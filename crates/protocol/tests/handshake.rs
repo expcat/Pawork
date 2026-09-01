@@ -1,7 +1,6 @@
 //! 版本协商、握手服务端逻辑、认证钩子与信封版本校验（L1 定向测试）。
 
 use pawork_domain::{ConnectionId, CoreInstanceId, GuiClientId};
-use pawork_protocol::{ApiVersion, CommandSource, GlobalSequence, API_VERSION};
 use pawork_protocol::client_auth::{TokenAuthenticator, TokenStore, TOKEN_SCHEME};
 use pawork_protocol::{
     decode_client_frame_checked, decode_server_frame_checked, ensure_compatible_api_version,
@@ -10,6 +9,7 @@ use pawork_protocol::{
     HandshakeResponse, ProtocolError, ProtocolErrorCode, ResumeContext, ResumeDisposition,
     ServerFrame,
 };
+use pawork_protocol::{ApiVersion, CommandSource, GlobalSequence, API_VERSION};
 
 const INSTANCE_ID: &str = "instance-1";
 
@@ -69,7 +69,7 @@ fn negotiate_picks_highest_common_minor() {
         negotiate_api_version(
             &[
                 ApiVersion::new(1, 0),
-                ApiVersion::new(1, 3),
+                ApiVersion::new(1, 4),
                 ApiVersion::new(2, 0)
             ],
             API_VERSION,
@@ -263,7 +263,7 @@ fn envelope_version_mismatch_produces_incompatible_version() {
     assert!(ensure_compatible_api_version(ApiVersion::new(1, 2), negotiated).is_ok());
     assert!(ensure_compatible_api_version(ApiVersion::new(1, 1), negotiated).is_ok());
     assert!(matches!(
-        ensure_compatible_api_version(ApiVersion::new(1, 4), negotiated),
+        ensure_compatible_api_version(ApiVersion::new(1, 5), negotiated),
         Err(ProtocolError {
             code: ProtocolErrorCode::IncompatibleVersion,
             ..
@@ -328,7 +328,8 @@ fn checked_decode_validates_negotiated_version() {
         issued_at: pawork_domain::Timestamp::from_unix_millis(1),
         command: pawork_protocol::AppCommand::CoreInitialize,
     };
-    let bytes = pawork_protocol::encode_client_frame(&ClientFrame::Command(envelope)).expect("encode");
+    let bytes =
+        pawork_protocol::encode_client_frame(&ClientFrame::Command(envelope)).expect("encode");
     assert!(matches!(
         decode_client_frame_checked(&bytes, API_VERSION),
         Err(ProtocolError {

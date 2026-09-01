@@ -23,7 +23,7 @@
 | `src/path.rs` | ~250 | `resolve_relative_path(roots, relative) -> ResolvedPath{absolute, root, relative}`；本层拦截空路径 / 绝对路径 / Windows 盘符 / UNC（`\\`、`//`）/ 保留设备名（CON、PRN、AUX、NUL、COM1-9、LPT1-9，含尾随 `.`/空格变体），其余委托 `pawork_policy::resolve_workspace_path`；`WorkspacePathError` 与 `PathSafetyError` 的一一映射 |
 | `src/file_index.rs` | ~1040 | `FileIndex`：`scan_workspace`（`spawn_blocking` 全量扫描 + 原子替换，`generation` 递增）、`snapshot` / `search`（子序列模糊匹配）、`apply_changes` 增量、`start_debounced_updates`（有界通道去抖）、`watch_workspace`（`notify` watcher）；`IndexOptions` / `FileKey` / `IndexedFile` / `IndexSnapshot` / `PathChange` / `ChangeKind` / `DebouncedUpdateHandle` / `WorkspaceWatcher` / `FileIndexError` |
 
-**config/（6 文件）**
+**config/（7 文件）**
 
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
@@ -31,8 +31,9 @@
 | `src/config/schema.rs` | ~370 | `PaworkConfig`（`default_provider` / `default_model` / `profile` / `trust_workspaces` / `proxy_url` / `providers` / `profiles` / `extra`）；`ProviderConfig` / `ModelConfig` / `ProfileConfig` / `ProfileOverrides` / `SessionOverrides` / `RunOverrides`；**schema 无 `api_key` 字段**，未知键落入 `extra`；`proxy_url` 的回环直连语义由 `pawork-providers` 运行时实现 |
 | `src/config/paths.rs` | ~140 | 平台定位常量与函数：`APP_QUALIFIER/ORGANIZATION/APPLICATION = dev/pawork/pawork`、`config_dir_for_app`（`directories`）、`global_config_path`、`workspace_config_path`（`<root>/.pawork/config.toml`）、`locate_workspace_config`（自起点向上找最近）、`default_search_roots` |
 | `src/config/merge.rs` | ~160 | `ConfigValue` 包装与 `Merge` trait；`merge_json`（对象按键递归、标量与数组整体替换）；`merge_ordered`（低→高依序合并） |
-| `src/config/error.rs` | ~60 | `ConfigParseError` / `ConfigError`：TOML 语法、schema 不匹配、IO 错误全部携带文件路径，`path()` 访问器 |
+| `src/config/error.rs` | ~70 | `ConfigParseError` / `ConfigError`：TOML 语法、schema 不匹配、IO 错误、写回序列化（`Write`）全部携带文件路径，`path()` 访问器 |
 | `src/config/loader.rs` | ~1120 | `Loader` 构建器与 `resolve()` 全流程：来源装配、`strip_untrusted_layer` 安全剥离（五种 `ConfigWarning`）、profile 层派生、`api_key` 双点剥除（单文件解析后 + 终值合并后）、确定性排序；`ConfigSource` / `LoadedSource` / `LoadedSourceSpan`；`ResolvedConfig{config, active_profile, sources, warnings}` |
+| `src/config/writer.rs` | ~120 | `write_default_model_pair`：SET-2 Global 层默认模型唯一写盘入口——读目标文件（缺失视为空）→ `toml::Table` 保留未知字段 → 改 `default_provider`/`default_model` 两键 → 同目录临时文件 + rename 原子写回；不触碰六层合并语义 |
 
 **resources/（9 文件）**
 
@@ -102,6 +103,7 @@
 - `PaworkConfig` 字段语义：`default_provider` / `default_model`（缺省选择）、`profile`（激活 profile 名）、`trust_workspaces`（安全开关，仅 Builtin/Global 可设）、`proxy_url`（全局出站代理，仅 Builtin/Global 可设）、`providers: Vec<ProviderConfig>`（id / base_url / models / default）、`profiles: Vec<ProfileConfig>`（name + `ProfileOverrides`）、`extra`（未知键透传，供上层扩展段消费）。
 - `ConfigWarning` 五种：`TrustWorkspacesIgnored` / `ProxyUrlIgnored` / `ProviderBaseUrlIgnored` / `McpTrustedIgnored` / `McpAutoStartIgnored`，均带 tier + source_key + path。
 - 错误语义：TOML 语法错、schema 不匹配、IO 错均带文件路径；缺失文件不致命（不加该来源）。
+- 写盘入口（SET-2）：`write_default_model_pair(path, provider_id, model_id)`——只改目标文件（宿主传 Global 层路径）的 `default_provider`/`default_model` 两键，其余字段原样保留；缺失文件视为空文档新建；同目录 tmp + rename 原子写回，序列化失败返回 `ConfigError::Write`（带路径）。六层合并语义不变，本包此外无任何写盘代码。
 - `paths` 函数无 IO 副作用（`locate_workspace_config` 除外，只读存在性检查）；`config_dir_for_app` 用 `directories` 三元组 `dev/pawork/pawork`。
 
 **resources**
@@ -230,7 +232,7 @@
   - 冲突裁决：同 tier 按 source rank（Codex 胜 Claude）、跨 tier 按 priority（workspace 胜 global），败者带 `conflict_loser`；胜者仍 `requires_review`。
   - `export_plan` 显式幂等且不改写源文件；dry-run 无写入；`select` 子集独立指纹、内容篡改后指纹命中仍重写。
   - 防御行为：危险内容（`bypassPermissions` 等）隔离不导入、扫描不追 symlink、per-kind 与 total 限额硬截断、`on-failure` / `acceptEdits` 映射为 Ask 而非 Allow。
-- src 内嵌单元测试：`lib.rs`（roots 去重与 canonicalize、Windows 大小写去重）、`path.rs`（逃逸 / 设备名矩阵）、`file_index.rs`（扫描 / 搜索 / 去抖 / watcher / 错误缓冲）、`config/*`（loader 剥离与告警、merge 语义、paths 定位、schema 序列化）、`resources/*`（agents 层级、skills 依赖与冲突、profiles 迁移与校验、io 边界）、`import/*`（detect 限额、parse 各分支、io no-follow、frontmatter、map 裁决、session_scan 排除规则）。
+- src 内嵌单元测试：`lib.rs`（roots 去重与 canonicalize、Windows 大小写去重）、`path.rs`（逃逸 / 设备名矩阵）、`file_index.rs`（扫描 / 搜索 / 去抖 / watcher / 错误缓冲）、`config/*`（loader 剥离与告警、merge 语义、paths 定位、schema 序列化、writer 原子写回与未知字段保留）、`resources/*`（agents 层级、skills 依赖与冲突、profiles 迁移与校验、io 边界）、`import/*`（detect 限额、parse 各分支、io no-follow、frontmatter、map 裁决、session_scan 排除规则）。
 - dev-dependencies：`tempfile`（临时目录夹具）、`serde_json`、`tokio`（macros / rt-multi-thread / time，供 async 测试）；无 build.rs、无 feature 矩阵，单一编译形态。
 - 默认验证命令：`cargo test -p pawork-workspace --offline --lib --tests`。
 

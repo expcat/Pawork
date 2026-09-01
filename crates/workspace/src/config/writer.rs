@@ -1,0 +1,124 @@
+//! Global 层默认项写盘（SET-2，ADR-046 D4）。
+//!
+//! 只提供 default_provider/default_model 成对写回这一个入口：读取现有
+//! Global 层文件（缺失视为空配置），以 TOML Value 结构保留全部未知字段，
+//! 仅覆盖两个键，最后经同目录临时文件 + rename 原子写回。六层合并语义、
+//! schema 与加载路径均不变。
+
+use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use crate::config::error::{ConfigError, ConfigParseError};
+
+/// 同进程内的临时文件唯一后缀：仅按 pid 区分的临时名会让同进程并发写
+/// 互相覆盖临时文件（GUI 快速双击即可触发）。
+static TEMP_SUFFIX: AtomicU64 = AtomicU64::new(0);
+
+/// 将 default_provider/default_model 原子写入指定（Global 层）配置文件。
+///
+/// 幂等：重复写入同一对值为最终覆盖语义。文件不存在时创建（含父目录）。
+pub fn write_default_model_pair(
+    path: &Path,
+    provider_id: &str,
+    model_id: &str,
+) -> Result<(), ConfigError> {
+    let content = match std::fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => {
+            return Err(ConfigError::Io {
+                path: path.to_path_buf(),
+                source: Box::new(error),
+            })
+        }
+    };
+    let mut table: toml::Table = toml::from_str(&content).map_err(|source| {
+        ConfigError::Parse(ConfigParseError::Toml {
+            path: path.to_path_buf(),
+            source: Box::new(source),
+        })
+    })?;
+    table.insert(
+        "default_provider".into(),
+        toml::Value::String(provider_id.to_string()),
+    );
+    table.insert(
+        "default_model".into(),
+        toml::Value::String(model_id.to_string()),
+    );
+    let serialized = toml::to_string(&table).map_err(|source| ConfigError::Write {
+        path: path.to_path_buf(),
+        source: Box::new(source),
+    })?;
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|source| ConfigError::Io {
+            path: parent.to_path_buf(),
+            source: Box::new(source),
+        })?;
+    }
+    let temp = path.with_file_name(format!(
+        "{}.{}.{}.tmp",
+        path.file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "config.toml".into()),
+        std::process::id(),
+        TEMP_SUFFIX.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::write(&temp, serialized).map_err(|source| ConfigError::Io {
+        path: temp.clone(),
+        source: Box::new(source),
+    })?;
+    std::fs::rename(&temp, path).map_err(|source| ConfigError::Io {
+        path: path.to_path_buf(),
+        source: Box::new(source),
+    })?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_path(tag: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("pawork-config-writer-{}-{tag}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create dir");
+        dir.join("config.toml")
+    }
+
+    #[test]
+    fn writes_pair_and_preserves_unknown_fields() {
+        let path = temp_path("preserve");
+        std::fs::write(
+            &path,
+            "trust_workspaces = true\n[extra_section]\nkey = \"v\"\n",
+        )
+        .expect("seed config");
+        write_default_model_pair(&path, "glm-coding", "glm-5.2").expect("write");
+        let content = std::fs::read_to_string(&path).expect("read back");
+        assert!(content.contains("default_provider = \"glm-coding\""));
+        assert!(content.contains("default_model = \"glm-5.2\""));
+        assert!(content.contains("trust_workspaces = true"));
+        assert!(content.contains("[extra_section]"));
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn creates_missing_file_and_rewrites_atomically() {
+        let path = temp_path("create");
+        write_default_model_pair(&path, "deepseek", "deepseek-chat").expect("create write");
+        write_default_model_pair(&path, "glm-coding", "glm-5.2").expect("overwrite");
+        let table: toml::Table =
+            toml::from_str(&std::fs::read_to_string(&path).expect("read")).expect("parse");
+        assert_eq!(
+            table.get("default_provider").and_then(|v| v.as_str()),
+            Some("glm-coding")
+        );
+        assert_eq!(
+            table.get("default_model").and_then(|v| v.as_str()),
+            Some("glm-5.2")
+        );
+        std::fs::remove_file(&path).ok();
+    }
+}

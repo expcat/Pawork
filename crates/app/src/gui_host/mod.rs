@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use crate::gui_server::{GuiHost, GuiHostError};
 use async_trait::async_trait;
 use futures::future::BoxFuture;
-use pawork_domain::{CommandId, QueryId, SessionId, TenantId, WorkspaceId};
+use pawork_domain::{CancellationToken, CommandId, QueryId, SessionId, TenantId, WorkspaceId};
 use pawork_engine::now_timestamp;
 use pawork_exec::PtyService;
 use pawork_protocol::{
@@ -95,6 +95,9 @@ pub struct GuiHostAdapter {
     next_fork: AtomicU64,
     pty: Arc<PtyService>,
     terminals: Mutex<HashMap<String, String>>,
+    /// SET-2：按 provider_id 的认证单飞守卫（auth_start / auth_set_api_key /
+    /// auth_cancel 共用；条目存在即 busy，Arc 身份用于安全移除自己的 flight）。
+    pub(crate) auth_flights: Arc<Mutex<HashMap<String, Arc<CancellationToken>>>>,
 }
 
 impl GuiHostAdapter {
@@ -155,6 +158,7 @@ impl GuiHostAdapter {
             next_fork: AtomicU64::new(1),
             pty: Arc::new(PtyService::new()),
             terminals: Mutex::new(HashMap::new()),
+            auth_flights: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -693,6 +697,13 @@ fn query_mcp_list<'a>(
     Box::pin(handlers::query::mcp_list(adapter, query))
 }
 
+fn query_provider_auth_status<'a>(
+    adapter: &'a GuiHostAdapter,
+    query: &'a pawork_protocol::AppQuery,
+) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
+    Box::pin(handlers::settings::provider_auth_status(adapter, query))
+}
+
 fn command_workspace_add<'a>(
     adapter: &'a GuiHostAdapter,
     envelope: &'a AppCommandEnvelope,
@@ -741,6 +752,50 @@ fn command_run_cancel<'a>(
     command: &'a AppCommand,
 ) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
     Box::pin(handlers::command::run_cancel(adapter, envelope, command))
+}
+
+fn command_auth_start<'a>(
+    adapter: &'a GuiHostAdapter,
+    envelope: &'a AppCommandEnvelope,
+    command: &'a AppCommand,
+) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
+    Box::pin(handlers::settings::auth_start(adapter, envelope, command))
+}
+
+fn command_auth_remove<'a>(
+    adapter: &'a GuiHostAdapter,
+    envelope: &'a AppCommandEnvelope,
+    command: &'a AppCommand,
+) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
+    Box::pin(handlers::settings::auth_remove(adapter, envelope, command))
+}
+
+fn command_auth_set_api_key<'a>(
+    adapter: &'a GuiHostAdapter,
+    envelope: &'a AppCommandEnvelope,
+    command: &'a AppCommand,
+) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
+    Box::pin(handlers::settings::auth_set_api_key(
+        adapter, envelope, command,
+    ))
+}
+
+fn command_auth_cancel<'a>(
+    adapter: &'a GuiHostAdapter,
+    envelope: &'a AppCommandEnvelope,
+    command: &'a AppCommand,
+) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
+    Box::pin(handlers::settings::auth_cancel(adapter, envelope, command))
+}
+
+fn command_set_default_model<'a>(
+    adapter: &'a GuiHostAdapter,
+    envelope: &'a AppCommandEnvelope,
+    command: &'a AppCommand,
+) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
+    Box::pin(handlers::settings::set_default_model(
+        adapter, envelope, command,
+    ))
 }
 
 fn command_tool_approve<'a>(
@@ -800,6 +855,7 @@ static QUERY_HANDLERS: &[(&str, QueryHandler)] = &[
     ("diff_get", query_diff_get),
     ("quota_overview", query_quota_overview),
     ("mcp_list", query_mcp_list),
+    ("provider_auth_status", query_provider_auth_status),
 ];
 
 static COMMAND_HANDLERS: &[(&str, CommandHandler)] = &[
@@ -809,6 +865,11 @@ static COMMAND_HANDLERS: &[(&str, CommandHandler)] = &[
     ("session_fork", command_session_fork),
     ("run_start", command_run_start),
     ("run_cancel", command_run_cancel),
+    ("auth_start", command_auth_start),
+    ("auth_remove", command_auth_remove),
+    ("auth_set_api_key", command_auth_set_api_key),
+    ("auth_cancel", command_auth_cancel),
+    ("set_default_model", command_set_default_model),
     ("tool_approve", command_tool_approve),
     ("terminal_create", command_terminal_create),
     ("terminal_write", command_terminal_write),

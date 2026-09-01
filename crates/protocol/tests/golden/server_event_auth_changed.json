@@ -1,0 +1,34 @@
+{
+  "data": {
+    "api_version": {
+      "major": 1,
+      "minor": 4
+    },
+    "event_id": "event-auth-1",
+    "global_sequence": 1,
+    "instance_id": "instance-1",
+    "payload": {
+      "data": {
+        "provider_id": "glm-coding",
+        "state": {
+          "data": {
+            "masked_credential": "sk-****abcd",
+            "method": "api_key"
+          },
+          "type": "succeeded"
+        }
+      },
+      "type": "auth_changed"
+    },
+    "source": {
+      "provider_id": "glm-coding",
+      "type": "provider"
+    },
+    "stream": {
+      "type": "global"
+    },
+    "stream_sequence": 1,
+    "timestamp": 4
+  },
+  "type": "event"
+}

@@ -1,0 +1,25 @@
+{
+  "data": {
+    "api_version": {
+      "major": 1,
+      "minor": 4
+    },
+    "identity": {
+      "actor_id": "actor-1",
+      "type": "local_user"
+    },
+    "issued_at": 1,
+    "query": {
+      "method": "provider_auth_status",
+      "params": {
+        "provider_id": "glm-coding"
+      }
+    },
+    "request_id": "query-auth-status",
+    "source": {
+      "client_id": "gui-1",
+      "type": "local_gui"
+    }
+  },
+  "type": "query"
+}

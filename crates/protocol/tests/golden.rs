@@ -9,16 +9,17 @@ use pawork_domain::{
     ArtifactId, CommandId, ConnectionId, CoreInstanceId, EventId, GuiClientId, RunId, Timestamp,
 };
 use pawork_protocol::{
-    ActorIdentity, ApiHandle, AppCommand, AppCommandEnvelope, AppEvent, AppEventEnvelope,
-    CommandSource, EventSource, EventStream, GlobalSequence, RunState, API_VERSION,
+    encode_client_frame, encode_server_frame, AppQuery, AppQueryEnvelope, AppResponse,
+    AppResponseEnvelope, ArtifactChunk, ArtifactReadRequest, ClientAuthentication, ClientFrame,
+    GuiCapability, HandshakeRequest, HandshakeResponse, ProtocolError, ProtocolErrorCode,
+    ProtocolErrorEnvelope, ResumeDisposition, ResumeRequest, ResumeResponse, ServerFrame, Snapshot,
+    SnapshotSection, SnapshotSectionKind, SubscribeRequest, TimelineItem, TimelineItemKind,
+    TimelinePage, WorkspaceRelativePath,
 };
 use pawork_protocol::{
-    encode_client_frame, encode_server_frame, ArtifactChunk, ArtifactReadRequest,
-    ClientAuthentication, ClientFrame, GuiCapability, HandshakeRequest, HandshakeResponse,
-    ProtocolError, ProtocolErrorCode, ProtocolErrorEnvelope, AppQuery, AppQueryEnvelope,
-    AppResponse, AppResponseEnvelope, ResumeDisposition, ResumeRequest, ResumeResponse,
-    ServerFrame, Snapshot, SnapshotSection, SnapshotSectionKind, SubscribeRequest, TimelineItem,
-    TimelineItemKind, TimelinePage, WorkspaceRelativePath,
+    ActorIdentity, ApiHandle, ApiKeySecret, AppCommand, AppCommandEnvelope, AppEvent,
+    AppEventEnvelope, AuthChangeState, CommandSource, EventSource, EventStream, GlobalSequence,
+    RunState, API_VERSION,
 };
 use serde_json::Value;
 
@@ -176,6 +177,25 @@ fn client_terminal_command_frame(command: AppCommand) -> ClientFrame {
     ClientFrame::Command(AppCommandEnvelope {
         api_version: API_VERSION,
         command_id: CommandId::from("command-terminal-1"),
+        source: CommandSource::RemoteGui {
+            client_id: GuiClientId::from("gui-1"),
+            connection_id: ConnectionId::from("connection-1"),
+        },
+        identity: ActorIdentity::LocalUser {
+            actor_id: pawork_domain::ActorId::from("actor-1"),
+            display_name: None,
+        },
+        expected_revision: None,
+        idempotency_key: None,
+        issued_at: Timestamp::from_unix_millis(2),
+        command,
+    })
+}
+
+fn client_auth_command_frame(command: AppCommand) -> ClientFrame {
+    ClientFrame::Command(AppCommandEnvelope {
+        api_version: API_VERSION,
+        command_id: CommandId::from("command-auth-1"),
         source: CommandSource::RemoteGui {
             client_id: GuiClientId::from("gui-1"),
             connection_id: ConnectionId::from("connection-1"),
@@ -533,6 +553,125 @@ fn golden_additional_server_frames() {
                 current_sequence: GlobalSequence(42),
             },
             capabilities: vec![GuiCapability::Events, GuiCapability::Snapshots],
+        })),
+    );
+}
+
+/// SET-1（ADR-046）：Provider 认证与默认模型协议词汇 golden。
+#[test]
+fn golden_auth_provider_slices() {
+    let provider_id = pawork_domain::ProviderId::from("glm-coding");
+    assert_golden(
+        "client_command_auth_set_api_key.json",
+        encode_client(&client_auth_command_frame(AppCommand::AuthSetApiKey {
+            provider_id: provider_id.clone(),
+            api_key: ApiKeySecret::new("sk-test-fixture-not-a-real-key"),
+        })),
+    );
+    assert_golden(
+        "client_command_auth_start.json",
+        encode_client(&client_auth_command_frame(AppCommand::AuthStart {
+            provider_id: provider_id.clone(),
+            flow: "oauth".into(),
+        })),
+    );
+    assert_golden(
+        "client_command_auth_remove.json",
+        encode_client(&client_auth_command_frame(AppCommand::AuthRemove {
+            provider_id: provider_id.clone(),
+        })),
+    );
+    assert_golden(
+        "client_command_auth_cancel.json",
+        encode_client(&client_auth_command_frame(AppCommand::AuthCancel {
+            provider_id: provider_id.clone(),
+        })),
+    );
+    assert_golden(
+        "client_command_set_default_model.json",
+        encode_client(&client_auth_command_frame(AppCommand::SetDefaultModel {
+            provider_id: provider_id.clone(),
+            model_id: "glm-4.7".into(),
+        })),
+    );
+    assert_golden(
+        "provider_auth_status.json",
+        encode_client(&ClientFrame::Query(AppQueryEnvelope {
+            api_version: API_VERSION,
+            request_id: pawork_domain::QueryId::from("query-auth-status"),
+            source: CommandSource::LocalGui {
+                client_id: GuiClientId::from("gui-1"),
+            },
+            identity: ActorIdentity::LocalUser {
+                actor_id: pawork_domain::ActorId::from("actor-1"),
+                display_name: None,
+            },
+            issued_at: Timestamp::from_unix_millis(1),
+            query: AppQuery::ProviderAuthStatus {
+                provider_id: Some(provider_id.clone()),
+            },
+        })),
+    );
+    assert_golden(
+        "server_event_auth_changed.json",
+        encode_server(&ServerFrame::Event(AppEventEnvelope {
+            api_version: API_VERSION,
+            instance_id: CoreInstanceId::from("instance-1"),
+            event_id: EventId::from("event-auth-1"),
+            global_sequence: GlobalSequence(1),
+            stream: EventStream::Global,
+            stream_sequence: 1,
+            timestamp: Timestamp::from_unix_millis(4),
+            source: EventSource::Provider {
+                provider_id: provider_id.clone(),
+            },
+            payload: AppEvent::AuthChanged {
+                provider_id: provider_id.clone(),
+                state: AuthChangeState::Succeeded {
+                    method: "api_key".into(),
+                    masked_credential: "sk-****abcd".into(),
+                },
+            },
+        })),
+    );
+    assert_golden(
+        "server_response_provider_auth_status.json",
+        encode_server(&ServerFrame::Response(AppResponseEnvelope {
+            api_version: API_VERSION,
+            request_id: pawork_domain::QueryId::from("query-auth-status"),
+            responded_at: Timestamp::from_unix_millis(3),
+            response: AppResponse::Data(serde_json::json!({
+                "providers": [{
+                    "provider_id": "glm-coding",
+                    "display_name": "GLM Coding",
+                    "endpoint_label": "https://api.z.ai/api/coding/paas/v4",
+                    "auth_methods": ["api_key"],
+                    "auth": {
+                        "type": "connected",
+                        "method": "api_key",
+                        "masked_credential": "sk-****abcd"
+                    },
+                    "catalog": {
+                        "type": "fixed_fallback",
+                        "snapshot_label": "2026-09-01",
+                        "fetched_at": null
+                    }
+                }]
+            })),
+        })),
+    );
+    assert_golden(
+        "server_response_auth_set_api_key.json",
+        encode_server(&ServerFrame::Response(AppResponseEnvelope {
+            api_version: API_VERSION,
+            request_id: pawork_domain::QueryId::from("query-auth-status"),
+            responded_at: Timestamp::from_unix_millis(3),
+            response: AppResponse::Data(serde_json::json!({
+                "provider_id": "glm-coding",
+                "method": "api_key",
+                "masked_credential": "sk-****abcd",
+                "verified_at": "2026-01-01T00:00:00Z"
+            })),
         })),
     );
 }

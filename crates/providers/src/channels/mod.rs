@@ -43,7 +43,7 @@ pub use xai::{builtin_models as xai_builtin_models, XaiConfig, XaiProvider};
     feature = "qwen-token-plan",
     feature = "deepseek"
 ))]
-pub use api_key::{ApiKeyChannelConfig, ApiKeyChannelProvider};
+pub use api_key::{verify_api_key, ApiKeyChannelConfig, ApiKeyChannelProvider};
 
 pub use registry::{
     channel_preset, is_enabled, ChannelKind, ChannelPreset, OAuthFlow, OAuthPreset,

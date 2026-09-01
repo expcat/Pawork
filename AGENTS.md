@@ -30,18 +30,18 @@
 - 仓库根即 Cargo workspace 根。
 - 当前布局为 21 成员（19 库 + 2 应用）：19 库平铺 `crates/<短名>`（目录 = 包名去 `pawork-` 前缀），2 应用 `apps/{pawork,desktop}`（ADR-039 定稿）；包清单与依赖方向见 [docs/architecture.md](docs/architecture.md) §2。
 - crate 统一 `pawork-` 前缀（`pawork-domain`、`pawork-engine`……）。**当前不新增包**，只往既有包加模块；任何包布局变更须先过 ADR。
-- 归档资产以 git tag `v2-final` 兜底，复活条件登记在 [ROADMAP.md](ROADMAP.md) §5 候选池；不得把归档代码复制回仓库其它位置。
+- 归档资产以 git tag `v2-final` 兜底，复活条件登记在 [docs/spec/backlog.md](docs/spec/backlog.md)；不得把归档代码复制回仓库其它位置。
 
 ## 4. 任务粒度
 
 - 每个任务应在数小时内可独立完成、独立验收。
 - 写入集尽量收敛到单一包或一组紧相关文件；不同任务不修改同一文件。
-- 任何任务完成后，对应文档与 ROADMAP 状态须同步更新（回写约定见 [ROADMAP.md](ROADMAP.md) §7.5）。
-- 任务开启 / 进行 / 收尾的公共规范见 [ROADMAP.md](ROADMAP.md) §7；进行中阶段任务书见 [plan/](plan/)；阶段外任务登记见 [ROADMAP.md](ROADMAP.md) §5。
+- 任何任务完成后，对应文档与 ROADMAP 状态须同步更新（回写约定见 [ROADMAP.md](ROADMAP.md) §6–§7）。
+- 任务开启 / 进行 / 收尾的公共规范见 [ROADMAP.md](ROADMAP.md) §6–§7；进行中阶段任务书见 [plan/](plan/)；阶段外候选登记见 [docs/spec/backlog.md](docs/spec/backlog.md)。
 
 ## 5. 验证决策
 
-实现任务以 [ROADMAP.md](ROADMAP.md) §7.3 为准——少测试、无全量门禁：只做能证明本任务核心行为的关键定向测试。默认死表为 `cargo test -p <crate> --offline --lib --tests`（多包可一次多个 `-p`，但仍是一个 Cargo 进程，不因包多改用 `--workspace`）。`cargo check -p <crate>` 仅在该包无测试或只需类型检查时使用。三类关键测试不推迟：安全红线定向回归、持久化与重放契约 golden、协议与解析 golden/种子；邻包 golden/probe/e2e/desktop/`cargo check -p pawork` 默认不跑，仅主代理收口且对应文件确有改动时加跑一次。
+实现任务以 [ROADMAP.md](ROADMAP.md) §6–§7 为准——少测试、无全量门禁：只做能证明本任务核心行为的关键定向测试。默认死表为 `cargo test -p <crate> --offline --lib --tests`（多包可一次多个 `-p`，但仍是一个 Cargo 进程，不因包多改用 `--workspace`）。`cargo check -p <crate>` 仅在该包无测试或只需类型检查时使用。三类关键测试不推迟：安全红线定向回归、持久化与重放契约 golden、协议与解析 golden/种子；邻包 golden/probe/e2e/desktop/`cargo check -p pawork` 默认不跑，仅主代理收口且对应文件确有改动时加跑一次。
 
 补充约定：
 
@@ -69,7 +69,7 @@ Full workspace gate: NOT RUN（当前未设置全量门禁）
 ## 6. 文档约定
 
 - 中文撰写，保留关键术语英文。
-- 常设文档体系（入口 [README.md](README.md)）：[ROADMAP.md](ROADMAP.md)（任务事实源：指针/剩余任务/登记/候选/任务约定）· [plan/](plan/)（进行中阶段任务书）· [docs/architecture.md](docs/architecture.md)（架构事实源：红线/布局/冻结契约/ADR 索引）· [docs/design.md](docs/design.md)（功能设计事实源：功能映射/扩展功能族/候选池）· [docs/spec/README.md](docs/spec/README.md)（产品 Spec + 包级 Spec 总索引）· [docs/spec/flows.md](docs/spec/flows.md)（跨包链路）· [docs/gui-design.md](docs/gui-design.md)（Desktop GUI 设计，配套 [design/](design/README.md) 视觉基准）· [docs/references.md](docs/references.md)（参照项目手册 + 调研附录）· [docs/history.md](docs/history.md)（历史存档）· [docs/adr/](docs/adr/)（架构决策记录）。
+- 常设文档体系（入口 [README.md](README.md)）：[ROADMAP.md](ROADMAP.md)（任务事实源：指针/阶段/开放决策/任务约定）· [plan/](plan/)（进行中阶段任务书）· [docs/architecture.md](docs/architecture.md)（架构事实源：红线/布局/冻结契约/ADR 索引）· [docs/design.md](docs/design.md)（功能设计事实源：功能映射/扩展功能族/候选池）· [docs/spec/README.md](docs/spec/README.md)（产品 Spec + 包级 Spec 总索引）· [docs/spec/backlog.md](docs/spec/backlog.md)（阶段外候选与复活条件）· [docs/spec/flows.md](docs/spec/flows.md)（跨包链路）· [docs/gui-design.md](docs/gui-design.md)（Desktop GUI 设计，配套 [design/](design/README.md) 视觉基准）· [docs/references.md](docs/references.md)（参照项目手册 + 调研附录）· [docs/history.md](docs/history.md)（历史存档）· [docs/adr/](docs/adr/)（架构决策记录）。
 - **Spec 边界**：`docs/spec/` 产品篇是跨事实源的产品化汇总，包级 Spec 是包内功能的文档化镜像；均不替代源码/golden、`docs/architecture.md` 的布局与冻结契约、ROADMAP/任务书的状态事实源。用户可见能力、契约、安全、Desktop、验证或运维边界变化时，同批更新对应 Spec；「已实现」「已验证」「已人工验收」「已发布」必须分开表述。
 - **包级 Spec 维护规则**：固定八节结构（见 [docs/spec/README.md](docs/spec/README.md)）。写入集改了模块树、对外 API、`pawork-*` 依赖边、feature 门、红线相关行为或测试资产时**同批**更新该包 `docs/spec/crates/<pkg>.md`；冲突以源码为准并回写。
 - **历史存档纪律**：已完成阶段的收口细节、已关闭登记项、已拍板决策的过程记录进 [docs/history.md](docs/history.md)，不留在 ROADMAP/plan；存档只增不删。
@@ -93,7 +93,7 @@ Full workspace gate: NOT RUN（当前未设置全量门禁）
 
 - 文档等一致性关键产物由主代理直接撰写。
 - 实现阶段：边界清晰、写入集互不重叠的任务可并行派发，遵循服务级 `AGENTS.md` 的路由与并发上限。
-- 派发实现 / 核查子代理时，提示词须点名写入集各包 `docs/spec/crates/<pkg>.md`（骨架见 [ROADMAP.md](ROADMAP.md) §7.1）；不要让子代理先通读全部 Spec。
+- 派发实现 / 核查子代理时，提示词须点名写入集各包 `docs/spec/crates/<pkg>.md`（切片骨架见当前 [Settings 任务书](plan/settings.md) §3，后续任务书沿用同一字段）；不要让子代理先通读全部 Spec。
 - 确定性检查先于模型审查；每个门禁只调用一个审查者。
 
 ## 10. 验证命令模板

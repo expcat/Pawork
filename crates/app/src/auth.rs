@@ -114,9 +114,7 @@ impl AppCore {
                         } else {
                             AuthSource::None
                         },
-                        masked: meta
-                            .as_ref()
-                            .map(|meta| meta.masked.as_str().to_string()),
+                        masked: meta.as_ref().map(|meta| meta.masked.as_str().to_string()),
                         expires_at_ms: meta.as_ref().and_then(|meta| meta.expires_at_ms),
                     });
                 }
@@ -138,11 +136,8 @@ impl AppCore {
             )));
         }
         let provider = ProviderId::new(provider_id);
-        let stored = pawork_auth::store_default_api_key(
-            self.auth_backend().as_ref(),
-            &provider,
-            secret,
-        )?;
+        let stored =
+            pawork_auth::store_default_api_key(self.auth_backend().as_ref(), &provider, secret)?;
         Ok(stored.masked)
     }
 
@@ -221,29 +216,34 @@ impl AppCore {
         login: OAuthLogin,
         timeout: Duration,
     ) -> Result<StoredCredential, AppError> {
-        let provider = match &login {
-            OAuthLogin::Pkce { provider, .. } | OAuthLogin::Device { provider, .. } => {
-                provider.clone()
-            }
-        };
-        let tokens = match login {
-            OAuthLogin::Pkce {
-                session, server, ..
-            } => {
-                let (code, state) = server.wait_for_code(timeout).await?;
-                exchange_pkce_code(&session, &code, &state, &self.http).await?
-            }
-            OAuthLogin::Device { config, prompt, .. } => {
-                poll_device_token(&config, &prompt, &self.http, timeout).await?
-            }
-        };
-        let stored = store_default_oauth_token(
-            self.auth_backend().as_ref(),
-            ProviderId::new(&provider),
-            &tokens,
-        )?;
-        Ok(stored)
+        oauth_finish(login, self.auth_backend().as_ref(), &self.http, timeout).await
     }
+}
+
+/// oauth_complete 的不持锁版本（SET-2 GUI 后台认证任务专用）：等待授权
+/// 可能耗时数分钟，任务内不得长期持有 core 读锁阻塞写操作。
+pub(crate) async fn oauth_finish(
+    login: OAuthLogin,
+    backend: &dyn pawork_auth::SecretBackend,
+    http: &reqwest::Client,
+    timeout: Duration,
+) -> Result<StoredCredential, AppError> {
+    let provider = match &login {
+        OAuthLogin::Pkce { provider, .. } | OAuthLogin::Device { provider, .. } => provider.clone(),
+    };
+    let tokens = match login {
+        OAuthLogin::Pkce {
+            session, server, ..
+        } => {
+            let (code, state) = server.wait_for_code(timeout).await?;
+            exchange_pkce_code(&session, &code, &state, http).await?
+        }
+        OAuthLogin::Device { config, prompt, .. } => {
+            poll_device_token(&config, &prompt, http, timeout).await?
+        }
+    };
+    let stored = store_default_oauth_token(backend, ProviderId::new(&provider), &tokens)?;
+    Ok(stored)
 }
 
 #[cfg(test)]
@@ -251,15 +251,13 @@ mod tests {
     use super::*;
     use crate::channels::OAuthFlow;
     use async_trait::async_trait;
-        use pawork_domain::{
-            CanonicalModelRequest, ModelDefinition, ModelProvider, ModelResponseSummary,
-            ProviderError, ProviderErrorKind, ProviderEventSink,
-        };
-    use pawork_auth::{
-        load_default_oauth_credential, resolve_oauth_credential, MemoryBackend,
+    use pawork_auth::{load_default_oauth_credential, resolve_oauth_credential, MemoryBackend};
+    use pawork_domain::{CancellationToken, ModelId};
+    use pawork_domain::{
+        CanonicalModelRequest, ModelDefinition, ModelProvider, ModelResponseSummary, ProviderError,
+        ProviderErrorKind, ProviderEventSink,
     };
     use pawork_workspace::config::PaworkConfig;
-    use pawork_domain::{CancellationToken, ModelId};
     use serde_json::json;
     use std::sync::Arc;
     use wiremock::matchers::{body_string_contains, method, path};
@@ -385,14 +383,12 @@ mod tests {
         assert!(xai_row.expires_at_ms.is_some());
 
         // OAuth 登录 → 解析 → XaiProvider 构造链路（fail-closed 语义见 adapter 测试）。
-        let stored = load_default_oauth_credential(
-            core.auth_backend().as_ref(),
-            &ProviderId::new("xai"),
-        )
-        .expect("load default")
-        .expect("present");
-        let credential = resolve_oauth_credential(&stored, core.auth_backend().as_ref())
-            .expect("resolve");
+        let stored =
+            load_default_oauth_credential(core.auth_backend().as_ref(), &ProviderId::new("xai"))
+                .expect("load default")
+                .expect("present");
+        let credential =
+            resolve_oauth_credential(&stored, core.auth_backend().as_ref()).expect("resolve");
         let provider = pawork_providers::XaiProvider::new(
             pawork_providers::XaiConfig::new("https://api.x.ai/v1"),
             Some(credential),
@@ -404,8 +400,9 @@ mod tests {
 
     #[test]
     fn xai_refresh_endpoint_resolves_from_preset() {
-        let preset = crate::provider_assembly::oauth_refresh_endpoint(&PaworkConfig::default(), "xai")
-            .expect("xai preset");
+        let preset =
+            crate::provider_assembly::oauth_refresh_endpoint(&PaworkConfig::default(), "xai")
+                .expect("xai preset");
         assert_eq!(preset.token_url, "https://auth.x.ai/oauth2/token");
         assert_eq!(preset.client_id, "b1a00492-073a-47ea-816f-4c329264a828");
         assert!(matches!(preset.flow, OAuthFlow::Device { .. }));

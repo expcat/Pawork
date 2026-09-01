@@ -984,6 +984,11 @@ impl AppCore {
         &self.backend
     }
 
+    /// OAuth 刷新 / token 交换用的共享 HTTP 客户端（SET-2 后台认证任务用）。
+    pub(crate) fn http_client(&self) -> &reqwest::Client {
+        &self.http
+    }
+
     /// 默认 provider 是否因缺凭证未装配（目录兜底模式）。
     pub fn provider_pending(&self) -> bool {
         self.provider_pending

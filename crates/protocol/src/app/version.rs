@@ -19,14 +19,18 @@ pub const V1_2: ApiVersion = ApiVersion { major: 1, minor: 2 };
 /// ADR-045 Terminal 生命周期（terminal_close 命令 + TerminalExited 事件）。
 pub const V1_3: ApiVersion = ApiVersion { major: 1, minor: 3 };
 
-pub const API_VERSION: ApiVersion = V1_3;
+/// ADR-046 SET-1：Provider 认证与默认模型协议词汇（auth_set_api_key /
+/// auth_cancel / auth_start / auth_remove / set_default_model /
+/// provider_auth_status / AuthChanged 状态机）。
+pub const V1_4: ApiVersion = ApiVersion { major: 1, minor: 4 };
 
+pub const API_VERSION: ApiVersion = V1_4;
 
 /// 宿主支持的完整 API 版本表（P13-10 schema 版本化）。
 ///
 /// 同 major 内 minor 只增、已发布 minor 必须继续支持；删除或新增 major 走
 /// [ADR-036](../../../../../Pawork_v1/docs/adr/ADR-036-gui-protocol-versioning.md) 定义的废弃与删除流程。
-pub const SUPPORTED_API_VERSIONS: &[ApiVersion] = &[V1_0, V1_1, V1_2, V1_3];
+pub const SUPPORTED_API_VERSIONS: &[ApiVersion] = &[V1_0, V1_1, V1_2, V1_3, V1_4];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[cfg_attr(feature = "typegen", derive(TS))]
@@ -90,6 +94,11 @@ pub const PROTOCOL_CRATE_COMPATIBILITY: &[ProtocolCrateCompatibility] = &[
         crate_version: "0.1.0",
         note: "ADR-045 Terminal 生命周期（terminal_close + TerminalExited）",
     },
+    ProtocolCrateCompatibility {
+        api: ApiVersion { major: 1, minor: 4 },
+        crate_version: "0.1.0",
+        note: "ADR-046 SET-1 Provider 认证与默认模型协议词汇",
+    },
 ];
 
 // =========================================================================
@@ -151,9 +160,10 @@ mod tests {
 
     #[test]
     fn version_helpers_and_supported_table_are_consistent() {
-        assert_eq!(ApiVersion::new(1, 3), API_VERSION);
+        assert_eq!(ApiVersion::new(1, 4), API_VERSION);
         assert_eq!(V1_1, ApiVersion::new(1, 1));
-        assert_eq!(ApiVersion::new(1, 2).bump_minor(), ApiVersion::new(1, 3));
+        assert_eq!(V1_3, ApiVersion::new(1, 3));
+        assert_eq!(ApiVersion::new(1, 3).bump_minor(), ApiVersion::new(1, 4));
         assert_eq!(
             ApiVersion::new(1, 2).bump_minor().bump_minor(),
             ApiVersion::new(1, 4)
@@ -161,7 +171,7 @@ mod tests {
         assert!(SUPPORTED_API_VERSIONS.contains(&V1_0));
         assert!(SUPPORTED_API_VERSIONS.contains(&V1_1));
         assert!(SUPPORTED_API_VERSIONS.contains(&API_VERSION));
-        assert_eq!(SUPPORTED_API_VERSIONS, &[V1_0, V1_1, V1_2, V1_3]);
+        assert_eq!(SUPPORTED_API_VERSIONS, &[V1_0, V1_1, V1_2, V1_3, V1_4]);
         assert!(SUPPORTED_API_VERSIONS
             .iter()
             .all(|version| version.major == API_VERSION.major));
@@ -185,7 +195,7 @@ mod tests {
         assert!(json.get("crate_version").is_none());
         assert!(!json.to_string().contains("crate_version"));
         let version = serde_json::to_value(API_VERSION).expect("serialize version");
-        assert_eq!(version, serde_json::json!({"major": 1, "minor": 3}));
+        assert_eq!(version, serde_json::json!({"major": 1, "minor": 4}));
     }
 
     #[test]
@@ -207,5 +217,4 @@ mod tests {
         };
         assert!(!other.is_legacy_default());
     }
-
 }

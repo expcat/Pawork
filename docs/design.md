@@ -1,17 +1,17 @@
 # Pawork 设计文档
 
-> 本文档是**功能设计事实源**：目标与原则、各功能域设计及其到参照项目的映射、已确认扩展功能族（G1–G7）与候选功能池、发布策略。包布局、依赖方向、冻结契约与架构红线见 [architecture.md](architecture.md)；包内实现细节见 [包级 Spec](spec/README.md)；Desktop GUI 设计见 [gui-design.md](gui-design.md)；参照项目手册与调研附录见 [references.md](references.md)；V1/V2/V3 历史沿革见 [history.md](history.md)。
+> 本文档是**功能设计事实源**：目标与原则、各功能域设计及其到参照项目的映射、已确认扩展功能族（G1–G7）与候选功能池、候选发布策略。包布局、依赖方向、冻结契约与架构红线见 [architecture.md](architecture.md)；包内实现细节见 [包级 Spec](spec/README.md)；Desktop GUI 设计见 [gui-design.md](gui-design.md)；参照项目手册与调研附录见 [references.md](references.md)；V1/V2/V3 历史沿革见 [history.md](history.md)。
 >
-> **状态（2026-08-25）**：既有功能与结构阶段已归档；当前主线为新 R1–R10 Desktop UI 99% 还原与全功能模拟操作验收：R8 与设计稿比对并输出 UI 优化文档，R9 修复，R10 测试，R11 收尾（见 [../ROADMAP.md](../ROADMAP.md)）。§2 的功能映射按 V2 阶段（S0–S13）组织，是「功能 ↔ 参照项目」的持续事实源，不代表现行包布局（现行布局见 [architecture.md](architecture.md) §2）。
+> **状态（2026-09-02）**：既有功能与旧 Desktop 阶段已归档；当前活动线为 [Settings：模型与供应商](spec/settings.md)，SET-1 协议词汇与 SET-2 Host settings 门面已实现并通过定向测试，Desktop UI 与四家真实认证验收未开始（见 [../ROADMAP.md](../ROADMAP.md)）。§2 的功能映射按 V2 阶段（S0–S13）组织，是「功能 ↔ 参照项目」的持续事实源，不代表现行包布局（现行布局见 [architecture.md](architecture.md) §2）。
 
 ---
 
 ## 1. 目标与原则
 
 1. Pawork 是纯 Rust 的 CLI Coding Agent + 独立 GPUI Desktop：`pawork` 二进制内置 Core（引擎、工具、Provider、存储、策略），Desktop 经 GUI Connection Protocol 连接 CLI。V2 已把 V1 的 88 crate / 约 23.6 万行重组交付为可用产品；V3 R1 后布局定稿 21 成员。
-2. **纵向优先**：先交付内置工具真实接线、能在真实仓库完成编码任务的 CLI Coding Agent，再长出最小 Agent GUI，其后按同一窗口增量加面；WASM 插件等扩展生态不在当前排期（候选见 §4–§5 与 [../ROADMAP.md](../ROADMAP.md) 候选池）。
+2. **纵向优先**：先交付内置工具真实接线、能在真实仓库完成编码任务的 CLI Coding Agent，再长出最小 Agent GUI，其后按同一窗口增量加面；WASM 插件等扩展生态不在当前排期（候选见 §4–§5 与 [产品候选](spec/backlog.md)）。
 3. **架构红线不变**：纯 Rust、CLI 与 Core 同进程同二进制、GUI 独立进程走协议、canonical domain 纯净、事件可持久化可重放、Secret 不落库不入日志、Engine 无 Provider 名称特例分支、禁止循环依赖（全文见 [architecture.md](architecture.md) §1）。
-4. **无消费者不合入**：任何模块必须有真实装配点；零消费者代码归档（git tag `v2-final` 兜底），复活条件登记 [../ROADMAP.md](../ROADMAP.md) 候选池。
+4. **无消费者不合入**：任何模块必须有真实装配点；零消费者代码归档（git tag `v2-final` 兜底），复活条件登记 [产品候选](spec/backlog.md)。
 5. **少测试、无全量门禁**：验证纪律见 [../ROADMAP.md](../ROADMAP.md) 任务约定章节；三类关键测试（安全红线、持久化/重放 golden、协议 golden）不推迟。
 
 ---
@@ -159,7 +159,7 @@
 | G4 | 子 Agent 声明式 provider/model/账户绑定 | opencode agent.model + 权限派生；CCR 子代理标签（反例，不采纳）；opencodex 模型即子代理 | Agent Profile/spawn 参数声明绑定 → RouteContext → provider-control 选账户；默认继承父绑定、显式覆盖；预算经 budget-gate 分配 | P1 | 方案 F4-A+B |
 | G5 | canonical 输入缓存策略控制 | Anthropic cache_control、OpenAI prompt_cache_key、pi/opencode/Claude Code 断点收敛实践 | cache 注解（canonical，无厂商字段）+ registry 缓存能力表 + adapter 断点/亲和键映射 + 缓存用量入账与命中率观测 + compaction 联动 | P1 | 方案 F5-B |
 | G6 | 账户/端点配置导入 | cc-switch SQLite SSOT、CLIProxyAPI auth-dir、opencodex config、Codex Router 托管 config 块、Claude/Codex 官方布局 | `pawork-workspace::import` 增加账户与端点只读导入源，secret 直接转存 Pawork auth 文件，不落仓库或中间文件 | P2 | 方案 F1 附属 |
-| G7 | 对外账户池网关模式 | opencodex / CLIProxyAPI / Codex Router 网关形态 | 近期不内建：以 openai-compatible 上游接外部网关 + 对内账户池；长期按需评估 channels 扩展 feature | P3 | 暂不排期（方案 F6，决策项；登记于 [../ROADMAP.md](../ROADMAP.md) 候选池） |
+| G7 | 对外账户池网关模式 | opencodex / CLIProxyAPI / Codex Router 网关形态 | 近期不内建：以 openai-compatible 上游接外部网关 + 对内账户池；长期按需评估 channels 扩展 feature | P3 | 暂不排期（方案 F6，决策项；登记于 [产品候选](spec/backlog.md)） |
 
 **状态**：G1–G6 已确认、待立项（登记于 [../ROADMAP.md](../ROADMAP.md)）；G7 维持不做。其中 G5 涉及冻结契约的附加式字段扩展（CanonicalModelRequest/ModelResponseSummary），须遵守 [architecture.md](architecture.md) §3.2 golden 先行原则。配套工作约定（执行期凭证 fail-closed / 少测试无门禁 / 缓存命中 95-97-99 目标）见 [references.md](references.md) 附录 C。
 
@@ -167,7 +167,7 @@
 
 ## 4. 候选功能对照（未排期；对照 OpenCode / Pi / Codex / DeepSeek Harness）
 
-> 本节先于 2026-08-14 对照 OpenCode / Pi / Codex 的公开功能面，再于 2026-08-17 补入 DeepSeek Harness，与 Pawork 已交付范围对照后识别**尚未规划**的功能缺口。每项标注来源、是否违反架构红线、建议优先级（P0 最高）。已交付或冻结候审的不在此列。四家项目的背景与功能全貌见 [references.md](references.md) §2。候选纳入排期的流程见 [../ROADMAP.md](../ROADMAP.md) 候选池章节。
+> 本节先于 2026-08-14 对照 OpenCode / Pi / Codex 的公开功能面，再于 2026-08-17 补入 DeepSeek Harness，与 Pawork 已交付范围对照后识别**尚未规划**的功能缺口。每项标注来源、是否违反架构红线、建议优先级（P0 最高）。已交付或冻结候审的不在此列。四家项目的背景与功能全貌见 [references.md](references.md) §2。候选纳入排期的流程见 [产品候选](spec/backlog.md)。
 
 ### 4.1 架构红线排除项（不实现）
 

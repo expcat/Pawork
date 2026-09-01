@@ -21,7 +21,7 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 
 ## 2. 模块与文件地图
 
-全包约 2 万行（含内嵌测试与 tests/）。src/ 共 43 个 `.rs`，tests/ 4 个。
+全包约 2 万行（含内嵌测试与 tests/）。src/ 共 44 个 `.rs`，tests/ 4 个。
 
 可见性布局：`gui_server` 是唯一 `pub mod`；`gui_host` 与 `services` 目录私有，公开类型统一经 `lib.rs` re-export；`testsupport` 仅 `cfg(test)` 编译。
 
@@ -34,7 +34,7 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 | `src/approval.rs` | ~520 | `ApprovalAsk`/`ApprovalResolve`、`ApprovalPromptHost` trait、`GuiApprovalHost`（pending/queued 决议池 + `ToolApprovalRequired` 事件发布）、`DenyAllApprovals`、`PreApprovedResolver`、`parse_approval_mode`、写工具预览（`relative_path_from_input`/`preview_for_tool`） |
 | `src/loop_ctx.rs` | ~430 | `SessionLoopCtx` 实现 `pawork_engine::LoopContext`：审批请求转宿主、工具执行经 `ToolScheduler`、写前 checkpoint、压缩（fork recovery branch + snapshot）、message/request id 发号、事件 emit |
 | `src/extensions.rs` | ~420 | 内建工具注册表、MCP 装配（auto_start/untrusted 拒绝/stdio 沙箱 + env 卫生）、`mcp_list`/`mcp_test`、`@token` 词法 `at_tokens`、`AT_FILE_MAX_BYTES`（64 KiB）、skill 目录发现 |
-| `src/auth.rs` | ~410 | `auth_status`（只报来源 file/env/none，不回显 secret）、`auth_set_key`/`auth_logout`、`oauth_begin`/`oauth_complete`（PKCE 与 Device Flow 编排）、`AuthChannelStatus`/`AuthSource`/`OAuthLogin` |
+| `src/auth.rs` | ~420 | `auth_status`（只报来源 file/env/none，不回显 secret）、`auth_set_key`/`auth_logout`、`oauth_begin`/`oauth_complete`（PKCE 与 Device Flow 编排）、`oauth_finish`（pub(crate)：不持 AppCore 锁的 OAuth 收尾，供 GUI Device Flow 后台轮询任务复用）、`AuthChannelStatus`/`AuthSource`/`OAuthLogin` |
 | `src/hub.rs` | ~410 | `EventHub`：全局序 + ring buffer（默认 4096）+ `tokio::broadcast` 有界订阅；`global_sequence` 连续重写、`replay_from`、越界→`HubError::ReplayUnavailable`、慢订阅者 `Lagged` |
 | `src/testsupport.rs` | ~390 | 仅 `cfg(test)`：`RecordingEvents`/`ScriptedProvider`/`mock_core*`、`RecordingSubscriber`、`RecordingCapture`（双注册 Dispatch 钉住 tracing-core interest 缓存，防投毒）及其回归测试 |
 | `src/diff.rs` | ~380 | 会话累计 diff：git 仓走 `pawork-git` 且按 session 改动路径过滤，非 git 回退写前快照对比；`SessionDiff`/`GitDiffHeader`、`paginate_diff`、`render_session_diff`、`git_status_note`（注入 provider 请求，失败静默省略） |
@@ -60,8 +60,8 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 | `src/gui_server/mod.rs` | ~180 | `GuiHost` trait（snapshot/timeline/query/command）、`GuiHostError`、`GuiServer`/`GuiServerConfig`（bind endpoint、accept 循环、按连接 spawn 会话任务）；re-export 连接层常量 |
 | `src/gui_server/connection.rs` | ~550 | `ConnectionManager`：客户端注册/心跳（`DEFAULT_HEARTBEAT_TIMEOUT` 30s idle 清理）/事件订阅；每连接有界 mpsc 队列（`DEFAULT_QUEUE_CAPACITY` 1024），慢客户端标记 `lagged` 丢新事件不阻塞发布者；断连**不**取消 run |
 | `src/gui_server/session.rs` | ~1000 | 单连接握手与帧循环：协议版本检查、command 盖 client 戳、capability 门（未授予在宿主前拒绝）、Resume 三态调度（replay / SnapshotRequired / up-to-date）、Heartbeat→Pong、订阅确认、lagged→ReplayUnavailable 帧；ADR-045 `deliverable_to_negotiated` 按协商 minor 门控推送——`TerminalExited`（since 1.3）不推给协商 <1.3 的连接（老客户端 serde 遇未知变体会 decode 失败断流），该连接仍可从快照 `terminal_sessions` 的 `state` 获知终态；`host_error_to_protocol` 把宿主 `not_found` 映射为既有 `RequestNotFound` 码（其余维持 Internal），ADR-045 的幂等边界在 wire 上可观察 |
-| `src/gui_host/mod.rs` | ~820 | `GuiHostAdapter`：实现 `GuiHost`；`QUERY_HANDLERS`/`COMMAND_HANDLERS` 静态分发表（与 protocol registry `gui.available` 双射）、幂等 wrap（scope 隔离 + begin/record）、snapshot 组装（含重启后 pending approvals 重建，Workspaces 段输出 v14 注册表全集合）、timeline 分页（limit 默认 200、clamp 1..=500，游标跨未投影事件推进） |
-| `src/gui_host/bus.rs` | ~275 | `GuiEventBus`（内部 `EventHub` 赋全局序 + replay；engine 终态上流时登记 run_id，供宿主合成终态兜底去重；`publish_raw` 合成事件序号从 `SYNTHETIC_SEQUENCE_BASE`=2^60 递增自取，不占真实持久化号段且排在既有时间线内容之后）、`GuiBroadcastSink`（AgentEvent→AppEvent 映射后广播）、`GuiRunRegistry`（活跃 GUI run 与 `CancellationToken` 登记） |
+| `src/gui_host/mod.rs` | ~900 | `GuiHostAdapter`：实现 `GuiHost`；`QUERY_HANDLERS`/`COMMAND_HANDLERS` 静态分发表（与 protocol registry `gui.available` 双射，SET-2 起新增六个 Settings 入口）、幂等 wrap（scope 隔离 + begin/record）、snapshot 组装（含重启后 pending approvals 重建，Workspaces 段输出 v14 注册表全集合）、timeline 分页（limit 默认 200、clamp 1..=500，游标跨未投影事件推进）；SET-2 `auth_flights` 按 provider_id 单飞守卫（auth_start / auth_set_api_key / auth_cancel 共用，Arc 身份防误删他人 flight） |
+| `src/gui_host/bus.rs` | ~315 | `GuiEventBus`（内部 `EventHub` 赋全局序 + replay；engine 终态上流时登记 run_id，供宿主合成终态兜底去重；`publish_raw` 合成事件序号从 `SYNTHETIC_SEQUENCE_BASE`=2^60 递增自取，不占真实持久化号段且排在既有时间线内容之后）、`GuiBroadcastSink`（AgentEvent→AppEvent 映射后广播）、`publish_provider_auth`（SET-2：Global 流广播 `AuthChanged`，`EventSource::Provider`，hub 重写全局序）、`GuiRunRegistry`（活跃 GUI run 与 `CancellationToken` 登记） |
 | `src/gui_host/events.rs` | ~190 | `AgentEventEnvelope`→`AppEvent` 投影助手、诊断事件映射、幂等 client scope 推导 |
 | `src/gui_host/handlers/mod.rs` | ~10 | handler 子模块声明 |
 | `src/gui_host/handlers/terminal.rs` | ~545 | TerminalCreate/Write/Resize/Close：经 `PtyService`；`terminal_create` 过 PolicyEngine（capability=Process；NeverAsk/ReadOnly 直拒，AskUser fail-closed 落 Deny）；`resolve_terminal_cwd` 按注册表严格解析目标 workspace（未登记 fail-closed）并保留 workspace 相对 cwd 记账（注册表值编码 owner+cwd，字段声明在 gui_host/mod.rs 不动；根目录 canonical 空串经 `terminal_cwd_label` 归一为 `"."`，防面板 cwd 空白）；`terminal_snapshots` 回报该相对 `cwd` 键（SnapshotSection.data 为不透明 JSON，非 golden 帧；记账缺失省略键，Desktop 显示 unknown）；输出经事件广播，需 terminal-streaming capability。ADR-045：`terminal_close` 经 `PtyService::cleanup` 终止进程组并移除 PTY service 条目，再由 `forget_terminal` 从 GuiHost 注册表注销（快照节不再出现），未知/重复 id 报 `not_found`；forwarder 是终态事件唯一广播点——`PtyEvent::Exit` 自带 waiter 已写入的权威 `state`，即使 cleanup 已移除 service map 条目仍无竞态地区分 `Killed`/`Exited` 并携带真实 `exit_code`/`signal`；转发链路 `Err(_)` 广播 `Failed`（不臆造退出码），close 路径自身不广播（与自发 Exit 天然去重） |
@@ -70,7 +70,8 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 | `src/gui_host/handlers/session.rs` | ~120 | SessionCreate（建会话 + 绑当前 workspace）/SessionOpen/SessionFork（自指定事件建分支并切换 active branch；无绑定会话诚实 Unassigned，不回退当前 workspace） |
 | `src/gui_host/handlers/approval.rs` | ~90 | ToolApprove：协议决定→domain 决定；live 决议 pending，非 live 走 session store 落 queued 决议、落库成功后经 `GuiBroadcastSink` 补广播（仅 `ToolCompleted` 上 wire）；写工具附预览 |
 | `src/gui_host/handlers/command.rs` | ~40 | WorkspaceAdd（持久幂等登记入 v14 注册表，同 canonical root 复用 stable id）、RunCancel（翻转注册的 `CancellationToken`） |
-| `src/gui_host/tests.rs` | ~2450 | `cfg(test)` 内嵌测试集：双射 pin、timeline 分页、`@` 展开三态、幂等（重启存活/失败计数/InFlight 收敛）、审批三态与重启后广播收口、合成终态闸门（fail 不重复/cancel 不谎报/早死兜底）、fork、provider 切换、bus lagged、ADR-045 `terminal_close`（kill→广播 Killed→注销快照节，重复 close 报 not_found）与自然退出广播 Exited+exit_code 等 |
+| `src/gui_host/handlers/settings.rs` | ~590 | SET-2 Host Settings 门面（ADR-046）六个 GUI 入口：`provider_auth_status`（六通道 descriptor 从 `CHANNEL_REGISTRY` 派生 display_name / endpoint_label / auth_methods；auth 四态 none/connecting/connected{method,masked}/error，connecting 由 auth_flights 推导、脱敏复用 auth_status，env 命中报 connected；catalog 三态 remote/fixed_fallback/unavailable 经 `models_overview` + join_all 并行探测，4s 超时，无持久缓存与后台轮询）、`auth_set_api_key`（trim 空校验→`verify_api_key` 内存验证 10s 超时→`store_default_api_key` 原子替换→`AuthChanged::Succeeded`；验证失败发 Failed 且旧凭证天然保留）、`auth_start`（仅 oauth 流；映射 `oauth_begin`，Device Flow 回 verification_url/user_code/expires_at；后台任务 `oauth_finish` 与 CancellationToken select，终态经 AuthChanged 下发，取消路径由 cancel 侧发）、`auth_cancel`（移除 flight 并取消 token，发 Cancelled；无进行中操作幂等 Accepted）、`auth_remove`（OAuth 删 token / ApiKey 删文件均发 Removed；env 凭证 fail-closed 提示 unset 变量；无凭证 not_found）、`set_default_model`（provider 已知且 model 属当前可运行目录→`write_default_model_pair` 写 Global 层）；明文 key 只在 handler 内存短暂停留，事件/响应仅携带 masked_credential |
+| `src/gui_host/tests.rs` | ~2600 | `cfg(test)` 内嵌测试集：双射 pin、timeline 分页、`@` 展开三态、幂等（重启存活/失败计数/InFlight 收敛）、审批三态与重启后广播收口、合成终态闸门（fail 不重复/cancel 不谎报/早死兜底）、fork、provider 切换、bus lagged、ADR-045 `terminal_close`（kill→广播 Killed→注销快照节，重复 close 报 not_found）与自然退出广播 Exited+exit_code、SET-2 settings（auth_set_api_key 成功→原子替换→事件/响应/status 脱敏；401 验证失败→旧凭证保留且无明文外泄）等 |
 | `tests/smoke.rs` | ~110 | env 门控真实 API 冒烟（`--ignored`），不进默认测试路径（`live-smoke` feature 显式启用） |
 | `tests/timeline_projection_host.rs` | ~160 | host `timeline()` 与 protocol 投影 golden 对拍 |
 | `tests/gui_server/session.rs` | ~1000 | 具名 test bin `gui_server_session`：握手/版本/capability/resume/心跳/慢消费 |
@@ -237,7 +238,7 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 - **EventHub 序列连续**：发布时重写 `global_sequence` 保证连续单调；replay 越界必须显式 `ReplayUnavailable`，禁止静默丢段。
 - **断连不取消 run**；慢客户端只降级自身（lagged），不得阻塞发布者或其它 GUI。
 - **无终态 run 必收口**：任何持久化了 `RunStarted` 的 run 最终必须有持久化终态——进程内由 engine/合成闸（persist-first）保证，进程死亡遗留由启动清扫（§4.6）幂等收口；重放侧不得出现永远 `running` 的 run。
-- **Secret 红线**：明文 key 不进 `AppError` 任何变体、不进日志与数据库；`auth_status` 只报来源；smoke 测试禁止打印 key。
+- **Secret 红线**：明文 key 不进 `AppError` 任何变体、不进日志与数据库；`auth_status` 只报来源；smoke 测试禁止打印 key。SET-2 settings 六入口同样只在内存验证路径短暂持有 key——`AuthChanged` 事件与响应只携带 masked_credential，验证失败保留旧凭证且不回显任何明文。
 - **`let _` 非测试归零**：非测试代码不允许 `let _ =` 吞结果（当前全包仅 3 处且都在 `cfg(test)`）。
 - **HOME 回退单点告警**：只有 `consume_data_dir_outcome` 打一次结构化 warn（`degrade.home_dir_fallback`），路径 helper 保持静默，禁止静默落 temp。
 - **usage 哨兵**：单机形态 ledger 记录 `record_id = "rec-<run_id>"`、默认 tenant/principal、`upstream_attempt = 1`，消费方不得把哨兵当真实上游账号。
@@ -288,6 +289,7 @@ cargo test -p pawork-app --offline --lib --tests --features ui-fixture
   - ToolApprove 三态：live waiting 不 durable seal / 非 live 有 waiting 投影 durable / 无 waiting 保持 queued；
   - snapshot 重启后重建 pending approvals；SessionCreate / SessionFork（建分支并切换）；
   - provider/model 切换：请求通道直连不走 catalog 顺位、未知 fail-closed、不静默保留旧 id；
+  - SET-2 settings：`auth_set_api_key` 主路径（wiremock 验证 Bearer 命中→原子替换→事件/响应/status 全脱敏）与失败路径（401→`auth_verify` Error、旧凭证保留、Failed 事件无明文）；
   - `GuiRunRegistry` cancel 翻转 token；bus 经 EventHub 发布与 lagged degrade 帧。
 - `hub.rs`：ring 超容量逐出、replay 越界 ReplayUnavailable、全局序连续。
 - `idempotency.rs`：容量逐出、SQLite CAS 权威、键冲突拒绝。

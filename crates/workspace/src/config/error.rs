@@ -40,6 +40,14 @@ pub enum ConfigError {
         #[source]
         source: Box<std::io::Error>,
     },
+
+    /// 写盘时 TOML 序列化失败（SET-2 Global 层默认项 writer）。
+    #[error("failed to write config at {path}: {source}")]
+    Write {
+        path: PathBuf,
+        #[source]
+        source: Box<toml::ser::Error>,
+    },
 }
 
 impl ConfigParseError {
@@ -54,7 +62,7 @@ impl ConfigError {
     pub fn path(&self) -> Option<&std::path::Path> {
         match self {
             ConfigError::Parse(e) => Some(e.path()),
-            ConfigError::Io { path, .. } => Some(path),
+            ConfigError::Io { path, .. } | ConfigError::Write { path, .. } => Some(path),
         }
     }
 }

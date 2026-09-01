@@ -27,9 +27,7 @@ pub enum OAuthFlow {
         extra_auth_params: Vec<(String, String)>,
     },
     /// Device Flow（RFC 8628；xAI）。
-    Device {
-        device_auth_url: String,
-    },
+    Device { device_auth_url: String },
 }
 
 /// OAuth 端点预设（运行期 String 形态）。ChatGPT 使用 Codex 公开 client 参数；
@@ -101,6 +99,8 @@ pub struct ChannelPreset {
     pub id: &'static str,
     pub kind: ChannelKind,
     pub default_base_url: &'static str,
+    /// Settings 面板展示名（Host 声明，Desktop 不按品牌硬编码）。
+    pub display_name: &'static str,
     pub feature: &'static str,
     pub oauth: Option<OAuthPresetData>,
 }
@@ -110,6 +110,14 @@ impl ChannelPreset {
     pub fn oauth_preset(&self) -> Option<OAuthPreset> {
         self.oauth.map(|data| data.to_preset())
     }
+
+    /// Host 声明的可用认证方法（ADR-046 D1：Desktop 禁止按品牌猜）。
+    pub fn auth_methods(&self) -> &'static [&'static str] {
+        match self.kind {
+            ChannelKind::ApiKey => &["api_key"],
+            ChannelKind::ChatGptOAuth | ChannelKind::XaiOAuth => &["oauth"],
+        }
+    }
 }
 
 /// 六条首发通道（顺序即 pawork models / auth list 展示顺序）。
@@ -118,6 +126,7 @@ pub static CHANNEL_REGISTRY: &[ChannelPreset] = &[
         id: "chatgpt",
         kind: ChannelKind::ChatGptOAuth,
         default_base_url: "https://chatgpt.com/backend-api/codex",
+        display_name: "ChatGPT",
         feature: "chatgpt-oauth",
         oauth: Some(OAuthPresetData {
             client_id: "app_EMoamEEZ73f0CkXaXp7hrann",
@@ -148,6 +157,7 @@ pub static CHANNEL_REGISTRY: &[ChannelPreset] = &[
         id: "xai",
         kind: ChannelKind::XaiOAuth,
         default_base_url: "https://api.x.ai/v1",
+        display_name: "xAI Grok",
         feature: "xai-oauth",
         oauth: Some(OAuthPresetData {
             client_id: "b1a00492-073a-47ea-816f-4c329264a828",
@@ -171,6 +181,7 @@ pub static CHANNEL_REGISTRY: &[ChannelPreset] = &[
         id: "glm-coding",
         kind: ChannelKind::ApiKey,
         default_base_url: "https://api.z.ai/api/coding/paas/v4",
+        display_name: "GLM Coding",
         feature: "glm-coding",
         oauth: None,
     },
@@ -178,6 +189,7 @@ pub static CHANNEL_REGISTRY: &[ChannelPreset] = &[
         id: "opencode-go",
         kind: ChannelKind::ApiKey,
         default_base_url: "https://opencode.ai/zen/go/v1",
+        display_name: "OpenCode Go",
         feature: "opencode-go",
         oauth: None,
     },
@@ -185,6 +197,7 @@ pub static CHANNEL_REGISTRY: &[ChannelPreset] = &[
         id: "qwen-token-plan",
         kind: ChannelKind::ApiKey,
         default_base_url: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+        display_name: "Qwen Token Plan",
         feature: "qwen-token-plan",
         oauth: None,
     },
@@ -192,6 +205,7 @@ pub static CHANNEL_REGISTRY: &[ChannelPreset] = &[
         id: "deepseek",
         kind: ChannelKind::ApiKey,
         default_base_url: "https://api.deepseek.com",
+        display_name: "DeepSeek",
         feature: "deepseek",
         oauth: None,
     },
@@ -246,7 +260,11 @@ mod tests {
                 "https://api.z.ai/api/coding/paas/v4",
                 "glm-coding",
             ),
-            ("opencode-go", "https://opencode.ai/zen/go/v1", "opencode-go"),
+            (
+                "opencode-go",
+                "https://opencode.ai/zen/go/v1",
+                "opencode-go",
+            ),
             (
                 "qwen-token-plan",
                 "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
@@ -289,6 +307,7 @@ mod tests {
             id: "unknown-channel",
             kind: ChannelKind::ApiKey,
             default_base_url: "https://example.test",
+            display_name: "Unknown Channel",
             feature: "not-a-feature",
             oauth: None,
         };

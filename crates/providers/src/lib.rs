@@ -8,43 +8,39 @@
 pub(crate) fn is_credential_header(name: &str) -> bool {
     matches!(
         name.to_ascii_lowercase().as_str(),
-        "authorization"
-            | "proxy-authorization"
-            | "api-key"
-            | "x-api-key"
-            | "x-goog-api-key"
+        "authorization" | "proxy-authorization" | "api-key" | "x-api-key" | "x-goog-api-key"
     )
 }
 
-pub mod net;
-pub mod provider;
-pub mod request;
-pub mod stream;
-pub mod usage;
+pub mod channels;
+pub mod error;
 pub mod error_table;
 pub mod memory_protector;
-mod responses_reasoning;
-pub mod responses;
-pub mod registry;
-pub mod pricing;
 pub mod negotiate;
+pub mod net;
+pub mod pricing;
+pub mod provider;
 pub mod reasoning;
-pub mod error;
-pub mod channels;
+pub mod registry;
+pub mod request;
+pub mod responses;
+mod responses_reasoning;
+pub mod stream;
+pub mod usage;
 
-pub use provider::{OpenAiCompatibleConfig, OpenAiCompatibleProvider};
-pub use request::to_chat_completions_body;
-pub use stream::{chunk_to_events, is_done, ChunkState};
+pub use error::RegistryError;
 pub use error_table::{normalize_vendor_error, VendorErrorRule, VENDOR_ERROR_RULES};
 pub use memory_protector::InMemoryReasoningProtector;
 pub use negotiate::{clamp_reasoning_to_thinking, CapabilityNegotiator};
-pub use error::RegistryError;
 pub use pricing::{estimate_cost, ModelPricing, BUILTIN_RATE_CARD, BUILTIN_RATE_VERSION};
+pub use provider::{OpenAiCompatibleConfig, OpenAiCompatibleProvider};
 pub use reasoning::{ReasoningProtectError, ReasoningProtector};
 pub use registry::{
     caps, merge_capabilities, CapabilityEvidence, CapabilitySource, CatalogEntry, ModelRegistry,
     ProbeError, ProviderCapabilitySource, ProviderProbe,
 };
+pub use request::to_chat_completions_body;
+pub use stream::{chunk_to_events, is_done, ChunkState};
 pub use usage::{map_stop_reason, normalize_usage, UsageAccumulator};
 
 #[cfg(feature = "anthropic")]
@@ -59,14 +55,14 @@ pub use channels::{
 pub use channels::builtin_models;
 
 #[cfg(feature = "chatgpt-oauth")]
-pub use channels::{ChatGptConfig, ChatGptProvider};
-#[cfg(feature = "chatgpt-oauth")]
 pub use channels::chatgpt::DEFAULT_BASE_URL as CHATGPT_DEFAULT_BASE_URL;
+#[cfg(feature = "chatgpt-oauth")]
+pub use channels::{ChatGptConfig, ChatGptProvider};
 
 #[cfg(feature = "xai-oauth")]
-pub use channels::{xai_builtin_models, XaiConfig, XaiProvider};
-#[cfg(feature = "xai-oauth")]
 pub use channels::xai::DEFAULT_BASE_URL as XAI_DEFAULT_BASE_URL;
+#[cfg(feature = "xai-oauth")]
+pub use channels::{xai_builtin_models, XaiConfig, XaiProvider};
 
 #[cfg(any(
     feature = "glm-coding",
@@ -74,7 +70,7 @@ pub use channels::xai::DEFAULT_BASE_URL as XAI_DEFAULT_BASE_URL;
     feature = "qwen-token-plan",
     feature = "deepseek"
 ))]
-pub use channels::{ApiKeyChannelConfig, ApiKeyChannelProvider};
+pub use channels::{verify_api_key, ApiKeyChannelConfig, ApiKeyChannelProvider};
 
 // R5 波 A 轨 b：通道 preset 单点登记（纯数据 + 唯一 feature cfg 求值点）。
 pub use channels::registry::{
@@ -84,10 +80,6 @@ pub use channels::registry::{
 
 #[cfg(feature = "anthropic")]
 pub use channels::anthropic;
-#[cfg(feature = "chatgpt-oauth")]
-pub use channels::chatgpt;
-#[cfg(feature = "xai-oauth")]
-pub use channels::xai;
 #[cfg(any(
     feature = "glm-coding",
     feature = "opencode-go",
@@ -95,7 +87,10 @@ pub use channels::xai;
     feature = "deepseek"
 ))]
 pub use channels::api_key;
-
+#[cfg(feature = "chatgpt-oauth")]
+pub use channels::chatgpt;
+#[cfg(feature = "xai-oauth")]
+pub use channels::xai;
 
 #[cfg(test)]
 mod module_discipline {
@@ -105,10 +100,18 @@ mod module_discipline {
     #[test]
     fn core_modules_do_not_reference_net_module() {
         let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        let files = ["registry.rs", "pricing.rs", "usage.rs", "negotiate.rs", "reasoning.rs", "error.rs"];
+        let files = [
+            "registry.rs",
+            "pricing.rs",
+            "usage.rs",
+            "negotiate.rs",
+            "reasoning.rs",
+            "error.rs",
+        ];
         for name in files {
             let path = src.join(name);
-            let contents = fs::read_to_string(&path).unwrap_or_else(|err| panic!("read {}: {err}", path.display()));
+            let contents = fs::read_to_string(&path)
+                .unwrap_or_else(|err| panic!("read {}: {err}", path.display()));
             let mentions_net = contents
                 .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
                 .any(|identifier| identifier == "net");

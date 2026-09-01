@@ -9,15 +9,15 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::channels::registry::{is_enabled, ChannelKind, ChannelPreset};
+use crate::net::http::HttpClientConfig;
+use crate::ReasoningProtector;
 use async_trait::async_trait;
+use pawork_domain::{CancellationToken, ModelId, ProviderId};
 use pawork_domain::{
     CanonicalModelRequest, CredentialKind, ModelDefinition, ModelProvider, ModelResponseSummary,
     ModelTransport, ProviderError, ProviderErrorKind, ProviderEventSink, ResolvedCredential,
 };
-use pawork_domain::{CancellationToken, ModelId, ProviderId};
-use crate::net::http::HttpClientConfig;
-use crate::channels::registry::{is_enabled, ChannelKind, ChannelPreset};
-use crate::ReasoningProtector;
 
 use crate::normalize_vendor_error;
 use crate::provider::{OpenAiCompatibleConfig, OpenAiCompatibleProvider};
@@ -213,4 +213,17 @@ impl ModelProvider for ApiKeyChannelProvider {
             )),
         }
     }
+}
+
+/// SET-2（ADR-046 D2）Settings verify-then-replace 的验证入口：
+/// 用候选 key 构造一次性 adapter，向该通道发一次最廉价已认证请求
+/// （GET /models）。明文只存在于本次请求的 Authorization 头与栈上，
+/// 不持久化、不记录；调用方仅在 Ok 时才写入 SecretBackend。
+pub async fn verify_api_key(
+    config: ApiKeyChannelConfig,
+    candidate_key: &str,
+) -> Result<(), ProviderError> {
+    let credential = ResolvedCredential::new(CredentialKind::ApiKey, candidate_key);
+    let provider = ApiKeyChannelProvider::new(config, Some(credential))?;
+    provider.list_models(None).await.map(|_| ())
 }

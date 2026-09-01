@@ -14,6 +14,33 @@ use ts_rs::TS;
 
 use super::version::{ApiVersion, DEFAULT_CONTROL_PLANE_PRINCIPAL};
 
+/// Provider API Key 明文 newtype（SET-1，ADR-046）。
+///
+/// wire 上是透明字符串；Debug 恒输出 `[REDACTED]`，禁止日志/错误路径
+/// 泄漏明文。不实现 Display，避免被无意格式化进面向用户的输出。
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
+pub struct ApiKeySecret(String);
+
+impl ApiKeySecret {
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for ApiKeySecret {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_tuple("ApiKeySecret")
+            .field(&"[REDACTED]")
+            .finish()
+    }
+}
+
 /// IDE/Host 上下文快照的资源上限。该数据来自外部客户端，Core 必须在存储和
 /// 注入模型请求前 fail-closed，避免诊断风暴或超长 URI/消息放大内存与 prompt。
 pub const MAX_CLIENT_CONTEXT_BYTES: usize = 1024 * 1024;
@@ -354,6 +381,17 @@ pub enum AppCommand {
     AuthRemove {
         provider_id: ProviderId,
     },
+    AuthSetApiKey {
+        provider_id: ProviderId,
+        api_key: ApiKeySecret,
+    },
+    AuthCancel {
+        provider_id: ProviderId,
+    },
+    SetDefaultModel {
+        provider_id: ProviderId,
+        model_id: String,
+    },
     ToolApprove {
         run_id: RunId,
         tool_call_id: ToolCallId,
@@ -482,6 +520,21 @@ mod tests {
             client_id: GuiClientId::from("gui-1"),
             connection_id: ConnectionId::from("connection-1"),
         }
+    }
+
+    #[test]
+    fn api_key_secret_debug_is_redacted_and_wire_is_transparent() {
+        let secret = ApiKeySecret::new("sk-live-plaintext");
+        assert_eq!(secret.as_str(), "sk-live-plaintext");
+        assert!(!format!("{secret:?}").contains("sk-live-plaintext"));
+        assert!(format!("{secret:?}").contains("[REDACTED]"));
+        assert_eq!(
+            serde_json::to_value(&secret).expect("serialize"),
+            serde_json::json!("sk-live-plaintext")
+        );
+        let decoded: ApiKeySecret =
+            serde_json::from_str(r#""sk-live-plaintext""#).expect("deserialize");
+        assert_eq!(decoded, secret);
     }
 
     #[test]
@@ -673,5 +726,4 @@ mod tests {
             None
         );
     }
-
 }

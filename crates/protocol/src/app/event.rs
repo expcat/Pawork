@@ -162,7 +162,7 @@ pub enum AppEvent {
     },
     AuthChanged {
         provider_id: ProviderId,
-        authenticated: bool,
+        state: AuthChangeState,
     },
     ProviderStatus {
         provider_id: ProviderId,
@@ -197,6 +197,25 @@ pub enum AppEvent {
     TeamEvent {
         event: Box<TeamEvent>,
     },
+}
+
+/// Provider 认证变更状态机（SET-1，ADR-046）：终态与中间态全部脱敏，
+/// `Succeeded` 只携带 method 与 masked_credential，绝无明文凭证。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
+#[serde(tag = "type", content = "data", rename_all = "snake_case")]
+pub enum AuthChangeState {
+    Pending,
+    Succeeded {
+        method: String,
+        masked_credential: String,
+    },
+    Failed {
+        error: String,
+    },
+    Cancelled,
+    Expired,
+    Removed,
 }
 
 /// 终端终态原因（ADR-045）：自然退出 / 经 terminal_close 终止 / 转发链路异常断流。
@@ -632,5 +651,4 @@ mod tests {
             },
         }
     }
-
 }

@@ -16,6 +16,7 @@ const V1_0: ApiVersion = ApiVersion { major: 1, minor: 0 };
 const V1_1: ApiVersion = ApiVersion { major: 1, minor: 1 };
 const V1_2: ApiVersion = ApiVersion { major: 1, minor: 2 };
 const V1_3: ApiVersion = ApiVersion { major: 1, minor: 3 };
+const V1_4: ApiVersion = ApiVersion { major: 1, minor: 4 };
 
 /// (wire 名, 最小 params 样本；None = unit 变体无 params)。
 fn command_samples() -> Vec<(&'static str, Option<Value>)> {
@@ -52,6 +53,15 @@ fn command_samples() -> Vec<(&'static str, Option<Value>)> {
             Some(json!({"provider_id": "glm-coding", "flow": "oauth"})),
         ),
         ("auth_remove", Some(json!({"provider_id": "glm-coding"}))),
+        (
+            "auth_set_api_key",
+            Some(json!({"provider_id": "glm-coding", "api_key": "sk-test-fixture"})),
+        ),
+        ("auth_cancel", Some(json!({"provider_id": "glm-coding"}))),
+        (
+            "set_default_model",
+            Some(json!({"provider_id": "glm-coding", "model_id": "glm-4.7"})),
+        ),
         (
             "tool_approve",
             Some(json!({
@@ -102,6 +112,10 @@ fn query_samples() -> Vec<(&'static str, Option<Value>)> {
         ("snapshot_fetch", None),
         ("plugin_list", None),
         ("mcp_list", None),
+        (
+            "provider_auth_status",
+            Some(json!({"provider_id": "glm-coding"})),
+        ),
     ]
 }
 
@@ -163,8 +177,8 @@ fn wire_names_are_bijective_with_serde_tags() {
 fn registry_tables_are_complete_and_unique() {
     let commands = command_entries();
     let queries = query_entries();
-    assert_eq!(commands.len(), 20);
-    assert_eq!(queries.len(), 11);
+    assert_eq!(commands.len(), 23);
+    assert_eq!(queries.len(), 12);
     for wire_name in commands.iter().map(|entry| entry.wire_name) {
         assert_eq!(
             commands
@@ -193,8 +207,10 @@ fn registry_tables_are_complete_and_unique() {
 fn sample_tables_match_registry_entries_exactly() {
     let sample_commands: std::collections::BTreeSet<&str> =
         command_samples().iter().map(|(name, _)| *name).collect();
-    let registry_commands: std::collections::BTreeSet<&str> =
-        command_entries().iter().map(|entry| entry.wire_name).collect();
+    let registry_commands: std::collections::BTreeSet<&str> = command_entries()
+        .iter()
+        .map(|entry| entry.wire_name)
+        .collect();
     assert_eq!(
         sample_commands, registry_commands,
         "command sample table drifted from registry entries"
@@ -202,8 +218,10 @@ fn sample_tables_match_registry_entries_exactly() {
 
     let sample_queries: std::collections::BTreeSet<&str> =
         query_samples().iter().map(|(name, _)| *name).collect();
-    let registry_queries: std::collections::BTreeSet<&str> =
-        query_entries().iter().map(|entry| entry.wire_name).collect();
+    let registry_queries: std::collections::BTreeSet<&str> = query_entries()
+        .iter()
+        .map(|entry| entry.wire_name)
+        .collect();
     assert_eq!(
         sample_queries, registry_queries,
         "query sample table drifted from registry entries"
@@ -388,25 +406,34 @@ fn command_registry_covers_every_variant_without_wildcard() {
                 false,
                 V1_0,
             ),
-            AppCommand::AuthStart { .. } => assert_command_entry(
+            AppCommand::AuthStart { .. } => {
+                assert_command_entry(&command, "auth_start", true, None, None, false, false, V1_4)
+            }
+            AppCommand::AuthRemove { .. } => {
+                assert_command_entry(&command, "auth_remove", true, None, None, false, true, V1_4)
+            }
+            AppCommand::AuthSetApiKey { .. } => assert_command_entry(
                 &command,
-                "auth_start",
-                false,
-                None,
-                None,
-                false,
-                false,
-                V1_0,
-            ),
-            AppCommand::AuthRemove { .. } => assert_command_entry(
-                &command,
-                "auth_remove",
-                false,
+                "auth_set_api_key",
+                true,
                 None,
                 None,
                 false,
                 true,
-                V1_0,
+                V1_4,
+            ),
+            AppCommand::AuthCancel { .. } => {
+                assert_command_entry(&command, "auth_cancel", true, None, None, false, true, V1_4)
+            }
+            AppCommand::SetDefaultModel { .. } => assert_command_entry(
+                &command,
+                "set_default_model",
+                true,
+                None,
+                None,
+                false,
+                true,
+                V1_4,
             ),
             AppCommand::ToolApprove { .. } => assert_command_entry(
                 &command,
@@ -523,16 +550,9 @@ fn query_registry_covers_every_variant_without_wildcard() {
                 true,
                 V1_0,
             ),
-            AppQuery::ModelList { .. } => assert_query_entry(
-                &query,
-                "model_list",
-                true,
-                None,
-                None,
-                false,
-                true,
-                V1_0,
-            ),
+            AppQuery::ModelList { .. } => {
+                assert_query_entry(&query, "model_list", true, None, None, false, true, V1_0)
+            }
             AppQuery::DiffListFiles { .. } => assert_query_entry(
                 &query,
                 "diff_list_files",
@@ -582,6 +602,16 @@ fn query_registry_covers_every_variant_without_wildcard() {
             AppQuery::McpList => {
                 assert_query_entry(&query, "mcp_list", true, None, None, false, true, V1_0)
             }
+            AppQuery::ProviderAuthStatus { .. } => assert_query_entry(
+                &query,
+                "provider_auth_status",
+                true,
+                None,
+                None,
+                false,
+                true,
+                V1_4,
+            ),
         }
     }
 }

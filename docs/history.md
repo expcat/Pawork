@@ -928,3 +928,56 @@ Validated: `cargo test -p pawork-exec --offline --lib --tests`（64）；`cargo 
 Targeted regressions: PTY service 条目与缓冲清理 / Killed 与自然 Exited 广播状态 / Stop 与 Close 回执顺序无关 / Failed 终端 Close-only 清理后恢复 Start / typegen 检入产物一致性。
 
 Full workspace gate: NOT RUN（当前未设置全量门禁）。
+
+---
+
+## 2026-09-01 — 活动路线图重置为 Settings
+
+- 用户明确将下一活动线切换为 Desktop Settings，并要求先只修改文档：首批覆盖 Z.AI/GLM、Kimi、DeepSeek、xAI/Grok 的供应商连接、API key/OAuth、模型发现/固定回退与默认 provider/model。
+- `ROADMAP.md` 删除旧阶段的过程性内容，重写为 SET-0～SET-7；旧内容仍可从本文既有归档与 git 历史检索，不在活动路线图保留副本。
+- 重置时仓库不存在 `plan/` 目录，因此没有可删除的旧 plan 文件；新建 `plan/settings.md` 作为唯一活动任务书。
+- 新建 `docs/spec/settings.md`，固化 Host-driven auth capability、每 provider 一个活动连接、远端目录优先/固定目录回退、Secret 非重放和 Settings Rail 信息架构。
+- 发布、License、安装器、自更新、供应链与三平台发布矩阵明确不进入本计划，待用户后续单独指定。
+
+Validated: Markdown/链接/diff 检查见当次文档任务报告；未运行 Cargo（纯文档）。
+
+Targeted regressions: none（无生产代码改动）。
+
+Full workspace gate: NOT RUN（当前未设置全量门禁）。
+
+---
+
+## 2026-09-01～02 — Settings SET-1（契约）与 SET-2（Host 门面）
+
+- SET-1：ADR-046 Accepted（用户确认初始未发布版本不采取兼容策略，minor 1.4 仅记账、无版本门控、不新增 GuiCapability）。protocol 落地 `ApiKeySecret`（Debug 恒 `[REDACTED]`）、`AuthSetApiKey`/`AuthCancel`/`SetDefaultModel` 命令、`ProviderAuthStatus` 查询、`AuthChanged` 由 `authenticated: bool` 重塑为六态状态机；`auth_start`/`auth_remove` 开放 GUI，headless/ACP 保持关闭；golden 34→43 帧、typegen 三产物同步。关键盘点事实：command ledger 只缓存响应不存请求、错误响应不缓存、tracing 不打 payload——Secret 非重放由此成立。审查退回过一次 `provider_auth_status` 响应 fixture 与 ADR D1 不符（缺 endpoint_label/状态机、多 default_model），已修正对齐。
+- SET-2：六入口接入真实 Host 能力。providers 增 `ChannelPreset.display_name`/`auth_methods()` 与 `verify_api_key`（候选 key 一次性 GET /models 验证，不持久化）；workspace 增 Global 层 `write_default_model_pair`（原子写回、保留未知字段、不动六层合并）；app 增 settings handler 组、按 provider 单飞守卫（CancellationToken + Arc 身份移除）、`oauth_finish` 不持锁变体（授权等待不阻塞 core 读锁）、`AuthChanged` 经 GuiEventBus 广播。pawork-auth 零改动。
+- 主代理审查修正两处：`pawork-providers` lib.rs 的 `verify_api_key` re-export 漏 feature 门（默认 features 仅 anthropic，单包 `cargo test -p pawork-providers` 会破坏编译）；`publish_provider_auth` 的 Global 流 `stream_sequence` 从专用计数器归一到既有临时事件置 0 约定。另注：worker 报告把 `crates/app/src/channels.rs` 误标为「用户既有改动未触碰」，实际是该任务的写入集内改动（内容无误，仅归属声明失准）。
+
+Validated: `cargo test -p pawork-protocol --features typegen --offline --lib --tests`（148）；`cargo test -p pawork-auth -p pawork-providers -p pawork-workspace -p pawork-app --offline --lib --tests` 全绿（app 171+6+15+2 / auth 73 / providers 195 / workspace 145）；修正后复跑 `cargo test -p pawork-providers --offline --lib --tests`（默认 features，180）与 `cargo test -p pawork-app --offline --lib --tests`（194）均绿。
+
+Targeted regressions: `ApiKeySecret` 脱敏/透传、registry 穷举守卫、9 帧新 golden、typegen check、auth_set_api_key 验证成功替换主路径 + 401 失败保旧且无明文（SET-2 上限 1+1）。
+
+Real-world evidence: pending（四家真实账号验收在 SET-7）。
+
+Full workspace gate: NOT RUN（当前未设置全量门禁）。
+
+---
+
+## 2026-09-02 — Settings SET-3（Settings 壳与只读供应商页）
+
+- Desktop 落地 Settings 壳：TaskRail `Local` 行 gear（TR-12 honest-hidden 注释随真实 capability 更新）、`AppRoute` 顶层路由（Settings 与工作台互斥渲染、工作台字段全保留）、Settings Rail（返回工作台 + 唯一真实导航项「Models & providers」）、全宽只读供应商页。
+- 数据链路：controller 新增 `provider_auth_status` 全量查询与 `ProviderStatusLoaded` 事件；projection 新增 `SettingsProvidersState`（解析 fail-closed；断线 `mark_stale` 保留 stale 只读并可见标注）。wire 形状以 `gui_host/handlers/settings.rs` 源码为准（auth 在途态实为 `connecting`）。
+- crates/ 零改动；worker 误带出的 rustfmt 全 crate 格式噪声（main.rs / platform.rs / inspector.rs / timeline*.rs）已由主代理逆 patch 剔除，写入集收敛到 5 个修改文件 + 1 个新增 UI 模块 + 3 份文档。
+- 审查（glm_reviewer）5 项发现，4 项同批修复：Settings 路由下九个工作台 action handler 加 route 守卫（修复 cmd-. 隐形取消 Run / cmd-enter 隐形审批旁路）；AX 状态行与 render 改经 `provider_status_lines()` 同源逐行发布（error/空态不再丢失）；stale 语义修正（begin_loading 清 stale、Disconnected 下迟到响应重新 mark_stale、空态显示条件收敛）；`auth_methods` 解析改 fail-closed。第 5 项（Settings 页 AX 卡片几何固定估值不随滚动）登记为 SET-7 真窗口验收 known gap。
+
+Validated: `cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`（163，含新增 3 条：解析主路径、畸形载荷 fail-closed、Settings 路由快捷键守卫）；`git diff --check` 通过。
+
+Targeted regressions: 上述 3 条（任务书上限 1 主路径 + 1 关键失败路径；路由守卫测试属审查发现的行为修复，按「改了行为且现有测试盖不到」新增）。
+
+Real-world evidence: pending（真窗口进入/返回/断线/1440/1080 属 SET-7 收口）。
+
+Known gaps: Settings 页 AX 卡片几何为固定估值、不随滚动（登记 plan/settings.md SET-7）；写操作与其余页面未开放（SET-4～SET-6）。
+
+Full workspace gate: NOT RUN（当前未设置全量门禁）。
+
+注（2026-09-02 Settings 主线提交）：本条目为原任务线自述记录；SET-3 代码（apps/desktop 写入集）未随该次提交进入 main，由其原任务线另行审查提交。

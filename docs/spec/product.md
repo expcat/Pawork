@@ -1,6 +1,6 @@
 # Pawork 产品规格
 
-> 基线日期：2026-08-25。既有功能与结构阶段已归档；当前主线是新 R1–R10 Desktop UI 99% 还原与全功能模拟操作验收：R8 比对、R9 修复、R10 测试，R11 收尾。Pawork 当前是本机开发产品，不是已发布发行版。
+> 基线日期：2026-09-02。既有功能与旧 Desktop 阶段已归档；当前活动线是 [Settings：模型与供应商](settings.md)，SET-1 协议词汇与 SET-2 Host settings 门面已实现并通过定向测试，Desktop UI 与四家真实认证验收未开始。Pawork 当前是本机开发产品，不是已发布发行版。
 
 ## 1. 产品定义
 
@@ -46,6 +46,7 @@ flowchart LR
 | PRD-002 | 长会话中断后难以恢复、审计或分支探索 | 会话以 append-only 事件持久化，可 resume、export/import、fork、compact 与 replay。 |
 | PRD-003 | 模型可能越过工作区、执行危险命令或泄漏 Secret | 相对路径、Policy、审批、灾难地板、Sandbox 和全局脱敏共同约束执行。 |
 | PRD-004 | 不同模型通道的 wire、能力和凭证形态不同 | Provider adapter 把差异归一到 canonical domain；凭证与配置分离。 |
+| PRD-007 | 添加/切换供应商需要记忆 CLI、端点和认证差异 | Desktop Settings 由 Host 声明认证能力，完成连接、模型目录和默认项管理。 |
 | PRD-005 | CLI、Desktop 与自动化客户端容易形成三套不一致产品 | 三通道命令/查询能力由 registry 同源登记；客户端连接同一宿主。 |
 | PRD-006 | 开发变更、终端、MCP 资源和任务状态难以集中观察 | CLI 与 Desktop 暴露对应只读/受控视图；关键状态可恢复和诊断。 |
 
@@ -55,7 +56,7 @@ flowchart LR
 | --- | --- | --- |
 | PRD-CORE-01 | `pawork` 必须是 Core 唯一正式宿主，保持纯 Rust 和单一生产装配点。 | 已实现；架构红线。 |
 | PRD-CHAT-01 | 必须支持流式多轮 chat、单次 run、模型选择、取消和可读错误。 | 已实现。 |
-| PRD-SESSION-01 | 必须持久化 Agent 事件并支持 list/show/resume/export/import/fork；重放结果须确定。 | 已实现；schema v13、export v3、envelope v1。 |
+| PRD-SESSION-01 | 必须持久化 Agent 事件并支持 list/show/resume/export/import/fork；重放结果须确定。 | 已实现；schema v14、export v3、envelope v1。 |
 | PRD-AGENT-01 | Agent loop 必须以 canonical request 驱动模型与工具，不得在 Engine 中写 Provider 特例。 | 已实现；依赖守护测试在位。 |
 | PRD-TOOL-01 | 必须提供工作区内读、查、写、补丁和命令执行工具，并让 descriptor 明确只读/审批语义。 | 已实现；八工具。 |
 | PRD-SAFE-01 | 文件与进程操作必须经过工作区路径、Policy、审批和 Sandbox 约束；不可静默放宽灾难地板。 | 已实现；平台能力与回退限制见 [security.md](security.md)。 |
@@ -63,7 +64,8 @@ flowchart LR
 | PRD-RESOURCE-01 | 必须加载 AGENTS.md、Skills、profiles、`@file`，并作为 MCP Client 管理资源；导入不得执行外部 hook。 | 已实现；Desktop 的 `@` 候选浮层和已加载规则分区未实现。 |
 | PRD-GIT-01 | 必须能查看 diff、创建 checkpoint/rollback；GUI 变更面默认只读。 | 已实现/部分实现：CLI 与核心能力已实现，Desktop stage/unstage/hunk 写操作为候选。 |
 | PRD-CLIENT-01 | Desktop、headless 与 ACP 必须连接同一宿主，能力宣告、授权与实现保持同源且未登记 fail-closed。 | 已实现。 |
-| PRD-DESKTOP-01 | Desktop 必须呈现 TaskRail、Timeline、Composer、审批和 Inspector，并在断线后可恢复且不取消 Run。 | 生产链路已实现；视觉 99%、完整 AX/交互与模拟操作矩阵按新 R1–R10 重验。 |
+| PRD-DESKTOP-01 | Desktop 必须呈现 TaskRail、Timeline、Composer、审批和 Inspector，并在断线后可恢复且不取消 Run。 | 生产链路已实现；主路径已验收，完整视觉/AX/跨平台仍需专项证据。 |
+| PRD-SETTINGS-01 | Desktop 必须通过 Host 管理供应商连接、API key/OAuth、模型发现与默认 provider/model；Secret 不得由 Desktop 持久化。 | 已立项，未实现；范围见 [settings.md](settings.md)。 |
 | PRD-OPS-01 | 本机实例必须可诊断、可观测数据目录/连接状态，并提供 service/status/watch/shutdown/doctor/usage 入口。 | 已实现；发布级运维、安装和三平台证据未立项。 |
 
 ## 5. 关键用户流程
@@ -98,6 +100,16 @@ flowchart LR
 2. ACP 适配 IDE/Agent Client；typed client 可 spawn `pawork headless --json-stdio` 或走本机 GUI 连接面。
 3. 非 TTY/JSON 模式拒绝交互审批，避免无人值守任务悬停或静默授权。
 
+### 5.5 Settings 与模型供应商
+
+1. 用户从 TaskRail 底部进入 Settings；Settings 使用独立导航和完整内容区，返回时恢复原工作台状态。
+2. Host 返回供应商及认证能力；首批覆盖 Z.AI/GLM、Kimi、DeepSeek、xAI/Grok。
+3. 用户以 API key 或 OAuth 建立连接；认证状态与模型目录状态分别呈现。
+4. Host 优先获取账号可见模型；不可获取时使用有版本标记的固定目录，并只暴露 Pawork adapter 可运行模型。
+5. 默认 provider/model 经 Host 持久化；Secret 只进入 auth backend。
+
+成功标准和安全前置见 [settings.md](settings.md)；SET-1/SET-2 已实现并通过定向测试，SET-3 起（Desktop UI、四家真实认证/目录验收）未开始。
+
 ## 6. 非目标与当前限制
 
 - 不提供全屏 TUI、JS/TS 插件运行时或 npm 生态传输。
@@ -105,8 +117,9 @@ flowchart LR
 - `NativeRestricted` 不是对抗性隔离；Sandbox 不应被表述为能抵御主动读取全部本机数据的恶意进程。
 - Desktop Changes 不执行 stage/unstage/hunk；`@` 有 host 展开但无候选浮层；Resources 无“已加载规则”分区。
 - Desktop 真实核心路径已完成本机验收；完整视觉/Accessibility、跨平台、Provider 矩阵与 OAuth 自然临期 refresh 尚未完成。
+- Desktop Settings 尚未实现；首批供应商、认证与模型发现只可描述为已立项。
 - License、安装器、自更新、发布/回滚 runbook、全量门禁与三平台发布矩阵未获授权，不属于当前交付。
 
 ## 7. 产品完成口径
 
-当前产品 Spec 认为“范围完整”是：需求、状态、限制、契约和证据入口均已记录。它不把产品或发布状态改成完成。Desktop 后续完成口径以 [ROADMAP P1–P5](../../ROADMAP.md#4-后续计划) 为准；发布仍需用户另行授权。
+当前产品 Spec 认为“范围完整”是：需求、状态、限制、契约和证据入口均已记录。它不把产品或发布状态改成完成。当前完成口径以 [ROADMAP](../../ROADMAP.md) 与 [Settings Spec](settings.md) 为准；发布不在活动计划内，仍需用户另行授权。

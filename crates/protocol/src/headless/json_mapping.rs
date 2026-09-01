@@ -258,7 +258,7 @@ mod tests {
             }),
             serde_json::to_value(AppEvent::AuthChanged {
                 provider_id: pawork_domain::ProviderId::from("p"),
-                authenticated: false,
+                state: crate::AuthChangeState::Removed,
             }),
             serde_json::to_value(AppEvent::ProviderStatus {
                 provider_id: pawork_domain::ProviderId::from("p"),
@@ -333,7 +333,10 @@ mod tests {
             app_event_tag_for_json_type("run_completed"),
             Some("run_changed")
         );
-        assert_eq!(app_event_tag_for_json_type("diagnostic"), Some("diagnostic"));
+        assert_eq!(
+            app_event_tag_for_json_type("diagnostic"),
+            Some("diagnostic")
+        );
         assert_eq!(app_event_tag_for_json_type("context_prepared"), None);
         assert!(!JSON_TO_HEADLESS_EVENT_MAP.is_empty());
     }

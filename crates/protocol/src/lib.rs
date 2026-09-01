@@ -28,9 +28,9 @@ use serde_json::Value;
 #[cfg(feature = "typegen")]
 use ts_rs::TS;
 
-pub mod app;
 #[cfg(feature = "adapter")]
 pub mod adapter;
+pub mod app;
 #[cfg(feature = "client-auth")]
 pub mod client_auth;
 pub mod codec;
@@ -45,17 +45,17 @@ pub mod typegen;
 
 pub use app::*;
 pub use app::{
-    ActorIdentity, ApiHandle, ApiVersion, AppCommand, AppCommandEnvelope, AppEvent,
+    ActorIdentity, ApiHandle, ApiKeySecret, ApiVersion, AppCommand, AppCommandEnvelope, AppEvent,
     AppEventEnvelope, AppQuery, AppQueryEnvelope, AppResponse, AppResponseEnvelope,
-    CommandSource, EventSource, EventStream, GlobalSequence, TimelineItem, TimelineItemKind,
-    TimelinePage, API_VERSION, SUPPORTED_API_VERSIONS,
+    AuthChangeState, CommandSource, EventSource, EventStream, GlobalSequence, TimelineItem,
+    TimelineItemKind, TimelinePage, API_VERSION, SUPPORTED_API_VERSIONS,
 };
 
 pub use codec::{
     decode_client_frame, decode_length_prefixed, decode_server_frame, encode_client_frame,
-    encode_length_prefixed, encode_server_frame, read_client_frame, read_frame, read_server_frame,
-    read_frame_async, write_client_frame, write_frame, write_frame_async, write_server_frame, ProtocolCodecError,
-    FRAME_LENGTH_PREFIX_BYTES,
+    encode_length_prefixed, encode_server_frame, read_client_frame, read_frame, read_frame_async,
+    read_server_frame, write_client_frame, write_frame, write_frame_async, write_server_frame,
+    ProtocolCodecError, FRAME_LENGTH_PREFIX_BYTES,
 };
 pub use handshake::{
     decode_client_frame_checked, decode_server_frame_checked, ensure_compatible_api_version,
@@ -318,5 +318,9 @@ pub enum ProtocolErrorCode {
     RequestNotFound,
     ReplayUnavailable,
     FrameTooLarge,
+    /// 宿主资源忙：同一 provider/资源已有操作在途，待其结束后可重试（ADR-046）。
+    Busy,
+    /// 请求校验被拒：输入非法、目标实体未知或通道/方法不支持（ADR-046）。
+    ValidationFailed,
     Internal,
 }

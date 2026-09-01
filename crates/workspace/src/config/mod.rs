@@ -15,6 +15,7 @@ mod loader;
 mod merge;
 mod paths;
 mod schema;
+mod writer;
 
 use serde::{Deserialize, Serialize};
 
@@ -31,6 +32,7 @@ pub use schema::{
     ModelConfig, PaworkConfig, ProfileConfig, ProfileOverrides, ProviderConfig, RunOverrides,
     SessionOverrides,
 };
+pub use writer::write_default_model_pair;
 
 /// 配置层级。
 ///

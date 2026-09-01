@@ -35,10 +35,11 @@ E3/E4 证据必须包含日期、环境/版本、输入范围、实际结果和�
 | PRD-TOOL-01 / CAP-TOOL-01 | tools/workspace/policy/exec | 八工具与路径/进程回归 | 真实仓库读写/命令冒烟 | 已实现；终局安全复跑未执行。 |
 | PRD-SAFE-01 / SEC-* | policy/auth/exec/storage/app | 安全种子、Secret 扫描、Seatbelt golden、ledger 回归 | 平台探针、真实审批/PTY | 已实现；部分平台/人工项仍待验。 |
 | PRD-PROVIDER-01 / CAP-PROVIDER-01 | providers/auth/app | adapter/negotiation/OAuth/脱敏测试 | ChatGPT/xAI/GLM/OpenCode 等真实请求 | 已实现；OAuth 自然临期 refresh 与真实 Anthropic/GLM Anthropic 端点待人工。 |
+| PRD-SETTINGS-01 / CAP-SETTINGS-01 / SET-* | protocol/app/auth/providers/workspace/desktop（计划） | protocol golden/typegen、Secret 负断言、provider verify、config writer、Desktop/AX（计划） | 四家真实认证/目录、Host 重启、真窗口（计划） | SET-1/SET-2 已实现并通过定向测试（协议 golden/typegen、Secret 负断言、Host 门面主/失败路径）；Desktop UI、四家真实认证/目录与真窗口验收未开始。 |
 | PRD-GIT-01 / CAP-GIT-01 | git/app/cli/Desktop Changes | git/checkpoint/diff 定向测试、Desktop projection | 真窗口 Changes、真实 rollback | Core 已实现；Desktop 写操作未实现，横滚人工项待验。 |
 | PRD-RESOURCE-01 / CAP-RESOURCE-01 | workspace/tools/app/Desktop | resources/import/MCP contract | 外部配置、MCP stdio、真窗口 Resources | 主流程已实现；部分 GUI 出口为候选。 |
 | PRD-CLIENT-01 / CAP-CLIENT-01 | protocol/app/client/cli | frame/headless/ACP golden、registry、probe | Desktop probe、Zed ACP、json-stdio | 已实现；发布级客户端矩阵未执行，probe 有已登记偶发超时。 |
-| PRD-DESKTOP-01 / DESK-* | desktop/client/protocol | projection/controller、U0/U1、AX 模型/映射测试 | 真 Host/Desktop、三张初始设计图、AX/IME、用户签字 | 正式构建、项目、消息/文件、Changes、Terminal 与 Session→Workspace 跨 Host 重启已完成本机真窗口验收；Host 多项目注册表已落地，Desktop 正式 UI 接线、完整视觉/VoiceOver/跨平台仍待 [ROADMAP P1–P4](../../ROADMAP.md#4-后续计划)。 |
+| PRD-DESKTOP-01 / DESK-* | desktop/client/protocol | projection/controller、U0/U1、AX 模型/映射测试 | 真 Host/Desktop、三张初始设计图、AX/IME、用户签字 | 正式构建、项目、消息/文件、Changes、Terminal 与 Session→Workspace 跨 Host 重启已完成本机真窗口验收；完整视觉/VoiceOver/跨平台仍需专项取证。 |
 | PRD-OPS-01 / CAP-OPS-01 | cli ops/service、app data_dir | 路径/状态/doctor 定向测试 | macOS/Linux/Windows service 与恢复演练 | 入口已实现；无发布级三平台/恢复门禁。 |
 
 ## 4. 三类不可推迟的回归
@@ -49,7 +50,7 @@ E3/E4 证据必须包含日期、环境/版本、输入范围、实际结果和�
 | 持久化与重放 | envelope、SQLite 迁移、append-only、branch lineage、PWB1、checkpoint、export/import、projection、CommandLedger 崩溃/重试 |
 | 协议与解析 | GUI frame、版本协商、registry fail-closed、headless JSON、ACP、MCP、配置六层、usage dedup、外部格式解析 |
 
-普通任务只跑写入集的定向命令；触及上述面时，对应关键回归必须同批更新，不能推迟到全量门禁。当前默认命令和单 Cargo 进程纪律见 [ROADMAP.md](../../ROADMAP.md) §7.3。
+普通任务只跑写入集的定向命令；触及上述面时，对应关键回归必须同批更新，不能推迟到全量门禁。当前默认命令和单 Cargo 进程纪律见 [ROADMAP.md](../../ROADMAP.md) §6–§7。
 
 ## 5. 当前验收缺口
 
@@ -62,8 +63,9 @@ E3/E4 证据必须包含日期、环境/版本、输入范围、实际结果和�
 | 三类关键回归发布矩阵 | 未立项 | 发布任务明确命令和环境后执行；普通改动仍同批跑受影响的定向种子。 |
 | 真实客户端/Provider 矩阵 | 未执行 | 四通道 chat、GUI/Desktop、Zed ACP、headless json-stdio、doctor 实际通过或明确 fail-closed。 |
 | 真实 Anthropic、fork/compact、PTY/审批恢复等历史人工项 | 待后续任务 | 实际执行，或由用户明确接受延期并在 ROADMAP/收口摘要登记。 |
-| 完整视觉与 Accessibility 签字 | 待 P4 | 三张初始设计图、主状态矩阵、100/125/150%、键盘/AX/VoiceOver 由当前真窗口重新取证并人工签字。 |
-| 发布级验证 | 未立项 | 用户另行授权发布任务（ROADMAP P5），先定 License，再定义三平台、供应链、安装/升级/回滚门禁。 |
+| Settings 模型与供应商 | SET-1/SET-2 已实现（定向测试通过） | [settings.md](settings.md) 的 SET-001～011 获得 E1/E2；四家真实认证/目录、Host 重启和真窗口取得 E3；人工视觉/VoiceOver 单独签字。 |
+| 完整视觉与 Accessibility 签字 | 待专项任务/Settings 收口 | 主工作台与 Settings 状态矩阵、100/125/150%、键盘/AX/VoiceOver 由当前真窗口重新取证并人工签字。 |
+| 发布级验证 | 未立项 | 发布不在当前 ROADMAP；用户另行授权后先定 License，再定义三平台、供应链、安装/升级/回滚门禁。 |
 
 ## 6. 证据记录格式
 

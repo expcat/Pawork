@@ -1,159 +1,116 @@
 # Pawork 路线图
 
-> 本文是当前任务与后续工作的唯一计划事实源，只保留未完成工作、验收标准和开放决策。已完成阶段与旧编号统一查阅 [docs/history.md](docs/history.md)；架构红线与冻结契约见 [docs/architecture.md](docs/architecture.md)。
+> 2026-09-01 重置。本文是当前任务与后续顺序的唯一计划事实源；旧阶段的逐片记录不再保留在活动路线图中，已完成事实查阅 [docs/history.md](docs/history.md)，逐字内容查阅 git 历史。架构红线与冻结契约仍以 [docs/architecture.md](docs/architecture.md) 和源码/golden 为准。
 
 ## 1. 当前指针
 
 | 字段 | 当前事实 |
 | --- | --- |
-| 活动线 | **P4 — Accessibility 与跨平台（2026-09-01 开启）** |
-| 状态 | 🔵 P4 进行中：片 1 缺口审计 ✅、片 3 AX 精确几何 ✅、片 2 真窗口走查 ✅、片 2F 缺陷修复与真窗口复验 ✅（D1/D2/D3 均通过，定向门禁 160/160；D4 登记观察）。P1 / P2 / P3 均已收口，过程与证据归档 [docs/history.md](docs/history.md)。 |
-| 本轮结果 | 片 1 审计：键盘/AX 主路径多数代码层闭环；A 级缺口二项——A1 VoiceOver+键盘+IME 真窗口人工验收未执行（[docs/gui-design.md](docs/gui-design.md):267 挂账本体），A2 AX bounds 固定偏移近似不止 P3-③ stepper（审批卡固定 112px 高、Timeline 行统一 52px 假高 vs render 变高 list）；B 级五项（Timeline 键盘滚动、Announcement 语义、终端 AX 截断、字符面板、非 macOS AX no-op）；跨平台 XP1–XP9，核心为 XP1 快捷键全 `cmd-` 前缀（gpui 解析为 platform 修饰键，Linux=Super、Windows=Win）、XP2 非 macOS 零 AX、XP8 无双目标编译证据；transport 双栈 / portable-pty / 进程树 / 沙箱分支已具备。片 3（A2 修复，提前于片 2 执行以免 VO 走查带已知几何偏差签字）：stepper 五按钮 / 审批卡 / Timeline 行高三处几何改与 render 同源公式推导（stepper 冻结 28/72×28 槽 + rem 缩放间距；审批卡高随 reason/detail 行数；Timeline 行高按内容 + row_top_gap 堆叠，滚动起始/容量不再用 52px 假高），行高为公式化近似（CJK 偏窄估）已在代码与 Spec 诚实标注；几何断言 6→9 条，desktop.md 同批回写。片 2F review 再修正同 run 早期历史误清后续审批、部分可见首项/脱钩审批 AX 发布与 WorkspaceConfirm 回焦来源；正式 Host/Desktop 以 AX frame 中心真实点击、焦点与落盘/终态双证据复验通过。 |
-| 下一动作 | 片 4 Timeline 键盘可达 → 片 5 快捷键别名 → 片 6 双目标编译 → 片 7 真机冒烟；VO 播报与系统 IME 真实组合待用户人工签字。 |
-| 本轮完成条件 | §4 P4 退出条件：键盘/AX/VoiceOver 主路径通过；Linux/Windows 能力和缺口有真实平台证据。 |
-| 当前阻塞 | 无（片 2 的 VoiceOver 人工签字与片 7 真机冒烟需用户配合）。 |
+| 活动线 | **Settings — 模型与供应商** |
+| 状态 | 🟢 SET-1/SET-2 已审查提交（协议词汇 + Host settings 门面）；SET-3 Settings 壳实现完成，待原任务线另行审查提交；写操作尚未开放。 |
+| 当前交付 | [Settings Feature Spec](docs/spec/settings.md)、[Settings 任务书](plan/settings.md)、ADR-046 协议词汇与 Host 门面（verify-then-replace、按 provider 单飞、Global 层默认项写盘）。 |
+| 下一动作 | SET-3 由原任务线审查提交；随后 SET-4：四家认证闭环（Z.AI/DeepSeek API key；Kimi API key + OAuth；xAI OAuth + API key）。 |
+| 当前阻塞 | 真实 Provider/OAuth 验收还需要对应账号与凭证。 |
+| 发布 | **不在本计划内**。待功能继续完善后，由用户另行指定发布范围、License 与门禁。 |
 
-状态：⚪ 未开始 · 🔵 进行中 · 🟢 已验证 · ⚠️ 阻塞。任何“已实现”“自动检查通过”“真窗口通过”“等待人工确认”必须分开记录。
+状态：⚪ 未开始 · 🔵 进行中 · 🟢 已验证 · ⚠️ 阻塞。`已实现`、`自动门禁通过`、`真实环境通过`、`人工验收`、`已发布`必须分别记录。
 
-## 2. 当前执行顺序
+## 2. 目标、范围与完成口径
 
-### E0 — 构建与启动入口 ✅
+### 2.1 目标
 
-- 在 `scripts/` 提供一个最小脚本，支持构建和启动两个入口。
-- `build` 只构建正式 `pawork` 与 `pawork-desktop` 二进制；不编译或运行 fixture、probe、测试 target。
-- `start` 默认先构建，再启动正式 `pawork gui serve` 与 Desktop；Host 已运行时复用，不启动第二个实例。
-- Desktop 退出时只关闭由本脚本启动的 Host；日志写入忽略目录，不把 token、凭证或运行数据写入仓库。
-- README 给出用户可直接复制的命令和运行前提。
+在 Pawork Desktop 增加真实 Settings 入口和宿主驱动的设置面。第一条纵向主路径是“模型与供应商”：用户可以添加供应商、选择该供应商实际支持的认证方式、验证/移除凭证、刷新可用模型，并设置默认 provider/model。
 
-### E1 — 真实核心路径 ✅
+首批产品范围固定为：
 
-严格使用正式 Host、真实数据库与真实 UI，不调用 `ui-fixture`、seed、probe 或测试 profile：
+- Z.AI / GLM：API key，先复用当前 Coding Plan 通道；
+- Kimi：Kimi Platform API key 与 Kimi Code OAuth，二者端点和凭证语义分开；
+- DeepSeek：API key；
+- xAI / Grok：OAuth Device Flow 与 API key；当前 OAuth 已有宿主基础，API-key adapter 仍需补齐。
 
-1. 启动空态并确认 Host 显示 Connected。
-2. 从 UI 添加一个真实本地项目；项目必须由用户选择或输入的真实目录进入 Host，不能靠预置 workspace 冒充。
-3. 在该项目中新建对话并发送消息。
-4. 要求 Agent 在项目内创建一个文本文件，内容同时包含 `Hello world` 与执行时的本地日期时间标记。
-5. 在 Changes 中确认文件名、状态与 diff 内容正确，且与命令行 `git status` / `git diff` 的真实结果一致。
-6. 在 Terminal 中启动会话、执行只读命令、看到输出并验证输入/输出/resize 的基本生命周期；重连恢复单列为诚实性边界。
+### 2.2 非目标
 
-### E2 — 修复与复验 ✅
+- 不发布、不做安装器、自更新、签名、公证、供应链或三平台发布矩阵。
+- 不在首批实现同 Provider 多账户池、轮询切号、额度路由或团队凭证共享。
+- 不在首批开放任意 OpenAI-compatible 自定义端点；保留为后续候选。
+- 不让 Desktop 直连 Provider、auth 文件、配置文件或数据库。
+- 不为尚无 Host 能力的设置项绘制可点击假页面，不伪造 quota、模型或登录成功状态。
+- 不新增包、JS Runtime、第二套配置系统或第二套 Secret 存储。
 
-- 每个失败先记录可观察现象和最短复现，再读源码定位根因。
-- 只修 E0/E1 主路径必需内容；不新增包、不演进 wire、不引入生产依赖，除非已证明现有契约无法承载且用户批准 ADR。
-- 有现有定向测试能证明回归时复用；只有行为改动且现有测试无法捕获时，最多补一条主路径和一条关键失败路径。
-- 修复后从失败步骤复跑，最后再完整走一遍 E1，避免用局部绿灯代替用户路径。
+### 2.3 用户可观察的完成口径
 
-### P1 — 项目与会话生命周期 ✅
+1. TaskRail 底部 `Local` 行有键盘/AX 可达的 Settings 入口；进入后可返回原工作台，active session、草稿和 Run 不被改变。
+2. Settings 使用独立左侧导航和完整内容区；模型与供应商页列出 Host 权威连接状态、认证方式、端点语义、模型来源与错误。
+3. 添加向导完成“选择供应商 → 选择认证方式 → 登录/录入 key → 验证 → 获取模型”；取消、失败、超时、断线和重试均有诚实终态。
+4. API key 只进入 auth backend；不进入 config、command ledger payload、Agent 事件、DB、日志、诊断、fixture 或可提交文件。
+5. 可远程获取模型时优先使用已认证的供应商目录；失败时才使用有来源和版本标记的内置目录，并明确显示 `远程 / 内置回退 / 不可用`。
+6. 用户选择的默认 provider/model 由 Host 持久化并在重启后恢复；失效选择显式降级，不静默切换供应商。
+7. 四家供应商至少各有一条真实认证与模型目录证据；OAuth、API key、Secret 泄漏、断线恢复和模型回退有定向回归。
+8. Settings 新增控件具备可见、键盘与 AX 同源 gate；1440×1024 与 1080×720 主操作可达。
 
-- **片 1 ✅**：ADR-043 / schema v13 Session→Workspace 弱引用持久化；storage/app 定向门禁与正式 Host/Desktop 重启复验均通过。
-- **片 2A ✅**：ADR-044 已由用户 Accepted，冻结 stable workspace identity、本地注册表持久化、legacy `ws-default` 与按 session 路由边界。
-- **片 2B ✅**：schema v14 `workspaces` 注册表 + AppCore/GuiHost 按 session workspace 路由（Run / 资源 / `@` 展开 / diff / terminal cwd）；`workspace_add` 幂等登记、`workspace_list` 返回注册表全集合；不改 wire，storage/workspace/app/cli 定向门禁通过。
-- **片 2C ✅**：审计确认添加 / 切换 / 重开项目、新建 / 续聊会话五流程在既有 Desktop 已完整接线（零代码改动）；正式 Host/Desktop 真窗口验收通过（隔离实例双粒度重开 + 按项目归属绑定核对），Desktop 定向门禁 147/147；P1 收口。
+## 3. 已锁定的产品规则
 
-### P2 — Agent 主路径可靠性 ✅
+- **连接实例而非全局 key 文本框**：首期每个供应商只允许一个活动连接；切换认证方式等价于替换该连接。多账户另行立项。
+- **认证能力由 Host 声明**：Desktop 不按供应商品牌硬编码 OAuth/API key 分支；宿主返回可用认证方法、状态和操作能力。
+- **认证与模型目录分离**：登录成功不等于目录刷新成功；两个状态和错误分别呈现。
+- **目录优先级**：已认证远端目录 > 版本固定的内置目录；远端只负责“当前账号可见 ID”，静态元数据只补显示名/能力/限制，合并时保守且 fail-closed。
+- **无公开目录时固定模型**：Z.AI 等未找到稳定公开 list-model contract 的通道使用实现时核对的官方模型页与 [Models.dev](https://models.dev/) 固定快照；不在运行时依赖第三方聚合站作为权限事实源。
+- **只展示可运行模型**：图片、视频或其它 Pawork adapter 尚不能调用的模型不进入 Composer 可选列表。
+- **Settings 页面诚实启用**：先显示“模型与供应商”；通用、权限与审批、工具与 MCP、终端、外观、高级、关于只在对应真实能力到位时逐页启用。
 
-退出条件（§4）：发送、审批、取消、失败恢复、重放与文件写入形成一条可靠闭环。切片如下，每片数小时内可验收：
+完整需求、供应商依据与开放决策见 [docs/spec/settings.md](docs/spec/settings.md)。
 
-- **片 1 ✅**：六链路（发送 / 审批 / 取消 / 失败恢复 / 重放 / 文件写入）可靠性缺口审计（glm_explorer，只读零改动）。结论：发送 / 取消（三相位均有测试钉住，Desktop Cancel 全相位可达）/ 审批（含重启恢复）/ 重放（三态 + lagged）四链路闭环；两个真实缺口同根——①无终态事件的 run（Host 崩溃 / sink 持久化失败）在重放侧永远悬空（runs 表停 "running"，timeline 工具行永 "running"，启动无清扫，合成终态只上 wire 不落库）；②checkpoint 止步于持久化层（快照失败仅 warn 静默跳过，Desktop 零消费）。
-- **片 2A ✅（已实现 + 定向门禁通过，待片 3 真窗口验证）**：悬空 run 诚实收口。open_store 启动清扫：state=running 的 run 追加持久化 ToolExecutionCompleted(is_error)（非 waiting 悬空工具）+ RunFailed(Internal)，waiting 审批保持 pending 可决议、幂等、单 session 失败不阻断启动；live 合成终态闸改 persist-first（持久化失败才退回 publish_raw 合成兜底）。写入集 crates/app 四文件，新增测试 4 条，cargo test -p pawork-app --offline --lib --tests 全绿；零 wire/schema 演进；app.md Spec 已同批回写（§4.1/§4.6/§5/§7）。
-- **片 2B ✅（已实现 + 定向门禁通过，待片 3 真窗口验证）**：checkpoint 失败诚实化。LoopContext::snapshot_write_tools 增 LoopEventEmitter 参数，快照失败经 emitter 发可持久化 Diagnostic{checkpoint.snapshot_failed}（写入继续）；protocol 投影两臂沿用 sandbox.fallback 模式渲染提示行。写入集 engine/app/protocol，新增测试 2 条，cargo test -p pawork-engine -p pawork-app -p pawork-protocol --offline --lib --tests 全绿；零 wire/schema 演进；engine.md/protocol.md Spec 已同批回写。不加回滚 UI（归候选池 A3）。
-- **片 3 ✅**：真窗口闭环验收通过（隔离实例 p2-3，glm_worker）：六链路一轮走通，UI（AX）+ SQLite/磁盘/git 双证据；取消两相位、kill -9 两相位失败恢复（诚实 RunFailed + 清扫幂等）、续聊重放、checkpoint 失败诊断真实触发落库；Desktop 门禁 147/147。三条观察项登记 §5。
+## 4. 执行顺序
 
-不改动范围：不演进 wire/schema；不新增包与生产依赖；Terminal stop/close 与 live exit/failure 仍归 P3 边界；不改 Provider 通道与多 Agent orchestration。
-
-### P3 — Changes / Terminal / Resources 完整性 ✅（2026-09-01 收口，细节归档 [docs/history.md](docs/history.md)）
-
-退出条件（§4）：三面板只展示 Host 权威数据，关键动作与错误恢复完整。切片如下，每片数小时内可验收：
-
-- **片 1 ✅**：三面板完整性缺口审计（glm_explorer，只读零改动）。结论：Changes 面（latest-session 三重 fail-closed、mismatch banner、断线 stale、重连刷新）与 Resources 面（mcp_list 权威数据、epoch 拒旧、stale 标记）在冻结契约内无真实缺口；缺口集中 Terminal 面——G1 resize 不可变参实为 no-op（A）、G2 gate 单一化断 exited 重建与瞬态失败重试（A）、G3 cwd 展示伪造（A）；G4 完整终端生命周期（stop/close + live exit）为已登记 B 边界须 ADR；G5 mcp_test 类动作归候选池；P2 遗留 ①② 不归 P3（①建议独立任务：Host 取消收口补 ToolCompleted；②engine 文案分支）。
-- **片 2 ✅（已实现 + 定向门禁通过，待片 3 真窗口验证）**：G1 Terminal 尺寸 stepper（−W/+W/−H/+H 本地草稿钳制 20–500 列 / 6–200 行，apply 走冻结 `terminal_resize`，可见/键盘/AX 三路径同 gate，匹配回执或终端切换后草稿复位）；G2 已知 exited/killed 终端 Start 单槽变 New（同 workspace/cwd 新建，旧终端只读保留不伪造生命周期）、瞬态 write/resize 失败在 runtime running 时不锁死仅 status_hint 报错；G3 Host `terminal_snapshots()` 补 `cwd` 键（注册表值 `owner\0cwd` 编码，快照段不透明 JSON 零 wire/golden 演进，缺键省略）、Desktop 缺键诚实显示 unknown。主代理收口与 review：回滚 worker 越界的 20 文件 import 重排（纯 churn）；修复 create 失败/断连后的 cwd 残留、New 在途仍可重复触发、AX 未播报尺寸草稿、空 cwd 显示空白，以及 resize 迟到回执跨 workspace 清错草稿/新终端误用当前终端尺寸；`cargo test -p pawork-app --offline --lib --tests`（187）与 `cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`（151，新增 4 条且扩展既有 gate 测试）复跑全绿；desktop.md / app.md Spec 已同批回写。AX 侧 stepper 节点 bounds 为固定偏移近似，精确几何归 P4 签字。
-- **片 3 ✅**：真窗口验收通过（隔离实例 p3-3，glm_worker，六场景 PASS，UI（AX）+ stty/pwd/git/SQLite/快照双证据）：G1 stepper Apply 后 PTY 真实 `stty size` 24x80→28x88、AX 四节点 press 可达；G2 `exit` 后经断连重连快照得 exited → Start 变 New → 新终端同 workspace/cwd（pwd 一致）、旧输出只读保留、无伪造 Stop（Host 重启变体不适用：注册表进程内，快照无终端如实 not started）；G3 外部客户端以 `working_directory=src` 建终端，重连后面板 cwd=src 与 pwd 一致；Changes（diff 与 git status 一致）/ Resources（mcp_list 权威、断线 stale 不伪装、Reconnect 恢复刷新）冒烟通过；Desktop 门禁 151/151 复跑。片 3 发现一真实缺陷已由主代理同波修复：Desktop 首次 Start 传 `.`，策略层归一为空串记账导致重连后面板 cwd 空白——`terminal_cwd_label` 根目录标签归一 + 定向测试 1 条（app 门禁 187 全绿）。
-
-- **片 4 ✅**：G4 Terminal 完整生命周期经 [ADR-045](docs/adr/ADR-045-terminal-lifecycle-wire-evolution.md)（用户 2026-09-01 Accepted）演进 wire——`terminal_close` 命令（`PtyService::cleanup` 幂等终止并移除 PTY service 条目，再注销 GuiHost 注册表；未知/重复 id 报 `not_found`）；`TerminalExited` live 事件（Exited/Killed/Failed 三态，waiter 将权威终态随内部 `PtyEvent::Exit` 传给 forwarder 唯一广播点，cleanup 与异步广播无竞态，IO 异常诚实 Failed 不臆造退出码）；API minor 1.2→1.3（新事件按协商 minor 门控推送，老连接仍从快照 `state` 获知终态）；golden 先行（34 fixture）。Desktop Stop/Close 同槽按钮（视觉/键盘/AX 三路径同源 gate）：exited/killed 可 Close 或 New；failed 只开放 Close，清理后回到 Start，避免 forwarder 断流时遗留仍运行的旧进程；live 终态即时刷新，Close 回执本地移除复位 not started。真窗口验收（隔离实例 adr045，glm_worker）发现并修复两个真实缺陷：cli ACP `app_event_kind` 漏新变体臂致 Host 编译失败（补臂）；Stop 后 Close 报 not registered 面板卡死（宿主 not_found 映射 `RequestNotFound` 可观察 + Desktop 按清理已达成收敛）。复验四场景全过：Stop→无重连即时 killed（ps 进程组证据）、Close→复位 not started 快照清空、exit 7→即时 exited、断线 stale 不回归。提交后 review 再修复 typegen 生成物遗漏、PTY service 会话泄漏、Stop/Close 回执先后竞态与 failed 终端无恢复入口；顺带修复 client contract harness 预存失败（ADR-044 后未登记 ws-default，base 复现确认）；protocol/app/client/exec/desktop Spec 同批回写。
-
-不改动范围：不再演进 wire schema（仅补齐 ADR-045 已接受版本的检入 TypeScript 生成物）；Terminal stop/close 与 live exit/failure 已经 ADR-045 拍板实施，其余 wire 冻结不变；Changes 面维持只读（git_stage 接线仍属 ADR 候选）；不新增包与生产依赖；Timeline / Composer / 审批主链路非本片范围；不跑全量门禁。
-
-### P4 — Accessibility 与跨平台（2026-09-01 开启）
-
-退出条件（§4）：键盘/AX/VoiceOver 主路径通过；Linux/Windows 能力和缺口有真实平台证据。切片如下，每片数小时内可验收：
-
-- **片 1 ✅**：Accessibility 与跨平台缺口审计（glm_explorer，只读零改动，未跑 cargo）。主路径判定：Composer 输入发送、审批决议、面板切换、Terminal 输入与 stepper 键盘闭环（代码层，三路径同 gate、IME 双门）；AX 标签/角色诚实性与动作 dispatch 闭环（代码层，identifier 白名单 + fail-closed）；全 App 焦点遍历、AX 树覆盖（Timeline 仅可见窗口节点）、AX 通知（仅三类，无 live-region）、VoiceOver（推断部分闭环）为部分闭环。A 级缺口：A1 VoiceOver+键盘+IME 真窗口人工验收未执行（docs/gui-design.md:267 挂账本体；既有定向门禁为结构级，不替代签字）；A2 AX bounds 固定偏移近似不止 P3-③ stepper——审批卡固定 112px 高（accessibility/app.rs:1005-1060）、Timeline 行统一 52px 假高而 render 为变高 list（app.rs:956-980 vs ui/timeline.rs:104-165）。B 级：B1 Timeline 无键盘滚动、B2 无 Announcement/live-region、B3 Terminal AX 输出 8192 截断且未声明、B4 ShowCharacterPalette 裁剪、B5 非 macOS AX no-op（跨平台归 XP2）。跨平台：已具备 transport 双栈（unix 0600 / Windows named pipe owner-only DACL）、portable-pty、进程树（setpgid / Job Object）、沙箱三分支、Windows 路径与文件锁分支；缺口 XP1 快捷键全 `cmd-` 前缀（gpui 解析为 platform 修饰键，Linux=Super、Windows=Win，主路径不可用且文案硬编码 Cmd，未用 `secondary-` 别名）、XP2 非 macOS 零 AX（gpui 0.2.2 无跨平台 a11y）、XP3 Tab 平台二分未验证、XP4 pipe 名长路径 256 字节边界、XP5 token/目录权限仅 unix 收紧、XP6 Windows 沙箱 Degraded、XP7 Increase Contrast 仅 macOS、XP8 未做双目标编译、XP9 ConPTY 下 Stop 树击杀语义未验证。
-- **片 2 ✅（真窗口走查通过，发现 D1–D3 转片 2F；VO/IME 人工签字仍挂起）**：macOS 真窗口键盘+AX 走查（隔离实例 p4-2，glm_worker，九项全过，记录 /tmp/p4-s2-walkthrough.md 75 行 + AX dump/截图证据）：Tab 链 18 步 + Shift-Tab 反向与 design §3.6 完全一致；菜单 ↑/↓/Enter/Esc 回焦触发器；Cmd+I / 页签 ←/→ / Cmd+Opt+↓↑ / Cmd+Opt+N 跳 Needs input；审批三路径（真实点击 / Cmd+1 / AXPress）三文件真实落盘；断线 Disconnected+Reconnect 诚实恢复。片 3 几何逐项吻合：审批卡高手算=实测 105（pad16+标题19+reason 2×19+按钮32）、按钮槽宽/gap 精确；stepper 五按钮与公式逐像素吻合（右缘 body_right−8、gap 4、header 36@100%）；Timeline 行高 28~204 随内容变化无重叠。发现缺陷：**D1** AXPress 开菜单不移 GPUI 焦点，Enter 落 composer SendMessage（VO 路径无法键盘选菜单、有误发风险）；**D2** 审批卡 AX 位置按视口底发布 vs 渲染内容流末项，短内容垂直偏差 ~453px，指针/VO 按 AX 坐标点击落空；**D3** 切走会话再 Cmd+Opt+N 跳回审批卡不恢复（host requested=4/responded=3，重放侧未从未决议 requested 事件重建 pending），run 挂起只能 Cancel；**D4**（观察项）外部应用抢前台后 Desktop 降级（渲染冻结/键盘死/AX 部分陈旧），重启恢复，根因未定位，与 P2-③ SIGSTOP 退化同族待分诊。待用户人工签字：VoiceOver 真实播报/导航/光标框；系统 IME 真实 composing（代码门 app.rs:178 is_composing 已在场）。
-- **片 2F ✅（已实现 + 定向门禁 160/160 + 真窗口复验通过）**：走查缺陷修复（glm_worker ×2 + 主代理 review 收口）。D1：七个菜单触发器（grouping/scope/model/inspector-toggle/entry「···」/add-task/header-new-task）AXPress 与可见点击同源先移焦再 toggle，Enter 不再误触 SendMessage；WorkspaceConfirm 关闭按真实来源回到 add-task 或 header-new-task。D2：Timeline 行与 approval 组成同一 list item 序列；已完成布局优先读取 `ListState::bounds_for_item` 的真实 item bounds，首帧才走 `timeline_visible_item_tops` / `timeline_following_window` 公式回退；部分可见首项保留，脱钩读史时视口外 approval 不发布可执行 AX 节点，按钮行随卡底移动。D3：snapshot `pending_tool_approvals` 是重开会话的当前权威；历史 ToolCompleted / ApprovalResponded 可能属于同 run 的更早工具，分页重放不再改写 pending，只有历史 run 终态按 run 清除；live ToolCompleted 仍按 run + tool_call_id 精确清除。review 修复三项：同 run 早期历史误清后续审批、部分可见首项/视口外审批发布、WorkspaceConfirm 回焦来源。定向测试新增 4 条，`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders` 160/160；正式 `p4-review` Host/Desktop 复验 D1 菜单回焦、D2 AX frame 中心真实点击后文件落盘与 Run completed、D3 同 run 前置工具后切会话跳回仍恢复审批，三场景均通过；desktop.md 同批回写。
-- **片 3 ✅（已实现 + 最终定向门禁 160/160 + 真窗口验证通过；提前于片 2 执行）**：AX 精确几何（A2，glm_worker）。terminal stepper 五按钮走 `terminal_stepper_ax_rects`（inspector.rs 同源：px_2/py_1/gap_1 rem 常量 + 冻结 28/72×28 槽）；审批卡高走 `approval_card_height`（标题/reason/detail 行数 + p_2 + 32px 按钮行，按钮行自卡底推导）；Timeline 行走 `timeline_row_height` + `row_top_gap` 公式化堆叠，滚动窗口走 `timeline_visible_item_tops` + `timeline_following_window`，已有 prepaint 时由 `ListState::bounds_for_item` 回填真实 item bounds（删 52px 统一假高；ListState 只读不触 handler 写借用）。写入集 apps/desktop 五文件（accessibility/app.rs、timeline.rs、timeline_entry.rs、inspector.rs、approval_card.rs），新增几何断言 3 条（6→9）。判断点（已接受并诚实标注）：stepper/apply 与审批按钮钉冻结槽位（按钮约 +3~10px、Terminal 头部行高 26.5→36，按既有冻结槽模式处理）；仅首帧/无测量布局时行高使用公式近似（0.6×字号字符宽估换行，CJK 偏窄估），稳定帧 AX 读真实 list bounds。desktop.md 同批回写。
-- **片 4**：Timeline 键盘可达（B1）——PageUp/Down 或空焦点 ↑/↓ 滚动与/或焦点化当前行语义，同批补 AX List 滚动联动；验收：纯键盘可回看历史并回底。
-- **片 5**：跨平台快捷键别名（XP1，小改）——APP_VIEW_KEYBINDINGS 增加 `secondary-`/`ctrl-` 别名并让文案按平台显示修饰键；macOS 全量定向门禁回归。
-- **片 6**：双目标编译证据（XP8）——rustup 添加 linux/windows target 后 `cargo check` 双目标，产出能力与缺口文档（P4 退出条件真实平台证据的第一层）。
-- **片 7**：Linux/Windows 真机冒烟清单（XP3/4/5/9）——pipe 连通+token 路径、PTY 创建/输入/Stop、Tab 遍历、快捷键别名、高对比不可用时默认态；无真机则明确登记「未验证」。
-
-不改动范围：Linux/Windows 平台 AX（XP2）只登记缺口与方案调研，不承诺实现；不演进 wire/schema；不新增包与生产依赖；不跑全量门禁；发布仍属 P5 且需用户授权。
-
-## 3. 本轮验收矩阵
-
-| 能力 | 通过条件 | 证据 |
+| 阶段 | 状态 | 交付与退出条件 |
 | --- | --- | --- |
-| 构建/启动 | 脚本可从仓库根构建两个正式二进制并打开真窗口；重复启动不产生双 Host。 | ✅ `./scripts/pawork-desktop.sh build/start`；独立 `desktop` 实例；Connected 真窗口 |
-| 项目 | UI 可将一个真实目录注册为 workspace/project，并显示可辨识项目名。 | ✅ `Add project…` 选择仓库根；Host `workspace_add`；Scope 显示 `Pawork`。✅ P1 片 2C：系统选择器登记第二真实项目 `p1-2c-proj`，scope 切换与双粒度重开复现项目集合 |
-| 对话与文件 | 消息实际发送；Agent 完成文件写入；磁盘文件含 `Hello world` 与本轮日期时间。 | ✅ 真实 Provider Run + 显式写入审批；两行标记文件实测生成（一次性产物，已随清理移除） |
-| Git Changes | UI 文件状态、diff 与仓库命令行事实一致；空态/非 Git 目录诚实显示。 | ✅ UI `untracked · +2 / −0`；`git status --short` 与定向 diff 一致 |
-| Terminal | UI 可创建 Terminal、执行只读命令并显示真实 stdout；错误与断线不伪装成功。 | ✅ 真实 PTY 执行 `pwd` 与 `terminal-ok`；可见文本/AX 不再暴露 ANSI/VT 控制串 |
-| 恢复与诚实性 | 重新打开任务或重连后，项目、对话、Changes 与 Terminal 的可恢复部分符合现有协议；不可恢复能力明确说明。 | ✅ P1 片 1：schema v13 `workspace_id=ws-default` 与 Task/Timeline/Changes 跨 Host 重启恢复；Terminal 进程不恢复但 workspace/cwd 仍正确，新 PTY `pwd` 为同一仓库。✅ P1 片 2C：项目集合（schema v14 注册表）与会话归属跨 Desktop 重启、Host 重启 + Reconnect 双粒度复现；断线诚实显示 Disconnected + Reconnect。 |
+| SET-0 文档立项 | 🟢 | 重写活动路线图；建立 Feature Spec、任务书和 Settings GUI 规则；旧 plan 不保留。 |
+| SET-1 契约与 ADR | 🟢 | ADR-046 Accepted（2026-09-01，初始未发布版本不采取兼容策略）；protocol 新词汇 + registry 登记 + 43 帧 golden + typegen 落地，`cargo test -p pawork-protocol --features typegen --offline --lib --tests` 148 绿。 |
+| SET-2 Host 设置门面 | 🟢 | 六入口 handler + descriptor 元数据（`ChannelPreset.display_name`/`auth_methods`）+ `verify_api_key` 验证入口 + Global 层 `write_default_model_pair` + `AuthChanged` 广播落地；四包定向测试全绿。 |
+| SET-3 Settings 壳 | 🔵 | gear、Settings Rail、返回工作台、全宽内容区、路由/焦点/断线态实现完成（工作区，待原任务线审查后另行提交）；只读 Provider 状态接通，无假按钮。 |
+| SET-4 四家认证 | ⚪ | Z.AI/DeepSeek API key；Kimi API key + OAuth；xAI OAuth + API key；每种方法有验证、取消、错误、替换/移除路径。 |
+| SET-5 模型发现与默认项 | ⚪ | 远端目录、静态回退、刷新/来源标签、可运行模型过滤、默认项持久化与 Composer 同步完成。 |
+| SET-6 其余 Settings 面 | ⚪ | 按“通用 → 权限与审批 → 工具与 MCP → 终端 → 外观 → 高级 → 关于”逐页立项；每页须有真实读写能力和独立验收，未接通的页不显示。 |
+| SET-7 真窗口收口 | ⚪ | 四家真实凭证矩阵、重启/断线、键盘/AX、窄窗和 Secret 泄漏检查通过；人工视觉验收单独签字。 |
 
-真窗口证据只用于本轮报告，不重新堆入 `docs/ui-review/`。长期视觉基准只保留 [design/README.md](design/README.md) 所列三张初始设计图。
+每阶段的写入集、命令和停止条件见 [plan/settings.md](plan/settings.md)。阶段失败先收敛当前层，不自动扩大到下一阶段。
 
-## 4. 后续计划
+## 5. 开放决策与硬前置
 
-E0–E2、P1、P2 与 P3 已完成。后续按以下顺序推进；每项在开启前再拆成数小时内可验收的小任务，不预建兼容层或第二套实现。
+| ID | 决策 | 当前状态 |
+| --- | --- | --- |
+| SET-D1 | GUI 如何传入 API key，且不进入 command ledger、事件、DB、日志或可重放响应 | ADR-046（Accepted）拍板：`ApiKeySecret` 非重放单帧内存传递，ledger 只缓存响应，响应/事件只携带脱敏元数据。 |
+| SET-D2 | Settings 所需 GUI capability/wire 是在现有 Auth command 上补字段/开放可用性，还是追加最小 command/query | ADR-046（Accepted）拍板：新增 `auth_set_api_key` / `auth_cancel` / `set_default_model` 命令与 `provider_auth_status` 查询，并开放 `auth_start` / `auth_remove` 的 GUI 可用性。 |
+| SET-D3 | Z.AI 首期只提供 Coding Plan preset，还是同时开放 General API preset | 首期锁定 Coding Plan；General API 后续按真实需求激活。 |
+| SET-D4 | Kimi OAuth 的模型目录是否有稳定、公开且可复用的 contract | 实现时以 Kimi Code 官方行为复核；不稳定则用有版本标记的内置目录。 |
+| SET-D5 | Settings 本地展示偏好是否需要持久化 | 仅路由/展开态可本地保存；业务默认项必须由 Host 持久化。具体形状在对应切片决定，不预建通用 preference 框架。 |
 
-| 优先级 | 主题 | 进入条件 | 退出条件 |
-| --- | --- | --- | --- |
-| ~~P2~~ ✅ | Agent 主路径可靠性（已收口，2026-09-01） | P1 可稳定复现真实 Run | 发送、审批、取消、失败恢复、重放与文件写入形成一条可靠闭环 |
-| ~~P3~~ ✅ | Changes / Terminal / Resources 完整性（已收口，2026-09-01） | P2 产出真实工具与文件事件（已满足） | 三面板只展示 Host 权威数据，关键动作与错误恢复完整 |
-| P4 🔵 | Accessibility 与跨平台（2026-09-01 开启，片 1 审计 ✅） | macOS 核心路径稳定（已满足） | 键盘/AX/VoiceOver 主路径通过；Linux/Windows 能力和缺口有真实平台证据 |
-| P5 | 发布准备 | P1–P4 完成且用户授权发布任务 | License、供应链、安装/升级/回滚和三平台发布门禁另立任务并通过 |
+冻结 wire/config/schema、Secret 生命周期或架构边界变化必须先走 ADR；普通 UI 布局与现有查询消费不借机扩张协议。
 
-## 5. 开放边界
+## 6. 验证与状态回写
 
-- 凭证只从 Pawork 正式 auth store 或显式环境 fallback 读取，不进入脚本、截图、日志、数据库事件或提交文件。
-- 文件与命令操作继续受 Workspace、Policy、Sandbox 与审批约束；检查脚本只对该次 Host 进程显式启用 workspace trust 与 `ask-for-dangerous`，不修改持久配置，写文件仍经显式审批，危险命令仍受闸。
-- Desktop 仍是独立 GPUI 进程，只经 GUI Connection Protocol 访问 Core；不直连 Provider、Git、数据库或 PTY。
-- 若“添加项目”在现有 Desktop 不可达，优先复用冻结的 `workspace_add` 命令；任何需要新增 wire 的方案先停在 ADR 决策。
-- Terminal Stop/Close 与 live exit/failure 事件已经 [ADR-045](docs/adr/ADR-045-terminal-lifecycle-wire-evolution.md) 落地（API 1.3：`terminal_close` + `TerminalExited`，按协商 minor 门控推送），UI Stop/Close 为真实 wire 能力；写入 `exit` 文本冒充终止的伪造路径仍禁止。
-- 发布、提交、推送、生产部署与真实账户变更不在本轮授权范围。
-- P2 遗留观察项（不阻塞；经 P3 片 1 审计判定 ①② 不归 P3，各立独立小任务——①冻结 wire 内 Host 取消收口补 `ToolCompleted{success:false}`，②engine 侧按写入被拒/继续分支措辞）：①审批等待相位取消 run 后，waiting tool call 的工具行显示 "running"，只剩用户决议一条闭合路径；②`checkpoint.snapshot_failed` 文案 "write proceeded without rollback point" 在越界写被工具层拒绝的场景与实际不符；③Desktop 进程被 SIGSTOP ≥30s 后 AX 树永久退化（与 P1 片 2C 窗口异常同类，倾向 macOS 环境非产品缺陷）；④Host 启动 chatgpt probe 401 warn 与重启后 usage ledger record id conflict warn（既有现象）。
-- P3 遗留观察项（不阻塞，归后续任务评估）：①多终端时面板粘住当前终端，外部客户端建的终端需任务往返切换才浮出（running 优先 + 最小 session_id 的选择设计，P4 或独立任务评估）；②Changes Files 清单为 session-diff 语义——无 run 的会话显示 0 files 并如实标注 latest-session，终端直接写入只体现在 Summary 的 dirty_files（设计事实，非缺口）；③Terminal AX stepper 节点 bounds 为固定偏移近似，精确几何归 P4 签字。
+- 纯文档任务：相对链接、状态词汇、外部依据、`git diff --check` 和写入集检查；不运行 Cargo。
+- 实现任务：默认单个 Cargo 进程运行受影响包的 `cargo test -p <crate> --offline --lib --tests`；该包无测试或只需类型检查时才用 `cargo check -p <crate> --offline`。
+- 协议/Secret/持久化改动：对应 golden/typegen、安全种子和泄漏检查不可推迟；真实凭证只从个人 auth backend/环境注入，不写入 fixture。
+- Desktop 改动：先定向测试，再用正式 Host/Desktop 和真实状态做窗口验收；截图不替代宿主/磁盘事实。
+- 完成一片后同步本文件、任务书、产品 Spec 与涉及包的包级 Spec；已完成过程压缩追加到 [docs/history.md](docs/history.md)。
 
-## 6. 计划事实源
+每次收尾至少记录：
 
-- 当前不保留进行中阶段任务书；`plan/` 为空，后续确有需要时再按数小时可验收粒度新建。
-- 活动目标、顺序、状态与候选统一登记在本文；已完成过程只进入 [docs/history.md](docs/history.md)，不回填旧计划。
-- 事实优先级：当前工作区 / 真实运行状态 > 源码与冻结契约 > 本文 > 历史记录。
+```text
+Implemented: <生产路径/用户入口，或 none>
+Validated: <实际命令/检查，或 none + 原因>
+Targeted regressions: <覆盖，或 none>
+Real-world evidence: <环境/账号/窗口，或 pending>
+Known gaps: <剩余缺口与登记位置>
+Full workspace gate: NOT RUN（当前未设置全量门禁）
+```
 
-## 7. 执行与收尾纪律
+## 7. 任务约定
 
-### 7.1 任务开启
-
-- 先写清目标、非目标、验收标准与不改动范围；进包前只读该写入集对应的 `docs/spec/crates/<pkg>.md`。
-- 先确认已有实现和未提交改动，再补剩余缺口；不为未来候选预建抽象、兼容层或第二套实现。
-
-### 7.2 实现
-
-- 保留用户未提交改动；写入集只覆盖当前主路径修复及必要文档/Spec。
-- 涉及 wire/schema/架构红线、生产依赖或发布动作时先停下走 ADR/用户授权。
-
-### 7.3 验证
-
-- 按存在性与 diff → 写入集定向测试 → 正式二进制构建 → 真窗口主路径推进，前一层失败先收敛原因。
-- 默认命令为 `cargo test -p <crate> --offline --lib --tests`；无测试或只需类型检查时用 `cargo check -p <crate> --offline`。多包仍只开一个 Cargo 进程。
-- 不运行 `cargo clean` 或 workspace 全量门禁；只有发布任务另行定义全量门禁。
-
-### 7.4 证据
-
-- “已实现”“自动门禁通过”“真窗口通过”“等待人工验收”“已发布”分别表述。
-- 真窗口结论同时提供 UI 状态与至少一个源码外事实（文件、Git、Host、PTY 或真实 Provider）。
-
-### 7.5 回写与报告
-
-- 每次收尾更新 §1、§3 与 §4；包行为或边界变化同批回写对应 Spec。
-- 完成细节归入 [docs/history.md](docs/history.md)，ROADMAP 不累积过程日志。
-- 最终报告列出实际实现、实际命令/场景、定向回归、真窗口证据、未验证项，并固定声明 `Full workspace gate: NOT RUN（当前未设置全量门禁）`。
+1. 开始前复核源码、当前 diff、相关包 Spec 和真实远程文档；不得按旧计划或记忆改代码。
+2. 写清目标、非目标、验收标准和不改动范围；每片控制在数小时内可独立验证。
+3. 保留用户未提交改动；只触碰当前切片必需文件，不新增包或生产依赖，除非任务已证明必要并获授权。
+4. 改 wire/schema/config/安全语义时先 ADR/golden；用户未 Accepted 前只允许研究和文档起草。
+5. 现有测试能证明行为时不新增测试；确需新增时只覆盖本次主路径，必要时再加一个关键失败路径。
+6. 不执行全量 workspace 门禁、提交、推送或发布，除非用户另行明确要求。

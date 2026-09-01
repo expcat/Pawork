@@ -5,12 +5,12 @@
 //! 逐命令授权均从 registry 派生；未登记 wire 名 fail-closed。headless 与
 //! ACP 消费侧切换在波 B 完成（本波只登记数据，不触碰两通道实现）。
 
-use crate::GuiCapability;
 use crate::headless::wire::SdkCapability;
+use crate::GuiCapability;
 
 use super::command::AppCommand;
 use super::query::AppQuery;
-use super::version::{ApiVersion, V1_0, V1_1, V1_2, V1_3};
+use super::version::{ApiVersion, V1_0, V1_1, V1_2, V1_3, V1_4};
 
 /// GUI 通道访问规格：是否可用 + 命令级所需能力。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -48,7 +48,7 @@ pub const GUI_INTRINSIC_CAPABILITIES: &[GuiCapability] =
     &[GuiCapability::Events, GuiCapability::Snapshots];
 
 static COMMANDS: &[RegistryEntry] = &[
-    // --- AppCommand（19）---
+    // --- AppCommand（23）---
     RegistryEntry {
         wire_name: "core_initialize",
         gui: GuiChannelAccess {
@@ -62,7 +62,10 @@ static COMMANDS: &[RegistryEntry] = &[
     },
     RegistryEntry {
         wire_name: "workspace_add",
-        gui: GuiChannelAccess { available: true, required_capability: None },
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
         headless: None,
         acp: false,
         idempotent: false,
@@ -81,7 +84,10 @@ static COMMANDS: &[RegistryEntry] = &[
     },
     RegistryEntry {
         wire_name: "session_create",
-        gui: GuiChannelAccess { available: true, required_capability: None },
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
         headless: Some(SdkCapability::Sessions),
         acp: true,
         idempotent: false,
@@ -89,7 +95,10 @@ static COMMANDS: &[RegistryEntry] = &[
     },
     RegistryEntry {
         wire_name: "session_open",
-        gui: GuiChannelAccess { available: true, required_capability: None },
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
         headless: Some(SdkCapability::Sessions),
         acp: false,
         idempotent: true,
@@ -97,7 +106,10 @@ static COMMANDS: &[RegistryEntry] = &[
     },
     RegistryEntry {
         wire_name: "session_fork",
-        gui: GuiChannelAccess { available: true, required_capability: None },
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
         headless: Some(SdkCapability::Sessions),
         acp: false,
         idempotent: false,
@@ -118,7 +130,10 @@ static COMMANDS: &[RegistryEntry] = &[
     // 不进入 GuiHost；headless 侧按 Sessions 能力映射（波 B 消费）。
     RegistryEntry {
         wire_name: "session_client_context_replace",
-        gui: GuiChannelAccess { available: false, required_capability: None },
+        gui: GuiChannelAccess {
+            available: false,
+            required_capability: None,
+        },
         headless: Some(SdkCapability::Sessions),
         acp: false,
         idempotent: true,
@@ -127,7 +142,10 @@ static COMMANDS: &[RegistryEntry] = &[
     // RunStart.provider 字段随 1.2 引入（version.rs），条目形状记 1.2。
     RegistryEntry {
         wire_name: "run_start",
-        gui: GuiChannelAccess { available: true, required_capability: None },
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
         headless: Some(SdkCapability::Runs),
         acp: true,
         idempotent: false,
@@ -135,7 +153,10 @@ static COMMANDS: &[RegistryEntry] = &[
     },
     RegistryEntry {
         wire_name: "run_cancel",
-        gui: GuiChannelAccess { available: true, required_capability: None },
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
         headless: Some(SdkCapability::Runs),
         acp: true,
         idempotent: true,
@@ -165,25 +186,62 @@ static COMMANDS: &[RegistryEntry] = &[
     },
     RegistryEntry {
         wire_name: "auth_start",
+        // SET-1（ADR-046）：Provider 认证流改由 GUI 触发；GUI 语义由
+        // ADR-046 D3 在 1.4 锁定，since 记为该语义引入版本。
         gui: GuiChannelAccess {
-            available: false,
+            available: true,
             required_capability: None,
         },
         headless: None,
         acp: false,
         idempotent: false,
-        since: V1_0,
+        since: V1_4,
     },
     RegistryEntry {
         wire_name: "auth_remove",
+        // SET-1（ADR-046）：Provider 认证流改由 GUI 触发；GUI 语义由
+        // ADR-046 D3 在 1.4 锁定，since 记为该语义引入版本。
         gui: GuiChannelAccess {
-            available: false,
+            available: true,
             required_capability: None,
         },
         headless: None,
         acp: false,
         idempotent: true,
-        since: V1_0,
+        since: V1_4,
+    },
+    RegistryEntry {
+        wire_name: "auth_set_api_key",
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
+        headless: None,
+        acp: false,
+        idempotent: true,
+        since: V1_4,
+    },
+    RegistryEntry {
+        wire_name: "auth_cancel",
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
+        headless: None,
+        acp: false,
+        idempotent: true,
+        since: V1_4,
+    },
+    RegistryEntry {
+        wire_name: "set_default_model",
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
+        headless: None,
+        acp: false,
+        idempotent: true,
+        since: V1_4,
     },
     RegistryEntry {
         wire_name: "tool_approve",
@@ -255,10 +313,13 @@ static COMMANDS: &[RegistryEntry] = &[
 ];
 
 static QUERIES: &[RegistryEntry] = &[
-    // --- AppQuery（11）---
+    // --- AppQuery（12）---
     RegistryEntry {
         wire_name: "workspace_list",
-        gui: GuiChannelAccess { available: true, required_capability: None },
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
         headless: None,
         acp: false,
         idempotent: true,
@@ -267,7 +328,10 @@ static QUERIES: &[RegistryEntry] = &[
     // Timeline 分页字段随 1.1 引入（version.rs），条目形状记 1.1。
     RegistryEntry {
         wire_name: "session_get",
-        gui: GuiChannelAccess { available: true, required_capability: None },
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
         headless: Some(SdkCapability::Sessions),
         acp: false,
         idempotent: true,
@@ -275,7 +339,10 @@ static QUERIES: &[RegistryEntry] = &[
     },
     RegistryEntry {
         wire_name: "run_status",
-        gui: GuiChannelAccess { available: true, required_capability: None },
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
         headless: Some(SdkCapability::Runs),
         acp: false,
         idempotent: true,
@@ -283,7 +350,10 @@ static QUERIES: &[RegistryEntry] = &[
     },
     RegistryEntry {
         wire_name: "model_list",
-        gui: GuiChannelAccess { available: true, required_capability: None },
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
         headless: None,
         acp: false,
         idempotent: true,
@@ -291,7 +361,10 @@ static QUERIES: &[RegistryEntry] = &[
     },
     RegistryEntry {
         wire_name: "diff_list_files",
-        gui: GuiChannelAccess { available: true, required_capability: None },
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
         headless: None,
         acp: false,
         idempotent: true,
@@ -299,7 +372,10 @@ static QUERIES: &[RegistryEntry] = &[
     },
     RegistryEntry {
         wire_name: "diff_get",
-        gui: GuiChannelAccess { available: true, required_capability: None },
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
         headless: None,
         acp: false,
         idempotent: true,
@@ -319,7 +395,10 @@ static QUERIES: &[RegistryEntry] = &[
     },
     RegistryEntry {
         wire_name: "quota_overview",
-        gui: GuiChannelAccess { available: true, required_capability: None },
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
         headless: None,
         acp: false,
         idempotent: true,
@@ -350,11 +429,25 @@ static QUERIES: &[RegistryEntry] = &[
     },
     RegistryEntry {
         wire_name: "mcp_list",
-        gui: GuiChannelAccess { available: true, required_capability: None },
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
         headless: None,
         acp: false,
         idempotent: true,
         since: V1_0,
+    },
+    RegistryEntry {
+        wire_name: "provider_auth_status",
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
+        headless: None,
+        acp: false,
+        idempotent: true,
+        since: V1_4,
     },
 ];
 
@@ -375,6 +468,9 @@ pub fn command_wire_name(command: &AppCommand) -> &'static str {
         AppCommand::RunTool { .. } => "run_tool",
         AppCommand::AuthStart { .. } => "auth_start",
         AppCommand::AuthRemove { .. } => "auth_remove",
+        AppCommand::AuthSetApiKey { .. } => "auth_set_api_key",
+        AppCommand::AuthCancel { .. } => "auth_cancel",
+        AppCommand::SetDefaultModel { .. } => "set_default_model",
         AppCommand::ToolApprove { .. } => "tool_approve",
         AppCommand::GitStage { .. } => "git_stage",
         AppCommand::TerminalCreate { .. } => "terminal_create",
@@ -398,6 +494,7 @@ pub fn query_wire_name(query: &AppQuery) -> &'static str {
         AppQuery::SnapshotFetch => "snapshot_fetch",
         AppQuery::PluginList => "plugin_list",
         AppQuery::McpList => "mcp_list",
+        AppQuery::ProviderAuthStatus { .. } => "provider_auth_status",
     }
 }
 
@@ -457,7 +554,9 @@ fn capability_rank(capability: &GuiCapability) -> u8 {
 pub fn gui_supported_capabilities() -> Vec<GuiCapability> {
     let mut capabilities = GUI_INTRINSIC_CAPABILITIES.to_vec();
     for entry in COMMANDS.iter().chain(QUERIES.iter()) {
-        if let (true, Some(capability)) = (entry.gui.available, entry.gui.required_capability.as_ref()) {
+        if let (true, Some(capability)) =
+            (entry.gui.available, entry.gui.required_capability.as_ref())
+        {
             if !capabilities.contains(capability) {
                 capabilities.push(capability.clone());
             }

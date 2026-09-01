@@ -21,12 +21,18 @@ pub struct FirstPartyChannel {
     pub id: &'static str,
     pub kind: ChannelKind,
     pub default_base_url: &'static str,
+    pub display_name: &'static str,
     preset: &'static ChannelPreset,
 }
 
 impl FirstPartyChannel {
     pub fn oauth_preset(&self) -> Option<OAuthPreset> {
         self.preset.oauth_preset()
+    }
+
+    /// Host 声明的认证方法（转发 providers 注册表单点）。
+    pub fn auth_methods(&self) -> &'static [&'static str] {
+        self.preset.auth_methods()
     }
 }
 
@@ -39,6 +45,7 @@ pub static FIRST_PARTY_CHANNELS: LazyLock<Vec<FirstPartyChannel>> = LazyLock::ne
             id: preset.id,
             kind: preset.kind,
             default_base_url: preset.default_base_url,
+            display_name: preset.display_name,
             preset,
         })
         .collect()
@@ -63,10 +70,16 @@ pub fn api_key_channel(id: &str) -> Option<&'static ChannelPreset> {
 ///
 /// Device Flow 只需 device_auth_url；PKCE 需要 auth_url + redirect_uri。
 /// 两者同时提供时 device 优先（Device Flow 无回调端口要求）。
-pub fn oauth_override(config: &pawork_workspace::config::PaworkConfig, id: &str) -> Option<OAuthPreset> {
+pub fn oauth_override(
+    config: &pawork_workspace::config::PaworkConfig,
+    id: &str,
+) -> Option<OAuthPreset> {
     let table = config.extra.get("oauth")?.get(id)?;
     let string_field = |key: &str| -> Option<String> {
-        table.get(key).and_then(|value| value.as_str()).map(String::from)
+        table
+            .get(key)
+            .and_then(|value| value.as_str())
+            .map(String::from)
     };
     let client_id = string_field("client_id")?;
     let token_url = string_field("token_url")?;
@@ -105,7 +118,10 @@ mod tests {
 
     #[test]
     fn first_party_channels_derive_from_provider_registry() {
-        let ids: Vec<&str> = FIRST_PARTY_CHANNELS.iter().map(|channel| channel.id).collect();
+        let ids: Vec<&str> = FIRST_PARTY_CHANNELS
+            .iter()
+            .map(|channel| channel.id)
+            .collect();
         assert_eq!(
             ids,
             [

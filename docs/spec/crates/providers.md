@@ -32,8 +32,8 @@
 | `src/net/sse.rs` | ~450 | 增量 `SseParser`（feed/finish）、`SseEvent` / `SseParseError`、`MAX_BUFFER_BYTES`（1 MiB 缓冲上限，UTF-8 安全跨 chunk） |
 | `src/net/retry.rs` | ~220 | `classify_status` / `classify_request_error`（HTTP 状态与 reqwest 错误 → `ProviderError`，解析 `Retry-After`，消息脱敏）、`parse_retry_after` |
 | `src/channels/mod.rs` | ~50 | 六通道 feature 门控的模块声明与 re-export |
-| `src/channels/registry.rs` | ~300 | `CHANNEL_REGISTRY`（六行静态 preset）、`ChannelPreset` / `ChannelKind`、`OAuthPreset(Data)` / `OAuthFlow(Data)`、`channel_preset`、`is_enabled`（唯一 cfg 求值点） |
-| `src/channels/api_key.rs` | ~220 | `ApiKeyChannelConfig` / `ApiKeyChannelProvider`：四条 API-key 通道共用适配器；默认 Chat Completions，逐模型显式声明才走 Responses |
+| `src/channels/registry.rs` | ~320 | `CHANNEL_REGISTRY`（六行静态 preset）、`ChannelPreset`（含 `display_name` 与 `auth_methods()` 元数据）/ `ChannelKind`、`OAuthPreset(Data)` / `OAuthFlow(Data)`、`channel_preset`、`is_enabled`（唯一 cfg 求值点） |
+| `src/channels/api_key.rs` | ~230 | `ApiKeyChannelConfig` / `ApiKeyChannelProvider`：四条 API-key 通道共用适配器；默认 Chat Completions，逐模型显式声明才走 Responses；`verify_api_key` 用候选 key 发一次性 `GET /models` 做写前验证（不持久化） |
 | `src/channels/chatgpt.rs` | ~280 | `ChatGptConfig` / `ChatGptProvider`：ChatGPT OAuth 通道（Responses transport、`chatgpt-account-id` / `originator` 头、`client_version` 校验、`DEFAULT_BASE_URL`） |
 | `src/channels/xai.rs` | ~280 | `XaiConfig` / `XaiProvider`：xAI Grok OAuth 通道，按模型 capability 声明选 Responses 或 Chat Completions；`xai_builtin_models` / `DEFAULT_BASE_URL` |
 | `src/channels/anthropic/mod.rs` | ~20 | re-export 与 `ANTHROPIC_VERSION`（`anthropic-version` 头值） |
@@ -54,6 +54,7 @@ trait 面为 `id()` / `list_models(credential)` / `stream(request, sink, cancel)
 - `ChatGptProvider`（feature `chatgpt-oauth`）：内部复用 `ResponsesTransport`；OAuth Bearer + `chatgpt-account-id`（构造入参或从 id_token JWT claim 提取）+ `originator: codex_cli_rs` 头；`client_version` 字符集校验，`/models?client_version=` 过滤目录。
 - `XaiProvider`（feature `xai-oauth`）：OAuth Bearer；按模型 capability 的 `transport` 声明路由 Responses / Chat Completions。
 - `ApiKeyChannelProvider`（任一 API-key feature）：以 `&'static ChannelPreset` 构造，构造期 fail-closed——preset 必须是 `ChannelKind::ApiKey` 且 `is_enabled`，凭证必须存在且为 API key 形态，config 固定头不得含凭证头。
+- `verify_api_key(config, candidate_key)`（async，任一 API-key feature）：SET-2 写前验证入口——用候选 key 构造一次性 adapter 发 `GET /models`，只返回 `Ok(())` / `ProviderError`；key 只在内存短暂停留、不落任何后端，供宿主 `auth_set_api_key` 在 `store_default_api_key` 之前校验。
 
 四种 transport 形态对照：
 
@@ -66,7 +67,7 @@ trait 面为 `id()` / `list_models(credential)` / `stream(request, sink, cancel)
 
 ### 3.2 通道注册表（channels/registry）
 
-`CHANNEL_REGISTRY: &[ChannelPreset]` 六行（顺序即 `pawork models` / `auth list` 展示顺序）；行本身**不带 cfg**，feature 是数据字段，`is_enabled(preset)` 是唯一的 `cfg!` 求值点（未知 feature 名返回 false，fail-closed）。`channel_preset(id)` 按 id 查行；`ChannelPreset::oauth_preset()` 把 const 镜像 `OAuthPresetData` 转运行期 `OAuthPreset { client_id, token_url, scopes, flow }`（与 config `[oauth.<id>]` 覆盖共用同一形状）。
+`CHANNEL_REGISTRY: &[ChannelPreset]` 六行（顺序即 `pawork models` / `auth list` 展示顺序）；行本身**不带 cfg**，feature 是数据字段，`is_enabled(preset)` 是唯一的 `cfg!` 求值点（未知 feature 名返回 false，fail-closed）。`channel_preset(id)` 按 id 查行；`ChannelPreset::oauth_preset()` 把 const 镜像 `OAuthPresetData` 转运行期 `OAuthPreset { client_id, token_url, scopes, flow }`（与 config `[oauth.<id>]` 覆盖共用同一形状）。`ChannelPreset` 另携带 `display_name`（品牌展示名）与 `auth_methods()`（ApiKey 通道返回 api_key、OAuth 通道返回 oauth），SET-2 GUI Settings 的通道 descriptor 与认证方式列表直接由此派生，宿主 / Desktop 不自建品牌表。
 
 | provider_id | 凭证形态（ChannelKind） | 默认协议 / endpoint | feature | OAuth 流 |
 | --- | --- | --- | --- | --- |

@@ -1,6 +1,6 @@
 # Pawork Spec 文档集
 
-> 基线日期：2026-08-31。状态：**现行（Living）**。本目录描述 Pawork 当前产品范围、需求、可见能力、稳定契约、安全边界、Desktop、验证与运维约束，并承载 **21 个包的逐包 Spec** 与跨包链路速览；它是跨事实源的产品化索引与包内功能的文档化镜像，**不是源码、协议形状或阶段状态的新事实源**。
+> 基线日期：2026-09-01。状态：**现行（Living）**。本目录描述 Pawork 当前产品范围、需求、可见能力、稳定契约、安全边界、Desktop、验证与运维约束，并承载 **21 个包的逐包 Spec** 与跨包链路速览；它是跨事实源的产品化索引与包内功能的文档化镜像，**不是源码、协议形状或阶段状态的新事实源**。
 
 ## 1. 文档范围
 
@@ -13,6 +13,7 @@
 | [contracts.md](contracts.md) | 哪些 API、wire、磁盘格式与安全语义已经冻结，如何演进？ |
 | [security.md](security.md) | 资产、信任边界、威胁、Policy、Sandbox、Secret 与路径要求是什么？ |
 | [desktop.md](desktop.md) | Desktop 的信息架构、交互流程、状态、可访问性与验收边界是什么？ |
+| [settings.md](settings.md) | 已立项的 Settings 如何管理供应商认证、模型发现、默认项与后续设置页？ |
 | [verification.md](verification.md) | 需求如何映射到自动化、golden、真实冒烟和人工证据？当前缺口是什么？ |
 | [operations.md](operations.md) | 如何启动、配置、诊断、备份与恢复本机实例？当前发布/运维边界是什么？ |
 | [backlog.md](backlog.md) | 已确认扩展、未排期候选、排除项和候选转正闸门是什么？ |
@@ -31,7 +32,7 @@
 | [crates/exec.md](crates/exec.md) | `pawork-exec` | 进程执行 / 沙箱（Seatbelt/Landlock/AppContainer）/ PTY |
 | [crates/tools.md](crates/tools.md) | `pawork-tools` | 八个内置工具 + ToolScheduler + MCP client |
 | [crates/workspace.md](crates/workspace.md) | `pawork-workspace` | workspace 服务、file_index、resources、六层配置、五来源导入 |
-| [crates/storage.md](crates/storage.md) | `pawork-storage` | SQLite Actor + session 事件存储（schema v13）+ PWB1 blob |
+| [crates/storage.md](crates/storage.md) | `pawork-storage` | SQLite Actor + session 事件存储（schema v14）+ PWB1 blob |
 | [crates/providers.md](crates/providers.md) | `pawork-providers` | HTTP/SSE 传输 + registry/pricing/usage/negotiate/reasoning + 六通道 adapter |
 | [crates/auth.md](crates/auth.md) | `pawork-auth` | Secret 后端、OAuth（PKCE/Device）、credential locator、脱敏 |
 | [crates/git.md](crates/git.md) | `pawork-git` | Diff/Status/GitService/HunkStage/worktree/merge |
@@ -86,7 +87,8 @@ Spec 中的能力状态不替代验证结论。某项“已实现”只说明生
 | V1 | P0–P19 | 历史任务书到 **P19**；共 224 个编号任务。P19-1～P19-16 为 Designed/未开始。2026-08-17 随 V1 归档。 |
 | V2 | S0–S13 | 已于 2026-08-18 收官；交付摘要见 [history.md](../history.md)。 |
 | V3 结构线 | R0–R9 | 已归档；旧编号和过程只在 [history](../history.md) / git 历史中检索。 |
-| 真实 Desktop 线 | E0–E2 / P1–P5 | E0–E2 真实核心路径已验证；当前从 P1 项目与会话生命周期继续，完成状态与后续优先级只看 [ROADMAP](../../ROADMAP.md)。 |
+| 真实 Desktop 线 | E0–E2 / P1–P4 | 旧阶段已经停止承载活动计划；完成事实见 [history](../history.md)。 |
+| Settings 线 | SET-0～SET-7 | SET-0 立项与 ADR-046 拍板；SET-1/SET-2 已实现并通过定向测试，SET-3 起未开始；状态与顺序只看 [ROADMAP](../../ROADMAP.md)。 |
 
 因此不会创建 P20 作为当前阶段。本目录使用领域化 Spec 名称；下一产品线的版本名和阶段编号只在用户选择真实产品目标并立项后确定。
 
@@ -97,5 +99,5 @@ Spec 中的能力状态不替代验证结论。某项“已实现”只说明生
 - Desktop 流程或可访问性变化：以 [gui-design.md](../gui-design.md) 和 [design/README.md](../../design/README.md) 为视觉/交互事实源，同批更新 `desktop.md`。
 - **包级 Spec**：写入集改了模块树、对外 API、`pawork-*` 依赖边、feature 门、红线相关行为或测试资产时，同批更新该包 `crates/<pkg>.md`；冲突以源码为准并回写。固定八节结构：职责与边界 · 模块树 · 对外 API 面 · 关键行为与语义 · 依赖与 feature · 红线与不变量 · 测试与 golden 资产 · 相关文档。
 - 验证只记录实际执行的命令与证据；缺凭证、缺平台或未签字必须如实标为 pending/fail-closed。
-- 小功能直接在 ROADMAP 当前切片写清需求；只有跨任务共享且信息量足够时才从 [feature-template.md](feature-template.md) 建独立 Feature Spec。
+- 小功能直接在 ROADMAP 当前切片写清需求；像 Settings 这样跨协议、Secret、Provider 与 Desktop 的功能才从 [feature-template.md](feature-template.md) 建独立 Feature Spec。
 - 发布、License、安装器、三平台与供应链门禁未经用户明确授权，不得从候选改写成已交付。

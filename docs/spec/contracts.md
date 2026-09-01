@@ -21,8 +21,8 @@
 | CON-BLOB-01 | Artifact/Protected Blob | `PWB1_MAGIC`，`PWB1_VERSION = 1`；protected 使用 AEAD | checkpoint/reasoning → artifact/protected stores | [blob](../../crates/storage/src/blob)；[PWB1 golden](../../crates/storage/tests/golden) |
 | CON-POLICY-01 | Policy 决策 | `PolicyDecision` 四变体；`ApprovalMode` 五档，默认 `ReadOnly` | tools/app → CLI/Desktop/exec | [policy](../../crates/policy/src)；[security.md](security.md) |
 | CON-CONFIG-01 | 配置 schema/层级 | `Builtin < Global < Profile < Workspace < Session < Run`；`ProviderConfig` 无 `api_key` | workspace loader → app/providers | [workspace config](../../crates/workspace/src/config) |
-| CON-GUI-01 | GUI Connection Protocol | API `1.2`；支持 `1.0/1.1/1.2`；`ClientFrame`/`ServerFrame`；上限 1 MiB | app GUI host ↔ client/Desktop | [protocol](../../crates/protocol/src)；[schemas/gui-protocol](../../schemas/gui-protocol)；protocol fixtures/golden |
-| CON-REGISTRY-01 | Command/Capability Registry | 19 `AppCommand`、11 `AppQuery`；GUI/headless/ACP 可用性同源 | protocol registry → app/cli/client | [registry](../../crates/protocol/src/app/registry.rs) |
+| CON-GUI-01 | GUI Connection Protocol | API `1.4`；支持 `1.0/1.1/1.2/1.3/1.4`；`ClientFrame`/`ServerFrame`；上限 1 MiB | app GUI host ↔ client/Desktop | [protocol](../../crates/protocol/src)；[schemas/gui-protocol](../../schemas/gui-protocol)；protocol fixtures/golden |
+| CON-REGISTRY-01 | Command/Capability Registry | 23 `AppCommand`、12 `AppQuery`；GUI/headless/ACP 可用性同源 | protocol registry → app/cli/client | [registry](../../crates/protocol/src/app/registry.rs) |
 | CON-HEADLESS-01 | Headless JSON | 与 GUI 帧正交的 request/response JSONL；stdout-only | CLI stdio ↔ SDK/automation | [headless protocol](../../crates/protocol/src/headless)；[schemas/headless-json](../../schemas/headless-json) |
 | CON-ACP-01 | ACP 映射 | ACP adapter 只接 registry 允许的能力，未登记拒绝 | IDE/ACP client ↔ CLI/AppCore | [CLI ACP](../../crates/cli/src/channels/acp)；ACP fixtures |
 | CON-USAGE-01 | Usage 与审计 | usage `dedup_key`；audit 为 JSONL | app/control-plane → usage ledger/audit | [control-plane](../../crates/control-plane/src)；对应 golden |
@@ -77,7 +77,7 @@
 5. 运行该契约的定向测试；真实客户端/旧库升级/人工 UI 证据按风险补齐。
 6. 同批更新 `docs/architecture.md`、本文件、对应包级 Spec（`docs/spec/crates/`）、ROADMAP/任务书和生成 schema。
 
-当前 R1–R10 不授权借 UI polish 或收口任务静默演进 schema/wire。若 design 的真实交互需要新 Host capability，必须先登记为硬前置，按本节流程与 ADR 闸门单独处理。
+当前 Settings 活动线不授权借 UI 实现静默演进 schema/wire。GUI auth status、非重放 Secret 写入、OAuth 进度与默认项 mutation 已经 [ADR-046](../adr/ADR-046-settings-auth-wire-and-secret-transit.md)（Accepted）拍板，按 D1–D6 实施；此外的新演进仍按本节流程与 ADR 闸门单独处理。
 
 ## 6. headless `--json` 与正式 headless 协议映射
 

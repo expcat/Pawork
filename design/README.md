@@ -20,6 +20,8 @@
 
 除以上三张 PNG 外，不再向本目录或 `docs/` 检入真窗口截图、遮罩、差分图、标注图和临时视觉证据。需要复验时重新从当前源码和真实状态采集，结论写入当轮报告，不把历史截图当成当前事实。
 
+Settings 当前没有检入 bitmap 基准。引用设计的结构已固化在 [Settings Spec](../docs/spec/settings.md) 与 [GUI 设计 §3.5](../docs/gui-design.md#35-settings-surface当前设计)：Settings Rail 替换 TaskRail、右侧使用完整内容区、首个页面为模型与供应商。等生产真窗口存在后再判断是否需要补一张定稿图，概念图不作为实现已验收的证据。
+
 ## 2. 布局合同
 
 - 宽屏为三栏：TaskRail 约 288px、Workspace 弹性伸缩、Inspector 约 440px。
@@ -27,6 +29,7 @@
 - Workspace Header 常驻；Timeline 从 Header 下开始阅读，短会话不沉到窗口底部。
 - Composer 常态总高 88–94px，Send/Cancel 使用单一主操作槽；RunStatusBar 高 24px。
 - Inspector 提供 Changes、Terminal、Resources；折叠后 Workspace 扩展，Activity 入口位于 Workspace Header 右侧。
+- Settings 从 `Local` 行 gear 进入；进入后隐藏 Workspace/Inspector，以约 288px Settings Rail + 弹性内容区呈现，1080px 宽时 rail 收敛至 240px。
 - 采用深色桌面工作台语言、8px 间距节奏和克制的 surface 层级。生产色值与尺寸以 `apps/desktop/src/ui/theme.rs` 为事实源，设计图不反向覆盖已验证的可访问性约束。
 
 ## 3. 交互与诚实性
@@ -45,6 +48,8 @@
 3. 用磁盘文件、`git status` / diff 与终端 stdout 交叉核对 UI，不用截图单独证明功能正确。
 4. 对照三张初始设计图检查信息架构、层级、密度和主操作可达性；动态内容不同不构成通过或失败的唯一依据。
 5. 自动检查、真窗口验收、人工视觉签字和发布状态分别记录，不能互相替代。
+
+Settings 另需检查供应商认证状态、模型目录来源、secure input、断线 fail-closed 与返回工作台状态保持；详见 [Settings 验证计划](../docs/spec/settings.md#8-验证计划)。
 
 ## 5. 非目标
 

@@ -6,8 +6,8 @@ use async_trait::async_trait;
 use pawork_domain::{AgentEventEnvelope, CancellationToken, EventId, RunId, SessionId};
 use pawork_engine::{now_timestamp, AgentEventSink, EngineError};
 use pawork_protocol::{
-    AppEvent, AppEventEnvelope, DiagnosticLevel, EventSource, EventStream, GlobalSequence,
-    RunState, API_VERSION,
+    AppEvent, AppEventEnvelope, AuthChangeState, DiagnosticLevel, EventSource, EventStream,
+    GlobalSequence, RunState, API_VERSION,
 };
 use serde_json::Value;
 
@@ -163,6 +163,34 @@ impl GuiEventBus {
             timestamp: now_timestamp(),
             source: EventSource::Core,
             payload: event,
+        };
+        self.hub.publish(app_envelope);
+    }
+
+    /// 发布 provider 认证变更事件（ADR-046 D3）：Global 流、Provider 来源。
+    /// global_sequence 由 hub 统一重写；stream_sequence 沿用临时 Global
+    /// 事件的既有约定置 0（与 publish_lagged_degrade / publish_terminal 一致）。
+    pub(in crate::gui_host) fn publish_provider_auth(
+        &self,
+        instance: pawork_domain::CoreInstanceId,
+        provider_id: &pawork_domain::ProviderId,
+        state: AuthChangeState,
+    ) {
+        let app_envelope = AppEventEnvelope {
+            api_version: API_VERSION,
+            instance_id: instance,
+            event_id: self.next_event_id(),
+            global_sequence: GlobalSequence(0),
+            stream: EventStream::Global,
+            stream_sequence: 0,
+            timestamp: now_timestamp(),
+            source: EventSource::Provider {
+                provider_id: provider_id.clone(),
+            },
+            payload: AppEvent::AuthChanged {
+                provider_id: provider_id.clone(),
+                state,
+            },
         };
         self.hub.publish(app_envelope);
     }

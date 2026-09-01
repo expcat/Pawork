@@ -6,16 +6,16 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use pawork_domain::{ActorId, ConnectionId, GuiClientId};
+use pawork_protocol::app::registry::{command_entry, query_entry, RegistryEntry};
+use pawork_protocol::codec::decode_client_frame;
 use pawork_protocol::{
     compute_resume_disposition, decode_client_frame_checked, encode_server_frame,
     validate_server_frame_api_version, ActorIdentity, ApiVersion, AppCommandEnvelope,
-    AppQueryEnvelope, AppResponseEnvelope, ClientFrame, CommandSource, EventStream,
-    GlobalSequence, GuiCapability, HandshakeRequest, HandshakeResponse, HandshakeSession,
-    ProtocolError, ProtocolErrorCode, ProtocolErrorEnvelope, ResumeContext, ResumeDisposition,
-    ResumeRequest, ResumeResponse, ServerFrame, SnapshotSectionKind,
+    AppQueryEnvelope, AppResponseEnvelope, ClientFrame, CommandSource, EventStream, GlobalSequence,
+    GuiCapability, HandshakeRequest, HandshakeResponse, HandshakeSession, ProtocolError,
+    ProtocolErrorCode, ProtocolErrorEnvelope, ResumeContext, ResumeDisposition, ResumeRequest,
+    ResumeResponse, ServerFrame, SnapshotSectionKind,
 };
-use pawork_protocol::app::registry::{command_entry, query_entry, RegistryEntry};
-use pawork_protocol::codec::decode_client_frame;
 use pawork_transport::{
     ConnectionInfo, GuiConnection, TransportError, TransportErrorKind, TransportFrame,
 };
@@ -153,47 +153,42 @@ async fn run(
 
     if granted.contains(&GuiCapability::Snapshots) {
         match snapshot_for_client(inner.as_ref(), &client_id).await {
-        Ok(snapshot) => {
-            if send_frame(
-                connection.as_ref(),
-                &ServerFrame::Snapshot(snapshot),
-                Some(negotiated),
-            )
-            .await
-            .is_err()
-            {
-                inner.connections.unregister(&client_id);
-                if let Err(error) = connection.close().await {
-                    tracing::debug!(%client_id, %error, "gui connection close failed after snapshot send error");
+            Ok(snapshot) => {
+                if send_frame(
+                    connection.as_ref(),
+                    &ServerFrame::Snapshot(snapshot),
+                    Some(negotiated),
+                )
+                .await
+                .is_err()
+                {
+                    inner.connections.unregister(&client_id);
+                    if let Err(error) = connection.close().await {
+                        tracing::debug!(%client_id, %error, "gui connection close failed after snapshot send error");
+                    }
+                    return;
                 }
-                return;
+            }
+            Err(error) => {
+                tracing::warn!(%client_id, %error, "initial snapshot failed");
+                if let Err(error) = send_frame(
+                    connection.as_ref(),
+                    &ServerFrame::Error(ProtocolErrorEnvelope {
+                        request_id: None,
+                        error: host_error_to_protocol(&error),
+                    }),
+                    Some(negotiated),
+                )
+                .await
+                {
+                    tracing::debug!(%client_id, %error, "gui snapshot error frame dropped");
+                }
             }
         }
-        Err(error) => {
-            tracing::warn!(%client_id, %error, "initial snapshot failed");
-            if let Err(error) = send_frame(
-                connection.as_ref(),
-                &ServerFrame::Error(ProtocolErrorEnvelope {
-                    request_id: None,
-                    error: host_error_to_protocol(&error),
-                }),
-                Some(negotiated),
-            )
-            .await
-            {
-                tracing::debug!(%client_id, %error, "gui snapshot error frame dropped");
-            }
-        }
-    }
     }
 
     let (stop_tx, stop_rx) = oneshot::channel();
-    let _forwarder = spawn_forwarder(
-        Arc::clone(&inner),
-        client_id.clone(),
-        stop_rx,
-        host_tx,
-    );
+    let _forwarder = spawn_forwarder(Arc::clone(&inner), client_id.clone(), stop_rx, host_tx);
 
     let mut watchdog = interval(watchdog_interval(
         inner.connections.config().heartbeat_timeout,
@@ -352,10 +347,7 @@ async fn handshake_phase(
         return None;
     };
     let current = inner.host.current_sequence();
-    let earliest_available = inner
-        .host
-        .earliest_available()
-        .unwrap_or(GlobalSequence(0));
+    let earliest_available = inner.host.earliest_available().unwrap_or(GlobalSequence(0));
     let session = HandshakeSession::new(client_id.clone(), connection_id.clone())
         .with_resume_context(ResumeContext {
             earliest_available,
@@ -414,10 +406,7 @@ fn host_stamp_command(
     envelope
 }
 
-fn host_stamp_query(
-    mut envelope: AppQueryEnvelope,
-    client_id: &GuiClientId,
-) -> AppQueryEnvelope {
+fn host_stamp_query(mut envelope: AppQueryEnvelope, client_id: &GuiClientId) -> AppQueryEnvelope {
     envelope.source = CommandSource::LocalGui {
         client_id: client_id.clone(),
     };
@@ -428,11 +417,7 @@ fn host_stamp_query(
     envelope
 }
 
-async fn handle_frame(
-    inner: &Inner,
-    frame: ClientFrame,
-    client_id: &GuiClientId,
-) -> FrameOutcome {
+async fn handle_frame(inner: &Inner, frame: ClientFrame, client_id: &GuiClientId) -> FrameOutcome {
     match frame {
         ClientFrame::Command(envelope) => {
             let granted = granted_capabilities_for(inner, client_id);
@@ -446,18 +431,20 @@ async fn handle_frame(
             }
             let stamped = host_stamp_command(envelope, client_id);
             match inner.host.command(&stamped).await {
-                Ok(response) => FrameOutcome::Reply(vec![ServerFrame::Response(
-                    AppResponseEnvelope {
+                Ok(response) => {
+                    FrameOutcome::Reply(vec![ServerFrame::Response(AppResponseEnvelope {
                         api_version: stamped.api_version,
                         request_id: pawork_domain::QueryId::from(stamped.command_id.as_str()),
                         responded_at: now_timestamp(),
                         response,
-                    },
-                )]),
-                Err(error) => FrameOutcome::Reply(vec![ServerFrame::Error(ProtocolErrorEnvelope {
-                    request_id: Some(stamped.command_id.as_str().to_string()),
-                    error: host_error_to_protocol(&error),
-                })]),
+                    })])
+                }
+                Err(error) => {
+                    FrameOutcome::Reply(vec![ServerFrame::Error(ProtocolErrorEnvelope {
+                        request_id: Some(stamped.command_id.as_str().to_string()),
+                        error: host_error_to_protocol(&error),
+                    })])
+                }
             }
         }
         ClientFrame::Query(envelope) => {
@@ -472,18 +459,20 @@ async fn handle_frame(
             // SessionGet 的 timeline 分页由 host.query() 内部执行（S7 wave A
             // 曾在此预调用一次并丢弃结果，导致带分页参数的查询执行两遍）。
             match inner.host.query(&stamped).await {
-                Ok(response) => FrameOutcome::Reply(vec![ServerFrame::Response(
-                    AppResponseEnvelope {
+                Ok(response) => {
+                    FrameOutcome::Reply(vec![ServerFrame::Response(AppResponseEnvelope {
                         api_version: stamped.api_version,
                         request_id: stamped.request_id.clone(),
                         responded_at: now_timestamp(),
                         response,
-                    },
-                )]),
-                Err(error) => FrameOutcome::Reply(vec![ServerFrame::Error(ProtocolErrorEnvelope {
-                    request_id: Some(stamped.request_id.as_str().to_string()),
-                    error: host_error_to_protocol(&error),
-                })]),
+                    })])
+                }
+                Err(error) => {
+                    FrameOutcome::Reply(vec![ServerFrame::Error(ProtocolErrorEnvelope {
+                        request_id: Some(stamped.request_id.as_str().to_string()),
+                        error: host_error_to_protocol(&error),
+                    })])
+                }
             }
         }
         ClientFrame::ArtifactRead(request) => FrameOutcome::Reply(vec![capability_error_frame(
@@ -569,10 +558,7 @@ async fn handle_resume(
     request: ResumeRequest,
 ) -> FrameOutcome {
     let current = inner.host.current_sequence();
-    let earliest = inner
-        .host
-        .earliest_available()
-        .unwrap_or(GlobalSequence(0));
+    let earliest = inner.host.earliest_available().unwrap_or(GlobalSequence(0));
     // Resume 用请求中的 last_global_sequence；为 0 时回落到 Ack 记录，
     // 使 Ack 能影响后续 Resume disposition。
     let last = if request.last_global_sequence.0 == 0 {
@@ -920,16 +906,23 @@ fn manager_error_frame(request_id: Option<String>, error: &ManagerError) -> Serv
 
 fn host_error_to_protocol(error: &GuiHostError) -> ProtocolError {
     // ADR-045：not_found 是 wire 承诺的可观察语义（terminal_close 幂等
-    // 边界：未知/重复 id 报 not_found），映射到既有 RequestNotFound 码，
-    // 客户端可据码收敛而非解析 message；其余宿主错误维持 Internal 不变。
+    // 边界：未知/重复 id 报 not_found），映射到既有 RequestNotFound 码。
+    // ADR-046：busy 与校验失败类是 Settings 入口的语义码，分别映射到
+    // Busy / ValidationFailed；客户端可据码收敛而非解析 message。
+    // 其余宿主错误维持 Internal 不变。
     let code = match error.code.as_str() {
         "not_found" => ProtocolErrorCode::RequestNotFound,
+        "busy" => ProtocolErrorCode::Busy,
+        "auth_verify" | "invalid_secret" | "unsupported" | "unknown_provider" | "unknown_model" => {
+            ProtocolErrorCode::ValidationFailed
+        }
         _ => ProtocolErrorCode::Internal,
     };
     ProtocolError {
         code,
         message: error.message.clone(),
-        retryable: error.retryable,
+        // busy 是瞬态：等在途操作结束后重试可能成功。
+        retryable: error.retryable || error.code == "busy",
     }
 }
 
@@ -974,10 +967,11 @@ fn now_timestamp() -> pawork_domain::Timestamp {
 mod tests {
     use super::*;
 
-    /// ADR-045：宿主 not_found（terminal_close 幂等边界）在 wire 上可观察
-    /// 为 RequestNotFound；其余宿主错误维持 Internal。
+    /// ADR-045/ADR-046：宿主语义错误码到 wire 码的映射——not_found →
+    /// RequestNotFound、busy → Busy（可重试）、校验失败类 →
+    /// ValidationFailed；其余宿主错误维持 Internal。
     #[test]
-    fn host_error_maps_not_found_to_request_not_found() {
+    fn host_error_maps_semantic_codes_to_wire_errors() {
         let not_found = host_error_to_protocol(&GuiHostError {
             code: "not_found".into(),
             message: "terminal pty-1 is not registered".into(),
@@ -985,6 +979,22 @@ mod tests {
         });
         assert_eq!(not_found.code, ProtocolErrorCode::RequestNotFound);
         assert_eq!(not_found.message, "terminal pty-1 is not registered");
+
+        let busy = host_error_to_protocol(&GuiHostError {
+            code: "busy".into(),
+            message: "an auth operation for provider glm-coding is already in progress".into(),
+            retryable: false,
+        });
+        assert_eq!(busy.code, ProtocolErrorCode::Busy);
+        assert!(busy.retryable, "busy must be retryable on the wire");
+
+        let auth_verify = host_error_to_protocol(&GuiHostError {
+            code: "auth_verify".into(),
+            message: "API key verification failed: 401".into(),
+            retryable: false,
+        });
+        assert_eq!(auth_verify.code, ProtocolErrorCode::ValidationFailed);
+        assert!(!auth_verify.retryable);
 
         let other = host_error_to_protocol(&GuiHostError {
             code: "policy_denied".into(),
