@@ -200,6 +200,9 @@ pub enum PtyEvent {
     Exit {
         code: Option<i32>,
         signal: Option<String>,
+        /// Waiter 写入退出事实后的权威终态；即使会话已被显式 cleanup
+        /// 从 service map 移除，订阅者仍可无竞态地区分自然退出与 kill。
+        state: PtySessionState,
     },
 }
 
@@ -448,7 +451,7 @@ impl PtyService {
                     Ok(status) => {
                         let code = Some(status.exit_code() as i32);
                         let signal = status_signal(&status);
-                        {
+                        let state = {
                             let mut runtime = waiter_session
                                 .state
                                 .lock()
@@ -459,12 +462,17 @@ impl PtyService {
                             runtime.finished = true;
                             runtime.exit_code = code;
                             runtime.exit_signal = signal.clone();
-                        }
-                        waiter_session.send_event(PtyEvent::Exit { code, signal });
+                            runtime.state
+                        };
+                        waiter_session.send_event(PtyEvent::Exit {
+                            code,
+                            signal,
+                            state,
+                        });
                     }
                     Err(err) => {
                         warn!(error = %err, "pty wait failed");
-                        {
+                        let state = {
                             let mut runtime = waiter_session
                                 .state
                                 .lock()
@@ -475,10 +483,12 @@ impl PtyService {
                             runtime.finished = true;
                             runtime.exit_code = None;
                             runtime.exit_signal = Some(format!("wait error: {err}"));
-                        }
+                            runtime.state
+                        };
                         waiter_session.send_event(PtyEvent::Exit {
                             code: None,
                             signal: Some(err.to_string()),
+                            state,
                         });
                     }
                 }

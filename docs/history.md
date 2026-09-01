@@ -915,3 +915,16 @@ Validated: 真窗口 AX + Host 快照 + ps/SQLite 双证据（实例 p3-3 六场
 Targeted regressions: terminal_close kill+注销+重复 not_found / 自然退出广播 Exited+exit_code / TerminalExited 按协商 minor 门控 / live 终态迟到输出不复活 / Close 回执 remove_terminal / host not_found→RequestNotFound 映射 / golden 34 fixture。
 
 Full workspace gate: NOT RUN（当前未设置全量门禁）。
+
+### 片 4 提交后 Review 修复（2026-09-01）
+
+- typegen 一致性门禁发现 ADR-045 的 API 1.3、`terminal_close`、`TerminalExited` 与 `TerminalExitReason` 尚未同步到检入的 TypeScript schemas；重新生成三组 schema 并由 typegen 测试锁定（core-api 81 / gui-protocol 98 / headless-json 88）。
+- `terminal_close` 原先只调用 `PtyService::kill` 并注销 GuiHost 注册表，PTY service map 与缓冲会永久保留。改为 `PtyService::cleanup`；waiter 把已写入的权威 `PtySessionState` 随内部 `PtyEvent::Exit` 发送，使 cleanup 移除 map 与异步终态广播并发时仍能无竞态地区分 Killed / Exited。Desktop 在请求发出时固定 Stop/Close 意图，避免 cleanup 等待回收后 live Killed 先于回执到达而把 Stop 误当 Close。定向测试钉住 running Close 与自然退出 tombstone Close 后 `session_count == 0`。
+- `TerminalExitReason::Failed` 会把 Desktop runtime_state 置为 `failed`，但旧 gate 只认可 exited / killed，导致 Failed 终端没有恢复动作。Stop/Close 终态谓词纳入 failed，并让视觉、键盘、AX 共用同一 gate；failed 只开放 Close（清理后回到 Start），不直接开放 New，因为 forwarder 断流时 PTY 进程可能仍在运行；断线时 Close 仍 fail-closed。
+- 同批回写 Desktop 产品 Spec、protocol / exec / app / client / desktop 包级 Spec 与 ROADMAP；未增加生产依赖、包或额外 wire 演进。
+
+Validated: `cargo test -p pawork-exec --offline --lib --tests`（64）；`cargo test -p pawork-app --offline --lib --tests`（192）；`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`（153）；`cargo test -p pawork-protocol --offline --features typegen --test typegen -- --nocapture`（1）；`cargo test -p pawork-protocol --offline --lib --tests`（145）；`cargo test -p pawork-client --offline --lib --tests`（41）；`./scripts/pawork-desktop.sh build`（pawork + Desktop 构建通过）；`git diff --check`。
+
+Targeted regressions: PTY service 条目与缓冲清理 / Killed 与自然 Exited 广播状态 / Stop 与 Close 回执顺序无关 / Failed 终端 Close-only 清理后恢复 Start / typegen 检入产物一致性。
+
+Full workspace gate: NOT RUN（当前未设置全量门禁）。

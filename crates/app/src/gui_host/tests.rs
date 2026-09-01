@@ -2411,6 +2411,11 @@
         assert!(matches!(closed, AppResponse::Accepted { .. }));
         let (_, _, reason) = wait_terminal_exited(&mut events, &terminal_id).await;
         assert_eq!(reason, pawork_protocol::TerminalExitReason::Killed);
+        assert_eq!(
+            adapter.pty.session_count(),
+            0,
+            "terminal_close must remove the PTY service entry and buffered state"
+        );
         assert!(
             adapter.terminal_snapshots().iter().all(|entry| {
                 entry.get("terminal_session_id").and_then(Value::as_str)
@@ -2443,4 +2448,21 @@
         let (exit_code, _, reason) = wait_terminal_exited(&mut events, &terminal_id).await;
         assert_eq!(reason, pawork_protocol::TerminalExitReason::Exited);
         assert_eq!(exit_code, Some(0));
+        assert_eq!(
+            adapter.pty.session_count(),
+            1,
+            "natural exit remains as a reconnectable tombstone until close"
+        );
+
+        adapter
+            .command(&command_envelope(AppCommand::TerminalClose {
+                terminal_session_id: terminal_id,
+            }))
+            .await
+            .expect("close exited terminal");
+        assert_eq!(
+            adapter.pty.session_count(),
+            0,
+            "closing an exited tombstone must remove its PTY service entry"
+        );
     }

@@ -12,8 +12,8 @@ use crate::ui::components::panel::Panel;
 use crate::ui::theme::{dark, font, metrics};
 
 use super::{
-    terminal_can_operate, terminal_close_label, terminal_known_exited, terminal_start_enabled,
-    AppView,
+    terminal_can_operate, terminal_can_reopen, terminal_close_label, terminal_known_ended,
+    terminal_start_enabled, AppView,
 };
 
 /// Terminal 页无输出时的占位文案（R2 Wave B）：视觉与 AX 树共用同源。
@@ -264,7 +264,7 @@ impl AppView {
         let size_label = format!("{columns}×{rows}");
         let cwd = terminal.cwd.clone();
         let started = terminal.session_id.is_some();
-        let apply_size = started && !terminal_known_exited(terminal);
+        let apply_size = started && !terminal_known_ended(terminal);
         let owner = terminal.workspace_id.as_deref().unwrap_or("unassigned");
         let mut state_label = terminal.availability_label();
         if terminal.dropped_events > 0 {
@@ -287,7 +287,8 @@ impl AppView {
         );
         let terminal_resize_enabled = terminal_operable && self.terminal_pending_resize.is_none();
         // ADR-045：running 显示 Stop（真实 terminal_close 终止）；已知
-        // exited/killed 显示 Close（清理 Host tombstone 与本地条目）；其余
+        // exited/killed/failed 显示 Close（清理 Host tombstone 与本地条目）；
+        // 其余
         // 状态不占位。在途 close 期间禁用，防连点重复提交。
         let terminal_close_action =
             terminal_close_label(&self.projection.connection, terminal);
@@ -462,7 +463,7 @@ impl AppView {
                             // 口，不伪造旧终端生命周期（G2）。
                             .label(if apply_size {
                                 "Size"
-                            } else if terminal_known_exited(terminal) {
+                            } else if terminal_can_reopen(terminal) {
                                 "New"
                             } else {
                                 "Start"
@@ -488,8 +489,8 @@ impl AppView {
     }
 
     /// ADR-045：Stop（running → terminal_close 终止）与 Close（已知
-    /// exited/killed → terminal_close 清理 Host tombstone）共用一个入口；
-    /// 语义差异由 Host 侧 kill 幂等承载，UI 不重复分叉。
+    /// exited/killed/failed → terminal_close 清理 Host tombstone）共用一个入口；
+    /// Host 侧 cleanup 幂等承载终止/清理，UI 记录请求发出时的动作语义。
     pub(super) fn on_close_terminal(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if self.terminal_pending_close.is_some() {
             return;
@@ -505,7 +506,14 @@ impl AppView {
         let Some(id) = self.projection.terminal.session_id.clone() else {
             return;
         };
-        self.terminal_pending_close = Some(id.clone());
+        let Some(action) = terminal_close_label(
+            &self.projection.connection,
+            &self.projection.terminal,
+        ) else {
+            return;
+        };
+        let remove_on_success = action == "Close";
+        self.terminal_pending_close = Some((id.clone(), remove_on_success));
         self.controller.terminal_close(id);
         cx.notify();
     }
@@ -558,7 +566,7 @@ impl AppView {
     pub(super) fn ensure_terminal(&mut self, _cx: &mut Context<Self>) {
         let terminal = self.projection.terminal.clone();
         if terminal.session_id.is_some() {
-            if !terminal_known_exited(&terminal) {
+            if !terminal_can_reopen(&terminal) {
                 return;
             }
             // G2：已知 exited/killed 的终端，Start 恢复为「新建终端」入口——

@@ -1,6 +1,6 @@
 # Desktop 产品与交互规格
 
-> 基线日期：2026-08-31。生产连接、主要组件链路与 macOS AX 语义基座已经存在；正式 Host/Desktop 的项目、对话、文件、Git Changes 与 Terminal 真实核心路径已通过，状态和后续顺序只看 [ROADMAP](../../ROADMAP.md)。
+> 基线日期：2026-09-01。生产连接、主要组件链路与 macOS AX 语义基座已经存在；正式 Host/Desktop 的项目、对话、文件、Git Changes 与 Terminal 真实核心路径已通过，状态和后续顺序只看 [ROADMAP](../../ROADMAP.md)。
 
 ## 1. 产品定位
 
@@ -26,7 +26,7 @@ flowchart LR
 | Timeline | 用户/助手/工具/诊断/Run 状态、流式内容、审批卡、fork 边界、回到底部 | 变高虚拟化；菜单锚点卸载、follow-scroll 与千级事件仍需按风险定向复验。 |
 | Composer | 多行输入、发送、附件/`@` 引用反馈 | host 已展开 `@token`；无模糊候选浮层。IME、粘贴与草稿仍需系统级人工验收。 |
 | Inspector / Changes | 默认 Changes；顶层 Changes/Terminal/Resources 与二级 Files/Summary 分层；DiffView；折叠态 Header ActivityPopover | 只读；无 stage/unstage/hunk 命令。 |
-| Inspector / Terminal | PTY 创建、输入、resize、流式输出；任务切换隔离草稿；失败、断线与 snapshot 终态诚实显示 | 创建需 Policy；纯文本视图过滤 ANSI/VT 控制序列但不是完整 VT emulator；冻结 wire 无 stop/close 命令与 live exit/failure 事件。 |
+| Inspector / Terminal | PTY 创建、输入、resize、Stop/Close、流式输出与 live/snapshot 终态；任务切换隔离草稿；失败与断线诚实显示 | 创建需 Policy；纯文本视图过滤 ANSI/VT 控制序列但不是完整 VT emulator；ADR-045 的 `terminal_close` / `TerminalExited` 自 API 1.3 起可用，旧 minor 仍只从 snapshot 获知终态。 |
 | Inspector / Resources | MCP server/tool 状态、刷新 | 只读；没有已加载 AGENTS.md/Skills 分区。 |
 
 ## 3. 连接与状态模型
@@ -93,7 +93,7 @@ flowchart LR
 - Changes 的 Files/Summary/DiffView/ActivityPopover 是只读投影；任何 stage/unstage/hunk 都需新增 protocol command、审批语义和 ADR，不得从 UI 直接调用 Git。
 - Resources 只消费 `mcp_list`；无 host query 的“已加载规则”不能伪造占位数据。
 - `@` 引用由 host `expand_at_refs` 解析并作为独立 Text part；Desktop 不自行读取任意文件。候选浮层需新增受控 file-index query。
-- Terminal 只发协议命令；Desktop 不持有本机 PTY 服务。当前仅有 create/write/resize 与流式 output；纯文本展示移除 ANSI/VT 控制序列，但不声称具备终端仿真。stop/close、live exit/failure 若要加入必须先演进 wire/ADR，不能以写入 `exit` 或本地 kill 冒充。Policy 拒绝必须原样 fail-closed。
+- Terminal 只发协议命令；Desktop 不持有本机 PTY 服务。当前使用 create/write/resize/close 与流式 output/exit；Stop/Close 和 live 终态均走 ADR-045 的真实 Host wire，不以写入 `exit` 或本地 kill 冒充。纯文本展示移除 ANSI/VT 控制序列，但不声称具备终端仿真；Policy 拒绝必须原样 fail-closed。
 
 ## 7. 当前验收合同
 

@@ -21,8 +21,8 @@ use crate::ui::theme::{font, metrics};
 use crate::ui::timeline_entry::display_time;
 use crate::ui::{
     activity_header_visibility, rail_project_occurrence_key, rail_session_focus_key,
-    terminal_can_operate, terminal_close_label, terminal_known_exited, terminal_start_enabled,
-    timeline, AppView,
+    terminal_can_operate, terminal_can_reopen, terminal_close_label, terminal_known_ended,
+    terminal_start_enabled, timeline, AppView,
     MenuKind, WORKSPACE_EMPTY_HINT,
 };
 
@@ -1652,7 +1652,7 @@ impl AppView {
         );
         let terminal_resize_enabled = terminal_operable && self.terminal_pending_resize.is_none();
         // 与可见按钮（inspector.rs）同 gate：running → Stop，已知
-        // exited/killed → Close，其余状态不发布节点。
+        // exited/killed/failed → Close，其余状态不发布节点。
         let terminal_close_label =
             terminal_close_label(&self.projection.connection, &self.projection.terminal)
                 .map(|label| match label {
@@ -1788,8 +1788,10 @@ impl AppView {
                     "terminal-start",
                     AxRole::Button,
                     if self.projection.terminal.session_id.is_some() {
-                        if terminal_known_exited(&self.projection.terminal) {
+                        if terminal_can_reopen(&self.projection.terminal) {
                             "Start new terminal"
+                        } else if terminal_known_ended(&self.projection.terminal) {
+                            "Start terminal"
                         } else {
                             "Apply terminal size"
                         }

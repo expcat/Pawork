@@ -87,7 +87,7 @@
   - async 方法：`resize` / `write` / `kill` / `wait_exit` / `cleanup` / `cleanup_owner`（返回清理数）/ `shutdown`。
   - 同步方法：`subscribe`（broadcast 接收器）/ `snapshot` / `read_output(cursor)` / `state` / `list_for_owner` / `session_count`。
   - `PtySnapshot { terminal_id, owner_session, state, size, buffer_start, buffer_end, buffered, exit_code, exit_signal, dropped_events }`。重连协议 = `snapshot()` 拿基线 + `read_output(cursor)` 增量：游标过旧 → `PtyError::StaleCursor{requested, available_from}`（应重新 snapshot）；未来游标 → `FutureCursor`（输入非法）。
-  - `PtyEvent`：`Output { data, cursor_end }` / `Exit { code, signal }`（broadcast 容量 256；慢消费者被覆写的事件计入 `dropped_events`）。
+  - `PtyEvent`：`Output { data, cursor_end }` / `Exit { code, signal, state }`（`state` 是 waiter 写入退出事实后的权威 `PtySessionState`，显式 cleanup 与订阅消费并发时仍可无竞态地区分 Exited/Killed；broadcast 容量 256，慢消费者被覆写的事件计入 `dropped_events`）。
   - `PtySessionState`：`Running / Exited / Killed`；`PtyError` 10 变体：`NotFound / Ownership / Closed / StaleCursor / FutureCursor / Create / Spawn / ProcessTree / Io / ShuttingDown`。
   - `OwnerSessionId` / `TerminalId`：字符串 newtype（本包不依赖 domain 的 ID 类型）。
 - `RingBuffer::new(capacity)` / `push` / `read_since(cursor)` / `start()` / `end()`；`OutputCursor` 单调递增，容量满丢最老字节。
@@ -128,7 +128,7 @@
 ### 4.5 PTY 会话生命周期
 
 1. `create`：拒绝 shutdown 中的服务 → `spawn_blocking` 内持全局 `PTY_SPAWN_LOCK` 短临界区 openpty + spawn + `attach_external`（portable-pty 的 Unix spawn 在 `pre_exec` 配置 session/TTY，并发进入是未定义行为；子进程经 `setsid` 成组长满足 attach 前置）→ 注册 `SessionInner`。
-2. Reader 专用 OS 线程：8 KiB 块阻塞读 master → `RingBuffer.push`（容量满丢最老）→ broadcast `Output{data, cursor_end}`。Waiter 专用 OS 线程：`child.wait()` → 置 `Exited`（或保持 `Killed`）+ exit_code/signal → 发 `Exit` → 幂等释放句柄并通知 `closed`。
+2. Reader 专用 OS 线程：8 KiB 块阻塞读 master → `RingBuffer.push`（容量满丢最老）→ broadcast `Output{data, cursor_end}`。Waiter 专用 OS 线程：`child.wait()` → 置 `Exited`（或保持 `Killed`）+ exit_code/signal → 发 `Exit{code, signal, state}`（终态随事件携带，不依赖仍在 service map 的快照）→ 幂等释放句柄并通知 `closed`。
 3. `write` / `resize` 经 `spawn_blocking` 转阻塞句柄；`kill` → guard.terminate 整树 + 状态置 `Killed`。
 4. 会话退出后条目**保留**（供重连读缓冲与退出态），由显式 `cleanup` / `cleanup_owner` / `shutdown` 移除；清理等待 waiter 回收子进程至多 `CLEANUP_GRACE = 5s`。
 5. 输出只存在于有界 ring buffer；PTY 原始输出不属于 Agent 事件，不持久化、不重放。

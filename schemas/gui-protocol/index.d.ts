@@ -89,6 +89,7 @@ export type { TeamPresence } from "./TeamPresence";
 export type { TeamRecipients } from "./TeamRecipients";
 export type { TeamTaskState } from "./TeamTaskState";
 export type { TenantId } from "./TenantId";
+export type { TerminalExitReason } from "./TerminalExitReason";
 export type { Timestamp } from "./Timestamp";
 export type { ToolCallId } from "./ToolCallId";
 export type { WindowReadEntry } from "./WindowReadEntry";

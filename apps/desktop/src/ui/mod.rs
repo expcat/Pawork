@@ -387,9 +387,10 @@ pub struct AppView {
     /// create 请求携带的 workspace 相对 cwd：Host 回执不带 cwd（wire 冻
     /// 结），成功后由 UI 补到新终端，避免显示退回默认 "."。
     terminal_pending_create_cwd: Option<String>,
-    /// 单一 Terminal close pending（ADR-045）：防连点重复提交；回执或
-    /// 断连时清除。
-    terminal_pending_close: Option<String>,
+    /// 单一 Terminal close pending（ADR-045）：(terminal id, 请求发出时是否
+    /// 为 Close 清理)。捕获原始 Stop/Close 意图，避免 live Killed 先于命令
+    /// 回执到达时把 Stop 误判为 Close；回执或断连时清除。
+    terminal_pending_close: Option<(String, bool)>,
     /// 待应用的终端尺寸草稿：None 跟随 Host 权威 columns/rows；stepper
     /// 修改产生本地草稿，resize 回执或终端切换后复位。
     terminal_size_draft: Option<(u16, u16)>,
@@ -1268,21 +1269,17 @@ impl AppView {
             ControllerEvent::TerminalCloseSucceeded {
                 terminal_session_id,
             } => {
-                if self.terminal_pending_close.as_deref() == Some(terminal_session_id.as_str()) {
+                let remove_on_success = self
+                    .terminal_pending_close
+                    .as_ref()
+                    .filter(|(pending_id, _)| pending_id == &terminal_session_id)
+                    .map(|(_, remove_on_success)| *remove_on_success);
+                if remove_on_success.is_some() {
                     self.terminal_pending_close = None;
                 }
-                // exited/killed 的 Close 清理路径：Host 已注销且不再发 live
-                // 事件，本地同步移除条目；running 的 Stop 路径终态由 live
-                // TerminalExited 刷新，回执不重复改 projection。
-                if self
-                    .projection
-                    .terminals
-                    .iter()
-                    .find(|terminal| {
-                        terminal.session_id.as_deref() == Some(terminal_session_id.as_str())
-                    })
-                    .is_some_and(terminal_known_exited)
-                {
+                // Close 清理请求按发出时捕获的意图移除；running 的 Stop 即使
+                // live Killed 先到，回执也不移除，仍保留 tombstone 供用户 Close。
+                if remove_on_success == Some(true) {
                     self.projection.remove_terminal(&terminal_session_id);
                     self.status_hint = Some("Terminal closed.".into());
                 }
@@ -1291,7 +1288,11 @@ impl AppView {
                 terminal_session_id,
                 reason,
             } => {
-                if self.terminal_pending_close.as_deref() == Some(terminal_session_id.as_str()) {
+                if self
+                    .terminal_pending_close
+                    .as_ref()
+                    .is_some_and(|(pending_id, _)| pending_id == &terminal_session_id)
+                {
                     self.terminal_pending_close = None;
                 }
                 self.status_hint = Some(format!("Terminal close failed: {reason}"));
@@ -2922,8 +2923,19 @@ pub(crate) fn terminal_can_operate(connection: &ConnectionState, terminal: &Term
         )
 }
 
-/// Host 快照已证明 exited/killed 的终端（不是 Failed 之类的本地降级）。
-pub(crate) fn terminal_known_exited(terminal: &TerminalState) -> bool {
+/// Host 快照或 live TerminalExited 已证明终态的终端。`failed` 只来自
+/// TerminalExitReason::Failed；瞬态 write/resize 错误不会改 runtime_state，
+/// 因此可安全开放 Close，而不会把仍可操作的 running 终端误判为终态。
+pub(crate) fn terminal_known_ended(terminal: &TerminalState) -> bool {
+    matches!(
+        terminal.runtime_state.as_deref(),
+        Some("exited") | Some("killed") | Some("failed")
+    )
+}
+
+/// 只有 Host 已证明进程退出或被终止的终端可直接 New。`failed` 表示
+/// forwarder 断流，进程可能仍在运行，必须先 Close 清理后再 Start。
+pub(crate) fn terminal_can_reopen(terminal: &TerminalState) -> bool {
     matches!(
         terminal.runtime_state.as_deref(),
         Some("exited") | Some("killed")
@@ -2931,7 +2943,7 @@ pub(crate) fn terminal_known_exited(terminal: &TerminalState) -> bool {
 }
 
 /// Terminal Stop/Close 的同槽谓词（ADR-045）：running → Some("Stop")（真实
-/// terminal_close 终止），已知 exited/killed → Some("Close")（清理 Host
+/// terminal_close 终止），已知 exited/killed/failed → Some("Close")（清理 Host
 /// tombstone），其余 None。视觉按钮、AX 节点与键盘路径必须使用同一谓词。
 pub(crate) fn terminal_close_label(
     connection: &ConnectionState,
@@ -2939,7 +2951,7 @@ pub(crate) fn terminal_close_label(
 ) -> Option<&'static str> {
     if terminal_can_operate(connection, terminal) {
         Some("Stop")
-    } else if terminal_known_exited(terminal)
+    } else if terminal_known_ended(terminal)
         && matches!(connection, ConnectionState::Connected { .. })
     {
         Some("Close")
@@ -2949,8 +2961,8 @@ pub(crate) fn terminal_close_label(
 }
 
 /// 底部 Start/Size 的单槽谓词。已知 exited/killed 终端的 Start 恢复为
-/// 「新建终端」入口（旧终端只读保留，不伪造生命周期）；其余 Stale/Failed
-/// 仍锁死；create / resize 在途时同 gate 禁用，防重复提交与迟到回执覆盖。
+/// 「新建终端」入口（旧终端只读保留，不伪造生命周期）；failed 必须先
+/// Close 清理，其余 Stale 状态仍锁死；create / resize 在途时同 gate 禁用。
 pub(crate) fn terminal_start_enabled(
     connection: &ConnectionState,
     terminal: &TerminalState,
@@ -2967,7 +2979,7 @@ pub(crate) fn terminal_start_enabled(
         if terminal_can_operate(connection, terminal) && resize_pending {
             return false;
         }
-        return terminal_can_operate(connection, terminal) || terminal_known_exited(terminal);
+        return terminal_can_operate(connection, terminal) || terminal_can_reopen(terminal);
     }
     true
 }
@@ -3380,9 +3392,11 @@ mod tests {
             ..TerminalState::default()
         };
         assert!(terminal_can_operate(&connected, &terminal));
+        assert_eq!(terminal_close_label(&connected, &terminal), Some("Stop"));
         assert!(terminal_start_enabled(&connected, &terminal, None, false));
         assert!(!terminal_start_enabled(&connected, &terminal, None, true));
         assert!(!terminal_can_operate(&disconnected, &terminal));
+        assert_eq!(terminal_close_label(&disconnected, &terminal), None);
         assert!(!terminal_start_enabled(
             &disconnected,
             &terminal,
@@ -3429,14 +3443,18 @@ mod tests {
         ));
     }
 
-    /// G2：已知 exited/killed 终端的 Start 恢复为「新建终端」入口（可操
-    /// 作性仍锁，输入/Size 不放开）；状态未知的终端不猜生命周期。
+    /// G2 / ADR-045：已知 exited/killed 终端的 Start 恢复为「新建终端」
+    /// 入口；failed 只开放 Close，避免在旧进程可能仍运行时直接 New。
+    /// 状态未知的终端不猜生命周期。
     #[test]
-    fn known_exited_terminal_start_reopens_instead_of_locking() {
+    fn known_terminal_end_states_use_safe_recovery_actions() {
         use crate::projection::TerminalAvailability;
 
         let connected = ConnectionState::Connected {
             instance_id: "instance-1".into(),
+        };
+        let disconnected = ConnectionState::Disconnected {
+            reason: "closed".into(),
         };
         let exited = TerminalState {
             session_id: Some("term-a".into()),
@@ -3449,12 +3467,25 @@ mod tests {
         };
         assert!(!terminal_can_operate(&connected, &exited));
         assert!(terminal_start_enabled(&connected, &exited, None, false));
+        assert_eq!(terminal_close_label(&connected, &exited), Some("Close"));
         assert!(!terminal_start_enabled(
             &connected,
             &exited,
             Some(&"ws-a".to_string()),
             false
         ));
+
+        let failed = TerminalState {
+            session_id: Some("term-failed".into()),
+            runtime_state: Some("failed".into()),
+            availability: TerminalAvailability::Stale {
+                reason: "terminal failed".into(),
+            },
+            ..TerminalState::default()
+        };
+        assert!(!terminal_start_enabled(&connected, &failed, None, false));
+        assert_eq!(terminal_close_label(&connected, &failed), Some("Close"));
+        assert_eq!(terminal_close_label(&disconnected, &failed), None);
 
         let unknown_state = TerminalState {
             session_id: Some("term-b".into()),

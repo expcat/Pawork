@@ -57,7 +57,6 @@ impl GuiHostAdapter {
             return;
         };
         let bus = Arc::clone(&self.bus);
-        let pty = Arc::clone(&self.pty);
         let instance = self.instance.clone();
         let terminal_session_id = terminal_id.as_str().to_string();
         tokio::spawn(async move {
@@ -74,14 +73,18 @@ impl GuiHostAdapter {
                         );
                     }
                     // ADR-045 D2：终态事件上 wire，同一终端只发一条（forwarder
-                    // 是唯一广播点）。reason 以 PtyService 权威运行时状态为准：
-                    // kill 先置 Killed 再触发 waiter 的 Exit，自然退出置 Exited。
-                    Ok(PtyEvent::Exit { code, signal }) => {
-                        let reason = match pty.snapshot(&terminal_id, &owner) {
-                            Ok(snapshot) if snapshot.state == PtySessionState::Killed => {
-                                TerminalExitReason::Killed
-                            }
-                            _ => TerminalExitReason::Exited,
+                    // 是唯一广播点）。PtyEvent 携 waiter 已写入的权威终态，
+                    // 即使 terminal_close 同时 cleanup 移除 service map 条目，
+                    // 仍无竞态地区分 kill 与自然退出。
+                    Ok(PtyEvent::Exit {
+                        code,
+                        signal,
+                        state,
+                    }) => {
+                        let reason = if state == PtySessionState::Killed {
+                            TerminalExitReason::Killed
+                        } else {
+                            TerminalExitReason::Exited
                         };
                         bus.publish_terminal(
                             instance.clone(),
@@ -411,8 +414,9 @@ pub(crate) async fn terminal_resize(
     })
 }
 
-/// ADR-045 D1：终止并注销终端会话。running 终端经 PtyService::kill 终止进程组
-/// （kill 幂等；已自然退出条目仅清理），随后从注册表注销；未知 id 报 not_found。
+/// ADR-045 D1：终止并注销终端会话。running 终端经 PtyService::cleanup
+/// 终止进程组并移除 PTY service 条目（已自然退出条目只做清理），随后从
+/// GuiHost 注册表注销；未知 id 报 not_found。
 /// 终态事件由 forwarder 统一广播（reason=Killed 与自发 Exit 去重），本 handler
 /// 不广播。
 pub(crate) async fn terminal_close(
@@ -429,7 +433,7 @@ pub(crate) async fn terminal_close(
     let owner = adapter.terminal_owner(terminal_session_id)?;
     adapter
         .pty
-        .kill(&TerminalId::new(terminal_session_id), &owner)
+        .cleanup(&TerminalId::new(terminal_session_id), &owner)
         .await
         .map_err(GuiHostAdapter::pty_error)?;
     adapter.forget_terminal(terminal_session_id);
