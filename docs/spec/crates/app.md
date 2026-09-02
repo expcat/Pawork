@@ -91,7 +91,7 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
   - `open_store(path)`：打开会话库跑迁移后读 v14 项目注册表、对 legacy 启动目录补登记（注册表为空时固定 `ws-default`）、按注册表重建 WorkspaceService 与内建工具并预载全部 session 归属绑定；`open_checkpoints(root)` / `open_control_plane(dir)`：分别打开检查点服务、usage/quota/audit 运行时；
   - `register_workspace(root) -> WorkspaceRecord`：持久幂等登记（同 canonical root 复用既有 stable id，同 id 异 root fail-closed），GUI `workspace_add` 入口；
   - `configure_approval(mode, trusted)`：设置审批模式与 workspace 信任并重建 `ToolScheduler` 配置（启动装配专用）；
-  - `set_approval_mode(mode)` / `set_workspace_trusted(trusted)`（SET-6b / ADR-048，pub(crate)）：运行时单字段切换，只改 `ApprovalService` 内存态，对之后启动的 run 生效；不持久化、不影响进行中 run；
+  - `set_approval_mode(mode)` / `set_workspace_trusted(trusted)`（SET-6b / ADR-048，pub(crate)）：运行时单字段切换 `ApprovalService` 内存态，并 Arc-swap 重建 `ToolScheduler`（进行中 run 持有旧 Arc，之后启动的 run 克隆新配置）；不持久化；
   - `prime_extensions()`：file-index 扫描（失败仅 warn）+ MCP auto-start（失败不拖垮装配）。
 - `shutdown(self) -> Result<(), AppError>`：关停 MCP 客户端、落 tasks 快照、关闭 store；消费 self。
 - 只读访问器：`provider_id()` / `model()` / `adapter_protocol()` / `config()` / `auth_backend()` / `store()`（无 store 时 `Err`）/ `workspace_id()` / `workspace_name()` / `workspace_trusted()` / `approval_mode()` / `approval_host()` / `tool_names()` / `turn_context()`；workspace 注册表查询 `registered_workspaces()` / `workspace_by_id()` / `workspace_for_session()` / `latest_session_for_workspace()`。
@@ -251,7 +251,7 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 - **instance 名白名单**：`[A-Za-z0-9._-]` 且禁 `..`，拒绝路径逃逸。
 - **compat import 防 TOCTOU**：apply 前对预览时快照的源文件做字节 + mtime 指纹复核，源已变化则 `sources_unchanged = false` 不落盘。
 - **tasks 快照原子写**：`tasks.json` 先写 `.json.tmp` 再 rename；persist 失败发 degrade 事件，不静默吞错。
-- **工具调度**：`ToolScheduler` 并发上限 8；审批模式或 workspace trust 变更必须重建 scheduler 配置（`configure_approval` / `replace_registry` 负责），禁止运行中就地改。
+- **工具调度**：`ToolScheduler` 并发上限 8；审批模式或 workspace trust 变更必须 Arc-swap 重建 scheduler 配置（`configure_approval` / `replace_registry` / SET-6b `set_approval_mode`/`set_workspace_trusted` 负责），禁止运行中就地改 PolicyEngine。
 
 ## 6. 依赖关系
 
@@ -290,7 +290,7 @@ cargo test -p pawork-app --offline --lib --tests --features ui-fixture
   - ToolApprove 三态：live waiting 不 durable seal / 非 live 有 waiting 投影 durable / 无 waiting 保持 queued；
   - snapshot 重启后重建 pending approvals；SessionCreate / SessionFork（建分支并切换）；
   - provider/model 切换：请求通道直连不走 catalog 顺位、未知 fail-closed、不静默保留旧 id；
-  - SET-2 settings：`auth_set_api_key` 主路径（wiremock 验证 Bearer 命中→原子替换→事件/响应/status 全脱敏）与失败路径（401→`auth_verify` Error、旧凭证保留、Failed 事件无明文）；SET-4 A3 xAI 双认证主路径与替换移除旧 OAuth 各一条；SET-5 `provider_auth_status` 顶层 `default`（已配置→对象取自生效配置而非 core 选中值 / 未配置→null）各一条，`set_default_model` 主路径串联（写盘成功→同会话重查 status `default` 即新 pair，HOME 重定向临时目录）一条；SET-6a `general_settings`/`set_proxy_url`：设置→重查一致、清除→重查 null、非法 URL fail-closed 保旧值且错误文案不含原文（HOME Drop 守卫）各一条；SET-6b 权限与审批：`set_approval_mode`→重查一致（含未知值 `invalid_approval_mode` 保旧）、`workspace_trust` 匹配 attached id→内存切换生效（`core.workspace_trusted()` 即 run 启动快照源）、id 不匹配→`unknown_workspace` fail-closed 保旧各一条；
+  - SET-2 settings：`auth_set_api_key` 主路径（wiremock 验证 Bearer 命中→原子替换→事件/响应/status 全脱敏）与失败路径（401→`auth_verify` Error、旧凭证保留、Failed 事件无明文）；SET-4 A3 xAI 双认证主路径与替换移除旧 OAuth 各一条；SET-5 `provider_auth_status` 顶层 `default`（已配置→对象取自生效配置而非 core 选中值 / 未配置→null）各一条，`set_default_model` 主路径串联（写盘成功→同会话重查 status `default` 即新 pair，HOME 重定向临时目录）一条；SET-6a `general_settings`/`set_proxy_url`：设置→重查一致、清除→重查 null、非法 URL fail-closed 保旧值且错误文案不含原文（HOME Drop 守卫）各一条；SET-6b 权限与审批：`set_approval_mode`→重查一致（含未知值 `invalid_approval_mode` 保旧）且 scheduler 同步 Arc-swap 到新 mode、`workspace_trust` 匹配 attached id→内存切换并重建 scheduler trust、id 不匹配→`unknown_workspace` fail-closed 保旧（含 scheduler）各一条；
   - `GuiRunRegistry` cancel 翻转 token；bus 经 EventHub 发布与 lagged degrade 帧。
 - `hub.rs`：ring 超容量逐出、replay 越界 ReplayUnavailable、全局序连续。
 - `idempotency.rs`：容量逐出、SQLite CAS 权威、键冲突拒绝。

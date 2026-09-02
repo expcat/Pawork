@@ -269,6 +269,10 @@ impl AppView {
                 window.focus(&self.settings_nav_providers_focus);
                 self.on_select_settings_page(SettingsPage::Providers, window, cx);
             }
+            "settings-nav-permissions" => {
+                window.focus(&self.settings_nav_permissions_focus);
+                self.on_select_settings_page(SettingsPage::Permissions, window, cx);
+            }
             "settings-proxy-save" => self.on_settings_proxy_save(cx),
             "settings-proxy-clear" => self.on_settings_proxy_clear(cx),
             // SET-6b：五档选择与可见按钮同源派发（入口复核 gate）；未知
@@ -1598,9 +1602,9 @@ impl AppView {
             y += MODE_ROW_HEIGHT + ROW_GAP;
         }
 
-        // ② 会话信任开关：状态行 + 切换按钮（与 render 同 gate，无
-        // attached workspace 时禁用）。
-        let workspace_attached = self.projection.workspace_id.is_some();
+        // ② 会话信任开关：状态行 + 切换按钮（与 render 同 gate，缺 Host
+        // attached workspace_id 时禁用）。
+        let workspace_attached = state.workspace_id.is_some();
         let trust_enabled = writes && workspace_attached;
         let trust_label = if state.workspace_trusted {
             "取消信任"
@@ -1622,7 +1626,12 @@ impl AppView {
                     "settings-workspace-trust-status",
                     AxRole::StaticText,
                     "会话信任",
-                    AxRect::new(frame.x + 16.0, y, (width - 180.0).max(60.0), MODE_ROW_HEIGHT),
+                    AxRect::new(
+                        frame.x + 16.0,
+                        y,
+                        (width - 180.0).max(60.0),
+                        MODE_ROW_HEIGHT,
+                    ),
                 )
                 .value(format!(
                     "当前 · {trust_state} · 信任当前 workspace（仅本会话，不写盘）"

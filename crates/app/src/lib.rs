@@ -753,6 +753,7 @@ impl AppCore {
         host: Arc<dyn ApprovalPromptHost>,
     ) {
         self.approval.configure(mode, workspace_trusted, host);
+        self.refresh_scheduler_approval();
     }
 
     /// 把目录登记进当前进程的 workspace 集合。生产 `workspace_add` 走
@@ -996,16 +997,35 @@ impl AppCore {
         self.http = http;
     }
 
-    /// SET-6b：set_approval_mode 运行时切换（ADR-048 D2）。只改内存态，
-    /// 对之后启动的 run 生效；不持久化、不影响进行中 run。
+    /// SET-6b：set_approval_mode 运行时切换（ADR-048 D2）。只改内存态并
+    /// Arc-swap scheduler；对之后启动的 run 生效；不持久化、不影响进行中 run。
     pub(crate) fn set_approval_mode(&mut self, mode: ApprovalMode) {
         self.approval.set_mode(mode);
+        self.refresh_scheduler_approval();
     }
 
     /// SET-6b：workspace_trust 运行时切换会话信任（ADR-048 D3）。不写盘，
     /// 重启后跟随 Global 配置；只影响之后启动的 run。
     pub(crate) fn set_workspace_trusted(&mut self, workspace_trusted: bool) {
         self.approval.set_workspace_trusted(workspace_trusted);
+        self.refresh_scheduler_approval();
+    }
+
+    /// 审批模式 / workspace trust 变更后 Arc-swap `ToolScheduler`。进行中
+    /// run 继续持有旧 Arc（快照语义）；禁止就地改 PolicyEngine。
+    fn refresh_scheduler_approval(&mut self) {
+        self.scheduler = Arc::new(
+            self.scheduler
+                .with_approval_snapshot(self.approval.mode(), self.approval.workspace_trusted()),
+        );
+    }
+
+    #[cfg(test)]
+    pub(crate) fn scheduler_approval_snapshot(&self) -> (ApprovalMode, bool) {
+        (
+            self.scheduler.approval_mode(),
+            self.scheduler.workspace_trusted(),
+        )
     }
 
     pub fn auth_backend(&self) -> &Arc<dyn SecretBackend> {

@@ -387,7 +387,9 @@ impl AppView {
         if self.settings_page == SettingsPage::Permissions
             && self.projection.settings_permissions.available
         {
-            return self.settings_permissions_page_element(cx).into_any_element();
+            return self
+                .settings_permissions_page_element(cx)
+                .into_any_element();
         }
         self.settings_providers_page_element(cx).into_any_element()
     }
@@ -851,9 +853,9 @@ impl AppView {
         }
         content = content.child(modes);
 
-        // ② 会话信任开关：workspace_id 取当前 attached；无 attached 时
-        // 禁用（fail-closed，不臆造 id）。
-        let trust_enabled = writes && self.projection.workspace_id.is_some();
+        // ② 会话信任开关：workspace_id 取 Host permissions_settings 透出的
+        // attached id；缺 id 禁用（fail-closed，不猜注册表首项）。
+        let trust_enabled = writes && state.workspace_id.is_some();
         let trust_label = if state.workspace_trusted {
             "取消信任"
         } else {
@@ -1015,7 +1017,9 @@ impl AppView {
         if current {
             row = row.child(
                 div().flex_none().child(
-                    Label::new("当前").size(font::XS).color(dark().accent.primary),
+                    Label::new("当前")
+                        .size(font::XS)
+                        .color(dark().accent.primary),
                 ),
             );
         } else {

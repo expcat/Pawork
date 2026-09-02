@@ -2916,16 +2916,21 @@ mod tests {
     #[test]
     fn permissions_settings_stale_keeps_last_values_and_disables_writes() {
         let mut state = SettingsPermissionsState::default();
-        state.apply_loaded(parse_permissions_settings(&json!({
-            "approval_mode": "ask_for_dangerous",
-            "workspace_trusted": true,
-            "trust_workspaces_global": null,
-            "workspace_id": "workspace-1"
-        }))
-        .expect("parse"));
+        state.apply_loaded(
+            parse_permissions_settings(&json!({
+                "approval_mode": "ask_for_dangerous",
+                "workspace_trusted": true,
+                "trust_workspaces_global": null,
+                "workspace_id": "workspace-1"
+            }))
+            .expect("parse"),
+        );
         assert!(state.writes_enabled(true));
         state.mark_stale("socket closed");
-        assert_eq!(state.approval_mode, Some(ApprovalModeSetting::AskForDangerous));
+        assert_eq!(
+            state.approval_mode,
+            Some(ApprovalModeSetting::AskForDangerous)
+        );
         assert!(state.workspace_trusted);
         assert_eq!(state.trust_workspaces_global, None);
         assert!(state.available);
@@ -2934,7 +2939,10 @@ mod tests {
         assert!(!state.writes_enabled(false));
         // 写失败保旧（fail-closed）：值不动，只记录错误。
         state.apply_failed("set approval mode failed");
-        assert_eq!(state.approval_mode, Some(ApprovalModeSetting::AskForDangerous));
+        assert_eq!(
+            state.approval_mode,
+            Some(ApprovalModeSetting::AskForDangerous)
+        );
         assert!(state.workspace_trusted);
         assert!(state.available);
     }

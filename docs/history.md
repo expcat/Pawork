@@ -1095,4 +1095,6 @@ Real-world evidence: pending（真窗口验收登记 SET-7）。
 
 Known gaps: 持久化 approval_mode 与 Global trust 写登记为后续候选（ADR-048 否决支）；真实窗口/键盘/AX 验收在 SET-7。
 
+提交前复查修复：`set_approval_mode` / `workspace_trust` 漏了 Arc-swap `ToolScheduler`（Settings 改档后之后启动的 run 仍走启动时 ReadOnly/untrusted 闸门）——改为 setter 重建新 Arc，进行中 run 持有旧 Arc；AX Press 补 `settings-nav-permissions`（可见/键盘已通、AX 切页缺 handler）；信任开关 enable 改用 Host `permissions_settings.workspace_id`，不再用 snapshot 注册表首项。
+
 Full workspace gate: NOT RUN（当前未设置全量门禁）。

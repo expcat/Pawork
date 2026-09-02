@@ -29,7 +29,7 @@ flowchart LR
 | Inspector / Changes | 默认 Changes；顶层 Changes/Terminal/Resources 与二级 Files/Summary 分层；DiffView；折叠态 Header ActivityPopover | 只读；无 stage/unstage/hunk 命令。 |
 | Inspector / Terminal | PTY 创建、输入、resize、Stop/Close、流式输出与 live/snapshot 终态；任务切换隔离草稿；失败与断线诚实显示 | 创建需 Policy；纯文本视图过滤 ANSI/VT 控制序列但不是完整 VT emulator；ADR-045 的 `terminal_close` / `TerminalExited` 自 API 1.3 起可用，旧 minor 仍只从 snapshot 获知终态。 |
 | Inspector / Resources | MCP server/tool 状态、刷新 | 只读；没有已加载 AGENTS.md/Skills 分区。 |
-| Settings | 独立 Settings Rail + 全宽内容；首个页面为模型与供应商 | 壳与供应商页已实现：SET-3 落地只读页（gear 进入、返回恢复工作台、断线 stale 标注），SET-4 落地认证写操作（API key secure 输入验证、OAuth 等待/取消、Replace/Remove、AuthChanged 驱动、stale 断线三路径禁写）；其它页面等待 SET-5–SET-6。 |
+| Settings | 独立 Settings Rail + 全宽内容；首个页面为模型与供应商 | 壳与供应商页已实现：SET-3 落地只读页（gear 进入、返回恢复工作台、断线 stale 标注），SET-4 落地认证写操作（API key secure 输入验证、OAuth 等待/取消、Replace/Remove、AuthChanged 驱动、stale 断线三路径禁写）；SET-5 落地模型目录与默认项；SET-6a 通用页（proxy_url）；SET-6b 权限与审批页（会话内 approval mode / workspace trust，不持久化）。其余页等待 SET-6 后续。 |
 
 ## 3. 连接与状态模型
 

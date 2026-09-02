@@ -222,6 +222,32 @@ impl ToolScheduler {
         self.registry.len()
     }
 
+    pub fn approval_mode(&self) -> ApprovalMode {
+        self.config.approval_mode
+    }
+
+    pub fn workspace_trusted(&self) -> bool {
+        self.config.workspace_trusted
+    }
+
+    /// 克隆工具表到新 scheduler，并换上新的审批快照。旧实例（含进行中
+    /// run 持有的 Arc）保持原 PolicyEngine；调用方以 Arc-swap 让之后的
+    /// run 克隆到新配置。
+    pub fn with_approval_snapshot(
+        &self,
+        approval_mode: ApprovalMode,
+        workspace_trusted: bool,
+    ) -> Self {
+        Self::new(
+            self.registry.clone(),
+            ToolSchedulerConfig {
+                max_concurrent: self.config.max_concurrent,
+                approval_mode,
+                workspace_trusted,
+            },
+        )
+    }
+
     /// 按显式工具名调度并执行。
     ///
     /// `approval` 为 `None` 与 [`AutoApproveResolver`] 同等：策略 Allow 时放行，
@@ -981,6 +1007,17 @@ mod tests {
             approval_mode,
             workspace_trusted,
         }
+    }
+
+    #[test]
+    fn with_approval_snapshot_keeps_original_and_retargets_new() {
+        let original = make_scheduler(Vec::new(), policy_config(ApprovalMode::ReadOnly, false));
+        let next = original.with_approval_snapshot(ApprovalMode::AskForWrites, true);
+        assert_eq!(original.approval_mode(), ApprovalMode::ReadOnly);
+        assert!(!original.workspace_trusted());
+        assert_eq!(next.approval_mode(), ApprovalMode::AskForWrites);
+        assert!(next.workspace_trusted());
+        assert_eq!(next.tool_count(), original.tool_count());
     }
 
     #[tokio::test]

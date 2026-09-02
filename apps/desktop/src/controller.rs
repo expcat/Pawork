@@ -1204,11 +1204,7 @@ impl DesktopController {
         let events = self.event_sender();
         self.runtime.spawn(async move {
             match client
-                .query(
-                    general_settings_query(),
-                    command_source(),
-                    actor_identity(),
-                )
+                .query(general_settings_query(), command_source(), actor_identity())
                 .await
             {
                 Ok(response) => match parse_general_settings_response(&response) {

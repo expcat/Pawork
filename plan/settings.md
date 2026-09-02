@@ -222,6 +222,8 @@ SET-5 收口后才逐页立项，不预建通用设置框架：
 
 ### SET-6b — 权限与审批页（approval mode + workspace trust）🟢
 
+> 2026-09-03 推送前复查再修：`set_approval_mode`/`workspace_trust` 补 ToolScheduler Arc-swap（否则之后 run 仍走启动时 ReadOnly/untrusted 闸门）、AX Press 补 `settings-nav-permissions`、信任开关 enable 改用 Host `workspace_id`（不再用 snapshot 注册表首项）。
+>
 > 2026-09-03 完成：ADR-048 Accepted 后三切片串行落地（glm_worker：protocol → app → desktop）。protocol 增 `PermissionsSettings` 查询 / `SetApprovalMode` 命令（since=V1_6、仅 GUI）+ `WorkspaceTrust` 死词汇开放 GUI（Approvals capability）+ API 1.6 + golden 48→55 帧 + typegen；app `ApprovalService` 运行时 setter + 三 handler（校验写入同锁）；desktop 权限与审批页（五档显式选择、会话信任开关、Global 默认只读行、生效边界文案、回执才生效、stale 三路径同禁、可见/键盘/AX 同 gate）。审查（glm_reviewer）修复四处：P2 冻结契约回写遗漏、P2 ROADMAP/plan 状态矛盾、P2 `set_approval_mode` 别名越契约（改严格五值 `approval_mode_from_wire`）、P3 信任开关 workspace_id 误取注册表首项——ADR-048 D1 实现期修订增补响应 `workspace_id`（Host 权威 attached id），golden 两响应帧同批钉死。protocol（含 55 帧 golden + typegen --check）/ app 206 / desktop 179 全绿。真窗口验收登记 SET-7。
 
 > 2026-09-02 立项：最小真实能力锁定为「当前 approval mode 与 workspace trust 的读取 + 会话内受控修改」。经主代理源码实读与两路 glm_explorer 调研三方确认：`ApprovalMode` 五档仅 CLI 启动参数注入、无持久化无运行时查询/修改 API（GUI 用户不传参即永远 ReadOnly）；`workspace_trusted` 为内存态，Global 层 `trust_workspaces` 可持久化但 writer 无写函数；wire 上 `WorkspaceTrust` 自 R3 登记即无 handler（死词汇），全协议无 approval mode query/command；run 启动时快照 mode/trusted，进行中 run 不受影响（既有架构，作为诚实生效边界）。wire 演进走 [ADR-048](../docs/adr/ADR-048-permissions-settings-wire.md)（2026-09-02 用户确认 Accepted）。

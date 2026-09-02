@@ -2681,7 +2681,9 @@ async fn provider_auth_status_reports_null_default_when_unconfigured() {
 async fn set_default_model_updates_status_default_within_same_session() {
     // 写盘目标经 HOME 重定向到临时目录，避免污染真实全局配置。
     // RestoreHome 必须在 tempfile 之后声明：Drop 先恢复 HOME，再删临时目录。
-    let _home_env = HOME_ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _home_env = HOME_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let home = tempfile::tempdir().expect("home tempdir");
     let _restore_home = RestoreHome(std::env::var_os("HOME"));
     crate::testsupport::set_env("HOME", home.path().to_str().expect("utf-8 home"));
@@ -2739,7 +2741,9 @@ async fn set_default_model_updates_status_default_within_same_session() {
 
 #[tokio::test]
 async fn set_proxy_url_updates_general_settings_within_same_session() {
-    let _home_env = HOME_ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _home_env = HOME_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let home = tempfile::tempdir().expect("home tempdir");
     let _restore_home = RestoreHome(std::env::var_os("HOME"));
     crate::testsupport::set_env("HOME", home.path().to_str().expect("utf-8 home"));
@@ -2754,7 +2758,10 @@ async fn set_proxy_url_updates_general_settings_within_same_session() {
     let AppResponse::Data(before) = before else {
         panic!("GeneralSettings must return Data: {before:?}")
     };
-    assert!(before["proxy_url"].is_null(), "fresh config has no proxy_url");
+    assert!(
+        before["proxy_url"].is_null(),
+        "fresh config has no proxy_url"
+    );
 
     let response = adapter
         .command(&command_envelope(AppCommand::SetProxyUrl {
@@ -2786,7 +2793,9 @@ async fn set_proxy_url_updates_general_settings_within_same_session() {
 
 #[tokio::test]
 async fn clear_proxy_url_updates_general_settings_to_null() {
-    let _home_env = HOME_ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _home_env = HOME_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let home = tempfile::tempdir().expect("home tempdir");
     let _restore_home = RestoreHome(std::env::var_os("HOME"));
     crate::testsupport::set_env("HOME", home.path().to_str().expect("utf-8 home"));
@@ -2801,13 +2810,18 @@ async fn clear_proxy_url_updates_general_settings_to_null() {
         .expect("seed proxy url");
 
     let response = adapter
-        .command(&command_envelope(AppCommand::SetProxyUrl { proxy_url: None }))
+        .command(&command_envelope(AppCommand::SetProxyUrl {
+            proxy_url: None,
+        }))
         .await
         .expect("clear proxy url");
     let AppResponse::Data(data) = response else {
         panic!("SetProxyUrl clear must return Data: {response:?}")
     };
-    assert!(data["proxy_url"].is_null(), "clear receipt must be null: {data}");
+    assert!(
+        data["proxy_url"].is_null(),
+        "clear receipt must be null: {data}"
+    );
 
     let after = adapter
         .query(&query_envelope(AppQuery::GeneralSettings))
@@ -2816,7 +2830,10 @@ async fn clear_proxy_url_updates_general_settings_to_null() {
     let AppResponse::Data(after) = after else {
         panic!("GeneralSettings must return Data: {after:?}")
     };
-    assert!(after["proxy_url"].is_null(), "requery after clear must be null: {after}");
+    assert!(
+        after["proxy_url"].is_null(),
+        "requery after clear must be null: {after}"
+    );
 
     let config_path = pawork_workspace::config::global_config_path().expect("global path");
     let persisted = std::fs::read_to_string(&config_path).expect("persisted config");
@@ -2828,7 +2845,9 @@ async fn clear_proxy_url_updates_general_settings_to_null() {
 
 #[tokio::test]
 async fn set_proxy_url_rejects_invalid_url_and_keeps_old_value() {
-    let _home_env = HOME_ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _home_env = HOME_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let home = tempfile::tempdir().expect("home tempdir");
     let _restore_home = RestoreHome(std::env::var_os("HOME"));
     crate::testsupport::set_env("HOME", home.path().to_str().expect("utf-8 home"));
@@ -2843,7 +2862,10 @@ async fn set_proxy_url_rejects_invalid_url_and_keeps_old_value() {
         .expect("seed proxy url");
     let config_path = pawork_workspace::config::global_config_path().expect("global path");
     let seeded = std::fs::read_to_string(&config_path).expect("seed persisted");
-    assert!(seeded.contains("proxy_url"), "seed did not persist: {seeded}");
+    assert!(
+        seeded.contains("proxy_url"),
+        "seed did not persist: {seeded}"
+    );
 
     let bad = "http://user:s3cret-proxy@not a url";
     let error = adapter
@@ -2866,11 +2888,13 @@ async fn set_proxy_url_rejects_invalid_url_and_keeps_old_value() {
     let AppResponse::Data(after) = after else {
         panic!("GeneralSettings must return Data: {after:?}")
     };
-    assert_eq!(after["proxy_url"], old, "invalid set must keep old proxy_url");
+    assert_eq!(
+        after["proxy_url"], old,
+        "invalid set must keep old proxy_url"
+    );
 
     let persisted = std::fs::read_to_string(&config_path).expect("persisted config");
     assert_eq!(persisted, seeded, "invalid set must not rewrite disk");
-
 }
 
 #[tokio::test]
@@ -2921,6 +2945,11 @@ async fn set_approval_mode_updates_permissions_settings_within_same_session() {
     };
     assert_eq!(after["approval_mode"], "ask_for_writes");
     assert_eq!(after["workspace_trusted"], false);
+    // ToolScheduler 必须同步 Arc-swap，否则之后启动的 run 仍走旧 ReadOnly 闸门。
+    assert_eq!(
+        adapter.core.read().await.scheduler_approval_snapshot(),
+        (crate::ApprovalMode::AskForWrites, false)
+    );
 }
 
 #[tokio::test]
@@ -2949,8 +2978,12 @@ async fn workspace_trust_toggles_session_trust_for_attached_workspace() {
         panic!("PermissionsSettings must return Data: {after:?}")
     };
     assert_eq!(after["workspace_trusted"], true);
-    // 之后启动的 run 在启动时快照该内存态（run.rs 读 approval service）。
+    // 之后启动的 run 克隆新 scheduler Arc（check_gate 用 config.workspace_trusted）。
     assert!(adapter.core.read().await.workspace_trusted());
+    assert_eq!(
+        adapter.core.read().await.scheduler_approval_snapshot(),
+        (crate::ApprovalMode::ReadOnly, true)
+    );
 }
 
 #[tokio::test]
@@ -2974,7 +3007,15 @@ async fn workspace_trust_rejects_mismatched_workspace_id_fail_closed() {
     let AppResponse::Data(after) = after else {
         panic!("PermissionsSettings must return Data: {after:?}")
     };
-    assert_eq!(after["workspace_trusted"], false, "trust must stay old value");
+    assert_eq!(
+        after["workspace_trusted"], false,
+        "trust must stay old value"
+    );
+    assert_eq!(
+        adapter.core.read().await.scheduler_approval_snapshot(),
+        (crate::ApprovalMode::ReadOnly, false),
+        "fail-closed must not rebuild scheduler trust"
+    );
 }
 
 #[tokio::test]

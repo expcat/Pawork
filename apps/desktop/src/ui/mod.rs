@@ -1527,9 +1527,7 @@ impl AppView {
                     } else {
                         format!("Could not load general settings · {reason}")
                     };
-                    self.projection
-                        .settings_general
-                        .apply_failed(&message);
+                    self.projection.settings_general.apply_failed(&message);
                 }
                 if action == "load permissions settings"
                     || action == "set approval mode"
@@ -1544,9 +1542,7 @@ impl AppView {
                         }
                         _ => format!("Could not load permissions settings · {reason}"),
                     };
-                    self.projection
-                        .settings_permissions
-                        .apply_failed(&message);
+                    self.projection.settings_permissions.apply_failed(&message);
                 }
                 if action == "start provider auth" || action == "verify api key" {
                     // auth_start / auth_set_api_key 的 socket 级失败无对应
@@ -2528,7 +2524,9 @@ impl AppView {
         if self.controller.load_permissions_settings() {
             self.projection.settings_permissions.begin_loading();
         } else {
-            self.projection.settings_permissions.mark_stale("not connected");
+            self.projection
+                .settings_permissions
+                .mark_stale("not connected");
         }
     }
 
