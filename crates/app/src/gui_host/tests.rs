@@ -2559,6 +2559,15 @@ async fn settings_adapter(
     base_url: String,
     backend: Arc<pawork_auth::MemoryBackend>,
 ) -> (GuiHostAdapter, tempfile::TempDir) {
+    settings_adapter_for_channel("glm-coding", "glm-5.2", base_url, backend).await
+}
+
+async fn settings_adapter_for_channel(
+    provider_id: &str,
+    model_id: &str,
+    base_url: String,
+    backend: Arc<pawork_auth::MemoryBackend>,
+) -> (GuiHostAdapter, tempfile::TempDir) {
     let dir = tempfile::tempdir().expect("tempdir");
     let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
         .await
@@ -2567,15 +2576,15 @@ async fn settings_adapter(
     config
         .providers
         .push(pawork_workspace::config::ProviderConfig {
-            id: "glm-coding".into(),
+            id: provider_id.into(),
             base_url: Some(base_url),
             default: None,
         });
     let core = AppCore::from_parts(
         Arc::new(MockProvider::sequence(Vec::new())),
         None,
-        pawork_domain::ModelId::from("glm-5.2"),
-        pawork_domain::ProviderId::from("glm-coding"),
+        pawork_domain::ModelId::from(model_id),
+        pawork_domain::ProviderId::from(provider_id),
         Some(store),
     )
     .with_state(config, backend as Arc<dyn pawork_auth::SecretBackend>);
@@ -2709,5 +2718,204 @@ async fn auth_set_api_key_verify_failure_keeps_old_credential() {
     let event_wire = serde_json::to_string(&event).expect("serialize event");
     assert!(event_wire.contains("\"failed\""), "missing failed state");
     assert!(!event_wire.contains(new_secret), "event leaks plaintext");
+    server.verify().await;
+}
+
+// ---- SET-4 A3：xAI 双认证（auth_set_api_key 走 verify-then-replace 门）----
+
+#[tokio::test]
+async fn xai_auth_set_api_key_main_path_connects_via_api_key() {
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let secret = "xai-live-key-1234567890abcdef";
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/models"))
+        .and(header("authorization", &format!("Bearer {secret}")))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({ "data": [{ "id": "grok-4" }] })),
+        )
+        .expect(1..)
+        .mount(&server)
+        .await;
+
+    let backend = Arc::new(pawork_auth::MemoryBackend::new());
+    let (adapter, _dir) =
+        settings_adapter_for_channel("xai", "grok-4", server.uri(), backend).await;
+
+    let response = adapter
+        .command(&command_envelope(AppCommand::AuthSetApiKey {
+            provider_id: pawork_domain::ProviderId::from("xai"),
+            api_key: pawork_protocol::ApiKeySecret::new(secret),
+        }))
+        .await
+        .expect("xai api key verify-then-replace succeeds");
+    let AppResponse::Data(data) = response else {
+        panic!("AuthSetApiKey must return Data: {response:?}")
+    };
+    assert_eq!(data["provider_id"], "xai");
+    assert_eq!(data["method"], "api_key");
+    server.verify().await;
+
+    let status = adapter
+        .query(&query_envelope(AppQuery::ProviderAuthStatus {
+            provider_id: Some(pawork_domain::ProviderId::from("xai")),
+        }))
+        .await
+        .expect("provider auth status");
+    let AppResponse::Data(status) = status else {
+        panic!("ProviderAuthStatus must return Data: {status:?}")
+    };
+    let entry = &status["providers"][0];
+    assert_eq!(entry["provider_id"], "xai");
+    assert_eq!(
+        entry["auth_methods"],
+        serde_json::json!(["oauth", "api_key"])
+    );
+    // 双认证通道按实际存储形态展示：api key 凭证在，显示 method api_key。
+    assert_eq!(entry["auth"]["type"], "connected");
+    assert_eq!(entry["auth"]["method"], "api_key");
+}
+
+#[tokio::test]
+async fn xai_auth_set_api_key_replaces_stored_oauth_credential() {
+    use pawork_auth::SecretBackend as _;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let secret = "xai-replacement-key-0000000001";
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/models"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({ "data": [{ "id": "grok-4" }] })),
+        )
+        .expect(1..)
+        .mount(&server)
+        .await;
+
+    let backend = Arc::new(pawork_auth::MemoryBackend::new());
+    let provider = pawork_domain::ProviderId::from("xai");
+    pawork_auth::store_default_oauth_token(
+        backend.as_ref(),
+        provider.clone(),
+        &pawork_auth::TokenSet {
+            access_token: "xai-old-oauth-access".into(),
+            refresh_token: Some("xai-old-oauth-refresh".into()),
+            id_token: None,
+            expires_in: Some(3600),
+            token_type: "Bearer".into(),
+            scope: Some("grok-cli:access".into()),
+        },
+    )
+    .expect("seed old oauth credential");
+
+    let (adapter, _dir) =
+        settings_adapter_for_channel("xai", "grok-4", server.uri(), backend.clone()).await;
+    adapter
+        .command(&command_envelope(AppCommand::AuthSetApiKey {
+            provider_id: provider.clone(),
+            api_key: pawork_protocol::ApiKeySecret::new(secret),
+        }))
+        .await
+        .expect("switching auth method must succeed");
+
+    // 替换语义：一切换认证方式 = 替换连接——旧 OAuth 条目被移除。
+    assert!(
+        pawork_auth::load_default_oauth_meta(backend.as_ref(), &provider)
+            .expect("load meta")
+            .is_none(),
+        "old oauth meta must be removed"
+    );
+    assert!(
+        pawork_auth::load_default_oauth_credential(backend.as_ref(), &provider)
+            .expect("load credential")
+            .is_none(),
+        "old oauth credential must be removed"
+    );
+    assert_eq!(
+        backend
+            .get("pawork.xai", "default")
+            .expect("api key stored"),
+        secret
+    );
+    server.verify().await;
+}
+
+#[tokio::test]
+async fn xai_api_key_verification_flight_rejects_auth_cancel() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let secret = "xai-cancel-guard-key-000000001";
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/models"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_delay(std::time::Duration::from_millis(3000))
+                .set_body_json(serde_json::json!({ "data": [{ "id": "grok-4" }] })),
+        )
+        .expect(1..)
+        .mount(&server)
+        .await;
+
+    let backend = Arc::new(pawork_auth::MemoryBackend::new());
+    let (adapter, _dir) =
+        settings_adapter_for_channel("xai", "grok-4", server.uri(), backend).await;
+    let mut events = adapter.subscribe_events();
+
+    let set_envelope = command_envelope(AppCommand::AuthSetApiKey {
+        provider_id: pawork_domain::ProviderId::from("xai"),
+        api_key: pawork_protocol::ApiKeySecret::new(secret),
+    });
+    let (set_outcome, cancel_outcome) = tokio::join!(adapter.command(&set_envelope), async {
+        // 等待 api-key 验证 flight 真正登记（auth_state 报 connecting）再取消，
+        // 避免竞态下取消落在 flight 登记之前。
+        for _ in 0..150 {
+            let status = adapter
+                .query(&query_envelope(AppQuery::ProviderAuthStatus {
+                    provider_id: Some(pawork_domain::ProviderId::from("xai")),
+                }))
+                .await
+                .expect("auth status poll");
+            let AppResponse::Data(status) = status else {
+                panic!("ProviderAuthStatus must return Data: {status:?}")
+            };
+            if status["providers"][0]["auth"]["type"] == "connecting" {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        adapter
+            .command(&command_envelope(AppCommand::AuthCancel {
+                provider_id: pawork_domain::ProviderId::from("xai"),
+            }))
+            .await
+    },);
+
+    // D3：api-key 验证 flight 不可取消——拒绝取消且登记保留，验证本身完成。
+    let cancel_error = cancel_outcome.expect_err("cancel of api-key flight must be rejected");
+    assert_eq!(cancel_error.code, "unsupported");
+    let response = set_outcome.expect("verification must complete despite rejected cancel attempt");
+    let AppResponse::Data(data) = response else {
+        panic!("AuthSetApiKey must return Data: {response:?}")
+    };
+    assert_eq!(data["method"], "api_key");
+
+    // 拒绝取消不发 Cancelled；事件流首个认证事件是验证成功。
+    let event = events.try_recv().expect("AuthChanged event");
+    let event_wire = serde_json::to_string(&event).expect("serialize event");
+    assert!(
+        event_wire.contains("\"succeeded\""),
+        "expected Succeeded event first: {event_wire}"
+    );
+    assert!(
+        !event_wire.contains("\"cancelled\""),
+        "rejected cancel must not emit Cancelled: {event_wire}"
+    );
     server.verify().await;
 }

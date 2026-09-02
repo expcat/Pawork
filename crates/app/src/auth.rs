@@ -12,7 +12,7 @@ use pawork_auth::{
 };
 use pawork_domain::ProviderId;
 
-use crate::channels::{self, ChannelKind, OAuthFlow};
+use crate::channels::{self, OAuthFlow};
 use crate::{AppCore, AppError};
 
 /// 凭证来源标注（auth list 展示；不含任何明文）。
@@ -62,63 +62,65 @@ pub enum OAuthLogin {
 }
 
 impl AppCore {
-    /// 六通道 + config 自定义 provider 的凭证状态（无网络、无明文）。
+    /// 首发通道 + config 自定义 provider 的凭证状态（无网络、无明文）。
+    /// 双认证通道（xAI）按实际存储形态展示：先查 api key 凭证，再查 OAuth
+    /// meta（SET-4 A3：显示 method 与实际凭证一致，不按 kind 猜）。
     pub fn auth_status(&self) -> Result<Vec<AuthChannelStatus>, AppError> {
         let mut rows = Vec::new();
         for channel in channels::FIRST_PARTY_CHANNELS.iter() {
-            let kind = match channel.kind {
-                ChannelKind::ApiKey => "api-key",
-                ChannelKind::ChatGptOAuth | ChannelKind::XaiOAuth => "oauth",
-            };
-            match channel.kind {
-                ChannelKind::ApiKey => {
-                    let source = match pawork_auth::resolve_provider_credential(
-                        self.auth_backend().as_ref(),
-                        channel.id,
-                    )? {
-                        pawork_auth::CredentialSource::AuthFile(stored) => AuthChannelStatus {
+            let methods = channel.auth_methods();
+            if methods.contains(&"api_key") {
+                match pawork_auth::resolve_provider_credential(
+                    self.auth_backend().as_ref(),
+                    channel.id,
+                )? {
+                    pawork_auth::CredentialSource::AuthFile(stored) => {
+                        rows.push(AuthChannelStatus {
                             provider: channel.id.into(),
-                            kind,
+                            kind: "api-key",
                             source: AuthSource::File,
                             masked: Some(stored.masked.as_str().to_string()),
                             expires_at_ms: None,
-                        },
-                        pawork_auth::CredentialSource::EnvFallback(_) => AuthChannelStatus {
+                        });
+                        continue;
+                    }
+                    pawork_auth::CredentialSource::EnvFallback(_) => {
+                        rows.push(AuthChannelStatus {
                             provider: channel.id.into(),
-                            kind,
+                            kind: "api-key",
                             source: AuthSource::Env,
                             masked: None,
                             expires_at_ms: None,
-                        },
-                        pawork_auth::CredentialSource::None => AuthChannelStatus {
-                            provider: channel.id.into(),
-                            kind,
-                            source: AuthSource::None,
-                            masked: None,
-                            expires_at_ms: None,
-                        },
-                    };
-                    rows.push(source);
-                }
-                ChannelKind::ChatGptOAuth | ChannelKind::XaiOAuth => {
-                    let provider = ProviderId::new(channel.id);
-                    let meta = pawork_auth::load_default_oauth_meta(
-                        self.auth_backend().as_ref(),
-                        &provider,
-                    )?;
-                    rows.push(AuthChannelStatus {
-                        provider: channel.id.into(),
-                        kind,
-                        source: if meta.is_some() {
-                            AuthSource::File
-                        } else {
-                            AuthSource::None
-                        },
-                        masked: meta.as_ref().map(|meta| meta.masked.as_str().to_string()),
-                        expires_at_ms: meta.as_ref().and_then(|meta| meta.expires_at_ms),
-                    });
+                        });
+                        continue;
+                    }
+                    pawork_auth::CredentialSource::None => {}
                 }
             }
+            if methods.contains(&"oauth") {
+                let provider = ProviderId::new(channel.id);
+                let meta =
+                    pawork_auth::load_default_oauth_meta(self.auth_backend().as_ref(), &provider)?;
+                rows.push(AuthChannelStatus {
+                    provider: channel.id.into(),
+                    kind: "oauth",
+                    source: if meta.is_some() {
+                        AuthSource::File
+                    } else {
+                        AuthSource::None
+                    },
+                    masked: meta.as_ref().map(|meta| meta.masked.as_str().to_string()),
+                    expires_at_ms: meta.as_ref().and_then(|meta| meta.expires_at_ms),
+                });
+                continue;
+            }
+            rows.push(AuthChannelStatus {
+                provider: channel.id.into(),
+                kind: method_label(methods.first().copied()),
+                source: AuthSource::None,
+                masked: None,
+                expires_at_ms: None,
+            });
         }
         Ok(rows)
     }
@@ -138,21 +140,31 @@ impl AppCore {
         let provider = ProviderId::new(provider_id);
         let stored =
             pawork_auth::store_default_api_key(self.auth_backend().as_ref(), &provider, secret)?;
+        // 替换语义（SET-4 A3）：一切换认证方式 = 替换连接；声明 oauth 的
+        // 通道写入 api key 后移除旧 OAuth 条目（删除失败 fail-closed 上报）。
+        if channels::first_party_channel(provider_id)
+            .map(|channel| channel.auth_methods().contains(&"oauth"))
+            .unwrap_or(false)
+        {
+            pawork_auth::delete_default_oauth_token(self.auth_backend().as_ref(), &provider)?;
+        }
         Ok(stored.masked)
     }
 
     /// pawork auth logout：删除 default 条目（OAuth 三账户或 API key default）。
     /// env fallback 不受影响（取消导出对应 PAWORK_API_KEY_* 即可）。
+    /// 双认证通道（xAI）两类条目都清理（删除幂等）。
     pub fn auth_logout(&self, provider_id: &str) -> Result<(), AppError> {
         let provider = ProviderId::new(provider_id);
         let backend = self.auth_backend();
-        match channels::first_party_channel(provider_id).map(|c| c.kind.clone()) {
-            Some(ChannelKind::ChatGptOAuth) | Some(ChannelKind::XaiOAuth) => {
-                pawork_auth::delete_default_oauth_token(backend.as_ref(), &provider)?;
-            }
-            _ => {
-                pawork_auth::delete_default_api_key(backend.as_ref(), &provider)?;
-            }
+        let methods = channels::first_party_channel(provider_id)
+            .map(|channel| channel.auth_methods())
+            .unwrap_or(&["api_key"]);
+        if methods.contains(&"oauth") {
+            pawork_auth::delete_default_oauth_token(backend.as_ref(), &provider)?;
+        }
+        if methods.contains(&"api_key") {
+            pawork_auth::delete_default_api_key(backend.as_ref(), &provider)?;
         }
         Ok(())
     }
@@ -243,7 +255,18 @@ pub(crate) async fn oauth_finish(
         }
     };
     let stored = store_default_oauth_token(backend, ProviderId::new(&provider), &tokens)?;
+    // 替换语义（SET-4 A3）：OAuth 登录成功写入后移除旧 API key 条目
+    //（幂等；删除失败 fail-closed 上报，不静默）。
+    pawork_auth::delete_default_api_key(backend, &ProviderId::new(&provider))?;
     Ok(stored)
+}
+
+/// auth list 展示标签：api_key 方法 → api-key，其余（oauth）→ oauth。
+fn method_label(method: Option<&str>) -> &'static str {
+    match method {
+        Some("api_key") => "api-key",
+        _ => "oauth",
+    }
 }
 
 #[cfg(test)]

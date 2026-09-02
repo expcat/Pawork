@@ -150,6 +150,16 @@ Settings 沿用现有深色主题、8px 节奏和 1440×1024 基线，不把工�
 > 「← 返回工作台」与首个只读「模型与供应商」页（Host `provider_auth_status`
 > 权威数据，断线保留 stale 只读标注；可见 / 键盘 / AX 三路径同 gate）。
 > 「添加供应商」与星标页面仍按 capability 隐藏，写操作属 SET-4/SET-5。
+>
+> 2026-09-02 SET-4 已落地认证写操作：Provider 卡片按 Host descriptor
+> （`auth_methods` + `auth.type`）发布写入口——API key 内联 secure 输入
+> （Verify / Cancel）、OAuth Connect 与等待态（授权 URL / user code / 到期
+> + Cancel）、Connected 态每 method 的 Replace 与 Remove（确认组）；
+> `AuthChanged` 六态驱动投影更新，Succeeded 后再查一次
+> `provider_auth_status`（认证成功与目录成功分离呈现）；Replace 流程的
+> Cancelled / Expired / Failed 不清旧凭证，同样触发权威重查；断线 stale
+> 时可见、键盘、AX 三路径同禁全部写动作；secure 输入的 AX value 只发布
+> 掩码。真实账号端到端与 VoiceOver 人工验收仍 pending。
 
 行为、供应商认证矩阵、模型目录回退和安全边界以 [Settings Spec](spec/settings.md) 为准。引用会话给出的信息架构足以指导实现，本轮不新增 bitmap；实现真窗口出现实际布局偏差时再生成/锁定 Settings 定稿图。
 

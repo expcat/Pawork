@@ -401,7 +401,9 @@ pub(crate) fn channel_protocol(
         Some(ChannelKind::ChatGptOAuth) | Some(ChannelKind::XaiOAuth) => {
             Ok(AdapterProtocol::Responses)
         }
-        Some(ChannelKind::ApiKey) => Ok(AdapterProtocol::ChatCompletions),
+        Some(ChannelKind::ApiKey) | Some(ChannelKind::KimiOAuth) => {
+            Ok(AdapterProtocol::ChatCompletions)
+        }
         None => Ok(resolve_adapter_protocol(config, id)?),
     }
 }
@@ -419,6 +421,9 @@ pub(crate) fn assemble_registry(
     }
     if channel.is_some_and(|channel| channel.kind == ChannelKind::XaiOAuth) {
         registry.merge_provider_models(provider_id, &pawork_providers::xai_builtin_models());
+    }
+    if channel.is_some_and(|channel| channel.kind == ChannelKind::KimiOAuth) {
+        registry.merge_provider_models(provider_id, &pawork_providers::kimi_code_builtin_models());
     }
     apply_config_models(&mut registry, &config.models, provider_id);
     apply_transport_overrides(&mut registry, config);
@@ -477,7 +482,16 @@ pub(crate) async fn assemble_provider(
             )
         }
         Some(ChannelKind::XaiOAuth) => {
-            let (credential, _) = oauth_credential(config, id, backend, refresh_oauth).await?;
+            // SET-4 A3 双认证：按实际存储形态解析——先 api key（auth 文件或
+            // env fallback），无则走 OAuth（含请求前刷新）；都不在才 fail-closed。
+            let credential = match try_api_key_credential(backend, id)? {
+                Some((credential, _)) => credential,
+                None => {
+                    oauth_credential(config, id, backend, refresh_oauth)
+                        .await?
+                        .0
+                }
+            };
             let base_url =
                 config_base.unwrap_or_else(|| channel.expect("channel").default_base_url.into());
             let mut xai_config = pawork_providers::XaiConfig::new(base_url);
@@ -489,6 +503,20 @@ pub(crate) async fn assemble_provider(
                 Arc::new(provider) as Arc<dyn ModelProvider>,
                 Some(credential),
                 AdapterProtocol::Responses,
+            )
+        }
+        Some(ChannelKind::KimiOAuth) => {
+            let (credential, _) = oauth_credential(config, id, backend, refresh_oauth).await?;
+            let base_url =
+                config_base.unwrap_or_else(|| channel.expect("channel").default_base_url.into());
+            let mut kimi_config = pawork_providers::KimiCodeConfig::new(base_url);
+            kimi_config.http.proxy = config.proxy_url.clone();
+            let provider =
+                pawork_providers::KimiCodeProvider::new(kimi_config, Some(credential.clone()))?;
+            (
+                Arc::new(provider) as Arc<dyn ModelProvider>,
+                Some(credential),
+                AdapterProtocol::ChatCompletions,
             )
         }
         Some(ChannelKind::ApiKey) => {
@@ -559,22 +587,30 @@ pub(crate) async fn assemble_provider(
         registry,
     })
 }
+/// API key 凭证链（可选形态）：auth 文件 → env fallback → None。
+fn try_api_key_credential(
+    backend: &Arc<dyn SecretBackend>,
+    id: &str,
+) -> Result<Option<(ResolvedCredential, crate::AuthSource)>, AppError> {
+    match resolve_provider_credential(backend.as_ref(), id)? {
+        CredentialSource::AuthFile(stored) => {
+            let credential = ApiKeyCredential::from_stored(stored)?.resolve(backend.as_ref())?;
+            Ok(Some((credential, crate::AuthSource::File)))
+        }
+        CredentialSource::EnvFallback(credential) => Ok(Some((credential, crate::AuthSource::Env))),
+        CredentialSource::None => Ok(None),
+    }
+}
+
 /// API key 凭证链：auth 文件 → env fallback → fail-closed。
 fn resolve_api_key_credential(
     backend: &Arc<dyn SecretBackend>,
     id: &str,
 ) -> Result<(ResolvedCredential, crate::AuthSource), AppError> {
-    match resolve_provider_credential(backend.as_ref(), id)? {
-        CredentialSource::AuthFile(stored) => {
-            let credential = ApiKeyCredential::from_stored(stored)?.resolve(backend.as_ref())?;
-            Ok((credential, crate::AuthSource::File))
-        }
-        CredentialSource::EnvFallback(credential) => Ok((credential, crate::AuthSource::Env)),
-        CredentialSource::None => Err(AppError::MissingCredential {
-            provider: id.to_string(),
-            env_name: api_key_env_name(id),
-        }),
-    }
+    try_api_key_credential(backend, id)?.ok_or_else(|| AppError::MissingCredential {
+        provider: id.to_string(),
+        env_name: api_key_env_name(id),
+    })
 }
 
 /// OAuth 凭证解析：default 条目（meta）→（可选）请求前刷新 → bearer。

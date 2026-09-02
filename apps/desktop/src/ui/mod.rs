@@ -22,7 +22,7 @@ mod timeline_entry;
 #[cfg(test)]
 mod u1_probe;
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -526,6 +526,16 @@ pub struct AppView {
     settings_back_focus: FocusHandle,
     /// Settings 内容滚动句柄（供应商列表可能超出视口）。
     settings_scroll: ScrollHandle,
+    /// SET-4：按 provider 懒建的 API key secure 输入实体（明文只留在
+    /// 实体内，提交 / 取消 / 离开页面即清空，含 undo 栈）。
+    settings_api_key_inputs: HashMap<String, Entity<crate::ui::text_input::TextInput>>,
+    /// SET-4：connected 态经 Replace 展开内联编辑器的 provider 集合。
+    settings_api_key_editors: HashSet<String>,
+    /// SET-4：Remove 二次确认中的 provider（不静默删除已存凭证）。
+    settings_remove_confirm: Option<String>,
+    /// SET-4：settings 写动作按钮焦点句柄（identifier 键控，随 provider
+    /// 清单回收）。
+    settings_action_focus: HashMap<String, FocusHandle>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -706,6 +716,10 @@ impl AppView {
                 .tab_index(RAIL_TAB_INDEX_SETTINGS),
             settings_back_focus: cx.focus_handle().tab_stop(true),
             settings_scroll: ScrollHandle::new(),
+            settings_api_key_inputs: HashMap::new(),
+            settings_api_key_editors: HashSet::new(),
+            settings_remove_confirm: None,
+            settings_action_focus: HashMap::new(),
         };
         timeline::install_scroll_follow(&view.timeline_list, &cx.weak_entity());
         // R3 Wave B Slice 4：composer 挂 1 档作为 Tab 链尾（rail 负档 →
@@ -1148,6 +1162,11 @@ impl AppView {
                 if had_active_run && self.projection.active_run_id.is_none() {
                     self.refresh_changes(cx);
                 }
+                // SET-4：认证成功≠目录成功——Succeeded 落地后重查一次
+                // provider_auth_status（两状态分离呈现）。
+                if self.projection.settings_providers.take_pending_status_refresh() {
+                    self.refresh_provider_status();
+                }
             }
             ControllerEvent::SessionCreated { session_id } => {
                 self.open_session(session_id, cx);
@@ -1359,12 +1378,31 @@ impl AppView {
             }
             ControllerEvent::ProviderStatusLoaded(providers) => {
                 self.projection.settings_providers.apply_loaded(providers);
+                // SET-4：按权威清单懒建 / 回收 secure 输入与按钮焦点句柄。
+                self.ensure_settings_api_key_inputs(cx);
                 // 迟到响应不丢断线标注：旧连接的回执在断线后到达时，
                 // 数据照收（只读无害），但重新标 stale 保持诚实。
                 if let ConnectionState::Disconnected { reason } = &self.projection.connection {
                     let stale = format!("connection lost · {reason}");
                     self.projection.settings_providers.mark_stale(&stale);
                 }
+            }
+            ControllerEvent::AuthStarted {
+                provider_id,
+                verification_url,
+                user_code,
+                expires_at,
+            } => {
+                // SET-4：登记 OAuth 等待信息并置 Connecting；进度由
+                // AuthChanged 事件收敛。
+                self.projection.settings_providers.apply_auth_started(
+                    &provider_id,
+                    crate::projection::OAuthWait {
+                        verification_url,
+                        user_code,
+                        expires_at,
+                    },
+                );
             }
             ControllerEvent::OperationFailed { action, reason } => {
                 if action == "open session" {
@@ -1374,6 +1412,13 @@ impl AppView {
                     self.projection
                         .settings_providers
                         .apply_failed(reason.as_str());
+                }
+                if action == "start provider auth" || action == "verify api key" {
+                    // auth_start / auth_set_api_key 的 socket 级失败无对应
+                    // AuthChanged 事件：重查权威状态回滚乐观 Connecting
+                    //（busy / unsupported / 断连等路径；Replace 旧凭证是
+                    // 否仍在也交重查裁决）。
+                    self.refresh_provider_status();
                 }
                 self.status_hint = Some(format!("{action} failed: {reason}"));
             }
@@ -2307,6 +2352,9 @@ impl AppView {
     /// Inspector / Timeline / Run 均未离开 AppView 字段），焦点回到入口。
     fn on_close_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.route = AppRoute::Workspace;
+        // SET-005：离开页面清空 secure 输入缓冲（含 undo 栈）与本地编辑
+        // 状态；工作台状态不受影响。
+        self.clear_settings_buffers(cx);
         window.focus(&self.settings_focus);
         cx.notify();
     }
@@ -3209,7 +3257,7 @@ impl Render for AppView {
                         .flex()
                         .flex_1()
                         .min_w_0()
-                        .child(self.settings_page_element()),
+                        .child(self.settings_page_element(cx)),
                 );
                 (sidebar, main)
             }

@@ -18,8 +18,18 @@ use crate::{channels, AppCore, AppError, OAuthLogin};
 
 use super::super::GuiHostAdapter;
 
+/// 一次进行中的认证 flight：取消令牌 + 种类标记。
+///
+/// D3：api_key 验证是单次同步请求（不可取消），OAuth 授权等待可取消；
+/// auth_cancel 按活跃 flight 的种类放行，不按通道声明推断。
+pub(crate) struct AuthFlight {
+    pub(super) token: Arc<CancellationToken>,
+    /// true = OAuth 授权等待（可取消）；false = api_key 验证（拒绝取消）。
+    pub(super) oauth_wait: bool,
+}
+
 /// 认证单飞注册表（按 provider_id；Arc 身份用于安全移除自己的 flight）。
-pub(super) type AuthFlights = Arc<Mutex<HashMap<String, Arc<CancellationToken>>>>;
+pub(crate) type AuthFlights = Arc<Mutex<HashMap<String, Arc<AuthFlight>>>>;
 
 /// OAuth 授权等待上限：设备码 / PKCE 回调超时后下发 Expired / Failed。
 const OAUTH_WAIT_TIMEOUT: Duration = Duration::from_secs(600);
@@ -33,7 +43,8 @@ const STATIC_CATALOG_LABEL: &str = concat!("pawork-providers/", env!("CARGO_PKG_
 fn flight_begin(
     flights: &AuthFlights,
     provider: &str,
-) -> Result<Arc<CancellationToken>, GuiHostError> {
+    oauth_wait: bool,
+) -> Result<Arc<AuthFlight>, GuiHostError> {
     let mut flights = flights.lock().expect("auth flights poisoned");
     if flights.contains_key(provider) {
         return Err(GuiHostAdapter::host_error(
@@ -41,20 +52,39 @@ fn flight_begin(
             format!("an auth operation for provider {provider} is already in progress"),
         ));
     }
-    let token = Arc::new(CancellationToken::new());
-    flights.insert(provider.to_string(), Arc::clone(&token));
-    Ok(token)
+    let flight = Arc::new(AuthFlight {
+        token: Arc::new(CancellationToken::new()),
+        oauth_wait,
+    });
+    flights.insert(provider.to_string(), Arc::clone(&flight));
+    Ok(flight)
 }
 
 /// 仅当注册表中仍是同一 flight 时移除，避免误删后来者。
-fn flight_end(flights: &AuthFlights, provider: &str, token: &Arc<CancellationToken>) {
+fn flight_end(flights: &AuthFlights, provider: &str, flight: &Arc<AuthFlight>) {
     let mut flights = flights.lock().expect("auth flights poisoned");
     if flights
         .get(provider)
-        .is_some_and(|current| Arc::ptr_eq(current, token))
+        .is_some_and(|current| Arc::ptr_eq(current, flight))
     {
         flights.remove(provider);
     }
+}
+
+/// 判定并取消可取消的 flight（单锁内完成种类判定与移除）。
+/// None = 无活跃 flight（幂等）；Some(false) = 活跃的是 api_key 验证
+/// flight（拒绝取消，登记保留）；Some(true) = OAuth 等待已移除并取消。
+fn cancel_oauth_flight_if_present(flights: &AuthFlights, provider: &str) -> Option<bool> {
+    let mut flights = flights.lock().expect("auth flights poisoned");
+    let Some(flight) = flights.get(provider) else {
+        return None;
+    };
+    if !flight.oauth_wait {
+        return Some(false);
+    }
+    let cancelled = flights.remove(provider).expect("flight present under lock");
+    cancelled.token.cancel();
+    Some(true)
 }
 
 fn flight_active(flights: &AuthFlights, provider: &str) -> bool {
@@ -110,37 +140,43 @@ fn auth_state(
         return json!({ "type": "connecting" });
     }
     let provider = ProviderId::new(channel.id);
-    match channel.kind {
-        channels::ChannelKind::ApiKey => {
-            match pawork_auth::resolve_provider_credential(core.auth_backend().as_ref(), channel.id)
-            {
-                Ok(CredentialSource::AuthFile(stored)) => json!({
+    // SET-4 A3：按 auth_methods 数据判定（不按 kind 猜）。声明 api_key 的
+    // 通道先查 api key 凭证，再查 OAuth meta——双认证通道显示 method 与
+    // 实际存储凭证一致。
+    let methods = channel.auth_methods();
+    if methods.contains(&"api_key") {
+        match pawork_auth::resolve_provider_credential(core.auth_backend().as_ref(), channel.id) {
+            Ok(CredentialSource::AuthFile(stored)) => {
+                return json!({
                     "type": "connected",
                     "method": "api_key",
                     "masked_credential": stored.masked.as_str(),
-                }),
-                // env 命中同样是可运行连接，但按脱敏规则不展示任何值片段。
-                Ok(CredentialSource::EnvFallback(_)) => json!({
+                });
+            }
+            // env 命中同样是可运行连接，但按脱敏规则不展示任何值片段。
+            Ok(CredentialSource::EnvFallback(_)) => {
+                return json!({
                     "type": "connected",
                     "method": "api_key",
                     "masked_credential": Value::Null,
-                }),
-                Ok(CredentialSource::None) => json!({ "type": "none" }),
-                Err(error) => json!({ "type": "error", "message": error.to_string() }),
+                });
             }
-        }
-        channels::ChannelKind::ChatGptOAuth | channels::ChannelKind::XaiOAuth => {
-            match pawork_auth::load_default_oauth_meta(core.auth_backend().as_ref(), &provider) {
-                Ok(Some(meta)) => json!({
-                    "type": "connected",
-                    "method": "oauth",
-                    "masked_credential": meta.masked.as_str(),
-                }),
-                Ok(None) => json!({ "type": "none" }),
-                Err(error) => json!({ "type": "error", "message": error.to_string() }),
-            }
+            Ok(CredentialSource::None) => {}
+            Err(error) => return json!({ "type": "error", "message": error.to_string() }),
         }
     }
+    if methods.contains(&"oauth") {
+        return match pawork_auth::load_default_oauth_meta(core.auth_backend().as_ref(), &provider) {
+            Ok(Some(meta)) => json!({
+                "type": "connected",
+                "method": "oauth",
+                "masked_credential": meta.masked.as_str(),
+            }),
+            Ok(None) => json!({ "type": "none" }),
+            Err(error) => json!({ "type": "error", "message": error.to_string() }),
+        };
+    }
+    json!({ "type": "none" })
 }
 
 /// 目录三态：探测成功 remote / 探测失败但有静态条目 fixed_fallback / 否则
@@ -281,9 +317,9 @@ pub(crate) async fn auth_set_api_key(
                 format!("provider {id} is unknown or does not declare api_key auth"),
             )
         })?;
-    let token = flight_begin(&adapter.auth_flights, id)?;
+    let flight = flight_begin(&adapter.auth_flights, id, false)?;
     let outcome = verify_and_store(adapter, preset, &provider_id, candidate).await;
-    flight_end(&adapter.auth_flights, id, &token);
+    flight_end(&adapter.auth_flights, id, &flight);
     match outcome {
         Ok(masked) => {
             adapter.bus.publish_provider_auth(
@@ -352,6 +388,12 @@ async fn verify_and_store(
         })?;
     let stored = pawork_auth::store_default_api_key(backend.as_ref(), provider_id, candidate)
         .map_err(|error| GuiHostAdapter::app_error(error.into()))?;
+    // 替换语义（SET-4 A3）：一切换认证方式 = 替换连接。声明 oauth 的通道
+    // 写入 api key 后移除旧 OAuth 条目；删除失败 fail-closed 上报，不静默。
+    if preset.auth_methods.contains(&"oauth") {
+        pawork_auth::delete_default_oauth_token(backend.as_ref(), provider_id)
+            .map_err(|error| GuiHostAdapter::app_error(error.into()))?;
+    }
     Ok(stored.masked.as_str().to_string())
 }
 
@@ -379,7 +421,7 @@ pub(crate) async fn auth_start(
             format!("provider {id} has no OAuth flow; it declares api_key auth"),
         ));
     }
-    let token = flight_begin(&adapter.auth_flights, id)?;
+    let flight = flight_begin(&adapter.auth_flights, id, true)?;
     let login = {
         let core = adapter.core.read().await;
         core.oauth_begin(id).await
@@ -387,7 +429,7 @@ pub(crate) async fn auth_start(
     let login = match login {
         Ok(login) => login,
         Err(error) => {
-            flight_end(&adapter.auth_flights, id, &token);
+            flight_end(&adapter.auth_flights, id, &flight);
             return Err(GuiHostAdapter::app_error(error));
         }
     };
@@ -429,9 +471,9 @@ pub(crate) async fn auth_start(
                 }
             }
             // 取消路径由 auth_cancel 负责移除 flight 并下发 Cancelled。
-            () = token.cancelled() => return,
+            () = flight.token.cancelled() => return,
         };
-        flight_end(&flights, provider.as_str(), &token);
+        flight_end(&flights, provider.as_str(), &flight);
         bus.publish_provider_auth(instance, &provider, outcome);
     });
 
@@ -453,30 +495,26 @@ pub(crate) async fn auth_cancel(
     let id = provider_id.as_str();
     // D3：AuthCancel 只取消「进行中的 OAuth 等待」。api_key 验证是单次
     // 同步请求，无法中途停止；若允许取消移除 flight，验证仍会跑完写盘并
-    // 下发终态，既违背 Cancelled 语义又破坏单飞守卫。
-    if flight_active(&adapter.auth_flights, id)
-        && channels::first_party_channel(id)
-            .is_some_and(|channel| channel.kind == channels::ChannelKind::ApiKey)
-    {
-        return Err(GuiHostAdapter::host_error(
-            "unsupported",
-            format!(
-                "auth_cancel only cancels OAuth waits; provider {id} api_key verification cannot be cancelled"
-            ),
-        ));
-    }
-    let token = adapter
-        .auth_flights
-        .lock()
-        .expect("auth flights poisoned")
-        .remove(id);
-    if let Some(token) = token {
-        token.cancel();
-        adapter.bus.publish_provider_auth(
-            adapter.instance.clone(),
-            &provider_id,
-            AuthChangeState::Cancelled,
-        );
+    // 下发终态，既违背 Cancelled 语义又破坏单飞守卫。按活跃 flight 的
+    // 种类标记放行（不按通道声明推断）：验证 flight 拒绝且登记保留，
+    // OAuth 等待 flight 才移除并下发 Cancelled。
+    match cancel_oauth_flight_if_present(&adapter.auth_flights, id) {
+        Some(true) => {
+            adapter.bus.publish_provider_auth(
+                adapter.instance.clone(),
+                &provider_id,
+                AuthChangeState::Cancelled,
+            );
+        }
+        Some(false) => {
+            return Err(GuiHostAdapter::host_error(
+                "unsupported",
+                format!(
+                    "auth_cancel only cancels OAuth waits; provider {id} api_key verification cannot be cancelled"
+                ),
+            ));
+        }
+        None => {}
     }
     // 无进行中操作时幂等 Accepted、不发事件。
     Ok(AppResponse::Accepted {
@@ -496,45 +534,54 @@ pub(crate) async fn auth_remove(
     let id = provider_id.as_str();
     let core = adapter.core.read().await;
     let backend = core.auth_backend();
-    let is_oauth = channels::first_party_channel(id)
-        .map(|channel| channel.kind != channels::ChannelKind::ApiKey)
-        .unwrap_or(false);
-    if is_oauth {
+    // SET-4 A3：按 auth_methods 数据判定；双认证通道（如 xai）依次清理
+    // OAuth 与 api key 条目（删除幂等），无任何存储凭证时 not_found。
+    let methods = channels::first_party_channel(id)
+        .map(|channel| channel.auth_methods())
+        .unwrap_or(&["api_key"]);
+    // env 凭证无法从 Host 侧移除；命中时仍继续清理已存条目（SET-4 审查修复：
+    // 双认证通道 env + 已存 OAuth 时应删掉 OAuth），仅最终无可删项时按 env 语义上报。
+    let env_credential_active = methods.contains(&"api_key")
+        && matches!(
+            pawork_auth::resolve_provider_credential(backend.as_ref(), id),
+            Ok(CredentialSource::EnvFallback(_))
+        );
+    let mut removed = false;
+    if methods.contains(&"oauth") {
         match pawork_auth::load_default_oauth_meta(backend.as_ref(), &provider_id) {
             Ok(Some(_)) => {
                 pawork_auth::delete_default_oauth_token(backend.as_ref(), &provider_id)
                     .map_err(|error| GuiHostAdapter::app_error(error.into()))?;
+                removed = true;
             }
-            Ok(None) => {
-                return Err(GuiHostAdapter::host_error(
-                    "not_found",
-                    format!("provider {id} has no stored OAuth credential"),
-                ));
-            }
+            Ok(None) => {}
             Err(error) => return Err(GuiHostAdapter::app_error(error.into())),
         }
-    } else {
+    }
+    if methods.contains(&"api_key") {
         match pawork_auth::resolve_provider_credential(backend.as_ref(), id) {
             Ok(CredentialSource::AuthFile(_)) => {
                 pawork_auth::delete_default_api_key(backend.as_ref(), &provider_id)
                     .map_err(|error| GuiHostAdapter::app_error(error.into()))?;
-            }
-            Ok(CredentialSource::EnvFallback(_)) => {
-                return Err(GuiHostAdapter::host_error(
-                    "unsupported",
-                    format!(
-                        "provider {id} credential comes from PAWORK_API_KEY_* env; unset the variable to disconnect"
-                    ),
-                ));
-            }
-            Ok(CredentialSource::None) => {
-                return Err(GuiHostAdapter::host_error(
-                    "not_found",
-                    format!("provider {id} has no stored credential"),
-                ));
+                removed = true;
             }
             Err(error) => return Err(GuiHostAdapter::app_error(error.into())),
+            Ok(_) => {}
         }
+    }
+    if !removed {
+        if env_credential_active {
+            return Err(GuiHostAdapter::host_error(
+                "unsupported",
+                format!(
+                    "provider {id} credential comes from PAWORK_API_KEY_* env; unset the variable to disconnect"
+                ),
+            ));
+        }
+        return Err(GuiHostAdapter::host_error(
+            "not_found",
+            format!("provider {id} has no stored credential"),
+        ));
     }
     adapter.bus.publish_provider_auth(
         adapter.instance.clone(),

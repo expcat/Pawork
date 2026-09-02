@@ -53,6 +53,14 @@ pub enum ControllerEvent {
     ModelsLoaded(Vec<ModelEntry>),
     /// provider_auth_status 查询成功（SET-3 只读供应商页）。
     ProviderStatusLoaded(Vec<ProviderStatusEntry>),
+    /// auth_start 响应（SET-4）：OAuth 授权等待信息；进度经 AuthChanged
+    /// 事件流下发，token 不经过 Desktop。
+    AuthStarted {
+        provider_id: String,
+        verification_url: String,
+        user_code: Option<String>,
+        expires_at: Option<String>,
+    },
     SessionForked {
         session_id: String,
     },
@@ -1073,6 +1081,144 @@ impl DesktopController {
         true
     }
 
+    /// 发起 OAuth 授权（auth_start）。响应只携带 verification_url /
+    /// user_code / expires_at，进度经 AuthChanged 事件收敛。
+    pub fn auth_start(&self, provider_id: String) {
+        let Some(client) = self.current_client() else {
+            self.emit_reliable(ControllerEvent::OperationFailed {
+                action: "start provider auth".into(),
+                reason: "not connected".into(),
+            });
+            return;
+        };
+        let events = self.event_sender();
+        self.runtime.spawn(async move {
+            let command = auth_start_command(&provider_id, "oauth");
+            let response = match client
+                .command(command, command_source(), actor_identity())
+                .await
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    try_emit(
+                        &events,
+                        ControllerEvent::OperationFailed {
+                            action: "start provider auth",
+                            reason: error.to_string(),
+                        },
+                    );
+                    return;
+                }
+            };
+            match parse_auth_started(&response) {
+                Ok((verification_url, user_code, expires_at)) => {
+                    let _ = events
+                        .send(ControllerEvent::AuthStarted {
+                            provider_id,
+                            verification_url,
+                            user_code,
+                            expires_at,
+                        })
+                        .await;
+                }
+                Err(reason) => try_emit(
+                    &events,
+                    ControllerEvent::OperationFailed {
+                        action: "start provider auth",
+                        reason,
+                    },
+                ),
+            }
+        });
+    }
+
+    /// 提交并验证 API key（auth_set_api_key，非重放命令）。明文只在本次
+    /// 调用栈上转成冻结 wire 命令后即弃：不写日志、不进事件 / projection /
+    /// 持久状态；结果（含失败原因）由 Host 经 AuthChanged 下发。
+    pub fn auth_set_api_key(&self, provider_id: String, api_key: String) {
+        let Some(client) = self.current_client() else {
+            self.emit_reliable(ControllerEvent::OperationFailed {
+                action: "verify api key".into(),
+                reason: "not connected".into(),
+            });
+            return;
+        };
+        let events = self.event_sender();
+        self.runtime.spawn(async move {
+            let command = auth_set_api_key_command(&provider_id, &api_key);
+            if let Err(error) = client
+                .command(command, command_source(), actor_identity())
+                .await
+            {
+                try_emit(
+                    &events,
+                    ControllerEvent::OperationFailed {
+                        action: "verify api key",
+                        reason: error.to_string(),
+                    },
+                );
+            }
+            // 成功路径无回执事件：Host 已先经 AuthChanged::Succeeded 下发
+            // 脱敏凭证，UI 状态由事件泵收敛。
+        });
+    }
+
+    /// 取消进行中的 OAuth 等待（auth_cancel；对 api_key 验证无效，Host
+    /// 返回结构化错误）。Cancelled 事件到达后 UI 复位。
+    pub fn auth_cancel(&self, provider_id: String) {
+        let Some(client) = self.current_client() else {
+            self.emit_reliable(ControllerEvent::OperationFailed {
+                action: "cancel provider auth".into(),
+                reason: "not connected".into(),
+            });
+            return;
+        };
+        let events = self.event_sender();
+        self.runtime.spawn(async move {
+            let command = auth_cancel_command(&provider_id);
+            if let Err(error) = client
+                .command(command, command_source(), actor_identity())
+                .await
+            {
+                try_emit(
+                    &events,
+                    ControllerEvent::OperationFailed {
+                        action: "cancel provider auth",
+                        reason: error.to_string(),
+                    },
+                );
+            }
+        });
+    }
+
+    /// 移除凭证（auth_remove；env 来源凭证由 Host 拒绝并说明）。Removed
+    /// 事件到达后 UI 复位，失败经 OperationFailed 呈现。
+    pub fn auth_remove(&self, provider_id: String) {
+        let Some(client) = self.current_client() else {
+            self.emit_reliable(ControllerEvent::OperationFailed {
+                action: "remove provider auth".into(),
+                reason: "not connected".into(),
+            });
+            return;
+        };
+        let events = self.event_sender();
+        self.runtime.spawn(async move {
+            let command = auth_remove_command(&provider_id);
+            if let Err(error) = client
+                .command(command, command_source(), actor_identity())
+                .await
+            {
+                try_emit(
+                    &events,
+                    ControllerEvent::OperationFailed {
+                        action: "remove provider auth",
+                        reason: error.to_string(),
+                    },
+                );
+            }
+        });
+    }
+
     /// 拉取 Changes 面文件清单（diff_list_files）。epoch 由 UI 递增，
     /// 响应原样带回，过期代次在 UI 侧丢弃。
     pub fn diff_list_files(&self, workspace_id: String, epoch: u64) {
@@ -1371,6 +1517,40 @@ fn terminal_close_command(terminal_session_id: &str) -> AppCommand {
     .expect("terminal_close command shape is frozen")
 }
 
+fn auth_start_command(provider_id: &str, flow: &str) -> AppCommand {
+    serde_json::from_value(json!({
+        "method": "auth_start",
+        "params": { "provider_id": provider_id, "flow": flow }
+    }))
+    .expect("auth_start command shape is frozen")
+}
+
+/// ApiKeySecret 在 wire 上是透明字符串；明文只在本函数栈上的 Value 里
+/// 短暂停留，from_value 后即弃，不落任何字段或日志。
+fn auth_set_api_key_command(provider_id: &str, api_key: &str) -> AppCommand {
+    serde_json::from_value(json!({
+        "method": "auth_set_api_key",
+        "params": { "provider_id": provider_id, "api_key": api_key }
+    }))
+    .expect("auth_set_api_key command shape is frozen")
+}
+
+fn auth_cancel_command(provider_id: &str) -> AppCommand {
+    serde_json::from_value(json!({
+        "method": "auth_cancel",
+        "params": { "provider_id": provider_id }
+    }))
+    .expect("auth_cancel command shape is frozen")
+}
+
+fn auth_remove_command(provider_id: &str) -> AppCommand {
+    serde_json::from_value(json!({
+        "method": "auth_remove",
+        "params": { "provider_id": provider_id }
+    }))
+    .expect("auth_remove command shape is frozen")
+}
+
 fn forked_session_id(response: &AppResponseEnvelope) -> Option<String> {
     match &response.response {
         AppResponse::Data(data) => data
@@ -1559,6 +1739,29 @@ fn parse_provider_status_response(
 ) -> Result<Vec<ProviderStatusEntry>, String> {
     match &response.response {
         AppResponse::Data(data) => parse_provider_status_entries(data),
+        AppResponse::Error(_) => Err("server returned an error response".into()),
+        other => Err(format!("unexpected response: {other:?}")),
+    }
+}
+
+/// 解包 auth_start 响应：verification_url 必填，user_code / expires_at
+/// 仅 device flow 携带（PKCE 为 None）。
+fn parse_auth_started(
+    response: &AppResponseEnvelope,
+) -> Result<(String, Option<String>, Option<String>), String> {
+    match &response.response {
+        AppResponse::Data(data) => {
+            let verification_url = data
+                .get("verification_url")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| "auth start missing verification_url".to_string())?
+                .to_string();
+            Ok((
+                verification_url,
+                optional_str(data, "user_code"),
+                optional_str(data, "expires_at"),
+            ))
+        }
         AppResponse::Error(_) => Err("server returned an error response".into()),
         other => Err(format!("unexpected response: {other:?}")),
     }

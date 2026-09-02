@@ -30,13 +30,13 @@ impl FirstPartyChannel {
         self.preset.oauth_preset()
     }
 
-    /// Host 声明的认证方法（转发 providers 注册表单点）。
+    /// Host 声明的认证方法（转发 providers 注册表数据字段，SET-4 起不再按 kind 派生）。
     pub fn auth_methods(&self) -> &'static [&'static str] {
-        self.preset.auth_methods()
+        self.preset.auth_methods
     }
 }
 
-/// 六条首发通道（顺序即 pawork models / auth list 展示顺序；
+/// 首发通道（顺序即 pawork models / auth list 展示顺序；SET-4 起为八条，
 /// 与 providers CHANNEL_REGISTRY 单点同源派生）。
 pub static FIRST_PARTY_CHANNELS: LazyLock<Vec<FirstPartyChannel>> = LazyLock::new(|| {
     pawork_providers::CHANNEL_REGISTRY
@@ -59,11 +59,11 @@ pub fn is_first_party(id: &str) -> bool {
     first_party_channel(id).is_some()
 }
 
-/// 该 id 对应的 API-key 通道 preset（仅注册表内 kind == ApiKey 的行；
-/// feature 门由装配层用 is_enabled fail-closed 判定）。
+/// 该 id 对应的 API-key 通道 preset（仅注册表内声明 api_key 认证方法的行；
+/// feature 门由装配层用 is_enabled fail-closed 判定；xAI 双认证通道同样命中）。
 pub fn api_key_channel(id: &str) -> Option<&'static ChannelPreset> {
     let preset = channel_preset(id)?;
-    (preset.kind == ChannelKind::ApiKey).then_some(preset)
+    preset.auth_methods.contains(&"api_key").then_some(preset)
 }
 
 /// config [oauth.<id>] 覆盖预设；返回 None 表示「必须配置但缺失」或 id 非OAuth。
@@ -131,6 +131,8 @@ mod tests {
                 "opencode-go",
                 "qwen-token-plan",
                 "deepseek",
+                "kimi-platform",
+                "kimi-code",
             ]
         );
         for channel in FIRST_PARTY_CHANNELS.iter() {

@@ -21,7 +21,9 @@ use crate::ui::inspector::{
     TERMINAL_EMPTY_OUTPUT, TERMINAL_ROWS_STEP,
 };
 use crate::ui::resources::ResourcesFetch;
-use crate::ui::settings::provider_status_lines;
+use crate::ui::settings::{
+    parse_settings_control, provider_status_lines, SettingsControl, SETTINGS_CONTROL_PREFIX,
+};
 use crate::ui::shell_layout;
 use crate::ui::theme::{font, metrics};
 use crate::ui::timeline_entry::display_time;
@@ -131,12 +133,31 @@ impl AppView {
         if !self.accessibility_tree(window, cx).permits(&request) {
             return;
         }
+        // SET-4：settings secure 输入（Focus / SetValue 合法输入路径；发布
+        // 方向只给掩码，见 settings_page_ax）。
+        let settings_api_key_input = parse_settings_control(&request.identifier).and_then(
+            |control| match control {
+                SettingsControl::ApiKeyInput(escaped) => Some(escaped),
+                _ => None,
+            },
+        );
         match request.action {
             AxAction::Focus => match request.identifier.as_str() {
                 "composer-input" => self.focus_composer(window, cx),
                 "terminal-input" => {
                     let focus = self.terminal_input.read(cx).focus_handle(cx);
                     window.focus(&focus);
+                }
+                // SET-4：settings secure 输入聚焦（与点击输入框同一路径；
+                // permits 已按当前树核对 enabled）。
+                _ if settings_api_key_input.is_some() => {
+                    let escaped = settings_api_key_input.clone().unwrap_or_default();
+                    if let Some(provider_id) = self.settings_provider_id_for_escaped(&escaped) {
+                        if let Some(input) = self.settings_api_key_inputs.get(&provider_id) {
+                            let focus = input.read(cx).focus_handle(cx);
+                            window.focus(&focus);
+                        }
+                    }
                 }
                 _ => return,
             },
@@ -149,6 +170,16 @@ impl AppView {
                     "terminal-input" => self
                         .terminal_input
                         .update(cx, |input, cx| input.set_text(value, cx)),
+                    // SET-4：AX set-value 是合法输入路径（等同键入）；
+                    // 发布方向永远只给掩码（settings_page_ax）。
+                    _ if settings_api_key_input.is_some() => {
+                        let escaped = settings_api_key_input.clone().unwrap_or_default();
+                        if let Some(provider_id) = self.settings_provider_id_for_escaped(&escaped) {
+                            if let Some(input) = self.settings_api_key_inputs.get(&provider_id) {
+                                input.update(cx, |input, cx| input.set_text(value, cx));
+                            }
+                        }
+                    }
                     _ => return,
                 }
             }
@@ -251,6 +282,20 @@ impl AppView {
             "group-timeline" => self.on_select_grouping(TaskRailGrouping::Timeline, window, cx),
             "group-projects" => self.on_select_grouping(TaskRailGrouping::Projects, window, cx),
             _ => {
+                // SET-4：settings 写动作与可见按钮同源派发（on_settings_
+                // action 入口复核 gate；permits 已按当前树核对 disabled）。
+                if identifier.starts_with(SETTINGS_CONTROL_PREFIX) {
+                    if let Some(SettingsControl::Action(action, escaped)) =
+                        parse_settings_control(identifier)
+                    {
+                        if let Some(provider_id) = self.settings_provider_id_for_escaped(&escaped)
+                        {
+                            self.on_settings_action(action, provider_id, cx);
+                            return true;
+                        }
+                    }
+                    return false;
+                }
                 if let Some((workspace_id, _)) = self
                     .projection
                     .project_scope_options()
@@ -409,7 +454,7 @@ impl AppView {
                         AxRect::new(0.0, 0.0, sidebar_width, content_height),
                     ),
                 )
-                .child(self.settings_page_ax(AxRect::new(
+                .child(self.settings_page_ax(window, cx, AxRect::new(
                     workspace_x,
                     0.0,
                     (width - sidebar_width).max(0.0),
@@ -825,15 +870,21 @@ impl AppView {
             )
     }
 
-    /// Settings 全宽内容（SET-3 只读供应商页）：标题 / 状态行 / Provider
-    /// 只读卡片（StaticText，无写操作 action）。卡片高度按四行文本 + 内边
-    /// 距的固定估值（只读节点，不参与 hit-test action 门控）。
-    fn settings_page_ax(&self, frame: AxRect) -> AxNode {
+    /// Settings 全宽内容（SET-4）：标题 / 状态行 / Provider 卡片。卡片含
+    /// 只读事实行、secure 输入（value 恒为掩码，SET-010）与写动作按钮；
+    /// 按钮与可见路径同 identifier / 同 gate（stale 时 enabled=false 且
+    /// permits 拒绝执行）。高度按行数 + 控件行的固定估值。
+    fn settings_page_ax(&self, window: &Window, cx: &App, frame: AxRect) -> AxNode {
         const HEADING_HEIGHT: f32 = 28.0;
         const SUBTITLE_HEIGHT: f32 = 20.0;
         const STATUS_HEIGHT: f32 = 20.0;
-        const PROVIDER_CARD_HEIGHT: f32 = 124.0;
+        const CARD_PAD: f32 = 16.0;
+        const CARD_GAP: f32 = 4.0;
+        const TEXT_ROW: f32 = 18.0;
+        const HEADER_ROW: f32 = 20.0;
+        const CONTROL_ROW: f32 = 28.0;
         let state = &self.projection.settings_providers;
+        let writes = self.settings_writes_enabled();
         let mut page = AxNode::new("settings-page", AxRole::Group, "Models & providers", frame)
             .child(
                 AxNode::new(
@@ -865,27 +916,143 @@ impl AppView {
             );
             y += STATUS_HEIGHT + 8.0;
         }
-        for (ix, provider) in state.providers.iter().enumerate() {
-            page = page.child(
-                AxNode::new(
-                    dynamic_identifier("settings-provider", &provider.provider_id),
-                    AxRole::StaticText,
-                    provider.display_name.clone(),
-                    AxRect::new(
-                        frame.x + 16.0,
-                        y + ix as f32 * (PROVIDER_CARD_HEIGHT + 8.0),
-                        width,
-                        PROVIDER_CARD_HEIGHT,
-                    ),
-                )
-                .value(format!(
-                    "{} · {} · {}",
-                    provider.auth_methods_label(),
-                    provider.auth_label(),
-                    provider.catalog_label()
-                ))
-                .description(provider.endpoint_label.clone()),
+        for provider in state.providers.iter() {
+            let wait = state.oauth_waits.get(&provider.provider_id);
+            let editor_open = self.settings_api_key_editor_visible(provider);
+            let remove_confirm =
+                self.settings_remove_confirm.as_deref() == Some(provider.provider_id.as_str());
+            let actions = crate::ui::settings::settings_auth_actions(
+                provider,
+                editor_open,
+                remove_confirm,
+                wait.is_some(),
             );
+            // 卡高估值：header + auth/endpoint/catalog 三行 + 可选等待 /
+            // note 行 + 可选输入 / 动作控件行。
+            let mut text_rows = 3.0;
+            if let Some(wait) = wait {
+                text_rows += 1.0
+                    + wait.user_code.is_some() as u8 as f32
+                    + wait.expires_at.is_some() as u8 as f32;
+            }
+            if state.auth_notes.contains_key(&provider.provider_id) {
+                text_rows += 1.0;
+            }
+            let editor_row = editor_open && self.settings_api_key_inputs.contains_key(&provider.provider_id);
+            let action_row = !actions.is_empty();
+            let control_rows =
+                editor_row as u8 as f32 + action_row as u8 as f32;
+            let children = 1.0 + text_rows + control_rows;
+            let card_height = CARD_PAD
+                + HEADER_ROW
+                + text_rows * TEXT_ROW
+                + control_rows * CONTROL_ROW
+                + (children - 1.0).max(0.0) * CARD_GAP;
+
+            let card_x = frame.x + 16.0;
+            let mut value = format!(
+                "{} · {} · {}",
+                provider.auth_methods_label(),
+                provider.auth_label(),
+                provider.catalog_label()
+            );
+            if let (crate::projection::ProviderAuthState::Connecting, Some(wait)) =
+                (&provider.auth, wait)
+            {
+                value.push_str(&format!(" · Authorize at {}", wait.verification_url));
+                if let Some(code) = &wait.user_code {
+                    value.push_str(&format!(" · Code {code}"));
+                }
+                if let Some(expires) = &wait.expires_at {
+                    value.push_str(&format!(" · Expires {expires}"));
+                }
+            }
+            if let Some(note) = state.auth_notes.get(&provider.provider_id) {
+                value.push_str(&format!(" · {note}"));
+            }
+            let mut card = AxNode::new(
+                dynamic_identifier("settings-provider", &provider.provider_id),
+                AxRole::Group,
+                provider.display_name.clone(),
+                AxRect::new(card_x, y, width, card_height),
+            )
+            .child(AxNode::new(
+                dynamic_identifier("settings-provider-summary", &provider.provider_id),
+                AxRole::StaticText,
+                provider.display_name.clone(),
+                AxRect::new(
+                    card_x + 8.0,
+                    y + 8.0,
+                    (width - 16.0).max(0.0),
+                    HEADER_ROW + text_rows * TEXT_ROW,
+                ),
+            )
+            .value(value)
+            .description(provider.endpoint_label.clone()));
+
+            // 控件行自卡底向上推导（与 render 的行序一致：editor 在上、
+            // 动作行在下）。
+            let mut control_y = y + card_height - 8.0 - CONTROL_ROW;
+            if action_row {
+                let mut button_x = card_x + 8.0;
+                for action in &actions {
+                    let identifier = action.identifier(&provider.provider_id);
+                    // 与 render 同源的逐按钮启用谓词（空输入 Verify 在 AX
+                    // 侧同样拒绝，不只依赖入口复核）。
+                    let enabled =
+                        self.settings_action_enabled(*action, &provider.provider_id, writes, cx);
+                    let focused = self
+                        .settings_action_focus
+                        .get(&identifier)
+                        .is_some_and(|focus| {
+                            self.open_menu.is_none() && focus.is_focused(window)
+                        });
+                    card = card.child(
+                        AxNode::new(
+                            identifier,
+                            AxRole::Button,
+                            action.label(),
+                            AxRect::new(button_x, control_y, 110.0, CONTROL_ROW),
+                        )
+                        .enabled(enabled)
+                        .focused(focused)
+                        .action(AxAction::Press),
+                    );
+                    button_x += 110.0 + 4.0;
+                }
+                control_y -= CONTROL_ROW + CARD_GAP;
+            }
+            if editor_row {
+                if let Some(input) = self.settings_api_key_inputs.get(&provider.provider_id) {
+                    // SET-010：AX value 恒为掩码（或空），明文不进语义树。
+                    let masked = input.read(cx).secure_mask().unwrap_or_default();
+                    card = card.child(
+                        AxNode::new(
+                            crate::ui::settings::settings_api_key_input_identifier(
+                                &provider.provider_id,
+                            ),
+                            AxRole::TextArea,
+                            "API key",
+                            AxRect::new(
+                                card_x + 8.0,
+                                control_y,
+                                (width - 16.0 - 240.0).max(120.0),
+                                CONTROL_ROW,
+                            ),
+                        )
+                        .value(masked)
+                        .enabled(writes)
+                        .focused(
+                            self.open_menu.is_none()
+                                && input.read(cx).focus_handle(cx).is_focused(window),
+                        )
+                        .action(AxAction::Focus)
+                        .action(AxAction::SetValue),
+                    );
+                }
+            }
+            page = page.child(card);
+            y += card_height + 8.0;
         }
         page
     }
@@ -2362,7 +2529,7 @@ fn project_key(workspace_id: Option<&str>) -> String {
     workspace_id.unwrap_or(UNASSIGNED_PROJECT).to_string()
 }
 
-fn dynamic_identifier(prefix: &str, raw: &str) -> String {
+pub(crate) fn dynamic_identifier(prefix: &str, raw: &str) -> String {
     let mut identifier = String::with_capacity(prefix.len() + raw.len() + 1);
     identifier.push_str(prefix);
     identifier.push('-');
@@ -2803,5 +2970,119 @@ mod tests {
                 );
             });
         }
+    }
+
+    /// SET-4（SET-010）：Settings secure API key 输入的 AX value 只发布掩码，
+    /// 全树不携带明文；断线 stale 后写动作按钮与输入 enabled=false 且
+    /// permits 拒绝（可见 / 键盘 / AX 三路径同 gate）。
+    #[gpui::test]
+    fn settings_ax_masks_api_key_and_gates_writes_when_stale(cx: &mut gpui::TestAppContext) {
+        use gpui::AppContext;
+
+        struct AxSettingsHost {
+            view: gpui::Entity<AppView>,
+        }
+        impl gpui::Render for AxSettingsHost {
+            fn render(
+                &mut self,
+                _window: &mut Window,
+                _cx: &mut Context<Self>,
+            ) -> impl gpui::IntoElement {
+                gpui::div()
+            }
+        }
+
+        fn assert_no_secret(node: &AxNode, secret: &str) {
+            assert!(!node.identifier.contains(secret));
+            assert!(!node.label.contains(secret));
+            if let Some(value) = &node.value {
+                assert!(!value.contains(secret), "AX value leaked secret: {value}");
+            }
+            if let Some(description) = &node.description {
+                assert!(!description.contains(secret));
+            }
+            for child in &node.children {
+                assert_no_secret(child, secret);
+            }
+        }
+
+        let platform = std::sync::Arc::new(crate::platform::Platform::new());
+        let socket = std::env::temp_dir().join("set4-ax-settings.sock");
+        let (host, cx) = cx.add_window_view(|_window, cx| {
+            let view = cx.new(|cx| AppView::new(platform, socket, None, cx));
+            AxSettingsHost { view }
+        });
+        let view = cx.update(|_window, cx| host.read(cx).view.clone());
+        cx.update(|_window, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.set_connection(ConnectionState::Connected {
+                    instance_id: "test".into(),
+                });
+                view.route = AppRoute::Settings;
+                view.projection.settings_providers.apply_loaded(vec![
+                    crate::projection::ProviderStatusEntry {
+                        provider_id: "kimi".into(),
+                        display_name: "Kimi".into(),
+                        endpoint_label: "https://api.moonshot.cn".into(),
+                        auth_methods: vec!["api_key".into()],
+                        auth: crate::projection::ProviderAuthState::NotConnected,
+                        catalog: crate::projection::ProviderCatalogState::Unavailable {
+                            error: "offline".into(),
+                        },
+                    },
+                ]);
+                view.ensure_settings_api_key_inputs(cx);
+                view.settings_api_key_inputs
+                    .get("kimi")
+                    .expect("api_key provider gets a secure input")
+                    .update(cx, |input, cx| input.set_text("sk-live-plaintext", cx));
+            });
+        });
+
+        let input_id = crate::ui::settings::settings_api_key_input_identifier("kimi");
+        let verify_id = crate::ui::settings::SettingsAuthAction::VerifyApiKey.identifier("kimi");
+        let expected_mask = "•".repeat("sk-live-plaintext".chars().count());
+
+        // 连接态：掩码 value 发布、按钮 enabled、Press 许可。
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            let tree = view.accessibility_tree(window, cx);
+            tree.validate().expect("settings AX tree validates");
+            let secret = "sk-live-plaintext";
+            for child in &tree.children {
+                assert_no_secret(child, secret);
+            }
+            let input = tree.find(&input_id).expect("secure input has an AX node");
+            assert_eq!(input.role, AxRole::TextArea);
+            assert_eq!(input.value.as_deref(), Some(expected_mask.as_str()));
+            assert!(input.enabled);
+            let verify = tree.find(&verify_id).expect("verify button has an AX node");
+            assert!(verify.enabled);
+            assert!(tree.permits(&AxRequest {
+                identifier: verify_id.clone(),
+                action: AxAction::Press,
+                value: None,
+            }));
+        });
+
+        // 断线 stale：写动作与 secure 输入同时禁用，permits 拒绝。
+        cx.update(|_window, cx| {
+            view.update(cx, |view, _cx| {
+                view.projection
+                    .settings_providers
+                    .mark_stale("socket closed");
+            });
+        });
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            let tree = view.accessibility_tree(window, cx);
+            assert!(!tree.find(&verify_id).expect("verify button").enabled);
+            assert!(!tree.find(&input_id).expect("secure input").enabled);
+            assert!(!tree.permits(&AxRequest {
+                identifier: verify_id.clone(),
+                action: AxAction::Press,
+                value: None,
+            }));
+        });
     }
 }

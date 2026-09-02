@@ -7,7 +7,7 @@
 //! 本文件只保留 UI 态（连接 / session 列表 / 审批卡 / 模型 / run 跟踪）与
 //! 渲染分组。
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use pawork_client::projection::TimelineProjection;
 use pawork_client::{
@@ -453,6 +453,19 @@ pub struct SettingsProvidersState {
     pub stale_reason: Option<String>,
     pub error: Option<String>,
     pub providers: Vec<ProviderStatusEntry>,
+    /// 进行中的 OAuth 授权等待（auth_start 响应携带的 URL / user code /
+    /// 到期；Desktop 只显示，不接触 token）。终态 AuthChanged 清除。
+    pub oauth_waits: HashMap<String, OAuthWait>,
+    /// 终态 AuthChanged 的瞬态反馈（取消 / 过期 / 移除）；下次权威状态
+    /// 到达即清空。
+    pub auth_notes: HashMap<String, String>,
+    /// Succeeded 落地后置位：认证成功≠目录成功，UI 需再拉一次
+    /// provider_auth_status（两状态分离呈现）。
+    pub pending_status_refresh: bool,
+    /// Replace 写流程基线：流程起点 provider 已 Connected。此后收到非
+    /// Succeeded / Removed 终态不清旧凭证（Host 未删除），改为触发
+    /// provider_auth_status 重查交权威裁决。
+    pub auth_replacing_connected: HashSet<String>,
 }
 
 impl SettingsProvidersState {
@@ -468,6 +481,9 @@ impl SettingsProvidersState {
         self.loading = false;
         self.stale_reason = None;
         self.error = None;
+        self.auth_notes.clear();
+        self.auth_replacing_connected.clear();
+        self.pending_status_refresh = false;
         self.providers = providers;
     }
 
@@ -481,6 +497,173 @@ impl SettingsProvidersState {
     pub fn mark_stale(&mut self, reason: &str) {
         self.loading = false;
         self.stale_reason = Some(reason.to_string());
+    }
+
+    /// auth_start 响应到达：登记 OAuth 等待信息并置 Connecting（Pending
+    /// 事件与响应的先后顺序不影响终态一致性）。
+    pub fn apply_auth_started(&mut self, provider_id: &str, wait: OAuthWait) {
+        self.oauth_waits.insert(provider_id.to_string(), wait);
+        if let Some(entry) = self
+            .providers
+            .iter_mut()
+            .find(|entry| entry.provider_id == provider_id)
+        {
+            entry.auth = ProviderAuthState::Connecting;
+        }
+    }
+
+    /// 写流程起点登记：provider 当前已 Connected 时记录 Replace 基线
+    ///（UI 乐观置 Connecting 之前调用）。
+    pub fn begin_auth_flow(&mut self, provider_id: &str) {
+        let connected = self.providers.iter().any(|entry| {
+            entry.provider_id == provider_id
+                && matches!(entry.auth, ProviderAuthState::Connected { .. })
+        });
+        if connected {
+            self.auth_replacing_connected.insert(provider_id.to_string());
+        }
+    }
+
+    /// 消费 Succeeded 置位的再查询提示（UI 在事件泵回执后调用）。
+    pub fn take_pending_status_refresh(&mut self) -> bool {
+        std::mem::take(&mut self.pending_status_refresh)
+    }
+
+    /// 应用 AuthChanged 事件（serde Value 形态；畸形载荷 fail-closed：
+    /// 只记录错误，不落地任何认证状态变化）。
+    pub fn apply_auth_changed_value(&mut self, provider_id: &str, state: &Value) -> bool {
+        match parse_auth_change(state) {
+            Ok(change) => self.apply_auth_change(provider_id, change),
+            Err(reason) => {
+                self.error =
+                    Some(format!("malformed auth change for {provider_id}: {reason}"));
+                false
+            }
+        }
+    }
+
+    fn apply_auth_change(&mut self, provider_id: &str, change: AuthChange) -> bool {
+        let terminal = !matches!(change, AuthChange::Pending);
+        if terminal {
+            self.oauth_waits.remove(provider_id);
+        }
+        // Replace 基线：非 Succeeded / Removed 终态不清旧凭证（Host 未
+        // 删除），改触发权威重查；Succeeded / Removed 落地即清基线。
+        let replacing = self.auth_replacing_connected.contains(provider_id);
+        if matches!(change, AuthChange::Succeeded { .. } | AuthChange::Removed) {
+            self.auth_replacing_connected.remove(provider_id);
+        }
+        if let Some(entry) = self
+            .providers
+            .iter_mut()
+            .find(|entry| entry.provider_id == provider_id)
+        {
+            match &change {
+                AuthChange::Pending => entry.auth = ProviderAuthState::Connecting,
+                AuthChange::Succeeded {
+                    method,
+                    masked_credential,
+                } => {
+                    entry.auth = ProviderAuthState::Connected {
+                        method: method.clone(),
+                        masked_credential: Some(masked_credential.clone()),
+                    };
+                    // 认证成功≠目录成功：提示 UI 再查一次 provider_auth_status。
+                    self.pending_status_refresh = true;
+                }
+                AuthChange::Failed { error } => {
+                    if replacing {
+                        // 旧凭证仍在：不断言 Error，交重查裁决；失败原因走
+                        // 瞬态 note（权威数据到达即清）。
+                        self.pending_status_refresh = true;
+                        self.auth_notes.insert(
+                            provider_id.to_string(),
+                            format!("Replacement failed · {error}"),
+                        );
+                    } else {
+                        entry.auth = ProviderAuthState::Error {
+                            message: error.clone(),
+                        };
+                    }
+                }
+                AuthChange::Cancelled | AuthChange::Expired | AuthChange::Removed => {
+                    if replacing && !matches!(change, AuthChange::Removed) {
+                        // Replace 被取消 / 过期：旧凭证仍在，保留现状态并
+                        // 重查权威状态。
+                        self.pending_status_refresh = true;
+                    } else {
+                        entry.auth = ProviderAuthState::NotConnected;
+                    }
+                }
+            }
+        }
+        let note = match &change {
+            AuthChange::Cancelled => Some("Authorization cancelled"),
+            AuthChange::Expired => Some("Authorization expired"),
+            AuthChange::Removed => Some("Connection removed"),
+            _ => None,
+        };
+        if let Some(note) = note {
+            self.auth_notes.insert(provider_id.to_string(), note.to_string());
+        }
+        false
+    }
+}
+
+/// AuthChanged 事件的投影视图（wire 六态）。由 serde Value 解析，畸形
+/// 形状 fail-closed 报错，不静默丢字段。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AuthChange {
+    Pending,
+    Succeeded {
+        method: String,
+        masked_credential: String,
+    },
+    Failed {
+        error: String,
+    },
+    Cancelled,
+    Expired,
+    Removed,
+}
+
+/// OAuth 授权等待信息（auth_start 响应；SET-4 只用于显示）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OAuthWait {
+    pub verification_url: String,
+    pub user_code: Option<String>,
+    pub expires_at: Option<String>,
+}
+
+/// 解析 AuthChangeState 的 wire 形态（tag=type / content=data）。
+pub fn parse_auth_change(state: &Value) -> Result<AuthChange, String> {
+    let kind = state
+        .get("type")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "auth change missing type".to_string())?;
+    match kind {
+        "pending" => Ok(AuthChange::Pending),
+        "succeeded" => {
+            let data = state
+                .get("data")
+                .ok_or_else(|| "succeeded auth change missing data".to_string())?;
+            Ok(AuthChange::Succeeded {
+                method: json_str(data, "method")?,
+                masked_credential: json_str(data, "masked_credential")?,
+            })
+        }
+        "failed" => {
+            let data = state
+                .get("data")
+                .ok_or_else(|| "failed auth change missing data".to_string())?;
+            Ok(AuthChange::Failed {
+                error: json_str(data, "error")?,
+            })
+        }
+        "cancelled" => Ok(AuthChange::Cancelled),
+        "expired" => Ok(AuthChange::Expired),
+        "removed" => Ok(AuthChange::Removed),
+        other => Err(format!("unknown auth change type {other}")),
     }
 }
 
@@ -1211,6 +1394,18 @@ impl DesktopProjection {
         } = &envelope.payload
         {
             return self.apply_terminal_exited(terminal_session_id, *reason);
+        }
+        // SET-4：AuthChanged 是全局供应商事件（不属时间线）。AuthChangeState
+        // 未从 pawork-client re-export，经 serde Value 进入纯投影解析，
+        // 畸形载荷 fail-closed。返回 false：不改时间线；Succeeded 的再查询
+        // 提示经 settings_providers.pending_status_refresh 传递。
+        if let AppEvent::AuthChanged { provider_id, state } = &envelope.payload {
+            return match serde_json::to_value(state) {
+                Ok(value) => self
+                    .settings_providers
+                    .apply_auth_changed_value(provider_id.as_str(), &value),
+                Err(_) => false,
+            };
         }
         // R3 Wave A 审查修复（P1）：rail 状态点的 run 成员关系跨会话维护，
         // 必须先于 active-session 闸门——RunChanged 抵达时该会话可能并非
@@ -2094,6 +2289,213 @@ mod tests {
             }
         ] }))
         .is_err());
+    }
+
+    fn settings_state_with_provider(auth_methods: &[&str]) -> SettingsProvidersState {
+        let mut state = SettingsProvidersState::default();
+        state.apply_loaded(vec![ProviderStatusEntry {
+            provider_id: "kimi".into(),
+            display_name: "Kimi".into(),
+            endpoint_label: "https://api.moonshot.cn".into(),
+            auth_methods: auth_methods.iter().map(|method| method.to_string()).collect(),
+            auth: ProviderAuthState::NotConnected,
+            catalog: ProviderCatalogState::Unavailable { error: "offline".into() },
+        }]);
+        state
+    }
+
+    fn provider_auth(state: &SettingsProvidersState) -> &ProviderAuthState {
+        &state.providers[0].auth
+    }
+
+    #[test]
+    fn auth_changed_states_parse_and_apply_to_provider_auth() {
+        // wire 形态（tag=type / content=data）六态解析。
+        assert_eq!(
+            parse_auth_change(&json!({ "type": "pending" })),
+            Ok(AuthChange::Pending)
+        );
+        assert_eq!(
+            parse_auth_change(&json!({
+                "type": "succeeded",
+                "data": { "method": "api_key", "masked_credential": "sk-…ab12" }
+            })),
+            Ok(AuthChange::Succeeded {
+                method: "api_key".into(),
+                masked_credential: "sk-…ab12".into()
+            })
+        );
+        assert_eq!(
+            parse_auth_change(&json!({
+                "type": "failed",
+                "data": { "error": "invalid key" }
+            })),
+            Ok(AuthChange::Failed { error: "invalid key".into() })
+        );
+        assert_eq!(
+            parse_auth_change(&json!({ "type": "cancelled" })),
+            Ok(AuthChange::Cancelled)
+        );
+        assert_eq!(
+            parse_auth_change(&json!({ "type": "expired" })),
+            Ok(AuthChange::Expired)
+        );
+        assert_eq!(
+            parse_auth_change(&json!({ "type": "removed" })),
+            Ok(AuthChange::Removed)
+        );
+
+        // Pending → Connecting。
+        let mut state = settings_state_with_provider(&["oauth"]);
+        state.apply_auth_changed_value("kimi", &json!({ "type": "pending" }));
+        assert_eq!(*provider_auth(&state), ProviderAuthState::Connecting);
+
+        // auth_start 回执登记等待详情；Succeeded 清等待、置 Connected，
+        // 并置再查询提示（认证成功≠目录成功）。
+        state.apply_auth_started(
+            "kimi",
+            OAuthWait {
+                verification_url: "https://example/verify".into(),
+                user_code: Some("ABCD".into()),
+                expires_at: Some("2026-09-02T09:00:00Z".into()),
+            },
+        );
+        assert_eq!(state.oauth_waits["kimi"].user_code.as_deref(), Some("ABCD"));
+        state.apply_auth_changed_value(
+            "kimi",
+            &json!({
+                "type": "succeeded",
+                "data": { "method": "oauth", "masked_credential": "mo…cd" }
+            }),
+        );
+        assert_eq!(
+            *provider_auth(&state),
+            ProviderAuthState::Connected {
+                method: "oauth".into(),
+                masked_credential: Some("mo…cd".into())
+            }
+        );
+        assert!(!state.oauth_waits.contains_key("kimi"));
+        assert!(state.take_pending_status_refresh());
+        assert!(!state.pending_status_refresh);
+
+        // Failed → Error（只承载 Host 已脱敏 message）。
+        state.apply_auth_changed_value(
+            "kimi",
+            &json!({ "type": "failed", "data": { "error": "denied" } }),
+        );
+        assert_eq!(
+            *provider_auth(&state),
+            ProviderAuthState::Error { message: "denied".into() }
+        );
+
+        // Cancelled / Expired / Removed → NotConnected + 瞬态 note + 清等待。
+        for (kind, note) in [
+            ("cancelled", "Authorization cancelled"),
+            ("expired", "Authorization expired"),
+            ("removed", "Connection removed"),
+        ] {
+            state.apply_auth_started(
+                "kimi",
+                OAuthWait {
+                    verification_url: "u".into(),
+                    user_code: None,
+                    expires_at: None,
+                },
+            );
+            state.apply_auth_changed_value("kimi", &json!({ "type": kind }));
+            assert_eq!(
+                *provider_auth(&state),
+                ProviderAuthState::NotConnected,
+                "{kind}"
+            );
+            assert_eq!(state.auth_notes.get("kimi").map(String::as_str), Some(note));
+            assert!(!state.oauth_waits.contains_key("kimi"), "{kind}");
+        }
+        // 下一次权威状态到达即清空瞬态反馈。
+        let providers = state.providers.clone();
+        state.apply_loaded(providers);
+        assert!(state.auth_notes.is_empty());
+    }
+
+    #[test]
+    fn malformed_auth_change_fails_closed_without_state_landing() {
+        let mut state = settings_state_with_provider(&["api_key"]);
+        for payload in [
+            json!({ "type": "mystery" }),
+            json!({ "type": "succeeded", "data": { "method": "api_key" } }),
+            json!({ "data": { "error": "x" } }),
+        ] {
+            assert!(!state.apply_auth_changed_value("kimi", &payload));
+            assert_eq!(*provider_auth(&state), ProviderAuthState::NotConnected);
+        }
+        assert!(state
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("malformed auth change"));
+        assert!(state.oauth_waits.is_empty());
+        assert!(state.auth_notes.is_empty());
+        assert!(!state.pending_status_refresh);
+    }
+
+    #[test]
+    fn replace_flow_terminal_keeps_old_credential_and_triggers_requery() {
+        // Connected 起点的 Replace 流程：Cancelled / Expired / Failed 不清
+        // 旧凭证（Host 未删除），保留现状态并触发权威重查。
+        let mut state = settings_state_with_provider(&["oauth"]);
+        state.providers[0].auth = ProviderAuthState::Connected {
+            method: "oauth".into(),
+            masked_credential: Some("mo…cd".into()),
+        };
+        state.begin_auth_flow("kimi");
+        // 乐观 / Pending 先置 Connecting（终态到达前的 UI 状态）。
+        state.apply_auth_changed_value("kimi", &json!({ "type": "pending" }));
+        assert_eq!(*provider_auth(&state), ProviderAuthState::Connecting);
+
+        for kind in ["cancelled", "expired"] {
+            state.apply_auth_changed_value("kimi", &json!({ "type": kind }));
+            assert_eq!(
+                *provider_auth(&state),
+                ProviderAuthState::Connecting,
+                "{kind}: replace keeps the old credential pending requery"
+            );
+            assert!(state.pending_status_refresh, "{kind}");
+            assert!(state.take_pending_status_refresh());
+        }
+
+        // Failed：不降级 Error，失败原因走瞬态 note，重查置位。
+        state.apply_auth_changed_value(
+            "kimi",
+            &json!({ "type": "failed", "data": { "error": "invalid key" } }),
+        );
+        assert_eq!(*provider_auth(&state), ProviderAuthState::Connecting);
+        assert!(state.pending_status_refresh);
+        assert_eq!(
+            state.auth_notes.get("kimi").map(String::as_str),
+            Some("Replacement failed · invalid key")
+        );
+        assert!(state.take_pending_status_refresh());
+
+        // Removed：凭证确实删除，仍复位 NotConnected。
+        state.providers[0].auth = ProviderAuthState::Connected {
+            method: "oauth".into(),
+            masked_credential: Some("mo…cd".into()),
+        };
+        state.begin_auth_flow("kimi");
+        state.apply_auth_changed_value("kimi", &json!({ "type": "removed" }));
+        assert_eq!(*provider_auth(&state), ProviderAuthState::NotConnected);
+        assert!(!state.pending_status_refresh);
+
+        // 权威数据到达即清基线（后续事件回到首连语义）。
+        state.providers[0].auth = ProviderAuthState::Connected {
+            method: "oauth".into(),
+            masked_credential: Some("mo…cd".into()),
+        };
+        state.begin_auth_flow("kimi");
+        let providers = state.providers.clone();
+        state.apply_loaded(providers);
+        assert!(state.auth_replacing_connected.is_empty());
     }
 
     fn session_entry(id: &str, title: &str, updated: u64) -> Value {

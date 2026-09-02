@@ -1,15 +1,15 @@
 //! 首发 API-key 渠道：preset 驱动的配置 / Provider，薄封装 OpenAI-compatible 传输。
 //!
-//! 四条渠道共用 Bearer 认证与 OpenAI-compatible transport；默认走 Chat
+//! API-key 渠道共用 Bearer 认证与 OpenAI-compatible transport；默认走 Chat
 //! Completions，只有逐模型显式声明时才走 Responses。构造期 fail-closed：必须提供且
-//! 仅接受 CredentialKind::ApiKey；preset 必须来自 CHANNEL_REGISTRY 且对应
-//! feature 已启用（R5 波 A 轨 b：枚举删除，数据行单点登记）。
+//! 仅接受 CredentialKind::ApiKey；preset 必须声明 api_key 认证方法且对应
+//! feature 已启用（SET-4 起按 auth_methods 数据字段判定，xAI 双认证通道复用）。
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::channels::registry::{is_enabled, ChannelKind, ChannelPreset};
+use crate::channels::registry::{is_enabled, ChannelPreset};
 use crate::net::http::HttpClientConfig;
 use crate::ReasoningProtector;
 use async_trait::async_trait;
@@ -35,13 +35,13 @@ pub struct ApiKeyChannelConfig {
 }
 
 impl ApiKeyChannelConfig {
-    /// 构造渠道配置。preset 的 kind 必须 ApiKey 且对应 feature 已启用
+    /// 构造渠道配置。preset 必须声明 api_key 认证方法且对应 feature 已启用
     /// （fail-closed；is_enabled 是注册表唯一的 cfg 求值点）。
     pub fn new(preset: &'static ChannelPreset) -> Result<Self, ProviderError> {
-        if preset.kind != ChannelKind::ApiKey {
+        if !preset.auth_methods.contains(&"api_key") {
             return Err(ProviderError::new(
                 ProviderErrorKind::InvalidRequest,
-                format!("channel {} is not an API-key channel", preset.id),
+                format!("channel {} does not declare api_key auth", preset.id),
             ));
         }
         if !is_enabled(preset) {

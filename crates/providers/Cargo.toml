@@ -16,6 +16,8 @@ glm-coding = []
 opencode-go = []
 qwen-token-plan = []
 deepseek = []
+kimi-platform = []
+kimi-code = []
 
 [dependencies]
 pawork-domain = { path = "../domain" }
@@ -57,4 +59,10 @@ required-features = ["chatgpt-oauth"]
 [[test]]
 name = "api_key_channels"
 path = "tests/api_key_channels.rs"
-required-features = ["glm-coding", "opencode-go", "qwen-token-plan", "deepseek"]
+required-features = [
+    "glm-coding",
+    "opencode-go",
+    "qwen-token-plan",
+    "deepseek",
+    "kimi-platform",
+]

@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use crate::gui_server::{GuiHost, GuiHostError};
 use async_trait::async_trait;
 use futures::future::BoxFuture;
-use pawork_domain::{CancellationToken, CommandId, QueryId, SessionId, TenantId, WorkspaceId};
+use pawork_domain::{CommandId, QueryId, SessionId, TenantId, WorkspaceId};
 use pawork_engine::now_timestamp;
 use pawork_exec::PtyService;
 use pawork_protocol::{
@@ -97,7 +97,9 @@ pub struct GuiHostAdapter {
     terminals: Mutex<HashMap<String, String>>,
     /// SET-2：按 provider_id 的认证单飞守卫（auth_start / auth_set_api_key /
     /// auth_cancel 共用；条目存在即 busy，Arc 身份用于安全移除自己的 flight）。
-    pub(crate) auth_flights: Arc<Mutex<HashMap<String, Arc<CancellationToken>>>>,
+    /// SET-4：flight 值携带种类标记（api_key 验证 / OAuth 等待），auth_cancel
+    /// 仅对 OAuth 等待放行（D3）。
+    pub(crate) auth_flights: handlers::settings::AuthFlights,
 }
 
 impl GuiHostAdapter {

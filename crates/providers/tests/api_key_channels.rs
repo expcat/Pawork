@@ -106,6 +106,7 @@ fn default_ids_and_base_urls_cover_all_channels() {
             "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
         ),
         ("deepseek", "https://api.deepseek.com"),
+        ("kimi-platform", "https://api.moonshot.ai/v1"),
     ];
 
     let presets = api_key_presets();

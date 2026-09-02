@@ -14,6 +14,8 @@ pub enum ChannelKind {
     ChatGptOAuth,
     /// xAI Grok OAuth（按模型 capability 选 Chat/Responses）。
     XaiOAuth,
+    /// Kimi Code OAuth（固定 Chat Completions）。
+    KimiOAuth,
 }
 
 /// OAuth 授权流形态（预设与 config [oauth.<id>] 覆盖共用；运行期 String 形态）。
@@ -103,6 +105,9 @@ pub struct ChannelPreset {
     pub display_name: &'static str,
     pub feature: &'static str,
     pub oauth: Option<OAuthPresetData>,
+    /// Host 声明的可用认证方法（构造期纯数据；SET-4 起不再按 kind 派生，
+    /// xAI 同时声明 oauth 与 api_key）。
+    pub auth_methods: &'static [&'static str],
 }
 
 impl ChannelPreset {
@@ -110,17 +115,9 @@ impl ChannelPreset {
     pub fn oauth_preset(&self) -> Option<OAuthPreset> {
         self.oauth.map(|data| data.to_preset())
     }
-
-    /// Host 声明的可用认证方法（ADR-046 D1：Desktop 禁止按品牌猜）。
-    pub fn auth_methods(&self) -> &'static [&'static str] {
-        match self.kind {
-            ChannelKind::ApiKey => &["api_key"],
-            ChannelKind::ChatGptOAuth | ChannelKind::XaiOAuth => &["oauth"],
-        }
-    }
 }
 
-/// 六条首发通道（顺序即 pawork models / auth list 展示顺序）。
+/// 首发通道（顺序即 pawork models / auth list 展示顺序；SET-4 起为八行）。
 pub static CHANNEL_REGISTRY: &[ChannelPreset] = &[
     ChannelPreset {
         id: "chatgpt",
@@ -128,6 +125,7 @@ pub static CHANNEL_REGISTRY: &[ChannelPreset] = &[
         default_base_url: "https://chatgpt.com/backend-api/codex",
         display_name: "ChatGPT",
         feature: "chatgpt-oauth",
+        auth_methods: &["oauth"],
         oauth: Some(OAuthPresetData {
             client_id: "app_EMoamEEZ73f0CkXaXp7hrann",
             token_url: "https://auth.openai.com/oauth/token",
@@ -159,6 +157,8 @@ pub static CHANNEL_REGISTRY: &[ChannelPreset] = &[
         default_base_url: "https://api.x.ai/v1",
         display_name: "xAI Grok",
         feature: "xai-oauth",
+        // SET-4 A3：xAI 双认证——OAuth 订阅与 API key 可切换（互斥替换）。
+        auth_methods: &["oauth", "api_key"],
         oauth: Some(OAuthPresetData {
             client_id: "b1a00492-073a-47ea-816f-4c329264a828",
             token_url: "https://auth.x.ai/oauth2/token",
@@ -183,6 +183,7 @@ pub static CHANNEL_REGISTRY: &[ChannelPreset] = &[
         default_base_url: "https://api.z.ai/api/coding/paas/v4",
         display_name: "GLM Coding",
         feature: "glm-coding",
+        auth_methods: &["api_key"],
         oauth: None,
     },
     ChannelPreset {
@@ -191,6 +192,7 @@ pub static CHANNEL_REGISTRY: &[ChannelPreset] = &[
         default_base_url: "https://opencode.ai/zen/go/v1",
         display_name: "OpenCode Go",
         feature: "opencode-go",
+        auth_methods: &["api_key"],
         oauth: None,
     },
     ChannelPreset {
@@ -199,6 +201,7 @@ pub static CHANNEL_REGISTRY: &[ChannelPreset] = &[
         default_base_url: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
         display_name: "Qwen Token Plan",
         feature: "qwen-token-plan",
+        auth_methods: &["api_key"],
         oauth: None,
     },
     ChannelPreset {
@@ -207,7 +210,35 @@ pub static CHANNEL_REGISTRY: &[ChannelPreset] = &[
         default_base_url: "https://api.deepseek.com",
         display_name: "DeepSeek",
         feature: "deepseek",
+        auth_methods: &["api_key"],
         oauth: None,
+    },
+    ChannelPreset {
+        id: "kimi-platform",
+        kind: ChannelKind::ApiKey,
+        default_base_url: "https://api.moonshot.ai/v1",
+        display_name: "Kimi Platform",
+        feature: "kimi-platform",
+        auth_methods: &["api_key"],
+        oauth: None,
+    },
+    ChannelPreset {
+        id: "kimi-code",
+        kind: ChannelKind::KimiOAuth,
+        default_base_url: "https://api.kimi.com/coding/v1",
+        display_name: "Kimi Code",
+        feature: "kimi-code",
+        auth_methods: &["oauth"],
+        // Kimi Code 公开 Device Flow 端点（MoonshotAI/kimi-cli auth/oauth.py
+        // 与 moonshotai.github.io/kimi-code 文档一致，SET-4 web 核对）。
+        oauth: Some(OAuthPresetData {
+            client_id: "17e5f671-d194-4dfb-9706-5516cb48c098",
+            token_url: "https://auth.kimi.com/api/oauth/token",
+            scopes: &["kimi-code"],
+            flow: OAuthFlowData::Device {
+                device_auth_url: "https://auth.kimi.com/api/oauth/device_authorization",
+            },
+        }),
     },
 ];
 
@@ -228,6 +259,8 @@ pub fn is_enabled(preset: &ChannelPreset) -> bool {
         "opencode-go" => cfg!(feature = "opencode-go"),
         "qwen-token-plan" => cfg!(feature = "qwen-token-plan"),
         "deepseek" => cfg!(feature = "deepseek"),
+        "kimi-platform" => cfg!(feature = "kimi-platform"),
+        "kimi-code" => cfg!(feature = "kimi-code"),
         _ => false,
     }
 }
@@ -237,7 +270,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registry_lists_six_first_party_channels_in_product_order() {
+    fn registry_lists_first_party_channels_in_product_order() {
         let ids: Vec<&str> = CHANNEL_REGISTRY.iter().map(|preset| preset.id).collect();
         assert_eq!(
             ids,
@@ -248,6 +281,8 @@ mod tests {
                 "opencode-go",
                 "qwen-token-plan",
                 "deepseek",
+                "kimi-platform",
+                "kimi-code",
             ]
         );
     }
@@ -271,6 +306,11 @@ mod tests {
                 "qwen-token-plan",
             ),
             ("deepseek", "https://api.deepseek.com", "deepseek"),
+            (
+                "kimi-platform",
+                "https://api.moonshot.ai/v1",
+                "kimi-platform",
+            ),
         ];
         for (id, url, feature) in expected {
             let preset = channel_preset(id).expect(id);
@@ -278,6 +318,7 @@ mod tests {
             assert_eq!(preset.default_base_url, url);
             assert_eq!(preset.feature, feature);
             assert!(preset.oauth.is_none());
+            assert_eq!(preset.auth_methods, &["api_key"]);
         }
     }
 
@@ -299,6 +340,26 @@ mod tests {
                 device_auth_url: "https://auth.x.ai/oauth2/device/code".into(),
             }
         );
+        let xai_row = channel_preset("xai").expect("xai row");
+        assert_eq!(xai_row.auth_methods, &["oauth", "api_key"]);
+    }
+
+    #[test]
+    fn kimi_code_preset_uses_official_device_flow_endpoints() {
+        let preset = channel_preset("kimi-code").expect("kimi-code row");
+        assert_eq!(preset.kind, ChannelKind::KimiOAuth);
+        assert_eq!(preset.default_base_url, "https://api.kimi.com/coding/v1");
+        assert_eq!(preset.auth_methods, &["oauth"]);
+        let oauth = preset.oauth_preset().expect("kimi-code oauth preset");
+        assert_eq!(oauth.client_id, "17e5f671-d194-4dfb-9706-5516cb48c098");
+        assert_eq!(oauth.token_url, "https://auth.kimi.com/api/oauth/token");
+        assert_eq!(
+            oauth.flow,
+            OAuthFlow::Device {
+                device_auth_url: "https://auth.kimi.com/api/oauth/device_authorization".into(),
+            }
+        );
+        assert_eq!(oauth.scopes, vec!["kimi-code".to_string()]);
     }
 
     #[test]
@@ -309,6 +370,7 @@ mod tests {
             default_base_url: "https://example.test",
             display_name: "Unknown Channel",
             feature: "not-a-feature",
+            auth_methods: &["api_key"],
             oauth: None,
         };
         assert!(!is_enabled(&preset));

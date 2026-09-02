@@ -7,9 +7,9 @@
 | 字段 | 当前事实 |
 | --- | --- |
 | 活动线 | **Settings — 模型与供应商** |
-| 状态 | 🟢 SET-1/SET-2 已审查提交（协议词汇 + Host settings 门面）；SET-3 Settings 壳已审查提交（只读供应商页接通）；写操作尚未开放。 |
+| 状态 | 🟢 SET-1/SET-2 已审查提交（协议词汇 + Host settings 门面）；SET-3 Settings 壳已审查提交（只读供应商页接通）；SET-4 四家认证闭环已审查提交（Kimi 双通道 + xAI 双认证 + Settings 写操作 UI）。 |
 | 当前交付 | [Settings Feature Spec](docs/spec/settings.md)、[Settings 任务书](plan/settings.md)、ADR-046 协议词汇与 Host 门面（verify-then-replace、按 provider 单飞、Global 层默认项写盘）。 |
-| 下一动作 | SET-4：四家认证闭环（Z.AI/DeepSeek API key；Kimi API key + OAuth；xAI OAuth + API key）。 |
+| 下一动作 | SET-5：模型发现与默认项（远端目录、固定回退、刷新/来源标签、可运行过滤、默认项持久化与 Composer 同步）。 |
 | 当前阻塞 | 真实 Provider/OAuth 验收还需要对应账号与凭证。 |
 | 发布 | **不在本计划内**。待功能继续完善后，由用户另行指定发布范围、License 与门禁。 |
 
@@ -68,7 +68,7 @@
 | SET-1 契约与 ADR | 🟢 | ADR-046 Accepted（2026-09-01，初始未发布版本不采取兼容策略）；protocol 新词汇 + registry 登记 + 43 帧 golden + typegen 落地，`cargo test -p pawork-protocol --features typegen --offline --lib --tests` 148 绿。 |
 | SET-2 Host 设置门面 | 🟢 | 六入口 handler + descriptor 元数据（`ChannelPreset.display_name`/`auth_methods`）+ `verify_api_key` 验证入口 + Global 层 `write_default_model_pair` + `AuthChanged` 广播落地；四包定向测试全绿。 |
 | SET-3 Settings 壳 | 🟢 | gear、Settings Rail、返回工作台、全宽内容区与只读供应商页实现并审查提交（审查修复合计六处；desktop 定向测试 163 绿）；无假按钮，写操作属 SET-4/SET-5。 |
-| SET-4 四家认证 | ⚪ | Z.AI/DeepSeek API key；Kimi API key + OAuth；xAI OAuth + API key；每种方法有验证、取消、错误、替换/移除路径。 |
+| SET-4 四家认证 | 🟢 | 2026-09-02 完成：registry 扩为八通道（+kimi-platform API key、+kimi-code Device OAuth，端点经 kimi-cli 官方源核对）；auth_methods 改数据字段，xAI 双认证；替换=互斥删旧凭证；Settings 写操作 UI（secure 输入/OAuth 等待/取消/Replace/Remove，AuthChanged 六态消费）。审查修复七处（flight 种类化、Replace 终态重查等）。Host 471 绿 + Desktop 168 绿；真实账号验收待凭证（SET-7）。 |
 | SET-5 模型发现与默认项 | ⚪ | 远端目录、静态回退、刷新/来源标签、可运行模型过滤、默认项持久化与 Composer 同步完成。 |
 | SET-6 其余 Settings 面 | ⚪ | 按“通用 → 权限与审批 → 工具与 MCP → 终端 → 外观 → 高级 → 关于”逐页立项；每页须有真实读写能力和独立验收，未接通的页不显示。 |
 | SET-7 真窗口收口 | ⚪ | 四家真实凭证矩阵、重启/断线、键盘/AX、窄窗和 Secret 泄漏检查通过；人工视觉验收单独签字。 |

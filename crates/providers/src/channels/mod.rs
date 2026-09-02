@@ -20,9 +20,13 @@ pub mod xai;
     feature = "glm-coding",
     feature = "opencode-go",
     feature = "qwen-token-plan",
-    feature = "deepseek"
+    feature = "deepseek",
+    feature = "kimi-platform"
 ))]
 pub mod api_key;
+
+#[cfg(feature = "kimi-code")]
+pub mod kimi;
 
 #[cfg(feature = "anthropic")]
 pub use anthropic::{
@@ -41,9 +45,13 @@ pub use xai::{builtin_models as xai_builtin_models, XaiConfig, XaiProvider};
     feature = "glm-coding",
     feature = "opencode-go",
     feature = "qwen-token-plan",
-    feature = "deepseek"
+    feature = "deepseek",
+    feature = "kimi-platform"
 ))]
 pub use api_key::{verify_api_key, ApiKeyChannelConfig, ApiKeyChannelProvider};
+
+#[cfg(feature = "kimi-code")]
+pub use kimi::{builtin_models as kimi_code_builtin_models, KimiCodeConfig, KimiCodeProvider};
 
 pub use registry::{
     channel_preset, is_enabled, ChannelKind, ChannelPreset, OAuthFlow, OAuthPreset,

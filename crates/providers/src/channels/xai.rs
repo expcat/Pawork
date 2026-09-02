@@ -1,7 +1,8 @@
 //! xAI Grok OAuth adapter with model-declared Chat/Responses transport selection.
 //!
 //! OAuth acquisition/refresh is owned by `pawork-auth`; this adapter only consumes a resolved
-//! bearer token. API-key auth is intentionally outside the initial product scope requested for S6.
+//! bearer credential. SET-4 A3 起同时接受 OAuth bearer 与 API key（Bearer 用法相同，
+//! 切换语义由宿主保证互斥替换）。
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -59,7 +60,7 @@ impl XaiProvider {
         config: XaiConfig,
         credential: Option<ResolvedCredential>,
     ) -> Result<Self, ProviderError> {
-        let credential = require_oauth(credential)?;
+        let credential = require_bearer_credential(credential)?;
         let chat = OpenAiCompatibleProvider::new(
             OpenAiCompatibleConfig {
                 base_url: config.base_url.clone(),
@@ -141,21 +142,23 @@ impl ModelProvider for XaiProvider {
     }
 }
 
-fn require_oauth(
+fn require_bearer_credential(
     credential: Option<ResolvedCredential>,
 ) -> Result<ResolvedCredential, ProviderError> {
     let credential = credential.ok_or_else(|| {
         ProviderError::new(
             ProviderErrorKind::Authentication,
-            "xAI Grok requires an OAuth bearer credential",
+            "xAI Grok requires an OAuth bearer or API key credential",
         )
     })?;
-    if credential.kind() != CredentialKind::OAuthBearer
-        || credential.expose_secret().trim().is_empty()
-    {
+    let accepted = matches!(
+        credential.kind(),
+        CredentialKind::OAuthBearer | CredentialKind::ApiKey
+    ) && !credential.expose_secret().trim().is_empty();
+    if !accepted {
         return Err(ProviderError::new(
             ProviderErrorKind::Authentication,
-            "xAI Grok initial adapter accepts only a non-empty OAuth bearer credential",
+            "xAI Grok accepts only a non-empty OAuth bearer or API key credential",
         ));
     }
     Ok(credential)
@@ -229,14 +232,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn oauth_is_required_and_api_key_is_deferred() {
+    fn bearer_credential_is_required_and_api_key_is_accepted() {
         for credential in [
             None,
-            Some(ResolvedCredential::new(CredentialKind::ApiKey, "sk-test")),
             Some(ResolvedCredential::new(
                 CredentialKind::SessionToken,
                 "session",
             )),
+            Some(ResolvedCredential::new(CredentialKind::ApiKey, "  ")),
         ] {
             assert_eq!(
                 XaiProvider::new(XaiConfig::default(), credential)
@@ -246,6 +249,12 @@ mod tests {
                 ProviderErrorKind::Authentication
             );
         }
+        let provider = XaiProvider::new(
+            XaiConfig::default(),
+            Some(ResolvedCredential::new(CredentialKind::ApiKey, "sk-test")),
+        )
+        .expect("API key credential must construct");
+        assert_eq!(provider.id().as_str(), "xai");
     }
 
     #[test]

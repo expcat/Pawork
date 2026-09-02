@@ -29,7 +29,7 @@ flowchart LR
 | Inspector / Changes | 默认 Changes；顶层 Changes/Terminal/Resources 与二级 Files/Summary 分层；DiffView；折叠态 Header ActivityPopover | 只读；无 stage/unstage/hunk 命令。 |
 | Inspector / Terminal | PTY 创建、输入、resize、Stop/Close、流式输出与 live/snapshot 终态；任务切换隔离草稿；失败与断线诚实显示 | 创建需 Policy；纯文本视图过滤 ANSI/VT 控制序列但不是完整 VT emulator；ADR-045 的 `terminal_close` / `TerminalExited` 自 API 1.3 起可用，旧 minor 仍只从 snapshot 获知终态。 |
 | Inspector / Resources | MCP server/tool 状态、刷新 | 只读；没有已加载 AGENTS.md/Skills 分区。 |
-| Settings | 独立 Settings Rail + 全宽内容；首个页面为模型与供应商 | 壳与只读供应商页已实现（SET-3）：TaskRail gear 进入、返回恢复工作台状态、断线保留 stale 只读标注；写操作与其它页面等待 SET-4–SET-6。 |
+| Settings | 独立 Settings Rail + 全宽内容；首个页面为模型与供应商 | 壳与供应商页已实现：SET-3 落地只读页（gear 进入、返回恢复工作台、断线 stale 标注），SET-4 落地认证写操作（API key secure 输入验证、OAuth 等待/取消、Replace/Remove、AuthChanged 驱动、stale 断线三路径禁写）；其它页面等待 SET-5–SET-6。 |
 
 ## 3. 连接与状态模型
 
@@ -66,7 +66,7 @@ flowchart LR
 | DESK-09 | 断线态可 Reconnect，Run/会话不因 UI 断线丢失。 | 重连路径已实现；项目与 Session 归属跨重启已复验。 |
 | DESK-10 | 1080×720 下 Composer、状态栏和 Header Activity 触发器仍可用。 | 生产响应式路径已实现；完整视觉签字仍待人工验收。 |
 | DESK-11 | 可见结构和控件具备稳定 AX identifier、正确 role/name/value/state/action；AX 操作复用鼠标/键盘的业务 gate。 | ADR-042 macOS bridge 已实现；本轮主路径可经 AX 驱动，全组件 VoiceOver 与 Windows/Linux 平台仍未验收。 |
-| DESK-12 | Settings 从 TaskRail 进入，以 Host capability 驱动供应商认证/模型目录；返回时保持工作台状态，secure input 不泄漏 AX value。 | 壳与只读供应商页已实现（SET-3）：gear / Rail / 返回与 stale 只读状态落地，进入退出不动会话、草稿、Inspector、Run；认证写操作与 secure input 属 SET-4/SET-5，见 [settings.md](settings.md)。 |
+| DESK-12 | Settings 从 TaskRail 进入，以 Host capability 驱动供应商认证/模型目录；返回时保持工作台状态，secure input 不泄漏 AX value。 | SET-3 壳 / 只读页与 SET-4 认证写操作已实现：全部动作由 descriptor 驱动，断线 stale 时可见 / 键盘 / AX 同禁（AX 逐按钮与可见按钮同源启用，含空输入 Verify）；Replace 流程 Cancelled / Expired / Failed 不清旧凭证并触发权威重查；secure input 的 AX value 只发布掩码并有定向回归（全树无明文）；真实账号端到端与 VoiceOver 人工验收 pending，见 [settings.md](settings.md)。 |
 
 ### 4.1 可见合同（已实现，非终局签字）
 

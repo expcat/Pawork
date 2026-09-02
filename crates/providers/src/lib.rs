@@ -68,9 +68,15 @@ pub use channels::{xai_builtin_models, XaiConfig, XaiProvider};
     feature = "glm-coding",
     feature = "opencode-go",
     feature = "qwen-token-plan",
-    feature = "deepseek"
+    feature = "deepseek",
+    feature = "kimi-platform"
 ))]
 pub use channels::{verify_api_key, ApiKeyChannelConfig, ApiKeyChannelProvider};
+
+#[cfg(feature = "kimi-code")]
+pub use channels::kimi::DEFAULT_BASE_URL as KIMI_CODE_DEFAULT_BASE_URL;
+#[cfg(feature = "kimi-code")]
+pub use channels::{kimi_code_builtin_models, KimiCodeConfig, KimiCodeProvider};
 
 // R5 波 A 轨 b：通道 preset 单点登记（纯数据 + 唯一 feature cfg 求值点）。
 pub use channels::registry::{
@@ -84,11 +90,14 @@ pub use channels::anthropic;
     feature = "glm-coding",
     feature = "opencode-go",
     feature = "qwen-token-plan",
-    feature = "deepseek"
+    feature = "deepseek",
+    feature = "kimi-platform"
 ))]
 pub use channels::api_key;
 #[cfg(feature = "chatgpt-oauth")]
 pub use channels::chatgpt;
+#[cfg(feature = "kimi-code")]
+pub use channels::kimi;
 #[cfg(feature = "xai-oauth")]
 pub use channels::xai;
 

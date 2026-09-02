@@ -25,6 +25,8 @@ pawork-providers = { path = "../providers", features = [
     "opencode-go",
     "qwen-token-plan",
     "deepseek",
+    "kimi-platform",
+    "kimi-code",
 ] }
 pawork-auth = { path = "../auth" }
 pawork-tools = { path = "../tools" }

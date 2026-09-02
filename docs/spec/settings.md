@@ -25,13 +25,13 @@
 
 | 能力 | 当前生产路径/证据 | 缺口 | 结论 |
 | --- | --- | --- | --- |
-| Settings 入口/路由 | TaskRail 底部仅有 `Local` 状态，[task_rail.rs](../../apps/desktop/src/ui/task_rail.rs) 无 gear/settings route | 无 Settings Surface、导航、焦点和返回语义 | 未实现 |
-| Provider 注册 | [channel registry](../../crates/providers/src/channels/registry.rs) 有 chatgpt/xai/glm-coding/opencode-go/qwen-token-plan/deepseek | Kimi 缺失；单一 `ChannelKind` 不足以描述同供应商多种认证方法 | 部分实现 |
-| API-key 通道 | [api_key.rs](../../crates/providers/src/channels/api_key.rs) 可请求 OpenAI-compatible `/models`；SET-2 增 `verify_api_key` 写前验证与 `auth_set_api_key` 非重放命令（verify-then-replace） | xAI adapter 目前不接受 API key（SET-4） | Host 侧已实现，Desktop 未接 |
-| OAuth | AppCore/auth 已有 OAuth 基础；xAI Device Flow 已接入；SET-2 起 `AuthStart`/`AuthCancel`/`AuthRemove` 对 GUI 开放并有 handler，进度经 `AuthChanged` 六态下发 | Kimi OAuth 未接入（SET-4） | Host 侧已实现，Desktop 未接 |
+| Settings 入口/路由 | SET-3 起 TaskRail `Local` 行 gear + AppRoute 顶层路由 + Settings Rail + 只读供应商页落地（[settings.rs](../../apps/desktop/src/ui/settings.rs)） | 其余设置页未启用（SET-6） | 已实现 |
+| Provider 注册 | [channel registry](../../crates/providers/src/channels/registry.rs) 八行：chatgpt/xai/glm-coding/opencode-go/qwen-token-plan/deepseek/kimi-platform/kimi-code；SET-4 起 `auth_methods` 为数据字段，支持同供应商多认证方法 | — | 已实现 |
+| API-key 通道 | [api_key.rs](../../crates/providers/src/channels/api_key.rs) 可请求 OpenAI-compatible `/models`；SET-2 增 `verify_api_key` 写前验证与 `auth_set_api_key` 非重放命令（verify-then-replace）；SET-4 起 xAI adapter 接受 API key，桌面端写操作已接通 | — | 已实现（真实账号验收 pending） |
+| OAuth | AppCore/auth 已有 OAuth 基础；xAI Device Flow 已接入；SET-2 起 `AuthStart`/`AuthCancel`/`AuthRemove` 对 GUI 开放并有 handler，进度经 `AuthChanged` 六态下发；SET-4 起 Kimi Code Device Flow 接入（[kimi.rs](../../crates/providers/src/channels/kimi.rs)），桌面端等待/取消 UI 已接通 | — | 已实现（真实账号验收 pending） |
 | 模型目录 | `ModelList` query 已对 GUI 开放；[provider_assembly.rs](../../crates/app/src/provider_assembly.rs) 已实现远端 probe 失败后静态回退；SET-2 起 `provider_auth_status` 返回目录三态（remote / fixed_fallback / unavailable） | xAI 当前只返回固定目录；显式刷新 UI 未做（SET-3/5） | Host 侧已实现，Desktop 未接 |
 | 默认 provider/model | 配置已有 default provider/model 语义；SET-2 增 Global 层 `write_default_model_pair` 与 `set_default_model` 命令（校验可运行目录后落盘） | Desktop 变更入口与重启验收未做（SET-3/5） | Host 侧已实现，Desktop 未接 |
-| Secret 存储 | auth backend 使用独立 `auth.json`、原子写和权限收紧；config 排除 `api_key` | 必须定义 key 经 GUI wire 的瞬时生命周期，禁止进入 command ledger/诊断 | 待契约 |
+| Secret 存储 | auth backend 使用独立 `auth.json`、原子写和权限收紧；config 排除 `api_key`；ADR-046 拍板 `ApiKeySecret` 非重放单帧内存传递，SET-4 Desktop secure input 只发掩码、明文不进 projection/日志 | — | 已实现 |
 
 归档或历史实现不能代替当前生产路径。本功能只复用当前包，不从 V1/V2 复活账户池或设置库存。
 

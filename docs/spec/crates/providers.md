@@ -4,7 +4,7 @@
 
 ## 1. 职责与边界
 
-- **职责**：承载四种 transport 形态（OpenAI-compatible Chat Completions、Responses、Anthropic Messages、xAI 按模型能力二选一）、模型目录与能力证据（`ModelRegistry`）、能力协商（`CapabilityNegotiator`）、计价与用量归一（pricing/usage）、厂商错误归一（error_table）、reasoning 续传保护接口（`ReasoningProtector`）、六条首发通道的静态注册（`CHANNEL_REGISTRY`）与网络层（HTTP/SSE/错误分类）。
+- **职责**：承载四种 transport 形态（OpenAI-compatible Chat Completions、Responses、Anthropic Messages、xAI 按模型能力二选一）、模型目录与能力证据（`ModelRegistry`）、能力协商（`CapabilityNegotiator`）、计价与用量归一（pricing/usage）、厂商错误归一（error_table）、reasoning 续传保护接口（`ReasoningProtector`）、八条首发通道的静态注册（`CHANNEL_REGISTRY`，SET-4 新增 Kimi Platform / Kimi Code）与网络层（HTTP/SSE/错误分类）。
 - **不做**：凭证的存取与解析（`pawork-auth`，见 [auth.md](auth.md)）；事件持久化；Agent loop 编排；GUI。装配（把 preset + 凭证 + registry 组装成 Provider 实例）由 `pawork-app` 承载。
 - **模块纪律**：core 纯逻辑模块（`registry` / `pricing` / `usage` / `negotiate` / `reasoning` / `error`）不得引用 `net` 模块，由 `lib.rs` 内 `module_discipline` 测试护航。
 - **engine 不认厂商名**：能力差异一律走 registry/capability 证据；`pawork-engine` 仅以 dev-dependency 引用本包，用 `CHANNEL_REGISTRY` 派生 no-provider-branch 守护测试名单。
@@ -31,11 +31,12 @@
 | `src/net/http.rs` | ~400 | `HttpClient` / `HttpClientConfig`（builder：timeout/proxy/user_agent/自定义头/禁系统代理）、`is_local_target` / `loopback_aware_proxy`（本地目标绕过代理）；Debug 输出对凭证头脱敏 |
 | `src/net/sse.rs` | ~450 | 增量 `SseParser`（feed/finish）、`SseEvent` / `SseParseError`、`MAX_BUFFER_BYTES`（1 MiB 缓冲上限，UTF-8 安全跨 chunk） |
 | `src/net/retry.rs` | ~220 | `classify_status` / `classify_request_error`（HTTP 状态与 reqwest 错误 → `ProviderError`，解析 `Retry-After`，消息脱敏）、`parse_retry_after` |
-| `src/channels/mod.rs` | ~50 | 六通道 feature 门控的模块声明与 re-export |
-| `src/channels/registry.rs` | ~320 | `CHANNEL_REGISTRY`（六行静态 preset）、`ChannelPreset`（含 `display_name` 与 `auth_methods()` 元数据）/ `ChannelKind`、`OAuthPreset(Data)` / `OAuthFlow(Data)`、`channel_preset`、`is_enabled`（唯一 cfg 求值点） |
-| `src/channels/api_key.rs` | ~230 | `ApiKeyChannelConfig` / `ApiKeyChannelProvider`：四条 API-key 通道共用适配器；默认 Chat Completions，逐模型显式声明才走 Responses；`verify_api_key` 用候选 key 发一次性 `GET /models` 做写前验证（不持久化） |
+| `src/channels/mod.rs` | ~60 | 八通道 feature 门控的模块声明与 re-export |
+| `src/channels/registry.rs` | ~360 | `CHANNEL_REGISTRY`（八行静态 preset）、`ChannelPreset`（含 `display_name` 与 `auth_methods` 数据字段，SET-4 起不再按 kind 派生）/ `ChannelKind`、`OAuthPreset(Data)` / `OAuthFlow(Data)`、`channel_preset`、`is_enabled`（唯一 cfg 求值点） |
+| `src/channels/api_key.rs` | ~230 | `ApiKeyChannelConfig` / `ApiKeyChannelProvider`：API-key 通道共用适配器（五行，含 kimi-platform；xAI 双认证亦复用 `verify_api_key`）；默认 Chat Completions，逐模型显式声明才走 Responses；`verify_api_key` 用候选 key 发一次性 `GET /models` 做写前验证（不持久化） |
 | `src/channels/chatgpt.rs` | ~280 | `ChatGptConfig` / `ChatGptProvider`：ChatGPT OAuth 通道（Responses transport、`chatgpt-account-id` / `originator` 头、`client_version` 校验、`DEFAULT_BASE_URL`） |
 | `src/channels/xai.rs` | ~280 | `XaiConfig` / `XaiProvider`：xAI Grok OAuth 通道，按模型 capability 声明选 Responses 或 Chat Completions；`xai_builtin_models` / `DEFAULT_BASE_URL` |
+| `src/channels/kimi.rs` | ~200 | `KimiCodeConfig` / `KimiCodeProvider`：Kimi Code OAuth 通道（SET-4 A2），只接受 OAuth bearer、只走 Chat Completions（`https://api.kimi.com/coding/v1`）；`builtin_models` 版本固定目录（id 取自官方 kimi-cli / Models.dev，能力未知不推断） |
 | `src/channels/anthropic/mod.rs` | ~20 | re-export 与 `ANTHROPIC_VERSION`（`anthropic-version` 头值） |
 | `src/channels/anthropic/provider.rs` | ~1.1k | `AnthropicProvider(Config)`：Messages transport；`prepare_request` 能力收口（§4.3）；`builtin_models` 静态目录（claude-3-5-sonnet / haiku） |
 | `src/channels/anthropic/request.rs` | ~790 | `to_messages_body(_with_plan)` / `MessagesWirePlan`：system 提升、`tool_use` 块、`thinking` 与 `cache_control` 按 plan 写 wire |
@@ -52,37 +53,40 @@ trait 面为 `id()` / `list_models(credential)` / `stream(request, sink, cancel)
 - `OpenAiCompatibleProvider::new(config, credential)`：`OpenAiCompatibleConfig::new(base_url)` 默认 `provider_id = "openai-compatible"`，可 `with_provider_id`。构造期若 config 自定义头含凭证头则拒绝（凭证只能经 `ResolvedCredential` 注入为 `Authorization: Bearer`）。
 - `AnthropicProvider`（feature `anthropic`，默认开启）：认证头 `x-api-key` + `anthropic-version`；可 `with_registry(Arc<ModelRegistry>)` 注入能力证据、`with_reasoning_protector` 注入续传保护。
 - `ChatGptProvider`（feature `chatgpt-oauth`）：内部复用 `ResponsesTransport`；OAuth Bearer + `chatgpt-account-id`（构造入参或从 id_token JWT claim 提取）+ `originator: codex_cli_rs` 头；`client_version` 字符集校验，`/models?client_version=` 过滤目录。
-- `XaiProvider`（feature `xai-oauth`）：OAuth Bearer；按模型 capability 的 `transport` 声明路由 Responses / Chat Completions。
-- `ApiKeyChannelProvider`（任一 API-key feature）：以 `&'static ChannelPreset` 构造，构造期 fail-closed——preset 必须是 `ChannelKind::ApiKey` 且 `is_enabled`，凭证必须存在且为 API key 形态，config 固定头不得含凭证头。
+- `XaiProvider`（feature `xai-oauth`）：OAuth Bearer 或 API key（SET-4 A3 双认证，Bearer 用法相同）；按模型 capability 的 `transport` 声明路由 Responses / Chat Completions。
+- `KimiCodeProvider`（feature `kimi-code`）：OAuth Bearer；固定 Chat Completions，`list_models` 返回版本固定 builtin。
+- `ApiKeyChannelProvider`（任一 API-key feature）：以 `&'static ChannelPreset` 构造，构造期 fail-closed——preset 必须声明 api_key 认证方法（`auth_methods` 数据字段）且 `is_enabled`，凭证必须存在且为 API key 形态，config 固定头不得含凭证头。
 - `verify_api_key(config, candidate_key)`（async，任一 API-key feature）：SET-2 写前验证入口——用候选 key 构造一次性 adapter 发 `GET /models`，只返回 `Ok(())` / `ProviderError`；key 只在内存短暂停留、不落任何后端，供宿主 `auth_set_api_key` 在 `store_default_api_key` 之前校验。
 
 四种 transport 形态对照：
 
 | transport | 请求组装 | 流解析 | 认证头 | 使用方 |
 | --- | --- | --- | --- | --- |
-| Chat Completions | `to_chat_completions_body` | `SseParser` + `chunk_to_events` | `Authorization: Bearer` | OpenAiCompatible、四条 API-key 通道、xAI Chat 模型 |
+| Chat Completions | `to_chat_completions_body` | `SseParser` + `chunk_to_events` | `Authorization: Bearer` | OpenAiCompatible、API-key 通道（五行）、xAI Chat 模型、Kimi Code |
 | Responses | `to_responses_body` | `SseParser` + `ResponsesStreamAssembler` | Bearer（ChatGPT 另加 account/originator 头） | ChatGPT、xAI Responses 模型、API-key 通道逐模型声明时 |
 | Anthropic Messages | `to_messages_body_with_plan` | `SseParser` + `parse_event` | `x-api-key` + `anthropic-version` | AnthropicProvider |
 | 模型能力路由 | —（复用上两行） | — | — | XaiProvider / ApiKeyChannelProvider 按 `ModelCapabilities::transport` 选择 |
 
 ### 3.2 通道注册表（channels/registry）
 
-`CHANNEL_REGISTRY: &[ChannelPreset]` 六行（顺序即 `pawork models` / `auth list` 展示顺序）；行本身**不带 cfg**，feature 是数据字段，`is_enabled(preset)` 是唯一的 `cfg!` 求值点（未知 feature 名返回 false，fail-closed）。`channel_preset(id)` 按 id 查行；`ChannelPreset::oauth_preset()` 把 const 镜像 `OAuthPresetData` 转运行期 `OAuthPreset { client_id, token_url, scopes, flow }`（与 config `[oauth.<id>]` 覆盖共用同一形状）。`ChannelPreset` 另携带 `display_name`（品牌展示名）与 `auth_methods()`（ApiKey 通道返回 api_key、OAuth 通道返回 oauth），SET-2 GUI Settings 的通道 descriptor 与认证方式列表直接由此派生，宿主 / Desktop 不自建品牌表。
+`CHANNEL_REGISTRY: &[ChannelPreset]` 八行（顺序即 `pawork models` / `auth list` 展示顺序）；行本身**不带 cfg**，feature 是数据字段，`is_enabled(preset)` 是唯一的 `cfg!` 求值点（未知 feature 名返回 false，fail-closed）。`channel_preset(id)` 按 id 查行；`ChannelPreset::oauth_preset()` 把 const 镜像 `OAuthPresetData` 转运行期 `OAuthPreset { client_id, token_url, scopes, flow }`（与 config `[oauth.<id>]` 覆盖共用同一形状）。`ChannelPreset` 另携带 `display_name`（品牌展示名）与 `auth_methods` 数据字段（SET-4 起不再按 kind 派生：纯 API-key 行为 `["api_key"]`、纯 OAuth 行为 `["oauth"]`、xAI 双认证为 `["oauth","api_key"]`），SET-2 GUI Settings 的通道 descriptor 与认证方式列表直接由此派生，宿主 / Desktop 不自建品牌表。
 
 | provider_id | 凭证形态（ChannelKind） | 默认协议 / endpoint | feature | OAuth 流 |
 | --- | --- | --- | --- | --- |
 | `chatgpt` | ChatGptOAuth（Bearer + account 头） | Responses / `https://chatgpt.com/backend-api/codex` | `chatgpt-oauth` | PKCE（auth.openai.com；redirect 固定 `http://localhost:1455/auth/callback`；scopes 含 `api.connectors.read/invoke`；附加 `codex_cli_simplified_flow` 等参数） |
-| `xai` | XaiOAuth（Bearer） | 按模型能力选 Responses/Chat / `https://api.x.ai/v1` | `xai-oauth` | Device Flow（auth.x.ai；scopes 含 `grok-cli:access`、`api:access`） |
+| `xai` | XaiOAuth（OAuth Bearer 或 API key，SET-4 双认证） | 按模型能力选 Responses/Chat / `https://api.x.ai/v1` | `xai-oauth` | Device Flow（auth.x.ai；scopes 含 `grok-cli:access`、`api:access`） |
 | `glm-coding` | ApiKey | Chat Completions / `https://api.z.ai/api/coding/paas/v4` | `glm-coding` | — |
 | `opencode-go` | ApiKey | Chat Completions / `https://opencode.ai/zen/go/v1` | `opencode-go` | — |
 | `qwen-token-plan` | ApiKey | Chat Completions / `https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1` | `qwen-token-plan` | — |
 | `deepseek` | ApiKey | Chat Completions / `https://api.deepseek.com` | `deepseek` | — |
+| `kimi-platform` | ApiKey | Chat Completions / `https://api.moonshot.ai/v1` | `kimi-platform` | — |
+| `kimi-code` | KimiOAuth（Bearer） | Chat Completions / `https://api.kimi.com/coding/v1` | `kimi-code` | Device Flow（auth.kimi.com；client_id `17e5f671-d194-4dfb-9706-5516cb48c098`；scope `kimi-code`；端点与 MoonshotAI/kimi-cli 官方源一致） |
 
 补充语义：
 
 - OAuth 行的公开 client_id / 端点预置在注册表源码中（各厂商公开 client 参数，非 Secret）；`OAuthPresetData` 是 static 初始化友好的 `&'static str` 镜像，运行期 `to_preset()` 转 String 形态后与 config `[oauth.<id>]` 覆盖走同一形状。
-- `ChannelKind` 三变体即三种装配形态：`ApiKey`（四条通道复用 OpenAI-compatible transport，可逐模型切 Responses）、`ChatGptOAuth`（固定 Responses）、`XaiOAuth`（按模型 capability 选 Chat/Responses）。
-- feature `anthropic`（默认开）承载 Messages transport 适配器，不属于 CHANNEL_REGISTRY 六行——它是 transport 基线而非首发通道行。
+- `ChannelKind` 四变体即四种装配形态：`ApiKey`（五行通道复用 OpenAI-compatible transport，可逐模型切 Responses）、`ChatGptOAuth`（固定 Responses）、`XaiOAuth`（按模型 capability 选 Chat/Responses；SET-4 起凭证可为 OAuth 或 API key）、`KimiOAuth`（固定 Chat Completions）。
+- feature `anthropic`（默认开）承载 Messages transport 适配器，不属于 CHANNEL_REGISTRY 八行——它是 transport 基线而非首发通道行。
 
 ### 3.3 模型目录与能力证据（registry）
 
@@ -183,7 +187,7 @@ trait 面为 `id()` / `list_models(credential)` / `stream(request, sink, cancel)
 - **Secret 不入日志/事件**：`HttpClient` Debug 输出与 `classify_*` 错误消息对凭证脱敏；`ProviderStreamEvent` 不携带明文凭证。
 - **reasoning 载荷不明文外泄**：`encrypted_content` / thinking signature 只经 `ReasoningProtector::protect` 换成 `protected_blob_ref` 后进入事件流；provider hint 走 `ReasoningItem.continuation_metadata` 命名空间键（如 anthropic model hint），engine 不解释其内容。
 - **engine 不按厂商名分支**：能力差异一律经 registry 证据 + negotiate 结果表达；`pawork-engine` 的守护测试名单从 `CHANNEL_REGISTRY` 派生（dev-only 依赖方向）。
-- **注册表单点登记**：`CHANNEL_REGISTRY` 行不带 cfg（`pawork models` 六行数据语义恒定）；`is_enabled` 是唯一 `cfg!` 求值点，未知 feature fail-closed；新增通道 = 加一行。
+- **注册表单点登记**：`CHANNEL_REGISTRY` 行不带 cfg（`pawork models` 八行数据语义恒定）；`is_enabled` 是唯一 `cfg!` 求值点，未知 feature fail-closed；新增通道 = 加一行。
 - **协商完备性**：`requested == supported ∪ unsupported`；不支持能力绝不静默丢弃——要么 `Reject` 要么显式 fallback 记录。
 - **Anthropic 收口**：prompt cache / thinking / hosted tools 的约束在写 wire 或发 HTTP 之前判定并拒绝（§4.3），不把不满足的请求发给厂商。
 - **保留键防覆盖**：`provider_options` 不能覆盖 `model` / `messages` / `stream` 等 wire 保留键（Chat 与 Responses 两处独立拦截）。
@@ -197,12 +201,12 @@ trait 面为 `id()` / `list_models(credential)` / `stream(request, sink, cancel)
 ## 6. 依赖关系
 
 - **上游**：仅 `pawork-domain`（canonical 类型、`ModelProvider` / `ProviderEventSink` trait、`ProviderError`）。三方：`reqwest`（HTTP）、`tokio` / `futures`（异步）、`serde(_json)`、`thiserror`、`tracing`、`bytes`、`async-trait`。
-- **下游**：`pawork-app` 生产依赖并开启全部七个 feature（`anthropic` + 六通道）；`pawork-engine` 仅 dev-dependency（守护测试名单）。依赖方向与包布局见 [../../design.md](../../design.md) §2。
+- **下游**：`pawork-app` 生产依赖并开启全部九个 feature（`anthropic` + 八通道）；`pawork-engine` 仅 dev-dependency（守护测试名单）。依赖方向与包布局见 [../../design.md](../../design.md) §2。
 - **features**（全部为空依赖集、只控制条件编译，互不依赖）：
   - `anthropic`（默认开）：Messages transport 适配器与 `builtin_models`；
   - `chatgpt-oauth` / `xai-oauth`：两条 OAuth 通道适配器；
   - `glm-coding` / `opencode-go` / `qwen-token-plan` / `deepseek`：任一开启即编译共用的 `api_key` 模块；
-  - `CHANNEL_REGISTRY` 与 `channels/registry` 不受任何 feature 门控，始终可用（数据恒定六行）。
+  - `CHANNEL_REGISTRY` 与 `channels/registry` 不受任何 feature 门控，始终可用（数据恒定八行）。
 
 ## 7. 测试与验证资产
 
@@ -210,13 +214,13 @@ trait 面为 `id()` / `list_models(credential)` / `stream(request, sink, cancel)
 
 | 测试资产 | required-features | 覆盖点 |
 | --- | --- | --- |
-| `src/**` 内 `#[cfg(test)]` | — | 各模块单测：`module_discipline`（core 不引用 net）、注册表六行顺序与 fail-closed、SSE 边界、保留键忽略、协商 clamp、pricing 定点、错误分类脱敏等 |
+| `src/**` 内 `#[cfg(test)]` | — | 各模块单测：`module_discipline`（core 不引用 net）、注册表八行顺序与 fail-closed、kimi-code 端点预设、xAI 双认证凭证接受、SSE 边界、保留键忽略、协商 clamp、pricing 定点、错误分类脱敏等 |
 | `tests/contract.rs` | —（默认即跑） | OpenAI-compatible 契约全集（见下） |
 | `tests/anthropic.rs` | `anthropic` | Messages 契约（见下） |
 | `tests/chatgpt.rs` | `chatgpt-oauth` | OAuth 头 / models / Responses 路径接线；malformed Responses 事件即使后随完成事件也报错 |
 | `tests/xai.rs` | `xai-oauth` | 模型能力选 Responses/Chat；grok Responses 带 OAuth Bearer 的全链路往返 |
 | `tests/responses.rs` | `chatgpt-oauth` | `to_responses_body` 保留 canonical tools、拦截保留键覆盖 |
-| `tests/api_key_channels.rs` | 四个 API-key feature | 四通道默认 id/endpoint 覆盖、非 ApiKey preset 与缺/错凭证 fail-closed、固定凭证头拒绝、Bearer Chat 路径、模型声明 transport 选 Responses 且不按通道分支 |
+| `tests/api_key_channels.rs` | 五个 API-key feature（含 kimi-platform） | 五通道默认 id/endpoint 覆盖、未声明 api_key 的 preset 与缺/错凭证 fail-closed、固定凭证头拒绝、Bearer Chat 路径、模型声明 transport 选 Responses 且不按通道分支 |
 
 `tests/contract.rs` 契约点（wiremock 驱动）：
 

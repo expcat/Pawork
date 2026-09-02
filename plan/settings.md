@@ -1,6 +1,6 @@
 # Settings 活动线任务书
 
-> 状态：SET-0～SET-3 已审查提交（SET-3：gear/Settings Rail/返回工作台/只读供应商页）；写操作未开放。2026-09-01 重置时仓库内不存在旧 `plan/` 文档；本文件是新建后的唯一活动任务书。范围依据 [Settings Feature Spec](../docs/spec/settings.md)，顺序与状态以 [ROADMAP](../ROADMAP.md) 为准。
+> 状态：SET-0～SET-4 已审查提交（SET-4：Kimi 双通道 + xAI 双认证 + Settings 认证写操作 UI）；真实账号验收待凭证。2026-09-01 重置时仓库内不存在旧 `plan/` 文档；本文件是新建后的唯一活动任务书。范围依据 [Settings Feature Spec](../docs/spec/settings.md)，顺序与状态以 [ROADMAP](../ROADMAP.md) 为准。
 
 ## 1. 开工合同
 
@@ -133,7 +133,9 @@
 
 **验证**：`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`；随后正式 Host/Desktop 真窗口检查进入、返回、断线、1440/1080。
 
-### SET-4 — 四家认证闭环 ⚪
+### SET-4 — 四家认证闭环 🟢
+
+> 2026-09-02 完成：registry 扩为八通道（末尾追加 kimi-platform API-key 行与 kimi-code Device OAuth 行；端点经 MoonshotAI/kimi-cli 源码与官方文档 web 核对一致）；`auth_methods` 从 kind 派生改为 `ChannelPreset` 数据字段，xAI 声明 ["oauth","api_key"] 双认证；新增 `ChannelKind::KimiOAuth` 与 channels/kimi.rs（OAuth-only、固定 Chat Completions、版本固定 builtin 目录）；xai adapter 接受 ApiKey 凭证；替换语义双向落地（set-api-key 成功删旧 OAuth、oauth_finish 成功删旧 api key，删除失败 fail-closed 上报）；auth_remove env 命中不阻断已存条目清理。Desktop 供应商页写操作落地：API key secure 内联输入（掩码渲染、AX value 无明文、Copy/Cut no-op）、OAuth 等待（URL/user code/到期/Cancel）、Replace/Remove、AuthChanged 六态消费与 Succeeded 后状态重查，全部 descriptor 驱动无品牌分支，stale/断线三路径同 gate 禁写。审查（glm_reviewer ×2）修复七处：Host 侧 auth flight 加种类标记（api-key 验证拒绝 AuthCancel，防 Cancelled/Succeeded 双发）、providers spec §7 五 feature 回写、auth_remove env 语义恢复；Desktop 侧 Replace 终态对已连接 provider 改触发权威重查而非断言未连接、空输入 Verify gate 发布到 AX、焦点句柄精确回收、verify 命令 socket 失败对称重查。新增定向测试 13 条（providers 5：kimi 凭证门与 builtin 3、xai 双凭证接受 1、kimi-code 端点 1；app 3：xai set-key 主路径/替换删旧 OAuth/取消 api-key flight 被拒；desktop 5：AuthChanged 六态解析应用/畸形 fail-closed/secure 掩码/AX 掩码+stale gate/Replace 终态重查）。真实账号端到端验收缺凭证，登记 SET-7。
 
 **目标**：按 Host descriptor 完成认证，不在 Desktop 写 vendor switch。
 

@@ -46,6 +46,7 @@ pub struct TextInput {
     content: SharedString,
     placeholder: SharedString,
     element_id: SharedString,
+    secure: bool,
     min_height: f32,
     max_height: f32,
     selected_range: Range<usize>,
@@ -61,6 +62,9 @@ pub struct TextInput {
     last_line_starts: Vec<usize>,
     last_bounds: Option<gpui::Bounds<Pixels>>,
 }
+
+/// secure 模式掩码字符（U+2022，3 字节 UTF-8）；每个 grapheme 一个。
+const SECURE_MASK: &str = "•";
 
 #[derive(Clone)]
 struct EditSnapshot {
@@ -83,6 +87,7 @@ impl TextInput {
             content: "".into(),
             placeholder: placeholder.into(),
             element_id: SharedString::from("composer-input"),
+            secure: false,
             min_height: metrics::COMPOSER_INPUT_MIN_HEIGHT,
             max_height: composer_input_max_height(),
             selected_range: 0..0,
@@ -152,6 +157,51 @@ impl TextInput {
         self.min_height = min;
         self.max_height = max.max(min);
         self
+    }
+
+    /// SET-010 secure 模式：渲染按 grapheme 掩码，Copy/Cut 不写剪贴板，
+    /// 换行被剔除（API key 单行语义）；明文只留在本实体内存与编辑栈，
+    /// AX value 由宿主发布掩码（本组件不参与 AX 树构建）。
+    pub fn secure(mut self) -> Self {
+        self.secure = true;
+        self
+    }
+
+    /// secure 掩码串（非 secure 或空内容返回 None；空内容走 placeholder）。
+    pub(crate) fn secure_mask(&self) -> Option<String> {
+        if !self.secure || self.content.is_empty() {
+            return None;
+        }
+        Some(self.content.graphemes(true).map(|_| SECURE_MASK).collect())
+    }
+
+    /// 显示文本字节长（secure：grapheme 数 × 掩码字节长）。
+    fn display_text_len(&self) -> usize {
+        if !self.secure {
+            return self.content.len();
+        }
+        self.content.graphemes(true).count() * SECURE_MASK.len()
+    }
+
+    /// content 字节偏移 → 显示文本字节偏移（grapheme 一一对应）。
+    fn to_display_offset(&self, offset: usize) -> usize {
+        if !self.secure {
+            return offset;
+        }
+        let offset = offset.min(self.content.len());
+        self.content[..offset].graphemes(true).count() * SECURE_MASK.len()
+    }
+
+    /// 显示文本字节偏移 → content 字节偏移（越界回落末尾）。
+    fn from_display_offset(&self, offset: usize) -> usize {
+        if !self.secure {
+            return offset;
+        }
+        self.content
+            .grapheme_indices(true)
+            .nth(offset / SECURE_MASK.len())
+            .map(|(index, _)| index)
+            .unwrap_or(self.content.len())
     }
 
     /// 由原生 Accessibility set-value 入口替换全文；与普通输入相同地把光标
@@ -290,6 +340,10 @@ impl TextInput {
     }
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
+        // SET-010：secure 输入不把明文写入剪贴板（no-op 而非报错）。
+        if self.secure {
+            return;
+        }
         if self.selected_range.is_empty() {
             return;
         }
@@ -299,6 +353,10 @@ impl TextInput {
     }
 
     fn cut(&mut self, _: &Cut, window: &mut Window, cx: &mut Context<Self>) {
+        // SET-010：secure 输入禁止 Cut 泄漏明文。
+        if self.secure {
+            return;
+        }
         if self.selected_range.is_empty() {
             return;
         }
@@ -341,11 +399,20 @@ impl TextInput {
 
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-            self.replace_text_in_range(None, &text.replace("\r\n", "\n"), window, cx);
+            let text = if self.secure {
+                // API key 单行语义：剔除粘贴带入的换行（含尾随换行）。
+                text.replace(['\r', '\n'], "")
+            } else {
+                text.replace("\r\n", "\n")
+            };
+            self.replace_text_in_range(None, &text, window, cx);
         }
     }
 
     fn new_line(&mut self, _: &NewLine, window: &mut Window, cx: &mut Context<Self>) {
+        if self.secure {
+            return;
+        }
         self.replace_text_in_range(None, "\n", window, cx);
     }
 
@@ -453,7 +520,9 @@ impl TextInput {
         let line = &lines[index];
         let start = *self.last_line_starts.get(index).unwrap_or(&0);
         let local = line.closest_index_for_x(position.x - bounds.left());
-        (start + local).min(self.content.len())
+        // last_layout 为显示文本（secure 掩码）空间：换算回 content 偏移。
+        let display_index = (start + local).min(self.display_text_len());
+        self.from_display_offset(display_index)
     }
 
     fn scroll_caret_into_view(&mut self) {
@@ -643,6 +712,8 @@ impl EntityInputHandler for TextInput {
     ) -> Option<gpui::Bounds<Pixels>> {
         let lines = self.last_layout.as_ref()?;
         let range = self.range_from_utf16(&range_utf16);
+        // IME 标记范围以 content 偏移表达；布局在显示文本空间。
+        let range = self.to_display_offset(range.start)..self.to_display_offset(range.end);
         let (line_index, line_start) = line_index_for_offset(&self.last_line_starts, range.start)?;
         let line = lines.get(line_index)?;
         let line_height = window.line_height();
@@ -687,7 +758,7 @@ impl EntityInputHandler for TextInput {
         let line = &lines[index];
         let utf8_index = line.index_for_x(line_point.x).unwrap_or(line.len());
         let start = *self.last_line_starts.get(index).unwrap_or(&0);
-        Some(self.offset_to_utf16(start + utf8_index))
+        Some(self.offset_to_utf16(self.from_display_offset(start + utf8_index)))
     }
 }
 
@@ -847,17 +918,31 @@ impl Element for TextElement {
             size: bounds.size,
         };
         let input = self.input.read(cx);
-        let content = input.content.clone();
-        let selected_range = input.selected_range.clone();
-        let cursor = input.cursor_offset();
+        // SET-010 secure：布局/光标/选择一律在显示文本（掩码）空间进行，
+        // 偏移经 grapheme 映射换算；content 明文不进任何布局产物。
+        let display_text: SharedString = if let Some(mask) = input.secure_mask() {
+            mask.into()
+        } else if input.content.is_empty() {
+            input.placeholder.clone()
+        } else {
+            input.content.clone()
+        };
+        let selected_range =
+            input.to_display_offset(input.selected_range.start)..input.to_display_offset(
+                input.selected_range.end,
+            );
+        let cursor = input.to_display_offset(input.cursor_offset());
         let style = window.text_style();
 
-        let (display_text, text_color) = if content.is_empty() {
-            (input.placeholder.clone(), dark().text.placeholder.into())
+        let text_color = if input.content.is_empty() {
+            dark().text.placeholder.into()
         } else {
-            (content, style.color)
+            style.color
         };
-        let marked = input.marked_range.clone();
+        let marked = input
+            .marked_range
+            .as_ref()
+            .map(|range| input.to_display_offset(range.start)..input.to_display_offset(range.end));
         let base = TextRun {
             len: 0,
             font: style.font(),
@@ -1097,6 +1182,23 @@ mod tests {
                 input.content.len()..input.content.len()
             );
             assert!(input.marked_range.is_none());
+        });
+    }
+
+    #[gpui::test]
+    fn secure_input_exposes_only_grapheme_mask(cx: &mut TestAppContext) {
+        let input = cx.new(|cx| TextInput::new(cx).secure());
+        input.update(cx, |input, cx| {
+            input.set_text("sk-live-plaintext", cx);
+            let masked = input.secure_mask().expect("secure input exposes the mask");
+            assert!(!masked.contains("sk-live-plaintext"));
+            assert_eq!(masked.chars().count(), "sk-live-plaintext".chars().count());
+        });
+        // 非 secure 输入不发布掩码（走普通明文渲染路径）。
+        let plain = cx.new(|cx| TextInput::with_placeholder("visible", cx));
+        plain.update(cx, |plain, cx| {
+            plain.set_text("visible", cx);
+            assert_eq!(plain.secure_mask(), None);
         });
     }
 

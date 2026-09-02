@@ -982,8 +982,6 @@ Full workspace gate: NOT RUN（当前未设置全量门禁）。
 
 注（2026-09-02 Settings 主线提交）：本条目为原任务线自述记录；SET-3 代码（apps/desktop 写入集）未随该次提交进入 main，由其原任务线另行审查提交。
 
----
-
 ## 2026-09-02 — Settings SET-3 审查提交（main）
 
 - 原任务线审查 SET-3 写入集并提交 main：apps/desktop 5 改 1 增（controller / projection / ui/mod / task_rail / accessibility-app + 新增 ui/settings.rs）与 3 份文档（gui-design、spec/desktop、spec/crates/desktop）。审查另发现并同批修复两处：(1) `ui/accessibility/app.rs` 中 SET-3 函数误插到 `project_ax_nodes` 的 doc 注释与 fn 之间导致文档错挂，“Settings 左栏” doc 归位 `settings_rail_ax`、“项目块 AX 投影” doc 归还原 fn；(2) `ui/mod.rs` `on_connected` 在 `load_models()` 后补调 `refresh_provider_status()`，重连后刷新只读供应商状态、清除断线 stale 标注。
@@ -998,3 +996,26 @@ Real-world evidence: pending（真窗口收口属 SET-7）。
 Known gaps: Settings 页 AX 卡片几何为固定估值、不随滚动（登记 SET-7）；写操作与其余页面未开放（SET-4～SET-6）。
 
 Full workspace gate: NOT RUN（当前未设置全量门禁）。
+
+---
+
+## 2026-09-02 — Settings SET-4 四家认证闭环
+
+- Host：registry 扩为八通道（末尾追加 kimi-platform API-key 行、kimi-code Device OAuth 行，端点经 MoonshotAI/kimi-cli 源码与官方文档核对）；`auth_methods` 从 kind 派生改为 `ChannelPreset` 数据字段，xAI 声明 ["oauth","api_key"]；新增 `ChannelKind::KimiOAuth` 与 channels/kimi.rs（OAuth-only、固定 Chat Completions、版本固定 builtin 目录：kimi-for-coding/kimi-for-coding-highspeed/k3/k3-256k，能力未知不推断）；xai adapter 接受 ApiKey 凭证；替换语义双向互斥（set-api-key 成功删旧 OAuth、oauth_finish 成功删旧 api key，删除失败 fail-closed 上报）；auth_remove 遇 env 命中仍清理已存条目（与 CLI auth_logout 一致）。
+- Desktop：供应商页写操作（descriptor 驱动，无品牌分支）——API key secure 内联输入（grapheme 掩码、AX value 无明文、Copy/Cut no-op）、OAuth 等待（URL/user code/到期/Cancel）、Replace/Remove、AuthChanged 六态消费，Succeeded 后重查 provider_auth_status（认证与目录状态分离）；stale/断线时可见/键盘/AX 三路径同 gate 禁写。
+- 审查（glm_reviewer ×2）七项发现并同批修复：Host——auth flight 加种类标记（api-key 验证拒绝 AuthCancel，防 Cancelled/Succeeded 双发与单飞破坏）、providers spec §7 五 feature 回写、auth_remove env 语义恢复；Desktop——Replace 终态（Cancelled/Expired/Failed）对已连接 provider 改触发权威重查而非断言未连接（auth_replacing_connected 基线）、空输入 Verify gate 同源发布到 AX、焦点句柄回收改精确匹配、verify 命令 socket 失败对称重查。
+- 施工方式：主代理定位关键路径后，glm_worker ×2 并行（Host/Desktop 写入集零重叠，Cargo 经 mkdir 锁串行），glm_reviewer ×2 分片审查，修复后主代理合并树复跑双门禁。
+
+Implemented: 四家认证闭环生产路径（Z.AI/DeepSeek/Kimi Platform API key、Kimi Code/xAI OAuth Device Flow、xAI API key）+ Settings 认证写操作 UI。
+
+Validated: `cargo test -p pawork-auth -p pawork-providers -p pawork-app --offline --lib --tests`（12 个测试二进制全绿，合并树复跑）；`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`（168 绿）；`git diff --check` 通过。
+
+Targeted regressions: 新增 13 条（providers 5：kimi 凭证门与 builtin 3、xai 双凭证接受 1、kimi-code 端点 1；app 3：xai set-key 主路径/替换删旧 OAuth/取消 api-key flight 被拒；desktop 5：AuthChanged 六态解析应用/畸形 fail-closed/secure 掩码/AX 掩码+stale gate/Replace 终态重查）。
+
+Real-world evidence: pending（四家真实账号/device flow/替换失败保旧属 SET-7，当前阻塞：缺对应账号与凭证）。
+
+Known gaps: kimi-code builtin 模型能力置 0 表未知，仅 config 覆盖可收紧；真实凭证验收与 VoiceOver 走查登记 SET-7。
+
+Full workspace gate: NOT RUN（当前未设置全量门禁）。
+
+---
