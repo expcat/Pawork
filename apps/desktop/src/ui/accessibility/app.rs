@@ -22,7 +22,8 @@ use crate::ui::inspector::{
 };
 use crate::ui::resources::ResourcesFetch;
 use crate::ui::settings::{
-    parse_settings_control, provider_status_lines, SettingsControl, SETTINGS_CONTROL_PREFIX,
+    general_status_lines, parse_settings_control, provider_status_lines, SettingsControl,
+    SETTINGS_CONTROL_PREFIX, SETTINGS_PROXY_EFFECT_NOTE, SETTINGS_PROXY_UNSET,
 };
 use crate::ui::shell_layout;
 use crate::ui::theme::{font, metrics};
@@ -30,7 +31,8 @@ use crate::ui::timeline_entry::display_time;
 use crate::ui::{
     activity_header_visibility, rail_project_occurrence_key, rail_session_focus_key,
     terminal_can_operate, terminal_can_reopen, terminal_close_label, terminal_known_ended,
-    terminal_start_enabled, timeline, AppRoute, AppView, MenuKind, WORKSPACE_EMPTY_HINT,
+    terminal_start_enabled, timeline, AppRoute, AppView, MenuKind, SettingsPage,
+    WORKSPACE_EMPTY_HINT,
 };
 
 const PAD: f32 = 8.0;
@@ -40,6 +42,22 @@ const ACTIVITY_CONTENT_INSET_X: f32 = 28.0;
 const ACTIVITY_HEADING_OFFSET_Y: f32 = 58.0;
 const ACTIVITY_SUMMARY_OFFSET_Y: f32 = 24.0;
 const ACTIVITY_HEADING_HEIGHT: f32 = 20.0;
+
+fn settings_nav_ax(
+    id: &'static str,
+    label: &'static str,
+    selected: bool,
+    focused: bool,
+    rect: AxRect,
+) -> AxNode {
+    if selected {
+        AxNode::new(id, AxRole::StaticText, label, rect).value("Selected")
+    } else {
+        AxNode::new(id, AxRole::Button, label, rect)
+            .focused(focused)
+            .action(AxAction::Press)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct ActivityPopoverAxGeometry {
@@ -147,6 +165,10 @@ impl AppView {
                     let focus = self.terminal_input.read(cx).focus_handle(cx);
                     window.focus(&focus);
                 }
+                "settings-proxy-input" => {
+                    let focus = self.settings_proxy_input.read(cx).focus_handle(cx);
+                    window.focus(&focus);
+                }
                 // SET-4：settings secure 输入聚焦（与点击输入框同一路径；
                 // permits 已按当前树核对 enabled）。
                 _ if settings_api_key_input.is_some() => {
@@ -168,6 +190,9 @@ impl AppView {
                         .update(cx, |input, cx| input.set_text(value, cx)),
                     "terminal-input" => self
                         .terminal_input
+                        .update(cx, |input, cx| input.set_text(value, cx)),
+                    "settings-proxy-input" => self
+                        .settings_proxy_input
                         .update(cx, |input, cx| input.set_text(value, cx)),
                     // SET-4：AX set-value 是合法输入路径（等同键入）；
                     // 发布方向永远只给掩码（settings_page_ax）。
@@ -233,6 +258,16 @@ impl AppView {
             // SET-5：页级刷新与可见按钮同一 handler（permits 按当前树核对
             // disabled）。
             "settings-refresh" => self.on_refresh_settings(cx),
+            "settings-nav-general" => {
+                window.focus(&self.settings_nav_general_focus);
+                self.on_select_settings_page(SettingsPage::General, window, cx);
+            }
+            "settings-nav-providers" => {
+                window.focus(&self.settings_nav_providers_focus);
+                self.on_select_settings_page(SettingsPage::Providers, window, cx);
+            }
+            "settings-proxy-save" => self.on_settings_proxy_save(cx),
+            "settings-proxy-clear" => self.on_settings_proxy_clear(cx),
             "model-picker" => {
                 window.focus(&self.model_focus);
                 self.on_toggle_model_menu(None, window, cx)
@@ -854,7 +889,13 @@ impl AppView {
         let back_y = PAD + shell_layout::TRAFFIC_LIGHT_SAFE_HEIGHT + PAD;
         let nav_y = back_y + metrics::RAIL_TOP_ROW_HEIGHT + PAD + PAD;
         let width = (frame.width - PAD * 2.0).max(0.0);
-        AxNode::new("settings-rail", AxRole::Group, "Settings", frame)
+        let general_available = self.projection.settings_general.available;
+        let current_page = if general_available {
+            self.settings_page
+        } else {
+            SettingsPage::Providers
+        };
+        let mut rail = AxNode::new("settings-rail", AxRole::Group, "Settings", frame)
             .child(
                 AxNode::new(
                     "settings-back",
@@ -870,20 +911,34 @@ impl AppView {
                 .focused(self.settings_back_focus.is_focused(window))
                 .action(AxAction::Press),
             )
-            .child(
-                AxNode::new(
-                    "settings-nav-providers",
-                    AxRole::StaticText,
-                    "Models & providers",
-                    AxRect::new(
-                        frame.x + PAD,
-                        frame.y + nav_y,
-                        width,
-                        metrics::RAIL_TOP_ROW_HEIGHT,
-                    ),
-                )
-                .value("Selected"),
-            )
+            .child(settings_nav_ax(
+                "settings-nav-providers",
+                "Models & providers",
+                current_page == SettingsPage::Providers,
+                self.open_menu.is_none() && self.settings_nav_providers_focus.is_focused(window),
+                AxRect::new(
+                    frame.x + PAD,
+                    frame.y + nav_y,
+                    width,
+                    metrics::RAIL_TOP_ROW_HEIGHT,
+                ),
+            ));
+        if general_available {
+            let general_y = nav_y + metrics::RAIL_TOP_ROW_HEIGHT + PAD;
+            rail = rail.child(settings_nav_ax(
+                "settings-nav-general",
+                "General",
+                current_page == SettingsPage::General,
+                self.open_menu.is_none() && self.settings_nav_general_focus.is_focused(window),
+                AxRect::new(
+                    frame.x + PAD,
+                    frame.y + general_y,
+                    width,
+                    metrics::RAIL_TOP_ROW_HEIGHT,
+                ),
+            ));
+        }
+        rail
     }
 
     /// Settings 全宽内容（SET-4）：标题 / 状态行 / Provider 卡片。卡片含
@@ -891,6 +946,10 @@ impl AppView {
     /// 按钮与可见路径同 identifier / 同 gate（stale 时 enabled=false 且
     /// permits 拒绝执行）。高度按行数 + 控件行的固定估值。
     fn settings_page_ax(&self, window: &Window, cx: &App, frame: AxRect) -> AxNode {
+        if self.settings_page == SettingsPage::General && self.projection.settings_general.available
+        {
+            return self.settings_general_page_ax(window, cx, frame);
+        }
         const HEADING_HEIGHT: f32 = 28.0;
         const SUBTITLE_HEIGHT: f32 = 20.0;
         const STATUS_HEIGHT: f32 = 20.0;
@@ -1238,6 +1297,137 @@ impl AppView {
         }
         page = page.child(section);
         page
+    }
+
+    /// 「General」页 AX（SET-6a）：当前值 / 输入 / Save / Clear / 生效边界；
+    /// stale 时 enabled=false，permits 拒绝写动作，与 render 同 gate。
+    fn settings_general_page_ax(&self, window: &Window, cx: &App, frame: AxRect) -> AxNode {
+        const HEADING_HEIGHT: f32 = 28.0;
+        const SUBTITLE_HEIGHT: f32 = 20.0;
+        const STATUS_HEIGHT: f32 = 20.0;
+        const CONTROL_ROW: f32 = 28.0;
+        let state = &self.projection.settings_general;
+        let writes = self.settings_general_writes_enabled();
+        let connected = matches!(
+            self.projection.connection,
+            ConnectionState::Connected { .. }
+        );
+        let current = match &state.proxy_url {
+            Some(url) => url.clone(),
+            None => SETTINGS_PROXY_UNSET.to_string(),
+        };
+        let input_empty = self.settings_proxy_input.read(cx).text().trim().is_empty();
+        let save_enabled = writes && !input_empty;
+        let clear_enabled = writes && state.proxy_url.is_some();
+        let refresh_focused =
+            self.open_menu.is_none() && self.settings_refresh_focus.is_focused(window);
+        let mut page = AxNode::new("settings-page", AxRole::Group, "General", frame)
+            .child(
+                AxNode::new(
+                    "settings-page-title",
+                    AxRole::StaticText,
+                    "General",
+                    AxRect::new(
+                        frame.x + 16.0,
+                        frame.y + 16.0,
+                        (frame.width - 136.0).max(0.0),
+                        HEADING_HEIGHT + SUBTITLE_HEIGHT,
+                    ),
+                )
+                .value("Host outbound HTTP proxy"),
+            )
+            .child(
+                AxNode::new(
+                    "settings-refresh",
+                    AxRole::Button,
+                    "Refresh",
+                    AxRect::new(
+                        frame.x + frame.width - 16.0 - 96.0,
+                        frame.y + 16.0,
+                        96.0,
+                        CONTROL_ROW,
+                    ),
+                )
+                .enabled(connected)
+                .focused(refresh_focused)
+                .action(AxAction::Press),
+            );
+        let mut y = frame.y + 16.0 + HEADING_HEIGHT + SUBTITLE_HEIGHT + 8.0;
+        let width = (frame.width - 32.0).max(0.0);
+        for (kind, label) in general_status_lines(state) {
+            page = page.child(
+                AxNode::new(
+                    format!("settings-status-{kind}"),
+                    AxRole::StaticText,
+                    "General status",
+                    AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT),
+                )
+                .value(label),
+            );
+            y += STATUS_HEIGHT + 8.0;
+        }
+        page = page.child(
+            AxNode::new(
+                "settings-proxy-current",
+                AxRole::StaticText,
+                "Proxy URL",
+                AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT),
+            )
+            .value(current),
+        );
+        y += STATUS_HEIGHT + 8.0;
+        let input_value = self.settings_proxy_input.read(cx).text().to_string();
+        let input_focused = self.open_menu.is_none()
+            && self
+                .settings_proxy_input
+                .read(cx)
+                .focus_handle(cx)
+                .is_focused(window);
+        page = page.child(
+            AxNode::new(
+                "settings-proxy-input",
+                AxRole::TextArea,
+                "Proxy URL",
+                AxRect::new(frame.x + 16.0, y, (width - 180.0).max(120.0), CONTROL_ROW),
+            )
+            .value(input_value)
+            .enabled(writes)
+            .focused(input_focused)
+            .action(AxAction::Focus)
+            .action(AxAction::SetValue),
+        );
+        page = page.child(
+            AxNode::new(
+                "settings-proxy-save",
+                AxRole::Button,
+                "Save",
+                AxRect::new(frame.x + frame.width - 16.0 - 168.0, y, 80.0, CONTROL_ROW),
+            )
+            .enabled(save_enabled)
+            .focused(self.open_menu.is_none() && self.settings_proxy_save_focus.is_focused(window))
+            .action(AxAction::Press),
+        );
+        page = page.child(
+            AxNode::new(
+                "settings-proxy-clear",
+                AxRole::Button,
+                "Clear",
+                AxRect::new(frame.x + frame.width - 16.0 - 80.0, y, 80.0, CONTROL_ROW),
+            )
+            .enabled(clear_enabled)
+            .focused(self.open_menu.is_none() && self.settings_proxy_clear_focus.is_focused(window))
+            .action(AxAction::Press),
+        );
+        y += CONTROL_ROW + 8.0;
+        page.child(
+            AxNode::new(
+                "settings-proxy-effect",
+                AxRole::StaticText,
+                "Effect",
+                AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT * 2.0),
+            )
+            .value(SETTINGS_PROXY_EFFECT_NOTE),
+        )
     }
 
     /// 项目块 AX 投影（对齐 task_rail.rs project_block）：折叠头 + 项目内新建

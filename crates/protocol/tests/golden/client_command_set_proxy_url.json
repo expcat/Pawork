@@ -5,13 +5,12 @@
       "minor": 5
     },
     "command": {
-      "method": "terminal_write",
+      "method": "set_proxy_url",
       "params": {
-        "data": "echo hi\n",
-        "terminal_session_id": "terminal-1"
+        "proxy_url": "http://127.0.0.1:7890"
       }
     },
-    "command_id": "command-terminal-1",
+    "command_id": "command-auth-1",
     "identity": {
       "actor_id": "actor-1",
       "type": "local_user"

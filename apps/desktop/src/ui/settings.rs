@@ -1,10 +1,13 @@
-//! Settings 壳（SET-3/4）：Settings Rail 与「Models & providers」页。
+//! Settings 壳（SET-3/4/6a）：Settings Rail、「Models & providers」页与
+//! 「General」页。
 //!
-//! 只呈现 Host `provider_auth_status` 权威事实：供应商名称、认证方式、
-//! 连接状态与目录来源（SET-3）；SET-4 增认证写操作（API key secure 输入
-//! 验证、OAuth 等待/取消、Replace/Remove），全部由 descriptor
-//! （auth_methods + auth.type）驱动，禁止按 provider 名分支。断线保留
-//! stale 只读结果并禁用全部写动作；可见 / 键盘 / AX 三路径同 gate。
+//! 供应商页只呈现 Host `provider_auth_status` 权威事实：供应商名称、
+//! 认证方式、连接状态与目录来源（SET-3）；SET-4 增认证写操作（API key
+//! secure 输入验证、OAuth 等待/取消、Replace/Remove），全部由 descriptor
+//! （auth_methods + auth.type）驱动，禁止按 provider 名分支。SET-6a 增
+//! 「General」页（`proxy_url` 读/设置/清除）；查询失败 / 未知则隐藏该
+//! 导航项且不渲染写入口。断线保留 stale 只读结果并禁用全部写动作；
+//! 可见 / 键盘 / AX 三路径同 gate。
 
 use std::collections::HashSet;
 
@@ -24,6 +27,7 @@ use crate::ui::text_input::TextInput;
 use super::accessibility::dynamic_identifier;
 use super::shell_layout;
 use super::AppView;
+use super::SettingsPage;
 
 /// Settings 内容可读列（与 Timeline 618px 可读列同节奏；全宽壳层内收敛）。
 const SETTINGS_CONTENT_MAX_WIDTH: f32 = 720.0;
@@ -33,6 +37,11 @@ const PROVIDER_CARD_PAD: f32 = 8.0;
 const SETTINGS_ACTION_HEIGHT: f32 = 28.0;
 /// 「模型与默认项」区失效提示（render 与 AX 同源；只声明事实，不切换）。
 pub(crate) const SETTINGS_DEFAULT_UNAVAILABLE_NOTE: &str = "Default model unavailable — the default provider is disconnected or the model is not in its current catalog.";
+/// null `proxy_url` 展示（ADR-047 D1；render / AX 同源）。
+pub(crate) const SETTINGS_PROXY_UNSET: &str = "未设置（跟随系统环境变量）";
+/// 生效边界（ADR-047 D2；不得宣称全局即时生效）。
+pub(crate) const SETTINGS_PROXY_EFFECT_NOTE: &str =
+    "新 OAuth/验证/目录探测同会话生效；当前活跃供应商的模型流量于切换供应商或重启 Host 后生效。";
 
 /// Settings 供应商页状态行（render 与 AX 同源）。stale / loading / error /
 /// 空态独立判定：stale 与 error 可同时出现，空态仅在完全无状态且列表为
@@ -58,6 +67,28 @@ pub(super) fn provider_status_lines(
         && state.stale_reason.is_none()
     {
         lines.push(("empty", "No providers reported by the host.".to_string()));
+    }
+    lines
+}
+
+/// Settings 通用页状态行（render 与 AX 同源）。
+pub(super) fn general_status_lines(
+    state: &crate::projection::SettingsGeneralState,
+) -> Vec<(&'static str, String)> {
+    let mut lines = Vec::new();
+    if let Some(reason) = &state.stale_reason {
+        lines.push((
+            "stale",
+            format!("Offline · showing last known state ({reason})"),
+        ));
+    } else if state.loading {
+        lines.push(("loading", "Loading…".to_string()));
+    }
+    if let Some(error) = &state.error {
+        lines.push((
+            "error",
+            format!("Could not load general settings · {error}"),
+        ));
     }
     lines
 }
@@ -283,36 +314,104 @@ impl AppView {
                 view.on_close_settings(window, cx);
                 cx.stop_propagation();
             }));
-        // 首页导航项：当前唯一页面，选中态静态行（不画无动作假按钮；
-        // 后续页面按真实 capability 逐页加入）。
-        let nav_item = div()
-            .id("settings-nav-providers")
-            .mt_2()
-            .w_full()
-            .h(px(metrics::RAIL_TOP_ROW_HEIGHT))
-            .flex()
-            .items_center()
-            .px(px(metrics::RAIL_INNER_PAD))
-            .rounded(px(4.0))
-            .bg(dark().surface.raised)
-            .child(
-                div().font_weight(FontWeight::MEDIUM).child(
-                    Label::new("Models & providers")
-                        .size(font::BODY_SM)
-                        .color(dark().text.primary),
-                ),
-            );
-
-        Panel::side_right(rail_width)
+        let general_available = self.projection.settings_general.available;
+        let current_page = if general_available {
+            self.settings_page
+        } else {
+            SettingsPage::Providers
+        };
+        let mut rail = Panel::side_right(rail_width)
             .child(shell_layout::rail_safe_area())
             .child(back)
-            .child(nav_item)
+            .child(self.settings_nav_item(
+                "settings-nav-providers",
+                "Models & providers",
+                current_page == SettingsPage::Providers,
+                SettingsPage::Providers,
+                cx,
+            ));
+        if general_available {
+            rail = rail.child(self.settings_nav_item(
+                "settings-nav-general",
+                "General",
+                current_page == SettingsPage::General,
+                SettingsPage::General,
+                cx,
+            ));
+        }
+        rail
     }
 
     /// Settings 全宽内容区（SET-4 认证写操作）。状态行全部来自
     /// projection（Host 权威 / stale / error）；卡片动作由 descriptor 驱动，
     /// 断线（stale）时可见 / 键盘 / AX 同时禁用。
     pub(super) fn settings_page_element(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.settings_page == SettingsPage::General && self.projection.settings_general.available
+        {
+            return self.settings_general_page_element(cx).into_any_element();
+        }
+        self.settings_providers_page_element(cx).into_any_element()
+    }
+
+    fn settings_nav_item(
+        &mut self,
+        id: &'static str,
+        label: &'static str,
+        selected: bool,
+        page: SettingsPage,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        if selected {
+            return div()
+                .id(id)
+                .mt_2()
+                .w_full()
+                .h(px(metrics::RAIL_TOP_ROW_HEIGHT))
+                .flex()
+                .items_center()
+                .px(px(metrics::RAIL_INNER_PAD))
+                .rounded(px(4.0))
+                .bg(dark().surface.raised)
+                .child(
+                    div().font_weight(FontWeight::MEDIUM).child(
+                        Label::new(label)
+                            .size(font::BODY_SM)
+                            .color(dark().text.primary),
+                    ),
+                )
+                .into_any_element();
+        }
+        let focus = if page == SettingsPage::General {
+            self.settings_nav_general_focus.clone()
+        } else {
+            self.settings_nav_providers_focus.clone()
+        };
+        Button::new(id)
+            .track_focus(&focus)
+            .variant(ButtonVariant::Ghost)
+            .padding(ButtonPadding::Horizontal(metrics::RAIL_INNER_PAD))
+            .height(px(metrics::RAIL_TOP_ROW_HEIGHT))
+            .vcenter()
+            .radius(4.0)
+            .text_size(font::BODY_SM)
+            .label(label)
+            .on_click(cx.listener(move |view, event, window, cx| {
+                if view.consume_button_key_click(id, event) {
+                    return;
+                }
+                view.on_select_settings_page(page, window, cx);
+            }))
+            .on_activate(cx.listener(move |view, _event, window, cx| {
+                view.note_button_key_activate(id);
+                view.on_select_settings_page(page, window, cx);
+                cx.stop_propagation();
+            }))
+            .into_any_element()
+    }
+
+    /// 「Models & providers」页（SET-4/5）：状态行全部来自 projection；
+    /// 卡片动作由 descriptor 驱动，断线（stale）时可见 / 键盘 / AX 同时禁用。
+    fn settings_providers_page_element(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let connected = matches!(
             self.projection.connection,
             ConnectionState::Connected { .. }
@@ -429,6 +528,182 @@ impl AppView {
                 .track_scroll(&self.settings_scroll)
                 .child(content),
         )
+    }
+
+    /// 「General」页（SET-6a / ADR-047）：Host 权威 proxy_url、内联输入 +
+    /// Save/Clear、生效边界文案；stale 只读，写入口与 AX 同 gate。
+    fn settings_general_page_element(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let connected = matches!(
+            self.projection.connection,
+            ConnectionState::Connected { .. }
+        );
+        let writes = self.settings_general_writes_enabled();
+        let state = &self.projection.settings_general;
+        let status_lines = general_status_lines(state);
+        let current = match &state.proxy_url {
+            Some(url) => url.clone(),
+            None => SETTINGS_PROXY_UNSET.to_string(),
+        };
+        let input_empty = self.settings_proxy_input.read(cx).text().trim().is_empty();
+        let save_enabled = writes && !input_empty;
+        let clear_enabled = writes && state.proxy_url.is_some();
+        let proxy_input = self.settings_proxy_input.clone();
+        let save_focus = self.settings_proxy_save_focus.clone();
+        let clear_focus = self.settings_proxy_clear_focus.clone();
+        let refresh_focus = self.settings_refresh_focus.clone();
+        let refresh = Button::new("settings-refresh")
+            .track_focus(&refresh_focus)
+            .variant(ButtonVariant::Raised)
+            .height(px(SETTINGS_ACTION_HEIGHT))
+            .vcenter()
+            .radius(4.0)
+            .bordered()
+            .text_size(font::BODY_SM)
+            .label("Refresh")
+            .tooltip("Refresh general settings")
+            .disabled(!connected)
+            .on_click(cx.listener(|view, event, _window, cx| {
+                if view.consume_button_key_click("settings-refresh", event) {
+                    return;
+                }
+                view.on_refresh_settings(cx);
+            }))
+            .on_activate(cx.listener(|view, _event, _window, cx| {
+                view.note_button_key_activate("settings-refresh");
+                view.on_refresh_settings(cx);
+                cx.stop_propagation();
+            }));
+        let save = Button::new("settings-proxy-save")
+            .track_focus(&save_focus)
+            .variant(ButtonVariant::Raised)
+            .height(px(SETTINGS_ACTION_HEIGHT))
+            .vcenter()
+            .radius(4.0)
+            .bordered()
+            .text_size(font::BODY_SM)
+            .label("Save")
+            .tooltip("Save proxy URL")
+            .disabled(!save_enabled)
+            .on_click(cx.listener(|view, event, _window, cx| {
+                if view.consume_button_key_click("settings-proxy-save", event) {
+                    return;
+                }
+                view.on_settings_proxy_save(cx);
+            }))
+            .on_activate(cx.listener(|view, _event, _window, cx| {
+                view.note_button_key_activate("settings-proxy-save");
+                view.on_settings_proxy_save(cx);
+                cx.stop_propagation();
+            }));
+        let clear = Button::new("settings-proxy-clear")
+            .track_focus(&clear_focus)
+            .variant(ButtonVariant::Raised)
+            .height(px(SETTINGS_ACTION_HEIGHT))
+            .vcenter()
+            .radius(4.0)
+            .bordered()
+            .text_size(font::BODY_SM)
+            .label("Clear")
+            .tooltip("Clear proxy URL")
+            .disabled(!clear_enabled)
+            .on_click(cx.listener(|view, event, _window, cx| {
+                if view.consume_button_key_click("settings-proxy-clear", event) {
+                    return;
+                }
+                view.on_settings_proxy_clear(cx);
+            }))
+            .on_activate(cx.listener(|view, _event, _window, cx| {
+                view.note_button_key_activate("settings-proxy-clear");
+                view.on_settings_proxy_clear(cx);
+                cx.stop_propagation();
+            }));
+
+        let mut content = div()
+            .flex()
+            .flex_col()
+            .min_w_0()
+            .max_w(px(SETTINGS_CONTENT_MAX_WIDTH))
+            .gap_2()
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_start()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .min_w_0()
+                            .child(
+                                div().font_weight(FontWeight::MEDIUM).child(
+                                    Label::new("General")
+                                        .size(font::TITLE)
+                                        .color(dark().text.primary),
+                                ),
+                            )
+                            .child(
+                                Label::new("Host outbound HTTP proxy")
+                                    .size(font::BODY_SM)
+                                    .color(dark().text.secondary),
+                            ),
+                    )
+                    .child(div().flex_1())
+                    .child(div().flex_none().pt_1().child(refresh)),
+            );
+        for (kind, line) in status_lines {
+            let color = if kind == "error" {
+                dark().semantic.danger_text
+            } else {
+                dark().text.secondary
+            };
+            content = content.child(status_line(&line, color));
+        }
+        content = content
+            .child(
+                Label::new(format!("Current · {current}"))
+                    .size(font::BODY)
+                    .color(dark().text.primary),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_1()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .when(!writes, |el| el.bg(dark().surface.disabled).opacity(0.55))
+                            .child(proxy_input),
+                    )
+                    .child(save)
+                    .child(clear),
+            )
+            .child(
+                Label::new(SETTINGS_PROXY_EFFECT_NOTE)
+                    .size(font::BODY_SM)
+                    .color(dark().text.secondary),
+            );
+
+        div()
+            .id("settings-page")
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_w_0()
+            .overflow_hidden()
+            .p_4()
+            .child(
+                div()
+                    .id("settings-page-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .track_scroll(&self.settings_scroll)
+                    .child(content),
+            )
     }
 
     /// 单个 provider 卡片（SET-4）：只读事实行 + descriptor 驱动写动作。
@@ -752,6 +1027,15 @@ impl AppView {
         ) && self.projection.settings_providers.stale_reason.is_none()
     }
 
+    /// 通用页写操作 gate（SET-6a）：连接 + 非 stale + 查询已成功。
+    pub(crate) fn settings_general_writes_enabled(&self) -> bool {
+        let connected = matches!(
+            self.projection.connection,
+            ConnectionState::Connected { .. }
+        );
+        self.projection.settings_general.writes_enabled(connected)
+    }
+
     /// 单个写动作的启用谓词（render 与 AX 同源）：writes 总 gate 之上，
     /// Verify 在 secure 输入为空时禁用（进程内读长度，AX value 仍只发布
     /// 掩码）。
@@ -920,6 +1204,31 @@ impl AppView {
         cx.notify();
     }
 
+    /// proxy Save（SET-6a；三路径同源）。空输入禁用；提交后等 Host 回执
+    /// 才改生效值。
+    pub(crate) fn on_settings_proxy_save(&mut self, cx: &mut Context<Self>) {
+        if !self.settings_general_writes_enabled() {
+            return;
+        }
+        let value = self.settings_proxy_input.read(cx).text().trim().to_string();
+        if value.is_empty() {
+            return;
+        }
+        self.controller.set_proxy_url(Some(value));
+        cx.notify();
+    }
+
+    /// proxy Clear（SET-6a；三路径同源）。已是 null 时禁用。
+    pub(crate) fn on_settings_proxy_clear(&mut self, cx: &mut Context<Self>) {
+        if !self.settings_general_writes_enabled()
+            || self.projection.settings_general.proxy_url.is_none()
+        {
+            return;
+        }
+        self.controller.set_proxy_url(None);
+        cx.notify();
+    }
+
     fn on_settings_connect_oauth(&mut self, provider_id: String, cx: &mut Context<Self>) {
         // descriptor 复核：provider 必须存在且声明 oauth（未知 id fail-closed）。
         let declares = self
@@ -1081,6 +1390,8 @@ impl AppView {
         for input in self.settings_api_key_inputs.values() {
             input.update(cx, |input, cx| input.reset_text("", cx));
         }
+        self.settings_proxy_input
+            .update(cx, |input, cx| input.reset_text("", cx));
         self.settings_api_key_editors.clear();
         self.settings_remove_confirm = None;
     }

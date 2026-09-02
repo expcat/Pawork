@@ -2,7 +2,7 @@
   "data": {
     "api_version": {
       "major": 1,
-      "minor": 4
+      "minor": 5
     },
     "request_id": "query-1",
     "responded_at": 3,

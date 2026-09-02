@@ -67,6 +67,8 @@ pub enum AppQuery {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         provider_id: Option<ProviderId>,
     },
+    /// Global 层通用设置（当前仅 `proxy_url`；ADR-047）。
+    GeneralSettings,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

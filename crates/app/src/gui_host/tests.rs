@@ -2610,6 +2610,9 @@ async fn settings_adapter_with_default(
 /// 将 HOME 重定向到临时目录，并在 Drop 时恢复原值（含 panic 路径）。
 /// 本文件仅此一处改进程环境；directories 在 Unix 上优先读 HOME，
 /// 必须先恢复再删临时目录，避免其它测试读到已释放路径。
+/// HOME 重定向测试互斥：libtest 并行会交叉改进程环境。
+static HOME_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 struct RestoreHome(Option<std::ffi::OsString>);
 
 impl Drop for RestoreHome {
@@ -2678,6 +2681,7 @@ async fn provider_auth_status_reports_null_default_when_unconfigured() {
 async fn set_default_model_updates_status_default_within_same_session() {
     // 写盘目标经 HOME 重定向到临时目录，避免污染真实全局配置。
     // RestoreHome 必须在 tempfile 之后声明：Drop 先恢复 HOME，再删临时目录。
+    let _home_env = HOME_ENV_LOCK.lock().expect("home env lock");
     let home = tempfile::tempdir().expect("home tempdir");
     let _restore_home = RestoreHome(std::env::var_os("HOME"));
     crate::testsupport::set_env("HOME", home.path().to_str().expect("utf-8 home"));
@@ -2731,6 +2735,142 @@ async fn set_default_model_updates_status_default_within_same_session() {
         persisted.contains("default_provider = \"glm-coding\""),
         "persisted config misses default pair: {persisted}"
     );
+}
+
+#[tokio::test]
+async fn set_proxy_url_updates_general_settings_within_same_session() {
+    let _home_env = HOME_ENV_LOCK.lock().expect("home env lock");
+    let home = tempfile::tempdir().expect("home tempdir");
+    let _restore_home = RestoreHome(std::env::var_os("HOME"));
+    crate::testsupport::set_env("HOME", home.path().to_str().expect("utf-8 home"));
+    let backend = Arc::new(pawork_auth::MemoryBackend::new());
+    let (adapter, _dir) = settings_adapter("http://127.0.0.1:1".into(), backend).await;
+    let proxy = "http://127.0.0.1:7890";
+
+    let before = adapter
+        .query(&query_envelope(AppQuery::GeneralSettings))
+        .await
+        .expect("general settings before set");
+    let AppResponse::Data(before) = before else {
+        panic!("GeneralSettings must return Data: {before:?}")
+    };
+    assert!(before["proxy_url"].is_null(), "fresh config has no proxy_url");
+
+    let response = adapter
+        .command(&command_envelope(AppCommand::SetProxyUrl {
+            proxy_url: Some(proxy.into()),
+        }))
+        .await
+        .expect("set proxy url");
+    let AppResponse::Data(data) = response else {
+        panic!("SetProxyUrl must return Data: {response:?}")
+    };
+    assert_eq!(data["proxy_url"], proxy);
+
+    let after = adapter
+        .query(&query_envelope(AppQuery::GeneralSettings))
+        .await
+        .expect("general settings after set");
+    let AppResponse::Data(after) = after else {
+        panic!("GeneralSettings must return Data: {after:?}")
+    };
+    assert_eq!(after["proxy_url"], proxy);
+
+    let config_path = pawork_workspace::config::global_config_path().expect("global path");
+    let persisted = std::fs::read_to_string(&config_path).expect("persisted config");
+    assert!(
+        persisted.contains("proxy_url = \"http://127.0.0.1:7890\""),
+        "persisted config misses proxy_url: {persisted}"
+    );
+}
+
+#[tokio::test]
+async fn clear_proxy_url_updates_general_settings_to_null() {
+    let _home_env = HOME_ENV_LOCK.lock().expect("home env lock");
+    let home = tempfile::tempdir().expect("home tempdir");
+    let _restore_home = RestoreHome(std::env::var_os("HOME"));
+    crate::testsupport::set_env("HOME", home.path().to_str().expect("utf-8 home"));
+    let backend = Arc::new(pawork_auth::MemoryBackend::new());
+    let (adapter, _dir) = settings_adapter("http://127.0.0.1:1".into(), backend).await;
+
+    adapter
+        .command(&command_envelope(AppCommand::SetProxyUrl {
+            proxy_url: Some("http://127.0.0.1:7890".into()),
+        }))
+        .await
+        .expect("seed proxy url");
+
+    let response = adapter
+        .command(&command_envelope(AppCommand::SetProxyUrl { proxy_url: None }))
+        .await
+        .expect("clear proxy url");
+    let AppResponse::Data(data) = response else {
+        panic!("SetProxyUrl clear must return Data: {response:?}")
+    };
+    assert!(data["proxy_url"].is_null(), "clear receipt must be null: {data}");
+
+    let after = adapter
+        .query(&query_envelope(AppQuery::GeneralSettings))
+        .await
+        .expect("general settings after clear");
+    let AppResponse::Data(after) = after else {
+        panic!("GeneralSettings must return Data: {after:?}")
+    };
+    assert!(after["proxy_url"].is_null(), "requery after clear must be null: {after}");
+
+    let config_path = pawork_workspace::config::global_config_path().expect("global path");
+    let persisted = std::fs::read_to_string(&config_path).expect("persisted config");
+    assert!(
+        !persisted.contains("proxy_url"),
+        "cleared config still has proxy_url: {persisted}"
+    );
+}
+
+#[tokio::test]
+async fn set_proxy_url_rejects_invalid_url_and_keeps_old_value() {
+    let _home_env = HOME_ENV_LOCK.lock().expect("home env lock");
+    let home = tempfile::tempdir().expect("home tempdir");
+    let _restore_home = RestoreHome(std::env::var_os("HOME"));
+    crate::testsupport::set_env("HOME", home.path().to_str().expect("utf-8 home"));
+    let backend = Arc::new(pawork_auth::MemoryBackend::new());
+    let (adapter, _dir) = settings_adapter("http://127.0.0.1:1".into(), backend).await;
+    let old = "http://127.0.0.1:7890";
+    adapter
+        .command(&command_envelope(AppCommand::SetProxyUrl {
+            proxy_url: Some(old.into()),
+        }))
+        .await
+        .expect("seed proxy url");
+    let config_path = pawork_workspace::config::global_config_path().expect("global path");
+    let seeded = std::fs::read_to_string(&config_path).expect("seed persisted");
+    assert!(seeded.contains("proxy_url"), "seed did not persist: {seeded}");
+
+    let bad = "http://user:s3cret-proxy@not a url";
+    let error = adapter
+        .command(&command_envelope(AppCommand::SetProxyUrl {
+            proxy_url: Some(bad.into()),
+        }))
+        .await
+        .expect_err("invalid proxy must fail closed");
+    assert_eq!(error.code, "invalid_proxy_url");
+    assert!(
+        !error.message.contains(bad) && !error.message.contains("s3cret-proxy"),
+        "error leaks proxy URL: {}",
+        error.message
+    );
+
+    let after = adapter
+        .query(&query_envelope(AppQuery::GeneralSettings))
+        .await
+        .expect("general settings after invalid set");
+    let AppResponse::Data(after) = after else {
+        panic!("GeneralSettings must return Data: {after:?}")
+    };
+    assert_eq!(after["proxy_url"], old, "invalid set must keep old proxy_url");
+
+    let persisted = std::fs::read_to_string(&config_path).expect("persisted config");
+    assert_eq!(persisted, seeded, "invalid set must not rewrite disk");
+
 }
 
 #[tokio::test]

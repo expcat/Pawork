@@ -10,7 +10,7 @@ use crate::GuiCapability;
 
 use super::command::AppCommand;
 use super::query::AppQuery;
-use super::version::{ApiVersion, V1_0, V1_1, V1_2, V1_3, V1_4};
+use super::version::{ApiVersion, V1_0, V1_1, V1_2, V1_3, V1_4, V1_5};
 
 /// GUI 通道访问规格：是否可用 + 命令级所需能力。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -48,7 +48,7 @@ pub const GUI_INTRINSIC_CAPABILITIES: &[GuiCapability] =
     &[GuiCapability::Events, GuiCapability::Snapshots];
 
 static COMMANDS: &[RegistryEntry] = &[
-    // --- AppCommand（23）---
+    // --- AppCommand（24）---
     RegistryEntry {
         wire_name: "core_initialize",
         gui: GuiChannelAccess {
@@ -244,6 +244,17 @@ static COMMANDS: &[RegistryEntry] = &[
         since: V1_4,
     },
     RegistryEntry {
+        wire_name: "set_proxy_url",
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
+        headless: None,
+        acp: false,
+        idempotent: true,
+        since: V1_5,
+    },
+    RegistryEntry {
         wire_name: "tool_approve",
         gui: GuiChannelAccess {
             available: true,
@@ -313,7 +324,7 @@ static COMMANDS: &[RegistryEntry] = &[
 ];
 
 static QUERIES: &[RegistryEntry] = &[
-    // --- AppQuery（12）---
+    // --- AppQuery（13）---
     RegistryEntry {
         wire_name: "workspace_list",
         gui: GuiChannelAccess {
@@ -449,6 +460,17 @@ static QUERIES: &[RegistryEntry] = &[
         idempotent: true,
         since: V1_4,
     },
+    RegistryEntry {
+        wire_name: "general_settings",
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
+        headless: None,
+        acp: false,
+        idempotent: true,
+        since: V1_5,
+    },
 ];
 
 /// 变体 → wire 名的唯一映射（从 gui_host 平移收编；禁止在通道侧再建镜像）。
@@ -471,6 +493,7 @@ pub fn command_wire_name(command: &AppCommand) -> &'static str {
         AppCommand::AuthSetApiKey { .. } => "auth_set_api_key",
         AppCommand::AuthCancel { .. } => "auth_cancel",
         AppCommand::SetDefaultModel { .. } => "set_default_model",
+        AppCommand::SetProxyUrl { .. } => "set_proxy_url",
         AppCommand::ToolApprove { .. } => "tool_approve",
         AppCommand::GitStage { .. } => "git_stage",
         AppCommand::TerminalCreate { .. } => "terminal_create",
@@ -495,6 +518,7 @@ pub fn query_wire_name(query: &AppQuery) -> &'static str {
         AppQuery::PluginList => "plugin_list",
         AppQuery::McpList => "mcp_list",
         AppQuery::ProviderAuthStatus { .. } => "provider_auth_status",
+        AppQuery::GeneralSettings => "general_settings",
     }
 }
 

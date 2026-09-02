@@ -19,7 +19,8 @@ use pawork_client::{
 use serde_json::json;
 
 use crate::projection::{
-    parse_provider_status_entries, sessions_in_snapshot, ModelEntry, SettingsProvidersData,
+    parse_general_settings, parse_provider_status_entries, sessions_in_snapshot, ModelEntry,
+    SettingsProvidersData,
 };
 
 const PAGE_LIMIT: u32 = 500;
@@ -60,6 +61,12 @@ pub enum ControllerEvent {
     DefaultModelConfirmed {
         provider_id: String,
         model_id: String,
+    },
+    /// general_settings 查询成功（SET-6a 通用页；Host 权威 proxy_url）。
+    GeneralSettingsLoaded(Option<String>),
+    /// set_proxy_url 获 Host Data 确认（SET-6a；回执即写后状态）。
+    ProxyUrlConfirmed {
+        proxy_url: Option<String>,
     },
     /// auth_start 响应（SET-4）：OAuth 授权等待信息；进度经 AuthChanged
     /// 事件流下发，token 不经过 Desktop。
@@ -1174,6 +1181,97 @@ impl DesktopController {
         });
     }
 
+    /// 拉取 Settings「通用」页（general_settings）。返回是否已派出
+    ///（断线时由 UI 保留 stale 只读结果，不进入 loading）。
+    pub fn load_general_settings(&self) -> bool {
+        let Some(client) = self.current_client() else {
+            return false;
+        };
+        let events = self.event_sender();
+        self.runtime.spawn(async move {
+            match client
+                .query(
+                    general_settings_query(),
+                    command_source(),
+                    actor_identity(),
+                )
+                .await
+            {
+                Ok(response) => match parse_general_settings_response(&response) {
+                    Ok(proxy_url) => {
+                        let _ = events
+                            .send(ControllerEvent::GeneralSettingsLoaded(proxy_url))
+                            .await;
+                    }
+                    Err(reason) => try_emit(
+                        &events,
+                        ControllerEvent::OperationFailed {
+                            action: "load general settings",
+                            reason,
+                        },
+                    ),
+                },
+                Err(error) => try_emit(
+                    &events,
+                    ControllerEvent::OperationFailed {
+                        action: "load general settings",
+                        reason: error.to_string(),
+                    },
+                ),
+            }
+        });
+        true
+    }
+
+    /// 设置或清除 Global `proxy_url`（set_proxy_url）。Data 确认后发
+    /// `ProxyUrlConfirmed`（回执即写后状态）；Error / 传输失败经
+    /// OperationFailed 呈现，不动 UI 现有生效值。
+    pub fn set_proxy_url(&self, proxy_url: Option<String>) {
+        let Some(client) = self.current_client() else {
+            self.emit_reliable(ControllerEvent::OperationFailed {
+                action: "set proxy url".into(),
+                reason: "not connected".into(),
+            });
+            return;
+        };
+        let events = self.event_sender();
+        self.runtime.spawn(async move {
+            let command = set_proxy_url_command(proxy_url.as_deref());
+            let response = match client
+                .command(command, command_source(), actor_identity())
+                .await
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    try_emit(
+                        &events,
+                        ControllerEvent::OperationFailed {
+                            action: "set proxy url",
+                            reason: error.to_string(),
+                        },
+                    );
+                    return;
+                }
+            };
+            match parse_general_settings_response(&response) {
+                Ok(confirmed) => {
+                    let _ = events
+                        .send(ControllerEvent::ProxyUrlConfirmed {
+                            proxy_url: confirmed,
+                        })
+                        .await;
+                }
+                Err(reason) => try_emit(
+                    &events,
+                    ControllerEvent::OperationFailed {
+                        action: "set proxy url",
+                        reason,
+                    },
+                ),
+            }
+        });
+    }
+
     /// 发起 OAuth 授权（auth_start）。响应只携带 verification_url /
     /// user_code / expires_at，进度经 AuthChanged 事件收敛。
     pub fn auth_start(&self, provider_id: String) {
@@ -1776,6 +1874,21 @@ fn provider_auth_status_query() -> AppQuery {
     .expect("provider_auth_status query shape is frozen")
 }
 
+fn general_settings_query() -> AppQuery {
+    serde_json::from_value(json!({
+        "method": "general_settings"
+    }))
+    .expect("general_settings query shape is frozen")
+}
+
+fn set_proxy_url_command(proxy_url: Option<&str>) -> AppCommand {
+    serde_json::from_value(json!({
+        "method": "set_proxy_url",
+        "params": { "proxy_url": proxy_url }
+    }))
+    .expect("set_proxy_url command shape is frozen")
+}
+
 fn diff_list_files_query(workspace_id: &str) -> AppQuery {
     serde_json::from_value(json!({
         "method": "diff_list_files",
@@ -1841,6 +1954,19 @@ fn parse_provider_status_response(
     match &response.response {
         AppResponse::Data(data) => parse_provider_status_entries(data),
         AppResponse::Error(_) => Err("server returned an error response".into()),
+        other => Err(format!("unexpected response: {other:?}")),
+    }
+}
+
+/// 解包 general_settings / set_proxy_url 信封：Data 为
+/// `{ "proxy_url": string | null }`；Error 取 Host 脱敏 message 原文
+///（不含 proxy URL）。
+fn parse_general_settings_response(
+    response: &AppResponseEnvelope,
+) -> Result<Option<String>, String> {
+    match &response.response {
+        AppResponse::Data(data) => parse_general_settings(data),
+        AppResponse::Error(error) => Err(error.message.clone()),
         other => Err(format!("unexpected response: {other:?}")),
     }
 }

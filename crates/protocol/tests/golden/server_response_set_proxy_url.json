@@ -4,11 +4,11 @@
       "major": 1,
       "minor": 5
     },
-    "request_id": "query-1",
+    "request_id": "query-set-proxy-url",
     "responded_at": 3,
     "response": {
       "data": {
-        "workspaces": []
+        "proxy_url": null
       },
       "type": "data"
     }

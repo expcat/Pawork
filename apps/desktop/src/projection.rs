@@ -670,6 +670,52 @@ pub struct OAuthWait {
     pub expires_at: Option<String>,
 }
 
+/// Settings「通用」页状态（SET-6a / ADR-047）：Host `general_settings`
+/// 权威 `proxy_url`。查询失败 / 未知则 `available=false`，导航不显示
+/// 该页且不渲染写入口；断线 `mark_stale` 保留最后只读结果。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SettingsGeneralState {
+    pub loading: bool,
+    pub stale_reason: Option<String>,
+    pub error: Option<String>,
+    /// 至少成功解析过一次（capability 到位）。失败 / 未知保持 false。
+    pub available: bool,
+    /// Host 权威生效值；`None` = 未设置（跟随系统环境变量）。
+    pub proxy_url: Option<String>,
+}
+
+impl SettingsGeneralState {
+    pub fn begin_loading(&mut self) {
+        self.loading = true;
+        self.stale_reason = None;
+    }
+
+    pub fn apply_loaded(&mut self, proxy_url: Option<String>) {
+        self.loading = false;
+        self.stale_reason = None;
+        self.error = None;
+        self.available = true;
+        self.proxy_url = proxy_url;
+    }
+
+    /// 查询或写失败：保留旧值，记录原因。从未成功过则保持 unavailable。
+    pub fn apply_failed(&mut self, reason: &str) {
+        self.loading = false;
+        self.error = Some(reason.to_string());
+    }
+
+    pub fn mark_stale(&mut self, reason: &str) {
+        self.loading = false;
+        self.stale_reason = Some(reason.to_string());
+    }
+
+    /// 写动作 gate（render / 键盘 / AX 同源）：须已接通、非 stale、且
+    /// 查询已成功（capability 到位）。
+    pub fn writes_enabled(&self, connected: bool) -> bool {
+        connected && self.available && self.stale_reason.is_none()
+    }
+}
+
 /// 解析 AuthChangeState 的 wire 形态（tag=type / content=data）。
 pub fn parse_auth_change(state: &Value) -> Result<AuthChange, String> {
     let kind = state
@@ -717,6 +763,23 @@ pub fn parse_provider_status_entries(data: &Value) -> Result<SettingsProvidersDa
         providers,
         default_model: parse_default_model(data)?,
     })
+}
+
+/// 解析 Host `general_settings` 的 `AppResponse::Data` 载荷
+/// `{ "proxy_url": string | null }`。缺字段 / 非字符串非 null fail-closed，
+/// 不把残缺帧静默当成未设置。
+pub fn parse_general_settings(data: &Value) -> Result<Option<String>, String> {
+    let value = data
+        .get("proxy_url")
+        .ok_or_else(|| "general settings missing proxy_url".to_string())?;
+    if value.is_null() {
+        return Ok(None);
+    }
+    value
+        .as_str()
+        .map(str::to_string)
+        .map(Some)
+        .ok_or_else(|| "proxy_url is not a string or null".to_string())
 }
 
 /// 顶层 `default`：null = 未设置默认；对象须同时携带字符串
@@ -884,6 +947,8 @@ pub struct DesktopProjection {
     pub pending_model: Option<(String, String)>,
     /// SET-3 Settings 供应商页只读状态（加载 / stale / Host 权威列表）。
     pub settings_providers: SettingsProvidersState,
+    /// SET-6a Settings 通用页（Host `general_settings` / `proxy_url`）。
+    pub settings_general: SettingsGeneralState,
     pub active_runs: Vec<ActiveRun>,
     pub active_run_started_at_ms: Option<u64>,
     pub resume: ResumeState,
@@ -2533,6 +2598,54 @@ mod tests {
         );
         assert_eq!(state.error.as_deref(), Some("query failed"));
         assert!(!state.loading);
+    }
+
+    #[test]
+    fn general_settings_parses_host_proxy_url() {
+        assert_eq!(
+            parse_general_settings(&json!({ "proxy_url": "http://127.0.0.1:7890" }))
+                .expect("parse proxy_url string"),
+            Some("http://127.0.0.1:7890".into())
+        );
+        assert_eq!(
+            parse_general_settings(&json!({ "proxy_url": null })).expect("parse null proxy_url"),
+            None
+        );
+        let mut state = SettingsGeneralState::default();
+        state.apply_loaded(Some("http://127.0.0.1:7890".into()));
+        assert!(state.available);
+        assert_eq!(state.proxy_url.as_deref(), Some("http://127.0.0.1:7890"));
+        state.apply_loaded(None);
+        assert_eq!(state.proxy_url, None);
+        assert!(state.available);
+    }
+
+    #[test]
+    fn general_settings_fails_closed_on_malformed_payload() {
+        assert!(parse_general_settings(&json!({})).is_err());
+        assert!(parse_general_settings(&json!({ "proxy_url": 7 })).is_err());
+        assert!(parse_general_settings(&json!({ "proxy_url": { "url": "x" } })).is_err());
+        let mut state = SettingsGeneralState::default();
+        state.apply_failed("malformed payload");
+        assert!(!state.available);
+        assert_eq!(state.proxy_url, None);
+        assert_eq!(state.error.as_deref(), Some("malformed payload"));
+    }
+
+    #[test]
+    fn general_settings_stale_keeps_last_value_and_disables_writes() {
+        let mut state = SettingsGeneralState::default();
+        state.apply_loaded(Some("http://127.0.0.1:7890".into()));
+        assert!(state.writes_enabled(true));
+        state.mark_stale("socket closed");
+        assert_eq!(state.proxy_url.as_deref(), Some("http://127.0.0.1:7890"));
+        assert!(state.available);
+        assert_eq!(state.stale_reason.as_deref(), Some("socket closed"));
+        assert!(!state.writes_enabled(true));
+        assert!(!state.writes_enabled(false));
+        state.apply_failed("query failed");
+        assert_eq!(state.proxy_url.as_deref(), Some("http://127.0.0.1:7890"));
+        assert!(state.available);
     }
 
     fn settings_state_with_provider(auth_methods: &[&str]) -> SettingsProvidersState {

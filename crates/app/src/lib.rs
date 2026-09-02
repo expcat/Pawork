@@ -724,7 +724,7 @@ impl AppCore {
     ///
     /// 未配置时保持 reqwest 默认（读 `HTTPS_PROXY` 等环境变量）；配置后
     /// 显式代理优先生效，回环/`.local` 目标直连（`loopback_aware_proxy`）。
-    fn http_from_config(config: &PaworkConfig) -> Result<reqwest::Client, AppError> {
+    pub(crate) fn http_from_config(config: &PaworkConfig) -> Result<reqwest::Client, AppError> {
         // F06: OAuth/探测客户端与 HttpClient 一样禁止跟随跨 origin 跳转
         // （默认政策会带出 x-api-key）。workspace 层 proxy_url 已在 loader 剥离。
         let redirect = reqwest::redirect::Policy::none();
@@ -988,6 +988,12 @@ impl AppCore {
     pub(crate) fn set_default_model_pair(&mut self, provider_id: &str, model_id: &str) {
         self.config.default_provider = Some(provider_id.to_string());
         self.config.default_model = Some(model_id.to_string());
+    }
+
+    /// SET-6a: set_proxy_url 写盘成功后直接赋值内存 proxy_url（含 None，禁止 merge_with）并换入预构 HTTP 客户端。
+    pub(crate) fn set_proxy_url(&mut self, proxy_url: Option<String>, http: reqwest::Client) {
+        self.config.proxy_url = proxy_url;
+        self.http = http;
     }
 
     pub fn auth_backend(&self) -> &Arc<dyn SecretBackend> {

@@ -1,6 +1,7 @@
-//! SET-2 Host Settings 门面（ADR-046）：provider_auth_status 查询与五个
-//! 认证 / 默认项命令。Secret 红线：api_key 明文只在 handler 栈上与验证
-//! 请求的 Authorization 头中短暂停留，绝不进入 tracing / 事件 / ledger。
+//! SET-2 Host Settings 门面（ADR-046）与 SET-6a 通用设置（ADR-047）。
+//! Secret 红线：api_key 明文只在 handler 栈上与验证请求的 Authorization
+//! 头中短暂停留，绝不进入 tracing / 事件 / ledger。proxy URL 可能内嵌
+//! user:pass，loopback_aware_proxy 错误串含原文，禁止送进 GUI Error / tracing。
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -661,5 +662,63 @@ pub(crate) async fn set_default_model(
     Ok(AppResponse::Data(json!({
         "provider_id": id,
         "model_id": model_id,
+    })))
+}
+
+fn invalid_proxy_url_error(candidate: Option<&str>) -> GuiHostError {
+    let reason = match candidate {
+        Some(url) if url.is_empty() => "empty".to_string(),
+        Some(url) => url
+            .parse::<reqwest::Url>()
+            .err()
+            .map(|error| error.to_string())
+            .unwrap_or_else(|| "client_build".to_string()),
+        None => "client_build".to_string(),
+    };
+    GuiHostAdapter::host_error(
+        "invalid_proxy_url",
+        format!("proxy URL is invalid ({reason})"),
+    )
+}
+
+pub(crate) async fn general_settings(
+    adapter: &GuiHostAdapter,
+    query: &AppQuery,
+) -> Result<AppResponse, GuiHostError> {
+    let AppQuery::GeneralSettings = query else {
+        unreachable!("general_settings handler receives GeneralSettings")
+    };
+    let core = adapter.core.read().await;
+    Ok(AppResponse::Data(json!({
+        "proxy_url": core.config().proxy_url.clone(),
+    })))
+}
+
+pub(crate) async fn set_proxy_url(
+    adapter: &GuiHostAdapter,
+    _envelope: &AppCommandEnvelope,
+    command: &AppCommand,
+) -> Result<AppResponse, GuiHostError> {
+    let AppCommand::SetProxyUrl { proxy_url } = command else {
+        unreachable!("set_proxy_url handler receives SetProxyUrl")
+    };
+    let mut candidate = pawork_workspace::config::PaworkConfig::default();
+    candidate.proxy_url = proxy_url.clone();
+    let http = AppCore::http_from_config(&candidate)
+        .map_err(|_| invalid_proxy_url_error(proxy_url.as_deref()))?;
+    let path = pawork_workspace::config::global_config_path().ok_or_else(|| {
+        GuiHostAdapter::host_error(
+            "config_unavailable",
+            "global config directory is not available on this platform",
+        )
+    })?;
+    pawork_workspace::config::write_proxy_url(&path, proxy_url.as_deref())
+        .map_err(|error| GuiHostAdapter::host_error("config_write", error.to_string()))?;
+    {
+        let mut core = adapter.core.write().await;
+        core.set_proxy_url(proxy_url.clone(), http);
+    }
+    Ok(AppResponse::Data(json!({
+        "proxy_url": proxy_url,
     })))
 }

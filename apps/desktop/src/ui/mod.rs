@@ -125,6 +125,15 @@ pub(crate) enum AppRoute {
     Settings,
 }
 
+/// Settings 内容页（SET-6a）：供应商页常在；通用页仅在 Host
+/// `general_settings` 查询成功后显示。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum SettingsPage {
+    #[default]
+    Providers,
+    General,
+}
+
 /// 工作台专属 action 在当前路由是否生效（SET-3 审查修复 1）：审批 /
 /// 取消 Run / 新建任务 / Inspector / 任务导航的全局键绑定在 Settings 路由
 /// 下全部旁路（Settings 壳内这些控件不渲染，键绑定也不得穿透路由）；
@@ -520,12 +529,23 @@ pub struct AppView {
     pending_inspector_focus: Option<InspectorFocusTarget>,
     /// 顶层路由（SET-3）：Settings 壳与工作台互斥渲染，切换不动工作台状态。
     route: AppRoute,
+    /// SET-6a：当前 Settings 内容页。通用页仅在 capability 到位后可选。
+    settings_page: SettingsPage,
     /// TaskRail 页脚 Settings gear（可见 / 键盘 / AX 同 gate）。
     settings_focus: FocusHandle,
     /// Settings Rail「← Back to workspace」焦点（进入 Settings 后首停）。
     settings_back_focus: FocusHandle,
     /// SET-5：Settings 页级「刷新」按钮焦点（provider 状态 + 模型目录）。
     settings_refresh_focus: FocusHandle,
+    /// SET-6a：Settings 导航「General」焦点。
+    settings_nav_general_focus: FocusHandle,
+    /// SET-6a：Settings 导航「Models & providers」焦点（通用页选中时）。
+    settings_nav_providers_focus: FocusHandle,
+    /// SET-6a：proxy URL 内联输入（明文；非 Secret）。
+    settings_proxy_input: Entity<crate::ui::text_input::TextInput>,
+    /// SET-6a：proxy Save / Clear 焦点。
+    settings_proxy_save_focus: FocusHandle,
+    settings_proxy_clear_focus: FocusHandle,
     /// Settings 内容滚动句柄（供应商列表可能超出视口）。
     settings_scroll: ScrollHandle,
     /// SET-4：按 provider 懒建的 API key secure 输入实体（明文只留在
@@ -712,12 +732,25 @@ impl AppView {
             pending_scope_focus: false,
             pending_inspector_focus: None,
             route: AppRoute::default(),
+            settings_page: SettingsPage::default(),
             settings_focus: cx
                 .focus_handle()
                 .tab_stop(true)
                 .tab_index(RAIL_TAB_INDEX_SETTINGS),
             settings_back_focus: cx.focus_handle().tab_stop(true),
             settings_refresh_focus: cx.focus_handle().tab_stop(true),
+            settings_nav_general_focus: cx.focus_handle().tab_stop(true),
+            settings_nav_providers_focus: cx.focus_handle().tab_stop(true),
+            settings_proxy_input: cx.new(|cx| {
+                TextInput::with_placeholder("http://127.0.0.1:7890", cx)
+                    .id("settings-proxy-input")
+                    .height_clamp(
+                        metrics::COMPOSER_INPUT_MIN_HEIGHT,
+                        metrics::COMPOSER_INPUT_MIN_HEIGHT,
+                    )
+            }),
+            settings_proxy_save_focus: cx.focus_handle().tab_stop(true),
+            settings_proxy_clear_focus: cx.focus_handle().tab_stop(true),
             settings_scroll: ScrollHandle::new(),
             settings_api_key_inputs: HashMap::new(),
             settings_api_key_editors: HashSet::new(),
@@ -1057,6 +1090,8 @@ impl AppView {
         self.controller.load_models();
         // SET-3：重连后刷新只读供应商状态，清除断线 stale 标注。
         self.refresh_provider_status();
+        // SET-6a：重连后刷新通用设置，清除 stale 并恢复写 gate。
+        self.refresh_general_settings();
         self.consume_events(events, cx);
         // 连接建立即武装 1s tick：barrier 启用而无 run 时也要常驻探测。
         self.arm_run_clock(cx);
@@ -1127,6 +1162,7 @@ impl AppView {
                 self.resources.mark_stale(&stale_reason);
                 // SET-3：Settings 供应商页同样保留 stale 只读结果。
                 self.projection.settings_providers.mark_stale(&stale_reason);
+                self.projection.settings_general.mark_stale(&stale_reason);
                 self.terminal_pending_write = None;
                 self.terminal_pending_create_workspace = None;
                 self.terminal_pending_create_cwd = None;
@@ -1405,6 +1441,19 @@ impl AppView {
                 // provider_auth_status 重查落地。
                 self.projection.confirm_default_model(provider_id, model_id);
             }
+            ControllerEvent::GeneralSettingsLoaded(proxy_url)
+            | ControllerEvent::ProxyUrlConfirmed { proxy_url } => {
+                self.projection
+                    .settings_general
+                    .apply_loaded(proxy_url.clone());
+                self.settings_proxy_input.update(cx, |input, cx| {
+                    input.reset_text(proxy_url.unwrap_or_default(), cx)
+                });
+                if let ConnectionState::Disconnected { reason } = &self.projection.connection {
+                    let stale = format!("connection lost · {reason}");
+                    self.projection.settings_general.mark_stale(&stale);
+                }
+            }
             ControllerEvent::AuthStarted {
                 provider_id,
                 verification_url,
@@ -1429,6 +1478,11 @@ impl AppView {
                 if action == "load provider status" {
                     self.projection
                         .settings_providers
+                        .apply_failed(reason.as_str());
+                }
+                if action == "load general settings" || action == "set proxy url" {
+                    self.projection
+                        .settings_general
                         .apply_failed(reason.as_str());
                 }
                 if action == "start provider auth" || action == "verify api key" {
@@ -2365,6 +2419,7 @@ impl AppView {
         // 与页级 Refresh 对称：进入即补拉模型目录（断线时 controller
         // 内部 no-op），「模型与默认项」区与失效判定有目录数据可用。
         self.controller.load_models();
+        self.refresh_general_settings();
         window.focus(&self.settings_back_focus);
         cx.notify();
     }
@@ -2376,6 +2431,7 @@ impl AppView {
         // SET-005：离开页面清空 secure 输入缓冲（含 undo 栈）与本地编辑
         // 状态；工作台状态不受影响。
         self.clear_settings_buffers(cx);
+        self.settings_page = SettingsPage::Providers;
         window.focus(&self.settings_focus);
         cx.notify();
     }
@@ -2392,6 +2448,37 @@ impl AppView {
         }
     }
 
+    /// 拉取通用页（SET-6a / general_settings）。断线不进入 loading；
+    /// 查询失败 / 未知则保持 unavailable，导航不显示该页。
+    fn refresh_general_settings(&mut self) {
+        if self.controller.load_general_settings() {
+            self.projection.settings_general.begin_loading();
+        } else {
+            self.projection.settings_general.mark_stale("not connected");
+        }
+    }
+
+    /// Settings 导航切页（SET-6a）。通用页未接通时 fail-closed 留在供应商页。
+    pub(crate) fn on_select_settings_page(
+        &mut self,
+        page: SettingsPage,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match page {
+            SettingsPage::General if !self.projection.settings_general.available => return,
+            SettingsPage::General => {
+                self.settings_page = SettingsPage::General;
+                window.focus(&self.settings_nav_general_focus);
+            }
+            SettingsPage::Providers => {
+                self.settings_page = SettingsPage::Providers;
+                window.focus(&self.settings_nav_providers_focus);
+            }
+        }
+        cx.notify();
+    }
+
     /// Settings 页级刷新（SET-5）：重查 provider_auth_status + model_list；
     /// 失败保留现有列表并显示错误（复用 stale / OperationFailed 通道，
     /// 不新增缓存）。入口复核连接态，与可见按钮 gate 同源。
@@ -2404,6 +2491,7 @@ impl AppView {
         }
         self.refresh_provider_status();
         self.controller.load_models();
+        self.refresh_general_settings();
         cx.notify();
     }
 

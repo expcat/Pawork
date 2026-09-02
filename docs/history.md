@@ -1056,3 +1056,22 @@ Known gaps: 真实凭证验收、重启/断线复验、AX 卡片几何（SET-3 �
 Full workspace gate: NOT RUN（当前未设置全量门禁）。
 
 ---
+
+## 2026-09-02 — Settings SET-6a 通用页（proxy_url，ADR-047）
+
+- 立项：SET-6 第一页经源码盘点 + grok_explorer 独立调研双确认，`proxy_url` 是 PaworkConfig 顶层键中唯一剩余「Host 已有、Global 层可持久化、有真实运行时语义」的通用键（default_* 属模型与供应商、trust_workspaces 属权限与审批、mcp 属工具与 MCP、profile 双轨风险排除）；SET-6 表「通用」定义随之从 workspace/session 行为改写为 Global 层通用配置。
+- ADR-047（用户 2026-09-02 确认 Accepted）：`GeneralSettings` 查询 + `SetProxyUrl` 命令（仅 GUI、API minor 1.5 仅记账）；grok_reviewer ADR 期审查修 2 P1——生效面拆分（`core.http` 只管 OAuth/验证/探测；模型流量代理在装配时拷入 adapter，已装配连接不重建、下次装配生效）与清除 wire 语义（字段必填、显式 null 清除、缺字段解码错误、`""` 非法保旧），另修 2 P2（SET-6 表定义、错误不回显原文 URL）。
+- 实施：protocol 新变体 + registry since=V1_5 + golden 43→48 帧 + typegen（主代理补修 worker 遗漏三处：Option 隐式默认吞缺字段→deserialize_with、handshake 两测试随版本 bump 参数化、typegen 未重生）；workspace `write_proxy_url`（复用原子写模式，None 移除键）；app 两 handler 按 D2 定序（校验=预构目标 client→Global 原子写→写锁直接赋值换入），`invalid_proxy_url`→ValidationFailed；desktop 通用页（capability gate、生效边界文案、stale 三路径同禁）。
+- 实现期审查（grok_reviewer）修 4 P2：冻结契约回写（architecture §3.2 API 1.0–1.5/48 帧、CON-GUI-01 1.5、CON-REGISTRY-01 24/13）、重连不刷新 general_settings 致 stale 写锁残留（补 on_connected 刷新）、Global 写 RMW 进程锁（CONFIG_WRITE_LOCK）、proxy 输入框 stale 视觉禁用。残留 P3：stale 时输入框仍可聚焦编辑草稿（写入口全部 fail-closed，不可持久化）。
+
+Implemented: Settings「通用」页 proxy_url 读取/设置/清除全链路（wire → Host → Global 配置 → Desktop）。
+
+Validated: `cargo test -p pawork-protocol --features typegen --offline --lib --tests`（150）；`cargo test -p pawork-workspace --offline --lib --tests`（147）；`cargo test -p pawork-app --offline --lib --tests`（203，fix1 复跑绿）；`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`（176，fix2 复跑绿）；`git diff --check`。
+
+Targeted regressions: protocol 必填/null 清除/缺字段解码错误 + 5 帧 golden；workspace 设置/清除两主路径；app 设置→重查、清除→重查 null、非法 URL 保旧；desktop 解析主路径、畸形 fail-closed、stale gate。
+
+Real-world evidence: pending（真窗口与代理实机验收登记 SET-7）。
+
+Known gaps: 输入框 stale 仅视觉禁用（P3，草稿不可持久化）；真实代理环境验收在 SET-7。
+
+Full workspace gate: NOT RUN（当前未设置全量门禁）。

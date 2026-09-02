@@ -675,3 +675,58 @@ fn golden_auth_provider_slices() {
         })),
     );
 }
+
+/// SET-6a（ADR-047）：通用设置查询 / SetProxyUrl 命令 golden。
+#[test]
+fn golden_general_settings_slices() {
+    assert_golden(
+        "general_settings.json",
+        encode_client(&ClientFrame::Query(AppQueryEnvelope {
+            api_version: API_VERSION,
+            request_id: pawork_domain::QueryId::from("query-general-settings"),
+            source: CommandSource::LocalGui {
+                client_id: GuiClientId::from("gui-1"),
+            },
+            identity: ActorIdentity::LocalUser {
+                actor_id: pawork_domain::ActorId::from("actor-1"),
+                display_name: None,
+            },
+            issued_at: Timestamp::from_unix_millis(1),
+            query: AppQuery::GeneralSettings,
+        })),
+    );
+    assert_golden(
+        "client_command_set_proxy_url.json",
+        encode_client(&client_auth_command_frame(AppCommand::SetProxyUrl {
+            proxy_url: Some("http://127.0.0.1:7890".into()),
+        })),
+    );
+    assert_golden(
+        "client_command_set_proxy_url_clear.json",
+        encode_client(&client_auth_command_frame(AppCommand::SetProxyUrl {
+            proxy_url: None,
+        })),
+    );
+    assert_golden(
+        "server_response_general_settings.json",
+        encode_server(&ServerFrame::Response(AppResponseEnvelope {
+            api_version: API_VERSION,
+            request_id: pawork_domain::QueryId::from("query-general-settings"),
+            responded_at: Timestamp::from_unix_millis(3),
+            response: AppResponse::Data(serde_json::json!({
+                "proxy_url": "http://127.0.0.1:7890"
+            })),
+        })),
+    );
+    assert_golden(
+        "server_response_set_proxy_url.json",
+        encode_server(&ServerFrame::Response(AppResponseEnvelope {
+            api_version: API_VERSION,
+            request_id: pawork_domain::QueryId::from("query-set-proxy-url"),
+            responded_at: Timestamp::from_unix_millis(3),
+            response: AppResponse::Data(serde_json::json!({
+                "proxy_url": null
+            })),
+        })),
+    );
+}

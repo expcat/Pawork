@@ -74,7 +74,7 @@ R1 收口（2026-08-19）后 workspace 定稿为 **21 成员（19 库 + 2 应用
 | 引擎语义 | 审批经 `ApprovalResolver` await（`ToolApprovalRequested/Responded` 事件对；Requested 在等待前落盘）、`CancelHandle`+`CancelReason`、`LoopContext` 工具执行注入点 | `crates/engine` 定向回归 |
 | 配置 schema | TOML、`ConfigTier`（Builtin<Global<Profile<Workspace<Session<Run）、`PaworkConfig`/`ProviderConfig{id, base_url}`（**无 api_key 字段**） | `crates/workspace::config` 六层矩阵测试 |
 | blob 格式 | `PWB1` + protected AEAD 边界（ADR-032）；artifact/protected/checkpoint 三区 | `crates/storage::blob` golden |
-| GUI 协议 | 帧格式（ADR-036 版本协商）；`SUPPORTED_API_VERSIONS` 1.0/1.1/1.2/1.3/1.4（1.4 = ADR-046 Settings 认证词汇）；typegen 检入 [`schemas/`](../schemas/)（core-api/gui-protocol/headless-json）；三通道可用性单源 `protocol::app::registry`，未登记 fail-closed | 43 帧 golden + typegen 断言（`crates/protocol`） |
+| GUI 协议 | 帧格式（ADR-036 版本协商）；`SUPPORTED_API_VERSIONS` 1.0/1.1/1.2/1.3/1.4/1.5（1.4 = ADR-046 Settings 认证词汇；1.5 = ADR-047 Settings 通用页词汇）；typegen 检入 [`schemas/`](../schemas/)（core-api/gui-protocol/headless-json）；三通道可用性单源 `protocol::app::registry`，未登记 fail-closed | 48 帧 golden + typegen 断言（`crates/protocol`） |
 | headless JSON | `HeadlessResponse`（`type=event|response`）；`run`/`chat --prompt --json` 已对齐；stdout 仅 JSONL；`--json` → 正式 headless 映射见 [spec/contracts.md](spec/contracts.md) | `crates/protocol` headless golden |
 | 控制面 | usage `dedup_key`；audit JSONL | `fixtures/audit/event-v1.jsonl` + `crates/control-plane` golden |
 | 缓存注解（已确认 D4，附加式） | `CanonicalModelRequest` 缓存策略枚举（`Off/Auto/Explicit{retention}`）+ 前缀分段标注；`ModelResponseSummary`/usage 增 `cache_read`/`cache_write`；serde 向后兼容 | golden 先行；方案见 [references.md](references.md) 附录 B（F5-B） |
@@ -117,4 +117,5 @@ R1 收口（2026-08-19）后 workspace 定稿为 **21 成员（19 库 + 2 应用
   - [ADR-044](adr/ADR-044-persistent-workspace-registry.md) 持久项目注册表与会话级 Workspace 路由（schema v14；复用既有 wire，不新增协议变体）。
   - [ADR-045](adr/ADR-045-terminal-lifecycle-wire-evolution.md) Terminal 生命周期 wire 演进（Accepted：`terminal_close` 命令 + `TerminalExited` live 事件、API minor 1.3、新事件按协商 minor 门控推送、golden 先行）。
   - [ADR-046](adr/ADR-046-settings-auth-wire-and-secret-transit.md) Settings 模型与供应商 wire（Accepted：`ProviderAuthStatus` 查询、`AuthSetApiKey` 非重放 Secret 写入、`AuthStart`/`AuthRemove` 开放 GUI + `AuthCancel` + `AuthChanged` 事件、`SetDefaultModel` 默认项 mutation、API minor 1.4 仅记账无兼容门控、golden 先行）。
-- 新决策继续以 ADR 记录，编号续接（下一个 ADR-047），落 [docs/adr/](adr/)；状态 Proposed → 用户确认 → Accepted 后方可执行对应破坏式改动。各 ADR 决策要点摘要见 [history.md](history.md)。
+  - [ADR-047](adr/ADR-047-general-settings-wire.md) Settings 通用页 wire（Accepted：`GeneralSettings` 查询、`SetProxyUrl` 命令（必填字段、显式 null 清除、校验先行构造 + Global 原子写 + 内存换入）、API minor 1.5 仅记账、golden 先行）。
+- 新决策继续以 ADR 记录，编号续接（下一个 ADR-048），落 [docs/adr/](adr/)；状态 Proposed → 用户确认 → Accepted 后方可执行对应破坏式改动。各 ADR 决策要点摘要见 [history.md](history.md)。

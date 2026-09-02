@@ -909,13 +909,14 @@ fn host_error_to_protocol(error: &GuiHostError) -> ProtocolError {
     // 边界：未知/重复 id 报 not_found），映射到既有 RequestNotFound 码。
     // ADR-046：busy 与校验失败类是 Settings 入口的语义码，分别映射到
     // Busy / ValidationFailed；客户端可据码收敛而非解析 message。
+    // ADR-047：invalid_proxy_url 是用户输入错误，与 auth_verify 同级，
+    // 不得落到 Internal。
     // 其余宿主错误维持 Internal 不变。
     let code = match error.code.as_str() {
         "not_found" => ProtocolErrorCode::RequestNotFound,
         "busy" => ProtocolErrorCode::Busy,
-        "auth_verify" | "invalid_secret" | "unsupported" | "unknown_provider" | "unknown_model" => {
-            ProtocolErrorCode::ValidationFailed
-        }
+        "auth_verify" | "invalid_secret" | "unsupported" | "unknown_provider" | "unknown_model"
+        | "invalid_proxy_url" => ProtocolErrorCode::ValidationFailed,
         _ => ProtocolErrorCode::Internal,
     };
     ProtocolError {
@@ -969,7 +970,7 @@ mod tests {
 
     /// ADR-045/ADR-046：宿主语义错误码到 wire 码的映射——not_found →
     /// RequestNotFound、busy → Busy（可重试）、校验失败类 →
-    /// ValidationFailed；其余宿主错误维持 Internal。
+    /// ValidationFailed（含 invalid_proxy_url）；其余宿主错误维持 Internal。
     #[test]
     fn host_error_maps_semantic_codes_to_wire_errors() {
         let not_found = host_error_to_protocol(&GuiHostError {
@@ -995,6 +996,14 @@ mod tests {
         });
         assert_eq!(auth_verify.code, ProtocolErrorCode::ValidationFailed);
         assert!(!auth_verify.retryable);
+
+        let invalid_proxy = host_error_to_protocol(&GuiHostError {
+            code: "invalid_proxy_url".into(),
+            message: "proxy URL is invalid (empty)".into(),
+            retryable: false,
+        });
+        assert_eq!(invalid_proxy.code, ProtocolErrorCode::ValidationFailed);
+        assert!(!invalid_proxy.retryable);
 
         let other = host_error_to_protocol(&GuiHostError {
             code: "policy_denied".into(),

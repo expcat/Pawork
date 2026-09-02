@@ -181,7 +181,7 @@ SET-5 收口后才逐页立项，不预建通用设置框架：
 
 | 顺序 | 页面 | 最小真实能力 | 明确不做 |
 | --- | --- | --- | --- |
-| 1 | 通用 | Host 已有、可持久化的默认 workspace/session 行为 | 无来源的偏好大全 |
+| 1 | 通用 | Host 已有、Global 层可持久化的通用配置（SET-6a 首期 = `proxy_url`） | 无来源的偏好大全 |
 | 2 | 权限与审批 | 当前 approval mode/trust 的读取与受控修改 | 绕过 Policy、静默 Allow |
 | 3 | 工具与 MCP | Host 权威 MCP list/test/config mutation | 假工具市场 |
 | 4 | 终端 | 有明确宿主持久化语义的 shell/cwd/尺寸默认值 | Desktop 直写 PTY 配置 |
@@ -190,6 +190,35 @@ SET-5 收口后才逐页立项，不预建通用设置框架：
 | 7 | 关于 | 构建版本、协议版本、数据目录的只读信息 | updater/release 宣称 |
 
 每页激活时补一页小任务或在本文件增加独立切片；涉及 wire/config/Policy 时重复 ADR 判定。未激活的页不显示。
+
+### SET-6a — 通用页（proxy_url）🟢
+
+> 2026-09-02 完成：protocol 落地 `GeneralSettings` 查询与 `SetProxyUrl` 命令（`proxy_url` 必填字段——deserialize_with 取消 Option 隐式默认，缺字段解码错误、显式 null 清除）、registry 登记 since=V1_5 仅 GUI、API 1.5、golden 43→48 帧（含清除帧与清除回执）+ typegen 三产物；workspace 增 `write_proxy_url`（Some 覆盖 / None 移除键、未知字段保留、原子写回）；app 两 handler 按 ADR-047 D2 定序（校验=预构目标 client → Global 原子写 → 写锁内直接赋值+换入），`invalid_proxy_url` 归 ValidationFailed 且不回显原文 URL；desktop「通用」页（查询成功才显示导航；null 文案「未设置（跟随系统环境变量）」；生效边界文案；stale 禁写三路径同 gate；重连自动刷新）。审查（grok_reviewer ×2）修复：ADR 期 2 P1（生效面拆分、清除 wire 语义）+2 P2；实现期 4 P2（冻结契约回写、重连不刷新 stale 残留、错误码映射、Global 写 RMW 加进程锁）+P3 文案对齐三处。已知残留（不挡收口）：proxy 输入框 stale 时仅视觉禁用，仍可获得焦点编辑草稿（Save/Clear/AX 均 fail-closed 不可持久化）。protocol 150 / workspace 119+13+15 / app 180+6+15+2 / desktop 176 全绿。真实窗口验收登记 SET-7。
+
+> 2026-09-02 立项：通用页最小真实能力锁定为 `proxy_url` 的读取、设置与清除（Global 层）。经主代理源码盘点与独立只读调研双确认：`PaworkConfig` 顶层键中 `default_*` 属「模型与供应商」（SET-5 已管）、`trust_workspaces` 属「权限与审批」、`mcp` 段属「工具与 MCP」、`profile` 与默认 provider/model 有双轨写风险排除；`proxy_url` 是唯一剩余 Host 已有、Global 层可持久化且有真实运行时语义的通用键。wire 演进走 [ADR-047](../docs/adr/ADR-047-general-settings-wire.md)（2026-09-02 用户确认 Accepted）。grok_reviewer 审查后修订：钉死「校验=完整构造目标客户端、先于写盘」以消除写后重建分叉；wire 上 `proxy_url` 字段必填、显式 `null` 才清除、缺字段即解码错误；生效边界拆分（OAuth/探测同会话生效，模型流量随下次装配生效）并写入页面文案；错误统一 `invalid_proxy_url` 不回显原文 URL。
+
+**写入集**：
+
+- `docs/adr/ADR-047-*.md`、`docs/architecture.md`、`docs/spec/contracts.md`；
+- `crates/protocol/`：`GeneralSettings` 查询 + `SetProxyUrl` 命令 + registry 登记 + API 1.5 + golden/typegen；
+- `crates/workspace/`：`write_proxy_url` 原子写回（保留未知字段，`None` 移除该键）；
+- `crates/app/`：两个 handler + 校验期预构目标客户端、写盘后内存赋值并换入新 `core.http`（与 ADR-047 D2 同序，禁止写后再新建）；
+- `apps/desktop/`：Settings 导航增「通用」页 + proxy 行读/设置/清除，可见/键盘/AX 同 gate，断线 fail-closed；
+- 实际涉及包的包级 Spec。
+
+**完成条件**：
+
+- 通用页显示 Host 权威 `proxy_url` 生效值（=Global 持久值或 null）；未设置时诚实显示跟随系统环境变量；
+- 设置经 Host 先行校验（与运行时同一构造路径，校验期完成客户端构造；非法 fail-closed 保旧值）、Global 层原子写盘、写后直接赋值同步内存并换入新 `core.http`；
+- 页面文案诚实标注生效边界：新 OAuth/验证/目录探测同会话生效，当前活跃供应商连接的模型流量于下次装配（切换供应商/重启 Host）后生效；
+- 断线 stale 只读，写动作 fail-closed；可见/键盘/AX 同 gate；
+- golden/typegen 先行；无 Settings 时 CLI 与 GUI 读同一 Global 配置保持一致。
+
+**停止条件**：ADR-047 已 Accepted（2026-09-02）；实施中冲突先收敛原因，不扩大写入集。
+
+**验证**：`cargo test -p pawork-protocol --features typegen --offline --lib --tests` + `cargo test -p pawork-workspace -p pawork-app --offline --lib --tests` + `cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`；单一 Cargo 进程纪律不变。
+
+**定向回归上限**：主路径两条（设置 → 重查一致；清除 → 重查 null，同属一个 mutation 的两半）；关键失败路径一条（非法 URL fail-closed 保旧）。现有测试可覆盖时不新增。
 
 ### SET-7 — 真窗口与人工收口 ⚪
 

@@ -1,12 +1,12 @@
-//! Global 层默认项写盘（SET-2，ADR-046 D4）。
+//! Global 层配置写盘（SET-2 / SET-6a）。
 //!
-//! 只提供 default_provider/default_model 成对写回这一个入口：读取现有
-//! Global 层文件（缺失视为空配置），以 TOML Value 结构保留全部未知字段，
-//! 仅覆盖两个键，最后经同目录临时文件 + rename 原子写回。六层合并语义、
-//! schema 与加载路径均不变。
+//! 读取现有 Global 层文件（缺失视为空配置），以 TOML Table 保留全部未知
+//! 字段，仅改目标键，最后经同目录临时文件 + rename 原子写回。六层合并
+//! 语义、schema 与加载路径均不变。
 
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 
 use crate::config::error::{ConfigError, ConfigParseError};
 
@@ -14,14 +14,12 @@ use crate::config::error::{ConfigError, ConfigParseError};
 /// 互相覆盖临时文件（GUI 快速双击即可触发）。
 static TEMP_SUFFIX: AtomicU64 = AtomicU64::new(0);
 
-/// 将 default_provider/default_model 原子写入指定（Global 层）配置文件。
-///
-/// 幂等：重复写入同一对值为最终覆盖语义。文件不存在时创建（含父目录）。
-pub fn write_default_model_pair(
-    path: &Path,
-    provider_id: &str,
-    model_id: &str,
-) -> Result<(), ConfigError> {
+/// 同进程跨键写串行化：`write_default_model_pair` 与 `write_proxy_url`
+/// 共用此锁，包住 read_table → 改 → atomic_write_table 全程，避免交错
+/// 读写造成 lost update。跨进程仍靠 atomic_write_table 的 rename 原子性。
+static CONFIG_WRITE_LOCK: Mutex<()> = Mutex::new(());
+
+fn read_table(path: &Path) -> Result<toml::Table, ConfigError> {
     let content = match std::fs::read_to_string(path) {
         Ok(content) => content,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
@@ -32,21 +30,16 @@ pub fn write_default_model_pair(
             })
         }
     };
-    let mut table: toml::Table = toml::from_str(&content).map_err(|source| {
+    toml::from_str(&content).map_err(|source| {
         ConfigError::Parse(ConfigParseError::Toml {
             path: path.to_path_buf(),
             source: Box::new(source),
         })
-    })?;
-    table.insert(
-        "default_provider".into(),
-        toml::Value::String(provider_id.to_string()),
-    );
-    table.insert(
-        "default_model".into(),
-        toml::Value::String(model_id.to_string()),
-    );
-    let serialized = toml::to_string(&table).map_err(|source| ConfigError::Write {
+    })
+}
+
+fn atomic_write_table(path: &Path, table: &toml::Table) -> Result<(), ConfigError> {
+    let serialized = toml::to_string(table).map_err(|source| ConfigError::Write {
         path: path.to_path_buf(),
         source: Box::new(source),
     })?;
@@ -74,6 +67,49 @@ pub fn write_default_model_pair(
         source: Box::new(source),
     })?;
     Ok(())
+}
+
+/// 将 default_provider/default_model 原子写入指定（Global 层）配置文件。
+///
+/// 幂等：重复写入同一对值为最终覆盖语义。文件不存在时创建（含父目录）。
+pub fn write_default_model_pair(
+    path: &Path,
+    provider_id: &str,
+    model_id: &str,
+) -> Result<(), ConfigError> {
+    let _guard = CONFIG_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut table = read_table(path)?;
+    table.insert(
+        "default_provider".into(),
+        toml::Value::String(provider_id.to_string()),
+    );
+    table.insert(
+        "default_model".into(),
+        toml::Value::String(model_id.to_string()),
+    );
+    atomic_write_table(path, &table)
+}
+
+/// 将 `proxy_url` 原子写入指定（Global 层）配置文件（SET-6a，ADR-047 D2）。
+///
+/// `Some` 覆盖该键；`None` 移除该键。其余未知字段原样保留。文件不存在时
+/// 视为空配置（`Some` 时创建；`None` 时写回无该键的空表）。
+pub fn write_proxy_url(path: &Path, proxy_url: Option<&str>) -> Result<(), ConfigError> {
+    let _guard = CONFIG_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut table = read_table(path)?;
+    match proxy_url {
+        Some(url) => {
+            table.insert("proxy_url".into(), toml::Value::String(url.to_string()));
+        }
+        None => {
+            table.remove("proxy_url");
+        }
+    }
+    atomic_write_table(path, &table)
 }
 
 #[cfg(test)]
@@ -118,6 +154,64 @@ mod tests {
         assert_eq!(
             table.get("default_model").and_then(|v| v.as_str()),
             Some("glm-5.2")
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn writes_proxy_url_and_preserves_unknown_fields() {
+        let path = temp_path("proxy-set");
+        std::fs::write(
+            &path,
+            "trust_workspaces = true\n[extra_section]\nkey = \"v\"\n",
+        )
+        .expect("seed config");
+        write_proxy_url(&path, Some("http://127.0.0.1:7890")).expect("write");
+        let table: toml::Table =
+            toml::from_str(&std::fs::read_to_string(&path).expect("read back")).expect("parse");
+        assert_eq!(
+            table.get("proxy_url").and_then(|v| v.as_str()),
+            Some("http://127.0.0.1:7890")
+        );
+        assert_eq!(
+            table.get("trust_workspaces").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            table
+                .get("extra_section")
+                .and_then(|v| v.as_table())
+                .and_then(|section| section.get("key"))
+                .and_then(|v| v.as_str()),
+            Some("v")
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn clears_proxy_url_and_leaves_other_fields() {
+        let path = temp_path("proxy-clear");
+        std::fs::write(
+            &path,
+            "proxy_url = \"http://127.0.0.1:7890\"\ntrust_workspaces = true\n[extra_section]\nkey = \"v\"\n",
+        )
+        .expect("seed config");
+        write_proxy_url(&path, None).expect("clear");
+        let content = std::fs::read_to_string(&path).expect("read back");
+        let table: toml::Table = toml::from_str(&content).expect("parse");
+        assert!(table.get("proxy_url").is_none());
+        assert!(!content.contains("proxy_url"));
+        assert_eq!(
+            table.get("trust_workspaces").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            table
+                .get("extra_section")
+                .and_then(|v| v.as_table())
+                .and_then(|section| section.get("key"))
+                .and_then(|v| v.as_str()),
+            Some("v")
         );
         std::fs::remove_file(&path).ok();
     }

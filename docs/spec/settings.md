@@ -25,7 +25,7 @@
 
 | 能力 | 当前生产路径/证据 | 缺口 | 结论 |
 | --- | --- | --- | --- |
-| Settings 入口/路由 | SET-3 起 TaskRail `Local` 行 gear + AppRoute 顶层路由 + Settings Rail + 只读供应商页落地（[settings.rs](../../apps/desktop/src/ui/settings.rs)） | 其余设置页未启用（SET-6） | 已实现 |
+| Settings 入口/路由 | SET-3 起 TaskRail `Local` 行 gear + AppRoute 顶层路由 + Settings Rail + 只读供应商页落地（[settings.rs](../../apps/desktop/src/ui/settings.rs)）；SET-6a 起「通用」页启用（proxy_url 读写清除，ADR-047） | 其余设置页未启用（SET-6 后续） | 已实现 |
 | Provider 注册 | [channel registry](../../crates/providers/src/channels/registry.rs) 八行：chatgpt/xai/glm-coding/opencode-go/qwen-token-plan/deepseek/kimi-platform/kimi-code；SET-4 起 `auth_methods` 为数据字段，支持同供应商多认证方法 | — | 已实现 |
 | API-key 通道 | [api_key.rs](../../crates/providers/src/channels/api_key.rs) 可请求 OpenAI-compatible `/models`；SET-2 增 `verify_api_key` 写前验证与 `auth_set_api_key` 非重放命令（verify-then-replace）；SET-4 起 xAI adapter 接受 API key，桌面端写操作已接通 | — | 已实现（真实账号验收 pending） |
 | OAuth | AppCore/auth 已有 OAuth 基础；xAI Device Flow 已接入；SET-2 起 `AuthStart`/`AuthCancel`/`AuthRemove` 对 GUI 开放并有 handler，进度经 `AuthChanged` 六态下发；SET-4 起 Kimi Code Device Flow 接入（[kimi.rs](../../crates/providers/src/channels/kimi.rs)），桌面端等待/取消 UI 已接通 | — | 已实现（真实账号验收 pending） |
@@ -147,7 +147,7 @@ Settings 沿用参考设计的 1440×1024 深色语言和 8px 节奏，不另起
 - provider 行只显示名称、认证方法、连接状态、模型数/目录来源和操作菜单；不显示无权威来源的余额。
 - 添加流程用同一内容区内的 stepper/panel，不弹出第二窗口。
 
-未来导航顺序：模型与供应商 → 通用 → 权限与审批 → 工具与 MCP → 终端 → 外观 → 高级 → 关于。每页只在读写契约真实存在时启用；导航不是未来功能占位清单。
+导航顺序：模型与供应商 → 通用（SET-6a 起启用）→ 权限与审批 → 工具与 MCP → 终端 → 外观 → 高级 → 关于。每页只在读写契约真实存在时启用；未启用的页不显示，导航不是未来功能占位清单。通用页当前承载 Global 层 `proxy_url` 的读取/设置/清除（ADR-047），页面文案如实标注生效边界（新 OAuth/验证/目录探测同会话生效；当前活跃供应商的模型流量于下次装配后生效）。
 
 ### 6.2 状态、键盘与可访问性
 

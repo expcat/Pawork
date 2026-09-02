@@ -246,6 +246,18 @@ impl ClientContextSnapshot {
     }
 }
 
+/// 必填但可空的字符串字段（ADR-047 `SetProxyUrl.proxy_url`）：显式
+/// `null` 解码为 `None`；挂上本函数即取消 serde 对 Option 的隐式
+/// default，缺字段变成 missing-field 解码错误而非静默 `None`。
+fn deserialize_required_nullable_string<'de, D>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer)
+}
+
 fn validate_client_uri(uri: &str) -> Result<(), String> {
     if uri.is_empty() || uri.len() > MAX_CLIENT_CONTEXT_URI_BYTES {
         return Err(format!(
@@ -391,6 +403,15 @@ pub enum AppCommand {
     SetDefaultModel {
         provider_id: ProviderId,
         model_id: String,
+    },
+    /// Global 层 `proxy_url`。wire 上 `proxy_url` 字段必填：显式 `null` 清除，
+    /// 缺字段是解码错误（不用 serde default / skip_serializing_if）。
+    SetProxyUrl {
+        // serde 对 Option 字段隐式 default=None，会吞掉缺字段；显式
+        // deserialize_with 取消该隐式默认，缺字段即 missing-field 解码错误，
+        // 显式 null 仍解码为 None（ADR-047 D2 必填语义）。
+        #[serde(deserialize_with = "deserialize_required_nullable_string")]
+        proxy_url: Option<String>,
     },
     ToolApprove {
         run_id: RunId,
@@ -724,6 +745,44 @@ mod tests {
         assert_eq!(
             ActorIdentity::Automation { name: "\t".into() }.canonical_principal(),
             None
+        );
+    }
+
+    #[test]
+    fn set_proxy_url_requires_field_and_treats_null_as_clear() {
+        let set: AppCommand = serde_json::from_value(serde_json::json!({
+            "method": "set_proxy_url",
+            "params": { "proxy_url": "http://127.0.0.1:7890" }
+        }))
+        .expect("set frame decodes");
+        assert_eq!(
+            set,
+            AppCommand::SetProxyUrl {
+                proxy_url: Some("http://127.0.0.1:7890".into()),
+            }
+        );
+
+        let clear: AppCommand = serde_json::from_value(serde_json::json!({
+            "method": "set_proxy_url",
+            "params": { "proxy_url": null }
+        }))
+        .expect("clear frame decodes");
+        assert_eq!(clear, AppCommand::SetProxyUrl { proxy_url: None });
+
+        let encoded = serde_json::to_value(&clear).expect("encode clear");
+        assert_eq!(encoded["params"]["proxy_url"], serde_json::Value::Null);
+        assert!(encoded["params"]
+            .as_object()
+            .expect("params object")
+            .contains_key("proxy_url"));
+
+        assert!(
+            serde_json::from_value::<AppCommand>(serde_json::json!({
+                "method": "set_proxy_url",
+                "params": {}
+            }))
+            .is_err(),
+            "missing proxy_url must fail closed"
         );
     }
 }

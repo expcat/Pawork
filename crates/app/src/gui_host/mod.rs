@@ -706,6 +706,13 @@ fn query_provider_auth_status<'a>(
     Box::pin(handlers::settings::provider_auth_status(adapter, query))
 }
 
+fn query_general_settings<'a>(
+    adapter: &'a GuiHostAdapter,
+    query: &'a pawork_protocol::AppQuery,
+) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
+    Box::pin(handlers::settings::general_settings(adapter, query))
+}
+
 fn command_workspace_add<'a>(
     adapter: &'a GuiHostAdapter,
     envelope: &'a AppCommandEnvelope,
@@ -800,6 +807,16 @@ fn command_set_default_model<'a>(
     ))
 }
 
+fn command_set_proxy_url<'a>(
+    adapter: &'a GuiHostAdapter,
+    envelope: &'a AppCommandEnvelope,
+    command: &'a AppCommand,
+) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
+    Box::pin(handlers::settings::set_proxy_url(
+        adapter, envelope, command,
+    ))
+}
+
 fn command_tool_approve<'a>(
     adapter: &'a GuiHostAdapter,
     envelope: &'a AppCommandEnvelope,
@@ -858,6 +875,7 @@ static QUERY_HANDLERS: &[(&str, QueryHandler)] = &[
     ("quota_overview", query_quota_overview),
     ("mcp_list", query_mcp_list),
     ("provider_auth_status", query_provider_auth_status),
+    ("general_settings", query_general_settings),
 ];
 
 static COMMAND_HANDLERS: &[(&str, CommandHandler)] = &[
@@ -872,6 +890,7 @@ static COMMAND_HANDLERS: &[(&str, CommandHandler)] = &[
     ("auth_set_api_key", command_auth_set_api_key),
     ("auth_cancel", command_auth_cancel),
     ("set_default_model", command_set_default_model),
+    ("set_proxy_url", command_set_proxy_url),
     ("tool_approve", command_tool_approve),
     ("terminal_create", command_terminal_create),
     ("terminal_write", command_terminal_write),
