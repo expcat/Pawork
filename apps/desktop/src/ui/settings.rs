@@ -15,13 +15,11 @@ use crate::ui::components::label::Label;
 use crate::ui::components::panel::Panel;
 use crate::ui::theme::{dark, font, metrics};
 
-use crate::projection::{
-    ConnectionState, OAuthWait, ProviderAuthState, ProviderStatusEntry,
-};
+use crate::projection::{ConnectionState, OAuthWait, ProviderAuthState, ProviderStatusEntry};
 use crate::ui::text_input::TextInput;
 
-use super::shell_layout;
 use super::accessibility::dynamic_identifier;
+use super::shell_layout;
 use super::AppView;
 
 /// Settings 内容可读列（与 Timeline 618px 可读列同节奏；全宽壳层内收敛）。
@@ -127,7 +125,10 @@ impl SettingsAuthAction {
     /// 控件 identifier（render 按钮 id / AX 节点 id / 派发键三用；provider
     /// id 经 dynamic_identifier 转义）。
     pub(crate) fn identifier(&self, provider_id: &str) -> String {
-        format!("{SETTINGS_CONTROL_PREFIX}{}", dynamic_identifier(self.key(), provider_id))
+        format!(
+            "{SETTINGS_CONTROL_PREFIX}{}",
+            dynamic_identifier(self.key(), provider_id)
+        )
     }
 }
 
@@ -485,21 +486,24 @@ impl AppView {
                     writes,
                     cx,
                 );
-                let mut editor = div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_1()
-                    .min_w_0();
+                let mut editor = div().flex().flex_row().items_center().gap_1().min_w_0();
                 editor = editor.child(div().flex_1().min_w_0().child(input));
-                for action in
-                    [SettingsAuthAction::VerifyApiKey, SettingsAuthAction::CancelApiKeyInput]
-                {
+                for action in [
+                    SettingsAuthAction::VerifyApiKey,
+                    SettingsAuthAction::CancelApiKeyInput,
+                ] {
                     if !actions.contains(&action) {
                         continue;
                     }
                     let (enabled, tooltip) = if action == SettingsAuthAction::VerifyApiKey {
-                        (verify_enabled, "API key is empty.")
+                        (
+                            verify_enabled,
+                            if writes && !verify_enabled {
+                                "API key is empty."
+                            } else {
+                                ""
+                            },
+                        )
                     } else {
                         (writes, "")
                     };
@@ -578,7 +582,11 @@ impl AppView {
     /// API key 内联编辑器可见性：none / error 常驻；connected 需 Replace
     /// 展开后出现；connecting（验证中）不显示。
     pub(crate) fn settings_api_key_editor_visible(&self, provider: &ProviderStatusEntry) -> bool {
-        if !provider.auth_methods.iter().any(|method| method == "api_key") {
+        if !provider
+            .auth_methods
+            .iter()
+            .any(|method| method == "api_key")
+        {
             return false;
         }
         match provider.auth {
@@ -645,7 +653,7 @@ impl AppView {
         provider_id: String,
         cx: &mut Context<Self>,
     ) {
-        if !self.settings_writes_enabled() {
+        if !self.settings_action_enabled(action, &provider_id, self.settings_writes_enabled(), cx) {
             return;
         }
         match action {
@@ -781,18 +789,20 @@ impl AppView {
         self.settings_action_focus
             .retain(|id, _| action_ids.contains(id));
         for id in ids {
-            self.settings_api_key_inputs.entry(id.clone()).or_insert_with(|| {
-                let element_id = format!("settings-api-key-input-{id}");
-                cx.new(|cx| {
-                    TextInput::with_placeholder("Paste API key", cx)
-                        .id(element_id)
-                        .secure()
-                        .height_clamp(
-                            metrics::COMPOSER_INPUT_MIN_HEIGHT,
-                            metrics::COMPOSER_INPUT_MIN_HEIGHT,
-                        )
-                })
-            });
+            self.settings_api_key_inputs
+                .entry(id.clone())
+                .or_insert_with(|| {
+                    let element_id = format!("settings-api-key-input-{id}");
+                    cx.new(|cx| {
+                        TextInput::with_placeholder("Paste API key", cx)
+                            .id(element_id)
+                            .secure()
+                            .height_clamp(
+                                metrics::COMPOSER_INPUT_MIN_HEIGHT,
+                                metrics::COMPOSER_INPUT_MIN_HEIGHT,
+                            )
+                    })
+                });
         }
     }
 

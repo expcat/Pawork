@@ -460,7 +460,8 @@ pub struct SettingsProvidersState {
     /// 到达即清空。
     pub auth_notes: HashMap<String, String>,
     /// Succeeded 落地后置位：认证成功≠目录成功，UI 需再拉一次
-    /// provider_auth_status（两状态分离呈现）。
+    /// provider_auth_status（两状态分离呈现）。Removed 同样置位：
+    /// 目录应变为 unavailable，且 env fallback 仍可能保持连接。
     pub pending_status_refresh: bool,
     /// Replace 写流程基线：流程起点 provider 已 Connected。此后收到非
     /// Succeeded / Removed 终态不清旧凭证（Host 未删除），改为触发
@@ -520,11 +521,12 @@ impl SettingsProvidersState {
                 && matches!(entry.auth, ProviderAuthState::Connected { .. })
         });
         if connected {
-            self.auth_replacing_connected.insert(provider_id.to_string());
+            self.auth_replacing_connected
+                .insert(provider_id.to_string());
         }
     }
 
-    /// 消费 Succeeded 置位的再查询提示（UI 在事件泵回执后调用）。
+    /// 消费 Succeeded / Removed 等置位的再查询提示（UI 在事件泵回执后调用）。
     pub fn take_pending_status_refresh(&mut self) -> bool {
         std::mem::take(&mut self.pending_status_refresh)
     }
@@ -535,8 +537,7 @@ impl SettingsProvidersState {
         match parse_auth_change(state) {
             Ok(change) => self.apply_auth_change(provider_id, change),
             Err(reason) => {
-                self.error =
-                    Some(format!("malformed auth change for {provider_id}: {reason}"));
+                self.error = Some(format!("malformed auth change for {provider_id}: {reason}"));
                 false
             }
         }
@@ -593,6 +594,10 @@ impl SettingsProvidersState {
                         self.pending_status_refresh = true;
                     } else {
                         entry.auth = ProviderAuthState::NotConnected;
+                        if matches!(change, AuthChange::Removed) {
+                            // 删除后目录与 env 残留都交 Host 权威重查。
+                            self.pending_status_refresh = true;
+                        }
                     }
                 }
             }
@@ -604,7 +609,8 @@ impl SettingsProvidersState {
             _ => None,
         };
         if let Some(note) = note {
-            self.auth_notes.insert(provider_id.to_string(), note.to_string());
+            self.auth_notes
+                .insert(provider_id.to_string(), note.to_string());
         }
         false
     }
@@ -1397,8 +1403,8 @@ impl DesktopProjection {
         }
         // SET-4：AuthChanged 是全局供应商事件（不属时间线）。AuthChangeState
         // 未从 pawork-client re-export，经 serde Value 进入纯投影解析，
-        // 畸形载荷 fail-closed。返回 false：不改时间线；Succeeded 的再查询
-        // 提示经 settings_providers.pending_status_refresh 传递。
+        // 畸形载荷 fail-closed。返回 false：不改时间线；Succeeded / Removed
+        // 的再查询提示经 settings_providers.pending_status_refresh 传递。
         if let AppEvent::AuthChanged { provider_id, state } = &envelope.payload {
             return match serde_json::to_value(state) {
                 Ok(value) => self
@@ -2297,9 +2303,14 @@ mod tests {
             provider_id: "kimi".into(),
             display_name: "Kimi".into(),
             endpoint_label: "https://api.moonshot.cn".into(),
-            auth_methods: auth_methods.iter().map(|method| method.to_string()).collect(),
+            auth_methods: auth_methods
+                .iter()
+                .map(|method| method.to_string())
+                .collect(),
             auth: ProviderAuthState::NotConnected,
-            catalog: ProviderCatalogState::Unavailable { error: "offline".into() },
+            catalog: ProviderCatalogState::Unavailable {
+                error: "offline".into(),
+            },
         }]);
         state
     }
@@ -2330,7 +2341,9 @@ mod tests {
                 "type": "failed",
                 "data": { "error": "invalid key" }
             })),
-            Ok(AuthChange::Failed { error: "invalid key".into() })
+            Ok(AuthChange::Failed {
+                error: "invalid key".into()
+            })
         );
         assert_eq!(
             parse_auth_change(&json!({ "type": "cancelled" })),
@@ -2386,7 +2399,9 @@ mod tests {
         );
         assert_eq!(
             *provider_auth(&state),
-            ProviderAuthState::Error { message: "denied".into() }
+            ProviderAuthState::Error {
+                message: "denied".into()
+            }
         );
 
         // Cancelled / Expired / Removed → NotConnected + 瞬态 note + 清等待。
@@ -2411,6 +2426,11 @@ mod tests {
             );
             assert_eq!(state.auth_notes.get("kimi").map(String::as_str), Some(note));
             assert!(!state.oauth_waits.contains_key("kimi"), "{kind}");
+            if kind == "removed" {
+                assert!(state.take_pending_status_refresh(), "{kind}");
+            } else {
+                assert!(!state.pending_status_refresh, "{kind}");
+            }
         }
         // 下一次权威状态到达即清空瞬态反馈。
         let providers = state.providers.clone();
@@ -2485,7 +2505,7 @@ mod tests {
         state.begin_auth_flow("kimi");
         state.apply_auth_changed_value("kimi", &json!({ "type": "removed" }));
         assert_eq!(*provider_auth(&state), ProviderAuthState::NotConnected);
-        assert!(!state.pending_status_refresh);
+        assert!(state.take_pending_status_refresh());
 
         // 权威数据到达即清基线（后续事件回到首连语义）。
         state.providers[0].auth = ProviderAuthState::Connected {

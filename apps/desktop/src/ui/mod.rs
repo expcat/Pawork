@@ -1162,8 +1162,8 @@ impl AppView {
                 if had_active_run && self.projection.active_run_id.is_none() {
                     self.refresh_changes(cx);
                 }
-                // SET-4：认证成功≠目录成功——Succeeded 落地后重查一次
-                // provider_auth_status（两状态分离呈现）。
+                // SET-4：Succeeded / Removed 落地后重查一次
+                // provider_auth_status（目录与 env 残留交权威裁决）。
                 if self.projection.settings_providers.take_pending_status_refresh() {
                     self.refresh_provider_status();
                 }

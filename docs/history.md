@@ -1019,3 +1019,19 @@ Known gaps: kimi-code builtin 模型能力置 0 表未知，仅 config 覆盖可
 Full workspace gate: NOT RUN（当前未设置全量门禁）。
 
 ---
+
+## 2026-09-02 — Settings SET-4 推送前复查
+
+- Desktop：Removed 终态补 pending_status_refresh，删除后目录与 env fallback 交 Host 权威重查，避免 UI 停在 NotConnected 而 Host 仍可运行。
+- Desktop：空输入 Verify tooltip 仅在禁用时出现；on_settings_action 入口复核 settings_action_enabled（与可见 / 键盘 / AX 同 gate）。
+- Desktop：secure 输入 AX set-value 与 IME 与粘贴一致剔除 CR/LF，锁单行语义。
+
+Implemented: SET-4 复查三项行为修正。
+
+Validated: `cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`（定向）。
+
+Targeted regressions: projection Removed 重查断言；secure set_text 剔除换行。
+
+Full workspace gate: NOT RUN（当前未设置全量门禁）。
+
+---

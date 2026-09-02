@@ -5,6 +5,7 @@
 //! Backspace/Delete/Home/End/左右/Paste，以及点击聚焦（波 C 多轮/IME 必需）。
 //! R5 Wave B：shift 选择、鼠标点选/拖选、Copy/Cut/SelectAll、Undo/Redo、overflow scroll。
 
+use std::borrow::Cow;
 use std::ops::Range;
 
 use super::theme::{dark, font, metrics};
@@ -65,6 +66,14 @@ pub struct TextInput {
 
 /// secure 模式掩码字符（U+2022，3 字节 UTF-8）；每个 grapheme 一个。
 const SECURE_MASK: &str = "•";
+
+/// SET-010：API key 单行语义。secure 输入剔除 CR/LF（粘贴 / AX set-value / IME 共用）。
+fn sanitize_secure<'a>(secure: bool, text: &'a str) -> Cow<'a, str> {
+    if !secure {
+        return Cow::Borrowed(text);
+    }
+    Cow::Owned(text.replace(['\r', '\n'], ""))
+}
 
 #[derive(Clone)]
 struct EditSnapshot {
@@ -208,7 +217,9 @@ impl TextInput {
     /// 收到末尾并清除 IME marked range / 旧布局缓存。
     pub fn set_text(&mut self, text: impl Into<SharedString>, cx: &mut Context<Self>) {
         self.push_undo();
-        self.content = text.into();
+        self.content = sanitize_secure(self.secure, text.into().as_ref())
+            .into_owned()
+            .into();
         let end = self.content.len();
         self.selected_range = end..end;
         self.selection_reversed = false;
@@ -662,10 +673,12 @@ impl EntityInputHandler for TextInput {
             .or(self.marked_range.clone())
             .unwrap_or(self.selected_range.clone());
 
+        let new_text = sanitize_secure(self.secure, new_text);
         self.push_undo();
-        self.content =
-            (self.content[0..range.start].to_owned() + new_text + &self.content[range.end..])
-                .into();
+        self.content = (self.content[0..range.start].to_owned()
+            + new_text.as_ref()
+            + &self.content[range.end..])
+            .into();
         self.selected_range = range.start + new_text.len()..range.start + new_text.len();
         self.marked_range.take();
         cx.notify();
@@ -686,9 +699,11 @@ impl EntityInputHandler for TextInput {
             .or(self.marked_range.clone())
             .unwrap_or(self.selected_range.clone());
 
-        self.content =
-            (self.content[0..range.start].to_owned() + new_text + &self.content[range.end..])
-                .into();
+        let new_text = sanitize_secure(self.secure, new_text);
+        self.content = (self.content[0..range.start].to_owned()
+            + new_text.as_ref()
+            + &self.content[range.end..])
+            .into();
         if !new_text.is_empty() {
             self.marked_range = Some(range.start..range.start + new_text.len());
         } else {
@@ -927,10 +942,8 @@ impl Element for TextElement {
         } else {
             input.content.clone()
         };
-        let selected_range =
-            input.to_display_offset(input.selected_range.start)..input.to_display_offset(
-                input.selected_range.end,
-            );
+        let selected_range = input.to_display_offset(input.selected_range.start)
+            ..input.to_display_offset(input.selected_range.end);
         let cursor = input.to_display_offset(input.cursor_offset());
         let style = window.text_style();
 
@@ -1189,10 +1202,11 @@ mod tests {
     fn secure_input_exposes_only_grapheme_mask(cx: &mut TestAppContext) {
         let input = cx.new(|cx| TextInput::new(cx).secure());
         input.update(cx, |input, cx| {
-            input.set_text("sk-live-plaintext", cx);
+            input.set_text("sk-live\nplaintext\r", cx);
+            assert_eq!(input.text(), "sk-liveplaintext");
             let masked = input.secure_mask().expect("secure input exposes the mask");
-            assert!(!masked.contains("sk-live-plaintext"));
-            assert_eq!(masked.chars().count(), "sk-live-plaintext".chars().count());
+            assert!(!masked.contains("sk-liveplaintext"));
+            assert_eq!(masked.chars().count(), "sk-liveplaintext".chars().count());
         });
         // 非 secure 输入不发布掩码（走普通明文渲染路径）。
         let plain = cx.new(|cx| TextInput::with_placeholder("visible", cx));
