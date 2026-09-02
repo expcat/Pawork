@@ -125,13 +125,14 @@ pub(crate) enum AppRoute {
     Settings,
 }
 
-/// Settings 内容页（SET-6a）：供应商页常在；通用页仅在 Host
-/// `general_settings` 查询成功后显示。
+/// Settings 内容页（SET-6a/6b）：供应商页常在；通用页 / 权限页仅在对应
+/// Host 查询成功后显示。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum SettingsPage {
     #[default]
     Providers,
     General,
+    Permissions,
 }
 
 /// 工作台专属 action 在当前路由是否生效（SET-3 审查修复 1）：审批 /
@@ -541,6 +542,8 @@ pub struct AppView {
     settings_nav_general_focus: FocusHandle,
     /// SET-6a：Settings 导航「Models & providers」焦点（通用页选中时）。
     settings_nav_providers_focus: FocusHandle,
+    /// SET-6b：Settings 导航「权限与审批」焦点。
+    settings_nav_permissions_focus: FocusHandle,
     /// SET-6a：proxy URL 内联输入（明文；非 Secret）。
     settings_proxy_input: Entity<crate::ui::text_input::TextInput>,
     /// SET-6a：proxy Save / Clear 焦点。
@@ -558,6 +561,9 @@ pub struct AppView {
     /// SET-4：settings 写动作按钮焦点句柄（identifier 键控，随 provider
     /// 清单回收）。
     settings_action_focus: HashMap<String, FocusHandle>,
+    /// SET-6b：权限页控件焦点句柄（五档 mode 按钮 + 信任开关；固定六条，
+    /// 随窗口生命周期回收）。
+    settings_permissions_focus: HashMap<String, FocusHandle>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -741,6 +747,7 @@ impl AppView {
             settings_refresh_focus: cx.focus_handle().tab_stop(true),
             settings_nav_general_focus: cx.focus_handle().tab_stop(true),
             settings_nav_providers_focus: cx.focus_handle().tab_stop(true),
+            settings_nav_permissions_focus: cx.focus_handle().tab_stop(true),
             settings_proxy_input: cx.new(|cx| {
                 TextInput::with_placeholder("http://127.0.0.1:7890", cx)
                     .id("settings-proxy-input")
@@ -756,6 +763,7 @@ impl AppView {
             settings_api_key_editors: HashSet::new(),
             settings_remove_confirm: None,
             settings_action_focus: HashMap::new(),
+            settings_permissions_focus: HashMap::new(),
         };
         timeline::install_scroll_follow(&view.timeline_list, &cx.weak_entity());
         // R3 Wave B Slice 4：composer 挂 1 档作为 Tab 链尾（rail 负档 →
@@ -1092,6 +1100,8 @@ impl AppView {
         self.refresh_provider_status();
         // SET-6a：重连后刷新通用设置，清除 stale 并恢复写 gate。
         self.refresh_general_settings();
+        // SET-6b：重连后刷新权限设置，清除 stale 并恢复写 gate。
+        self.refresh_permissions_settings();
         self.consume_events(events, cx);
         // 连接建立即武装 1s tick：barrier 启用而无 run 时也要常驻探测。
         self.arm_run_clock(cx);
@@ -1163,6 +1173,9 @@ impl AppView {
                 // SET-3：Settings 供应商页同样保留 stale 只读结果。
                 self.projection.settings_providers.mark_stale(&stale_reason);
                 self.projection.settings_general.mark_stale(&stale_reason);
+                self.projection
+                    .settings_permissions
+                    .mark_stale(&stale_reason);
                 self.terminal_pending_write = None;
                 self.terminal_pending_create_workspace = None;
                 self.terminal_pending_create_cwd = None;
@@ -1454,6 +1467,34 @@ impl AppView {
                     self.projection.settings_general.mark_stale(&stale);
                 }
             }
+            ControllerEvent::PermissionsSettingsLoaded(data) => {
+                self.projection.settings_permissions.apply_loaded(data);
+                // 迟到响应不丢断线标注（与通用页同口径）。
+                if let ConnectionState::Disconnected { reason } = &self.projection.connection {
+                    let stale = format!("connection lost · {reason}");
+                    self.projection.settings_permissions.mark_stale(&stale);
+                }
+            }
+            ControllerEvent::ApprovalModeConfirmed { mode } => {
+                // Host Data 确认（回执即写后状态，ADR-048 D2）；不乐观更新。
+                self.projection
+                    .settings_permissions
+                    .confirm_approval_mode(mode);
+                if let ConnectionState::Disconnected { reason } = &self.projection.connection {
+                    let stale = format!("connection lost · {reason}");
+                    self.projection.settings_permissions.mark_stale(&stale);
+                }
+            }
+            ControllerEvent::WorkspaceTrustConfirmed { trusted } => {
+                // Host Data 确认（回执即写后状态，ADR-048 D3）；不乐观更新。
+                self.projection
+                    .settings_permissions
+                    .confirm_workspace_trusted(trusted);
+                if let ConnectionState::Disconnected { reason } = &self.projection.connection {
+                    let stale = format!("connection lost · {reason}");
+                    self.projection.settings_permissions.mark_stale(&stale);
+                }
+            }
             ControllerEvent::AuthStarted {
                 provider_id,
                 verification_url,
@@ -1488,6 +1529,23 @@ impl AppView {
                     };
                     self.projection
                         .settings_general
+                        .apply_failed(&message);
+                }
+                if action == "load permissions settings"
+                    || action == "set approval mode"
+                    || action == "set workspace trust"
+                {
+                    let message = match action {
+                        "set approval mode" => {
+                            format!("Could not switch approval mode · {reason}")
+                        }
+                        "set workspace trust" => {
+                            format!("Could not change workspace trust · {reason}")
+                        }
+                        _ => format!("Could not load permissions settings · {reason}"),
+                    };
+                    self.projection
+                        .settings_permissions
                         .apply_failed(&message);
                 }
                 if action == "start provider auth" || action == "verify api key" {
@@ -2425,6 +2483,7 @@ impl AppView {
         // 内部 no-op），「模型与默认项」区与失效判定有目录数据可用。
         self.controller.load_models();
         self.refresh_general_settings();
+        self.refresh_permissions_settings();
         window.focus(&self.settings_back_focus);
         cx.notify();
     }
@@ -2463,6 +2522,16 @@ impl AppView {
         }
     }
 
+    /// 拉取权限与审批页（SET-6b / permissions_settings）。断线不进入
+    /// loading；查询失败 / 未知则保持 unavailable，导航不显示该页。
+    fn refresh_permissions_settings(&mut self) {
+        if self.controller.load_permissions_settings() {
+            self.projection.settings_permissions.begin_loading();
+        } else {
+            self.projection.settings_permissions.mark_stale("not connected");
+        }
+    }
+
     /// Settings 导航切页（SET-6a）。通用页未接通时 fail-closed 留在供应商页。
     pub(crate) fn on_select_settings_page(
         &mut self,
@@ -2475,6 +2544,11 @@ impl AppView {
             SettingsPage::General => {
                 self.settings_page = SettingsPage::General;
                 window.focus(&self.settings_nav_general_focus);
+            }
+            SettingsPage::Permissions if !self.projection.settings_permissions.available => return,
+            SettingsPage::Permissions => {
+                self.settings_page = SettingsPage::Permissions;
+                window.focus(&self.settings_nav_permissions_focus);
             }
             SettingsPage::Providers => {
                 self.settings_page = SettingsPage::Providers;
@@ -2497,6 +2571,7 @@ impl AppView {
         self.refresh_provider_status();
         self.controller.load_models();
         self.refresh_general_settings();
+        self.refresh_permissions_settings();
         cx.notify();
     }
 

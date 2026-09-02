@@ -413,6 +413,12 @@ pub enum AppCommand {
         #[serde(deserialize_with = "deserialize_required_nullable_string")]
         proxy_url: Option<String>,
     },
+    /// 会话内审批模式切换（ADR-048 D2）：`mode` 为必填 snake_case 串，
+    /// 未知值由宿主校验失败（fail-closed 保旧）；只影响之后启动的 run，
+    /// 不持久化。
+    SetApprovalMode {
+        mode: String,
+    },
     ToolApprove {
         run_id: RunId,
         tool_call_id: ToolCallId,

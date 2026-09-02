@@ -19,7 +19,8 @@ use pawork_client::{
 use serde_json::json;
 
 use crate::projection::{
-    parse_general_settings, parse_provider_status_entries, sessions_in_snapshot, ModelEntry,
+    parse_general_settings, parse_permissions_settings, parse_provider_status_entries,
+    sessions_in_snapshot, ApprovalModeSetting, ModelEntry, PermissionsSettingsData,
     SettingsProvidersData,
 };
 
@@ -67,6 +68,19 @@ pub enum ControllerEvent {
     /// set_proxy_url 获 Host Data 确认（SET-6a；回执即写后状态）。
     ProxyUrlConfirmed {
         proxy_url: Option<String>,
+    },
+    /// permissions_settings 查询成功（SET-6b 权限与审批页；Host 权威
+    /// 三元组：当前 mode / 会话 trusted / Global 持久默认）。
+    PermissionsSettingsLoaded(PermissionsSettingsData),
+    /// set_approval_mode 获 Host Data 确认（SET-6b / ADR-048 D2；回执即
+    /// 写后状态）。
+    ApprovalModeConfirmed {
+        mode: ApprovalModeSetting,
+    },
+    /// workspace_trust 获 Host Data 确认（SET-6b / ADR-048 D3；回执即
+    /// 写后状态）。
+    WorkspaceTrustConfirmed {
+        trusted: bool,
     },
     /// auth_start 响应（SET-4）：OAuth 授权等待信息；进度经 AuthChanged
     /// 事件流下发，token 不经过 Desktop。
@@ -1272,6 +1286,144 @@ impl DesktopController {
         });
     }
 
+    /// 拉取 Settings「权限与审批」页（permissions_settings，SET-6b）。返回
+    /// 是否已派出（断线时由 UI 保留 stale 只读结果，不进入 loading）。
+    pub fn load_permissions_settings(&self) -> bool {
+        let Some(client) = self.current_client() else {
+            return false;
+        };
+        let events = self.event_sender();
+        self.runtime.spawn(async move {
+            match client
+                .query(
+                    permissions_settings_query(),
+                    command_source(),
+                    actor_identity(),
+                )
+                .await
+            {
+                Ok(response) => match parse_permissions_settings_response(&response) {
+                    Ok(data) => {
+                        let _ = events
+                            .send(ControllerEvent::PermissionsSettingsLoaded(data))
+                            .await;
+                    }
+                    Err(reason) => try_emit(
+                        &events,
+                        ControllerEvent::OperationFailed {
+                            action: "load permissions settings",
+                            reason,
+                        },
+                    ),
+                },
+                Err(error) => try_emit(
+                    &events,
+                    ControllerEvent::OperationFailed {
+                        action: "load permissions settings",
+                        reason: error.to_string(),
+                    },
+                ),
+            }
+        });
+        true
+    }
+
+    /// 会话内切换审批模式（set_approval_mode，ADR-048 D2：不持久化、只
+    /// 影响之后启动的 run）。Data 回执即写后状态；Error / 传输失败经
+    /// OperationFailed 呈现，不动 UI 现有生效值。
+    pub fn set_approval_mode(&self, mode: &str) {
+        let Some(client) = self.current_client() else {
+            self.emit_reliable(ControllerEvent::OperationFailed {
+                action: "set approval mode".into(),
+                reason: "not connected".into(),
+            });
+            return;
+        };
+        let events = self.event_sender();
+        let owned_mode = mode.to_string();
+        self.runtime.spawn(async move {
+            let command = set_approval_mode_command(&owned_mode);
+            let response = match client
+                .command(command, command_source(), actor_identity())
+                .await
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    try_emit(
+                        &events,
+                        ControllerEvent::OperationFailed {
+                            action: "set approval mode",
+                            reason: error.to_string(),
+                        },
+                    );
+                    return;
+                }
+            };
+            match parse_approval_mode_confirmation(&response) {
+                Ok(mode) => {
+                    let _ = events
+                        .send(ControllerEvent::ApprovalModeConfirmed { mode })
+                        .await;
+                }
+                Err(reason) => try_emit(
+                    &events,
+                    ControllerEvent::OperationFailed {
+                        action: "set approval mode",
+                        reason,
+                    },
+                ),
+            }
+        });
+    }
+
+    /// 会话内信任切换（workspace_trust，ADR-048 D3：workspace_id 必须匹配
+    /// 当前 attached workspace，由 Host 校验；不写盘）。Data 回执即写后
+    /// 状态；失败 fail-closed 不动 UI 现有生效值。
+    pub fn set_workspace_trust(&self, workspace_id: &str, trusted: bool) {
+        let Some(client) = self.current_client() else {
+            self.emit_reliable(ControllerEvent::OperationFailed {
+                action: "set workspace trust".into(),
+                reason: "not connected".into(),
+            });
+            return;
+        };
+        let events = self.event_sender();
+        let owned_workspace = workspace_id.to_string();
+        self.runtime.spawn(async move {
+            let command = set_workspace_trust_command(&owned_workspace, trusted);
+            let response = match client
+                .command(command, command_source(), actor_identity())
+                .await
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    try_emit(
+                        &events,
+                        ControllerEvent::OperationFailed {
+                            action: "set workspace trust",
+                            reason: error.to_string(),
+                        },
+                    );
+                    return;
+                }
+            };
+            match parse_workspace_trust_confirmation(&response) {
+                Ok(trusted) => {
+                    let _ = events
+                        .send(ControllerEvent::WorkspaceTrustConfirmed { trusted })
+                        .await;
+                }
+                Err(reason) => try_emit(
+                    &events,
+                    ControllerEvent::OperationFailed {
+                        action: "set workspace trust",
+                        reason,
+                    },
+                ),
+            }
+        });
+    }
+
     /// 发起 OAuth 授权（auth_start）。响应只携带 verification_url /
     /// user_code / expires_at，进度经 AuthChanged 事件收敛。
     pub fn auth_start(&self, provider_id: String) {
@@ -1881,12 +2033,35 @@ fn general_settings_query() -> AppQuery {
     .expect("general_settings query shape is frozen")
 }
 
+fn permissions_settings_query() -> AppQuery {
+    serde_json::from_value(json!({
+        "method": "permissions_settings"
+    }))
+    .expect("permissions_settings query shape is frozen")
+}
+
 fn set_proxy_url_command(proxy_url: Option<&str>) -> AppCommand {
     serde_json::from_value(json!({
         "method": "set_proxy_url",
         "params": { "proxy_url": proxy_url }
     }))
     .expect("set_proxy_url command shape is frozen")
+}
+
+fn set_approval_mode_command(mode: &str) -> AppCommand {
+    serde_json::from_value(json!({
+        "method": "set_approval_mode",
+        "params": { "mode": mode }
+    }))
+    .expect("set_approval_mode command shape is frozen")
+}
+
+fn set_workspace_trust_command(workspace_id: &str, trusted: bool) -> AppCommand {
+    serde_json::from_value(json!({
+        "method": "workspace_trust",
+        "params": { "workspace_id": workspace_id, "trusted": trusted }
+    }))
+    .expect("workspace_trust command shape is frozen")
 }
 
 fn diff_list_files_query(workspace_id: &str) -> AppQuery {
@@ -1966,6 +2141,46 @@ fn parse_general_settings_response(
 ) -> Result<Option<String>, String> {
     match &response.response {
         AppResponse::Data(data) => parse_general_settings(data),
+        AppResponse::Error(error) => Err(error.message.clone()),
+        other => Err(format!("unexpected response: {other:?}")),
+    }
+}
+
+/// 解包 permissions_settings 信封（SET-6b）：Data 为
+/// `{ approval_mode, workspace_trusted, trust_workspaces_global }`；Error
+/// 取 Host 脱敏 message 原文。
+fn parse_permissions_settings_response(
+    response: &AppResponseEnvelope,
+) -> Result<PermissionsSettingsData, String> {
+    match &response.response {
+        AppResponse::Data(data) => parse_permissions_settings(data),
+        AppResponse::Error(error) => Err(error.message.clone()),
+        other => Err(format!("unexpected response: {other:?}")),
+    }
+}
+
+/// 解包 set_approval_mode 回执：Data 携带写后 `{ approval_mode }`；未知
+/// 档位 fail-closed 报错（UI 保留旧值）。
+fn parse_approval_mode_confirmation(
+    response: &AppResponseEnvelope,
+) -> Result<ApprovalModeSetting, String> {
+    match &response.response {
+        AppResponse::Data(data) => {
+            let mode = required_str(data, "approval_mode")?;
+            ApprovalModeSetting::from_wire(&mode)
+        }
+        AppResponse::Error(error) => Err(error.message.clone()),
+        other => Err(format!("unexpected response: {other:?}")),
+    }
+}
+
+/// 解包 workspace_trust 回执：Data 携带写后 `{ workspace_trusted }`。
+fn parse_workspace_trust_confirmation(response: &AppResponseEnvelope) -> Result<bool, String> {
+    match &response.response {
+        AppResponse::Data(data) => data
+            .get("workspace_trusted")
+            .and_then(serde_json::Value::as_bool)
+            .ok_or_else(|| "workspace trust receipt missing workspace_trusted".to_string()),
         AppResponse::Error(error) => Err(error.message.clone()),
         other => Err(format!("unexpected response: {other:?}")),
     }

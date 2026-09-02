@@ -5,12 +5,13 @@
       "minor": 6
     },
     "command": {
-      "method": "terminal_create",
+      "method": "workspace_trust",
       "params": {
+        "trusted": true,
         "workspace_id": "workspace-1"
       }
     },
-    "command_id": "command-terminal-1",
+    "command_id": "command-auth-1",
     "identity": {
       "actor_id": "actor-1",
       "type": "local_user"

@@ -1077,3 +1077,22 @@ Known gaps: 输入框 stale 仅视觉禁用（P3，草稿不可持久化）；�
 提交前复查（未推送审查）修复：选中 Settings 导航项补 track_focus / AX focused，避免切页后键盘焦点落空；Save 失败状态行与 load 失败文案分开（不再显示 Could not load）；HOME_ENV_LOCK 毒化走 into_inner；workspace Spec 补记 CONFIG_WRITE_LOCK。
 
 Full workspace gate: NOT RUN（当前未设置全量门禁）。
+
+## 2026-09-03 — Settings SET-6b 权限与审批页（approval mode + workspace trust，ADR-048）
+
+- 立项：SET-6 第二页经主代理源码实读 + 两路 glm_explorer 调研三方确认：`ApprovalMode` 五档仅 CLI 启动参数注入（无持久化、无运行时查询/修改 API，GUI 用户不传参即永远 ReadOnly）；`workspace_trusted` 为内存态；wire 上 `WorkspaceTrust` 自 R3 登记即无 handler（死词汇）；run 启动时快照 mode/trusted（进行中 run 不受影响，作为诚实生效边界）。
+- ADR-048（用户 2026-09-02 确认 Accepted）：`PermissionsSettings` 查询 + `SetApprovalMode` 命令（仅 GUI、API minor 1.6 仅记账）+ 复用 `WorkspaceTrust` 冻结词汇实装 handler 并开放 GUI（会话内信任切换不写盘）。明确不持久化 approval_mode（重启回 ReadOnly 是有意 fail-closed 安全默认）、不写 Global trust（只读展示）、不改 Policy 决策链、不新增 PermissionsChanged 事件。
+- 实施（glm_worker ×3 串行切片）：protocol 新变体 + registry since=V1_6 + workspace_trust 开放 GUI（Approvals capability，since 维持 V1_0）+ golden 48→55 帧 + typegen；app `ApprovalService` 运行时 setter + 三 handler（校验与写入同锁防 check-then-set 竞态）；desktop 权限与审批页（五档显式选择、会话信任开关、Global 默认只读行、生效边界文案、回执才生效不乐观更新、stale 三路径同禁）。
+- 实现期审查（glm_reviewer）修 2 P2 + 1 P3：冻结契约回写遗漏（architecture §3.2 API 1.6/55 帧、CON-GUI-01 1.6、CON-REGISTRY-01 25/14）；ROADMAP/plan 状态与 ADR Accepted 自相矛盾（同批收口）；`set_approval_mode` 复用 CLI `parse_approval_mode` 收 kebab/on_failure 别名超契约（改严格五值 snake_case 的 `approval_mode_from_wire`）；Desktop 信任开关误取注册表首项 workspace_id（多 workspace 下恒 unknown_workspace）——ADR-048 D1 实现期修订增补响应字段 `workspace_id`（Host 权威 attached id，校验方与发送方同源），golden 两响应帧同批钉死。
+
+Implemented: Settings「权限与审批」页——当前 approval mode / 会话 trust / Global 持久默认三态读取，五档 mode 与会话信任的会话内受控修改（不持久化、重启回默认、进行中 Run 不受影响）。
+
+Validated: `cargo test -p pawork-protocol --features typegen --offline --lib --tests`（全绿含 55 帧 golden 与 typegen --check）；`cargo test -p pawork-app --offline --lib --tests`（206，修复后复跑绿）；`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`（179，修复后复跑绿）；`git diff --check`。
+
+Targeted regressions: app 三定向（set→重查一致含透出 attached workspace_id 断言、trust 切换生效、id 不匹配 fail-closed）；desktop 三定向（四元组解析主路径含五档往返与缺 workspace_id fail-closed、畸形 fail-closed、stale 保值禁写）。
+
+Real-world evidence: pending（真窗口验收登记 SET-7）。
+
+Known gaps: 持久化 approval_mode 与 Global trust 写登记为后续候选（ADR-048 否决支）；真实窗口/键盘/AX 验收在 SET-7。
+
+Full workspace gate: NOT RUN（当前未设置全量门禁）。

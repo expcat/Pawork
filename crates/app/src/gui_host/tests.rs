@@ -2874,6 +2874,110 @@ async fn set_proxy_url_rejects_invalid_url_and_keeps_old_value() {
 }
 
 #[tokio::test]
+async fn set_approval_mode_updates_permissions_settings_within_same_session() {
+    let backend = Arc::new(pawork_auth::MemoryBackend::new());
+    let (adapter, _dir) = settings_adapter("http://127.0.0.1:1".into(), backend).await;
+
+    let before = adapter
+        .query(&query_envelope(AppQuery::PermissionsSettings))
+        .await
+        .expect("permissions settings before set");
+    let AppResponse::Data(before) = before else {
+        panic!("PermissionsSettings must return Data: {before:?}")
+    };
+    assert_eq!(before["approval_mode"], "read_only");
+    assert_eq!(before["workspace_trusted"], false);
+    assert!(before["trust_workspaces_global"].is_null());
+    // ADR-048 D1（实现期修订）：透出 Host 权威 attached workspace_id。
+    let attached = adapter.core.read().await.workspace_id().to_string();
+    assert_eq!(before["workspace_id"], attached.as_str());
+
+    let response = adapter
+        .command(&command_envelope(AppCommand::SetApprovalMode {
+            mode: "ask_for_writes".into(),
+        }))
+        .await
+        .expect("set approval mode");
+    let AppResponse::Data(data) = response else {
+        panic!("SetApprovalMode must return Data: {response:?}")
+    };
+    assert_eq!(data["approval_mode"], "ask_for_writes");
+
+    // 未知值 fail-closed：Error 且旧值保留（ADR-048 D2）。
+    let error = adapter
+        .command(&command_envelope(AppCommand::SetApprovalMode {
+            mode: "yolo".into(),
+        }))
+        .await
+        .expect_err("unknown approval mode must fail closed");
+    assert_eq!(error.code, "invalid_approval_mode");
+
+    let after = adapter
+        .query(&query_envelope(AppQuery::PermissionsSettings))
+        .await
+        .expect("permissions settings after set");
+    let AppResponse::Data(after) = after else {
+        panic!("PermissionsSettings must return Data: {after:?}")
+    };
+    assert_eq!(after["approval_mode"], "ask_for_writes");
+    assert_eq!(after["workspace_trusted"], false);
+}
+
+#[tokio::test]
+async fn workspace_trust_toggles_session_trust_for_attached_workspace() {
+    let backend = Arc::new(pawork_auth::MemoryBackend::new());
+    let (adapter, _dir) = settings_adapter("http://127.0.0.1:1".into(), backend).await;
+    let workspace_id = adapter.core.read().await.workspace_id().clone();
+
+    let response = adapter
+        .command(&command_envelope(AppCommand::WorkspaceTrust {
+            workspace_id: workspace_id.clone(),
+            trusted: true,
+        }))
+        .await
+        .expect("workspace trust");
+    let AppResponse::Data(data) = response else {
+        panic!("WorkspaceTrust must return Data: {response:?}")
+    };
+    assert_eq!(data["workspace_trusted"], true);
+
+    let after = adapter
+        .query(&query_envelope(AppQuery::PermissionsSettings))
+        .await
+        .expect("permissions settings after trust");
+    let AppResponse::Data(after) = after else {
+        panic!("PermissionsSettings must return Data: {after:?}")
+    };
+    assert_eq!(after["workspace_trusted"], true);
+    // 之后启动的 run 在启动时快照该内存态（run.rs 读 approval service）。
+    assert!(adapter.core.read().await.workspace_trusted());
+}
+
+#[tokio::test]
+async fn workspace_trust_rejects_mismatched_workspace_id_fail_closed() {
+    let backend = Arc::new(pawork_auth::MemoryBackend::new());
+    let (adapter, _dir) = settings_adapter("http://127.0.0.1:1".into(), backend).await;
+
+    let error = adapter
+        .command(&command_envelope(AppCommand::WorkspaceTrust {
+            workspace_id: WorkspaceId::from("ws-other"),
+            trusted: true,
+        }))
+        .await
+        .expect_err("mismatched workspace must fail closed");
+    assert_eq!(error.code, "unknown_workspace");
+
+    let after = adapter
+        .query(&query_envelope(AppQuery::PermissionsSettings))
+        .await
+        .expect("permissions settings after mismatch");
+    let AppResponse::Data(after) = after else {
+        panic!("PermissionsSettings must return Data: {after:?}")
+    };
+    assert_eq!(after["workspace_trusted"], false, "trust must stay old value");
+}
+
+#[tokio::test]
 async fn auth_set_api_key_verifies_replaces_and_masks_end_to_end() {
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};

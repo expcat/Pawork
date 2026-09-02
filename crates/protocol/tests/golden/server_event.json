@@ -2,7 +2,7 @@
   "data": {
     "api_version": {
       "major": 1,
-      "minor": 5
+      "minor": 6
     },
     "event_id": "event-1",
     "global_sequence": 1,

@@ -716,6 +716,148 @@ impl SettingsGeneralState {
     }
 }
 
+/// 审批模式五档（SET-6b / ADR-048 D1-D2；wire 串与 Host `ApprovalMode`
+/// serde 表示一致）。render 与 AX 共用 label / description；未知 wire 串
+/// fail-closed，不臆造档位。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ApprovalModeSetting {
+    AlwaysAsk,
+    AskForWrites,
+    AskForDangerous,
+    NeverAsk,
+    ReadOnly,
+}
+
+impl ApprovalModeSetting {
+    /// 全部档位：页面渲染与解析白名单的单一来源。
+    pub const ALL: [Self; 5] = [
+        Self::AlwaysAsk,
+        Self::AskForWrites,
+        Self::AskForDangerous,
+        Self::NeverAsk,
+        Self::ReadOnly,
+    ];
+
+    pub fn wire(self) -> &'static str {
+        match self {
+            Self::AlwaysAsk => "always_ask",
+            Self::AskForWrites => "ask_for_writes",
+            Self::AskForDangerous => "ask_for_dangerous",
+            Self::NeverAsk => "never_ask",
+            Self::ReadOnly => "read_only",
+        }
+    }
+
+    /// wire 串 → 档位；未知值 Err（fail-closed）。
+    pub fn from_wire(value: &str) -> Result<Self, String> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|mode| mode.wire() == value)
+            .ok_or_else(|| format!("unknown approval mode {value}"))
+    }
+
+    /// 档位名（render 与 AX 同源）。
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::AlwaysAsk => "每次询问",
+            Self::AskForWrites => "写操作询问",
+            Self::AskForDangerous => "危险操作询问",
+            Self::NeverAsk => "从不询问",
+            Self::ReadOnly => "只读",
+        }
+    }
+
+    /// 档位说明（render 与 AX 同源；从不询问档如实披露灾难命令地板）。
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::AlwaysAsk => "所有工具调用都需要人工批准",
+            Self::AskForWrites => "只读放行，写操作需要批准",
+            Self::AskForDangerous => "常规操作放行，危险操作需要批准",
+            Self::NeverAsk => "全部自动执行；灾难命令仍被 Host 拒绝",
+            Self::ReadOnly => "只放行只读操作，不执行任何写操作",
+        }
+    }
+}
+
+/// `permissions_settings` 查询的载荷（SET-6b / ADR-048 D1 含实现期修订）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PermissionsSettingsData {
+    pub approval_mode: ApprovalModeSetting,
+    pub workspace_trusted: bool,
+    pub trust_workspaces_global: Option<bool>,
+    /// Host 权威 attached workspace id；发 `workspace_trust` 时原样回填，
+    /// 校验方与发送方同源（不猜注册表首项）。
+    pub workspace_id: String,
+}
+
+/// Settings「权限与审批」页状态（SET-6b / ADR-048）：Host
+/// `permissions_settings` 权威三元组（当前 mode / 会话 trusted / Global
+/// 持久默认）。查询失败 / 未知则 `available=false`，导航不显示该页且
+/// 不渲染写入口；断线 `mark_stale` 保留最后只读结果；写回执按字段
+/// 确认（回执即写后状态，不乐观更新）。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SettingsPermissionsState {
+    pub loading: bool,
+    pub stale_reason: Option<String>,
+    pub error: Option<String>,
+    /// 至少成功解析过一次（capability 到位）。失败 / 未知保持 false。
+    pub available: bool,
+    pub approval_mode: Option<ApprovalModeSetting>,
+    pub workspace_trusted: bool,
+    /// Global 层持久值；`None` = 未设置（默认不信任）。本片只读展示。
+    pub trust_workspaces_global: Option<bool>,
+    /// Host 权威 attached workspace id（ADR-048 D1 实现期修订）。
+    pub workspace_id: Option<String>,
+}
+
+impl SettingsPermissionsState {
+    pub fn begin_loading(&mut self) {
+        self.loading = true;
+        self.stale_reason = None;
+    }
+
+    pub fn apply_loaded(&mut self, data: PermissionsSettingsData) {
+        self.loading = false;
+        self.stale_reason = None;
+        self.error = None;
+        self.available = true;
+        self.approval_mode = Some(data.approval_mode);
+        self.workspace_trusted = data.workspace_trusted;
+        self.trust_workspaces_global = data.trust_workspaces_global;
+        self.workspace_id = Some(data.workspace_id);
+    }
+
+    /// 查询或写失败：保留旧值，记录原因。从未成功过则保持 unavailable。
+    pub fn apply_failed(&mut self, reason: &str) {
+        self.loading = false;
+        self.error = Some(reason.to_string());
+    }
+
+    pub fn mark_stale(&mut self, reason: &str) {
+        self.loading = false;
+        self.stale_reason = Some(reason.to_string());
+    }
+
+    /// `set_approval_mode` Data 回执（回执即写后状态，ADR-048 D2）。
+    pub fn confirm_approval_mode(&mut self, mode: ApprovalModeSetting) {
+        self.approval_mode = Some(mode);
+        self.error = None;
+    }
+
+    /// `workspace_trust` Data 回执（回执即写后状态，ADR-048 D3）。
+    pub fn confirm_workspace_trusted(&mut self, trusted: bool) {
+        self.workspace_trusted = trusted;
+        self.error = None;
+    }
+
+    /// 写动作 gate（render / 键盘 / AX 同源）：须已接通、非 stale、且
+    /// 查询已成功（capability 到位）。
+    pub fn writes_enabled(&self, connected: bool) -> bool {
+        connected && self.available && self.stale_reason.is_none()
+    }
+}
+
 /// 解析 AuthChangeState 的 wire 形态（tag=type / content=data）。
 pub fn parse_auth_change(state: &Value) -> Result<AuthChange, String> {
     let kind = state
@@ -780,6 +922,44 @@ pub fn parse_general_settings(data: &Value) -> Result<Option<String>, String> {
         .map(str::to_string)
         .map(Some)
         .ok_or_else(|| "proxy_url is not a string or null".to_string())
+}
+
+/// 解析 Host `permissions_settings` 的 `AppResponse::Data` 载荷
+/// `{ approval_mode, workspace_trusted, trust_workspaces_global }`。
+/// 缺字段 / 未知 mode / 类型错误 fail-closed，不把残缺帧当成默认值。
+pub fn parse_permissions_settings(data: &Value) -> Result<PermissionsSettingsData, String> {
+    let mode = data
+        .get("approval_mode")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "permissions settings missing string approval_mode".to_string())?;
+    let approval_mode = ApprovalModeSetting::from_wire(mode)
+        .map_err(|_| format!("unknown approval mode {mode}"))?;
+    let workspace_trusted = data
+        .get("workspace_trusted")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| "permissions settings missing boolean workspace_trusted".to_string())?;
+    let global = data
+        .get("trust_workspaces_global")
+        .ok_or_else(|| "permissions settings missing trust_workspaces_global".to_string())?;
+    let trust_workspaces_global = if global.is_null() {
+        None
+    } else {
+        global
+            .as_bool()
+            .map(Some)
+            .ok_or_else(|| "trust_workspaces_global is not a boolean or null".to_string())?
+    };
+    let workspace_id = data
+        .get("workspace_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "permissions settings missing string workspace_id".to_string())?
+        .to_string();
+    Ok(PermissionsSettingsData {
+        approval_mode,
+        workspace_trusted,
+        trust_workspaces_global,
+        workspace_id,
+    })
 }
 
 /// 顶层 `default`：null = 未设置默认；对象须同时携带字符串
@@ -949,6 +1129,8 @@ pub struct DesktopProjection {
     pub settings_providers: SettingsProvidersState,
     /// SET-6a Settings 通用页（Host `general_settings` / `proxy_url`）。
     pub settings_general: SettingsGeneralState,
+    /// SET-6b Settings 权限与审批页（Host `permissions_settings`）。
+    pub settings_permissions: SettingsPermissionsState,
     pub active_runs: Vec<ActiveRun>,
     pub active_run_started_at_ms: Option<u64>,
     pub resume: ResumeState,
@@ -2645,6 +2827,115 @@ mod tests {
         assert!(!state.writes_enabled(false));
         state.apply_failed("query failed");
         assert_eq!(state.proxy_url.as_deref(), Some("http://127.0.0.1:7890"));
+        assert!(state.available);
+    }
+
+    #[test]
+    fn permissions_settings_parses_host_triple() {
+        // 主路径：四元组解析（null global = 未设置）+ 全五档 wire 串往返。
+        let data = parse_permissions_settings(&json!({
+            "approval_mode": "ask_for_writes",
+            "workspace_trusted": true,
+            "trust_workspaces_global": null,
+            "workspace_id": "workspace-1"
+        }))
+        .expect("parse permissions settings");
+        assert_eq!(data.approval_mode, ApprovalModeSetting::AskForWrites);
+        assert!(data.workspace_trusted);
+        assert_eq!(data.trust_workspaces_global, None);
+        assert_eq!(data.workspace_id, "workspace-1");
+        for mode in ApprovalModeSetting::ALL {
+            let parsed = parse_permissions_settings(&json!({
+                "approval_mode": mode.wire(),
+                "workspace_trusted": false,
+                "trust_workspaces_global": true,
+                "workspace_id": "workspace-1"
+            }))
+            .expect("known mode parses");
+            assert_eq!(parsed.approval_mode, mode);
+        }
+        let mut state = SettingsPermissionsState::default();
+        state.apply_loaded(data);
+        assert!(state.available);
+        assert_eq!(state.approval_mode, Some(ApprovalModeSetting::AskForWrites));
+        assert!(state.writes_enabled(true));
+        // 写回执按字段确认（回执即写后状态）。
+        state.confirm_approval_mode(ApprovalModeSetting::NeverAsk);
+        assert_eq!(state.approval_mode, Some(ApprovalModeSetting::NeverAsk));
+        state.confirm_workspace_trusted(false);
+        assert!(!state.workspace_trusted);
+    }
+
+    #[test]
+    fn permissions_settings_fails_closed_on_malformed_payload() {
+        assert!(parse_permissions_settings(&json!({})).is_err());
+        assert!(parse_permissions_settings(&json!({ "approval_mode": "always_ask" })).is_err());
+        assert!(parse_permissions_settings(&json!({
+            "approval_mode": "yolo",
+            "workspace_trusted": false,
+            "trust_workspaces_global": null,
+            "workspace_id": "workspace-1"
+        }))
+        .is_err());
+        assert!(parse_permissions_settings(&json!({
+            "approval_mode": 7,
+            "workspace_trusted": false,
+            "trust_workspaces_global": null,
+            "workspace_id": "workspace-1"
+        }))
+        .is_err());
+        assert!(parse_permissions_settings(&json!({
+            "approval_mode": "read_only",
+            "workspace_trusted": "yes",
+            "trust_workspaces_global": null,
+            "workspace_id": "workspace-1"
+        }))
+        .is_err());
+        assert!(parse_permissions_settings(&json!({
+            "approval_mode": "read_only",
+            "workspace_trusted": false,
+            "trust_workspaces_global": "true",
+            "workspace_id": "workspace-1"
+        }))
+        .is_err());
+        // 缺 workspace_id 同样 fail-closed（ADR-048 D1 实现期修订字段）。
+        assert!(parse_permissions_settings(&json!({
+            "approval_mode": "read_only",
+            "workspace_trusted": false,
+            "trust_workspaces_global": null
+        }))
+        .is_err());
+        let mut state = SettingsPermissionsState::default();
+        state.apply_failed("malformed payload");
+        assert!(!state.available);
+        assert_eq!(state.approval_mode, None);
+        assert!(!state.workspace_trusted);
+        assert_eq!(state.error.as_deref(), Some("malformed payload"));
+    }
+
+    #[test]
+    fn permissions_settings_stale_keeps_last_values_and_disables_writes() {
+        let mut state = SettingsPermissionsState::default();
+        state.apply_loaded(parse_permissions_settings(&json!({
+            "approval_mode": "ask_for_dangerous",
+            "workspace_trusted": true,
+            "trust_workspaces_global": null,
+            "workspace_id": "workspace-1"
+        }))
+        .expect("parse"));
+        assert!(state.writes_enabled(true));
+        state.mark_stale("socket closed");
+        assert_eq!(state.approval_mode, Some(ApprovalModeSetting::AskForDangerous));
+        assert!(state.workspace_trusted);
+        assert_eq!(state.trust_workspaces_global, None);
+        assert!(state.available);
+        assert_eq!(state.stale_reason.as_deref(), Some("socket closed"));
+        assert!(!state.writes_enabled(true));
+        assert!(!state.writes_enabled(false));
+        // 写失败保旧（fail-closed）：值不动，只记录错误。
+        state.apply_failed("set approval mode failed");
+        assert_eq!(state.approval_mode, Some(ApprovalModeSetting::AskForDangerous));
+        assert!(state.workspace_trusted);
         assert!(state.available);
     }
 

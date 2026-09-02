@@ -7,9 +7,9 @@
 | 字段 | 当前事实 |
 | --- | --- |
 | 活动线 | **Settings — 模型与供应商** |
-| 状态 | 🟢 SET-1/SET-2 已审查提交（协议词汇 + Host settings 门面）；SET-3 Settings 壳已审查提交（只读供应商页接通）；SET-4 四家认证闭环已审查提交（Kimi 双通道 + xAI 双认证 + Settings 写操作 UI）；SET-5 模型发现与默认项已审查提交（xAI/Kimi Code 远端目录 + 可运行过滤 + 默认项透出/设置/Composer 同步，审查修复四处）；SET-6a 通用页已审查提交（ADR-047：`GeneralSettings`/`SetProxyUrl`，proxy_url Global 层读写清除 + 生效边界诚实文案）。 |
-| 当前交付 | [Settings Feature Spec](docs/spec/settings.md)、[Settings 任务书](plan/settings.md)、ADR-046 协议词汇与 Host 门面（verify-then-replace、按 provider 单飞、Global 层默认项写盘）、ADR-047 通用页 wire。 |
-| 下一动作 | SET-6 其余页按「权限与审批 → 工具与 MCP → 终端 → 外观 → 高级 → 关于」逐页立项（每页须有真实读写能力，未接通不显示）。 |
+| 状态 | 🟢 SET-1/SET-2 已审查提交（协议词汇 + Host settings 门面）；SET-3 Settings 壳已审查提交（只读供应商页接通）；SET-4 四家认证闭环已审查提交（Kimi 双通道 + xAI 双认证 + Settings 写操作 UI）；SET-5 模型发现与默认项已审查提交（xAI/Kimi Code 远端目录 + 可运行过滤 + 默认项透出/设置/Composer 同步，审查修复四处）；SET-6a 通用页已审查提交（ADR-047：`GeneralSettings`/`SetProxyUrl`，proxy_url Global 层读写清除 + 生效边界诚实文案）；SET-6b 权限与审批页已审查提交（ADR-048：`PermissionsSettings`/`SetApprovalMode`/`WorkspaceTrust` 实装，会话内受控修改不持久化，API 1.6）。 |
+| 当前交付 | [Settings Feature Spec](docs/spec/settings.md)、[Settings 任务书](plan/settings.md)、ADR-046 协议词汇与 Host 门面（verify-then-replace、按 provider 单飞、Global 层默认项写盘）、ADR-047 通用页 wire、ADR-048 权限与审批页 wire。 |
+| 下一动作 | SET-6 其余页按「工具与 MCP → 终端 → 外观 → 高级 → 关于」逐页立项（每页须有真实读写能力，未接通不显示）。 |
 | 当前阻塞 | 真实 Provider/OAuth 验收还需要对应账号与凭证。 |
 | 发布 | **不在本计划内**。待功能继续完善后，由用户另行指定发布范围、License 与门禁。 |
 
@@ -70,8 +70,9 @@
 | SET-3 Settings 壳 | 🟢 | gear、Settings Rail、返回工作台、全宽内容区与只读供应商页实现并审查提交（审查修复合计六处；desktop 定向测试 163 绿）；无假按钮，写操作属 SET-4/SET-5。 |
 | SET-4 四家认证 | 🟢 | 2026-09-02 完成：registry 扩为八通道（+kimi-platform API key、+kimi-code Device OAuth，端点经 kimi-cli 官方源核对）；auth_methods 改数据字段，xAI 双认证；替换=互斥删旧凭证；Settings 写操作 UI（secure 输入/OAuth 等待/取消/Replace/Remove，AuthChanged 六态消费）。审查修复七处（flight 种类化、Replace 终态重查等）；推送前复查再修 Removed 权威重查 / Verify tooltip / secure 换行三处。Host 471 绿 + Desktop 168 绿；真实账号验收待凭证（SET-7）。 |
 | SET-5 模型发现与默认项 | 🟢 | 2026-09-02 完成：xAI/Kimi Code 远端目录（language-models 可运行过滤 / kimi-cli 同端点，SET-D08 关闭）、未知 ID 保守合并、失败一律 fixed_fallback；provider_auth_status 透出持久化默认项且 set 后同会话内存同步；Desktop「模型与默认项」区（分组列表/Default 徽标/Set default/显式刷新，四路径同 gate）、Host 确认后 Composer 同步、失效默认显式提示。审查修复四处（P1 内存同步、P2 空目录误报、P2 kimi 失败路径补测、提交前 HOME Drop 守卫）。providers 163+29 / app 177+23 / desktop 173 全绿；真实 API 与真窗口验收待 SET-7。已审查提交。 |
+| SET-6b 权限与审批页 | 🟢 | 2026-09-03 完成：ADR-048 Accepted（`PermissionsSettings` 查询含 Host 权威 attached workspace_id、`SetApprovalMode` 严格五值 snake_case 会话内生效不持久化、`WorkspaceTrust` 死词汇实装开放 GUI 会话内信任切换不写盘）；golden 48→55 帧 + typegen + API 1.6；Desktop 权限与审批页（五档选择/会话信任开关/Global 默认只读/生效边界文案/回执才生效）。审查修复 2 P2 + 1 P3（冻结契约回写、状态矛盾、别名越契约、workspace_id 来源错位）。protocol/app 206/desktop 179 全绿。真窗口验收登记 SET-7。 |
 | SET-6a 通用页 | 🟢 | 2026-09-02 完成：ADR-047 Accepted；`GeneralSettings` 查询 + `SetProxyUrl` 命令（必填字段、显式 null 清除、缺字段解码错误）、API 1.5、golden 43→48 帧；`write_proxy_url` Global 原子写；handler 校验预构 client→写盘→内存换入定序；Desktop 通用页（capability gate、生效边界文案、stale 三路径同禁、重连刷新）。审查修复 4 P2 + 3 P3；提交前复查再修导航焦点丢失与 Save 失败文案。protocol 150 / workspace 147 / app 203 / desktop 176 全绿。真窗口验收登记 SET-7。 |
-| SET-6 其余 Settings 面 | ⚪ | 按“权限与审批 → 工具与 MCP → 终端 → 外观 → 高级 → 关于”逐页立项；每页须有真实读写能力和独立验收，未接通的页不显示。 |
+| SET-6 其余 Settings 面 | 🔵 | 按“权限与审批 → 工具与 MCP → 终端 → 外观 → 高级 → 关于”逐页立项；每页须有真实读写能力和独立验收，未接通的页不显示。SET-6b 权限与审批页已完成（见下表行）。 |
 | SET-7 真窗口收口 | ⚪ | 四家真实凭证矩阵、重启/断线、键盘/AX、窄窗和 Secret 泄漏检查通过；人工视觉验收单独签字。 |
 
 每阶段的写入集、命令和停止条件见 [plan/settings.md](plan/settings.md)。阶段失败先收敛当前层，不自动扩大到下一阶段。

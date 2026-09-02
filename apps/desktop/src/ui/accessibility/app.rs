@@ -3,9 +3,9 @@
 use gpui::{App, Context, Focusable, Window};
 
 use crate::projection::{
-    run_footer_label, run_summary_texts, ConnectionState, DateBucket, ForkBoundary, ModelEntry,
-    SessionLiveStatus, TaskRailGrouping, TaskRailProjectGroup, TimelineEntry, TimelineEntryKind,
-    TimelineRow, UNASSIGNED_PROJECT,
+    run_footer_label, run_summary_texts, ApprovalModeSetting, ConnectionState, DateBucket,
+    ForkBoundary, ModelEntry, SessionLiveStatus, TaskRailGrouping, TaskRailProjectGroup,
+    TimelineEntry, TimelineEntryKind, TimelineRow, UNASSIGNED_PROJECT,
 };
 
 use super::{AxAction, AxBridge, AxNode, AxRect, AxRequest, AxRole, AxTree};
@@ -22,8 +22,9 @@ use crate::ui::inspector::{
 };
 use crate::ui::resources::ResourcesFetch;
 use crate::ui::settings::{
-    general_status_lines, parse_settings_control, provider_status_lines, SettingsControl,
-    SETTINGS_CONTROL_PREFIX, SETTINGS_PROXY_EFFECT_NOTE, SETTINGS_PROXY_UNSET,
+    general_status_lines, parse_settings_control, permissions_status_lines, provider_status_lines,
+    SettingsControl, SETTINGS_CONTROL_PREFIX, SETTINGS_PERMISSIONS_EFFECT_NOTE,
+    SETTINGS_PROXY_EFFECT_NOTE, SETTINGS_PROXY_UNSET, SETTINGS_TRUST_UNSET,
 };
 use crate::ui::shell_layout;
 use crate::ui::theme::{font, metrics};
@@ -270,6 +271,21 @@ impl AppView {
             }
             "settings-proxy-save" => self.on_settings_proxy_save(cx),
             "settings-proxy-clear" => self.on_settings_proxy_clear(cx),
+            // SET-6b：五档选择与可见按钮同源派发（入口复核 gate）；未知
+            // wire 串（含静态行 id）fail-closed。
+            other if other.starts_with("settings-approval-mode-") => {
+                let wire = other
+                    .strip_prefix("settings-approval-mode-")
+                    .unwrap_or_default();
+                match ApprovalModeSetting::from_wire(wire) {
+                    Ok(mode) => self.on_settings_approval_mode(mode, cx),
+                    Err(_) => return false,
+                }
+            }
+            "settings-workspace-trust" => {
+                let trusted = !self.projection.settings_permissions.workspace_trusted;
+                self.on_settings_workspace_trust(trusted, cx);
+            }
             "model-picker" => {
                 window.focus(&self.model_focus);
                 self.on_toggle_model_menu(None, window, cx)
@@ -892,10 +908,11 @@ impl AppView {
         let nav_y = back_y + metrics::RAIL_TOP_ROW_HEIGHT + PAD + PAD;
         let width = (frame.width - PAD * 2.0).max(0.0);
         let general_available = self.projection.settings_general.available;
-        let current_page = if general_available {
-            self.settings_page
-        } else {
-            SettingsPage::Providers
+        let permissions_available = self.projection.settings_permissions.available;
+        let current_page = match self.settings_page {
+            SettingsPage::General if !general_available => SettingsPage::Providers,
+            SettingsPage::Permissions if !permissions_available => SettingsPage::Providers,
+            page => page,
         };
         let mut rail = AxNode::new("settings-rail", AxRole::Group, "Settings", frame)
             .child(
@@ -940,6 +957,26 @@ impl AppView {
                 ),
             ));
         }
+        if permissions_available {
+            // 几何与 render 同源：通用项之后递增一行（无通用项时紧随
+            // 供应商项）。
+            let mut permissions_y = nav_y + metrics::RAIL_TOP_ROW_HEIGHT + PAD;
+            if general_available {
+                permissions_y += metrics::RAIL_TOP_ROW_HEIGHT + PAD;
+            }
+            rail = rail.child(settings_nav_ax(
+                "settings-nav-permissions",
+                "权限与审批",
+                current_page == SettingsPage::Permissions,
+                self.open_menu.is_none() && self.settings_nav_permissions_focus.is_focused(window),
+                AxRect::new(
+                    frame.x + PAD,
+                    frame.y + permissions_y,
+                    width,
+                    metrics::RAIL_TOP_ROW_HEIGHT,
+                ),
+            ));
+        }
         rail
     }
 
@@ -951,6 +988,11 @@ impl AppView {
         if self.settings_page == SettingsPage::General && self.projection.settings_general.available
         {
             return self.settings_general_page_ax(window, cx, frame);
+        }
+        if self.settings_page == SettingsPage::Permissions
+            && self.projection.settings_permissions.available
+        {
+            return self.settings_permissions_page_ax(window, cx, frame);
         }
         const HEADING_HEIGHT: f32 = 28.0;
         const SUBTITLE_HEIGHT: f32 = 20.0;
@@ -1429,6 +1471,207 @@ impl AppView {
                 AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT * 2.0),
             )
             .value(SETTINGS_PROXY_EFFECT_NOTE),
+        )
+    }
+
+    /// 「权限与审批」页 AX（SET-6b）：五档审批模式（当前档只读、其余
+    /// Press）、会话信任开关、Global 默认只读行、生效边界；stale 时
+    /// enabled=false 且 permits 拒绝写动作，与 render 同 gate。
+    fn settings_permissions_page_ax(&self, window: &Window, cx: &App, frame: AxRect) -> AxNode {
+        const HEADING_HEIGHT: f32 = 28.0;
+        const SUBTITLE_HEIGHT: f32 = 20.0;
+        const STATUS_HEIGHT: f32 = 20.0;
+        const CONTROL_ROW: f32 = 28.0;
+        const MODE_ROW_HEIGHT: f32 = 44.0;
+        const ROW_GAP: f32 = 4.0;
+        let state = &self.projection.settings_permissions;
+        let writes = self.settings_permissions_writes_enabled();
+        let connected = matches!(
+            self.projection.connection,
+            ConnectionState::Connected { .. }
+        );
+        let refresh_focused =
+            self.open_menu.is_none() && self.settings_refresh_focus.is_focused(window);
+        let mut page = AxNode::new("settings-page", AxRole::Group, "权限与审批", frame)
+            .child(
+                AxNode::new(
+                    "settings-page-title",
+                    AxRole::StaticText,
+                    "权限与审批",
+                    AxRect::new(
+                        frame.x + 16.0,
+                        frame.y + 16.0,
+                        (frame.width - 136.0).max(0.0),
+                        HEADING_HEIGHT + SUBTITLE_HEIGHT,
+                    ),
+                )
+                .value("当前会话的审批模式与 workspace 信任"),
+            )
+            .child(
+                AxNode::new(
+                    "settings-refresh",
+                    AxRole::Button,
+                    "Refresh",
+                    AxRect::new(
+                        frame.x + frame.width - 16.0 - 96.0,
+                        frame.y + 16.0,
+                        96.0,
+                        CONTROL_ROW,
+                    ),
+                )
+                .enabled(connected)
+                .focused(refresh_focused)
+                .action(AxAction::Press),
+            );
+        let mut y = frame.y + 16.0 + HEADING_HEIGHT + SUBTITLE_HEIGHT + 8.0;
+        let width = (frame.width - 32.0).max(0.0);
+        for (kind, label) in permissions_status_lines(state) {
+            page = page.child(
+                AxNode::new(
+                    format!("settings-status-{kind}"),
+                    AxRole::StaticText,
+                    "Permissions status",
+                    AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT),
+                )
+                .value(label),
+            );
+            y += STATUS_HEIGHT + 8.0;
+        }
+
+        // ① 五档审批模式：每档一行（label · description，当前档标「当前」），
+        // 非 current 档发布 Press 按钮（enabled 与 render 同源）。
+        let current_mode_label = state
+            .approval_mode
+            .map(ApprovalModeSetting::label)
+            .unwrap_or("未知");
+        page = page.child(
+            AxNode::new(
+                "settings-approval-mode-header",
+                AxRole::StaticText,
+                "审批模式",
+                AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT),
+            )
+            .value(format!("当前 · {current_mode_label}")),
+        );
+        y += STATUS_HEIGHT + 8.0;
+        for mode in ApprovalModeSetting::ALL {
+            let current = state.approval_mode == Some(mode);
+            let mut value = format!("{} · {}", mode.label(), mode.description());
+            if current {
+                value.push_str(" · 当前");
+            }
+            let button_id = format!("settings-approval-mode-{}", mode.wire());
+            let select_enabled = writes && !current;
+            let select_focused = self
+                .settings_permissions_focus
+                .get(&button_id)
+                .is_some_and(|focus| self.open_menu.is_none() && focus.is_focused(window));
+            let mut row = AxNode::new(
+                format!("settings-approval-mode-row-{}", mode.wire()),
+                AxRole::StaticText,
+                mode.label(),
+                AxRect::new(frame.x + 16.0, y, (width - 96.0).max(60.0), MODE_ROW_HEIGHT),
+            )
+            .value(value);
+            if current {
+                row = row.description("当前档位");
+            }
+            page = page.child(row);
+            if !current {
+                page = page.child(
+                    AxNode::new(
+                        button_id,
+                        AxRole::Button,
+                        format!("选择 {}", mode.label()),
+                        AxRect::new(
+                            frame.x + frame.width - 16.0 - 88.0,
+                            y + (MODE_ROW_HEIGHT - CONTROL_ROW) / 2.0,
+                            88.0,
+                            CONTROL_ROW,
+                        ),
+                    )
+                    .enabled(select_enabled)
+                    .focused(select_focused)
+                    .action(AxAction::Press),
+                );
+            }
+            y += MODE_ROW_HEIGHT + ROW_GAP;
+        }
+
+        // ② 会话信任开关：状态行 + 切换按钮（与 render 同 gate，无
+        // attached workspace 时禁用）。
+        let workspace_attached = self.projection.workspace_id.is_some();
+        let trust_enabled = writes && workspace_attached;
+        let trust_label = if state.workspace_trusted {
+            "取消信任"
+        } else {
+            "信任 workspace"
+        };
+        let trust_state = if state.workspace_trusted {
+            "已信任"
+        } else {
+            "未信任"
+        };
+        let trust_focused = self
+            .settings_permissions_focus
+            .get("settings-workspace-trust")
+            .is_some_and(|focus| self.open_menu.is_none() && focus.is_focused(window));
+        page = page
+            .child(
+                AxNode::new(
+                    "settings-workspace-trust-status",
+                    AxRole::StaticText,
+                    "会话信任",
+                    AxRect::new(frame.x + 16.0, y, (width - 180.0).max(60.0), MODE_ROW_HEIGHT),
+                )
+                .value(format!(
+                    "当前 · {trust_state} · 信任当前 workspace（仅本会话，不写盘）"
+                )),
+            )
+            .child(
+                AxNode::new(
+                    "settings-workspace-trust",
+                    AxRole::Button,
+                    trust_label,
+                    AxRect::new(
+                        frame.x + frame.width - 16.0 - 116.0,
+                        y + (MODE_ROW_HEIGHT - CONTROL_ROW) / 2.0,
+                        116.0,
+                        CONTROL_ROW,
+                    ),
+                )
+                .enabled(trust_enabled)
+                .focused(trust_focused)
+                .action(AxAction::Press),
+            );
+        y += MODE_ROW_HEIGHT + 8.0;
+
+        // ③ Global 默认只读行。
+        let global_text = match state.trust_workspaces_global {
+            None => SETTINGS_TRUST_UNSET,
+            Some(true) => "已设置：信任所有 workspace",
+            Some(false) => "已设置：不信任所有 workspace",
+        };
+        page = page.child(
+            AxNode::new(
+                "settings-trust-global",
+                AxRole::StaticText,
+                "Global 默认",
+                AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT),
+            )
+            .value(global_text),
+        );
+        y += STATUS_HEIGHT + 8.0;
+
+        // ④ 生效边界（与 render 同源文案）。
+        page.child(
+            AxNode::new(
+                "settings-permissions-effect",
+                AxRole::StaticText,
+                "Effect",
+                AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT * 2.0),
+            )
+            .value(SETTINGS_PERMISSIONS_EFFECT_NOTE),
         )
     }
 

@@ -220,6 +220,39 @@ SET-5 收口后才逐页立项，不预建通用设置框架：
 
 **定向回归上限**：主路径两条（设置 → 重查一致；清除 → 重查 null，同属一个 mutation 的两半）；关键失败路径一条（非法 URL fail-closed 保旧）。现有测试可覆盖时不新增。
 
+### SET-6b — 权限与审批页（approval mode + workspace trust）🟢
+
+> 2026-09-03 完成：ADR-048 Accepted 后三切片串行落地（glm_worker：protocol → app → desktop）。protocol 增 `PermissionsSettings` 查询 / `SetApprovalMode` 命令（since=V1_6、仅 GUI）+ `WorkspaceTrust` 死词汇开放 GUI（Approvals capability）+ API 1.6 + golden 48→55 帧 + typegen；app `ApprovalService` 运行时 setter + 三 handler（校验写入同锁）；desktop 权限与审批页（五档显式选择、会话信任开关、Global 默认只读行、生效边界文案、回执才生效、stale 三路径同禁、可见/键盘/AX 同 gate）。审查（glm_reviewer）修复四处：P2 冻结契约回写遗漏、P2 ROADMAP/plan 状态矛盾、P2 `set_approval_mode` 别名越契约（改严格五值 `approval_mode_from_wire`）、P3 信任开关 workspace_id 误取注册表首项——ADR-048 D1 实现期修订增补响应 `workspace_id`（Host 权威 attached id），golden 两响应帧同批钉死。protocol（含 55 帧 golden + typegen --check）/ app 206 / desktop 179 全绿。真窗口验收登记 SET-7。
+
+> 2026-09-02 立项：最小真实能力锁定为「当前 approval mode 与 workspace trust 的读取 + 会话内受控修改」。经主代理源码实读与两路 glm_explorer 调研三方确认：`ApprovalMode` 五档仅 CLI 启动参数注入、无持久化无运行时查询/修改 API（GUI 用户不传参即永远 ReadOnly）；`workspace_trusted` 为内存态，Global 层 `trust_workspaces` 可持久化但 writer 无写函数；wire 上 `WorkspaceTrust` 自 R3 登记即无 handler（死词汇），全协议无 approval mode query/command；run 启动时快照 mode/trusted，进行中 run 不受影响（既有架构，作为诚实生效边界）。wire 演进走 [ADR-048](../docs/adr/ADR-048-permissions-settings-wire.md)（2026-09-02 用户确认 Accepted）。
+
+**目标**：GUI 用户可查看当前审批模式与信任状态，并在会话内显式切换；所有变更不持久化、重启回默认（fail-closed 安全语义）。
+
+**非目标**：不持久化 approval_mode；不写 Global `trust_workspaces`（只读展示，写留候选）；不改 Policy 决策链与进行中 run；不新增 `PermissionsChanged` 事件；不做「一键全允许」。
+
+**写入集**（ADR-048 Accepted 后才动生产代码）：
+
+- `docs/adr/ADR-048-*.md`、`docs/architecture.md`、`docs/spec/contracts.md`；
+- `crates/protocol/`：`PermissionsSettings` 查询 + `SetApprovalMode` 命令 + `WorkspaceTrust` 开放 GUI + registry（since=V1_6）+ API 1.6 + golden/typegen；
+- `crates/app/`：`ApprovalService` 运行时 setter（set_mode / set_workspace_trusted，`configure` 保持启动专用）+ 三 handler；
+- `apps/desktop/`：Settings 导航增「权限与审批」页（五档选择、会话信任开关、Global 默认只读行、生效边界文案），可见/键盘/AX 同 gate，断线 fail-closed；
+- 实际涉及包的包级 Spec。
+
+**完成条件**：
+
+- 页面显示 Host 权威三元组（当前 mode / 会话 trusted / Global 持久默认），来源语义不混淆；
+- `SetApprovalMode` 会话内生效，之后启动的 run 用新 mode，进行中 run 不变；未知值 fail-closed 保旧；
+- `WorkspaceTrust` 校验 workspace_id 匹配当前 attach，不匹配 Error 保旧；切换只影响之后启动的 run；
+- 页面文案诚实标注：不持久化、重启回默认、进行中 Run 不受影响；
+- 断线 stale 只读、写动作 fail-closed；可见/键盘/AX 同 gate；
+- golden/typegen 先行；不新增 crate、依赖、schema 键。
+
+**停止条件**：ADR-048 未获用户 Accepted 时，停在 ADR + 预期 golden 描述，不写生产 handler。
+
+**验证**：`cargo test -p pawork-protocol --features typegen --offline --lib --tests` + `cargo test -p pawork-app --offline --lib --tests` + `cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`；单一 Cargo 进程纪律不变。
+
+**定向回归上限**：主路径两条（set mode → 重查一致；workspace_trust 匹配 id → 之后 run 生效）；关键失败路径一条（workspace_id 不匹配 fail-closed）。现有测试可覆盖时不新增。
+
 ### SET-7 — 真窗口与人工收口 ⚪
 
 **自动证据**：实际写入集定向门禁；protocol/Secret/config 三类关键回归；`git diff --check`。

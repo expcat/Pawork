@@ -34,6 +34,19 @@ impl ApprovalService {
         self.host = host;
     }
 
+    /// ADR-048 D2：运行时切换审批模式（GUI Settings 专用）。只改内存态，
+    /// 对之后启动的 run 生效（run 启动时快照）；不持久化，不触碰进行中
+    /// run。启动装配仍走 Self::configure（一次性设三字段）。
+    pub(crate) fn set_mode(&mut self, mode: ApprovalMode) {
+        self.mode = mode;
+    }
+
+    /// ADR-048 D3：运行时切换当前会话的 workspace 信任（内存态，不写盘，
+    /// 重启后跟随 Global 配置）。生效边界同 set_mode。
+    pub(crate) fn set_workspace_trusted(&mut self, workspace_trusted: bool) {
+        self.workspace_trusted = workspace_trusted;
+    }
+
     pub(crate) fn mode(&self) -> ApprovalMode {
         self.mode
     }

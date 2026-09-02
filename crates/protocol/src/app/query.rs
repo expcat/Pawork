@@ -69,6 +69,9 @@ pub enum AppQuery {
     },
     /// Global 层通用设置（当前仅 `proxy_url`；ADR-047）。
     GeneralSettings,
+    /// 权限与审批设置三元组（当前 approval mode / 会话信任 / Global 信任；
+    /// ADR-048）。
+    PermissionsSettings,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

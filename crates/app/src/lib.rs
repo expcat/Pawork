@@ -996,6 +996,18 @@ impl AppCore {
         self.http = http;
     }
 
+    /// SET-6b：set_approval_mode 运行时切换（ADR-048 D2）。只改内存态，
+    /// 对之后启动的 run 生效；不持久化、不影响进行中 run。
+    pub(crate) fn set_approval_mode(&mut self, mode: ApprovalMode) {
+        self.approval.set_mode(mode);
+    }
+
+    /// SET-6b：workspace_trust 运行时切换会话信任（ADR-048 D3）。不写盘，
+    /// 重启后跟随 Global 配置；只影响之后启动的 run。
+    pub(crate) fn set_workspace_trusted(&mut self, workspace_trusted: bool) {
+        self.approval.set_workspace_trusted(workspace_trusted);
+    }
+
     pub fn auth_backend(&self) -> &Arc<dyn SecretBackend> {
         &self.backend
     }

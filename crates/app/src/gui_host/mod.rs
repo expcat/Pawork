@@ -713,12 +713,29 @@ fn query_general_settings<'a>(
     Box::pin(handlers::settings::general_settings(adapter, query))
 }
 
+fn query_permissions_settings<'a>(
+    adapter: &'a GuiHostAdapter,
+    query: &'a pawork_protocol::AppQuery,
+) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
+    Box::pin(handlers::settings::permissions_settings(adapter, query))
+}
+
 fn command_workspace_add<'a>(
     adapter: &'a GuiHostAdapter,
     envelope: &'a AppCommandEnvelope,
     command: &'a AppCommand,
 ) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
     Box::pin(handlers::command::workspace_add(adapter, envelope, command))
+}
+
+fn command_workspace_trust<'a>(
+    adapter: &'a GuiHostAdapter,
+    envelope: &'a AppCommandEnvelope,
+    command: &'a AppCommand,
+) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
+    Box::pin(handlers::settings::workspace_trust(
+        adapter, envelope, command,
+    ))
 }
 
 fn command_session_create<'a>(
@@ -817,6 +834,16 @@ fn command_set_proxy_url<'a>(
     ))
 }
 
+fn command_set_approval_mode<'a>(
+    adapter: &'a GuiHostAdapter,
+    envelope: &'a AppCommandEnvelope,
+    command: &'a AppCommand,
+) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
+    Box::pin(handlers::settings::set_approval_mode(
+        adapter, envelope, command,
+    ))
+}
+
 fn command_tool_approve<'a>(
     adapter: &'a GuiHostAdapter,
     envelope: &'a AppCommandEnvelope,
@@ -876,10 +903,12 @@ static QUERY_HANDLERS: &[(&str, QueryHandler)] = &[
     ("mcp_list", query_mcp_list),
     ("provider_auth_status", query_provider_auth_status),
     ("general_settings", query_general_settings),
+    ("permissions_settings", query_permissions_settings),
 ];
 
 static COMMAND_HANDLERS: &[(&str, CommandHandler)] = &[
     ("workspace_add", command_workspace_add),
+    ("workspace_trust", command_workspace_trust),
     ("session_create", command_session_create),
     ("session_open", command_session_open),
     ("session_fork", command_session_fork),
@@ -891,6 +920,7 @@ static COMMAND_HANDLERS: &[(&str, CommandHandler)] = &[
     ("auth_cancel", command_auth_cancel),
     ("set_default_model", command_set_default_model),
     ("set_proxy_url", command_set_proxy_url),
+    ("set_approval_mode", command_set_approval_mode),
     ("tool_approve", command_tool_approve),
     ("terminal_create", command_terminal_create),
     ("terminal_write", command_terminal_write),

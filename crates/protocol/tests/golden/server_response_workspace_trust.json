@@ -4,11 +4,11 @@
       "major": 1,
       "minor": 6
     },
-    "request_id": "query-set-proxy-url",
+    "request_id": "query-workspace-trust",
     "responded_at": 3,
     "response": {
       "data": {
-        "proxy_url": null
+        "workspace_trusted": true
       },
       "type": "data"
     }

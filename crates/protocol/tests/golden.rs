@@ -730,3 +730,87 @@ fn golden_general_settings_slices() {
         })),
     );
 }
+
+/// SET-6b（ADR-048）：权限与审批查询 / SetApprovalMode / WorkspaceTrust golden。
+#[test]
+fn golden_permissions_settings_slices() {
+    assert_golden(
+        "permissions_settings.json",
+        encode_client(&ClientFrame::Query(AppQueryEnvelope {
+            api_version: API_VERSION,
+            request_id: pawork_domain::QueryId::from("query-permissions-settings"),
+            source: CommandSource::LocalGui {
+                client_id: GuiClientId::from("gui-1"),
+            },
+            identity: ActorIdentity::LocalUser {
+                actor_id: pawork_domain::ActorId::from("actor-1"),
+                display_name: None,
+            },
+            issued_at: Timestamp::from_unix_millis(1),
+            query: AppQuery::PermissionsSettings,
+        })),
+    );
+    assert_golden(
+        "client_command_set_approval_mode.json",
+        encode_client(&client_auth_command_frame(AppCommand::SetApprovalMode {
+            mode: "ask_for_writes".into(),
+        })),
+    );
+    assert_golden(
+        "client_command_workspace_trust.json",
+        encode_client(&client_auth_command_frame(AppCommand::WorkspaceTrust {
+            workspace_id: pawork_domain::WorkspaceId::from("workspace-1"),
+            trusted: true,
+        })),
+    );
+    assert_golden(
+        "server_response_permissions_settings.json",
+        encode_server(&ServerFrame::Response(AppResponseEnvelope {
+            api_version: API_VERSION,
+            request_id: pawork_domain::QueryId::from("query-permissions-settings"),
+            responded_at: Timestamp::from_unix_millis(3),
+            response: AppResponse::Data(serde_json::json!({
+                "approval_mode": "read_only",
+                "workspace_trusted": false,
+                "trust_workspaces_global": null,
+                "workspace_id": "workspace-1"
+            })),
+        })),
+    );
+    assert_golden(
+        "server_response_permissions_settings_trust_global.json",
+        encode_server(&ServerFrame::Response(AppResponseEnvelope {
+            api_version: API_VERSION,
+            request_id: pawork_domain::QueryId::from("query-permissions-settings"),
+            responded_at: Timestamp::from_unix_millis(3),
+            response: AppResponse::Data(serde_json::json!({
+                "approval_mode": "ask_for_writes",
+                "workspace_trusted": true,
+                "trust_workspaces_global": true,
+                "workspace_id": "workspace-1"
+            })),
+        })),
+    );
+    assert_golden(
+        "server_response_set_approval_mode.json",
+        encode_server(&ServerFrame::Response(AppResponseEnvelope {
+            api_version: API_VERSION,
+            request_id: pawork_domain::QueryId::from("query-set-approval-mode"),
+            responded_at: Timestamp::from_unix_millis(3),
+            response: AppResponse::Data(serde_json::json!({
+                "approval_mode": "ask_for_writes"
+            })),
+        })),
+    );
+    assert_golden(
+        "server_response_workspace_trust.json",
+        encode_server(&ServerFrame::Response(AppResponseEnvelope {
+            api_version: API_VERSION,
+            request_id: pawork_domain::QueryId::from("query-workspace-trust"),
+            responded_at: Timestamp::from_unix_millis(3),
+            response: AppResponse::Data(serde_json::json!({
+                "workspace_trusted": true
+            })),
+        })),
+    );
+}

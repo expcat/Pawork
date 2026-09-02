@@ -1,4 +1,5 @@
-//! SET-2 Host Settings 门面（ADR-046）与 SET-6a 通用设置（ADR-047）。
+//! SET-2 Host Settings 门面（ADR-046）、SET-6a 通用设置（ADR-047）与
+//! SET-6b 权限与审批设置（ADR-048）。
 //! Secret 红线：api_key 明文只在 handler 栈上与验证请求的 Authorization
 //! 头中短暂停留，绝不进入 tracing / 事件 / ledger。proxy URL 可能内嵌
 //! user:pass，loopback_aware_proxy 错误串含原文，禁止送进 GUI Error / tracing。
@@ -9,6 +10,7 @@ use std::time::Duration;
 
 use pawork_auth::{AuthError, CredentialSource};
 use pawork_domain::{CancellationToken, ProviderId};
+use pawork_policy::ApprovalMode;
 use pawork_protocol::{AppCommand, AppCommandEnvelope, AppQuery, AppResponse, AuthChangeState};
 use pawork_providers::ReasoningProtector;
 use serde_json::{json, Value};
@@ -681,6 +683,34 @@ fn invalid_proxy_url_error(candidate: Option<&str>) -> GuiHostError {
     )
 }
 
+/// ApprovalMode → wire 串（ADR-048 D1：snake_case，与 ApprovalMode 的
+/// serde 表示一致）。穷尽 match：policy 新增变体时编译期强制回写。
+fn approval_mode_wire(mode: ApprovalMode) -> &'static str {
+    match mode {
+        ApprovalMode::AlwaysAsk => "always_ask",
+        ApprovalMode::AskForWrites => "ask_for_writes",
+        ApprovalMode::AskForDangerous => "ask_for_dangerous",
+        ApprovalMode::NeverAsk => "never_ask",
+        ApprovalMode::ReadOnly => "read_only",
+    }
+}
+
+/// wire 串 → ApprovalMode（ADR-048 D2：仅收五个 snake_case 规范值）。
+/// 不复用 CLI 的 parse_approval_mode——其 kebab/on_failure 别名超出 wire
+/// 契约，GUI 通道一律按未知值 fail-closed。
+fn approval_mode_from_wire(value: &str) -> Result<ApprovalMode, String> {
+    match value {
+        "always_ask" => Ok(ApprovalMode::AlwaysAsk),
+        "ask_for_writes" => Ok(ApprovalMode::AskForWrites),
+        "ask_for_dangerous" => Ok(ApprovalMode::AskForDangerous),
+        "never_ask" => Ok(ApprovalMode::NeverAsk),
+        "read_only" => Ok(ApprovalMode::ReadOnly),
+        other => Err(format!(
+            "unknown approval mode `{other}`; expected always_ask|ask_for_writes|ask_for_dangerous|never_ask|read_only"
+        )),
+    }
+}
+
 pub(crate) async fn general_settings(
     adapter: &GuiHostAdapter,
     query: &AppQuery,
@@ -720,5 +750,82 @@ pub(crate) async fn set_proxy_url(
     }
     Ok(AppResponse::Data(json!({
         "proxy_url": proxy_url,
+    })))
+}
+
+/// ADR-048 D1：权限与审批三元组。三字段来源语义分列：前两个是当前
+/// 会话内存态（对之后启动的 run 生效），trust_workspaces_global 是
+/// Global 层持久值（None → null，只读展示，本片不写）。
+pub(crate) async fn permissions_settings(
+    adapter: &GuiHostAdapter,
+    query: &AppQuery,
+) -> Result<AppResponse, GuiHostError> {
+    let AppQuery::PermissionsSettings = query else {
+        unreachable!("permissions_settings handler receives PermissionsSettings")
+    };
+    let core = adapter.core.read().await;
+    Ok(AppResponse::Data(json!({
+        "approval_mode": approval_mode_wire(core.approval_mode()),
+        "workspace_trusted": core.workspace_trusted(),
+        "trust_workspaces_global": core.config().trust_workspaces,
+        // ADR-048 D1（实现期修订）：透出 Host 权威 attached workspace_id，
+        // Desktop 发 workspace_trust 时原样回填，校验方与发送方同源。
+        "workspace_id": core.workspace_id().to_string(),
+    })))
+}
+
+/// ADR-048 D2：会话内切换审批模式。仅收五个 snake_case 规范值
+/// （approval_mode_from_wire），未知值 Error 且旧值保留（fail-closed）；
+/// 只影响之后启动的 run，不持久化。
+pub(crate) async fn set_approval_mode(
+    adapter: &GuiHostAdapter,
+    _envelope: &AppCommandEnvelope,
+    command: &AppCommand,
+) -> Result<AppResponse, GuiHostError> {
+    let AppCommand::SetApprovalMode { mode } = command else {
+        unreachable!("set_approval_mode handler receives SetApprovalMode")
+    };
+    let parsed = approval_mode_from_wire(mode)
+        .map_err(|reason| GuiHostAdapter::host_error("invalid_approval_mode", reason))?;
+    {
+        let mut core = adapter.core.write().await;
+        core.set_approval_mode(parsed);
+    }
+    Ok(AppResponse::Data(json!({
+        "approval_mode": approval_mode_wire(parsed),
+    })))
+}
+
+/// ADR-048 D3：会话内信任切换。workspace_id 必须匹配当前 attached
+/// workspace，不匹配 Error 且保旧（fail-closed）；切换只影响之后启动的
+/// run，不写盘。校验与写入同一把写锁内完成，避免 check-then-set 竞态。
+pub(crate) async fn workspace_trust(
+    adapter: &GuiHostAdapter,
+    _envelope: &AppCommandEnvelope,
+    command: &AppCommand,
+) -> Result<AppResponse, GuiHostError> {
+    let AppCommand::WorkspaceTrust {
+        workspace_id,
+        trusted,
+    } = command
+    else {
+        unreachable!("workspace_trust handler receives WorkspaceTrust")
+    };
+    {
+        let mut core = adapter.core.write().await;
+        if core.workspace_id().as_str() != workspace_id.as_str() {
+            return Err(GuiHostAdapter::host_error(
+                "unknown_workspace",
+                format!(
+                    "workspace {} is not the attached workspace {}",
+                    workspace_id.as_str(),
+                    core.workspace_id().as_str()
+                ),
+            ));
+        }
+        core.set_workspace_trusted(*trusted);
+    }
+    Ok(AppResponse::Data(json!({
+        "workspace_trusted": trusted,
     })))
 }

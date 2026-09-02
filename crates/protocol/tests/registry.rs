@@ -18,6 +18,7 @@ const V1_2: ApiVersion = ApiVersion { major: 1, minor: 2 };
 const V1_3: ApiVersion = ApiVersion { major: 1, minor: 3 };
 const V1_4: ApiVersion = ApiVersion { major: 1, minor: 4 };
 const V1_5: ApiVersion = ApiVersion { major: 1, minor: 5 };
+const V1_6: ApiVersion = ApiVersion { major: 1, minor: 6 };
 
 /// (wire 名, 最小 params 样本；None = unit 变体无 params)。
 fn command_samples() -> Vec<(&'static str, Option<Value>)> {
@@ -66,6 +67,10 @@ fn command_samples() -> Vec<(&'static str, Option<Value>)> {
         (
             "set_proxy_url",
             Some(json!({"proxy_url": "http://127.0.0.1:7890"})),
+        ),
+        (
+            "set_approval_mode",
+            Some(json!({"mode": "ask_for_writes"})),
         ),
         (
             "tool_approve",
@@ -122,6 +127,7 @@ fn query_samples() -> Vec<(&'static str, Option<Value>)> {
             Some(json!({"provider_id": "glm-coding"})),
         ),
         ("general_settings", None),
+        ("permissions_settings", None),
     ]
 }
 
@@ -183,8 +189,8 @@ fn wire_names_are_bijective_with_serde_tags() {
 fn registry_tables_are_complete_and_unique() {
     let commands = command_entries();
     let queries = query_entries();
-    assert_eq!(commands.len(), 24);
-    assert_eq!(queries.len(), 13);
+    assert_eq!(commands.len(), 25);
+    assert_eq!(queries.len(), 14);
     for wire_name in commands.iter().map(|entry| entry.wire_name) {
         assert_eq!(
             commands
@@ -315,8 +321,8 @@ fn command_registry_covers_every_variant_without_wildcard() {
             AppCommand::WorkspaceTrust { .. } => assert_command_entry(
                 &command,
                 "workspace_trust",
-                false,
-                None,
+                true,
+                Some(GuiCapability::Approvals),
                 None,
                 false,
                 true,
@@ -450,6 +456,16 @@ fn command_registry_covers_every_variant_without_wildcard() {
                 false,
                 true,
                 V1_5,
+            ),
+            AppCommand::SetApprovalMode { .. } => assert_command_entry(
+                &command,
+                "set_approval_mode",
+                true,
+                None,
+                None,
+                false,
+                true,
+                V1_6,
             ),
             AppCommand::ToolApprove { .. } => assert_command_entry(
                 &command,
@@ -637,6 +653,16 @@ fn query_registry_covers_every_variant_without_wildcard() {
                 false,
                 true,
                 V1_5,
+            ),
+            AppQuery::PermissionsSettings => assert_query_entry(
+                &query,
+                "permissions_settings",
+                true,
+                None,
+                None,
+                false,
+                true,
+                V1_6,
             ),
         }
     }

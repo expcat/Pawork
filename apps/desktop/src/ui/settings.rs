@@ -1,12 +1,13 @@
-//! Settings 壳（SET-3/4/6a）：Settings Rail、「Models & providers」页与
-//! 「General」页。
+//! Settings 壳（SET-3/4/6a/6b）：Settings Rail、「Models & providers」、
+//! 「General」与「权限与审批」页。
 //!
 //! 供应商页只呈现 Host `provider_auth_status` 权威事实：供应商名称、
 //! 认证方式、连接状态与目录来源（SET-3）；SET-4 增认证写操作（API key
 //! secure 输入验证、OAuth 等待/取消、Replace/Remove），全部由 descriptor
 //! （auth_methods + auth.type）驱动，禁止按 provider 名分支。SET-6a 增
-//! 「General」页（`proxy_url` 读/设置/清除）；查询失败 / 未知则隐藏该
-//! 导航项且不渲染写入口。断线保留 stale 只读结果并禁用全部写动作；
+//! 「General」页（`proxy_url` 读/设置/清除）；SET-6b 增「权限与审批」页
+//! （五档审批模式 / 会话信任 / Global 默认只读）；查询失败 / 未知则隐藏
+//! 该导航项且不渲染写入口。断线保留 stale 只读结果并禁用全部写动作；
 //! 可见 / 键盘 / AX 三路径同 gate。
 
 use std::collections::HashSet;
@@ -19,8 +20,8 @@ use crate::ui::components::panel::Panel;
 use crate::ui::theme::{dark, font, metrics};
 
 use crate::projection::{
-    group_models_by_provider, ConnectionState, ModelEntry, OAuthWait, ProviderAuthState,
-    ProviderStatusEntry,
+    group_models_by_provider, ApprovalModeSetting, ConnectionState, ModelEntry, OAuthWait,
+    ProviderAuthState, ProviderStatusEntry, SettingsPermissionsState,
 };
 use crate::ui::text_input::TextInput;
 
@@ -42,6 +43,11 @@ pub(crate) const SETTINGS_PROXY_UNSET: &str = "未设置（跟随系统环境变
 /// 生效边界（ADR-047 D2；不得宣称全局即时生效）。
 pub(crate) const SETTINGS_PROXY_EFFECT_NOTE: &str =
     "新 OAuth/验证/目录探测同会话生效；当前活跃供应商的模型流量于切换供应商或重启 Host 后生效。";
+
+/// null `trust_workspaces_global` 展示（ADR-048 D1；render / AX 同源）。
+pub(crate) const SETTINGS_TRUST_UNSET: &str = "未设置（默认不信任）";
+/// 权限页生效边界（ADR-048 D2/D3；不得宣称持久化或影响进行中 Run）。
+pub(crate) const SETTINGS_PERMISSIONS_EFFECT_NOTE: &str = "以上变更仅当前会话生效、不持久化：重启 Host 后回到默认；进行中的 Run 不受影响，之后启动的 Run 使用新设置。";
 
 /// Settings 供应商页状态行（render 与 AX 同源）。stale / loading / error /
 /// 空态独立判定：stale 与 error 可同时出现，空态仅在完全无状态且列表为
@@ -75,6 +81,26 @@ pub(super) fn provider_status_lines(
 /// 按动作区分（load vs save），此处原样展示。
 pub(super) fn general_status_lines(
     state: &crate::projection::SettingsGeneralState,
+) -> Vec<(&'static str, String)> {
+    let mut lines = Vec::new();
+    if let Some(reason) = &state.stale_reason {
+        lines.push((
+            "stale",
+            format!("Offline · showing last known state ({reason})"),
+        ));
+    } else if state.loading {
+        lines.push(("loading", "Loading…".to_string()));
+    }
+    if let Some(error) = &state.error {
+        lines.push(("error", error.clone()));
+    }
+    lines
+}
+
+/// Settings 权限页状态行（render 与 AX 同源）。error 文案由事件消费侧
+/// 按动作区分（load / set mode / set trust），此处原样展示。
+pub(super) fn permissions_status_lines(
+    state: &SettingsPermissionsState,
 ) -> Vec<(&'static str, String)> {
     let mut lines = Vec::new();
     if let Some(reason) = &state.stale_reason {
@@ -313,10 +339,11 @@ impl AppView {
                 cx.stop_propagation();
             }));
         let general_available = self.projection.settings_general.available;
-        let current_page = if general_available {
-            self.settings_page
-        } else {
-            SettingsPage::Providers
+        let permissions_available = self.projection.settings_permissions.available;
+        let current_page = match self.settings_page {
+            SettingsPage::General if !general_available => SettingsPage::Providers,
+            SettingsPage::Permissions if !permissions_available => SettingsPage::Providers,
+            page => page,
         };
         let mut rail = Panel::side_right(rail_width)
             .child(shell_layout::rail_safe_area())
@@ -337,6 +364,15 @@ impl AppView {
                 cx,
             ));
         }
+        if permissions_available {
+            rail = rail.child(self.settings_nav_item(
+                "settings-nav-permissions",
+                "权限与审批",
+                current_page == SettingsPage::Permissions,
+                SettingsPage::Permissions,
+                cx,
+            ));
+        }
         rail
     }
 
@@ -347,6 +383,11 @@ impl AppView {
         if self.settings_page == SettingsPage::General && self.projection.settings_general.available
         {
             return self.settings_general_page_element(cx).into_any_element();
+        }
+        if self.settings_page == SettingsPage::Permissions
+            && self.projection.settings_permissions.available
+        {
+            return self.settings_permissions_page_element(cx).into_any_element();
         }
         self.settings_providers_page_element(cx).into_any_element()
     }
@@ -359,10 +400,10 @@ impl AppView {
         page: SettingsPage,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
-        let focus = if page == SettingsPage::General {
-            self.settings_nav_general_focus.clone()
-        } else {
-            self.settings_nav_providers_focus.clone()
+        let focus = match page {
+            SettingsPage::General => self.settings_nav_general_focus.clone(),
+            SettingsPage::Permissions => self.settings_nav_permissions_focus.clone(),
+            SettingsPage::Providers => self.settings_nav_providers_focus.clone(),
         };
         if selected {
             return div()
@@ -707,6 +748,311 @@ impl AppView {
             )
     }
 
+    /// 「权限与审批」页（SET-6b / ADR-048）：① 五档审批模式显式选择
+    /// （当前值高亮；切换发 `set_approval_mode`，等回执才改生效值）；
+    /// ② 会话信任开关（发 `workspace_trust`，workspace_id 取当前
+    /// attached）；③ `trust_workspaces_global` 只读行；④ 生效边界诚实
+    /// 文案。stale 只读，写入口与 AX 同 gate。
+    fn settings_permissions_page_element(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let connected = matches!(
+            self.projection.connection,
+            ConnectionState::Connected { .. }
+        );
+        let writes = self.settings_permissions_writes_enabled();
+        let state = self.projection.settings_permissions.clone();
+        let status_lines = permissions_status_lines(&state);
+        let refresh_focus = self.settings_refresh_focus.clone();
+        let refresh = Button::new("settings-refresh")
+            .track_focus(&refresh_focus)
+            .variant(ButtonVariant::Raised)
+            .height(px(SETTINGS_ACTION_HEIGHT))
+            .vcenter()
+            .radius(4.0)
+            .bordered()
+            .text_size(font::BODY_SM)
+            .label("Refresh")
+            .tooltip("Refresh permissions settings")
+            .disabled(!connected)
+            .on_click(cx.listener(|view, event, _window, cx| {
+                if view.consume_button_key_click("settings-refresh", event) {
+                    return;
+                }
+                view.on_refresh_settings(cx);
+            }))
+            .on_activate(cx.listener(|view, _event, _window, cx| {
+                view.note_button_key_activate("settings-refresh");
+                view.on_refresh_settings(cx);
+                cx.stop_propagation();
+            }));
+
+        let mut content = div()
+            .flex()
+            .flex_col()
+            .min_w_0()
+            .max_w(px(SETTINGS_CONTENT_MAX_WIDTH))
+            .gap_2()
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_start()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .min_w_0()
+                            .child(
+                                div().font_weight(FontWeight::MEDIUM).child(
+                                    Label::new("权限与审批")
+                                        .size(font::TITLE)
+                                        .color(dark().text.primary),
+                                ),
+                            )
+                            .child(
+                                Label::new("当前会话的审批模式与 workspace 信任")
+                                    .size(font::BODY_SM)
+                                    .color(dark().text.secondary),
+                            ),
+                    )
+                    .child(div().flex_1())
+                    .child(div().flex_none().pt_1().child(refresh)),
+            );
+        for (kind, line) in status_lines {
+            let color = if kind == "error" {
+                dark().semantic.danger_text
+            } else {
+                dark().text.secondary
+            };
+            content = content.child(status_line(&line, color));
+        }
+
+        // ① 五档审批模式：当前值高亮只读，其余档位显式「选择」。
+        let current_mode_label = state
+            .approval_mode
+            .map(ApprovalModeSetting::label)
+            .unwrap_or("未知");
+        content = content
+            .child(
+                div().font_weight(FontWeight::MEDIUM).child(
+                    Label::new("审批模式")
+                        .size(font::BODY)
+                        .color(dark().text.primary),
+                ),
+            )
+            .child(
+                Label::new(format!("当前 · {current_mode_label}"))
+                    .size(font::BODY_SM)
+                    .color(dark().text.secondary),
+            );
+        let mut modes = div().flex().flex_col().min_w_0().gap_1();
+        for mode in ApprovalModeSetting::ALL {
+            modes = modes.child(self.settings_approval_mode_row(mode, &state, writes, cx));
+        }
+        content = content.child(modes);
+
+        // ② 会话信任开关：workspace_id 取当前 attached；无 attached 时
+        // 禁用（fail-closed，不臆造 id）。
+        let trust_enabled = writes && self.projection.workspace_id.is_some();
+        let trust_label = if state.workspace_trusted {
+            "取消信任"
+        } else {
+            "信任 workspace"
+        };
+        let trust_focus = self
+            .settings_permissions_focus
+            .entry("settings-workspace-trust".to_string())
+            .or_insert_with(|| cx.focus_handle().tab_stop(true))
+            .clone();
+        let trust_toggle = Button::new("settings-workspace-trust")
+            .track_focus(&trust_focus)
+            .variant(ButtonVariant::Raised)
+            .height(px(SETTINGS_ACTION_HEIGHT))
+            .vcenter()
+            .radius(4.0)
+            .bordered()
+            .text_size(font::BODY_SM)
+            .label(trust_label)
+            .tooltip("Toggle session workspace trust")
+            .disabled(!trust_enabled)
+            .on_click(cx.listener(|view, event, _window, cx| {
+                if view.consume_button_key_click("settings-workspace-trust", event) {
+                    return;
+                }
+                let trusted = view.projection.settings_permissions.workspace_trusted;
+                view.on_settings_workspace_trust(!trusted, cx);
+            }))
+            .on_activate(cx.listener(|view, _event, _window, cx| {
+                view.note_button_key_activate("settings-workspace-trust");
+                let trusted = view.projection.settings_permissions.workspace_trusted;
+                view.on_settings_workspace_trust(!trusted, cx);
+                cx.stop_propagation();
+            }));
+        let trust_state_label = if state.workspace_trusted {
+            "已信任"
+        } else {
+            "未信任"
+        };
+        content = content.child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .min_w_0()
+                .p(px(PROVIDER_CARD_PAD))
+                .rounded(px(4.0))
+                .border_1()
+                .border_color(dark().border.subtle)
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .child(
+                            Label::new("会话信任")
+                                .size(font::BODY)
+                                .color(dark().text.primary),
+                        )
+                        .child(
+                            Label::new("信任当前 workspace（仅本会话，不写盘）")
+                                .size(font::BODY_SM)
+                                .color(dark().text.secondary),
+                        ),
+                )
+                .child(
+                    div().flex_none().child(
+                        Label::new(format!("当前 · {trust_state_label}"))
+                            .size(font::BODY_SM)
+                            .color(dark().text.secondary),
+                    ),
+                )
+                .child(div().flex_none().child(trust_toggle)),
+        );
+
+        // ③ Global 默认只读行（本片不写 Global trust）。
+        let global_text = match state.trust_workspaces_global {
+            None => SETTINGS_TRUST_UNSET,
+            Some(true) => "已设置：信任所有 workspace",
+            Some(false) => "已设置：不信任所有 workspace",
+        };
+        content = content.child(
+            Label::new(format!("Global 默认（只读）· {global_text}"))
+                .size(font::BODY_SM)
+                .color(dark().text.secondary),
+        );
+
+        // ④ 生效边界诚实文案。
+        content = content.child(
+            Label::new(SETTINGS_PERMISSIONS_EFFECT_NOTE)
+                .size(font::BODY_SM)
+                .color(dark().text.secondary),
+        );
+
+        div()
+            .id("settings-page")
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_w_0()
+            .overflow_hidden()
+            .p_4()
+            .child(
+                div()
+                    .id("settings-page-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .track_scroll(&self.settings_scroll)
+                    .child(content),
+            )
+    }
+
+    /// 单个审批模式行：当前档高亮只读（accent 边框 + 「当前」徽标），
+    /// 其余档位「选择」按钮（可见 / 键盘 / AX 三路径同 identifier、同
+    /// gate；stale 时禁用）。
+    fn settings_approval_mode_row(
+        &mut self,
+        mode: ApprovalModeSetting,
+        state: &SettingsPermissionsState,
+        writes: bool,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let current = state.approval_mode == Some(mode);
+        let enabled = writes && !current;
+        let mut row = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .min_w_0()
+            .p(px(PROVIDER_CARD_PAD))
+            .rounded(px(4.0))
+            .border_1()
+            .border_color(if current {
+                dark().accent.primary
+            } else {
+                dark().border.subtle
+            })
+            .when(current, |el| el.bg(dark().surface.raised))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        Label::new(mode.label())
+                            .size(font::BODY)
+                            .color(dark().text.primary),
+                    )
+                    .child(
+                        Label::new(mode.description())
+                            .size(font::BODY_SM)
+                            .color(dark().text.secondary),
+                    ),
+            );
+        if current {
+            row = row.child(
+                div().flex_none().child(
+                    Label::new("当前").size(font::XS).color(dark().accent.primary),
+                ),
+            );
+        } else {
+            let id = format!("settings-approval-mode-{}", mode.wire());
+            let focus = self
+                .settings_permissions_focus
+                .entry(id.clone())
+                .or_insert_with(|| cx.focus_handle().tab_stop(true))
+                .clone();
+            let click_id = id.clone();
+            let activate_id = id.clone();
+            let select = Button::new(id)
+                .track_focus(&focus)
+                .variant(ButtonVariant::Raised)
+                .height(px(SETTINGS_ACTION_HEIGHT))
+                .vcenter()
+                .radius(4.0)
+                .bordered()
+                .text_size(font::BODY_SM)
+                .label("选择")
+                .disabled(!enabled)
+                .on_click(cx.listener(move |view, event, _window, cx| {
+                    if view.consume_button_key_click(&click_id, event) {
+                        return;
+                    }
+                    view.on_settings_approval_mode(mode, cx);
+                }))
+                .on_activate(cx.listener(move |view, _event, _window, cx| {
+                    view.note_button_key_activate(&activate_id);
+                    view.on_settings_approval_mode(mode, cx);
+                    cx.stop_propagation();
+                }));
+            row = row.child(div().flex_none().child(select));
+        }
+        row.into_any_element()
+    }
+
     /// 单个 provider 卡片（SET-4）：只读事实行 + descriptor 驱动写动作。
     /// secure 输入按 provider 懒建实体；OAuth 等待详情（URL / code /
     /// 到期）只在 Connecting 且有等待信息时呈现。
@@ -1037,6 +1383,17 @@ impl AppView {
         self.projection.settings_general.writes_enabled(connected)
     }
 
+    /// 权限页写操作 gate（SET-6b）：连接 + 非 stale + 查询已成功。
+    pub(crate) fn settings_permissions_writes_enabled(&self) -> bool {
+        let connected = matches!(
+            self.projection.connection,
+            ConnectionState::Connected { .. }
+        );
+        self.projection
+            .settings_permissions
+            .writes_enabled(connected)
+    }
+
     /// 单个写动作的启用谓词（render 与 AX 同源）：writes 总 gate 之上，
     /// Verify 在 secure 输入为空时禁用（进程内读长度，AX value 仍只发布
     /// 掩码）。
@@ -1227,6 +1584,38 @@ impl AppView {
             return;
         }
         self.controller.set_proxy_url(None);
+        cx.notify();
+    }
+
+    /// 切换审批模式（SET-6b；三路径同源）。入口级复核 gate 与当前值；
+    /// 确认回执由 ApprovalModeConfirmed 收敛，不在此乐观改状态。
+    pub(crate) fn on_settings_approval_mode(
+        &mut self,
+        mode: ApprovalModeSetting,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.settings_permissions_writes_enabled()
+            || self.projection.settings_permissions.approval_mode == Some(mode)
+        {
+            return;
+        }
+        self.controller.set_approval_mode(mode.wire());
+        cx.notify();
+    }
+
+    /// 会话信任切换（SET-6b；三路径同源）。workspace_id 取 Host 查询透出的
+    /// attached id（ADR-048 D1 实现期修订；缺 id fail-closed）；确认回执由
+    /// WorkspaceTrustConfirmed 收敛。
+    pub(crate) fn on_settings_workspace_trust(&mut self, trusted: bool, cx: &mut Context<Self>) {
+        if !self.settings_permissions_writes_enabled()
+            || self.projection.settings_permissions.workspace_trusted == trusted
+        {
+            return;
+        }
+        let Some(workspace_id) = self.projection.settings_permissions.workspace_id.clone() else {
+            return;
+        };
+        self.controller.set_workspace_trust(&workspace_id, trusted);
         cx.notify();
     }
 

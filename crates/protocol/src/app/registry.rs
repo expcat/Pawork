@@ -10,7 +10,7 @@ use crate::GuiCapability;
 
 use super::command::AppCommand;
 use super::query::AppQuery;
-use super::version::{ApiVersion, V1_0, V1_1, V1_2, V1_3, V1_4, V1_5};
+use super::version::{ApiVersion, V1_0, V1_1, V1_2, V1_3, V1_4, V1_5, V1_6};
 
 /// GUI 通道访问规格：是否可用 + 命令级所需能力。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -48,7 +48,7 @@ pub const GUI_INTRINSIC_CAPABILITIES: &[GuiCapability] =
     &[GuiCapability::Events, GuiCapability::Snapshots];
 
 static COMMANDS: &[RegistryEntry] = &[
-    // --- AppCommand（24）---
+    // --- AppCommand（25）---
     RegistryEntry {
         wire_name: "core_initialize",
         gui: GuiChannelAccess {
@@ -73,9 +73,11 @@ static COMMANDS: &[RegistryEntry] = &[
     },
     RegistryEntry {
         wire_name: "workspace_trust",
+        // ADR-048 D3：GUI 开放（会话内信任切换，不写盘）；可用性变化随
+        // 1.6 生效，since 维持词汇首次登记的 V1_0。
         gui: GuiChannelAccess {
-            available: false,
-            required_capability: None,
+            available: true,
+            required_capability: Some(GuiCapability::Approvals),
         },
         headless: None,
         acp: false,
@@ -255,6 +257,18 @@ static COMMANDS: &[RegistryEntry] = &[
         since: V1_5,
     },
     RegistryEntry {
+        wire_name: "set_approval_mode",
+        // ADR-048 D2：会话内生效、不持久化；仅 GUI 开放。
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
+        headless: None,
+        acp: false,
+        idempotent: true,
+        since: V1_6,
+    },
+    RegistryEntry {
         wire_name: "tool_approve",
         gui: GuiChannelAccess {
             available: true,
@@ -324,7 +338,7 @@ static COMMANDS: &[RegistryEntry] = &[
 ];
 
 static QUERIES: &[RegistryEntry] = &[
-    // --- AppQuery（13）---
+    // --- AppQuery（14）---
     RegistryEntry {
         wire_name: "workspace_list",
         gui: GuiChannelAccess {
@@ -471,6 +485,18 @@ static QUERIES: &[RegistryEntry] = &[
         idempotent: true,
         since: V1_5,
     },
+    RegistryEntry {
+        wire_name: "permissions_settings",
+        // ADR-048 D1：审批模式 / 会话信任 / Global 信任三元组；仅 GUI 开放。
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
+        headless: None,
+        acp: false,
+        idempotent: true,
+        since: V1_6,
+    },
 ];
 
 /// 变体 → wire 名的唯一映射（从 gui_host 平移收编；禁止在通道侧再建镜像）。
@@ -494,6 +520,7 @@ pub fn command_wire_name(command: &AppCommand) -> &'static str {
         AppCommand::AuthCancel { .. } => "auth_cancel",
         AppCommand::SetDefaultModel { .. } => "set_default_model",
         AppCommand::SetProxyUrl { .. } => "set_proxy_url",
+        AppCommand::SetApprovalMode { .. } => "set_approval_mode",
         AppCommand::ToolApprove { .. } => "tool_approve",
         AppCommand::GitStage { .. } => "git_stage",
         AppCommand::TerminalCreate { .. } => "terminal_create",
@@ -519,6 +546,7 @@ pub fn query_wire_name(query: &AppQuery) -> &'static str {
         AppQuery::McpList => "mcp_list",
         AppQuery::ProviderAuthStatus { .. } => "provider_auth_status",
         AppQuery::GeneralSettings => "general_settings",
+        AppQuery::PermissionsSettings => "permissions_settings",
     }
 }
 
