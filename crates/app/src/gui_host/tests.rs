@@ -802,10 +802,10 @@ async fn run_start_early_death_without_terminal_still_synthesizes_failed() {
         .map(|envelope| envelope.payload.clone())
         .collect();
     assert_eq!(
-            terminal_states_for(&wire, &run),
-            vec![RunState::Failed],
-            "early death without an engine terminal must still synthesize exactly one RunChanged{{Failed}}: {wire:?}"
-        );
+        terminal_states_for(&wire, &run),
+        vec![RunState::Failed],
+        "early death without an engine terminal must still synthesize exactly one RunChanged{{Failed}}: {wire:?}"
+    );
     assert!(
         has_run_failed_diagnostic(&wire),
         "fallback run.failed diagnostic must survive for early-death paths: {wire:?}"
@@ -2568,6 +2568,18 @@ async fn settings_adapter_for_channel(
     base_url: String,
     backend: Arc<pawork_auth::MemoryBackend>,
 ) -> (GuiHostAdapter, tempfile::TempDir) {
+    settings_adapter_with_default(provider_id, model_id, base_url, backend, None).await
+}
+
+/// 可选在生效配置中注入 default_provider/default_model（SET-5 持久化
+/// 默认项）；None 表示未配置默认项。
+async fn settings_adapter_with_default(
+    provider_id: &str,
+    model_id: &str,
+    base_url: String,
+    backend: Arc<pawork_auth::MemoryBackend>,
+    default: Option<(&str, &str)>,
+) -> (GuiHostAdapter, tempfile::TempDir) {
     let dir = tempfile::tempdir().expect("tempdir");
     let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
         .await
@@ -2580,6 +2592,10 @@ async fn settings_adapter_for_channel(
             base_url: Some(base_url),
             default: None,
         });
+    if let Some((default_provider, default_model)) = default {
+        config.default_provider = Some(default_provider.into());
+        config.default_model = Some(default_model.into());
+    }
     let core = AppCore::from_parts(
         Arc::new(MockProvider::sequence(Vec::new())),
         None,
@@ -2589,6 +2605,132 @@ async fn settings_adapter_for_channel(
     )
     .with_state(config, backend as Arc<dyn pawork_auth::SecretBackend>);
     (GuiHostAdapter::new(Arc::new(core)), dir)
+}
+
+/// 将 HOME 重定向到临时目录，并在 Drop 时恢复原值（含 panic 路径）。
+/// 本文件仅此一处改进程环境；directories 在 Unix 上优先读 HOME，
+/// 必须先恢复再删临时目录，避免其它测试读到已释放路径。
+struct RestoreHome(Option<std::ffi::OsString>);
+
+impl Drop for RestoreHome {
+    fn drop(&mut self) {
+        #[allow(unused_unsafe)]
+        unsafe {
+            match self.0.take() {
+                Some(value) => std::env::set_var("HOME", value),
+                None => std::env::remove_var("HOME"),
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn provider_auth_status_reports_persisted_default_pair() {
+    let backend = Arc::new(pawork_auth::MemoryBackend::new());
+    // 默认项取自生效配置而非 core 当前选中的 provider/model，
+    // 因此注入与 core 选中值不同的默认对。
+    let (adapter, _dir) = settings_adapter_with_default(
+        "glm-coding",
+        "glm-5.2",
+        "http://127.0.0.1:1".into(),
+        backend,
+        Some(("deepseek", "deepseek-chat")),
+    )
+    .await;
+    let status = adapter
+        .query(&query_envelope(AppQuery::ProviderAuthStatus {
+            provider_id: Some(pawork_domain::ProviderId::from("glm-coding")),
+        }))
+        .await
+        .expect("provider auth status");
+    let AppResponse::Data(status) = status else {
+        panic!("ProviderAuthStatus must return Data: {status:?}")
+    };
+    assert_eq!(
+        status["default"],
+        serde_json::json!({
+            "provider_id": "deepseek",
+            "model_id": "deepseek-chat",
+        })
+    );
+}
+
+#[tokio::test]
+async fn provider_auth_status_reports_null_default_when_unconfigured() {
+    let backend = Arc::new(pawork_auth::MemoryBackend::new());
+    let (adapter, _dir) = settings_adapter("http://127.0.0.1:1".into(), backend).await;
+    let status = adapter
+        .query(&query_envelope(AppQuery::ProviderAuthStatus {
+            provider_id: Some(pawork_domain::ProviderId::from("glm-coding")),
+        }))
+        .await
+        .expect("provider auth status");
+    let AppResponse::Data(status) = status else {
+        panic!("ProviderAuthStatus must return Data: {status:?}")
+    };
+    assert!(
+        status["default"].is_null(),
+        "default must be null: {status}"
+    );
+}
+
+#[tokio::test]
+async fn set_default_model_updates_status_default_within_same_session() {
+    // 写盘目标经 HOME 重定向到临时目录，避免污染真实全局配置。
+    // RestoreHome 必须在 tempfile 之后声明：Drop 先恢复 HOME，再删临时目录。
+    let home = tempfile::tempdir().expect("home tempdir");
+    let _restore_home = RestoreHome(std::env::var_os("HOME"));
+    crate::testsupport::set_env("HOME", home.path().to_str().expect("utf-8 home"));
+    let backend = Arc::new(pawork_auth::MemoryBackend::new());
+    let (adapter, _dir) = settings_adapter("http://127.0.0.1:1".into(), backend).await;
+    let provider = pawork_domain::ProviderId::from("glm-coding");
+
+    let before = adapter
+        .query(&query_envelope(AppQuery::ProviderAuthStatus {
+            provider_id: Some(provider.clone()),
+        }))
+        .await
+        .expect("status before set");
+    let AppResponse::Data(before) = before else {
+        panic!("ProviderAuthStatus must return Data: {before:?}")
+    };
+    assert!(before["default"].is_null(), "fresh config has no default");
+
+    let response = adapter
+        .command(&command_envelope(AppCommand::SetDefaultModel {
+            provider_id: provider.clone(),
+            model_id: "glm-5.2".into(),
+        }))
+        .await
+        .expect("set default model");
+    let AppResponse::Data(data) = response else {
+        panic!("SetDefaultModel must return Data: {response:?}")
+    };
+    assert_eq!(data["provider_id"], "glm-coding");
+    assert_eq!(data["model_id"], "glm-5.2");
+
+    // 同会话重查：内存生效配置已同步为新 pair，无需 Host 重启。
+    let after = adapter
+        .query(&query_envelope(AppQuery::ProviderAuthStatus {
+            provider_id: Some(provider),
+        }))
+        .await
+        .expect("status after set");
+    let AppResponse::Data(after) = after else {
+        panic!("ProviderAuthStatus must return Data: {after:?}")
+    };
+    assert_eq!(
+        after["default"],
+        serde_json::json!({ "provider_id": "glm-coding", "model_id": "glm-5.2" })
+    );
+
+    // 写盘确实落在重定向后的全局配置文件。
+    let config_path = pawork_workspace::config::global_config_path().expect("global path");
+    let persisted = std::fs::read_to_string(&config_path).expect("persisted config");
+    assert!(
+        persisted.contains("default_provider = \"glm-coding\""),
+        "persisted config misses default pair: {persisted}"
+    );
 }
 
 #[tokio::test]

@@ -190,7 +190,7 @@ async fn catalog_state(core: &AppCore, channel: &channels::FirstPartyChannel) ->
                 "type": "unavailable",
                 "error": error.to_string(),
                 "fetched_at": Value::Null,
-            })
+            });
         }
     };
     let registry = assemble_registry(core.config(), &id, protocol, Some(channel));
@@ -215,7 +215,7 @@ async fn catalog_state(core: &AppCore, channel: &channels::FirstPartyChannel) ->
                     return json!({
                         "type": "remote",
                         "fetched_at": iso8601_utc(now_millis()),
-                    })
+                    });
                 }
                 Ok(Err(error)) => error.to_string(),
                 Err(_) => "runtime model probe timed out".to_string(),
@@ -286,7 +286,19 @@ pub(crate) async fn provider_auth_status(
             })
         })
         .collect();
-    Ok(AppResponse::Data(json!({ "providers": providers })))
+    // SET-5：顶层透出生效配置（分层合并后）的持久化默认项；
+    // provider/model 任一缺失时诚实输出 null，不虚构半配对。
+    let config = core.config();
+    let default = match (&config.default_provider, &config.default_model) {
+        (Some(default_provider), Some(default_model)) => json!({
+            "provider_id": default_provider,
+            "model_id": default_model,
+        }),
+        _ => Value::Null,
+    };
+    Ok(AppResponse::Data(
+        json!({ "providers": providers, "default": default }),
+    ))
 }
 
 pub(crate) async fn auth_set_api_key(
@@ -640,6 +652,12 @@ pub(crate) async fn set_default_model(
     })?;
     pawork_workspace::config::write_default_model_pair(&path, id, model_id)
         .map_err(|error| GuiHostAdapter::host_error("config_write", error.to_string()))?;
+    // SET-5：写盘成功即同步内存生效配置（短写锁，校验读锁已释放），
+    // 保证同会话重查 provider_auth_status 的 default 即为新值。
+    {
+        let mut core = adapter.core.write().await;
+        core.set_default_model_pair(id, model_id);
+    }
     Ok(AppResponse::Data(json!({
         "provider_id": id,
         "model_id": model_id,

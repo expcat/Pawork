@@ -1,6 +1,6 @@
 # Settings 活动线任务书
 
-> 状态：SET-0～SET-4 已审查提交（SET-4：Kimi 双通道 + xAI 双认证 + Settings 认证写操作 UI）；真实账号验收待凭证。2026-09-01 重置时仓库内不存在旧 `plan/` 文档；本文件是新建后的唯一活动任务书。范围依据 [Settings Feature Spec](../docs/spec/settings.md)，顺序与状态以 [ROADMAP](../ROADMAP.md) 为准。
+> 状态：SET-0～SET-5 已审查提交（SET-5：模型发现/固定回退/默认项，审查修复四处）；真实账号验收待凭证。2026-09-01 重置时仓库内不存在旧 `plan/` 文档；本文件是新建后的唯一活动任务书。范围依据 [Settings Feature Spec](../docs/spec/settings.md)，顺序与状态以 [ROADMAP](../ROADMAP.md) 为准。
 
 ## 1. 开工合同
 
@@ -154,7 +154,9 @@
 `cargo test -p pawork-auth -p pawork-providers -p pawork-app --offline --lib --tests`，
 再运行 `cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`；同一时刻仅一个 Cargo 进程。真实账号验收不得把 token 写进脚本、日志或 fixture。
 
-### SET-5 — 模型发现、固定回退与默认项 ⚪
+### SET-5 — 模型发现、固定回退与默认项 🟢
+
+> 2026-09-02 完成：xAI `list_models` 改走远端 `GET {base}/language-models`（OAuth bearer 与 API key 均可，只保留 output_modalities 含 text 的可运行模型；修正旧版有凭证即误标 remote）；Kimi Code 经取证（官方 kimi-cli 使用 `https://api.kimi.com/coding/v1/models`，SET-D08 关闭为 Accepted）走远端 `/models`，OpenAI 风格 data[] 解析；两者已知 ID 沿用内置元数据、未知 ID 只给保守默认，形状不符/失败/无凭证一律 Err 由 Host 落 fixed_fallback。Z.AI Coding Plan 维持现状（`/models` 端点有官方文档迹象，探测失败自动固定回退）。`provider_auth_status` 顶层透出持久化默认项（生效配置 default pair 或 null）；`set_default_model` 写盘成功后同步内存配置，同会话重查即新默认。Desktop 新增「模型与默认项」区（按 provider 分组、Default 徽标、Set default、页级 Refresh，可见/键盘/AX/入口同 gate），Host 确认后同步 Composer selected_model，失效默认显式提示（目录空抑制误报、未连接/目录确缺才提示），无静默切换。审查（glm_reviewer）修复三处：set_default_model 内存配置不同步（P1）、空目录误报默认失效（P2）、kimi 失败路径测试缺失且 Spec 虚报（P2）。提交前复查再修：同会话 set_default_model 测试用 Drop 守卫恢复 HOME。新增定向测试 8 条（providers 3：xai 解析+过滤/远端失败 Err/kimi 形状不符 Err，另 kimi 解析主路径改造 1；app 3：default 字段有无 2 + set-重查串联 1；desktop 5：default 解析/畸形 fail-closed/确认同步/失效标志/刷新失败保留）。glm-coding 等通用 API-key 通道远端探测为既有行为未改。真实 API 与真窗口验收登记 SET-7。
 
 **目标**：从连接到 Composer 形成可解释目录闭环。
 

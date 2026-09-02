@@ -15,7 +15,10 @@ use crate::ui::components::label::Label;
 use crate::ui::components::panel::Panel;
 use crate::ui::theme::{dark, font, metrics};
 
-use crate::projection::{ConnectionState, OAuthWait, ProviderAuthState, ProviderStatusEntry};
+use crate::projection::{
+    group_models_by_provider, ConnectionState, ModelEntry, OAuthWait, ProviderAuthState,
+    ProviderStatusEntry,
+};
 use crate::ui::text_input::TextInput;
 
 use super::accessibility::dynamic_identifier;
@@ -28,6 +31,8 @@ const SETTINGS_CONTENT_MAX_WIDTH: f32 = 720.0;
 const PROVIDER_CARD_PAD: f32 = 8.0;
 /// 写动作按钮高度（与 Composer 28px 动作槽同节奏）。
 const SETTINGS_ACTION_HEIGHT: f32 = 28.0;
+/// 「模型与默认项」区失效提示（render 与 AX 同源；只声明事实，不切换）。
+pub(crate) const SETTINGS_DEFAULT_UNAVAILABLE_NOTE: &str = "Default model unavailable — the default provider is disconnected or the model is not in its current catalog.";
 
 /// Settings 供应商页状态行（render 与 AX 同源）。stale / loading / error /
 /// 空态独立判定：stale 与 error 可同时出现，空态仅在完全无状态且列表为
@@ -137,6 +142,9 @@ impl SettingsAuthAction {
 pub(crate) enum SettingsControl {
     Action(SettingsAuthAction, String),
     ApiKeyInput(String),
+    /// 设为默认（SET-5）：携带转义后的 "<provider>:<model>"，由 AppView
+    /// 对照 projection.models 还原（未知 fail-closed）。
+    SetDefaultModel(String),
 }
 
 pub(crate) fn settings_api_key_input_identifier(provider_id: &str) -> String {
@@ -146,12 +154,24 @@ pub(crate) fn settings_api_key_input_identifier(provider_id: &str) -> String {
     )
 }
 
+/// 「设为默认」控件 identifier（render 按钮 id / AX 节点 id / 派发键三用；
+/// provider 与 model 以 ':' 拼接后整体转义）。
+pub(crate) fn settings_set_default_identifier(provider_id: &str, model_id: &str) -> String {
+    format!(
+        "{SETTINGS_CONTROL_PREFIX}{}",
+        dynamic_identifier("set-default", &format!("{provider_id}:{model_id}"))
+    )
+}
+
 /// 前缀锚定解析 settings 控件 identifier；provider 部分是转义后的 id，
 /// 由 AppView 对照 provider 列表还原（未知 id fail-closed）。
 pub(crate) fn parse_settings_control(identifier: &str) -> Option<SettingsControl> {
     let rest = identifier.strip_prefix(SETTINGS_CONTROL_PREFIX)?;
     if let Some(provider) = rest.strip_prefix("api-key-input-") {
         return Some(SettingsControl::ApiKeyInput(provider.to_string()));
+    }
+    if let Some(target) = rest.strip_prefix("set-default-") {
+        return Some(SettingsControl::SetDefaultModel(target.to_string()));
     }
     // 已知 action key 集合有限且互不为前缀（均以 '-' 收尾成段），
     // 逐个前缀匹配消解复合 key（connect-oauth 等）。
@@ -318,22 +338,58 @@ impl AppView {
             .min_w_0()
             .max_w(px(SETTINGS_CONTENT_MAX_WIDTH))
             .gap_2();
+        // 页级刷新（SET-5）：重查 provider_auth_status + model_list；断线
+        // 禁用（与 AX / 入口 gate 同源）。
+        let refresh_enabled = connected;
+        let refresh_focus = self.settings_refresh_focus.clone();
+        let refresh = Button::new("settings-refresh")
+            .track_focus(&refresh_focus)
+            .variant(ButtonVariant::Raised)
+            .height(px(SETTINGS_ACTION_HEIGHT))
+            .vcenter()
+            .radius(4.0)
+            .bordered()
+            .text_size(font::BODY_SM)
+            .label("Refresh")
+            .tooltip("Refresh provider status and model catalog")
+            .disabled(!refresh_enabled)
+            .on_click(cx.listener(|view, event, _window, cx| {
+                if view.consume_button_key_click("settings-refresh", event) {
+                    return;
+                }
+                view.on_refresh_settings(cx);
+            }))
+            .on_activate(cx.listener(|view, _event, _window, cx| {
+                view.note_button_key_activate("settings-refresh");
+                view.on_refresh_settings(cx);
+                cx.stop_propagation();
+            }));
         content = content.child(
             div()
                 .flex()
-                .flex_col()
+                .flex_row()
+                .items_start()
+                .gap_2()
                 .child(
-                    div().font_weight(FontWeight::MEDIUM).child(
-                        Label::new("Models & providers")
-                            .size(font::TITLE)
-                            .color(dark().text.primary),
-                    ),
+                    div()
+                        .flex()
+                        .flex_col()
+                        .min_w_0()
+                        .child(
+                            div().font_weight(FontWeight::MEDIUM).child(
+                                Label::new("Models & providers")
+                                    .size(font::TITLE)
+                                    .color(dark().text.primary),
+                            ),
+                        )
+                        .child(
+                            Label::new("Connection status and catalog source for each provider")
+                                .size(font::BODY_SM)
+                                .color(dark().text.secondary),
+                        ),
                 )
-                .child(
-                    Label::new("Connection status and catalog source for each provider")
-                        .size(font::BODY_SM)
-                        .color(dark().text.secondary),
-                ),
+                .child(div().flex_1())
+                .child(div().flex_none().pt_1().child(refresh)),
         );
 
         // 状态行（不只靠颜色区分）：与 AX 共用 provider_status_lines，
@@ -361,6 +417,9 @@ impl AppView {
             }
             content = content.child(cards);
         }
+
+        // SET-5:「模型与默认项」区（供应商列表下方）。
+        content = content.child(self.settings_models_section(cx));
 
         page.child(
             div()
@@ -550,6 +609,141 @@ impl AppView {
         card
     }
 
+    /// 「模型与默认项」区（SET-5）：按 provider 分组列出 projection.models
+    /// 的可运行模型；默认行带徽标，每行提供「设为默认」（gate 与 AX 同
+    /// 源）；默认失效时给出显式说明行，不做任何静默切换。
+    fn settings_models_section(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let default = self.projection.settings_providers.default_model.clone();
+        let unavailable = self.projection.default_model_unavailable();
+        let groups = group_models_by_provider(&self.projection.models);
+        let mut section = div()
+            .id("settings-models")
+            .flex()
+            .flex_col()
+            .min_w_0()
+            .gap_1()
+            .mt_2()
+            .child(
+                div().font_weight(FontWeight::MEDIUM).child(
+                    Label::new("Models & defaults")
+                        .size(font::TITLE)
+                        .color(dark().text.primary),
+                ),
+            )
+            .child(
+                Label::new("Runnable models per provider; the default applies to new runs")
+                    .size(font::BODY_SM)
+                    .color(dark().text.secondary),
+            );
+        if unavailable {
+            section = section.child(status_line(
+                SETTINGS_DEFAULT_UNAVAILABLE_NOTE,
+                dark().semantic.danger_text,
+            ));
+        }
+        if groups.is_empty() {
+            section = section.child(status_line(
+                "No models reported by the host.",
+                dark().text.secondary,
+            ));
+            return section;
+        }
+        for (provider_id, models) in groups {
+            // 组头显示名取 provider 权威清单；目录里出现而清单缺失的
+            // provider 诚实回落原始 id，不臆造。
+            let display_name = self
+                .projection
+                .settings_providers
+                .providers
+                .iter()
+                .find(|entry| entry.provider_id == provider_id)
+                .map(|entry| entry.display_name.clone())
+                .unwrap_or_else(|| provider_id.to_string());
+            let mut group = div().flex().flex_col().min_w_0().gap_1().mt_1().child(
+                div().min_w_0().truncate().child(
+                    Label::new(display_name)
+                        .size(font::BODY)
+                        .color(dark().text.primary),
+                ),
+            );
+            for model in models {
+                group = group.child(self.settings_model_row(&default, &model, cx));
+            }
+            section = section.child(group);
+        }
+        section
+    }
+
+    /// 单个模型行：display_name + id + 默认徽标 +「设为默认」按钮
+    ///（可见 / 键盘 / AX 三路径同 identifier、同 gate）。
+    fn settings_model_row(
+        &mut self,
+        default: &Option<(String, String)>,
+        model: &ModelEntry,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let is_default = default
+            .as_ref()
+            .is_some_and(|(provider, id)| provider == &model.provider_id && id == &model.id);
+        let enabled = self.settings_set_default_enabled(&model.provider_id, &model.id);
+        let id = settings_set_default_identifier(&model.provider_id, &model.id);
+        let focus = self
+            .settings_action_focus
+            .entry(id.clone())
+            .or_insert_with(|| cx.focus_handle().tab_stop(true))
+            .clone();
+        let click_id = id.clone();
+        let click_provider = model.provider_id.clone();
+        let click_model = model.id.clone();
+        let activate_id = id.clone();
+        let activate_provider = model.provider_id.clone();
+        let activate_model = model.id.clone();
+        let button = Button::new(id)
+            .track_focus(&focus)
+            .variant(ButtonVariant::Raised)
+            .height(px(SETTINGS_ACTION_HEIGHT))
+            .vcenter()
+            .radius(4.0)
+            .bordered()
+            .text_size(font::BODY_SM)
+            .label("Set default")
+            .disabled(!enabled)
+            .on_click(cx.listener(move |view, event, _window, cx| {
+                if view.consume_button_key_click(&click_id, event) {
+                    return;
+                }
+                view.on_settings_set_default(click_provider.clone(), click_model.clone(), cx);
+            }))
+            .on_activate(cx.listener(move |view, _event, _window, cx| {
+                view.note_button_key_activate(&activate_id);
+                view.on_settings_set_default(activate_provider.clone(), activate_model.clone(), cx);
+                cx.stop_propagation();
+            }));
+        let mut row = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .min_w_0()
+            .child(
+                div().flex_1().min_w_0().truncate().child(
+                    Label::new(format!("{} · {}", model.display_name, model.id))
+                        .size(font::BODY_SM)
+                        .color(dark().text.secondary),
+                ),
+            );
+        if is_default {
+            row = row.child(
+                div().flex_none().child(
+                    Label::new("Default")
+                        .size(font::XS)
+                        .color(dark().accent.primary),
+                ),
+            );
+        }
+        row.child(div().flex_none().child(button))
+    }
+
     /// 写操作总 gate：断线 / stale 一律禁写（可见 / 键盘 / AX 三路径共用）。
     pub(crate) fn settings_writes_enabled(&self) -> bool {
         matches!(
@@ -577,6 +771,26 @@ impl AppView {
         self.settings_api_key_inputs
             .get(provider_id)
             .is_some_and(|input| !input.read(cx).text().trim().is_empty())
+    }
+
+    /// 「设为默认」启用谓词（SET-5；render / 键盘 / AX / 入口四路径共用）：
+    /// writes 总 gate 之上，要求该 provider 当前已连接、且该行非当前默认。
+    pub(crate) fn settings_set_default_enabled(&self, provider_id: &str, model_id: &str) -> bool {
+        if !self.settings_writes_enabled() {
+            return false;
+        }
+        let state = &self.projection.settings_providers;
+        if state
+            .default_model
+            .as_ref()
+            .is_some_and(|(provider, model)| provider == provider_id && model == model_id)
+        {
+            return false;
+        }
+        state.providers.iter().any(|entry| {
+            entry.provider_id == provider_id
+                && matches!(entry.auth, ProviderAuthState::Connected { .. })
+        })
     }
 
     /// API key 内联编辑器可见性：none / error 常驻；connected 需 Replace
@@ -685,6 +899,27 @@ impl AppView {
         }
     }
 
+    /// 「设为默认」统一入口（SET-5；三路径同源；入口级复核 gate 与模型
+    /// 目录，未知 pair fail-closed）。确认回执由 DefaultModelConfirmed /
+    /// ProviderStatusLoaded 收敛，不在此乐观改状态。
+    pub(crate) fn on_settings_set_default(
+        &mut self,
+        provider_id: String,
+        model_id: String,
+        cx: &mut Context<Self>,
+    ) {
+        let in_catalog = self
+            .projection
+            .models
+            .iter()
+            .any(|model| model.provider_id == provider_id && model.id == model_id);
+        if !in_catalog || !self.settings_set_default_enabled(&provider_id, &model_id) {
+            return;
+        }
+        self.controller.set_default_model(provider_id, model_id);
+        cx.notify();
+    }
+
     fn on_settings_connect_oauth(&mut self, provider_id: String, cx: &mut Context<Self>) {
         // descriptor 复核：provider 必须存在且声明 oauth（未知 id fail-closed）。
         let declares = self
@@ -764,7 +999,8 @@ impl AppView {
         self.settings_api_key_editors.remove(&provider_id);
     }
 
-    /// 按当前 provider 清单懒建 / 回收 secure 输入实体与焦点句柄。
+    /// 按当前 provider 清单懒建 / 回收 secure 输入实体与焦点句柄（含
+    /// 「设为默认」按钮随模型目录的回收）。
     pub(crate) fn ensure_settings_api_key_inputs(&mut self, cx: &mut Context<Self>) {
         let ids: Vec<String> = self
             .projection
@@ -785,6 +1021,12 @@ impl AppView {
             for action in SettingsAuthAction::ALL {
                 action_ids.insert(action.identifier(&entry.provider_id));
             }
+        }
+        for model in &self.projection.models {
+            action_ids.insert(settings_set_default_identifier(
+                &model.provider_id,
+                &model.id,
+            ));
         }
         self.settings_action_focus
             .retain(|id, _| action_ids.contains(id));
@@ -815,6 +1057,22 @@ impl AppView {
             .iter()
             .find(|entry| dynamic_identifier("", &entry.provider_id) == format!("-{escaped}"))
             .map(|entry| entry.provider_id.clone())
+    }
+
+    /// 转义后的 "<provider>:<model>" → 原始 pair（以 projection.models 为
+    /// 权威，未知 fail-closed；不反解转义）。
+    pub(crate) fn settings_default_target_for_escaped(
+        &self,
+        escaped: &str,
+    ) -> Option<(String, String)> {
+        self.projection
+            .models
+            .iter()
+            .find(|model| {
+                dynamic_identifier("", &format!("{}:{}", model.provider_id, model.id))
+                    == format!("-{escaped}")
+            })
+            .map(|model| (model.provider_id.clone(), model.id.clone()))
     }
 
     /// 离开 Settings：清空 secure 缓冲（含 undo 栈）与进行中的本地编辑

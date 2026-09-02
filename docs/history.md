@@ -1035,3 +1035,24 @@ Targeted regressions: projection Removed 重查断言；secure set_text 剔除�
 Full workspace gate: NOT RUN（当前未设置全量门禁）。
 
 ---
+
+## 2026-09-02 — Settings SET-5 模型发现、固定回退与默认项
+
+- providers：xAI `list_models` 改走远端 `GET {base}/language-models`（OAuth bearer / API key 同 Bearer 头），只保留 output_modalities 含 text 的可运行模型，修正旧版有凭证即误标 remote；Kimi Code 走远端 `GET {base}/models`（官方 kimi-cli 同端点，SET-D08 关闭为 Accepted），OpenAI 风格 data[] 解析。两者已知 ID 沿用内置元数据、未知 ID 保守默认（窗口 0 / Chat 基线），形状不符/失败/无凭证一律 Err，由 Host 落 fixed_fallback。Z.AI Coding Plan 维持通用 /models 探测（端点有官方文档迹象）。
+- app：`provider_auth_status` 顶层透出持久化默认项（生效配置 default pair 或 null）；`set_default_model` 写盘成功后短写锁同步内存配置（审查 P1 修复），同会话重查即新默认。
+- desktop：Settings 新增「模型与默认项」区（按 provider 分组、Default 徽标、Set default、页级 Refresh，可见/键盘/AX/入口同 gate）；Host Data 确认后经权威重查同步 Composer selected_model；失效默认显式提示（目录空抑制误报，审查 P2 修复），无静默切换；进入 Settings 即补拉目录。
+- 审查（glm_reviewer）修复三处：P1 内存配置不同步、P2 空目录误报默认失效、P2 kimi 失败路径零测试且 Spec 虚报（补测后一致）。提交前复查再修一处：set_default_model 同会话测试改用 Drop 守卫恢复 HOME，避免断言失败泄漏临时 HOME。提交前再复查：还原 crates/app 与 desktop 中非写入集的 rustfmt 导入重排。
+
+Implemented: xAI/Kimi Code 远端目录与可运行过滤；默认项透出/设置/内存同步；Desktop 模型与默认项区 + Composer 同步。
+
+Validated: `cargo test -p pawork-providers --offline --lib --tests --features xai-oauth,kimi-code`（163+11+16+2）；`cargo test -p pawork-app --offline --lib --tests`（177+6+15+2）；`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`（173）；`git diff --check`。
+
+Targeted regressions: 新增 8 条——xai 远端解析+过滤、xai 远端失败 Err、kimi 解析主路径（改造）、kimi 形状不符 Err；app default 字段有无 2 条 + set-重查串联 1 条；desktop default 解析、畸形 fail-closed、确认同步、失效标志（含空目录抑制）、刷新失败保留旧列表。
+
+Real-world evidence: pending（四家真实 API 与真窗口验收登记 SET-7，待凭证）。
+
+Known gaps: 真实凭证验收、重启/断线复验、AX 卡片几何（SET-3 登记）均在 SET-7。
+
+Full workspace gate: NOT RUN（当前未设置全量门禁）。
+
+---

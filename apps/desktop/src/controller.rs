@@ -19,7 +19,7 @@ use pawork_client::{
 use serde_json::json;
 
 use crate::projection::{
-    parse_provider_status_entries, sessions_in_snapshot, ModelEntry, ProviderStatusEntry,
+    parse_provider_status_entries, sessions_in_snapshot, ModelEntry, SettingsProvidersData,
 };
 
 const PAGE_LIMIT: u32 = 500;
@@ -51,8 +51,16 @@ pub enum ControllerEvent {
         text: String,
     },
     ModelsLoaded(Vec<ModelEntry>),
-    /// provider_auth_status 查询成功（SET-3 只读供应商页）。
-    ProviderStatusLoaded(Vec<ProviderStatusEntry>),
+    /// provider_auth_status 查询成功（SET-3 只读供应商页；SET-5 起随载荷
+    /// 携带 Host 权威默认模型）。
+    ProviderStatusLoaded(SettingsProvidersData),
+    /// set_default_model 获 Host Data 确认（SET-5；echo 携带已确认 pair，
+    /// Composer 据此同步）。随后 controller 重查 provider_auth_status 取回
+    /// 权威 default。
+    DefaultModelConfirmed {
+        provider_id: String,
+        model_id: String,
+    },
     /// auth_start 响应（SET-4）：OAuth 授权等待信息；进度经 AuthChanged
     /// 事件流下发，token 不经过 Desktop。
     AuthStarted {
@@ -1081,6 +1089,91 @@ impl DesktopController {
         true
     }
 
+    /// 设为默认模型（set_default_model，非重放命令）。Data 确认后发
+    /// `DefaultModelConfirmed`（Composer 同步）并重查 provider_auth_status
+    /// 取回权威 default；Error / 传输失败经 OperationFailed 呈现，不动
+    /// UI 现有状态。
+    pub fn set_default_model(&self, provider_id: String, model_id: String) {
+        let Some(client) = self.current_client() else {
+            self.emit_reliable(ControllerEvent::OperationFailed {
+                action: "set default model".into(),
+                reason: "not connected".into(),
+            });
+            return;
+        };
+        let events = self.event_sender();
+        self.runtime.spawn(async move {
+            let command = set_default_model_command(&provider_id, &model_id);
+            let response = match client
+                .command(command, command_source(), actor_identity())
+                .await
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    try_emit(
+                        &events,
+                        ControllerEvent::OperationFailed {
+                            action: "set default model",
+                            reason: error.to_string(),
+                        },
+                    );
+                    return;
+                }
+            };
+            let confirmed = match parse_default_model_confirmation(&response) {
+                Ok(confirmed) => confirmed,
+                Err(reason) => {
+                    try_emit(
+                        &events,
+                        ControllerEvent::OperationFailed {
+                            action: "set default model",
+                            reason,
+                        },
+                    );
+                    return;
+                }
+            };
+            let _ = events
+                .send(ControllerEvent::DefaultModelConfirmed {
+                    provider_id: confirmed.0,
+                    model_id: confirmed.1,
+                })
+                .await;
+            // 确认后重查权威 provider 状态（含 default）；失败走既有
+            // load provider status 通道，UI 保留现有只读列表。
+            match client
+                .query(
+                    provider_auth_status_query(),
+                    command_source(),
+                    actor_identity(),
+                )
+                .await
+            {
+                Ok(response) => match parse_provider_status_response(&response) {
+                    Ok(data) => {
+                        let _ = events
+                            .send(ControllerEvent::ProviderStatusLoaded(data))
+                            .await;
+                    }
+                    Err(reason) => try_emit(
+                        &events,
+                        ControllerEvent::OperationFailed {
+                            action: "load provider status",
+                            reason,
+                        },
+                    ),
+                },
+                Err(error) => try_emit(
+                    &events,
+                    ControllerEvent::OperationFailed {
+                        action: "load provider status",
+                        reason: error.to_string(),
+                    },
+                ),
+            }
+        });
+    }
+
     /// 发起 OAuth 授权（auth_start）。响应只携带 verification_url /
     /// user_code / expires_at，进度经 AuthChanged 事件收敛。
     pub fn auth_start(&self, provider_id: String) {
@@ -1551,6 +1644,14 @@ fn auth_remove_command(provider_id: &str) -> AppCommand {
     .expect("auth_remove command shape is frozen")
 }
 
+fn set_default_model_command(provider_id: &str, model_id: &str) -> AppCommand {
+    serde_json::from_value(json!({
+        "method": "set_default_model",
+        "params": { "provider_id": provider_id, "model_id": model_id }
+    }))
+    .expect("set_default_model command shape is frozen")
+}
+
 fn forked_session_id(response: &AppResponseEnvelope) -> Option<String> {
     match &response.response {
         AppResponse::Data(data) => data
@@ -1736,9 +1837,23 @@ fn parse_models(response: &AppResponseEnvelope) -> Result<Vec<ModelEntry>, Strin
 /// `{"providers":[…]}`，条目解析在 projection（纯状态可单测）。
 fn parse_provider_status_response(
     response: &AppResponseEnvelope,
-) -> Result<Vec<ProviderStatusEntry>, String> {
+) -> Result<SettingsProvidersData, String> {
     match &response.response {
         AppResponse::Data(data) => parse_provider_status_entries(data),
+        AppResponse::Error(_) => Err("server returned an error response".into()),
+        other => Err(format!("unexpected response: {other:?}")),
+    }
+}
+
+/// 解包 set_default_model 响应：Data 携带 Host 确认的 provider/model pair。
+fn parse_default_model_confirmation(
+    response: &AppResponseEnvelope,
+) -> Result<(String, String), String> {
+    match &response.response {
+        AppResponse::Data(data) => Ok((
+            required_str(data, "provider_id")?,
+            required_str(data, "model_id")?,
+        )),
         AppResponse::Error(_) => Err("server returned an error response".into()),
         other => Err(format!("unexpected response: {other:?}")),
     }

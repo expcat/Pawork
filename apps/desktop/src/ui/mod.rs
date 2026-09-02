@@ -524,6 +524,8 @@ pub struct AppView {
     settings_focus: FocusHandle,
     /// Settings Rail「← Back to workspace」焦点（进入 Settings 后首停）。
     settings_back_focus: FocusHandle,
+    /// SET-5：Settings 页级「刷新」按钮焦点（provider 状态 + 模型目录）。
+    settings_refresh_focus: FocusHandle,
     /// Settings 内容滚动句柄（供应商列表可能超出视口）。
     settings_scroll: ScrollHandle,
     /// SET-4：按 provider 懒建的 API key secure 输入实体（明文只留在
@@ -715,6 +717,7 @@ impl AppView {
                 .tab_stop(true)
                 .tab_index(RAIL_TAB_INDEX_SETTINGS),
             settings_back_focus: cx.focus_handle().tab_stop(true),
+            settings_refresh_focus: cx.focus_handle().tab_stop(true),
             settings_scroll: ScrollHandle::new(),
             settings_api_key_inputs: HashMap::new(),
             settings_api_key_editors: HashSet::new(),
@@ -1164,7 +1167,11 @@ impl AppView {
                 }
                 // SET-4：Succeeded / Removed 落地后重查一次
                 // provider_auth_status（目录与 env 残留交权威裁决）。
-                if self.projection.settings_providers.take_pending_status_refresh() {
+                if self
+                    .projection
+                    .settings_providers
+                    .take_pending_status_refresh()
+                {
                     self.refresh_provider_status();
                 }
             }
@@ -1375,9 +1382,11 @@ impl AppView {
             }
             ControllerEvent::ModelsLoaded(models) => {
                 self.projection.set_models(models);
+                // 模型目录变化后回收已消失模型的「设为默认」焦点句柄。
+                self.ensure_settings_api_key_inputs(cx);
             }
-            ControllerEvent::ProviderStatusLoaded(providers) => {
-                self.projection.settings_providers.apply_loaded(providers);
+            ControllerEvent::ProviderStatusLoaded(data) => {
+                self.projection.settings_providers.apply_loaded(data);
                 // SET-4：按权威清单懒建 / 回收 secure 输入与按钮焦点句柄。
                 self.ensure_settings_api_key_inputs(cx);
                 // 迟到响应不丢断线标注：旧连接的回执在断线后到达时，
@@ -1386,6 +1395,15 @@ impl AppView {
                     let stale = format!("connection lost · {reason}");
                     self.projection.settings_providers.mark_stale(&stale);
                 }
+            }
+            ControllerEvent::DefaultModelConfirmed {
+                provider_id,
+                model_id,
+            } => {
+                // Host Data 确认：Composer 同步到已确认默认（会话 / 草稿 /
+                // Run 不动）；权威 default 由 controller 随后的
+                // provider_auth_status 重查落地。
+                self.projection.confirm_default_model(provider_id, model_id);
             }
             ControllerEvent::AuthStarted {
                 provider_id,
@@ -2336,14 +2354,17 @@ impl AppView {
         self.start_connect(cx);
     }
 
-    /// 进入 Settings（SET-3）：只切路由 + 拉取只读供应商状态。工作台
-    /// 组件不渲染但状态全部保留在 AppView 字段；Run 不受影响。
+    /// 进入 Settings（SET-3）：只切路由 + 拉取只读供应商状态与模型目录。
+    /// 工作台组件不渲染但状态全部保留在 AppView 字段；Run 不受影响。
     fn on_open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.route = AppRoute::Settings;
         // 路由切换时关闭任何打开的菜单，Settings 壳内没有菜单宿主。
         self.open_menu = None;
         self.menu_highlight = None;
         self.refresh_provider_status();
+        // 与页级 Refresh 对称：进入即补拉模型目录（断线时 controller
+        // 内部 no-op），「模型与默认项」区与失效判定有目录数据可用。
+        self.controller.load_models();
         window.focus(&self.settings_back_focus);
         cx.notify();
     }
@@ -2369,6 +2390,21 @@ impl AppView {
                 .settings_providers
                 .mark_stale("not connected");
         }
+    }
+
+    /// Settings 页级刷新（SET-5）：重查 provider_auth_status + model_list；
+    /// 失败保留现有列表并显示错误（复用 stale / OperationFailed 通道，
+    /// 不新增缓存）。入口复核连接态，与可见按钮 gate 同源。
+    fn on_refresh_settings(&mut self, cx: &mut Context<Self>) {
+        if !matches!(
+            self.projection.connection,
+            ConnectionState::Connected { .. }
+        ) {
+            return;
+        }
+        self.refresh_provider_status();
+        self.controller.load_models();
+        cx.notify();
     }
 
     fn on_send_message(&mut self, _: &SendMessage, window: &mut Window, cx: &mut Context<Self>) {

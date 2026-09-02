@@ -354,6 +354,23 @@ pub struct ModelEntry {
     pub context_window_tokens: Option<u64>,
 }
 
+/// Settings「模型与默认项」区分组：按 provider 聚合可运行模型（保持目录
+/// 首现顺序），render 与 AX 同源。返回 owned 数据，避免 UI 构建期间的
+/// 借用冲突。
+pub fn group_models_by_provider(models: &[ModelEntry]) -> Vec<(String, Vec<ModelEntry>)> {
+    let mut groups: Vec<(String, Vec<ModelEntry>)> = Vec::new();
+    for model in models {
+        match groups
+            .iter_mut()
+            .find(|(provider, _)| *provider == model.provider_id)
+        {
+            Some((_, entries)) => entries.push(model.clone()),
+            None => groups.push((model.provider_id.clone(), vec![model.clone()])),
+        }
+    }
+    groups
+}
+
 /// SET-3 只读供应商页：Host `provider_auth_status` 的单个 provider 认证
 /// 状态投影。只承载 Host 权威事实（wire 形状见 gui_host
 /// handlers/settings.rs），不含写操作状态。
@@ -387,6 +404,14 @@ pub struct ProviderStatusEntry {
     pub auth_methods: Vec<String>,
     pub auth: ProviderAuthState,
     pub catalog: ProviderCatalogState,
+}
+
+/// `provider_auth_status` 的 `AppResponse::Data` 投影：供应商清单 + Host
+/// 权威默认模型（顶层 `default`；`None` = 未设置默认）。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SettingsProvidersData {
+    pub providers: Vec<ProviderStatusEntry>,
+    pub default_model: Option<(String, String)>,
 }
 
 fn auth_method_display_name(method: &str) -> &str {
@@ -453,6 +478,9 @@ pub struct SettingsProvidersState {
     pub stale_reason: Option<String>,
     pub error: Option<String>,
     pub providers: Vec<ProviderStatusEntry>,
+    /// Host 权威默认 provider/model（provider_auth_status 顶层 default；
+    /// 随 apply_loaded 整体替换，无默认即 None）。
+    pub default_model: Option<(String, String)>,
     /// 进行中的 OAuth 授权等待（auth_start 响应携带的 URL / user code /
     /// 到期；Desktop 只显示，不接触 token）。终态 AuthChanged 清除。
     pub oauth_waits: HashMap<String, OAuthWait>,
@@ -478,14 +506,15 @@ impl SettingsProvidersState {
     }
 
     /// 新数据到达：清 stale / error / loading，替换列表。
-    pub fn apply_loaded(&mut self, providers: Vec<ProviderStatusEntry>) {
+    pub fn apply_loaded(&mut self, data: SettingsProvidersData) {
         self.loading = false;
         self.stale_reason = None;
         self.error = None;
         self.auth_notes.clear();
         self.auth_replacing_connected.clear();
         self.pending_status_refresh = false;
-        self.providers = providers;
+        self.providers = data.providers;
+        self.default_model = data.default_model;
     }
 
     /// 查询失败：保留旧列表供只读（不伪造空态），记录失败原因。
@@ -674,12 +703,37 @@ pub fn parse_auth_change(state: &Value) -> Result<AuthChange, String> {
 }
 
 /// 解析 Host `provider_auth_status` 的 `AppResponse::Data` 载荷
-///（`{"providers":[…]}`）。缺字段 / 未知状态 fail-closed，不静默丢条目。
-pub fn parse_provider_status_entries(data: &Value) -> Result<Vec<ProviderStatusEntry>, String> {
+///（`{"providers":[…], "default": …}`）。缺字段 / 未知状态 fail-closed，
+/// 不静默丢条目或默认项。
+pub fn parse_provider_status_entries(data: &Value) -> Result<SettingsProvidersData, String> {
     let Some(list) = data.get("providers").and_then(Value::as_array) else {
         return Err("provider status missing providers array".into());
     };
-    list.iter().map(parse_provider_status_entry).collect()
+    let providers = list
+        .iter()
+        .map(parse_provider_status_entry)
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(SettingsProvidersData {
+        providers,
+        default_model: parse_default_model(data)?,
+    })
+}
+
+/// 顶层 `default`：null = 未设置默认；对象须同时携带字符串
+/// `provider_id` / `model_id`。缺字段 / 非法形状 fail-closed（整载荷
+/// 报错，不静默丢默认项）。
+fn parse_default_model(data: &Value) -> Result<Option<(String, String)>, String> {
+    let value = data
+        .get("default")
+        .ok_or_else(|| "provider status missing default".to_string())?;
+    if value.is_null() {
+        return Ok(None);
+    }
+    let provider_id = json_str(value, "provider_id")
+        .map_err(|_| "default missing string field provider_id".to_string())?;
+    let model_id = json_str(value, "model_id")
+        .map_err(|_| "default missing string field model_id".to_string())?;
+    Ok(Some((provider_id, model_id)))
 }
 
 fn parse_provider_status_entry(entry: &Value) -> Result<ProviderStatusEntry, String> {
@@ -726,7 +780,7 @@ fn parse_provider_status_entry(entry: &Value) -> Result<ProviderStatusEntry, Str
         other => {
             return Err(format!(
                 "provider {provider_id} unknown catalog type {other}"
-            ))
+            ));
         }
     };
     // 认证方式 fail-closed：缺失 / 非数组 / 含非字符串项即报错，不静默
@@ -1549,6 +1603,39 @@ impl DesktopProjection {
         self.models = models;
     }
 
+    /// set_default_model 获 Host Data 确认：Composer 同步到已确认默认
+    ///（清 pending 切换；不改当前会话 / 草稿 / Run）。
+    pub fn confirm_default_model(&mut self, provider_id: String, model_id: String) {
+        self.selected_model = Some((provider_id, model_id));
+        self.pending_model = None;
+    }
+
+    /// Settings「模型与默认项」失效判定：默认 provider 未连接，或默认
+    /// model 不在该 provider 当前可运行目录（projection.models）。无默认
+    /// 返回 false；目录为空（尚未成功加载或 model_list 失败）时无法判定，
+    /// 抑制提示不误报；只判定显式提示，不做任何静默切换。
+    pub fn default_model_unavailable(&self) -> bool {
+        let Some((provider_id, model_id)) = &self.settings_providers.default_model else {
+            return false;
+        };
+        let connected = self.settings_providers.providers.iter().any(|entry| {
+            entry.provider_id == *provider_id
+                && matches!(entry.auth, ProviderAuthState::Connected { .. })
+        });
+        if !connected {
+            return true;
+        }
+        // 目录为空 = 无成功目录数据：区分「无目录数据」与「目录明确
+        // 不含」，不误报失效。
+        if self.models.is_empty() {
+            return false;
+        }
+        !self
+            .models
+            .iter()
+            .any(|model| model.provider_id == *provider_id && model.id == *model_id)
+    }
+
     pub fn workspace_name(&self, workspace_id: Option<&str>) -> String {
         match workspace_id {
             None => UNASSIGNED_PROJECT.into(),
@@ -2236,9 +2323,11 @@ mod tests {
                         "fetched_at": null
                     }
                 }
-            ]
+            ],
+            "default": null
         });
-        let entries = parse_provider_status_entries(&data).expect("parse provider status");
+        let loaded = parse_provider_status_entries(&data).expect("parse provider status");
+        let entries = &loaded.providers;
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].auth_methods_label(), "API key");
         assert_eq!(entries[0].auth_label(), "Connected · API key · sk-…ab12");
@@ -2252,19 +2341,22 @@ mod tests {
             entries[1].catalog_label(),
             "Built-in catalog fallback · models.dev@v1"
         );
+        assert_eq!(loaded.default_model, None);
     }
 
     #[test]
     fn provider_status_entries_fail_closed_on_malformed_payload() {
+        // default 合法（null），钉住错误只来自 providers 侧。
+        let payload = |providers: Value| json!({ "providers": providers, "default": null });
         // 缺 providers 数组：整体 fail-closed。
-        assert!(parse_provider_status_entries(&json!({ "providers": "nope" })).is_err());
+        assert!(parse_provider_status_entries(&payload(json!("nope"))).is_err());
         // 单条缺 auth / 未知 auth 状态：不静默丢条目。
-        assert!(parse_provider_status_entries(&json!({ "providers": [
+        assert!(parse_provider_status_entries(&payload(json!([
             { "provider_id": "glm-coding", "display_name": "Z.AI", "endpoint_label": "e" }
-        ] }))
+        ])))
         .is_err());
         // auth_methods 缺失 / 非数组 / 含非字符串项：fail-closed，不默认空表。
-        assert!(parse_provider_status_entries(&json!({ "providers": [
+        assert!(parse_provider_status_entries(&payload(json!([
             {
                 "provider_id": "glm-coding",
                 "display_name": "Z.AI",
@@ -2272,9 +2364,9 @@ mod tests {
                 "auth": { "type": "none" },
                 "catalog": { "type": "remote", "fetched_at": "t" }
             }
-        ] }))
+        ])))
         .is_err());
-        assert!(parse_provider_status_entries(&json!({ "providers": [
+        assert!(parse_provider_status_entries(&payload(json!([
             {
                 "provider_id": "glm-coding",
                 "display_name": "Z.AI",
@@ -2283,9 +2375,9 @@ mod tests {
                 "auth": { "type": "none" },
                 "catalog": { "type": "remote", "fetched_at": "t" }
             }
-        ] }))
+        ])))
         .is_err());
-        assert!(parse_provider_status_entries(&json!({ "providers": [
+        assert!(parse_provider_status_entries(&payload(json!([
             {
                 "provider_id": "glm-coding",
                 "display_name": "Z.AI",
@@ -2293,25 +2385,174 @@ mod tests {
                 "auth": { "type": "mystery" },
                 "catalog": { "type": "remote", "fetched_at": "t" }
             }
-        ] }))
+        ])))
         .is_err());
+    }
+
+    #[test]
+    fn provider_status_default_parses_host_default() {
+        // 主路径：default 对象 → Some(pair)；null → None（Host 权威语义）。
+        let mut data = json!({
+            "default": { "provider_id": "kimi", "model_id": "kimi-k2-0905-preview" }
+        });
+        data["providers"] = json!([]);
+        let loaded = parse_provider_status_entries(&data).expect("parse default");
+        assert_eq!(
+            loaded.default_model,
+            Some(("kimi".to_string(), "kimi-k2-0905-preview".to_string()))
+        );
+        let mut none = json!({ "default": null });
+        none["providers"] = json!([]);
+        assert_eq!(
+            parse_provider_status_entries(&none)
+                .expect("parse null default")
+                .default_model,
+            None
+        );
+    }
+
+    #[test]
+    fn provider_status_default_fails_closed_on_malformed_payload() {
+        let payload = |default: Value| json!({ "providers": [], "default": default });
+        // 缺顶层 default：整体 fail-closed，不静默当 null。
+        assert!(parse_provider_status_entries(&json!({ "providers": [] })).is_err());
+        // 非对象非 null / 缺 model_id / 字段非字符串：同样 fail-closed。
+        assert!(parse_provider_status_entries(&payload(json!("kimi"))).is_err());
+        assert!(parse_provider_status_entries(&payload(json!({ "provider_id": "kimi" }))).is_err());
+        assert!(parse_provider_status_entries(&payload(json!({
+            "provider_id": "kimi",
+            "model_id": 7
+        })))
+        .is_err());
+    }
+
+    #[test]
+    fn set_default_confirmation_syncs_composer_projection() {
+        let mut projection = DesktopProjection::default();
+        // 确认后重查 provider_auth_status：权威 default 先落地 Settings 状态。
+        projection
+            .settings_providers
+            .apply_loaded(SettingsProvidersData {
+                providers: Vec::new(),
+                default_model: Some(("kimi".to_string(), "kimi-k2-0905-preview".to_string())),
+            });
+        projection.set_pending_model("glm-coding".into(), "glm-4.7".into());
+        // Host Data 确认到达：selected_model 同步为已确认默认，pending 清空
+        //（Composer 同步；不改会话 / 草稿 / Run）。
+        projection.confirm_default_model("kimi".into(), "kimi-k2-0905-preview".into());
+        assert_eq!(
+            projection.selected_model,
+            Some(("kimi".to_string(), "kimi-k2-0905-preview".to_string()))
+        );
+        assert_eq!(projection.pending_model, None);
+        assert_eq!(
+            projection.effective_model(),
+            Some(&("kimi".to_string(), "kimi-k2-0905-preview".to_string()))
+        );
+        assert_eq!(
+            projection.settings_providers.default_model,
+            projection.selected_model
+        );
+    }
+
+    #[test]
+    fn default_model_unavailable_flag_tracks_connection_and_catalog() {
+        let mut projection = DesktopProjection::default();
+        let entry = |auth: ProviderAuthState| ProviderStatusEntry {
+            provider_id: "kimi".into(),
+            display_name: "Kimi".into(),
+            endpoint_label: "https://api.kimi.com".into(),
+            auth_methods: vec!["oauth".into()],
+            auth,
+            catalog: ProviderCatalogState::Unavailable {
+                error: "offline".into(),
+            },
+        };
+        // 目录为空（尚未加载 / model_list 失败）：即使已连接且有默认，
+        // 也区分「无目录数据」与「目录明确不含」，不误报失效。
+        projection.settings_providers.providers = vec![entry(ProviderAuthState::Connected {
+            method: "oauth".into(),
+            masked_credential: None,
+        })];
+        projection.settings_providers.default_model =
+            Some(("kimi".into(), "kimi-k2-0905-preview".into()));
+        assert!(!projection.default_model_unavailable());
+        projection.set_models(vec![ModelEntry {
+            provider_id: "kimi".into(),
+            id: "kimi-k2-0905-preview".into(),
+            display_name: "Kimi K2".into(),
+            context_window_tokens: None,
+        }]);
+        // 无默认：不误报失效。
+        projection.settings_providers.default_model = None;
+        assert!(!projection.default_model_unavailable());
+        // 默认 provider 未连接：显式失效。
+        projection
+            .settings_providers
+            .apply_loaded(SettingsProvidersData {
+                providers: vec![entry(ProviderAuthState::NotConnected)],
+                default_model: Some(("kimi".into(), "kimi-k2-0905-preview".into())),
+            });
+        assert!(projection.default_model_unavailable());
+        // 已连接但默认 model 不在该 provider 当前目录：显式失效。
+        projection.settings_providers.providers[0].auth = ProviderAuthState::Connected {
+            method: "oauth".into(),
+            masked_credential: None,
+        };
+        projection.settings_providers.default_model = Some(("kimi".into(), "kimi-latest".into()));
+        assert!(projection.default_model_unavailable());
+        // 已连接且在当前目录：可用。
+        projection.settings_providers.default_model =
+            Some(("kimi".into(), "kimi-k2-0905-preview".into()));
+        assert!(!projection.default_model_unavailable());
+    }
+
+    #[test]
+    fn provider_status_refresh_failure_keeps_last_list_and_default() {
+        // 页级刷新失败（OperationFailed → apply_failed）：保留旧列表与
+        // 默认项，只记录错误，不伪造空态。
+        let mut state = SettingsProvidersState::default();
+        state.apply_loaded(SettingsProvidersData {
+            providers: vec![ProviderStatusEntry {
+                provider_id: "kimi".into(),
+                display_name: "Kimi".into(),
+                endpoint_label: "https://api.kimi.com".into(),
+                auth_methods: vec!["oauth".into()],
+                auth: ProviderAuthState::NotConnected,
+                catalog: ProviderCatalogState::Unavailable {
+                    error: "offline".into(),
+                },
+            }],
+            default_model: Some(("kimi".to_string(), "kimi-k2-0905-preview".to_string())),
+        });
+        state.apply_failed("query failed");
+        assert_eq!(state.providers.len(), 1);
+        assert_eq!(
+            state.default_model,
+            Some(("kimi".to_string(), "kimi-k2-0905-preview".to_string()))
+        );
+        assert_eq!(state.error.as_deref(), Some("query failed"));
+        assert!(!state.loading);
     }
 
     fn settings_state_with_provider(auth_methods: &[&str]) -> SettingsProvidersState {
         let mut state = SettingsProvidersState::default();
-        state.apply_loaded(vec![ProviderStatusEntry {
-            provider_id: "kimi".into(),
-            display_name: "Kimi".into(),
-            endpoint_label: "https://api.moonshot.cn".into(),
-            auth_methods: auth_methods
-                .iter()
-                .map(|method| method.to_string())
-                .collect(),
-            auth: ProviderAuthState::NotConnected,
-            catalog: ProviderCatalogState::Unavailable {
-                error: "offline".into(),
-            },
-        }]);
+        state.apply_loaded(SettingsProvidersData {
+            providers: vec![ProviderStatusEntry {
+                provider_id: "kimi".into(),
+                display_name: "Kimi".into(),
+                endpoint_label: "https://api.moonshot.cn".into(),
+                auth_methods: auth_methods
+                    .iter()
+                    .map(|method| method.to_string())
+                    .collect(),
+                auth: ProviderAuthState::NotConnected,
+                catalog: ProviderCatalogState::Unavailable {
+                    error: "offline".into(),
+                },
+            }],
+            default_model: None,
+        });
         state
     }
 
@@ -2434,7 +2675,10 @@ mod tests {
         }
         // 下一次权威状态到达即清空瞬态反馈。
         let providers = state.providers.clone();
-        state.apply_loaded(providers);
+        state.apply_loaded(SettingsProvidersData {
+            providers,
+            default_model: None,
+        });
         assert!(state.auth_notes.is_empty());
     }
 
@@ -2514,7 +2758,11 @@ mod tests {
         };
         state.begin_auth_flow("kimi");
         let providers = state.providers.clone();
-        state.apply_loaded(providers);
+        let default_model = state.default_model.clone();
+        state.apply_loaded(SettingsProvidersData {
+            providers,
+            default_model,
+        });
         assert!(state.auth_replacing_connected.is_empty());
     }
 

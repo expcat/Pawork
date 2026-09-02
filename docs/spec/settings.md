@@ -29,8 +29,8 @@
 | Provider 注册 | [channel registry](../../crates/providers/src/channels/registry.rs) 八行：chatgpt/xai/glm-coding/opencode-go/qwen-token-plan/deepseek/kimi-platform/kimi-code；SET-4 起 `auth_methods` 为数据字段，支持同供应商多认证方法 | — | 已实现 |
 | API-key 通道 | [api_key.rs](../../crates/providers/src/channels/api_key.rs) 可请求 OpenAI-compatible `/models`；SET-2 增 `verify_api_key` 写前验证与 `auth_set_api_key` 非重放命令（verify-then-replace）；SET-4 起 xAI adapter 接受 API key，桌面端写操作已接通 | — | 已实现（真实账号验收 pending） |
 | OAuth | AppCore/auth 已有 OAuth 基础；xAI Device Flow 已接入；SET-2 起 `AuthStart`/`AuthCancel`/`AuthRemove` 对 GUI 开放并有 handler，进度经 `AuthChanged` 六态下发；SET-4 起 Kimi Code Device Flow 接入（[kimi.rs](../../crates/providers/src/channels/kimi.rs)），桌面端等待/取消 UI 已接通 | — | 已实现（真实账号验收 pending） |
-| 模型目录 | `ModelList` query 已对 GUI 开放；[provider_assembly.rs](../../crates/app/src/provider_assembly.rs) 已实现远端 probe 失败后静态回退；SET-2 起 `provider_auth_status` 返回目录三态（remote / fixed_fallback / unavailable） | xAI 当前只返回固定目录；显式刷新 UI 未做（SET-3/5） | Host 侧已实现，Desktop 未接 |
-| 默认 provider/model | 配置已有 default provider/model 语义；SET-2 增 Global 层 `write_default_model_pair` 与 `set_default_model` 命令（校验可运行目录后落盘） | Desktop 变更入口与重启验收未做（SET-3/5） | Host 侧已实现，Desktop 未接 |
+| 模型目录 | `ModelList` query 已对 GUI 开放；[provider_assembly.rs](../../crates/app/src/provider_assembly.rs) 已实现远端 probe 失败后静态回退；SET-2 起 `provider_auth_status` 返回目录三态（remote / fixed_fallback / unavailable）；SET-5 起 xAI 走远端 `/language-models`（按 output_modalities 过滤可运行模型）、Kimi Code 走远端 `/models`（与官方 kimi-cli 同端点），未知 ID 只给保守默认；Desktop 已有来源/时间/错误标签与显式刷新 | — | 已实现（真实 API 验收 pending） |
+| 默认 provider/model | 配置已有 default provider/model 语义；SET-2 增 Global 层 `write_default_model_pair` 与 `set_default_model` 命令（校验可运行目录后落盘）；SET-5 起 `provider_auth_status` 透出持久化默认项、写盘后同会话内存同步，Desktop「模型与默认项」区可设默认并在 Host 确认后同步 Composer，失效显式提示不静默切换 | 重启恢复真窗口验收待 SET-7 | 已实现（真实环境验收 pending） |
 | Secret 存储 | auth backend 使用独立 `auth.json`、原子写和权限收紧；config 排除 `api_key`；ADR-046 拍板 `ApiKeySecret` 非重放单帧内存传递，SET-4 Desktop secure input 只发掩码、明文不进 projection/日志 | — | 已实现 |
 
 归档或历史实现不能代替当前生产路径。本功能只复用当前包，不从 V1/V2 复活账户池或设置库存。
@@ -221,5 +221,5 @@ Settings 沿用参考设计的 1440×1024 深色语言和 8px 节奏，不另起
 | SET-D05 | 模型目录优先级 | 已认证远端优先，固定目录有版本标记回退，第三方不作运行时权限源 | Accepted |
 | SET-D06 | 发布是否进入计划 | 不进入；由用户后续单独指定 | Accepted |
 | SET-D07 | API key 的 GUI wire/ledger 形状 | ADR-046 在 golden 前拍板 | Open / 硬前置 |
-| SET-D08 | Kimi OAuth 模型目录 contract | 实现时对官方端点取证；不稳定则固定回退 | Open |
+| SET-D08 | Kimi OAuth 模型目录 contract | SET-5 取证：官方 kimi-cli 实际请求 `https://api.kimi.com/coding/v1/models`（OpenAI 风格 `data[]`），按远端优先实现；形状不符/失败一律 Err，由 Host 落版本固定回退 | Accepted |
 | SET-D09 | Z.AI General API preset | 首期不开放，只做 Coding Plan；后续按需求再决定 | Deferred |

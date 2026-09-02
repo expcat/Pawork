@@ -169,7 +169,9 @@ pub enum AppError {
     UnknownProvider { id: String },
     #[error("provider `{id}` 未配置 base_url")]
     MissingBaseUrl { id: String },
-    #[error("provider {provider} 缺少凭证：pawork auth set-key {provider}（auth 文件）或环境变量 {env_name}")]
+    #[error(
+        "provider {provider} 缺少凭证：pawork auth set-key {provider}（auth 文件）或环境变量 {env_name}"
+    )]
     MissingCredential { provider: String, env_name: String },
     #[error("provider {0} 缺少 OAuth 凭证：pawork auth login {0}")]
     OAuthLoginRequired(String),
@@ -978,6 +980,14 @@ impl AppCore {
 
     pub fn config(&self) -> &PaworkConfig {
         &self.config
+    }
+
+    /// SET-5：`set_default_model` 写盘成功后同步内存生效配置的默认对。
+    /// 只改 config 两个默认字段，不触发 reload/watch，也不动当前活跃
+    /// provider/model。
+    pub(crate) fn set_default_model_pair(&mut self, provider_id: &str, model_id: &str) {
+        self.config.default_provider = Some(provider_id.to_string());
+        self.config.default_model = Some(model_id.to_string());
     }
 
     pub fn auth_backend(&self) -> &Arc<dyn SecretBackend> {
