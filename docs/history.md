@@ -1074,4 +1074,6 @@ Real-world evidence: pending（真窗口与代理实机验收登记 SET-7）。
 
 Known gaps: 输入框 stale 仅视觉禁用（P3，草稿不可持久化）；真实代理环境验收在 SET-7。
 
+提交前复查（未推送审查）修复：选中 Settings 导航项补 track_focus / AX focused，避免切页后键盘焦点落空；Save 失败状态行与 load 失败文案分开（不再显示 Could not load）；HOME_ENV_LOCK 毒化走 into_inner；workspace Spec 补记 CONFIG_WRITE_LOCK。
+
 Full workspace gate: NOT RUN（当前未设置全量门禁）。

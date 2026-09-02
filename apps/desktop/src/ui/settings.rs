@@ -71,7 +71,8 @@ pub(super) fn provider_status_lines(
     lines
 }
 
-/// Settings 通用页状态行（render 与 AX 同源）。
+/// Settings 通用页状态行（render 与 AX 同源）。error 文案由事件消费侧
+/// 按动作区分（load vs save），此处原样展示。
 pub(super) fn general_status_lines(
     state: &crate::projection::SettingsGeneralState,
 ) -> Vec<(&'static str, String)> {
@@ -85,10 +86,7 @@ pub(super) fn general_status_lines(
         lines.push(("loading", "Loading…".to_string()));
     }
     if let Some(error) = &state.error {
-        lines.push((
-            "error",
-            format!("Could not load general settings · {error}"),
-        ));
+        lines.push(("error", error.clone()));
     }
     lines
 }
@@ -361,9 +359,17 @@ impl AppView {
         page: SettingsPage,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
+        let focus = if page == SettingsPage::General {
+            self.settings_nav_general_focus.clone()
+        } else {
+            self.settings_nav_providers_focus.clone()
+        };
         if selected {
             return div()
                 .id(id)
+                .tab_stop(true)
+                .track_focus(&focus)
+                .focus(|style| style.border_1().border_color(dark().accent.primary))
                 .mt_2()
                 .w_full()
                 .h(px(metrics::RAIL_TOP_ROW_HEIGHT))
@@ -381,11 +387,6 @@ impl AppView {
                 )
                 .into_any_element();
         }
-        let focus = if page == SettingsPage::General {
-            self.settings_nav_general_focus.clone()
-        } else {
-            self.settings_nav_providers_focus.clone()
-        };
         Button::new(id)
             .track_focus(&focus)
             .variant(ButtonVariant::Ghost)

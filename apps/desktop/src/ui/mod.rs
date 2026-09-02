@@ -1481,9 +1481,14 @@ impl AppView {
                         .apply_failed(reason.as_str());
                 }
                 if action == "load general settings" || action == "set proxy url" {
+                    let message = if action == "set proxy url" {
+                        format!("Could not save proxy URL · {reason}")
+                    } else {
+                        format!("Could not load general settings · {reason}")
+                    };
                     self.projection
                         .settings_general
-                        .apply_failed(reason.as_str());
+                        .apply_failed(&message);
                 }
                 if action == "start provider auth" || action == "verify api key" {
                     // auth_start / auth_set_api_key 的 socket 级失败无对应

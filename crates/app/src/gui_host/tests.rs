@@ -2681,7 +2681,7 @@ async fn provider_auth_status_reports_null_default_when_unconfigured() {
 async fn set_default_model_updates_status_default_within_same_session() {
     // 写盘目标经 HOME 重定向到临时目录，避免污染真实全局配置。
     // RestoreHome 必须在 tempfile 之后声明：Drop 先恢复 HOME，再删临时目录。
-    let _home_env = HOME_ENV_LOCK.lock().expect("home env lock");
+    let _home_env = HOME_ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let home = tempfile::tempdir().expect("home tempdir");
     let _restore_home = RestoreHome(std::env::var_os("HOME"));
     crate::testsupport::set_env("HOME", home.path().to_str().expect("utf-8 home"));
@@ -2739,7 +2739,7 @@ async fn set_default_model_updates_status_default_within_same_session() {
 
 #[tokio::test]
 async fn set_proxy_url_updates_general_settings_within_same_session() {
-    let _home_env = HOME_ENV_LOCK.lock().expect("home env lock");
+    let _home_env = HOME_ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let home = tempfile::tempdir().expect("home tempdir");
     let _restore_home = RestoreHome(std::env::var_os("HOME"));
     crate::testsupport::set_env("HOME", home.path().to_str().expect("utf-8 home"));
@@ -2786,7 +2786,7 @@ async fn set_proxy_url_updates_general_settings_within_same_session() {
 
 #[tokio::test]
 async fn clear_proxy_url_updates_general_settings_to_null() {
-    let _home_env = HOME_ENV_LOCK.lock().expect("home env lock");
+    let _home_env = HOME_ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let home = tempfile::tempdir().expect("home tempdir");
     let _restore_home = RestoreHome(std::env::var_os("HOME"));
     crate::testsupport::set_env("HOME", home.path().to_str().expect("utf-8 home"));
@@ -2828,7 +2828,7 @@ async fn clear_proxy_url_updates_general_settings_to_null() {
 
 #[tokio::test]
 async fn set_proxy_url_rejects_invalid_url_and_keeps_old_value() {
-    let _home_env = HOME_ENV_LOCK.lock().expect("home env lock");
+    let _home_env = HOME_ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let home = tempfile::tempdir().expect("home tempdir");
     let _restore_home = RestoreHome(std::env::var_os("HOME"));
     crate::testsupport::set_env("HOME", home.path().to_str().expect("utf-8 home"));

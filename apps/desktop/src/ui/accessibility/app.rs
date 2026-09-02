@@ -51,7 +51,9 @@ fn settings_nav_ax(
     rect: AxRect,
 ) -> AxNode {
     if selected {
-        AxNode::new(id, AxRole::StaticText, label, rect).value("Selected")
+        AxNode::new(id, AxRole::StaticText, label, rect)
+            .value("Selected")
+            .focused(focused)
     } else {
         AxNode::new(id, AxRole::Button, label, rect)
             .focused(focused)

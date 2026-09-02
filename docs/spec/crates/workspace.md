@@ -33,7 +33,7 @@
 | `src/config/merge.rs` | ~160 | `ConfigValue` 包装与 `Merge` trait；`merge_json`（对象按键递归、标量与数组整体替换）；`merge_ordered`（低→高依序合并） |
 | `src/config/error.rs` | ~70 | `ConfigParseError` / `ConfigError`：TOML 语法、schema 不匹配、IO 错误、写回序列化（`Write`）全部携带文件路径，`path()` 访问器 |
 | `src/config/loader.rs` | ~1120 | `Loader` 构建器与 `resolve()` 全流程：来源装配、`strip_untrusted_layer` 安全剥离（五种 `ConfigWarning`）、profile 层派生、`api_key` 双点剥除（单文件解析后 + 终值合并后）、确定性排序；`ConfigSource` / `LoadedSource` / `LoadedSourceSpan`；`ResolvedConfig{config, active_profile, sources, warnings}` |
-| `src/config/writer.rs` | ~220 | `write_default_model_pair`（SET-2）与 `write_proxy_url`（SET-6a / ADR-047 D2）：读目标文件（缺失视为空）→ `toml::Table` 保留未知字段 → 改目标键（`proxy_url` 的 `None` 移除该键）→ 同目录临时文件 + rename 原子写回；不触碰六层合并语义 |
+| `src/config/writer.rs` | ~220 | `write_default_model_pair`（SET-2）与 `write_proxy_url`（SET-6a / ADR-047 D2）：读目标文件（缺失视为空）→ `toml::Table` 保留未知字段 → 改目标键（`proxy_url` 的 `None` 移除该键）→ 同目录临时文件 + rename 原子写回；两入口共用 `CONFIG_WRITE_LOCK` 串行化同进程 RMW；不触碰六层合并语义 |
 
 **resources/（9 文件）**
 
@@ -103,7 +103,7 @@
 - `PaworkConfig` 字段语义：`default_provider` / `default_model`（缺省选择）、`profile`（激活 profile 名）、`trust_workspaces`（安全开关，仅 Builtin/Global 可设）、`proxy_url`（全局出站代理，仅 Builtin/Global 可设）、`providers: Vec<ProviderConfig>`（id / base_url / models / default）、`profiles: Vec<ProfileConfig>`（name + `ProfileOverrides`）、`extra`（未知键透传，供上层扩展段消费）。
 - `ConfigWarning` 五种：`TrustWorkspacesIgnored` / `ProxyUrlIgnored` / `ProviderBaseUrlIgnored` / `McpTrustedIgnored` / `McpAutoStartIgnored`，均带 tier + source_key + path。
 - 错误语义：TOML 语法错、schema 不匹配、IO 错均带文件路径；缺失文件不致命（不加该来源）。
-- 写盘入口：`write_default_model_pair(path, provider_id, model_id)`（SET-2）只改目标文件（宿主传 Global 层路径）的 `default_provider`/`default_model` 两键；`write_proxy_url(path, proxy_url: Option<&str>)`（SET-6a / ADR-047 D2）`Some` 覆盖 `proxy_url`、`None` 移除该键。二者均保留其余未知字段；缺失文件视为空文档；同目录 tmp + rename 原子写回，序列化失败返回 `ConfigError::Write`（带路径）。六层合并语义不变，本包此外无任何写盘代码。
+- 写盘入口：`write_default_model_pair(path, provider_id, model_id)`（SET-2）只改目标文件（宿主传 Global 层路径）的 `default_provider`/`default_model` 两键；`write_proxy_url(path, proxy_url: Option<&str>)`（SET-6a / ADR-047 D2）`Some` 覆盖 `proxy_url`、`None` 移除该键。二者均保留其余未知字段；缺失文件视为空文档；同目录 tmp + rename 原子写回，序列化失败返回 `ConfigError::Write`（带路径）；同进程内两入口共用 `CONFIG_WRITE_LOCK` 包住 read-modify-write，避免交错写丢更新。六层合并语义不变，本包此外无任何写盘代码。
 - `paths` 函数无 IO 副作用（`locate_workspace_config` 除外，只读存在性检查）；`config_dir_for_app` 用 `directories` 三元组 `dev/pawork/pawork`。
 
 **resources**
