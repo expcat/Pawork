@@ -72,7 +72,8 @@ impl Harness {
             GuiHost::instance_id(adapter.as_ref()),
             SUPPORTED_API_VERSIONS.to_vec(),
             vec![GuiCapability::Events, GuiCapability::Snapshots],
-        );
+        )
+        .with_host_data_dir("/tmp/pawork-contract-data");
         let transport = Arc::new(LocalTransport::default());
         let server = GuiServer::new(GuiServerConfig {
             host: adapter.clone(),
@@ -270,6 +271,10 @@ async fn create_session_send_message_and_receive_streaming_run_events() {
     let info: &SessionInfo = client.info();
     assert_eq!(info.client_id.as_str(), "client-0");
     assert_eq!(info.handle.api_version, API_VERSION);
+    assert_eq!(
+        info.host_data_dir.as_deref(),
+        Some("/tmp/pawork-contract-data")
+    );
     assert!(
         client.initial_snapshot().is_some(),
         "握手后应有首帧 Snapshot"

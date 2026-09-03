@@ -57,6 +57,8 @@
 >
 > **SET-6f 模块增量（2026-09-03）**：`controller.rs` 在 `DesktopConnect` 保留非 Secret `DesktopHandshakeInfo`（runtime ID / 协商 API / granted capabilities）；`ui/mod.rs` 增 `SettingsPage::Advanced`、握手摘要与导航焦点，Connecting/断线清空摘要，Reconnect 入口复核 `show_reconnect()`；`ui/settings.rs` 增始终可用的高级诊断页；`ui/accessibility/app.rs` 同步导航、诊断行与同源 Reconnect。未改 protocol/config/schema/Policy 或生产依赖。
 
+> **SET-6g 模块增量（2026-09-03）**：`controller.rs` 把 client `SessionInfo.host_data_dir` 原样带入 `DesktopHandshakeInfo`；`ui/mod.rs` 增 `SettingsPage::About`、导航焦点与连接生命周期回退；`ui/settings.rs` 以 Connected + 非空路径为唯一 gate，render/AX 共用 Desktop build、实际协商 GUI API、Host data directory 三行；`ui/accessibility/app.rs` 同步动态导航、只读语义树与 Press 映射。缺字段、仅空白字段或断线时隐藏 About 并退回高级；路径原样展示，不从 endpoint 推断，不用于文件操作。未新增生产依赖。
+
 ## 3. 用户可见界面与交互面
 
 ### 3.1 启动参数与运行模式
@@ -243,6 +245,7 @@ domain id 类型未从 client re-export，命令 / 查询经冻结的 serde 形�
 - **窗口、字号与焦点**：默认 1440×1024、最小 1080×720（`WINDOW_MIN_SIZE`）；字体以 16px 根字号的 rem token 表达，100% 保持冻结视觉，125%/150% 只由应用快捷键调整窗口 `rem_size`，几何 px token 不随意缩放；消息正文 / 完成摘要行高以 24px 为 100% 基准并换算 rem，放大时避免多行正文负 leading。150% rail=320，1080 窗口仍保留 760px Workspace。macOS 透明 titlebar；启动与用户发起的任务切换、审批、Fork 后聚焦 Composer；激活当前 task 仍关闭菜单并聚焦 Composer；Review changes 展开 Inspector 后聚焦 Changes 选中页签；点击输入框显式拉回焦点。
 - **Settings 外观页**：SET-6e 将上述三档字号暴露为始终可用的本地 Settings 页面；页面按钮、Cmd+=/Cmd+-/Cmd+0 和 AX Press 共享同一 `AppView.text_scale`，立即改变当前窗口 `rem_size`。当前不持久化，Desktop 重启恢复 100%；不借此创建第二套 preference 或 theme 状态。
 - **Settings 高级页**：SET-6f 将当前连接已有的非 Secret 握手摘要、socket endpoint、resume/ack 暴露为始终可达的本地只读页；Connecting/断线清空 runtime/API/capabilities，Failed/Disconnected 复用既有 Reconnect。runtime ID 不称作 CLI `--instance` 配置名；页面不显示 GUI token/token path、不推断 data directory、不 shell-out `doctor`，也不提供实例切换。
+- **Settings 关于页**：SET-6g 只在当前 Connected 握手提供非空 `host_data_dir` 时动态发布导航与只读页；三项值分别来自 Desktop 编译元数据、当前协商 API 和 Host 握手，render/AX 共用同一行模型。仅空白字段按缺失处理，但合法路径值原样展示；Connecting/断线清空握手并从 About 退回高级。不提供 updater/release/License 或任何写动作。
 - **Accessibility 单一语义源（ADR-042）**：`AppView` 只从 canonical UI 状态与布局 metric 构建显式 `AxTree`；壳层几何与 render 共享 `shell_layout::resolve`（100% 窄窗 rail=240、150% rail=320），`composer-status-hint` 发布字号百分比；稳定 identifier 与本地化 label 分离，macOS bridge 只做 AppKit 映射。AX press / focus / set-value 必须回到既有 handler 与 enable gate，未知请求 fail-closed；disabled 控件不得发布可执行 action。触发器语义与可见路径一致——AXPress 开菜单（grouping/scope/model/Activity/entry/add-task/header-new-task）先移 GPUI 焦点到触发器再 toggle，与点击路径 mousedown→click 同源，WorkspaceConfirm 关闭按来源回焦（P4 片 2F，D1）；Timeline AX 与 render 共享 rows + approval item 序列，稳定帧读取 `ListState::bounds_for_item` 真实布局，首帧用共享公式回退，视口外条目不发布（P4 片 2F，D2）；IME composing 中 AX Send 与键盘 Enter 同样不生效。新增可见交互须同批补节点、bounds、状态和 action 映射；非 macOS 当前为 no-op，不宣称已有平台 AX 实现。
 - **平台显示偏好**：默认深色 palette 保持冻结 token；macOS Increase Contrast 开启时只增强辅助文字、交互 surface、边界与选区，并通过系统通知触发窗口刷新。当前 UI 无动画或过渡，因此 Reduce Motion 不需要分支。R7 主动系统态测试依用户指令跳过，只能声明实现与代码级门禁，不能声明真系统态通过。
 
@@ -294,7 +297,7 @@ cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders
 ```
 
 - `--bins`：本包是 bin-only（无 lib target），任务指南默认的 `--lib --tests` 匹配不到任何 target。
-- `--features gpui/runtime_shaders`：gpui 默认构建在编译期调用 Metal 着色器编译器；开发机仅有 Xcode CLT 时缺 Metal Toolchain 会构建失败，runtime_shaders 把着色器编译推迟到运行时使本机可闭环。当前 Desktop 定向门禁为 186/186（SET-6f）。
+- `--features gpui/runtime_shaders`：gpui 默认构建在编译期调用 Metal 着色器编译器；开发机仅有 Xcode CLT 时缺 Metal Toolchain 会构建失败，runtime_shaders 把着色器编译推迟到运行时使本机可闭环。当前 Desktop 定向门禁为 186/186（SET-6g；扩展既有本地 Settings GPUI 回归，覆盖 About 缺字段隐藏、字段存在导航与三值、路径原样透传、断线清空/回退，未增加测试数量）。
 
 本包 dev-dependencies 为 `tempfile`（workspace `3`，仅服务 `ui/barriers.rs` 的临时目录测试）与 `gpui` dev 条目（`=0.2.2` + `test-support` feature，R1 Wave C 起；仅测试构建启用 TestAppContext/VisualTestContext，resolver v2 下不进生产二进制闭包），均不计入生产 deny-list。
 

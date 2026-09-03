@@ -151,6 +151,9 @@ pub enum HandshakeResponse {
         /// 服务端按自身能力筛选后授予的能力列表；空列表时省略。
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         capabilities: Vec<GuiCapability>,
+        /// 当前 Host 实际使用的数据目录；仅由已认证的本机 GUI Host 可选发布。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        host_data_dir: Option<String>,
     },
     Rejected {
         request_id: String,

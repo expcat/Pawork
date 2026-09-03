@@ -321,6 +321,10 @@ impl AppView {
                 window.focus(&self.settings_nav_advanced_focus);
                 self.on_select_settings_page(SettingsPage::Advanced, window, cx);
             }
+            "settings-nav-about" => {
+                window.focus(&self.settings_nav_about_focus);
+                self.on_select_settings_page(SettingsPage::About, window, cx);
+            }
             "settings-proxy-save" => self.on_settings_proxy_save(cx),
             "settings-proxy-clear" => self.on_settings_proxy_clear(cx),
             "settings-terminal-save" => self.on_settings_terminal_save(cx),
@@ -980,11 +984,13 @@ impl AppView {
         let permissions_available = self.projection.settings_permissions.available;
         let tools_available = self.resources.available;
         let terminal_available = self.projection.settings_terminal.available;
+        let about_available = self.settings_about_rows().is_some();
         let current_page = match self.settings_page {
             SettingsPage::General if !general_available => SettingsPage::Providers,
             SettingsPage::Permissions if !permissions_available => SettingsPage::Providers,
             SettingsPage::Tools if !tools_available => SettingsPage::Providers,
             SettingsPage::Terminal if !terminal_available => SettingsPage::Providers,
+            SettingsPage::About if !about_available => SettingsPage::Advanced,
             page => page,
         };
         let mut rail = AxNode::new("settings-rail", AxRole::Group, "Settings", frame)
@@ -1125,7 +1131,7 @@ impl AppView {
             ),
         ));
         let advanced_y = appearance_y + metrics::RAIL_TOP_ROW_HEIGHT + PAD;
-        rail.child(settings_nav_ax(
+        rail = rail.child(settings_nav_ax(
             "settings-nav-advanced",
             "高级",
             current_page == SettingsPage::Advanced,
@@ -1136,7 +1142,23 @@ impl AppView {
                 width,
                 metrics::RAIL_TOP_ROW_HEIGHT,
             ),
-        ))
+        ));
+        if about_available {
+            let about_y = advanced_y + metrics::RAIL_TOP_ROW_HEIGHT + PAD;
+            rail = rail.child(settings_nav_ax(
+                "settings-nav-about",
+                "关于",
+                current_page == SettingsPage::About,
+                self.open_menu.is_none() && self.settings_nav_about_focus.is_focused(window),
+                AxRect::new(
+                    frame.x + PAD,
+                    frame.y + about_y,
+                    width,
+                    metrics::RAIL_TOP_ROW_HEIGHT,
+                ),
+            ));
+        }
+        rail
     }
 
     /// Settings 全宽内容（SET-4）：标题 / 状态行 / Provider 卡片。卡片含
@@ -1165,6 +1187,12 @@ impl AppView {
             return self.settings_appearance_page_ax(window, frame);
         }
         if self.settings_page == SettingsPage::Advanced {
+            return self.settings_advanced_page_ax(window, frame);
+        }
+        if self.settings_page == SettingsPage::About {
+            if self.settings_about_rows().is_some() {
+                return self.settings_about_page_ax(frame);
+            }
             return self.settings_advanced_page_ax(window, frame);
         }
         const HEADING_HEIGHT: f32 = 28.0;
@@ -2012,6 +2040,43 @@ impl AppView {
             )
             .value(SETTINGS_ADVANCED_DOCTOR_NOTE),
         )
+    }
+
+    /// 「关于」页 AX（SET-6g / ADR-051）：与 render 共用只读行及
+    /// `host_data_dir` 非空 gate；没有动作节点，也不保留断线前路径。
+    fn settings_about_page_ax(&self, frame: AxRect) -> AxNode {
+        const HEADING_HEIGHT: f32 = 28.0;
+        const SUBTITLE_HEIGHT: f32 = 20.0;
+        const ROW_HEIGHT: f32 = 40.0;
+        let width = (frame.width - 32.0).max(0.0);
+        let mut y = frame.y + 16.0 + HEADING_HEIGHT + SUBTITLE_HEIGHT + 8.0;
+        let mut page = AxNode::new("settings-page", AxRole::Group, "关于", frame).child(
+            AxNode::new(
+                "settings-page-title",
+                AxRole::StaticText,
+                "关于",
+                AxRect::new(
+                    frame.x + 16.0,
+                    frame.y + 16.0,
+                    width,
+                    HEADING_HEIGHT + SUBTITLE_HEIGHT,
+                ),
+            )
+            .value("Build and current Host connection information"),
+        );
+        for (id, label, value) in self.settings_about_rows().unwrap_or_default() {
+            page = page.child(
+                AxNode::new(
+                    id,
+                    AxRole::StaticText,
+                    label,
+                    AxRect::new(frame.x + 16.0, y, width, ROW_HEIGHT),
+                )
+                .value(value),
+            );
+            y += ROW_HEIGHT;
+        }
+        page
     }
 
     /// 「权限与审批」页 AX（SET-6b）：五档审批模式（当前档只读、其余
@@ -4275,7 +4340,8 @@ mod tests {
         }
     }
 
-    /// SET-6e/6f：外观与高级页都是 Desktop 本地能力，离线也必须可达；
+    /// SET-6e/6f/6g：外观与高级页都是 Desktop 本地能力，离线也必须可达；
+    /// About 仅在当前握手携带非空 Host 路径时出现，丢失后退回高级页；
     /// 高级页不伪装旧握手，外观字号 AX Press 与可见 / 键盘路径同源。
     #[gpui::test]
     fn settings_local_pages_ax_are_available_offline_and_update_state(
@@ -4318,6 +4384,12 @@ mod tests {
             tree.validate().expect("offline Settings AX tree validates");
             assert!(tree.find("settings-nav-appearance").is_some());
             assert!(tree.find("settings-nav-advanced").is_some());
+            assert!(tree.find("settings-nav-about").is_none());
+            assert!(!tree.permits(&AxRequest {
+                identifier: "settings-nav-about".into(),
+                action: AxAction::Press,
+                value: None,
+            }));
             assert!(tree.permits(&AxRequest {
                 identifier: "settings-nav-advanced".into(),
                 action: AxAction::Press,
@@ -4374,8 +4446,9 @@ mod tests {
                 };
                 view.handshake_info = Some(crate::controller::DesktopHandshakeInfo {
                     runtime_id: "runtime-6f".into(),
-                    api_version: "1.8".into(),
+                    api_version: "1.9".into(),
                     capabilities: vec!["events".into(), "snapshots".into()],
+                    host_data_dir: None,
                 });
             });
         });
@@ -4396,7 +4469,7 @@ mod tests {
             assert_eq!(
                 tree.find("settings-advanced-api")
                     .and_then(|node| node.value.as_deref()),
-                Some("1.8")
+                Some("1.9")
             );
             assert_eq!(
                 tree.find("settings-advanced-capabilities")
@@ -4414,11 +4487,66 @@ mod tests {
                 Some("Unavailable")
             );
             assert!(tree.find("reconnect").is_none());
+            assert!(tree.find("settings-nav-about").is_none());
             assert!(tree.permits(&AxRequest {
                 identifier: "settings-nav-appearance".into(),
                 action: AxAction::Press,
                 value: None,
             }));
+        });
+        // 只有当前握手给出非空权威路径时才发布 About；页面三行与
+        // render 共用数据源，不从 endpoint 或本机默认目录推断。
+        cx.update(|_window, cx| {
+            view.update(cx, |view, _cx| {
+                view.handshake_info
+                    .as_mut()
+                    .expect("connected handshake exists")
+                    .host_data_dir = Some(" /tmp/pawork-set6g ".into());
+            });
+        });
+        cx.update(|window, cx| {
+            let tree = view.read(cx).accessibility_tree(window, cx);
+            tree.validate().expect("About navigation AX tree validates");
+            assert!(tree.find("settings-nav-about").is_some());
+            assert!(tree.permits(&AxRequest {
+                identifier: "settings-nav-about".into(),
+                action: AxAction::Press,
+                value: None,
+            }));
+        });
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.handle_accessibility_request(
+                    AxRequest {
+                        identifier: "settings-nav-about".into(),
+                        action: AxAction::Press,
+                        value: None,
+                    },
+                    window,
+                    cx,
+                );
+            });
+        });
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            assert_eq!(view.settings_page, SettingsPage::About);
+            let tree = view.accessibility_tree(window, cx);
+            tree.validate().expect("About page AX tree validates");
+            assert_eq!(
+                tree.find("settings-about-desktop-build")
+                    .and_then(|node| node.value.as_deref()),
+                Some(env!("CARGO_PKG_VERSION"))
+            );
+            assert_eq!(
+                tree.find("settings-about-api")
+                    .and_then(|node| node.value.as_deref()),
+                Some("1.9")
+            );
+            assert_eq!(
+                tree.find("settings-about-data-dir")
+                    .and_then(|node| node.value.as_deref()),
+                Some(" /tmp/pawork-set6g ")
+            );
         });
         // 最终业务入口也必须 fail-closed：即使迟到的旧 Reconnect 事件被
         // 派发，Connected 状态也不能启动第二条连接。
@@ -4448,6 +4576,7 @@ mod tests {
         cx.update(|window, cx| {
             let view = view.read(cx);
             assert!(view.handshake_info.is_none());
+            assert_eq!(view.settings_page, SettingsPage::Advanced);
             let tree = view.accessibility_tree(window, cx);
             tree.validate()
                 .expect("disconnected advanced page AX tree validates");
@@ -4461,6 +4590,8 @@ mod tests {
                     .and_then(|node| node.value.as_deref()),
                 Some("Unavailable · connect to the Host")
             );
+            assert!(tree.find("settings-nav-about").is_none());
+            assert!(tree.find("settings-about-data-dir").is_none());
             assert!(tree.find("reconnect").is_some());
         });
         cx.update(|window, cx| {

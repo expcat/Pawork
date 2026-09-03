@@ -5,6 +5,7 @@
 //! 在线判定）。Ctrl-C 关闭监听并退出；关闭不取消已进入 Core 的 Run
 //! （进程内 Run 随进程结束，跨进程存活语义归 S10 service）。
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use pawork_app::gui_server::{GuiHost, GuiServer, GuiServerConfig};
@@ -19,7 +20,12 @@ use pawork_transport::{
 use crate::ops::{gui_pid_path, gui_socket_path, gui_token_path, remove_pid_file, write_pid_file};
 use crate::{CliError, GuiCommand};
 
-pub async fn run_gui(core: AppCore, command: GuiCommand, instance: &str) -> Result<(), CliError> {
+pub async fn run_gui(
+    core: AppCore,
+    command: GuiCommand,
+    instance: &str,
+    data_dir: PathBuf,
+) -> Result<(), CliError> {
     let GuiCommand::Serve { socket } = command;
     let approvals = Arc::new(GuiApprovalHost::new());
     let mut core = core;
@@ -31,7 +37,6 @@ pub async fn run_gui(core: AppCore, command: GuiCommand, instance: &str) -> Resu
     let core = Arc::new(tokio::sync::RwLock::new(core));
     let adapter = GuiHostAdapter::from_locked(Arc::clone(&core), approvals);
     let pty = adapter.pty();
-    let data_dir = pawork_app::default_data_dir();
     let socket_path = socket.unwrap_or_else(|| gui_socket_path(&data_dir, instance));
     if let Some(parent) = socket_path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -72,6 +77,7 @@ pub async fn run_gui(core: AppCore, command: GuiCommand, instance: &str) -> Resu
         SUPPORTED_API_VERSIONS.to_vec(),
         gui_supported_capabilities(),
     )
+    .with_host_data_dir(data_dir.to_string_lossy().into_owned())
     .with_authenticator(Box::new(TokenAuthenticator::new(store)));
     let server = GuiServer::new(GuiServerConfig {
         host: Arc::new(adapter),

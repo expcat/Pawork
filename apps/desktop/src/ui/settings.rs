@@ -1,6 +1,6 @@
-//! Settings 壳（SET-3/4/6a/6b/6c/6d/6e/6f）：Settings Rail、「Models &
+//! Settings 壳（SET-3/4/6a/6b/6c/6d/6e/6f/6g）：Settings Rail、「Models &
 //! providers」、「General」、「权限与审批」、「工具与 MCP」、「终端」、「外观」
-//! 与「高级」页。
+//!、「高级」与「关于」页。
 //!
 //! 供应商页只呈现 Host `provider_auth_status` 权威事实：供应商名称、
 //! 认证方式、连接状态与目录来源（SET-3）；SET-4 增认证写操作（API key
@@ -14,7 +14,8 @@
 //! 100% / 125% / 150% 会话级字号能力，不经 Host；SET-6f 只读展示当前
 //! 连接的握手摘要、启动 endpoint、恢复游标，并复用既有 Reconnect。Host 查询失败 /
 //! 未知则隐藏对应导航项且不渲染写入口。断线保留 stale 只读结果
-//! 并禁用 Host 写动作；外观 / 高级页作为本地能力始终可用。
+//! 并禁用 Host 写动作；外观 / 高级页作为本地能力始终可用。SET-6g 仅在
+//! 当前认证握手声明非空 Host 数据目录时显示「关于」，且断线时立即隐藏。
 //! 可见 / 键盘 / AX 三路径同 gate。
 
 use std::collections::HashSet;
@@ -546,11 +547,13 @@ impl AppView {
         let permissions_available = self.projection.settings_permissions.available;
         let tools_available = self.resources.available;
         let terminal_available = self.projection.settings_terminal.available;
+        let about_available = self.settings_about_rows().is_some();
         let current_page = match self.settings_page {
             SettingsPage::General if !general_available => SettingsPage::Providers,
             SettingsPage::Permissions if !permissions_available => SettingsPage::Providers,
             SettingsPage::Tools if !tools_available => SettingsPage::Providers,
             SettingsPage::Terminal if !terminal_available => SettingsPage::Providers,
+            SettingsPage::About if !about_available => SettingsPage::Advanced,
             page => page,
         };
         let mut rail = Panel::side_right(rail_width)
@@ -606,13 +609,23 @@ impl AppView {
             SettingsPage::Appearance,
             cx,
         ));
-        rail.child(self.settings_nav_item(
+        rail = rail.child(self.settings_nav_item(
             "settings-nav-advanced",
             "高级",
             current_page == SettingsPage::Advanced,
             SettingsPage::Advanced,
             cx,
-        ))
+        ));
+        if about_available {
+            rail = rail.child(self.settings_nav_item(
+                "settings-nav-about",
+                "关于",
+                current_page == SettingsPage::About,
+                SettingsPage::About,
+                cx,
+            ));
+        }
+        rail
     }
 
     /// Settings 全宽内容区（SET-4 认证写操作）。状态行全部来自
@@ -644,6 +657,12 @@ impl AppView {
         if self.settings_page == SettingsPage::Advanced {
             return self.settings_advanced_page_element(cx).into_any_element();
         }
+        if self.settings_page == SettingsPage::About {
+            if self.settings_about_rows().is_some() {
+                return self.settings_about_page_element().into_any_element();
+            }
+            return self.settings_advanced_page_element(cx).into_any_element();
+        }
         self.settings_providers_page_element(cx).into_any_element()
     }
 
@@ -662,6 +681,7 @@ impl AppView {
             SettingsPage::Terminal => self.settings_nav_terminal_focus.clone(),
             SettingsPage::Appearance => self.settings_nav_appearance_focus.clone(),
             SettingsPage::Advanced => self.settings_nav_advanced_focus.clone(),
+            SettingsPage::About => self.settings_nav_about_focus.clone(),
             SettingsPage::Providers => self.settings_nav_providers_focus.clone(),
         };
         if selected {
@@ -1513,6 +1533,105 @@ impl AppView {
                     .text_color(dark().text.secondary)
                     .child(SETTINGS_ADVANCED_DOCTOR_NOTE),
             );
+
+        div()
+            .id("settings-page")
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_w_0()
+            .overflow_hidden()
+            .p_4()
+            .child(
+                div()
+                    .id("settings-page-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .track_scroll(&self.settings_scroll)
+                    .child(content),
+            )
+    }
+
+    /// 「关于」页只读行（SET-6g / ADR-051）：三个值分别来自 Desktop
+    /// 构建元数据与当前已认证握手。Host 路径缺失或为空时整页不可用，
+    /// render / AX 共用该 fail-closed gate，绝不从 endpoint 推断。
+    pub(super) fn settings_about_rows(&self) -> Option<Vec<(&'static str, &'static str, String)>> {
+        if !matches!(
+            self.projection.connection,
+            ConnectionState::Connected { .. }
+        ) {
+            return None;
+        }
+        let handshake = self.handshake_info.as_ref()?;
+        let host_data_dir = handshake.host_data_dir.as_deref()?;
+        if host_data_dir.trim().is_empty() {
+            return None;
+        }
+        Some(vec![
+            (
+                "settings-about-desktop-build",
+                "Desktop build",
+                env!("CARGO_PKG_VERSION").to_string(),
+            ),
+            (
+                "settings-about-api",
+                "GUI API",
+                handshake.api_version.clone(),
+            ),
+            (
+                "settings-about-data-dir",
+                "Host data directory",
+                host_data_dir.to_string(),
+            ),
+        ])
+    }
+
+    /// 「关于」页（SET-6g / ADR-051）：仅呈现当前连接的三项权威事实，
+    /// 不提供 updater、release、License 或任何写动作。
+    fn settings_about_page_element(&mut self) -> impl IntoElement {
+        let mut content = div()
+            .flex()
+            .flex_col()
+            .min_w_0()
+            .max_w(px(SETTINGS_CONTENT_MAX_WIDTH))
+            .gap_2()
+            .child(
+                div().font_weight(FontWeight::MEDIUM).child(
+                    Label::new("关于")
+                        .size(font::TITLE)
+                        .color(dark().text.primary),
+                ),
+            )
+            .child(
+                Label::new("Build and current Host connection information")
+                    .size(font::BODY_SM)
+                    .color(dark().text.secondary),
+            );
+
+        for (id, label, value) in self.settings_about_rows().unwrap_or_default() {
+            content = content.child(
+                div()
+                    .id(id)
+                    .w_full()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        Label::new(label)
+                            .size(font::BODY_SM)
+                            .color(dark().text.secondary),
+                    )
+                    .child(
+                        div()
+                            .w_full()
+                            .min_w_0()
+                            .whitespace_normal()
+                            .text_size(font::BODY)
+                            .text_color(dark().text.primary)
+                            .child(value),
+                    ),
+            );
+        }
 
         div()
             .id("settings-page")

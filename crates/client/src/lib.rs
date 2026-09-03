@@ -88,6 +88,8 @@ pub struct SessionInfo {
     pub client_id: GuiClientId,
     pub connection_id: ConnectionId,
     pub capabilities: Vec<GuiCapability>,
+    /// Host 在已认证握手中发布的实际数据目录展示值。
+    pub host_data_dir: Option<String>,
     /// 服务端按重连历史计算的初始 resume disposition（首连通常为
     /// `SnapshotRequired`）。
     pub resume: ResumeDisposition,
@@ -338,15 +340,24 @@ impl GuiClient {
                 return Err(unexpected_frame("handshake response", &other));
             }
         };
-        let (handle, client_id, connection_id, resume, capabilities) = match response {
+        let (handle, client_id, connection_id, resume, capabilities, host_data_dir) = match response
+        {
             HandshakeResponse::Accepted {
                 handle,
                 client_id,
                 connection_id,
                 resume,
                 capabilities,
+                host_data_dir,
                 ..
-            } => (handle, client_id, connection_id, resume, capabilities),
+            } => (
+                handle,
+                client_id,
+                connection_id,
+                resume,
+                capabilities,
+                host_data_dir,
+            ),
             HandshakeResponse::Rejected { error, .. } => {
                 return Err(ClientError::HandshakeRejected(error));
             }
@@ -367,6 +378,7 @@ impl GuiClient {
             client_id,
             connection_id,
             capabilities,
+            host_data_dir,
             resume,
         });
         Ok(Self {
@@ -1184,6 +1196,7 @@ mod tests {
                 client_id: GuiClientId::from("client-1"),
                 connection_id: ConnectionId::from("conn-1"),
                 capabilities: Vec::new(),
+                host_data_dir: None,
                 resume: ResumeDisposition::SnapshotRequired {
                     earliest_available_sequence: GlobalSequence(0),
                 },
@@ -1272,6 +1285,7 @@ mod tests {
                 client_id: GuiClientId::from("client-1"),
                 connection_id: ConnectionId::from("conn-1"),
                 capabilities: Vec::new(),
+                host_data_dir: None,
                 resume: ResumeDisposition::SnapshotRequired {
                     earliest_available_sequence: GlobalSequence(0),
                 },

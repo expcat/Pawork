@@ -246,6 +246,8 @@ pub struct DesktopHandshakeInfo {
     pub runtime_id: String,
     pub api_version: String,
     pub capabilities: Vec<String>,
+    /// 当前已认证 Host 声明的实际数据目录；缺失时 About fail-closed 隐藏。
+    pub host_data_dir: Option<String>,
 }
 
 /// 握手 / 重连结果：`resume` 为 None 表示首连（无 last_ack）。
@@ -1978,6 +1980,7 @@ fn desktop_handshake_info(client: &GuiClient) -> DesktopHandshakeInfo {
             })
             .map(str::to_string)
             .collect(),
+        host_data_dir: client.info().host_data_dir.clone(),
     }
 }
 

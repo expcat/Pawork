@@ -5,11 +5,11 @@
 | 字段 | 值 |
 | --- | --- |
 | Feature ID / 名称 | `SETTINGS-01` / Settings 与模型供应商管理 |
-| 状态 | **Accepted（SET-1～SET-6f 已实现并通过各自定向门禁；下一片为 SET-6g「关于」，真实认证、完整真窗口与人工验收仍 pending）** |
+| 状态 | **Accepted（SET-1～SET-6g 已实现并通过各自定向门禁；「关于」按 ADR-051 只在当前认证连接提供非空 Host 数据目录时启用；真实认证、完整真窗口与人工验收仍 pending）** |
 | Owner | Pawork maintainers |
 | 目标阶段 | Settings 活动线；不绑定发布版本 |
 | 最近更新 | 2026-09-03 |
-| 关联 | [ROADMAP](../../ROADMAP.md) · [任务书](../../plan/settings.md) · [GUI 设计](../gui-design.md) · [ADR-046](../adr/ADR-046-settings-auth-wire-and-secret-transit.md)（Accepted，2026-09-01） |
+| 关联 | [ROADMAP](../../ROADMAP.md) · [任务书](../../plan/settings.md) · [GUI 设计](../gui-design.md) · [ADR-046](../adr/ADR-046-settings-auth-wire-and-secret-transit.md)（Accepted，2026-09-01） · [ADR-051](../adr/ADR-051-about-settings-host-data-dir.md)（Accepted，2026-09-03） |
 
 ## 1. 问题、用户与目标
 
@@ -25,7 +25,7 @@
 
 | 能力 | 当前生产路径/证据 | 缺口 | 结论 |
 | --- | --- | --- | --- |
-| Settings 入口/路由 | SET-3 起 TaskRail `Local` 行 gear + AppRoute 顶层路由 + Settings Rail + 只读供应商页落地（[settings.rs](../../apps/desktop/src/ui/settings.rs)）；SET-6a～6d 依次启用通用、权限与审批、工具与 MCP、终端；SET-6e/6f 启用始终可用的本地外观页与高级连接诊断页 | 「关于」尚未启用 | 已实现（已启用页面）；下一片按 SET-6g 推进 |
+| Settings 入口/路由 | SET-3 起 TaskRail `Local` 行 gear + AppRoute 顶层路由 + Settings Rail + 只读供应商页落地（[settings.rs](../../apps/desktop/src/ui/settings.rs)）；SET-6a～6d 依次启用通用、权限与审批、工具与 MCP、终端；SET-6e/6f 启用始终可用的本地外观页与高级连接诊断页；SET-6g 启用由当前握手权威元数据驱动的 About 页 | 真实 Host/Desktop 窗口与 VoiceOver 验收待 SET-7 | 已实现并通过定向门禁；About 在缺字段、空字段或断线时隐藏 |
 | Provider 注册 | [channel registry](../../crates/providers/src/channels/registry.rs) 八行：chatgpt/xai/glm-coding/opencode-go/qwen-token-plan/deepseek/kimi-platform/kimi-code；SET-4 起 `auth_methods` 为数据字段，支持同供应商多认证方法 | — | 已实现 |
 | API-key 通道 | [api_key.rs](../../crates/providers/src/channels/api_key.rs) 可请求 OpenAI-compatible `/models`；SET-2 增 `verify_api_key` 写前验证与 `auth_set_api_key` 非重放命令（verify-then-replace）；SET-4 起 xAI adapter 接受 API key，桌面端写操作已接通 | — | 已实现（真实账号验收 pending） |
 | OAuth | AppCore/auth 已有 OAuth 基础；xAI Device Flow 已接入；SET-2 起 `AuthStart`/`AuthCancel`/`AuthRemove` 对 GUI 开放并有 handler，进度经 `AuthChanged` 六态下发；SET-4 起 Kimi Code Device Flow 接入（[kimi.rs](../../crates/providers/src/channels/kimi.rs)），桌面端等待/取消 UI 已接通 | — | 已实现（真实账号验收 pending） |
@@ -116,7 +116,7 @@ GPUI Settings
 - **依赖红线**：Desktop 的业务依赖仍只能是 `pawork-client`；不得直接依赖 protocol/app/providers/auth/workspace。
 - **现有可复用面**：GUI `ModelList` query、`AuthStart` / `AuthRemove` 类型、AppCore auth API、通用 API-key `/models`、静态+运行期 catalog merge。
 - **需要补的最小能力**：provider/auth descriptor 与状态查询；GUI 可用的 OAuth 生命周期；非重放 API-key 写入；连接移除/替换；默认 provider/model 变更与确认。
-- **冻结契约**：新增/改变 GUI command/query/response/capability 必须先起草 ADR-046，bump 兼容 minor，golden/typegen 先行；旧 Host/Client 无能力时隐藏 Settings 写入口，不能降级为 Desktop 直写文件。
+- **冻结契约**：新增/改变 GUI command/query/response/capability 必须先起草对应 ADR、bump 兼容 minor，并以 golden/typegen 先行；SET-1 由 ADR-046 承载，SET-6g 的可选 Accepted 握手字段由 ADR-051 Accepted 承载并随 API 1.9 落地。旧 Host/Client 无能力时隐藏对应 Settings 入口，不能降级为 Desktop 直写文件或本地推断。
 - **Secret 命令**：不得进入持久 command ledger payload、response replay、事件或诊断。具体瞬时传递与失败恢复由 ADR 决定；这是实现硬前置，不以普通 `AppCommand` 直接落地绕过。
 - **配置**：凭证仍不进入 `PaworkConfig`。默认 provider/model 优先复用现有字段和层级；若需改变写入优先级、文件形状或配置 schema，另列契约差异并先过 ADR/golden。
 - **迁移**：首期不创建账户表或模型缓存表，预期无 SQLite migration。既有 CLI 凭证必须在 Settings 中以脱敏状态可见。
@@ -132,6 +132,7 @@ GPUI Settings
 - OAuth token 只由 Host 流程换取和持久化；Desktop 只显示授权 URL、用户码、到期时间与脱敏状态。取消/过期不写半成品。
 - Provider 错误必须经过既有脱敏/有界化；禁止把 request header/body、token 或供应商原始敏感错误送入 GUI Diagnostic。
 - 高级页只发布非 Secret 握手摘要、当前 socket endpoint、resume/ack；断线即清 runtime/API/capabilities。不得显示 GUI token、token path，不得从 socket 路径推断 data directory 或配置实例名。
+- SET-6g 边界：Host data directory 仅在认证成功的 Accepted 握手中可选发布，只用于本机 About 原样展示；API 1.9 沿用初始未发布阶段 minor 只记账策略，不新增 1.8 运行时分支。路径不得进入日志、事件、ledger、数据库或后续文件操作输入；缺字段、仅空白字段或断线时 About fail-closed 隐藏。
 - 移除连接先确认目标 provider/auth method，只删除对应 auth backend 条目；不改会话事件或历史模型记录。
 - 无 workspace path、Tool、Sandbox 或 PTY 新能力；这些安全面为 none。若后续 Settings 页改变 Policy/MCP/Terminal，则各自另立安全切片。
 - 最低回归：真实形态 Secret 扫描、日志/事件/DB/fixture 负断言、替换失败保旧、OAuth 过期/取消、未知 provider/method fail-closed、断线期间写入拒绝。
@@ -148,7 +149,7 @@ Settings 沿用参考设计的 1440×1024 深色语言和 8px 节奏，不另起
 - provider 行只显示名称、认证方法、连接状态、模型数/目录来源和操作菜单；不显示无权威来源的余额。
 - 添加流程用同一内容区内的 stepper/panel，不弹出第二窗口。
 
-导航顺序：模型与供应商 → 通用（SET-6a）→ 权限与审批（SET-6b）→ 工具与 MCP（SET-6c）→ 终端（SET-6d）→ 外观（SET-6e）→ 高级（SET-6f）→ 关于。只有「关于」尚未启用，不显示占位项。通用页承载 Global `proxy_url` 读写（ADR-047）；权限与审批页承载会话级 `approval_mode` / `workspace_trusted` 与 Global 默认只读值（ADR-048）；工具与 MCP 页复用 Host `mcp_list` 并提供 test/remove（ADR-049）；终端页承载 Global `terminal_settings` 全态写，只影响之后创建的终端（ADR-050）。外观页不经 Host：复用 Desktop 既有 `TextScale` 提供 100%/125%/150%，与 Cmd+=/Cmd+-/Cmd+0 共用唯一状态；字号仅当前 Desktop 会话生效，重启恢复 100%。当前主题仅深色，macOS Increase Contrast 跟随系统且只读说明；不提供 light/system/custom theme 假控件。高级页同样不新增 Host query：只读展示当前连接已有的 runtime ID、协商 API/capabilities、启动 endpoint、resume/ack；runtime ID 不称作配置 instance，断线清空握手摘要并复用既有 Reconnect。
+导航顺序：模型与供应商 → 通用（SET-6a）→ 权限与审批（SET-6b）→ 工具与 MCP（SET-6c）→ 终端（SET-6d）→ 外观（SET-6e）→ 高级（SET-6f）→ 关于（SET-6g）。通用页承载 Global `proxy_url` 读写（ADR-047）；权限与审批页承载会话级 `approval_mode` / `workspace_trusted` 与 Global 默认只读值（ADR-048）；工具与 MCP 页复用 Host `mcp_list` 并提供 test/remove（ADR-049）；终端页承载 Global `terminal_settings` 全态写，只影响之后创建的终端（ADR-050）。外观页不经 Host：复用 Desktop 既有 `TextScale` 提供 100%/125%/150%，与 Cmd+=/Cmd+-/Cmd+0 共用唯一状态；字号仅当前 Desktop 会话生效，重启恢复 100%。当前主题仅深色，macOS Increase Contrast 跟随系统且只读说明；不提供 light/system/custom theme 假控件。高级页同样不新增 Host query：只读展示当前连接已有的 runtime ID、协商 API/capabilities、启动 endpoint、resume/ack；runtime ID 不称作配置 instance，断线清空握手摘要并复用既有 Reconnect。按 [ADR-051](../adr/ADR-051-about-settings-host-data-dir.md)，About 只在当前认证连接握手携带非空 `host_data_dir` 时显示，且只展示 Desktop build、实际协商 GUI API 与 Host data directory；缺字段、仅空白字段或断线时隐藏并从该页退回高级，不添加 updater/release/License 占位。
 
 ### 6.2 状态、键盘与可访问性
 
@@ -161,7 +162,7 @@ Settings 沿用参考设计的 1440×1024 深色语言和 8px 节奏，不另起
 ### 6.3 CLI 与其它客户端
 
 - 既有 `pawork auth`、`pawork models` 继续可用，是诊断/恢复入口；Settings 不改变其参数语义。
-- Host 级 data directory、PID、socket 存活与握手自检仍由 pre-Core `pawork --instance <name> doctor` 负责；高级页不 shell-out、不从 endpoint 猜 instance，只补当前 Desktop 连接视角。
+- Host 级 PID、socket 存活与握手自检仍由 pre-Core `pawork --instance <name> doctor` 负责；高级页不 shell-out、不从 endpoint 猜 instance。About 直接显示认证握手声明的当前 Host data directory，并在 SET-7 与 `doctor --json` 对照；不能用 `doctor` 反向填充 UI。
 - headless/ACP 不因 Desktop 功能自动获得 Secret 写入能力；registry 必须对各通道显式声明，首期可只对认证本机 GUI 开放。
 - Desktop/CLI 对同一 auth backend 的状态必须一致；GUI 设置后 `pawork auth list` / `pawork models` 能以脱敏方式核对。
 
@@ -177,7 +178,7 @@ Settings 沿用参考设计的 1440×1024 深色语言和 8px 节奏，不另起
 | SET-4 Provider auth | providers、auth、app；对应包 Spec | SET-2 | 四家认证矩阵完成，xAI API key/Kimi 两种连接补齐 | 串行 |
 | SET-5 Catalog/default | providers、app、protocol/client、desktop、workspace | SET-2～4 | 远端/固定目录、刷新、过滤、默认项与 Composer 同步 | 串行 |
 | SET-6a～6f 其它页 | 按页最小写入集；SET-6e/6f 仅 desktop + 文档 | SET-5 | 通用、权限、MCP、终端、外观与高级均以真实能力启用；本地页不造持久化/配置能力 | 串行 |
-| SET-6g 关于 | 仅在权威字段到位后确定最小写入集 | SET-6f | 构建版本、协议版本、数据目录均有权威来源；不宣称 updater/release | 串行 |
+| SET-6g 关于 | protocol/schemas、client、cli、desktop 与对应 Spec；不改 App query/config/schema | SET-6f + ADR-051 Accepted | Desktop build、协商 API、Host data directory 均有权威来源；缺字段 fail-closed；不宣称 updater/release | 串行 |
 | SET-7 验收 | 测试/文档；仅修真实缺陷 | SET-3～6g | 定向门禁、四家真实账号、断线/重启、AX/窄窗证据 | 串行 |
 
 其余 Settings 页不塞入 SET-1～5。模型与供应商收口后，每页按真实能力分别建小切片；不得以“完整设置中心”为由同时修改无关包。
@@ -194,6 +195,7 @@ Settings 沿用参考设计的 1440×1024 深色语言和 8px 节奏，不另起
 | SET-008 | workspace/app config writer | 配置层级与重启测试 | Host/Desktop 重启 | 默认项失效走查 |
 | SET-6e 外观 | desktop render + `TextScale` + AX tree | 离线导航/AX Press/根字号/selected 定向回归 | 正式窗口 100/125/150% 与重启 | 视觉、Tab/Enter、VoiceOver 签字 |
 | SET-6f 高级 | desktop handshake 摘要 + render/AX 同源行 | 离线/连接两态、Reconnect gate、旧握手清空 | 正式 Host 对照 API/capabilities/endpoint/resume/ack | 视觉、Tab/Enter、VoiceOver 签字 |
+| SET-6g 关于 | Accepted 握手可选 `host_data_dir` + desktop render/AX 同源行 | 握手 present/absent + About 启用/清空隐藏 | 正式 Host 对照 build、协商 API 与 `doctor --json` data directory | 视觉、Tab/Enter、VoiceOver 签字 |
 
 受影响关键回归：协议/golden、Secret/脱敏、配置持久化。测试使用假 key/token 形态；真实凭证只在隔离实例中读取，输出前脱敏。任何 401/429/超时先记录真实类别，不用 mock 冒充 E3。
 
@@ -209,11 +211,11 @@ Settings 沿用参考设计的 1440×1024 深色语言和 8px 节奏，不另起
 ## 10. 文档与收尾
 
 - [x] ROADMAP、Feature Spec、任务书和 GUI 行为设计同步。
-- [x] product/capabilities/desktop/verification/backlog 索引本 Feature，状态诚实标为未实现。
+- [x] product/capabilities/desktop/verification/backlog 索引本 Feature，状态随各切片诚实同步。
 - [x] SET-1 后同步 contracts/architecture/ADR/protocol/client/app 包级 Spec。
 - [x] SET-2 后同步 providers/workspace/app 包级 Spec（pawork-auth 零改动，无需回写）。
-- [x] SET-3～6f 已同步 desktop 等实际写入集包级 Spec。
-- [x] SET-3～6f 已逐片写入实际验证和已知缺口，并压缩进 history。
+- [x] SET-3～6g 已同步各实际写入集包级 Spec。
+- [x] SET-3～6g 已逐片写入实际验证和已知缺口，并压缩进 history。
 - [ ] 模型与供应商真实验收后再决定是否补 Settings bitmap 基准。
 
 ## 11. 决策与开放问题
@@ -229,3 +231,4 @@ Settings 沿用参考设计的 1440×1024 深色语言和 8px 节奏，不另起
 | SET-D07 | API key 的 GUI wire/ledger 形状 | ADR-046 已拍板非重放 `ApiKeySecret` + ledger 只缓存脱敏响应 | Accepted |
 | SET-D08 | Kimi OAuth 模型目录 contract | SET-5 取证：官方 kimi-cli 实际请求 `https://api.kimi.com/coding/v1/models`（OpenAI 风格 `data[]`），按远端优先实现；形状不符/失败一律 Err，由 Host 落版本固定回退 | Accepted |
 | SET-D09 | Z.AI General API preset | 首期不开放，只做 Coding Plan；后续按需求再决定 | Deferred |
+| SET-D10 | About 如何获得当前 Host 数据目录 | ADR-051 Accepted：API 1.9 Accepted 握手追加可选 `host_data_dir`；GUI Host 与 Core 共用同一次解析，缺字段、空字段或断线时隐藏 About | Accepted（已实现并通过定向门禁） |

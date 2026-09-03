@@ -13,11 +13,11 @@
 
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
-| `src/lib.rs` | ~1080 | `Cli`（全局参数）与 `Command` 及全部子命令 enum（`SessionsCommand` / `AuthCommand` / `GuiCommand` / `AcpCommand` / `ServiceCommand` / `McpCommand` / `TasksCommand` / `PlanCommand` / `AgentsCommand`）；`run()` / `run_inner()` 分发；`run_models`；`approval_host` 选择；`CliError`；clap 解析单元测试 |
+| `src/lib.rs` | ~1080 | `Cli`（全局参数）与 `Command` 及全部子命令 enum（`SessionsCommand` / `AuthCommand` / `GuiCommand` / `AcpCommand` / `ServiceCommand` / `McpCommand` / `TasksCommand` / `PlanCommand` / `AgentsCommand`）；`run()` / `run_inner()` 分发（GUI 分支把同一次 data-dir 解析同时注入 Core 与 `run_gui`）；`run_models`；`approval_host` 选择；`CliError`；clap 解析单元测试 |
 | `src/chat.rs` | ~650 | `run_chat`（REPL + 单次）、`run_once`、`run_json`（`--json` 驱动）；REPL 斜杠命令处理；`drive_turn` Ctrl-C 取消；轮末 usage 行；`map_turn_error` |
 | `src/sessions.rs` | ~700 | `sessions list/show/export/import/fork` 实现；`.jsonl` 首行签名嗅探（Codex 信封 / Claude 本地行 / Pi 默认）；`format_millis`（无时区库的 UTC 格式化） |
 | `src/auth.rs` | ~120 | `auth list/set-key/login/logout`；OAuth 登录等待 5 分钟（`LOGIN_TIMEOUT`）；只显示掩码 |
-| `src/gui.rs` | ~150 | `gui serve`：单实例探测、`TokenStore`、socket 目录 0o700、pid 文件、`GuiServer` accept 循环；握手能力由 `pawork_protocol::app::registry::gui_supported_capabilities()` **派生**（无手写清单） |
+| `src/gui.rs` | ~150 | `gui serve`：消费 `run_inner` 已解析的 Host data directory，派生单实例 socket/pid/token，向认证握手注入同一路径；单实例探测、`TokenStore`、socket 目录 0o700、pid 文件、`GuiServer` accept 循环；握手能力由 `pawork_protocol::app::registry::gui_supported_capabilities()` **派生**（无手写清单） |
 | `src/headless.rs` | ~430 | `headless --json-stdio`：`HeadlessHandler`（hello 协商、capability gate、compat import/history、事件轮询）；`HOST_CAPABILITIES` 常量 |
 | `src/acp.rs` | ~280 | `acp serve` 进程循环：stdin 逐行 JSON-RPC 解析、`session/prompt` 并发 inflight、事件泵任务、outbox 冲刷、EOF 后 30s drain 收尾 |
 | `src/ops.rs` | ~360 | `status` / `watch` / `shutdown` / `doctor`；`gui_socket_path` / `gui_token_path` / `gui_pid_path` 命名；token 文件读取组装握手 proof；`InstanceReport` |
@@ -140,6 +140,7 @@
 
 1. **启动与装配**（`run_inner`）：
    - clap 解析 → `normalize_instance`；`service` / `status` / `doctor` / `watch` / `shutdown` 五命令直接进入 pre-core 分支返回。
+   - `gui serve` 在加载 Core 前只解析一次实际 data directory：同一个 `PathBuf` 同时写入 `AppLoadOptions.data_dir` 并传给 `run_gui`；Core 存储、socket/pid/token 派生和 Accepted 握手元数据因此不会分叉。`--socket` 只覆盖 endpoint，不改变 data directory。
    - 组装 `AppLoadOptions`（provider / model / instance / `parse_approval_mode` / `trust_workspaces` / approval_host）；`--trust-workspaces` 只设置本进程显式覆盖，不修改配置；gui / headless / acp 三命令强制换 `GuiApprovalHost`。
    - 目录与协议入口类命令（models / sessions / auth / diff / rollback / mcp / import / headless / acp / gui / usage / tasks / plan / agents）用 `AppCore::load_for_catalog`（容忍默认 provider 缺凭证的目录兜底装配），其余（chat / run）用 `AppCore::load`。
    - 普通命令路径在结果返回前执行 `core.shutdown()`，快路径命令（gui / headless / acp / json 驱动）各自负责收尾。
@@ -165,7 +166,7 @@
    - 订阅滞后 → `fail_closed_all_prompts`：清空 occupancy / pending / run 映射 / held_events，全部未决 prompt 以 Failed 释放，并释放 outbox 中全部屏障。stdin EOF 后最多 drain 30 秒（`ACP_DRAIN_TIMEOUT`）等待活跃 run 收尾，inflight 任务 join 超时 2 秒后 abort。
 6. **gui serve 生命周期**：
    - bind 前向目标 socket 发 300ms 探测连接，能连上即报错拒绝双实例（Unix bind 会清理 stale socket 文件，探测是唯一在线判定）。
-   - 加载或生成 `gui.token`（`TokenStore`）→ 写 pid 文件 → `HandshakeService`（能力由 registry `gui_supported_capabilities()` 派生）+ `TokenAuthenticator` → accept 循环持有连接句柄（`SessionHandle` 提前 drop 会令客户端握手 Broken pipe）。
+   - 以 `run_inner` 传入的同一 data directory 加载或生成 `gui.token`（`TokenStore`）→ 写 pid 文件 → `HandshakeService`（能力由 registry `gui_supported_capabilities()` 派生，并用 `with_host_data_dir` 注入该目录）+ `TokenAuthenticator` → 认证成功的 Accepted 握手发布可选只读元数据 → accept 循环持有连接句柄（`SessionHandle` 提前 drop 会令客户端握手 Broken pipe）。
    - Ctrl-C 关闭监听、删 pid 文件、关闭 pty 与 Core；关闭不取消已进入 Core 的 run（进程内 run 随进程结束，跨进程存活语义归 service）。
 7. **审批五档与宿主选择**：
    - `--approval-mode` 五档：`always-ask` / `ask-for-writes` / `ask-for-dangerous` / `never-ask` / `read-only`（kebab 与 snake 拼写均可；缺省 `read-only`）。已移除的旧档 `on-failure` 保持拼写兼容，**映射为 `NeverAsk`**；未知档报错并列出合法值。
@@ -186,6 +187,7 @@
 - **ACP wire 契约**：`PROTOCOL_VERSION = 1`（整数）；实验 v2 握手显式拒绝（-32602，错误信息点名 experimental v2）；`initialize` 每连接一次。JSON-RPC 错误码固定：-32700 Parse / -32600 InvalidRequest / -32601 MethodNotFound / -32602 InvalidParams / -32603 Internal / -32800 RequestCancelled / -32000 AuthRequired / -32002 ResourceNotFound。params 未知字段（除保留 `_meta`）一律 -32602；`session/request_permission` 响应是嵌套 outcome 形状，扁平形状与未知字段拒绝。`fixtures/v1` 的 golden **先于实现改动**（冻结契约清单见 [../../design.md](../../design.md)）。
 - **RunState → StopReason 映射**（ACP prompt 结果）：Completed → `end_turn`；Cancelled / Interrupted → `cancelled`；Failed → JSON-RPC internal error（"prompt turn failed in Core"）。
 - **GUI 握手能力派生**：`gui serve` 对外宣告的 capability 集不手写，恒等于 `pawork_protocol::app::registry::gui_supported_capabilities()` 的派生结果——registry 增删命令映射时 GUI 宣告自动跟随；禁止在本包重新出现字面量能力清单。
+- **GUI 数据目录单源**：Core 加载、socket/pid/token 路径和 API 1.9 Accepted `host_data_dir` 必须消费 `run_inner` 的同一个解析结果；不得在 `run_gui` 二次读取环境或按 endpoint 反推。`host_data_dir` 只作当前认证客户端的只读展示元数据，不进日志、事件、ledger 或文件操作输入。
 - **ACP 命令准入**：registry `acp` 列即 ACP 可达命令全集（当前 `session_create` / `run_start` / `run_cancel` / `tool_approve`，测试钉死）；adapter decode 产物与宿主自构命令都过 `admit_acp_command`，列外命令 `ProtocolUnsupported`。禁止在本包另维护一份命令名字表——三通道可用性一律查 protocol registry（headless 列 / acp 列 / `gui_supported_capabilities()`）。
 - **审批 fail-closed**：`--json` 或 stdin 非 TTY 时任何审批请求都被拒绝（`DenyAllApprovals`）；ACP 权限选项固定 `allow-once` / `reject-once`，未知 option id 拒绝；客户端错误响应视为 Deny，`-32800` 视为 Cancel。
 - **通道身份戳**：三条程序化通道进 Core 的命令 / 查询一律 `CommandSource::Automation` + `ActorIdentity::Automation`（名称分别 `cli-json` / `headless` / `acp:pawork-acp`），command id 前缀 `cli-<name>-<n>` / `acp-<request_id>`——事件与审计侧可区分来源。
@@ -236,6 +238,8 @@
 | `fixtures/v2/`（1 个 JSON） | `initialize-request-v2`——仅用于断言实验 v2 显式拒绝 |
 
 Cargo `[[test]]` 把 target 命名为 `acp_fixtures` / `acp_floor`（文件为 `tests/fixtures.rs` / `tests/floor.rs`）。交互式 REPL、gui serve 网络路径与真实 Provider 不在本包测试范围（验证策略见 [../verification.md](../verification.md)）。
+
+2026-09-03 SET-6g 与 client 合并运行默认门禁，CLI 84/84、client 41/41 通过；`cargo check -p pawork --offline` 通过。GUI data directory 的同源装配由类型/调用链编译覆盖，握手字段的 wire 与透传由 protocol/client 定向回归锁定。
 
 ## 8. 注意事项与已知限制
 

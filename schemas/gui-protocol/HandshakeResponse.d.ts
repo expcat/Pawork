@@ -11,4 +11,8 @@ export type HandshakeResponse = { "status": "accepted", request_id: string, sele
 /**
  * 服务端按自身能力筛选后授予的能力列表；空列表时省略。
  */
-capabilities?: Array<GuiCapability>, } | { "status": "rejected", request_id: string, error: ProtocolError, };
+capabilities?: Array<GuiCapability>,
+/**
+ * 当前 Host 实际使用的数据目录；仅由已认证的本机 GUI Host 可选发布。
+ */
+host_data_dir?: string | null, } | { "status": "rejected", request_id: string, error: ProtocolError, };

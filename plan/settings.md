@@ -1,6 +1,6 @@
 # Settings 活动线任务书
 
-> 状态：SET-0～SET-6f 已审查提交；下一片为 SET-6g「关于」。真实账号与完整真窗口验收仍待 SET-7。2026-09-01 重置时仓库内不存在旧 `plan/` 文档；本文件是新建后的唯一活动任务书。范围依据 [Settings Feature Spec](../docs/spec/settings.md)，顺序与状态以 [ROADMAP](../ROADMAP.md) 为准。
+> 状态：SET-0～SET-6f 已审查提交；SET-6g「关于」已实现并通过定向门禁，[ADR-051](../docs/adr/ADR-051-about-settings-host-data-dir.md) 为 Accepted。真实账号与完整真窗口验收仍待 SET-7。2026-09-01 重置时仓库内不存在旧 `plan/` 文档；本文件是新建后的唯一活动任务书。范围依据 [Settings Feature Spec](../docs/spec/settings.md)，顺序与状态以 [ROADMAP](../ROADMAP.md) 为准。
 
 ## 1. 开工合同
 
@@ -354,6 +354,35 @@ SET-5 收口后才逐页立项，不预建通用设置框架：
 
 **定向回归**：扩展既有本地 Settings 页 GPUI 测试，覆盖离线 Advanced 导航、失败态权威文案/endpoint/unavailable 握手、Reconnect AX Press gate、连接后 runtime/API/capabilities/resume 与 last-ack 行、已连接态重复 Reconnect fail-closed，以及 `ControllerEvent::Disconnected` 清空握手并恢复 Reconnect；同一测试继续覆盖外观页既有字号主路径，不新增测试体系。
 
+### SET-6g — 关于页（权威版本 / 协议 / 数据目录）🟢
+
+> 2026-09-03 完成：用户接受 [ADR-051](../docs/adr/ADR-051-about-settings-host-data-dir.md) 后，Host 实际数据目录进入认证成功的 Accepted 握手；Desktop build、实际协商 GUI API 与 Host data directory 三项权威来源已接通。
+
+**目标**：以三项权威只读信息启用 About：明确标注的 Desktop build、当前连接实际协商 GUI API、当前 Host 实际数据目录。
+
+**非目标**：不传 Host build version；不做 updater、release channel、License、安装器状态或版本比较；不从 endpoint / Desktop 环境推断路径；不 shell-out；不新增 AppQuery、capability、config/schema、偏好框架、crate 或依赖。
+
+**实际写入集**：
+
+- `crates/protocol/` + `schemas/`：Accepted 握手可选 `host_data_dir`、API 1.9、golden/typegen；
+- `crates/client/`：`SessionInfo` 原样保存可选字段；
+- `crates/cli/`：GUI 启动只解析一次数据目录，同值交给 `AppCore`、socket/PID/token 与握手；
+- `apps/desktop/`：About 动态导航、只读 render/AX、断线或缺字段时隐藏并退回高级页；
+- 上述包级 Spec、契约/架构/Settings/GUI 文档；完成后再向 history 追加已验证事实。
+
+**完成条件**：
+
+- 只有当前认证连接实际携带非空 `host_data_dir` 时才显示 About；旧 Host、缺字段、Connecting/断线均 fail-closed；API 1.9 沿用既有 minor 只记账策略，不新增 1.8 运行时分支；
+- Desktop build、协商 API 与数据目录分别来自 build env、当前 `SessionInfo` 与 Host 单次目录解析，不混用支持上限或 endpoint 推断；仅用 trim 判定全空白字段不可用，合法路径值原样展示；
+- render / AX 共用三行只读数据；断线不保留旧路径；无任何更新、发布或 License 假入口；
+- API 1.9 只演进握手字段，28 command / 15 query 与 capability 集不变。
+
+**ADR 闸门**：ADR-051 已于 2026-09-03 获用户 Accepted；实现未扩出 D1～D5。
+
+**验证**：`cargo test -p pawork-protocol --features typegen --offline --lib --tests`（155）、`cargo test -p pawork-client -p pawork-cli --offline --lib --tests`（125）、`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`（186）、`cargo check -p pawork --offline` 与 `git diff --check` 均通过；同一时刻只运行一个 Cargo 进程。真窗口仍在 SET-7 对照 `pawork doctor --json` 的数据目录与当前协商 API。
+
+**定向回归**：64 个 GUI fixture 数量不变；44 个引用 `API_VERSION` 的 fixture 仅做 minor 8→9 机械更新，Accepted 握手 fixture 另增字段。协议覆盖元数据 present / absent 与缺字段解码；client contract 覆盖透传；Desktop 只扩展既有 Settings 主路径，锁定 About 有字段启用、合法路径原样展示、清空后隐藏/退回，未新增测试体系。只读审查发现并修复 1 个 P2：展示值不再被 `trim()` 改写，`trim()` 只用于全空白 gate；修后 Desktop 186/186 复跑通过。
+
 ### SET-7 — 真窗口与人工收口 ⚪
 
 **自动证据**：实际写入集定向门禁；protocol/Secret/config 三类关键回归；`git diff --check`。
@@ -366,6 +395,7 @@ SET-5 收口后才逐页立项，不预建通用设置框架：
 - `pawork auth list` / `pawork models` 与 GUI 脱敏状态一致；
 - 1440×1024、1080×720、外观页 100/125/150% 与 Cmd+=/Cmd+-/Cmd+0 同步、键盘/AX；重启后回到 100%。
 - 高级页连接中/已连接/断线三态、endpoint/握手摘要与实际 Host 一致；Reconnect、Tab/Enter 与 VoiceOver 可达且页面无 GUI token 及其路径泄漏。
+- 关于页 Desktop build、协商 GUI API 与 Host data directory 分别对照构建元数据、当前握手与 `pawork doctor --json`；断线/旧 Host 时导航消失且不残留路径，Tab/Enter 与 VoiceOver 可达。
 - SET-3 登记的已知缺口：Settings 页 AX 卡片几何为固定估值、不随滚动位移；1080×720 折叠线以下卡片 AX rect 与视觉错位，VoiceOver 走查时重点核，必要时修。
 
 **人工签字**：视觉层级、secure input、OAuth 浏览器切换、VoiceOver。没有用户签字时只写“等待人工验收”。

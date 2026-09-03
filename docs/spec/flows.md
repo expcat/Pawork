@@ -45,6 +45,7 @@ pawork-desktop  ──framed bytes──►  pawork gui serve
 - 传输：`pawork-transport` 只搬 `[u32 LE len][payload]`，上限 1 MiB。
 - 编解码：`pawork-protocol` 的 `ClientFrame` / `ServerFrame`。
 - 鉴权：`gui serve` 写 `gui.token`（`TokenStore`）；desktop `platform.rs` 读同名文件，缺 token fail-closed。
+- 握手元数据：GUI Host 在认证成功的 API 1.9 `Accepted` 响应中可选发布与 Core 装配共用的 `host_data_dir`；`pawork-client::SessionInfo` 原样保留，Desktop About 只在当前连接字段非空时展示，缺失/断线不从 endpoint 推断。
 - 命令/查询：三通道可用性来自 `protocol::app::registry`，host 分发表与 `gui.available` 双射。未登记 fail-closed。
 
 Desktop 四层：`ui` → `controller`（只调 `GuiClient`）→ `projection`（无 gpui/tokio）→ `platform`（socket/token）。生产 `pawork-*` 依赖必须恰好 `{pawork-client}`。

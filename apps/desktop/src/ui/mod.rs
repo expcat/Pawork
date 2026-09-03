@@ -125,8 +125,9 @@ pub(crate) enum AppRoute {
     Settings,
 }
 
-/// Settings 内容页（SET-6a/6b/6c/6d/6e/6f）：供应商页与 Desktop 本地页
-/// 常在；通用页 / 权限页 / 工具页 / 终端页仅在对应 Host 查询成功后显示。
+/// Settings 内容页（SET-6a～6g）：供应商页与 Desktop 本地页常在；通用页 /
+/// 权限页 / 工具页 / 终端页仅在对应 Host 查询成功后显示，About 仅在当前
+/// 认证握手携带权威 Host 数据目录时显示。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum SettingsPage {
     #[default]
@@ -137,6 +138,7 @@ pub(crate) enum SettingsPage {
     Terminal,
     Appearance,
     Advanced,
+    About,
 }
 
 /// 工作台专属 action 在当前路由是否生效（SET-3 审查修复 1）：审批 /
@@ -559,6 +561,8 @@ pub struct AppView {
     settings_nav_appearance_focus: FocusHandle,
     /// SET-6f：Settings 导航「高级」焦点（本地诊断页，始终可用）。
     settings_nav_advanced_focus: FocusHandle,
+    /// SET-6g：Settings 导航「关于」焦点（Host 数据目录可用时显示）。
+    settings_nav_about_focus: FocusHandle,
     /// SET-6e：三档字号选择的稳定焦点句柄。
     settings_appearance_focus: HashMap<String, FocusHandle>,
     /// SET-6a：proxy URL 内联输入（明文；非 Secret）。
@@ -780,6 +784,7 @@ impl AppView {
             settings_nav_terminal_focus: cx.focus_handle().tab_stop(true),
             settings_nav_appearance_focus: cx.focus_handle().tab_stop(true),
             settings_nav_advanced_focus: cx.focus_handle().tab_stop(true),
+            settings_nav_about_focus: cx.focus_handle().tab_stop(true),
             settings_appearance_focus: HashMap::new(),
             settings_proxy_input: cx.new(|cx| {
                 TextInput::with_placeholder("http://127.0.0.1:7890", cx)
@@ -1105,6 +1110,9 @@ impl AppView {
         self.barriers.remove_timeline_stable();
         self.barriers.remove_approval_visible();
         self.handshake_info = None;
+        if self.settings_page == SettingsPage::About {
+            self.settings_page = SettingsPage::Advanced;
+        }
         self.projection.set_connection(ConnectionState::Connecting);
         self.status_hint = None;
         cx.notify();
@@ -1151,6 +1159,9 @@ impl AppView {
         let previous_session = self.projection.active_session_id.clone();
         self.projection
             .set_connection(ConnectionState::Connected { instance_id });
+        if self.settings_page == SettingsPage::About && self.settings_about_rows().is_none() {
+            self.settings_page = SettingsPage::Advanced;
+        }
         let apply = match &resume {
             None => {
                 self.projection.apply_fresh_snapshot(&snapshot);
@@ -1238,6 +1249,9 @@ impl AppView {
             ControllerEvent::Disconnected { reason } => {
                 let stale_reason = format!("connection lost · {reason}");
                 self.handshake_info = None;
+                if self.settings_page == SettingsPage::About {
+                    self.settings_page = SettingsPage::Advanced;
+                }
                 self.projection
                     .set_connection(ConnectionState::Disconnected { reason });
                 self.changes.mark_stale(&stale_reason);
@@ -2714,6 +2728,11 @@ impl AppView {
             SettingsPage::Advanced => {
                 self.settings_page = SettingsPage::Advanced;
                 window.focus(&self.settings_nav_advanced_focus);
+            }
+            SettingsPage::About if self.settings_about_rows().is_none() => return,
+            SettingsPage::About => {
+                self.settings_page = SettingsPage::About;
+                window.focus(&self.settings_nav_about_focus);
             }
             SettingsPage::Providers => {
                 self.settings_page = SettingsPage::Providers;

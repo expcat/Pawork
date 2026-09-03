@@ -171,6 +171,7 @@ fn sample_server_frames() -> Vec<ServerFrame> {
                 current_sequence: GlobalSequence(42),
             },
             capabilities: vec![GuiCapability::Events, GuiCapability::Snapshots],
+            host_data_dir: None,
         }),
         ServerFrame::Handshake(HandshakeResponse::Rejected {
             request_id: "request-1".into(),

@@ -9,10 +9,11 @@
     "handle": {
       "api_version": {
         "major": 1,
-        "minor": 8
+        "minor": 9
       },
       "instance_id": "instance-1"
     },
+    "host_data_dir": "/tmp/pawork-data",
     "request_id": "request-1",
     "resume": {
       "from_sequence": 16,
@@ -21,7 +22,7 @@
     },
     "selected_api_version": {
       "major": 1,
-      "minor": 8
+      "minor": 9
     },
     "status": "accepted"
   },

@@ -1169,3 +1169,21 @@ Real-world evidence: pending（真窗口、Tab/Enter 与 VoiceOver 仍登记 SET
 Known gaps: SET-6g「关于」尚未实现；Host 级完整 `doctor` 报告、data dir 与配置 instance 切换不属于 Desktop 本页，继续由 `pawork --instance <name> doctor` 承载。
 
 Full workspace gate: NOT RUN（当前未设置全量门禁）。
+
+## 2026-09-03 — Settings SET-6g 关于页（ADR-051）
+
+- 决策：[ADR-051](adr/ADR-051-about-settings-host-data-dir.md) 经用户确认 Accepted。API 1.9 在 `HandshakeResponse::Accepted` 追加可选 `host_data_dir`；不新增 command/query/capability，不为 1.8 建运行时分支。GUI Host 在加载 Core 前只解析一次 data directory，同一个 `PathBuf` 交给 Core、socket/PID/token 派生和握手；`--socket` 只覆盖 endpoint。
+- 实施：protocol/golden/typegen 接入字段与版本；client `SessionInfo` 和 Desktop `DesktopHandshakeInfo` 原样透传；About 动态显示 Desktop build、当前协商 GUI API、Host data directory 三项只读事实。只有当前 Connected 握手携带非空路径时才发布导航；缺字段、仅空白字段、Connecting 或断线均隐藏，已在 About 时退回高级。无 updater/release/License、路径推断、shell-out、App query/config/schema/Policy 或新依赖。
+- 只读审查：发现并修复 1 个 P2——初版把路径 `trim()` 后用于展示，会改写首尾空格属于合法字符的路径；现仅用 `trim()` 判定全空白字段不可用，展示保留 Host 原值，既有 Desktop Settings 主路径补原样断言。其余 gate、断线清空、render/AX 同源与无写动作核对通过。
+
+Implemented: Settings「关于」页与 API 1.9 可选认证握手元数据；ROADMAP 指针推进至 SET-7 真窗口与人工收口。
+
+Validated: `cargo run -p pawork-protocol --features typegen --bin pawork-protocol-typegen --offline`；`cargo test -p pawork-protocol --features typegen --offline --lib --tests`（155/155）；`cargo test -p pawork-client -p pawork-cli --offline --lib --tests`（125/125，其中 client 41、CLI 84）；`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`（186/186，P2 修复后全量复跑）；`cargo check -p pawork --offline`；`git diff --check`。
+
+Targeted regressions: 协议 `host_data_dir` present/absent 与旧帧缺字段解码；client contract 原样透传；Desktop About 缺字段隐藏、有字段导航与三行值、合法路径原样展示、断线清空并退回高级。64 个 GUI fixture 数量不变，44 个引用当前版本的 fixture 仅由 1.8 更新为 1.9；registry 保持 28 command / 15 query。
+
+Real-world evidence: pending（正式 Host 对照 `pawork doctor --json` data directory、真窗口视觉、Tab/Enter 与 VoiceOver 登记 SET-7）。
+
+Known gaps: 本片没有 Host build version、updater、release channel、License、安装器状态或实例切换；均未被当前需求证明必要。
+
+Full workspace gate: NOT RUN（当前未设置全量门禁）。

@@ -109,6 +109,7 @@ fn server_handshake_accepted_frame() -> ServerFrame {
             through_sequence: GlobalSequence(20),
         },
         capabilities: vec![GuiCapability::Events, GuiCapability::Snapshots],
+        host_data_dir: Some("/tmp/pawork-data".into()),
     })
 }
 
@@ -553,6 +554,7 @@ fn golden_additional_server_frames() {
                 current_sequence: GlobalSequence(42),
             },
             capabilities: vec![GuiCapability::Events, GuiCapability::Snapshots],
+            host_data_dir: None,
         })),
     );
 }

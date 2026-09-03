@@ -65,7 +65,7 @@ S7 的产品形状：**一个本地 Coding Agent 聊天窗**，不是工作站�
 | Composer | 纯文本发送、取消当轮、下拉已配置 model/provider | `@file`、附件、profile（S9 再长） |
 | Approval | 时间线内嵌仅本次允许 / 本轮运行允许 / 拒绝（复用 S3 语义） | 完整 Policy 说明页、信任向导 |
 | Changes / Terminal / Resources | 已实现的 Host-driven Surface | 写能力仍按各自契约增量 |
-| Settings | 当前活动增量；独立 Settings Rail + 全宽内容；模型与供应商、通用、权限与审批、工具与 MCP、终端、外观、高级已启用 | 「关于」在权威构建/协议/数据目录来源到位后启用 |
+| Settings | 当前活动增量；独立 Settings Rail + 全宽内容；模型与供应商、通用、权限与审批、工具与 MCP、终端、外观、高级、关于已启用 | About 只在当前认证连接提供非空 Host 数据目录时出现；真实窗口与 VoiceOver 验收待 SET-7 |
 | Workflow | 隐藏 | 真实产品面另行立项 |
 
 空态：无会话时主区只有一句提示和 Composer。不以假卡片冒充未实现能力。
@@ -195,6 +195,12 @@ Settings 沿用现有深色主题、8px 节奏和 1440×1024 基线，不把工�
 > 不用于反推 data directory / 配置 instance；不提供实例热切换、CLI shell-out
 > 或诊断历史。
 
+> 2026-09-03 SET-6g 已按 ADR-051 落地「关于」页：Desktop build 来自
+> 编译元数据，GUI API 来自当前协商结果，Host data directory 来自认证成功的
+> Accepted 握手。只有当前连接提供非空路径时才显示导航；缺字段、仅空白字段或
+> 断线时隐藏并退回高级。路径原样展示，不从 endpoint 推断，不用于文件操作；
+> 页面不添加 updater、release 或 License 占位。
+
 行为、供应商认证矩阵、模型目录回退和安全边界以 [Settings Spec](spec/settings.md) 为准。引用会话给出的信息架构足以指导实现，本轮不新增 bitmap；实现真窗口出现实际布局偏差时再生成/锁定 Settings 定稿图。
 
 ---
@@ -251,7 +257,7 @@ S1 起的 `--json` 仍标 **unstable**。S7 的 GUI **不**把 `--json` 当长�
 | S10 | 正式协议 / 多客户端 / Fork / PTY / service | 重连 Replay、Fork、InspectorToolTabs 激活 Terminal；本机多窗口未做（见 [产品候选](spec/backlog.md)） |
 | S11 | Plan / 后台任务 / usage / 多 Agent | Workflow 与完整用量/quota 状态条；ActivityPopover 激活 Main / subagent 状态列表 |
 | S12 | 全项目 Code Review | 只读核对 Desktop 四层边界、状态投影、能力声明、可访问性及 S7–S11 GUI 需求/证据；不改界面、不启动窗口 |
-| Settings（当前） | provider/auth/catalog/config 的 Host 门面 + Desktop 本地 presentation state | Settings Rail；已启用模型与供应商、通用、权限、MCP、终端、外观，其余页面按真实能力逐页加入 |
+| Settings（当前） | provider/auth/catalog/config 的 Host 门面 + Desktop 本地 presentation state | Settings Rail；已启用模型与供应商、通用、权限、MCP、终端、外观、高级与 About；About 由当前认证握手的非空 Host 数据目录动态启用，不显示 updater/release/License 占位 |
 | 待决策 | WASM 插件 / Hooks / LSP / 市场 | 预留 Resources 空位与协议扩展点，**不画假市场页** |
 
 后续阶段任务书必须带一行「GUI 增量」；没有对应投影/命令就不做按钮。

@@ -74,7 +74,7 @@ R1 收口（2026-08-19）后 workspace 定稿为 **21 成员（19 库 + 2 应用
 | 引擎语义 | 审批经 `ApprovalResolver` await（`ToolApprovalRequested/Responded` 事件对；Requested 在等待前落盘）、`CancelHandle`+`CancelReason`、`LoopContext` 工具执行注入点 | `crates/engine` 定向回归 |
 | 配置 schema | TOML、`ConfigTier`（Builtin<Global<Profile<Workspace<Session<Run）、`PaworkConfig`/`ProviderConfig{id, base_url}`（**无 api_key 字段**） | `crates/workspace::config` 六层矩阵测试 |
 | blob 格式 | `PWB1` + protected AEAD 边界（ADR-032）；artifact/protected/checkpoint 三区 | `crates/storage::blob` golden |
-| GUI 协议 | 帧格式（ADR-036 版本协商）；`SUPPORTED_API_VERSIONS` 1.0/1.1/1.2/1.3/1.4/1.5/1.6/1.7/1.8（1.4 = ADR-046 Settings 认证词汇；1.5 = ADR-047 Settings 通用页词汇；1.6 = ADR-048 Settings 权限与审批页词汇；1.7 = ADR-049 Settings 工具与 MCP 页词汇；1.8 = ADR-050 Settings 终端页词汇）；typegen 检入 [`schemas/`](../schemas/)（core-api/gui-protocol/headless-json）；三通道可用性单源 `protocol::app::registry`，未登记 fail-closed | 64 帧 golden + typegen 断言（`crates/protocol`） |
+| GUI 协议 | 帧格式（ADR-036 版本协商）；`SUPPORTED_API_VERSIONS` 1.0/1.1/1.2/1.3/1.4/1.5/1.6/1.7/1.8/1.9（1.4 = ADR-046 Settings 认证词汇；1.5 = ADR-047 Settings 通用页词汇；1.6 = ADR-048 Settings 权限与审批页词汇；1.7 = ADR-049 Settings 工具与 MCP 页词汇；1.8 = ADR-050 Settings 终端页词汇；1.9 = ADR-051 Accepted 握手可选 Host data directory）；typegen 检入 [`schemas/`](../schemas/)（core-api/gui-protocol/headless-json）；三通道可用性单源 `protocol::app::registry`，未登记 fail-closed | 64 帧 golden + typegen 断言（`crates/protocol`） |
 | headless JSON | `HeadlessResponse`（`type=event|response`）；`run`/`chat --prompt --json` 已对齐；stdout 仅 JSONL；`--json` → 正式 headless 映射见 [spec/contracts.md](spec/contracts.md) | `crates/protocol` headless golden |
 | 控制面 | usage `dedup_key`；audit JSONL | `fixtures/audit/event-v1.jsonl` + `crates/control-plane` golden |
 | 缓存注解（已确认 D4，附加式） | `CanonicalModelRequest` 缓存策略枚举（`Off/Auto/Explicit{retention}`）+ 前缀分段标注；`ModelResponseSummary`/usage 增 `cache_read`/`cache_write`；serde 向后兼容 | golden 先行；方案见 [references.md](references.md) 附录 B（F5-B） |
@@ -106,7 +106,7 @@ R1 收口（2026-08-19）后 workspace 定稿为 **21 成员（19 库 + 2 应用
 ## 5. ADR 索引
 
 - **ADR-001 ~ ADR-036**：随 V1 归档于 `../Pawork_v1/docs/adr/`，原则继续有效。常被引用：ADR-001 纯 Rust、ADR-019 无 TUI、ADR-031 沙箱可观测回退、ADR-032 blob 格式（PWB1）、ADR-035 gpui 锁定 `=0.2.2`、ADR-036 GUI 协议版本协商。
-- **本仓库现存**（[docs/adr/](adr/)；ADR-037～044 Accepted）：
+- **本仓库现存**（[docs/adr/](adr/)；ADR-037～051 Accepted）：
   - [ADR-037](adr/ADR-037-s13-wave-b-contracts.md) S13 波 B 五项契约（trait 归 domain / 维持 ADR-031 / `ToolResultContent.artifacts` / `Revised` title+steps / `ResultArchived.task_id`）。
   - [ADR-038](adr/ADR-038-inventory-and-product-shape.md) 库存与产品形态（R0：单机形态、休眠库存归档裁决）。
   - [ADR-039](adr/ADR-039-package-layout-and-no-merge-list.md) 包布局与不合并清单（R1：37→21、扁平 `crates/`）。
@@ -121,4 +121,5 @@ R1 收口（2026-08-19）后 workspace 定稿为 **21 成员（19 库 + 2 应用
   - [ADR-048](adr/ADR-048-permissions-settings-wire.md) Settings 权限与审批页 wire（Accepted：`PermissionsSettings` 查询（含 Host 权威 attached workspace_id）、`SetApprovalMode` 会话内生效不持久化、`WorkspaceTrust` 死词汇实装开放 GUI（会话内信任切换不写盘）、API minor 1.6 仅记账、golden 先行）。
   - [ADR-049](adr/ADR-049-mcp-settings-wire.md) Settings 工具与 MCP 页 wire（Accepted：`McpTest` 命令、`McpServerRemove` 命令（Global 层移除 + pawork.mcp.* SecretRef 幂等清理 + 内存同步重建 registry，同会话生效）、API minor 1.7 仅记账、golden 先行）。
   - [ADR-050](adr/ADR-050-terminal-settings-wire.md) Settings 终端页 wire 与 config（Accepted：Global `[terminal]` 段（shell/columns/rows）+ 非 Global 层整段剥离、`TerminalSettings` 查询、`SetTerminalSettings` 全态写命令（shell=null 清除）、terminal_create 应用配置默认、API minor 1.8 仅记账、golden 先行）。
-- 新决策继续以 ADR 记录，编号续接（下一个 ADR-051），落 [docs/adr/](adr/)；状态 Proposed → 用户确认 → Accepted 后方可执行对应破坏式改动。各 ADR 决策要点摘要见 [history.md](history.md)。
+  - [ADR-051](adr/ADR-051-about-settings-host-data-dir.md) Settings 关于页 Host 数据目录握手元数据（Accepted：API 1.9 Accepted 握手追加可选 `host_data_dir`；GUI Host 与 Core 共用单次目录解析，缺字段、空字段或断线时 About 隐藏；已实现并通过定向门禁）。
+- 新决策继续以 ADR 记录，编号续接（下一个 ADR-052），落 [docs/adr/](adr/)；状态 Proposed → 用户确认 → Accepted 后方可执行对应破坏式改动。各 ADR 决策要点摘要见 [history.md](history.md)。

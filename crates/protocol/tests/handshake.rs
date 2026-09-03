@@ -106,6 +106,7 @@ fn handshake_accepts_and_filters_capabilities() {
         connection_id,
         resume,
         capabilities,
+        host_data_dir,
     } = response
     else {
         panic!("expected accepted handshake, got {response:?}");
@@ -115,6 +116,7 @@ fn handshake_accepts_and_filters_capabilities() {
     assert_eq!(handle.instance_id, CoreInstanceId::from(INSTANCE_ID));
     assert_eq!(client_id, GuiClientId::from("gui-1"));
     assert_eq!(connection_id, ConnectionId::from("connection-1"));
+    assert_eq!(host_data_dir, None);
     // TerminalStreaming 不在服务端能力内，被筛选掉。
     assert_eq!(
         capabilities,
@@ -122,6 +124,38 @@ fn handshake_accepts_and_filters_capabilities() {
     );
     // 全新客户端（无 last_global_sequence）需要 Snapshot。
     assert!(matches!(resume, ResumeDisposition::SnapshotRequired { .. }));
+}
+
+#[test]
+fn handshake_host_data_dir_is_optional_and_missing_field_decodes() {
+    let service = service()
+        .with_authenticator(Box::new(AlwaysAccept))
+        .with_host_data_dir("/tmp/pawork-data");
+    let mut authenticated = request(vec![API_VERSION], vec![]);
+    authenticated.authentication = Some(ClientAuthentication {
+        scheme: "bearer".into(),
+        proof: "valid".into(),
+    });
+    let response = service.accept(&authenticated, session());
+    let HandshakeResponse::Accepted { host_data_dir, .. } = &response else {
+        panic!("expected accepted handshake, got {response:?}");
+    };
+    assert_eq!(host_data_dir.as_deref(), Some("/tmp/pawork-data"));
+
+    let mut value = serde_json::to_value(response).expect("serialize accepted handshake");
+    value
+        .as_object_mut()
+        .expect("accepted handshake object")
+        .remove("host_data_dir");
+    let decoded: HandshakeResponse =
+        serde_json::from_value(value).expect("decode accepted handshake without host_data_dir");
+    assert!(matches!(
+        decoded,
+        HandshakeResponse::Accepted {
+            host_data_dir: None,
+            ..
+        }
+    ));
 }
 
 #[test]

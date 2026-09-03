@@ -32,8 +32,8 @@ use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 use pawork_app::{
-    normalize_instance, parse_approval_mode, AppCore, AppError, AppLoadOptions, ApprovalPromptHost,
-    DenyAllApprovals, GuiApprovalHost,
+    consume_data_dir_outcome, default_data_dir_outcome, normalize_instance, parse_approval_mode,
+    AppCore, AppError, AppLoadOptions, ApprovalPromptHost, DenyAllApprovals, GuiApprovalHost,
 };
 use thiserror::Error;
 
@@ -396,6 +396,9 @@ async fn run_inner() -> Result<(), CliError> {
     }
 
     let mut options = AppLoadOptions::from_cli(cli.provider, cli.model);
+    let gui_data_dir = matches!(&cli.command, Command::Gui { .. })
+        .then(|| consume_data_dir_outcome(default_data_dir_outcome()));
+    options.data_dir = gui_data_dir.clone();
     options.instance = instance.clone();
     options.approval_mode = match cli.approval_mode.as_deref() {
         Some(value) => Some(parse_approval_mode(value).map_err(CliError::Usage)?),
@@ -433,7 +436,15 @@ async fn run_inner() -> Result<(), CliError> {
         AppCore::load(options).await?
     };
     match cli.command {
-        Command::Gui { command } => return gui::run_gui(core, command, &instance).await,
+        Command::Gui { command } => {
+            return gui::run_gui(
+                core,
+                command,
+                &instance,
+                gui_data_dir.expect("GUI command resolves its data directory before Core load"),
+            )
+            .await;
+        }
         Command::Headless { json_stdio } => return headless::run_headless(core, json_stdio).await,
         Command::Acp {
             command: AcpCommand::Serve,

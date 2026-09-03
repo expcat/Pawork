@@ -22,7 +22,7 @@
 | `src/headless/stream.rs` | ~110 | `EventSubscription`（有界 `mpsc` 事件通道，可取消）与 `BackpressurePolicy`（Drop 计数丢弃 / Error 显式溢出） |
 | `src/headless/error.rs` | ~150 | `SdkError` / `SdkErrorKind`（spawn、I/O、malformed frame、`UnknownResponseType`、`UnsupportedCapability`、`IncompatibleApiVersion`、`RequestFailed`、`Backpressure`、`Cancelled`、`Timeout`；`as_str` 稳定标签） |
 | `src/headless/mock.rs` | ~150 | `MockTransport`：脚本化响应队列 + 已发送行记录（`Clone` 共享），供下游无进程测试 |
-| `src/headless/version.rs` | ~40 | `SDK_VERSION`（crate 版本）与 `SDK_API_VERSION`（跟随 protocol 当前版本，现为 1.3）；2 个内联测试 |
+| `src/headless/version.rs` | ~40 | `SDK_VERSION`（crate 版本）与 `SDK_API_VERSION`（跟随 protocol 当前版本，现为 1.9）；2 个内联测试 |
 | `examples/probe.rs` | ~580 | live 模式测试客户端：`--connect`（外部握手 + WorkspaceList）、`--live-two-gui`、`--live-pty`、`--token`（缺省读 `{data_dir}/gui.token`） |
 | `tests/contract.rs` | ~650 | GUI Connection Protocol 契约测试（LocalTransport UDS × 进程内 `GuiServer` + `GuiHostAdapter` + `MockProvider`），9 测试 |
 | `tests/probe.rs` + `tests/probe/harness.rs` + `tests/probe/scenarios.rs` | ~1 110 | `--self-test` 13 场景（MemoryTransport 进程内装配）；harness 提供 AppCore / GuiServer / 握手 / CLI 侧命令辅助；默认不编译，`probe-self-test` feature 显式启用 |
@@ -33,9 +33,9 @@
 
 **GuiClient 连接与会话信息**
 
-- `connect(transport, endpoint, options, authentication)` / `connect_with_config(..., ClientConfig)`：连接 + 握手；获授 `Snapshots` 能力时同步消费首帧 Snapshot（`initial_snapshot()` 取出）。`connect_with_resume(...)` / `connect_with_resume_config(...)`：握手后按 `last_global_sequence` 自动 Resume，返回 `(client, Option<ResumeOutcome>)`。
+- `connect(transport, endpoint, options, authentication)` / `connect_with_config(..., ClientConfig)`：连接 + 握手；获授 `Snapshots` 能力时同步消费首帧 Snapshot（`initial_snapshot()` 取出）。Accepted 握手的可选 `host_data_dir` 原样保留在 `SessionInfo`，不做路径推断或规范化。`connect_with_resume(...)` / `connect_with_resume_config(...)`：握手后按 `last_global_sequence` 自动 Resume，返回 `(client, Option<ResumeOutcome>)`。
 - `ClientConfig { timeout（默认 10 s）, client_name, client_version, capabilities（默认 Events + Snapshots + Approvals）, supported_api_versions（默认 SUPPORTED_API_VERSIONS）}`。
-- `SessionInfo { handle, client_id, connection_id, capabilities（授予集）, resume（服务端初始 disposition）}`：握手成功后固定不变。
+- `SessionInfo { handle, client_id, connection_id, capabilities（授予集）, resume（服务端初始 disposition）, host_data_dir? }`：握手成功后固定不变；`host_data_dir` 缺字段解码为 `None`，存在时原样透传给 Desktop。
 - `ResumeOutcome { disposition, replayed（Replay 补发的事件，序列严格递增）, snapshot（SnapshotRequired 附带的重建快照）}`。
 - 会话信息访问：`info()` / `handle()` / `client_id()` / `connection_id()` / `api_version()` / `capabilities()` / `connection_info()` / `is_connected()` / `last_acked_sequence()`。
 
@@ -84,7 +84,7 @@
 
 ## 5. 契约与不变量
 
-- **版本协商**：`ClientConfig::supported_api_versions` 默认跟随 `pawork-protocol::SUPPORTED_API_VERSIONS`（1.0 / 1.1 / 1.2 / 1.3），服务端取 major 相同的最高共同 minor；不兼容必须显式拒绝（`IncompatibleVersion`），后续 ServerFrame 信封版本漂移由 `ClientError::Version` 捕获（ADR-036）。headless 侧 `SDK_API_VERSION` = 1.3 同理。
+- **版本协商**：`ClientConfig::supported_api_versions` 默认跟随 `pawork-protocol::SUPPORTED_API_VERSIONS`（1.0 / 1.1 / 1.2 / 1.3 / 1.4 / 1.5 / 1.6 / 1.7 / 1.8 / 1.9），服务端取 major 相同的最高共同 minor；不兼容必须显式拒绝（`IncompatibleVersion`），后续 ServerFrame 信封版本漂移由 `ClientError::Version` 捕获（ADR-036）。headless 侧 `SDK_API_VERSION` = 1.9 同理。
 - **帧上限**：经 `ConnectOptions::max_frame_bytes` 与 transport 对齐 1 MiB（见 [transport.md](transport.md)）；本 crate 不改帧格式。
 - **FrameWant 路由不变量**：Response / Snapshot / Resume 只按 `request_id` 匹配；Event 消费路径独占 `request_id = None` 的错误帧；不匹配帧只 stash 不丢弃——并发调用互不吞帧。
 - **幂等重放**：同 `command_id` 的 `command_envelope` 重放由宿主 IdempotencyStore 返回相同响应（probe `command-idempotency` 钉住）。
@@ -118,7 +118,7 @@
 
 **`tests/contract.rs`（LocalTransport UDS 真机装配，9 测试；socket 落 tempdir）**
 
-- `create_session_send_message_and_receive_streaming_run_events`：建会话 / 发消息 / 收流式 Run 事件。
+- `create_session_send_message_and_receive_streaming_run_events`：Accepted 握手的 `host_data_dir` 原样进入 `SessionInfo`，随后建会话 / 发消息 / 收流式 Run 事件。
 - `snapshot_and_reconnect_resume_replays_missing_events`：Snapshot + 断线重连，有 last_ack 且 host 能 replay 时 Resume 返回 Replay。
 - `resume_falls_back_to_snapshot_required_when_replay_unavailable`：无共享 replay 源时降级 SnapshotRequired。
 - `three_gui_clients_sync_runs_from_cli_and_each_other`：三 GUI 同步 CLI 与彼此的 Run 事件。
@@ -136,11 +136,11 @@
 
 **`examples/probe.rs`（live 模式，需真实 `pawork gui serve`）**：`--connect`（握手 + WorkspaceList）、`--live-two-gui`（双客户端、kill 一个后 Resume Replay）、`--live-pty`（开 PTY、写入、断线重连续接）；token 缺省读 `{data_dir}/gui.token`。
 
-**`src/lib.rs` 内联（8）**：FrameWant 匹配矩阵（request-scoped vs 连接级 Error）、事件等待者与响应等待者互不饿死、`next_event` 显式暴露 `ReplayUnavailable`、连接实例 request namespace 不重复等。
+**`src/lib.rs` 内联（10）**：FrameWant 匹配矩阵（request-scoped vs 连接级 Error）、事件等待者与响应等待者互不饿死、`next_event` 显式暴露 `ReplayUnavailable`、连接实例 request namespace 不重复等。
 
 默认验证命令：`cargo test -p pawork-client --offline --lib --tests`。
 
-2026-08-30 R6 Wave B 根因修复后该默认命令 41/41 通过（lib target 10、client_tests 22、contract 9）；Host 重启后的真实 policy fail-closed 另由 Desktop U2 矩阵覆盖。
+2026-09-03 SET-6g 后该默认命令 41/41 通过（lib target 10、client_tests 22、contract 9）；contract 主路径同时锁定 `host_data_dir` 原样透传。Host 重启后的真实 policy fail-closed 另由 Desktop U2 矩阵覆盖。
 
 opt-in 复跑：`cargo test -p pawork-client --offline --features probe-self-test --test probe`；spawn_e2e 用 `--features spawn-e2e --test spawn_e2e`（2026-08-30 起默认死表不再编译这两箱）。
 

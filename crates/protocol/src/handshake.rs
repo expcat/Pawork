@@ -90,6 +90,7 @@ pub struct HandshakeService {
     supported_api_versions: Vec<ApiVersion>,
     supported_capabilities: Vec<GuiCapability>,
     authenticator: Option<Box<dyn ClientAuthenticator>>,
+    host_data_dir: Option<String>,
 }
 
 impl HandshakeService {
@@ -103,12 +104,19 @@ impl HandshakeService {
             supported_api_versions,
             supported_capabilities,
             authenticator: None,
+            host_data_dir: None,
         }
     }
 
     /// 注入认证钩子；配置后客户端必须提交可验证的 `authentication`。
     pub fn with_authenticator(mut self, authenticator: Box<dyn ClientAuthenticator>) -> Self {
         self.authenticator = Some(authenticator);
+        self
+    }
+
+    /// 注入当前 Host 实际使用的数据目录展示值。
+    pub fn with_host_data_dir(mut self, host_data_dir: impl Into<String>) -> Self {
+        self.host_data_dir = Some(host_data_dir.into());
         self
     }
 
@@ -187,6 +195,7 @@ impl HandshakeService {
             connection_id: session.connection_id,
             resume,
             capabilities,
+            host_data_dir: self.host_data_dir.clone(),
         }
     }
 }
