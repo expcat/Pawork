@@ -1,4 +1,4 @@
-//! Global 层配置写盘（SET-2 / SET-6a / SET-6c）。
+//! Global 层配置写盘（SET-2 / SET-6a / SET-6c / SET-6 终端页）。
 //!
 //! 读取现有 Global 层文件（缺失视为空配置），以 TOML Table 保留全部未知
 //! 字段，仅改目标键，最后经同目录临时文件 + rename 原子写回。六层合并
@@ -15,8 +15,8 @@ use crate::config::error::{ConfigError, ConfigParseError};
 static TEMP_SUFFIX: AtomicU64 = AtomicU64::new(0);
 
 /// 同进程跨键写串行化：`write_default_model_pair` / `write_proxy_url` /
-/// `write_mcp_server_remove` 共用此锁，包住 read_table → 改 →
-/// atomic_write_table 全程，避免交错
+/// `write_mcp_server_remove` / `write_terminal_settings` 共用此锁，包住
+/// read_table → 改 → atomic_write_table 全程，避免交错
 /// 读写造成 lost update。跨进程仍靠 atomic_write_table 的 rename 原子性。
 static CONFIG_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
@@ -134,6 +134,40 @@ pub fn write_mcp_server_remove(path: &Path, name: &str) -> Result<bool, ConfigEr
         return Ok(false);
     }
     atomic_write_table(path, &table).map(|()| true)
+}
+
+/// 将终端默认设置全态原子写入指定（Global 层）配置文件的 `[terminal]` 段
+/// （SET-6 终端页 / ADR-050 D1、D3）。
+///
+/// 全态写：`shell` 为 `None` 时移除该键（回平台默认），columns/rows 总是
+/// 写入。`[terminal]` 段内其余未知字段与文件顶层未知字段原样保留；既有
+/// `terminal` 键为非 table 的旧值本就无法通过 schema 加载，重建为空表。
+pub fn write_terminal_settings(
+    path: &Path,
+    shell: Option<&str>,
+    columns: u16,
+    rows: u16,
+) -> Result<(), ConfigError> {
+    let _guard = CONFIG_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut table = read_table(path)?;
+    let mut terminal = match table.remove("terminal") {
+        Some(toml::Value::Table(existing)) => existing,
+        Some(_) | None => toml::Table::new(),
+    };
+    match shell {
+        Some(shell) => {
+            terminal.insert("shell".into(), toml::Value::String(shell.to_string()));
+        }
+        None => {
+            terminal.remove("shell");
+        }
+    }
+    terminal.insert("columns".into(), toml::Value::Integer(i64::from(columns)));
+    terminal.insert("rows".into(), toml::Value::Integer(i64::from(rows)));
+    table.insert("terminal".into(), toml::Value::Table(terminal));
+    atomic_write_table(path, &table)
 }
 
 #[cfg(test)]

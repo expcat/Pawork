@@ -419,6 +419,19 @@ pub enum AppCommand {
     SetApprovalMode {
         mode: String,
     },
+    /// 终端默认值全态写（ADR-050 D3）：shell/columns/rows 三字段必填，
+    /// 全态写而非部分更新，消除 missing/null 二义；`shell: null` 显式
+    /// 清除回平台默认，columns/rows 生效边界为之后创建的终端。
+    SetTerminalSettings {
+        // serde 对 Option 字段隐式 default=None，会吞掉缺字段；显式
+        // deserialize_with 取消该隐式默认，缺字段即 missing-field 解码
+        // 错误，显式 null 仍解码为 None（ADR-050 D3 必填语义，同
+        // SetProxyUrl 先例）。
+        #[serde(deserialize_with = "deserialize_required_nullable_string")]
+        shell: Option<String>,
+        columns: u16,
+        rows: u16,
+    },
     ToolApprove {
         run_id: RunId,
         tool_call_id: ToolCallId,
@@ -800,5 +813,58 @@ mod tests {
             .is_err(),
             "missing proxy_url must fail closed"
         );
+    }
+
+    #[test]
+    fn set_terminal_settings_requires_all_fields_and_treats_null_shell_as_clear() {
+        let set: AppCommand = serde_json::from_value(serde_json::json!({
+            "method": "set_terminal_settings",
+            "params": { "shell": "/bin/zsh", "columns": 120, "rows": 40 }
+        }))
+        .expect("set frame decodes");
+        assert_eq!(
+            set,
+            AppCommand::SetTerminalSettings {
+                shell: Some("/bin/zsh".into()),
+                columns: 120,
+                rows: 40,
+            }
+        );
+
+        let clear: AppCommand = serde_json::from_value(serde_json::json!({
+            "method": "set_terminal_settings",
+            "params": { "shell": null, "columns": 120, "rows": 40 }
+        }))
+        .expect("clear frame decodes");
+        assert_eq!(
+            clear,
+            AppCommand::SetTerminalSettings {
+                shell: None,
+                columns: 120,
+                rows: 40,
+            }
+        );
+
+        let encoded = serde_json::to_value(&clear).expect("encode clear");
+        assert_eq!(encoded["params"]["shell"], serde_json::Value::Null);
+        assert!(encoded["params"]
+            .as_object()
+            .expect("params object")
+            .contains_key("shell"));
+
+        for params in [
+            serde_json::json!({ "columns": 120, "rows": 40 }),
+            serde_json::json!({ "shell": null, "rows": 40 }),
+            serde_json::json!({ "shell": null, "columns": 120 }),
+        ] {
+            assert!(
+                serde_json::from_value::<AppCommand>(serde_json::json!({
+                    "method": "set_terminal_settings",
+                    "params": params
+                }))
+                .is_err(),
+                "missing shell/columns/rows must fail closed"
+            );
+        }
     }
 }

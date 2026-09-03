@@ -23,10 +23,12 @@ use crate::ui::inspector::{
 use crate::ui::resources::ResourcesFetch;
 use crate::ui::settings::{
     general_status_lines, parse_settings_control, parse_settings_mcp_control,
-    permissions_status_lines, provider_status_lines, tools_status_lines, SettingsControl,
+    parse_terminal_dimension, permissions_status_lines, provider_status_lines,
+    terminal_save_enabled, terminal_status_lines, tools_status_lines, SettingsControl,
     SettingsMcpAction, SETTINGS_CONTROL_PREFIX, SETTINGS_MCP_CONTROL_PREFIX,
     SETTINGS_MCP_EFFECT_NOTE, SETTINGS_MCP_REMOVE_CONFIRM_NOTE, SETTINGS_PERMISSIONS_EFFECT_NOTE,
-    SETTINGS_PROXY_EFFECT_NOTE, SETTINGS_PROXY_UNSET, SETTINGS_TRUST_UNSET,
+    SETTINGS_PROXY_EFFECT_NOTE, SETTINGS_PROXY_UNSET, SETTINGS_TERMINAL_EFFECT_NOTE,
+    SETTINGS_TERMINAL_SHELL_UNSET, SETTINGS_TRUST_UNSET,
 };
 use crate::ui::shell_layout;
 use crate::ui::theme::{font, metrics};
@@ -174,6 +176,21 @@ impl AppView {
                     let focus = self.settings_proxy_input.read(cx).focus_handle(cx);
                     window.focus(&focus);
                 }
+                "settings-terminal-shell-input" => {
+                    let focus = self.settings_terminal_shell_input.read(cx).focus_handle(cx);
+                    window.focus(&focus);
+                }
+                "settings-terminal-columns-input" => {
+                    let focus = self
+                        .settings_terminal_columns_input
+                        .read(cx)
+                        .focus_handle(cx);
+                    window.focus(&focus);
+                }
+                "settings-terminal-rows-input" => {
+                    let focus = self.settings_terminal_rows_input.read(cx).focus_handle(cx);
+                    window.focus(&focus);
+                }
                 // SET-4：settings secure 输入聚焦（与点击输入框同一路径；
                 // permits 已按当前树核对 enabled）。
                 _ if settings_api_key_input.is_some() => {
@@ -198,6 +215,15 @@ impl AppView {
                         .update(cx, |input, cx| input.set_text(value, cx)),
                     "settings-proxy-input" => self
                         .settings_proxy_input
+                        .update(cx, |input, cx| input.set_text(value, cx)),
+                    "settings-terminal-shell-input" => self
+                        .settings_terminal_shell_input
+                        .update(cx, |input, cx| input.set_text(value, cx)),
+                    "settings-terminal-columns-input" => self
+                        .settings_terminal_columns_input
+                        .update(cx, |input, cx| input.set_text(value, cx)),
+                    "settings-terminal-rows-input" => self
+                        .settings_terminal_rows_input
                         .update(cx, |input, cx| input.set_text(value, cx)),
                     // SET-4：AX set-value 是合法输入路径（等同键入）；
                     // 发布方向永远只给掩码（settings_page_ax）。
@@ -279,8 +305,14 @@ impl AppView {
                 window.focus(&self.settings_nav_tools_focus);
                 self.on_select_settings_page(SettingsPage::Tools, window, cx);
             }
+            "settings-nav-terminal" => {
+                window.focus(&self.settings_nav_terminal_focus);
+                self.on_select_settings_page(SettingsPage::Terminal, window, cx);
+            }
             "settings-proxy-save" => self.on_settings_proxy_save(cx),
             "settings-proxy-clear" => self.on_settings_proxy_clear(cx),
+            "settings-terminal-save" => self.on_settings_terminal_save(cx),
+            "settings-terminal-clear" => self.on_settings_terminal_clear(cx),
             // SET-6b：五档选择与可见按钮同源派发（入口复核 gate）；未知
             // wire 串（含静态行 id）fail-closed。
             other if other.starts_with("settings-approval-mode-") => {
@@ -929,10 +961,12 @@ impl AppView {
         let general_available = self.projection.settings_general.available;
         let permissions_available = self.projection.settings_permissions.available;
         let tools_available = self.resources.available;
+        let terminal_available = self.projection.settings_terminal.available;
         let current_page = match self.settings_page {
             SettingsPage::General if !general_available => SettingsPage::Providers,
             SettingsPage::Permissions if !permissions_available => SettingsPage::Providers,
             SettingsPage::Tools if !tools_available => SettingsPage::Providers,
+            SettingsPage::Terminal if !terminal_available => SettingsPage::Providers,
             page => page,
         };
         let mut rail = AxNode::new("settings-rail", AxRole::Group, "Settings", frame)
@@ -1020,6 +1054,31 @@ impl AppView {
                 ),
             ));
         }
+        if terminal_available {
+            // 几何与 render 同源：工具项之后递增一行（按可用项累计）。
+            let mut terminal_y = nav_y + metrics::RAIL_TOP_ROW_HEIGHT + PAD;
+            if general_available {
+                terminal_y += metrics::RAIL_TOP_ROW_HEIGHT + PAD;
+            }
+            if permissions_available {
+                terminal_y += metrics::RAIL_TOP_ROW_HEIGHT + PAD;
+            }
+            if tools_available {
+                terminal_y += metrics::RAIL_TOP_ROW_HEIGHT + PAD;
+            }
+            rail = rail.child(settings_nav_ax(
+                "settings-nav-terminal",
+                "终端",
+                current_page == SettingsPage::Terminal,
+                self.open_menu.is_none() && self.settings_nav_terminal_focus.is_focused(window),
+                AxRect::new(
+                    frame.x + PAD,
+                    frame.y + terminal_y,
+                    width,
+                    metrics::RAIL_TOP_ROW_HEIGHT,
+                ),
+            ));
+        }
         rail
     }
 
@@ -1039,6 +1098,11 @@ impl AppView {
         }
         if self.settings_page == SettingsPage::Tools && self.resources.available {
             return self.settings_tools_page_ax(window, frame);
+        }
+        if self.settings_page == SettingsPage::Terminal
+            && self.projection.settings_terminal.available
+        {
+            return self.settings_terminal_page_ax(window, cx, frame);
         }
         const HEADING_HEIGHT: f32 = 28.0;
         const SUBTITLE_HEIGHT: f32 = 20.0;
@@ -1517,6 +1581,220 @@ impl AppView {
                 AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT * 2.0),
             )
             .value(SETTINGS_PROXY_EFFECT_NOTE),
+        )
+    }
+
+    /// 「终端」页 AX（SET-6d / ADR-050）：shell / columns / rows 输入
+    ///（TextArea，Focus / SetValue）+ Save / Clear（Press）+ 生效边界；
+    /// stale 时 enabled=false 且 permits 拒绝写动作，与 render 同 gate
+    ///（尺寸解析同源 parse_terminal_dimension）。
+    fn settings_terminal_page_ax(&self, window: &Window, cx: &App, frame: AxRect) -> AxNode {
+        const HEADING_HEIGHT: f32 = 28.0;
+        const SUBTITLE_HEIGHT: f32 = 20.0;
+        const STATUS_HEIGHT: f32 = 20.0;
+        const CONTROL_ROW: f32 = 28.0;
+        let state = &self.projection.settings_terminal;
+        let writes = self.settings_terminal_writes_enabled();
+        let connected = matches!(
+            self.projection.connection,
+            ConnectionState::Connected { .. }
+        );
+        let shell_current = state
+            .shell
+            .clone()
+            .unwrap_or_else(|| SETTINGS_TERMINAL_SHELL_UNSET.to_string());
+        let size_current = format!("{}×{}", state.columns, state.rows);
+        let shell_text = self
+            .settings_terminal_shell_input
+            .read(cx)
+            .text()
+            .trim()
+            .to_string();
+        let columns_value =
+            parse_terminal_dimension(self.settings_terminal_columns_input.read(cx).text());
+        let rows_value =
+            parse_terminal_dimension(self.settings_terminal_rows_input.read(cx).text());
+        let save_enabled = terminal_save_enabled(writes, columns_value, rows_value);
+        let clear_enabled = writes && state.shell.is_some();
+        let refresh_focused =
+            self.open_menu.is_none() && self.settings_refresh_focus.is_focused(window);
+        let mut page = AxNode::new("settings-page", AxRole::Group, "终端", frame)
+            .child(
+                AxNode::new(
+                    "settings-page-title",
+                    AxRole::StaticText,
+                    "终端",
+                    AxRect::new(
+                        frame.x + 16.0,
+                        frame.y + 16.0,
+                        (frame.width - 136.0).max(0.0),
+                        HEADING_HEIGHT + SUBTITLE_HEIGHT,
+                    ),
+                )
+                .value("Default shell and size for new terminals"),
+            )
+            .child(
+                AxNode::new(
+                    "settings-refresh",
+                    AxRole::Button,
+                    "Refresh",
+                    AxRect::new(
+                        frame.x + frame.width - 16.0 - 96.0,
+                        frame.y + 16.0,
+                        96.0,
+                        CONTROL_ROW,
+                    ),
+                )
+                .enabled(connected)
+                .focused(refresh_focused)
+                .action(AxAction::Press),
+            );
+        let mut y = frame.y + 16.0 + HEADING_HEIGHT + SUBTITLE_HEIGHT + 8.0;
+        let width = (frame.width - 32.0).max(0.0);
+        for (kind, label) in terminal_status_lines(state) {
+            page = page.child(
+                AxNode::new(
+                    format!("settings-status-{kind}"),
+                    AxRole::StaticText,
+                    "Terminal status",
+                    AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT),
+                )
+                .value(label),
+            );
+            y += STATUS_HEIGHT + 8.0;
+        }
+        page = page
+            .child(
+                AxNode::new(
+                    "settings-terminal-shell-current",
+                    AxRole::StaticText,
+                    "Default shell",
+                    AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT),
+                )
+                .value(shell_current),
+            )
+            .child(
+                AxNode::new(
+                    "settings-terminal-size-current",
+                    AxRole::StaticText,
+                    "Default size",
+                    AxRect::new(
+                        frame.x + 16.0,
+                        y + STATUS_HEIGHT + 8.0,
+                        width,
+                        STATUS_HEIGHT,
+                    ),
+                )
+                .value(size_current),
+            );
+        y += STATUS_HEIGHT * 2.0 + 16.0;
+        let shell_input_focused = self.open_menu.is_none()
+            && self
+                .settings_terminal_shell_input
+                .read(cx)
+                .focus_handle(cx)
+                .is_focused(window);
+        page = page
+            .child(
+                AxNode::new(
+                    "settings-terminal-shell-input",
+                    AxRole::TextArea,
+                    "Shell",
+                    AxRect::new(frame.x + 16.0, y, (width - 88.0).max(120.0), CONTROL_ROW),
+                )
+                .value(shell_text)
+                .enabled(writes)
+                .focused(shell_input_focused)
+                .action(AxAction::Focus)
+                .action(AxAction::SetValue),
+            )
+            .child(
+                AxNode::new(
+                    "settings-terminal-clear",
+                    AxRole::Button,
+                    "Clear",
+                    AxRect::new(frame.x + frame.width - 16.0 - 80.0, y, 80.0, CONTROL_ROW),
+                )
+                .enabled(clear_enabled)
+                .focused(
+                    self.open_menu.is_none()
+                        && self.settings_terminal_clear_focus.is_focused(window),
+                )
+                .action(AxAction::Press),
+            );
+        y += CONTROL_ROW + 8.0;
+        let columns_input_focused = self.open_menu.is_none()
+            && self
+                .settings_terminal_columns_input
+                .read(cx)
+                .focus_handle(cx)
+                .is_focused(window);
+        let rows_input_focused = self.open_menu.is_none()
+            && self
+                .settings_terminal_rows_input
+                .read(cx)
+                .focus_handle(cx)
+                .is_focused(window);
+        page = page
+            .child(
+                AxNode::new(
+                    "settings-terminal-columns-input",
+                    AxRole::TextArea,
+                    "Columns",
+                    AxRect::new(frame.x + 16.0, y, 96.0, CONTROL_ROW),
+                )
+                .value(
+                    self.settings_terminal_columns_input
+                        .read(cx)
+                        .text()
+                        .to_string(),
+                )
+                .enabled(writes)
+                .focused(columns_input_focused)
+                .action(AxAction::Focus)
+                .action(AxAction::SetValue),
+            )
+            .child(
+                AxNode::new(
+                    "settings-terminal-rows-input",
+                    AxRole::TextArea,
+                    "Rows",
+                    AxRect::new(frame.x + 16.0 + 96.0 + 16.0, y, 96.0, CONTROL_ROW),
+                )
+                .value(
+                    self.settings_terminal_rows_input
+                        .read(cx)
+                        .text()
+                        .to_string(),
+                )
+                .enabled(writes)
+                .focused(rows_input_focused)
+                .action(AxAction::Focus)
+                .action(AxAction::SetValue),
+            )
+            .child(
+                AxNode::new(
+                    "settings-terminal-save",
+                    AxRole::Button,
+                    "Save",
+                    AxRect::new(frame.x + frame.width - 16.0 - 80.0, y, 80.0, CONTROL_ROW),
+                )
+                .enabled(save_enabled)
+                .focused(
+                    self.open_menu.is_none()
+                        && self.settings_terminal_save_focus.is_focused(window),
+                )
+                .action(AxAction::Press),
+            );
+        y += CONTROL_ROW + 8.0;
+        page.child(
+            AxNode::new(
+                "settings-terminal-effect",
+                AxRole::StaticText,
+                "Effect",
+                AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT * 2.0),
+            )
+            .value(SETTINGS_TERMINAL_EFFECT_NOTE),
         )
     }
 

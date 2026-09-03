@@ -72,6 +72,10 @@ pub enum AppQuery {
     /// 权限与审批设置三元组（当前 approval mode / 会话信任 / Global 信任；
     /// ADR-048）。
     PermissionsSettings,
+    /// 终端默认设置（ADR-050 D2）：响应 Data 形状为
+    /// `{ shell, columns, rows }`——shell 为 Global 持久值（null = 跟随
+    /// 平台默认），columns/rows 为生效值（未设置 = 80/24）。
+    TerminalSettings,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

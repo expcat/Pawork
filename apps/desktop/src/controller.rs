@@ -20,8 +20,8 @@ use serde_json::json;
 
 use crate::projection::{
     parse_general_settings, parse_permissions_settings, parse_provider_status_entries,
-    sessions_in_snapshot, ApprovalModeSetting, ModelEntry, PermissionsSettingsData,
-    SettingsProvidersData,
+    parse_terminal_settings, sessions_in_snapshot, ApprovalModeSetting, ModelEntry,
+    PermissionsSettingsData, SettingsProvidersData, TerminalSettingsData,
 };
 
 const PAGE_LIMIT: u32 = 500;
@@ -82,6 +82,11 @@ pub enum ControllerEvent {
     WorkspaceTrustConfirmed {
         trusted: bool,
     },
+    /// terminal_settings 查询成功（SET-6d 终端页；Host 权威生效值）。
+    TerminalSettingsLoaded(TerminalSettingsData),
+    /// set_terminal_settings 获 Host Data 确认（SET-6d / ADR-050 D3；回执
+    /// 即写后完整状态）。
+    TerminalSettingsConfirmed(TerminalSettingsData),
     /// auth_start 响应（SET-4）：OAuth 授权等待信息；进度经 AuthChanged
     /// 事件流下发，token 不经过 Desktop。
     AuthStarted {
@@ -1426,6 +1431,96 @@ impl DesktopController {
         });
     }
 
+    /// 拉取 Settings「终端」页（terminal_settings，SET-6d / ADR-050 D2）。
+    /// 返回是否已派出（断线时由 UI 保留 stale 只读结果，不进入 loading）。
+    pub fn load_terminal_settings(&self) -> bool {
+        let Some(client) = self.current_client() else {
+            return false;
+        };
+        let events = self.event_sender();
+        self.runtime.spawn(async move {
+            match client
+                .query(
+                    terminal_settings_query(),
+                    command_source(),
+                    actor_identity(),
+                )
+                .await
+            {
+                Ok(response) => match parse_terminal_settings_response(&response) {
+                    Ok(data) => {
+                        let _ = events
+                            .send(ControllerEvent::TerminalSettingsLoaded(data))
+                            .await;
+                    }
+                    Err(reason) => try_emit(
+                        &events,
+                        ControllerEvent::OperationFailed {
+                            action: "load terminal settings",
+                            reason,
+                        },
+                    ),
+                },
+                Err(error) => try_emit(
+                    &events,
+                    ControllerEvent::OperationFailed {
+                        action: "load terminal settings",
+                        reason: error.to_string(),
+                    },
+                ),
+            }
+        });
+        true
+    }
+
+    /// 终端默认值全态写（set_terminal_settings，SET-6d / ADR-050 D3）：
+    /// shell/columns/rows 三字段必填全态回传（shell=null 清除回平台默认）。
+    /// Data 回执即写后状态经 `TerminalSettingsConfirmed` 投递；Error /
+    /// 传输失败经 OperationFailed 呈现，不动 UI 现有生效值。
+    pub fn set_terminal_settings(&self, shell: Option<String>, columns: u16, rows: u16) {
+        let Some(client) = self.current_client() else {
+            self.emit_reliable(ControllerEvent::OperationFailed {
+                action: "set terminal settings".into(),
+                reason: "not connected".into(),
+            });
+            return;
+        };
+        let events = self.event_sender();
+        self.runtime.spawn(async move {
+            let command = set_terminal_settings_command(shell.as_deref(), columns, rows);
+            let response = match client
+                .command(command, command_source(), actor_identity())
+                .await
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    try_emit(
+                        &events,
+                        ControllerEvent::OperationFailed {
+                            action: "set terminal settings",
+                            reason: error.to_string(),
+                        },
+                    );
+                    return;
+                }
+            };
+            match parse_terminal_settings_response(&response) {
+                Ok(data) => {
+                    let _ = events
+                        .send(ControllerEvent::TerminalSettingsConfirmed(data))
+                        .await;
+                }
+                Err(reason) => try_emit(
+                    &events,
+                    ControllerEvent::OperationFailed {
+                        action: "set terminal settings",
+                        reason,
+                    },
+                ),
+            }
+        });
+    }
+
     /// 发起 OAuth 授权（auth_start）。响应只携带 verification_url /
     /// user_code / expires_at，进度经 AuthChanged 事件收敛。
     pub fn auth_start(&self, provider_id: String) {
@@ -2136,6 +2231,13 @@ fn permissions_settings_query() -> AppQuery {
     .expect("permissions_settings query shape is frozen")
 }
 
+fn terminal_settings_query() -> AppQuery {
+    serde_json::from_value(json!({
+        "method": "terminal_settings"
+    }))
+    .expect("terminal_settings query shape is frozen")
+}
+
 fn set_proxy_url_command(proxy_url: Option<&str>) -> AppCommand {
     serde_json::from_value(json!({
         "method": "set_proxy_url",
@@ -2158,6 +2260,14 @@ fn set_workspace_trust_command(workspace_id: &str, trusted: bool) -> AppCommand 
         "params": { "workspace_id": workspace_id, "trusted": trusted }
     }))
     .expect("workspace_trust command shape is frozen")
+}
+
+fn set_terminal_settings_command(shell: Option<&str>, columns: u16, rows: u16) -> AppCommand {
+    serde_json::from_value(json!({
+        "method": "set_terminal_settings",
+        "params": { "shell": shell, "columns": columns, "rows": rows }
+    }))
+    .expect("set_terminal_settings command shape is frozen")
 }
 
 fn diff_list_files_query(workspace_id: &str) -> AppQuery {
@@ -2266,6 +2376,19 @@ fn parse_permissions_settings_response(
 ) -> Result<PermissionsSettingsData, String> {
     match &response.response {
         AppResponse::Data(data) => parse_permissions_settings(data),
+        AppResponse::Error(error) => Err(error.message.clone()),
+        other => Err(format!("unexpected response: {other:?}")),
+    }
+}
+
+/// 解包 terminal_settings / set_terminal_settings 信封（SET-6d /
+/// ADR-050）：Data 为 `{ shell, columns, rows }`（查询与写回执同形状）；
+/// Error 取 Host 脱敏 message 原文。
+fn parse_terminal_settings_response(
+    response: &AppResponseEnvelope,
+) -> Result<TerminalSettingsData, String> {
+    match &response.response {
+        AppResponse::Data(data) => parse_terminal_settings(data),
         AppResponse::Error(error) => Err(error.message.clone()),
         other => Err(format!("unexpected response: {other:?}")),
     }
@@ -2646,6 +2769,35 @@ mod tests {
         let remove = serde_json::to_value(mcp_server_remove_command("fetch")).unwrap();
         assert_eq!(remove["method"], "mcp_server_remove");
         assert_eq!(remove["params"]["name"], "fetch");
+    }
+
+    #[test]
+    fn terminal_settings_wire_pins_query_and_full_state_write() {
+        // 主路径（全态写串联）：查询帧 + 全态写帧（shell Some/null 两态）
+        // 与同形状回执解析（ADR-050 D2/D3）。
+        let query = serde_json::to_value(terminal_settings_query()).unwrap();
+        assert_eq!(query["method"], "terminal_settings");
+
+        let set = serde_json::to_value(set_terminal_settings_command(
+            Some("/bin/zsh"),
+            120,
+            40,
+        ))
+        .unwrap();
+        assert_eq!(set["method"], "set_terminal_settings");
+        assert_eq!(set["params"]["shell"], "/bin/zsh");
+        assert_eq!(set["params"]["columns"], 120);
+        assert_eq!(set["params"]["rows"], 40);
+
+        let clear = serde_json::to_value(set_terminal_settings_command(None, 80, 24)).unwrap();
+        assert_eq!(clear["params"]["shell"], serde_json::Value::Null);
+
+        let receipt = parse_terminal_settings_response(&envelope(serde_json::json!({
+            "shell": null, "columns": 80, "rows": 24
+        })))
+        .expect("parse terminal settings receipt");
+        assert_eq!(receipt.shell, None);
+        assert_eq!((receipt.columns, receipt.rows), (80, 24));
     }
 
     fn envelope(data: serde_json::Value) -> AppResponseEnvelope {

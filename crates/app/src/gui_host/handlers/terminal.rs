@@ -225,12 +225,28 @@ pub(crate) async fn terminal_create(
     let workspace_trusted = core.approval.workspace_trusted();
     let (cwd, cwd_label) =
         GuiHostAdapter::resolve_terminal_cwd(&core, workspace_id, working_directory.as_ref())?;
+    // ADR-050 D4：读取生效配置的终端默认值（Global 层持久值），只影响
+    // 之后创建的终端；未设字段回落 exec 平台默认（shell=None 兜底链、
+    // 80×24），策略闸 classification_shell(spec.shell) 自动跟随。
+    let terminal = core.config().terminal.clone();
     drop(core);
     let owner = OwnerSessionId::new(workspace_id.as_str());
+    let mut size = PtyWindowSize::default();
+    let mut shell = None;
+    if let Some(config) = &terminal {
+        if let Some(columns) = config.columns {
+            size.cols = columns;
+        }
+        if let Some(rows) = config.rows {
+            size.rows = rows;
+        }
+        shell = config.shell.clone();
+    }
     let spec = PtyCreateSpec {
         owner_session: owner.clone(),
         cwd,
-        size: PtyWindowSize::default(),
+        shell,
+        size,
         ..PtyCreateSpec::default()
     };
     let gate = decide_terminal_create(

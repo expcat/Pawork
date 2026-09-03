@@ -74,7 +74,7 @@ R1 收口（2026-08-19）后 workspace 定稿为 **21 成员（19 库 + 2 应用
 | 引擎语义 | 审批经 `ApprovalResolver` await（`ToolApprovalRequested/Responded` 事件对；Requested 在等待前落盘）、`CancelHandle`+`CancelReason`、`LoopContext` 工具执行注入点 | `crates/engine` 定向回归 |
 | 配置 schema | TOML、`ConfigTier`（Builtin<Global<Profile<Workspace<Session<Run）、`PaworkConfig`/`ProviderConfig{id, base_url}`（**无 api_key 字段**） | `crates/workspace::config` 六层矩阵测试 |
 | blob 格式 | `PWB1` + protected AEAD 边界（ADR-032）；artifact/protected/checkpoint 三区 | `crates/storage::blob` golden |
-| GUI 协议 | 帧格式（ADR-036 版本协商）；`SUPPORTED_API_VERSIONS` 1.0/1.1/1.2/1.3/1.4/1.5/1.6/1.7（1.4 = ADR-046 Settings 认证词汇；1.5 = ADR-047 Settings 通用页词汇；1.6 = ADR-048 Settings 权限与审批页词汇；1.7 = ADR-049 Settings 工具与 MCP 页词汇）；typegen 检入 [`schemas/`](../schemas/)（core-api/gui-protocol/headless-json）；三通道可用性单源 `protocol::app::registry`，未登记 fail-closed | 59 帧 golden + typegen 断言（`crates/protocol`） |
+| GUI 协议 | 帧格式（ADR-036 版本协商）；`SUPPORTED_API_VERSIONS` 1.0/1.1/1.2/1.3/1.4/1.5/1.6/1.7/1.8（1.4 = ADR-046 Settings 认证词汇；1.5 = ADR-047 Settings 通用页词汇；1.6 = ADR-048 Settings 权限与审批页词汇；1.7 = ADR-049 Settings 工具与 MCP 页词汇；1.8 = ADR-050 Settings 终端页词汇）；typegen 检入 [`schemas/`](../schemas/)（core-api/gui-protocol/headless-json）；三通道可用性单源 `protocol::app::registry`，未登记 fail-closed | 64 帧 golden + typegen 断言（`crates/protocol`） |
 | headless JSON | `HeadlessResponse`（`type=event|response`）；`run`/`chat --prompt --json` 已对齐；stdout 仅 JSONL；`--json` → 正式 headless 映射见 [spec/contracts.md](spec/contracts.md) | `crates/protocol` headless golden |
 | 控制面 | usage `dedup_key`；audit JSONL | `fixtures/audit/event-v1.jsonl` + `crates/control-plane` golden |
 | 缓存注解（已确认 D4，附加式） | `CanonicalModelRequest` 缓存策略枚举（`Off/Auto/Explicit{retention}`）+ 前缀分段标注；`ModelResponseSummary`/usage 增 `cache_read`/`cache_write`；serde 向后兼容 | golden 先行；方案见 [references.md](references.md) 附录 B（F5-B） |
@@ -120,4 +120,5 @@ R1 收口（2026-08-19）后 workspace 定稿为 **21 成员（19 库 + 2 应用
   - [ADR-047](adr/ADR-047-general-settings-wire.md) Settings 通用页 wire（Accepted：`GeneralSettings` 查询、`SetProxyUrl` 命令（必填字段、显式 null 清除、校验先行构造 + Global 原子写 + 内存换入）、API minor 1.5 仅记账、golden 先行）。
   - [ADR-048](adr/ADR-048-permissions-settings-wire.md) Settings 权限与审批页 wire（Accepted：`PermissionsSettings` 查询（含 Host 权威 attached workspace_id）、`SetApprovalMode` 会话内生效不持久化、`WorkspaceTrust` 死词汇实装开放 GUI（会话内信任切换不写盘）、API minor 1.6 仅记账、golden 先行）。
   - [ADR-049](adr/ADR-049-mcp-settings-wire.md) Settings 工具与 MCP 页 wire（Accepted：`McpTest` 命令、`McpServerRemove` 命令（Global 层移除 + pawork.mcp.* SecretRef 幂等清理 + 内存同步重建 registry，同会话生效）、API minor 1.7 仅记账、golden 先行）。
-- 新决策继续以 ADR 记录，编号续接（下一个 ADR-050），落 [docs/adr/](adr/)；状态 Proposed → 用户确认 → Accepted 后方可执行对应破坏式改动。各 ADR 决策要点摘要见 [history.md](history.md)。
+  - [ADR-050](adr/ADR-050-terminal-settings-wire.md) Settings 终端页 wire 与 config（Accepted：Global `[terminal]` 段（shell/columns/rows）+ 非 Global 层整段剥离、`TerminalSettings` 查询、`SetTerminalSettings` 全态写命令（shell=null 清除）、terminal_create 应用配置默认、API minor 1.8 仅记账、golden 先行）。
+- 新决策继续以 ADR 记录，编号续接（下一个 ADR-051），落 [docs/adr/](adr/)；状态 Proposed → 用户确认 → Accepted 后方可执行对应破坏式改动。各 ADR 决策要点摘要见 [history.md](history.md)。

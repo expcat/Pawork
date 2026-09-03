@@ -125,8 +125,8 @@ pub(crate) enum AppRoute {
     Settings,
 }
 
-/// Settings 内容页（SET-6a/6b/6c）：供应商页常在；通用页 / 权限页 /
-/// 工具页仅在对应 Host 查询成功后显示。
+/// Settings 内容页（SET-6a/6b/6c/6d）：供应商页常在；通用页 / 权限页 /
+/// 工具页 / 终端页仅在对应 Host 查询成功后显示。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum SettingsPage {
     #[default]
@@ -134,6 +134,7 @@ pub(crate) enum SettingsPage {
     General,
     Permissions,
     Tools,
+    Terminal,
 }
 
 /// 工作台专属 action 在当前路由是否生效（SET-3 审查修复 1）：审批 /
@@ -547,11 +548,20 @@ pub struct AppView {
     settings_nav_permissions_focus: FocusHandle,
     /// SET-6c：Settings 导航「工具与 MCP」焦点。
     settings_nav_tools_focus: FocusHandle,
+    /// SET-6d：Settings 导航「终端」焦点。
+    settings_nav_terminal_focus: FocusHandle,
     /// SET-6a：proxy URL 内联输入（明文；非 Secret）。
     settings_proxy_input: Entity<crate::ui::text_input::TextInput>,
     /// SET-6a：proxy Save / Clear 焦点。
     settings_proxy_save_focus: FocusHandle,
     settings_proxy_clear_focus: FocusHandle,
+    /// SET-6d：终端页 shell / columns / rows 输入（明文；非 Secret）。
+    settings_terminal_shell_input: Entity<crate::ui::text_input::TextInput>,
+    settings_terminal_columns_input: Entity<crate::ui::text_input::TextInput>,
+    settings_terminal_rows_input: Entity<crate::ui::text_input::TextInput>,
+    /// SET-6d：终端页 Save / Clear 焦点。
+    settings_terminal_save_focus: FocusHandle,
+    settings_terminal_clear_focus: FocusHandle,
     /// Settings 内容滚动句柄（供应商列表可能超出视口）。
     settings_scroll: ScrollHandle,
     /// SET-4：按 provider 懒建的 API key secure 输入实体（明文只留在
@@ -755,6 +765,7 @@ impl AppView {
             settings_nav_providers_focus: cx.focus_handle().tab_stop(true),
             settings_nav_permissions_focus: cx.focus_handle().tab_stop(true),
             settings_nav_tools_focus: cx.focus_handle().tab_stop(true),
+            settings_nav_terminal_focus: cx.focus_handle().tab_stop(true),
             settings_proxy_input: cx.new(|cx| {
                 TextInput::with_placeholder("http://127.0.0.1:7890", cx)
                     .id("settings-proxy-input")
@@ -765,6 +776,32 @@ impl AppView {
             }),
             settings_proxy_save_focus: cx.focus_handle().tab_stop(true),
             settings_proxy_clear_focus: cx.focus_handle().tab_stop(true),
+            settings_terminal_shell_input: cx.new(|cx| {
+                TextInput::with_placeholder("/bin/zsh", cx)
+                    .id("settings-terminal-shell-input")
+                    .height_clamp(
+                        metrics::COMPOSER_INPUT_MIN_HEIGHT,
+                        metrics::COMPOSER_INPUT_MIN_HEIGHT,
+                    )
+            }),
+            settings_terminal_columns_input: cx.new(|cx| {
+                TextInput::with_placeholder("80", cx)
+                    .id("settings-terminal-columns-input")
+                    .height_clamp(
+                        metrics::COMPOSER_INPUT_MIN_HEIGHT,
+                        metrics::COMPOSER_INPUT_MIN_HEIGHT,
+                    )
+            }),
+            settings_terminal_rows_input: cx.new(|cx| {
+                TextInput::with_placeholder("24", cx)
+                    .id("settings-terminal-rows-input")
+                    .height_clamp(
+                        metrics::COMPOSER_INPUT_MIN_HEIGHT,
+                        metrics::COMPOSER_INPUT_MIN_HEIGHT,
+                    )
+            }),
+            settings_terminal_save_focus: cx.focus_handle().tab_stop(true),
+            settings_terminal_clear_focus: cx.focus_handle().tab_stop(true),
             settings_scroll: ScrollHandle::new(),
             settings_api_key_inputs: HashMap::new(),
             settings_api_key_editors: HashSet::new(),
@@ -1110,6 +1147,9 @@ impl AppView {
         self.refresh_general_settings();
         // SET-6b：重连后刷新权限设置，清除 stale 并恢复写 gate。
         self.refresh_permissions_settings();
+        // SET-6d：重连后刷新终端设置（同时预热新建终端初始尺寸的
+        // 查询缓存），清除 stale 并恢复写 gate。
+        self.refresh_terminal_settings();
         // SET-6c：重连后刷新 MCP 清单（与通用 / 权限页对称），清除 stale
         // 并恢复「工具与 MCP」页导航与写 gate。
         self.refresh_resources(cx);
@@ -1187,6 +1227,8 @@ impl AppView {
                 self.projection
                     .settings_permissions
                     .mark_stale(&stale_reason);
+                // SET-6d：终端页同样保留 stale 只读结果（审查 P2 修复）。
+                self.projection.settings_terminal.mark_stale(&stale_reason);
                 self.terminal_pending_write = None;
                 self.terminal_pending_create_workspace = None;
                 self.terminal_pending_create_cwd = None;
@@ -1269,6 +1311,16 @@ impl AppView {
                     self.projection
                         .apply_terminal_cwd(&terminal_session_id, &cwd);
                 }
+                // SET-6d（ADR-050 D4）：新终端投影初始尺寸取
+                // terminal_settings 生效值（查询缓存；未查询到回落
+                // 80×24 现状）。随后那次 terminal_resize 同尺寸下发。
+                let (settings_columns, settings_rows) =
+                    self.projection.settings_terminal.effective_size();
+                self.projection.apply_terminal_initial_size(
+                    &terminal_session_id,
+                    settings_columns,
+                    settings_rows,
+                );
                 // 先取新终端自己的尺寸，再切回当前 workspace；否则用户在
                 // create 回执前切项目时，会把另一终端的尺寸误发给新终端。
                 let (columns, rows) = self
@@ -1506,6 +1558,28 @@ impl AppView {
                     self.projection.settings_permissions.mark_stale(&stale);
                 }
             }
+            ControllerEvent::TerminalSettingsLoaded(data)
+            | ControllerEvent::TerminalSettingsConfirmed(data) => {
+                // SET-6d：查询与写回执同形状（回执即写后完整状态，
+                // ADR-050 D3）；输入框回填 Host 权威生效值。
+                self.projection.settings_terminal.apply_loaded(data.clone());
+                let shell = data.shell.clone().unwrap_or_default();
+                let columns = data.columns.to_string();
+                let rows = data.rows.to_string();
+                self.settings_terminal_shell_input.update(cx, |input, cx| {
+                    input.reset_text(shell, cx)
+                });
+                self.settings_terminal_columns_input.update(cx, |input, cx| {
+                    input.reset_text(columns, cx)
+                });
+                self.settings_terminal_rows_input.update(cx, |input, cx| {
+                    input.reset_text(rows, cx)
+                });
+                if let ConnectionState::Disconnected { reason } = &self.projection.connection {
+                    let stale = format!("connection lost · {reason}");
+                    self.projection.settings_terminal.mark_stale(&stale);
+                }
+            }
             ControllerEvent::AuthStarted {
                 provider_id,
                 verification_url,
@@ -1554,6 +1628,14 @@ impl AppView {
                         _ => format!("Could not load permissions settings · {reason}"),
                     };
                     self.projection.settings_permissions.apply_failed(&message);
+                }
+                if action == "load terminal settings" || action == "set terminal settings" {
+                    let message = if action == "set terminal settings" {
+                        format!("Could not save terminal settings · {reason}")
+                    } else {
+                        format!("Could not load terminal settings · {reason}")
+                    };
+                    self.projection.settings_terminal.apply_failed(&message);
                 }
                 if action == "start provider auth" || action == "verify api key" {
                     // auth_start / auth_set_api_key 的 socket 级失败无对应
@@ -2506,6 +2588,7 @@ impl AppView {
         self.controller.load_models();
         self.refresh_general_settings();
         self.refresh_permissions_settings();
+        self.refresh_terminal_settings();
         // SET-6c：进入即拉取 MCP 清单（复用 Inspector Resources 的
         // resources 状态 / epoch / stale / 断线机制；成功后「工具与
         // MCP」导航可用）。
@@ -2560,6 +2643,16 @@ impl AppView {
         }
     }
 
+    /// 拉取终端页（SET-6d / terminal_settings）。断线不进入 loading；
+    /// 查询失败 / 未知则保持 unavailable，导航不显示该页。
+    fn refresh_terminal_settings(&mut self) {
+        if self.controller.load_terminal_settings() {
+            self.projection.settings_terminal.begin_loading();
+        } else {
+            self.projection.settings_terminal.mark_stale("not connected");
+        }
+    }
+
     /// Settings 导航切页（SET-6a）。通用页未接通时 fail-closed 留在供应商页。
     pub(crate) fn on_select_settings_page(
         &mut self,
@@ -2583,6 +2676,11 @@ impl AppView {
                 self.settings_page = SettingsPage::Tools;
                 window.focus(&self.settings_nav_tools_focus);
             }
+            SettingsPage::Terminal if !self.projection.settings_terminal.available => return,
+            SettingsPage::Terminal => {
+                self.settings_page = SettingsPage::Terminal;
+                window.focus(&self.settings_nav_terminal_focus);
+            }
             SettingsPage::Providers => {
                 self.settings_page = SettingsPage::Providers;
                 window.focus(&self.settings_nav_providers_focus);
@@ -2605,6 +2703,7 @@ impl AppView {
         self.controller.load_models();
         self.refresh_general_settings();
         self.refresh_permissions_settings();
+        self.refresh_terminal_settings();
         self.refresh_resources(cx);
         cx.notify();
     }

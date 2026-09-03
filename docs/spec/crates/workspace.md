@@ -28,12 +28,12 @@
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
 | `src/config/mod.rs` | ~90 | `ConfigTier` 六层枚举与 `priority()`（0..5）、`source_key()`、`as_str()`；模块 re-export（注意 `merge_json` 不在公开面，仅 `merge_ordered` / `ConfigValue` / `Merge`） |
-| `src/config/schema.rs` | ~370 | `PaworkConfig`（`default_provider` / `default_model` / `profile` / `trust_workspaces` / `proxy_url` / `providers` / `profiles` / `extra`）；`ProviderConfig` / `ModelConfig` / `ProfileConfig` / `ProfileOverrides` / `SessionOverrides` / `RunOverrides`；**schema 无 `api_key` 字段**，未知键落入 `extra`；`proxy_url` 的回环直连语义由 `pawork-providers` 运行时实现 |
+| `src/config/schema.rs` | ~400 | `PaworkConfig`（`default_provider` / `default_model` / `profile` / `trust_workspaces` / `proxy_url` / `terminal` / `providers` / `profiles` / `extra`）；`TerminalConfig`（ADR-050 D1：`shell`/`columns`/`rows` 均 Option、skip_none，仅 Global 层可写入）；`ProviderConfig` / `ModelConfig` / `ProfileConfig` / `ProfileOverrides` / `SessionOverrides` / `RunOverrides`；**schema 无 `api_key` 字段**，未知键落入 `extra`；`proxy_url` 的回环直连语义由 `pawork-providers` 运行时实现 |
 | `src/config/paths.rs` | ~140 | 平台定位常量与函数：`APP_QUALIFIER/ORGANIZATION/APPLICATION = dev/pawork/pawork`、`config_dir_for_app`（`directories`）、`global_config_path`、`workspace_config_path`（`<root>/.pawork/config.toml`）、`locate_workspace_config`（自起点向上找最近）、`default_search_roots` |
 | `src/config/merge.rs` | ~160 | `ConfigValue` 包装与 `Merge` trait；`merge_json`（对象按键递归、标量与数组整体替换）；`merge_ordered`（低→高依序合并） |
 | `src/config/error.rs` | ~70 | `ConfigParseError` / `ConfigError`：TOML 语法、schema 不匹配、IO 错误、写回序列化（`Write`）全部携带文件路径，`path()` 访问器 |
-| `src/config/loader.rs` | ~1120 | `Loader` 构建器与 `resolve()` 全流程：来源装配、`strip_untrusted_layer` 安全剥离（五种 `ConfigWarning`）、profile 层派生、`api_key` 双点剥除（单文件解析后 + 终值合并后）、确定性排序；`ConfigSource` / `LoadedSource` / `LoadedSourceSpan`；`ResolvedConfig{config, active_profile, sources, warnings}` |
-| `src/config/writer.rs` | ~220 | `write_default_model_pair`（SET-2）与 `write_proxy_url`（SET-6a / ADR-047 D2）与 `write_mcp_server_remove`（SET-6c / ADR-049 D2）：读目标文件（缺失视为空）→ `toml::Table` 保留未知字段 → 改目标键（`proxy_url` 的 `None` 移除该键）→ 同目录临时文件 + rename 原子写回；三入口共用 `CONFIG_WRITE_LOCK` 串行化同进程 RMW；不触碰六层合并语义 |
+| `src/config/loader.rs` | ~1150 | `Loader` 构建器与 `resolve()` 全流程：来源装配、`strip_untrusted_layer` 安全剥离（六种 `ConfigWarning`，ADR-050 起非 Global 层顶层 `terminal` 整段剥离 + `TerminalIgnored` 告警，防仓库投毒默认 shell）、profile 层派生、`api_key` 双点剥除（单文件解析后 + 终值合并后）、确定性排序；`ConfigSource` / `LoadedSource` / `LoadedSourceSpan`；`ResolvedConfig{config, active_profile, sources, warnings}` |
+| `src/config/writer.rs` | ~260 | `write_default_model_pair`（SET-2）与 `write_proxy_url`（SET-6a / ADR-047 D2）与 `write_mcp_server_remove`（SET-6c / ADR-049 D2）与 `write_terminal_settings`（SET-6 终端页 / ADR-050 D1：`[terminal]` 全态写，`shell=None` 移除该键，columns/rows 总是写入）：读目标文件（缺失视为空）→ `toml::Table` 保留未知字段 → 改目标键（`proxy_url` 的 `None` 移除该键）→ 同目录临时文件 + rename 原子写回；四入口共用 `CONFIG_WRITE_LOCK` 串行化同进程 RMW；不触碰六层合并语义 |
 
 **resources/（9 文件）**
 

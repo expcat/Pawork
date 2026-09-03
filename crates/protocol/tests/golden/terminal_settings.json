@@ -10,14 +10,9 @@
     },
     "issued_at": 1,
     "query": {
-      "method": "session_get",
-      "params": {
-        "session_id": "session-1",
-        "timeline_after_sequence": 10,
-        "timeline_limit": 50
-      }
+      "method": "terminal_settings"
     },
-    "request_id": "query-timeline",
+    "request_id": "query-terminal-settings",
     "source": {
       "client_id": "gui-1",
       "type": "local_gui"

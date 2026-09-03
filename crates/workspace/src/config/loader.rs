@@ -82,6 +82,13 @@ pub enum ConfigWarning {
         source_key: String,
         path: Option<PathBuf>,
     },
+    /// 非 builtin/global 层尝试设置顶层 `terminal` 段（仓库投毒指定默认
+    /// shell 等同任意命令执行），已被整段剥离（ADR-050 D1）。
+    TerminalIgnored {
+        tier: ConfigTier,
+        source_key: String,
+        path: Option<PathBuf>,
+    },
 }
 
 /// 合并解析结果：最终配置 + 按合并顺序排列的来源记录 + 每个顶层键的生效来源。
@@ -312,8 +319,9 @@ fn resolve_sources(mut sources: Vec<ConfigSource>) -> Result<ResolvedConfig, Con
             .then_with(|| left.source_key.cmp(&right.source_key))
     });
 
-    // 安全红线：privilege / egress 键仅 builtin 安全默认值与用户全局层可生效。
-    // profile/workspace/session/run 的覆盖一律剥离，关闭工作区自我提权与出站劫持。
+    // 安全红线：privilege / egress / terminal 键仅 builtin 安全默认值与用户
+    // 全局层可生效。profile/workspace/session/run 的覆盖一律剥离，关闭工作区
+    // 自我提权、出站劫持与仓库投毒默认 shell。
     let mut warnings: Vec<ConfigWarning> = Vec::new();
     for src in &mut final_sources {
         if matches!(src.tier, ConfigTier::Builtin | ConfigTier::Global) {
@@ -370,7 +378,7 @@ fn warning_span(src: &ConfigSource) -> (ConfigTier, String, Option<PathBuf>) {
     (src.tier, src.source_key.clone(), src.path.clone())
 }
 
-/// 剥离非 Builtin/Global 层的 privilege / egress 覆盖；只剥字段，不删整段。
+/// 剥离非 Builtin/Global 层的 privilege / egress / terminal 覆盖。
 fn strip_untrusted_layer(src: &mut ConfigSource, warnings: &mut Vec<ConfigWarning>) {
     let (tier, source_key, path) = warning_span(src);
     let value = src.value.as_value_mut();
@@ -383,6 +391,13 @@ fn strip_untrusted_layer(src: &mut ConfigSource, warnings: &mut Vec<ConfigWarnin
     }
     if remove_top_level_key(value, "proxy_url") {
         warnings.push(ConfigWarning::ProxyUrlIgnored {
+            tier,
+            source_key: source_key.clone(),
+            path: path.clone(),
+        });
+    }
+    if remove_top_level_key(value, "terminal") {
+        warnings.push(ConfigWarning::TerminalIgnored {
             tier,
             source_key: source_key.clone(),
             path: path.clone(),
@@ -626,6 +641,50 @@ mod tests {
         assert_eq!(
             proxy_only.config.providers[0].base_url.as_deref(),
             Some("https://api.openai.com/v1")
+        );
+    }
+
+    #[test]
+    fn workspace_terminal_section_is_stripped_with_warning() {
+        let resolved = Loader::new()
+            .with_value(
+                ConfigTier::Global,
+                "global",
+                json!({
+                    "terminal": { "shell": "/bin/zsh", "columns": 120, "rows": 40 }
+                }),
+            )
+            .with_value(
+                ConfigTier::Workspace,
+                "workspace",
+                json!({
+                    "terminal": { "shell": "/tmp/evil-shell", "columns": 999, "rows": 999 }
+                }),
+            )
+            .resolve()
+            .expect("resolve");
+
+        let terminal = resolved.config.terminal.as_ref().expect("global terminal kept");
+        assert_eq!(terminal.shell.as_deref(), Some("/bin/zsh"));
+        assert_eq!(terminal.columns, Some(120));
+        assert_eq!(terminal.rows, Some(40));
+        assert!(resolved.warnings.iter().any(|warning| matches!(
+            warning,
+            ConfigWarning::TerminalIgnored {
+                tier: ConfigTier::Workspace,
+                source_key,
+                ..
+            } if source_key == "workspace"
+        )));
+        let workspace = resolved
+            .sources
+            .iter()
+            .find(|source| source.span.tier == ConfigTier::Workspace)
+            .expect("workspace source");
+        assert!(
+            workspace.value.as_value().get("terminal").is_none(),
+            "workspace [terminal] must be stripped entirely: {:?}",
+            workspace.value
         );
     }
 

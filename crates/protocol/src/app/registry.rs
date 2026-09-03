@@ -10,7 +10,7 @@ use crate::GuiCapability;
 
 use super::command::AppCommand;
 use super::query::AppQuery;
-use super::version::{ApiVersion, V1_0, V1_1, V1_2, V1_3, V1_4, V1_5, V1_6, V1_7};
+use super::version::{ApiVersion, V1_0, V1_1, V1_2, V1_3, V1_4, V1_5, V1_6, V1_7, V1_8};
 
 /// GUI 通道访问规格：是否可用 + 命令级所需能力。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -48,7 +48,7 @@ pub const GUI_INTRINSIC_CAPABILITIES: &[GuiCapability] =
     &[GuiCapability::Events, GuiCapability::Snapshots];
 
 static COMMANDS: &[RegistryEntry] = &[
-    // --- AppCommand（27）---
+    // --- AppCommand（28）---
     RegistryEntry {
         wire_name: "core_initialize",
         gui: GuiChannelAccess {
@@ -268,6 +268,19 @@ static COMMANDS: &[RegistryEntry] = &[
         idempotent: true,
         since: V1_6,
     },
+    // ADR-050 D3：终端默认值全态写（Global 原子写 + 内存同步）；
+    // 仅 GUI 开放，非法 shell/越界尺寸宿主侧 fail-closed 保旧。
+    RegistryEntry {
+        wire_name: "set_terminal_settings",
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
+        headless: None,
+        acp: false,
+        idempotent: true,
+        since: V1_8,
+    },
     RegistryEntry {
         wire_name: "tool_approve",
         gui: GuiChannelAccess {
@@ -363,7 +376,7 @@ static COMMANDS: &[RegistryEntry] = &[
 ];
 
 static QUERIES: &[RegistryEntry] = &[
-    // --- AppQuery（14）---
+    // --- AppQuery（15）---
     RegistryEntry {
         wire_name: "workspace_list",
         gui: GuiChannelAccess {
@@ -522,6 +535,19 @@ static QUERIES: &[RegistryEntry] = &[
         idempotent: true,
         since: V1_6,
     },
+    // ADR-050 D2：终端默认设置查询（shell 持久值 + columns/rows 生效值）；
+    // 仅 GUI 开放。
+    RegistryEntry {
+        wire_name: "terminal_settings",
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
+        headless: None,
+        acp: false,
+        idempotent: true,
+        since: V1_8,
+    },
 ];
 
 /// 变体 → wire 名的唯一映射（从 gui_host 平移收编；禁止在通道侧再建镜像）。
@@ -546,6 +572,7 @@ pub fn command_wire_name(command: &AppCommand) -> &'static str {
         AppCommand::SetDefaultModel { .. } => "set_default_model",
         AppCommand::SetProxyUrl { .. } => "set_proxy_url",
         AppCommand::SetApprovalMode { .. } => "set_approval_mode",
+        AppCommand::SetTerminalSettings { .. } => "set_terminal_settings",
         AppCommand::ToolApprove { .. } => "tool_approve",
         AppCommand::GitStage { .. } => "git_stage",
         AppCommand::TerminalCreate { .. } => "terminal_create",
@@ -574,6 +601,7 @@ pub fn query_wire_name(query: &AppQuery) -> &'static str {
         AppQuery::ProviderAuthStatus { .. } => "provider_auth_status",
         AppQuery::GeneralSettings => "general_settings",
         AppQuery::PermissionsSettings => "permissions_settings",
+        AppQuery::TerminalSettings => "terminal_settings",
     }
 }
 

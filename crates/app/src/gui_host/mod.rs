@@ -720,6 +720,13 @@ fn query_permissions_settings<'a>(
     Box::pin(handlers::settings::permissions_settings(adapter, query))
 }
 
+fn query_terminal_settings<'a>(
+    adapter: &'a GuiHostAdapter,
+    query: &'a pawork_protocol::AppQuery,
+) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
+    Box::pin(handlers::settings::terminal_settings(adapter, query))
+}
+
 fn command_workspace_add<'a>(
     adapter: &'a GuiHostAdapter,
     envelope: &'a AppCommandEnvelope,
@@ -844,6 +851,16 @@ fn command_set_approval_mode<'a>(
     ))
 }
 
+fn command_set_terminal_settings<'a>(
+    adapter: &'a GuiHostAdapter,
+    envelope: &'a AppCommandEnvelope,
+    command: &'a AppCommand,
+) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
+    Box::pin(handlers::settings::set_terminal_settings(
+        adapter, envelope, command,
+    ))
+}
+
 fn command_tool_approve<'a>(
     adapter: &'a GuiHostAdapter,
     envelope: &'a AppCommandEnvelope,
@@ -922,6 +939,7 @@ static QUERY_HANDLERS: &[(&str, QueryHandler)] = &[
     ("provider_auth_status", query_provider_auth_status),
     ("general_settings", query_general_settings),
     ("permissions_settings", query_permissions_settings),
+    ("terminal_settings", query_terminal_settings),
 ];
 
 static COMMAND_HANDLERS: &[(&str, CommandHandler)] = &[
@@ -939,6 +957,7 @@ static COMMAND_HANDLERS: &[(&str, CommandHandler)] = &[
     ("set_default_model", command_set_default_model),
     ("set_proxy_url", command_set_proxy_url),
     ("set_approval_mode", command_set_approval_mode),
+    ("set_terminal_settings", command_set_terminal_settings),
     ("tool_approve", command_tool_approve),
     ("terminal_create", command_terminal_create),
     ("terminal_write", command_terminal_write),

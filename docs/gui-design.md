@@ -172,6 +172,14 @@ Settings 沿用现有深色主题、8px 节奏和 1440×1024 基线，不把工�
 > 五档审批模式显式选择、会话信任开关、Global 默认只读行；变更仅当前会话
 > 生效、不持久化、进行中 Run 不受影响；可见 / 键盘 / AX 三路径同 gate。
 
+> 2026-09-03 SET-6d 已落地「终端」页（ADR-050）：`terminal_settings`
+> 查询成功后才显示；Host 权威生效值（shell 未设置显示「未设置（跟随
+> 平台默认）」；columns/rows 生效值）+ shell 输入 / columns/rows 数值
+> 输入 + Save（全态回传三字段，空 shell 映射为 null）/ Clear（清除 shell）；新建终端初始尺寸
+> 取生效 columns/rows（未查询到回落 80×24）；页面如实标注生效边界
+>（只影响之后创建的终端，已存在终端不变）；断线 stale 只读禁写，
+> 重连后自动刷新恢复；可见 / 键盘 / AX 三路径同 gate。
+
 行为、供应商认证矩阵、模型目录回退和安全边界以 [Settings Spec](spec/settings.md) 为准。引用会话给出的信息架构足以指导实现，本轮不新增 bitmap；实现真窗口出现实际布局偏差时再生成/锁定 Settings 定稿图。
 
 ---

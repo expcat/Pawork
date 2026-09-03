@@ -5,10 +5,11 @@
       "minor": 8
     },
     "command": {
-      "method": "auth_set_api_key",
+      "method": "set_terminal_settings",
       "params": {
-        "api_key": "sk-test-fixture-not-a-real-key",
-        "provider_id": "glm-coding"
+        "columns": 120,
+        "rows": 40,
+        "shell": "/bin/zsh"
       }
     },
     "command_id": "command-auth-1",

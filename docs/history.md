@@ -1110,3 +1110,22 @@ Known gaps: GUI 新增 MCP server（add）、trusted/auto_start 切换、mcp_lis
 提交前复查修复：remove 写盘成功后清密失败仍同步内存（避免盘已删、UI/内存仍展示）；Desktop 回执 bump epoch 防止在途 mcp_list 覆盖写后清单；Test/Remove 失败在 Settings 页可见（不再只进工作台 status_hint）；空态不再与 status line 重复，加载中不误报 No MCP servers；AX 确认文案不再覆盖 last_error；补 writer 移除/缺失键定向测试。
 
 Full workspace gate: NOT RUN（当前未设置全量门禁）。
+
+## 2026-09-03 — Settings SET-6d 终端页（terminal shell/尺寸默认值，ADR-050）
+
+- 立项：SET-6 第四页经主代理源码实读 + 两路 glm_explorer 独立只读核查三方确认：PaworkConfig 无终端键；TerminalCreate wire 无 shell/size；terminal_create 恒用 PtyCreateSpec::default()（shell=None 走 exec 兜底链，size 恒 80×24）；resize 只作用会话无持久化；Desktop 新建终端后立即按 80×24 下发 resize 会压掉配置默认；Workspace 层可设 shell 即仓库投毒任意命令执行，须整段剥离（同 trusted/auto_start 先例）。cwd 默认值属 per-workspace 语义且需新增 Workspace 层写盘，登记候选。
+- ADR-050（用户 2026-09-03 确认 Accepted）：Global [terminal] 段（shell/columns/rows）+ strip_untrusted_layer 整段剥离；TerminalSettings 查询（生效值，未设 columns/rows=80/24）+ SetTerminalSettings 全态写（三字段必填、shell=null 显式清除、校验 fail-closed：shell 存在性/PATH 可解析、columns/rows ∈ 2..=1000；定序校验→Global 原子写→内存同步）；terminal_create 应用配置默认（策略闸 classification_shell 自动跟随）；Desktop 初始尺寸取生效值；API minor 1.8 仅记账；golden 先行 5 帧。
+- 实施：glm_worker 三切片串行（protocol → workspace/app → desktop）；glm_reviewer 审查修 2 P2（冻结契约回写：architecture §3.2 API 1.8/64 帧 + ADR 索引 + CON-GUI-01/CON-REGISTRY-01 28/15；Disconnected 分支补 settings_terminal mark_stale）+ P3 状态矛盾同批收口。
+- 提交前复查再修：Desktop Save 不再要求非空 shell——空输入映射为 null（平台默认），否则默认「未设置 shell」时无法只保存 columns/rows；protocol 包级 Spec 模块树 27/14 漏改为 28/15。
+
+Implemented: Settings「终端」页——Host 权威生效值读取（shell null=跟随平台默认）与 Global 层全态写（Save/Clear），只影响之后创建的终端；新建终端初始尺寸取配置默认。
+
+Validated: cargo test -p pawork-protocol --features typegen --offline --lib --tests（154，含 64 帧 golden 与 typegen --check）；cargo test -p pawork-workspace -p pawork-app --offline --lib --tests（364）；cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders（185，含空 shell Save 映射为 null）；cargo check -p pawork --offline；git diff --check。
+
+Targeted regressions: 主路径（set→清除→重查一致；terminal_create 应用配置 shell/size）+ 关键失败（非法 shell/越界尺寸 fail-closed 保旧）+ 安全红线（非 Global 层 [terminal] 剥离告警）+ desktop（解析应用/全态写串联/初始尺寸取生效值/畸形 fail-closed）。
+
+Real-world evidence: pending（真窗口验收登记 SET-7）。
+
+Known gaps: 连接后 terminal_settings 查询在途窗口内新建终端仍按 80×24 resize 覆盖配置默认（skip resize 会致投影/PTY 尺寸错配，留待 TerminalCreate 响应携带实际尺寸的 wire 演进）；shell 校验不排目录、Windows 无 PATHEXT 解析；cwd 默认值登记候选（ADR-050 否决支）。
+
+Full workspace gate: NOT RUN（当前未设置全量门禁）。

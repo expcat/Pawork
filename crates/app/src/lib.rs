@@ -55,7 +55,7 @@ use pawork_engine::{
 use pawork_providers::ModelRegistry;
 use pawork_storage::session::{SessionStore, SessionStoreError, WorkspaceRecord};
 use pawork_tools::{ToolRegistry, ToolRegistryError, ToolScheduler, ToolSchedulerConfig};
-use pawork_workspace::config::{ConfigError, Loader, PaworkConfig};
+use pawork_workspace::config::{ConfigError, Loader, PaworkConfig, TerminalConfig};
 use pawork_workspace::{FileIndexError, Workspace, WorkspaceError, WorkspaceService};
 use thiserror::Error;
 
@@ -995,6 +995,21 @@ impl AppCore {
     pub(crate) fn set_proxy_url(&mut self, proxy_url: Option<String>, http: reqwest::Client) {
         self.config.proxy_url = proxy_url;
         self.http = http;
+    }
+
+    /// SET-6 终端页（ADR-050 D3）：`set_terminal_settings` 写盘成功后
+    /// 直接赋值内存 `[terminal]` 段（全态写，禁止 merge_with）。
+    pub(crate) fn set_terminal_settings(
+        &mut self,
+        shell: Option<String>,
+        columns: u16,
+        rows: u16,
+    ) {
+        self.config.terminal = Some(TerminalConfig {
+            shell,
+            columns: Some(columns),
+            rows: Some(rows),
+        });
     }
 
     /// SET-6b：set_approval_mode 运行时切换（ADR-048 D2）。只改内存态并

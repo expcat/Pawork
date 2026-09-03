@@ -288,6 +288,40 @@ SET-5 收口后才逐页立项，不预建通用设置框架：
 
 **定向回归上限**：主路径两条（mcp_test → 状态回写且重查一致 + remove → 三处一致重查不含；关键失败路径一条（未知 name 三处皆不动 fail-closed。现有测试可覆盖时不新增。
 
+### SET-6d — 终端页（shell/columns/rows 默认值）🟢
+
+> 2026-09-03 完成：ADR-050 Accepted 后三切片串行落地（glm_worker：protocol → workspace/app → desktop）。protocol 增 `TerminalSettings` 查询 / `SetTerminalSettings` 全态写命令（三字段必填、shell=null 显式清除、since=V1_8、仅 GUI、idempotent）+ API 1.8 + golden 5 新帧（39 既有帧仅 api_version 7→8 机械重写）+ typegen；workspace schema 增 `terminal: Option<TerminalConfig>` + `write_terminal_settings`（Global RMW+进程锁+原子写、shell=None 移除键）+ `strip_untrusted_layer` 整段剥离 `terminal`（ConfigWarning::TerminalIgnored）；app 两 handler（校验 fail-closed：shell trim 非空、含分隔符须存在、否则 PATH 可解析、columns/rows ∈ 2..=1000；定序校验→写盘→内存同步）+ terminal_create 应用配置 shell/size（策略闸 classification_shell 自动跟随）；desktop「终端」页（生效值展示、shell null 文案「未设置（跟随平台默认）」、三输入全态写 Save/Clear、生效边界文案、stale 三路径同 gate、可见/键盘/AX 同 gate、重连预热查询缓存）+ 新建终端初始尺寸取生效值。审查（glm_reviewer）修复 2 P2（冻结契约回写：architecture §3.2 API 1.8/64 帧 + ADR 索引 + CON-GUI-01/CON-REGISTRY-01 28/15；Disconnected 分支补 settings_terminal mark_stale）+ P3 状态矛盾同批收口。提交前复查再修：Save 空 shell 映射为 null（可只改尺寸）；protocol Spec 模块树 27/14 → 28/15。已知残留（不挡收口，符合 ADR 字面）：连接后 terminal_settings 查询在途窗口内新建终端仍按 80×24 resize 覆盖配置默认（skip resize 会致投影/PTY 尺寸错配渲染损坏，留待 TerminalCreate 响应携带实际尺寸的 wire 演进）；shell 校验 exists() 不排目录、Windows 无 PATHEXT 解析。protocol 154 / workspace 121+13+15 / app 192+6+15+2 / desktop 185 全绿；`cargo check -p pawork --offline` 通过。真窗口验收登记 SET-7。
+
+> 2026-09-03 立项：最小真实能力锁定为「Global 层 `[terminal]` 段（shell/columns/rows）的读取与全态写 + terminal_create 应用配置默认 + Desktop 初始尺寸取生效值」。经主代理源码实读与两路 glm_explorer 独立只读核查三方确认：`PaworkConfig` 无终端键；`TerminalCreate` wire 无 shell/size；terminal_create 恒用 `PtyCreateSpec::default()`（shell=None 走 exec 兜底链 $SHELL//bin/sh/cmd.exe，size 恒 80×24）；resize 只作用会话无持久化；**Desktop 新建终端后立即按 80×24 下发一次 resize，会压掉宿主配置默认，必须同批处理**；Workspace 层若可设 shell 即仓库投毒任意命令执行，须整段剥离（同 trusted/auto_start 先例）。cwd 默认值属 per-workspace 语义、workspace 包无 Workspace 层写盘代码，不入本片、登记候选。wire/config 演进走 [ADR-050](../docs/adr/ADR-050-terminal-settings-wire.md)（2026-09-03 起草，**待用户 Accepted**）。
+
+**目标**：GUI 用户可查看并设置终端默认 shell 与初始尺寸（Global 持久化）；之后创建的终端使用配置默认；已存在终端不回溯。
+
+**非目标**：不做 cwd 默认值（登记候选）；不允许 Workspace 层 `[terminal]`（整段剥离）；不做部分字段 patch（全态写）；不做 resize 持久化、像素尺寸、shell args、env 配置；Desktop 不直写 PTY 配置。
+
+**写入集**（ADR-050 Accepted 后才动生产代码）：
+
+- `docs/adr/ADR-050-*.md`、`docs/architecture.md`、`docs/spec/contracts.md`；
+- `crates/protocol/`：`TerminalSettings` 查询 + `SetTerminalSettings` 命令（三字段必填全态写，shell=null 清除）+ registry（since=V1_8、仅 GUI、idempotent）+ API 1.8 + golden/typegen；
+- `crates/workspace/`：schema 增 `terminal: Option<TerminalConfig>`；`write_terminal_settings` Global RMW+原子写；`strip_untrusted_layer` 追加剥离 `terminal` 键 + ConfigWarning；
+- `crates/app/`：两 handler（校验 fail-closed：shell 存在性/PATH 可解析，columns/rows ∈ 2..=1000；定序校验→写盘→内存同步）；`terminal_create` 应用配置 shell/size；
+- `apps/desktop/`：Settings 导航增「终端」页（shell 输入、columns/rows 输入、Save，生效边界文案「只影响之后创建的终端」），新建终端初始尺寸改用生效值；可见/键盘/AX 同 gate，断线 fail-closed；
+- 实际涉及包的包级 Spec + `docs/spec/settings.md` 页启用。
+
+**完成条件**：
+
+- 页面显示 Host 权威生效值（shell null=跟随平台默认；columns/rows 未设=80/24），来源语义不混淆；
+- set 全态写经校验、Global 原子写、同会话重查一致、重启恢复；非法 shell/越界尺寸 fail-closed 保旧；
+- 非 Global 层 `[terminal]` 被剥离并如实告警；
+- 之后创建的终端 shell/size 与配置一致（策略闸分类自动跟随）；Desktop 新建初始尺寸不再硬编码 80×24；
+- 断线 stale 只读、写动作 fail-closed；可见/键盘/AX 同 gate；
+- golden/typegen 先行；不新增 crate、依赖。
+
+**停止条件**：ADR-050 未获用户 Accepted 时，停在 ADR + 预期 golden 描述，不写生产 handler。
+
+**验证**：`cargo test -p pawork-protocol --features typegen --offline --lib --tests` + `cargo test -p pawork-workspace -p pawork-app --offline --lib --tests` + `cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`；单一 Cargo 进程纪律不变。
+
+**定向回归上限**：主路径两条（set → 重查一致；terminal_create 应用配置 shell/size）；关键失败路径一条（非法值 fail-closed 保旧）；安全红线定向回归一条（非 Global 层 `[terminal]` 剥离）。现有测试可覆盖时不新增。
+
 ### SET-7 — 真窗口与人工收口 ⚪
 
 **自动证据**：实际写入集定向门禁；protocol/Secret/config 三类关键回归；`git diff --check`。

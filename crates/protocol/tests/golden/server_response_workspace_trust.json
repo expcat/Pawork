@@ -2,7 +2,7 @@
   "data": {
     "api_version": {
       "major": 1,
-      "minor": 7
+      "minor": 8
     },
     "request_id": "query-workspace-trust",
     "responded_at": 3,

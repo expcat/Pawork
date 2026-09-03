@@ -858,6 +858,84 @@ impl SettingsPermissionsState {
     }
 }
 
+/// `terminal_settings` 查询 / `set_terminal_settings` 回执的载荷
+///（ADR-050 D2/D3）：shell 为 Global 持久值（null = 跟随平台默认），
+/// columns/rows 为生效值（未设置 = 80/24）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalSettingsData {
+    pub shell: Option<String>,
+    pub columns: u16,
+    pub rows: u16,
+}
+
+/// Settings「终端」页状态（SET-6d / ADR-050）：Host `terminal_settings`
+/// 权威生效值。查询失败 / 未知则 `available=false`，导航不显示该页且
+/// 不渲染写入口；断线 `mark_stale` 保留最后只读结果；写回执即写后
+/// 状态（全态写，不乐观更新）。`effective_size` 同时作为新建终端的
+/// 初始尺寸来源（未查询到时回落 80×24 现状）。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SettingsTerminalState {
+    pub loading: bool,
+    pub stale_reason: Option<String>,
+    pub error: Option<String>,
+    /// 至少成功解析过一次（capability 到位）。失败 / 未知保持 false。
+    pub available: bool,
+    /// Global 持久值；`None` = 未设置（跟随平台默认）。
+    pub shell: Option<String>,
+    /// Host 生效值（未设置 = 80/24）。
+    pub columns: u16,
+    pub rows: u16,
+}
+
+impl SettingsTerminalState {
+    pub fn begin_loading(&mut self) {
+        self.loading = true;
+        self.stale_reason = None;
+    }
+
+    pub fn apply_loaded(&mut self, data: TerminalSettingsData) {
+        self.loading = false;
+        self.stale_reason = None;
+        self.error = None;
+        self.available = true;
+        self.shell = data.shell;
+        self.columns = data.columns;
+        self.rows = data.rows;
+    }
+
+    /// 查询或写失败：保留旧值，记录原因。从未成功过则保持 unavailable。
+    pub fn apply_failed(&mut self, reason: &str) {
+        self.loading = false;
+        self.error = Some(reason.to_string());
+    }
+
+    pub fn mark_stale(&mut self, reason: &str) {
+        self.loading = false;
+        self.stale_reason = Some(reason.to_string());
+    }
+
+    /// `set_terminal_settings` Data 回执（回执即写后状态，ADR-050 D3）。
+    pub fn apply_confirmed(&mut self, data: TerminalSettingsData) {
+        self.apply_loaded(data);
+    }
+
+    /// 写动作 gate（render / 键盘 / AX 同源）：须已接通、非 stale、且
+    /// 查询已成功（capability 到位）。
+    pub fn writes_enabled(&self, connected: bool) -> bool {
+        connected && self.available && self.stale_reason.is_none()
+    }
+
+    /// 新建终端的初始尺寸（ADR-050 D4）：查询成功取生效值，未查询到
+    /// 回落 80×24（现状行为）。
+    pub fn effective_size(&self) -> (u16, u16) {
+        if self.available {
+            (self.columns, self.rows)
+        } else {
+            (80, 24)
+        }
+    }
+}
+
 /// 解析 AuthChangeState 的 wire 形态（tag=type / content=data）。
 pub fn parse_auth_change(state: &Value) -> Result<AuthChange, String> {
     let kind = state
@@ -922,6 +1000,34 @@ pub fn parse_general_settings(data: &Value) -> Result<Option<String>, String> {
         .map(str::to_string)
         .map(Some)
         .ok_or_else(|| "proxy_url is not a string or null".to_string())
+}
+
+/// 解析 Host `terminal_settings` 的 `AppResponse::Data` 载荷
+/// `{ shell: string | null, columns: u16, rows: u16 }`（ADR-050 D2）。
+/// 缺字段 / 类型错误 fail-closed，不把残缺帧当成默认值。
+pub fn parse_terminal_settings(data: &Value) -> Result<TerminalSettingsData, String> {
+    let shell = match data.get("shell") {
+        None => return Err("terminal settings missing shell".into()),
+        Some(Value::Null) => None,
+        Some(value) => Some(
+            value
+                .as_str()
+                .ok_or_else(|| "shell is not a string or null".to_string())?
+                .to_string(),
+        ),
+    };
+    let dimension = |field: &str| -> Result<u16, String> {
+        let value = data
+            .get(field)
+            .and_then(Value::as_u64)
+            .ok_or_else(|| format!("terminal settings missing u16 {field}"))?;
+        u16::try_from(value).map_err(|_| format!("{field} exceeds u16 range"))
+    };
+    Ok(TerminalSettingsData {
+        shell,
+        columns: dimension("columns")?,
+        rows: dimension("rows")?,
+    })
 }
 
 /// 解析 Host `permissions_settings` 的 `AppResponse::Data` 载荷
@@ -1131,6 +1237,9 @@ pub struct DesktopProjection {
     pub settings_general: SettingsGeneralState,
     /// SET-6b Settings 权限与审批页（Host `permissions_settings`）。
     pub settings_permissions: SettingsPermissionsState,
+    /// SET-6d Settings 终端页（Host `terminal_settings`；其生效尺寸
+    /// 同时作为新建终端初始尺寸来源，ADR-050 D4）。
+    pub settings_terminal: SettingsTerminalState,
     pub active_runs: Vec<ActiveRun>,
     pub active_run_started_at_ms: Option<u64>,
     pub resume: ResumeState,
@@ -1380,6 +1489,21 @@ impl DesktopProjection {
         {
             self.terminal = terminal;
         }
+    }
+
+    /// 新建终端初始尺寸（ADR-050 D4）：create 回执后按 terminal_settings
+    /// 生效值覆盖投影默认 80×24（尺寸仍在途——只写 columns/rows，不置
+    /// resize_confirmed；随后那次 terminal_resize 的回执才确认）。
+    pub fn apply_terminal_initial_size(
+        &mut self,
+        terminal_session_id: &str,
+        columns: u16,
+        rows: u16,
+    ) -> bool {
+        self.update_terminal(terminal_session_id, |terminal| {
+            terminal.columns = columns;
+            terminal.rows = rows;
+        })
     }
 
     pub fn mark_terminal_ready(&mut self, terminal_session_id: &str) -> bool {
@@ -2945,6 +3069,72 @@ mod tests {
         );
         assert!(state.workspace_trusted);
         assert!(state.available);
+    }
+
+    #[test]
+    fn terminal_settings_main_path_confirms_full_state_and_sizes_new_terminal() {
+        // 主路径：解析应用 + 全态写串联 + 初始尺寸取生效值（ADR-050 D2-D4）。
+        let mut state = SettingsTerminalState::default();
+        assert_eq!(state.effective_size(), (80, 24), "unqueried falls back");
+        state.apply_loaded(
+            parse_terminal_settings(&json!({
+                "shell": "/bin/zsh", "columns": 120, "rows": 40
+            }))
+            .expect("parse terminal settings"),
+        );
+        assert!(state.available);
+        assert!(state.writes_enabled(true));
+        assert_eq!(state.shell.as_deref(), Some("/bin/zsh"));
+        assert_eq!(state.effective_size(), (120, 40));
+        // 全态写回执（shell=null 清除 + 新尺寸）即写后状态。
+        state.apply_confirmed(
+            parse_terminal_settings(&json!({
+                "shell": null, "columns": 100, "rows": 30
+            }))
+            .expect("parse clear receipt"),
+        );
+        assert_eq!(state.shell, None);
+        assert_eq!(state.effective_size(), (100, 30));
+        // 新建终端投影初始尺寸取生效值（不置 resize_confirmed，回执才确认）。
+        let mut projection = DesktopProjection::default();
+        projection.workspace_id = Some("ws-1".into());
+        projection.settings_terminal = state;
+        projection.apply_terminal_created("ws-1".into(), "term-1".into());
+        let (columns, rows) = projection.settings_terminal.effective_size();
+        assert!(projection.apply_terminal_initial_size("term-1", columns, rows));
+        assert_eq!(
+            (projection.terminal.columns, projection.terminal.rows),
+            (100, 30)
+        );
+        assert!(!projection.terminal.resize_confirmed);
+    }
+
+    #[test]
+    fn terminal_settings_fails_closed_on_malformed_payload() {
+        assert!(parse_terminal_settings(&json!({})).is_err());
+        assert!(parse_terminal_settings(&json!({ "columns": 80, "rows": 24 })).is_err());
+        assert!(parse_terminal_settings(&json!({
+            "shell": null, "rows": 24
+        }))
+        .is_err());
+        assert!(parse_terminal_settings(&json!({
+            "shell": 7, "columns": 80, "rows": 24
+        }))
+        .is_err());
+        assert!(parse_terminal_settings(&json!({
+            "shell": null, "columns": "80", "rows": 24
+        }))
+        .is_err());
+        assert!(parse_terminal_settings(&json!({
+            "shell": null, "columns": 80, "rows": 70000
+        }))
+        .is_err());
+        let mut state = SettingsTerminalState::default();
+        state.apply_failed("malformed payload");
+        assert!(!state.available);
+        assert_eq!(state.shell, None);
+        assert_eq!((state.columns, state.rows), (0, 0));
+        assert_eq!(state.error.as_deref(), Some("malformed payload"));
     }
 
     fn settings_state_with_provider(auth_methods: &[&str]) -> SettingsProvidersState {

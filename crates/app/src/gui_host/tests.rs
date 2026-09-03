@@ -2898,6 +2898,250 @@ async fn set_proxy_url_rejects_invalid_url_and_keeps_old_value() {
 }
 
 #[tokio::test]
+async fn set_terminal_settings_updates_and_clears_shell_within_same_session() {
+    let _home_env = HOME_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let home = tempfile::tempdir().expect("home tempdir");
+    let _restore_home = RestoreHome(std::env::var_os("HOME"));
+    crate::testsupport::set_env("HOME", home.path().to_str().expect("utf-8 home"));
+    let backend = Arc::new(pawork_auth::MemoryBackend::new());
+    let (adapter, _dir) = settings_adapter("http://127.0.0.1:1".into(), backend).await;
+
+    let before = adapter
+        .query(&query_envelope(AppQuery::TerminalSettings))
+        .await
+        .expect("terminal settings before set");
+    let AppResponse::Data(before) = before else {
+        panic!("TerminalSettings must return Data: {before:?}")
+    };
+    assert_eq!(
+        before,
+        serde_json::json!({ "shell": None::<String>, "columns": 80, "rows": 24 }),
+        "fresh config must report platform defaults"
+    );
+
+    #[cfg(unix)]
+    let shell = "/bin/sh";
+    #[cfg(windows)]
+    let shell = "cmd.exe";
+    let response = adapter
+        .command(&command_envelope(AppCommand::SetTerminalSettings {
+            shell: Some(shell.into()),
+            columns: 120,
+            rows: 40,
+        }))
+        .await
+        .expect("set terminal settings");
+    let AppResponse::Data(data) = response else {
+        panic!("SetTerminalSettings must return Data: {response:?}")
+    };
+    assert_eq!(data["shell"], shell);
+    assert_eq!(data["columns"], 120);
+    assert_eq!(data["rows"], 40);
+
+    let after = adapter
+        .query(&query_envelope(AppQuery::TerminalSettings))
+        .await
+        .expect("terminal settings after set");
+    let AppResponse::Data(after) = after else {
+        panic!("TerminalSettings must return Data: {after:?}")
+    };
+    assert_eq!(after["shell"], shell);
+    assert_eq!(after["columns"], 120);
+    assert_eq!(after["rows"], 40);
+
+    let config_path = pawork_workspace::config::global_config_path().expect("global path");
+    let persisted = std::fs::read_to_string(&config_path).expect("persisted config");
+    assert!(persisted.contains("[terminal]"), "missing [terminal]: {persisted}");
+    assert!(
+        persisted.contains(format!("shell = \"{shell}\"").as_str()),
+        "persisted config misses shell: {persisted}"
+    );
+
+    // ADR-050 D3：shell=null 显式清除回平台默认，columns/rows 保持全态值。
+    let response = adapter
+        .command(&command_envelope(AppCommand::SetTerminalSettings {
+            shell: None,
+            columns: 120,
+            rows: 40,
+        }))
+        .await
+        .expect("clear terminal shell");
+    let AppResponse::Data(data) = response else {
+        panic!("SetTerminalSettings clear must return Data: {response:?}")
+    };
+    assert!(data["shell"].is_null(), "clear receipt must be null: {data}");
+
+    let after = adapter
+        .query(&query_envelope(AppQuery::TerminalSettings))
+        .await
+        .expect("terminal settings after clear");
+    let AppResponse::Data(after) = after else {
+        panic!("TerminalSettings must return Data: {after:?}")
+    };
+    assert!(after["shell"].is_null(), "requery after clear: {after}");
+    assert_eq!(after["columns"], 120);
+    assert_eq!(after["rows"], 40);
+
+    let persisted = std::fs::read_to_string(&config_path).expect("persisted config");
+    assert!(
+        !persisted.contains("shell"),
+        "cleared config still has shell key: {persisted}"
+    );
+    assert!(persisted.contains("columns = 120"), "{persisted}");
+}
+
+#[tokio::test]
+async fn set_terminal_settings_rejects_invalid_values_and_keeps_old() {
+    let _home_env = HOME_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let home = tempfile::tempdir().expect("home tempdir");
+    let _restore_home = RestoreHome(std::env::var_os("HOME"));
+    crate::testsupport::set_env("HOME", home.path().to_str().expect("utf-8 home"));
+    let backend = Arc::new(pawork_auth::MemoryBackend::new());
+    let (adapter, _dir) = settings_adapter("http://127.0.0.1:1".into(), backend).await;
+
+    #[cfg(unix)]
+    let seeded_shell = "/bin/sh";
+    #[cfg(windows)]
+    let seeded_shell = "cmd.exe";
+    adapter
+        .command(&command_envelope(AppCommand::SetTerminalSettings {
+            shell: Some(seeded_shell.into()),
+            columns: 120,
+            rows: 40,
+        }))
+        .await
+        .expect("seed terminal settings");
+    let config_path = pawork_workspace::config::global_config_path().expect("global path");
+    let seeded = std::fs::read_to_string(&config_path).expect("seed persisted");
+
+    for bad in [
+        AppCommand::SetTerminalSettings {
+            shell: Some("/definitely/missing/pawork-shell".into()),
+            columns: 120,
+            rows: 40,
+        },
+        AppCommand::SetTerminalSettings {
+            shell: Some(seeded_shell.into()),
+            columns: 1,
+            rows: 40,
+        },
+        AppCommand::SetTerminalSettings {
+            shell: Some(seeded_shell.into()),
+            columns: 120,
+            rows: 2000,
+        },
+    ] {
+        let error = adapter
+            .command(&command_envelope(bad))
+            .await
+            .expect_err("invalid terminal settings must fail closed");
+        assert_eq!(error.code, "invalid_terminal_settings");
+    }
+
+    let after = adapter
+        .query(&query_envelope(AppQuery::TerminalSettings))
+        .await
+        .expect("terminal settings after invalid set");
+    let AppResponse::Data(after) = after else {
+        panic!("TerminalSettings must return Data: {after:?}")
+    };
+    assert_eq!(after["shell"], seeded_shell);
+    assert_eq!(after["columns"], 120);
+    assert_eq!(after["rows"], 40);
+
+    let persisted = std::fs::read_to_string(&config_path).expect("persisted config");
+    assert_eq!(persisted, seeded, "invalid set must not rewrite disk");
+}
+
+#[tokio::test]
+async fn terminal_create_applies_configured_shell_and_size() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
+        .await
+        .expect("store");
+    #[cfg(unix)]
+    let configured_shell = "/usr/bin/true";
+    #[cfg(windows)]
+    let configured_shell = "cmd.exe";
+    let mut config = pawork_workspace::config::PaworkConfig::default();
+    config.terminal = Some(pawork_workspace::config::TerminalConfig {
+        shell: Some(configured_shell.into()),
+        columns: Some(97),
+        rows: Some(31),
+    });
+    let mut core = AppCore::from_parts(
+        Arc::new(MockProvider::sequence(Vec::new())),
+        None,
+        pawork_domain::ModelId::from("model-1"),
+        pawork_domain::ProviderId::from("mock"),
+        Some(store),
+    )
+    .with_state(
+        config,
+        Arc::new(pawork_auth::MemoryBackend::new()) as Arc<dyn pawork_auth::SecretBackend>,
+    );
+    core.attach_workspace(dir.path()).expect("attach workspace");
+    core.configure_approval(
+        crate::ApprovalMode::AskForDangerous,
+        true,
+        Arc::new(crate::DenyAllApprovals),
+    );
+    let adapter = GuiHostAdapter::new(Arc::new(core));
+
+    let created = adapter
+        .command(&command_envelope(AppCommand::TerminalCreate {
+            workspace_id: WorkspaceId::from("ws-default"),
+            working_directory: None,
+        }))
+        .await
+        .expect("terminal_create");
+    let AppResponse::Data(payload) = created else {
+        panic!("terminal_create must return Data: {created:?}")
+    };
+    let terminal_id = payload["terminal_session_id"]
+        .as_str()
+        .expect("terminal_session_id")
+        .to_string();
+
+    // ADR-050 D4：size 生效值来自配置（pixel 0 由 PtyWindowSize::default 保持）。
+    let owner = pawork_exec::OwnerSessionId::new("ws-default");
+    let snapshot = adapter
+        .pty
+        .snapshot(&pawork_exec::TerminalId::new(&terminal_id), &owner)
+        .expect("snapshot");
+    assert_eq!(snapshot.size.cols, 97);
+    assert_eq!(snapshot.size.rows, 31);
+    assert_eq!(snapshot.size.pixel_width, 0);
+    assert_eq!(snapshot.size.pixel_height, 0);
+
+    // 配置 shell 真被用于 spawn：/usr/bin/true 立即以 exit_code=0 退出
+    //（默认交互 shell 不会立即退出）。
+    #[cfg(unix)]
+    {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let snapshot = adapter
+                .pty
+                .snapshot(&pawork_exec::TerminalId::new(&terminal_id), &owner)
+                .expect("snapshot");
+            if snapshot.state == pawork_exec::PtySessionState::Exited {
+                assert_eq!(snapshot.exit_code, Some(0));
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "configured shell /usr/bin/true must exit promptly"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
+}
+
+#[tokio::test]
 async fn set_approval_mode_updates_permissions_settings_within_same_session() {
     let backend = Arc::new(pawork_auth::MemoryBackend::new());
     let (adapter, _dir) = settings_adapter("http://127.0.0.1:1".into(), backend).await;

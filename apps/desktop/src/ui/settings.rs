@@ -1,5 +1,5 @@
-//! Settings 壳（SET-3/4/6a/6b/6c）：Settings Rail、「Models & providers」、
-//! 「General」、「权限与审批」与「工具与 MCP」页。
+//! Settings 壳（SET-3/4/6a/6b/6c/6d）：Settings Rail、「Models &
+//! providers」、「General」、「权限与审批」、「工具与 MCP」与「终端」页。
 //!
 //! 供应商页只呈现 Host `provider_auth_status` 权威事实：供应商名称、
 //! 认证方式、连接状态与目录来源（SET-3）；SET-4 增认证写操作（API key
@@ -8,8 +8,9 @@
 //! 「General」页（`proxy_url` 读/设置/清除）；SET-6b 增「权限与审批」页
 //! （五档审批模式 / 会话信任 / Global 默认只读）；SET-6c 增「工具与
 //! MCP」页（复用 Resources 的 mcp_list 数据链 + mcp_test /
-//! mcp_server_remove 写动作）；查询失败 / 未知则隐藏该导航项且不渲染
-//! 写入口。断线保留 stale 只读结果并禁用全部写动作；
+//! mcp_server_remove 写动作）；SET-6d 增「终端」页（terminal_settings
+//! 读取 + set_terminal_settings 全态写）；查询失败 / 未知则隐藏该导航
+//! 项且不渲染写入口。断线保留 stale 只读结果并禁用全部写动作；
 //! 可见 / 键盘 / AX 三路径同 gate。
 
 use std::collections::HashSet;
@@ -24,7 +25,7 @@ use crate::ui::theme::{dark, font, metrics};
 use crate::controller::McpServerEntry;
 use crate::projection::{
     group_models_by_provider, ApprovalModeSetting, ConnectionState, ModelEntry, OAuthWait,
-    ProviderAuthState, ProviderStatusEntry, SettingsPermissionsState,
+    ProviderAuthState, ProviderStatusEntry, SettingsPermissionsState, SettingsTerminalState,
 };
 use crate::ui::text_input::TextInput;
 
@@ -62,6 +63,37 @@ pub(crate) const SETTINGS_MCP_REMOVE_CONFIRM_NOTE: &str =
 /// 「工具与 MCP」页生效边界（SET-6c / ADR-049 D1/D2；render 与 AX 同源）。
 pub(crate) const SETTINGS_MCP_EFFECT_NOTE: &str =
     "Test 现场验证该 server 并回写状态；移除作用于 Global 配置并清理凭证，同会话内其工具不再注册。";
+
+/// null shell 展示（SET-6d / ADR-050 D2；render 与 AX 同源）。
+pub(crate) const SETTINGS_TERMINAL_SHELL_UNSET: &str = "未设置（跟随平台默认）";
+/// 终端页生效边界（SET-6d / ADR-050 D4；render 与 AX 同源，快照语义）。
+pub(crate) const SETTINGS_TERMINAL_EFFECT_NOTE: &str = "只影响之后创建的终端，已存在终端不变。";
+
+/// 终端页尺寸输入解析（SET-6d）：u16 且 ∈ 2..=1000（与 Host 校验一致，
+/// ADR-050 D3）；畸形 / 越界返回 None（Save 禁用，fail-closed）。
+/// render 与 AX 同源。
+pub(crate) fn parse_terminal_dimension(text: &str) -> Option<u16> {
+    let value: u16 = text.trim().parse().ok()?;
+    (2..=1000).contains(&value).then_some(value)
+}
+
+/// 终端页 shell 输入 → wire 载荷（SET-6d / ADR-050 D3）：trim 后空串
+/// 映射为 None（null = 跟随平台默认），使尺寸可在未设置 shell 时
+/// 单独保存；非空则回传 trimmed。render / 键盘 / AX 同源。
+pub(crate) fn parse_terminal_shell(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+/// 终端页 Save 是否可点（SET-6d）：写 gate 开且 columns/rows 合法。
+/// 空 shell 是合法全态（null），不参与禁用。render 与 AX 同源。
+pub(crate) fn terminal_save_enabled(writes: bool, columns: Option<u16>, rows: Option<u16>) -> bool {
+    writes && columns.is_some() && rows.is_some()
+}
 
 /// Settings 供应商页状态行（render 与 AX 同源）。stale / loading / error /
 /// 空态独立判定：stale 与 error 可同时出现，空态仅在完全无状态且列表为
@@ -116,6 +148,24 @@ pub(super) fn general_status_lines(
 pub(super) fn permissions_status_lines(
     state: &SettingsPermissionsState,
 ) -> Vec<(&'static str, String)> {
+    let mut lines = Vec::new();
+    if let Some(reason) = &state.stale_reason {
+        lines.push((
+            "stale",
+            format!("Offline · showing last known state ({reason})"),
+        ));
+    } else if state.loading {
+        lines.push(("loading", "Loading…".to_string()));
+    }
+    if let Some(error) = &state.error {
+        lines.push(("error", error.clone()));
+    }
+    lines
+}
+
+/// Settings 终端页状态行（SET-6d；render 与 AX 同源）。error 文案由事件
+/// 消费侧按动作区分（load / set），此处原样展示。
+pub(super) fn terminal_status_lines(state: &SettingsTerminalState) -> Vec<(&'static str, String)> {
     let mut lines = Vec::new();
     if let Some(reason) = &state.stale_reason {
         lines.push((
@@ -450,10 +500,12 @@ impl AppView {
         let general_available = self.projection.settings_general.available;
         let permissions_available = self.projection.settings_permissions.available;
         let tools_available = self.resources.available;
+        let terminal_available = self.projection.settings_terminal.available;
         let current_page = match self.settings_page {
             SettingsPage::General if !general_available => SettingsPage::Providers,
             SettingsPage::Permissions if !permissions_available => SettingsPage::Providers,
             SettingsPage::Tools if !tools_available => SettingsPage::Providers,
+            SettingsPage::Terminal if !terminal_available => SettingsPage::Providers,
             page => page,
         };
         let mut rail = Panel::side_right(rail_width)
@@ -493,6 +545,15 @@ impl AppView {
                 cx,
             ));
         }
+        if terminal_available {
+            rail = rail.child(self.settings_nav_item(
+                "settings-nav-terminal",
+                "终端",
+                current_page == SettingsPage::Terminal,
+                SettingsPage::Terminal,
+                cx,
+            ));
+        }
         rail
     }
 
@@ -514,6 +575,11 @@ impl AppView {
         if self.settings_page == SettingsPage::Tools && self.resources.available {
             return self.settings_tools_page_element(cx).into_any_element();
         }
+        if self.settings_page == SettingsPage::Terminal
+            && self.projection.settings_terminal.available
+        {
+            return self.settings_terminal_page_element(cx).into_any_element();
+        }
         self.settings_providers_page_element(cx).into_any_element()
     }
 
@@ -529,6 +595,7 @@ impl AppView {
             SettingsPage::General => self.settings_nav_general_focus.clone(),
             SettingsPage::Permissions => self.settings_nav_permissions_focus.clone(),
             SettingsPage::Tools => self.settings_nav_tools_focus.clone(),
+            SettingsPage::Terminal => self.settings_nav_terminal_focus.clone(),
             SettingsPage::Providers => self.settings_nav_providers_focus.clone(),
         };
         if selected {
@@ -852,6 +919,231 @@ impl AppView {
             )
             .child(
                 Label::new(SETTINGS_PROXY_EFFECT_NOTE)
+                    .size(font::BODY_SM)
+                    .color(dark().text.secondary),
+            );
+
+        div()
+            .id("settings-page")
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_w_0()
+            .overflow_hidden()
+            .p_4()
+            .child(
+                div()
+                    .id("settings-page-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .track_scroll(&self.settings_scroll)
+                    .child(content),
+            )
+    }
+
+    /// 「终端」页（SET-6d / ADR-050）：Host 权威生效值（shell 持久值 +
+    /// columns/rows 生效值）、shell 内联输入 + columns/rows 数值输入 +
+    /// Save（全态回传三字段）/ Clear（清除 shell）、生效边界文案；stale
+    /// 只读，写入口与 AX 同 gate。
+    fn settings_terminal_page_element(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let connected = matches!(
+            self.projection.connection,
+            ConnectionState::Connected { .. }
+        );
+        let writes = self.settings_terminal_writes_enabled();
+        let state = self.projection.settings_terminal.clone();
+        let status_lines = terminal_status_lines(&state);
+        let shell_current = state
+            .shell
+            .clone()
+            .unwrap_or_else(|| SETTINGS_TERMINAL_SHELL_UNSET.to_string());
+        let size_current = format!("{}×{}", state.columns, state.rows);
+        let columns_value =
+            parse_terminal_dimension(self.settings_terminal_columns_input.read(cx).text());
+        let rows_value =
+            parse_terminal_dimension(self.settings_terminal_rows_input.read(cx).text());
+        let save_enabled = terminal_save_enabled(writes, columns_value, rows_value);
+        let clear_enabled = writes && state.shell.is_some();
+        let shell_input = self.settings_terminal_shell_input.clone();
+        let columns_input = self.settings_terminal_columns_input.clone();
+        let rows_input = self.settings_terminal_rows_input.clone();
+        let save_focus = self.settings_terminal_save_focus.clone();
+        let clear_focus = self.settings_terminal_clear_focus.clone();
+        let refresh_focus = self.settings_refresh_focus.clone();
+        let refresh = Button::new("settings-refresh")
+            .track_focus(&refresh_focus)
+            .variant(ButtonVariant::Raised)
+            .height(px(SETTINGS_ACTION_HEIGHT))
+            .vcenter()
+            .radius(4.0)
+            .bordered()
+            .text_size(font::BODY_SM)
+            .label("Refresh")
+            .tooltip("Refresh terminal settings")
+            .disabled(!connected)
+            .on_click(cx.listener(|view, event, _window, cx| {
+                if view.consume_button_key_click("settings-refresh", event) {
+                    return;
+                }
+                view.on_refresh_settings(cx);
+            }))
+            .on_activate(cx.listener(|view, _event, _window, cx| {
+                view.note_button_key_activate("settings-refresh");
+                view.on_refresh_settings(cx);
+                cx.stop_propagation();
+            }));
+        let save = Button::new("settings-terminal-save")
+            .track_focus(&save_focus)
+            .variant(ButtonVariant::Raised)
+            .height(px(SETTINGS_ACTION_HEIGHT))
+            .vcenter()
+            .radius(4.0)
+            .bordered()
+            .text_size(font::BODY_SM)
+            .label("Save")
+            .tooltip("Save terminal defaults (shell, columns, rows)")
+            .disabled(!save_enabled)
+            .on_click(cx.listener(|view, event, _window, cx| {
+                if view.consume_button_key_click("settings-terminal-save", event) {
+                    return;
+                }
+                view.on_settings_terminal_save(cx);
+            }))
+            .on_activate(cx.listener(|view, _event, _window, cx| {
+                view.note_button_key_activate("settings-terminal-save");
+                view.on_settings_terminal_save(cx);
+                cx.stop_propagation();
+            }));
+        let clear = Button::new("settings-terminal-clear")
+            .track_focus(&clear_focus)
+            .variant(ButtonVariant::Raised)
+            .height(px(SETTINGS_ACTION_HEIGHT))
+            .vcenter()
+            .radius(4.0)
+            .bordered()
+            .text_size(font::BODY_SM)
+            .label("Clear")
+            .tooltip("Clear default shell")
+            .disabled(!clear_enabled)
+            .on_click(cx.listener(|view, event, _window, cx| {
+                if view.consume_button_key_click("settings-terminal-clear", event) {
+                    return;
+                }
+                view.on_settings_terminal_clear(cx);
+            }))
+            .on_activate(cx.listener(|view, _event, _window, cx| {
+                view.note_button_key_activate("settings-terminal-clear");
+                view.on_settings_terminal_clear(cx);
+                cx.stop_propagation();
+            }));
+
+        let mut content = div()
+            .flex()
+            .flex_col()
+            .min_w_0()
+            .max_w(px(SETTINGS_CONTENT_MAX_WIDTH))
+            .gap_2()
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_start()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .min_w_0()
+                            .child(
+                                div().font_weight(FontWeight::MEDIUM).child(
+                                    Label::new("终端")
+                                        .size(font::TITLE)
+                                        .color(dark().text.primary),
+                                ),
+                            )
+                            .child(
+                                Label::new("Default shell and size for new terminals")
+                                    .size(font::BODY_SM)
+                                    .color(dark().text.secondary),
+                            ),
+                    )
+                    .child(div().flex_1())
+                    .child(div().flex_none().pt_1().child(refresh)),
+            );
+        for (kind, line) in status_lines {
+            let color = if kind == "error" {
+                dark().semantic.danger_text
+            } else {
+                dark().text.secondary
+            };
+            content = content.child(status_line(&line, color));
+        }
+        content = content
+            .child(
+                Label::new(format!("Current shell · {shell_current}"))
+                    .size(font::BODY)
+                    .color(dark().text.primary),
+            )
+            .child(
+                Label::new(format!("Current size · {size_current}"))
+                    .size(font::BODY)
+                    .color(dark().text.primary),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_1()
+                    .min_w_0()
+                    .child(
+                        Label::new("Shell")
+                            .size(font::BODY_SM)
+                            .color(dark().text.secondary),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .when(!writes, |el| el.bg(dark().surface.disabled).opacity(0.55))
+                            .child(shell_input),
+                    )
+                    .child(clear),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_1()
+                    .min_w_0()
+                    .child(
+                        Label::new("Size")
+                            .size(font::BODY_SM)
+                            .color(dark().text.secondary),
+                    )
+                    .child(
+                        div()
+                            .w(px(96.0))
+                            .when(!writes, |el| el.bg(dark().surface.disabled).opacity(0.55))
+                            .child(columns_input),
+                    )
+                    .child(
+                        Label::new("×")
+                            .size(font::BODY_SM)
+                            .color(dark().text.secondary),
+                    )
+                    .child(
+                        div()
+                            .w(px(96.0))
+                            .when(!writes, |el| el.bg(dark().surface.disabled).opacity(0.55))
+                            .child(rows_input),
+                    )
+                    .child(div().flex_1())
+                    .child(save),
+            )
+            .child(
+                Label::new(SETTINGS_TERMINAL_EFFECT_NOTE)
                     .size(font::BODY_SM)
                     .color(dark().text.secondary),
             );
@@ -1746,6 +2038,15 @@ impl AppView {
             .writes_enabled(connected)
     }
 
+    /// 终端页写操作 gate（SET-6d）：连接 + 非 stale + 查询已成功。
+    pub(crate) fn settings_terminal_writes_enabled(&self) -> bool {
+        let connected = matches!(
+            self.projection.connection,
+            ConnectionState::Connected { .. }
+        );
+        self.projection.settings_terminal.writes_enabled(connected)
+    }
+
     /// 「工具与 MCP」页写操作 gate（SET-6c）：连接 + 非 stale + mcp_list
     /// 已成功（available；语义与通用 / 权限页一致）。
     pub(crate) fn settings_tools_writes_enabled(&self) -> bool {
@@ -1946,6 +2247,41 @@ impl AppView {
             return;
         }
         self.controller.set_proxy_url(None);
+        cx.notify();
+    }
+
+    /// 终端页 Save（SET-6d；三路径同源）：shell/columns/rows 三字段全态
+    /// 回传（ADR-050 D3）；空 shell 映射为 null（跟随平台默认），畸形 /
+    /// 越界尺寸禁用，提交后等 Host 回执才改生效值。
+    pub(crate) fn on_settings_terminal_save(&mut self, cx: &mut Context<Self>) {
+        if !self.settings_terminal_writes_enabled() {
+            return;
+        }
+        let shell = parse_terminal_shell(self.settings_terminal_shell_input.read(cx).text());
+        let Some(columns) =
+            parse_terminal_dimension(self.settings_terminal_columns_input.read(cx).text())
+        else {
+            return;
+        };
+        let Some(rows) =
+            parse_terminal_dimension(self.settings_terminal_rows_input.read(cx).text())
+        else {
+            return;
+        };
+        self.controller.set_terminal_settings(shell, columns, rows);
+        cx.notify();
+    }
+
+    /// 终端页 Clear（SET-6d；三路径同源）：清除只作用于 shell（null 回
+    /// 平台默认）；columns/rows 按全态写语义回传 Host 权威生效值。
+    pub(crate) fn on_settings_terminal_clear(&mut self, cx: &mut Context<Self>) {
+        if !self.settings_terminal_writes_enabled()
+            || self.projection.settings_terminal.shell.is_none()
+        {
+            return;
+        }
+        let (columns, rows) = self.projection.settings_terminal.effective_size();
+        self.controller.set_terminal_settings(None, columns, rows);
         cx.notify();
     }
 
@@ -2196,6 +2532,12 @@ impl AppView {
         }
         self.settings_proxy_input
             .update(cx, |input, cx| input.reset_text("", cx));
+        self.settings_terminal_shell_input
+            .update(cx, |input, cx| input.reset_text("", cx));
+        self.settings_terminal_columns_input
+            .update(cx, |input, cx| input.reset_text("", cx));
+        self.settings_terminal_rows_input
+            .update(cx, |input, cx| input.reset_text("", cx));
         self.settings_api_key_editors.clear();
         self.settings_remove_confirm = None;
         self.settings_mcp_remove_confirm = None;
@@ -2208,4 +2550,21 @@ fn status_line(text: &str, color: gpui::Rgba) -> impl IntoElement {
             .size(font::BODY_SM)
             .color(color),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_terminal_dimension, parse_terminal_shell, terminal_save_enabled};
+
+    #[test]
+    fn terminal_save_allows_empty_shell_when_size_is_valid() {
+        assert_eq!(parse_terminal_shell("   "), None);
+        assert_eq!(parse_terminal_shell("/bin/zsh"), Some("/bin/zsh".into()));
+        assert!(terminal_save_enabled(true, Some(80), Some(24)));
+        assert!(!terminal_save_enabled(true, None, Some(24)));
+        assert!(!terminal_save_enabled(false, Some(80), Some(24)));
+        assert_eq!(parse_terminal_dimension(" 120 "), Some(120));
+        assert_eq!(parse_terminal_dimension("1"), None);
+        assert_eq!(parse_terminal_dimension("2000"), None);
+    }
 }

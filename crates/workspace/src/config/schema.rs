@@ -49,6 +49,10 @@ pub struct PaworkConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub proxy_url: Option<String>,
 
+    /// 终端默认设置（ADR-050 D1：仅 Global 层可写入，其余层整段剥离）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal: Option<TerminalConfig>,
+
     /// 任意扩展字段，按 key 递归合并。为未在 schema 显式声明的配置保留向后兼容入口。
     ///
     /// 顶层 `api_key` 不得经 extra 绕过「配置不含凭证」红线，反序列化时剥离。
@@ -59,6 +63,24 @@ pub struct PaworkConfig {
         deserialize_with = "deserialize_extra_without_api_key"
     )]
     pub extra: BTreeMap<String, serde_json::Value>,
+}
+
+/// 终端默认设置段（`[terminal]`，ADR-050 D1）。
+///
+/// 三字段独立可选：`shell: None` 跟随平台默认（exec 兜底链），
+/// columns/rows 未设时由消费方回落既有默认（80×24）。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TerminalConfig {
+    /// 默认 shell 程序（含路径分隔符时为路径，否则按 PATH 解析）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shell: Option<String>,
+    /// 默认列数。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub columns: Option<u16>,
+    /// 默认行数。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rows: Option<u16>,
 }
 
 fn deserialize_extra_without_api_key<'de, D>(
@@ -174,6 +196,9 @@ impl PaworkConfig {
         }
         if other.proxy_url.is_some() {
             self.proxy_url = other.proxy_url.clone();
+        }
+        if other.terminal.is_some() {
+            self.terminal = other.terminal.clone();
         }
         if !other.providers.is_empty() {
             self.providers = other.providers.clone();

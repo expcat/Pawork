@@ -863,3 +863,71 @@ fn golden_mcp_settings_slices() {
         })),
     );
 }
+
+/// SET-6 第四页（ADR-050）：终端设置查询 / SetTerminalSettings 命令 golden。
+///
+/// 查询响应 Data 形状 `{ shell, columns, rows }`：shell 为 Global 持久值
+/// （null = 平台默认），columns/rows 为生效值；set 命令三字段必填，
+/// `shell: null` 显式清除，回执回写完整状态（清除帧收据，同
+/// set_proxy_url 先例）。
+#[test]
+fn golden_terminal_settings_slices() {
+    assert_golden(
+        "terminal_settings.json",
+        encode_client(&ClientFrame::Query(AppQueryEnvelope {
+            api_version: API_VERSION,
+            request_id: pawork_domain::QueryId::from("query-terminal-settings"),
+            source: CommandSource::LocalGui {
+                client_id: GuiClientId::from("gui-1"),
+            },
+            identity: ActorIdentity::LocalUser {
+                actor_id: pawork_domain::ActorId::from("actor-1"),
+                display_name: None,
+            },
+            issued_at: Timestamp::from_unix_millis(1),
+            query: AppQuery::TerminalSettings,
+        })),
+    );
+    assert_golden(
+        "client_command_set_terminal_settings.json",
+        encode_client(&client_auth_command_frame(AppCommand::SetTerminalSettings {
+            shell: Some("/bin/zsh".into()),
+            columns: 120,
+            rows: 40,
+        })),
+    );
+    assert_golden(
+        "client_command_set_terminal_settings_clear.json",
+        encode_client(&client_auth_command_frame(AppCommand::SetTerminalSettings {
+            shell: None,
+            columns: 120,
+            rows: 40,
+        })),
+    );
+    assert_golden(
+        "server_response_terminal_settings.json",
+        encode_server(&ServerFrame::Response(AppResponseEnvelope {
+            api_version: API_VERSION,
+            request_id: pawork_domain::QueryId::from("query-terminal-settings"),
+            responded_at: Timestamp::from_unix_millis(3),
+            response: AppResponse::Data(serde_json::json!({
+                "shell": null,
+                "columns": 80,
+                "rows": 24
+            })),
+        })),
+    );
+    assert_golden(
+        "server_response_set_terminal_settings.json",
+        encode_server(&ServerFrame::Response(AppResponseEnvelope {
+            api_version: API_VERSION,
+            request_id: pawork_domain::QueryId::from("query-set-terminal-settings"),
+            responded_at: Timestamp::from_unix_millis(3),
+            response: AppResponse::Data(serde_json::json!({
+                "shell": null,
+                "columns": 120,
+                "rows": 40
+            })),
+        })),
+    );
+}
