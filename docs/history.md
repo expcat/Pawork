@@ -1187,3 +1187,25 @@ Real-world evidence: pending（正式 Host 对照 `pawork doctor --json` data di
 Known gaps: 本片没有 Host build version、updater、release channel、License、安装器状态或实例切换；均未被当前需求证明必要。
 
 Full workspace gate: NOT RUN（当前未设置全量门禁）。
+
+## 2026-09-04 — Settings SET-7 Computer Use 真窗口验收（部分通过）
+
+- 验收边界：使用正式 `pawork` Host 与 `pawork-desktop`，隔离 `PAWORK_DATA_DIR=/tmp/pawork-set7-data` 和个人凭证副本；不使用 fixture/seed/mock。所有 UI 导航与写操作均由 Computer Use 驱动，脚本未替代 UI 交互；磁盘 checksum 与进程检查只作为 UI 结果之外的事实断言。
+- 连接与本地页：在 Host 未启动时，Advanced 如实显示 socket 连接失败、启动 endpoint 与 Reconnect；Computer Use 激活 Reconnect 后显示 runtime ID、GUI API 1.9、granted capabilities、endpoint、resume/ack，About 显示 Desktop build 0.1.0、GUI API 1.9 与 Host data directory `/tmp/pawork-set7-data`。外观页切换至 150% 后视觉/选中态同步，Desktop 重启恢复 100%。Advanced/截图均未出现 GUI token 或 token path。
+- 默认项写路径：Computer Use 激活 DeepSeek Chat 的 Set default 后，AX 中 Default 徽标迁移至 `deepseek-chat`，该按钮禁用、原默认项按钮恢复可用；返回工作台后 Composer 显示 `deepseek / deepseek-chat`。实际 Global config 同步写盘，并在测试后由备份逐字节还原。
+- 移除写路径：第一次 Remove 进入 `Remove connection` / `Keep` 两态确认；确认后 DeepSeek 卡片变 `API key · Not connected`，模型区显示失效默认横幅，DeepSeek 组 Set default 全禁，隔离 auth 副本删除 `pawork.deepseek`。截图与 AX 只显示凭证掩码，真实 auth 未被修改。
+- 降级与一致性：`pawork auth list` 与移除前 GUI 的 provider/kind/来源/掩码一致。本机网络代理不可用；ChatGPT 远端目录失败后显示 `Catalog unavailable`，xAI/GLM/OpenCode Go/Qwen/DeepSeek 显示/输出 built-in/fixed fallback。仅记录各自降级状态可见，不冒充远端目录成功。
+- 窗口证据：1080×720 验证 Advanced、About、Appearance 首屏；供应商长页因 Computer Use 对 GPUI 滚动容器无效，改用 1080×1400 拉高窗口完成 Set default/Remove 取证。该替代证明写路径，不证明 1080×720 长页滚动或折叠线以下 AX 几何。
+- 环境还原：真实 config 与备份 SHA-256 均为 `65fcce22…`，真实 `~/.pawork/auth.json` SHA-256 保持 `0a7fbbf4…`；Host/Desktop 均退出，隔离运行目录已清理。截图与 AX 证据暂存本机 `/tmp/set7-cua/`。
+
+Implemented: none（纯验收与状态回写，无生产代码改动）。
+
+Validated: Computer Use 真窗口操作（Host 未启动时连接失败→Reconnect、Connected 状态的 Advanced/About、外观 150%→Desktop 重启 100%、Set default→Composer、Remove 两步确认）+ AX/截图观察 + `pawork auth list` / `pawork models` 一致性观察 + SHA-256 磁盘断言与进程/临时目录清理检查；`git diff --check` 在文档回写后执行。
+
+Targeted regressions: none（本轮无代码改动；沿用 SET-1～SET-6g 已通过的定向自动门禁）。
+
+Real-world evidence: 部分通过。正式 Host/Desktop 的首次连接失败→Reconnect、Connected 状态本地页与 DeepSeek 写路径通过；Kimi Platform/Kimi Code 无真实凭证，远端目录成功受网络代理阻塞，API key 替换失败保旧、Host 重启与默认项恢复、连接完整三态、About 隐藏态、1440×1024、125%/字号快捷键、Tab/Enter、1080×720 长页/AX 几何及 xAI/Kimi OAuth 全流程未完成。
+
+Human acceptance: 等待人工验收（视觉层级、secure input、OAuth 浏览器切换、VoiceOver）。
+
+Full workspace gate: NOT RUN（纯文档回写，当前未设置全量门禁）。

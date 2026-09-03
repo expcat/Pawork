@@ -1,6 +1,6 @@
 # Settings 活动线任务书
 
-> 状态：SET-0～SET-6f 已审查提交；SET-6g「关于」已实现并通过定向门禁，[ADR-051](../docs/adr/ADR-051-about-settings-host-data-dir.md) 为 Accepted。真实账号与完整真窗口验收仍待 SET-7。2026-09-01 重置时仓库内不存在旧 `plan/` 文档；本文件是新建后的唯一活动任务书。范围依据 [Settings Feature Spec](../docs/spec/settings.md)，顺序与状态以 [ROADMAP](../ROADMAP.md) 为准。
+> 状态：SET-0～SET-6g 已审查提交；SET-7 于 2026-09-04 完成一轮正式 Host/Desktop 的 Computer Use 真窗口验收，Host 未启动时连接失败→Reconnect、Connected 状态的 Advanced/About、外观 150%→Desktop 重启 100%、默认项写入与移除写路径通过。完整认证/窗口矩阵与四项人工签字仍待补，阶段未归档。2026-09-01 重置时仓库内不存在旧 `plan/` 文档；本文件是新建后的唯一活动任务书。范围依据 [Settings Feature Spec](../docs/spec/settings.md)，顺序与状态以 [ROADMAP](../ROADMAP.md) 为准。
 
 ## 1. 开工合同
 
@@ -383,7 +383,7 @@ SET-5 收口后才逐页立项，不预建通用设置框架：
 
 **定向回归**：64 个 GUI fixture 数量不变；44 个引用 `API_VERSION` 的 fixture 仅做 minor 8→9 机械更新，Accepted 握手 fixture 另增字段。协议覆盖元数据 present / absent 与缺字段解码；client contract 覆盖透传；Desktop 只扩展既有 Settings 主路径，锁定 About 有字段启用、合法路径原样展示、清空后隐藏/退回，未新增测试体系。只读审查发现并修复 1 个 P2：展示值不再被 `trim()` 改写，`trim()` 只用于全空白 gate；修后 Desktop 186/186 复跑通过。
 
-### SET-7 — 真窗口与人工收口 ⚪
+### SET-7 — 真窗口与人工收口 ⚠️
 
 **自动证据**：实际写入集定向门禁；protocol/Secret/config 三类关键回归；`git diff --check`。
 
@@ -399,6 +399,16 @@ SET-5 收口后才逐页立项，不预建通用设置框架：
 - SET-3 登记的已知缺口：Settings 页 AX 卡片几何为固定估值、不随滚动位移；1080×720 折叠线以下卡片 AX rect 与视觉错位，VoiceOver 走查时重点核，必要时修。
 
 **人工签字**：视觉层级、secure input、OAuth 浏览器切换、VoiceOver。没有用户签字时只写“等待人工验收”。
+
+**2026-09-04 Computer Use 真窗口记录**：
+
+- 环境：以正式 `pawork` Host 与 `pawork-desktop`、隔离 `PAWORK_DATA_DIR=/tmp/pawork-set7-data` 和个人凭证副本启动；无 fixture/seed/mock。UI 导航、Reconnect、字号、Set default、返回工作台、Remove 与确认均由 Computer Use 操作，未用脚本替代 UI 交互。
+- 已通过：Host 未启动时 Advanced 显示真实 socket 不存在错误；Computer Use 激活 Reconnect 后显示 runtime ID、GUI API 1.9、capabilities、endpoint、resume/ack；About 显示 Desktop 0.1.0、GUI API 1.9 与 `/tmp/pawork-set7-data`；页面未显示 GUI token 或 token path。
+- 已通过：外观页切至 150% 后视觉与选中态同步，重启 Desktop 恢复 100%；1080×720 首屏可用。Computer Use 对 GPUI 长页滚动容器无效，供应商页折叠线以下改用 1080×1400 拉高窗口取证，因此 1080×720 长页滚动/AX 几何不宣称通过。
+- 已通过：DeepSeek `deepseek-chat` 经 Set default 后 Default 徽标、按钮 gate 与工作台 Composer 同步，实际 Global config 写盘；Remove 首击进入 `Remove connection`/`Keep` 两态确认，确认后卡片变 `Not connected`、默认项显示 unavailable、该 provider 的 Set default 全禁，隔离 auth 副本删除 `pawork.deepseek`。
+- 已通过：供应商凭证在截图与 AX 中只显示掩码；`pawork auth list` 与移除前 GUI 状态一致。测试结束后真实 config 由备份逐字节还原（SHA-256 `65fcce22…`），真实 `~/.pawork/auth.json` 保持 SHA-256 `0a7fbbf4…`；Host/Desktop 已退出，隔离运行目录已清理。本地证据暂存 `/tmp/set7-cua/`。
+- 诚实降级：本机网络代理不可用；ChatGPT 远端请求失败后显示 `Catalog unavailable`，xAI/GLM/OpenCode Go/Qwen/DeepSeek 显示/输出 built-in/fixed fallback。本轮只证明各自降级状态可见且 CLI/GUI 一致，不把它记录为远端目录成功。
+- 未完成：Kimi Platform API key 与 Kimi Code OAuth 无真实凭证；xAI/Kimi device flow、refresh、取消和浏览器切换未完整走查；API key“替换失败保旧”未构造；Host 重启与默认项恢复、Connected→Disconnected/Connecting、About 断线/旧 Host 隐藏未走查；1440×1024、125%、Cmd+=/Cmd+-/Cmd+0、Tab/Enter、1080×720 长页滚动与折叠线以下 AX 几何未取证；视觉层级、secure input 与 VoiceOver 等待用户人工验收。
 
 ## 4. 每片收尾清单
 

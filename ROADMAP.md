@@ -6,11 +6,11 @@
 
 | 字段 | 当前事实 |
 | --- | --- |
-| 活动线 | **Settings — 模型与供应商** |
-| 状态 | 🟢 SET-1/SET-2 已审查提交（协议词汇 + Host settings 门面）；SET-3 Settings 壳已审查提交（只读供应商页接通）；SET-4 四家认证闭环已审查提交（Kimi 双通道 + xAI 双认证 + Settings 写操作 UI）；SET-5 模型发现与默认项已审查提交（xAI/Kimi Code 远端目录 + 可运行过滤 + 默认项透出/设置/Composer 同步，审查修复四处）；SET-6a 通用页已审查提交（ADR-047：`GeneralSettings`/`SetProxyUrl`，proxy_url Global 层读写清除 + 生效边界诚实文案）；SET-6b 权限与审批页已审查提交（ADR-048：`PermissionsSettings`/`SetApprovalMode`/`WorkspaceTrust` 实装，会话内受控修改不持久化，API 1.6）；SET-6c 工具与 MCP 页已审查提交（ADR-049：`McpTest`/`McpServerRemove`，MCP 清单/test/移除闭环，API 1.7）；SET-6d 终端页已审查提交（ADR-050：Global `[terminal]` shell/columns/rows + `TerminalSettings`/`SetTerminalSettings` 全态写，API 1.8）；SET-6e 外观页已审查提交（复用 Desktop 既有 100%/125%/150% 会话级字号，不新增配置或协议）；SET-6f 高级页已审查提交（只读连接/握手/endpoint/resume/ack 诊断 + 断线 Reconnect；无 wire/config/ADR）；SET-6g 已实现并通过定向门禁（ADR-051 Accepted：API 1.9 可选 Host 数据目录握手元数据 + About 动态只读页），真窗口与人工验收待 SET-7。 |
+| 活动线 | **Settings — 真窗口与人工收口** |
+| 状态 | 🟢 SET-1～SET-6g 已实现、通过各自定向门禁并提交；⚠️ SET-7 已完成一轮正式 Host/Desktop 的 Computer Use 真窗口验收：Host 未启动时连接失败→Reconnect、Connected 状态的 Advanced/About、外观 150%→Desktop 重启 100%、默认模型写入与 Composer 同步、移除二次确认与失效默认提示均通过。完整窗口/认证矩阵及人工签字仍未完成，因此 SET-7 未归档。 |
 | 当前交付 | [Settings Feature Spec](docs/spec/settings.md)、[Settings 任务书](plan/settings.md)、ADR-046 协议词汇与 Host 门面（verify-then-replace、按 provider 单飞、Global 层默认项写盘）、ADR-047 通用页 wire、ADR-048 权限与审批页 wire、ADR-049 工具与 MCP 页 wire、ADR-050 终端页 wire、SET-6e Desktop 本地外观页、SET-6f Desktop 本地连接诊断页、[ADR-051](docs/adr/ADR-051-about-settings-host-data-dir.md)（Accepted：API 1.9 `host_data_dir`）与 SET-6g About 页。 |
-| 下一动作 | 进入 SET-7：用正式 Host 对照 About 的 Desktop build、协商 API 与 `pawork doctor --json` data directory，并完成真窗口、键盘与 VoiceOver 人工验收。 |
-| 当前阻塞 | SET-6g 自动门禁无阻塞；真实 Provider/OAuth 验收需要对应账号与凭证，About/整体 Settings 的视觉与 VoiceOver 仍需人工签字。 |
+| 下一动作 | 补齐 Kimi Platform/Kimi Code 真实凭证、OAuth device flow/refresh/取消、API key 替换失败保旧、Host 重启与默认项恢复、Connected→Disconnected/Connecting、About 断线/旧 Host 隐藏、1440×1024、125%、Cmd+=/Cmd+-/Cmd+0、Tab/Enter、1080×720 长页滚动与折叠线以下 AX 几何证据；随后由用户完成视觉层级、secure input、OAuth 浏览器切换与 VoiceOver 签字，再归档 Settings 阶段。 |
+| 当前阻塞 | Kimi 双通道无真实凭证；本机网络代理不可用，远端模型目录只能确认诚实回落而不能确认远端成功；API key“替换失败保旧”未构造；Computer Use 对 GPUI 滚动容器无效，已用拉高窗口覆盖当前写路径，但 1080×720 长页滚动仍待人工；四项人工签字待用户。 |
 | 发布 | **不在本计划内**。待功能继续完善后，由用户另行指定发布范围、License 与门禁。 |
 
 状态：⚪ 未开始 · 🔵 进行中 · 🟢 已验证 · ⚠️ 阻塞。`已实现`、`自动门禁通过`、`真实环境通过`、`人工验收`、`已发布`必须分别记录。
@@ -78,7 +78,7 @@
 | SET-6e 外观页 | 🟢 | 2026-09-03 完成：Settings Rail 新增始终可用的「外观」页，复用唯一 `TextScale` 与 `set_text_scale` 提供 100%/125%/150% 三档；页面、既有 Cmd+=/Cmd+-/Cmd+0 与 AX Press 同步同一会话状态，当前档有文字/视觉/AX selected 标记；深色主题与 macOS Increase Contrast 仅诚实只读说明。离线 AX 主路径及未知档位 fail-closed 回归通过，desktop 186 全绿；只读复审修复 render/AX 按钮几何漂移与 150% 下长说明裁切 2 P2，并复核 resolved。提交前复查再修：desktop 包级 Spec 模块地图回写 SET-6e（settings/mod/accessibility 行数与测试计数）与外观页 AX `tree.validate` + 150% Press permits。未新增 Host wire、持久化、主题体系或依赖。正式隔离 Host/Desktop 已接通，界面抓取因 Computer Use 超时未取证，视觉/VoiceOver 仍登记 SET-7。 |
 | SET-6f 高级页 | 🟢 | 2026-09-03 完成：Settings Rail 在「外观」后新增始终可用的「高级」页；Desktop 保留当前连接已有的非 Secret 握手摘要，展示连接状态、Host runtime ID、协商 GUI API、granted capabilities、启动 endpoint、resume 与最后 ack。Connecting/断线清空协商字段，Failed/Disconnected 复用既有 Reconnect；runtime ID 明确不等同配置 instance，GUI token/token path 不展示，原样 endpoint 不用于反推 data directory/配置 instance。只读复审修 2 P2（Reconnect 入口最终 gate + 握手清空/last-ack 定向证据）。提交前复查：Connection 诊断行改为纯相位文案（Connected / Connecting… / Disconnected / Connect failed），不再复用 TaskRail「Local · Connected · resume」合成串，resume 与 runtime ID 留在各自行。未改 protocol/config/schema/Policy、未新增依赖；Desktop 186/186。真窗口、Tab/Enter 与 VoiceOver 仍登记 SET-7。 |
 | SET-6g 关于页 | 🟢 | 2026-09-03 完成：[ADR-051](docs/adr/ADR-051-about-settings-host-data-dir.md) Accepted；API 1.9 Accepted 握手追加可选 `host_data_dir`，GUI Host 单次解析后与 Core/socket/PID/token/握手共用，client/Desktop 原样透传。About 仅在当前连接路径非空时显示 Desktop build、协商 API、Host data directory；缺字段/Connecting/断线隐藏并退回高级页，render/AX 同源，无 updater/release/License。只读审查修复 1 P2（trim 仅判空，不改写合法路径展示）；64 个 GUI fixture 保持不变（44 个当前版本 fixture 1.8→1.9），28 command/15 query 不变；protocol 155、client+CLI 125、desktop 186 全绿。真窗口与人工验收登记 SET-7。 |
-| SET-7 真窗口收口 | ⚪ | 四家真实凭证矩阵、重启/断线、键盘/AX、窄窗和 Secret 泄漏检查通过；人工视觉验收单独签字。 |
+| SET-7 真窗口收口 | ⚠️ | 2026-09-04：正式隔离 Host/Desktop 通过 Computer Use 验证 Host 未启动时连接失败→Reconnect、Connected 状态的 Advanced/About、外观 150%→Desktop 重启 100%、DeepSeek 默认项写盘并同步 Composer、Remove 两步确认与失效默认提示；AX/截图仅见脱敏凭证，真实配置已逐字节还原、真实 auth 未改。四家认证/远端目录全矩阵、替换失败保旧、Host 重启与默认恢复、连接完整三态、About 隐藏态、1440×1024、125%/快捷键、Tab/Enter、1080×720 长页/AX 几何及四项人工签字仍待补，未归档。 |
 
 每阶段的写入集、命令和停止条件见 [plan/settings.md](plan/settings.md)。阶段失败先收敛当前层，不自动扩大到下一阶段。
 
