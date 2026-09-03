@@ -1,4 +1,4 @@
-//! Global 层配置写盘（SET-2 / SET-6a）。
+//! Global 层配置写盘（SET-2 / SET-6a / SET-6c）。
 //!
 //! 读取现有 Global 层文件（缺失视为空配置），以 TOML Table 保留全部未知
 //! 字段，仅改目标键，最后经同目录临时文件 + rename 原子写回。六层合并
@@ -14,8 +14,9 @@ use crate::config::error::{ConfigError, ConfigParseError};
 /// 互相覆盖临时文件（GUI 快速双击即可触发）。
 static TEMP_SUFFIX: AtomicU64 = AtomicU64::new(0);
 
-/// 同进程跨键写串行化：`write_default_model_pair` 与 `write_proxy_url`
-/// 共用此锁，包住 read_table → 改 → atomic_write_table 全程，避免交错
+/// 同进程跨键写串行化：`write_default_model_pair` / `write_proxy_url` /
+/// `write_mcp_server_remove` 共用此锁，包住 read_table → 改 →
+/// atomic_write_table 全程，避免交错
 /// 读写造成 lost update。跨进程仍靠 atomic_write_table 的 rename 原子性。
 static CONFIG_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
@@ -110,6 +111,29 @@ pub fn write_proxy_url(path: &Path, proxy_url: Option<&str>) -> Result<(), Confi
         }
     }
     atomic_write_table(path, &table)
+}
+
+/// 从指定（Global 层）配置文件原子移除 `mcp.servers.<name>`
+/// （SET-6c，ADR-049 D2）。
+///
+/// 其余未知字段（含其它 server 条目）原样保留。键不存在时不写盘并返回
+/// `Ok(false)`（fail-closed 保旧，由调用方如实回执）；存在且移除成功返回
+/// `Ok(true)`。
+pub fn write_mcp_server_remove(path: &Path, name: &str) -> Result<bool, ConfigError> {
+    let _guard = CONFIG_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut table = read_table(path)?;
+    let removed = table
+        .get_mut("mcp")
+        .and_then(|mcp| mcp.as_table_mut())
+        .and_then(|mcp| mcp.get_mut("servers"))
+        .and_then(|servers| servers.as_table_mut())
+        .is_some_and(|servers| servers.remove(name).is_some());
+    if !removed {
+        return Ok(false);
+    }
+    atomic_write_table(path, &table).map(|()| true)
 }
 
 #[cfg(test)]
@@ -212,6 +236,44 @@ mod tests {
                 .and_then(|section| section.get("key"))
                 .and_then(|v| v.as_str()),
             Some("v")
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn write_mcp_server_remove_drops_named_server_and_skips_missing() {
+        let path = temp_path("mcp-remove");
+        let seeded = [
+            "trust_workspaces = true",
+            "",
+            "[mcp.servers.demo]",
+            r#"transport = { kind = "http", url = "https://mcp.example.com/mcp" }"#,
+            "",
+            "[mcp.servers.keep]",
+            r#"transport = { kind = "http", url = "https://keep.example.com/mcp" }"#,
+            "",
+        ]
+        .join("\n");
+        std::fs::write(&path, seeded).expect("seed config");
+        assert!(write_mcp_server_remove(&path, "demo").expect("remove demo"));
+        let content = std::fs::read_to_string(&path).expect("read back");
+        let table: toml::Table = toml::from_str(&content).expect("parse");
+        assert_eq!(
+            table.get("trust_workspaces").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        let servers = table
+            .get("mcp")
+            .and_then(|mcp| mcp.as_table())
+            .and_then(|mcp| mcp.get("servers"))
+            .and_then(|servers| servers.as_table())
+            .expect("servers table");
+        assert!(servers.get("demo").is_none());
+        assert!(servers.get("keep").is_some());
+        assert!(!write_mcp_server_remove(&path, "demo").expect("missing is no-op"));
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("unchanged after missing"),
+            content
         );
         std::fs::remove_file(&path).ok();
     }

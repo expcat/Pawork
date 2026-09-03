@@ -32,7 +32,7 @@ pub use schema::{
     ModelConfig, PaworkConfig, ProfileConfig, ProfileOverrides, ProviderConfig, RunOverrides,
     SessionOverrides,
 };
-pub use writer::{write_default_model_pair, write_proxy_url};
+pub use writer::{write_default_model_pair, write_mcp_server_remove, write_proxy_url};
 
 /// 配置层级。
 ///

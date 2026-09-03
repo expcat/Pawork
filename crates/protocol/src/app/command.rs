@@ -445,6 +445,16 @@ pub enum AppCommand {
     TerminalClose {
         terminal_session_id: String,
     },
+    /// ADR-049 SET-6c：现场验证单个 MCP server（ping + list_tools 并回写
+    /// slot 状态）。name 必填；未知 server 由宿主 fail-closed（Error）。
+    McpTest {
+        name: String,
+    },
+    /// ADR-049 SET-6c：从 Global 层移除单个 MCP server（写盘 + SecretRef
+    /// 清理 + 内存同步）。name 必填；不存在时三处皆不动（fail-closed 保旧）。
+    McpServerRemove {
+        name: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

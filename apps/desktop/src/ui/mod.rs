@@ -125,14 +125,15 @@ pub(crate) enum AppRoute {
     Settings,
 }
 
-/// Settings 内容页（SET-6a/6b）：供应商页常在；通用页 / 权限页仅在对应
-/// Host 查询成功后显示。
+/// Settings 内容页（SET-6a/6b/6c）：供应商页常在；通用页 / 权限页 /
+/// 工具页仅在对应 Host 查询成功后显示。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum SettingsPage {
     #[default]
     Providers,
     General,
     Permissions,
+    Tools,
 }
 
 /// 工作台专属 action 在当前路由是否生效（SET-3 审查修复 1）：审批 /
@@ -544,6 +545,8 @@ pub struct AppView {
     settings_nav_providers_focus: FocusHandle,
     /// SET-6b：Settings 导航「权限与审批」焦点。
     settings_nav_permissions_focus: FocusHandle,
+    /// SET-6c：Settings 导航「工具与 MCP」焦点。
+    settings_nav_tools_focus: FocusHandle,
     /// SET-6a：proxy URL 内联输入（明文；非 Secret）。
     settings_proxy_input: Entity<crate::ui::text_input::TextInput>,
     /// SET-6a：proxy Save / Clear 焦点。
@@ -558,6 +561,9 @@ pub struct AppView {
     settings_api_key_editors: HashSet<String>,
     /// SET-4：Remove 二次确认中的 provider（不静默删除已存凭证）。
     settings_remove_confirm: Option<String>,
+    /// SET-6c：MCP server Remove 二次确认中的 server 名（写盘 + 清凭证，
+    /// 不静默删除）。
+    settings_mcp_remove_confirm: Option<String>,
     /// SET-4：settings 写动作按钮焦点句柄（identifier 键控，随 provider
     /// 清单回收）。
     settings_action_focus: HashMap<String, FocusHandle>,
@@ -748,6 +754,7 @@ impl AppView {
             settings_nav_general_focus: cx.focus_handle().tab_stop(true),
             settings_nav_providers_focus: cx.focus_handle().tab_stop(true),
             settings_nav_permissions_focus: cx.focus_handle().tab_stop(true),
+            settings_nav_tools_focus: cx.focus_handle().tab_stop(true),
             settings_proxy_input: cx.new(|cx| {
                 TextInput::with_placeholder("http://127.0.0.1:7890", cx)
                     .id("settings-proxy-input")
@@ -762,6 +769,7 @@ impl AppView {
             settings_api_key_inputs: HashMap::new(),
             settings_api_key_editors: HashSet::new(),
             settings_remove_confirm: None,
+            settings_mcp_remove_confirm: None,
             settings_action_focus: HashMap::new(),
             settings_permissions_focus: HashMap::new(),
         };
@@ -1102,6 +1110,9 @@ impl AppView {
         self.refresh_general_settings();
         // SET-6b：重连后刷新权限设置，清除 stale 并恢复写 gate。
         self.refresh_permissions_settings();
+        // SET-6c：重连后刷新 MCP 清单（与通用 / 权限页对称），清除 stale
+        // 并恢复「工具与 MCP」页导航与写 gate。
+        self.refresh_resources(cx);
         self.consume_events(events, cx);
         // 连接建立即武装 1s tick：barrier 启用而无 run 时也要常驻探测。
         self.arm_run_clock(cx);
@@ -1551,6 +1562,18 @@ impl AppView {
                     // 否仍在也交重查裁决）。
                     self.refresh_provider_status();
                 }
+                if action == "test mcp server" || action == "remove mcp server" {
+                    let message = if action == "remove mcp server" {
+                        format!("Could not remove MCP server · {reason}")
+                    } else {
+                        format!("Could not test MCP server · {reason}")
+                    };
+                    self.resources.action_error = Some(message);
+                    if action == "remove mcp server" {
+                        // 写盘可能已成功、仅清密失败：重查清单与 Host 对齐。
+                        self.refresh_resources(cx);
+                    }
+                }
                 self.status_hint = Some(format!("{action} failed: {reason}"));
             }
             ControllerEvent::DiffFilesLoaded {
@@ -1589,6 +1612,9 @@ impl AppView {
             }
             ControllerEvent::McpServersLoaded { epoch, servers } => {
                 self.resources.apply_servers(epoch, servers);
+            }
+            ControllerEvent::McpServersReceipt { servers } => {
+                self.resources.apply_authoritative_servers(servers);
             }
             ControllerEvent::DiffFilesFailed { epoch, reason } => {
                 if self.changes.mark_failed_for_epoch(epoch, &reason) {
@@ -2480,6 +2506,10 @@ impl AppView {
         self.controller.load_models();
         self.refresh_general_settings();
         self.refresh_permissions_settings();
+        // SET-6c：进入即拉取 MCP 清单（复用 Inspector Resources 的
+        // resources 状态 / epoch / stale / 断线机制；成功后「工具与
+        // MCP」导航可用）。
+        self.refresh_resources(cx);
         window.focus(&self.settings_back_focus);
         cx.notify();
     }
@@ -2548,6 +2578,11 @@ impl AppView {
                 self.settings_page = SettingsPage::Permissions;
                 window.focus(&self.settings_nav_permissions_focus);
             }
+            SettingsPage::Tools if !self.resources.available => return,
+            SettingsPage::Tools => {
+                self.settings_page = SettingsPage::Tools;
+                window.focus(&self.settings_nav_tools_focus);
+            }
             SettingsPage::Providers => {
                 self.settings_page = SettingsPage::Providers;
                 window.focus(&self.settings_nav_providers_focus);
@@ -2570,6 +2605,7 @@ impl AppView {
         self.controller.load_models();
         self.refresh_general_settings();
         self.refresh_permissions_settings();
+        self.refresh_resources(cx);
         cx.notify();
     }
 

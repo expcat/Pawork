@@ -1,13 +1,15 @@
-//! Settings 壳（SET-3/4/6a/6b）：Settings Rail、「Models & providers」、
-//! 「General」与「权限与审批」页。
+//! Settings 壳（SET-3/4/6a/6b/6c）：Settings Rail、「Models & providers」、
+//! 「General」、「权限与审批」与「工具与 MCP」页。
 //!
 //! 供应商页只呈现 Host `provider_auth_status` 权威事实：供应商名称、
 //! 认证方式、连接状态与目录来源（SET-3）；SET-4 增认证写操作（API key
 //! secure 输入验证、OAuth 等待/取消、Replace/Remove），全部由 descriptor
 //! （auth_methods + auth.type）驱动，禁止按 provider 名分支。SET-6a 增
 //! 「General」页（`proxy_url` 读/设置/清除）；SET-6b 增「权限与审批」页
-//! （五档审批模式 / 会话信任 / Global 默认只读）；查询失败 / 未知则隐藏
-//! 该导航项且不渲染写入口。断线保留 stale 只读结果并禁用全部写动作；
+//! （五档审批模式 / 会话信任 / Global 默认只读）；SET-6c 增「工具与
+//! MCP」页（复用 Resources 的 mcp_list 数据链 + mcp_test /
+//! mcp_server_remove 写动作）；查询失败 / 未知则隐藏该导航项且不渲染
+//! 写入口。断线保留 stale 只读结果并禁用全部写动作；
 //! 可见 / 键盘 / AX 三路径同 gate。
 
 use std::collections::HashSet;
@@ -19,6 +21,7 @@ use crate::ui::components::label::Label;
 use crate::ui::components::panel::Panel;
 use crate::ui::theme::{dark, font, metrics};
 
+use crate::controller::McpServerEntry;
 use crate::projection::{
     group_models_by_provider, ApprovalModeSetting, ConnectionState, ModelEntry, OAuthWait,
     ProviderAuthState, ProviderStatusEntry, SettingsPermissionsState,
@@ -26,6 +29,9 @@ use crate::projection::{
 use crate::ui::text_input::TextInput;
 
 use super::accessibility::dynamic_identifier;
+use super::resources::{
+    mcp_server_meta_text, mcp_server_name_row, ResourcesFetch, ResourcesPanelState,
+};
 use super::shell_layout;
 use super::AppView;
 use super::SettingsPage;
@@ -48,6 +54,14 @@ pub(crate) const SETTINGS_PROXY_EFFECT_NOTE: &str =
 pub(crate) const SETTINGS_TRUST_UNSET: &str = "未设置（默认不信任）";
 /// 权限页生效边界（ADR-048 D2/D3；不得宣称持久化或影响进行中 Run）。
 pub(crate) const SETTINGS_PERMISSIONS_EFFECT_NOTE: &str = "以上变更仅当前会话生效、不持久化：重启 Host 后回到默认；进行中的 Run 不受影响，之后启动的 Run 使用新设置。";
+
+/// 「工具与 MCP」页 Remove 二次确认提示（SET-6c / ADR-049 D2；render 与
+/// AX 同源，诚实标注快照语义）。
+pub(crate) const SETTINGS_MCP_REMOVE_CONFIRM_NOTE: &str =
+    "移除将写回 Global 配置并清理该 server 的凭证；进行中 Run 已快照的工具不会回溯撤销。";
+/// 「工具与 MCP」页生效边界（SET-6c / ADR-049 D1/D2；render 与 AX 同源）。
+pub(crate) const SETTINGS_MCP_EFFECT_NOTE: &str =
+    "Test 现场验证该 server 并回写状态；移除作用于 Global 配置并清理凭证，同会话内其工具不再注册。";
 
 /// Settings 供应商页状态行（render 与 AX 同源）。stale / loading / error /
 /// 空态独立判定：stale 与 error 可同时出现，空态仅在完全无状态且列表为
@@ -113,6 +127,34 @@ pub(super) fn permissions_status_lines(
     }
     if let Some(error) = &state.error {
         lines.push(("error", error.clone()));
+    }
+    lines
+}
+
+/// Settings「工具与 MCP」页状态行（SET-6c；render 与 AX 同源）。复用
+/// Resources 面状态：stale / loading / error / 空态独立判定。
+pub(super) fn tools_status_lines(state: &ResourcesPanelState) -> Vec<(&'static str, String)> {
+    let mut lines = Vec::new();
+    if let Some(reason) = &state.stale_reason {
+        lines.push((
+            "stale",
+            format!("Offline · showing last known state ({reason})"),
+        ));
+    } else if matches!(state.fetch, ResourcesFetch::Fetching) {
+        lines.push(("loading", "Loading…".to_string()));
+    }
+    if let ResourcesFetch::Failed(reason) = &state.fetch {
+        lines.push(("error", format!("Could not load MCP servers · {reason}")));
+    }
+    if let Some(error) = &state.action_error {
+        lines.push(("action", error.clone()));
+    }
+    if state.servers.is_empty()
+        && !matches!(state.fetch, ResourcesFetch::Fetching)
+        && state.stale_reason.is_none()
+        && !matches!(state.fetch, ResourcesFetch::Failed(_))
+    {
+        lines.push(("empty", "No MCP servers configured.".to_string()));
     }
     lines
 }
@@ -251,6 +293,73 @@ pub(crate) fn parse_settings_control(identifier: &str) -> Option<SettingsControl
     None
 }
 
+/// 「工具与 MCP」页写动作（SET-6c / ADR-049）。render / 键盘 / AX 三路径
+/// 同源：可见按钮、on_activate 与 AX Press 共用同一 identifier 与同一
+/// 入口 gate；Remove 走两步确认（先 Remove 再 ConfirmRemove）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SettingsMcpAction {
+    Test,
+    Remove,
+    ConfirmRemove,
+    KeepRemove,
+}
+
+/// MCP 控件 identifier 前缀（action key 在 server 名之前，前缀锚定解析
+/// 无歧义；与 provider 动作的 SETTINGS_CONTROL_PREFIX 区分）。
+pub(crate) const SETTINGS_MCP_CONTROL_PREFIX: &str = "settings-mcp-";
+
+impl SettingsMcpAction {
+    pub(crate) fn key(&self) -> &'static str {
+        match self {
+            Self::Test => "test",
+            Self::Remove => "remove",
+            Self::ConfirmRemove => "confirm-remove",
+            Self::KeepRemove => "keep-remove",
+        }
+    }
+
+    fn from_key(key: &str) -> Option<Self> {
+        match key {
+            "test" => Some(Self::Test),
+            "remove" => Some(Self::Remove),
+            "confirm-remove" => Some(Self::ConfirmRemove),
+            "keep-remove" => Some(Self::KeepRemove),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn label(&self) -> &'static str {
+        match self {
+            Self::Test => "Test",
+            Self::Remove => "移除",
+            Self::ConfirmRemove => "确认移除",
+            Self::KeepRemove => "保留",
+        }
+    }
+
+    /// 控件 identifier（render 按钮 id / AX 节点 id / 派发键三用；server
+    /// 名经 dynamic_identifier 转义）。
+    pub(crate) fn identifier(&self, server: &str) -> String {
+        format!(
+            "{SETTINGS_MCP_CONTROL_PREFIX}{}",
+            dynamic_identifier(self.key(), server)
+        )
+    }
+}
+
+/// 前缀锚定解析「工具与 MCP」页控件 identifier；server 部分是转义后的
+/// 名，由 AppView 对照当前权威清单还原（未知 fail-closed）。
+pub(crate) fn parse_settings_mcp_control(identifier: &str) -> Option<(SettingsMcpAction, String)> {
+    let rest = identifier.strip_prefix(SETTINGS_MCP_CONTROL_PREFIX)?;
+    // key 集合有限；confirm-remove / keep-remove 须先于 remove 匹配。
+    for key in ["confirm-remove", "keep-remove", "remove", "test"] {
+        if let Some(escaped) = rest.strip_prefix(&format!("{key}-")) {
+            return Some((SettingsMcpAction::from_key(key)?, escaped.to_string()));
+        }
+    }
+    None
+}
+
 /// 按 Host descriptor（auth_methods + auth.type）推导卡片可见写动作；
 /// 未知 method 不臆造入口（fail-closed）。
 pub(crate) fn settings_auth_actions(
@@ -340,9 +449,11 @@ impl AppView {
             }));
         let general_available = self.projection.settings_general.available;
         let permissions_available = self.projection.settings_permissions.available;
+        let tools_available = self.resources.available;
         let current_page = match self.settings_page {
             SettingsPage::General if !general_available => SettingsPage::Providers,
             SettingsPage::Permissions if !permissions_available => SettingsPage::Providers,
+            SettingsPage::Tools if !tools_available => SettingsPage::Providers,
             page => page,
         };
         let mut rail = Panel::side_right(rail_width)
@@ -373,6 +484,15 @@ impl AppView {
                 cx,
             ));
         }
+        if tools_available {
+            rail = rail.child(self.settings_nav_item(
+                "settings-nav-tools",
+                "工具与 MCP",
+                current_page == SettingsPage::Tools,
+                SettingsPage::Tools,
+                cx,
+            ));
+        }
         rail
     }
 
@@ -391,6 +511,9 @@ impl AppView {
                 .settings_permissions_page_element(cx)
                 .into_any_element();
         }
+        if self.settings_page == SettingsPage::Tools && self.resources.available {
+            return self.settings_tools_page_element(cx).into_any_element();
+        }
         self.settings_providers_page_element(cx).into_any_element()
     }
 
@@ -405,6 +528,7 @@ impl AppView {
         let focus = match page {
             SettingsPage::General => self.settings_nav_general_focus.clone(),
             SettingsPage::Permissions => self.settings_nav_permissions_focus.clone(),
+            SettingsPage::Tools => self.settings_nav_tools_focus.clone(),
             SettingsPage::Providers => self.settings_nav_providers_focus.clone(),
         };
         if selected {
@@ -970,6 +1094,230 @@ impl AppView {
             )
     }
 
+    /// 「工具与 MCP」页（SET-6c / ADR-049）：复用 Resources 的
+    /// ResourcesPanelState（mcp_list 数据链 / epoch / stale / 断线
+    /// fail-closed）；每行提供 Test / Remove（两步确认）；状态行与写
+    /// gate 和 AX 同源。
+    fn settings_tools_page_element(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let connected = matches!(
+            self.projection.connection,
+            ConnectionState::Connected { .. }
+        );
+        let writes = self.settings_tools_writes_enabled();
+        let status_lines = tools_status_lines(&self.resources);
+        let servers = self.resources.servers.clone();
+        let remove_confirm = self.settings_mcp_remove_confirm.clone();
+        let refresh_focus = self.settings_refresh_focus.clone();
+        let refresh = Button::new("settings-refresh")
+            .track_focus(&refresh_focus)
+            .variant(ButtonVariant::Raised)
+            .height(px(SETTINGS_ACTION_HEIGHT))
+            .vcenter()
+            .radius(4.0)
+            .bordered()
+            .text_size(font::BODY_SM)
+            .label("Refresh")
+            .tooltip("Refresh MCP servers")
+            .disabled(!connected)
+            .on_click(cx.listener(|view, event, _window, cx| {
+                if view.consume_button_key_click("settings-refresh", event) {
+                    return;
+                }
+                view.on_refresh_settings(cx);
+            }))
+            .on_activate(cx.listener(|view, _event, _window, cx| {
+                view.note_button_key_activate("settings-refresh");
+                view.on_refresh_settings(cx);
+                cx.stop_propagation();
+            }));
+
+        let mut content = div()
+            .flex()
+            .flex_col()
+            .min_w_0()
+            .max_w(px(SETTINGS_CONTENT_MAX_WIDTH))
+            .gap_2()
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_start()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .min_w_0()
+                            .child(
+                                div().font_weight(FontWeight::MEDIUM).child(
+                                    Label::new("工具与 MCP")
+                                        .size(font::TITLE)
+                                        .color(dark().text.primary),
+                                ),
+                            )
+                            .child(
+                                Label::new("Host 权威 MCP server 清单、状态与配置")
+                                    .size(font::BODY_SM)
+                                    .color(dark().text.secondary),
+                            ),
+                    )
+                    .child(div().flex_1())
+                    .child(div().flex_none().pt_1().child(refresh)),
+            );
+        for (kind, line) in status_lines {
+            let color = if kind == "error" || kind == "action" {
+                dark().semantic.danger_text
+            } else {
+                dark().text.secondary
+            };
+            content = content.child(status_line(&line, color));
+        }
+        for (ix, server) in servers.iter().enumerate() {
+            content = content.child(self.settings_mcp_server_card(
+                ix,
+                server,
+                remove_confirm.as_deref(),
+                writes,
+                cx,
+            ));
+        }
+        // 生效边界诚实文案（ADR-049 D2 快照语义）。
+        content = content.child(status_line(SETTINGS_MCP_EFFECT_NOTE, dark().text.secondary));
+
+        div()
+            .id("settings-page")
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_w_0()
+            .overflow_hidden()
+            .p_4()
+            .child(
+                div()
+                    .id("settings-page-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .track_scroll(&self.settings_scroll)
+                    .child(content),
+            )
+    }
+
+    /// 单个 MCP server 卡片（SET-6c）：清单行复用 Resources 的渲染形状
+    /// （name + state / transport · tools · last_error），动作行含 Test /
+    /// Remove（Remove 走两步确认）。
+    fn settings_mcp_server_card(
+        &mut self,
+        ix: usize,
+        server: &McpServerEntry,
+        remove_confirm: Option<&str>,
+        writes: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let confirming = remove_confirm == Some(server.name.as_str());
+        let mut card = div()
+            .id(("settings-mcp-server", ix))
+            .flex()
+            .flex_col()
+            .min_w_0()
+            .gap_1()
+            .p(px(PROVIDER_CARD_PAD))
+            .rounded(px(4.0))
+            .border_1()
+            .border_color(if confirming {
+                dark().semantic.warning_text
+            } else {
+                dark().border.subtle
+            })
+            .bg(dark().surface.raised)
+            .child(mcp_server_name_row(server))
+            .child(
+                div()
+                    .text_size(font::XS)
+                    .text_color(dark().text.tertiary)
+                    .child(mcp_server_meta_text(server)),
+            );
+        if confirming {
+            card = card.child(status_line(
+                SETTINGS_MCP_REMOVE_CONFIRM_NOTE,
+                dark().semantic.warning_text,
+            ));
+        }
+        let mut actions = vec![SettingsMcpAction::Test];
+        if confirming {
+            actions.push(SettingsMcpAction::ConfirmRemove);
+            actions.push(SettingsMcpAction::KeepRemove);
+        } else {
+            actions.push(SettingsMcpAction::Remove);
+        }
+        let mut row = div().flex().flex_row().gap_1().flex_wrap();
+        for action in actions {
+            let tooltip = match action {
+                SettingsMcpAction::Test => "Ping this server and refresh its state.",
+                SettingsMcpAction::Remove | SettingsMcpAction::ConfirmRemove => {
+                    "Remove this server from the Global config and clear its credentials."
+                }
+                SettingsMcpAction::KeepRemove => "",
+            };
+            row = row.child(self.settings_mcp_action_button(
+                action,
+                &server.name,
+                writes,
+                tooltip,
+                cx,
+            ));
+        }
+        card.child(row)
+    }
+
+    /// MCP 写动作按钮：可见 / 键盘（on_activate）/ AX（同名 identifier
+    /// Press）三路径汇入同一 on_settings_mcp_action；disabled 时三者同时
+    /// 失效。
+    fn settings_mcp_action_button(
+        &mut self,
+        action: SettingsMcpAction,
+        server: &str,
+        writes: bool,
+        tooltip: &'static str,
+        cx: &mut Context<Self>,
+    ) -> Button {
+        let id = action.identifier(server);
+        let focus = self
+            .settings_action_focus
+            .entry(id.clone())
+            .or_insert_with(|| cx.focus_handle().tab_stop(true))
+            .clone();
+        let click_id = id.clone();
+        let click_server = server.to_string();
+        let activate_id = id.clone();
+        let activate_server = server.to_string();
+        let button = Button::new(id)
+            .track_focus(&focus)
+            .variant(ButtonVariant::Raised)
+            .height(px(SETTINGS_ACTION_HEIGHT))
+            .vcenter()
+            .radius(4.0)
+            .bordered()
+            .text_size(font::BODY_SM)
+            .label(action.label())
+            .disabled(!writes)
+            .on_click(cx.listener(move |view, event, _window, cx| {
+                if view.consume_button_key_click(&click_id, event) {
+                    return;
+                }
+                view.on_settings_mcp_action(action, click_server.clone(), cx);
+            }))
+            .on_activate(cx.listener(move |view, _event, _window, cx| {
+                view.note_button_key_activate(&activate_id);
+                view.on_settings_mcp_action(action, activate_server.clone(), cx);
+                cx.stop_propagation();
+            }));
+        if tooltip.is_empty() {
+            button
+        } else {
+            button.tooltip(tooltip)
+        }
+    }
+
     /// 单个审批模式行：当前档高亮只读（accent 边框 + 「当前」徽标），
     /// 其余档位「选择」按钮（可见 / 键盘 / AX 三路径同 identifier、同
     /// gate；stale 时禁用）。
@@ -1398,6 +1746,16 @@ impl AppView {
             .writes_enabled(connected)
     }
 
+    /// 「工具与 MCP」页写操作 gate（SET-6c）：连接 + 非 stale + mcp_list
+    /// 已成功（available；语义与通用 / 权限页一致）。
+    pub(crate) fn settings_tools_writes_enabled(&self) -> bool {
+        let connected = matches!(
+            self.projection.connection,
+            ConnectionState::Connected { .. }
+        );
+        connected && self.resources.available && self.resources.stale_reason.is_none()
+    }
+
     /// 单个写动作的启用谓词（render 与 AX 同源）：writes 总 gate 之上，
     /// Verify 在 secure 输入为空时禁用（进程内读长度，AX value 仍只发布
     /// 掩码）。
@@ -1623,6 +1981,48 @@ impl AppView {
         cx.notify();
     }
 
+    /// MCP 写动作统一入口（SET-6c；三路径同源；入口级复核 gate 与清单
+    /// 成员）。Remove 走两步确认；确认回执（同形状 servers）经
+    /// McpServersReceipt 收敛，不在此乐观改清单。
+    pub(crate) fn on_settings_mcp_action(
+        &mut self,
+        action: SettingsMcpAction,
+        name: String,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.settings_mcp_server_action_enabled(&name) {
+            return;
+        }
+        match action {
+            SettingsMcpAction::Test => {
+                self.controller.mcp_test(name);
+            }
+            SettingsMcpAction::Remove => {
+                self.settings_mcp_remove_confirm = Some(name);
+            }
+            SettingsMcpAction::ConfirmRemove => {
+                self.settings_mcp_remove_confirm = None;
+                self.controller.mcp_server_remove(name);
+            }
+            SettingsMcpAction::KeepRemove => {
+                self.settings_mcp_remove_confirm = None;
+            }
+        }
+        cx.notify();
+    }
+
+    /// MCP 写动作启用谓词（render 与 AX 同源）：writes 总 gate 之上复核
+    /// server 仍在当前权威清单（未知名 fail-closed）。
+    pub(crate) fn settings_mcp_server_action_enabled(&self, name: &str) -> bool {
+        if !self.settings_tools_writes_enabled() {
+            return false;
+        }
+        self.resources
+            .servers
+            .iter()
+            .any(|server| server.name == name)
+    }
+
     fn on_settings_connect_oauth(&mut self, provider_id: String, cx: &mut Context<Self>) {
         // descriptor 复核：provider 必须存在且声明 oauth（未知 id fail-closed）。
         let declares = self
@@ -1762,6 +2162,16 @@ impl AppView {
             .map(|entry| entry.provider_id.clone())
     }
 
+    /// AX 派发用：按转义串对照当前权威 MCP server 清单还原名称（SET-6c；
+    /// 未知名 fail-closed）。
+    pub(crate) fn settings_mcp_server_for_escaped(&self, escaped: &str) -> Option<String> {
+        self.resources
+            .servers
+            .iter()
+            .find(|server| dynamic_identifier("", &server.name) == format!("-{escaped}"))
+            .map(|server| server.name.clone())
+    }
+
     /// 转义后的 "<provider>:<model>" → 原始 pair（以 projection.models 为
     /// 权威，未知 fail-closed；不反解转义）。
     pub(crate) fn settings_default_target_for_escaped(
@@ -1788,6 +2198,7 @@ impl AppView {
             .update(cx, |input, cx| input.reset_text("", cx));
         self.settings_api_key_editors.clear();
         self.settings_remove_confirm = None;
+        self.settings_mcp_remove_confirm = None;
     }
 }
 

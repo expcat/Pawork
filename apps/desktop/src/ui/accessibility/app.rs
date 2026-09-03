@@ -22,8 +22,10 @@ use crate::ui::inspector::{
 };
 use crate::ui::resources::ResourcesFetch;
 use crate::ui::settings::{
-    general_status_lines, parse_settings_control, permissions_status_lines, provider_status_lines,
-    SettingsControl, SETTINGS_CONTROL_PREFIX, SETTINGS_PERMISSIONS_EFFECT_NOTE,
+    general_status_lines, parse_settings_control, parse_settings_mcp_control,
+    permissions_status_lines, provider_status_lines, tools_status_lines, SettingsControl,
+    SettingsMcpAction, SETTINGS_CONTROL_PREFIX, SETTINGS_MCP_CONTROL_PREFIX,
+    SETTINGS_MCP_EFFECT_NOTE, SETTINGS_MCP_REMOVE_CONFIRM_NOTE, SETTINGS_PERMISSIONS_EFFECT_NOTE,
     SETTINGS_PROXY_EFFECT_NOTE, SETTINGS_PROXY_UNSET, SETTINGS_TRUST_UNSET,
 };
 use crate::ui::shell_layout;
@@ -273,6 +275,10 @@ impl AppView {
                 window.focus(&self.settings_nav_permissions_focus);
                 self.on_select_settings_page(SettingsPage::Permissions, window, cx);
             }
+            "settings-nav-tools" => {
+                window.focus(&self.settings_nav_tools_focus);
+                self.on_select_settings_page(SettingsPage::Tools, window, cx);
+            }
             "settings-proxy-save" => self.on_settings_proxy_save(cx),
             "settings-proxy-clear" => self.on_settings_proxy_clear(cx),
             // SET-6b：五档选择与可见按钮同源派发（入口复核 gate）；未知
@@ -362,6 +368,15 @@ impl AppView {
                             }
                         }
                         _ => {}
+                    }
+                    return false;
+                }
+                if identifier.starts_with(SETTINGS_MCP_CONTROL_PREFIX) {
+                    if let Some((action, escaped)) = parse_settings_mcp_control(identifier) {
+                        if let Some(name) = self.settings_mcp_server_for_escaped(&escaped) {
+                            self.on_settings_mcp_action(action, name, cx);
+                            return true;
+                        }
                     }
                     return false;
                 }
@@ -913,9 +928,11 @@ impl AppView {
         let width = (frame.width - PAD * 2.0).max(0.0);
         let general_available = self.projection.settings_general.available;
         let permissions_available = self.projection.settings_permissions.available;
+        let tools_available = self.resources.available;
         let current_page = match self.settings_page {
             SettingsPage::General if !general_available => SettingsPage::Providers,
             SettingsPage::Permissions if !permissions_available => SettingsPage::Providers,
+            SettingsPage::Tools if !tools_available => SettingsPage::Providers,
             page => page,
         };
         let mut rail = AxNode::new("settings-rail", AxRole::Group, "Settings", frame)
@@ -981,6 +998,28 @@ impl AppView {
                 ),
             ));
         }
+        if tools_available {
+            // 几何与 render 同源：权限项之后递增一行（按可用项累计）。
+            let mut tools_y = nav_y + metrics::RAIL_TOP_ROW_HEIGHT + PAD;
+            if general_available {
+                tools_y += metrics::RAIL_TOP_ROW_HEIGHT + PAD;
+            }
+            if permissions_available {
+                tools_y += metrics::RAIL_TOP_ROW_HEIGHT + PAD;
+            }
+            rail = rail.child(settings_nav_ax(
+                "settings-nav-tools",
+                "工具与 MCP",
+                current_page == SettingsPage::Tools,
+                self.open_menu.is_none() && self.settings_nav_tools_focus.is_focused(window),
+                AxRect::new(
+                    frame.x + PAD,
+                    frame.y + tools_y,
+                    width,
+                    metrics::RAIL_TOP_ROW_HEIGHT,
+                ),
+            ));
+        }
         rail
     }
 
@@ -997,6 +1036,9 @@ impl AppView {
             && self.projection.settings_permissions.available
         {
             return self.settings_permissions_page_ax(window, cx, frame);
+        }
+        if self.settings_page == SettingsPage::Tools && self.resources.available {
+            return self.settings_tools_page_ax(window, frame);
         }
         const HEADING_HEIGHT: f32 = 28.0;
         const SUBTITLE_HEIGHT: f32 = 20.0;
@@ -1681,6 +1723,146 @@ impl AppView {
                 AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT * 2.0),
             )
             .value(SETTINGS_PERMISSIONS_EFFECT_NOTE),
+        )
+    }
+
+    /// 「工具与 MCP」页 AX（SET-6c）：server 行复用 resources_ax 的形状
+    /// （state · transport · tools 数 + last_error 描述），每行 Test /
+    /// Remove（两步确认）按钮与 render 同 gate；stale 时 enabled=false
+    /// 且 permits 拒绝写动作。几何为固定估值（SET-7 已登记与滚动的
+    /// 已知缺口，与其他 Settings 页同口径）。
+    fn settings_tools_page_ax(&self, window: &Window, frame: AxRect) -> AxNode {
+        const HEADING_HEIGHT: f32 = 28.0;
+        const SUBTITLE_HEIGHT: f32 = 20.0;
+        const STATUS_HEIGHT: f32 = 20.0;
+        const CONTROL_ROW: f32 = 28.0;
+        const CARD_PAD: f32 = 8.0;
+        const NAME_ROW: f32 = 20.0;
+        const META_ROW: f32 = 16.0;
+        const CARD_GAP: f32 = 8.0;
+        let writes = self.settings_tools_writes_enabled();
+        let connected = matches!(
+            self.projection.connection,
+            ConnectionState::Connected { .. }
+        );
+        let refresh_focused =
+            self.open_menu.is_none() && self.settings_refresh_focus.is_focused(window);
+        let mut page = AxNode::new("settings-page", AxRole::Group, "工具与 MCP", frame)
+            .child(
+                AxNode::new(
+                    "settings-page-title",
+                    AxRole::StaticText,
+                    "工具与 MCP",
+                    AxRect::new(
+                        frame.x + 16.0,
+                        frame.y + 16.0,
+                        (frame.width - 136.0).max(0.0),
+                        HEADING_HEIGHT + SUBTITLE_HEIGHT,
+                    ),
+                )
+                .value("Host 权威 MCP server 清单、状态与配置"),
+            )
+            .child(
+                AxNode::new(
+                    "settings-refresh",
+                    AxRole::Button,
+                    "Refresh",
+                    AxRect::new(
+                        frame.x + frame.width - 16.0 - 96.0,
+                        frame.y + 16.0,
+                        96.0,
+                        CONTROL_ROW,
+                    ),
+                )
+                .enabled(connected)
+                .focused(refresh_focused)
+                .action(AxAction::Press),
+            );
+        let mut y = frame.y + 16.0 + HEADING_HEIGHT + SUBTITLE_HEIGHT + 8.0;
+        let width = (frame.width - 32.0).max(0.0);
+        for (kind, label) in tools_status_lines(&self.resources) {
+            page = page.child(
+                AxNode::new(
+                    format!("settings-status-{kind}"),
+                    AxRole::StaticText,
+                    "Tools status",
+                    AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT),
+                )
+                .value(label),
+            );
+            y += STATUS_HEIGHT + 8.0;
+        }
+        for server in &self.resources.servers {
+            let confirming =
+                self.settings_mcp_remove_confirm.as_deref() == Some(server.name.as_str());
+            let mut actions = vec![SettingsMcpAction::Test];
+            if confirming {
+                actions.push(SettingsMcpAction::ConfirmRemove);
+                actions.push(SettingsMcpAction::KeepRemove);
+            } else {
+                actions.push(SettingsMcpAction::Remove);
+            }
+            let confirm_rows = confirming as u8 as f32 * (STATUS_HEIGHT + CONTROL_ROW + CARD_GAP);
+            let card_height = CARD_PAD * 2.0 + NAME_ROW + META_ROW + CONTROL_ROW + confirm_rows;
+            let mut row = AxNode::new(
+                dynamic_identifier("settings-mcp-server", &server.name),
+                AxRole::ListItem,
+                server.name.clone(),
+                AxRect::new(frame.x + 16.0, y, width, card_height),
+            )
+            .value(format!(
+                "{} · {} · {} tools",
+                server.state, server.transport, server.tool_count
+            ));
+            let mut description = server.last_error.clone().unwrap_or_default();
+            if confirming {
+                if description.is_empty() {
+                    description = SETTINGS_MCP_REMOVE_CONFIRM_NOTE.to_string();
+                } else {
+                    description = format!("{description} · {SETTINGS_MCP_REMOVE_CONFIRM_NOTE}");
+                }
+            }
+            row = row.description(description);
+            page = page.child(row);
+            // 动作按钮：与 render 同 identifier / 同 gate；焦点句柄与
+            // provider 动作共用 settings_action_focus（identifier 键控）。
+            let button_w = 96.0;
+            for (ix, action) in actions.iter().enumerate() {
+                let id = action.identifier(&server.name);
+                let action_focused = self
+                    .settings_action_focus
+                    .get(&id)
+                    .is_some_and(|focus| self.open_menu.is_none() && focus.is_focused(window));
+                page = page.child(
+                    AxNode::new(
+                        id,
+                        AxRole::Button,
+                        action.label(),
+                        AxRect::new(
+                            frame.x + frame.width
+                                - 16.0
+                                - (actions.len() - ix) as f32 * (button_w + 4.0),
+                            y + card_height - CARD_PAD - CONTROL_ROW,
+                            button_w,
+                            CONTROL_ROW,
+                        ),
+                    )
+                    .enabled(writes && self.settings_mcp_server_action_enabled(&server.name))
+                    .focused(action_focused)
+                    .action(AxAction::Press),
+                );
+            }
+            y += card_height + CARD_GAP;
+        }
+        // 生效边界（与 render 同源文案）。
+        page.child(
+            AxNode::new(
+                "settings-mcp-effect",
+                AxRole::StaticText,
+                "Effect",
+                AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT * 2.0),
+            )
+            .value(SETTINGS_MCP_EFFECT_NOTE),
         )
     }
 

@@ -1098,3 +1098,15 @@ Known gaps: 持久化 approval_mode 与 Global trust 写登记为后续候选（
 提交前复查修复：`set_approval_mode` / `workspace_trust` 漏了 Arc-swap `ToolScheduler`（Settings 改档后之后启动的 run 仍走启动时 ReadOnly/untrusted 闸门）——改为 setter 重建新 Arc，进行中 run 持有旧 Arc；AX Press 补 `settings-nav-permissions`（可见/键盘已通、AX 切页缺 handler）；信任开关 enable 改用 Host `permissions_settings.workspace_id`，不再用 snapshot 注册表首项。
 
 Full workspace gate: NOT RUN（当前未设置全量门禁）。
+
+## 2026-09-03 — Settings SET-6c 工具与 MCP 页（MCP list/test/remove，ADR-049）
+
+- 立项：SET-6 第三页经主代理源码实读 + 两路 glm_explorer 独立只读核查三方确认：list 复用既有 `mcp_list`（V1_0 GUI 可用，Resources 页已消费，数据链零协议改动）；test 复用 Host 实装 `mcp_test`（CLI 已消费，GUI 无词汇）；config mutation 首片取 remove——Host 零写路径；add 明确不入本片（Secret 传输 + `pawork.mcp.*` 写封装属独立安全切片）。
+- ADR-049（用户 2026-09-03 确认 Accepted）：`McpTest` / `McpServerRemove` 两命令（since=V1_7、仅 GUI、非幂等、API minor 1.7 仅记账、golden 先行 4 帧回执形状复用 mcp_list 金样、35 既有帧仅 api_version 机械重写）；remove 定序「合并配置校验存在 + 跨层同名守卫（非 Global 层仍定义同名 server 即 Error）→ Global 原子写 → `pawork.mcp.<name>` SecretRef 幂等清理 → 内存同步（shutdown slot + 删 slot + 重建 registry）」；同会话生效，进行中 run 已快照工具不回溯撤销。
+- 实现：glm_worker 三切片串行（protocol → workspace/app → desktop）；glm_reviewer 审查修 1 P1（冻结契约/Spec 回写缺失，主代理同批补齐 architecture/contracts/四包 Spec/settings.md）+ 3 P2（跨层同名守卫 + 定向回归、mcp_test 两条失败路径回归、Secret 命名空间 fail-closed 纯函数测试）+ P3（立项引文状态、注释定序、writer 空行）。
+
+Known gaps: GUI 新增 MCP server（add）、trusted/auto_start 切换、mcp_list 响应补 endpoint 均登记为候选（ADR-049 否决支）；真实窗口/VoiceOver 验收在 SET-7。
+
+提交前复查修复：remove 写盘成功后清密失败仍同步内存（避免盘已删、UI/内存仍展示）；Desktop 回执 bump epoch 防止在途 mcp_list 覆盖写后清单；Test/Remove 失败在 Settings 页可见（不再只进工作台 status_hint）；空态不再与 status line 重复，加载中不误报 No MCP servers；AX 确认文案不再覆盖 last_error；补 writer 移除/缺失键定向测试。
+
+Full workspace gate: NOT RUN（当前未设置全量门禁）。

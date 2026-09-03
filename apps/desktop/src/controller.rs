@@ -158,6 +158,12 @@ pub enum ControllerEvent {
         epoch: u64,
         reason: String,
     },
+    /// mcp_test / mcp_server_remove 的 Data 回执（SET-6c / ADR-049）：形状
+    /// 与 mcp_list 相同，无 epoch —— 回执即 Host 权威写后状态，UI 直接
+    /// 落地 ResourcesPanelState。
+    McpServersReceipt {
+        servers: Vec<McpServerEntry>,
+    },
     OperationFailed {
         action: &'static str,
         reason: String,
@@ -1696,6 +1702,100 @@ impl DesktopController {
         });
     }
 
+    /// 现场验证单个 MCP server（mcp_test，SET-6c / ADR-049 D1）。Data 回执
+    /// 与 mcp_list 同形状（验证后的权威清单），经 McpServersReceipt 投递；
+    /// Error / 传输失败经 OperationFailed 呈现，不动 UI 现有清单。
+    pub fn mcp_test(&self, name: String) {
+        let Some(client) = self.current_client() else {
+            self.emit_reliable(ControllerEvent::OperationFailed {
+                action: "test mcp server".into(),
+                reason: "not connected".into(),
+            });
+            return;
+        };
+        let events = self.event_sender();
+        self.runtime.spawn(async move {
+            let command = mcp_test_command(&name);
+            let response = match client
+                .command(command, command_source(), actor_identity())
+                .await
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    try_emit(
+                        &events,
+                        ControllerEvent::OperationFailed {
+                            action: "test mcp server",
+                            reason: error.to_string(),
+                        },
+                    );
+                    return;
+                }
+            };
+            match parse_mcp_receipt(&response) {
+                Ok(servers) => {
+                    let _ = events
+                        .send(ControllerEvent::McpServersReceipt { servers })
+                        .await;
+                }
+                Err(reason) => try_emit(
+                    &events,
+                    ControllerEvent::OperationFailed {
+                        action: "test mcp server",
+                        reason,
+                    },
+                ),
+            }
+        });
+    }
+
+    /// 从 Global 配置移除单个 MCP server（mcp_server_remove，SET-6c /
+    /// ADR-049 D2）。Data 回执与 mcp_list 同形状（移除后的权威清单）；
+    /// 失败 fail-closed 不动 UI 现有清单。
+    pub fn mcp_server_remove(&self, name: String) {
+        let Some(client) = self.current_client() else {
+            self.emit_reliable(ControllerEvent::OperationFailed {
+                action: "remove mcp server".into(),
+                reason: "not connected".into(),
+            });
+            return;
+        };
+        let events = self.event_sender();
+        self.runtime.spawn(async move {
+            let command = mcp_server_remove_command(&name);
+            let response = match client
+                .command(command, command_source(), actor_identity())
+                .await
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    try_emit(
+                        &events,
+                        ControllerEvent::OperationFailed {
+                            action: "remove mcp server",
+                            reason: error.to_string(),
+                        },
+                    );
+                    return;
+                }
+            };
+            match parse_mcp_receipt(&response) {
+                Ok(servers) => {
+                    let _ = events
+                        .send(ControllerEvent::McpServersReceipt { servers })
+                        .await;
+                }
+                Err(reason) => try_emit(
+                    &events,
+                    ControllerEvent::OperationFailed {
+                        action: "remove mcp server",
+                        reason,
+                    },
+                ),
+            }
+        });
+    }
+
     fn event_sender(&self) -> smol::channel::Sender<ControllerEvent> {
         self.state
             .events
@@ -2086,6 +2186,22 @@ fn mcp_list_query() -> AppQuery {
     .expect("mcp_list query shape is frozen")
 }
 
+fn mcp_test_command(name: &str) -> AppCommand {
+    serde_json::from_value(json!({
+        "method": "mcp_test",
+        "params": { "name": name }
+    }))
+    .expect("mcp_test command shape is frozen")
+}
+
+fn mcp_server_remove_command(name: &str) -> AppCommand {
+    serde_json::from_value(json!({
+        "method": "mcp_server_remove",
+        "params": { "name": name }
+    }))
+    .expect("mcp_server_remove command shape is frozen")
+}
+
 fn parse_models(response: &AppResponseEnvelope) -> Result<Vec<ModelEntry>, String> {
     match &response.response {
         AppResponse::Data(data) => {
@@ -2403,6 +2519,16 @@ fn parse_mcp_servers(response: &AppResponseEnvelope) -> Result<Vec<McpServerEntr
     }
 }
 
+/// 解包 mcp_test / mcp_server_remove 回执（SET-6c；Data 形状同 mcp_list）；
+/// Error 取 Host 脱敏 message 原文（UI 保留旧清单，fail-closed）。
+fn parse_mcp_receipt(response: &AppResponseEnvelope) -> Result<Vec<McpServerEntry>, String> {
+    match &response.response {
+        AppResponse::Data(_) => parse_mcp_servers(response),
+        AppResponse::Error(error) => Err(error.message.clone()),
+        other => Err(format!("unexpected response: {other:?}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2512,6 +2638,14 @@ mod tests {
         let mcp = serde_json::to_value(mcp_list_query()).unwrap();
         assert_eq!(mcp["method"], "mcp_list");
         assert_eq!(mcp["params"], serde_json::Value::Null);
+
+        let test = serde_json::to_value(mcp_test_command("context7")).unwrap();
+        assert_eq!(test["method"], "mcp_test");
+        assert_eq!(test["params"]["name"], "context7");
+
+        let remove = serde_json::to_value(mcp_server_remove_command("fetch")).unwrap();
+        assert_eq!(remove["method"], "mcp_server_remove");
+        assert_eq!(remove["params"]["name"], "fetch");
     }
 
     fn envelope(data: serde_json::Value) -> AppResponseEnvelope {
@@ -2631,5 +2765,42 @@ mod tests {
         assert_eq!(servers[0].last_error, None);
         assert_eq!(servers[1].state, "failed");
         assert_eq!(servers[1].last_error.as_deref(), Some("connection refused"));
+    }
+
+    #[test]
+    fn parse_mcp_receipt_reads_data_and_surfaces_error_message() {
+        let servers = parse_mcp_receipt(&envelope(serde_json::json!({
+            "servers": [
+                {
+                    "name": "fetch",
+                    "transport": "stdio",
+                    "state": "ready",
+                    "tools": ["fetch_url"],
+                    "last_error": null
+                }
+            ]
+        })))
+        .expect("parse mcp receipt");
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0].name, "fetch");
+
+        let error: AppResponseEnvelope = serde_json::from_value(serde_json::json!({
+            "api_version": { "major": 1, "minor": 1 },
+            "request_id": "q-test",
+            "responded_at": 0,
+            "response": {
+                "type": "error",
+                "data": {
+                    "category": "invalid_request",
+                    "message": "unknown mcp server",
+                    "retryable": false
+                }
+            }
+        }))
+        .expect("test error envelope");
+        assert_eq!(
+            parse_mcp_receipt(&error).expect_err("error receipt must fail closed"),
+            "unknown mcp server"
+        );
     }
 }

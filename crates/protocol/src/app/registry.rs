@@ -10,7 +10,7 @@ use crate::GuiCapability;
 
 use super::command::AppCommand;
 use super::query::AppQuery;
-use super::version::{ApiVersion, V1_0, V1_1, V1_2, V1_3, V1_4, V1_5, V1_6};
+use super::version::{ApiVersion, V1_0, V1_1, V1_2, V1_3, V1_4, V1_5, V1_6, V1_7};
 
 /// GUI 通道访问规格：是否可用 + 命令级所需能力。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -48,7 +48,7 @@ pub const GUI_INTRINSIC_CAPABILITIES: &[GuiCapability] =
     &[GuiCapability::Events, GuiCapability::Snapshots];
 
 static COMMANDS: &[RegistryEntry] = &[
-    // --- AppCommand（25）---
+    // --- AppCommand（27）---
     RegistryEntry {
         wire_name: "core_initialize",
         gui: GuiChannelAccess {
@@ -335,6 +335,31 @@ static COMMANDS: &[RegistryEntry] = &[
         idempotent: false,
         since: V1_3,
     },
+    // ADR-049 D1：MCP 现场验证（触网、可能改变连接状态）；仅 GUI 开放。
+    RegistryEntry {
+        wire_name: "mcp_test",
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
+        headless: None,
+        acp: false,
+        idempotent: false,
+        since: V1_7,
+    },
+    // ADR-049 D2：Global 层移除 MCP server（写盘/清密/内存同步）；
+    // 仅 GUI 开放，未知 name fail-closed 保旧。
+    RegistryEntry {
+        wire_name: "mcp_server_remove",
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
+        headless: None,
+        acp: false,
+        idempotent: false,
+        since: V1_7,
+    },
 ];
 
 static QUERIES: &[RegistryEntry] = &[
@@ -527,6 +552,8 @@ pub fn command_wire_name(command: &AppCommand) -> &'static str {
         AppCommand::TerminalWrite { .. } => "terminal_write",
         AppCommand::TerminalResize { .. } => "terminal_resize",
         AppCommand::TerminalClose { .. } => "terminal_close",
+        AppCommand::McpTest { .. } => "mcp_test",
+        AppCommand::McpServerRemove { .. } => "mcp_server_remove",
     }
 }
 

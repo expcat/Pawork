@@ -814,3 +814,52 @@ fn golden_permissions_settings_slices() {
         })),
     );
 }
+
+/// SET-6c（ADR-049）：MCP test / server remove 命令与回执 golden。
+///
+/// 回执 Data 复用 mcp_list 的 servers 数组形状（McpServerStatus：
+/// name/transport/state/tools/last_error）；remove 回执为移除后的清单，
+/// 不再含该 server。
+#[test]
+fn golden_mcp_settings_slices() {
+    assert_golden(
+        "client_command_mcp_test.json",
+        encode_client(&client_auth_command_frame(AppCommand::McpTest {
+            name: "context7".into(),
+        })),
+    );
+    assert_golden(
+        "client_command_mcp_server_remove.json",
+        encode_client(&client_auth_command_frame(AppCommand::McpServerRemove {
+            name: "context7".into(),
+        })),
+    );
+    assert_golden(
+        "server_response_mcp_test.json",
+        encode_server(&ServerFrame::Response(AppResponseEnvelope {
+            api_version: API_VERSION,
+            request_id: pawork_domain::QueryId::from("query-mcp-test"),
+            responded_at: Timestamp::from_unix_millis(3),
+            response: AppResponse::Data(serde_json::json!({
+                "servers": [{
+                    "name": "context7",
+                    "transport": "stdio",
+                    "state": "connected",
+                    "tools": ["search_docs"],
+                    "last_error": null
+                }]
+            })),
+        })),
+    );
+    assert_golden(
+        "server_response_mcp_server_remove.json",
+        encode_server(&ServerFrame::Response(AppResponseEnvelope {
+            api_version: API_VERSION,
+            request_id: pawork_domain::QueryId::from("query-mcp-server-remove"),
+            responded_at: Timestamp::from_unix_millis(3),
+            response: AppResponse::Data(serde_json::json!({
+                "servers": []
+            })),
+        })),
+    );
+}

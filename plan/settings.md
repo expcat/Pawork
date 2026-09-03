@@ -255,6 +255,39 @@ SET-5 收口后才逐页立项，不预建通用设置框架：
 
 **定向回归上限**：主路径两条（set mode → 重查一致；workspace_trust 匹配 id → 之后 run 生效）；关键失败路径一条（workspace_id 不匹配 fail-closed）。现有测试可覆盖时不新增。
 
+### SET-6c — 工具与 MCP 页（MCP list/test/remove）🟢
+
+> 2026-09-03 完成：ADR-049 Accepted 后三切片串行落地（glm_worker：protocol → workspace/app → desktop）。protocol 增 `McpTest` / `McpServerRemove`（since=V1_7、仅 GUI、非幂等）+ API 1.7 + golden 4 帧（回执形状复用 mcp_list 金样）+ typegen 三产物，35 个既有帧仅 api_version 6→7 机械重写；workspace 增 `write_mcp_server_remove`（Global 层 RMW+进程锁+原子写，缺失键 Ok(false) 不写盘）；app 两 handler（remove 定序「合并配置校验存在 + 跨层同名守卫 → Global 原子写 → pawork.mcp.* SecretRef 幂等清理 → 内存同步 shutdown slot+删 slot+重建 registry」，同会话生效）；desktop「工具与 MCP」页（复用 mcp_list 数据链与 ResourcesPanelState，每行 Test/Remove 两步确认，回执即权威生效值，stale 三路径同 gate，可见/键盘/AX 同 gate）。审查（glm_reviewer）修复 1 P1（Spec/契约回写，主代理收口）+3 P2（跨层同名守卫、mcp_test 回归、Secret 命名空间 fail-closed 测试）+P3。protocol 152 / workspace 119+13+15 / app 189 / desktop 181 全绿。真窗口验收登记 SET-7。
+
+> 2026-09-03 立项：最小真实能力锁定为「Host 权威 MCP list/test/remove」。经主代理源码实读与两路 glm_explorer 独立只读核查三方确认：list 复用既有 mcp_list（V1_0 GUI 可用，Resources 页已消费，数据链零协议改动可复用；test 复用 Host 实装 mcp_test（CLI 已消费，GUI 无词汇；config mutation 首片取 remove——Host 零写路径，需 workspace writer 新增 write_mcp_server_remove（Global 层 RMW+原子写 + SecretRef 清理 + 内存同步（shutdown slot + 重建 registry）；add 不入本片（Secret 传输 + 新写封装属独立安全切片。wire 演进走 [ADR-049](../docs/adr/ADR-049-mcp-settings-wire.md)（2026-09-03 用户确认 Accepted）。
+
+**目标**：GUI 用户可在 Settings 内查看 Host 权威 MCP server 清单（name/transport/state/tools/last_error），可对单个 server 执行 test，可从 Global 配置移除 server（含 SecretRef 清理，全部写路径经 Host。
+
+**非目标**：不做 server add（登记候选）；不切换 trusted/auto_start；不扩展 mcp_list 响应加 endpoint；不做 enable/disable 概念；不动 Policy/MCP 装配语义。
+
+**写入集**（ADR-049 Accepted 后才动生产代码）：
+
+- docs/adr/ADR-049-*.md、docs/architecture.md、docs/spec/contracts.md；
+- crates/protocol/：McpTest + McpServerRemove 命令 + registry 登记（since=V1_7 + API 1.7 + golden/typegen + 仅 GUI 通道保守；
+- crates/workspace/：write_mcp_server_remove 原子写回（Global 层 RMW + 进程锁 + 原子写，保留未知字段；
+- crates/app/：两 handler（mcp_test 复用 AppCore::mcp_test + McpServerRemove 按 ADR-049 D2 定序；
+- apps/desktop/：Settings 导航增「工具与 MCP」页（复用 Resources 数据链，Test/Remove + stale 三路径同 gate，可见/键盘/AX 同 gate；
+- 实际涉及包的包级 Spec + docs/spec/settings.md 页启用。
+
+**完成条件**：
+
+- 页面显示 Host 权威 MCP 清单与状态（复用 mcp_list，来源语义不混淆；
+- test 单 server 现场验证并回写状态，未知 server fail-closed；
+- remove 后盘/密/内存三处一致，重查不含，进行中 run 已快照工具不回溯撤销（文案诚实标注；
+- 断线 stale 只读、写动作 fail-closed；可见/键盘/AX 同 gate；
+- golden/typegen 先行；不新增 crate、依赖、schema 键。
+
+**停止条件**：ADR-049 未获用户 Accepted 时，停在 ADR + 预期 golden 描述，不写生产 handler。
+
+**验证**：`cargo test -p pawork-protocol --features typegen --offline --lib --tests` + `cargo test -p pawork-workspace -p pawork-app --offline --lib --tests` + `cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`；单一 Cargo 进程纪律不变。
+
+**定向回归上限**：主路径两条（mcp_test → 状态回写且重查一致 + remove → 三处一致重查不含；关键失败路径一条（未知 name 三处皆不动 fail-closed。现有测试可覆盖时不新增。
+
 ### SET-7 — 真窗口与人工收口 ⚪
 
 **自动证据**：实际写入集定向门禁；protocol/Secret/config 三类关键回归；`git diff --check`。

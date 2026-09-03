@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use pawork_auth::locator::MCP_AUTH_FILE_NAME;
+use pawork_auth::locator::{MCP_AUTH_FILE_NAME, MCP_SERVICE_PREFIX};
 use pawork_auth::{FileBackend, SecretBackend};
 use pawork_domain::ContentPart;
 use pawork_engine::InjectedLayer;
@@ -12,9 +12,10 @@ use pawork_exec::{
     default_secret_paths, FilesystemPolicy, NativeRestricted, NetworkMode, SandboxPolicy,
 };
 use pawork_tools::mcp::capabilities::register_server_tools;
-use pawork_tools::mcp::config::{McpConfig, StdioSandboxRuntime, TransportSpec};
+use pawork_tools::mcp::config::{McpConfig, McpServerConfig, StdioSandboxRuntime, TransportSpec};
 use pawork_tools::mcp::manager::{ConnectionState, ManagedMcpClient};
 use pawork_tools::mcp::sandbox::apply_mcp_stdio_env_hygiene;
+use pawork_tools::mcp::security::SecretRef;
 use pawork_tools::mcp::{McpError, McpPeer};
 use pawork_tools::{
     ApplyPatchTool, EditFileTool, FindFilesTool, ListDirectoryTool, ReadFileTool, RunCommandTool,
@@ -222,6 +223,85 @@ impl AppCore {
         Ok(self.mcp_list())
     }
 
+    /// ADR-049 D2：移除 MCP server 的内存同步（写盘与清密由调用方完成）。
+    /// 定序：生效配置 extra 同步 → shutdown 该 slot client（best-effort，
+    /// 失败不阻断，盘已为权威）→ 删 slot → 重建 registry 去除该 server 工具。
+    /// 进行中 run 已快照的工具不回溯撤销（快照语义）。
+    pub(crate) async fn remove_mcp_server(&mut self, name: &str) -> Result<(), AppError> {
+        if let Some(serde_json::Value::Object(mcp)) = self.config.extra.get_mut("mcp") {
+            if let Some(serde_json::Value::Object(servers)) = mcp.get_mut("servers") {
+                servers.remove(name);
+            }
+        }
+        if let Some(index) = self
+            .extensions
+            .mcp_servers
+            .iter()
+            .position(|slot| slot.name == name)
+        {
+            let slot = self.extensions.mcp_servers.remove(index);
+            if let Some(client) = &slot.client {
+                if let Err(error) = client.shutdown().await {
+                    tracing::warn!(
+                        error = %error,
+                        server = %name,
+                        "mcp client shutdown failed during removal"
+                    );
+                }
+            }
+        }
+        let config = mcp_config_from_pawork(&self.config)?;
+        let mut registry = builtin_registry(&self.extensions.workspaces)?;
+        let mut reregister_failed = Vec::new();
+        for slot in &self.extensions.mcp_servers {
+            // 仅重建此前确实注册进 registry 的工具（descriptors 为准）：
+            // 非 auto-start / 装配失败 / 仅 test 过的 slot 不额外注册。
+            let registered = slot.tools.iter().any(|tool| {
+                self.descriptors
+                    .iter()
+                    .any(|descriptor| &descriptor.name == tool)
+            });
+            if !registered {
+                continue;
+            }
+            let (Some(client), Some(server)) = (slot.client.clone(), config.server(&slot.name))
+            else {
+                continue;
+            };
+            let peer: Arc<dyn McpPeer> = client;
+            if let Err(error) = register_server_tools(
+                &mut registry,
+                &slot.name,
+                peer,
+                server.permissions.clone(),
+                server.trusted && self.approval.workspace_trusted(),
+                self.approval.workspace_trusted(),
+            )
+            .await
+            {
+                tracing::warn!(
+                    error = %error,
+                    server = %slot.name,
+                    "mcp tool re-registration failed during removal"
+                );
+                reregister_failed.push(slot.name.clone());
+            }
+        }
+        // 重注册失败的 slot 同步清空 tools，mcp_list 不谎报未注册工具。
+        for name in reregister_failed {
+            if let Some(slot) = self
+                .extensions
+                .mcp_servers
+                .iter_mut()
+                .find(|slot| slot.name == name)
+            {
+                slot.tools.clear();
+            }
+        }
+        self.replace_registry(registry);
+        Ok(())
+    }
+
     async fn test_one_mcp(&mut self, name: &str) -> Result<(), AppError> {
         let config = mcp_config_from_pawork(&self.config)?;
         let server = config
@@ -353,8 +433,48 @@ pub(crate) fn mcp_config_from_pawork(
     }
 }
 
+/// ADR-049 D2：定位移除 `<name>` 时应清理的 SecretRef——仅收集
+/// `pawork.mcp.<name>` service 下的引用；指向其它 server 的 `pawork.mcp.*`
+/// 引用不属于本次清理范围（跳过）；非 `pawork.mcp.*` 命名空间的引用
+/// fail-closed（Err，调用方不得继续写盘清密）。
+pub(crate) fn mcp_server_secrets_for_removal(
+    name: &str,
+    server: &McpServerConfig,
+) -> Result<Vec<SecretRef>, AppError> {
+    let expected_service = format!("{MCP_SERVICE_PREFIX}{name}");
+    let references = match &server.transport {
+        TransportSpec::Stdio { env, .. } => env.values(),
+        TransportSpec::Http { headers, .. } => headers.values(),
+    };
+    let mut owned = Vec::new();
+    for reference in references {
+        if reference.service() == expected_service {
+            owned.push(reference.clone());
+        } else if !reference.service().starts_with(MCP_SERVICE_PREFIX) {
+            return Err(AppError::Mcp(McpError::Secret(format!(
+                "secret service '{}' is outside the pawork.mcp.* namespace",
+                reference.service()
+            ))));
+        }
+    }
+    Ok(owned)
+}
+
+/// ADR-049 D2：删除已定位的 MCP SecretRef。`SecretBackend::delete` 幂等
+/// （NotFound 视为已清理）；其余错误如实上抛，由调用方按阶段回执。
+pub(crate) fn clear_mcp_server_secrets(references: &[SecretRef]) -> Result<(), AppError> {
+    let backend = mcp_secret_backend();
+    for reference in references {
+        match backend.delete(reference.service(), reference.account()) {
+            Ok(()) | Err(pawork_auth::AuthError::NotFound) => {}
+            Err(error) => return Err(AppError::Auth(error)),
+        }
+    }
+    Ok(())
+}
+
 /// Independent MCP secret store next to auth.json. Never the Provider FileBackend.
-fn mcp_secret_backend() -> Arc<dyn SecretBackend> {
+pub(crate) fn mcp_secret_backend() -> Arc<dyn SecretBackend> {
     let path = FileBackend::new().path().with_file_name(MCP_AUTH_FILE_NAME);
     Arc::new(FileBackend::with_path(path))
 }
@@ -434,4 +554,65 @@ pub(crate) fn at_tokens(text: &str) -> Vec<String> {
         }
     }
     tokens
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    fn http_server(headers: BTreeMap<String, SecretRef>) -> McpServerConfig {
+        McpServerConfig {
+            transport: TransportSpec::Http {
+                url: "https://mcp.example.com/mcp".into(),
+                headers,
+            },
+            auto_start: false,
+            timeout_ms: None,
+            restart: Default::default(),
+            permissions: Default::default(),
+            trusted: false,
+        }
+    }
+
+    #[test]
+    fn mcp_server_secrets_for_removal_collects_skips_and_fails_closed() {
+        // 非 pawork.mcp.* 命名空间：fail-closed（Err），调用方不得继续写盘清密。
+        let mut headers = BTreeMap::new();
+        headers.insert(
+            "Authorization".to_string(),
+            SecretRef::new("other.service", "cred-1"),
+        );
+        assert!(matches!(
+            mcp_server_secrets_for_removal("demo", &http_server(headers)),
+            Err(AppError::Mcp(McpError::Secret(_)))
+        ));
+
+        // 其它 server 的 pawork.mcp.* 引用：跳过，不收集。
+        let mut headers = BTreeMap::new();
+        headers.insert(
+            "Authorization".to_string(),
+            SecretRef::new("pawork.mcp.other", "cred-1"),
+        );
+        let collected =
+            mcp_server_secrets_for_removal("demo", &http_server(headers)).expect("skip others");
+        assert!(collected.is_empty());
+
+        // 本 server 的引用：全部收集（多 header / 多 account 一并纳入）。
+        let mut headers = BTreeMap::new();
+        headers.insert(
+            "Authorization".to_string(),
+            SecretRef::new("pawork.mcp.demo", "cred-1"),
+        );
+        headers.insert(
+            "X-Custom".to_string(),
+            SecretRef::new("pawork.mcp.demo", "cred-2"),
+        );
+        let collected = mcp_server_secrets_for_removal("demo", &http_server(headers))
+            .expect("collect own refs");
+        assert_eq!(collected.len(), 2);
+        assert!(collected
+            .iter()
+            .all(|reference| reference.service() == "pawork.mcp.demo"));
+    }
 }

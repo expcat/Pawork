@@ -1,0 +1,27 @@
+{
+  "data": {
+    "api_version": {
+      "major": 1,
+      "minor": 7
+    },
+    "request_id": "query-mcp-test",
+    "responded_at": 3,
+    "response": {
+      "data": {
+        "servers": [
+          {
+            "last_error": null,
+            "name": "context7",
+            "state": "connected",
+            "tools": [
+              "search_docs"
+            ],
+            "transport": "stdio"
+          }
+        ]
+      },
+      "type": "data"
+    }
+  },
+  "type": "response"
+}

@@ -5,9 +5,9 @@
       "minor": 7
     },
     "command": {
-      "method": "auth_remove",
+      "method": "mcp_server_remove",
       "params": {
-        "provider_id": "glm-coding"
+        "name": "context7"
       }
     },
     "command_id": "command-auth-1",

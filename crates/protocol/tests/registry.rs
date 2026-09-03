@@ -19,6 +19,7 @@ const V1_3: ApiVersion = ApiVersion { major: 1, minor: 3 };
 const V1_4: ApiVersion = ApiVersion { major: 1, minor: 4 };
 const V1_5: ApiVersion = ApiVersion { major: 1, minor: 5 };
 const V1_6: ApiVersion = ApiVersion { major: 1, minor: 6 };
+const V1_7: ApiVersion = ApiVersion { major: 1, minor: 7 };
 
 /// (wire 名, 最小 params 样本；None = unit 变体无 params)。
 fn command_samples() -> Vec<(&'static str, Option<Value>)> {
@@ -97,6 +98,8 @@ fn command_samples() -> Vec<(&'static str, Option<Value>)> {
             "terminal_close",
             Some(json!({"terminal_session_id": "t-1"})),
         ),
+        ("mcp_test", Some(json!({"name": "context7"}))),
+        ("mcp_server_remove", Some(json!({"name": "context7"}))),
     ]
 }
 
@@ -189,7 +192,7 @@ fn wire_names_are_bijective_with_serde_tags() {
 fn registry_tables_are_complete_and_unique() {
     let commands = command_entries();
     let queries = query_entries();
-    assert_eq!(commands.len(), 25);
+    assert_eq!(commands.len(), 27);
     assert_eq!(queries.len(), 14);
     for wire_name in commands.iter().map(|entry| entry.wire_name) {
         assert_eq!(
@@ -519,6 +522,19 @@ fn command_registry_covers_every_variant_without_wildcard() {
                 false,
                 false,
                 V1_3,
+            ),
+            AppCommand::McpTest { .. } => {
+                assert_command_entry(&command, "mcp_test", true, None, None, false, false, V1_7)
+            }
+            AppCommand::McpServerRemove { .. } => assert_command_entry(
+                &command,
+                "mcp_server_remove",
+                true,
+                None,
+                None,
+                false,
+                false,
+                V1_7,
             ),
         }
     }

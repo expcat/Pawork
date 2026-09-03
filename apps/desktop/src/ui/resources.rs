@@ -25,6 +25,12 @@ pub(super) struct ResourcesPanelState {
     pub fetch: ResourcesFetch,
     pub servers: Vec<McpServerEntry>,
     pub stale_reason: Option<String>,
+    /// 至少成功拉取过一次（SET-6c：Settings「工具与 MCP」页导航 gate，
+    /// 语义与 settings_general / settings_permissions 的 available 一致）。
+    pub available: bool,
+    /// SET-6c：mcp_test / mcp_server_remove 失败文案（Settings 页可见；
+    /// 工作台 Composer footer 仍走 status_hint）。成功回执才清除。
+    pub action_error: Option<String>,
     pub scroll: ScrollHandle,
 }
 
@@ -35,6 +41,8 @@ impl Default for ResourcesPanelState {
             fetch: ResourcesFetch::Idle,
             servers: Vec::new(),
             stale_reason: None,
+            available: false,
+            action_error: None,
             scroll: ScrollHandle::new(),
         }
     }
@@ -80,8 +88,59 @@ impl ResourcesPanelState {
         self.servers = servers;
         self.fetch = ResourcesFetch::Ready;
         self.stale_reason = None;
+        self.available = true;
         true
     }
+
+    /// mcp_test / mcp_server_remove 的 Data 回执（SET-6c / ADR-049）：回执
+    /// 即 Host 权威写后状态。bump epoch 使在途 mcp_list 失效，避免 Refresh
+    /// 迟到响应覆盖写后清单；成功回执清除 action_error。
+    pub(super) fn apply_authoritative_servers(&mut self, servers: Vec<McpServerEntry>) {
+        self.epoch += 1;
+        self.servers = servers;
+        self.fetch = ResourcesFetch::Ready;
+        self.stale_reason = None;
+        self.available = true;
+        self.action_error = None;
+    }
+}
+
+/// MCP server 清单行头（name + state；Inspector Resources 与 Settings
+/// 「工具与 MCP」页共用同一渲染形状）。
+pub(super) fn mcp_server_name_row(server: &McpServerEntry) -> gpui::Div {
+    div()
+        .flex()
+        .flex_row()
+        .items_baseline()
+        .justify_between()
+        .gap_2()
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .truncate()
+                .text_size(font::SM)
+                .text_color(dark().text.primary)
+                .child(server.name.clone()),
+        )
+        .child(
+            Label::new(server.state.clone())
+                .size(font::XS)
+                .color(if server.state == "failed" {
+                    dark().semantic.danger_text
+                } else {
+                    dark().text.secondary
+                }),
+        )
+}
+
+/// MCP server 清单行 meta 文案（transport · tools 数 · last_error）。
+pub(super) fn mcp_server_meta_text(server: &McpServerEntry) -> String {
+    let mut meta = format!("{} · {} tools", server.transport, server.tool_count);
+    if let Some(error) = &server.last_error {
+        meta.push_str(&format!(" · {error}"));
+    }
+    meta
 }
 
 impl AppView {
@@ -139,46 +198,14 @@ impl AppView {
                         .track_scroll(&self.resources.scroll)
                         .overflow_y_scroll();
                     for server in &self.resources.servers {
-                        let mut meta =
-                            format!("{} · {} tools", server.transport, server.tool_count);
-                        if let Some(error) = &server.last_error {
-                            meta.push_str(&format!(" · {error}"));
-                        }
-                        list = list
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_row()
-                                    .items_baseline()
-                                    .justify_between()
-                                    .gap_2()
-                                    .px_2()
-                                    .pt_2()
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .truncate()
-                                            .text_size(font::SM)
-                                            .text_color(dark().text.primary)
-                                            .child(server.name.clone()),
-                                    )
-                                    .child(Label::new(server.state.clone()).size(font::XS).color(
-                                        if server.state == "failed" {
-                                            dark().semantic.danger_text
-                                        } else {
-                                            dark().text.secondary
-                                        },
-                                    )),
-                            )
-                            .child(
-                                div()
-                                    .px_2()
-                                    .pb_2()
-                                    .text_size(font::XS)
-                                    .text_color(dark().text.tertiary)
-                                    .child(meta),
-                            );
+                        list = list.child(mcp_server_name_row(server).px_2().pt_2()).child(
+                            div()
+                                .px_2()
+                                .pb_2()
+                                .text_size(font::XS)
+                                .text_color(dark().text.tertiary)
+                                .child(mcp_server_meta_text(server)),
+                        );
                     }
                     list.into_any_element()
                 }
@@ -266,5 +293,48 @@ mod tests {
         assert_eq!(state.servers.len(), 1);
         assert_eq!(state.stale_reason.as_deref(), Some("connection lost"));
         assert!(!state.mark_failed_for_epoch(epoch, "late failure"));
+    }
+
+    #[test]
+    fn authoritative_receipt_lands_and_marks_page_available() {
+        let mut state = ResourcesPanelState::default();
+        assert!(!state.available);
+        let epoch = state.begin_refresh();
+        assert!(state.apply_servers(
+            epoch,
+            vec![McpServerEntry {
+                name: "fetch".into(),
+                transport: "stdio".into(),
+                state: "ready".into(),
+                tool_count: 2,
+                last_error: None,
+            }]
+        ));
+        assert!(state.available);
+        let inflight = state.begin_refresh();
+        state.stale_reason = Some("connection lost".into());
+        state.action_error = Some("Could not test MCP server · boom".into());
+        // 回执落地、解除 stale、清除 action_error，并 bump epoch 使在途
+        // mcp_list 失效。
+        state.apply_authoritative_servers(Vec::new());
+        assert_eq!(state.fetch, ResourcesFetch::Ready);
+        assert!(state.stale_reason.is_none());
+        assert!(state.servers.is_empty());
+        assert!(state.available);
+        assert!(state.action_error.is_none());
+        assert!(
+            !state.apply_servers(
+                inflight,
+                vec![McpServerEntry {
+                    name: "stale".into(),
+                    transport: "stdio".into(),
+                    state: "ready".into(),
+                    tool_count: 1,
+                    last_error: None,
+                }]
+            ),
+            "in-flight mcp_list must not overwrite a later receipt"
+        );
+        assert!(state.servers.is_empty());
     }
 }

@@ -892,6 +892,24 @@ fn command_terminal_close<'a>(
     ))
 }
 
+fn command_mcp_test<'a>(
+    adapter: &'a GuiHostAdapter,
+    envelope: &'a AppCommandEnvelope,
+    command: &'a AppCommand,
+) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
+    Box::pin(handlers::mcp::mcp_test(adapter, envelope, command))
+}
+
+fn command_mcp_server_remove<'a>(
+    adapter: &'a GuiHostAdapter,
+    envelope: &'a AppCommandEnvelope,
+    command: &'a AppCommand,
+) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
+    Box::pin(handlers::mcp::mcp_server_remove(
+        adapter, envelope, command,
+    ))
+}
+
 static QUERY_HANDLERS: &[(&str, QueryHandler)] = &[
     ("workspace_list", query_workspace_list),
     ("session_get", query_session_get),
@@ -926,6 +944,8 @@ static COMMAND_HANDLERS: &[(&str, CommandHandler)] = &[
     ("terminal_write", command_terminal_write),
     ("terminal_resize", command_terminal_resize),
     ("terminal_close", command_terminal_close),
+    ("mcp_test", command_mcp_test),
+    ("mcp_server_remove", command_mcp_server_remove),
 ];
 
 impl GuiHostAdapter {

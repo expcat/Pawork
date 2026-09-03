@@ -3148,6 +3148,391 @@ async fn auth_set_api_key_verify_failure_keeps_old_credential() {
     server.verify().await;
 }
 
+// ---- SET-6c 工具与 MCP（ADR-049）----
+
+/// 构造带 MCP 段生效配置的 adapter：merged 视图经 extra 注入（模拟
+/// loader 已发现 Global 层），盘上内容由测试自行播种保持一致。
+async fn mcp_settings_adapter(mcp: serde_json::Value) -> (GuiHostAdapter, tempfile::TempDir) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
+        .await
+        .expect("store");
+    let mut config = pawork_workspace::config::PaworkConfig::default();
+    config
+        .providers
+        .push(pawork_workspace::config::ProviderConfig {
+            id: "glm-coding".into(),
+            base_url: Some("http://127.0.0.1:1".into()),
+            default: None,
+        });
+    config.extra.insert("mcp".into(), mcp);
+    let backend = Arc::new(pawork_auth::MemoryBackend::new());
+    let core = AppCore::from_parts(
+        Arc::new(MockProvider::sequence(Vec::new())),
+        None,
+        pawork_domain::ModelId::from("glm-5.2"),
+        pawork_domain::ProviderId::from("glm-coding"),
+        Some(store),
+    )
+    .with_state(config, backend as Arc<dyn pawork_auth::SecretBackend>);
+    (GuiHostAdapter::new(Arc::new(core)), dir)
+}
+
+#[tokio::test]
+async fn mcp_server_remove_clears_disk_secret_and_memory() {
+    // 写盘与 mcp-auth.json 目标均经 HOME 重定向到临时目录。
+    let _home_env = HOME_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let home = tempfile::tempdir().expect("home tempdir");
+    let _restore_home = RestoreHome(std::env::var_os("HOME"));
+    crate::testsupport::set_env("HOME", home.path().to_str().expect("utf-8 home"));
+
+    // Global 盘上播种 demo + keep（demo 带一个 SecretRef header）。
+    let config_path = pawork_workspace::config::global_config_path().expect("global path");
+    std::fs::create_dir_all(config_path.parent().expect("config parent"))
+        .expect("create config dir");
+    let seeded = r#"trust_workspaces = true
+
+[mcp.servers.demo]
+transport = { kind = "http", url = "https://mcp.example.com/mcp", headers = { Authorization = { service = "pawork.mcp.demo", account = "cred-1" } } }
+
+[mcp.servers.keep]
+transport = { kind = "http", url = "https://keep.example.com/mcp" }
+"#;
+    std::fs::write(&config_path, seeded).expect("seed global config");
+
+    let (adapter, _dir) = mcp_settings_adapter(serde_json::json!({
+        "servers": {
+            "demo": {
+                "transport": {
+                    "kind": "http",
+                    "url": "https://mcp.example.com/mcp",
+                    "headers": {
+                        "Authorization": {
+                            "service": "pawork.mcp.demo",
+                            "account": "cred-1"
+                        }
+                    }
+                }
+            },
+            "keep": {
+                "transport": { "kind": "http", "url": "https://keep.example.com/mcp" }
+            }
+        }
+    }))
+    .await;
+
+    let secret_backend = crate::extensions::mcp_secret_backend();
+    secret_backend
+        .store("pawork.mcp.demo", "cred-1", "sk-mcp-value")
+        .expect("store mcp secret");
+
+    let response = adapter
+        .command(&command_envelope(AppCommand::McpServerRemove {
+            name: "demo".into(),
+        }))
+        .await
+        .expect("mcp_server_remove");
+    let AppResponse::Data(data) = response else {
+        panic!("McpServerRemove must return Data: {response:?}")
+    };
+    let names: Vec<&str> = data["servers"]
+        .as_array()
+        .expect("servers array")
+        .iter()
+        .map(|server| server["name"].as_str().expect("server name"))
+        .collect();
+    assert_eq!(names, vec!["keep"]);
+
+    // 盘：demo 条目消失；未知字段与其它 server 原样保留。
+    let persisted = std::fs::read_to_string(&config_path).expect("persisted config");
+    assert!(!persisted.contains("demo"), "demo must be gone: {persisted}");
+    assert!(persisted.contains("trust_workspaces = true"));
+    // toml 序列化会把单键子表折叠为 [mcp.servers.keep.transport] 形态的
+    // header，按前缀断言，不写死 header 形态。
+    assert!(
+        persisted.contains("mcp.servers.keep"),
+        "keep must be preserved: {persisted}"
+    );
+
+    // 密：pawork.mcp.demo 下的 SecretRef 已清理。
+    assert!(matches!(
+        secret_backend.get("pawork.mcp.demo", "cred-1"),
+        Err(pawork_auth::AuthError::NotFound)
+    ));
+
+    // 内存：同会话重查 mcp_list 不再含 demo。
+    let list = adapter
+        .query(&query_envelope(AppQuery::McpList))
+        .await
+        .expect("mcp list after remove");
+    let AppResponse::Data(list) = list else {
+        panic!("McpList must return Data: {list:?}")
+    };
+    let list_wire = serde_json::to_string(&list).expect("serialize list");
+    assert!(
+        !list_wire.contains("demo"),
+        "mcp_list must not contain demo: {list_wire}"
+    );
+    assert!(list_wire.contains("keep"));
+}
+
+#[tokio::test]
+async fn mcp_server_remove_unknown_name_fails_closed() {
+    let _home_env = HOME_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let home = tempfile::tempdir().expect("home tempdir");
+    let _restore_home = RestoreHome(std::env::var_os("HOME"));
+    crate::testsupport::set_env("HOME", home.path().to_str().expect("utf-8 home"));
+
+    let config_path = pawork_workspace::config::global_config_path().expect("global path");
+    std::fs::create_dir_all(config_path.parent().expect("config parent"))
+        .expect("create config dir");
+    let seeded = r#"[mcp.servers.demo]
+transport = { kind = "http", url = "https://mcp.example.com/mcp", headers = { Authorization = { service = "pawork.mcp.demo", account = "cred-1" } } }
+"#;
+    std::fs::write(&config_path, seeded).expect("seed global config");
+
+    let (adapter, _dir) = mcp_settings_adapter(serde_json::json!({
+        "servers": {
+            "demo": {
+                "transport": {
+                    "kind": "http",
+                    "url": "https://mcp.example.com/mcp",
+                    "headers": {
+                        "Authorization": {
+                            "service": "pawork.mcp.demo",
+                            "account": "cred-1"
+                        }
+                    }
+                }
+            }
+        }
+    }))
+    .await;
+
+    let secret_backend = crate::extensions::mcp_secret_backend();
+    secret_backend
+        .store("pawork.mcp.demo", "cred-1", "sk-mcp-value")
+        .expect("store mcp secret");
+
+    let error = adapter
+        .command(&command_envelope(AppCommand::McpServerRemove {
+            name: "ghost".into(),
+        }))
+        .await
+        .expect_err("unknown server must fail closed");
+    assert_eq!(error.code, "unknown_mcp_server");
+
+    // 三处皆不动：盘字节一致、SecretRef 保留、内存 mcp_list 仍含 demo。
+    let after = std::fs::read_to_string(&config_path).expect("config after");
+    assert_eq!(seeded, after);
+    assert_eq!(
+        secret_backend
+            .get("pawork.mcp.demo", "cred-1")
+            .expect("secret must be kept"),
+        "sk-mcp-value"
+    );
+    let list = adapter
+        .query(&query_envelope(AppQuery::McpList))
+        .await
+        .expect("mcp list after failure");
+    let AppResponse::Data(list) = list else {
+        panic!("McpList must return Data: {list:?}")
+    };
+    assert!(
+        serde_json::to_string(&list)
+            .expect("serialize list")
+            .contains("demo"),
+        "demo must remain in mcp_list: {list}"
+    );
+}
+
+#[tokio::test]
+async fn mcp_test_unknown_name_fails_closed_and_keeps_list() {
+    let (adapter, _dir) = mcp_settings_adapter(serde_json::json!({
+        "servers": {
+            "demo": { "transport": { "kind": "http", "url": "http://127.0.0.1:1/mcp" } }
+        }
+    }))
+    .await;
+
+    let before = adapter
+        .query(&query_envelope(AppQuery::McpList))
+        .await
+        .expect("mcp list before");
+    let error = adapter
+        .command(&command_envelope(AppCommand::McpTest { name: "ghost".into() }))
+        .await
+        .expect_err("unknown server must fail closed");
+    assert_eq!(error.code, "unknown_mcp_server");
+    let after = adapter
+        .query(&query_envelope(AppQuery::McpList))
+        .await
+        .expect("mcp list after");
+    assert_eq!(
+        serde_json::to_string(&before).expect("serialize before"),
+        serde_json::to_string(&after).expect("serialize after"),
+        "mcp_list must be unchanged by the failed test"
+    );
+}
+
+#[tokio::test]
+async fn mcp_test_unreachable_http_fails_closed_and_keeps_slot_state() {
+    let ws = tempfile::tempdir().expect("workspace tempdir");
+    let (adapter, _dir) = mcp_settings_adapter(serde_json::json!({
+        "servers": {
+            "demo": { "transport": { "kind": "http", "url": "http://127.0.0.1:1/mcp" } }
+        }
+    }))
+    .await;
+    // test_one_mcp 需要已附加 workspace 才会走到建连；预置 connected slot，
+    // 断言失败路径不覆盖既有 slot 状态（fail-closed）。
+    {
+        let mut core = adapter.core.write().await;
+        core.attach_workspace(ws.path()).expect("attach workspace");
+        core.extensions.mcp_servers.push(crate::extensions::McpServerSlot {
+            name: "demo".into(),
+            transport: "http".into(),
+            state: "connected".into(),
+            last_error: None,
+            tools: Vec::new(),
+            client: None,
+        });
+    }
+
+    let before = adapter
+        .query(&query_envelope(AppQuery::McpList))
+        .await
+        .expect("mcp list before");
+    let error = adapter
+        .command(&command_envelope(AppCommand::McpTest { name: "demo".into() }))
+        .await
+        .expect_err("unreachable http server must fail closed");
+    assert_eq!(error.code, "app_error");
+    let after = adapter
+        .query(&query_envelope(AppQuery::McpList))
+        .await
+        .expect("mcp list after");
+    assert_eq!(
+        serde_json::to_string(&before).expect("serialize before"),
+        serde_json::to_string(&after).expect("serialize after"),
+        "slot state must be unchanged by the failed test"
+    );
+    let AppResponse::Data(list) = after else {
+        panic!("McpList must return Data: {after:?}")
+    };
+    let demo = list["servers"]
+        .as_array()
+        .expect("servers array")
+        .iter()
+        .find(|server| server["name"] == "demo")
+        .expect("demo slot retained");
+    assert_eq!(demo["state"], "connected");
+    assert_eq!(demo["last_error"], serde_json::Value::Null);
+}
+
+#[tokio::test]
+async fn mcp_server_remove_same_name_in_workspace_layer_fails_closed() {
+    let _home_env = HOME_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let home = tempfile::tempdir().expect("home tempdir");
+    let _restore_home = RestoreHome(std::env::var_os("HOME"));
+    crate::testsupport::set_env("HOME", home.path().to_str().expect("utf-8 home"));
+
+    // Global 盘上播种 demo；workspace 层再定义同名 demo（跨层同名）。
+    let config_path = pawork_workspace::config::global_config_path().expect("global path");
+    std::fs::create_dir_all(config_path.parent().expect("config parent"))
+        .expect("create config dir");
+    let seeded = r#"[mcp.servers.demo]
+transport = { kind = "http", url = "https://mcp.example.com/mcp", headers = { Authorization = { service = "pawork.mcp.demo", account = "cred-1" } } }
+"#;
+    std::fs::write(&config_path, seeded).expect("seed global config");
+    let ws = tempfile::tempdir().expect("workspace tempdir");
+    let ws_config = ws.path().join(".pawork").join("config.toml");
+    std::fs::create_dir_all(ws_config.parent().expect("ws config parent"))
+        .expect("create ws config dir");
+    std::fs::write(
+        &ws_config,
+        "[mcp.servers.demo]\ntransport = { kind = \"http\", url = \"https://workspace.example.com/mcp\" }\n",
+    )
+    .expect("seed workspace config");
+
+    let (adapter, _dir) = mcp_settings_adapter(serde_json::json!({
+        "servers": {
+            "demo": {
+                "transport": {
+                    "kind": "http",
+                    "url": "https://mcp.example.com/mcp",
+                    "headers": {
+                        "Authorization": {
+                            "service": "pawork.mcp.demo",
+                            "account": "cred-1"
+                        }
+                    }
+                }
+            }
+        }
+    }))
+    .await;
+    adapter
+        .core
+        .write()
+        .await
+        .attach_workspace(ws.path())
+        .expect("attach workspace");
+
+    let secret_backend = crate::extensions::mcp_secret_backend();
+    secret_backend
+        .store("pawork.mcp.demo", "cred-1", "sk-mcp-value")
+        .expect("store mcp secret");
+
+    let error = adapter
+        .command(&command_envelope(AppCommand::McpServerRemove {
+            name: "demo".into(),
+        }))
+        .await
+        .expect_err("cross-layer same name must fail closed");
+    assert_eq!(error.code, "mcp_server_defined_in_other_layers");
+    assert!(
+        error.message.contains("also defined"),
+        "message must state the server is also defined elsewhere: {}",
+        error.message
+    );
+    assert!(
+        error.message.contains("workspace"),
+        "message must name the other layer: {}",
+        error.message
+    );
+
+    // 三处皆不动：盘字节一致、SecretRef 保留、内存 mcp_list 仍含 demo。
+    let after = std::fs::read_to_string(&config_path).expect("config after");
+    assert_eq!(seeded, after);
+    assert!(ws_config.is_file(), "workspace layer untouched");
+    assert_eq!(
+        secret_backend
+            .get("pawork.mcp.demo", "cred-1")
+            .expect("secret must be kept"),
+        "sk-mcp-value"
+    );
+    let list = adapter
+        .query(&query_envelope(AppQuery::McpList))
+        .await
+        .expect("mcp list after failure");
+    let AppResponse::Data(list) = list else {
+        panic!("McpList must return Data: {list:?}")
+    };
+    assert!(
+        serde_json::to_string(&list)
+            .expect("serialize list")
+            .contains("demo"),
+        "demo must remain in mcp_list: {list}"
+    );
+}
+
 // ---- SET-4 A3：xAI 双认证（auth_set_api_key 走 verify-then-replace 门）----
 
 #[tokio::test]
