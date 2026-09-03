@@ -1,6 +1,6 @@
 # Desktop 产品与交互规格
 
-> 基线日期：2026-09-01。生产连接、主要组件链路与 macOS AX 语义基座已经存在；正式 Host/Desktop 的项目、对话、文件、Git Changes 与 Terminal 真实核心路径已通过，状态和后续顺序只看 [ROADMAP](../../ROADMAP.md)。
+> 基线日期：2026-09-03。生产连接、主要组件链路与 macOS AX 语义基座已经存在；正式 Host/Desktop 的项目、对话、文件、Git Changes 与 Terminal 真实核心路径已通过，状态和后续顺序只看 [ROADMAP](../../ROADMAP.md)。
 
 ## 1. 产品定位
 
@@ -29,7 +29,7 @@ flowchart LR
 | Inspector / Changes | 默认 Changes；顶层 Changes/Terminal/Resources 与二级 Files/Summary 分层；DiffView；折叠态 Header ActivityPopover | 只读；无 stage/unstage/hunk 命令。 |
 | Inspector / Terminal | PTY 创建、输入、resize、Stop/Close、流式输出与 live/snapshot 终态；任务切换隔离草稿；失败与断线诚实显示 | 创建需 Policy；纯文本视图过滤 ANSI/VT 控制序列但不是完整 VT emulator；ADR-045 的 `terminal_close` / `TerminalExited` 自 API 1.3 起可用，旧 minor 仍只从 snapshot 获知终态。 |
 | Inspector / Resources | MCP server/tool 状态、刷新 | 只读；没有已加载 AGENTS.md/Skills 分区。 |
-| Settings | 独立 Settings Rail + 全宽内容；首个页面为模型与供应商 | 壳与供应商页已实现：SET-3 落地只读页（gear 进入、返回恢复工作台、断线 stale 标注），SET-4 落地认证写操作（API key secure 输入验证、OAuth 等待/取消、Replace/Remove、AuthChanged 驱动、stale 断线三路径禁写）；SET-5 落地模型目录与默认项；SET-6a 通用页（proxy_url）；SET-6b 权限与审批页（会话内 approval mode / workspace trust，不持久化）。其余页等待 SET-6 后续。 |
+| Settings | 独立 Settings Rail + 全宽内容；模型与供应商、通用、权限与审批、工具与 MCP、终端、外观 | SET-3～SET-6e 已逐片实现；Host-backed 页按权威查询能力显示并在 stale 时禁写，本地外观页离线常在，复用 100%/125%/150% 会话级字号。高级、关于未启用；真实账号、完整真窗口与人工验收待 SET-7。 |
 
 ## 3. 连接与状态模型
 
@@ -66,7 +66,7 @@ flowchart LR
 | DESK-09 | 断线态可 Reconnect，Run/会话不因 UI 断线丢失。 | 重连路径已实现；项目与 Session 归属跨重启已复验。 |
 | DESK-10 | 1080×720 下 Composer、状态栏和 Header Activity 触发器仍可用。 | 生产响应式路径已实现；完整视觉签字仍待人工验收。 |
 | DESK-11 | 可见结构和控件具备稳定 AX identifier、正确 role/name/value/state/action；AX 操作复用鼠标/键盘的业务 gate。 | ADR-042 macOS bridge 已实现；本轮主路径可经 AX 驱动，全组件 VoiceOver 与 Windows/Linux 平台仍未验收。 |
-| DESK-12 | Settings 从 TaskRail 进入，以 Host capability 驱动供应商认证/模型目录；返回时保持工作台状态，secure input 不泄漏 AX value。 | SET-3 壳 / 只读页与 SET-4 认证写操作已实现：全部动作由 descriptor 驱动，断线 stale 时可见 / 键盘 / AX 同禁（AX 逐按钮与可见按钮同源启用，含空输入 Verify）；Replace 流程 Cancelled / Expired / Failed 不清旧凭证并触发权威重查；secure input 的 AX value 只发布掩码并有定向回归（全树无明文）；真实账号端到端与 VoiceOver 人工验收 pending，见 [settings.md](settings.md)。 |
+| DESK-12 | Settings 从 TaskRail 进入；Host capability 驱动业务页，本地外观页驱动当前 Desktop 字号；返回时保持工作台状态，secure input 不泄漏 AX value。 | SET-3～SET-6e 已实现。外观页在离线态仍可达，三档按钮/快捷键/AX Press 共享 `TextScale`，当前档 selected 同步；字号不持久化、重启恢复 100%。真实账号端到端、完整真窗口与 VoiceOver 人工验收 pending，见 [settings.md](settings.md)。 |
 
 ### 4.1 可见合同（已实现，非终局签字）
 
@@ -86,7 +86,7 @@ flowchart LR
 - 菜单支持键盘到达、选择与关闭；长标题以 truncate + 可辨识上下文呈现；
 - 长会话、长 diff 和窄窗不让主要操作不可达。
 - AX identifier 与用户可见/可本地化 label 分离；disabled 控件不发布可执行 action，未知 action fail-closed；新增可见交互须同批补语义节点。
-- 应用内字号支持 100% / 125% / 150%：`Cmd+=` / `Cmd++` 放大、`Cmd+-` 缩小、`Cmd+0` 重置；状态栏与 AX 发布当前百分比。150% + 1080×720 使用 320px TaskRail，Workspace 保留 760px。
+- 应用内字号支持 100% / 125% / 150%：`Cmd+=` / `Cmd++` 放大、`Cmd+-` 缩小、`Cmd+0` 重置；SET-6e 外观页提供同源三档按钮及当前值/AX selected。字号只在当前 Desktop 会话生效，重启恢复 100%；150% + 1080×720 使用 320px TaskRail，Workspace 保留 760px。
 - macOS Increase Contrast 在同一深色主题内增强辅助文字、surface、边界与选区并监听系统变更；当前 UI 无动画，Reduce Motion 无渲染分支。主动系统偏好验收仍未执行，不宣称真系统态通过。
 
 当前锁定 GPUI 0.2.2 不原生导出元素级 AX tree；ADR-042 已由 Desktop 显式 `AxTree` + AppKit 虚拟元素补救。菜单方向键、grouping/scope tab stop 与全局焦点等价路径已经存在；已知缺口仍包括 VoiceOver 屏幕朗读措辞/顺序、主动系统偏好，以及 Windows/Linux 平台 AX，它们不得降级为已通过。

@@ -24,11 +24,14 @@ use crate::ui::resources::ResourcesFetch;
 use crate::ui::settings::{
     general_status_lines, parse_settings_control, parse_settings_mcp_control,
     parse_terminal_dimension, permissions_status_lines, provider_status_lines,
-    terminal_save_enabled, terminal_status_lines, tools_status_lines, SettingsControl,
-    SettingsMcpAction, SETTINGS_CONTROL_PREFIX, SETTINGS_MCP_CONTROL_PREFIX,
+    settings_text_scale_from_identifier, settings_text_scale_identifier, terminal_save_enabled,
+    terminal_status_lines, tools_status_lines, SettingsControl, SettingsMcpAction,
+    SETTINGS_APPEARANCE_CONTROL_GAP, SETTINGS_APPEARANCE_CONTROL_HEIGHT,
+    SETTINGS_APPEARANCE_CONTROL_WIDTH, SETTINGS_APPEARANCE_EFFECT_NOTE,
+    SETTINGS_APPEARANCE_THEME_NOTE, SETTINGS_CONTROL_PREFIX, SETTINGS_MCP_CONTROL_PREFIX,
     SETTINGS_MCP_EFFECT_NOTE, SETTINGS_MCP_REMOVE_CONFIRM_NOTE, SETTINGS_PERMISSIONS_EFFECT_NOTE,
     SETTINGS_PROXY_EFFECT_NOTE, SETTINGS_PROXY_UNSET, SETTINGS_TERMINAL_EFFECT_NOTE,
-    SETTINGS_TERMINAL_SHELL_UNSET, SETTINGS_TRUST_UNSET,
+    SETTINGS_TERMINAL_SHELL_UNSET, SETTINGS_TEXT_SCALES, SETTINGS_TRUST_UNSET,
 };
 use crate::ui::shell_layout;
 use crate::ui::theme::{font, metrics};
@@ -309,10 +312,20 @@ impl AppView {
                 window.focus(&self.settings_nav_terminal_focus);
                 self.on_select_settings_page(SettingsPage::Terminal, window, cx);
             }
+            "settings-nav-appearance" => {
+                window.focus(&self.settings_nav_appearance_focus);
+                self.on_select_settings_page(SettingsPage::Appearance, window, cx);
+            }
             "settings-proxy-save" => self.on_settings_proxy_save(cx),
             "settings-proxy-clear" => self.on_settings_proxy_clear(cx),
             "settings-terminal-save" => self.on_settings_terminal_save(cx),
             "settings-terminal-clear" => self.on_settings_terminal_clear(cx),
+            other if other.starts_with("settings-text-scale-") => {
+                let Some(scale) = settings_text_scale_from_identifier(other) else {
+                    return false;
+                };
+                self.on_settings_text_scale(scale, window, cx);
+            }
             // SET-6b：五档选择与可见按钮同源派发（入口复核 gate）；未知
             // wire 串（含静态行 id）fail-closed。
             other if other.starts_with("settings-approval-mode-") => {
@@ -1079,7 +1092,33 @@ impl AppView {
                 ),
             ));
         }
-        rail
+        // SET-6e 外观是 Desktop 本地能力，始终在所有 Host 可用页之后
+        // 显示；位置按实际可见项累计，与 render 同源。
+        let mut appearance_y = nav_y + metrics::RAIL_TOP_ROW_HEIGHT + PAD;
+        if general_available {
+            appearance_y += metrics::RAIL_TOP_ROW_HEIGHT + PAD;
+        }
+        if permissions_available {
+            appearance_y += metrics::RAIL_TOP_ROW_HEIGHT + PAD;
+        }
+        if tools_available {
+            appearance_y += metrics::RAIL_TOP_ROW_HEIGHT + PAD;
+        }
+        if terminal_available {
+            appearance_y += metrics::RAIL_TOP_ROW_HEIGHT + PAD;
+        }
+        rail.child(settings_nav_ax(
+            "settings-nav-appearance",
+            "外观",
+            current_page == SettingsPage::Appearance,
+            self.open_menu.is_none() && self.settings_nav_appearance_focus.is_focused(window),
+            AxRect::new(
+                frame.x + PAD,
+                frame.y + appearance_y,
+                width,
+                metrics::RAIL_TOP_ROW_HEIGHT,
+            ),
+        ))
     }
 
     /// Settings 全宽内容（SET-4）：标题 / 状态行 / Provider 卡片。卡片含
@@ -1103,6 +1142,9 @@ impl AppView {
             && self.projection.settings_terminal.available
         {
             return self.settings_terminal_page_ax(window, cx, frame);
+        }
+        if self.settings_page == SettingsPage::Appearance {
+            return self.settings_appearance_page_ax(window, frame);
         }
         const HEADING_HEIGHT: f32 = 28.0;
         const SUBTITLE_HEIGHT: f32 = 20.0;
@@ -1795,6 +1837,90 @@ impl AppView {
                 AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT * 2.0),
             )
             .value(SETTINGS_TERMINAL_EFFECT_NOTE),
+        )
+    }
+
+    /// 「外观」页 AX（SET-6e）：三档字号按钮与 render 共用冻结
+    /// identifier / 当前选中态，不受 Host 连接状态影响。
+    fn settings_appearance_page_ax(&self, window: &Window, frame: AxRect) -> AxNode {
+        const HEADING_HEIGHT: f32 = 28.0;
+        const SUBTITLE_HEIGHT: f32 = 20.0;
+        const STATUS_HEIGHT: f32 = 20.0;
+        let width = (frame.width - 32.0).max(0.0);
+        let mut y = frame.y + 16.0 + HEADING_HEIGHT + SUBTITLE_HEIGHT + 8.0;
+        let mut page = AxNode::new("settings-page", AxRole::Group, "外观", frame)
+            .child(
+                AxNode::new(
+                    "settings-page-title",
+                    AxRole::StaticText,
+                    "外观",
+                    AxRect::new(
+                        frame.x + 16.0,
+                        frame.y + 16.0,
+                        width,
+                        HEADING_HEIGHT + SUBTITLE_HEIGHT,
+                    ),
+                )
+                .value("Desktop presentation preferences"),
+            )
+            .child(
+                AxNode::new(
+                    "settings-appearance-theme",
+                    AxRole::StaticText,
+                    "主题",
+                    AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT * 3.0),
+                )
+                .value(format!("深色 · {SETTINGS_APPEARANCE_THEME_NOTE}")),
+            );
+        y += STATUS_HEIGHT * 3.0 + 8.0;
+        page = page.child(
+            AxNode::new(
+                "settings-appearance-text-size",
+                AxRole::StaticText,
+                "字号",
+                AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT * 2.0),
+            )
+            .value(format!("当前 · {}%", self.text_scale.percent())),
+        );
+        y += STATUS_HEIGHT * 2.0 + 8.0;
+        for (index, scale) in SETTINGS_TEXT_SCALES.into_iter().enumerate() {
+            let id = settings_text_scale_identifier(scale);
+            let selected = self.text_scale == scale;
+            let focused = self
+                .settings_appearance_focus
+                .get(id)
+                .is_some_and(|focus| self.open_menu.is_none() && focus.is_focused(window));
+            page = page.child(
+                AxNode::new(
+                    id,
+                    AxRole::Button,
+                    format!("字号 {}%", scale.percent()),
+                    AxRect::new(
+                        frame.x
+                            + 16.0
+                            + index as f32
+                                * (SETTINGS_APPEARANCE_CONTROL_WIDTH
+                                    + SETTINGS_APPEARANCE_CONTROL_GAP),
+                        y,
+                        SETTINGS_APPEARANCE_CONTROL_WIDTH,
+                        SETTINGS_APPEARANCE_CONTROL_HEIGHT,
+                    ),
+                )
+                .value(if selected { "当前" } else { "可选" })
+                .selected(selected)
+                .focused(focused)
+                .action(AxAction::Press),
+            );
+        }
+        y += SETTINGS_APPEARANCE_CONTROL_HEIGHT + 8.0;
+        page.child(
+            AxNode::new(
+                "settings-appearance-effect",
+                AxRole::StaticText,
+                "生效范围",
+                AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT * 3.0),
+            )
+            .value(SETTINGS_APPEARANCE_EFFECT_NOTE),
         )
     }
 
@@ -4057,6 +4183,118 @@ mod tests {
                 );
             });
         }
+    }
+
+    /// SET-6e：外观页是 Desktop 本地能力，离线也必须可达；字号 AX Press
+    /// 与可见 / 键盘路径共用 `set_text_scale`，并同步根字号与 selected 状态。
+    #[gpui::test]
+    fn settings_appearance_ax_is_available_offline_and_updates_scale(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use gpui::AppContext;
+
+        struct AxAppearanceHost {
+            view: gpui::Entity<AppView>,
+        }
+        impl gpui::Render for AxAppearanceHost {
+            fn render(
+                &mut self,
+                _window: &mut Window,
+                _cx: &mut Context<Self>,
+            ) -> impl gpui::IntoElement {
+                gpui::div()
+            }
+        }
+
+        let platform = std::sync::Arc::new(crate::platform::Platform::new());
+        let socket = std::env::temp_dir().join("set6e-ax-appearance.sock");
+        let (host, cx) = cx.add_window_view(|_window, cx| {
+            let view = cx.new(|cx| AppView::new(platform, socket, None, cx));
+            AxAppearanceHost { view }
+        });
+        let view = cx.update(|_window, cx| host.read(cx).view.clone());
+        cx.update(|_window, cx| {
+            view.update(cx, |view, _cx| view.route = AppRoute::Settings);
+        });
+
+        cx.update(|window, cx| {
+            let tree = view.read(cx).accessibility_tree(window, cx);
+            tree.validate().expect("offline Settings AX tree validates");
+            assert!(tree.find("settings-nav-appearance").is_some());
+            assert!(tree.permits(&AxRequest {
+                identifier: "settings-nav-appearance".into(),
+                action: AxAction::Press,
+                value: None,
+            }));
+        });
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.handle_accessibility_request(
+                    AxRequest {
+                        identifier: "settings-nav-appearance".into(),
+                        action: AxAction::Press,
+                        value: None,
+                    },
+                    window,
+                    cx,
+                );
+            });
+        });
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            assert_eq!(view.settings_page, SettingsPage::Appearance);
+            let tree = view.accessibility_tree(window, cx);
+            tree.validate().expect("appearance page AX tree validates");
+            let scale_100 = tree.find("settings-text-scale-100").unwrap();
+            let scale_125 = tree.find("settings-text-scale-125").unwrap();
+            let scale_150 = tree.find("settings-text-scale-150").unwrap();
+            assert!(scale_100.selected);
+            assert!(!scale_125.selected);
+            assert!(!scale_150.selected);
+            for node in [scale_100, scale_125, scale_150] {
+                assert_eq!(node.bounds.width, SETTINGS_APPEARANCE_CONTROL_WIDTH);
+                assert_eq!(node.bounds.height, SETTINGS_APPEARANCE_CONTROL_HEIGHT);
+            }
+            assert_eq!(
+                scale_125.bounds.x - scale_100.bounds.x,
+                SETTINGS_APPEARANCE_CONTROL_WIDTH + SETTINGS_APPEARANCE_CONTROL_GAP
+            );
+            assert_eq!(
+                scale_150.bounds.x - scale_125.bounds.x,
+                SETTINGS_APPEARANCE_CONTROL_WIDTH + SETTINGS_APPEARANCE_CONTROL_GAP
+            );
+            assert!(!tree.permits(&AxRequest {
+                identifier: "settings-text-scale-175".into(),
+                action: AxAction::Press,
+                value: None,
+            }));
+            assert!(tree.permits(&AxRequest {
+                identifier: "settings-text-scale-150".into(),
+                action: AxAction::Press,
+                value: None,
+            }));
+        });
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.handle_accessibility_request(
+                    AxRequest {
+                        identifier: "settings-text-scale-150".into(),
+                        action: AxAction::Press,
+                        value: None,
+                    },
+                    window,
+                    cx,
+                );
+            });
+        });
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            assert_eq!(view.text_scale, font::TextScale::Percent150);
+            assert_eq!(f32::from(window.rem_size()), 24.0);
+            let tree = view.accessibility_tree(window, cx);
+            assert!(!tree.find("settings-text-scale-100").unwrap().selected);
+            assert!(tree.find("settings-text-scale-150").unwrap().selected);
+        });
     }
 
     /// SET-4（SET-010）：Settings secure API key 输入的 AX value 只发布掩码，

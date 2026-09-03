@@ -65,7 +65,7 @@ S7 的产品形状：**一个本地 Coding Agent 聊天窗**，不是工作站�
 | Composer | 纯文本发送、取消当轮、下拉已配置 model/provider | `@file`、附件、profile（S9 再长） |
 | Approval | 时间线内嵌仅本次允许 / 本轮运行允许 / 拒绝（复用 S3 语义） | 完整 Policy 说明页、信任向导 |
 | Changes / Terminal / Resources | 已实现的 Host-driven Surface | 写能力仍按各自契约增量 |
-| Settings | 当前活动增量；独立 Settings Rail + 全宽内容，首个页面为模型与供应商 | 其它设置页在真实 capability 到位后逐页启用 |
+| Settings | 当前活动增量；独立 Settings Rail + 全宽内容；模型与供应商、通用、权限与审批、工具与 MCP、终端、外观已启用 | 高级、关于在真实 capability 到位后逐页启用 |
 | Workflow | 隐藏 | 真实产品面另行立项 |
 
 空态：无会话时主区只有一句提示和 Composer。不以假卡片冒充未实现能力。
@@ -180,6 +180,13 @@ Settings 沿用现有深色主题、8px 节奏和 1440×1024 基线，不把工�
 >（只影响之后创建的终端，已存在终端不变）；断线 stale 只读禁写，
 > 重连后自动刷新恢复；可见 / 键盘 / AX 三路径同 gate。
 
+> 2026-09-03 SET-6e 已落地「外观」页：它是 Desktop 本地能力，断线时
+> 仍显示且可操作；三档 100%/125%/150% 直接复用既有 `TextScale` 与
+> `set_text_scale`，因此页面按钮、Cmd+=/Cmd+-/Cmd+0、当前值和 AX
+> `selected` 始终同步。页面诚实说明字号仅当前 Desktop 会话生效、重启
+> 恢复 100%；主题只读显示当前深色实现及 macOS Increase Contrast 系统
+> 跟随，不绘制 light/system/custom theme 控件，不新增偏好持久化。
+
 行为、供应商认证矩阵、模型目录回退和安全边界以 [Settings Spec](spec/settings.md) 为准。引用会话给出的信息架构足以指导实现，本轮不新增 bitmap；实现真窗口出现实际布局偏差时再生成/锁定 Settings 定稿图。
 
 ---
@@ -236,7 +243,7 @@ S1 起的 `--json` 仍标 **unstable**。S7 的 GUI **不**把 `--json` 当长�
 | S10 | 正式协议 / 多客户端 / Fork / PTY / service | 重连 Replay、Fork、InspectorToolTabs 激活 Terminal；本机多窗口未做（见 [产品候选](spec/backlog.md)） |
 | S11 | Plan / 后台任务 / usage / 多 Agent | Workflow 与完整用量/quota 状态条；ActivityPopover 激活 Main / subagent 状态列表 |
 | S12 | 全项目 Code Review | 只读核对 Desktop 四层边界、状态投影、能力声明、可访问性及 S7–S11 GUI 需求/证据；不改界面、不启动窗口 |
-| Settings（当前） | provider/auth/catalog/config 的 Host 门面 | Settings Rail；先启用模型与供应商，其它页面按真实能力逐页加入 |
+| Settings（当前） | provider/auth/catalog/config 的 Host 门面 + Desktop 本地 presentation state | Settings Rail；已启用模型与供应商、通用、权限、MCP、终端、外观，其余页面按真实能力逐页加入 |
 | 待决策 | WASM 插件 / Hooks / LSP / 市场 | 预留 Resources 空位与协议扩展点，**不画假市场页** |
 
 后续阶段任务书必须带一行「GUI 增量」；没有对应投影/命令就不做按钮。

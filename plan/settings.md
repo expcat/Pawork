@@ -1,6 +1,6 @@
 # Settings 活动线任务书
 
-> 状态：SET-0～SET-5 已审查提交（SET-5：模型发现/固定回退/默认项，审查修复四处）；真实账号验收待凭证。2026-09-01 重置时仓库内不存在旧 `plan/` 文档；本文件是新建后的唯一活动任务书。范围依据 [Settings Feature Spec](../docs/spec/settings.md)，顺序与状态以 [ROADMAP](../ROADMAP.md) 为准。
+> 状态：SET-0～SET-6e 已审查提交；真实账号与完整真窗口验收仍待 SET-7。2026-09-01 重置时仓库内不存在旧 `plan/` 文档；本文件是新建后的唯一活动任务书。范围依据 [Settings Feature Spec](../docs/spec/settings.md)，顺序与状态以 [ROADMAP](../ROADMAP.md) 为准。
 
 ## 1. 开工合同
 
@@ -175,7 +175,7 @@
 
 **验证**：provider/app/workspace/desktop 受影响包定向测试；四家真实 API 或明确记录为何只能固定回退；Host/Desktop 重启复验。
 
-### SET-6 — 其它 Settings 页 ⚪
+### SET-6 — 其它 Settings 页 🔵
 
 SET-5 收口后才逐页立项，不预建通用设置框架：
 
@@ -322,6 +322,22 @@ SET-5 收口后才逐页立项，不预建通用设置框架：
 
 **定向回归上限**：主路径两条（set → 重查一致；terminal_create 应用配置 shell/size）；关键失败路径一条（非法值 fail-closed 保旧）；安全红线定向回归一条（非 Global 层 `[terminal]` 剥离）。现有测试可覆盖时不新增。
 
+### SET-6e — 外观页（会话级字号）🟢
+
+> 2026-09-03 完成：Settings Rail 新增始终可用的「外观」页；复用既有 `TextScale` 与唯一 `set_text_scale` 入口提供 100%/125%/150% 三档，页面按钮、Cmd+=/Cmd+-/Cmd+0 与 AX Press 同步同一状态。当前档以文字、按钮样式和 AX `selected` 同时标记；三档按钮的 render / AX 几何共用固定宽高与间距，长说明按内容列换行。主题只读陈述当前深色实现与 macOS Increase Contrast 系统跟随，不绘制未实现控件；页面明确字号仅当前 Desktop 会话生效、重启恢复 100%。离线 AX 主路径与未知 identifier fail-closed 定向测试通过，Desktop 186/186。提交前复查再修：desktop 包级 Spec 模块地图回写 SET-6e，外观页 AX 在切页后 `tree.validate` 并断言 150% Press 获许可。
+
+**目标**：让用户在 Settings 内发现并操作已有字号能力，断线时仍可用，且当前值在可见与 AX 两条呈现中一致。
+
+**非目标**：不做 light/system/custom theme；不持久化字号；不新建通用 preference 框架；不改 Host wire、config/schema、业务包、快捷键语义或现有布局阈值。
+
+**写入集**：`apps/desktop/src/ui/{mod.rs,settings.rs,accessibility/app.rs}`，以及 ROADMAP、任务书、Settings/Desktop/GUI/能力文档与 history；无新依赖。
+
+**完成条件**：外观导航离线常在；三档按钮共用既有缩放入口；当前档唯一选中；未知档位与离开外观页后的迟到动作 fail-closed；深色/系统高对比/会话级重置边界不作虚假承诺。
+
+**验证**：`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`（186/186）；正式隔离 Host/Desktop 已成功连接，Computer Use 获取 Pawork AX 状态连续超时，视觉、Tab/Enter 与 VoiceOver 证据留在 SET-7，不把启动成功冒充界面验收。
+
+**定向回归**：新增一条 GPUI 测试覆盖离线导航 → AX Press 150% → `TextScale`/24px 根字号/AX selected 同步，断言三档 AX bounds 使用 render 共用几何、切页后 tree.validate，并锁定未知 175% identifier 不获许可、合法 150% Press 获许可；不重复测试既有缩放步进和快捷键表。
+
 ### SET-7 — 真窗口与人工收口 ⚪
 
 **自动证据**：实际写入集定向门禁；protocol/Secret/config 三类关键回归；`git diff --check`。
@@ -332,7 +348,7 @@ SET-5 收口后才逐页立项，不预建通用设置框架：
 - remote model list 或固定回退原因；
 - API key 替换失败保旧、移除、Host/Desktop 重启、断线/重连；
 - `pawork auth list` / `pawork models` 与 GUI 脱敏状态一致；
-- 1440×1024、1080×720、100/125/150%、键盘/AX。
+- 1440×1024、1080×720、外观页 100/125/150% 与 Cmd+=/Cmd+-/Cmd+0 同步、键盘/AX；重启后回到 100%。
 - SET-3 登记的已知缺口：Settings 页 AX 卡片几何为固定估值、不随滚动位移；1080×720 折叠线以下卡片 AX rect 与视觉错位，VoiceOver 走查时重点核，必要时修。
 
 **人工签字**：视觉层级、secure input、OAuth 浏览器切换、VoiceOver。没有用户签字时只写“等待人工验收”。

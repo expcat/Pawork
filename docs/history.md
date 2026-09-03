@@ -1129,3 +1129,23 @@ Real-world evidence: pending（真窗口验收登记 SET-7）。
 Known gaps: 连接后 terminal_settings 查询在途窗口内新建终端仍按 80×24 resize 覆盖配置默认（skip resize 会致投影/PTY 尺寸错配，留待 TerminalCreate 响应携带实际尺寸的 wire 演进）；shell 校验不排目录、Windows 无 PATHEXT 解析；cwd 默认值登记候选（ADR-050 否决支）。
 
 Full workspace gate: NOT RUN（当前未设置全量门禁）。
+
+## 2026-09-03 — Settings SET-6e 外观页（会话级字号）
+
+- 立项与边界：源码与 Desktop Spec 复核确认已有唯一 `TextScale`（100%/125%/150%）、`set_text_scale` 和 Cmd+=/Cmd+-/Cmd+0 链路，但没有本地 preference 存储。SET-D5 本片因此锁定为会话级字号发现面；不临时造 JSON/TOML、不借 Host 配置持久化、不扩 light/system/custom theme。
+- 实施：Settings Rail 新增始终可用的「外观」页；三档按钮直接汇入既有缩放入口，当前档以文字、Primary 样式与 AX `selected` 同步标记；按钮 render / AX bounds 共用 112×28px 与 8px 间距常量，长说明按内容列换行。页面只读陈述当前深色主题、macOS Increase Contrast 系统跟随及“重启恢复 100%”边界。AX 树同步常在导航、三档 Button 与 Press 派发，未知档位 fail-closed；无 controller/projection/protocol/config/依赖改动。
+- 定向回归：新增一条 GPUI 测试覆盖断线初态下外观导航仍可达、AX Press 150% 后 `TextScale::Percent150` / 24px 根字号 / selected 同步，并断言 AX bounds 使用 render 共用几何、未知 175% identifier 不获许可；既有缩放步进和快捷键测试不重复扩写。
+- 只读复审：无 P0/P1；发现并修复 2 P2（按钮可见几何与 AX bounds 漂移、150% 最小窗长说明单行裁切），同一复审者定向复核均 resolved。
+- 提交前复查：无 P0/P1；修复 2 P2——desktop 包级 Spec 模块地图未把 SET-6e 写进 `settings.rs` / `mod.rs` / `accessibility/app.rs` 行（行数与 accessibility 测试计数仍停在 SET-6d），以及外观页 AX 切页后未 `validate`、未断言合法 150% Press 获许可。
+
+Implemented: Desktop Settings「外观」页的会话级 100%/125%/150% 字号控制；深色主题与系统 Increase Contrast 只读说明。
+
+Validated: `cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`（186/186）；`git diff --check`；隔离 `PAWORK_DATA_DIR` / `--instance set6e` 下正式 Host socket listening，正式 Desktop 触发真实模型目录查询，生产链路成功接通。
+
+Targeted regressions: 离线导航 + AX 150% 主路径 + 根字号/selected/按钮几何同步；外观页 AX tree.validate；未知 175% fail-closed 与合法 150% Press permits。
+
+Real-world evidence: 正式 Host/Desktop 已启动并接通；Computer Use 连续三次无法取得 Pawork AX 状态（timeoutReached），未取得页面视觉、Tab/Enter 或 VoiceOver 证据，留待 SET-7，且不把进程启动冒充界面验收。
+
+Known gaps: 字号不持久化是本片明确产品边界（重启恢复 100%）；light/system/custom theme、高级、关于均未实现；完整真窗口与人工验收登记 SET-7。
+
+Full workspace gate: NOT RUN（当前未设置全量门禁）。

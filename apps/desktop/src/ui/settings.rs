@@ -1,5 +1,5 @@
-//! Settings 壳（SET-3/4/6a/6b/6c/6d）：Settings Rail、「Models &
-//! providers」、「General」、「权限与审批」、「工具与 MCP」与「终端」页。
+//! Settings 壳（SET-3/4/6a/6b/6c/6d/6e）：Settings Rail、「Models &
+//! providers」、「General」、「权限与审批」、「工具与 MCP」、「终端」与「外观」页。
 //!
 //! 供应商页只呈现 Host `provider_auth_status` 权威事实：供应商名称、
 //! 认证方式、连接状态与目录来源（SET-3）；SET-4 增认证写操作（API key
@@ -9,8 +9,10 @@
 //! （五档审批模式 / 会话信任 / Global 默认只读）；SET-6c 增「工具与
 //! MCP」页（复用 Resources 的 mcp_list 数据链 + mcp_test /
 //! mcp_server_remove 写动作）；SET-6d 增「终端」页（terminal_settings
-//! 读取 + set_terminal_settings 全态写）；查询失败 / 未知则隐藏该导航
-//! 项且不渲染写入口。断线保留 stale 只读结果并禁用全部写动作；
+//! 读取 + set_terminal_settings 全态写）；SET-6e 复用 Desktop 已有的
+//! 100% / 125% / 150% 会话级字号能力，不经 Host。Host 查询失败 /
+//! 未知则隐藏对应导航项且不渲染写入口。断线保留 stale 只读结果
+//! 并禁用 Host 写动作；外观页作为本地能力始终可用。
 //! 可见 / 键盘 / AX 三路径同 gate。
 
 use std::collections::HashSet;
@@ -34,8 +36,7 @@ use super::resources::{
     mcp_server_meta_text, mcp_server_name_row, ResourcesFetch, ResourcesPanelState,
 };
 use super::shell_layout;
-use super::AppView;
-use super::SettingsPage;
+use super::{AppRoute, AppView, SettingsPage};
 
 /// Settings 内容可读列（与 Timeline 618px 可读列同节奏；全宽壳层内收敛）。
 const SETTINGS_CONTENT_MAX_WIDTH: f32 = 720.0;
@@ -68,6 +69,41 @@ pub(crate) const SETTINGS_MCP_EFFECT_NOTE: &str =
 pub(crate) const SETTINGS_TERMINAL_SHELL_UNSET: &str = "未设置（跟随平台默认）";
 /// 终端页生效边界（SET-6d / ADR-050 D4；render 与 AX 同源，快照语义）。
 pub(crate) const SETTINGS_TERMINAL_EFFECT_NOTE: &str = "只影响之后创建的终端，已存在终端不变。";
+
+/// 外观页主题说明（SET-6e）：只陈述已实现能力，不画未实现的
+/// light / system 主题控件。render / AX 同源。
+pub(crate) const SETTINGS_APPEARANCE_THEME_NOTE: &str =
+    "当前仅提供深色主题；macOS Increase Contrast 由系统控制并自动刷新。";
+/// 外观页字号生效边界（SET-6e）：本片不引入第二套配置或假持久化。
+pub(crate) const SETTINGS_APPEARANCE_EFFECT_NOTE: &str =
+    "字号立即应用于当前 Desktop 会话；重启后恢复 100%。也可用 Cmd+= / Cmd+- / Cmd+0 调整。";
+/// 外观页字号按钮的固定几何；render 与 AX bounds 共用，避免缩放后命中框漂移。
+pub(crate) const SETTINGS_APPEARANCE_CONTROL_HEIGHT: f32 = SETTINGS_ACTION_HEIGHT;
+pub(crate) const SETTINGS_APPEARANCE_CONTROL_WIDTH: f32 = 112.0;
+pub(crate) const SETTINGS_APPEARANCE_CONTROL_GAP: f32 = 8.0;
+
+/// 外观页唯一可写能力：复用既有三档 `TextScale`。
+pub(crate) const SETTINGS_TEXT_SCALES: [font::TextScale; 3] = [
+    font::TextScale::Percent100,
+    font::TextScale::Percent125,
+    font::TextScale::Percent150,
+];
+
+/// 字号控件 identifier（render 按钮 / AX 节点 / AX 派发同源）。
+pub(crate) const fn settings_text_scale_identifier(scale: font::TextScale) -> &'static str {
+    match scale {
+        font::TextScale::Percent100 => "settings-text-scale-100",
+        font::TextScale::Percent125 => "settings-text-scale-125",
+        font::TextScale::Percent150 => "settings-text-scale-150",
+    }
+}
+
+/// 只接受三个冻结 identifier；未知值 fail-closed。
+pub(crate) fn settings_text_scale_from_identifier(identifier: &str) -> Option<font::TextScale> {
+    SETTINGS_TEXT_SCALES
+        .into_iter()
+        .find(|scale| settings_text_scale_identifier(*scale) == identifier)
+}
 
 /// 终端页尺寸输入解析（SET-6d）：u16 且 ∈ 2..=1000（与 Host 校验一致，
 /// ADR-050 D3）；畸形 / 越界返回 None（Save 禁用，fail-closed）。
@@ -554,7 +590,13 @@ impl AppView {
                 cx,
             ));
         }
-        rail
+        rail.child(self.settings_nav_item(
+            "settings-nav-appearance",
+            "外观",
+            current_page == SettingsPage::Appearance,
+            SettingsPage::Appearance,
+            cx,
+        ))
     }
 
     /// Settings 全宽内容区（SET-4 认证写操作）。状态行全部来自
@@ -580,6 +622,9 @@ impl AppView {
         {
             return self.settings_terminal_page_element(cx).into_any_element();
         }
+        if self.settings_page == SettingsPage::Appearance {
+            return self.settings_appearance_page_element(cx).into_any_element();
+        }
         self.settings_providers_page_element(cx).into_any_element()
     }
 
@@ -596,6 +641,7 @@ impl AppView {
             SettingsPage::Permissions => self.settings_nav_permissions_focus.clone(),
             SettingsPage::Tools => self.settings_nav_tools_focus.clone(),
             SettingsPage::Terminal => self.settings_nav_terminal_focus.clone(),
+            SettingsPage::Appearance => self.settings_nav_appearance_focus.clone(),
             SettingsPage::Providers => self.settings_nav_providers_focus.clone(),
         };
         if selected {
@@ -1164,6 +1210,147 @@ impl AppView {
                     .track_scroll(&self.settings_scroll)
                     .child(content),
             )
+    }
+
+    /// 「外观」页（SET-6e）：不经 Host，直接复用 Desktop 已有的
+    /// 100% / 125% / 150% `TextScale`。三个按钮始终可达，当前档以
+    /// 文字 + 视觉 + AX selected 同时标记；断线不禁用本地能力。
+    fn settings_appearance_page_element(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let current = self.text_scale;
+        let mut scale_controls = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(SETTINGS_APPEARANCE_CONTROL_GAP))
+            .min_w_0();
+        for scale in SETTINGS_TEXT_SCALES {
+            let id = settings_text_scale_identifier(scale);
+            let selected = scale == current;
+            let focus = self
+                .settings_appearance_focus
+                .entry(id.to_string())
+                .or_insert_with(|| cx.focus_handle().tab_stop(true))
+                .clone();
+            let tooltip = if selected {
+                format!("当前字号为 {}%", scale.percent())
+            } else {
+                format!("将字号设为 {}%", scale.percent())
+            };
+            let button = Button::new(id)
+                .track_focus(&focus)
+                .variant(if selected {
+                    ButtonVariant::Primary
+                } else {
+                    ButtonVariant::Raised
+                })
+                .height(px(SETTINGS_APPEARANCE_CONTROL_HEIGHT))
+                .width(px(SETTINGS_APPEARANCE_CONTROL_WIDTH))
+                .padding(ButtonPadding::Wide)
+                .center()
+                .radius(4.0)
+                .bordered()
+                .text_size(font::BODY_SM)
+                .label(format!("{}%", scale.percent()))
+                .tooltip(tooltip)
+                .on_click(cx.listener(move |view, event, window, cx| {
+                    if view.consume_button_key_click(id, event) {
+                        return;
+                    }
+                    view.on_settings_text_scale(scale, window, cx);
+                }))
+                .on_activate(cx.listener(move |view, _event, window, cx| {
+                    view.note_button_key_activate(id);
+                    view.on_settings_text_scale(scale, window, cx);
+                    cx.stop_propagation();
+                }));
+            scale_controls = scale_controls.child(button);
+        }
+
+        let content = div()
+            .flex()
+            .flex_col()
+            .min_w_0()
+            .max_w(px(SETTINGS_CONTENT_MAX_WIDTH))
+            .gap_2()
+            .child(
+                div().font_weight(FontWeight::MEDIUM).child(
+                    Label::new("外观")
+                        .size(font::TITLE)
+                        .color(dark().text.primary),
+                ),
+            )
+            .child(
+                Label::new("Desktop presentation preferences")
+                    .size(font::BODY_SM)
+                    .color(dark().text.secondary),
+            )
+            .child(
+                Label::new("主题 · 深色")
+                    .size(font::BODY)
+                    .color(dark().text.primary),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .min_w_0()
+                    .whitespace_normal()
+                    .text_size(font::BODY_SM)
+                    .text_color(dark().text.secondary)
+                    .child(SETTINGS_APPEARANCE_THEME_NOTE),
+            )
+            .child(
+                div().font_weight(FontWeight::MEDIUM).child(
+                    Label::new("字号")
+                        .size(font::BODY)
+                        .color(dark().text.primary),
+                ),
+            )
+            .child(
+                Label::new(format!("当前 · {}%", current.percent()))
+                    .size(font::BODY_SM)
+                    .color(dark().text.secondary),
+            )
+            .child(scale_controls)
+            .child(
+                div()
+                    .w_full()
+                    .min_w_0()
+                    .whitespace_normal()
+                    .text_size(font::BODY_SM)
+                    .text_color(dark().text.secondary)
+                    .child(SETTINGS_APPEARANCE_EFFECT_NOTE),
+            );
+
+        div()
+            .id("settings-page")
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_w_0()
+            .overflow_hidden()
+            .p_4()
+            .child(
+                div()
+                    .id("settings-page-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .track_scroll(&self.settings_scroll)
+                    .child(content),
+            )
+    }
+
+    /// 外观页字号选择入口（SET-6e）：只在当前 Settings / 外观
+    /// 路由生效，防止迟到的可见 / 键盘 / AX 动作穿透。
+    pub(crate) fn on_settings_text_scale(
+        &mut self,
+        scale: font::TextScale,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.route != AppRoute::Settings || self.settings_page != SettingsPage::Appearance {
+            return;
+        }
+        self.set_text_scale(scale, window, cx);
     }
 
     /// 「权限与审批」页（SET-6b / ADR-048）：① 五档审批模式显式选择

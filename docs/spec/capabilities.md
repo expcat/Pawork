@@ -1,6 +1,6 @@
 # Pawork 能力与入口矩阵
 
-> 基线日期：2026-09-01。状态词汇见 [README.md](README.md#3-状态词汇)。本表记录生产可见面，不以“代码存在”替代当前阶段复验或发布证明。
+> 基线日期：2026-09-03。状态词汇见 [README.md](README.md#3-状态词汇)。本表记录生产可见面，不以“代码存在”替代当前阶段复验或发布证明。
 
 ## 1. 产品能力
 
@@ -19,7 +19,7 @@
 | CAP-RESOURCE-01 | AGENTS.md、Skills、profiles、`@file`、配置导入 | chat/run、`import` | 已实现；部分 GUI 缺口 | Desktop 已消费 host `@` 展开和 MCP 列表；无 `@` 候选浮层/已加载规则 query。 |
 | CAP-MCP-01 | MCP Client 配置、测试、工具/资源 | `mcp list/test`、Desktop Resources | 已实现 | MCP auth 与主 Provider auth 分域；Pawork 作为 MCP Server 未实现。 |
 | CAP-GUI-01 | 本机 GUI server 与 GPUI Desktop | `gui serve`、`pawork-desktop` | 生产链路已实现；完整人工门禁未完成 | 项目/会话/Changes/Terminal 主路径已验收；完整视觉、AX/IME/跨平台仍需专项证据；断线不取消 Run。 |
-| CAP-SETTINGS-01 | Desktop Settings：供应商连接、认证、模型目录与默认项 | TaskRail Settings（计划） | SET-1/SET-2 协议与 Host 门面已实现；Desktop 未实现 | 首批四家；Host-driven；Secret 只进 auth backend；见 [settings.md](settings.md)。 |
+| CAP-SETTINGS-01 | Desktop Settings：供应商连接、认证、模型目录/默认项、通用、权限、MCP、终端与外观 | TaskRail `Local` 行 Settings | SET-1～SET-6e 已实现并通过各片定向门禁；真实账号/完整真窗口/人工验收待 SET-7 | 业务设置 Host-driven；Secret 只进 auth backend；外观字号仅当前 Desktop 会话，深色/Increase Contrast 只读说明；高级、关于未启用。见 [settings.md](settings.md)。 |
 | CAP-CLIENT-01 | GUI typed client、headless JSON、ACP | `headless`、`acp serve`、`pawork-client` | 已实现 | GUI/headless/ACP 能力表同源；wire/JSON 受冻结契约约束。 |
 | CAP-WORKFLOW-01 | plan、tasks 与演示型多 Agent 编排 | `plan`、`tasks`、`agents demo` | 已实现/受限 | `agents` 是 demo 入口；teams/goal/automation/monitor 的完整产品面已归档或候选。 |
 | CAP-OPS-01 | 服务安装/启停、状态、观察、关闭、诊断 | `service`、`status`、`watch`、`shutdown`、`doctor` | 已实现；平台验收不完整 | service 默认 dry-run，显式 `--apply` 才改系统；Windows SCM 实机仍为候选验收。 |

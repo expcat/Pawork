@@ -125,8 +125,8 @@ pub(crate) enum AppRoute {
     Settings,
 }
 
-/// Settings 内容页（SET-6a/6b/6c/6d）：供应商页常在；通用页 / 权限页 /
-/// 工具页 / 终端页仅在对应 Host 查询成功后显示。
+/// Settings 内容页（SET-6a/6b/6c/6d/6e）：供应商页与本地外观页常在；
+/// 通用页 / 权限页 / 工具页 / 终端页仅在对应 Host 查询成功后显示。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum SettingsPage {
     #[default]
@@ -135,6 +135,7 @@ pub(crate) enum SettingsPage {
     Permissions,
     Tools,
     Terminal,
+    Appearance,
 }
 
 /// 工作台专属 action 在当前路由是否生效（SET-3 审查修复 1）：审批 /
@@ -550,6 +551,10 @@ pub struct AppView {
     settings_nav_tools_focus: FocusHandle,
     /// SET-6d：Settings 导航「终端」焦点。
     settings_nav_terminal_focus: FocusHandle,
+    /// SET-6e：Settings 导航「外观」焦点（本地能力，始终可用）。
+    settings_nav_appearance_focus: FocusHandle,
+    /// SET-6e：三档字号选择的稳定焦点句柄。
+    settings_appearance_focus: HashMap<String, FocusHandle>,
     /// SET-6a：proxy URL 内联输入（明文；非 Secret）。
     settings_proxy_input: Entity<crate::ui::text_input::TextInput>,
     /// SET-6a：proxy Save / Clear 焦点。
@@ -766,6 +771,8 @@ impl AppView {
             settings_nav_permissions_focus: cx.focus_handle().tab_stop(true),
             settings_nav_tools_focus: cx.focus_handle().tab_stop(true),
             settings_nav_terminal_focus: cx.focus_handle().tab_stop(true),
+            settings_nav_appearance_focus: cx.focus_handle().tab_stop(true),
+            settings_appearance_focus: HashMap::new(),
             settings_proxy_input: cx.new(|cx| {
                 TextInput::with_placeholder("http://127.0.0.1:7890", cx)
                     .id("settings-proxy-input")
@@ -2680,6 +2687,10 @@ impl AppView {
             SettingsPage::Terminal => {
                 self.settings_page = SettingsPage::Terminal;
                 window.focus(&self.settings_nav_terminal_focus);
+            }
+            SettingsPage::Appearance => {
+                self.settings_page = SettingsPage::Appearance;
+                window.focus(&self.settings_nav_appearance_focus);
             }
             SettingsPage::Providers => {
                 self.settings_page = SettingsPage::Providers;
