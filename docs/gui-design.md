@@ -65,7 +65,7 @@ S7 的产品形状：**一个本地 Coding Agent 聊天窗**，不是工作站�
 | Composer | 纯文本发送、取消当轮、下拉已配置 model/provider | `@file`、附件、profile（S9 再长） |
 | Approval | 时间线内嵌仅本次允许 / 本轮运行允许 / 拒绝（复用 S3 语义） | 完整 Policy 说明页、信任向导 |
 | Changes / Terminal / Resources | 已实现的 Host-driven Surface | 写能力仍按各自契约增量 |
-| Settings | 当前活动增量；独立 Settings Rail + 全宽内容；模型与供应商、通用、权限与审批、工具与 MCP、终端、外观已启用 | 高级、关于在真实 capability 到位后逐页启用 |
+| Settings | 当前活动增量；独立 Settings Rail + 全宽内容；模型与供应商、通用、权限与审批、工具与 MCP、终端、外观、高级已启用 | 「关于」在权威构建/协议/数据目录来源到位后启用 |
 | Workflow | 隐藏 | 真实产品面另行立项 |
 
 空态：无会话时主区只有一句提示和 Composer。不以假卡片冒充未实现能力。
@@ -186,6 +186,14 @@ Settings 沿用现有深色主题、8px 节奏和 1440×1024 基线，不把工�
 > `selected` 始终同步。页面诚实说明字号仅当前 Desktop 会话生效、重启
 > 恢复 100%；主题只读显示当前深色实现及 macOS Increase Contrast 系统
 > 跟随，不绘制 light/system/custom theme 控件，不新增偏好持久化。
+
+> 2026-09-03 SET-6f 已落地「高级」页：它是 Desktop 本地连接诊断面，
+> 断线时仍可达；只读展示连接状态、Host runtime ID、实际协商 GUI API、
+> granted capabilities、启动 endpoint、resume 与最后 ack，并在 Failed /
+> Disconnected 时复用既有 Reconnect。Connecting / 断线清空握手摘要，
+> runtime ID 不冒充配置 instance；GUI token/token path 不展示，原样 endpoint
+> 不用于反推 data directory / 配置 instance；不提供实例热切换、CLI shell-out
+> 或诊断历史。
 
 行为、供应商认证矩阵、模型目录回退和安全边界以 [Settings Spec](spec/settings.md) 为准。引用会话给出的信息架构足以指导实现，本轮不新增 bitmap；实现真窗口出现实际布局偏差时再生成/锁定 Settings 定稿图。
 

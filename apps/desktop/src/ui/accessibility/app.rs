@@ -26,12 +26,13 @@ use crate::ui::settings::{
     parse_terminal_dimension, permissions_status_lines, provider_status_lines,
     settings_text_scale_from_identifier, settings_text_scale_identifier, terminal_save_enabled,
     terminal_status_lines, tools_status_lines, SettingsControl, SettingsMcpAction,
-    SETTINGS_APPEARANCE_CONTROL_GAP, SETTINGS_APPEARANCE_CONTROL_HEIGHT,
-    SETTINGS_APPEARANCE_CONTROL_WIDTH, SETTINGS_APPEARANCE_EFFECT_NOTE,
-    SETTINGS_APPEARANCE_THEME_NOTE, SETTINGS_CONTROL_PREFIX, SETTINGS_MCP_CONTROL_PREFIX,
-    SETTINGS_MCP_EFFECT_NOTE, SETTINGS_MCP_REMOVE_CONFIRM_NOTE, SETTINGS_PERMISSIONS_EFFECT_NOTE,
-    SETTINGS_PROXY_EFFECT_NOTE, SETTINGS_PROXY_UNSET, SETTINGS_TERMINAL_EFFECT_NOTE,
-    SETTINGS_TERMINAL_SHELL_UNSET, SETTINGS_TEXT_SCALES, SETTINGS_TRUST_UNSET,
+    SETTINGS_ADVANCED_DOCTOR_NOTE, SETTINGS_ADVANCED_TARGET_NOTE, SETTINGS_APPEARANCE_CONTROL_GAP,
+    SETTINGS_APPEARANCE_CONTROL_HEIGHT, SETTINGS_APPEARANCE_CONTROL_WIDTH,
+    SETTINGS_APPEARANCE_EFFECT_NOTE, SETTINGS_APPEARANCE_THEME_NOTE, SETTINGS_CONTROL_PREFIX,
+    SETTINGS_MCP_CONTROL_PREFIX, SETTINGS_MCP_EFFECT_NOTE, SETTINGS_MCP_REMOVE_CONFIRM_NOTE,
+    SETTINGS_PERMISSIONS_EFFECT_NOTE, SETTINGS_PROXY_EFFECT_NOTE, SETTINGS_PROXY_UNSET,
+    SETTINGS_TERMINAL_EFFECT_NOTE, SETTINGS_TERMINAL_SHELL_UNSET, SETTINGS_TEXT_SCALES,
+    SETTINGS_TRUST_UNSET,
 };
 use crate::ui::shell_layout;
 use crate::ui::theme::{font, metrics};
@@ -315,6 +316,10 @@ impl AppView {
             "settings-nav-appearance" => {
                 window.focus(&self.settings_nav_appearance_focus);
                 self.on_select_settings_page(SettingsPage::Appearance, window, cx);
+            }
+            "settings-nav-advanced" => {
+                window.focus(&self.settings_nav_advanced_focus);
+                self.on_select_settings_page(SettingsPage::Advanced, window, cx);
             }
             "settings-proxy-save" => self.on_settings_proxy_save(cx),
             "settings-proxy-clear" => self.on_settings_proxy_clear(cx),
@@ -1107,7 +1112,7 @@ impl AppView {
         if terminal_available {
             appearance_y += metrics::RAIL_TOP_ROW_HEIGHT + PAD;
         }
-        rail.child(settings_nav_ax(
+        rail = rail.child(settings_nav_ax(
             "settings-nav-appearance",
             "外观",
             current_page == SettingsPage::Appearance,
@@ -1115,6 +1120,19 @@ impl AppView {
             AxRect::new(
                 frame.x + PAD,
                 frame.y + appearance_y,
+                width,
+                metrics::RAIL_TOP_ROW_HEIGHT,
+            ),
+        ));
+        let advanced_y = appearance_y + metrics::RAIL_TOP_ROW_HEIGHT + PAD;
+        rail.child(settings_nav_ax(
+            "settings-nav-advanced",
+            "高级",
+            current_page == SettingsPage::Advanced,
+            self.open_menu.is_none() && self.settings_nav_advanced_focus.is_focused(window),
+            AxRect::new(
+                frame.x + PAD,
+                frame.y + advanced_y,
                 width,
                 metrics::RAIL_TOP_ROW_HEIGHT,
             ),
@@ -1145,6 +1163,9 @@ impl AppView {
         }
         if self.settings_page == SettingsPage::Appearance {
             return self.settings_appearance_page_ax(window, frame);
+        }
+        if self.settings_page == SettingsPage::Advanced {
+            return self.settings_advanced_page_ax(window, frame);
         }
         const HEADING_HEIGHT: f32 = 28.0;
         const SUBTITLE_HEIGHT: f32 = 20.0;
@@ -1921,6 +1942,75 @@ impl AppView {
                 AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT * 3.0),
             )
             .value(SETTINGS_APPEARANCE_EFFECT_NOTE),
+        )
+    }
+
+    /// 「高级」页 AX（SET-6f）：与 render 共用诊断行和安全边界；Reconnect
+    /// 继续复用全局 identifier、焦点与当前连接态 gate。
+    fn settings_advanced_page_ax(&self, window: &Window, frame: AxRect) -> AxNode {
+        const HEADING_HEIGHT: f32 = 28.0;
+        const SUBTITLE_HEIGHT: f32 = 20.0;
+        const DIAGNOSTIC_ROW_HEIGHT: f32 = 40.0;
+        const NOTE_HEIGHT: f32 = 56.0;
+        let width = (frame.width - 32.0).max(0.0);
+        let mut y = frame.y + 16.0 + HEADING_HEIGHT + SUBTITLE_HEIGHT + 8.0;
+        let mut page = AxNode::new("settings-page", AxRole::Group, "高级", frame).child(
+            AxNode::new(
+                "settings-page-title",
+                AxRole::StaticText,
+                "高级",
+                AxRect::new(
+                    frame.x + 16.0,
+                    frame.y + 16.0,
+                    width,
+                    HEADING_HEIGHT + SUBTITLE_HEIGHT,
+                ),
+            )
+            .value("Connection diagnostics and startup target"),
+        );
+        for (id, label, value) in self.settings_advanced_diagnostic_rows() {
+            page = page.child(
+                AxNode::new(
+                    id,
+                    AxRole::StaticText,
+                    label,
+                    AxRect::new(frame.x + 16.0, y, width, DIAGNOSTIC_ROW_HEIGHT),
+                )
+                .value(value),
+            );
+            y += DIAGNOSTIC_ROW_HEIGHT;
+        }
+        if self.projection.show_reconnect() {
+            page = page.child(
+                AxNode::new(
+                    "reconnect",
+                    AxRole::Button,
+                    "Reconnect",
+                    AxRect::new(frame.x + 16.0, y, 112.0, CONTROL_HEIGHT),
+                )
+                .focused(self.open_menu.is_none() && self.reconnect_focus.is_focused(window))
+                .action(AxAction::Press),
+            );
+            y += CONTROL_HEIGHT + PAD;
+        }
+        page = page.child(
+            AxNode::new(
+                "settings-advanced-target-note",
+                AxRole::StaticText,
+                "Startup target boundary",
+                AxRect::new(frame.x + 16.0, y, width, NOTE_HEIGHT),
+            )
+            .value(SETTINGS_ADVANCED_TARGET_NOTE),
+        );
+        y += NOTE_HEIGHT + PAD;
+        page.child(
+            AxNode::new(
+                "settings-advanced-doctor-note",
+                AxRole::StaticText,
+                "Host diagnostics boundary",
+                AxRect::new(frame.x + 16.0, y, width, NOTE_HEIGHT),
+            )
+            .value(SETTINGS_ADVANCED_DOCTOR_NOTE),
         )
     }
 
@@ -4185,10 +4275,10 @@ mod tests {
         }
     }
 
-    /// SET-6e：外观页是 Desktop 本地能力，离线也必须可达；字号 AX Press
-    /// 与可见 / 键盘路径共用 `set_text_scale`，并同步根字号与 selected 状态。
+    /// SET-6e/6f：外观与高级页都是 Desktop 本地能力，离线也必须可达；
+    /// 高级页不伪装旧握手，外观字号 AX Press 与可见 / 键盘路径同源。
     #[gpui::test]
-    fn settings_appearance_ax_is_available_offline_and_updates_scale(
+    fn settings_local_pages_ax_are_available_offline_and_update_state(
         cx: &mut gpui::TestAppContext,
     ) {
         use gpui::AppContext;
@@ -4207,25 +4297,171 @@ mod tests {
         }
 
         let platform = std::sync::Arc::new(crate::platform::Platform::new());
-        let socket = std::env::temp_dir().join("set6e-ax-appearance.sock");
+        let socket = std::env::temp_dir().join("set6f-ax-local-pages.sock");
+        let endpoint = socket.display().to_string();
         let (host, cx) = cx.add_window_view(|_window, cx| {
             let view = cx.new(|cx| AppView::new(platform, socket, None, cx));
             AxAppearanceHost { view }
         });
         let view = cx.update(|_window, cx| host.read(cx).view.clone());
         cx.update(|_window, cx| {
-            view.update(cx, |view, _cx| view.route = AppRoute::Settings);
+            view.update(cx, |view, _cx| {
+                view.route = AppRoute::Settings;
+                view.projection.set_connection(ConnectionState::Failed {
+                    reason: "host unavailable".into(),
+                });
+            });
         });
 
         cx.update(|window, cx| {
             let tree = view.read(cx).accessibility_tree(window, cx);
             tree.validate().expect("offline Settings AX tree validates");
             assert!(tree.find("settings-nav-appearance").is_some());
+            assert!(tree.find("settings-nav-advanced").is_some());
+            assert!(tree.permits(&AxRequest {
+                identifier: "settings-nav-advanced".into(),
+                action: AxAction::Press,
+                value: None,
+            }));
+        });
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.handle_accessibility_request(
+                    AxRequest {
+                        identifier: "settings-nav-advanced".into(),
+                        action: AxAction::Press,
+                        value: None,
+                    },
+                    window,
+                    cx,
+                );
+            });
+        });
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            assert_eq!(view.settings_page, SettingsPage::Advanced);
+            let tree = view.accessibility_tree(window, cx);
+            tree.validate().expect("advanced page AX tree validates");
+            assert_eq!(
+                tree.find("settings-advanced-connection")
+                    .and_then(|node| node.value.as_deref()),
+                Some("Connect failed · host unavailable")
+            );
+            assert_eq!(
+                tree.find("settings-advanced-runtime")
+                    .and_then(|node| node.value.as_deref()),
+                Some("Unavailable · connect to the Host")
+            );
+            assert_eq!(
+                tree.find("settings-advanced-endpoint")
+                    .and_then(|node| node.value.as_deref()),
+                Some(endpoint.as_str())
+            );
+            assert!(tree.find("reconnect").is_some());
+            assert!(tree.permits(&AxRequest {
+                identifier: "reconnect".into(),
+                action: AxAction::Press,
+                value: None,
+            }));
+        });
+        cx.update(|_window, cx| {
+            view.update(cx, |view, _cx| {
+                view.projection.set_connection(ConnectionState::Connected {
+                    instance_id: "runtime-6f".into(),
+                });
+                view.projection.resume = crate::projection::ResumeState::UpToDate {
+                    current_sequence: 42,
+                };
+                view.handshake_info = Some(crate::controller::DesktopHandshakeInfo {
+                    runtime_id: "runtime-6f".into(),
+                    api_version: "1.8".into(),
+                    capabilities: vec!["events".into(), "snapshots".into()],
+                });
+            });
+        });
+        cx.update(|window, cx| {
+            let tree = view.read(cx).accessibility_tree(window, cx);
+            tree.validate()
+                .expect("connected advanced page AX tree validates");
+            assert_eq!(
+                tree.find("settings-advanced-connection")
+                    .and_then(|node| node.value.as_deref()),
+                Some("Connected")
+            );
+            assert_eq!(
+                tree.find("settings-advanced-runtime")
+                    .and_then(|node| node.value.as_deref()),
+                Some("runtime-6f")
+            );
+            assert_eq!(
+                tree.find("settings-advanced-api")
+                    .and_then(|node| node.value.as_deref()),
+                Some("1.8")
+            );
+            assert_eq!(
+                tree.find("settings-advanced-capabilities")
+                    .and_then(|node| node.value.as_deref()),
+                Some("events, snapshots")
+            );
+            assert_eq!(
+                tree.find("settings-advanced-resume")
+                    .and_then(|node| node.value.as_deref()),
+                Some("Up to date · 42")
+            );
+            assert_eq!(
+                tree.find("settings-advanced-last-ack")
+                    .and_then(|node| node.value.as_deref()),
+                Some("Unavailable")
+            );
+            assert!(tree.find("reconnect").is_none());
             assert!(tree.permits(&AxRequest {
                 identifier: "settings-nav-appearance".into(),
                 action: AxAction::Press,
                 value: None,
             }));
+        });
+        // 最终业务入口也必须 fail-closed：即使迟到的旧 Reconnect 事件被
+        // 派发，Connected 状态也不能启动第二条连接。
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| view.on_reconnect(window, cx));
+        });
+        cx.update(|_window, cx| {
+            let view = view.read(cx);
+            assert!(matches!(
+                &view.projection.connection,
+                ConnectionState::Connected { .. }
+            ));
+            assert!(view.handshake_info.is_some());
+        });
+        // 通过真实 ControllerEvent 消费路径证明旧握手在断线时清空，且
+        // Advanced 页重新发布 Reconnect；不直接改测试状态绕过生命周期。
+        cx.update(|_window, cx| {
+            view.update(cx, |view, cx| {
+                view.handle_controller_event(
+                    crate::controller::ControllerEvent::Disconnected {
+                        reason: "connection closed".into(),
+                    },
+                    cx,
+                );
+            });
+        });
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            assert!(view.handshake_info.is_none());
+            let tree = view.accessibility_tree(window, cx);
+            tree.validate()
+                .expect("disconnected advanced page AX tree validates");
+            assert_eq!(
+                tree.find("settings-advanced-connection")
+                    .and_then(|node| node.value.as_deref()),
+                Some("Disconnected · connection closed")
+            );
+            assert_eq!(
+                tree.find("settings-advanced-runtime")
+                    .and_then(|node| node.value.as_deref()),
+                Some("Unavailable · connect to the Host")
+            );
+            assert!(tree.find("reconnect").is_some());
         });
         cx.update(|window, cx| {
             view.update(cx, |view, cx| {

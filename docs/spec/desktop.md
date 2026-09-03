@@ -29,7 +29,7 @@ flowchart LR
 | Inspector / Changes | 默认 Changes；顶层 Changes/Terminal/Resources 与二级 Files/Summary 分层；DiffView；折叠态 Header ActivityPopover | 只读；无 stage/unstage/hunk 命令。 |
 | Inspector / Terminal | PTY 创建、输入、resize、Stop/Close、流式输出与 live/snapshot 终态；任务切换隔离草稿；失败与断线诚实显示 | 创建需 Policy；纯文本视图过滤 ANSI/VT 控制序列但不是完整 VT emulator；ADR-045 的 `terminal_close` / `TerminalExited` 自 API 1.3 起可用，旧 minor 仍只从 snapshot 获知终态。 |
 | Inspector / Resources | MCP server/tool 状态、刷新 | 只读；没有已加载 AGENTS.md/Skills 分区。 |
-| Settings | 独立 Settings Rail + 全宽内容；模型与供应商、通用、权限与审批、工具与 MCP、终端、外观 | SET-3～SET-6e 已逐片实现；Host-backed 页按权威查询能力显示并在 stale 时禁写，本地外观页离线常在，复用 100%/125%/150% 会话级字号。高级、关于未启用；真实账号、完整真窗口与人工验收待 SET-7。 |
+| Settings | 独立 Settings Rail + 全宽内容；模型与供应商、通用、权限与审批、工具与 MCP、终端、外观、高级 | SET-3～SET-6f 已逐片实现；Host-backed 页按权威查询能力显示并在 stale 时禁写，本地外观/高级页离线常在。外观复用 100%/125%/150% 会话级字号；高级只读展示当前连接/握手/endpoint/resume/ack 并复用 Reconnect。「关于」未启用；真实账号、完整真窗口与人工验收待 SET-7。 |
 
 ## 3. 连接与状态模型
 
@@ -66,7 +66,7 @@ flowchart LR
 | DESK-09 | 断线态可 Reconnect，Run/会话不因 UI 断线丢失。 | 重连路径已实现；项目与 Session 归属跨重启已复验。 |
 | DESK-10 | 1080×720 下 Composer、状态栏和 Header Activity 触发器仍可用。 | 生产响应式路径已实现；完整视觉签字仍待人工验收。 |
 | DESK-11 | 可见结构和控件具备稳定 AX identifier、正确 role/name/value/state/action；AX 操作复用鼠标/键盘的业务 gate。 | ADR-042 macOS bridge 已实现；本轮主路径可经 AX 驱动，全组件 VoiceOver 与 Windows/Linux 平台仍未验收。 |
-| DESK-12 | Settings 从 TaskRail 进入；Host capability 驱动业务页，本地外观页驱动当前 Desktop 字号；返回时保持工作台状态，secure input 不泄漏 AX value。 | SET-3～SET-6e 已实现。外观页在离线态仍可达，三档按钮/快捷键/AX Press 共享 `TextScale`，当前档 selected 同步；字号不持久化、重启恢复 100%。真实账号端到端、完整真窗口与 VoiceOver 人工验收 pending，见 [settings.md](settings.md)。 |
+| DESK-12 | Settings 从 TaskRail 进入；Host capability 驱动业务页，本地外观页驱动当前 Desktop 字号；本地高级页提供安全连接诊断；返回时保持工作台状态，secure input 不泄漏 AX value。 | SET-3～SET-6f 已实现。外观页在离线态仍可达，三档按钮/快捷键/AX Press 共享 `TextScale`；高级页的握手摘要只在当前连接存活时可用，runtime ID 不冒充配置 instance，Reconnect 与既有 handler 同源。真实账号端到端、完整真窗口与 VoiceOver 人工验收 pending，见 [settings.md](settings.md)。 |
 
 ### 4.1 可见合同（已实现，非终局签字）
 
@@ -95,6 +95,7 @@ flowchart LR
 
 - Changes 的 Files/Summary/DiffView/ActivityPopover 是只读投影；任何 stage/unstage/hunk 都需新增 protocol command、审批语义和 ADR，不得从 UI 直接调用 Git。
 - Resources 只消费 `mcp_list`；无 host query 的“已加载规则”不能伪造占位数据。
+- Settings 高级页只消费 Desktop 已有握手与连接本地事实；不显示 token/token path，不从 socket 推断 data directory/配置 instance，不 shell-out CLI，也不提供实例热切换。
 - `@` 引用由 host `expand_at_refs` 解析并作为独立 Text part；Desktop 不自行读取任意文件。候选浮层需新增受控 file-index query。
 - Terminal 只发协议命令；Desktop 不持有本机 PTY 服务。当前使用 create/write/resize/close 与流式 output/exit；Stop/Close 和 live 终态均走 ADR-045 的真实 Host wire，不以写入 `exit` 或本地 kill 冒充。纯文本展示移除 ANSI/VT 控制序列，但不声称具备终端仿真；Policy 拒绝必须原样 fail-closed。
 

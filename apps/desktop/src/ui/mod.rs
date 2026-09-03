@@ -34,7 +34,7 @@ use gpui::{
 };
 use pawork_client::AppEvent;
 
-use crate::controller::{ControllerEvent, DesktopController};
+use crate::controller::{ControllerEvent, DesktopController, DesktopHandshakeInfo};
 use crate::platform::Platform;
 use crate::projection::{
     ConnectionState, DateBucket, DesktopProjection, ResumeApply, SessionLiveStatus,
@@ -125,8 +125,8 @@ pub(crate) enum AppRoute {
     Settings,
 }
 
-/// Settings 内容页（SET-6a/6b/6c/6d/6e）：供应商页与本地外观页常在；
-/// 通用页 / 权限页 / 工具页 / 终端页仅在对应 Host 查询成功后显示。
+/// Settings 内容页（SET-6a/6b/6c/6d/6e/6f）：供应商页与 Desktop 本地页
+/// 常在；通用页 / 权限页 / 工具页 / 终端页仅在对应 Host 查询成功后显示。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum SettingsPage {
     #[default]
@@ -136,6 +136,7 @@ pub(crate) enum SettingsPage {
     Tools,
     Terminal,
     Appearance,
+    Advanced,
 }
 
 /// 工作台专属 action 在当前路由是否生效（SET-3 审查修复 1）：审批 /
@@ -394,6 +395,9 @@ pub struct AppView {
     _platform: Arc<Platform>,
     controller: Arc<DesktopController>,
     socket: PathBuf,
+    /// SET-6f：当前连接实际协商出的非 Secret 握手摘要；Connecting / 断线
+    /// 时清空，避免把旧 Host 信息冒充当前状态。
+    handshake_info: Option<DesktopHandshakeInfo>,
     projection: DesktopProjection,
     text_input: Entity<TextInput>,
     terminal_input: Entity<TextInput>,
@@ -553,6 +557,8 @@ pub struct AppView {
     settings_nav_terminal_focus: FocusHandle,
     /// SET-6e：Settings 导航「外观」焦点（本地能力，始终可用）。
     settings_nav_appearance_focus: FocusHandle,
+    /// SET-6f：Settings 导航「高级」焦点（本地诊断页，始终可用）。
+    settings_nav_advanced_focus: FocusHandle,
     /// SET-6e：三档字号选择的稳定焦点句柄。
     settings_appearance_focus: HashMap<String, FocusHandle>,
     /// SET-6a：proxy URL 内联输入（明文；非 Secret）。
@@ -614,6 +620,7 @@ impl AppView {
             _platform: platform,
             controller,
             socket,
+            handshake_info: None,
             projection: DesktopProjection::default(),
             text_input,
             terminal_input,
@@ -772,6 +779,7 @@ impl AppView {
             settings_nav_tools_focus: cx.focus_handle().tab_stop(true),
             settings_nav_terminal_focus: cx.focus_handle().tab_stop(true),
             settings_nav_appearance_focus: cx.focus_handle().tab_stop(true),
+            settings_nav_advanced_focus: cx.focus_handle().tab_stop(true),
             settings_appearance_focus: HashMap::new(),
             settings_proxy_input: cx.new(|cx| {
                 TextInput::with_placeholder("http://127.0.0.1:7890", cx)
@@ -1096,8 +1104,10 @@ impl AppView {
     fn start_connect(&mut self, cx: &mut Context<Self>) {
         self.barriers.remove_timeline_stable();
         self.barriers.remove_approval_visible();
+        self.handshake_info = None;
         self.projection.set_connection(ConnectionState::Connecting);
         self.status_hint = None;
+        cx.notify();
         let controller = Arc::clone(&self.controller);
         let socket = self.socket.clone();
         cx.spawn(
@@ -1107,6 +1117,7 @@ impl AppView {
                         view.on_connected(
                             connected.snapshot,
                             connected.resume,
+                            connected.handshake,
                             connected.events,
                             cx,
                         );
@@ -1131,9 +1142,11 @@ impl AppView {
         &mut self,
         snapshot: pawork_client::Snapshot,
         resume: Option<pawork_client::ResumeOutcome>,
+        handshake: DesktopHandshakeInfo,
         events: smol::channel::Receiver<ControllerEvent>,
         cx: &mut Context<Self>,
     ) {
+        self.handshake_info = Some(handshake);
         let instance_id = snapshot.instance_id.as_str().to_string();
         let previous_session = self.projection.active_session_id.clone();
         self.projection
@@ -1224,6 +1237,7 @@ impl AppView {
         match event {
             ControllerEvent::Disconnected { reason } => {
                 let stale_reason = format!("connection lost · {reason}");
+                self.handshake_info = None;
                 self.projection
                     .set_connection(ConnectionState::Disconnected { reason });
                 self.changes.mark_stale(&stale_reason);
@@ -2579,6 +2593,11 @@ impl AppView {
     }
 
     fn on_reconnect(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        // render / AX 的可见性不是最终授权：旧按钮事件可能在首击已切到
+        // Connecting 后才到达。入口再次复核，保证 connect single-flight。
+        if !self.projection.show_reconnect() {
+            return;
+        }
         self.start_connect(cx);
     }
 
@@ -2691,6 +2710,10 @@ impl AppView {
             SettingsPage::Appearance => {
                 self.settings_page = SettingsPage::Appearance;
                 window.focus(&self.settings_nav_appearance_focus);
+            }
+            SettingsPage::Advanced => {
+                self.settings_page = SettingsPage::Advanced;
+                window.focus(&self.settings_nav_advanced_focus);
             }
             SettingsPage::Providers => {
                 self.settings_page = SettingsPage::Providers;

@@ -1,6 +1,6 @@
 # Settings 活动线任务书
 
-> 状态：SET-0～SET-6e 已审查提交；真实账号与完整真窗口验收仍待 SET-7。2026-09-01 重置时仓库内不存在旧 `plan/` 文档；本文件是新建后的唯一活动任务书。范围依据 [Settings Feature Spec](../docs/spec/settings.md)，顺序与状态以 [ROADMAP](../ROADMAP.md) 为准。
+> 状态：SET-0～SET-6f 已审查提交；下一片为 SET-6g「关于」。真实账号与完整真窗口验收仍待 SET-7。2026-09-01 重置时仓库内不存在旧 `plan/` 文档；本文件是新建后的唯一活动任务书。范围依据 [Settings Feature Spec](../docs/spec/settings.md)，顺序与状态以 [ROADMAP](../ROADMAP.md) 为准。
 
 ## 1. 开工合同
 
@@ -338,6 +338,22 @@ SET-5 收口后才逐页立项，不预建通用设置框架：
 
 **定向回归**：新增一条 GPUI 测试覆盖离线导航 → AX Press 150% → `TextScale`/24px 根字号/AX selected 同步，断言三档 AX bounds 使用 render 共用几何、切页后 tree.validate，并锁定未知 175% identifier 不获许可、合法 150% Press 获许可；不重复测试既有缩放步进和快捷键表。
 
+### SET-6f — 高级页（连接诊断）🟢
+
+> 2026-09-03 完成：Settings Rail 在「外观」后新增始终可用的「高级」页。Desktop 连接成功后保留现有握手中的 Host runtime ID、实际协商 GUI API 与 granted capabilities；页面同源展示连接状态、启动 endpoint、resume 状态与最后 ack 游标。Connecting / 断线时清空握手摘要，避免把旧 Host 信息冒充当前状态；Disconnected / Failed 时复用既有 Reconnect handler。提交前复查：Connection 行只报告相位，不复用 TaskRail 合成文案。Desktop 定向门禁 186/186。
+
+**目标**：给用户一个安全、诚实的当前连接诊断入口，足以核对 Desktop 正在连接什么、协商了什么，并在失败时重试。
+
+**非目标**：不把 runtime ID 称作 CLI `--instance` 配置名；不编辑或热切换实例；不显示 GUI token / token path；不推断 data directory；不在 Desktop 内 shell-out `doctor`；不新增诊断历史、Host query、wire/config/schema/Policy/ADR、依赖或「关于」页内容。
+
+**写入集**：`apps/desktop/src/{controller.rs,ui/mod.rs,ui/settings.rs,ui/accessibility/app.rs}`，以及 ROADMAP、任务书、Settings/Desktop/GUI/能力/运维/desktop 包级 Spec 与 history；无新依赖。
+
+**完成条件**：高级导航离线常在；连接成功时握手、endpoint、resume/ack 与当前连接一致；断线后协商字段明确 unavailable 且出现真实 Reconnect；render 与 AX 共用诊断行和安全边界；完整 token 与 token path 不进入页面，原样 endpoint 不被反推成独立的配置 instance / data directory 字段。
+
+**验证**：`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`（186/186）；未运行全工作区门禁。真实窗口、Tab/Enter 与 VoiceOver 证据仍留在 SET-7，自动测试不冒充人工验收。
+
+**定向回归**：扩展既有本地 Settings 页 GPUI 测试，覆盖离线 Advanced 导航、失败态权威文案/endpoint/unavailable 握手、Reconnect AX Press gate、连接后 runtime/API/capabilities/resume 与 last-ack 行、已连接态重复 Reconnect fail-closed，以及 `ControllerEvent::Disconnected` 清空握手并恢复 Reconnect；同一测试继续覆盖外观页既有字号主路径，不新增测试体系。
+
 ### SET-7 — 真窗口与人工收口 ⚪
 
 **自动证据**：实际写入集定向门禁；protocol/Secret/config 三类关键回归；`git diff --check`。
@@ -349,6 +365,7 @@ SET-5 收口后才逐页立项，不预建通用设置框架：
 - API key 替换失败保旧、移除、Host/Desktop 重启、断线/重连；
 - `pawork auth list` / `pawork models` 与 GUI 脱敏状态一致；
 - 1440×1024、1080×720、外观页 100/125/150% 与 Cmd+=/Cmd+-/Cmd+0 同步、键盘/AX；重启后回到 100%。
+- 高级页连接中/已连接/断线三态、endpoint/握手摘要与实际 Host 一致；Reconnect、Tab/Enter 与 VoiceOver 可达且页面无 GUI token 及其路径泄漏。
 - SET-3 登记的已知缺口：Settings 页 AX 卡片几何为固定估值、不随滚动位移；1080×720 折叠线以下卡片 AX rect 与视觉错位，VoiceOver 走查时重点核，必要时修。
 
 **人工签字**：视觉层级、secure input、OAuth 浏览器切换、VoiceOver。没有用户签字时只写“等待人工验收”。

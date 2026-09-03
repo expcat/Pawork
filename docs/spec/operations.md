@@ -60,6 +60,7 @@ Builtin < Global < Profile < Workspace < Session < Run
 
 - `gui serve` 创建/读取受控 token，socket 目录权限为 `0o700`；自定义 socket 若位于数据目录外，需明确其权限与生命周期。
 - Desktop 支持 `--socket`、`--instance`、`--probe`、`--probe-smoke`；生产使用缺 token 必须失败。
+- Desktop Settings「高级」页只读显示当前连接状态、Host runtime ID、协商 API/capabilities、启动 endpoint、resume/ack，并在断线态复用 Reconnect；runtime ID 不是配置 instance。该页不显示 token/token path、不推断 data directory，也不替代或运行 `doctor`。
 - host idle timeout 30s，Desktop 约 15s heartbeat；持续断线先检查 host 进程、socket/token、实例名和 handshake，而不是重建 DB。
 - `status`、`watch`、`shutdown`、`doctor` 在加载完整 AppCore 前运行，适合诊断宿主不可启动的情形。
 - pid 文件是提示，不是权威活性检测；以进程、socket 握手和 doctor 结果交叉确认。

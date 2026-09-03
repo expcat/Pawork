@@ -5,7 +5,7 @@
 | 字段 | 值 |
 | --- | --- |
 | Feature ID / 名称 | `SETTINGS-01` / Settings 与模型供应商管理 |
-| 状态 | **Accepted（SET-1～SET-6e 已实现并通过各自定向门禁；真实认证、完整真窗口与人工验收仍 pending）** |
+| 状态 | **Accepted（SET-1～SET-6f 已实现并通过各自定向门禁；下一片为 SET-6g「关于」，真实认证、完整真窗口与人工验收仍 pending）** |
 | Owner | Pawork maintainers |
 | 目标阶段 | Settings 活动线；不绑定发布版本 |
 | 最近更新 | 2026-09-03 |
@@ -25,7 +25,7 @@
 
 | 能力 | 当前生产路径/证据 | 缺口 | 结论 |
 | --- | --- | --- | --- |
-| Settings 入口/路由 | SET-3 起 TaskRail `Local` 行 gear + AppRoute 顶层路由 + Settings Rail + 只读供应商页落地（[settings.rs](../../apps/desktop/src/ui/settings.rs)）；SET-6a～6d 依次启用通用、权限与审批、工具与 MCP、终端；SET-6e 启用始终可用的本地外观页（三档会话级字号） | 高级、关于未启用 | 已实现（已启用页面）；其余按切片推进 |
+| Settings 入口/路由 | SET-3 起 TaskRail `Local` 行 gear + AppRoute 顶层路由 + Settings Rail + 只读供应商页落地（[settings.rs](../../apps/desktop/src/ui/settings.rs)）；SET-6a～6d 依次启用通用、权限与审批、工具与 MCP、终端；SET-6e/6f 启用始终可用的本地外观页与高级连接诊断页 | 「关于」尚未启用 | 已实现（已启用页面）；下一片按 SET-6g 推进 |
 | Provider 注册 | [channel registry](../../crates/providers/src/channels/registry.rs) 八行：chatgpt/xai/glm-coding/opencode-go/qwen-token-plan/deepseek/kimi-platform/kimi-code；SET-4 起 `auth_methods` 为数据字段，支持同供应商多认证方法 | — | 已实现 |
 | API-key 通道 | [api_key.rs](../../crates/providers/src/channels/api_key.rs) 可请求 OpenAI-compatible `/models`；SET-2 增 `verify_api_key` 写前验证与 `auth_set_api_key` 非重放命令（verify-then-replace）；SET-4 起 xAI adapter 接受 API key，桌面端写操作已接通 | — | 已实现（真实账号验收 pending） |
 | OAuth | AppCore/auth 已有 OAuth 基础；xAI Device Flow 已接入；SET-2 起 `AuthStart`/`AuthCancel`/`AuthRemove` 对 GUI 开放并有 handler，进度经 `AuthChanged` 六态下发；SET-4 起 Kimi Code Device Flow 接入（[kimi.rs](../../crates/providers/src/channels/kimi.rs)），桌面端等待/取消 UI 已接通 | — | 已实现（真实账号验收 pending） |
@@ -53,7 +53,7 @@ flowchart LR
 1. 用户从 TaskRail 底部 `Local` 行的 gear 进入 Settings。
 2. 左栏整体替换为 Settings Rail，首项为 `← 返回工作台`；右侧不显示 Timeline、Composer 或 Inspector，完整空间交给当前设置页。
 3. 返回后恢复原 active session、Timeline 位置、Composer 草稿、Inspector 状态和进行中的 Run；Settings 本身不取消 Run。
-4. 断线时保留最后一次只读结果并标记 stale；禁用所有写入/验证/刷新动作，只提供 Reconnect/返回。
+4. 断线时保留 Host-backed 页最后一次只读结果并标记 stale；禁用所有写入/验证/刷新动作。高级页仍可查看连接失败原因与 endpoint，并提供同源 Reconnect/返回；旧握手摘要不得冒充当前连接。
 
 ### 3.2 添加供应商
 
@@ -131,6 +131,7 @@ GPUI Settings
 - 新 key 先在 Host 内存中验证，成功后原子写入 auth backend；替换失败不破坏旧凭证。若未来允许“未验证保存”，必须由用户显式选择并另行登记，不作为首期默认。
 - OAuth token 只由 Host 流程换取和持久化；Desktop 只显示授权 URL、用户码、到期时间与脱敏状态。取消/过期不写半成品。
 - Provider 错误必须经过既有脱敏/有界化；禁止把 request header/body、token 或供应商原始敏感错误送入 GUI Diagnostic。
+- 高级页只发布非 Secret 握手摘要、当前 socket endpoint、resume/ack；断线即清 runtime/API/capabilities。不得显示 GUI token、token path，不得从 socket 路径推断 data directory 或配置实例名。
 - 移除连接先确认目标 provider/auth method，只删除对应 auth backend 条目；不改会话事件或历史模型记录。
 - 无 workspace path、Tool、Sandbox 或 PTY 新能力；这些安全面为 none。若后续 Settings 页改变 Policy/MCP/Terminal，则各自另立安全切片。
 - 最低回归：真实形态 Secret 扫描、日志/事件/DB/fixture 负断言、替换失败保旧、OAuth 过期/取消、未知 provider/method fail-closed、断线期间写入拒绝。
@@ -147,7 +148,7 @@ Settings 沿用参考设计的 1440×1024 深色语言和 8px 节奏，不另起
 - provider 行只显示名称、认证方法、连接状态、模型数/目录来源和操作菜单；不显示无权威来源的余额。
 - 添加流程用同一内容区内的 stepper/panel，不弹出第二窗口。
 
-导航顺序：模型与供应商 → 通用（SET-6a）→ 权限与审批（SET-6b）→ 工具与 MCP（SET-6c）→ 终端（SET-6d）→ 外观（SET-6e）→ 高级 → 关于。高级与关于尚未启用，不显示占位项。通用页承载 Global `proxy_url` 读写（ADR-047）；权限与审批页承载会话级 `approval_mode` / `workspace_trusted` 与 Global 默认只读值（ADR-048）；工具与 MCP 页复用 Host `mcp_list` 并提供 test/remove（ADR-049）；终端页承载 Global `terminal_settings` 全态写，只影响之后创建的终端（ADR-050）。外观页不经 Host：复用 Desktop 既有 `TextScale` 提供 100%/125%/150%，与 Cmd+=/Cmd+-/Cmd+0 共用唯一状态；字号仅当前 Desktop 会话生效，重启恢复 100%。当前主题仅深色，macOS Increase Contrast 跟随系统且只读说明；不提供 light/system/custom theme 假控件。
+导航顺序：模型与供应商 → 通用（SET-6a）→ 权限与审批（SET-6b）→ 工具与 MCP（SET-6c）→ 终端（SET-6d）→ 外观（SET-6e）→ 高级（SET-6f）→ 关于。只有「关于」尚未启用，不显示占位项。通用页承载 Global `proxy_url` 读写（ADR-047）；权限与审批页承载会话级 `approval_mode` / `workspace_trusted` 与 Global 默认只读值（ADR-048）；工具与 MCP 页复用 Host `mcp_list` 并提供 test/remove（ADR-049）；终端页承载 Global `terminal_settings` 全态写，只影响之后创建的终端（ADR-050）。外观页不经 Host：复用 Desktop 既有 `TextScale` 提供 100%/125%/150%，与 Cmd+=/Cmd+-/Cmd+0 共用唯一状态；字号仅当前 Desktop 会话生效，重启恢复 100%。当前主题仅深色，macOS Increase Contrast 跟随系统且只读说明；不提供 light/system/custom theme 假控件。高级页同样不新增 Host query：只读展示当前连接已有的 runtime ID、协商 API/capabilities、启动 endpoint、resume/ack；runtime ID 不称作配置 instance，断线清空握手摘要并复用既有 Reconnect。
 
 ### 6.2 状态、键盘与可访问性
 
@@ -160,6 +161,7 @@ Settings 沿用参考设计的 1440×1024 深色语言和 8px 节奏，不另起
 ### 6.3 CLI 与其它客户端
 
 - 既有 `pawork auth`、`pawork models` 继续可用，是诊断/恢复入口；Settings 不改变其参数语义。
+- Host 级 data directory、PID、socket 存活与握手自检仍由 pre-Core `pawork --instance <name> doctor` 负责；高级页不 shell-out、不从 endpoint 猜 instance，只补当前 Desktop 连接视角。
 - headless/ACP 不因 Desktop 功能自动获得 Secret 写入能力；registry 必须对各通道显式声明，首期可只对认证本机 GUI 开放。
 - Desktop/CLI 对同一 auth backend 的状态必须一致；GUI 设置后 `pawork auth list` / `pawork models` 能以脱敏方式核对。
 
@@ -174,8 +176,9 @@ Settings 沿用参考设计的 1440×1024 深色语言和 8px 节奏，不另起
 | SET-3 Settings 壳 | desktop；desktop 产品/包 Spec | SET-1 query 形状 | route、rail、返回、断线/空态、AX 接通 | 可与 SET-2 后半只读部分协调，默认串行 |
 | SET-4 Provider auth | providers、auth、app；对应包 Spec | SET-2 | 四家认证矩阵完成，xAI API key/Kimi 两种连接补齐 | 串行 |
 | SET-5 Catalog/default | providers、app、protocol/client、desktop、workspace | SET-2～4 | 远端/固定目录、刷新、过滤、默认项与 Composer 同步 | 串行 |
-| SET-6a～6e 其它页 | 按页最小写入集；SET-6e 仅 desktop + 文档 | SET-5 | 通用、权限、MCP、终端、外观均以真实能力启用；外观复用会话级字号且不造持久化 | 串行 |
-| SET-7 验收 | 测试/文档；仅修真实缺陷 | SET-3～6e | 定向门禁、四家真实账号、断线/重启、AX/窄窗证据 | 串行 |
+| SET-6a～6f 其它页 | 按页最小写入集；SET-6e/6f 仅 desktop + 文档 | SET-5 | 通用、权限、MCP、终端、外观与高级均以真实能力启用；本地页不造持久化/配置能力 | 串行 |
+| SET-6g 关于 | 仅在权威字段到位后确定最小写入集 | SET-6f | 构建版本、协议版本、数据目录均有权威来源；不宣称 updater/release | 串行 |
+| SET-7 验收 | 测试/文档；仅修真实缺陷 | SET-3～6g | 定向门禁、四家真实账号、断线/重启、AX/窄窗证据 | 串行 |
 
 其余 Settings 页不塞入 SET-1～5。模型与供应商收口后，每页按真实能力分别建小切片；不得以“完整设置中心”为由同时修改无关包。
 
@@ -190,6 +193,7 @@ Settings 沿用参考设计的 1440×1024 深色语言和 8px 节奏，不另起
 | SET-006/007 | provider list_models/catalog merge | provider contract + fallback/filter tests | 四家远端目录或明确固定回退 | 来源/降级文案 |
 | SET-008 | workspace/app config writer | 配置层级与重启测试 | Host/Desktop 重启 | 默认项失效走查 |
 | SET-6e 外观 | desktop render + `TextScale` + AX tree | 离线导航/AX Press/根字号/selected 定向回归 | 正式窗口 100/125/150% 与重启 | 视觉、Tab/Enter、VoiceOver 签字 |
+| SET-6f 高级 | desktop handshake 摘要 + render/AX 同源行 | 离线/连接两态、Reconnect gate、旧握手清空 | 正式 Host 对照 API/capabilities/endpoint/resume/ack | 视觉、Tab/Enter、VoiceOver 签字 |
 
 受影响关键回归：协议/golden、Secret/脱敏、配置持久化。测试使用假 key/token 形态；真实凭证只在隔离实例中读取，输出前脱敏。任何 401/429/超时先记录真实类别，不用 mock 冒充 E3。
 
@@ -208,8 +212,8 @@ Settings 沿用参考设计的 1440×1024 深色语言和 8px 节奏，不另起
 - [x] product/capabilities/desktop/verification/backlog 索引本 Feature，状态诚实标为未实现。
 - [x] SET-1 后同步 contracts/architecture/ADR/protocol/client/app 包级 Spec。
 - [x] SET-2 后同步 providers/workspace/app 包级 Spec（pawork-auth 零改动，无需回写）。
-- [x] SET-3～6e 已同步 desktop 等实际写入集包级 Spec。
-- [x] SET-3～6e 已逐片写入实际验证和已知缺口，并压缩进 history。
+- [x] SET-3～6f 已同步 desktop 等实际写入集包级 Spec。
+- [x] SET-3～6f 已逐片写入实际验证和已知缺口，并压缩进 history。
 - [ ] 模型与供应商真实验收后再决定是否补 Settings bitmap 基准。
 
 ## 11. 决策与开放问题

@@ -1,5 +1,6 @@
-//! Settings 壳（SET-3/4/6a/6b/6c/6d/6e）：Settings Rail、「Models &
-//! providers」、「General」、「权限与审批」、「工具与 MCP」、「终端」与「外观」页。
+//! Settings 壳（SET-3/4/6a/6b/6c/6d/6e/6f）：Settings Rail、「Models &
+//! providers」、「General」、「权限与审批」、「工具与 MCP」、「终端」、「外观」
+//! 与「高级」页。
 //!
 //! 供应商页只呈现 Host `provider_auth_status` 权威事实：供应商名称、
 //! 认证方式、连接状态与目录来源（SET-3）；SET-4 增认证写操作（API key
@@ -10,9 +11,10 @@
 //! MCP」页（复用 Resources 的 mcp_list 数据链 + mcp_test /
 //! mcp_server_remove 写动作）；SET-6d 增「终端」页（terminal_settings
 //! 读取 + set_terminal_settings 全态写）；SET-6e 复用 Desktop 已有的
-//! 100% / 125% / 150% 会话级字号能力，不经 Host。Host 查询失败 /
+//! 100% / 125% / 150% 会话级字号能力，不经 Host；SET-6f 只读展示当前
+//! 连接的握手摘要、启动 endpoint、恢复游标，并复用既有 Reconnect。Host 查询失败 /
 //! 未知则隐藏对应导航项且不渲染写入口。断线保留 stale 只读结果
-//! 并禁用 Host 写动作；外观页作为本地能力始终可用。
+//! 并禁用 Host 写动作；外观 / 高级页作为本地能力始终可用。
 //! 可见 / 键盘 / AX 三路径同 gate。
 
 use std::collections::HashSet;
@@ -77,6 +79,13 @@ pub(crate) const SETTINGS_APPEARANCE_THEME_NOTE: &str =
 /// 外观页字号生效边界（SET-6e）：本片不引入第二套配置或假持久化。
 pub(crate) const SETTINGS_APPEARANCE_EFFECT_NOTE: &str =
     "字号立即应用于当前 Desktop 会话；重启后恢复 100%。也可用 Cmd+= / Cmd+- / Cmd+0 调整。";
+
+/// 高级页启动目标边界（SET-6f）：runtime ID 不能冒充 CLI 配置实例名，
+/// 且任何凭证及其路径都不进入 render / AX。
+pub(crate) const SETTINGS_ADVANCED_TARGET_NOTE: &str = "Endpoint 由 Desktop 启动时的 --instance / --socket 决定；切换需重启 Desktop。Host runtime ID 不是配置实例名。本页不显示 GUI token 或 token path。";
+/// Host 级自检仍由 pre-Core CLI 命令负责；Desktop 不 shell-out，也不从
+/// socket 路径推断 data directory / 配置实例名。
+pub(crate) const SETTINGS_ADVANCED_DOCTOR_NOTE: &str = "Host 级 data directory、PID、socket 存活与握手自检请使用 pawork --instance <name> doctor；本页不推断实例名，也不运行该命令。";
 /// 外观页字号按钮的固定几何；render 与 AX bounds 共用，避免缩放后命中框漂移。
 pub(crate) const SETTINGS_APPEARANCE_CONTROL_HEIGHT: f32 = SETTINGS_ACTION_HEIGHT;
 pub(crate) const SETTINGS_APPEARANCE_CONTROL_WIDTH: f32 = 112.0;
@@ -590,11 +599,18 @@ impl AppView {
                 cx,
             ));
         }
-        rail.child(self.settings_nav_item(
+        rail = rail.child(self.settings_nav_item(
             "settings-nav-appearance",
             "外观",
             current_page == SettingsPage::Appearance,
             SettingsPage::Appearance,
+            cx,
+        ));
+        rail.child(self.settings_nav_item(
+            "settings-nav-advanced",
+            "高级",
+            current_page == SettingsPage::Advanced,
+            SettingsPage::Advanced,
             cx,
         ))
     }
@@ -625,6 +641,9 @@ impl AppView {
         if self.settings_page == SettingsPage::Appearance {
             return self.settings_appearance_page_element(cx).into_any_element();
         }
+        if self.settings_page == SettingsPage::Advanced {
+            return self.settings_advanced_page_element(cx).into_any_element();
+        }
         self.settings_providers_page_element(cx).into_any_element()
     }
 
@@ -642,6 +661,7 @@ impl AppView {
             SettingsPage::Tools => self.settings_nav_tools_focus.clone(),
             SettingsPage::Terminal => self.settings_nav_terminal_focus.clone(),
             SettingsPage::Appearance => self.settings_nav_appearance_focus.clone(),
+            SettingsPage::Advanced => self.settings_nav_advanced_focus.clone(),
             SettingsPage::Providers => self.settings_nav_providers_focus.clone(),
         };
         if selected {
@@ -1319,6 +1339,179 @@ impl AppView {
                     .text_size(font::BODY_SM)
                     .text_color(dark().text.secondary)
                     .child(SETTINGS_APPEARANCE_EFFECT_NOTE),
+            );
+
+        div()
+            .id("settings-page")
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_w_0()
+            .overflow_hidden()
+            .p_4()
+            .child(
+                div()
+                    .id("settings-page-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .track_scroll(&self.settings_scroll)
+                    .child(content),
+            )
+    }
+
+    /// 「高级」页诊断行（SET-6f）：render / AX 共用；未连接时协商字段
+    /// 诚实返回 unavailable，endpoint 与最后 ack 游标仍来自 Desktop 本地事实。
+    pub(super) fn settings_advanced_diagnostic_rows(
+        &self,
+    ) -> Vec<(&'static str, &'static str, String)> {
+        // Connection 只报告相位，不复用 TaskRail「Local · Connected · resume」
+        // 合成文案，避免把 resume / runtime id 混进这一行。
+        let connection = match &self.projection.connection {
+            ConnectionState::Connected { .. } => "Connected".into(),
+            other => other.label(),
+        };
+        let unavailable = "Unavailable · connect to the Host";
+        let (runtime_id, api_version, capabilities, resume) = match &self.handshake_info {
+            Some(handshake) => (
+                handshake.runtime_id.clone(),
+                handshake.api_version.clone(),
+                if handshake.capabilities.is_empty() {
+                    "None granted".to_string()
+                } else {
+                    handshake.capabilities.join(", ")
+                },
+                self.projection
+                    .resume
+                    .label()
+                    .unwrap_or_else(|| "Fresh snapshot".into()),
+            ),
+            None => (
+                unavailable.into(),
+                unavailable.into(),
+                unavailable.into(),
+                unavailable.into(),
+            ),
+        };
+        let last_ack = self
+            .controller
+            .last_acked_sequence()
+            .map_or_else(|| "Unavailable".into(), |sequence| sequence.to_string());
+        vec![
+            ("settings-advanced-connection", "Connection", connection),
+            ("settings-advanced-runtime", "Host runtime ID", runtime_id),
+            ("settings-advanced-api", "GUI API", api_version),
+            (
+                "settings-advanced-capabilities",
+                "Granted capabilities",
+                capabilities,
+            ),
+            (
+                "settings-advanced-endpoint",
+                "Endpoint",
+                self.socket.display().to_string(),
+            ),
+            ("settings-advanced-resume", "Resume", resume),
+            (
+                "settings-advanced-last-ack",
+                "Last acknowledged sequence",
+                last_ack,
+            ),
+        ]
+    }
+
+    /// 「高级」页（SET-6f）：仅呈现 Desktop 已有连接事实，并在断线态
+    /// 复用壳层现有 Reconnect。无实例编辑、CLI shell-out 或诊断历史。
+    fn settings_advanced_page_element(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut content = div()
+            .flex()
+            .flex_col()
+            .min_w_0()
+            .max_w(px(SETTINGS_CONTENT_MAX_WIDTH))
+            .gap_2()
+            .child(
+                div().font_weight(FontWeight::MEDIUM).child(
+                    Label::new("高级")
+                        .size(font::TITLE)
+                        .color(dark().text.primary),
+                ),
+            )
+            .child(
+                Label::new("Connection diagnostics and startup target")
+                    .size(font::BODY_SM)
+                    .color(dark().text.secondary),
+            );
+
+        for (id, label, value) in self.settings_advanced_diagnostic_rows() {
+            content = content.child(
+                div()
+                    .id(id)
+                    .w_full()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        Label::new(label)
+                            .size(font::BODY_SM)
+                            .color(dark().text.secondary),
+                    )
+                    .child(
+                        div()
+                            .w_full()
+                            .min_w_0()
+                            .whitespace_normal()
+                            .text_size(font::BODY)
+                            .text_color(dark().text.primary)
+                            .child(value),
+                    ),
+            );
+        }
+
+        if self.projection.show_reconnect() {
+            let reconnect_focus = self.reconnect_focus.clone();
+            content = content.child(
+                div().pt_1().child(
+                    Button::new("reconnect")
+                        .track_focus(&reconnect_focus)
+                        .variant(ButtonVariant::Primary)
+                        .height(px(SETTINGS_ACTION_HEIGHT))
+                        .padding(ButtonPadding::Wide)
+                        .center()
+                        .radius(4.0)
+                        .text_size(font::BODY_SM)
+                        .label("Reconnect")
+                        .on_click(cx.listener(|view, event, window, cx| {
+                            if view.consume_button_key_click("reconnect", event) {
+                                return;
+                            }
+                            view.on_reconnect(window, cx);
+                        }))
+                        .on_activate(cx.listener(|view, _event, window, cx| {
+                            view.note_button_key_activate("reconnect");
+                            view.on_reconnect(window, cx);
+                            cx.stop_propagation();
+                        })),
+                ),
+            );
+        }
+
+        content = content
+            .child(
+                div()
+                    .w_full()
+                    .min_w_0()
+                    .whitespace_normal()
+                    .text_size(font::BODY_SM)
+                    .text_color(dark().text.secondary)
+                    .child(SETTINGS_ADVANCED_TARGET_NOTE),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .min_w_0()
+                    .whitespace_normal()
+                    .text_size(font::BODY_SM)
+                    .text_color(dark().text.secondary)
+                    .child(SETTINGS_ADVANCED_DOCTOR_NOTE),
             );
 
         div()

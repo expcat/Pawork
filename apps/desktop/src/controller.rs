@@ -239,10 +239,20 @@ pub struct McpServerEntry {
     pub last_error: Option<String>,
 }
 
+/// Desktop 使用的非 Secret 握手摘要；runtime ID 不等同 CLI `--instance`
+/// 配置名，capabilities 使用冻结 wire 的 snake_case 名。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DesktopHandshakeInfo {
+    pub runtime_id: String,
+    pub api_version: String,
+    pub capabilities: Vec<String>,
+}
+
 /// 握手 / 重连结果：`resume` 为 None 表示首连（无 last_ack）。
 pub struct DesktopConnect {
     pub snapshot: Snapshot,
     pub resume: Option<ResumeOutcome>,
+    pub handshake: DesktopHandshakeInfo,
     pub events: smol::channel::Receiver<ControllerEvent>,
 }
 
@@ -397,9 +407,11 @@ impl DesktopController {
                 }
             }
         });
+        let handshake_info = desktop_handshake_info(&handshake);
         Ok(DesktopConnect {
             snapshot,
             resume,
+            handshake: handshake_info,
             events: receiver,
         })
     }
@@ -1947,6 +1959,26 @@ fn desktop_capabilities() -> Vec<GuiCapability> {
         GuiCapability::Approvals,
         GuiCapability::TerminalStreaming,
     ]
+}
+
+fn desktop_handshake_info(client: &GuiClient) -> DesktopHandshakeInfo {
+    let version = client.api_version();
+    DesktopHandshakeInfo {
+        runtime_id: client.handle().instance_id.as_str().to_string(),
+        api_version: format!("{}.{}", version.major, version.minor),
+        capabilities: client
+            .capabilities()
+            .iter()
+            .map(|capability| match capability {
+                GuiCapability::Events => "events",
+                GuiCapability::Snapshots => "snapshots",
+                GuiCapability::ArtifactStreaming => "artifact_streaming",
+                GuiCapability::TerminalStreaming => "terminal_streaming",
+                GuiCapability::Approvals => "approvals",
+            })
+            .map(str::to_string)
+            .collect(),
+    }
 }
 
 /// source / identity 占位：服务端 host_stamp_command / host_stamp_query 会统一

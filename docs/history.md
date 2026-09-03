@@ -1149,3 +1149,23 @@ Real-world evidence: 正式 Host/Desktop 已启动并接通；Computer Use 连�
 Known gaps: 字号不持久化是本片明确产品边界（重启恢复 100%）；light/system/custom theme、高级、关于均未实现；完整真窗口与人工验收登记 SET-7。
 
 Full workspace gate: NOT RUN（当前未设置全量门禁）。
+
+## 2026-09-03 — Settings SET-6f 高级页（连接诊断）
+
+- 立项与边界：源码与 Spec 复核确认 Desktop 已持有连接状态、启动 endpoint、重连入口、resume/ack 游标，`GuiClient` 也保留成功握手后的 runtime ID、协商 API 版本与 granted capabilities；无需新增 Host query 或修改 wire。CLI `InstanceReport` 仍是 CLI 私有诊断面，Desktop 不 shell-out、不猜测配置 instance/data dir；runtime ID 明确不冒充 `--instance` 名称。
+- 实施：连接成功时把非 Secret 的握手摘要随 `DesktopConnect` 交给 UI；Settings Rail 新增始终可用的「高级」页，只读展示连接状态、Host runtime ID、GUI API、granted capabilities、启动 endpoint、resume 与 last acknowledged sequence，并在可重连状态复用既有 Reconnect。开始新连接或断线时清空旧握手摘要，避免把历史 Host 数据冒充当前状态；页面不展示 GUI token 或 token 路径。
+- 定向回归：扩展既有 Settings 本地页 GPUI/AX 测试，覆盖离线导航与握手不可用状态、失败状态下 endpoint 与 Reconnect、连接后 runtime/API/capabilities/resume/last-ack 行、已连接态迟到 Reconnect fail-closed，以及 `ControllerEvent::Disconnected` 清空握手并恢复 Reconnect；继续共用同一测试覆盖外观页，测试总数不增加。
+- 只读复审：无 P0/P1；修复 2 P2——Reconnect 只在 render/AX 判断可见、最终入口未复核导致迟到双击可并发 connect，以及原测试/文档没有真正证明握手 `Some → Disconnected → None` 与 last-ack 行。共同入口补最终 gate，`start_connect` 进入 Connecting 立即重绘；同一条测试补足生命周期证据。
+- 提交前复查：Connection 诊断行不再复用 TaskRail `connection_status_label()`（会把「Local ·」和 resume 相位拼进 Connection）；改为 Connected 纯相位，失败/断线仍走 `ConnectionState::label()`。定向测试锁定已连接 `Connected` 与断线 `Disconnected · connection closed`。
+
+Implemented: Desktop Settings「高级」连接诊断页；ROADMAP 指针推进到 SET-6g「关于」。
+
+Validated: `cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`（186/186）；`git diff --check`。
+
+Targeted regressions: 离线/失败/已连接/断线 Advanced AX 树，endpoint/resume/last-ack 行、握手 `Some → Disconnected → None`，以及 Reconnect AX/最终业务双 gate；既有外观页回归同测通过。
+
+Real-world evidence: pending（真窗口、Tab/Enter 与 VoiceOver 仍登记 SET-7；本片未把自动化树测试冒充人工验收）。
+
+Known gaps: SET-6g「关于」尚未实现；Host 级完整 `doctor` 报告、data dir 与配置 instance 切换不属于 Desktop 本页，继续由 `pawork --instance <name> doctor` 承载。
+
+Full workspace gate: NOT RUN（当前未设置全量门禁）。
