@@ -3,7 +3,10 @@
 use super::*;
 
 impl AppView {
-    pub(super) fn settings_general_page_element(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn settings_general_page_element(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let connected = matches!(
             self.projection.connection,
             ConnectionState::Connected { .. }
@@ -132,9 +135,16 @@ impl AppView {
         }
         content = content
             .child(
+                div().font_weight(FontWeight::MEDIUM).child(
+                    Label::new("Proxy URL")
+                        .size(font::BODY)
+                        .color(dark().text.primary),
+                ),
+            )
+            .child(
                 Label::new(format!("Current · {current}"))
-                    .size(font::BODY)
-                    .color(dark().text.primary),
+                    .size(font::BODY_SM)
+                    .color(dark().text.secondary),
             )
             .child(
                 div()

@@ -32,20 +32,21 @@ impl AppView {
         );
         let refresh_focused =
             self.open_menu.is_none() && self.settings_refresh_focus.is_focused(window);
-        let mut page = AxNode::new("settings-page", AxRole::Group, "工具与 MCP", frame)
+        let width = super::settings::settings_content_ax_width(frame);
+        let mut page = AxNode::new("settings-page", AxRole::Group, "Tools & MCP", frame)
             .child(
                 AxNode::new(
                     "settings-page-title",
                     AxRole::StaticText,
-                    "工具与 MCP",
+                    "Tools & MCP",
                     AxRect::new(
                         frame.x + 16.0,
                         frame.y + 16.0,
-                        (frame.width - 136.0).max(0.0),
+                        (width - 136.0).max(0.0),
                         HEADING_HEIGHT + SUBTITLE_HEIGHT,
                     ),
                 )
-                .value("Host 权威 MCP server 清单、状态与配置"),
+                .value("MCP servers, status, and configuration reported by the Host"),
             )
             .child(
                 AxNode::new(
@@ -53,7 +54,7 @@ impl AppView {
                     AxRole::Button,
                     "Refresh",
                     AxRect::new(
-                        frame.x + frame.width - 16.0 - 96.0,
+                        frame.x + 16.0 + width - 96.0,
                         frame.y + 16.0,
                         96.0,
                         CONTROL_ROW,
@@ -64,7 +65,6 @@ impl AppView {
                 .action(AxAction::Press),
             );
         let mut y = frame.y + 16.0 + HEADING_HEIGHT + SUBTITLE_HEIGHT + 8.0;
-        let width = (frame.width - 32.0).max(0.0);
         for (kind, label) in tools_status_lines(&self.resources) {
             page = page.child(
                 AxNode::new(
@@ -124,9 +124,7 @@ impl AppView {
                         AxRole::Button,
                         action.label(),
                         AxRect::new(
-                            frame.x + frame.width
-                                - 16.0
-                                - (actions.len() - ix) as f32 * (button_w + 4.0),
+                            frame.x + 16.0 + width - (actions.len() - ix) as f32 * (button_w + 4.0),
                             y + card_height - CARD_PAD - CONTROL_ROW,
                             button_w,
                             CONTROL_ROW,

@@ -5,7 +5,10 @@ use super::*;
 impl AppView {
     /// 「高级」页（SET-6f）：仅呈现 Desktop 已有连接事实，并在断线态
     /// 复用壳层现有 Reconnect。无实例编辑、CLI shell-out 或诊断历史。
-    pub(super) fn settings_advanced_page_element(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn settings_advanced_page_element(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let mut content = div()
             .flex()
             .flex_col()
@@ -14,7 +17,7 @@ impl AppView {
             .gap_2()
             .child(
                 div().font_weight(FontWeight::MEDIUM).child(
-                    Label::new("高级")
+                    Label::new("Advanced")
                         .size(font::TITLE)
                         .color(dark().text.primary),
                 ),
@@ -32,15 +35,22 @@ impl AppView {
                     .w_full()
                     .min_w_0()
                     .flex()
-                    .flex_col()
+                    .flex_row()
+                    .items_start()
+                    .gap_2()
+                    .py_1()
+                    .border_b_1()
+                    .border_color(dark().border.subtle)
                     .child(
-                        Label::new(label)
-                            .size(font::BODY_SM)
-                            .color(dark().text.secondary),
+                        div().w(px(184.0)).flex_none().child(
+                            Label::new(label)
+                                .size(font::BODY_SM)
+                                .color(dark().text.secondary),
+                        ),
                     )
                     .child(
                         div()
-                            .w_full()
+                            .flex_1()
                             .min_w_0()
                             .whitespace_normal()
                             .text_size(font::BODY)

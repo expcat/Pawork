@@ -1,9 +1,7 @@
 //! DesktopProjection 定向测试。
 
 use super::*;
-use pawork_client::{
-    AppEventEnvelope, ResumeDisposition, ResumeOutcome, Snapshot, TimelinePage,
-};
+use pawork_client::{AppEventEnvelope, ResumeDisposition, ResumeOutcome, Snapshot, TimelinePage};
 use serde_json::{json, Value};
 
 fn snapshot_with_sessions(entries: Vec<Value>) -> Snapshot {
@@ -54,11 +52,12 @@ fn provider_status_entries_map_host_wire_to_readonly_labels() {
         ],
         "default": null
     });
-    let loaded = serde_json::from_value::<ProviderAuthStatusData>(data.clone()).expect("parse provider status");
+    let loaded = serde_json::from_value::<ProviderAuthStatusData>(data.clone())
+        .expect("parse provider status");
     let entries = &loaded.providers;
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[0].auth_methods_label(), "API key");
-    assert_eq!(entries[0].auth_label(), "Connected · API key · sk-…ab12");
+    assert_eq!(entries[0].auth_label(), "Connected");
     assert_eq!(
         entries[0].catalog_label(),
         "Remote catalog · fetched 2026-09-02T08:00:00Z"
@@ -79,42 +78,50 @@ fn provider_status_entries_fail_closed_on_malformed_payload() {
     // 缺 providers 数组：整体 fail-closed。
     assert!(serde_json::from_value::<ProviderAuthStatusData>(payload(json!("nope"))).is_err());
     // 单条缺 auth / 未知 auth 状态：不静默丢条目。
-    assert!(serde_json::from_value::<ProviderAuthStatusData>(payload(json!([
-        { "provider_id": "glm-coding", "display_name": "Z.AI", "endpoint_label": "e" }
-    ])))
-    .is_err());
+    assert!(
+        serde_json::from_value::<ProviderAuthStatusData>(payload(json!([
+            { "provider_id": "glm-coding", "display_name": "Z.AI", "endpoint_label": "e" }
+        ])))
+        .is_err()
+    );
     // auth_methods 缺失 / 非数组 / 含非字符串项：fail-closed，不默认空表。
-    assert!(serde_json::from_value::<ProviderAuthStatusData>(payload(json!([
-        {
-            "provider_id": "glm-coding",
-            "display_name": "Z.AI",
-            "endpoint_label": "e",
-            "auth": { "type": "none" },
-            "catalog": { "type": "remote", "fetched_at": "t" }
-        }
-    ])))
-    .is_err());
-    assert!(serde_json::from_value::<ProviderAuthStatusData>(payload(json!([
-        {
-            "provider_id": "glm-coding",
-            "display_name": "Z.AI",
-            "endpoint_label": "e",
-            "auth_methods": "api_key",
-            "auth": { "type": "none" },
-            "catalog": { "type": "remote", "fetched_at": "t" }
-        }
-    ])))
-    .is_err());
-    assert!(serde_json::from_value::<ProviderAuthStatusData>(payload(json!([
-        {
-            "provider_id": "glm-coding",
-            "display_name": "Z.AI",
-            "endpoint_label": "e",
-            "auth": { "type": "mystery" },
-            "catalog": { "type": "remote", "fetched_at": "t" }
-        }
-    ])))
-    .is_err());
+    assert!(
+        serde_json::from_value::<ProviderAuthStatusData>(payload(json!([
+            {
+                "provider_id": "glm-coding",
+                "display_name": "Z.AI",
+                "endpoint_label": "e",
+                "auth": { "type": "none" },
+                "catalog": { "type": "remote", "fetched_at": "t" }
+            }
+        ])))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<ProviderAuthStatusData>(payload(json!([
+            {
+                "provider_id": "glm-coding",
+                "display_name": "Z.AI",
+                "endpoint_label": "e",
+                "auth_methods": "api_key",
+                "auth": { "type": "none" },
+                "catalog": { "type": "remote", "fetched_at": "t" }
+            }
+        ])))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<ProviderAuthStatusData>(payload(json!([
+            {
+                "provider_id": "glm-coding",
+                "display_name": "Z.AI",
+                "endpoint_label": "e",
+                "auth": { "type": "mystery" },
+                "catalog": { "type": "remote", "fetched_at": "t" }
+            }
+        ])))
+        .is_err()
+    );
 }
 
 #[test]
@@ -124,7 +131,8 @@ fn provider_status_default_parses_host_default() {
         "default": { "provider_id": "kimi", "model_id": "kimi-k2-0905-preview" }
     });
     data["providers"] = json!([]);
-    let loaded = serde_json::from_value::<ProviderAuthStatusData>(data.clone()).expect("parse default");
+    let loaded =
+        serde_json::from_value::<ProviderAuthStatusData>(data.clone()).expect("parse default");
     assert_eq!(
         loaded.default,
         Some(DefaultModelPair {
@@ -149,12 +157,17 @@ fn provider_status_default_fails_closed_on_malformed_payload() {
     assert!(serde_json::from_value::<ProviderAuthStatusData>(json!({ "providers": [] })).is_err());
     // 非对象非 null / 缺 model_id / 字段非字符串：同样 fail-closed。
     assert!(serde_json::from_value::<ProviderAuthStatusData>(payload(json!("kimi"))).is_err());
-    assert!(serde_json::from_value::<ProviderAuthStatusData>(payload(json!({ "provider_id": "kimi" }))).is_err());
-    assert!(serde_json::from_value::<ProviderAuthStatusData>(payload(json!({
-        "provider_id": "kimi",
-        "model_id": 7
-    })))
+    assert!(serde_json::from_value::<ProviderAuthStatusData>(payload(
+        json!({ "provider_id": "kimi" })
+    ))
     .is_err());
+    assert!(
+        serde_json::from_value::<ProviderAuthStatusData>(payload(json!({
+            "provider_id": "kimi",
+            "model_id": 7
+        })))
+        .is_err()
+    );
 }
 
 #[test]
@@ -263,9 +276,9 @@ fn provider_status_refresh_failure_keeps_last_list_and_default() {
             },
         }],
         default: Some(DefaultModelPair {
-                provider_id: "kimi".to_string(),
-                model_id: "kimi-k2-0905-preview".to_string(),
-            }),
+            provider_id: "kimi".to_string(),
+            model_id: "kimi-k2-0905-preview".to_string(),
+        }),
     });
     state.apply_failed("query failed");
     assert_eq!(state.providers.len(), 1);
@@ -280,13 +293,17 @@ fn provider_status_refresh_failure_keeps_last_list_and_default() {
 #[test]
 fn general_settings_parses_host_proxy_url() {
     assert_eq!(
-        serde_json::from_value::<GeneralSettingsData>(json!({ "proxy_url": "http://127.0.0.1:7890" }))
-            .expect("parse proxy_url string")
-            .proxy_url,
+        serde_json::from_value::<GeneralSettingsData>(
+            json!({ "proxy_url": "http://127.0.0.1:7890" })
+        )
+        .expect("parse proxy_url string")
+        .proxy_url,
         Some("http://127.0.0.1:7890".into())
     );
     assert_eq!(
-        serde_json::from_value::<GeneralSettingsData>(json!({ "proxy_url": null })).expect("parse null proxy_url").proxy_url,
+        serde_json::from_value::<GeneralSettingsData>(json!({ "proxy_url": null }))
+            .expect("parse null proxy_url")
+            .proxy_url,
         None
     );
     let mut state = SettingsGeneralState::default();
@@ -304,7 +321,10 @@ fn general_settings_parses_host_proxy_url() {
 fn general_settings_fails_closed_on_malformed_payload() {
     assert!(serde_json::from_value::<GeneralSettingsData>(json!({})).is_err());
     assert!(serde_json::from_value::<GeneralSettingsData>(json!({ "proxy_url": 7 })).is_err());
-    assert!(serde_json::from_value::<GeneralSettingsData>(json!({ "proxy_url": { "url": "x" } })).is_err());
+    assert!(
+        serde_json::from_value::<GeneralSettingsData>(json!({ "proxy_url": { "url": "x" } }))
+            .is_err()
+    );
     let mut state = SettingsGeneralState::default();
     state.apply_failed("malformed payload");
     assert!(!state.query.available);
@@ -345,12 +365,12 @@ fn permissions_settings_parses_host_triple() {
     assert_eq!(data.trust_workspaces_global, None);
     assert_eq!(data.workspace_id, "workspace-1");
     for mode in [
-            ApprovalModeWire::AlwaysAsk,
-            ApprovalModeWire::AskForWrites,
-            ApprovalModeWire::AskForDangerous,
-            ApprovalModeWire::NeverAsk,
-            ApprovalModeWire::ReadOnly,
-        ] {
+        ApprovalModeWire::AlwaysAsk,
+        ApprovalModeWire::AskForWrites,
+        ApprovalModeWire::AskForDangerous,
+        ApprovalModeWire::NeverAsk,
+        ApprovalModeWire::ReadOnly,
+    ] {
         let parsed = serde_json::from_value::<PermissionsSettingsData>(json!({
             "approval_mode": mode.as_str(),
             "workspace_trusted": false,
@@ -375,7 +395,10 @@ fn permissions_settings_parses_host_triple() {
 #[test]
 fn permissions_settings_fails_closed_on_malformed_payload() {
     assert!(serde_json::from_value::<PermissionsSettingsData>(json!({})).is_err());
-    assert!(serde_json::from_value::<PermissionsSettingsData>(json!({ "approval_mode": "always_ask" })).is_err());
+    assert!(serde_json::from_value::<PermissionsSettingsData>(
+        json!({ "approval_mode": "always_ask" })
+    )
+    .is_err());
     assert!(serde_json::from_value::<PermissionsSettingsData>(json!({
         "approval_mode": "yolo",
         "workspace_trusted": false,
@@ -433,10 +456,7 @@ fn permissions_settings_stale_keeps_last_values_and_disables_writes() {
     );
     assert!(state.writes_enabled(true));
     state.mark_stale("socket closed");
-    assert_eq!(
-        state.approval_mode,
-        Some(ApprovalModeWire::AskForDangerous)
-    );
+    assert_eq!(state.approval_mode, Some(ApprovalModeWire::AskForDangerous));
     assert!(state.workspace_trusted);
     assert_eq!(state.trust_workspaces_global, None);
     assert!(state.query.available);
@@ -445,10 +465,7 @@ fn permissions_settings_stale_keeps_last_values_and_disables_writes() {
     assert!(!state.writes_enabled(false));
     // 写失败保旧（fail-closed）：值不动，只记录错误。
     state.apply_failed("set approval mode failed");
-    assert_eq!(
-        state.approval_mode,
-        Some(ApprovalModeWire::AskForDangerous)
-    );
+    assert_eq!(state.approval_mode, Some(ApprovalModeWire::AskForDangerous));
     assert!(state.workspace_trusted);
     assert!(state.query.available);
 }
@@ -494,7 +511,10 @@ fn terminal_settings_main_path_confirms_full_state_and_sizes_new_terminal() {
 #[test]
 fn terminal_settings_fails_closed_on_malformed_payload() {
     assert!(serde_json::from_value::<TerminalSettingsData>(json!({})).is_err());
-    assert!(serde_json::from_value::<TerminalSettingsData>(json!({ "columns": 80, "rows": 24 })).is_err());
+    assert!(
+        serde_json::from_value::<TerminalSettingsData>(json!({ "columns": 80, "rows": 24 }))
+            .is_err()
+    );
     assert!(serde_json::from_value::<TerminalSettingsData>(json!({
         "shell": null, "rows": 24
     }))
@@ -645,11 +665,7 @@ fn auth_changed_states_parse_and_apply_to_provider_auth() {
             },
         );
         state.apply_auth_changed_value("kimi", &json!({ "type": kind }));
-        assert_eq!(
-            *provider_auth(&state),
-            ProviderAuthState::None,
-            "{kind}"
-        );
+        assert_eq!(*provider_auth(&state), ProviderAuthState::None, "{kind}");
         assert_eq!(state.auth_notes.get("kimi").map(String::as_str), Some(note));
         assert!(!state.oauth_waits.contains_key("kimi"), "{kind}");
         if kind == "removed" {

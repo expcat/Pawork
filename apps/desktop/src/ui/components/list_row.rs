@@ -2,7 +2,7 @@
 //!
 //! Task 行 / 项目头行的可点区域统一：选中态背景取现状值（active=raised /
 //! 否则 bg.panel / 头行无底色），hover 按基准 §8.1（ghost 行 → surface.raised，
-//! raised 行 → surface.hover），active 复用 hover 色。
+//! raised 行 → surface.hover），pressed 使用更沉的 surface.pressed。
 
 use gpui::{
     div, prelude::*, px, AnyElement, App, ClickEvent, FocusHandle, IntoElement, KeyDownEvent,
@@ -93,10 +93,11 @@ impl RenderOnce for ListRow {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let mut row = div().id(self.id).cursor_pointer();
         if let Some(focus) = self.focus.as_ref() {
-            row = row
-                .tab_stop(true)
-                .track_focus(focus)
-                .focus(|style| style.border_1().border_color(dark().accent.primary));
+            row = row.tab_stop(true).track_focus(focus).focus(|style| {
+                style
+                    .border(px(metrics::FOCUS_RING_WIDTH))
+                    .border_color(dark().accent.primary)
+            });
         }
         let hover = match self.kind {
             ListRowKind::Task { selected } => {
@@ -134,7 +135,7 @@ impl RenderOnce for ListRow {
             }
         };
         row = row.hover(move |style| style.bg(hover));
-        row = row.active(move |style| style.bg(hover));
+        row = row.active(|style| style.bg(dark().surface.pressed));
         for child in self.children {
             row = row.child(child);
         }

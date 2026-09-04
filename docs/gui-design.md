@@ -1,6 +1,6 @@
 # Pawork Desktop GUI 设计
 
-> Desktop GUI 的设计事实源。视觉实施基准：[../design/README.md](../design/README.md)。产品/验收汇总见 [spec/desktop.md](spec/desktop.md)；包级 Spec 见 [spec/crates/desktop.md](spec/crates/desktop.md)。
+> Desktop GUI 的设计事实源。目标 UI 全面优化方案见 [gui-optimization.md](gui-optimization.md)，分阶段任务见 [gui-roadmap.md](gui-roadmap.md)；视觉实施基准见 [../design/README.md](../design/README.md)。产品/验收汇总见 [spec/desktop.md](spec/desktop.md)；包级 Spec 见 [spec/crates/desktop.md](spec/crates/desktop.md)。
 
 ---
 
@@ -21,7 +21,7 @@
 
 ## 2. 参照与取舍
 
-只吸收可验证的「主对话壳」行为，不复制完整 IDE。以 [三张初始设计图](../design/README.md) 检查信息架构与视觉语言，以真窗口和真实数据判断功能。
+只吸收可验证的「主对话壳」行为，不复制完整 IDE。以 [三张阶段设计图](../design/README.md) 检查信息架构与视觉语言，以真窗口和真实数据判断功能。
 
 | 参照 | 吸收 | 不吸收 |
 | --- | --- | --- |
@@ -83,10 +83,12 @@
 
 ### 3.2 TaskRail
 
-视觉基准为 [Timeline](../design/desktop-shell-timeline-v3.png)、[折叠 Inspector](../design/desktop-shell-timeline-collapsed-v3.png) 与 [Projects](../design/desktop-shell-projects-v3.png)。
+阶段视觉基准为 [P0 Foundation](../design/desktop-ui-p0-foundation-v4.png)、[P1 Run & Review](../design/desktop-ui-p1-run-review-v4.png) 与 [P2 Settings & Polish](../design/desktop-ui-p2-settings-v4.png)。
 
 - 顶部 `All projects / <project>` 是范围筛选；`Timeline / Projects` 是分组方式。两者正交。
-- 分组方式收进标题行右侧 `GroupingMenuButton`，不保留宽幅 segmented control。
+- 分组方式使用标题行右侧 28×28px 二态直接切换按钮，不保留宽幅 segmented control，也不打开下拉菜单。
+- 当前为 Timeline 时显示 folder icon、tooltip / AX name 为 `Show projects`；当前为 Projects 时显示 clock icon、tooltip / AX name 为 `Show timeline`。图标表达目标动作，AX value 表达当前视图。
+- click、Enter、Space 与 AX Press 立即切到另一种分组；切换后焦点留在按钮，active session、Composer 草稿、Run、scope 与项目展开状态不变。
 - 全局 `AddTaskButton` 在连接行；每个项目头另有定向新建，绑定该项目 canonical `workspace_id`。断线与 stale 时两类入口均禁用。
 - Timeline 层级：日期（Today / Yesterday / Previous 7 days / Earlier）→ 项目 → Task，均按最近活动倒序；Task 行不再重复项目名。
 - Projects 按 canonical Workspace 分组；缺失元数据的 Session 进入 `Unassigned`。
@@ -98,15 +100,16 @@
 - Composer 常态高 88–94 px，同行控件高 28–30 px；模型 / reasoning 只在模型选择器显示。
 - `ContextMeter`：当前请求上下文估算 / model catalog context window。容量未知时显示 unavailable，不用 Session 累计 token 冒充。
 - Workspace 与 Inspector 底部共享 24 px `RunStatusBar`：Task 累计 token、Provider 剩余额度、output tokens/s 与 Run duration；缺权威来源时显示 unknown / `—`。
-- Inspector 顶层：Changes / Terminal / Resources。折叠时宽度归零，右上 `ActivityPopover` 摘要 Changes 行数与 Agent 状态；Surface 未接通时隐藏对应分区，不做可点击假入口。
+- Inspector 顶层：Changes / Terminal / Resources。折叠时宽度归零，右上 `ActivityPopover` 只摘要已有的 Changes 事实；Surface 未接通时隐藏对应分区，不做可点击假入口。
 - 只消费 projection / Host capability，经 controller → `pawork-client`；GUI 不直连 Provider、quota、Git、PTY 或数据库。
 
 ### 3.4 可见层级
 
-- Timeline 消息、tool 与 summary 占满可用宽度，以 618px 可读列封顶。
+- Timeline 消息、tool 与 summary 占满可用宽度，以 618px 可读列封顶。同一 Run 的连续 tool 合并为一个 group，标题汇总数量与真实状态，默认展开并可由 click、Enter、Space、AX Press 折叠；折叠键取首个 tool event id，live 与 replay 结构一致。
+- Run 终态只保留一个 summary；只有当前 Session 存在真实 Changes 时才显示 `Review changes`，并打开、聚焦 Changes。失败、取消与审批状态均使用文字 / 图标，不只依赖颜色。
 - TaskRail 项目计数和任务时间使用 56px 右对齐 meta 槽；标题 `truncate`。
-- Changes 文件行使用固定槽；DiffView 有只读路径 header 与增删 marker gutter。
-- ActivityPopover 保持 320×320、右上锚定与 capability honesty。
+- Changes 文件行使用固定槽；DiffView 有只读路径 header 与增删 marker gutter；Changes / Resources 的 empty、error、stale 各自给出诚实说明。
+- ActivityPopover 保持 320px 宽、按当前唯一 Changes 内容收缩为 144px 高、右上锚定并维持 capability honesty。
 
 ### 3.5 Settings
 
@@ -115,29 +118,29 @@ Settings 沿用深色主题、8px 节奏和 1440×1024 基线，不把工作台�
 ```text
 ┌──────────────────┬────────────────────────────────────────────┐
 │ Settings Rail    │  内容区                                    │
-│ ← 返回工作台     │                                            │
-│ 模型与供应商     │                                            │
-│ 通用             │                                            │
-│ 权限与审批       │                                            │
-│ 工具与 MCP       │                                            │
-│ 终端             │                                            │
-│ 外观             │                                            │
-│ 高级             │                                            │
-│ 关于             │                                            │
+│ ← Back to workspace│                                           │
+│ Models & providers│                                            │
+│ General           │                                            │
+│ Approvals         │                                            │
+│ Tools & MCP       │                                            │
+│ Terminal          │                                            │
+│ Appearance        │                                            │
+│ Advanced          │                                            │
+│ About             │                                            │
 └──────────────────┴────────────────────────────────────────────┘
 ```
 
 - 入口位于 TaskRail 底部 `Local` 行右侧 gear。进入后左栏换成 Settings Rail；Timeline、Composer、Inspector 不渲染。
-- `← 返回工作台` 恢复进入前的 session、Timeline 位置、Composer 草稿、Inspector 和 Run；Settings 不取消 Run。
-- 导航顺序：模型与供应商 → 通用 → 权限与审批 → 工具与 MCP → 终端 → 外观 → 高级 → 关于。没有真实读写能力的页不显示。
-- **模型与供应商**：Host `provider_auth_status` 权威数据。认证方式由 Host `auth_methods` 声明，Desktop 不按供应商名称硬编码 OAuth/API key 分支。API key 用 secure input，完整值不得进 AX tree、日志或状态文本。OAuth 只显示授权 URL、device code、到期/取消，不接触 token。认证成功与目录成功是两个状态。
-- **通用**：Global `proxy_url`；未设置显示「未设置（跟随系统环境变量）」；新 OAuth / 验证 / 目录同会话生效，当前供应商模型流量于切换或重启后生效。
-- **权限与审批**：五档审批模式、会话信任开关、Global 默认只读行；变更仅当前会话生效、不持久化、进行中 Run 不受影响。
-- **工具与 MCP**：复用 Host `mcp_list`，提供 test / remove。
-- **终端**：Global `[terminal]`（shell / columns / rows）；只影响之后创建的终端。
-- **外观**：Desktop 本地；三档 100%/125%/150% 与 `Cmd+=` / `Cmd+-` / `Cmd+0` 共用 `TextScale`；仅当前 Desktop 会话生效，重启恢复 100%。主题只读深色 + macOS Increase Contrast，不画 light/system 控件。
-- **高级**：本地连接诊断；断线仍可达。只读 runtime ID、协商 API、capabilities、endpoint、resume/ack。不展示 GUI token，不从 endpoint 反推 data directory。
-- **关于**：只在当前认证握手提供非空 `host_data_dir` 时显示；缺字段、空白或断线时隐藏并退回高级。路径原样展示，不用于文件操作。
+- `← Back to workspace` 恢复进入前的 session、Timeline 位置、Composer 草稿、Inspector 和 Run；Settings 不取消 Run。
+- 导航与页内可见文案统一 English，顺序为 Models & providers → General → Approvals → Tools & MCP → Terminal → Appearance → Advanced → About。没有真实读写能力的页不显示；Advanced 离线仍可进入。
+- **Models & providers**：内容最大宽 820px；provider 使用 64px 概览行，分列显示认证方式、连接状态与目录 / 模型数。Host `provider_auth_status` 是权威数据，Desktop 不按供应商名称硬编码 OAuth/API key 分支。普通行与 AX summary 不显示 masked credential、endpoint、catalog error 或 raw model id；endpoint / 错误只在连接、等待或删除确认详情出现。API key editor 仅在 Connect / Replace 后展开，secure input 的完整值不得进 AX tree、日志或状态文本。OAuth 只显示授权 URL、device code、到期/取消，不接触 token。认证成功与目录成功是两个状态；默认模型使用独立 section。
+- **General**：Global `proxy_url`；未设置显示 `Not set (uses system environment variables)`；新 OAuth / 验证 / 目录同会话生效，当前供应商模型流量于切换或重启后生效。
+- **权限与审批**：五档审批模式使用整行 radio，row click、Enter、Space 与 AX Press 同一 handler；会话信任开关、Global 默认只读行不变。变更仅当前会话生效、不持久化、进行中 Run 不受影响。
+- **Tools & MCP**：复用 Host `mcp_list`，提供 Test / Remove。
+- **Terminal**：Global `[terminal]`（shell / columns / rows）；只影响之后创建的终端。
+- **Appearance**：Desktop 本地；三档 100%/125%/150% 与 `Cmd+=` / `Cmd+-` / `Cmd+0` 共用 `TextScale`，并显示随选择即时变化的正文 / control 字阶样例；仅当前 Desktop 会话生效，重启恢复 100%。主题只读深色 + macOS Increase Contrast，不画 light/system 控件。
+- **Advanced**：本地连接诊断；断线仍可达。只读 runtime ID、协商 API、capabilities、endpoint、resume/ack，以 definition list 呈现。不展示 GUI token，不从 endpoint 反推 data directory。
+- **About**：只在当前认证握手提供非空 `host_data_dir` 时显示，并以 definition list 呈现；缺字段、空白或断线时隐藏并退回 Advanced。路径原样展示，不用于文件操作。
 
 断线保留最后只读结果并统一标 stale；写操作三路径（可见 / 键盘 / AX）同 gate。行为细节以 [Settings Spec](spec/settings.md) 为准。
 
@@ -182,7 +185,7 @@ Snapshot 只有会话树、活动 Run、待审批与 Provider 等状态，**没�
 - 连接、Run、tool 与审批状态必须有文本/图标语义，不能只靠颜色；主路径可全键盘操作。
 - Accessibility 以 Desktop 显式语义树为唯一来源：稳定 identifier 与可本地化 label 分离；macOS 由 AppKit bridge 导出。应用内字号 `Cmd+=` / `Cmd++`、`Cmd+-`、`Cmd+0` 在 100%/125%/150% 间切换。新增可见交互必须同批补语义。当前 UI 无动画，Reduce Motion 无渲染分支。
 - 可交互控件必须有 hover 与按下态；hover / active 只改背景，不引起布局移动。
-- 菜单为 `anchored()/deferred()` 浮层，同一时刻单开互斥；选择 / 再点触发器 / `Escape` / 点击浮层外关闭；打开时滚轮不穿透。
+- scope、model、entry、Activity 菜单为 `anchored()/deferred()` 浮层，同一时刻单开互斥；选择 / 再点触发器 / `Escape` / 点击浮层外关闭；打开时滚轮不穿透。Timeline / Projects 直接切换按钮不属于菜单。
 - 用户发起的 task 切换、审批决策后焦点回到 Composer；session reset 先关闭旧菜单。
 - Timeline 条目经变高虚拟化；侧栏长标题单行省略号截断。
 - Resources 只读呈现 MCP 状态，字段缺失显示 unknown；无 Host 出口的分区不画入口。
@@ -214,8 +217,8 @@ Snapshot 只有会话树、活动 Run、待审批与 Provider 等状态，**没�
 | `inspector.rs` | Changes / Terminal / Resources |
 | `changes.rs` | Files / Summary + DiffView + ActivityPopover |
 | `resources.rs` | MCP 只读列表 |
-| `task_rail.rs` | 侧栏 + grouping/scope 菜单 |
+| `task_rail.rs` | 侧栏 + grouping 直接切换 + scope 菜单 |
 | `text_input.rs` | 单行 TextElement（IME、UTF-16 映射） |
 | `settings/` | Settings Rail 与各页 |
 
-`ui/components/`：`Button`、`Dropdown`/`MenuPanel`/`MenuRow`、`FollowScroll`/`BackToBottom`、`Label`/`Badge`、`ListRow`、`Panel`、`StatusBar`。五组菜单全部浮层化，`Option<MenuKind>` 单开互斥。
+`ui/components/`：`Button`、`Dropdown`/`MenuPanel`/`MenuRow`、`FollowScroll`/`BackToBottom`、`Label`/`Badge`、`ListRow`、`Panel`、`StatusBar`。scope / model / entry / Activity 菜单全部浮层化，`Option<MenuKind>` 单开互斥；grouping 使用普通 Button 直接切换。

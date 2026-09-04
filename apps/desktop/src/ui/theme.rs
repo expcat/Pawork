@@ -63,6 +63,8 @@ pub struct SurfaceColors {
     pub disabled: Rgba,
     /// #182229：surface.raised 控件与选中行的 hover / active 背景。
     pub hover: Rgba,
+    /// #0e181f：raised 控件的 pressed 背景；比 hover 更沉，不靠缩放表达按下。
+    pub pressed: Rgba,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -144,6 +146,7 @@ fn dark_for(increase_contrast: bool) -> Theme {
             raised: rgb(0x10171c),
             disabled: rgb(0x0c161c),
             hover: rgb(0x182229),
+            pressed: rgb(0x0e181f),
         },
         border: BorderColors {
             subtle: rgb(0x1a2129),
@@ -179,6 +182,7 @@ fn dark_for(increase_contrast: bool) -> Theme {
     };
     if increase_contrast {
         theme.surface.hover = rgb(0x24323b);
+        theme.surface.pressed = rgb(0x1b2830);
         theme.border.subtle = rgb(0x66717a);
         theme.border.strong = rgb(0x8d979e);
         theme.text.secondary = rgb(0xd0d0d0);
@@ -245,27 +249,48 @@ pub mod font {
         }
     }
 
-    /// 24px：Workspace Header 任务标题（state-a 量图 cap17→≈24 semibold，
-    /// state-b cap≈18→≈25；取档 24，容差 ±1 内）。
-    pub const HEADER_TITLE: Rems = from_pixels(24.0);
-    /// 17px：次级行文字（rail 相对时间 / 项目计数 / 连接行文案）。
-    pub const BODY_SM: Rems = from_pixels(17.0);
-    /// 18px：主体列表字阶（rail 日期头 / 项目头 / 任务标题 / scope / 正文）。
-    pub const BODY: Rems = from_pixels(18.0);
-    /// 22px：rail App 标题（state-a/c 量图 cap16–17 → 22）。
-    pub const TITLE: Rems = from_pixels(22.0);
+    /// 22px：Workspace Header 任务标题。
+    pub const HEADER_TITLE: Rems = from_pixels(22.0);
+    /// 12px：次级信息（相对时间 / 项目计数 / 连接行 / 时间戳）。
+    pub const BODY_SM: Rems = from_pixels(12.0);
+    /// 16px：Timeline 正文与 section title。
+    pub const BODY: Rems = from_pixels(16.0);
+    /// 20px：页面与应用标题。
+    pub const TITLE: Rems = from_pixels(20.0);
     /// 11px：提示 / 标签 / 次级行。
     pub const XS: Rems = from_pixels(11.0);
-    /// 12px：正文与控件。
+    /// 12px：meta 与紧凑辅助文字。
     pub const SM: Rems = from_pixels(12.0);
-    /// 13px：标题与输入框正文。
-    pub const BASE: Rems = from_pixels(13.0);
+    /// 14px：控件、列表与输入框正文。
+    pub const BASE: Rems = from_pixels(14.0);
     /// 等宽字体族（R8 波 D DiffView 代码区；本仓当前仅 macOS 构建）。
     pub const MONO: &str = "Menlo";
 }
 
 /// 间距 / 尺寸常量（px 数值；消费点经 gpui::px 转换）。
 pub mod metrics {
+    // ── Foundation 组件节奏（P0-1）──
+    /// 基础间距只使用 4 / 8 / 12 / 16 / 24 / 32 六档。
+    pub const SPACE_1: f32 = 4.0;
+    pub const SPACE_2: f32 = 8.0;
+    pub const SPACE_3: f32 = 12.0;
+    pub const SPACE_4: f32 = 16.0;
+    pub const SPACE_6: f32 = 24.0;
+    pub const SPACE_8: f32 = 32.0;
+    /// 小控件 / 输入与菜单 / 内容 surface 的三档圆角。
+    pub const CONTROL_RADIUS: f32 = 4.0;
+    pub const INPUT_MENU_RADIUS: f32 = 6.0;
+    pub const SURFACE_RADIUS: f32 = 8.0;
+    /// 键盘焦点环宽度；组件 focus state 只改视觉，不缩放控件。
+    pub const FOCUS_RING_WIDTH: f32 = 2.0;
+    /// 普通 icon button 命中区；Composer Send / Cancel 另有 32px 专用槽。
+    pub const ICON_BUTTON_SIZE: f32 = 28.0;
+    /// 通用菜单几何。
+    pub const MENU_ANCHOR_GAP: f32 = SPACE_2;
+    pub const MENU_MIN_WIDTH: f32 = 220.0;
+    pub const MENU_MAX_WIDTH: f32 = 360.0;
+    pub const MENU_ROW_HEIGHT: f32 = 34.0;
+    pub const MENU_PADDING: f32 = SPACE_2;
     /// 1：「···」条目菜单触发器的水平内边距（R8 波 B）。
     pub const PADDING_XS: f32 = 1.0;
     /// 2：ghost 文本按钮（Inspector 开合 / Header 动作）的水平内边距（R8 波 B）。
@@ -276,7 +301,7 @@ pub mod metrics {
     /// 12：rail 内层水平内边距（Panel p_2 帧 8 + 12 = 统一 inset 20）。
     pub const RAIL_INNER_PAD: f32 = 12.0;
     /// 28：rail 角标按钮边长（grouping / 全局与定向新建；量图 28–30，hit area ≥24）。
-    pub const RAIL_ICON_BUTTON_SIZE: f32 = 28.0;
+    pub const RAIL_ICON_BUTTON_SIZE: f32 = ICON_BUTTON_SIZE;
     /// 10：rail 状态圆点直径（量图 Ø10–11）。
     pub const RAIL_STATUS_DOT_SIZE: f32 = 10.0;
     /// 8：连接行文案槽与全局「+」按钮的保留间隔（render 与 AX 共享）。
@@ -348,8 +373,10 @@ pub mod metrics {
     /// 40：相邻消息条目间距（量图标签顶到标签顶 100 − 标签24 − 间12 −
     /// 单行正文24，取 40；多行正文按实际高度累加）。
     pub const MSG_ENTRY_GAP: f32 = 40.0;
-    /// 5：Tool activity 面板圆角（量图 r≈5±1）。
-    pub const TOOL_GROUP_RADIUS: f32 = 5.0;
+    /// 8：Tool activity / Run summary 与 Composer 使用同一主要 surface 圆角。
+    pub const TOOL_GROUP_RADIUS: f32 = 8.0;
+    /// 44：Tool group 可折叠标题行；与共享可点击 Row 高度一致。
+    pub const TOOL_GROUP_HEADER_HEIGHT: f32 = 44.0;
     /// 15：Tool activity 面板内左 inset（量图图标 x341，面板 x326）。
     pub const TOOL_GROUP_INNER_INSET: f32 = 15.0;
     /// 52：Tool 行高（量图行距 ≈54 − 分隔线 2）。
@@ -413,9 +440,8 @@ pub mod metrics {
     pub const SCROLL_BOTTOM_SLACK: f32 = 16.0;
     /// 320：ActivityPopover 宽度（design/README.md §8.5）。
     pub const ACTIVITY_POPOVER_WIDTH: f32 = 320.0;
-    /// 320：ActivityPopover 外框目标高度（R6 Wave A State B 基准约 347px；
-    /// Agent 状态能力尚未进入 S11，因此本波保留诚实空白而不伪造行）。
-    pub const ACTIVITY_POPOVER_HEIGHT: f32 = 320.0;
+    /// 144：当前只有 Changes 摘要时按内容收缩，不为未实现的 Agent 状态留空。
+    pub const ACTIVITY_POPOVER_HEIGHT: f32 = 144.0;
     /// 58：Inspector 顶层页签条高度（R6 Wave A 两级页签）。
     pub const INSPECTOR_TAB_HEIGHT: f32 = 58.0;
     /// 100：Inspector 顶层单个页签的固定命中宽度。
@@ -552,7 +578,7 @@ mod tests {
     }
 
     #[test]
-    fn text_scale_steps_are_bounded_and_keep_default_pixels() {
+    fn text_scale_steps_and_foundation_tokens_match_accepted_tiers() {
         use font::TextScale;
 
         assert_eq!(TextScale::Percent100.decrease(), TextScale::Percent100);
@@ -563,16 +589,42 @@ mod tests {
         assert_eq!(TextScale::Percent100.rem_pixels(), 16.0);
         assert_eq!(TextScale::Percent125.rem_pixels(), 20.0);
         assert_eq!(TextScale::Percent150.rem_pixels(), 24.0);
-        assert_eq!(font::default_pixels(font::BASE), 13.0);
+        assert_eq!(font::default_pixels(font::HEADER_TITLE), 22.0);
+        assert_eq!(font::default_pixels(font::TITLE), 20.0);
+        assert_eq!(font::default_pixels(font::BODY), 16.0);
+        assert_eq!(font::default_pixels(font::BASE), 14.0);
+        assert_eq!(font::default_pixels(font::BODY_SM), 12.0);
+        assert_eq!(font::default_pixels(font::SM), 12.0);
+        assert_eq!(font::default_pixels(font::XS), 11.0);
+        assert_eq!(
+            [
+                metrics::SPACE_1,
+                metrics::SPACE_2,
+                metrics::SPACE_3,
+                metrics::SPACE_4,
+                metrics::SPACE_6,
+                metrics::SPACE_8,
+            ],
+            [4.0, 8.0, 12.0, 16.0, 24.0, 32.0]
+        );
+        assert_eq!(metrics::CONTROL_RADIUS, 4.0);
+        assert_eq!(metrics::INPUT_MENU_RADIUS, 6.0);
+        assert_eq!(metrics::SURFACE_RADIUS, 8.0);
+        assert_eq!(metrics::FOCUS_RING_WIDTH, 2.0);
+        assert_eq!(metrics::ICON_BUTTON_SIZE, 28.0);
+        assert_eq!(metrics::MENU_ANCHOR_GAP, 8.0);
+        assert_eq!(metrics::MENU_MIN_WIDTH, 220.0);
+        assert_eq!(metrics::MENU_MAX_WIDTH, 360.0);
+        assert_eq!(metrics::MENU_ROW_HEIGHT, 34.0);
+        assert_eq!(metrics::MENU_PADDING, 8.0);
     }
 
-    /// R3 Wave A TaskRail 几何 / 字阶合同（state-a §2.1/§3 + state-c §2.1 取档）：
-    /// render 与 AX 树共用本组常量，钉住数值防静默漂移。
+    /// TaskRail 几何继续冻结，字阶改用 P0 Foundation 层级。
     #[test]
     fn task_rail_geometry_and_font_constants_match_frozen_tiers() {
-        assert_eq!(font::default_pixels(font::TITLE), 22.0);
-        assert_eq!(font::default_pixels(font::BODY), 18.0);
-        assert_eq!(font::default_pixels(font::BODY_SM), 17.0);
+        assert_eq!(font::default_pixels(font::TITLE), 20.0);
+        assert_eq!(font::default_pixels(font::BODY), 16.0);
+        assert_eq!(font::default_pixels(font::BODY_SM), 12.0);
         assert_eq!(metrics::RAIL_CONTENT_INSET, 20.0);
         assert_eq!(metrics::RAIL_INNER_PAD, 12.0);
         assert_eq!(metrics::RAIL_ICON_BUTTON_SIZE, 28.0);
@@ -596,7 +648,7 @@ mod tests {
     /// state-b §2 量图取档）：钉住数值防静默漂移。
     #[test]
     fn workspace_timeline_geometry_constants_match_frozen_tiers() {
-        assert_eq!(font::default_pixels(font::HEADER_TITLE), 24.0);
+        assert_eq!(font::default_pixels(font::HEADER_TITLE), 22.0);
         assert_eq!(
             font::default_pixels(font::from_pixels(metrics::MSG_LINE_HEIGHT)),
             24.0
@@ -616,7 +668,8 @@ mod tests {
         assert_eq!(metrics::MSG_LABEL_BODY_GAP, 12.0);
         assert_eq!(metrics::MSG_PARAGRAPH_GAP, 28.0);
         assert_eq!(metrics::MSG_ENTRY_GAP, 40.0);
-        assert_eq!(metrics::TOOL_GROUP_RADIUS, 5.0);
+        assert_eq!(metrics::TOOL_GROUP_RADIUS, 8.0);
+        assert_eq!(metrics::TOOL_GROUP_HEADER_HEIGHT, 44.0);
         assert_eq!(metrics::TOOL_GROUP_INNER_INSET, 15.0);
         assert_eq!(metrics::TOOL_ROW_HEIGHT, 52.0);
         assert_eq!(metrics::TOOL_ROW_DIVIDER, 2.0);
@@ -633,7 +686,7 @@ mod tests {
     }
 
     /// R6 Wave A 两级页签 / ActivityPopover 合同：顶层 58、二级 56、
-    /// accent 下划线 2px；折叠态 Activity 自 Workspace Header 向下约 320px。
+    /// accent 下划线 2px；折叠态 Activity 仅按当前真实内容保留 144px。
     #[test]
     fn inspector_tabs_and_activity_popover_constants_match_frozen_tiers() {
         assert_eq!(metrics::INSPECTOR_TAB_HEIGHT, 58.0);
@@ -642,7 +695,7 @@ mod tests {
         assert_eq!(metrics::CHANGES_TAB_WIDTH, 96.0);
         assert_eq!(metrics::TAB_UNDERLINE_HEIGHT, 2.0);
         assert_eq!(metrics::ACTIVITY_POPOVER_WIDTH, 320.0);
-        assert_eq!(metrics::ACTIVITY_POPOVER_HEIGHT, 320.0);
+        assert_eq!(metrics::ACTIVITY_POPOVER_HEIGHT, 144.0);
         assert_eq!(metrics::CHANGES_FILE_GLYPH_WIDTH, 20.0);
         assert_eq!(metrics::CHANGES_FILE_STATUS_WIDTH, 72.0);
         assert_eq!(metrics::CHANGES_FILE_DELTA_WIDTH, 76.0);

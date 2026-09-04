@@ -13,15 +13,15 @@ use gpui::{
     Styled, Window,
 };
 
-use crate::ui::theme::{dark, metrics};
+use crate::ui::theme::{dark, font, metrics};
 
-/// 浮层与触发器的垂直间距（迁移前 in-flow 面板 mt_1 的等值）。
-pub const ANCHOR_GAP_Y: f32 = 4.0;
+/// 浮层与触发器的垂直间距。
+pub const ANCHOR_GAP_Y: f32 = metrics::MENU_ANCHOR_GAP;
 /// 面板最大高度：菜单项超出时面板自身滚动（§8.2）。
 pub const MENU_MAX_HEIGHT: f32 = 240.0;
 
-/// MenuRow 菜单选项行（§8.1：未选中 hover = surface.raised；选中保持
-/// accent.primary 不叠加 hover；禁用行 text.ghost 且无交互）。
+/// MenuRow 菜单选项行（§8.1：选中项用 check + label，不用整行亮蓝；
+/// 禁用行 text.ghost 且无交互）。
 #[derive(IntoElement)]
 pub struct MenuRow {
     id: SharedString,
@@ -78,25 +78,41 @@ impl MenuRow {
 
 impl RenderOnce for MenuRow {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        let mut row = div().id(self.id).px_2().py_1().rounded_sm();
+        let marker = if self.selected { "✓" } else { "" };
+        let mut row = div()
+            .id(self.id)
+            .flex()
+            .w_full()
+            .min_w_0()
+            .items_center()
+            .gap_2()
+            .h(px(metrics::MENU_ROW_HEIGHT))
+            .px_2()
+            .rounded(px(metrics::CONTROL_RADIUS))
+            .text_size(font::BASE)
+            .child(
+                div()
+                    .w(px(metrics::SPACE_4))
+                    .flex_none()
+                    .text_color(dark().accent.primary)
+                    .child(marker),
+            );
         if self.disabled {
-            return row.text_color(dark().text.ghost).child(self.label);
+            return row
+                .text_color(dark().text.ghost)
+                .child(div().flex_1().min_w_0().truncate().child(self.label));
         }
-        row = row.cursor_pointer().bg(if self.selected {
-            dark().accent.primary
-        } else if self.highlighted {
-            dark().surface.raised
-        } else {
-            dark().bg.menu
-        });
-        if !self.selected {
-            // 未选中行 hover / active = surface.raised；选中行不叠加 hover（§8.1）。
-            let hover = dark().surface.raised;
-            row = row
-                .hover(move |style| style.bg(hover))
-                .active(move |style| style.bg(hover));
-        }
-        row = row.child(self.label);
+        row = row
+            .cursor_pointer()
+            .bg(if self.selected || self.highlighted {
+                dark().surface.raised
+            } else {
+                dark().bg.menu
+            });
+        row = row
+            .hover(|style| style.bg(dark().surface.hover))
+            .active(|style| style.bg(dark().surface.pressed));
+        row = row.child(div().flex_1().min_w_0().truncate().child(self.label));
         if let Some(on_click) = self.on_click {
             row = row.on_click(on_click);
         }
@@ -104,8 +120,8 @@ impl RenderOnce for MenuRow {
     }
 }
 
-/// MenuPanel 浮层菜单面板：p-1 / rounded-md / bg.menu / border.strong（样式沿用
-/// 迁移前），occlude() 拦截下层点击与滚轮，外点关闭经回调交还宿主。
+/// MenuPanel 浮层菜单面板：220–360px / 8px padding / 6px radius / menu shadow，
+/// occlude() 拦截下层点击与滚轮，外点关闭经回调交还宿主。
 #[derive(IntoElement)]
 pub struct MenuPanel {
     id: SharedString,
@@ -157,13 +173,16 @@ impl RenderOnce for MenuPanel {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let mut panel = div()
             .id(self.id)
-            .p_1()
-            .rounded_md()
+            .p(px(metrics::MENU_PADDING))
+            .rounded(px(metrics::INPUT_MENU_RADIUS))
             .bg(dark().bg.menu)
             .border_1()
             .border_color(dark().border.strong)
+            .min_w(px(metrics::MENU_MIN_WIDTH))
+            .max_w(px(metrics::MENU_MAX_WIDTH))
             .max_h(px(self.max_height))
             .overflow_y_scroll()
+            .shadow_md()
             // 拦截面板命中区内的下层点击与滚轮（§8.2 滚轮无穿透）。
             .occlude();
         if let Some(listener) = self.on_outside_click {

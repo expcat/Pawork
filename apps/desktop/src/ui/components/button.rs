@@ -10,7 +10,7 @@ use gpui::{
     RenderOnce, Rgba, SharedString, Styled, Window,
 };
 
-use crate::ui::theme::dark;
+use crate::ui::theme::{dark, font, metrics};
 
 /// 按钮形态：决定底色、文字色与 hover / active 映射（design/README.md §8.1）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,8 +99,7 @@ impl Button {
         self
     }
 
-    /// 禁用态：切换底 / 文字色并按基准 §8.1 关闭 hover / active。
-    /// on_click 是否挂接由调用方决定（与迁移前逐点一致）。
+    /// 禁用态：切换底 / 文字色并关闭 hover / active / mouse press。
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
@@ -167,7 +166,7 @@ impl Button {
         self
     }
 
-    /// 覆盖默认圆角（px 数值；默认非 Ghost 为 rounded_md=6px）。
+    /// 覆盖默认圆角（px 数值；普通控件默认 4px）。
     pub fn radius(mut self, radius: f32) -> Self {
         self.radius = Some(radius);
         self
@@ -211,7 +210,7 @@ impl Button {
     /// 在行级 on_key_down 直接调用激活 handler（调用方保证与 on_click 同一
     /// 激活路径，禁合成 click 兜底——GPUI 把聚焦元素的 keyboard click 挂在
     /// keyup 合成路径，真窗口注入不可达，同 ListRow::on_activate）。是否
-    /// stop_propagation 由调用方 handler 决定：Grouping / Scope / Model
+    /// stop_propagation 由调用方 handler 决定：Scope / Model 菜单与 Grouping 直接切换
     /// 菜单打开时调用方让位（不 stop）让根节点菜单 Enter 接管（spec §3.3）；
     /// disabled 按钮不激活。
     pub fn on_activate(
@@ -224,20 +223,30 @@ impl Button {
 }
 
 impl ButtonVariant {
-    /// （enabled 底色, hover / active 色）；Ghost 无底色。
-    fn colors(self) -> (Option<Rgba>, Rgba) {
+    /// （enabled 底色, hover 色, pressed 色）；Ghost 无底色。
+    fn colors(self) -> (Option<Rgba>, Rgba, Rgba) {
         match self {
-            Self::Primary | Self::IconCircle => (Some(dark().accent.primary), dark().accent.hover),
-            Self::Ghost => (None, dark().surface.raised),
+            Self::Primary | Self::IconCircle => (
+                Some(dark().accent.primary),
+                dark().accent.hover,
+                dark().accent.primary,
+            ),
+            Self::Ghost => (None, dark().surface.raised, dark().surface.hover),
             Self::Danger => (
                 Some(dark().semantic.danger_bg),
                 dark().semantic.danger_hover,
+                dark().semantic.danger_bg,
             ),
             Self::Success => (
                 Some(dark().semantic.success_bg),
                 dark().semantic.success_hover,
+                dark().semantic.success_bg,
             ),
-            Self::Raised => (Some(dark().surface.raised), dark().surface.hover),
+            Self::Raised => (
+                Some(dark().surface.raised),
+                dark().surface.hover,
+                dark().surface.pressed,
+            ),
         }
     }
 
@@ -269,20 +278,20 @@ impl ButtonVariant {
             Self::Primary | Self::IconCircle | Self::Danger | Self::Success => {
                 Some(dark().text.on_accent)
             }
-            Self::Raised => Some(dark().text.disabled),
-            Self::Ghost => None,
+            Self::Raised | Self::Ghost => Some(dark().text.disabled),
         }
     }
 }
 
 fn focus_ring_style<T: Styled>(this: T) -> T {
-    this.border_1().border_color(dark().accent.primary)
+    this.border(px(metrics::FOCUS_RING_WIDTH))
+        .border_color(dark().accent.primary)
 }
 
 impl RenderOnce for Button {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let enabled = !self.disabled;
-        let (rest_bg, hover) = self.variant.colors();
+        let (rest_bg, hover, pressed) = self.variant.colors();
         let bg = if enabled {
             rest_bg
         } else {
@@ -308,22 +317,18 @@ impl RenderOnce for Button {
                 .track_focus(focus)
                 .focus(focus_ring_style);
         }
-        button = button.cursor_pointer();
+        if enabled {
+            button = button.cursor_pointer();
+        }
         if let Some(bg) = bg {
             button = button.bg(bg);
         }
         if let Some(color) = text_color {
             button = button.text_color(color);
         }
-        if let Some(size) = self.text_size {
-            button = button.text_size(size);
-        }
-        if !matches!(
-            self.variant,
-            ButtonVariant::Ghost | ButtonVariant::IconCircle
-        ) && !self.circle
-        {
-            button = button.rounded_md();
+        button = button.text_size(self.text_size.unwrap_or(font::BASE));
+        if !matches!(self.variant, ButtonVariant::IconCircle) && !self.circle {
+            button = button.rounded(px(metrics::CONTROL_RADIUS));
         }
         if let Some(radius) = self.radius {
             button = button.rounded(px(radius));
@@ -347,10 +352,10 @@ impl RenderOnce for Button {
             button = button.max_w(max_width).min_w_0().overflow_hidden();
         }
         if enabled {
-            // hover / active 只改背景（基准 §8.1）；active 复用 hover 色。
+            // hover / active 只改背景，不通过缩放制造按压感。
             button = button
                 .hover(move |style| style.bg(hover))
-                .active(move |style| style.bg(hover));
+                .active(move |style| style.bg(pressed));
         }
         if let Some(label) = self.label {
             if self.max_width.is_some() {
@@ -362,8 +367,10 @@ impl RenderOnce for Button {
         if let Some(tooltip) = self.tooltip {
             button = button.tooltip(move |_, cx| crate::ui::tooltip_text(tooltip.clone(), cx));
         }
-        if let Some(on_click) = self.on_click {
-            button = button.on_click(on_click);
+        if enabled {
+            if let Some(on_click) = self.on_click {
+                button = button.on_click(on_click);
+            }
         }
         if let Some(on_activate) = self.on_activate {
             button = button.on_key_down(move |event: &KeyDownEvent, window, cx| {

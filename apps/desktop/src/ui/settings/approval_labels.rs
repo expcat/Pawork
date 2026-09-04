@@ -12,20 +12,22 @@ pub const ALL: [ApprovalModeWire; 5] = [
 
 pub fn label(mode: ApprovalModeWire) -> &'static str {
     match mode {
-        ApprovalModeWire::AlwaysAsk => "每次询问",
-        ApprovalModeWire::AskForWrites => "写操作询问",
-        ApprovalModeWire::AskForDangerous => "危险操作询问",
-        ApprovalModeWire::NeverAsk => "从不询问",
-        ApprovalModeWire::ReadOnly => "只读",
+        ApprovalModeWire::AlwaysAsk => "Always ask",
+        ApprovalModeWire::AskForWrites => "Ask for writes",
+        ApprovalModeWire::AskForDangerous => "Ask for dangerous actions",
+        ApprovalModeWire::NeverAsk => "Never ask",
+        ApprovalModeWire::ReadOnly => "Read only",
     }
 }
 
 pub fn description(mode: ApprovalModeWire) -> &'static str {
     match mode {
-        ApprovalModeWire::AlwaysAsk => "所有工具调用都需要人工批准",
-        ApprovalModeWire::AskForWrites => "只读放行，写操作需要批准",
-        ApprovalModeWire::AskForDangerous => "常规操作放行，危险操作需要批准",
-        ApprovalModeWire::NeverAsk => "全部自动执行；灾难命令仍被 Host 拒绝",
-        ApprovalModeWire::ReadOnly => "只放行只读操作，不执行任何写操作",
+        ApprovalModeWire::AlwaysAsk => "Require approval for every tool call",
+        ApprovalModeWire::AskForWrites => "Allow reads; require approval for writes",
+        ApprovalModeWire::AskForDangerous => "Allow routine actions; ask before dangerous actions",
+        ApprovalModeWire::NeverAsk => {
+            "Run automatically; the Host still blocks catastrophic commands"
+        }
+        ApprovalModeWire::ReadOnly => "Allow read-only actions and block all writes",
     }
 }

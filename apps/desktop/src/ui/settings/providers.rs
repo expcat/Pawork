@@ -5,7 +5,10 @@ use std::collections::HashSet;
 use super::*;
 
 impl AppView {
-    pub(super) fn settings_providers_page_element(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn settings_providers_page_element(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let connected = matches!(
             self.projection.connection,
             ConnectionState::Connected { .. }
@@ -95,13 +98,27 @@ impl AppView {
             };
             content = content.child(status_line(&line, color));
         }
+        content = content.child(
+            div().font_weight(FontWeight::MEDIUM).child(
+                Label::new("Providers")
+                    .size(font::BODY)
+                    .color(dark().text.primary),
+            ),
+        );
 
         if !providers.is_empty() {
             let mut cards = div().flex().flex_col().min_w_0().gap_2();
             for (ix, provider) in providers.iter().enumerate() {
+                let model_count = self
+                    .projection
+                    .models
+                    .iter()
+                    .filter(|model| model.provider_id == provider.provider_id)
+                    .count();
                 cards = cards.child(self.settings_provider_card(
                     ix,
                     provider,
+                    model_count,
                     &oauth_waits,
                     &auth_notes,
                     writes,
@@ -130,6 +147,7 @@ impl AppView {
         &mut self,
         ix: usize,
         provider: &ProviderAuthStatusEntry,
+        model_count: usize,
         oauth_waits: &std::collections::HashMap<String, AuthStartData>,
         auth_notes: &std::collections::HashMap<String, String>,
         writes: bool,
@@ -140,69 +158,148 @@ impl AppView {
         let remove_confirm = self.settings_remove_confirm.as_deref() == Some(provider_id.as_str());
         let oauth_waiting = oauth_waits.contains_key(&provider_id);
         let actions = settings_auth_actions(provider, editor_open, remove_confirm, oauth_waiting);
-
+        let row_actions: Vec<SettingsAuthAction> = actions
+            .iter()
+            .copied()
+            .filter(|action| {
+                !matches!(
+                    action,
+                    SettingsAuthAction::VerifyApiKey | SettingsAuthAction::CancelApiKeyInput
+                )
+            })
+            .collect();
+        let actions_in_details = remove_confirm || row_actions.len() > 2;
+        let endpoint_visible = editor_open || oauth_waiting || remove_confirm;
+        let auth_error = match &provider.auth {
+            ProviderAuthState::Error { message } => Some(message.as_str()),
+            _ => None,
+        };
+        let catalog_error = matches!(
+            (&provider.auth, &provider.catalog),
+            (
+                ProviderAuthState::Connected { .. },
+                crate::projection::ProviderCatalogState::Unavailable { .. },
+            )
+        );
+        let detail_visible = editor_open
+            || oauth_waiting
+            || remove_confirm
+            || actions_in_details
+            || auth_error.is_some()
+            || catalog_error
+            || auth_notes.contains_key(&provider_id);
+        let connection_color = match provider.auth {
+            ProviderAuthState::Connected { .. } => dark().semantic.success_fg,
+            ProviderAuthState::Error { .. } => dark().semantic.danger_text,
+            _ => dark().text.secondary,
+        };
+        let catalog_summary = provider_catalog_overview_label(provider, model_count);
+        let auth_methods = provider.auth_methods_label();
+        let auth_methods = if auth_methods.is_empty() {
+            "No auth method".to_string()
+        } else {
+            auth_methods
+        };
+        let mut header_actions = div()
+            .flex()
+            .flex_1()
+            .min_w_0()
+            .items_center()
+            .justify_end()
+            .gap_1();
+        if !actions_in_details {
+            for action in &row_actions {
+                let tooltip = if *action == SettingsAuthAction::Remove {
+                    "Remove the stored credential."
+                } else {
+                    ""
+                };
+                header_actions = header_actions.child(self.settings_action_button(
+                    *action,
+                    &provider_id,
+                    writes,
+                    tooltip,
+                    cx,
+                ));
+            }
+        }
+        let header = div()
+            .id(("settings-provider-overview", ix))
+            .h(px(PROVIDER_OVERVIEW_HEIGHT))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .min_w_0()
+            .px_2()
+            .when(detail_visible, |el| {
+                el.border_b_1().border_color(dark().border.subtle)
+            })
+            .child(
+                div()
+                    .w(px(172.0))
+                    .min_w_0()
+                    .truncate()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(
+                        Label::new(provider.display_name.clone())
+                            .size(font::BODY)
+                            .color(dark().text.primary),
+                    ),
+            )
+            .child(
+                div().w(px(104.0)).min_w_0().truncate().child(
+                    Label::new(auth_methods)
+                        .size(font::BODY_SM)
+                        .color(dark().text.secondary),
+                ),
+            )
+            .child(
+                div().w(px(132.0)).min_w_0().truncate().child(
+                    Label::new(provider.auth_label())
+                        .size(font::BODY_SM)
+                        .color(connection_color),
+                ),
+            )
+            .child(
+                div().w(px(132.0)).min_w_0().truncate().child(
+                    Label::new(catalog_summary)
+                        .size(font::BODY_SM)
+                        .color(dark().text.secondary),
+                ),
+            )
+            .child(header_actions);
         let mut card = div()
             .id(("settings-provider", ix))
             .flex()
             .flex_col()
             .min_w_0()
-            .gap_1()
-            .p(px(PROVIDER_CARD_PAD))
-            .rounded(px(4.0))
+            .rounded(px(6.0))
             .border_1()
             .border_color(dark().border.subtle)
             .bg(dark().surface.raised)
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_baseline()
-                    .gap_2()
-                    .min_w_0()
-                    .child(
-                        div()
-                            .min_w_0()
-                            .truncate()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(
-                                Label::new(provider.display_name.clone())
-                                    .size(font::BODY)
-                                    .color(dark().text.primary),
-                            ),
-                    )
-                    .child(
-                        div().flex_none().child(
-                            Label::new(provider.auth_methods_label())
-                                .size(font::BODY_SM)
-                                .color(dark().text.secondary),
-                        ),
-                    ),
-            )
-            .child(
-                Label::new(provider.auth_label())
-                    .size(font::BODY_SM)
-                    .color(dark().text.secondary),
-            );
+            .child(header);
+        let mut details = div().flex().flex_col().min_w_0().gap_1().p_2();
 
         // OAuth 授权等待详情：Desktop 只显示 URL / user code / 到期，
         // 不接触 token；取消走 auth_cancel。
         if let (ProviderAuthState::Connecting, Some(wait)) =
             (&provider.auth, oauth_waits.get(&provider_id))
         {
-            card = card.child(
+            details = details.child(
                 Label::new(format!("Authorize at {}", wait.verification_url))
                     .size(font::BODY_SM)
                     .color(dark().text.secondary),
             );
             if let Some(code) = &wait.user_code {
-                card = card.child(
+                details = details.child(
                     Label::new(format!("Code {code}"))
                         .size(font::BODY_SM)
                         .color(dark().text.secondary),
                 );
             }
             if let Some(expires) = &wait.expires_at {
-                card = card.child(
+                details = details.child(
                     Label::new(format!("Expires {expires}"))
                         .size(font::BODY_SM)
                         .color(dark().text.tertiary),
@@ -212,20 +309,27 @@ impl AppView {
 
         // 终态 AuthChanged 的瞬态反馈（取消 / 过期 / 移除）。
         if let Some(note) = auth_notes.get(&provider_id) {
-            card = card.child(status_line(note, dark().text.secondary));
+            details = details.child(status_line(note, dark().text.secondary));
         }
-
-        card = card
-            .child(
-                Label::new(provider.endpoint_label.clone())
-                    .size(font::BODY_SM)
-                    .color(dark().text.tertiary),
-            )
-            .child(
-                Label::new(provider.catalog_label())
+        if let Some(message) = auth_error {
+            details = details.child(status_line(
+                &format!("Connection error · {message}"),
+                dark().semantic.danger_text,
+            ));
+        }
+        if catalog_error {
+            details = details.child(status_line(
+                &provider.catalog_label(),
+                dark().semantic.danger_text,
+            ));
+        }
+        if endpoint_visible {
+            details = details.child(
+                Label::new(format!("Endpoint · {}", provider.endpoint_label))
                     .size(font::BODY_SM)
                     .color(dark().text.tertiary),
             );
+        }
 
         // API key secure 输入（内联）：none / error 常驻；connected 由
         // Replace 展开后出现；Verify 空输入禁用，明文不进 projection。
@@ -266,37 +370,31 @@ impl AppView {
                         cx,
                     ));
                 }
-                card = card.child(editor);
+                details = details.child(editor);
             }
         }
 
-        // 其余动作行（Connect / Replace / Cancel / Remove / 确认组）。
-        let row_actions: Vec<SettingsAuthAction> = actions
-            .into_iter()
-            .filter(|action| {
-                !matches!(
-                    action,
-                    SettingsAuthAction::VerifyApiKey | SettingsAuthAction::CancelApiKeyInput
-                )
-            })
-            .collect();
-        if !row_actions.is_empty() {
+        // 多动作或 destructive 二次确认移入详情，普通概览保持 64px。
+        if actions_in_details && !row_actions.is_empty() {
             let mut row = div().flex().flex_row().gap_1().flex_wrap();
-            for action in row_actions {
-                let tooltip = if action == SettingsAuthAction::Remove {
+            for action in &row_actions {
+                let tooltip = if *action == SettingsAuthAction::Remove {
                     "Remove the stored credential."
                 } else {
                     ""
                 };
                 row = row.child(self.settings_action_button(
-                    action,
+                    *action,
                     &provider_id,
                     writes,
                     tooltip,
                     cx,
                 ));
             }
-            card = card.child(row);
+            details = details.child(row);
+        }
+        if detail_visible {
+            card = card.child(details);
         }
         card
     }
@@ -317,13 +415,13 @@ impl AppView {
             .mt_2()
             .child(
                 div().font_weight(FontWeight::MEDIUM).child(
-                    Label::new("Models & defaults")
+                    Label::new("Default model")
                         .size(font::TITLE)
                         .color(dark().text.primary),
                 ),
             )
             .child(
-                Label::new("Runnable models per provider; the default applies to new runs")
+                Label::new("Choose the model used when a new task starts")
                     .size(font::BODY_SM)
                     .color(dark().text.secondary),
             );
@@ -366,7 +464,8 @@ impl AppView {
         section
     }
 
-    /// 单个模型行：display_name + id + 默认徽标 +「设为默认」按钮
+    /// 单个模型行：普通列表只显示 display_name + 默认徽标 +「设为默认」按钮；
+    /// raw id 只用于稳定控件 identifier 与 Host 写入。
     ///（可见 / 键盘 / AX 三路径同 identifier、同 gate）。
     pub(super) fn settings_model_row(
         &mut self,
@@ -419,7 +518,7 @@ impl AppView {
             .min_w_0()
             .child(
                 div().flex_1().min_w_0().truncate().child(
-                    Label::new(format!("{} · {}", model.display_name, model.id))
+                    Label::new(model.display_name.clone())
                         .size(font::BODY_SM)
                         .color(dark().text.secondary),
                 ),
@@ -475,9 +574,12 @@ impl AppView {
         })
     }
 
-    /// API key 内联编辑器可见性：none / error 常驻；connected 需 Replace
-    /// 展开后出现；connecting（验证中）不显示。
-    pub(crate) fn settings_api_key_editor_visible(&self, provider: &ProviderAuthStatusEntry) -> bool {
+    /// API key 内联编辑器只在 Connect / Replace 后展开；普通 provider
+    /// 概览始终保持紧凑，connecting（验证中）不显示。
+    pub(crate) fn settings_api_key_editor_visible(
+        &self,
+        provider: &ProviderAuthStatusEntry,
+    ) -> bool {
         if !provider
             .auth_methods
             .iter()
@@ -486,8 +588,9 @@ impl AppView {
             return false;
         }
         match provider.auth {
-            ProviderAuthState::None | ProviderAuthState::Error { .. } => true,
-            ProviderAuthState::Connected { .. } => self
+            ProviderAuthState::None
+            | ProviderAuthState::Error { .. }
+            | ProviderAuthState::Connected { .. } => self
                 .settings_api_key_editors
                 .contains(&provider.provider_id),
             ProviderAuthState::Connecting => false,
@@ -559,7 +662,7 @@ impl AppView {
             SettingsAuthAction::CancelOauth => {
                 self.controller.auth_cancel(provider_id);
             }
-            SettingsAuthAction::ReplaceApiKey => {
+            SettingsAuthAction::ConnectApiKey | SettingsAuthAction::ReplaceApiKey => {
                 self.settings_api_key_editors.insert(provider_id);
             }
             SettingsAuthAction::VerifyApiKey => {

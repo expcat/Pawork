@@ -7,7 +7,10 @@ impl AppView {
     /// columns/rows 生效值）、shell 内联输入 + columns/rows 数值输入 +
     /// Save（全态回传三字段）/ Clear（清除 shell）、生效边界文案；stale
     /// 只读，写入口与 AX 同 gate。
-    pub(super) fn settings_terminal_page_element(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn settings_terminal_page_element(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let connected = matches!(
             self.projection.connection,
             ConnectionState::Connected { .. }
@@ -118,7 +121,7 @@ impl AppView {
                             .min_w_0()
                             .child(
                                 div().font_weight(FontWeight::MEDIUM).child(
-                                    Label::new("终端")
+                                    Label::new("Terminal")
                                         .size(font::TITLE)
                                         .color(dark().text.primary),
                                 ),

@@ -28,9 +28,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{
-    AnyView, App, AsyncWindowContext, ClickEvent, Context, Corner, Entity, FocusHandle, Focusable,
-    FontWeight, KeyBinding, KeyDownEvent, ListAlignment, ListState, PathPromptOptions, Pixels,
-    Point, Render, Rgba, ScrollHandle, SharedString, Window, actions, div, point, prelude::*, px,
+    actions, div, point, prelude::*, px, AnyView, App, AsyncWindowContext, ClickEvent, Context,
+    Corner, Entity, FocusHandle, Focusable, FontWeight, KeyBinding, KeyDownEvent, ListAlignment,
+    ListState, PathPromptOptions, Pixels, Point, Render, Rgba, ScrollHandle, SharedString, Window,
 };
 use pawork_client::AppEvent;
 
@@ -47,6 +47,7 @@ use components::dropdown::Dropdown;
 use components::follow_scroll::FollowScroll;
 use components::label::Badge;
 use components::status_bar::StatusBar;
+use input_area::grouped_model_menu_entries;
 use inspector::InspectorTab;
 use resources::ResourcesPanelState;
 use theme::{dark, font, metrics};
@@ -89,9 +90,10 @@ pub(crate) const APP_VIEW_KEYBINDINGS: &[(&str, &str)] = &[
     ("cmd-0", "ResetTextSize"),
 ];
 
-/// Timeline 空态引导（R2 Wave B）：无 active session 且条目数为 0 时居中
-/// 显示；视觉与 AX 树共用同一文案源（accessibility/app.rs）。
-pub(crate) const WORKSPACE_EMPTY_HINT: &str = "Select a task from the rail, or press Cmd+N to start a new one. Cycle tasks with Cmd+Opt+↓ / Cmd+Opt+↑, or jump to the next task that needs attention with Cmd+Opt+N.";
+/// Timeline 空态（P0-3）：无 active session 且条目数为 0 时，只给出一个
+/// 清楚的主路径；视觉与 AX 树共用同一文案源（accessibility/app.rs）。
+pub(crate) const WORKSPACE_EMPTY_TITLE: &str = "Start a task";
+pub(crate) const WORKSPACE_EMPTY_HINT: &str = "Choose a task from the sidebar or create a new one.";
 
 /// R3 Wave B：rail Tab 焦点顺序前缀（design §3.6：scope → grouping → 全局
 /// 新建）；行为链（项目头 / 定向新建 / task 行）按当前分组渲染序接在其后，
@@ -195,7 +197,6 @@ fn now_unix_ms() -> u64 {
 /// 当前打开的浮层菜单（五组共享，开新即关旧，修互斥不对称）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum MenuKind {
-    Grouping,
     Scope,
     Model,
     /// 条目「···」菜单，键为 timeline event_id。
@@ -350,7 +351,11 @@ fn install_appkit_tab_monitor(window: &Window, cx: &App) {
                 .is_ok()
             }) == Some(true)
         });
-        if handled { nil } else { event }
+        if handled {
+            nil
+        } else {
+            event
+        }
     }
 
     /// 本地监听器在 AppKit C 调用栈上执行，禁止 unwind 穿越：兜底捕获
@@ -442,6 +447,8 @@ pub struct AppView {
     grouping: TaskRailGrouping,
     scope_workspace_id: Option<String>,
     collapsed_projects: BTreeSet<String>,
+    /// P1-2：以首个 tool event id 标识的本地折叠偏好；不进入 wire / replay。
+    collapsed_tool_groups: HashSet<String>,
     inspector_open: bool,
     /// Inspector 顶层页签（Changes / Terminal / Resources）。
     inspector_tab: InspectorTab,
@@ -451,7 +458,7 @@ pub struct AppView {
     resources: ResourcesPanelState,
     /// 当前打开的菜单；单一状态位保证至多一个打开（§8.2）。
     open_menu: Option<MenuKind>,
-    /// Grouping / Scope / Model 菜单的键盘高亮行（None = 尚未移动，回落到
+    /// Scope / Model 等菜单的键盘高亮行（None = 尚未移动，回落到
     /// 当前选中项；菜单关闭时复位）。
     menu_highlight: Option<usize>,
     /// 键盘 Enter 选择菜单项后，触发器在同一物理按键的 keyup 仍会合成
@@ -503,6 +510,7 @@ pub struct AppView {
     /// Timeline 虚拟化 action 按 event_id 懒建稳定焦点句柄；条目卸载/重挂
     /// 不丢普通键盘焦点语义，删除后的遗留项随窗口生命周期回收。
     timeline_entry_action_focus: BTreeMap<String, FocusHandle>,
+    timeline_tool_group_focus: BTreeMap<String, FocusHandle>,
     timeline_review_changes_focus: BTreeMap<String, FocusHandle>,
     inspector_tab_focus: [FocusHandle; 3],
     inspector_collapse_focus: FocusHandle,
@@ -653,6 +661,7 @@ impl AppView {
             grouping: TaskRailGrouping::Timeline,
             scope_workspace_id: None,
             collapsed_projects: BTreeSet::new(),
+            collapsed_tool_groups: HashSet::new(),
             inspector_open: true,
             inspector_tab: InspectorTab::default(),
             changes: ChangesPanelState::default(),
@@ -700,6 +709,7 @@ impl AppView {
                 .tab_stop(true)
                 .tab_index(INSPECTOR_TAB_INDEX),
             timeline_entry_action_focus: BTreeMap::new(),
+            timeline_tool_group_focus: BTreeMap::new(),
             timeline_review_changes_focus: BTreeMap::new(),
             inspector_tab_focus: std::array::from_fn(|_| {
                 cx.focus_handle()
@@ -859,6 +869,7 @@ impl AppView {
         let title = self.projection.workspace_header_title().map(str::to_string);
         let branch = self.header_branch();
         let status = self.projection.workspace_header_status();
+        let workspace_empty = self.projection.workspace_empty_hint_visible();
         let can_create = self.can_create_task();
         let new_task_tooltip = SharedString::from(if can_create {
             "New task (Cmd+N)".to_string()
@@ -955,6 +966,8 @@ impl AppView {
             .pt(px(metrics::HEADER_SAFE_STRIP))
             .pl(px(metrics::TIMELINE_CONTENT_INSET))
             .pr(px(metrics::HEADER_INSET_RIGHT))
+            .border_b_1()
+            .border_color(dark().border.subtle)
             .child(
                 div()
                     .flex()
@@ -1012,7 +1025,9 @@ impl AppView {
             .when(activity_trigger_visible, |header| {
                 header.when_some(activity_trigger, |header, trigger| header.child(trigger))
             })
-            .when(!activity_trigger_visible, |header| header.child(new_task))
+            .when(!activity_trigger_visible && !workspace_empty, |header| {
+                header.child(new_task)
+            })
     }
 
     /// Header branch 诚实数据源：host diff_* 固定解析 latest 会话，仅当
@@ -1068,6 +1083,21 @@ impl AppView {
     ) -> FocusHandle {
         self.timeline_review_changes_focus
             .entry(event_id.to_string())
+            .or_insert_with(|| {
+                cx.focus_handle()
+                    .tab_stop(true)
+                    .tab_index(INSPECTOR_TAB_INDEX)
+            })
+            .clone()
+    }
+
+    pub(super) fn timeline_tool_group_focus(
+        &mut self,
+        group_key: &str,
+        cx: &mut Context<Self>,
+    ) -> FocusHandle {
+        self.timeline_tool_group_focus
+            .entry(group_key.to_string())
             .or_insert_with(|| {
                 cx.focus_handle()
                     .tab_stop(true)
@@ -2066,9 +2096,7 @@ impl AppView {
                     // 的 Enter 同样视为 no-op（语义：选择即当前态）。
                     let selected = self.menu_selected_index();
                     let highlight = self.menu_highlight_effective(selected);
-                    if matches!(kind, MenuKind::Grouping | MenuKind::Scope | MenuKind::Model)
-                        && highlight == selected
-                    {
+                    if matches!(kind, MenuKind::Scope | MenuKind::Model) && highlight == selected {
                         cx.stop_propagation();
                         return;
                     }
@@ -2272,7 +2300,6 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         let trigger = match kind {
-            MenuKind::Grouping => self.grouping_focus.clone(),
             MenuKind::Scope => self.scope_focus.clone(),
             MenuKind::Model => self.model_focus.clone(),
             MenuKind::Entry(event_id) => self
@@ -2295,7 +2322,6 @@ impl AppView {
     /// 菜单高亮行数。所有可点击 MenuRow 均进入同一普通键盘分派。
     fn menu_item_count(&self) -> usize {
         match self.open_menu.as_ref() {
-            Some(MenuKind::Grouping) => 2,
             Some(MenuKind::Scope) => self.projection.project_scope_options().len() + 1,
             Some(MenuKind::Model) => self.projection.models.len(),
             Some(MenuKind::Entry(_)) => 1,
@@ -2315,10 +2341,6 @@ impl AppView {
     /// 当前选中项在菜单中的行位（键盘高亮的回落起点）。
     fn menu_selected_index(&self) -> usize {
         match self.open_menu.as_ref() {
-            Some(MenuKind::Grouping) => match self.grouping {
-                TaskRailGrouping::Timeline => 0,
-                TaskRailGrouping::Projects => 1,
-            },
             Some(MenuKind::Scope) => self
                 .projection
                 .project_scope_options()
@@ -2329,8 +2351,7 @@ impl AppView {
                 .projection
                 .effective_model()
                 .and_then(|(provider, id)| {
-                    self.projection
-                        .models
+                    grouped_model_menu_entries(&self.projection.models)
                         .iter()
                         .position(|model| model.provider_id == *provider && model.id == *id)
                 })
@@ -2371,14 +2392,6 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         match kind {
-            MenuKind::Grouping => {
-                let mode = if ix == 0 {
-                    TaskRailGrouping::Timeline
-                } else {
-                    TaskRailGrouping::Projects
-                };
-                self.on_select_grouping(mode, window, cx);
-            }
             MenuKind::Scope => {
                 let options = self.projection.project_scope_options();
                 if let Some((workspace_id, _)) = options.get(ix).cloned() {
@@ -2388,8 +2401,8 @@ impl AppView {
                 }
             }
             MenuKind::Model => {
-                if let Some(model) = self.projection.models.get(ix).cloned() {
-                    self.on_select_model(model, cx);
+                if let Some(model) = grouped_model_menu_entries(&self.projection.models).get(ix) {
+                    self.on_select_model(model.clone(), cx);
                 }
             }
             MenuKind::Entry(event_id) => {
@@ -3682,16 +3695,12 @@ mod tests {
         assert!(actions.contains(&"ApproveForRun"));
         assert!(actions.contains(&"Deny"));
         assert!(actions.contains(&"CancelRun"));
-        assert!(
-            APP_VIEW_KEYBINDINGS
-                .iter()
-                .any(|(key, action)| *key == "cmd-." && *action == "CancelRun")
-        );
-        assert!(
-            APP_VIEW_KEYBINDINGS
-                .iter()
-                .any(|(key, action)| *key == "cmd-enter" && *action == "ApproveOnce")
-        );
+        assert!(APP_VIEW_KEYBINDINGS
+            .iter()
+            .any(|(key, action)| *key == "cmd-." && *action == "CancelRun"));
+        assert!(APP_VIEW_KEYBINDINGS
+            .iter()
+            .any(|(key, action)| *key == "cmd-enter" && *action == "ApproveOnce"));
         for (key, action) in [
             ("cmd-=", "IncreaseTextSize"),
             ("cmd-+", "IncreaseTextSize"),
@@ -3785,9 +3794,13 @@ mod tests {
     }
 
     #[test]
-    fn workspace_empty_hint_mentions_cycling_and_attention() {
-        assert!(WORKSPACE_EMPTY_HINT.contains("Cmd+Opt"));
-        assert!(WORKSPACE_EMPTY_HINT.contains("Cmd+N"));
+    fn workspace_empty_state_has_one_clear_primary_path() {
+        assert_eq!(WORKSPACE_EMPTY_TITLE, "Start a task");
+        assert_eq!(
+            WORKSPACE_EMPTY_HINT,
+            "Choose a task from the sidebar or create a new one."
+        );
+        assert!(!WORKSPACE_EMPTY_HINT.contains("Cmd+"));
     }
 
     /// design §3.6：scope → grouping → 全局新建 → 项目头 / 定向新建 → task 行；

@@ -4,15 +4,18 @@ use gpui::{App, Focusable, Window};
 
 use super::{AxAction, AxNode, AxRect, AxRole};
 use crate::projection::ConnectionState;
-use crate::ui::settings::{
-    general_status_lines, SETTINGS_PROXY_EFFECT_NOTE, SETTINGS_PROXY_UNSET,
-};
+use crate::ui::settings::{general_status_lines, SETTINGS_PROXY_EFFECT_NOTE, SETTINGS_PROXY_UNSET};
 use crate::ui::AppView;
 
 impl AppView {
     /// 「General」页 AX（SET-6a）：当前值 / 输入 / Save / Clear / 生效边界；
     /// stale 时 enabled=false，permits 拒绝写动作，与 render 同 gate。
-    pub(crate) fn settings_general_page_ax(&self, window: &Window, cx: &App, frame: AxRect) -> AxNode {
+    pub(crate) fn settings_general_page_ax(
+        &self,
+        window: &Window,
+        cx: &App,
+        frame: AxRect,
+    ) -> AxNode {
         const HEADING_HEIGHT: f32 = 28.0;
         const SUBTITLE_HEIGHT: f32 = 20.0;
         const STATUS_HEIGHT: f32 = 20.0;
@@ -32,6 +35,7 @@ impl AppView {
         let clear_enabled = writes && state.proxy_url.is_some();
         let refresh_focused =
             self.open_menu.is_none() && self.settings_refresh_focus.is_focused(window);
+        let width = super::settings::settings_content_ax_width(frame);
         let mut page = AxNode::new("settings-page", AxRole::Group, "General", frame)
             .child(
                 AxNode::new(
@@ -41,7 +45,7 @@ impl AppView {
                     AxRect::new(
                         frame.x + 16.0,
                         frame.y + 16.0,
-                        (frame.width - 136.0).max(0.0),
+                        (width - 136.0).max(0.0),
                         HEADING_HEIGHT + SUBTITLE_HEIGHT,
                     ),
                 )
@@ -53,7 +57,7 @@ impl AppView {
                     AxRole::Button,
                     "Refresh",
                     AxRect::new(
-                        frame.x + frame.width - 16.0 - 96.0,
+                        frame.x + 16.0 + width - 96.0,
                         frame.y + 16.0,
                         96.0,
                         CONTROL_ROW,
@@ -64,7 +68,6 @@ impl AppView {
                 .action(AxAction::Press),
             );
         let mut y = frame.y + 16.0 + HEADING_HEIGHT + SUBTITLE_HEIGHT + 8.0;
-        let width = (frame.width - 32.0).max(0.0);
         for (kind, label) in general_status_lines(state) {
             page = page.child(
                 AxNode::new(
@@ -77,11 +80,18 @@ impl AppView {
             );
             y += STATUS_HEIGHT + 8.0;
         }
+        page = page.child(AxNode::new(
+            "settings-proxy-heading",
+            AxRole::StaticText,
+            "Proxy URL",
+            AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT),
+        ));
+        y += STATUS_HEIGHT + 8.0;
         page = page.child(
             AxNode::new(
                 "settings-proxy-current",
                 AxRole::StaticText,
-                "Proxy URL",
+                "Current proxy URL",
                 AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT),
             )
             .value(current),
@@ -112,7 +122,7 @@ impl AppView {
                 "settings-proxy-save",
                 AxRole::Button,
                 "Save",
-                AxRect::new(frame.x + frame.width - 16.0 - 168.0, y, 80.0, CONTROL_ROW),
+                AxRect::new(frame.x + 16.0 + width - 168.0, y, 80.0, CONTROL_ROW),
             )
             .enabled(save_enabled)
             .focused(self.open_menu.is_none() && self.settings_proxy_save_focus.is_focused(window))
@@ -123,7 +133,7 @@ impl AppView {
                 "settings-proxy-clear",
                 AxRole::Button,
                 "Clear",
-                AxRect::new(frame.x + frame.width - 16.0 - 80.0, y, 80.0, CONTROL_ROW),
+                AxRect::new(frame.x + 16.0 + width - 80.0, y, 80.0, CONTROL_ROW),
             )
             .enabled(clear_enabled)
             .focused(self.open_menu.is_none() && self.settings_proxy_clear_focus.is_focused(window))

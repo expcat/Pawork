@@ -14,7 +14,7 @@ impl AppView {
             .gap_2()
             .child(
                 div().font_weight(FontWeight::MEDIUM).child(
-                    Label::new("关于")
+                    Label::new("About")
                         .size(font::TITLE)
                         .color(dark().text.primary),
                 ),
@@ -32,15 +32,22 @@ impl AppView {
                     .w_full()
                     .min_w_0()
                     .flex()
-                    .flex_col()
+                    .flex_row()
+                    .items_start()
+                    .gap_2()
+                    .py_1()
+                    .border_b_1()
+                    .border_color(dark().border.subtle)
                     .child(
-                        Label::new(label)
-                            .size(font::BODY_SM)
-                            .color(dark().text.secondary),
+                        div().w(px(184.0)).flex_none().child(
+                            Label::new(label)
+                                .size(font::BODY_SM)
+                                .color(dark().text.secondary),
+                        ),
                     )
                     .child(
                         div()
-                            .w_full()
+                            .flex_1()
                             .min_w_0()
                             .whitespace_normal()
                             .text_size(font::BODY)

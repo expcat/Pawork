@@ -136,10 +136,26 @@ pub enum TaskRailGrouping {
 }
 
 impl TaskRailGrouping {
-    pub fn accessible_name(self) -> &'static str {
+    /// 当前呈现模式；供 AX value 使用，不和按钮目标动作混写。
+    pub fn view_label(self) -> &'static str {
         match self {
-            Self::Timeline => "Group tasks · Timeline",
-            Self::Projects => "Group tasks · Projects",
+            Self::Timeline => "Timeline view",
+            Self::Projects => "Projects view",
+        }
+    }
+
+    /// 二态按钮显示的下一步动作；供 tooltip 与 AX name 共用。
+    pub fn toggle_action_label(self) -> &'static str {
+        match self {
+            Self::Timeline => "Show projects",
+            Self::Projects => "Show timeline",
+        }
+    }
+
+    pub fn toggled(self) -> Self {
+        match self {
+            Self::Timeline => Self::Projects,
+            Self::Projects => Self::Timeline,
         }
     }
 }
@@ -692,5 +708,4 @@ impl DesktopProjection {
             started_at_ms,
         });
     }
-
 }

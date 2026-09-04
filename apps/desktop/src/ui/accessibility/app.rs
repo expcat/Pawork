@@ -1,7 +1,7 @@
 //! AppView → AxTree 投影与 AX action 白名单。
 
-use std::str::FromStr;
 use gpui::{App, Context, Focusable, Window};
+use std::str::FromStr;
 
 use crate::projection::{
     run_footer_label, run_summary_texts, ApprovalModeWire, ConnectionState, DateBucket,
@@ -15,7 +15,8 @@ use crate::ui::approval_card::{
     APPROVAL_BUTTON_SLOT_WIDTHS, APPROVAL_CARD_PAD_REMS,
 };
 use crate::ui::changes::{ChangesFetch, ChangesTab};
-use crate::ui::components::dropdown::ANCHOR_GAP_Y;
+use crate::ui::components::dropdown::{ANCHOR_GAP_Y, MENU_MAX_HEIGHT};
+use crate::ui::input_area::{grouped_model_menu_entries, MODEL_MENU_GROUP_HEADER_HEIGHT};
 use crate::ui::inspector::{
     plain_terminal_output, terminal_header_height, terminal_resize_status_label,
     terminal_size_for_display, terminal_stepper_ax_rects, InspectorTab, TERMINAL_COLUMNS_STEP,
@@ -29,12 +30,12 @@ use crate::ui::settings::{
 };
 use crate::ui::shell_layout;
 use crate::ui::theme::{font, metrics};
-use crate::ui::timeline_entry::display_time;
+use crate::ui::timeline_entry::{display_time, tool_group_summary};
 use crate::ui::{
     activity_header_visibility, rail_project_occurrence_key, rail_session_focus_key,
     terminal_can_operate, terminal_can_reopen, terminal_close_label, terminal_known_ended,
     terminal_start_enabled, timeline, AppRoute, AppView, MenuKind, SettingsPage,
-    WORKSPACE_EMPTY_HINT,
+    WORKSPACE_EMPTY_HINT, WORKSPACE_EMPTY_TITLE,
 };
 
 pub(crate) const PAD: f32 = 8.0;
@@ -44,7 +45,6 @@ const ACTIVITY_CONTENT_INSET_X: f32 = 28.0;
 const ACTIVITY_HEADING_OFFSET_Y: f32 = 58.0;
 const ACTIVITY_SUMMARY_OFFSET_Y: f32 = 24.0;
 const ACTIVITY_HEADING_HEIGHT: f32 = 20.0;
-
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct ActivityPopoverAxGeometry {
@@ -234,15 +234,8 @@ impl AppView {
         cx: &mut Context<Self>,
     ) -> bool {
         match identifier {
-            // D1（P4 片 2F）：AXPress 开菜单与可见点击同源移焦——鼠标按下
-            // 会把 GPUI 焦点交给触发器按钮，菜单打开后 Enter 由根节点菜单
-            // 裁决；AX 不移焦时焦点滞留 composer，Enter 误触 SendMessage。
-            // 先移焦再 toggle（mousedown → click 顺序）；enable gate 仍由
-            // permits 按当前树核对，三路径语义不变。
-            "task-rail-grouping" => {
-                window.focus(&self.grouping_focus);
-                self.on_toggle_grouping_menu(None, window, cx)
-            }
+            // P0-2：AX Press 与 mouse / Enter / Space 共用直接切换路径。
+            "task-rail-grouping" => self.toggle_grouping(window, cx),
             "project-scope" => {
                 window.focus(&self.scope_focus);
                 self.on_toggle_scope_menu(None, window, cx)
@@ -342,6 +335,26 @@ impl AppView {
             "approve-for-run" => self.on_approve("approve_for_run", window, cx),
             "approve-deny" => self.on_approve("deny", window, cx),
             "timeline-back-to-bottom" => self.timeline_jump_to_bottom(),
+            other if other.starts_with("tool-group-toggle-") => {
+                let Some(group_key) = self
+                    .projection
+                    .timeline_rows()
+                    .iter()
+                    .filter_map(|row| match row {
+                        TimelineRow::ToolGroup { entry_indices }
+                        | TimelineRow::RunSummary {
+                            group: Some(entry_indices),
+                            ..
+                        } => timeline::tool_group_key(entry_indices, &self.projection.timeline),
+                        _ => None,
+                    })
+                    .find(|key| tool_group_toggle_identifier(key) == other)
+                    .map(str::to_string)
+                else {
+                    return false;
+                };
+                self.toggle_tool_group(&group_key, cx);
+            }
             // Inspector 折叠态触发器的可见语义是弹出 ActivityPopover（R6
             // Wave A 起位于 Workspace Header），摘要行才展开 Inspector；
             // 展开态由 inspector-collapse 收起。
@@ -374,8 +387,6 @@ impl AppView {
             "terminal-back-to-bottom" => self.terminal_scroll.jump_to_bottom(),
             "terminal-close" => self.on_close_terminal(window, cx),
             "activity-open-changes" => self.on_activity_open_changes(window, cx),
-            "group-timeline" => self.on_select_grouping(TaskRailGrouping::Timeline, window, cx),
-            "group-projects" => self.on_select_grouping(TaskRailGrouping::Projects, window, cx),
             _ => {
                 // SET-4/5：settings 写动作与「设为默认」均与可见按钮同源
                 // 派发（入口复核 gate；permits 已按当前树核对 disabled）。
@@ -622,7 +633,7 @@ impl AppView {
         let grouping = AxNode::new(
             "task-rail-grouping",
             AxRole::Button,
-            self.grouping.accessible_name(),
+            self.grouping.toggle_action_label(),
             AxRect::new(
                 (frame.width - inset - metrics::RAIL_ICON_BUTTON_SIZE).max(inset),
                 // 标题行高 36、按钮 28：render items_center → 按钮顶 +4。
@@ -631,12 +642,7 @@ impl AppView {
                 metrics::RAIL_ICON_BUTTON_SIZE,
             ),
         )
-        .value(match self.grouping {
-            TaskRailGrouping::Timeline => "Timeline",
-            TaskRailGrouping::Projects => "Projects",
-        })
-        // R7 Wave A：菜单打开时 AX 焦点移交高亮项（macOS 菜单惯例），
-        // 触发器让出 focused，树内保持唯一焦点。
+        .value(self.grouping.view_label())
         .focused(self.open_menu.is_none() && self.grouping_focus.is_focused(window))
         .action(AxAction::Press);
         y += metrics::RAIL_TITLE_ROW_HEIGHT + metrics::RAIL_TITLE_SCOPE_GAP;
@@ -816,49 +822,6 @@ impl AppView {
             .action(AxAction::Press),
         );
 
-        if matches!(self.open_menu, Some(MenuKind::Grouping)) {
-            // 浮层贴 grouping 角标下方：标题行顶 = PAD + 36 安全区 + PAD，
-            // 行高 36；旧 CONTROL_HEIGHT=28 的锚点会把菜单抬到 traffic-light 带。
-            let grouping_menu_y = PAD
-                + shell_layout::TRAFFIC_LIGHT_SAFE_HEIGHT
-                + PAD
-                + metrics::RAIL_TITLE_ROW_HEIGHT;
-            let grouping_menu_x = (frame.width - inset - 148.0).max(inset);
-            let highlight = self.menu_highlight_effective(match self.grouping {
-                TaskRailGrouping::Timeline => 0,
-                TaskRailGrouping::Projects => 1,
-            });
-            sidebar = sidebar.child(
-                AxNode::new(
-                    "grouping-menu",
-                    AxRole::Group,
-                    "Task grouping",
-                    AxRect::new(grouping_menu_x, grouping_menu_y, 148.0, 64.0),
-                )
-                .child(
-                    AxNode::new(
-                        "group-timeline",
-                        AxRole::Button,
-                        "Timeline",
-                        AxRect::new(grouping_menu_x, grouping_menu_y, 148.0, 32.0),
-                    )
-                    .selected(self.grouping == TaskRailGrouping::Timeline)
-                    .focused(highlight == 0)
-                    .action(AxAction::Press),
-                )
-                .child(
-                    AxNode::new(
-                        "group-projects",
-                        AxRole::Button,
-                        "Projects",
-                        AxRect::new(grouping_menu_x, grouping_menu_y + 32.0, 148.0, 32.0),
-                    )
-                    .selected(self.grouping == TaskRailGrouping::Projects)
-                    .focused(highlight == 1)
-                    .action(AxAction::Press),
-                ),
-            );
-        }
         if matches!(self.open_menu, Some(MenuKind::Scope)) {
             let scope_menu_y = PAD
                 + shell_layout::TRAFFIC_LIGHT_SAFE_HEIGHT
@@ -1184,6 +1147,8 @@ impl AppView {
                 );
             }
             header
+        } else if self.projection.workspace_empty_hint_visible() {
+            header
         } else {
             header.child(
                 AxNode::new("header-new-task", AxRole::Button, "New task", action)
@@ -1219,6 +1184,8 @@ impl AppView {
                         &self.projection.timeline,
                         column_width,
                         rem_px,
+                        &self.collapsed_tool_groups,
+                        self.changes_available_for_active(),
                     ),
                 )
             })
@@ -1305,15 +1272,42 @@ impl AppView {
         });
         let mut list = AxNode::new("timeline", AxRole::List, "Timeline", frame);
         if empty_hint_visible {
-            // 空态引导只读节点：与 timeline_area 可见条件同源（projection
-            // 谓词），无 action；垂直居中，宽度占满 timeline 区。
-            let hint_y = frame.y + ((frame.height - ROW_HEIGHT) / 2.0).max(0.0);
-            list = list.child(AxNode::new(
-                "workspace-empty-hint",
-                AxRole::StaticText,
-                WORKSPACE_EMPTY_HINT,
-                AxRect::new(frame.x, hint_y, frame.width, ROW_HEIGHT),
-            ));
+            // P0-3：与 timeline_area 同源的 title / description / Primary
+            // action。Header 同态不发布重复 New task 节点，保证 identifier
+            // 唯一；disabled 时不发布 Press action。
+            let group_height = 112.0_f32.min(frame.height);
+            let group_y = frame.y + ((frame.height - group_height) / 2.0).max(0.0);
+            let content_x = frame.x + metrics::TIMELINE_CONTENT_INSET;
+            let content_width = (frame.width - metrics::TIMELINE_CONTENT_INSET * 2.0).max(0.0);
+            let button_width = 112.0_f32.min(content_width);
+            let button_x = content_x + ((content_width - button_width) / 2.0).max(0.0);
+            let can_create = self.can_create_task();
+            let mut new_task = AxNode::new(
+                "header-new-task",
+                AxRole::Button,
+                "New task",
+                AxRect::new(button_x, group_y + 76.0, button_width, 36.0),
+            )
+            .description(self.add_task_disabled_reason())
+            .enabled(can_create)
+            .focused(self.open_menu.is_none() && self.header_new_task_focus.is_focused(window));
+            if can_create {
+                new_task = new_task.action(AxAction::Press);
+            }
+            list = list
+                .child(AxNode::new(
+                    "workspace-empty-title",
+                    AxRole::StaticText,
+                    WORKSPACE_EMPTY_TITLE,
+                    AxRect::new(content_x, group_y, content_width, 28.0),
+                ))
+                .child(AxNode::new(
+                    "workspace-empty-hint",
+                    AxRole::StaticText,
+                    WORKSPACE_EMPTY_HINT,
+                    AxRect::new(content_x, group_y + 36.0, content_width, 24.0),
+                ))
+                .child(new_task);
         }
         for &(ix, top, height) in visible_items.iter().filter(|(ix, _, _)| *ix < total) {
             let rect = AxRect::new(column_x, top, column_width, height);
@@ -1351,17 +1345,20 @@ impl AppView {
             .enumerate()
             {
                 let width = APPROVAL_BUTTON_SLOT_WIDTHS[ix];
-                approval_node = approval_node.child(
-                    AxNode::new(
+                approval_node = approval_node.child({
+                    let mut button = AxNode::new(
                         id,
                         AxRole::Button,
                         label,
                         AxRect::new(button_x, button_row_y, width, APPROVAL_BUTTON_HEIGHT),
                     )
                     .enabled(enabled)
-                    .focused(focused[ix])
-                    .action(AxAction::Press),
-                );
+                    .focused(focused[ix]);
+                    if enabled {
+                        button = button.action(AxAction::Press);
+                    }
+                    button
+                });
                 button_x += width + button_gap;
             }
             list = list.child(approval_node);
@@ -1406,15 +1403,42 @@ impl AppView {
                 self.timeline_entry_ax(window, &self.projection.timeline[*entry_index], rect, false)
             }
             TimelineRow::ToolGroup { entry_indices } => {
+                let group_key = timeline::tool_group_key(entry_indices, &self.projection.timeline)
+                    .unwrap_or_default();
+                let rows = self.tool_row_views(entry_indices);
+                let collapsed = self.collapsed_tool_groups.contains(group_key);
                 let mut group = AxNode::new(
-                    dynamic_identifier(
-                        "tool-group",
-                        &self.projection.timeline[entry_indices[0]].event_id,
-                    ),
+                    dynamic_identifier("tool-group", group_key),
                     AxRole::Group,
-                    format!("Tool activity · {} tools", entry_indices.len()),
+                    "Tool activity",
                     rect,
+                )
+                .child(
+                    AxNode::new(
+                        tool_group_toggle_identifier(group_key),
+                        AxRole::Button,
+                        "Tool activity",
+                        AxRect::new(
+                            rect.x,
+                            rect.y,
+                            rect.width,
+                            metrics::TOOL_GROUP_HEADER_HEIGHT,
+                        ),
+                    )
+                    .value(tool_group_summary(&rows))
+                    .description(if collapsed { "Collapsed" } else { "Expanded" })
+                    .focused(
+                        self.open_menu.is_none()
+                            && self
+                                .timeline_tool_group_focus
+                                .get(group_key)
+                                .is_some_and(|focus| focus.is_focused(window)),
+                    )
+                    .action(AxAction::Press),
                 );
+                if collapsed {
+                    return group;
+                }
                 for (ix, &entry_index) in entry_indices.iter().enumerate() {
                     let entry = &self.projection.timeline[entry_index];
                     let TimelineEntryKind::ToolCall {
@@ -1427,7 +1451,9 @@ impl AppView {
                     };
                     let tool_rect = AxRect::new(
                         rect.x,
-                        rect.y + ix as f32 * metrics::TOOL_ROW_HEIGHT,
+                        rect.y
+                            + metrics::TOOL_GROUP_HEADER_HEIGHT
+                            + ix as f32 * metrics::TOOL_ROW_HEIGHT,
                         rect.width,
                         metrics::TOOL_ROW_HEIGHT,
                     );
@@ -1455,27 +1481,53 @@ impl AppView {
                 );
                 let mut y = rect.y;
                 if let Some(entry_indices) = group {
-                    for &entry_index in entry_indices {
-                        let entry = &self.projection.timeline[entry_index];
-                        let TimelineEntryKind::ToolCall {
-                            name,
-                            status,
-                            detail,
-                        } = &entry.kind
-                        else {
-                            continue;
-                        };
-                        region = region.child(
-                            AxNode::new(
-                                dynamic_identifier("tool-row", &entry.event_id),
-                                AxRole::ListItem,
-                                format!("Tool · {name}"),
-                                AxRect::new(rect.x, y, rect.width, metrics::TOOL_ROW_HEIGHT),
-                            )
-                            .value(timeline::tool_status_label(status))
-                            .description(detail.clone().unwrap_or_default()),
-                        );
-                        y += metrics::TOOL_ROW_HEIGHT;
+                    let group_key =
+                        timeline::tool_group_key(entry_indices, &self.projection.timeline)
+                            .unwrap_or_default();
+                    let rows = self.tool_row_views(entry_indices);
+                    let collapsed = self.collapsed_tool_groups.contains(group_key);
+                    region = region.child(
+                        AxNode::new(
+                            tool_group_toggle_identifier(group_key),
+                            AxRole::Button,
+                            "Tool activity",
+                            AxRect::new(rect.x, y, rect.width, metrics::TOOL_GROUP_HEADER_HEIGHT),
+                        )
+                        .value(tool_group_summary(&rows))
+                        .description(if collapsed { "Collapsed" } else { "Expanded" })
+                        .focused(
+                            self.open_menu.is_none()
+                                && self
+                                    .timeline_tool_group_focus
+                                    .get(group_key)
+                                    .is_some_and(|focus| focus.is_focused(window)),
+                        )
+                        .action(AxAction::Press),
+                    );
+                    y += metrics::TOOL_GROUP_HEADER_HEIGHT;
+                    if !collapsed {
+                        for &entry_index in entry_indices {
+                            let entry = &self.projection.timeline[entry_index];
+                            let TimelineEntryKind::ToolCall {
+                                name,
+                                status,
+                                detail,
+                            } = &entry.kind
+                            else {
+                                continue;
+                            };
+                            region = region.child(
+                                AxNode::new(
+                                    dynamic_identifier("tool-row", &entry.event_id),
+                                    AxRole::ListItem,
+                                    format!("Tool · {name}"),
+                                    AxRect::new(rect.x, y, rect.width, metrics::TOOL_ROW_HEIGHT),
+                                )
+                                .value(timeline::tool_status_label(status))
+                                .description(detail.clone().unwrap_or_default()),
+                            );
+                            y += metrics::TOOL_ROW_HEIGHT;
+                        }
                     }
                     y += metrics::SUMMARY_CARD_GAP;
                 }
@@ -1492,28 +1544,29 @@ impl AppView {
                 );
                 let review_enabled = terminal_entry.fork_boundary == Some(ForkBoundary::Completed)
                     && self.changes_available_for_active();
-                region = region.child(
-                    AxNode::new(
-                        run_review_identifier(&terminal_entry.event_id),
-                        AxRole::Button,
-                        "Review changes",
-                        AxRect::new(
-                            (rect.x + rect.width - metrics::SUMMARY_BUTTON_WIDTH).max(rect.x),
-                            y,
-                            metrics::SUMMARY_BUTTON_WIDTH,
-                            metrics::SUMMARY_BUTTON_HEIGHT,
-                        ),
-                    )
-                    .enabled(review_enabled)
-                    .focused(
-                        self.open_menu.is_none()
-                            && self
-                                .timeline_review_changes_focus
-                                .get(&terminal_entry.event_id)
-                                .is_some_and(|focus| focus.is_focused(window)),
-                    )
-                    .action(AxAction::Press),
-                );
+                if review_enabled {
+                    region = region.child(
+                        AxNode::new(
+                            run_review_identifier(&terminal_entry.event_id),
+                            AxRole::Button,
+                            "Review changes",
+                            AxRect::new(
+                                (rect.x + rect.width - metrics::SUMMARY_BUTTON_WIDTH).max(rect.x),
+                                y,
+                                metrics::SUMMARY_BUTTON_WIDTH,
+                                metrics::SUMMARY_BUTTON_HEIGHT,
+                            ),
+                        )
+                        .focused(
+                            self.open_menu.is_none()
+                                && self
+                                    .timeline_review_changes_focus
+                                    .get(&terminal_entry.event_id)
+                                    .is_some_and(|focus| focus.is_focused(window)),
+                        )
+                        .action(AxAction::Press),
+                    );
+                }
                 y += metrics::SUMMARY_CHECK_CIRCLE + metrics::TIMELINE_FOOTER_GAP;
                 if let Some(label) = run_footer_label(terminal_entry) {
                     region = region.child(AxNode::new(
@@ -1741,51 +1794,70 @@ impl AppView {
             );
         }
         if matches!(self.open_menu, Some(MenuKind::Model)) {
+            let entries = grouped_model_menu_entries(&self.projection.models);
             let selected_ix = self
                 .projection
                 .effective_model()
                 .and_then(|(provider, id)| {
-                    self.projection
-                        .models
+                    entries
                         .iter()
                         .position(|model| model.provider_id == *provider && model.id == *id)
                 })
                 .unwrap_or(0);
             let highlight = self.menu_highlight_effective(selected_ix);
+            let groups = crate::projection::group_models_by_provider(&self.projection.models);
+            let content_height = metrics::MENU_PADDING * 2.0
+                + groups.len() as f32 * MODEL_MENU_GROUP_HEADER_HEIGHT
+                + entries.len() as f32 * metrics::MENU_ROW_HEIGHT;
+            let menu_height = content_height.min(MENU_MAX_HEIGHT);
+            let menu_x = frame.x + pad;
+            let menu_y = (footer_y - ANCHOR_GAP_Y - menu_height).max(0.0);
             let mut menu = AxNode::new(
                 "model-menu",
                 AxRole::Group,
                 "Models",
-                AxRect::new(
-                    frame.x + pad,
-                    footer_y + metrics::COMPOSER_SEND_SIZE,
-                    260.0,
-                    240.0,
-                ),
+                AxRect::new(menu_x, menu_y, 260.0, menu_height),
             );
-            for (ix, model) in self.projection.models.iter().enumerate() {
-                let selected = self
-                    .projection
-                    .effective_model()
-                    .is_some_and(|current| current.0 == model.provider_id && current.1 == model.id);
-                menu = menu.child(
-                    AxNode::new(
-                        model_identifier(model),
-                        AxRole::Button,
-                        model.display_name.clone(),
-                        AxRect::new(
-                            frame.x + pad,
-                            footer_y + metrics::COMPOSER_SEND_SIZE + ix as f32 * ROW_HEIGHT,
-                            260.0,
-                            ROW_HEIGHT,
-                        ),
-                    )
-                    .value(format!("{} / {}", model.provider_id, model.id))
-                    .enabled(self.can_switch_model())
-                    .selected(selected)
-                    .focused(ix == highlight)
-                    .action(AxAction::Press),
-                );
+            let mut y = menu_y + metrics::MENU_PADDING;
+            let mut item_ix = 0;
+            // render 面板在 MENU_MAX_HEIGHT 内自滚且初始停在顶部；AX 只发布
+            // 与首帧可见窗口相交的子节点，不把裁剪区外的行塞进树（滚动后
+            // 的 AX 窗口跟随是后续候选）。
+            let menu_bottom = menu_y + menu_height;
+            for (provider_id, models) in groups {
+                if y < menu_bottom {
+                    menu = menu.child(AxNode::new(
+                        dynamic_identifier("model-provider", &provider_id),
+                        AxRole::StaticText,
+                        provider_id,
+                        AxRect::new(menu_x, y, 260.0, MODEL_MENU_GROUP_HEADER_HEIGHT),
+                    ));
+                }
+                y += MODEL_MENU_GROUP_HEADER_HEIGHT;
+                for model in models {
+                    let selected = self.projection.effective_model().is_some_and(|current| {
+                        current.0 == model.provider_id && current.1 == model.id
+                    });
+                    let can_switch = self.can_switch_model();
+                    if y < menu_bottom {
+                        let mut item = AxNode::new(
+                            model_identifier(&model),
+                            AxRole::Button,
+                            model.display_name.clone(),
+                            AxRect::new(menu_x, y, 260.0, metrics::MENU_ROW_HEIGHT),
+                        )
+                        .value(format!("{} / {}", model.provider_id, model.id))
+                        .enabled(can_switch)
+                        .selected(selected)
+                        .focused(item_ix == highlight);
+                        if can_switch {
+                            item = item.action(AxAction::Press);
+                        }
+                        menu = menu.child(item);
+                    }
+                    item_ix += 1;
+                    y += metrics::MENU_ROW_HEIGHT;
+                }
             }
             composer = composer.child(menu);
         }
@@ -2483,6 +2555,10 @@ fn run_review_identifier(event_id: &str) -> String {
     dynamic_identifier("run-review-changes", event_id)
 }
 
+fn tool_group_toggle_identifier(event_id: &str) -> String {
+    dynamic_identifier("tool-group-toggle", event_id)
+}
+
 fn diff_file_identifier(path: &str) -> String {
     dynamic_identifier("changes-file", path)
 }
@@ -2564,8 +2640,8 @@ mod tests {
     }
 
     /// R6 Wave A：折叠态 Header Activity 的 AX 触发器与 Popover 锚点公式
-    /// 必须钉住生产 render 所用的 40×37 槽、右侧 25px inset、4px gap 与
-    /// 320×320 外框；Connected 真窗口证据受环境阻塞时仍能防止静默漂移。
+    /// 必须钉住生产 render 所用的 40×37 槽、右侧 25px inset、8px gap 与
+    /// 320×144 内容收缩外框；Connected 真窗口证据受环境阻塞时仍能防止静默漂移。
     #[test]
     fn activity_header_ax_geometry_matches_render_anchor_contract() {
         let header = AxRect::new(240.0, 0.0, 840.0, metrics::HEADER_HEIGHT);
@@ -2573,11 +2649,11 @@ mod tests {
         assert_eq!(trigger, AxRect::new(1015.0, 51.5, 40.0, 37.0));
 
         let popover = activity_popover_ax_geometry(header, trigger);
-        assert_eq!(popover.frame, AxRect::new(735.0, 92.5, 320.0, 320.0));
-        assert_eq!(popover.heading, AxRect::new(763.0, 150.5, 264.0, 20.0));
+        assert_eq!(popover.frame, AxRect::new(735.0, 96.5, 320.0, 144.0));
+        assert_eq!(popover.heading, AxRect::new(763.0, 154.5, 264.0, 20.0));
         assert_eq!(
             popover.open_changes,
-            AxRect::new(763.0, 174.5, 264.0, ROW_HEIGHT)
+            AxRect::new(763.0, 178.5, 264.0, ROW_HEIGHT)
         );
     }
 
@@ -2620,7 +2696,7 @@ mod tests {
     }
 
     /// P4 片 3：Timeline 行 rect 相邻不重叠、行间距与 row_top_gap 一致，
-    /// 行高按内容公式化（tool 组 = 行数×52；消息 = 标签 + 12 + 正文）。
+    /// 行高按内容公式化（tool 组 = 44 标题 + 行数×52；消息 = 标签 + 12 + 正文）。
     #[test]
     fn timeline_row_layouts_stack_with_content_heights_and_gaps() {
         use crate::projection::{TimelineEntry, TimelineEntryKind, TimelineRow};
@@ -2675,33 +2751,56 @@ mod tests {
             .map(|row| {
                 (
                     row_top_gap(row),
-                    timeline_row_height(row, &timeline, 618.0, 16.0),
+                    timeline_row_height(
+                        row,
+                        &timeline,
+                        618.0,
+                        16.0,
+                        &std::collections::HashSet::new(),
+                        false,
+                    ),
                 )
             })
             .collect();
-        // 100%：消息 = 标签 29 + 12 + 正文 24；tool 组 = 2×52；相位 = 28。
-        assert_eq!(layouts[0].1, 65.0);
-        assert_eq!(layouts[1].1, 104.0);
-        assert_eq!(layouts[2].1, 28.0);
+        // 100%：消息 = 标签 26 + 12 + 正文 24；tool 组 = 44 + 2×52；相位 = 19。
+        assert_eq!(layouts[0].1, 62.0);
+        assert_eq!(layouts[1].1, 148.0);
+        assert_eq!(layouts[2].1, 19.0);
+        let mut collapsed = std::collections::HashSet::new();
+        collapsed.insert("e2".to_string());
+        assert_eq!(
+            timeline_row_height(&rows[1], &timeline, 618.0, 16.0, &collapsed, false),
+            metrics::TOOL_GROUP_HEADER_HEIGHT
+        );
         // 行间距与 row_top_gap 同源：消息→tool 组 48，tool 组→相位 40。
         assert_eq!(layouts[1].0, metrics::TOOL_GROUP_TOP_GAP);
         assert_eq!(layouts[2].0, metrics::MSG_ENTRY_GAP);
         let tops = timeline_visible_item_tops(&layouts, 100.0, 400.0, 0, 0.0);
         assert_eq!(tops[0], (0, 100.0));
-        assert_eq!(tops[1], (1, 100.0 + 65.0 + 48.0));
-        assert_eq!(tops[2], (2, tops[1].1 + 104.0 + 40.0));
+        assert_eq!(tops[1], (1, 100.0 + 62.0 + 48.0));
+        assert_eq!(tops[2], (2, tops[1].1 + 148.0 + 40.0));
         for pair in tops.windows(2) {
             assert!(pair[0].1 + layouts[pair[0].0].1 <= pair[1].1);
         }
-        // 125%：消息行高随字号档缩放（标签 36 + 12 + 正文 30）。
-        assert_eq!(timeline_row_height(&rows[0], &timeline, 618.0, 20.0), 78.0);
-        // 跟随态窗口：视口装不下全部（65+48+104+40+28=285>200）时，
-        // 首个部分可见项仍保留，item 1 内偏移 20；全部装得下则从 0 开始。
-        assert_eq!(timeline_following_window(&layouts, 200.0), (1, 20.0));
+        // 125%：消息行高随字号档缩放（标签 32 + 12 + 正文 30）。
+        assert_eq!(
+            timeline_row_height(
+                &rows[0],
+                &timeline,
+                618.0,
+                20.0,
+                &std::collections::HashSet::new(),
+                false,
+            ),
+            74.0
+        );
+        // 跟随态窗口：视口装不下全部（62+48+148+40+19=317>200）时，
+        // 首个部分可见项仍保留，item 1 内偏移 55；全部装得下则从 0 开始。
+        assert_eq!(timeline_following_window(&layouts, 200.0), (1, 55.0));
         assert_eq!(timeline_following_window(&layouts, 400.0), (0, 0.0));
-        let tail = timeline_visible_item_tops(&layouts, 100.0, 200.0, 1, 20.0);
-        assert_eq!(tail[0], (1, 128.0));
-        assert_eq!(tail[1], (2, 272.0));
+        let tail = timeline_visible_item_tops(&layouts, 100.0, 200.0, 1, 55.0);
+        assert_eq!(tail[0], (1, 93.0));
+        assert_eq!(tail[1], (2, 281.0));
     }
 
     /// P4 片 2F（D2）：审批卡 AX 位置按内容流推导（渲染为 timeline list
@@ -2717,11 +2816,11 @@ mod tests {
         let card_height = approval_card_height("Use bash", None, 618.0, 16.0);
         // 短内容：approval 与 rows 组成同一 item 序列，全量远小于视口。
         let short = vec![
-            (0.0f32, 65.0f32),
+            (0.0f32, 62.0f32),
             (metrics::MSG_ENTRY_GAP, 104.0),
             (metrics::MSG_ENTRY_GAP, card_height),
         ];
-        let flow_top = content_top + 65.0 + metrics::MSG_ENTRY_GAP + 104.0 + metrics::MSG_ENTRY_GAP;
+        let flow_top = content_top + 62.0 + metrics::MSG_ENTRY_GAP + 104.0 + metrics::MSG_ENTRY_GAP;
         let short_window = timeline_following_window(&short, viewport_height);
         assert_eq!(short_window, (0, 0.0));
         let short_tops = timeline_visible_item_tops(
@@ -2770,12 +2869,13 @@ mod tests {
         );
     }
 
-    /// P4 片 2F（D1）：AXPress 开 grouping/scope 菜单与真实点击同源移焦
-    /// ——焦点必须离开 composer 落到触发器，后续 Enter 才由根节点菜单
-    /// 裁决而非触发 SendMessage。AppView 不作窗口根渲染（规避测试线程
-    /// AppKit 安装），仅驱动 AX dispatch 本身。
+    /// P0-2：grouping AXPress 直接双向切换且不生成菜单，并保留 session / scope /
+    /// draft / collapsed projects；其余菜单触发器仍先移焦，Escape-style 关闭后
+    /// 回到来源。AppView 不作窗口根渲染，仅驱动 AX dispatch 本身。
     #[gpui::test]
-    fn ax_press_menu_trigger_moves_focus_off_composer(cx: &mut gpui::TestAppContext) {
+    fn ax_press_direct_grouping_and_menu_triggers_keep_focus_contract(
+        cx: &mut gpui::TestAppContext,
+    ) {
         use gpui::AppContext;
 
         struct AxPressHost {
@@ -2798,12 +2898,59 @@ mod tests {
             AxPressHost { view }
         });
         let view = cx.update(|_window, cx| host.read(cx).view.clone());
-        for identifier in [
-            "task-rail-grouping",
-            "project-scope",
-            "add-task",
-            "header-new-task",
-        ] {
+
+        cx.update(|window, cx| {
+            view.update(cx, |view, _cx| {
+                view.projection.active_session_id = Some("s-keep".into());
+                view.scope_workspace_id = Some("ws-keep".into());
+                view.composer_drafts.insert("s-keep".into(), "draft".into());
+                view.collapsed_projects.insert("ws-keep".into());
+                // 直接切换也必须关闭此前打开的其它浮层与高亮。
+                view.open_menu = Some(MenuKind::Scope);
+                view.menu_highlight = Some(0);
+            });
+            let composer = view.read(cx).composer_focus_handle(cx);
+            window.focus(&composer);
+        });
+        for expected in [TaskRailGrouping::Projects, TaskRailGrouping::Timeline] {
+            cx.update(|window, cx| {
+                view.update(cx, |view, cx| {
+                    view.handle_accessibility_request(
+                        AxRequest {
+                            identifier: "task-rail-grouping".into(),
+                            action: AxAction::Press,
+                            value: None,
+                        },
+                        window,
+                        cx,
+                    );
+                });
+            });
+            cx.update(|window, cx| {
+                let view = view.read(cx);
+                assert_eq!(view.grouping, expected);
+                assert!(view.open_menu.is_none());
+                assert!(view.menu_highlight.is_none());
+                assert!(view.grouping_focus.is_focused(window));
+                assert_eq!(view.projection.active_session_id.as_deref(), Some("s-keep"));
+                assert_eq!(view.scope_workspace_id.as_deref(), Some("ws-keep"));
+                assert_eq!(
+                    view.composer_drafts.get("s-keep").map(String::as_str),
+                    Some("draft")
+                );
+                assert!(view.collapsed_projects.contains("ws-keep"));
+                assert!(view.rail_scroll_to_active);
+            });
+        }
+
+        // 恢复 All projects，让两个 New Task 入口走 WorkspaceConfirm 菜单路径。
+        cx.update(|_window, cx| {
+            view.update(cx, |view, _cx| {
+                view.scope_workspace_id = None;
+                view.projection.active_session_id = None;
+            });
+        });
+        for identifier in ["project-scope", "add-task", "header-new-task"] {
             cx.update(|window, cx| {
                 // add-task / header-new-task 经 can_create_task 门控：注入
                 // Connected 使 AX press 不被 fail-closed 拒绝（真实点击同理）。
@@ -2835,7 +2982,6 @@ mod tests {
                     "{identifier}: AX press must move focus off the composer"
                 );
                 let trigger_focused = match identifier {
-                    "task-rail-grouping" => view.grouping_focus.is_focused(window),
                     "project-scope" => view.scope_focus.is_focused(window),
                     "add-task" => view.add_task_focus.is_focused(window),
                     _ => view.header_new_task_focus.is_focused(window),
@@ -2854,7 +3000,6 @@ mod tests {
             cx.update(|window, cx| {
                 let view = view.read(cx);
                 let trigger_focused = match identifier {
-                    "task-rail-grouping" => view.grouping_focus.is_focused(window),
                     "project-scope" => view.scope_focus.is_focused(window),
                     "add-task" => view.add_task_focus.is_focused(window),
                     _ => view.header_new_task_focus.is_focused(window),
@@ -3240,21 +3385,38 @@ mod tests {
                 view.route = AppRoute::Settings;
                 view.projection.settings_providers.apply_loaded(
                     crate::projection::ProviderAuthStatusData {
-                        providers: vec![crate::projection::ProviderAuthStatusEntry {
-                            provider_id: "kimi".into(),
-                            display_name: "Kimi".into(),
-                            endpoint_label: "https://api.moonshot.cn".into(),
-                            auth_methods: vec!["api_key".into()],
-                            auth: crate::projection::ProviderAuthState::None,
-                            catalog: crate::projection::ProviderCatalogState::Unavailable {
-                                error: "offline".into(),
-                                fetched_at: None,
+                        providers: vec![
+                            crate::projection::ProviderAuthStatusEntry {
+                                provider_id: "kimi".into(),
+                                display_name: "Kimi".into(),
+                                endpoint_label: "https://api.moonshot.cn".into(),
+                                auth_methods: vec!["api_key".into()],
+                                auth: crate::projection::ProviderAuthState::None,
+                                catalog: crate::projection::ProviderCatalogState::Unavailable {
+                                    error: "offline".into(),
+                                    fetched_at: None,
+                                },
                             },
-                        }],
+                            crate::projection::ProviderAuthStatusEntry {
+                                provider_id: "connected".into(),
+                                display_name: "Connected provider".into(),
+                                endpoint_label: "https://provider.example".into(),
+                                auth_methods: vec!["api_key".into()],
+                                auth: crate::projection::ProviderAuthState::Connected {
+                                    method: "api_key".into(),
+                                    masked_credential: Some("masked-fragment-sentinel".into()),
+                                },
+                                catalog: crate::projection::ProviderCatalogState::FixedFallback {
+                                    snapshot_label: "test@v1".into(),
+                                    fetched_at: None,
+                                },
+                            },
+                        ],
                         default: None,
                     },
                 );
                 view.ensure_settings_api_key_inputs(cx);
+                view.settings_api_key_editors.insert("kimi".into());
                 view.settings_api_key_inputs
                     .get("kimi")
                     .expect("api_key provider gets a secure input")
@@ -3274,7 +3436,30 @@ mod tests {
             let secret = "sk-live-plaintext";
             for child in &tree.children {
                 assert_no_secret(child, secret);
+                assert_no_secret(child, "masked-fragment-sentinel");
             }
+            let connected = tree
+                .find(&dynamic_identifier("settings-provider", "connected"))
+                .expect("connected provider has an AX summary");
+            assert!(connected.value.as_deref().is_some_and(|value| {
+                value.contains("Connected") && !value.contains("masked-fragment-sentinel")
+            }));
+            // 列几何与 render 同源：auth-methods 列并入 name value 后，
+            // connection / catalog 必须平移 112px（104 列 + 8 间距）。
+            let connection = tree
+                .find(&dynamic_identifier(
+                    "settings-provider-connection",
+                    "connected",
+                ))
+                .expect("connection column has an AX node");
+            let catalog = tree
+                .find(&dynamic_identifier(
+                    "settings-provider-catalog",
+                    "connected",
+                ))
+                .expect("catalog column has an AX node");
+            assert_eq!(connection.bounds.x, connected.bounds.x + 300.0);
+            assert_eq!(catalog.bounds.x, connected.bounds.x + 440.0);
             let input = tree.find(&input_id).expect("secure input has an AX node");
             assert_eq!(input.role, AxRole::TextArea);
             assert_eq!(input.value.as_deref(), Some(expected_mask.as_str()));
@@ -3306,6 +3491,79 @@ mod tests {
                 action: AxAction::Press,
                 value: None,
             }));
+        });
+    }
+
+    /// P0-4 修复：model 菜单内容超过 MENU_MAX_HEIGHT 时，render 面板内部
+    /// 滚动而 AX 只发布与裁剪后菜单框相交的子节点，树内不得出现框外 rect。
+    #[gpui::test]
+    fn model_menu_ax_culls_rows_outside_clipped_frame(cx: &mut gpui::TestAppContext) {
+        use gpui::AppContext;
+
+        struct AxMenuHost {
+            view: gpui::Entity<AppView>,
+        }
+        impl gpui::Render for AxMenuHost {
+            fn render(
+                &mut self,
+                _window: &mut Window,
+                _cx: &mut Context<Self>,
+            ) -> impl gpui::IntoElement {
+                gpui::div()
+            }
+        }
+
+        let platform = std::sync::Arc::new(crate::platform::Platform::new());
+        let socket = std::env::temp_dir().join("p0-4-model-menu-cull.sock");
+        let (host, cx) = cx.add_window_view(|_window, cx| {
+            let view = cx.new(|cx| AppView::new(platform, socket, None, cx));
+            AxMenuHost { view }
+        });
+        let view = cx.update(|_window, cx| host.read(cx).view.clone());
+        cx.update(|_window, cx| {
+            view.update(cx, |view, _cx| {
+                view.projection.set_connection(ConnectionState::Connected {
+                    instance_id: "test".into(),
+                });
+                let mut models = Vec::new();
+                for provider in ["alpha", "beta"] {
+                    for ix in 0..4 {
+                        models.push(ModelEntry {
+                            provider_id: provider.into(),
+                            id: format!("{provider}-{ix}"),
+                            display_name: format!("{provider} model {ix}"),
+                            context_window_tokens: None,
+                        });
+                    }
+                }
+                view.projection.set_models(models);
+                view.open_menu = Some(MenuKind::Model);
+            });
+        });
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            let tree = view.accessibility_tree(window, cx);
+            tree.validate().expect("model menu AX tree validates");
+            let menu = tree.find("model-menu").expect("model menu has an AX node");
+            assert!(menu.bounds.height <= MENU_MAX_HEIGHT);
+            // 8 模型 + 2 组头的完整内容确实超过 240px，裁剪路径被真实走到。
+            let full_content = metrics::MENU_PADDING * 2.0
+                + 2.0 * MODEL_MENU_GROUP_HEADER_HEIGHT
+                + 8.0 * metrics::MENU_ROW_HEIGHT;
+            assert!(full_content > MENU_MAX_HEIGHT);
+            let bottom = menu.bounds.y + menu.bounds.height;
+            for child in &menu.children {
+                assert!(
+                    child.bounds.y < bottom,
+                    "{} starts at {} outside menu bottom {}",
+                    child.identifier,
+                    child.bounds.y,
+                    bottom
+                );
+            }
+            // 裁剪确实发生：完整内容 2 组头 + 8 行不可能全部入树。
+            assert!(menu.children.len() < 10);
+            assert!(!menu.children.is_empty());
         });
     }
 }

@@ -461,7 +461,7 @@ impl AppView {
                         area.child(BackToBottom::new(
                             Button::new("terminal-back-to-bottom")
                                 .variant(ButtonVariant::Raised)
-                                .label("↓ 回到底部")
+                                .label("↓ Back to bottom")
                                 .track_focus(&self.terminal_back_to_bottom_focus)
                                 .on_click(cx.listener(|view, event, _window, cx| {
                                     if view

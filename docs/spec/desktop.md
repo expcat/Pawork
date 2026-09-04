@@ -29,7 +29,7 @@ flowchart LR
 | Inspector / Changes | 默认 Changes；顶层 Changes/Terminal/Resources 与二级 Files/Summary 分层；DiffView；折叠态 Header ActivityPopover | 只读；无 stage/unstage/hunk 命令。 |
 | Inspector / Terminal | PTY 创建、输入、resize、Stop/Close、流式输出与 live/snapshot 终态；任务切换隔离草稿；失败与断线诚实显示 | 创建需 Policy；纯文本视图过滤 ANSI/VT 控制序列但不是完整 VT emulator；ADR-045 的 `terminal_close` / `TerminalExited` 自 API 1.3 起可用，旧 minor 仍只从 snapshot 获知终态。 |
 | Inspector / Resources | MCP server/tool 状态、刷新 | 只读；没有已加载 AGENTS.md/Skills 分区。 |
-| Settings | 独立 Settings Rail + 全宽内容；模型与供应商、通用、权限与审批、工具与 MCP、终端、外观、高级、关于 | SET-3～SET-6g 已逐片实现；Host-backed 页按权威能力显示并在 stale 时禁写，本地外观/高级页离线常在。外观复用 100%/125%/150% 会话级字号；高级只读展示当前连接/握手/endpoint/resume/ack 并复用 Reconnect；关于只在当前认证握手携带非空 Host data directory 时显示。真实账号、完整真窗口与人工验收待 SET-7。 |
+| Settings | English Settings Rail + 820px 内容列；Models & providers、General、Approvals、Tools & MCP、Terminal、Appearance、Advanced、About | P2 已产品化现有能力：provider 64px 概览与按需详情、默认模型独立 section、Approvals 整行 radio、Appearance 即时字号样例、Advanced/About definition list。Host-backed 页按权威能力显示并在 stale 时禁写，本地 Appearance/Advanced 离线常在；普通 UI / AX summary 不显示 credential 片段。真实账号、完整真窗口与人工验收仍待补。 |
 
 ## 3. 连接与状态模型
 
@@ -73,8 +73,8 @@ flowchart LR
 - Timeline wrapper 使用满宽 + 618px 可读列，独立 summary 与 tool-group summary 分别使用 40px / 12px 节奏；关键元信息提升到 secondary。
 - TaskRail project count / task time 使用 56px 右对齐尾槽；Header 为 medium；24px StatusBar 使用 12px 字阶和窄窗裁切。
 - Composer 的 input/footer 共属同一 panel surface，unavailable Context 使用 tertiary；常态高度、220px 增长上限和 Send/Cancel 单槽不变。
-- Changes 文件行使用稳定前后槽；DiffView 的只读路径 header 位于横滚外，24px 语义 gutter 与中性正文分离；ActivityPopover 保持 320×320 与 capability honesty，只组织真实 Changes section。
-- 以上是当前生产结构，不代表三张初始设计图已经完成人工视觉签字；完整 Timeline/Changes AX、VoiceOver 与系统偏好仍需后续验收。
+- Changes 文件行使用稳定前后槽；DiffView 的只读路径 header 位于横滚外，24px 语义 gutter 与中性正文分离；ActivityPopover 按当前真实 Changes 内容收缩为 320×144，并保持 capability honesty。
+- 以上是当前生产结构，不代表三张阶段目标设计图已经完成人工视觉签字；完整 Timeline/Changes AX、VoiceOver 与系统偏好仍需后续验收。
 
 ## 5. 键盘、IME 与可访问性
 
@@ -111,4 +111,4 @@ flowchart LR
 - Desktop Changes 只读是当前协议边界，Git 写操作仍需 ADR，不得用假按钮补图；
 - `@` 候选浮层和 Resources 规则分区只有 Host capability 存在时才可展示。
 
-证据必须记录实际窗口状态、连接态、真实操作 trace、文件/Git/PTY/Provider 外部事实和实际执行的自动检查。主工作台三张初始设计图、Settings 真窗口、VoiceOver 与发布状态均需单独记录，不能由功能测试互相替代。
+证据必须记录实际窗口状态、连接态、真实操作 trace、文件/Git/PTY/Provider 外部事实和实际执行的自动检查。三张阶段目标设计图、Settings 真窗口、VoiceOver 与发布状态均需单独记录，不能由功能测试互相替代。

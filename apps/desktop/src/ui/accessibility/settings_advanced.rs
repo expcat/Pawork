@@ -15,13 +15,13 @@ impl AppView {
         const SUBTITLE_HEIGHT: f32 = 20.0;
         const DIAGNOSTIC_ROW_HEIGHT: f32 = 40.0;
         const NOTE_HEIGHT: f32 = 56.0;
-        let width = (frame.width - 32.0).max(0.0);
+        let width = super::settings::settings_content_ax_width(frame);
         let mut y = frame.y + 16.0 + HEADING_HEIGHT + SUBTITLE_HEIGHT + 8.0;
-        let mut page = AxNode::new("settings-page", AxRole::Group, "高级", frame).child(
+        let mut page = AxNode::new("settings-page", AxRole::Group, "Advanced", frame).child(
             AxNode::new(
                 "settings-page-title",
                 AxRole::StaticText,
-                "高级",
+                "Advanced",
                 AxRect::new(
                     frame.x + 16.0,
                     frame.y + 16.0,

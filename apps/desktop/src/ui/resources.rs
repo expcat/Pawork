@@ -234,19 +234,39 @@ impl AppView {
 }
 
 fn resources_placeholder(text: impl Into<String>) -> gpui::Div {
-    resources_placeholder_colored(text, dark().text.secondary)
+    let text = text.into();
+    let description = match text.as_str() {
+        "Resources unavailable." => "Connect to the Host to inspect MCP resources.",
+        "Loading resources…" => "Reading the current MCP server list.",
+        "No MCP servers configured." => "No server is available from the current Host.",
+        _ => "No additional details are available.",
+    };
+    resources_placeholder_content(text, description.to_string(), dark().text.primary)
 }
 
 fn resources_placeholder_colored(text: impl Into<String>, color: gpui::Rgba) -> gpui::Div {
+    resources_placeholder_content("Couldn’t load resources".into(), text.into(), color)
+}
+
+fn resources_placeholder_content(
+    title: String,
+    description: String,
+    color: gpui::Rgba,
+) -> gpui::Div {
     div()
         .flex()
+        .flex_col()
         .flex_1()
-        .items_start()
-        .justify_start()
-        .p_2()
-        .text_size(font::SM)
-        .text_color(color)
-        .child(text.into())
+        .items_center()
+        .justify_center()
+        .gap_2()
+        .p_6()
+        .child(Label::new(title).size(font::BASE).color(color))
+        .child(
+            Label::new(description)
+                .size(font::SM)
+                .color(dark().text.secondary),
+        )
 }
 
 #[cfg(test)]

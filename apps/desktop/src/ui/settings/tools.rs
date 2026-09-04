@@ -3,7 +3,10 @@
 use super::*;
 
 impl AppView {
-    pub(super) fn settings_tools_page_element(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn settings_tools_page_element(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let connected = matches!(
             self.projection.connection,
             ConnectionState::Connected { .. }
@@ -55,15 +58,17 @@ impl AppView {
                             .min_w_0()
                             .child(
                                 div().font_weight(FontWeight::MEDIUM).child(
-                                    Label::new("工具与 MCP")
+                                    Label::new("Tools & MCP")
                                         .size(font::TITLE)
                                         .color(dark().text.primary),
                                 ),
                             )
                             .child(
-                                Label::new("Host 权威 MCP server 清单、状态与配置")
-                                    .size(font::BODY_SM)
-                                    .color(dark().text.secondary),
+                                Label::new(
+                                    "MCP servers, status, and configuration reported by the Host",
+                                )
+                                .size(font::BODY_SM)
+                                .color(dark().text.secondary),
                             ),
                     )
                     .child(div().flex_1())

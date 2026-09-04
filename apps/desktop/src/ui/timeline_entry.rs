@@ -13,8 +13,8 @@
 //! - pub(super) fn message_entry_element(&self, entry: &TimelineEntry, menu_open: bool, can_fork: bool, cx: &mut Context<Self>) -> gpui::Div
 //! - pub(super) struct ToolRowView { pub name: String, pub status_label: String, pub status: ToolRowStatus, pub detail: Option<String> }
 //! - pub(super) enum ToolRowStatus { Pending, Running, Succeeded, Failed, Cancelled, Other }
-//! - pub(super) fn tool_group_element(&self, rows: &[ToolRowView]) -> gpui::Div
-//! - pub(super) struct RunSummaryView { pub title: String, pub description: String, pub review_changes_enabled: bool, pub review_changes_disabled_reason: Option<String> }
+//! - pub(super) fn tool_group_element(&mut self, group_key: &str, rows: &[ToolRowView], cx: &mut Context<Self>) -> gpui::Div
+//! - pub(super) struct RunSummaryView { pub title: String, pub description: String, pub review_changes_enabled: bool }
 //! - pub(super) fn run_summary_element(&mut self, view: &RunSummaryView, event_id: &str, cx: &mut Context<Self>) -> gpui::Div（内部经 cx.listener 调 AppView 的 event-specific Review handler，mod.rs 实现）
 //! - pub(super) fn run_footer_element(&self, label: &str, time: &str) -> gpui::Div
 //! - pub(super) fn error_entry_element(&mut self, entry: &TimelineEntry, menu_open: bool, can_fork: bool, cx: &mut Context<Self>) -> gpui::Div
@@ -31,6 +31,7 @@ use crate::projection::{ConnectionState, TimelineEntry, TimelineEntryKind};
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
 use crate::ui::components::dropdown::{Dropdown, MenuPanel, MenuRow};
 use crate::ui::components::label::Label;
+use crate::ui::components::list_row::ListRow;
 use crate::ui::theme::{dark, font, metrics};
 
 use super::task_rail::relative_activity;
@@ -67,6 +68,45 @@ pub(super) struct ToolRowView {
     pub detail: Option<String>,
 }
 
+/// Tool group 标题：只汇总已有状态，不编造 wire 中不存在的耗时。
+pub(super) fn tool_group_summary(rows: &[ToolRowView]) -> String {
+    let mut completed = 0;
+    let mut running = 0;
+    let mut pending = 0;
+    let mut failed = 0;
+    let mut cancelled = 0;
+    let mut other = 0;
+    for row in rows {
+        match row.status {
+            ToolRowStatus::Succeeded => completed += 1,
+            ToolRowStatus::Running => running += 1,
+            ToolRowStatus::Pending => pending += 1,
+            ToolRowStatus::Failed => failed += 1,
+            ToolRowStatus::Cancelled => cancelled += 1,
+            ToolRowStatus::Other => other += 1,
+        }
+    }
+    let mut states = Vec::new();
+    for (count, word) in [
+        (completed, "completed"),
+        (running, "running"),
+        (pending, "pending"),
+        (failed, "failed"),
+        (cancelled, "cancelled"),
+        (other, "other"),
+    ] {
+        if count > 0 {
+            states.push(format!("{count} {word}"));
+        }
+    }
+    let noun = if rows.len() == 1 { "tool" } else { "tools" };
+    if states.is_empty() {
+        format!("{} {noun}", rows.len())
+    } else {
+        format!("{} {noun} · {}", rows.len(), states.join(" · "))
+    }
+}
+
 impl ToolRowView {
     /// wire 原文字段 → 渲染视图。detail 空串归一为 None（旧渲染同语义）。
     pub(super) fn from_parts(name: &str, status: &str, detail: Option<&str>) -> Self {
@@ -90,7 +130,6 @@ pub(super) struct RunSummaryView {
     /// 禁止恒绿 ✓ 对失败/取消宣称成功（审查 P2）。
     pub terminal: RunSummaryTerminal,
     pub review_changes_enabled: bool,
-    pub review_changes_disabled_reason: Option<String>,
 }
 
 /// Run 摘要卡终态种类（与 projection ForkBoundary 一一对应，展示层枚举）。
@@ -520,16 +559,84 @@ impl AppView {
         )
     }
 
-    /// F-08 Tool activity 面板：1px border.subtle / r5 / 无标题；行高 52，
-    /// 行间 2px 分隔线；内左 inset 15。组默认展开（折叠交互属 Wave B）。
-    pub(super) fn tool_group_element(&self, rows: &[ToolRowView]) -> gpui::Div {
+    /// P1-2 Tool activity：44px 标题汇总真实状态，默认展开；mouse、
+    /// Enter / Space 与 AX 都切换同一个本地 presentation state。
+    pub(super) fn tool_group_element(
+        &mut self,
+        group_key: &str,
+        rows: &[ToolRowView],
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let collapsed = self.collapsed_tool_groups.contains(group_key);
+        let row_id = format!("tool-group-toggle-{group_key}");
+        let click_id = row_id.clone();
+        let click_key = group_key.to_string();
+        let activate_id = row_id.clone();
+        let activate_key = group_key.to_string();
+        let focus = self.timeline_tool_group_focus(group_key, cx);
+        let header = ListRow::project_header(row_id)
+            .track_focus(&focus)
+            .child(
+                div()
+                    .w_full()
+                    .min_w_0()
+                    .px_3()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .w(px(12.0))
+                            .flex_none()
+                            .text_size(font::BODY_SM)
+                            .text_color(dark().text.secondary)
+                            .child(if collapsed { "›" } else { "⌄" }),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_size(font::BODY_SM)
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(dark().text.primary)
+                            .child(tool_group_summary(rows)),
+                    ),
+            )
+            .on_click(cx.listener(move |view, event, _window, cx| {
+                if view.consume_row_key_click(&click_id, event) {
+                    return;
+                }
+                view.toggle_tool_group(&click_key, cx);
+            }))
+            .on_activate(cx.listener(move |view, _event, _window, cx| {
+                view.note_row_key_activate(&activate_id);
+                view.toggle_tool_group(&activate_key, cx);
+                cx.stop_propagation();
+            }));
         let mut panel = div()
             .flex()
             .flex_col()
             .max_w(px(metrics::TIMELINE_READABLE_WIDTH))
+            .bg(dark().surface.raised)
             .border_1()
             .border_color(dark().border.subtle)
-            .rounded(px(metrics::TOOL_GROUP_RADIUS));
+            .rounded(px(metrics::TOOL_GROUP_RADIUS))
+            .overflow_hidden()
+            .child(
+                div()
+                    .h(px(metrics::TOOL_GROUP_HEADER_HEIGHT))
+                    .flex()
+                    .items_center()
+                    .when(!collapsed, |header| {
+                        header.border_b_1().border_color(dark().border.subtle)
+                    })
+                    .child(header),
+            );
+        if collapsed {
+            return panel;
+        }
         for (index, row) in rows.iter().enumerate() {
             let mut element = tool_row_element(row);
             if index > 0 {
@@ -543,9 +650,9 @@ impl AppView {
     }
 
     /// F-08 Run 摘要卡：Ø40 success_fg 圆 + 深色 ✓ + 标题 + 说明（两行内）+
-    /// 右侧主按钮 “Review changes”（168×40 r8，点击切 Inspector Changes；
-    /// 数据不可用时 disabled 并给原因；“Open in editor” 无 Host capability
-    /// 不画）。无权威数据时 description 为组装层给的一句通用完成说明。
+    /// 右侧主按钮 “Review changes”（168×40 r8，点击切 Inspector Changes）；
+    /// 仅有当前 session 的真实 Changes 时才渲染；“Open in editor” 无 Host
+    /// capability 不画。无权威数据时 description 为组装层通用说明。
     pub(super) fn run_summary_element(
         &mut self,
         view: &RunSummaryView,
@@ -554,7 +661,7 @@ impl AppView {
     ) -> gpui::Div {
         let button_id = format!("run-review-{event_id}");
         let review_focus = self.timeline_review_focus(event_id, cx);
-        let mut button = Button::new(button_id.clone())
+        let button = Button::new(button_id.clone())
             .variant(ButtonVariant::Primary)
             .width(px(metrics::SUMMARY_BUTTON_WIDTH))
             .height(px(metrics::SUMMARY_BUTTON_HEIGHT))
@@ -562,39 +669,35 @@ impl AppView {
             .radius(metrics::SUMMARY_BUTTON_RADIUS)
             .text_size(font::BODY_SM)
             .label("Review changes")
-            .disabled(!view.review_changes_enabled)
             .track_focus(&review_focus);
-        if let Some(reason) = view
-            .review_changes_disabled_reason
-            .as_deref()
-            .filter(|reason| !reason.is_empty())
-        {
-            button = button.tooltip(reason.to_string());
-        }
-        if view.review_changes_enabled {
-            button = button
-                .on_click(cx.listener({
-                    let event_id = event_id.to_string();
-                    let button_id = button_id.clone();
-                    move |view, event, _window, cx| {
-                        if view.consume_button_key_click(&button_id, event) {
-                            return;
+        let button = if view.review_changes_enabled {
+            Some(
+                button
+                    .on_click(cx.listener({
+                        let event_id = event_id.to_string();
+                        let button_id = button_id.clone();
+                        move |view, event, _window, cx| {
+                            if view.consume_button_key_click(&button_id, event) {
+                                return;
+                            }
+                            // click 与普通键盘最终复用同一 Review handler；两条
+                            // 路径仅在同一个 render enable gate 下挂接。键盘入口
+                            // 额外按 event_id 复核，防虚拟化条目状态变更后越权。
+                            let _ = &event_id;
+                            view.on_review_changes(cx);
                         }
-                        // click 与普通键盘最终复用同一 Review handler；两条
-                        // 路径仅在同一个 render enable gate 下挂接。键盘入口
-                        // 额外按 event_id 复核，防虚拟化条目状态变更后越权。
-                        let _ = &event_id;
-                        view.on_review_changes(cx);
-                    }
-                }))
-                .on_activate(cx.listener({
-                    let event_id = event_id.to_string();
-                    move |view, _event, _window, cx| {
-                        view.activate_review_changes_from_keyboard(&event_id, cx);
-                        cx.stop_propagation();
-                    }
-                }));
-        }
+                    }))
+                    .on_activate(cx.listener({
+                        let event_id = event_id.to_string();
+                        move |view, _event, _window, cx| {
+                            view.activate_review_changes_from_keyboard(&event_id, cx);
+                            cx.stop_propagation();
+                        }
+                    })),
+            )
+        } else {
+            None
+        };
         let (circle_bg, circle_fg, circle_glyph) = match view.terminal {
             RunSummaryTerminal::Completed => (dark().semantic.success_fg, dark().bg.base, "✓"),
             RunSummaryTerminal::Failed => (dark().semantic.danger_bg, dark().text.on_accent, "✕"),
@@ -663,7 +766,7 @@ impl AppView {
             .pr_5()
             .py_6()
             .child(left_column)
-            .child(button)
+            .when_some(button, |card, button| card.child(button))
     }
 
     /// F-08 Timeline 页脚：终态词（左）+ 终态时间（右），17px secondary。
@@ -790,6 +893,16 @@ mod tests {
 
         let view = ToolRowView::from_parts("bash", "running", None);
         assert_eq!(view.detail, None);
+
+        let rows = vec![
+            ToolRowView::from_parts("read_file", "succeeded", None),
+            ToolRowView::from_parts("bash", "running", None),
+            ToolRowView::from_parts("edit_file", "failed", None),
+        ];
+        assert_eq!(
+            tool_group_summary(&rows),
+            "3 tools · 1 completed · 1 running · 1 failed"
+        );
     }
 
     /// 摘要卡视图构造：字段直存，禁用原因为独立通道。
@@ -800,14 +913,9 @@ mod tests {
             description: "Run finished.".into(),
             terminal: RunSummaryTerminal::Completed,
             review_changes_enabled: false,
-            review_changes_disabled_reason: Some("Changes unavailable.".into()),
         };
         assert_eq!(view.title, "Ready for review");
         assert!(!view.review_changes_enabled);
-        assert_eq!(
-            view.review_changes_disabled_reason.as_deref(),
-            Some("Changes unavailable."),
-        );
     }
 
     /// 段落 / 列表切分：空行分段；“- ”前缀连续行为列表项（前缀剥离）；

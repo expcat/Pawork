@@ -8,7 +8,7 @@
 | 状态 | **Accepted（SET-1～SET-6g 已实现并通过各自定向门禁；「关于」按 ADR-051 只在当前认证连接提供非空 Host 数据目录时启用；真实认证、完整真窗口与人工验收仍 pending）** |
 | Owner | Pawork maintainers |
 | 目标阶段 | Settings 活动线；不绑定发布版本 |
-| 最近更新 | 2026-09-03 |
+| 最近更新 | 2026-09-04（P2 Settings 产品化已实现并通过 Desktop 自动门禁；真窗口 / VoiceOver 仍 pending） |
 | 关联 | [GUI 设计](../gui-design.md) · [AGENTS.md](../../AGENTS.md) |
 
 ## 1. 问题、用户与目标
@@ -51,7 +51,7 @@ flowchart LR
 ~~~
 
 1. 用户从 TaskRail 底部 `Local` 行的 gear 进入 Settings。
-2. 左栏整体替换为 Settings Rail，首项为 `← 返回工作台`；右侧不显示 Timeline、Composer 或 Inspector，完整空间交给当前设置页。
+2. 左栏整体替换为 English Settings Rail，首项为 `← Back to workspace`；右侧不显示 Timeline、Composer、Inspector 或 RunStatusBar，完整空间交给当前设置页。
 3. 返回后恢复原 active session、Timeline 位置、Composer 草稿、Inspector 状态和进行中的 Run；Settings 本身不取消 Run。
 4. 断线时保留 Host-backed 页最后一次只读结果并标记 stale；禁用所有写入/验证/刷新动作。高级页仍可查看连接失败原因与 endpoint，并提供同源 Reconnect/返回；旧握手摘要不得冒充当前连接。
 
@@ -144,12 +144,13 @@ GPUI Settings
 Settings 沿用参考设计的 1440×1024 深色语言和 8px 节奏，不另起 Dashboard 卡片墙：
 
 - TaskRail 底部 `Local` 行右侧新增 Settings gear。
-- Settings Rail 首项固定为 `← 返回工作台`；首个可用页为“模型与供应商”。
-- 内容区使用“页面标题/说明 → 已连接供应商 → 添加供应商 → 模型与默认项”的单层结构。
-- provider 行只显示名称、认证方法、连接状态、模型数/目录来源和操作菜单；不显示无权威来源的余额。
+- Settings Rail 首项固定为 `← Back to workspace`；八页导航统一 English，首个可用页为 `Models & providers`，内容最大宽 820px。
+- 内容区使用稳定的 page header / section / field / feedback 层级；不显示工作台 RunStatusBar。
+- provider 默认层为 64px 概览行，只显示名称、认证方法、连接状态、目录 availability / 模型数和可用动作；普通 render 与 AX summary 不发布 masked credential、endpoint、catalog error、raw model id 或无权威来源余额。endpoint / 错误仅在连接、等待或删除确认详情显示；API key editor 仅在 Connect / Replace 后展开。
+- 默认模型使用独立 section；认证成功与目录成功继续分开表达，Remove 仍需二次确认。
 - 添加流程用同一内容区内的 stepper/panel，不弹出第二窗口。
 
-导航顺序：模型与供应商 → 通用（SET-6a）→ 权限与审批（SET-6b）→ 工具与 MCP（SET-6c）→ 终端（SET-6d）→ 外观（SET-6e）→ 高级（SET-6f）→ 关于（SET-6g）。通用页承载 Global `proxy_url` 读写（ADR-047）；权限与审批页承载会话级 `approval_mode` / `workspace_trusted` 与 Global 默认只读值（ADR-048）；工具与 MCP 页复用 Host `mcp_list` 并提供 test/remove（ADR-049）；终端页承载 Global `terminal_settings` 全态写，只影响之后创建的终端（ADR-050）。外观页不经 Host：复用 Desktop 既有 `TextScale` 提供 100%/125%/150%，与 Cmd+=/Cmd+-/Cmd+0 共用唯一状态；字号仅当前 Desktop 会话生效，重启恢复 100%。当前主题仅深色，macOS Increase Contrast 跟随系统且只读说明；不提供 light/system/custom theme 假控件。高级页同样不新增 Host query：只读展示当前连接已有的 runtime ID、协商 API/capabilities、启动 endpoint、resume/ack；runtime ID 不称作配置 instance，断线清空握手摘要并复用既有 Reconnect。按 ADR-051，About 只在当前认证连接握手携带非空 `host_data_dir` 时显示，且只展示 Desktop build、实际协商 GUI API 与 Host data directory；缺字段、仅空白字段或断线时隐藏并从该页退回高级，不添加 updater/release/License 占位。
+导航顺序：Models & providers → General（SET-6a）→ Approvals（SET-6b）→ Tools & MCP（SET-6c）→ Terminal（SET-6d）→ Appearance（SET-6e）→ Advanced（SET-6f）→ About（SET-6g）。General / Terminal 使用 label-help-feedback；Approvals 的五档 mode 为整行 radio，mouse / Enter / Space / AX Press 同源；Appearance 有随 `TextScale` 即时变化的正文 / control 样例；Advanced / About 使用固定 label 列的 definition list。Host capability 与既有读写 / stale 边界不变；Appearance / Advanced 离线仍可进入。
 
 ### 6.2 状态、键盘与可访问性
 
@@ -157,6 +158,7 @@ Settings 沿用参考设计的 1440×1024 深色语言和 8px 节奏，不另起
 - Tab 顺序：返回 → Settings 导航 → 页面标题/主操作 → provider 列表操作 → 向导控件。Escape 关闭菜单/取消未提交步骤；不静默删除已存凭证。
 - 箭头键移动 Settings 导航和单选项；Enter/Space 激活；认证进行中禁用重复提交但保留取消。
 - 稳定 AX identifiers 与本地化 label 分离；status 不只靠颜色；错误获得焦点或 Announcement；secure input 的值不进入语义树。
+- 普通 provider AX summary 不携带 masked credential；secure input 只发布等长掩码。stale 时输入与所有写动作 disabled，且 disabled 节点不发布 Press。
 - 1440×1024 Settings Rail 约 288px；1080×720 收敛到 240px，内容单列且主操作不溢出。字号 100/125/150% 沿用 Desktop 现有缩放。
 
 ### 6.3 CLI 与其它客户端
@@ -166,7 +168,7 @@ Settings 沿用参考设计的 1440×1024 深色语言和 8px 节奏，不另起
 - headless/ACP 不因 Desktop 功能自动获得 Secret 写入能力；registry 必须对各通道显式声明，首期可只对认证本机 GUI 开放。
 - Desktop/CLI 对同一 auth backend 的状态必须一致；GUI 设置后 `pawork auth list` / `pawork models` 能以脱敏方式核对。
 
-本轮沿用引用设计的信息架构，不生成新的 bitmap 基准；实现后的真实窗口才决定是否需要补一张 Settings 定稿图，避免用概念图覆盖可访问性与真实数据约束。
+P2 视觉方向见 [desktop-ui-p2-settings-v4.png](../../design/desktop-ui-p2-settings-v4.png)；它不替代真实数据、安全或 VoiceOver 证据。2026-09-04 自动门禁已通过，最终真窗口签字仍 pending。
 
 ## 7. 实现切片
 

@@ -39,7 +39,7 @@ E3/E4 证据必须包含日期、环境/版本、输入范围、实际结果和�
 | PRD-GIT-01 / CAP-GIT-01 | git/app/cli/Desktop Changes | git/checkpoint/diff 定向测试、Desktop projection | 真窗口 Changes、真实 rollback | Core 已实现；Desktop 写操作未实现，横滚人工项待验。 |
 | PRD-RESOURCE-01 / CAP-RESOURCE-01 | workspace/tools/app/Desktop | resources/import/MCP contract | 外部配置、MCP stdio、真窗口 Resources | 主流程已实现；部分 GUI 出口为候选。 |
 | PRD-CLIENT-01 / CAP-CLIENT-01 | protocol/app/client/cli | frame/headless/ACP golden、registry、probe | Desktop probe、Zed ACP、json-stdio | 已实现；发布级客户端矩阵未执行，probe 有已登记偶发超时。 |
-| PRD-DESKTOP-01 / DESK-* | desktop/client/protocol | projection/controller、U0/U1、AX 模型/映射测试 | 真 Host/Desktop、三张初始设计图、AX/IME、用户签字 | 正式构建、项目、消息/文件、Changes、Terminal 与 Session→Workspace 跨 Host 重启已完成本机真窗口验收；完整视觉/VoiceOver/跨平台仍需专项取证。 |
+| PRD-DESKTOP-01 / DESK-* | desktop/client/protocol | projection/controller、U0/U1、AX 模型/映射测试 | 真 Host/Desktop、三张阶段目标设计图、AX/IME、用户签字 | 正式构建、项目、消息/文件、Changes、Terminal 与 Session→Workspace 跨 Host 重启已完成本机真窗口验收；完整视觉/VoiceOver/跨平台仍需专项取证。 |
 | PRD-OPS-01 / CAP-OPS-01 | cli ops/service、app data_dir | 路径/状态/doctor 定向测试 | macOS/Linux/Windows service 与恢复演练 | 入口已实现；无发布级三平台/恢复门禁。 |
 
 ## 4. 三类不可推迟的回归

@@ -6,7 +6,10 @@ impl AppView {
     /// 「外观」页（SET-6e）：不经 Host，直接复用 Desktop 已有的
     /// 100% / 125% / 150% `TextScale`。三个按钮始终可达，当前档以
     /// 文字 + 视觉 + AX selected 同时标记；断线不禁用本地能力。
-    pub(super) fn settings_appearance_page_element(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn settings_appearance_page_element(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let current = self.text_scale;
         let mut scale_controls = div()
             .flex()
@@ -23,9 +26,9 @@ impl AppView {
                 .or_insert_with(|| cx.focus_handle().tab_stop(true))
                 .clone();
             let tooltip = if selected {
-                format!("当前字号为 {}%", scale.percent())
+                format!("Current text size: {}%", scale.percent())
             } else {
-                format!("将字号设为 {}%", scale.percent())
+                format!("Set text size to {}%", scale.percent())
             };
             let button = Button::new(id)
                 .track_focus(&focus)
@@ -65,7 +68,7 @@ impl AppView {
             .gap_2()
             .child(
                 div().font_weight(FontWeight::MEDIUM).child(
-                    Label::new("外观")
+                    Label::new("Appearance")
                         .size(font::TITLE)
                         .color(dark().text.primary),
                 ),
@@ -76,7 +79,7 @@ impl AppView {
                     .color(dark().text.secondary),
             )
             .child(
-                Label::new("主题 · 深色")
+                Label::new("Theme · Dark")
                     .size(font::BODY)
                     .color(dark().text.primary),
             )
@@ -91,17 +94,39 @@ impl AppView {
             )
             .child(
                 div().font_weight(FontWeight::MEDIUM).child(
-                    Label::new("字号")
+                    Label::new("Text size")
                         .size(font::BODY)
                         .color(dark().text.primary),
                 ),
             )
             .child(
-                Label::new(format!("当前 · {}%", current.percent()))
+                Label::new(format!("Current · {}%", current.percent()))
                     .size(font::BODY_SM)
                     .color(dark().text.secondary),
             )
             .child(scale_controls)
+            .child(
+                div()
+                    .id("settings-appearance-sample")
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .p_2()
+                    .rounded(px(6.0))
+                    .border_1()
+                    .border_color(dark().border.subtle)
+                    .bg(dark().surface.raised)
+                    .child(
+                        Label::new("The quick brown fox jumps over the lazy dog.")
+                            .size(font::BODY)
+                            .color(dark().text.primary),
+                    )
+                    .child(
+                        Label::new("Code, tools, and review stay readable at this size.")
+                            .size(font::BODY_SM)
+                            .color(dark().text.secondary),
+                    ),
+            )
             .child(
                 div()
                     .w_full()

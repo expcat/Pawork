@@ -798,19 +798,38 @@ fn session_mismatch<'a>(data: Option<&'a str>, active: Option<&str>) -> Option<&
 }
 
 fn changes_placeholder(text: impl Into<String>) -> Div {
-    changes_placeholder_colored(text, dark().text.secondary)
+    let text = text.into();
+    let description = match text.as_str() {
+        "Changes unavailable." => "Connect to the Host and open a task to inspect changes.",
+        "Loading changes…" => "Reading the latest session diff.",
+        "No active session." => "Open a task to inspect its changes.",
+        "No changes in this session yet." => "This session has not reported file changes.",
+        "Select a file to view its diff." => "Choose a file above to inspect its diff.",
+        "Loading diff…" => "Reading the selected file diff.",
+        _ => "No additional details are available.",
+    };
+    changes_placeholder_content(text, description.to_string(), dark().text.primary)
 }
 
 fn changes_placeholder_colored(text: impl Into<String>, color: gpui::Rgba) -> Div {
+    changes_placeholder_content("Couldn’t load changes".into(), text.into(), color)
+}
+
+fn changes_placeholder_content(title: String, description: String, color: gpui::Rgba) -> Div {
     div()
         .flex()
+        .flex_col()
         .flex_1()
-        .items_start()
-        .justify_start()
-        .p_2()
-        .text_size(font::SM)
-        .text_color(color)
-        .child(text.into())
+        .items_center()
+        .justify_center()
+        .gap_2()
+        .p_6()
+        .child(Label::new(title).size(font::BASE).color(color))
+        .child(
+            Label::new(description)
+                .size(font::SM)
+                .color(dark().text.secondary),
+        )
 }
 
 fn summary_row(label: &str, value: String) -> impl IntoElement {

@@ -1,4 +1,4 @@
-//! Sessions 侧栏（TaskRail）：分组 / 范围菜单、项目块与任务列表。
+//! Sessions 侧栏（TaskRail）：分组直接切换、范围菜单、项目块与任务列表。
 //!
 //! R3 Wave A（F-03/F-04）按 state-a/c 量图还原视觉与结构：顶部三行
 //! （标题 / scope / 连接）、日期桶 → 项目头 → 任务行的列表节奏，以及诚实
@@ -62,12 +62,12 @@ impl AppView {
     ///（默认 288 / 窄窗 240 / 150% 文本 320）。
     pub(super) fn sidebar_element(&mut self, rail_width: Pixels, cx: &mut Context<Self>) -> Panel {
         let can_create = self.can_create_task();
+        // 图标表达下一步动作，而不是重复当前模式。
         let grouping_glyph = match self.grouping {
-            TaskRailGrouping::Timeline => "◷",
-            TaskRailGrouping::Projects => "▤",
+            TaskRailGrouping::Timeline => "▤",
+            TaskRailGrouping::Projects => "◷",
         };
         let scope_label = self.scope_label();
-        let grouping_menu_open = matches!(self.open_menu, Some(MenuKind::Grouping));
         let scope_menu_open = matches!(self.open_menu, Some(MenuKind::Scope));
         let now_ms = now_unix_ms();
         let connection_label = self.connection_status_label();
@@ -76,9 +76,8 @@ impl AppView {
             - metrics::RAIL_ICON_BUTTON_SIZE
             - metrics::RAIL_CONNECTION_ADD_GAP;
 
-        // F-03 标题行：角标钮（ghost 档 hover surface.raised，§8.1），hit area
-        // 28×28 ≥ 24；identifier / tooltip / accessible name 冻结不变。
-        let grouping_tooltip = SharedString::from(self.grouping.accessible_name());
+        // P0-2：二态直接切换；28×28 ghost，只显示目标动作图标，不再打开菜单。
+        let grouping_tooltip = SharedString::from(self.grouping.toggle_action_label());
         let grouping_focus = self.grouping_focus.clone();
         let grouping_button = Button::new("task-rail-grouping")
             .track_focus(&grouping_focus)
@@ -89,36 +88,20 @@ impl AppView {
             .center()
             .radius(4.0)
             .text_size(font::BASE)
-            .label(format!("{grouping_glyph} ▾"))
+            .label(grouping_glyph)
             .tooltip(grouping_tooltip)
             .on_click(cx.listener(|view, event, window, cx| {
-                // 键盘激活（Slice 5 P2b）后的同键 keyup 合成 click 在此吞除。
+                // Enter / Space 后的同键 keyup 合成 click 在此吞除，避免切两次。
                 if view.consume_button_key_click("task-rail-grouping", event) {
                     return;
                 }
-                let down = Self::click_down_position(event);
-                view.on_toggle_grouping_menu(down, window, cx);
+                view.toggle_grouping(window, cx);
             }))
-            // Slice 5 P2b：聚焦触发器裸 Enter / Space 行级激活（与 click 同
-            // handler 路径，禁合成 click）；菜单已开时让位给根节点菜单
-            // Enter 接管（spec §3.3）。
             .on_activate(cx.listener(|view, _event, window, cx| {
-                if view.open_menu.is_some() {
-                    // 让位前重新武装 keyup 吞除标记：Return 双路投递时第二路
-                    // keydown 的 keyup 合成 click 也要吞（否则它会走 on_click
-                    // 把刚开的菜单关掉，实测顺序 DOWN1→UP1(click)→DOWN2→
-                    // UP2(click)）。
-                    view.note_button_key_activate("task-rail-grouping");
-                    return;
-                }
                 view.note_button_key_activate("task-rail-grouping");
-                view.on_toggle_grouping_menu(None, window, cx);
+                view.toggle_grouping(window, cx);
                 cx.stop_propagation();
             }));
-        let mut grouping = Dropdown::new(grouping_button);
-        if grouping_menu_open {
-            grouping = grouping.panel(self.grouping_menu_element(cx));
-        }
 
         // F-03 scope 行：全宽 raised 行 + 1px 描边 + 圆角 4 + 高 36 + 字阶 18。
         let scope_focus = self.scope_focus.clone();
@@ -230,7 +213,7 @@ impl AppView {
                             .text_color(dark().text.primary)
                             .child("Pawork"),
                     )
-                    .child(grouping),
+                    .child(grouping_button),
             )
             .child(
                 div()
@@ -347,40 +330,6 @@ impl AppView {
             // 顶部先留 ≥36px 无交互安全区，再进入 F-03 的三行节奏。
             .child(shell_layout::rail_safe_area())
             .child(content)
-    }
-
-    fn grouping_menu_element(&self, cx: &mut Context<Self>) -> MenuPanel {
-        let current = self.grouping;
-        let highlight = self.menu_highlight_effective(match current {
-            TaskRailGrouping::Timeline => 0,
-            TaskRailGrouping::Projects => 1,
-        });
-        MenuPanel::new("grouping-menu")
-            .dismiss_on_outside(cx.listener(|view, event: &gpui::MouseDownEvent, _, cx| {
-                view.dismiss_menu_on_outside(MenuKind::Grouping, event.position, cx);
-            }))
-            .children(
-                [
-                    (TaskRailGrouping::Timeline, "Timeline"),
-                    (TaskRailGrouping::Projects, "Projects"),
-                ]
-                .into_iter()
-                .enumerate()
-                .map(|(ix, (mode, label))| {
-                    let selected = current == mode;
-                    MenuRow::new(SharedString::from(format!("group-{label}")))
-                        .label(if selected {
-                            format!("✓ {label}")
-                        } else {
-                            format!("  {label}")
-                        })
-                        .selected(selected)
-                        .highlighted(ix == highlight)
-                        .on_click(cx.listener(move |view, _event, window, cx| {
-                            view.on_select_grouping(mode, window, cx);
-                        }))
-                }),
-            )
     }
 
     fn scope_menu_element(&self, cx: &mut Context<Self>) -> MenuPanel {
@@ -820,27 +769,16 @@ impl AppView {
         (children, active_offset, has_active)
     }
 
-    pub(super) fn on_toggle_grouping_menu(
-        &mut self,
-        down_position: Option<Point<Pixels>>,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.toggle_menu(MenuKind::Grouping, down_position, cx);
-    }
-
-    pub(super) fn on_select_grouping(
-        &mut self,
-        grouping: TaskRailGrouping,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.grouping = grouping;
+    pub(super) fn toggle_grouping(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.grouping = self.grouping.toggled();
+        // 切换时关闭其它浮层并清掉菜单临时态；active session、scope、draft、
+        // collapsed projects 均不触碰，焦点稳定留在直接切换按钮。
         self.open_menu = None;
         self.menu_highlight = None;
-        // §3.6：切换分组不改 active session，但下一次 render 把 active task
-        // 滚动到可见；展开状态（collapsed_projects）原样保留。
+        self.pending_keyboard_menu_select = None;
+        self.pending_outside_close = None;
         self.rail_scroll_to_active = true;
+        window.focus(&self.grouping_focus);
         cx.notify();
     }
 

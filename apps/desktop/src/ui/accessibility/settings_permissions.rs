@@ -14,7 +14,12 @@ impl AppView {
     /// 「权限与审批」页 AX（SET-6b）：五档审批模式（当前档只读、其余
     /// Press）、会话信任开关、Global 默认只读行、生效边界；stale 时
     /// enabled=false 且 permits 拒绝写动作，与 render 同 gate。
-    pub(crate) fn settings_permissions_page_ax(&self, window: &Window, _cx: &App, frame: AxRect) -> AxNode {
+    pub(crate) fn settings_permissions_page_ax(
+        &self,
+        window: &Window,
+        _cx: &App,
+        frame: AxRect,
+    ) -> AxNode {
         const HEADING_HEIGHT: f32 = 28.0;
         const SUBTITLE_HEIGHT: f32 = 20.0;
         const STATUS_HEIGHT: f32 = 20.0;
@@ -29,20 +34,21 @@ impl AppView {
         );
         let refresh_focused =
             self.open_menu.is_none() && self.settings_refresh_focus.is_focused(window);
-        let mut page = AxNode::new("settings-page", AxRole::Group, "权限与审批", frame)
+        let width = super::settings::settings_content_ax_width(frame);
+        let mut page = AxNode::new("settings-page", AxRole::Group, "Approvals", frame)
             .child(
                 AxNode::new(
                     "settings-page-title",
                     AxRole::StaticText,
-                    "权限与审批",
+                    "Approvals",
                     AxRect::new(
                         frame.x + 16.0,
                         frame.y + 16.0,
-                        (frame.width - 136.0).max(0.0),
+                        (width - 136.0).max(0.0),
                         HEADING_HEIGHT + SUBTITLE_HEIGHT,
                     ),
                 )
-                .value("当前会话的审批模式与 workspace 信任"),
+                .value("Approval mode and workspace trust for this session"),
             )
             .child(
                 AxNode::new(
@@ -50,7 +56,7 @@ impl AppView {
                     AxRole::Button,
                     "Refresh",
                     AxRect::new(
-                        frame.x + frame.width - 16.0 - 96.0,
+                        frame.x + 16.0 + width - 96.0,
                         frame.y + 16.0,
                         96.0,
                         CONTROL_ROW,
@@ -61,7 +67,6 @@ impl AppView {
                 .action(AxAction::Press),
             );
         let mut y = frame.y + 16.0 + HEADING_HEIGHT + SUBTITLE_HEIGHT + 8.0;
-        let width = (frame.width - 32.0).max(0.0);
         for (kind, label) in permissions_status_lines(state) {
             page = page.child(
                 AxNode::new(
@@ -75,20 +80,20 @@ impl AppView {
             y += STATUS_HEIGHT + 8.0;
         }
 
-        // ① 五档审批模式：每档一行（label · description，当前档标「当前」），
-        // 非 current 档发布 Press 按钮（enabled 与 render 同源）。
+        // ① 五档审批模式：每档是一个整行 radio；selected、enabled 与
+        // Press 均与 render 同源。
         let current_mode_label = state
             .approval_mode
             .map(approval_mode_label)
-            .unwrap_or("未知");
+            .unwrap_or("Unknown");
         page = page.child(
             AxNode::new(
                 "settings-approval-mode-header",
                 AxRole::StaticText,
-                "审批模式",
+                "Approval mode",
                 AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT),
             )
-            .value(format!("当前 · {current_mode_label}")),
+            .value(format!("Current · {current_mode_label}")),
         );
         y += STATUS_HEIGHT + 8.0;
         for mode in APPROVAL_MODE_ALL {
@@ -99,7 +104,7 @@ impl AppView {
                 approval_mode_description(mode)
             );
             if current {
-                value.push_str(" · 当前");
+                value.push_str(" · Current");
             }
             let button_id = format!("settings-approval-mode-{}", mode.as_str());
             let select_enabled = writes && !current;
@@ -108,34 +113,21 @@ impl AppView {
                 .get(&button_id)
                 .is_some_and(|focus| self.open_menu.is_none() && focus.is_focused(window));
             let mut row = AxNode::new(
-                format!("settings-approval-mode-row-{}", mode.as_str()),
-                AxRole::StaticText,
+                button_id,
+                AxRole::Tab,
                 approval_mode_label(mode),
-                AxRect::new(frame.x + 16.0, y, (width - 96.0).max(60.0), MODE_ROW_HEIGHT),
+                AxRect::new(frame.x + 16.0, y, width, MODE_ROW_HEIGHT),
             )
-            .value(value);
+            .value(value)
+            .selected(current)
+            .enabled(current || select_enabled)
+            .focused(select_focused);
             if current {
-                row = row.description("当前档位");
+                row = row.description("Current approval mode");
+            } else if select_enabled {
+                row = row.action(AxAction::Press);
             }
             page = page.child(row);
-            if !current {
-                page = page.child(
-                    AxNode::new(
-                        button_id,
-                        AxRole::Button,
-                        format!("选择 {}", approval_mode_label(mode)),
-                        AxRect::new(
-                            frame.x + frame.width - 16.0 - 88.0,
-                            y + (MODE_ROW_HEIGHT - CONTROL_ROW) / 2.0,
-                            88.0,
-                            CONTROL_ROW,
-                        ),
-                    )
-                    .enabled(select_enabled)
-                    .focused(select_focused)
-                    .action(AxAction::Press),
-                );
-            }
             y += MODE_ROW_HEIGHT + ROW_GAP;
         }
 
@@ -144,14 +136,14 @@ impl AppView {
         let workspace_attached = state.workspace_id.is_some();
         let trust_enabled = writes && workspace_attached;
         let trust_label = if state.workspace_trusted {
-            "取消信任"
+            "Remove trust"
         } else {
-            "信任 workspace"
+            "Trust workspace"
         };
         let trust_state = if state.workspace_trusted {
-            "已信任"
+            "Trusted"
         } else {
-            "未信任"
+            "Not trusted"
         };
         let trust_focused = self
             .settings_permissions_focus
@@ -162,7 +154,7 @@ impl AppView {
                 AxNode::new(
                     "settings-workspace-trust-status",
                     AxRole::StaticText,
-                    "会话信任",
+                    "Session trust",
                     AxRect::new(
                         frame.x + 16.0,
                         y,
@@ -171,7 +163,7 @@ impl AppView {
                     ),
                 )
                 .value(format!(
-                    "当前 · {trust_state} · 信任当前 workspace（仅本会话，不写盘）"
+                    "Current · {trust_state} · Trust the current workspace for this session only"
                 )),
             )
             .child(
@@ -180,7 +172,7 @@ impl AppView {
                     AxRole::Button,
                     trust_label,
                     AxRect::new(
-                        frame.x + frame.width - 16.0 - 116.0,
+                        frame.x + 16.0 + width - 116.0,
                         y + (MODE_ROW_HEIGHT - CONTROL_ROW) / 2.0,
                         116.0,
                         CONTROL_ROW,
@@ -195,14 +187,14 @@ impl AppView {
         // ③ Global 默认只读行。
         let global_text = match state.trust_workspaces_global {
             None => SETTINGS_TRUST_UNSET,
-            Some(true) => "已设置：信任所有 workspace",
-            Some(false) => "已设置：不信任所有 workspace",
+            Some(true) => "Set to trust all workspaces",
+            Some(false) => "Set to distrust all workspaces",
         };
         page = page.child(
             AxNode::new(
                 "settings-trust-global",
                 AxRole::StaticText,
-                "Global 默认",
+                "Global default",
                 AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT),
             )
             .value(global_text),

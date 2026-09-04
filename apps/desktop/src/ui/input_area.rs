@@ -8,13 +8,25 @@ use gpui::{
     Window,
 };
 
-use crate::projection::{ConnectionState, ModelEntry};
+use crate::projection::{group_models_by_provider, ConnectionState, ModelEntry};
 use crate::ui::components::button::{Button, ButtonVariant};
 use crate::ui::components::dropdown::{Dropdown, MenuPanel, MenuRow, ANCHOR_GAP_Y};
 use crate::ui::components::label::Label;
 use crate::ui::theme::{dark, font, metrics};
 
 use super::{AppView, MenuKind};
+
+/// model menu provider 分组头高度；render 与 AX 几何共用。
+pub(super) const MODEL_MENU_GROUP_HEADER_HEIGHT: f32 = 24.0;
+
+/// Composer model menu 的可点击项顺序。provider 保持目录首现顺序，组内
+/// 保持原目录顺序；鼠标、键盘与 AX 均使用这份扁平顺序。
+pub(super) fn grouped_model_menu_entries(models: &[ModelEntry]) -> Vec<ModelEntry> {
+    group_models_by_provider(models)
+        .into_iter()
+        .flat_map(|(_, models)| models)
+        .collect()
+}
 
 impl AppView {
     pub(super) fn composer_element(&self, cx: &mut Context<Self>) -> gpui::Div {
@@ -28,7 +40,12 @@ impl AppView {
         self.sync_composer_placeholder(composer_hint.clone(), cx);
 
         let model_tooltip = if can_switch_model {
-            SharedString::from("Select model")
+            SharedString::from(
+                self.projection
+                    .effective_model()
+                    .map(|(provider, id)| format!("Select model · {provider} / {id}"))
+                    .unwrap_or_else(|| "Select model".into()),
+            )
         } else {
             SharedString::from(self.model_disabled_reason())
         };
@@ -63,7 +80,12 @@ impl AppView {
                     cx.stop_propagation();
                 }));
         }
-        let mut model_picker = Dropdown::new(model_button);
+        // Composer 紧邻窗口底部，model menu 明确从触发器上方打开；anchored
+        // 仍负责贴合窗口边界，MenuPanel 负责长列表内部滚动。
+        let mut model_picker = Dropdown::new(model_button).panel_anchor(
+            Corner::BottomLeft,
+            point(px(metrics::ZERO), px(-ANCHOR_GAP_Y)),
+        );
         if model_menu_open {
             model_picker = model_picker.panel(self.model_menu_element(cx));
         }
@@ -142,9 +164,10 @@ impl AppView {
             .p(px(metrics::COMPOSER_PAD))
             .min_h(px(metrics::COMPOSER_PANEL_MIN_HEIGHT))
             .max_h(px(metrics::COMPOSER_PANEL_MAX_HEIGHT))
-            .border_t_1()
+            .border_1()
             .border_color(dark().border.subtle)
-            .bg(dark().bg.panel)
+            .rounded(px(metrics::SURFACE_RADIUS))
+            .bg(dark().surface.raised)
             .child(
                 div()
                     .flex()
@@ -232,7 +255,7 @@ impl AppView {
                 .models
                 .iter()
                 .find(|entry| entry.provider_id == *provider && entry.id == *id)
-                .map(|entry| format!("{} / {}", entry.provider_id, entry.display_name))
+                .map(|entry| entry.display_name.clone())
                 .unwrap_or_else(|| format!("{provider} / {id}")),
             None if self.projection.models.is_empty() => "Model · loading".into(),
             None => "Model · select".into(),
@@ -251,49 +274,61 @@ impl AppView {
 
     /// model 菜单面板（从 composer 内联抽出，与其他组同构的浮层 + MenuRow）。
     fn model_menu_element(&self, cx: &mut Context<Self>) -> MenuPanel {
+        let entries = grouped_model_menu_entries(&self.projection.models);
         let selected_ix = self
             .projection
             .effective_model()
             .and_then(|(provider, id)| {
-                self.projection
-                    .models
+                entries
                     .iter()
                     .position(|entry| entry.provider_id == *provider && entry.id == *id)
             })
             .unwrap_or(0);
         let highlight = self.menu_highlight_effective(selected_ix);
-        MenuPanel::new("model-menu")
-            .dismiss_on_outside(cx.listener(|view, event: &gpui::MouseDownEvent, _, cx| {
+        let mut panel = MenuPanel::new("model-menu").dismiss_on_outside(cx.listener(
+            |view, event: &gpui::MouseDownEvent, _, cx| {
                 view.dismiss_menu_on_outside(MenuKind::Model, event.position, cx);
-            }))
-            .children(
-                self.projection
-                    .models
-                    .iter()
-                    .cloned()
-                    .enumerate()
-                    .map(|(ix, model)| {
-                        let selected =
-                            self.projection
-                                .effective_model()
-                                .is_some_and(|(provider, id)| {
-                                    provider == &model.provider_id && id == &model.id
-                                });
-                        let label = format!("{} / {}", model.provider_id, model.display_name);
-                        MenuRow::new(SharedString::from(format!(
-                            "model-{}-{}",
-                            model.provider_id, model.id
-                        )))
-                        .label(label)
-                        .selected(selected)
-                        .highlighted(ix == highlight)
-                        .on_click(cx.listener(
-                            move |view, _event, _window, cx| {
-                                view.on_select_model(model.clone(), cx);
-                            },
-                        ))
-                    }),
-            )
+            },
+        ));
+        let mut item_ix = 0;
+        for (provider_id, models) in group_models_by_provider(&self.projection.models) {
+            panel = panel.child(
+                div()
+                    .h(px(MODEL_MENU_GROUP_HEADER_HEIGHT))
+                    .px_2()
+                    .flex()
+                    .items_center()
+                    .min_w_0()
+                    .truncate()
+                    .text_size(font::SM)
+                    .text_color(dark().text.secondary)
+                    .child(provider_id),
+            );
+            for model in models {
+                let selected = self
+                    .projection
+                    .effective_model()
+                    .is_some_and(|(provider, id)| {
+                        provider == &model.provider_id && id == &model.id
+                    });
+                panel = panel.child(
+                    MenuRow::new(SharedString::from(format!(
+                        "model-{}-{}",
+                        model.provider_id, model.id
+                    )))
+                    .label(model.display_name.clone())
+                    .selected(selected)
+                    .highlighted(item_ix == highlight)
+                    .on_click(cx.listener(
+                        move |view, _event, _window, cx| {
+                            view.on_select_model(model.clone(), cx);
+                        },
+                    )),
+                );
+                item_ix += 1;
+            }
+        }
+        panel
     }
 
     /// Composer 空输入 placeholder：只走连接/session/run 状态机，不被
@@ -482,7 +517,7 @@ fn composer_placeholder_hint(
 
 #[cfg(test)]
 mod tests {
-    use super::{composer_placeholder_hint, AppView};
+    use super::{composer_placeholder_hint, grouped_model_menu_entries, AppView};
     use crate::projection::{ConnectionState, ModelEntry};
     use crate::ui::theme::metrics;
 
@@ -562,28 +597,36 @@ mod tests {
                 display_name: "Opus".into(),
                 context_window_tokens: Some(200_000),
             },
+            ModelEntry {
+                provider_id: "openai".into(),
+                id: "gpt-4.1-mini".into(),
+                display_name: "GPT-4.1 mini".into(),
+                context_window_tokens: Some(128_000),
+            },
         ];
+        let entries = grouped_model_menu_entries(&models);
+        assert_eq!(
+            entries
+                .iter()
+                .map(|model| model.id.as_str())
+                .collect::<Vec<_>>(),
+            ["gpt-4.1", "gpt-4.1-mini", "opus"]
+        );
         let selected = Some(("anthropic".to_string(), "opus".to_string()));
         let selected_ix = selected
             .as_ref()
             .and_then(|(provider, id)| {
-                models
+                entries
                     .iter()
                     .position(|entry| entry.provider_id == *provider && entry.id == *id)
             })
             .unwrap_or(0);
-        assert_eq!(selected_ix, 1);
-        assert_eq!(
-            format!(
-                "{} / {}",
-                models[selected_ix].provider_id, models[selected_ix].display_name
-            ),
-            "anthropic / Opus"
-        );
+        assert_eq!(selected_ix, 2);
+        assert_eq!(entries[selected_ix].display_name, "Opus");
         let none_ix = None::<(String, String)>
             .as_ref()
             .and_then(|(provider, id)| {
-                models
+                entries
                     .iter()
                     .position(|entry| entry.provider_id == *provider && entry.id == *id)
             })

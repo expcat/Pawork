@@ -17,6 +17,8 @@
 //!    （splice 不安全）；脱钩读史时恢复 reset 前偏移（item_ix 越界钳制
 //!    到新末项），视口不跳。
 
+use std::collections::HashSet;
+
 use gpui::{
     div, list, prelude::*, px, AnyElement, Context, ListOffset, ListState, Pixels, SharedString,
     WeakEntity, Window,
@@ -36,7 +38,7 @@ use super::timeline_entry::{
     default_text_line_height, display_time, estimated_wrapped_lines, message_block_line_counts,
     RunSummaryTerminal, RunSummaryView, ToolRowView,
 };
-use super::{now_unix_ms, AppView, MenuKind, WORKSPACE_EMPTY_HINT};
+use super::{now_unix_ms, AppView, MenuKind, WORKSPACE_EMPTY_HINT, WORKSPACE_EMPTY_TITLE};
 
 /// list() 视口外上下方向的预渲染量（px，非视觉尺寸；仅影响滚动顺滑度）。
 pub(super) const TIMELINE_OVERDRAW: f32 = 200.0;
@@ -146,17 +148,26 @@ fn message_entry_height(text: &str, column_width: f32, rem_px: f32) -> f32 {
 
 /// Run 摘要卡高度（run_summary_element 同源）：py_6×2 + max(左列, 40 槽)；
 /// 左列 = max(Ø40, 标题行) + gap_4 + 说明（line_clamp 2，行高 1.5rem）。
-fn run_summary_card_height(terminal: &TimelineEntry, column_width: f32, rem_px: f32) -> f32 {
+fn run_summary_card_height(
+    terminal: &TimelineEntry,
+    column_width: f32,
+    rem_px: f32,
+    review_changes_visible: bool,
+) -> f32 {
     let description = run_summary_texts(terminal)
         .map(|(_, description)| description)
         .unwrap_or_default();
     let desc_font_px = font::BODY_SM.0 * rem_px;
     // 说明列宽估计：卡内容（pl 15 + pr_5）- gap_6 - 168 按钮槽 - Ø40 占位 - gap_4。
+    let review_slot = if review_changes_visible {
+        1.5 * rem_px + metrics::SUMMARY_BUTTON_WIDTH
+    } else {
+        0.0
+    };
     let desc_width = (column_width
         - (metrics::TOOL_GROUP_INNER_INSET
             + 1.25 * rem_px
-            + 1.5 * rem_px
-            + metrics::SUMMARY_BUTTON_WIDTH
+            + review_slot
             + metrics::SUMMARY_CHECK_CIRCLE
             + 1.0 * rem_px))
         .max(0.0);
@@ -166,8 +177,32 @@ fn run_summary_card_height(terminal: &TimelineEntry, column_width: f32, rem_px: 
         .max(default_text_line_height(font::BODY.0 * rem_px))
         + 1.0 * rem_px
         + desc_lines as f32 * body_line_height;
-    let content = left_column.max(metrics::SUMMARY_BUTTON_HEIGHT);
+    let content = if review_changes_visible {
+        left_column.max(metrics::SUMMARY_BUTTON_HEIGHT)
+    } else {
+        left_column
+    };
     3.0 * rem_px + content
+}
+
+/// Tool group 的稳定 presentation key：首个 tool event id。历史 replay 与
+/// live reducer 使用同一 event id，因此折叠偏好不会依赖行下标。
+pub(super) fn tool_group_key<'a>(
+    entry_indices: &[usize],
+    timeline: &'a [TimelineEntry],
+) -> Option<&'a str> {
+    entry_indices
+        .first()
+        .and_then(|entry_index| timeline.get(*entry_index))
+        .map(|entry| entry.event_id.as_str())
+}
+
+fn tool_group_is_collapsed(
+    entry_indices: &[usize],
+    timeline: &[TimelineEntry],
+    collapsed_tool_groups: &HashSet<String>,
+) -> bool {
+    tool_group_key(entry_indices, timeline).is_some_and(|key| collapsed_tool_groups.contains(key))
 }
 
 /// Timeline 单行内容高度公式（render 组装同源；AX 行 rect 共用）。文本
@@ -178,6 +213,8 @@ pub(super) fn timeline_row_height(
     timeline: &[TimelineEntry],
     column_width: f32,
     rem_px: f32,
+    collapsed_tool_groups: &HashSet<String>,
+    review_changes_available: bool,
 ) -> f32 {
     match row {
         TimelineRow::Message { entry_index } | TimelineRow::Error { entry_index } => {
@@ -199,14 +236,30 @@ pub(super) fn timeline_row_height(
                 * estimated_wrapped_lines(state, column_width, font_px).max(1) as f32
         }
         TimelineRow::ToolGroup { entry_indices } => {
-            metrics::TOOL_ROW_HEIGHT * entry_indices.len() as f32
+            metrics::TOOL_GROUP_HEADER_HEIGHT
+                + if tool_group_is_collapsed(entry_indices, timeline, collapsed_tool_groups) {
+                    0.0
+                } else {
+                    metrics::TOOL_ROW_HEIGHT * entry_indices.len() as f32
+                }
         }
         TimelineRow::RunSummary { group, terminal } => {
             let mut height = 0.0;
             if let Some(group) = group {
-                height += metrics::TOOL_ROW_HEIGHT * group.len() as f32 + metrics::SUMMARY_CARD_GAP;
+                height += metrics::TOOL_GROUP_HEADER_HEIGHT;
+                if !tool_group_is_collapsed(group, timeline, collapsed_tool_groups) {
+                    height += metrics::TOOL_ROW_HEIGHT * group.len() as f32;
+                }
+                height += metrics::SUMMARY_CARD_GAP;
             }
-            height += run_summary_card_height(&timeline[*terminal], column_width, rem_px);
+            let review_changes_visible = review_changes_available
+                && timeline[*terminal].fork_boundary == Some(ForkBoundary::Completed);
+            height += run_summary_card_height(
+                &timeline[*terminal],
+                column_width,
+                rem_px,
+                review_changes_visible,
+            );
             height += metrics::TIMELINE_FOOTER_GAP;
             // 页脚行（BODY_SM 标签恒高于「···」按钮）。
             height += default_text_line_height(font::BODY_SM.0 * rem_px);
@@ -324,19 +377,53 @@ impl AppView {
         .flex_1()
         .pl(px(metrics::TIMELINE_CONTENT_INSET))
         .pt(px(metrics::TIMELINE_TOP_GAP));
-        // 空态引导（gui-design 空态原则）：无 active session 且条目数为 0 时
-        // 居中一句 tertiary 提示；Disconnected 保留旧条目时不进入本分支。
+        // P0-3 空态：无 active session 且条目数为 0 时只给出一个清楚的
+        // Primary New task 路径；Disconnected 保留旧条目时不进入本分支。
         let content = if empty_hint_visible {
+            let can_create = self.can_create_task();
+            let tooltip = SharedString::from(if can_create {
+                "New task (Cmd+N)".to_string()
+            } else {
+                self.add_task_disabled_reason()
+            });
+            let new_task = Button::new("header-new-task")
+                .variant(ButtonVariant::Primary)
+                .track_focus(&self.header_new_task_focus)
+                .height(px(36.0))
+                .padding(ButtonPadding::Horizontal(metrics::SPACE_4))
+                .center()
+                .label("New task")
+                .tooltip(tooltip)
+                .disabled(!can_create)
+                .on_click(cx.listener(|view, event, window, cx| {
+                    if view.consume_button_key_click("header-new-task", event) {
+                        return;
+                    }
+                    view.on_new_session(window, cx);
+                }))
+                .on_activate(cx.listener(|view, _event, window, cx| {
+                    if view.open_menu.is_some() {
+                        view.note_button_key_activate("header-new-task");
+                        return;
+                    }
+                    view.note_button_key_activate("header-new-task");
+                    view.on_new_session(window, cx);
+                    cx.stop_propagation();
+                }));
             div()
                 .flex_1()
                 .flex()
+                .flex_col()
                 .items_center()
                 .justify_center()
+                .gap(px(metrics::SPACE_2))
+                .child(Label::new(WORKSPACE_EMPTY_TITLE).size(font::TITLE))
                 .child(
                     Label::new(WORKSPACE_EMPTY_HINT)
-                        .size(font::BASE)
-                        .color(dark().text.tertiary),
+                        .size(font::BODY)
+                        .color(dark().text.secondary),
                 )
+                .child(div().mt(px(metrics::SPACE_2)).child(new_task))
                 .into_any_element()
         } else {
             entries.into_any_element()
@@ -354,7 +441,7 @@ impl AppView {
                 area.child(BackToBottom::new(
                     Button::new("timeline-back-to-bottom")
                         .variant(ButtonVariant::Raised)
-                        .label("↓ 回到底部")
+                        .label("↓ Back to bottom")
                         .track_focus(&back_to_bottom_focus)
                         .on_click(cx.listener(|view, event, _window, cx| {
                             if view.consume_button_key_click("timeline-back-to-bottom", event) {
@@ -410,7 +497,13 @@ impl AppView {
             }
             TimelineRow::ToolGroup { entry_indices } => {
                 let rows = self.tool_row_views(entry_indices);
-                self.tool_group_element(&rows).into_any_element()
+                let Some(group_key) =
+                    tool_group_key(entry_indices, &self.projection.timeline).map(str::to_string)
+                else {
+                    return div().into_any_element();
+                };
+                self.tool_group_element(&group_key, &rows, cx)
+                    .into_any_element()
             }
             TimelineRow::RunSummary { group, terminal } => {
                 let entry = self.projection.timeline[*terminal].clone();
@@ -418,11 +511,19 @@ impl AppView {
                 let mut region = div().flex().flex_col();
                 if let Some(entry_indices) = group {
                     let rows = self.tool_row_views(entry_indices);
-                    region = region.child(self.tool_group_element(&rows)).child(
-                        div()
-                            .mt(px(metrics::SUMMARY_CARD_GAP))
-                            .child(self.run_summary_element(&summary, &entry.event_id, cx)),
-                    );
+                    if let Some(group_key) =
+                        tool_group_key(entry_indices, &self.projection.timeline).map(str::to_string)
+                    {
+                        region =
+                            region
+                                .child(self.tool_group_element(&group_key, &rows, cx))
+                                .child(div().mt(px(metrics::SUMMARY_CARD_GAP)).child(
+                                    self.run_summary_element(&summary, &entry.event_id, cx),
+                                ));
+                    } else {
+                        region =
+                            region.child(self.run_summary_element(&summary, &entry.event_id, cx));
+                    }
                 } else {
                     region = region.child(self.run_summary_element(&summary, &entry.event_id, cx));
                 }
@@ -452,7 +553,7 @@ impl AppView {
 
     /// 组装 ToolRowView（含状态词映射）；索引由 timeline_rows 保证指向
     /// ToolCall 条目。
-    fn tool_row_views(&self, entry_indices: &[usize]) -> Vec<ToolRowView> {
+    pub(super) fn tool_row_views(&self, entry_indices: &[usize]) -> Vec<ToolRowView> {
         entry_indices
             .iter()
             .map(|&ix| {
@@ -470,6 +571,14 @@ impl AppView {
             .collect()
     }
 
+    pub(super) fn toggle_tool_group(&mut self, group_key: &str, cx: &mut Context<Self>) {
+        if !self.collapsed_tool_groups.remove(group_key) {
+            self.collapsed_tool_groups.insert(group_key.to_string());
+        }
+        self.timeline_changed();
+        cx.notify();
+    }
+
     /// RunSummaryView 数据（诚实口径：完成态才有 Review changes 动作；
     /// Changes 数据不可用时禁用并给原因）。
     fn run_summary_view(&self, entry: &TimelineEntry) -> RunSummaryView {
@@ -477,13 +586,6 @@ impl AppView {
             .unwrap_or(("Run", "The run reached a terminal state.".to_string()));
         let completed = entry.fork_boundary == Some(ForkBoundary::Completed);
         let review_changes_enabled = completed && self.changes_available_for_active();
-        let review_changes_disabled_reason = if review_changes_enabled {
-            None
-        } else if !completed {
-            Some("Review is available after a completed run.".to_string())
-        } else {
-            Some("Changes data is not available yet.".to_string())
-        };
         RunSummaryView {
             title: title.into(),
             description,
@@ -493,7 +595,6 @@ impl AppView {
                 _ => RunSummaryTerminal::Completed,
             },
             review_changes_enabled,
-            review_changes_disabled_reason,
         }
     }
 

@@ -15,7 +15,12 @@ impl AppView {
     ///（TextArea，Focus / SetValue）+ Save / Clear（Press）+ 生效边界；
     /// stale 时 enabled=false 且 permits 拒绝写动作，与 render 同 gate
     ///（尺寸解析同源 parse_terminal_dimension）。
-    pub(crate) fn settings_terminal_page_ax(&self, window: &Window, cx: &App, frame: AxRect) -> AxNode {
+    pub(crate) fn settings_terminal_page_ax(
+        &self,
+        window: &Window,
+        cx: &App,
+        frame: AxRect,
+    ) -> AxNode {
         const HEADING_HEIGHT: f32 = 28.0;
         const SUBTITLE_HEIGHT: f32 = 20.0;
         const STATUS_HEIGHT: f32 = 20.0;
@@ -45,16 +50,17 @@ impl AppView {
         let clear_enabled = writes && state.shell.is_some();
         let refresh_focused =
             self.open_menu.is_none() && self.settings_refresh_focus.is_focused(window);
-        let mut page = AxNode::new("settings-page", AxRole::Group, "终端", frame)
+        let width = super::settings::settings_content_ax_width(frame);
+        let mut page = AxNode::new("settings-page", AxRole::Group, "Terminal", frame)
             .child(
                 AxNode::new(
                     "settings-page-title",
                     AxRole::StaticText,
-                    "终端",
+                    "Terminal",
                     AxRect::new(
                         frame.x + 16.0,
                         frame.y + 16.0,
-                        (frame.width - 136.0).max(0.0),
+                        (width - 136.0).max(0.0),
                         HEADING_HEIGHT + SUBTITLE_HEIGHT,
                     ),
                 )
@@ -66,7 +72,7 @@ impl AppView {
                     AxRole::Button,
                     "Refresh",
                     AxRect::new(
-                        frame.x + frame.width - 16.0 - 96.0,
+                        frame.x + 16.0 + width - 96.0,
                         frame.y + 16.0,
                         96.0,
                         CONTROL_ROW,
@@ -77,7 +83,6 @@ impl AppView {
                 .action(AxAction::Press),
             );
         let mut y = frame.y + 16.0 + HEADING_HEIGHT + SUBTITLE_HEIGHT + 8.0;
-        let width = (frame.width - 32.0).max(0.0);
         for (kind, label) in terminal_status_lines(state) {
             page = page.child(
                 AxNode::new(
@@ -140,7 +145,7 @@ impl AppView {
                     "settings-terminal-clear",
                     AxRole::Button,
                     "Clear",
-                    AxRect::new(frame.x + frame.width - 16.0 - 80.0, y, 80.0, CONTROL_ROW),
+                    AxRect::new(frame.x + 16.0 + width - 80.0, y, 80.0, CONTROL_ROW),
                 )
                 .enabled(clear_enabled)
                 .focused(
@@ -204,7 +209,7 @@ impl AppView {
                     "settings-terminal-save",
                     AxRole::Button,
                     "Save",
-                    AxRect::new(frame.x + frame.width - 16.0 - 80.0, y, 80.0, CONTROL_ROW),
+                    AxRect::new(frame.x + 16.0 + width - 80.0, y, 80.0, CONTROL_ROW),
                 )
                 .enabled(save_enabled)
                 .focused(

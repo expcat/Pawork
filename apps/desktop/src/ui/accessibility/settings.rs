@@ -26,11 +26,22 @@ fn settings_nav_ax(
     }
 }
 
+/// Settings 内容列宽（与 render 的 `SETTINGS_CONTENT_MAX_WIDTH` 同源）：
+/// frame 内边距 16×2，宽窗下钳到 820px。所有 settings_* 页 AX 几何必须
+/// 经此取值，否则 VoiceOver 高亮框会与 820px render 列系统性漂移。
+pub(crate) fn settings_content_ax_width(frame: AxRect) -> f32 {
+    (frame.width - 32.0)
+        .max(0.0)
+        .min(crate::ui::settings::SETTINGS_CONTENT_MAX_WIDTH)
+}
+
 impl AppView {
     /// Settings 左栏（SET-3）：返回按钮 + 首页导航项。几何与
     /// settings.rs render 同源（Panel p_2 + 36px 安全区 + gap_2 + mt_2）。
     pub(crate) fn settings_rail_ax(&self, window: &Window, frame: AxRect) -> AxNode {
-        let back_y = PAD + shell_layout::TRAFFIC_LIGHT_SAFE_HEIGHT + PAD;
+        const TITLE_HEIGHT: f32 = 28.0;
+        let title_y = PAD + shell_layout::TRAFFIC_LIGHT_SAFE_HEIGHT + PAD;
+        let back_y = title_y + TITLE_HEIGHT + PAD;
         let nav_y = back_y + metrics::RAIL_TOP_ROW_HEIGHT + PAD + PAD;
         let width = (frame.width - PAD * 2.0).max(0.0);
         let general_available = self.projection.settings_general.query.available;
@@ -47,6 +58,12 @@ impl AppView {
             page => page,
         };
         let mut rail = AxNode::new("settings-rail", AxRole::Group, "Settings", frame)
+            .child(AxNode::new(
+                "settings-rail-title",
+                AxRole::StaticText,
+                "Settings",
+                AxRect::new(frame.x + PAD, frame.y + title_y, width, TITLE_HEIGHT),
+            ))
             .child(
                 AxNode::new(
                     "settings-back",
@@ -98,7 +115,7 @@ impl AppView {
             }
             rail = rail.child(settings_nav_ax(
                 "settings-nav-permissions",
-                "权限与审批",
+                "Approvals",
                 current_page == SettingsPage::Permissions,
                 self.open_menu.is_none() && self.settings_nav_permissions_focus.is_focused(window),
                 AxRect::new(
@@ -120,7 +137,7 @@ impl AppView {
             }
             rail = rail.child(settings_nav_ax(
                 "settings-nav-tools",
-                "工具与 MCP",
+                "Tools & MCP",
                 current_page == SettingsPage::Tools,
                 self.open_menu.is_none() && self.settings_nav_tools_focus.is_focused(window),
                 AxRect::new(
@@ -145,7 +162,7 @@ impl AppView {
             }
             rail = rail.child(settings_nav_ax(
                 "settings-nav-terminal",
-                "终端",
+                "Terminal",
                 current_page == SettingsPage::Terminal,
                 self.open_menu.is_none() && self.settings_nav_terminal_focus.is_focused(window),
                 AxRect::new(
@@ -173,7 +190,7 @@ impl AppView {
         }
         rail = rail.child(settings_nav_ax(
             "settings-nav-appearance",
-            "外观",
+            "Appearance",
             current_page == SettingsPage::Appearance,
             self.open_menu.is_none() && self.settings_nav_appearance_focus.is_focused(window),
             AxRect::new(
@@ -186,7 +203,7 @@ impl AppView {
         let advanced_y = appearance_y + metrics::RAIL_TOP_ROW_HEIGHT + PAD;
         rail = rail.child(settings_nav_ax(
             "settings-nav-advanced",
-            "高级",
+            "Advanced",
             current_page == SettingsPage::Advanced,
             self.open_menu.is_none() && self.settings_nav_advanced_focus.is_focused(window),
             AxRect::new(
@@ -200,7 +217,7 @@ impl AppView {
             let about_y = advanced_y + metrics::RAIL_TOP_ROW_HEIGHT + PAD;
             rail = rail.child(settings_nav_ax(
                 "settings-nav-about",
-                "关于",
+                "About",
                 current_page == SettingsPage::About,
                 self.open_menu.is_none() && self.settings_nav_about_focus.is_focused(window),
                 AxRect::new(
@@ -219,7 +236,8 @@ impl AppView {
     /// 按钮与可见路径同 identifier / 同 gate（stale 时 enabled=false 且
     /// permits 拒绝写动作）。
     pub(crate) fn settings_page_ax(&self, window: &Window, cx: &App, frame: AxRect) -> AxNode {
-        if self.settings_page == SettingsPage::General && self.projection.settings_general.query.available
+        if self.settings_page == SettingsPage::General
+            && self.projection.settings_general.query.available
         {
             return self.settings_general_page_ax(window, cx, frame);
         }

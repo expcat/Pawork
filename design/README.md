@@ -1,24 +1,24 @@
-# Pawork Desktop 初始视觉基准
+# Pawork Desktop 分阶段视觉基准
 
-> 本目录只保留三张初始设计图。行为事实源：[GUI 设计](../docs/gui-design.md)。
+> 本目录只保留三张目标设计图。行为事实源：[GUI 设计](../docs/gui-design.md)，实施顺序与状态见 [UI Roadmap](../docs/gui-roadmap.md)。
 
 ## 1. 保留资产
 
-| 状态 | 资产 | 用途 |
+| 阶段 | 资产 | 用途 |
 | --- | --- | --- |
-| Timeline + Inspector | [desktop-shell-timeline-v3.png](desktop-shell-timeline-v3.png) | 三栏主工作台、对话、Changes |
-| Timeline + 折叠 Inspector | [desktop-shell-timeline-collapsed-v3.png](desktop-shell-timeline-collapsed-v3.png) | Workspace 扩展与 Activity 入口 |
-| Projects | [desktop-shell-projects-v3.png](desktop-shell-projects-v3.png) | 按项目组织 Task |
+| P0 Foundation | [desktop-ui-p0-foundation-v4.png](desktop-ui-p0-foundation-v4.png) | 三栏比例、组件状态、Projects 模式、直接切换按钮与 Composer |
+| P1 Run & Review | [desktop-ui-p1-run-review-v4.png](desktop-ui-p1-run-review-v4.png) | Timeline 模式、Run 工作单元、tool group、完成摘要与 Changes |
+| P2 Settings & Polish | [desktop-ui-p2-settings-v4.png](desktop-ui-p2-settings-v4.png) | Settings Rail、provider 概览、默认模型、留白与敏感信息层级 |
 
-![Timeline 初始设计](desktop-shell-timeline-v3.png)
+![P0 Foundation](desktop-ui-p0-foundation-v4.png)
 
-![Timeline 折叠初始设计](desktop-shell-timeline-collapsed-v3.png)
+![P1 Run 与 Review](desktop-ui-p1-run-review-v4.png)
 
-![Projects 初始设计](desktop-shell-projects-v3.png)
+![P2 Settings 与精修](desktop-ui-p2-settings-v4.png)
 
 除以上三张 PNG 外，不再向本目录或 `docs/` 检入真窗口截图、遮罩、差分图、标注图和临时视觉证据。需要复验时从当前源码和真实状态采集，结论写入当轮报告。
 
-Settings 没有检入 bitmap。结构见 [Settings Spec](../docs/spec/settings.md) 与 [GUI 设计 §3.5](../docs/gui-design.md#35-settings)。生产真窗口出现实际布局偏差时再判断是否补定稿图。
+三张图分别冻结 P0、P1、P2 的视觉方向，不是三个可互换主题。动态内容与真实状态不同不构成单独的通过或失败依据。
 
 ## 2. 布局合同
 
@@ -33,6 +33,7 @@ Settings 没有检入 bitmap。结构见 [Settings Spec](../docs/spec/settings.m
 ## 3. 交互与诚实性
 
 - `Timeline / Projects` 是分组方式，`All projects / <project>` 是项目范围，两者正交。
+- 分组按钮是 28×28px 二态直接切换，不打开菜单：Timeline 视图显示 folder icon + `Show projects`；Projects 视图显示 clock icon + `Show timeline`。图标表达目标动作，切换后随新目标变化。
 - 项目范围菜单必须提供 `Add project…`，通过系统目录选择器把真实目录交给 Host；不得用 fixture 或预置项目冒充添加成功。
 - 新 Task 绑定当前项目；无项目时明确要求先选择或添加项目。
 - Timeline 只展示真实 Session / Run / Tool 事件。能力不可用时显示 unavailable、禁用或隐藏，不补假数据。
@@ -43,7 +44,7 @@ Settings 没有检入 bitmap。结构见 [Settings Spec](../docs/spec/settings.m
 
 1. 使用 `./scripts/pawork-desktop.sh start` 构建并启动正式 Host/Desktop；不加载 fixture、seed、probe 或测试 profile。
 2. 用磁盘文件、`git status` / diff 与终端 stdout 交叉核对 UI，不用截图单独证明功能正确。
-3. 对照三张初始设计图检查信息架构、层级、密度和主操作可达性；动态内容不同不构成通过或失败的唯一依据。
+3. 按 Roadmap 阶段对照对应设计图检查信息架构、层级、密度和主操作可达性；动态内容不同不构成通过或失败的唯一依据。
 4. 自动检查、真窗口验收、人工视觉签字和发布状态分别记录，不能互相替代。
 
 ## 5. 非目标

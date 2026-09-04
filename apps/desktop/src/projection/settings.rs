@@ -88,24 +88,14 @@ impl ProviderStatusLabels for ProviderAuthStatusEntry {
             .join(" / ")
     }
 
-    /// 连接状态文案（render 与 AX 同源；masked credential 只显示 Host
-    /// 已脱敏值）。`ProviderAuthState::None` 的用户文案仍是 "Not connected"。
+    /// 连接状态文案（render 与 AX 同源）。普通概览不显示 credential，
+    /// 包括 Host 已脱敏的片段；credential 只留在 secure 编辑控件。
     fn auth_label(&self) -> String {
         match &self.auth {
-            ProviderAuthState::Connected {
-                method,
-                masked_credential,
-            } => {
-                let mut label = format!("Connected · {}", auth_method_display_name(method));
-                if let Some(masked) = masked_credential {
-                    label.push_str(" · ");
-                    label.push_str(masked);
-                }
-                label
-            }
+            ProviderAuthState::Connected { .. } => "Connected".into(),
             ProviderAuthState::None => "Not connected".into(),
             ProviderAuthState::Connecting => "Connecting…".into(),
-            ProviderAuthState::Error { message } => format!("Error · {message}"),
+            ProviderAuthState::Error { .. } => "Connection error".into(),
         }
     }
 
@@ -189,9 +179,7 @@ impl SettingsProvidersState {
         self.auth_replacing_connected.clear();
         self.pending_status_refresh = false;
         self.providers = data.providers;
-        self.default_model = data
-            .default
-            .map(|pair| (pair.provider_id, pair.model_id));
+        self.default_model = data.default.map(|pair| (pair.provider_id, pair.model_id));
     }
 
     /// auth_start 响应到达：登记 OAuth 等待信息并置 Connecting（Pending

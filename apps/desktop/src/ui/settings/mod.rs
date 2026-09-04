@@ -24,12 +24,13 @@ pub(super) use gpui::{div, prelude::*, px, App, Context, FontWeight, Pixels};
 
 pub(super) use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
 pub(super) use crate::ui::components::label::Label;
+pub(super) use crate::ui::components::list_row::ListRow;
 pub(super) use crate::ui::components::panel::Panel;
 pub(super) use crate::ui::theme::{dark, font, metrics};
 
 pub(super) use crate::controller::McpServerEntry;
 pub(super) use crate::projection::{
-    group_models_by_provider, ApprovalModeWire, ConnectionState, ModelEntry, AuthStartData,
+    group_models_by_provider, ApprovalModeWire, AuthStartData, ConnectionState, ModelEntry,
     ProviderAuthState, ProviderAuthStatusEntry, ProviderStatusLabels, SettingsPermissionsState,
     SettingsTerminalState,
 };
@@ -42,52 +43,73 @@ pub(super) use super::resources::{
 pub(super) use super::shell_layout;
 pub(super) use super::{AppRoute, AppView, SettingsPage};
 
-/// Settings 内容可读列（与 Timeline 618px 可读列同节奏；全宽壳层内收敛）。
-pub(super) const SETTINGS_CONTENT_MAX_WIDTH: f32 = 720.0;
+/// Settings 内容可读列；与 P2 设计的 760–880px 目标一致。
+pub(super) const SETTINGS_CONTENT_MAX_WIDTH: f32 = 820.0;
 /// Provider 卡片内边距（8px 节奏）。
 pub(super) const PROVIDER_CARD_PAD: f32 = 8.0;
+/// Provider 普通概览行高度；详情仅在连接流程、错误或二次确认时展开。
+pub(crate) const PROVIDER_OVERVIEW_HEIGHT: f32 = 64.0;
 /// 写动作按钮高度（与 Composer 28px 动作槽同节奏）。
 pub(super) const SETTINGS_ACTION_HEIGHT: f32 = 28.0;
 /// 「模型与默认项」区失效提示（render 与 AX 同源；只声明事实，不切换）。
 pub(crate) const SETTINGS_DEFAULT_UNAVAILABLE_NOTE: &str = "Default model unavailable — the default provider is disconnected or the model is not in its current catalog.";
 /// null `proxy_url` 展示（ADR-047 D1；render / AX 同源）。
-pub(crate) const SETTINGS_PROXY_UNSET: &str = "未设置（跟随系统环境变量）";
+pub(crate) const SETTINGS_PROXY_UNSET: &str = "Not set (uses system environment variables)";
 /// 生效边界（ADR-047 D2；不得宣称全局即时生效）。
-pub(crate) const SETTINGS_PROXY_EFFECT_NOTE: &str =
-    "新 OAuth/验证/目录探测同会话生效；当前活跃供应商的模型流量于切换供应商或重启 Host 后生效。";
+pub(crate) const SETTINGS_PROXY_EFFECT_NOTE: &str = "New OAuth, verification, and catalog requests use this proxy immediately. Model traffic for the active provider updates after switching providers or restarting the Host.";
 
 /// null `trust_workspaces_global` 展示（ADR-048 D1；render / AX 同源）。
-pub(crate) const SETTINGS_TRUST_UNSET: &str = "未设置（默认不信任）";
+pub(crate) const SETTINGS_TRUST_UNSET: &str = "Not set (workspaces are untrusted by default)";
 /// 权限页生效边界（ADR-048 D2/D3；不得宣称持久化或影响进行中 Run）。
-pub(crate) const SETTINGS_PERMISSIONS_EFFECT_NOTE: &str = "以上变更仅当前会话生效、不持久化：重启 Host 后回到默认；进行中的 Run 不受影响，之后启动的 Run 使用新设置。";
+pub(crate) const SETTINGS_PERMISSIONS_EFFECT_NOTE: &str = "Changes apply only to this session and are not persisted. Running tasks are unchanged; new tasks use the updated settings until the Host restarts.";
 
 /// 「工具与 MCP」页 Remove 二次确认提示（SET-6c / ADR-049 D2；render 与
 /// AX 同源，诚实标注快照语义）。
-pub(crate) const SETTINGS_MCP_REMOVE_CONFIRM_NOTE: &str =
-    "移除将写回 Global 配置并清理该 server 的凭证；进行中 Run 已快照的工具不会回溯撤销。";
+pub(crate) const SETTINGS_MCP_REMOVE_CONFIRM_NOTE: &str = "Removing this server updates the global configuration and clears its credentials. Tools already snapshotted by a running task are unchanged.";
 /// 「工具与 MCP」页生效边界（SET-6c / ADR-049 D1/D2；render 与 AX 同源）。
-pub(crate) const SETTINGS_MCP_EFFECT_NOTE: &str =
-    "Test 现场验证该 server 并回写状态；移除作用于 Global 配置并清理凭证，同会话内其工具不再注册。";
+pub(crate) const SETTINGS_MCP_EFFECT_NOTE: &str = "Test checks the server and refreshes its status. Remove updates the global configuration, clears credentials, and unregisters its tools for this session.";
 
 /// null shell 展示（SET-6d / ADR-050 D2；render 与 AX 同源）。
-pub(crate) const SETTINGS_TERMINAL_SHELL_UNSET: &str = "未设置（跟随平台默认）";
+pub(crate) const SETTINGS_TERMINAL_SHELL_UNSET: &str = "Not set (uses the platform default)";
 /// 终端页生效边界（SET-6d / ADR-050 D4；render 与 AX 同源，快照语义）。
-pub(crate) const SETTINGS_TERMINAL_EFFECT_NOTE: &str = "只影响之后创建的终端，已存在终端不变。";
+pub(crate) const SETTINGS_TERMINAL_EFFECT_NOTE: &str =
+    "Changes apply to newly created terminals; existing terminals are unchanged.";
 
 /// 外观页主题说明（SET-6e）：只陈述已实现能力，不画未实现的
 /// light / system 主题控件。render / AX 同源。
 pub(crate) const SETTINGS_APPEARANCE_THEME_NOTE: &str =
-    "当前仅提供深色主题；macOS Increase Contrast 由系统控制并自动刷新。";
+    "Dark theme is currently the only theme. macOS Increase Contrast is applied automatically.";
 /// 外观页字号生效边界（SET-6e）：本片不引入第二套配置或假持久化。
-pub(crate) const SETTINGS_APPEARANCE_EFFECT_NOTE: &str =
-    "字号立即应用于当前 Desktop 会话；重启后恢复 100%。也可用 Cmd+= / Cmd+- / Cmd+0 调整。";
+pub(crate) const SETTINGS_APPEARANCE_EFFECT_NOTE: &str = "Text size applies immediately to this Desktop session and resets to 100% after restart. You can also use Cmd+=, Cmd+-, or Cmd+0.";
 
 /// 高级页启动目标边界（SET-6f）：runtime ID 不能冒充 CLI 配置实例名，
 /// 且任何凭证及其路径都不进入 render / AX。
-pub(crate) const SETTINGS_ADVANCED_TARGET_NOTE: &str = "Endpoint 由 Desktop 启动时的 --instance / --socket 决定；切换需重启 Desktop。Host runtime ID 不是配置实例名。本页不显示 GUI token 或 token path。";
+pub(crate) const SETTINGS_ADVANCED_TARGET_NOTE: &str = "The endpoint is selected by --instance or --socket when Desktop starts; changing it requires a restart. The Host runtime ID is not a configuration instance name. GUI tokens and token paths are never shown here.";
 /// Host 级自检仍由 pre-Core CLI 命令负责；Desktop 不 shell-out，也不从
 /// socket 路径推断 data directory / 配置实例名。
-pub(crate) const SETTINGS_ADVANCED_DOCTOR_NOTE: &str = "Host 级 data directory、PID、socket 存活与握手自检请使用 pawork --instance <name> doctor；本页不推断实例名，也不运行该命令。";
+pub(crate) const SETTINGS_ADVANCED_DOCTOR_NOTE: &str = "Use pawork --instance <name> doctor for Host data directory, PID, socket, and handshake checks. Desktop does not infer an instance name or run that command.";
+
+/// Provider 概览中的目录列：只给 availability 与真实模型数，不把错误、
+/// endpoint 或 snapshot 标签塞进普通列表与 AX summary。
+pub(crate) fn provider_catalog_overview_label(
+    provider: &ProviderAuthStatusEntry,
+    model_count: usize,
+) -> String {
+    match &provider.catalog {
+        crate::projection::ProviderCatalogState::Remote { .. }
+        | crate::projection::ProviderCatalogState::FixedFallback { .. } => {
+            if model_count == 0 {
+                "Catalog available".into()
+            } else {
+                format!(
+                    "{model_count} model{}",
+                    if model_count == 1 { "" } else { "s" }
+                )
+            }
+        }
+        crate::projection::ProviderCatalogState::Unavailable { .. } => "Catalog unavailable".into(),
+    }
+}
 /// 外观页字号按钮的固定几何；render 与 AX bounds 共用，避免缩放后命中框漂移。
 pub(crate) const SETTINGS_APPEARANCE_CONTROL_HEIGHT: f32 = SETTINGS_ACTION_HEIGHT;
 pub(crate) const SETTINGS_APPEARANCE_CONTROL_WIDTH: f32 = 112.0;
@@ -260,6 +282,7 @@ pub(crate) fn tools_status_lines(state: &ResourcesPanelState) -> Vec<(&'static s
 /// on_activate 与 AX Press 共用同一 identifier 与同一入口 gate。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SettingsAuthAction {
+    ConnectApiKey,
     ConnectOauth,
     ReplaceOauth,
     CancelOauth,
@@ -277,7 +300,8 @@ pub(crate) const SETTINGS_CONTROL_PREFIX: &str = "settings-action-";
 
 impl SettingsAuthAction {
     /// 全部动作：key 解析与焦点回收白名单的单一来源。
-    pub(crate) const ALL: [Self; 9] = [
+    pub(crate) const ALL: [Self; 10] = [
+        Self::ConnectApiKey,
         Self::ConnectOauth,
         Self::ReplaceOauth,
         Self::CancelOauth,
@@ -291,6 +315,7 @@ impl SettingsAuthAction {
 
     pub(crate) fn key(&self) -> &'static str {
         match self {
+            Self::ConnectApiKey => "connect-api-key",
             Self::ConnectOauth => "connect-oauth",
             Self::ReplaceOauth => "replace-oauth",
             Self::CancelOauth => "cancel-oauth",
@@ -309,7 +334,8 @@ impl SettingsAuthAction {
 
     pub(crate) fn label(&self) -> &'static str {
         match self {
-            Self::ConnectOauth => "Connect",
+            Self::ConnectApiKey => "Connect API key",
+            Self::ConnectOauth => "Connect OAuth",
             Self::ReplaceOauth => "Replace OAuth",
             Self::CancelOauth => "Cancel",
             Self::ReplaceApiKey => "Replace API key",
@@ -370,6 +396,7 @@ pub(crate) fn parse_settings_control(identifier: &str) -> Option<SettingsControl
     // 已知 action key 集合有限且互不为前缀（均以 '-' 收尾成段），
     // 逐个前缀匹配消解复合 key（connect-oauth 等）。
     for key in [
+        "connect-api-key",
         "connect-oauth",
         "replace-oauth",
         "cancel-oauth",
@@ -428,9 +455,9 @@ impl SettingsMcpAction {
     pub(crate) fn label(&self) -> &'static str {
         match self {
             Self::Test => "Test",
-            Self::Remove => "移除",
-            Self::ConfirmRemove => "确认移除",
-            Self::KeepRemove => "保留",
+            Self::Remove => "Remove",
+            Self::ConfirmRemove => "Confirm remove",
+            Self::KeepRemove => "Keep",
         }
     }
 
@@ -471,8 +498,12 @@ pub(crate) fn settings_auth_actions(
             for method in &provider.auth_methods {
                 match method.as_str() {
                     "api_key" => {
-                        actions.push(SettingsAuthAction::VerifyApiKey);
-                        actions.push(SettingsAuthAction::CancelApiKeyInput);
+                        if api_key_editor_open {
+                            actions.push(SettingsAuthAction::VerifyApiKey);
+                            actions.push(SettingsAuthAction::CancelApiKeyInput);
+                        } else {
+                            actions.push(SettingsAuthAction::ConnectApiKey);
+                        }
                     }
                     "oauth" => actions.push(SettingsAuthAction::ConnectOauth),
                     _ => {}
@@ -548,7 +579,8 @@ mod terminal;
 mod tools;
 
 pub(crate) use approval_labels::{
-    description as approval_mode_description, label as approval_mode_label, ALL as APPROVAL_MODE_ALL,
+    description as approval_mode_description, label as approval_mode_label,
+    ALL as APPROVAL_MODE_ALL,
 };
 
 impl AppView {
@@ -598,6 +630,20 @@ impl AppView {
         };
         let mut rail = Panel::side_right(rail_width)
             .child(shell_layout::rail_safe_area())
+            .child(
+                div()
+                    .id("settings-rail-title")
+                    .h(px(28.0))
+                    .flex()
+                    .items_center()
+                    .px(px(metrics::RAIL_INNER_PAD))
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(
+                        Label::new("Settings")
+                            .size(font::TITLE)
+                            .color(dark().text.primary),
+                    ),
+            )
             .child(back)
             .child(self.settings_nav_item(
                 "settings-nav-providers",
@@ -618,7 +664,7 @@ impl AppView {
         if permissions_available {
             rail = rail.child(self.settings_nav_item(
                 "settings-nav-permissions",
-                "权限与审批",
+                "Approvals",
                 current_page == SettingsPage::Permissions,
                 SettingsPage::Permissions,
                 cx,
@@ -627,7 +673,7 @@ impl AppView {
         if tools_available {
             rail = rail.child(self.settings_nav_item(
                 "settings-nav-tools",
-                "工具与 MCP",
+                "Tools & MCP",
                 current_page == SettingsPage::Tools,
                 SettingsPage::Tools,
                 cx,
@@ -636,7 +682,7 @@ impl AppView {
         if terminal_available {
             rail = rail.child(self.settings_nav_item(
                 "settings-nav-terminal",
-                "终端",
+                "Terminal",
                 current_page == SettingsPage::Terminal,
                 SettingsPage::Terminal,
                 cx,
@@ -644,14 +690,14 @@ impl AppView {
         }
         rail = rail.child(self.settings_nav_item(
             "settings-nav-appearance",
-            "外观",
+            "Appearance",
             current_page == SettingsPage::Appearance,
             SettingsPage::Appearance,
             cx,
         ));
         rail = rail.child(self.settings_nav_item(
             "settings-nav-advanced",
-            "高级",
+            "Advanced",
             current_page == SettingsPage::Advanced,
             SettingsPage::Advanced,
             cx,
@@ -659,7 +705,7 @@ impl AppView {
         if about_available {
             rail = rail.child(self.settings_nav_item(
                 "settings-nav-about",
-                "关于",
+                "About",
                 current_page == SettingsPage::About,
                 SettingsPage::About,
                 cx,
@@ -672,7 +718,8 @@ impl AppView {
     /// projection（Host 权威 / stale / error）；卡片动作由 descriptor 驱动，
     /// 断线（stale）时可见 / 键盘 / AX 同时禁用。
     pub(super) fn settings_page_element(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.settings_page == SettingsPage::General && self.projection.settings_general.query.available
+        if self.settings_page == SettingsPage::General
+            && self.projection.settings_general.query.available
         {
             return self.settings_general_page_element(cx).into_any_element();
         }
