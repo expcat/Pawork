@@ -138,7 +138,7 @@ Settings 沿用深色主题、8px 节奏和 1440×1024 基线，不把工作台�
 - **权限与审批**：五档审批模式使用整行 radio，row click、Enter、Space 与 AX Press 同一 handler；会话信任开关、Global 默认只读行不变。变更仅当前会话生效、不持久化、进行中 Run 不受影响。
 - **Tools & MCP**：复用 Host `mcp_list`，提供 Test / Remove。
 - **Terminal**：Global `[terminal]`（shell / columns / rows）；只影响之后创建的终端。
-- **Appearance**：Desktop 本地；三档 100%/125%/150% 与 `Cmd+=` / `Cmd+-` / `Cmd+0` 共用 `TextScale`，并显示随选择即时变化的正文 / control 字阶样例；仅当前 Desktop 会话生效，重启恢复 100%。主题只读深色 + macOS Increase Contrast，不画 light/system 控件。
+- **Appearance**：Desktop 本地；三档 100%/125%/150% 与 `Cmd+=` / `Cmd+-` / `Cmd+0` 共用 `TextScale`，并显示随选择即时变化的正文 / control 字阶样例；仅当前 Desktop 会话生效，重启恢复 100%。主题只读深色，不画 light/system 控件。
 - **Advanced**：本地连接诊断；断线仍可达。只读 runtime ID、协商 API、capabilities、endpoint、resume/ack，以 definition list 呈现。不展示 GUI token，不从 endpoint 反推 data directory。
 - **About**：只在当前认证握手提供非空 `host_data_dir` 时显示，并以 definition list 呈现；缺字段、空白或断线时隐藏并退回 Advanced。路径原样展示，不用于文件操作。
 
@@ -179,7 +179,7 @@ Snapshot 只有会话树、活动 Run、待审批与 Provider 等状态，**没�
 - 工具调用是 Timeline 里的折叠块，不是单独 IDE 面板。
 - 流式输出按 token/事件追加；取消只取消当轮，历史保留。
 - 审批 fail-closed：无用户动作不得当默认允许。
-- 主题当前仅 dark 基线；macOS Increase Contrast 只在同一 dark 主题内增强对比，不构成第二套主题。
+- 主题当前仅 dark 基线，不读取系统显示偏好，不构成第二套主题。
 - `Enter` 仅在 IME 未组合时发送，`Shift+Enter` 换行；多行粘贴保持原文。
 - Timeline 只在用户位于底部时追随流式输出；用户向上阅读后不得抢滚动位置。向上脱钩的滚动区提供回底控件。
 - 连接、Run、tool 与审批状态必须有文本/图标语义，不能只靠颜色；主路径可全键盘操作。

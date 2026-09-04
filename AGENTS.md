@@ -48,6 +48,7 @@
 - **主干可用**：`pawork` 二进制可编译、可运行，既有冒烟行为不回退；合并/归档波补跑 `cargo tree` 断言（无环、`-p pawork` 闭包不膨胀）。
 - **冻结契约不静默破坏**（清单见 [docs/architecture.md](docs/architecture.md) §3.2）：golden 先于实现改动；schema/wire 演进须用户确认。
 - 全量门禁与发布不在默认范围；获明确授权后须另立任务和门禁。
+- **功能测试用模型**：需要真实 Provider 的功能验证（真窗口 Run、流式/工具/审批、live smoke）固定使用 `opencode-go` / `glm-5.3-flash`。只通过当次 Host/CLI `--provider opencode-go --model glm-5.3-flash` 覆盖，不写持久默认；产品示例默认仍是 `glm-coding` / `glm-5.2`。连接失败按真实终态记录，不得换未指定模型或伪造成功。口径见 [docs/spec/verification.md](docs/spec/verification.md) §2.1。
 
 硬约束：
 
@@ -151,3 +152,4 @@ Lagged 后不得伪造起点直发；改经 hub 真序列取信封，并回 `Rep
 - Terminal 是过滤 ANSI/VT 的纯文本视图，不是完整 VT emulator。
 - 菜单开着时 Timeline 条目被虚拟化卸载，浮层随条目回收，属可接受行为。
 - `apps/desktop` 直接业务依赖只允许 `pawork-client`。
+- 功能测试用模型固定为 `opencode-go / glm-5.3-flash`（当次 Host 参数，不写持久默认）。

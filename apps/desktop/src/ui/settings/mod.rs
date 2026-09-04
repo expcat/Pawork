@@ -78,7 +78,7 @@ pub(crate) const SETTINGS_TERMINAL_EFFECT_NOTE: &str =
 /// 外观页主题说明（SET-6e）：只陈述已实现能力，不画未实现的
 /// light / system 主题控件。render / AX 同源。
 pub(crate) const SETTINGS_APPEARANCE_THEME_NOTE: &str =
-    "Dark theme is currently the only theme. macOS Increase Contrast is applied automatically.";
+    "Dark theme is currently the only theme.";
 /// 外观页字号生效边界（SET-6e）：本片不引入第二套配置或假持久化。
 pub(crate) const SETTINGS_APPEARANCE_EFFECT_NOTE: &str = "Text size applies immediately to this Desktop session and resets to 100% after restart. You can also use Cmd+=, Cmd+-, or Cmd+0.";
 

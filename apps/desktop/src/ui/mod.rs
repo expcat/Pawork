@@ -10,7 +10,6 @@ mod changes;
 mod components;
 mod input_area;
 mod inspector;
-mod platform_preferences;
 mod resources;
 mod settings;
 mod shell_layout;
@@ -3511,10 +3510,6 @@ fn terminal_resize_receipt_clears_draft(
 
 impl Render for AppView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // AppKit posts a workspace notification when display accessibility
-        // preferences change. Refresh the palette before constructing this
-        // frame and keep the current window available to the callback.
-        platform_preferences::install(window, cx);
         // 一次性安装 AppKit Tab 本地监听器：NSWindow 会吞掉裸 Tab
         //（key-view 循环为空），监听器在派发前截获并驱动 GPUI 焦点链。
         // 监听器进程级只装一次；每次 render 刷新 thread_local 窗口句柄，

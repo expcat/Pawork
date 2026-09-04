@@ -65,8 +65,8 @@ flowchart LR
 | DESK-08 | Inspector 三页签独立滚动，切入/展开/会话切换/Run 终态/刷新时拉取正确数据。 | 本轮真实 Changes 与 Terminal 主路径已通过；Resources 和跨会话全矩阵仍按后续任务复验。 |
 | DESK-09 | 断线态可 Reconnect，Run/会话不因 UI 断线丢失。 | 重连路径已实现；项目与 Session 归属跨重启已复验。 |
 | DESK-10 | 1080×720 下 Composer、状态栏和 Header Activity 触发器仍可用。 | 生产响应式路径已实现；完整视觉签字仍待人工验收。 |
-| DESK-11 | 可见结构和控件具备稳定 AX identifier、正确 role/name/value/state/action；AX 操作复用鼠标/键盘的业务 gate。 | ADR-042 macOS bridge 已实现；本轮主路径可经 AX 驱动，全组件 VoiceOver 与 Windows/Linux 平台仍未验收。 |
-| DESK-12 | Settings 从 TaskRail 进入；Host capability 驱动业务页，本地外观页驱动当前 Desktop 字号；本地高级页提供安全连接诊断；关于页呈现当前 Host 权威元数据；返回时保持工作台状态，secure input 不泄漏 AX value。 | SET-3～SET-6g 已实现。外观页在离线态仍可达，三档按钮/快捷键/AX Press 共享 `TextScale`；高级页的握手摘要只在当前连接存活时可用，runtime ID 不冒充配置 instance，Reconnect 与既有 handler 同源；About 的 render/AX 共用 Connected + 非空 `host_data_dir` gate，断线清空并回退高级。真实账号端到端、完整真窗口与 VoiceOver 人工验收 pending，见 [settings.md](settings.md)。 |
+| DESK-11 | 可见结构和控件具备稳定 AX identifier、正确 role/name/value/state/action；AX 操作复用鼠标/键盘的业务 gate。 | ADR-042 macOS bridge 已实现；本轮主路径可经 AX 驱动，Windows/Linux 平台仍未验收（VoiceOver 验收已于 2026-09-04 按用户要求移出范围）。 |
+| DESK-12 | Settings 从 TaskRail 进入；Host capability 驱动业务页，本地外观页驱动当前 Desktop 字号；本地高级页提供安全连接诊断；关于页呈现当前 Host 权威元数据；返回时保持工作台状态，secure input 不泄漏 AX value。 | SET-3～SET-6g 已实现。外观页在离线态仍可达，三档按钮/快捷键/AX Press 共享 `TextScale`；高级页的握手摘要只在当前连接存活时可用，runtime ID 不冒充配置 instance，Reconnect 与既有 handler 同源；About 的 render/AX 共用 Connected + 非空 `host_data_dir` gate，断线清空并回退高级。真实账号端到端与完整真窗口人工验收 pending，见 [settings.md](settings.md)。 |
 
 ### 4.1 可见合同（已实现，非终局签字）
 
@@ -74,7 +74,7 @@ flowchart LR
 - TaskRail project count / task time 使用 56px 右对齐尾槽；Header 为 medium；24px StatusBar 使用 12px 字阶和窄窗裁切。
 - Composer 的 input/footer 共属同一 panel surface，unavailable Context 使用 tertiary；常态高度、220px 增长上限和 Send/Cancel 单槽不变。
 - Changes 文件行使用稳定前后槽；DiffView 的只读路径 header 位于横滚外，24px 语义 gutter 与中性正文分离；ActivityPopover 按当前真实 Changes 内容收缩为 320×144，并保持 capability honesty。
-- 以上是当前生产结构，不代表三张阶段目标设计图已经完成人工视觉签字；完整 Timeline/Changes AX、VoiceOver 与系统偏好仍需后续验收。
+- 以上是当前生产结构，不代表三张阶段目标设计图已经完成人工视觉签字；完整 Timeline/Changes AX 仍需后续验收。
 
 ## 5. 键盘、IME 与可访问性
 
@@ -87,9 +87,9 @@ flowchart LR
 - 长会话、长 diff 和窄窗不让主要操作不可达。
 - AX identifier 与用户可见/可本地化 label 分离；disabled 控件不发布可执行 action，未知 action fail-closed；新增可见交互须同批补语义节点。
 - 应用内字号支持 100% / 125% / 150%：`Cmd+=` / `Cmd++` 放大、`Cmd+-` 缩小、`Cmd+0` 重置；SET-6e 外观页提供同源三档按钮及当前值/AX selected。字号只在当前 Desktop 会话生效，重启恢复 100%；150% + 1080×720 使用 320px TaskRail，Workspace 保留 760px。
-- macOS Increase Contrast 在同一深色主题内增强辅助文字、surface、边界与选区并监听系统变更；当前 UI 无动画，Reduce Motion 无渲染分支。主动系统偏好验收仍未执行，不宣称真系统态通过。
+- 主题为单一深色 palette，不读取系统显示偏好（Increase Contrast 支持已于 2026-09-04 移除）；当前 UI 无动画，Reduce Motion 无渲染分支。
 
-当前锁定 GPUI 0.2.2 不原生导出元素级 AX tree；ADR-042 已由 Desktop 显式 `AxTree` + AppKit 虚拟元素补救。菜单方向键、grouping/scope tab stop 与全局焦点等价路径已经存在；已知缺口仍包括 VoiceOver 屏幕朗读措辞/顺序、主动系统偏好，以及 Windows/Linux 平台 AX，它们不得降级为已通过。
+当前锁定 GPUI 0.2.2 不原生导出元素级 AX tree；ADR-042 已由 Desktop 显式 `AxTree` + AppKit 虚拟元素补救。菜单方向键、grouping/scope tab stop 与全局焦点等价路径已经存在；已知缺口为 Windows/Linux 平台 AX；VoiceOver 屏幕朗读与系统显示偏好验收已于 2026-09-04 按用户要求移出范围。
 
 ## 6. 只读与写入边界
 
@@ -102,7 +102,7 @@ flowchart LR
 
 ## 7. 当前验收合同
 
-当前执行入口只有 [AGENTS.md](../../AGENTS.md)。Settings 的专项行为与证据见 [settings.md](settings.md)。真实 Desktop 主路径至少覆盖：正式启动、添加真实项目、新建 Task、发送消息、文件写入与审批、Git Changes、Terminal 输入输出；不使用 fixture、seed、probe 或测试 profile 冒充通过。
+当前执行入口只有 [AGENTS.md](../../AGENTS.md)。Settings 的专项行为与证据见 [settings.md](settings.md)。真实 Desktop 主路径至少覆盖：正式启动、添加真实项目、新建 Task、发送消息、文件写入与审批、Git Changes、Terminal 输入输出；不使用 fixture、seed、probe 或测试 profile 冒充通过。需要真实模型的功能验证固定使用 `opencode-go / glm-5.3-flash`（当次 Host `--provider` / `--model`，不改持久默认）；口径见 [verification.md](verification.md) §2.1。
 
 边界口径：
 
@@ -111,4 +111,4 @@ flowchart LR
 - Desktop Changes 只读是当前协议边界，Git 写操作仍需 ADR，不得用假按钮补图；
 - `@` 候选浮层和 Resources 规则分区只有 Host capability 存在时才可展示。
 
-证据必须记录实际窗口状态、连接态、真实操作 trace、文件/Git/PTY/Provider 外部事实和实际执行的自动检查。三张阶段目标设计图、Settings 真窗口、VoiceOver 与发布状态均需单独记录，不能由功能测试互相替代。
+证据必须记录实际窗口状态、连接态、真实操作 trace、文件/Git/PTY/Provider 外部事实和实际执行的自动检查。三张阶段目标设计图、Settings 真窗口与发布状态均需单独记录，不能由功能测试互相替代。

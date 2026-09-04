@@ -25,6 +25,16 @@
 
 E3/E4 证据必须包含日期、环境/版本、输入范围、实际结果和可追溯位置。`/tmp` 截图或日志若未检入，只能作为当次本机证据，不能假装成仓库可复现门禁。
 
+### 2.1 功能测试用模型
+
+日常需要真实 Provider 的功能验证（真窗口 Run、流式输出、工具/审批、live smoke）固定使用：
+
+| Provider | Model | 选择方式 | 禁止 |
+| --- | --- | --- | --- |
+| `opencode-go` | `glm-5.3-flash` | 当次 Host/CLI `--provider` / `--model` 临时覆盖 | 写入 Global/Workspace 持久默认；连接失败时改用未指定模型或伪造成功终态 |
+
+产品示例默认仍是 `glm-coding` / `glm-5.2`。该约定只约束日常功能验证的默认真实模型，不替代四通道矩阵或发布级 Provider 门禁。证据须写明实际使用的 provider/model；网络/凭证失败按真实终态记录。
+
 ## 3. 需求追踪矩阵
 
 | 需求族 | 实现锚 | 自动化锚 | 真实/人工锚 | 当前结论 |
@@ -39,7 +49,7 @@ E3/E4 证据必须包含日期、环境/版本、输入范围、实际结果和�
 | PRD-GIT-01 / CAP-GIT-01 | git/app/cli/Desktop Changes | git/checkpoint/diff 定向测试、Desktop projection | 真窗口 Changes、真实 rollback | Core 已实现；Desktop 写操作未实现，横滚人工项待验。 |
 | PRD-RESOURCE-01 / CAP-RESOURCE-01 | workspace/tools/app/Desktop | resources/import/MCP contract | 外部配置、MCP stdio、真窗口 Resources | 主流程已实现；部分 GUI 出口为候选。 |
 | PRD-CLIENT-01 / CAP-CLIENT-01 | protocol/app/client/cli | frame/headless/ACP golden、registry、probe | Desktop probe、Zed ACP、json-stdio | 已实现；发布级客户端矩阵未执行，probe 有已登记偶发超时。 |
-| PRD-DESKTOP-01 / DESK-* | desktop/client/protocol | projection/controller、U0/U1、AX 模型/映射测试 | 真 Host/Desktop、三张阶段目标设计图、AX/IME、用户签字 | 正式构建、项目、消息/文件、Changes、Terminal 与 Session→Workspace 跨 Host 重启已完成本机真窗口验收；完整视觉/VoiceOver/跨平台仍需专项取证。 |
+| PRD-DESKTOP-01 / DESK-* | desktop/client/protocol | projection/controller、U0/U1、AX 模型/映射测试 | 真 Host/Desktop、三张阶段目标设计图、AX/IME、用户签字 | 正式构建、项目、消息/文件、Changes、Terminal 与 Session→Workspace 跨 Host 重启已完成本机真窗口验收；完整视觉与跨平台仍需专项取证（VoiceOver 验收已于 2026-09-04 按用户要求移出范围）。 |
 | PRD-OPS-01 / CAP-OPS-01 | cli ops/service、app data_dir | 路径/状态/doctor 定向测试 | macOS/Linux/Windows service 与恢复演练 | 入口已实现；无发布级三平台/恢复门禁。 |
 
 ## 4. 三类不可推迟的回归
@@ -63,8 +73,8 @@ E3/E4 证据必须包含日期、环境/版本、输入范围、实际结果和�
 | 三类关键回归发布矩阵 | 未立项 | 发布任务明确命令和环境后执行；普通改动仍同批跑受影响的定向种子。 |
 | 真实客户端/Provider 矩阵 | 未执行 | 四通道 chat、GUI/Desktop、Zed ACP、headless json-stdio、doctor 实际通过或明确 fail-closed。 |
 | 真实 Anthropic、fork/compact、PTY/审批恢复等历史人工项 | 待后续任务 | 实际执行，或由用户明确接受延期并在 ROADMAP/收口摘要登记。 |
-| Settings 模型与供应商 | SET-1/SET-2 已实现（定向测试通过） | [settings.md](settings.md) 的 SET-001～011 获得 E1/E2；四家真实认证/目录、Host 重启和真窗口取得 E3；人工视觉/VoiceOver 单独签字。 |
-| 完整视觉与 Accessibility 签字 | 待专项任务/Settings 收口 | 主工作台与 Settings 状态矩阵、100/125/150%、键盘/AX/VoiceOver 由当前真窗口重新取证并人工签字。 |
+| Settings 模型与供应商 | SET-1/SET-2 已实现（定向测试通过） | [settings.md](settings.md) 的 SET-001～011 获得 E1/E2；四家真实认证/目录、Host 重启和真窗口取得 E3；人工视觉/键盘单独签字。 |
+| 完整视觉与 Accessibility 签字 | 待专项任务/Settings 收口 | 主工作台与 Settings 状态矩阵、100/125/150%、键盘/AX 由当前真窗口重新取证并人工签字。 |
 | 发布级验证 | 未立项 | 发布不在当前 ROADMAP；用户另行授权后先定 License，再定义三平台、供应链、安装/升级/回滚门禁。 |
 
 ## 6. 证据记录格式

@@ -44,6 +44,7 @@ Builtin < Global < Profile < Workspace < Session < Run
 
 - 工作区配置位于仓库根 `.pawork/` 体系；从 git 子目录/非 git 目录发现根的闭环仍需专项复核。
 - CLI provider/model/instance/approval 覆盖属于运行入口，不应写回包含 Secret 的配置。
+- 功能测试用模型固定为 `opencode-go` / `glm-5.3-flash`：用当次 `--provider opencode-go --model glm-5.3-flash` 覆盖；不要把该对写入持久默认。产品示例默认仍是 `glm-coding` / `glm-5.2`。详见 [verification.md](verification.md) §2.1。
 - `ProviderConfig` 无 `api_key`；凭证通过 `pawork auth` 或受控 env fallback 提供。
 - 配置/会话导入先 dry-run/预览；扫描不得执行 hook、启动 MCP 或联网。
 - 不要手工编辑损坏的 auth JSON 以“跳过”错误；应保留原文件、用受控恢复/重新登录重建。

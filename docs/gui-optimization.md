@@ -245,7 +245,7 @@ Composer 是主操作，应明显但不笨重：
 - 整体为单一 raised panel，1px subtle border，8px radius，常态 88–94px。
 - 输入区首屏 1–3 行，placeholder 使用一句动作提示：`Ask Pawork to inspect, change, or explain…`。
 - Footer 左侧依次为 model picker、workspace；右侧为 ContextMeter 和 Send / Cancel 单槽。
-- model picker 显示 `Grok 4 · High`；provider 只在菜单或 tooltip 中显示，避免 `xai / grok-4` 像内部 ID。
+- model picker 显示 `GLM 5.3 Flash`；provider 只在菜单或 tooltip 中显示，避免 `opencode-go / glm-5.3-flash` 像内部 ID。
 - workspace 只显示项目名，不在 Composer 重复绝对路径。
 - ContextMeter 使用条 + `78k / 128k`；未知显示 `Context unavailable`，不显示 `— / 256000`。
 - Send 32×32px 圆形主按钮；空输入 / stale / running 时禁用并给出 tooltip 原因。
@@ -358,7 +358,7 @@ Composer 是主操作，应明显但不笨重：
 
 ### 7.7 Appearance
 
-- Theme 作为只读设置行：`Dark · Follows macOS Increase Contrast`。
+- Theme 作为只读设置行，只陈述当前唯一 dark 主题。
 - Text size 使用三段 radio / segmented control：100% / 125% / 150%，当前项清晰选中。
 - 下方显示一行 15–16px 正文样例和一行 12px meta 样例，让用户立刻理解差异。
 - 快捷键作为辅助说明；不重复写成长段落。
@@ -415,7 +415,7 @@ Composer 是主操作，应明显但不笨重：
 
 - 用户文案描述“现在发生什么 / 下一步能做什么”，技术细节放 Help 或 Advanced。
 - 状态统一使用动词或结果：Connecting、Running、Waiting for approval、Ready for review、Failed、Cancelled。
-- 避免把内部 ID 当主文案：`xai / grok-4` → `Grok 4`；`ws-default` → `Pawork`。
+- 避免把内部 ID 当主文案：`opencode-go / glm-5.3-flash` → `GLM 5.3 Flash`；`ws-default` → `Pawork`。
 - unknown、unavailable、stale 三者不混用：unknown = Host 未提供值；unavailable = 当前能力不存在；stale = 展示的是旧值。
 
 ### 9.2 建议空态
@@ -440,8 +440,8 @@ Composer 是主操作，应明显但不笨重：
 - 状态不只靠颜色；icon、文字和 AX value 同源。
 - Tab 顺序遵循可见阅读顺序：TaskRail → Header → Timeline actions → Composer → Inspector；菜单打开后焦点限制在菜单，关闭回触发器。
 - `Enter` 仅在 IME 未组合时发送；`Shift+Enter` 换行；Escape 只关闭最上层浮层。
-- 100% / 125% / 150% 下均不截断主动作；Increase Contrast 使用现有增强 palette。
-- 真正的 WCAG / VoiceOver 结论必须经实现后的对比度计算、键盘走查和 VoiceOver 人工验收，本文件不宣称已合规。
+- 100% / 125% / 150% 下均不截断主动作。
+- 真正的 WCAG 结论必须经实现后的对比度计算与键盘走查，本文件不宣称已合规。（Increase Contrast 与 VoiceOver 验收已于 2026-09-04 按用户要求移出范围。）
 
 ---
 
@@ -471,7 +471,7 @@ Composer 是主操作，应明显但不笨重：
 
 - `ui/settings/`：按页重排，统一 English 文案，隐藏默认列表中的 credential 片段。
 - 添加轻量过渡并实现 Reduce Motion 分支。
-- 完成 100% / 125% / 150%、Increase Contrast、长标题、长模型列表的真窗口走查。
+- 完成 100% / 125% / 150%、长标题、长模型列表的真窗口走查。
 
 验收：Settings 每页有稳定 header / section / field / feedback 结构；无技术字段墙、无中英混排、无敏感片段进入普通截图。
 
@@ -513,14 +513,13 @@ Composer 是主操作，应明显但不笨重：
 
 - [ ] 主路径可全键盘完成；焦点环始终可见。
 - [ ] 关键文字和控件对比度经实际颜色计算通过目标值。
-- [ ] 100% / 125% / 150% 真窗口无裁切；Increase Contrast 真系统态复验。
-- [ ] VoiceOver 朗读顺序、控件名、value、enabled / selected / focused 与视觉一致。
+- [ ] 100% / 125% / 150% 真窗口无裁切。
 
 ### 12.5 证据
 
 - [ ] 每阶段保存“视觉基准 + 同尺寸真窗口”并排对比；截图只作视觉证据，不代替 Host / Git / PTY 外部事实。
 - [ ] 先跑 diff / link 检查，再跑受影响的 Desktop 定向测试；不为纯文档变更跑 Cargo。
-- [ ] 分开记录：已实现、自动门禁通过、真窗口验收、VoiceOver 人工签字、发布。
+- [ ] 分开记录：已实现、自动门禁通过、真窗口验收、发布。
 
 ---
 

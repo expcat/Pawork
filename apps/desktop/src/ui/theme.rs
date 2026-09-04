@@ -18,12 +18,10 @@
 //! 白字 × accent.hover ≈ 4.55、白字 × success_hover ≈ 4.61；placeholder ×
 //! surface.hover ≈ 4.04 须保持 <4.5，钉住其不得用于 hover surface 的约束。
 //!
-//! 运行时仍只有一套 dark 主题；macOS Increase Contrast 只选择同一主题的
-//! 可访问 palette 变体。Global 实现保留为未来主题挂载点，当前未 set_global。
+//! 运行时只有一套 dark 主题；不读取系统 Increase Contrast。Global 实现
+//! 保留为未来主题挂载点，当前未 set_global。
 
 use gpui::{rgb, rgba, Global, Rgba};
-
-use super::platform_preferences;
 
 /// 六组颜色 token 宿主。
 #[derive(Debug, Clone, Copy)]
@@ -129,14 +127,10 @@ pub struct SemanticColors {
     pub danger_hover: Rgba,
 }
 
-/// 深色主题访问器。默认态保持 R2 冻结 token；macOS Increase Contrast 开启时
-/// 只增强辅助文字、交互 surface 与边界，不改变布局或语义色。
+/// 深色主题访问器。运行时保持 R2 冻结的单一 dark palette；
+/// 不读取 macOS Increase Contrast，也不派生第二套可访问 palette。
 pub fn dark() -> Theme {
-    dark_for(platform_preferences::increase_contrast())
-}
-
-fn dark_for(increase_contrast: bool) -> Theme {
-    let mut theme = Theme {
+    Theme {
         bg: BackgroundColors {
             base: rgb(0x07121a),
             panel: rgb(0x061219),
@@ -179,22 +173,7 @@ fn dark_for(increase_contrast: bool) -> Theme {
             danger_bg: rgb(0x8a3b32),
             danger_hover: rgb(0x9c463c),
         },
-    };
-    if increase_contrast {
-        theme.surface.hover = rgb(0x24323b);
-        theme.surface.pressed = rgb(0x1b2830);
-        theme.border.subtle = rgb(0x66717a);
-        theme.border.strong = rgb(0x8d979e);
-        theme.text.secondary = rgb(0xd0d0d0);
-        theme.text.tertiary = rgb(0xb8b8b8);
-        theme.text.disabled = rgb(0xb8b8b8);
-        theme.text.ghost = rgb(0x9ca3a8);
-        theme.text.detail = rgb(0xd0d0d0);
-        theme.text.placeholder = rgb(0xb8b8b8);
-        theme.accent.selection = rgba(0x5b9dffaa);
-        theme.semantic.warning_border = theme.semantic.warning_text;
     }
-    theme
 }
 
 /// 字阶以 16px 根字号的 rem 表达；100% 时与冻结 px 值逐项相等，窗口调整
@@ -510,7 +489,7 @@ mod tests {
     /// surface.raised ≈ 4.52（placeholder 为不透明 #7f7f7f，与 tertiary 同值）。
     #[test]
     fn wcag_text_on_surface_pairs_match_frozen_targets() {
-        let theme = dark_for(false);
+        let theme = dark();
         assert_contrast_approx(
             contrast_ratio(theme.text.secondary, theme.surface.hover),
             4.82,
@@ -529,7 +508,7 @@ mod tests {
     /// §2.1：白字（on_accent）× accent.hover ≈ 4.55、× success_hover ≈ 4.61。
     #[test]
     fn wcag_on_accent_over_hover_actions_match_frozen_targets() {
-        let theme = dark_for(false);
+        let theme = dark();
         assert_contrast_approx(
             contrast_ratio(theme.text.on_accent, theme.accent.hover),
             4.55,
@@ -544,7 +523,7 @@ mod tests {
     /// 不得用于 hover surface 的约束。
     #[test]
     fn wcag_placeholder_stays_below_aa_on_hover_surface() {
-        let theme = dark_for(false);
+        let theme = dark();
         let ratio = contrast_ratio(theme.text.placeholder, theme.surface.hover);
         assert!(
             ratio < 4.5,
@@ -555,26 +534,8 @@ mod tests {
     /// §2.1：状态点绿槽位落地为不透明 #74c94c，不得回落到 success_bg。
     #[test]
     fn success_fg_is_opaque_status_dot_green() {
-        let theme = dark_for(false);
+        let theme = dark();
         assert_eq!(theme.semantic.success_fg, rgb(0x74c94c));
-    }
-
-    #[test]
-    fn increase_contrast_strengthens_text_and_boundaries() {
-        let default = dark_for(false);
-        let contrast = dark_for(true);
-        assert!(
-            contrast_ratio(contrast.border.subtle, contrast.bg.panel) >= 3.0,
-            "high-contrast panel boundaries must reach 3:1"
-        );
-        assert!(
-            contrast_ratio(contrast.border.subtle, contrast.bg.panel)
-                > contrast_ratio(default.border.subtle, default.bg.panel)
-        );
-        assert!(
-            contrast_ratio(contrast.text.tertiary, contrast.surface.raised)
-                > contrast_ratio(default.text.tertiary, default.surface.raised)
-        );
     }
 
     #[test]

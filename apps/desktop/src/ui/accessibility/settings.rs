@@ -28,7 +28,7 @@ fn settings_nav_ax(
 
 /// Settings 内容列宽（与 render 的 `SETTINGS_CONTENT_MAX_WIDTH` 同源）：
 /// frame 内边距 16×2，宽窗下钳到 820px。所有 settings_* 页 AX 几何必须
-/// 经此取值，否则 VoiceOver 高亮框会与 820px render 列系统性漂移。
+/// 经此取值，否则 AX 高亮框会与 820px render 列系统性漂移。
 pub(crate) fn settings_content_ax_width(frame: AxRect) -> f32 {
     (frame.width - 32.0)
         .max(0.0)

@@ -8,7 +8,7 @@
 | 状态 | **Accepted（SET-1～SET-6g 已实现并通过各自定向门禁；「关于」按 ADR-051 只在当前认证连接提供非空 Host 数据目录时启用；真实认证、完整真窗口与人工验收仍 pending）** |
 | Owner | Pawork maintainers |
 | 目标阶段 | Settings 活动线；不绑定发布版本 |
-| 最近更新 | 2026-09-04（P2 Settings 产品化已实现并通过 Desktop 自动门禁；真窗口 / VoiceOver 仍 pending） |
+| 最近更新 | 2026-09-04（P2 Settings 产品化已实现并通过 Desktop 自动门禁；真窗口人工验收仍 pending；VoiceOver 验收已按用户要求移出范围） |
 | 关联 | [GUI 设计](../gui-design.md) · [AGENTS.md](../../AGENTS.md) |
 
 ## 1. 问题、用户与目标
@@ -25,7 +25,7 @@
 
 | 能力 | 当前生产路径/证据 | 缺口 | 结论 |
 | --- | --- | --- | --- |
-| Settings 入口/路由 | SET-3 起 TaskRail `Local` 行 gear + AppRoute 顶层路由 + Settings Rail + 只读供应商页落地（[settings/](../../apps/desktop/src/ui/settings/)）；SET-6a～6d 依次启用通用、权限与审批、工具与 MCP、终端；SET-6e/6f 启用始终可用的本地外观页与高级连接诊断页；SET-6g 启用由当前握手权威元数据驱动的 About 页 | 真实 Host/Desktop 窗口与 VoiceOver 验收待 SET-7 | 已实现并通过定向门禁；About 在缺字段、空字段或断线时隐藏 |
+| Settings 入口/路由 | SET-3 起 TaskRail `Local` 行 gear + AppRoute 顶层路由 + Settings Rail + 只读供应商页落地（[settings/](../../apps/desktop/src/ui/settings/)）；SET-6a～6d 依次启用通用、权限与审批、工具与 MCP、终端；SET-6e/6f 启用始终可用的本地外观页与高级连接诊断页；SET-6g 启用由当前握手权威元数据驱动的 About 页 | 真实 Host/Desktop 窗口验收待 SET-7 | 已实现并通过定向门禁；About 在缺字段、空字段或断线时隐藏 |
 | Provider 注册 | [channel registry](../../crates/providers/src/channels/registry.rs) 八行：chatgpt/xai/glm-coding/opencode-go/qwen-token-plan/deepseek/kimi-platform/kimi-code；SET-4 起 `auth_methods` 为数据字段，支持同供应商多认证方法 | — | 已实现 |
 | API-key 通道 | [api_key.rs](../../crates/providers/src/channels/api_key.rs) 可请求 OpenAI-compatible `/models`；SET-2 增 `verify_api_key` 写前验证与 `auth_set_api_key` 非重放命令（verify-then-replace）；SET-4 起 xAI adapter 接受 API key，桌面端写操作已接通 | — | 已实现（真实账号验收 pending） |
 | OAuth | AppCore/auth 已有 OAuth 基础；xAI Device Flow 已接入；SET-2 起 `AuthStart`/`AuthCancel`/`AuthRemove` 对 GUI 开放并有 handler，进度经 `AuthChanged` 六态下发；SET-4 起 Kimi Code Device Flow 接入（[kimi.rs](../../crates/providers/src/channels/kimi.rs)），桌面端等待/取消 UI 已接通 | — | 已实现（真实账号验收 pending） |
@@ -97,7 +97,7 @@ flowchart LR
 | SET-007 | 只把 adapter 可运行模型暴露给 Composer，元数据合并保守。 | Must | provider contract 测试 |
 | SET-008 | 默认 provider/model 经 Host 持久化，重启恢复；失效时不静默跨供应商切换。 | Must | 配置测试 + Host 重启 |
 | SET-009 | 认证成功与目录成功是两个独立状态；断线时读旧标 stale、写动作 fail-closed。 | Must | reducer/controller 测试 + 断线复验 |
-| SET-010 | 可见、键盘和 AX 动作共用业务 gate；secure input 不在 AX value 中泄漏。 | Must | Desktop/AX 定向测试 + VoiceOver 人工 |
+| SET-010 | 可见、键盘和 AX 动作共用业务 gate；secure input 不在 AX value 中泄漏。 | Must | Desktop/AX 定向测试 + 键盘人工走查 |
 | SET-011 | 尚无真实 Host 能力的其它 Settings 页面不显示或明确 unavailable，不出现可点击假实现。 | Must | capability honesty 测试 + 人工走查 |
 
 并发口径：同一 provider 同时只允许一个认证/刷新操作；重复提交显式返回 busy 或复用同一进度，不并发覆盖凭证。命令幂等不得通过持久化 Secret payload 实现。
@@ -168,7 +168,7 @@ Settings 沿用参考设计的 1440×1024 深色语言和 8px 节奏，不另起
 - headless/ACP 不因 Desktop 功能自动获得 Secret 写入能力；registry 必须对各通道显式声明，首期可只对认证本机 GUI 开放。
 - Desktop/CLI 对同一 auth backend 的状态必须一致；GUI 设置后 `pawork auth list` / `pawork models` 能以脱敏方式核对。
 
-P2 视觉方向见 [desktop-ui-p2-settings-v4.png](../../design/desktop-ui-p2-settings-v4.png)；它不替代真实数据、安全或 VoiceOver 证据。2026-09-04 自动门禁已通过，最终真窗口签字仍 pending。
+P2 视觉方向见 [desktop-ui-p2-settings-v4.png](../../design/desktop-ui-p2-settings-v4.png)；它不替代真实数据或安全证据。2026-09-04 自动门禁已通过，最终真窗口签字仍 pending。
 
 ## 7. 实现切片
 
@@ -189,15 +189,15 @@ P2 视觉方向见 [desktop-ui-p2-settings-v4.png](../../design/desktop-ui-p2-se
 
 | 需求 | E1 实现证据 | E2 自动化 | E3 真实环境 | E4 人工 |
 | --- | --- | --- | --- | --- |
-| SET-001/010/011 | desktop route/render/controller/AX | desktop 定向测试 | 正式 Host/Desktop，1440/1080 | 视觉、键盘、VoiceOver 签字 |
+| SET-001/010/011 | desktop route/render/controller/AX | desktop 定向测试 | 正式 Host/Desktop，1440/1080 | 视觉、键盘签字 |
 | SET-002/009 | protocol registry + app query | protocol golden/typegen + app/client tests | 断线/重连与旧 Host | 状态文案走查 |
 | SET-003/004 | app auth facade + desktop wizard | auth/app/desktop；Secret 负断言 | 真实 API key，替换失败 | secure input/删除确认 |
 | SET-005 | Kimi/xAI OAuth adapter | OAuth refresh/cancel/error tests | 真实账号与 device flow | 浏览器切换/超时走查 |
 | SET-006/007 | provider list_models/catalog merge | provider contract + fallback/filter tests | 四家远端目录或明确固定回退 | 来源/降级文案 |
 | SET-008 | workspace/app config writer | 配置层级与重启测试 | Host/Desktop 重启 | 默认项失效走查 |
-| SET-6e 外观 | desktop render + `TextScale` + AX tree | 离线导航/AX Press/根字号/selected 定向回归 | 正式窗口 100/125/150% 与重启 | 视觉、Tab/Enter、VoiceOver 签字 |
-| SET-6f 高级 | desktop handshake 摘要 + render/AX 同源行 | 离线/连接两态、Reconnect gate、旧握手清空 | 正式 Host 对照 API/capabilities/endpoint/resume/ack | 视觉、Tab/Enter、VoiceOver 签字 |
-| SET-6g 关于 | Accepted 握手可选 `host_data_dir` + desktop render/AX 同源行 | 握手 present/absent + About 启用/清空隐藏 | 正式 Host 对照 build、协商 API 与 `doctor --json` data directory | 视觉、Tab/Enter、VoiceOver 签字 |
+| SET-6e 外观 | desktop render + `TextScale` + AX tree | 离线导航/AX Press/根字号/selected 定向回归 | 正式窗口 100/125/150% 与重启 | 视觉、Tab/Enter 签字 |
+| SET-6f 高级 | desktop handshake 摘要 + render/AX 同源行 | 离线/连接两态、Reconnect gate、旧握手清空 | 正式 Host 对照 API/capabilities/endpoint/resume/ack | 视觉、Tab/Enter 签字 |
+| SET-6g 关于 | Accepted 握手可选 `host_data_dir` + desktop render/AX 同源行 | 握手 present/absent + About 启用/清空隐藏 | 正式 Host 对照 build、协商 API 与 `doctor --json` data directory | 视觉、Tab/Enter 签字 |
 
 受影响关键回归：协议/golden、Secret/脱敏、配置持久化。测试使用假 key/token 形态；真实凭证只在隔离实例中读取，输出前脱敏。任何 401/429/超时先记录真实类别，不用 mock 冒充 E3。
 
