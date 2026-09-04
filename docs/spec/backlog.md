@@ -1,6 +1,6 @@
 # 产品候选与激活规格
 
-> 基线日期：2026-09-01。这里汇总未进入活动线的产品候选和转正规则。当前已立项工作见 [ROADMAP](../../ROADMAP.md) 与 [Settings Spec](settings.md)；本页不等于排期。
+> 基线日期：2026-09-01。这里汇总未进入活动线的产品候选和转正规则。产品规则见 [Settings Spec](settings.md)；工程约定见 [AGENTS.md](../../AGENTS.md)。本页不等于排期。
 
 ## 1. 候选转正闸门
 
@@ -29,11 +29,11 @@
 | G6 | 账户/端点配置导入 | P2 | 已确认未排期；Secret 必须直接进入 auth backend，不经中间文件。 |
 | G7 | 对外账户池网关 | P3 | 明确不内建；近期用 openai-compatible 上游连接外部网关。 |
 
-设计与决议全文见 [design §3](../design.md#3-已确认扩展功能族多账户额度切换子-agent-路由与输入缓存g1g7) 和 [references 附录 C（决策 D1–D8）](../references.md#附录-c-决策记录-d1d8-与并入约定原-researchmulti-account-quota-plan-mergemd)。
+设计与决议全文见 [design §3](../design.md#3-已确认扩展功能族g1g7) 和 [references 附录 C（决策 D1–D8）](../references.md#附录-c-决策记录-d1d8-与并入约定原-researchmulti-account-quota-plan-mergemd)。
 
 ## 3. 功能对照候选池（28 项）
 
-下表是 [design §4](../design.md#4-候选功能对照未排期对照-opencode--pi--codex--deepseek-harness) 的索引；实际合计 **28 项：P1 5、P2 17、P3 6**。
+下表是未排期候选索引；实际合计 **28 项：P1 5、P2 17、P3 6**。红线排除项见 [design §4](../design.md#4-架构红线排除项不实现)。
 
 | ID | 候选 | 优先级 |
 | --- | --- | --- |

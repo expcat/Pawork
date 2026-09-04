@@ -1,6 +1,6 @@
 # 安全与信任规格
 
-> 基线日期：2026-08-25。本文定义 Pawork 的产品安全边界和验收要求；冻结枚举/路径语义以 [policy 源码](../../crates/policy/src)、[exec 源码](../../crates/exec/src) 与 [ADR-041](../adr/ADR-041-sandbox-trust-model.md) 为准。
+> 基线日期：2026-08-25。本文定义 Pawork 的产品安全边界和验收要求；冻结枚举/路径语义以 [policy 源码](../../crates/policy/src)、[exec 源码](../../crates/exec/src) 与 ADR-041 为准。
 
 ## 1. 安全目标
 
@@ -114,4 +114,4 @@ Policy 输出固定为 `Allow`、`Deny`、`AskUser`、`AllowWithConstraints`。�
 6. 用户可见的拒绝/降级文案，不吞错、不静默 fallback；
 7. 需要改 wire/schema/架构红线时先过 ADR。
 
-发布级安全矩阵尚未立项；任何任务触及安全边界时仍须同批运行对应定向回归，不得推迟。Settings 的当前顺序见 [ROADMAP](../../ROADMAP.md) 与 [settings.md](settings.md)。
+发布级安全矩阵尚未立项；任何任务触及安全边界时仍须同批运行对应定向回归，不得推迟。Settings 的当前顺序见 [AGENTS.md](../../AGENTS.md) 与 [settings.md](settings.md)。

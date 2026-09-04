@@ -154,4 +154,4 @@
 - `AllowWithConstraints` 仅对 `Process` 能力产生；约束注入到工具输入的动作发生在消费方（`pawork-tools` scheduler，见 [tools.md](tools.md) §4.1）。
 - `resolve_workspace_path` 会真实访问文件系统（canonicalize / symlink_metadata）；对不存在路径不报 NotFound（留给上层 I/O），只保证安全性。
 - PTY 创建入闸不在本包：闸在 app 宿主（capability=`Process`，AskUser fail-closed 落 Deny，R7 波 B / ADR-041 D2）；本包只提供裁决原语。
-- 相关文档：Spec 索引 [../README.md](../README.md)；架构与冻结契约事实源 [../../design.md](../../design.md)；跨包运行时数据流 [../flows.md](../flows.md) 与 [../../architecture.md](../../architecture.md)；任务状态 [../../../ROADMAP.md](../../../ROADMAP.md)。
+- 相关文档：Spec 索引 [../README.md](../README.md)；架构与冻结契约事实源 [../../design.md](../../design.md)；跨包运行时数据流 [../flows.md](../flows.md) 与 [../../architecture.md](../../architecture.md)；任务状态 [AGENTS.md](../../../AGENTS.md)。

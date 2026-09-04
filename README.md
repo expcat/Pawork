@@ -4,8 +4,6 @@
 
 Pawork 用 Rust 从零实现一个编码智能体（Coding Agent）平台核心。二进制 `pawork` 是 Core 的唯一正式宿主；Desktop GUI（GPUI，`apps/desktop`）作为独立进程，经 CLI 暴露的 GUI Connection Protocol 连接 Core。
 
-**当前状态（2026-09-04）**：正式 Host/Desktop 的项目、对话、文件、Git Changes 和 Terminal 真实核心路径已经验收。活动线是 **CLN 内部收敛**（[plan/cleanup.md](plan/cleanup.md)）；Settings SET-0～SET-6g 已实现，SET-7 真窗口与人工签字暂停（缺口见 [plan/settings.md](plan/settings.md)）。当前指针见 [ROADMAP.md](ROADMAP.md)，历史沿革见 [docs/history.md](docs/history.md)。V1 全量实现归档于仓库外 `../Pawork_v1/`。
-
 ## 快速开始
 
 ```bash
@@ -34,7 +32,7 @@ Pawork/                  # 仓库根 = Cargo workspace 根
 │   ├── tools/           # 八工具 + scheduler + mcp/
 │   ├── workspace/       # workspace 服务 + resources/ + config/ + import/
 │   ├── storage/         # sqlite/ + session/ + blob/（PWB1）
-│   ├── providers/       # net/ + registry/pricing/usage/negotiate/reasoning + channels/（六通道）
+│   ├── providers/       # net/ + registry/pricing/usage/negotiate/reasoning + channels/
 │   ├── auth/            # Secret 后端 / OAuth / 脱敏解析链
 │   ├── git/             # Diff/Status/Checkpoint/worktree
 │   ├── engine/          # Agent Engine（生产依赖仅 domain）
@@ -44,46 +42,35 @@ Pawork/                  # 仓库根 = Cargo workspace 根
 │   ├── transport/       # local（UDS）+ memory
 │   ├── app/             # 装配宿主 + gui_server/
 │   ├── cli/             # 21 子命令 + channels/acp/
-│   └── client/          # framed 连接面 + headless/（原 sdk）
+│   └── client/          # framed 连接面 + headless/
 ├── apps/                # pawork（CLI 宿主 + composition root）、desktop（GPUI GUI）
 ├── schemas/             # protocol typegen 检入的 .d.ts
 ├── fixtures/            # 测试夹具
-├── scripts/             # 维护脚本（如 stale incremental 清理）
+├── scripts/             # 维护脚本
 ├── design/              # GUI 三张初始视觉基准图
-├── docs/                # 架构、设计、Spec、参照、存档、ADR
-├── plan/                # 当前活动线任务书（CLN；Settings 暂停缺口）
-└── ROADMAP.md           # 当前任务与后续计划的唯一计划事实源
+└── docs/                # 架构、设计、Spec、参照
 ```
 
-21 成员（19 库 + 2 应用，ADR-039 定稿）。包清单、依赖方向与冻结契约见 [docs/architecture.md](docs/architecture.md)。
+21 成员（19 库 + 2 应用）。包清单、依赖方向与冻结契约见 [docs/architecture.md](docs/architecture.md)。
 
 ## 文档导航
 
 | 文档 | 职责 |
 | --- | --- |
-| [ROADMAP.md](ROADMAP.md) | 任务事实源：当前指针、CLN 阶段、开放决策与任务约定 |
-| [plan/cleanup.md](plan/cleanup.md) | CLN 内部收敛任务书：切片、写入集、验收 |
-| [plan/settings.md](plan/settings.md) | Settings SET-7 暂停缺口（SET-0～6g 已归档到 history） |
-| [docs/architecture.md](docs/architecture.md) | 架构事实源：红线、包布局与依赖方向、冻结契约、S13 安全拍板、ADR 索引 |
-| [docs/design.md](docs/design.md) | 功能设计事实源：功能域 ↔ 参照项目映射、已确认扩展功能族（G1–G7）、候选功能池 |
-| [docs/spec/README.md](docs/spec/README.md) | 产品与包级 Spec 总索引：产品范围/能力/契约/安全/Desktop/验证/运维 + 21 包逐包 Spec + 跨包链路 |
-| [docs/spec/settings.md](docs/spec/settings.md) | Settings Feature Spec：供应商认证、模型发现、默认项、IA、安全和验证 |
-| [docs/spec/crates/](docs/spec/README.md#12-包级-spec) | **包级 Spec**：每包一篇，读文档即可了解该包全部功能与行为（agent 辅助阅读主入口） |
-| [docs/spec/flows.md](docs/spec/flows.md) | 跨包核心链路：Agent loop / GUI 连接 / 事件持久化与重放 / 凭证与脱敏 |
-| [docs/gui-design.md](docs/gui-design.md) | Desktop GUI 设计（配套 [design/README.md](design/README.md) 视觉基准与设计图） |
-| [docs/references.md](docs/references.md) | 参照项目手册 + 调研附录（多账户/配额/缓存） |
-| [docs/history.md](docs/history.md) | 历史存档：V1 迁移、V2（S0–S13）交付、V3（R0–R9）各阶段收口记录、已关闭登记项 |
-| [docs/adr/](docs/adr/) | 架构决策记录（ADR-037～052 现存，见 [README](docs/adr/README.md)；001～036 随 V1 归档） |
-| [AGENTS.md](AGENTS.md) | 工程约定（代理与人类协作者） |
-
-V1 时期文档随 V1 归档于 `../Pawork_v1/docs/`，仓库内链接以 `../Pawork_v1/...` 标注。
+| [docs/architecture.md](docs/architecture.md) | 架构：红线、包布局与依赖方向、冻结契约、安全语义 |
+| [docs/design.md](docs/design.md) | 功能设计：能力域与参照项目映射、明确不做的形态 |
+| [docs/spec/README.md](docs/spec/README.md) | 产品与包级 Spec 总索引 |
+| [docs/spec/crates/](docs/spec/README.md#12-包级-spec) | 每包一篇 Spec（agent 辅助阅读主入口） |
+| [docs/spec/flows.md](docs/spec/flows.md) | 跨包核心链路 |
+| [docs/spec/settings.md](docs/spec/settings.md) | Settings Feature Spec |
+| [docs/gui-design.md](docs/gui-design.md) | Desktop GUI 设计（配套 [design/README.md](design/README.md)） |
+| [docs/references.md](docs/references.md) | 参照项目手册与调研附录 |
+| [AGENTS.md](AGENTS.md) | 工程约定与开发经验 |
 
 ## 贡献
 
-- 工程约定见 [AGENTS.md](AGENTS.md)；任务执行与收尾约定见 [ROADMAP.md](ROADMAP.md) §6–§7。当前不设全量门禁，发布须用户明确授权后另立任务。
-- 架构决策以 ADR 记录（[docs/adr/](docs/adr/)，编号续接，下一个为 Settings 契约 ADR-046）。
-- 当前**不新增包**，只往既有包加模块；包布局变更须先过 ADR。
+工程约定见 [AGENTS.md](AGENTS.md)。当前不设全量门禁；发布须用户明确授权后另立任务。不新增包，只往既有包加模块；包布局、冻结契约或安全语义的破坏式改动须先向用户确认。
 
 ## 许可证
 
-待定。发布不在当前计划内；由用户后续单独立项时一并拍板。
+待定。

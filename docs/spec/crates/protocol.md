@@ -264,4 +264,4 @@
 - `TimelineEntry` / `TimelineEntryKind` / `ForkBoundary` 是纯数据渲染态：不进帧、不参与 typegen（`schemas/` 三组均无对应 `.d.ts`），跨进程传输的时间线形状只有 `TimelinePage` / `TimelineItem`。
 - `AppQueryEnvelope` 没有 `expected_revision` / `idempotency_key`（查询天然幂等）；命令去重语义全部挂在 `AppCommandEnvelope` 上。
 - Team 镜像类型源码注释仍称"与 `teams::TeamEvent` 同形"，但 `teams` crate 已随 R0 归档、不在当前 21 成员内；protocol 侧形状现为仓内唯一定义，仓内消费方是 `pawork-cli` 的 ACP 映射。
-- 相关文档：[domain.md](domain.md) · [testkit.md](testkit.md) · [../README.md](../README.md) · [../../../ROADMAP.md](../../../ROADMAP.md)。
+- 相关文档：[domain.md](domain.md) · [testkit.md](testkit.md) · [../README.md](../README.md) · [AGENTS.md](../../../AGENTS.md)。

@@ -51,7 +51,7 @@
 
 [flows.md](flows.md)：Agent loop、GUI 连接、事件持久化与重放、凭证与脱敏四条跨包链路的速览与红线；进单包前的全局定位用。
 
-不在本目录重复维护：布局与依赖边（[architecture.md](../architecture.md)）、逐符号 API（源码/rustdoc/golden）、任务状态（[ROADMAP](../../ROADMAP.md)）、视觉 token 明细（[GUI 视觉基准](../../design/README.md)）。
+不在本目录重复维护：布局与依赖边（[architecture.md](../architecture.md)）、逐符号 API（源码/rustdoc/golden）、任务状态（[AGENTS.md](../../AGENTS.md)）、视觉 token 明细（[GUI 视觉基准](../../design/README.md)）。
 
 ## 2. 事实源优先级
 
@@ -59,7 +59,7 @@
 
 1. 当前分支源码、检入 schema/golden、工作区差异、实际运行日志与真实远程状态；
 2. 已 Accepted 的 ADR 与 [docs/architecture.md](../architecture.md) 中的布局/冻结契约；
-3. [ROADMAP.md](../../ROADMAP.md) 中的活动状态；
+3. [AGENTS.md](../../AGENTS.md) 中的活动状态；
 4. 本 Spec 文档集（产品篇与包级 Spec）。
 
 Spec 中的能力状态不替代验证结论。某项“已实现”只说明生产路径存在；是否完成当前阶段复验、真实环境验收或发布门禁，必须再看 [verification.md](verification.md)。
@@ -85,10 +85,10 @@ Spec 中的能力状态不替代验证结论。某项“已实现”只说明生
 | 世代 | 编号 | 结论 |
 | --- | --- | --- |
 | V1 | P0–P19 | 历史任务书到 **P19**；共 224 个编号任务。P19-1～P19-16 为 Designed/未开始。2026-08-17 随 V1 归档。 |
-| V2 | S0–S13 | 已于 2026-08-18 收官；交付摘要见 [history.md](../history.md)。 |
-| V3 结构线 | R0–R9 | 已归档；旧编号和过程只在 [history](../history.md) / git 历史中检索。 |
-| 真实 Desktop 线 | E0–E2 / P1–P4 | 旧阶段已经停止承载活动计划；完成事实见 [history](../history.md)。 |
-| Settings 线 | SET-0～SET-7 | SET-0～SET-6g 已实现（过程见 [history](../history.md)）；SET-7 真窗口/人工签字暂停，缺口见 [plan/settings.md](../../plan/settings.md)。当前活动线是 CLN，指针只看 [ROADMAP](../../ROADMAP.md)。 |
+| V2 | S0–S13 | 已于 2026-08-18 收官；交付摘要见 history.md。 |
+| V3 结构线 | R0–R9 | 已归档；旧编号和过程只在 history / git 历史中检索。 |
+| 真实 Desktop 线 | E0–E2 / P1–P4 | 旧阶段已经停止承载活动计划；完成事实见 history。 |
+| Settings 线 | SET-0～SET-7 | SET-0～SET-6g 已实现（过程见 history）；SET-7 真窗口/人工签字暂停，缺口见 [Settings Spec](settings.md)。当前活动线是 CLN，指针只看 [AGENTS.md](../../AGENTS.md)。 |
 
 因此不会创建 P20 作为当前阶段。本目录使用领域化 Spec 名称；下一产品线的版本名和阶段编号只在用户选择真实产品目标并立项后确定。
 

@@ -336,4 +336,4 @@ cargo test -p pawork-app --offline --lib --tests --features ui-fixture
 - **`AppCore` 字段全私有或 `pub(crate)`**：消费方只能走方法门面；`Debug` 输出经筛选（provider_id/model/协议/是否有 store 等），不含凭证本体。
 - **内部测试装配件不可外用**：`testsupport` 的 `mock_core` / `ScriptedProvider` / `RecordingCapture` 均 `pub(crate)`；tests/ 集成测试改用 pawork-testkit 的 `MockProvider` / `MockScript`。
 
-相关：产品能力总览 [../capabilities.md](../capabilities.md) · 跨包流程 [../flows.md](../flows.md) · 契约清单 [../contracts.md](../contracts.md) · Spec 索引 [../README.md](../README.md) · 任务状态 [../../../ROADMAP.md](../../../ROADMAP.md)
+相关：产品能力总览 [../capabilities.md](../capabilities.md) · 跨包流程 [../flows.md](../flows.md) · 契约清单 [../contracts.md](../contracts.md) · Spec 索引 [../README.md](../README.md) · 任务状态 [AGENTS.md](../../../AGENTS.md)

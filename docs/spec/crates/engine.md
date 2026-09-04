@@ -185,4 +185,4 @@
 - `AssembledTurn` 对 `ToolCallArgumentsDelta` 早于 `ToolCallStarted` 到达的乱序容错（补建空名调用）；参数 JSON 解析失败时降级 `Value::Null`，不报错。
 - 结构性摘要（降级路径）只截取文本 part，非文本内容不进入摘要。
 - `ToolStreamEvent::Progress` 与 `ArtifactAvailable` 目前在 `LoopEventEmitter::emit_tool_event` 中被静默忽略，不映射为 AgentEvent。
-- 相关文档：[architecture](../../architecture.md) · [design](../../design.md) §3.2 引擎语义 · [flows](../flows.md) · [Spec 总览](../README.md) · [ROADMAP](../../../ROADMAP.md)；相邻包：[domain.md](domain.md) · [app.md](app.md) · [providers.md](providers.md)。
+- 相关文档：[architecture](../../architecture.md) · [design](../../design.md) · [flows](../flows.md) · [Spec 总览](../README.md) · [AGENTS.md](../../../AGENTS.md)；相邻包：[domain.md](domain.md) · [app.md](app.md) · [providers.md](providers.md)。

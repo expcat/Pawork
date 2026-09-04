@@ -247,7 +247,7 @@ domain id 类型未从 client re-export，命令 / 查询经冻结的 serde 形�
 
 ## 5. 契约与不变量
 
-- **视觉基准事实源**：[../../../design/README.md](../../../design/README.md)（三张 1440×1024 初始设计图）与 [../../gui-design.md](../../gui-design.md)（Surface 与连接协议消费约定）。theme token 已按设计事实源冻结到源码；hover / active 只改背景，active 复用 hover 色。当前视觉验收状态只看 [UI Review](../../UI_Review.md) 与 [ROADMAP](../../../ROADMAP.md)。
+- **视觉基准事实源**：[../../../design/README.md](../../../design/README.md)（三张 1440×1024 初始设计图）与 [../../gui-design.md](../../gui-design.md)（Surface 与连接协议消费约定）。theme token 已按设计事实源冻结到源码；hover / active 只改背景，active 复用 hover 色。当前视觉验收状态只看 [GUI 设计](../../gui-design.md) 与 [AGENTS.md](../../../AGENTS.md)。
 - **R9 可见层级合同**：Timeline 满宽 + 618px readable wrapper、40/12px summary 节奏；TaskRail 56px meta 槽；Composer surface 与 unavailable 对比；Changes 20/72/76px 文件槽、36px 横滚外 header、24px gutter；ActivityPopover 320×320 及 capability honesty 均已落地。这里只冻结 R9 可见实现，不宣称 Timeline/Changes 全状态 AX 几何或终局视觉门禁已经通过。
 - **审批 fail-closed**：无默认允许；决策只能来自显式点击或快捷键；断线禁用；run / tool 终态与 `ApprovalResponded` 清卡防幽灵审批。
 - **`gui.token` fail-closed**：token 缺失、不可读或为空即连接失败，禁止无认证静默连接；错误信息只含路径，token 内容不落日志。
@@ -329,7 +329,7 @@ cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders
 
 本包 dev-dependencies 为 `tempfile`（workspace `3`，仅服务 `ui/barriers.rs` 的临时目录测试）与 `gpui` dev 条目（`=0.2.2` + `test-support` feature，R1 Wave C 起；仅测试构建启用 TestAppContext/VisualTestContext，resolver v2 下不进生产二进制闭包），均不计入生产 deny-list。
 
-**运行时验证资产**：`--probe`（连接 + snapshot + 模型目录一行摘要）与 `--probe-smoke`（流式回合 / 切模型 / 审批 / 取消 / 两次断线重连持久化 / `disconnect_survive`），配合隔离实例（`--instance` + `PAWORK_DATA_DIR`）在真实 host 上冒烟。[scripts/ui-ax-dump.swift](../../../scripts/ui-ax-dump.swift) 与 [scripts/ui-key-event.swift](../../../scripts/ui-key-event.swift) 可做真窗口 AX / HID 取证。历史 R/Wave 编排脚本与 `docs/ui-review/` 运行证据已移出仓库，结论在 [history.md](../../history.md)；新结论必须按当前 ROADMAP 重建证据。
+**运行时验证资产**：`--probe`（连接 + snapshot + 模型目录一行摘要）与 `--probe-smoke`（流式回合 / 切模型 / 审批 / 取消 / 两次断线重连持久化 / `disconnect_survive`），配合隔离实例（`--instance` + `PAWORK_DATA_DIR`）在真实 host 上冒烟。[scripts/ui-ax-dump.swift](../../../scripts/ui-ax-dump.swift) 与 [scripts/ui-key-event.swift](../../../scripts/ui-key-event.swift) 可做真窗口 AX / HID 取证。历史编排脚本与运行证据已移出仓库；新结论必须按当前源码与真窗口重建证据。
 
 截至 2026-09-01，正式 Host/Desktop（无 fixture/seed/mock）已完成添加项目、真实 Provider 对话、审批写文件、Changes 与真实 Git 对照、PTY 命令、P1 多项目/会话归属双粒度重开、P2 六链路可靠性与 P3 三面板验收（含 ADR-045 Terminal 生命周期）。P3 隔离实例以 AX + `stty`/`pwd`/Git/SQLite/Host snapshot/ps 双证据验证尺寸变更、exited 重建、cwd 恢复、Changes/Resources 刷新与断线 stale；ADR-045 复验 Stop→无重连即时 killed（进程组击杀证据）、Close→复位 not started 且快照清空、`exit 7` 即时 exited、断线 stale 不回归；P4 片 3 消除 AX 树三处固定偏移几何（stepper / 审批卡 / Timeline）；P4 片 2F 修复并真窗口复验 D1（AXPress 菜单同源移焦与来源回焦）、D2（Timeline/approval 共享 item 序列，稳定帧读取真实 list bounds，AX frame 中心真实点击落盘）与 D3（历史早期工具不清 snapshot 当前审批，切走跳回仍恢复），当前 Desktop 定向门禁 160/160。VoiceOver 播报/光标框与系统 IME 真实 composing 仍待用户人工签字，P4 其余切片未完成。
 

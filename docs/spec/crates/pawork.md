@@ -58,4 +58,4 @@
 - 脱敏是最后防线而非唯一防线：上游（auth / provider / storage）仍须避免把明文 Secret 放进 tracing 字段；正则集合覆盖已知形态，新增凭证形态时须同批补 `redact.rs` 模式与测试。
 - `sk-`/`api-` 前缀模式要求后随至少 12 个字符，过短的合成串不会命中；敏感键匹配的是**完整字段名**（锚定 `^…$`），形如 `context_tokens` 的度量字段不会被误遮。
 - `RedactingFmtLayer` 输出为简单单行格式（无时间戳 / span 上下文），面向人读与冒烟排查，非结构化日志管道。
-- 状态与任务登记见 [../../../ROADMAP.md](../../../ROADMAP.md)；设计事实源见 [../../design.md](../../design.md)；Spec 汇总见 [../README.md](../README.md)。
+- 状态与任务登记见 [AGENTS.md](../../../AGENTS.md)；设计事实源见 [../../design.md](../../design.md)；Spec 汇总见 [../README.md](../README.md)。

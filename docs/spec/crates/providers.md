@@ -251,4 +251,4 @@ dev-dependencies：`wiremock`（HTTP mock）、`proptest`、多线程 tokio。�
 - `OpenAiCompatibleConfig.request_timeout` 是「建连及流式读取无数据超时」的便捷字段（设置时覆盖 `http.timeout`）；配合逐 chunk 重置语义，长流只要持续有数据就不会误杀。
 - `channels/mod.rs` 的 re-export 保持合并前 adapters 包的对外路径形状（`ApiKeyChannelConfig` / `ChatGptProvider` 等可从 crate 根直取），消费方无需感知内部目录结构。
 - `responses_reasoning` 是 crate 私有模块（无 `pub`），其行为只能经 `responses` 模块间接观察；历史 hint 键拼写兼容属于该模块内部契约。
-- 各 OAuth 流程本身（PKCE/Device/refresh）由 `pawork-auth` 承载（见 [auth.md](auth.md)）；本包注册表只提供端点预设数据。任务状态与阶段口径见 [../../../ROADMAP.md](../../../ROADMAP.md)。
+- 各 OAuth 流程本身（PKCE/Device/refresh）由 `pawork-auth` 承载（见 [auth.md](auth.md)）；本包注册表只提供端点预设数据。任务状态与阶段口径见 [AGENTS.md](../../../AGENTS.md)。

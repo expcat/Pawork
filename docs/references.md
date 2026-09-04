@@ -1,6 +1,6 @@
 # 参照项目手册
 
-> **用途**：任务开启阶段快速查阅各参照项目的目标、功能面与文档入口。本手册是**目录/索引层**，不展开机制细节：机制调研全文见本文附录 A–C（深入处以「详见附录 A §N」跳转），各阶段功能 → 参照项目的映射见 [design.md](design.md) §2，**参照项目 → 功能规划**的反向分类见本文 §6，旧 V3（R0–R9）参照快照见本文 §7；当前 UI 方向与验收顺序见 [GUI 设计](gui-design.md) 和 [ROADMAP](../ROADMAP.md)。多账户/配额/缓存调研已并入本文附录 A/B/C。文中 star 数与项目事实为 **2026-08-18** 快照；实现前应复核最新实态。
+> 目录/索引层。机制调研见附录 A–C；功能 → 参照映射见 [design.md](design.md) §2；反向分类见本文 §6。star 数与项目事实为 **2026-08-18** 快照，实现前应复核最新实态。
 
 ---
 
@@ -40,7 +40,7 @@
 
 ## 2. 主要对标项目
 
-Pawork 的候选功能对照基于四家的公开功能面（功能对照见 [design.md](design.md) §4，转正规则见 [产品候选](spec/backlog.md)）。通用红线：纯 Rust 不引入 JS 运行时（排除 JS 插件生态路线）；无 TUI（CLI 交互模式 + S7 起的 GPUI Desktop，设计见 [gui-design.md](gui-design.md)）。
+对照基于四家公开功能面（转正规则见 [产品候选](spec/backlog.md)）。通用红线：纯 Rust 不引入 JS 运行时；无 TUI（CLI 交互模式 + GPUI Desktop，设计见 [gui-design.md](gui-design.md)）。
 
 ### 2.1 OpenCode
 
@@ -128,7 +128,7 @@ Pawork 的候选功能对照基于四家的公开功能面（功能对照见 [de
 | [Cline](https://github.com/cline/cline) | VS Code 编码 Agent | BYOK 配置档手动切换；按模型清单在 system + 末 1–2 user 打 `cache_control`，粘滞交给 OpenRouter；Plan/Act 双模型绑定 | §8 |
 | [Kilo Code](https://github.com/Kilo-Org/kilocode) | VS Code 编码 Agent + 自营网关 | 沿 Cline 谱系断点、`kilo-auto` 会话亲和分层路由、难度分类路由与缓存命中协同设计 | §8 |
 
-> **收录标准**（沿用附录 A §8）：仅收录活跃维护、且在表内承担**不可替代角色**的项目。历次移除：① 2026-08-14 按 pushed_at 复核活跃度，移除 TensorZero、Roo Code、Helicone AI Gateway、Arch/archgw、Portkey、one-api、gemini-balance 共 7 项；② 2026-08-18 GitHub API 全量复核后按「同功能与实现思路可由表内更强项目替代 + star 停滞或活跃不足」二次清理，移除 gpt-load、uni-api、claude-code-hub、meridian、antigravity-claude-proxy 共 5 项。逐项理由、替代关系与「外部网关存续风险 → 自持进程内能力（F6-A）更稳」结论见 [附录 A](#附录-a-多账户配额缓存机制调研原-researchmulti-account-quota-referencemd) §8；被移除项的机制原文仍保留在附录 A §4.5/§4.6/§5.4（历史快照）。同日复核另记：claude-relay-service 增长停滞（作者重心转向 sub2api），仍为 G3 sticky 主参照，保留观察；meridian 仓库无 LICENSE（移除的附加原因：不可参考其代码）。
+> **收录标准**：仅收录活跃维护、且在表内承担不可替代角色的项目。GPL 系与无 LICENSE 仓库只参照 API 形状，禁止复制代码。
 
 ---
 
@@ -152,21 +152,21 @@ Pawork 的候选功能对照基于四家的公开功能面（功能对照见 [de
 
 ## 5. 调研附录索引
 
-原 docs/research/ 三份调研已于 **2026-08-25** 并入本文文末附录（压缩保留结论，原文全文见 git 历史）：
+三份调研压缩保留结论，并入本文附录：
 
 | 附录 | 用途 |
 | --- | --- |
 | [附录 A](#附录-a-多账户配额缓存机制调研原-researchmulti-account-quota-referencemd) | 外部实现逻辑调研：项目机制详查（A §2–§4）、厂商缓存机制对照（A §5）、模式归纳（A §6）、与 V1 资产对照（A §7）、参照项目对照总表与收录标准（A §8） |
-| [附录 B](#附录-b-分功能方案-f1f6原-researchmulti-account-quota-proposalsmd) | F1–F6 实施方案与推荐（**已确认**）：多账户凭证、额度感知、切换路由、子 Agent 绑定、输入缓存、网关模式；含分阶段落地图（B §7） |
+| [附录 B](#附录-b-分功能方案-f1f6原-researchmulti-account-quota-proposalsmd) | F1–F6 实施方案与推荐（**已确认**）：多账户凭证、额度感知、切换路由、子 Agent 绑定、输入缓存、网关模式 |
 | [附录 C](#附录-c-决策记录-d1d8-与并入约定原-researchmulti-account-quota-plan-mergemd) | 决策记录 D1–D8 与并入约定（决策唯一入口）：执行期凭证 fail-closed、少测试无门禁、缓存命中率 95/97/99 目标 |
 
-F1–F6 与 [design.md](design.md) §3 已确认扩展功能族（G1–G7）的对应关系见附录 B §7。后续新增专题调研直接以附录形式并入本手册，并在 §1 总览、对应章节与 §6 反向分类登记。
+F1–F6 与 [design.md](design.md) §3（G1–G7）对应：G1↔F1、G2↔F2、G3↔F3、G4↔F4、G5↔F5、G6↔F1 附属、G7↔F6。后续专题调研以附录并入，并在 §1 总览、对应章节与 §6 登记。
 
 ---
 
 ## 6. 参照项目按功能规划分类
 
-> 正向映射（功能 → 参照）以 [design.md](design.md) §2 / §3 为准；本节是**反向索引**。标「主」= 实现时优先对照；「对照 / 反例」= 取舍参考或明确不采纳。旧 V3 阶段轴见 §7；当前 UI 阶段轴见 [ROADMAP](../ROADMAP.md)。
+> 正向映射以 [design.md](design.md) §2 / §3 为准；本节是**反向索引**。标「主」= 实现时优先对照；「对照 / 反例」= 取舍参考或明确不采纳。
 
 ### 6.1 按规划轴
 
@@ -221,26 +221,6 @@ F1–F6 与 [design.md](design.md) §3 已确认扩展功能族（G1–G7）的�
 | gpui-component | C | R8 组件库 / theme token / VirtualList 主参照（Apache-2.0，可借鉴实现） |
 | Zed `ui`/`theme` | C | R8 组件 API 形状与 token 组织对照（GPL-3.0：只参形状不抄代码） |
 | sandbox-runtime（srt） | C | R7 沙箱策略语义与 egress 架构主参照（写 allow-only / 读挖洞 / 域名白名单 + 双代理） |
-
----
-
-## 7. 历史 V3 阶段参照指引（R0–R9）
-
-> 本节是 **2026-08-18** 的旧 V3 调研快照，不再与当前 ROADMAP 阶段一一对应。当前外部行为与测试方法以 [GUI 设计](gui-design.md) 和 [ROADMAP](../ROADMAP.md) 为准；以下内容只供历史选型考证。
-
-### 7.1 阶段 → 参照映射
-
-| 阶段 | 主参照 | 对照 / 反例 | 关键参照点 |
-| --- | --- | --- | --- |
-| **旧 R8** GUI 组件化与 Desktop 收口 | [gpui-component](https://github.com/longbridge/gpui-component) **v0.5.1 tag**（Apache-2.0；该版依赖 crates.io gpui ^0.2.2 与本仓 ADR-035 锁定一致，主干已改跟 Zed git 主干，勿参主干） | Zed [`crates/ui`](https://github.com/zed-industries/zed/tree/main/crates/ui)/`crates/theme`（**GPL-3.0：只参 API 形状不抄代码**）；Codex Desktop / OpenCode Desktop 壳形态（既有 S7 参照） | gpui-component：60+ 组件、`ThemeColor` 语义 token、`VirtualList` 与 Zed `ButtonLike`/`ContextMenu` 只作历史组件组织参照 |
-| **旧 R9** 一致性收口 | —（内部核对） | — | 后续收口过程已归档；当前状态只看 ROADMAP/history |
-
-### 7.2 使用纪律
-
-- **许可证红线**：GPL 系（Zed `ui`/`theme`）与无 LICENSE 仓库只参照 API 形状与机制思路，禁止复制代码；Apache-2.0 / MIT 系（codex-rs、gpui-component、srt）可借鉴实现但仍以自写为主，引入片段须记录出处。
-- **参照不改契约**：对照外部设计时，本仓冻结契约（[architecture.md](architecture.md) §3.2）优先；外部形状与冻结契约冲突的，走 ADR 而不是「顺手对齐」。
-- **快照时效**：本节结论为 2026-08-18 快照；后续任务开工时按 [../ROADMAP.md](../ROADMAP.md) §7.1 核查约定重验参照项目实态（版本、许可证、API 形状），漂移即回写本节。
-- **登记约定**：2026-08-18 随本节新入册 ACP、gpui-component、Zed `ui`/`theme`、sandbox-runtime 四项（§1 总览与 §6.2 已同步）；R8 任务书引用的「Zed ui 与 gpui-component API 形状」自此在本手册有落点。**2026-08-21**：Codex 主入口改为官方仓 [openai/codex](https://github.com/openai/codex)（此前 §1 只挂产品文档站）；附录 A §8 同步补行。后续 V3 专项调研继续按 §5 约定登记。
 
 ---
 
@@ -499,7 +479,7 @@ V1 已有大量同构资产（详见 V1 归档 [provider-control-plane](../../Pa
 
 ## 附录 B 分功能方案 F1–F6（原 research/multi-account-quota-proposals.md）
 
-> 状态：**已确认**（2026-08-14 用户按推荐通过全部方案 F1–F6，决策原则：**减少实现复杂度、优先缓存命中**）。**2026-08-25 并入本手册**：每项选定方案与理由完整保留，对比过程压缩；原文全文见 git 历史 `docs/research/multi-account-quota-proposals.md`。决策记录见 [附录 C](#附录-c-决策记录-d1d8-与并入约定原-researchmulti-account-quota-plan-mergemd)；外部依据见 [附录 A](#附录-a-多账户配额缓存机制调研原-researchmulti-account-quota-referencemd)（下文引用记作「A §N」）+ Pawork V1 既有资产（`provider-control` 13.5k 行、`quota-service` 核心约 6k 行、`usage-ledger`、orchestration budget-gate，对照见 A §7）。文中 S0–S13 阶段编号为撰写时点 V2 规划语境（历史）；转正落点按 [产品候选](spec/backlog.md) 重新登记（见附录 C §4）。
+> 状态：**已确认**（2026-08-14 用户按推荐通过全部方案 F1–F6，决策原则：**减少实现复杂度、优先缓存命中**）。**2026-08-25 并入本手册**：每项选定方案与理由完整保留，对比过程压缩；原文全文见 git 历史 `docs/research/multi-account-quota-proposals.md`。决策记录见 [附录 C](#附录-c-决策记录-d1d8-与并入约定原-researchmulti-account-quota-plan-mergemd)；外部依据见 [附录 A](#附录-a-多账户配额缓存机制调研原-researchmulti-account-quota-referencemd)（下文引用记作「A §N」）+ Pawork V1 既有资产（`provider-control` 13.5k 行、`quota-service` 核心约 6k 行、`usage-ledger`、orchestration budget-gate，对照见 A §7）。文中 S0–S13 阶段编号为撰写时点 V2 规划语境（历史）；转正落点按 [产品候选](spec/backlog.md) 重新登记。
 >
 > 全文适用的架构红线：Agent Engine 不按 Provider 名走特例（能力差异一律经 registry/capability 数据表达）；Secret 不落数据库、不入日志/事件流/仓库（账户凭证走 `pawork-auth` 的仓库外 `auth.json`，0600、原子写、损坏 fail-closed）；canonical domain 纯净（厂商字段不进 `pawork-domain`/`pawork-api` 核心类型）；所有路由/切换决策事件化、可持久化、可重放。
 
@@ -524,7 +504,7 @@ V1 已有大量同构资产（详见 V1 归档 [provider-control-plane](../../Pa
 
 **F1-B 内容**：
 1. **账户实体沿用 V1**：`ProviderAccount`（priority、weight、max concurrency、lifecycle：Active→CoolingDown→Active / BillingBlocked / Disabled）+ `CredentialMetadata`（仅 `secret_ref`、kind、expiry、refresh state）——契约已冻结（account-control schema v2），直接迁移。
-2. **新增凭证 kind：订阅 plan OAuth**（ChatGPT plan / Claude plan / Copilot 等，对应 [design.md](design.md) §4.5 候选 D8）：refresh token 入 Pawork auth 文件（`pawork-auth` 已有 OAuth PKCE/Device/refresh 全流程），凭证解析链沿用 auth 文件 → env fallback；多账户 secret_ref 命名规约 `<provider>/<account_id>`。
+2. **新增凭证 kind：订阅 plan OAuth**（ChatGPT plan / Claude plan / Copilot 等，对应 [产品候选](spec/backlog.md) 的订阅登录项）：refresh token 入 Pawork auth 文件（`pawork-auth` 已有 OAuth PKCE/Device/refresh 全流程），凭证解析链沿用 auth 文件 → env fallback；多账户 secret_ref 命名规约 `<provider>/<account_id>`。
 3. **CLI 用户面**：`pawork accounts list/add/remove/enable/disable`（与 `pawork usage` 同批），`auth set-key` 扩展 `--account` 维度。
 
 **选定理由**：词表与状态机已是 V1 冻结资产（A §7 对照表），激活成本远低于新造；auth 文件已有 0600、原子写、损坏 fail-closed、掩码展示与日志脱敏基线；plan OAuth 是两条真实测试通道（GLM Coding Plan、OpenCode Go）之后最现实的账户形态。
@@ -540,7 +520,7 @@ V1 已有大量同构资产（详见 V1 归档 [provider-control-plane](../../Pa
 **选项与选定（F2-A+B 组合）**：
 - **F2-A（基线，选定）**：LocalLedger 派生——V1 `usage-ledger`（dedup_key 幂等）+ `LedgerQuotaAdapter` 按 Rolling5h/Weekly/Monthly 滚动派生 `Derived` 快照；orchestration budget-gate 消费投影。零网络请求、零 ToS 面，但只见自己消耗。
 - **F2-B（叠加，选定）**：**被动配额信号捕获**——Provider adapter 在正常请求的响应头/错误体中捕获配额信息（Anthropic `anthropic-ratelimit-*`、OpenAI `x-ratelimit-*` 与 plan 窗口字段、`Retry-After`、`usage_limit_reached` 类错误体），归一为 `QuotaSnapshot`（confidence 按来源定 `Exact`/`Derived`）写入 quota 缓存与账户健康状态；不新增任何请求；归一化放 provider adapter（厂商差异不进 core，符合红线）。
-- **F2-C / F2-D（保持冻结）**：六厂商远端适配器 + `RefreshScheduler`（约 8k 行主动轮询）与 WebScrape 兜底——维持冻结候审不变（激活条件见 [history.md](history.md) §1.6 冻结候审清单；原 v1-migration-reference.md §4.4 见 git 历史），不因本批候选自动解冻。
+- **F2-C / F2-D（保持冻结）**：六厂商远端适配器 + `RefreshScheduler`（约 8k 行主动轮询）与 WebScrape 兜底——维持冻结候审不变（激活条件见 git 历史中的冻结候审清单），不因本批候选自动解冻。
 
 **预算执行规则沿用 V1**：仅 fresh `Exact` 且明确耗尽的信号可触发硬停止；`Derived`/`Scraped`/stale 只产软告警；budget-gate 按窗口余量为子 Agent 分配预算（联动 F4）。
 
@@ -595,7 +575,7 @@ F5-C（网关式响应缓存/语义缓存）不属于本域——那是输出缓
 
 **选定理由**：这是唯一「V1 没有对应资产」的净新增，但外部实践已高度收敛（A §5.2 四家客户端做法一致到细节），可低风险抄收敛解；分层设计保住两条红线（canonical 纯净、engine 零厂商分支）。
 
-**契约影响与开放问题**：`CanonicalModelRequest`/`ModelResponseSummary` 字段新增为**附加式**，serde 向后兼容 + golden 先行（[architecture.md](architecture.md) §3.2 原则）；分阶段：契约占位 → context 分段产出 → adapter 映射与用量入账全量（见 B §7）。开放问题——GLM Coding Plan 套餐不参与缓存计费（A §5.1），计价表需按「计费模式」区分套餐/按量；OpenAI `prompt_cache_key` 每键 ~15 rpm 限制在高并发编排下的分片策略（子 Agent 家族共享 key 时，参照 A §5.5 Codex 命中率 62%→9.6% 反例）。
+**契约影响与开放问题**：`CanonicalModelRequest`/`ModelResponseSummary` 字段新增为**附加式**，serde 向后兼容 + golden 先行（[architecture.md](architecture.md) §3.2 原则）；分阶段：契约占位 → context 分段产出 → adapter 映射与用量入账全量。开放问题——GLM Coding Plan 套餐不参与缓存计费（A §5.1），计价表需按「计费模式」区分套餐/按量；OpenAI `prompt_cache_key` 每键 ~15 rpm 限制在高并发编排下的分片策略（子 Agent 家族共享 key 时，参照 A §5.5 Codex 命中率 62%→9.6% 反例）。
 
 ### B F6 对外账户池网关模式（决策项）
 
@@ -605,19 +585,6 @@ F5-C（网关式响应缓存/语义缓存）不属于本域——那是输出缓
 - F6-B（长期候选，P3）：以 channels 扩展 feature 评估——V1 `client-claude-gateway` / `client-codex-app-server`（14.4k 行 channels 资产）已有「外部客户端协议 → Pawork」翻译层，反向暴露「模型代理端点」是其邻接能力；若未来有真实需求（如团队共享账户池），按 [产品候选](spec/backlog.md) 流程评估。
 - F6-C（不做）：独立网关 app——偏离产品定位（Coding Agent 而非 API 网关），且订阅账户转售式代理的 ToS 风险最重（A §6 第 7 条）。
 
-### B §7 分阶段落地图（确认时点的 V2 规划语境，历史对照）
-
-| 阶段 | 并入内容 | 涉及包 |
-| --- | --- | --- |
-| S2 | F5-B-1 canonical 缓存注解占位（契约激活即完整形状，字段暂闲置） | api/provider-core（契约） |
-| S5 | F5-B-1 context 前缀分段产出；缓存用量并入 token 统计路径 | engine、provider-core、session |
-| S6 | F1-B-2 plan 凭证 kind 铺垫 + auth 文件多凭证命名；F5-B-2/3 adapter 缓存映射、registry 能力表、用量入账 | providers、auth、provider-core、config |
-| S9 | G6 账户/端点导入源（Claude/Codex/opencodex/cc-switch/CLIProxyAPI/Codex Router 布局）；F4 Agent Profile 绑定字段随 profiles 契约定型 | compat、resources |
-| S11 | F1-B 账户层激活与 CLI；F2-A+B 额度感知；F3-B 亲和 + 再平衡 + 配额余量策略；F4-A+B 子 Agent 绑定与预算 | provider-control、quota、control-plane、orchestration、cli |
-| 冻结不变 | quota 六厂商远端适配器 + WebScrape（F2-C/D） | — |
-| 明确不做 | 请求级默认轮换（F3-C）、in-band 子代理标签（F4-C）、身份伪装/identity-confuse、响应缓存（F5-C）、独立网关 app（F6-C） | — |
-
-与 [design.md](design.md) §3 已确认扩展功能族的对应：G1↔F1、G2↔F2、G3↔F3、G4↔F4、G5↔F5、G6↔F1 附属、G7↔F6。
 
 ### B §8 决策清单
 
@@ -643,7 +610,7 @@ F5-C（网关式响应缓存/语义缓存）不属于本域——那是输出缓
 
 #### C §1.2 开发期测试策略：少测试、无门禁
 
-- 开发期**尽量少测试**：每阶段只保留**关键模块级测试**（能证明该阶段核心行为的最小集合）；不设阶段全量门禁（与 V1 时期历史原则一致，原 v1-migration-reference.md §6 见 git 历史）。未来若决定发布再另立任务。
+- 开发期**尽量少测试**：每阶段只保留**关键模块级测试**（能证明该阶段核心行为的最小集合）；不设阶段全量门禁。未来若决定发布再另立任务。
 - 并入 plan 的任务执行时，按此原则**核减**各阶段计划中已写入的非关键测试项：只删不加，保留冒烟、关键路径与契约 golden。
 
 #### C §1.3 缓存命中率目标与真实命中测试（95 / 97 / 99）
@@ -670,7 +637,7 @@ F5-C（网关式响应缓存/语义缓存）不属于本域——那是输出缓
 | D3 | F3-B 会话-账户亲和默认开 + 「配额余量优先」策略 | ✅ 已确认（2026-08-14 按推荐） | 作为多账户场景默认行为（直接服务「优先缓存命中」原则）；效果与前后差异见 C §3.1 |
 | D4 | F5-B canonical 缓存契约扩展（附加式字段） | ✅ 已确认（2026-08-14 按推荐） | 契约激活时字段一次就位，golden 先行；差异见 C §3.2 |
 | D5 | F6 网关形态 | ✅ 已确认（F6-A） | 不内建独立网关：能力以进程内库实现；不兼容供应商处理见 C §3.3 |
-| D6 | 并入 plan 的方式 | ✅ 已确认 | 由后续独立任务执行，C §4 为其任务书（落点已随 V2 收官失效，见该节） |
+| D6 | 并入后续任务的方式 | ✅ 已确认 | 由后续独立任务执行；落点按 [产品候选](spec/backlog.md) 登记 |
 | D7 | 开发期测试策略：少测试、无门禁 | ✅ 已确认（2026-08-14） | 见 C §1.2；并入 plan 时核减非关键测试项 |
 | D8 | 缓存命中率目标 95/97/99 与真实命中测试 | ✅ 已确认（2026-08-14） | 见 C §1.3；对话场景起步，多账户激活后补全场景，99% 目标保留给未来发布验证任务 |
 
@@ -716,7 +683,3 @@ F5-C（网关式响应缓存/语义缓存）不属于本域——那是输出缓
 1. **协议形态不兼容**（Anthropic Messages / OpenAI Chat Completions / OpenAI Responses / Gemini 四形态）：每形态一个 adapter 做 canonical ↔ 厂商翻译；新增 OpenAI 兼容形态供应商 = 填配置（base_url + 模型表），全新协议形态才需新写 adapter，核心不动。
 2. **能力不兼容**（不支持工具 / 图片 / 缓存 / thinking / 结构化输出）：model registry 能力表声明 + Engine 查表降级（thinking → 标签文本、图片 → 占位、缓存注解 → 忽略、工具 → 禁用并提示）；红线禁止按厂商名写特例分支。Pi 的 compat 矩阵为成熟先例（附录 A §2.2）。
 3. **完全接不进**（无 API、OAuth 被厂商封锁如 Claude plan）：不硬接、不做身份伪装（UA 伪装 / identity-confuse 均排除）；用户自愿时把外部网关（opencodex、Codex Router 等）当一个 openai-compatible 上游接入，风险外置。**注意**：外部网关与 Pawork 双层账户池并存时，同一 provider 的轮换只在一层启用，否则双层轮换互相毁缓存。
-
-### C §4 并入计划任务书（历史，落点已失效）
-
-原 §4 为「把 F/G 方案并入 `plan/S*.md`」的任务书：前置条件 D1–D8 已于 2026-08-14 全部确认。V3 更新（2026-08-18）：所列落点文件 `plan/S*.md` 已随 V2 收官删除，且 R0 已归档 account-control-v1 装配面（原 plan/R0 任务书 D2）；本节保留为**方案内容清单**（F/G/D 决议仍有效）——多账户任务转正时按 [产品候选](spec/backlog.md) 重新登记落点（V3 布局下另立任务书），方案 → 阶段映射见 [附录 B](#附录-b-分功能方案-f1f6原-researchmulti-account-quota-proposalsmd) §7 落地图（历史对照）。执行约束沿用 C §1 凭证约定；明确不做项沿用 B §7（请求级默认轮换、in-band 子代理标签、身份伪装、响应缓存、独立网关 app）；99% release 目标保留为未来发布任务输入。原逐文件写入内容清单见 git 历史。

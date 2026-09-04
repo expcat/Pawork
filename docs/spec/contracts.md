@@ -78,7 +78,7 @@
 5. 运行该契约的定向测试；真实客户端/旧库升级/人工 UI 证据按风险补齐。
 6. 同批更新 `docs/architecture.md`、本文件、对应包级 Spec（`docs/spec/crates/`）、ROADMAP/任务书和生成 schema。
 
-当前 Settings 活动线不授权借 UI 实现静默演进 schema/wire。GUI auth status、非重放 Secret 写入、OAuth 进度与默认项 mutation 已经 [ADR-046](../adr/ADR-046-settings-auth-wire-and-secret-transit.md)（Accepted）拍板，按 D1–D6 实施；此外的新演进仍按本节流程与 ADR 闸门单独处理。
+当前 Settings 活动线不授权借 UI 实现静默演进 schema/wire。GUI auth status、非重放 Secret 写入、OAuth 进度与默认项 mutation 已经 ADR-046（Accepted）拍板，按 D1–D6 实施；此外的新演进仍按本节流程与 ADR 闸门单独处理。
 
 ## 6. headless `--json` 与正式 headless 协议映射
 

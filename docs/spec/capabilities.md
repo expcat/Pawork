@@ -79,7 +79,7 @@
 | Changes | Files/Summary/DiffView/ActivityPopover | 只读生产入口已实现；写操作仍是 ADR 候选。 |
 | Terminal | 创建、输入、resize、Stop/Close、输出 | 生产入口已实现；真 PTY 主路径已验收。 |
 | Resources | MCP server/tool 状态只读列表 | 生产入口已实现；无 host query 的分区不展示。 |
-| Settings | 供应商连接、认证、模型目录/default、通用、权限/MCP/终端、外观、高级连接诊断与关于 | SET-1～SET-6g 已实现并通过定向门禁；About 按 [ADR-051](../adr/ADR-051-about-settings-host-data-dir.md) 动态启用，真实账号/完整真窗口/人工验收待后续。 |
+| Settings | 供应商连接、认证、模型目录/default、通用、权限/MCP/终端、外观、高级连接诊断与关于 | SET-1～SET-6g 已实现并通过定向门禁；About 按 ADR-051 动态启用，真实账号/完整真窗口/人工验收待后续。 |
 
 ## 5. 不可宣称为已交付
 

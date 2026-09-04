@@ -10,8 +10,7 @@ description = "Pawork 的纯领域类型与跨 crate 基础语义"
 [features]
 default = []
 typegen = ["dep:ts-rs"]
-# F41 预留语义：扩展生态整族（WASM 插件 / 市场 / Hooks / LSP）沿 V2 决议移出排期；
-# 见 ROADMAP.md §3.3。空数组仅作复活锚点，随 R1 api→domain 合入随迁（原 pawork-api）。
+# 扩展生态整族（WASM 插件 / 市场 / Hooks / LSP）不在主干；空数组仅作复活锚点。
 plugin = []
 
 [dependencies]

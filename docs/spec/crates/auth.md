@@ -147,4 +147,4 @@
 - `decode_jwt_payload` 不验签，只用于提取非机密路由 claim，不构成信任边界。
 - 回调服务器一次性、单连接、固定 200 文本响应；不支持 https redirect（上游 allow-list 均为本机 http）。`CallbackServer::start` 需要已存在的 tokio runtime（`Handle::try_current`），纯同步上下文无法启动。
 - 时间口径统一为 Unix 毫秒（`now_unix_millis`），到期判断依赖本机时钟；`refresh_skew` / 30s grace 用于吸收时钟偏差与网络延迟。
-- 跨包链路（装配、CLI 交互）见 [../flows.md](../flows.md)；任务状态见 [../../../ROADMAP.md](../../../ROADMAP.md)。
+- 跨包链路（装配、CLI 交互）见 [../flows.md](../flows.md)；任务状态见 [AGENTS.md](../../../AGENTS.md)。

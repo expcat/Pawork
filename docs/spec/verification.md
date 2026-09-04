@@ -1,6 +1,6 @@
 # 验证与证据规格
 
-> 基线日期：2026-08-31。本文定义如何证明 Spec。旧 R/Wave 结论只作历史线索；当前工作区与 [ROADMAP](../../ROADMAP.md) 优先。
+> 基线日期：2026-08-31。本文定义如何证明 Spec。旧 R/Wave 结论只作历史线索；当前工作区与 [AGENTS.md](../../AGENTS.md) 优先。
 
 ## 1. 四个独立结论
 
@@ -50,7 +50,7 @@ E3/E4 证据必须包含日期、环境/版本、输入范围、实际结果和�
 | 持久化与重放 | envelope、SQLite 迁移、append-only、branch lineage、PWB1、checkpoint、export/import、projection、CommandLedger 崩溃/重试 |
 | 协议与解析 | GUI frame、版本协商、registry fail-closed、headless JSON、ACP、MCP、配置六层、usage dedup、外部格式解析 |
 
-普通任务只跑写入集的定向命令；触及上述面时，对应关键回归必须同批更新，不能推迟到全量门禁。当前默认命令和单 Cargo 进程纪律见 [ROADMAP.md](../../ROADMAP.md) §6–§7。
+普通任务只跑写入集的定向命令；触及上述面时，对应关键回归必须同批更新，不能推迟到全量门禁。当前默认命令和单 Cargo 进程纪律见 [AGENTS.md](../../AGENTS.md) §6–§7。
 
 ## 5. 当前验收缺口
 

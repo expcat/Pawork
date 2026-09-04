@@ -254,4 +254,4 @@ Cargo `[[test]]` 把 target 命名为 `acp_fixtures` / `acp_floor`（文件为 `
 - `service` 定义模板硬编码 `gui serve` 为服务入口；不支持的平台显式报错。macOS / Linux 的 `install --apply` 只写定义文件，激活需按提示手动执行或 `start --apply`。
 - `watch` / `doctor` 的握手探测需要 token 文件本机可读；`doctor` 报告 `handshake: failed: …` 而不中断其余检查。
 - 本包自身不安装 tracing subscriber：日志装配与全字段脱敏（`Redactor` / `RedactingFmtLayer`）由宿主二进制承载（见 [pawork.md](pawork.md)），本包只发 `tracing` 事件。
-- 状态回写与任务登记见 [../../../ROADMAP.md](../../../ROADMAP.md)；跨包时序图见 [../flows.md](../flows.md)；产品能力口径见 [../README.md](../README.md)。
+- 状态回写与任务登记见 [AGENTS.md](../../../AGENTS.md)；跨包时序图见 [../flows.md](../flows.md)；产品能力口径见 [../README.md](../README.md)。

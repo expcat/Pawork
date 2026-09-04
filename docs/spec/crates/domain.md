@@ -200,4 +200,4 @@
 - `ToolCapability::ExternalPlugin` / `PluginId` / feature `plugin` 均为 F41 生态预留，当前无运行时消费。
 - `client_session.rs` 只定义 trait 与记录形状，不含任何存储逻辑；两个实现分别在 protocol（内存）与 storage/session（SQLite）。
 - 源码注释中引用的 "26 帧 golden"（`degrade.rs`）是 R4 时点的历史计数，protocol 侧 golden 夹具现已扩至 32 个文件；以 `crates/protocol/tests/golden/` 实际内容为准。
-- 相关文档：[protocol.md](protocol.md) · [testkit.md](testkit.md) · [../README.md](../README.md) · [../../../ROADMAP.md](../../../ROADMAP.md)。
+- 相关文档：[protocol.md](protocol.md) · [testkit.md](testkit.md) · [../README.md](../README.md) · [AGENTS.md](../../../AGENTS.md)。

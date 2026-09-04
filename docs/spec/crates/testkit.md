@@ -86,4 +86,4 @@
 - `MockTool` 忽略 `ToolEventSink`（`_sink`）；需要测 `ToolStreamEvent` 流出时须自写工具替身。
 - 断言函数 panic 式失败（`assert!`），仅供测试上下文使用。
 - P15 引入的 capability / server_tool / citation / reasoning 断言辅助未迁入，需要时在使用方测试内自写。
-- 相关文档：[domain.md](domain.md) · [protocol.md](protocol.md) · [../README.md](../README.md) · [../../../ROADMAP.md](../../../ROADMAP.md)。
+- 相关文档：[domain.md](domain.md) · [protocol.md](protocol.md) · [../README.md](../README.md) · [AGENTS.md](../../../AGENTS.md)。

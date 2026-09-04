@@ -302,4 +302,4 @@ cargo test -p pawork-storage --offline --lib --tests --features compaction,check
 - sequence 经 SQLite `i64` 存储，越界防御为 `SequenceOverflow`；`archived`/`head_sequence` 等均带 `CHECK` 约束兜底。
 - fixtures 是检入的 JSONL 文本，golden 断言在 `cfg(test)` 中 `include_str!` 引用；改动必须走 §7 的重生成流程并人工 diff，禁止手改。
 - dev-dependencies 中 `proptest` 当前无用点（历史遗留声明）。
-- 阶段状态与后续演进（R7 沙箱对 blob 路径的收紧等）以 [../../../ROADMAP.md](../../../ROADMAP.md) 为准；产品可见能力口径见 [../README.md](../README.md)。
+- 阶段状态与后续演进（R7 沙箱对 blob 路径的收紧等）以 [AGENTS.md](../../../AGENTS.md) 为准；产品可见能力口径见 [../README.md](../README.md)。

@@ -181,4 +181,4 @@
 - Landlock 是纯 allow 模型：deny 路径与 allow 根重叠时后端直接拒绝该次执行（`Denied`），不会静默放行。
 - `max_output_bytes` 为 stdout+stderr 合计预算、8 KiB 块推送，截断点可能落在 UTF-8 字符中间（消费方需容忍半字符字节流）。
 - `attach_external` 在 Unix 仅接受进程组长；PTY 路径由 portable-pty 的 `setsid` 保证；`ProcessLimits` 参数仅 Windows 生效。
-- 相关文档：跨包执行链路 [../flows.md](../flows.md)；架构总览 [../../architecture.md](../../architecture.md)；布局与冻结契约 [../../design.md](../../design.md)；Spec 索引 [../README.md](../README.md)；R7 沙箱演进 [../../../ROADMAP.md](../../../ROADMAP.md)。
+- 相关文档：跨包执行链路 [../flows.md](../flows.md)；架构总览 [../../architecture.md](../../architecture.md)；布局与冻结契约 [../../design.md](../../design.md)；Spec 索引 [../README.md](../README.md)；R7 沙箱演进 [AGENTS.md](../../../AGENTS.md)。

@@ -9,7 +9,7 @@
 | Owner | Pawork maintainers |
 | 目标阶段 | Settings 活动线；不绑定发布版本 |
 | 最近更新 | 2026-09-03 |
-| 关联 | [ROADMAP](../../ROADMAP.md) · [SET-7 缺口](../../plan/settings.md) · [GUI 设计](../gui-design.md) · [ADR-046](../adr/ADR-046-settings-auth-wire-and-secret-transit.md)（Accepted） · [ADR-051](../adr/ADR-051-about-settings-host-data-dir.md)（Accepted） · SET-0～6g 过程见 [history.md](../history.md) |
+| 关联 | [GUI 设计](../gui-design.md) · [AGENTS.md](../../AGENTS.md) |
 
 ## 1. 问题、用户与目标
 
@@ -149,7 +149,7 @@ Settings 沿用参考设计的 1440×1024 深色语言和 8px 节奏，不另起
 - provider 行只显示名称、认证方法、连接状态、模型数/目录来源和操作菜单；不显示无权威来源的余额。
 - 添加流程用同一内容区内的 stepper/panel，不弹出第二窗口。
 
-导航顺序：模型与供应商 → 通用（SET-6a）→ 权限与审批（SET-6b）→ 工具与 MCP（SET-6c）→ 终端（SET-6d）→ 外观（SET-6e）→ 高级（SET-6f）→ 关于（SET-6g）。通用页承载 Global `proxy_url` 读写（ADR-047）；权限与审批页承载会话级 `approval_mode` / `workspace_trusted` 与 Global 默认只读值（ADR-048）；工具与 MCP 页复用 Host `mcp_list` 并提供 test/remove（ADR-049）；终端页承载 Global `terminal_settings` 全态写，只影响之后创建的终端（ADR-050）。外观页不经 Host：复用 Desktop 既有 `TextScale` 提供 100%/125%/150%，与 Cmd+=/Cmd+-/Cmd+0 共用唯一状态；字号仅当前 Desktop 会话生效，重启恢复 100%。当前主题仅深色，macOS Increase Contrast 跟随系统且只读说明；不提供 light/system/custom theme 假控件。高级页同样不新增 Host query：只读展示当前连接已有的 runtime ID、协商 API/capabilities、启动 endpoint、resume/ack；runtime ID 不称作配置 instance，断线清空握手摘要并复用既有 Reconnect。按 [ADR-051](../adr/ADR-051-about-settings-host-data-dir.md)，About 只在当前认证连接握手携带非空 `host_data_dir` 时显示，且只展示 Desktop build、实际协商 GUI API 与 Host data directory；缺字段、仅空白字段或断线时隐藏并从该页退回高级，不添加 updater/release/License 占位。
+导航顺序：模型与供应商 → 通用（SET-6a）→ 权限与审批（SET-6b）→ 工具与 MCP（SET-6c）→ 终端（SET-6d）→ 外观（SET-6e）→ 高级（SET-6f）→ 关于（SET-6g）。通用页承载 Global `proxy_url` 读写（ADR-047）；权限与审批页承载会话级 `approval_mode` / `workspace_trusted` 与 Global 默认只读值（ADR-048）；工具与 MCP 页复用 Host `mcp_list` 并提供 test/remove（ADR-049）；终端页承载 Global `terminal_settings` 全态写，只影响之后创建的终端（ADR-050）。外观页不经 Host：复用 Desktop 既有 `TextScale` 提供 100%/125%/150%，与 Cmd+=/Cmd+-/Cmd+0 共用唯一状态；字号仅当前 Desktop 会话生效，重启恢复 100%。当前主题仅深色，macOS Increase Contrast 跟随系统且只读说明；不提供 light/system/custom theme 假控件。高级页同样不新增 Host query：只读展示当前连接已有的 runtime ID、协商 API/capabilities、启动 endpoint、resume/ack；runtime ID 不称作配置 instance，断线清空握手摘要并复用既有 Reconnect。按 ADR-051，About 只在当前认证连接握手携带非空 `host_data_dir` 时显示，且只展示 Desktop build、实际协商 GUI API 与 Host data directory；缺字段、仅空白字段或断线时隐藏并从该页退回高级，不添加 updater/release/License 占位。
 
 ### 6.2 状态、键盘与可访问性
 
@@ -172,7 +172,7 @@ Settings 沿用参考设计的 1440×1024 深色语言和 8px 节奏，不另起
 
 | 切片 | 写入集 | 前置 | 完成条件 | 可并行性 |
 | --- | --- | --- | --- | --- |
-| SET-1 契约 | docs/adr、protocol、schemas、client/app contract tests | 本 Spec | ADR Accepted；Secret/状态/wire 最小形状与兼容策略锁定 | 串行 |
+| SET-1 契约 | protocol、schemas、client/app contract tests | 本 Spec | Secret/状态/wire 最小形状与兼容策略锁定 | 串行 |
 | SET-2 Host 门面 | auth、providers、workspace、app；对应包 Spec | SET-1 | descriptor、状态、凭证操作、默认项由 Host 单点提供 | 串行 |
 | SET-3 Settings 壳 | desktop；desktop 产品/包 Spec | SET-1 query 形状 | route、rail、返回、断线/空态、AX 接通 | 可与 SET-2 后半只读部分协调，默认串行 |
 | SET-4 Provider auth | providers、auth、app；对应包 Spec | SET-2 | 四家认证矩阵完成，xAI API key/Kimi 两种连接补齐 | 串行 |

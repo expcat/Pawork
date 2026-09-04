@@ -1,6 +1,6 @@
 # Desktop 产品与交互规格
 
-> 基线日期：2026-09-03。生产连接、主要组件链路与 macOS AX 语义基座已经存在；正式 Host/Desktop 的项目、对话、文件、Git Changes 与 Terminal 真实核心路径已通过，状态和后续顺序只看 [ROADMAP](../../ROADMAP.md)。
+> 基线日期：2026-09-03。生产连接、主要组件链路与 macOS AX 语义基座已经存在；正式 Host/Desktop 的项目、对话、文件、Git Changes 与 Terminal 真实核心路径已通过，状态和后续顺序只看 [AGENTS.md](../../AGENTS.md)。
 
 ## 1. 产品定位
 
@@ -96,13 +96,13 @@ flowchart LR
 - Changes 的 Files/Summary/DiffView/ActivityPopover 是只读投影；任何 stage/unstage/hunk 都需新增 protocol command、审批语义和 ADR，不得从 UI 直接调用 Git。
 - Resources 只消费 `mcp_list`；无 host query 的“已加载规则”不能伪造占位数据。
 - Settings 高级页只消费 Desktop 已有握手与连接本地事实；不显示 token/token path，不从 socket 推断 data directory/配置 instance，不 shell-out CLI，也不提供实例热切换。
-- Settings About 已按 [ADR-051](../adr/ADR-051-about-settings-host-data-dir.md) Accepted 落地：只在当前认证握手声明非空 Host data directory 后显示，原样呈现该路径；缺字段、仅空白字段或断线时隐藏并退回高级。路径不用于文件操作或 endpoint 反推。
+- Settings About 已按 ADR-051 Accepted 落地：只在当前认证握手声明非空 Host data directory 后显示，原样呈现该路径；缺字段、仅空白字段或断线时隐藏并退回高级。路径不用于文件操作或 endpoint 反推。
 - `@` 引用由 host `expand_at_refs` 解析并作为独立 Text part；Desktop 不自行读取任意文件。候选浮层需新增受控 file-index query。
 - Terminal 只发协议命令；Desktop 不持有本机 PTY 服务。当前使用 create/write/resize/close 与流式 output/exit；Stop/Close 和 live 终态均走 ADR-045 的真实 Host wire，不以写入 `exit` 或本地 kill 冒充。纯文本展示移除 ANSI/VT 控制序列，但不声称具备终端仿真；Policy 拒绝必须原样 fail-closed。
 
 ## 7. 当前验收合同
 
-当前执行入口只有 [ROADMAP](../../ROADMAP.md)。Settings 的专项行为与证据见 [settings.md](settings.md)。真实 Desktop 主路径至少覆盖：正式启动、添加真实项目、新建 Task、发送消息、文件写入与审批、Git Changes、Terminal 输入输出；不使用 fixture、seed、probe 或测试 profile 冒充通过。
+当前执行入口只有 [AGENTS.md](../../AGENTS.md)。Settings 的专项行为与证据见 [settings.md](settings.md)。真实 Desktop 主路径至少覆盖：正式启动、添加真实项目、新建 Task、发送消息、文件写入与审批、Git Changes、Terminal 输入输出；不使用 fixture、seed、probe 或测试 profile 冒充通过。
 
 边界口径：
 

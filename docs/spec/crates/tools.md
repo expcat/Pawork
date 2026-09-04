@@ -218,4 +218,4 @@
 - MCP：HTTP transport 不经进程沙箱（无本地进程，凭 URL 校验与 Secret 域约束）；`ManagedMcpClient` 无后台心跳，断连在下次请求才被发现（`ping()` 供宿主探活）；`auto_start` 仅配置位，启动编排在宿主。
 - `StdioTransportConfig` / `HttpTransportConfig` 位于私有 `mod transport`（类型 pub 但包外不可命名）——以其为参数的公开函数（如 `OAuthHttpConnector::new`）实际只能由 crate 内部装配，这是刻意的封装边界而非疏漏。
 - `list_directory` 的 `path` 不接受空串（`PathSafetyError::Empty` → InvalidInput），列 root 用 `"."`；`read_file` 对超过 4 MiB 的文件只读前 4 MiB 并标记 truncated，不报错。
-- 相关文档：[policy.md](policy.md)（裁决与路径内核）、[exec.md](exec.md)（执行原语）、[../flows.md](../flows.md)（跨包链路）、[../../architecture.md](../../architecture.md)、[../../design.md](../../design.md)、[../README.md](../README.md)、[../../../ROADMAP.md](../../../ROADMAP.md)。
+- 相关文档：[policy.md](policy.md)（裁决与路径内核）、[exec.md](exec.md)（执行原语）、[../flows.md](../flows.md)（跨包链路）、[../../architecture.md](../../architecture.md)、[../../design.md](../../design.md)、[../README.md](../README.md)、[AGENTS.md](../../../AGENTS.md)。
