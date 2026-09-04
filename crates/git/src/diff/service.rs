@@ -314,17 +314,27 @@ fn is_gitlink(header: &str) -> bool {
 /// 用 numstat 输出填充每个文件的 additions/deletions 与 binary 标记。
 fn merge_numstat(files: &mut [DiffFile], numstat: &str) {
     use std::collections::HashMap;
-    // numstat -z 的真实布局是逐行、行尾 NUL；按 \n 分割后逐行处理。
+    // `--numstat -z` 的普通记录是 `add\tdel\tpath\0`；rename/copy
+    // 记录把 path 留空，随后依次给出 old/new 两个 NUL 字段。
     let mut stats: HashMap<String, (u32, u32, bool)> = HashMap::new();
-    for raw in numstat.split('\n') {
-        let raw = raw.trim_end_matches('\0');
+    let mut records = numstat.split('\0');
+    while let Some(raw) = records.next() {
         if raw.is_empty() {
             continue;
         }
         let mut parts = raw.splitn(3, '\t');
         let added = parts.next().unwrap_or("0");
         let del = parts.next().unwrap_or("0");
-        let path = parts.next().unwrap_or("");
+        let inline_path = parts.next().unwrap_or("");
+        let path = if inline_path.is_empty() {
+            let _previous_path = records.next().unwrap_or("");
+            records.next().unwrap_or("")
+        } else {
+            inline_path
+        };
+        if path.is_empty() {
+            continue;
+        }
         let binary = added == "-" && del == "-";
         let a: u32 = added.parse().unwrap_or(0);
         let d: u32 = del.parse().unwrap_or(0);
@@ -390,20 +400,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn diff_modified_file_has_hunks_and_counts() {
+    async fn diff_multiple_modified_files_have_hunks_and_counts() {
         let (_dir, repo) = make_repo();
+        std::fs::write(repo.join("g.txt"), "x\ny\n").expect("write second file");
+        run_git(&repo, &["add", "g.txt"]);
+        run_git(&repo, &["commit", "-q", "-m", "second file"]);
         std::fs::write(repo.join("f.txt"), "a\nB\nc\nd\n").expect("write");
+        std::fs::write(repo.join("g.txt"), "x\nY\n").expect("edit second file");
         let svc = DiffService::new(GitRunner::new(), &repo);
         let files = svc
             .diff(&opts_vs_head(), CancellationToken::new())
             .await
             .expect("diff");
-        assert_eq!(files.len(), 1);
-        let f = &files[0];
+        assert_eq!(files.len(), 2);
+        let f = files
+            .iter()
+            .find(|file| file.path == "f.txt")
+            .expect("f.txt");
         assert_eq!(f.status, FileStatus::Modified);
         assert_eq!(f.additions, 2);
         assert_eq!(f.deletions, 1);
         assert!(!f.hunks.is_empty());
+        let g = files
+            .iter()
+            .find(|file| file.path == "g.txt")
+            .expect("g.txt");
+        assert_eq!((g.additions, g.deletions), (1, 1));
+        assert!(!g.hunks.is_empty());
         // 验证 hunk 内出现新增 +B / +d 与删除 -b。
         let all_text: Vec<&str> = f
             .hunks

@@ -23,7 +23,7 @@
 | `src/diff/mod.rs` | ~23 | diff 子模块声明与 re-export（`hunk_stage` / `model` / `parser` / `service`）；`FileStatus` 来自 `status` |
 | `src/diff/model.rs` | ~70 | 结构化 diff 数据模型：`DiffFile`（path / previous_path / status:`FileStatus` / staged / binary / additions / deletions / hunks，`changed_lines()`）、`DiffHunk`、`DiffLine`、`HunkId`（全局自增 u64）、`LineKind`（Context / Addition / Deletion） |
 | `src/diff/parser.rs` | ~270 | unified diff 文本状态机解析：`parse_unified` / `parse_unified_with_start`（延续 HunkId 起点）；`@@` 头解析、`\ No newline at end of file` 标记按上一行类型作用到旧侧/新侧（Context 两侧一致）；容忍任意输入不 panic |
-| `src/diff/service.rs` | ~650 | `DiffService`：`diff_summary`（`--raw -z` + `--numstat -z` 合并，工作区视角补 `ls-files --others --exclude-standard -z` 未跟踪文件）、`diff`（逐文件 `-U<n> --no-color -- <path>` 解析 hunks）；`DiffOptions` / `paginate` / `DiffPage`；`--raw` 头解析（状态字母 M/A/D/T/U、R/C 带相似度、mode 160000 gitlink） |
+| `src/diff/service.rs` | ~650 | `DiffService`：`diff_summary`（`--raw -z` + `--numstat -z` 按 NUL 记录合并，含多文件与 rename/copy old/new 双路径，工作区视角补 `ls-files --others --exclude-standard -z` 未跟踪文件）、`diff`（逐文件 `-U<n> --no-color -- <path>` 解析 hunks）；`DiffOptions` / `paginate` / `DiffPage`；`--raw` 头解析（状态字母 M/A/D/T/U、R/C 带相似度、mode 160000 gitlink） |
 | `src/diff/hunk_stage.rs` | ~715 | `HunkStageService`：`stage_hunks` / `unstage_hunks` / `stage_lines` / `unstage_lines`（底层 `git apply --cached [-R]`）；纯函数 `build_hunk_patch`（重建 `diff --git` 头 + 选中 hunks）与 `build_line_patch`（按 bool 选择行、重算 hunk 行数） |
 | `tests/parser_contract.rs` | ~65 | parser golden 契约 + proptest（任意输入不 panic）；夹具在 `tests/golden/*.diff` |
 
@@ -81,7 +81,7 @@
 ## 4. 核心行为与数据流
 
 1. **一次 git 调用**：domain `CancellationToken` 桥接为 exec 令牌（已取消立即 cancel，否则 spawn 后台等待任务、调用结束 abort）→ 构造 `CommandSpec`（cwd 经 `dunce::simplified` 去 Windows verbatim 前缀、timeout=30s、max_output_bytes=16MB、`env_clear=false`）→ `ProcessRuntime::run` → 归一：`timed_out`→`Timeout`；`killed` 且无退出码→`Cancelled`；退出码 0→Ok；其余→`GitFailed{code, stderr}`。
-2. **一次结构化 diff**：`base_args`（`diff` + 可选 range / `--cached` / `-M`）→ `--raw -z` 解析文件清单（`:<oldmode> <newmode> <sha> <sha> <STATUS>\0<path>\0[<origpath>\0]`；R/C 带相似度尾数、mode 160000 标 gitlink）→ `--numstat -z` 合并行数与 binary 标记 → 非 staged 视角追加 `ls-files --others --exclude-standard -z` 未跟踪文件 → （`diff` 入口）逐文件 `git diff -U<n> --no-color -- <path>`，`parse_unified_with_start` 解析 hunks 并延续全局 `HunkId`。binary / gitlink / untracked 不跑文本 hunk（避免把 submodule 工作树当内容解析）。
+2. **一次结构化 diff**：`base_args`（`diff` + 可选 range / `--cached` / `-M`）→ `--raw -z` 解析文件清单（`:<oldmode> <newmode> <sha> <sha> <STATUS>\0<path>\0[<origpath>\0]`；R/C 带相似度尾数、mode 160000 标 gitlink）→ `--numstat -z` 按 NUL 记录合并行数与 binary 标记（普通记录内联 path；R/C 空 path 后消费 old/new 两字段并匹配 new path）→ 非 staged 视角追加 `ls-files --others --exclude-standard -z` 未跟踪文件 → （`diff` 入口）逐文件 `git diff -U<n> --no-color -- <path>`，`parse_unified_with_start` 解析 hunks 并延续全局 `HunkId`。binary / gitlink / untracked 不跑文本 hunk（避免把 submodule 工作树当内容解析）。
 3. **hunk/行级暂存**：调用方从 `DiffService` 拿 `DiffFile` → `build_hunk_patch`（选中 hunks）或 `build_line_patch`（`selection: &[bool]` 按行保留：未选 Added 行剔除、未选 Removed 行降级为 Context，并重算两侧行数）→ `StageService::apply_patch_to_index`（临时文件 + `git apply --cached [-R]`）→ index 期间被改动则 `PatchDoesNotApply`，调用方应重新 diff 后重试。
 4. **status 解析**：`--porcelain=v1 -z` 按 `\0` 分段；每条 `XY PATH`，X→`index_status`、Y→`worktree_status`；`??` 置 `untracked=true`；X 为 R/C 时下一段为原路径存入 `previous_path`。
 5. **HEAD 判定**：`symbolic-ref --short HEAD` 三分支——成功且非空→`Branch`；`GitFailed` 且 stderr 含 `detached`→`rev-parse HEAD` 取 SHA→`Detached`；其余失败→`Unborn`（新仓库无提交）。
@@ -112,7 +112,7 @@
   - `status.rs`：porcelain 双列状态、rename 原路径、untracked 过滤。
   - `stage.rs`：stage / unstage / discard 真实仓库行为、`--force` 文件名经 `--` 安全 stage、`PatchDoesNotApply` 归一。
   - `worktree.rs`：add / list / remove 生命周期、脏 worktree 无 force 删除失败且数据保留、option 形路径与 branch 拒绝。
-  - `diff/service.rs` / `diff/hunk_stage.rs`：diff 清单与 hunks、分页、hunk/行级暂存端到端与失败路径。
+  - `diff/service.rs` / `diff/hunk_stage.rs`：diff 清单与 hunks、多文件 NUL numstat 计数、分页、hunk/行级暂存端到端与失败路径。
 - `tests/parser_contract.rs`：golden 契约（`tests/golden/basic_hunk.diff` / `no_newline.diff` / `context_no_newline.diff`）+ proptest 任意输入不 panic。
 - 默认验证命令：`cargo test -p pawork-git --offline --lib --tests`（需要系统 git 可用）。
 

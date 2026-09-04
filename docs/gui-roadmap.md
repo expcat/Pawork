@@ -1,6 +1,6 @@
 # Pawork Desktop UI 优化 Roadmap
 
-> 状态：**源码已实现、自动门禁已通过，三张阶段图的真窗口视觉签字已通过**（P0–P2；完整 Human acceptance 仍受真实 Provider 成功 streaming / tool / Review 串联与系统 IME composing 人工签字限制。Increase Contrast 功能与 VoiceOver 验收门禁已于 2026-09-04 按用户要求移除）。
+> 状态：**P0 与 P1 已完成源码、自动门禁及真窗口 Human acceptance**（真实 `opencode-go / glm-5.3-flash` streaming / tool / Review、Approval 与系统 IME composing 均已通过；P2 保持既有源码、自动门禁和阶段图视觉签字记录。Increase Contrast 功能与 VoiceOver 验收门禁已于 2026-09-04 按用户要求移除）。
 > 基线日期：2026-09-04。目标设计见 [UI / Design 全面优化方案](gui-optimization.md)，现行行为见 [GUI 设计](gui-design.md)、[Desktop Spec](spec/desktop.md) 与源码。
 > 本 Roadmap 只拆分已接受的 UI 优化，不代表生产路径、自动门禁或人工验收已经完成。
 
@@ -202,7 +202,7 @@ flowchart LR
 - 已实现：Composer 改用单一 raised surface、1px subtle border 与 8px radius；model picker 只显示 display name，provider / raw id 留在 tooltip、菜单与 AX value。
 - 已实现：model menu 按 provider 分组，组内保持目录顺序；鼠标、方向键 / Enter 与 AX 使用同一扁平索引。Composer 菜单固定优先向上锚定，通用 `anchored` 继续处理窗口边界，超长行截断、超高菜单内部滚动。
 - 自动门禁：既有 InputArea 测试 3/3（含交错 provider 的分组 / 选中索引回归）；`git diff --check` 通过。没有新增测试数量、依赖、搜索服务或模型来源。
-- 真窗口视觉 / 键盘验收：PASSED（最终补证见 P0-5）；系统 IME 真实 composing：PENDING。
+- 真窗口视觉 / 键盘验收：PASSED（最终补证见 P0-5）；系统 IME 真实 composing 的最终补证同见 P0-5。
 
 ### P0-5：阶段收口
 
@@ -217,7 +217,8 @@ flowchart LR
 - 自动门禁：`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`，187/187；`./scripts/pawork-desktop.sh build` 成功；`git diff --check` 通过。门禁首次暴露 2 处只反映旧字号 / 间距的 AX 几何期望，按同源公式修正后定向测试与完整 Desktop bin 门禁均通过。
 - 测试 Host：按用户指定以 `opencode-go / glm-5.3-flash` 启动真实 `pawork gui serve`；不修改持久默认配置。当前环境无法连接 OpenCode，模型调用只能验到真实 Running → failed 闭环，不能宣称成功响应。
 - 真窗口复验：正式 Host 与刚编译的 Desktop 已启动，但 macOS 锁屏使窗口读取 / 操作被系统拒绝；1440×1024、1080×720 与键盘主路径仍为 PENDING，不能由自动门禁替代。
-- 最终补证（2026-09-04，当前源码构建）：与 P0 阶段图并排核对了 1440×1024 宽窗和约 1080×720 最小窗；三栏 / Inspector 自动折叠、唯一空态主动作、TaskRail direct toggle、Composer 与 scope / model / New Task 浮层均无裁切。Timeline / Projects 经 mouse、Return、Space 同源切换并保持焦点；方向键与 Escape 的菜单焦点恢复通过。P0 视觉与上述键盘主路径签字 PASSED；系统 IME 真实 composing 仍单列 PENDING。
+- 最终补证（2026-09-04，当前源码构建）：与 P0 阶段图并排核对了 1440×1024 宽窗和约 1080×720 最小窗；三栏 / Inspector 自动折叠、唯一空态主动作、TaskRail direct toggle、Composer 与 scope / model / New Task 浮层均无裁切。Timeline / Projects 经 mouse、Return、Space 同源切换并保持焦点；方向键与 Escape 的菜单焦点恢复通过。
+- 系统 IME 补证（2026-09-05）：真窗口切换到系统拼音输入源后，以真实 key event 在 Composer 形成 `ce'shi` 组合串；首次 Return 只确认组合态，输入值变为 `ceshi`，Timeline 未新增用户消息或 Run，Status 仍为 idle。随后清空 Composer 并恢复进入验证前的输入源；未发送任何验证文本。P0 Human acceptance：PASSED。
 
 ---
 
@@ -235,7 +236,7 @@ flowchart LR
 执行记录（2026-09-04）：
 
 - 已实现：复用既有 `timeline_rows()` 的 `run_id` / entry 顺序，不改 reducer、wire、sequence 或 replay。User、Pawork、连续 tool group、terminal summary 保持同一阅读主线；terminal summary 吸收同 Run 的重复 phase，live 与 replay 都由同一投影结构渲染。
-- 自动门禁：Timeline projection / geometry 与完整 Desktop bin 门禁通过；Human acceptance：PENDING。
+- 自动门禁：Timeline projection / geometry 与完整 Desktop bin 门禁通过；真窗口 Human acceptance：PASSED（P1-5 补证）。
 
 ### P1-2：Tool group 与完成摘要
 
@@ -249,8 +250,9 @@ flowchart LR
 执行记录（2026-09-04）：
 
 - 已实现：连续 tool 使用首个 tool event id 作为稳定 group key；44px header 汇总 `N tools · <state counts>`，默认展开，mouse / Enter / Space / AX Press 共用折叠 handler 与状态。行内只展示已有 name、detail、状态，不伪造 wire 缺失的耗时。
-- 已实现：Run 终态只保留一个 summary；完成 / 失败 / 取消使用不同文字与 glyph。只有当前 Session 存在真实 Changes 时才出现唯一 `Review changes`，激活后展开并聚焦 Changes；没有 Open-in-editor capability 时不画入口。
-- 自动门禁：既有 tool 定向测试 5/5、Timeline projection / AX / 完整 Desktop bin 门禁通过；Human acceptance：PENDING。
+- 已实现：Run 终态只保留一个 summary；完成 / 失败 / 取消使用不同文字与 glyph。只有当前 Session 存在至少一个真实、可审阅的 Changes 文件时才出现唯一 `Review changes`，激活后展开并聚焦 Changes；完成但文件列表为空时使用轻量 `Run completed`，不画假 CTA。没有 Open-in-editor capability 时不画入口。
+- 真窗口修复（2026-09-05）：真实 completed run 首次暴露 `ready · 0 files` 仍显示 `Ready for review` 的误导状态；现以同一 `has_reviewable_files_for` gate 驱动 render、行高与 AX，空列表不再发布 CTA。另定位并修复 `pawork-git` 把多文件 `git diff --numstat -z` 错按换行拆分导致 `+0/−0` 的根因，按 NUL 记录（含 rename/copy old/new 字段）解析。
+- 自动门禁：既有 tool 定向测试、Timeline projection / AX 及最终 Desktop bin 186/186 通过；`pawork-git` 57 个 lib 单测 + 5 个 parser contract 通过。真窗口 Human acceptance：PASSED（P1-5 补证）。
 
 ### P1-3：Approval、失败与断线状态
 
@@ -263,7 +265,8 @@ flowchart LR
 执行记录（2026-09-04）：
 
 - 已核对并收口：Approval 仍是 Timeline 最高层级，无默认选择；Allow once / Allow for run / Deny 的 mouse、keyboard、AX 走同一 fail-closed gate。disabled AX button 不再发布 Press；断线保留旧投影并禁用写动作。
-- 自动门禁：Approval AX 定向测试与 187/187 Desktop bin 门禁通过；未改审批语义、Policy 或 Host 收口。Human acceptance：PENDING。
+- 自动门禁：Approval AX 定向测试与 Desktop bin 门禁通过；未改审批语义、Policy 或 Host 收口。
+- 真窗口补证（2026-09-05）：真实 Provider 请求 `run_command` 的无副作用危险分类样本 `rm -rf --help` 后，Approval 卡显示 Allow once / Allow for run / Deny 三个未预选决策；选择 Deny 后命令未执行，tool 原位显示 failed，Run 诚实完成并回到 idle。Human acceptance：PASSED。
 
 ### P1-4：Inspector 与折叠 Activity
 
@@ -277,7 +280,8 @@ flowchart LR
 
 - 已实现：Changes / Resources 的 unavailable、empty、error、stale 使用分层且诚实的占位；Changes 仍只读，Terminal 仍为过滤 ANSI/VT 的纯文本投影。
 - 已实现：Activity 只有真实 Changes section 时从旧固定 320×320 收缩为 320×144；render 与 AX 使用同一几何常量，不为未实现 Agent / Add tool 留空白。
-- 自动门禁：Changes / Resources / Inspector / Activity 几何定向测试与完整 Desktop bin 门禁通过；Human acceptance：PENDING。
+- 自动门禁：Changes / Resources / Inspector / Activity 几何定向测试与完整 Desktop bin 门禁通过。
+- 真窗口补证（2026-09-05）：Inspector 折叠后 Activity 只显示真实 Changes；单文件 edit 时摘要为 `1 file · +1/−0`，点击 Timeline `Review changes` 或 Activity 均展开 Inspector 并选中 Changes。Human acceptance：PASSED。
 
 ### P1-5：阶段收口
 
@@ -292,6 +296,9 @@ flowchart LR
 - 测试 Host / 模型：`opencode-go / glm-5.3-flash`。真实 Run 已到达 Running，但当前环境无法连接 OpenCode，随后 failed；因此 streaming / successful response / Review changes 的本轮真窗口串联未完成。Human acceptance：PENDING。
 - 解锁后复验：Host 以当次 `--provider opencode-go --model glm-5.3-flash` 启动；真窗口发出的 run 在持久化事件中依次记录 `provider_request_started{provider_id: opencode-go, model: glm-5.3-flash}` 与 `run_failed{category: unavailable}`，证明选择已到达真实 Provider 请求且失败终态诚实收口。网络仍不可达，故 successful streaming / tool / Review 串联仍为 PENDING。
 - 最终视觉补证（2026-09-04，当前源码构建）：与 P1 阶段图核对了真实历史 completed run 的 prompt → 单一 tool group → assistant response → 单一 terminal summary，以及真实 failed run、Inspector 折叠与仅含 Changes 的紧凑 Activity。工作区初始 clean 时 Changes 如实显示 0 files，未制造 fixture 或虚假 Review CTA。P1 阶段图视觉签字 PASSED；同日新发无工具请求再次呈现 Running / Cancel 后因 `https://opencode.ai` 连接失败收口为 failed，故当前网络下 successful streaming / tool / Review 串联仍为 PENDING。
+- 最终功能补证（2026-09-05）：失败根因是持久配置仍指向不可用的本机代理端点；只在验证期间以临时 loopback bridge 接到当前可用代理，未修改任何持久配置或 Provider 默认。`opencode-go / glm-5.3-flash` 随后在正式 Host/Desktop 完成真实 streaming、`read_file` / `find_files` / `run_command` / `edit_file` tool activity、assistant response 与 completed 终态。
+- Review / Approval 补证：tracked `edit_file` 产生 1 个真实 Changes 文件，summary 显示 `Ready for review`，CTA 展开并聚焦 Changes；重建 Host 后文件行和 Activity 分别显示 `modified · +1 / −0`、`1 file · +1/−0`。验证标记已移除。独立审批 Run 的 Deny 路径也按 P1-3 收口。P1 Human acceptance：PASSED。
+- 最终自动门禁：`CARGO_INCREMENTAL=0 cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`，186/186；`./scripts/pawork-desktop.sh build` 成功；`pawork-git` 包级测试 57 + 5 全通过。
 
 ---
 
@@ -329,13 +336,13 @@ flowchart LR
 
 - **依赖**：P2-1。
 - **写入集**：`ui/settings/{general,permissions,tools,terminal,appearance,advanced,about}.rs` 及对应 accessibility 文件、Settings / Desktop Spec。
-- **工作**：Approvals 改整行 radio；General 与 Terminal 形成 label / help / feedback；Appearance 加即时字阶样例；Advanced / About 改 definition list。
+- **工作**：Approvals 改整行 radio；Network 与 Terminal 形成 label / help / feedback；Appearance 加即时字阶样例；Advanced / About 改 definition list。
 - **验收**：每页一个明确主动作；success / error / stale 就地反馈；敏感 token、路径不进入全局 AX summary。
 - **不做**：不为缺失 capability 画灰色入口。
 
 执行记录（2026-09-04）：
 
-- 已实现：Approvals 改为整行 radio，row click / Enter / Space / AX Press 同源；General 明确 Proxy URL section；Terminal 保留 label / current / help / feedback；Appearance 新增即时正文与 control 字阶样例；Advanced / About 改为 label 固定列的 definition list。
+- 已实现：Approvals 改为整行 radio，row click / Enter / Space / AX Press 同源；Network 明确 HTTP proxy section，并说明值写入 workspace 外的用户配置；Terminal 保留 label / current / help / feedback；Appearance 新增即时正文与 control 字阶样例；Advanced / About 改为 label 固定列的 definition list。
 - 自动门禁：Settings 定向测试 12/12、完整 Desktop bin 门禁 187/187；缺失 capability 仍不画入口。Human acceptance：PENDING。
 
 ### P2-4：响应式、字号与动效
@@ -367,6 +374,7 @@ flowchart LR
 - 2026-09-04 范围调整：按用户要求移除 macOS Increase Contrast 功能（删除 `ui/platform_preferences.rs` 系统偏好桥，theme 回归单一冻结 palette 并移除对应定向测试）与全部 VoiceOver 人工验收门禁；AX tree 与键盘支持保留。Desktop 定向门禁 186/186。
 - 最终视觉 / 键盘 / AX 补证（2026-09-04，当前源码构建）：三张阶段图逐张并排核对，1440×1024 宽窗与含约 3px 窗框的 1083×723 最小窗均无主动作、focus ring 或浮层裁切；最小窗 Workspace 仍大于 560px，Inspector 自动折叠。Appearance 100% / 125% / 150% 的 selected / current 与样例即时一致，`⌘0` 恢复 100%；Settings 八页、provider 连接 / catalog 分层与普通 AX summary 已核对，未发布 credential 片段，Appearance 也不再出现已移除的 Increase Contrast 文案。阶段图视觉签字 PASSED。
 - 未完成证据：当前环境无法取得真实 Provider 的 successful streaming / tool / Review 串联；系统 IME 真实 composing 仍待用户人工签字。因此完整 Human acceptance 保持 PENDING，不用视觉签字或自动门禁替代。
+- 后续补证（2026-09-05）：上条所列两个跨阶段阻塞已由 P0-5 / P1-5 的真实系统 IME 与 Provider/Review 证据关闭；本次不扩张或重做 P2 实现，P2 状态仍按其既有证据记录。
 
 ---
 
@@ -374,17 +382,17 @@ flowchart LR
 
 | ID | 状态 | 依赖 | 核心产物 |
 | --- | --- | --- | --- |
-| P0-0 | Implemented | — | 真实基线与场景清单 |
-| P0-1 | Validated | P0-0 | Theme / component state |
-| P0-2 | Validated | P0-1 | Direct grouping toggle |
-| P0-3 | Validated | P0-1 | Shell / Header / empty state |
-| P0-4 | Validated | P0-1 | Composer / menus |
-| P0-5 | Validated | P0-2/3/4 | P0 阶段图视觉与键盘主路径 PASSED；系统 IME composing PENDING |
-| P1-1 | Validated | P0-5 | Run visual grouping；Human acceptance PENDING |
-| P1-2 | Validated | P1-1 | Tool group / summary；Human acceptance PENDING |
-| P1-3 | Validated | P1-1 | Approval / failure / stale；Human acceptance PENDING |
-| P1-4 | Validated | P1-2 | Inspector / Activity；Human acceptance PENDING |
-| P1-5 | Validated | P1-3/4 | P1 阶段图视觉 PASSED；Provider 成功串联 PENDING |
+| P0-0 | Human accepted | — | 真实基线与场景清单 |
+| P0-1 | Human accepted | P0-0 | Theme / component state |
+| P0-2 | Human accepted | P0-1 | Direct grouping toggle |
+| P0-3 | Human accepted | P0-1 | Shell / Header / empty state |
+| P0-4 | Human accepted | P0-1 | Composer / menus / 系统 IME composing |
+| P0-5 | Human accepted | P0-2/3/4 | P0 阶段图、键盘主路径与系统 IME PASSED |
+| P1-1 | Human accepted | P0-5 | Run visual grouping / live streaming |
+| P1-2 | Human accepted | P1-1 | Tool group / honest summary / Review CTA |
+| P1-3 | Human accepted | P1-1 | Approval / failure / stale |
+| P1-4 | Human accepted | P1-2 | Inspector / Activity / real diff counts |
+| P1-5 | Human accepted | P1-3/4 | Prompt → tool → response → Review / Approval PASSED |
 | P2-1 | Validated | P1-5 | Settings shell；Human acceptance PENDING |
 | P2-2 | Validated | P2-1 | Providers / default model；Human acceptance PENDING |
 | P2-3 | Validated | P2-1 | Remaining Settings pages；Human acceptance PENDING |

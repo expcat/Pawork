@@ -126,7 +126,7 @@ pub(crate) enum AppRoute {
     Settings,
 }
 
-/// Settings 内容页（SET-6a～6g）：供应商页与 Desktop 本地页常在；通用页 /
+/// Settings 内容页（SET-6a～6g）：供应商页与 Desktop 本地页常在；Network /
 /// 权限页 / 工具页 / 终端页仅在对应 Host 查询成功后显示，About 仅在当前
 /// 认证握手携带权威 Host 数据目录时显示。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -542,7 +542,7 @@ pub struct AppView {
     pending_inspector_focus: Option<InspectorFocusTarget>,
     /// 顶层路由（SET-3）：Settings 壳与工作台互斥渲染，切换不动工作台状态。
     route: AppRoute,
-    /// SET-6a：当前 Settings 内容页。通用页仅在 capability 到位后可选。
+    /// SET-6a：当前 Settings 内容页。Network 仅在 capability 到位后可选。
     settings_page: SettingsPage,
     /// TaskRail 页脚 Settings gear（可见 / 键盘 / AX 同 gate）。
     settings_focus: FocusHandle,
@@ -550,9 +550,9 @@ pub struct AppView {
     settings_back_focus: FocusHandle,
     /// SET-5：Settings 页级「刷新」按钮焦点（provider 状态 + 模型目录）。
     settings_refresh_focus: FocusHandle,
-    /// SET-6a：Settings 导航「General」焦点。
+    /// SET-6a：Settings 导航「Network」焦点（内部字段保留 general）。
     settings_nav_general_focus: FocusHandle,
-    /// SET-6a：Settings 导航「Models & providers」焦点（通用页选中时）。
+    /// SET-6a：Settings 导航「Models & providers」焦点（Network 选中时）。
     settings_nav_providers_focus: FocusHandle,
     /// SET-6b：Settings 导航「权限与审批」焦点。
     settings_nav_permissions_focus: FocusHandle,
@@ -1047,12 +1047,10 @@ impl AppView {
             .filter(|branch| !branch.is_empty())
     }
 
-    /// Changes 数据是否对 active session 可用（Review changes 门控）。
+    /// active session 是否有至少一个可审阅 Changes 文件（CTA 门控）。
     fn changes_available_for_active(&self) -> bool {
-        self.changes.session_id.is_some()
-            && self.changes.session_id == self.projection.active_session_id
-            && matches!(self.changes.fetch, changes::ChangesFetch::Ready)
-            && self.changes.stale_reason.is_none()
+        self.changes
+            .has_reviewable_files_for(self.projection.active_session_id.as_deref())
     }
 
     pub fn composer_focus_handle(&self, cx: &App) -> FocusHandle {
@@ -2621,7 +2619,7 @@ impl AppView {
         }
     }
 
-    /// 拉取通用页（SET-6a / general_settings）。断线不进入 loading；
+    /// 拉取 Network 页（SET-6a / general_settings）。断线不进入 loading；
     /// 查询失败 / 未知则保持 unavailable，导航不显示该页。
     fn refresh_general_settings(&mut self) {
         if self.controller.load_general_settings() {
@@ -2655,7 +2653,7 @@ impl AppView {
         }
     }
 
-    /// Settings 导航切页（SET-6a）。通用页未接通时 fail-closed 留在供应商页。
+    /// Settings 导航切页（SET-6a）。Network 未接通时 fail-closed 留在供应商页。
     pub(crate) fn on_select_settings_page(
         &mut self,
         page: SettingsPage,

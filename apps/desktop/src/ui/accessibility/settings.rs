@@ -95,7 +95,7 @@ impl AppView {
             let general_y = nav_y + metrics::RAIL_TOP_ROW_HEIGHT + PAD;
             rail = rail.child(settings_nav_ax(
                 "settings-nav-general",
-                "General",
+                "Network",
                 current_page == SettingsPage::General,
                 self.open_menu.is_none() && self.settings_nav_general_focus.is_focused(window),
                 AxRect::new(

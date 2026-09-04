@@ -45,12 +45,16 @@ fn failed_run_reason(label: &str) -> Option<&str> {
 
 /// Run 摘要卡内容（F-08 诚实文案）：无权威数据用通用描述，禁止编造
 /// 耗时 / 数字；失败原因取 reducer 标签原文；非终态条目返回 None。
-pub fn run_summary_texts(entry: &TimelineEntry) -> Option<(&'static str, String)> {
+pub fn run_summary_texts(
+    entry: &TimelineEntry,
+    review_changes_available: bool,
+) -> Option<(&'static str, String)> {
     match entry.fork_boundary {
-        Some(ForkBoundary::Completed) => Some((
+        Some(ForkBoundary::Completed) if review_changes_available => Some((
             "Ready for review",
             "The run finished. Review the changes from this turn.".to_string(),
         )),
+        Some(ForkBoundary::Completed) => Some(("Run completed", "The run finished.".to_string())),
         Some(ForkBoundary::Cancelled) => Some((
             "Run cancelled",
             "The run was cancelled. Output from this turn is preserved.".to_string(),

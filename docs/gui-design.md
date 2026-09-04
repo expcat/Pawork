@@ -106,7 +106,7 @@
 ### 3.4 可见层级
 
 - Timeline 消息、tool 与 summary 占满可用宽度，以 618px 可读列封顶。同一 Run 的连续 tool 合并为一个 group，标题汇总数量与真实状态，默认展开并可由 click、Enter、Space、AX Press 折叠；折叠键取首个 tool event id，live 与 replay 结构一致。
-- Run 终态只保留一个 summary；只有当前 Session 存在真实 Changes 时才显示 `Review changes`，并打开、聚焦 Changes。失败、取消与审批状态均使用文字 / 图标，不只依赖颜色。
+- Run 终态只保留一个 summary；只有当前 Session 存在至少一个真实、可审阅的 Changes 文件时才显示 `Ready for review` 与 `Review changes`，并打开、聚焦 Changes；文件列表为空时显示轻量 `Run completed`，不画假 CTA。失败、取消与审批状态均使用文字 / 图标，不只依赖颜色。
 - TaskRail 项目计数和任务时间使用 56px 右对齐 meta 槽；标题 `truncate`。
 - Changes 文件行使用固定槽；DiffView 有只读路径 header 与增删 marker gutter；Changes / Resources 的 empty、error、stale 各自给出诚实说明。
 - ActivityPopover 保持 320px 宽、按当前唯一 Changes 内容收缩为 144px 高、右上锚定并维持 capability honesty。
@@ -120,7 +120,7 @@ Settings 沿用深色主题、8px 节奏和 1440×1024 基线，不把工作台�
 │ Settings Rail    │  内容区                                    │
 │ ← Back to workspace│                                           │
 │ Models & providers│                                            │
-│ General           │                                            │
+│ Network           │                                            │
 │ Approvals         │                                            │
 │ Tools & MCP       │                                            │
 │ Terminal          │                                            │
@@ -132,9 +132,9 @@ Settings 沿用深色主题、8px 节奏和 1440×1024 基线，不把工作台�
 
 - 入口位于 TaskRail 底部 `Local` 行右侧 gear。进入后左栏换成 Settings Rail；Timeline、Composer、Inspector 不渲染。
 - `← Back to workspace` 恢复进入前的 session、Timeline 位置、Composer 草稿、Inspector 和 Run；Settings 不取消 Run。
-- 导航与页内可见文案统一 English，顺序为 Models & providers → General → Approvals → Tools & MCP → Terminal → Appearance → Advanced → About。没有真实读写能力的页不显示；Advanced 离线仍可进入。
+- 导航与页内可见文案统一 English，顺序为 Models & providers → Network → Approvals → Tools & MCP → Terminal → Appearance → Advanced → About。没有真实读写能力的页不显示；Advanced 离线仍可进入。
 - **Models & providers**：内容最大宽 820px；provider 使用 64px 概览行，分列显示认证方式、连接状态与目录 / 模型数。Host `provider_auth_status` 是权威数据，Desktop 不按供应商名称硬编码 OAuth/API key 分支。普通行与 AX summary 不显示 masked credential、endpoint、catalog error 或 raw model id；endpoint / 错误只在连接、等待或删除确认详情出现。API key editor 仅在 Connect / Replace 后展开，secure input 的完整值不得进 AX tree、日志或状态文本。OAuth 只显示授权 URL、device code、到期/取消，不接触 token。认证成功与目录成功是两个状态；默认模型使用独立 section。
-- **General**：Global `proxy_url`；未设置显示 `Not set (uses system environment variables)`；新 OAuth / 验证 / 目录同会话生效，当前供应商模型流量于切换或重启后生效。
+- **Network**：Global `proxy_url`；可在 GUI 填写，也可手动写入标准用户配置目录中的 `config.toml`。该文件位于 workspace 外，不会进入仓库；workspace `.pawork/config.toml` 中的代理值会被忽略。未设置显示 `Not set (uses system environment variables)`；新 OAuth / 验证 / 目录同会话生效，当前供应商模型流量于切换或重启后生效。
 - **权限与审批**：五档审批模式使用整行 radio，row click、Enter、Space 与 AX Press 同一 handler；会话信任开关、Global 默认只读行不变。变更仅当前会话生效、不持久化、进行中 Run 不受影响。
 - **Tools & MCP**：复用 Host `mcp_list`，提供 Test / Remove。
 - **Terminal**：Global `[terminal]`（shell / columns / rows）；只影响之后创建的终端。

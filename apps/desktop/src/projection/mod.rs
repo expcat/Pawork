@@ -63,7 +63,7 @@ pub struct DesktopProjection {
     pub pending_model: Option<(String, String)>,
     /// SET-3 Settings 供应商页只读状态（加载 / stale / Host 权威列表）。
     pub settings_providers: SettingsProvidersState,
-    /// SET-6a Settings 通用页（Host `general_settings` / `proxy_url`）。
+    /// SET-6a Settings Network 页（Host `general_settings` / `proxy_url`）。
     pub settings_general: SettingsGeneralState,
     /// SET-6b Settings 权限与审批页（Host `permissions_settings`）。
     pub settings_permissions: SettingsPermissionsState,

@@ -2901,11 +2901,15 @@ fn timeline_rows_terminal_without_group_and_phases_stay_single() {
 fn run_summary_and_footer_texts_map_terminal_boundaries_only() {
     let completed = terminal_entry(1, ForkBoundary::Completed);
     assert_eq!(
-        run_summary_texts(&completed),
+        run_summary_texts(&completed, true),
         Some((
             "Ready for review",
             "The run finished. Review the changes from this turn.".to_string()
         ))
+    );
+    assert_eq!(
+        run_summary_texts(&completed, false),
+        Some(("Run completed", "The run finished.".to_string()))
     );
     assert_eq!(run_footer_label(&completed), Some("Run completed"));
     assert_eq!(
@@ -2922,7 +2926,7 @@ fn run_summary_and_footer_texts_map_terminal_boundaries_only() {
         TimelineEntryKind::RunState("run interrupted".into()),
         Some("r-1"),
     );
-    assert_eq!(run_summary_texts(&phase), None);
+    assert_eq!(run_summary_texts(&phase, false), None);
     assert_eq!(run_footer_label(&phase), None);
 }
 
@@ -2939,25 +2943,25 @@ fn failed_run_summary_description_reports_real_reason() {
     };
     // 有原因：摘要卡显示原因原文；原因内部再含分隔符只剥一次前缀。
     assert_eq!(
-        run_summary_texts(&failed_entry(1, "run failed · provider timeout")),
+        run_summary_texts(&failed_entry(1, "run failed · provider timeout"), false),
         Some(("Run failed", "provider timeout".to_string()))
     );
     assert_eq!(
-        run_summary_texts(&failed_entry(2, "run failed · a · b")),
+        run_summary_texts(&failed_entry(2, "run failed · a · b"), false),
         Some(("Run failed", "a · b".to_string()))
     );
     // 无原因（live 臂标签）：兜底通用失败文案，不指向不存在的错误详情。
     assert_eq!(
-        run_summary_texts(&failed_entry(3, "run failed")),
+        run_summary_texts(&failed_entry(3, "run failed"), false),
         Some(("Run failed", "The run failed.".to_string()))
     );
     // 剥离失败（非 reducer 格式标签）/ 剥离后为空：同样兜底。
     assert_eq!(
-        run_summary_texts(&failed_entry(4, "run terminal")),
+        run_summary_texts(&failed_entry(4, "run terminal"), false),
         Some(("Run failed", "The run failed.".to_string()))
     );
     assert_eq!(
-        run_summary_texts(&failed_entry(5, "run failed · ")),
+        run_summary_texts(&failed_entry(5, "run failed · "), false),
         Some(("Run failed", "The run failed.".to_string()))
     );
 }

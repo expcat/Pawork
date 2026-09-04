@@ -1,4 +1,4 @@
-//! Settings general 页。
+//! Settings Network 页（wire 仍沿用兼容的 general_settings）。
 
 use super::*;
 
@@ -34,7 +34,7 @@ impl AppView {
             .bordered()
             .text_size(font::BODY_SM)
             .label("Refresh")
-            .tooltip("Refresh general settings")
+            .tooltip("Refresh network settings")
             .disabled(!connected)
             .on_click(cx.listener(|view, event, _window, cx| {
                 if view.consume_button_key_click("settings-refresh", event) {
@@ -111,13 +111,13 @@ impl AppView {
                             .min_w_0()
                             .child(
                                 div().font_weight(FontWeight::MEDIUM).child(
-                                    Label::new("General")
+                                    Label::new("Network")
                                         .size(font::TITLE)
                                         .color(dark().text.primary),
                                 ),
                             )
                             .child(
-                                Label::new("Host outbound HTTP proxy")
+                                Label::new("Host outbound network settings")
                                     .size(font::BODY_SM)
                                     .color(dark().text.secondary),
                             ),
@@ -136,7 +136,7 @@ impl AppView {
         content = content
             .child(
                 div().font_weight(FontWeight::MEDIUM).child(
-                    Label::new("Proxy URL")
+                    Label::new("HTTP proxy")
                         .size(font::BODY)
                         .color(dark().text.primary),
                 ),
@@ -164,9 +164,18 @@ impl AppView {
                     .child(clear),
             )
             .child(
-                Label::new(SETTINGS_PROXY_EFFECT_NOTE)
-                    .size(font::BODY_SM)
-                    .color(dark().text.secondary),
+                div().max_w(px(640.0)).child(
+                    Label::new(SETTINGS_PROXY_EFFECT_NOTE)
+                        .size(font::BODY_SM)
+                        .color(dark().text.secondary),
+                ),
+            )
+            .child(
+                div().max_w(px(640.0)).child(
+                    Label::new(SETTINGS_PROXY_STORAGE_NOTE)
+                        .size(font::BODY_SM)
+                        .color(dark().text.secondary),
+                ),
             );
 
         div()

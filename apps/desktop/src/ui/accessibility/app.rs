@@ -1531,8 +1531,10 @@ impl AppView {
                     }
                     y += metrics::SUMMARY_CARD_GAP;
                 }
-                let (title, description) =
-                    run_summary_texts(terminal_entry).unwrap_or(("Run", String::new()));
+                let review_enabled = terminal_entry.fork_boundary == Some(ForkBoundary::Completed)
+                    && self.changes_available_for_active();
+                let (title, description) = run_summary_texts(terminal_entry, review_enabled)
+                    .unwrap_or(("Run", String::new()));
                 region = region.child(
                     AxNode::new(
                         dynamic_identifier("run-summary-card", &terminal_entry.event_id),
@@ -1542,8 +1544,6 @@ impl AppView {
                     )
                     .description(description),
                 );
-                let review_enabled = terminal_entry.fork_boundary == Some(ForkBoundary::Completed)
-                    && self.changes_available_for_active();
                 if review_enabled {
                     region = region.child(
                         AxNode::new(

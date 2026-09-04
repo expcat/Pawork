@@ -5,10 +5,10 @@
 | 字段 | 值 |
 | --- | --- |
 | Feature ID / 名称 | `SETTINGS-01` / Settings 与模型供应商管理 |
-| 状态 | **Accepted（SET-1～SET-6g 已实现并通过各自定向门禁；「关于」按 ADR-051 只在当前认证连接提供非空 Host 数据目录时启用；真实认证、完整真窗口与人工验收仍 pending）** |
+| 状态 | **Accepted（SET-1～SET-6g 已实现并通过各自定向门禁；SET-012 Network 本机代理闭环已获 E1～E3；真实账号矩阵的完整人工验收仍 pending）** |
 | Owner | Pawork maintainers |
 | 目标阶段 | Settings 活动线；不绑定发布版本 |
-| 最近更新 | 2026-09-04（P2 Settings 产品化已实现并通过 Desktop 自动门禁；真窗口人工验收仍 pending；VoiceOver 验收已按用户要求移出范围） |
+| 最近更新 | 2026-09-05（Network 菜单与本机代理配置边界收口） |
 | 关联 | [GUI 设计](../gui-design.md) · [AGENTS.md](../../AGENTS.md) |
 
 ## 1. 问题、用户与目标
@@ -25,7 +25,7 @@
 
 | 能力 | 当前生产路径/证据 | 缺口 | 结论 |
 | --- | --- | --- | --- |
-| Settings 入口/路由 | SET-3 起 TaskRail `Local` 行 gear + AppRoute 顶层路由 + Settings Rail + 只读供应商页落地（[settings/](../../apps/desktop/src/ui/settings/)）；SET-6a～6d 依次启用通用、权限与审批、工具与 MCP、终端；SET-6e/6f 启用始终可用的本地外观页与高级连接诊断页；SET-6g 启用由当前握手权威元数据驱动的 About 页 | 真实 Host/Desktop 窗口验收待 SET-7 | 已实现并通过定向门禁；About 在缺字段、空字段或断线时隐藏 |
+| Settings 入口/路由 | SET-3 起 TaskRail `Local` 行 gear + AppRoute 顶层路由 + Settings Rail + 只读供应商页落地（[settings/](../../apps/desktop/src/ui/settings/)）；SET-6a 的代理入口现显示为 Network，SET-6b～6d 依次启用权限与审批、工具与 MCP、终端；SET-6e/6f 启用始终可用的本地外观页与高级连接诊断页；SET-6g 启用由当前握手权威元数据驱动的 About 页 | — | 已实现；Network 与 Global `config.toml` 共用 Host 权威读写路径 |
 | Provider 注册 | [channel registry](../../crates/providers/src/channels/registry.rs) 八行：chatgpt/xai/glm-coding/opencode-go/qwen-token-plan/deepseek/kimi-platform/kimi-code；SET-4 起 `auth_methods` 为数据字段，支持同供应商多认证方法 | — | 已实现 |
 | API-key 通道 | [api_key.rs](../../crates/providers/src/channels/api_key.rs) 可请求 OpenAI-compatible `/models`；SET-2 增 `verify_api_key` 写前验证与 `auth_set_api_key` 非重放命令（verify-then-replace）；SET-4 起 xAI adapter 接受 API key，桌面端写操作已接通 | — | 已实现（真实账号验收 pending） |
 | OAuth | AppCore/auth 已有 OAuth 基础；xAI Device Flow 已接入；SET-2 起 `AuthStart`/`AuthCancel`/`AuthRemove` 对 GUI 开放并有 handler，进度经 `AuthChanged` 六态下发；SET-4 起 Kimi Code Device Flow 接入（[kimi.rs](../../crates/providers/src/channels/kimi.rs)），桌面端等待/取消 UI 已接通 | — | 已实现（真实账号验收 pending） |
@@ -99,6 +99,7 @@ flowchart LR
 | SET-009 | 认证成功与目录成功是两个独立状态；断线时读旧标 stale、写动作 fail-closed。 | Must | reducer/controller 测试 + 断线复验 |
 | SET-010 | 可见、键盘和 AX 动作共用业务 gate；secure input 不在 AX value 中泄漏。 | Must | Desktop/AX 定向测试 + 键盘人工走查 |
 | SET-011 | 尚无真实 Host 能力的其它 Settings 页面不显示或明确 unavailable，不出现可点击假实现。 | Must | capability honesty 测试 + 人工走查 |
+| SET-012 | Network 页读写用户 Global `proxy_url`；配置文件位于 workspace 外，workspace `.pawork/config.toml` 不得覆盖代理。 | Must | workspace/app 定向测试 + Host 重启真窗口 |
 
 并发口径：同一 provider 同时只允许一个认证/刷新操作；重复提交显式返回 busy 或复用同一进度，不并发覆盖凭证。命令幂等不得通过持久化 Secret payload 实现。
 
@@ -118,7 +119,7 @@ GPUI Settings
 - **需要补的最小能力**：provider/auth descriptor 与状态查询；GUI 可用的 OAuth 生命周期；非重放 API-key 写入；连接移除/替换；默认 provider/model 变更与确认。
 - **冻结契约**：新增/改变 GUI command/query/response/capability 必须先起草对应 ADR、bump 兼容 minor，并以 golden/typegen 先行；SET-1 由 ADR-046 承载，SET-6g 的可选 Accepted 握手字段由 ADR-051 Accepted 承载并随 API 1.9 落地。旧 Host/Client 无能力时隐藏对应 Settings 入口，不能降级为 Desktop 直写文件或本地推断。
 - **Secret 命令**：不得进入持久 command ledger payload、response replay、事件或诊断。具体瞬时传递与失败恢复由 ADR 决定；这是实现硬前置，不以普通 `AppCommand` 直接落地绕过。
-- **配置**：凭证仍不进入 `PaworkConfig`。默认 provider/model 优先复用现有字段和层级；若需改变写入优先级、文件形状或配置 schema，另列契约差异并先过 ADR/golden。
+- **配置**：凭证仍不进入 `PaworkConfig`。Network 沿用既有 Global `proxy_url`、`general_settings` / `set_proxy_url` wire 与原子 writer，不改变 schema 或优先级；文件由 `config_dir_for_app` 定位在 workspace 外。workspace 层代理继续剥离。默认 provider/model 仍复用现有字段和层级。
 - **迁移**：首期不创建账户表或模型缓存表，预期无 SQLite migration。既有 CLI 凭证必须在 Settings 中以脱敏状态可见。
 
 精确演进规则见 [contracts.md](contracts.md) 和 [architecture.md](../architecture.md) §3.2。
@@ -150,7 +151,7 @@ Settings 沿用参考设计的 1440×1024 深色语言和 8px 节奏，不另起
 - 默认模型使用独立 section；认证成功与目录成功继续分开表达，Remove 仍需二次确认。
 - 添加流程用同一内容区内的 stepper/panel，不弹出第二窗口。
 
-导航顺序：Models & providers → General（SET-6a）→ Approvals（SET-6b）→ Tools & MCP（SET-6c）→ Terminal（SET-6d）→ Appearance（SET-6e）→ Advanced（SET-6f）→ About（SET-6g）。General / Terminal 使用 label-help-feedback；Approvals 的五档 mode 为整行 radio，mouse / Enter / Space / AX Press 同源；Appearance 有随 `TextScale` 即时变化的正文 / control 样例；Advanced / About 使用固定 label 列的 definition list。Host capability 与既有读写 / stale 边界不变；Appearance / Advanced 离线仍可进入。
+导航顺序：Models & providers → Network（SET-6a）→ Approvals（SET-6b）→ Tools & MCP（SET-6c）→ Terminal（SET-6d）→ Appearance（SET-6e）→ Advanced（SET-6f）→ About（SET-6g）。Network / Terminal 使用 label-help-feedback；Approvals 的五档 mode 为整行 radio，mouse / Enter / Space / AX Press 同源；Appearance 有随 `TextScale` 即时变化的正文 / control 样例；Advanced / About 使用固定 label 列的 definition list。Host capability 与既有读写 / stale 边界不变；Appearance / Advanced 离线仍可进入。
 
 ### 6.2 状态、键盘与可访问性
 
@@ -179,7 +180,7 @@ P2 视觉方向见 [desktop-ui-p2-settings-v4.png](../../design/desktop-ui-p2-se
 | SET-3 Settings 壳 | desktop；desktop 产品/包 Spec | SET-1 query 形状 | route、rail、返回、断线/空态、AX 接通 | 可与 SET-2 后半只读部分协调，默认串行 |
 | SET-4 Provider auth | providers、auth、app；对应包 Spec | SET-2 | 四家认证矩阵完成，xAI API key/Kimi 两种连接补齐 | 串行 |
 | SET-5 Catalog/default | providers、app、protocol/client、desktop、workspace | SET-2～4 | 远端/固定目录、刷新、过滤、默认项与 Composer 同步 | 串行 |
-| SET-6a～6f 其它页 | 按页最小写入集；SET-6e/6f 仅 desktop + 文档 | SET-5 | 通用、权限、MCP、终端、外观与高级均以真实能力启用；本地页不造持久化/配置能力 | 串行 |
+| SET-6a～6f 其它页 | 按页最小写入集；SET-6e/6f 仅 desktop + 文档 | SET-5 | Network、权限、MCP、终端、外观与高级均以真实能力启用；本地页不造持久化/配置能力 | 串行 |
 | SET-6g 关于 | protocol/schemas、client、cli、desktop 与对应 Spec；不改 App query/config/schema | SET-6f + ADR-051 Accepted | Desktop build、协商 API、Host data directory 均有权威来源；缺字段 fail-closed；不宣称 updater/release | 串行 |
 | SET-7 验收 | 测试/文档；仅修真实缺陷 | SET-3～6g | 定向门禁、四家真实账号、断线/重启、AX/窄窗证据 | 串行 |
 
@@ -195,11 +196,14 @@ P2 视觉方向见 [desktop-ui-p2-settings-v4.png](../../design/desktop-ui-p2-se
 | SET-005 | Kimi/xAI OAuth adapter | OAuth refresh/cancel/error tests | 真实账号与 device flow | 浏览器切换/超时走查 |
 | SET-006/007 | provider list_models/catalog merge | provider contract + fallback/filter tests | 四家远端目录或明确固定回退 | 来源/降级文案 |
 | SET-008 | workspace/app config writer | 配置层级与重启测试 | Host/Desktop 重启 | 默认项失效走查 |
+| SET-012 | workspace Global `config.toml` + Desktop Network | workspace/app 既有 proxy 持久化与安全剥离测试 | GUI 保存后重启 Host，真实 Provider 直连当前代理 | Network 文案、键盘与 AX 一致 |
 | SET-6e 外观 | desktop render + `TextScale` + AX tree | 离线导航/AX Press/根字号/selected 定向回归 | 正式窗口 100/125/150% 与重启 | 视觉、Tab/Enter 签字 |
 | SET-6f 高级 | desktop handshake 摘要 + render/AX 同源行 | 离线/连接两态、Reconnect gate、旧握手清空 | 正式 Host 对照 API/capabilities/endpoint/resume/ack | 视觉、Tab/Enter 签字 |
 | SET-6g 关于 | Accepted 握手可选 `host_data_dir` + desktop render/AX 同源行 | 握手 present/absent + About 启用/清空隐藏 | 正式 Host 对照 build、协商 API 与 `doctor --json` data directory | 视觉、Tab/Enter 签字 |
 
 受影响关键回归：协议/golden、Secret/脱敏、配置持久化。测试使用假 key/token 形态；真实凭证只在隔离实例中读取，输出前脱敏。任何 401/429/超时先记录真实类别，不用 mock 冒充 E3。
+
+SET-012 本机证据（2026-09-05，macOS）：GUI `Settings → Network` 将代理保存为 `http://127.0.0.1:38081`，落盘到 workspace 外的用户 Global `config.toml`；旧临时转发端口 `7890` 保持关闭。Host 重启后页面恢复同一值，远端 OpenCode Go 目录从静态回退恢复为 29 项，`opencode-go / glm-5.3-flash` 真窗口请求返回精确 `proxy-ok` 并进入 `Run completed`。E2 同批通过 `pawork-workspace` 150 个测试、app 3 个 proxy handler 测试及 Desktop 186 个 bin 测试；E4 用户签字未由此自动推定。
 
 ## 9. 运行、迁移与回滚
 

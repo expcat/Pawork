@@ -29,7 +29,7 @@ flowchart LR
 | Inspector / Changes | 默认 Changes；顶层 Changes/Terminal/Resources 与二级 Files/Summary 分层；DiffView；折叠态 Header ActivityPopover | 只读；无 stage/unstage/hunk 命令。 |
 | Inspector / Terminal | PTY 创建、输入、resize、Stop/Close、流式输出与 live/snapshot 终态；任务切换隔离草稿；失败与断线诚实显示 | 创建需 Policy；纯文本视图过滤 ANSI/VT 控制序列但不是完整 VT emulator；ADR-045 的 `terminal_close` / `TerminalExited` 自 API 1.3 起可用，旧 minor 仍只从 snapshot 获知终态。 |
 | Inspector / Resources | MCP server/tool 状态、刷新 | 只读；没有已加载 AGENTS.md/Skills 分区。 |
-| Settings | English Settings Rail + 820px 内容列；Models & providers、General、Approvals、Tools & MCP、Terminal、Appearance、Advanced、About | P2 已产品化现有能力：provider 64px 概览与按需详情、默认模型独立 section、Approvals 整行 radio、Appearance 即时字号样例、Advanced/About definition list。Host-backed 页按权威能力显示并在 stale 时禁写，本地 Appearance/Advanced 离线常在；普通 UI / AX summary 不显示 credential 片段。真实账号、完整真窗口与人工验收仍待补。 |
+| Settings | English Settings Rail + 820px 内容列；Models & providers、Network、Approvals、Tools & MCP、Terminal、Appearance、Advanced、About | P2 已产品化现有能力：provider 64px 概览与按需详情、默认模型独立 section、Network 写入 workspace 外的用户 `config.toml`、Approvals 整行 radio、Appearance 即时字号样例、Advanced/About definition list。Host-backed 页按权威能力显示并在 stale 时禁写，本地 Appearance/Advanced 离线常在；普通 UI / AX summary 不显示 credential 片段。真实账号、完整真窗口与人工验收仍待补。 |
 
 ## 3. 连接与状态模型
 

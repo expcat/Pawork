@@ -1,14 +1,14 @@
 //! Settings 壳：导航与共享类型；各页实现见子模块。
 //!
 //! Settings 壳（SET-3/4/6a/6b/6c/6d/6e/6f/6g）：Settings Rail、「Models &
-//! providers」、「General」、「权限与审批」、「工具与 MCP」、「终端」、「外观」
+//! providers」、「Network」、「权限与审批」、「工具与 MCP」、「终端」、「外观」
 //!、「高级」与「关于」页。
 //!
 //! 供应商页只呈现 Host `provider_auth_status` 权威事实：供应商名称、
 //! 认证方式、连接状态与目录来源（SET-3）；SET-4 增认证写操作（API key
 //! secure 输入验证、OAuth 等待/取消、Replace/Remove），全部由 descriptor
 //! （auth_methods + auth.type）驱动，禁止按 provider 名分支。SET-6a 增
-//! 「General」页（`proxy_url` 读/设置/清除）；SET-6b 增「权限与审批」页
+//! 「Network」页（`proxy_url` 读/设置/清除；wire 名保持 General）；SET-6b 增「权限与审批」页
 //! （五档审批模式 / 会话信任 / Global 默认只读）；SET-6c 增「工具与
 //! MCP」页（复用 Resources 的 mcp_list 数据链 + mcp_test /
 //! mcp_server_remove 写动作）；SET-6d 增「终端」页（terminal_settings
@@ -57,6 +57,8 @@ pub(crate) const SETTINGS_DEFAULT_UNAVAILABLE_NOTE: &str = "Default model unavai
 pub(crate) const SETTINGS_PROXY_UNSET: &str = "Not set (uses system environment variables)";
 /// 生效边界（ADR-047 D2；不得宣称全局即时生效）。
 pub(crate) const SETTINGS_PROXY_EFFECT_NOTE: &str = "New OAuth, verification, and catalog requests use this proxy immediately. Model traffic for the active provider updates after switching providers or restarting the Host.";
+/// 本机代理写入用户配置目录而非 workspace；render / AX 同源。
+pub(crate) const SETTINGS_PROXY_STORAGE_NOTE: &str = "Stored in Pawork's per-user config.toml outside all workspaces. Proxy values in workspace .pawork/config.toml files are ignored.";
 
 /// null `trust_workspaces_global` 展示（ADR-048 D1；render / AX 同源）。
 pub(crate) const SETTINGS_TRUST_UNSET: &str = "Not set (workspaces are untrusted by default)";
@@ -192,7 +194,7 @@ pub(crate) fn provider_status_lines(
     lines
 }
 
-/// Settings 通用页状态行（render 与 AX 同源）。error 文案由事件消费侧
+/// Settings Network 页状态行（内部/wire 仍沿用 General；render 与 AX 同源）。error 文案由事件消费侧
 /// 按动作区分（load vs save），此处原样展示。
 pub(crate) fn general_status_lines(
     state: &crate::projection::SettingsGeneralState,
@@ -655,7 +657,7 @@ impl AppView {
         if general_available {
             rail = rail.child(self.settings_nav_item(
                 "settings-nav-general",
-                "General",
+                "Network",
                 current_page == SettingsPage::General,
                 SettingsPage::General,
                 cx,
@@ -827,7 +829,7 @@ impl AppView {
         self.projection.settings_providers.writes_enabled(connected)
     }
 
-    /// 通用页写操作 gate（SET-6a）：连接 + 非 stale + 查询已成功。
+    /// Network 页写操作 gate（SET-6a）：连接 + 非 stale + 查询已成功。
     pub(crate) fn settings_general_writes_enabled(&self) -> bool {
         let connected = matches!(
             self.projection.connection,

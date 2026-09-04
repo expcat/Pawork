@@ -61,7 +61,7 @@ pub enum ControllerEvent {
     /// Composer 据此同步）。随后 controller 重查 provider_auth_status 取回
     /// 权威 default。
     DefaultModelConfirmed(DefaultModelPair),
-    /// general_settings 查询成功（SET-6a 通用页；Host 权威 proxy_url）。
+    /// general_settings 查询成功（SET-6a Network 页；Host 权威 proxy_url）。
     GeneralSettingsLoaded(GeneralSettingsData),
     /// set_proxy_url 获 Host Data 确认（SET-6a；回执即写后状态）。
     ProxyUrlConfirmed(GeneralSettingsData),

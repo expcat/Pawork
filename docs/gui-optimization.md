@@ -310,7 +310,7 @@ Composer 是主操作，应明显但不笨重：
 - 保留 288px Settings Rail + 弹性内容区；1080px 时 rail 为 240px。
 - 内容区顶部 48–56px page header；正文左对齐，最大宽度 760–880px，不把表单拉满全屏。
 - 同一语言完成整套 UI。本轮不引入 i18n 基础设施，先统一为 **English**，因为主工作台和既有视觉基准已经以 English 为主；中文仅保留在文档。
-- Settings 导航统一：Models & providers / General / Approvals / Tools & MCP / Terminal / Appearance / Advanced / About。
+- Settings 导航统一：Models & providers / Network / Approvals / Tools & MCP / Terminal / Appearance / Advanced / About。
 - Settings 页不显示工作台 RunStatusBar；运行事实只在返回工作台后查看，避免无关噪声长期占底部。
 - 每页结构固定：Title + 一句说明 → section → inline feedback。Refresh 只在 Host-backed 页出现。
 
@@ -326,9 +326,10 @@ Composer 是主操作，应明显但不笨重：
 - Models & defaults 独立 section：按 provider 分组的紧凑列表，当前 default 使用 check；`Set default` 只在 hover / focus 时显著。
 - 模型名称优先，raw model id 作为 secondary mono；不可运行模型禁用并解释原因。
 
-### 7.3 General
+### 7.3 Network
 
 - Form label：`HTTP proxy`；当前继承状态在 label 下说明。
+- 写入标准用户配置目录中的 `config.toml`，明确说明该文件位于 workspace 外；workspace `.pawork/config.toml` 不得覆盖代理。
 - 输入宽 480–560px；Save 为 primary，Clear 为 secondary，Refresh 位于 page header。
 - “何时生效”使用一条 info callout，不与字段挤在同一行。
 - 成功、失败和 stale 反馈紧贴字段；保存期间禁止重复提交。

@@ -154,7 +154,7 @@ fn run_summary_card_height(
     rem_px: f32,
     review_changes_visible: bool,
 ) -> f32 {
-    let description = run_summary_texts(terminal)
+    let description = run_summary_texts(terminal, review_changes_visible)
         .map(|(_, description)| description)
         .unwrap_or_default();
     let desc_font_px = font::BODY_SM.0 * rem_px;
@@ -579,13 +579,13 @@ impl AppView {
         cx.notify();
     }
 
-    /// RunSummaryView 数据（诚实口径：完成态才有 Review changes 动作；
-    /// Changes 数据不可用时禁用并给原因）。
+    /// RunSummaryView 数据（诚实口径：仅完成态 + active session
+    /// 非空 Changes 显示 Review changes，其余完成态使用轻量摘要）。
     fn run_summary_view(&self, entry: &TimelineEntry) -> RunSummaryView {
-        let (title, description) = run_summary_texts(entry)
-            .unwrap_or(("Run", "The run reached a terminal state.".to_string()));
         let completed = entry.fork_boundary == Some(ForkBoundary::Completed);
         let review_changes_enabled = completed && self.changes_available_for_active();
+        let (title, description) = run_summary_texts(entry, review_changes_enabled)
+            .unwrap_or(("Run", "The run reached a terminal state.".to_string()));
         RunSummaryView {
             title: title.into(),
             description,

@@ -113,7 +113,7 @@ Workspace 为 **21 成员（19 库 + 2 应用）**：19 个库平铺 `crates/<�
 - **Session→Workspace**：`sessions.workspace_id` 可空弱引用，写穿 + 启动预载；不回填历史；无 FK。
 - **持久项目注册表**：`workspaces` 表按 canonical root 幂等登记，`root_path` UNIQUE；同 id 不同 root fail-closed。有可用项目时未绑定/未登记会话 fail-closed。
 - **Terminal 生命周期**：`terminal_close` 注销注册表；`TerminalExited` live 事件按协商 minor 门控；重复 close 报 `not_found`（对客户端是「清理目标已达成」）。
-- **Settings wire**：API key 明文只走非重放单帧 `ApiKeySecret`（Debug 恒 `[REDACTED]`，无 Display）；`SetApprovalMode` / `WorkspaceTrust` 会话内生效、不持久化；`SetProxyUrl` / `SetTerminalSettings` / MCP remove 写 Global 层；About 只在握手提供非空 `host_data_dir` 时显示，不从 endpoint 反推。
+- **Settings wire**：API key 明文只走非重放单帧 `ApiKeySecret`（Debug 恒 `[REDACTED]`，无 Display）；`SetApprovalMode` / `WorkspaceTrust` 会话内生效、不持久化；`SetProxyUrl` 写 workspace 外标准用户配置目录的 Global `config.toml`，`SetTerminalSettings` / MCP remove 同写 Global 层；About 只在握手提供非空 `host_data_dir` 时显示，不从 endpoint 反推。
 - **Desktop AX**：GPUI 锁定 `=0.2.2`；显式语义树 + AppKit 虚拟 AX 元素；AX action 回到既有 AppView handler 与 enable gate。
 - **CancellationToken**：exec 与其它包仍双轨，不借路径依赖合并类型。
 - **配置写盘**：Global 层入口共用单一 RMW 内核（`CONFIG_WRITE_LOCK` + tmp/rename）；OAuth/MCP 测试与可注入默认 HTTP 客户端均为 `redirect(Policy::none())`。

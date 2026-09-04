@@ -219,6 +219,15 @@ impl ChangesPanelState {
         (self.files.len(), additions, deletions)
     }
 
+    /// Run summary 只在 active session 有至少一个可审阅文件时发布 CTA。
+    pub(super) fn has_reviewable_files_for(&self, active_session_id: Option<&str>) -> bool {
+        active_session_id.is_some()
+            && self.session_id.as_deref() == active_session_id
+            && matches!(self.fetch, ChangesFetch::Ready)
+            && self.stale_reason.is_none()
+            && !self.files.is_empty()
+    }
+
     /// 按 status 分组计数（BTreeMap 保证展示顺序稳定）。
     pub(super) fn status_counts(&self) -> BTreeMap<&str, usize> {
         let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
@@ -888,6 +897,12 @@ mod tests {
             binary: false,
         }]);
         assert_eq!(state.activity_summary(), "1 file · +2/−0");
+        assert!(state.has_reviewable_files_for(Some("s-1")));
+        assert!(!state.has_reviewable_files_for(Some("s-2")));
+
+        let empty = ready_state(Vec::new());
+        assert_eq!(empty.activity_summary(), "0 files · +0/−0");
+        assert!(!empty.has_reviewable_files_for(Some("s-1")));
 
         assert_eq!(
             ChangesPanelState::default().activity_summary(),

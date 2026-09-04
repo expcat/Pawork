@@ -1,4 +1,4 @@
-# Pawork 配置样例。复制到全局配置目录或工作区 `.pawork/config.toml`：
+# Pawork 配置样例。用户本机覆盖写入标准全局配置目录（位于仓库外）：
 #   Windows: %APPDATA%\dev\pawork\pawork\config.toml
 #   macOS:   ~/Library/Application Support/dev.pawork.pawork/config.toml
 #   Linux:   ~/.config/pawork/config.toml
@@ -12,7 +12,8 @@
 default_provider = "glm-coding"
 default_model = "glm-5.2"
 
-# 全局出站代理（可选）。Provider/OAuth 请求走此代理；
+# 全局出站代理（可选，仅全局配置生效；工作区 `.pawork/config.toml`
+# 中的 proxy_url 会被安全忽略）。Provider/OAuth 请求走此代理；
 # 回环与 *.local 目标（本地网关）保持直连。等价 CLIProxyAPI 的 proxy-url。
 # proxy_url = "http://127.0.0.1:38081"
 
