@@ -13,7 +13,7 @@
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
 | `src/lib.rs` | ~50 | crate 门面：红线说明；`locator` / `oauth` 为 pub 模块，其余私有模块 + 选择性 re-export |
-| `src/error.rs` | ~60 | `AuthError`：`Storage` / `NotFound` / `InvalidSecret` / `MalformedMetadata` / `OAuth` / `TokenEndpoint{error,description}` / `ExpiredToken` / `Callback` / `Http` / `Io` / `Url`；任何变体 Display 不含明文 |
+| `src/error.rs` | ~60 | `AuthError`：`Storage` / `NotFound` / `InvalidSecret` / `MalformedMetadata` / `OAuth` / `TokenEndpoint{error,description}` / `ExpiredToken` / `Callback` / `Http` / `Io` / `Url`；任何变体 Display 不含明文。`Http` 只保留错误类别与 scheme/host/port，剥掉 userinfo/path/query |
 | `src/backend.rs` | ~200 | `SecretBackend` trait（`store` / `store_batch` / `get` / `delete` / 隐藏扩展点 `refresh_lock_path`）；`MemoryBackend`（测试用，故意不派生 Debug） |
 | `src/file_backend.rs` | ~580 | `FileBackend`：单 JSON 文件（`version` + `service→account→secret`）、0600、独立临时文件 + rename 原子写、跨进程 write/refresh 锁、损坏 fail-closed；`try_acquire_file_lock` / `FileLockGuard`（crate 内共用） |
 | `src/locator.rs` | ~70 | 命名单一事实源：`PROVIDER_SERVICE_PREFIX`（`pawork`）、`MCP_SERVICE_PREFIX`（`pawork.mcp.`）、`MCP_AUTH_FILE_NAME`（`mcp-auth.json`）、`secret_service_for` / `oauth_secret_service` / `is_mcp_secret_service` / `api_key_env_name` / `read_api_key_from_env` |

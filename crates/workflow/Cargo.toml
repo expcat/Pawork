@@ -14,9 +14,7 @@ default = []
 pawork-domain = { path = "../domain" }
 serde.workspace = true
 thiserror.workspace = true
-regex.workspace = true
 tokio = { workspace = true, features = ["rt", "sync"] }
-tracing.workspace = true
 
 [dev-dependencies]
 async-trait.workspace = true

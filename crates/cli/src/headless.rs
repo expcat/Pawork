@@ -41,9 +41,15 @@ pub async fn run_headless(core: AppCore, json_stdio: bool) -> Result<(), CliErro
     let adapter = Arc::new(crate::adapter::adapter_with_gui_approvals(core));
     let mut handler = HeadlessHandler::new(adapter);
     let stdin = BufReader::new(stdin());
-    stdio::run_loop(stdin, stdout(), LoopConfig::default(), &mut handler)
+    let result = stdio::run_loop(stdin, stdout(), LoopConfig::default(), &mut handler)
         .await
-        .map_err(CliError::Io)
+        .map_err(CliError::Io);
+    // 与 chat --json 路径一致：事件订阅 Lagged 停流后以错误退出，
+    // 不让 SDK 在缺序状态下把会话当作正常结束。
+    if result.is_ok() && handler.stream_halted {
+        return Err(CliError::Turn("event subscriber lagged".into()));
+    }
+    result
 }
 
 struct HeadlessHandler {
@@ -51,6 +57,8 @@ struct HeadlessHandler {
     events: tokio::sync::broadcast::Receiver<pawork_protocol::AppEventEnvelope>,
     granted: Vec<SdkCapability>,
     owned_sessions: BTreeSet<SessionId>,
+    /// 事件订阅 Lagged 后置 true：停流（fail-closed），不再消费空洞后事件。
+    stream_halted: bool,
 }
 
 impl HeadlessHandler {
@@ -61,6 +69,7 @@ impl HeadlessHandler {
             events,
             granted: Vec::new(),
             owned_sessions: BTreeSet::new(),
+            stream_halted: false,
         }
     }
 
@@ -207,22 +216,42 @@ impl Handler for HeadlessHandler {
     }
 
     async fn poll_event(&mut self) -> Option<HeadlessResponse> {
-        if !self.granted.contains(&SdkCapability::Streaming) {
+        if self.stream_halted || !self.granted.contains(&SdkCapability::Streaming) {
             tokio::time::sleep(std::time::Duration::from_millis(25)).await;
             return None;
         }
-        match self.events.try_recv() {
-            Ok(envelope) => Some(HeadlessResponse::Event { envelope }),
-            Err(TryRecvError::Lagged(missed)) => Some(HeadlessResponse::Error {
-                request_id: None,
-                kind: ProtocolErrorKind::Backpressure,
-                message: format!("event subscriber lagged; missed {missed}"),
-            }),
-            Err(TryRecvError::Empty | TryRecvError::Closed) => {
+        match poll_broadcast(&mut self.events, &mut self.stream_halted) {
+            Some(frame) => Some(frame),
+            None => {
                 tokio::time::sleep(std::time::Duration::from_millis(5)).await;
                 None
             }
         }
+    }
+}
+
+/// 轮询广播事件出口；Lagged 后停流（fail-closed），不再消费空洞后的事件。
+///
+/// 与 chat --json 路径一致：空洞后的事件序列对客户端不再可信，只回一帧
+/// Backpressure 错误，之后该连接不再转发任何事件帧。
+fn poll_broadcast(
+    events: &mut tokio::sync::broadcast::Receiver<pawork_protocol::AppEventEnvelope>,
+    stream_halted: &mut bool,
+) -> Option<HeadlessResponse> {
+    if *stream_halted {
+        return None;
+    }
+    match events.try_recv() {
+        Ok(envelope) => Some(HeadlessResponse::Event { envelope }),
+        Err(TryRecvError::Lagged(missed)) => {
+            *stream_halted = true;
+            Some(HeadlessResponse::Error {
+                request_id: None,
+                kind: ProtocolErrorKind::Backpressure,
+                message: format!("event subscriber lagged; missed {missed}"),
+            })
+        }
+        Err(TryRecvError::Empty | TryRecvError::Closed) => None,
     }
 }
 
@@ -413,6 +442,55 @@ mod tests {
                 SdkCapability::CompatHistory,
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn lagged_broadcast_halts_stream_instead_of_resuming_after_hole() {
+        let envelope = serde_json::json!({
+            "api_version": {"major": 1, "minor": 0},
+            "instance_id": "core-1",
+            "event_id": "evt-1",
+            "global_sequence": 1,
+            "stream": {"type": "global"},
+            "stream_sequence": 1,
+            "timestamp": 1700000000000u64,
+            "source": {"type": "core"},
+            "payload": {
+                "type": "core_ready",
+                "data": {
+                    "handle": {
+                        "instance_id": "core-1",
+                        "api_version": {"major": 1, "minor": 0}
+                    }
+                }
+            }
+        });
+        let make_envelope = || {
+            serde_json::from_value::<pawork_protocol::AppEventEnvelope>(envelope.clone())
+                .expect("decode envelope")
+        };
+        let (tx, mut rx) = tokio::sync::broadcast::channel(1);
+        // 容量 1 连发两条：接收端落后制造空洞。
+        tx.send(make_envelope()).expect("send first");
+        tx.send(make_envelope()).expect("send second");
+
+        let mut halted = false;
+        let frame = poll_broadcast(&mut rx, &mut halted).expect("lag yields error frame");
+        assert!(
+            matches!(
+                frame,
+                HeadlessResponse::Error {
+                    kind: ProtocolErrorKind::Backpressure,
+                    request_id: None,
+                    ..
+                }
+            ),
+            "expected backpressure error frame, got {frame:?}"
+        );
+        assert!(halted, "Lagged 后必须停流");
+        // 空洞后的新事件不得再被消费。
+        tx.send(make_envelope()).expect("send after hole");
+        assert!(poll_broadcast(&mut rx, &mut halted).is_none());
     }
 }
 

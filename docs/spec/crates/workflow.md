@@ -92,7 +92,7 @@
 
 ## 6. 依赖关系
 
-- **生产依赖**：`pawork-domain`；`serde` / `thiserror` / `regex` / `tokio`（rt, sync；实际仅用 `broadcast`）/ `tracing`。注意：`regex` 与 `tracing` 在当前源码中**无使用点**（历史遗留声明）。
+- **生产依赖**：`pawork-domain`；`serde` / `thiserror` / `tokio`（rt, sync；实际仅用 `broadcast`）。
 - **features**：`default = []`，无任何具名 feature（早期 `process-exec` feature 已随执行路径归档，现行不存在）。
 - **被依赖**：仅 `pawork-app`（plan host 与 tasks host / services）。`pawork-orchestration` 不依赖本包。
 

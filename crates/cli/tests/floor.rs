@@ -340,6 +340,60 @@ async fn prompt_with_tool_emits_permission_request_and_tool_events() {
 }
 
 #[tokio::test]
+async fn invalid_permission_option_denies_tool_instead_of_hanging() {
+    let harness = common::TestHarness::new(MockScript::new().tool_then_complete()).await;
+    let dir = temp_dir("acp-host-permission-invalid-");
+    harness.prepare_workspace(dir.path()).await;
+    let session_id = harness
+        .new_session(dir.path().to_str().expect("path"))
+        .await;
+
+    let prompt = spawn_prompt(&harness, 28, &session_id, "run the tool");
+    let mut prompt = prompt;
+    let mut collected = Vec::new();
+    let mut responded = false;
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    let result = loop {
+        collect_outbox(&harness, &mut collected);
+        if !responded {
+            if let Some(request) = find_outbox(&collected, "session/request_permission") {
+                let request_id = request["id"].clone();
+                let error = harness
+                    .host
+                    .handle_response(
+                        request_id,
+                        Ok(json!({
+                            "outcome": { "outcome": "selected", "optionId": "bogus-option" }
+                        })),
+                    )
+                    .await
+                    .expect_err("未知 optionId 必须回 JSON-RPC 错误");
+                assert_eq!(
+                    error.code,
+                    pawork_cli::channels::acp::wire::ERROR_INVALID_PARAMS
+                );
+                responded = true;
+            }
+        }
+        match tokio::time::timeout(Duration::from_millis(25), &mut prompt).await {
+            Ok(result) => {
+                collect_outbox(&harness, &mut collected);
+                break result
+                    .expect("prompt task panicked")
+                    .expect("Deny 补发后 prompt 应以 cancelled 收口");
+            }
+            Err(_) => {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "权限响应无法采用时必须补发 Deny，prompt 不得悬挂"
+                );
+            }
+        }
+    };
+    assert_eq!(result["stopReason"], json!("cancelled"));
+}
+
+#[tokio::test]
 async fn concurrent_prompts_across_two_sessions_carry_distinct_causal_run_ids() {
     let harness =
         common::TestHarness::new(MockScript::new().text("started ").wait_for_cancellation()).await;
@@ -974,6 +1028,59 @@ async fn fail_closed_releases_inflight_prompt() {
     let error = result.expect_err("fail-closed prompt must fail");
     assert_eq!(error.code, pawork_cli::channels::acp::wire::ERROR_INTERNAL);
     assert!(!harness.host.has_active_runs());
+}
+
+#[tokio::test]
+async fn fail_closed_cancels_core_runs_and_denies_pending_permissions() {
+    let harness = common::TestHarness::new(MockScript::new().tool_then_complete()).await;
+    let dir = temp_dir("acp-host-fail-closed-core-");
+    harness.prepare_workspace(dir.path()).await;
+    let session_id = harness
+        .new_session(dir.path().to_str().expect("path"))
+        .await;
+    let prompt = spawn_prompt(&harness, 27, &session_id, "hang on approval");
+    let mut collected = Vec::new();
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let run_id = loop {
+        collect_outbox(&harness, &mut collected);
+        if find_outbox(&collected, "session/request_permission").is_some() {
+            break harness
+                .host
+                .pending_run(&ClientSessionId::new(&session_id))
+                .expect("run must bind before permission request");
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "未在超时前收到权限请求"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    };
+    // 不回权限响应：pending permission 保持悬挂，只能靠 fail-closed 补偿。
+    harness
+        .host
+        .fail_closed_all_prompts("test fail-closed core");
+    let result = tokio::time::timeout(Duration::from_secs(5), prompt)
+        .await
+        .expect("fail-closed prompt must not hang")
+        .expect("prompt task");
+    assert!(result.is_err(), "fail-closed prompt must fail");
+    assert!(
+        wait_until(
+            || matches!(
+                harness.mock.run_state(&run_id),
+                Some(pawork_protocol::RunState::Cancelled)
+            ),
+            Duration::from_secs(5)
+        )
+        .await,
+        "fail-closed 必须向 Core 补发 RunCancel（当前 {:?}）",
+        harness.mock.run_state(&run_id)
+    );
+    assert_eq!(
+        harness.mock.run_approval(&run_id),
+        Some(pawork_protocol::ApprovalDecision::Deny),
+        "fail-closed 必须对挂起权限补发 ToolApprove Deny"
+    );
 }
 
 #[tokio::test]

@@ -28,9 +28,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{
-    actions, div, point, prelude::*, px, AnyView, App, AsyncWindowContext, ClickEvent, Context,
-    Corner, Entity, FocusHandle, Focusable, FontWeight, KeyBinding, KeyDownEvent, ListAlignment,
-    ListState, PathPromptOptions, Pixels, Point, Render, Rgba, ScrollHandle, SharedString, Window,
+    AnyView, App, AsyncWindowContext, ClickEvent, Context, Corner, Entity, FocusHandle, Focusable,
+    FontWeight, KeyBinding, KeyDownEvent, ListAlignment, ListState, PathPromptOptions, Pixels,
+    Point, Render, Rgba, ScrollHandle, SharedString, Window, actions, div, point, prelude::*, px,
 };
 use pawork_client::AppEvent;
 
@@ -350,11 +350,7 @@ fn install_appkit_tab_monitor(window: &Window, cx: &App) {
                 .is_ok()
             }) == Some(true)
         });
-        if handled {
-            nil
-        } else {
-            event
-        }
+        if handled { nil } else { event }
     }
 
     /// 本地监听器在 AppKit C 调用栈上执行，禁止 unwind 穿越：兜底捕获
@@ -1539,12 +1535,16 @@ impl AppView {
             }
             ControllerEvent::ApprovalModeConfirmed { mode } => {
                 // Host Data 确认（回执即写后状态，ADR-048 D2）；不乐观更新。
-                self.projection.settings_permissions.confirm_approval_mode(mode);
+                self.projection
+                    .settings_permissions
+                    .confirm_approval_mode(mode);
                 self.remark_settings_stale_if_disconnected();
             }
             ControllerEvent::WorkspaceTrustConfirmed { trusted } => {
                 // Host Data 确认（回执即写后状态，ADR-048 D3）；不乐观更新。
-                self.projection.settings_permissions.confirm_workspace_trusted(trusted);
+                self.projection
+                    .settings_permissions
+                    .confirm_workspace_trusted(trusted);
                 self.remark_settings_stale_if_disconnected();
             }
             ControllerEvent::TerminalSettingsLoaded(data)
@@ -1555,32 +1555,22 @@ impl AppView {
                 let shell = data.shell.clone().unwrap_or_default();
                 let columns = data.columns.to_string();
                 let rows = data.rows.to_string();
-                self.settings_terminal_shell_input.update(cx, |input, cx| {
-                    input.reset_text(shell, cx)
-                });
-                self.settings_terminal_columns_input.update(cx, |input, cx| {
-                    input.reset_text(columns, cx)
-                });
-                self.settings_terminal_rows_input.update(cx, |input, cx| {
-                    input.reset_text(rows, cx)
-                });
+                self.settings_terminal_shell_input
+                    .update(cx, |input, cx| input.reset_text(shell, cx));
+                self.settings_terminal_columns_input
+                    .update(cx, |input, cx| input.reset_text(columns, cx));
+                self.settings_terminal_rows_input
+                    .update(cx, |input, cx| input.reset_text(rows, cx));
                 self.remark_settings_stale_if_disconnected();
             }
-            ControllerEvent::AuthStarted {
-                provider_id,
-                data,
-            } => {
+            ControllerEvent::AuthStarted { provider_id, data } => {
                 // SET-4：登记 OAuth 等待信息并置 Connecting；进度由
                 // AuthChanged 事件收敛。
-                self.projection.settings_providers.apply_auth_started(
-                    &provider_id,
-                    data,
-                );
+                self.projection
+                    .settings_providers
+                    .apply_auth_started(&provider_id, data);
             }
             ControllerEvent::OperationFailed { action, reason } => {
-                if action == "open session" {
-                    self.timeline_paging = false;
-                }
                 if action == "load provider status" {
                     self.projection
                         .settings_providers
@@ -1637,6 +1627,14 @@ impl AppView {
                     }
                 }
                 self.status_hint = Some(format!("{action} failed: {reason}"));
+            }
+            ControllerEvent::SessionOpenFailed { session_id, reason } => {
+                // 分页复位按 session 匹配：A→B 快切时 A 的迟到失败不得
+                // 清掉 B 的 timeline_paging（否则 settle barrier 提前放行）。
+                if self.projection.active_session_id.as_deref() == Some(&session_id) {
+                    self.timeline_paging = false;
+                    self.status_hint = Some(format!("open session failed: {reason}"));
+                }
             }
             ControllerEvent::DiffFilesLoaded {
                 epoch,
@@ -2584,7 +2582,6 @@ impl AppView {
         cx.notify();
     }
 
-
     fn refresh_all_settings(&mut self, cx: &mut Context<Self>) {
         self.refresh_provider_status();
         self.controller.load_models();
@@ -2640,7 +2637,9 @@ impl AppView {
         if self.controller.load_terminal_settings() {
             self.projection.settings_terminal.begin_loading();
         } else {
-            self.projection.settings_terminal.mark_stale("not connected");
+            self.projection
+                .settings_terminal
+                .mark_stale("not connected");
         }
     }
 
@@ -2657,7 +2656,9 @@ impl AppView {
                 self.settings_page = SettingsPage::General;
                 window.focus(&self.settings_nav_general_focus);
             }
-            SettingsPage::Permissions if !self.projection.settings_permissions.query.available => return,
+            SettingsPage::Permissions if !self.projection.settings_permissions.query.available => {
+                return;
+            }
             SettingsPage::Permissions => {
                 self.settings_page = SettingsPage::Permissions;
                 window.focus(&self.settings_nav_permissions_focus);
@@ -3681,12 +3682,16 @@ mod tests {
         assert!(actions.contains(&"ApproveForRun"));
         assert!(actions.contains(&"Deny"));
         assert!(actions.contains(&"CancelRun"));
-        assert!(APP_VIEW_KEYBINDINGS
-            .iter()
-            .any(|(key, action)| *key == "cmd-." && *action == "CancelRun"));
-        assert!(APP_VIEW_KEYBINDINGS
-            .iter()
-            .any(|(key, action)| *key == "cmd-enter" && *action == "ApproveOnce"));
+        assert!(
+            APP_VIEW_KEYBINDINGS
+                .iter()
+                .any(|(key, action)| *key == "cmd-." && *action == "CancelRun")
+        );
+        assert!(
+            APP_VIEW_KEYBINDINGS
+                .iter()
+                .any(|(key, action)| *key == "cmd-enter" && *action == "ApproveOnce")
+        );
         for (key, action) in [
             ("cmd-=", "IncreaseTextSize"),
             ("cmd-+", "IncreaseTextSize"),

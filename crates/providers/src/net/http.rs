@@ -36,7 +36,7 @@ impl fmt::Debug for HttpClientConfig {
         formatter
             .debug_struct("HttpClientConfig")
             .field("timeout", &self.timeout)
-            .field("proxy", &self.proxy)
+            .field("proxy", &self.proxy.as_deref().map(redact_proxy_url))
             .field("user_agent", &self.user_agent)
             .field("extra_headers", &RedactedHeaders(&self.extra_headers))
             .field("system_proxy", &self.system_proxy)
@@ -309,7 +309,7 @@ pub fn is_local_target(host: &str) -> bool {
 pub fn loopback_aware_proxy(proxy: &str) -> Result<reqwest::Proxy, String> {
     let parsed: reqwest::Url = proxy
         .parse()
-        .map_err(|err| format!("invalid proxy {proxy:?}: {err}"))?;
+        .map_err(|err| format!("invalid proxy {}: {err}", redact_proxy_url(proxy)))?;
     Ok(reqwest::Proxy::custom(move |url| {
         if is_local_target(url.host_str().unwrap_or_default()) {
             None
@@ -317,6 +317,35 @@ pub fn loopback_aware_proxy(proxy: &str) -> Result<reqwest::Proxy, String> {
             Some(parsed.clone())
         }
     }))
+}
+
+/// Debug / 错误消息只保留 scheme/host/port，剥掉 userinfo（以及 path/query/fragment）。
+fn redact_proxy_url(proxy: &str) -> String {
+    match proxy.parse::<reqwest::Url>() {
+        Ok(url) => redact_url_origin(&url),
+        Err(_) => strip_userinfo(proxy),
+    }
+}
+
+fn redact_url_origin(url: &reqwest::Url) -> String {
+    let scheme = url.scheme();
+    let host = url.host_str().unwrap_or("invalid-host");
+    match url.port() {
+        Some(port) => format!("{scheme}://{host}:{port}"),
+        None => format!("{scheme}://{host}"),
+    }
+}
+
+fn strip_userinfo(raw: &str) -> String {
+    let Some(scheme_end) = raw.find("://") else {
+        return raw.to_string();
+    };
+    let rest = &raw[scheme_end + 3..];
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let Some(at) = rest[..authority_end].rfind('@') else {
+        return raw.to_string();
+    };
+    format!("{}{}", &raw[..scheme_end + 3], &rest[at + 1..])
 }
 
 /// 截断字符串到指定字节长度（在 UTF-8 边界安全处）。
@@ -396,5 +425,27 @@ mod tests {
             !debug.contains("also-secret"),
             "header value must be redacted: {debug}"
         );
+    }
+
+    #[test]
+    fn proxy_debug_and_parse_error_strip_userinfo() {
+        const SECRET: &str = "s3cret-proxy-pass";
+        let proxy = format!("http://alice:{SECRET}@proxy.example:8080/hidden?token=abc");
+        let config = HttpClientConfig::builder().proxy(proxy).build();
+        let debug = format!("{config:?}");
+        assert!(debug.contains("http://proxy.example:8080"), "{debug}");
+        assert!(!debug.contains("alice"), "{debug}");
+        assert!(!debug.contains(SECRET), "{debug}");
+        assert!(!debug.contains("/hidden"), "{debug}");
+        assert!(!debug.contains("token=abc"), "{debug}");
+
+        let invalid = format!("http://alice:{SECRET}@not a url");
+        let err = loopback_aware_proxy(&invalid).expect_err("invalid proxy");
+        assert!(!err.contains("alice"), "{err}");
+        assert!(!err.contains(SECRET), "{err}");
+        let provider_err = ProviderError::new(ProviderErrorKind::InvalidRequest, err);
+        assert!(!provider_err.message.contains("alice"), "{}", provider_err.message);
+        assert!(!provider_err.message.contains(SECRET), "{}", provider_err.message);
+        assert!(!provider_err.message.contains(&invalid), "{}", provider_err.message);
     }
 }

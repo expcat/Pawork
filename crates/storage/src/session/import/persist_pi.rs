@@ -171,15 +171,16 @@ fn persist_pi_entry(
                 }),
             }
         }
-        PiPayload::Compaction {
-            sequence,
-            summary: _,
-        } => {
+        PiPayload::Compaction { sequence, summary } => {
             report.imported_compactions += 1;
-            AgentEvent::CompactionCompleted {
-                summary_message_id: MessageId::from(format!("pi-summary-{sequence}")),
-                compacted_through: EventSequence::new(sequence.max(1)),
-            }
+            persist_pi_compaction(
+                transaction,
+                session,
+                sequence,
+                summary.as_deref(),
+                next_sequence,
+            )?;
+            return Ok(());
         }
         PiPayload::Branch { branch_id, parent } => {
             // R6 波 B：Pi 导入收编为单分支语义——Branch marker 不再创建
@@ -197,6 +198,50 @@ fn persist_pi_entry(
         PiPayload::Header { .. } | PiPayload::Raw => return Ok(()),
     };
 
+    persist_pi_event(transaction, session, next_sequence, payload)
+}
+
+fn persist_pi_compaction(
+    transaction: &Transaction<'_>,
+    session: &str,
+    source_sequence: u64,
+    summary: Option<&str>,
+    next_sequence: &mut u64,
+) -> Result<(), SessionStoreError> {
+    let compacted_through = next_sequence.saturating_sub(1);
+    let summary_message_id = format!("pi-summary-{source_sequence}");
+    persist_pi_event(
+        transaction,
+        session,
+        next_sequence,
+        AgentEvent::MessageCommitted {
+            message: Message {
+                id: MessageId::from(summary_message_id.clone()),
+                role: MessageRole::Assistant,
+                content: vec![ContentPart::Text(TextContent {
+                    text: summary.unwrap_or_default().to_string(),
+                })],
+                metadata: MessageMetadata::default(),
+            },
+        },
+    )?;
+    persist_pi_event(
+        transaction,
+        session,
+        next_sequence,
+        AgentEvent::CompactionCompleted {
+            summary_message_id: MessageId::from(summary_message_id),
+            compacted_through: EventSequence::new(compacted_through),
+        },
+    )
+}
+
+fn persist_pi_event(
+    transaction: &Transaction<'_>,
+    session: &str,
+    next_sequence: &mut u64,
+    payload: AgentEvent,
+) -> Result<(), SessionStoreError> {
     let envelope = AgentEventEnvelope::new(
         EventId::from(format!("pi-event-{next_sequence}")),
         SessionId::from(session.to_string()),
@@ -435,6 +480,54 @@ mod tests {
             store.export_session(&SessionId::from("pi-dup")).await,
             Err(SessionStoreError::SessionNotFound(_))
         ));
+        store.shutdown().await.expect("shutdown");
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn import_pi_compaction_inserts_summary_before_completed() {
+        let path = temp_path();
+        let (store, _) = SessionStore::open(&path).await.expect("store");
+        let content = concat!(
+            r#"{"session_id":"pi-compact","title":"compact"}"#,
+            "\n",
+            r#"{"sequence":1,"role":"user","text":"old-1"}"#,
+            "\n",
+            r#"{"sequence":2,"role":"assistant","text":"old-2"}"#,
+            "\n",
+            r#"{"sequence":99,"summary":"kept summary"}"#,
+            "\n",
+            r#"{"sequence":100,"role":"user","text":"after"}"#,
+        );
+        let report = store.import_pi_jsonl_lines(content).await.expect("import");
+        assert_eq!(report.imported_messages, 3);
+        assert_eq!(report.imported_compactions, 1);
+
+        let session = SessionId::from("pi-compact");
+        let events = store.replay_events(&session, 1, 100).await.expect("replay");
+        assert_eq!(events.len(), 5);
+        assert!(matches!(
+            &events[2].payload,
+            AgentEvent::MessageCommitted { message }
+                if message.id.as_str() == "pi-summary-99"
+        ));
+        assert!(matches!(
+            &events[3].payload,
+            AgentEvent::CompactionCompleted {
+                summary_message_id,
+                compacted_through,
+            } if summary_message_id.as_str() == "pi-summary-99"
+                && compacted_through.value() == 2
+        ));
+
+        let snapshot = store.projection_snapshot(&session).await.expect("snapshot");
+        let ids: Vec<&str> = snapshot
+            .messages
+            .iter()
+            .map(|message| message.id.as_str())
+            .collect();
+        assert_eq!(ids, vec!["pi-summary-99", "pi-msg-100"]);
+
         store.shutdown().await.expect("shutdown");
         let _ = fs::remove_file(path);
     }

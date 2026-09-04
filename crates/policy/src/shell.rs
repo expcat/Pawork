@@ -37,6 +37,9 @@ const MAX_SCRIPT_DEPTH: usize = 12;
 /// 判定一条命令的风险等级。
 pub fn classify_command(program: &str, args: &[String]) -> CommandRisk {
     // 1) `sh -c` / `cmd /c` / `powershell -Command`：提取脚本交 tokenizer 管线。
+    if posix_shell_loads_rc_or_init_file(program, args) {
+        return CommandRisk::Dangerous;
+    }
     if let Some(script) = extract_shell_script(program, args) {
         return classify_snippet(&script);
     }
@@ -541,6 +544,9 @@ fn command_dangerous(cmd: &Cmd, depth: usize) -> bool {
         return true;
     }
     let args: Vec<String> = cmd.args.iter().map(|w| w.text.clone()).collect();
+    if posix_shell_loads_rc_or_init_file(&program.text, &args) {
+        return true;
+    }
     if let Some(script) = extract_shell_script(&program.text, &args) {
         return script_dangerous(&script, depth + 1);
     }
@@ -641,7 +647,9 @@ fn classify_single(program: &str, args: &[String]) -> bool {
     if is_perl_program(&base) && has_flag(args, "-e") {
         return true;
     }
-    match base.as_str() {
+    let folded = base.to_ascii_lowercase();
+    let folded = folded.strip_suffix(".exe").unwrap_or(&folded);
+    match folded {
         "rm" => rm_dangerous(args),
         "chmod" | "chown" => has_recursive_flag(args),
         "git" => git_push_force(args) || git_branch_delete(args),
@@ -651,7 +659,9 @@ fn classify_single(program: &str, args: &[String]) -> bool {
 
 fn catastrophic_single(program: &str, args: &[String]) -> bool {
     let base = basename(program);
-    match base.as_str() {
+    let folded = base.to_ascii_lowercase();
+    let folded = folded.strip_suffix(".exe").unwrap_or(&folded);
+    match folded {
         "mkfs" => true,
         name if name.starts_with("mkfs.") => true,
         "dd" => args.iter().any(|arg| {
@@ -679,10 +689,10 @@ fn is_dangerous_program(base: &str) -> bool {
     let folded = base.to_ascii_lowercase();
     let folded = folded.strip_suffix(".exe").unwrap_or(&folded);
     matches!(
-        base,
+        folded,
         "sudo" | "su" | "dd" | "shutdown" | "reboot" | "halt" | "poweroff" | "format" | "reg"
-    ) || base == "mkfs"
-        || base.starts_with("mkfs.")
+    ) || folded == "mkfs"
+        || folded.starts_with("mkfs.")
         || matches!(
             folded,
             "remove-item" | "del" | "erase" | "osascript" | "diskpart" | "schtasks" | "launchctl"
@@ -766,7 +776,7 @@ fn is_shell_program(program: &str) -> bool {
     let folded = base.to_ascii_lowercase();
     let folded = folded.strip_suffix(".exe").unwrap_or(&folded);
     matches!(
-        base.as_str(),
+        folded,
         "sh" | "bash" | "zsh" | "dash" | "ksh" | "ash" | "fish" | "csh" | "tcsh"
     ) || matches!(folded, "cmd" | "powershell" | "pwsh")
 }
@@ -798,10 +808,11 @@ fn is_shell_script_flag(program: &str, arg: &str) -> bool {
 
 /// 从 `shell -c` / `cmd /c` / `powershell -Command` 中提取脚本字符串。
 ///
-/// POSIX shell 额外识别单 dash 组合短选项簇中含 `c` 的形态（`-lc`/`-cl`/
-/// `-rcfile`）：按 `-c` 对待，取簇之后第一个非选项参数为脚本（`c` 后字母
-/// 按现实 bash 语义忽略，簇内含 `c` 即命中，宁可升档）。cmd/powershell
-/// 分支保持精确匹配，不识别组合簇。
+/// POSIX shell 额外识别单 dash 组合短选项簇中含 `c` 的形态（`-lc`/`-cl`）：
+/// 按 `-c` 对待，取簇之后第一个非选项参数为脚本（`c` 后字母按现实 bash
+/// 语义忽略，簇内含 `c` 即命中，宁可升档）。`--rcfile`/`-rcfile`/`--init-file`
+/// 一律视为危险（不读文件体），并从扫描中跳过以免遮蔽后续 `-c`。
+/// cmd/powershell 分支保持精确匹配，不识别组合簇。
 fn extract_shell_script(program: &str, args: &[String]) -> Option<String> {
     if !is_shell_program(program) {
         return None;
@@ -809,6 +820,12 @@ fn extract_shell_script(program: &str, args: &[String]) -> Option<String> {
     let posix_shell = !is_cmd_program(program) && !is_powershell_program(program);
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
+        if posix_shell && is_posix_rcfile_or_init_file_option(arg) {
+            if !arg.contains('=') {
+                let _ = iter.next();
+            }
+            continue;
+        }
         if is_shell_script_flag(program, arg) {
             let rest: Vec<&str> = iter.map(String::as_str).collect();
             if rest.is_empty() {
@@ -823,9 +840,29 @@ fn extract_shell_script(program: &str, args: &[String]) -> Option<String> {
     None
 }
 
-/// 单 dash 组合短选项簇且含 `c`（`-lc`/`-cl`/`-rcfile` 形；`--long` 不算）。
+/// 单 dash 组合短选项簇且含 `c`（`-lc`/`-cl` 形；`--long` 与 rcfile/init-file 不算）。
 fn posix_short_cluster_with_c(arg: &str) -> bool {
-    arg.len() > 1 && arg.starts_with('-') && !arg.starts_with("--") && arg.contains('c')
+    !is_posix_rcfile_or_init_file_option(arg)
+        && arg.len() > 1
+        && arg.starts_with('-')
+        && !arg.starts_with("--")
+        && arg.contains('c')
+}
+
+fn is_posix_rcfile_or_init_file_option(arg: &str) -> bool {
+    matches!(arg, "--rcfile" | "-rcfile" | "--init-file" | "-init-file")
+        || arg.starts_with("--rcfile=")
+        || arg.starts_with("--init-file=")
+        || arg.starts_with("-rcfile=")
+        || arg.starts_with("-init-file=")
+}
+
+fn posix_shell_loads_rc_or_init_file(program: &str, args: &[String]) -> bool {
+    if !is_shell_program(program) || is_cmd_program(program) || is_powershell_program(program) {
+        return false;
+    }
+    args.iter()
+        .any(|arg| is_posix_rcfile_or_init_file_option(arg))
 }
 
 fn is_dangerous_redirect_target(target: &str) -> bool {
@@ -982,7 +1019,7 @@ mod tests {
         // D4 只紧不松：-lc/-cl 等含 c 组合短选项簇按 -c 提取脚本递归分类。
         assert_eq!(danger("bash", &["-lc", "rm -rf /"]), CommandRisk::Dangerous);
         assert_eq!(danger("sh", &["-cl", "rm -rf /"]), CommandRisk::Dangerous);
-        // 宁可升档：-rcfile 形簇同样按 -c 处理。
+        // rcfile 形式本身升档；文件名不当脚本，故不把文件体当 -c。
         assert_eq!(
             danger("bash", &["-rcfile", "rm -rf /"]),
             CommandRisk::Dangerous
@@ -1261,5 +1298,38 @@ mod tests {
             danger("sh", &["-c", "echo 'unterminated"]),
             CommandRisk::Safe
         );
+    }
+
+    #[test]
+    fn posix_names_match_folded_without_exe() {
+        assert_eq!(danger("BASH", &["-c", "rm -rf /"]), CommandRisk::Dangerous);
+        assert!(floor("BASH", &["-c", "rm -rf /"]));
+        assert_eq!(danger("RM", &["-rf", "/"]), CommandRisk::Dangerous);
+        assert!(floor("RM", &["-rf", "/"]));
+        assert_eq!(danger("SUDO", &["id"]), CommandRisk::Dangerous);
+    }
+
+    #[test]
+    fn posix_rcfile_and_init_file_are_dangerous_and_do_not_shadow_c() {
+        assert_eq!(
+            danger("bash", &["--rcfile", "/tmp/x.sh"]),
+            CommandRisk::Dangerous
+        );
+        assert_eq!(
+            danger("bash", &["--init-file", "/tmp/x.sh"]),
+            CommandRisk::Dangerous
+        );
+        assert_eq!(
+            danger("bash", &["--rcfile=/tmp/x.sh"]),
+            CommandRisk::Dangerous
+        );
+        assert!(!floor("bash", &["--rcfile", "/tmp/x.sh"]));
+        assert!(!floor("bash", &["-rcfile", "rm -rf /"]));
+        assert_eq!(
+            danger("bash", &["-rcfile", "/tmp/x.sh", "-c", "echo hi"]),
+            CommandRisk::Dangerous
+        );
+        assert!(floor("bash", &["-rcfile", "/tmp/x.sh", "-c", "rm -rf /"]));
+        assert!(floor("bash", &["--rcfile", "/tmp/x.sh", "-c", "rm -rf /"]));
     }
 }

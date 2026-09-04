@@ -50,17 +50,47 @@ pub fn classify_status(
 
 /// 归一化请求阶段（连接 / 发送 / 超时）的错误。
 pub fn classify_request_error(error: reqwest::Error) -> ProviderError {
+    let message = redact_request_error(&error);
     if error.is_timeout() {
-        ProviderError::new(ProviderErrorKind::Timeout, error.to_string())
+        ProviderError::new(ProviderErrorKind::Timeout, message)
     } else if error.is_connect() {
-        ProviderError::new(ProviderErrorKind::Network, error.to_string())
+        ProviderError::new(ProviderErrorKind::Network, message)
     } else if error.is_body() || error.is_decode() {
         // 响应体读取 / 解码失败视作流中断
-        ProviderError::new(ProviderErrorKind::StreamInterrupted, error.to_string())
+        ProviderError::new(ProviderErrorKind::StreamInterrupted, message)
     } else if error.is_request() {
-        ProviderError::new(ProviderErrorKind::InvalidRequest, error.to_string())
+        ProviderError::new(ProviderErrorKind::InvalidRequest, message)
     } else {
-        ProviderError::new(ProviderErrorKind::Network, error.to_string())
+        ProviderError::new(ProviderErrorKind::Network, message)
+    }
+}
+
+fn redact_request_error(error: &reqwest::Error) -> String {
+    let kind = if error.is_timeout() {
+        "timeout"
+    } else if error.is_connect() {
+        "connect"
+    } else if error.is_body() {
+        "body"
+    } else if error.is_decode() {
+        "decode"
+    } else if error.is_request() {
+        "request"
+    } else {
+        "network"
+    };
+    match error.url() {
+        Some(url) => format!("http {kind} error from {}", redact_url_origin(url)),
+        None => format!("http {kind} error"),
+    }
+}
+
+fn redact_url_origin(url: &reqwest::Url) -> String {
+    let scheme = url.scheme();
+    let host = url.host_str().unwrap_or("invalid-host");
+    match url.port() {
+        Some(port) => format!("{scheme}://{host}:{port}"),
+        None => format!("{scheme}://{host}"),
     }
 }
 
@@ -220,5 +250,35 @@ mod tests {
         // 401 不可重试，即使带 Retry-After 也不采纳
         let err = classify_status(reqwest::StatusCode::UNAUTHORIZED, Some("10"), "no");
         assert_eq!(err.retry_after_ms, None);
+    }
+
+    #[test]
+    fn classify_request_error_redacts_url_userinfo_path_and_query() {
+        const SECRET: &str = "s3cret-token-pass";
+        let raw = format!("https://alice:{SECRET}@oauth.example/v1/token?code=leak");
+        let error = reqwest_error_with_url(&raw);
+        assert!(
+            error.to_string().contains(SECRET) || error.url().is_some(),
+            "precondition: reqwest error should carry the URL"
+        );
+        let classified = classify_request_error(error);
+        assert!(!classified.message.contains(SECRET), "{}", classified.message);
+        assert!(!classified.message.contains("alice"), "{}", classified.message);
+        assert!(!classified.message.contains("/v1/token"), "{}", classified.message);
+        assert!(!classified.message.contains("code=leak"), "{}", classified.message);
+        assert!(
+            classified.message.contains("https://oauth.example"),
+            "{}",
+            classified.message
+        );
+    }
+
+    fn reqwest_error_with_url(url: &str) -> reqwest::Error {
+        let parsed: reqwest::Url = url.parse().expect("url");
+        reqwest::Client::builder()
+            .user_agent("\0")
+            .build()
+            .expect_err("invalid user-agent")
+            .with_url(parsed)
     }
 }

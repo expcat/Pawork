@@ -55,7 +55,7 @@
 1. 服务端 `bind(Local { address })`：Unix 下若路径已存在且是 socket 文件则视为陈旧遗留并删除，存在但非 socket 则 `BindFailed`；bind 成功后将 socket 文件权限收紧为 `0o600`。Windows 下创建 owner-only DACL 的 named pipe。
 2. 客户端 `connect`：按 `timeout_ms` 限时建立流（超时 → `Timeout`，失败 → `ConnectionFailed`）；连接两端各自持有 `ConnectionInfo`（服务端 id 形如 `connection-N`，客户端形如 `client-N`）。
 3. `send(frame)`：先在写入前按 `info.max_frame_bytes` 校验长度（超限 → `FrameTooLarge`，不写任何字节），再写 `[u32 LE payload_len][payload]`。对端已断（BrokenPipe / ConnectionReset 等）→ 标记关闭并返回 `ConnectionClosed`。
-4. `receive()`：先读 4 字节长度前缀——帧边界上的干净 EOF 视为对端正常关闭（`ConnectionClosed`），前缀读到一半断流为 `ProtocolViolation`；声明长度超过上限时**在分配缓冲区之前**拒绝（`FrameTooLarge`）并标记连接关闭（流已错位不可恢复）；然后 `read_exact` 读满 payload。
+4. `receive()`：分帧进度跨调用保留（外层超时取消不丢半帧）。先读 4 字节长度前缀——帧边界上的干净 EOF 视为对端正常关闭（`ConnectionClosed`）；前缀或 payload 读到一半断流同样关闭连接（`ConnectionClosed`，避免残留字节当下一帧长度前缀）；声明长度超过上限时**在分配缓冲区之前**拒绝（`FrameTooLarge`）并标记连接关闭（流已错位不可恢复）；然后读满 payload。
 5. `close()`：幂等；首次关闭 shutdown 写半部。Unix listener `close` 额外删除 socket 文件。
 
 **进程内通道（`memory/mod.rs`）**

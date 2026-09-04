@@ -32,7 +32,7 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 | `src/provider_assembly.rs` | ~1250 | provider 装配单点：`assemble_provider`/`assemble_registry`、通道→协议解析（KimiOAuth→ChatCompletions 装配 `KimiCodeProvider`；xAI SET-4 双认证按存储形态解析凭证——api key 优先、无则 OAuth 含刷新）、OAuth 刷新装配、`switch_model`/`switch_provider`（含 ModelSwitched 诊断事件）、`model_catalog`/`models_overview`/`provider_models` 目录聚合（builtin + config 覆盖 + 运行期探测，kimi-code 静态目录合并）、`is_credential_pending` |
 | `src/idempotency.rs` | ~660 | `IdempotencyStore`：以 storage `CommandLedger`（SQLite）为权威 CAS 持久态，内存 `Notify` 做 InFlight 有界等待；`IdempotencyCheck`{New/Replay/InFlight}、`should_cache`、容量逐出、`IdempotencyStats` |
 | `src/protected.rs` | ~620 | Reasoning 保护：`SwappableReasoningProtector`（内存 ↔ 持久动态绑定）、`ProtectedBlobStore` + `FileKeyResolver`（`master.key`）注入；instance 级 `BlobScope` `instance-reasoning` |
-| `src/approval.rs` | ~520 | `ApprovalAsk`/`ApprovalResolve`、`ApprovalPromptHost` trait、`GuiApprovalHost`（pending/queued 决议池 + `ToolApprovalRequired` 事件发布）、`DenyAllApprovals`、`PreApprovedResolver`、`parse_approval_mode`、写工具预览（`relative_path_from_input`/`preview_for_tool`） |
+| `src/approval.rs` | ~520 | `ApprovalAsk`/`ApprovalResolve`、`ApprovalPromptHost` trait、`GuiApprovalHost`（pending/queued 单锁决议池 + `ToolApprovalRequired` 事件发布）、`DenyAllApprovals`、`PreApprovedResolver`、`parse_approval_mode`、写工具预览（`relative_path_from_input`/`preview_for_tool`） |
 | `src/loop_ctx.rs` | ~430 | `SessionLoopCtx` 实现 `pawork_engine::LoopContext`：审批请求转宿主、工具执行经 `ToolScheduler`、写前 checkpoint、压缩（fork recovery branch + snapshot）、message/request id 发号、事件 emit |
 | `src/extensions.rs` | ~420 | 内建工具注册表、MCP 装配（auto_start/untrusted 拒绝/stdio 沙箱 + env 卫生）、`mcp_list`/`mcp_test`、`@token` 词法 `at_tokens`、`AT_FILE_MAX_BYTES`（64 KiB）、skill 目录发现 |
 | `src/auth.rs` | ~440 | `auth_status`（只报来源 file/env/none，不回显 secret；SET-4 起按 auth_methods 数据判定，xAI 双认证先查 api key 再查 OAuth meta，显示 method 与实际凭证一致）、`auth_set_key`（声明 oauth 的通道写入后移除旧 OAuth 条目）/`auth_logout`（双认证通道两类条目幂等清理）、`oauth_begin`/`oauth_complete`（PKCE 与 Device Flow 编排）、`oauth_finish`（pub(crate)：不持 AppCore 锁的 OAuth 收尾，供 GUI Device Flow 后台轮询任务复用；store 成功后对称移除旧 api key 条目，删除失败 fail-closed）、`AuthChannelStatus`/`AuthSource`/`OAuthLogin` |
@@ -46,7 +46,7 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 | `src/devfixture.rs` | ~1350 | `cfg(any(test, feature = "ui-fixture"))` + `#[doc(hidden)]` dev-only（R1 Wave B）：UI fixture 种子器。默认 feature 关闭，不进入生产编译；声明式数据集在写入前校验引用、枚举、相对路径与时间锚点，拒绝绝对路径 / `.` / `..`、默认数据目录与仓库重叠、Unix socket 路径超限以及时间戳溢出/越界；git 基线隔离用户/系统配置与 `GIT_*` 路由环境；seed 先写 `preparing` marker，完整收口后改 `ready`，失败可安全重试且 serve fail-closed。数据经 SessionStore / CheckpointService 公开 API + git/文件写入隔离 root；不依赖 testkit |
 | `src/channels.rs` | ~210 | 首发通道 facade：从 providers `CHANNEL_REGISTRY` 派生 `FIRST_PARTY_CHANNELS`/`first_party_channel`/`is_first_party`/`ChannelKind`，`oauth_override` 允许配置覆盖 OAuth preset；通道登记单点在 providers |
 | `src/orchestration_host.rs` | ~210 | S11 多 Agent demo：`run_multi_agent_demo`（Supervisor spawn 双 worker / cancel-tree / budget-gate），固定样例 provider/model id，非通用编排 API |
-| `src/plan_host.rs` | ~190 | Plan 审批 gate：`plan_snapshot/create/replace/submit/approve/reject`（事件重放构建 `PlanService`，决议落 audit）；`ensure_plan_allows_execution`（无 Plan 放行，有未批准版本拦截 run 并 audit Deny） |
+| `src/plan_host.rs` | ~190 | Plan 审批 gate：`plan_snapshot/create/replace/submit/approve/reject`（事件重放构建 `PlanService`，决议落 audit）；`ensure_plan_allows_execution`（无 Plan 放行，有未批准版本拦截 run 并 audit Deny；重放失败原样上抛，禁止 fail-open） |
 | `src/protocol.rs` | ~140 | 适配器协议选择：`AdapterProtocol`{ChatCompletions/Messages/Responses}，`extra.provider_protocols[id]` → 样例默认表 → ChatCompletions；未知值 fail-closed（`ProtocolError::Unknown`）；纯配置数据，engine 不读 |
 | `src/tasks_host.rs` | ~90 | tasks 门面转发 + `parse_task_kind`；`tasks.json` 快照 load/replay 与原子写（tmp + rename） |
 | `src/persist.rs` | ~20 | `PersistThenRender`：先 `append_event`（用 session 当前 active branch）成功再交渲染 sink |
@@ -186,7 +186,7 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 ### 4.2 CLI chat_turn 单轮
 
 1. 调用方（cli REPL / exec）持 `Vec<Message>` 调 `AppCore::chat_turn(session, messages, sink, cancel)`。
-2. Plan gate：`ensure_plan_allows_execution`——会话存在未批准 Plan 版本则拒（`AppError::PlanNotApproved`，audit 记 Deny）；无 Plan 或已批准放行。
+2. Plan gate：`ensure_plan_allows_execution`——会话存在未批准 Plan 版本则拒（`AppError::PlanNotApproved`，audit 记 Deny）；无 Plan 或已批准放行。事件重放失败（含 StoreNotOpen）原样上抛，不得吞成 Ok 后继续执行。
 3. quota 预检：`projected_run_usage` 估算本轮输入预算并询问 `QuotaService`，超限直接拒绝，不发请求。
 4. 装配 `TurnContext`：system prompt、注入层（instructions / skills / profiles / AGENTS 文件，经 `load_injected_layers`）、工具定义、`git_status_note` 短状态行（任何 git 失败静默省略，不阻断）。
 5. 进入 `pawork_engine::run_session`。`SessionLoopCtx` 作为 `LoopContext` 提供：
@@ -211,7 +211,7 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 
 ### 4.4 审批等待与恢复（K-02）
 
-1. live 路径：engine 发 `ToolApprovalRequested` → `SessionLoopCtx` 挂起等待决议 → `GuiApprovalHost` 登记 pending 并广播审批事件。
+1. live 路径：engine 发 `ToolApprovalRequested` → `SessionLoopCtx` 挂起等待决议 → `GuiApprovalHost` 在同一把锁内查 queued / 插 pending 并广播审批事件（先到的 ToolApprove 入队，后到的 decide 立即消费，避免双锁窗口挂死）。
 2. GUI 发 ToolApprove 命令（协议 `ApprovalDecision` 译为 domain 决定；写工具附 `preview_for_tool` 生成的预览）→ live 决议唤醒等待中的 run，放行或拒绝该工具。live 等待期间**不**做持久 seal（决议由 run 自身事件流落库，避免双写）。
 3. 非 live（进程重启、run 不在内存）：
    - session 有 waiting 投影 → ToolApprove 决议持久化落库（durable seal），下次 resume 可见；落库成功后经 `GuiBroadcastSink` 逐事件补广播（persist-first），`broadcast_event` 过滤后仅 `ToolExecutionCompleted` 映射 `AppEvent::ToolCompleted`（success=false）上 wire，GUI 借此清 pending 并把 tool 行显示为 failed；`ToolApprovalResponded`/`MessageCommitted` 仍不进实时流，wire 契约不变（`tool_approve_non_live_waiting_broadcasts_tool_completed` 钉住）；

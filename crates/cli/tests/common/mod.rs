@@ -213,6 +213,16 @@ impl MockAcpCommandHost {
             .map(|run| run.state.lock().expect("run state").clone())
     }
 
+    /// 观测 fail-closed / 权限拒绝是否真的把决策送进了 Core 替身。
+    pub fn run_approval(&self, run_id: &RunId) -> Option<ApprovalDecision> {
+        self.inner
+            .runs
+            .lock()
+            .expect("runs")
+            .get(run_id)
+            .and_then(|run| run.approval.lock().expect("approval").clone())
+    }
+
     fn next_name(&self, prefix: &str) -> String {
         format!(
             "{prefix}-{}",

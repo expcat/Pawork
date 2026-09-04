@@ -7,8 +7,8 @@
 //! 交错写出。
 //!
 //! 输出默认每行 flush（保持流式语义）；批量模式下由 [`StdioWriter`] 的待写
-//! 上限提供显式背压：待写字节超过 [`StdioWriter::max_pending_bytes`] 时报
-//! 背压错误，避免无界缓冲。
+//! 上限提供显式背压：待写字节超过 [`StdioWriter::max_pending_bytes`] 时先写
+//! `backpressure` 错误帧再终止（fail-closed，不静默丢帧）。
 
 use async_trait::async_trait;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufWriter};
@@ -185,8 +185,9 @@ impl<W: AsyncWrite + Unpin> StdioWriter<W> {
         self.pending_bytes
     }
 
-    /// 写出一帧（追加 `\n`）。批量模式下待写字节超过 `max_frame_bytes`
-    /// 即报背压错误；流式模式下每帧后自动 flush。
+    /// 写出一帧（追加 `\n`）。批量模式下待写字节（含换行）超过
+    /// `max_frame_bytes` 时先写 `backpressure` 错误帧，再以错误终止
+    /// （fail-closed）；流式模式下每帧后自动 flush。
     pub async fn write_frame(&mut self, frame: &HeadlessResponse) -> std::io::Result<()> {
         let line = encode_protocol_response(frame).map_err(|error| {
             std::io::Error::new(
@@ -194,16 +195,27 @@ impl<W: AsyncWrite + Unpin> StdioWriter<W> {
                 format!("encode response: {error}"),
             )
         })?;
-        self.pending_bytes += line.len() + 1;
-        if self.pending_bytes > self.config.max_frame_bytes {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::WouldBlock,
-                format!(
-                    "output backpressure: pending {} bytes exceeds limit {}",
-                    self.pending_bytes, self.config.max_frame_bytes
-                ),
-            ));
+        let frame_bytes = line.len() + 1;
+        if self.pending_bytes + frame_bytes > self.config.max_frame_bytes {
+            let message = format!(
+                "output backpressure: pending {} bytes plus frame {} bytes exceeds limit {}",
+                self.pending_bytes, frame_bytes, self.config.max_frame_bytes
+            );
+            let backpressure = error_frame(None, backpressure_kind(), message.clone());
+            let error_line = encode_protocol_response(&backpressure).map_err(|error| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("encode backpressure frame: {error}"),
+                )
+            })?;
+            // 绕过待写预算写出终止通知帧并 flush：客户端必须在连接关闭前
+            // 看到显式 backpressure 错误，而不是只拿到断流。
+            self.inner.write_all(error_line.as_bytes()).await?;
+            self.inner.write_all(b"\n").await?;
+            self.inner.flush().await?;
+            return Err(std::io::Error::new(std::io::ErrorKind::WouldBlock, message));
         }
+        self.pending_bytes += frame_bytes;
         self.inner.write_all(line.as_bytes()).await?;
         self.inner.write_all(b"\n").await?;
         if !self.config.batch_mode {
@@ -223,4 +235,85 @@ impl<W: AsyncWrite + Unpin> StdioWriter<W> {
 /// 事件流背压（Host 订阅者落后）的协议错误类别（测试/接线断言用）。
 pub fn backpressure_kind() -> ProtocolErrorKind {
     ProtocolErrorKind::Backpressure
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::pin::Pin;
+    use std::sync::{Arc, Mutex};
+    use std::task::{Context, Poll};
+    use tokio::io::AsyncWrite;
+
+    /// 记录全部落盘字节的测试写入端（共享句柄便于在 writer 未归还时检查）。
+    #[derive(Clone, Default)]
+    struct RecordingSink {
+        bytes: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl AsyncWrite for RecordingSink {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<std::io::Result<usize>> {
+            self.bytes.lock().unwrap().extend_from_slice(buf);
+            Poll::Ready(Ok(buf.len()))
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn backpressure_fails_closed_with_error_frame_and_intact_pending() {
+        let frame = HeadlessResponse::Error {
+            request_id: Some("req-1".into()),
+            kind: ProtocolErrorKind::Internal,
+            message: "m".into(),
+        };
+        let line = encode_protocol_response(&frame).expect("encode frame");
+        // 上限取「帧 + 换行」的边界值：合法边界帧不得被误报背压。
+        let config = LoopConfig {
+            batch_mode: true,
+            max_frame_bytes: line.len() + 1,
+        };
+        let sink = RecordingSink::default();
+        let mut writer = StdioWriter::new(sink.clone(), config);
+        writer
+            .write_frame(&frame)
+            .await
+            .expect("boundary frame fits pending budget");
+        assert_eq!(writer.pending_bytes(), line.len() + 1);
+
+        let error = writer
+            .write_frame(&frame)
+            .await
+            .expect_err("overflowing frame must fail");
+        assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock);
+        // 先检查再累加：失败帧不得污染 pending_bytes。
+        assert_eq!(writer.pending_bytes(), line.len() + 1);
+
+        // fail-closed 前必须先写出 backpressure 错误帧。
+        let written = String::from_utf8(sink.bytes.lock().unwrap().clone()).expect("utf8 output");
+        let last_line = written.trim_end().rsplit('\n').next().expect("error line");
+        let backpressure: HeadlessResponse =
+            serde_json::from_str(last_line).expect("decode backpressure frame");
+        assert!(
+            matches!(
+                backpressure,
+                HeadlessResponse::Error {
+                    kind: ProtocolErrorKind::Backpressure,
+                    request_id: None,
+                    ..
+                }
+            ),
+            "expected backpressure error frame, got {backpressure:?}"
+        );
+    }
 }

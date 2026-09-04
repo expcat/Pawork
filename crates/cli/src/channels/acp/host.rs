@@ -157,6 +157,7 @@ struct PendingPrompt {
     completion: tokio::sync::mpsc::Sender<PromptResolution>,
 }
 
+#[derive(Clone)]
 struct PendingPermission {
     run_id: RunId,
     tool_call_id: ToolCallId,
@@ -657,7 +658,7 @@ impl AcpActor {
                 }
             }
             UrgentMail::FailClosed { reason, reply } => {
-                self.fail_closed_all_prompts(&reason);
+                self.fail_closed_all_prompts(&reason).await;
                 if let Err(error) = reply.send(()) {
                     tracing::debug!(?error, "acp fail-closed reply dropped");
                 }
@@ -844,12 +845,23 @@ impl AcpActor {
         let decision = match result {
             Ok(value) => match self.adapter()?.decode_permission_response(value) {
                 Ok(crate::channels::acp::adapter::PermissionDecision::Selected { option_id }) => {
-                    map::decision_for_option(&option_id).map_err(|error| jsonrpc_error(&error))?
+                    match map::decision_for_option(&option_id) {
+                        Ok(decision) => decision,
+                        Err(error) => {
+                            let error = jsonrpc_error(&error);
+                            self.deny_pending_permission(&permission).await;
+                            return Err(error);
+                        }
+                    }
                 }
                 Ok(crate::channels::acp::adapter::PermissionDecision::Cancelled) => {
                     ApprovalDecision::Cancel
                 }
-                Err(error) => return Err(jsonrpc_error(&error)),
+                Err(error) => {
+                    let error = jsonrpc_error(&error);
+                    self.deny_pending_permission(&permission).await;
+                    return Err(error);
+                }
             },
             Err(error) if error.code == ERROR_REQUEST_CANCELLED => ApprovalDecision::Cancel,
             Err(_) => ApprovalDecision::Deny,
@@ -867,6 +879,29 @@ impl AcpActor {
         Ok(())
     }
 
+    /// 权限响应无法采用（decode 失败 / 未知选项）时 fail-closed：先向 Core
+    /// 补发 Deny，再把 JSON-RPC 错误交还调用方——否则等待审批的 run 会
+    /// 永远挂起。best-effort：dispatch 失败仅告警，不掩盖原始错误。
+    async fn deny_pending_permission(&mut self, permission: &PendingPermission) {
+        let Ok(adapter) = self.adapter() else {
+            return;
+        };
+        let envelope = adapter.command_envelope(
+            &format!("permission-deny-{}", permission.tool_call_id.as_str()),
+            AppCommand::ToolApprove {
+                run_id: permission.run_id.clone(),
+                tool_call_id: permission.tool_call_id.clone(),
+                decision: ApprovalDecision::Deny,
+            },
+        );
+        if let Err(error) = self
+            .dispatch_attached(&permission.client_session_id, envelope)
+            .await
+        {
+            tracing::warn!(?error, "acp permission fail-closed deny dispatch failed");
+        }
+    }
+
     async fn drain_and_pump(&mut self) {
         let mut events = Vec::new();
         loop {
@@ -875,7 +910,8 @@ impl AcpActor {
                 Err(broadcast::error::TryRecvError::Empty) => break,
                 Err(broadcast::error::TryRecvError::Closed) => break,
                 Err(broadcast::error::TryRecvError::Lagged(_)) => {
-                    self.fail_closed_all_prompts("event subscription lagged");
+                    self.fail_closed_all_prompts("event subscription lagged")
+                        .await;
                     return;
                 }
             }
@@ -1436,15 +1472,21 @@ impl AcpActor {
                 .clone();
             let id = Value::Number(self.next_request_id.into());
             self.next_request_id = self.next_request_id.saturating_add(1);
-            self.pending_permissions.insert(
-                id.clone(),
-                PendingPermission {
-                    run_id,
-                    tool_call_id,
-                    client_session_id: client_session_id.clone(),
-                },
-            );
-            let params = serialize_value(params, "RequestPermissionParams")?;
+            let permission = PendingPermission {
+                run_id,
+                tool_call_id,
+                client_session_id: client_session_id.clone(),
+            };
+            // 先序列化、成功后才登记 pending：序列化失败时不留悬挂的权限
+            // 请求（否则永远等不到客户端响应），直接 fail-closed 补发 Deny。
+            let params = match serialize_value(params, "RequestPermissionParams") {
+                Ok(params) => params,
+                Err(error) => {
+                    self.deny_pending_permission(&permission).await;
+                    return Err(error);
+                }
+            };
+            self.pending_permissions.insert(id.clone(), permission);
             self.push_frame(
                 JsonRpcRequest {
                     jsonrpc: "2.0".into(),
@@ -1502,12 +1544,21 @@ impl AcpActor {
         }
     }
 
-    fn fail_closed_all_prompts(&mut self, reason: &str) {
+    async fn fail_closed_all_prompts(&mut self, reason: &str) {
         tracing::warn!(
             reason,
             "acp host fail-closed: releasing all in-flight prompts"
         );
         report_acp_state("acp host fail-closed", json!({ "reason": reason }));
+        // 先拍下 Core 侧补偿目标（已绑定 run 与挂起审批），再清本地账本：
+        // 只清宿主状态会把 Core 里的 run / 审批留在永久等待中。
+        let runs: Vec<(RunId, ClientSessionId)> = self
+            .run_sessions
+            .iter()
+            .map(|(run_id, client_session_id)| (run_id.clone(), client_session_id.clone()))
+            .collect();
+        let permissions: Vec<PendingPermission> =
+            self.pending_permissions.values().cloned().collect();
         self.occupancy.clear();
         let prompts = std::mem::take(&mut self.pending_prompts);
         self.pending_permissions.clear();
@@ -1529,6 +1580,22 @@ impl AcpActor {
                     tracing::debug!(?error, "acp fail-closed prompt completion dropped");
                 }
             }
+        }
+        // Core 侧 fail-closed：取消已绑定 run、拒绝挂起审批（best-effort，
+        // 与 prompt 建立临界区失败时的补偿路径一致）。
+        if let Ok(adapter) = self.adapter() {
+            for (run_id, client_session_id) in runs {
+                let envelope = adapter.command_envelope(
+                    &format!("fail-closed-{run_id}"),
+                    AppCommand::RunCancel { run_id },
+                );
+                if let Err(error) = self.dispatch_attached(&client_session_id, envelope).await {
+                    tracing::warn!(?error, "acp fail-closed RunCancel dispatch failed");
+                }
+            }
+        }
+        for permission in permissions {
+            self.deny_pending_permission(&permission).await;
         }
         self.publish_snapshot();
     }

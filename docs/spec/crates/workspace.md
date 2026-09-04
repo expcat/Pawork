@@ -21,7 +21,7 @@
 | --- | --- | --- |
 | `src/lib.rs` | ~200 | `Workspace{id,name,roots}` / `WorkspaceService::add/get`（roots `fs::canonicalize` + `dunce::simplified` + 平台感知去重，Windows 大小写不敏感）；`canonicalize_root` 公开同一规范化规则（ADR-044 持久登记前的去重键）；`WorkspaceError` 七个 variant；子模块声明与 re-export |
 | `src/path.rs` | ~250 | `resolve_relative_path(roots, relative) -> ResolvedPath{absolute, root, relative}`；本层拦截空路径 / 绝对路径 / Windows 盘符 / UNC（`\\`、`//`）/ 保留设备名（CON、PRN、AUX、NUL、COM1-9、LPT1-9，含尾随 `.`/空格变体），其余委托 `pawork_policy::resolve_workspace_path`；`WorkspacePathError` 与 `PathSafetyError` 的一一映射 |
-| `src/file_index.rs` | ~1040 | `FileIndex`：`scan_workspace`（`spawn_blocking` 全量扫描 + 原子替换，`generation` 递增）、`snapshot` / `search`（子序列模糊匹配）、`apply_changes` 增量、`start_debounced_updates`（有界通道去抖）、`watch_workspace`（`notify` watcher）；`IndexOptions` / `FileKey` / `IndexedFile` / `IndexSnapshot` / `PathChange` / `ChangeKind` / `DebouncedUpdateHandle` / `WorkspaceWatcher` / `FileIndexError` |
+| `src/file_index.rs` | ~1040 | `FileIndex`：`scan_workspace`（`spawn_blocking` 全量扫描 + generation CAS 替换：扫描前采样代次，写回时已变则丢弃，`generation` 递增）、`snapshot` / `search`（子序列模糊匹配）、`apply_changes` 增量、`start_debounced_updates`（有界通道去抖）、`watch_workspace`（`notify` watcher）；`IndexOptions` / `FileKey` / `IndexedFile` / `IndexSnapshot` / `PathChange` / `ChangeKind` / `DebouncedUpdateHandle` / `WorkspaceWatcher` / `FileIndexError` |
 
 **config/（7 文件）**
 
@@ -193,7 +193,7 @@
    | `AgentMarkdown` | `.claude/agents/*.md` | AgentProfile | frontmatter name/description/model/tools + body 为 system；`!x`/`-x` 前缀工具进 denied 且 deny 优先 |
    | `AgentsJson` | `.codex/agents.json` | AgentProfile | `agents.*` 对象逐条构建 `AgentProfileV2`；`hooks` 键触发 requires_review 且不导入 |
    | `PiSettings` | `.pi/settings.json` | Instructions + McpServer | `instructions` 字符串 + `mcpServers`/`mcp` 两键；hooks 记 `hooks_not_imported` |
-8. **file_index 扫描与看护**：全量扫描在 `spawn_blocking` 中用 `ignore::WalkBuilder`（全局 ignore 文件 → workspace ignore 文件 → 内置排除目录）遍历各 root，前 8KB 探测二进制、记录 size / mtime / 语言标签；成功后整体替换旧索引并 `generation+1`（失败保留旧代）。`notify` 事件经有界 mpsc 通道进入去抖循环，窗口收口后批量 `apply_changes`；watcher 错误与通道丢弃事件计入观测面（`errors` / `errors_truncated` / `dropped_events`）。
+8. **file_index 扫描与看护**：全量扫描在 `spawn_blocking` 中用 `ignore::WalkBuilder`（全局 ignore 文件 → workspace ignore 文件 → 内置排除目录）遍历各 root，前 8KB 探测二进制、记录 size / mtime / 语言标签；写回前做 generation CAS——扫描期间代次已变则丢弃本次结果，否则整体替换并 `generation+1`（失败保留旧代）。`notify` 事件经有界 mpsc 通道进入去抖循环，窗口收口后批量 `apply_changes`；watcher 错误与通道丢弃事件计入观测面（`errors` / `errors_truncated` / `dropped_events`）。
 
 ## 5. 契约与不变量
 

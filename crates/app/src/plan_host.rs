@@ -127,9 +127,9 @@ impl AppCore {
         &self,
         session_id: &SessionId,
     ) -> Result<(), AppError> {
-        let Ok(service) = self.plan_service(session_id).await else {
-            return Ok(());
-        };
+        // 事件重放失败必须原样上抛：吞成 Ok(()) 会让未批准 Plan 的会话
+        // fail-open 直接执行。无 Plan（snapshot None）仍放行。
+        let service = self.plan_service(session_id).await?;
         let Some(snapshot) = service.plan_snapshot() else {
             return Ok(());
         };
@@ -180,6 +180,45 @@ impl AppCore {
 
 fn plan_error(error: PlanError) -> AppError {
     AppError::Plan(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testsupport::ScriptedProvider;
+    use pawork_domain::{
+        ModelDefinition, ModelId, ModelResponseSummary, ProviderId, ProviderStreamEvent,
+        StopReason, TokenUsage,
+    };
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn plan_gate_propagates_replay_error_instead_of_fail_open() {
+        let provider = Arc::new(ScriptedProvider {
+            events: Vec::<ProviderStreamEvent>::new(),
+            summary: ModelResponseSummary {
+                stop_reason: StopReason::Completed,
+                usage: TokenUsage::default(),
+                response_id: Some("resp-plan-gate".into()),
+                provider_metadata: Default::default(),
+            },
+            models: Vec::<ModelDefinition>::new(),
+        });
+        // 无 store：plan_service 的 replay 链路确定性失败（StoreNotOpen）。
+        let core = AppCore::from_parts(
+            provider,
+            None,
+            ModelId::from("glm-5.2"),
+            ProviderId::from("mock"),
+            None,
+        );
+        let session = SessionId::from("ses-plan-gate-error");
+        let result = core.ensure_plan_allows_execution(&session).await;
+        assert!(
+            matches!(result, Err(AppError::StoreNotOpen)),
+            "replay 失败必须上抛而非 fail-open: {result:?}"
+        );
+    }
 }
 
 pub fn review_status_label(status: PlanReviewStatus) -> &'static str {

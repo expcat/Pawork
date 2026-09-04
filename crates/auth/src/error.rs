@@ -47,8 +47,8 @@ pub enum AuthError {
     #[error("oauth callback error: {0}")]
     Callback(String),
 
-    /// HTTP（reqwest）请求失败。
-    #[error("http error: {0}")]
+    /// HTTP（reqwest）请求失败。Display 只保留错误类别与 host 级来源。
+    #[error("http error: {}", redact_http_error(.0))]
     Http(#[from] reqwest::Error),
 
     /// 回调服务器的底层 IO 错误。
@@ -58,4 +58,65 @@ pub enum AuthError {
     /// URL 解析失败。
     #[error("url parse error: {0}")]
     Url(#[from] url::ParseError),
+}
+
+fn redact_http_error(error: &reqwest::Error) -> String {
+    match error.url() {
+        Some(url) => format!("{} from {}", http_error_kind(error), redact_url_origin(url)),
+        None => http_error_kind(error).to_string(),
+    }
+}
+
+fn http_error_kind(error: &reqwest::Error) -> &'static str {
+    if error.is_timeout() {
+        "timeout"
+    } else if error.is_connect() {
+        "connect"
+    } else if error.is_body() {
+        "body"
+    } else if error.is_decode() {
+        "decode"
+    } else if error.is_request() {
+        "request"
+    } else if error.is_builder() {
+        "builder"
+    } else {
+        "error"
+    }
+}
+
+fn redact_url_origin(url: &reqwest::Url) -> String {
+    let scheme = url.scheme();
+    let host = url.host_str().unwrap_or("invalid-host");
+    match url.port() {
+        Some(port) => format!("{scheme}://{host}:{port}"),
+        None => format!("{scheme}://{host}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn http_display_redacts_token_endpoint_url() {
+        const SECRET: &str = "s3cret-oauth-pass";
+        let raw = format!("https://alice:{SECRET}@auth.example/oauth/token?code=leak");
+        let inner = reqwest::Client::builder()
+            .user_agent("\0")
+            .build()
+            .expect_err("invalid user-agent")
+            .with_url(raw.parse().expect("url"));
+        assert!(
+            inner.to_string().contains(SECRET) || inner.url().is_some(),
+            "precondition: reqwest Display/url carries the endpoint"
+        );
+        let err = AuthError::from(inner);
+        let display = err.to_string();
+        assert!(!display.contains(SECRET), "{display}");
+        assert!(!display.contains("alice"), "{display}");
+        assert!(!display.contains("/oauth/token"), "{display}");
+        assert!(!display.contains("code=leak"), "{display}");
+        assert!(display.contains("auth.example"), "{display}");
+    }
 }

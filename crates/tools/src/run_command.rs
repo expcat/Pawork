@@ -44,6 +44,31 @@ const MAX_OPEN_FDS: u64 = 4_096;
 const DEFAULT_MAX_PROCS: u32 = 64;
 const MAX_MAX_PROCS: u32 = 256;
 
+/// 子进程环境 denylist：通配命中优先于 allowlist（含显式 `env{}`）。
+fn process_env_denylist() -> Vec<String> {
+    [
+        "*TOKEN*",
+        "*KEY*",
+        "*SECRET*",
+        "BASH_ENV",
+        "ENV",
+        "BASH_FUNC_*",
+        "NODE_OPTIONS",
+        "PYTHONSTARTUP",
+        "PERL5OPT",
+        "LD_PRELOAD",
+        "DYLD_*",
+        "*PASS*",
+        "*PAT",
+        "*AUTH*",
+        "*COOKIE*",
+        "*CREDENTIAL*",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect()
+}
+
 /// `run_command` 工具。
 #[derive(Clone)]
 pub struct RunCommandTool {
@@ -237,7 +262,7 @@ async fn run(
         max_procs: Some(max_procs),
         env_clear: true,
         env_allowlist,
-        env_denylist: vec!["*TOKEN*".into(), "*KEY*".into(), "*SECRET*".into()],
+        env_denylist: process_env_denylist(),
         resources: ResourceLimits {
             cpu_seconds: Some(cpu_seconds),
             memory_mb: Some(memory_mb),
@@ -811,5 +836,84 @@ mod tests {
             "visible env missing: {text}"
         );
         assert!(!text.contains("secret-canary"), "secret leaked: {text}");
+    }
+
+    #[test]
+    fn process_env_denylist_covers_startup_injection_and_secret_patterns() {
+        let deny = process_env_denylist();
+        for name in [
+            "*TOKEN*",
+            "*KEY*",
+            "*SECRET*",
+            "BASH_ENV",
+            "ENV",
+            "BASH_FUNC_*",
+            "NODE_OPTIONS",
+            "PYTHONSTARTUP",
+            "PERL5OPT",
+            "LD_PRELOAD",
+            "DYLD_*",
+            "*PASS*",
+            "*PAT",
+            "*AUTH*",
+            "*COOKIE*",
+            "*CREDENTIAL*",
+        ] {
+            assert!(
+                deny.iter().any(|item| item == name),
+                "missing denylist pattern {name}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn sandbox_strips_explicit_startup_and_credential_environment() {
+        let (service, id, _root, _ws_dir) = make_service();
+        let sink = RecordingToolSink::default();
+        #[cfg(windows)]
+        let input = json!({
+            "argv": [
+                "powershell",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "[Console]::Out.WriteLine(\"VISIBLE=$env:PAWORK_TEST_VISIBLE NODE=$env:NODE_OPTIONS PASS=$env:PAWORK_TEST_PASSWORD\")"
+            ],
+            "env": {
+                "PAWORK_TEST_VISIBLE": "visible-canary",
+                "NODE_OPTIONS": "node-canary",
+                "PAWORK_TEST_PASSWORD": "pass-canary"
+            }
+        });
+        #[cfg(not(windows))]
+        let input = json!({
+            "argv": ["sh", "-c", "printf 'VISIBLE=%s NODE=%s PASS=%s' \"$PAWORK_TEST_VISIBLE\" \"$NODE_OPTIONS\" \"$PAWORK_TEST_PASSWORD\""],
+            "env": {
+                "PAWORK_TEST_VISIBLE": "visible-canary",
+                "NODE_OPTIONS": "node-canary",
+                "PAWORK_TEST_PASSWORD": "pass-canary"
+            }
+        });
+        let result = run(
+            &service,
+            ProcessRuntime::new(),
+            &id,
+            &input,
+            &[],
+            &sink,
+            CancellationToken::new(),
+        )
+        .await
+        .expect("sandboxed run");
+        let text = match &result.content[0] {
+            ContentPart::Text(text) => &text.text,
+            _ => panic!("expected text"),
+        };
+        assert!(
+            text.contains("visible-canary"),
+            "visible env missing: {text}"
+        );
+        assert!(!text.contains("node-canary"), "NODE_OPTIONS leaked: {text}");
+        assert!(!text.contains("pass-canary"), "password leaked: {text}");
     }
 }

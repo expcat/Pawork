@@ -7,7 +7,10 @@
 //! SnapshotRequired / UpToDate 三态交给 projection。
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicU64, Ordering},
+};
 use std::time::Duration;
 
 use pawork_client::{
@@ -16,11 +19,11 @@ use pawork_client::{
     CommandSource, ConnectOptions, DefaultModelPair, GeneralSettingsData, GlobalSequence,
     GuiCapability, GuiClient, GuiTransportClient, LocalTransport, PermissionsSettingsData,
     ProtocolErrorCode, ProviderAuthStatusData, ResumeDisposition, ResumeOutcome, Snapshot,
-    TerminalSettingsData, TimelinePage, TransportEndpoint, TOKEN_SCHEME,
+    TOKEN_SCHEME, TerminalSettingsData, TimelinePage, TransportEndpoint,
 };
 use serde_json::json;
 
-use crate::projection::{sessions_in_snapshot, ModelEntry};
+use crate::projection::{ModelEntry, sessions_in_snapshot};
 
 pub(super) const PAGE_LIMIT: u32 = 500;
 pub(super) const MAX_PAGES: usize = 200;
@@ -160,6 +163,12 @@ pub enum ControllerEvent {
     McpServersReceipt {
         servers: Vec<McpServerEntry>,
     },
+    /// open_session 的会话级失败：携带 session_id，UI 仅在该会话仍为
+    /// active 时复位分页状态（A→B 快切时 A 的迟到失败不影响 B）。
+    SessionOpenFailed {
+        session_id: String,
+        reason: String,
+    },
     OperationFailed {
         action: &'static str,
         reason: String,
@@ -253,6 +262,9 @@ struct SharedState {
     client: Mutex<Option<GuiClient>>,
     events: Mutex<Option<smol::channel::Sender<ControllerEvent>>>,
     last_acked: Mutex<Option<u64>>,
+    /// 连接代次：每次成功连接递增。旧泵 / 旧心跳的迟到失败不得拆掉
+    /// 新连接（清 client 槽或投递 Disconnected）。
+    generation: AtomicU64,
 }
 
 pub struct DesktopController {
@@ -272,6 +284,7 @@ impl DesktopController {
                 client: Mutex::new(None),
                 events: Mutex::new(None),
                 last_acked: Mutex::new(None),
+                generation: AtomicU64::new(0),
             }),
         }
     }
@@ -355,19 +368,28 @@ impl DesktopController {
             .map_err(|error| format!("connect task failed: {error}"))??;
         let (handshake, resume, snapshot) = connected;
 
+        // 代次递增必须先于 client 槽安装：teardown 在 client 锁内对照
+        // generation，保证旧连接的迟到失败清不掉新连接。
+        let generation = self
+            .state
+            .generation
+            .fetch_add(1, Ordering::AcqRel)
+            .wrapping_add(1);
         *self.state.client.lock().unwrap_or_else(|p| p.into_inner()) = Some(handshake.clone());
         *self.state.events.lock().unwrap_or_else(|p| p.into_inner()) = Some(sender.clone());
 
         let pump_client = handshake.clone();
         let pump_events = sender;
         let pump_state = Arc::clone(&self.state);
+        let heartbeat_client = handshake.clone();
+        let heartbeat_events = pump_events.clone();
+        let heartbeat_state = Arc::clone(&self.state);
         self.runtime.spawn(async move {
-            // 宿主 heartbeat_timeout 为 30s，任意入站帧都会刷新；空闲时由 desktop 周期 heartbeat 保活。
-            let mut idle_ticks = 0u32;
+            // 保活由独立的 heartbeat 任务承担：泵可能阻塞在向 UI channel
+            // 的 send().await 上（channel 满时不能丢事件），不能因此停跳。
             loop {
                 match pump_client.next_event_timeout(Duration::from_secs(1)).await {
                     Ok(event) => {
-                        idle_ticks = 0;
                         record_shared_last_acked(&pump_state, event.global_sequence.0);
                         let _ = pump_client.ack(event.global_sequence).await;
                         if pump_events
@@ -378,29 +400,44 @@ impl DesktopController {
                             break;
                         }
                     }
-                    Err(ClientError::Timeout { .. }) => {
-                        idle_ticks += 1;
-                        if idle_ticks < 15 {
-                            continue;
-                        }
-                        idle_ticks = 0;
-                        if let Err(error) = pump_client.heartbeat().await {
-                            let reason = error.to_string();
-                            *pump_state.client.lock().unwrap_or_else(|p| p.into_inner()) = None;
-                            let _ = pump_events
-                                .send(ControllerEvent::Disconnected { reason })
-                                .await;
-                            break;
-                        }
-                    }
+                    // 空闲 tick：继续等事件即可。
+                    Err(ClientError::Timeout { .. }) => continue,
                     Err(error) => {
-                        let reason = error.to_string();
-                        *pump_state.client.lock().unwrap_or_else(|p| p.into_inner()) = None;
-                        let _ = pump_events
-                            .send(ControllerEvent::Disconnected { reason })
-                            .await;
+                        teardown_stale_connection(
+                            &pump_state,
+                            &pump_events,
+                            generation,
+                            error.to_string(),
+                        )
+                        .await;
                         break;
                     }
+                }
+            }
+        });
+        // 独立心跳：host heartbeat_timeout 30s。泵被 UI 排水阻塞时心跳
+        // 也不能停；而 select! 抢占 next_event_timeout 会破坏分帧读的
+        // 取消安全性（半帧后流错位），故用独立任务按 interval 保活——
+        // client io 为 AsyncMutex，泵内并发调用本就是支持路径。
+        self.runtime.spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(15));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            // interval 首 tick 立即完成，消费掉以进入 15s 节奏。
+            interval.tick().await;
+            loop {
+                interval.tick().await;
+                if heartbeat_state.generation.load(Ordering::Acquire) != generation {
+                    break;
+                }
+                if let Err(error) = heartbeat_client.heartbeat().await {
+                    teardown_stale_connection(
+                        &heartbeat_state,
+                        &heartbeat_events,
+                        generation,
+                        error.to_string(),
+                    )
+                    .await;
+                    break;
                 }
             }
         });
@@ -579,13 +616,12 @@ impl DesktopController {
             {
                 Ok(response) => response,
                 Err(error) => {
-                    try_emit(
-                        &events,
-                        ControllerEvent::OperationFailed {
+                    let _ = events
+                        .send(ControllerEvent::OperationFailed {
                             action: "test mcp server",
                             reason: error.to_string(),
-                        },
-                    );
+                        })
+                        .await;
                     return;
                 }
             };
@@ -595,13 +631,14 @@ impl DesktopController {
                         .send(ControllerEvent::McpServersReceipt { servers })
                         .await;
                 }
-                Err(reason) => try_emit(
-                    &events,
-                    ControllerEvent::OperationFailed {
-                        action: "test mcp server",
-                        reason,
-                    },
-                ),
+                Err(reason) => {
+                    let _ = events
+                        .send(ControllerEvent::OperationFailed {
+                            action: "test mcp server",
+                            reason,
+                        })
+                        .await;
+                }
             }
         });
     }
@@ -626,13 +663,12 @@ impl DesktopController {
             {
                 Ok(response) => response,
                 Err(error) => {
-                    try_emit(
-                        &events,
-                        ControllerEvent::OperationFailed {
+                    let _ = events
+                        .send(ControllerEvent::OperationFailed {
                             action: "remove mcp server",
                             reason: error.to_string(),
-                        },
-                    );
+                        })
+                        .await;
                     return;
                 }
             };
@@ -642,13 +678,14 @@ impl DesktopController {
                         .send(ControllerEvent::McpServersReceipt { servers })
                         .await;
                 }
-                Err(reason) => try_emit(
-                    &events,
-                    ControllerEvent::OperationFailed {
-                        action: "remove mcp server",
-                        reason,
-                    },
-                ),
+                Err(reason) => {
+                    let _ = events
+                        .send(ControllerEvent::OperationFailed {
+                            action: "remove mcp server",
+                            reason,
+                        })
+                        .await;
+                }
             }
         });
     }
@@ -682,9 +719,35 @@ impl DesktopController {
     }
 }
 
-
 pub(super) fn try_emit(events: &smol::channel::Sender<ControllerEvent>, event: ControllerEvent) {
     let _ = events.try_send(event);
+}
+
+/// 连接级失败收尾：在 client 锁内对照 generation，仅当没有更新的连接
+/// 接管时才清 client 槽并投递 Disconnected，避免旧泵 / 旧心跳迟到的
+/// 失败拆掉重连后的新连接。Disconnected 本身走可靠 send().await。
+async fn teardown_stale_connection(
+    state: &SharedState,
+    events: &smol::channel::Sender<ControllerEvent>,
+    generation: u64,
+    reason: String,
+) {
+    {
+        let mut client = state.client.lock().unwrap_or_else(|p| p.into_inner());
+        if state.generation.load(Ordering::Acquire) != generation {
+            return;
+        }
+        // 泵与心跳可能同时失败：只允许第一个清空者投递 Disconnected，
+        // 避免同一代次连发两次把重连后的 UI 再打回断线。
+        if client.is_none() {
+            return;
+        }
+        *client = None;
+    }
+    if state.generation.load(Ordering::Acquire) != generation {
+        return;
+    }
+    let _ = events.send(ControllerEvent::Disconnected { reason }).await;
 }
 
 pub(super) fn record_shared_last_acked(state: &SharedState, sequence: u64) {
@@ -787,7 +850,10 @@ pub(super) fn is_workspace_relative_cwd(cwd: &str) -> bool {
             .any(|component| component == ".."))
 }
 
-pub(super) fn terminal_create_command(workspace_id: &str, cwd: Option<&str>) -> Result<AppCommand, String> {
+pub(super) fn terminal_create_command(
+    workspace_id: &str,
+    cwd: Option<&str>,
+) -> Result<AppCommand, String> {
     let mut params = json!({ "workspace_id": workspace_id });
     if let Some(cwd) = cwd.map(str::trim).filter(|cwd| !cwd.is_empty()) {
         if !is_workspace_relative_cwd(cwd) {
@@ -813,7 +879,11 @@ pub(super) fn terminal_write_command(terminal_session_id: &str, data: &str) -> A
     .expect("terminal_write command shape is frozen")
 }
 
-pub(super) fn terminal_resize_command(terminal_session_id: &str, columns: u16, rows: u16) -> AppCommand {
+pub(super) fn terminal_resize_command(
+    terminal_session_id: &str,
+    columns: u16,
+    rows: u16,
+) -> AppCommand {
     serde_json::from_value(json!({
         "method": "terminal_resize",
         "params": {
@@ -949,7 +1019,11 @@ pub(super) fn load_desktop_authentication(
     })
 }
 
-pub(super) fn run_start_command(session_id: &str, text: &str, model: Option<&(String, String)>) -> AppCommand {
+pub(super) fn run_start_command(
+    session_id: &str,
+    text: &str,
+    model: Option<&(String, String)>,
+) -> AppCommand {
     let mut params = json!({
         "session_id": session_id,
         "user_message": text
@@ -1046,7 +1120,11 @@ pub(super) fn set_workspace_trust_command(workspace_id: &str, trusted: bool) -> 
     .expect("workspace_trust command shape is frozen")
 }
 
-pub(super) fn set_terminal_settings_command(shell: Option<&str>, columns: u16, rows: u16) -> AppCommand {
+pub(super) fn set_terminal_settings_command(
+    shell: Option<&str>,
+    columns: u16,
+    rows: u16,
+) -> AppCommand {
     serde_json::from_value(json!({
         "method": "set_terminal_settings",
         "params": { "shell": shell, "columns": columns, "rows": rows }
@@ -1133,7 +1211,9 @@ pub(super) fn parse_provider_status_response(
     response: &AppResponseEnvelope,
 ) -> Result<ProviderAuthStatusData, String> {
     match &response.response {
-        AppResponse::Data(data) => serde_json::from_value(data.clone()).map_err(|error| error.to_string()),
+        AppResponse::Data(data) => {
+            serde_json::from_value(data.clone()).map_err(|error| error.to_string())
+        }
         AppResponse::Error(_) => Err("server returned an error response".into()),
         other => Err(format!("unexpected response: {other:?}")),
     }
@@ -1146,7 +1226,9 @@ pub(super) fn parse_general_settings_response(
     response: &AppResponseEnvelope,
 ) -> Result<GeneralSettingsData, String> {
     match &response.response {
-        AppResponse::Data(data) => serde_json::from_value(data.clone()).map_err(|error| error.to_string()),
+        AppResponse::Data(data) => {
+            serde_json::from_value(data.clone()).map_err(|error| error.to_string())
+        }
         AppResponse::Error(error) => Err(error.message.clone()),
         other => Err(format!("unexpected response: {other:?}")),
     }
@@ -1159,7 +1241,9 @@ pub(super) fn parse_permissions_settings_response(
     response: &AppResponseEnvelope,
 ) -> Result<PermissionsSettingsData, String> {
     match &response.response {
-        AppResponse::Data(data) => serde_json::from_value(data.clone()).map_err(|error| error.to_string()),
+        AppResponse::Data(data) => {
+            serde_json::from_value(data.clone()).map_err(|error| error.to_string())
+        }
         AppResponse::Error(error) => Err(error.message.clone()),
         other => Err(format!("unexpected response: {other:?}")),
     }
@@ -1172,7 +1256,9 @@ pub(super) fn parse_terminal_settings_response(
     response: &AppResponseEnvelope,
 ) -> Result<TerminalSettingsData, String> {
     match &response.response {
-        AppResponse::Data(data) => serde_json::from_value(data.clone()).map_err(|error| error.to_string()),
+        AppResponse::Data(data) => {
+            serde_json::from_value(data.clone()).map_err(|error| error.to_string())
+        }
         AppResponse::Error(error) => Err(error.message.clone()),
         other => Err(format!("unexpected response: {other:?}")),
     }
@@ -1197,7 +1283,9 @@ pub(super) fn parse_approval_mode_confirmation(
 }
 
 /// 解包 workspace_trust 回执：Data 携带写后 `{ workspace_trusted }`。
-pub(super) fn parse_workspace_trust_confirmation(response: &AppResponseEnvelope) -> Result<bool, String> {
+pub(super) fn parse_workspace_trust_confirmation(
+    response: &AppResponseEnvelope,
+) -> Result<bool, String> {
     match &response.response {
         AppResponse::Data(data) => data
             .get("workspace_trusted")
@@ -1213,7 +1301,9 @@ pub(super) fn parse_default_model_confirmation(
     response: &AppResponseEnvelope,
 ) -> Result<DefaultModelPair, String> {
     match &response.response {
-        AppResponse::Data(data) => serde_json::from_value(data.clone()).map_err(|error| error.to_string()),
+        AppResponse::Data(data) => {
+            serde_json::from_value(data.clone()).map_err(|error| error.to_string())
+        }
         AppResponse::Error(_) => Err("server returned an error response".into()),
         other => Err(format!("unexpected response: {other:?}")),
     }
@@ -1221,17 +1311,19 @@ pub(super) fn parse_default_model_confirmation(
 
 /// 解包 auth_start 响应：verification_url 必填，user_code / expires_at
 /// 仅 device flow 携带（PKCE 为 None）。
-pub(super) fn parse_auth_started(
-    response: &AppResponseEnvelope,
-) -> Result<AuthStartData, String> {
+pub(super) fn parse_auth_started(response: &AppResponseEnvelope) -> Result<AuthStartData, String> {
     match &response.response {
-        AppResponse::Data(data) => serde_json::from_value(data.clone()).map_err(|error| error.to_string()),
+        AppResponse::Data(data) => {
+            serde_json::from_value(data.clone()).map_err(|error| error.to_string())
+        }
         AppResponse::Error(_) => Err("server returned an error response".into()),
         other => Err(format!("unexpected response: {other:?}")),
     }
 }
 
-pub(super) fn timeline_page(response: &AppResponseEnvelope) -> Result<Option<TimelinePage>, String> {
+pub(super) fn timeline_page(
+    response: &AppResponseEnvelope,
+) -> Result<Option<TimelinePage>, String> {
     match &response.response {
         AppResponse::Data(data) => match data.get("timeline_page") {
             Some(page) => serde_json::from_value::<TimelinePage>(page.clone())
@@ -1389,7 +1481,9 @@ pub(super) fn parse_diff_file(
 }
 
 /// mcp_list 响应（形状由主代理钉死）：{"servers":[{name,transport,state,tools,last_error}]}。
-pub(super) fn parse_mcp_servers(response: &AppResponseEnvelope) -> Result<Vec<McpServerEntry>, String> {
+pub(super) fn parse_mcp_servers(
+    response: &AppResponseEnvelope,
+) -> Result<Vec<McpServerEntry>, String> {
     match &response.response {
         AppResponse::Data(data) => data
             .get("servers")
@@ -1417,7 +1511,9 @@ pub(super) fn parse_mcp_servers(response: &AppResponseEnvelope) -> Result<Vec<Mc
 
 /// 解包 mcp_test / mcp_server_remove 回执（SET-6c；Data 形状同 mcp_list）；
 /// Error 取 Host 脱敏 message 原文（UI 保留旧清单，fail-closed）。
-pub(super) fn parse_mcp_receipt(response: &AppResponseEnvelope) -> Result<Vec<McpServerEntry>, String> {
+pub(super) fn parse_mcp_receipt(
+    response: &AppResponseEnvelope,
+) -> Result<Vec<McpServerEntry>, String> {
     match &response.response {
         AppResponse::Data(_) => parse_mcp_servers(response),
         AppResponse::Error(error) => Err(error.message.clone()),
@@ -1551,12 +1647,8 @@ mod tests {
         let query = serde_json::to_value(terminal_settings_query()).unwrap();
         assert_eq!(query["method"], "terminal_settings");
 
-        let set = serde_json::to_value(set_terminal_settings_command(
-            Some("/bin/zsh"),
-            120,
-            40,
-        ))
-        .unwrap();
+        let set =
+            serde_json::to_value(set_terminal_settings_command(Some("/bin/zsh"), 120, 40)).unwrap();
         assert_eq!(set["method"], "set_terminal_settings");
         assert_eq!(set["params"]["shell"], "/bin/zsh");
         assert_eq!(set["params"]["columns"], 120);

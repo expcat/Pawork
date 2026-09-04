@@ -124,10 +124,10 @@ trait 面为 `id()` / `list_models(credential)` / `stream(request, sink, cancel)
 
 ### 3.7 网络层（net，feature 无关）
 
-- `HttpClientConfig::builder()`：`timeout` / `no_timeout` / `proxy` / `user_agent` / `header` / `disable_system_proxy`；`HttpClient::new(config)`（代理不合法等报 `ProviderError`）。凭证头在 Debug 输出中显示为脱敏值。`is_local_target(host)` / `loopback_aware_proxy(proxy)`：loopback 目标绕过代理。
+- `HttpClientConfig::builder()`：`timeout` / `no_timeout` / `proxy` / `user_agent` / `header` / `disable_system_proxy`；`HttpClient::new(config)`（代理不合法等报 `ProviderError`）。凭证头在 Debug 输出中显示为脱敏值；proxy URL 的 Debug / 解析错误只保留 scheme/host/port。`is_local_target(host)` / `loopback_aware_proxy(proxy)`：loopback 目标绕过代理。
 - `SseParser::new()` / `feed(&[u8]) -> Vec<Result<SseEvent, SseParseError>>` / `finish()`：增量解析，容忍 CRLF/LF、注释行、跨 chunk UTF-8 截断；缓冲超 `MAX_BUFFER_BYTES`（1 MiB）报错。
 - `classify_status(status, retry_after, body_snippet)`：状态码 → `ProviderErrorKind` 固定映射——401 `Authentication`、403 `Authorization`、404 `ModelNotFound`、408 `Timeout`、413 `ContextTooLarge`、429 `RateLimited`、400 `InvalidRequest`、451 `ContentFiltered`、402 `QuotaExceeded`、500/502/503/504 `ProviderUnavailable`，其余 4xx/5xx 按类别兜底。`message` 固定为 `HTTP <code>`——`body_snippet` **不写入** message（上游正文可能回显 token）；`Retry-After`（秒数或 RFC 7231 IMF-fixdate，`parse_retry_after`）仅对 retryable 类采纳为 `retry_after_ms`。
-- `classify_request_error(reqwest::Error)`：timeout → `Timeout`、connect → `Network`、body/decode → `StreamInterrupted`、request 构造 → `InvalidRequest`、其余 → `Network`。
+- `classify_request_error(reqwest::Error)`：timeout → `Timeout`、connect → `Network`、body/decode → `StreamInterrupted`、request 构造 → `InvalidRequest`、其余 → `Network`；消息只保留错误类别与 origin，不含 userinfo/path/query。
 
 ### 3.8 wire 纯函数与错误表
 

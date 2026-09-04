@@ -298,7 +298,11 @@ impl GuiHostAdapter {
 
     #[cfg(test)]
     pub(crate) async fn command_record_failure_count(&self) -> u64 {
-        self.waiters.stats().await.record_failures
+        self.waiters
+            .stats()
+            .await
+            .expect("stats")
+            .record_failures
     }
 }
 

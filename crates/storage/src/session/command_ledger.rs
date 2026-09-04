@@ -143,34 +143,30 @@ impl CommandLedger {
         Ok(deleted as u64)
     }
 
-    pub async fn stats(&self) -> LedgerStats {
-        self.database
-            .call(|connection| {
-                let entries: i64 = connection
-                    .query_row("SELECT COUNT(*) FROM command_ledger", [], |row| row.get(0))
-                    .unwrap_or(0);
-                let inflight: i64 = connection
-                    .query_row(
-                        "SELECT COUNT(*) FROM command_ledger WHERE status='inflight'",
-                        [],
-                        |row| row.get(0),
-                    )
-                    .unwrap_or(0);
-                let completed: i64 = connection
-                    .query_row(
-                        "SELECT COUNT(*) FROM command_ledger WHERE status='completed'",
-                        [],
-                        |row| row.get(0),
-                    )
-                    .unwrap_or(0);
-                LedgerStats {
+    pub async fn stats(&self) -> Result<LedgerStats, LedgerError> {
+        Ok(self
+            .database
+            .call(|connection| -> Result<LedgerStats, rusqlite::Error> {
+                let entries: i64 =
+                    connection
+                        .query_row("SELECT COUNT(*) FROM command_ledger", [], |row| row.get(0))?;
+                let inflight: i64 = connection.query_row(
+                    "SELECT COUNT(*) FROM command_ledger WHERE status='inflight'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                let completed: i64 = connection.query_row(
+                    "SELECT COUNT(*) FROM command_ledger WHERE status='completed'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                Ok(LedgerStats {
                     entries: entries.max(0) as usize,
                     inflight: inflight.max(0) as usize,
                     completed: completed.max(0) as usize,
-                }
+                })
             })
-            .await
-            .unwrap_or_default()
+            .await??)
     }
 }
 
@@ -631,7 +627,7 @@ mod tests {
             .record("t", "s", "cmd-4", None, "four", 2)
             .await
             .expect("record 4 evicts oldest");
-        let stats = ledger.stats().await;
+        let stats = ledger.stats().await.expect("stats");
         assert_eq!(stats.completed, 2);
         assert_eq!(
             ledger
@@ -687,7 +683,7 @@ mod tests {
             .record("tenant-c", "cli", "cmd-c", None, "c", 2)
             .await
             .expect("record c evicts oldest globally");
-        let stats = ledger.stats().await;
+        let stats = ledger.stats().await.expect("stats");
         assert_eq!(stats.completed, 2);
         assert_eq!(
             ledger
@@ -736,7 +732,7 @@ mod tests {
         let readonly = SessionStore::open_read_only(&path)
             .await
             .expect("open_read_only");
-        let stats = readonly.command_ledger().stats().await;
+        let stats = readonly.command_ledger().stats().await.expect("stats");
         assert_eq!(
             stats.inflight, 1,
             "read-only open must not reclaim inflight rows"
@@ -753,5 +749,16 @@ mod tests {
             LedgerCheck::New
         );
         store.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn stats_returns_error_when_actor_is_closed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("ledger.sqlite3");
+        let (store, _) = SessionStore::open(&path).await.expect("open");
+        let ledger = store.command_ledger();
+        store.shutdown().await.expect("shutdown");
+        let err = ledger.stats().await.expect_err("closed actor must fail");
+        assert!(matches!(err, LedgerError::Database(_)));
     }
 }

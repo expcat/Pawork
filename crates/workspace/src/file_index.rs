@@ -109,7 +109,7 @@ impl FileIndex {
         }
     }
 
-    /// 在 blocking 池完成扫描，完整结果就绪后一次性替换旧索引。
+    /// 在 blocking 池完成扫描；写回时若 generation 已变则丢弃本次结果。
     pub async fn scan_workspace(
         &self,
         workspace: &Workspace,
@@ -118,15 +118,35 @@ impl FileIndex {
         let workspace_id = workspace.id.clone();
         let roots = workspace.roots.clone();
         let options = self.options.clone();
+        let started_generation = {
+            let guard = self.states.read().map_err(|_| FileIndexError::Poisoned)?;
+            guard.get(&workspace_id).map(|state| state.generation)
+        };
         let started = Instant::now();
         let files = tokio::task::spawn_blocking(move || scan(&workspace, &options))
             .await
             .map_err(|error| FileIndexError::Task(error.to_string()))??;
         let duration = started.elapsed().as_millis().try_into().unwrap_or(u64::MAX);
+        self.commit_scan_if_current(&workspace_id, roots, started_generation, files, duration)
+    }
+
+    fn commit_scan_if_current(
+        &self,
+        workspace_id: &WorkspaceId,
+        roots: Vec<PathBuf>,
+        started_generation: Option<u64>,
+        files: BTreeMap<FileKey, IndexedFile>,
+        duration: u64,
+    ) -> Result<IndexSnapshot, FileIndexError> {
         let mut guard = self.states.write().map_err(|_| FileIndexError::Poisoned)?;
-        let generation = guard
-            .get(&workspace_id)
-            .map_or(1, |state| state.generation.saturating_add(1));
+        let current_generation = guard.get(workspace_id).map(|state| state.generation);
+        if current_generation != started_generation {
+            drop(guard);
+            return self
+                .snapshot(workspace_id)?
+                .ok_or_else(|| FileIndexError::WorkspaceNotIndexed(workspace_id.to_string()));
+        }
+        let generation = current_generation.map_or(1, |generation| generation.saturating_add(1));
         guard.insert(
             workspace_id.clone(),
             WorkspaceIndex {
@@ -137,7 +157,7 @@ impl FileIndex {
             },
         );
         drop(guard);
-        self.snapshot(&workspace_id)?
+        self.snapshot(workspace_id)?
             .ok_or_else(|| FileIndexError::WorkspaceNotIndexed(workspace_id.to_string()))
     }
 
@@ -993,6 +1013,68 @@ mod tests {
             snapshot.iter().any(|error| error.contains("channel full")),
             "full-channel drops must be observable: {snapshot:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn stale_full_scan_does_not_replace_newer_generation() {
+        let root = temp_dir("stale-scan");
+        fs::write(root.join("old.rs"), "fn old() {}\n").expect("old");
+        let workspace = workspace(&root);
+        let index = FileIndex::new(IndexOptions::default());
+        let first = index.scan_workspace(&workspace).await.expect("first scan");
+        assert_eq!(first.generation, 1);
+
+        fs::write(root.join("new.rs"), "fn newer() {}\n").expect("new");
+        let newer = index
+            .apply_changes(
+                &workspace,
+                &[PathChange {
+                    path: root.join("new.rs"),
+                    kind: ChangeKind::Upsert,
+                }],
+            )
+            .await
+            .expect("incremental");
+        assert_eq!(newer.generation, 2);
+
+        let stale_key = FileKey {
+            root_index: 0,
+            relative_path: "stale.rs".into(),
+        };
+        let stale_files = BTreeMap::from([(
+            stale_key.clone(),
+            IndexedFile {
+                key: stale_key,
+                size: 1,
+                modified_at_ms: 0,
+                language: Some("rust".into()),
+                binary: false,
+            },
+        )]);
+        let snapshot = index
+            .commit_scan_if_current(
+                &workspace.id,
+                workspace.roots.clone(),
+                Some(first.generation),
+                stale_files,
+                1,
+            )
+            .expect("stale commit discarded");
+        assert_eq!(snapshot.generation, 2);
+        let paths: Vec<&str> = snapshot
+            .files
+            .iter()
+            .map(|file| file.key.relative_path.as_str())
+            .collect();
+        assert!(
+            paths.contains(&"new.rs"),
+            "incremental file must remain: {paths:?}"
+        );
+        assert!(
+            !paths.contains(&"stale.rs"),
+            "stale scan must not replace: {paths:?}"
+        );
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

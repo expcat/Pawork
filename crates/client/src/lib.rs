@@ -32,7 +32,7 @@ use pawork_protocol::{
     HandshakeRequest, HandshakeResponse, ProtocolCodecError, ProtocolError, ResumeRequest,
     ResumeResponse, ServerFrame, SubscribeRequest, SUPPORTED_API_VERSIONS,
 };
-use pawork_transport::{ConnectionInfo, GuiConnection, TransportError, TransportFrame};
+use pawork_transport::{ConnectionInfo, GuiConnection, TransportError, TransportErrorKind, TransportFrame};
 use thiserror::Error;
 use tokio::sync::Mutex as AsyncMutex;
 
@@ -339,6 +339,9 @@ impl GuiClient {
         .await?;
         let response = match recv_frame(conn.as_ref(), config.timeout, None).await? {
             ServerFrame::Handshake(response) => response,
+            ServerFrame::Error(envelope) => {
+                return Err(ClientError::HandshakeRejected(envelope.error));
+            }
             other => {
                 return Err(unexpected_frame("handshake response", &other));
             }
@@ -370,6 +373,9 @@ impl GuiClient {
             Some(
                 match recv_frame(conn.as_ref(), config.timeout, Some(handle.api_version)).await? {
                     ServerFrame::Snapshot(snapshot) => snapshot,
+                    ServerFrame::Error(envelope) => {
+                        return Err(ClientError::Protocol(envelope.error));
+                    }
                     other => return Err(unexpected_frame("initial snapshot", &other)),
                 },
             )
@@ -818,6 +824,9 @@ impl GuiClient {
         timeout: Duration,
         want: FrameWant<'_>,
     ) -> Result<ServerFrame, ClientError> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(ClientError::Disconnected);
+        }
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
             if let Some(frame) = self.pop_inbox(want).await {
@@ -845,8 +854,14 @@ impl GuiClient {
                 let received = tokio::time::timeout(remaining, self.conn.receive()).await;
                 let bytes = match received {
                     Ok(Ok(bytes)) => bytes,
+                    Ok(Err(error)) if error.kind == TransportErrorKind::ConnectionClosed => {
+                        self.closed.store(true, Ordering::Release);
+                        return Err(ClientError::Disconnected);
+                    }
                     Ok(Err(error)) => return Err(ClientError::Transport(error)),
                     Err(_) => {
+                        // transport receive 是取消安全的（读进度留在连接内），
+                        // 超时不污染流，同连接可安全重试。
                         return Err(ClientError::Timeout {
                             operation: "receive frame",
                             timeout,
@@ -950,8 +965,13 @@ async fn recv_frame(
         let received = tokio::time::timeout(remaining, conn.receive()).await;
         let bytes = match received {
             Ok(Ok(bytes)) => bytes,
+            Ok(Err(error)) if error.kind == TransportErrorKind::ConnectionClosed => {
+                return Err(ClientError::Disconnected);
+            }
             Ok(Err(error)) => return Err(ClientError::Transport(error)),
             Err(_) => {
+                // transport receive 是取消安全的（读进度留在连接内），
+                // 超时不污染流，同连接可安全重试。
                 return Err(ClientError::Timeout {
                     operation: "receive frame",
                     timeout,
@@ -1116,6 +1136,77 @@ mod tests {
     fn mock(frames: Vec<TransportFrame>) -> MockConnection {
         MockConnection {
             frames: Mutex::new(VecDeque::from(frames)),
+        }
+    }
+
+    /// receive() 会一直挂起，直到 close()；用于验证超时不污染连接、可重试。
+    struct HangingConnection {
+        closed: AtomicBool,
+    }
+
+    impl HangingConnection {
+        fn new() -> Self {
+            Self {
+                closed: AtomicBool::new(false),
+            }
+        }
+    }
+
+    impl GuiConnection for HangingConnection {
+        fn send<'life0, 'async_trait>(
+            &'life0 self,
+            _frame: TransportFrame,
+        ) -> Pin<Box<dyn Future<Output = Result<(), TransportError>> + Send + 'async_trait>>
+        where
+            'life0: 'async_trait,
+            Self: 'async_trait,
+        {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn receive<'life0, 'async_trait>(
+            &'life0 self,
+        ) -> Pin<
+            Box<dyn Future<Output = Result<TransportFrame, TransportError>> + Send + 'async_trait>,
+        >
+        where
+            'life0: 'async_trait,
+            Self: 'async_trait,
+        {
+            Box::pin(async move {
+                if self.closed.load(Ordering::Acquire) {
+                    return Err(TransportError {
+                        kind: TransportErrorKind::ConnectionClosed,
+                        message: "connection is closed".into(),
+                        retryable: false,
+                    });
+                }
+                std::future::pending::<()>().await;
+                unreachable!("pending")
+            })
+        }
+
+        fn close<'life0, 'async_trait>(
+            &'life0 self,
+        ) -> Pin<Box<dyn Future<Output = Result<(), TransportError>> + Send + 'async_trait>>
+        where
+            'life0: 'async_trait,
+            Self: 'async_trait,
+        {
+            Box::pin(async {
+                self.closed.store(true, Ordering::Release);
+                Ok(())
+            })
+        }
+
+        fn info(&self) -> ConnectionInfo {
+            ConnectionInfo {
+                connection_id: "hanging".into(),
+                locality: ConnectionLocality::InProcess,
+                peer_label: None,
+                encrypted: false,
+                max_frame_bytes: 1024 * 1024,
+            }
         }
     }
 
@@ -1307,6 +1398,110 @@ mod tests {
             .await
             .expect_err("ReplayUnavailable must be observable");
         assert!(error.is_replay_unavailable());
+        assert_eq!(error.kind(), ClientErrorKind::Protocol);
+    }
+
+    #[tokio::test]
+    async fn receive_timeout_does_not_poison_connection() {
+        let conn = HangingConnection::new();
+        let error = recv_frame(&conn, Duration::from_millis(20), None)
+            .await
+            .expect_err("hanging receive must time out");
+        assert!(matches!(error, ClientError::Timeout { .. }));
+        let error = recv_frame(&conn, Duration::from_millis(20), None)
+            .await
+            .expect_err("idle timeout must keep the connection usable");
+        assert!(
+            matches!(error, ClientError::Timeout { .. }),
+            "transport receive 取消安全：超时可重试，不得升级为 Disconnected"
+        );
+
+        let client = GuiClient {
+            conn: Arc::new(HangingConnection::new()),
+            config: ClientConfig::default(),
+            info: Arc::new(SessionInfo {
+                handle: ApiHandle {
+                    instance_id: pawork_domain::CoreInstanceId::from("instance-1"),
+                    api_version: API_VERSION,
+                },
+                client_id: GuiClientId::from("client-1"),
+                connection_id: ConnectionId::from("conn-1"),
+                capabilities: Vec::new(),
+                host_data_dir: None,
+                resume: ResumeDisposition::SnapshotRequired {
+                    earliest_available_sequence: GlobalSequence(0),
+                },
+            }),
+            initial_snapshot: Arc::new(Mutex::new(None)),
+            inbox: Arc::new(AsyncMutex::new(VecDeque::new())),
+            io: Arc::new(AsyncMutex::new(())),
+            request_namespace: Arc::from("test-request"),
+            next_request: Arc::new(AtomicU64::new(0)),
+            next_nonce: Arc::new(AtomicU64::new(0)),
+            last_acked: Arc::new(AtomicU64::new(0)),
+            closed: Arc::new(AtomicBool::new(false)),
+        };
+        let error = client
+            .recv_matching(Duration::from_millis(20), FrameWant::Event)
+            .await
+            .expect_err("hanging recv_matching must time out");
+        assert!(matches!(error, ClientError::Timeout { .. }));
+        assert!(client.is_connected());
+        let error = client
+            .recv_matching(Duration::from_millis(20), FrameWant::Event)
+            .await
+            .expect_err("idle timeout must keep the connection usable");
+        assert!(matches!(error, ClientError::Timeout { .. }));
+    }
+
+    #[tokio::test]
+    async fn handshake_and_initial_snapshot_map_connection_error_frames() {
+        use pawork_protocol::{ProtocolError, ProtocolErrorEnvelope};
+
+        let host_error = ProtocolErrorEnvelope {
+            request_id: None,
+            error: ProtocolError {
+                code: ProtocolErrorCode::Internal,
+                message: "host failed".into(),
+                retryable: false,
+            },
+        };
+        let conn = Arc::new(mock(vec![TransportFrame::new(
+            encode_server_frame(&ServerFrame::Error(host_error.clone())).expect("encode error"),
+        )]));
+        let error = GuiClient::handshake(conn, &ClientConfig::default(), None)
+            .await
+            .err()
+            .expect("connection-level handshake error must not become UnexpectedFrame");
+        assert!(matches!(error, ClientError::HandshakeRejected(_)));
+        assert_eq!(error.kind(), ClientErrorKind::HandshakeRejected);
+
+        let accepted = ServerFrame::Handshake(HandshakeResponse::Accepted {
+            request_id: "handshake".into(),
+            selected_api_version: API_VERSION,
+            handle: ApiHandle {
+                instance_id: pawork_domain::CoreInstanceId::from("instance-1"),
+                api_version: API_VERSION,
+            },
+            client_id: GuiClientId::from("client-1"),
+            connection_id: ConnectionId::from("conn-1"),
+            resume: ResumeDisposition::SnapshotRequired {
+                earliest_available_sequence: GlobalSequence(0),
+            },
+            capabilities: vec![GuiCapability::Snapshots],
+            host_data_dir: None,
+        });
+        let conn = Arc::new(mock(vec![
+            TransportFrame::new(encode_server_frame(&accepted).expect("encode accepted")),
+            TransportFrame::new(
+                encode_server_frame(&ServerFrame::Error(host_error)).expect("encode snapshot error"),
+            ),
+        ]));
+        let error = GuiClient::handshake(conn, &ClientConfig::default(), None)
+            .await
+            .err()
+            .expect("connection-level snapshot error must not become UnexpectedFrame");
+        assert!(matches!(error, ClientError::Protocol(_)));
         assert_eq!(error.kind(), ClientErrorKind::Protocol);
     }
 }

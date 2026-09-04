@@ -137,7 +137,7 @@
 
 1. scheduler 闸门中 policy 已做 shell 风险分类与灾难地板判定（[policy.md](policy.md) §4.3）；`NeverAsk` 下注入的执行约束与显式输入取更严者。
 2. 工具内解析输入：非空 `argv` 优先；否则 `command` 包平台 shell（Unix `sh -c`，Windows `cmd /d /s /c`）；`cwd` 相对解析进 workspace root（默认第一 root）；clamp timeout / 输出 / 资源四项。
-3. 手工构造 `SandboxPolicy`：read/write roots = workspace roots、deny = `default_secret_paths()`、`NetworkMode::Enforce`、**`allow_spawn=true`**（区别于 exec 的 `untrusted_default`——命令执行本身已过 policy 闸门）、`max_procs` = clamp 值、`env_clear=true`、allowlist = `default_env_allowlist()` ∪ 显式 `env` 键、denylist = `["*TOKEN*","*KEY*","*SECRET*"]`——显式传入的 env 若命中通配同样被剥除，宿主 Secret 与模型注入的 Secret 都进不了子进程。
+3. 手工构造 `SandboxPolicy`：read/write roots = workspace roots、deny = `default_secret_paths()`、`NetworkMode::Enforce`、**`allow_spawn=true`**（区别于 exec 的 `untrusted_default`——命令执行本身已过 policy 闸门）、`max_procs` = clamp 值、`env_clear=true`、allowlist = `default_env_allowlist()` ∪ 显式 `env` 键、denylist = `process_env_denylist()`（`*TOKEN*`/`*KEY*`/`*SECRET*`/`*PASS*`/`*PAT`/`*AUTH*`/`*COOKIE*`/`*CREDENTIAL*` 与 `BASH_ENV`/`ENV`/`BASH_FUNC_*`/`NODE_OPTIONS`/`PYTHONSTARTUP`/`PERL5OPT`/`LD_PRELOAD`/`DYLD_*`）——通配命中优先于 allowlist，显式 `env{}` 同样被剥除。
 4. `SandboxSelector::new().pick()` 选后端 → `spawn_stream`（exec 管线：软限制 → 平台翻译 → 进程树守卫，见 [exec.md](exec.md) §4.3）。
 5. 取消桥：spawn 一个任务监听 domain `CancellationToken`，触发即 exec token `.cancel()`。
 6. 收集事件流：stdout/stderr 分别累积（exec 层已按合计预算截断）；组装文本（stdout + `[stderr]` 段 + 非零 `[exit N]`）与 `metadata.sandbox = {backend, isolation, fallback, note, attempted[], limits}`（内联 golden 钉形状）——回退可观测地呈现给上层与用户。
@@ -174,7 +174,7 @@
 - **调度默认最保守**：`ToolSchedulerConfig::default` = `ReadOnly` 档 + untrusted + 并发 8；policy `AskUser` 无有权 resolver 时 fail-closed 拒绝；`AutoApproveResolver` 不能回答 policy prompt。
 - **原子性**：write/edit 单文件原子写；edit 多段与 apply_patch 多文件「全成或全滚」，回滚字节精确（proptest 钉死）。
 - **`metadata.sandbox` 形状**：run_command 必带后端选择证据（backend/isolation/fallback/note/attempted/limits），`metadata_sandbox_shape_and_limits_golden` 钉死——「fail-closed 可观测回退」在工具层的落点。
-- **run_command 环境卫生**：`env_clear=true` + denylist `*TOKEN*/*KEY*/*SECRET*`（优先于 allowlist），宿主与显式注入的命中项都被剥除。
+- **run_command 环境卫生**：`env_clear=true` + denylist 覆盖 Secret 通配与 shell/动态语言启动注入变量（优先于 allowlist），宿主与显式注入的命中项都被剥除。
 - 无独立 golden 文件；上述契约全部由内联测试承载。
 
 ## 6. 依赖关系

@@ -59,6 +59,16 @@ struct PendingAsk {
     sender: Option<oneshot::Sender<ApprovalDecision>>,
 }
 
+/// pending / queued 共用一个锁：resolve 的「查 pending → 入 queued」与
+/// decide 的「查 queued → 入 pending」必须各自原子，否则两把锁的窗口里
+/// decide 查空 queued、resolve 入队、decide 再插 pending 等待，
+/// oneshot 永远不会被唤醒。
+#[derive(Default)]
+struct ApprovalState {
+    pending: HashMap<String, PendingAsk>,
+    queued: HashMap<String, ApprovalDecision>,
+}
+
 /// `ToolApprove` 对 GUI 宿主的解析结果。
 ///
 /// 只有 Live / Queued 两态：重启后的待审批由 snapshot 只读合并呈现，
@@ -75,8 +85,7 @@ pub enum ApprovalResolve {
 /// 决策先到时入队，注册时立即解析；关窗不断开 oneshot，也不自动允许。
 #[derive(Default)]
 pub struct GuiApprovalHost {
-    pending: Mutex<HashMap<String, PendingAsk>>,
-    queued: Mutex<HashMap<String, ApprovalDecision>>,
+    state: Mutex<ApprovalState>,
     on_pending: Mutex<Option<Arc<dyn Fn(&ApprovalAsk) + Send + Sync>>>,
 }
 
@@ -104,12 +113,13 @@ impl GuiApprovalHost {
         decision: ApprovalDecision,
     ) -> Result<ApprovalResolve, String> {
         let key = Self::key(tool_call_id);
-        let mut pending = self
-            .pending
+        let mut state = self
+            .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if pending.contains_key(&key) {
-            if pending
+        if state.pending.contains_key(&key) {
+            if state
+                .pending
                 .get(&key)
                 .is_some_and(|entry| entry.ask.run_id.as_str() != run_id.as_str())
             {
@@ -118,28 +128,25 @@ impl GuiApprovalHost {
                     tool_call_id.as_str()
                 ));
             }
-            let entry = pending.remove(&key).expect("pending key exists");
-            drop(pending);
+            let entry = state.pending.remove(&key).expect("pending key exists");
+            drop(state);
             let sender = entry.sender.expect("live pending always has a sender");
             if let Err(error) = sender.send(decision) {
                 tracing::debug!(error = ?error, "approval waiter closed before live resolve");
             }
             return Ok(ApprovalResolve::Live);
         }
-        drop(pending);
-        self.queued
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert(key, decision);
+        state.queued.insert(key, decision);
         Ok(ApprovalResolve::Queued)
     }
 
     pub fn pending(&self) -> Vec<PendingToolApproval> {
-        let pending = self
-            .pending
+        let state = self
+            .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let mut list: Vec<_> = pending
+        let mut list: Vec<_> = state
+            .pending
             .values()
             .map(|entry| PendingToolApproval {
                 run_id: entry.ask.run_id.clone(),
@@ -163,9 +170,10 @@ impl GuiApprovalHost {
 
     /// run 终态清理，避免 snapshot 泄漏陈旧 pending。
     pub fn clear_run(&self, run_id: &RunId) {
-        self.pending
+        self.state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .pending
             .retain(|_, entry| entry.ask.run_id.as_str() != run_id.as_str());
     }
 }
@@ -174,25 +182,25 @@ impl GuiApprovalHost {
 impl ApprovalPromptHost for GuiApprovalHost {
     async fn decide(&self, ask: &ApprovalAsk, cancel: CancellationToken) -> ApprovalDecision {
         let key = Self::key(&ask.tool_call_id);
-        if let Some(decision) = self
-            .queued
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .remove(&key)
-        {
-            return decision;
-        }
         let (sender, receiver) = oneshot::channel();
-        self.pending
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert(
+        {
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            // 查 queued 与插 pending 在同一临界区：resolve 若在我们之前
+            // 入队，这里立即消费；若之后到达，必走 Live oneshot 唤醒。
+            if let Some(decision) = state.queued.remove(&key) {
+                return decision;
+            }
+            state.pending.insert(
                 key.clone(),
                 PendingAsk {
                     ask: ask.clone(),
                     sender: Some(sender),
                 },
             );
+        }
         let listener = self
             .on_pending
             .lock()
@@ -204,9 +212,10 @@ impl ApprovalPromptHost for GuiApprovalHost {
         tokio::select! {
             biased;
             _ = cancel.cancelled() => {
-                self.pending
+                self.state
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .pending
                     .remove(&key);
                 ApprovalDecision::Cancelled
             }
@@ -524,5 +533,45 @@ mod tests {
         let decision = host.decide(&ask, CancellationToken::new()).await;
         assert_eq!(decision, ApprovalDecision::ApprovedOnce);
         assert!(host.pending().is_empty());
+    }
+
+    #[tokio::test]
+    async fn decide_registered_waiter_is_woken_by_late_resolve() {
+        // 回归：decide 查完 queued 为空、尚未插入 pending 的窗口内，
+        // ToolApprove 先入队 queued —— 等待方必须被唤醒而不是永远挂起。
+        // pending / queued 合并单锁后，两种先后都原子收敛。
+        let host = Arc::new(GuiApprovalHost::new());
+        let ask = ApprovalAsk {
+            run_id: RunId::from("run-2"),
+            session_id: Some(pawork_domain::SessionId::from("ses-2")),
+            tool_name: "write_file".into(),
+            tool_call_id: ToolCallId::from("call-2"),
+            relative_path: None,
+            message: "Approve workspace file write".into(),
+            risk: RiskLevel::Moderate,
+            preview: None,
+        };
+        let waiter = {
+            let host = Arc::clone(&host);
+            let ask = ask.clone();
+            tokio::spawn(async move { host.decide(&ask, CancellationToken::new()).await })
+        };
+        let registered = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while host.pending().is_empty() {
+            assert!(
+                std::time::Instant::now() < registered,
+                "decide 应先注册 pending"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        let kind = host
+            .resolve(&ask.run_id, &ask.tool_call_id, ApprovalDecision::Denied)
+            .expect("late resolve");
+        assert_eq!(kind, ApprovalResolve::Live);
+        let decision = tokio::time::timeout(std::time::Duration::from_secs(5), waiter)
+            .await
+            .expect("resolve 后 decide 不得悬挂")
+            .expect("waiter task");
+        assert_eq!(decision, ApprovalDecision::Denied);
     }
 }

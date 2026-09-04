@@ -96,7 +96,7 @@
 ### 4.3 shell 分类管线（升档与地板共用 tokenizer）
 
 1. `extract_shell_script` 识别 shell 包装并提取内层脚本重新走整条管线（递归，深度上限 `MAX_SCRIPT_DEPTH = 12`）：
-   - POSIX 族：`sh|bash|zsh|dash|ksh|ash|fish|csh|tcsh -c`，含单 dash 组合短选项簇（`-lc`/`-cl` 等含 `c` 即按 `-c` 对待，取簇后首个非选项参数为脚本，宁可升档）。
+   - POSIX 族：`sh|bash|zsh|dash|ksh|ash|fish|csh|tcsh -c`，含单 dash 组合短选项簇（`-lc`/`-cl` 等含 `c` 即按 `-c` 对待，取簇后首个非选项参数为脚本，宁可升档）。`--rcfile`/`-rcfile`/`--init-file`/`-init-file`（含 `=` 粘连）一律升档 Dangerous，文件名不当 `-c` 脚本，并从扫描中跳过以免遮蔽后续 `-c`。程序名大小写折叠并剥 `.exe` 后匹配。
    - Windows：`cmd /c`（`/c`/`-c` 大小写不敏感）、`powershell|pwsh -Command|/Command|-c|/c`。
 2. 非 shell 调用时把 `program + args` 拼为脚本视图整体解析（覆盖「程序名含空白/分隔符」与 argv 形态）。
 3. Lexer 认知：单引号（内无转义）、双引号（`\"` `\\` `\$` `` \` `` 与行续接）、反斜杠转义、`$VAR`/`${VAR}`/位置与特殊参数（标记 dynamic）、`$(...)` 与反引号命令替换（内层原文收集进 substitutions）、`&&`/`||`/`|`/`;`/换行分段、`#` 注释、重定向目标提取（`>` `>>` `2>` 等 fd 数字前缀、`&>`、`>&N`）。未闭合引号按已读内容收尾，不 panic。

@@ -34,6 +34,10 @@ pub struct TerminalState {
 /// Host 快照未提供 cwd 时的诚实占位（区别于「将创建在工作区根」的 "."）。
 pub(crate) const TERMINAL_CWD_UNKNOWN: &str = "unknown";
 
+/// 终端滚动视图的本地缓冲上限：超限从最旧处裁剪，保留最新输出。
+/// 纯文本视图（非 VT emulator）只承诺可回读的尾部滚动内容。
+const TERMINAL_OUTPUT_MAX_BYTES: usize = 256 * 1024;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TerminalAvailability {
     Ready,
@@ -130,6 +134,29 @@ impl TerminalState {
         };
     }
 
+    /// 追加一段输出并维持缓冲上限（按 UTF-8 字符边界裁掉最旧内容）。
+    fn append_output(&mut self, delta: &str) {
+        self.output.push_str(delta);
+        if self.output.len() > TERMINAL_OUTPUT_MAX_BYTES {
+            let excess = self.output.len() - TERMINAL_OUTPUT_MAX_BYTES;
+            let mut cut = excess;
+            while !self.output.is_char_boundary(cut) {
+                cut += 1;
+            }
+            self.output.drain(0..cut);
+        }
+        // Replay 可能在当前 snapshot 之后补到 terminal 的历史输出。
+        // exited/killed 等 snapshot 终态是更强事实，不能被旧输出复活。
+        if self
+            .runtime_state
+            .as_deref()
+            .is_none_or(|state| state == "running")
+        {
+            self.runtime_state = Some("running".into());
+            self.availability = TerminalAvailability::Ready;
+        }
+    }
+
     pub fn availability_label(&self) -> String {
         match &self.availability {
             TerminalAvailability::Ready => {
@@ -158,32 +185,24 @@ impl DesktopProjection {
             .iter_mut()
             .find(|terminal| terminal.session_id.as_deref() == Some(terminal_session_id))
         {
-            terminal.output.push_str(delta);
-            // Replay 可能在当前 snapshot 之后补到 terminal 的历史输出。
-            // exited/killed 等 snapshot 终态是更强事实，不能被旧输出复活。
-            if terminal
-                .runtime_state
-                .as_deref()
-                .is_none_or(|state| state == "running")
-            {
-                terminal.runtime_state = Some("running".into());
-                terminal.availability = TerminalAvailability::Ready;
-            }
+            terminal.append_output(delta);
             if self.terminal.session_id.as_deref() == Some(terminal_session_id) {
-                self.terminal = terminal.clone();
+                // 镜像与条目在每个同步点保持全量相等；原地补同一段增量，
+                // 避免每个 chunk 克隆整份 output。
+                self.terminal.append_output(delta);
                 return true;
             }
             return false;
         }
         // TerminalOutput 可以先于 create 回执抵达。先按 id 缓存；在
         // TerminalCreated 给出权威 workspace 前不展示，避免任务切换期间串屏。
-        let terminal = TerminalState {
+        let mut terminal = TerminalState {
             session_id: Some(terminal_session_id.to_string()),
-            output: delta.to_string(),
             runtime_state: Some("running".into()),
             availability: TerminalAvailability::Ready,
             ..TerminalState::default()
         };
+        terminal.append_output(delta);
         self.terminals.push(terminal);
         false
     }

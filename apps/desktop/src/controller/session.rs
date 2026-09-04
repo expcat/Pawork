@@ -8,15 +8,10 @@ impl DesktopController {
     /// 去重（gui-design §4.1 第 3 条）。
     pub fn open_session(&self, session_id: String) {
         let Some(client) = self.current_client() else {
-            if let Some(events) = self.try_event_sender() {
-                try_emit(
-                    &events,
-                    ControllerEvent::OperationFailed {
-                        action: "open session",
-                        reason: "not connected".into(),
-                    },
-                );
-            }
+            self.emit_reliable(ControllerEvent::SessionOpenFailed {
+                session_id,
+                reason: "not connected".into(),
+            });
             return;
         };
         let events = self.event_sender();
@@ -30,36 +25,33 @@ impl DesktopController {
                 {
                     Ok(response) => response,
                     Err(error) => {
-                        try_emit(
-                            &events,
-                            ControllerEvent::OperationFailed {
-                                action: "open session",
+                        let _ = events
+                            .send(ControllerEvent::SessionOpenFailed {
+                                session_id: session_id.clone(),
                                 reason: error.to_string(),
-                            },
-                        );
+                            })
+                            .await;
                         return;
                     }
                 };
                 let page = match timeline_page(&response) {
                     Ok(Some(page)) => page,
                     Ok(None) => {
-                        try_emit(
-                            &events,
-                            ControllerEvent::OperationFailed {
-                                action: "open session",
+                        let _ = events
+                            .send(ControllerEvent::SessionOpenFailed {
+                                session_id: session_id.clone(),
                                 reason: "session_get response carried no timeline page".into(),
-                            },
-                        );
+                            })
+                            .await;
                         return;
                     }
                     Err(reason) => {
-                        try_emit(
-                            &events,
-                            ControllerEvent::OperationFailed {
-                                action: "open session",
+                        let _ = events
+                            .send(ControllerEvent::SessionOpenFailed {
+                                session_id: session_id.clone(),
                                 reason,
-                            },
-                        );
+                            })
+                            .await;
                         return;
                     }
                 };
@@ -79,13 +71,12 @@ impl DesktopController {
                     return;
                 }
             }
-            try_emit(
-                &events,
-                ControllerEvent::OperationFailed {
-                    action: "open session",
+            let _ = events
+                .send(ControllerEvent::SessionOpenFailed {
+                    session_id,
                     reason: format!("timeline exceeded {MAX_PAGES} pages"),
-                },
-            );
+                })
+                .await;
         });
     }
 
@@ -93,15 +84,10 @@ impl DesktopController {
     /// 挑 updated_at_ms 最新的 session 返回（host gui_host 行为）。
     pub fn create_session(&self, workspace_id: String) {
         let Some(client) = self.current_client() else {
-            if let Some(events) = self.try_event_sender() {
-                try_emit(
-                    &events,
-                    ControllerEvent::OperationFailed {
-                        action: "create session",
-                        reason: "not connected".into(),
-                    },
-                );
-            }
+            self.emit_reliable(ControllerEvent::OperationFailed {
+                action: "create session",
+                reason: "not connected".into(),
+            });
             return;
         };
         let events = self.event_sender();
@@ -111,13 +97,12 @@ impl DesktopController {
                 .command(command, command_source(), actor_identity())
                 .await
             {
-                try_emit(
-                    &events,
-                    ControllerEvent::OperationFailed {
+                let _ = events
+                    .send(ControllerEvent::OperationFailed {
                         action: "create session",
                         reason: error.to_string(),
-                    },
-                );
+                    })
+                    .await;
                 return;
             }
             match client.snapshot().await {
@@ -138,24 +123,22 @@ impl DesktopController {
                             .send(ControllerEvent::SessionCreated { session_id })
                             .await;
                     } else {
-                        try_emit(
-                            &events,
-                            ControllerEvent::OperationFailed {
+                        let _ = events
+                            .send(ControllerEvent::OperationFailed {
                                 action: "create session",
                                 reason: "host accepted SessionCreate but snapshot has no sessions"
                                     .into(),
-                            },
-                        );
+                            })
+                            .await;
                     }
                 }
                 Err(error) => {
-                    try_emit(
-                        &events,
-                        ControllerEvent::OperationFailed {
+                    let _ = events
+                        .send(ControllerEvent::OperationFailed {
                             action: "create session",
                             reason: error.to_string(),
-                        },
-                    );
+                        })
+                        .await;
                 }
             }
         });
@@ -165,15 +148,10 @@ impl DesktopController {
     /// Host 的 canonical workspace 结果，不在 Desktop 侧猜名称或 id。
     pub fn open_workspace(&self, root_path: PathBuf) {
         let Some(client) = self.current_client() else {
-            if let Some(events) = self.try_event_sender() {
-                try_emit(
-                    &events,
-                    ControllerEvent::OperationFailed {
-                        action: "open project",
-                        reason: "not connected".into(),
-                    },
-                );
-            }
+            self.emit_reliable(ControllerEvent::OperationFailed {
+                action: "open project",
+                reason: "not connected".into(),
+            });
             return;
         };
         let events = self.event_sender();
@@ -185,24 +163,22 @@ impl DesktopController {
             {
                 Ok(response) => response,
                 Err(error) => {
-                    try_emit(
-                        &events,
-                        ControllerEvent::OperationFailed {
+                    let _ = events
+                        .send(ControllerEvent::OperationFailed {
                             action: "open project",
                             reason: error.to_string(),
-                        },
-                    );
+                        })
+                        .await;
                     return;
                 }
             };
             let Some((workspace_id, name)) = workspace_opened(&response) else {
-                try_emit(
-                    &events,
-                    ControllerEvent::OperationFailed {
+                let _ = events
+                    .send(ControllerEvent::OperationFailed {
                         action: "open project",
                         reason: format!("unexpected response: {:?}", response.response),
-                    },
-                );
+                    })
+                    .await;
                 return;
             };
             match client.snapshot().await {
@@ -219,13 +195,12 @@ impl DesktopController {
                         .await;
                 }
                 Err(error) => {
-                    try_emit(
-                        &events,
-                        ControllerEvent::OperationFailed {
+                    let _ = events
+                        .send(ControllerEvent::OperationFailed {
                             action: "open project",
                             reason: error.to_string(),
-                        },
-                    );
+                        })
+                        .await;
                 }
             }
         });
@@ -234,6 +209,11 @@ impl DesktopController {
     /// 发送用户消息：RunStart。可选 `(provider, model)` 只影响下一轮。
     pub fn send_message(&self, session_id: String, text: String, model: Option<(String, String)>) {
         let Some(client) = self.current_client() else {
+            // 断线不是静默成功：可靠回执让 Composer 立刻可见失败原因。
+            self.emit_reliable(ControllerEvent::OperationFailed {
+                action: "send message",
+                reason: "not connected".into(),
+            });
             return;
         };
         let events = self.event_sender();
@@ -258,23 +238,21 @@ impl DesktopController {
                             .await;
                     }
                     other => {
-                        try_emit(
-                            &events,
-                            ControllerEvent::OperationFailed {
+                        let _ = events
+                            .send(ControllerEvent::OperationFailed {
                                 action: "send message",
                                 reason: format!("unexpected response: {other:?}"),
-                            },
-                        );
+                            })
+                            .await;
                     }
                 },
                 Err(error) => {
-                    try_emit(
-                        &events,
-                        ControllerEvent::OperationFailed {
+                    let _ = events
+                        .send(ControllerEvent::OperationFailed {
                             action: "send message",
                             reason: error.to_string(),
-                        },
-                    );
+                        })
+                        .await;
                 }
             }
         });
@@ -282,6 +260,10 @@ impl DesktopController {
 
     pub fn cancel_run(&self, run_id: String) {
         let Some(client) = self.current_client() else {
+            self.emit_reliable(ControllerEvent::OperationFailed {
+                action: "cancel run",
+                reason: "not connected".into(),
+            });
             return;
         };
         let events = self.event_sender();
@@ -291,19 +273,22 @@ impl DesktopController {
                 .command(command, command_source(), actor_identity())
                 .await
             {
-                try_emit(
-                    &events,
-                    ControllerEvent::OperationFailed {
+                let _ = events
+                    .send(ControllerEvent::OperationFailed {
                         action: "cancel run",
                         reason: error.to_string(),
-                    },
-                );
+                    })
+                    .await;
             }
         });
     }
 
     pub fn approve(&self, run_id: String, tool_call_id: String, decision: &str) {
         let Some(client) = self.current_client() else {
+            self.emit_reliable(ControllerEvent::OperationFailed {
+                action: "approve tool",
+                reason: "not connected".into(),
+            });
             return;
         };
         let events = self.event_sender();
@@ -313,13 +298,12 @@ impl DesktopController {
                 .command(command, command_source(), actor_identity())
                 .await
             {
-                try_emit(
-                    &events,
-                    ControllerEvent::OperationFailed {
+                let _ = events
+                    .send(ControllerEvent::OperationFailed {
                         action: "approve tool",
                         reason: error.to_string(),
-                    },
-                );
+                    })
+                    .await;
             }
         });
     }
@@ -353,15 +337,10 @@ impl DesktopController {
     /// 错误走既有 OperationFailed，不改 host/app。
     pub fn fork_session(&self, session_id: String, parent_event_id: String) {
         let Some(client) = self.current_client() else {
-            if let Some(events) = self.try_event_sender() {
-                try_emit(
-                    &events,
-                    ControllerEvent::OperationFailed {
-                        action: "fork session",
-                        reason: "not connected".into(),
-                    },
-                );
-            }
+            self.emit_reliable(ControllerEvent::OperationFailed {
+                action: "fork session",
+                reason: "not connected".into(),
+            });
             return;
         };
         let events = self.event_sender();
@@ -373,13 +352,12 @@ impl DesktopController {
             {
                 Ok(response) => match &response.response {
                     AppResponse::Error(_) => {
-                        try_emit(
-                            &events,
-                            ControllerEvent::OperationFailed {
+                        let _ = events
+                            .send(ControllerEvent::OperationFailed {
                                 action: "fork session",
                                 reason: "server returned an error response".into(),
-                            },
-                        );
+                            })
+                            .await;
                     }
                     AppResponse::Accepted { .. } | AppResponse::Data(_) => {
                         let hinted = forked_session_id(&response);
@@ -404,30 +382,33 @@ impl DesktopController {
                                         .await;
                                 }
                             }
-                            Err(error) => try_emit(
-                                &events,
-                                ControllerEvent::OperationFailed {
-                                    action: "fork session",
-                                    reason: error.to_string(),
-                                },
-                            ),
+                            Err(error) => {
+                                let _ = events
+                                    .send(ControllerEvent::OperationFailed {
+                                        action: "fork session",
+                                        reason: error.to_string(),
+                                    })
+                                    .await;
+                            }
                         }
                     }
-                    other => try_emit(
-                        &events,
-                        ControllerEvent::OperationFailed {
-                            action: "fork session",
-                            reason: format!("unexpected response: {other:?}"),
-                        },
-                    ),
+                    other => {
+                        let _ = events
+                            .send(ControllerEvent::OperationFailed {
+                                action: "fork session",
+                                reason: format!("unexpected response: {other:?}"),
+                            })
+                            .await;
+                    }
                 },
-                Err(error) => try_emit(
-                    &events,
-                    ControllerEvent::OperationFailed {
-                        action: "fork session",
-                        reason: error.to_string(),
-                    },
-                ),
+                Err(error) => {
+                    let _ = events
+                        .send(ControllerEvent::OperationFailed {
+                            action: "fork session",
+                            reason: error.to_string(),
+                        })
+                        .await;
+                }
             }
         });
     }

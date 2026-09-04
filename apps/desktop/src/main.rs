@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{
-    prelude::*, px, size, App, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions,
+    App, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions, prelude::*, px, size,
 };
 
 use crate::controller::ControllerEvent;
@@ -315,7 +315,11 @@ async fn probe_smoke(
             Some(false) => "0",
             None => "unknown",
         },
-        if approval { "approved" } else { "not_requested" },
+        if approval {
+            "approved"
+        } else {
+            "not_requested"
+        },
     ))
 }
 
@@ -404,6 +408,9 @@ async fn wait_for_session(
             ControllerEvent::SessionCreated { session_id } => Some(session_id.clone()),
             ControllerEvent::OperationFailed { action, reason } => {
                 Some(format!("FAIL {action}: {reason}"))
+            }
+            ControllerEvent::SessionOpenFailed { reason, .. } => {
+                Some(format!("FAIL open session: {reason}"))
             }
             _ => None,
         },
@@ -565,6 +572,9 @@ async fn wait_for_timeline(
             }
             ControllerEvent::OperationFailed { action, reason } => {
                 Some(format!("FAIL {action}: {reason}"))
+            }
+            ControllerEvent::SessionOpenFailed { reason, .. } => {
+                Some(format!("FAIL open session: {reason}"))
             }
             _ => None,
         },

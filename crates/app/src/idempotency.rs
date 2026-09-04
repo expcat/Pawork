@@ -213,7 +213,10 @@ impl IdempotencyStore {
         let ledger = self.ledger()?;
         let json = serde_json::to_string(&response)
             .map_err(|error| IdempotencyError::Other(error.to_string()))?;
-        let before = ledger.stats().await;
+        let before = ledger
+            .stats()
+            .await
+            .map_err(|error| IdempotencyError::Other(error.to_string()))?;
         let result = ledger
             .record(
                 tenant_id.as_str(),
@@ -226,7 +229,10 @@ impl IdempotencyStore {
             .await;
         match result {
             Ok(()) => {
-                let after = ledger.stats().await;
+                let after = ledger
+                    .stats()
+                    .await
+                    .map_err(|error| IdempotencyError::Other(error.to_string()))?;
                 if after.completed < before.completed + 1 {
                     lock(&self.counters).evicted += 1;
                 }
@@ -269,13 +275,16 @@ impl IdempotencyStore {
         lock(&self.waiters).notify(tenant_id, &self.client_scope, command_id);
     }
 
-    pub async fn stats(&self) -> IdempotencyStats {
+    pub async fn stats(&self) -> Result<IdempotencyStats, IdempotencyError> {
         let mut stats = *lock(&self.counters);
         if let Some(ledger) = &self.ledger {
-            let db: LedgerStats = ledger.stats().await;
+            let db: LedgerStats = ledger
+                .stats()
+                .await
+                .map_err(|error| IdempotencyError::Other(error.to_string()))?;
             stats.entries = db.entries;
         }
-        stats
+        Ok(stats)
     }
 }
 
@@ -409,7 +418,7 @@ mod tests {
                 .await
                 .expect("record");
         }
-        let stats = store.stats().await;
+        let stats = store.stats().await.expect("stats");
         assert_eq!(stats.entries, 2);
         assert_eq!(stats.evicted, 1);
         assert!(matches!(
@@ -483,7 +492,7 @@ mod tests {
             .record(&tenant("tenant-a"), &command_id, Some("key-1"), error)
             .await
             .expect("record");
-        assert_eq!(store.stats().await.entries, 1);
+        assert_eq!(store.stats().await.expect("stats").entries, 1);
         session.shutdown().await.expect("shutdown");
     }
 
@@ -573,7 +582,7 @@ mod tests {
             .await
             .expect("trigger eviction");
 
-        let stats = store.stats().await;
+        let stats = store.stats().await.expect("stats");
         assert_eq!(stats.entries, 2);
         assert_eq!(stats.evicted, 1);
         assert!(matches!(

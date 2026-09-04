@@ -439,7 +439,11 @@ impl CheckpointService {
                 .get(run_id)
                 .and_then(|calls| calls.get(tool_call_id))
                 .cloned()
-                .unwrap_or_default()
+                .ok_or_else(|| {
+                    CheckpointError::NotFound(format!(
+                        "run {run_id} / tool_call {tool_call_id} paths"
+                    ))
+                })?
         };
         Ok((files, abs_map))
     }
@@ -543,11 +547,10 @@ async fn restore_snapshot(
     absolute: Option<&Path>,
 ) -> Result<(), CheckpointError> {
     let Some(target) = absolute else {
-        tracing::warn!(
-            relative_path = %snapshot.relative_path,
-            "rollback: no resolved path recorded, skipping"
-        );
-        return Ok(());
+        return Err(CheckpointError::NotFound(format!(
+            "resolved path for {}",
+            snapshot.relative_path
+        )));
     };
 
     if snapshot.existed {
@@ -815,6 +818,26 @@ mod tests {
         assert_eq!(restored.len(), 2);
         assert_eq!(std::fs::read(&a).expect("read a"), b"A0");
         assert_eq!(std::fs::read(&b).expect("read b"), b"B0");
+        h.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn rollback_missing_recorded_path_is_not_found() {
+        let h = Harness::new("missing-path").await;
+        let svc = CheckpointService::new(h.store.clone());
+        let target = h.ws.join("orphan.txt");
+        std::fs::write(&target, b"original").expect("write");
+        svc.snapshot_before_write("run", "tc", &h.roots(), "orphan.txt")
+            .await
+            .expect("snapshot");
+        {
+            let mut state = guard(&svc.state);
+            state.paths.clear();
+        }
+        std::fs::write(&target, b"changed").expect("overwrite");
+        let err = svc.rollback_tool_call("run", "tc").await.unwrap_err();
+        assert!(matches!(err, CheckpointError::NotFound(_)));
+        assert_eq!(std::fs::read(&target).expect("read"), b"changed");
         h.shutdown().await;
     }
 

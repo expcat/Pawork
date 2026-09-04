@@ -104,10 +104,42 @@ impl GuiTransportClient for LocalTransport {
 /// 读写各持一把 `tokio::sync::Mutex`，保证 `send` / `receive` / `close` 以
 /// `&self` 并发调用安全；同一时刻只允许一个进行中的写（或读）。
 pub(crate) struct StreamConnection<R, W> {
-    reader: tokio::sync::Mutex<R>,
+    reader: tokio::sync::Mutex<ReadHalf<R>>,
     writer: tokio::sync::Mutex<W>,
     info: ConnectionInfo,
     closed: AtomicBool,
+}
+
+/// 读半部 + 跨调用保留的分帧进度。`receive` 被外层超时取消时，
+/// future 析构但进度留在连接里，下一次 `receive` 从断点续读，
+/// 不会把半个帧的残留字节当成新帧的长度前缀。
+pub(crate) struct ReadHalf<R> {
+    reader: R,
+    state: ReadState,
+}
+
+struct ReadState {
+    header: [u8; LENGTH_PREFIX_BYTES],
+    header_filled: usize,
+    payload: Option<Vec<u8>>,
+    payload_filled: usize,
+}
+
+impl ReadState {
+    fn new() -> Self {
+        Self {
+            header: [0u8; LENGTH_PREFIX_BYTES],
+            header_filled: 0,
+            payload: None,
+            payload_filled: 0,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.header_filled = 0;
+        self.payload = None;
+        self.payload_filled = 0;
+    }
 }
 
 impl<R, W> StreamConnection<R, W>
@@ -117,7 +149,10 @@ where
 {
     pub(crate) fn new(reader: R, writer: W, info: ConnectionInfo) -> Self {
         Self {
-            reader: tokio::sync::Mutex::new(reader),
+            reader: tokio::sync::Mutex::new(ReadHalf {
+                reader,
+                state: ReadState::new(),
+            }),
             writer: tokio::sync::Mutex::new(writer),
             info,
             closed: AtomicBool::new(false),
@@ -165,33 +200,35 @@ where
         if self.closed.load(Ordering::Acquire) {
             return Err(connection_closed("connection is closed"));
         }
-        let mut reader = self.reader.lock().await;
-        let mut header = [0u8; LENGTH_PREFIX_BYTES];
-        let mut filled = 0usize;
-        while filled < LENGTH_PREFIX_BYTES {
-            match reader.read(&mut header[filled..]).await {
-                Ok(0) if filled == 0 => {
+        let mut guard = self.reader.lock().await;
+        let ReadHalf { reader, state } = &mut *guard;
+        while state.header_filled < LENGTH_PREFIX_BYTES {
+            match reader.read(&mut state.header[state.header_filled..]).await {
+                Ok(0) if state.header_filled == 0 => {
                     // 帧边界上的干净 EOF：对端正常关闭。
                     self.closed.store(true, Ordering::Release);
                     return Err(connection_closed("peer closed the connection"));
                 }
                 Ok(0) => {
-                    return Err(protocol_violation("truncated frame header"));
+                    // 半截帧头已消费，流已错位：关闭连接，避免下轮把残留字节当长度前缀。
+                    self.closed.store(true, Ordering::Release);
+                    return Err(connection_closed("truncated frame header"));
                 }
-                Ok(n) => filled += n,
+                Ok(n) => state.header_filled += n,
                 Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-                Err(error) if filled == 0 && is_peer_gone(&error) => {
+                Err(error) if state.header_filled == 0 && is_peer_gone(&error) => {
                     self.closed.store(true, Ordering::Release);
                     return Err(connection_closed(&format!("peer closed: {error}")));
                 }
                 Err(error) => {
-                    return Err(protocol_violation(&format!(
+                    self.closed.store(true, Ordering::Release);
+                    return Err(connection_closed(&format!(
                         "failed to read frame header: {error}"
                     )));
                 }
             }
         }
-        let declared = u32::from_le_bytes(header) as u64;
+        let declared = u32::from_le_bytes(state.header) as u64;
         if declared > self.info.max_frame_bytes {
             // 声明长度超限：拒绝（在分配缓冲区之前），流已错位，标记关闭。
             self.closed.store(true, Ordering::Release);
@@ -200,11 +237,29 @@ where
                 self.info.max_frame_bytes,
             ));
         }
-        let mut payload = vec![0u8; declared as usize];
-        reader
-            .read_exact(&mut payload)
-            .await
-            .map_err(|error| protocol_violation(&format!("truncated frame payload: {error}")))?;
+        let capacity = declared as usize;
+        let payload = state
+            .payload
+            .get_or_insert_with(|| vec![0u8; capacity]);
+        while state.payload_filled < payload.len() {
+            match reader.read(&mut payload[state.payload_filled..]).await {
+                Ok(0) => {
+                    // 半截 payload 已消费，流已错位：关闭连接，避免下轮把残留字节当长度前缀。
+                    self.closed.store(true, Ordering::Release);
+                    return Err(connection_closed("truncated frame payload: peer closed"));
+                }
+                Ok(n) => state.payload_filled += n,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(error) => {
+                    self.closed.store(true, Ordering::Release);
+                    return Err(connection_closed(&format!(
+                        "truncated frame payload: {error}"
+                    )));
+                }
+            }
+        }
+        let payload = state.payload.take().expect("payload filled above");
+        state.reset();
         Ok(TransportFrame::new(payload))
     }
 
@@ -243,10 +298,6 @@ fn transport_error(kind: TransportErrorKind, message: impl Into<String>) -> Tran
 
 fn connection_closed(message: &str) -> TransportError {
     transport_error(TransportErrorKind::ConnectionClosed, message)
-}
-
-fn protocol_violation(message: &str) -> TransportError {
-    transport_error(TransportErrorKind::ProtocolViolation, message)
 }
 
 fn frame_too_large(actual: usize, limit: u64) -> TransportError {
@@ -291,5 +342,78 @@ mod tests {
             Ok(_) => panic!("must reject non-local endpoint"),
         };
         assert_eq!(error.kind, TransportErrorKind::InvalidEndpoint);
+    }
+
+    #[tokio::test]
+    async fn truncated_header_or_payload_closes_connection() {
+        async fn receive_twice(bytes: &[u8]) -> (TransportError, TransportError) {
+            let (peer, local) = tokio::io::duplex(64);
+            let (reader, writer) = tokio::io::split(local);
+            let conn = StreamConnection::new(
+                reader,
+                writer,
+                connection_info("test".into(), 1024),
+            );
+            {
+                let (_peer_reader, mut peer_writer) = tokio::io::split(peer);
+                peer_writer.write_all(bytes).await.expect("write truncated");
+                peer_writer.shutdown().await.expect("shutdown writer");
+            }
+            let first = conn
+                .receive()
+                .await
+                .expect_err("truncated frame must fail");
+            let second = conn
+                .receive()
+                .await
+                .expect_err("closed connection must not reread leftover bytes");
+            (first, second)
+        }
+
+        let (first, second) = receive_twice(&[0x05, 0x00]).await;
+        assert_eq!(first.kind, TransportErrorKind::ConnectionClosed);
+        assert_eq!(second.kind, TransportErrorKind::ConnectionClosed);
+
+        let mut truncated_payload = Vec::from(8u32.to_le_bytes());
+        truncated_payload.extend_from_slice(&[1, 2, 3]);
+        let (first, second) = receive_twice(&truncated_payload).await;
+        assert_eq!(first.kind, TransportErrorKind::ConnectionClosed);
+        assert_eq!(second.kind, TransportErrorKind::ConnectionClosed);
+    }
+
+    #[tokio::test]
+    async fn cancelled_receive_mid_frame_resumes_without_desync() {
+        use std::time::Duration;
+
+        let mut frame = Vec::from(5u32.to_le_bytes());
+        frame.extend_from_slice(b"hello");
+
+        // 场景一：取消发生在半截帧头。
+        let (mut peer, local) = tokio::io::duplex(64);
+        let (reader, writer) = tokio::io::split(local);
+        let conn = StreamConnection::new(reader, writer, connection_info("test".into(), 1024));
+        peer.write_all(&frame[..3]).await.expect("write partial header");
+        let first = tokio::time::timeout(Duration::from_millis(50), conn.receive()).await;
+        assert!(first.is_err(), "partial header receive must time out");
+        peer.write_all(&frame[3..]).await.expect("write rest");
+        let received = tokio::time::timeout(Duration::from_secs(5), conn.receive())
+            .await
+            .expect("resumed receive completes")
+            .expect("frame intact after mid-header cancel");
+        assert_eq!(received.as_bytes(), b"hello");
+
+        // 场景二：取消发生在半截 payload。
+        let (mut peer, local) = tokio::io::duplex(64);
+        let (reader, writer) = tokio::io::split(local);
+        let conn = StreamConnection::new(reader, writer, connection_info("test".into(), 1024));
+        peer.write_all(&frame[..6]).await.expect("write header + partial payload");
+        let first = tokio::time::timeout(Duration::from_millis(50), conn.receive()).await;
+        assert!(first.is_err(), "partial payload receive must time out");
+        peer.write_all(&frame[6..]).await.expect("write rest");
+        let received = tokio::time::timeout(Duration::from_secs(5), conn.receive())
+            .await
+            .expect("resumed receive completes")
+            .expect("frame intact after mid-payload cancel");
+        assert_eq!(received.as_bytes(), b"hello");
     }
 }
