@@ -248,8 +248,8 @@ domain id 类型未从 client re-export，命令 / 查询经冻结的 serde 形�
 
 ## 5. 契约与不变量
 
-- **视觉基准事实源**：[../../../design/README.md](../../../design/README.md)（P0–P2 三张 1440×1024 逻辑尺寸阶段目标设计图）、[UI 优化方案](../../gui-optimization.md) 与 [../../gui-design.md](../../gui-design.md)。P0-1 已把基础字阶、六档 spacing、三档 radius、2px focus ring、icon/menu 几何与 hover/pressed 状态冻结到 `theme.rs`；普通 panel 无 shadow，menu/popover 才有 elevation。真窗口视觉签字仍须按 Roadmap 单列，不能由 token 测试替代。
-- **R9 / P1 可见层级合同**：Timeline 满宽 + 618px readable wrapper、40/12px summary 节奏；TaskRail 56px meta 槽；Composer surface 与 unavailable 对比；Changes 20/72/76px 文件槽、36px 横滚外 header、24px gutter；ActivityPopover 由旧 320×320 收缩为当前内容所需的 320×144，并保持 capability honesty。这里只冻结可见实现，不宣称 Timeline/Changes 全状态 AX 几何或终局视觉门禁已经通过。
+- **视觉基准事实源**：[../../../design/README.md](../../../design/README.md)（P0–P2 三张 1440×1024 逻辑尺寸阶段目标设计图）、[UI 优化方案](../../gui-optimization.md) 与 [../../gui-design.md](../../gui-design.md)。P0-1 已把基础字阶、六档 spacing、三档 radius、2px focus ring、icon/menu 几何与 hover/pressed 状态冻结到 `theme.rs`；普通 panel 无 shadow，menu/popover 才有 elevation。2026-09-04 已按 Roadmap 单列完成三张阶段图的当前构建真窗口视觉签字；该证据仍不得由 token 测试替代，也不替代 Provider 成功流或系统 IME 人工签字。
+- **R9 / P1 可见层级合同**：Timeline 满宽 + 618px readable wrapper、40/12px summary 节奏；TaskRail 56px meta 槽；Composer surface 与 unavailable 对比；Changes 20/72/76px 文件槽、36px 横滚外 header、24px gutter；ActivityPopover 由旧 320×320 收缩为当前内容所需的 320×144，并保持 capability honesty。这里只冻结可见实现；阶段图的当前构建真窗口视觉签字已单列通过，但不扩张为 Timeline/Changes 全状态 AX 几何的自动覆盖。
 - **审批 fail-closed**：无默认允许；决策只能来自显式点击或快捷键；断线禁用；run / tool 终态与 `ApprovalResponded` 清卡防幽灵审批。
 - **P1 Run 工作单元（2026-09-04）**：不改 reducer / wire / sequence，只在 `timeline_rows()` 的既有 run/order 上组织视觉。连续 tool 以首个 event id 为稳定 group key，标题汇总真实数量与状态并可折叠；terminal summary 吸收同 Run 的重复相位，完成、失败、取消不混写。只有当前 Session 的真实 Changes 可用时显示 `Review changes`，mouse / keyboard / AX 进入同一 Changes handler；Approval 继续占最高层级并保持三决策 fail-closed。Inspector 三页共享诚实 empty/error/stale 语言，Activity 仅含 Changes 时按 320×144 收缩。
 - **`gui.token` fail-closed**：token 缺失、不可读或为空即连接失败，禁止无认证静默连接；错误信息只含路径，token 内容不落日志。
@@ -338,7 +338,7 @@ cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders
 
 截至 2026-09-01，正式 Host/Desktop（无 fixture/seed/mock）已完成添加项目、真实 Provider 对话、审批写文件、Changes 与真实 Git 对照、PTY 命令、P1 多项目/会话归属双粒度重开、P2 六链路可靠性与 P3 三面板验收（含 ADR-045 Terminal 生命周期）。P3 隔离实例以 AX + `stty`/`pwd`/Git/SQLite/Host snapshot/ps 双证据验证尺寸变更、exited 重建、cwd 恢复、Changes/Resources 刷新与断线 stale；ADR-045 复验 Stop→无重连即时 killed（进程组击杀证据）、Close→复位 not started 且快照清空、`exit 7` 即时 exited、断线 stale 不回归；P4 片 3 消除 AX 树三处固定偏移几何（stepper / 审批卡 / Timeline）；P4 片 2F 修复并真窗口复验 D1（AXPress 菜单同源移焦与来源回焦）、D2（Timeline/approval 共享 item 序列，稳定帧读取真实 list bounds，AX frame 中心真实点击落盘）与 D3（历史早期工具不清 snapshot 当前审批，切走跳回仍恢复），当前 Desktop 定向门禁 160/160。系统 IME 真实 composing 仍待用户人工签字（VoiceOver 签字已于 2026-09-04 按用户要求移出范围），P4 其余切片未完成。
 
-2026-09-04 P0–P2 UI Roadmap 已完成源码实现与 187/187 Desktop 自动门禁（含审查修复：Settings AX 列几何与 820px render 列同源、model 菜单 AX 裁剪）；测试 Host 使用用户指定的 `opencode-go / glm-5.3-flash` 临时启动参数，未改持久默认。真实 Run 到达 Running 后因当前环境无法连接 OpenCode 而 failed，未取得成功模型响应；P0 后续真窗口复验又受 macOS 锁屏阻塞。因此三张阶段图、1080×720 / 三档字号与键盘主路径的本轮人工签字仍为 PENDING，不能由自动门禁替代。
+2026-09-04 P0–P2 UI Roadmap 已完成源码实现与当轮 Desktop 自动门禁（移除 Increase Contrast / VoiceOver 门禁前 187/187，范围调整后 186/186；含审查修复：Settings AX 列几何与 820px render 列同源、model 菜单 AX 裁剪）。当前源码重新执行 `./scripts/pawork-desktop.sh build` 成功，并在正式 Host / Desktop 上逐张对照 P0–P2 阶段图：1440×1024 宽窗与含约 3px 窗框的 1083×723 最小窗布局、Inspector 折叠、Activity、Settings 八页、provider 分层、100% / 125% / 150% 字号，以及 direct toggle / 菜单焦点路径均通过，三张阶段图视觉签字为 PASSED。测试 Host 仍只以临时参数使用 `opencode-go / glm-5.3-flash`；同日无工具请求真实到达 Running / Cancel 后因当前环境无法连接 `https://opencode.ai` 而 failed，故 successful streaming / tool / Review 串联与系统 IME composing 人工签字保持 PENDING，不能由视觉或自动门禁替代。
 
 2026-09-04 按用户要求移除 macOS Increase Contrast 支持与全部 VoiceOver 验收门禁：删除 `ui/platform_preferences.rs`（NSWorkspace 显示偏好桥），`theme::dark()` 回归单一冻结 palette 并移除对应定向测试（Desktop 门禁 187→186），Appearance 页主题说明同步更新；AX tree 与键盘支持保留。
 
@@ -347,8 +347,8 @@ cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders
 - **gpui 前台执行器无 tokio reactor（历史崩溃教训）**：在 `cx.spawn` 的前台执行器上 await client 调用，会在 `receive_frame` 内部的 `tokio::time` 直接 panic。连接期握手 / ack / `subscribe_all` 与事件泵**必须**全部跑在 `runtime.spawn` 上，gpui 侧只经 channel 消费结果。`--probe-smoke` 走 `platform.block_on` 自带 runtime，暴露不了这类回归，因此生产窗口启动仍是必需门禁。
 - **Changes 面只读**（用户拍板 2026-08-24）：git_stage / HunkStageService 接线顺延 ADR 候选；`@` 补全浮层与「已加载规则」分区无 Host 出口（`@` 端到端展开在 host 侧 crates/app，不在本 crate）。
 - **host `diff_*` 固定解析 latest 会话**：数据会话与当前查看会话不一致时，UI 以 banner「Showing changes for latest session X — not the active session.」与 popover 提示行如实标注，不静默张冠李戴。
-- **渲染面自动门禁尚未完整**：现有布局、主题、键盘与 AX 定向测试不覆盖完整 Timeline/Changes AX 几何与全组件 150%/hover/inactive；性能阈值未冻结；三张阶段目标设计图的人工视觉签字仍待专项验收。
-- **ActivityPopover 终局未签字**：divider/raised Changes section 与相关 AX 子节点已有定向测试；完整 screen-reader、动态状态与三张阶段目标设计图的人工视觉签字仍待专项验收，不把结构测试冒充视觉终局。
+- **渲染面自动门禁尚未完整**：现有布局、主题、键盘与 AX 定向测试不覆盖完整 Timeline/Changes AX 几何与全组件 hover/inactive，性能阈值也未冻结；三张阶段目标设计图的当前构建真窗口视觉签字已通过，但不扩张为这些未覆盖项的自动保证。
+- **ActivityPopover 已完成视觉签字**：divider/raised Changes section、仅有 Changes capability 时的 320×144 收缩、最小窗锚定与相关 AX 子节点已由定向测试和当前构建真窗口共同核对。VoiceOver / 完整 screen-reader 已移出本 Roadmap 验收范围；后续 capability 增减仍须重新验证动态内容高度与 AX 子树。
 - **环境性断连**：显示器休眠 / App Nap 下心跳超时断连（Reconnect 横幅恢复）为宿主环境行为，非缺陷。
 - **早死 run 的回显行重选后消失（R4 Wave B 评审 P3，存量语义）**：plan 闸门在 `MessageCommitted` 之前拒绝时，用户消息从未持久化；乐观回显让用户先看见消息，重选 / 重连后快照重建时该行随基线清空消失。消息此前根本不显示，echo 只是使该语义可观察；是否把用户消息持久化提前到闸门之前属 [产品候选](../backlog.md)。同理，合成兜底条目（≥2^60 序号）在屏时若同会话又有真实事件到达，真实事件按序号插到合成条目之前（深边角化妆性排序），重选即自愈。同一 run 的乐观回显行与稍后到达的持久化 UserMessage 在未经重选/重连时理论上可并存（echo 不进 seen）；实际触发面极窄——最新用户消息只经快照到达而快照会重建 timeline——重选即自愈。
 - **单主题**：仅深色 `dark()`，不读取系统显示偏好（Increase Contrast palette 变体已于 2026-09-04 移除）。SET-6e 外观页只读陈述这一事实，不提供 light/system/custom theme 控件；`Theme: Global` 是未来运行时主题挂载点，当前未 `set_global`。

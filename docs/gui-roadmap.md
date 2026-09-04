@@ -1,6 +1,6 @@
 # Pawork Desktop UI 优化 Roadmap
 
-> 状态：**源码已实现、自动门禁已通过**（P0–P2；三张阶段图的真窗口人工验收待补。Increase Contrast 功能与 VoiceOver 验收门禁已于 2026-09-04 按用户要求移除）。
+> 状态：**源码已实现、自动门禁已通过，三张阶段图的真窗口视觉签字已通过**（P0–P2；完整 Human acceptance 仍受真实 Provider 成功 streaming / tool / Review 串联与系统 IME composing 人工签字限制。Increase Contrast 功能与 VoiceOver 验收门禁已于 2026-09-04 按用户要求移除）。
 > 基线日期：2026-09-04。目标设计见 [UI / Design 全面优化方案](gui-optimization.md)，现行行为见 [GUI 设计](gui-design.md)、[Desktop Spec](spec/desktop.md) 与源码。
 > 本 Roadmap 只拆分已接受的 UI 优化，不代表生产路径、自动门禁或人工验收已经完成。
 
@@ -138,8 +138,8 @@ flowchart LR
 - 正式 `pawork` Host / Desktop 路径下完成 1440×1024、1080×720、100% / 150% 的真窗口基线；覆盖启动未选 Task、Projects、Timeline、运行中与断线保留旧投影。截图只作当轮临时证据，未写入仓库。
 - 测试模型按用户指定固定为 `opencode-go / glm-5.3-flash`，通过本次临时 Host 参数覆盖，不修改持久默认配置。RunStart 已进入真实 `Running`，界面同步显示 Task / Header running、Cancel 与 `Run 00:00`；随后因当前环境到 OpenCode 服务的 HTTP 连接失败进入 failed，未伪造成功终态。
 - 外部事实交叉核对：`pawork --instance desktop status` 确认本机 socket listening；Git 仍为 `main` 且只保留启动前已有的 GUI 设计文档 / 图片改动；本轮基线未产生工作区文件改动。
-- 基线时观察到 grouping 两项菜单、150% 下 Inspector 页签 / CTA 拥挤、Settings provider AX summary 朗读 masked credential 片段；这些是后续 P0–P2 的输入，其中 grouping 与 credential summary 已在本 Roadmap 内收口，最终 150% 真窗口复验仍 pending。
-- 自动门禁：按本任务约束未运行 Cargo。Human acceptance：PENDING。
+- 基线时观察到 grouping 两项菜单、150% 下 Inspector 页签 / CTA 拥挤、Settings provider AX summary 朗读 masked credential 片段；这些是后续 P0–P2 的输入，其中 grouping 与 credential summary 已在本 Roadmap 内收口，最终 150% 真窗口复验见 P2-5。
+- 自动门禁：按本任务约束未运行 Cargo。当轮 Human acceptance：PENDING；后续补证见 P2-5。
 
 ### P0-1：Theme 与基础组件状态
 
@@ -154,7 +154,7 @@ flowchart LR
 - 已实现：字阶收敛为 Header 22 / title 20 / 正文 16 / control 14 / meta 12px；新增共享 4/8/12/16/24/32 spacing、4/6/8 radius、2px focus、28px icon 与 220–360px menu token。默认仍是单一 dark palette，surface 含 pressed 色。
 - 已实现：Button / ListRow 分离 Hover 与 Pressed 且不缩放；Button disabled 不再挂 mouse press；Badge 使用 12px meta；MenuPanel 使用 8px 锚距、8px padding、r6、strong border 与 menu-only shadow，MenuRow 改为 34px、check + label 选中语义，不再整行亮蓝。
 - 自动门禁：theme 定向测试 10/10；`git diff --check` 通过。现有测试内扩展 1 条 token 断言，没有新增测试文件或依赖。
-- 真窗口视觉验收：PENDING（按 P0-5 与三张阶段图统一收口）。
+- 真窗口视觉验收：PASSED（最终补证见 P0-5）。
 
 ### P0-2：TaskRail 与直接切换按钮
 
@@ -169,7 +169,7 @@ flowchart LR
 - 已实现：`task-rail-grouping` 改为 28×28 二态 Ghost 直接按钮；Timeline 显示 Projects 目标 glyph / `Show projects`，Projects 显示 Timeline 目标 glyph / `Show timeline`，移除 chevron、Dropdown、`MenuKind::Grouping`、grouping menu 与两项 AX 子树。
 - 同源交互：mouse、Enter、Space、AX Press 均调用 `toggle_grouping()`；AX name 是目标动作，value 是 `Timeline view` / `Projects view`。切换关闭其它浮层、清高亮并保留按钮焦点、active session、scope、draft 与 collapsed projects，随后滚动 active task 到可见。
 - 自动门禁：`cargo test -p pawork-desktop --offline --bin pawork-desktop --features gpui/runtime_shaders grouping`，2/2；`git diff --check` 通过。复用并调整既有 AX 测试，没有增加测试数量或依赖。
-- 真窗口视觉 / 键盘验收：PENDING（P0-5 统一收口）。
+- 真窗口视觉 / 键盘验收：PASSED（最终补证见 P0-5）。
 
 ### P0-3：Shell、Header 与空态
 
@@ -185,7 +185,7 @@ flowchart LR
 - 已实现：Workspace Header 增加 1px subtle divider；标题、branch、live Run 状态和右侧 New task / Activity 继续使用真实投影与既有 enable gate。无 active Task 时，中央空态改为 `Start a task` + 一句说明 + 唯一 Primary `New task`，并隐藏 Header 中重复的新建动作。
 - 同源交互：空态按钮复用既有 `header-new-task` focus、mouse / Enter / Space / AX Press 与 WorkspaceConfirm 回焦路径；断线时 disabled 且不发布 AX Press。
 - 自动门禁：空态定向测试 2/2、shell layout 4/4、相关 AX Press 1/1；`git diff --check` 通过。未新增测试文件、依赖或协议行为。
-- 真窗口视觉 / 键盘验收：PENDING（P0-5 统一收口）。
+- 真窗口视觉 / 键盘验收：PASSED（最终补证见 P0-5）。
 
 ### P0-4：Composer 与通用浮层
 
@@ -202,7 +202,7 @@ flowchart LR
 - 已实现：Composer 改用单一 raised surface、1px subtle border 与 8px radius；model picker 只显示 display name，provider / raw id 留在 tooltip、菜单与 AX value。
 - 已实现：model menu 按 provider 分组，组内保持目录顺序；鼠标、方向键 / Enter 与 AX 使用同一扁平索引。Composer 菜单固定优先向上锚定，通用 `anchored` 继续处理窗口边界，超长行截断、超高菜单内部滚动。
 - 自动门禁：既有 InputArea 测试 3/3（含交错 provider 的分组 / 选中索引回归）；`git diff --check` 通过。没有新增测试数量、依赖、搜索服务或模型来源。
-- 真窗口视觉 / 键盘 / IME 验收：PENDING（P0-5 统一收口）。
+- 真窗口视觉 / 键盘验收：PASSED（最终补证见 P0-5）；系统 IME 真实 composing：PENDING。
 
 ### P0-5：阶段收口
 
@@ -217,6 +217,7 @@ flowchart LR
 - 自动门禁：`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`，187/187；`./scripts/pawork-desktop.sh build` 成功；`git diff --check` 通过。门禁首次暴露 2 处只反映旧字号 / 间距的 AX 几何期望，按同源公式修正后定向测试与完整 Desktop bin 门禁均通过。
 - 测试 Host：按用户指定以 `opencode-go / glm-5.3-flash` 启动真实 `pawork gui serve`；不修改持久默认配置。当前环境无法连接 OpenCode，模型调用只能验到真实 Running → failed 闭环，不能宣称成功响应。
 - 真窗口复验：正式 Host 与刚编译的 Desktop 已启动，但 macOS 锁屏使窗口读取 / 操作被系统拒绝；1440×1024、1080×720 与键盘主路径仍为 PENDING，不能由自动门禁替代。
+- 最终补证（2026-09-04，当前源码构建）：与 P0 阶段图并排核对了 1440×1024 宽窗和约 1080×720 最小窗；三栏 / Inspector 自动折叠、唯一空态主动作、TaskRail direct toggle、Composer 与 scope / model / New Task 浮层均无裁切。Timeline / Projects 经 mouse、Return、Space 同源切换并保持焦点；方向键与 Escape 的菜单焦点恢复通过。P0 视觉与上述键盘主路径签字 PASSED；系统 IME 真实 composing 仍单列 PENDING。
 
 ---
 
@@ -290,6 +291,7 @@ flowchart LR
 - 自动门禁：`CARGO_INCREMENTAL=0 cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`，187/187。
 - 测试 Host / 模型：`opencode-go / glm-5.3-flash`。真实 Run 已到达 Running，但当前环境无法连接 OpenCode，随后 failed；因此 streaming / successful response / Review changes 的本轮真窗口串联未完成。Human acceptance：PENDING。
 - 解锁后复验：Host 以当次 `--provider opencode-go --model glm-5.3-flash` 启动；真窗口发出的 run 在持久化事件中依次记录 `provider_request_started{provider_id: opencode-go, model: glm-5.3-flash}` 与 `run_failed{category: unavailable}`，证明选择已到达真实 Provider 请求且失败终态诚实收口。网络仍不可达，故 successful streaming / tool / Review 串联仍为 PENDING。
+- 最终视觉补证（2026-09-04，当前源码构建）：与 P1 阶段图核对了真实历史 completed run 的 prompt → 单一 tool group → assistant response → 单一 terminal summary，以及真实 failed run、Inspector 折叠与仅含 Changes 的紧凑 Activity。工作区初始 clean 时 Changes 如实显示 0 files，未制造 fixture 或虚假 Review CTA。P1 阶段图视觉签字 PASSED；同日新发无工具请求再次呈现 Running / Cancel 后因 `https://opencode.ai` 连接失败收口为 failed，故当前网络下 successful streaming / tool / Review 串联仍为 PENDING。
 
 ---
 
@@ -347,7 +349,7 @@ flowchart LR
 执行记录（2026-09-04）：
 
 - 已核对：现有 `shell_layout::resolve` 与 theme 定向测试继续钉住 1440×1024、1080×720 与 100%/125%/150%；P2 内容宽、64px provider 行、focus / disabled / selected 状态复用同一 token / gate。
-- 当前 UI 没有动画或过渡，因此未制造 Reduce Motion 分支。自动布局 / theme / AX 门禁通过；三档字号与窄窗的本轮真窗口视觉复验因锁屏为 PENDING。
+- 当前 UI 没有动画或过渡，因此未制造 Reduce Motion 分支。自动布局 / theme / AX 门禁通过；100% / 125% / 150% 与窄窗真窗口视觉复验已在 P2-5 最终补证中 PASSED。
 
 ### P2-5：最终验收与状态同步
 
@@ -361,8 +363,10 @@ flowchart LR
 - 已实现并完成文档状态同步；`cargo check`、Settings 定向 12/12、Activity AX 定向 1/1、Desktop bin 187/187 与 `git diff --check` 通过。GLM 审查发现的 2 处 AX 几何缺陷已同批修复并各补 1 条现有测试内断言 / 1 条定向测试：Settings 各页 AX 列宽与 render 820px 内容列同源（含 provider connection/catalog 列 +300/+440 平移）、model 菜单只发布 240px 裁剪框内子节点。
 - 真窗口 / 人工：P0 基线曾覆盖 1440×1024、1080×720、100%/150%、empty、Projects、Timeline、Running 与 disconnect；最终新构建的 P1/P2 复验、125% 与键盘主路径因 macOS 锁屏未取得证据，均保持 PENDING。
 - 模型记录：测试模型为 `opencode-go / glm-5.3-flash`，仅通过临时 Host 参数选择，未修改持久默认；网络失败意味着没有成功模型响应证据。
-- 解锁后真窗口补证：当前新构建在 1080×720 逻辑最小窗（显示缩放截图为 1152×768）下无主动作裁切；Appearance 100% / 125% / 150% 均即时生效且样例完整；Timeline / Projects 经 mouse、Return、Space 同源切换并保持焦点；Settings 八页、provider 概览与 AX summary 已逐页核对。三张阶段图的并排签字仍为 PENDING。
+- 解锁后真窗口补证：当前新构建在 1080×720 逻辑最小窗（显示缩放截图为 1152×768）下无主动作裁切；Appearance 100% / 125% / 150% 均即时生效且样例完整；Timeline / Projects 经 mouse、Return、Space 同源切换并保持焦点；Settings 八页、provider 概览与 AX summary 已逐页核对。三张阶段图的并排签字随后由下一条最终补证完成。
 - 2026-09-04 范围调整：按用户要求移除 macOS Increase Contrast 功能（删除 `ui/platform_preferences.rs` 系统偏好桥，theme 回归单一冻结 palette 并移除对应定向测试）与全部 VoiceOver 人工验收门禁；AX tree 与键盘支持保留。Desktop 定向门禁 186/186。
+- 最终视觉 / 键盘 / AX 补证（2026-09-04，当前源码构建）：三张阶段图逐张并排核对，1440×1024 宽窗与含约 3px 窗框的 1083×723 最小窗均无主动作、focus ring 或浮层裁切；最小窗 Workspace 仍大于 560px，Inspector 自动折叠。Appearance 100% / 125% / 150% 的 selected / current 与样例即时一致，`⌘0` 恢复 100%；Settings 八页、provider 连接 / catalog 分层与普通 AX summary 已核对，未发布 credential 片段，Appearance 也不再出现已移除的 Increase Contrast 文案。阶段图视觉签字 PASSED。
+- 未完成证据：当前环境无法取得真实 Provider 的 successful streaming / tool / Review 串联；系统 IME 真实 composing 仍待用户人工签字。因此完整 Human acceptance 保持 PENDING，不用视觉签字或自动门禁替代。
 
 ---
 
@@ -375,17 +379,17 @@ flowchart LR
 | P0-2 | Validated | P0-1 | Direct grouping toggle |
 | P0-3 | Validated | P0-1 | Shell / Header / empty state |
 | P0-4 | Validated | P0-1 | Composer / menus |
-| P0-5 | Validated | P0-2/3/4 | P0 证据与文档同步；Human acceptance PENDING |
+| P0-5 | Validated | P0-2/3/4 | P0 阶段图视觉与键盘主路径 PASSED；系统 IME composing PENDING |
 | P1-1 | Validated | P0-5 | Run visual grouping；Human acceptance PENDING |
 | P1-2 | Validated | P1-1 | Tool group / summary；Human acceptance PENDING |
 | P1-3 | Validated | P1-1 | Approval / failure / stale；Human acceptance PENDING |
 | P1-4 | Validated | P1-2 | Inspector / Activity；Human acceptance PENDING |
-| P1-5 | Validated | P1-3/4 | P1 证据与文档已同步；Human acceptance PENDING |
+| P1-5 | Validated | P1-3/4 | P1 阶段图视觉 PASSED；Provider 成功串联 PENDING |
 | P2-1 | Validated | P1-5 | Settings shell；Human acceptance PENDING |
 | P2-2 | Validated | P2-1 | Providers / default model；Human acceptance PENDING |
 | P2-3 | Validated | P2-1 | Remaining Settings pages；Human acceptance PENDING |
 | P2-4 | Validated | P2-2/3 | Responsive / AX / polish；Human acceptance PENDING |
-| P2-5 | Validated | P2-4 | 自动证据与状态已同步；Human acceptance PENDING |
+| P2-5 | Validated | P2-4 | 三张阶段图 / 最小窗 / 三档字号 PASSED；完整 Human acceptance PENDING |
 
 状态词：`Planned` = 仅设计；`Implemented` = 源码已落地；`Validated` = 指定自动门禁通过；`Human accepted` = 真窗口与人工 AX 验收完成。
 
