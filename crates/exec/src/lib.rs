@@ -1,12 +1,11 @@
 //! pawork-exec：进程树 + 沙箱 + PTY。
 //!
-//! 本 crate 不依赖 pawork-domain / pawork-policy（W1 自含）。
-//! 取消令牌用本 crate `cancel`；路径判断用本 crate `path`。
+//! 路径判定复用 `pawork-policy`（ADR-052）；不直接依赖 `pawork-domain`。
+//! 取消令牌用本 crate `cancel`（与 domain 令牌隔离）。
 //! PTY 输出留在本模块环形缓冲，不写入 Agent Event Store。
 
 pub mod cancel;
 mod os;
-mod path;
 mod process;
 mod pty;
 mod sandbox;

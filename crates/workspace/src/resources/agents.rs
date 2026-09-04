@@ -7,6 +7,8 @@
 
 use std::path::{Path, PathBuf};
 
+use pawork_policy::{canonicalize_platform, path_within_root};
+
 use crate::config::ConfigTier;
 
 use super::{
@@ -83,7 +85,7 @@ pub(crate) fn load_agents_hierarchy(
     current_path_kind: CurrentPathKind,
     limits: ResourceLimits,
 ) -> (AgentsHierarchy, Vec<ResourceIssue>) {
-    let canonical_root = io::canonicalize_platform(root).ok();
+    let canonical_root = canonicalize_platform(root).ok();
     let chain = target_directory_chain(current_path, current_path_kind);
 
     let mut found: Vec<(usize, AgentsDocument)> = Vec::new();
@@ -146,18 +148,19 @@ fn load_one(
     relative: &Path,
     max_file_bytes: u64,
 ) -> Result<Option<AgentsDocument>, ResourceIssue> {
-    // 通过 canonicalize 同时完成「存在性」与「越界 symlink」校验：缺失文件返回
-    // NotFound（静默跳过该层级），解析后的目标若逃出 canonical 根则视为越界。
-    let canonical_target = match io::canonicalize_platform(absolute) {
+    // 两侧都必须先 canonicalize：policy 的 `path_within_root` 要求 canonical 输入。
+    // 缺失文件静默跳过该层级；根无法规范化或目标逃出根则 fail-closed 为越界。
+    let canonical_target = match canonicalize_platform(absolute) {
         Ok(path) => path,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(file_issue(relative, ResourceFileError::Io(error))),
     };
 
-    if let Some(root) = canonical_root {
-        if !io::path_within_root(&canonical_target, root) {
-            return Err(out_of_bounds_issue(relative));
-        }
+    let Some(canonical_root) = canonical_root else {
+        return Err(out_of_bounds_issue(relative));
+    };
+    if !path_within_root(&canonical_target, canonical_root) {
+        return Err(out_of_bounds_issue(relative));
     }
 
     let body = match io::read_utf8_bounded(&canonical_target, max_file_bytes) {

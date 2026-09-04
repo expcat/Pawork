@@ -1,20 +1,6 @@
 //! 结构化 Diff 数据模型（与已归档 V1 `../Pawork_v1/docs/features/git-diff.md` 对齐）。
 
-/// 文件级变更状态。
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FileStatus {
-    #[default]
-    Unmodified,
-    Added,
-    Modified,
-    Deleted,
-    Renamed,
-    Copied,
-    TypeChanged,
-    Unmerged,
-    Untracked,
-}
+use crate::status::FileStatus;
 
 /// 单行 diff 的类型。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

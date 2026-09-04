@@ -326,17 +326,14 @@ mod tests {
                 }
             }),
         );
-        let mut core = AppCore::from_parts(
+        AppCore::from_parts(
             Arc::new(NoopProvider),
             None,
             ModelId::from("grok-4"),
             ProviderId::from("xai"),
             None,
-        );
-        core.config = config;
-        core.backend = Arc::new(MemoryBackend::new());
-        core.http = reqwest::Client::new();
-        core
+        )
+        .with_state(config, Arc::new(MemoryBackend::new()))
     }
 
     #[tokio::test]

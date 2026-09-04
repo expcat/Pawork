@@ -200,7 +200,7 @@ mod tests {
             stored,
             backend.clone(),
             refresh_config("http://must-not-be-called.invalid".into()),
-            reqwest::Client::new(),
+            pawork_auth::http_client().expect("http client"),
         );
 
         let bearer = provider.bearer().await.expect("bearer");
@@ -250,7 +250,7 @@ mod tests {
             stored,
             backend.clone(),
             refresh_config(server.uri()),
-            reqwest::Client::new(),
+            pawork_auth::http_client().expect("http client"),
         );
 
         let bearer = provider.bearer().await.expect("bearer with refresh");
@@ -303,7 +303,7 @@ mod tests {
             &session,
             "the-code",
             &session.state,
-            &reqwest::Client::new(),
+            &pawork_auth::http_client().expect("http client"),
             &backend,
             "MCP PKCE",
         )
@@ -337,7 +337,7 @@ mod tests {
             stored,
             backend.clone(),
             refresh_config("http://must-not-be-called.invalid".into()),
-            reqwest::Client::new(),
+            pawork_auth::http_client().expect("http client"),
         ));
         let connector = OAuthHttpConnector::new(
             HttpTransportConfig::new("http://127.0.0.1:9000/mcp"),

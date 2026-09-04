@@ -1171,19 +1171,7 @@ impl AppView {
         };
         self.status_hint = self.projection.resume.label();
         self.timeline_changed();
-        self.controller.load_models();
-        // SET-3：重连后刷新只读供应商状态，清除断线 stale 标注。
-        self.refresh_provider_status();
-        // SET-6a：重连后刷新通用设置，清除 stale 并恢复写 gate。
-        self.refresh_general_settings();
-        // SET-6b：重连后刷新权限设置，清除 stale 并恢复写 gate。
-        self.refresh_permissions_settings();
-        // SET-6d：重连后刷新终端设置（同时预热新建终端初始尺寸的
-        // 查询缓存），清除 stale 并恢复写 gate。
-        self.refresh_terminal_settings();
-        // SET-6c：重连后刷新 MCP 清单（与通用 / 权限页对称），清除 stale
-        // 并恢复「工具与 MCP」页导航与写 gate。
-        self.refresh_resources(cx);
+        self.refresh_all_settings(cx);
         self.consume_events(events, cx);
         // 连接建立即武装 1s tick：barrier 启用而无 run 时也要常驻探测。
         self.arm_run_clock(cx);
@@ -1256,14 +1244,7 @@ impl AppView {
                     .set_connection(ConnectionState::Disconnected { reason });
                 self.changes.mark_stale(&stale_reason);
                 self.resources.mark_stale(&stale_reason);
-                // SET-3：Settings 供应商页同样保留 stale 只读结果。
-                self.projection.settings_providers.mark_stale(&stale_reason);
-                self.projection.settings_general.mark_stale(&stale_reason);
-                self.projection
-                    .settings_permissions
-                    .mark_stale(&stale_reason);
-                // SET-6d：终端页同样保留 stale 只读结果（审查 P2 修复）。
-                self.projection.settings_terminal.mark_stale(&stale_reason);
+                self.projection.mark_settings_stale(&stale_reason);
                 self.terminal_pending_write = None;
                 self.terminal_pending_create_workspace = None;
                 self.terminal_pending_create_cwd = None;
@@ -1534,64 +1515,37 @@ impl AppView {
             }
             ControllerEvent::ProviderStatusLoaded(data) => {
                 self.projection.settings_providers.apply_loaded(data);
-                // SET-4：按权威清单懒建 / 回收 secure 输入与按钮焦点句柄。
                 self.ensure_settings_api_key_inputs(cx);
-                // 迟到响应不丢断线标注：旧连接的回执在断线后到达时，
-                // 数据照收（只读无害），但重新标 stale 保持诚实。
-                if let ConnectionState::Disconnected { reason } = &self.projection.connection {
-                    let stale = format!("connection lost · {reason}");
-                    self.projection.settings_providers.mark_stale(&stale);
-                }
+                self.remark_settings_stale_if_disconnected();
             }
-            ControllerEvent::DefaultModelConfirmed {
-                provider_id,
-                model_id,
-            } => {
+            ControllerEvent::DefaultModelConfirmed(pair) => {
                 // Host Data 确认：Composer 同步到已确认默认（会话 / 草稿 /
                 // Run 不动）；权威 default 由 controller 随后的
                 // provider_auth_status 重查落地。
-                self.projection.confirm_default_model(provider_id, model_id);
+                self.projection.confirm_default_model_pair(pair);
             }
-            ControllerEvent::GeneralSettingsLoaded(proxy_url)
-            | ControllerEvent::ProxyUrlConfirmed { proxy_url } => {
-                self.projection
-                    .settings_general
-                    .apply_loaded(proxy_url.clone());
+            ControllerEvent::GeneralSettingsLoaded(data)
+            | ControllerEvent::ProxyUrlConfirmed(data) => {
+                let proxy_url = data.proxy_url.clone();
+                self.projection.settings_general.apply_loaded(data);
                 self.settings_proxy_input.update(cx, |input, cx| {
                     input.reset_text(proxy_url.unwrap_or_default(), cx)
                 });
-                if let ConnectionState::Disconnected { reason } = &self.projection.connection {
-                    let stale = format!("connection lost · {reason}");
-                    self.projection.settings_general.mark_stale(&stale);
-                }
+                self.remark_settings_stale_if_disconnected();
             }
             ControllerEvent::PermissionsSettingsLoaded(data) => {
                 self.projection.settings_permissions.apply_loaded(data);
-                // 迟到响应不丢断线标注（与通用页同口径）。
-                if let ConnectionState::Disconnected { reason } = &self.projection.connection {
-                    let stale = format!("connection lost · {reason}");
-                    self.projection.settings_permissions.mark_stale(&stale);
-                }
+                self.remark_settings_stale_if_disconnected();
             }
             ControllerEvent::ApprovalModeConfirmed { mode } => {
                 // Host Data 确认（回执即写后状态，ADR-048 D2）；不乐观更新。
-                self.projection
-                    .settings_permissions
-                    .confirm_approval_mode(mode);
-                if let ConnectionState::Disconnected { reason } = &self.projection.connection {
-                    let stale = format!("connection lost · {reason}");
-                    self.projection.settings_permissions.mark_stale(&stale);
-                }
+                self.projection.settings_permissions.confirm_approval_mode(mode);
+                self.remark_settings_stale_if_disconnected();
             }
             ControllerEvent::WorkspaceTrustConfirmed { trusted } => {
                 // Host Data 确认（回执即写后状态，ADR-048 D3）；不乐观更新。
-                self.projection
-                    .settings_permissions
-                    .confirm_workspace_trusted(trusted);
-                if let ConnectionState::Disconnected { reason } = &self.projection.connection {
-                    let stale = format!("connection lost · {reason}");
-                    self.projection.settings_permissions.mark_stale(&stale);
-                }
+                self.projection.settings_permissions.confirm_workspace_trusted(trusted);
+                self.remark_settings_stale_if_disconnected();
             }
             ControllerEvent::TerminalSettingsLoaded(data)
             | ControllerEvent::TerminalSettingsConfirmed(data) => {
@@ -1610,26 +1564,17 @@ impl AppView {
                 self.settings_terminal_rows_input.update(cx, |input, cx| {
                     input.reset_text(rows, cx)
                 });
-                if let ConnectionState::Disconnected { reason } = &self.projection.connection {
-                    let stale = format!("connection lost · {reason}");
-                    self.projection.settings_terminal.mark_stale(&stale);
-                }
+                self.remark_settings_stale_if_disconnected();
             }
             ControllerEvent::AuthStarted {
                 provider_id,
-                verification_url,
-                user_code,
-                expires_at,
+                data,
             } => {
                 // SET-4：登记 OAuth 等待信息并置 Connecting；进度由
                 // AuthChanged 事件收敛。
                 self.projection.settings_providers.apply_auth_started(
                     &provider_id,
-                    crate::projection::OAuthWait {
-                        verification_url,
-                        user_code,
-                        expires_at,
-                    },
+                    data,
                 );
             }
             ControllerEvent::OperationFailed { action, reason } => {
@@ -2622,17 +2567,7 @@ impl AppView {
         // 路由切换时关闭任何打开的菜单，Settings 壳内没有菜单宿主。
         self.open_menu = None;
         self.menu_highlight = None;
-        self.refresh_provider_status();
-        // 与页级 Refresh 对称：进入即补拉模型目录（断线时 controller
-        // 内部 no-op），「模型与默认项」区与失效判定有目录数据可用。
-        self.controller.load_models();
-        self.refresh_general_settings();
-        self.refresh_permissions_settings();
-        self.refresh_terminal_settings();
-        // SET-6c：进入即拉取 MCP 清单（复用 Inspector Resources 的
-        // resources 状态 / epoch / stale / 断线机制；成功后「工具与
-        // MCP」导航可用）。
-        self.refresh_resources(cx);
+        self.refresh_all_settings(cx);
         window.focus(&self.settings_back_focus);
         cx.notify();
     }
@@ -2649,6 +2584,22 @@ impl AppView {
         cx.notify();
     }
 
+
+    fn refresh_all_settings(&mut self, cx: &mut Context<Self>) {
+        self.refresh_provider_status();
+        self.controller.load_models();
+        self.refresh_general_settings();
+        self.refresh_permissions_settings();
+        self.refresh_terminal_settings();
+        self.refresh_resources(cx);
+    }
+
+    fn remark_settings_stale_if_disconnected(&mut self) {
+        if let ConnectionState::Disconnected { reason } = &self.projection.connection {
+            let stale = format!("connection lost · {reason}");
+            self.projection.mark_settings_stale(&stale);
+        }
+    }
     /// 拉取只读供应商状态（provider_auth_status）。断线时不进入 loading，
     /// 保留 stale 只读结果（controller 未派出时由 stale_reason 标注）。
     fn refresh_provider_status(&mut self) {
@@ -2701,12 +2652,12 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         match page {
-            SettingsPage::General if !self.projection.settings_general.available => return,
+            SettingsPage::General if !self.projection.settings_general.query.available => return,
             SettingsPage::General => {
                 self.settings_page = SettingsPage::General;
                 window.focus(&self.settings_nav_general_focus);
             }
-            SettingsPage::Permissions if !self.projection.settings_permissions.available => return,
+            SettingsPage::Permissions if !self.projection.settings_permissions.query.available => return,
             SettingsPage::Permissions => {
                 self.settings_page = SettingsPage::Permissions;
                 window.focus(&self.settings_nav_permissions_focus);
@@ -2716,7 +2667,7 @@ impl AppView {
                 self.settings_page = SettingsPage::Tools;
                 window.focus(&self.settings_nav_tools_focus);
             }
-            SettingsPage::Terminal if !self.projection.settings_terminal.available => return,
+            SettingsPage::Terminal if !self.projection.settings_terminal.query.available => return,
             SettingsPage::Terminal => {
                 self.settings_page = SettingsPage::Terminal;
                 window.focus(&self.settings_nav_terminal_focus);
@@ -2745,19 +2696,14 @@ impl AppView {
     /// Settings 页级刷新（SET-5）：重查 provider_auth_status + model_list；
     /// 失败保留现有列表并显示错误（复用 stale / OperationFailed 通道，
     /// 不新增缓存）。入口复核连接态，与可见按钮 gate 同源。
-    fn on_refresh_settings(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn on_refresh_settings(&mut self, cx: &mut Context<Self>) {
         if !matches!(
             self.projection.connection,
             ConnectionState::Connected { .. }
         ) {
             return;
         }
-        self.refresh_provider_status();
-        self.controller.load_models();
-        self.refresh_general_settings();
-        self.refresh_permissions_settings();
-        self.refresh_terminal_settings();
-        self.refresh_resources(cx);
+        self.refresh_all_settings(cx);
         cx.notify();
     }
 

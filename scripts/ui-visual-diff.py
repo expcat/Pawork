@@ -35,11 +35,11 @@ rejects over-masking before a score can be accepted.
 
 Usage:
   python3 scripts/ui-visual-diff.py \
-      --reference docs/ui-review/state-a/reference.png \
-      --current docs/ui-review/state-a/current.png \
-      --zones docs/ui-review/state-a/zones.json \
-      --masks docs/ui-review/state-a/mask.json \
-      --out docs/ui-review/state-a
+      --reference /tmp/pawork-visual/reference.png \
+      --current /tmp/pawork-visual/current.png \
+      --zones /tmp/pawork-visual/zones.json \
+      --masks /tmp/pawork-visual/mask.json \
+      --out /tmp/pawork-visual/out
 
 Exit codes: 0 all zones pass; 1 a visual zone fails; 2 invalid input or I/O.
 Requires Python 3.8+, Pillow and numpy.

@@ -142,6 +142,16 @@ pub fn random_state() -> String {
     crate::base64url::encode(&bytes)
 }
 
+/// OAuth / MCP 共用的 HTTP 客户端：禁止跟随跳转（F06）。
+///
+/// reqwest 默认会跟随 3xx 并把 Authorization / form body 带到新 origin；
+/// token endpoint 与 MCP OAuth 必须显式关闭。
+pub fn http_client() -> Result<reqwest::Client, AuthError> {
+    Ok(reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?)
+}
+
 /// PKCE Authorization Code Flow 配置。
 #[derive(Clone, Debug)]
 pub struct PkceFlowConfig {
@@ -1470,7 +1480,7 @@ mod tests {
             extra_auth_params: Vec::new(),
         };
         let session = start_pkce_flow(config).expect("start");
-        let http = reqwest::Client::new();
+        let http = http_client().expect("http client");
         let token = exchange_pkce_code(&session, "the-code", &session.state, &http)
             .await
             .expect("exchange");
@@ -1492,7 +1502,7 @@ mod tests {
             extra_auth_params: Vec::new(),
         };
         let session = start_pkce_flow(config).expect("start");
-        let http = reqwest::Client::new();
+        let http = http_client().expect("http client");
         let err = exchange_pkce_code(&session, "code", "wrong-state", &http)
             .await
             .expect_err("state mismatch");
@@ -1520,7 +1530,7 @@ mod tests {
             extra_auth_params: Vec::new(),
         };
         let session = start_pkce_flow(config).expect("start");
-        let http = reqwest::Client::new();
+        let http = http_client().expect("http client");
         let err = exchange_pkce_code(&session, "code", &session.state, &http)
             .await
             .expect_err("error");
@@ -1575,7 +1585,7 @@ mod tests {
             scopes: vec!["read".into()],
             provider: ProviderId::new("p"),
         };
-        let http = reqwest::Client::new();
+        let http = http_client().expect("http client");
         let prompt = request_device_authorization(&config, &http)
             .await
             .expect("device auth");
@@ -1600,7 +1610,7 @@ mod tests {
             })))
             .mount(&server)
             .await;
-        let http = reqwest::Client::new();
+        let http = http_client().expect("http client");
         let token = refresh_access_token(
             &format!("{}/token", server.uri()),
             "cid",
@@ -1656,7 +1666,7 @@ mod tests {
             &mut stored,
             &backend,
             &config,
-            &reqwest::Client::new(),
+            &http_client().expect("http client"),
         )
         .await
         .expect("resolve with refresh");
@@ -1714,7 +1724,7 @@ mod tests {
             client_id: "client-id".into(),
             refresh_skew: Duration::from_secs(30),
         };
-        let http = reqwest::Client::new();
+        let http = http_client().expect("http client");
 
         let (first_result, second_result) = tokio::join!(
             refresh_oauth_credential_if_needed(&mut first, &backend, &config, &http),

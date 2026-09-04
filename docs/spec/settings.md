@@ -9,7 +9,7 @@
 | Owner | Pawork maintainers |
 | 目标阶段 | Settings 活动线；不绑定发布版本 |
 | 最近更新 | 2026-09-03 |
-| 关联 | [ROADMAP](../../ROADMAP.md) · [任务书](../../plan/settings.md) · [GUI 设计](../gui-design.md) · [ADR-046](../adr/ADR-046-settings-auth-wire-and-secret-transit.md)（Accepted，2026-09-01） · [ADR-051](../adr/ADR-051-about-settings-host-data-dir.md)（Accepted，2026-09-03） |
+| 关联 | [ROADMAP](../../ROADMAP.md) · [SET-7 缺口](../../plan/settings.md) · [GUI 设计](../gui-design.md) · [ADR-046](../adr/ADR-046-settings-auth-wire-and-secret-transit.md)（Accepted） · [ADR-051](../adr/ADR-051-about-settings-host-data-dir.md)（Accepted） · SET-0～6g 过程见 [history.md](../history.md) |
 
 ## 1. 问题、用户与目标
 
@@ -25,7 +25,7 @@
 
 | 能力 | 当前生产路径/证据 | 缺口 | 结论 |
 | --- | --- | --- | --- |
-| Settings 入口/路由 | SET-3 起 TaskRail `Local` 行 gear + AppRoute 顶层路由 + Settings Rail + 只读供应商页落地（[settings.rs](../../apps/desktop/src/ui/settings.rs)）；SET-6a～6d 依次启用通用、权限与审批、工具与 MCP、终端；SET-6e/6f 启用始终可用的本地外观页与高级连接诊断页；SET-6g 启用由当前握手权威元数据驱动的 About 页 | 真实 Host/Desktop 窗口与 VoiceOver 验收待 SET-7 | 已实现并通过定向门禁；About 在缺字段、空字段或断线时隐藏 |
+| Settings 入口/路由 | SET-3 起 TaskRail `Local` 行 gear + AppRoute 顶层路由 + Settings Rail + 只读供应商页落地（[settings/](../../apps/desktop/src/ui/settings/)）；SET-6a～6d 依次启用通用、权限与审批、工具与 MCP、终端；SET-6e/6f 启用始终可用的本地外观页与高级连接诊断页；SET-6g 启用由当前握手权威元数据驱动的 About 页 | 真实 Host/Desktop 窗口与 VoiceOver 验收待 SET-7 | 已实现并通过定向门禁；About 在缺字段、空字段或断线时隐藏 |
 | Provider 注册 | [channel registry](../../crates/providers/src/channels/registry.rs) 八行：chatgpt/xai/glm-coding/opencode-go/qwen-token-plan/deepseek/kimi-platform/kimi-code；SET-4 起 `auth_methods` 为数据字段，支持同供应商多认证方法 | — | 已实现 |
 | API-key 通道 | [api_key.rs](../../crates/providers/src/channels/api_key.rs) 可请求 OpenAI-compatible `/models`；SET-2 增 `verify_api_key` 写前验证与 `auth_set_api_key` 非重放命令（verify-then-replace）；SET-4 起 xAI adapter 接受 API key，桌面端写操作已接通 | — | 已实现（真实账号验收 pending） |
 | OAuth | AppCore/auth 已有 OAuth 基础；xAI Device Flow 已接入；SET-2 起 `AuthStart`/`AuthCancel`/`AuthRemove` 对 GUI 开放并有 handler，进度经 `AuthChanged` 六态下发；SET-4 起 Kimi Code Device Flow 接入（[kimi.rs](../../crates/providers/src/channels/kimi.rs)），桌面端等待/取消 UI 已接通 | — | 已实现（真实账号验收 pending） |

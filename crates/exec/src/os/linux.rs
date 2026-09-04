@@ -6,6 +6,8 @@
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
+use pawork_policy::path_within_root;
+
 use crate::sandbox::{NetworkMode, SandboxPolicy};
 
 /// 系统只读路径单一来源：bwrap ro-bind 与 Landlock read_paths 共用，
@@ -469,7 +471,7 @@ pub fn generate_bwrap_argv(policy: &SandboxPolicy, workspace_roots: &[PathBuf]) 
             .iter()
             .chain(&policy.filesystem.write_roots)
             .chain(workspace_roots)
-            .any(|root| crate::path::path_within_root(denied, root));
+            .any(|root| path_within_root(denied, root));
         if visible {
             argv.push("--tmpfs".into());
             argv.push(denied.to_string_lossy().to_string());
@@ -613,10 +615,10 @@ mod landlock_backend {
     use std::path::{Path, PathBuf};
 
     use async_trait::async_trait;
+    use pawork_policy::{canonicalize_platform, path_within_root};
 
     use super::{probe_landlock_support, SYSTEM_READ_PATHS};
     use crate::cancel::CancellationToken;
-    use crate::path::{canonicalize_platform, path_within_root};
     use crate::process::{LinuxLandlockPolicy, ProcessRuntime};
     use crate::sandbox::{
         apply_soft_restrictions, NetworkMode, SandboxBackend, SandboxError,

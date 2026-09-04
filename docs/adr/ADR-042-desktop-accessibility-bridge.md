@@ -5,7 +5,7 @@
 
 ## 背景
 
-R1 Wave C 对真 fixture Host + 真 `pawork-desktop` 窗口做了 macOS Accessibility（AX）取证：截图中的 Pawork 三栏 UI 完整，但系统 AX 树只有 `AXApplication`、`AXWindow`、三个 traffic-light button 与空 `AXStaticText`，没有任何 Pawork 自定义控件的 role / label / value / action / identifier。证据见 [`docs/ui-review/wave-c/ax-gate/`](../ui-review/wave-c/ax-gate/)。源码复核也确认 crates.io `gpui = 0.2.2` 没有 AccessKit 或等价的元素级 AX 导出。
+R1 Wave C 对真 fixture Host + 真 `pawork-desktop` 窗口做了 macOS Accessibility（AX）取证：截图中的 Pawork 三栏 UI 完整，但系统 AX 树只有 `AXApplication`、`AXWindow`、三个 traffic-light button 与空 `AXStaticText`，没有任何 Pawork 自定义控件的 role / label / value / action / identifier。当时的失败基线与补救证据已收入 [history.md](../history.md)（R1 Wave C / ADR-042）；实体可经 git 历史回溯。源码复核也确认 crates.io `gpui = 0.2.2` 没有 AccessKit 或等价的元素级 AX 导出。
 
 这使 R1 的 U2 真窗口语义驱动与 VoiceOver 可用性同时失败。任务书禁止把坐标点击伪装成语义定位，因此必须在三条补救路线中做出决策：
 
@@ -63,8 +63,6 @@ R1 Wave C 对真 fixture Host + 真 `pawork-desktop` 窗口做了 macOS Accessib
 
 ## 相关
 
-- [R1 Wave C AX bridge 通过取证](../ui-review/wave-c/ax-bridge/notes.md)
 - [Desktop 包级 Spec](../spec/crates/desktop.md)
 - [架构事实源与 ADR 索引](../architecture.md)
-- [AX 失败取证](../ui-review/wave-c/ax-gate/notes.md)
-- [AX bridge 通过取证](../ui-review/wave-c/ax-bridge/notes.md)
+- R1 Wave C AX 失败基线与 bridge 通过取证：见 [history.md](../history.md)（原 `docs/ui-review/wave-c/`，实体可经 git 历史回溯）

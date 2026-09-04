@@ -4,40 +4,11 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
+use pawork_policy::{canonicalize_platform, path_within_root, relative_to_root};
+
 use crate::resolve_relative_path;
 
 use super::{error::ResourceFileError, source::ResourceIssue};
-
-/// 平台一致的 canonicalize：Windows 上去掉 `\\?\` verbatim 前缀。
-pub(crate) fn canonicalize_platform(path: &Path) -> std::io::Result<PathBuf> {
-    dunce::canonicalize(path)
-}
-
-/// 判断 canonical 路径是否位于 canonical root 内。
-pub(crate) fn path_within_root(path: &Path, root: &Path) -> bool {
-    relative_to_root(path, root).is_some()
-}
-
-#[cfg(not(windows))]
-pub(crate) fn relative_to_root(path: &Path, root: &Path) -> Option<PathBuf> {
-    path.strip_prefix(root).ok().map(Path::to_path_buf)
-}
-
-#[cfg(windows)]
-pub(crate) fn relative_to_root(path: &Path, root: &Path) -> Option<PathBuf> {
-    let mut path_components = path.components();
-    for root_component in root.components() {
-        let path_component = path_components.next()?;
-        if !path_component
-            .as_os_str()
-            .to_string_lossy()
-            .eq_ignore_ascii_case(&root_component.as_os_str().to_string_lossy())
-        {
-            return None;
-        }
-    }
-    Some(path_components.collect())
-}
 
 /// 把工作区相对路径接到 root 上（走 `resolve_relative_path` 词法规则）。
 pub(crate) fn join_under_root(root: &Path, relative: &str) -> Result<PathBuf, ResourceFileError> {
@@ -126,7 +97,7 @@ pub(crate) fn sorted_children_within(
     sorted_children(&canonical, maximum)
 }
 
-fn canonical_within(path: &Path, root: &Path) -> Result<PathBuf, ResourceFileError> {
+pub(crate) fn canonical_within(path: &Path, root: &Path) -> Result<PathBuf, ResourceFileError> {
     let canonical_root = canonicalize_platform(root).map_err(ResourceFileError::Io)?;
     let canonical_path = match canonicalize_platform(path) {
         Ok(path) => path,

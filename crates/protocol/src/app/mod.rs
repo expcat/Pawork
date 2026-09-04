@@ -6,6 +6,7 @@ pub mod limits;
 pub mod query;
 pub mod quota;
 pub mod registry;
+pub mod settings;
 pub mod version;
 
 pub use command::*;
@@ -13,4 +14,5 @@ pub use event::*;
 pub use limits::*;
 pub use query::*;
 pub use quota::*;
+pub use settings::*;
 pub use version::*;

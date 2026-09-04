@@ -4,6 +4,7 @@
 //! `protected` feature 提供 PWB1 AEAD 层（`protected.sqlite3` + `protected/`）；
 //! `checkpoint` feature 提供写前快照 / 回滚（`checkpoint-state-v1.json`）。
 
+mod atomic;
 pub mod artifact;
 
 pub use artifact::{

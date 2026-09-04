@@ -9,8 +9,9 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 
+use pawork_policy::{canonicalize_platform, path_within_root};
+
 use crate::cancel::CancellationToken;
-use crate::path::{canonicalize_platform, path_within_root};
 use crate::process::{
     CommandSpec, ProcessError, ProcessEvent, ProcessHandle, ProcessInput, ProcessLimits,
     ProcessRuntime,

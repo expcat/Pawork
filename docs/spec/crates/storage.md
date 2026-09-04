@@ -19,7 +19,7 @@
 
 ## 2. 模块与文件地图
 
-共 28 个 `.rs` 源文件（约 1.92 万行）+ 2 个集成测试 + 8 个 fixture/golden 数据文件。单元测试内嵌于各源文件尾部 `#[cfg(test)] mod tests`（21 处），没有独立单元测试树。
+共 29 个 `.rs` 源文件（约 1.92 万行）+ 2 个集成测试 + 8 个 fixture/golden 数据文件。单元测试内嵌于各源文件尾部 `#[cfg(test)] mod tests`（21 处），没有独立单元测试树。
 
 | 路径 | 行数 | 承载内容 |
 | --- | --- | --- |
@@ -47,10 +47,11 @@
 | `src/session/import/persist_pi.rs` | ~450 | `import_pi_jsonl(_lines)`：Secret 预扫 → header 必需 → 单 `Immediate` 事务落 main 分支（Branch marker 折叠为 Diagnostic） |
 | `src/session/import/persist_compat.rs` | ~900 | `import_compat(_from_file/_dry_run)` 与 `compat_import_history`：指纹幂等、`compat_import_identity` 冲突检测、键集分页 |
 | `src/session/import/persist_export.rs` | ~920 | `export_session`/`import_session`/`add_tags`/`get_session_identity`：v3 全量往返，导入侧身份匹配 + 顺序/parent 预检 |
-| `src/blob/mod.rs` | ~30 | blob 门面：artifact 常开 re-export；`protected`/`checkpoint` 随 feature |
-| `src/blob/artifact.rs` | ~1230 | `ArtifactStore`：`<root>/blobs/ab/cd/<hash>` 分片目录 + `artifacts.sqlite3` 元数据；put 去重/预算、get 重验哈希、`read_range`、refcount、gc、`integrity_check` |
-| `src/blob/protected.rs` | ~1460 | `ProtectedBlobStore`：PWB1 AEAD 信封（XChaCha20-Poly1305）、`BlobScope` 隔离、pending/ready/deleting 三态、延迟回收 gc、崩溃 reconcile；`parse_pwb1_envelope`/`open_pwb1_envelope`/`pwb1_aad` 纯函数 |
-| `src/blob/checkpoint.rs` | ~1010 | `CheckpointService`：写前快照 `snapshot_before_write`、`rollback_tool_call`/`rollback_run`、`conflict_check`、`checkpoint-state-v1.json` 原子持久化、roots 内路径解析防穿越 |
+| `src/blob/mod.rs` | ~30 | blob 门面：`atomic` 私有；artifact 常开 re-export；`protected`/`checkpoint` 随 feature |
+| `src/blob/atomic.rs` | ~50 | crate 私有 `atomic_write_bytes`：同目录 `.tmp-{pid}-{counter}`、`create_new`、`write_all`+`sync_all`+`rename`，失败删临时文件；artifact / protected / checkpoint 共用 |
+| `src/blob/artifact.rs` | ~1220 | `ArtifactStore`：`<root>/blobs/ab/cd/<hash>` 分片目录 + `artifacts.sqlite3` 元数据；put 去重/预算、get 重验哈希、`read_range`、refcount、gc、`integrity_check` |
+| `src/blob/protected.rs` | ~1430 | `ProtectedBlobStore`：PWB1 AEAD 信封（XChaCha20-Poly1305）、`BlobScope` 隔离、pending/ready/deleting 三态、延迟回收 gc、崩溃 reconcile；`parse_pwb1_envelope`/`open_pwb1_envelope`/`pwb1_aad` 纯函数 |
+| `src/blob/checkpoint.rs` | ~980 | `CheckpointService`：写前快照 `snapshot_before_write`、`rollback_tool_call`/`rollback_run`、`conflict_check`、`checkpoint-state-v1.json` 原子持久化（`spawn_blocking` 调 `atomic_write_bytes`）、roots 内路径解析防穿越 |
 | `tests/pwb1_golden.rs` | ~160 | PWB1 已知向量 golden（required-features `protected`） |
 | `tests/read_range.rs` | ~230 | `read_range` 边界/完整性集成测试（required-features `blob`） |
 | `src/session/fixtures/*.jsonl` | 7 个 | v12 升级 golden 的 lineage 期望：`v12_fork_tree.{main,fork-a,fork-b}`、`v12_interleaved.{main,side}`、`v12_compaction.{main,side}`（见 §5/§7） |
@@ -132,9 +133,9 @@
 
 ### 3.10 blob 三区
 
-- **artifact（feature `blob`）**：`ArtifactStore::open(root)` / `open_with_options(root, ArtifactStoreOptions { disk_budget })`。`put(&[u8]) -> PutOutcome { id: BlobId, created, ref_count }`（BLAKE3 寻址，重复 put 命中去重仅引用 +1；超预算报 `DiskBudgetExceeded`；tmp+rename 原子落盘）；`get`/`read_range(id, offset, limit)` 读时重验哈希，不符报 `BlobCorrupted`（另有 `EmptyRange`/`RangeOffsetOutOfBounds`/`UnknownBlob`/`BlobMissing`）；`release`（下溢报 `RefCountUnderflow`；归零不立即删文件）；`gc()`（删 0 引用 blob + 回收 >24h 的 `.tmp-` 与无元数据孤儿文件）；`integrity_check()`、`disk_usage()`、`metadata`、`byte_length`、`blob_path`、`database`、`shutdown`。
+- **artifact（feature `blob`）**：`ArtifactStore::open(root)` / `open_with_options(root, ArtifactStoreOptions { disk_budget })`。`put(&[u8]) -> PutOutcome { id: BlobId, created, ref_count }`（BLAKE3 寻址，重复 put 命中去重仅引用 +1；超预算报 `DiskBudgetExceeded`；经 `atomic_write_bytes` tmp+fsync+rename 原子落盘）；`get`/`read_range(id, offset, limit)` 读时重验哈希，不符报 `BlobCorrupted`（另有 `EmptyRange`/`RangeOffsetOutOfBounds`/`UnknownBlob`/`BlobMissing`）；`release`（下溢报 `RefCountUnderflow`；归零不立即删文件）；`gc()`（删 0 引用 blob + 回收 >24h 的 `.tmp-` 与无元数据孤儿文件）；`integrity_check()`、`disk_usage()`、`metadata`、`byte_length`、`blob_path`、`database`、`shutdown`。
 - **protected（feature `protected`）**：`ProtectedBlobStore::open(root, resolver: Arc<dyn ProtectedKeyResolver>)`。scope = `BlobScope::new(provider_id, session_id)`；内置 `InMemoryKeyResolver`（`insert`/`set_current`/`remove` 管理各 scope 的 `KeyVersion → AeadKey`）可作宿主实现。`put(scope, plaintext) -> PutOutcome { blob_ref, key_version, .. }`：取 scope 当前 `KeyVersion` → PWB1 AEAD 密封 → 三态写入（§4.7）。`get(scope, ref)` 解密返回 `ProtectedBlob`（`expose()` 取明文，Drop 时 `zeroize`）；跨 scope 访问、密钥缺失、文件缺失统一 fail-closed 为 `ProtectedBlobUnavailable`，格式/摘要/AEAD 失败为 `ProtectedBlobCorrupted`（`is_unavailable()`/`is_corrupted()` 判别）。`retain`/`release`（归零后进入 `retention_ms` 延迟回收窗，默认 7 天）、`gc()`、`metadata`、`shutdown`。纯函数 `parse_pwb1_envelope`/`open_pwb1_envelope`/`pwb1_aad` 供离线校验。
-- **checkpoint（feature `checkpoint`）**：`CheckpointService::open(ArtifactStore)`（恢复 `checkpoint-state-v1.json`，版本不符 fail-closed）。`snapshot_run(run_id)` 幂等建条目；`snapshot_before_write(run_id, tool_call_id, roots, relative_path) -> FileSnapshot`：在 roots 内 canonicalize 解析（拒绝绝对路径与 `..` 穿越），读旧内容存 Blob（同 key 去重，并发多余引用自动 release）；`rollback_tool_call`/`rollback_run` 逆序恢复（tmp+sync+rename 原子写、删新增文件、还原 unix mode）；`conflict_check(run_id, tool_call_id)` 重读文件比对 pre_hash 报告用户改动；`list_changes(run_id)` 同步快照。
+- **checkpoint（feature `checkpoint`）**：`CheckpointService::open(ArtifactStore)`（恢复 `checkpoint-state-v1.json`，版本不符 fail-closed）。`snapshot_run(run_id)` 幂等建条目；`snapshot_before_write(run_id, tool_call_id, roots, relative_path) -> FileSnapshot`：在 roots 内 canonicalize 解析（拒绝绝对路径与 `..` 穿越），读旧内容存 Blob（同 key 去重，并发多余引用自动 release）；`rollback_tool_call`/`rollback_run` 逆序恢复（同一 `atomic_write_bytes`、删新增文件、还原 unix mode）；`conflict_check(run_id, tool_call_id)` 重读文件比对 pre_hash 报告用户改动；`list_changes(run_id)` 同步快照。
 
 ### 3.11 client_adapter
 
@@ -200,7 +201,7 @@
 
 1. `snapshot_before_write`：`relative_path` 逐个 root `join` + `canonicalize`，校验落在某 root 内（拒绝绝对路径与 `..` 穿越，`PathEscape`/`UnresolvedPath`）。
 2. 同 `run_id + tool_call_id + relative_path` 已有快照直接复用；否则读当前内容（不存在则记 `existed = false`）→ `ArtifactStore::put` 存 pre 内容（去重）→ 记 `FileSnapshot { relative_path, existed, pre_blob, pre_hash, unix_mode }` 挂到该 tool_call 的 `ChangeRecord`；并发竞态下先 put 后发现重复会 `release` 多余引用。
-3. 状态经 `checkpoint-state-v1.json`（`schema_version = 1`）tmp+sync+rename 原子持久化；锁内只做内存图操作，从不跨 `.await` 持锁。
+3. 状态经 `checkpoint-state-v1.json`（`schema_version = 1`）由 `atomic_write_bytes`（`spawn_blocking`）原子持久化；锁内只做内存图操作，从不跨 `.await` 持锁。
 4. `rollback_tool_call`/`rollback_run` 逆序恢复：从 Blob 取回 pre 内容原子写回（恢复 unix mode），`existed = false` 的文件直接删除；`conflict_check` 重读文件重算 BLAKE3 与 `pre_hash` 比对，产出 `ConflictReport { relative_path, user_modified }`，不阻止回滚、只供调用方决策。
 
 ## 5. 契约与不变量
@@ -211,6 +212,7 @@
 - **迁移史 append-only**：`MIGRATIONS` 数组 v1–v12 的 DDL 文本不可改写，演进只能追加新版本。全史：v1 `core_session_schema`（sessions / session_branches / session_events + 投影三表 messages / runs / tool_calls）；v2 `event_store_immutability`（append-only 双触发器）；v3 `active_branch` 列 + 分支序索引 + `session_leases`；v4 `session_tags`；v5 `server_tool_events` + `transcript_envelopes`；v6 `compat_import_identity`；v7 `client_adapter_sessions`；v8 sessions 补 `tenant_id`/`principal_id` 并回填 `local/default`、`local/user`；v9 `session_bindings`（归档预留，见 §8）；v10 messages 加 `branch_id DEFAULT 'main'` 并按事件回填；**v11 = R4 `command_ledger`**（含 `idempotency_key` 部分唯一索引）；**v12 = R6 branch lineage 原生化**——`messages` 整表重建去掉 `DEFAULT 'main'`（新表 `branch_id NOT NULL` 无默认值），回填按 `session_events` 反查真实分支，查不到归属的孤儿行经 TEMP 触发器 `RAISE(ABORT)` 整批回滚（fail-closed，升级前已留 `.pre-migration-v11.bak`）；**v13 = ADR-043 Session→Workspace 归属持久化**——`sessions` 纯追加可空 `workspace_id TEXT` 列，不回填（历史 NULL 按 Unassigned）、无 FK（弱引用）；**v14 = ADR-044 持久项目注册表**——新建 `workspaces` 表（`workspace_id` 主键、`root_path` UNIQUE、`created_at_ms`/`updated_at_ms`）与 `idx_workspaces_created` 索引，空表不回填、不据历史归属猜 root。
 - **升级 golden**：`src/session/fixtures/v12_{fork_tree,interleaved,compaction}.*.jsonl`（7 份）锁定三个种子场景迁移后各分支 lineage 消息序列；重生成须显式 `PAWORK_WRITE_STORAGE_GOLDEN=1` 跑 ignored 测试。
 - **PWB1 冻结**：magic `PWB1`、version=1、algorithm=1（XChaCha20-Poly1305）、header 34 字节、AAD 形状（见 §4.7）；已知向量 `tests/golden/pwb1_valid.hex`（key=0x11×32、nonce=0x00..0x17、key_version=1）。
+- **blob 原子写单源**：`blob/atomic.rs` 的 `atomic_write_bytes` 是 artifact / protected / checkpoint 唯一落盘路径；临时文件 `.tmp-` 前缀，与 artifact `gc` 的 24h 孤儿回收约定对齐。
 - **export v3 形状冻结**：字段见 §3.8；读兼容 v1/v2（身份回填 `local/default`、`local/user`，v1 事件归 `main`），写只出 v3。`command_ledger`、`compat_import_identity` 等运维表**不进** export。
 - **CompactionSnapshot v1 serde 形状冻结**（`snapshot.rs` 注释明示），`SnapshotVersion` 单值 `V1`。
 - **Secret 红线**：明文 Token 不落库不落日志——写前 `redact_sensitive_json` + `sanitize_reasoning_metadata`（provider_hints 白名单命名空间）+ 导入前 `find_secret` fail-closed；legacy hint 键只读映射、不回写。protected 区明文只存在于内存 `ProtectedBlob`（Drop zeroize），错误信息与 Debug 输出不含密钥/明文。

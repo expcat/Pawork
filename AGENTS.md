@@ -21,7 +21,7 @@
 - 所有 Agent 事件必须可持久化、可重放。
 - GUI 不得直接访问 Provider、数据库与工具；只能通过 GUI Connection Protocol 连接 CLI，经 CLI 宿主访问 Core（不直接加载 Core crate）。
 
-违反以上任意一条需先升级为 ADR 讨论或向用户确认。V1 时期 ADR（ADR-001 ~ ADR-035）随 V1 归档于 [../Pawork_v1/docs/adr/](../Pawork_v1/docs/adr/)，其原则在本仓库继续有效；新决策仍以 ADR 记录（编号续接，现存 037–041，见 [docs/architecture.md](docs/architecture.md) §5）。
+违反以上任意一条需先升级为 ADR 讨论或向用户确认。V1 时期 ADR（ADR-001 ~ ADR-036）随 V1 归档于 [../Pawork_v1/docs/adr/](../Pawork_v1/docs/adr/)，其原则在本仓库继续有效；新决策仍以 ADR 记录（编号续接，现存 ADR-037～052，见 [docs/architecture.md](docs/architecture.md) §5 与 [docs/adr/README.md](docs/adr/README.md)）。
 
 ## 3. 命名与结构约定
 
@@ -69,7 +69,7 @@ Full workspace gate: NOT RUN（当前未设置全量门禁）
 ## 6. 文档约定
 
 - 中文撰写，保留关键术语英文。
-- 常设文档体系（入口 [README.md](README.md)）：[ROADMAP.md](ROADMAP.md)（任务事实源：指针/阶段/开放决策/任务约定）· [plan/](plan/)（进行中阶段任务书）· [docs/architecture.md](docs/architecture.md)（架构事实源：红线/布局/冻结契约/ADR 索引）· [docs/design.md](docs/design.md)（功能设计事实源：功能映射/扩展功能族/候选池）· [docs/spec/README.md](docs/spec/README.md)（产品 Spec + 包级 Spec 总索引）· [docs/spec/backlog.md](docs/spec/backlog.md)（阶段外候选与复活条件）· [docs/spec/flows.md](docs/spec/flows.md)（跨包链路）· [docs/gui-design.md](docs/gui-design.md)（Desktop GUI 设计，配套 [design/](design/README.md) 视觉基准）· [docs/references.md](docs/references.md)（参照项目手册 + 调研附录）· [docs/history.md](docs/history.md)（历史存档）· [docs/adr/](docs/adr/)（架构决策记录）。
+- 常设文档体系（入口 [README.md](README.md)）：[ROADMAP.md](ROADMAP.md)（任务事实源：指针/阶段/开放决策/任务约定）· [plan/](plan/)（进行中阶段任务书）· [docs/architecture.md](docs/architecture.md)（架构事实源：红线/布局/冻结契约/ADR 索引）· [docs/design.md](docs/design.md)（功能设计事实源：功能映射/扩展功能族/候选池）· [docs/spec/README.md](docs/spec/README.md)（产品 Spec + 包级 Spec 总索引）· [docs/spec/backlog.md](docs/spec/backlog.md)（阶段外候选与复活条件）· [docs/spec/flows.md](docs/spec/flows.md)（跨包链路）· [docs/gui-design.md](docs/gui-design.md)（Desktop GUI 设计，配套 [design/](design/README.md) 视觉基准）· [docs/references.md](docs/references.md)（参照项目手册 + 调研附录）· [docs/history.md](docs/history.md)（历史存档）· [docs/adr/](docs/adr/)（架构决策记录，目录说明 [docs/adr/README.md](docs/adr/README.md)）。
 - **Spec 边界**：`docs/spec/` 产品篇是跨事实源的产品化汇总，包级 Spec 是包内功能的文档化镜像；均不替代源码/golden、`docs/architecture.md` 的布局与冻结契约、ROADMAP/任务书的状态事实源。用户可见能力、契约、安全、Desktop、验证或运维边界变化时，同批更新对应 Spec；「已实现」「已验证」「已人工验收」「已发布」必须分开表述。
 - **包级 Spec 维护规则**：固定八节结构（见 [docs/spec/README.md](docs/spec/README.md)）。写入集改了模块树、对外 API、`pawork-*` 依赖边、feature 门、红线相关行为或测试资产时**同批**更新该包 `docs/spec/crates/<pkg>.md`；冲突以源码为准并回写。
 - **历史存档纪律**：已完成阶段的收口细节、已关闭登记项、已拍板决策的过程记录进 [docs/history.md](docs/history.md)，不留在 ROADMAP/plan；存档只增不删。
@@ -93,7 +93,7 @@ Full workspace gate: NOT RUN（当前未设置全量门禁）
 
 - 文档等一致性关键产物由主代理直接撰写。
 - 实现阶段：边界清晰、写入集互不重叠的任务可并行派发，遵循服务级 `AGENTS.md` 的路由与并发上限。
-- 派发实现 / 核查子代理时，提示词须点名写入集各包 `docs/spec/crates/<pkg>.md`（切片骨架见当前 [Settings 任务书](plan/settings.md) §3，后续任务书沿用同一字段）；不要让子代理先通读全部 Spec。
+- 派发实现 / 核查子代理时，提示词须点名写入集各包 `docs/spec/crates/<pkg>.md`（切片骨架见当前 [CLN 任务书](plan/cleanup.md)，Settings 缺口见 [plan/settings.md](plan/settings.md)）；不要让子代理先通读全部 Spec。
 - 确定性检查先于模型审查；每个门禁只调用一个审查者。
 
 ## 10. 验证命令模板

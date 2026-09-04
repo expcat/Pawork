@@ -15,7 +15,8 @@ pub mod model;
 pub mod parser;
 pub mod service;
 
+pub use crate::status::FileStatus;
 pub use hunk_stage::{build_hunk_patch, build_line_patch, HunkStageService};
-pub use model::{DiffFile, DiffHunk, DiffLine, FileStatus, HunkId, LineKind};
+pub use model::{DiffFile, DiffHunk, DiffLine, HunkId, LineKind};
 pub use parser::parse_unified;
 pub use service::{paginate, DiffOptions, DiffPage, DiffService};

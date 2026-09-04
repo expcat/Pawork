@@ -1209,3 +1209,72 @@ Real-world evidence: 部分通过。正式 Host/Desktop 的首次连接失败→
 Human acceptance: 等待人工验收（视觉层级、secure input、OAuth 浏览器切换、VoiceOver）。
 
 Full workspace gate: NOT RUN（纯文档回写，当前未设置全量门禁）。
+
+## 2026-09-04 — 文档资产清理
+
+- **ADR 目录**：保留 ADR-037～052 决策正文（不删不改裁决）；新增 [adr/README.md](adr/README.md) 作目录索引，与 [architecture.md](architecture.md) §5 对齐。AGENTS/README 中过期的「037–041 / 037～045」编号已更正。
+- **plan/**：`plan/settings.md` 只留 SET-7 未完成缺口；SET-0～SET-6g 切片正文从活动任务书移除（本文件既有逐片存档仍是过程事实源）。`plan/cleanup.md` 已完成 CLN 片改为状态表，未完成片保留写入集。
+- **视觉评审资产**：删除 `docs/ui-review/`（量图/zones/mask/各 R·Wave notes；PNG 运行证据此前已清）。删除仅服务那些波次的 `scripts/ui-r*` / `ui-wave-*` 编排脚本、`ui-normalize-reference.py`，以及扫出无活动引用的 `ui-ax-frames.swift` / `ui-platform-prefs.swift`。保留 `design/` 三张初始设计图、`docs/UI_Review.md` 当前健康度，以及 `ui-fixture.sh` / `ui-ax-dump.swift` / `ui-key-event.swift` / `ui-focus-switch.sh` / `ui-visual-diff.py` 等通用工具。
+- 新截图不得再写入仓库；对照设计图与真窗口结论分别记录。
+
+Implemented: none（文档与仓库资产清理，无生产代码改动）。
+
+Validated: 相对链接指向仍存在的 ADR / design PNG / plan 文件；`git diff --check` 在本清理回写后执行。
+
+Targeted regressions: none（无代码改动）。
+
+Full workspace gate: NOT RUN。
+
+## 2026-09-04 — CLN-9 control-plane 命名 + git FileStatus
+
+- `pawork_control_plane::tenant::PolicyDecision` 重命名为 `TenantPolicyDecision`（crate 根 re-export 同步；无旧名 alias）。冻结的 `pawork_policy::PolicyDecision`、以及 `PolicyDecisionKind` / `PolicyDecisionEvent` 不变。`merge_dual_failures` 保留。
+- `pawork-git` 删除 `diff/model.rs` 中重复的 `FileStatus`；`diff::FileStatus` 与 crate root 为同一 porcelain 九态类型。serde `snake_case` 变体名未改。
+
+Implemented: 租户策略裁决类型与 git 文件状态各只留一套。
+
+Validated: `cargo test -p pawork-control-plane -p pawork-git --offline --lib --tests`（control-plane 204；git lib 57 + `parser_contract` 5）。
+
+Targeted regressions: tenant `decide_*` 分支、`PolicyDecisionEvent::kind_of` 映射、git porcelain/diff/hunk-stage 与 parser golden。
+
+Full workspace gate: NOT RUN。
+
+## 2026-09-04 — CLN-8 storage 原子写
+
+- blob 三区删除各自 `atomic_write`；新增 crate 私有 `blob/atomic.rs`：`atomic_write_bytes`（`.tmp-{pid}-{counter}`、`create_new`、fsync、rename、失败删临时文件）。artifact / protected 同步调用；checkpoint `spawn_blocking` 同一 helper。PWB1、schema v14、`checkpoint-state-v1.json` 形状未改。
+- `event_store.rs` 未拆：测试与私有 redact helper 同文件，机械拆分会扩大 crate-visible API。
+
+Implemented: blob 原子写单源。
+
+Validated: `cargo test -p pawork-storage --offline --lib --tests --features compaction,checkpoint,protected`（lib 157 + 1 ignored；`pwb1_golden` 4；`read_range` 5）。
+
+Targeted regressions: artifact put/gc `.tmp-` 孤儿、PWB1 golden、checkpoint 状态往返与回滚。
+
+Full workspace gate: NOT RUN。
+
+## 2026-09-04 — CLN-5 Desktop 拆分
+
+- 删除 `projection.rs` / `controller.rs` / `ui/settings.rs` 神文件（无 shim），按域拆 `projection/`、`controller/`、`ui/settings/`、`ui/accessibility/settings_*.rs`。
+- Settings 查询/回执走 `pawork_client` protocol 类型；`SettingsQueryGate` 统一 loading/stale/写 gate；断线 `refresh_all_settings` + `mark_settings_stale` 单点扇出。
+- AX identifier 不漂；`SetApprovalMode.mode` 仍为 String（`ApprovalModeWire::as_str()`）。
+- 收口时补：拆分切错的文档注释与模块可见性；protocol 可空字段改为键必须出现（`null` 才是未设置），对齐 SET-6 fail-closed。
+
+Implemented: Desktop Settings 经 protocol Data 反序列化；神文件拆分。
+
+Validated: `cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders` 186；`cargo test -p pawork-protocol --offline --lib` 55。
+
+Targeted regressions: Settings typed 解析 fail-closed（缺 nullable 键 / 类型错误）、投影 63、controller 14、AX identifier 回归。
+
+Full workspace gate: NOT RUN。
+
+## 2026-09-04 — CLN-10 收口
+
+- 包级 Spec 已按源码回写：storage（`atomic_write_bytes`）、control-plane（`TenantPolicyDecision`）、git（单一 `FileStatus`）。architecture 表同步这三项；21 成员布局未变。
+- `cargo tree -p pawork --offline` 去重闭包 243 行，与 Wave 3 前基线一致；`pawork-*` 包集合未增。重复出现均为钻石依赖 `(*)`，不是环。
+
+Implemented: none（收口文档与依赖闭包核对）。
+
+Validated: `cargo tree -p pawork --offline --prefix none`（243）；相对链接与状态词汇回写。
+
+Targeted regressions: none（本片无生产代码）。
+
+Full workspace gate: NOT RUN。

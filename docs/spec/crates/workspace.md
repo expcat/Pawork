@@ -33,7 +33,7 @@
 | `src/config/merge.rs` | ~160 | `ConfigValue` 包装与 `Merge` trait；`merge_json`（对象按键递归、标量与数组整体替换）；`merge_ordered`（低→高依序合并） |
 | `src/config/error.rs` | ~70 | `ConfigParseError` / `ConfigError`：TOML 语法、schema 不匹配、IO 错误、写回序列化（`Write`）全部携带文件路径，`path()` 访问器 |
 | `src/config/loader.rs` | ~1150 | `Loader` 构建器与 `resolve()` 全流程：来源装配、`strip_untrusted_layer` 安全剥离（六种 `ConfigWarning`，ADR-050 起非 Global 层顶层 `terminal` 整段剥离 + `TerminalIgnored` 告警，防仓库投毒默认 shell）、profile 层派生、`api_key` 双点剥除（单文件解析后 + 终值合并后）、确定性排序；`ConfigSource` / `LoadedSource` / `LoadedSourceSpan`；`ResolvedConfig{config, active_profile, sources, warnings}` |
-| `src/config/writer.rs` | ~260 | `write_default_model_pair`（SET-2）与 `write_proxy_url`（SET-6a / ADR-047 D2）与 `write_mcp_server_remove`（SET-6c / ADR-049 D2）与 `write_terminal_settings`（SET-6 终端页 / ADR-050 D1：`[terminal]` 全态写，`shell=None` 移除该键，columns/rows 总是写入）：读目标文件（缺失视为空）→ `toml::Table` 保留未知字段 → 改目标键（`proxy_url` 的 `None` 移除该键）→ 同目录临时文件 + rename 原子写回；四入口共用 `CONFIG_WRITE_LOCK` 串行化同进程 RMW；不触碰六层合并语义 |
+| `src/config/writer.rs` | ~320 | 四个公开入口（`write_default_model_pair` / `write_proxy_url` / `write_mcp_server_remove` / `write_terminal_settings`）只表达键语义；共用 `rmw_global_config`（锁 + `read_table` + 可选 `atomic_write_table`）。`write_mcp_server_remove` 键缺失时不写盘返回 `Ok(false)`。未知字段保留；不触碰六层合并。 |
 
 **resources/（9 文件）**
 
@@ -43,7 +43,7 @@
 | `src/resources/request.rs` | ~180 | `WorkspaceRelativePath`（构造与 serde 反序列化两处同样拒绝绝对路径 / `..`）；`CurrentPathKind::{Directory, File}`；`ResourceRequest{workspace_id, root_index, current_path, current_path_kind, selection}`；`ResourceSelection`（active/disabled skills、prompt_template + prompt_arguments、profile、session/run instructions）；`ResourceLimits`；`ResourceLoaderOptions` |
 | `src/resources/error.rs` | ~50 | `ResourceLoadError`：workspace/root 不存在、`InvalidRelativePath`、文件缺失 / 超限 / 非 UTF-8 / 越界等 |
 | `src/resources/source.rs` | ~210 | 溯源与诊断：`ResourceKind` 七类（Instructions / AgentsFile / Skill / PromptTemplate / AgentProfile / LanguageServer / UserHook）；`ResourceOrigin`（Global / Workspace / Session / Run，不暴露宿主绝对路径）；`ResourceProvenance{tier, source_key, origin}`；`ResourceDiagnostics`（`sort_deterministically`）、`ResourceIssue`（warning/error 构造器 + `for_resource`）、`ResourceDiagnosticStatus` / `ResourceDiagnosticEntry` |
-| `src/resources/io.rs` | ~320 | 安全 IO 内核：`canonicalize_platform`、`path_within_root`、`join_under_root`（canonical-within 校验，symlink 逃逸拒绝）、`read_utf8_bounded` / `read_utf8_bounded_within`（大小上限 + UTF-8 校验）、`is_safe_relative_reference` |
+| `src/resources/io.rs` | ~260 | 安全 IO：`join_under_root`、crate-private `canonical_within`（两侧先 `pawork_policy::canonicalize_platform`，再 `path_within_root`）、`read_utf8_bounded` / `read_utf8_bounded_within`、`workspace_relative_key`（`relative_to_root`）、`is_safe_relative_reference`。不再自写 canonicalize / within-root。 |
 | `src/resources/agents.rs` | ~490 | `AGENTS.md` 层级发现：root → `current_path` 每层目录收集，按深度排序；`AgentsDocument`（`relative_path()`）/ `AgentsHierarchy`（`from_documents` / `documents` / `len` / `nearest`）；symlink 逃逸与损坏文件隔离为诊断 |
 | `src/resources/skills.rs` | ~1560 | Skill 装载：`manifest.toml` + 同目录 `SKILL.md` body；`SkillManifest`（id / version / description / parameters / dependencies / conflicts / scripts / assets / permissions）；`SkillParameter` / `SkillScript` / `SkillDependency`；激活集解析：BFS 依赖遍历、semver 兼容检查、循环与显式冲突检测；`LoadedSkill` / `SkillResolution` |
 | `src/resources/profiles.rs` | ~1970 | Agent Profile 装载：v1（instructions + 默认 provider/model）与 v2（`pawork_domain::AgentProfileV2` 全维度）双 schema、v1 自动迁 v2、同名冲突与明文 Secret 检测、tool 规则一致性校验、`memory_available=false` 时显式标 `Unavailable`；`resolve_profile_references` 在 bundle 内解析 profile→skill 引用（`agent_profile_ref_id_invalid` / `ref_version_invalid` / `ref_duplicate` 三类诊断）；`AgentProfile` / `LoadedAgentProfileV2` / `InstructionLayer` / `ResolvedInstructions::ordered_layers` |
@@ -212,7 +212,7 @@
 
 ## 6. 依赖关系
 
-- **依赖**：`pawork-domain`（`WorkspaceId`；profile 域类型 `AgentProfileV2` / `ProfileToolRules` / `ReasoningEffort` 等）、`pawork-policy`（`resolve_workspace_path` 路径内核、`PathSafetyError`、`ApprovalMode`）、`directories`（平台配置目录）、`dunce`、`ignore` + `notify`（文件索引）、`semver`（serde 特性，skill 版本）、`serde` / `serde_json` / `toml`、`thiserror`、`tokio`（macros / rt / sync / time）；Unix 下 `libc`。
+- **依赖**：`pawork-domain`（`WorkspaceId`；profile 域类型 `AgentProfileV2` / `ProfileToolRules` / `ReasoningEffort` 等）、`pawork-policy`（`resolve_workspace_path` 路径内核、`canonicalize_platform` / `path_within_root` / `relative_to_root`、`PathSafetyError`、`ApprovalMode`）、`directories`（平台配置目录）、`dunce`、`ignore` + `notify`（文件索引）、`semver`（serde 特性，skill 版本）、`serde` / `serde_json` / `toml`、`thiserror`、`tokio`（macros / rt / sync / time）；Unix 下 `libc`。
 - **被依赖**：
   - `pawork-tools`：八个文件系统工具（read_file / write_file / edit_file / apply_patch / list_directory / search_text / find_files / run_command）经 `WorkspaceService` 解析路径；`mcp/config.rs` 消费 `ResolvedConfig`。
   - `pawork-app`：宿主装配 config（`Loader::discover`）、resources（`ResourceLoader`）、import（`CompatLoader` / `scan_local_sessions`，见 `import_host.rs` / `services/import.rs`）并与 tools 共享同一 `WorkspaceService` 实例（约 12 个文件引用）。
@@ -246,6 +246,6 @@
 - `session_scan` 只发现文件不解析内容；会话内容解析与入库在上层 import 流程。
 - 文件索引的二进制判定基于前 8KB 含 NUL 探测，可能误判无 NUL 的二进制格式为文本。
 - `import/parse.rs` 对外部格式做宽松兼容（未知键记名不复制值），外部工具 schema 演进会产生新的 `unknown_key` 告警，属预期行为而非缺陷。
-- `resources` 与 `import` 各有一套独立的安全 IO（`resources/io.rs` 与 `import/io.rs`），语义相近但上限与错误类型不同，修改时须分别回归。
+- `resources` 与 `import` 仍分两套 IO 错误类型与上限（`resources/io.rs` 委托 policy canonicalize；`import/io.rs` 自管 no-follow 读）。根无法 canonicalize 时 AGENTS.md 加载 fail-closed 为 OutsideRoot，不在无 within-root 检查时读文件。
 - `ImportStatus::Disabled` 已声明并有展示映射（preview 输出 `disabled`），但当前源码无构造点：模块文档「无法安全映射标为 Unsupported / Disabled」实际只落在 Unsupported；导入 hook 的「默认禁用」由 `HookConfig.enabled=false` 表达而非条目状态。
 - `LanguageServer` / `UserHook` 等 `ResourceKind` 变体已声明，但 resources 加载器当前只装载 Instructions / AgentsFile / Skill / AgentProfile 四类。

@@ -194,12 +194,6 @@ fn role_label(role: &MessageRole) -> &'static str {
     }
 }
 
-// V1 消费者（ContextBuilder）未迁移；S8 资源阶段接线前仅测试引用。
-#[allow(dead_code)]
-pub(crate) const fn message_framing_tokens() -> u64 {
-    MESSAGE_FRAMING_TOKENS
-}
-
 pub(crate) const fn reply_primer_tokens() -> u64 {
     REPLY_PRIMER_TOKENS
 }
@@ -230,7 +224,7 @@ mod tests {
 
     #[test]
     fn framing_constants_match_industry_conventions() {
-        assert_eq!(message_framing_tokens(), 4);
+        assert_eq!(MESSAGE_FRAMING_TOKENS, 4);
         assert_eq!(reply_primer_tokens(), 3);
         assert_eq!(TOOL_FRAMING_TOKENS, 8);
         assert_eq!(IMAGE_PLACEHOLDER_TOKENS, 85);

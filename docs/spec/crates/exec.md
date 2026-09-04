@@ -1,6 +1,6 @@
 # pawork-exec
 
-> 执行内核：跨平台 Process Runtime（进程组/Job、超时、输出上限、协作取消、整树回收）、Sandbox Runtime（macOS Seatbelt / Linux bwrap+Landlock / Windows Job、软沙箱 NativeRestricted、可观测回退选择器）与 PTY 服务。**不依赖任何 `pawork-*` 包**（W1 自含，含 domain 与 policy），被 `pawork-tools` 与 app 宿主消费。
+> 执行内核：跨平台 Process Runtime（进程组/Job、超时、输出上限、协作取消、整树回收）、Sandbox Runtime（macOS Seatbelt / Linux bwrap+Landlock / Windows Job、软沙箱 NativeRestricted、可观测回退选择器）与 PTY 服务。生产 `pawork-*` 依赖仅为 [`pawork-policy`](policy.md)（ADR-052：路径 helper）；**不直接依赖** `pawork-domain`。被 `pawork-tools` 与 app 宿主消费。
 
 ## 1. 职责与边界
 
@@ -15,7 +15,6 @@
 | --- | --- | --- |
 | `src/lib.rs` | ~50 | 门面：`pub mod cancel`，其余模块私有 + 全量 re-export；平台函数（Seatbelt profile / bwrap argv / Landlock 探测 / AppContainer 映射）以 `pub(crate) use` 引入（R0 D21 包外零消费，R7 再评估是否公开）。 |
 | `src/cancel.rs` | ~165（含测试） | 协作取消原语 `CancellationToken` / `CancellationFuture`：`Arc<{AtomicBool, Mutex<Vec<Waker>>}>`，克隆共享，`cancelled().await` 挂起至取消，`cancel()` 幂等唤醒全部 waiter。 |
-| `src/path.rs` | ~37 | `canonicalize_platform` / `path_within_root` / `relative_to_root` 的 **crate 内小复制**（与 pawork-policy 同名函数同语义，避免 exec→policy 依赖边）；全部 `pub(crate)`。 |
 | `src/process.rs` | ~1060（逻辑 ~600 + 测试） | `CommandSpec`（含 Linux 专属 `landlock` 字段）/ `ProcessLimits` / `ProcessRuntime` / `ProcessEvent` / `ProcessOutput` / `ProcessInput` / `ProcessHandle` / `ProcessError` / `LinuxLandlockPolicy`（pub(crate)）；Unix `pre_exec`（setpgid + setrlimit + Linux PDEATHSIG + Landlock restrict）；Windows `CREATE_SUSPENDED` → Job attach → `NtResumeProcess`；监督循环与 `kill_child_tree`。 |
 | `src/sandbox.rs` | ~1210（逻辑 ~700 + 测试） | `SandboxPolicy` / `FilesystemPolicy` / `NetworkMode` / `ResourceLimits` / `IsolationLevel` / `SandboxBackend` trait / `SandboxProcessSpec` / `SandboxProcess` / `SandboxInteractiveProcess` / `SandboxError` / `ProbeOutcome` / `BackendSelection`；软沙箱 `NativeRestricted` 与全后端共用第一层 `apply_soft_restrictions`；`SandboxSelector`；`default_secret_paths` / `default_env_allowlist`。 |
 | `src/tree.rs` | ~185 | `ProcessTreeGuard`：`attach`（pub(crate)，spawn 后立即挂载）与公开的 `attach_external(pid, limits)`（PTY 场景；Unix 要求目标为进程组长）、幂等 `terminate()`；`PROCESS_TREE_KILL_TIMEOUT = 5s`；`kill_child_tree` 收口函数。 |
@@ -153,8 +152,8 @@
 
 ## 6. 依赖关系
 
-- **workspace 内**：无（`path.rs` 为 policy 三函数的刻意复制，保持 W1 零依赖）。
-- **外部**：`tokio`（full）、`portable-pty`、`async-trait`、`serde/serde_json`、`thiserror`、`tracing`、`dunce`、`libc`（Unix）；Linux 加 `landlock`；Windows 加 `windows`（Win32 Job/Threading/Security feature 集）。dev 依赖 `tempfile`。无 cargo feature。
+- **workspace 内**：`pawork-policy`（ADR-052：`canonicalize_platform` / `path_within_root` 供 sandbox 与 Linux bwrap deny 判定；不直接依赖 domain）。
+- **外部**：`tokio`（process/rt/sync/time 等）、`portable-pty`、`async-trait`、`serde/serde_json`、`thiserror`、`tracing`、`libc`（Unix）；Linux 加 `landlock`；Windows 加 `windows`（Win32 Job/Threading/Security feature 集）。dev 依赖 `tempfile`。无 cargo feature。canonicalize 经 policy 使用 `dunce`，本包不再直接依赖 `dunce`。
 - **被依赖**：`pawork-tools`（run_command + MCP stdio 托管）、app 宿主（PTY / 沙箱装配）。`pawork-engine` 刻意不依赖本包（进程操作由宿主注入）。
 
 ## 7. 测试与验证资产

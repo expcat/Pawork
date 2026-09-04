@@ -5,7 +5,7 @@
 
 ## 背景
 
-Settings 活动线（[ROADMAP](../../ROADMAP.md) §4 SET-1、[任务书](../../plan/settings.md)、[Feature Spec](../spec/settings.md)）的硬前置：为 Desktop 的「模型与供应商」页锁定 Host-driven contract。2026-09-01 源码盘点确认的基线事实：
+Settings 活动线（[Feature Spec](../spec/settings.md)、[ADR 索引](../architecture.md)）的硬前置：为 Desktop 的「模型与供应商」页锁定 Host-driven contract。2026-09-01 源码盘点确认的基线事实：
 
 - `AuthStart{provider_id, flow}` / `AuthRemove{provider_id}` 类型已在 `AppCommand` 中存在，但 registry 对 GUI/headless/ACP 三通道全部 `available: false`（[registry.rs:167](../../crates/protocol/src/app/registry.rs)），wire 上无实际消费者；`auth_status`/`oauth_begin` 等 Host 能力只被 CLI 进程内消费。
 - `ModelList` 是已对 GUI 开放的 query，但只返回目录条目，不含 descriptor、认证状态与目录来源/错误。

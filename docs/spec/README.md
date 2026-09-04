@@ -29,7 +29,7 @@
 | [crates/protocol.md](crates/protocol.md) | `pawork-protocol` | GUI 帧 / headless JSON / core-api / typegen + 三通道 registry + 共享投影 reducer |
 | [crates/testkit.md](crates/testkit.md) | `pawork-testkit` | dev-only MockProvider/MockTool 与契约断言 |
 | [crates/policy.md](crates/policy.md) | `pawork-policy` | 安全内核：PolicyDecision/ApprovalMode、shell 风险分类、路径校验 |
-| [crates/exec.md](crates/exec.md) | `pawork-exec` | 进程执行 / 沙箱（Seatbelt/Landlock/AppContainer）/ PTY |
+| [crates/exec.md](crates/exec.md) | `pawork-exec` | 进程执行 / 沙箱（Seatbelt/Landlock/AppContainer）/ PTY；ADR-052 依赖 policy 路径 helper |
 | [crates/tools.md](crates/tools.md) | `pawork-tools` | 八个内置工具 + ToolScheduler + MCP client |
 | [crates/workspace.md](crates/workspace.md) | `pawork-workspace` | workspace 服务、file_index、resources、六层配置、五来源导入 |
 | [crates/storage.md](crates/storage.md) | `pawork-storage` | SQLite Actor + session 事件存储（schema v14）+ PWB1 blob |
@@ -88,7 +88,7 @@ Spec 中的能力状态不替代验证结论。某项“已实现”只说明生
 | V2 | S0–S13 | 已于 2026-08-18 收官；交付摘要见 [history.md](../history.md)。 |
 | V3 结构线 | R0–R9 | 已归档；旧编号和过程只在 [history](../history.md) / git 历史中检索。 |
 | 真实 Desktop 线 | E0–E2 / P1–P4 | 旧阶段已经停止承载活动计划；完成事实见 [history](../history.md)。 |
-| Settings 线 | SET-0～SET-7 | SET-0 立项与 ADR-046 拍板；SET-1/SET-2 已实现并通过定向测试，SET-3 起未开始；状态与顺序只看 [ROADMAP](../../ROADMAP.md)。 |
+| Settings 线 | SET-0～SET-7 | SET-0～SET-6g 已实现（过程见 [history](../history.md)）；SET-7 真窗口/人工签字暂停，缺口见 [plan/settings.md](../../plan/settings.md)。当前活动线是 CLN，指针只看 [ROADMAP](../../ROADMAP.md)。 |
 
 因此不会创建 P20 作为当前阶段。本目录使用领域化 Spec 名称；下一产品线的版本名和阶段编号只在用户选择真实产品目标并立项后确定。
 

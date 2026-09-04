@@ -26,10 +26,10 @@ Accessibility 口径：本轮真实路径已通过稳定 identifier 驱动项目
 ## 3. 证据纪律
 
 - 功能结论必须同时有真实窗口状态与源码外事实（文件、Git、Host 或 PTY 输出）。
-- 当前运行截图只随当轮报告展示，不重新写入 `docs/ui-review/`。
+- 当前运行截图只随当轮报告展示，不写入仓库。
 - 仓库长期只保留 [design/README.md](../design/README.md) 列出的三张初始设计图。
 - 旧 R/Wave 编号、截图路径和通过数量不再是当前状态事实；需要追溯时查看 Git 历史与 [history.md](history.md)。
 
 ## 4. 下一门禁
 
-P1 片 2B 已完成 Host 项目注册表与按会话路由；下一步用正式 Desktop UI 验收添加 / 切换 / 重开项目及新建 / 续聊会话，之后才进入完整视觉与 Accessibility 签字。
+当前活动线是 [CLN](../ROADMAP.md)，不是新的视觉波次。Settings 真窗口 / VoiceOver / 视觉签字仍登记在 [plan/settings.md](../plan/settings.md) SET-7。仓库不再保存评审截图；对照 [design/README.md](../design/README.md) 三张初始设计图即可。

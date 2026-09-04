@@ -115,13 +115,13 @@ impl PolicyDecisionEvent {
         }
     }
 
-    /// 从 `PolicyDecision` 归一化为决策种类。
-    pub fn kind_of(decision: &crate::PolicyDecision) -> PolicyDecisionKind {
+    /// 从 [`crate::TenantPolicyDecision`] 归一化为决策种类。
+    pub fn kind_of(decision: &crate::TenantPolicyDecision) -> PolicyDecisionKind {
         match decision {
-            crate::PolicyDecision::Allow => PolicyDecisionKind::Allow,
-            crate::PolicyDecision::Deny { .. } => PolicyDecisionKind::Deny,
-            crate::PolicyDecision::Limit { .. } => PolicyDecisionKind::Limit,
-            crate::PolicyDecision::Fallback { .. } => PolicyDecisionKind::Fallback,
+            crate::TenantPolicyDecision::Allow => PolicyDecisionKind::Allow,
+            crate::TenantPolicyDecision::Deny { .. } => PolicyDecisionKind::Deny,
+            crate::TenantPolicyDecision::Limit { .. } => PolicyDecisionKind::Limit,
+            crate::TenantPolicyDecision::Fallback { .. } => PolicyDecisionKind::Fallback,
         }
     }
 }
@@ -178,7 +178,7 @@ pub fn sanitize_reason(reason: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{IdentityContext, PolicyDecision, PolicyGate};
+    use crate::{IdentityContext, PolicyGate, TenantPolicyDecision};
 
     #[test]
     fn gate_and_kind_strings_are_stable() {
@@ -187,19 +187,19 @@ mod tests {
         assert_eq!(PolicyDecisionKind::Deny.as_str(), "deny");
         assert_eq!(PolicyDecisionKind::Fallback.as_str(), "fallback");
         assert_eq!(
-            PolicyDecisionEvent::kind_of(&PolicyDecision::Allow),
+            PolicyDecisionEvent::kind_of(&TenantPolicyDecision::Allow),
             PolicyDecisionKind::Allow
         );
         assert_eq!(
-            PolicyDecisionEvent::kind_of(&PolicyDecision::Limit { reason: "x".into() }),
+            PolicyDecisionEvent::kind_of(&TenantPolicyDecision::Limit { reason: "x".into() }),
             PolicyDecisionKind::Limit
         );
         assert_eq!(
-            PolicyDecisionEvent::kind_of(&PolicyDecision::Deny { reason: "x".into() }),
+            PolicyDecisionEvent::kind_of(&TenantPolicyDecision::Deny { reason: "x".into() }),
             PolicyDecisionKind::Deny
         );
         assert_eq!(
-            PolicyDecisionEvent::kind_of(&PolicyDecision::Fallback { reason: "x".into() }),
+            PolicyDecisionEvent::kind_of(&TenantPolicyDecision::Fallback { reason: "x".into() }),
             PolicyDecisionKind::Fallback
         );
     }

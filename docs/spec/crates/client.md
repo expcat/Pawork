@@ -15,7 +15,7 @@
 
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
-| `src/lib.rs` | ~1 280 | `GuiClient` 全部实现：`ClientConfig`、`SessionInfo`、`ResumeOutcome`、`ClientError` / `ClientErrorKind`、私有 `FrameWant` 帧路由、握手 / 往返 / 订阅屏障 / Snapshot / Resume / Ack / Heartbeat；每连接实例 request namespace 防 Host 重启后的幂等键碰撞；对 Desktop 的 re-export（protocol 类型、`projection`、`TOKEN_SCHEME`、transport 四类型）；10 个内联测试 |
+| `src/lib.rs` | ~1 280 | `GuiClient` 全部实现：`ClientConfig`、`SessionInfo`、`ResumeOutcome`、`ClientError` / `ClientErrorKind`、私有 `FrameWant` 帧路由、握手 / 往返 / 订阅屏障 / Snapshot / Resume / Ack / Heartbeat；每连接实例 request namespace 防 Host 重启后的幂等键碰撞；对 Desktop 的 re-export（protocol 类型含 Settings 载荷、`projection`、`TOKEN_SCHEME`、transport 四类型）；10 个内联测试 |
 | `src/headless/mod.rs` | ~90 | headless SDK 门面：模块文档（版本策略 / 稳定面 / 背压）、re-export（`PaworkClient`、`SdkError`、`EventSubscription`、`SDK_API_VERSION` 等）、`spawn_pawork` 便捷入口、`experimental`（`CompatOutcome`）与 `reexport`（常用协议类型）子模块 |
 | `src/headless/client.rs` | ~770 | `PaworkClient`：`spawn` / `from_transport`（自动握手）、typed 高层 API（`create_session` / `run_start` / `cancel` / `run_retry` / `list_workspaces` / `subscribe` / `unsubscribe` / `resume` / `import_compat` / `compat_history` / `close`）、`RouterState`（pending 请求 + 订阅槽）、`reader_loop`（逐行解析 JSONL 并路由） |
 | `src/headless/transport.rs` | ~180 | `Transport` trait（行级 send / recv / close）与 `StdioTransport`（进程 spawn + stdin/stdout 管道）；`PaworkOptions`（binary 默认 `PAWORK_BIN` 或 `pawork`、args 默认 `["headless", "--json-stdio"]`、env、timeout） |

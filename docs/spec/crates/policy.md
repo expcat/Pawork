@@ -128,8 +128,7 @@
 ## 6. 依赖关系
 
 - **依赖**：`pawork-domain`（仅 `ToolCapability`）；外部 `serde` / `serde_json` / `thiserror` / `dunce` / `regex`（regex 在 Cargo.toml 声明但当前源码未直接使用）。无 cargo feature，无平台差异依赖。dev 依赖 `tempfile`。
-- **被依赖**：`pawork-tools`（common 路径解析 + scheduler 闸门）、`pawork-workspace`、`pawork-app`。
-- **刻意不依赖本包**：`pawork-exec`（其内部 `path.rs` 为三函数小复制，见 [exec.md](exec.md) §2）。
+- **被依赖**：`pawork-tools`（common 路径解析 + scheduler 闸门）、`pawork-workspace`、`pawork-app`、`pawork-exec`（ADR-052：sandbox / bwrap 复用 `canonicalize_platform` / `path_within_root`）。
 
 ## 7. 测试与验证资产
 

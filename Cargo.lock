@@ -4501,9 +4501,9 @@ name = "pawork-exec"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "dunce",
  "landlock",
  "libc",
+ "pawork-policy",
  "portable-pty",
  "serde",
  "serde_json",

@@ -14,10 +14,9 @@ use crate::config::error::{ConfigError, ConfigParseError};
 /// 互相覆盖临时文件（GUI 快速双击即可触发）。
 static TEMP_SUFFIX: AtomicU64 = AtomicU64::new(0);
 
-/// 同进程跨键写串行化：`write_default_model_pair` / `write_proxy_url` /
-/// `write_mcp_server_remove` / `write_terminal_settings` 共用此锁，包住
-/// read_table → 改 → atomic_write_table 全程，避免交错
-/// 读写造成 lost update。跨进程仍靠 atomic_write_table 的 rename 原子性。
+/// 同进程跨键写串行化：四个公开入口都经 [`rmw_global_config`] 持此锁，
+/// 包住 read_table → 改 → atomic_write_table 全程，避免交错读写造成
+/// lost update。跨进程仍靠 atomic_write_table 的 rename 原子性。
 static CONFIG_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 fn read_table(path: &Path) -> Result<toml::Table, ConfigError> {
@@ -70,6 +69,25 @@ fn atomic_write_table(path: &Path, table: &toml::Table) -> Result<(), ConfigErro
     Ok(())
 }
 
+/// Global 配置的唯一 read-modify-write 内核。
+///
+/// `mutate` 返回 `(should_write, value)`：`should_write == false` 时不调用
+/// [`atomic_write_table`]（`write_mcp_server_remove` 在键缺失时走此路径）。
+fn rmw_global_config<T>(
+    path: &Path,
+    mutate: impl FnOnce(&mut toml::Table) -> Result<(bool, T), ConfigError>,
+) -> Result<T, ConfigError> {
+    let _guard = CONFIG_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut table = read_table(path)?;
+    let (should_write, value) = mutate(&mut table)?;
+    if should_write {
+        atomic_write_table(path, &table)?;
+    }
+    Ok(value)
+}
+
 /// 将 default_provider/default_model 原子写入指定（Global 层）配置文件。
 ///
 /// 幂等：重复写入同一对值为最终覆盖语义。文件不存在时创建（含父目录）。
@@ -78,19 +96,17 @@ pub fn write_default_model_pair(
     provider_id: &str,
     model_id: &str,
 ) -> Result<(), ConfigError> {
-    let _guard = CONFIG_WRITE_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let mut table = read_table(path)?;
-    table.insert(
-        "default_provider".into(),
-        toml::Value::String(provider_id.to_string()),
-    );
-    table.insert(
-        "default_model".into(),
-        toml::Value::String(model_id.to_string()),
-    );
-    atomic_write_table(path, &table)
+    rmw_global_config(path, |table| {
+        table.insert(
+            "default_provider".into(),
+            toml::Value::String(provider_id.to_string()),
+        );
+        table.insert(
+            "default_model".into(),
+            toml::Value::String(model_id.to_string()),
+        );
+        Ok((true, ()))
+    })
 }
 
 /// 将 `proxy_url` 原子写入指定（Global 层）配置文件（SET-6a，ADR-047 D2）。
@@ -98,19 +114,17 @@ pub fn write_default_model_pair(
 /// `Some` 覆盖该键；`None` 移除该键。其余未知字段原样保留。文件不存在时
 /// 视为空配置（`Some` 时创建；`None` 时写回无该键的空表）。
 pub fn write_proxy_url(path: &Path, proxy_url: Option<&str>) -> Result<(), ConfigError> {
-    let _guard = CONFIG_WRITE_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let mut table = read_table(path)?;
-    match proxy_url {
-        Some(url) => {
-            table.insert("proxy_url".into(), toml::Value::String(url.to_string()));
+    rmw_global_config(path, |table| {
+        match proxy_url {
+            Some(url) => {
+                table.insert("proxy_url".into(), toml::Value::String(url.to_string()));
+            }
+            None => {
+                table.remove("proxy_url");
+            }
         }
-        None => {
-            table.remove("proxy_url");
-        }
-    }
-    atomic_write_table(path, &table)
+        Ok((true, ()))
+    })
 }
 
 /// 从指定（Global 层）配置文件原子移除 `mcp.servers.<name>`
@@ -120,20 +134,15 @@ pub fn write_proxy_url(path: &Path, proxy_url: Option<&str>) -> Result<(), Confi
 /// `Ok(false)`（fail-closed 保旧，由调用方如实回执）；存在且移除成功返回
 /// `Ok(true)`。
 pub fn write_mcp_server_remove(path: &Path, name: &str) -> Result<bool, ConfigError> {
-    let _guard = CONFIG_WRITE_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let mut table = read_table(path)?;
-    let removed = table
-        .get_mut("mcp")
-        .and_then(|mcp| mcp.as_table_mut())
-        .and_then(|mcp| mcp.get_mut("servers"))
-        .and_then(|servers| servers.as_table_mut())
-        .is_some_and(|servers| servers.remove(name).is_some());
-    if !removed {
-        return Ok(false);
-    }
-    atomic_write_table(path, &table).map(|()| true)
+    rmw_global_config(path, |table| {
+        let removed = table
+            .get_mut("mcp")
+            .and_then(|mcp| mcp.as_table_mut())
+            .and_then(|mcp| mcp.get_mut("servers"))
+            .and_then(|servers| servers.as_table_mut())
+            .is_some_and(|servers| servers.remove(name).is_some());
+        Ok((removed, removed))
+    })
 }
 
 /// 将终端默认设置全态原子写入指定（Global 层）配置文件的 `[terminal]` 段
@@ -148,26 +157,24 @@ pub fn write_terminal_settings(
     columns: u16,
     rows: u16,
 ) -> Result<(), ConfigError> {
-    let _guard = CONFIG_WRITE_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let mut table = read_table(path)?;
-    let mut terminal = match table.remove("terminal") {
-        Some(toml::Value::Table(existing)) => existing,
-        Some(_) | None => toml::Table::new(),
-    };
-    match shell {
-        Some(shell) => {
-            terminal.insert("shell".into(), toml::Value::String(shell.to_string()));
+    rmw_global_config(path, |table| {
+        let mut terminal = match table.remove("terminal") {
+            Some(toml::Value::Table(existing)) => existing,
+            Some(_) | None => toml::Table::new(),
+        };
+        match shell {
+            Some(shell) => {
+                terminal.insert("shell".into(), toml::Value::String(shell.to_string()));
+            }
+            None => {
+                terminal.remove("shell");
+            }
         }
-        None => {
-            terminal.remove("shell");
-        }
-    }
-    terminal.insert("columns".into(), toml::Value::Integer(i64::from(columns)));
-    terminal.insert("rows".into(), toml::Value::Integer(i64::from(rows)));
-    table.insert("terminal".into(), toml::Value::Table(terminal));
-    atomic_write_table(path, &table)
+        terminal.insert("columns".into(), toml::Value::Integer(i64::from(columns)));
+        terminal.insert("rows".into(), toml::Value::Integer(i64::from(rows)));
+        table.insert("terminal".into(), toml::Value::Table(terminal));
+        Ok((true, ()))
+    })
 }
 
 #[cfg(test)]

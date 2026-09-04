@@ -63,9 +63,9 @@ pub struct TenantPolicy {
     pub audit_export: Option<AuditExportPolicy>,
 }
 
-/// 策略决策结果。
+/// 租户策略决策结果（与冻结的 `pawork_policy::PolicyDecision` 不是同一类型）。
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PolicyDecision {
+pub enum TenantPolicyDecision {
     /// 放行。
     Allow,
     /// 拒绝，并附原因。
@@ -326,10 +326,10 @@ impl TenantPolicyEngine for InMemoryTenantPolicyEngine {
     ) -> Result<(), TenantPolicyError> {
         let policy = self.policy(tenant);
         match decide_model(model, policy.allowed_models.as_deref()) {
-            PolicyDecision::Allow => Ok(()),
-            PolicyDecision::Deny { .. }
-            | PolicyDecision::Limit { .. }
-            | PolicyDecision::Fallback { .. } => Err(TenantPolicyError::ModelNotAllowed {
+            TenantPolicyDecision::Allow => Ok(()),
+            TenantPolicyDecision::Deny { .. }
+            | TenantPolicyDecision::Limit { .. }
+            | TenantPolicyDecision::Fallback { .. } => Err(TenantPolicyError::ModelNotAllowed {
                 model: model.to_string(),
             }),
         }
@@ -342,7 +342,7 @@ impl TenantPolicyEngine for InMemoryTenantPolicyEngine {
     ) -> Result<(), TenantPolicyError> {
         let policy = self.policy(tenant);
         match decide_provider(provider, policy.allowed_providers.as_deref()) {
-            PolicyDecision::Allow => Ok(()),
+            TenantPolicyDecision::Allow => Ok(()),
             _ => Err(TenantPolicyError::ProviderNotAllowed {
                 provider: provider.to_string(),
             }),
@@ -356,7 +356,7 @@ impl TenantPolicyEngine for InMemoryTenantPolicyEngine {
     ) -> Result<(), TenantPolicyError> {
         let policy = self.policy(tenant);
         match decide_account(account, policy.allowed_accounts.as_deref()) {
-            PolicyDecision::Allow => Ok(()),
+            TenantPolicyDecision::Allow => Ok(()),
             _ => Err(TenantPolicyError::AccountNotAllowed {
                 account: account.to_string(),
             }),
@@ -371,7 +371,7 @@ impl TenantPolicyEngine for InMemoryTenantPolicyEngine {
     ) -> Result<(), TenantPolicyError> {
         let role = self.principal_role(tenant, principal);
         match decide_permission(role, permission) {
-            PolicyDecision::Allow => Ok(()),
+            TenantPolicyDecision::Allow => Ok(()),
             _ => Err(TenantPolicyError::PermissionDenied {
                 principal: principal.to_string(),
                 permission,
@@ -391,9 +391,9 @@ impl TenantPolicyEngine for InMemoryTenantPolicyEngine {
             policy.audit_export.as_ref(),
             destination,
         ) {
-            PolicyDecision::Allow => Ok(()),
-            PolicyDecision::Deny { reason } => Err(TenantPolicyError::AuditExportDenied { reason }),
-            PolicyDecision::Limit { reason } | PolicyDecision::Fallback { reason } => {
+            TenantPolicyDecision::Allow => Ok(()),
+            TenantPolicyDecision::Deny { reason } => Err(TenantPolicyError::AuditExportDenied { reason }),
+            TenantPolicyDecision::Limit { reason } | TenantPolicyDecision::Fallback { reason } => {
                 Err(TenantPolicyError::AuditExportDenied { reason })
             }
         }
@@ -491,37 +491,37 @@ impl TenantPolicyEngine for InMemoryTenantPolicyEngine {
 }
 
 /// 决策助手：判断 agent 并发是否放行（`None` 不限制，`current >= max` 拒绝）。
-pub fn decide_agent_concurrency(current: u64, max: Option<u64>) -> PolicyDecision {
+pub fn decide_agent_concurrency(current: u64, max: Option<u64>) -> TenantPolicyDecision {
     match max {
-        None => PolicyDecision::Allow,
-        Some(max) if current >= max => PolicyDecision::Deny {
+        None => TenantPolicyDecision::Allow,
+        Some(max) if current >= max => TenantPolicyDecision::Deny {
             reason: format!("agent 并发已达上限 {max}（当前 {current}）"),
         },
-        Some(_) => PolicyDecision::Allow,
+        Some(_) => TenantPolicyDecision::Allow,
     }
 }
 
 /// 决策助手：判断请求并发是否放行（`None` 不限制，`current >= max` 拒绝）。
-pub fn decide_request_concurrency(current: u64, max: Option<u64>) -> PolicyDecision {
+pub fn decide_request_concurrency(current: u64, max: Option<u64>) -> TenantPolicyDecision {
     match max {
-        None => PolicyDecision::Allow,
-        Some(max) if current >= max => PolicyDecision::Deny {
+        None => TenantPolicyDecision::Allow,
+        Some(max) if current >= max => TenantPolicyDecision::Deny {
             reason: format!("请求并发已达上限 {max}（当前 {current}）"),
         },
-        Some(_) => PolicyDecision::Allow,
+        Some(_) => TenantPolicyDecision::Allow,
     }
 }
 
 /// 决策助手：判断模型是否放行（`None` 不限制；`Some([])` 拒绝全部；
 /// 命中列表放行，否则拒绝）。
-pub fn decide_model(model: &ModelId, allowed: Option<&[ModelId]>) -> PolicyDecision {
+pub fn decide_model(model: &ModelId, allowed: Option<&[ModelId]>) -> TenantPolicyDecision {
     match allowed {
-        None => PolicyDecision::Allow,
-        Some([]) => PolicyDecision::Deny {
+        None => TenantPolicyDecision::Allow,
+        Some([]) => TenantPolicyDecision::Deny {
             reason: "模型白名单为空（拒绝全部）".to_string(),
         },
-        Some(list) if list.contains(model) => PolicyDecision::Allow,
-        Some(_) => PolicyDecision::Deny {
+        Some(list) if list.contains(model) => TenantPolicyDecision::Allow,
+        Some(_) => TenantPolicyDecision::Deny {
             reason: format!("模型 {model} 不在允许列表内"),
         },
     }
@@ -529,14 +529,14 @@ pub fn decide_model(model: &ModelId, allowed: Option<&[ModelId]>) -> PolicyDecis
 
 /// 决策助手：判断 Provider 是否放行（`None` 不限制；`Some([])` 拒绝全部；
 /// 命中列表放行，否则拒绝）。
-pub fn decide_provider(provider: &ProviderId, allowed: Option<&[ProviderId]>) -> PolicyDecision {
+pub fn decide_provider(provider: &ProviderId, allowed: Option<&[ProviderId]>) -> TenantPolicyDecision {
     match allowed {
-        None => PolicyDecision::Allow,
-        Some([]) => PolicyDecision::Deny {
+        None => TenantPolicyDecision::Allow,
+        Some([]) => TenantPolicyDecision::Deny {
             reason: "Provider 白名单为空（拒绝全部）".to_string(),
         },
-        Some(list) if list.contains(provider) => PolicyDecision::Allow,
-        Some(_) => PolicyDecision::Deny {
+        Some(list) if list.contains(provider) => TenantPolicyDecision::Allow,
+        Some(_) => TenantPolicyDecision::Deny {
             reason: format!("Provider {provider} 不在允许列表内"),
         },
     }
@@ -544,25 +544,25 @@ pub fn decide_provider(provider: &ProviderId, allowed: Option<&[ProviderId]>) ->
 
 /// 决策助手：判断账号是否放行（`None` 不限制；`Some([])` 拒绝全部；
 /// 命中列表放行，否则拒绝）。
-pub fn decide_account(account: &AccountId, allowed: Option<&[AccountId]>) -> PolicyDecision {
+pub fn decide_account(account: &AccountId, allowed: Option<&[AccountId]>) -> TenantPolicyDecision {
     match allowed {
-        None => PolicyDecision::Allow,
-        Some([]) => PolicyDecision::Deny {
+        None => TenantPolicyDecision::Allow,
+        Some([]) => TenantPolicyDecision::Deny {
             reason: "账号白名单为空（拒绝全部）".to_string(),
         },
-        Some(list) if list.contains(account) => PolicyDecision::Allow,
-        Some(_) => PolicyDecision::Deny {
+        Some(list) if list.contains(account) => TenantPolicyDecision::Allow,
+        Some(_) => TenantPolicyDecision::Deny {
             reason: format!("账号 {account} 不在允许列表内"),
         },
     }
 }
 
 /// 决策助手：判断角色是否被授权权限（deny-first）。
-pub fn decide_permission(role: PrincipalRole, permission: Permission) -> PolicyDecision {
+pub fn decide_permission(role: PrincipalRole, permission: Permission) -> TenantPolicyDecision {
     if role.allows(permission) {
-        PolicyDecision::Allow
+        TenantPolicyDecision::Allow
     } else {
-        PolicyDecision::Deny {
+        TenantPolicyDecision::Deny {
             reason: format!("角色 {} 缺少权限 {}", role.as_str(), permission.as_str()),
         }
     }
@@ -572,13 +572,13 @@ pub fn decide_permission(role: PrincipalRole, permission: Permission) -> PolicyD
 ///
 /// `None` 永久保留；`Some(days)` 且 `age_days > days` 时返回 `Limit`
 /// （允许按保留期修剪），否则放行。
-pub fn decide_retention(age_days: u64, retention_days: Option<u64>) -> PolicyDecision {
+pub fn decide_retention(age_days: u64, retention_days: Option<u64>) -> TenantPolicyDecision {
     match retention_days {
-        None => PolicyDecision::Allow,
-        Some(days) if age_days > days => PolicyDecision::Limit {
+        None => TenantPolicyDecision::Allow,
+        Some(days) if age_days > days => TenantPolicyDecision::Limit {
             reason: format!("记录年龄 {age_days} 天超过保留期 {days} 天"),
         },
-        Some(_) => PolicyDecision::Allow,
+        Some(_) => TenantPolicyDecision::Allow,
     }
 }
 
@@ -588,19 +588,19 @@ pub fn decide_audit_export(
     role: PrincipalRole,
     policy: Option<&AuditExportPolicy>,
     destination: &str,
-) -> PolicyDecision {
-    if let PolicyDecision::Deny { reason } = decide_permission(role, Permission::AuditExport) {
-        return PolicyDecision::Deny { reason };
+) -> TenantPolicyDecision {
+    if let TenantPolicyDecision::Deny { reason } = decide_permission(role, Permission::AuditExport) {
+        return TenantPolicyDecision::Deny { reason };
     }
     let policy = match policy {
         Some(policy) if policy.enabled => policy,
         Some(_) => {
-            return PolicyDecision::Deny {
+            return TenantPolicyDecision::Deny {
                 reason: "租户未启用 Audit 导出".to_string(),
             }
         }
         None => {
-            return PolicyDecision::Deny {
+            return TenantPolicyDecision::Deny {
                 reason: "租户未配置 Audit 导出策略".to_string(),
             }
         }
@@ -610,9 +610,9 @@ pub fn decide_audit_export(
         .iter()
         .any(|allowed| allowed == destination)
     {
-        PolicyDecision::Allow
+        TenantPolicyDecision::Allow
     } else {
-        PolicyDecision::Deny {
+        TenantPolicyDecision::Deny {
             reason: format!("导出目标 {destination} 不在允许列表内"),
         }
     }
@@ -628,29 +628,29 @@ pub fn decide_budget(
     input_limit: Option<u64>,
     output_limit: Option<u64>,
     cost_limit: Option<u64>,
-) -> PolicyDecision {
+) -> TenantPolicyDecision {
     if let Some(limit) = input_limit {
         if used_input_tokens >= limit {
-            return PolicyDecision::Deny {
+            return TenantPolicyDecision::Deny {
                 reason: format!("输入 token 预算超限：used={used_input_tokens} limit={limit}"),
             };
         }
     }
     if let Some(limit) = output_limit {
         if used_output_tokens >= limit {
-            return PolicyDecision::Deny {
+            return TenantPolicyDecision::Deny {
                 reason: format!("输出 token 预算超限：used={used_output_tokens} limit={limit}"),
             };
         }
     }
     if let Some(limit) = cost_limit {
         if used_cost_micros >= limit {
-            return PolicyDecision::Deny {
+            return TenantPolicyDecision::Deny {
                 reason: format!("成本预算超限：used={used_cost_micros} limit={limit}"),
             };
         }
     }
-    PolicyDecision::Allow
+    TenantPolicyDecision::Allow
 }
 
 #[cfg(test)]

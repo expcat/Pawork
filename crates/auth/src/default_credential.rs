@@ -487,7 +487,7 @@ mod tests {
             client_id: "client-id".into(),
             refresh_skew: Duration::from_secs(30),
         };
-        let http = reqwest::Client::new();
+        let http = crate::http_client().expect("http client");
 
         assert!(
             refresh_default_oauth_credential_if_needed(&mut first, &backend, &config, &http,)
@@ -541,7 +541,7 @@ mod tests {
                     client_id: "process-client".into(),
                     refresh_skew: Duration::from_secs(30),
                 },
-                &reqwest::Client::new(),
+                &crate::http_client().expect("http client"),
             ))
             .expect("child refresh");
     }

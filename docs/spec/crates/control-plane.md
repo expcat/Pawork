@@ -19,7 +19,7 @@
 | `src/audit.rs` | ~470 | `AUDIT_SCHEMA_VERSION = 1`、`AuditEventV1`（`new` / `with_dimensions` / `validate`）、`AuditAction` / `AuditDecision` / `AuditTargetKind` / `AuditDimensions`、`AuditSink` / `AuditStore` trait、`InMemoryAuditStore`、`FileAuditStore`（JSONL 追加）、`AuditError`；含 JSONL golden 测试 |
 | `src/decision.rs` | ~275 | `PolicyGate`（9 个 enforcement point：`RouteCandidate` / `LeaseAcquire` / `AgentSpawn` / `RequestAdmission` / `SessionQuery` / `UsageQuery` / `AuditQuery` / `AuditExport` / `Retention`）、`PolicyDecisionKind`（`Allow` / `Deny` / `Limit` / `Fallback`）、`PolicyDecisionEvent`（版本化决策事件）、`sanitize_reason`（脱敏 + 截断） |
 | `src/rbac.rs` | ~290 | `PrincipalRole`（`Admin` / `User` / `Service` / `Viewer`，`rank` / `permissions` / `allows` / `merge_deny_first`）、`Permission`（8 项）、`PermissionProfile`（`effective_role`）、`AuditExportPolicy`；合并一律 deny-first |
-| `src/tenant.rs` | ~930 | `TenantPolicy`（并发上限、预算、允许的 model/provider/account、保留期、审计导出）、`PolicyDecision` / `ConcurrencyKind` / `BudgetDimension` / `TenantPolicyError`、`TenantPolicyEngine` trait（check_* + `set_policy` / `policy_version`）、`InMemoryTenantPolicyEngine`、9 个纯函数 `decide_*`（决策逻辑与引擎分离，可独立单测） |
+| `src/tenant.rs` | ~930 | `TenantPolicy`（并发上限、预算、允许的 model/provider/account、保留期、审计导出）、`TenantPolicyDecision` / `ConcurrencyKind` / `BudgetDimension` / `TenantPolicyError`、`TenantPolicyEngine` trait（check_* + `set_policy` / `policy_version`）、`InMemoryTenantPolicyEngine`、9 个纯函数 `decide_*`（决策逻辑与引擎分离，可独立单测） |
 | `src/usage.rs` | ~2 830 | 多维 usage/cost 账本：`UsageRecord`（`RECORD_VERSION = 2`）、`UsageAttribution`、`UsageTotals`、`UsageQuery`、`UsageFilterField`、`CostConfidence`、`UsageLedgerError`、`UsageLedger` trait、`InMemoryUsageLedger`、`SqliteUsageLedger`（feature `sqlite`；`SCHEMA_VERSION = 3`）、`AUTO_RECORD_ID_PREFIX = "auto-rec-"` |
 | `src/credential/mod.rs` | ~2 270 | `CONTROL_PLANE_SCHEMA_VERSION = 2`、`LeaseId`、`AcquireRequest`、`CredentialLease`（**无 secret 字段**）、`LeaseOutcome`、`PoolError`、`AccountHealth`、`ReleaseReceipt`、`CredentialPool` trait、`LeaseGuard`（RAII）、`DEFAULT_LEASE_TTL_MS = 3_600_000`、`CredentialPicker` / `LegacyCredentialPicker`、`PoolConfig`、`LeaseIdGenerator`、`InMemoryCredentialPool` |
 | `src/credential/lease.rs` | ~840 | canonical 租约状态机（纯领域、无 I/O 无 await）：`LeaseState`、`LeaseRecord`（versioned、无 secret；`open` / `release` / `expire` / `reclaim` / `to_public_lease`）、`LeaseEvent`、`LeaseTransitionError`、`LeaseClock`（+ `SystemLeaseClock` / `FixedLeaseClock`）、`ReclaimReport`、`LeaseProjection`（对象安全持久化 sink，+ `Null` / `InMemory` 实现） |
@@ -61,12 +61,12 @@
 - `with_dimensions` builder 附加维度；`AUDIT_SCHEMA_VERSION = 1` 写进每条事件。
 - `AuditSink::append(event)` 是唯一写入口；`AuditStore: AuditSink` 增加查询能力。
 - `FileAuditStore::open(path)`：JSONL 追加式存储（一行一条、`\n` 结尾）；`InMemoryAuditStore` 供测试；`path()` 暴露落盘位置。
-- `PolicyDecisionEvent::new(gate, kind, reason, ...)`：策略决策审计事件（版本化）；`kind_of(&PolicyDecision)` 把 tenant 决策映射为 `PolicyDecisionKind`；`reason` 一律过 `sanitize_reason`（脱敏 + 长度截断）。
+- `PolicyDecisionEvent::new(gate, kind, reason, ...)`：策略决策审计事件（版本化）；`kind_of(&TenantPolicyDecision)` 把 tenant 决策映射为 `PolicyDecisionKind`；`reason` 一律过 `sanitize_reason`（脱敏 + 长度截断）。
 
 **tenant / rbac（根 re-export）**
 
 - `TenantPolicy` 字段族：Agent / Request 两类并发上限、按 `BudgetDimension` 的预算、允许的 model / provider / account 白名单（`None` = 不限制）、保留期天数、审计导出策略。
-- `TenantPolicyEngine`：按 `TenantId` 查策略并执行 `check_*`（并发 / 预算 / model / provider / account / 权限 / 保留期 / 审计导出）；返回 `PolicyDecision`（allow / deny / limit 语义）。`set_policy` / `policy_version` 支持热更新与乐观版本。
+- `TenantPolicyEngine`：按 `TenantId` 查策略并执行 `check_*`（并发 / 预算 / model / provider / account / 权限 / 保留期 / 审计导出）；内部裁决类型为 `TenantPolicyDecision`（`Allow` / `Deny` / `Limit` / `Fallback`，与冻结的 `pawork_policy::PolicyDecision` 不同名）。`set_policy` / `policy_version` 支持热更新与乐观版本。
 - 纯函数 `decide_*` 系列（9 个：agent / request 并发、model、provider、account、permission、retention、audit_export、budget）：无状态决策逻辑，引擎实现与宿主可复用；`decide_permission` 基于 `PrincipalRole::permissions()` 静态表。
 - `Permission` 八项：`AgentSpawn` / `RouteCandidate` / `LeaseAcquire` / `SessionRead` / `UsageRead` / `AuditRead` / `AuditExport` / `PolicyManage`。
 - `PrincipalRole`：`rank()` 给出权限强弱序，`merge_deny_first` 合并取低权限侧；`PermissionProfile::effective_role(principal)` 查主体生效角色；`AuditExportPolicy` 控制审计导出授权。
@@ -188,6 +188,7 @@
 
 ## 8. 注意事项与已知限制
 
+- `TenantPolicyDecision`（`Allow` / `Deny` / `Limit` / `Fallback`）是租户策略内部裁决，crate 根导出；与冻结的 `pawork_policy::PolicyDecision` 不同名。审计通道仍用 `PolicyDecisionKind` / `PolicyDecisionEvent`。
 - 归档资产不存在于本包：account-control-v1 九模块、binding/schema、OTel exporter、identity_schema（复活条件见 [产品候选](../backlog.md)）。RBAC 三类型（role / permission / profile）保留。
 - `mask_credential_hint` **不在本包**（在 `pawork-protocol`，见 [protocol.md](protocol.md)）；本包 quota 的脱敏工具（`redact_endpoint` / `redact_secrets` / `redact_source`）在私有模块 `quota/util.rs`，对外不可见。
 - `quota::service` 的 `QuotaRead` / `QuotaOverview` / `WindowRead` / `ScopeMatch` / `QuotaFailure` 需走 `quota::service::` 路径（`quota::` 只 re-export `QuotaService` / `QuotaClock` / `CacheRead` / `CacheOverview`）。

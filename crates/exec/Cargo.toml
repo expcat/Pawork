@@ -8,8 +8,8 @@ authors.workspace = true
 description = "Pawork 进程树、沙箱与 PTY（Job Object / 进程组 / Landlock / Seatbelt / AppContainer / 重连快照）"
 
 [dependencies]
+pawork-policy = { path = "../policy" }
 async-trait.workspace = true
-dunce.workspace = true
 libc.workspace = true
 portable-pty = "0.9"
 serde.workspace = true

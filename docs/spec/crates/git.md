@@ -13,15 +13,15 @@
 
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
-| `src/lib.rs` | ~40 | crate 门面：7 个模块声明与全部公开 re-export；说明 crate root 的 `FileStatus` 是 `status::FileStatus`，diff 侧同名类型走 `diff::FileStatus` |
+| `src/lib.rs` | ~40 | crate 门面：7 个模块声明与全部公开 re-export；`FileStatus` 唯一定义在 `status`，`diff::FileStatus` 为同一类型 re-export |
 | `src/error.rs` | ~70 | `GitError` 统一错误枚举（17 个 variant）；`From<pawork_exec::ProcessError>` 归一：Spawn 且 `NotFound`→`GitNotFound`、`KillTimeout`→`Timeout`、其余 Spawn/ProcessTree/Isolation→`Other`、IO 透传 |
 | `src/process.rs` | ~200 | `GitRunner`（默认 `git` 路径、30s 超时、16MB 输出上限）；`validate_position_arg` 注入防护；domain→exec 取消令牌桥接（已取消立即 cancel，否则后台任务等待）；Windows `\\?\` verbatim cwd 经 `dunce` 简化 |
 | `src/repo.rs` | ~410 | `GitService`：`open`（`rev-parse --show-toplevel` 定位 work tree，失败→`NotARepository`）、`git_dir` / `is_bare` / `current_branch` / `current_head` / `repo_info`（合并 rev-parse，固定两次 spawn，unborn 回退路径）；`Head::{Branch(name), Detached(sha), Unborn}` / `RepoInfo` |
 | `src/status.rs` | ~370 | `StatusService` 与自由函数 `read_status`：`git status --porcelain=v1 -z --untracked-files=all` 解析为 `FileChange`（X 列 index / Y 列 worktree 双状态 + `untracked` 标记 + rename/copy 原路径）；`FileStatus` 九态状态码映射；`changed_files` 过滤未跟踪与全未修改条目 |
 | `src/stage.rs` | ~450 | `StageService`：`stage` / `unstage` / `discard` / `stage_all` / `classify`（仅 `Discard`=`StageRisk::Dangerous`）；`apply_patch_to_index` 用临时 patch 文件走 `git apply --cached [-R]`，失败归一 `PatchDoesNotApply`；路径一律经 `--` 传递 |
 | `src/worktree.rs` | ~360 | `WorktreeService`：`list`（`worktree list --porcelain` 解析）/ `add` / `remove` / `prune`；`remove` 先经 `list()` 校验目标为 git 受管 worktree，绝不调用 `std::fs` 递归删除用户数据 |
-| `src/diff/mod.rs` | ~20 | diff 子模块声明与 re-export（`hunk_stage` / `model` / `parser` / `service`） |
-| `src/diff/model.rs` | ~85 | 结构化 diff 数据模型：`DiffFile`（path / previous_path / status / staged / binary / additions / deletions / hunks，`changed_lines()`）、`DiffHunk`、`DiffLine`、`HunkId`（全局自增 u64）、`LineKind`（Context / Added / Removed）、diff 侧 `FileStatus`（含 `Untracked`、相似度 rename） |
+| `src/diff/mod.rs` | ~23 | diff 子模块声明与 re-export（`hunk_stage` / `model` / `parser` / `service`）；`FileStatus` 来自 `status` |
+| `src/diff/model.rs` | ~70 | 结构化 diff 数据模型：`DiffFile`（path / previous_path / status:`FileStatus` / staged / binary / additions / deletions / hunks，`changed_lines()`）、`DiffHunk`、`DiffLine`、`HunkId`（全局自增 u64）、`LineKind`（Context / Addition / Deletion） |
 | `src/diff/parser.rs` | ~270 | unified diff 文本状态机解析：`parse_unified` / `parse_unified_with_start`（延续 HunkId 起点）；`@@` 头解析、`\ No newline at end of file` 标记按上一行类型作用到旧侧/新侧（Context 两侧一致）；容忍任意输入不 panic |
 | `src/diff/service.rs` | ~650 | `DiffService`：`diff_summary`（`--raw -z` + `--numstat -z` 合并，工作区视角补 `ls-files --others --exclude-standard -z` 未跟踪文件）、`diff`（逐文件 `-U<n> --no-color -- <path>` 解析 hunks）；`DiffOptions` / `paginate` / `DiffPage`；`--raw` 头解析（状态字母 M/A/D/T/U、R/C 带相似度、mode 160000 gitlink） |
 | `src/diff/hunk_stage.rs` | ~715 | `HunkStageService`：`stage_hunks` / `unstage_hunks` / `stage_lines` / `unstage_lines`（底层 `git apply --cached [-R]`）；纯函数 `build_hunk_patch`（重建 `diff --git` 头 + 选中 hunks）与 `build_line_patch`（按 bool 选择行、重算 hunk 行数） |
@@ -118,7 +118,7 @@
 
 ## 8. 注意事项与已知限制
 
-- **两个 `FileStatus`**：`status::FileStatus`（porcelain 状态码，crate root re-export）与 `diff::FileStatus`（diff 文件状态，含 `Untracked` 与相似度 rename）同名不同型，跨模块引用须带路径。
+- **单一 `FileStatus`**：定义在 `status.rs`（porcelain 九态，crate root re-export）；`diff::FileStatus` 是同一类型。`--raw` 的相似度数字只用于 rename/copy 检测，不进枚举。
 - **`HunkStageService` / `StageService` / `WorktreeService` 当前零默认闭包消费者**：HunkStage 与 Stage 在整个 workspace 无生产调用点（Desktop 未接线）；Worktree 仅被 orchestration 的默认关闭 feature 使用。API 保留但演进时无下游回归网。
 - `GitError` 中 `NothingToCommit` / `BranchAlreadyExists` / `BranchNotFound` / `BranchNotMerged` / `ReferenceNotFound` / `Conflict` / `DetachedHead` / `LocalChangesWouldBeOverwritten` 等 variant 是 V2 归档服务的遗留，当前全 workspace 无构造点。
 - hunk 级暂存对输入来源敏感：`stage_*` 只接受 worktree-vs-index diff、`unstage_*` 只接受 staged diff，混用会 `PatchDoesNotApply`；rename / binary / untracked 不支持。

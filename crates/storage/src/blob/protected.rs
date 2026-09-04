@@ -7,12 +7,13 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    fmt, fs,
-    io::{self, Write},
+    fmt, fs, io,
     path::{Path, PathBuf},
     sync::{Arc, RwLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+
+use super::atomic::atomic_write_bytes;
 
 use crate::sqlite::{DatabaseActor, DatabaseError};
 use chacha20poly1305::{
@@ -421,7 +422,9 @@ impl ProtectedBlobStore {
             })
             .await??;
 
-        if let Err(error) = atomic_write(&path, &envelope) {
+        if let Err(error) = atomic_write_bytes(&path, &envelope)
+            .map_err(|source| ProtectedBlobError::io(&path, source))
+        {
             let pending_ref = logical_ref.clone();
             let _ = self
                 .database
@@ -965,35 +968,6 @@ fn is_digest(value: &str) -> bool {
             .as_bytes()
             .iter()
             .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-}
-
-fn atomic_write(path: &Path, content: &[u8]) -> Result<(), ProtectedBlobError> {
-    let parent = path.parent().expect("ciphertext path has parent");
-    fs::create_dir_all(parent).map_err(|source| ProtectedBlobError::io(parent, source))?;
-    let mut random = [0u8; 8];
-    getrandom::fill(&mut random).expect("OS entropy unavailable");
-    let temp = parent.join(format!(
-        ".tmp-{}-{}",
-        std::process::id(),
-        u64::from_le_bytes(random)
-    ));
-    let result = (|| {
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp)
-            .map_err(|source| ProtectedBlobError::io(&temp, source))?;
-        file.write_all(content)
-            .map_err(|source| ProtectedBlobError::io(&temp, source))?;
-        file.sync_all()
-            .map_err(|source| ProtectedBlobError::io(&temp, source))?;
-        fs::rename(&temp, path).map_err(|source| ProtectedBlobError::io(path, source))?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temp);
-    }
-    result
 }
 
 fn collect_ciphertext_files(root: &Path) -> Result<Vec<PathBuf>, ProtectedBlobError> {

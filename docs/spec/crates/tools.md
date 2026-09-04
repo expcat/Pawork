@@ -29,7 +29,7 @@
 | `src/mcp/codec.rs` | ~700（逻辑 ~430 + 测试） | **rmcp SDK 唯一隔离点**（crate 私有 mod）：`RunningClient`/`ClientPeer` 包装、initialize 握手、`Tool → McpToolInfo`（read_only_hint）、`CallToolResult → ToolResult`（structured_content 进 metadata、is_error 转 error context）、`apply_tool_result_budget`（UTF-8 安全截断）、`timed`/`should_retry`、streamable-http 构建、`test_support::InProcessConnector`。 |
 | `src/mcp/config.rs` | ~875（逻辑 ~485 + 测试） | `McpConfig`（读 `ResolvedConfig.extra["mcp"]` 已合并层）、`McpServerConfig{transport, auto_start, timeout_ms, restart, permissions, trusted}`、`TransportSpec::{Stdio, Http}` 校验、`RestartPolicy`、`McpPermissions`、`StdioSandboxRuntime`、`SecretResolvingConnector`、服务器名禁 `.`。 |
 | `src/mcp/manager.rs` | ~590（逻辑 ~375 + 测试） | `ManagedMcpClient`：惰性连接、指数退避有界重启（耗尽后冷却 4×max_delay）、请求超时、shutdown 取消在途、`HealthSnapshot`/`ConnectionState`；`should_retry` 触发单次强制重连重试；实现 `McpPeer`。 |
-| `src/mcp/oauth.rs` | ~370（逻辑 ~150 + 测试） | PKCE：`begin_pkce_login` / `complete_pkce_login`（换码 + 存储）；`McpBearerProvider`（到期自动 refresh）；`OAuthHttpConnector`（注入 Bearer；拒绝已有 Authorization header 的配置；token 轮换要求重建 transport）。 |
+| `src/mcp/oauth.rs` | ~370（逻辑 ~150 + 测试） | PKCE：`begin_pkce_login` / `complete_pkce_login`（换码 + 存储）；`McpBearerProvider`（到期自动 refresh）；`OAuthHttpConnector`；测试与构造一律 `pawork_auth::http_client()`（`redirect(none)`），不使用 `Client::new()`。 |
 | `src/mcp/sandbox.rs` | ~580（逻辑 ~390 + 测试） | stdio 托管：`StdioSpawner` trait / `SandboxedStdioSpawner`（唯一生产实现，走 `SandboxBackend::spawn_interactive`）/ `SpawnedStdio`（AsyncRead/AsyncWrite 适配，stdout 预算 8 MiB fail-closed 断连）；`apply_mcp_stdio_env_hygiene`（env_clear + untrusted allowlist + 追加 deny `PAWORK_API_KEY_*`，不改 network_mode）。 |
 | `src/mcp/security.rs` | ~205（逻辑 ~115 + 测试） | `SecretRef{service, account}`（只序列化 locator；`resolve` 强制 `pawork.mcp.*` 前缀，Provider/OAuth 域 fail-closed）；`ResolvedSecret`（Debug/Display 恒 `[REDACTED]`）。 |
 | `src/mcp/transport.rs` | ~400（逻辑 ~300 + 测试） | 传输配置（crate 私有 mod，类型 pub 但包外不可命名）：`StdioTransportConfig` / `HttpTransportConfig` / `TransportConfig`（携密字段 Debug 手写 redact、URL 打码 userinfo/query/fragment）、`McpConnector` trait（pub(crate)）、`DefaultConnector`。 |
@@ -179,7 +179,7 @@
 
 ## 6. 依赖关系
 
-- **workspace 内**：`pawork-domain`（AgentTool/ToolResult/CancellationToken 等 canonical 类型）、`pawork-policy`（路径内核 + PolicyEngine）、`pawork-exec`（Process/Sandbox Runtime）、`pawork-workspace`（WorkspaceService、ResolvedConfig）、`pawork-auth`（SecretBackend、OAuth 原语）。
+- **workspace 内**：`pawork-domain`（AgentTool/ToolResult/CancellationToken 等 canonical 类型）、`pawork-policy`（路径内核 + PolicyEngine）、`pawork-exec`（Process/Sandbox Runtime）、`pawork-workspace`（WorkspaceService、ResolvedConfig）、`pawork-auth`（SecretBackend、OAuth 原语、`http_client()`）。
 - **外部**：`tokio`、`async-trait`、`serde/serde_json`、`thiserror`、`tracing`、`ignore`、`globset`、`regex`、`chardetng`、`encoding_rs`、`rmcp`（仅 codec）、`reqwest`（OAuth）、`url`。dev：`tempfile`、`proptest`、`wiremock`。无 cargo feature。
 - **被依赖**：`pawork-engine`（Agent loop 工具执行）、app 宿主（注册与调度装配）。
 

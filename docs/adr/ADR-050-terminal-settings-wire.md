@@ -5,7 +5,7 @@
 
 ## 背景
 
-SET-6 逐页立项的第四页是「终端」。任务书（plan/settings.md SET-6 表）锁定的最小真实能力是「有明确宿主持久化语义的 shell/cwd/尺寸默认值」，明确不做 Desktop 直写 PTY 配置。2026-09-03 经主代理源码实读与两路 glm_explorer 独立只读核查三方确认的基线事实：
+SET-6 逐页立项的第四页是「终端」。[Feature Spec](../spec/settings.md) 锁定的最小真实能力是「有明确宿主持久化语义的 shell/cwd/尺寸默认值」，明确不做 Desktop 直写 PTY 配置。2026-09-03 经主代理源码实读与两路 glm_explorer 独立只读核查三方确认的基线事实：
 
 - **config**：`PaworkConfig` 顶层无 shell/terminal/cwd/尺寸键；未知键经 flatten 落入 `extra` 按键递归合并，全仓无代码读 `extra["terminal"]`（crates/workspace/src/config/schema.rs:16）。Global writer 已有三个同构先例（RMW + `CONFIG_WRITE_LOCK` 进程锁 + 原子写，crates/workspace/src/config/writer.rs:21-42）。Workspace 层 `<root>/.pawork/config.toml` 的未知键同样透传进 `extra`，但 workspace 包没有 Workspace 层写盘代码。
 - **安全边界**：`strip_untrusted_layer`（crates/workspace/src/config/loader.rs:374）对非 Builtin/Global 层剥离 `trust_workspaces` / `proxy_url` / `providers[].base_url` / `mcp.servers.*.trusted|auto_start`。若 Workspace 层可设默认 shell，克隆恶意仓库后打开终端即执行仓库指定程序——等同任意命令执行，必须阻断。

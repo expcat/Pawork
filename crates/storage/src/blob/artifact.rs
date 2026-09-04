@@ -17,13 +17,13 @@
 
 use std::{
     collections::HashSet,
-    fmt, fs,
-    io::{self, Write},
+    fmt, fs, io,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::atomic::{AtomicU64, Ordering},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+
+use super::atomic::atomic_write_bytes;
 
 use crate::sqlite::{DatabaseActor, DatabaseError};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -254,7 +254,12 @@ impl ArtifactStore {
                             }
                         };
                         if !healthy {
-                            atomic_write(&path, &content)?;
+                            atomic_write_bytes(&path, &content).map_err(|source| {
+                                ArtifactStoreError::Io {
+                                    source,
+                                    path: path.clone(),
+                                }
+                            })?;
                         }
                         connection.execute(
                             "UPDATE artifact_blobs \
@@ -284,10 +289,20 @@ impl ArtifactStore {
                                 path: path.clone(),
                             })?;
                         if blake3::hash(&existing) != hash {
-                            atomic_write(&path, &content)?;
+                            atomic_write_bytes(&path, &content).map_err(|source| {
+                                ArtifactStoreError::Io {
+                                    source,
+                                    path: path.clone(),
+                                }
+                            })?;
                         }
                     } else {
-                        atomic_write(&path, &content)?;
+                        atomic_write_bytes(&path, &content).map_err(|source| {
+                            ArtifactStoreError::Io {
+                                source,
+                                path: path.clone(),
+                            }
+                        })?;
                     }
                     connection.execute(
                         "INSERT INTO artifact_blobs \
@@ -701,36 +716,6 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-/// 原子写：同目录临时文件写入并同步后 rename 到目标路径。
-fn atomic_write(path: &Path, content: &[u8]) -> Result<(), ArtifactStoreError> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|source| ArtifactStoreError::Io {
-            source,
-            path: parent.to_path_buf(),
-        })?;
-    }
-    let temp_path = path.with_file_name(format!(
-        ".tmp-{}-{}",
-        std::process::id(),
-        TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
-    ));
-    let result = (|| -> io::Result<()> {
-        let mut file = fs::File::create(&temp_path)?;
-        file.write_all(content)?;
-        file.sync_all()?;
-        fs::rename(&temp_path, path)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temp_path);
-    }
-    result.map_err(|source| ArtifactStoreError::Io {
-        source,
-        path: path.to_path_buf(),
-    })
-}
-
 /// 递归收集目录下的普通文件，跳过 `.tmp-` 前缀的写入中临时文件。
 fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
     let entries = match fs::read_dir(dir) {
@@ -907,7 +892,7 @@ fn collect_tmp_files(dir: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::AtomicU64;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::*;
 

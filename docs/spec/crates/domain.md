@@ -171,7 +171,7 @@
 - **上游（外部）**：`serde` / `serde_json` / `thiserror` / `async-trait`；可选 `ts-rs`（feature `typegen`）。dev：`tokio`（macros / rt / rt-multi-thread / time，仅测试）。
 - **上游（内部）**：无——本包是依赖根。
 - **下游（生产依赖方，16 包）**：auth、control-plane、engine、git、orchestration、policy、protocol、providers、storage、testkit、tools、workflow、workspace、app、cli、client。
-- **不依赖本包**：`pawork-exec`、`pawork-transport`（字节/进程层不感知领域类型）。
+- **不直接依赖本包**：`pawork-exec`（ADR-052 只依赖 policy，domain 仅经 policy 传递）、`pawork-transport`（字节/进程层不感知领域类型）。
 - 全景依赖方向见 [../../architecture.md](../../architecture.md) 与 [../../design.md](../../design.md) §2；跨包链路见 [../flows.md](../flows.md)。
 
 ## 7. 测试与验证资产

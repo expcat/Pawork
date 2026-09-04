@@ -31,8 +31,8 @@ pub use rbac::{AuditExportPolicy, Permission, PermissionProfile, PrincipalRole};
 pub use tenant::{
     decide_account, decide_agent_concurrency, decide_audit_export, decide_budget, decide_model,
     decide_permission, decide_provider, decide_request_concurrency, decide_retention,
-    BudgetDimension, ConcurrencyKind, InMemoryTenantPolicyEngine, PolicyDecision, TenantPolicy,
-    TenantPolicyEngine, TenantPolicyError,
+    BudgetDimension, ConcurrencyKind, InMemoryTenantPolicyEngine, TenantPolicy,
+    TenantPolicyDecision, TenantPolicyEngine, TenantPolicyError,
 };
 pub use usage::{
     CostConfidence, InMemoryUsageLedger, UsageAttribution, UsageFilterField, UsageLedger,

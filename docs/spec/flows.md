@@ -10,7 +10,7 @@
 
 1. CLI `chat` / `run` 或 GUI `run_start` → `AppCore::chat_turn*`（实现在 `crates/app/src/services/run.rs`）。
 2. 宿主装配 `SessionLoopCtx`（`crates/app/src/loop_ctx.rs`）实现 `pawork_engine::LoopContext`。
-3. `pawork_engine::run_session`（`crates/engine/src/tool_loop.rs`）调 `ModelProvider::stream`，把 `ProviderStreamEvent` 映射为 `AgentEvent`。
+3. `pawork_engine::run_session`（`crates/engine/src/tool_loop/`）调 `ModelProvider::stream`，把 `ProviderStreamEvent` 映射为 `AgentEvent`。
 4. 收集到 tool call 后：`request_approval`（**等待前**必须 emit `ToolApprovalRequested`）→ `execute_tools` → `ToolScheduler`（`pawork-tools`）→ 各 `AgentTool`。
 5. 轮数上限 `DEFAULT_MAX_TOOL_ROUNDS = 20`。压缩走 `LoopContext::compact_history`（host 负责 session fork/snapshot）。
 

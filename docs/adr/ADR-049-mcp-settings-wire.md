@@ -5,7 +5,7 @@
 
 ## 背景
 
-SET-6 逐页立项的第三页是「工具与 MCP」。任务书（plan/settings.md SET-6 表）锁定的最小真实能力是「Host 权威 MCP list/test/config mutation」，明确不做假工具市场。2026-09-03 经主代理源码实读与两路 glm_explorer 独立只读核查三方确认的基线事实：
+SET-6 逐页立项的第三页是「工具与 MCP」。[Feature Spec](../spec/settings.md) 锁定的最小真实能力是「Host 权威 MCP list/test/config mutation」，明确不做假工具市场。2026-09-03 经主代理源码实读与两路 glm_explorer 独立只读核查三方确认的基线事实：
 
 - **list**：wire mcp_list 查询自 V1_0 即 GUI 可用，handler 已实装（crates/app/src/gui_host/handlers/query.rs），Desktop Inspector Resources 页已消费（apps/desktop/src/controller.rs / ui/resources.rs）；响应形状钉死 servers 数组（name/transport/state/tools/last_error），数据链零协议改动可复用（query/parse/epoch/stale/断线 fail-closed），无需扩展响应。
 - **test**：Host 已实装 AppCore::mcp_test(Option<&str>)（crates/app/src/extensions.rs，现场 ping + list_tools + 回写 slot；stdio server 在 untrusted workspace 拒绝（既有 PermissionDenied 语义）。CLI pawork mcp test 已消费；wire 上无任何 GUI/headless 词汇。

@@ -31,17 +31,17 @@ R1 收口（2026-08-19）后 workspace 定稿为 **21 成员（19 库 + 2 应用
 | `pawork-protocol` | `crates/protocol` | → domain | GUI 帧 / headless-json / core-api / typegen（检入 `schemas/` 三产物）；`app/registry`（三通道登记单源）+ `projection/`（共享投影 reducer） |
 | `pawork-testkit` | `crates/testkit` | → domain | dev-only：MockProvider/MockTool/契约断言 |
 | `pawork-policy` | `crates/policy` | → domain | 安全内核；`PolicyDecision`/`ApprovalMode` 冻结契约与红线回归锚；shell 风险分类；`path` 内核 |
-| `pawork-exec` | `crates/exec` | 无内部依赖 | process/sandbox/pty；沙箱按 ADR-041（macOS Seatbelt 写白名单正式化） |
+| `pawork-exec` | `crates/exec` | → policy（ADR-052：仅路径 helper） | process/sandbox/pty；沙箱按 ADR-041；不直接依赖 domain；CancellationToken 仍为本包类型 |
 | `pawork-tools` | `crates/tools` | → domain、exec、policy、workspace、auth | 八工具 + scheduler + `mcp/`（rmcp 隔离断言为模块级测试） |
 | `pawork-workspace` | `crates/workspace` | → domain、policy | `service/`+`path/`+`file_index/`、`resources/`、`config/`（六层矩阵）、`import/`（五来源导入 + session_scan） |
-| `pawork-storage` | `crates/storage` | → domain | `sqlite/`（Actor+migration 框架）、`session/`（DDL/迁移/export）、`blob/`（PWB1+checkpoint/protected）；`default = ["session","blob"]`，compaction/checkpoint/protected opt-in |
+| `pawork-storage` | `crates/storage` | → domain | `sqlite/`（Actor+migration 框架）、`session/`（DDL/迁移/export）、`blob/`（artifact + 共用 `atomic_write_bytes` + PWB1/checkpoint/protected）；`default = ["session","blob"]`，compaction/checkpoint/protected opt-in |
 | `pawork-providers` | `crates/providers` | → domain | `net/`（http/sse/retry）+ `registry/`/`pricing/`/`usage/`/`negotiate/`/`reasoning/` + `channels/`（六通道，feature 门控；通道登记单点 `channels/registry.rs` `CHANNEL_REGISTRY`，app 侧为 facade）；core 不依赖 net 为模块纪律 + 源扫描测试 |
 | `pawork-auth` | `crates/auth` | → domain | Secret 后端/OAuth/脱敏/解析链 + `locator` 单一事实源（Secret 审计边界） |
-| `pawork-git` | `crates/git` | → domain、exec | Diff/Status/GitService/GitRunner/HunkStage/worktree/merge |
+| `pawork-git` | `crates/git` | → domain、exec | Diff/Status/GitService/GitRunner/HunkStage/worktree；单一 `FileStatus` |
 | `pawork-engine` | `crates/engine` | → domain（唯一 pawork-* 生产依赖，`tests/domain_only.rs` 断言护航） | tool_loop/session_turn/context/cancel/appender |
 | `pawork-workflow` | `crates/workflow` | → domain | plan/task 纯 reducer |
 | `pawork-orchestration` | `crates/orchestration` | → domain、control-plane（default-features = false）、git(opt) | supervisor/budget/lifecycle/merge/task_graph/worktree/identity；不依赖 workflow（装配在 app） |
-| `pawork-control-plane` | `crates/control-plane` | → domain（rusqlite optional，自开连接） | 控制面 core + `quota/` + `credential/`（lease/pool）；usage `dedup_key`/audit JSONL golden |
+| `pawork-control-plane` | `crates/control-plane` | → domain（rusqlite optional，自开连接） | 控制面 core + `quota/` + `credential/`（lease/pool）；租户裁决 `TenantPolicyDecision`（与 policy 的 `PolicyDecision` 不同名）；usage `dedup_key`/audit JSONL golden |
 | `pawork-transport` | `crates/transport` | 无内部依赖（帧长度常量与 protocol 对齐，但不依赖该 crate） | local（UDS/named pipe）+ memory |
 | `pawork-app` | `crates/app` | 领域宿主依赖 + transport | 装配宿主 + `gui_server/`（GuiServer/ConnectionManager/GuiHost trait）+ `gui_host/`（分发表） |
 | `pawork-cli` | `crates/cli` | 原 cli 依赖（GuiHost 经 app） | 21 子命令 + `channels/acp/`（AcpHost 四件套） |
@@ -85,7 +85,7 @@ R1 收口（2026-08-19）后 workspace 定稿为 **21 成员（19 库 + 2 应用
 - **无消费者不合入**：任何保留在主 workspace 的模块必须有真实装配点（生产调用链或已登记的激活条件）；零消费者代码归档（git tag `v2-final` 兜底），不以 experimental feature 库存。归档 = 移出 workspace members + 删除源目录；复活条件登记 [产品候选](spec/backlog.md)；不把归档代码复制回仓库其它位置。
 - **合并不裁剪契约**：包合并时契约类型整组平移、零裁剪，golden/测试随迁。
 - **破坏式改动边界**：允许破坏内部代码组织与 API；不允许静默破坏磁盘/线上格式、CLI 用户可见行为与安全语义（fail-closed 只紧不松）。
-- **路径校验语义矩阵**（S12-CR09-05 收口）：`pawork-policy` `path::resolve_workspace_path` 为写路径与读工具的唯一安全内核（canonical 复核 + root 收敛 + symlink/`.git`/TOCTOU 防护）；`pawork-workspace` `path::resolve_relative_path` 在平台词法前置拦截（盘符/UNC/设备名）后**委托** policy 内核；`pawork-workspace` `resources/io.rs` 的 `canonical_within` 仍保留自写 canonicalize + 前缀比较（资源加载专用，语义同源，残余登记于 [ROADMAP.md](../ROADMAP.md)）。新调用点一律复用 policy 内核，禁止再长第四套实现。
+- **路径校验语义矩阵**（S12-CR09-05 收口，CLN/ADR-052 收敛）：`pawork-policy` `path::resolve_workspace_path` 为写路径与读工具的唯一安全内核（canonical 复核 + root 收敛 + symlink/`.git`/TOCTOU 防护）；`pawork-workspace` `path::resolve_relative_path` 在平台词法前置拦截（盘符/UNC/设备名）后**委托** policy 内核。canonicalize / within-root / relative-to-root **只存在于 policy**：workspace resources 与 exec 沙箱必须调用这些函数，禁止包内再复制。新调用点一律复用 policy 内核。
 
 ---
 
@@ -106,7 +106,7 @@ R1 收口（2026-08-19）后 workspace 定稿为 **21 成员（19 库 + 2 应用
 ## 5. ADR 索引
 
 - **ADR-001 ~ ADR-036**：随 V1 归档于 `../Pawork_v1/docs/adr/`，原则继续有效。常被引用：ADR-001 纯 Rust、ADR-019 无 TUI、ADR-031 沙箱可观测回退、ADR-032 blob 格式（PWB1）、ADR-035 gpui 锁定 `=0.2.2`、ADR-036 GUI 协议版本协商。
-- **本仓库现存**（[docs/adr/](adr/)；ADR-037～051 Accepted）：
+- **本仓库现存**（[docs/adr/](adr/) 目录说明见 [adr/README.md](adr/README.md)；ADR-037～052 Accepted）：
   - [ADR-037](adr/ADR-037-s13-wave-b-contracts.md) S13 波 B 五项契约（trait 归 domain / 维持 ADR-031 / `ToolResultContent.artifacts` / `Revised` title+steps / `ResultArchived.task_id`）。
   - [ADR-038](adr/ADR-038-inventory-and-product-shape.md) 库存与产品形态（R0：单机形态、休眠库存归档裁决）。
   - [ADR-039](adr/ADR-039-package-layout-and-no-merge-list.md) 包布局与不合并清单（R1：37→21、扁平 `crates/`）。
@@ -122,4 +122,5 @@ R1 收口（2026-08-19）后 workspace 定稿为 **21 成员（19 库 + 2 应用
   - [ADR-049](adr/ADR-049-mcp-settings-wire.md) Settings 工具与 MCP 页 wire（Accepted：`McpTest` 命令、`McpServerRemove` 命令（Global 层移除 + pawork.mcp.* SecretRef 幂等清理 + 内存同步重建 registry，同会话生效）、API minor 1.7 仅记账、golden 先行）。
   - [ADR-050](adr/ADR-050-terminal-settings-wire.md) Settings 终端页 wire 与 config（Accepted：Global `[terminal]` 段（shell/columns/rows）+ 非 Global 层整段剥离、`TerminalSettings` 查询、`SetTerminalSettings` 全态写命令（shell=null 清除）、terminal_create 应用配置默认、API minor 1.8 仅记账、golden 先行）。
   - [ADR-051](adr/ADR-051-about-settings-host-data-dir.md) Settings 关于页 Host 数据目录握手元数据（Accepted：API 1.9 Accepted 握手追加可选 `host_data_dir`；GUI Host 与 Core 共用单次目录解析，缺字段、空字段或断线时 About 隐藏；已实现并通过定向门禁）。
-- 新决策继续以 ADR 记录，编号续接（下一个 ADR-052），落 [docs/adr/](adr/)；状态 Proposed → 用户确认 → Accepted 后方可执行对应破坏式改动。各 ADR 决策要点摘要见 [history.md](history.md)。
+  - [ADR-052](adr/ADR-052-exec-policy-path.md) exec 复用 policy 路径 helper（Accepted：exec→policy，删除 `exec/src/path.rs` 复制；不合并包；CancellationToken 仍双轨）。
+- 新决策继续以 ADR 记录，编号续接（下一个 ADR-053），落 [docs/adr/](adr/)；状态 Proposed → 用户确认 → Accepted 后方可执行对应破坏式改动。各 ADR 决策要点摘要见 [history.md](history.md)。

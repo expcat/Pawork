@@ -44,9 +44,12 @@ pub use pawork_protocol::client_auth::TOKEN_SCHEME;
 pub use pawork_protocol::projection;
 pub use pawork_protocol::{
     ActorIdentity, ApiVersion, AppCommand, AppCommandEnvelope, AppEvent, AppEventEnvelope,
-    AppQuery, AppQueryEnvelope, AppResponse, AppResponseEnvelope, ClientAuthentication,
-    CommandSource, EventStream, GlobalSequence, GuiCapability, ProtocolErrorCode, RunState,
-    Snapshot, TerminalExitReason, TimelineItem, TimelineItemKind, TimelinePage,
+    AppQuery, AppQueryEnvelope, AppResponse, AppResponseEnvelope, ApprovalModeWire,
+    AuthStartData, ClientAuthentication, CommandSource, DefaultModelPair, EventStream,
+    GeneralSettingsData, GlobalSequence, GuiCapability, PermissionsSettingsData,
+    ProtocolErrorCode, ProviderAuthState, ProviderAuthStatusData, ProviderAuthStatusEntry,
+    ProviderCatalogState, RunState, Snapshot, TerminalExitReason, TerminalSettingsData,
+    TimelineItem, TimelineItemKind, TimelinePage,
 };
 pub use pawork_transport::{ConnectOptions, GuiTransportClient, LocalTransport, TransportEndpoint};
 

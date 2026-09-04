@@ -13,7 +13,12 @@
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
 | `src/lib.rs` | ~410（非测试 ~95） | crate 门面与 re-export；`assemble_request(_with_tools)` 冻结默认值装配；`pub(crate) run_turn` 单轮原语（预取消检查 + `provider.stream`，13 变体原样透传） |
-| `src/tool_loop.rs` | ~3240（非测试 ~1060） | 多轮工具循环 `run_session`；`LoopContext` trait；`ApprovalGate` / `PendingToolInvocation` / `WriteCheckpoint` / `CompactionOutcome`；`DEFAULT_MAX_TOOL_ROUNDS`；资源层注入；上下文收敛（压缩 / 截断）；压缩链与 `run_manual_compaction`；审批 gate 应用与工具结果对齐 |
+| `src/tool_loop/mod.rs` | ~360 | `run_session` 编排；`LoopContext` trait；`ApprovalGate` / `PendingToolInvocation` / `WriteCheckpoint` / `CompactionOutcome`；`DEFAULT_MAX_TOOL_ROUNDS` |
+| `src/tool_loop/round.rs` | ~110 | 单轮 `run_turn` 收集（`collect_stream_round`）、助手消息装配、usage 饱和加法 |
+| `src/tool_loop/approval.rs` | ~110 | `wait_and_apply`：`request_approval` await 后补发 `ToolApprovalResponded`；gate 数不匹配 fail-closed Denied；ApprovedForRun 跨轮记忆 |
+| `src/tool_loop/exec.rs` | ~210 | 待执行调用解析、写快照、`execute_tools`、结果对齐与 `MessageCommitted` |
+| `src/tool_loop/compaction.rs` | ~470 | 注入层、输入估算、软限压缩 / 硬限截断、`run_manual_compaction` |
+| `src/tool_loop/tests.rs` | ~2180 | 原 `tool_loop.rs` 内联测试整文件迁入（`#[cfg(test)]`） |
 | `src/session_turn.rs` | ~640（非测试 ~195） | `SessionTurn`（会话轮次标识 + start_sequence）；`run_session_turn` 单轮事件化（无工具循环）；`now_timestamp` |
 | `src/appender.rs` | ~330 | `AssembledTurn`：把 `ProviderStreamEvent` 流折叠成一条助手 `Message`（text / thinking / reasoning / tool_calls / summary）；`PendingToolCall`；`ToolCallResult`；`tool_results_message` |
 | `src/cancel.rs` | ~190 | `CancelHandle`（原子幂等 cancel：取消根 token → 触发 cleaner 杀树）；`CancelReason` / `CancelReceipt`；`ProcessTreeCleaner` trait 与 `NoopProcessTreeCleaner` |
@@ -21,7 +26,7 @@
 | `src/context/mod.rs` | ~65 | `context` 门面；`ContextLimits`（硬预算 + 历史软限）；`InjectedLayer`（宿主注入的系统提示层）；`TurnContext`（默认全禁用，retained 4） |
 | `src/context/budget.rs` | ~90 | `ContextBudget`（`from_context_window` 推导 `max_input_tokens`，serde 形状冻结）；`ContextBudgetBreakdown` 占用明细 |
 | `src/context/compaction.rs` | ~150 | `compute_compaction` 触发判定纯函数（硬限优先于软限）；`CompactionReason` / `CompactionTrigger`（serde snake_case）；`AutoCompactionReason`（engine → host 原因，含 `Manual`） |
-| `src/context/token.rs` | ~300 | `TokenEstimator` trait（`count_text` 为核心，message / content part / tool schema 计数为默认实现）；`HeuristicEstimator`（非 CJK chars/4，CJK/Kana/Hangul 按 1 字符/token）；`ToolSchema`；`reply_primer_tokens`（pub(crate)） |
+| `src/context/token.rs` | ~290 | `TokenEstimator` trait（`count_text` 为核心，message / content part / tool schema 计数为默认实现）；`HeuristicEstimator`（非 CJK chars/4，CJK/Kana/Hangul 按 1 字符/token）；`ToolSchema`；`MESSAGE_FRAMING_TOKENS` 由 `count_message` 直接使用；`reply_primer_tokens`（pub(crate)） |
 | `src/context/tool_result_trim.rs` | ~420 | tool result 分级裁剪：`TrimThresholds`（2/16/256 KiB）、`ResultSize`（Small/Medium/Large/Huge）、`trim_tool_result(_with)`、`TrimmedToolResult`（`retained_full` 暂存原文）、`byte_len_of_tool_result` |
 | `tests/domain_only.rs` | ~90 | 红线断言：解析本包 Cargo.toml，生产 `pawork-*` 依赖必须恰为 `{pawork-domain}`（覆盖 alias 与 target 表） |
 | `tests/no_provider_branch.rs` | ~115 | 红线断言：扫描 `src/` 全部 `.rs`，禁止出现任何 provider 名串；名单 = `pawork-providers::CHANNEL_REGISTRY` 派生通道 id + 固化基线别名（openai/anthropic/grok/glm 等） |
@@ -45,7 +50,7 @@
 ### 3.3 `LoopContext` trait（宿主回调，逐方法语义）
 
 - `execute_tools(calls: Vec<PendingToolInvocation>, events: LoopEventEmitter, cancel) -> Vec<ToolCallResult>`：执行已放行的调用；执行期间可经 `events.emit_tool_event` 转发 `ToolStreamEvent::OutputDelta`（映射为 `AgentEvent::ToolOutputDelta`；`Progress` / `ArtifactAvailable` 被忽略）。返回结果不要求与 `calls` 等长同序——engine 用 `align_tool_results` 按 invocation 顺序对齐，缺失项回填 `NotFound` 失败结果。
-- `request_approval(calls, already_approved_for_run: bool, events, cancel) -> Result<Vec<ApprovalGate>, EngineError>`：对整批调用逐个给出闸门，返回向量必须与 `calls` 等长。`ApprovalGate::NotRequired` = 策略已放行不发审批事件；`ApprovalGate::Asked(decision)` = 用户可见审批。**实现契约（K-02）**：每次阻塞等待决策前必须先 emit `AgentEvent::ToolApprovalRequested`（含 batch 已批准的短路路径），reason 逐字为 ``tool `{name}` requires approval``；engine 只补发 `ToolApprovalResponded`。`already_approved_for_run = true` 时不应再询问用户。
+- `request_approval(calls: &[PendingToolInvocation], already_approved_for_run: bool, events, cancel) -> Result<Vec<ApprovalGate>, EngineError>`：对整批调用逐个给出闸门，返回向量必须与 `calls` 等长。`ApprovalGate::NotRequired` = 策略已放行不发审批事件；`ApprovalGate::Asked(decision)` = 用户可见审批。**实现契约（K-02）**：每次阻塞等待决策前必须先 emit `AgentEvent::ToolApprovalRequested`（含 batch 已批准的短路路径），reason 逐字为 ``tool `{name}` requires approval``；engine 只补发 `ToolApprovalResponded`。`already_approved_for_run = true` 时不应再询问用户。
 - `next_message_id() -> MessageId` / `next_request_id() -> RequestId`：为助手消息、工具消息、摘要消息与每轮新请求分配 id（内部摘要请求也从这里取 request_id）。
 - `compact_history(reason: AutoCompactionReason, summary_text: &str, cancel) -> Result<Option<CompactionOutcome>, EngineError>`：压缩回调，host（app）负责 session 侧 fork/snapshot 后回传元数据（`source_event_count` + `compacted_through`）。默认实现返回 `Ok(None)`（无持久化宿主时 engine 仍完成消息层压缩）；宿主侧失败**必须**返回 `Err`，engine 将终止当前 run，不静默吞掉。
 - `snapshot_write_tools(calls, events, cancel) -> Vec<WriteCheckpoint>`：写工具执行前由宿主拍快照，默认空；engine 只对每个返回项发 `AgentEvent::CheckpointCreated`，不依赖 blob/git。快照失败时宿主可经 `events`（`LoopEventEmitter::emit`）发 `AgentEvent::Diagnostic{code:"checkpoint.snapshot_failed"}`（P2 片 2B，写入继续，不阻断 run）。
@@ -166,7 +171,7 @@
 | `tests/no_provider_branch.rs` | **红线**：src/ 无 provider 名分支；守护名单派生自 `CHANNEL_REGISTRY` 且包含 chatgpt/xai/glm-coding/opencode-go/qwen-token-plan/deepseek 等首发通道 |
 | `lib.rs` 内联测试 | 装配默认值冻结断言；`run_turn` 透传（含 Thinking/ToolCallStarted 等变体）、预取消不调 provider、流中取消 |
 | `session_turn.rs` 内联测试 | 单轮事件序 golden、预取消 / 流中取消 / provider 错误 / persist 失败中断且续跑接续 sequence |
-| `tool_loop.rs` 内联测试（23 个） | 多轮循环（`mock_provider_completes_multi_turn_tool_loop`）、并行只读工具、工具失败回填续跑、`max_tool_rounds_emits_run_failed_without_extra_stream`、审批事件对与 ApprovedOnce/ForRun/Denied（`approval_event_pair_then_execute_on_approved_once`、`short_approval_gates_fail_closed_without_executing`、`denied_fills_tool_result_and_continues_without_executing`、`approved_for_run_remembers_across_tool_rounds`）、取消（长工具中取消、`cancel_while_waiting_for_approval_emits_requested_without_responded`）、S5 上下文（默认关闭现状、注入层、软限压缩、硬限截断、`compaction_outcome_metadata_flows_into_events`、`compact_history_error_fails_the_run_instead_of_being_swallowed`、手动压缩两例、长对话恒不超硬限）、checkpoint（快照先于执行、回滚追加事件）、sandbox fallback 诊断 |
+| `tool_loop/tests.rs`（24 个，原内联测试整文件迁入） | 多轮循环（`mock_provider_completes_multi_turn_tool_loop`）、并行只读工具、工具失败回填续跑、`max_tool_rounds_emits_run_failed_without_extra_stream`、审批事件对与 ApprovedOnce/ForRun/Denied（`approval_event_pair_then_execute_on_approved_once`、`short_approval_gates_fail_closed_without_executing`、`denied_fills_tool_result_and_continues_without_executing`、`approved_for_run_remembers_across_tool_rounds`）、取消（长工具中取消、`cancel_while_waiting_for_approval_emits_requested_without_responded`）、S5 上下文（默认关闭现状、注入层、软限压缩、硬限截断、`compaction_outcome_metadata_flows_into_events`、`compact_history_error_fails_the_run_instead_of_being_swallowed`、手动压缩两例、长对话恒不超硬限）、checkpoint（快照先于执行、回滚追加事件）、sandbox fallback 诊断 |
 | `appender.rs` / `cancel.rs` / `context/*` 内联测试 | 流式折叠、取消幂等与杀树计数、预算推导 / 触发优先级 / 估算口径 / 裁剪分级边界 |
 
 默认验证命令：`cargo test -p pawork-engine --offline --lib --tests`。

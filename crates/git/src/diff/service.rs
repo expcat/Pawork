@@ -8,10 +8,11 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::status::FileStatus;
 use crate::{validate_position_arg, GitError, GitRunner};
 use pawork_domain::CancellationToken;
 
-use super::model::{DiffFile, FileStatus};
+use super::model::DiffFile;
 use super::parser::parse_unified_with_start;
 
 /// diff 选项。

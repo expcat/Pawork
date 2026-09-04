@@ -17,10 +17,11 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::status::FileStatus;
 use crate::{GitError, GitRunner, StageService};
 use pawork_domain::CancellationToken;
 
-use super::model::{DiffFile, DiffHunk, DiffLine, FileStatus, HunkId, LineKind};
+use super::model::{DiffFile, DiffHunk, DiffLine, HunkId, LineKind};
 
 /// Hunk / Line 暂存服务。
 pub struct HunkStageService {

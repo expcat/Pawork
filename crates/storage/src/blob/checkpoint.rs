@@ -23,14 +23,13 @@
 
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use super::atomic::atomic_write_bytes;
 use crate::blob::{ArtifactStore, ArtifactStoreError, BlobId};
 
 use serde::{Deserialize, Serialize};
-use tokio::io::AsyncWriteExt;
 
 /// 单个文件在某次写操作前的快照。
 ///
@@ -173,7 +172,7 @@ impl CheckpointService {
         let _serial = self.persist_lock.lock().await;
         let snapshot = guard(&self.state).clone();
         let bytes = serde_json::to_vec(&snapshot)?;
-        atomic_write(&self.state_path, &bytes).await
+        write_bytes_atomically((*self.state_path).clone(), bytes).await
     }
 
     /// 幂等：确保 run 条目存在（`head = None`）。
@@ -554,7 +553,7 @@ async fn restore_snapshot(
     if snapshot.existed {
         if let Some(blob) = &snapshot.pre_blob {
             let content = store.get(blob).await?;
-            atomic_write(target, &content).await?;
+            write_bytes_atomically(target.to_path_buf(), content).await?;
         }
         #[cfg(unix)]
         if let Some(mode) = snapshot.unix_mode {
@@ -577,36 +576,13 @@ async fn restore_snapshot(
     Ok(())
 }
 
-/// 原子写：同目录临时文件写入并 sync 后 rename 到目标（参考 artifact-store）。
-async fn atomic_write(path: &Path, content: &[u8]) -> Result<(), CheckpointError> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    tokio::fs::create_dir_all(parent)
+/// 在 blocking 线程上调用 crate 统一的同步原子写（tmp + fsync + rename）。
+async fn write_bytes_atomically(path: PathBuf, content: Vec<u8>) -> Result<(), CheckpointError> {
+    let context = format!(" while writing {}", path.display());
+    tokio::task::spawn_blocking(move || atomic_write_bytes(&path, &content))
         .await
-        .map_err(|source| CheckpointError::Io {
-            context: format!(" while creating {}", parent.display()),
-            source,
-        })?;
-
-    let temp_path = path.with_file_name(format!(
-        ".ckpt-tmp-{}-{}",
-        std::process::id(),
-        TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
-    ));
-    let result = async {
-        let mut file = tokio::fs::File::create(&temp_path).await?;
-        file.write_all(content).await?;
-        file.sync_all().await?;
-        drop(file);
-        tokio::fs::rename(&temp_path, path).await
-    }
-    .await;
-    if result.is_err() {
-        let _ = tokio::fs::remove_file(&temp_path).await;
-    }
-    result.map_err(|source| CheckpointError::Io {
-        context: format!(" while writing {}", path.display()),
-        source,
-    })
+        .unwrap_or_else(|join| Err(std::io::Error::other(join)))
+        .map_err(|source| CheckpointError::Io { context, source })
 }
 
 #[cfg(unix)]
@@ -635,12 +611,10 @@ fn guard<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poison| poison.into_inner())
 }
 
-static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::AtomicU64;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_TEMP: AtomicU64 = AtomicU64::new(1);
 

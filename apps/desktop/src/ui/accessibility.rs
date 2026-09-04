@@ -13,6 +13,15 @@ mod macos;
 #[cfg(target_os = "macos")]
 pub use macos::AxBridge;
 mod app;
+mod settings;
+mod settings_about;
+mod settings_advanced;
+mod settings_appearance;
+mod settings_general;
+mod settings_permissions;
+mod settings_providers;
+mod settings_terminal;
+mod settings_tools;
 pub(crate) use app::dynamic_identifier;
 
 /// AX 坐标使用 GPUI content 的顶左原点、逻辑像素。
