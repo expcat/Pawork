@@ -1,6 +1,6 @@
 # Pawork Desktop GUI 设计
 
-> Desktop GUI 的设计事实源。GUI 优化已收尾，验收记录见 [Desktop Spec](spec/desktop.md#8-gui-收尾验收记录2026-09-05)；视觉实施基准见 [../design/README.md](../design/README.md)。产品/验收汇总见 [spec/desktop.md](spec/desktop.md)；包级 Spec 见 [spec/crates/desktop.md](spec/crates/desktop.md)。
+> Desktop GUI 的设计事实源。P0–P2 收尾记录见 [Desktop Spec](spec/desktop.md#8-gui-收尾验收记录2026-09-05)；当前活动线见 [ROADMAP.md](ROADMAP.md)（显示项须先统一 UI Design）。视觉实施基准见 [../design/README.md](../design/README.md)。产品/验收汇总见 [spec/desktop.md](spec/desktop.md)；包级 Spec 见 [spec/crates/desktop.md](spec/crates/desktop.md)。
 
 ---
 
@@ -132,14 +132,14 @@ Settings 沿用深色主题、8px 节奏和 1440×1024 基线，不把工作台�
 
 - 入口位于 TaskRail 底部 `Local` 行右侧 gear。进入后左栏换成 Settings Rail；Timeline、Composer、Inspector 不渲染。
 - `← Back to workspace` 恢复进入前的 session、Timeline 位置、Composer 草稿、Inspector 和 Run；Settings 不取消 Run。各页内容在受限高度内纵向滚动，切页回到顶部；输入框至少容纳当前字号的一行与内边距。
-- 导航与页内可见文案默认 English，可在 Appearance 页切换为简体中文（当次会话即时生效、不持久化，重启回到 English）；顺序为 Models & providers → Network → Approvals → Tools & MCP → Terminal → Appearance → Advanced → About。没有真实读写能力的页不显示；Advanced 离线仍可进入。
+- 导航与页内可见文案默认 English，可在 Appearance 页切换为简体中文（即时生效，保存到用户目录 `desktop.json`，重启恢复）；顺序为 Models & providers → Network → Approvals → Tools & MCP → Terminal → Appearance → Advanced → About。没有真实读写能力的页不显示；Advanced 离线仍可进入。
 - 翻译边界：只翻译界面 chrome 文案（按钮、提示、空态、状态提示、tooltip）；session 标题、provider / model id、文件路径、工具输出与 wire 错误原因等数据内容保持原文；品牌名「Pawork」、功能符号与示例数据不翻译。render 与 AX 经同一目录同源取词，AX 节点 id 保持英文。
 - **Models & providers**：内容最大宽 820px；provider 使用 64px 概览行，分列显示认证方式、连接状态与目录 / 模型数；认证操作放在独立详情行，避免窄窗与大字号挤压信息列。Host `provider_auth_status` 是权威数据，Desktop 不按供应商名称硬编码 OAuth/API key 分支。普通行与 AX summary 不显示 masked credential、endpoint、catalog error 或 raw model id；endpoint / 错误只在连接、等待或删除确认详情出现。API key editor 仅在 Connect / Replace 后展开，secure input 的完整值不得进 AX tree、日志或状态文本。OAuth 只显示授权 URL、device code、到期/取消，不接触 token。认证成功与目录成功是两个状态；默认模型使用独立 section。当 Global `proxy_url` 已配置时，行右侧追加供应商级代理开关：生效值 `true` 显示 `Proxy on`（走代理），`false` 显示 `Proxy off`（直连）；click / Enter / Space / AX Press 同一 handler，Host `set_provider_use_proxy` 回执即写后状态，不乐观更新。未配置全局代理时不渲染该按钮。
 - **Network**：Global `proxy_url`；可在 GUI 填写，也可手动写入标准用户配置目录中的 `config.toml`。该文件位于 workspace 外，不会进入仓库；workspace `.pawork/config.toml` 中的代理值会被忽略。未设置显示 `Not set (uses system environment variables)`；新 OAuth / 验证 / 目录同会话生效，当前供应商模型流量于切换或重启后生效。代理是全局开关，供应商级绕过经 Models & providers 页的代理开关表达（`use_proxy = false` 时该 provider 出站直连）。
-- **权限与审批**：五档审批模式使用整行 radio，两行说明的行高随字号为 56/70/84px，row click、Enter、Space 与 AX Press 同一 handler；会话信任开关、Global 默认只读行不变。变更仅当前会话生效、不持久化、进行中 Run 不受影响。
+- **权限与审批**：五档审批模式使用整行 radio，两行说明的行高随字号为 56/70/84px，row click、Enter、Space 与 AX Press 同一 handler；项目信任开关与 Global 默认只读行并列。审批默认与当前 canonical 根路径的信任选择保存到 Global 配置；进行中 Run 不受影响，后续 Run 按实际目标项目取信任。
 - **Tools & MCP**：复用 Host `mcp_list`，提供 Test / Remove。
 - **Terminal**：Global `[terminal]`（shell / columns / rows）；只影响之后创建的终端。
-- **Appearance**：Desktop 本地；三档 100%/125%/150% 与 `Cmd+=` / `Cmd+-` / `Cmd+0` 共用 `TextScale`，并显示随选择即时变化的正文 / control 字阶样例；仅当前 Desktop 会话生效，重启恢复 100%。主题只读深色，不画 light/system 控件。同页提供语言切换（English / 中文）：两个同源按钮，切换后整界面即时重渲染，仅当前 Desktop 会话生效，重启恢复 English。
+- **Appearance**：Desktop 本地；三档 100%/125%/150% 与 `Cmd+=` / `Cmd+-` / `Cmd+0` 共用 `TextScale`，并显示随选择即时变化的正文 / control 字阶样例；立即生效，保存到用户目录 `desktop.json`，重启恢复选择。主题只读深色，不画 light/system 控件。同页提供语言切换（English / 中文）：两个同源按钮，切换后整界面即时重渲染，保存到同一 `desktop.json`，重启恢复选择。
 - **Advanced**：本地连接诊断；断线仍可达。只读 runtime ID、协商 API、capabilities、endpoint、resume/ack，以 definition list 呈现，长路径换行且页尾说明可滚动到达。不展示 GUI token，不从 endpoint 反推 data directory。
 - **About**：只在当前认证握手提供非空 `host_data_dir` 时显示，并以 definition list 呈现；缺字段、空白或断线时隐藏并退回 Advanced。路径原样展示，不用于文件操作。
 
@@ -222,5 +222,18 @@ Snapshot 只有会话树、活动 Run、待审批与 Provider 等状态，**没�
 | `text_input.rs` | 单行 TextElement（IME、UTF-16 映射） |
 | `settings/` | Settings Rail 与各页 |
 | `i18n.rs` | 界面文案目录（English / 中文）与全局语言切换 |
+| `accessibility.rs` + `accessibility/` | AX 语义模型与 macOS bridge（ADR-042；语义树来自 AppView 状态） |
+| `barriers.rs` | UI fixture barrier 发射器（仅 `PAWORK_UI_BARRIER_DIR` 设置时启用） |
+| `shell_layout.rs` | 窗口壳布局合同：三栏宽度、响应式收敛与文本缩放规则的唯一计算入口 |
+| `u1_probe.rs` | GPUI TestAppContext 进程内驱动探针（不挂 AppView / socket） |
 
 `ui/components/`：`Button`、`Dropdown`/`MenuPanel`/`MenuRow`、`FollowScroll`/`BackToBottom`、`Label`/`Badge`、`ListRow`、`Panel`、`StatusBar`。scope / model / entry / Activity 菜单全部浮层化，`Option<MenuKind>` 单开互斥；grouping 使用普通 Button 直接切换。
+
+
+## 8. OPT-D 统一候选稿（已签字）
+
+2026-09-05 按 [ROADMAP OPT-D](ROADMAP.md#3-opt-d--统一-ui-design闸门) 新增六张 1440×1024 设计稿，覆盖工作台收起/打开、Composer 启用模型菜单、全宽 Settings、供应商展开凭证/代理 Switch/四默认角色，以及模型启用四状态。资产、图标命中区、宽度、状态规则与样例边界统一见 [design/README.md §0](../design/README.md#0-opt-d-统一设计交付2026-09-05已签字)。
+
+本批仅交付设计，等用户视觉签字通过；未修改 Inspector 默认、Rail/图标尺寸、Settings 820px 上限、Session 命令或模型启用逻辑。签字后由 OPT-2/3/4 将新设计替换对应生产合同，再通过真实数据与窗口验收。旧 P0–P2 图继续保留。
+
+OPT-1 行为已同步到 §3.5：审批与项目信任由 Host 保存 Global 配置，语言/字号由 Desktop 保存 `desktop.json`，见 [ADR-053](spec/settings.md#adr-053opt-1-设置持久化2026-09-05)。这种持久化改动不代表 OPT 视觉已落地或已签字。

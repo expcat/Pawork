@@ -1,7 +1,6 @@
 //! 最小 i18n：English / 中文 界面语言切换（本地 presentation preference）。
 //!
-//! 与 `TextScale` 同口径：内存态、即时生效、不持久化，重启回到默认
-//! English；不引入任何外部 i18n 框架。`render` 与 `AX` 必须经同一个
+//! 与 `TextScale` 同口径：即时生效，保存到用户目录 desktop.json，重启恢复；不引入任何外部 i18n 框架。`render` 与 `AX` 必须经同一个
 //! `t()` 取文案（同源合同）；AX node id 保持英文稳定标识，不翻译。
 //! 数据内容（会话标题、provider / model id、路径、wire 错误详情）不翻译。
 
@@ -89,10 +88,16 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             ("Switch interface language to {}", "切换界面语言为 {}")
         }
         "settings.appearance.language.hint" => (
-            "Applies immediately to this window; resets to English on restart.",
-            "立即对本窗口生效；重启后恢复为 English。",
+            "Applies immediately and is restored after restart.",
+            "立即生效，并在重启后恢复。",
         ),
         // ── Settings · Appearance 页 ──
+        "settings.appearance.load_failed" => {
+            ("Could not load appearance preferences", "无法读取外观设置")
+        }
+        "settings.appearance.save_failed" => {
+            ("Could not save appearance preferences", "无法保存外观设置")
+        }
         "settings.appearance.title" => ("Appearance", "外观"),
         "settings.appearance.subtitle" => {
             ("Desktop presentation preferences", "桌面显示偏好")
@@ -109,8 +114,8 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         }
         "settings.appearance.tooltip_scale_set" => ("Set text size to {}%", "将字号设为 {}%"),
         "settings.appearance.effect_note" => (
-            "Text size applies immediately to this Desktop session and resets to 100% after restart. You can also use Cmd+=, Cmd+-, or Cmd+0.",
-            "字号立即对本次会话生效，重启后恢复 100%。也可使用 Cmd+=、Cmd+- 或 Cmd+0。",
+            "Text size is saved and restored after restart. You can also use Cmd+=, Cmd+-, or Cmd+0.",
+            "字号立即生效，保存后重启仍在。也可使用 Cmd+=、Cmd+- 或 Cmd+0。",
         ),
         "settings.appearance.sample_body" => (
             "The quick brown fox jumps over the lazy dog.",
@@ -179,8 +184,8 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         // ── Settings · Approvals（Permissions 页）──
         "settings.permissions.title" => ("Approvals", "审批"),
         "settings.permissions.subtitle" => (
-            "Approval mode and workspace trust for this session",
-            "本次会话的审批模式与 workspace 信任",
+            "Saved approval default and current workspace trust",
+            "持久化审批默认与当前 workspace 信任",
         ),
         "settings.permissions.refresh_tooltip" => {
             ("Refresh permissions settings", "刷新权限设置")
@@ -189,15 +194,16 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "settings.permissions.mode_title" => ("Approval mode", "审批模式"),
         "settings.permissions.trust_remove" => ("Remove trust", "移除信任"),
         "settings.permissions.trust_add" => ("Trust workspace", "信任 workspace"),
-        "settings.permissions.trust_toggle_tooltip" => {
-            ("Toggle session workspace trust", "切换本次会话的 workspace 信任")
-        }
+        "settings.permissions.trust_toggle_tooltip" => (
+            "Save trust for the current workspace",
+            "保存当前 workspace 信任",
+        ),
         "settings.permissions.trust_state_trusted" => ("Trusted", "已信任"),
         "settings.permissions.trust_state_untrusted" => ("Not trusted", "未信任"),
-        "settings.permissions.session_trust_title" => ("Session trust", "会话信任"),
+        "settings.permissions.session_trust_title" => ("Workspace trust", "项目信任"),
         "settings.permissions.session_trust_desc" => (
-            "Trust the current workspace for this session only",
-            "仅在本次会话中信任当前 workspace",
+            "Remember trust for this workspace after restart",
+            "记住当前 workspace 信任，重启后恢复",
         ),
         "settings.permissions.global_readonly" => {
             ("Global default (read only) · {}", "全局默认（只读）· {}")
@@ -213,8 +219,8 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             "未设置（workspace 默认不受信任）",
         ),
         "settings.permissions.effect_note" => (
-            "Changes apply only to this session and are not persisted. Running tasks are unchanged; new tasks use the updated settings until the Host restarts.",
-            "更改仅对本次会话生效且不持久化。运行中的任务不受影响；新任务使用更新后的设置，直到 Host 重启。",
+            "Saved to global configuration. Approval mode is the default; trust applies to this workspace. Running tasks are unchanged. Explicit launch options override saved values for that launch.",
+            "保存到全局配置：审批模式作为默认，信任只针对当前项目。进行中的任务不变；显式启动参数覆盖当次进程。",
         ),
         "settings.permissions.state_current" => ("Current", "当前"),
         "settings.permissions.ax_status" => ("Permissions status", "权限状态"),

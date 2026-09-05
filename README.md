@@ -15,7 +15,7 @@ Pawork 用 Rust 从零实现一个编码智能体（Coding Agent）平台核心�
 ./target/debug/pawork gui serve  # 启动 GUI 连接服务
 ```
 
-Desktop 启动脚本不加载 fixture、seed 或测试 profile。它默认使用独立的真实实例 `desktop`，避免把日常 CLI 会话混入 UI 检查；可用 `PAWORK_DESKTOP_INSTANCE=<name>` 覆盖。脚本为本次 Host 进程显式信任 UI 选择的 workspace（不写配置），并默认使用 `ask-for-dangerous`：普通写入和默认 shell 可运行，危险命令仍需审批；这是现有 Terminal Policy 闸允许真实 PTY 的档位。可用 `PAWORK_DESKTOP_APPROVAL_MODE=ask-for-writes` 改为逐写审批（此时 Terminal 会按既定策略 fail-closed），或用 `PAWORK_DESKTOP_TRUST_WORKSPACES=0` 关闭进程级信任。上述参数只在脚本新启 Host 时生效；若复用已运行实例，则沿用该 Host 的设置。Desktop 退出时只关闭脚本自己启动的 Host，日志位于 `target/pawork-desktop-runtime/host.log`。
+Desktop 启动脚本不加载 fixture、seed 或测试 profile。它默认使用独立的真实实例 `desktop`，避免把日常 CLI 会话混入 UI 检查；可用 `PAWORK_DESKTOP_INSTANCE=<name>` 覆盖。脚本默认跟随用户 Global 配置中的审批默认与逐项目信任（未设时只读、不信任），Settings 修改后重启仍在。`PAWORK_DESKTOP_APPROVAL_MODE=ask-for-dangerous` 可显式覆盖当次审批，`PAWORK_DESKTOP_TRUST_WORKSPACES=1` 可显式信任当次进程中的工作区；`0` 表示不注入信任覆盖、跟随保存值。上述参数只在脚本新启 Host 时生效；若复用已运行实例，则沿用该 Host 的设置。Desktop 退出时只关闭脚本自己启动的 Host，日志位于 `target/pawork-desktop-runtime/host.log`。
 
 凭证经 `pawork auth` 写入 `~/.pawork/auth.json`；env 变量仅作遗留 fallback。Secret 红线：key/token 不入日志、事件与任何可提交文件。
 
@@ -58,6 +58,7 @@ Pawork/                  # 仓库根 = Cargo workspace 根
 | 文档 | 职责 |
 | --- | --- |
 | [docs/architecture.md](docs/architecture.md) | 架构：红线、包布局与依赖方向、冻结契约、安全语义 |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | 当前活动线：Desktop 优化（OPT）任务规划 |
 | [docs/design.md](docs/design.md) | 功能设计：能力域与参照项目映射、明确不做的形态 |
 | [docs/spec/README.md](docs/spec/README.md) | 产品与包级 Spec 总索引 |
 | [docs/spec/crates/](docs/spec/README.md#12-包级-spec) | 每包一篇 Spec（agent 辅助阅读主入口） |

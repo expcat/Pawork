@@ -177,7 +177,11 @@ impl AppView {
                 t("settings.appearance.scope_title"),
                 AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT * 2.0),
             )
-            .value(t("settings.appearance.language.hint")),
+            .value(
+                self.appearance_error
+                    .as_deref()
+                    .unwrap_or(t("settings.appearance.language.hint")),
+            ),
         )
     }
 }

@@ -49,6 +49,13 @@ pub struct LoadedSource {
 /// 配置解析过程中的非致命告警，供调用方审计与测试断言。
 #[derive(Clone, Debug, PartialEq)]
 pub enum ConfigWarning {
+    /// 非 Global 层的审批默认或逐项目信任覆盖被剥离（ADR-053）。
+    PermissionsIgnored {
+        key: String,
+        tier: ConfigTier,
+        source_key: String,
+        path: Option<PathBuf>,
+    },
     /// 非 builtin/global 层尝试设置 `trust_workspaces`（自我提权风险），已被忽略。
     ///
     /// `trust_workspaces` 是安全开关，只能由安全默认值或用户全局层决定；
@@ -383,6 +390,16 @@ fn warning_span(src: &ConfigSource) -> (ConfigTier, String, Option<PathBuf>) {
 fn strip_untrusted_layer(src: &mut ConfigSource, warnings: &mut Vec<ConfigWarning>) {
     let (tier, source_key, path) = warning_span(src);
     let value = src.value.as_value_mut();
+    for key in ["approval_mode", "workspace_trust"] {
+        if remove_top_level_key(value, key) {
+            warnings.push(ConfigWarning::PermissionsIgnored {
+                key: key.into(),
+                tier,
+                source_key: source_key.clone(),
+                path: path.clone(),
+            });
+        }
+    }
     if remove_top_level_key(value, "trust_workspaces") {
         warnings.push(ConfigWarning::TrustWorkspacesIgnored {
             tier,
@@ -557,6 +574,30 @@ mod tests {
     }
 
     #[test]
+    fn persisted_permissions_are_global_only() {
+        let global =
+            json!({"approval_mode": "ask_for_writes", "workspace_trust": {"/project": false}});
+        let resolved = Loader::new()
+            .with_value(ConfigTier::Global, "global", global.clone())
+            .with_value(ConfigTier::Workspace, "workspace", json!({
+                "approval_mode": "never_ask", "workspace_trust": {"/project": true, "/other": true}
+            }))
+            .resolve().expect("resolve");
+        assert_eq!(serde_json::to_value(&resolved.config).unwrap(), global);
+        assert_eq!(resolved.warnings.len(), 2);
+        assert!(Loader::new()
+            .with_value(
+                ConfigTier::Global,
+                "global",
+                json!({
+                    "approval_mode": "yolo"
+                })
+            )
+            .resolve()
+            .is_err());
+    }
+
+    #[test]
     fn workspace_proxy_url_and_forged_base_url_are_stripped() {
         let resolved = Loader::new()
             .with_value(
@@ -675,7 +716,11 @@ mod tests {
             .resolve()
             .expect("resolve");
 
-        let terminal = resolved.config.terminal.as_ref().expect("global terminal kept");
+        let terminal = resolved
+            .config
+            .terminal
+            .as_ref()
+            .expect("global terminal kept");
         assert_eq!(terminal.shell.as_deref(), Some("/bin/zsh"));
         assert_eq!(terminal.columns, Some(120));
         assert_eq!(terminal.rows, Some(40));

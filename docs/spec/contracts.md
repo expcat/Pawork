@@ -1,5 +1,7 @@
 # 稳定契约规格
 
+OPT-1 / [ADR-053](settings.md#adr-053opt-1-设置持久化2026-09-05)：Settings 审批模式保存为 Global 默认，信任选择按 canonical workspace 根路径保存；非 Global 高层禁止覆盖；命令与回执 JSON 形状保持不变。Appearance 保存用户目录 `desktop.json`。实现/自动验证/人工验收状态分别见 [ROADMAP](../ROADMAP.md)。
+
 > 基线日期：2026-08-25。本文是契约目录和演进规则；精确字节形状以源码、检入 schema 与 golden 为准，[docs/architecture.md](../architecture.md) §3.2 是冻结契约事实源。
 
 ## 1. 契约原则
@@ -76,7 +78,7 @@
 3. 先提交/更新 golden、升级 fixture 或 schema diff，让预期变化显式失败。
 4. 实现生产者和全部当前消费者；旧版本读写策略必须明确。
 5. 运行该契约的定向测试；真实客户端/旧库升级/人工 UI 证据按风险补齐。
-6. 同批更新 `docs/architecture.md`、本文件、对应包级 Spec（`docs/spec/crates/`）、ROADMAP/任务书和生成 schema。
+6. 同批更新 `docs/architecture.md`、本文件、对应包级 Spec（`docs/spec/crates/`）、任务书和生成 schema。
 
 当前 Settings 活动线不授权借 UI 实现静默演进 schema/wire。GUI auth status、非重放 Secret 写入、OAuth 进度与默认项 mutation 已经 ADR-046（Accepted）拍板，按 D1–D6 实施；此外的新演进仍按本节流程与 ADR 闸门单独处理。
 

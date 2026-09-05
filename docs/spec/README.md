@@ -13,10 +13,11 @@
 | [contracts.md](contracts.md) | 哪些 API、wire、磁盘格式与安全语义已经冻结，如何演进？ |
 | [security.md](security.md) | 资产、信任边界、威胁、Policy、Sandbox、Secret 与路径要求是什么？ |
 | [desktop.md](desktop.md) | Desktop 的信息架构、交互流程、状态、可访问性与验收边界是什么？ |
-| [settings.md](settings.md) | 已立项的 Settings 如何管理供应商认证、模型发现、默认项与后续设置页？ |
+| [settings.md](settings.md) | Settings 如何管理供应商认证、模型发现、默认项与后续设置页？ |
 | [verification.md](verification.md) | 需求如何映射到自动化、golden、真实冒烟和人工证据？当前缺口是什么？ |
 | [operations.md](operations.md) | 如何启动、配置、诊断、备份与恢复本机实例？当前发布/运维边界是什么？ |
 | [backlog.md](backlog.md) | 已确认扩展、未排期候选、排除项和候选转正闸门是什么？ |
+| [../ROADMAP.md](../ROADMAP.md) | 当前活动线（Desktop 优化 OPT）排了哪些任务、何为 UI Design 闸门？ |
 | [feature-template.md](feature-template.md) | 大型候选转正时，Feature Spec 最少应包含哪些内容？ |
 
 ### 1.2 包级 Spec
@@ -51,7 +52,7 @@
 
 [flows.md](flows.md)：Agent loop、GUI 连接、事件持久化与重放、凭证与脱敏四条跨包链路的速览与红线；进单包前的全局定位用。
 
-不在本目录重复维护：布局与依赖边（[architecture.md](../architecture.md)）、逐符号 API（源码/rustdoc/golden）、任务状态（[AGENTS.md](../../AGENTS.md)）、视觉 token 明细（[GUI 视觉基准](../../design/README.md)）。
+不在本目录重复维护：布局与依赖边（[architecture.md](../architecture.md)）、逐符号 API（源码/rustdoc/golden）、当前活动线任务规划（[ROADMAP.md](../ROADMAP.md)）、工程约定（[AGENTS.md](../../AGENTS.md)）、视觉 token 明细（[GUI 视觉基准](../../design/README.md)）。
 
 ## 2. 事实源优先级
 
@@ -85,19 +86,20 @@ Spec 中的能力状态不替代验证结论。某项“已实现”只说明生
 | 世代 | 编号 | 结论 |
 | --- | --- | --- |
 | V1 | P0–P19 | 历史任务书到 **P19**；共 224 个编号任务。P19-1～P19-16 为 Designed/未开始。2026-08-17 随 V1 归档。 |
-| V2 | S0–S13 | 已于 2026-08-18 收官；交付摘要见 history.md。 |
-| V3 结构线 | R0–R9 | 已归档；旧编号和过程只在 history / git 历史中检索。 |
-| 真实 Desktop 线 | E0–E2 / P1–P4 | 旧阶段已经停止承载活动计划；完成事实见 history。 |
-| Settings 线 | SET-0～SET-7 | SET-0～SET-6g 已实现（过程见 history）；SET-7 真窗口/人工签字暂停，缺口见 [Settings Spec](settings.md)。当前活动线是 CLN，指针只看 [AGENTS.md](../../AGENTS.md)。 |
+| V2 | S0–S13 | 已于 2026-08-18 收官；过程检索走 git 历史。 |
+| V3 结构线 | R0–R9 | 已归档；旧编号和过程只在 git 历史中检索。 |
+| 真实 Desktop 线 | E0–E2 / P1–P4 | 旧阶段已停止承载活动计划；完成事实检索走 git 历史。 |
+| Settings 线 | SET-0～SET-7 | SET-0～SET-6h 已实现，本机真窗口验收通过（2026-09-05，证据见 [desktop.md §8](desktop.md#8-gui-收尾验收记录2026-09-05)）；四家真实账号认证矩阵人工验收仍 pending，缺口见 [Settings Spec](settings.md)。 |
+| Desktop 优化线 | OPT-D、OPT-1～OPT-4 | 2026-09-05 真窗口反馈立项；规划见 [ROADMAP.md](../ROADMAP.md)。OPT-D 已交付并获用户签字，OPT-1 已实现并通过定向验证；OPT-2/3/4 未开始。 |
 
-因此不会创建 P20 作为当前阶段。本目录使用领域化 Spec 名称；下一产品线的版本名和阶段编号只在用户选择真实产品目标并立项后确定。
+因此不会创建 P20 作为当前阶段。本目录使用领域化 Spec 名称；活动线编号以路线图为准。
 
 ## 5. 维护规则
 
-- 用户可见能力、产品边界或状态变化：同批更新 `product.md` / `capabilities.md` 及 ROADMAP。
+- 用户可见能力、产品边界或状态变化：同批更新 `product.md` / `capabilities.md`。
 - wire、schema、配置层级、Secret/Policy 语义变化：先完成 ADR（若需）与 golden，再更新 `contracts.md` / `security.md`。
 - Desktop 流程或可访问性变化：以 [gui-design.md](../gui-design.md) 和 [design/README.md](../../design/README.md) 为视觉/交互事实源，同批更新 `desktop.md`。
 - **包级 Spec**：写入集改了模块树、对外 API、`pawork-*` 依赖边、feature 门、红线相关行为或测试资产时，同批更新该包 `crates/<pkg>.md`；冲突以源码为准并回写。固定八节结构：职责与边界 · 模块树 · 对外 API 面 · 关键行为与语义 · 依赖与 feature · 红线与不变量 · 测试与 golden 资产 · 相关文档。
 - 验证只记录实际执行的命令与证据；缺凭证、缺平台或未签字必须如实标为 pending/fail-closed。
-- 小功能直接在 ROADMAP 当前切片写清需求；像 Settings 这样跨协议、Secret、Provider 与 Desktop 的功能才从 [feature-template.md](feature-template.md) 建独立 Feature Spec。
+- 小功能直接在任务书写清需求；像 Settings 这样跨协议、Secret、Provider 与 Desktop 的功能才从 [feature-template.md](feature-template.md) 建独立 Feature Spec。
 - 发布、License、安装器、三平台与供应链门禁未经用户明确授权，不得从候选改写成已交付。

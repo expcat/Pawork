@@ -42,6 +42,14 @@ pub struct PaworkConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trust_workspaces: Option<bool>,
 
+    /// Global 审批默认（ADR-053）；显式宿主启动参数可覆盖当次进程。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approval_mode: Option<pawork_policy::ApprovalMode>,
+
+    /// Global 逐项目选择；键由 Host canonical 根路径生成，false 可撤销全局信任。
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub workspace_trust: BTreeMap<String, bool>,
+
     /// 全局出站代理（如 `http://127.0.0.1:38081`）。
     ///
     /// 参照 CLIProxyAPI `proxy-url`：应用于 Provider/OAuth 出站请求；
@@ -199,6 +207,10 @@ impl PaworkConfig {
         if other.trust_workspaces.is_some() {
             self.trust_workspaces = other.trust_workspaces;
         }
+        if other.approval_mode.is_some() {
+            self.approval_mode = other.approval_mode;
+        }
+        self.workspace_trust.extend(other.workspace_trust.clone());
         if other.proxy_url.is_some() {
             self.proxy_url = other.proxy_url.clone();
         }

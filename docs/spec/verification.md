@@ -73,7 +73,7 @@ E3/E4 证据必须包含日期、环境/版本、输入范围、实际结果和�
 | 三类关键回归发布矩阵 | 未立项 | 发布任务明确命令和环境后执行；普通改动仍同批跑受影响的定向种子。 |
 | 真实客户端/Provider 矩阵 | 未执行 | 四通道 chat、GUI/Desktop、Zed ACP、headless json-stdio、doctor 实际通过或明确 fail-closed。 |
 | 真实 Anthropic、fork/compact、PTY/审批恢复等历史人工项 | 待后续任务 | 实际执行，或由用户明确接受延期并在对应 Spec/收口摘要登记。 |
-| Settings 模型与供应商 | SET-1～SET-6g 已实现；SET-012 Network E1～E3 已验证 | [settings.md](settings.md) 其余需求完成四家真实认证/目录矩阵；本机视觉/键盘 E3 已完成，E4 用户签字仍独立记录。 |
+| Settings 模型与供应商 | SET-1～SET-6h 已实现；SET-012 Network E1～E3 已验证；SET-6h 真窗口验收通过（2026-09-05） | [settings.md](settings.md) 其余需求完成四家真实认证/目录矩阵；本机视觉/键盘 E3 已完成，E4 用户签字仍独立记录。 |
 | 完整视觉与 Accessibility 签字 | P0–P2 本机 E3 已通过；跨平台待专项 | 主工作台 P0/P1、Settings 八页、三张阶段图、100/125/150%、键盘/AX 与系统 IME 已由当前真窗口取证；非 macOS 与发布级 Accessibility 不在本轮范围。 |
 | 发布级验证 | 未立项 | 发布不在当前任务范围；用户另行授权后先定 License，再定义三平台、供应链、安装/升级/回滚门禁。 |
 

@@ -43,6 +43,8 @@
 
 模块可见性：仅 `pub mod channels`；其余模块私有，另有 crate 级 `pub use error::format_provider_error`。
 
+OPT-1 / ADR-053：`gui::run_gui` 经 `AppCore::set_approval_host` 只接线 GUI 审批回调，保留加载后的 Global/逐项目配置与显式启动覆盖来源。正式启动脚本默认跟随保存配置，环境 `PAWORK_DESKTOP_APPROVAL_MODE` / `PAWORK_DESKTOP_TRUST_WORKSPACES=1` 仍可显式覆盖当次启动。
+
 ## 3. 对外 API 面
 
 ### 3.1 Rust API（消费方仅 [apps/pawork](pawork.md) 与集成测试）

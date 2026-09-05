@@ -419,9 +419,9 @@ pub enum AppCommand {
         provider_id: ProviderId,
         use_proxy: bool,
     },
-    /// 会话内审批模式切换（ADR-048 D2）：`mode` 为必填 snake_case 串，
+    /// 审批默认保存（ADR-053）：`mode` 为必填 snake_case 串，
     /// 未知值由宿主校验失败（fail-closed 保旧）；只影响之后启动的 run，
-    /// 不持久化。
+    /// Host 写 Global 配置后更新后续 Run；进行中的 Run 不变。
     SetApprovalMode {
         mode: String,
     },

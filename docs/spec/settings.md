@@ -1,5 +1,30 @@
 # Settings：模型与供应商
 
+## ADR-053：OPT-1 设置持久化（2026-09-05）
+
+状态：OPT-1 已实现、定向自动验证通过、Appearance 真窗口重启恢复通过；用户视觉签字与发布独立记录（[本批证据](../ROADMAP.md#101-本批交付与证据2026-09-05)）；替代 ADR-048 的「审批与会话信任不持久化」语义。GUI command / response 形状不变，无数据库迁移。设计像素仍受 OPT-D 签字闸门约束。
+
+- **D1 审批默认**：Global `config.toml` 新增可选 `approval_mode`，复用 Policy 五种 snake_case 值；缺失为 `read_only`，非法值拒绝加载。启动显式 `AppLoadOptions.approval_mode` 优先，只覆盖当前进程。`set_approval_mode` 先原子写 Global，再更新当前 Host 与 scheduler；写入失败返回 `config_write` 并保留旧运行态。
+- **D2 项目信任**：Global 新增 `workspace_trust` 表，键为 Host 解析的 canonical workspace 根路径、值为 bool；当前项目显式 true/false 优先于 `trust_workspaces` 全局默认。`workspace_trust` 命令只接 attached workspace id，Host 自行解析路径后写盘，不能用其他 id 或客户端任意路径写入。不得将信任一个项目扩大到全部项目；没有可解析根路径时 fail-closed。重启恢复同一路径的选择；新项目沿用全局默认。显式启动 trust 覆盖只影响当次进程；用户在 Settings 保存当前项目信任后，清除该启动覆盖，后续按各项目保存值/全局默认解析。
+- **D3 安全边界**：Profile / Workspace / Session / Run 配置层的 `approval_mode` 和 `workspace_trust` 整段剥离并记录 warning，与既有 `trust_workspaces` 一致。写盘及内存更新串行化；进行中的 Run 继续使用已捕获 scheduler，后续 Run 用新值。Secret、Policy、Sandbox 与路径边界不变。
+- **D4 外观**：Desktop 自有用户配置目录 `desktop.json` 保存 `language`（`en`/`zh`）与 `text_scale`（100/125/150）。仅使用现有 Rust/std/serde_json，不增加业务依赖。启动恢复，缺文件用默认；损坏或无法读取时显示失败提示且不覆盖原文件。修改先原子写盘，失败保旧并提示。快捷键和 Settings 走同一写入口；Desktop 不读写 Host `config.toml` 业务键。
+- **验收**：先固定配置加载/安全剥离 golden，再实施；复用 Host Settings 测试验证保存、重新装配、非法输入/写盘失败保旧与无匹配项目拒绝；外观覆盖保存后重读及损坏文件保留。使用真实窗口复验语言/字号重启恢复，证据不得当作设计签字。
+
+## OPT-1a：八页持久化盘点
+
+| 页面 | 可改项与持久化归属 | OPT-1 处理 |
+| --- | --- | --- |
+| Models & providers | 默认对话 `default_provider/default_model`、`providers[].use_proxy` → Global `config.toml`；API key/OAuth → auth backend | 已有，不重做；F8/F10 留 OPT-3 |
+| Network | `proxy_url` → Global `config.toml` | 已有，不重做 |
+| Approvals | 审批模式、当前项目 trust 原为 Host 内存；`trust_workspaces` 是 Global 只读默认 | 新增 `approval_mode` / `workspace_trust`，见 ADR-053 |
+| Tools & MCP | Remove → Global `mcp.servers` + 独立 MCP 凭证；Test 是即时连接检查 | 已有，不把检测结果当偏好保存 |
+| Terminal | 默认 shell、columns、rows → Global `[terminal]` | 已有，不重做；当前 PTY 尺寸属于运行态 |
+| Appearance | language、text_scale 原为当次窗口；theme 只读深色 | `desktop.json` 保存语言与字号（含快捷键），重启恢复 |
+| Advanced | 只读连接、API、capabilities 与 resume/ack 运行状态 | 无用户可改配置项 |
+| About | 只读版本、Host 数据目录与支持信息 | 无用户可改配置项 |
+
+macOS 外观路径：`~/Library/Application Support/dev.pawork.pawork/desktop.json`；Linux `$XDG_CONFIG_HOME/pawork/desktop.json`（缺省 `~/.config/pawork/desktop.json`）；Windows `%APPDATA%/pawork/pawork/config/desktop.json`。外观与 Host 配置各自拥有文件，避免跨进程覆盖业务键。正式 `scripts/pawork-desktop.sh` 默认不再注入审批/信任覆盖；显式环境参数仍可覆盖当次启动。
+
 ## 元数据
 
 | 字段 | 值 |
@@ -146,7 +171,7 @@ GPUI Settings
 Settings 沿用参考设计的 1440×1024 深色语言和 8px 节奏，不另起 Dashboard 卡片墙：
 
 - TaskRail 底部 `Local` 行右侧新增 Settings gear。
-- Settings Rail 首项固定为 `← Back to workspace`；八页导航默认 English（Appearance 页可切换简体中文，当次会话生效、不持久化），首个可用页为 `Models & providers`，内容最大宽 820px。
+- Settings Rail 首项固定为 `← Back to workspace`；八页导航默认 English（Appearance 页可切换简体中文，ADR-053 起即时生效并持久化），首个可用页为 `Models & providers`，内容最大宽 820px。
 - 内容区使用稳定的 page header / section / field / feedback 层级；不显示工作台 RunStatusBar。
 - provider 默认层为 64px 概览行，只显示名称、认证方法、连接状态、目录 availability / 模型数和可用动作；普通 render 与 AX summary 不发布 masked credential、endpoint、catalog error、raw model id 或无权威来源余额。endpoint / 错误仅在连接、等待或删除确认详情显示；API key editor 仅在 Connect / Replace 后展开。
 - 默认模型使用独立 section；认证成功与目录成功继续分开表达，Remove 仍需二次确认。

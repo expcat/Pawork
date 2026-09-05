@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{
-    App, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions, prelude::*, px, size,
+    prelude::*, px, size, App, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions,
 };
 
 use crate::controller::ControllerEvent;
@@ -385,7 +385,7 @@ fn pick_other_model<'a>(
     models: &'a [projection::ModelEntry],
     first: &projection::ModelEntry,
 ) -> Option<&'a projection::ModelEntry> {
-    // 只走 ROADMAP §1.1 低消耗矩阵；目录没有 deepseek-v4-flash 就跳过，
+    // 只走既定低消耗 fallback 矩阵；目录没有 deepseek-v4-flash 就跳过，
     // 不擅自换 claude / grok / 同通道相邻档。
     pick_model(models, "deepseek", "deepseek-v4-flash")
         .or_else(|| pick_model(models, "opencode-go", "deepseek-v4-flash"))
@@ -677,8 +677,13 @@ fn run_app(socket: PathBuf, barrier_dir: Option<PathBuf>) {
                     }),
                     ..Default::default()
                 },
-                move |_, cx| {
-                    cx.new(|cx| ui::AppView::new(view_platform, view_socket, view_barrier_dir, cx))
+                move |window, cx| {
+                    cx.new(|cx| {
+                        let mut view =
+                            ui::AppView::new(view_platform, view_socket, view_barrier_dir, cx);
+                        view.restore_appearance(window, cx);
+                        view
+                    })
                 },
             )
             .expect("open pawork-desktop window");

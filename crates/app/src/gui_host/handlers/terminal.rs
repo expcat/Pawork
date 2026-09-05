@@ -222,7 +222,10 @@ pub(crate) async fn terminal_create(
     };
     let core = adapter.core.read().await;
     let approval_mode = core.approval.mode();
-    let workspace_trusted = core.approval.workspace_trusted();
+    let workspace = core
+        .workspace_by_id(workspace_id)
+        .map_err(GuiHostAdapter::app_error)?;
+    let workspace_trusted = core.workspace_trusted_for_roots(&workspace.roots);
     let (cwd, cwd_label) =
         GuiHostAdapter::resolve_terminal_cwd(&core, workspace_id, working_directory.as_ref())?;
     // ADR-050 D4：读取生效配置的终端默认值（Global 层持久值），只影响

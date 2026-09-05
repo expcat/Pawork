@@ -673,6 +673,13 @@ async fn terminal_create_applies_configured_shell_and_size() {
 
 #[tokio::test]
 async fn set_approval_mode_updates_permissions_settings_within_same_session() {
+    let _guard = HOME_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let home_dir = tempfile::tempdir().unwrap();
+    let _restore = RestoreHome(std::env::var_os("HOME"));
+    #[allow(unused_unsafe)]
+    unsafe {
+        std::env::set_var("HOME", home_dir.path());
+    }
     let backend = Arc::new(pawork_auth::MemoryBackend::new());
     let (adapter, _dir) = settings_adapter("http://127.0.0.1:1".into(), backend).await;
 
@@ -701,6 +708,27 @@ async fn set_approval_mode_updates_permissions_settings_within_same_session() {
     };
     assert_eq!(data["approval_mode"], "ask_for_writes");
 
+    let config_path = pawork_workspace::config::global_config_path().unwrap();
+    let restored = pawork_workspace::config::Loader::discover_from(Some(&config_path), None)
+        .resolve()
+        .unwrap();
+    assert_eq!(
+        restored.config.approval_mode,
+        Some(crate::ApprovalMode::AskForWrites)
+    );
+    let mut options = crate::AppLoadOptions::default();
+    options.workspace_root = Some(_dir.path().to_path_buf());
+    options.data_dir = Some(_dir.path().join("restart-data"));
+    options.auth_backend = Some(Arc::new(pawork_auth::MemoryBackend::new()));
+    let restarted = AppCore::load_for_catalog(options.clone()).await.unwrap();
+    assert_eq!(restarted.approval_mode(), crate::ApprovalMode::AskForWrites);
+    drop(restarted);
+    options.approval_mode = Some(crate::ApprovalMode::ReadOnly);
+    let overridden = AppCore::load_for_catalog(options).await.unwrap();
+    assert_eq!(overridden.approval_mode(), crate::ApprovalMode::ReadOnly);
+    drop(overridden);
+    let disk_before = std::fs::read_to_string(&config_path).unwrap();
+
     // 未知值 fail-closed：Error 且旧值保留（ADR-048 D2）。
     let error = adapter
         .command(&command_envelope(AppCommand::SetApprovalMode {
@@ -709,6 +737,17 @@ async fn set_approval_mode_updates_permissions_settings_within_same_session() {
         .await
         .expect_err("unknown approval mode must fail closed");
     assert_eq!(error.code, "invalid_approval_mode");
+    assert_eq!(std::fs::read_to_string(&config_path).unwrap(), disk_before);
+    // 损坏配置不可被覆盖，内存保持已确认值。
+    std::fs::write(&config_path, "[broken").unwrap();
+    let error = adapter
+        .command(&command_envelope(AppCommand::SetApprovalMode {
+            mode: "never_ask".into(),
+        }))
+        .await
+        .expect_err("write failure");
+    assert_eq!(error.code, "config_write");
+    assert_eq!(std::fs::read_to_string(&config_path).unwrap(), "[broken");
 
     let after = adapter
         .query(&query_envelope(AppQuery::PermissionsSettings))
@@ -728,8 +767,21 @@ async fn set_approval_mode_updates_permissions_settings_within_same_session() {
 
 #[tokio::test]
 async fn workspace_trust_toggles_session_trust_for_attached_workspace() {
+    let _guard = HOME_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let home_dir = tempfile::tempdir().unwrap();
+    let _restore = RestoreHome(std::env::var_os("HOME"));
+    #[allow(unused_unsafe)]
+    unsafe {
+        std::env::set_var("HOME", home_dir.path());
+    }
     let backend = Arc::new(pawork_auth::MemoryBackend::new());
     let (adapter, _dir) = settings_adapter("http://127.0.0.1:1".into(), backend).await;
+    adapter
+        .core
+        .write()
+        .await
+        .attach_workspace(_dir.path())
+        .unwrap();
     let workspace_id = adapter.core.read().await.workspace_id().clone();
 
     let response = adapter
@@ -752,6 +804,24 @@ async fn workspace_trust_toggles_session_trust_for_attached_workspace() {
         panic!("PermissionsSettings must return Data: {after:?}")
     };
     assert_eq!(after["workspace_trusted"], true);
+    let config_path = pawork_workspace::config::global_config_path().unwrap();
+    assert!(config_path.is_file());
+    let other_dir = tempfile::tempdir().unwrap();
+    let mut options = crate::AppLoadOptions::default();
+    options.workspace_root = Some(_dir.path().to_path_buf());
+    options.data_dir = Some(other_dir.path().join("restart-data"));
+    options.auth_backend = Some(Arc::new(pawork_auth::MemoryBackend::new()));
+    let mut restarted = AppCore::load_for_catalog(options.clone()).await.unwrap();
+    assert!(restarted.workspace_trusted());
+    restarted.attach_workspace(other_dir.path()).unwrap();
+    assert!(!restarted.workspace_trusted(), "trust must not escape to another project");
+    let original = adapter.core.read().await.workspace_by_id(&workspace_id).unwrap();
+    assert!(restarted.workspace_trusted_for_roots(&original.roots));
+    drop(restarted);
+    options.trust_workspaces = Some(false);
+    let overridden = AppCore::load_for_catalog(options).await.unwrap();
+    assert!(!overridden.workspace_trusted());
+    drop(overridden);
     // 之后启动的 run 克隆新 scheduler Arc（check_gate 用 config.workspace_trusted）。
     assert!(adapter.core.read().await.workspace_trusted());
     assert_eq!(

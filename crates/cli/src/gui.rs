@@ -29,11 +29,7 @@ pub async fn run_gui(
     let GuiCommand::Serve { socket } = command;
     let approvals = Arc::new(GuiApprovalHost::new());
     let mut core = core;
-    core.configure_approval(
-        core.approval_mode(),
-        core.workspace_trusted(),
-        approvals.clone(),
-    );
+    core.set_approval_host(approvals.clone());
     let core = Arc::new(tokio::sync::RwLock::new(core));
     let adapter = GuiHostAdapter::from_locked(Arc::clone(&core), approvals);
     let pty = adapter.pty();

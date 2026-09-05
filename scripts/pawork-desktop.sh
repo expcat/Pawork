@@ -10,12 +10,12 @@ host_log="$runtime_dir/host.log"
 macos_bundle="$runtime_dir/Pawork.app"
 command_mode="${1:-start}"
 instance_name="${PAWORK_DESKTOP_INSTANCE:-desktop}"
-trust_workspaces="${PAWORK_DESKTOP_TRUST_WORKSPACES:-1}"
-approval_mode="${PAWORK_DESKTOP_APPROVAL_MODE:-ask-for-dangerous}"
+trust_workspaces="${PAWORK_DESKTOP_TRUST_WORKSPACES:-0}"
+approval_mode="${PAWORK_DESKTOP_APPROVAL_MODE:-}"
 
 usage() {
   printf 'Usage: %s [build|start]\n' "${0##*/}"
-  printf 'Start defaults: instance=desktop, approval=ask-for-dangerous, trust-workspaces=1.\n'
+  printf 'Start defaults: instance=desktop; approval and trust follow global configuration.\n'
 }
 
 build_binaries() {
@@ -67,7 +67,7 @@ build_binaries
 mkdir -p "$runtime_dir"
 
 case "$approval_mode" in
-  always-ask|ask-for-writes|ask-for-dangerous|never-ask|read-only)
+  ""|always-ask|ask-for-writes|ask-for-dangerous|never-ask|read-only)
     ;;
   *)
     printf 'PAWORK_DESKTOP_APPROVAL_MODE must be always-ask, ask-for-writes, ask-for-dangerous, never-ask, or read-only.\n' >&2
@@ -92,17 +92,20 @@ trap cleanup_host EXIT INT TERM
 if host_is_running; then
   printf 'Reusing the running Pawork host.\n'
 else
-  host_trust_args=()
+  host_args=(--instance "$instance_name")
   if [[ "$trust_workspaces" == "1" ]]; then
-    host_trust_args+=(--trust-workspaces)
+    host_args+=(--trust-workspaces)
   elif [[ "$trust_workspaces" != "0" ]]; then
     printf 'PAWORK_DESKTOP_TRUST_WORKSPACES must be 0 or 1.\n' >&2
     exit 2
   fi
+  if [[ -n "$approval_mode" ]]; then
+    host_args+=(--approval-mode "$approval_mode")
+  fi
   : >"$host_log"
   (
     cd "$repo_dir"
-    exec "$pawork_bin" --instance "$instance_name" --approval-mode "$approval_mode" "${host_trust_args[@]}" gui serve
+    exec "$pawork_bin" "${host_args[@]}" gui serve
   ) >"$host_log" 2>&1 &
   host_process_id=$!
   host_was_started=1
@@ -127,7 +130,7 @@ else
     exit 1
   fi
   printf 'Started the Pawork host (approval=%s, trust-workspaces=%s). Log: %s\n' \
-    "$approval_mode" "$trust_workspaces" "$host_log"
+    "${approval_mode:-config}" "$trust_workspaces" "$host_log"
 fi
 
 cd "$repo_dir"

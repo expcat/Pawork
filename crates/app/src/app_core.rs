@@ -289,6 +289,8 @@ pub struct AppCore {
     pub(crate) tool_defs: Vec<ToolDefinition>,
     pub(crate) descriptors: Vec<ToolDescriptor>,
     pub(crate) approval: services::approval::ApprovalService,
+    // 显式可信宿主覆盖，仅当前进程；配置项目信任不改变此值。
+    trust_override: Option<bool>,
     pub(crate) session: services::session::SessionService,
     pub(crate) run: services::run::RunService,
     pub(crate) extensions: services::extension::ExtensionService,
@@ -330,7 +332,7 @@ impl std::fmt::Debug for AppCore {
             .field("has_store", &self.store.is_some())
             .field("tool_count", &self.tool_defs.len())
             .field("approval_mode", &self.approval.mode())
-            .field("workspace_trusted", &self.approval.workspace_trusted())
+            .field("workspace_trusted", &self.workspace_trusted())
             .finish()
     }
 }
@@ -357,6 +359,10 @@ impl AppCore {
             .workspace_root
             .clone()
             .or_else(|| std::env::current_dir().ok());
+        let approval_mode = options
+            .approval_mode
+            .or(resolved.config.approval_mode)
+            .unwrap_or_default();
         let trusted = options
             .trust_workspaces
             .unwrap_or_else(|| resolved.config.trust_workspaces.unwrap_or(false));
@@ -369,12 +375,13 @@ impl AppCore {
         )
         .await?;
         core.configure_approval(
-            options.approval_mode.unwrap_or_default(),
+            approval_mode,
             trusted,
             options
                 .approval_host
                 .unwrap_or_else(|| Arc::new(DenyAllApprovals)),
         );
+        core.trust_override = options.trust_workspaces;
         if let Some(root) = workspace_root.as_deref() {
             core.attach_workspace(root)?;
         }
@@ -410,7 +417,12 @@ impl AppCore {
         let backend: Arc<dyn SecretBackend> = Arc::new(FileBackend::new());
         let trusted = resolved.config.trust_workspaces.unwrap_or(false);
         let mut core = Self::from_config(resolved.config, provider, model, backend).await?;
-        core.configure_approval(ApprovalMode::ReadOnly, trusted, Arc::new(DenyAllApprovals));
+        core.configure_approval(
+            core.config.approval_mode.unwrap_or_default(),
+            trusted,
+            Arc::new(DenyAllApprovals),
+        );
+        core.trust_override = None;
         if let Some(root) = workspace_root_from_config_file(workspace_file) {
             core.attach_workspace(&root)?;
         } else if let Ok(cwd) = std::env::current_dir() {
@@ -630,6 +642,7 @@ impl AppCore {
             tool_defs: Vec::new(),
             descriptors: Vec::new(),
             approval: services::approval::ApprovalService::new(),
+            trust_override: None,
             session: services::session::SessionService::new(),
             run: services::run::RunService,
             extensions: services::extension::ExtensionService::new(),
@@ -651,8 +664,18 @@ impl AppCore {
     }
 
     /// 装配后补全 host 状态（config + 凭证后端）。
-    pub(crate) fn with_state(mut self, config: PaworkConfig, backend: Arc<dyn SecretBackend>) -> Self {
+    pub(crate) fn with_state(
+        mut self,
+        config: PaworkConfig,
+        backend: Arc<dyn SecretBackend>,
+    ) -> Self {
+        self.approval.configure(
+            config.approval_mode.unwrap_or_default(),
+            config.trust_workspaces.unwrap_or(false),
+            self.approval.host(),
+        );
         self.config = config;
+        self.refresh_scheduler_approval();
         self.backend = backend;
         self
     }
@@ -689,8 +712,18 @@ impl AppCore {
         workspace_trusted: bool,
         host: Arc<dyn ApprovalPromptHost>,
     ) {
+        self.trust_override = Some(workspace_trusted);
         self.approval.configure(mode, workspace_trusted, host);
         self.refresh_scheduler_approval();
+    }
+
+    /// GUI 宿主只替换审批交互入口，不改启动参数或 Global 信任默认。
+    pub fn set_approval_host(&mut self, host: Arc<dyn ApprovalPromptHost>) {
+        self.approval.configure(
+            self.approval.mode(),
+            self.approval.workspace_trusted(),
+            host,
+        );
     }
 
     /// 把目录登记进当前进程的 workspace 集合。生产 `workspace_add` 走
@@ -970,18 +1003,34 @@ impl AppCore {
         });
     }
 
-    /// SET-6b：set_approval_mode 运行时切换（ADR-048 D2）。只改内存态并
-    /// Arc-swap scheduler；对之后启动的 run 生效；不持久化、不影响进行中 run。
+    /// ADR-053：Host 写盘成功后更新内存并 Arc-swap scheduler；
+    /// 只影响之后启动的 Run，进行中 Run 保留快照。
     pub(crate) fn set_approval_mode(&mut self, mode: ApprovalMode) {
+        self.config.approval_mode = Some(mode);
         self.approval.set_mode(mode);
         self.refresh_scheduler_approval();
     }
 
-    /// SET-6b：workspace_trust 运行时切换会话信任（ADR-048 D3）。不写盘，
-    /// 重启后跟随 Global 配置；只影响之后启动的 run。
-    pub(crate) fn set_workspace_trusted(&mut self, workspace_trusted: bool) {
-        self.approval.set_workspace_trusted(workspace_trusted);
+    /// ADR-053：Host 已验证根路径且写盘成功，只更新该项目。
+    pub(crate) fn set_workspace_trusted(&mut self, root: String, trusted: bool) {
+        self.config.workspace_trust.insert(root, trusted);
+        // 用户在 Settings 的显式选择取代该进程的启动 trust 覆盖。
+        self.trust_override = None;
         self.refresh_scheduler_approval();
+    }
+
+    pub(crate) fn workspace_trusted_for_roots(&self, roots: &[PathBuf]) -> bool {
+        if roots.is_empty() {
+            return false;
+        }
+        roots.iter().all(|root| {
+            self.trust_override
+                .or_else(|| {
+                    root.to_str()
+                        .and_then(|key| self.config.workspace_trust.get(key).copied())
+                })
+                .unwrap_or(self.config.trust_workspaces.unwrap_or(false))
+        })
     }
 
     /// 审批模式 / workspace trust 变更后 Arc-swap `ToolScheduler`。进行中
@@ -989,7 +1038,7 @@ impl AppCore {
     fn refresh_scheduler_approval(&mut self) {
         self.scheduler = Arc::new(
             self.scheduler
-                .with_approval_snapshot(self.approval.mode(), self.approval.workspace_trusted()),
+                .with_approval_snapshot(self.approval.mode(), self.workspace_trusted()),
         );
     }
 
@@ -1106,7 +1155,12 @@ impl AppCore {
     }
 
     pub fn workspace_trusted(&self) -> bool {
-        self.approval.workspace_trusted()
+        if self.extensions.workspace_roots.is_empty() {
+            self.trust_override
+                .unwrap_or(self.config.trust_workspaces.unwrap_or(false))
+        } else {
+            self.workspace_trusted_for_roots(&self.extensions.workspace_roots)
+        }
     }
 
     /// 记录 SessionCreate 带来的 canonical workspace（仅进程内缓存；

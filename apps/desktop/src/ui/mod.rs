@@ -8,9 +8,9 @@ mod approval_card;
 mod barriers;
 mod changes;
 mod components;
+pub(crate) mod i18n;
 mod input_area;
 mod inspector;
-pub(crate) mod i18n;
 mod resources;
 mod settings;
 mod shell_layout;
@@ -448,8 +448,11 @@ pub struct AppView {
     event_task: Option<gpui::Task<()>>,
     status_hint: Option<String>,
     text_scale: font::TextScale,
+    /// 正式窗口 bootstrap 开启磁盘存储；纯 UI 测试构造不访问用户配置。
+    persist_appearance: bool,
+    appearance_error: Option<String>,
     /// 界面语言（与 text_scale 同口径的本地 presentation preference：
-    /// 内存态、即时生效、不持久化；全局值经 i18n::language() 同源读取）。
+    /// 用户目录落盘、即时生效；全局值经 i18n::language() 同源读取）。
     language: i18n::Language,
     grouping: TaskRailGrouping,
     scope_workspace_id: Option<String>,
@@ -665,6 +668,8 @@ impl AppView {
             event_task: None,
             status_hint: None,
             text_scale: font::TextScale::default(),
+            persist_appearance: false,
+            appearance_error: None,
             language: i18n::language(),
             grouping: TaskRailGrouping::Timeline,
             scope_workspace_id: None,
@@ -2978,12 +2983,73 @@ impl AppView {
         self.on_cancel_clicked(window, cx);
     }
 
+    /// 正式窗口首帧前恢复；构造纯 UI 状态不访问磁盘。
+    pub(crate) fn restore_appearance(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.persist_appearance = true;
+        match crate::platform::load_preferences() {
+            Ok(prefs) => {
+                self.language = if prefs.language == "zh" {
+                    i18n::Language::Chinese
+                } else {
+                    i18n::Language::English
+                };
+                i18n::set_language(self.language);
+                self.text_scale = match prefs.text_scale {
+                    125 => font::TextScale::Percent125,
+                    150 => font::TextScale::Percent150,
+                    _ => font::TextScale::Percent100,
+                };
+                window.set_rem_size(px(self.text_scale.rem_pixels()));
+                self.terminal_input.update(cx, |input, cx| {
+                    input.set_placeholder(i18n::t("inspector.terminal_input_placeholder"), cx)
+                });
+            }
+            Err(reason) => {
+                let error = format!("{}: {reason}", i18n::t("settings.appearance.load_failed"));
+                self.status_hint = Some(error.clone());
+                self.appearance_error = Some(error);
+            }
+        }
+    }
+
+    fn save_appearance(
+        &mut self,
+        language: i18n::Language,
+        scale: font::TextScale,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.persist_appearance {
+            return true;
+        }
+        let prefs = crate::platform::DesktopPreferences {
+            language: if language == i18n::Language::Chinese {
+                "zh"
+            } else {
+                "en"
+            }
+            .into(),
+            text_scale: scale.percent(),
+        };
+        if let Err(reason) = crate::platform::save_preferences(&prefs) {
+            let error = format!("{}: {reason}", i18n::t("settings.appearance.save_failed"));
+            self.status_hint = Some(error.clone());
+            self.appearance_error = Some(error);
+            cx.notify();
+            return false;
+        }
+        self.appearance_error = None;
+        true
+    }
+
     fn set_text_scale(
         &mut self,
         scale: font::TextScale,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.save_appearance(self.language, scale, cx) {
+            return;
+        }
         self.text_scale = scale;
         window.set_rem_size(px(scale.rem_pixels()));
         self.status_hint = Some(i18n::t("status.text_scale").replace("{}", &scale.percent().to_string()));
@@ -2998,6 +3064,9 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         if self.language == language {
+            return;
+        }
+        if !self.save_appearance(language, self.text_scale, cx) {
             return;
         }
         self.language = language;

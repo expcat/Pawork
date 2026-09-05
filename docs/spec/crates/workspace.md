@@ -28,7 +28,7 @@
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
 | `src/config/mod.rs` | ~90 | `ConfigTier` 六层枚举与 `priority()`（0..5）、`source_key()`、`as_str()`；模块 re-export（注意 `merge_json` 不在公开面，仅 `merge_ordered` / `ConfigValue` / `Merge`） |
-| `src/config/schema.rs` | ~400 | `PaworkConfig`（`default_provider` / `default_model` / `profile` / `trust_workspaces` / `proxy_url` / `terminal` / `providers` / `profiles` / `extra`）；`TerminalConfig`（ADR-050 D1：`shell`/`columns`/`rows` 均 Option、skip_none，仅 Global 层可写入）；`ProviderConfig`（id / base_url / default / `use_proxy`：供应商级代理开关，Option、skip_none）/ `ModelConfig` / `ProfileConfig` / `ProfileOverrides` / `SessionOverrides` / `RunOverrides`；**schema 无 `api_key` 字段**，未知键落入 `extra`；`proxy_url` 的回环直连语义由 `pawork-providers` 运行时实现 |
+| `src/config/schema.rs` | ~400 | `PaworkConfig`（`default_provider` / `default_model` / `profile` / `trust_workspaces` / `approval_mode` / `workspace_trust` / `proxy_url` / `terminal` / `providers` / `profiles` / `extra`）；`TerminalConfig`（ADR-050 D1：`shell`/`columns`/`rows` 均 Option、skip_none，仅 Global 层可写入）；`ProviderConfig`（id / base_url / default / `use_proxy`：供应商级代理开关，Option、skip_none）/ `ModelConfig` / `ProfileConfig` / `ProfileOverrides` / `SessionOverrides` / `RunOverrides`；**schema 无 `api_key` 字段**，未知键落入 `extra`；`proxy_url` 的回环直连语义由 `pawork-providers` 运行时实现 |
 | `src/config/paths.rs` | ~140 | 平台定位常量与函数：`APP_QUALIFIER/ORGANIZATION/APPLICATION = dev/pawork/pawork`、`config_dir_for_app`（`directories`）、`global_config_path`（workspace 外的标准用户配置）、`workspace_config_path`（`<root>/.pawork/config.toml`）、`locate_workspace_config`（自起点向上找最近）、`default_search_roots` |
 | `src/config/merge.rs` | ~160 | `ConfigValue` 包装与 `Merge` trait；`merge_json`（对象按键递归、标量与数组整体替换）；`merge_ordered`（低→高依序合并） |
 | `src/config/error.rs` | ~70 | `ConfigParseError` / `ConfigError`：TOML 语法、schema 不匹配、IO 错误、写回序列化（`Write`）全部携带文件路径，`path()` 访问器 |
@@ -69,6 +69,8 @@
 | `src/import/session_scan.rs` | ~320 | 本地会话只读发现：`LocalSessionSource::{Claude, Codex}`、`LocalSessionRoots::detect/from_home`（`~/.claude/projects`、`~/.codex/sessions`）、`LocalSessionFile`、`scan_local_sessions`（深度与总量限额、symlink 跳过、Claude 排除 `agent-*.jsonl` subagent sidecar） |
 
 `fixtures/` 为 smoke 测试夹具（五来源目录 `.claude` / `.codex` / `.cursor` / `.grok` / `.pi` + `.mcp.json` + `AGENTS.md` / `CLAUDE.md`），不是文档。
+
+ADR-053（OPT-1）：schema 新增 `approval_mode: Option<pawork_policy::ApprovalMode>`（沿用 Policy 兼容读入 `on_failure`）与 `workspace_trust: BTreeMap<String, bool>`；缺失保持旧安全默认。新增 `write_approval_mode` / `write_workspace_trust` 共用既有 RMW 锁，逐项目信任写入不替换其他根路径。非 Builtin/Global 层两键剥离，分别产出 `ConfigWarning::PermissionsIgnored { key, tier, source_key, path }`。加载 golden `persisted_permissions_are_global_only` 固定 Global 权威、阻止仓库自我提权与非法审批模式拒绝。
 
 ## 3. 对外 API 面
 

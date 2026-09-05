@@ -4,6 +4,9 @@
 
 use std::path::PathBuf;
 
+mod preferences;
+pub use preferences::{load_preferences, save_preferences, DesktopPreferences};
+
 /// 桌面壳持有的 tokio Runtime。
 ///
 /// GUI Connection Protocol 的所有异步操作（连接、Command/Query 往返、事件泵）

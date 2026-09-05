@@ -53,7 +53,7 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 | `src/services/mod.rs` | ~10 | 七服务模块声明（全 `pub(crate)`） |
 | `src/services/session.rs` | ~730 | `SessionService`：会话生命周期、workspace 绑定（ADR-043：初始绑定与 session/main 分支同事务落盘，启动时读取全部绑定并以 `replace_workspace_cache` 原子替换；`bind_session_workspace` 保持仅内存供 devfixture）、事件序号 `next_sequence`、`resolve_session`（前缀/序号）、`resume_messages`（CLI：`seal_orphaned_approvals` 落 Denied）与 `resume_messages_keep_pending`（GUI：保留待审批）；`resolve_waiting_tool_call` 返回落库 envelope 序列供宿主补广播 |
 | `src/services/run.rs` | ~600 | `RunService`：`chat_turn`/`chat_turn_with_run_id`（Plan gate → quota 预检 → TurnContext 装配含 `git_status_note` → engine `run_session` → usage 落账）、`compact_session` 手动压缩、`append_payload` 事件追加（返回 envelope 供补广播） |
-| `src/services/approval.rs` | ~500 | `ApprovalService`：审批模式与 workspace trust 配置（启动 `configure` + SET-6b 运行时 `set_mode`/`set_workspace_trusted`，ADR-048：只改内存态、对之后启动的 run 生效）、`ApprovalPromptHost` 委派、模式变更时重建 `ToolScheduler` 配置 |
+| `src/services/approval.rs` | ~500 | `ApprovalService`：审批模式与宿主装配（启动 `configure`、运行时 `set_mode`）；ADR-053 由 Host 先落盘再更新审批快照，逐项目信任由 AppCore 配置解析、`ApprovalPromptHost` 委派、模式变更时重建 `ToolScheduler` 配置 |
 | `src/services/usage.rs` | ~400 | `UsageService`：持有 `ControlPlaneRuntime`；`projected_run_usage` 预算预检、`record_completed_usage` 落 `usage-ledger.sqlite3`、`usage_overview`/`session_usage`/`last_run_usage`/`estimate_cost_for` |
 | `src/services/extension.rs` | ~330 | `ExtensionService`：workspace roots/file-index、`expand_at_refs`（命中 file-index 的 `@` 附件展开为独立 Text part，64 KiB 截断标记）、`complete_at`、注入层加载（instructions/skills/profiles）、MCP slot 持有与关停 |
 | `src/services/import.rs` | ~310 | `ImportService`：本机会话扫描、compat 预览/应用（指纹校验 `sources_unchanged`）、`export_session_doc`/`import_session_file`（export/compat/pi 三格式） |
@@ -77,13 +77,15 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 | `src/gui_host/handlers/settings/catalog.rs` | ~260 | `provider_auth_status`：通道 descriptor 从 `CHANNEL_REGISTRY` 派生 display_name / endpoint_label / auth_methods（八通道）；auth 四态 none/connecting/connected{method,masked}/error，connecting 由 auth_flights 推导，env 命中报 connected 且 `masked_credential: null`；SET-4 A3 按 auth_methods 数据判定（声明 api_key 先查 api key 再查 OAuth meta）；catalog 三态 remote/fixed_fallback/unavailable 经 `models_overview` + `join_all` 并行探测，4s 超时，无持久缓存；SET-5 顶层 `default` 为 `DefaultModelPair` 或 null；`providers[].use_proxy` 输出生效值（未显式 `false` 即 `true`）。`set_provider_use_proxy`（ADR-052）：provider 已知（第一方通道或 config 登记）→ `write_provider_use_proxy` 写 Global 配置 → 短写锁 `AppCore::set_provider_use_proxy`，回执 `ProviderUseProxyData`；未知 provider fail-closed `unknown_provider`，Global 配置目录不可得 `config_unavailable`。`set_default_model`：provider 已知且 model 属可运行目录→`write_default_model_pair`→短写锁 `AppCore::set_default_model_pair` |
 | `src/gui_host/handlers/settings/auth.rs` | ~330 | `auth_set_api_key`（trim→`verify_api_key` 10s→`store_default_api_key` 原子替换；声明 oauth 的通道移除旧 OAuth，删除失败 fail-closed；验证失败 Failed 且旧凭证保留）、`auth_start`（仅 oauth；Device Flow 回 `AuthStartData`；后台 `oauth_finish` 与 CancellationToken select）、`auth_cancel`（仅 OAuth 等待可取消；api_key 验证拒绝取消，D3）、`auth_remove`（按 auth_methods 清理；env 命中仍清已存条目，无可删项提示 unset） |
 | `src/gui_host/handlers/settings/general.rs` | ~65 | Desktop Network 页沿用兼容 wire `general_settings` / `set_proxy_url`：`GeneralSettingsData`。校验用 `http_from_config` 预构 client；非法 URL `invalid_proxy_url`（文案只带解析类别，不含原文 URL）；代理原子写入 workspace 外的用户 Global `config.toml`，写锁内 `set_proxy_url` 禁止 `merge_with` |
-| `src/gui_host/handlers/settings/permissions.rs` | ~90 | `permissions_settings` 输出 `PermissionsSettingsData`。`set_approval_mode`：`ApprovalModeWire::from_str`（不收 kebab/`on_failure`），未知值 `invalid_approval_mode` 保旧；只改内存。`workspace_trust`：id 必须匹配 attached workspace，同一把写锁内校验+写入 |
+| `src/gui_host/handlers/settings/permissions.rs` | ~90 | `permissions_settings` 输出 `PermissionsSettingsData`。`set_approval_mode`：`ApprovalModeWire::from_str`（不收 kebab/`on_failure`），未知值 `invalid_approval_mode` 保旧；ADR-053 先原子写 Global 配置再更新内存。`workspace_trust`：id 必须匹配 attached workspace，同一把写锁内校验 attached id、解析 canonical 根路径、写 Global `workspace_trust`、更新内存 |
 | `src/gui_host/handlers/settings/terminal.rs` | ~100 | `terminal_settings` / `set_terminal_settings`：`TerminalSettingsData`。shell trim 非空且可解析、columns/rows ∈ 2..=1000，非法 `invalid_terminal_settings` 保旧；`shell: null` 清回平台默认；未设尺寸回落 `PtyWindowSize::default()` = 80×24 |
 | `src/gui_host/tests/` | ~4000 | `cfg(test)` 原 `tests.rs` 按域拆为 `mod.rs` + `run` / `session` / `approval` / `idempotency` / `terminal` / `settings`（约 60 条）：双射 pin、timeline 分页、`@` 展开三态、幂等、审批三态与重启后广播收口、合成终态闸门、fork、provider 切换、bus lagged、ADR-045 `terminal_close`、SET-2/4/5/6 settings（含脱敏、xAI 双认证、proxy/approval/terminal fail-closed） |
 | `tests/smoke.rs` | ~110 | env 门控真实 API 冒烟（`--ignored`），不进默认测试路径（`live-smoke` feature 显式启用） |
 | `tests/timeline_projection_host.rs` | ~160 | host `timeline()` 与 protocol 投影 golden 对拍 |
 | `tests/gui_server/session.rs` | ~1000 | 具名 test bin `gui_server_session`：握手/版本/capability/resume/心跳/慢消费 |
 | `tests/gui_server/multi_gui_runtime.rs` | ~830 | 具名 test bin `gui_server_multi_gui_runtime`：多 GUI 一致性/重连 replay/慢客户端隔离 |
+
+ADR-053 启动：显式 `AppLoadOptions.approval_mode` > Global 审批 > ReadOnly；显式 `trust_workspaces` 仅当次进程，缺省为当前根路径选择 > Global 全项目信任默认。`set_approval_host` 只替换交互入口，GUI/CLI 装配不再把已解析 trust 伪装成显式启动覆盖。Settings 修改当前信任时清除当次启动 trust 覆盖，以保存选择为准；其他项目回到各自配置。Host 持写锁跨写盘和内存更新，失败不改变 scheduler。现有 Settings 测试扩充为落盘/重载、项目隔离、未知模式拒绝与损坏 Global 文件保旧。
 
 ## 3. 对外 API 面
 
@@ -99,7 +101,7 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
   - `open_store(path)`：打开会话库跑迁移后读 v14 项目注册表、对 legacy 启动目录补登记（注册表为空时固定 `ws-default`）、按注册表重建 WorkspaceService 与内建工具并预载全部 session 归属绑定；`open_checkpoints(root)` / `open_control_plane(dir)`：分别打开检查点服务、usage/quota/audit 运行时；
   - `register_workspace(root) -> WorkspaceRecord`：持久幂等登记（同 canonical root 复用既有 stable id，同 id 异 root fail-closed），GUI `workspace_add` 入口；
   - `configure_approval(mode, trusted)`：设置审批模式与 workspace 信任并重建 `ToolScheduler` 配置（启动装配专用）；
-  - `set_approval_mode(mode)` / `set_workspace_trusted(trusted)`（SET-6b / ADR-048，pub(crate)）：运行时单字段切换 `ApprovalService` 内存态，并 Arc-swap 重建 `ToolScheduler`（进行中 run 持有旧 Arc，之后启动的 run 克隆新配置）；不持久化；
+  - `set_approval_mode(mode)` / `set_workspace_trusted(root, trusted)`（ADR-053，pub(crate)）：Host handler 写盘成功后更新配置内存与 scheduler 快照；进行中 run 不变。`workspace_trusted_for_roots` 按实际目标根路径读取逐项目信任，Run/Terminal 不借用其他项目信任；
   - `prime_extensions()`：file-index 扫描（失败仅 warn）+ MCP auto-start（失败不拖垮装配）。
 - `shutdown(self) -> Result<(), AppError>`：关停 MCP 客户端、落 tasks 快照、关闭 store；消费 self。
 - 只读访问器：`provider_id()` / `model()` / `adapter_protocol()` / `config()` / `auth_backend()` / `store()`（无 store 时 `Err`）/ `workspace_id()` / `workspace_name()` / `workspace_trusted()` / `approval_mode()` / `approval_host()` / `tool_names()` / `turn_context()`；workspace 注册表查询 `registered_workspaces()` / `workspace_by_id()` / `workspace_for_session()` / `latest_session_for_workspace()`。

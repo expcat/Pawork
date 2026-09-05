@@ -84,7 +84,7 @@
 
 ## 5. 契约与不变量
 
-- **版本协商**：`ClientConfig::supported_api_versions` 默认跟随 `pawork-protocol::SUPPORTED_API_VERSIONS`（1.0 / 1.1 / 1.2 / 1.3 / 1.4 / 1.5 / 1.6 / 1.7 / 1.8 / 1.9），服务端取 major 相同的最高共同 minor；不兼容必须显式拒绝（`IncompatibleVersion`），后续 ServerFrame 信封版本漂移由 `ClientError::Version` 捕获（ADR-036）。headless 侧 `SDK_API_VERSION` = 1.9 同理。
+- **版本协商**：`ClientConfig::supported_api_versions` 默认跟随 `pawork-protocol::SUPPORTED_API_VERSIONS`（1.0 / 1.1 / 1.2 / 1.3 / 1.4 / 1.5 / 1.6 / 1.7 / 1.8 / 1.9 / 1.10），服务端取 major 相同的最高共同 minor；不兼容必须显式拒绝（`IncompatibleVersion`），后续 ServerFrame 信封版本漂移由 `ClientError::Version` 捕获（ADR-036）。headless 侧 `SDK_API_VERSION` 跟随 `pawork_protocol::API_VERSION`（当前 1.10）同理。
 - **帧上限**：经 `ConnectOptions::max_frame_bytes` 与 transport 对齐 1 MiB（见 [transport.md](transport.md)）；本 crate 不改帧格式。
 - **FrameWant 路由不变量**：Response / Snapshot / Resume 只按 `request_id` 匹配；Event 消费路径独占 `request_id = None` 的错误帧；不匹配帧只 stash 不丢弃——并发调用互不吞帧。
 - **幂等重放**：同 `command_id` 的 `command_envelope` 重放由宿主 IdempotencyStore 返回相同响应（probe `command-idempotency` 钉住）。

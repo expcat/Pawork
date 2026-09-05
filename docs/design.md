@@ -1,6 +1,6 @@
 # Pawork 设计
 
-> 功能设计事实源：目标与原则、各能力域及其到参照项目的映射、明确排除的形态。包布局与冻结契约见 [architecture.md](architecture.md)；包内实现见 [包级 Spec](spec/README.md)；Desktop 见 [gui-design.md](gui-design.md)；参照手册与调研附录见 [references.md](references.md)。未排期候选见 [产品候选](spec/backlog.md)。
+> 功能设计事实源：目标与原则、各能力域及其到参照项目的映射、明确排除的形态。包布局与冻结契约见 [architecture.md](architecture.md)；当前活动线见 [ROADMAP.md](ROADMAP.md)；包内实现见 [包级 Spec](spec/README.md)；Desktop 见 [gui-design.md](gui-design.md)；参照手册与调研附录见 [references.md](references.md)。未排期候选见 [产品候选](spec/backlog.md)。
 
 ---
 
@@ -56,7 +56,7 @@
 | run_command + 沙箱（AppContainer/Landlock/Seatbelt）+ 可观测回退（不是拒跑；CLI/GUI 必须展示 fallback） | Codex sandbox；DeepSeek Harness `ctx.sandbox`；Windows Job Object + AppContainer |
 | shell 风险分类 → 审批（Dangerous 必询） | policy `shell` 分类；OpenCode `permission.bash` |
 | 取消 = 清理整棵进程树 | Job Object / 进程组 |
-| 输出截断 + 完整输出落工件 | 上下文预算纪律；对照 research §5.3 前缀稳定技巧 |
+| 输出截断 + 完整输出落工件 | 上下文预算纪律；对照 [references.md](references.md) 附录 A §5.3 前缀稳定技巧 |
 
 ### 上下文预算与用量
 

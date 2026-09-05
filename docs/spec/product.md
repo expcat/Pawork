@@ -1,6 +1,6 @@
 # Pawork 产品规格
 
-> 基线日期：2026-09-02。既有功能与旧 Desktop 阶段已归档；当前活动线是 [Settings：模型与供应商](settings.md)，SET-1 协议词汇与 SET-2 Host settings 门面已实现并通过定向测试，Desktop UI 与四家真实认证验收未开始。Pawork 当前是本机开发产品，不是已发布发行版。
+> 基线日期：2026-09-05。既有功能与旧 Desktop 阶段已归档；[Settings：模型与供应商](settings.md) 活动线已实现并通过本机真窗口验收（2026-09-05），四家真实账号认证矩阵人工验收仍 pending；当前活动线为 [Desktop 优化 OPT](../ROADMAP.md)：OPT-D 已签字、OPT-1 已实现并验证。Pawork 当前是本机开发产品，不是已发布发行版。
 
 ## 1. 产品定义
 
@@ -65,7 +65,7 @@ flowchart LR
 | PRD-GIT-01 | 必须能查看 diff、创建 checkpoint/rollback；GUI 变更面默认只读。 | 已实现/部分实现：CLI 与核心能力已实现，Desktop stage/unstage/hunk 写操作为候选。 |
 | PRD-CLIENT-01 | Desktop、headless 与 ACP 必须连接同一宿主，能力宣告、授权与实现保持同源且未登记 fail-closed。 | 已实现。 |
 | PRD-DESKTOP-01 | Desktop 必须呈现 TaskRail、Timeline、Composer、审批和 Inspector，并在断线后可恢复且不取消 Run。 | 生产链路已实现；主路径已验收，完整视觉/AX/跨平台仍需专项证据。 |
-| PRD-SETTINGS-01 | Desktop 必须通过 Host 管理供应商连接、API key/OAuth、模型发现与默认 provider/model；Secret 不得由 Desktop 持久化。 | 已立项，未实现；范围见 [settings.md](settings.md)。 |
+| PRD-SETTINGS-01 | Desktop 必须通过 Host 管理供应商连接、API key/OAuth、模型发现与默认 provider/model；Secret 不得由 Desktop 持久化。 | 已实现，本机真窗口验收通过（2026-09-05）；真实账号矩阵人工验收 pending；范围见 [settings.md](settings.md)。 |
 | PRD-OPS-01 | 本机实例必须可诊断、可观测数据目录/连接状态，并提供 service/status/watch/shutdown/doctor/usage 入口。 | 已实现；发布级运维、安装和三平台证据未立项。 |
 
 ## 5. 关键用户流程
@@ -108,7 +108,7 @@ flowchart LR
 4. Host 优先获取账号可见模型；不可获取时使用有版本标记的固定目录，并只暴露 Pawork adapter 可运行模型。
 5. 默认 provider/model 经 Host 持久化；Secret 只进入 auth backend。
 
-成功标准和安全前置见 [settings.md](settings.md)；SET-1/SET-2 已实现并通过定向测试，SET-3 起（Desktop UI、四家真实认证/目录验收）未开始。
+成功标准和安全前置见 [settings.md](settings.md)；SET-1～SET-6h 已实现，本机真窗口验收通过（2026-09-05）；四家真实认证/目录矩阵验收仍 pending。
 
 ## 6. 非目标与当前限制
 
@@ -117,7 +117,7 @@ flowchart LR
 - `NativeRestricted` 不是对抗性隔离；Sandbox 不应被表述为能抵御主动读取全部本机数据的恶意进程。
 - Desktop Changes 不执行 stage/unstage/hunk；`@` 有 host 展开但无候选浮层；Resources 无“已加载规则”分区。
 - Desktop 真实核心路径已完成本机验收；完整视觉/Accessibility、跨平台、Provider 矩阵与 OAuth 自然临期 refresh 尚未完成。
-- Desktop Settings 尚未实现；首批供应商、认证与模型发现只可描述为已立项。
+- Desktop Settings 四家真实账号认证/目录矩阵与 E4 签字仍未完成，相关结论不得写成已验收。
 - License、安装器、自更新、发布/回滚 runbook、全量门禁与三平台发布矩阵未获授权，不属于当前交付。
 
 ## 7. 产品完成口径

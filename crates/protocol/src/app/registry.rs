@@ -271,7 +271,7 @@ static COMMANDS: &[RegistryEntry] = &[
     },
     RegistryEntry {
         wire_name: "set_approval_mode",
-        // ADR-048 D2：会话内生效、不持久化；仅 GUI 开放。
+        // ADR-053：保存 Global 审批默认；仅 GUI 开放。
         gui: GuiChannelAccess {
             available: true,
             required_capability: None,

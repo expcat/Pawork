@@ -11,9 +11,7 @@ use crate::gui_server::GuiHostError;
 
 use super::{policy_approval_mode, settings_data, wire_approval_mode};
 
-/// ADR-048 D1：权限与审批三元组。三字段来源语义分列：前两个是当前
-/// 会话内存态（对之后启动的 run 生效），trust_workspaces_global 是
-/// Global 层持久值（None → null，只读展示，本片不写）。
+/// ADR-053：当前生效审批与项目信任；Global 全项目信任默认只读。
 pub(crate) async fn permissions_settings(
     adapter: &GuiHostAdapter,
     query: &AppQuery,
@@ -32,9 +30,7 @@ pub(crate) async fn permissions_settings(
     }))
 }
 
-/// ADR-048 D2：会话内切换审批模式。仅收五个 snake_case 规范值
-/// （[`ApprovalModeWire::from_str`]），未知值 Error 且旧值保留（fail-closed）；
-/// 只影响之后启动的 run，不持久化。
+/// ADR-053：Global 默认先落盘成功，再替换后续 Run 的审批快照。
 pub(crate) async fn set_approval_mode(
     adapter: &GuiHostAdapter,
     _envelope: &AppCommandEnvelope,
@@ -43,18 +39,20 @@ pub(crate) async fn set_approval_mode(
     let AppCommand::SetApprovalMode { mode } = command else {
         unreachable!("set_approval_mode handler receives SetApprovalMode")
     };
-    let parsed = ApprovalModeWire::from_str(mode)
-        .map_err(|reason| GuiHostAdapter::host_error("invalid_approval_mode", reason.to_string()))?;
+    let parsed = ApprovalModeWire::from_str(mode).map_err(|reason| {
+        GuiHostAdapter::host_error("invalid_approval_mode", reason.to_string())
+    })?;
     {
         let mut core = adapter.core.write().await;
+        let path = global_config_path()?;
+        pawork_workspace::config::write_approval_mode(&path, policy_approval_mode(parsed))
+            .map_err(|error| GuiHostAdapter::host_error("config_write", error.to_string()))?;
         core.set_approval_mode(policy_approval_mode(parsed));
     }
     Ok(settings_data(json!({ "approval_mode": parsed })))
 }
 
-/// ADR-048 D3：会话内信任切换。workspace_id 必须匹配当前 attached
-/// workspace，不匹配 Error 且保旧（fail-closed）；切换只影响之后启动的
-/// run，不写盘。校验与写入同一把写锁内完成，避免 check-then-set 竞态。
+/// ADR-053：仅当前 attached workspace，校验、写盘与运行态更新共用写锁。
 pub(crate) async fn workspace_trust(
     adapter: &GuiHostAdapter,
     _envelope: &AppCommandEnvelope,
@@ -79,9 +77,31 @@ pub(crate) async fn workspace_trust(
                 ),
             ));
         }
-        core.set_workspace_trusted(*trusted);
+        let workspace = core
+            .workspace_by_id(workspace_id)
+            .map_err(GuiHostAdapter::app_error)?;
+        let root = workspace
+            .roots
+            .first()
+            .and_then(|root| root.to_str())
+            .ok_or_else(|| {
+                GuiHostAdapter::host_error("unknown_workspace", "workspace has no persistable root")
+            })?
+            .to_owned();
+        pawork_workspace::config::write_workspace_trust(&global_config_path()?, &root, *trusted)
+            .map_err(|error| GuiHostAdapter::host_error("config_write", error.to_string()))?;
+        core.set_workspace_trusted(root, *trusted);
     }
     Ok(AppResponse::Data(json!({
         "workspace_trusted": trusted,
     })))
+}
+
+fn global_config_path() -> Result<std::path::PathBuf, GuiHostError> {
+    pawork_workspace::config::global_config_path().ok_or_else(|| {
+        GuiHostAdapter::host_error(
+            "config_unavailable",
+            "global config directory is unavailable",
+        )
+    })
 }

@@ -17,7 +17,7 @@
 
 ## 2. 模块与文件地图
 
-57 个 `.rs` 文件、约 32.3k 行，全部在 `[[bin]] pawork-desktop` target 内（无 lib target、无 crate `tests/` 目录）。
+57 个 `.rs` 文件、约 34.7k 行，全部在 `[[bin]] pawork-desktop` target 内（无 lib target、无 crate `tests/` 目录）。
 
 | 路径 | 行数 | 承载内容 |
 | --- | --- | --- |
@@ -87,6 +87,8 @@
 >
 > **CLN-5 模块增量（2026-09-04）**：删除 `projection.rs` / `controller.rs` / `ui/settings.rs` 神文件（无 shim）；Settings JSON 经 `pawork_client` protocol 类型反序列化；`SettingsQueryGate` 统一 loading/stale/写 gate；断线 `refresh_all_settings` + `mark_settings_stale` 单点扇出；AX identifier 不漂。`SetApprovalMode.mode` 仍为 String。
 
+ADR-053 新增 `src/platform/preferences.rs`：标准用户配置目录的 `desktop.json`；std + serde_json、串行 read/modify/write + 同目录临时文件 rename，保留未知键；缺文件默认，损坏/权限失败保旧并经 Appearance 的可见提示与 AX 同源展示。`AppView::restore_appearance` 只由正式窗口 bootstrap 在首帧前调用，恢复语言和 window rem；纯 UI 状态构造不访问用户磁盘。无新增业务依赖。`preferences_restore_and_preserve_other_keys` / `damaged_preferences_are_not_overwritten` 为本次定向回归。
+
 ## 3. 用户可见界面与交互面
 
 ### 3.1 启动参数与运行模式
@@ -100,7 +102,7 @@ pawork-desktop [--socket <path>] [--instance <name>] [--probe|--probe-smoke]
 - `--probe`：不开窗，connect + snapshot + `model_list` 后打印一行 `connected: instance=… sessions=… models=… catalog=…` 退出（成功 0 / 失败 1）。
 - `--probe-smoke`：同一条 controller 路径跑真实冒烟——流式回合、切模型、写文件触发审批、取消 run、两次断线重连（持久化回放 + `disconnect_survive` 断言进行中 run 未被断线取消），打印签名行退出。
 - 正常模式：1440×1024 居中窗口、最小 1080×720（透明 titlebar，traffic lights 悬浮于壳层，rail 顶部留 36px 安全区），启动即聚焦 Composer。
-- 仓库入口 `scripts/pawork-desktop.sh` 支持 `build|start`：只构建正式 `pawork`/`pawork-desktop`，默认独立 `desktop` 实例与 `ask-for-dangerous` + 本进程 workspace 信任；不加载 fixture、seed 或测试 profile。macOS 通过最小 `.app` bundle 执行真实二进制以获得正常窗口/AX 注册。
+- 仓库入口 `scripts/pawork-desktop.sh` 支持 `build|start`：只构建正式 `pawork`/`pawork-desktop`，默认独立 `desktop` 实例，审批与逐项目信任跟随 Global 配置；显式环境参数仅覆盖当次启动；不加载 fixture、seed 或测试 profile。macOS 通过最小 `.app` bundle 执行真实二进制以获得正常窗口/AX 注册。
 
 ### 3.2 三栏工作台（100%：侧栏 288 / Inspector 440 / 状态栏高 24；窗口宽 ≤1279 时侧栏 240 且 Inspector 默认折叠；150%：侧栏 320、宽度不足 1320 时 Inspector 折叠；Workspace ≥560）
 
@@ -174,7 +176,7 @@ AX 焦点口径：grouping 是直接按钮，name 表达目标动作、value 表
 
 - 界面 chrome 文案集中在 `ui/i18n.rs` 目录，`t(key)` / `t2(key, a, b)` 按当前语言返回 `&'static str`；未知 key 原样返回，不 panic。
 - 语言切换入口在 Settings → Appearance（`English` / `中文` 两个同源按钮，AX identifier `settings-language-en` / `settings-language-zh`），mouse / Enter / Space / AX Press 共用 `AppView::set_language`：更新全局语言与本地镜像、刷新 terminal_input placeholder、给出 status_hint 并整界面重渲染。
-- 仅当次 Desktop 会话生效、不持久化；重启回到 English（默认）。不触碰 Host / 会话 / Run 状态。
+- ADR-053：保存到用户配置目录 `desktop.json`，重启恢复；缺文件默认 English。不触碰 Host / 会话 / Run 状态。
 - 翻译边界：只翻译 chrome 文案（按钮、提示、空态、状态提示、tooltip、Settings 页）；session 标题、provider / model id、文件路径、工具输出、wire 错误原因等数据内容保持原文；品牌名「Pawork」、功能符号（✕ ↑ ⚙ + ▤ ◷ ↻ ↓）与示例数据不翻译。
 - render 与 AX 经同一 `t()` 调用同源取词；AX 节点 id 保持英文。
 
@@ -285,8 +287,8 @@ domain id 类型未从 client re-export，命令 / 查询经冻结的 serde 形�
 - **Changes scope**：Host 的 `diff_list_files` / `diff_get` 均解析 latest session；UI 明示该 scope，且两次请求的 session id 不一致时 fail-closed 要求刷新，不能把新会话内容挂到旧列表。
 - **心跳配比**：独立 15s 心跳任务对 host 30s 超时的节拍不可静默改动；断线不取消 Run。
 - **窗口、字号与焦点**：默认 1440×1024、最小 1080×720（`WINDOW_MIN_SIZE`）；字体以 16px 根字号的 rem token 表达，100% 保持冻结视觉，125%/150% 只由应用快捷键调整窗口 `rem_size`，几何 px token 不随意缩放；消息正文 / 完成摘要行高以 24px 为 100% 基准并换算 rem，放大时避免多行正文负 leading。150% rail=320，1080 窗口仍保留 760px Workspace。macOS 透明 titlebar；启动与用户发起的任务切换、审批、Fork 后聚焦 Composer；激活当前 task 仍关闭菜单并聚焦 Composer；Review changes 展开 Inspector 后聚焦 Changes 选中页签；点击输入框显式拉回焦点。
-- **Settings 外观页**：SET-6e 将上述三档字号暴露为始终可用的本地 Settings 页面；页面按钮、Cmd+=/Cmd+-/Cmd+0 和 AX Press 共享同一 `AppView.text_scale`，立即改变当前窗口 `rem_size`。当前不持久化，Desktop 重启恢复 100%；不借此创建第二套 preference 或 theme 状态。
-- **界面语言（i18n，2026-09-05）**：默认 English，Settings → Appearance 可切换简体中文；全局 `AtomicU8` + 静态目录，切换即时重渲染（含 AX name / value / description），仅当次会话生效、不持久化。render 与 AX 同源调用 `t()`；AX 节点 id、数据内容（session 标题、provider / model id、路径、工具输出、wire 错误原因）与品牌名 / 功能符号不翻译。不引入语言持久化、区域格式化工具链或第三语言；未知 key 原样回显。
+- **Settings 外观页**：SET-6e 将上述三档字号暴露为始终可用的本地 Settings 页面；页面按钮、Cmd+=/Cmd+-/Cmd+0 和 AX Press 共享同一 `AppView.text_scale`，立即改变当前窗口 `rem_size`。ADR-053：与语言共同保存到 `desktop.json`，快捷键同入口；写成功后才更新显示，重启恢复，缺文件默认 100%。
+- **界面语言（i18n，2026-09-05）**：默认 English，Settings → Appearance 可切换简体中文；全局 `AtomicU8` + 静态目录，切换即时重渲染（含 AX name / value / description），ADR-053 起保存到用户目录，重启恢复。render 与 AX 同源调用 `t()`；AX 节点 id、数据内容（session 标题、provider / model id、路径、工具输出、wire 错误原因）与品牌名 / 功能符号不翻译。不引入区域格式化工具链或第三语言；未知 key 原样回显。
 - **Settings 高级页**：SET-6f 将当前连接已有的非 Secret 握手摘要、socket endpoint、resume/ack 暴露为始终可达的本地只读页；Connecting/断线清空 runtime/API/capabilities，Failed/Disconnected 复用既有 Reconnect。runtime ID 不称作 CLI `--instance` 配置名；页面不显示 GUI token/token path、不推断 data directory、不 shell-out `doctor`，也不提供实例切换。
 - **Settings 关于页**：SET-6g 只在当前 Connected 握手提供非空 `host_data_dir` 时动态发布导航与只读页；三项值分别来自 Desktop 编译元数据、当前协商 API 和 Host 握手，render/AX 共用同一行模型。仅空白字段按缺失处理，但合法路径值原样展示；Connecting/断线清空握手并从 About 退回高级。不提供 updater/release/License 或任何写动作。
 - **Accessibility 单一语义源（ADR-042）**：`AppView` 只从 canonical UI 状态与布局 metric 构建显式 `AxTree`；壳层几何与 render 共享 `shell_layout::resolve`（100% 窄窗 rail=240、150% rail=320），`composer-status-hint` 发布字号百分比；稳定 identifier 与本地化 label 分离，macOS bridge 只做 AppKit 映射。AX press / focus / set-value 必须回到既有 handler 与 enable gate，未知请求 fail-closed；disabled 控件不得发布可执行 action。Grouping AX Press 直接 toggle；其余触发器先移 GPUI 焦点再开菜单，WorkspaceConfirm 关闭按来源回焦。Timeline AX 与 render 共享 rows + approval item 序列、tool group 折叠态和 Review gate；稳定帧读取真实 list bounds，首帧用共享公式回退，视口外条目不发布。Settings 普通树不得携带 API key 明文或 masked credential 片段；secure input 只发布等长掩码，stale 时输入与所有写动作 disabled 且无 Press。IME composing 中 AX Send 与键盘 Enter 同样不生效。新增可见交互须同批补节点、bounds、状态和 action 映射；非 macOS 当前为 no-op，不宣称已有平台 AX 实现。

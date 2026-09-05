@@ -27,7 +27,7 @@ fn read_table(path: &Path) -> Result<toml::Table, ConfigError> {
             return Err(ConfigError::Io {
                 path: path.to_path_buf(),
                 source: Box::new(error),
-            })
+            });
         }
     };
     toml::from_str(&content).map_err(|source| {
@@ -86,6 +86,39 @@ fn rmw_global_config<T>(
         atomic_write_table(path, &table)?;
     }
     Ok(value)
+}
+
+/// ADR-053：只写 Global 审批默认，共用串行 RMW。
+pub fn write_approval_mode(
+    path: &Path,
+    mode: pawork_policy::ApprovalMode,
+) -> Result<(), ConfigError> {
+    rmw_global_config(path, |table| {
+        let value = toml::Value::try_from(mode).map_err(|source| ConfigError::Write {
+            path: path.to_path_buf(),
+            source: Box::new(source),
+        })?;
+        table.insert("approval_mode".into(), value);
+        Ok((true, ()))
+    })
+}
+
+/// ADR-053：根路径由 Host 解析；一个项目的选择不得覆盖其他项目。
+pub fn write_workspace_trust(path: &Path, root: &str, trusted: bool) -> Result<(), ConfigError> {
+    rmw_global_config(path, |table| {
+        let entries = table
+            .entry("workspace_trust")
+            .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+        let entries = entries.as_table_mut().ok_or_else(|| ConfigError::Io {
+            path: path.to_path_buf(),
+            source: Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "workspace_trust is not a table",
+            )),
+        })?;
+        entries.insert(root.into(), toml::Value::Boolean(trusted));
+        Ok((true, ()))
+    })
 }
 
 /// 将 default_provider/default_model 原子写入指定（Global 层）配置文件。
@@ -151,7 +184,7 @@ pub fn write_provider_use_proxy(
                         std::io::ErrorKind::InvalidData,
                         "providers is not an array",
                     )),
-                })
+                });
             }
         };
         let entry = providers.iter_mut().find(|item| {

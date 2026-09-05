@@ -69,7 +69,7 @@ Full workspace gate: NOT RUN（当前未设置全量门禁）
 ## 6. 文档约定
 
 - 中文撰写，保留关键术语英文。
-- 常设文档（入口 [README.md](README.md)）：[docs/architecture.md](docs/architecture.md)（架构）· [docs/design.md](docs/design.md)（功能设计）· [docs/gui-design.md](docs/gui-design.md)（Desktop GUI，配套 [design/](design/README.md) 视觉基准）· [docs/references.md](docs/references.md)（参照项目与调研）· [docs/spec/README.md](docs/spec/README.md)（产品与包级 Spec）· 本文（工程约定与经验）。
+- 常设文档（入口 [README.md](README.md)）：[docs/architecture.md](docs/architecture.md)（架构）· [docs/ROADMAP.md](docs/ROADMAP.md)（当前活动线）· [docs/design.md](docs/design.md)（功能设计）· [docs/gui-design.md](docs/gui-design.md)（Desktop GUI，配套 [design/](design/README.md) 视觉基准）· [docs/references.md](docs/references.md)（参照项目与调研）· [docs/spec/README.md](docs/spec/README.md)（产品与包级 Spec）· 本文（工程约定与经验）。
 - **Spec 边界**：`docs/spec/` 产品篇是跨事实源的产品化汇总，包级 Spec 是包内功能的文档化镜像；均不替代源码/golden、`docs/architecture.md` 的布局与冻结契约。用户可见能力、契约、安全、Desktop、验证或运维边界变化时，同批更新对应 Spec；「已实现」「已验证」「已人工验收」「已发布」必须分开表述。
 - **包级 Spec 维护规则**：固定八节结构（见 [docs/spec/README.md](docs/spec/README.md)）。写入集改了模块树、对外 API、`pawork-*` 依赖边、feature 门、红线相关行为或测试资产时**同批**更新该包 `docs/spec/crates/<pkg>.md`；冲突以源码为准并回写。
 - 交叉引用使用仓库内相对路径链接。

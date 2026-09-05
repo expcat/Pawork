@@ -218,7 +218,11 @@ impl AppView {
                     .whitespace_normal()
                     .text_size(font::BODY_SM)
                     .text_color(dark().text.secondary)
-                    .child(t("settings.appearance.language.hint")),
+                    .child(
+                        self.appearance_error
+                            .as_deref()
+                            .unwrap_or(t("settings.appearance.language.hint")).to_owned(),
+                    ),
             );
 
         div()

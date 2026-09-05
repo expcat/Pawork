@@ -339,7 +339,7 @@ impl DesktopController {
         true
     }
 
-    /// 会话内切换审批模式（set_approval_mode，ADR-048 D2：不持久化、只
+    /// 保存审批默认（set_approval_mode，ADR-053：Global 落盘、只
     /// 影响之后启动的 run）。Data 回执即写后状态；Error / 传输失败经
     /// OperationFailed 呈现，不动 UI 现有生效值。
     pub fn set_approval_mode(&self, mode: ApprovalModeWire) {
@@ -387,7 +387,7 @@ impl DesktopController {
         });
     }
 
-    /// 会话内信任切换（workspace_trust，ADR-048 D3：workspace_id 必须匹配
+    /// 当前项目信任保存（workspace_trust，ADR-053：workspace_id 必须匹配
     /// 当前 attached workspace，由 Host 校验；不写盘）。Data 回执即写后
     /// 状态；失败 fail-closed 不动 UI 现有生效值。
     pub fn set_workspace_trust(&self, workspace_id: &str, trusted: bool) {

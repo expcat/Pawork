@@ -145,15 +145,19 @@ impl RunService {
         };
         let mut turn_context = core.turn_context();
         turn_context.injected_layers = core.load_injected_layers_for_session(session_id).await;
+        let workspace_trusted = core.workspace_trusted_for_roots(&run_workspace.roots);
         let loop_ctx = SessionLoopCtx {
-            scheduler: core.scheduler.clone(),
+            scheduler: std::sync::Arc::new(
+                core.scheduler
+                    .with_approval_snapshot(core.approval.mode(), workspace_trusted),
+            ),
             workspace_id: run_workspace.id.clone(),
             run_id: run_id.clone(),
             next_message: &core.next_message,
             next_request: &core.next_request,
             policy: PolicyEngine::new(core.approval.mode()),
             approval_mode: core.approval.mode(),
-            workspace_trusted: core.approval.workspace_trusted(),
+            workspace_trusted,
             descriptors: core.descriptors.clone(),
             approval_host: core.approval.host(),
             store: Some(core.store()?),
@@ -258,15 +262,19 @@ impl RunService {
             render,
             branch_id: core.session_active_branch(session_id).await?,
         };
+        let workspace_trusted = core.workspace_trusted_for_roots(&run_workspace.roots);
         let loop_ctx = SessionLoopCtx {
-            scheduler: core.scheduler.clone(),
+            scheduler: std::sync::Arc::new(
+                core.scheduler
+                    .with_approval_snapshot(core.approval.mode(), workspace_trusted),
+            ),
             workspace_id: run_workspace.id.clone(),
             run_id,
             next_message: &core.next_message,
             next_request: &core.next_request,
             policy: PolicyEngine::new(core.approval.mode()),
             approval_mode: core.approval.mode(),
-            workspace_trusted: core.approval.workspace_trusted(),
+            workspace_trusted,
             descriptors: core.descriptors.clone(),
             approval_host: core.approval.host(),
             store: Some(core.store()?),

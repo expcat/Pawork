@@ -74,9 +74,9 @@ Workspace 为 **21 成员（19 库 + 2 应用）**：19 个库平铺 `crates/<�
 | 工具契约 | `AgentTool`（`descriptor`/`execute`）、`ToolEventSink`、`ToolExecutionContext`（`workspace_id` + 相对 `working_directory`）、`ToolDescriptor`（含 `requires_approval`/`read_only`/`allowed_in_untrusted_workspace`） | `crates/domain::tool_api` |
 | Policy 契约 | `PolicyDecision`（`Allow/Deny/AskUser/AllowWithConstraints`）、`ApprovalPrompt`+`RiskLevel`、`ApprovalMode`（默认 `ReadOnly`；旧 `on-failure` 仅兼容读入并映射 `NeverAsk`） | `crates/policy` 安全红线回归 |
 | 引擎语义 | 审批经 `ApprovalResolver` await（`ToolApprovalRequested/Responded` 事件对；Requested 在等待前落盘）、`CancelHandle`+`CancelReason`、`LoopContext` 工具执行注入点 | `crates/engine` 定向回归 |
-| 配置 schema | TOML、`ConfigTier`（Builtin<Global<Profile<Workspace<Session<Run）、`PaworkConfig`/`ProviderConfig{id, base_url}`（**无 api_key 字段**） | `crates/workspace::config` 六层矩阵测试 |
+| 配置 schema | TOML、`ConfigTier`（Builtin<Global<Profile<Workspace<Session<Run）、`PaworkConfig`/`ProviderConfig{id, base_url}`（**无 api_key 字段**）；ADR-053 追加 Global-only `approval_mode` / `workspace_trust`，非 Global 高层剥离 | `crates/workspace::config` 六层矩阵测试 |
 | blob 格式 | `PWB1` + protected AEAD 边界；artifact/protected/checkpoint 三区 | `crates/storage::blob` golden |
-| GUI 协议 | 帧格式带版本协商；`SUPPORTED_API_VERSIONS` 1.0–1.9（1.3 Terminal 生命周期 `terminal_close` + `TerminalExited`，按协商 minor 门控推送；1.4 Settings 认证；1.5 通用页；1.6 权限与审批；1.7 工具与 MCP；1.8 终端设置；1.9 Accepted 握手可选 `host_data_dir`）；typegen 检入 [`schemas/`](../schemas/)（core-api/gui-protocol/headless-json）；三通道可用性单源 `protocol::app::registry`，未登记 fail-closed | 帧 golden + typegen 断言（`crates/protocol`） |
+| GUI 协议 | 帧格式带版本协商；`SUPPORTED_API_VERSIONS` 1.0–1.10（1.3 Terminal 生命周期 `terminal_close` + `TerminalExited`，按协商 minor 门控推送；1.4 Settings 认证；1.5 通用页；1.6 权限与审批；1.7 工具与 MCP；1.8 终端设置；1.9 Accepted 握手可选 `host_data_dir`；1.10 供应商级代理开关 `set_provider_use_proxy`）；typegen 检入 [`schemas/`](../schemas/)（core-api/gui-protocol/headless-json）；三通道可用性单源 `protocol::app::registry`，未登记 fail-closed | 帧 golden + typegen 断言（`crates/protocol`） |
 | headless JSON | `HeadlessResponse`（`type=event|response`）；`run`/`chat --prompt --json` 已对齐；stdout 仅 JSONL；`--json` → 正式 headless 映射见 [spec/contracts.md](spec/contracts.md) | `crates/protocol` headless golden |
 | 控制面 | usage `dedup_key`；audit JSONL | `fixtures/audit/event-v1.jsonl` + `crates/control-plane` golden |
 | 缓存注解（附加式） | `CanonicalModelRequest` 缓存策略枚举（`Off/Auto/Explicit{retention}`）+ 前缀分段标注；`ModelResponseSummary`/usage 增 `cache_read`/`cache_write`；serde 向后兼容 | golden 先行；方案见 [references.md](references.md) 附录 B（F5-B） |
@@ -113,7 +113,7 @@ Workspace 为 **21 成员（19 库 + 2 应用）**：19 个库平铺 `crates/<�
 - **Session→Workspace**：`sessions.workspace_id` 可空弱引用，写穿 + 启动预载；不回填历史；无 FK。
 - **持久项目注册表**：`workspaces` 表按 canonical root 幂等登记，`root_path` UNIQUE；同 id 不同 root fail-closed。有可用项目时未绑定/未登记会话 fail-closed。
 - **Terminal 生命周期**：`terminal_close` 注销注册表；`TerminalExited` live 事件按协商 minor 门控；重复 close 报 `not_found`（对客户端是「清理目标已达成」）。
-- **Settings wire**：API key 明文只走非重放单帧 `ApiKeySecret`（Debug 恒 `[REDACTED]`，无 Display）；`SetApprovalMode` / `WorkspaceTrust` 会话内生效、不持久化；`SetProxyUrl` 写 workspace 外标准用户配置目录的 Global `config.toml`，`SetTerminalSettings` / MCP remove 同写 Global 层；About 只在握手提供非空 `host_data_dir` 时显示，不从 endpoint 反推。
+- **Settings wire**：API key 明文只走非重放单帧 `ApiKeySecret`（Debug 恒 `[REDACTED]`，无 Display）；`SetApprovalMode` 保存 Global `approval_mode` 默认，`WorkspaceTrust` 保存 Global `workspace_trust` canonical 根路径布尔项（[ADR-053](spec/settings.md#adr-053opt-1-设置持久化2026-09-05)）；先落盘后更新后续 Run，进行中 Run 不变；`SetProxyUrl` 写 workspace 外标准用户配置目录的 Global `config.toml`，`SetTerminalSettings` / MCP remove 同写 Global 层；About 只在握手提供非空 `host_data_dir` 时显示，不从 endpoint 反推。
 - **Desktop AX**：GPUI 锁定 `=0.2.2`；显式语义树 + AppKit 虚拟 AX 元素；AX action 回到既有 AppView handler 与 enable gate。
 - **CancellationToken**：exec 与其它包仍双轨，不借路径依赖合并类型。
 - **配置写盘**：Global 层入口共用单一 RMW 内核（`CONFIG_WRITE_LOCK` + tmp/rename）；OAuth/MCP 测试与可注入默认 HTTP 客户端均为 `redirect(Policy::none())`。

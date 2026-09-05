@@ -111,9 +111,7 @@ impl GuiHostAdapter {
     pub fn with_approvals(core: Arc<AppCore>, approvals: Arc<GuiApprovalHost>) -> Self {
         let mut owned = Arc::try_unwrap(core)
             .unwrap_or_else(|_| panic!("GuiHostAdapter requires a uniquely owned AppCore Arc"));
-        let mode = owned.approval_mode();
-        let trusted = owned.workspace_trusted();
-        owned.configure_approval(mode, trusted, approvals.clone());
+        owned.set_approval_host(approvals.clone());
         Self::from_locked(Arc::new(tokio::sync::RwLock::new(owned)), approvals)
     }
 
@@ -383,7 +381,7 @@ impl GuiHost for GuiHostAdapter {
                             json!({
                                 "id": record.workspace_id.as_str(),
                                 "name": record.name,
-                                "trusted": core.workspace_trusted(),
+                                "trusted": core.workspace_trusted_for_roots(std::slice::from_ref(&record.root_path)),
                             })
                         })
                         .collect(),
