@@ -10,9 +10,13 @@
     },
     "issued_at": 1,
     "query": {
-      "method": "terminal_settings"
+      "method": "model_list",
+      "params": {
+        "include_disabled": true,
+        "provider_id": "glm-coding"
+      }
     },
-    "request_id": "query-terminal-settings",
+    "request_id": "query-model-list-include-disabled",
     "source": {
       "client_id": "gui-1",
       "type": "local_gui"

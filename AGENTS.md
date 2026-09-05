@@ -153,3 +153,7 @@ Lagged 后不得伪造起点直发；改经 hub 真序列取信封，并回 `Rep
 - 菜单开着时 Timeline 条目被虚拟化卸载，浮层随条目回收，属可接受行为。
 - `apps/desktop` 直接业务依赖只允许 `pawork-client`。
 - 功能测试用模型固定为 `opencode-go / glm-5.3-flash`（当次 Host 参数，不写持久默认）。
+
+**运行中 bundle 覆盖即 SIGKILL**
+
+正式脚本 `cp -f` 覆盖 `Pawork.app` 内正在运行的二进制后，从同一 bundle 路径新启动的进程立即被 SIGKILL（exit 137、无日志）；已运行实例不受影响。需与正在运行的窗口并行开第二个实例验收时，复制平行 bundle（如 `Pawork-<instance>.app`）再启动，勿复用同一路径。

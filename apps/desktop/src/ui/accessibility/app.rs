@@ -19,9 +19,9 @@ use crate::ui::components::dropdown::{ANCHOR_GAP_Y, MENU_MAX_HEIGHT};
 use crate::ui::i18n::t;
 use crate::ui::input_area::{grouped_model_menu_entries, MODEL_MENU_GROUP_HEADER_HEIGHT};
 use crate::ui::inspector::{
-    plain_terminal_output, terminal_header_height, terminal_resize_status_label,
-    terminal_size_for_display, terminal_stepper_ax_rects, InspectorTab, TERMINAL_COLUMNS_STEP,
-    TERMINAL_ROWS_STEP, terminal_empty_output,
+    plain_terminal_output, terminal_empty_output, terminal_header_height,
+    terminal_resize_status_label, terminal_size_for_display, terminal_stepper_ax_rects,
+    InspectorTab, TERMINAL_COLUMNS_STEP, TERMINAL_ROWS_STEP,
 };
 use crate::ui::resources::ResourcesFetch;
 use crate::ui::settings::{
@@ -33,11 +33,11 @@ use crate::ui::shell_layout;
 use crate::ui::theme::{font, metrics};
 use crate::ui::timeline_entry::{display_time, tool_group_summary};
 use crate::ui::{
-    activity_header_visibility, rail_project_occurrence_key, rail_session_focus_key,
-    rail_session_archive_focus_key, rail_session_rename_focus_key, terminal_can_operate,
+    activity_header_visibility, rail_project_occurrence_key, rail_session_archive_focus_key,
+    rail_session_focus_key, rail_session_rename_focus_key, terminal_can_operate,
     terminal_can_reopen, terminal_close_label, terminal_known_ended, terminal_start_enabled,
-    timeline, AppRoute, AppView, MenuKind, SettingsPage, workspace_empty_hint,
-    workspace_empty_title,
+    timeline, workspace_empty_hint, workspace_empty_title, AppRoute, AppView, MenuKind,
+    SettingsPage,
 };
 
 pub(crate) const PAD: f32 = 8.0;
@@ -203,7 +203,9 @@ impl AppView {
                         .update(cx, |input, cx| input.set_text(value, cx)),
                     "session-rename-input" => {
                         if let Some(rename) = self.session_rename.as_ref() {
-                            rename.input.update(cx, |input, cx| input.set_text(value, cx));
+                            rename
+                                .input
+                                .update(cx, |input, cx| input.set_text(value, cx));
                         }
                     }
                     "terminal-input" => self
@@ -618,53 +620,50 @@ impl AppView {
         let workspace_x = sidebar_width;
 
         // SET-3 顶层路由：Settings 壳与工作台互斥（与 render 同源）。
-        let mut tree = if settings_route {
-            AxTree::new(width, height)
-                .child(
-                    self.settings_rail_ax(
+        let mut tree =
+            if settings_route {
+                AxTree::new(width, height)
+                    .child(self.settings_rail_ax(
                         window,
                         AxRect::new(0.0, 0.0, sidebar_width, content_height),
-                    ),
-                )
-                .child(self.settings_page_ax(
-                    window,
-                    cx,
-                    AxRect::new(
-                        workspace_x,
-                        0.0,
-                        (width - sidebar_width).max(0.0),
-                        content_height,
-                    ),
-                ))
-        } else {
-            let mut tree = AxTree::new(width, height)
-                .child(
-                    self.sidebar_ax(
+                    ))
+                    .child(self.settings_page_ax(
+                        window,
+                        cx,
+                        AxRect::new(
+                            workspace_x,
+                            0.0,
+                            (width - sidebar_width).max(0.0),
+                            content_height,
+                        ),
+                    ))
+            } else {
+                let mut tree = AxTree::new(width, height)
+                    .child(self.sidebar_ax(
                         window,
                         cx,
                         AxRect::new(0.0, 0.0, sidebar_width, content_height),
-                    ),
-                )
-                .child(self.workspace_ax(
-                    window,
-                    cx,
-                    AxRect::new(workspace_x, 0.0, workspace_width, content_height),
-                    shell.inspector_open,
-                ));
-            if shell.inspector_open {
-                tree = tree.child(self.inspector_ax(
-                    window,
-                    cx,
-                    AxRect::new(
-                        width - inspector_width,
-                        0.0,
-                        inspector_width,
-                        content_height,
-                    ),
-                ));
-            }
-            tree
-        };
+                    ))
+                    .child(self.workspace_ax(
+                        window,
+                        cx,
+                        AxRect::new(workspace_x, 0.0, workspace_width, content_height),
+                        shell.inspector_open,
+                    ));
+                if shell.inspector_open {
+                    tree = tree.child(self.inspector_ax(
+                        window,
+                        cx,
+                        AxRect::new(
+                            width - inspector_width,
+                            0.0,
+                            inspector_width,
+                            content_height,
+                        ),
+                    ));
+                }
+                tree
+            };
         if !settings_route {
             // StatusBar 视觉上不覆盖左栏账户区；AX frame 与 render 同源。
             tree = tree.child(self.status_ax(AxRect::new(
@@ -764,11 +763,11 @@ impl AppView {
             // 否则按钮 frame 比可见位置高 8px（ADR-042 同源约束）。
             y += PAD;
             sidebar = sidebar.child(
-            AxNode::new(
-                "reconnect",
-                AxRole::Button,
-                t("rail.reconnect"),
-                AxRect::new(
+                AxNode::new(
+                    "reconnect",
+                    AxRole::Button,
+                    t("rail.reconnect"),
+                    AxRect::new(
                         inset,
                         y,
                         (frame.width - inset * 2.0).max(0.0),
@@ -845,8 +844,8 @@ impl AppView {
                     if project_index > 0 {
                         row_y += metrics::RAIL_PROJECT_BLOCK_GAP;
                     }
-                    let (nodes, consumed) =
-                        self.project_ax_nodes(window, cx, project, None, row_y, list_width, can_create);
+                    let (nodes, consumed) = self
+                        .project_ax_nodes(window, cx, project, None, row_y, list_width, can_create);
                     row_y += consumed;
                     for node in nodes {
                         list = list.child(node);
@@ -1055,20 +1054,20 @@ impl AppView {
                 let action_y = row_top
                     + (metrics::RAIL_TASK_ROW_HEIGHT - metrics::RAIL_SESSION_ACTION_SIZE) / 2.0;
                 let mut row = AxNode::new(
-                        session_identifier(&session.session_id),
-                        AxRole::ListItem,
-                        session.title.clone(),
-                        AxRect::new(inset, top + consumed, width, metrics::RAIL_TASK_ROW_HEIGHT),
-                    )
-                    .description(session_status_description(status, unread))
-                    .focused(
-                        self.open_menu.is_none()
-                            && self
-                                .rail_row_focus
-                                .get(&focus_key)
-                                .is_some_and(|handle| handle.is_focused(window)),
-                    )
-                    .selected(is_active);
+                    session_identifier(&session.session_id),
+                    AxRole::ListItem,
+                    session.title.clone(),
+                    AxRect::new(inset, top + consumed, width, metrics::RAIL_TASK_ROW_HEIGHT),
+                )
+                .description(session_status_description(status, unread))
+                .focused(
+                    self.open_menu.is_none()
+                        && self
+                            .rail_row_focus
+                            .get(&focus_key)
+                            .is_some_and(|handle| handle.is_focused(window)),
+                )
+                .selected(is_active);
                 if renaming {
                     // 行内改名：行不再激活打开，发布编辑器（Focus / SetValue
                     // 与 composer 输入同构；AXValue 即草稿纯文本）。
@@ -1098,10 +1097,8 @@ impl AppView {
                     row = row.action(AxAction::Press);
                     // OPT-D：选中行右侧改名 / 归档按钮与 render 同源发布。
                     if is_active {
-                        let rename_focus_key =
-                            rail_session_rename_focus_key(&session.session_id);
-                        let archive_focus_key =
-                            rail_session_archive_focus_key(&session.session_id);
+                        let rename_focus_key = rail_session_rename_focus_key(&session.session_id);
+                        let archive_focus_key = rail_session_archive_focus_key(&session.session_id);
                         row = row
                             .child(
                                 AxNode::new(
@@ -1257,12 +1254,16 @@ impl AppView {
         );
         if trigger_visible {
             header = header.child(
-                AxNode::new("inspector-toggle", AxRole::Button, t("header.tooltip_activity"), action)
-                    .focused(
-                        self.open_menu.is_none()
-                            && self.inspector_activity_focus.is_focused(window),
-                    )
-                    .action(AxAction::Press),
+                AxNode::new(
+                    "inspector-toggle",
+                    AxRole::Button,
+                    t("header.tooltip_activity"),
+                    action,
+                )
+                .focused(
+                    self.open_menu.is_none() && self.inspector_activity_focus.is_focused(window),
+                )
+                .action(AxAction::Press),
             );
             if popover_visible {
                 let geometry =
@@ -1298,12 +1299,15 @@ impl AppView {
             header
         } else {
             header.child(
-                AxNode::new("header-new-task", AxRole::Button, t("timeline.new_task"), action)
-                    .enabled(self.can_create_task())
-                    .focused(
-                        self.open_menu.is_none() && self.header_new_task_focus.is_focused(window),
-                    )
-                    .action(AxAction::Press),
+                AxNode::new(
+                    "header-new-task",
+                    AxRole::Button,
+                    t("timeline.new_task"),
+                    action,
+                )
+                .enabled(self.can_create_task())
+                .focused(self.open_menu.is_none() && self.header_new_task_focus.is_focused(window))
+                .action(AxAction::Press),
             )
         }
     }
@@ -3591,6 +3595,7 @@ mod tests {
                             },
                         ],
                         default: None,
+                        role_defaults: Default::default(),
                     },
                 );
                 view.ensure_settings_api_key_inputs(cx);

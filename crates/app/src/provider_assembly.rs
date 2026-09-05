@@ -140,6 +140,17 @@ impl AppCore {
             model,
         )
         .await?;
+        // ADR-055 D4：会话内模型切换同闸——目标模型禁用时结构化
+        // fail-closed，不静默回退其他模型。
+        if !self
+            .config
+            .is_model_enabled(provider_id.as_str(), entry.id.as_str())
+        {
+            return Err(AppError::ModelDisabled {
+                provider: provider_id.as_str().to_string(),
+                model: entry.id.as_str().to_string(),
+            });
+        }
         let from = (self.provider_id.clone(), self.model.clone());
         self.model = entry.id.clone();
         let to = (self.provider_id.clone(), self.model.clone());
@@ -203,6 +214,16 @@ impl AppCore {
                     provider: provider.to_string(),
                 })?
         };
+        // ADR-055 D4：切换后生效对禁用时 fail-closed，不启动后续轮。
+        if !self
+            .config
+            .is_model_enabled(target.as_str(), target_model.as_str())
+        {
+            return Err(AppError::ModelDisabled {
+                provider: target.as_str().to_string(),
+                model: target_model.as_str().to_string(),
+            });
+        }
 
         let from = (self.provider_id.clone(), self.model.clone());
         self.provider = assembled.adapter;

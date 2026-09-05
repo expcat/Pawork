@@ -12,6 +12,7 @@ use thiserror::Error;
 #[cfg(feature = "typegen")]
 use ts_rs::TS;
 
+use super::settings::DefaultModelPair;
 use super::version::{ApiVersion, DEFAULT_CONTROL_PLANE_PRINCIPAL};
 
 /// Provider API Key 明文 newtype（SET-1，ADR-046）。
@@ -258,6 +259,17 @@ where
     Option::<String>::deserialize(deserializer)
 }
 
+/// 必填但可空的结构化字段（ADR-055 `SetDefaultRoleModel.value`）：
+/// 同 `deserialize_required_nullable_string` 先例，泛型到任意 T——
+/// 显式 `null` 解码为 `None`，缺字段是 missing-field 解码错误。
+fn deserialize_required_option<'de, T, D>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: Deserializer<'de>,
+{
+    Option::<T>::deserialize(deserializer)
+}
+
 fn validate_client_uri(uri: &str) -> Result<(), String> {
     if uri.is_empty() || uri.len() > MAX_CLIENT_CONTEXT_URI_BYTES {
         return Err(format!(
@@ -433,6 +445,31 @@ pub enum AppCommand {
     SetProviderUseProxy {
         provider_id: ProviderId,
         use_proxy: bool,
+    },
+    /// ADR-055 OPT-3a：单模型启用/禁用（provider `disabled_models`
+    /// denylist 写）。provider 未知或模型不在该 provider 当前可运行目录由
+    /// 宿主 fail-closed；禁用命中角色默认对时同次写盘清除该键对，回执
+    /// `cleared_roles` 按 wire 名列出（D3）。
+    SetModelEnabled {
+        provider_id: ProviderId,
+        model_id: String,
+        enabled: bool,
+    },
+    /// ADR-055 OPT-3a：provider 全量模型启用/禁用。全开 = 清空该
+    /// provider denylist；全关 = Host 按当前聚合目录展开全部模型写入
+    /// denylist（目录为空 fail-closed，不写盘）。
+    SetProviderModelsEnabled {
+        provider_id: ProviderId,
+        enabled: bool,
+    },
+    /// ADR-055 OPT-3b：四默认角色（conversation/naming/vision/search）读写。
+    /// `role` 为必填 snake_case 串，未知值由宿主校验 fail-closed（同
+    /// `SetApprovalMode` 先例）；`value` 必填可空：显式 `null` 清除该
+    /// 角色键对，缺字段是解码错误（同 `SetProxyUrl` 先例）。
+    SetDefaultRoleModel {
+        role: String,
+        #[serde(deserialize_with = "deserialize_required_option")]
+        value: Option<DefaultModelPair>,
     },
     /// 审批默认保存（ADR-053）：`mode` 为必填 snake_case 串，
     /// 未知值由宿主校验失败（fail-closed 保旧）；只影响之后启动的 run，

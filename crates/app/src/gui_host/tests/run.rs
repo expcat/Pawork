@@ -1020,3 +1020,68 @@ async fn run_start_with_provider_does_not_silently_keep_same_model_id() {
         error.message
     );
 }
+
+/// ADR-055 D4：生效模型或显式请求模型被禁用时 RunStart 结构化
+/// fail-closed（model_disabled），不启动 Run、不登记 ActiveGuiRun。
+#[tokio::test]
+async fn run_start_fails_closed_when_model_disabled() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
+        .await
+        .expect("store");
+    let provider =
+        MockProvider::sequence(Vec::new()).with_models(vec![pawork_domain::ModelDefinition {
+            id: pawork_domain::ModelId::from("model-2"),
+            display_name: "Model 2".into(),
+            context_window_tokens: 8_000,
+            max_output_tokens: 1_024,
+            capabilities: Default::default(),
+        }]);
+    let mut core = AppCore::from_parts(
+        Arc::new(provider),
+        None,
+        pawork_domain::ModelId::from("model-1"),
+        pawork_domain::ProviderId::from("mock"),
+        Some(store),
+    );
+    core.config
+        .providers
+        .push(pawork_workspace::config::ProviderConfig {
+            id: "mock".into(),
+            disabled_models: vec!["model-1".into(), "model-2".into()],
+            ..Default::default()
+        });
+    let session = core.create_session("disabled").await.expect("session");
+    let adapter = GuiHostAdapter::new(Arc::new(core));
+
+    // 无切换请求：会话当前生效模型（model-1）被禁用 → fail-closed。
+    let error = adapter
+        .command(&command_envelope(AppCommand::RunStart {
+            session_id: session.clone(),
+            user_message: "hi".into(),
+            model: None,
+            provider: None,
+            profile: None,
+        }))
+        .await
+        .expect_err("disabled effective model must fail closed");
+    assert_eq!(error.code, "model_disabled", "error: {error:?}");
+    assert!(
+        adapter.runs.active().is_empty(),
+        "failed RunStart must not register an active run"
+    );
+
+    // 显式切换到禁用模型（model-2）：switch_model 同闸 fail-closed。
+    let error = adapter
+        .command(&command_envelope(AppCommand::RunStart {
+            session_id: session,
+            user_message: "hi".into(),
+            model: Some(pawork_domain::ModelId::from("model-2")),
+            provider: None,
+            profile: None,
+        }))
+        .await
+        .expect_err("disabled requested model must fail closed");
+    assert_eq!(error.code, "model_disabled", "error: {error:?}");
+    assert!(adapter.runs.active().is_empty());
+}

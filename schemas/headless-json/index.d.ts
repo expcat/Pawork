@@ -32,6 +32,7 @@ export type { CompatImportReport } from "./CompatImportReport";
 export type { CompatSource } from "./CompatSource";
 export type { ConnectionId } from "./ConnectionId";
 export type { CoreInstanceId } from "./CoreInstanceId";
+export type { DefaultModelPair } from "./DefaultModelPair";
 export type { DiagnosticLevel } from "./DiagnosticLevel";
 export type { ErrorCategory } from "./ErrorCategory";
 export type { ErrorContext } from "./ErrorContext";

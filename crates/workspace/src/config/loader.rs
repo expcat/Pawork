@@ -78,6 +78,22 @@ pub enum ConfigWarning {
         source_key: String,
         path: Option<PathBuf>,
     },
+    /// 非 builtin/global 层尝试设置 `providers[].disabled_models`（越权改写
+    /// 模型启用集），已被忽略（ADR-055 D1：Global 独占偏好）。
+    ProviderDisabledModelsIgnored {
+        tier: ConfigTier,
+        source_key: String,
+        path: Option<PathBuf>,
+    },
+    /// 非 builtin/global 层尝试设置顶层 vision/search 角色默认模型键
+    /// （ADR-055 D5：与 proxy_url 同为 Global 独占），已被忽略。
+    /// conversation/naming 仍按既有分层合并，不在此闸。
+    GlobalRoleModelIgnored {
+        key: String,
+        tier: ConfigTier,
+        source_key: String,
+        path: Option<PathBuf>,
+    },
     /// 非 builtin/global 层尝试设置 `mcp.servers.*.trusted`（自我提权），已被忽略。
     McpTrustedIgnored {
         tier: ConfigTier,
@@ -421,8 +437,31 @@ fn strip_untrusted_layer(src: &mut ConfigSource, warnings: &mut Vec<ConfigWarnin
             path: path.clone(),
         });
     }
-    if strip_provider_base_url_and_use_proxy(value) {
+    for key in [
+        "vision_provider",
+        "vision_model",
+        "search_provider",
+        "search_model",
+    ] {
+        if remove_top_level_key(value, key) {
+            warnings.push(ConfigWarning::GlobalRoleModelIgnored {
+                key: key.into(),
+                tier: tier.clone(),
+                source_key: source_key.clone(),
+                path: path.clone(),
+            });
+        }
+    }
+    let (base_url_or_use_proxy, disabled_models) = strip_provider_base_url_and_use_proxy(value);
+    if base_url_or_use_proxy {
         warnings.push(ConfigWarning::ProviderBaseUrlIgnored {
+            tier,
+            source_key: source_key.clone(),
+            path: path.clone(),
+        });
+    }
+    if disabled_models {
+        warnings.push(ConfigWarning::ProviderDisabledModelsIgnored {
             tier,
             source_key: source_key.clone(),
             path: path.clone(),
@@ -445,24 +484,31 @@ fn strip_untrusted_layer(src: &mut ConfigSource, warnings: &mut Vec<ConfigWarnin
     }
 }
 
-/// 剥 `providers[].base_url` 与 `use_proxy`，不整体替换数组（ADR-052：
+/// 剥 `providers[].base_url` 与 `use_proxy`，并剥 `providers[].disabled_models`
+/// （ADR-055 D1：模型启用集为 Global 独占），不整体替换数组（ADR-052：
 /// 非 Global 层不得覆盖代理行为，与顶层 `proxy_url` 剥离同红线）。
-fn strip_provider_base_url_and_use_proxy(value: &mut Value) -> bool {
+///
+/// 返回 `(base_url/use_proxy 被剥, disabled_models 被剥)`。
+fn strip_provider_base_url_and_use_proxy(value: &mut Value) -> (bool, bool) {
     let Some(Value::Array(providers)) = value.get_mut("providers") else {
-        return false;
+        return (false, false);
     };
-    let mut stripped = false;
+    let mut stripped_base = false;
+    let mut stripped_disabled = false;
     for item in providers {
         if let Value::Object(provider) = item {
             if provider.remove("base_url").is_some() {
-                stripped = true;
+                stripped_base = true;
             }
             if provider.remove("use_proxy").is_some() {
-                stripped = true;
+                stripped_base = true;
+            }
+            if provider.remove("disabled_models").is_some() {
+                stripped_disabled = true;
             }
         }
     }
-    stripped
+    (stripped_base, stripped_disabled)
 }
 
 /// 从 extra 根的 `mcp.servers.*` 剥 `trusted` / `auto_start`，保留 command/url。
@@ -814,6 +860,148 @@ mod tests {
                 ..
             }
         )));
+    }
+
+    #[test]
+    fn workspace_disabled_models_is_stripped_with_warning() {
+        let resolved = Loader::new()
+            .with_value(
+                ConfigTier::Workspace,
+                "workspace",
+                json!({
+                    "providers": [
+                        {
+                            "id": "glm-coding",
+                            "disabled_models": ["glm-5.3-flash"],
+                            "use_proxy": false
+                        },
+                        { "id": "other", "disabled_models": [] }
+                    ]
+                }),
+            )
+            .resolve()
+            .expect("resolve");
+
+        // 键出现即剥（含空数组），只剥字段、不删数组项。
+        assert_eq!(resolved.config.providers.len(), 2);
+        assert!(resolved
+            .config
+            .providers
+            .iter()
+            .all(|provider| provider.disabled_models.is_empty()));
+        assert_eq!(resolved.config.providers[0].id, "glm-coding");
+        assert_eq!(resolved.config.providers[0].use_proxy, None);
+        assert!(resolved.warnings.iter().any(|warning| matches!(
+            warning,
+            ConfigWarning::ProviderDisabledModelsIgnored {
+                tier: ConfigTier::Workspace,
+                source_key,
+                ..
+            } if source_key == "workspace"
+        )));
+        let workspace = resolved
+            .sources
+            .iter()
+            .find(|source| source.span.tier == ConfigTier::Workspace)
+            .expect("workspace source");
+        let providers = workspace.value.as_value().get("providers").unwrap();
+        assert!(providers[0].get("disabled_models").is_none());
+        assert!(providers[1].get("disabled_models").is_none());
+        assert_eq!(providers[0]["id"], "glm-coding");
+
+        // Global 层照常生效。
+        let global_only = Loader::new()
+            .with_value(
+                ConfigTier::Global,
+                "global",
+                json!({ "providers": [{ "id": "glm-coding", "disabled_models": ["glm-5.2"] }] }),
+            )
+            .resolve()
+            .expect("resolve global only");
+        assert_eq!(
+            global_only.config.providers[0].disabled_models,
+            vec!["glm-5.2".to_string()]
+        );
+        assert!(global_only.warnings.is_empty());
+    }
+
+    #[test]
+    fn workspace_global_role_model_keys_are_stripped_with_warning() {
+        let resolved = Loader::new()
+            .with_value(
+                ConfigTier::Global,
+                "global",
+                json!({
+                    "vision_provider": "glm-coding",
+                    "vision_model": "glm-4.6v",
+                    "search_provider": "opencode-go",
+                    "search_model": "glm-5.3-flash"
+                }),
+            )
+            .with_value(
+                ConfigTier::Workspace,
+                "workspace",
+                json!({
+                    "vision_provider": "evil",
+                    "vision_model": "evil-v",
+                    "search_provider": "evil",
+                    "search_model": "evil-s",
+                    "default_provider": "ws-p"
+                }),
+            )
+            .resolve()
+            .expect("resolve");
+
+        assert_eq!(
+            resolved.config.vision_provider.as_deref(),
+            Some("glm-coding")
+        );
+        assert_eq!(resolved.config.vision_model.as_deref(), Some("glm-4.6v"));
+        assert_eq!(
+            resolved.config.search_provider.as_deref(),
+            Some("opencode-go")
+        );
+        assert_eq!(
+            resolved.config.search_model.as_deref(),
+            Some("glm-5.3-flash")
+        );
+        assert_eq!(resolved.config.default_provider.as_deref(), Some("ws-p"));
+        for key in [
+            "vision_provider",
+            "vision_model",
+            "search_provider",
+            "search_model",
+        ] {
+            assert!(
+                resolved.warnings.iter().any(|warning| matches!(
+                    warning,
+                    ConfigWarning::GlobalRoleModelIgnored {
+                        key: stripped_key,
+                        tier: ConfigTier::Workspace,
+                        ..
+                    } if stripped_key == key
+                )),
+                "missing GlobalRoleModelIgnored warning for {key}: {:?}",
+                resolved.warnings
+            );
+        }
+        let workspace = resolved
+            .sources
+            .iter()
+            .find(|source| source.span.tier == ConfigTier::Workspace)
+            .expect("workspace source");
+        for key in [
+            "vision_provider",
+            "vision_model",
+            "search_provider",
+            "search_model",
+        ] {
+            assert!(workspace.value.as_value().get(key).is_none());
+        }
+        assert_eq!(
+            workspace.value.as_value().get("default_provider"),
+            Some(&json!("ws-p"))
+        );
     }
 
     #[test]

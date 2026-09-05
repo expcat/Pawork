@@ -277,6 +277,23 @@ pub(crate) async fn run_start(
             }
         }
     }
+    // ADR-055 D4：会话当前生效模型被禁用时结构化 fail-closed——不启动
+    // Run、不回退其他模型（显式切换路径由 switch_model/switch_provider
+    // 同闸拦截；此处覆盖无切换请求但生效对已禁用的情形）。必须在登记
+    // ActiveGuiRun 之前完成：失败路径不能留下幽灵 run。
+    {
+        let core = adapter.core.read().await;
+        let (provider, model) = (
+            core.provider_id().as_str().to_string(),
+            core.model().as_str().to_string(),
+        );
+        if !core.config().is_model_enabled(&provider, &model) {
+            return Err(GuiHostAdapter::app_error(crate::AppError::ModelDisabled {
+                provider,
+                model,
+            }));
+        }
+    }
     // 与 CLI run_one_turn 同一语义：user text 原样为首 part，`@token` 命中的
     // file-index 附件作为独立 Text part 追加；无 `@` 或未命中时零行为变化。
     // 解析失败按 fail-closed 上抛，禁止把未展开文本静默发给模型。

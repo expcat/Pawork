@@ -33,9 +33,9 @@ pub use schema::{
     SessionOverrides, TerminalConfig,
 };
 pub use writer::{
-    write_approval_mode, write_default_model_pair, write_mcp_server_remove,
-    write_naming_model_pair, write_provider_use_proxy, write_proxy_url, write_terminal_settings,
-    write_workspace_trust,
+    write_approval_mode, write_default_model_pair, write_mcp_server_remove, write_model_pair,
+    write_naming_model_pair, write_provider_disabled_models, write_provider_use_proxy,
+    write_proxy_url, write_terminal_settings, write_workspace_trust,
 };
 
 /// 配置层级。

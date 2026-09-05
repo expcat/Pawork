@@ -21,6 +21,7 @@ use pawork_protocol::{
     AppEventEnvelope, AuthChangeState, CommandSource, EventSource, EventStream, GlobalSequence,
     RunState, API_VERSION,
 };
+use pawork_protocol::DefaultModelPair;
 use serde_json::Value;
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/golden");
@@ -704,7 +705,12 @@ fn golden_auth_provider_slices() {
                         "fetched_at": null
                     },
                     "use_proxy": true
-                }]
+                }],
+                "role_defaults": {
+                    "naming": null,
+                    "vision": null,
+                    "search": null
+                }
             })),
         })),
     );
@@ -996,6 +1002,91 @@ fn golden_terminal_settings_slices() {
                 "columns": 120,
                 "rows": 40
             })),
+        })),
+    );
+}
+
+/// ADR-055 OPT-3：模型启用集与默认角色协议词汇 golden（since 1.12）。
+///
+/// D4：`model_list` 的 `include_disabled` 缺省 false 时字段整个不上
+/// wire（旧帧形状不变）；显式 true 取全量目录。
+#[test]
+fn golden_opt3_model_enablement_slices() {
+    let provider_id = pawork_domain::ProviderId::from("glm-coding");
+    assert_golden(
+        "client_command_set_model_enabled.json",
+        encode_client(&client_auth_command_frame(AppCommand::SetModelEnabled {
+            provider_id: provider_id.clone(),
+            model_id: "glm-4.7".into(),
+            enabled: false,
+        })),
+    );
+    assert_golden(
+        "client_command_set_provider_models_enabled.json",
+        encode_client(&client_auth_command_frame(
+            AppCommand::SetProviderModelsEnabled {
+                provider_id: provider_id.clone(),
+                enabled: false,
+            },
+        )),
+    );
+    assert_golden(
+        "client_command_set_default_role_model.json",
+        encode_client(&client_auth_command_frame(
+            AppCommand::SetDefaultRoleModel {
+                role: "naming".into(),
+                value: Some(DefaultModelPair {
+                    provider_id: "glm-coding".into(),
+                    model_id: "glm-4.7".into(),
+                }),
+            },
+        )),
+    );
+    assert_golden(
+        "client_command_set_default_role_model_clear.json",
+        encode_client(&client_auth_command_frame(
+            AppCommand::SetDefaultRoleModel {
+                role: "naming".into(),
+                value: None,
+            },
+        )),
+    );
+    assert_golden(
+        "model_list.json",
+        encode_client(&ClientFrame::Query(AppQueryEnvelope {
+            api_version: API_VERSION,
+            request_id: pawork_domain::QueryId::from("query-model-list"),
+            source: CommandSource::LocalGui {
+                client_id: GuiClientId::from("gui-1"),
+            },
+            identity: ActorIdentity::LocalUser {
+                actor_id: pawork_domain::ActorId::from("actor-1"),
+                display_name: None,
+            },
+            issued_at: Timestamp::from_unix_millis(1),
+            query: AppQuery::ModelList {
+                provider_id: None,
+                include_disabled: false,
+            },
+        })),
+    );
+    assert_golden(
+        "model_list_include_disabled.json",
+        encode_client(&ClientFrame::Query(AppQueryEnvelope {
+            api_version: API_VERSION,
+            request_id: pawork_domain::QueryId::from("query-model-list-include-disabled"),
+            source: CommandSource::LocalGui {
+                client_id: GuiClientId::from("gui-1"),
+            },
+            identity: ActorIdentity::LocalUser {
+                actor_id: pawork_domain::ActorId::from("actor-1"),
+                display_name: None,
+            },
+            issued_at: Timestamp::from_unix_millis(1),
+            query: AppQuery::ModelList {
+                provider_id: Some(provider_id),
+                include_disabled: true,
+            },
         })),
     );
 }

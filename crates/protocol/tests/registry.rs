@@ -23,6 +23,7 @@ const V1_7: ApiVersion = ApiVersion { major: 1, minor: 7 };
 const V1_8: ApiVersion = ApiVersion { major: 1, minor: 8 };
 const V1_10: ApiVersion = ApiVersion { major: 1, minor: 10 };
 const V1_11: ApiVersion = ApiVersion { major: 1, minor: 11 };
+const V1_12: ApiVersion = ApiVersion { major: 1, minor: 12 };
 
 /// (wire 名, 最小 params 样本；None = unit 变体无 params)。
 fn command_samples() -> Vec<(&'static str, Option<Value>)> {
@@ -83,6 +84,18 @@ fn command_samples() -> Vec<(&'static str, Option<Value>)> {
         (
             "set_provider_use_proxy",
             Some(json!({"provider_id": "glm-coding", "use_proxy": false})),
+        ),
+        (
+            "set_model_enabled",
+            Some(json!({"provider_id": "glm-coding", "model_id": "glm-4.7", "enabled": false})),
+        ),
+        (
+            "set_provider_models_enabled",
+            Some(json!({"provider_id": "glm-coding", "enabled": false})),
+        ),
+        (
+            "set_default_role_model",
+            Some(json!({"role": "naming", "value": {"provider_id": "glm-coding", "model_id": "glm-4.7"}})),
         ),
         (
             "set_approval_mode",
@@ -212,7 +225,7 @@ fn wire_names_are_bijective_with_serde_tags() {
 fn registry_tables_are_complete_and_unique() {
     let commands = command_entries();
     let queries = query_entries();
-    assert_eq!(commands.len(), 31);
+    assert_eq!(commands.len(), 34);
     assert_eq!(queries.len(), 15);
     for wire_name in commands.iter().map(|entry| entry.wire_name) {
         assert_eq!(
@@ -509,6 +522,36 @@ fn command_registry_covers_every_variant_without_wildcard() {
                 false,
                 true,
                 V1_10,
+            ),
+            AppCommand::SetModelEnabled { .. } => assert_command_entry(
+                &command,
+                "set_model_enabled",
+                true,
+                None,
+                None,
+                false,
+                true,
+                V1_12,
+            ),
+            AppCommand::SetProviderModelsEnabled { .. } => assert_command_entry(
+                &command,
+                "set_provider_models_enabled",
+                true,
+                None,
+                None,
+                false,
+                true,
+                V1_12,
+            ),
+            AppCommand::SetDefaultRoleModel { .. } => assert_command_entry(
+                &command,
+                "set_default_role_model",
+                true,
+                None,
+                None,
+                false,
+                true,
+                V1_12,
             ),
             AppCommand::SetApprovalMode { .. } => assert_command_entry(
                 &command,

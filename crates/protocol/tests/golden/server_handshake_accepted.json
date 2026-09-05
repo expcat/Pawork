@@ -9,7 +9,7 @@
     "handle": {
       "api_version": {
         "major": 1,
-        "minor": 11
+        "minor": 12
       },
       "instance_id": "instance-1"
     },
@@ -22,7 +22,7 @@
     },
     "selected_api_version": {
       "major": 1,
-      "minor": 11
+      "minor": 12
     },
     "status": "accepted"
   },

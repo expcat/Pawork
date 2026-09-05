@@ -5,12 +5,16 @@
       "minor": 12
     },
     "command": {
-      "method": "terminal_create",
+      "method": "set_default_role_model",
       "params": {
-        "workspace_id": "workspace-1"
+        "role": "naming",
+        "value": {
+          "model_id": "glm-4.7",
+          "provider_id": "glm-coding"
+        }
       }
     },
-    "command_id": "command-terminal-1",
+    "command_id": "command-auth-1",
     "identity": {
       "actor_id": "actor-1",
       "type": "local_user"

@@ -66,12 +66,17 @@ pub(crate) async fn model_list(
     adapter: &GuiHostAdapter,
     query: &AppQuery,
 ) -> Result<AppResponse, GuiHostError> {
-    let AppQuery::ModelList { provider_id } = query else {
+    let AppQuery::ModelList {
+        provider_id,
+        include_disabled,
+    } = query
+    else {
         unreachable!("model_list handler receives ModelList")
     };
     // 与 `pawork models` 同一聚合目录，供 Desktop 切换已配置
     // provider/model；单通道 `model_catalog` 只含当前宿主。
-    let catalog = adapter.core.read().await.models_overview().await;
+    let core = adapter.core.read().await;
+    let catalog = core.models_overview().await;
     let entries: Vec<_> = catalog
         .iter()
         .filter(|entry| {
@@ -80,12 +85,24 @@ pub(crate) async fn model_list(
                 .map(|id| id.as_str() == entry.provider.as_str())
                 .unwrap_or(true)
         })
+        // ADR-055 D4：过滤权威在 Host——缺省响应不含禁用模型；设置弹层
+        // 显式 include_disabled=true 取全量目录。
+        .filter(|entry| {
+            *include_disabled
+                || core
+                    .config()
+                    .is_model_enabled(entry.provider.as_str(), entry.id.as_str())
+        })
         .map(|entry| {
+            let enabled = core
+                .config()
+                .is_model_enabled(entry.provider.as_str(), entry.id.as_str());
             json!({
                 "provider_id": entry.provider.as_str(),
                 "id": entry.id.as_str(),
                 "display_name": entry.display_name,
                 "context_window_tokens": entry.context_window_tokens,
+                "enabled": enabled,
             })
         })
         .collect();

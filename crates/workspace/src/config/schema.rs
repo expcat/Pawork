@@ -34,6 +34,22 @@ pub struct PaworkConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub naming_model: Option<String>,
 
+    /// 识图 provider（ADR-055 D5；Global 层独占，落地期只保存选择不接路由）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vision_provider: Option<String>,
+
+    /// 识图 model（ADR-055 D5；分层与 vision_provider 相同）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vision_model: Option<String>,
+
+    /// 搜索 provider（ADR-055 D5；Global 层独占，落地期只保存选择不接路由）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub search_provider: Option<String>,
+
+    /// 搜索 model（ADR-055 D5；分层与 search_provider 相同）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub search_model: Option<String>,
+
     /// provider 列表配置。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub providers: Vec<ProviderConfig>,
@@ -127,6 +143,10 @@ pub struct ProviderConfig {
     /// `Some(false)`：该 provider 出站绕过全局代理。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub use_proxy: Option<bool>,
+    /// 该 provider 禁用模型 denylist（ADR-055 D1；Global 独占偏好）。
+    /// 键缺失或空数组 = 全部启用；随 providers 整表替换合并。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disabled_models: Vec<String>,
 }
 
 /// Model 配置。
@@ -212,6 +232,18 @@ impl PaworkConfig {
         if other.default_model.is_some() {
             self.default_model = other.default_model.clone();
         }
+        if other.vision_provider.is_some() {
+            self.vision_provider = other.vision_provider.clone();
+        }
+        if other.vision_model.is_some() {
+            self.vision_model = other.vision_model.clone();
+        }
+        if other.search_provider.is_some() {
+            self.search_provider = other.search_provider.clone();
+        }
+        if other.search_model.is_some() {
+            self.search_model = other.search_model.clone();
+        }
         if other.trust_workspaces.is_some() {
             self.trust_workspaces = other.trust_workspaces;
         }
@@ -235,6 +267,21 @@ impl PaworkConfig {
             self.profiles = other.profiles.clone();
         }
         merge_extra(&mut self.extra, &other.extra);
+    }
+
+    /// 某 provider 的某模型是否启用（ADR-055 D1）。
+    ///
+    /// denylist 语义：无该 provider 条目或键缺失 = 启用；运行期目录新
+    /// 出现的模型默认启用，无需配置迁移。
+    pub fn is_model_enabled(&self, provider_id: &str, model_id: &str) -> bool {
+        match self
+            .providers
+            .iter()
+            .find(|provider| provider.id == provider_id)
+        {
+            Some(provider) => !provider.disabled_models.iter().any(|m| m == model_id),
+            None => true,
+        }
     }
 }
 
@@ -337,6 +384,7 @@ mod tests {
             base_url: Some("https://example.test/v1".into()),
             default: Some(true),
             use_proxy: None,
+            disabled_models: Vec::new(),
         };
         let toml = toml::to_string(&provider).expect("serialize provider");
         let debug = format!("{provider:?}");
@@ -417,5 +465,51 @@ other_extension = 1
         assert!(!debug.contains("api_key"), "{debug}");
         assert!(!toml.contains("fake-key-should-be-stripped"));
         assert!(!debug.contains("fake-key-should-be-stripped"));
+    }
+
+    #[test]
+    fn role_model_pairs_parse_and_merge() {
+        let cfg: PaworkConfig = serde_json::from_value(json!({
+            "vision_provider": "glm-coding",
+            "vision_model": "glm-4.6v",
+            "search_provider": "opencode-go",
+            "search_model": "glm-5.3-flash"
+        }))
+        .expect("parse role pairs");
+        assert_eq!(cfg.vision_provider.as_deref(), Some("glm-coding"));
+        assert_eq!(cfg.vision_model.as_deref(), Some("glm-4.6v"));
+        assert_eq!(cfg.search_provider.as_deref(), Some("opencode-go"));
+        assert_eq!(cfg.search_model.as_deref(), Some("glm-5.3-flash"));
+
+        let mut merged = PaworkConfig::default();
+        merged.merge_with(&cfg);
+        assert_eq!(merged.vision_provider, cfg.vision_provider);
+        assert_eq!(merged.vision_model, cfg.vision_model);
+        assert_eq!(merged.search_provider, cfg.search_provider);
+        assert_eq!(merged.search_model, cfg.search_model);
+
+        // 低优先级层的缺省值（None）不清空已生效键。
+        merged.merge_with(&PaworkConfig::default());
+        assert_eq!(merged.vision_provider.as_deref(), Some("glm-coding"));
+        assert_eq!(merged.search_model.as_deref(), Some("glm-5.3-flash"));
+    }
+
+    #[test]
+    fn is_model_enabled_denylist_defaults_to_enabled() {
+        let cfg: PaworkConfig = serde_json::from_value(json!({
+            "providers": [
+                { "id": "glm-coding", "disabled_models": ["glm-5.2"] },
+                { "id": "deepseek" }
+            ]
+        }))
+        .expect("parse denylist");
+        // 无该 provider 条目 = 启用。
+        assert!(cfg.is_model_enabled("unknown-provider", "any-model"));
+        // 有条目但键缺失 = 启用。
+        assert!(cfg.is_model_enabled("deepseek", "deepseek-chat"));
+        // 键在但模型不在 denylist = 启用。
+        assert!(cfg.is_model_enabled("glm-coding", "glm-5.3-flash"));
+        // denylist 命中 = 禁用。
+        assert!(!cfg.is_model_enabled("glm-coding", "glm-5.2"));
     }
 }

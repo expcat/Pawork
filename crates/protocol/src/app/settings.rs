@@ -1,8 +1,10 @@
 //! Settings 查询 / 命令的 `AppResponse::Data` 载荷（CLN-4）。
 //!
-//! 形状对齐 Host `gui_host/handlers/settings.rs` 今日写出的 JSON。本波只
-//! 增加类型，不改 `AppCommand` / `AppQuery` 变体、不升 API minor、不进
-//! typegen `export_all`（尚未被信封引用，避免 schema 空转）。
+//! 形状对齐 Host `gui_host/handlers/settings.rs` 今日写出的 JSON。
+//! `DefaultModelPair` 自 ADR-055 起被 `AppCommand::SetDefaultRoleModel`
+//! 引用，随信封进 typegen；其余 Data 类型仍是 serde-only 载荷——
+//! `AppResponse::Data` 在 wire 上是 `Value`，形状由 Host 与 golden 钉死，
+//! 不单独进 typegen `export_all`（避免 schema 空转）。
 //!
 //! `SetApprovalMode.mode` 本波仍是 `String`；[`ApprovalModeWire`] 是 GUI
 //! 通道唯一的 snake_case 枚举（无 kebab、无 `on_failure` 别名）。
@@ -12,6 +14,8 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
+#[cfg(feature = "typegen")]
+use ts_rs::TS;
 
 /// 取消 serde 对 `Option` 的隐式 default：键必须出现，`null` 才是 [`None`]。
 fn deserialize_required_option<'de, T, D>(deserializer: D) -> Result<Option<T>, D::Error>
@@ -110,6 +114,7 @@ pub struct PermissionsSettingsData {
 
 /// 生效默认模型配对（Host 顶层 `default` 对象；缺 provider/model 时为 JSON `null`）。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
 pub struct DefaultModelPair {
     pub provider_id: String,
     pub model_id: String,
@@ -174,12 +179,55 @@ pub struct ProviderUseProxyData {
     pub use_proxy: bool,
 }
 
+/// `set_model_enabled` 回执 Data（ADR-055 OPT-3a）：写后状态 +
+/// 本次禁用清除的角色默认对 wire 名列表（D3；启用恒为空）。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SetModelEnabledData {
+    pub provider_id: String,
+    pub model_id: String,
+    pub enabled: bool,
+    pub cleared_roles: Vec<String>,
+}
+
+/// `set_provider_models_enabled` 回执 Data（ADR-055 OPT-3a）：写后状态 +
+/// 全关展开清除的角色默认对 wire 名列表。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SetProviderModelsEnabledData {
+    pub provider_id: String,
+    pub enabled: bool,
+    pub cleared_roles: Vec<String>,
+}
+
+/// `set_default_role_model` 回执 Data（ADR-055 OPT-3b）：写后状态；
+/// `value` 必填可空，清除时为 JSON `null`。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SetDefaultRoleModelData {
+    pub role: String,
+    #[serde(deserialize_with = "deserialize_required_option")]
+    pub value: Option<DefaultModelPair>,
+}
+
+/// `provider_auth_status.role_defaults`（ADR-055 D5）：naming / vision /
+/// search 三键 required-nullable，半配对输出 `null`（同顶层 `default`
+/// 口径）；conversation 仍由既有顶层 `default` 透出，不在此重复。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RoleDefaultsData {
+    #[serde(deserialize_with = "deserialize_required_option")]
+    pub naming: Option<DefaultModelPair>,
+    #[serde(deserialize_with = "deserialize_required_option")]
+    pub vision: Option<DefaultModelPair>,
+    #[serde(deserialize_with = "deserialize_required_option")]
+    pub search: Option<DefaultModelPair>,
+}
+
 /// `provider_auth_status` 查询 Data。Rust 字段名 `default` 对应 JSON 键 `default`。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderAuthStatusData {
     pub providers: Vec<ProviderAuthStatusEntry>,
     #[serde(rename = "default", deserialize_with = "deserialize_required_option")]
     pub default: Option<DefaultModelPair>,
+    /// 三辅助角色默认对（ADR-055 D5，since 1.12 必填）。
+    pub role_defaults: RoleDefaultsData,
 }
 
 /// `auth_start` 回执：三键稳定；PKCE 时 `user_code` / `expires_at` 为 JSON `null`。
@@ -268,7 +316,9 @@ mod tests {
     #[test]
     fn settings_data_missing_nullable_keys_fail_closed() {
         assert!(serde_json::from_value::<GeneralSettingsData>(json!({})).is_err());
-        assert!(serde_json::from_value::<ProviderAuthStatusData>(json!({ "providers": [] })).is_err());
+        assert!(
+            serde_json::from_value::<ProviderAuthStatusData>(json!({ "providers": [] })).is_err()
+        );
         assert!(serde_json::from_value::<TerminalSettingsData>(
             json!({ "columns": 80, "rows": 24 })
         )
@@ -328,7 +378,12 @@ mod tests {
                 },
                 "use_proxy": true
             }],
-            "default": null
+            "default": null,
+            "role_defaults": {
+                "naming": null,
+                "vision": null,
+                "search": null
+            }
         });
         let status: ProviderAuthStatusData =
             serde_json::from_value(json.clone()).expect("env connected status");
@@ -412,5 +467,94 @@ mod tests {
             })
         );
         assert_eq!(roundtrip(&pkce), pkce);
+    }
+
+    #[test]
+    fn opt3_model_enablement_and_role_data_roundtrip() {
+        let model_enabled = SetModelEnabledData {
+            provider_id: "glm-coding".into(),
+            model_id: "glm-4.7".into(),
+            enabled: false,
+            cleared_roles: vec!["naming".into(), "conversation".into()],
+        };
+        assert_eq!(
+            serde_json::to_value(&model_enabled).expect("serialize"),
+            json!({
+                "provider_id": "glm-coding",
+                "model_id": "glm-4.7",
+                "enabled": false,
+                "cleared_roles": ["naming", "conversation"]
+            })
+        );
+        assert_eq!(roundtrip(&model_enabled), model_enabled);
+
+        let provider_enabled = SetProviderModelsEnabledData {
+            provider_id: "glm-coding".into(),
+            enabled: true,
+            cleared_roles: vec![],
+        };
+        assert_eq!(roundtrip(&provider_enabled), provider_enabled);
+
+        let role_set = SetDefaultRoleModelData {
+            role: "naming".into(),
+            value: Some(DefaultModelPair {
+                provider_id: "glm-coding".into(),
+                model_id: "glm-4.7".into(),
+            }),
+        };
+        assert_eq!(
+            serde_json::to_value(&role_set).expect("serialize"),
+            json!({
+                "role": "naming",
+                "value": {"provider_id": "glm-coding", "model_id": "glm-4.7"}
+            })
+        );
+        assert_eq!(roundtrip(&role_set), role_set);
+
+        let role_clear = SetDefaultRoleModelData {
+            role: "vision".into(),
+            value: None,
+        };
+        assert_eq!(
+            serde_json::to_value(&role_clear).expect("serialize"),
+            json!({"role": "vision", "value": null})
+        );
+        assert_eq!(roundtrip(&role_clear), role_clear);
+
+        let role_defaults = RoleDefaultsData {
+            naming: Some(DefaultModelPair {
+                provider_id: "glm-coding".into(),
+                model_id: "glm-4.7".into(),
+            }),
+            vision: None,
+            search: None,
+        };
+        assert_eq!(
+            serde_json::to_value(&role_defaults).expect("serialize"),
+            json!({
+                "naming": {"provider_id": "glm-coding", "model_id": "glm-4.7"},
+                "vision": null,
+                "search": null
+            })
+        );
+        assert_eq!(roundtrip(&role_defaults), role_defaults);
+    }
+
+    #[test]
+    fn opt3_required_nullable_role_fields_fail_closed() {
+        assert!(serde_json::from_value::<SetDefaultRoleModelData>(json!({
+            "role": "naming"
+        }))
+        .is_err());
+        assert!(serde_json::from_value::<RoleDefaultsData>(json!({
+            "naming": null,
+            "vision": null
+        }))
+        .is_err());
+        assert!(serde_json::from_value::<ProviderAuthStatusData>(json!({
+            "providers": [],
+            "default": null
+        }))
+        .is_err());
     }
 }

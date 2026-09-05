@@ -1,5 +1,23 @@
 # Settings：模型与供应商
 
+## ADR-055：OPT-3 模型启用集与默认角色（2026-09-05）
+
+状态：Accepted（protocol / workspace / app 已实现并通过各自定向门禁与合并收口，API 1.12，golden/typegen 先红后绿，证据见 [ROADMAP §10.4](../ROADMAP.md#104-本批交付与证据2026-09-05opt-3a3b-内核协议配置)；Desktop GUI 控件与真窗口验收待后续批次）。落地 OPT-3a/3b 的内核、协议与配置半区：模型启用集（3a）与四默认角色配置键与读写（3b）。Desktop 控件（模型启用弹层、四默认角色区、代理 Switch）按 OPT-D 签字稿在后续 GUI 批次落地；OPT-3d/3e（多凭证、额度槽）不在本 ADR 范围。GUI API 1.11 → 1.12（minor 只增）。对应 [ROADMAP §6](../ROADMAP.md#6-opt-3--供应商模型启用与默认角色)。
+
+- **D1 启用集存储**：Global `[[providers]]` 条目新增 `disabled_models: Vec<String>`（denylist）。键缺失或空数组 = 该 provider 模型全部启用；运行期目录新出现的模型默认启用，无需配置迁移，这是选 denylist 而非 enabled 字段的原因。启用语义属于「某 provider 的某模型」，放 `[[providers]]` 条目内而不放扁平 `[[models]]`（后者无 provider 归属，跨供应商会撞 id）。`disabled_models` 是 Global 独占偏好：非 Global 层出现即剥离并记录 warning（与 `use_proxy` 同闸，loader 扩展现有 provider 条目剥离）。
+- **D2 协议词汇（API 1.12）**：
+  - `SetModelEnabled { provider_id, model_id, enabled }`：provider 未知 fail-closed（`unknown_provider`）；模型不在该 provider 当前可运行目录 fail-closed（`unknown_model`，同 set_default_model 校验口径）。幂等：重复同态写为最终覆盖语义。回执 `SetModelEnabledData { provider_id, model_id, enabled, cleared_roles }`。
+  - `SetProviderModelsEnabled { provider_id, enabled }`：全开 = 清空该 provider denylist；全关 = Host 按当前聚合目录展开该 provider 全部模型写入 denylist。全关时目录为空 fail-closed（`catalog_unavailable`）不写盘——空展开写空 denylist 会退化为全开，语义颠倒。回执 `SetProviderModelsEnabledData { provider_id, enabled, cleared_roles }`。
+  - 写盘沿用 `rmw_global_config` 原子写；写盘成功即同步内存生效配置（同 `set_provider_use_proxy` 先例），GUI 随后重查 `model_list` / `provider_auth_status` 获得权威全态。
+- **D3 禁用即显式失效**：`enabled = false`（含全关展开）命中任一角色默认对（conversation = `default_provider/default_model`、naming、vision、search）时，Host 同一次写盘移除该角色键对，回执 `cleared_roles` 按 wire 名列出被清除角色；禁止静默换绑到其他 provider/模型（ROADMAP OPT-3a 验收）。半配对（provider/model 任一缺失）本就当 null 处理，清除时移除存在的键。进行中的 Run 不受影响，只影响之后启动的 Run（同 ADR-053 D3 口径）。
+- **D4 过滤权威在 Host**：
+  - `AppQuery::ModelList` additive 增加可选 `include_disabled`（缺省 false）：缺省响应不含禁用模型，满足「Composer / `ModelList` / 默认项下拉不出现未启用模型」；设置弹层显式传 `true` 取全量。响应条目 additive 增 `enabled: bool`。
+  - RunStart：显式 `provider`/`model` 或会话当前生效模型被禁用时结构化 fail-closed（`model_disabled`），不启动 Run、不回退其他模型；`switch_provider` / 会话内模型切换同闸。`set_default_model` 与 `SetDefaultRoleModel` 拒绝把禁用模型设为默认。
+- **D5 四默认角色**：角色 wire 名 `conversation` / `naming` / `vision` / `search`。conversation 即既有 `default_provider/default_model` 与 `set_default_model`（旧命令保留，不复制第二份真相）；naming 键已在 ADR-054 D4 落地并由 auto_title 消费。Global 新增 `vision_provider/vision_model`、`search_provider/search_model`，Global 层独占（非 Global 层剥离并记录 warning，同 `proxy_url` 既有闸）。Vision/Search 落地期**只保存选择、不接路由**（识图依赖 B5、搜索依赖 B1）；接线路径落地前 GUI 不得暗示已生效。
+  - `SetDefaultRoleModel { role, value }`：`role` 为必填 snake_case 串，未知值 fail-closed（同 `SetApprovalMode` 先例）；`value` 必填可空（同 `SetProxyUrl` 先例，缺字段为解码错误），`{ provider_id, model_id }` 设置、`null` 清除该角色键对。设置校验 = 已知 provider + 可运行目录 + 未禁用。回执 `SetDefaultRoleModelData { role, value }`（写后状态，清除时 `value` 为 null）。
+  - `provider_auth_status` 响应 additive 增 `role_defaults: { naming, vision, search }`（三键 required-nullable `DefaultModelPair | null`，半配对输出 null，同既有 `default` 口径）；conversation 仍由既有顶层 `default` 透出。
+- **D6 golden/typegen 先行**：`set_model_enabled` / `set_provider_models_enabled` / `set_default_role_model`（含 clear）与 `model_list`（含 `include_disabled`）golden fixture 先行（先红后绿）；registry 注册、版本表（V1_12）、`schemas/` typegen 产物同批检入；`server_response_provider_auth_status.json` 增补 `role_defaults` 键。
+
 ## ADR-053：OPT-1 设置持久化（2026-09-05）
 
 状态：OPT-1 已实现、定向自动验证通过、Appearance 真窗口重启恢复通过；用户视觉签字与发布独立记录（[本批证据](../ROADMAP.md#101-本批交付与证据2026-09-05)）；替代 ADR-048 的「审批与会话信任不持久化」语义。GUI command / response 形状不变，无数据库迁移。设计像素仍受 OPT-D 签字闸门约束。
@@ -14,7 +32,7 @@
 
 | 页面 | 可改项与持久化归属 | OPT-1 处理 |
 | --- | --- | --- |
-| Models & providers | 默认对话 `default_provider/default_model`、`providers[].use_proxy` → Global `config.toml`；命名 `naming_provider/naming_model` → Global `config.toml`（ADR-054 D4，OPT-2d 落键与 Host 消费，GUI 入口留 OPT-3b）；API key/OAuth → auth backend | 默认对话/代理已有，不重做；F8 识图/搜索键与四默认角色 GUI 留 OPT-3 |
+| Models & providers | 默认对话 `default_provider/default_model`、`providers[].use_proxy` → Global `config.toml`；命名 `naming_provider/naming_model` → Global `config.toml`（ADR-054 D4，OPT-2d 落键与 Host 消费，GUI 入口留 OPT-3b）；API key/OAuth → auth backend | 默认对话/代理已有，不重做；F8 识图/搜索键与四默认角色配置已由 ADR-055 落键（vision/search 只保存不接路由）；四默认角色与模型启用弹层 GUI 留 OPT-3 后续批次 |
 | Network | `proxy_url` → Global `config.toml` | 已有，不重做 |
 | Approvals | 审批模式、当前项目 trust 原为 Host 内存；`trust_workspaces` 是 Global 只读默认 | 新增 `approval_mode` / `workspace_trust`，见 ADR-053 |
 | Tools & MCP | Remove → Global `mcp.servers` + 独立 MCP 凭证；Test 是即时连接检查 | 已有，不把检测结果当偏好保存 |

@@ -32,7 +32,9 @@ use pawork_protocol::{
     HandshakeRequest, HandshakeResponse, ProtocolCodecError, ProtocolError, ResumeRequest,
     ResumeResponse, ServerFrame, SubscribeRequest, SUPPORTED_API_VERSIONS,
 };
-use pawork_transport::{ConnectionInfo, GuiConnection, TransportError, TransportErrorKind, TransportFrame};
+use pawork_transport::{
+    ConnectionInfo, GuiConnection, TransportError, TransportErrorKind, TransportFrame,
+};
 use thiserror::Error;
 use tokio::sync::Mutex as AsyncMutex;
 
@@ -44,12 +46,12 @@ pub use pawork_protocol::client_auth::TOKEN_SCHEME;
 pub use pawork_protocol::projection;
 pub use pawork_protocol::{
     ActorIdentity, ApiVersion, AppCommand, AppCommandEnvelope, AppEvent, AppEventEnvelope,
-    AppQuery, AppQueryEnvelope, AppResponse, AppResponseEnvelope, ApprovalModeWire,
-    AuthStartData, ClientAuthentication, CommandSource, DefaultModelPair, EventStream,
-    GeneralSettingsData, GlobalSequence, GuiCapability, PermissionsSettingsData,
-    ProtocolErrorCode, ProviderAuthState, ProviderAuthStatusData, ProviderAuthStatusEntry,
-    ProviderCatalogState, ProviderUseProxyData, RunState, Snapshot, TerminalExitReason,
-    TerminalSettingsData, TimelineItem, TimelineItemKind, TimelinePage,
+    AppQuery, AppQueryEnvelope, AppResponse, AppResponseEnvelope, ApprovalModeWire, AuthStartData,
+    ClientAuthentication, CommandSource, DefaultModelPair, EventStream, GeneralSettingsData,
+    GlobalSequence, GuiCapability, PermissionsSettingsData, ProtocolErrorCode, ProviderAuthState,
+    ProviderAuthStatusData, ProviderAuthStatusEntry, ProviderCatalogState, ProviderUseProxyData,
+    RoleDefaultsData, RunState, Snapshot, TerminalExitReason, TerminalSettingsData, TimelineItem,
+    TimelineItemKind, TimelinePage,
 };
 pub use pawork_transport::{ConnectOptions, GuiTransportClient, LocalTransport, TransportEndpoint};
 
@@ -1494,7 +1496,8 @@ mod tests {
         let conn = Arc::new(mock(vec![
             TransportFrame::new(encode_server_frame(&accepted).expect("encode accepted")),
             TransportFrame::new(
-                encode_server_frame(&ServerFrame::Error(host_error)).expect("encode snapshot error"),
+                encode_server_frame(&ServerFrame::Error(host_error))
+                    .expect("encode snapshot error"),
             ),
         ]));
         let error = GuiClient::handshake(conn, &ClientConfig::default(), None)

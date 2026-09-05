@@ -28,6 +28,7 @@ export type { CommandId } from "./CommandId";
 export type { CommandSource } from "./CommandSource";
 export type { ConnectionId } from "./ConnectionId";
 export type { CoreInstanceId } from "./CoreInstanceId";
+export type { DefaultModelPair } from "./DefaultModelPair";
 export type { DiagnosticLevel } from "./DiagnosticLevel";
 export type { ErrorCategory } from "./ErrorCategory";
 export type { ErrorContext } from "./ErrorContext";

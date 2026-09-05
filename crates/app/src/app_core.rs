@@ -118,6 +118,8 @@ pub enum AppError {
     Auth(#[from] AuthError),
     #[error("未知模型 {model}（provider {provider}）")]
     UnknownModel { model: String, provider: String },
+    #[error("模型 {model}（provider {provider}）已被禁用")]
+    ModelDisabled { provider: String, model: String },
     #[error("模型 {model} 属于 provider {owner}，当前是 {current}；先 /provider {owner}")]
     ModelBelongsToProvider {
         model: String,
@@ -196,6 +198,75 @@ pub enum AppError {
     Task(String),
     #[error("{0}")]
     Orchestration(String),
+}
+
+/// ADR-055 D5：四默认角色键对（conversation 复用既有
+/// `default_provider/default_model`，不建第二份真相）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RoleModelKind {
+    Conversation,
+    Naming,
+    Vision,
+    Search,
+}
+
+impl RoleModelKind {
+    /// 全部角色固定序（D3 `cleared_roles` 输出顺序）。
+    pub(crate) const ALL: [Self; 4] =
+        [Self::Conversation, Self::Naming, Self::Vision, Self::Search];
+
+    /// wire 串 → 角色；未知值 None（宿主按 `unknown_role` fail-closed）。
+    pub(crate) fn from_wire(role: &str) -> Option<Self> {
+        match role {
+            "conversation" => Some(Self::Conversation),
+            "naming" => Some(Self::Naming),
+            "vision" => Some(Self::Vision),
+            "search" => Some(Self::Search),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn wire_name(self) -> &'static str {
+        match self {
+            Self::Conversation => "conversation",
+            Self::Naming => "naming",
+            Self::Vision => "vision",
+            Self::Search => "search",
+        }
+    }
+
+    /// Global 配置键对（写盘用）。
+    pub(crate) fn provider_key(self) -> &'static str {
+        match self {
+            Self::Conversation => "default_provider",
+            Self::Naming => "naming_provider",
+            Self::Vision => "vision_provider",
+            Self::Search => "search_provider",
+        }
+    }
+
+    pub(crate) fn model_key(self) -> &'static str {
+        match self {
+            Self::Conversation => "default_model",
+            Self::Naming => "naming_model",
+            Self::Vision => "vision_model",
+            Self::Search => "search_model",
+        }
+    }
+
+    /// 生效配置中的当前键对；半配对按 None（null 口径）处理。
+    pub(crate) fn pair_in_config(self, config: &PaworkConfig) -> Option<(String, String)> {
+        let (provider, model) = match self {
+            Self::Conversation => (&config.default_provider, &config.default_model),
+            Self::Naming => (&config.naming_provider, &config.naming_model),
+            Self::Vision => (&config.vision_provider, &config.vision_model),
+            Self::Search => (&config.search_provider, &config.search_model),
+        };
+        match (provider, model) {
+            (Some(provider), Some(model)) => Some((provider.clone(), model.clone())),
+            _ => None,
+        }
+    }
 }
 
 /// S5 压缩在 engine 侧保留的最近消息条数；session 侧保留策略按
@@ -988,6 +1059,65 @@ impl AppCore {
         }
     }
 
+    /// ADR-055 OPT-3a：模型启用集写盘成功后同步内存 denylist（与
+    /// writer 语义一致：空 = 移除键/不建条目；无条目且非空 = 追加仅含
+    /// `id` + `disabled_models` 的新条目）。
+    pub(crate) fn set_provider_disabled_models(
+        &mut self,
+        provider_id: &str,
+        disabled: Vec<String>,
+    ) {
+        match self
+            .config
+            .providers
+            .iter_mut()
+            .find(|provider| provider.id == provider_id)
+        {
+            Some(provider) => provider.disabled_models = disabled,
+            None if disabled.is_empty() => {}
+            None => self
+                .config
+                .providers
+                .push(pawork_workspace::config::ProviderConfig {
+                    id: provider_id.to_string(),
+                    disabled_models: disabled,
+                    ..Default::default()
+                }),
+        }
+    }
+
+    /// ADR-055 OPT-3b：默认角色键对写盘成功后同步内存生效配置（含清除）。
+    pub(crate) fn set_role_model_pair(&mut self, kind: RoleModelKind, pair: Option<(&str, &str)>) {
+        let (provider_slot, model_slot) = match kind {
+            RoleModelKind::Conversation => (
+                &mut self.config.default_provider,
+                &mut self.config.default_model,
+            ),
+            RoleModelKind::Naming => (
+                &mut self.config.naming_provider,
+                &mut self.config.naming_model,
+            ),
+            RoleModelKind::Vision => (
+                &mut self.config.vision_provider,
+                &mut self.config.vision_model,
+            ),
+            RoleModelKind::Search => (
+                &mut self.config.search_provider,
+                &mut self.config.search_model,
+            ),
+        };
+        match pair {
+            Some((provider_id, model_id)) => {
+                *provider_slot = Some(provider_id.to_string());
+                *model_slot = Some(model_id.to_string());
+            }
+            None => {
+                *provider_slot = None;
+                *model_slot = None;
+            }
+        }
+    }
+
     /// SET-6 终端页（ADR-050 D3）：`set_terminal_settings` 写盘成功后
     /// 直接赋值内存 `[terminal]` 段（全态写，禁止 merge_with）。
     pub(crate) fn set_terminal_settings(
@@ -1101,19 +1231,18 @@ impl AppCore {
         self.workspace_by_id(&workspace_id)
     }
 
-    /// ADR-044 D3：有可用项目时未绑定/未登记必须 fail-closed。
-    /// 仅测试与尚未登记任何 root 的进程允许落到空的 ws-unbound。
+    /// 未绑定分两种（ADR-054 D1 修订 ADR-044 D3）：
+    /// 会话显式无项目（sessions.workspace_id = NULL）是合法产品状态，允许以
+    /// 空授权面运行问答——文件类工具由 Policy 对空 roots fail-closed；
+    /// 绑定悬空（指向不可用 workspace）仍 fail-closed，仅测试与尚未登记
+    /// 任何 root 的进程允许 legacy ws-unbound 落到空授权面。
     pub(crate) fn workspace_for_session_or_unbound(
         &self,
         session_id: &SessionId,
     ) -> Result<Workspace, AppError> {
         match self.workspace_for_session(session_id) {
             Ok(workspace) => Ok(workspace),
-            Err(AppError::SessionWorkspaceUnassigned(_))
-                if !self.has_usable_registered_workspace() =>
-            {
-                Ok(unbound_workspace())
-            }
+            Err(AppError::SessionWorkspaceUnassigned(_)) => Ok(unbound_workspace()),
             Err(AppError::WorkspaceUnavailable(ref workspace_id))
                 if workspace_id == "ws-unbound" && !self.has_usable_registered_workspace() =>
             {
@@ -1881,7 +2010,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unassigned_session_fails_closed_when_registry_has_a_project() {
+    async fn unassigned_session_runs_unbound_when_registry_has_a_project() {
+        // ADR-054 D1：显式无项目会话以空授权面运行，不借用任何已登记项目。
         let project = tempfile::tempdir().expect("project");
         let (mut core, _dir) = mock_core(Vec::new()).await;
         core.register_workspace(project.path())
@@ -1893,9 +2023,27 @@ mod tests {
             .create_session(&session, "unassigned", pawork_engine::now_timestamp())
             .await
             .expect("create unbound session");
+        let workspace = core
+            .workspace_for_session_or_unbound(&session)
+            .expect("unassigned session runs unbound");
+        assert_eq!(workspace.id.as_str(), "ws-unbound");
+        assert!(workspace.roots.is_empty(), "no authorization surface");
+    }
+
+    #[tokio::test]
+    async fn dangling_workspace_binding_fails_closed() {
+        // ADR-044 D3 保留：绑定指向不可用 workspace 不得静默落到 unbound。
+        let (core, _dir) = mock_core(Vec::new()).await;
+        let session = SessionId::from("ses-dangling");
+        core.store()
+            .expect("store")
+            .create_session(&session, "dangling", pawork_engine::now_timestamp())
+            .await
+            .expect("create session");
+        core.bind_session_workspace(&session, WorkspaceId::from("ws-gone"));
         let error = core
             .workspace_for_session_or_unbound(&session)
-            .expect_err("must not borrow current project");
-        assert!(matches!(error, AppError::SessionWorkspaceUnassigned(_)));
+            .expect_err("dangling binding must fail closed");
+        assert!(matches!(error, AppError::WorkspaceUnavailable(_)));
     }
 }

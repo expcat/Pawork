@@ -40,6 +40,7 @@ pub(super) async fn settings_adapter_with_default(
             base_url: Some(base_url),
             default: None,
             use_proxy: None,
+            disabled_models: Vec::new(),
         });
     if let Some((default_provider, default_model)) = default {
         config.default_provider = Some(default_provider.into());
@@ -1009,6 +1010,7 @@ pub(super) async fn mcp_settings_adapter(mcp: serde_json::Value) -> (GuiHostAdap
             base_url: Some("http://127.0.0.1:1".into()),
             default: None,
             use_proxy: None,
+            disabled_models: Vec::new(),
         });
     config.extra.insert("mcp".into(), mcp);
     let backend = Arc::new(pawork_auth::MemoryBackend::new());
@@ -1575,4 +1577,389 @@ async fn xai_api_key_verification_flight_rejects_auth_cancel() {
         "rejected cancel must not emit Cancelled: {event_wire}"
     );
     server.verify().await;
+}
+
+// ---- ADR-055 OPT-3a/3b：模型启用集与默认角色 ----
+
+/// 启停 roundtrip + model_list 两态（缺省过滤禁用、include_disabled 全量）。
+#[tokio::test]
+async fn set_model_enabled_roundtrip_and_model_list_states() {
+    let _home_env = HOME_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let home = tempfile::tempdir().expect("home tempdir");
+    let _restore_home = RestoreHome(std::env::var_os("HOME"));
+    crate::testsupport::set_env("HOME", home.path().to_str().expect("utf-8 home"));
+    let backend = Arc::new(pawork_auth::MemoryBackend::new());
+    let (adapter, _dir) = settings_adapter("http://127.0.0.1:1".into(), backend).await;
+    let provider = pawork_domain::ProviderId::from("glm-coding");
+
+    let response = adapter
+        .command(&command_envelope(AppCommand::SetModelEnabled {
+            provider_id: provider.clone(),
+            model_id: "glm-5.2".into(),
+            enabled: false,
+        }))
+        .await
+        .expect("disable model");
+    let AppResponse::Data(data) = response else {
+        panic!("SetModelEnabled must return Data: {response:?}")
+    };
+    assert_eq!(data["provider_id"], "glm-coding");
+    assert_eq!(data["model_id"], "glm-5.2");
+    assert_eq!(data["enabled"], false);
+    assert_eq!(data["cleared_roles"], serde_json::json!([]));
+
+    // 缺省 model_list 不含禁用模型。
+    let list = adapter
+        .query(&query_envelope(AppQuery::ModelList {
+            provider_id: Some(provider.clone()),
+            include_disabled: false,
+        }))
+        .await
+        .expect("model list default");
+    let AppResponse::Data(list) = list else {
+        panic!("ModelList must return Data: {list:?}")
+    };
+    let entries = list.as_array().expect("entries");
+    assert!(
+        entries.iter().all(|entry| entry["id"] != "glm-5.2"),
+        "disabled model must be filtered by default: {list}"
+    );
+
+    // include_disabled=true 取全量目录并标注 enabled=false。
+    let full = adapter
+        .query(&query_envelope(AppQuery::ModelList {
+            provider_id: Some(provider.clone()),
+            include_disabled: true,
+        }))
+        .await
+        .expect("model list full");
+    let AppResponse::Data(full) = full else {
+        panic!("ModelList must return Data: {full:?}")
+    };
+    let entries = full.as_array().expect("entries");
+    let disabled_entry = entries
+        .iter()
+        .find(|entry| entry["id"] == "glm-5.2")
+        .expect("include_disabled must keep glm-5.2");
+    assert_eq!(disabled_entry["enabled"], false);
+    assert!(
+        entries
+            .iter()
+            .filter(|entry| entry["id"] != "glm-5.2")
+            .all(|entry| entry["enabled"] == true),
+        "other entries must be enabled: {full}"
+    );
+
+    // 禁用模型不能再设为默认（D4）。
+    let error = adapter
+        .command(&command_envelope(AppCommand::SetDefaultModel {
+            provider_id: provider.clone(),
+            model_id: "glm-5.2".into(),
+        }))
+        .await
+        .expect_err("disabled default must fail closed");
+    assert_eq!(error.code, "model_disabled");
+
+    // 重新启用：denylist 移除，缺省列表恢复。
+    let response = adapter
+        .command(&command_envelope(AppCommand::SetModelEnabled {
+            provider_id: provider.clone(),
+            model_id: "glm-5.2".into(),
+            enabled: true,
+        }))
+        .await
+        .expect("re-enable model");
+    let AppResponse::Data(data) = response else {
+        panic!("SetModelEnabled must return Data: {response:?}")
+    };
+    assert_eq!(data["enabled"], true);
+    assert_eq!(data["cleared_roles"], serde_json::json!([]));
+    let list = adapter
+        .query(&query_envelope(AppQuery::ModelList {
+            provider_id: Some(provider),
+            include_disabled: false,
+        }))
+        .await
+        .expect("model list after re-enable");
+    let AppResponse::Data(list) = list else {
+        panic!("ModelList must return Data: {list:?}")
+    };
+    assert!(
+        list.as_array()
+            .expect("entries")
+            .iter()
+            .any(|entry| entry["id"] == "glm-5.2" && entry["enabled"] == true),
+        "re-enabled model must be back: {list}"
+    );
+}
+
+/// D3：禁用命中 conversation/naming 角色默认对 → 同批清除并如实回报。
+#[tokio::test]
+async fn set_model_enabled_clears_role_defaults() {
+    let _home_env = HOME_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let home = tempfile::tempdir().expect("home tempdir");
+    let _restore_home = RestoreHome(std::env::var_os("HOME"));
+    crate::testsupport::set_env("HOME", home.path().to_str().expect("utf-8 home"));
+    let backend = Arc::new(pawork_auth::MemoryBackend::new());
+    let (adapter, _dir) = settings_adapter("http://127.0.0.1:1".into(), backend).await;
+    let provider = pawork_domain::ProviderId::from("glm-coding");
+    let pair = pawork_protocol::DefaultModelPair {
+        provider_id: "glm-coding".into(),
+        model_id: "glm-5.2".into(),
+    };
+
+    adapter
+        .command(&command_envelope(AppCommand::SetDefaultModel {
+            provider_id: provider.clone(),
+            model_id: "glm-5.2".into(),
+        }))
+        .await
+        .expect("seed default pair");
+    adapter
+        .command(&command_envelope(AppCommand::SetDefaultRoleModel {
+            role: "naming".into(),
+            value: Some(pair.clone()),
+        }))
+        .await
+        .expect("seed naming pair");
+
+    let response = adapter
+        .command(&command_envelope(AppCommand::SetModelEnabled {
+            provider_id: provider.clone(),
+            model_id: "glm-5.2".into(),
+            enabled: false,
+        }))
+        .await
+        .expect("disable model");
+    let AppResponse::Data(data) = response else {
+        panic!("SetModelEnabled must return Data: {response:?}")
+    };
+    assert_eq!(
+        data["cleared_roles"],
+        serde_json::json!(["conversation", "naming"])
+    );
+
+    // 内存生效配置同步：default 与 role_defaults.naming 均为 null。
+    let status = adapter
+        .query(&query_envelope(AppQuery::ProviderAuthStatus {
+            provider_id: Some(provider),
+        }))
+        .await
+        .expect("status after disable");
+    let AppResponse::Data(status) = status else {
+        panic!("ProviderAuthStatus must return Data: {status:?}")
+    };
+    assert!(status["default"].is_null(), "cleared default: {status}");
+    assert!(
+        status["role_defaults"]["naming"].is_null(),
+        "cleared naming: {status}"
+    );
+    assert!(
+        status["role_defaults"]["vision"].is_null() && status["role_defaults"]["search"].is_null(),
+        "untouched roles stay null: {status}"
+    );
+
+    // 角色键对确实从 Global 配置移除。
+    let config_path = pawork_workspace::config::global_config_path().expect("global path");
+    let persisted = std::fs::read_to_string(&config_path).expect("persisted config");
+    assert!(
+        !persisted.contains("default_provider") && !persisted.contains("naming_provider"),
+        "cleared role keys must be removed: {persisted}"
+    );
+}
+
+/// 全关按聚合目录展开；空目录 catalog_unavailable fail-closed 不写盘。
+#[tokio::test]
+async fn set_provider_models_enabled_expands_catalog_and_empty_fails_closed() {
+    let _home_env = HOME_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let home = tempfile::tempdir().expect("home tempdir");
+    let _restore_home = RestoreHome(std::env::var_os("HOME"));
+    crate::testsupport::set_env("HOME", home.path().to_str().expect("utf-8 home"));
+    let backend = Arc::new(pawork_auth::MemoryBackend::new());
+    let (adapter, _dir) = settings_adapter("http://127.0.0.1:1".into(), backend.clone()).await;
+    let provider = pawork_domain::ProviderId::from("glm-coding");
+
+    let response = adapter
+        .command(&command_envelope(AppCommand::SetProviderModelsEnabled {
+            provider_id: provider.clone(),
+            enabled: false,
+        }))
+        .await
+        .expect("disable all glm-coding models");
+    let AppResponse::Data(data) = response else {
+        panic!("SetProviderModelsEnabled must return Data: {response:?}")
+    };
+    assert_eq!(data["provider_id"], "glm-coding");
+    assert_eq!(data["enabled"], false);
+    assert_eq!(data["cleared_roles"], serde_json::json!([]));
+
+    // 展开写入静态目录全部模型。
+    let config_path = pawork_workspace::config::global_config_path().expect("global path");
+    let persisted = std::fs::read_to_string(&config_path).expect("persisted config");
+    assert!(
+        persisted.contains("disabled_models") && persisted.contains("\"glm-5.2\""),
+        "full disable must expand the catalog: {persisted}"
+    );
+    let full = adapter
+        .query(&query_envelope(AppQuery::ModelList {
+            provider_id: Some(provider.clone()),
+            include_disabled: true,
+        }))
+        .await
+        .expect("model list full");
+    let AppResponse::Data(full) = full else {
+        panic!("ModelList must return Data: {full:?}")
+    };
+    assert!(
+        full.as_array()
+            .expect("entries")
+            .iter()
+            .all(|entry| entry["enabled"] == false),
+        "all entries disabled: {full}"
+    );
+
+    // 再全开：denylist 清空，缺省列表恢复。
+    adapter
+        .command(&command_envelope(AppCommand::SetProviderModelsEnabled {
+            provider_id: provider,
+            enabled: true,
+        }))
+        .await
+        .expect("re-enable all");
+    let persisted = std::fs::read_to_string(&config_path).expect("persisted config");
+    assert!(
+        !persisted.contains("disabled_models"),
+        "re-enable must clear the denylist: {persisted}"
+    );
+
+    // 空目录（无静态条目、无探测结果）fail-closed：catalog_unavailable，
+    // 不写盘。
+    let (adapter, _dir) = settings_adapter_for_channel(
+        "custom-empty",
+        "model-x",
+        "http://127.0.0.1:1".into(),
+        backend,
+    )
+    .await;
+    let error = adapter
+        .command(&command_envelope(AppCommand::SetProviderModelsEnabled {
+            provider_id: pawork_domain::ProviderId::from("custom-empty"),
+            enabled: false,
+        }))
+        .await
+        .expect_err("empty catalog must fail closed");
+    assert_eq!(error.code, "catalog_unavailable", "error: {error:?}");
+    let persisted = std::fs::read_to_string(&config_path).expect("persisted config");
+    assert!(
+        !persisted.contains("custom-empty"),
+        "empty catalog must not write: {persisted}"
+    );
+}
+
+/// 角色设/清回执与未知 role fail-closed；禁用模型不能设为角色默认。
+#[tokio::test]
+async fn set_default_role_model_set_clear_unknown_role_and_disabled_value() {
+    let _home_env = HOME_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let home = tempfile::tempdir().expect("home tempdir");
+    let _restore_home = RestoreHome(std::env::var_os("HOME"));
+    crate::testsupport::set_env("HOME", home.path().to_str().expect("utf-8 home"));
+    let backend = Arc::new(pawork_auth::MemoryBackend::new());
+    let (adapter, _dir) = settings_adapter("http://127.0.0.1:1".into(), backend).await;
+    let provider = pawork_domain::ProviderId::from("glm-coding");
+    let pair = pawork_protocol::DefaultModelPair {
+        provider_id: "glm-coding".into(),
+        model_id: "glm-5.2".into(),
+    };
+
+    let response = adapter
+        .command(&command_envelope(AppCommand::SetDefaultRoleModel {
+            role: "naming".into(),
+            value: Some(pair.clone()),
+        }))
+        .await
+        .expect("set naming pair");
+    let AppResponse::Data(data) = response else {
+        panic!("SetDefaultRoleModel must return Data: {response:?}")
+    };
+    assert_eq!(data["role"], "naming");
+    assert_eq!(data["value"]["provider_id"], "glm-coding");
+    assert_eq!(data["value"]["model_id"], "glm-5.2");
+    let status = adapter
+        .query(&query_envelope(AppQuery::ProviderAuthStatus {
+            provider_id: Some(provider.clone()),
+        }))
+        .await
+        .expect("status after set");
+    let AppResponse::Data(status) = status else {
+        panic!("ProviderAuthStatus must return Data: {status:?}")
+    };
+    assert_eq!(
+        status["role_defaults"]["naming"],
+        serde_json::json!({ "provider_id": "glm-coding", "model_id": "glm-5.2" })
+    );
+
+    let response = adapter
+        .command(&command_envelope(AppCommand::SetDefaultRoleModel {
+            role: "naming".into(),
+            value: None,
+        }))
+        .await
+        .expect("clear naming pair");
+    let AppResponse::Data(data) = response else {
+        panic!("SetDefaultRoleModel clear must return Data: {response:?}")
+    };
+    assert_eq!(data["role"], "naming");
+    assert!(data["value"].is_null(), "clear receipt is null: {data}");
+    let status = adapter
+        .query(&query_envelope(AppQuery::ProviderAuthStatus {
+            provider_id: Some(provider.clone()),
+        }))
+        .await
+        .expect("status after clear");
+    let AppResponse::Data(status) = status else {
+        panic!("ProviderAuthStatus must return Data: {status:?}")
+    };
+    assert!(status["role_defaults"]["naming"].is_null(), "{status}");
+    let config_path = pawork_workspace::config::global_config_path().expect("global path");
+    let persisted = std::fs::read_to_string(&config_path).expect("persisted config");
+    assert!(
+        !persisted.contains("naming_provider"),
+        "cleared naming pair must not persist: {persisted}"
+    );
+
+    // 未知 role fail-closed。
+    let error = adapter
+        .command(&command_envelope(AppCommand::SetDefaultRoleModel {
+            role: "nope".into(),
+            value: None,
+        }))
+        .await
+        .expect_err("unknown role must fail closed");
+    assert_eq!(error.code, "unknown_role", "error: {error:?}");
+
+    // 禁用模型不能设为角色默认（D4/D5 设置校验）。
+    adapter
+        .command(&command_envelope(AppCommand::SetModelEnabled {
+            provider_id: provider,
+            model_id: "glm-5.2".into(),
+            enabled: false,
+        }))
+        .await
+        .expect("disable glm-5.2");
+    let error = adapter
+        .command(&command_envelope(AppCommand::SetDefaultRoleModel {
+            role: "vision".into(),
+            value: Some(pair),
+        }))
+        .await
+        .expect_err("disabled role value must fail closed");
+    assert_eq!(error.code, "model_disabled", "error: {error:?}");
 }

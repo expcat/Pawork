@@ -216,6 +216,7 @@ impl GuiHostAdapter {
         let code = match error {
             crate::AppError::UnknownModel { .. }
             | crate::AppError::ModelBelongsToProvider { .. } => "unknown_model",
+            crate::AppError::ModelDisabled { .. } => "model_disabled",
             crate::AppError::SessionNotFound(_)
             | crate::AppError::Session(
                 pawork_storage::session::SessionStoreError::SessionNotFound(_),
@@ -878,6 +879,36 @@ fn command_set_provider_use_proxy<'a>(
     ))
 }
 
+fn command_set_model_enabled<'a>(
+    adapter: &'a GuiHostAdapter,
+    envelope: &'a AppCommandEnvelope,
+    command: &'a AppCommand,
+) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
+    Box::pin(handlers::settings::set_model_enabled(
+        adapter, envelope, command,
+    ))
+}
+
+fn command_set_provider_models_enabled<'a>(
+    adapter: &'a GuiHostAdapter,
+    envelope: &'a AppCommandEnvelope,
+    command: &'a AppCommand,
+) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
+    Box::pin(handlers::settings::set_provider_models_enabled(
+        adapter, envelope, command,
+    ))
+}
+
+fn command_set_default_role_model<'a>(
+    adapter: &'a GuiHostAdapter,
+    envelope: &'a AppCommandEnvelope,
+    command: &'a AppCommand,
+) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
+    Box::pin(handlers::settings::set_default_role_model(
+        adapter, envelope, command,
+    ))
+}
+
 fn command_set_approval_mode<'a>(
     adapter: &'a GuiHostAdapter,
     envelope: &'a AppCommandEnvelope,
@@ -996,6 +1027,12 @@ static COMMAND_HANDLERS: &[(&str, CommandHandler)] = &[
     ("set_default_model", command_set_default_model),
     ("set_proxy_url", command_set_proxy_url),
     ("set_provider_use_proxy", command_set_provider_use_proxy),
+    ("set_model_enabled", command_set_model_enabled),
+    (
+        "set_provider_models_enabled",
+        command_set_provider_models_enabled,
+    ),
+    ("set_default_role_model", command_set_default_role_model),
     ("set_approval_mode", command_set_approval_mode),
     ("set_terminal_settings", command_set_terminal_settings),
     ("tool_approve", command_tool_approve),

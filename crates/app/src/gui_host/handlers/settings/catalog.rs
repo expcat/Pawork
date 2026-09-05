@@ -4,11 +4,12 @@ use pawork_auth::CredentialSource;
 use pawork_domain::ProviderId;
 use pawork_protocol::{
     AppCommand, AppCommandEnvelope, AppQuery, AppResponse, DefaultModelPair, ProviderAuthState,
-    ProviderAuthStatusData, ProviderAuthStatusEntry, ProviderCatalogState,
-    ProviderUseProxyData,
+    ProviderAuthStatusData, ProviderAuthStatusEntry, ProviderCatalogState, ProviderUseProxyData,
+    RoleDefaultsData, SetDefaultRoleModelData, SetModelEnabledData, SetProviderModelsEnabledData,
 };
 use pawork_providers::ReasoningProtector;
 
+use crate::app_core::RoleModelKind;
 use crate::gui_host::GuiHostAdapter;
 use crate::gui_server::GuiHostError;
 use crate::provider_assembly::{assemble_provider, assemble_registry, channel_protocol};
@@ -28,6 +29,62 @@ fn endpoint_label(core: &AppCore, channel: &channels::FirstPartyChannel) -> Stri
         .find(|provider| provider.id == channel.id)
         .and_then(|provider| provider.base_url.clone())
         .unwrap_or_else(|| channel.default_base_url.to_string())
+}
+
+/// provider 已知性（首方通道或生效配置 `[[providers]]` 条目）。
+fn known_provider(core: &AppCore, id: &str) -> bool {
+    channels::is_first_party(id)
+        || core
+            .config()
+            .providers
+            .iter()
+            .any(|provider| provider.id == id)
+}
+
+/// provider/model 校验（`set_default_model` 的 models_overview 口径）+
+/// ADR-055 D4 禁用校验：拒绝把禁用模型设为默认/角色默认对。
+async fn validate_runnable_model(
+    core: &AppCore,
+    id: &str,
+    model_id: &str,
+) -> Result<(), GuiHostError> {
+    if !known_provider(core, id) {
+        return Err(GuiHostAdapter::host_error(
+            "unknown_provider",
+            format!("provider {id} is unknown"),
+        ));
+    }
+    let overview = core.models_overview().await;
+    if !overview
+        .iter()
+        .any(|entry| entry.provider.as_str() == id && entry.id.as_str() == model_id)
+    {
+        return Err(GuiHostAdapter::host_error(
+            "unknown_model",
+            format!("model {model_id} is not in the runnable catalog of provider {id}"),
+        ));
+    }
+    if !core.config().is_model_enabled(id, model_id) {
+        return Err(GuiHostAdapter::host_error(
+            "model_disabled",
+            format!("model {model_id} of provider {id} is disabled"),
+        ));
+    }
+    Ok(())
+}
+
+/// Global 配置路径（不可用即 `config_unavailable`）。
+fn global_config_file() -> Result<std::path::PathBuf, GuiHostError> {
+    pawork_workspace::config::global_config_path().ok_or_else(|| {
+        GuiHostAdapter::host_error(
+            "config_unavailable",
+            "global config directory is not available on this platform",
+        )
+    })
+}
+
+fn config_write_error(error: pawork_workspace::config::ConfigError) -> GuiHostError {
+    GuiHostAdapter::host_error("config_write", error.to_string())
 }
 
 fn auth_state(
@@ -203,7 +260,25 @@ pub(crate) async fn provider_auth_status(
         }),
         _ => None,
     };
-    Ok(settings_data(ProviderAuthStatusData { providers, default }))
+    // ADR-055 D5：三辅助角色默认对（半配对输出 null，同顶层 default 口径）；
+    // conversation 仍由既有顶层 default 透出，不在此重复。
+    let wire_pair = |kind: RoleModelKind| {
+        kind.pair_in_config(config)
+            .map(|(provider_id, model_id)| DefaultModelPair {
+                provider_id,
+                model_id,
+            })
+    };
+    let role_defaults = RoleDefaultsData {
+        naming: wire_pair(RoleModelKind::Naming),
+        vision: wire_pair(RoleModelKind::Vision),
+        search: wire_pair(RoleModelKind::Search),
+    };
+    Ok(settings_data(ProviderAuthStatusData {
+        providers,
+        default,
+        role_defaults,
+    }))
 }
 
 pub(crate) async fn set_default_model(
@@ -221,28 +296,8 @@ pub(crate) async fn set_default_model(
     let id = provider_id.as_str();
     {
         let core = adapter.core.read().await;
-        let known = channels::is_first_party(id)
-            || core
-                .config()
-                .providers
-                .iter()
-                .any(|provider| provider.id == id);
-        if !known {
-            return Err(GuiHostAdapter::host_error(
-                "unknown_provider",
-                format!("provider {id} is unknown"),
-            ));
-        }
-        let overview = core.models_overview().await;
-        let runnable = overview
-            .iter()
-            .any(|entry| entry.provider.as_str() == id && entry.id.as_str() == model_id);
-        if !runnable {
-            return Err(GuiHostAdapter::host_error(
-                "unknown_model",
-                format!("model {model_id} is not in the runnable catalog of provider {id}"),
-            ));
-        }
+        // 校验复用 models_overview 口径；ADR-055 D4 起含禁用校验。
+        validate_runnable_model(&core, id, model_id).await?;
     }
     let path = pawork_workspace::config::global_config_path().ok_or_else(|| {
         GuiHostAdapter::host_error(
@@ -310,5 +365,230 @@ pub(crate) async fn set_provider_use_proxy(
     Ok(settings_data(ProviderUseProxyData {
         provider_id: id.to_string(),
         use_proxy: *use_proxy,
+    }))
+}
+
+/// ADR-055 OPT-3a：单模型启用/禁用。禁用命中任一角色默认对时同批清除
+/// 该键对（D3：禁止静默换绑），回执 `cleared_roles` 按 wire 名列出；
+/// 启用恒为空。写盘成功即同步内存生效配置（同 set_provider_use_proxy）。
+pub(crate) async fn set_model_enabled(
+    adapter: &GuiHostAdapter,
+    _envelope: &AppCommandEnvelope,
+    command: &AppCommand,
+) -> Result<AppResponse, GuiHostError> {
+    let AppCommand::SetModelEnabled {
+        provider_id,
+        model_id,
+        enabled,
+    } = command
+    else {
+        unreachable!("set_model_enabled handler receives SetModelEnabled")
+    };
+    let id = provider_id.as_str();
+    let model = model_id.as_str();
+    let (disabled, cleared) = {
+        let core = adapter.core.read().await;
+        if !known_provider(&core, id) {
+            return Err(GuiHostAdapter::host_error(
+                "unknown_provider",
+                format!("provider {id} is unknown"),
+            ));
+        }
+        // 校验口径同 set_default_model：模型必须在该 provider 当前可运行目录。
+        let overview = core.models_overview().await;
+        if !overview
+            .iter()
+            .any(|entry| entry.provider.as_str() == id && entry.id.as_str() == model)
+        {
+            return Err(GuiHostAdapter::host_error(
+                "unknown_model",
+                format!("model {model} is not in the runnable catalog of provider {id}"),
+            ));
+        }
+        let mut disabled: Vec<String> = core
+            .config()
+            .providers
+            .iter()
+            .find(|provider| provider.id == id)
+            .map(|provider| provider.disabled_models.clone())
+            .unwrap_or_default();
+        let mut cleared = Vec::new();
+        if *enabled {
+            disabled.retain(|entry| entry != model);
+        } else {
+            // 幂等：重复同态写为最终覆盖语义。
+            if !disabled.iter().any(|entry| entry == model) {
+                disabled.push(model.to_string());
+            }
+            for kind in RoleModelKind::ALL {
+                if kind.pair_in_config(core.config()) == Some((id.to_string(), model.to_string())) {
+                    cleared.push(kind);
+                }
+            }
+        }
+        (disabled, cleared)
+    };
+    let path = global_config_file()?;
+    pawork_workspace::config::write_provider_disabled_models(&path, id, &disabled)
+        .map_err(config_write_error)?;
+    for kind in &cleared {
+        pawork_workspace::config::write_model_pair(
+            &path,
+            kind.provider_key(),
+            kind.model_key(),
+            None,
+        )
+        .map_err(config_write_error)?;
+    }
+    {
+        let mut core = adapter.core.write().await;
+        core.set_provider_disabled_models(id, disabled);
+        for kind in &cleared {
+            core.set_role_model_pair(*kind, None);
+        }
+    }
+    Ok(settings_data(SetModelEnabledData {
+        provider_id: id.to_string(),
+        model_id: model.to_string(),
+        enabled: *enabled,
+        cleared_roles: cleared
+            .iter()
+            .map(|kind| kind.wire_name().to_string())
+            .collect(),
+    }))
+}
+
+/// ADR-055 OPT-3a：provider 全量模型启用/禁用。全开 = 清空 denylist；
+/// 全关 = 按当前聚合目录展开全部模型写 denylist（目录为空
+/// `catalog_unavailable` fail-closed 不写盘，防空展开退化为全开）。
+pub(crate) async fn set_provider_models_enabled(
+    adapter: &GuiHostAdapter,
+    _envelope: &AppCommandEnvelope,
+    command: &AppCommand,
+) -> Result<AppResponse, GuiHostError> {
+    let AppCommand::SetProviderModelsEnabled {
+        provider_id,
+        enabled,
+    } = command
+    else {
+        unreachable!("set_provider_models_enabled handler receives SetProviderModelsEnabled")
+    };
+    let id = provider_id.as_str();
+    let (disabled, cleared) = {
+        let core = adapter.core.read().await;
+        if !known_provider(&core, id) {
+            return Err(GuiHostAdapter::host_error(
+                "unknown_provider",
+                format!("provider {id} is unknown"),
+            ));
+        }
+        if *enabled {
+            (Vec::new(), Vec::new())
+        } else {
+            let mut models: Vec<String> = core
+                .models_overview()
+                .await
+                .iter()
+                .filter(|entry| entry.provider.as_str() == id)
+                .map(|entry| entry.id.as_str().to_string())
+                .collect();
+            models.sort();
+            models.dedup();
+            if models.is_empty() {
+                return Err(GuiHostAdapter::host_error(
+                    "catalog_unavailable",
+                    format!("provider {id} has no runnable catalog to disable"),
+                ));
+            }
+            // 全关展开使命中该 provider 的任一角色默认对整体失效。
+            let cleared = RoleModelKind::ALL
+                .into_iter()
+                .filter(|kind| {
+                    kind.pair_in_config(core.config())
+                        .is_some_and(|(provider, _)| provider == id)
+                })
+                .collect::<Vec<_>>();
+            (models, cleared)
+        }
+    };
+    let path = global_config_file()?;
+    pawork_workspace::config::write_provider_disabled_models(&path, id, &disabled)
+        .map_err(config_write_error)?;
+    for kind in &cleared {
+        pawork_workspace::config::write_model_pair(
+            &path,
+            kind.provider_key(),
+            kind.model_key(),
+            None,
+        )
+        .map_err(config_write_error)?;
+    }
+    {
+        let mut core = adapter.core.write().await;
+        core.set_provider_disabled_models(id, disabled);
+        for kind in &cleared {
+            core.set_role_model_pair(*kind, None);
+        }
+    }
+    Ok(settings_data(SetProviderModelsEnabledData {
+        provider_id: id.to_string(),
+        enabled: *enabled,
+        cleared_roles: cleared
+            .iter()
+            .map(|kind| kind.wire_name().to_string())
+            .collect(),
+    }))
+}
+
+/// ADR-055 OPT-3b：四默认角色读写。未知 role `unknown_role` fail-closed；
+/// `value = null` 清除键对；设置校验 = 已知 provider + 可运行目录 + 未禁用。
+pub(crate) async fn set_default_role_model(
+    adapter: &GuiHostAdapter,
+    _envelope: &AppCommandEnvelope,
+    command: &AppCommand,
+) -> Result<AppResponse, GuiHostError> {
+    let AppCommand::SetDefaultRoleModel { role, value } = command else {
+        unreachable!("set_default_role_model handler receives SetDefaultRoleModel")
+    };
+    let Some(kind) = RoleModelKind::from_wire(role) else {
+        return Err(GuiHostAdapter::host_error(
+            "unknown_role",
+            format!("role {role} is not one of conversation/naming/vision/search"),
+        ));
+    };
+    // 清除（null）：半配对只移除存在的键，两键都不存在时写盘为 no-op。
+    let pair = match value {
+        Some(pair) => {
+            let (provider_id, model_id) = (pair.provider_id.clone(), pair.model_id.clone());
+            {
+                let core = adapter.core.read().await;
+                validate_runnable_model(&core, &provider_id, &model_id).await?;
+            }
+            Some((provider_id, model_id))
+        }
+        None => None,
+    };
+    let path = global_config_file()?;
+    let write_pair = match &pair {
+        Some((provider_id, model_id)) => Some((provider_id.as_str(), model_id.as_str())),
+        None => None,
+    };
+    pawork_workspace::config::write_model_pair(
+        &path,
+        kind.provider_key(),
+        kind.model_key(),
+        write_pair,
+    )
+    .map_err(config_write_error)?;
+    {
+        let mut core = adapter.core.write().await;
+        core.set_role_model_pair(kind, write_pair);
+    }
+    Ok(settings_data(SetDefaultRoleModelData {
+        role: kind.wire_name().to_string(),
+        value: pair.map(|(provider_id, model_id)| DefaultModelPair {
+            provider_id,
+            model_id,
+        }),
     }))
 }

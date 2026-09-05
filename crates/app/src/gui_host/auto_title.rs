@@ -26,12 +26,36 @@ pub(crate) async fn auto_title_after_successful_run(
     let core = core.read().await;
     match core.get_session(&session_id).await {
         Ok(record) if record.title == PLACEHOLDER_SESSION_TITLE => {}
-        _ => return,
+        other => {
+            tracing::debug!(title = ?other.map(|record| record.title), "session auto naming skipped: title not placeholder");
+            return;
+        }
     }
-    if core.config().naming_provider.is_none() || core.config().naming_model.is_none() {
-        return;
+    let config = core.config();
+    match (
+        config.naming_provider.as_deref(),
+        config.naming_model.as_deref(),
+    ) {
+        (Some(provider), Some(model)) if !config.is_model_enabled(provider, model) => {
+            // ADR-055 D4：命名模型被禁用时跳过命名，保留占位名。
+            tracing::debug!(
+                naming_provider = provider,
+                naming_model = model,
+                "session auto naming skipped: naming model disabled"
+            );
+            return;
+        }
+        (Some(_), Some(_)) => {}
+        _ => {
+            tracing::debug!(
+                naming_provider = ?config.naming_provider,
+                "session auto naming skipped: naming model not configured"
+            );
+            return;
+        }
     }
     let Some(first_user_text) = first_user_text(&core, &session_id).await else {
+        tracing::debug!("session auto naming skipped: no first user text");
         return;
     };
     let title = match core.generate_session_title(&first_user_text).await {

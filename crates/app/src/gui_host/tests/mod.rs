@@ -163,7 +163,10 @@ async fn model_list_uses_aggregated_overview() {
     let (core, _dir, _session) = core_with_turn().await;
     let host: Arc<dyn GuiHost> = Arc::new(GuiHostAdapter::new(core));
     let response = host
-        .query(&query_envelope(AppQuery::ModelList { provider_id: None }))
+        .query(&query_envelope(AppQuery::ModelList {
+            provider_id: None,
+            include_disabled: false,
+        }))
         .await
         .expect("model list");
     let AppResponse::Data(data) = response else {
@@ -374,4 +377,3 @@ fn gui_event_bus_publishes_lagged_degrade_frame() {
     assert_eq!(event.stream, EventStream::Global);
     assert_eq!(bus.current_sequence(), 1);
 }
-

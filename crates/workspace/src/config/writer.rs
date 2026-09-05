@@ -129,17 +129,12 @@ pub fn write_default_model_pair(
     provider_id: &str,
     model_id: &str,
 ) -> Result<(), ConfigError> {
-    rmw_global_config(path, |table| {
-        table.insert(
-            "default_provider".into(),
-            toml::Value::String(provider_id.to_string()),
-        );
-        table.insert(
-            "default_model".into(),
-            toml::Value::String(model_id.to_string()),
-        );
-        Ok((true, ()))
-    })
+    write_model_pair(
+        path,
+        "default_provider",
+        "default_model",
+        Some((provider_id, model_id)),
+    )
 }
 
 /// 将 naming_provider/naming_model 原子写入指定（Global 层）配置文件
@@ -151,16 +146,43 @@ pub fn write_naming_model_pair(
     provider_id: &str,
     model_id: &str,
 ) -> Result<(), ConfigError> {
-    rmw_global_config(path, |table| {
-        table.insert(
-            "naming_provider".into(),
-            toml::Value::String(provider_id.to_string()),
-        );
-        table.insert(
-            "naming_model".into(),
-            toml::Value::String(model_id.to_string()),
-        );
-        Ok((true, ()))
+    write_model_pair(
+        path,
+        "naming_provider",
+        "naming_model",
+        Some((provider_id, model_id)),
+    )
+}
+
+/// 将 provider/model 键对原子写入指定（Global 层）配置文件的通用入口
+/// （ADR-055 D5：conversation/naming/vision/search 四角色同口径）。
+///
+/// `Some` 写两键（最终覆盖语义，文件不存在时创建含父目录）；`None` 移除
+/// 已存在的键（半配对只移除存在的那一半；两键都不存在时不写盘返回
+/// `Ok`）。其余未知字段原样保留。
+pub fn write_model_pair(
+    path: &Path,
+    provider_key: &str,
+    model_key: &str,
+    pair: Option<(&str, &str)>,
+) -> Result<(), ConfigError> {
+    rmw_global_config(path, |table| match pair {
+        Some((provider_id, model_id)) => {
+            table.insert(
+                provider_key.to_string(),
+                toml::Value::String(provider_id.to_string()),
+            );
+            table.insert(
+                model_key.to_string(),
+                toml::Value::String(model_id.to_string()),
+            );
+            Ok((true, ()))
+        }
+        None => {
+            let removed_provider = table.remove(provider_key).is_some();
+            let removed_model = table.remove(model_key).is_some();
+            Ok((removed_provider || removed_model, ()))
+        }
     })
 }
 
@@ -227,6 +249,70 @@ pub fn write_provider_use_proxy(
             }
         }
         Ok((true, ()))
+    })
+}
+
+/// 将指定 provider 的禁用模型 denylist 原子写入（Global 层）配置文件的
+/// `[[providers]]` 条目（ADR-055 D1）。
+///
+/// 命中同 `id` 条目：`disabled` 非空则覆盖该数组，空则移除该键（键本就
+/// 缺失时不写盘）；无该条目：非空则追加仅含 `id` + `disabled_models` 的
+/// 新条目，空则不写盘返回 `Ok`。其余条目与未知字段原样保留；`providers`
+/// 已存在但非数组时 fail-closed 报错（同 [`write_provider_use_proxy`]）。
+pub fn write_provider_disabled_models(
+    path: &Path,
+    provider_id: &str,
+    disabled: &[String],
+) -> Result<(), ConfigError> {
+    rmw_global_config(path, |table| {
+        let disabled_value = || {
+            toml::Value::try_from(disabled).map_err(|source| ConfigError::Write {
+                path: path.to_path_buf(),
+                source: Box::new(source),
+            })
+        };
+        let providers = match table
+            .entry("providers")
+            .or_insert_with(|| toml::Value::Array(Vec::new()))
+        {
+            toml::Value::Array(array) => array,
+            _ => {
+                return Err(ConfigError::Io {
+                    path: path.to_path_buf(),
+                    source: Box::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "providers is not an array",
+                    )),
+                });
+            }
+        };
+        let entry = providers.iter_mut().find(|item| {
+            item.as_table()
+                .and_then(|table| table.get("id"))
+                .and_then(toml::Value::as_str)
+                .is_some_and(|id| id == provider_id)
+        });
+        match entry {
+            Some(toml::Value::Table(entry)) => {
+                if disabled.is_empty() {
+                    let removed = entry.remove("disabled_models").is_some();
+                    Ok((removed, ()))
+                } else {
+                    entry.insert("disabled_models".into(), disabled_value()?);
+                    Ok((true, ()))
+                }
+            }
+            _ => {
+                if disabled.is_empty() {
+                    return Ok((false, ()));
+                }
+                let mut created = toml::Table::new();
+                created.insert("id".into(), toml::Value::String(provider_id.to_string()));
+                created.insert("disabled_models".into(), disabled_value()?);
+                providers.push(toml::Value::Table(created));
+                Ok((true, ()))
+            }
+        }
     })
 }
 
@@ -489,6 +575,166 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(&path).expect("unchanged after missing"),
             content
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn write_model_pair_set_clear_and_schema_roundtrip() {
+        let path = temp_path("model-pair");
+        std::fs::write(
+            &path,
+            "trust_workspaces = true\n[extra_section]\nkey = \"v\"\n",
+        )
+        .expect("seed config");
+        write_model_pair(
+            &path,
+            "vision_provider",
+            "vision_model",
+            Some(("glm-coding", "glm-4.6v")),
+        )
+        .expect("set vision pair");
+        let content = std::fs::read_to_string(&path).expect("read back");
+        let config: crate::config::schema::PaworkConfig =
+            toml::from_str(&content).expect("schema roundtrip");
+        assert_eq!(config.vision_provider.as_deref(), Some("glm-coding"));
+        assert_eq!(config.vision_model.as_deref(), Some("glm-4.6v"));
+        assert_eq!(config.trust_workspaces, Some(true));
+        assert_eq!(
+            config
+                .extra
+                .get("extra_section")
+                .and_then(|v| v.get("key"))
+                .and_then(|v| v.as_str()),
+            Some("v")
+        );
+
+        write_model_pair(&path, "vision_provider", "vision_model", None).expect("clear pair");
+        let content = std::fs::read_to_string(&path).expect("read back");
+        assert!(!content.contains("vision_provider"));
+        assert!(!content.contains("vision_model"));
+        assert!(content.contains("trust_workspaces = true"));
+        assert!(content.contains("[extra_section]"));
+
+        // 两键都不存在时清除为 no-op：不写盘，内容不变。
+        write_model_pair(&path, "vision_provider", "vision_model", None).expect("clear again");
+        assert_eq!(std::fs::read_to_string(&path).expect("unchanged"), content);
+
+        // 半配对清除：只移除存在的那一半。
+        std::fs::write(&path, "search_provider = \"opencode-go\"\n").expect("seed half pair");
+        write_model_pair(&path, "search_provider", "search_model", None).expect("clear half");
+        let content = std::fs::read_to_string(&path).expect("read back");
+        assert!(!content.contains("search_provider"));
+        assert!(!content.contains("search_model"));
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn write_provider_disabled_models_set_clear_append_and_noop() {
+        let path = temp_path("provider-disabled-models");
+        std::fs::write(
+            &path,
+            "proxy_url = \"http://127.0.0.1:7890\"\n[[providers]]\nid = \"glm-coding\"\nbase_url = \"https://example.test/v1\"\n[[providers]]\nid = \"other\"\n",
+        )
+        .expect("seed config");
+        // 命中既有 id：写数组，保留 base_url 与其它条目。
+        write_provider_disabled_models(
+            &path,
+            "glm-coding",
+            &["glm-5.2".to_string(), "glm-5.3-flash".to_string()],
+        )
+        .expect("set existing");
+        let table: toml::Table =
+            toml::from_str(&std::fs::read_to_string(&path).expect("read")).expect("parse");
+        let providers = table
+            .get("providers")
+            .and_then(|v| v.as_array())
+            .expect("providers");
+        assert_eq!(providers.len(), 2);
+        let first = providers[0].as_table().expect("entry");
+        assert_eq!(
+            first.get("base_url").and_then(|v| v.as_str()),
+            Some("https://example.test/v1")
+        );
+        assert_eq!(
+            first.get("disabled_models").and_then(|v| v.as_array()),
+            Some(&vec![
+                toml::Value::String("glm-5.2".into()),
+                toml::Value::String("glm-5.3-flash".into())
+            ])
+        );
+        assert!(providers[1]
+            .as_table()
+            .expect("entry")
+            .get("disabled_models")
+            .is_none());
+        assert_eq!(
+            table.get("proxy_url").and_then(|v| v.as_str()),
+            Some("http://127.0.0.1:7890")
+        );
+
+        // 空切片：移除该键；再清一次为 no-op。
+        write_provider_disabled_models(&path, "glm-coding", &[]).expect("clear existing");
+        let table: toml::Table =
+            toml::from_str(&std::fs::read_to_string(&path).expect("read")).expect("parse");
+        let first = table
+            .get("providers")
+            .and_then(|v| v.as_array())
+            .expect("providers")[0]
+            .as_table()
+            .expect("entry");
+        assert!(first.get("disabled_models").is_none());
+        assert_eq!(
+            first.get("base_url").and_then(|v| v.as_str()),
+            Some("https://example.test/v1")
+        );
+        let cleared = std::fs::read_to_string(&path).expect("read cleared");
+        write_provider_disabled_models(&path, "glm-coding", &[]).expect("clear noop");
+        assert_eq!(std::fs::read_to_string(&path).expect("unchanged"), cleared);
+
+        // 无该条目且非空：追加 id + disabled_models 新条目。
+        write_provider_disabled_models(&path, "new-provider", &["m1".to_string()])
+            .expect("append missing");
+        let table: toml::Table =
+            toml::from_str(&std::fs::read_to_string(&path).expect("read")).expect("parse");
+        let providers = table
+            .get("providers")
+            .and_then(|v| v.as_array())
+            .expect("providers");
+        assert_eq!(providers.len(), 3);
+        let created = providers[2].as_table().expect("created entry");
+        assert_eq!(
+            created.get("id").and_then(|v| v.as_str()),
+            Some("new-provider")
+        );
+        assert_eq!(
+            created.get("disabled_models").and_then(|v| v.as_array()),
+            Some(&vec![toml::Value::String("m1".into())])
+        );
+
+        // 无该条目且空：不写盘返回 Ok。
+        let before = std::fs::read_to_string(&path).expect("read before noop");
+        write_provider_disabled_models(&path, "ghost", &[]).expect("missing + empty is no-op");
+        assert_eq!(std::fs::read_to_string(&path).expect("unchanged"), before);
+
+        // 文件不存在 + 空切片：不创建文件。
+        let missing = temp_path("provider-disabled-missing");
+        let _ = std::fs::remove_file(&missing);
+        write_provider_disabled_models(&missing, "ghost", &[]).expect("missing file is no-op");
+        assert!(!missing.exists());
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn write_provider_disabled_models_fails_closed_on_non_array_providers() {
+        let path = temp_path("provider-disabled-non-array");
+        std::fs::write(&path, "providers = 1\n").expect("seed config");
+        assert!(write_provider_disabled_models(&path, "glm-coding", &["m1".to_string()]).is_err());
+        // 空切片同样 fail-closed：providers 形态非法时不静默放行。
+        assert!(write_provider_disabled_models(&path, "glm-coding", &[]).is_err());
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("unchanged"),
+            "providers = 1\n"
         );
         std::fs::remove_file(&path).ok();
     }

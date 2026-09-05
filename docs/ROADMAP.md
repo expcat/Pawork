@@ -1,6 +1,6 @@
 # Pawork 活动路线图：Desktop 优化（OPT）
 
-> 基线日期：2026-09-05。状态：**OPT-D 六张候选稿已交付、已获视觉签字；OPT-1 已实现并通过定向验证；OPT-2/3/4 未开始**。来源：当日正式 Desktop 真窗口走查（11 条反馈）。本文件是当前活动线的任务规划，**不是**源码或冻结契约的事实源。P0–P2 收尾证据仍见 [Desktop Spec §8](spec/desktop.md#8-gui-收尾验收记录2026-09-05)；未排期候选仍见 [backlog.md](spec/backlog.md)。
+> 基线日期：2026-09-05。状态：**OPT-D 六张候选稿已交付、已获视觉签字；OPT-1 已实现并通过定向验证；OPT-2 已实现且真窗口验收通过（§10.3）；OPT-3 内核/协议/配置半区已实现（3a/3b，ADR-055，API 1.12，§10.4），GUI 控件批次待做；OPT-4 未开始**。来源：当日正式 Desktop 真窗口走查（11 条反馈）。本文件是当前活动线的任务规划，**不是**源码或冻结契约的事实源。P0–P2 收尾证据仍见 [Desktop Spec §8](spec/desktop.md#8-gui-收尾验收记录2026-09-05)；未排期候选仍见 [backlog.md](spec/backlog.md)。
 
 **闸门**：凡涉及显示效果的条目，必须先完成 **OPT-D 统一 UI Design**（一体出图），再改像素与布局。内核/配置/协议可与出图并行准备，但 GUI 落地以设计稿为准。
 
@@ -168,11 +168,11 @@ F3「代理保存到对应配置」：现行 Global `[[providers]].use_proxy` �
 | --- | --- |
 | OPT-D | 六张统一候选稿已交付、尺寸/状态走查通过；**用户视觉签字通过**（设计闸门已放行） |
 | OPT-1 | 1a–1d 已实现；定向自动验证通过；Appearance 真窗口重启恢复通过；未归档/未发布 |
-| OPT-2 | 2a–2d 已实现（ADR-054，API 1.11）；定向自动验证通过；**等待真窗口人工验收**（会话行按钮、行内改名、No project 提示与自动标题）；未归档/未发布 |
-| OPT-3 | 未开始（协议可预研，GUI 等 D） |
+| OPT-2 | 2a–2d 已实现（ADR-054，API 1.11）；定向自动验证与真窗口验收通过（验收中修复无项目会话无法问答，见 §10.3）；未归档/未发布 |
+| OPT-3 | 3a/3b 内核·协议·配置已实现（ADR-055，API 1.12）；定向自动验证通过；GUI 控件（启用弹层/四默认角色/代理 Switch）与真窗口验收待后续批次；3d/3e 未开始 |
 | OPT-4 | 未开始（等 D 签字） |
 
-本线整体仍未完成：OPT-3/4 尚未开始；OPT-2 已实现待真窗口人工验收；后续 GUI 对照新图验收与发布分别记录，不由本批自动推定。
+本线整体仍未完成：OPT-3 GUI 批次与 3d/3e、OPT-4 尚未开始；后续 GUI 对照新图验收与发布分别记录，不由本批自动推定。
 
 
 ### 10.1 本批交付与证据（2026-09-05）
@@ -217,4 +217,41 @@ Full workspace gate: NOT RUN（当前未设置全量门禁）。
 
 Validated: 上表实际命令。
 Targeted regressions: 上述 OPT-2 契约与行为。
+Full workspace gate: NOT RUN（当前未设置全量门禁）。
+
+### 10.3 本批交付与证据（2026-09-05，OPT-2 真窗口验收 + 无项目问答修复）
+
+- **验收中修复（根因）**：ADR-044 D3 的 `workspace_for_session_or_unbound` 在注册表存在任一可用项目时对未绑定会话一律 fail-closed，与 ADR-054 D1「无项目会话可问答」冲突；桌面 Host 启动即自动登记 cwd 项目，导致无项目会话发送必报 `session … has no workspace binding`（真窗口实测复现）。修复：显式 NULL 归属（合法产品状态）以空授权面 `ws-unbound` 运行问答，文件类工具仍由 Policy 对空 roots fail-closed；绑定悬空维持 fail-closed。[architecture.md](architecture.md) 冻结契约与 [app Spec](spec/crates/app.md) 同批修订。
+- **真窗口验收**（macOS 26.6.2，正式脚本构建；隔离实例 `opt2acc`，Host 当次 `--provider opencode-go --model glm-5.3-flash` 覆盖，不写持久默认；生产实例 desktop 全程未受影响）：
+  - 2a：全局 New task 直建无项目会话（无 WorkspaceConfirm 浮层），归 Unassigned；DB `workspace_id` 为 NULL；Composer 显示 No project 与文件工具不可用诚实提示；真实问答 Run 三次 completed。
+  - 2b：会话行 Rename → 行内编辑，Enter 提交（DB 写后状态）/Esc 取消（不落盘）。
+  - 2c：Archive → 列表即时隐藏，DB `archived=1`，事件与投影未删除。
+  - 2d：Global 临时写入 `naming_provider`/`naming_model`（opencode-go/glm-5.3-flash，验收后已还原），Run 成功终态后自动命名为模型生成标题，SessionMetaChanged 广播使窗口列表即时更新。
+  - 附带复验：Host 重启后窗口 Reconnect 恢复连接、会话与 Composer 草稿。
+- **启动发现**：运行中的 `Pawork.app` 被脚本 `cp -f` 覆盖二进制后，新进程从同一 bundle 路径启动即被 SIGKILL（exit 137，无日志）；改用平行 bundle 路径规避。已记入 [AGENTS.md](../AGENTS.md) §11 工程经验。
+- **自动验证**：`cargo test -p pawork-app --offline --lib --tests` 225 passed（含 unassigned→unbound 主路径与 dangling 绑定 fail-closed 两条新回归）；`cargo build -p pawork --offline` 通过（复用 target，无新依赖）。
+
+Validated: 上表实际命令 + 真窗口/AX/SQLite 交叉验证。
+Targeted regressions: 无归属会话问答、空授权面 fail-closed、改名/归档写读、自动标题写回。
+Full workspace gate: NOT RUN（当前未设置全量门禁）。
+
+### 10.4 本批交付与证据（2026-09-05，OPT-3a/3b 内核·协议·配置）
+
+- **ADR-055**（[settings Spec](spec/settings.md#adr-055opt-3-模型启用集与默认角色2026-09-05)）先行冻结契约：GUI API 1.11 → 1.12，golden/typegen 先红后绿；`disabled_models` denylist 与 vision/search 角色键 Global 层独占（非 Global 层剥离 + 告警）。
+- **OPT-3a 内核**：`SetModelEnabled` / `SetProviderModelsEnabled`（全关按当前聚合目录展开，目录为空 `catalog_unavailable` 不写盘）；禁用命中角色默认对时同批清除并回执 `cleared_roles`（固定序 conversation→naming→vision→search，禁止静默换绑）；`ModelList` 缺省过滤禁用模型（`include_disabled=true` 取全量），RunStart / switch_provider / set_default* 对禁用模型一律 `model_disabled` fail-closed。
+- **OPT-3b 内核**：Global 新增 `vision_provider/vision_model`、`search_provider/search_model`（naming 对已在 ADR-054 落地）；`SetDefaultRoleModel{role, value}`（未知 role fail-closed，null 清除）；`provider_auth_status` 响应增 `role_defaults{naming,vision,search}`。Vision/Search 落地期只保存选择、不接路由（B1/B5 未落地）。
+- **不在本批**：OPT-3 GUI 控件（模型启用弹层、四默认角色区、代理 Switch，对照 OPT-D 签字稿）、OPT-3d/3e（多凭证、额度槽）、真窗口验收与发布。
+- **Desktop 消费面**：`provider_auth_status.role_defaults` 自 1.12 起必填；Desktop 夹具 / AX 与 `pawork-client` 再导出已同步，`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders` 193/193。GUI 控件仍待后续批次。
+
+| 检查 | 结果 |
+| --- | --- |
+| `cargo test -p pawork-protocol -p pawork-workspace -p pawork-app --offline --lib --tests`（单 Cargo 进程收口） | 通过（protocol 165 + workspace lib 132 / loader_file 13 / smoke 15 + app lib 207 及 gui_server 集成全绿） |
+| protocol golden 先红后绿：升版首跑全红，`GUI_PROTOCOL_UPDATE_GOLDEN=1` 重生成后转绿；既有 fixture 逐 token 核对仅 minor 11→12 + `role_defaults` 新增键 | 通过 |
+| `cargo run -p pawork-protocol --features typegen --bin pawork-protocol-typegen` + `--check` | 通过（schemas 三产物同步检入，零漂移） |
+| `cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders` | 193 passed（`role_defaults` 必填后夹具/client 同步） |
+
+定向回归：三命令 golden（含 clear）与 model_list 两态 fixture、registry 双射、required-nullable 缺键 fail-closed、schema denylist parse/merge、writer set/clear/保留未知字段、loader 两类剥离告警、启停 roundtrip、cleared_roles、全关展开/空目录 fail-closed、角色设/清/未知 role、model_list 两态、RunStart 双路径 model_disabled。实现由 glm 子代理按互不重叠写入集串行切片（protocol → workspace → app），主代理撰写 ADR-055 与 Spec/ROADMAP 同步并抽查切片 diff。
+
+Validated: 上表实际命令。
+Targeted regressions: 上述 OPT-3a/3b 契约与行为。
 Full workspace gate: NOT RUN（当前未设置全量门禁）。

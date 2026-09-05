@@ -66,7 +66,7 @@ flowchart LR
 | ID | 要求 | 状态 |
 | --- | --- | --- |
 | DESK-01 | 用户能添加/选择真实项目并新建/切换会话，选中态与标题在长列表中可辨认。 | 项目选择、新建和切换生产入口已实现；多项目集合与 Session 归属已持久化并通过重启复验。 |
-| DESK-01a | 全局 New task 直建无项目会话（Unassigned），会话行右侧可改名/归档；配置命名模型后占位标题会话在 Run 成功后自动命名。 | ADR-054 已实现（API 1.11），定向自动验证通过；真窗口验收待 OPT-2 收尾。归档仅隐藏不删除；无项目会话文件类工具 fail-closed，Composer 显示 No project 诚实提示。 |
+| DESK-01a | 全局 New task 直建无项目会话（Unassigned），会话行右侧可改名/归档；配置命名模型后占位标题会话在 Run 成功后自动命名。 | ADR-054 已实现（API 1.11），定向自动验证与真窗口验收通过（2026-09-05，见 §8 OPT-2 验收；验收中修复无项目会话问答 fail-closed 冲突）。归档仅隐藏不删除；无项目会话以空授权面运行问答，文件类工具 fail-closed，Composer 显示 No project 诚实提示。 |
 | DESK-02 | Timeline 能按确定顺序投影历史和 live 事件，去重且不跨 Run 串线。 | 已实现；共享 reducer/golden。 |
 | DESK-03 | 流式输出时默认跟随底部；用户上滚后脱钩，显式回底后重挂。 | 生产逻辑已实现；长会话与性能按风险定向重验。 |
 | DESK-04 | 工具请求以审批卡呈现 ApproveOnce/ApproveForRun/Deny；取消动作可见。 | 生产逻辑已实现；本轮真实 `write_file` 审批路径已通过。 |
@@ -135,6 +135,11 @@ GUI P0–P2 及追加中文/供应商代理开关均已实现；本机 E2 自动
 - **P2 Settings & Polish**：computer-use 逐页检查 Models & providers、Network、Approvals、Tools & MCP、Terminal、Appearance、Advanced、About；切换 English/中文及 100%/125%/150%。Connected 与目录错误分层；当前 ChatGPT 目录 HTTP 401 如实展示。真实 Network/供应商代理开关写回证据保留在 [Settings Spec](settings.md)；本次未修改凭证、代理、默认模型或审批策略。
 - **本次视觉修复并复验**：Advanced 长路径正常换行；Settings 页启用受限高度内的纵向滚动，切页归零；provider 认证操作移到详情行；两行审批说明随字号增高；单行输入至少容纳当前行高与内边距；Activity 高度与 AX 几何随字号调整；scope 下方锚定与单勾。最小窗 150% 下高级页底部、审批页信任/说明、模型列表及 Network/Terminal 输入完整可达。
 - **自动验证**：`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders` 189/189；`./scripts/pawork-desktop.sh build` 成功；`cargo tree -p pawork --offline --prefix none` 成功且 manifest/lock 无差异；`git diff --check` 与改动文档相对链接检查通过。未新增依赖或测试数量，仅扩展既有 Activity 几何断言。
+
 - **证据位置**：本次 Codex 任务 `01a06f10-cd2b-77b3-95a8-165ce4cfe6f8` 的 computer-use trace，以及本机 `~/.codex/visualizations/2026/09/05/01a06f10-cd2b-77b3-95a8-165ce4cfe6f8/pawork-audit`（截图 01–42，最终修复图 31–40，恢复后的常规窗口图 41–42）；截图不检入仓库，不作为仓库可复现门禁。临时测试/构建日志前缀为 `/tmp/pawork-gui-closeout-verified-`。
+
+### 8.1 OPT-2 会话生命周期真窗口验收（2026-09-05）
+
+隔离实例 `opt2acc`，Host 当次 `--provider opencode-go --model glm-5.3-flash`（不写持久默认），生产实例 `desktop` 未受影响。逐项窗口 + AX + SQLite 交叉验证：全局 New task 直建 Unassigned 会话（DB `workspace_id` NULL，无 WorkspaceConfirm）；Composer No project 与文件工具不可用提示；真实问答 Run 三次 completed；行内改名 Enter 提交/Esc 取消（DB 写后状态一致）；归档后列表隐藏且 `archived=1` 未删除；临时配置命名模型后占位标题在 Run 成功终态自动改写并经 SessionMetaChanged 即时刷新；Host 重启后 Reconnect 恢复连接与草稿。验收中发现并修复：ADR-044 D3 对未绑定会话的 fail-closed 与 ADR-054 D1 冲突，致无项目会话无法问答——显式 NULL 归属改以空授权面 `ws-unbound` 运行，文件工具仍 Policy fail-closed（详见 [ROADMAP §10.3](../ROADMAP.md)）。命名用配置已还原，本批不推定 OPT-3/4 与发布状态。
 
 Full workspace gate: NOT RUN（当前未设置全量门禁）。

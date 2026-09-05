@@ -10,7 +10,9 @@ use crate::GuiCapability;
 
 use super::command::AppCommand;
 use super::query::AppQuery;
-use super::version::{ApiVersion, V1_0, V1_1, V1_2, V1_3, V1_4, V1_5, V1_6, V1_7, V1_8, V1_10, V1_11};
+use super::version::{
+    ApiVersion, V1_0, V1_1, V1_2, V1_3, V1_4, V1_5, V1_6, V1_7, V1_8, V1_10, V1_11, V1_12,
+};
 
 /// GUI 通道访问规格：是否可用 + 命令级所需能力。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -48,7 +50,7 @@ pub const GUI_INTRINSIC_CAPABILITIES: &[GuiCapability] =
     &[GuiCapability::Events, GuiCapability::Snapshots];
 
 static COMMANDS: &[RegistryEntry] = &[
-    // --- AppCommand（29）---
+    // --- AppCommand（34）---
     RegistryEntry {
         wire_name: "core_initialize",
         gui: GuiChannelAccess {
@@ -292,6 +294,41 @@ static COMMANDS: &[RegistryEntry] = &[
         acp: false,
         idempotent: true,
         since: V1_10,
+    },
+    // ADR-055 OPT-3a/3b：模型启用集与默认角色写（Global 原子写 + 内存
+    // 同步）；仅 GUI 开放，未知 provider/model/role 宿主侧 fail-closed 保旧。
+    RegistryEntry {
+        wire_name: "set_model_enabled",
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
+        headless: None,
+        acp: false,
+        idempotent: true,
+        since: V1_12,
+    },
+    RegistryEntry {
+        wire_name: "set_provider_models_enabled",
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
+        headless: None,
+        acp: false,
+        idempotent: true,
+        since: V1_12,
+    },
+    RegistryEntry {
+        wire_name: "set_default_role_model",
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
+        headless: None,
+        acp: false,
+        idempotent: true,
+        since: V1_12,
     },
     RegistryEntry {
         wire_name: "set_approval_mode",
@@ -611,6 +648,9 @@ pub fn command_wire_name(command: &AppCommand) -> &'static str {
         AppCommand::SetDefaultModel { .. } => "set_default_model",
         AppCommand::SetProxyUrl { .. } => "set_proxy_url",
         AppCommand::SetProviderUseProxy { .. } => "set_provider_use_proxy",
+        AppCommand::SetModelEnabled { .. } => "set_model_enabled",
+        AppCommand::SetProviderModelsEnabled { .. } => "set_provider_models_enabled",
+        AppCommand::SetDefaultRoleModel { .. } => "set_default_role_model",
         AppCommand::SetApprovalMode { .. } => "set_approval_mode",
         AppCommand::SetTerminalSettings { .. } => "set_terminal_settings",
         AppCommand::ToolApprove { .. } => "tool_approve",

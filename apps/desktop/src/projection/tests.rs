@@ -52,7 +52,8 @@ fn provider_status_entries_map_host_wire_to_readonly_labels() {
                 }
             }
         ],
-        "default": null
+        "default": null,
+        "role_defaults": { "naming": null, "vision": null, "search": null }
     });
     let loaded = serde_json::from_value::<ProviderAuthStatusData>(data.clone())
         .expect("parse provider status");
@@ -78,7 +79,7 @@ fn provider_status_entries_map_host_wire_to_readonly_labels() {
 #[test]
 fn provider_status_entries_fail_closed_on_malformed_payload() {
     // default 合法（null），钉住错误只来自 providers 侧。
-    let payload = |providers: Value| json!({ "providers": providers, "default": null });
+    let payload = |providers: Value| json!({ "providers": providers, "default": null, "role_defaults": { "naming": null, "vision": null, "search": null } });
     // 缺 providers 数组：整体 fail-closed。
     assert!(serde_json::from_value::<ProviderAuthStatusData>(payload(json!("nope"))).is_err());
     // 单条缺 auth / 未知 auth 状态：不静默丢条目。
@@ -132,7 +133,8 @@ fn provider_status_entries_fail_closed_on_malformed_payload() {
 fn provider_status_default_parses_host_default() {
     // 主路径：default 对象 → Some(pair)；null → None（Host 权威语义）。
     let mut data = json!({
-        "default": { "provider_id": "kimi", "model_id": "kimi-k2-0905-preview" }
+        "default": { "provider_id": "kimi", "model_id": "kimi-k2-0905-preview" },
+        "role_defaults": { "naming": null, "vision": null, "search": null }
     });
     data["providers"] = json!([]);
     let loaded =
@@ -144,7 +146,7 @@ fn provider_status_default_parses_host_default() {
             model_id: "kimi-k2-0905-preview".to_string(),
         })
     );
-    let mut none = json!({ "default": null });
+    let mut none = json!({ "default": null, "role_defaults": { "naming": null, "vision": null, "search": null } });
     none["providers"] = json!([]);
     assert_eq!(
         serde_json::from_value::<ProviderAuthStatusData>(none.clone())
@@ -156,9 +158,13 @@ fn provider_status_default_parses_host_default() {
 
 #[test]
 fn provider_status_default_fails_closed_on_malformed_payload() {
-    let payload = |default: Value| json!({ "providers": [], "default": default });
-    // 缺顶层 default：整体 fail-closed，不静默当 null。
+    let payload = |default: Value| json!({ "providers": [], "default": default, "role_defaults": { "naming": null, "vision": null, "search": null } });
+    // 缺顶层 default / 缺 role_defaults：整体 fail-closed，不静默当 null。
     assert!(serde_json::from_value::<ProviderAuthStatusData>(json!({ "providers": [] })).is_err());
+    assert!(serde_json::from_value::<ProviderAuthStatusData>(
+        json!({ "providers": [], "default": null })
+    )
+    .is_err());
     // 非对象非 null / 缺 model_id / 字段非字符串：同样 fail-closed。
     assert!(serde_json::from_value::<ProviderAuthStatusData>(payload(json!("kimi"))).is_err());
     assert!(serde_json::from_value::<ProviderAuthStatusData>(payload(
@@ -186,6 +192,7 @@ fn set_default_confirmation_syncs_composer_projection() {
                 provider_id: "kimi".to_string(),
                 model_id: "kimi-k2-0905-preview".to_string(),
             }),
+            role_defaults: Default::default(),
         });
     projection.set_pending_model("glm-coding".into(), "glm-4.7".into());
     // Host Data 确认到达：selected_model 同步为已确认默认，pending 清空
@@ -248,6 +255,7 @@ fn default_model_unavailable_flag_tracks_connection_and_catalog() {
                 provider_id: "kimi".into(),
                 model_id: "kimi-k2-0905-preview".into(),
             }),
+            role_defaults: Default::default(),
         });
     assert!(projection.default_model_unavailable());
     // 已连接但默认 model 不在该 provider 当前目录：显式失效。
@@ -285,6 +293,7 @@ fn provider_status_refresh_failure_keeps_last_list_and_default() {
             provider_id: "kimi".to_string(),
             model_id: "kimi-k2-0905-preview".to_string(),
         }),
+        role_defaults: Default::default(),
     });
     state.apply_failed("query failed");
     assert_eq!(state.providers.len(), 1);
@@ -564,6 +573,7 @@ fn settings_state_with_provider(auth_methods: &[&str]) -> SettingsProvidersState
             use_proxy: true,
         }],
         default: None,
+        role_defaults: Default::default(),
     });
     state
 }
@@ -686,6 +696,7 @@ fn auth_changed_states_parse_and_apply_to_provider_auth() {
     state.apply_loaded(ProviderAuthStatusData {
         providers,
         default: None,
+        role_defaults: Default::default(),
     });
     assert!(state.auth_notes.is_empty());
 }
@@ -773,6 +784,7 @@ fn replace_flow_terminal_keeps_old_credential_and_triggers_requery() {
             provider_id,
             model_id,
         }),
+        role_defaults: Default::default(),
     });
     assert!(state.auth_replacing_connected.is_empty());
 }

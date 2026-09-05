@@ -13,6 +13,12 @@ use super::command::{ActorIdentity, CommandSource, WorkspaceRelativePath};
 use super::quota::QuotaOverviewQuery;
 use super::version::ApiVersion;
 
+/// 缺省 false 的 bool 字段：false 时整个不上 wire（ADR-055 D4
+/// `ModelList.include_disabled`，保持旧帧形状不变）。
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "typegen", derive(TS))]
 pub struct AppQueryEnvelope {
@@ -42,6 +48,10 @@ pub enum AppQuery {
     ModelList {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         provider_id: Option<ProviderId>,
+        /// ADR-055 D4：缺省 false = 响应不含禁用模型（Composer / 默认项
+        /// 下拉口径）；设置弹层显式传 true 取全量目录。false 不上 wire。
+        #[serde(default, skip_serializing_if = "is_false")]
+        include_disabled: bool,
     },
     DiffListFiles {
         workspace_id: WorkspaceId,

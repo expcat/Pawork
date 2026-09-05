@@ -111,7 +111,7 @@ Workspace 为 **21 成员（19 库 + 2 应用）**：19 个库平铺 `crates/<�
 
 - **会话分支**：append-only 单表全局 sequence；fork 只许切在闭合 turn 边界（`RunCompleted` / `RunCancelled` / `RunFailed`）；压缩按分支水位；父支晚写不得污染旧 fork。
 - **Session→Workspace**：`sessions.workspace_id` 可空弱引用，写穿 + 启动预载；不回填历史；无 FK。
-- **持久项目注册表**：`workspaces` 表按 canonical root 幂等登记，`root_path` UNIQUE；同 id 不同 root fail-closed。有可用项目时未绑定/未登记会话 fail-closed。
+- **持久项目注册表**：`workspaces` 表按 canonical root 幂等登记，`root_path` UNIQUE；同 id 不同 root fail-closed。会话归属分两态（ADR-054 D1 修订 ADR-044 D3）：显式无项目会话（sessions.workspace_id 为 NULL）是合法产品状态，以空授权面（ws-unbound、无 roots）运行问答，文件类工具由 Policy 对空 roots fail-closed；绑定悬空（指向不可用 workspace）仍 fail-closed，仅测试与尚未登记任何 root 的进程允许 legacy ws-unbound 落空授权面。
 - **Terminal 生命周期**：`terminal_close` 注销注册表；`TerminalExited` live 事件按协商 minor 门控；重复 close 报 `not_found`（对客户端是「清理目标已达成」）。
 - **Settings wire**：API key 明文只走非重放单帧 `ApiKeySecret`（Debug 恒 `[REDACTED]`，无 Display）；`SetApprovalMode` 保存 Global `approval_mode` 默认，`WorkspaceTrust` 保存 Global `workspace_trust` canonical 根路径布尔项（[ADR-053](spec/settings.md#adr-053opt-1-设置持久化2026-09-05)）；先落盘后更新后续 Run，进行中 Run 不变；`SetProxyUrl` 写 workspace 外标准用户配置目录的 Global `config.toml`，`SetTerminalSettings` / MCP remove 同写 Global 层；About 只在握手提供非空 `host_data_dir` 时显示，不从 endpoint 反推。
 - **Desktop AX**：GPUI 锁定 `=0.2.2`；显式语义树 + AppKit 虚拟 AX 元素；AX action 回到既有 AppView handler 与 enable gate。

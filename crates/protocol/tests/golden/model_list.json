@@ -10,9 +10,10 @@
     },
     "issued_at": 1,
     "query": {
-      "method": "terminal_settings"
+      "method": "model_list",
+      "params": {}
     },
-    "request_id": "query-terminal-settings",
+    "request_id": "query-model-list",
     "source": {
       "client_id": "gui-1",
       "type": "local_gui"
