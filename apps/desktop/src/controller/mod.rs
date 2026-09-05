@@ -18,7 +18,8 @@ use pawork_client::{
     ApprovalModeWire, AuthStartData, ClientAuthentication, ClientConfig, ClientError,
     CommandSource, ConnectOptions, DefaultModelPair, GeneralSettingsData, GlobalSequence,
     GuiCapability, GuiClient, GuiTransportClient, LocalTransport, PermissionsSettingsData,
-    ProtocolErrorCode, ProviderAuthStatusData, ResumeDisposition, ResumeOutcome, Snapshot,
+    ProtocolErrorCode, ProviderAuthStatusData, ProviderUseProxyData, ResumeDisposition,
+    ResumeOutcome, Snapshot,
     TOKEN_SCHEME, TerminalSettingsData, TimelinePage, TransportEndpoint,
 };
 use serde_json::json;
@@ -65,6 +66,12 @@ pub enum ControllerEvent {
     GeneralSettingsLoaded(GeneralSettingsData),
     /// set_proxy_url 获 Host Data 确认（SET-6a；回执即写后状态）。
     ProxyUrlConfirmed(GeneralSettingsData),
+    /// set_provider_use_proxy 获 Host Data 确认（ADR-052 SET-6h；回执即
+    /// 写后状态，直接落 projection，不重查）。
+    ProviderUseProxyConfirmed {
+        provider_id: String,
+        use_proxy: bool,
+    },
     /// permissions_settings 查询成功（SET-6b 权限与审批页；Host 权威
     /// 三元组：当前 mode / 会话 trusted / Global 持久默认）。
     PermissionsSettingsLoaded(PermissionsSettingsData),
@@ -1104,6 +1111,14 @@ pub(super) fn set_proxy_url_command(proxy_url: Option<&str>) -> AppCommand {
     .expect("set_proxy_url command shape is frozen")
 }
 
+pub(super) fn set_provider_use_proxy_command(provider_id: &str, use_proxy: bool) -> AppCommand {
+    serde_json::from_value(json!({
+        "method": "set_provider_use_proxy",
+        "params": { "provider_id": provider_id, "use_proxy": use_proxy }
+    }))
+    .expect("set_provider_use_proxy command shape is frozen")
+}
+
 pub(super) fn set_approval_mode_command(mode: &str) -> AppCommand {
     serde_json::from_value(json!({
         "method": "set_approval_mode",
@@ -1225,6 +1240,21 @@ pub(super) fn parse_provider_status_response(
 pub(super) fn parse_general_settings_response(
     response: &AppResponseEnvelope,
 ) -> Result<GeneralSettingsData, String> {
+    match &response.response {
+        AppResponse::Data(data) => {
+            serde_json::from_value(data.clone()).map_err(|error| error.to_string())
+        }
+        AppResponse::Error(error) => Err(error.message.clone()),
+        other => Err(format!("unexpected response: {other:?}")),
+    }
+}
+
+/// 解包 set_provider_use_proxy 信封：Data 为
+/// `{ "provider_id": string, "use_proxy": bool }`；Error 取 Host 脱敏
+/// message 原文。
+pub(super) fn parse_provider_use_proxy_response(
+    response: &AppResponseEnvelope,
+) -> Result<ProviderUseProxyData, String> {
     match &response.response {
         AppResponse::Data(data) => {
             serde_json::from_value(data.clone()).map_err(|error| error.to_string())

@@ -32,6 +32,7 @@ use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
 use crate::ui::components::dropdown::{Dropdown, MenuPanel, MenuRow};
 use crate::ui::components::label::Label;
 use crate::ui::components::list_row::ListRow;
+use crate::ui::i18n::t;
 use crate::ui::theme::{dark, font, metrics};
 
 use super::task_rail::relative_activity;
@@ -338,7 +339,7 @@ fn entry_actions_element(
                 }))
                 .child(
                     MenuRow::new(SharedString::from(format!("fork-{}", entry.event_id)))
-                        .label("Fork")
+                        .label(t("timeline.fork"))
                         .disabled(!can_fork)
                         .when(can_fork, |row| {
                             row.on_click(cx.listener(move |view, _event, window, cx| {
@@ -668,7 +669,7 @@ impl AppView {
             .center()
             .radius(metrics::SUMMARY_BUTTON_RADIUS)
             .text_size(font::BODY_SM)
-            .label("Review changes")
+            .label(t("timeline.review_changes"))
             .track_focus(&review_focus);
         let button = if view.review_changes_enabled {
             Some(

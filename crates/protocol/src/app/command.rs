@@ -413,6 +413,12 @@ pub enum AppCommand {
         #[serde(deserialize_with = "deserialize_required_nullable_string")]
         proxy_url: Option<String>,
     },
+    /// 供应商级代理开关（ADR-052 SET-6h）：`use_proxy = false` 时该 provider
+    /// 出站绕过 Global `proxy_url`；`true` 恢复跟随。两字段必填。
+    SetProviderUseProxy {
+        provider_id: ProviderId,
+        use_proxy: bool,
+    },
     /// 会话内审批模式切换（ADR-048 D2）：`mode` 为必填 snake_case 串，
     /// 未知值由宿主校验失败（fail-closed 保旧）；只影响之后启动的 run，
     /// 不持久化。

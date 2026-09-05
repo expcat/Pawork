@@ -18,6 +18,7 @@ use crate::ui::components::dropdown::{Dropdown, MenuPanel, MenuRow};
 use crate::ui::components::label::Label;
 use crate::ui::components::list_row::ListRow;
 use crate::ui::components::panel::Panel;
+use crate::ui::i18n::t;
 use crate::ui::theme::{dark, font, metrics};
 
 use super::{
@@ -143,7 +144,7 @@ impl AppView {
         // F-03 全局 AddTaskButton：28×28 角标，glyph ~13px；禁用原因 tooltip
         // 逻辑不动。
         let add_task_tooltip = if can_create {
-            SharedString::from("New task (Cmd+N)")
+            SharedString::from(t("timeline.new_task_tooltip"))
         } else {
             SharedString::from(self.add_task_disabled_reason())
         };
@@ -264,7 +265,7 @@ impl AppView {
                         .height(px(metrics::RAIL_TOP_ROW_HEIGHT))
                         .center()
                         .text_size(font::BODY_SM)
-                        .label("Reconnect")
+                        .label(t("rail.reconnect"))
                         .on_click(cx.listener(|view, event, window, cx| {
                             if view.consume_button_key_click("reconnect", event) {
                                 return;
@@ -294,7 +295,7 @@ impl AppView {
                 .gap_2()
                 .child(
                     div().flex_1().min_w_0().child(
-                        Label::new("Local")
+                        Label::new(t("rail.local"))
                             .size(font::BODY_SM)
                             .color(dark().text.secondary),
                     ),
@@ -310,7 +311,7 @@ impl AppView {
                         .radius(4.0)
                         .text_size(font::BASE)
                         .label("⚙")
-                        .tooltip("Settings")
+                        .tooltip(t("rail.tooltip_settings"))
                         .on_click(cx.listener(|view, event, window, cx| {
                             if view.consume_button_key_click("open-settings", event) {
                                 return;
@@ -368,7 +369,7 @@ impl AppView {
             );
         panel = panel.child(
             MenuRow::new("scope-add-project")
-                .label("Add project…")
+                .label(t("common.add_project"))
                 .highlighted(add_project_ix == highlight)
                 .on_click(cx.listener(|view, _event, window, cx| {
                     view.on_open_project(window, cx);
@@ -428,7 +429,7 @@ impl AppView {
                     .flex()
                     .items_center()
                     .child(
-                        Label::new("No tasks")
+                        Label::new(t("rail.no_tasks"))
                             .size(font::BODY_SM)
                             .color(dark().text.tertiary),
                     ),
@@ -453,7 +454,7 @@ impl AppView {
                                 .text_size(font::BODY)
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(dark().text.secondary)
-                                .child(group.bucket.label().to_string()),
+                                .child(group.bucket.display_label().to_string()),
                         );
                     if group_index > 0 {
                         bucket_header = bucket_header.mt(px(metrics::RAIL_BUCKET_TOP_GAP));
@@ -895,9 +896,10 @@ impl AppView {
         }
     }
 
-    fn scope_label(&self) -> String {
+    /// scope 行可见文案（render 与 AX 同源）。
+    pub(super) fn scope_label(&self) -> String {
         match &self.scope_workspace_id {
-            None => "All projects".into(),
+            None => t("rail.scope_all_projects").into(),
             Some(id) => self.projection.workspace_name(Some(id)),
         }
     }
@@ -906,8 +908,8 @@ impl AppView {
     pub(super) fn connection_status_label(&self) -> String {
         match &self.projection.connection {
             ConnectionState::Connected { .. } => match self.projection.resume.label() {
-                Some(resume) => format!("Local · Connected · {resume}"),
-                None => "Local · Connected".into(),
+                Some(resume) => t("rail.connection_local_connected_resume").replace("{}", &resume),
+                None => t("rail.connection_local_connected").into(),
             },
             other => other.label(),
         }
@@ -915,13 +917,13 @@ impl AppView {
 
     pub(super) fn add_task_disabled_reason(&self) -> String {
         match &self.projection.connection {
-            ConnectionState::Connected { .. } => "Create task is available.".into(),
-            ConnectionState::Connecting => "New task needs a live connection.".into(),
+            ConnectionState::Connected { .. } => t("rail.newtask_available").into(),
+            ConnectionState::Connecting => t("rail.newtask_needs_connection").into(),
             ConnectionState::Disconnected { reason } => {
-                format!("New task disabled · disconnected · {reason}")
+                t("rail.newtask_disabled_disconnected").replace("{}", reason)
             }
             ConnectionState::Failed { reason } => {
-                format!("New task disabled · connect failed · {reason}")
+                t("rail.newtask_disabled_failed").replace("{}", reason)
             }
         }
     }

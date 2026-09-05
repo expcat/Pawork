@@ -2,6 +2,8 @@
 
 use pawork_client::{TimelineItemKind, TimelinePage};
 
+use crate::ui::i18n::t;
+
 use super::{DesktopProjection, ForkBoundary, TimelineEntry, TimelineEntryKind};
 
 /// Timeline 渲染行（R4 Wave A F-08 组装纯数据）：连续 ToolCall（同 run
@@ -51,24 +53,26 @@ pub fn run_summary_texts(
 ) -> Option<(&'static str, String)> {
     match entry.fork_boundary {
         Some(ForkBoundary::Completed) if review_changes_available => Some((
-            "Ready for review",
-            "The run finished. Review the changes from this turn.".to_string(),
+            t("run.ready_for_review"),
+            t("run.summary_review_desc").to_string(),
         )),
-        Some(ForkBoundary::Completed) => Some(("Run completed", "The run finished.".to_string())),
+        Some(ForkBoundary::Completed) => {
+            Some((t("run.footer_completed"), t("run.completed_desc").to_string()))
+        }
         Some(ForkBoundary::Cancelled) => Some((
-            "Run cancelled",
-            "The run was cancelled. Output from this turn is preserved.".to_string(),
+            t("run.footer_cancelled"),
+            t("run.cancelled_desc").to_string(),
         )),
         // 失败摘要是唯一的失败原因出口（Error 仅来自 Diagnostic，RunFailed
         // 不产生 Error 条目）：有原因用原文，无原因 / 标签剥离失败走通用
         // 兜底，不指向不存在的"上方错误详情"。
         Some(ForkBoundary::Failed) => Some((
-            "Run failed",
+            t("run.footer_failed"),
             match &entry.kind {
                 TimelineEntryKind::RunState(label) => failed_run_reason(label)
                     .map(str::to_string)
-                    .unwrap_or_else(|| "The run failed.".to_string()),
-                _ => "The run failed.".to_string(),
+                    .unwrap_or_else(|| t("run.failed_desc_fallback").to_string()),
+                _ => t("run.failed_desc_fallback").to_string(),
             },
         )),
         None => None,
@@ -78,9 +82,9 @@ pub fn run_summary_texts(
 /// Timeline 页脚终态词（§4.4：completed / cancelled / failed；非终态 None）。
 pub fn run_footer_label(entry: &TimelineEntry) -> Option<&'static str> {
     match entry.fork_boundary {
-        Some(ForkBoundary::Completed) => Some("Run completed"),
-        Some(ForkBoundary::Cancelled) => Some("Run cancelled"),
-        Some(ForkBoundary::Failed) => Some("Run failed"),
+        Some(ForkBoundary::Completed) => Some(t("run.footer_completed")),
+        Some(ForkBoundary::Cancelled) => Some(t("run.footer_cancelled")),
+        Some(ForkBoundary::Failed) => Some(t("run.footer_failed")),
         None => None,
     }
 }

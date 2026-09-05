@@ -4,6 +4,7 @@
 use gpui::{div, prelude::*, px, Context, SharedString};
 
 use crate::ui::components::button::{Button, ButtonVariant};
+use crate::ui::i18n::t;
 use crate::ui::theme::{dark, font};
 use crate::ui::timeline_entry::{default_text_line_height, estimated_wrapped_lines};
 
@@ -63,7 +64,7 @@ impl AppView {
                 div()
                     .text_size(font::SM)
                     .text_color(dark().semantic.warning_text)
-                    .child(format!("Approval · {}", pending.tool_name)),
+                    .child(t("approval.title").replace("{}", &pending.tool_name)),
             )
             .child(
                 div()
@@ -84,17 +85,17 @@ impl AppView {
         let buttons = [
             (
                 "approve-once",
-                "Allow once",
+                t("approval.allow_once"),
                 "approve_once",
                 ButtonVariant::Primary,
             ),
             (
                 "approve-for-run",
-                "Allow for run",
+                t("approval.allow_for_run"),
                 "approve_for_run",
                 ButtonVariant::Success,
             ),
-            ("approve-deny", "Deny", "deny", ButtonVariant::Danger),
+            ("approve-deny", t("approval.deny"), "deny", ButtonVariant::Danger),
         ];
         let approve_once_focus = self.approve_once_focus.clone();
         let approve_for_run_focus = self.approve_for_run_focus.clone();
@@ -113,9 +114,9 @@ impl AppView {
                 };
                 let tooltip = if can_approve {
                     SharedString::from(match id {
-                        "approve-once" => "Allow once (Cmd+1 / Cmd+Return)",
-                        "approve-for-run" => "Allow for run (Cmd+2)",
-                        _ => "Deny (Cmd+3)",
+                        "approve-once" => t("approval.tooltip_allow_once"),
+                        "approve-for-run" => t("approval.tooltip_allow_for_run"),
+                        _ => t("approval.tooltip_deny"),
                     })
                 } else {
                     approve_disabled.clone()
@@ -152,9 +153,9 @@ impl AppView {
 
     fn approve_disabled_reason(&self) -> String {
         if self.projection.pending_approval.is_none() {
-            "No pending approval.".into()
+            t("approval.disabled_none_pending").into()
         } else {
-            "Approval needs a live connection.".into()
+            t("approval.disabled_needs_connection").into()
         }
     }
 }

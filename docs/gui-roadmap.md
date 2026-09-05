@@ -1,6 +1,6 @@
 # Pawork Desktop UI 优化 Roadmap
 
-> 状态：**P0 与 P1 已完成源码、自动门禁及真窗口 Human acceptance**（真实 `opencode-go / glm-5.3-flash` streaming / tool / Review、Approval 与系统 IME composing 均已通过；P2 保持既有源码、自动门禁和阶段图视觉签字记录。Increase Contrast 功能与 VoiceOver 验收门禁已于 2026-09-04 按用户要求移除）。
+> 状态：**P0 与 P1 已完成源码、自动门禁及真窗口 Human acceptance**（真实 `opencode-go / glm-5.3-flash` streaming / tool / Review、Approval 与系统 IME composing 均已通过；P2 保持既有源码、自动门禁和阶段图视觉签字记录；P2-6 中文界面与 P2-7 供应商级代理开关已于 2026-09-05 完成真窗口 Human acceptance。Increase Contrast 功能与 VoiceOver 验收门禁已于 2026-09-04 按用户要求移除）。
 > 基线日期：2026-09-04。目标设计见 [UI / Design 全面优化方案](gui-optimization.md)，现行行为见 [GUI 设计](gui-design.md)、[Desktop Spec](spec/desktop.md) 与源码。
 > 本 Roadmap 只拆分已接受的 UI 优化，不代表生产路径、自动门禁或人工验收已经完成。
 
@@ -311,7 +311,7 @@ flowchart LR
 - **写入集**：`ui/settings/mod.rs`、`ui/accessibility/settings.rs`、必要的 shell layout、包级 Desktop Spec 与 Settings Spec。
 - **工作**：统一 English；固定 page header / section / feedback 结构；正文最大宽 760–880px；返回工作台恢复进入前状态。
 - **验收**：八页导航顺序稳定；断线仍可进入 Advanced；无真实能力的页继续隐藏；Settings 不显示 RunStatusBar。
-- **不做**：不引入 i18n 基础设施、不取消正在运行的 Run。
+- **不做**：不引入 i18n 基础设施、不取消正在运行的 Run。（2026-09-05 用户追加中文界面需求后，i18n 非目标解除，见 P2-6。）
 
 执行记录（2026-09-04）：
 
@@ -331,6 +331,7 @@ flowchart LR
 - 已实现：provider 默认层改为 64px 概览，分列显示认证方式、连接态、目录 / 模型数与常用动作；默认模型独立 section。Connect / Replace 才展开 API key editor，Remove 仍二次确认。
 - 安全层级：普通 render 与 AX summary 不发布 masked credential、endpoint、catalog error 或 raw model id；endpoint / 错误只进入连接、等待或确认详情。连接与目录分别表达，不按 Provider 名称走特例。
 - 自动门禁：provider projection 断言更新；secure input + ordinary summary 泄漏 / stale gate 现有 AX 回归通过；完整 Desktop bin 门禁通过。Human acceptance：PENDING。
+- 真窗口修复（2026-09-05）：Default model 区 provider 组头在真窗口只剩省略号——该 taffy 版本下 `w_full` 百分比宽对 stretch 决定的父宽解析塌缩；改为与模型行同源的 `flex_row + flex_1 + truncate` 后重建进 runtime bundle，像素与 AX 复验随 P2-5 人工验收补齐。
 
 ### P2-3：其余 Settings 页面
 
@@ -375,6 +376,42 @@ flowchart LR
 - 最终视觉 / 键盘 / AX 补证（2026-09-04，当前源码构建）：三张阶段图逐张并排核对，1440×1024 宽窗与含约 3px 窗框的 1083×723 最小窗均无主动作、focus ring 或浮层裁切；最小窗 Workspace 仍大于 560px，Inspector 自动折叠。Appearance 100% / 125% / 150% 的 selected / current 与样例即时一致，`⌘0` 恢复 100%；Settings 八页、provider 连接 / catalog 分层与普通 AX summary 已核对，未发布 credential 片段，Appearance 也不再出现已移除的 Increase Contrast 文案。阶段图视觉签字 PASSED。
 - 未完成证据：当前环境无法取得真实 Provider 的 successful streaming / tool / Review 串联；系统 IME 真实 composing 仍待用户人工签字。因此完整 Human acceptance 保持 PENDING，不用视觉签字或自动门禁替代。
 - 后续补证（2026-09-05）：上条所列两个跨阶段阻塞已由 P0-5 / P1-5 的真实系统 IME 与 Provider/Review 证据关闭；本次不扩张或重做 P2 实现，P2 状态仍按其既有证据记录。
+- 验收环境修复与复验（2026-09-05）：
+  - LaunchServices 启动死锁：`Pawork.app/Contents/MacOS/Pawork` 原为指向构建产物的符号链接，`open` 启动 3/3 次永久卡死在 dyld（`getOnDiskBinarySliceOffset → open()`，CPU 停在 0:00.01，`sample` 可证）；同一二进制以真实文件入 bundle 即正常。已把 `scripts/pawork-desktop.sh` 的 `prepare_macos_bundle()` 从 `ln -sf` 改为 `cp -f`，修复后 `open Pawork.app --args --instance desktop` 正常启动（6s 时 CPU 0:00.15，越过 dyld），并随后与宿主建立活动连接（`lsof` 双端 fd 指针互指可证）。
+  - 宿主 accept 疑云结论：此前怀疑「gui serve accept 永不返回」系误诊——本协议为客户端先发（客户端发 `hello`、宿主回 `hello_ack`），裸 socket「连上后无数据」的健康检查不成立。`pawork doctor --instance desktop` 握手探测 `handshake: ok`；desktop `--probe` 经真实客户端路径连接成功（sessions=9、models=56）。此前窗口不出现的根因是上一条的 symlink 启动死锁，进程从未走到连接。
+  - 门禁复跑：`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders` 186/186 通过（含组头修复）。像素与键盘 / AX 人工复验待解锁后进行。
+
+---
+
+### P2-6：中文界面与语言切换（追加任务）
+
+- **来源**：用户请求「添加中文界面支持，在设置里可以切换语言」（2026-09-05）；P2-1 的 i18n 非目标随之解除。
+- **写入集**：新增 `ui/i18n.rs`；`ui/` 全部 chrome 文案（mod / task_rail / timeline / timeline_entry / input_area / inspector / changes / resources / approval_card / settings/*）改经目录取词；`ui/settings/appearance.rs` 增语言切换区；`ui/accessibility/*` AX 文案同源取词；gui-design / Settings Spec / Desktop Spec 同批更新。
+- **工作**：静态双语目录（English 默认 / 简体中文）与全局 `AtomicU8` 语言态；`t(key)` / `t2(key, a, b)` 同源取词，未知 key 原样返回；Settings → Appearance 提供 `English` / `中文` 两个同源按钮（AX identifier `settings-language-en` / `settings-language-zh`），mouse / Enter / Space / AX Press 共用同一 `set_language`；切换后整界面即时重渲染（含 AX name / value / description）并同步 terminal placeholder；仅当次 Desktop 会话生效、不持久化，重启回到 English。
+- **翻译边界**：只翻译 chrome 文案；session 标题、provider / model id、文件路径、工具输出、wire 错误原因等数据内容保持原文；品牌名「Pawork」、功能符号与示例数据不翻译；AX 节点 id 保持英文。
+- **验收**：默认 English 时既有测试断言全部保持绿色；切换中文后 chrome 文案变中文、数据内容不变；render 与 AX 经同一 `t()` 调用同源。
+- **不做**：语言持久化、区域 / 日期 / 数字格式化、第三语言、运行时动态加载目录。
+
+执行记录（2026-09-05）：
+
+- 已实现：`ui/i18n.rs` 双语目录与语言态（含 `localize*` 纯函数测试面）；工作台、Timeline、Composer、Inspector、Changes、Resources、Approval 与 Settings 八页的 chrome 文案全部经 `t()` / `t2()` 取词；Appearance 页新增当前语言显示、两个语言按钮与说明；`set_language` 更新全局态、刷新 terminal_input placeholder、给出 status_hint 并重渲染。
+- 已实现：render 与 AX 同源——同一文案在渲染与 AX 树中经同一 `t()` 调用取得；AX 节点 id、fetch_state 诊断段与数据内容保持英文 / 原文。
+- 自动门禁：`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders` 188/188 通过（含 2 条新增 i18n 定向测试；既有断言在默认 English 下保持绿色）。全量 `t()` / `t2()` key 与目录比对无缺失。
+- 真窗口 / 人工验收（2026-09-05 补证）：解锁后真窗口 Settings → Appearance 点击 `中文`，整界面 chrome 即时切换为中文（设置 / 模型与提供商 / 外观 / 字号 / 语言 / 生效范围；供应商页 提供商 / 刷新 / 已连接 / 未连接 / 目录不可用 / 走代理 / 直连 / 替换 OAuth / 移除 / 默认模型 / 设为默认；样例文本为中文 pangram），切回 English 即时恢复。AX 树与 render 同源（`settings-language-zh` 的中文标签渲染正常；审查发现并修复根因：`settings-language-*` 的 AX Press 派发分支此前缺失（CUA 元素索引点击无效的真因），已补同源派发与定向回归）。小瑕疵：切换瞬间已打开的 tooltip 可能短暂显示旧英文，关闭重开即恢复，可接受。Human acceptance：PASSED。
+
+### P2-7：供应商级代理开关（追加任务）
+
+- **来源**：用户请求「模型供应商添加一个开启关闭按钮，当配置了代理地址后，可以选择供应商是否启用通过代理连接」（2026-09-05）。
+- **写入集**：`crates/workspace`（`ProviderConfig.use_proxy` + `write_provider_use_proxy` writer + 非 Global 层 `use_proxy` 剥离）、`crates/protocol`（ADR-052，API 1.9→1.10，`SetProviderUseProxy` / `ProviderUseProxyData`）、`crates/app`（`set_provider_use_proxy` handler + `AppCore` mutator + 装配点生效代理）、`apps/desktop`（controller 派发 / 回执、projection `confirm_use_proxy`、providers 行开关与 AX 节点）、`ui/i18n.rs` 新增 5 键；对应包级 Spec 与 Settings / contracts / capabilities 文档同批更新。
+- **工作**：生效值语义为 `!= Some(false)`——`None` / `true` 跟随 Global `proxy_url`，显式 `false` 直连。开关仅在 Global `proxy_url` 已配置时渲染；`Proxy on`（走代理）/ `Proxy off`（直连）显示当前生效值，writes 总闸关闭（断线 stale）时 disabled；mouse / Enter / Space / AX Press 共用 `on_settings_toggle_provider_use_proxy`。不乐观更新：`ProviderUseProxyData` 回执即写后状态，失败走 OperationFailed 不落地。写只落 workspace 外的 Global `config.toml`；非 Global 层 `use_proxy` 与 `base_url` 同红线剥离（防仓库配置绕过全局代理）。
+- **验收**：protocol 1.10 golden 与注册表门禁通过；workspace writer 主路径与非 Global 剥离定向回归通过；app handler 定向测试通过；真窗口在配置全局代理后开关可见、切换即持久化、标签随生效值变化。
+- **不做**：每供应商独立代理地址、语言或其它配置的持久化、乐观更新。
+
+执行记录（2026-09-05）：
+
+- 已实现：上述写入集全部落地；协议为纯增量（1.9→1.10，29 命令），旧 client 不受影响，`providers[].use_proxy` 为必填生效值（未显式 `false` 即 `true`），flag contract 演进已按冻结契约流程随 golden 先行。
+- 自动门禁：`pawork-protocol` 144 个测试、`pawork-workspace`（含非 Global 层 `use_proxy` 剥离扩展断言）与 `pawork-app` 定向门禁全部通过；Desktop bin 门禁 188/188 通过（含一条既有 wire fixture 适配新必填字段 `use_proxy`，未新增测试）。
+- 真窗口 / 人工验收（2026-09-05 补证）：配置 `proxy_url` 后全部 provider 行显示 `走代理` 开关；中文模式点击 xAI 开关，`走代理`→`直连`，Global `config.toml` 即时写入 `[[providers]] id="xai" use_proxy=false`；再次点击恢复 `走代理`（`use_proxy=true`）。重启 Host 并移除 `proxy_url`（Host 启动时缓存配置）后，provider 行不再渲染开关（AX 树 + 截图为证），行内其它按钮不变；恢复代理配置并重启 Host 后开关重新显示。Human acceptance：PASSED。
 
 ---
 
@@ -398,6 +435,8 @@ flowchart LR
 | P2-3 | Validated | P2-1 | Remaining Settings pages；Human acceptance PENDING |
 | P2-4 | Validated | P2-2/3 | Responsive / AX / polish；Human acceptance PENDING |
 | P2-5 | Validated | P2-4 | 三张阶段图 / 最小窗 / 三档字号 PASSED；完整 Human acceptance PENDING |
+| P2-6 | Human accepted | P2-5 | 中文界面与 Appearance 语言切换；真窗口 PASSED |
+| P2-7 | Human accepted | P2-5 | 供应商级代理开关（ADR-052 / API 1.10）；真窗口 PASSED |
 
 状态词：`Planned` = 仅设计；`Implemented` = 源码已落地；`Validated` = 指定自动门禁通过；`Human accepted` = 真窗口与人工 AX 验收完成。
 

@@ -24,12 +24,12 @@
 | `src/main.rs` | ~670 | 入口与手动 argv 解析（非 clap）；`PAWORK_UI_BARRIER_DIR` env 读取（空值视同未设置，None 全程零开销）；`run_app`（1440×1024 居中窗口 + `WINDOW_MIN_SIZE` 1080×720 最小尺寸——R2 Wave B 设计响应式底线，再窄击穿 Workspace ≥560 合同——+ 沉浸式 titlebar：TitlebarOptions appears_transparent，traffic lights 悬浮深色壳、内容视口贯通全窗，R2 Wave A；`install_keybindings`、聚焦 Composer、安装 macOS AX bridge）；`run_probe` / `run_probe_smoke` 无窗冒烟模式及其 `wait_for_*` 事件等待器；1 个测试 |
 | `src/controller/mod.rs` | ~1730 | `DesktopController`（connect / 事件泵 / 独立 15s 心跳任务）；`ControllerEvent`；Command·Query 构造与信封解包后 `serde_json::from_value` 到 protocol Data。`SetApprovalMode.mode` 仍为 String（`ApprovalModeWire::as_str()`）。14 个测试 |
 | `src/controller/session.rs` | ~430 | workspace_add / session create·fork / run start·cancel / model_list / snapshot·timeline 分页；open_session 失败发 `SessionOpenFailed{session_id}` |
-| `src/controller/settings.rs` | ~610 | Settings 查询与写（provider_auth_status、auth_*、general/permissions/terminal、mcp_test/remove、set_default_model）；断线不派出 |
+| `src/controller/settings.rs` | ~610 | Settings 查询与写（provider_auth_status、auth_*、general/permissions/terminal、mcp_test/remove、set_default_model、set_provider_use_proxy）；断线不派出 |
 | `src/controller/terminal.rs` | ~210 | terminal_create / write / resize / close 与 ADR-045 回执 |
 | `src/platform.rs` | ~230 | `Platform`（tokio multi_thread Runtime，`handle()` / `block_on()`）；`default_socket_path` / `socket_path_for_instance` / `token_path_for_instance` / `token_path_for_socket` 路径发现；deny-list 断言；4 个测试 |
 | `src/projection/mod.rs` | ~500 | `DesktopProjection` 装配与 live 事件应用；Settings 断线 `mark_settings_stale` 单点扇出 |
 | `src/projection/session.rs` | ~710 | `ConnectionState` / `ResumeState` / `PendingApproval` / `ModelEntry` / `ActiveRun` / session·workspace 摘要 / TaskRail 分组；P0-2 将 grouping 当前 `view_label`、目标 `toggle_action_label` 与 `toggled` 分开，避免 AX name/value 混写；`group_models_by_provider` |
-| `src/projection/settings.rs` | ~550 | `SettingsQueryGate`（loading/stale/available/writes_enabled）与各 Settings 页 wrapper；Host Data 走 `pawork_client` protocol 类型 `from_value` fail-closed（缺 nullable 键不算未设置）；`parse_auth_change`（AuthChanged 非 CLN-4 Data）；`ProviderStatusLabels::auth_label` 只返回连接态，不拼接 masked credential 或错误详情 |
+| `src/projection/settings.rs` | ~550 | `SettingsQueryGate`（loading/stale/available/writes_enabled）与各 Settings 页 wrapper；Host Data 走 `pawork_client` protocol 类型 `from_value` fail-closed（缺 nullable 键不算未设置）；`parse_auth_change`（AuthChanged 非 CLN-4 Data）；`ProviderStatusLabels::auth_label` 只返回连接态，不拼接 masked credential 或错误详情；`confirm_use_proxy` 落地 ADR-052 `set_provider_use_proxy` 写回执（回执即写后状态，不另重查） |
 | `src/projection/terminal.rs` | ~470 | `TerminalState` / 多 workspace 终端 / live exit / Close 清理 / 新建终端初始尺寸 |
 | `src/projection/timeline.rs` | ~200 | Timeline 行分组与 Run footer/summary 文案 |
 | `src/projection/tests.rs` | ~2970 | 63 个投影测试（snapshot/replay、Run/Timeline/Terminal、Settings typed 解析 fail-closed） |
@@ -43,12 +43,13 @@
 | `src/ui/accessibility/settings_permissions.rs` | ~220 | Approvals 整行 radio AX（identifier `settings-approval-mode-{wire}` 不漂；selected/enabled/Press 与 render 同源） |
 | `src/ui/accessibility/settings_tools.rs` | ~150 | MCP 页 AX |
 | `src/ui/accessibility/settings_terminal.rs` | ~220 | 终端页 AX |
-| `src/ui/accessibility/settings_appearance.rs` | ~90 | 外观页 AX |
+| `src/ui/accessibility/settings_appearance.rs` | ~180 | 外观页 AX（含字号与语言切换节点，name / value / selected 与 render 同源） |
 | `src/ui/accessibility/settings_advanced.rs` | ~80 | 高级页 AX |
 | `src/ui/accessibility/settings_about.rs` | ~45 | 关于页 AX |
 | `src/ui/accessibility/macos.rs` | ~940 | ADR-042 AppKit bridge：`GPUIView` AX root、`NSAccessibilityElement` 虚拟元素、frame / parent / hit-test / focus / notification / retain-release、settable/action 双门与 action 回调；结构不变（identifier/role/press 能力/子树形状）时原位刷新既有 element 而非整树重建，内部树同步 super 直调不触发 action 回调；6 个 macOS 测试 |
 | `src/ui/barriers.rs` | ~175 | UI fixture barrier 发射器（R1 Wave B）：`BarrierSink` 读 `PAWORK_UI_BARRIER_DIR`（None 零开销直通）；`timeline_stable`（settle_seq 单调自增 / session_id / entry_count）重写与 `approval_visible` 写/删；tmp+rename 原子替换、IO 失败静默；1 个测试 |
 | `src/ui/theme.rs` | ~694 | 深色单主题 token + 以 16px 根字号表达的 `Rems` 字阶 + 100%/125%/150% `TextScale` + `metrics` 尺寸常量；P0-1 收敛为 Header 22、title 20、正文 16、control 14、meta 12px，并冻结 4/8/12/16/24/32 spacing、4/6/8 radius、2px focus、28px icon button、220–360px menu；surface 含 pressed 色；单一 dark palette，不读取系统显示偏好；9 个定向测试 |
+| `src/ui/i18n.rs` | ~750 | 界面文案目录（English / 中文）与全局语言态：`Language`（默认 English）、`AtomicU8` 当前语言、`t(key)` / `t2(key, a, b)`（未知 key 原样返回）、`set_language`、`catalog_overview_label` 与纯函数 `localize*` 测试面；2 个定向测试 |
 | `src/ui/timeline.rs` | ~670 | Timeline 容器：gpui `list()` 变高虚拟化与显式跟随；`timeline_rows()` 同源组装五类行，按既有 run/order 把连续 tool 聚合并由 terminal summary 吸收重复相位；P1 以首个 tool event id 作为稳定折叠 key，live / replay 共用结构，折叠态进入共享行高 / 可见窗口 / AX 公式；618px 可读列、短会话 Top 对齐、空态唯一 New task 与 `TIMELINE_OVERDRAW`=200px 合同不变 |
 | `src/ui/timeline_entry.rs` | ~920 | 消息、tool group、Run summary/footer 与 error 的工作单元呈现；P1 tool group header 汇总 `N tools · <state counts>`，默认展开，mouse / Enter / Space / AX 共用折叠状态；状态与 detail 不伪造 wire 缺失耗时。Run summary 按 Completed / Failed / Cancelled 区分，只有当前 Session 存在至少一个真实、可审阅的 Changes 文件时才显示唯一主 CTA `Review changes` 并聚焦 Changes；Open in editor 无 capability 不画；8 个测试 |
 | `src/ui/approval_card.rs` | ~160 | 审批卡：警示卡 + Allow once / Allow for run / Deny 三按钮（P4 片 3 按钮 32px 槽位，卡高 `approval_card_height` 公式与 AX 同源：p_2 + 标题/reason（+可选 detail）行数 + 按钮行）；app 级 focus handle（虚拟化卸载不丢失）；禁用原因 tooltip；R7 Wave B 的 mouse / keyboard / AX 三路径汇入同一 gate，决策后关闭旧菜单并把焦点交回 Composer |
@@ -57,12 +58,12 @@
 | `src/ui/changes.rs` | ~990 | Changes 面：Files / Summary、只读 DiffView、latest-session mismatch fail-closed 与诚实 scope；empty / unavailable / stale 使用分层占位。`has_reviewable_files_for` 要求 active session、Ready、非 stale 且文件非空，供 Run summary render/AX 同源门控。折叠态 Header ActivityPopover 为 320×144，按当前唯一 Changes 内容收缩，不为未实现的 Agent 状态留空；7 个测试 |
 | `src/ui/resources.rs` | ~290 | Resources 页：MCP server 只读表 + `ResourcesPanelState`（epoch 防过期）+ 手动刷新；empty / unavailable / error / stale 分层；SET-6c 权威回执 bump epoch；3 个测试 |
 | `src/ui/settings/mod.rs` | ~880 | English Settings 壳与稳定八页导航；内容可读列 820px；共享状态 / gate、descriptor 驱动认证动作与 Connect API key 编辑入口；1 个测试（空 shell Save 映射 null） |
-| `src/ui/settings/providers.rs` | ~880 | 64px provider 概览（认证方式 / 连接 / 目录或模型数）+ 按需详情；普通层不显示 masked credential、endpoint、catalog error 或 raw model id；默认模型独立 section；Remove 保持二次确认 |
+| `src/ui/settings/providers.rs` | ~880 | 64px provider 概览（认证方式 / 连接 / 目录或模型数）+ 按需详情；普通层不显示 masked credential、endpoint、catalog error 或 raw model id；默认模型独立 section；Remove 保持二次确认；ADR-052 provider 级代理开关按钮：仅 Global `proxy_url` 已配置时可见，按生效值显示 `Proxy on`（走代理）/ `Proxy off`（直连），writes 总闸关闭（断线 stale）时 disabled；mouse / Enter / Space / AX Press 共用 `on_settings_toggle_provider_use_proxy` |
 | `src/ui/settings/general.rs` | ~220 | Network / HTTP proxy（wire 保持 General 兼容名） |
 | `src/ui/settings/permissions.rs` | ~340 | 五档整行 radio + 会话信任；row click / Enter / Space / AX Press 共用 handler；`ApprovalModeWire` English 标签在 `approval_labels.rs` |
 | `src/ui/settings/tools.rs` | ~270 | MCP list/test/remove |
 | `src/ui/settings/terminal.rs` | ~260 | 终端默认值 |
-| `src/ui/settings/appearance.rs` | ~180 | 本地三档字号 + 随当前字号即时变化的正文 / control 样例 surface |
+| `src/ui/settings/appearance.rs` | ~260 | 本地三档字号 + 随当前字号即时变化的正文 / control 样例 surface + English / 中文语言切换（同源按钮，切换走 `AppView::set_language`） |
 | `src/ui/settings/advanced.rs` | ~200 | 连接诊断 definition list |
 | `src/ui/settings/about.rs` | ~130 | Host data directory 只读 definition list |
 | `src/ui/settings/approval_labels.rs` | ~30 | 五档 English label/description |
@@ -169,6 +170,14 @@ Tab 焦点顺序（design §3.6，R3 Wave B）：rail 前缀三档 `RAIL_TAB_STO
 
 AX 焦点口径：grouping 是直接按钮，name 表达目标动作、value 表达当前视图且 Press 后焦点仍在按钮；其余浮层菜单打开时触发器让出 focused，高亮菜单项成为树内唯一 focused 节点。Timeline 行级动作仍与 click 同 handler / gate。
 
+### 3.4 语言（i18n）
+
+- 界面 chrome 文案集中在 `ui/i18n.rs` 目录，`t(key)` / `t2(key, a, b)` 按当前语言返回 `&'static str`；未知 key 原样返回，不 panic。
+- 语言切换入口在 Settings → Appearance（`English` / `中文` 两个同源按钮，AX identifier `settings-language-en` / `settings-language-zh`），mouse / Enter / Space / AX Press 共用 `AppView::set_language`：更新全局语言与本地镜像、刷新 terminal_input placeholder、给出 status_hint 并整界面重渲染。
+- 仅当次 Desktop 会话生效、不持久化；重启回到 English（默认）。不触碰 Host / 会话 / Run 状态。
+- 翻译边界：只翻译 chrome 文案（按钮、提示、空态、状态提示、tooltip、Settings 页）；session 标题、provider / model id、文件路径、工具输出、wire 错误原因等数据内容保持原文；品牌名「Pawork」、功能符号（✕ ↑ ⚙ + ▤ ◷ ↻ ↓）与示例数据不翻译。
+- render 与 AX 经同一 `t()` 调用同源取词；AX 节点 id 保持英文。
+
 ## 4. 核心行为与数据流
 
 ### 4.1 启动 → 连接 → snapshot → 分页 timeline → live 事件 → 断线 Reconnect
@@ -237,6 +246,7 @@ AX 焦点口径：grouping 是直接按钮，name 表达目标动作、value 表
 | 设为默认模型 | `set_default_model` → 重查 `provider_auth_status` | `DefaultModelConfirmed` + `ProviderStatusLoaded` |
 | Settings 通用设置 | `general_settings` | `GeneralSettingsLoaded` |
 | 设置 / 清除代理 | `set_proxy_url`（null=清除） | `ProxyUrlConfirmed`（回执即写后状态） |
+| Provider 代理开关 | `set_provider_use_proxy`（ADR-052） | `ProviderUseProxyConfirmed`（回执即写后状态） |
 | Settings 权限设置 | `permissions_settings` | `PermissionsSettingsLoaded`（四元组，含 Host attached workspace_id） |
 | Settings 工具与 MCP | `mcp_list`（复用）+ `mcp_test` / `mcp_server_remove` 命令 | `McpServersLoaded`（复用 ResourcesPanelState）/ `McpServersReceipt`（写回执即权威） |
 | 切换审批模式 / 会话信任 | `set_approval_mode` / `workspace_trust` | `ApprovalModeConfirmed` / `WorkspaceTrustConfirmed`（回执即写后状态） |
@@ -259,6 +269,7 @@ domain id 类型未从 client re-export，命令 / 查询经冻结的 serde 形�
 - **P2 Settings 产品化（2026-09-04，2026-09-05 Network 收口）**：Settings Rail、标题、section、field、feedback 与导航统一 English，内容最大宽 820px；Advanced 断线可达且 Settings 不渲染 RunStatusBar。Provider 普通层为 64px 概览，只发布认证方式、连接态和目录 / 模型数；masked credential 永不进入普通 render 或 AX summary，endpoint / catalog error 只在连接、等待或二次确认详情出现，API key 编辑器仅由 Connect / Replace 打开，默认模型独立 section。Approvals 使用整行 radio；Network / Terminal 使用 label-help-feedback；Appearance 有即时字号样例；Advanced / About 为 definition list。100%/125%/150% 与 1080×720 继续走现有共享 token / layout；当前没有动画，故无 Reduce Motion 分支。
 - **Settings Tools & MCP 页（SET-6c / ADR-049）**：导航仅在 Host `mcp_list` 至少成功一次后显示。清单复用 mcp_list（name/transport/state/tools/last_error）；每行 Test 发 `mcp_test{name}`、Remove 两步确认后发 `mcp_server_remove{name}`，回执 `{servers:[...]}` 即权威生效值（bump epoch，不另重查）；Error 保留旧清单并在本页显示失败文案（render/AX 同源 `action_error`，不再只进工作台 status_hint）；未知/畸形 fail-closed；断线 stale 只读禁写（render/键盘/AX 同 gate）。生效边界文案：remove 同会话生效（盘/密/内存三处一致），进行中 Run 已快照工具不回溯撤销，重启后与盘一致。
 - **Settings Network 页（SET-6a / ADR-047）**：可见页名从仅承载代理的 General 收敛为 Network；为保持兼容，Host query / command、内部 identifier 与投影类型仍沿用 `general_settings` / `set_proxy_url` / General 命名，不 bump wire。导航仅在 Host 查询至少成功解析一次后显示（失败/未知隐藏且不渲染写入口）。页面显示 Host 权威 `proxy_url`；GUI Save 与手工编辑共用 workspace 外标准用户配置目录中的 Global `config.toml`，workspace `.pawork/config.toml` 中代理值被忽略。null 文案 `Not set (uses system environment variables)`；回执 `{proxy_url}` 才改生效值，不另重查。断线 stale 保留最后只读结果并禁写（render / keyboard / AX 同 gate）。新 OAuth/验证/目录探测同会话生效；当前活跃供应商模型流量于切换供应商或重启 Host 后生效。proxy URL 非 Secret，输入明文；畸形载荷 fail-closed。
+- **Settings Providers 供应商级代理开关（ADR-052 SET-6h）**：provider 概览行动作区追加开关按钮，仅 Global `proxy_url` 已配置时可见；`use_proxy=true` 显示 `Proxy on`（走代理），`false` 显示 `Proxy off`（直连），tooltip 区分当前生效态。click / Enter / Space / AX Press 共用 `on_settings_toggle_provider_use_proxy`，派出 `set_provider_use_proxy{provider_id, use_proxy}`；不乐观更新，`ProviderUseProxyData` 回执即写后状态，失败走 OperationFailed 不落地。写只落 Global 层 `config.toml`（workspace 层代理仍被剥离）；Host 装配按生效代理：Global `proxy_url` 统一生效，仅该 provider 显式 `use_proxy = false` 时绕过。新装配连接（目录探测、切换 provider / model）同会话即用新生效值，已装配连接于切换供应商或重启 Host 后生效。`providers[].use_proxy` 为必填生效值（未显式 `false` 即 `true`）。
 - **禁动符号**（R8 冻结面，bin 内测试钉住内容）：`APP_VIEW_KEYBINDINGS`、`install_keybindings`、`MAIN_PATH_TAB_STOP_IDS`、`resolve_new_task_workspace`。
 - **Settings Approvals 页（SET-6b / ADR-048）**：导航仅在 Host `permissions_settings` 至少成功解析一次后显示（失败/未知隐藏且不渲染写入口）。五档审批模式使用整行 radio；当前值 selected，只对 enabled 的非当前行发布 mouse / Enter / Space / AX Press，并发 `set_approval_mode`，等 Data 回执才改生效值（不乐观更新）。会话信任开关发 `workspace_trust`；`trust_workspaces_global` 只读行，null 文案 `Not set (workspaces are untrusted by default)`。未知 mode / 畸形载荷 fail-closed；断线 stale 保留最后只读结果并禁写。
 - **Settings Terminal 页（SET-6d / ADR-050）**：导航仅在 Host `terminal_settings` 至少成功解析一次后显示（失败/未知隐藏且不渲染写入口）。页面显示 Host 权威生效值：shell null 文案 `Not set (uses the platform default)`，以及 columns/rows；Save 全态回传三字段，Clear 清除 shell，回执后才更新。新建终端初始投影尺寸与创建后 resize 取生效值（未查询回落 80×24）；只影响之后创建的终端。畸形载荷 fail-closed；断线 stale 保留最后只读结果并禁写，重连自动刷新。
@@ -275,6 +286,7 @@ domain id 类型未从 client re-export，命令 / 查询经冻结的 serde 形�
 - **心跳配比**：独立 15s 心跳任务对 host 30s 超时的节拍不可静默改动；断线不取消 Run。
 - **窗口、字号与焦点**：默认 1440×1024、最小 1080×720（`WINDOW_MIN_SIZE`）；字体以 16px 根字号的 rem token 表达，100% 保持冻结视觉，125%/150% 只由应用快捷键调整窗口 `rem_size`，几何 px token 不随意缩放；消息正文 / 完成摘要行高以 24px 为 100% 基准并换算 rem，放大时避免多行正文负 leading。150% rail=320，1080 窗口仍保留 760px Workspace。macOS 透明 titlebar；启动与用户发起的任务切换、审批、Fork 后聚焦 Composer；激活当前 task 仍关闭菜单并聚焦 Composer；Review changes 展开 Inspector 后聚焦 Changes 选中页签；点击输入框显式拉回焦点。
 - **Settings 外观页**：SET-6e 将上述三档字号暴露为始终可用的本地 Settings 页面；页面按钮、Cmd+=/Cmd+-/Cmd+0 和 AX Press 共享同一 `AppView.text_scale`，立即改变当前窗口 `rem_size`。当前不持久化，Desktop 重启恢复 100%；不借此创建第二套 preference 或 theme 状态。
+- **界面语言（i18n，2026-09-05）**：默认 English，Settings → Appearance 可切换简体中文；全局 `AtomicU8` + 静态目录，切换即时重渲染（含 AX name / value / description），仅当次会话生效、不持久化。render 与 AX 同源调用 `t()`；AX 节点 id、数据内容（session 标题、provider / model id、路径、工具输出、wire 错误原因）与品牌名 / 功能符号不翻译。不引入语言持久化、区域格式化工具链或第三语言；未知 key 原样回显。
 - **Settings 高级页**：SET-6f 将当前连接已有的非 Secret 握手摘要、socket endpoint、resume/ack 暴露为始终可达的本地只读页；Connecting/断线清空 runtime/API/capabilities，Failed/Disconnected 复用既有 Reconnect。runtime ID 不称作 CLI `--instance` 配置名；页面不显示 GUI token/token path、不推断 data directory、不 shell-out `doctor`，也不提供实例切换。
 - **Settings 关于页**：SET-6g 只在当前 Connected 握手提供非空 `host_data_dir` 时动态发布导航与只读页；三项值分别来自 Desktop 编译元数据、当前协商 API 和 Host 握手，render/AX 共用同一行模型。仅空白字段按缺失处理，但合法路径值原样展示；Connecting/断线清空握手并从 About 退回高级。不提供 updater/release/License 或任何写动作。
 - **Accessibility 单一语义源（ADR-042）**：`AppView` 只从 canonical UI 状态与布局 metric 构建显式 `AxTree`；壳层几何与 render 共享 `shell_layout::resolve`（100% 窄窗 rail=240、150% rail=320），`composer-status-hint` 发布字号百分比；稳定 identifier 与本地化 label 分离，macOS bridge 只做 AppKit 映射。AX press / focus / set-value 必须回到既有 handler 与 enable gate，未知请求 fail-closed；disabled 控件不得发布可执行 action。Grouping AX Press 直接 toggle；其余触发器先移 GPUI 焦点再开菜单，WorkspaceConfirm 关闭按来源回焦。Timeline AX 与 render 共享 rows + approval item 序列、tool group 折叠态和 Review gate；稳定帧读取真实 list bounds，首帧用共享公式回退，视口外条目不发布。Settings 普通树不得携带 API key 明文或 masked credential 片段；secure input 只发布等长掩码，stale 时输入与所有写动作 disabled 且无 Press。IME composing 中 AX Send 与键盘 Enter 同样不生效。新增可见交互须同批补节点、bounds、状态和 action 映射；非 macOS 当前为 no-op，不宣称已有平台 AX 实现。

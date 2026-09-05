@@ -7,6 +7,7 @@ use gpui::{div, prelude::*, Context, ScrollHandle};
 use crate::controller::McpServerEntry;
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
 use crate::ui::components::label::Label;
+use crate::ui::i18n::t;
 use crate::ui::theme::{dark, font, metrics};
 
 use super::AppView;
@@ -155,7 +156,7 @@ impl AppView {
             .border_b_1()
             .border_color(dark().border.subtle)
             .child(
-                Label::new("MCP servers")
+                Label::new(t("resources.mcp_title"))
                     .size(font::XS)
                     .color(dark().text.tertiary),
             )
@@ -167,7 +168,7 @@ impl AppView {
                     .text_size(font::XS)
                     .text_color(dark().text.secondary)
                     .label("↻")
-                    .tooltip("Refresh resources")
+                    .tooltip(t("resources.tooltip_refresh"))
                     .track_focus(&self.resources_refresh_focus)
                     .on_click(cx.listener(|view, event, _window, cx| {
                         if view.consume_button_key_click("resources-refresh", event) {
@@ -178,10 +179,10 @@ impl AppView {
             );
         let body = match &self.resources.fetch {
             ResourcesFetch::Idle => {
-                resources_placeholder("Resources unavailable.").into_any_element()
+                resources_placeholder("resources.unavailable").into_any_element()
             }
             ResourcesFetch::Fetching if self.resources.servers.is_empty() => {
-                resources_placeholder("Loading resources…").into_any_element()
+                resources_placeholder("resources.loading").into_any_element()
             }
             ResourcesFetch::Failed(reason) => {
                 resources_placeholder_colored(reason.clone(), dark().semantic.danger_text)
@@ -189,7 +190,7 @@ impl AppView {
             }
             ResourcesFetch::Fetching | ResourcesFetch::Ready => {
                 if self.resources.servers.is_empty() {
-                    resources_placeholder("No MCP servers configured.").into_any_element()
+                    resources_placeholder("resources.empty").into_any_element()
                 } else {
                     let mut list = div()
                         .id("mcp-server-list")
@@ -233,19 +234,24 @@ impl AppView {
     }
 }
 
-fn resources_placeholder(text: impl Into<String>) -> gpui::Div {
-    let text = text.into();
-    let description = match text.as_str() {
-        "Resources unavailable." => "Connect to the Host to inspect MCP resources.",
-        "Loading resources…" => "Reading the current MCP server list.",
-        "No MCP servers configured." => "No server is available from the current Host.",
-        _ => "No additional details are available.",
+/// 占位文案按 i18n key 取主文案与说明（同源；不能按翻译后的串匹配）。
+fn resources_placeholder(key: &'static str) -> gpui::Div {
+    let description = match key {
+        "resources.unavailable" => t("resources.unavailable_desc"),
+        "resources.loading" => t("resources.loading_desc"),
+        "resources.empty" => t("resources.empty_desc"),
+        _ => t("common.placeholder_no_details"),
     };
-    resources_placeholder_content(text, description.to_string(), dark().text.primary)
+    resources_placeholder_content(
+        t(key).to_string(),
+        description.to_string(),
+        dark().text.primary,
+    )
 }
 
+/// 失败占位：标题本地化；reason 为 wire 数据，不翻译。
 fn resources_placeholder_colored(text: impl Into<String>, color: gpui::Rgba) -> gpui::Div {
-    resources_placeholder_content("Couldn’t load resources".into(), text.into(), color)
+    resources_placeholder_content(t("resources.error_title").into(), text.into(), color)
 }
 
 fn resources_placeholder_content(

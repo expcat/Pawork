@@ -4,9 +4,10 @@ use gpui::{App, Focusable, Window};
 
 use super::{AxAction, AxNode, AxRect, AxRole};
 use crate::projection::ConnectionState;
+use crate::ui::i18n::t;
 use crate::ui::settings::{
     parse_terminal_dimension, terminal_save_enabled, terminal_status_lines,
-    SETTINGS_TERMINAL_EFFECT_NOTE, SETTINGS_TERMINAL_SHELL_UNSET,
+    settings_terminal_effect_note, settings_terminal_shell_unset,
 };
 use crate::ui::AppView;
 
@@ -34,7 +35,7 @@ impl AppView {
         let shell_current = state
             .shell
             .clone()
-            .unwrap_or_else(|| SETTINGS_TERMINAL_SHELL_UNSET.to_string());
+            .unwrap_or_else(|| settings_terminal_shell_unset().to_string());
         let size_current = format!("{}×{}", state.columns, state.rows);
         let shell_text = self
             .settings_terminal_shell_input
@@ -51,12 +52,12 @@ impl AppView {
         let refresh_focused =
             self.open_menu.is_none() && self.settings_refresh_focus.is_focused(window);
         let width = super::settings::settings_content_ax_width(frame);
-        let mut page = AxNode::new("settings-page", AxRole::Group, "Terminal", frame)
+        let mut page = AxNode::new("settings-page", AxRole::Group, t("settings.terminal.title"), frame)
             .child(
                 AxNode::new(
                     "settings-page-title",
                     AxRole::StaticText,
-                    "Terminal",
+                    t("settings.terminal.title"),
                     AxRect::new(
                         frame.x + 16.0,
                         frame.y + 16.0,
@@ -64,13 +65,13 @@ impl AppView {
                         HEADING_HEIGHT + SUBTITLE_HEIGHT,
                     ),
                 )
-                .value("Default shell and size for new terminals"),
+                .value(t("settings.terminal.subtitle")),
             )
             .child(
                 AxNode::new(
                     "settings-refresh",
                     AxRole::Button,
-                    "Refresh",
+                    t("settings.refresh"),
                     AxRect::new(
                         frame.x + 16.0 + width - 96.0,
                         frame.y + 16.0,
@@ -88,7 +89,7 @@ impl AppView {
                 AxNode::new(
                     format!("settings-status-{kind}"),
                     AxRole::StaticText,
-                    "Terminal status",
+                    t("settings.terminal.ax_status"),
                     AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT),
                 )
                 .value(label),
@@ -100,7 +101,7 @@ impl AppView {
                 AxNode::new(
                     "settings-terminal-shell-current",
                     AxRole::StaticText,
-                    "Default shell",
+                    t("settings.terminal.ax_default_shell"),
                     AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT),
                 )
                 .value(shell_current),
@@ -109,7 +110,7 @@ impl AppView {
                 AxNode::new(
                     "settings-terminal-size-current",
                     AxRole::StaticText,
-                    "Default size",
+                    t("settings.terminal.ax_default_size"),
                     AxRect::new(
                         frame.x + 16.0,
                         y + STATUS_HEIGHT + 8.0,
@@ -131,7 +132,7 @@ impl AppView {
                 AxNode::new(
                     "settings-terminal-shell-input",
                     AxRole::TextArea,
-                    "Shell",
+                    t("settings.terminal.shell_label"),
                     AxRect::new(frame.x + 16.0, y, (width - 88.0).max(120.0), CONTROL_ROW),
                 )
                 .value(shell_text)
@@ -144,7 +145,7 @@ impl AppView {
                 AxNode::new(
                     "settings-terminal-clear",
                     AxRole::Button,
-                    "Clear",
+                    t("settings.clear"),
                     AxRect::new(frame.x + 16.0 + width - 80.0, y, 80.0, CONTROL_ROW),
                 )
                 .enabled(clear_enabled)
@@ -172,7 +173,7 @@ impl AppView {
                 AxNode::new(
                     "settings-terminal-columns-input",
                     AxRole::TextArea,
-                    "Columns",
+                    t("settings.terminal.ax_columns"),
                     AxRect::new(frame.x + 16.0, y, 96.0, CONTROL_ROW),
                 )
                 .value(
@@ -190,7 +191,7 @@ impl AppView {
                 AxNode::new(
                     "settings-terminal-rows-input",
                     AxRole::TextArea,
-                    "Rows",
+                    t("settings.terminal.ax_rows"),
                     AxRect::new(frame.x + 16.0 + 96.0 + 16.0, y, 96.0, CONTROL_ROW),
                 )
                 .value(
@@ -208,7 +209,7 @@ impl AppView {
                 AxNode::new(
                     "settings-terminal-save",
                     AxRole::Button,
-                    "Save",
+                    t("settings.save"),
                     AxRect::new(frame.x + 16.0 + width - 80.0, y, 80.0, CONTROL_ROW),
                 )
                 .enabled(save_enabled)
@@ -223,10 +224,10 @@ impl AppView {
             AxNode::new(
                 "settings-terminal-effect",
                 AxRole::StaticText,
-                "Effect",
+                t("settings.terminal.ax_effect"),
                 AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT * 2.0),
             )
-            .value(SETTINGS_TERMINAL_EFFECT_NOTE),
+            .value(settings_terminal_effect_note()),
         )
     }
 }

@@ -6,12 +6,14 @@ use std::ops::{Deref, DerefMut};
 
 use serde_json::Value;
 
+use crate::ui::i18n::t;
+
 use super::DesktopProjection;
 
 pub use pawork_client::{
     ApprovalModeWire, AuthStartData, DefaultModelPair, GeneralSettingsData,
     PermissionsSettingsData, ProviderAuthState, ProviderAuthStatusData, ProviderAuthStatusEntry,
-    ProviderCatalogState, TerminalSettingsData,
+    ProviderCatalogState, ProviderUseProxyData, TerminalSettingsData,
 };
 
 /// 通用 / 权限 / 终端 / 供应商页共用的查询门闩（SET-6 / CLN-5）。
@@ -92,10 +94,10 @@ impl ProviderStatusLabels for ProviderAuthStatusEntry {
     /// 包括 Host 已脱敏的片段；credential 只留在 secure 编辑控件。
     fn auth_label(&self) -> String {
         match &self.auth {
-            ProviderAuthState::Connected { .. } => "Connected".into(),
-            ProviderAuthState::None => "Not connected".into(),
-            ProviderAuthState::Connecting => "Connecting…".into(),
-            ProviderAuthState::Error { .. } => "Connection error".into(),
+            ProviderAuthState::Connected { .. } => t("provider.auth_connected").into(),
+            ProviderAuthState::None => t("provider.auth_not_connected").into(),
+            ProviderAuthState::Connecting => t("provider.auth_connecting").into(),
+            ProviderAuthState::Error { .. } => t("provider.auth_connection_error").into(),
         }
     }
 
@@ -103,13 +105,13 @@ impl ProviderStatusLabels for ProviderAuthStatusEntry {
     fn catalog_label(&self) -> String {
         match &self.catalog {
             ProviderCatalogState::Remote { fetched_at } => {
-                format!("Remote catalog · fetched {fetched_at}")
+                t("provider.catalog_remote").replace("{}", &fetched_at)
             }
             ProviderCatalogState::FixedFallback { snapshot_label, .. } => {
-                format!("Built-in catalog fallback · {snapshot_label}")
+                t("provider.catalog_fallback").replace("{}", &snapshot_label)
             }
             ProviderCatalogState::Unavailable { error, .. } => {
-                format!("Catalog unavailable · {error}")
+                t("provider.catalog_unavailable_error").replace("{}", &error)
             }
         }
     }
@@ -180,6 +182,18 @@ impl SettingsProvidersState {
         self.pending_status_refresh = false;
         self.providers = data.providers;
         self.default_model = data.default.map(|pair| (pair.provider_id, pair.model_id));
+    }
+
+    /// set_provider_use_proxy 写回执（ADR-052 SET-6h；回执即写后状态）：
+    /// 直接落地对应条目的生效开关值；未知 provider 忽略（不虚构条目）。
+    pub fn confirm_use_proxy(&mut self, provider_id: &str, use_proxy: bool) {
+        if let Some(entry) = self
+            .providers
+            .iter_mut()
+            .find(|entry| entry.provider_id == provider_id)
+        {
+            entry.use_proxy = use_proxy;
+        }
     }
 
     /// auth_start 响应到达：登记 OAuth 等待信息并置 Connecting（Pending
@@ -286,9 +300,9 @@ impl SettingsProvidersState {
             }
         }
         let note = match &change {
-            AuthChange::Cancelled => Some("Authorization cancelled"),
-            AuthChange::Expired => Some("Authorization expired"),
-            AuthChange::Removed => Some("Connection removed"),
+            AuthChange::Cancelled => Some(t("provider.note_auth_cancelled")),
+            AuthChange::Expired => Some(t("provider.note_auth_expired")),
+            AuthChange::Removed => Some(t("provider.note_connection_removed")),
             _ => None,
         };
         if let Some(note) = note {

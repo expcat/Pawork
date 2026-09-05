@@ -2,7 +2,7 @@
   "data": {
     "api_version": {
       "major": 1,
-      "minor": 9
+      "minor": 10
     },
     "request_id": "query-auth-status",
     "responded_at": 3,
@@ -25,7 +25,8 @@
             },
             "display_name": "GLM Coding",
             "endpoint_label": "https://api.z.ai/api/coding/paas/v4",
-            "provider_id": "glm-coding"
+            "provider_id": "glm-coding",
+            "use_proxy": true
           }
         ]
       },

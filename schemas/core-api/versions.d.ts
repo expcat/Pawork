@@ -2,6 +2,6 @@
 
 import type { ApiVersion } from "./ApiVersion";
 
-export const API_VERSION: ApiVersion = { major: 1, minor: 9 };
+export const API_VERSION: ApiVersion = { major: 1, minor: 10 };
 
-export const SUPPORTED_API_VERSIONS: ReadonlyArray<ApiVersion> = [{ major: 1, minor: 0 }, { major: 1, minor: 1 }, { major: 1, minor: 2 }, { major: 1, minor: 3 }, { major: 1, minor: 4 }, { major: 1, minor: 5 }, { major: 1, minor: 6 }, { major: 1, minor: 7 }, { major: 1, minor: 8 }, { major: 1, minor: 9 }];
+export const SUPPORTED_API_VERSIONS: ReadonlyArray<ApiVersion> = [{ major: 1, minor: 0 }, { major: 1, minor: 1 }, { major: 1, minor: 2 }, { major: 1, minor: 3 }, { major: 1, minor: 4 }, { major: 1, minor: 5 }, { major: 1, minor: 6 }, { major: 1, minor: 7 }, { major: 1, minor: 8 }, { major: 1, minor: 9 }, { major: 1, minor: 10 }];

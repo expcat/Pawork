@@ -21,7 +21,7 @@ impl AppView {
         let shell_current = state
             .shell
             .clone()
-            .unwrap_or_else(|| SETTINGS_TERMINAL_SHELL_UNSET.to_string());
+            .unwrap_or_else(|| settings_terminal_shell_unset().to_string());
         let size_current = format!("{}×{}", state.columns, state.rows);
         let columns_value =
             parse_terminal_dimension(self.settings_terminal_columns_input.read(cx).text());
@@ -43,8 +43,8 @@ impl AppView {
             .radius(4.0)
             .bordered()
             .text_size(font::BODY_SM)
-            .label("Refresh")
-            .tooltip("Refresh terminal settings")
+            .label(t("settings.refresh"))
+            .tooltip(t("settings.terminal.refresh_tooltip"))
             .disabled(!connected)
             .on_click(cx.listener(|view, event, _window, cx| {
                 if view.consume_button_key_click("settings-refresh", event) {
@@ -65,8 +65,8 @@ impl AppView {
             .radius(4.0)
             .bordered()
             .text_size(font::BODY_SM)
-            .label("Save")
-            .tooltip("Save terminal defaults (shell, columns, rows)")
+            .label(t("settings.save"))
+            .tooltip(t("settings.terminal.save_tooltip"))
             .disabled(!save_enabled)
             .on_click(cx.listener(|view, event, _window, cx| {
                 if view.consume_button_key_click("settings-terminal-save", event) {
@@ -87,8 +87,8 @@ impl AppView {
             .radius(4.0)
             .bordered()
             .text_size(font::BODY_SM)
-            .label("Clear")
-            .tooltip("Clear default shell")
+            .label(t("settings.clear"))
+            .tooltip(t("settings.terminal.clear_tooltip"))
             .disabled(!clear_enabled)
             .on_click(cx.listener(|view, event, _window, cx| {
                 if view.consume_button_key_click("settings-terminal-clear", event) {
@@ -121,13 +121,13 @@ impl AppView {
                             .min_w_0()
                             .child(
                                 div().font_weight(FontWeight::MEDIUM).child(
-                                    Label::new("Terminal")
+                                    Label::new(t("settings.terminal.title"))
                                         .size(font::TITLE)
                                         .color(dark().text.primary),
                                 ),
                             )
                             .child(
-                                Label::new("Default shell and size for new terminals")
+                                Label::new(t("settings.terminal.subtitle"))
                                     .size(font::BODY_SM)
                                     .color(dark().text.secondary),
                             ),
@@ -145,12 +145,12 @@ impl AppView {
         }
         content = content
             .child(
-                Label::new(format!("Current shell · {shell_current}"))
+                Label::new(t("settings.terminal.current_shell").replace("{}", &shell_current))
                     .size(font::BODY)
                     .color(dark().text.primary),
             )
             .child(
-                Label::new(format!("Current size · {size_current}"))
+                Label::new(t("settings.terminal.current_size").replace("{}", &size_current))
                     .size(font::BODY)
                     .color(dark().text.primary),
             )
@@ -162,7 +162,7 @@ impl AppView {
                     .gap_1()
                     .min_w_0()
                     .child(
-                        Label::new("Shell")
+                        Label::new(t("settings.terminal.shell_label"))
                             .size(font::BODY_SM)
                             .color(dark().text.secondary),
                     )
@@ -183,7 +183,7 @@ impl AppView {
                     .gap_1()
                     .min_w_0()
                     .child(
-                        Label::new("Size")
+                        Label::new(t("settings.terminal.size_label"))
                             .size(font::BODY_SM)
                             .color(dark().text.secondary),
                     )
@@ -208,7 +208,7 @@ impl AppView {
                     .child(save),
             )
             .child(
-                Label::new(SETTINGS_TERMINAL_EFFECT_NOTE)
+                Label::new(settings_terminal_effect_note())
                     .size(font::BODY_SM)
                     .color(dark().text.secondary),
             );

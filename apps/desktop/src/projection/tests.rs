@@ -35,6 +35,7 @@ fn provider_status_entries_map_host_wire_to_readonly_labels() {
                     "method": "api_key",
                     "masked_credential": "sk-…ab12"
                 },
+                "use_proxy": true,
                 "catalog": { "type": "remote", "fetched_at": "2026-09-02T08:00:00Z" }
             },
             {
@@ -43,6 +44,7 @@ fn provider_status_entries_map_host_wire_to_readonly_labels() {
                 "endpoint_label": "https://api.moonshot.cn",
                 "auth_methods": ["api_key", "oauth"],
                 "auth": { "type": "none" },
+                "use_proxy": false,
                 "catalog": {
                     "type": "fixed_fallback",
                     "snapshot_label": "models.dev@v1",
@@ -56,6 +58,8 @@ fn provider_status_entries_map_host_wire_to_readonly_labels() {
         .expect("parse provider status");
     let entries = &loaded.providers;
     assert_eq!(entries.len(), 2);
+    assert!(entries[0].use_proxy);
+    assert!(!entries[1].use_proxy);
     assert_eq!(entries[0].auth_methods_label(), "API key");
     assert_eq!(entries[0].auth_label(), "Connected");
     assert_eq!(
@@ -215,6 +219,7 @@ fn default_model_unavailable_flag_tracks_connection_and_catalog() {
             error: "offline".into(),
             fetched_at: None,
         },
+        use_proxy: true,
     };
     // 目录为空（尚未加载 / model_list 失败）：即使已连接且有默认，
     // 也区分「无目录数据」与「目录明确不含」，不误报失效。
@@ -274,6 +279,7 @@ fn provider_status_refresh_failure_keeps_last_list_and_default() {
                 error: "offline".into(),
                 fetched_at: None,
             },
+            use_proxy: true,
         }],
         default: Some(DefaultModelPair {
             provider_id: "kimi".to_string(),
@@ -555,6 +561,7 @@ fn settings_state_with_provider(auth_methods: &[&str]) -> SettingsProvidersState
                 error: "offline".into(),
                 fetched_at: None,
             },
+            use_proxy: true,
         }],
         default: None,
     });

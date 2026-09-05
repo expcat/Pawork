@@ -4,9 +4,10 @@ use gpui::Window;
 
 use super::{dynamic_identifier, AxAction, AxNode, AxRect, AxRole};
 use crate::projection::ConnectionState;
+use crate::ui::i18n::t;
 use crate::ui::settings::{
-    tools_status_lines, SettingsMcpAction, SETTINGS_MCP_EFFECT_NOTE,
-    SETTINGS_MCP_REMOVE_CONFIRM_NOTE,
+    settings_mcp_effect_note, settings_mcp_remove_confirm_note, tools_status_lines,
+    SettingsMcpAction,
 };
 use crate::ui::AppView;
 
@@ -33,12 +34,12 @@ impl AppView {
         let refresh_focused =
             self.open_menu.is_none() && self.settings_refresh_focus.is_focused(window);
         let width = super::settings::settings_content_ax_width(frame);
-        let mut page = AxNode::new("settings-page", AxRole::Group, "Tools & MCP", frame)
+        let mut page = AxNode::new("settings-page", AxRole::Group, t("settings.tools.title"), frame)
             .child(
                 AxNode::new(
                     "settings-page-title",
                     AxRole::StaticText,
-                    "Tools & MCP",
+                    t("settings.tools.title"),
                     AxRect::new(
                         frame.x + 16.0,
                         frame.y + 16.0,
@@ -46,13 +47,13 @@ impl AppView {
                         HEADING_HEIGHT + SUBTITLE_HEIGHT,
                     ),
                 )
-                .value("MCP servers, status, and configuration reported by the Host"),
+                .value(t("settings.tools.subtitle")),
             )
             .child(
                 AxNode::new(
                     "settings-refresh",
                     AxRole::Button,
-                    "Refresh",
+                    t("settings.refresh"),
                     AxRect::new(
                         frame.x + 16.0 + width - 96.0,
                         frame.y + 16.0,
@@ -70,7 +71,7 @@ impl AppView {
                 AxNode::new(
                     format!("settings-status-{kind}"),
                     AxRole::StaticText,
-                    "Tools status",
+                    t("settings.tools.ax_status"),
                     AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT),
                 )
                 .value(label),
@@ -95,16 +96,19 @@ impl AppView {
                 server.name.clone(),
                 AxRect::new(frame.x + 16.0, y, width, card_height),
             )
-            .value(format!(
-                "{} · {} · {} tools",
-                server.state, server.transport, server.tool_count
-            ));
+            .value(
+                t("settings.tools.ax_server_summary")
+                    .replacen("{}", &server.state.to_string(), 1)
+                    .replacen("{}", &server.transport.to_string(), 1)
+                    .replacen("{}", &server.tool_count.to_string(), 1),
+            );
             let mut description = server.last_error.clone().unwrap_or_default();
             if confirming {
                 if description.is_empty() {
-                    description = SETTINGS_MCP_REMOVE_CONFIRM_NOTE.to_string();
+                    description = settings_mcp_remove_confirm_note().to_string();
                 } else {
-                    description = format!("{description} · {SETTINGS_MCP_REMOVE_CONFIRM_NOTE}");
+                    description =
+                        format!("{description} · {}", settings_mcp_remove_confirm_note());
                 }
             }
             row = row.description(description);
@@ -142,10 +146,10 @@ impl AppView {
             AxNode::new(
                 "settings-mcp-effect",
                 AxRole::StaticText,
-                "Effect",
+                t("settings.tools.ax_effect"),
                 AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT * 2.0),
             )
-            .value(SETTINGS_MCP_EFFECT_NOTE),
+            .value(settings_mcp_effect_note()),
         )
     }
 }

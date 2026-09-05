@@ -127,6 +127,54 @@ pub fn write_proxy_url(path: &Path, proxy_url: Option<&str>) -> Result<(), Confi
     })
 }
 
+/// 将指定 provider 的代理开关原子写入（Global 层）配置文件的
+/// `[[providers]]` 条目（ADR-052 SET-6h）。
+///
+/// 命中同 `id` 条目则更新其 `use_proxy`；无该条目则追加仅含
+/// `id` + `use_proxy` 的新条目。其余条目与未知字段原样保留。
+/// `providers` 已存在但非数组时（schema 加载同样不容忍）fail-closed 报错。
+pub fn write_provider_use_proxy(
+    path: &Path,
+    provider_id: &str,
+    use_proxy: bool,
+) -> Result<(), ConfigError> {
+    rmw_global_config(path, |table| {
+        let providers = match table
+            .entry("providers")
+            .or_insert_with(|| toml::Value::Array(Vec::new()))
+        {
+            toml::Value::Array(array) => array,
+            _ => {
+                return Err(ConfigError::Io {
+                    path: path.to_path_buf(),
+                    source: Box::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "providers is not an array",
+                    )),
+                })
+            }
+        };
+        let entry = providers.iter_mut().find(|item| {
+            item.as_table()
+                .and_then(|table| table.get("id"))
+                .and_then(toml::Value::as_str)
+                .is_some_and(|id| id == provider_id)
+        });
+        match entry {
+            Some(toml::Value::Table(entry)) => {
+                entry.insert("use_proxy".into(), toml::Value::Boolean(use_proxy));
+            }
+            _ => {
+                let mut created = toml::Table::new();
+                created.insert("id".into(), toml::Value::String(provider_id.to_string()));
+                created.insert("use_proxy".into(), toml::Value::Boolean(use_proxy));
+                providers.push(toml::Value::Table(created));
+            }
+        }
+        Ok((true, ()))
+    })
+}
+
 /// 从指定（Global 层）配置文件原子移除 `mcp.servers.<name>`
 /// （SET-6c，ADR-049 D2）。
 ///
@@ -277,6 +325,58 @@ mod tests {
                 .and_then(|section| section.get("key"))
                 .and_then(|v| v.as_str()),
             Some("v")
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn writes_provider_use_proxy_and_preserves_other_entries() {
+        let path = temp_path("provider-use-proxy");
+        std::fs::write(
+            &path,
+            "proxy_url = \"http://127.0.0.1:7890\"\n[[providers]]\nid = \"glm-coding\"\nbase_url = \"https://example.test/v1\"\n[[providers]]\nid = \"other\"\n",
+        )
+        .expect("seed config");
+        // 命中既有 id：只加 use_proxy，不动 base_url 与其它条目。
+        write_provider_use_proxy(&path, "glm-coding", false).expect("write existing");
+        let table: toml::Table =
+            toml::from_str(&std::fs::read_to_string(&path).expect("read back")).expect("parse");
+        let providers = table
+            .get("providers")
+            .and_then(|v| v.as_array())
+            .expect("providers");
+        assert_eq!(providers.len(), 2);
+        let first = providers[0].as_table().expect("entry table");
+        assert_eq!(
+            first.get("base_url").and_then(|v| v.as_str()),
+            Some("https://example.test/v1")
+        );
+        assert_eq!(
+            first.get("use_proxy").and_then(|v| v.as_bool()),
+            Some(false)
+        );
+        assert!(providers[1]
+            .as_table()
+            .expect("entry")
+            .get("use_proxy")
+            .is_none());
+        // 无该 id：追加新条目。
+        write_provider_use_proxy(&path, "new-provider", true).expect("write missing");
+        let table: toml::Table =
+            toml::from_str(&std::fs::read_to_string(&path).expect("read back")).expect("parse");
+        let providers = table
+            .get("providers")
+            .and_then(|v| v.as_array())
+            .expect("providers");
+        assert_eq!(providers.len(), 3);
+        let created = providers[2].as_table().expect("created entry");
+        assert_eq!(
+            created.get("id").and_then(|v| v.as_str()),
+            Some("new-provider")
+        );
+        assert_eq!(
+            created.get("use_proxy").and_then(|v| v.as_bool()),
+            Some(true)
         );
         std::fs::remove_file(&path).ok();
     }

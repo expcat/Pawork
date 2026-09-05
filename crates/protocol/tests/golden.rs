@@ -657,7 +657,8 @@ fn golden_auth_provider_slices() {
                         "type": "fixed_fallback",
                         "snapshot_label": "2026-09-01",
                         "fetched_at": null
-                    }
+                    },
+                    "use_proxy": true
                 }]
             })),
         })),
@@ -681,6 +682,7 @@ fn golden_auth_provider_slices() {
 /// SET-6a（ADR-047）：通用设置查询 / SetProxyUrl 命令 golden。
 #[test]
 fn golden_general_settings_slices() {
+    let provider_id = pawork_domain::ProviderId::from("glm-coding");
     assert_golden(
         "general_settings.json",
         encode_client(&ClientFrame::Query(AppQueryEnvelope {
@@ -710,6 +712,13 @@ fn golden_general_settings_slices() {
         })),
     );
     assert_golden(
+        "client_command_set_provider_use_proxy.json",
+        encode_client(&client_auth_command_frame(AppCommand::SetProviderUseProxy {
+            provider_id: provider_id.clone(),
+            use_proxy: false,
+        })),
+    );
+    assert_golden(
         "server_response_general_settings.json",
         encode_server(&ServerFrame::Response(AppResponseEnvelope {
             api_version: API_VERSION,
@@ -728,6 +737,18 @@ fn golden_general_settings_slices() {
             responded_at: Timestamp::from_unix_millis(3),
             response: AppResponse::Data(serde_json::json!({
                 "proxy_url": null
+            })),
+        })),
+    );
+    assert_golden(
+        "server_response_set_provider_use_proxy.json",
+        encode_server(&ServerFrame::Response(AppResponseEnvelope {
+            api_version: API_VERSION,
+            request_id: pawork_domain::QueryId::from("query-set-provider-use-proxy"),
+            responded_at: Timestamp::from_unix_millis(3),
+            response: AppResponse::Data(serde_json::json!({
+                "provider_id": "glm-coding",
+                "use_proxy": false
             })),
         })),
     );

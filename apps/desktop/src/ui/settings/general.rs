@@ -16,7 +16,7 @@ impl AppView {
         let status_lines = general_status_lines(state);
         let current = match &state.proxy_url {
             Some(url) => url.clone(),
-            None => SETTINGS_PROXY_UNSET.to_string(),
+            None => settings_proxy_unset().to_string(),
         };
         let input_empty = self.settings_proxy_input.read(cx).text().trim().is_empty();
         let save_enabled = writes && !input_empty;
@@ -33,8 +33,8 @@ impl AppView {
             .radius(4.0)
             .bordered()
             .text_size(font::BODY_SM)
-            .label("Refresh")
-            .tooltip("Refresh network settings")
+            .label(t("settings.refresh"))
+            .tooltip(t("settings.network.refresh_tooltip"))
             .disabled(!connected)
             .on_click(cx.listener(|view, event, _window, cx| {
                 if view.consume_button_key_click("settings-refresh", event) {
@@ -55,8 +55,8 @@ impl AppView {
             .radius(4.0)
             .bordered()
             .text_size(font::BODY_SM)
-            .label("Save")
-            .tooltip("Save proxy URL")
+            .label(t("settings.save"))
+            .tooltip(t("settings.network.save_tooltip"))
             .disabled(!save_enabled)
             .on_click(cx.listener(|view, event, _window, cx| {
                 if view.consume_button_key_click("settings-proxy-save", event) {
@@ -77,8 +77,8 @@ impl AppView {
             .radius(4.0)
             .bordered()
             .text_size(font::BODY_SM)
-            .label("Clear")
-            .tooltip("Clear proxy URL")
+            .label(t("settings.clear"))
+            .tooltip(t("settings.network.clear_tooltip"))
             .disabled(!clear_enabled)
             .on_click(cx.listener(|view, event, _window, cx| {
                 if view.consume_button_key_click("settings-proxy-clear", event) {
@@ -111,13 +111,13 @@ impl AppView {
                             .min_w_0()
                             .child(
                                 div().font_weight(FontWeight::MEDIUM).child(
-                                    Label::new("Network")
+                                    Label::new(t("settings.network.title"))
                                         .size(font::TITLE)
                                         .color(dark().text.primary),
                                 ),
                             )
                             .child(
-                                Label::new("Host outbound network settings")
+                                Label::new(t("settings.network.subtitle"))
                                     .size(font::BODY_SM)
                                     .color(dark().text.secondary),
                             ),
@@ -136,13 +136,13 @@ impl AppView {
         content = content
             .child(
                 div().font_weight(FontWeight::MEDIUM).child(
-                    Label::new("HTTP proxy")
+                    Label::new(t("settings.network.proxy_title"))
                         .size(font::BODY)
                         .color(dark().text.primary),
                 ),
             )
             .child(
-                Label::new(format!("Current · {current}"))
+                Label::new(t("settings.current").replace("{}", &current))
                     .size(font::BODY_SM)
                     .color(dark().text.secondary),
             )
@@ -165,14 +165,14 @@ impl AppView {
             )
             .child(
                 div().max_w(px(640.0)).child(
-                    Label::new(SETTINGS_PROXY_EFFECT_NOTE)
+                    Label::new(settings_proxy_effect_note())
                         .size(font::BODY_SM)
                         .color(dark().text.secondary),
                 ),
             )
             .child(
                 div().max_w(px(640.0)).child(
-                    Label::new(SETTINGS_PROXY_STORAGE_NOTE)
+                    Label::new(settings_proxy_storage_note())
                         .size(font::BODY_SM)
                         .color(dark().text.secondary),
                 ),

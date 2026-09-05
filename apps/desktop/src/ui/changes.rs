@@ -12,6 +12,7 @@ use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
 use crate::ui::components::dropdown::{MenuPanel, MenuRow};
 use crate::ui::components::label::Label;
 use crate::ui::components::list_row::ListRow;
+use crate::ui::i18n::t;
 use crate::ui::theme::{dark, font, metrics};
 
 use super::{AppView, MenuKind};
@@ -330,7 +331,7 @@ impl AppView {
                     .text_size(font::XS)
                     .text_color(dark().text.secondary)
                     .label("↻")
-                    .tooltip("Refresh changes")
+                    .tooltip(t("changes.tooltip_refresh"))
                     .track_focus(&self.changes_refresh_focus)
                     .on_click(cx.listener(|view, event, _window, cx| {
                         if view.consume_button_key_click("changes-refresh", event) {
@@ -353,7 +354,7 @@ impl AppView {
                     .border_color(dark().border.subtle)
                     .text_size(font::XS)
                     .text_color(dark().text.tertiary)
-                    .child("Host latest-session diff · workspace context is not a filter"),
+                    .child(t("changes.scope_note")),
             )
             .when_some(self.changes.stale_reason.clone(), |block, reason| {
                 block.child(
@@ -400,9 +401,9 @@ impl AppView {
 
     fn changes_files_element(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let body = match &self.changes.fetch {
-            ChangesFetch::Idle => changes_placeholder("Changes unavailable.").into_any_element(),
+            ChangesFetch::Idle => changes_placeholder("changes.unavailable").into_any_element(),
             ChangesFetch::Fetching if self.changes.files.is_empty() => {
-                changes_placeholder("Loading changes…").into_any_element()
+                changes_placeholder("changes.loading").into_any_element()
             }
             ChangesFetch::Failed(reason) => {
                 changes_placeholder_colored(reason.clone(), dark().semantic.danger_text)
@@ -411,9 +412,9 @@ impl AppView {
             ChangesFetch::Fetching | ChangesFetch::Ready => {
                 if self.changes.files.is_empty() {
                     if self.changes.session_id.is_none() {
-                        changes_placeholder("No active session.").into_any_element()
+                        changes_placeholder("changes.no_active_session").into_any_element()
                     } else {
-                        changes_placeholder("No changes in this session yet.").into_any_element()
+                        changes_placeholder("changes.empty").into_any_element()
                     }
                 } else {
                     self.changes_file_list_element(cx).into_any_element()
@@ -513,9 +514,9 @@ impl AppView {
     fn diff_view_element(&self) -> impl IntoElement {
         match &self.changes.diff {
             DiffFetch::Idle => {
-                changes_placeholder("Select a file to view its diff.").into_any_element()
+                changes_placeholder("changes.diff_select_file").into_any_element()
             }
-            DiffFetch::Fetching => changes_placeholder("Loading diff…").into_any_element(),
+            DiffFetch::Fetching => changes_placeholder("changes.diff_loading").into_any_element(),
             DiffFetch::Failed(reason) => {
                 changes_placeholder_colored(reason.clone(), dark().semantic.danger_text)
                     .into_any_element()
@@ -577,7 +578,7 @@ impl AppView {
                             .px_2()
                             .py_1()
                             .text_color(dark().text.secondary)
-                            .child("Binary file — not rendered."),
+                            .child(t("changes.diff_binary")),
                     );
                 } else if file.hunks.is_empty() {
                     body = body.child(
@@ -585,7 +586,7 @@ impl AppView {
                             .px_2()
                             .py_1()
                             .text_color(dark().text.secondary)
-                            .child("No hunks in response."),
+                            .child(t("changes.diff_no_hunks")),
                     );
                 } else {
                     // GPUI 的 ScrollHandle 只以直接 child bounds 计算 content
@@ -684,9 +685,9 @@ impl AppView {
 
     fn changes_summary_element(&self) -> impl IntoElement {
         let body = match &self.changes.fetch {
-            ChangesFetch::Idle => changes_placeholder("Changes unavailable."),
+            ChangesFetch::Idle => changes_placeholder("changes.unavailable"),
             ChangesFetch::Fetching if self.changes.files.is_empty() => {
-                changes_placeholder("Loading changes…")
+                changes_placeholder("changes.loading")
             }
             ChangesFetch::Failed(reason) => {
                 changes_placeholder_colored(reason.clone(), dark().semantic.danger_text)
@@ -754,7 +755,7 @@ impl AppView {
                     .p_4()
                     .child(
                         div().border_b_1().border_color(dark().border.subtle).child(
-                            Label::new("Activity")
+                            Label::new(t("changes.tab_activity"))
                                 .size(font::BODY)
                                 .color(dark().text.primary),
                         ),
@@ -770,7 +771,7 @@ impl AppView {
                             .rounded(px(4.0))
                             .bg(dark().surface.raised)
                             .child(
-                                Label::new("Changes")
+                                Label::new(t("changes.tab_changes"))
                                     .size(font::BODY_SM)
                                     .color(dark().text.secondary),
                             )
@@ -806,22 +807,27 @@ fn session_mismatch<'a>(data: Option<&'a str>, active: Option<&str>) -> Option<&
     (data != active).then_some(data)
 }
 
-fn changes_placeholder(text: impl Into<String>) -> Div {
-    let text = text.into();
-    let description = match text.as_str() {
-        "Changes unavailable." => "Connect to the Host and open a task to inspect changes.",
-        "Loading changes…" => "Reading the latest session diff.",
-        "No active session." => "Open a task to inspect its changes.",
-        "No changes in this session yet." => "This session has not reported file changes.",
-        "Select a file to view its diff." => "Choose a file above to inspect its diff.",
-        "Loading diff…" => "Reading the selected file diff.",
-        _ => "No additional details are available.",
+/// 占位文案按 i18n key 取主文案与说明（同源；不能按翻译后的串匹配）。
+fn changes_placeholder(key: &'static str) -> Div {
+    let description = match key {
+        "changes.unavailable" => t("changes.unavailable_desc"),
+        "changes.loading" => t("changes.loading_desc"),
+        "changes.no_active_session" => t("changes.no_active_session_desc"),
+        "changes.empty" => t("changes.empty_desc"),
+        "changes.diff_select_file" => t("changes.diff_select_file_desc"),
+        "changes.diff_loading" => t("changes.diff_loading_desc"),
+        _ => t("common.placeholder_no_details"),
     };
-    changes_placeholder_content(text, description.to_string(), dark().text.primary)
+    changes_placeholder_content(
+        t(key).to_string(),
+        description.to_string(),
+        dark().text.primary,
+    )
 }
 
+/// 失败占位：标题本地化；reason 为 wire 数据，不翻译。
 fn changes_placeholder_colored(text: impl Into<String>, color: gpui::Rgba) -> Div {
-    changes_placeholder_content("Couldn’t load changes".into(), text.into(), color)
+    changes_placeholder_content(t("changes.error_title").into(), text.into(), color)
 }
 
 fn changes_placeholder_content(title: String, description: String, color: gpui::Rgba) -> Div {

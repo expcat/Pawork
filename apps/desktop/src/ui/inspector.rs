@@ -9,6 +9,7 @@ use crate::projection::{ConnectionState, TerminalState, TERMINAL_CWD_UNKNOWN};
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
 use crate::ui::components::follow_scroll::BackToBottom;
 use crate::ui::components::panel::Panel;
+use crate::ui::i18n::t;
 use crate::ui::theme::{dark, font, metrics};
 
 use super::{
@@ -17,7 +18,9 @@ use super::{
 };
 
 /// Terminal 页无输出时的占位文案（R2 Wave B）：视觉与 AX 树共用同源。
-pub(super) const TERMINAL_EMPTY_OUTPUT: &str = "Terminal output will appear here.";
+pub(super) fn terminal_empty_output() -> &'static str {
+    t("inspector.terminal_empty_output")
+}
 
 /// 尺寸 stepper 的步长与安全边界（列 / 行）：步长取常用适配的可感增量，
 /// 边界防止把 PTY 缩到不可用或放大到离谱值。
@@ -65,9 +68,9 @@ pub(crate) fn terminal_resize_status_label(
     draft: Option<(u16, u16)>,
 ) -> Option<&'static str> {
     if draft.is_some_and(|size| size != (terminal.columns, terminal.rows)) {
-        Some("size not applied")
+        Some(t("inspector.resize_not_applied"))
     } else if terminal.resize_confirmed {
-        Some("resize confirmed")
+        Some(t("inspector.resize_confirmed"))
     } else {
         None
     }
@@ -160,9 +163,9 @@ pub(super) enum InspectorTab {
 impl InspectorTab {
     fn label(self) -> &'static str {
         match self {
-            Self::Changes => "Changes",
-            Self::Terminal => "Terminal",
-            Self::Resources => "Resources",
+            Self::Changes => t("inspector.tab_changes"),
+            Self::Terminal => t("inspector.tab_terminal"),
+            Self::Resources => t("inspector.tab_resources"),
         }
     }
 
@@ -304,7 +307,7 @@ impl AppView {
     fn terminal_page_element(&self, _connected: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let terminal = &self.projection.terminal;
         let output = if terminal.output.is_empty() {
-            TERMINAL_EMPTY_OUTPUT.to_string()
+            terminal_empty_output().to_string()
         } else {
             plain_terminal_output(&terminal.output)
         };
@@ -401,7 +404,7 @@ impl AppView {
                                     .height(px(TERMINAL_STEPPER_BUTTON_HEIGHT))
                                     .center()
                                     .label(size_label)
-                                    .tooltip("Apply terminal size")
+                                    .tooltip(t("inspector.tooltip_apply_size"))
                                     .track_focus(&self.terminal_resize_focus)
                                     .on_click(cx.listener(|view, event, window, cx| {
                                         if view.consume_button_key_click("terminal-resize", event) {
@@ -461,7 +464,7 @@ impl AppView {
                         area.child(BackToBottom::new(
                             Button::new("terminal-back-to-bottom")
                                 .variant(ButtonVariant::Raised)
-                                .label("↓ Back to bottom")
+                                .label(t("timeline.back_to_bottom"))
                                 .track_focus(&self.terminal_back_to_bottom_focus)
                                 .on_click(cx.listener(|view, event, _window, cx| {
                                     if view

@@ -5,12 +5,13 @@
       "minor": 10
     },
     "command": {
-      "method": "terminal_create",
+      "method": "set_provider_use_proxy",
       "params": {
-        "workspace_id": "workspace-1"
+        "provider_id": "glm-coding",
+        "use_proxy": false
       }
     },
-    "command_id": "command-terminal-1",
+    "command_id": "command-auth-1",
     "identity": {
       "actor_id": "actor-1",
       "type": "local_user"

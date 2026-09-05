@@ -37,7 +37,11 @@ prepare_macos_bundle() {
   local executable_dir="$macos_bundle/Contents/MacOS"
   mkdir -p "$executable_dir"
   cp "$repo_dir/apps/desktop/macos/Info.plist" "$macos_bundle/Contents/Info.plist"
-  ln -sf "$desktop_bin" "$executable_dir/Pawork"
+  # 必须复制真实二进制，不能用符号链接：LaunchServices(open) 启动「指向
+  # target/debug/pawork-desktop 的 symlink」时，新构建二进制的进程会永久卡死
+  # 在 dyld 的 getOnDiskBinarySliceOffset -> open()（2026-09-05 实测：
+  # symlink bundle 三次启动全部卡死，真实文件 bundle 同二进制正常启动）。
+  cp -f "$desktop_bin" "$executable_dir/Pawork"
 }
 
 case "$command_mode" in

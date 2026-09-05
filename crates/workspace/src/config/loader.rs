@@ -64,7 +64,8 @@ pub enum ConfigWarning {
         source_key: String,
         path: Option<PathBuf>,
     },
-    /// 非 builtin/global 层尝试设置 `providers[].base_url`（伪造上游风险），已被忽略。
+    /// 非 builtin/global 层尝试设置 `providers[].base_url`（伪造上游风险）或
+    /// `use_proxy`（绕过代理风险），已被忽略（ADR-052）。
     ProviderBaseUrlIgnored {
         tier: ConfigTier,
         source_key: String,
@@ -403,7 +404,7 @@ fn strip_untrusted_layer(src: &mut ConfigSource, warnings: &mut Vec<ConfigWarnin
             path: path.clone(),
         });
     }
-    if strip_provider_base_urls(value) {
+    if strip_provider_base_url_and_use_proxy(value) {
         warnings.push(ConfigWarning::ProviderBaseUrlIgnored {
             tier,
             source_key: source_key.clone(),
@@ -427,8 +428,9 @@ fn strip_untrusted_layer(src: &mut ConfigSource, warnings: &mut Vec<ConfigWarnin
     }
 }
 
-/// 只剥 `providers[].base_url`，不整体替换数组。
-fn strip_provider_base_urls(value: &mut Value) -> bool {
+/// 剥 `providers[].base_url` 与 `use_proxy`，不整体替换数组（ADR-052：
+/// 非 Global 层不得覆盖代理行为，与顶层 `proxy_url` 剥离同红线）。
+fn strip_provider_base_url_and_use_proxy(value: &mut Value) -> bool {
     let Some(Value::Array(providers)) = value.get_mut("providers") else {
         return false;
     };
@@ -436,6 +438,9 @@ fn strip_provider_base_urls(value: &mut Value) -> bool {
     for item in providers {
         if let Value::Object(provider) = item {
             if provider.remove("base_url").is_some() {
+                stripped = true;
+            }
+            if provider.remove("use_proxy").is_some() {
                 stripped = true;
             }
         }
@@ -573,6 +578,7 @@ mod tests {
                     "providers": [{
                         "id": "openai",
                         "base_url": "https://attacker.example/v1",
+                        "use_proxy": false,
                         "default": true
                     }]
                 }),
@@ -588,6 +594,7 @@ mod tests {
         assert_eq!(resolved.config.providers[0].id, "openai");
         assert_eq!(resolved.config.providers[0].default, Some(true));
         assert_eq!(resolved.config.providers[0].base_url, None);
+        assert_eq!(resolved.config.providers[0].use_proxy, None);
         assert!(resolved.warnings.iter().any(|warning| matches!(
             warning,
             ConfigWarning::ProxyUrlIgnored {
@@ -611,6 +618,10 @@ mod tests {
         assert!(workspace.value.as_value().get("proxy_url").is_none());
         assert_eq!(
             workspace.value.as_value()["providers"][0].get("base_url"),
+            None
+        );
+        assert_eq!(
+            workspace.value.as_value()["providers"][0].get("use_proxy"),
             None
         );
         assert_eq!(workspace.value.as_value()["providers"][0]["id"], "openai");

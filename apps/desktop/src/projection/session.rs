@@ -2,6 +2,7 @@
 
 use std::collections::BTreeSet;
 
+use crate::ui::i18n::{t, t2};
 use pawork_client::{ResumeDisposition, Snapshot};
 use serde_json::Value;
 
@@ -25,10 +26,12 @@ impl ConnectionState {
     /// 侧栏连接状态文本（禁用原因用文字说明，不只靠颜色区分）。
     pub fn label(&self) -> String {
         match self {
-            Self::Connecting => "Connecting…".into(),
-            Self::Connected { instance_id } => format!("Connected · {instance_id}"),
-            Self::Disconnected { reason } => format!("Disconnected · {reason}"),
-            Self::Failed { reason } => format!("Connect failed · {reason}"),
+            Self::Connecting => t("connection.connecting").into(),
+            Self::Connected { instance_id } => {
+                t("connection.connected").replace("{}", instance_id)
+            }
+            Self::Disconnected { reason } => t("connection.disconnected").replace("{}", reason),
+            Self::Failed { reason } => t("connection.failed").replace("{}", reason),
         }
     }
 }
@@ -95,13 +98,19 @@ impl ResumeState {
             Self::Replay {
                 from_sequence,
                 through_sequence,
-            } => Some(format!("Replay · {from_sequence}–{through_sequence}")),
+            } => Some(t2(
+                "resume.replay",
+                &from_sequence.to_string(),
+                &through_sequence.to_string(),
+            )),
             Self::SnapshotRequired {
                 earliest_available_sequence,
-            } => Some(format!(
-                "Snapshot required · from {earliest_available_sequence}"
-            )),
-            Self::UpToDate { current_sequence } => Some(format!("Up to date · {current_sequence}")),
+            } => Some(
+                t("resume.snapshot_required").replace("{}", &earliest_available_sequence.to_string()),
+            ),
+            Self::UpToDate { current_sequence } => Some(
+                t("resume.up_to_date").replace("{}", &current_sequence.to_string()),
+            ),
         }
     }
 
@@ -139,16 +148,16 @@ impl TaskRailGrouping {
     /// 当前呈现模式；供 AX value 使用，不和按钮目标动作混写。
     pub fn view_label(self) -> &'static str {
         match self {
-            Self::Timeline => "Timeline view",
-            Self::Projects => "Projects view",
+            Self::Timeline => t("rail.grouping_timeline_view"),
+            Self::Projects => t("rail.grouping_projects_view"),
         }
     }
 
     /// 二态按钮显示的下一步动作；供 tooltip 与 AX name 共用。
     pub fn toggle_action_label(self) -> &'static str {
         match self {
-            Self::Timeline => "Show projects",
-            Self::Projects => "Show timeline",
+            Self::Timeline => t("rail.grouping_show_projects"),
+            Self::Projects => t("rail.grouping_show_timeline"),
         }
     }
 
@@ -169,6 +178,7 @@ pub enum DateBucket {
 }
 
 impl DateBucket {
+    /// 稳定英文标签：参与 rail AX identifier 构造，不翻译。
     pub fn label(self) -> &'static str {
         match self {
             Self::Today => "Today",
@@ -177,9 +187,26 @@ impl DateBucket {
             Self::Earlier => "Earlier",
         }
     }
+
+    /// 界面显示标签（经 i18n；identifier 构造仍用英文 `label`）。
+    pub fn display_label(self) -> &'static str {
+        match self {
+            Self::Today => t("date.today"),
+            Self::Yesterday => t("date.yesterday"),
+            Self::Previous7Days => t("date.previous_7_days"),
+            Self::Earlier => t("date.earlier"),
+        }
+    }
 }
 
+/// 未分组占位的稳定英文标识（参与 rail key / AX identifier，不翻译）；
+/// 显示文案经 `unassigned_project_display`。
 pub const UNASSIGNED_PROJECT: &str = "Unassigned";
+
+/// 未分组项目头的显示文案（i18n 同源；默认语言下与标识一致）。
+pub fn unassigned_project_display() -> &'static str {
+    t("taskrail.unassigned")
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TaskRailProjectGroup {
@@ -263,9 +290,9 @@ impl SessionLiveStatus {
     /// AX description / 状态点语义共用状态词。
     pub fn label(self) -> &'static str {
         match self {
-            Self::Running => "Running",
-            Self::NeedsInput => "Needs input",
-            Self::Blocked => "Blocked",
+            Self::Running => t("live.running"),
+            Self::NeedsInput => t("live.needs_input"),
+            Self::Blocked => t("live.blocked"),
         }
     }
 }
@@ -522,7 +549,7 @@ impl DesktopProjection {
 
     pub fn workspace_name(&self, workspace_id: Option<&str>) -> String {
         match workspace_id {
-            None => UNASSIGNED_PROJECT.into(),
+            None => unassigned_project_display().into(),
             Some(id) => self
                 .workspaces
                 .iter()
@@ -572,7 +599,7 @@ impl DesktopProjection {
     }
 
     pub fn project_scope_options(&self) -> Vec<(Option<String>, String)> {
-        let mut options = vec![(None, "All projects".into())];
+        let mut options = vec![(None, t("rail.scope_all_projects").to_string())];
         let mut seen = BTreeSet::new();
         for workspace in &self.workspaces {
             if seen.insert(workspace.id.clone()) {
@@ -600,8 +627,8 @@ impl DesktopProjection {
     /// ContextMeter：当前请求估算未知时显示 unavailable / `—`，只用 catalog window。
     pub fn context_meter_label(&self) -> String {
         match self.selected_context_window() {
-            Some(window) => format!("Context · — / {window}"),
-            None => "Context · unavailable".into(),
+            Some(window) => t("composer.context_meter").replace("{}", &window.to_string()),
+            None => t("composer.context_unavailable").into(),
         }
     }
 
@@ -612,9 +639,9 @@ impl DesktopProjection {
         let duration = match (self.active_run_id.as_ref(), self.active_run_started_at_ms) {
             (Some(_), Some(started_at_ms)) => format_run_duration(started_at_ms, now_ms),
             (Some(_), None) => "—".into(),
-            (None, _) => "idle".into(),
+            (None, _) => t("run.status_idle").into(),
         };
-        format!("Task — tokens | Quota unavailable | — tok/s | Run {duration}")
+        t("run.status_bar").replace("{}", &duration)
     }
 
     /// Reconnect 相位（F-02 壳层校准）：仅 Disconnected / ConnectFailed 提供

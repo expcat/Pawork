@@ -10,6 +10,7 @@ mod changes;
 mod components;
 mod input_area;
 mod inspector;
+pub(crate) mod i18n;
 mod resources;
 mod settings;
 mod shell_layout;
@@ -91,8 +92,12 @@ pub(crate) const APP_VIEW_KEYBINDINGS: &[(&str, &str)] = &[
 
 /// Timeline 空态（P0-3）：无 active session 且条目数为 0 时，只给出一个
 /// 清楚的主路径；视觉与 AX 树共用同一文案源（accessibility/app.rs）。
-pub(crate) const WORKSPACE_EMPTY_TITLE: &str = "Start a task";
-pub(crate) const WORKSPACE_EMPTY_HINT: &str = "Choose a task from the sidebar or create a new one.";
+pub(crate) fn workspace_empty_title() -> &'static str {
+    i18n::t("timeline.empty_title")
+}
+pub(crate) fn workspace_empty_hint() -> &'static str {
+    i18n::t("timeline.empty_hint")
+}
 
 /// R3 Wave B：rail Tab 焦点顺序前缀（design §3.6：scope → grouping → 全局
 /// 新建）；行为链（项目头 / 定向新建 / task 行）按当前分组渲染序接在其后，
@@ -443,6 +448,9 @@ pub struct AppView {
     event_task: Option<gpui::Task<()>>,
     status_hint: Option<String>,
     text_scale: font::TextScale,
+    /// 界面语言（与 text_scale 同口径的本地 presentation preference：
+    /// 内存态、即时生效、不持久化；全局值经 i18n::language() 同源读取）。
+    language: i18n::Language,
     grouping: TaskRailGrouping,
     scope_workspace_id: Option<String>,
     collapsed_projects: BTreeSet<String>,
@@ -616,7 +624,7 @@ impl AppView {
         let controller = Arc::new(DesktopController::new(platform.handle()));
         let text_input = cx.new(|cx| TextInput::new(cx));
         let terminal_input = cx.new(|cx| {
-            TextInput::with_placeholder("Terminal input… (Enter to write)", cx)
+            TextInput::with_placeholder(i18n::t("inspector.terminal_input_placeholder"), cx)
                 .id("terminal-input")
                 .height_clamp(
                     crate::ui::theme::metrics::COMPOSER_INPUT_MIN_HEIGHT,
@@ -657,6 +665,7 @@ impl AppView {
             event_task: None,
             status_hint: None,
             text_scale: font::TextScale::default(),
+            language: i18n::language(),
             grouping: TaskRailGrouping::Timeline,
             scope_workspace_id: None,
             collapsed_projects: BTreeSet::new(),
@@ -871,7 +880,7 @@ impl AppView {
         let workspace_empty = self.projection.workspace_empty_hint_visible();
         let can_create = self.can_create_task();
         let new_task_tooltip = SharedString::from(if can_create {
-            "New task (Cmd+N)".to_string()
+            i18n::t("timeline.new_task_tooltip").to_string()
         } else {
             self.add_task_disabled_reason()
         });
@@ -924,7 +933,7 @@ impl AppView {
                 .text_size(font::BODY)
                 .text_color(dark().text.emphasis)
                 .label("⋯")
-                .tooltip("Activity")
+                .tooltip(i18n::t("header.tooltip_activity"))
                 .track_focus(&self.inspector_activity_focus)
                 .on_click(cx.listener(|view, event, _window, cx| {
                     if view.consume_button_key_click("inspector-toggle", event) {
@@ -1159,7 +1168,7 @@ impl AppView {
                     this.update(cx, |view, cx| {
                         view.projection
                             .set_connection(ConnectionState::Failed { reason });
-                        view.status_hint = Some("Connect failed. Click Reconnect to retry.".into());
+                        view.status_hint = Some(i18n::t("status.connect_failed_retry").into());
                         cx.notify();
                     })
                     .ok();
@@ -1275,7 +1284,7 @@ impl AppView {
                 self.terminal_pending_resize = None;
                 // 断连终止一切进行中分页，避免 settle barrier 永久停发。
                 self.timeline_paging = false;
-                self.status_hint = Some("Connection lost. Click Reconnect.".into());
+                self.status_hint = Some(i18n::t("status.connection_lost").into());
             }
             ControllerEvent::Snapshot(snapshot) => {
                 self.projection.merge_snapshot(&snapshot);
@@ -1323,10 +1332,10 @@ impl AppView {
                 self.scope_workspace_id = Some(workspace_id);
                 self.reconcile_terminal_workspace(cx);
                 self.rail_scroll_to_active = true;
-                self.status_hint = Some(format!("Project opened · {name}"));
+                self.status_hint = Some(i18n::t("status.project_opened").replace("{}", &name));
             }
             ControllerEvent::SessionForked { session_id } => {
-                self.status_hint = Some(format!("Forked · {session_id}"));
+                self.status_hint = Some(i18n::t("status.forked").replace("{}", &session_id));
                 self.open_session(session_id, cx);
             }
             ControllerEvent::TerminalCreated {
@@ -1399,7 +1408,7 @@ impl AppView {
                 self.projection
                     .mark_terminal_create_failed(&workspace_id, reason.clone());
                 self.reconcile_terminal_workspace(cx);
-                self.status_hint = Some(format!("Create terminal failed: {reason}"));
+                self.status_hint = Some(i18n::t("status.terminal_create_failed").replace("{}", &reason));
             }
             ControllerEvent::TerminalWriteSucceeded {
                 terminal_session_id,
@@ -1423,7 +1432,7 @@ impl AppView {
                         self.terminal_input.update(cx, |input, cx| input.clear(cx));
                     }
                 }
-                self.status_hint = Some("Terminal input sent.".into());
+                self.status_hint = Some(i18n::t("status.terminal_input_sent").into());
             }
             ControllerEvent::TerminalWriteFailed {
                 terminal_session_id,
@@ -1432,7 +1441,7 @@ impl AppView {
                 self.terminal_pending_write = None;
                 self.projection
                     .note_terminal_io_failed(&terminal_session_id, reason.clone());
-                self.status_hint = Some(format!("Terminal write failed: {reason}"));
+                self.status_hint = Some(i18n::t("status.terminal_write_failed").replace("{}", &reason));
             }
             ControllerEvent::TerminalResizeSucceeded {
                 terminal_session_id,
@@ -1461,7 +1470,9 @@ impl AppView {
                 if self.projection.terminal.session_id.as_deref()
                     == Some(terminal_session_id.as_str())
                 {
-                    self.status_hint = Some(format!("Terminal size · {columns}×{rows}"));
+                    self.status_hint = Some(
+                        i18n::t2("status.terminal_size", &columns.to_string(), &rows.to_string()),
+                    );
                 }
             }
             ControllerEvent::TerminalResizeFailed {
@@ -1480,7 +1491,7 @@ impl AppView {
                 if self.projection.terminal.session_id.as_deref()
                     == Some(terminal_session_id.as_str())
                 {
-                    self.status_hint = Some(format!("Terminal resize failed: {reason}"));
+                    self.status_hint = Some(i18n::t("status.terminal_resize_failed").replace("{}", &reason));
                 }
             }
             ControllerEvent::TerminalCloseSucceeded {
@@ -1498,7 +1509,7 @@ impl AppView {
                 // live Killed 先到，回执也不移除，仍保留 tombstone 供用户 Close。
                 if remove_on_success == Some(true) {
                     self.projection.remove_terminal(&terminal_session_id);
-                    self.status_hint = Some("Terminal closed.".into());
+                    self.status_hint = Some(i18n::t("status.terminal_closed").into());
                 }
             }
             ControllerEvent::TerminalCloseFailed {
@@ -1512,7 +1523,7 @@ impl AppView {
                 {
                     self.terminal_pending_close = None;
                 }
-                self.status_hint = Some(format!("Terminal close failed: {reason}"));
+                self.status_hint = Some(i18n::t("status.terminal_close_failed").replace("{}", &reason));
             }
             ControllerEvent::MessageSent {
                 session_id,
@@ -1555,6 +1566,16 @@ impl AppView {
                     input.reset_text(proxy_url.unwrap_or_default(), cx)
                 });
                 self.remark_settings_stale_if_disconnected();
+            }
+            ControllerEvent::ProviderUseProxyConfirmed {
+                provider_id,
+                use_proxy,
+            } => {
+                // Host Data 确认（回执即写后状态，ADR-052 SET-6h）；
+                // 不乐观更新：以回执值为准直接收敛，不重查。
+                self.projection
+                    .settings_providers
+                    .confirm_use_proxy(&provider_id, use_proxy);
             }
             ControllerEvent::PermissionsSettingsLoaded(data) => {
                 self.projection.settings_permissions.apply_loaded(data);
@@ -1603,6 +1624,10 @@ impl AppView {
                         .settings_providers
                         .apply_failed(reason.as_str());
                 }
+                if action == "set provider use proxy" {
+                    let message = format!("Could not change provider proxy · {reason}");
+                    self.projection.settings_providers.apply_failed(&message);
+                }
                 if action == "load general settings" || action == "set proxy url" {
                     let message = if action == "set proxy url" {
                         format!("Could not save proxy URL · {reason}")
@@ -1643,9 +1668,9 @@ impl AppView {
                 }
                 if action == "test mcp server" || action == "remove mcp server" {
                     let message = if action == "remove mcp server" {
-                        format!("Could not remove MCP server · {reason}")
+                        i18n::t("status.mcp_remove_failed").replace("{}", &reason)
                     } else {
-                        format!("Could not test MCP server · {reason}")
+                        i18n::t("status.mcp_test_failed").replace("{}", &reason)
                     };
                     self.resources.action_error = Some(message);
                     if action == "remove mcp server" {
@@ -1653,14 +1678,14 @@ impl AppView {
                         self.refresh_resources(cx);
                     }
                 }
-                self.status_hint = Some(format!("{action} failed: {reason}"));
+                self.status_hint = Some(i18n::t2("status.action_failed", &action, &reason));
             }
             ControllerEvent::SessionOpenFailed { session_id, reason } => {
                 // 分页复位按 session 匹配：A→B 快切时 A 的迟到失败不得
                 // 清掉 B 的 timeline_paging（否则 settle barrier 提前放行）。
                 if self.projection.active_session_id.as_deref() == Some(&session_id) {
                     self.timeline_paging = false;
-                    self.status_hint = Some(format!("open session failed: {reason}"));
+                    self.status_hint = Some(i18n::t("status.open_session_failed").replace("{}", &reason));
                 }
             }
             ControllerEvent::DiffFilesLoaded {
@@ -1705,7 +1730,7 @@ impl AppView {
             }
             ControllerEvent::DiffFilesFailed { epoch, reason } => {
                 if self.changes.mark_failed_for_epoch(epoch, &reason) {
-                    self.status_hint = Some(format!("Load changes failed: {reason}"));
+                    self.status_hint = Some(i18n::t("status.load_changes_failed").replace("{}", &reason));
                 }
             }
             ControllerEvent::DiffContentFailed {
@@ -1717,12 +1742,12 @@ impl AppView {
                     .changes
                     .mark_diff_failed_for_epoch(epoch, &path, &reason)
                 {
-                    self.status_hint = Some(format!("Load diff failed: {reason}"));
+                    self.status_hint = Some(i18n::t("status.load_diff_failed").replace("{}", &reason));
                 }
             }
             ControllerEvent::McpServersFailed { epoch, reason } => {
                 if self.resources.mark_failed_for_epoch(epoch, &reason) {
-                    self.status_hint = Some(format!("Load resources failed: {reason}"));
+                    self.status_hint = Some(i18n::t("status.load_resources_failed").replace("{}", &reason));
                 }
             }
         }
@@ -1857,7 +1882,7 @@ impl AppView {
                 self.open_menu = Some(MenuKind::WorkspaceConfirm);
                 self.menu_highlight = None;
                 self.status_hint =
-                    Some("All projects: confirm a workspace before creating a task.".into());
+                    Some(i18n::t("status.confirm_workspace_first").into());
                 cx.notify();
             }
         }
@@ -1865,12 +1890,12 @@ impl AppView {
 
     pub(super) fn on_open_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.can_create_task() {
-            self.status_hint = Some("Opening a project needs a live connection.".into());
+            self.status_hint = Some(i18n::t("status.open_project_needs_connection").into());
             cx.notify();
             return;
         }
         self.close_open_menu(cx);
-        self.status_hint = Some("Choose a project folder…".into());
+        self.status_hint = Some(i18n::t("status.choose_project_folder").into());
         let selection = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
@@ -1881,7 +1906,7 @@ impl AppView {
             Ok(Ok(Some(mut paths))) => {
                 if let Some(path) = paths.pop() {
                     this.update_in(cx, |view, _window, cx| {
-                        view.status_hint = Some("Opening project…".into());
+                        view.status_hint = Some(i18n::t("status.opening_project").into());
                         view.controller.open_workspace(path);
                         cx.notify();
                     })
@@ -1890,21 +1915,21 @@ impl AppView {
             }
             Ok(Ok(None)) => {
                 this.update(cx, |view, cx| {
-                    view.status_hint = Some("Open project cancelled.".into());
+                    view.status_hint = Some(i18n::t("status.open_project_cancelled").into());
                     cx.notify();
                 })
                 .ok();
             }
             Ok(Err(error)) => {
                 this.update(cx, |view, cx| {
-                    view.status_hint = Some(format!("Open project failed: {error}"));
+                    view.status_hint = Some(i18n::t("status.open_project_failed").replace("{}", &error.to_string()));
                     cx.notify();
                 })
                 .ok();
             }
             Err(error) => {
                 this.update(cx, |view, cx| {
-                    view.status_hint = Some(format!("Open project failed: {error}"));
+                    view.status_hint = Some(i18n::t("status.open_project_failed").replace("{}", &error.to_string()));
                     cx.notify();
                 })
                 .ok();
@@ -1926,7 +1951,7 @@ impl AppView {
             return;
         }
         let Some(workspace) = workspace_id else {
-            self.status_hint = Some("Choose a project before creating a task.".into());
+            self.status_hint = Some(i18n::t("status.choose_project_first").into());
             cx.notify();
             return;
         };
@@ -2522,7 +2547,7 @@ impl AppView {
                 self.focus_composer(window, cx);
             }
             None => {
-                self.status_hint = Some("No task needs attention.".into());
+                self.status_hint = Some(i18n::t("status.no_task_attention").into());
                 cx.notify();
             }
         }
@@ -2822,7 +2847,7 @@ impl AppView {
         self.refresh_changes(cx);
         let fetching = matches!(self.changes.fetch, changes::ChangesFetch::Fetching);
         if !was_available && !fetching {
-            self.status_hint = Some("Changes data is not available yet.".into());
+            self.status_hint = Some(i18n::t("status.changes_not_available").into());
         }
         cx.notify();
     }
@@ -2960,7 +2985,28 @@ impl AppView {
     ) {
         self.text_scale = scale;
         window.set_rem_size(px(scale.rem_pixels()));
-        self.status_hint = Some(format!("Text size · {}%", scale.percent()));
+        self.status_hint = Some(i18n::t("status.text_scale").replace("{}", &scale.percent().to_string()));
+        cx.notify();
+    }
+
+    /// 切换界面语言（i18n）：更新全局值与本地镜像，给出状态提示并重渲染。
+    /// 与 set_text_scale 同构：仅本地 presentation，不触碰 Host / 会话状态。
+    fn set_language(
+        &mut self,
+        language: i18n::Language,
+        cx: &mut Context<Self>,
+    ) {
+        if self.language == language {
+            return;
+        }
+        self.language = language;
+        i18n::set_language(language);
+        // terminal_input 的 placeholder 只在构造时设置；切语言时同步刷新
+        // （composer placeholder 每次 render 经状态机重设，无需处理）。
+        self.terminal_input.update(cx, |input, cx| {
+            input.set_placeholder(i18n::t("inspector.terminal_input_placeholder"), cx)
+        });
+        self.status_hint = Some(i18n::t("status.language").replace("{}", language.display_name()));
         cx.notify();
     }
 
@@ -3015,12 +3061,12 @@ impl AppView {
             self.projection.connection,
             ConnectionState::Connected { .. }
         ) {
-            self.status_hint = Some("Terminal needs a live connection; input was kept.".into());
+            self.status_hint = Some(i18n::t("status.terminal_needs_connection").into());
             cx.notify();
             return;
         }
         if self.terminal_pending_write.is_some() {
-            self.status_hint = Some("Waiting for the previous terminal write.".into());
+            self.status_hint = Some(i18n::t("status.terminal_waiting_write").into());
             cx.notify();
             return;
         }
@@ -3028,13 +3074,13 @@ impl AppView {
             && !terminal_can_operate(&self.projection.connection, &self.projection.terminal)
         {
             self.status_hint =
-                Some("Terminal is not ready; input was kept and nothing was written.".into());
+                Some(i18n::t("status.terminal_not_ready").into());
             cx.notify();
             return;
         }
         if self.projection.terminal.session_id.is_none() {
             self.ensure_terminal(cx);
-            self.status_hint = Some("Starting terminal…".into());
+            self.status_hint = Some(i18n::t("status.terminal_starting").into());
             cx.notify();
             return;
         }
@@ -3061,7 +3107,7 @@ impl AppView {
 
     fn send_current_message(&mut self, cx: &mut Context<Self>) {
         let Some(session_id) = self.projection.active_session_id.clone() else {
-            self.status_hint = Some("Open a session first.".into());
+            self.status_hint = Some(i18n::t("status.open_session_first").into());
             cx.notify();
             return;
         };
@@ -3652,10 +3698,15 @@ impl Render for AppView {
                     .flex_1()
                     .min_w_0()
                     .child(main)
-                    .child(
-                        // F-13：信息串居中；Inspector/Activity 触发器已随
-                        // F-12（R6 Wave A）迁至 Workspace Header。
-                        StatusBar::new().centered(Badge::new(run_status)),
+                    // F-13：信息串居中；Inspector/Activity 触发器已随
+                    // F-12（R6 Wave A）迁至 Workspace Header。P2-1：
+                    // StatusBar 只在工作台渲染，Settings 壳不显示
+                    // RunStatusBar（render 与 AX 同源）。
+                    .when(
+                        matches!(self.route, AppRoute::Workspace),
+                        |column| {
+                            column.child(StatusBar::new().centered(Badge::new(run_status)))
+                        },
                     ),
             )
     }
@@ -3788,12 +3839,12 @@ mod tests {
 
     #[test]
     fn workspace_empty_state_has_one_clear_primary_path() {
-        assert_eq!(WORKSPACE_EMPTY_TITLE, "Start a task");
+        assert_eq!(workspace_empty_title(), "Start a task");
         assert_eq!(
-            WORKSPACE_EMPTY_HINT,
+            workspace_empty_hint(),
             "Choose a task from the sidebar or create a new one."
         );
-        assert!(!WORKSPACE_EMPTY_HINT.contains("Cmd+"));
+        assert!(!workspace_empty_hint().contains("Cmd+"));
     }
 
     /// design §3.6：scope → grouping → 全局新建 → 项目头 / 定向新建 → task 行；

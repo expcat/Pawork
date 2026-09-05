@@ -33,7 +33,8 @@ pub use schema::{
     SessionOverrides, TerminalConfig,
 };
 pub use writer::{
-    write_default_model_pair, write_mcp_server_remove, write_proxy_url,
+    write_default_model_pair, write_mcp_server_remove, write_provider_use_proxy,
+    write_proxy_url,
     write_terminal_settings,
 };
 

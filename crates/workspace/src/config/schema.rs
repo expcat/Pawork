@@ -106,6 +106,11 @@ pub struct ProviderConfig {
     /// 是否为默认 provider。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default: Option<bool>,
+    /// 该 provider 是否跟随 Global `proxy_url`（ADR-052 SET-6h）。
+    /// `None`/`Some(true)`：配置了全局代理时经代理出站；
+    /// `Some(false)`：该 provider 出站绕过全局代理。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub use_proxy: Option<bool>,
 }
 
 /// Model 配置。
@@ -311,6 +316,7 @@ mod tests {
             id: "glm-coding".into(),
             base_url: Some("https://example.test/v1".into()),
             default: Some(true),
+            use_proxy: None,
         };
         let toml = toml::to_string(&provider).expect("serialize provider");
         let debug = format!("{provider:?}");

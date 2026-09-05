@@ -48,8 +48,8 @@ pub use pawork_protocol::{
     AuthStartData, ClientAuthentication, CommandSource, DefaultModelPair, EventStream,
     GeneralSettingsData, GlobalSequence, GuiCapability, PermissionsSettingsData,
     ProtocolErrorCode, ProviderAuthState, ProviderAuthStatusData, ProviderAuthStatusEntry,
-    ProviderCatalogState, RunState, Snapshot, TerminalExitReason, TerminalSettingsData,
-    TimelineItem, TimelineItemKind, TimelinePage,
+    ProviderCatalogState, ProviderUseProxyData, RunState, Snapshot, TerminalExitReason,
+    TerminalSettingsData, TimelineItem, TimelineItemKind, TimelinePage,
 };
 pub use pawork_transport::{ConnectOptions, GuiTransportClient, LocalTransport, TransportEndpoint};
 

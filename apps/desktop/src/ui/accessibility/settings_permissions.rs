@@ -4,9 +4,10 @@ use gpui::{App, Window};
 
 use super::{AxAction, AxNode, AxRect, AxRole};
 use crate::projection::ConnectionState;
+use crate::ui::i18n::t;
 use crate::ui::settings::{
     approval_mode_description, approval_mode_label, permissions_status_lines, APPROVAL_MODE_ALL,
-    SETTINGS_PERMISSIONS_EFFECT_NOTE, SETTINGS_TRUST_UNSET,
+    settings_permissions_effect_note, settings_trust_unset,
 };
 use crate::ui::AppView;
 
@@ -35,12 +36,17 @@ impl AppView {
         let refresh_focused =
             self.open_menu.is_none() && self.settings_refresh_focus.is_focused(window);
         let width = super::settings::settings_content_ax_width(frame);
-        let mut page = AxNode::new("settings-page", AxRole::Group, "Approvals", frame)
+        let mut page = AxNode::new(
+            "settings-page",
+            AxRole::Group,
+            t("settings.permissions.title"),
+            frame,
+        )
             .child(
                 AxNode::new(
                     "settings-page-title",
                     AxRole::StaticText,
-                    "Approvals",
+                    t("settings.permissions.title"),
                     AxRect::new(
                         frame.x + 16.0,
                         frame.y + 16.0,
@@ -48,13 +54,13 @@ impl AppView {
                         HEADING_HEIGHT + SUBTITLE_HEIGHT,
                     ),
                 )
-                .value("Approval mode and workspace trust for this session"),
+                .value(t("settings.permissions.subtitle")),
             )
             .child(
                 AxNode::new(
                     "settings-refresh",
                     AxRole::Button,
-                    "Refresh",
+                    t("settings.refresh"),
                     AxRect::new(
                         frame.x + 16.0 + width - 96.0,
                         frame.y + 16.0,
@@ -72,7 +78,7 @@ impl AppView {
                 AxNode::new(
                     format!("settings-status-{kind}"),
                     AxRole::StaticText,
-                    "Permissions status",
+                    t("settings.permissions.ax_status"),
                     AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT),
                 )
                 .value(label),
@@ -85,15 +91,15 @@ impl AppView {
         let current_mode_label = state
             .approval_mode
             .map(approval_mode_label)
-            .unwrap_or("Unknown");
+            .unwrap_or(t("settings.permissions.unknown_mode"));
         page = page.child(
             AxNode::new(
                 "settings-approval-mode-header",
                 AxRole::StaticText,
-                "Approval mode",
+                t("settings.permissions.mode_title"),
                 AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT),
             )
-            .value(format!("Current · {current_mode_label}")),
+            .value(t("settings.current").replace("{}", current_mode_label)),
         );
         y += STATUS_HEIGHT + 8.0;
         for mode in APPROVAL_MODE_ALL {
@@ -104,7 +110,7 @@ impl AppView {
                 approval_mode_description(mode)
             );
             if current {
-                value.push_str(" · Current");
+                value.push_str(&format!(" · {}", t("settings.permissions.state_current")));
             }
             let button_id = format!("settings-approval-mode-{}", mode.as_str());
             let select_enabled = writes && !current;
@@ -123,7 +129,7 @@ impl AppView {
             .enabled(current || select_enabled)
             .focused(select_focused);
             if current {
-                row = row.description("Current approval mode");
+                row = row.description(t("settings.permissions.ax_current_mode_desc"));
             } else if select_enabled {
                 row = row.action(AxAction::Press);
             }
@@ -136,14 +142,14 @@ impl AppView {
         let workspace_attached = state.workspace_id.is_some();
         let trust_enabled = writes && workspace_attached;
         let trust_label = if state.workspace_trusted {
-            "Remove trust"
+            t("settings.permissions.trust_remove")
         } else {
-            "Trust workspace"
+            t("settings.permissions.trust_add")
         };
         let trust_state = if state.workspace_trusted {
-            "Trusted"
+            t("settings.permissions.trust_state_trusted")
         } else {
-            "Not trusted"
+            t("settings.permissions.trust_state_untrusted")
         };
         let trust_focused = self
             .settings_permissions_focus
@@ -154,7 +160,7 @@ impl AppView {
                 AxNode::new(
                     "settings-workspace-trust-status",
                     AxRole::StaticText,
-                    "Session trust",
+                    t("settings.permissions.session_trust_title"),
                     AxRect::new(
                         frame.x + 16.0,
                         y,
@@ -163,7 +169,9 @@ impl AppView {
                     ),
                 )
                 .value(format!(
-                    "Current · {trust_state} · Trust the current workspace for this session only"
+                    "{} · {}",
+                    t("settings.current").replace("{}", trust_state),
+                    t("settings.permissions.session_trust_desc")
                 )),
             )
             .child(
@@ -186,15 +194,15 @@ impl AppView {
 
         // ③ Global 默认只读行。
         let global_text = match state.trust_workspaces_global {
-            None => SETTINGS_TRUST_UNSET,
-            Some(true) => "Set to trust all workspaces",
-            Some(false) => "Set to distrust all workspaces",
+            None => settings_trust_unset(),
+            Some(true) => t("settings.permissions.global_trust_all"),
+            Some(false) => t("settings.permissions.global_distrust_all"),
         };
         page = page.child(
             AxNode::new(
                 "settings-trust-global",
                 AxRole::StaticText,
-                "Global default",
+                t("settings.permissions.ax_global_title"),
                 AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT),
             )
             .value(global_text),
@@ -206,10 +214,10 @@ impl AppView {
             AxNode::new(
                 "settings-permissions-effect",
                 AxRole::StaticText,
-                "Effect",
+                t("settings.permissions.ax_effect"),
                 AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT * 2.0),
             )
-            .value(SETTINGS_PERMISSIONS_EFFECT_NOTE),
+            .value(settings_permissions_effect_note()),
         )
     }
 }

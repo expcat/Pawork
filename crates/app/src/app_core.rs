@@ -934,6 +934,27 @@ impl AppCore {
         self.http = http;
     }
 
+    /// ADR-052 SET-6h：set_provider_use_proxy 写盘成功后同步内存生效配置。
+    /// 命中既有 `[[providers]]` 条目则更新 `use_proxy`；无该条目则追加
+    /// 仅含 `id` + `use_proxy` 的新条目（与 writer 语义一致）。
+    pub(crate) fn set_provider_use_proxy(&mut self, provider_id: &str, use_proxy: bool) {
+        match self
+            .config
+            .providers
+            .iter_mut()
+            .find(|provider| provider.id == provider_id)
+        {
+            Some(provider) => provider.use_proxy = Some(use_proxy),
+            None => self.config.providers.push(
+                pawork_workspace::config::ProviderConfig {
+                    id: provider_id.to_string(),
+                    use_proxy: Some(use_proxy),
+                    ..Default::default()
+                },
+            ),
+        }
+    }
+
     /// SET-6 终端页（ADR-050 D3）：`set_terminal_settings` 写盘成功后
     /// 直接赋值内存 `[terminal]` 段（全态写，禁止 merge_with）。
     pub(crate) fn set_terminal_settings(

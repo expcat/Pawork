@@ -845,6 +845,16 @@ fn command_set_proxy_url<'a>(
     ))
 }
 
+fn command_set_provider_use_proxy<'a>(
+    adapter: &'a GuiHostAdapter,
+    envelope: &'a AppCommandEnvelope,
+    command: &'a AppCommand,
+) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
+    Box::pin(handlers::settings::set_provider_use_proxy(
+        adapter, envelope, command,
+    ))
+}
+
 fn command_set_approval_mode<'a>(
     adapter: &'a GuiHostAdapter,
     envelope: &'a AppCommandEnvelope,
@@ -960,6 +970,7 @@ static COMMAND_HANDLERS: &[(&str, CommandHandler)] = &[
     ("auth_cancel", command_auth_cancel),
     ("set_default_model", command_set_default_model),
     ("set_proxy_url", command_set_proxy_url),
+    ("set_provider_use_proxy", command_set_provider_use_proxy),
     ("set_approval_mode", command_set_approval_mode),
     ("set_terminal_settings", command_set_terminal_settings),
     ("tool_approve", command_tool_approve),

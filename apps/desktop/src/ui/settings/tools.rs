@@ -24,8 +24,8 @@ impl AppView {
             .radius(4.0)
             .bordered()
             .text_size(font::BODY_SM)
-            .label("Refresh")
-            .tooltip("Refresh MCP servers")
+            .label(t("settings.refresh"))
+            .tooltip(t("settings.tools.refresh_tooltip"))
             .disabled(!connected)
             .on_click(cx.listener(|view, event, _window, cx| {
                 if view.consume_button_key_click("settings-refresh", event) {
@@ -58,14 +58,14 @@ impl AppView {
                             .min_w_0()
                             .child(
                                 div().font_weight(FontWeight::MEDIUM).child(
-                                    Label::new("Tools & MCP")
+                                    Label::new(t("settings.tools.title"))
                                         .size(font::TITLE)
                                         .color(dark().text.primary),
                                 ),
                             )
                             .child(
                                 Label::new(
-                                    "MCP servers, status, and configuration reported by the Host",
+                                    t("settings.tools.subtitle"),
                                 )
                                 .size(font::BODY_SM)
                                 .color(dark().text.secondary),
@@ -92,7 +92,7 @@ impl AppView {
             ));
         }
         // 生效边界诚实文案（ADR-049 D2 快照语义）。
-        content = content.child(status_line(SETTINGS_MCP_EFFECT_NOTE, dark().text.secondary));
+        content = content.child(status_line(settings_mcp_effect_note(), dark().text.secondary));
 
         div()
             .id("settings-page")
@@ -148,7 +148,7 @@ impl AppView {
             );
         if confirming {
             card = card.child(status_line(
-                SETTINGS_MCP_REMOVE_CONFIRM_NOTE,
+                settings_mcp_remove_confirm_note(),
                 dark().semantic.warning_text,
             ));
         }
@@ -162,9 +162,9 @@ impl AppView {
         let mut row = div().flex().flex_row().gap_1().flex_wrap();
         for action in actions {
             let tooltip = match action {
-                SettingsMcpAction::Test => "Ping this server and refresh its state.",
+                SettingsMcpAction::Test => t("settings.tools.tooltip_test"),
                 SettingsMcpAction::Remove | SettingsMcpAction::ConfirmRemove => {
-                    "Remove this server from the Global config and clear its credentials."
+                    t("settings.tools.tooltip_remove")
                 }
                 SettingsMcpAction::KeepRemove => "",
             };

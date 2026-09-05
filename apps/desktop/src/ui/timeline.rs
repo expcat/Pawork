@@ -32,13 +32,14 @@ use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
 use crate::ui::components::dropdown::{Dropdown, MenuPanel, MenuRow};
 use crate::ui::components::follow_scroll::BackToBottom;
 use crate::ui::components::label::Label;
+use crate::ui::i18n::t;
 use crate::ui::theme::{dark, font, metrics};
 
 use super::timeline_entry::{
     default_text_line_height, display_time, estimated_wrapped_lines, message_block_line_counts,
     RunSummaryTerminal, RunSummaryView, ToolRowView,
 };
-use super::{now_unix_ms, AppView, MenuKind, WORKSPACE_EMPTY_HINT, WORKSPACE_EMPTY_TITLE};
+use super::{now_unix_ms, workspace_empty_hint, workspace_empty_title, AppView, MenuKind};
 
 /// list() 视口外上下方向的预渲染量（px，非视觉尺寸；仅影响滚动顺滑度）。
 pub(super) const TIMELINE_OVERDRAW: f32 = 200.0;
@@ -98,7 +99,7 @@ fn sync_list(view: &mut AppView, row_count: usize) {
 /// 原文；未知状态原样显示不伪造。render 与 AX 共用。
 pub(super) fn tool_status_label(status: &str) -> String {
     if status == "succeeded" {
-        "Completed".into()
+        t("tool.status_completed").into()
     } else {
         status.to_string()
     }
@@ -382,7 +383,7 @@ impl AppView {
         let content = if empty_hint_visible {
             let can_create = self.can_create_task();
             let tooltip = SharedString::from(if can_create {
-                "New task (Cmd+N)".to_string()
+                t("timeline.new_task_tooltip").to_string()
             } else {
                 self.add_task_disabled_reason()
             });
@@ -392,7 +393,7 @@ impl AppView {
                 .height(px(36.0))
                 .padding(ButtonPadding::Horizontal(metrics::SPACE_4))
                 .center()
-                .label("New task")
+                .label(t("timeline.new_task"))
                 .tooltip(tooltip)
                 .disabled(!can_create)
                 .on_click(cx.listener(|view, event, window, cx| {
@@ -417,9 +418,9 @@ impl AppView {
                 .items_center()
                 .justify_center()
                 .gap(px(metrics::SPACE_2))
-                .child(Label::new(WORKSPACE_EMPTY_TITLE).size(font::TITLE))
+                .child(Label::new(workspace_empty_title()).size(font::TITLE))
                 .child(
-                    Label::new(WORKSPACE_EMPTY_HINT)
+                    Label::new(workspace_empty_hint())
                         .size(font::BODY)
                         .color(dark().text.secondary),
                 )
@@ -441,7 +442,7 @@ impl AppView {
                 area.child(BackToBottom::new(
                     Button::new("timeline-back-to-bottom")
                         .variant(ButtonVariant::Raised)
-                        .label("↓ Back to bottom")
+                        .label(t("timeline.back_to_bottom"))
                         .track_focus(&back_to_bottom_focus)
                         .on_click(cx.listener(|view, event, _window, cx| {
                             if view.consume_button_key_click("timeline-back-to-bottom", event) {
@@ -655,7 +656,7 @@ impl AppView {
                     }))
                     .child(
                         MenuRow::new(SharedString::from(format!("fork-{}", entry.event_id)))
-                            .label("Fork")
+                            .label(t("timeline.fork"))
                             .disabled(!can_fork)
                             .when(can_fork, |row| {
                                 row.on_click(cx.listener(move |view, _event, window, cx| {

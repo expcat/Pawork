@@ -17,13 +17,13 @@ impl AppView {
             .gap_2()
             .child(
                 div().font_weight(FontWeight::MEDIUM).child(
-                    Label::new("Advanced")
+                    Label::new(t("settings.advanced.title"))
                         .size(font::TITLE)
                         .color(dark().text.primary),
                 ),
             )
             .child(
-                Label::new("Connection diagnostics and startup target")
+                Label::new(t("settings.advanced.subtitle"))
                     .size(font::BODY_SM)
                     .color(dark().text.secondary),
             );
@@ -72,7 +72,7 @@ impl AppView {
                         .center()
                         .radius(4.0)
                         .text_size(font::BODY_SM)
-                        .label("Reconnect")
+                        .label(t("settings.advanced.reconnect"))
                         .on_click(cx.listener(|view, event, window, cx| {
                             if view.consume_button_key_click("reconnect", event) {
                                 return;
@@ -96,7 +96,7 @@ impl AppView {
                     .whitespace_normal()
                     .text_size(font::BODY_SM)
                     .text_color(dark().text.secondary)
-                    .child(SETTINGS_ADVANCED_TARGET_NOTE),
+                    .child(settings_advanced_target_note()),
             )
             .child(
                 div()
@@ -105,7 +105,7 @@ impl AppView {
                     .whitespace_normal()
                     .text_size(font::BODY_SM)
                     .text_color(dark().text.secondary)
-                    .child(SETTINGS_ADVANCED_DOCTOR_NOTE),
+                    .child(settings_advanced_doctor_note()),
             );
 
         div()
@@ -134,23 +134,23 @@ impl AppView {
         // Connection 只报告相位，不复用 TaskRail「Local · Connected · resume」
         // 合成文案，避免把 resume / runtime id 混进这一行。
         let connection = match &self.projection.connection {
-            ConnectionState::Connected { .. } => "Connected".into(),
+            ConnectionState::Connected { .. } => t("settings.advanced.connected").into(),
             other => other.label(),
         };
-        let unavailable = "Unavailable · connect to the Host";
+        let unavailable = t("settings.advanced.unavailable_connect");
         let (runtime_id, api_version, capabilities, resume) = match &self.handshake_info {
             Some(handshake) => (
                 handshake.runtime_id.clone(),
                 handshake.api_version.clone(),
                 if handshake.capabilities.is_empty() {
-                    "None granted".to_string()
+                    t("settings.advanced.none_granted").to_string()
                 } else {
                     handshake.capabilities.join(", ")
                 },
                 self.projection
                     .resume
                     .label()
-                    .unwrap_or_else(|| "Fresh snapshot".into()),
+                    .unwrap_or_else(|| t("settings.advanced.fresh_snapshot").into()),
             ),
             None => (
                 unavailable.into(),
@@ -162,25 +162,25 @@ impl AppView {
         let last_ack = self
             .controller
             .last_acked_sequence()
-            .map_or_else(|| "Unavailable".into(), |sequence| sequence.to_string());
+            .map_or_else(|| t("settings.advanced.unavailable").into(), |sequence| sequence.to_string());
         vec![
-            ("settings-advanced-connection", "Connection", connection),
-            ("settings-advanced-runtime", "Host runtime ID", runtime_id),
-            ("settings-advanced-api", "GUI API", api_version),
+            ("settings-advanced-connection", t("settings.advanced.row_connection"), connection),
+            ("settings-advanced-runtime", t("settings.advanced.row_runtime"), runtime_id),
+            ("settings-advanced-api", t("settings.advanced.row_api"), api_version),
             (
                 "settings-advanced-capabilities",
-                "Granted capabilities",
+                t("settings.advanced.row_capabilities"),
                 capabilities,
             ),
             (
                 "settings-advanced-endpoint",
-                "Endpoint",
+                t("settings.advanced.row_endpoint"),
                 self.socket.display().to_string(),
             ),
-            ("settings-advanced-resume", "Resume", resume),
+            ("settings-advanced-resume", t("settings.advanced.row_resume"), resume),
             (
                 "settings-advanced-last-ack",
-                "Last acknowledged sequence",
+                t("settings.advanced.row_last_ack"),
                 last_ack,
             ),
         ]

@@ -4,14 +4,12 @@
       "major": 1,
       "minor": 10
     },
-    "request_id": "query-auth-status",
+    "request_id": "query-set-provider-use-proxy",
     "responded_at": 3,
     "response": {
       "data": {
-        "masked_credential": "sk-****abcd",
-        "method": "api_key",
         "provider_id": "glm-coding",
-        "verified_at": "2026-01-01T00:00:00Z"
+        "use_proxy": false
       },
       "type": "data"
     }

@@ -5,10 +5,10 @@
 | 字段 | 值 |
 | --- | --- |
 | Feature ID / 名称 | `SETTINGS-01` / Settings 与模型供应商管理 |
-| 状态 | **Accepted（SET-1～SET-6g 已实现并通过各自定向门禁；SET-012 Network 本机代理闭环已获 E1～E3；真实账号矩阵的完整人工验收仍 pending）** |
+| 状态 | **Accepted（SET-1～SET-6g 已实现并通过各自定向门禁；SET-012 Network 本机代理闭环已获 E1～E3；SET-6h 供应商级代理开关（ADR-052）已实现并通过 protocol/workspace/app 定向门禁，真窗口验收通过（2026-09-05）；真实账号矩阵的完整人工验收仍 pending）** |
 | Owner | Pawork maintainers |
 | 目标阶段 | Settings 活动线；不绑定发布版本 |
-| 最近更新 | 2026-09-05（Network 菜单与本机代理配置边界收口） |
+| 最近更新 | 2026-09-05（SET-6h 供应商级代理开关与 Network 本机代理配置边界） |
 | 关联 | [GUI 设计](../gui-design.md) · [AGENTS.md](../../AGENTS.md) |
 
 ## 1. 问题、用户与目标
@@ -51,7 +51,7 @@ flowchart LR
 ~~~
 
 1. 用户从 TaskRail 底部 `Local` 行的 gear 进入 Settings。
-2. 左栏整体替换为 English Settings Rail，首项为 `← Back to workspace`；右侧不显示 Timeline、Composer、Inspector 或 RunStatusBar，完整空间交给当前设置页。
+2. 左栏整体替换为 Settings Rail（默认 English，可在 Appearance 页切换为简体中文），首项为 `← Back to workspace`；右侧不显示 Timeline、Composer、Inspector 或 RunStatusBar，完整空间交给当前设置页。
 3. 返回后恢复原 active session、Timeline 位置、Composer 草稿、Inspector 状态和进行中的 Run；Settings 本身不取消 Run。
 4. 断线时保留 Host-backed 页最后一次只读结果并标记 stale；禁用所有写入/验证/刷新动作。高级页仍可查看连接失败原因与 endpoint，并提供同源 Reconnect/返回；旧握手摘要不得冒充当前连接。
 
@@ -100,6 +100,7 @@ flowchart LR
 | SET-010 | 可见、键盘和 AX 动作共用业务 gate；secure input 不在 AX value 中泄漏。 | Must | Desktop/AX 定向测试 + 键盘人工走查 |
 | SET-011 | 尚无真实 Host 能力的其它 Settings 页面不显示或明确 unavailable，不出现可点击假实现。 | Must | capability honesty 测试 + 人工走查 |
 | SET-012 | Network 页读写用户 Global `proxy_url`；配置文件位于 workspace 外，workspace `.pawork/config.toml` 不得覆盖代理。 | Must | workspace/app 定向测试 + Host 重启真窗口 |
+| SET-013 | 供应商级代理开关：配置了 Global `proxy_url` 后，provider 概览行可切换走代理 / 直连；写只落 Global 层 `config.toml`，回执即写后状态，非 Global 层 `use_proxy` 一律剥离。 | Must | protocol/workspace/app 定向测试 + 真窗口 |
 
 并发口径：同一 provider 同时只允许一个认证/刷新操作；重复提交显式返回 busy 或复用同一进度，不并发覆盖凭证。命令幂等不得通过持久化 Secret payload 实现。
 
@@ -117,9 +118,9 @@ GPUI Settings
 - **依赖红线**：Desktop 的业务依赖仍只能是 `pawork-client`；不得直接依赖 protocol/app/providers/auth/workspace。
 - **现有可复用面**：GUI `ModelList` query、`AuthStart` / `AuthRemove` 类型、AppCore auth API、通用 API-key `/models`、静态+运行期 catalog merge。
 - **需要补的最小能力**：provider/auth descriptor 与状态查询；GUI 可用的 OAuth 生命周期；非重放 API-key 写入；连接移除/替换；默认 provider/model 变更与确认。
-- **冻结契约**：新增/改变 GUI command/query/response/capability 必须先起草对应 ADR、bump 兼容 minor，并以 golden/typegen 先行；SET-1 由 ADR-046 承载，SET-6g 的可选 Accepted 握手字段由 ADR-051 Accepted 承载并随 API 1.9 落地。旧 Host/Client 无能力时隐藏对应 Settings 入口，不能降级为 Desktop 直写文件或本地推断。
+- **冻结契约**：新增/改变 GUI command/query/response/capability 必须先起草对应 ADR、bump 兼容 minor，并以 golden/typegen 先行；SET-1 由 ADR-046 承载，SET-6g 的可选 Accepted 握手字段由 ADR-051 Accepted 承载并随 API 1.9 落地。SET-6h 供应商级代理开关由 ADR-052 承载并随 API 1.10 落地。旧 Host/Client 无能力时隐藏对应 Settings 入口，不能降级为 Desktop 直写文件或本地推断。
 - **Secret 命令**：不得进入持久 command ledger payload、response replay、事件或诊断。具体瞬时传递与失败恢复由 ADR 决定；这是实现硬前置，不以普通 `AppCommand` 直接落地绕过。
-- **配置**：凭证仍不进入 `PaworkConfig`。Network 沿用既有 Global `proxy_url`、`general_settings` / `set_proxy_url` wire 与原子 writer，不改变 schema 或优先级；文件由 `config_dir_for_app` 定位在 workspace 外。workspace 层代理继续剥离。默认 provider/model 仍复用现有字段和层级。
+- **配置**：凭证仍不进入 `PaworkConfig`。Network 沿用既有 Global `proxy_url`、`general_settings` / `set_proxy_url` wire 与原子 writer，不改变 schema 或优先级；文件由 `config_dir_for_app` 定位在 workspace 外。workspace 层代理继续剥离。供应商级 `use_proxy` 经原子 writer `write_provider_use_proxy` 只写 Global 层 `[[providers]]` 条目（缺条目时新增最小条目），非 Global 层 `use_proxy` 与 `base_url` 同红线剥离。默认 provider/model 仍复用现有字段和层级。
 - **迁移**：首期不创建账户表或模型缓存表，预期无 SQLite migration。既有 CLI 凭证必须在 Settings 中以脱敏状态可见。
 
 精确演进规则见 [contracts.md](contracts.md) 和 [architecture.md](../architecture.md) §3.2。
@@ -145,13 +146,13 @@ GPUI Settings
 Settings 沿用参考设计的 1440×1024 深色语言和 8px 节奏，不另起 Dashboard 卡片墙：
 
 - TaskRail 底部 `Local` 行右侧新增 Settings gear。
-- Settings Rail 首项固定为 `← Back to workspace`；八页导航统一 English，首个可用页为 `Models & providers`，内容最大宽 820px。
+- Settings Rail 首项固定为 `← Back to workspace`；八页导航默认 English（Appearance 页可切换简体中文，当次会话生效、不持久化），首个可用页为 `Models & providers`，内容最大宽 820px。
 - 内容区使用稳定的 page header / section / field / feedback 层级；不显示工作台 RunStatusBar。
 - provider 默认层为 64px 概览行，只显示名称、认证方法、连接状态、目录 availability / 模型数和可用动作；普通 render 与 AX summary 不发布 masked credential、endpoint、catalog error、raw model id 或无权威来源余额。endpoint / 错误仅在连接、等待或删除确认详情显示；API key editor 仅在 Connect / Replace 后展开。
 - 默认模型使用独立 section；认证成功与目录成功继续分开表达，Remove 仍需二次确认。
 - 添加流程用同一内容区内的 stepper/panel，不弹出第二窗口。
 
-导航顺序：Models & providers → Network（SET-6a）→ Approvals（SET-6b）→ Tools & MCP（SET-6c）→ Terminal（SET-6d）→ Appearance（SET-6e）→ Advanced（SET-6f）→ About（SET-6g）。Network / Terminal 使用 label-help-feedback；Approvals 的五档 mode 为整行 radio，mouse / Enter / Space / AX Press 同源；Appearance 有随 `TextScale` 即时变化的正文 / control 样例；Advanced / About 使用固定 label 列的 definition list。Host capability 与既有读写 / stale 边界不变；Appearance / Advanced 离线仍可进入。
+导航顺序：Models & providers → Network（SET-6a）→ Approvals（SET-6b）→ Tools & MCP（SET-6c）→ Terminal（SET-6d）→ Appearance（SET-6e）→ Advanced（SET-6f）→ About（SET-6g）。Network / Terminal 使用 label-help-feedback；Approvals 的五档 mode 为整行 radio，mouse / Enter / Space / AX Press 同源；Appearance 有随 `TextScale` 即时变化的正文 / control 样例，并提供 English / 中文 语言切换（同源按钮，即时重渲染）；Advanced / About 使用固定 label 列的 definition list。Host capability 与既有读写 / stale 边界不变；Appearance / Advanced 离线仍可进入。
 
 ### 6.2 状态、键盘与可访问性
 
@@ -182,6 +183,7 @@ P2 视觉方向见 [desktop-ui-p2-settings-v4.png](../../design/desktop-ui-p2-se
 | SET-5 Catalog/default | providers、app、protocol/client、desktop、workspace | SET-2～4 | 远端/固定目录、刷新、过滤、默认项与 Composer 同步 | 串行 |
 | SET-6a～6f 其它页 | 按页最小写入集；SET-6e/6f 仅 desktop + 文档 | SET-5 | Network、权限、MCP、终端、外观与高级均以真实能力启用；本地页不造持久化/配置能力 | 串行 |
 | SET-6g 关于 | protocol/schemas、client、cli、desktop 与对应 Spec；不改 App query/config/schema | SET-6f + ADR-051 Accepted | Desktop build、协商 API、Host data directory 均有权威来源；缺字段 fail-closed；不宣称 updater/release | 串行 |
+| SET-6h 供应商代理开关 | protocol/schemas、workspace writer、app handler、client、desktop 与对应 Spec | SET-012 Network + ADR-052 | Global 代理已配置时 provider 行显示开关；`use_proxy = false` 出站绕过全局代理；回执即写后状态 | 串行 |
 | SET-7 验收 | 测试/文档；仅修真实缺陷 | SET-3～6g | 定向门禁、四家真实账号、断线/重启、AX/窄窗证据 | 串行 |
 
 其余 Settings 页不塞入 SET-1～5。模型与供应商收口后，每页按真实能力分别建小切片；不得以“完整设置中心”为由同时修改无关包。
@@ -197,6 +199,7 @@ P2 视觉方向见 [desktop-ui-p2-settings-v4.png](../../design/desktop-ui-p2-se
 | SET-006/007 | provider list_models/catalog merge | provider contract + fallback/filter tests | 四家远端目录或明确固定回退 | 来源/降级文案 |
 | SET-008 | workspace/app config writer | 配置层级与重启测试 | Host/Desktop 重启 | 默认项失效走查 |
 | SET-012 | workspace Global `config.toml` + Desktop Network | workspace/app 既有 proxy 持久化与安全剥离测试 | GUI 保存后重启 Host，真实 Provider 直连当前代理 | Network 文案、键盘与 AX 一致 |
+| SET-6h | provider 行开关 + `set_provider_use_proxy` 闭环 | protocol 1.10 golden + workspace writer / 非 Global 剥离 + app handler 定向测试 | 配置全局代理后真窗口切换开关并持久化到 Global `config.toml` | 开关文案、键盘与 AX 一致 |
 | SET-6e 外观 | desktop render + `TextScale` + AX tree | 离线导航/AX Press/根字号/selected 定向回归 | 正式窗口 100/125/150% 与重启 | 视觉、Tab/Enter 签字 |
 | SET-6f 高级 | desktop handshake 摘要 + render/AX 同源行 | 离线/连接两态、Reconnect gate、旧握手清空 | 正式 Host 对照 API/capabilities/endpoint/resume/ack | 视觉、Tab/Enter 签字 |
 | SET-6g 关于 | Accepted 握手可选 `host_data_dir` + desktop render/AX 同源行 | 握手 present/absent + About 启用/清空隐藏 | 正式 Host 对照 build、协商 API 与 `doctor --json` data directory | 视觉、Tab/Enter 签字 |
@@ -204,6 +207,8 @@ P2 视觉方向见 [desktop-ui-p2-settings-v4.png](../../design/desktop-ui-p2-se
 受影响关键回归：协议/golden、Secret/脱敏、配置持久化。测试使用假 key/token 形态；真实凭证只在隔离实例中读取，输出前脱敏。任何 401/429/超时先记录真实类别，不用 mock 冒充 E3。
 
 SET-012 本机证据（2026-09-05，macOS）：GUI `Settings → Network` 将代理保存为 `http://127.0.0.1:38081`，落盘到 workspace 外的用户 Global `config.toml`；旧临时转发端口 `7890` 保持关闭。Host 重启后页面恢复同一值，远端 OpenCode Go 目录从静态回退恢复为 29 项，`opencode-go / glm-5.3-flash` 真窗口请求返回精确 `proxy-ok` 并进入 `Run completed`。E2 同批通过 `pawork-workspace` 150 个测试、app 3 个 proxy handler 测试及 Desktop 186 个 bin 测试；E4 用户签字未由此自动推定。
+
+SET-6h 本机证据（2026-09-05，macOS）：Global `config.toml` 配置 `proxy_url` 后，真窗口各 provider 行显示 `走代理` 开关；中文模式点击 xAI 开关 `走代理`→`直连`，文件即时写入 `[[providers]] id="xai" use_proxy=false`，再点恢复 `use_proxy=true`。重启 Host 并移除 `proxy_url`（Host 启动缓存配置）后开关不再渲染（AX 树 + 截图），行内其它按钮不变；恢复代理配置并重启 Host 后开关重新显示。E2 同批通过 protocol 144、workspace/app 定向门禁与 Desktop 188/188；E4 用户签字未由此自动推定。
 
 ## 9. 运行、迁移与回滚
 

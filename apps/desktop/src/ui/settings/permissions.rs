@@ -28,8 +28,8 @@ impl AppView {
             .radius(4.0)
             .bordered()
             .text_size(font::BODY_SM)
-            .label("Refresh")
-            .tooltip("Refresh permissions settings")
+            .label(t("settings.refresh"))
+            .tooltip(t("settings.permissions.refresh_tooltip"))
             .disabled(!connected)
             .on_click(cx.listener(|view, event, _window, cx| {
                 if view.consume_button_key_click("settings-refresh", event) {
@@ -62,13 +62,13 @@ impl AppView {
                             .min_w_0()
                             .child(
                                 div().font_weight(FontWeight::MEDIUM).child(
-                                    Label::new("Approvals")
+                                    Label::new(t("settings.permissions.title"))
                                         .size(font::TITLE)
                                         .color(dark().text.primary),
                                 ),
                             )
                             .child(
-                                Label::new("Approval mode and workspace trust for this session")
+                                Label::new(t("settings.permissions.subtitle"))
                                     .size(font::BODY_SM)
                                     .color(dark().text.secondary),
                             ),
@@ -89,17 +89,17 @@ impl AppView {
         let current_mode_label = state
             .approval_mode
             .map(approval_mode_label)
-            .unwrap_or("Unknown");
+            .unwrap_or(t("settings.permissions.unknown_mode"));
         content = content
             .child(
                 div().font_weight(FontWeight::MEDIUM).child(
-                    Label::new("Approval mode")
+                    Label::new(t("settings.permissions.mode_title"))
                         .size(font::BODY)
                         .color(dark().text.primary),
                 ),
             )
             .child(
-                Label::new(format!("Current · {current_mode_label}"))
+                Label::new(t("settings.current").replace("{}", current_mode_label))
                     .size(font::BODY_SM)
                     .color(dark().text.secondary),
             );
@@ -113,9 +113,9 @@ impl AppView {
         // attached id；缺 id 禁用（fail-closed，不猜注册表首项）。
         let trust_enabled = writes && state.workspace_id.is_some();
         let trust_label = if state.workspace_trusted {
-            "Remove trust"
+            t("settings.permissions.trust_remove")
         } else {
-            "Trust workspace"
+            t("settings.permissions.trust_add")
         };
         let trust_focus = self
             .settings_permissions_focus
@@ -131,7 +131,7 @@ impl AppView {
             .bordered()
             .text_size(font::BODY_SM)
             .label(trust_label)
-            .tooltip("Toggle session workspace trust")
+            .tooltip(t("settings.permissions.trust_toggle_tooltip"))
             .disabled(!trust_enabled)
             .on_click(cx.listener(|view, event, _window, cx| {
                 if view.consume_button_key_click("settings-workspace-trust", event) {
@@ -147,9 +147,9 @@ impl AppView {
                 cx.stop_propagation();
             }));
         let trust_state_label = if state.workspace_trusted {
-            "Trusted"
+            t("settings.permissions.trust_state_trusted")
         } else {
-            "Not trusted"
+            t("settings.permissions.trust_state_untrusted")
         };
         content = content.child(
             div()
@@ -169,19 +169,19 @@ impl AppView {
                         .flex()
                         .flex_col()
                         .child(
-                            Label::new("Session trust")
+                            Label::new(t("settings.permissions.session_trust_title"))
                                 .size(font::BODY)
                                 .color(dark().text.primary),
                         )
                         .child(
-                            Label::new("Trust the current workspace for this session only")
+                            Label::new(t("settings.permissions.session_trust_desc"))
                                 .size(font::BODY_SM)
                                 .color(dark().text.secondary),
                         ),
                 )
                 .child(
                     div().flex_none().child(
-                        Label::new(format!("Current · {trust_state_label}"))
+                        Label::new(t("settings.current").replace("{}", trust_state_label))
                             .size(font::BODY_SM)
                             .color(dark().text.secondary),
                     ),
@@ -191,19 +191,19 @@ impl AppView {
 
         // ③ Global 默认只读行（本片不写 Global trust）。
         let global_text = match state.trust_workspaces_global {
-            None => SETTINGS_TRUST_UNSET,
-            Some(true) => "Set to trust all workspaces",
-            Some(false) => "Set to distrust all workspaces",
+            None => settings_trust_unset(),
+            Some(true) => t("settings.permissions.global_trust_all"),
+            Some(false) => t("settings.permissions.global_distrust_all"),
         };
         content = content.child(
-            Label::new(format!("Global default (read only) · {global_text}"))
+            Label::new(t("settings.permissions.global_readonly").replace("{}", global_text))
                 .size(font::BODY_SM)
                 .color(dark().text.secondary),
         );
 
         // ④ 生效边界诚实文案。
         content = content.child(
-            Label::new(SETTINGS_PERMISSIONS_EFFECT_NOTE)
+            Label::new(settings_permissions_effect_note())
                 .size(font::BODY_SM)
                 .color(dark().text.secondary),
         );
@@ -282,7 +282,7 @@ impl AppView {
         if current {
             row = row.child(
                 div().flex_none().child(
-                    Label::new("Current")
+                    Label::new(t("settings.permissions.state_current"))
                         .size(font::XS)
                         .color(dark().accent.primary),
                 ),

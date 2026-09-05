@@ -4,9 +4,10 @@ use gpui::{App, Focusable, Window};
 
 use super::{dynamic_identifier, AxAction, AxNode, AxRect, AxRole};
 use crate::projection::{ConnectionState, ProviderStatusLabels};
+use crate::ui::i18n::t;
 use crate::ui::settings::{
     provider_catalog_overview_label, provider_status_lines, settings_api_key_input_identifier,
-    PROVIDER_OVERVIEW_HEIGHT, SETTINGS_DEFAULT_UNAVAILABLE_NOTE,
+    settings_default_unavailable_note, settings_use_proxy_identifier, PROVIDER_OVERVIEW_HEIGHT,
 };
 use crate::ui::AppView;
 
@@ -36,12 +37,17 @@ impl AppView {
         );
         let refresh_focused =
             self.open_menu.is_none() && self.settings_refresh_focus.is_focused(window);
-        let mut page = AxNode::new("settings-page", AxRole::Group, "Models & providers", frame)
+        let mut page = AxNode::new(
+            "settings-page",
+            AxRole::Group,
+            t("settings.providers.title"),
+            frame,
+        )
             .child(
                 AxNode::new(
                     "settings-page-title",
                     AxRole::StaticText,
-                    "Models & providers",
+                    t("settings.providers.title"),
                     AxRect::new(
                         frame.x + 16.0,
                         frame.y + 16.0,
@@ -49,13 +55,13 @@ impl AppView {
                         HEADING_HEIGHT + SUBTITLE_HEIGHT,
                     ),
                 )
-                .value("Connection status and catalog source for each provider"),
+                .value(t("settings.providers.subtitle")),
             )
             .child(
                 AxNode::new(
                     "settings-refresh",
                     AxRole::Button,
-                    "Refresh",
+                    t("settings.refresh"),
                     AxRect::new(
                         frame.x + 16.0 + width - 96.0,
                         frame.y + 16.0,
@@ -75,7 +81,7 @@ impl AppView {
                 AxNode::new(
                     format!("settings-status-{kind}"),
                     AxRole::StaticText,
-                    "Provider status",
+                    t("settings.providers.ax_status"),
                     AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT),
                 )
                 .value(label),
@@ -85,7 +91,7 @@ impl AppView {
         page = page.child(AxNode::new(
             "settings-providers-heading",
             AxRole::StaticText,
-            "Providers",
+            t("settings.providers.section_providers"),
             AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT),
         ));
         y += STATUS_HEIGHT + 8.0;
@@ -132,25 +138,33 @@ impl AppView {
             if let (crate::projection::ProviderAuthState::Connecting, Some(wait)) =
                 (&provider.auth, wait)
             {
-                detail_values.push(format!("Authorize at {}", wait.verification_url));
+                detail_values.push(
+                    t("settings.providers.authorize_at").replace("{}", &wait.verification_url),
+                );
                 if let Some(code) = &wait.user_code {
-                    detail_values.push(format!("Code {code}"));
+                    detail_values.push(t("settings.providers.oauth_code").replace("{}", code));
                 }
                 if let Some(expires) = &wait.expires_at {
-                    detail_values.push(format!("Expires {expires}"));
+                    detail_values.push(
+                        t("settings.providers.oauth_expires").replace("{}", expires),
+                    );
                 }
             }
             if let Some(note) = state.auth_notes.get(&provider.provider_id) {
                 detail_values.push(note.clone());
             }
             if let Some(message) = auth_error {
-                detail_values.push(format!("Connection error · {message}"));
+                detail_values.push(
+                    t("settings.providers.connection_error").replace("{}", message),
+                );
             }
             if catalog_error {
                 detail_values.push(provider.catalog_label());
             }
             if endpoint_visible {
-                detail_values.push(format!("Endpoint · {}", provider.endpoint_label));
+                detail_values.push(
+                    t("settings.providers.endpoint_row").replace("{}", &provider.endpoint_label),
+                );
             }
             let detail_actions = actions_in_details.then_some(row_actions.len()).unwrap_or(0);
             let detail_visible = !detail_values.is_empty() || editor_row || detail_actions > 0;
@@ -176,7 +190,7 @@ impl AppView {
             let catalog_summary = provider_catalog_overview_label(provider, model_count);
             let auth_methods = provider.auth_methods_label();
             let auth_methods = if auth_methods.is_empty() {
-                "No auth method".to_string()
+                t("settings.providers.no_auth_method").to_string()
             } else {
                 auth_methods
             };
@@ -205,7 +219,7 @@ impl AppView {
                 AxNode::new(
                     dynamic_identifier("settings-provider-connection", &provider.provider_id),
                     AxRole::StaticText,
-                    "Connection",
+                    t("settings.providers.ax_connection"),
                     // render 列：name 172 + gap 8 + auth-methods 104 + gap 8；
                     // auth-methods 已并入 name 节点 value，后续列必须平移。
                     AxRect::new(card_x + 300.0, y, 132.0, PROVIDER_OVERVIEW_HEIGHT),
@@ -216,7 +230,7 @@ impl AppView {
                 AxNode::new(
                     dynamic_identifier("settings-provider-catalog", &provider.provider_id),
                     AxRole::StaticText,
-                    "Catalog",
+                    t("settings.providers.ax_catalog"),
                     AxRect::new(card_x + 440.0, y, 132.0, PROVIDER_OVERVIEW_HEIGHT),
                 )
                 .value(catalog_summary),
@@ -227,7 +241,44 @@ impl AppView {
             } else {
                 row_actions.clone()
             };
-            let mut button_x = card_x + width - 8.0 - header_actions.len() as f32 * 114.0;
+            // 供应商级代理开关（ADR-052 SET-6h）：与 render 同源可见条件
+            //（配置了全局代理才出现）与 gate（writes 总闸）；位于动作按钮
+            // 左侧，占一个 114px 位。
+            let proxy_visible = self.projection.settings_general.proxy_url.is_some();
+            let header_button_count = header_actions.len() + usize::from(proxy_visible);
+            let mut button_x = card_x + width - 8.0 - header_button_count as f32 * 114.0;
+            if proxy_visible {
+                let identifier = settings_use_proxy_identifier(&provider.provider_id);
+                let enabled = writes;
+                let focused = self
+                    .settings_action_focus
+                    .get(&identifier)
+                    .is_some_and(|focus| self.open_menu.is_none() && focus.is_focused(window));
+                let label = if provider.use_proxy {
+                    t("settings.providers.proxy_on")
+                } else {
+                    t("settings.providers.proxy_off")
+                };
+                let mut toggle = AxNode::new(
+                    identifier,
+                    AxRole::Button,
+                    t("settings.providers.ax_use_proxy"),
+                    AxRect::new(
+                        button_x,
+                        y + (PROVIDER_OVERVIEW_HEIGHT - CONTROL_ROW) / 2.0,
+                        110.0,
+                        CONTROL_ROW,
+                    ),
+                )
+                .value(label)
+                .enabled(enabled)
+                .focused(focused);
+                if enabled {
+                    toggle = toggle.action(AxAction::Press);
+                }
+                card = card.child(toggle);
+                button_x += 114.0;
+            }
             for action in header_actions {
                 let identifier = action.identifier(&provider.provider_id);
                 let enabled =
@@ -262,7 +313,7 @@ impl AppView {
                     AxNode::new(
                         dynamic_identifier("settings-provider-details", &provider.provider_id),
                         AxRole::StaticText,
-                        "Provider details",
+                        t("settings.providers.ax_details"),
                         AxRect::new(card_x + 8.0, detail_y, width - 16.0, text_height),
                     )
                     .value(detail_values.join(" · ")),
@@ -275,7 +326,7 @@ impl AppView {
                     let mut input_node = AxNode::new(
                         settings_api_key_input_identifier(&provider.provider_id),
                         AxRole::TextArea,
-                        "API key",
+                        t("settings.providers.ax_api_key"),
                         AxRect::new(
                             card_x + 8.0,
                             detail_y,
@@ -387,26 +438,26 @@ impl AppView {
         let mut section = AxNode::new(
             "settings-models",
             AxRole::Group,
-            "Default model",
+            t("settings.providers.default_model_title"),
             AxRect::new(models_x, models_y, width, section_height),
         )
         .child(AxNode::new(
             "settings-models-title",
             AxRole::StaticText,
-            "Default model",
+            t("settings.providers.default_model_title"),
             AxRect::new(models_x, models_y, width, HEADING_HEIGHT + SUBTITLE_HEIGHT),
         ))
-        .value("Choose the model used when a new task starts");
+        .value(t("settings.providers.default_model_subtitle"));
         models_y += HEADING_HEIGHT + SUBTITLE_HEIGHT + 8.0;
         if unavailable {
             section = section.child(
                 AxNode::new(
                     "settings-models-unavailable",
                     AxRole::StaticText,
-                    "Default model",
+                    t("settings.providers.default_model_title"),
                     AxRect::new(models_x, models_y, width, STATUS_HEIGHT),
                 )
-                .value(SETTINGS_DEFAULT_UNAVAILABLE_NOTE),
+                .value(settings_default_unavailable_note()),
             );
             models_y += STATUS_HEIGHT + 8.0;
         }
@@ -415,10 +466,10 @@ impl AppView {
                 AxNode::new(
                     "settings-models-empty",
                     AxRole::StaticText,
-                    "Models",
+                    t("settings.providers.ax_models_title"),
                     AxRect::new(models_x, models_y, width, STATUS_HEIGHT),
                 )
-                .value("No models reported by the host."),
+                .value(t("settings.providers.no_models")),
             );
             models_y += STATUS_HEIGHT + 8.0;
         }
@@ -461,12 +512,12 @@ impl AppView {
                     .is_some_and(|focus| self.open_menu.is_none() && focus.is_focused(window));
                 let mut value = model.display_name.clone();
                 if is_default {
-                    value.push_str(" · Default");
+                    value.push_str(&format!(" · {}", t("settings.providers.default_badge")));
                 }
                 let mut default_button = AxNode::new(
                     identifier,
                     AxRole::Button,
-                    "Set default",
+                    t("settings.providers.set_default"),
                     AxRect::new(models_x + width - 104.0, row_y, 104.0, MODEL_ROW_HEIGHT),
                 )
                 .enabled(enabled)

@@ -19,7 +19,7 @@ mod permissions;
 mod terminal;
 
 pub(crate) use auth::{auth_cancel, auth_remove, auth_set_api_key, auth_start};
-pub(crate) use catalog::{provider_auth_status, set_default_model};
+pub(crate) use catalog::{provider_auth_status, set_default_model, set_provider_use_proxy};
 pub(crate) use general::{general_settings, set_proxy_url};
 pub(crate) use permissions::{permissions_settings, set_approval_mode, workspace_trust};
 pub(crate) use terminal::{set_terminal_settings, terminal_settings};

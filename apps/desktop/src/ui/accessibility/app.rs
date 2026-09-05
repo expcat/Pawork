@@ -16,11 +16,12 @@ use crate::ui::approval_card::{
 };
 use crate::ui::changes::{ChangesFetch, ChangesTab};
 use crate::ui::components::dropdown::{ANCHOR_GAP_Y, MENU_MAX_HEIGHT};
+use crate::ui::i18n::t;
 use crate::ui::input_area::{grouped_model_menu_entries, MODEL_MENU_GROUP_HEADER_HEIGHT};
 use crate::ui::inspector::{
     plain_terminal_output, terminal_header_height, terminal_resize_status_label,
     terminal_size_for_display, terminal_stepper_ax_rects, InspectorTab, TERMINAL_COLUMNS_STEP,
-    TERMINAL_EMPTY_OUTPUT, TERMINAL_ROWS_STEP,
+    TERMINAL_ROWS_STEP, terminal_empty_output,
 };
 use crate::ui::resources::ResourcesFetch;
 use crate::ui::settings::{
@@ -35,7 +36,7 @@ use crate::ui::{
     activity_header_visibility, rail_project_occurrence_key, rail_session_focus_key,
     terminal_can_operate, terminal_can_reopen, terminal_close_label, terminal_known_ended,
     terminal_start_enabled, timeline, AppRoute, AppView, MenuKind, SettingsPage,
-    WORKSPACE_EMPTY_HINT, WORKSPACE_EMPTY_TITLE,
+    workspace_empty_hint, workspace_empty_title,
 };
 
 pub(crate) const PAD: f32 = 8.0;
@@ -304,6 +305,13 @@ impl AppView {
                 };
                 self.on_settings_text_scale(scale, window, cx);
             }
+            // i18n：语言按钮 AX press 与可见按钮同源派发；未知 id fail-closed。
+            other if other.starts_with("settings-language-") => {
+                let Some(language) = crate::ui::i18n::language_from_identifier(other) else {
+                    return false;
+                };
+                self.on_settings_language(language, cx);
+            }
             // SET-6b：五档选择与可见按钮同源派发（入口复核 gate）；未知
             // wire 串（含静态行 id）fail-closed。
             other if other.starts_with("settings-approval-mode-") => {
@@ -405,6 +413,14 @@ impl AppView {
                                 self.settings_default_target_for_escaped(&escaped)
                             {
                                 self.on_settings_set_default(provider_id, model_id, cx);
+                                return true;
+                            }
+                        }
+                        Some(SettingsControl::UseProxy(escaped)) => {
+                            if let Some(provider_id) =
+                                self.settings_provider_id_for_escaped(&escaped)
+                            {
+                                self.on_settings_toggle_provider_use_proxy(provider_id, cx);
                                 return true;
                             }
                         }
@@ -552,7 +568,14 @@ impl AppView {
         let viewport = window.viewport_size();
         let width = f32::from(viewport.width).max(1.0);
         let height = f32::from(viewport.height).max(1.0);
-        let content_height = (height - metrics::STATUS_BAR_HEIGHT).max(1.0);
+        // P2-1：Settings 壳不渲染 RunStatusBar（与 render 同源），内容用全高；
+        // 工作台保留底部 24px StatusBar。
+        let settings_route = self.route == AppRoute::Settings;
+        let content_height = if settings_route {
+            height
+        } else {
+            (height - metrics::STATUS_BAR_HEIGHT).max(1.0)
+        };
         // 与 AppView::render 共享同一壳层几何决定（R2 Wave A 响应式：
         // 窄窗 rail=240 且 Inspector 强制折叠；150% 文本 rail=320），
         // AX bounds 不得偏出实际布局。
@@ -571,7 +594,7 @@ impl AppView {
         let workspace_x = sidebar_width;
 
         // SET-3 顶层路由：Settings 壳与工作台互斥（与 render 同源）。
-        let tree = if self.route == AppRoute::Settings {
+        let mut tree = if settings_route {
             AxTree::new(width, height)
                 .child(
                     self.settings_rail_ax(
@@ -614,13 +637,16 @@ impl AppView {
             }
             tree
         };
-        // StatusBar 视觉上不覆盖左栏账户区；AX frame 与 render 同源。
-        tree.child(self.status_ax(AxRect::new(
-            sidebar_width,
-            content_height,
-            (width - sidebar_width).max(0.0),
-            metrics::STATUS_BAR_HEIGHT,
-        )))
+        if !settings_route {
+            // StatusBar 视觉上不覆盖左栏账户区；AX frame 与 render 同源。
+            tree = tree.child(self.status_ax(AxRect::new(
+                sidebar_width,
+                content_height,
+                (width - sidebar_width).max(0.0),
+                metrics::STATUS_BAR_HEIGHT,
+            )));
+        }
+        tree
     }
 
     fn sidebar_ax(&self, window: &Window, frame: AxRect) -> AxNode {
@@ -646,10 +672,7 @@ impl AppView {
         .focused(self.open_menu.is_none() && self.grouping_focus.is_focused(window))
         .action(AxAction::Press);
         y += metrics::RAIL_TITLE_ROW_HEIGHT + metrics::RAIL_TITLE_SCOPE_GAP;
-        let scope_label = match &self.scope_workspace_id {
-            None => "All projects".into(),
-            Some(id) => self.projection.workspace_name(Some(id)),
-        };
+        let scope_label = self.scope_label();
         let scope = AxNode::new(
             "project-scope",
             AxRole::Button,
@@ -686,7 +709,7 @@ impl AppView {
         let add_task = AxNode::new(
             "add-task",
             AxRole::Button,
-            "New task",
+            t("timeline.new_task"),
             AxRect::new(
                 (frame.width - inset - metrics::RAIL_ICON_BUTTON_SIZE).max(inset),
                 y + (metrics::RAIL_TOP_ROW_HEIGHT - metrics::RAIL_ICON_BUTTON_SIZE) / 2.0,
@@ -712,11 +735,11 @@ impl AppView {
             // 否则按钮 frame 比可见位置高 8px（ADR-042 同源约束）。
             y += PAD;
             sidebar = sidebar.child(
-                AxNode::new(
-                    "reconnect",
-                    AxRole::Button,
-                    "Reconnect",
-                    AxRect::new(
+            AxNode::new(
+                "reconnect",
+                AxRole::Button,
+                t("rail.reconnect"),
+                AxRect::new(
                         inset,
                         y,
                         (frame.width - inset * 2.0).max(0.0),
@@ -756,7 +779,7 @@ impl AppView {
                     list = list.child(AxNode::new(
                         dynamic_identifier("date-group", group.bucket.label()),
                         AxRole::StaticText,
-                        group.bucket.label(),
+                        group.bucket.display_label(),
                         AxRect::new(inset, row_y, list_width, metrics::RAIL_BUCKET_HEADER_HEIGHT),
                     ));
                     row_y += metrics::RAIL_BUCKET_HEADER_HEIGHT;
@@ -810,7 +833,7 @@ impl AppView {
             AxNode::new(
                 "open-settings",
                 AxRole::Button,
-                "Settings",
+                t("rail.tooltip_settings"),
                 AxRect::new(
                     (frame.width - inset - metrics::RAIL_ICON_BUTTON_SIZE).max(inset),
                     (frame.height - PAD - metrics::RAIL_ICON_BUTTON_SIZE).max(list_top),
@@ -868,13 +891,13 @@ impl AppView {
             }
             let add_ix = options.len();
             menu = menu.child(
-                AxNode::new(
-                    "scope-add-project",
-                    AxRole::Button,
-                    "Add project…",
-                    AxRect::new(
-                        inset,
-                        scope_menu_y + add_ix as f32 * ROW_HEIGHT,
+            AxNode::new(
+                "scope-add-project",
+                AxRole::Button,
+                t("common.add_project"),
+                AxRect::new(
+                    inset,
+                    scope_menu_y + add_ix as f32 * ROW_HEIGHT,
                         list_width,
                         ROW_HEIGHT,
                     ),
@@ -1111,7 +1134,7 @@ impl AppView {
         );
         if trigger_visible {
             header = header.child(
-                AxNode::new("inspector-toggle", AxRole::Button, "Activity", action)
+                AxNode::new("inspector-toggle", AxRole::Button, t("header.tooltip_activity"), action)
                     .focused(
                         self.open_menu.is_none()
                             && self.inspector_activity_focus.is_focused(window),
@@ -1124,13 +1147,13 @@ impl AppView {
                     AxNode::new(
                         "activity-popover",
                         AxRole::Group,
-                        "Activity",
+                        t("changes.tab_activity"),
                         geometry.frame,
                     )
                     .child(AxNode::new(
                         "activity-changes-heading",
                         AxRole::StaticText,
-                        "Changes",
+                        t("changes.tab_changes"),
                         geometry.heading,
                     ))
                     .child(
@@ -1151,7 +1174,7 @@ impl AppView {
             header
         } else {
             header.child(
-                AxNode::new("header-new-task", AxRole::Button, "New task", action)
+                AxNode::new("header-new-task", AxRole::Button, t("timeline.new_task"), action)
                     .enabled(self.can_create_task())
                     .focused(
                         self.open_menu.is_none() && self.header_new_task_focus.is_focused(window),
@@ -1285,7 +1308,7 @@ impl AppView {
             let mut new_task = AxNode::new(
                 "header-new-task",
                 AxRole::Button,
-                "New task",
+                t("timeline.new_task"),
                 AxRect::new(button_x, group_y + 76.0, button_width, 36.0),
             )
             .description(self.add_task_disabled_reason())
@@ -1298,13 +1321,13 @@ impl AppView {
                 .child(AxNode::new(
                     "workspace-empty-title",
                     AxRole::StaticText,
-                    WORKSPACE_EMPTY_TITLE,
+                    workspace_empty_title(),
                     AxRect::new(content_x, group_y, content_width, 28.0),
                 ))
                 .child(AxNode::new(
                     "workspace-empty-hint",
                     AxRole::StaticText,
-                    WORKSPACE_EMPTY_HINT,
+                    workspace_empty_hint(),
                     AxRect::new(content_x, group_y + 36.0, content_width, 24.0),
                 ))
                 .child(new_task);
@@ -1337,9 +1360,9 @@ impl AppView {
                     .value(format!("{} · {}", pending.tool_name, pending.reason));
             let mut button_x = approval.x;
             for (ix, (id, label)) in [
-                ("approve-once", "Allow once"),
-                ("approve-for-run", "Allow for run"),
-                ("approve-deny", "Deny"),
+                ("approve-once", t("approval.allow_once")),
+                ("approve-for-run", t("approval.allow_for_run")),
+                ("approve-deny", t("approval.deny")),
             ]
             .into_iter()
             .enumerate()
@@ -1368,7 +1391,7 @@ impl AppView {
                 AxNode::new(
                     "timeline-back-to-bottom",
                     AxRole::Button,
-                    "Back to bottom",
+                    t("timeline.ax_back_to_bottom"),
                     AxRect::new(
                         frame.x + frame.width - 140.0,
                         frame.y + frame.height - 40.0,
@@ -1549,7 +1572,7 @@ impl AppView {
                         AxNode::new(
                             run_review_identifier(&terminal_entry.event_id),
                             AxRole::Button,
-                            "Review changes",
+                            t("timeline.review_changes"),
                             AxRect::new(
                                 (rect.x + rect.width - metrics::SUMMARY_BUTTON_WIDTH).max(rect.x),
                                 y,
@@ -1615,7 +1638,7 @@ impl AppView {
                     let fork_node = AxNode::new(
                         fork_identifier(&terminal_entry.event_id),
                         AxRole::Button,
-                        "Fork",
+                        t("timeline.fork"),
                         AxRect::new(menu_row.x - 80.0, menu_row.y + 28.0, 112.0, 30.0),
                     )
                     .enabled(
@@ -1674,7 +1697,7 @@ impl AppView {
                     AxNode::new(
                         fork_identifier(&entry.event_id),
                         AxRole::Button,
-                        "Fork",
+                        t("timeline.fork"),
                         AxRect::new(row.x + row.width - 112.0, row.y + 28.0, 112.0, 30.0),
                     )
                     .enabled(
@@ -1904,13 +1927,13 @@ impl AppView {
                 .filter(|(id, _)| id.is_some())
                 .count();
             menu = menu.child(
-                AxNode::new(
-                    "workspace-confirm-add-project",
-                    AxRole::Button,
-                    "Add project…",
-                    AxRect::new(
-                        frame.x + pad,
-                        footer_y + metrics::COMPOSER_SEND_SIZE + add_ix as f32 * ROW_HEIGHT,
+            AxNode::new(
+                "workspace-confirm-add-project",
+                AxRole::Button,
+                t("common.add_project"),
+                AxRect::new(
+                    frame.x + pad,
+                    footer_y + metrics::COMPOSER_SEND_SIZE + add_ix as f32 * ROW_HEIGHT,
                         280.0,
                         ROW_HEIGHT,
                     ),
@@ -1940,7 +1963,7 @@ impl AppView {
                     AxNode::new(
                         "inspector-tab-changes",
                         AxRole::Tab,
-                        "Changes",
+                        t("inspector.tab_changes"),
                         AxRect::new(tab_x, frame.y, tab_width, strip_height),
                     )
                     .selected(self.inspector_tab == InspectorTab::Changes)
@@ -1953,7 +1976,7 @@ impl AppView {
                     AxNode::new(
                         "inspector-tab-terminal",
                         AxRole::Tab,
-                        "Terminal",
+                        t("inspector.tab_terminal"),
                         AxRect::new(tab_x + tab_width, frame.y, tab_width, strip_height),
                     )
                     .selected(self.inspector_tab == InspectorTab::Terminal)
@@ -1966,7 +1989,7 @@ impl AppView {
                     AxNode::new(
                         "inspector-tab-resources",
                         AxRole::Tab,
-                        "Resources",
+                        t("inspector.tab_resources"),
                         AxRect::new(tab_x + tab_width * 2.0, frame.y, tab_width, strip_height),
                     )
                     .selected(self.inspector_tab == InspectorTab::Resources)
@@ -2020,8 +2043,8 @@ impl AppView {
         let button_width = 72.0;
         let focus = self.terminal_input.read(cx).focus_handle(cx);
         let output = if self.projection.terminal.output.is_empty() {
-            // 与可见 Terminal 页占位同源（TERMINAL_EMPTY_OUTPUT）。
-            TERMINAL_EMPTY_OUTPUT.to_string()
+            // 与可见 Terminal 页占位同源（terminal_empty_output()）。
+            terminal_empty_output().to_string()
         } else {
             tail_chars(
                 &plain_terminal_output(&self.projection.terminal.output),
@@ -2221,7 +2244,7 @@ impl AppView {
                 AxNode::new(
                     "terminal-back-to-bottom",
                     AxRole::Button,
-                    "Back to bottom",
+                    t("timeline.ax_back_to_bottom"),
                     AxRect::new(
                         frame.x + frame.width - 140.0,
                         (input_y - 40.0).max(frame.y + header_height),
@@ -2251,13 +2274,10 @@ impl AppView {
             ChangesFetch::Ready => format!("ready · {} files", self.changes.files.len()),
             ChangesFetch::Failed(reason) => format!("failed · {reason}"),
         };
+        let scope_note = t("changes.scope_note");
         let description = match &self.changes.stale_reason {
-            Some(reason) => format!(
-                "Host latest-session diff; workspace context is not a filter · {fetch_state} · stale · {reason}"
-            ),
-            None => format!(
-                "Host latest-session diff; workspace context is not a filter · {fetch_state}"
-            ),
+            Some(reason) => format!("{scope_note} · {fetch_state} · stale · {reason}"),
+            None => format!("{scope_note} · {fetch_state}"),
         };
         let mut changes = AxNode::new("changes", AxRole::Group, "Changes", frame)
             .description(description)
@@ -2299,7 +2319,7 @@ impl AppView {
                 AxNode::new(
                     "changes-refresh",
                     AxRole::Button,
-                    "Refresh changes",
+                    t("changes.tooltip_refresh"),
                     AxRect::new(
                         frame.x + frame.width - 40.0,
                         refresh_y,
@@ -2391,7 +2411,7 @@ impl AppView {
                 AxNode::new(
                     "resources-refresh",
                     AxRole::Button,
-                    "Refresh resources",
+                    t("resources.tooltip_refresh"),
                     AxRect::new(frame.x + frame.width - 40.0, frame.y + PAD, 32.0, 28.0),
                 )
                 .focused(
@@ -2402,7 +2422,7 @@ impl AppView {
         let mut list = AxNode::new(
             "mcp-server-list",
             AxRole::List,
-            "MCP servers",
+            t("resources.mcp_title"),
             AxRect::new(
                 frame.x + PAD,
                 frame.y + 44.0,
@@ -3057,6 +3077,9 @@ mod tests {
             assert!(tree.find("settings-nav-appearance").is_some());
             assert!(tree.find("settings-nav-advanced").is_some());
             assert!(tree.find("settings-nav-about").is_none());
+            // P2-1：Settings 壳不发布 RunStatusBar。
+            assert!(tree.find("status-bar").is_none());
+            assert!(tree.find("run-status").is_none());
             assert!(!tree.permits(&AxRequest {
                 identifier: "settings-nav-about".into(),
                 action: AxAction::Press,
@@ -3396,6 +3419,7 @@ mod tests {
                                     error: "offline".into(),
                                     fetched_at: None,
                                 },
+                                use_proxy: true,
                             },
                             crate::projection::ProviderAuthStatusEntry {
                                 provider_id: "connected".into(),
@@ -3410,6 +3434,7 @@ mod tests {
                                     snapshot_label: "test@v1".into(),
                                     fetched_at: None,
                                 },
+                                use_proxy: true,
                             },
                         ],
                         default: None,

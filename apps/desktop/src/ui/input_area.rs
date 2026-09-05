@@ -12,6 +12,7 @@ use crate::projection::{group_models_by_provider, ConnectionState, ModelEntry};
 use crate::ui::components::button::{Button, ButtonVariant};
 use crate::ui::components::dropdown::{Dropdown, MenuPanel, MenuRow, ANCHOR_GAP_Y};
 use crate::ui::components::label::Label;
+use crate::ui::i18n::{t, t2};
 use crate::ui::theme::{dark, font, metrics};
 
 use super::{AppView, MenuKind};
@@ -43,8 +44,8 @@ impl AppView {
             SharedString::from(
                 self.projection
                     .effective_model()
-                    .map(|(provider, id)| format!("Select model · {provider} / {id}"))
-                    .unwrap_or_else(|| "Select model".into()),
+                    .map(|(provider, id)| t2("composer.model_tooltip", provider, id))
+                    .unwrap_or_else(|| t("composer.model_tooltip_none").to_string()),
             )
         } else {
             SharedString::from(self.model_disabled_reason())
@@ -257,18 +258,18 @@ impl AppView {
                 .find(|entry| entry.provider_id == *provider && entry.id == *id)
                 .map(|entry| entry.display_name.clone())
                 .unwrap_or_else(|| format!("{provider} / {id}")),
-            None if self.projection.models.is_empty() => "Model · loading".into(),
-            None => "Model · select".into(),
+            None if self.projection.models.is_empty() => t("composer.model_loading").into(),
+            None => t("composer.model_select").into(),
         }
     }
 
     fn model_disabled_reason(&self) -> String {
         if self.projection.active_run_id.is_some() {
-            "Model switch is disabled while a run is in progress.".into()
+            t("composer.model_disabled_running").into()
         } else if self.projection.models.is_empty() {
-            "Model catalog is still loading.".into()
+            t("composer.model_disabled_loading").into()
         } else {
-            "Model switch needs a live connection.".into()
+            t("composer.model_disabled_offline").into()
         }
     }
 
@@ -343,21 +344,21 @@ impl AppView {
 
     fn send_disabled_reason(&self) -> String {
         if self.projection.active_run_id.is_some() {
-            "Run in progress — sending is disabled. Cancel remains available.".into()
+            t("composer.placeholder_running").into()
         } else {
             match &self.projection.connection {
                 ConnectionState::Connected { .. } => {
                     if self.projection.active_session_id.is_none() {
-                        "Open a session to send messages.".into()
+                        t("composer.placeholder_open_session").into()
                     } else {
-                        "Message is empty.".into()
+                        t("composer.send_disabled_empty").into()
                     }
                 }
-                ConnectionState::Connecting => "Waiting for connection…".into(),
+                ConnectionState::Connecting => t("composer.placeholder_waiting").into(),
                 ConnectionState::Disconnected { .. } => {
-                    "Disconnected — click Reconnect before sending.".into()
+                    t("composer.placeholder_disconnected").into()
                 }
-                ConnectionState::Failed { .. } => "Connect failed — click Reconnect.".into(),
+                ConnectionState::Failed { .. } => t("composer.placeholder_connect_failed").into(),
             }
         }
     }
@@ -389,16 +390,14 @@ impl AppView {
                 .iter()
                 .find(|session| &session.session_id == session_id)
             {
-                return format!(
-                    "Workspace · {}",
-                    self.projection
-                        .workspace_name(session.workspace_id.as_deref())
-                );
+                return t("composer.workspace_scope")
+                    .replace("{}", &self.projection.workspace_name(session.workspace_id.as_deref()));
             }
         }
         match self.scope_workspace_id.as_deref() {
-            Some(id) => format!("Workspace · {}", self.projection.workspace_name(Some(id))),
-            None => "Workspace · confirm in All projects".into(),
+            Some(id) => t("composer.workspace_scope")
+                .replace("{}", &self.projection.workspace_name(Some(id))),
+            None => t("composer.workspace_scope_confirm_all").into(),
         }
     }
 
@@ -421,7 +420,7 @@ impl AppView {
                     .py_1()
                     .text_size(font::SM)
                     .text_color(dark().semantic.warning_text)
-                    .child("Add a workspace before creating a task."),
+                    .child(t("composer.add_workspace_first")),
             );
         }
         let highlight = self.menu_highlight_effective(0);
@@ -439,7 +438,7 @@ impl AppView {
         }
         panel = panel.child(
             MenuRow::new("workspace-confirm-add-project")
-                .label("Add project…")
+                .label(t("common.add_project"))
                 .highlighted(add_project_ix == highlight)
                 .on_click(cx.listener(|view, _event, window, cx| {
                     view.on_open_project(window, cx);
@@ -497,21 +496,21 @@ fn composer_placeholder_hint(
     running: bool,
 ) -> String {
     if running {
-        return "Run in progress — sending is disabled. Cancel remains available.".into();
+        return t("composer.placeholder_running").into();
     }
     match connection {
         ConnectionState::Connected { .. } => {
             if has_session {
-                "Message Pawork… (Enter to send, Shift+Enter for newline)".into()
+                t("composer.placeholder_message").into()
             } else {
-                "Open a session to send messages.".into()
+                t("composer.placeholder_open_session").into()
             }
         }
-        ConnectionState::Connecting => "Waiting for connection…".into(),
+        ConnectionState::Connecting => t("composer.placeholder_waiting").into(),
         ConnectionState::Disconnected { .. } => {
-            "Disconnected — click Reconnect before sending.".into()
+            t("composer.placeholder_disconnected").into()
         }
-        ConnectionState::Failed { .. } => "Connect failed — click Reconnect.".into(),
+        ConnectionState::Failed { .. } => t("composer.placeholder_connect_failed").into(),
     }
 }
 

@@ -46,8 +46,8 @@ impl AppView {
             .radius(4.0)
             .bordered()
             .text_size(font::BODY_SM)
-            .label("Refresh")
-            .tooltip("Refresh provider status and model catalog")
+            .label(t("settings.refresh"))
+            .tooltip(t("settings.providers.refresh_tooltip"))
             .disabled(!refresh_enabled)
             .on_click(cx.listener(|view, event, _window, cx| {
                 if view.consume_button_key_click("settings-refresh", event) {
@@ -73,13 +73,13 @@ impl AppView {
                         .min_w_0()
                         .child(
                             div().font_weight(FontWeight::MEDIUM).child(
-                                Label::new("Models & providers")
+                                Label::new(t("settings.providers.title"))
                                     .size(font::TITLE)
                                     .color(dark().text.primary),
                             ),
                         )
                         .child(
-                            Label::new("Connection status and catalog source for each provider")
+                            Label::new(t("settings.providers.subtitle"))
                                 .size(font::BODY_SM)
                                 .color(dark().text.secondary),
                         ),
@@ -100,7 +100,7 @@ impl AppView {
         }
         content = content.child(
             div().font_weight(FontWeight::MEDIUM).child(
-                Label::new("Providers")
+                Label::new(t("settings.providers.section_providers"))
                     .size(font::BODY)
                     .color(dark().text.primary),
             ),
@@ -196,7 +196,7 @@ impl AppView {
         let catalog_summary = provider_catalog_overview_label(provider, model_count);
         let auth_methods = provider.auth_methods_label();
         let auth_methods = if auth_methods.is_empty() {
-            "No auth method".to_string()
+            t("settings.providers.no_auth_method").to_string()
         } else {
             auth_methods
         };
@@ -207,10 +207,63 @@ impl AppView {
             .items_center()
             .justify_end()
             .gap_1();
+        // 供应商级代理开关（ADR-052 SET-6h）：仅在配置了全局代理时可见；
+        // 显示当前生效态（走代理 / 直连），点击切换。与 AX 同 identifier /
+        // 同 gate（writes 总闸）。
+        let proxy_visible = self.projection.settings_general.proxy_url.is_some();
+        if proxy_visible {
+            let id = settings_use_proxy_identifier(&provider_id);
+            let focus = self
+                .settings_action_focus
+                .entry(id.clone())
+                .or_insert_with(|| cx.focus_handle().tab_stop(true))
+                .clone();
+            let (label, tooltip) = if provider.use_proxy {
+                (
+                    t("settings.providers.proxy_on"),
+                    t("settings.providers.proxy_tooltip_on"),
+                )
+            } else {
+                (
+                    t("settings.providers.proxy_off"),
+                    t("settings.providers.proxy_tooltip_off"),
+                )
+            };
+            let click_id = id.clone();
+            let click_provider = provider_id.clone();
+            let activate_id = id.clone();
+            let activate_provider = provider_id.clone();
+            let toggle = Button::new(id)
+                .track_focus(&focus)
+                .variant(ButtonVariant::Raised)
+                .height(px(SETTINGS_ACTION_HEIGHT))
+                .vcenter()
+                .radius(4.0)
+                .bordered()
+                .text_size(font::BODY_SM)
+                .label(label)
+                .tooltip(tooltip)
+                .disabled(!writes)
+                .on_click(cx.listener(move |view, event, _window, cx| {
+                    if view.consume_button_key_click(&click_id, event) {
+                        return;
+                    }
+                    view.on_settings_toggle_provider_use_proxy(click_provider.clone(), cx);
+                }))
+                .on_activate(cx.listener(move |view, _event, _window, cx| {
+                    view.note_button_key_activate(&activate_id);
+                    view.on_settings_toggle_provider_use_proxy(
+                        activate_provider.clone(),
+                        cx,
+                    );
+                    cx.stop_propagation();
+                }));
+            header_actions = header_actions.child(toggle);
+        }
         if !actions_in_details {
             for action in &row_actions {
                 let tooltip = if *action == SettingsAuthAction::Remove {
-                    "Remove the stored credential."
+                    t("settings.providers.tooltip_remove_credential")
                 } else {
                     ""
                 };
@@ -287,20 +340,22 @@ impl AppView {
             (&provider.auth, oauth_waits.get(&provider_id))
         {
             details = details.child(
-                Label::new(format!("Authorize at {}", wait.verification_url))
+                Label::new(
+                    t("settings.providers.authorize_at").replace("{}", &wait.verification_url),
+                )
                     .size(font::BODY_SM)
                     .color(dark().text.secondary),
             );
             if let Some(code) = &wait.user_code {
                 details = details.child(
-                    Label::new(format!("Code {code}"))
+                    Label::new(t("settings.providers.oauth_code").replace("{}", code))
                         .size(font::BODY_SM)
                         .color(dark().text.secondary),
                 );
             }
             if let Some(expires) = &wait.expires_at {
                 details = details.child(
-                    Label::new(format!("Expires {expires}"))
+                    Label::new(t("settings.providers.oauth_expires").replace("{}", expires))
                         .size(font::BODY_SM)
                         .color(dark().text.tertiary),
                 );
@@ -313,7 +368,7 @@ impl AppView {
         }
         if let Some(message) = auth_error {
             details = details.child(status_line(
-                &format!("Connection error · {message}"),
+                &t("settings.providers.connection_error").replace("{}", message),
                 dark().semantic.danger_text,
             ));
         }
@@ -325,7 +380,9 @@ impl AppView {
         }
         if endpoint_visible {
             details = details.child(
-                Label::new(format!("Endpoint · {}", provider.endpoint_label))
+                Label::new(
+                    t("settings.providers.endpoint_row").replace("{}", &provider.endpoint_label),
+                )
                     .size(font::BODY_SM)
                     .color(dark().text.tertiary),
             );
@@ -354,7 +411,7 @@ impl AppView {
                         (
                             verify_enabled,
                             if writes && !verify_enabled {
-                                "API key is empty."
+                                t("settings.providers.api_key_empty")
                             } else {
                                 ""
                             },
@@ -379,7 +436,7 @@ impl AppView {
             let mut row = div().flex().flex_row().gap_1().flex_wrap();
             for action in &row_actions {
                 let tooltip = if *action == SettingsAuthAction::Remove {
-                    "Remove the stored credential."
+                    t("settings.providers.tooltip_remove_credential")
                 } else {
                     ""
                 };
@@ -415,25 +472,25 @@ impl AppView {
             .mt_2()
             .child(
                 div().font_weight(FontWeight::MEDIUM).child(
-                    Label::new("Default model")
+                    Label::new(t("settings.providers.default_model_title"))
                         .size(font::TITLE)
                         .color(dark().text.primary),
                 ),
             )
             .child(
-                Label::new("Choose the model used when a new task starts")
+                Label::new(t("settings.providers.default_model_subtitle"))
                     .size(font::BODY_SM)
                     .color(dark().text.secondary),
             );
         if unavailable {
             section = section.child(status_line(
-                SETTINGS_DEFAULT_UNAVAILABLE_NOTE,
+                settings_default_unavailable_note(),
                 dark().semantic.danger_text,
             ));
         }
         if groups.is_empty() {
             section = section.child(status_line(
-                "No models reported by the host.",
+                t("settings.providers.no_models"),
                 dark().text.secondary,
             ));
             return section;
@@ -450,10 +507,15 @@ impl AppView {
                 .map(|entry| entry.display_name.clone())
                 .unwrap_or_else(|| provider_id.to_string());
             let mut group = div().flex().flex_col().min_w_0().gap_1().mt_1().child(
-                div().min_w_0().truncate().child(
-                    Label::new(display_name)
-                        .size(font::BODY)
-                        .color(dark().text.primary),
+                // 组头宽度不能用 w_full：该 taffy 版本下百分比宽对 stretch
+                // 决定的父宽解析塌缩，provider 名只剩省略号（像素复验实证）。
+                // 改用与模型行一致的 flex_row + flex_1 模式（同屏渲染正常）。
+                div().flex().flex_row().min_w_0().child(
+                    div().flex_1().min_w_0().truncate().child(
+                        Label::new(display_name)
+                            .size(font::BODY)
+                            .color(dark().text.primary),
+                    ),
                 ),
             );
             for model in models {
@@ -497,7 +559,7 @@ impl AppView {
             .radius(4.0)
             .bordered()
             .text_size(font::BODY_SM)
-            .label("Set default")
+            .label(t("settings.providers.set_default"))
             .disabled(!enabled)
             .on_click(cx.listener(move |view, event, _window, cx| {
                 if view.consume_button_key_click(&click_id, event) {
@@ -526,7 +588,7 @@ impl AppView {
         if is_default {
             row = row.child(
                 div().flex_none().child(
-                    Label::new("Default")
+                    Label::new(t("settings.providers.default_badge"))
                         .size(font::XS)
                         .color(dark().accent.primary),
                 ),
@@ -705,6 +767,35 @@ impl AppView {
         cx.notify();
     }
 
+    /// 供应商级代理开关入口（ADR-052 SET-6h；render / 键盘 / AX 三路径
+    /// 同源；入口级复核 gate）。未配置全局代理时按钮不渲染，此入口同样
+    /// fail-closed。确认回执由 ProviderUseProxyConfirmed / 重查收敛，
+    /// 不在此乐观改状态。
+    pub(crate) fn on_settings_toggle_provider_use_proxy(
+        &mut self,
+        provider_id: String,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.settings_writes_enabled() {
+            return;
+        }
+        if self.projection.settings_general.proxy_url.is_none() {
+            return;
+        }
+        let Some(current) = self
+            .projection
+            .settings_providers
+            .providers
+            .iter()
+            .find(|entry| entry.provider_id == provider_id)
+            .map(|entry| entry.use_proxy)
+        else {
+            return;
+        };
+        self.controller.set_provider_use_proxy(provider_id, !current);
+        cx.notify();
+    }
+
     /// 启动 OAuth：descriptor 复核后登记 Replace 基线并置 Connecting。
     fn on_settings_connect_oauth(&mut self, provider_id: String, cx: &mut Context<Self>) {
         // descriptor 复核：provider 必须存在且声明 oauth（未知 id fail-closed）。
@@ -807,6 +898,10 @@ impl AppView {
             for action in SettingsAuthAction::ALL {
                 action_ids.insert(action.identifier(&entry.provider_id));
             }
+            // 代理开关随全局代理配置可见；可见性与回收白名单同源。
+            if self.projection.settings_general.proxy_url.is_some() {
+                action_ids.insert(settings_use_proxy_identifier(&entry.provider_id));
+            }
         }
         for model in &self.projection.models {
             action_ids.insert(settings_set_default_identifier(
@@ -822,7 +917,7 @@ impl AppView {
                 .or_insert_with(|| {
                     let element_id = format!("settings-api-key-input-{id}");
                     cx.new(|cx| {
-                        TextInput::with_placeholder("Paste API key", cx)
+                        TextInput::with_placeholder(t("settings.providers.api_key_placeholder"), cx)
                             .id(element_id)
                             .secure()
                             .height_clamp(

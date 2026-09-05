@@ -14,13 +14,13 @@ impl AppView {
             .gap_2()
             .child(
                 div().font_weight(FontWeight::MEDIUM).child(
-                    Label::new("About")
+                    Label::new(t("settings.about.title"))
                         .size(font::TITLE)
                         .color(dark().text.primary),
                 ),
             )
             .child(
-                Label::new("Build and current Host connection information")
+                Label::new(t("settings.about.subtitle"))
                     .size(font::BODY_SM)
                     .color(dark().text.secondary),
             );
@@ -93,17 +93,17 @@ impl AppView {
         Some(vec![
             (
                 "settings-about-desktop-build",
-                "Desktop build",
+                t("settings.about.row_desktop_build"),
                 env!("CARGO_PKG_VERSION").to_string(),
             ),
             (
                 "settings-about-api",
-                "GUI API",
+                t("settings.about.row_api"),
                 handshake.api_version.clone(),
             ),
             (
                 "settings-about-data-dir",
-                "Host data directory",
+                t("settings.about.row_data_dir"),
                 host_data_dir.to_string(),
             ),
         ])

@@ -162,6 +162,16 @@ pub struct ProviderAuthStatusEntry {
     pub auth_methods: Vec<String>,
     pub auth: ProviderAuthState,
     pub catalog: ProviderCatalogState,
+    /// 该 provider 是否跟随 Global `proxy_url`（ADR-052 SET-6h）。
+    /// Host 输出 `config.providers[].use_proxy != Some(false)` 的生效值。
+    pub use_proxy: bool,
+}
+
+/// `set_provider_use_proxy` 回执 Data（ADR-052 SET-6h；回执即写后状态）。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderUseProxyData {
+    pub provider_id: String,
+    pub use_proxy: bool,
 }
 
 /// `provider_auth_status` 查询 Data。Rust 字段名 `default` 对应 JSON 键 `default`。
@@ -315,7 +325,8 @@ mod tests {
                 "catalog": {
                     "type": "remote",
                     "fetched_at": "2026-09-04T00:00:00Z"
-                }
+                },
+                "use_proxy": true
             }],
             "default": null
         });

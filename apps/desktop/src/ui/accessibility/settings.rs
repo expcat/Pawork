@@ -4,6 +4,7 @@ use gpui::{App, Window};
 
 use super::app::PAD;
 use super::{AxAction, AxNode, AxRect, AxRole};
+use crate::ui::i18n::t;
 use crate::ui::shell_layout;
 use crate::ui::theme::metrics;
 use crate::ui::{AppView, SettingsPage};
@@ -17,7 +18,7 @@ fn settings_nav_ax(
 ) -> AxNode {
     if selected {
         AxNode::new(id, AxRole::StaticText, label, rect)
-            .value("Selected")
+            .value(t("settings.nav.state_selected"))
             .focused(focused)
     } else {
         AxNode::new(id, AxRole::Button, label, rect)
@@ -57,18 +58,23 @@ impl AppView {
             SettingsPage::About if !about_available => SettingsPage::Advanced,
             page => page,
         };
-        let mut rail = AxNode::new("settings-rail", AxRole::Group, "Settings", frame)
+        let mut rail = AxNode::new(
+            "settings-rail",
+            AxRole::Group,
+            t("settings.rail_title"),
+            frame,
+        )
             .child(AxNode::new(
                 "settings-rail-title",
                 AxRole::StaticText,
-                "Settings",
+                t("settings.rail_title"),
                 AxRect::new(frame.x + PAD, frame.y + title_y, width, TITLE_HEIGHT),
             ))
             .child(
                 AxNode::new(
                     "settings-back",
                     AxRole::Button,
-                    "Back to workspace",
+                    t("settings.back_tooltip"),
                     AxRect::new(
                         frame.x + PAD,
                         frame.y + back_y,
@@ -81,7 +87,7 @@ impl AppView {
             )
             .child(settings_nav_ax(
                 "settings-nav-providers",
-                "Models & providers",
+                t("settings.nav.providers"),
                 current_page == SettingsPage::Providers,
                 self.open_menu.is_none() && self.settings_nav_providers_focus.is_focused(window),
                 AxRect::new(
@@ -95,7 +101,7 @@ impl AppView {
             let general_y = nav_y + metrics::RAIL_TOP_ROW_HEIGHT + PAD;
             rail = rail.child(settings_nav_ax(
                 "settings-nav-general",
-                "Network",
+                t("settings.nav.general"),
                 current_page == SettingsPage::General,
                 self.open_menu.is_none() && self.settings_nav_general_focus.is_focused(window),
                 AxRect::new(
@@ -115,7 +121,7 @@ impl AppView {
             }
             rail = rail.child(settings_nav_ax(
                 "settings-nav-permissions",
-                "Approvals",
+                t("settings.nav.permissions"),
                 current_page == SettingsPage::Permissions,
                 self.open_menu.is_none() && self.settings_nav_permissions_focus.is_focused(window),
                 AxRect::new(
@@ -137,7 +143,7 @@ impl AppView {
             }
             rail = rail.child(settings_nav_ax(
                 "settings-nav-tools",
-                "Tools & MCP",
+                t("settings.nav.tools"),
                 current_page == SettingsPage::Tools,
                 self.open_menu.is_none() && self.settings_nav_tools_focus.is_focused(window),
                 AxRect::new(
@@ -162,7 +168,7 @@ impl AppView {
             }
             rail = rail.child(settings_nav_ax(
                 "settings-nav-terminal",
-                "Terminal",
+                t("settings.nav.terminal"),
                 current_page == SettingsPage::Terminal,
                 self.open_menu.is_none() && self.settings_nav_terminal_focus.is_focused(window),
                 AxRect::new(
@@ -190,7 +196,7 @@ impl AppView {
         }
         rail = rail.child(settings_nav_ax(
             "settings-nav-appearance",
-            "Appearance",
+            t("settings.nav.appearance"),
             current_page == SettingsPage::Appearance,
             self.open_menu.is_none() && self.settings_nav_appearance_focus.is_focused(window),
             AxRect::new(
@@ -203,7 +209,7 @@ impl AppView {
         let advanced_y = appearance_y + metrics::RAIL_TOP_ROW_HEIGHT + PAD;
         rail = rail.child(settings_nav_ax(
             "settings-nav-advanced",
-            "Advanced",
+            t("settings.nav.advanced"),
             current_page == SettingsPage::Advanced,
             self.open_menu.is_none() && self.settings_nav_advanced_focus.is_focused(window),
             AxRect::new(
@@ -217,7 +223,7 @@ impl AppView {
             let about_y = advanced_y + metrics::RAIL_TOP_ROW_HEIGHT + PAD;
             rail = rail.child(settings_nav_ax(
                 "settings-nav-about",
-                "About",
+                t("settings.nav.about"),
                 current_page == SettingsPage::About,
                 self.open_menu.is_none() && self.settings_nav_about_focus.is_focused(window),
                 AxRect::new(

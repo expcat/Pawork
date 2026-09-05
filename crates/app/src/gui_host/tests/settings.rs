@@ -39,6 +39,7 @@ pub(super) async fn settings_adapter_with_default(
             id: provider_id.into(),
             base_url: Some(base_url),
             default: None,
+            use_proxy: None,
         });
     if let Some((default_provider, default_model)) = default {
         config.default_provider = Some(default_provider.into());
@@ -288,6 +289,87 @@ async fn clear_proxy_url_updates_general_settings_to_null() {
     assert!(
         !persisted.contains("proxy_url"),
         "cleared config still has proxy_url: {persisted}"
+    );
+}
+
+/// ADR-052 SET-6h：开关写盘 + 同会话内存生效 + 回执即写后状态。
+#[tokio::test]
+async fn set_provider_use_proxy_persists_and_syncs_effective_config() {
+    let _home_env = HOME_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let home = tempfile::tempdir().expect("home tempdir");
+    let _restore_home = RestoreHome(std::env::var_os("HOME"));
+    crate::testsupport::set_env("HOME", home.path().to_str().expect("utf-8 home"));
+    let backend = Arc::new(pawork_auth::MemoryBackend::new());
+    let (adapter, _dir) = settings_adapter("http://127.0.0.1:1".into(), backend).await;
+
+    let response = adapter
+        .command(&command_envelope(AppCommand::SetProviderUseProxy {
+            provider_id: pawork_domain::ProviderId::from("glm-coding"),
+            use_proxy: false,
+        }))
+        .await
+        .expect("set provider use_proxy");
+    let AppResponse::Data(data) = response else {
+        panic!("SetProviderUseProxy must return Data: {response:?}")
+    };
+    assert_eq!(data["provider_id"], "glm-coding");
+    assert_eq!(data["use_proxy"], false);
+
+    // 同会话重查：providers[] 生效值已同步为 false（生效值 = 未显式 false）。
+    let after = adapter
+        .query(&query_envelope(AppQuery::ProviderAuthStatus {
+            provider_id: None,
+        }))
+        .await
+        .expect("status after set");
+    let AppResponse::Data(after) = after else {
+        panic!("ProviderAuthStatus must return Data: {after:?}")
+    };
+    let entry = after["providers"]
+        .as_array()
+        .expect("providers array")
+        .iter()
+        .find(|entry| entry["provider_id"] == "glm-coding")
+        .expect("glm-coding entry");
+    assert_eq!(entry["use_proxy"], false);
+
+    // 写盘落在重定向后的全局配置 `[[providers]]` 条目。
+    let config_path = pawork_workspace::config::global_config_path().expect("global path");
+    let persisted = std::fs::read_to_string(&config_path).expect("persisted config");
+    assert!(
+        persisted.contains("use_proxy = false"),
+        "persisted config misses use_proxy: {persisted}"
+    );
+}
+
+/// ADR-052 SET-6h 失败路径：未知 provider fail-closed，不落盘。
+#[tokio::test]
+async fn set_provider_use_proxy_rejects_unknown_provider() {
+    let _home_env = HOME_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let home = tempfile::tempdir().expect("home tempdir");
+    let _restore_home = RestoreHome(std::env::var_os("HOME"));
+    crate::testsupport::set_env("HOME", home.path().to_str().expect("utf-8 home"));
+    let backend = Arc::new(pawork_auth::MemoryBackend::new());
+    let (adapter, _dir) = settings_adapter("http://127.0.0.1:1".into(), backend).await;
+
+    let error = adapter
+        .command(&command_envelope(AppCommand::SetProviderUseProxy {
+            provider_id: pawork_domain::ProviderId::from("no-such-provider"),
+            use_proxy: false,
+        }))
+        .await
+        .expect_err("unknown provider must fail");
+    assert_eq!(error.code, "unknown_provider", "error: {error:?}");
+
+    let config_path = pawork_workspace::config::global_config_path().expect("global path");
+    let persisted = std::fs::read_to_string(&config_path).unwrap_or_default();
+    assert!(
+        !persisted.contains("no-such-provider"),
+        "unknown provider must not persist: {persisted}"
     );
 }
 
@@ -856,6 +938,7 @@ pub(super) async fn mcp_settings_adapter(mcp: serde_json::Value) -> (GuiHostAdap
             id: "glm-coding".into(),
             base_url: Some("http://127.0.0.1:1".into()),
             default: None,
+            use_proxy: None,
         });
     config.extra.insert("mcp".into(), mcp);
     let backend = Arc::new(pawork_auth::MemoryBackend::new());

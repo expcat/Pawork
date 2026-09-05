@@ -43,6 +43,8 @@ pub(super) use super::resources::{
 pub(super) use super::shell_layout;
 pub(super) use super::{AppRoute, AppView, SettingsPage};
 
+use crate::ui::i18n::t;
+
 /// Settings 内容可读列；与 P2 设计的 760–880px 目标一致。
 pub(super) const SETTINGS_CONTENT_MAX_WIDTH: f32 = 820.0;
 /// Provider 卡片内边距（8px 节奏）。
@@ -52,44 +54,60 @@ pub(crate) const PROVIDER_OVERVIEW_HEIGHT: f32 = 64.0;
 /// 写动作按钮高度（与 Composer 28px 动作槽同节奏）。
 pub(super) const SETTINGS_ACTION_HEIGHT: f32 = 28.0;
 /// 「模型与默认项」区失效提示（render 与 AX 同源；只声明事实，不切换）。
-pub(crate) const SETTINGS_DEFAULT_UNAVAILABLE_NOTE: &str = "Default model unavailable — the default provider is disconnected or the model is not in its current catalog.";
+pub(crate) fn settings_default_unavailable_note() -> &'static str {
+    t("settings.default_unavailable_note")
+}
 /// null `proxy_url` 展示（ADR-047 D1；render / AX 同源）。
-pub(crate) const SETTINGS_PROXY_UNSET: &str = "Not set (uses system environment variables)";
+pub(crate) fn settings_proxy_unset() -> &'static str {
+    t("settings.network.proxy_unset")
+}
 /// 生效边界（ADR-047 D2；不得宣称全局即时生效）。
-pub(crate) const SETTINGS_PROXY_EFFECT_NOTE: &str = "New OAuth, verification, and catalog requests use this proxy immediately. Model traffic for the active provider updates after switching providers or restarting the Host.";
+pub(crate) fn settings_proxy_effect_note() -> &'static str {
+    t("settings.network.proxy_effect_note")
+}
 /// 本机代理写入用户配置目录而非 workspace；render / AX 同源。
-pub(crate) const SETTINGS_PROXY_STORAGE_NOTE: &str = "Stored in Pawork's per-user config.toml outside all workspaces. Proxy values in workspace .pawork/config.toml files are ignored.";
+pub(crate) fn settings_proxy_storage_note() -> &'static str {
+    t("settings.network.proxy_storage_note")
+}
 
 /// null `trust_workspaces_global` 展示（ADR-048 D1；render / AX 同源）。
-pub(crate) const SETTINGS_TRUST_UNSET: &str = "Not set (workspaces are untrusted by default)";
+pub(crate) fn settings_trust_unset() -> &'static str {
+    t("settings.permissions.trust_unset")
+}
 /// 权限页生效边界（ADR-048 D2/D3；不得宣称持久化或影响进行中 Run）。
-pub(crate) const SETTINGS_PERMISSIONS_EFFECT_NOTE: &str = "Changes apply only to this session and are not persisted. Running tasks are unchanged; new tasks use the updated settings until the Host restarts.";
+pub(crate) fn settings_permissions_effect_note() -> &'static str {
+    t("settings.permissions.effect_note")
+}
 
 /// 「工具与 MCP」页 Remove 二次确认提示（SET-6c / ADR-049 D2；render 与
 /// AX 同源，诚实标注快照语义）。
-pub(crate) const SETTINGS_MCP_REMOVE_CONFIRM_NOTE: &str = "Removing this server updates the global configuration and clears its credentials. Tools already snapshotted by a running task are unchanged.";
+pub(crate) fn settings_mcp_remove_confirm_note() -> &'static str {
+    t("settings.tools.remove_confirm_note")
+}
 /// 「工具与 MCP」页生效边界（SET-6c / ADR-049 D1/D2；render 与 AX 同源）。
-pub(crate) const SETTINGS_MCP_EFFECT_NOTE: &str = "Test checks the server and refreshes its status. Remove updates the global configuration, clears credentials, and unregisters its tools for this session.";
+pub(crate) fn settings_mcp_effect_note() -> &'static str {
+    t("settings.tools.effect_note")
+}
 
 /// null shell 展示（SET-6d / ADR-050 D2；render 与 AX 同源）。
-pub(crate) const SETTINGS_TERMINAL_SHELL_UNSET: &str = "Not set (uses the platform default)";
+pub(crate) fn settings_terminal_shell_unset() -> &'static str {
+    t("settings.terminal.shell_unset")
+}
 /// 终端页生效边界（SET-6d / ADR-050 D4；render 与 AX 同源，快照语义）。
-pub(crate) const SETTINGS_TERMINAL_EFFECT_NOTE: &str =
-    "Changes apply to newly created terminals; existing terminals are unchanged.";
-
-/// 外观页主题说明（SET-6e）：只陈述已实现能力，不画未实现的
-/// light / system 主题控件。render / AX 同源。
-pub(crate) const SETTINGS_APPEARANCE_THEME_NOTE: &str =
-    "Dark theme is currently the only theme.";
-/// 外观页字号生效边界（SET-6e）：本片不引入第二套配置或假持久化。
-pub(crate) const SETTINGS_APPEARANCE_EFFECT_NOTE: &str = "Text size applies immediately to this Desktop session and resets to 100% after restart. You can also use Cmd+=, Cmd+-, or Cmd+0.";
+pub(crate) fn settings_terminal_effect_note() -> &'static str {
+    t("settings.terminal.effect_note")
+}
 
 /// 高级页启动目标边界（SET-6f）：runtime ID 不能冒充 CLI 配置实例名，
 /// 且任何凭证及其路径都不进入 render / AX。
-pub(crate) const SETTINGS_ADVANCED_TARGET_NOTE: &str = "The endpoint is selected by --instance or --socket when Desktop starts; changing it requires a restart. The Host runtime ID is not a configuration instance name. GUI tokens and token paths are never shown here.";
+pub(crate) fn settings_advanced_target_note() -> &'static str {
+    t("settings.advanced.target_note")
+}
 /// Host 级自检仍由 pre-Core CLI 命令负责；Desktop 不 shell-out，也不从
 /// socket 路径推断 data directory / 配置实例名。
-pub(crate) const SETTINGS_ADVANCED_DOCTOR_NOTE: &str = "Use pawork --instance <name> doctor for Host data directory, PID, socket, and handshake checks. Desktop does not infer an instance name or run that command.";
+pub(crate) fn settings_advanced_doctor_note() -> &'static str {
+    t("settings.advanced.doctor_note")
+}
 
 /// Provider 概览中的目录列：只给 availability 与真实模型数，不把错误、
 /// endpoint 或 snapshot 标签塞进普通列表与 AX summary。
@@ -100,16 +118,11 @@ pub(crate) fn provider_catalog_overview_label(
     match &provider.catalog {
         crate::projection::ProviderCatalogState::Remote { .. }
         | crate::projection::ProviderCatalogState::FixedFallback { .. } => {
-            if model_count == 0 {
-                "Catalog available".into()
-            } else {
-                format!(
-                    "{model_count} model{}",
-                    if model_count == 1 { "" } else { "s" }
-                )
-            }
+            crate::ui::i18n::catalog_overview_label(model_count)
         }
-        crate::projection::ProviderCatalogState::Unavailable { .. } => "Catalog unavailable".into(),
+        crate::projection::ProviderCatalogState::Unavailable { .. } => {
+            t("settings.providers.catalog_unavailable").to_string()
+        }
     }
 }
 /// 外观页字号按钮的固定几何；render 与 AX bounds 共用，避免缩放后命中框漂移。
@@ -176,20 +189,26 @@ pub(crate) fn provider_status_lines(
     if let Some(reason) = &state.query.stale_reason {
         lines.push((
             "stale",
-            format!("Offline · showing last known state ({reason})"),
+            t("settings.status.offline_stale").replace("{}", reason),
         ));
     } else if state.query.loading {
-        lines.push(("loading", "Loading…".to_string()));
+        lines.push(("loading", t("settings.status.loading").to_string()));
     }
     if let Some(error) = &state.query.error {
-        lines.push(("error", format!("Could not load provider status · {error}")));
+        lines.push((
+            "error",
+            t("settings.providers.status_error").replace("{}", error),
+        ));
     }
     if state.providers.is_empty()
         && !state.query.loading
         && state.query.error.is_none()
         && state.query.stale_reason.is_none()
     {
-        lines.push(("empty", "No providers reported by the host.".to_string()));
+        lines.push((
+            "empty",
+            t("settings.providers.status_empty").to_string(),
+        ));
     }
     lines
 }
@@ -203,10 +222,10 @@ pub(crate) fn general_status_lines(
     if let Some(reason) = &state.query.stale_reason {
         lines.push((
             "stale",
-            format!("Offline · showing last known state ({reason})"),
+            t("settings.status.offline_stale").replace("{}", reason),
         ));
     } else if state.query.loading {
-        lines.push(("loading", "Loading…".to_string()));
+        lines.push(("loading", t("settings.status.loading").to_string()));
     }
     if let Some(error) = &state.query.error {
         lines.push(("error", error.clone()));
@@ -223,10 +242,10 @@ pub(crate) fn permissions_status_lines(
     if let Some(reason) = &state.query.stale_reason {
         lines.push((
             "stale",
-            format!("Offline · showing last known state ({reason})"),
+            t("settings.status.offline_stale").replace("{}", reason),
         ));
     } else if state.query.loading {
-        lines.push(("loading", "Loading…".to_string()));
+        lines.push(("loading", t("settings.status.loading").to_string()));
     }
     if let Some(error) = &state.query.error {
         lines.push(("error", error.clone()));
@@ -241,10 +260,10 @@ pub(crate) fn terminal_status_lines(state: &SettingsTerminalState) -> Vec<(&'sta
     if let Some(reason) = &state.query.stale_reason {
         lines.push((
             "stale",
-            format!("Offline · showing last known state ({reason})"),
+            t("settings.status.offline_stale").replace("{}", reason),
         ));
     } else if state.query.loading {
-        lines.push(("loading", "Loading…".to_string()));
+        lines.push(("loading", t("settings.status.loading").to_string()));
     }
     if let Some(error) = &state.query.error {
         lines.push(("error", error.clone()));
@@ -259,13 +278,16 @@ pub(crate) fn tools_status_lines(state: &ResourcesPanelState) -> Vec<(&'static s
     if let Some(reason) = &state.stale_reason {
         lines.push((
             "stale",
-            format!("Offline · showing last known state ({reason})"),
+            t("settings.status.offline_stale").replace("{}", reason),
         ));
     } else if matches!(state.fetch, ResourcesFetch::Fetching) {
-        lines.push(("loading", "Loading…".to_string()));
+        lines.push(("loading", t("settings.status.loading").to_string()));
     }
     if let ResourcesFetch::Failed(reason) = &state.fetch {
-        lines.push(("error", format!("Could not load MCP servers · {reason}")));
+        lines.push((
+            "error",
+            t("settings.tools.status_error").replace("{}", reason),
+        ));
     }
     if let Some(error) = &state.action_error {
         lines.push(("action", error.clone()));
@@ -275,7 +297,7 @@ pub(crate) fn tools_status_lines(state: &ResourcesPanelState) -> Vec<(&'static s
         && state.stale_reason.is_none()
         && !matches!(state.fetch, ResourcesFetch::Failed(_))
     {
-        lines.push(("empty", "No MCP servers configured.".to_string()));
+        lines.push(("empty", t("settings.tools.status_empty").to_string()));
     }
     lines
 }
@@ -336,16 +358,16 @@ impl SettingsAuthAction {
 
     pub(crate) fn label(&self) -> &'static str {
         match self {
-            Self::ConnectApiKey => "Connect API key",
-            Self::ConnectOauth => "Connect OAuth",
-            Self::ReplaceOauth => "Replace OAuth",
-            Self::CancelOauth => "Cancel",
-            Self::ReplaceApiKey => "Replace API key",
-            Self::VerifyApiKey => "Verify",
-            Self::CancelApiKeyInput => "Cancel",
-            Self::Remove => "Remove",
-            Self::ConfirmRemove => "Remove connection",
-            Self::KeepRemove => "Keep",
+            Self::ConnectApiKey => t("settings.providers.action_connect_api_key"),
+            Self::ConnectOauth => t("settings.providers.action_connect_oauth"),
+            Self::ReplaceOauth => t("settings.providers.action_replace_oauth"),
+            Self::CancelOauth => t("settings.providers.action_cancel"),
+            Self::ReplaceApiKey => t("settings.providers.action_replace_api_key"),
+            Self::VerifyApiKey => t("settings.providers.action_verify"),
+            Self::CancelApiKeyInput => t("settings.providers.action_cancel"),
+            Self::Remove => t("settings.providers.action_remove"),
+            Self::ConfirmRemove => t("settings.providers.action_confirm_remove"),
+            Self::KeepRemove => t("settings.providers.action_keep"),
         }
     }
 
@@ -367,12 +389,24 @@ pub(crate) enum SettingsControl {
     /// 设为默认（SET-5）：携带转义后的 "<provider>:<model>"，由 AppView
     /// 对照 projection.models 还原（未知 fail-closed）。
     SetDefaultModel(String),
+    /// 供应商代理开关（ADR-052 SET-6h）：携带转义后的 provider id，由
+    /// AppView 对照 provider 清单还原（未知 fail-closed）。
+    UseProxy(String),
 }
 
 pub(crate) fn settings_api_key_input_identifier(provider_id: &str) -> String {
     format!(
         "{SETTINGS_CONTROL_PREFIX}{}",
         dynamic_identifier("api-key-input", provider_id)
+    )
+}
+
+/// 「供应商代理开关」控件 identifier（render 按钮 id / AX 节点 id / 派发键
+/// 三用；provider id 经 dynamic_identifier 转义）。
+pub(crate) fn settings_use_proxy_identifier(provider_id: &str) -> String {
+    format!(
+        "{SETTINGS_CONTROL_PREFIX}{}",
+        dynamic_identifier("use-proxy", provider_id)
     )
 }
 
@@ -394,6 +428,9 @@ pub(crate) fn parse_settings_control(identifier: &str) -> Option<SettingsControl
     }
     if let Some(target) = rest.strip_prefix("set-default-") {
         return Some(SettingsControl::SetDefaultModel(target.to_string()));
+    }
+    if let Some(provider) = rest.strip_prefix("use-proxy-") {
+        return Some(SettingsControl::UseProxy(provider.to_string()));
     }
     // 已知 action key 集合有限且互不为前缀（均以 '-' 收尾成段），
     // 逐个前缀匹配消解复合 key（connect-oauth 等）。
@@ -456,10 +493,10 @@ impl SettingsMcpAction {
 
     pub(crate) fn label(&self) -> &'static str {
         match self {
-            Self::Test => "Test",
-            Self::Remove => "Remove",
-            Self::ConfirmRemove => "Confirm remove",
-            Self::KeepRemove => "Keep",
+            Self::Test => t("settings.tools.action_test"),
+            Self::Remove => t("settings.tools.action_remove"),
+            Self::ConfirmRemove => t("settings.tools.action_confirm_remove"),
+            Self::KeepRemove => t("settings.tools.action_keep"),
         }
     }
 
@@ -604,8 +641,8 @@ impl AppView {
             .radius(4.0)
             .bordered()
             .text_size(font::BODY)
-            .label("← Back to workspace")
-            .tooltip("Back to workspace")
+            .label(t("settings.back"))
+            .tooltip(t("settings.back_tooltip"))
             .on_click(cx.listener(|view, event, window, cx| {
                 if view.consume_button_key_click("settings-back", event) {
                     return;
@@ -641,7 +678,7 @@ impl AppView {
                     .px(px(metrics::RAIL_INNER_PAD))
                     .font_weight(FontWeight::MEDIUM)
                     .child(
-                        Label::new("Settings")
+                        Label::new(t("settings.rail_title"))
                             .size(font::TITLE)
                             .color(dark().text.primary),
                     ),
@@ -649,7 +686,7 @@ impl AppView {
             .child(back)
             .child(self.settings_nav_item(
                 "settings-nav-providers",
-                "Models & providers",
+                t("settings.nav.providers"),
                 current_page == SettingsPage::Providers,
                 SettingsPage::Providers,
                 cx,
@@ -657,7 +694,7 @@ impl AppView {
         if general_available {
             rail = rail.child(self.settings_nav_item(
                 "settings-nav-general",
-                "Network",
+                t("settings.nav.general"),
                 current_page == SettingsPage::General,
                 SettingsPage::General,
                 cx,
@@ -666,7 +703,7 @@ impl AppView {
         if permissions_available {
             rail = rail.child(self.settings_nav_item(
                 "settings-nav-permissions",
-                "Approvals",
+                t("settings.nav.permissions"),
                 current_page == SettingsPage::Permissions,
                 SettingsPage::Permissions,
                 cx,
@@ -675,7 +712,7 @@ impl AppView {
         if tools_available {
             rail = rail.child(self.settings_nav_item(
                 "settings-nav-tools",
-                "Tools & MCP",
+                t("settings.nav.tools"),
                 current_page == SettingsPage::Tools,
                 SettingsPage::Tools,
                 cx,
@@ -684,7 +721,7 @@ impl AppView {
         if terminal_available {
             rail = rail.child(self.settings_nav_item(
                 "settings-nav-terminal",
-                "Terminal",
+                t("settings.nav.terminal"),
                 current_page == SettingsPage::Terminal,
                 SettingsPage::Terminal,
                 cx,
@@ -692,14 +729,14 @@ impl AppView {
         }
         rail = rail.child(self.settings_nav_item(
             "settings-nav-appearance",
-            "Appearance",
+            t("settings.nav.appearance"),
             current_page == SettingsPage::Appearance,
             SettingsPage::Appearance,
             cx,
         ));
         rail = rail.child(self.settings_nav_item(
             "settings-nav-advanced",
-            "Advanced",
+            t("settings.nav.advanced"),
             current_page == SettingsPage::Advanced,
             SettingsPage::Advanced,
             cx,
@@ -707,7 +744,7 @@ impl AppView {
         if about_available {
             rail = rail.child(self.settings_nav_item(
                 "settings-nav-about",
-                "About",
+                t("settings.nav.about"),
                 current_page == SettingsPage::About,
                 SettingsPage::About,
                 cx,

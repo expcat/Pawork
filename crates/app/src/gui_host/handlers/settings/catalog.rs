@@ -5,6 +5,7 @@ use pawork_domain::ProviderId;
 use pawork_protocol::{
     AppCommand, AppCommandEnvelope, AppQuery, AppResponse, DefaultModelPair, ProviderAuthState,
     ProviderAuthStatusData, ProviderAuthStatusEntry, ProviderCatalogState,
+    ProviderUseProxyData,
 };
 use pawork_providers::ReasoningProtector;
 
@@ -182,6 +183,14 @@ pub(crate) async fn provider_auth_status(
                 .collect(),
             auth: auth_state(&core, &adapter.auth_flights, channel),
             catalog,
+            // ADR-052 SET-6h：生效值 = 未显式 `use_proxy = false`。
+            use_proxy: core
+                .config()
+                .providers
+                .iter()
+                .find(|provider| provider.id == channel.id)
+                .and_then(|provider| provider.use_proxy)
+                != Some(false),
         })
         .collect();
     // SET-5：顶层透出生效配置（分层合并后）的持久化默认项；
@@ -252,5 +261,54 @@ pub(crate) async fn set_default_model(
     Ok(settings_data(DefaultModelPair {
         provider_id: id.to_string(),
         model_id: model_id.clone(),
+    }))
+}
+
+/// ADR-052 SET-6h：切换供应商级代理开关。`use_proxy = false` 表示该
+/// provider 出站绕过 Global `proxy_url`；未设置或 `true` 跟随全局代理。
+/// 与 set_default_model 一致：写盘成功即同步内存生效配置。
+pub(crate) async fn set_provider_use_proxy(
+    adapter: &GuiHostAdapter,
+    _envelope: &AppCommandEnvelope,
+    command: &AppCommand,
+) -> Result<AppResponse, GuiHostError> {
+    let AppCommand::SetProviderUseProxy {
+        provider_id,
+        use_proxy,
+    } = command
+    else {
+        unreachable!("set_provider_use_proxy handler receives SetProviderUseProxy")
+    };
+    let id = provider_id.as_str();
+    {
+        let core = adapter.core.read().await;
+        let known = channels::is_first_party(id)
+            || core
+                .config()
+                .providers
+                .iter()
+                .any(|provider| provider.id == id);
+        if !known {
+            return Err(GuiHostAdapter::host_error(
+                "unknown_provider",
+                format!("provider {id} is unknown"),
+            ));
+        }
+    }
+    let path = pawork_workspace::config::global_config_path().ok_or_else(|| {
+        GuiHostAdapter::host_error(
+            "config_unavailable",
+            "global config directory is not available on this platform",
+        )
+    })?;
+    pawork_workspace::config::write_provider_use_proxy(&path, id, *use_proxy)
+        .map_err(|error| GuiHostAdapter::host_error("config_write", error.to_string()))?;
+    {
+        let mut core = adapter.core.write().await;
+        core.set_provider_use_proxy(id, *use_proxy);
+    }
+    Ok(settings_data(ProviderUseProxyData {
+        provider_id: id.to_string(),
+        use_proxy: *use_proxy,
     }))
 }

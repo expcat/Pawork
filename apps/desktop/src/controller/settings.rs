@@ -247,6 +247,56 @@ impl DesktopController {
         });
     }
 
+    /// 切换供应商级代理开关（set_provider_use_proxy，ADR-052 SET-6h）。
+    /// Data 确认后发 `ProviderUseProxyConfirmed`（回执即写后状态）；
+    /// Error / 传输失败经 OperationFailed 呈现，不动 UI 现有开关值。
+    pub fn set_provider_use_proxy(&self, provider_id: String, use_proxy: bool) {
+        let Some(client) = self.current_client() else {
+            self.emit_reliable(ControllerEvent::OperationFailed {
+                action: "set provider use proxy".into(),
+                reason: "not connected".into(),
+            });
+            return;
+        };
+        let events = self.event_sender();
+        self.runtime.spawn(async move {
+            let command = set_provider_use_proxy_command(&provider_id, use_proxy);
+            let response = match client
+                .command(command, command_source(), actor_identity())
+                .await
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    try_emit(
+                        &events,
+                        ControllerEvent::OperationFailed {
+                            action: "set provider use proxy",
+                            reason: error.to_string(),
+                        },
+                    );
+                    return;
+                }
+            };
+            match parse_provider_use_proxy_response(&response) {
+                Ok(confirmed) => {
+                    let _ = events
+                        .send(ControllerEvent::ProviderUseProxyConfirmed {
+                            provider_id: confirmed.provider_id,
+                            use_proxy: confirmed.use_proxy,
+                        })
+                        .await;
+                }
+                Err(reason) => try_emit(
+                    &events,
+                    ControllerEvent::OperationFailed {
+                        action: "set provider use proxy",
+                        reason,
+                    },
+                ),
+            }
+        });
+    }
+
     /// 拉取 Settings「权限与审批」页（permissions_settings，SET-6b）。返回
     /// 是否已派出（断线时由 UI 保留 stale 只读结果，不进入 loading）。
     pub fn load_permissions_settings(&self) -> bool {

@@ -4,9 +4,10 @@ use gpui::{App, Focusable, Window};
 
 use super::{AxAction, AxNode, AxRect, AxRole};
 use crate::projection::ConnectionState;
+use crate::ui::i18n::t;
 use crate::ui::settings::{
-    general_status_lines, SETTINGS_PROXY_EFFECT_NOTE, SETTINGS_PROXY_STORAGE_NOTE,
-    SETTINGS_PROXY_UNSET,
+    general_status_lines, settings_proxy_effect_note, settings_proxy_storage_note,
+    settings_proxy_unset,
 };
 use crate::ui::AppView;
 
@@ -31,7 +32,7 @@ impl AppView {
         );
         let current = match &state.proxy_url {
             Some(url) => url.clone(),
-            None => SETTINGS_PROXY_UNSET.to_string(),
+            None => settings_proxy_unset().to_string(),
         };
         let input_empty = self.settings_proxy_input.read(cx).text().trim().is_empty();
         let save_enabled = writes && !input_empty;
@@ -39,12 +40,12 @@ impl AppView {
         let refresh_focused =
             self.open_menu.is_none() && self.settings_refresh_focus.is_focused(window);
         let width = super::settings::settings_content_ax_width(frame);
-        let mut page = AxNode::new("settings-page", AxRole::Group, "Network", frame)
+        let mut page = AxNode::new("settings-page", AxRole::Group, t("settings.network.title"), frame)
             .child(
                 AxNode::new(
                     "settings-page-title",
                     AxRole::StaticText,
-                    "Network",
+                    t("settings.network.title"),
                     AxRect::new(
                         frame.x + 16.0,
                         frame.y + 16.0,
@@ -52,13 +53,13 @@ impl AppView {
                         HEADING_HEIGHT + SUBTITLE_HEIGHT,
                     ),
                 )
-                .value("Host outbound network settings"),
+                .value(t("settings.network.subtitle")),
             )
             .child(
                 AxNode::new(
                     "settings-refresh",
                     AxRole::Button,
-                    "Refresh",
+                    t("settings.refresh"),
                     AxRect::new(
                         frame.x + 16.0 + width - 96.0,
                         frame.y + 16.0,
@@ -76,7 +77,7 @@ impl AppView {
                 AxNode::new(
                     format!("settings-status-{kind}"),
                     AxRole::StaticText,
-                    "Network status",
+                    t("settings.network.ax_status"),
                     AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT),
                 )
                 .value(label),
@@ -86,7 +87,7 @@ impl AppView {
         page = page.child(AxNode::new(
             "settings-proxy-heading",
             AxRole::StaticText,
-            "HTTP proxy",
+            t("settings.network.proxy_title"),
             AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT),
         ));
         y += STATUS_HEIGHT + 8.0;
@@ -94,7 +95,7 @@ impl AppView {
             AxNode::new(
                 "settings-proxy-current",
                 AxRole::StaticText,
-                "Current proxy URL",
+                t("settings.network.ax_current_proxy"),
                 AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT),
             )
             .value(current),
@@ -111,7 +112,7 @@ impl AppView {
             AxNode::new(
                 "settings-proxy-input",
                 AxRole::TextArea,
-                "Proxy URL",
+                t("settings.network.ax_proxy_input"),
                 AxRect::new(frame.x + 16.0, y, (width - 180.0).max(120.0), CONTROL_ROW),
             )
             .value(input_value)
@@ -124,7 +125,7 @@ impl AppView {
             AxNode::new(
                 "settings-proxy-save",
                 AxRole::Button,
-                "Save",
+                t("settings.save"),
                 AxRect::new(frame.x + 16.0 + width - 168.0, y, 80.0, CONTROL_ROW),
             )
             .enabled(save_enabled)
@@ -135,7 +136,7 @@ impl AppView {
             AxNode::new(
                 "settings-proxy-clear",
                 AxRole::Button,
-                "Clear",
+                t("settings.clear"),
                 AxRect::new(frame.x + 16.0 + width - 80.0, y, 80.0, CONTROL_ROW),
             )
             .enabled(clear_enabled)
@@ -147,20 +148,20 @@ impl AppView {
             AxNode::new(
                 "settings-proxy-effect",
                 AxRole::StaticText,
-                "Effect",
+                t("settings.network.ax_effect"),
                 AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT * 2.0),
             )
-            .value(SETTINGS_PROXY_EFFECT_NOTE),
+            .value(settings_proxy_effect_note()),
         );
         y += STATUS_HEIGHT * 2.0 + 8.0;
         page.child(
             AxNode::new(
                 "settings-proxy-storage",
                 AxRole::StaticText,
-                "Storage",
+                t("settings.network.ax_storage"),
                 AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT * 2.0),
             )
-            .value(SETTINGS_PROXY_STORAGE_NOTE),
+            .value(settings_proxy_storage_note()),
         )
     }
 }

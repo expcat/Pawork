@@ -4,7 +4,8 @@ use gpui::Window;
 
 use super::app::{CONTROL_HEIGHT, PAD};
 use super::{AxAction, AxNode, AxRect, AxRole};
-use crate::ui::settings::{SETTINGS_ADVANCED_DOCTOR_NOTE, SETTINGS_ADVANCED_TARGET_NOTE};
+use crate::ui::i18n::t;
+use crate::ui::settings::{settings_advanced_doctor_note, settings_advanced_target_note};
 use crate::ui::AppView;
 
 impl AppView {
@@ -17,11 +18,17 @@ impl AppView {
         const NOTE_HEIGHT: f32 = 56.0;
         let width = super::settings::settings_content_ax_width(frame);
         let mut y = frame.y + 16.0 + HEADING_HEIGHT + SUBTITLE_HEIGHT + 8.0;
-        let mut page = AxNode::new("settings-page", AxRole::Group, "Advanced", frame).child(
+        let mut page = AxNode::new(
+            "settings-page",
+            AxRole::Group,
+            t("settings.advanced.title"),
+            frame,
+        )
+        .child(
             AxNode::new(
                 "settings-page-title",
                 AxRole::StaticText,
-                "Advanced",
+                t("settings.advanced.title"),
                 AxRect::new(
                     frame.x + 16.0,
                     frame.y + 16.0,
@@ -29,7 +36,7 @@ impl AppView {
                     HEADING_HEIGHT + SUBTITLE_HEIGHT,
                 ),
             )
-            .value("Connection diagnostics and startup target"),
+            .value(t("settings.advanced.subtitle")),
         );
         for (id, label, value) in self.settings_advanced_diagnostic_rows() {
             page = page.child(
@@ -48,7 +55,7 @@ impl AppView {
                 AxNode::new(
                     "reconnect",
                     AxRole::Button,
-                    "Reconnect",
+                    t("settings.advanced.reconnect"),
                     AxRect::new(frame.x + 16.0, y, 112.0, CONTROL_HEIGHT),
                 )
                 .focused(self.open_menu.is_none() && self.reconnect_focus.is_focused(window))
@@ -60,20 +67,20 @@ impl AppView {
             AxNode::new(
                 "settings-advanced-target-note",
                 AxRole::StaticText,
-                "Startup target boundary",
+                t("settings.advanced.ax_target_title"),
                 AxRect::new(frame.x + 16.0, y, width, NOTE_HEIGHT),
             )
-            .value(SETTINGS_ADVANCED_TARGET_NOTE),
+            .value(settings_advanced_target_note()),
         );
         y += NOTE_HEIGHT + PAD;
         page.child(
             AxNode::new(
                 "settings-advanced-doctor-note",
                 AxRole::StaticText,
-                "Host diagnostics boundary",
+                t("settings.advanced.ax_doctor_title"),
                 AxRect::new(frame.x + 16.0, y, width, NOTE_HEIGHT),
             )
-            .value(SETTINGS_ADVANCED_DOCTOR_NOTE),
+            .value(settings_advanced_doctor_note()),
         )
     }
 }

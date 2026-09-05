@@ -1,6 +1,7 @@
 //! Settings AX 导航与页分发。identifier / Press gate / 几何与 render 同源。
 
 use super::{AxNode, AxRect, AxRole};
+use crate::ui::i18n::t;
 use crate::ui::AppView;
 
 impl AppView {
@@ -12,11 +13,17 @@ impl AppView {
         const ROW_HEIGHT: f32 = 40.0;
         let width = super::settings::settings_content_ax_width(frame);
         let mut y = frame.y + 16.0 + HEADING_HEIGHT + SUBTITLE_HEIGHT + 8.0;
-        let mut page = AxNode::new("settings-page", AxRole::Group, "About", frame).child(
+        let mut page = AxNode::new(
+            "settings-page",
+            AxRole::Group,
+            t("settings.about.title"),
+            frame,
+        )
+        .child(
             AxNode::new(
                 "settings-page-title",
                 AxRole::StaticText,
-                "About",
+                t("settings.about.title"),
                 AxRect::new(
                     frame.x + 16.0,
                     frame.y + 16.0,
@@ -24,7 +31,7 @@ impl AppView {
                     HEADING_HEIGHT + SUBTITLE_HEIGHT,
                 ),
             )
-            .value("Build and current Host connection information"),
+            .value(t("settings.about.subtitle")),
         );
         for (id, label, value) in self.settings_about_rows().unwrap_or_default() {
             page = page.child(

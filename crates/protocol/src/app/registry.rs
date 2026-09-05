@@ -10,7 +10,7 @@ use crate::GuiCapability;
 
 use super::command::AppCommand;
 use super::query::AppQuery;
-use super::version::{ApiVersion, V1_0, V1_1, V1_2, V1_3, V1_4, V1_5, V1_6, V1_7, V1_8};
+use super::version::{ApiVersion, V1_0, V1_1, V1_2, V1_3, V1_4, V1_5, V1_6, V1_7, V1_8, V1_10};
 
 /// GUI 通道访问规格：是否可用 + 命令级所需能力。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -48,7 +48,7 @@ pub const GUI_INTRINSIC_CAPABILITIES: &[GuiCapability] =
     &[GuiCapability::Events, GuiCapability::Snapshots];
 
 static COMMANDS: &[RegistryEntry] = &[
-    // --- AppCommand（28）---
+    // --- AppCommand（29）---
     RegistryEntry {
         wire_name: "core_initialize",
         gui: GuiChannelAccess {
@@ -255,6 +255,19 @@ static COMMANDS: &[RegistryEntry] = &[
         acp: false,
         idempotent: true,
         since: V1_5,
+    },
+    // ADR-052 SET-6h：供应商级代理开关（Global 原子写 + 内存同步）；
+    // 仅 GUI 开放，未知 provider 宿主侧 fail-closed 报错。
+    RegistryEntry {
+        wire_name: "set_provider_use_proxy",
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
+        headless: None,
+        acp: false,
+        idempotent: true,
+        since: V1_10,
     },
     RegistryEntry {
         wire_name: "set_approval_mode",
@@ -571,6 +584,7 @@ pub fn command_wire_name(command: &AppCommand) -> &'static str {
         AppCommand::AuthCancel { .. } => "auth_cancel",
         AppCommand::SetDefaultModel { .. } => "set_default_model",
         AppCommand::SetProxyUrl { .. } => "set_proxy_url",
+        AppCommand::SetProviderUseProxy { .. } => "set_provider_use_proxy",
         AppCommand::SetApprovalMode { .. } => "set_approval_mode",
         AppCommand::SetTerminalSettings { .. } => "set_terminal_settings",
         AppCommand::ToolApprove { .. } => "tool_approve",

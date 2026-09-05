@@ -391,6 +391,22 @@ fn find_provider<'a>(
         .ok_or_else(|| AppError::UnknownProvider { id: id.to_string() })
 }
 
+/// 该 provider 出站应使用的代理（ADR-052 SET-6h）：Global `proxy_url`
+/// 生效，除非该 provider 显式 `use_proxy = false`。未按 id 特判，
+/// 仅查配置。
+fn provider_proxy(config: &PaworkConfig, provider_id: &str) -> Option<String> {
+    let bypass = config
+        .providers
+        .iter()
+        .find(|provider| provider.id == provider_id)
+        .is_some_and(|provider| provider.use_proxy == Some(false));
+    if bypass {
+        None
+    } else {
+        config.proxy_url.clone()
+    }
+}
+
 /// 通道协议解析（无凭证依赖）：首发通道固定，其余走 config provider_protocols。
 pub(crate) fn channel_protocol(
     channel: Option<&channels::FirstPartyChannel>,
@@ -471,7 +487,7 @@ pub(crate) async fn assemble_provider(
                 config_base.unwrap_or_else(|| channel.expect("channel").default_base_url.into());
             let mut chatgpt_config =
                 pawork_providers::ChatGptConfig::new(account_id).with_base_url(base_url);
-            chatgpt_config.http.proxy = config.proxy_url.clone();
+            chatgpt_config.http.proxy = provider_proxy(config, id);
             let provider =
                 pawork_providers::ChatGptProvider::new(chatgpt_config, Some(credential.clone()))?
                     .with_reasoning_protector(Arc::clone(&reasoning_protector));
@@ -495,7 +511,7 @@ pub(crate) async fn assemble_provider(
             let base_url =
                 config_base.unwrap_or_else(|| channel.expect("channel").default_base_url.into());
             let mut xai_config = pawork_providers::XaiConfig::new(base_url);
-            xai_config.http.proxy = config.proxy_url.clone();
+            xai_config.http.proxy = provider_proxy(config, id);
             let provider =
                 pawork_providers::XaiProvider::new(xai_config, Some(credential.clone()))?
                     .with_reasoning_protector(Arc::clone(&reasoning_protector));
@@ -510,7 +526,7 @@ pub(crate) async fn assemble_provider(
             let base_url =
                 config_base.unwrap_or_else(|| channel.expect("channel").default_base_url.into());
             let mut kimi_config = pawork_providers::KimiCodeConfig::new(base_url);
-            kimi_config.http.proxy = config.proxy_url.clone();
+            kimi_config.http.proxy = provider_proxy(config, id);
             let provider =
                 pawork_providers::KimiCodeProvider::new(kimi_config, Some(credential.clone()))?;
             (
@@ -525,7 +541,7 @@ pub(crate) async fn assemble_provider(
                 .ok_or_else(|| AppError::UnknownProvider { id: id.to_string() })?;
             let (credential, _source) = resolve_api_key_credential(backend, id)?;
             let mut channel_config = ApiKeyChannelConfig::new(preset)?;
-            channel_config.http.proxy = config.proxy_url.clone();
+            channel_config.http.proxy = provider_proxy(config, id);
             if let Some(base_url) = config_base {
                 channel_config = channel_config.with_base_url(base_url);
             }
@@ -551,7 +567,7 @@ pub(crate) async fn assemble_provider(
                     {
                         let mut c = OpenAiCompatibleConfig::new(base_url)
                             .with_provider_id(provider_id.as_str().to_string());
-                        c.http.proxy = config.proxy_url.clone();
+                        c.http.proxy = provider_proxy(config, id);
                         c
                     },
                     Some(credential.clone()),
@@ -561,7 +577,7 @@ pub(crate) async fn assemble_provider(
                         {
                             let mut c = AnthropicConfig::new(base_url)
                                 .with_provider_id(provider_id.as_str().to_string());
-                            c.http.proxy = config.proxy_url.clone();
+                            c.http.proxy = provider_proxy(config, id);
                             c
                         },
                         Some(credential.clone()),
