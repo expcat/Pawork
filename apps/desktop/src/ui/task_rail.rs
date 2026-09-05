@@ -22,8 +22,8 @@ use crate::ui::i18n::t;
 use crate::ui::theme::{dark, font, metrics};
 
 use super::{
-    now_unix_ms, rail_project_key, rail_session_focus_key, shell_layout, AppView, MenuKind,
-    RailStop,
+    now_unix_ms, rail_project_key, rail_session_archive_focus_key, rail_session_focus_key,
+    rail_session_rename_focus_key, shell_layout, AppView, MenuKind, RailStop,
 };
 
 enum RailView {
@@ -677,6 +677,17 @@ impl AppView {
                 let unread = self.projection.session_unread(&task.session_id);
                 let task_focus =
                     self.rail_row_focus_handle(&rail_session_focus_key(&task.session_id), &*cx);
+                // ADR-054 D2：该行处于行内改名编辑态时，标题槽换成输入框，
+                // 行点击 / 键盘激活让位（不抢编辑焦点）。
+                let renaming = self
+                    .session_rename
+                    .as_ref()
+                    .is_some_and(|state| state.session_id == task.session_id);
+                let rename_input = self
+                    .session_rename
+                    .as_ref()
+                    .filter(|state| state.session_id == task.session_id)
+                    .map(|state| state.input.clone());
                 // 状态点语义（诚实，只消费 wire 已有数据）：Needs input
                 // （pending approval 按 session_id 归属）琥珀优先于 Running 蓝，
                 // 再次为 Blocked 红（R3 Wave B live 派生）；其余空心灰圆
@@ -694,7 +705,28 @@ impl AppView {
                 } else {
                     0.0
                 };
-                let row = ListRow::task(SharedString::from(session_id.clone()), is_active)
+                let title_slot = match rename_input {
+                    Some(input) => div().flex_1().min_w_0().child(input),
+                    None => div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_size(font::BODY)
+                        .font_weight(if is_active {
+                            FontWeight::MEDIUM
+                        } else if unread {
+                            FontWeight::SEMIBOLD
+                        } else {
+                            FontWeight::NORMAL
+                        })
+                        .text_color(if is_active {
+                            dark().text.primary
+                        } else {
+                            dark().text.emphasis
+                        })
+                        .child(task.title.clone()),
+                };
+                let mut row = ListRow::task(SharedString::from(session_id.clone()), is_active)
                     .track_focus(&task_focus)
                     .child(
                         div()
@@ -707,26 +739,7 @@ impl AppView {
                             .child(status_dot(dot_filled, dot_color))
                             // 长任务标题单行 truncate；相对时间右对齐保留；
                             // Unread 只提字重（同字号同行高，不改几何）。
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .truncate()
-                                    .text_size(font::BODY)
-                                    .font_weight(if is_active {
-                                        FontWeight::MEDIUM
-                                    } else if unread {
-                                        FontWeight::SEMIBOLD
-                                    } else {
-                                        FontWeight::NORMAL
-                                    })
-                                    .text_color(if is_active {
-                                        dark().text.primary
-                                    } else {
-                                        dark().text.emphasis
-                                    })
-                                    .child(task.title.clone()),
-                            ),
+                            .child(title_slot),
                     )
                     .child(
                         div()
@@ -740,27 +753,125 @@ impl AppView {
                                     .size(font::BODY_SM)
                                     .color(dark().text.secondary),
                             ),
-                    )
+                    );
+                if !renaming {
+                    row = row
+                        .on_click(cx.listener(move |view, event: &ClickEvent, window, cx| {
+                            // 行级键盘激活后的同键 keyup 合成 click 在此吞除。
+                            if view.consume_row_key_click(&task_row_key_click, event) {
+                                return;
+                            }
+                            view.on_session_clicked(&session_id, window, cx);
+                        }))
+                        .on_activate(cx.listener(
+                            move |view, _event: &KeyDownEvent, window, cx| {
+                                // 菜单打开时让位：Enter 由根节点菜单接管（P3a）。
+                                if view.open_menu.is_some() {
+                                    // 双路投递第二路 keyup 合成 click 吞除标记
+                                    // 重新武装（防 session 被二次打开）。
+                                    view.note_row_key_activate(&task_row_key);
+                                    return;
+                                }
+                                view.note_row_key_activate(&task_row_key);
+                                view.on_session_clicked(&activate_session_id, window, cx);
+                                cx.stop_propagation();
+                            },
+                        ));
+                }
+                // OPT-D：选中行右侧改名 / 归档按钮（hit area ≥32×32；与行
+                // 点击区解耦，按钮 click 不冒泡成「打开会话」）。
+                if is_active && !renaming {
+                    let rename_focus = self.rail_row_focus_handle(
+                        &rail_session_rename_focus_key(&task.session_id),
+                        &*cx,
+                    );
+                    let archive_focus = self.rail_row_focus_handle(
+                        &rail_session_archive_focus_key(&task.session_id),
+                        &*cx,
+                    );
+                    let begin_rename_id = task.session_id.clone();
+                    let activate_rename_id = begin_rename_id.clone();
+                    let rename_button = Button::new(format!(
+                        "session-rename-{}",
+                        task.session_id
+                    ))
+                    .track_focus(&rename_focus)
+                    .variant(ButtonVariant::Ghost)
+                    .disabled(!can_create)
+                    .padding(ButtonPadding::None)
+                    .width(px(metrics::RAIL_SESSION_ACTION_SIZE))
+                    .height(px(metrics::RAIL_SESSION_ACTION_SIZE))
+                    .center()
+                    .radius(4.0)
+                    .text_size(font::BASE)
+                    .text_color(dark().text.secondary)
+                    .label("✎")
+                    .tooltip(t("taskrail.rename"))
                     .on_click(cx.listener(move |view, event: &ClickEvent, window, cx| {
-                        // 行级键盘激活后的同键 keyup 合成 click 在此吞除。
-                        if view.consume_row_key_click(&task_row_key_click, event) {
+                        if view.consume_button_key_click(&begin_rename_id, event) {
                             return;
                         }
-                        view.on_session_clicked(&session_id, window, cx);
+                        view.begin_session_rename(&begin_rename_id, window, cx);
                     }))
-                    .on_activate(cx.listener(move |view, _event: &KeyDownEvent, window, cx| {
-                        // 菜单打开时让位：Enter 由根节点菜单接管（P3a）。
-                        if view.open_menu.is_some() {
-                            // 双路投递第二路 keyup 合成 click 吞除标记
-                            // 重新武装（防 session 被二次打开）。
-                            view.note_row_key_activate(&task_row_key);
+                        .on_activate(cx.listener(
+                            move |view, _event: &KeyDownEvent, window, cx| {
+                                if view.open_menu.is_some() {
+                                    view.note_button_key_activate(&activate_rename_id);
+                                    return;
+                                }
+                                view.note_button_key_activate(&activate_rename_id);
+                                view.begin_session_rename(&activate_rename_id, window, cx);
+                                cx.stop_propagation();
+                            },
+                        ));
+                    let archive_click_id = task.session_id.clone();
+                    let archive_activate_id = task.session_id.clone();
+                    let archive_button = Button::new(format!(
+                        "session-archive-{}",
+                        task.session_id
+                    ))
+                    .track_focus(&archive_focus)
+                    .variant(ButtonVariant::Ghost)
+                    .disabled(!can_create)
+                    .padding(ButtonPadding::None)
+                    .width(px(metrics::RAIL_SESSION_ACTION_SIZE))
+                    .height(px(metrics::RAIL_SESSION_ACTION_SIZE))
+                    .center()
+                    .radius(4.0)
+                    .text_size(font::BASE)
+                    .text_color(dark().text.secondary)
+                    .label("🗄")
+                    .tooltip(t("taskrail.archive"))
+                    .on_click(cx.listener(move |view, event: &ClickEvent, _window, cx| {
+                        if view.consume_button_key_click(&archive_click_id, event) {
                             return;
                         }
-                        view.note_row_key_activate(&task_row_key);
-                        view.on_session_clicked(&activate_session_id, window, cx);
-                        cx.stop_propagation();
-                    }));
-                children.push(div().mt(px(row_gap)).child(row).into_any_element());
+                        view.on_session_archive(archive_click_id.clone(), cx);
+                    }))
+                    .on_activate(cx.listener(
+                        move |view, _event: &KeyDownEvent, _window, cx| {
+                            if view.open_menu.is_some() {
+                                view.note_button_key_activate(&archive_activate_id);
+                                return;
+                            }
+                            view.note_button_key_activate(&archive_activate_id);
+                            view.on_session_archive(archive_activate_id.clone(), cx);
+                            cx.stop_propagation();
+                        },
+                    ));
+                    children.push(
+                        div()
+                            .mt(px(row_gap))
+                            .flex()
+                            .items_center()
+                            .child(div().flex_1().min_w_0().child(row))
+                            .child(rename_button)
+                            .child(archive_button)
+                            .into_any_element(),
+                    );
+                } else {
+                    children.push(div().mt(px(row_gap)).child(row).into_any_element());
+                }
                 if is_active {
                     active_offset = Some(children.len() - 1);
                 }

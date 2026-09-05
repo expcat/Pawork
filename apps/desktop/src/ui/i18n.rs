@@ -439,6 +439,8 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "live.needs_input" => ("Needs input", "等待输入"),
         "live.blocked" => ("Blocked", "受阻"),
         "taskrail.unassigned" => ("Unassigned", "未分组"),
+        "taskrail.rename" => ("Rename", "重命名"),
+        "taskrail.archive" => ("Archive", "归档"),
         // ── Workspace chrome · Composer / Input area ──
         "composer.placeholder_running" => (
             "Run in progress — sending is disabled. Cancel remains available.",
@@ -476,13 +478,10 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             ("Model switch needs a live connection.", "切换模型需要有效连接。")
         }
         "composer.workspace_scope" => ("Workspace · {}", "工作区 · {}"),
-        "composer.workspace_scope_confirm_all" => (
-            "Workspace · confirm in All projects",
-            "工作区 · 在「所有项目」中确认",
-        ),
-        "composer.add_workspace_first" => (
-            "Add a workspace before creating a task.",
-            "创建任务前，请先添加 workspace。",
+        "composer.no_project_chip" => ("No project", "无项目"),
+        "composer.file_tools_unavailable" => (
+            "File tools unavailable until a project is selected.",
+            "选择项目前，文件工具不可用。",
         ),
         "common.add_project" => ("Add project…", "添加项目…"),
         // ── Workspace chrome · Task rail ──
@@ -693,14 +692,6 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "status.opening_project" => ("Opening project…", "正在打开项目…"),
         "status.open_project_cancelled" => ("Open project cancelled.", "已取消打开项目。"),
         "status.open_project_failed" => ("Open project failed: {}", "打开项目失败：{}"),
-        "status.choose_project_first" => (
-            "Choose a project before creating a task.",
-            "创建任务前，请先选择一个项目。",
-        ),
-        "status.confirm_workspace_first" => (
-            "All projects: confirm a workspace before creating a task.",
-            "所有项目：创建任务前请先确认工作区。",
-        ),
         "status.no_task_attention" => ("No task needs attention.", "没有需要关注的任务。"),
         "status.changes_not_available" => {
             ("Changes data is not available yet.", "变更数据还不可用。")

@@ -103,6 +103,46 @@ impl SessionService {
         Ok(id)
     }
 
+    /// GUI SessionCreate（ADR-054 D1，workspace_id = None）：显式无归属，
+    /// 固定落盘 workspace_id = NULL，不挂接进程内 workspace 缓存。
+    pub async fn create_session_unbound(
+        &self,
+        core: &AppCore,
+        title: impl Into<String>,
+    ) -> Result<SessionId, AppError> {
+        let n = core.next_session.fetch_add(1, Ordering::Relaxed);
+        let ts = pawork_engine::now_timestamp();
+        let id = SessionId::from(format!("ses-{}-{n}", ts.as_unix_millis()));
+        core.store()?.create_session(&id, title, ts).await?;
+        Ok(id)
+    }
+
+    /// ADR-054 D2：改名；不存在由存储报 SessionNotFound。
+    pub async fn rename_session(
+        &self,
+        core: &AppCore,
+        session_id: &SessionId,
+        title: &str,
+        now_ms: i64,
+    ) -> Result<(), AppError> {
+        core.store()?.rename_session(session_id, title, now_ms).await?;
+        Ok(())
+    }
+
+    /// ADR-054 D3：归档 / 反归档；不存在由存储报 SessionNotFound。
+    pub async fn archive_session(
+        &self,
+        core: &AppCore,
+        session_id: &SessionId,
+        archived: bool,
+        now_ms: i64,
+    ) -> Result<(), AppError> {
+        core.store()?
+            .archive_session(session_id, archived, now_ms)
+            .await?;
+        Ok(())
+    }
+
     pub async fn list_sessions(&self, core: &AppCore) -> Result<Vec<SessionRecord>, AppError> {
         Ok(core.store()?.list_sessions().await?)
     }

@@ -161,7 +161,7 @@ async fn probe_smoke(
         .workspace_id
         .clone()
         .unwrap_or_else(|| "ws-default".into());
-    controller.create_session(workspace);
+    controller.create_session(Some(workspace));
     let session_id = wait_for_session(&events, &mut projection).await?;
     projection.select_session(&session_id);
 

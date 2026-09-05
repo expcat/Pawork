@@ -142,6 +142,28 @@ pub fn write_default_model_pair(
     })
 }
 
+/// 将 naming_provider/naming_model 原子写入指定（Global 层）配置文件
+/// （ADR-054 D4：与 default 对相同的写入口径，凭证仍只进 auth backend）。
+///
+/// 幂等：重复写入同一对值为最终覆盖语义。文件不存在时创建（含父目录）。
+pub fn write_naming_model_pair(
+    path: &Path,
+    provider_id: &str,
+    model_id: &str,
+) -> Result<(), ConfigError> {
+    rmw_global_config(path, |table| {
+        table.insert(
+            "naming_provider".into(),
+            toml::Value::String(provider_id.to_string()),
+        );
+        table.insert(
+            "naming_model".into(),
+            toml::Value::String(model_id.to_string()),
+        );
+        Ok((true, ()))
+    })
+}
+
 /// 将 `proxy_url` 原子写入指定（Global 层）配置文件（SET-6a，ADR-047 D2）。
 ///
 /// `Some` 覆盖该键；`None` 移除该键。其余未知字段原样保留。文件不存在时
@@ -301,6 +323,25 @@ mod tests {
             table.get("default_model").and_then(|v| v.as_str()),
             Some("glm-5.2")
         );
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn writes_naming_pair_roundtrip_and_keeps_default_pair() {
+        let path = temp_path("naming-roundtrip");
+        write_default_model_pair(&path, "glm-coding", "glm-5.2").expect("seed default pair");
+        write_naming_model_pair(&path, "opencode-go", "glm-5.3-flash").expect("write naming");
+        let content = std::fs::read_to_string(&path).expect("read back");
+        let config: crate::config::schema::PaworkConfig =
+            toml::from_str(&content).expect("schema parse");
+        assert_eq!(
+            config.naming_provider.as_deref(),
+            Some("opencode-go"),
+            "{content}"
+        );
+        assert_eq!(config.naming_model.as_deref(), Some("glm-5.3-flash"));
+        assert_eq!(config.default_provider.as_deref(), Some("glm-coding"));
+        assert_eq!(config.default_model.as_deref(), Some("glm-5.2"));
         std::fs::remove_file(&path).ok();
     }
 

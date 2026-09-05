@@ -341,9 +341,24 @@ pub enum AppCommand {
         trusted: bool,
     },
     SessionCreate {
-        workspace_id: WorkspaceId,
+        // ADR-054 D1（since 1.11）：字段可缺省或显式 null → 无归属会话；
+        // 显式传值行为不变（绑定该 workspace）。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        workspace_id: Option<WorkspaceId>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         title: Option<String>,
+    },
+    /// ADR-054 D2：会话改名。两字段必填；title trim 后为空由 Host 结构化
+    /// 拒绝，不写盘。
+    SessionRename {
+        session_id: SessionId,
+        title: String,
+    },
+    /// ADR-054 D3：归档 / 反归档。归档不删事件与投影；wire 保留
+    /// `archived: false` 反向写口。
+    SessionArchive {
+        session_id: SessionId,
+        archived: bool,
     },
     SessionOpen {
         session_id: SessionId,

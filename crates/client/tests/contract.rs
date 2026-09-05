@@ -285,7 +285,7 @@ async fn create_session_send_message_and_receive_streaming_run_events() {
     client
         .command(
             AppCommand::SessionCreate {
-                workspace_id: WorkspaceId::from("ws-default"),
+                workspace_id: Some(WorkspaceId::from("ws-default")),
                 title: Some("contract-a".into()),
             },
             source.clone(),
@@ -356,7 +356,7 @@ async fn snapshot_and_reconnect_resume_replays_missing_events() {
     client
         .command(
             AppCommand::SessionCreate {
-                workspace_id: WorkspaceId::from("ws-default"),
+                workspace_id: Some(WorkspaceId::from("ws-default")),
                 title: Some("contract-b".into()),
             },
             gui_source(&client),
@@ -511,7 +511,7 @@ async fn resume_falls_back_to_snapshot_required_when_replay_unavailable() {
     client
         .command(
             AppCommand::SessionCreate {
-                workspace_id: WorkspaceId::from("ws-default"),
+                workspace_id: Some(WorkspaceId::from("ws-default")),
                 title: Some("contract-b2".into()),
             },
             gui_source(&client),
@@ -598,7 +598,7 @@ async fn three_gui_clients_sync_runs_from_cli_and_each_other() {
     gui_a
         .command(
             AppCommand::SessionCreate {
-                workspace_id: WorkspaceId::from("ws-default"),
+                workspace_id: Some(WorkspaceId::from("ws-default")),
                 title: Some("contract-c".into()),
             },
             gui_source(&gui_a),
@@ -676,7 +676,7 @@ async fn gui_disconnect_does_not_cancel_run() {
     client
         .command(
             AppCommand::SessionCreate {
-                workspace_id: WorkspaceId::from("ws-default"),
+                workspace_id: Some(WorkspaceId::from("ws-default")),
                 title: Some("contract-g".into()),
             },
             gui_source(&client),

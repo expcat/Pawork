@@ -88,7 +88,7 @@ fn client_command_frame() -> ClientFrame {
         idempotency_key: None,
         issued_at: Timestamp::from_unix_millis(1),
         command: AppCommand::SessionCreate {
-            workspace_id: pawork_domain::WorkspaceId::from("workspace-1"),
+            workspace_id: Some(pawork_domain::WorkspaceId::from("workspace-1")),
             title: None,
         },
     })
@@ -256,6 +256,51 @@ fn golden_server_frames() {
         serde_json::from_slice(&encode_server_frame(&server_error_frame()).expect("encode error"))
             .expect("parse error");
     assert_golden("server_error.json", error);
+}
+
+/// ADR-054 OPT-2：会话生命周期词汇的 wire golden（since 1.11）。
+#[test]
+fn golden_opt2_session_lifecycle_frames() {
+    assert_golden(
+        "client_command_session_rename.json",
+        encode_client(&client_terminal_command_frame(AppCommand::SessionRename {
+            session_id: pawork_domain::SessionId::from("session-1"),
+            title: "renamed".into(),
+        })),
+    );
+    assert_golden(
+        "client_command_session_archive.json",
+        encode_client(&client_terminal_command_frame(AppCommand::SessionArchive {
+            session_id: pawork_domain::SessionId::from("session-1"),
+            archived: true,
+        })),
+    );
+    // D1：workspace_id 缺省 = 无归属，序列化后字段整个消失。
+    assert_golden(
+        "client_command_session_create_unassigned.json",
+        encode_client(&client_terminal_command_frame(AppCommand::SessionCreate {
+            workspace_id: None,
+            title: None,
+        })),
+    );
+    assert_golden(
+        "server_event_session_meta_changed.json",
+        encode_server(&ServerFrame::Event(AppEventEnvelope {
+            api_version: API_VERSION,
+            instance_id: CoreInstanceId::from("instance-1"),
+            event_id: EventId::from("event-meta-1"),
+            global_sequence: GlobalSequence(21),
+            stream: EventStream::Session(pawork_domain::SessionId::from("session-1")),
+            stream_sequence: 1,
+            timestamp: Timestamp::from_unix_millis(9),
+            source: EventSource::Core,
+            payload: AppEvent::SessionMetaChanged {
+                session_id: pawork_domain::SessionId::from("session-1"),
+                title: "renamed".into(),
+                archived: false,
+            },
+        })),
+    );
 }
 
 fn session_get_timeline_frame() -> ClientFrame {

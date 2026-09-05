@@ -358,7 +358,7 @@ async fn command_idempotency() -> Result<(), String> {
         idempotency_key: None,
         issued_at: Timestamp::from_unix_millis(7),
         command: AppCommand::SessionCreate {
-            workspace_id: pawork_domain::WorkspaceId::from("ws-unbound"),
+            workspace_id: Some(pawork_domain::WorkspaceId::from("ws-unbound")),
             title: Some("idempotent".into()),
         },
     };
@@ -789,7 +789,7 @@ async fn prepare_session_via_client(client: &GuiClient) -> Result<SessionId, Str
     let session = client
         .command(
             AppCommand::SessionCreate {
-                workspace_id: pawork_domain::WorkspaceId::from("ws-unbound"),
+                workspace_id: Some(pawork_domain::WorkspaceId::from("ws-unbound")),
                 title: Some("self-test".into()),
             },
             harness::gui_source(client),

@@ -108,6 +108,13 @@ pub enum AppEvent {
         session_id: SessionId,
         revision: u64,
     },
+    /// ADR-054 D5：改名 / 归档 / 自动标题写回成功后的会话元数据变化；
+    /// payload 为写后状态，Desktop 收到后重取 snapshot。
+    SessionMetaChanged {
+        session_id: SessionId,
+        title: String,
+        archived: bool,
+    },
     RunChanged {
         run_id: RunId,
         state: RunState,

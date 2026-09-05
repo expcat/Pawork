@@ -281,6 +281,9 @@ pub mod metrics {
     pub const RAIL_INNER_PAD: f32 = 12.0;
     /// 28：rail 角标按钮边长（grouping / 全局与定向新建；量图 28–30，hit area ≥24）。
     pub const RAIL_ICON_BUTTON_SIZE: f32 = ICON_BUTTON_SIZE;
+    /// 32：会话行改名 / 归档按钮边长（OPT-D 签字约束：Session 行动作
+    /// hit area ≥32×32，行高 44 内垂直居中）。
+    pub const RAIL_SESSION_ACTION_SIZE: f32 = 32.0;
     /// 10：rail 状态圆点直径（量图 Ø10–11）。
     pub const RAIL_STATUS_DOT_SIZE: f32 = 10.0;
     /// 8：连接行文案槽与全局「+」按钮的保留间隔（render 与 AX 共享）。
@@ -601,6 +604,7 @@ mod tests {
         assert_eq!(metrics::RAIL_BUCKET_TO_PROJECT_GAP, 2.0);
         assert_eq!(metrics::RAIL_PROJECT_TO_TASK_GAP, 2.0);
         assert_eq!(metrics::RAIL_TASK_ROW_HEIGHT, 44.0);
+        assert_eq!(metrics::RAIL_SESSION_ACTION_SIZE, 32.0);
         assert_eq!(metrics::RAIL_PROJECT_BLOCK_GAP, 8.0);
         assert_eq!(metrics::RAIL_META_SLOT_WIDTH, 56.0);
     }

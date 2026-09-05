@@ -83,7 +83,7 @@ pub async fn run_json(
         match dispatch_command(
             &adapter,
             AppCommand::SessionCreate {
-                workspace_id,
+                workspace_id: Some(workspace_id),
                 title: Some(session_title_from_text(&prompt)),
             },
         )

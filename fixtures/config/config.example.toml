@@ -4,9 +4,9 @@
 #   Linux:   ~/.config/pawork/config.toml
 #
 # 不要把 API key 写进本文件（写了也会被忽略）。
-# 凭证只走环境变量：PAWORK_API_KEY_<PROVIDER_ID 大写，- 变 _>
+# 凭证主入口是 `pawork auth set-key`（写入仓库外 auth 文件）；
+# 环境变量 PAWORK_API_KEY_<PROVIDER_ID 大写，- 变 _> 为显式 fallback：
 #   PowerShell: $env:PAWORK_API_KEY_GLM_CODING = "<key>"
-#   PowerShell: $env:PAWORK_API_KEY_OPENCODE_GO = "<key>"
 #   bash:       export PAWORK_API_KEY_GLM_CODING="<key>"
 
 default_provider = "glm-coding"

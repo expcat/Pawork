@@ -82,7 +82,9 @@ impl DesktopController {
 
     /// 新建 session：SessionCreate 只回 Accepted（无 session id），重取 snapshot
     /// 挑 updated_at_ms 最新的 session 返回（host gui_host 行为）。
-    pub fn create_session(&self, workspace_id: String) {
+    /// ADR-054 D1：workspace_id = None 直建无归属会话（All projects 下的
+    /// 全局 New task），不经过任何工作区确认。
+    pub fn create_session(&self, workspace_id: Option<String>) {
         let Some(client) = self.current_client() else {
             self.emit_reliable(ControllerEvent::OperationFailed {
                 action: "create session",
@@ -92,7 +94,7 @@ impl DesktopController {
         };
         let events = self.event_sender();
         self.runtime.spawn(async move {
-            let command = session_create_command(&workspace_id);
+            let command = session_create_command(workspace_id.as_deref());
             if let Err(error) = client
                 .command(command, command_source(), actor_identity())
                 .await
@@ -136,6 +138,134 @@ impl DesktopController {
                     let _ = events
                         .send(ControllerEvent::OperationFailed {
                             action: "create session",
+                            reason: error.to_string(),
+                        })
+                        .await;
+                }
+            }
+        });
+    }
+
+    /// ADR-054 D2：会话改名。回执后重取 snapshot（沿用 create/fork 模式）；
+    /// Host 写盘成功还会广播 SessionMetaChanged，由事件泵再刷新一次列表。
+    pub fn rename_session(&self, session_id: String, title: String) {
+        let Some(client) = self.current_client() else {
+            self.emit_reliable(ControllerEvent::OperationFailed {
+                action: "rename session",
+                reason: "not connected".into(),
+            });
+            return;
+        };
+        let events = self.event_sender();
+        self.runtime.spawn(async move {
+            let command = session_rename_command(&session_id, &title);
+            match client
+                .command(command, command_source(), actor_identity())
+                .await
+            {
+                Ok(response) => match &response.response {
+                    AppResponse::Error(_) => {
+                        let _ = events
+                            .send(ControllerEvent::OperationFailed {
+                                action: "rename session",
+                                reason: "server returned an error response".into(),
+                            })
+                            .await;
+                    }
+                    AppResponse::Accepted { .. } | AppResponse::Data(_) => {
+                        match client.snapshot().await {
+                            Ok(snapshot) => {
+                                let _ = events
+                                    .send(ControllerEvent::Snapshot(snapshot))
+                                    .await;
+                            }
+                            Err(error) => {
+                                let _ = events
+                                    .send(ControllerEvent::OperationFailed {
+                                        action: "rename session",
+                                        reason: error.to_string(),
+                                    })
+                                    .await;
+                            }
+                        }
+                    }
+                    other => {
+                        let _ = events
+                            .send(ControllerEvent::OperationFailed {
+                                action: "rename session",
+                                reason: format!("unexpected response: {other:?}"),
+                            })
+                            .await;
+                    }
+                },
+                Err(error) => {
+                    let _ = events
+                        .send(ControllerEvent::OperationFailed {
+                            action: "rename session",
+                            reason: error.to_string(),
+                        })
+                        .await;
+                }
+            }
+        });
+    }
+
+    /// ADR-054 D3：归档会话。归档后 snapshot 隐藏该 session（事件与投影
+    /// 仍在 Host 侧保留，SessionOpen 仍可读）；Desktop 只暴露归档入口。
+    pub fn archive_session(&self, session_id: String) {
+        let Some(client) = self.current_client() else {
+            self.emit_reliable(ControllerEvent::OperationFailed {
+                action: "archive session",
+                reason: "not connected".into(),
+            });
+            return;
+        };
+        let events = self.event_sender();
+        self.runtime.spawn(async move {
+            let command = session_archive_command(&session_id, true);
+            match client
+                .command(command, command_source(), actor_identity())
+                .await
+            {
+                Ok(response) => match &response.response {
+                    AppResponse::Error(_) => {
+                        let _ = events
+                            .send(ControllerEvent::OperationFailed {
+                                action: "archive session",
+                                reason: "server returned an error response".into(),
+                            })
+                            .await;
+                    }
+                    AppResponse::Accepted { .. } | AppResponse::Data(_) => {
+                        match client.snapshot().await {
+                            Ok(snapshot) => {
+                                let _ = events
+                                    .send(ControllerEvent::Snapshot(snapshot))
+                                    .await;
+                            }
+                            Err(error) => {
+                                let _ = events
+                                    .send(ControllerEvent::OperationFailed {
+                                        action: "archive session",
+                                        reason: error.to_string(),
+                                    })
+                                    .await;
+                            }
+                        }
+                    }
+                    other => {
+                        let _ = events
+                            .send(ControllerEvent::OperationFailed {
+                                action: "archive session",
+                                reason: format!("unexpected response: {other:?}"),
+                            })
+                            .await;
+                    }
+                },
+                Err(error) => {
+                    let _ = events
+                        .send(ControllerEvent::OperationFailed {
+                            action: "archive session",
                             reason: error.to_string(),
                         })
                         .await;

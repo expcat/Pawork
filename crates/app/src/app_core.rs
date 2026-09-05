@@ -1209,6 +1209,38 @@ impl AppCore {
             .await
     }
 
+    /// GUI SessionCreate（ADR-054 D1，无归属）：固定落盘 workspace_id = NULL。
+    pub async fn create_session_unbound(
+        &self,
+        title: impl Into<String>,
+    ) -> Result<SessionId, AppError> {
+        self.session.create_session_unbound(self, title).await
+    }
+
+    /// ADR-054 D2：会话改名（同时推进 updated_at_ms）。
+    pub async fn rename_session(
+        &self,
+        session_id: &SessionId,
+        title: &str,
+        now_ms: i64,
+    ) -> Result<(), AppError> {
+        self.session
+            .rename_session(self, session_id, title, now_ms)
+            .await
+    }
+
+    /// ADR-054 D3：会话归档 / 反归档（同时推进 updated_at_ms）。
+    pub async fn archive_session(
+        &self,
+        session_id: &SessionId,
+        archived: bool,
+        now_ms: i64,
+    ) -> Result<(), AppError> {
+        self.session
+            .archive_session(self, session_id, archived, now_ms)
+            .await
+    }
+
     pub async fn list_sessions(&self) -> Result<Vec<SessionRecord>, AppError> {
         self.session.list_sessions(self).await
     }
@@ -1445,6 +1477,9 @@ impl AppCore {
         Ok(())
     }
 }
+
+/// GUI 新会话默认占位标题（ADR-054 D4：自动命名的触发与写回护栏）。
+pub(crate) const PLACEHOLDER_SESSION_TITLE: &str = "New session";
 
 pub fn session_title_from_text(text: &str) -> String {
     let collapsed: String = text.split_whitespace().collect::<Vec<_>>().join(" ");

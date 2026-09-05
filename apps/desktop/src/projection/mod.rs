@@ -24,21 +24,20 @@ use serde_json::Value;
 
 pub use pawork_client::projection::{ForkBoundary, TimelineEntry, TimelineEntryKind};
 
+pub use session::group_models_by_provider;
 pub use session::{
     sessions_in_snapshot, ActiveRun, ConnectionState, DateBucket, ModelEntry, PendingApproval,
     ResumeApply, ResumeState, SessionLiveStatus, SessionSummary, TaskRailDateGroup,
     TaskRailGrouping, TaskRailProjectGroup, WorkspaceSummary, UNASSIGNED_PROJECT,
 };
-pub use session::group_models_by_provider;
 pub use settings::{
     parse_auth_change, ApprovalModeWire, AuthChange, AuthStartData, DefaultModelPair,
     GeneralSettingsData, PermissionsSettingsData, ProviderAuthState, ProviderAuthStatusData,
     ProviderAuthStatusEntry, ProviderCatalogState, ProviderStatusLabels, SettingsGeneralState,
-    SettingsPermissionsState, SettingsProvidersState, SettingsTerminalState,
-    TerminalSettingsData,
+    SettingsPermissionsState, SettingsProvidersState, SettingsTerminalState, TerminalSettingsData,
 };
-pub use terminal::{TerminalAvailability, TerminalState};
 pub(crate) use terminal::TERMINAL_CWD_UNKNOWN;
+pub use terminal::{TerminalAvailability, TerminalState};
 pub use timeline::{run_footer_label, run_summary_texts, TimelineRow};
 
 use session::{
@@ -160,6 +159,22 @@ impl DesktopProjection {
             .collect();
         self.unread_sessions
             .retain(|session_id| live.contains(session_id.as_str()));
+        self.blocked_sessions
+            .retain(|session_id| live.contains(session_id.as_str()));
+        // ADR-054 D3：归档后 snapshot 不再携带该会话。merge_snapshot 是
+        // rename/archive 回执与 SessionMetaChanged 刷新的共用入口；若仍
+        // 保留 active_session_id，Timeline 会变成看不见入口的幽灵会话。
+        if self
+            .active_session_id
+            .as_deref()
+            .is_some_and(|session_id| !live.contains(session_id))
+        {
+            self.active_session_id = None;
+            self.timeline.reset_baseline();
+            self.active_run_id = None;
+            self.active_run_started_at_ms = None;
+            self.pending_approval = None;
+        }
     }
 
     /// 重连三态：Replay 续接事件；SnapshotRequired 丢 stale 换基线；

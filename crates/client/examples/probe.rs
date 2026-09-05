@@ -229,7 +229,7 @@ async fn live_two_gui(endpoint: &str, token_path: Option<&str>) -> Result<String
     let created = client_a
         .command(
             AppCommand::SessionCreate {
-                workspace_id: workspace_id.clone(),
+                workspace_id: Some(workspace_id.clone()),
                 title: Some("s10-live-a".into()),
             },
             CommandSource::LocalGui {

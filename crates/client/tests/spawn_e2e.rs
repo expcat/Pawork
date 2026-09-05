@@ -115,7 +115,7 @@ async fn spawns_real_pawork_and_round_trips() {
     let workspace_id = WorkspaceId::from("ws-sdk-e2e");
     let created = client
         .command(AppCommand::SessionCreate {
-            workspace_id,
+            workspace_id: Some(workspace_id),
             title: Some("sdk e2e".into()),
         })
         .await
@@ -211,7 +211,7 @@ async fn run_start_without_provider_returns_error_response() {
     let workspace_id = WorkspaceId::from("ws-sdk-e2e");
     let created = client
         .command(AppCommand::SessionCreate {
-            workspace_id,
+            workspace_id: Some(workspace_id),
             title: Some("sdk e2e".into()),
         })
         .await
@@ -274,7 +274,7 @@ async fn real_host_enforces_granted_capabilities() {
     // 已映射 + 已授予：Sessions 内的 Command 正常往返。
     let created = client
         .command(AppCommand::SessionCreate {
-            workspace_id: WorkspaceId::from("ws-sdk-e2e"),
+            workspace_id: Some(WorkspaceId::from("ws-sdk-e2e")),
             title: Some("gate e2e".into()),
         })
         .await

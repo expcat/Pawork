@@ -1,6 +1,201 @@
 use super::*;
 use pawork_testkit::{MockProvider, MockScript};
 
+fn naming_mock_provider(scripts: Vec<MockScript>) -> MockProvider {
+    MockProvider::sequence(scripts).with_models(vec![pawork_domain::ModelDefinition {
+        id: pawork_domain::ModelId::from("model-1"),
+        display_name: "model-1".into(),
+        context_window_tokens: 0,
+        max_output_tokens: 0,
+        capabilities: pawork_domain::ModelCapabilities::default(),
+    }])
+}
+
+async fn assert_session_title(adapter: &GuiHostAdapter, session: &pawork_domain::SessionId, expected: &str) {
+    let response = adapter
+        .command(&command_envelope(AppCommand::SessionOpen {
+            session_id: session.clone(),
+        }))
+        .await
+        .expect("session open");
+    let AppResponse::Data(data) = response else {
+        panic!("SessionOpen must return data: {response:?}");
+    };
+    assert_eq!(data["title"].as_str(), Some(expected), "{data}");
+}
+
+#[tokio::test]
+async fn run_success_auto_titles_placeholder_session_and_broadcasts() {
+    let dir = tempfile::tempdir().expect("store");
+    let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
+        .await
+        .expect("store");
+    let provider = naming_mock_provider(vec![
+        MockScript::new().text("ok").complete(),
+        // 命名输出带前后空白与第二行：必须 trim 取首个非空行。
+        MockScript::new().text("  帮我修登录 bug\n多余的第二行\n").complete(),
+    ]);
+    let mut core = AppCore::from_parts(
+        Arc::new(provider),
+        None,
+        pawork_domain::ModelId::from("model-1"),
+        pawork_domain::ProviderId::from("mock"),
+        Some(store),
+    );
+    core.config.naming_provider = Some("mock".into());
+    core.config.naming_model = Some("model-1".into());
+    let session = core.create_session("New session").await.expect("session");
+    let adapter = GuiHostAdapter::new(Arc::new(core));
+    let mut events = adapter.subscribe_events();
+    let response = adapter
+        .command(&command_envelope(AppCommand::RunStart {
+            session_id: session.clone(),
+            user_message: "登录页 500 了，帮我看看".into(),
+            model: None,
+            provider: None,
+            profile: None,
+        }))
+        .await
+        .expect("run accepted");
+    let AppResponse::Accepted {
+        run_id: Some(run_id),
+        ..
+    } = response
+    else {
+        panic!("RunStart must be accepted: {response:?}");
+    };
+    wait_run_completed(&mut events, &run_id).await;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let envelope = tokio::time::timeout_at(deadline, events.recv())
+            .await
+            .expect("naming should broadcast SessionMetaChanged")
+            .expect("event channel");
+        if let AppEvent::SessionMetaChanged {
+            session_id,
+            title,
+            archived,
+        } = &envelope.payload
+        {
+            assert_eq!(session_id, &session);
+            assert_eq!(title, "帮我修登录 bug");
+            assert!(!archived);
+            break;
+        }
+    }
+    assert_session_title(&adapter, &session, "帮我修登录 bug").await;
+}
+
+#[tokio::test]
+async fn auto_title_without_naming_config_skips_provider_call() {
+    let dir = tempfile::tempdir().expect("store");
+    let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
+        .await
+        .expect("store");
+    let provider = naming_mock_provider(vec![MockScript::new().text("ok").complete()]);
+    let core = AppCore::from_parts(
+        Arc::new(provider.clone()),
+        None,
+        pawork_domain::ModelId::from("model-1"),
+        pawork_domain::ProviderId::from("mock"),
+        Some(store),
+    );
+    // 不配置 naming_provider / naming_model：不得调用命名模型。
+    let session = core.create_session("New session").await.expect("session");
+    let adapter = GuiHostAdapter::new(Arc::new(core));
+    let mut events = adapter.subscribe_events();
+    let response = adapter
+        .command(&command_envelope(AppCommand::RunStart {
+            session_id: session.clone(),
+            user_message: "hello".into(),
+            model: None,
+            provider: None,
+            profile: None,
+        }))
+        .await
+        .expect("run accepted");
+    let AppResponse::Accepted {
+        run_id: Some(run_id),
+        ..
+    } = response
+    else {
+        panic!("RunStart must be accepted: {response:?}");
+    };
+    wait_run_completed(&mut events, &run_id).await;
+    wait_run_registry_drains(&adapter.runs(), &run_id).await;
+    // 给错误的命名触发留出观察窗口后再断言。
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert_eq!(
+        provider.calls().len(),
+        1,
+        "naming must not call the provider without naming config"
+    );
+    assert_session_title(&adapter, &session, "New session").await;
+}
+
+#[tokio::test]
+async fn auto_title_failure_keeps_placeholder_title() {
+    let dir = tempfile::tempdir().expect("store");
+    let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
+        .await
+        .expect("store");
+    let provider = naming_mock_provider(vec![
+        MockScript::new().text("ok").complete(),
+        MockScript::new().fail(pawork_domain::ProviderError::new(
+            pawork_domain::ProviderErrorKind::Timeout,
+            "naming provider down",
+        )),
+    ]);
+    let mut core = AppCore::from_parts(
+        Arc::new(provider.clone()),
+        None,
+        pawork_domain::ModelId::from("model-1"),
+        pawork_domain::ProviderId::from("mock"),
+        Some(store),
+    );
+    core.config.naming_provider = Some("mock".into());
+    core.config.naming_model = Some("model-1".into());
+    let session = core.create_session("New session").await.expect("session");
+    let adapter = GuiHostAdapter::new(Arc::new(core));
+    let mut events = adapter.subscribe_events();
+    let response = adapter
+        .command(&command_envelope(AppCommand::RunStart {
+            session_id: session.clone(),
+            user_message: "hello".into(),
+            model: None,
+            provider: None,
+            profile: None,
+        }))
+        .await
+        .expect("run accepted");
+    let AppResponse::Accepted {
+        run_id: Some(run_id),
+        ..
+    } = response
+    else {
+        panic!("RunStart must be accepted: {response:?}");
+    };
+    wait_run_completed(&mut events, &run_id).await;
+    // 等命名尝试真实发生（第二次 provider 调用）再断言保留占位名。
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    while provider.calls().len() < 2 {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "naming attempt must reach the provider"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    while let Ok(envelope) = events.try_recv() {
+        assert!(
+            !matches!(&envelope.payload, AppEvent::SessionMetaChanged { .. }),
+            "failed naming must not broadcast: {:?}",
+            envelope.payload
+        );
+    }
+    assert_session_title(&adapter, &session, "New session").await;
+}
+
 #[tokio::test]
 async fn run_start_expands_at_refs_into_separate_parts() {
     let workspace = tempfile::tempdir().expect("workspace");
@@ -825,4 +1020,3 @@ async fn run_start_with_provider_does_not_silently_keep_same_model_id() {
         error.message
     );
 }
-

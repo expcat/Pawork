@@ -1929,6 +1929,44 @@ fn session_tree_accepts_flat_sessions_and_branch_nodes() {
     assert_eq!(projection.sessions[0].title, "Wrapped");
 }
 
+/// ADR-054 D2/D3：SessionMetaChanged 后 controller 重取 snapshot，投影按
+/// 快照反映改名与归档（归档会话不再出现在 session_tree → rail 隐藏）。
+#[test]
+fn snapshot_refresh_reflects_rename_and_archive() {
+    let mut projection = DesktopProjection::from_snapshot(&snapshot_with_sessions(vec![
+        session_entry("s-1", "Old title", 20),
+        session_entry("s-2", "Keep", 10),
+    ]));
+    assert_eq!(projection.sessions[0].title, "Old title");
+
+    // 改名后的写盘快照：标题更新，排序按 updated_at_ms。
+    projection.merge_snapshot(&snapshot_with_sessions(vec![
+        session_entry("s-2", "Keep", 10),
+        session_entry("s-1", "New title", 30),
+    ]));
+    let renamed = projection
+        .sessions
+        .iter()
+        .find(|session| session.session_id == "s-1")
+        .expect("renamed session survives");
+    assert_eq!(renamed.title, "New title");
+
+    // 归档后的快照不再携带该会话（Host 隐藏 archived）；unread 残留清除，
+    // 当前选中的归档会话退出选择并清空 Timeline（避免幽灵会话）。
+    projection.select_session("s-1");
+    projection.unread_sessions.insert("s-1".into());
+    projection.merge_snapshot(&snapshot_with_sessions(vec![session_entry(
+        "s-2", "Keep", 10,
+    )]));
+    assert!(projection
+        .sessions
+        .iter()
+        .all(|session| session.session_id != "s-1"));
+    assert!(!projection.unread_sessions.contains("s-1"));
+    assert!(projection.active_session_id.is_none());
+    assert!(projection.timeline.entries.is_empty());
+}
+
 /// 与 `event` 相同，但 stream 指向给定 session/branch（wire 无 branch
 /// 字段，分支事件以分支自身的 stream id 表达）。
 fn session_event(sequence: u64, session: &str, payload: Value) -> AppEventEnvelope {

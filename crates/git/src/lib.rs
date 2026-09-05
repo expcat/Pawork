@@ -14,7 +14,7 @@
 //! - [`diff`]：结构化 Diff（`DiffFile`/`DiffHunk`/`DiffLine`）与 [`HunkStageService`]。
 //!
 //! R0/ADR-038 D16（2026-08-18 波 C）：branch/stash/conflict/history/cache/commit
-//! 六个零消费服务已归档删除（git tag `v2-final` 可找回），复活条件见 ROADMAP §3.3。
+//! 六个零消费服务已归档删除（git tag `v2-final` 可找回），复活条件见 docs/spec/backlog.md。
 //!
 //! [`FileStatus`] 是唯一的文件状态类型（porcelain 九态映射）。
 //! crate root 与 [`diff::FileStatus`] 为同一类型；[`DiffFile::status`] 使用该类型。

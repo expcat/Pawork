@@ -321,6 +321,7 @@ pub(crate) async fn run_start(
             core.chat_turn_with_run_id(run.clone(), &session, messages, &sink, token)
                 .await
         };
+        let succeeded = outcome.is_ok();
         if let Err(error) = outcome {
             let core = core.read().await;
             seal_run_without_terminal(&core, &bus, instance.clone(), &session, &run, &error).await;
@@ -328,6 +329,16 @@ pub(crate) async fn run_start(
         approvals.clear_run(&run);
         runs.remove(&run);
         bus.clear_terminal_reported(run.as_str());
+        // ADR-054 D4：成功终态后异步自动命名，不阻塞终态事件；独立任务
+        // 复用 bus 广播 SessionMetaChanged，失败/超时静默保留占位名。
+        if succeeded {
+            tokio::spawn(crate::gui_host::auto_title::auto_title_after_successful_run(
+                core,
+                bus,
+                instance,
+                session,
+            ));
+        }
     });
     Ok(AppResponse::Accepted {
         command_id: envelope.command_id.clone(),

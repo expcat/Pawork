@@ -141,7 +141,7 @@ impl Harness {
                 cli_source(),
                 cli_identity(),
                 AppCommand::SessionCreate {
-                    workspace_id: pawork_domain::WorkspaceId::from("ws-unbound"),
+                    workspace_id: Some(pawork_domain::WorkspaceId::from("ws-unbound")),
                     title: Some(title.into()),
                 },
             ))

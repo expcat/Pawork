@@ -10,6 +10,7 @@ OPT-1 / [ADR-053](settings.md#adr-053opt-1-设置持久化2026-09-05)：Settings
 | --- | --- | --- | --- | --- |
 | CAP-CHAT-01 | 流式多轮对话、单次 Run、取消、模型选择 | `chat`、`run`、`models` | 已实现 | Engine 只消费 canonical domain；真实通道可用性取决于凭证与运行期模型目录。 |
 | CAP-SESSION-01 | 会话列表、查看、恢复、导出/导入、分支 | `sessions`、`--resume` | 已实现 | envelope v1、DB v14、export v3；损坏/Secret 导入 fail-closed。 |
+| CAP-SESSION-02 | Desktop 会话生命周期：无项目直建（Unassigned）、行右侧改名/归档、命名模型自动标题 | Desktop TaskRail / New task | 已实现（ADR-054，API 1.11）；真窗口验收待 OPT-2 收尾 | 归档仅隐藏不删除，wire 保留反归档写口；自动标题须配置 Global `naming_provider`/`naming_model`，未配置不命名、不用启发式；无项目会话文件类工具 fail-closed。 |
 | CAP-AGENT-01 | 多轮 Agent loop 与工具调用 | `chat`、`run`、GUI/headless/ACP | 已实现 | 轮数有界；Provider 特例只在 adapter，不进 Engine。 |
 | CAP-TOOL-01 | read/list/search/find/write/edit/apply_patch/run_command 八工具 | Agent tool call | 已实现 | 文件输入为 workspace-relative；写/进程能力受 Policy。 |
 | CAP-APPROVAL-01 | 工具审批、Run 内授权、拒绝、取消 | CLI approval、Desktop 审批卡 | 已实现 | 非 TTY/JSON deny-all；CLI resume seal Denied，GUI resume 保留 pending。 |

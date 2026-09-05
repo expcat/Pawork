@@ -31,7 +31,7 @@
 | `src/session/event_store.rs` | ~2250 | 事件读写核心：`create_session(_with_identity/_with_workspace)`/`create_branch`/`switch_branch`/`append_event`/`replay_events`/`tail_events`/`events_by_branch`；`set_session_workspace`（ADR-043 既有会话归属写穿）；写前 Secret 脱敏（`redact_sensitive_json`、`sanitize_reasoning_metadata`）与 legacy provider hint 键只读映射；`persist_event_in_transaction` 供导入复用 |
 | `src/session/projection.rs` | ~1590 | 投影写入 `apply_projection`、读取 `ProjectionSnapshot`（messages/runs/tool_calls/server_tool_events/program_output/screenshots/transcript_envelopes）、compaction 水位折叠、`rebuild_projection` |
 | `src/session/session_tree.rs` | ~580 | 分支树单点：`load_ancestor_lineage`/`visible_on_lineage`/`events_on_lineage`/`fork_from_event`/`session_tree`；fork 边界校验与幂等 |
-| `src/session/catalog.rs` | ~240 | 会话目录：`list_sessions`/`get_session` 与 `SessionRecord`（v13 起含 `workspace_id: Option<String>` 归属弱引用）；`list_session_workspace_bindings` 返回含 archived 的全部非 NULL 绑定；v14 起含项目注册表 `WorkspaceRecord` 与 `register_workspace`/`list_workspaces` |
+| `src/session/catalog.rs` | ~290 | 会话目录：`list_sessions`/`get_session` 与 `SessionRecord`（v13 起含 `workspace_id: Option<String>` 归属弱引用）；`rename_session`/`archive_session`（ADR-054：更新 title/archived 与 `updated_at_ms`，缺失报 `SessionNotFound`）；`list_session_workspace_bindings` 返回含 archived 的全部非 NULL 绑定；v14 起含项目注册表 `WorkspaceRecord` 与 `register_workspace`/`list_workspaces` |
 | `src/session/command_ledger.rs` | ~730 | `CommandLedger`：`check`/`record`/`release`/`reclaim_inflight`/`stats`，容量 4096 全局淘汰；`waiting_tool_call(s)` 审批恢复查询 |
 | `src/session/client_adapter.rs` | ~530 | `SqliteClientSessionRegistryStore`：以 SQLite 实现 domain 的 `SessionRegistryStore`（load_all/insert/compare_and_swap/remove_if_owner，乐观并发） |
 | `src/session/test_support.rs` | ~340 | `cfg(test)` 种子场景（fork_tree/interleaved/compaction），供迁移 golden 复现历史库形态 |
@@ -112,7 +112,7 @@
 
 ### 3.7 目录、标签与身份
 
-- `list_sessions()`（固定过滤 `archived=0`、按 `updated_at_ms` 降序，无参数）/ `get_session(&SessionId)`（缺失报 `SessionNotFound`）：`SessionRecord { session_id, title, created_at_ms, updated_at_ms, archived, active_branch }`。
+- `list_sessions()`（固定过滤 `archived=0`、按 `updated_at_ms` 降序，无参数）/ `get_session(&SessionId)`（缺失报 `SessionNotFound`）：`SessionRecord { session_id, title, created_at_ms, updated_at_ms, archived, active_branch }`。`rename_session(&SessionId, title, now_ms)` / `archive_session(&SessionId, archived, now_ms)`（ADR-054）：UPDATE 单行走 `updated_at_ms` 刷新，缺失报 `SessionNotFound`；归档不删事件与投影，`get_session` 仍可读。
 - `add_tags(session, &[&str])`：幂等插入 `session_tags`。
 - `get_session_identity(session) -> (tenant_id, principal_id)`。
 

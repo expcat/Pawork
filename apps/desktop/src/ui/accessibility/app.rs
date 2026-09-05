@@ -34,9 +34,10 @@ use crate::ui::theme::{font, metrics};
 use crate::ui::timeline_entry::{display_time, tool_group_summary};
 use crate::ui::{
     activity_header_visibility, rail_project_occurrence_key, rail_session_focus_key,
-    terminal_can_operate, terminal_can_reopen, terminal_close_label, terminal_known_ended,
-    terminal_start_enabled, timeline, AppRoute, AppView, MenuKind, SettingsPage,
-    workspace_empty_hint, workspace_empty_title,
+    rail_session_archive_focus_key, rail_session_rename_focus_key, terminal_can_operate,
+    terminal_can_reopen, terminal_close_label, terminal_known_ended, terminal_start_enabled,
+    timeline, AppRoute, AppView, MenuKind, SettingsPage, workspace_empty_hint,
+    workspace_empty_title,
 };
 
 pub(crate) const PAD: f32 = 8.0;
@@ -151,6 +152,13 @@ impl AppView {
         match request.action {
             AxAction::Focus => match request.identifier.as_str() {
                 "composer-input" => self.focus_composer(window, cx),
+                // ADR-054 D2：行内改名编辑器聚焦（与点击行内输入框同路径）。
+                "session-rename-input" => {
+                    if let Some(rename) = self.session_rename.as_ref() {
+                        let focus = rename.input.read(cx).focus_handle(cx);
+                        window.focus(&focus);
+                    }
+                }
                 "terminal-input" => {
                     let focus = self.terminal_input.read(cx).focus_handle(cx);
                     window.focus(&focus);
@@ -193,6 +201,11 @@ impl AppView {
                     "composer-input" => self
                         .text_input
                         .update(cx, |input, cx| input.set_text(value, cx)),
+                    "session-rename-input" => {
+                        if let Some(rename) = self.session_rename.as_ref() {
+                            rename.input.update(cx, |input, cx| input.set_text(value, cx));
+                        }
+                    }
                     "terminal-input" => self
                         .terminal_input
                         .update(cx, |input, cx| input.set_text(value, cx)),
@@ -243,12 +256,9 @@ impl AppView {
                 window.focus(&self.scope_focus);
                 self.on_toggle_scope_menu(None, window, cx)
             }
-            "scope-add-project" | "workspace-confirm-add-project" => {
-                self.on_open_project(window, cx)
-            }
-            // D1 同类：All-projects 态会开 WorkspaceConfirm 菜单，AXPress
-            // 同样先移焦触发器，否则焦点滞留 composer、Enter 误触 SendMessage
-            //（已解析 workspace 时 create_task 随后聚焦 composer，无害）。
+            "scope-add-project" => self.on_open_project(window, cx),
+            // ADR-054 D1：All-projects 态直建无归属会话（无确认浮层）；
+            // AXPress 先移焦触发器，与真实点击同一路径。
             "add-task" => {
                 window.focus(&self.add_task_focus);
                 self.on_new_session(window, cx)
@@ -460,16 +470,6 @@ impl AppView {
                     self.on_select_model(model, cx);
                     return true;
                 }
-                if let Some(workspace) = self
-                    .projection
-                    .workspaces
-                    .iter()
-                    .find(|workspace| workspace_confirm_identifier(&workspace.id) == identifier)
-                    .cloned()
-                {
-                    self.on_confirm_workspace(workspace.id, window, cx);
-                    return true;
-                }
                 if let Some(session) = self
                     .projection
                     .sessions
@@ -478,6 +478,28 @@ impl AppView {
                     .cloned()
                 {
                     self.on_session_clicked(&session.session_id, window, cx);
+                    return true;
+                }
+                // ADR-054 D2/D3：行级改名 / 归档与可见按钮同源派发（permits
+                // 已按当前树核对 enabled）。
+                if let Some(session) = self
+                    .projection
+                    .sessions
+                    .iter()
+                    .find(|session| session_rename_identifier(&session.session_id) == identifier)
+                    .cloned()
+                {
+                    self.begin_session_rename(&session.session_id, window, cx);
+                    return true;
+                }
+                if let Some(session) = self
+                    .projection
+                    .sessions
+                    .iter()
+                    .find(|session| session_archive_identifier(&session.session_id) == identifier)
+                    .cloned()
+                {
+                    self.on_session_archive(session.session_id, cx);
                     return true;
                 }
                 if let Some(project) = self
@@ -617,7 +639,11 @@ impl AppView {
         } else {
             let mut tree = AxTree::new(width, height)
                 .child(
-                    self.sidebar_ax(window, AxRect::new(0.0, 0.0, sidebar_width, content_height)),
+                    self.sidebar_ax(
+                        window,
+                        cx,
+                        AxRect::new(0.0, 0.0, sidebar_width, content_height),
+                    ),
                 )
                 .child(self.workspace_ax(
                     window,
@@ -651,7 +677,7 @@ impl AppView {
         tree
     }
 
-    fn sidebar_ax(&self, window: &Window, frame: AxRect) -> AxNode {
+    fn sidebar_ax(&self, window: &Window, cx: &App, frame: AxRect) -> AxNode {
         let can_create = self.can_create_task();
         // 与可见 TaskRail 对齐（R3 Wave A，几何单一来源 theme::metrics）：
         // Panel p_2(8) + 36px traffic-light 安全区 + gap_2(8) 后进入标题行，
@@ -795,6 +821,7 @@ impl AppView {
                         };
                         let (nodes, consumed) = self.project_ax_nodes(
                             window,
+                            cx,
                             project,
                             Some(group.bucket),
                             row_y,
@@ -819,7 +846,7 @@ impl AppView {
                         row_y += metrics::RAIL_PROJECT_BLOCK_GAP;
                     }
                     let (nodes, consumed) =
-                        self.project_ax_nodes(window, project, None, row_y, list_width, can_create);
+                        self.project_ax_nodes(window, cx, project, None, row_y, list_width, can_create);
                     row_y += consumed;
                     for node in nodes {
                         list = list.child(node);
@@ -953,6 +980,7 @@ impl AppView {
     fn project_ax_nodes(
         &self,
         window: &Window,
+        cx: &App,
         project: &TaskRailProjectGroup,
         bucket: Option<DateBucket>,
         top: f32,
@@ -1017,8 +1045,16 @@ impl AppView {
                 let status = self.projection.session_live_status(&session.session_id);
                 let unread = self.projection.session_unread(&session.session_id);
                 let focus_key = rail_session_focus_key(&session.session_id);
-                nodes.push(
-                    AxNode::new(
+                let is_active = self.projection.active_session_id.as_deref()
+                    == Some(session.session_id.as_str());
+                let renaming = self
+                    .session_rename
+                    .as_ref()
+                    .is_some_and(|state| state.session_id == session.session_id);
+                let row_top = top + consumed;
+                let action_y = row_top
+                    + (metrics::RAIL_TASK_ROW_HEIGHT - metrics::RAIL_SESSION_ACTION_SIZE) / 2.0;
+                let mut row = AxNode::new(
                         session_identifier(&session.session_id),
                         AxRole::ListItem,
                         session.title.clone(),
@@ -1032,12 +1068,90 @@ impl AppView {
                                 .get(&focus_key)
                                 .is_some_and(|handle| handle.is_focused(window)),
                     )
-                    .selected(
-                        self.projection.active_session_id.as_deref()
-                            == Some(session.session_id.as_str()),
-                    )
-                    .action(AxAction::Press),
-                );
+                    .selected(is_active);
+                if renaming {
+                    // 行内改名：行不再激活打开，发布编辑器（Focus / SetValue
+                    // 与 composer 输入同构；AXValue 即草稿纯文本）。
+                    if let Some(state) = self.session_rename.as_ref() {
+                        row = row.child(
+                            AxNode::new(
+                                "session-rename-input",
+                                AxRole::TextArea,
+                                t("taskrail.rename"),
+                                AxRect::new(
+                                    inset,
+                                    row_top,
+                                    (width - metrics::RAIL_SESSION_ACTION_SIZE * 2.0).max(0.0),
+                                    metrics::RAIL_TASK_ROW_HEIGHT,
+                                ),
+                            )
+                            .value(state.input.read(cx).text().to_string())
+                            .focused(
+                                self.open_menu.is_none()
+                                    && state.input.read(cx).focus_handle(cx).is_focused(window),
+                            )
+                            .action(AxAction::Focus)
+                            .action(AxAction::SetValue),
+                        );
+                    }
+                } else {
+                    row = row.action(AxAction::Press);
+                    // OPT-D：选中行右侧改名 / 归档按钮与 render 同源发布。
+                    if is_active {
+                        let rename_focus_key =
+                            rail_session_rename_focus_key(&session.session_id);
+                        let archive_focus_key =
+                            rail_session_archive_focus_key(&session.session_id);
+                        row = row
+                            .child(
+                                AxNode::new(
+                                    session_rename_identifier(&session.session_id),
+                                    AxRole::Button,
+                                    t("taskrail.rename"),
+                                    AxRect::new(
+                                        (inset + width - metrics::RAIL_SESSION_ACTION_SIZE * 2.0)
+                                            .max(inset),
+                                        action_y,
+                                        metrics::RAIL_SESSION_ACTION_SIZE,
+                                        metrics::RAIL_SESSION_ACTION_SIZE,
+                                    ),
+                                )
+                                .enabled(can_create)
+                                .focused(
+                                    self.open_menu.is_none()
+                                        && self
+                                            .rail_row_focus
+                                            .get(&rename_focus_key)
+                                            .is_some_and(|handle| handle.is_focused(window)),
+                                )
+                                .action(AxAction::Press),
+                            )
+                            .child(
+                                AxNode::new(
+                                    session_archive_identifier(&session.session_id),
+                                    AxRole::Button,
+                                    t("taskrail.archive"),
+                                    AxRect::new(
+                                        (inset + width - metrics::RAIL_SESSION_ACTION_SIZE)
+                                            .max(inset),
+                                        action_y,
+                                        metrics::RAIL_SESSION_ACTION_SIZE,
+                                        metrics::RAIL_SESSION_ACTION_SIZE,
+                                    ),
+                                )
+                                .enabled(can_create)
+                                .focused(
+                                    self.open_menu.is_none()
+                                        && self
+                                            .rail_row_focus
+                                            .get(&archive_focus_key)
+                                            .is_some_and(|handle| handle.is_focused(window)),
+                                )
+                                .action(AxAction::Press),
+                            );
+                    }
+                }
+                nodes.push(row);
                 consumed += metrics::RAIL_TASK_ROW_HEIGHT;
             }
         }
@@ -1782,7 +1896,45 @@ impl AppView {
                 // R7 Wave A：model 菜单打开时 AX 焦点移交高亮项（同 grouping）。
                 .focused(self.open_menu.is_none() && self.model_focus.is_focused(window))
                 .action(AxAction::Press),
+            )
+            // OPT-D：项目上下文槽（无项目 chip / Workspace · 名称）与文件
+            // 工具不可用提示——纯状态文本，与 footer 可见文案同源。
+            .child(
+                AxNode::new(
+                    "composer-workspace",
+                    AxRole::StaticText,
+                    "Workspace context",
+                    AxRect::new(
+                        frame.x + pad + 228.0,
+                        footer_y,
+                        180.0_f32.min(frame.width),
+                        metrics::COMPOSER_FOOTER_CONTROL,
+                    ),
+                )
+                .value(if self.composer_workspace_no_project() {
+                    t("composer.no_project_chip").to_string()
+                } else {
+                    self.composer_workspace_label()
+                }),
             );
+        if self.composer_file_tools_unavailable_visible() {
+            let hint_x = frame.x + pad + 412.0;
+            let hint_width = (action_x - pad - hint_x).max(0.0);
+            composer = composer.child(
+                AxNode::new(
+                    "composer-file-tools-hint",
+                    AxRole::StaticText,
+                    "File tools",
+                    AxRect::new(
+                        hint_x,
+                        footer_y,
+                        hint_width,
+                        metrics::COMPOSER_FOOTER_CONTROL,
+                    ),
+                )
+                .value(t("composer.file_tools_unavailable")),
+            );
+        }
         if let Some(hint) = self.status_hint.as_ref() {
             let hint_x = frame.x + pad + 228.0;
             let hint_width = (action_x - pad - hint_x).max(0.0);
@@ -1892,65 +2044,6 @@ impl AppView {
                     y += metrics::MENU_ROW_HEIGHT;
                 }
             }
-            composer = composer.child(menu);
-        }
-        if matches!(self.open_menu, Some(MenuKind::WorkspaceConfirm)) {
-            let highlight = self.menu_highlight_effective(0);
-            let mut menu = AxNode::new(
-                "workspace-confirm",
-                AxRole::Group,
-                "Choose workspace",
-                AxRect::new(
-                    frame.x + pad,
-                    footer_y + metrics::COMPOSER_SEND_SIZE,
-                    280.0,
-                    220.0,
-                ),
-            );
-            for (ix, workspace) in self
-                .projection
-                .project_scope_options()
-                .into_iter()
-                .filter_map(|(id, name)| id.map(|id| (id, name)))
-                .enumerate()
-            {
-                menu = menu.child(
-                    AxNode::new(
-                        workspace_confirm_identifier(&workspace.0),
-                        AxRole::Button,
-                        workspace.1,
-                        AxRect::new(
-                            frame.x + pad,
-                            footer_y + metrics::COMPOSER_SEND_SIZE + ix as f32 * ROW_HEIGHT,
-                            280.0,
-                            ROW_HEIGHT,
-                        ),
-                    )
-                    .focused(ix == highlight)
-                    .action(AxAction::Press),
-                );
-            }
-            let add_ix = self
-                .projection
-                .project_scope_options()
-                .into_iter()
-                .filter(|(id, _)| id.is_some())
-                .count();
-            menu = menu.child(
-            AxNode::new(
-                "workspace-confirm-add-project",
-                AxRole::Button,
-                t("common.add_project"),
-                AxRect::new(
-                    frame.x + pad,
-                    footer_y + metrics::COMPOSER_SEND_SIZE + add_ix as f32 * ROW_HEIGHT,
-                        280.0,
-                        ROW_HEIGHT,
-                    ),
-                )
-                .focused(add_ix == highlight)
-                .action(AxAction::Press),
-            );
             composer = composer.child(menu);
         }
         composer
@@ -2545,6 +2638,14 @@ fn session_identifier(session_id: &str) -> String {
     dynamic_identifier("session", session_id)
 }
 
+fn session_rename_identifier(session_id: &str) -> String {
+    dynamic_identifier("session-rename", session_id)
+}
+
+fn session_archive_identifier(session_id: &str) -> String {
+    dynamic_identifier("session-archive", session_id)
+}
+
 /// 项目头 identifier。Timeline 模式下同一项目可出现于多个日期组，以日期桶
 /// 限定避免重复 id（AxTree::validate 拒绝重复）；Projects 模式保持 project-{key}。
 fn rail_project_identifier(bucket: Option<DateBucket>, key: &str) -> String {
@@ -2563,10 +2664,6 @@ fn rail_project_add_identifier(bucket: Option<DateBucket>, key: &str) -> String 
 
 fn scope_identifier(workspace_id: Option<&str>) -> String {
     dynamic_identifier("scope", workspace_id.unwrap_or("all"))
-}
-
-fn workspace_confirm_identifier(workspace_id: &str) -> String {
-    dynamic_identifier("workspace-confirm", workspace_id)
 }
 
 fn model_identifier(model: &ModelEntry) -> String {
@@ -2978,17 +3075,17 @@ mod tests {
             });
         }
 
-        // 恢复 All projects，让两个 New Task 入口走 WorkspaceConfirm 菜单路径。
+        // 恢复 All projects：scope 仍开菜单；两个全局 New Task 入口按
+        // ADR-054 D1 直建无归属会话（无确认浮层）。
         cx.update(|_window, cx| {
             view.update(cx, |view, _cx| {
                 view.scope_workspace_id = None;
                 view.projection.active_session_id = None;
             });
         });
-        for identifier in ["project-scope", "add-task", "header-new-task"] {
+        for identifier in ["project-scope"] {
             cx.update(|window, cx| {
-                // add-task / header-new-task 经 can_create_task 门控：注入
-                // Connected 使 AX press 不被 fail-closed 拒绝（真实点击同理）。
+                // scope 菜单触发器同源注入 Connected（真实点击同理）。
                 view.update(cx, |view, _cx| {
                     view.projection.set_connection(ConnectionState::Connected {
                         instance_id: "test".into(),
@@ -3042,6 +3139,47 @@ mod tests {
                 assert!(
                     trigger_focused,
                     "{identifier}: Escape-style close must restore the originating trigger"
+                );
+            });
+        }
+
+        // ADR-054 D1：All projects 下 add-task / header-new-task 的 AX press
+        // 与真实点击同路径直建无归属会话——不开任何确认菜单，流程收口
+        // 后焦点回 Composer（新任务待输入）。测试宿主无连接 client，
+        // create_session 走 not-connected 诚实失败通道（emit_reliable 在
+        // 未连接时为 no-op），不伪造成功。
+        for identifier in ["add-task", "header-new-task"] {
+            cx.update(|window, cx| {
+                view.update(cx, |view, _cx| {
+                    view.projection.set_connection(ConnectionState::Connected {
+                        instance_id: "test".into(),
+                    });
+                });
+                let composer = view.read(cx).composer_focus_handle(cx);
+                window.focus(&composer);
+            });
+            cx.update(|window, cx| {
+                view.update(cx, |view, cx| {
+                    view.handle_accessibility_request(
+                        AxRequest {
+                            identifier: identifier.to_string(),
+                            action: AxAction::Press,
+                            value: None,
+                        },
+                        window,
+                        cx,
+                    );
+                });
+            });
+            cx.update(|window, cx| {
+                let view = view.read(cx);
+                assert!(
+                    view.open_menu.is_none(),
+                    "{identifier}: direct create must not open a confirm menu"
+                );
+                assert!(
+                    view.composer_focus_handle(cx).is_focused(window),
+                    "{identifier}: direct create hands focus to the composer"
                 );
             });
         }

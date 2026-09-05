@@ -168,11 +168,11 @@ F3「代理保存到对应配置」：现行 Global `[[providers]].use_proxy` �
 | --- | --- |
 | OPT-D | 六张统一候选稿已交付、尺寸/状态走查通过；**用户视觉签字通过**（设计闸门已放行） |
 | OPT-1 | 1a–1d 已实现；定向自动验证通过；Appearance 真窗口重启恢复通过；未归档/未发布 |
-| OPT-2 | 未开始（协议可预研，GUI 等 D） |
+| OPT-2 | 2a–2d 已实现（ADR-054，API 1.11）；定向自动验证通过；**等待真窗口人工验收**（会话行按钮、行内改名、No project 提示与自动标题）；未归档/未发布 |
 | OPT-3 | 未开始（协议可预研，GUI 等 D） |
 | OPT-4 | 未开始（等 D 签字） |
 
-本线整体仍未完成：OPT-2/3/4 尚未开始；设计签字、后续 GUI 对照新图验收与发布分别记录，不由本批自动推定。
+本线整体仍未完成：OPT-3/4 尚未开始；OPT-2 已实现待真窗口人工验收；后续 GUI 对照新图验收与发布分别记录，不由本批自动推定。
 
 
 ### 10.1 本批交付与证据（2026-09-05）
@@ -195,4 +195,26 @@ F3「代理保存到对应配置」：现行 Global `[[providers]].use_proxy` �
 
 Validated: 上表实际命令、窗口/AX 与配置文件交叉验证。
 Targeted regressions: 上述 OPT-1 核心持久化与权限边界。
+Full workspace gate: NOT RUN（当前未设置全量门禁）。
+
+### 10.2 本批交付与证据（2026-09-05，OPT-2）
+
+- **ADR-054**（[desktop Spec](spec/desktop.md#adr-054opt-2-会话生命周期与自动标题2026-09-05)）先行冻结契约：GUI API 1.10 → 1.11，golden/typegen 先红后绿。
+- **OPT-2a**：`session_create.workspace_id` 可选化（缺省/null → 落盘 NULL 归 Unassigned）；Desktop 全局 New task 直建无项目会话，WorkspaceConfirm 浮层整批移除，项目头「+」与 Add project 保留；无项目会话 Composer 显示 No project chip 与文件工具不可用诚实提示。
+- **OPT-2b/2c**：storage `rename_session`/`archive_session`（缺失 fail-closed）；`session_rename`（空白标题结构化拒绝不写盘）/`session_archive`（仅隐藏不删除，wire 保留反归档）GUI 命令；写盘成功回执写后状态并广播 `SessionMetaChanged`；Desktop 会话行右侧 32×32 改名/归档按钮（键盘/AX 可达，行内编辑 Enter/Esc）。
+- **OPT-2d**：Global 配置 `naming_provider`/`naming_model`（分层同 default 对，`write_naming_model_pair` 原子写）；GUI RunStart 成功终态后独立 spawn 自动命名（复用/装配命名 provider，无工具一次性补全，20s 超时、限长 72），写回前二次复核占位名，未配置/失败/超时保留 `New session` 不启发式。Settings GUI 入口留 OPT-3b。
+
+| 检查 | 结果 |
+| --- | --- |
+| `cargo test -p pawork-storage -p pawork-protocol -p pawork-app --offline --lib --tests` | 通过（19 个测试二进制，含 storage rename/archive、protocol golden `golden_opt2_session_lifecycle_frames`、registry 31 命令双射钉住） |
+| `cargo test -p pawork-workspace -p pawork-app --offline --lib --tests` | 通过（含命名对写读往返、自动标题成功写回/未配置不调用/失败保留占位名三例） |
+| `cargo test -p pawork-desktop --offline --tests --features gpui/runtime_shaders` | 193 passed（含 wire 形状钉住、snapshot 改名/归档刷新、行内改名决策、AX 直建改写） |
+| `cargo test -p pawork-protocol --features typegen --offline --test typegen` | 通过（schemas 三产物同步检入） |
+| `cargo check -p pawork --offline`（主代理收口） | 通过 |
+| `git diff --check`、文档本地链接 | 通过 |
+
+定向回归：无归属会话落盘与 snapshot 归组、改名空白拒绝、归档隐藏且 `get_session` 仍可读、SessionMetaChanged 广播与 Desktop 刷新、命名模型未配置/失败诚实保留占位名。未跑 probe/spawn_e2e 与真窗口验收（OPT-2 收尾待做：会话行按钮与行内改名视觉、无项目提示、真实命名模型端到端，用 `opencode-go/glm-5.3-flash` 当次参数）。日志在本机 /tmp（opt2_*/pawork-opt2d-*.log），不检入仓库。
+
+Validated: 上表实际命令。
+Targeted regressions: 上述 OPT-2 契约与行为。
 Full workspace gate: NOT RUN（当前未设置全量门禁）。

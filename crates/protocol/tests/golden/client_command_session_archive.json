@@ -5,14 +5,13 @@
       "minor": 11
     },
     "command": {
-      "method": "set_terminal_settings",
+      "method": "session_archive",
       "params": {
-        "columns": 120,
-        "rows": 40,
-        "shell": "/bin/zsh"
+        "archived": true,
+        "session_id": "session-1"
       }
     },
-    "command_id": "command-auth-1",
+    "command_id": "command-terminal-1",
     "identity": {
       "actor_id": "actor-1",
       "type": "local_user"

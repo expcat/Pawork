@@ -14,12 +14,12 @@ use std::sync::{
 use std::time::Duration;
 
 use pawork_client::{
-    ActorIdentity, AppCommand, AppEventEnvelope, AppQuery, AppResponse, AppResponseEnvelope,
-    ApprovalModeWire, AuthStartData, ClientAuthentication, ClientConfig, ClientError,
-    CommandSource, ConnectOptions, DefaultModelPair, GeneralSettingsData, GlobalSequence,
-    GuiCapability, GuiClient, GuiTransportClient, LocalTransport, PermissionsSettingsData,
-    ProtocolErrorCode, ProviderAuthStatusData, ProviderUseProxyData, ResumeDisposition,
-    ResumeOutcome, Snapshot,
+    ActorIdentity, AppCommand, AppEvent, AppEventEnvelope, AppQuery, AppResponse,
+    AppResponseEnvelope, ApprovalModeWire, AuthStartData, ClientAuthentication, ClientConfig,
+    ClientError, CommandSource, ConnectOptions, DefaultModelPair, GeneralSettingsData,
+    GlobalSequence, GuiCapability, GuiClient, GuiTransportClient, LocalTransport,
+    PermissionsSettingsData, ProtocolErrorCode, ProviderAuthStatusData, ProviderUseProxyData,
+    ResumeDisposition, ResumeOutcome, Snapshot,
     TOKEN_SCHEME, TerminalSettingsData, TimelinePage, TransportEndpoint,
 };
 use serde_json::json;
@@ -399,12 +399,39 @@ impl DesktopController {
                     Ok(event) => {
                         record_shared_last_acked(&pump_state, event.global_sequence.0);
                         let _ = pump_client.ack(event.global_sequence).await;
+                        // ADR-054 D5：SessionMetaChanged（改名 / 归档 / 自动
+                        // 标题写回）意味着快照里的 session_tree 已过时；重取
+                        // snapshot 让列表回到 Host 写后状态。泵任务已在
+                        // runtime 上，直接 tokio::spawn 不占用 gpui 执行器。
+                        let meta_changed = matches!(
+                            event.payload,
+                            AppEvent::SessionMetaChanged { .. }
+                        );
                         if pump_events
                             .send(ControllerEvent::Event(event))
                             .await
                             .is_err()
                         {
                             break;
+                        }
+                        if meta_changed {
+                            let client = pump_client.clone();
+                            let events = pump_events.clone();
+                            tokio::spawn(async move {
+                                match client.snapshot().await {
+                                    Ok(snapshot) => {
+                                        let _ = events.send(ControllerEvent::Snapshot(snapshot)).await;
+                                    }
+                                    Err(error) => {
+                                        let _ = events
+                                            .send(ControllerEvent::OperationFailed {
+                                                action: "refresh sessions",
+                                                reason: error.to_string(),
+                                            })
+                                            .await;
+                                    }
+                                }
+                            });
                         }
                     }
                     // 空闲 tick：继续等事件即可。
@@ -816,12 +843,36 @@ pub(super) fn actor_identity() -> ActorIdentity {
 
 /// WorkspaceId / SessionId 等 domain id 未从 pawork-client re-export；命令与
 /// 查询经冻结的 serde 形状（method/params）构造，避免引入第二个业务依赖。
-pub(super) fn session_create_command(workspace_id: &str) -> AppCommand {
+/// ADR-054 D1（since 1.11）：workspace_id = None 时缺省该字段 → Host 落盘
+/// 无归属会话；显式传值行为不变。
+pub(super) fn session_create_command(workspace_id: Option<&str>) -> AppCommand {
+    let params = match workspace_id {
+        Some(workspace_id) => json!({ "workspace_id": workspace_id }),
+        None => json!({}),
+    };
     serde_json::from_value(json!({
         "method": "session_create",
-        "params": { "workspace_id": workspace_id }
+        "params": params
     }))
     .expect("session_create command shape is frozen")
+}
+
+/// ADR-054 D2：会话改名。title trim 后为空由 Host 结构化拒绝，不写盘。
+pub(super) fn session_rename_command(session_id: &str, title: &str) -> AppCommand {
+    serde_json::from_value(json!({
+        "method": "session_rename",
+        "params": { "session_id": session_id, "title": title }
+    }))
+    .expect("session_rename command shape is frozen")
+}
+
+/// ADR-054 D3：归档 / 反归档。Desktop 只暴露归档入口（archived = true）。
+pub(super) fn session_archive_command(session_id: &str, archived: bool) -> AppCommand {
+    serde_json::from_value(json!({
+        "method": "session_archive",
+        "params": { "session_id": session_id, "archived": archived }
+    }))
+    .expect("session_archive command shape is frozen")
 }
 
 pub(super) fn workspace_add_command(root_path: &std::path::Path) -> AppCommand {
@@ -1599,6 +1650,28 @@ mod tests {
         assert_eq!(value["method"], "session_fork");
         assert_eq!(value["params"]["session_id"], "s-1");
         assert_eq!(value["params"]["parent_event_id"], "evt-9");
+    }
+
+    /// ADR-054 D1–D3：create 缺省 workspace_id、rename / archive 的冻结
+    /// wire 形状（Desktop 不引入第二个业务依赖，形状钉在测试里）。
+    #[test]
+    fn session_lifecycle_commands_pin_wire_shapes() {
+        let unassigned = serde_json::to_value(session_create_command(None)).unwrap();
+        assert_eq!(unassigned["method"], "session_create");
+        assert!(unassigned["params"].get("workspace_id").is_none());
+
+        let scoped = serde_json::to_value(session_create_command(Some("ws-1"))).unwrap();
+        assert_eq!(scoped["params"]["workspace_id"], "ws-1");
+
+        let rename = serde_json::to_value(session_rename_command("s-1", "New title")).unwrap();
+        assert_eq!(rename["method"], "session_rename");
+        assert_eq!(rename["params"]["session_id"], "s-1");
+        assert_eq!(rename["params"]["title"], "New title");
+
+        let archive = serde_json::to_value(session_archive_command("s-1", true)).unwrap();
+        assert_eq!(archive["method"], "session_archive");
+        assert_eq!(archive["params"]["session_id"], "s-1");
+        assert_eq!(archive["params"]["archived"], true);
     }
 
     #[test]

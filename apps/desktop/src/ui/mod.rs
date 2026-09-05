@@ -205,8 +205,6 @@ enum MenuKind {
     Model,
     /// 条目「···」菜单，键为 timeline event_id。
     Entry(String),
-    /// 无触发器：All projects 下新建任务的条件确认浮层。
-    WorkspaceConfirm,
     /// Inspector 折叠态的 ActivityPopover（Workspace Header Activity
     /// 触发器弹出，R6 Wave A 自 StatusBar 迁入）。
     Activity,
@@ -540,6 +538,9 @@ pub struct AppView {
     /// rail 行级焦点句柄（按 RailStop::focus_key 懒建，会话删除后遗留条目
     /// 无副作用，随窗口生命周期回收）。
     rail_row_focus: BTreeMap<String, FocusHandle>,
+    /// ADR-054 D2：TaskRail 行内改名编辑器（同一时刻至多一个；None =
+    /// 无行处于编辑态）。输入框实体进入编辑态时懒建，退出即随状态丢弃。
+    session_rename: Option<SessionRenameState>,
     /// rail 列表滚动句柄：grouping / scope 切换后滚动 active task 到可见。
     rail_scroll: ScrollHandle,
     /// 下一次 render 时把 active task 滚动到可见（design §3.6）。
@@ -784,6 +785,7 @@ impl AppView {
                 .tab_stop(true)
                 .tab_index(INSPECTOR_TAB_INDEX),
             rail_row_focus: BTreeMap::new(),
+            session_rename: None,
             rail_scroll: ScrollHandle::new(),
             rail_scroll_to_active: false,
             pending_scope_focus: false,
@@ -1293,6 +1295,17 @@ impl AppView {
             }
             ControllerEvent::Snapshot(snapshot) => {
                 self.projection.merge_snapshot(&snapshot);
+                // 编辑中的 session 已从快照消失（他端归档等）：静默退出
+                // 编辑态，不提交。
+                if self.session_rename.as_ref().is_some_and(|rename| {
+                    !self
+                        .projection
+                        .sessions
+                        .iter()
+                        .any(|session| session.session_id == rename.session_id)
+                }) {
+                    self.session_rename = None;
+                }
                 self.timeline_changed();
             }
             ControllerEvent::TimelineLoaded { session_id, page } => {
@@ -1838,6 +1851,8 @@ impl AppView {
         // task 切换会重建 Timeline；先关闭可能锚在旧条目或旧上下文上的浮层，
         // 避免快捷键切换后留下不可见但仍接管键盘的 MenuKind。
         self.close_open_menu(cx);
+        // 切走会话即退出旧行内改名编辑态（不提交）。
+        self.session_rename = None;
         self.stash_composer_draft(cx);
         self.projection.select_session(&session_id);
         self.reconcile_terminal_workspace(cx);
@@ -1881,16 +1896,9 @@ impl AppView {
     }
 
     fn on_new_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match resolve_new_task_workspace(self.scope_workspace_id.as_deref()) {
-            Some(workspace) => self.create_task(Some(workspace.to_string()), window, cx),
-            None => {
-                self.open_menu = Some(MenuKind::WorkspaceConfirm);
-                self.menu_highlight = None;
-                self.status_hint =
-                    Some(i18n::t("status.confirm_workspace_first").into());
-                cx.notify();
-            }
-        }
+        // ADR-054 D1 / OPT-D：All projects 作用域下全局 New task 直建无归属
+        // 会话，不再开 WorkspaceConfirm；项目作用域仍定向新建到该项目。
+        self.create_task(self.scope_workspace_id.clone(), window, cx);
     }
 
     pub(super) fn on_open_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1955,12 +1963,7 @@ impl AppView {
             cx.notify();
             return;
         }
-        let Some(workspace) = workspace_id else {
-            self.status_hint = Some(i18n::t("status.choose_project_first").into());
-            cx.notify();
-            return;
-        };
-        self.controller.create_session(workspace);
+        self.controller.create_session(workspace_id);
         self.focus_composer(window, cx);
         cx.notify();
     }
@@ -1970,6 +1973,111 @@ impl AppView {
             self.projection.connection,
             ConnectionState::Connected { .. }
         )
+    }
+
+    /// ADR-054 D2：进入行内改名。懒建单行编辑器，预填当前标题并聚焦；
+    /// 行内编辑期间浮层菜单全部收口。
+    fn begin_session_rename(
+        &mut self,
+        session_id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.close_open_menu(cx);
+        let title = self
+            .projection
+            .sessions
+            .iter()
+            .find(|session| session.session_id == session_id)
+            .map(|session| session.title.clone())
+            .unwrap_or_default();
+        let input = cx.new(|cx| {
+            TextInput::with_placeholder("", cx)
+                .id("session-rename-input")
+                .height_clamp(
+                    metrics::RAIL_SESSION_ACTION_SIZE,
+                    metrics::RAIL_SESSION_ACTION_SIZE,
+                )
+        });
+        input.update(cx, |editor, cx| editor.set_text(title, cx));
+        let focus = input.read(cx).focus_handle(cx);
+        self.session_rename = Some(SessionRenameState {
+            session_id: session_id.to_string(),
+            input,
+        });
+        window.focus(&focus);
+        cx.notify();
+    }
+
+    /// 行内改名编辑器是否聚焦（Enter / Escape 路由用）。
+    fn session_rename_input_focused(&self, window: &Window, cx: &App) -> bool {
+        self.session_rename
+            .as_ref()
+            .is_some_and(|rename| rename.input.read(cx).focus_handle(cx).is_focused(window))
+    }
+
+    /// 改名提交后的收口：退出编辑态并把焦点送回该会话行（与菜单关闭
+    /// 回焦触发器同规）。
+    fn end_session_rename(&mut self, session_id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.session_rename = None;
+        let focus_key = rail_session_focus_key(session_id);
+        if let Some(handle) = self.rail_row_focus.get(&focus_key) {
+            window.focus(handle);
+        }
+        cx.notify();
+    }
+
+    /// Enter 提交：空标题不提交（保留编辑器）；未变化仅退出；变化发
+    /// SessionRename。连接 / Host 侧失败经既有 OperationFailed 通道可见。
+    fn commit_session_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(rename) = self.session_rename.as_ref() else {
+            return;
+        };
+        let session_id = rename.session_id.clone();
+        let draft = rename.input.read(cx).text().to_string();
+        let current = self
+            .projection
+            .sessions
+            .iter()
+            .find(|session| session.session_id == session_id)
+            .map(|session| session.title.clone())
+            .unwrap_or_default();
+        match session_rename_decision(&current, &draft) {
+            SessionRenameDecision::KeepEditing => {
+                cx.notify();
+            }
+            SessionRenameDecision::Close => {
+                self.end_session_rename(&session_id, window, cx);
+            }
+            SessionRenameDecision::Submit(title) => {
+                self.end_session_rename(&session_id, window, cx);
+                self.controller.rename_session(session_id, title);
+            }
+        }
+    }
+
+    /// Escape 取消：退出编辑态，不写盘、不发命令。
+    fn cancel_session_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(rename) = self.session_rename.as_ref() else {
+            return;
+        };
+        let session_id = rename.session_id.clone();
+        self.end_session_rename(&session_id, window, cx);
+    }
+
+    /// ADR-054 D3：归档当前会话行。Host 写盘后经 SessionMetaChanged /
+    /// 回执重取的 snapshot 隐藏该行；归档不取消进行中的 Run、不断连。
+    fn on_session_archive(&mut self, session_id: String, cx: &mut Context<Self>) {
+        self.close_open_menu(cx);
+        if self
+            .session_rename
+            .as_ref()
+            .is_some_and(|rename| rename.session_id == session_id)
+        {
+            self.session_rename = None;
+        }
+        self.controller.archive_session(session_id);
+        cx.notify();
     }
 
     /// 提取 ClickEvent 的按下位置（键盘触发无位置，永不判为同一次物理点击）。
@@ -2100,6 +2208,13 @@ impl AppView {
             } else {
                 window.focus_next();
             }
+            cx.stop_propagation();
+            return;
+        }
+        // 行内改名：Escape 取消并回焦会话行（进入编辑态时浮层已收口，
+        // 菜单分支不会先于这里接管）。
+        if key == "escape" && self.session_rename_input_focused(window, cx) {
+            self.cancel_session_rename(window, cx);
             cx.stop_propagation();
             return;
         }
@@ -2334,10 +2449,6 @@ impl AppView {
                 .get(&event_id)
                 .cloned()
                 .unwrap_or_else(|| self.focus_handle.clone()),
-            MenuKind::WorkspaceConfirm if self.header_new_task_focus.is_focused(window) => {
-                self.header_new_task_focus.clone()
-            }
-            MenuKind::WorkspaceConfirm => self.add_task_focus.clone(),
             MenuKind::Activity => self.inspector_activity_focus.clone(),
         };
         self.open_menu = None;
@@ -2352,14 +2463,6 @@ impl AppView {
             Some(MenuKind::Scope) => self.projection.project_scope_options().len() + 1,
             Some(MenuKind::Model) => self.projection.models.len(),
             Some(MenuKind::Entry(_)) => 1,
-            Some(MenuKind::WorkspaceConfirm) => {
-                self.projection
-                    .project_scope_options()
-                    .into_iter()
-                    .filter(|(id, _)| id.is_some())
-                    .count()
-                    + 1
-            }
             Some(MenuKind::Activity) => 1,
             None => 0,
         }
@@ -2436,19 +2539,6 @@ impl AppView {
                 if ix == 0 && self.can_fork_entry(&event_id) {
                     self.close_open_menu(cx);
                     self.on_fork(&event_id, window, cx);
-                }
-            }
-            MenuKind::WorkspaceConfirm => {
-                let choices: Vec<_> = self
-                    .projection
-                    .project_scope_options()
-                    .into_iter()
-                    .filter_map(|(id, name)| id.map(|id| (id, name)))
-                    .collect();
-                if let Some((workspace_id, _)) = choices.get(ix).cloned() {
-                    self.on_confirm_workspace(workspace_id, window, cx);
-                } else if ix == choices.len() {
-                    self.on_open_project(window, cx);
                 }
             }
             MenuKind::Activity => {
@@ -2750,6 +2840,16 @@ impl AppView {
     }
 
     fn on_send_message(&mut self, _: &SendMessage, window: &mut Window, cx: &mut Context<Self>) {
+        // 行内改名编辑器聚焦时 Enter 属于提交改名，不是发送消息。
+        if self.session_rename_input_focused(window, cx) {
+            if let Some(rename) = self.session_rename.as_ref() {
+                if rename.input.read(cx).is_composing() {
+                    return;
+                }
+            }
+            self.commit_session_rename(window, cx);
+            return;
+        }
         if self
             .terminal_input
             .read(cx)
@@ -3314,10 +3414,6 @@ impl AppView {
     }
 }
 
-fn resolve_new_task_workspace(scope_workspace_id: Option<&str>) -> Option<&str> {
-    scope_workspace_id
-}
-
 /// 所有需要 live connection 的 action 共用 fail-closed 基础 gate。render、
 /// 普通键盘、快捷键与 AX 最终 handler 必须在入口处再次复核。
 fn live_action_enabled(connection: &ConnectionState, target_present: bool) -> bool {
@@ -3374,6 +3470,42 @@ impl RailStop {
 
 pub(super) fn rail_session_focus_key(session_id: &str) -> String {
     format!("task-{session_id}")
+}
+
+/// 行内改名（铅笔）按钮焦点键；与 archive 一样按 session 懒建。
+pub(super) fn rail_session_rename_focus_key(session_id: &str) -> String {
+    format!("task-rename-{session_id}")
+}
+
+/// 行内归档按钮焦点键。
+pub(super) fn rail_session_archive_focus_key(session_id: &str) -> String {
+    format!("task-archive-{session_id}")
+}
+
+/// ADR-054 D2 行内改名编辑态：同一时刻至多一个 session 处于编辑。
+struct SessionRenameState {
+    session_id: String,
+    input: Entity<TextInput>,
+}
+
+/// 行内改名的提交裁决：trim 后为空 → 保留编辑器不提交（与 Host 的空
+/// title 结构化拒绝同语义）；与当前标题一致 → 仅退出编辑；否则提交。
+#[derive(Debug)]
+enum SessionRenameDecision {
+    KeepEditing,
+    Close,
+    Submit(String),
+}
+
+fn session_rename_decision(current: &str, draft: &str) -> SessionRenameDecision {
+    let trimmed = draft.trim();
+    if trimmed.is_empty() {
+        SessionRenameDecision::KeepEditing
+    } else if trimmed == current {
+        SessionRenameDecision::Close
+    } else {
+        SessionRenameDecision::Submit(trimmed.to_string())
+    }
 }
 
 pub(super) fn rail_project_occurrence_key(
@@ -3885,10 +4017,26 @@ mod tests {
         assert!(height <= 94.0 && height >= 88.0);
     }
 
+    /// ADR-054 D2：行内改名提交裁决——空标题（含纯空白）不提交，保持
+    /// 编辑器；未变化仅退出；变化才发 SessionRename。
     #[test]
-    fn all_projects_new_task_requires_workspace_confirm() {
-        assert!(resolve_new_task_workspace(None).is_none());
-        assert_eq!(resolve_new_task_workspace(Some("ws-a")), Some("ws-a"));
+    fn session_rename_decision_gates_empty_and_unchanged_titles() {
+        assert!(matches!(
+            session_rename_decision("Old", "   "),
+            SessionRenameDecision::KeepEditing
+        ));
+        assert!(matches!(
+            session_rename_decision("Old", ""),
+            SessionRenameDecision::KeepEditing
+        ));
+        assert!(matches!(
+            session_rename_decision("Old", "Old"),
+            SessionRenameDecision::Close
+        ));
+        match session_rename_decision("Old", "  New title  ") {
+            SessionRenameDecision::Submit(title) => assert_eq!(title, "New title"),
+            other => panic!("expected submit, got {other:?}"),
+        }
     }
 
     #[test]

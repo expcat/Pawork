@@ -334,7 +334,7 @@ impl AcpClientAdapter {
         Ok(CanonicalClientRequest::Command(self.command_envelope(
             &frame.request_id,
             AppCommand::SessionCreate {
-                workspace_id,
+                workspace_id: Some(workspace_id),
                 title: Some(params.cwd),
             },
         )))
@@ -622,7 +622,7 @@ mod tests {
     fn acp_gate_admits_registry_acp_commands() {
         let commands = [
             AppCommand::SessionCreate {
-                workspace_id: WorkspaceId::new("ws"),
+                workspace_id: Some(WorkspaceId::new("ws")),
                 title: None,
             },
             AppCommand::RunStart {

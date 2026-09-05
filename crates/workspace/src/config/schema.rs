@@ -26,6 +26,14 @@ pub struct PaworkConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
 
+    /// 自动命名 provider（ADR-054 D4；分层与 default_provider 相同）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub naming_provider: Option<String>,
+
+    /// 自动命名 model（ADR-054 D4；分层与 default_model 相同）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub naming_model: Option<String>,
+
     /// provider 列表配置。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub providers: Vec<ProviderConfig>,

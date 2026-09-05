@@ -36,6 +36,7 @@ use crate::{
 };
 
 mod bus;
+mod auto_title;
 mod events;
 mod handlers;
 #[cfg(test)]
@@ -215,6 +216,10 @@ impl GuiHostAdapter {
         let code = match error {
             crate::AppError::UnknownModel { .. }
             | crate::AppError::ModelBelongsToProvider { .. } => "unknown_model",
+            crate::AppError::SessionNotFound(_)
+            | crate::AppError::Session(
+                pawork_storage::session::SessionStoreError::SessionNotFound(_),
+            ) => "not_found",
             _ => "app_error",
         };
         Self::host_error(code, error.to_string())
@@ -773,6 +778,26 @@ fn command_session_fork<'a>(
     Box::pin(handlers::session::session_fork(adapter, envelope, command))
 }
 
+fn command_session_rename<'a>(
+    adapter: &'a GuiHostAdapter,
+    envelope: &'a AppCommandEnvelope,
+    command: &'a AppCommand,
+) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
+    Box::pin(handlers::session::session_rename(
+        adapter, envelope, command,
+    ))
+}
+
+fn command_session_archive<'a>(
+    adapter: &'a GuiHostAdapter,
+    envelope: &'a AppCommandEnvelope,
+    command: &'a AppCommand,
+) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
+    Box::pin(handlers::session::session_archive(
+        adapter, envelope, command,
+    ))
+}
+
 fn command_run_start<'a>(
     adapter: &'a GuiHostAdapter,
     envelope: &'a AppCommandEnvelope,
@@ -960,6 +985,8 @@ static COMMAND_HANDLERS: &[(&str, CommandHandler)] = &[
     ("session_create", command_session_create),
     ("session_open", command_session_open),
     ("session_fork", command_session_fork),
+    ("session_rename", command_session_rename),
+    ("session_archive", command_session_archive),
     ("run_start", command_run_start),
     ("run_cancel", command_run_cancel),
     ("auth_start", command_auth_start),

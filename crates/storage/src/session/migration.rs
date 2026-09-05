@@ -207,7 +207,7 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "session_binding_affinity",
         // P18-7（ADR-033）曾建 session_bindings/session_binding_events；R0/ADR-038 D3：
         // binding 状态机已归档（tag v2-final），本表无读写方；append-only 留表「预留」，
-        // 不回滚 DDL；复活条件见 ROADMAP §3.3/§4。
+        // 不回滚 DDL；复活条件见 docs/spec/backlog.md。
         sql: r#"
             CREATE TABLE session_bindings (
                 tenant_id TEXT NOT NULL,

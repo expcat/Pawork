@@ -355,7 +355,7 @@ impl PaworkClient {
     ) -> Result<SessionView, SdkError> {
         let envelope = self
             .command(AppCommand::SessionCreate {
-                workspace_id,
+                workspace_id: Some(workspace_id),
                 title,
             })
             .await?;

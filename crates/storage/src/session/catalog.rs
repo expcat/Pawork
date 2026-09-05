@@ -241,6 +241,54 @@ impl SessionStore {
             workspace_id,
         })
     }
+
+    /// ADR-054：会话改名。单行 UPDATE 同时推进 `updated_at_ms`；
+    /// 会话不存在报 `SessionNotFound`（fail-closed，不静默创建）。
+    pub async fn rename_session(
+        &self,
+        session_id: &SessionId,
+        title: &str,
+        now_ms: i64,
+    ) -> Result<(), SessionStoreError> {
+        let lookup = session_id.to_string();
+        let title = title.to_string();
+        self.database()
+            .call(move |connection| -> Result<(), SessionStoreError> {
+                let updated = connection.execute(
+                    "UPDATE sessions SET title=?2, updated_at_ms=?3 WHERE session_id=?1",
+                    params![lookup, title, now_ms],
+                )?;
+                if updated == 0 {
+                    return Err(SessionStoreError::SessionNotFound(lookup));
+                }
+                Ok(())
+            })
+            .await?
+    }
+
+    /// ADR-054：归档 / 反归档。归档只改 `archived` 标记与 `updated_at_ms`，
+    /// 不删事件与投影；会话不存在报 `SessionNotFound`。
+    pub async fn archive_session(
+        &self,
+        session_id: &SessionId,
+        archived: bool,
+        now_ms: i64,
+    ) -> Result<(), SessionStoreError> {
+        let lookup = session_id.to_string();
+        let archived_flag: i64 = if archived { 1 } else { 0 };
+        self.database()
+            .call(move |connection| -> Result<(), SessionStoreError> {
+                let updated = connection.execute(
+                    "UPDATE sessions SET archived=?2, updated_at_ms=?3 WHERE session_id=?1",
+                    params![lookup, archived_flag, now_ms],
+                )?;
+                if updated == 0 {
+                    return Err(SessionStoreError::SessionNotFound(lookup));
+                }
+                Ok(())
+            })
+            .await?
+    }
 }
 
 #[cfg(test)]
@@ -327,6 +375,76 @@ mod tests {
             .get_session(&SessionId::from("missing"))
             .await
             .expect_err("missing");
+        assert!(matches!(
+            error,
+            SessionStoreError::SessionNotFound(ref id) if id == "missing"
+        ));
+        store.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn rename_session_updates_title_and_touches_updated_at() {
+        let (_dir, path) = temp_db();
+        let (store, _) = SessionStore::open(&path).await.expect("store");
+        let session = SessionId::from("session-rename");
+        store
+            .create_session(&session, "old", Timestamp::from_unix_millis(100))
+            .await
+            .expect("seed");
+        store
+            .rename_session(&session, "new title", 500)
+            .await
+            .expect("rename");
+        let record = store.get_session(&session).await.expect("renamed record");
+        assert_eq!(record.title, "new title");
+        assert_eq!(record.updated_at_ms, 500);
+        let error = store
+            .rename_session(&SessionId::from("missing"), "x", 600)
+            .await
+            .expect_err("missing session");
+        assert!(matches!(
+            error,
+            SessionStoreError::SessionNotFound(ref id) if id == "missing"
+        ));
+        store.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn archive_session_toggles_flag_and_hides_from_listing() {
+        let (_dir, path) = temp_db();
+        let (store, _) = SessionStore::open(&path).await.expect("store");
+        let session = SessionId::from("session-archive");
+        store
+            .create_session(&session, "alpha", Timestamp::from_unix_millis(100))
+            .await
+            .expect("seed");
+        store
+            .archive_session(&session, true, 700)
+            .await
+            .expect("archive");
+        let record = store.get_session(&session).await.expect("archived record");
+        assert!(record.archived);
+        assert_eq!(record.updated_at_ms, 700);
+        assert!(
+            !store
+                .list_sessions()
+                .await
+                .expect("list")
+                .iter()
+                .any(|record| record.session_id == "session-archive"),
+            "archived sessions must be hidden from list_sessions"
+        );
+        store
+            .archive_session(&session, false, 800)
+            .await
+            .expect("unarchive");
+        let record = store.get_session(&session).await.expect("unarchived record");
+        assert!(!record.archived);
+        assert_eq!(record.updated_at_ms, 800);
+        let error = store
+            .archive_session(&SessionId::from("missing"), true, 900)
+            .await
+            .expect_err("missing session");
         assert!(matches!(
             error,
             SessionStoreError::SessionNotFound(ref id) if id == "missing"

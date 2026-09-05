@@ -11,7 +11,7 @@
 | Owner | `<主责>` |
 | 目标版本/阶段 | `<版本与阶段；未立项不得填写虚假编号>` |
 | 最近更新 | `YYYY-MM-DD` |
-| 关联 ROADMAP / 任务书 / ADR | `<相对链接>` |
+| 关联 backlog / 任务书 / ADR | `<相对链接>` |
 
 ## 1. 问题、用户与目标
 
@@ -105,7 +105,7 @@
 
 - [ ] `capabilities.md` / `product.md` 状态同步
 - [ ] `contracts.md` / `security.md` / `desktop.md` / `operations.md` 按影响同步
-- [ ] `docs/design.md`/`docs/architecture.md`、ADR、对应包级 Spec（`docs/spec/crates/`）、ROADMAP/任务书同步
+- [ ] `docs/design.md`/`docs/architecture.md`、ADR、对应包级 Spec（`docs/spec/crates/`）、任务书同步
 - [ ] 实际验证与已知缺口记录
 - [ ] 候选从 [backlog.md](backlog.md) 转为已实现或明确延期
 
@@ -114,4 +114,3 @@
 | ID | 问题/决策 | 选项与取舍 | Owner/时点 | 状态 |
 | --- | --- | --- | --- | --- |
 | `<D1>` | `<问题>` | `<A/B/C>` | `<人/日期>` | Open/Accepted/Superseded |
-

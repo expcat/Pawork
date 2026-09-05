@@ -4,8 +4,7 @@
 //! Forked / 发送失败等瞬态反馈落 footer Label。
 
 use gpui::{
-    anchored, deferred, div, point, prelude::*, px, Context, Corner, Pixels, Point, SharedString,
-    Window,
+    div, point, prelude::*, px, Context, Corner, Pixels, Point, SharedString, Window,
 };
 
 use crate::projection::{group_models_by_provider, ConnectionState, ModelEntry};
@@ -181,18 +180,6 @@ impl AppView {
                             .child(self.text_input.clone()),
                     ),
             )
-            .when(
-                matches!(self.open_menu, Some(MenuKind::WorkspaceConfirm)),
-                |composer| {
-                    // 无触发器：锚在 footer 行上方（原 label 行位置），浮层化不占布局流。
-                    composer.child(deferred(
-                        anchored()
-                            .anchor(Corner::TopLeft)
-                            .offset(point(px(metrics::ZERO), px(ANCHOR_GAP_Y)))
-                            .child(self.workspace_confirm_element(cx)),
-                    ))
-                },
-            )
             .child(
                 div()
                     .flex()
@@ -209,12 +196,42 @@ impl AppView {
                     )
                     .child(
                         div().max_w(px(180.0)).min_w_0().overflow_hidden().child(
-                            div().truncate().child(
-                                Label::new(self.composer_workspace_label())
-                                    .size(font::XS)
-                                    .color(dark().text.secondary),
-                            ),
+                            // OPT-D / ADR-054 D1：无项目上下文用 chip 呈现
+                            //（纯状态展示）；有项目沿用文字 scope 标签。
+                            match self.composer_workspace_no_project() {
+                                true => div()
+                                    .px_2()
+                                    .py(px(metrics::SPACE_1))
+                                    .border_1()
+                                    .border_color(dark().border.subtle)
+                                    .rounded(px(metrics::CONTROL_RADIUS))
+                                    .truncate()
+                                    .child(
+                                        Label::new(t("composer.no_project_chip"))
+                                            .size(font::XS)
+                                            .color(dark().text.secondary),
+                                    ),
+                                false => div().truncate().child(
+                                    Label::new(self.composer_workspace_label())
+                                        .size(font::XS)
+                                        .color(dark().text.secondary),
+                                ),
+                            },
                         ),
+                    )
+                    .when(
+                        self.composer_file_tools_unavailable_visible(),
+                        |footer| {
+                            footer.child(
+                                div().max_w(px(320.0)).min_w_0().overflow_hidden().child(
+                                    div().truncate().child(
+                                        Label::new(t("composer.file_tools_unavailable"))
+                                            .size(font::XS)
+                                            .color(dark().text.tertiary),
+                                    ),
+                                ),
+                            )
+                        },
                     )
                     .child(
                         Label::new(context_meter)
@@ -382,7 +399,7 @@ impl AppView {
             )
     }
 
-    fn composer_workspace_label(&self) -> String {
+    pub(super) fn composer_workspace_label(&self) -> String {
         if let Some(session_id) = &self.projection.active_session_id {
             if let Some(session) = self
                 .projection
@@ -397,65 +414,40 @@ impl AppView {
         match self.scope_workspace_id.as_deref() {
             Some(id) => t("composer.workspace_scope")
                 .replace("{}", &self.projection.workspace_name(Some(id))),
-            None => t("composer.workspace_scope_confirm_all").into(),
+            None => t("composer.no_project_chip").into(),
         }
     }
 
-    fn workspace_confirm_element(&self, cx: &mut Context<Self>) -> MenuPanel {
-        let choices: Vec<(String, String)> = self
-            .projection
-            .project_scope_options()
-            .into_iter()
-            .filter_map(|(id, name)| id.map(|id| (id, name)))
-            .collect();
-        let mut panel = MenuPanel::new("workspace-confirm").dismiss_on_outside(cx.listener(
-            |view, event: &gpui::MouseDownEvent, _, cx| {
-                view.dismiss_menu_on_outside(MenuKind::WorkspaceConfirm, event.position, cx);
-            },
-        ));
-        if choices.is_empty() {
-            panel = panel.child(
-                div()
-                    .px_2()
-                    .py_1()
-                    .text_size(font::SM)
-                    .text_color(dark().semantic.warning_text)
-                    .child(t("composer.add_workspace_first")),
-            );
+    /// Composer footer 的项目上下文是否为「无项目」：active session 优先
+    ///（ADR-054 D1 无归属会话），否则回落当前 scope；All projects 同样
+    /// 视为无项目上下文（新建任务将不绑定 workspace）。
+    pub(super) fn composer_workspace_no_project(&self) -> bool {
+        if let Some(session_id) = self.projection.active_session_id.as_deref() {
+            if let Some(session) = self
+                .projection
+                .sessions
+                .iter()
+                .find(|session| session.session_id == session_id)
+            {
+                return session.workspace_id.is_none();
+            }
         }
-        let highlight = self.menu_highlight_effective(0);
-        let add_project_ix = choices.len();
-        for (ix, (id, name)) in choices.into_iter().enumerate() {
-            let pick = id.clone();
-            panel = panel.child(
-                MenuRow::new(SharedString::from(format!("workspace-confirm-{id}")))
-                    .label(name)
-                    .highlighted(ix == highlight)
-                    .on_click(cx.listener(move |view, _event, window, cx| {
-                        view.on_confirm_workspace(pick.clone(), window, cx);
-                    })),
-            );
-        }
-        panel = panel.child(
-            MenuRow::new("workspace-confirm-add-project")
-                .label(t("common.add_project"))
-                .highlighted(add_project_ix == highlight)
-                .on_click(cx.listener(|view, _event, window, cx| {
-                    view.on_open_project(window, cx);
-                })),
-        );
-        panel
+        self.scope_workspace_id.is_none()
     }
 
-    pub(super) fn on_confirm_workspace(
-        &mut self,
-        workspace_id: String,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.open_menu = None;
-        self.menu_highlight = None;
-        self.create_task(Some(workspace_id), window, cx);
+    /// 文件工具不可用提示只在无项目会话激活时出现（无 active session 时
+    /// 不提示——还没有任务上下文）。
+    pub(super) fn composer_file_tools_unavailable_visible(&self) -> bool {
+        self.projection
+            .active_session_id
+            .as_deref()
+            .and_then(|session_id| {
+                self.projection
+                    .sessions
+                    .iter()
+                    .find(|session| session.session_id == session_id)
+            })
+            .is_some_and(|session| session.workspace_id.is_none())
     }
 
     pub(super) fn on_toggle_model_menu(

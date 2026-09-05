@@ -2,6 +2,16 @@
 
 > 基线日期：2026-09-05。GUI P0–P2（含中文与供应商代理开关）已实现，定向自动验证与本机真窗口验收完成，证据见 §8；工程约定见 [AGENTS.md](../../AGENTS.md)。
 
+## ADR-054：OPT-2 会话生命周期与自动标题（2026-09-05）
+
+背景：OPT-2（[ROADMAP](../ROADMAP.md) §5，反馈 F7/F9 与 F8 的自动命名）。设计闸门 OPT-D 已签字（[design/README §0](../../design/README.md)）。GUI API minor 1.10 → 1.11，golden/typegen 先行。
+
+- **D1 `SessionCreate.workspace_id` 改可选（since 1.11）**：wire 上字段可缺省或显式 `null` → Host 落盘 `workspace_id = NULL`，归 Unassigned；显式传值行为不变。无项目会话不获得任何 workspace 授权面：文件类工具按现有 Policy 对无 workspace 会话 fail-closed，只适用于问答等不碰仓库的任务。
+- **D2 `SessionRename{session_id, title}`**：两字段必填；title trim 后为空为结构化错误，不写盘。写盘成功后回执 Data（session_view，即写后状态）。
+- **D3 `SessionArchive{session_id, archived: bool}`**：两字段必填。归档后 `list_sessions`/snapshot 隐藏；归档不删除事件与投影，`SessionOpen` 仍可读；wire 保留 `archived: false` 反向写口，本阶段不提供永久删除，Desktop 只暴露归档入口。
+- **D4 命名模型与自动标题**：Global 配置 `naming_provider` / `naming_model`（分层与 `default_provider`/`default_model` 相同；凭证仍只进 auth backend）。未配置则不自动命名，不用启发式冒充模型命名。会话标题仍为占位名（`New session`）且 Run 达成功终态时，Host 用命名模型做一次无工具一次性补全；成功才写回标题，失败/超时保留占位名。Settings 四默认角色的 GUI 入口属 OPT-3b，本阶段只落配置键与 Host 消费。
+- **D5 `AppEvent::SessionMetaChanged{session_id, title, archived}`**：改名/归档/自动标题写回后由 Host 经 EventHub 广播；Desktop 收到后重取 snapshot，列表即时反映写后状态。
+
 ## 1. 产品定位
 
 Pawork Desktop 是本机单窗口 GPUI Agent 工作台。它只负责呈现、输入和用户控制，通过 `pawork-client` 连接 `pawork gui serve`；业务状态、Provider、数据库、工具、Git、PTY 与安全决策均留在 CLI/AppCore 宿主。
@@ -56,6 +66,7 @@ flowchart LR
 | ID | 要求 | 状态 |
 | --- | --- | --- |
 | DESK-01 | 用户能添加/选择真实项目并新建/切换会话，选中态与标题在长列表中可辨认。 | 项目选择、新建和切换生产入口已实现；多项目集合与 Session 归属已持久化并通过重启复验。 |
+| DESK-01a | 全局 New task 直建无项目会话（Unassigned），会话行右侧可改名/归档；配置命名模型后占位标题会话在 Run 成功后自动命名。 | ADR-054 已实现（API 1.11），定向自动验证通过；真窗口验收待 OPT-2 收尾。归档仅隐藏不删除；无项目会话文件类工具 fail-closed，Composer 显示 No project 诚实提示。 |
 | DESK-02 | Timeline 能按确定顺序投影历史和 live 事件，去重且不跨 Run 串线。 | 已实现；共享 reducer/golden。 |
 | DESK-03 | 流式输出时默认跟随底部；用户上滚后脱钩，显式回底后重挂。 | 生产逻辑已实现；长会话与性能按风险定向重验。 |
 | DESK-04 | 工具请求以审批卡呈现 ApproveOnce/ApproveForRun/Deny；取消动作可见。 | 生产逻辑已实现；本轮真实 `write_file` 审批路径已通过。 |

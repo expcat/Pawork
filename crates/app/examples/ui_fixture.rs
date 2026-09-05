@@ -526,7 +526,7 @@ impl Client {
         self.send(&ClientFrame::Command(Self::command_envelope(
             &format!("self-check-session-create-{}", wall_now_ms()),
             AppCommand::SessionCreate {
-                workspace_id: WorkspaceId::from(workspace_id),
+                workspace_id: Some(WorkspaceId::from(workspace_id)),
                 title: Some("ui fixture self-check".into()),
             },
         )))

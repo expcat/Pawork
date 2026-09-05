@@ -14,7 +14,7 @@
 
 | 页面 | 可改项与持久化归属 | OPT-1 处理 |
 | --- | --- | --- |
-| Models & providers | 默认对话 `default_provider/default_model`、`providers[].use_proxy` → Global `config.toml`；API key/OAuth → auth backend | 已有，不重做；F8/F10 留 OPT-3 |
+| Models & providers | 默认对话 `default_provider/default_model`、`providers[].use_proxy` → Global `config.toml`；命名 `naming_provider/naming_model` → Global `config.toml`（ADR-054 D4，OPT-2d 落键与 Host 消费，GUI 入口留 OPT-3b）；API key/OAuth → auth backend | 默认对话/代理已有，不重做；F8 识图/搜索键与四默认角色 GUI 留 OPT-3 |
 | Network | `proxy_url` → Global `config.toml` | 已有，不重做 |
 | Approvals | 审批模式、当前项目 trust 原为 Host 内存；`trust_workspaces` 是 Global 只读默认 | 新增 `approval_mode` / `workspace_trust`，见 ADR-053 |
 | Tools & MCP | Remove → Global `mcp.servers` + 独立 MCP 凭证；Test 是即时连接检查 | 已有，不把检测结果当偏好保存 |

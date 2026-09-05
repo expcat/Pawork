@@ -14,8 +14,10 @@ use pawork_auth::{
     SecretBackend,
 };
 use pawork_domain::{
-    AgentEvent, ModelDefinition, ModelId, ModelProvider, ProviderId, ResolvedCredential, RunId,
-    SessionId,
+    AgentEvent, CanonicalModelRequest, CancellationToken, ContentPart, Message, MessageId,
+    MessageRole, ModelDefinition, ModelId, ModelProvider, ProviderError, ProviderErrorKind,
+    ProviderEventSink, ProviderStreamEvent, ProviderId, RequestId, ResolvedCredential, RunId,
+    SessionId, TextContent,
 };
 use pawork_providers::ReasoningProtector;
 use pawork_providers::{
@@ -24,9 +26,79 @@ use pawork_providers::{
 };
 use pawork_workspace::config::{PaworkConfig, ProviderConfig};
 
+use async_trait::async_trait;
+
 use crate::channels::{self, ChannelKind};
 use crate::protocol::{resolve_adapter_protocol, AdapterProtocol};
 use crate::{AppCore, AppError};
+
+/// 自动命名一次性补全的兜底超时（ADR-054 D4：超时保留占位名）。
+const NAMING_TIMEOUT: Duration = Duration::from_secs(20);
+/// 送入命名模型的首条用户消息截断上限（字符）。
+const NAMING_INPUT_MAX_CHARS: usize = 4_000;
+/// 命名补全输出上限（token）：标题本身只取单行，64 已远超所需。
+const NAMING_MAX_OUTPUT_TOKENS: u64 = 64;
+
+/// 构造无工具的命名补全请求：system 指令 + 截断后的首条用户消息。
+fn naming_request(model: ModelId, first_user_text: &str) -> CanonicalModelRequest {
+    let truncated: String = first_user_text.chars().take(NAMING_INPUT_MAX_CHARS).collect();
+    let mut request = pawork_engine::assemble_request(
+        RequestId::from(format!(
+            "req-naming-{}",
+            pawork_engine::now_timestamp().as_unix_millis()
+        )),
+        model,
+        vec![
+            Message {
+                id: MessageId::from("naming-system"),
+                role: MessageRole::System,
+                content: vec![ContentPart::Text(TextContent {
+                    text: "你在为用户会话生成标题。根据用户消息生成一个简短标题：不超过 20 个字；只输出标题本身，不要引号、编号、前后缀或解释。".into(),
+                })],
+                metadata: Default::default(),
+            },
+            Message {
+                id: MessageId::from("naming-user"),
+                role: MessageRole::User,
+                content: vec![ContentPart::Text(TextContent { text: truncated })],
+                metadata: Default::default(),
+            },
+        ],
+    );
+    request.max_output_tokens = Some(NAMING_MAX_OUTPUT_TOKENS);
+    request
+}
+
+/// 收集命名补全的文本增量；完成后取首个非空行并按既有标题规则限长。
+#[derive(Default)]
+struct TitleTextSink {
+    text: std::sync::Mutex<String>,
+}
+
+impl TitleTextSink {
+    fn single_line_title(&self) -> Option<String> {
+        let joined = self.text.lock().expect("title sink mutex").clone();
+        let line = joined
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())?;
+        let title = crate::session_title_from_text(line);
+        (title != crate::app_core::PLACEHOLDER_SESSION_TITLE).then_some(title)
+    }
+}
+
+#[async_trait]
+impl ProviderEventSink for TitleTextSink {
+    async fn emit(&self, event: ProviderStreamEvent) -> Result<(), ProviderError> {
+        if let ProviderStreamEvent::TextDelta(delta) = event {
+            self.text
+                .lock()
+                .expect("title sink mutex")
+                .push_str(&delta);
+        }
+        Ok(())
+    }
+}
 
 /// 目录命令（models/auth/sessions）装配时容忍的「凭证缺失」错误族；
 /// 其余错误（配置、协议、provider 未知）仍然 fail-closed。
@@ -145,6 +217,67 @@ impl AppCore {
             self.record_model_switch(session, from, to).await?;
         }
         Ok(())
+    }
+
+    /// ADR-054 D4：用命名模型做一次无工具一次性补全，产出会话标题。
+    ///
+    /// 命名 provider 与当前已装配 provider 相同且凭证就绪时复用既有
+    /// adapter / 凭证（避免重复装配）；否则经 assemble_provider 全量装配。
+    /// 调用带超时；任何失败由调用方决定保留占位名，本方法不产生用户可见
+    /// 错误。输出 trim 后取首个非空行并限长，空结果返回 None。
+    pub(crate) async fn generate_session_title(
+        &self,
+        first_user_text: &str,
+    ) -> Result<Option<String>, AppError> {
+        let (provider, model) = match (
+            self.config.naming_provider.as_deref(),
+            self.config.naming_model.as_deref(),
+        ) {
+            (Some(provider), Some(model)) => (provider.to_string(), model.to_string()),
+            _ => return Ok(None),
+        };
+        let provider_id = ProviderId::new(provider);
+        let (adapter, credential, mut registry) =
+            if provider_id == self.provider_id && !self.provider_pending {
+                (
+                    Arc::clone(&self.provider),
+                    self.credential.clone(),
+                    self.registry.as_ref().clone(),
+                )
+            } else {
+                let assembled = assemble_provider(
+                    &self.config,
+                    &provider_id,
+                    &self.backend,
+                    true,
+                    Arc::clone(&self.reasoning_protector) as Arc<dyn ReasoningProtector>,
+                )
+                .await?;
+                (assembled.adapter, assembled.credential, assembled.registry)
+            };
+        let entry = resolve_provider_model(
+            &mut registry,
+            adapter.as_ref(),
+            credential.as_ref(),
+            &provider_id,
+            &model,
+        )
+        .await?;
+        let request = naming_request(entry.id.clone(), first_user_text);
+        let sink = TitleTextSink::default();
+        let streamed = tokio::time::timeout(
+            NAMING_TIMEOUT,
+            adapter.stream(request, &sink, CancellationToken::new()),
+        )
+        .await
+        .map_err(|_| {
+            AppError::from(ProviderError::new(
+                ProviderErrorKind::Timeout,
+                "session naming timed out",
+            ))
+        })??;
+        let _ = streamed;
+        Ok(sink.single_line_title())
     }
 
     /// 追加 model.switched 诊断事件（冻结的 Diagnostic 变体，不新增枚举形状）。
@@ -338,7 +471,7 @@ fn catalog_entry_from_definition(
 
 /// 按明确的 `(provider, model)` 解析模型。静态目录未命中目标 provider 时，
 /// 对该 provider 探测一次并惰性合并；探测仍未命中则保持 fail-closed。
-async fn resolve_provider_model(
+pub(crate) async fn resolve_provider_model(
     registry: &mut ModelRegistry,
     provider: &dyn ModelProvider,
     credential: Option<&ResolvedCredential>,

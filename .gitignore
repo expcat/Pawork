@@ -4,7 +4,6 @@
 # Secret / 凭据（绝不入库）
 .env
 .env.*
-!.env.example
 *.pem
 *.key
 secrets/

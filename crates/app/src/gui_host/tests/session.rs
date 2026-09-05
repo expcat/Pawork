@@ -70,7 +70,7 @@ async fn session_create_command_creates_session() {
     let host: Arc<dyn GuiHost> = Arc::new(GuiHostAdapter::new(core));
     let response = host
         .command(&command_envelope(AppCommand::SessionCreate {
-            workspace_id: WorkspaceId::from("ws-default"),
+            workspace_id: Some(WorkspaceId::from("ws-default")),
             title: Some("from gui".into()),
         }))
         .await
@@ -96,6 +96,126 @@ async fn session_create_command_creates_session() {
         }),
         "SessionCreate must bind workspace_id in the next snapshot: {sessions:?}"
     );
+}
+
+/// ADR-054 D1：缺省 workspace_id 落盘 NULL，snapshot 不带归属字段。
+#[tokio::test]
+async fn session_create_without_workspace_lands_unassigned() {
+    let (core, _dir, _session) = core_with_turn().await;
+    let host: Arc<dyn GuiHost> = Arc::new(GuiHostAdapter::new(core));
+    let response = host
+        .command(&command_envelope(AppCommand::SessionCreate {
+            workspace_id: None,
+            title: None,
+        }))
+        .await
+        .expect("accepted");
+    let AppResponse::Data(data) = &response else {
+        panic!("SessionCreate must return Data: {response:?}");
+    };
+    assert_eq!(data["title"], json!("New session"));
+    assert!(data.get("workspace_id").is_none(), "{data}");
+    let session_id = data["session_id"].as_str().expect("session_id").to_string();
+    let snapshot = host.snapshot().await.expect("snapshot after create");
+    let sessions = snapshot
+        .sections
+        .iter()
+        .find(|section| section.kind == SnapshotSectionKind::SessionTree)
+        .and_then(|section| section.data.clone())
+        .and_then(|data| data.as_array().cloned())
+        .unwrap_or_default();
+    assert!(
+        sessions.iter().any(|entry| {
+            entry.get("session_id").and_then(Value::as_str) == Some(session_id.as_str())
+                && entry.get("workspace_id").is_none()
+        }),
+        "unassigned SessionCreate must omit workspace_id in snapshot: {sessions:?}"
+    );
+}
+
+/// ADR-054 D2/D3/D5：改名 / 归档写盘、回执写后状态并广播
+/// SessionMetaChanged；空 title 结构化拒绝且不写盘。
+#[tokio::test]
+async fn session_rename_and_archive_update_meta_and_broadcast() {
+    let (core, _dir, _session) = core_with_turn().await;
+    let session = core
+        .create_session_with_workspace("before", WorkspaceId::from("ws-default"))
+        .await
+        .expect("seed session");
+    let adapter = GuiHostAdapter::new(core);
+    let mut events = adapter.subscribe_events();
+
+    let blank = adapter
+        .command(&command_envelope(AppCommand::SessionRename {
+            session_id: session.clone(),
+            title: "   ".into(),
+        }))
+        .await
+        .expect_err("blank title is rejected");
+    assert_eq!(blank.code, "invalid_title");
+    assert!(matches!(events.try_recv(), Err(_)));
+
+    let response = adapter
+        .command(&command_envelope(AppCommand::SessionRename {
+            session_id: session.clone(),
+            title: "renamed".into(),
+        }))
+        .await
+        .expect("rename");
+    let AppResponse::Data(data) = response else {
+        panic!("SessionRename must return Data");
+    };
+    assert_eq!(data.get("title").and_then(Value::as_str), Some("renamed"));
+    assert_eq!(data.get("archived").and_then(Value::as_bool), Some(false));
+    let event = events.try_recv().expect("SessionMetaChanged event");
+    assert!(matches!(
+        event.payload,
+        AppEvent::SessionMetaChanged {
+            ref title,
+            archived: false,
+            ..
+        } if title == "renamed"
+    ));
+
+    let response = adapter
+        .command(&command_envelope(AppCommand::SessionArchive {
+            session_id: session.clone(),
+            archived: true,
+        }))
+        .await
+        .expect("archive");
+    let AppResponse::Data(data) = response else {
+        panic!("SessionArchive must return Data");
+    };
+    assert_eq!(data.get("archived").and_then(Value::as_bool), Some(true));
+    let event = events.try_recv().expect("archive SessionMetaChanged");
+    assert!(matches!(
+        event.payload,
+        AppEvent::SessionMetaChanged { archived: true, .. }
+    ));
+
+    let listed = adapter
+        .core
+        .read()
+        .await
+        .list_sessions()
+        .await
+        .expect("list");
+    assert!(
+        !listed
+            .iter()
+            .any(|record| record.session_id == session.as_str()),
+        "archived session must be hidden from list_sessions"
+    );
+
+    let missing = adapter
+        .command(&command_envelope(AppCommand::SessionArchive {
+            session_id: SessionId::from("ses-missing"),
+            archived: true,
+        }))
+        .await
+        .expect_err("missing session is fail-closed");
+    assert_eq!(missing.code, "not_found");
 }
 
 #[tokio::test]
@@ -175,4 +295,3 @@ async fn session_fork_command_creates_branch_and_switches() {
         "snapshot must include TerminalSessions"
     );
 }
-

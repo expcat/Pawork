@@ -13,7 +13,7 @@ edition = "2021"
 rust-version = "1.88"
 publish = false
 authors = ["Pawork Contributors"]
-# license 待定（crates.io 发布硬前置，见 ROADMAP §4）。
+# license 待定（crates.io 发布硬前置，见 docs/spec/backlog.md BK-RELEASE-01）。
 
 [workspace.dependencies]
 tokio = "1"

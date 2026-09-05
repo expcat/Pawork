@@ -262,6 +262,7 @@ pub fn app_event_kind(event: &AppEvent) -> &'static str {
         AppEvent::CoreReady { .. } => "core_ready",
         AppEvent::WorkspaceChanged { .. } => "workspace_changed",
         AppEvent::SessionChanged { .. } => "session_changed",
+        AppEvent::SessionMetaChanged { .. } => "session_meta_changed",
         AppEvent::RunChanged { .. } => "run_changed",
         AppEvent::AssistantDelta { .. } => "assistant_delta",
         AppEvent::ThinkingDelta { .. } => "thinking_delta",

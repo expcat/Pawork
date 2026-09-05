@@ -10,7 +10,7 @@ use crate::GuiCapability;
 
 use super::command::AppCommand;
 use super::query::AppQuery;
-use super::version::{ApiVersion, V1_0, V1_1, V1_2, V1_3, V1_4, V1_5, V1_6, V1_7, V1_8, V1_10};
+use super::version::{ApiVersion, V1_0, V1_1, V1_2, V1_3, V1_4, V1_5, V1_6, V1_7, V1_8, V1_10, V1_11};
 
 /// GUI 通道访问规格：是否可用 + 命令级所需能力。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -127,6 +127,30 @@ static COMMANDS: &[RegistryEntry] = &[
         acp: false,
         idempotent: false,
         since: V1_0,
+    },
+    // ADR-054 OPT-2（since 1.11）：会话改名 / 归档，Desktop 入口；
+    // headless / ACP 暂不映射（fail-closed）。
+    RegistryEntry {
+        wire_name: "session_rename",
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
+        headless: None,
+        acp: false,
+        idempotent: true,
+        since: V1_11,
+    },
+    RegistryEntry {
+        wire_name: "session_archive",
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
+        headless: None,
+        acp: false,
+        idempotent: true,
+        since: V1_11,
     },
     // Host（IDE/ACP）侧命令：GUI 通道维持 S7 起的 PermissionDenied 拒绝，
     // 不进入 GuiHost；headless 侧按 Sessions 能力映射（波 B 消费）。
@@ -573,6 +597,8 @@ pub fn command_wire_name(command: &AppCommand) -> &'static str {
         AppCommand::SessionOpen { .. } => "session_open",
         AppCommand::SessionFork { .. } => "session_fork",
         AppCommand::SessionCompact { .. } => "session_compact",
+        AppCommand::SessionRename { .. } => "session_rename",
+        AppCommand::SessionArchive { .. } => "session_archive",
         AppCommand::SessionClientContextReplace { .. } => "session_client_context_replace",
         AppCommand::RunStart { .. } => "run_start",
         AppCommand::RunCancel { .. } => "run_cancel",

@@ -22,7 +22,7 @@ async fn command_idempotency_replays_first_response_without_repeating_side_effec
         CommandId::from("cmd-create-1"),
         Some("create-once"),
         AppCommand::SessionCreate {
-            workspace_id: WorkspaceId::from("ws-default"),
+            workspace_id: Some(WorkspaceId::from("ws-default")),
             title: Some("once".into()),
         },
     );
@@ -35,7 +35,7 @@ async fn command_idempotency_replays_first_response_without_repeating_side_effec
             CommandId::from("cmd-create-2"),
             Some("create-once"),
             AppCommand::SessionCreate {
-                workspace_id: WorkspaceId::from("ws-default"),
+                workspace_id: Some(WorkspaceId::from("ws-default")),
                 title: Some("once-again".into()),
             },
         ))
@@ -144,7 +144,7 @@ async fn distinct_gui_clients_do_not_collide_on_command_id() {
             "client-a",
             "gui-cmd-0",
             AppCommand::SessionCreate {
-                workspace_id: WorkspaceId::from("ws-default"),
+                workspace_id: Some(WorkspaceId::from("ws-default")),
                 title: Some("from-a".into()),
             },
         ))
@@ -210,7 +210,7 @@ async fn command_idempotency_survives_restart() {
         CommandId::from("cmd-create-1"),
         Some("create-once"),
         AppCommand::SessionCreate {
-            workspace_id: WorkspaceId::from("ws-default"),
+            workspace_id: Some(WorkspaceId::from("ws-default")),
             title: Some("once".into()),
         },
     );
@@ -332,7 +332,7 @@ async fn command_record_failure_is_counted_not_swallowed() {
             CommandId::from("cmd-create-live"),
             None,
             AppCommand::SessionCreate {
-                workspace_id: WorkspaceId::from("ws-default"),
+                workspace_id: Some(WorkspaceId::from("ws-default")),
                 title: Some("live".into()),
             },
         ))
@@ -389,7 +389,7 @@ async fn inflight_shared_key_different_command_id_does_not_hang() {
                     CommandId::from("cmd-inflight-waiter"),
                     Some("shared-hang"),
                     AppCommand::SessionCreate {
-                        workspace_id: WorkspaceId::from("ws-default"),
+                        workspace_id: Some(WorkspaceId::from("ws-default")),
                         title: Some("waiter".into()),
                     },
                 ))
@@ -492,7 +492,7 @@ async fn inflight_dropped_wakeup_still_converges_via_bounded_poll() {
             waiter_id,
             Some("drop-wakeup"),
             AppCommand::SessionCreate {
-                workspace_id: WorkspaceId::from("ws-default"),
+                workspace_id: Some(WorkspaceId::from("ws-default")),
                 title: Some("drop-wakeup".into()),
             },
         )),

@@ -403,7 +403,7 @@ mod tests {
     #[test]
     fn granted_session_capability_still_allows_mapped_commands() {
         let command = AppCommand::SessionCreate {
-            workspace_id: pawork_domain::WorkspaceId::from("ws-1"),
+            workspace_id: Some(pawork_domain::WorkspaceId::from("ws-1")),
             title: None,
         };
         assert_eq!(
