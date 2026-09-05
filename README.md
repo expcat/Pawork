@@ -64,8 +64,6 @@ Pawork/                  # 仓库根 = Cargo workspace 根
 | [docs/spec/flows.md](docs/spec/flows.md) | 跨包核心链路 |
 | [docs/spec/settings.md](docs/spec/settings.md) | Settings Feature Spec |
 | [docs/gui-design.md](docs/gui-design.md) | Desktop GUI 设计（配套 [design/README.md](design/README.md)） |
-| [docs/gui-optimization.md](docs/gui-optimization.md) | Desktop UI / Design 全面优化方案（现状审计、竞品对比、逐区修改与验收） |
-| [docs/gui-roadmap.md](docs/gui-roadmap.md) | Desktop UI 优化 Roadmap（P0–P2 子任务、依赖、写入集与阶段验收） |
 | [docs/references.md](docs/references.md) | 参照项目手册与调研附录 |
 | [AGENTS.md](AGENTS.md) | 工程约定与开发经验 |
 

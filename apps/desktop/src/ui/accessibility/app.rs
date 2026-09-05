@@ -42,10 +42,6 @@ use crate::ui::{
 pub(crate) const PAD: f32 = 8.0;
 pub(crate) const CONTROL_HEIGHT: f32 = 28.0;
 pub(crate) const ROW_HEIGHT: f32 = 32.0;
-const ACTIVITY_CONTENT_INSET_X: f32 = 28.0;
-const ACTIVITY_HEADING_OFFSET_Y: f32 = 58.0;
-const ACTIVITY_SUMMARY_OFFSET_Y: f32 = 24.0;
-const ACTIVITY_HEADING_HEIGHT: f32 = 20.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct ActivityPopoverAxGeometry {
@@ -69,24 +65,30 @@ fn header_action_ax_rect(frame: AxRect) -> AxRect {
 fn activity_popover_ax_geometry(
     header_frame: AxRect,
     trigger: AxRect,
+    rem_px: f32,
 ) -> ActivityPopoverAxGeometry {
+    let scale = rem_px / font::BASE_REM_PIXELS;
+    let menu_inset = metrics::MENU_PADDING + 1.0;
+    let width = metrics::ACTIVITY_POPOVER_WIDTH + 2.0 * menu_inset;
+    let inset_x = menu_inset + 1.5 * rem_px + 1.0; // p_4 + section border + p_2
     let frame = AxRect::new(
-        (trigger.x + trigger.width - metrics::ACTIVITY_POPOVER_WIDTH).max(header_frame.x),
+        (trigger.x + trigger.width - width).max(header_frame.x),
         trigger.y + trigger.height + ANCHOR_GAP_Y,
-        metrics::ACTIVITY_POPOVER_WIDTH,
-        metrics::ACTIVITY_POPOVER_HEIGHT,
+        width,
+        metrics::ACTIVITY_POPOVER_HEIGHT * scale + 2.0 * menu_inset,
     );
     let heading = AxRect::new(
-        frame.x + ACTIVITY_CONTENT_INSET_X,
-        frame.y + ACTIVITY_HEADING_OFFSET_Y,
-        (frame.width - 2.0 * ACTIVITY_CONTENT_INSET_X).max(0.0),
-        ACTIVITY_HEADING_HEIGHT,
+        frame.x + inset_x,
+        // p_4 + 标题行 + divider + gap_2 + section border + p_2
+        frame.y + menu_inset + 2.0 * rem_px + 1.5 * font::BODY.0 * rem_px + 2.0,
+        (frame.width - 2.0 * inset_x).max(0.0),
+        1.5 * font::BODY_SM.0 * rem_px,
     );
     let open_changes = AxRect::new(
         heading.x,
-        heading.y + ACTIVITY_SUMMARY_OFFSET_Y,
+        heading.y + heading.height + 0.25 * rem_px,
         heading.width,
-        ROW_HEIGHT,
+        metrics::MENU_ROW_HEIGHT,
     );
     ActivityPopoverAxGeometry {
         frame,
@@ -654,8 +656,9 @@ impl AppView {
         // 与可见 TaskRail 对齐（R3 Wave A，几何单一来源 theme::metrics）：
         // Panel p_2(8) + 36px traffic-light 安全区 + gap_2(8) 后进入标题行，
         // 三行节奏 32 / 20；AX 不得把首控件投影到按钮带。
-        let inset = metrics::RAIL_CONTENT_INSET;
-        let mut y = PAD + shell_layout::TRAFFIC_LIGHT_SAFE_HEIGHT + PAD;
+        let rem_px = f32::from(window.rem_size());
+        let inset = 0.5 * rem_px + metrics::RAIL_INNER_PAD;
+        let mut y = rem_px + shell_layout::TRAFFIC_LIGHT_SAFE_HEIGHT;
         let grouping = AxNode::new(
             "task-rail-grouping",
             AxRole::Button,
@@ -846,12 +849,12 @@ impl AppView {
         );
 
         if matches!(self.open_menu, Some(MenuKind::Scope)) {
-            let scope_menu_y = PAD
+            let scope_menu_y = rem_px
                 + shell_layout::TRAFFIC_LIGHT_SAFE_HEIGHT
-                + PAD
                 + metrics::RAIL_TITLE_ROW_HEIGHT
                 + metrics::RAIL_TITLE_SCOPE_GAP
-                + metrics::RAIL_TOP_ROW_HEIGHT;
+                + metrics::RAIL_TOP_ROW_HEIGHT
+                + ANCHOR_GAP_Y;
             let mut menu = AxNode::new(
                 "scope-menu",
                 AxRole::Group,
@@ -879,9 +882,12 @@ impl AppView {
                         label,
                         AxRect::new(
                             inset,
-                            scope_menu_y + ix as f32 * ROW_HEIGHT,
+                            scope_menu_y
+                                + metrics::MENU_PADDING
+                                + 1.0
+                                + ix as f32 * metrics::MENU_ROW_HEIGHT,
                             list_width,
-                            ROW_HEIGHT,
+                            metrics::MENU_ROW_HEIGHT,
                         ),
                     )
                     .selected(selected)
@@ -891,15 +897,18 @@ impl AppView {
             }
             let add_ix = options.len();
             menu = menu.child(
-            AxNode::new(
-                "scope-add-project",
-                AxRole::Button,
-                t("common.add_project"),
-                AxRect::new(
-                    inset,
-                    scope_menu_y + add_ix as f32 * ROW_HEIGHT,
+                AxNode::new(
+                    "scope-add-project",
+                    AxRole::Button,
+                    t("common.add_project"),
+                    AxRect::new(
+                        inset,
+                        scope_menu_y
+                            + metrics::MENU_PADDING
+                            + 1.0
+                            + add_ix as f32 * metrics::MENU_ROW_HEIGHT,
                         list_width,
-                        ROW_HEIGHT,
+                        metrics::MENU_ROW_HEIGHT,
                     ),
                 )
                 .focused(add_ix == highlight)
@@ -1142,7 +1151,8 @@ impl AppView {
                     .action(AxAction::Press),
             );
             if popover_visible {
-                let geometry = activity_popover_ax_geometry(frame, action);
+                let geometry =
+                    activity_popover_ax_geometry(frame, action, f32::from(window.rem_size()));
                 header = header.child(
                     AxNode::new(
                         "activity-popover",
@@ -2661,19 +2671,24 @@ mod tests {
 
     /// R6 Wave A：折叠态 Header Activity 的 AX 触发器与 Popover 锚点公式
     /// 必须钉住生产 render 所用的 40×37 槽、右侧 25px inset、8px gap 与
-    /// 320×144 内容收缩外框；Connected 真窗口证据受环境阻塞时仍能防止静默漂移。
+    /// 320×144 基准内容、面板内边距，以及大字号下的摘要命中范围。
     #[test]
     fn activity_header_ax_geometry_matches_render_anchor_contract() {
         let header = AxRect::new(240.0, 0.0, 840.0, metrics::HEADER_HEIGHT);
         let trigger = header_action_ax_rect(header);
         assert_eq!(trigger, AxRect::new(1015.0, 51.5, 40.0, 37.0));
 
-        let popover = activity_popover_ax_geometry(header, trigger);
-        assert_eq!(popover.frame, AxRect::new(735.0, 96.5, 320.0, 144.0));
-        assert_eq!(popover.heading, AxRect::new(763.0, 154.5, 264.0, 20.0));
+        let popover = activity_popover_ax_geometry(header, trigger, 16.0);
+        assert_eq!(popover.frame, AxRect::new(717.0, 96.5, 338.0, 162.0));
+        assert_eq!(popover.heading, AxRect::new(751.0, 163.5, 270.0, 18.0));
         assert_eq!(
             popover.open_changes,
-            AxRect::new(763.0, 178.5, 264.0, ROW_HEIGHT)
+            AxRect::new(751.0, 185.5, 270.0, metrics::MENU_ROW_HEIGHT)
+        );
+        let large = activity_popover_ax_geometry(header, trigger, 24.0);
+        assert_eq!(large.frame.height, 234.0);
+        assert!(
+            large.open_changes.y + large.open_changes.height < large.frame.y + large.frame.height
         );
     }
 

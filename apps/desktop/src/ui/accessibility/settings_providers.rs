@@ -117,7 +117,8 @@ impl AppView {
                     )
                 })
                 .collect();
-            let actions_in_details = remove_confirm || row_actions.len() > 2;
+            // 认证动作使用独立详情行，避免窄窗 / 150% 下挤压目录列。
+            let actions_in_details = !row_actions.is_empty();
             let editor_row = editor_open
                 && self
                     .settings_api_key_inputs

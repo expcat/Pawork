@@ -25,7 +25,8 @@ impl AppView {
         const SUBTITLE_HEIGHT: f32 = 20.0;
         const STATUS_HEIGHT: f32 = 20.0;
         const CONTROL_ROW: f32 = 28.0;
-        const MODE_ROW_HEIGHT: f32 = 44.0;
+        let mode_row_height = crate::ui::settings::SETTINGS_APPROVAL_ROW_REMS
+            * f32::from(window.rem_size());
         const ROW_GAP: f32 = 4.0;
         let state = &self.projection.settings_permissions;
         let writes = self.settings_permissions_writes_enabled();
@@ -122,7 +123,7 @@ impl AppView {
                 button_id,
                 AxRole::Tab,
                 approval_mode_label(mode),
-                AxRect::new(frame.x + 16.0, y, width, MODE_ROW_HEIGHT),
+                AxRect::new(frame.x + 16.0, y, width, mode_row_height),
             )
             .value(value)
             .selected(current)
@@ -134,7 +135,7 @@ impl AppView {
                 row = row.action(AxAction::Press);
             }
             page = page.child(row);
-            y += MODE_ROW_HEIGHT + ROW_GAP;
+            y += mode_row_height + ROW_GAP;
         }
 
         // ② 会话信任开关：状态行 + 切换按钮（与 render 同 gate，缺 Host
@@ -165,7 +166,7 @@ impl AppView {
                         frame.x + 16.0,
                         y,
                         (width - 180.0).max(60.0),
-                        MODE_ROW_HEIGHT,
+                        mode_row_height,
                     ),
                 )
                 .value(format!(
@@ -181,7 +182,7 @@ impl AppView {
                     trust_label,
                     AxRect::new(
                         frame.x + 16.0 + width - 116.0,
-                        y + (MODE_ROW_HEIGHT - CONTROL_ROW) / 2.0,
+                        y + (mode_row_height - CONTROL_ROW) / 2.0,
                         116.0,
                         CONTROL_ROW,
                     ),
@@ -190,7 +191,7 @@ impl AppView {
                 .focused(trust_focused)
                 .action(AxAction::Press),
             );
-        y += MODE_ROW_HEIGHT + 8.0;
+        y += mode_row_height + 8.0;
 
         // ③ Global 默认只读行。
         let global_text = match state.trust_workspaces_global {

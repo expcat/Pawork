@@ -1,6 +1,6 @@
 # Desktop 产品与交互规格
 
-> 基线日期：2026-09-03。生产连接、主要组件链路与 macOS AX 语义基座已经存在；正式 Host/Desktop 的项目、对话、文件、Git Changes 与 Terminal 真实核心路径已通过，状态和后续顺序只看 [AGENTS.md](../../AGENTS.md)。
+> 基线日期：2026-09-05。GUI P0–P2（含中文与供应商代理开关）已实现，定向自动验证与本机真窗口验收完成，证据见 §8；工程约定见 [AGENTS.md](../../AGENTS.md)。
 
 ## 1. 产品定位
 
@@ -25,11 +25,11 @@ flowchart LR
 | --- | --- | --- |
 | TaskRail | 会话/任务条目、新任务、项目范围、`Add project…`、选中态、长标题截断 | 项目通过系统目录选择器和 Host `workspace_add` 注册；当前 project/session 持久化生命周期仍不完整。100%：宽窗 288px、1080–1279 为 240px；150% 时 320px。 |
 | Timeline | 用户/助手/工具/诊断/Run 状态、流式内容、审批卡、fork 边界、回到底部 | 变高虚拟化；菜单锚点卸载、follow-scroll 与千级事件仍需按风险定向复验。 |
-| Composer | 多行输入、发送、附件/`@` 引用反馈 | host 已展开 `@token`；无模糊候选浮层。IME、粘贴与草稿仍需系统级人工验收。 |
+| Composer | 多行输入、发送、附件/`@` 引用反馈 | host 已展开 `@token`；无模糊候选浮层。系统 IME composing 已取得本机证据；多行粘贴与草稿有定向测试，跨平台输入仍需专项验收。 |
 | Inspector / Changes | 默认 Changes；顶层 Changes/Terminal/Resources 与二级 Files/Summary 分层；DiffView；折叠态 Header ActivityPopover | 只读；无 stage/unstage/hunk 命令。 |
 | Inspector / Terminal | PTY 创建、输入、resize、Stop/Close、流式输出与 live/snapshot 终态；任务切换隔离草稿；失败与断线诚实显示 | 创建需 Policy；纯文本视图过滤 ANSI/VT 控制序列但不是完整 VT emulator；ADR-045 的 `terminal_close` / `TerminalExited` 自 API 1.3 起可用，旧 minor 仍只从 snapshot 获知终态。 |
 | Inspector / Resources | MCP server/tool 状态、刷新 | 只读；没有已加载 AGENTS.md/Skills 分区。 |
-| Settings | English Settings Rail + 820px 内容列；Models & providers、Network、Approvals、Tools & MCP、Terminal、Appearance、Advanced、About | P2 已产品化现有能力：provider 64px 概览与按需详情、默认模型独立 section、Network 写入 workspace 外的用户 `config.toml`、Approvals 整行 radio、Appearance 即时字号样例、Advanced/About definition list。Host-backed 页按权威能力显示并在 stale 时禁写，本地 Appearance/Advanced 离线常在；普通 UI / AX summary 不显示 credential 片段。真实账号、完整真窗口与人工验收仍待补。 |
+| Settings | English / 中文 Settings Rail + 820px 可滚动内容列；Models & providers、Network、Approvals、Tools & MCP、Terminal、Appearance、Advanced、About | P2 已产品化现有能力：provider 64px 概览与独立认证操作行、默认模型独立 section、Network 写入 workspace 外的用户 `config.toml`、Approvals 整行 radio、Appearance 即时字号样例、Advanced/About definition list。Host-backed 页按权威能力显示并在 stale 时禁写，本地 Appearance/Advanced 离线常在；普通 UI / AX summary 不显示 credential 片段。本机视觉/键盘走查已完成；四家真实认证/目录矩阵与 E4 用户签字仍单独登记。 |
 
 ## 3. 连接与状态模型
 
@@ -60,21 +60,21 @@ flowchart LR
 | DESK-03 | 流式输出时默认跟随底部；用户上滚后脱钩，显式回底后重挂。 | 生产逻辑已实现；长会话与性能按风险定向重验。 |
 | DESK-04 | 工具请求以审批卡呈现 ApproveOnce/ApproveForRun/Deny；取消动作可见。 | 生产逻辑已实现；本轮真实 `write_file` 审批路径已通过。 |
 | DESK-05 | Fork 只在 reducer 标记的闭合 Run 边界开放，动作入口再次校验。 | 已实现。 |
-| DESK-06 | 同时只打开一个菜单；Escape/外点关闭；浮层 occlude 防滚轮穿透。 | 生产逻辑已实现；全部菜单和滚轮边界仍需完整人工走查。 |
-| DESK-07 | Composer 支持中文 IME、多行粘贴、Shift+Enter 与明确发送。 | 生产逻辑已实现；真实 IME、paste 与系统级输入仍待人工验收。 |
+| DESK-06 | 同时只打开一个菜单；Escape/外点关闭；浮层 occlude 防滚轮穿透。 | 已实现；本机 scope / model / Activity 及键盘关闭回焦已复验。 |
+| DESK-07 | Composer 支持中文 IME、多行粘贴、Shift+Enter 与明确发送。 | 已实现；系统 IME composing 已于 2026-09-05 完成真窗口补证，paste/Shift+Enter 由现有定向回归覆盖。 |
 | DESK-08 | Inspector 三页签独立滚动，切入/展开/会话切换/Run 终态/刷新时拉取正确数据。 | 本轮真实 Changes 与 Terminal 主路径已通过；Resources 和跨会话全矩阵仍按后续任务复验。 |
 | DESK-09 | 断线态可 Reconnect，Run/会话不因 UI 断线丢失。 | 重连路径已实现；项目与 Session 归属跨重启已复验。 |
-| DESK-10 | 1080×720 下 Composer、状态栏和 Header Activity 触发器仍可用。 | 生产响应式路径已实现；完整视觉签字仍待人工验收。 |
+| DESK-10 | 1080×720 下 Composer、状态栏和 Header Activity 触发器仍可用。 | 已实现；1440×1024、1080×720 与三档字号的本机视觉复验通过（§8）。 |
 | DESK-11 | 可见结构和控件具备稳定 AX identifier、正确 role/name/value/state/action；AX 操作复用鼠标/键盘的业务 gate。 | ADR-042 macOS bridge 已实现；本轮主路径可经 AX 驱动，Windows/Linux 平台仍未验收（VoiceOver 验收已于 2026-09-04 按用户要求移出范围）。 |
-| DESK-12 | Settings 从 TaskRail 进入；Host capability 驱动业务页，本地外观页驱动当前 Desktop 字号；本地高级页提供安全连接诊断；关于页呈现当前 Host 权威元数据；返回时保持工作台状态，secure input 不泄漏 AX value。 | SET-3～SET-6g 已实现。外观页在离线态仍可达，三档按钮/快捷键/AX Press 共享 `TextScale`；高级页的握手摘要只在当前连接存活时可用，runtime ID 不冒充配置 instance，Reconnect 与既有 handler 同源；About 的 render/AX 共用 Connected + 非空 `host_data_dir` gate，断线清空并回退高级。真实账号端到端与完整真窗口人工验收 pending，见 [settings.md](settings.md)。 |
+| DESK-12 | Settings 从 TaskRail 进入；Host capability 驱动业务页，本地外观页驱动当前 Desktop 字号；本地高级页提供安全连接诊断；关于页呈现当前 Host 权威元数据；返回时保持工作台状态，secure input 不泄漏 AX value。 | SET-3～SET-6g 已实现。外观页在离线态仍可达，三档按钮/快捷键/AX Press 共享 `TextScale`；高级页的握手摘要只在当前连接存活时可用，runtime ID 不冒充配置 instance，Reconnect 与既有 handler 同源；About 的 render/AX 共用 Connected + 非空 `host_data_dir` gate，断线清空并回退高级。本机八页视觉、字号与语言切换已复验；真实账号端到端矩阵与 E4 签字见 [settings.md](settings.md)。 |
 
-### 4.1 可见合同（已实现，非终局签字）
+### 4.1 当前可见合同
 
 - Timeline wrapper 使用满宽 + 618px 可读列，独立 summary 与 tool-group summary 分别使用 40px / 12px 节奏；关键元信息提升到 secondary。
 - TaskRail project count / task time 使用 56px 右对齐尾槽；Header 为 medium；24px StatusBar 使用 12px 字阶和窄窗裁切。
 - Composer 的 input/footer 共属同一 panel surface，unavailable Context 使用 tertiary；常态高度、220px 增长上限和 Send/Cancel 单槽不变。
-- Changes 文件行使用稳定前后槽；DiffView 的只读路径 header 位于横滚外，24px 语义 gutter 与中性正文分离；ActivityPopover 按当前真实 Changes 内容收缩为 320×144，并保持 capability honesty。
-- 以上是当前生产结构，不代表三张阶段目标设计图已经完成人工视觉签字；完整 Timeline/Changes AX 仍需后续验收。
+- Changes 文件行使用稳定前后槽；DiffView 的只读路径 header 位于横滚外，24px 语义 gutter 与中性正文分离；ActivityPopover 内容宽 320px，内容高随 100%/125%/150% 为 144/180/216px，外框包含 8px padding 与 1px border，摘要可见且保持 capability honesty。
+- 三张阶段图与本机视觉走查已收口；此结论不扩张为 Timeline/Changes 全状态 AX 几何覆盖或发布级签字。
 
 ## 5. 键盘、IME 与可访问性
 
@@ -112,3 +112,18 @@ flowchart LR
 - `@` 候选浮层和 Resources 规则分区只有 Host capability 存在时才可展示。
 
 证据必须记录实际窗口状态、连接态、真实操作 trace、文件/Git/PTY/Provider 外部事实和实际执行的自动检查。三张阶段目标设计图、Settings 真窗口与发布状态均需单独记录，不能由功能测试互相替代。
+
+
+## 8. GUI 收尾验收记录（2026-09-05）
+
+GUI P0–P2 及追加中文/供应商代理开关均已实现；本机 E2 自动验证与 E3 真窗口检查完成，原活动路线图及实施计划已清理。E4 用户签字、跨平台、真实账号完整矩阵与发布门禁未由此推定。
+
+- **环境与产物**：macOS 26.6.2（25G83），Desktop 0.1.0、GUI API 1.10；源码基线 `f977b34` 加本次局部视觉修复，经正式脚本构建并把真实可执行文件复制进 runtime `.app`。`pawork --instance desktop status` 为 listening，`doctor --instance desktop` 握手正常。
+- **P0 Foundation**：对照三张阶段图中的 Foundation，核对 1440×1024 与 1080×720（含窗框截图 1083×723）、空态唯一 New task、Inspector 自适应折叠、Composer、Timeline/Projects 直接切换。鼠标/Return/Space 切换保持 active session、草稿与焦点；scope 菜单在触发器下方展开且只有一个选中勾，Escape 回焦；model 长菜单可滚动、向上展开。
+- **P1 Run & Review**：保留 2026-09-05 已有真实 `opencode-go / glm-5.3-flash` streaming/tool/Review、Approval Deny 与系统 IME composing 证据。本次重新读取正式 Host 持久事件并在窗口打开历史会话 `ses-1788535764261-1`：`run-gui-1788538222136-1` 为 completed，包含 49 个 assistant text delta、3 次 tool started/completed 与 1 个 run_completed，provider/model 符合指定测试模型。零文件终态只显示 Run completed，Activity 为 `0 files · +0/−0`；不把历史回放当成本次新发模型请求。
+- **P2 Settings & Polish**：computer-use 逐页检查 Models & providers、Network、Approvals、Tools & MCP、Terminal、Appearance、Advanced、About；切换 English/中文及 100%/125%/150%。Connected 与目录错误分层；当前 ChatGPT 目录 HTTP 401 如实展示。真实 Network/供应商代理开关写回证据保留在 [Settings Spec](settings.md)；本次未修改凭证、代理、默认模型或审批策略。
+- **本次视觉修复并复验**：Advanced 长路径正常换行；Settings 页启用受限高度内的纵向滚动，切页归零；provider 认证操作移到详情行；两行审批说明随字号增高；单行输入至少容纳当前行高与内边距；Activity 高度与 AX 几何随字号调整；scope 下方锚定与单勾。最小窗 150% 下高级页底部、审批页信任/说明、模型列表及 Network/Terminal 输入完整可达。
+- **自动验证**：`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders` 189/189；`./scripts/pawork-desktop.sh build` 成功；`cargo tree -p pawork --offline --prefix none` 成功且 manifest/lock 无差异；`git diff --check` 与改动文档相对链接检查通过。未新增依赖或测试数量，仅扩展既有 Activity 几何断言。
+- **证据位置**：本次 Codex 任务 `01a06f10-cd2b-77b3-95a8-165ce4cfe6f8` 的 computer-use trace，以及本机 `~/.codex/visualizations/2026/09/05/01a06f10-cd2b-77b3-95a8-165ce4cfe6f8/pawork-audit`（截图 01–42，最终修复图 31–40，恢复后的常规窗口图 41–42）；截图不检入仓库，不作为仓库可复现门禁。临时测试/构建日志前缀为 `/tmp/pawork-gui-closeout-verified-`。
+
+Full workspace gate: NOT RUN（当前未设置全量门禁）。

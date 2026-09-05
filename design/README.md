@@ -1,6 +1,6 @@
 # Pawork Desktop 分阶段视觉基准
 
-> 本目录只保留三张目标设计图。行为事实源：[GUI 设计](../docs/gui-design.md)，实施顺序与状态见 [UI Roadmap](../docs/gui-roadmap.md)。
+> 本目录只保留三张目标设计图。行为事实源：[GUI 设计](../docs/gui-design.md)，收尾证据见 [Desktop Spec](../docs/spec/desktop.md#8-gui-收尾验收记录2026-09-05)。
 
 ## 1. 保留资产
 
@@ -44,7 +44,7 @@
 
 1. 使用 `./scripts/pawork-desktop.sh start` 构建并启动正式 Host/Desktop；不加载 fixture、seed、probe 或测试 profile。
 2. 用磁盘文件、`git status` / diff 与终端 stdout 交叉核对 UI，不用截图单独证明功能正确。
-3. 按 Roadmap 阶段对照对应设计图检查信息架构、层级、密度和主操作可达性；动态内容不同不构成通过或失败的唯一依据。
+3. 按 P0/P1/P2 对照对应设计图检查信息架构、层级、密度和主操作可达性；动态内容不同不构成通过或失败的唯一依据。
 4. 自动检查、真窗口验收、人工视觉签字和发布状态分别记录，不能互相替代。
 
 ## 5. 非目标

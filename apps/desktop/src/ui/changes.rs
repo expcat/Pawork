@@ -740,15 +740,19 @@ impl AppView {
     pub(super) fn activity_popover_element(&self, cx: &mut Context<Self>) -> MenuPanel {
         let summary = self.changes.activity_summary();
         let mismatch = self.changes_session_mismatch();
+        let content_height = metrics::ACTIVITY_POPOVER_HEIGHT
+            * self.text_scale.rem_pixels() / font::BASE_REM_PIXELS;
+        // 字号同时放大 rem 间距；外框还需容纳 MenuPanel 的 padding 与 border。
+        let panel_height = content_height + 2.0 * (metrics::MENU_PADDING + 1.0);
         let panel = MenuPanel::new("activity-popover")
-            .max_height(metrics::ACTIVITY_POPOVER_HEIGHT + 8.0)
+            .max_height(panel_height + if mismatch.is_some() { 40.0 } else { 0.0 })
             .dismiss_on_outside(cx.listener(|view, event: &MouseDownEvent, _window, cx| {
                 view.dismiss_menu_on_outside(MenuKind::Activity, event.position, cx);
             }))
             .child(
                 div()
                     .w(px(metrics::ACTIVITY_POPOVER_WIDTH))
-                    .h(px(metrics::ACTIVITY_POPOVER_HEIGHT))
+                    .h(px(content_height))
                     .flex()
                     .flex_col()
                     .gap_2()

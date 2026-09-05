@@ -11,7 +11,7 @@
 3. **是否真实验收**：真实 Provider、真实 OS、真窗口、真实客户端或用户签字是否完成？
 4. **是否可发布**：License、安装/升级、供应链、三平台和发布/回滚门禁是否明确并通过？
 
-前一项不能替代后一项。当前 Pawork 有大量“已实现 + 历史定向测试通过”的能力；Desktop 真实核心路径及 GUI Roadmap P0/P1 已完成本机 E3 真窗口验收，跨平台与发布门禁仍未完成。
+前一项不能替代后一项。当前 Pawork 有大量“已实现 + 历史定向测试通过”的能力；Desktop 真实核心路径及 GUI P0–P2 已完成本机 E3 真窗口验收，跨平台与发布门禁仍未完成。
 
 ## 2. 证据等级
 
@@ -66,16 +66,16 @@ E3/E4 证据必须包含日期、环境/版本、输入范围、实际结果和�
 
 | 缺口 | 状态 | 完成条件 |
 | --- | --- | --- |
-| Desktop 真实核心路径 | 已验证（2026-09-05） | 正式脚本构建/启动；真实项目、`opencode-go / glm-5.3-flash` streaming/tool/Review、Approval Deny、Git Changes 与系统 IME 均有窗口与外部事实双证据；详见 [GUI Roadmap](../gui-roadmap.md) P0-5 / P1-5。 |
+| Desktop 真实核心路径 | 已验证（2026-09-05） | 正式脚本构建/启动；真实项目、`opencode-go / glm-5.3-flash` streaming/tool/Review、Approval Deny、Git Changes 与系统 IME 均有窗口与外部事实双证据；详见 [Desktop 收尾记录](desktop.md#8-gui-收尾验收记录2026-09-05)。 |
 | Session→Workspace 重启归属 | ✅ P1 片 1 | 同一 Session 在 Host 重启后仍恢复到原 Workspace，Task/Timeline/Changes 一致；Terminal 进程诚实不恢复，workspace/cwd 恢复后新 PTY 仍在同一仓库。 |
 | 配置根闭环 | 未执行 | git 根/子目录/非 git 三态与六层配置文档一致，偏差已修或登记。 |
 | ChatGPT/xAI 自然临期 OAuth refresh | 待真实账号/临期窗口 | refresh → retry → success 与 `invalid_grant` 清理均有真实证据。 |
 | 三类关键回归发布矩阵 | 未立项 | 发布任务明确命令和环境后执行；普通改动仍同批跑受影响的定向种子。 |
 | 真实客户端/Provider 矩阵 | 未执行 | 四通道 chat、GUI/Desktop、Zed ACP、headless json-stdio、doctor 实际通过或明确 fail-closed。 |
-| 真实 Anthropic、fork/compact、PTY/审批恢复等历史人工项 | 待后续任务 | 实际执行，或由用户明确接受延期并在 ROADMAP/收口摘要登记。 |
-| Settings 模型与供应商 | SET-1～SET-6g 已实现；SET-012 Network E1～E3 已验证 | [settings.md](settings.md) 其余需求完成四家真实认证/目录矩阵；完整人工视觉/键盘仍单独签字。 |
-| 完整视觉与 Accessibility 签字 | P0/P1 已通过；跨平台待专项 | 主工作台 P0/P1、三张阶段图、100/125/150%、键盘/AX 与系统 IME 已由当前真窗口取证；非 macOS 与发布级 Accessibility 不在本轮范围。 |
-| 发布级验证 | 未立项 | 发布不在当前 ROADMAP；用户另行授权后先定 License，再定义三平台、供应链、安装/升级/回滚门禁。 |
+| 真实 Anthropic、fork/compact、PTY/审批恢复等历史人工项 | 待后续任务 | 实际执行，或由用户明确接受延期并在对应 Spec/收口摘要登记。 |
+| Settings 模型与供应商 | SET-1～SET-6g 已实现；SET-012 Network E1～E3 已验证 | [settings.md](settings.md) 其余需求完成四家真实认证/目录矩阵；本机视觉/键盘 E3 已完成，E4 用户签字仍独立记录。 |
+| 完整视觉与 Accessibility 签字 | P0–P2 本机 E3 已通过；跨平台待专项 | 主工作台 P0/P1、Settings 八页、三张阶段图、100/125/150%、键盘/AX 与系统 IME 已由当前真窗口取证；非 macOS 与发布级 Accessibility 不在本轮范围。 |
+| 发布级验证 | 未立项 | 发布不在当前任务范围；用户另行授权后先定 License，再定义三平台、供应链、安装/升级/回滚门禁。 |
 
 ## 6. 证据记录格式
 

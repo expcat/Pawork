@@ -170,25 +170,13 @@ Settings 沿用参考设计的 1440×1024 深色语言和 8px 节奏，不另起
 - headless/ACP 不因 Desktop 功能自动获得 Secret 写入能力；registry 必须对各通道显式声明，首期可只对认证本机 GUI 开放。
 - Desktop/CLI 对同一 auth backend 的状态必须一致；GUI 设置后 `pawork auth list` / `pawork models` 能以脱敏方式核对。
 
-P2 视觉方向见 [desktop-ui-p2-settings-v4.png](../../design/desktop-ui-p2-settings-v4.png)；它不替代真实数据或安全证据。2026-09-04 自动门禁已通过，最终真窗口签字仍 pending。
+P2 视觉方向见 [desktop-ui-p2-settings-v4.png](../../design/desktop-ui-p2-settings-v4.png)；它不替代真实数据或安全证据。2026-09-05 本机八页、English/中文、三档字号、窄窗与键盘走查已完成 E3，记录见 [Desktop Spec §8](desktop.md#8-gui-收尾验收记录2026-09-05)；四家真实认证/目录矩阵与 E4 签字仍独立登记。
 
-## 7. 实现切片
+## 7. 实现索引
 
-| 切片 | 写入集 | 前置 | 完成条件 | 可并行性 |
-| --- | --- | --- | --- | --- |
-| SET-1 契约 | protocol、schemas、client/app contract tests | 本 Spec | Secret/状态/wire 最小形状与兼容策略锁定 | 串行 |
-| SET-2 Host 门面 | auth、providers、workspace、app；对应包 Spec | SET-1 | descriptor、状态、凭证操作、默认项由 Host 单点提供 | 串行 |
-| SET-3 Settings 壳 | desktop；desktop 产品/包 Spec | SET-1 query 形状 | route、rail、返回、断线/空态、AX 接通 | 可与 SET-2 后半只读部分协调，默认串行 |
-| SET-4 Provider auth | providers、auth、app；对应包 Spec | SET-2 | 四家认证矩阵完成，xAI API key/Kimi 两种连接补齐 | 串行 |
-| SET-5 Catalog/default | providers、app、protocol/client、desktop、workspace | SET-2～4 | 远端/固定目录、刷新、过滤、默认项与 Composer 同步 | 串行 |
-| SET-6a～6f 其它页 | 按页最小写入集；SET-6e/6f 仅 desktop + 文档 | SET-5 | Network、权限、MCP、终端、外观与高级均以真实能力启用；本地页不造持久化/配置能力 | 串行 |
-| SET-6g 关于 | protocol/schemas、client、cli、desktop 与对应 Spec；不改 App query/config/schema | SET-6f + ADR-051 Accepted | Desktop build、协商 API、Host data directory 均有权威来源；缺字段 fail-closed；不宣称 updater/release | 串行 |
-| SET-6h 供应商代理开关 | protocol/schemas、workspace writer、app handler、client、desktop 与对应 Spec | SET-012 Network + ADR-052 | Global 代理已配置时 provider 行显示开关；`use_proxy = false` 出站绕过全局代理；回执即写后状态 | 串行 |
-| SET-7 验收 | 测试/文档；仅修真实缺陷 | SET-3～6g | 定向门禁、四家真实账号、断线/重启、AX/窄窗证据 | 串行 |
+SET-1～SET-6h 已落地：契约在 protocol/client，认证与目录由 auth/providers/app 提供，Global 配置由 workspace writer 持久化，Desktop 提供八页 Settings 与供应商代理开关。模块、API、边界及对应验证以各包 Spec 和下表为准；已完成的切片排期不再保留。
 
-其余 Settings 页不塞入 SET-1～5。模型与供应商收口后，每页按真实能力分别建小切片；不得以“完整设置中心”为由同时修改无关包。
-
-## 8. 验证计划
+## 8. 验证与证据
 
 | 需求 | E1 实现证据 | E2 自动化 | E3 真实环境 | E4 人工 |
 | --- | --- | --- | --- | --- |
@@ -221,13 +209,13 @@ SET-6h 本机证据（2026-09-05，macOS）：Global `config.toml` 配置 `proxy
 
 ## 10. 文档与收尾
 
-- [x] ROADMAP、Feature Spec、任务书和 GUI 行为设计同步。
+- [x] Feature Spec 与 GUI 行为设计同步，已完成的活动规划文档已清理。
 - [x] product/capabilities/desktop/verification/backlog 索引本 Feature，状态随各切片诚实同步。
 - [x] SET-1 后同步 contracts/architecture/ADR/protocol/client/app 包级 Spec。
 - [x] SET-2 后同步 providers/workspace/app 包级 Spec（pawork-auth 零改动，无需回写）。
 - [x] SET-3～6g 已同步各实际写入集包级 Spec。
 - [x] SET-3～6g 已逐片写入实际验证和已知缺口，并压缩进 history。
-- [ ] 模型与供应商真实验收后再决定是否补 Settings bitmap 基准。
+- [x] 视觉方向沿用 P2 阶段图；真窗口证据留在验收任务，不向仓库新增 bitmap。
 
 ## 11. 决策与开放问题
 

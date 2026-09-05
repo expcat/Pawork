@@ -25,6 +25,7 @@ pub enum ListRowKind {
 pub struct ListRow {
     id: SharedString,
     kind: ListRowKind,
+    height: f32,
     focus: Option<FocusHandle>,
     children: Vec<AnyElement>,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
@@ -46,6 +47,7 @@ impl ListRow {
         Self {
             id: id.into(),
             kind,
+            height: metrics::RAIL_TASK_ROW_HEIGHT,
             focus: None,
             children: Vec::new(),
             on_click: None,
@@ -57,6 +59,12 @@ impl ListRow {
     /// 聚焦描边（tab_index 档位由调用方的 focus handle 携带）。
     pub fn track_focus(mut self, focus: &FocusHandle) -> Self {
         self.focus = Some(focus.clone());
+        self
+    }
+
+    /// 多行设置项可按当前字号提供行高；TaskRail 保持默认 44px。
+    pub fn height(mut self, height: f32) -> Self {
+        self.height = height;
         self
     }
 
@@ -109,7 +117,7 @@ impl RenderOnce for ListRow {
                     .flex_row()
                     .items_center()
                     .min_w_0()
-                    .h(px(metrics::RAIL_TASK_ROW_HEIGHT))
+                    .h(px(self.height))
                     .px_2()
                     .rounded_sm();
                 if selected {
@@ -129,7 +137,7 @@ impl RenderOnce for ListRow {
                     .min_w_0()
                     .items_center()
                     .gap_1()
-                    .h(px(metrics::RAIL_TASK_ROW_HEIGHT))
+                    .h(px(self.height))
                     .rounded_sm();
                 dark().surface.raised
             }

@@ -2726,6 +2726,7 @@ impl AppView {
                 window.focus(&self.settings_nav_providers_focus);
             }
         }
+        self.settings_scroll.set_offset(gpui::point(px(0.0), px(0.0)));
         cx.notify();
     }
 
@@ -3639,7 +3640,7 @@ impl Render for AppView {
             }
             AppRoute::Settings => {
                 let sidebar = self.settings_rail_element(px(shell.rail_width), cx);
-                let main = div().flex().flex_row().flex_1().min_w_0().child(
+                let main = div().flex().flex_row().flex_1().min_w_0().min_h_0().child(
                     div()
                         .id("shell-settings")
                         .debug_selector(|| "shell-settings".into())

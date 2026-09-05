@@ -6,8 +6,8 @@
 //! 每会话终态字段，不画终态绿点）。几何常量与 AX 树共享 theme::metrics。
 
 use gpui::{
-    div, prelude::*, px, AnyElement, ClickEvent, Context, FontWeight, KeyDownEvent, Pixels, Point,
-    Rgba, SharedString, Window,
+    div, point, prelude::*, px, AnyElement, ClickEvent, Context, Corner, FontWeight, KeyDownEvent,
+    Pixels, Point, Rgba, SharedString, Window,
 };
 
 use crate::projection::{
@@ -136,7 +136,10 @@ impl AppView {
                 view.on_toggle_scope_menu(None, window, cx);
                 cx.stop_propagation();
             }));
-        let mut scope = Dropdown::new(scope_button);
+        let mut scope = Dropdown::new(scope_button).panel_anchor(
+            Corner::TopLeft,
+            point(px(0.0), px(metrics::RAIL_TOP_ROW_HEIGHT)),
+        );
         if scope_menu_open {
             scope = scope.panel(self.scope_menu_element(cx));
         }
@@ -355,11 +358,7 @@ impl AppView {
                         let selected = current == workspace_id;
                         let option_id = workspace_id.clone().unwrap_or_else(|| "all".into());
                         MenuRow::new(SharedString::from(format!("scope-{option_id}")))
-                            .label(if selected {
-                                format!("✓ {label}")
-                            } else {
-                                label
-                            })
+                            .label(label)
                             .selected(selected)
                             .highlighted(ix == highlight)
                             .on_click(cx.listener(move |view, _event, window, cx| {

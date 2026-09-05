@@ -53,6 +53,8 @@ pub(super) const PROVIDER_CARD_PAD: f32 = 8.0;
 pub(crate) const PROVIDER_OVERVIEW_HEIGHT: f32 = 64.0;
 /// 写动作按钮高度（与 Composer 28px 动作槽同节奏）。
 pub(super) const SETTINGS_ACTION_HEIGHT: f32 = 28.0;
+/// 两行审批说明与内边距随字号一起增长（render / AX 同源）。
+pub(crate) const SETTINGS_APPROVAL_ROW_REMS: f32 = 3.5;
 /// 「模型与默认项」区失效提示（render 与 AX 同源；只声明事实，不切换）。
 pub(crate) fn settings_default_unavailable_note() -> &'static str {
     t("settings.default_unavailable_note")

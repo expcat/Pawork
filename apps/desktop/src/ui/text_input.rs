@@ -1089,11 +1089,13 @@ impl Element for TextElement {
 }
 
 impl Render for TextInput {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // 固定单行输入也必须容纳当前字号的行高与 py_1 内边距。
+        let line_min_height = (font::BASE.0 * 1.5 + 0.5) * f32::from(window.rem_size());
         div()
             .flex()
             .key_context("TextInput")
-            .max_h(px(self.max_height))
+            .max_h(px(self.max_height.max(line_min_height)))
             .track_focus(&self.focus_handle(cx))
             .cursor(CursorStyle::IBeam)
             .on_action(cx.listener(Self::backspace))

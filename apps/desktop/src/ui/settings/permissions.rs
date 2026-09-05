@@ -221,6 +221,7 @@ impl AppView {
                     .id("settings-page-scroll")
                     .flex_1()
                     .min_h_0()
+                    .overflow_y_scroll()
                     .track_scroll(&self.settings_scroll)
                     .child(content),
             )
@@ -254,6 +255,7 @@ impl AppView {
             dark().text.tertiary
         };
         let mut row = ListRow::task(id.clone(), current)
+            .height(SETTINGS_APPROVAL_ROW_REMS * self.text_scale.rem_pixels())
             .track_focus(&focus)
             .child(
                 div().w(px(20.0)).flex_none().child(

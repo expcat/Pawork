@@ -136,6 +136,7 @@ impl AppView {
                 .id("settings-page-scroll")
                 .flex_1()
                 .min_h_0()
+                .overflow_y_scroll()
                 .track_scroll(&self.settings_scroll)
                 .child(content),
         )
@@ -168,7 +169,8 @@ impl AppView {
                 )
             })
             .collect();
-        let actions_in_details = remove_confirm || row_actions.len() > 2;
+        // 认证动作使用独立详情行，避免窄窗 / 150% 下挤压目录列。
+        let actions_in_details = !row_actions.is_empty();
         let endpoint_visible = editor_open || oauth_waiting || remove_confirm;
         let auth_error = match &provider.auth {
             ProviderAuthState::Error { message } => Some(message.as_str()),
@@ -431,7 +433,7 @@ impl AppView {
             }
         }
 
-        // 多动作或 destructive 二次确认移入详情，普通概览保持 64px。
+        // 认证动作与 destructive 二次确认位于详情，概览保持 64px。
         if actions_in_details && !row_actions.is_empty() {
             let mut row = div().flex().flex_row().gap_1().flex_wrap();
             for action in &row_actions {

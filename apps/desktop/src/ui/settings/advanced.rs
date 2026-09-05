@@ -32,7 +32,6 @@ impl AppView {
             content = content.child(
                 div()
                     .id(id)
-                    .w_full()
                     .min_w_0()
                     .flex()
                     .flex_row()
@@ -121,6 +120,7 @@ impl AppView {
                     .id("settings-page-scroll")
                     .flex_1()
                     .min_h_0()
+                    .overflow_y_scroll()
                     .track_scroll(&self.settings_scroll)
                     .child(content),
             )

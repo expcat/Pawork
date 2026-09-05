@@ -1,6 +1,6 @@
 # Pawork Desktop GUI 设计
 
-> Desktop GUI 的设计事实源。目标 UI 全面优化方案见 [gui-optimization.md](gui-optimization.md)，分阶段任务见 [gui-roadmap.md](gui-roadmap.md)；视觉实施基准见 [../design/README.md](../design/README.md)。产品/验收汇总见 [spec/desktop.md](spec/desktop.md)；包级 Spec 见 [spec/crates/desktop.md](spec/crates/desktop.md)。
+> Desktop GUI 的设计事实源。GUI 优化已收尾，验收记录见 [Desktop Spec](spec/desktop.md#8-gui-收尾验收记录2026-09-05)；视觉实施基准见 [../design/README.md](../design/README.md)。产品/验收汇总见 [spec/desktop.md](spec/desktop.md)；包级 Spec 见 [spec/crates/desktop.md](spec/crates/desktop.md)。
 
 ---
 
@@ -109,7 +109,7 @@
 - Run 终态只保留一个 summary；只有当前 Session 存在至少一个真实、可审阅的 Changes 文件时才显示 `Ready for review` 与 `Review changes`，并打开、聚焦 Changes；文件列表为空时显示轻量 `Run completed`，不画假 CTA。失败、取消与审批状态均使用文字 / 图标，不只依赖颜色。
 - TaskRail 项目计数和任务时间使用 56px 右对齐 meta 槽；标题 `truncate`。
 - Changes 文件行使用固定槽；DiffView 有只读路径 header 与增删 marker gutter；Changes / Resources 的 empty、error、stale 各自给出诚实说明。
-- ActivityPopover 保持 320px 宽、按当前唯一 Changes 内容收缩为 144px 高、右上锚定并维持 capability honesty。
+- ActivityPopover 内容宽 320px，100%/125%/150% 下内容高 144/180/216px；含 padding/border 的外框为 338×162/198/234px，右缘对齐触发器并保持 8px 下方间距，AX 几何同源；来源说明按实际内容追加。
 
 ### 3.5 Settings
 
@@ -131,16 +131,16 @@ Settings 沿用深色主题、8px 节奏和 1440×1024 基线，不把工作台�
 ```
 
 - 入口位于 TaskRail 底部 `Local` 行右侧 gear。进入后左栏换成 Settings Rail；Timeline、Composer、Inspector 不渲染。
-- `← Back to workspace` 恢复进入前的 session、Timeline 位置、Composer 草稿、Inspector 和 Run；Settings 不取消 Run。
+- `← Back to workspace` 恢复进入前的 session、Timeline 位置、Composer 草稿、Inspector 和 Run；Settings 不取消 Run。各页内容在受限高度内纵向滚动，切页回到顶部；输入框至少容纳当前字号的一行与内边距。
 - 导航与页内可见文案默认 English，可在 Appearance 页切换为简体中文（当次会话即时生效、不持久化，重启回到 English）；顺序为 Models & providers → Network → Approvals → Tools & MCP → Terminal → Appearance → Advanced → About。没有真实读写能力的页不显示；Advanced 离线仍可进入。
 - 翻译边界：只翻译界面 chrome 文案（按钮、提示、空态、状态提示、tooltip）；session 标题、provider / model id、文件路径、工具输出与 wire 错误原因等数据内容保持原文；品牌名「Pawork」、功能符号与示例数据不翻译。render 与 AX 经同一目录同源取词，AX 节点 id 保持英文。
-- **Models & providers**：内容最大宽 820px；provider 使用 64px 概览行，分列显示认证方式、连接状态与目录 / 模型数。Host `provider_auth_status` 是权威数据，Desktop 不按供应商名称硬编码 OAuth/API key 分支。普通行与 AX summary 不显示 masked credential、endpoint、catalog error 或 raw model id；endpoint / 错误只在连接、等待或删除确认详情出现。API key editor 仅在 Connect / Replace 后展开，secure input 的完整值不得进 AX tree、日志或状态文本。OAuth 只显示授权 URL、device code、到期/取消，不接触 token。认证成功与目录成功是两个状态；默认模型使用独立 section。当 Global `proxy_url` 已配置时，行右侧追加供应商级代理开关：生效值 `true` 显示 `Proxy on`（走代理），`false` 显示 `Proxy off`（直连）；click / Enter / Space / AX Press 同一 handler，Host `set_provider_use_proxy` 回执即写后状态，不乐观更新。未配置全局代理时不渲染该按钮。
+- **Models & providers**：内容最大宽 820px；provider 使用 64px 概览行，分列显示认证方式、连接状态与目录 / 模型数；认证操作放在独立详情行，避免窄窗与大字号挤压信息列。Host `provider_auth_status` 是权威数据，Desktop 不按供应商名称硬编码 OAuth/API key 分支。普通行与 AX summary 不显示 masked credential、endpoint、catalog error 或 raw model id；endpoint / 错误只在连接、等待或删除确认详情出现。API key editor 仅在 Connect / Replace 后展开，secure input 的完整值不得进 AX tree、日志或状态文本。OAuth 只显示授权 URL、device code、到期/取消，不接触 token。认证成功与目录成功是两个状态；默认模型使用独立 section。当 Global `proxy_url` 已配置时，行右侧追加供应商级代理开关：生效值 `true` 显示 `Proxy on`（走代理），`false` 显示 `Proxy off`（直连）；click / Enter / Space / AX Press 同一 handler，Host `set_provider_use_proxy` 回执即写后状态，不乐观更新。未配置全局代理时不渲染该按钮。
 - **Network**：Global `proxy_url`；可在 GUI 填写，也可手动写入标准用户配置目录中的 `config.toml`。该文件位于 workspace 外，不会进入仓库；workspace `.pawork/config.toml` 中的代理值会被忽略。未设置显示 `Not set (uses system environment variables)`；新 OAuth / 验证 / 目录同会话生效，当前供应商模型流量于切换或重启后生效。代理是全局开关，供应商级绕过经 Models & providers 页的代理开关表达（`use_proxy = false` 时该 provider 出站直连）。
-- **权限与审批**：五档审批模式使用整行 radio，row click、Enter、Space 与 AX Press 同一 handler；会话信任开关、Global 默认只读行不变。变更仅当前会话生效、不持久化、进行中 Run 不受影响。
+- **权限与审批**：五档审批模式使用整行 radio，两行说明的行高随字号为 56/70/84px，row click、Enter、Space 与 AX Press 同一 handler；会话信任开关、Global 默认只读行不变。变更仅当前会话生效、不持久化、进行中 Run 不受影响。
 - **Tools & MCP**：复用 Host `mcp_list`，提供 Test / Remove。
 - **Terminal**：Global `[terminal]`（shell / columns / rows）；只影响之后创建的终端。
 - **Appearance**：Desktop 本地；三档 100%/125%/150% 与 `Cmd+=` / `Cmd+-` / `Cmd+0` 共用 `TextScale`，并显示随选择即时变化的正文 / control 字阶样例；仅当前 Desktop 会话生效，重启恢复 100%。主题只读深色，不画 light/system 控件。同页提供语言切换（English / 中文）：两个同源按钮，切换后整界面即时重渲染，仅当前 Desktop 会话生效，重启恢复 English。
-- **Advanced**：本地连接诊断；断线仍可达。只读 runtime ID、协商 API、capabilities、endpoint、resume/ack，以 definition list 呈现。不展示 GUI token，不从 endpoint 反推 data directory。
+- **Advanced**：本地连接诊断；断线仍可达。只读 runtime ID、协商 API、capabilities、endpoint、resume/ack，以 definition list 呈现，长路径换行且页尾说明可滚动到达。不展示 GUI token，不从 endpoint 反推 data directory。
 - **About**：只在当前认证握手提供非空 `host_data_dir` 时显示，并以 definition list 呈现；缺字段、空白或断线时隐藏并退回 Advanced。路径原样展示，不用于文件操作。
 
 断线保留最后只读结果并统一标 stale；写操作三路径（可见 / 键盘 / AX）同 gate。行为细节以 [Settings Spec](spec/settings.md) 为准。

@@ -107,6 +107,7 @@ impl AppView {
                     .id("settings-page-scroll")
                     .flex_1()
                     .min_h_0()
+                    .overflow_y_scroll()
                     .track_scroll(&self.settings_scroll)
                     .child(content),
             )
