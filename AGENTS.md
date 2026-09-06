@@ -157,3 +157,7 @@ Lagged 后不得伪造起点直发；改经 hub 真序列取信封，并回 `Rep
 **运行中 bundle 覆盖即 SIGKILL**
 
 正式脚本 `cp -f` 覆盖 `Pawork.app` 内正在运行的二进制后，从同一 bundle 路径新启动的进程立即被 SIGKILL（exit 137、无日志）；已运行实例不受影响。需与正在运行的窗口并行开第二个实例验收时，复制平行 bundle（如 `Pawork-<instance>.app`）再启动，勿复用同一路径。
+
+**exec 会话派生进程被静默回收**
+
+真窗口验收时，exec 会话内以 `nohup … &` 派生的 Desktop / Host 进程会在会话收尾被回收（空日志、无退出码），随后按路径 getApp 会经 LaunchServices 重拉起**无参数**实例（连默认 socket 报 ConnectionFailed）。GUI 进程用 `open -na <bundle> --args --instance <name>` 启动（launchd 托管、跨会话存活），CLI Host 用常驻 exec 会话承载；验收前后注意核对 `ps` 里的实际 argv。

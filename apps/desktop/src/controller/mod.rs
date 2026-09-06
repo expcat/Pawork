@@ -8,8 +8,8 @@
 
 use std::path::PathBuf;
 use std::sync::{
-    Arc, Mutex,
     atomic::{AtomicU64, Ordering},
+    Arc, Mutex,
 };
 use std::time::Duration;
 
@@ -19,12 +19,12 @@ use pawork_client::{
     ClientError, CommandSource, ConnectOptions, DefaultModelPair, GeneralSettingsData,
     GlobalSequence, GuiCapability, GuiClient, GuiTransportClient, LocalTransport,
     PermissionsSettingsData, ProtocolErrorCode, ProviderAuthStatusData, ProviderUseProxyData,
-    ResumeDisposition, ResumeOutcome, Snapshot,
-    TOKEN_SCHEME, TerminalSettingsData, TimelinePage, TransportEndpoint,
+    ResumeDisposition, ResumeOutcome, Snapshot, TerminalSettingsData, TimelinePage,
+    TransportEndpoint, TOKEN_SCHEME,
 };
 use serde_json::json;
 
-use crate::projection::{ModelEntry, sessions_in_snapshot};
+use crate::projection::{sessions_in_snapshot, ModelEntry, SettingsRole};
 
 pub(super) const PAGE_LIMIT: u32 = 500;
 pub(super) const MAX_PAGES: usize = 200;
@@ -58,10 +58,13 @@ pub enum ControllerEvent {
     /// provider_auth_status 查询成功（SET-3 只读供应商页；SET-5 起随载荷
     /// 携带 Host 权威默认模型）。
     ProviderStatusLoaded(ProviderAuthStatusData),
-    /// set_default_model 获 Host Data 确认（SET-5；echo 携带已确认 pair，
-    /// Composer 据此同步）。随后 controller 重查 provider_auth_status 取回
-    /// 权威 default。
-    DefaultModelConfirmed(DefaultModelPair),
+    /// set_default_role_model 获 Host Data 确认（OPT-3b / ADR-055 D5；回执
+    /// 即写后状态，不重查）：按角色落地键对；conversation 另同步 Composer
+    /// 已确认默认。
+    DefaultRoleModelConfirmed {
+        role: SettingsRole,
+        value: Option<DefaultModelPair>,
+    },
     /// general_settings 查询成功（SET-6a Network 页；Host 权威 proxy_url）。
     GeneralSettingsLoaded(GeneralSettingsData),
     /// set_proxy_url 获 Host Data 确认（SET-6a；回执即写后状态）。
@@ -71,6 +74,24 @@ pub enum ControllerEvent {
     ProviderUseProxyConfirmed {
         provider_id: String,
         use_proxy: bool,
+    },
+    /// model_list（include_disabled=true）查询成功（OPT-3a / ADR-055 D4）：
+    /// Settings「Manage models」弹层的全量目录权威状态。
+    ModelCatalogLoaded(Vec<ModelEntry>),
+    /// set_model_enabled 获 Host Data 确认（OPT-3a / ADR-055 D2/D3；回执
+    /// 即写后状态）：弹层先按回执收敛再重查权威全态；cleared_roles 诚实
+    /// 呈现，不静默换绑。
+    ModelEnabledConfirmed {
+        provider_id: String,
+        model_id: String,
+        enabled: bool,
+        cleared_roles: Vec<String>,
+    },
+    /// set_provider_models_enabled 获 Host Data 确认（OPT-3a；同上）。
+    ProviderModelsEnabledConfirmed {
+        provider_id: String,
+        enabled: bool,
+        cleared_roles: Vec<String>,
     },
     /// permissions_settings 查询成功（SET-6b 权限与审批页；Host 权威
     /// 三元组：当前 mode / 会话 trusted / Global 持久默认）。
@@ -403,10 +424,8 @@ impl DesktopController {
                         // 标题写回）意味着快照里的 session_tree 已过时；重取
                         // snapshot 让列表回到 Host 写后状态。泵任务已在
                         // runtime 上，直接 tokio::spawn 不占用 gpui 执行器。
-                        let meta_changed = matches!(
-                            event.payload,
-                            AppEvent::SessionMetaChanged { .. }
-                        );
+                        let meta_changed =
+                            matches!(event.payload, AppEvent::SessionMetaChanged { .. });
                         if pump_events
                             .send(ControllerEvent::Event(event))
                             .await
@@ -420,7 +439,8 @@ impl DesktopController {
                             tokio::spawn(async move {
                                 match client.snapshot().await {
                                     Ok(snapshot) => {
-                                        let _ = events.send(ControllerEvent::Snapshot(snapshot)).await;
+                                        let _ =
+                                            events.send(ControllerEvent::Snapshot(snapshot)).await;
                                     }
                                     Err(error) => {
                                         let _ = events
@@ -997,12 +1017,15 @@ pub(super) fn auth_remove_command(provider_id: &str) -> AppCommand {
     .expect("auth_remove command shape is frozen")
 }
 
-pub(super) fn set_default_model_command(provider_id: &str, model_id: &str) -> AppCommand {
+pub(super) fn set_default_role_model_command(
+    role: &str,
+    value: Option<&DefaultModelPair>,
+) -> AppCommand {
     serde_json::from_value(json!({
-        "method": "set_default_model",
-        "params": { "provider_id": provider_id, "model_id": model_id }
+        "method": "set_default_role_model",
+        "params": { "role": role, "value": value }
     }))
-    .expect("set_default_model command shape is frozen")
+    .expect("set_default_role_model command shape is frozen")
 }
 
 pub(super) fn forked_session_id(response: &AppResponseEnvelope) -> Option<String> {
@@ -1125,6 +1148,14 @@ pub(super) fn model_list_query() -> AppQuery {
     .expect("model_list query shape is frozen")
 }
 
+pub(super) fn model_catalog_query() -> AppQuery {
+    serde_json::from_value(json!({
+        "method": "model_list",
+        "params": { "include_disabled": true }
+    }))
+    .expect("model_list include_disabled query shape is frozen")
+}
+
 pub(super) fn provider_auth_status_query() -> AppQuery {
     serde_json::from_value(json!({
         "method": "provider_auth_status",
@@ -1168,6 +1199,26 @@ pub(super) fn set_provider_use_proxy_command(provider_id: &str, use_proxy: bool)
         "params": { "provider_id": provider_id, "use_proxy": use_proxy }
     }))
     .expect("set_provider_use_proxy command shape is frozen")
+}
+
+pub(super) fn set_model_enabled_command(
+    provider_id: &str,
+    model_id: &str,
+    enabled: bool,
+) -> AppCommand {
+    serde_json::from_value(json!({
+        "method": "set_model_enabled",
+        "params": { "provider_id": provider_id, "model_id": model_id, "enabled": enabled }
+    }))
+    .expect("set_model_enabled command shape is frozen")
+}
+
+pub(super) fn set_provider_models_enabled_command(provider_id: &str, enabled: bool) -> AppCommand {
+    serde_json::from_value(json!({
+        "method": "set_provider_models_enabled",
+        "params": { "provider_id": provider_id, "enabled": enabled }
+    }))
+    .expect("set_provider_models_enabled command shape is frozen")
 }
 
 pub(super) fn set_approval_mode_command(mode: &str) -> AppCommand {
@@ -1255,6 +1306,12 @@ pub(super) fn parse_models(response: &AppResponseEnvelope) -> Result<Vec<ModelEn
                         .get("display_name")
                         .and_then(|value| value.as_str())
                         .unwrap_or(id);
+                    // ADR-055 D4：响应条目 additive 增 enabled；旧 Host
+                    // 缺字段即视为启用（缺省口径只回启用模型）。
+                    let enabled = entry
+                        .get("enabled")
+                        .and_then(|value| value.as_bool())
+                        .unwrap_or(true);
                     Some(ModelEntry {
                         provider_id: provider_id.to_string(),
                         id: id.to_string(),
@@ -1262,6 +1319,7 @@ pub(super) fn parse_models(response: &AppResponseEnvelope) -> Result<Vec<ModelEn
                         context_window_tokens: entry
                             .get("context_window_tokens")
                             .and_then(serde_json::Value::as_u64),
+                        enabled,
                     })
                 })
                 .collect())
@@ -1269,6 +1327,99 @@ pub(super) fn parse_models(response: &AppResponseEnvelope) -> Result<Vec<ModelEn
         AppResponse::Error(_) => Err("server returned an error response".into()),
         other => Err(format!("unexpected response: {other:?}")),
     }
+}
+
+/// set_model_enabled 回执的 Desktop 侧形状（ADR-055 D2；wire 字段同源，
+/// 手工解包与 parse_models 同先例——pawork-client 不再导出 protocol
+/// Data 类型时不引入第二业务依赖）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct ModelEnabledReceipt {
+    pub provider_id: String,
+    pub model_id: String,
+    pub enabled: bool,
+    pub cleared_roles: Vec<String>,
+}
+
+/// set_provider_models_enabled 回执的 Desktop 侧形状（ADR-055 D2）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct ProviderModelsEnabledReceipt {
+    pub provider_id: String,
+    pub enabled: bool,
+    pub cleared_roles: Vec<String>,
+}
+
+/// 解包 set_model_enabled 信封：Data 为 `{ provider_id, model_id,
+/// enabled, cleared_roles }`；Error 取 Host 脱敏 message 原文。
+pub(super) fn parse_model_enabled_confirmation(
+    response: &AppResponseEnvelope,
+) -> Result<ModelEnabledReceipt, String> {
+    let data = match &response.response {
+        AppResponse::Data(data) => data,
+        AppResponse::Error(error) => return Err(error.message.clone()),
+        other => return Err(format!("unexpected response: {other:?}")),
+    };
+    let object = data
+        .as_object()
+        .ok_or_else(|| "model enabled receipt is not an object".to_string())?;
+    let field = |key: &str| {
+        object
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+    };
+    Ok(ModelEnabledReceipt {
+        provider_id: field("provider_id").ok_or("missing provider_id")?,
+        model_id: field("model_id").ok_or("missing model_id")?,
+        enabled: object
+            .get("enabled")
+            .and_then(serde_json::Value::as_bool)
+            .ok_or("missing enabled")?,
+        cleared_roles: parse_cleared_roles(object),
+    })
+}
+
+/// 解包 set_provider_models_enabled 信封：Data 为 `{ provider_id,
+/// enabled, cleared_roles }`。
+pub(super) fn parse_provider_models_enabled_confirmation(
+    response: &AppResponseEnvelope,
+) -> Result<ProviderModelsEnabledReceipt, String> {
+    let data = match &response.response {
+        AppResponse::Data(data) => data,
+        AppResponse::Error(error) => return Err(error.message.clone()),
+        other => return Err(format!("unexpected response: {other:?}")),
+    };
+    let object = data
+        .as_object()
+        .ok_or_else(|| "provider models receipt is not an object".to_string())?;
+    let field = |key: &str| {
+        object
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+    };
+    Ok(ProviderModelsEnabledReceipt {
+        provider_id: field("provider_id").ok_or("missing provider_id")?,
+        enabled: object
+            .get("enabled")
+            .and_then(serde_json::Value::as_bool)
+            .ok_or("missing enabled")?,
+        cleared_roles: parse_cleared_roles(object),
+    })
+}
+
+/// cleared_roles 按 wire 名原样保留（角色显示名由 UI 层映射，未知值不
+/// 臆造）；畸形条目剔除，缺键视为空（启用路径恒为空）。
+fn parse_cleared_roles(object: &serde_json::Map<String, serde_json::Value>) -> Vec<String> {
+    object
+        .get("cleared_roles")
+        .and_then(serde_json::Value::as_array)
+        .map(|roles| {
+            roles
+                .iter()
+                .filter_map(|role| role.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// 解包 provider_auth_status 信封：`AppResponse::Data` 载荷形如
@@ -1377,15 +1528,29 @@ pub(super) fn parse_workspace_trust_confirmation(
     }
 }
 
-/// 解包 set_default_model 响应：Data 携带 Host 确认的 provider/model pair。
-pub(super) fn parse_default_model_confirmation(
+/// 解包 set_default_role_model 响应（OPT-3b / ADR-055 D5）：Data 携带
+/// `{ role, value }`（value 必填可空，清除时为 null）；role 按已知 wire
+/// 名 fail-closed（未知 echo 不落地任何状态）；Error 取 Host 脱敏 message。
+pub(super) fn parse_default_role_model_confirmation(
     response: &AppResponseEnvelope,
-) -> Result<DefaultModelPair, String> {
+) -> Result<(SettingsRole, Option<DefaultModelPair>), String> {
     match &response.response {
         AppResponse::Data(data) => {
-            serde_json::from_value(data.clone()).map_err(|error| error.to_string())
+            let role = data
+                .get("role")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| "set default role model receipt missing role".to_string())?;
+            let role = SettingsRole::from_wire_name(role)
+                .ok_or_else(|| format!("set default role model receipt unknown role {role}"))?;
+            let value = data
+                .get("value")
+                .cloned()
+                .ok_or_else(|| "set default role model receipt missing value".to_string())?;
+            let value = serde_json::from_value::<Option<DefaultModelPair>>(value)
+                .map_err(|error| error.to_string())?;
+            Ok((role, value))
         }
-        AppResponse::Error(_) => Err("server returned an error response".into()),
+        AppResponse::Error(error) => Err(error.message.clone()),
         other => Err(format!("unexpected response: {other:?}")),
     }
 }
@@ -1766,6 +1931,205 @@ mod tests {
         .expect("parse terminal settings receipt");
         assert_eq!(receipt.shell, None);
         assert_eq!((receipt.columns, receipt.rows), (80, 24));
+    }
+
+    /// OPT-3b / ADR-055 D5：set_default_role_model 的冻结 wire 形状与
+    /// 回执解析（set / clear / 未知 role / 缺 value / Error 信封）。
+    #[test]
+    fn default_role_model_pins_wire_and_receipt_parsing() {
+        let pair = DefaultModelPair {
+            provider_id: "kimi".into(),
+            model_id: "kimi-k2-0905-preview".into(),
+        };
+        let set =
+            serde_json::to_value(set_default_role_model_command("naming", Some(&pair))).unwrap();
+        assert_eq!(set["method"], "set_default_role_model");
+        assert_eq!(set["params"]["role"], "naming");
+        assert_eq!(set["params"]["value"]["provider_id"], "kimi");
+        assert_eq!(set["params"]["value"]["model_id"], "kimi-k2-0905-preview");
+
+        let clear = serde_json::to_value(set_default_role_model_command("vision", None)).unwrap();
+        assert_eq!(clear["params"]["role"], "vision");
+        assert_eq!(clear["params"]["value"], serde_json::Value::Null);
+
+        let receipt = |role: &str, value: serde_json::Value| {
+            envelope(serde_json::json!({ "role": role, "value": value }))
+        };
+        let (role, value) = parse_default_role_model_confirmation(&receipt(
+            "search",
+            serde_json::json!({
+                "provider_id": "deepseek",
+                "model_id": "deepseek-v4-flash"
+            }),
+        ))
+        .expect("parse set receipt");
+        assert_eq!(role, SettingsRole::Search);
+        assert_eq!(
+            value,
+            Some(DefaultModelPair {
+                provider_id: "deepseek".into(),
+                model_id: "deepseek-v4-flash".into(),
+            })
+        );
+
+        let (role, value) =
+            parse_default_role_model_confirmation(&receipt("naming", serde_json::Value::Null))
+                .expect("parse clear receipt");
+        assert_eq!(role, SettingsRole::Naming);
+        assert_eq!(value, None);
+
+        assert!(parse_default_role_model_confirmation(&receipt(
+            "summarizer",
+            serde_json::Value::Null
+        ))
+        .is_err());
+        assert!(
+            parse_default_role_model_confirmation(&envelope(serde_json::json!({
+                "role": "vision"
+            })))
+            .is_err()
+        );
+        let error = serde_json::from_value(serde_json::json!({
+            "api_version": { "major": 1, "minor": 12 },
+            "request_id": "q-test",
+            "responded_at": 0,
+            "response": {
+                "type": "error",
+                "data": {
+                    "category": "invalid_request",
+                    "message": "provider disabled",
+                    "retryable": false
+                }
+            }
+        }))
+        .expect("test error envelope");
+        assert_eq!(
+            parse_default_role_model_confirmation(&error).unwrap_err(),
+            "provider disabled"
+        );
+    }
+
+    /// OPT-3a / ADR-055 D2-D4：模型启用 wire 冻结形状与回执解析
+    ///（目录查询显式 include_disabled=true；cleared_roles 原样带回；
+    /// Error 取 Host 脱敏 message 原文；缺字段 fail-closed）。
+    #[test]
+    fn model_enablement_pins_wire_and_receipts() {
+        let catalog = serde_json::to_value(model_catalog_query()).unwrap();
+        assert_eq!(catalog["method"], "model_list");
+        assert_eq!(catalog["params"]["include_disabled"], true);
+        let filtered = serde_json::to_value(model_list_query()).unwrap();
+        assert_eq!(
+            filtered["params"].as_object().map(|params| params.len()),
+            Some(0)
+        );
+
+        let enable =
+            serde_json::to_value(set_model_enabled_command("kimi", "kimi-k2", false)).unwrap();
+        assert_eq!(enable["method"], "set_model_enabled");
+        assert_eq!(enable["params"]["provider_id"], "kimi");
+        assert_eq!(enable["params"]["model_id"], "kimi-k2");
+        assert_eq!(enable["params"]["enabled"], false);
+
+        let all = serde_json::to_value(set_provider_models_enabled_command("kimi", false)).unwrap();
+        assert_eq!(all["method"], "set_provider_models_enabled");
+        assert_eq!(all["params"]["provider_id"], "kimi");
+        assert_eq!(all["params"]["enabled"], false);
+
+        let receipt = parse_model_enabled_confirmation(&envelope(serde_json::json!({
+            "provider_id": "kimi",
+            "model_id": "kimi-k2",
+            "enabled": false,
+            "cleared_roles": ["naming", "vision"]
+        })))
+        .expect("parse model receipt");
+        assert_eq!(
+            receipt,
+            ModelEnabledReceipt {
+                provider_id: "kimi".into(),
+                model_id: "kimi-k2".into(),
+                enabled: false,
+                cleared_roles: vec!["naming".into(), "vision".into()],
+            }
+        );
+        // 畸形 cleared_roles 条目剔除，缺键视为空（启用路径恒为空）。
+        let enabled_receipt = parse_model_enabled_confirmation(&envelope(serde_json::json!({
+            "provider_id": "kimi",
+            "model_id": "kimi-k2",
+            "enabled": true,
+            "cleared_roles": ["naming", 7]
+        })))
+        .expect("parse enabled receipt");
+        assert_eq!(enabled_receipt.cleared_roles, vec!["naming".to_string()]);
+
+        let all_receipt =
+            parse_provider_models_enabled_confirmation(&envelope(serde_json::json!({
+                "provider_id": "kimi",
+                "enabled": false,
+                "cleared_roles": ["conversation"]
+            })))
+            .expect("parse provider models receipt");
+        assert_eq!(all_receipt.provider_id, "kimi");
+        assert!(!all_receipt.enabled);
+        assert_eq!(all_receipt.cleared_roles, vec!["conversation".to_string()]);
+
+        assert!(
+            parse_model_enabled_confirmation(&envelope(serde_json::json!({
+                "provider_id": "kimi",
+                "model_id": "kimi-k2"
+            })))
+            .is_err()
+        );
+        assert!(parse_provider_models_enabled_confirmation(&envelope(
+            serde_json::json!({ "provider_id": "kimi", "enabled": true })
+        ))
+        .is_ok());
+        assert!(parse_provider_models_enabled_confirmation(&envelope(
+            serde_json::json!({ "provider_id": "kimi" })
+        ))
+        .is_err());
+        let error = serde_json::from_value(serde_json::json!({
+            "api_version": { "major": 1, "minor": 12 },
+            "request_id": "q-test",
+            "responded_at": 0,
+            "response": {
+                "type": "error",
+                "data": {
+                    "category": "unavailable",
+                    "message": "catalog unavailable",
+                    "retryable": true
+                }
+            }
+        }))
+        .expect("test error envelope");
+        assert_eq!(
+            parse_provider_models_enabled_confirmation(&error).unwrap_err(),
+            "catalog unavailable"
+        );
+    }
+
+    /// ADR-055 D4：model_list 条目 enabled 为 additive 字段——有值按值
+    /// 读，缺字段（旧 Host）视为启用。
+    #[test]
+    fn parse_models_reads_enabled_flag_additively() {
+        let models = parse_models(&envelope(serde_json::json!([
+            {
+                "provider_id": "kimi",
+                "id": "kimi-k2",
+                "display_name": "Kimi K2",
+                "enabled": false
+            },
+            { "provider_id": "glm", "id": "glm-4.7", "display_name": "GLM 4.7" }
+        ])))
+        .expect("parse models");
+        assert_eq!(models.len(), 2);
+        assert_eq!(
+            (models[0].id.as_str(), models[0].enabled),
+            ("kimi-k2", false)
+        );
+        assert_eq!(
+            (models[1].id.as_str(), models[1].enabled),
+            ("glm-4.7", true)
+        );
     }
 
     fn envelope(data: serde_json::Value) -> AppResponseEnvelope {

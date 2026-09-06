@@ -37,6 +37,153 @@ impl DesktopController {
         });
     }
 
+    /// 拉取全量模型目录（model_list include_disabled=true；OPT-3a /
+    /// ADR-055 D4）。返回是否已派出（断线时由 UI 保留 stale 只读结果）。
+    pub fn load_model_catalog(&self) -> bool {
+        let Some(client) = self.current_client() else {
+            return false;
+        };
+        let events = self.event_sender();
+        self.runtime.spawn(async move {
+            let query = model_catalog_query();
+            match client
+                .query(query, command_source(), actor_identity())
+                .await
+            {
+                Ok(response) => match parse_models(&response) {
+                    Ok(models) => {
+                        let _ = events
+                            .send(ControllerEvent::ModelCatalogLoaded(models))
+                            .await;
+                    }
+                    Err(reason) => try_emit(
+                        &events,
+                        ControllerEvent::OperationFailed {
+                            action: "load model catalog",
+                            reason,
+                        },
+                    ),
+                },
+                Err(error) => try_emit(
+                    &events,
+                    ControllerEvent::OperationFailed {
+                        action: "load model catalog",
+                        reason: error.to_string(),
+                    },
+                ),
+            }
+        });
+        true
+    }
+
+    /// 单模型启用 / 禁用（set_model_enabled，OPT-3a / ADR-055 D2/D3；
+    /// 非重放命令）。Data 回执即写后状态 + cleared_roles：UI 先按回执
+    /// 收敛弹层再重查权威全态；Error / 传输失败经 OperationFailed 呈现，
+    /// 不动现有状态。
+    pub fn set_model_enabled(&self, provider_id: String, model_id: String, enabled: bool) {
+        let Some(client) = self.current_client() else {
+            self.emit_reliable(ControllerEvent::OperationFailed {
+                action: "set model enabled".into(),
+                reason: "not connected".into(),
+            });
+            return;
+        };
+        let events = self.event_sender();
+        self.runtime.spawn(async move {
+            let command = set_model_enabled_command(&provider_id, &model_id, enabled);
+            let response = match client
+                .command(command, command_source(), actor_identity())
+                .await
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    try_emit(
+                        &events,
+                        ControllerEvent::OperationFailed {
+                            action: "set model enabled",
+                            reason: error.to_string(),
+                        },
+                    );
+                    return;
+                }
+            };
+            let receipt = match parse_model_enabled_confirmation(&response) {
+                Ok(receipt) => receipt,
+                Err(reason) => {
+                    try_emit(
+                        &events,
+                        ControllerEvent::OperationFailed {
+                            action: "set model enabled",
+                            reason,
+                        },
+                    );
+                    return;
+                }
+            };
+            let _ = events
+                .send(ControllerEvent::ModelEnabledConfirmed {
+                    provider_id: receipt.provider_id,
+                    model_id: receipt.model_id,
+                    enabled: receipt.enabled,
+                    cleared_roles: receipt.cleared_roles,
+                })
+                .await;
+        });
+    }
+
+    /// provider 全量模型启用 / 禁用（set_provider_models_enabled，OPT-3a；
+    /// 全关由 Host 按当前目录展开，空目录 fail-closed）。回执语义同
+    /// set_model_enabled。
+    pub fn set_provider_models_enabled(&self, provider_id: String, enabled: bool) {
+        let Some(client) = self.current_client() else {
+            self.emit_reliable(ControllerEvent::OperationFailed {
+                action: "set provider models enabled".into(),
+                reason: "not connected".into(),
+            });
+            return;
+        };
+        let events = self.event_sender();
+        self.runtime.spawn(async move {
+            let command = set_provider_models_enabled_command(&provider_id, enabled);
+            let response = match client
+                .command(command, command_source(), actor_identity())
+                .await
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    try_emit(
+                        &events,
+                        ControllerEvent::OperationFailed {
+                            action: "set provider models enabled",
+                            reason: error.to_string(),
+                        },
+                    );
+                    return;
+                }
+            };
+            let receipt = match parse_provider_models_enabled_confirmation(&response) {
+                Ok(receipt) => receipt,
+                Err(reason) => {
+                    try_emit(
+                        &events,
+                        ControllerEvent::OperationFailed {
+                            action: "set provider models enabled",
+                            reason,
+                        },
+                    );
+                    return;
+                }
+            };
+            let _ = events
+                .send(ControllerEvent::ProviderModelsEnabledConfirmed {
+                    provider_id: receipt.provider_id,
+                    enabled: receipt.enabled,
+                    cleared_roles: receipt.cleared_roles,
+                })
+                .await;
+        });
+    }
+
     /// 拉取 Settings「模型与供应商」页只读状态（provider_auth_status，
     /// provider_id=None → 全部）。返回是否已派出（断线时由 UI 保留 stale
     /// 只读结果，不进入 loading）。
@@ -80,21 +227,26 @@ impl DesktopController {
         true
     }
 
-    /// 设为默认模型（set_default_model，非重放命令）。Data 确认后发
-    /// `DefaultModelConfirmed`（Composer 同步）并重查 provider_auth_status
-    /// 取回权威 default；Error / 传输失败经 OperationFailed 呈现，不动
-    /// UI 现有状态。
-    pub fn set_default_model(&self, provider_id: String, model_id: String) {
+    /// 设置 / 清除默认角色模型（set_default_role_model，OPT-3b /
+    /// ADR-055 D5；非重放命令）。Data 回执即写后状态，发
+    /// `DefaultRoleModelConfirmed` 直接落地（不重查，同
+    /// set_provider_use_proxy 先例）；Error / 传输失败经 OperationFailed
+    /// 呈现，不动 UI 现有状态。
+    pub fn set_default_role_model(&self, role: SettingsRole, value: Option<(String, String)>) {
         let Some(client) = self.current_client() else {
             self.emit_reliable(ControllerEvent::OperationFailed {
-                action: "set default model".into(),
+                action: "set default role model".into(),
                 reason: "not connected".into(),
             });
             return;
         };
+        let pair = value.map(|(provider_id, model_id)| DefaultModelPair {
+            provider_id,
+            model_id,
+        });
         let events = self.event_sender();
         self.runtime.spawn(async move {
-            let command = set_default_model_command(&provider_id, &model_id);
+            let command = set_default_role_model_command(role.wire_name(), pair.as_ref());
             let response = match client
                 .command(command, command_source(), actor_identity())
                 .await
@@ -104,61 +256,33 @@ impl DesktopController {
                     try_emit(
                         &events,
                         ControllerEvent::OperationFailed {
-                            action: "set default model",
+                            action: "set default role model",
                             reason: error.to_string(),
                         },
                     );
                     return;
                 }
             };
-            let confirmed = match parse_default_model_confirmation(&response) {
-                Ok(confirmed) => confirmed,
-                Err(reason) => {
-                    try_emit(
-                        &events,
-                        ControllerEvent::OperationFailed {
-                            action: "set default model",
-                            reason,
-                        },
-                    );
-                    return;
-                }
-            };
-            let _ = events
-                .send(ControllerEvent::DefaultModelConfirmed(confirmed))
-                .await;
-            // 确认后重查权威 provider 状态（含 default）；失败走既有
-            // load provider status 通道，UI 保留现有只读列表。
-            match client
-                .query(
-                    provider_auth_status_query(),
-                    command_source(),
-                    actor_identity(),
-                )
-                .await
-            {
-                Ok(response) => match parse_provider_status_response(&response) {
-                    Ok(data) => {
-                        let _ = events
-                            .send(ControllerEvent::ProviderStatusLoaded(data))
-                            .await;
+            let (confirmed_role, confirmed_value) =
+                match parse_default_role_model_confirmation(&response) {
+                    Ok(confirmed) => confirmed,
+                    Err(reason) => {
+                        try_emit(
+                            &events,
+                            ControllerEvent::OperationFailed {
+                                action: "set default role model",
+                                reason,
+                            },
+                        );
+                        return;
                     }
-                    Err(reason) => try_emit(
-                        &events,
-                        ControllerEvent::OperationFailed {
-                            action: "load provider status",
-                            reason,
-                        },
-                    ),
-                },
-                Err(error) => try_emit(
-                    &events,
-                    ControllerEvent::OperationFailed {
-                        action: "load provider status",
-                        reason: error.to_string(),
-                    },
-                ),
-            }
+                };
+            let _ = events
+                .send(ControllerEvent::DefaultRoleModelConfirmed {
+                    role: confirmed_role,
+                    value: confirmed_value,
+                })
+                .await;
         });
     }
 
@@ -557,10 +681,7 @@ impl DesktopController {
             match parse_auth_started(&response) {
                 Ok(data) => {
                     let _ = events
-                        .send(ControllerEvent::AuthStarted {
-                            provider_id,
-                            data,
-                        })
+                        .send(ControllerEvent::AuthStarted { provider_id, data })
                         .await;
                 }
                 Err(reason) => try_emit(

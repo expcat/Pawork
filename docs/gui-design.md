@@ -86,7 +86,7 @@
 阶段视觉基准为 [P0 Foundation](../design/desktop-ui-p0-foundation-v4.png)、[P1 Run & Review](../design/desktop-ui-p1-run-review-v4.png) 与 [P2 Settings & Polish](../design/desktop-ui-p2-settings-v4.png)。
 
 - 顶部 `All projects / <project>` 是范围筛选；`Timeline / Projects` 是分组方式。两者正交。
-- 分组方式使用标题行右侧 28×28px 二态直接切换按钮，不保留宽幅 segmented control，也不打开下拉菜单。
+- 分组方式使用标题行右侧二态直接切换按钮，不保留宽幅 segmented control，也不打开下拉菜单。OPT-4a（F1）起六处主要动作（分组切换、项目/任务新增、Activity、Inspector 折叠/重开、Send/Cancel）命中区 ≥36×36px、可见字形 20–22px；Session 行改名/归档命中区 ≥32×32px 维持不变。
 - 当前为 Timeline 时显示 folder icon、tooltip / AX name 为 `Show projects`；当前为 Projects 时显示 clock icon、tooltip / AX name 为 `Show timeline`。图标表达目标动作，AX value 表达当前视图。
 - click、Enter、Space 与 AX Press 立即切到另一种分组；切换后焦点留在按钮，active session、Composer 草稿、Run、scope 与项目展开状态不变。
 - 全局 `AddTaskButton` 在连接行；每个项目头另有定向新建，绑定该项目 canonical `workspace_id`。断线与 stale 时两类入口均禁用。
@@ -103,7 +103,7 @@
 - Composer 常态高 88–94 px，同行控件高 28–30 px；模型 / reasoning 只在模型选择器显示。
 - `ContextMeter`：当前请求上下文估算 / model catalog context window。容量未知时显示 unavailable，不用 Session 累计 token 冒充。
 - Workspace 与 Inspector 底部共享 24 px `RunStatusBar`：Task 累计 token、Provider 剩余额度、output tokens/s 与 Run duration；缺权威来源时显示 unknown / `—`。
-- Inspector 顶层：Changes / Terminal / Resources。折叠时宽度归零，右上 `ActivityPopover` 只摘要已有的 Changes 事实；Surface 未接通时隐藏对应分区，不做可点击假入口。
+- Inspector 顶层：Changes / Terminal / Resources。OPT-4b（F6）起默认折叠（宽屏同样），折叠时宽度归零；Workspace Header 右上 `Activity` 触发器与最右 `inspector-expand` 重开按钮并存（OPT-D 签字稿 collapsed 态），`ActivityPopover` 只摘要已有的 Changes 事实；显式动作（重开入口、Activity 摘要、Review changes）展开面板，空间不足（窄窗 / 大字号）保持折叠。Surface 未接通时隐藏对应分区，不做可点击假入口。
 - 只消费 projection / Host capability，经 controller → `pawork-client`；GUI 不直连 Provider、quota、Git、PTY 或数据库。
 
 ### 3.4 可见层级
@@ -133,11 +133,11 @@ Settings 沿用深色主题、8px 节奏和 1440×1024 基线，不把工作台�
 └──────────────────┴────────────────────────────────────────────┘
 ```
 
-- 入口位于 TaskRail 底部 `Local` 行右侧 gear。进入后左栏换成 Settings Rail；Timeline、Composer、Inspector 不渲染。
+- 入口位于 TaskRail 底部 `Local` 行右侧 gear。进入后左栏换成 Settings Rail；Timeline、Composer、Inspector 不渲染。OPT-4d（F4）起导航选中态零位移：选中与未选中共用同一外壳几何，差异仅为背景、字重与不参与布局的左缘指示条（1px 描边两态常驻、焦点只换色），文字坐标逐像素不变。
 - `← Back to workspace` 恢复进入前的 session、Timeline 位置、Composer 草稿、Inspector 和 Run；Settings 不取消 Run。各页内容在受限高度内纵向滚动，切页回到顶部；输入框至少容纳当前字号的一行与内边距。
 - 导航与页内可见文案默认 English，可在 Appearance 页切换为简体中文（即时生效，保存到用户目录 `desktop.json`，重启恢复）；顺序为 Models & providers → Network → Approvals → Tools & MCP → Terminal → Appearance → Advanced → About。没有真实读写能力的页不显示；Advanced 离线仍可进入。
 - 翻译边界：只翻译界面 chrome 文案（按钮、提示、空态、状态提示、tooltip）；session 标题、provider / model id、文件路径、工具输出与 wire 错误原因等数据内容保持原文；品牌名「Pawork」、功能符号与示例数据不翻译。render 与 AX 经同一目录同源取词，AX 节点 id 保持英文。
-- **Models & providers**：内容最大宽 820px；provider 使用 64px 概览行，分列显示认证方式、连接状态与目录 / 模型数；认证操作放在独立详情行，避免窄窗与大字号挤压信息列。Host `provider_auth_status` 是权威数据，Desktop 不按供应商名称硬编码 OAuth/API key 分支。普通行与 AX summary 不显示 masked credential、endpoint、catalog error 或 raw model id；endpoint / 错误只在连接、等待或删除确认详情出现。API key editor 仅在 Connect / Replace 后展开，secure input 的完整值不得进 AX tree、日志或状态文本。OAuth 只显示授权 URL、device code、到期/取消，不接触 token。认证成功与目录成功是两个状态；默认模型使用独立 section。当 Global `proxy_url` 已配置时，行右侧追加供应商级代理开关：生效值 `true` 显示 `Proxy on`（走代理），`false` 显示 `Proxy off`（直连）；click / Enter / Space / AX Press 同一 handler，Host `set_provider_use_proxy` 回执即写后状态，不乐观更新。未配置全局代理时不渲染该按钮。
+- **Models & providers**：OPT-4c（F2）起内容用满 Rail 外可用宽度、两侧各 32px padding，不再保留 820px 上限（render 与 AX 几何经 `SETTINGS_CONTENT_PAD` 同源）；provider 使用 64px 概览行，分列显示认证方式、连接状态与目录 / 模型数；认证操作放在独立详情行，避免窄窗与大字号挤压信息列。Host `provider_auth_status` 是权威数据，Desktop 不按供应商名称硬编码 OAuth/API key 分支。普通行与 AX summary 不显示 masked credential、endpoint、catalog error 或 raw model id；endpoint / 错误只在连接、等待或删除确认详情出现。API key editor 仅在 Connect / Replace 后展开，secure input 的完整值不得进 AX tree、日志或状态文本。OAuth 只显示授权 URL、device code、到期/取消，不接触 token。认证成功与目录成功是两个状态。OPT-3 起页首为「Default models」四默认角色区（对话/命名/识图/搜索；候选 = 已连接且已启用的模型，可清除；识图/搜索在路由落地前标注「只保存」）。每 provider 行提供 Manage models 弹层：单模型 Switch、Enable all / Disable all；禁用命中角色默认对时 Host 同批清除该键对并如实提示；目录为空显示诚实空态，不渲染全开假按钮。当 Global `proxy_url` 已配置时，行右侧追加供应商级代理 Switch（OPT-3c 起为 Switch 控件，On/Off 状态词，tooltip 说明走代理/直连）；click / Enter / Space / AX Press 同一 handler，Host `set_provider_use_proxy` 回执即写后状态，不乐观更新。未配置全局代理时不渲染该开关。
 - **Network**：Global `proxy_url`；可在 GUI 填写，也可手动写入标准用户配置目录中的 `config.toml`。该文件位于 workspace 外，不会进入仓库；workspace `.pawork/config.toml` 中的代理值会被忽略。未设置显示 `Not set (uses system environment variables)`；新 OAuth / 验证 / 目录同会话生效，当前供应商模型流量于切换或重启后生效。代理是全局开关，供应商级绕过经 Models & providers 页的代理开关表达（`use_proxy = false` 时该 provider 出站直连）。
 - **权限与审批**：五档审批模式使用整行 radio，两行说明的行高随字号为 56/70/84px，row click、Enter、Space 与 AX Press 同一 handler；项目信任开关与 Global 默认只读行并列。审批默认与当前 canonical 根路径的信任选择保存到 Global 配置；进行中 Run 不受影响，后续 Run 按实际目标项目取信任。
 - **Tools & MCP**：复用 Host `mcp_list`，提供 Test / Remove。
@@ -195,7 +195,7 @@ Snapshot 只有会话树、活动 Run、待审批与 Provider 等状态，**没�
 - Resources 只读呈现 MCP 状态，字段缺失显示 unknown；无 Host 出口的分区不画入口。
 - `@file` 由 Host 在 run_start 展开为独立 Text part，客户端不本地拼文件内容。
 
-响应式：`1080 × 720` 为功能门禁。100% 字号时 rail 收敛 240px、Inspector 默认折叠、中央对话区 ≥560px；150% 时 rail 320px，窗口不足 1320 时保持 Inspector 折叠。
+响应式：`1080 × 720` 为功能门禁。OPT-4b 起 Inspector 全部宽度档默认折叠（F6），显式动作才展开；100% 字号时 rail 收敛 240px、中央对话区 ≥560px，150% 时 rail 320px；空间不足（窄窗 / 大字号不足 1320）Inspector 保持折叠，偏好不被 resize 改写。
 
 ---
 
@@ -237,6 +237,6 @@ Snapshot 只有会话树、活动 Run、待审批与 Provider 等状态，**没�
 
 2026-09-05 按 [ROADMAP OPT-D](ROADMAP.md#3-opt-d--统一-ui-design闸门) 新增六张 1440×1024 设计稿，覆盖工作台收起/打开、Composer 启用模型菜单、全宽 Settings、供应商展开凭证/代理 Switch/四默认角色，以及模型启用四状态。资产、图标命中区、宽度、状态规则与样例边界统一见 [design/README.md §0](../design/README.md#0-opt-d-统一设计交付2026-09-05已签字)。
 
-本批仅交付设计，等用户视觉签字通过；未修改 Inspector 默认、Rail/图标尺寸、Settings 820px 上限、Session 命令或模型启用逻辑。签字后由 OPT-2/3/4 将新设计替换对应生产合同，再通过真实数据与窗口验收。旧 P0–P2 图继续保留。
+用户视觉签字已于 2026-09-05 确认（见 ROADMAP §10）。签字后 OPT-2/3/4 已将新设计替换对应生产合同：OPT-2 会话生命周期、OPT-3 模型启用与默认角色、OPT-4（2026-09-06）落地 Inspector 默认折叠与重开入口、六处主操作图标 36×36/20–22px、Settings 全宽与导航零位移选中态；真窗口对照新图验收另行记录。旧 P0–P2 图继续保留。
 
 OPT-1 行为已同步到 §3.5：审批与项目信任由 Host 保存 Global 配置，语言/字号由 Desktop 保存 `desktop.json`，见 [ADR-053](spec/settings.md#adr-053opt-1-设置持久化2026-09-05)。这种持久化改动不代表 OPT 视觉已落地或已签字。

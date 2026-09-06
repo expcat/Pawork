@@ -6,7 +6,7 @@ use super::{AxAction, AxNode, AxRect, AxRole};
 use crate::ui::settings::{
     settings_text_scale_identifier, SETTINGS_APPEARANCE_CONTROL_GAP,
     SETTINGS_APPEARANCE_CONTROL_HEIGHT, SETTINGS_APPEARANCE_CONTROL_WIDTH,
-    SETTINGS_TEXT_SCALES,
+    SETTINGS_CONTENT_PAD, SETTINGS_TEXT_SCALES,
 };
 use crate::ui::i18n::{t, LANGUAGES};
 use crate::ui::AppView;
@@ -33,7 +33,7 @@ impl AppView {
                     AxRole::StaticText,
                     t("settings.appearance.title"),
                     AxRect::new(
-                        frame.x + 16.0,
+                        frame.x + SETTINGS_CONTENT_PAD,
                         frame.y + 16.0,
                         width,
                         HEADING_HEIGHT + SUBTITLE_HEIGHT,
@@ -46,7 +46,7 @@ impl AppView {
                     "settings-appearance-theme",
                     AxRole::StaticText,
                     t("settings.appearance.theme"),
-                    AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT * 3.0),
+                    AxRect::new(frame.x + SETTINGS_CONTENT_PAD, y, width, STATUS_HEIGHT * 3.0),
                 )
                 .value(t("settings.appearance.theme_note")),
             );
@@ -56,7 +56,7 @@ impl AppView {
                 "settings-appearance-text-size",
                 AxRole::StaticText,
                 t("settings.appearance.text_size"),
-                AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT * 2.0),
+                AxRect::new(frame.x + SETTINGS_CONTENT_PAD, y, width, STATUS_HEIGHT * 2.0),
             )
             .value(
                 t("settings.appearance.current_scale")
@@ -104,7 +104,7 @@ impl AppView {
                 "settings-appearance-sample",
                 AxRole::StaticText,
                 t("settings.appearance.sample_title"),
-                AxRect::new(frame.x + 16.0, y, width, 56.0),
+                AxRect::new(frame.x + SETTINGS_CONTENT_PAD, y, width, 56.0),
             )
             .value(format!(
                 "{} {}",
@@ -118,7 +118,7 @@ impl AppView {
                 "settings-appearance-effect",
                 AxRole::StaticText,
                 t("settings.appearance.scope_title"),
-                AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT * 3.0),
+                AxRect::new(frame.x + SETTINGS_CONTENT_PAD, y, width, STATUS_HEIGHT * 3.0),
             )
             .value(t("settings.appearance.effect_note")),
         );
@@ -128,7 +128,7 @@ impl AppView {
                 "settings-appearance-language",
                 AxRole::StaticText,
                 t("settings.appearance.language"),
-                AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT * 2.0),
+                AxRect::new(frame.x + SETTINGS_CONTENT_PAD, y, width, STATUS_HEIGHT * 2.0),
             )
             .value(
                 t("settings.appearance.language.current")
@@ -175,7 +175,7 @@ impl AppView {
                 "settings-appearance-language-hint",
                 AxRole::StaticText,
                 t("settings.appearance.scope_title"),
-                AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT * 2.0),
+                AxRect::new(frame.x + SETTINGS_CONTENT_PAD, y, width, STATUS_HEIGHT * 2.0),
             )
             .value(
                 self.appearance_error

@@ -1,6 +1,6 @@
 # Pawork 活动路线图：Desktop 优化（OPT）
 
-> 基线日期：2026-09-05。状态：**OPT-D 六张候选稿已交付、已获视觉签字；OPT-1 已实现并通过定向验证；OPT-2 已实现且真窗口验收通过（§10.3）；OPT-3 内核/协议/配置半区已实现（3a/3b，ADR-055，API 1.12，§10.4），GUI 控件批次待做；OPT-4 未开始**。来源：当日正式 Desktop 真窗口走查（11 条反馈）。本文件是当前活动线的任务规划，**不是**源码或冻结契约的事实源。P0–P2 收尾证据仍见 [Desktop Spec §8](spec/desktop.md#8-gui-收尾验收记录2026-09-05)；未排期候选仍见 [backlog.md](spec/backlog.md)。
+> 基线日期：2026-09-05。状态：**OPT-D 六张候选稿已交付、已获视觉签字；OPT-1 已实现并通过定向验证；OPT-2 已实现且真窗口验收通过（§10.3）；OPT-3 内核/协议/配置半区已实现（3a/3b，ADR-055，API 1.12，§10.4），GUI 控件批次（启用弹层/四默认角色/代理 Switch）已实现并经定向门禁与协议层验收（§10.5），代理 Switch 像素级复验已通过（§10.6）；OPT-4 已实现（4a–4e，§10.6），desktop 门禁 207/207**。来源：当日正式 Desktop 真窗口走查（11 条反馈）。本文件是当前活动线的任务规划，**不是**源码或冻结契约的事实源。P0–P2 收尾证据仍见 [Desktop Spec §8](spec/desktop.md#8-gui-收尾验收记录2026-09-05)；未排期候选仍见 [backlog.md](spec/backlog.md)。
 
 **闸门**：凡涉及显示效果的条目，必须先完成 **OPT-D 统一 UI Design**（一体出图），再改像素与布局。内核/配置/协议可与出图并行准备，但 GUI 落地以设计稿为准。
 
@@ -169,10 +169,10 @@ F3「代理保存到对应配置」：现行 Global `[[providers]].use_proxy` �
 | OPT-D | 六张统一候选稿已交付、尺寸/状态走查通过；**用户视觉签字通过**（设计闸门已放行） |
 | OPT-1 | 1a–1d 已实现；定向自动验证通过；Appearance 真窗口重启恢复通过；未归档/未发布 |
 | OPT-2 | 2a–2d 已实现（ADR-054，API 1.11）；定向自动验证与真窗口验收通过（验收中修复无项目会话无法问答，见 §10.3）；未归档/未发布 |
-| OPT-3 | 3a/3b 内核·协议·配置已实现（ADR-055，API 1.12）；定向自动验证通过；GUI 控件（启用弹层/四默认角色/代理 Switch）与真窗口验收待后续批次；3d/3e 未开始 |
-| OPT-4 | 未开始（等 D 签字） |
+| OPT-3 | 3a/3b 内核·协议·配置已实现（ADR-055，API 1.12）；GUI 控件批次已实现（§10.5），desktop 门禁 207/207、协议层验收通过、修复清除判定误删盘上默认对的 D3a 缺陷；代理 Switch 像素级复验已通过（§10.6）；3d/3e 未开始 |
+| OPT-4 | 4a–4e 已实现（§10.6）：图标命中区/字形、Inspector 默认折叠 + 重开入口、Settings 全宽与导航零位移、4e 核对一致；desktop 门禁 207/207；真窗口对照新图验收待做 |
 
-本线整体仍未完成：OPT-3 GUI 批次与 3d/3e、OPT-4 尚未开始；后续 GUI 对照新图验收与发布分别记录，不由本批自动推定。
+本线整体仍未完成：OPT-3 剩 3d/3e、OPT-4 真窗口对照新图验收待做；后续验收与发布分别记录，不由本批自动推定。
 
 
 ### 10.1 本批交付与证据（2026-09-05）
@@ -254,4 +254,46 @@ Full workspace gate: NOT RUN（当前未设置全量门禁）。
 
 Validated: 上表实际命令。
 Targeted regressions: 上述 OPT-3a/3b 契约与行为。
+Full workspace gate: NOT RUN（当前未设置全量门禁）。
+
+### 10.5 本批交付与证据（2026-09-06，OPT-3 GUI 控件批次）
+
+- **范围**（对照 OPT-D 签字稿）：每 provider「Manage models」启用弹层（单模型 Switch + Enable all / Disable all + 空目录诚实空态）、页首「Default models」四默认角色区（候选 = 已连接且已启用模型，可清除，vision/search 标注只保存不接路由）、代理开关改 Switch 控件（OPT-3c，写回仍走 `set_provider_use_proxy`）、Composer 模型选择器过滤禁用模型并在全禁用时显示「No enabled models」诚实空态且禁用发送。
+- **实现方式**：glm 子代理三片并行（Composer / 四角色区 / 供应商弹层与 Switch），写入集互不重叠；主代理收口审查、协议层验收与文档同步。
+- **验收中发现并修复一处数据丢失缺陷（ADR-055 增 D3a）**：禁用流程原按内存生效配置判定角色默认对清除，而 CLI `--provider/--model` 覆盖只进内存不落盘——带覆盖运行的 Host 上 Disable-all 会把覆盖值误判为用户默认对，误删盘上真实的 `default_provider/default_model`（本机实际发生一次，xai/grok-4 被删，当场从验收前备份恢复）。修复：清除判定改读盘上持久化配置（Builtin + Global 文件，不含 Session/Run 覆盖），内存同步仅在与被清持久化对一致时执行，CLI 覆盖的生效值保留。回归：`disable_keeps_persisted_role_pairs_under_memory_override`。
+- **协议层复验**（真实运行测试 Host `--instance opt3acc --provider opencode-go --model glm-5.3-flash`）：盘上 xai/grok-4 默认对 + 内存 CLI 覆盖场景下，Enable-all → `cleared_roles=[]`；设 naming=opencode-go/deepseek-v4-pro 后 Disable-all → `cleared_roles=["naming"]`，盘上默认对完好、naming 键对被移除、内存覆盖值保留；代理开关 on/off 往返落盘一致。探针教训：复用 command_id 会命中持久幂等账本重放（响应真实但不执行写入），复验脚本必须每次换新 command_id。
+- **真窗口核对**：四角色菜单分组完整性（含 MenuPanel 240px 折叠滚动后 xai/glm-coding 组可达）、Composer 选择器、Manage models 弹层已在真窗口经 AX + 截图核对；代理 Switch 的像素级开关操作待屏幕解锁后补验（交互三路径已由 AX 门禁钉住）。两处疑似缺陷结案为非缺陷：角色菜单「缺组」是弹层折叠滚动假象；角色触发器「索引点击无反应」是误点相邻静态文本标签，AX 派发代码无误。
+- **配置影响披露**：验收向共享 Global 配置写入过 6 条 `use_proxy=false` 与 opencode-go denylist（验收操作本身即写该文件），收尾已恢复为验收前 87 字节备份（仅 `default_*` 与 `proxy_url`）；测试 Host/Desktop 为独立 `opt3acc` 实例与平行 bundle，未触碰生产实例（pid 68191）。
+
+| 检查 | 结果 |
+| --- | --- |
+| `cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders` | 205 passed（含弹层/角色区/Switch/空态 AX 钉板与 Composer 空态 fail-closed） |
+| `cargo test -p pawork-app --offline --lib --tests` | 208 passed（含 D3a 回归）+ gui_server 集成 21 全绿 |
+| 协议层复验（Enable/Disable-all、cleared_roles、盘上默认对保留、代理开关落盘往返） | 通过 |
+| 真窗口像素级代理 Switch 操作 | 待屏幕解锁补验 |
+
+Validated: 上表实际命令与协议探针；真窗口核对范围如上。
+Targeted regressions: D3a 内存覆盖不误删盘上默认对（单禁 + 全关两路径）；弹层/角色区/Switch/空态 AX。
+Full workspace gate: NOT RUN（当前未设置全量门禁）。
+
+### 10.6 本批交付与证据（2026-09-06，OPT-4 工作台与 Settings 壳层落地）
+
+- **范围**（对照 OPT-D 签字稿）：4a 六处主要动作命中区 ≥36×36、可见字形 20px（`font::ICON`）——rail 分组切换/全局与项目头「+」/Local gear、Workspace Header Activity 与 header-new-task、Inspector 面板内 collapse、Composer Send/Cancel 同槽（Composer 常态自然高 89，仍在 88–94 合同）；4b Inspector 初始默认折叠（仅构造默认，Review changes / Activity 摘要等显式动作仍可展开），折叠态 Header 最右新增 `inspector-expand` 重开按钮（40×37 槽、与 Activity 触发器 4px 间距并存，click/Enter/Space/AX Press 同 handler，render/AX 经 `HEADER_ACTION_GAP` 同源）；4c Settings 内容取消 820px 上限，用满 Rail 外可用宽度、两侧各 32px padding（`SETTINGS_CONTENT_PAD`，render 与 AX 同源，含 7 个 AX 页文件 50 处原点机械迁移）；4d 导航选中/未选中共用同一外壳几何（微移根因：选中态 mt_2 差 8px + gpui border 参与 Taffy 布局致焦点描边挤内容盒），差异仅为背景/字重/绝对定位左缘 3px 指示条，1px 描边两态常驻、焦点只换色，文字坐标零位移；4e 空态/左栏 +/菜单锚点对照签字稿核对一致，无改动。
+- **实现方式**：glm 子代理两片并行（工作台 / Settings 壳），写入集互不重叠且不跑 cargo；主代理收口编译与门禁、修复一处遗漏钉板（mod.rs Composer 动作槽 32→36）、撰写文档同步。
+- **未采纳的签字稿视觉**（维持现行生产合同，改动须先改 gui-design.md，见 §8）：空态装饰性气泡图标、rail 全宽蓝色 New task 按钮。`⤢` 字形已在真窗口确认渲染正常（见下段顺带观察）。
+- **配置影响**：OPT-4 实现本身纯 GUI，无配置/协议/契约变化（ADR-055 不变，API 1.12 不变）；Global 配置仅在下段 Switch 复验中被写测并已还原，生产实例全程未触碰。
+
+| 检查 | 结果 |
+| --- | --- |
+| `cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`（单 Cargo 进程，主代理收口） | 207 passed（较 §10.5 记录 +2：OPT-4d 导航零位移 AX 主路径断言 1 条 + §10.5 批次计数复核差 1 条）；OPT-4a token 钉板（36 命中区/HEADER_ACTION_GAP）、Composer 高度合同重钉 89∈[88,94]、Inspector 默认折叠断言（复用既有 AX 宿主）全绿 |
+| `git diff --check`、文档本地链接 | 通过 |
+
+定向回归：六处主操作命中区/字形 token 钉板与 AX 同源（rail/header/composer/collapse）、Inspector 默认折叠与重开入口三路径、Settings 全宽列 render/AX 同源（含 50 处 AX 原点迁移）、导航两态 frame 逐像素一致。OPT-4 真窗口对照新图验收仍待补做（本段仅记录顺带观察，不替代正式验收）；OPT-3 代理 Switch 像素级复验同批已通过（见下段）。日志在本机 /tmp（pawork-opt4-desktop-tests*.log），不检入仓库。
+
+**同批补做：OPT-3 代理 Switch 像素级复验**（屏幕已解锁；隔离实例 `opt4acc` + 平行 bundle，Host 当次 `--provider opencode-go --model glm-5.3-flash` 覆盖；生产实例与 Global 配置验收前已备份、验收后已还原）。xAI 行代理 Switch：第一次点击（元素级）On→Off，盘上 Global config 同批落 `use_proxy = false`；第二次真实像素坐标点击（屏幕坐标 (5368,778)，AX 框中心同源）Off→On，盘上落回 `use_proxy = true`；AX 值随回执翻转（不乐观更新），真实鼠标点击后焦点落在 Switch 上。顺带真窗口观察（不构成 OPT-4 正式对照验收）：Inspector 默认折叠且 Header 右上 Activity + 重开按钮并存、`⤢` 字形渲染正常、Settings 内容全宽、导航选中行左缘指示条无位移。
+
+进程经验：exec 会话内 `nohup … &` 派生的 Desktop/Host 进程在会话收尾时被回收（空日志静默退出），导致 CUA 按路径重拉起无参数实例；GUI 进程须用 `open -na <bundle> --args …`（launchd 托管跨会话存活）或常驻 exec 会话承载。已记入 AGENTS.md §11。
+
+Validated: 上表实际命令 + 真窗口 AX / 像素点击 / 盘上配置交叉验证。
+Targeted regressions: 上述 OPT-4 几何与行为；代理 Switch 像素级开关写读往返。
 Full workspace gate: NOT RUN（当前未设置全量门禁）。

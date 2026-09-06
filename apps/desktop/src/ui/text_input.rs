@@ -1253,7 +1253,7 @@ mod tests {
 
     #[gpui::test]
     fn terminal_height_clamp_is_independent_of_composer_budget(cx: &mut TestAppContext) {
-        // Terminal 独立 28–220，不被 Composer 面板预算（163）截断。
+        // Terminal 独立 28–220，不被 Composer 面板预算（159）截断。
         let terminal = cx.new(|cx| TextInput::new(cx).height_clamp(28.0, 220.0));
         terminal.update(cx, |terminal, _| {
             assert_eq!(terminal.min_height, 28.0);

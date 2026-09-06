@@ -3,13 +3,30 @@
 use gpui::{App, Focusable, Window};
 
 use super::{dynamic_identifier, AxAction, AxNode, AxRect, AxRole};
-use crate::projection::{ConnectionState, ProviderStatusLabels};
+use crate::projection::{ConnectionState, ModelEntry, ProviderStatusLabels};
+use crate::ui::components::dropdown::{ANCHOR_GAP_Y, MENU_MAX_HEIGHT};
+use crate::ui::components::switch::SWITCH_TRACK_WIDTH;
 use crate::ui::i18n::t;
 use crate::ui::settings::{
     provider_catalog_overview_label, provider_status_lines, settings_api_key_input_identifier,
-    settings_default_unavailable_note, settings_use_proxy_identifier, PROVIDER_OVERVIEW_HEIGHT,
+    settings_default_unavailable_note, settings_manage_models_identifier,
+    settings_model_switch_identifier, settings_models_disable_all_identifier,
+    settings_models_enable_all_identifier, settings_models_menu_identifier,
+    settings_models_refresh_identifier, settings_role_candidates, settings_role_clear_identifier,
+    settings_role_description_label, settings_role_item_identifier,
+    settings_role_trigger_identifier, settings_use_proxy_identifier, SettingsRole,
+    PROVIDER_OVERVIEW_HEIGHT, SETTINGS_CONTENT_PAD, SETTINGS_MODELS_MENU_EMPTY_HEIGHT,
+    SETTINGS_MODELS_MENU_HEADER_HEIGHT, SETTINGS_MODELS_MENU_MAX_HEIGHT,
+    SETTINGS_MODELS_MENU_ROW_HEIGHT, SETTINGS_MODELS_MENU_WIDTH, SETTINGS_ROLE_LABEL_WIDTH,
+    SETTINGS_ROLE_MENU_EMPTY_HEIGHT, SETTINGS_ROLE_MENU_GROUP_HEADER_HEIGHT,
+    SETTINGS_ROLE_MENU_WIDTH, SETTINGS_ROLE_ROW_HEIGHT,
 };
+use crate::ui::theme::metrics;
 use crate::ui::AppView;
+use crate::ui::MenuKind;
+
+/// 代理 Switch 组（轨道 + 状态文案）在概览行的 AX 估值宽度。
+const SWITCH_GROUP_WIDTH: f32 = SWITCH_TRACK_WIDTH + 4.0 + 24.0;
 
 impl AppView {
     pub(crate) fn settings_providers_page_ax(
@@ -27,8 +44,9 @@ impl AppView {
         const CONTROL_ROW: f32 = 28.0;
         let state = &self.projection.settings_providers;
         let writes = self.settings_writes_enabled();
-        // 与 render 的 820px 内容列同源（宽窗钳制）；右缘锚定元素一律
-        // 以 frame.x + 16 + width 计算，不直接用 frame.width。
+        // 与 render 的全宽内容列同源（OPT-4c：Rail 外全宽、两侧 32px）；
+        // 右缘锚定元素一律以 frame.x + SETTINGS_CONTENT_PAD + width
+        // 计算，不直接用 frame.width。
         let width = super::settings::settings_content_ax_width(frame);
         // SET-5：页级刷新按钮（连接态 gate，与 render 同源）。
         let connected = matches!(
@@ -43,36 +61,36 @@ impl AppView {
             t("settings.providers.title"),
             frame,
         )
-            .child(
-                AxNode::new(
-                    "settings-page-title",
-                    AxRole::StaticText,
-                    t("settings.providers.title"),
-                    AxRect::new(
-                        frame.x + 16.0,
-                        frame.y + 16.0,
-                        (width - 136.0).max(0.0),
-                        HEADING_HEIGHT + SUBTITLE_HEIGHT,
-                    ),
-                )
-                .value(t("settings.providers.subtitle")),
+        .child(
+            AxNode::new(
+                "settings-page-title",
+                AxRole::StaticText,
+                t("settings.providers.title"),
+                AxRect::new(
+                    frame.x + SETTINGS_CONTENT_PAD,
+                    frame.y + 16.0,
+                    (width - 136.0).max(0.0),
+                    HEADING_HEIGHT + SUBTITLE_HEIGHT,
+                ),
             )
-            .child(
-                AxNode::new(
-                    "settings-refresh",
-                    AxRole::Button,
-                    t("settings.refresh"),
-                    AxRect::new(
-                        frame.x + 16.0 + width - 96.0,
-                        frame.y + 16.0,
-                        96.0,
-                        CONTROL_ROW,
-                    ),
-                )
-                .enabled(connected)
-                .focused(refresh_focused)
-                .action(AxAction::Press),
-            );
+            .value(t("settings.providers.subtitle")),
+        )
+        .child(
+            AxNode::new(
+                "settings-refresh",
+                AxRole::Button,
+                t("settings.refresh"),
+                AxRect::new(
+                    frame.x + SETTINGS_CONTENT_PAD + width - 96.0,
+                    frame.y + 16.0,
+                    96.0,
+                    CONTROL_ROW,
+                ),
+            )
+            .enabled(connected)
+            .focused(refresh_focused)
+            .action(AxAction::Press),
+        );
         let mut y = frame.y + 16.0 + HEADING_HEIGHT + SUBTITLE_HEIGHT + 8.0;
         // 与 render 同源（SET-3 修复 2）：stale / loading / error / 空态各自
         // 独立发布，stale 与 error 可同时存在，不再三选一合并。
@@ -82,17 +100,115 @@ impl AppView {
                     format!("settings-status-{kind}"),
                     AxRole::StaticText,
                     t("settings.providers.ax_status"),
-                    AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT),
+                    AxRect::new(frame.x + SETTINGS_CONTENT_PAD, y, width, STATUS_HEIGHT),
                 )
                 .value(label),
             );
             y += STATUS_HEIGHT + 8.0;
         }
+        // OPT-3b / ADR-055 D5「Default models」四角色区（与 render 同源）：
+        // 触发器 identifier / gate / 值文案 / 几何同源；菜单展开时发布
+        // 可选行（Press 派发与 render 点击同入口）。高度按固定行高估值。
+        let roles_unavailable = self.projection.default_model_unavailable();
+        let roles_header_height = HEADING_HEIGHT + SUBTITLE_HEIGHT;
+        let mut roles_height = roles_header_height + 8.0;
+        if roles_unavailable {
+            roles_height += STATUS_HEIGHT + 8.0;
+        }
+        let roles_card_height =
+            CARD_PAD + SettingsRole::ALL.len() as f32 * SETTINGS_ROLE_ROW_HEIGHT + CARD_PAD;
+        roles_height += roles_card_height;
+        let roles_x = frame.x + SETTINGS_CONTENT_PAD;
+        // render 行内布局：8px 卡片内边距 + 172px 角色名 + 8px gap。
+        let menu_x = roles_x + CARD_PAD + SETTINGS_ROLE_LABEL_WIDTH + 8.0;
+        let mut section = AxNode::new(
+            "settings-default-roles",
+            AxRole::Group,
+            t("settings.roles.title"),
+            AxRect::new(roles_x, y, width, roles_height),
+        )
+        .child(AxNode::new(
+            "settings-default-roles-title",
+            AxRole::StaticText,
+            t("settings.roles.title"),
+            AxRect::new(roles_x, y, width, roles_header_height),
+        ))
+        .value(t("settings.roles.subtitle"));
+        y += roles_header_height + 8.0;
+        if roles_unavailable {
+            section = section.child(
+                AxNode::new(
+                    "settings-default-roles-unavailable",
+                    AxRole::StaticText,
+                    t("settings.roles.title"),
+                    AxRect::new(roles_x, y, width, STATUS_HEIGHT),
+                )
+                .value(settings_default_unavailable_note()),
+            );
+            y += STATUS_HEIGHT + 8.0;
+        }
+        let mut card = AxNode::new(
+            "settings-default-roles-card",
+            AxRole::Group,
+            t("settings.roles.title"),
+            AxRect::new(roles_x, y, width, roles_card_height),
+        );
+        let mut row_y = y + CARD_PAD;
+        for role in SettingsRole::ALL {
+            let identifier = settings_role_trigger_identifier(role);
+            let enabled = self.settings_role_menu_enabled(role);
+            let focused = self
+                .settings_action_focus
+                .get(&identifier)
+                .is_some_and(|focus| self.open_menu.is_none() && focus.is_focused(window));
+            let mut trigger = AxNode::new(
+                identifier,
+                AxRole::Button,
+                role.label(),
+                AxRect::new(
+                    menu_x,
+                    row_y + (SETTINGS_ROLE_ROW_HEIGHT - CONTROL_ROW) / 2.0,
+                    SETTINGS_ROLE_MENU_WIDTH,
+                    CONTROL_ROW,
+                ),
+            )
+            .value(self.settings_role_value_label(role))
+            .description(settings_role_description_label(role))
+            .enabled(enabled)
+            .focused(focused);
+            if enabled {
+                trigger = trigger.action(AxAction::Press);
+            }
+            card = card
+                .child(
+                    AxNode::new(
+                        format!("settings-role-label-{}", role.wire_name()),
+                        AxRole::StaticText,
+                        role.label(),
+                        AxRect::new(
+                            roles_x + CARD_PAD,
+                            row_y,
+                            SETTINGS_ROLE_LABEL_WIDTH,
+                            SETTINGS_ROLE_ROW_HEIGHT,
+                        ),
+                    )
+                    .value(settings_role_description_label(role)),
+                )
+                .child(trigger);
+            if matches!(self.open_menu, Some(MenuKind::SettingsRole(open)) if open == role) {
+                let menu_y = row_y + (SETTINGS_ROLE_ROW_HEIGHT + CONTROL_ROW) / 2.0 + ANCHOR_GAP_Y;
+                card = card.child(self.settings_role_menu_ax(role, menu_x, menu_y));
+            }
+            row_y += SETTINGS_ROLE_ROW_HEIGHT;
+        }
+        page = page.child(section.child(card));
+        y += roles_card_height + 8.0;
+
         page = page.child(AxNode::new(
             "settings-providers-heading",
             AxRole::StaticText,
             t("settings.providers.section_providers"),
-            AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT),
+            AxRect::new(frame.x + SETTINGS_CONTENT_PAD, y, width, STATUS_HEIGHT),
         ));
         y += STATUS_HEIGHT + 8.0;
         for provider in state.providers.iter() {
@@ -146,18 +262,15 @@ impl AppView {
                     detail_values.push(t("settings.providers.oauth_code").replace("{}", code));
                 }
                 if let Some(expires) = &wait.expires_at {
-                    detail_values.push(
-                        t("settings.providers.oauth_expires").replace("{}", expires),
-                    );
+                    detail_values
+                        .push(t("settings.providers.oauth_expires").replace("{}", expires));
                 }
             }
             if let Some(note) = state.auth_notes.get(&provider.provider_id) {
                 detail_values.push(note.clone());
             }
             if let Some(message) = auth_error {
-                detail_values.push(
-                    t("settings.providers.connection_error").replace("{}", message),
-                );
+                detail_values.push(t("settings.providers.connection_error").replace("{}", message));
             }
             if catalog_error {
                 detail_values.push(provider.catalog_label());
@@ -181,7 +294,7 @@ impl AppView {
                 0.0
             };
             let card_height = PROVIDER_OVERVIEW_HEIGHT + detail_height;
-            let card_x = frame.x + 16.0;
+            let card_x = frame.x + SETTINGS_CONTENT_PAD;
             let model_count = self
                 .projection
                 .models
@@ -242,12 +355,41 @@ impl AppView {
             } else {
                 row_actions.clone()
             };
-            // 供应商级代理开关（ADR-052 SET-6h）：与 render 同源可见条件
-            //（配置了全局代理才出现）与 gate（writes 总闸）；位于动作按钮
-            // 左侧，占一个 114px 位。
+            // 「Manage models」入口（OPT-3a）：常驻一个 114px 位（未连接 /
+            // 目录不可用禁用，disabled 不发布 Press）；供应商级代理开关
+            //（OPT-3c Switch + 状态文案）占最右 64px 位，与 render 同源
+            // 可见条件与 gate。
             let proxy_visible = self.projection.settings_general.proxy_url.is_some();
-            let header_button_count = header_actions.len() + usize::from(proxy_visible);
-            let mut button_x = card_x + width - 8.0 - header_button_count as f32 * 114.0;
+            let header_button_count = header_actions.len() + 1;
+            let proxy_slot = usize::from(proxy_visible) as f32 * (SWITCH_GROUP_WIDTH + 8.0);
+            let mut button_x =
+                card_x + width - 8.0 - header_button_count as f32 * 114.0 - proxy_slot;
+            let manage_identifier = settings_manage_models_identifier(&provider.provider_id);
+            let manage_enabled = self.settings_manage_models_enabled(provider);
+            let manage_focused = self
+                .settings_action_focus
+                .get(&manage_identifier)
+                .is_some_and(|focus| self.open_menu.is_none() && focus.is_focused(window));
+            let mut manage = AxNode::new(
+                manage_identifier,
+                AxRole::Button,
+                t("settings.providers.manage_models"),
+                AxRect::new(
+                    button_x,
+                    y + (PROVIDER_OVERVIEW_HEIGHT - CONTROL_ROW) / 2.0,
+                    110.0,
+                    CONTROL_ROW,
+                ),
+            )
+            .description(t("settings.providers.manage_models_tooltip"))
+            .enabled(manage_enabled)
+            .focused(manage_focused);
+            if manage_enabled {
+                manage = manage.action(AxAction::Press);
+            }
+            card = card.child(manage);
+            let manage_button_x = button_x;
+            button_x += 114.0;
             if proxy_visible {
                 let identifier = settings_use_proxy_identifier(&provider.provider_id);
                 let enabled = writes;
@@ -255,30 +397,30 @@ impl AppView {
                     .settings_action_focus
                     .get(&identifier)
                     .is_some_and(|focus| self.open_menu.is_none() && focus.is_focused(window));
-                let label = if provider.use_proxy {
-                    t("settings.providers.proxy_on")
+                let value = if provider.use_proxy {
+                    t("settings.providers.switch_on")
                 } else {
-                    t("settings.providers.proxy_off")
+                    t("settings.providers.switch_off")
                 };
                 let mut toggle = AxNode::new(
                     identifier,
                     AxRole::Button,
                     t("settings.providers.ax_use_proxy"),
                     AxRect::new(
-                        button_x,
+                        card_x + width - 8.0 - SWITCH_GROUP_WIDTH,
                         y + (PROVIDER_OVERVIEW_HEIGHT - CONTROL_ROW) / 2.0,
-                        110.0,
+                        SWITCH_GROUP_WIDTH,
                         CONTROL_ROW,
                     ),
                 )
-                .value(label)
+                .value(value)
+                .selected(provider.use_proxy)
                 .enabled(enabled)
                 .focused(focused);
                 if enabled {
                     toggle = toggle.action(AxAction::Press);
                 }
                 card = card.child(toggle);
-                button_x += 114.0;
             }
             for action in header_actions {
                 let identifier = action.identifier(&provider.provider_id);
@@ -306,6 +448,16 @@ impl AppView {
                 }
                 card = card.child(button);
                 button_x += 114.0;
+            }
+            if matches!(&self.open_menu, Some(MenuKind::SettingsProviderModels(open)) if open == &provider.provider_id)
+            {
+                let menu_y = y + (PROVIDER_OVERVIEW_HEIGHT + CONTROL_ROW) / 2.0 + ANCHOR_GAP_Y;
+                card = card.child(self.settings_models_menu_ax(
+                    &provider.provider_id,
+                    manage_button_x,
+                    menu_y,
+                    window,
+                ));
             }
 
             let mut detail_y = y + PROVIDER_OVERVIEW_HEIGHT + CARD_PAD;
@@ -413,144 +565,287 @@ impl AppView {
             page = page.child(card);
             y += card_height + 8.0;
         }
+        page
+    }
 
-        // SET-5「模型与默认项」区（与 render 同源）：分组模型行、默认
-        // 徽标并入行 value、失效默认显式提示行、「设为默认」按钮与可见
-        // 路径同 identifier / 同 gate（stale 或未连接 provider 时
-        // enabled=false 且 permits 拒绝）。高度按行数固定估值。
-        const MODEL_GROUP_HEADER: f32 = 20.0;
-        const MODEL_ROW_HEIGHT: f32 = 28.0;
-        let default = state.default_model.clone();
-        let unavailable = self.projection.default_model_unavailable();
-        let groups = crate::projection::group_models_by_provider(&self.projection.models);
-        let mut section_height = HEADING_HEIGHT + SUBTITLE_HEIGHT + 8.0;
-        if unavailable {
-            section_height += STATUS_HEIGHT + 8.0;
-        }
-        if groups.is_empty() {
-            section_height += STATUS_HEIGHT + 8.0;
-        }
-        for (_, models) in &groups {
-            section_height +=
-                8.0 + MODEL_GROUP_HEADER + models.len() as f32 * (MODEL_ROW_HEIGHT + CARD_GAP);
-        }
-        let models_x = frame.x + 16.0;
-        let mut models_y = y + 8.0;
-        let mut section = AxNode::new(
-            "settings-models",
+    /// 角色菜单展开态 AX（与 render 浮层同源）：清除行 + 已连接 provider
+    /// 分组的启用模型；空候选只发布诚实说明行（无 Press，不编造模型）。
+    /// 面板高度按内容估值并在 MENU_MAX_HEIGHT 内裁剪，与 render 自滚一致。
+    fn settings_role_menu_ax(&self, role: SettingsRole, menu_x: f32, menu_y: f32) -> AxNode {
+        let candidates = settings_role_candidates(
+            &self.projection.models,
+            &self.projection.settings_providers.providers,
+        );
+        let current = self.projection.settings_providers.role_value(role);
+        let highlight = self.menu_highlight_effective(self.menu_selected_index());
+        let content_height = if candidates.is_empty() {
+            metrics::MENU_PADDING * 2.0 + SETTINGS_ROLE_MENU_EMPTY_HEIGHT
+        } else {
+            let entry_count: usize = candidates.iter().map(|(_, models)| models.len()).sum();
+            metrics::MENU_PADDING * 2.0
+                + candidates.len() as f32 * SETTINGS_ROLE_MENU_GROUP_HEADER_HEIGHT
+                + (entry_count + 1) as f32 * metrics::MENU_ROW_HEIGHT
+        };
+        let menu_height = content_height.min(MENU_MAX_HEIGHT);
+        let mut menu = AxNode::new(
+            format!("settings-role-menu-{}", role.wire_name()),
             AxRole::Group,
-            t("settings.providers.default_model_title"),
-            AxRect::new(models_x, models_y, width, section_height),
+            t("settings.roles.ax_menu"),
+            AxRect::new(menu_x, menu_y, SETTINGS_ROLE_MENU_WIDTH, menu_height),
+        );
+        let mut item_y = menu_y + metrics::MENU_PADDING;
+        let menu_bottom = menu_y + menu_height;
+        if candidates.is_empty() {
+            return menu.child(
+                AxNode::new(
+                    format!("settings-role-menu-empty-{}", role.wire_name()),
+                    AxRole::StaticText,
+                    t("settings.roles.empty_title"),
+                    AxRect::new(
+                        menu_x,
+                        item_y,
+                        SETTINGS_ROLE_MENU_WIDTH,
+                        SETTINGS_ROLE_MENU_EMPTY_HEIGHT,
+                    ),
+                )
+                .value(t("settings.roles.empty_hint")),
+            );
+        }
+        let can_write = self.settings_role_menu_enabled(role);
+        let mut clear = AxNode::new(
+            settings_role_clear_identifier(role),
+            AxRole::Button,
+            t("settings.roles.clear"),
+            AxRect::new(
+                menu_x,
+                item_y,
+                SETTINGS_ROLE_MENU_WIDTH,
+                metrics::MENU_ROW_HEIGHT,
+            ),
         )
-        .child(AxNode::new(
-            "settings-models-title",
-            AxRole::StaticText,
-            t("settings.providers.default_model_title"),
-            AxRect::new(models_x, models_y, width, HEADING_HEIGHT + SUBTITLE_HEIGHT),
-        ))
-        .value(t("settings.providers.default_model_subtitle"));
-        models_y += HEADING_HEIGHT + SUBTITLE_HEIGHT + 8.0;
-        if unavailable {
-            section = section.child(
-                AxNode::new(
-                    "settings-models-unavailable",
-                    AxRole::StaticText,
-                    t("settings.providers.default_model_title"),
-                    AxRect::new(models_x, models_y, width, STATUS_HEIGHT),
-                )
-                .value(settings_default_unavailable_note()),
-            );
-            models_y += STATUS_HEIGHT + 8.0;
+        .selected(current.is_none())
+        .enabled(can_write)
+        .focused(0 == highlight);
+        if can_write {
+            clear = clear.action(AxAction::Press);
         }
-        if groups.is_empty() {
-            section = section.child(
-                AxNode::new(
-                    "settings-models-empty",
-                    AxRole::StaticText,
-                    t("settings.providers.ax_models_title"),
-                    AxRect::new(models_x, models_y, width, STATUS_HEIGHT),
-                )
-                .value(t("settings.providers.no_models")),
-            );
-            models_y += STATUS_HEIGHT + 8.0;
-        }
-        for (provider_id, models) in groups {
+        menu = menu.child(clear);
+        item_y += metrics::MENU_ROW_HEIGHT;
+        let mut item_ix = 1;
+        for (provider_id, models) in candidates {
             // 组头显示名取 provider 权威清单（与 render 同源回落）。
-            let display_name = state
+            let display_name = self
+                .projection
+                .settings_providers
                 .providers
                 .iter()
                 .find(|entry| entry.provider_id == provider_id)
                 .map(|entry| entry.display_name.clone())
                 .unwrap_or_else(|| provider_id.to_string());
-            let group_height =
-                MODEL_GROUP_HEADER + models.len() as f32 * (MODEL_ROW_HEIGHT + CARD_GAP);
-            let mut group = AxNode::new(
-                dynamic_identifier("settings-model-group", &provider_id),
-                AxRole::Group,
-                display_name.clone(),
-                AxRect::new(models_x, models_y, width, group_height),
-            )
-            .child(AxNode::new(
-                dynamic_identifier("settings-model-group-title", &provider_id),
-                AxRole::StaticText,
-                display_name,
-                AxRect::new(models_x, models_y, width, MODEL_GROUP_HEADER),
-            ));
-            let mut row_y = models_y + MODEL_GROUP_HEADER;
+            if item_y < menu_bottom {
+                menu = menu.child(AxNode::new(
+                    dynamic_identifier(
+                        &format!("settings-role-menu-group-{}", role.wire_name()),
+                        &provider_id,
+                    ),
+                    AxRole::StaticText,
+                    display_name,
+                    AxRect::new(
+                        menu_x,
+                        item_y,
+                        SETTINGS_ROLE_MENU_WIDTH,
+                        SETTINGS_ROLE_MENU_GROUP_HEADER_HEIGHT,
+                    ),
+                ));
+            }
+            item_y += SETTINGS_ROLE_MENU_GROUP_HEADER_HEIGHT;
             for model in models {
-                let is_default = default.as_ref().is_some_and(|(provider, id)| {
+                let selected = current.is_some_and(|(provider, id)| {
                     provider == &model.provider_id && id == &model.id
                 });
-                let identifier = crate::ui::settings::settings_set_default_identifier(
-                    &model.provider_id,
-                    &model.id,
-                );
-                // 与 render 同源的启用谓词（入口派发前 permits 已核对）。
-                let enabled = self.settings_set_default_enabled(&model.provider_id, &model.id);
-                let focused = self
-                    .settings_action_focus
-                    .get(&identifier)
-                    .is_some_and(|focus| self.open_menu.is_none() && focus.is_focused(window));
-                let mut value = model.display_name.clone();
-                if is_default {
-                    value.push_str(&format!(" · {}", t("settings.providers.default_badge")));
-                }
-                let mut default_button = AxNode::new(
-                    identifier,
-                    AxRole::Button,
-                    t("settings.providers.set_default"),
-                    AxRect::new(models_x + width - 104.0, row_y, 104.0, MODEL_ROW_HEIGHT),
-                )
-                .enabled(enabled)
-                .focused(focused);
-                if enabled {
-                    default_button = default_button.action(AxAction::Press);
-                }
-                group = group
-                    .child(
-                        AxNode::new(
-                            dynamic_identifier(
-                                "settings-model",
-                                &format!("{}:{}", model.provider_id, model.id),
-                            ),
-                            AxRole::StaticText,
-                            model.display_name.clone(),
-                            AxRect::new(
-                                models_x + 8.0,
-                                row_y,
-                                (width - 136.0).max(60.0),
-                                MODEL_ROW_HEIGHT,
-                            ),
-                        )
-                        .value(value),
+                if item_y < menu_bottom {
+                    let mut item = AxNode::new(
+                        settings_role_item_identifier(role, &model.provider_id, &model.id),
+                        AxRole::Button,
+                        model.display_name.clone(),
+                        AxRect::new(
+                            menu_x,
+                            item_y,
+                            SETTINGS_ROLE_MENU_WIDTH,
+                            metrics::MENU_ROW_HEIGHT,
+                        ),
                     )
-                    .child(default_button);
-                row_y += MODEL_ROW_HEIGHT + CARD_GAP;
+                    .value(format!("{} / {}", model.provider_id, model.id))
+                    .enabled(can_write)
+                    .selected(selected)
+                    .focused(item_ix == highlight);
+                    if can_write {
+                        item = item.action(AxAction::Press);
+                    }
+                    menu = menu.child(item);
+                }
+                item_ix += 1;
+                item_y += metrics::MENU_ROW_HEIGHT;
             }
-            section = section.child(group);
-            models_y += group_height + 8.0;
         }
-        page = page.child(section);
-        page
+        menu
+    }
+
+    /// 「Manage models」弹层 AX（与 render 浮层同源，OPT-3a / ADR-055
+    /// D2/D3）：Enable all / Disable all + 每模型 Switch（checked 进 value
+    /// 与 selected）；空目录只发布诚实空态 + Refresh（复用页级刷新）。
+    /// 面板高度按内容估值并在弹层上限内裁剪，与 render 自滚一致。
+    fn settings_models_menu_ax(
+        &self,
+        provider_id: &str,
+        menu_x: f32,
+        menu_y: f32,
+        window: &Window,
+    ) -> AxNode {
+        let models: Vec<&ModelEntry> = self
+            .projection
+            .settings_providers
+            .model_catalog
+            .iter()
+            .filter(|model| model.provider_id == provider_id)
+            .collect();
+        let pending = self
+            .projection
+            .settings_providers
+            .model_write_pending
+            .as_ref()
+            .is_some_and(|pending| pending.targets(provider_id));
+        let writes = self.settings_writes_enabled();
+        let content_height = if models.is_empty() {
+            SETTINGS_MODELS_MENU_EMPTY_HEIGHT
+        } else {
+            SETTINGS_MODELS_MENU_HEADER_HEIGHT
+                + models.len() as f32 * SETTINGS_MODELS_MENU_ROW_HEIGHT
+        };
+        let menu_height =
+            (metrics::MENU_PADDING * 2.0 + content_height).min(SETTINGS_MODELS_MENU_MAX_HEIGHT);
+        let mut menu = AxNode::new(
+            settings_models_menu_identifier(provider_id),
+            AxRole::Group,
+            t("settings.providers.models_title"),
+            AxRect::new(menu_x, menu_y, SETTINGS_MODELS_MENU_WIDTH, menu_height),
+        );
+        // 头行右侧 Enable all / Disable all（render 从右向左：Disable all
+        // 最右；两者 100px 槽 + 4px 间隙估值）。
+        let header_y = menu_y + metrics::MENU_PADDING;
+        for (identifier, label, button_x) in [
+            (
+                settings_models_disable_all_identifier(provider_id),
+                t("settings.providers.models_disable_all"),
+                menu_x + SETTINGS_MODELS_MENU_WIDTH - metrics::MENU_PADDING - 100.0,
+            ),
+            (
+                settings_models_enable_all_identifier(provider_id),
+                t("settings.providers.models_enable_all"),
+                menu_x + SETTINGS_MODELS_MENU_WIDTH - metrics::MENU_PADDING - 204.0,
+            ),
+        ] {
+            let enabled = writes && !pending && !models.is_empty();
+            let focused = self
+                .settings_action_focus
+                .get(&identifier)
+                .is_some_and(|focus| focus.is_focused(window));
+            let mut node = AxNode::new(
+                identifier,
+                AxRole::Button,
+                label,
+                AxRect::new(
+                    button_x,
+                    header_y,
+                    100.0,
+                    SETTINGS_MODELS_MENU_HEADER_HEIGHT,
+                ),
+            )
+            .enabled(enabled)
+            .focused(focused);
+            if enabled {
+                node = node.action(AxAction::Press);
+            }
+            menu = menu.child(node);
+        }
+        if models.is_empty() {
+            let refresh_identifier = settings_models_refresh_identifier(provider_id);
+            let refresh_focused = self
+                .settings_action_focus
+                .get(&refresh_identifier)
+                .is_some_and(|focus| focus.is_focused(window));
+            let mut refresh = AxNode::new(
+                refresh_identifier,
+                AxRole::Button,
+                t("settings.providers.models_refresh"),
+                AxRect::new(
+                    menu_x + metrics::MENU_PADDING,
+                    header_y + SETTINGS_MODELS_MENU_HEADER_HEIGHT + 36.0,
+                    110.0,
+                    28.0,
+                ),
+            )
+            .enabled(writes)
+            .focused(refresh_focused);
+            if writes {
+                refresh = refresh.action(AxAction::Press);
+            }
+            return menu
+                .child(
+                    AxNode::new(
+                        format!("settings-models-empty-{provider_id}"),
+                        AxRole::StaticText,
+                        t("settings.providers.models_empty_title"),
+                        AxRect::new(
+                            menu_x + metrics::MENU_PADDING,
+                            header_y + SETTINGS_MODELS_MENU_HEADER_HEIGHT,
+                            SETTINGS_MODELS_MENU_WIDTH - metrics::MENU_PADDING * 2.0,
+                            36.0,
+                        ),
+                    )
+                    .value(t("settings.providers.models_empty_hint")),
+                )
+                .child(refresh);
+        }
+        let mut item_y = menu_y + metrics::MENU_PADDING + SETTINGS_MODELS_MENU_HEADER_HEIGHT;
+        let menu_bottom = menu_y + menu_height;
+        for model in models {
+            if item_y >= menu_bottom {
+                break;
+            }
+            let identifier = settings_model_switch_identifier(provider_id, &model.id);
+            let enabled = writes && !pending;
+            let focused = self
+                .settings_action_focus
+                .get(&identifier)
+                .is_some_and(|focus| focus.is_focused(window));
+            let value = if model.enabled {
+                t("settings.providers.switch_on")
+            } else {
+                t("settings.providers.switch_off")
+            };
+            let mut item = AxNode::new(
+                identifier,
+                AxRole::Button,
+                model.display_name.clone(),
+                AxRect::new(
+                    menu_x + metrics::MENU_PADDING,
+                    item_y,
+                    SETTINGS_MODELS_MENU_WIDTH - metrics::MENU_PADDING * 2.0,
+                    SETTINGS_MODELS_MENU_ROW_HEIGHT,
+                ),
+            )
+            .value(value)
+            .description(format!("{}/{}", model.provider_id, model.id))
+            .selected(model.enabled)
+            .enabled(enabled)
+            .focused(focused);
+            if enabled {
+                item = item.action(AxAction::Press);
+            }
+            menu = menu.child(item);
+            item_y += SETTINGS_MODELS_MENU_ROW_HEIGHT;
+        }
+        menu
     }
 }

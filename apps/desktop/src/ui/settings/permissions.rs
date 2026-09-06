@@ -47,7 +47,6 @@ impl AppView {
             .flex()
             .flex_col()
             .min_w_0()
-            .max_w(px(SETTINGS_CONTENT_MAX_WIDTH))
             .gap_2()
             .child(
                 div()
@@ -208,23 +207,8 @@ impl AppView {
                 .color(dark().text.secondary),
         );
 
-        div()
-            .id("settings-page")
-            .flex()
-            .flex_col()
-            .flex_1()
-            .min_w_0()
-            .overflow_hidden()
-            .p_4()
-            .child(
-                div()
-                    .id("settings-page-scroll")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.settings_scroll)
-                    .child(content),
-            )
+        // OPT-4c（F2）：外层脚手架统一在 settings_page_element。
+        content
     }
 
     /// 单个审批模式行：整行即 radio；mouse、Enter、Space 与 AX Press

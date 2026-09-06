@@ -8,13 +8,53 @@ use serde_json::Value;
 
 use crate::ui::i18n::t;
 
+use super::session::ModelEntry;
 use super::DesktopProjection;
 
 pub use pawork_client::{
     ApprovalModeWire, AuthStartData, DefaultModelPair, GeneralSettingsData,
     PermissionsSettingsData, ProviderAuthState, ProviderAuthStatusData, ProviderAuthStatusEntry,
-    ProviderCatalogState, ProviderUseProxyData, TerminalSettingsData,
+    ProviderCatalogState, RoleDefaultsData, TerminalSettingsData,
 };
+
+/// Settings 四默认角色（OPT-3b / ADR-055 D5）。wire 名是 Host 权威词汇
+///（未知值 fail-closed）；conversation 复用既有顶层 `default`，不复制
+/// 第二份真相。render 与 AX 的控件 identifier 也复用 wire 名（不翻译）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SettingsRole {
+    Conversation,
+    Naming,
+    Vision,
+    Search,
+}
+
+impl SettingsRole {
+    pub const ALL: [Self; 4] = [Self::Conversation, Self::Naming, Self::Vision, Self::Search];
+
+    pub const fn wire_name(self) -> &'static str {
+        match self {
+            Self::Conversation => "conversation",
+            Self::Naming => "naming",
+            Self::Vision => "vision",
+            Self::Search => "search",
+        }
+    }
+
+    /// 未知 wire 名 fail-closed（回执 echo 校验与 AX 派发共用）。
+    pub fn from_wire_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|role| role.wire_name() == name)
+    }
+
+    /// 角色显示名（render 与 AX 同源）。
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Conversation => t("settings.roles.conversation"),
+            Self::Naming => t("settings.roles.naming"),
+            Self::Vision => t("settings.roles.vision"),
+            Self::Search => t("settings.roles.search"),
+        }
+    }
+}
 
 /// 通用 / 权限 / 终端 / 供应商页共用的查询门闩（SET-6 / CLN-5）。
 ///
@@ -117,6 +157,20 @@ impl ProviderStatusLabels for ProviderAuthStatusEntry {
     }
 }
 
+/// provider_auth_status.role_defaults 的 UI 投影（ADR-055 D5）：naming /
+/// vision / search 三键对（半配对 Host 已输出 null；UI 比较用 pair 元组，
+/// 同 default_model 口径）。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RoleDefaultsState {
+    pub naming: Option<(String, String)>,
+    pub vision: Option<(String, String)>,
+    pub search: Option<(String, String)>,
+}
+
+fn default_pair_to_tuple(pair: DefaultModelPair) -> (String, String) {
+    (pair.provider_id, pair.model_id)
+}
+
 /// Settings「模型与供应商」页整体状态（SET-3 只读）：加载态、断线 stale
 /// 标注与最后成功数据；断线保留 stale 只读结果，不伪造刷新。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -126,6 +180,9 @@ pub struct SettingsProvidersState {
     /// Host 权威默认 provider/model（provider_auth_status 顶层 default；
     /// 随 apply_loaded 整体替换，无默认即 None）。UI 比较仍用 pair 元组。
     pub default_model: Option<(String, String)>,
+    /// provider_auth_status.role_defaults（ADR-055 D5）：naming / vision /
+    /// search 三角色键对（半配对已由 Host 输出 null）。
+    pub role_defaults: RoleDefaultsState,
     /// 进行中的 OAuth 授权等待（auth_start 响应携带的 URL / user code /
     /// 到期；Desktop 只显示，不接触 token）。终态 AuthChanged 清除。
     pub oauth_waits: HashMap<String, AuthStartData>,
@@ -140,6 +197,40 @@ pub struct SettingsProvidersState {
     /// Succeeded / Removed 终态不清旧凭证（Host 未删除），改为触发
     /// provider_auth_status 重查交权威裁决。
     pub auth_replacing_connected: HashSet<String>,
+    /// 全量模型目录（model_list include_disabled=true；ADR-055 D4）：
+    /// 「Manage models」弹层的权威状态，与 projection.models（缺省过滤
+    /// 口径）分列存储，不互相覆盖。
+    pub model_catalog: Vec<ModelEntry>,
+    /// 模型启用写在途（OPT-3a）：SetModelEnabled / SetProviderModelsEnabled
+    /// 已派出、回执 / 失败未到；对应弹层控件禁用防重复提交。
+    pub model_write_pending: Option<ProviderModelWrite>,
+    /// 禁用命中角色默认对时的诚实说明（Host cleared_roles 回执，ADR-055
+    /// D3）：随权威重查不消失，下次写回执替换、离开 Settings 清空。
+    pub model_cleared_note: Option<String>,
+}
+
+/// 模型启用写在途种类（OPT-3a）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProviderModelWrite {
+    /// SetModelEnabled 在途（provider × model）。
+    Model {
+        provider_id: String,
+        model_id: String,
+    },
+    /// SetProviderModelsEnabled 在途（provider 全开 / 全关）。
+    All { provider_id: String },
+}
+
+impl ProviderModelWrite {
+    /// 是否作用于该 provider（弹层按 provider 整体禁用）。
+    pub fn targets(&self, provider_id: &str) -> bool {
+        match self {
+            Self::Model {
+                provider_id: id, ..
+            }
+            | Self::All { provider_id: id } => id == provider_id,
+        }
+    }
 }
 
 impl Default for SettingsProvidersState {
@@ -152,10 +243,14 @@ impl Default for SettingsProvidersState {
             },
             providers: Vec::new(),
             default_model: None,
+            role_defaults: RoleDefaultsState::default(),
             oauth_waits: HashMap::new(),
             auth_notes: HashMap::new(),
             pending_status_refresh: false,
             auth_replacing_connected: HashSet::new(),
+            model_catalog: Vec::new(),
+            model_write_pending: None,
+            model_cleared_note: None,
         }
     }
 }
@@ -182,6 +277,33 @@ impl SettingsProvidersState {
         self.pending_status_refresh = false;
         self.providers = data.providers;
         self.default_model = data.default.map(|pair| (pair.provider_id, pair.model_id));
+        self.role_defaults = RoleDefaultsState {
+            naming: data.role_defaults.naming.map(default_pair_to_tuple),
+            vision: data.role_defaults.vision.map(default_pair_to_tuple),
+            search: data.role_defaults.search.map(default_pair_to_tuple),
+        };
+    }
+
+    /// 当前角色的键对（conversation 即顶层 default）。
+    pub fn role_value(&self, role: SettingsRole) -> Option<&(String, String)> {
+        match role {
+            SettingsRole::Conversation => self.default_model.as_ref(),
+            SettingsRole::Naming => self.role_defaults.naming.as_ref(),
+            SettingsRole::Vision => self.role_defaults.vision.as_ref(),
+            SettingsRole::Search => self.role_defaults.search.as_ref(),
+        }
+    }
+
+    /// `SetDefaultRoleModel` Data 回执（ADR-055 D5；回执即写后状态）：
+    /// 按角色落地键对；清除为 None。conversation 的 Composer 同步见
+    /// `DesktopProjection::confirm_role_default_pair`。
+    pub fn confirm_role_default(&mut self, role: SettingsRole, value: Option<(String, String)>) {
+        match role {
+            SettingsRole::Conversation => self.default_model = value,
+            SettingsRole::Naming => self.role_defaults.naming = value,
+            SettingsRole::Vision => self.role_defaults.vision = value,
+            SettingsRole::Search => self.role_defaults.search = value,
+        }
     }
 
     /// set_provider_use_proxy 写回执（ADR-052 SET-6h；回执即写后状态）：
@@ -193,6 +315,36 @@ impl SettingsProvidersState {
             .find(|entry| entry.provider_id == provider_id)
         {
             entry.use_proxy = use_proxy;
+        }
+    }
+
+    /// 全量目录查询到达（include_disabled=true）：整体替换；条目 enabled
+    /// 即弹层 Switch 权威状态。
+    pub fn apply_model_catalog(&mut self, models: Vec<ModelEntry>) {
+        self.model_catalog = models;
+    }
+
+    /// SetModelEnabled Data 回执（ADR-055 D2；回执即写后状态）：目录内
+    /// 同条目收敛；条目缺失（目录暂态滞后）交随后的权威重查。
+    pub fn confirm_model_enabled(&mut self, provider_id: &str, model_id: &str, enabled: bool) {
+        if let Some(entry) = self
+            .model_catalog
+            .iter_mut()
+            .find(|entry| entry.provider_id == provider_id && entry.id == model_id)
+        {
+            entry.enabled = enabled;
+        }
+    }
+
+    /// SetProviderModelsEnabled Data 回执（回执即写后状态）：该 provider
+    /// 全部条目收敛到统一值，其他 provider 不动。
+    pub fn confirm_provider_models_enabled(&mut self, provider_id: &str, enabled: bool) {
+        for entry in self
+            .model_catalog
+            .iter_mut()
+            .filter(|entry| entry.provider_id == provider_id)
+        {
+            entry.enabled = enabled;
         }
     }
 
@@ -513,15 +665,23 @@ impl DesktopProjection {
         self.settings_terminal.mark_stale(reason);
     }
 
-    /// set_default_model 获 Host Data 确认：Composer 同步到已确认默认
-    ///（清 pending 切换；不改当前会话 / 草稿 / Run）。
-    pub fn confirm_default_model(&mut self, provider_id: String, model_id: String) {
-        self.selected_model = Some((provider_id, model_id));
-        self.pending_model = None;
-    }
-
-    pub fn confirm_default_model_pair(&mut self, pair: DefaultModelPair) {
-        self.confirm_default_model(pair.provider_id, pair.model_id);
+    /// `SetDefaultRoleModel` 获 Host Data 确认（OPT-3b / ADR-055 D5；回执
+    /// 即写后状态）：按角色落地键对；conversation 另把 Composer 同步到
+    /// 已确认默认（清 pending 切换；不改当前会话 / 草稿 / Run）。清除
+    /// conversation 默认只落 Settings 状态，不臆造 Composer 有效模型。
+    pub fn confirm_role_default_pair(
+        &mut self,
+        role: SettingsRole,
+        value: Option<DefaultModelPair>,
+    ) {
+        let tuple = value.map(default_pair_to_tuple);
+        if role == SettingsRole::Conversation {
+            if let Some((provider_id, model_id)) = tuple.clone() {
+                self.selected_model = Some((provider_id, model_id));
+                self.pending_model = None;
+            }
+        }
+        self.settings_providers.confirm_role_default(role, tuple);
     }
 
     /// Settings「模型与默认项」失效判定：默认 provider 未连接，或默认

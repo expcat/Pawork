@@ -346,8 +346,6 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "settings.providers.tooltip_remove_credential" => {
             ("Remove the stored credential.", "移除已存储的凭证。")
         }
-        "settings.providers.proxy_on" => ("Proxy on", "走代理"),
-        "settings.providers.proxy_off" => ("Proxy off", "直连"),
         "settings.providers.proxy_tooltip_on" => (
             "This provider connects through the global proxy. Activate to bypass.",
             "该提供商经全局代理连接。点击切换为直连。",
@@ -357,22 +355,76 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             "该提供商绕过全局代理直连。点击切换为经代理连接。",
         ),
         "settings.providers.ax_use_proxy" => ("Use proxy toggle", "代理开关"),
+        // ── Manage models 弹层与 Switch 状态（OPT-3a/3c / ADR-055）──
+        "settings.providers.switch_on" => ("On", "开"),
+        "settings.providers.switch_off" => ("Off", "关"),
+        "settings.providers.manage_models" => ("Manage models", "管理模型"),
+        "settings.providers.manage_models_tooltip" => {
+            ("View and manage enabled models", "查看并管理已启用模型")
+        }
+        "settings.providers.models_title" => ("Enabled models", "已启用模型"),
+        "settings.providers.models_enable_all" => ("Enable all", "全部启用"),
+        "settings.providers.models_disable_all" => ("Disable all", "全部禁用"),
+        "settings.providers.models_empty_title" => ("No models returned", "未返回模型"),
+        "settings.providers.models_empty_hint" => {
+            ("This provider's catalog is empty.", "该提供商的目录为空。")
+        }
+        "settings.providers.models_refresh" => ("Refresh catalog", "刷新目录"),
+        "settings.providers.models_cleared_roles" => (
+            "Disabled models cleared default roles: {}",
+            "禁用模型已清除默认角色：{}",
+        ),
         "settings.providers.authorize_at" => ("Authorize at {}", "前往授权：{}"),
         "settings.providers.oauth_code" => ("Code {}", "代码 {}"),
         "settings.providers.oauth_expires" => ("Expires {}", "到期时间 {}"),
         "settings.providers.connection_error" => ("Connection error · {}", "连接错误 · {}"),
         "settings.providers.endpoint_row" => ("Endpoint · {}", "端点 · {}"),
         "settings.providers.api_key_empty" => ("API key is empty.", "API key 为空。"),
-        "settings.providers.default_model_title" => ("Default model", "默认模型"),
-        "settings.providers.default_model_subtitle" => (
-            "Choose the model used when a new task starts",
-            "选择新任务启动时使用的模型",
+        // ── Default models 四默认角色（OPT-3b / ADR-055 D5）──
+        "settings.roles.title" => ("Default models", "默认模型"),
+        "settings.roles.subtitle" => (
+            "Select the default model for each role. These defaults will be used for new runs.",
+            "为每个角色选择默认模型。这些默认值将用于新的运行。",
         ),
-        "settings.providers.no_models" => {
-            ("No models reported by the host.", "Host 未报告任何模型。")
-        }
-        "settings.providers.set_default" => ("Set default", "设为默认"),
-        "settings.providers.default_badge" => ("Default", "默认"),
+        "settings.roles.conversation" => ("Conversation", "对话"),
+        "settings.roles.naming" => ("Naming", "命名"),
+        "settings.roles.vision" => ("Vision", "识图"),
+        "settings.roles.search" => ("Search", "搜索"),
+        "settings.roles.conversation_desc" => (
+            "Smart, general purpose conversations and reasoning across tasks.",
+            "通用对话与跨任务推理。",
+        ),
+        "settings.roles.naming_desc" => (
+            "Generate clear, consistent names and identifiers.",
+            "生成清晰一致的名称与标识。",
+        ),
+        "settings.roles.vision_desc" => (
+            "Understand and describe images, diagrams, and screenshots.",
+            "理解并描述图片、图表与截图。",
+        ),
+        "settings.roles.search_desc" => (
+            "Find relevant information and summarize results.",
+            "查找相关信息并汇总结果。",
+        ),
+        "settings.roles.save_only_vision" => (
+            "Saved only — image routing isn't wired yet",
+            "仅保存选择——识图路由尚未接线",
+        ),
+        "settings.roles.save_only_search" => (
+            "Saved only — search routing isn't wired yet",
+            "仅保存选择——搜索路由尚未接线",
+        ),
+        "settings.roles.not_set" => ("Not set", "未设置"),
+        "settings.roles.clear" => ("Clear", "清除"),
+        "settings.roles.empty_title" => (
+            "No enabled models on connected providers",
+            "已连接的提供商没有已启用模型",
+        ),
+        "settings.roles.empty_hint" => (
+            "Connect a provider or enable models to choose defaults.",
+            "连接提供商或启用模型后再选择默认项。",
+        ),
+        "settings.roles.ax_menu" => ("Default model options", "默认模型选项"),
         "settings.providers.api_key_placeholder" => ("Paste API key", "粘贴 API key"),
         "settings.providers.catalog_unavailable" => ("Catalog unavailable", "目录不可用"),
         "settings.providers.catalog_available" => ("Catalog available", "目录可用"),
@@ -396,7 +448,6 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "settings.providers.ax_catalog" => ("Catalog", "目录"),
         "settings.providers.ax_details" => ("Provider details", "提供商详情"),
         "settings.providers.ax_api_key" => ("API key", "API key"),
-        "settings.providers.ax_models_title" => ("Models", "模型"),
         // ── 审批模式（render / AX 同源）──
         "approval.mode.always_ask" => ("Always ask", "总是询问"),
         "approval.mode.ask_for_writes" => ("Ask for writes", "写入时询问"),
@@ -477,6 +528,19 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "composer.model_disabled_offline" => {
             ("Model switch needs a live connection.", "切换模型需要有效连接。")
         }
+        "composer.model_none_available" => ("No enabled models", "无已启用模型"),
+        "composer.model_disabled_empty" => (
+            "No enabled models on this host. Enable a model in Settings → Models & providers.",
+            "此主机没有已启用模型。请在 Settings → Models & providers 启用模型。",
+        ),
+        "composer.model_menu_empty" => (
+            "Enable a model in Settings → Models & providers.",
+            "请在 Settings → Models & providers 启用模型。",
+        ),
+        "composer.send_disabled_no_models" => (
+            "Sending needs an enabled model. Enable a model in Settings → Models & providers.",
+            "发送需要已启用模型。请在 Settings → Models & providers 启用模型。",
+        ),
         "composer.workspace_scope" => ("Workspace · {}", "工作区 · {}"),
         "composer.no_project_chip" => ("No project", "无项目"),
         "composer.file_tools_unavailable" => (
@@ -654,6 +718,8 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             "终端输入…（Enter 写入）",
         ),
         "header.tooltip_activity" => ("Activity", "动态"),
+        // OPT-4b：折叠态 Header 最右的重开入口（tooltip 与 AX name 同源）。
+        "header.tooltip_open_inspector" => ("Open inspector", "打开检查器"),
         // ── Workspace chrome · 状态栏提示 ──
         "status.connect_failed_retry" => (
             "Connect failed. Click Reconnect to retry.",
@@ -774,7 +840,10 @@ mod tests {
     #[test]
     fn language_from_identifier_round_trips_and_rejects_unknown() {
         for language in LANGUAGES {
-            assert_eq!(language_from_identifier(language.identifier()), Some(language));
+            assert_eq!(
+                language_from_identifier(language.identifier()),
+                Some(language)
+            );
         }
         assert_eq!(language_from_identifier("settings-language-fr"), None);
         assert_eq!(language_from_identifier("settings-text-scale-100"), None);

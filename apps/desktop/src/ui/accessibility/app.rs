@@ -1,7 +1,6 @@
 //! AppView → AxTree 投影与 AX action 白名单。
 
 use gpui::{App, Context, Focusable, Window};
-use std::str::FromStr;
 
 use crate::projection::{
     run_footer_label, run_summary_texts, ApprovalModeWire, ConnectionState, DateBucket,
@@ -17,7 +16,9 @@ use crate::ui::approval_card::{
 use crate::ui::changes::{ChangesFetch, ChangesTab};
 use crate::ui::components::dropdown::{ANCHOR_GAP_Y, MENU_MAX_HEIGHT};
 use crate::ui::i18n::t;
-use crate::ui::input_area::{grouped_model_menu_entries, MODEL_MENU_GROUP_HEADER_HEIGHT};
+use crate::ui::input_area::{
+    grouped_model_menu_entries, MODEL_MENU_EMPTY_STATE_HEIGHT, MODEL_MENU_GROUP_HEADER_HEIGHT,
+};
 use crate::ui::inspector::{
     plain_terminal_output, terminal_empty_output, terminal_header_height,
     terminal_resize_status_label, terminal_size_for_display, terminal_stepper_ax_rects,
@@ -25,9 +26,11 @@ use crate::ui::inspector::{
 };
 use crate::ui::resources::ResourcesFetch;
 use crate::ui::settings::{
-    parse_settings_control, parse_settings_mcp_control, settings_text_scale_from_identifier,
-    SettingsControl, SETTINGS_APPEARANCE_CONTROL_GAP, SETTINGS_APPEARANCE_CONTROL_HEIGHT,
-    SETTINGS_APPEARANCE_CONTROL_WIDTH, SETTINGS_CONTROL_PREFIX, SETTINGS_MCP_CONTROL_PREFIX,
+    parse_settings_control, parse_settings_mcp_control, parse_settings_models_control,
+    parse_settings_role_control, settings_text_scale_from_identifier, SettingsControl,
+    SettingsModelsControl, SettingsRoleControl, SETTINGS_APPEARANCE_CONTROL_GAP,
+    SETTINGS_APPEARANCE_CONTROL_HEIGHT, SETTINGS_APPEARANCE_CONTROL_WIDTH, SETTINGS_CONTROL_PREFIX,
+    SETTINGS_MCP_CONTROL_PREFIX, SETTINGS_MODELS_CONTROL_PREFIX, SETTINGS_ROLE_CONTROL_PREFIX,
 };
 use crate::ui::shell_layout;
 use crate::ui::theme::{font, metrics};
@@ -58,6 +61,18 @@ fn header_action_ax_rect(frame: AxRect) -> AxRect {
         (frame.x + frame.width - metrics::HEADER_INSET_RIGHT - metrics::HEADER_ACTION_WIDTH)
             .max(frame.x),
         content_top + ((content_height - metrics::HEADER_ACTION_HEIGHT) / 2.0).max(0.0),
+        metrics::HEADER_ACTION_WIDTH,
+        metrics::HEADER_ACTION_HEIGHT,
+    )
+}
+
+/// OPT-4b：折叠态 Activity 触发器槽——位于最右动作槽（inspector-expand）
+/// 左侧一格，与 render 的 HEADER_ACTION_GAP 排列同源。
+fn header_activity_ax_rect(frame: AxRect) -> AxRect {
+    let right = header_action_ax_rect(frame);
+    AxRect::new(
+        (right.x - metrics::HEADER_ACTION_WIDTH - metrics::HEADER_ACTION_GAP).max(frame.x),
+        right.y,
         metrics::HEADER_ACTION_WIDTH,
         metrics::HEADER_ACTION_HEIGHT,
     )
@@ -385,6 +400,12 @@ impl AppView {
                 self.toggle_menu(MenuKind::Activity, None, cx)
             }
             "inspector-collapse" => self.on_toggle_inspector(window, cx),
+            // OPT-4b：折叠态 Header 最右重开入口；Press 先移焦触发器，再与
+            // click / Enter / Space 共用 on_toggle_inspector。
+            "inspector-expand" => {
+                window.focus(&self.inspector_expand_focus);
+                self.on_toggle_inspector(window, cx)
+            }
             "inspector-tab-changes" => self.select_inspector_tab(InspectorTab::Changes, cx),
             "inspector-tab-terminal" => self.select_inspector_tab(InspectorTab::Terminal, cx),
             "inspector-tab-resources" => self.select_inspector_tab(InspectorTab::Resources, cx),
@@ -422,14 +443,6 @@ impl AppView {
                                 return true;
                             }
                         }
-                        Some(SettingsControl::SetDefaultModel(escaped)) => {
-                            if let Some((provider_id, model_id)) =
-                                self.settings_default_target_for_escaped(&escaped)
-                            {
-                                self.on_settings_set_default(provider_id, model_id, cx);
-                                return true;
-                            }
-                        }
                         Some(SettingsControl::UseProxy(escaped)) => {
                             if let Some(provider_id) =
                                 self.settings_provider_id_for_escaped(&escaped)
@@ -439,6 +452,79 @@ impl AppView {
                             }
                         }
                         _ => {}
+                    }
+                    return false;
+                }
+                if identifier.starts_with(SETTINGS_ROLE_CONTROL_PREFIX) {
+                    // OPT-3b：四默认角色下拉（触发器 / 清除 / 候选行）与
+                    // 可见菜单同入口派发；入口复核 gate，未知 pair fail-closed。
+                    match parse_settings_role_control(identifier) {
+                        Some(SettingsRoleControl::Trigger(role)) => {
+                            self.on_toggle_settings_role_menu(role, None, window, cx);
+                            return true;
+                        }
+                        Some(SettingsRoleControl::Clear(role)) => {
+                            self.on_select_settings_role(role, None, cx);
+                            return true;
+                        }
+                        Some(SettingsRoleControl::Item(role, escaped)) => {
+                            if let Some((provider_id, model_id)) =
+                                self.settings_default_target_for_escaped(&escaped)
+                            {
+                                self.on_select_settings_role(
+                                    role,
+                                    Some((provider_id, model_id)),
+                                    cx,
+                                );
+                                return true;
+                            }
+                        }
+                        None => {}
+                    }
+                    return false;
+                }
+                if identifier.starts_with(SETTINGS_MODELS_CONTROL_PREFIX) {
+                    // OPT-3a：「Manage models」弹层（触发器 / 单模型
+                    // Switch / Enable-Disable all / Refresh）与可见控件同
+                    // 入口派发；入口复核 gate，未知 pair fail-closed。
+                    match parse_settings_models_control(identifier) {
+                        Some(SettingsModelsControl::Manage(escaped)) => {
+                            if let Some(provider_id) =
+                                self.settings_provider_id_for_escaped(&escaped)
+                            {
+                                self.on_toggle_settings_models_menu(provider_id, None, window, cx);
+                                return true;
+                            }
+                        }
+                        Some(SettingsModelsControl::Toggle(escaped)) => {
+                            if let Some((provider_id, model_id)) =
+                                self.settings_model_target_for_escaped(&escaped)
+                            {
+                                self.on_toggle_provider_model(provider_id, model_id, cx);
+                                return true;
+                            }
+                        }
+                        Some(SettingsModelsControl::EnableAll(escaped)) => {
+                            if let Some(provider_id) =
+                                self.settings_provider_id_for_escaped(&escaped)
+                            {
+                                self.on_toggle_provider_models_all(provider_id, true, cx);
+                                return true;
+                            }
+                        }
+                        Some(SettingsModelsControl::DisableAll(escaped)) => {
+                            if let Some(provider_id) =
+                                self.settings_provider_id_for_escaped(&escaped)
+                            {
+                                self.on_toggle_provider_models_all(provider_id, false, cx);
+                                return true;
+                            }
+                        }
+                        Some(SettingsModelsControl::RefreshCatalog(_)) => {
+                            self.on_refresh_settings(cx);
+                            return true;
+                        }
+                        None => {}
                     }
                     return false;
                 }
@@ -690,7 +776,7 @@ impl AppView {
             self.grouping.toggle_action_label(),
             AxRect::new(
                 (frame.width - inset - metrics::RAIL_ICON_BUTTON_SIZE).max(inset),
-                // 标题行高 36、按钮 28：render items_center → 按钮顶 +4。
+                // 标题行高 36、按钮同取 36（OPT-D）：render items_center → 顶 +0。
                 y + (metrics::RAIL_TITLE_ROW_HEIGHT - metrics::RAIL_ICON_BUTTON_SIZE) / 2.0,
                 metrics::RAIL_ICON_BUTTON_SIZE,
                 metrics::RAIL_ICON_BUTTON_SIZE,
@@ -1245,20 +1331,22 @@ impl AppView {
             );
         }
         let action = header_action_ax_rect(frame);
-        // R6 Wave A（F-12）：与 render 同用 activity_header_visibility 口径；
-        // 折叠态 Activity 占 Header 最右动作槽，浮层右缘与触发器右缘对齐；
-        // 展开态该槽恢复 New task。
+        // R6 Wave A（F-12）+ OPT-4b：与 render 同用 activity_header_visibility
+        // 口径；折叠态 Activity 左移一格、inspector-expand 占最右动作槽，
+        // 浮层右缘与触发器右缘对齐；展开态最右槽恢复 New task。
         let (trigger_visible, popover_visible) = activity_header_visibility(
             inspector_open,
             matches!(self.open_menu, Some(MenuKind::Activity)),
         );
         if trigger_visible {
+            // 折叠态 Activity 槽位于重开按钮左侧一格（gap 与 render 同源）。
+            let trigger_rect = header_activity_ax_rect(frame);
             header = header.child(
                 AxNode::new(
                     "inspector-toggle",
                     AxRole::Button,
                     t("header.tooltip_activity"),
-                    action,
+                    trigger_rect,
                 )
                 .focused(
                     self.open_menu.is_none() && self.inspector_activity_focus.is_focused(window),
@@ -1267,7 +1355,7 @@ impl AppView {
             );
             if popover_visible {
                 let geometry =
-                    activity_popover_ax_geometry(frame, action, f32::from(window.rem_size()));
+                    activity_popover_ax_geometry(frame, trigger_rect, f32::from(window.rem_size()));
                 header = header.child(
                     AxNode::new(
                         "activity-popover",
@@ -1294,7 +1382,18 @@ impl AppView {
                     ),
                 );
             }
-            header
+            // OPT-4b：折叠态重开 Inspector 的专用入口，占最右动作槽；展开态
+            // 不发布（折叠走面板内 inspector-collapse）。
+            header.child(
+                AxNode::new(
+                    "inspector-expand",
+                    AxRole::Button,
+                    t("header.tooltip_open_inspector"),
+                    action,
+                )
+                .focused(self.open_menu.is_none() && self.inspector_expand_focus.is_focused(window))
+                .action(AxAction::Press),
+            )
         } else if self.projection.workspace_empty_hint_visible() {
             header
         } else {
@@ -1861,11 +1960,15 @@ impl AppView {
         let action_x = frame.x + frame.width - pad - metrics::COMPOSER_SEND_SIZE;
         let input_width = (action_x - pad - (frame.x + pad)).max(0.0);
         let running = self.projection.active_run_id.is_some();
-        let current_model = self
-            .projection
-            .effective_model()
-            .map(|(provider, model)| format!("{provider} / {model}"))
-            .unwrap_or_else(|| "No model".into());
+        let current_model = if self.model_catalog_empty() {
+            // 全关空态：与可见按钮同文案（i18n 同源），不报「No model」。
+            t("composer.model_none_available").to_string()
+        } else {
+            self.projection
+                .effective_model()
+                .map(|(provider, model)| format!("{provider} / {model}"))
+                .unwrap_or_else(|| "No model".into())
+        };
         let input_focus = self.text_input.read(cx).focus_handle(cx);
         // AXValue 恒为纯文本：空输入即空串，placeholder 不得回退进 value
         // （R4 U2 composer-cleared / R5 r5-1 契约）。
@@ -1896,7 +1999,7 @@ impl AppView {
                     ),
                 )
                 .value(current_model)
-                .enabled(self.can_switch_model())
+                .enabled(self.can_open_model_menu())
                 // R7 Wave A：model 菜单打开时 AX 焦点移交高亮项（同 grouping）。
                 .focused(self.open_menu.is_none() && self.model_focus.is_focused(window))
                 .action(AxAction::Press),
@@ -1995,9 +2098,13 @@ impl AppView {
                 .unwrap_or(0);
             let highlight = self.menu_highlight_effective(selected_ix);
             let groups = crate::projection::group_models_by_provider(&self.projection.models);
-            let content_height = metrics::MENU_PADDING * 2.0
-                + groups.len() as f32 * MODEL_MENU_GROUP_HEADER_HEIGHT
-                + entries.len() as f32 * metrics::MENU_ROW_HEIGHT;
+            let content_height = if entries.is_empty() {
+                metrics::MENU_PADDING * 2.0 + MODEL_MENU_EMPTY_STATE_HEIGHT
+            } else {
+                metrics::MENU_PADDING * 2.0
+                    + groups.len() as f32 * MODEL_MENU_GROUP_HEADER_HEIGHT
+                    + entries.len() as f32 * metrics::MENU_ROW_HEIGHT
+            };
             let menu_height = content_height.min(MENU_MAX_HEIGHT);
             let menu_x = frame.x + pad;
             let menu_y = (footer_y - ANCHOR_GAP_Y - menu_height).max(0.0);
@@ -2013,39 +2120,53 @@ impl AppView {
             // 与首帧可见窗口相交的子节点，不把裁剪区外的行塞进树（滚动后
             // 的 AX 窗口跟随是后续候选）。
             let menu_bottom = menu_y + menu_height;
-            for (provider_id, models) in groups {
-                if y < menu_bottom {
-                    menu = menu.child(AxNode::new(
-                        dynamic_identifier("model-provider", &provider_id),
+            if entries.is_empty() {
+                // 全关空态：菜单只发布一行说明（StaticText，无 Press——
+                // disabled 节点不发布 Press），不编造可选模型。
+                menu = menu.child(
+                    AxNode::new(
+                        "model-menu-empty",
                         AxRole::StaticText,
-                        provider_id,
-                        AxRect::new(menu_x, y, 260.0, MODEL_MENU_GROUP_HEADER_HEIGHT),
-                    ));
-                }
-                y += MODEL_MENU_GROUP_HEADER_HEIGHT;
-                for model in models {
-                    let selected = self.projection.effective_model().is_some_and(|current| {
-                        current.0 == model.provider_id && current.1 == model.id
-                    });
-                    let can_switch = self.can_switch_model();
+                        t("composer.model_none_available"),
+                        AxRect::new(menu_x, y, 260.0, MODEL_MENU_EMPTY_STATE_HEIGHT),
+                    )
+                    .value(t("composer.model_menu_empty")),
+                );
+            } else {
+                for (provider_id, models) in groups {
                     if y < menu_bottom {
-                        let mut item = AxNode::new(
-                            model_identifier(&model),
-                            AxRole::Button,
-                            model.display_name.clone(),
-                            AxRect::new(menu_x, y, 260.0, metrics::MENU_ROW_HEIGHT),
-                        )
-                        .value(format!("{} / {}", model.provider_id, model.id))
-                        .enabled(can_switch)
-                        .selected(selected)
-                        .focused(item_ix == highlight);
-                        if can_switch {
-                            item = item.action(AxAction::Press);
-                        }
-                        menu = menu.child(item);
+                        menu = menu.child(AxNode::new(
+                            dynamic_identifier("model-provider", &provider_id),
+                            AxRole::StaticText,
+                            provider_id,
+                            AxRect::new(menu_x, y, 260.0, MODEL_MENU_GROUP_HEADER_HEIGHT),
+                        ));
                     }
-                    item_ix += 1;
-                    y += metrics::MENU_ROW_HEIGHT;
+                    y += MODEL_MENU_GROUP_HEADER_HEIGHT;
+                    for model in models {
+                        let selected = self.projection.effective_model().is_some_and(|current| {
+                            current.0 == model.provider_id && current.1 == model.id
+                        });
+                        let can_switch = self.can_switch_model();
+                        if y < menu_bottom {
+                            let mut item = AxNode::new(
+                                model_identifier(&model),
+                                AxRole::Button,
+                                model.display_name.clone(),
+                                AxRect::new(menu_x, y, 260.0, metrics::MENU_ROW_HEIGHT),
+                            )
+                            .value(format!("{} / {}", model.provider_id, model.id))
+                            .enabled(can_switch)
+                            .selected(selected)
+                            .focused(item_ix == highlight);
+                            if can_switch {
+                                item = item.action(AxAction::Press);
+                            }
+                            menu = menu.child(item);
+                        }
+                        item_ix += 1;
+                        y += metrics::MENU_ROW_HEIGHT;
+                    }
                 }
             }
             composer = composer.child(menu);
@@ -2057,7 +2178,9 @@ impl AppView {
         let tab_width = metrics::INSPECTOR_TAB_WIDTH;
         let strip_height = metrics::INSPECTOR_TAB_HEIGHT;
         let tab_x = frame.x + 12.0;
-        let collapse_y = frame.y + ((strip_height - CONTROL_HEIGHT) / 2.0).max(0.0);
+        // OPT-4a：折叠按钮 36×36（render 同源 ICON_BUTTON_SIZE；pr_2 在
+        // 100% 字号下为 8px，与 PAD 近似口径沿用）。
+        let collapse_y = frame.y + ((strip_height - metrics::ICON_BUTTON_SIZE) / 2.0).max(0.0);
         let mut inspector = AxNode::new("inspector", AxRole::Group, "Inspector", frame)
             .child(
                 AxNode::new(
@@ -2112,10 +2235,10 @@ impl AppView {
                     AxRole::Button,
                     "Hide inspector",
                     AxRect::new(
-                        frame.x + frame.width - 40.0,
+                        frame.x + frame.width - PAD - metrics::ICON_BUTTON_SIZE,
                         collapse_y,
-                        32.0,
-                        CONTROL_HEIGHT,
+                        metrics::ICON_BUTTON_SIZE,
+                        metrics::ICON_BUTTON_SIZE,
                     ),
                 )
                 .focused(
@@ -2767,7 +2890,7 @@ mod tests {
         let height = crate::ui::AppView::composer_panel_height(input);
         assert!(height <= 94.0);
         assert_ne!(height, input + 68.0);
-        assert_eq!(crate::ui::theme::metrics::COMPOSER_SEND_SIZE, 32.0);
+        assert_eq!(crate::ui::theme::metrics::COMPOSER_SEND_SIZE, 36.0);
     }
 
     /// R6 Wave A：折叠态 Header Activity 的 AX 触发器与 Popover 锚点公式
@@ -2778,6 +2901,9 @@ mod tests {
         let header = AxRect::new(240.0, 0.0, 840.0, metrics::HEADER_HEIGHT);
         let trigger = header_action_ax_rect(header);
         assert_eq!(trigger, AxRect::new(1015.0, 51.5, 40.0, 37.0));
+        // OPT-4b：折叠态 Activity 左移一格（40 槽 + 4 间距），重开按钮占最右。
+        let toggle = header_activity_ax_rect(header);
+        assert_eq!(toggle, AxRect::new(971.0, 51.5, 40.0, 37.0));
 
         let popover = activity_popover_ax_geometry(header, trigger, 16.0);
         assert_eq!(popover.frame, AxRect::new(717.0, 96.5, 338.0, 162.0));
@@ -3034,6 +3160,12 @@ mod tests {
             AxPressHost { view }
         });
         let view = cx.update(|_window, cx| host.read(cx).view.clone());
+
+        // OPT-4b（F6）：Inspector 默认折叠；显式动作（Review changes /
+        // Activity 摘要 / inspector-expand）仍可展开。
+        cx.update(|_window, cx| {
+            assert!(!view.read(cx).inspector_open);
+        });
 
         cx.update(|window, cx| {
             view.update(cx, |view, _cx| {
@@ -3716,6 +3848,7 @@ mod tests {
                             id: format!("{provider}-{ix}"),
                             display_name: format!("{provider} model {ix}"),
                             context_window_tokens: None,
+                            enabled: true,
                         });
                     }
                 }
@@ -3747,6 +3880,526 @@ mod tests {
             // 裁剪确实发生：完整内容 2 组头 + 8 行不可能全部入树。
             assert!(menu.children.len() < 10);
             assert!(!menu.children.is_empty());
+        });
+    }
+
+    /// OPT-3 切片 1：全关空态的诚实呈现——加载中不得误报「无已启用
+    /// 模型」；目录查询完成且为空时 picker 仍可开菜单看说明行、发送
+    /// fail-closed，且不发布任何可选模型行。
+    #[gpui::test]
+    fn model_menu_empty_state_is_honest_and_fail_closed(cx: &mut gpui::TestAppContext) {
+        use gpui::AppContext;
+
+        struct AxEmptyHost {
+            view: gpui::Entity<AppView>,
+        }
+        impl gpui::Render for AxEmptyHost {
+            fn render(
+                &mut self,
+                _window: &mut Window,
+                _cx: &mut Context<Self>,
+            ) -> impl gpui::IntoElement {
+                gpui::div()
+            }
+        }
+
+        let platform = std::sync::Arc::new(crate::platform::Platform::new());
+        let socket = std::env::temp_dir().join("opt3-model-menu-empty.sock");
+        let (host, cx) = cx.add_window_view(|_window, cx| {
+            let view = cx.new(|cx| AppView::new(platform, socket, None, cx));
+            AxEmptyHost { view }
+        });
+        let view = cx.update(|_window, cx| host.read(cx).view.clone());
+        // 已连接 + 激活会话，但目录查询未完成：保持 loading 语义。
+        cx.update(|_window, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.set_connection(ConnectionState::Connected {
+                    instance_id: "test".into(),
+                });
+                view.projection.active_session_id = Some("s-1".into());
+                view.text_input
+                    .update(cx, |input, cx| input.reset_text("hello", cx));
+            });
+        });
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            let tree = view.accessibility_tree(window, cx);
+            tree.validate().expect("loading AX tree validates");
+            let picker = tree
+                .find("model-picker")
+                .expect("model picker has an AX node");
+            assert!(!picker.enabled);
+            assert_eq!(picker.value.as_deref(), Some("No model"));
+            // 加载中不误报全关：发送仍可用（现有行为，Host 侧权威默认）。
+            assert!(tree.find("send").expect("send has an AX node").enabled);
+        });
+        // 目录查询完成且结果为空：进入全关空态。
+        cx.update(|_window, cx| {
+            view.update(cx, |view, _cx| {
+                view.projection.set_models(Vec::new());
+                view.open_menu = Some(MenuKind::Model);
+            });
+        });
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            let tree = view.accessibility_tree(window, cx);
+            tree.validate().expect("empty-state AX tree validates");
+            let picker = tree
+                .find("model-picker")
+                .expect("model picker has an AX node");
+            assert!(picker.enabled);
+            assert_eq!(picker.value.as_deref(), Some("No enabled models"));
+            assert!(tree.permits(&AxRequest {
+                identifier: "model-picker".into(),
+                action: AxAction::Press,
+                value: None,
+            }));
+            // 全关空态 fail-closed：无已启用模型不发送。
+            let send = tree.find("send").expect("send has an AX node");
+            assert!(!send.enabled);
+            assert!(!tree.permits(&AxRequest {
+                identifier: "send".into(),
+                action: AxAction::Press,
+                value: None,
+            }));
+            let menu = tree.find("model-menu").expect("model menu has an AX node");
+            let empty = tree
+                .find("model-menu-empty")
+                .expect("empty menu publishes its explanation");
+            assert_eq!(empty.role, AxRole::StaticText);
+            // 说明行不发布 Press（disabled 节点无 Press 契约）。
+            assert!(empty.actions.is_empty());
+            assert_eq!(empty.value.as_deref(), Some(t("composer.model_menu_empty")));
+            // 菜单不发布任何可选模型行：不编造模型。
+            assert_eq!(menu.children.len(), 1);
+            assert!(menu
+                .children
+                .iter()
+                .all(|child| child.role != AxRole::Button));
+        });
+    }
+
+    /// OPT-3b / ADR-055 D5：Default models 四角色区 AX 形状——四个触发器
+    /// identifier / role / label / value 稳定，菜单发布清除与已连接
+    /// provider 候选（未连接组不出现），Vision / Search 如实标注只保存；
+    /// stale 时触发器禁用且 Press 被拒。
+    #[gpui::test]
+    fn settings_role_defaults_ax_shape_pins_triggers_menu_and_filter(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use gpui::AppContext;
+
+        use crate::projection::{
+            ProviderAuthState, ProviderAuthStatusEntry, ProviderCatalogState, SettingsRole,
+        };
+        use crate::ui::settings::{
+            settings_role_clear_identifier, settings_role_item_identifier,
+            settings_role_trigger_identifier,
+        };
+
+        struct AxRolesHost {
+            view: gpui::Entity<AppView>,
+        }
+        impl gpui::Render for AxRolesHost {
+            fn render(
+                &mut self,
+                _window: &mut Window,
+                _cx: &mut Context<Self>,
+            ) -> impl gpui::IntoElement {
+                gpui::div()
+            }
+        }
+
+        let platform = std::sync::Arc::new(crate::platform::Platform::new());
+        let socket = std::env::temp_dir().join("opt3b-role-defaults-ax.sock");
+        let (host, cx) = cx.add_window_view(|_window, cx| {
+            let view = cx.new(|cx| AppView::new(platform, socket, None, cx));
+            AxRolesHost { view }
+        });
+        let view = cx.update(|_window, cx| host.read(cx).view.clone());
+        let provider = |provider_id: &str, auth: ProviderAuthState| ProviderAuthStatusEntry {
+            provider_id: provider_id.to_string(),
+            display_name: provider_id.to_string(),
+            endpoint_label: String::new(),
+            auth_methods: vec!["api_key".to_string()],
+            auth,
+            catalog: ProviderCatalogState::Unavailable {
+                error: "offline".to_string(),
+                fetched_at: None,
+            },
+            use_proxy: true,
+        };
+        cx.update(|_window, cx| {
+            view.update(cx, |view, _cx| {
+                view.projection.set_connection(ConnectionState::Connected {
+                    instance_id: "test".into(),
+                });
+                view.route = AppRoute::Settings;
+                view.projection.settings_providers.apply_loaded(
+                    crate::projection::ProviderAuthStatusData {
+                        providers: vec![
+                            provider(
+                                "kimi",
+                                ProviderAuthState::Connected {
+                                    method: "api_key".to_string(),
+                                    masked_credential: None,
+                                },
+                            ),
+                            provider("glm", ProviderAuthState::None),
+                        ],
+                        default: None,
+                        role_defaults: Default::default(),
+                    },
+                );
+                view.projection.set_models(vec![
+                    ModelEntry {
+                        provider_id: "kimi".into(),
+                        id: "kimi-k2".into(),
+                        display_name: "Kimi K2".into(),
+                        context_window_tokens: None,
+                        enabled: true,
+                    },
+                    ModelEntry {
+                        provider_id: "glm".into(),
+                        id: "glm-4.7".into(),
+                        display_name: "GLM 4.7".into(),
+                        context_window_tokens: None,
+                        enabled: true,
+                    },
+                    ModelEntry {
+                        provider_id: "ghost".into(),
+                        id: "ghost-x".into(),
+                        display_name: "Ghost X".into(),
+                        context_window_tokens: None,
+                        enabled: true,
+                    },
+                ]);
+                view.open_menu = Some(MenuKind::SettingsRole(SettingsRole::Naming));
+            });
+        });
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            let tree = view.accessibility_tree(window, cx);
+            tree.validate().expect("role defaults AX tree validates");
+            for role in SettingsRole::ALL {
+                let identifier = settings_role_trigger_identifier(role);
+                let trigger = tree
+                    .find(&identifier)
+                    .unwrap_or_else(|| panic!("{identifier} missing from AX tree"));
+                assert_eq!(trigger.role, AxRole::Button);
+                assert_eq!(trigger.label, role.label());
+                assert_eq!(trigger.value.as_deref(), Some("Not set"));
+                assert!(trigger.enabled);
+                // 与 render 同源：四角色区位于 Providers 列表之上。
+                let heading = tree
+                    .find("settings-providers-heading")
+                    .expect("providers heading has an AX node");
+                assert!(
+                    trigger.bounds.y < heading.bounds.y,
+                    "{identifier} must sit above the providers list"
+                );
+                assert!(tree.permits(&AxRequest {
+                    identifier: identifier.clone(),
+                    action: AxAction::Press,
+                    value: None,
+                }));
+            }
+            // Vision / Search 落地期只保存：说明如实标注，不暗示已生效。
+            let vision = tree
+                .find(&settings_role_trigger_identifier(SettingsRole::Vision))
+                .expect("vision trigger has an AX node");
+            assert!(vision
+                .description
+                .as_deref()
+                .is_some_and(|description| description.contains("image routing")));
+            let search = tree
+                .find(&settings_role_trigger_identifier(SettingsRole::Search))
+                .expect("search trigger has an AX node");
+            assert!(search
+                .description
+                .as_deref()
+                .is_some_and(|description| description.contains("search routing")));
+
+            // 菜单展开：清除行 + 已连接 provider 候选可选。
+            let clear_id = settings_role_clear_identifier(SettingsRole::Naming);
+            let clear = tree.find(&clear_id).expect("clear row has an AX node");
+            assert_eq!(clear.label, "Clear");
+            assert!(tree.permits(&AxRequest {
+                identifier: clear_id,
+                action: AxAction::Press,
+                value: None,
+            }));
+            let item_id = settings_role_item_identifier(SettingsRole::Naming, "kimi", "kimi-k2");
+            let item = tree.find(&item_id).expect("kimi item has an AX node");
+            assert_eq!(item.value.as_deref(), Some("kimi / kimi-k2"));
+            assert!(tree.permits(&AxRequest {
+                identifier: item_id,
+                action: AxAction::Press,
+                value: None,
+            }));
+            // 未连接 provider（glm）与清单缺失 provider（ghost）不出现。
+            assert!(tree
+                .find(&settings_role_item_identifier(
+                    SettingsRole::Naming,
+                    "glm",
+                    "glm-4.7"
+                ))
+                .is_none());
+            assert!(tree
+                .find(&settings_role_item_identifier(
+                    SettingsRole::Naming,
+                    "ghost",
+                    "ghost-x"
+                ))
+                .is_none());
+        });
+        // 断线 stale：角色写禁用，Press fail-closed。
+        cx.update(|_window, cx| {
+            view.update(cx, |view, _cx| {
+                view.projection
+                    .settings_providers
+                    .mark_stale("socket closed");
+            });
+        });
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            let tree = view.accessibility_tree(window, cx);
+            let identifier = settings_role_trigger_identifier(SettingsRole::Naming);
+            let trigger = tree
+                .find(&identifier)
+                .expect("naming trigger still present");
+            assert!(!trigger.enabled);
+            assert!(!tree.permits(&AxRequest {
+                identifier,
+                action: AxAction::Press,
+                value: None,
+            }));
+        });
+    }
+
+    /// OPT-3a / ADR-055 D2-D3：Manage models 弹层与代理 Switch 的 AX 形
+    /// 状——Manage 入口 gate（未连接禁用不发布 Press）、弹层 Group + 每模
+    /// 型 Switch（checked 进 value/selected）、Enable/Disable all 与空目
+    /// 录 Refresh 的可操作性、代理 Switch value 与 Press；stale 关闸。
+    #[gpui::test]
+    fn settings_models_menu_ax_pins_gates_switches_and_empty_state(cx: &mut gpui::TestAppContext) {
+        use gpui::AppContext;
+
+        use crate::projection::{
+            ModelEntry, ProviderAuthState, ProviderAuthStatusEntry, ProviderCatalogState,
+        };
+        use crate::ui::settings::{
+            settings_manage_models_identifier, settings_model_switch_identifier,
+            settings_models_disable_all_identifier, settings_models_enable_all_identifier,
+            settings_models_menu_identifier, settings_models_refresh_identifier,
+            settings_use_proxy_identifier,
+        };
+
+        struct AxModelsHost {
+            view: gpui::Entity<AppView>,
+        }
+        impl gpui::Render for AxModelsHost {
+            fn render(
+                &mut self,
+                _window: &mut Window,
+                _cx: &mut Context<Self>,
+            ) -> impl gpui::IntoElement {
+                gpui::div()
+            }
+        }
+
+        let platform = std::sync::Arc::new(crate::platform::Platform::new());
+        let socket = std::env::temp_dir().join("opt3a-models-menu-ax.sock");
+        let (host, cx) = cx.add_window_view(|_window, cx| {
+            let view = cx.new(|cx| AppView::new(platform, socket, None, cx));
+            AxModelsHost { view }
+        });
+        let view = cx.update(|_window, cx| host.read(cx).view.clone());
+        let catalog_remote = || ProviderCatalogState::Remote {
+            fetched_at: "2026-09-05T00:00:00Z".into(),
+        };
+        let provider = |provider_id: &str, auth: ProviderAuthState| ProviderAuthStatusEntry {
+            provider_id: provider_id.to_string(),
+            display_name: provider_id.to_string(),
+            endpoint_label: String::new(),
+            auth_methods: vec!["api_key".to_string()],
+            auth,
+            catalog: catalog_remote(),
+            use_proxy: true,
+        };
+        cx.update(|_window, cx| {
+            view.update(cx, |view, _cx| {
+                view.projection.set_connection(ConnectionState::Connected {
+                    instance_id: "test".into(),
+                });
+                view.route = AppRoute::Settings;
+                view.projection.settings_providers.apply_loaded(
+                    crate::projection::ProviderAuthStatusData {
+                        providers: vec![
+                            provider(
+                                "kimi",
+                                ProviderAuthState::Connected {
+                                    method: "api_key".to_string(),
+                                    masked_credential: None,
+                                },
+                            ),
+                            provider("glm", ProviderAuthState::None),
+                            provider(
+                                "empty",
+                                ProviderAuthState::Connected {
+                                    method: "api_key".to_string(),
+                                    masked_credential: None,
+                                },
+                            ),
+                        ],
+                        default: None,
+                        role_defaults: Default::default(),
+                    },
+                );
+                view.projection.settings_providers.apply_model_catalog(vec![
+                    ModelEntry {
+                        provider_id: "kimi".into(),
+                        id: "kimi-k2".into(),
+                        display_name: "Kimi K2".into(),
+                        context_window_tokens: None,
+                        enabled: true,
+                    },
+                    ModelEntry {
+                        provider_id: "kimi".into(),
+                        id: "kimi-k2-thinking".into(),
+                        display_name: "Kimi K2 Thinking".into(),
+                        context_window_tokens: None,
+                        enabled: false,
+                    },
+                ]);
+                view.projection.settings_general.proxy_url = Some("http://127.0.0.1:7890".into());
+                view.open_menu = Some(MenuKind::SettingsProviderModels("kimi".into()));
+            });
+        });
+        let press = |identifier: String| AxRequest {
+            identifier,
+            action: AxAction::Press,
+            value: None,
+        };
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            let tree = view.accessibility_tree(window, cx);
+            tree.validate().expect("models menu AX tree validates");
+            // 已连接 + 目录可用：Manage 可按；未连接禁用且不发布 Press。
+            let manage = tree
+                .find(&settings_manage_models_identifier("kimi"))
+                .expect("kimi manage trigger has an AX node");
+            assert!(manage.enabled);
+            assert!(tree.permits(&press(settings_manage_models_identifier("kimi"))));
+            let glm_manage = tree
+                .find(&settings_manage_models_identifier("glm"))
+                .expect("glm manage trigger has an AX node");
+            assert!(!glm_manage.enabled);
+            assert!(!tree.permits(&press(settings_manage_models_identifier("glm"))));
+
+            // 弹层：Group + 每模型 Switch（value/selected 与 enabled 同源）
+            // + Enable all / Disable all 可按。
+            let menu = tree
+                .find(&settings_models_menu_identifier("kimi"))
+                .expect("models menu group has an AX node");
+            assert_eq!(menu.role, AxRole::Group);
+            let on = tree
+                .find(&settings_model_switch_identifier("kimi", "kimi-k2"))
+                .expect("kimi-k2 switch has an AX node");
+            assert_eq!(on.value.as_deref(), Some("On"));
+            assert!(on.selected);
+            assert!(on.enabled);
+            assert!(tree.permits(&press(settings_model_switch_identifier("kimi", "kimi-k2"))));
+            let off = tree
+                .find(&settings_model_switch_identifier(
+                    "kimi",
+                    "kimi-k2-thinking",
+                ))
+                .expect("kimi-k2-thinking switch has an AX node");
+            assert_eq!(off.value.as_deref(), Some("Off"));
+            assert!(!off.selected);
+            assert!(tree.permits(&press(settings_model_switch_identifier(
+                "kimi",
+                "kimi-k2-thinking"
+            ))));
+            for identifier in [
+                settings_models_enable_all_identifier("kimi"),
+                settings_models_disable_all_identifier("kimi"),
+            ] {
+                let button = tree
+                    .find(&identifier)
+                    .unwrap_or_else(|| panic!("{identifier} missing from AX tree"));
+                assert!(button.enabled);
+                assert!(tree.permits(&press(identifier)));
+            }
+
+            // 代理 Switch（OPT-3c）：全局 proxy_url 已配置时出现，value
+            // On / selected=true / 可按。
+            let proxy = tree
+                .find(&settings_use_proxy_identifier("kimi"))
+                .expect("kimi proxy switch has an AX node");
+            assert_eq!(proxy.value.as_deref(), Some("On"));
+            assert!(proxy.selected);
+            assert!(proxy.enabled);
+            assert!(tree.permits(&press(settings_use_proxy_identifier("kimi"))));
+        });
+
+        // 空目录弹层（connected + catalog 可用但目录无条目）：诚实空态 +
+        // Refresh 可按；Enable / Disable all 禁用不发布 Press。
+        cx.update(|_window, cx| {
+            view.update(cx, |view, _cx| {
+                view.open_menu = Some(MenuKind::SettingsProviderModels("empty".into()));
+            });
+        });
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            let tree = view.accessibility_tree(window, cx);
+            tree.validate().expect("empty menu AX tree validates");
+            let empty = tree
+                .find("settings-models-empty-empty")
+                .expect("empty catalog note has an AX node");
+            assert_eq!(
+                empty.value.as_deref(),
+                Some("This provider's catalog is empty.")
+            );
+            let refresh = tree
+                .find(&settings_models_refresh_identifier("empty"))
+                .expect("refresh button has an AX node");
+            assert!(refresh.enabled);
+            assert!(tree.permits(&press(settings_models_refresh_identifier("empty"))));
+            for identifier in [
+                settings_models_enable_all_identifier("empty"),
+                settings_models_disable_all_identifier("empty"),
+            ] {
+                let button = tree
+                    .find(&identifier)
+                    .unwrap_or_else(|| panic!("{identifier} missing from AX tree"));
+                assert!(!button.enabled);
+                assert!(!tree.permits(&press(identifier)));
+            }
+        });
+
+        // 断线 stale：Manage 与弹层开关全部关闸，Press fail-closed。
+        cx.update(|_window, cx| {
+            view.update(cx, |view, _cx| {
+                view.projection
+                    .settings_providers
+                    .mark_stale("socket closed");
+            });
+        });
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            let tree = view.accessibility_tree(window, cx);
+            let manage = tree
+                .find(&settings_manage_models_identifier("kimi"))
+                .expect("kimi manage trigger still present");
+            assert!(!manage.enabled);
+            assert!(!tree.permits(&press(settings_manage_models_identifier("kimi"))));
+            let proxy = tree
+                .find(&settings_use_proxy_identifier("kimi"))
+                .expect("kimi proxy switch still present");
+            assert!(!proxy.enabled);
+            assert!(!tree.permits(&press(settings_use_proxy_identifier("kimi"))));
         });
     }
 }

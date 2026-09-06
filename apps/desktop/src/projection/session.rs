@@ -27,9 +27,7 @@ impl ConnectionState {
     pub fn label(&self) -> String {
         match self {
             Self::Connecting => t("connection.connecting").into(),
-            Self::Connected { instance_id } => {
-                t("connection.connected").replace("{}", instance_id)
-            }
+            Self::Connected { instance_id } => t("connection.connected").replace("{}", instance_id),
             Self::Disconnected { reason } => t("connection.disconnected").replace("{}", reason),
             Self::Failed { reason } => t("connection.failed").replace("{}", reason),
         }
@@ -106,11 +104,12 @@ impl ResumeState {
             Self::SnapshotRequired {
                 earliest_available_sequence,
             } => Some(
-                t("resume.snapshot_required").replace("{}", &earliest_available_sequence.to_string()),
+                t("resume.snapshot_required")
+                    .replace("{}", &earliest_available_sequence.to_string()),
             ),
-            Self::UpToDate { current_sequence } => Some(
-                t("resume.up_to_date").replace("{}", &current_sequence.to_string()),
-            ),
+            Self::UpToDate { current_sequence } => {
+                Some(t("resume.up_to_date").replace("{}", &current_sequence.to_string()))
+            }
         }
     }
 
@@ -248,6 +247,9 @@ pub struct ModelEntry {
     pub id: String,
     pub display_name: String,
     pub context_window_tokens: Option<u64>,
+    /// ADR-055 D4：Host 目录条目的启用态（响应 additive 增字段；缺省
+    /// true——旧 Host 只回启用模型，缺失即视为启用）。
+    pub enabled: bool,
 }
 
 /// Settings「模型与默认项」区分组：按 provider 聚合可运行模型（保持目录
@@ -543,6 +545,10 @@ impl DesktopProjection {
             self.restore_terminal_availability();
         } else {
             self.mark_terminals_stale(state.label());
+            // 「目录已加载」只对当前连接成立；断线 / 重连后由 Host 重查
+            // model_list 再置位，避免把上一连接的空目录误报为本连接的
+            // 「全部禁用」终态。
+            self.models_loaded = false;
         }
         self.connection = state;
     }

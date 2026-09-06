@@ -1,11 +1,9 @@
 //! Composer 输入区（InputArea）：两行结构（R5 Wave A）。
-//! 行 1 输入区；行 2 footer（model / workspace / ContextMeter / 瞬态 status_hint / 32×32 动作槽）。
+//! 行 1 输入区；行 2 footer（model / workspace / ContextMeter / 瞬态 status_hint / 36×36 动作槽）。
 //! Send 与 Cancel 同槽互换（element id `composer-action`）；placeholder 只走状态机，
 //! Forked / 发送失败等瞬态反馈落 footer Label。
 
-use gpui::{
-    div, point, prelude::*, px, Context, Corner, Pixels, Point, SharedString, Window,
-};
+use gpui::{div, point, prelude::*, px, Context, Corner, Pixels, Point, SharedString, Window};
 
 use crate::projection::{group_models_by_provider, ConnectionState, ModelEntry};
 use crate::ui::components::button::{Button, ButtonVariant};
@@ -19,6 +17,9 @@ use super::{AppView, MenuKind};
 /// model menu provider 分组头高度；render 与 AX 几何共用。
 pub(super) const MODEL_MENU_GROUP_HEADER_HEIGHT: f32 = 24.0;
 
+/// model menu 空态说明块高度（标题 + 指引一行）；render 与 AX 几何共用。
+pub(super) const MODEL_MENU_EMPTY_STATE_HEIGHT: f32 = 56.0;
+
 /// Composer model menu 的可点击项顺序。provider 保持目录首现顺序，组内
 /// 保持原目录顺序；鼠标、键盘与 AX 均使用这份扁平顺序。
 pub(super) fn grouped_model_menu_entries(models: &[ModelEntry]) -> Vec<ModelEntry> {
@@ -28,12 +29,25 @@ pub(super) fn grouped_model_menu_entries(models: &[ModelEntry]) -> Vec<ModelEntr
         .collect()
 }
 
+/// 「已连接且 model_list 查询已完成但结果为空」：唯一允许显示「无已启用
+/// 模型」空态的判定（ADR-055 D4 缺省过滤后 models 即 Host 启用集）。
+/// 加载中（查询未完成）与断线不得误报为全部禁用。
+pub(super) fn model_catalog_empty_state(
+    connected: bool,
+    models_loaded: bool,
+    models_empty: bool,
+) -> bool {
+    connected && models_loaded && models_empty
+}
+
 impl AppView {
     pub(super) fn composer_element(&self, cx: &mut Context<Self>) -> gpui::Div {
         let can_send = self.can_send(cx);
         let can_cancel = self.can_cancel();
         let can_switch_model = self.can_switch_model();
-        let model_menu_open = matches!(self.open_menu, Some(MenuKind::Model)) && can_switch_model;
+        let can_open_model_menu = self.can_open_model_menu();
+        let model_menu_open =
+            matches!(self.open_menu, Some(MenuKind::Model)) && can_open_model_menu;
         let composer_hint = self.composer_placeholder_hint();
         let context_meter = self.projection.context_meter_label();
         let context_available = context_meter != "Context · unavailable";
@@ -53,13 +67,15 @@ impl AppView {
         let mut model_button = Button::new("model-picker")
             .track_focus(&model_focus)
             .variant(ButtonVariant::Raised)
-            .disabled(!can_switch_model)
+            .disabled(!can_open_model_menu)
             .label(self.model_label())
             .tooltip(model_tooltip)
             .height(px(metrics::COMPOSER_FOOTER_CONTROL))
             .max_width(px(220.0))
             .vcenter();
-        if can_switch_model {
+        // 全关空态下按钮保持可点：菜单从触发器上方打开给诚实说明行，
+        // 但不提供任何可选项（选择路径仍由 can_switch_model fail-closed）。
+        if can_open_model_menu {
             model_button = model_button
                 .on_click(cx.listener(|view, event, window, cx| {
                     if view.consume_button_key_click("model-picker", event) {
@@ -103,6 +119,7 @@ impl AppView {
                 .icon_circle(metrics::COMPOSER_SEND_SIZE)
                 .disabled(!can_cancel)
                 .track_focus(&action_focus)
+                .text_size(font::ICON)
                 .label("✕")
                 .tooltip(cancel_tooltip);
             if can_cancel {
@@ -132,6 +149,7 @@ impl AppView {
                 .icon_circle(metrics::COMPOSER_SEND_SIZE)
                 .disabled(!can_send)
                 .track_focus(&action_focus)
+                .text_size(font::ICON)
                 .label("↑")
                 .tooltip(send_tooltip);
             if can_send {
@@ -219,20 +237,17 @@ impl AppView {
                             },
                         ),
                     )
-                    .when(
-                        self.composer_file_tools_unavailable_visible(),
-                        |footer| {
-                            footer.child(
-                                div().max_w(px(320.0)).min_w_0().overflow_hidden().child(
-                                    div().truncate().child(
-                                        Label::new(t("composer.file_tools_unavailable"))
-                                            .size(font::XS)
-                                            .color(dark().text.tertiary),
-                                    ),
+                    .when(self.composer_file_tools_unavailable_visible(), |footer| {
+                        footer.child(
+                            div().max_w(px(320.0)).min_w_0().overflow_hidden().child(
+                                div().truncate().child(
+                                    Label::new(t("composer.file_tools_unavailable"))
+                                        .size(font::XS)
+                                        .color(dark().text.tertiary),
                                 ),
-                            )
-                        },
-                    )
+                            ),
+                        )
+                    })
                     .child(
                         Label::new(context_meter)
                             .size(font::XS)
@@ -267,6 +282,10 @@ impl AppView {
     }
 
     fn model_label(&self) -> String {
+        if self.model_catalog_empty() {
+            // 全关 / 空目录：不回退展示旧默认对（Host 已清除角色默认）。
+            return t("composer.model_none_available").into();
+        }
         match self.projection.effective_model() {
             Some((provider, id)) => self
                 .projection
@@ -283,6 +302,8 @@ impl AppView {
     fn model_disabled_reason(&self) -> String {
         if self.projection.active_run_id.is_some() {
             t("composer.model_disabled_running").into()
+        } else if self.model_catalog_empty() {
+            t("composer.model_disabled_empty").into()
         } else if self.projection.models.is_empty() {
             t("composer.model_disabled_loading").into()
         } else {
@@ -308,6 +329,31 @@ impl AppView {
                 view.dismiss_menu_on_outside(MenuKind::Model, event.position, cx);
             },
         ));
+        if entries.is_empty() {
+            // 已连接且目录查询完成但为空：菜单仍从触发器上方打开，给标题
+            // + 一行指引的诚实空态；无可选项，不编造模型。
+            return panel.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(metrics::SPACE_1))
+                    .px_2()
+                    .py(px(metrics::SPACE_2))
+                    .min_w_0()
+                    .child(
+                        div()
+                            .text_size(font::SM)
+                            .text_color(dark().text.primary)
+                            .child(t("composer.model_none_available")),
+                    )
+                    .child(
+                        div()
+                            .text_size(font::XS)
+                            .text_color(dark().text.secondary)
+                            .child(t("composer.model_menu_empty")),
+                    ),
+            );
+        }
         let mut item_ix = 0;
         for (provider_id, models) in group_models_by_provider(&self.projection.models) {
             panel = panel.child(
@@ -359,6 +405,19 @@ impl AppView {
         )
     }
 
+    /// 已连接且 model_list 已完成但为空（全关 / 无目录）：唯一呈现
+    /// 「无已启用模型」空态的状态。
+    pub(super) fn model_catalog_empty(&self) -> bool {
+        model_catalog_empty_state(
+            matches!(
+                self.projection.connection,
+                ConnectionState::Connected { .. }
+            ),
+            self.projection.models_loaded,
+            self.projection.models.is_empty(),
+        )
+    }
+
     fn send_disabled_reason(&self) -> String {
         if self.projection.active_run_id.is_some() {
             t("composer.placeholder_running").into()
@@ -367,6 +426,8 @@ impl AppView {
                 ConnectionState::Connected { .. } => {
                     if self.projection.active_session_id.is_none() {
                         t("composer.placeholder_open_session").into()
+                    } else if self.model_catalog_empty() {
+                        t("composer.send_disabled_no_models").into()
                     } else {
                         t("composer.send_disabled_empty").into()
                     }
@@ -407,8 +468,12 @@ impl AppView {
                 .iter()
                 .find(|session| &session.session_id == session_id)
             {
-                return t("composer.workspace_scope")
-                    .replace("{}", &self.projection.workspace_name(session.workspace_id.as_deref()));
+                return t("composer.workspace_scope").replace(
+                    "{}",
+                    &self
+                        .projection
+                        .workspace_name(session.workspace_id.as_deref()),
+                );
             }
         }
         match self.scope_workspace_id.as_deref() {
@@ -456,7 +521,7 @@ impl AppView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.can_switch_model() {
+        if !self.can_open_model_menu() {
             return;
         }
         self.toggle_menu(MenuKind::Model, down_position, cx);
@@ -499,16 +564,16 @@ fn composer_placeholder_hint(
             }
         }
         ConnectionState::Connecting => t("composer.placeholder_waiting").into(),
-        ConnectionState::Disconnected { .. } => {
-            t("composer.placeholder_disconnected").into()
-        }
+        ConnectionState::Disconnected { .. } => t("composer.placeholder_disconnected").into(),
         ConnectionState::Failed { .. } => t("composer.placeholder_connect_failed").into(),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{composer_placeholder_hint, grouped_model_menu_entries, AppView};
+    use super::{
+        composer_placeholder_hint, grouped_model_menu_entries, model_catalog_empty_state, AppView,
+    };
     use crate::projection::{ConnectionState, ModelEntry};
     use crate::ui::theme::metrics;
 
@@ -564,13 +629,26 @@ mod tests {
     fn composer_panel_height_clamps_across_input_sizes() {
         let idle = AppView::composer_panel_height(metrics::COMPOSER_INPUT_MIN_HEIGHT);
         assert!(idle >= 88.0 && idle <= 94.0, "idle panel {idle}");
-        assert_eq!(idle, metrics::COMPOSER_PANEL_MIN_HEIGHT);
+        // OPT-D 动作槽 36：常态自然高 89（仍落 88–94 合同），不再是下限本身。
+        assert_eq!(idle, 89.0);
         let mid = AppView::composer_panel_height(80.0);
         assert!(mid > idle);
         assert!(mid < metrics::COMPOSER_PANEL_MAX_HEIGHT);
         let capped = AppView::composer_panel_height(400.0);
         assert_eq!(capped, metrics::COMPOSER_PANEL_MAX_HEIGHT);
-        assert_eq!(metrics::COMPOSER_SEND_SIZE, 32.0);
+        assert_eq!(metrics::COMPOSER_SEND_SIZE, 36.0);
+    }
+
+    #[test]
+    fn model_catalog_empty_state_requires_connected_loaded_and_empty() {
+        // 只有「已连接 + 目录查询已完成 + 结果为空」才呈现全关空态。
+        assert!(model_catalog_empty_state(true, true, true));
+        // 加载中：查询未完成，不得把空 models 误报为全部禁用。
+        assert!(!model_catalog_empty_state(true, false, true));
+        // 断线：即使上一连接曾加载为空，也回到 offline 文案。
+        assert!(!model_catalog_empty_state(false, true, true));
+        // 已加载且有启用模型：正常分组菜单。
+        assert!(!model_catalog_empty_state(true, true, false));
     }
 
     #[test]
@@ -581,18 +659,21 @@ mod tests {
                 id: "gpt-4.1".into(),
                 display_name: "GPT-4.1".into(),
                 context_window_tokens: Some(128_000),
+                enabled: true,
             },
             ModelEntry {
                 provider_id: "anthropic".into(),
                 id: "opus".into(),
                 display_name: "Opus".into(),
                 context_window_tokens: Some(200_000),
+                enabled: true,
             },
             ModelEntry {
                 provider_id: "openai".into(),
                 id: "gpt-4.1-mini".into(),
                 display_name: "GPT-4.1 mini".into(),
                 context_window_tokens: Some(128_000),
+                enabled: true,
             },
         ];
         let entries = grouped_model_menu_entries(&models);

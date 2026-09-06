@@ -8,6 +8,7 @@ use crate::ui::i18n::t;
 use crate::ui::settings::{
     general_status_lines, settings_proxy_effect_note, settings_proxy_storage_note,
     settings_proxy_unset,
+    SETTINGS_CONTENT_PAD,
 };
 use crate::ui::AppView;
 
@@ -47,7 +48,7 @@ impl AppView {
                     AxRole::StaticText,
                     t("settings.network.title"),
                     AxRect::new(
-                        frame.x + 16.0,
+                        frame.x + SETTINGS_CONTENT_PAD,
                         frame.y + 16.0,
                         (width - 136.0).max(0.0),
                         HEADING_HEIGHT + SUBTITLE_HEIGHT,
@@ -61,7 +62,7 @@ impl AppView {
                     AxRole::Button,
                     t("settings.refresh"),
                     AxRect::new(
-                        frame.x + 16.0 + width - 96.0,
+                        frame.x + SETTINGS_CONTENT_PAD + width - 96.0,
                         frame.y + 16.0,
                         96.0,
                         CONTROL_ROW,
@@ -78,7 +79,7 @@ impl AppView {
                     format!("settings-status-{kind}"),
                     AxRole::StaticText,
                     t("settings.network.ax_status"),
-                    AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT),
+                    AxRect::new(frame.x + SETTINGS_CONTENT_PAD, y, width, STATUS_HEIGHT),
                 )
                 .value(label),
             );
@@ -88,7 +89,7 @@ impl AppView {
             "settings-proxy-heading",
             AxRole::StaticText,
             t("settings.network.proxy_title"),
-            AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT),
+            AxRect::new(frame.x + SETTINGS_CONTENT_PAD, y, width, STATUS_HEIGHT),
         ));
         y += STATUS_HEIGHT + 8.0;
         page = page.child(
@@ -96,7 +97,7 @@ impl AppView {
                 "settings-proxy-current",
                 AxRole::StaticText,
                 t("settings.network.ax_current_proxy"),
-                AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT),
+                AxRect::new(frame.x + SETTINGS_CONTENT_PAD, y, width, STATUS_HEIGHT),
             )
             .value(current),
         );
@@ -113,7 +114,12 @@ impl AppView {
                 "settings-proxy-input",
                 AxRole::TextArea,
                 t("settings.network.ax_proxy_input"),
-                AxRect::new(frame.x + 16.0, y, (width - 180.0).max(120.0), CONTROL_ROW),
+                AxRect::new(
+                    frame.x + SETTINGS_CONTENT_PAD,
+                    y,
+                    (width - 180.0).max(120.0),
+                    CONTROL_ROW,
+                ),
             )
             .value(input_value)
             .enabled(writes)
@@ -126,7 +132,7 @@ impl AppView {
                 "settings-proxy-save",
                 AxRole::Button,
                 t("settings.save"),
-                AxRect::new(frame.x + 16.0 + width - 168.0, y, 80.0, CONTROL_ROW),
+                AxRect::new(frame.x + SETTINGS_CONTENT_PAD + width - 168.0, y, 80.0, CONTROL_ROW),
             )
             .enabled(save_enabled)
             .focused(self.open_menu.is_none() && self.settings_proxy_save_focus.is_focused(window))
@@ -137,7 +143,7 @@ impl AppView {
                 "settings-proxy-clear",
                 AxRole::Button,
                 t("settings.clear"),
-                AxRect::new(frame.x + 16.0 + width - 80.0, y, 80.0, CONTROL_ROW),
+                AxRect::new(frame.x + SETTINGS_CONTENT_PAD + width - 80.0, y, 80.0, CONTROL_ROW),
             )
             .enabled(clear_enabled)
             .focused(self.open_menu.is_none() && self.settings_proxy_clear_focus.is_focused(window))
@@ -149,7 +155,7 @@ impl AppView {
                 "settings-proxy-effect",
                 AxRole::StaticText,
                 t("settings.network.ax_effect"),
-                AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT * 2.0),
+                AxRect::new(frame.x + SETTINGS_CONTENT_PAD, y, width, STATUS_HEIGHT * 2.0),
             )
             .value(settings_proxy_effect_note()),
         );
@@ -159,7 +165,7 @@ impl AppView {
                 "settings-proxy-storage",
                 AxRole::StaticText,
                 t("settings.network.ax_storage"),
-                AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT * 2.0),
+                AxRect::new(frame.x + SETTINGS_CONTENT_PAD, y, width, STATUS_HEIGHT * 2.0),
             )
             .value(settings_proxy_storage_note()),
         )

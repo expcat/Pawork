@@ -2,7 +2,7 @@
 
 ## ADR-055：OPT-3 模型启用集与默认角色（2026-09-05）
 
-状态：Accepted（protocol / workspace / app 已实现并通过各自定向门禁与合并收口，API 1.12，golden/typegen 先红后绿，证据见 [ROADMAP §10.4](../ROADMAP.md#104-本批交付与证据2026-09-05opt-3a3b-内核协议配置)；Desktop GUI 控件与真窗口验收待后续批次）。落地 OPT-3a/3b 的内核、协议与配置半区：模型启用集（3a）与四默认角色配置键与读写（3b）。Desktop 控件（模型启用弹层、四默认角色区、代理 Switch）按 OPT-D 签字稿在后续 GUI 批次落地；OPT-3d/3e（多凭证、额度槽）不在本 ADR 范围。GUI API 1.11 → 1.12（minor 只增）。对应 [ROADMAP §6](../ROADMAP.md#6-opt-3--供应商模型启用与默认角色)。
+状态：Accepted（protocol / workspace / app 已实现并通过各自定向门禁与合并收口，API 1.12，golden/typegen 先红后绿，证据见 [ROADMAP §10.4](../ROADMAP.md#104-本批交付与证据2026-09-05opt-3a3b-内核协议配置)；Desktop GUI 控件批次已实现（§10.5，desktop 门禁 207/207、协议层验收通过；代理 Switch 像素级复验已通过，见 §10.6）；验收中修复清除判定口径，见 D3a）。落地 OPT-3a/3b 的内核、协议与配置半区：模型启用集（3a）与四默认角色配置键与读写（3b）。Desktop 控件（模型启用弹层、四默认角色区、代理 Switch）已按 OPT-D 签字稿落地（见 ROADMAP §10.5）；OPT-3d/3e（多凭证、额度槽）不在本 ADR 范围。GUI API 1.11 → 1.12（minor 只增）。对应 [ROADMAP §6](../ROADMAP.md#6-opt-3--供应商模型启用与默认角色)。
 
 - **D1 启用集存储**：Global `[[providers]]` 条目新增 `disabled_models: Vec<String>`（denylist）。键缺失或空数组 = 该 provider 模型全部启用；运行期目录新出现的模型默认启用，无需配置迁移，这是选 denylist 而非 enabled 字段的原因。启用语义属于「某 provider 的某模型」，放 `[[providers]]` 条目内而不放扁平 `[[models]]`（后者无 provider 归属，跨供应商会撞 id）。`disabled_models` 是 Global 独占偏好：非 Global 层出现即剥离并记录 warning（与 `use_proxy` 同闸，loader 扩展现有 provider 条目剥离）。
 - **D2 协议词汇（API 1.12）**：
@@ -10,6 +10,7 @@
   - `SetProviderModelsEnabled { provider_id, enabled }`：全开 = 清空该 provider denylist；全关 = Host 按当前聚合目录展开该 provider 全部模型写入 denylist。全关时目录为空 fail-closed（`catalog_unavailable`）不写盘——空展开写空 denylist 会退化为全开，语义颠倒。回执 `SetProviderModelsEnabledData { provider_id, enabled, cleared_roles }`。
   - 写盘沿用 `rmw_global_config` 原子写；写盘成功即同步内存生效配置（同 `set_provider_use_proxy` 先例），GUI 随后重查 `model_list` / `provider_auth_status` 获得权威全态。
 - **D3 禁用即显式失效**：`enabled = false`（含全关展开）命中任一角色默认对（conversation = `default_provider/default_model`、naming、vision、search）时，Host 同一次写盘移除该角色键对，回执 `cleared_roles` 按 wire 名列出被清除角色；禁止静默换绑到其他 provider/模型（ROADMAP OPT-3a 验收）。半配对（provider/model 任一缺失）本就当 null 处理，清除时移除存在的键。进行中的 Run 不受影响，只影响之后启动的 Run（同 ADR-053 D3 口径）。
+  - **D3a 清除判定以盘上持久化配置为准（2026-09-06 修订）**：命中判定读 Global 文件（Builtin + Global 层，不含 Session/Run 覆盖）。启动期 CLI `--provider/--model` 覆盖只进内存生效配置、不落盘；若按内存判定会把覆盖值当成用户默认对，误删盘上真实键对（GUI 批次验收中实际发生一次，当场回滚配置并修复）。内存同步随之收窄：仅当内存对与**被清除的持久化对**一致时才同步置 null；CLI 覆盖的生效值保留（哪怕已指向禁用模型，由 Composer/下拉按过滤规则如实标不可用），不写回盘。
 - **D4 过滤权威在 Host**：
   - `AppQuery::ModelList` additive 增加可选 `include_disabled`（缺省 false）：缺省响应不含禁用模型，满足「Composer / `ModelList` / 默认项下拉不出现未启用模型」；设置弹层显式传 `true` 取全量。响应条目 additive 增 `enabled: bool`。
   - RunStart：显式 `provider`/`model` 或会话当前生效模型被禁用时结构化 fail-closed（`model_disabled`），不启动 Run、不回退其他模型；`switch_provider` / 会话内模型切换同闸。`set_default_model` 与 `SetDefaultRoleModel` 拒绝把禁用模型设为默认。
@@ -32,7 +33,7 @@
 
 | 页面 | 可改项与持久化归属 | OPT-1 处理 |
 | --- | --- | --- |
-| Models & providers | 默认对话 `default_provider/default_model`、`providers[].use_proxy` → Global `config.toml`；命名 `naming_provider/naming_model` → Global `config.toml`（ADR-054 D4，OPT-2d 落键与 Host 消费，GUI 入口留 OPT-3b）；API key/OAuth → auth backend | 默认对话/代理已有，不重做；F8 识图/搜索键与四默认角色配置已由 ADR-055 落键（vision/search 只保存不接路由）；四默认角色与模型启用弹层 GUI 留 OPT-3 后续批次 |
+| Models & providers | 默认对话 `default_provider/default_model`、`providers[].use_proxy` → Global `config.toml`；命名 `naming_provider/naming_model` → Global `config.toml`（ADR-054 D4，OPT-2d 落键与 Host 消费，GUI 入口留 OPT-3b）；API key/OAuth → auth backend | 默认对话/代理已有，不重做；F8 识图/搜索键与四默认角色配置已由 ADR-055 落键（vision/search 只保存不接路由）；四默认角色区、模型启用弹层与代理 Switch GUI 已随 OPT-3 GUI 批次落地（2026-09-06） |
 | Network | `proxy_url` → Global `config.toml` | 已有，不重做 |
 | Approvals | 审批模式、当前项目 trust 原为 Host 内存；`trust_workspaces` 是 Global 只读默认 | 新增 `approval_mode` / `workspace_trust`，见 ADR-053 |
 | Tools & MCP | Remove → Global `mcp.servers` + 独立 MCP 凭证；Test 是即时连接检查 | 已有，不把检测结果当偏好保存 |
@@ -189,7 +190,7 @@ GPUI Settings
 Settings 沿用参考设计的 1440×1024 深色语言和 8px 节奏，不另起 Dashboard 卡片墙：
 
 - TaskRail 底部 `Local` 行右侧新增 Settings gear。
-- Settings Rail 首项固定为 `← Back to workspace`；八页导航默认 English（Appearance 页可切换简体中文，ADR-053 起即时生效并持久化），首个可用页为 `Models & providers`，内容最大宽 820px。
+- Settings Rail 首项固定为 `← Back to workspace`；八页导航默认 English（Appearance 页可切换简体中文，ADR-053 起即时生效并持久化），首个可用页为 `Models & providers`；OPT-4c 起内容用满 Rail 外可用宽度、两侧各 32px padding，不再保留 820px 上限。
 - 内容区使用稳定的 page header / section / field / feedback 层级；不显示工作台 RunStatusBar。
 - provider 默认层为 64px 概览行，只显示名称、认证方法、连接状态、目录 availability / 模型数和可用动作；普通 render 与 AX summary 不发布 masked credential、endpoint、catalog error、raw model id 或无权威来源余额。endpoint / 错误仅在连接、等待或删除确认详情显示；API key editor 仅在 Connect / Replace 后展开。
 - 默认模型使用独立 section；认证成功与目录成功继续分开表达，Remove 仍需二次确认。

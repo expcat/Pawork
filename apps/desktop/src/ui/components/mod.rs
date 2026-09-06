@@ -10,3 +10,4 @@ pub mod label;
 pub mod list_row;
 pub mod panel;
 pub mod status_bar;
+pub mod switch;

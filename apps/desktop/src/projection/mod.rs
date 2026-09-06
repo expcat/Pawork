@@ -33,8 +33,9 @@ pub use session::{
 pub use settings::{
     parse_auth_change, ApprovalModeWire, AuthChange, AuthStartData, DefaultModelPair,
     GeneralSettingsData, PermissionsSettingsData, ProviderAuthState, ProviderAuthStatusData,
-    ProviderAuthStatusEntry, ProviderCatalogState, ProviderStatusLabels, SettingsGeneralState,
-    SettingsPermissionsState, SettingsProvidersState, SettingsTerminalState, TerminalSettingsData,
+    ProviderAuthStatusEntry, ProviderCatalogState, ProviderModelWrite, ProviderStatusLabels,
+    RoleDefaultsData, SettingsGeneralState, SettingsPermissionsState, SettingsProvidersState,
+    SettingsRole, SettingsTerminalState, TerminalSettingsData,
 };
 pub(crate) use terminal::TERMINAL_CWD_UNKNOWN;
 pub use terminal::{TerminalAvailability, TerminalState};
@@ -58,6 +59,10 @@ pub struct DesktopProjection {
     pub timeline: TimelineProjection,
     pub pending_approval: Option<PendingApproval>,
     pub models: Vec<ModelEntry>,
+    /// model_list 查询是否已在本连接上完成（ModelsLoaded 已落地）。
+    /// 区分「加载中」与「已加载为空」：只有已连接且已完成查询的空结果才
+    /// 允许呈现「无已启用模型」空态；断线 / 重连复位待 Host 重查。
+    pub models_loaded: bool,
     pub selected_model: Option<(String, String)>,
     pub pending_model: Option<(String, String)>,
     /// SET-3 Settings 供应商页只读状态（加载 / stale / Host 权威列表）。
@@ -422,6 +427,7 @@ impl DesktopProjection {
 
     pub fn set_models(&mut self, models: Vec<ModelEntry>) {
         self.models = models;
+        self.models_loaded = true;
     }
 
     pub(super) fn selected_context_window(&self) -> Option<u64> {

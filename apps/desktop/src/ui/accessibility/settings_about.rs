@@ -2,6 +2,7 @@
 
 use super::{AxNode, AxRect, AxRole};
 use crate::ui::i18n::t;
+use crate::ui::settings::SETTINGS_CONTENT_PAD;
 use crate::ui::AppView;
 
 impl AppView {
@@ -25,7 +26,7 @@ impl AppView {
                 AxRole::StaticText,
                 t("settings.about.title"),
                 AxRect::new(
-                    frame.x + 16.0,
+                    frame.x + SETTINGS_CONTENT_PAD,
                     frame.y + 16.0,
                     width,
                     HEADING_HEIGHT + SUBTITLE_HEIGHT,
@@ -39,7 +40,7 @@ impl AppView {
                     id,
                     AxRole::StaticText,
                     label,
-                    AxRect::new(frame.x + 16.0, y, width, ROW_HEIGHT),
+                    AxRect::new(frame.x + SETTINGS_CONTENT_PAD, y, width, ROW_HEIGHT),
                 )
                 .value(value),
             );

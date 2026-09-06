@@ -43,7 +43,6 @@ impl AppView {
             .flex()
             .flex_col()
             .min_w_0()
-            .max_w(px(SETTINGS_CONTENT_MAX_WIDTH))
             .gap_2()
             .child(
                 div()
@@ -94,23 +93,8 @@ impl AppView {
         // 生效边界诚实文案（ADR-049 D2 快照语义）。
         content = content.child(status_line(settings_mcp_effect_note(), dark().text.secondary));
 
-        div()
-            .id("settings-page")
-            .flex()
-            .flex_col()
-            .flex_1()
-            .min_w_0()
-            .overflow_hidden()
-            .p_4()
-            .child(
-                div()
-                    .id("settings-page-scroll")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.settings_scroll)
-                    .child(content),
-            )
+        // OPT-4c（F2）：外层脚手架统一在 settings_page_element。
+        content
     }
 
     /// 单个 MCP server 卡片（SET-6c）：清单行复用 Resources 的渲染形状

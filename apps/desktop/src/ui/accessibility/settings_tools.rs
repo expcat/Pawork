@@ -8,6 +8,7 @@ use crate::ui::i18n::t;
 use crate::ui::settings::{
     settings_mcp_effect_note, settings_mcp_remove_confirm_note, tools_status_lines,
     SettingsMcpAction,
+    SETTINGS_CONTENT_PAD,
 };
 use crate::ui::AppView;
 
@@ -41,7 +42,7 @@ impl AppView {
                     AxRole::StaticText,
                     t("settings.tools.title"),
                     AxRect::new(
-                        frame.x + 16.0,
+                        frame.x + SETTINGS_CONTENT_PAD,
                         frame.y + 16.0,
                         (width - 136.0).max(0.0),
                         HEADING_HEIGHT + SUBTITLE_HEIGHT,
@@ -55,7 +56,7 @@ impl AppView {
                     AxRole::Button,
                     t("settings.refresh"),
                     AxRect::new(
-                        frame.x + 16.0 + width - 96.0,
+                        frame.x + SETTINGS_CONTENT_PAD + width - 96.0,
                         frame.y + 16.0,
                         96.0,
                         CONTROL_ROW,
@@ -72,7 +73,7 @@ impl AppView {
                     format!("settings-status-{kind}"),
                     AxRole::StaticText,
                     t("settings.tools.ax_status"),
-                    AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT),
+                    AxRect::new(frame.x + SETTINGS_CONTENT_PAD, y, width, STATUS_HEIGHT),
                 )
                 .value(label),
             );
@@ -94,7 +95,7 @@ impl AppView {
                 dynamic_identifier("settings-mcp-server", &server.name),
                 AxRole::ListItem,
                 server.name.clone(),
-                AxRect::new(frame.x + 16.0, y, width, card_height),
+                AxRect::new(frame.x + SETTINGS_CONTENT_PAD, y, width, card_height),
             )
             .value(
                 t("settings.tools.ax_server_summary")
@@ -128,7 +129,8 @@ impl AppView {
                         AxRole::Button,
                         action.label(),
                         AxRect::new(
-                            frame.x + 16.0 + width - (actions.len() - ix) as f32 * (button_w + 4.0),
+                            frame.x + SETTINGS_CONTENT_PAD + width
+                                - (actions.len() - ix) as f32 * (button_w + 4.0),
                             y + card_height - CARD_PAD - CONTROL_ROW,
                             button_w,
                             CONTROL_ROW,
@@ -147,7 +149,7 @@ impl AppView {
                 "settings-mcp-effect",
                 AxRole::StaticText,
                 t("settings.tools.ax_effect"),
-                AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT * 2.0),
+                AxRect::new(frame.x + SETTINGS_CONTENT_PAD, y, width, STATUS_HEIGHT * 2.0),
             )
             .value(settings_mcp_effect_note()),
         )

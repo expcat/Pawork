@@ -197,7 +197,13 @@ fn set_default_confirmation_syncs_composer_projection() {
     projection.set_pending_model("glm-coding".into(), "glm-4.7".into());
     // Host Data 确认到达：selected_model 同步为已确认默认，pending 清空
     //（Composer 同步；不改会话 / 草稿 / Run）。
-    projection.confirm_default_model("kimi".into(), "kimi-k2-0905-preview".into());
+    projection.confirm_role_default_pair(
+        SettingsRole::Conversation,
+        Some(DefaultModelPair {
+            provider_id: "kimi".to_string(),
+            model_id: "kimi-k2-0905-preview".to_string(),
+        }),
+    );
     assert_eq!(
         projection.selected_model,
         Some(("kimi".to_string(), "kimi-k2-0905-preview".to_string()))
@@ -210,6 +216,82 @@ fn set_default_confirmation_syncs_composer_projection() {
     assert_eq!(
         projection.settings_providers.default_model,
         projection.selected_model
+    );
+}
+
+/// OPT-3b / ADR-055 D5：role_defaults 随 provider_auth_status 落地，四
+/// 角色 set / clear 回执按角色收敛；conversation 清除只落 Settings，不
+/// 臆造 Composer 有效模型。
+#[test]
+fn role_defaults_apply_and_confirm_per_role() {
+    let pair = |provider_id: &str, model_id: &str| DefaultModelPair {
+        provider_id: provider_id.to_string(),
+        model_id: model_id.to_string(),
+    };
+    let mut projection = DesktopProjection::default();
+    projection
+        .settings_providers
+        .apply_loaded(ProviderAuthStatusData {
+            providers: Vec::new(),
+            default: Some(pair("kimi", "kimi-k2-0905-preview")),
+            role_defaults: RoleDefaultsData {
+                naming: Some(pair("glm", "glm-4.7")),
+                vision: None,
+                search: Some(pair("deepseek", "deepseek-v4-flash")),
+            },
+        });
+    assert_eq!(
+        projection
+            .settings_providers
+            .role_value(SettingsRole::Conversation),
+        Some(&("kimi".to_string(), "kimi-k2-0905-preview".to_string()))
+    );
+    assert_eq!(
+        projection
+            .settings_providers
+            .role_value(SettingsRole::Naming),
+        Some(&("glm".to_string(), "glm-4.7".to_string()))
+    );
+    assert_eq!(
+        projection
+            .settings_providers
+            .role_value(SettingsRole::Vision),
+        None
+    );
+    assert_eq!(
+        projection
+            .settings_providers
+            .role_value(SettingsRole::Search),
+        Some(&("deepseek".to_string(), "deepseek-v4-flash".to_string()))
+    );
+
+    projection.confirm_role_default_pair(SettingsRole::Vision, Some(pair("kimi", "kimi-vlm")));
+    assert_eq!(
+        projection
+            .settings_providers
+            .role_value(SettingsRole::Vision),
+        Some(&("kimi".to_string(), "kimi-vlm".to_string()))
+    );
+    projection.confirm_role_default_pair(SettingsRole::Search, None);
+    assert_eq!(
+        projection
+            .settings_providers
+            .role_value(SettingsRole::Search),
+        None
+    );
+
+    projection.set_pending_model("glm".into(), "glm-4.7".into());
+    projection.confirm_role_default_pair(SettingsRole::Conversation, None);
+    assert_eq!(
+        projection
+            .settings_providers
+            .role_value(SettingsRole::Conversation),
+        None
+    );
+    // 清除 conversation 不改 Composer：pending 保留，不臆造有效模型。
+    assert_eq!(
+        projection.pending_model,
+        Some(("glm".to_string(), "glm-4.7".to_string()))
     );
 }
 
@@ -242,6 +324,7 @@ fn default_model_unavailable_flag_tracks_connection_and_catalog() {
         id: "kimi-k2-0905-preview".into(),
         display_name: "Kimi K2".into(),
         context_window_tokens: None,
+        enabled: true,
     }]);
     // 无默认：不误报失效。
     projection.settings_providers.default_model = None;
@@ -1728,9 +1811,33 @@ fn context_meter_uses_catalog_window_and_stays_honest() {
         id: "glm-4.7".into(),
         display_name: "GLM 4.7".into(),
         context_window_tokens: Some(200_000),
+        enabled: true,
     }]);
     projection.set_pending_model("glm-coding".into(), "glm-4.7".into());
     assert_eq!(projection.context_meter_label(), "Context · — / 200000");
+}
+
+#[test]
+fn models_loaded_flag_marks_catalog_query_completion() {
+    let mut projection = DesktopProjection::default();
+    // 初始未加载：空 models 只能显示 loading，不得误报为全部禁用。
+    assert!(!projection.models_loaded);
+    // 空结果也算「已加载」：这是全关空态的判定依据。
+    projection.set_models(Vec::new());
+    assert!(projection.models_loaded);
+    // 断线 / 重连：目录必须重查，不复用上一连接的「已加载」。
+    projection.set_connection(ConnectionState::Disconnected {
+        reason: "lost".into(),
+    });
+    assert!(!projection.models_loaded);
+    projection.set_models(Vec::new());
+    projection.set_connection(ConnectionState::Connecting);
+    assert!(!projection.models_loaded);
+    // 连接建立本身不置位：只由 ModelsLoaded 落地。
+    projection.set_connection(ConnectionState::Connected {
+        instance_id: "dev".into(),
+    });
+    assert!(!projection.models_loaded);
 }
 
 fn day_ms(days: u64) -> u64 {
@@ -3044,4 +3151,77 @@ fn workspace_header_predicates_follow_active_session_and_live_status() {
         projection.workspace_header_status(),
         Some(SessionLiveStatus::Running)
     );
+}
+
+/// OPT-3a / ADR-055 D2-D4：全量目录（include_disabled=true）与两类启用
+/// 写回执的收敛语义——单模型只动命中条目，provider 全开/全关只动该
+/// provider，未知条目忽略；在途标记按 provider 判定。
+#[test]
+fn model_catalog_and_enablement_receipts_converge_provider_scoped_state() {
+    let model = |provider_id: &str, id: &str, enabled: bool| ModelEntry {
+        provider_id: provider_id.to_string(),
+        id: id.to_string(),
+        display_name: format!("{provider_id}/{id}"),
+        context_window_tokens: None,
+        enabled,
+    };
+    let mut projection = DesktopProjection::default();
+    projection.settings_providers.apply_model_catalog(vec![
+        model("kimi", "kimi-k2", true),
+        model("kimi", "kimi-k2-thinking", true),
+        model("glm", "glm-4.7", true),
+    ]);
+
+    // SetModelEnabled 回执：仅命中 provider×model 收敛，其余不动。
+    projection
+        .settings_providers
+        .confirm_model_enabled("kimi", "kimi-k2-thinking", false);
+    let catalog = &projection.settings_providers.model_catalog;
+    assert_eq!(
+        (catalog[0].id.as_str(), catalog[0].enabled),
+        ("kimi-k2", true)
+    );
+    assert_eq!(
+        (catalog[1].id.as_str(), catalog[1].enabled),
+        ("kimi-k2-thinking", false)
+    );
+    assert_eq!(
+        (catalog[2].id.as_str(), catalog[2].enabled),
+        ("glm-4.7", true)
+    );
+    // 目录暂态滞后的未知 pair 忽略（权威重查兜底）。
+    projection
+        .settings_providers
+        .confirm_model_enabled("kimi", "ghost-x", false);
+    assert!(projection.settings_providers.model_catalog[0].enabled);
+
+    // SetProviderModelsEnabled 回执：该 provider 全部条目收敛，其他
+    // provider 不动。
+    projection
+        .settings_providers
+        .confirm_provider_models_enabled("kimi", false);
+    let catalog = &projection.settings_providers.model_catalog;
+    assert!(!catalog[0].enabled);
+    assert!(!catalog[1].enabled);
+    assert!(catalog[2].enabled);
+
+    // 在途按 provider 判定：弹层整体禁用防重复提交。
+    assert!(ProviderModelWrite::Model {
+        provider_id: "kimi".into(),
+        model_id: "kimi-k2".into(),
+    }
+    .targets("kimi"));
+    assert!(!ProviderModelWrite::Model {
+        provider_id: "kimi".into(),
+        model_id: "kimi-k2".into(),
+    }
+    .targets("glm"));
+    assert!(ProviderModelWrite::All {
+        provider_id: "glm".into()
+    }
+    .targets("glm"));
+    assert!(!ProviderModelWrite::All {
+        provider_id: "glm".into()
+    }
+    .targets("kimi"));
 }

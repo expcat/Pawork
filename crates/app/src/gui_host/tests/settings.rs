@@ -1772,6 +1772,116 @@ async fn set_model_enabled_clears_role_defaults() {
     );
 }
 
+/// D3 回归：清除判定以盘上持久化配置为准。内存生效配置被 CLI
+/// `--provider/--model` 覆盖（不落盘）时，禁用覆盖值指向的 provider/model
+/// 不得误删盘上真实的默认对，内存覆盖值也不得被清掉。
+#[tokio::test]
+async fn disable_keeps_persisted_role_pairs_under_memory_override() {
+    let _home_env = HOME_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let home = tempfile::tempdir().expect("home tempdir");
+    let _restore_home = RestoreHome(std::env::var_os("HOME"));
+    crate::testsupport::set_env("HOME", home.path().to_str().expect("utf-8 home"));
+    let backend = Arc::new(pawork_auth::MemoryBackend::new());
+    // 内存生效配置默认对 = (glm-coding, glm-5.2)，模拟 CLI 覆盖。
+    let (adapter, _dir) = settings_adapter_with_default(
+        "glm-coding",
+        "glm-5.2",
+        "http://127.0.0.1:1".into(),
+        backend,
+        Some(("glm-coding", "glm-5.2")),
+    )
+    .await;
+    // 盘上持久化默认对是另一 provider 的真实用户配置。
+    let config_path = pawork_workspace::config::global_config_path().expect("global path");
+    pawork_workspace::config::write_model_pair(
+        &config_path,
+        "default_provider",
+        "default_model",
+        Some(("deepseek", "deepseek-chat")),
+    )
+    .expect("seed persisted default pair");
+    let provider = pawork_domain::ProviderId::from("glm-coding");
+
+    // 单模型禁用：覆盖值命中内存默认对，但盘上默认对不属于该 provider。
+    let response = adapter
+        .command(&command_envelope(AppCommand::SetModelEnabled {
+            provider_id: provider.clone(),
+            model_id: "glm-5.2".into(),
+            enabled: false,
+        }))
+        .await
+        .expect("disable model");
+    let AppResponse::Data(data) = response else {
+        panic!("SetModelEnabled must return Data: {response:?}")
+    };
+    assert_eq!(data["cleared_roles"], serde_json::json!([]));
+    let persisted = std::fs::read_to_string(&config_path).expect("persisted config");
+    assert!(
+        persisted.contains("default_provider = \"deepseek\"")
+            && persisted.contains("default_model = \"deepseek-chat\""),
+        "persisted default pair must survive memory-override disable: {persisted}"
+    );
+
+    // 内存覆盖值保留（诚实显示当前生效默认，哪怕已禁用）。
+    let status = adapter
+        .query(&query_envelope(AppQuery::ProviderAuthStatus {
+            provider_id: Some(provider.clone()),
+        }))
+        .await
+        .expect("status after disable");
+    let AppResponse::Data(status) = status else {
+        panic!("ProviderAuthStatus must return Data: {status:?}")
+    };
+    assert_eq!(
+        status["default"],
+        serde_json::json!({"provider_id": "glm-coding", "model_id": "glm-5.2"}),
+        "memory override pair must stay: {status}"
+    );
+
+    // 恢复后走全关路径：同样不得误删盘上默认对。
+    adapter
+        .command(&command_envelope(AppCommand::SetModelEnabled {
+            provider_id: provider.clone(),
+            model_id: "glm-5.2".into(),
+            enabled: true,
+        }))
+        .await
+        .expect("re-enable model");
+    let response = adapter
+        .command(&command_envelope(AppCommand::SetProviderModelsEnabled {
+            provider_id: provider.clone(),
+            enabled: false,
+        }))
+        .await
+        .expect("disable all glm-coding models");
+    let AppResponse::Data(data) = response else {
+        panic!("SetProviderModelsEnabled must return Data: {response:?}")
+    };
+    assert_eq!(data["cleared_roles"], serde_json::json!([]));
+    let persisted = std::fs::read_to_string(&config_path).expect("persisted config");
+    assert!(
+        persisted.contains("default_provider = \"deepseek\"")
+            && persisted.contains("default_model = \"deepseek-chat\""),
+        "persisted default pair must survive disable-all: {persisted}"
+    );
+    let status = adapter
+        .query(&query_envelope(AppQuery::ProviderAuthStatus {
+            provider_id: Some(provider),
+        }))
+        .await
+        .expect("status after disable-all");
+    let AppResponse::Data(status) = status else {
+        panic!("ProviderAuthStatus must return Data: {status:?}")
+    };
+    assert_eq!(
+        status["default"],
+        serde_json::json!({"provider_id": "glm-coding", "model_id": "glm-5.2"}),
+        "memory override pair must stay after disable-all: {status}"
+    );
+}
+
 /// 全关按聚合目录展开；空目录 catalog_unavailable fail-closed 不写盘。
 #[tokio::test]
 async fn set_provider_models_enabled_expands_catalog_and_empty_fails_closed() {

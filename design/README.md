@@ -4,7 +4,7 @@
 
 ## 0. OPT-D 统一设计交付（2026-09-05，已签字）
 
-六张 PNG 均为 1440×1024，共用深色工作台、8px 节奏、蓝色主操作与稳定侧栏。它们是同一套设计的不同状态；OPT-2 行为（无项目直建、会话行改名/归档、No project 提示、自动标题）已按本批落地，其余像素与控件（OPT-3/4）尚未按图改。生成参考、完整修订提示词和尺寸处理见 [opt-prompts.md](opt-prompts.md)。
+六张 PNG 均为 1440×1024，共用深色工作台、8px 节奏、蓝色主操作与稳定侧栏。它们是同一套设计的不同状态；OPT-2 行为（无项目直建、会话行改名/归档、No project 提示、自动标题）已按本批落地，OPT-2/3 行为与控件、OPT-4（2026-09-06）像素与布局均已按本批落地。生成参考、完整修订提示词和尺寸处理见 [opt-prompts.md](opt-prompts.md)。
 
 | 画幅 | 资产与验收重点 |
 | --- | --- |
@@ -24,7 +24,7 @@
 - 四默认角色只从已连接且启用的候选中选；关闭所选模型显式失效。Vision/Search 在真实路由接线前只保存选择，说明这一限制。未连接时进入认证；空目录时刷新；全关时禁用发送。
 - 图中 provider、模型、任务、凭证、diff 为设计样例，不是当前可用能力或运行证据。三张首稿保留的 `Jane Doe`/头像、附件与 `Open in editor` 不构成新增产品要求；正式实现统一使用 Local + gear，未实现入口隐藏。额度无权威数据时隐藏轨道与数字。
 
-**交付状态**：资产与状态检查完成；**用户视觉签字已于 2026-09-05 确认**。设计闸门已放行；OPT-2/3/4 留待后续任务实施。下文 §1–3 仍描述 P0–P2 历史基线，冲突处在签字后按本节与 [GUI 设计 §8](../docs/gui-design.md#8-opt-d-统一候选稿已签字) 更新生产合同。
+**交付状态**：资产与状态检查完成；**用户视觉签字已于 2026-09-05 确认**。设计闸门已放行；OPT-2/3/4 已实施（OPT-4 于 2026-09-06 落地图标命中区、Inspector 默认折叠、Settings 全宽与导航零位移，见 [ROADMAP §10](../docs/ROADMAP.md)）。下文 §1–3 仍描述 P0–P2 历史基线，冲突处以本节与 [GUI 设计](../docs/gui-design.md) 现行生产合同为准。
 
 ## 1. 保留资产
 
@@ -46,12 +46,12 @@
 
 ## 2. 布局合同
 
-- 宽屏为三栏：TaskRail 约 288px、Workspace 弹性伸缩、Inspector 约 440px。
-- `1080–1279px` 时 TaskRail 收敛到 240px，Inspector 默认折叠；主操作不得被裁切或遮挡。
+- 宽屏为三栏：TaskRail 约 288px、Workspace 弹性伸缩、Inspector 打开时约 440px；OPT-4b 起 Inspector 默认收起（宽屏同样）。
+- `1080–1279px` 时 TaskRail 收敛到 240px，Inspector 空间不足保持折叠；主操作不得被裁切或遮挡。
 - Workspace Header 常驻；Timeline 从 Header 下开始阅读，短会话不沉到窗口底部。
 - Composer 常态总高 88–94px，Send/Cancel 使用单一主操作槽；RunStatusBar 高 24px。
 - Inspector 提供 Changes、Terminal、Resources；折叠后 Workspace 扩展，Activity 入口位于 Workspace Header 右侧。
-- Settings 从 `Local` 行 gear 进入；进入后隐藏 Workspace/Inspector，以约 288px Settings Rail + 弹性内容区呈现，1080px 宽时 rail 收敛至 240px。
+- Settings 从 `Local` 行 gear 进入；进入后隐藏 Workspace/Inspector，以约 288px Settings Rail + 弹性内容区呈现，1080px 宽时 rail 收敛至 240px；OPT-4c 起内容区用满 Rail 外可用宽度、两侧各 32px padding，不保留 820px 上限。
 - 深色桌面工作台语言、8px 间距节奏。生产色值与尺寸以 `apps/desktop/src/ui/theme.rs` 为事实源，设计图不反向覆盖已验证的可访问性约束。
 
 ## 3. 交互与诚实性

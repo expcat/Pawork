@@ -77,7 +77,8 @@ impl AppView {
             - metrics::RAIL_ICON_BUTTON_SIZE
             - metrics::RAIL_CONNECTION_ADD_GAP;
 
-        // P0-2：二态直接切换；28×28 ghost，只显示目标动作图标，不再打开菜单。
+        // P0-2：二态直接切换；36×36 ghost（OPT-D 命中区 ≥36×36、字形 20px），
+        // 只显示目标动作图标，不再打开菜单。
         let grouping_tooltip = SharedString::from(self.grouping.toggle_action_label());
         let grouping_focus = self.grouping_focus.clone();
         let grouping_button = Button::new("task-rail-grouping")
@@ -88,7 +89,7 @@ impl AppView {
             .height(px(metrics::RAIL_ICON_BUTTON_SIZE))
             .center()
             .radius(4.0)
-            .text_size(font::BASE)
+            .text_size(font::ICON)
             .label(grouping_glyph)
             .tooltip(grouping_tooltip)
             .on_click(cx.listener(|view, event, window, cx| {
@@ -144,8 +145,8 @@ impl AppView {
             scope = scope.panel(self.scope_menu_element(cx));
         }
 
-        // F-03 全局 AddTaskButton：28×28 角标，glyph ~13px；禁用原因 tooltip
-        // 逻辑不动。
+        // F-03 全局 AddTaskButton：36×36 角标、字形 20px（OPT-D）；禁用
+        // 原因 tooltip 逻辑不动。
         let add_task_tooltip = if can_create {
             SharedString::from(t("timeline.new_task_tooltip"))
         } else {
@@ -161,7 +162,7 @@ impl AppView {
             .height(px(metrics::RAIL_ICON_BUTTON_SIZE))
             .center()
             .radius(4.0)
-            .text_size(font::BASE)
+            .text_size(font::ICON)
             .label("+")
             .tooltip(add_task_tooltip)
             .on_click(cx.listener(|view, event, window, cx| {
@@ -312,7 +313,7 @@ impl AppView {
                         .height(px(metrics::RAIL_ICON_BUTTON_SIZE))
                         .center()
                         .radius(4.0)
-                        .text_size(font::BASE)
+                        .text_size(font::ICON)
                         .label("⚙")
                         .tooltip(t("rail.tooltip_settings"))
                         .on_click(cx.listener(|view, event, window, cx| {
@@ -552,7 +553,7 @@ impl AppView {
         let header_row_key = format!("project-{key}");
         let header_row_key_click = header_row_key.clone();
         // F-04 项目头：chevron + 名称（18 medium emphasis）+ 独立右对齐计数 +
-        // 定向「+」（28×28；Unassigned 无 +）。折叠态只显示头。
+        // 定向「+」（36×36、字形 20px / OPT-D；Unassigned 无 +）。折叠态只显示头。
         let mut header = div()
             .mt(px(header_gap))
             .flex()
@@ -638,7 +639,7 @@ impl AppView {
                         .height(px(metrics::RAIL_ICON_BUTTON_SIZE))
                         .center()
                         .radius(4.0)
-                        .text_size(font::BASE)
+                        .text_size(font::ICON)
                         .label("+")
                         .on_click(cx.listener(move |view, event: &ClickEvent, window, cx| {
                             // 键盘激活后的同键 keyup 合成 click 在此吞除

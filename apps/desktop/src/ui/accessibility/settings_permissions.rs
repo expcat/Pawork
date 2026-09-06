@@ -8,6 +8,7 @@ use crate::ui::i18n::t;
 use crate::ui::settings::{
     approval_mode_description, approval_mode_label, permissions_status_lines, APPROVAL_MODE_ALL,
     settings_permissions_effect_note, settings_trust_unset,
+    SETTINGS_CONTENT_PAD,
 };
 use crate::ui::AppView;
 
@@ -49,7 +50,7 @@ impl AppView {
                     AxRole::StaticText,
                     t("settings.permissions.title"),
                     AxRect::new(
-                        frame.x + 16.0,
+                        frame.x + SETTINGS_CONTENT_PAD,
                         frame.y + 16.0,
                         (width - 136.0).max(0.0),
                         HEADING_HEIGHT + SUBTITLE_HEIGHT,
@@ -63,7 +64,7 @@ impl AppView {
                     AxRole::Button,
                     t("settings.refresh"),
                     AxRect::new(
-                        frame.x + 16.0 + width - 96.0,
+                        frame.x + SETTINGS_CONTENT_PAD + width - 96.0,
                         frame.y + 16.0,
                         96.0,
                         CONTROL_ROW,
@@ -80,7 +81,7 @@ impl AppView {
                     format!("settings-status-{kind}"),
                     AxRole::StaticText,
                     t("settings.permissions.ax_status"),
-                    AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT),
+                    AxRect::new(frame.x + SETTINGS_CONTENT_PAD, y, width, STATUS_HEIGHT),
                 )
                 .value(label),
             );
@@ -98,7 +99,7 @@ impl AppView {
                 "settings-approval-mode-header",
                 AxRole::StaticText,
                 t("settings.permissions.mode_title"),
-                AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT),
+                AxRect::new(frame.x + SETTINGS_CONTENT_PAD, y, width, STATUS_HEIGHT),
             )
             .value(t("settings.current").replace("{}", current_mode_label)),
         );
@@ -123,7 +124,7 @@ impl AppView {
                 button_id,
                 AxRole::Tab,
                 approval_mode_label(mode),
-                AxRect::new(frame.x + 16.0, y, width, mode_row_height),
+                AxRect::new(frame.x + SETTINGS_CONTENT_PAD, y, width, mode_row_height),
             )
             .value(value)
             .selected(current)
@@ -163,7 +164,7 @@ impl AppView {
                     AxRole::StaticText,
                     t("settings.permissions.session_trust_title"),
                     AxRect::new(
-                        frame.x + 16.0,
+                        frame.x + SETTINGS_CONTENT_PAD,
                         y,
                         (width - 180.0).max(60.0),
                         mode_row_height,
@@ -181,7 +182,7 @@ impl AppView {
                     AxRole::Button,
                     trust_label,
                     AxRect::new(
-                        frame.x + 16.0 + width - 116.0,
+                        frame.x + SETTINGS_CONTENT_PAD + width - 116.0,
                         y + (mode_row_height - CONTROL_ROW) / 2.0,
                         116.0,
                         CONTROL_ROW,
@@ -204,7 +205,7 @@ impl AppView {
                 "settings-trust-global",
                 AxRole::StaticText,
                 t("settings.permissions.ax_global_title"),
-                AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT),
+                AxRect::new(frame.x + SETTINGS_CONTENT_PAD, y, width, STATUS_HEIGHT),
             )
             .value(global_text),
         );
@@ -216,7 +217,7 @@ impl AppView {
                 "settings-permissions-effect",
                 AxRole::StaticText,
                 t("settings.permissions.ax_effect"),
-                AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT * 2.0),
+                AxRect::new(frame.x + SETTINGS_CONTENT_PAD, y, width, STATUS_HEIGHT * 2.0),
             )
             .value(settings_permissions_effect_note()),
         )

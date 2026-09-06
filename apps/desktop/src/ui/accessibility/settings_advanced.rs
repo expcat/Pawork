@@ -5,7 +5,9 @@ use gpui::Window;
 use super::app::{CONTROL_HEIGHT, PAD};
 use super::{AxAction, AxNode, AxRect, AxRole};
 use crate::ui::i18n::t;
-use crate::ui::settings::{settings_advanced_doctor_note, settings_advanced_target_note};
+use crate::ui::settings::{
+    settings_advanced_doctor_note, settings_advanced_target_note, SETTINGS_CONTENT_PAD,
+};
 use crate::ui::AppView;
 
 impl AppView {
@@ -30,7 +32,7 @@ impl AppView {
                 AxRole::StaticText,
                 t("settings.advanced.title"),
                 AxRect::new(
-                    frame.x + 16.0,
+                    frame.x + SETTINGS_CONTENT_PAD,
                     frame.y + 16.0,
                     width,
                     HEADING_HEIGHT + SUBTITLE_HEIGHT,
@@ -44,7 +46,7 @@ impl AppView {
                     id,
                     AxRole::StaticText,
                     label,
-                    AxRect::new(frame.x + 16.0, y, width, DIAGNOSTIC_ROW_HEIGHT),
+                    AxRect::new(frame.x + SETTINGS_CONTENT_PAD, y, width, DIAGNOSTIC_ROW_HEIGHT),
                 )
                 .value(value),
             );
@@ -56,7 +58,7 @@ impl AppView {
                     "reconnect",
                     AxRole::Button,
                     t("settings.advanced.reconnect"),
-                    AxRect::new(frame.x + 16.0, y, 112.0, CONTROL_HEIGHT),
+                    AxRect::new(frame.x + SETTINGS_CONTENT_PAD, y, 112.0, CONTROL_HEIGHT),
                 )
                 .focused(self.open_menu.is_none() && self.reconnect_focus.is_focused(window))
                 .action(AxAction::Press),
@@ -68,7 +70,7 @@ impl AppView {
                 "settings-advanced-target-note",
                 AxRole::StaticText,
                 t("settings.advanced.ax_target_title"),
-                AxRect::new(frame.x + 16.0, y, width, NOTE_HEIGHT),
+                AxRect::new(frame.x + SETTINGS_CONTENT_PAD, y, width, NOTE_HEIGHT),
             )
             .value(settings_advanced_target_note()),
         );
@@ -78,7 +80,7 @@ impl AppView {
                 "settings-advanced-doctor-note",
                 AxRole::StaticText,
                 t("settings.advanced.ax_doctor_title"),
-                AxRect::new(frame.x + 16.0, y, width, NOTE_HEIGHT),
+                AxRect::new(frame.x + SETTINGS_CONTENT_PAD, y, width, NOTE_HEIGHT),
             )
             .value(settings_advanced_doctor_note()),
         )

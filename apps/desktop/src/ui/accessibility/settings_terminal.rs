@@ -8,6 +8,7 @@ use crate::ui::i18n::t;
 use crate::ui::settings::{
     parse_terminal_dimension, terminal_save_enabled, terminal_status_lines,
     settings_terminal_effect_note, settings_terminal_shell_unset,
+    SETTINGS_CONTENT_PAD,
 };
 use crate::ui::AppView;
 
@@ -59,7 +60,7 @@ impl AppView {
                     AxRole::StaticText,
                     t("settings.terminal.title"),
                     AxRect::new(
-                        frame.x + 16.0,
+                        frame.x + SETTINGS_CONTENT_PAD,
                         frame.y + 16.0,
                         (width - 136.0).max(0.0),
                         HEADING_HEIGHT + SUBTITLE_HEIGHT,
@@ -73,7 +74,7 @@ impl AppView {
                     AxRole::Button,
                     t("settings.refresh"),
                     AxRect::new(
-                        frame.x + 16.0 + width - 96.0,
+                        frame.x + SETTINGS_CONTENT_PAD + width - 96.0,
                         frame.y + 16.0,
                         96.0,
                         CONTROL_ROW,
@@ -90,7 +91,7 @@ impl AppView {
                     format!("settings-status-{kind}"),
                     AxRole::StaticText,
                     t("settings.terminal.ax_status"),
-                    AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT),
+                    AxRect::new(frame.x + SETTINGS_CONTENT_PAD, y, width, STATUS_HEIGHT),
                 )
                 .value(label),
             );
@@ -102,7 +103,7 @@ impl AppView {
                     "settings-terminal-shell-current",
                     AxRole::StaticText,
                     t("settings.terminal.ax_default_shell"),
-                    AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT),
+                    AxRect::new(frame.x + SETTINGS_CONTENT_PAD, y, width, STATUS_HEIGHT),
                 )
                 .value(shell_current),
             )
@@ -112,7 +113,7 @@ impl AppView {
                     AxRole::StaticText,
                     t("settings.terminal.ax_default_size"),
                     AxRect::new(
-                        frame.x + 16.0,
+                        frame.x + SETTINGS_CONTENT_PAD,
                         y + STATUS_HEIGHT + 8.0,
                         width,
                         STATUS_HEIGHT,
@@ -133,7 +134,12 @@ impl AppView {
                     "settings-terminal-shell-input",
                     AxRole::TextArea,
                     t("settings.terminal.shell_label"),
-                    AxRect::new(frame.x + 16.0, y, (width - 88.0).max(120.0), CONTROL_ROW),
+                    AxRect::new(
+                        frame.x + SETTINGS_CONTENT_PAD,
+                        y,
+                        (width - 88.0).max(120.0),
+                        CONTROL_ROW,
+                    ),
                 )
                 .value(shell_text)
                 .enabled(writes)
@@ -146,7 +152,12 @@ impl AppView {
                     "settings-terminal-clear",
                     AxRole::Button,
                     t("settings.clear"),
-                    AxRect::new(frame.x + 16.0 + width - 80.0, y, 80.0, CONTROL_ROW),
+                    AxRect::new(
+                        frame.x + SETTINGS_CONTENT_PAD + width - 80.0,
+                        y,
+                        80.0,
+                        CONTROL_ROW,
+                    ),
                 )
                 .enabled(clear_enabled)
                 .focused(
@@ -174,7 +185,7 @@ impl AppView {
                     "settings-terminal-columns-input",
                     AxRole::TextArea,
                     t("settings.terminal.ax_columns"),
-                    AxRect::new(frame.x + 16.0, y, 96.0, CONTROL_ROW),
+                    AxRect::new(frame.x + SETTINGS_CONTENT_PAD, y, 96.0, CONTROL_ROW),
                 )
                 .value(
                     self.settings_terminal_columns_input
@@ -192,7 +203,7 @@ impl AppView {
                     "settings-terminal-rows-input",
                     AxRole::TextArea,
                     t("settings.terminal.ax_rows"),
-                    AxRect::new(frame.x + 16.0 + 96.0 + 16.0, y, 96.0, CONTROL_ROW),
+                    AxRect::new(frame.x + SETTINGS_CONTENT_PAD + 96.0 + 16.0, y, 96.0, CONTROL_ROW),
                 )
                 .value(
                     self.settings_terminal_rows_input
@@ -210,7 +221,12 @@ impl AppView {
                     "settings-terminal-save",
                     AxRole::Button,
                     t("settings.save"),
-                    AxRect::new(frame.x + 16.0 + width - 80.0, y, 80.0, CONTROL_ROW),
+                    AxRect::new(
+                        frame.x + SETTINGS_CONTENT_PAD + width - 80.0,
+                        y,
+                        80.0,
+                        CONTROL_ROW,
+                    ),
                 )
                 .enabled(save_enabled)
                 .focused(
@@ -225,7 +241,7 @@ impl AppView {
                 "settings-terminal-effect",
                 AxRole::StaticText,
                 t("settings.terminal.ax_effect"),
-                AxRect::new(frame.x + 16.0, y, width, STATUS_HEIGHT * 2.0),
+                AxRect::new(frame.x + SETTINGS_CONTENT_PAD, y, width, STATUS_HEIGHT * 2.0),
             )
             .value(settings_terminal_effect_note()),
         )

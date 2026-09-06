@@ -278,11 +278,16 @@ impl AppView {
             .border_color(dark().border.subtle)
             .child(tabs)
             .child(
+                // OPT-4a：折叠按钮 36×36 命中区、20px 字形（OPT-D 签字）。
                 Button::new("inspector-collapse")
                     .variant(ButtonVariant::Ghost)
-                    .text_size(font::SM)
+                    .padding(ButtonPadding::None)
+                    .width(px(metrics::ICON_BUTTON_SIZE))
+                    .height(px(metrics::ICON_BUTTON_SIZE))
+                    .center()
+                    .radius(4.0)
+                    .text_size(font::ICON)
                     .text_color(dark().text.secondary)
-                    .padding(ButtonPadding::Horizontal(metrics::PADDING_SM))
                     .label("⟩")
                     .track_focus(&self.inspector_collapse_focus)
                     .on_click(cx.listener(|view, event, window, cx| {

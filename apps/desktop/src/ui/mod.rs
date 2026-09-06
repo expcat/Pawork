@@ -37,7 +37,7 @@ use pawork_client::AppEvent;
 use crate::controller::{ControllerEvent, DesktopController, DesktopHandshakeInfo};
 use crate::platform::Platform;
 use crate::projection::{
-    ConnectionState, DateBucket, DesktopProjection, ResumeApply, SessionLiveStatus,
+    ConnectionState, DateBucket, DesktopProjection, ResumeApply, SessionLiveStatus, SettingsRole,
     TaskRailGrouping, TerminalState, UNASSIGNED_PROJECT,
 };
 use barriers::BarrierSink;
@@ -203,6 +203,11 @@ fn now_unix_ms() -> u64 {
 enum MenuKind {
     Scope,
     Model,
+    /// Settings「Default models」四角色下拉（OPT-3b / ADR-055 D5）。
+    SettingsRole(SettingsRole),
+    /// Settings 供应商「Manage models」启用弹层（OPT-3a / ADR-055 D2；
+    /// 键为 provider id，单一状态位保证至多一个弹层）。
+    SettingsProviderModels(String),
     /// 条目「···」菜单，键为 timeline event_id。
     Entry(String),
     /// Inspector 折叠态的 ActivityPopover（Workspace Header Activity
@@ -488,6 +493,9 @@ pub struct AppView {
     /// 重开；位置不等或键盘触发则为新点击，清标记后正常 toggle
     /// （见 dismiss_menu_on_outside）。
     pending_outside_close: Option<(MenuKind, Point<Pixels>)>,
+    /// Settings 四默认角色的在途写（SetDefaultRoleModel 已派出、回执 /
+    /// 失败未到）：该角色下拉禁用，其余角色不受影响。
+    settings_role_pending: Option<SettingsRole>,
     run_clock_running: bool,
     /// R1 Wave B fixture barrier 状态（PAWORK_UI_BARRIER_DIR 未设置则
     /// 零开销直通；发射语义见 ui/barriers.rs）。
@@ -523,6 +531,8 @@ pub struct AppView {
     inspector_tab_focus: [FocusHandle; 3],
     inspector_collapse_focus: FocusHandle,
     inspector_activity_focus: FocusHandle,
+    /// Inspector 折叠态 Header 重开按钮焦点（OPT-4b；与 Activity 触发器并存）。
+    inspector_expand_focus: FocusHandle,
     changes_tab_focus: [FocusHandle; 2],
     changes_refresh_focus: FocusHandle,
     changes_file_focus: BTreeMap<String, FocusHandle>,
@@ -676,7 +686,9 @@ impl AppView {
             scope_workspace_id: None,
             collapsed_projects: BTreeSet::new(),
             collapsed_tool_groups: HashSet::new(),
-            inspector_open: true,
+            // OPT-4b（F6）：默认折叠（宽屏同样）；显式动作（Review changes、
+            // Activity 摘要等）仍可展开。
+            inspector_open: false,
             inspector_tab: InspectorTab::default(),
             changes: ChangesPanelState::default(),
             resources: ResourcesPanelState::default(),
@@ -686,6 +698,7 @@ impl AppView {
             pending_row_key_activate: None,
             pending_button_key_activate: None,
             pending_outside_close: None,
+            settings_role_pending: None,
             run_clock_running: false,
             barriers: BarrierSink::new(barrier_dir),
             ax_bridge: None,
@@ -735,6 +748,10 @@ impl AppView {
                 .tab_stop(true)
                 .tab_index(INSPECTOR_TAB_INDEX),
             inspector_activity_focus: cx
+                .focus_handle()
+                .tab_stop(true)
+                .tab_index(INSPECTOR_TAB_INDEX),
+            inspector_expand_focus: cx
                 .focus_handle()
                 .tab_stop(true)
                 .tab_index(INSPECTOR_TAB_INDEX),
@@ -902,7 +919,7 @@ impl AppView {
             .center()
             .vcenter()
             .radius(metrics::HEADER_ACTION_RADIUS)
-            .text_size(font::BODY)
+            .text_size(font::ICON)
             .text_color(dark().text.emphasis)
             .label("+")
             .tooltip(new_task_tooltip);
@@ -937,7 +954,7 @@ impl AppView {
                 .center()
                 .vcenter()
                 .radius(metrics::HEADER_ACTION_RADIUS)
-                .text_size(font::BODY)
+                .text_size(font::ICON)
                 .text_color(dark().text.emphasis)
                 .label("⋯")
                 .tooltip(i18n::t("header.tooltip_activity"))
@@ -970,6 +987,40 @@ impl AppView {
             }
             dropdown
         });
+        // OPT-4b（F6）：Inspector 默认折叠；折叠态 Header 最右新增重开入口，
+        // 与 Activity 触发器并存（签字稿 collapsed 态右上角）；展开态不渲染
+        // （折叠仍走面板内 inspector-collapse）。click / Enter / Space / AX
+        // Press 共用 on_toggle_inspector，机制与 Activity 触发器一致。
+        let inspector_expand = Button::new("inspector-expand")
+            .track_focus(&self.inspector_expand_focus)
+            .variant(ButtonVariant::Ghost)
+            .bordered()
+            .padding(ButtonPadding::None)
+            .width(px(metrics::HEADER_ACTION_WIDTH))
+            .height(px(metrics::HEADER_ACTION_HEIGHT))
+            .center()
+            .vcenter()
+            .radius(metrics::HEADER_ACTION_RADIUS)
+            .text_size(font::ICON)
+            .text_color(dark().text.emphasis)
+            .label("⤢")
+            .tooltip(i18n::t("header.tooltip_open_inspector"))
+            .on_click(cx.listener(|view, event, window, cx| {
+                if view.consume_button_key_click("inspector-expand", event) {
+                    return;
+                }
+                view.on_toggle_inspector(window, cx);
+            }))
+            .on_activate(cx.listener(|view, _event, window, cx| {
+                if view.open_menu.is_some() {
+                    // 菜单已开时让位给根节点菜单 Enter 接管（同触发器口径）。
+                    view.note_button_key_activate("inspector-expand");
+                    return;
+                }
+                view.note_button_key_activate("inspector-expand");
+                view.on_toggle_inspector(window, cx);
+                cx.stop_propagation();
+            }));
         div()
             .id("workspace-header")
             .debug_selector(|| "workspace-header".into())
@@ -1038,7 +1089,18 @@ impl AppView {
                     }),
             )
             .when(activity_trigger_visible, |header| {
-                header.when_some(activity_trigger, |header, trigger| header.child(trigger))
+                header.when_some(activity_trigger, |header, trigger| {
+                    // OPT-4b：折叠态右上角 Activity + 重开入口并存；Activity
+                    // 在左，inspector-expand 占最右动作槽。
+                    header.child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap(px(metrics::HEADER_ACTION_GAP))
+                            .child(trigger)
+                            .child(inspector_expand),
+                    )
+                })
             })
             .when(!activity_trigger_visible && !workspace_empty, |header| {
                 header.child(new_task)
@@ -1426,7 +1488,8 @@ impl AppView {
                 self.projection
                     .mark_terminal_create_failed(&workspace_id, reason.clone());
                 self.reconcile_terminal_workspace(cx);
-                self.status_hint = Some(i18n::t("status.terminal_create_failed").replace("{}", &reason));
+                self.status_hint =
+                    Some(i18n::t("status.terminal_create_failed").replace("{}", &reason));
             }
             ControllerEvent::TerminalWriteSucceeded {
                 terminal_session_id,
@@ -1459,7 +1522,8 @@ impl AppView {
                 self.terminal_pending_write = None;
                 self.projection
                     .note_terminal_io_failed(&terminal_session_id, reason.clone());
-                self.status_hint = Some(i18n::t("status.terminal_write_failed").replace("{}", &reason));
+                self.status_hint =
+                    Some(i18n::t("status.terminal_write_failed").replace("{}", &reason));
             }
             ControllerEvent::TerminalResizeSucceeded {
                 terminal_session_id,
@@ -1488,9 +1552,11 @@ impl AppView {
                 if self.projection.terminal.session_id.as_deref()
                     == Some(terminal_session_id.as_str())
                 {
-                    self.status_hint = Some(
-                        i18n::t2("status.terminal_size", &columns.to_string(), &rows.to_string()),
-                    );
+                    self.status_hint = Some(i18n::t2(
+                        "status.terminal_size",
+                        &columns.to_string(),
+                        &rows.to_string(),
+                    ));
                 }
             }
             ControllerEvent::TerminalResizeFailed {
@@ -1509,7 +1575,8 @@ impl AppView {
                 if self.projection.terminal.session_id.as_deref()
                     == Some(terminal_session_id.as_str())
                 {
-                    self.status_hint = Some(i18n::t("status.terminal_resize_failed").replace("{}", &reason));
+                    self.status_hint =
+                        Some(i18n::t("status.terminal_resize_failed").replace("{}", &reason));
                 }
             }
             ControllerEvent::TerminalCloseSucceeded {
@@ -1541,7 +1608,8 @@ impl AppView {
                 {
                     self.terminal_pending_close = None;
                 }
-                self.status_hint = Some(i18n::t("status.terminal_close_failed").replace("{}", &reason));
+                self.status_hint =
+                    Some(i18n::t("status.terminal_close_failed").replace("{}", &reason));
             }
             ControllerEvent::MessageSent {
                 session_id,
@@ -1565,16 +1633,24 @@ impl AppView {
                 // 模型目录变化后回收已消失模型的「设为默认」焦点句柄。
                 self.ensure_settings_api_key_inputs(cx);
             }
+            ControllerEvent::ModelCatalogLoaded(models) => {
+                // 全量目录（include_disabled=true）只喂「Manage models」
+                // 弹层；与 projection.models（过滤口径）分列，不互相覆盖。
+                self.projection
+                    .settings_providers
+                    .apply_model_catalog(models);
+            }
             ControllerEvent::ProviderStatusLoaded(data) => {
                 self.projection.settings_providers.apply_loaded(data);
                 self.ensure_settings_api_key_inputs(cx);
                 self.remark_settings_stale_if_disconnected();
             }
-            ControllerEvent::DefaultModelConfirmed(pair) => {
-                // Host Data 确认：Composer 同步到已确认默认（会话 / 草稿 /
-                // Run 不动）；权威 default 由 controller 随后的
-                // provider_auth_status 重查落地。
-                self.projection.confirm_default_model_pair(pair);
+            ControllerEvent::DefaultRoleModelConfirmed { role, value } => {
+                // Host Data 确认（回执即写后状态，ADR-055 D5；不重查）：
+                // 按角色落地键对；conversation 另同步 Composer 已确认默认
+                //（会话 / 草稿 / Run 不动）。
+                self.settings_role_pending = None;
+                self.projection.confirm_role_default_pair(role, value);
             }
             ControllerEvent::GeneralSettingsLoaded(data)
             | ControllerEvent::ProxyUrlConfirmed(data) => {
@@ -1594,6 +1670,36 @@ impl AppView {
                 self.projection
                     .settings_providers
                     .confirm_use_proxy(&provider_id, use_proxy);
+            }
+            ControllerEvent::ModelEnabledConfirmed {
+                provider_id,
+                model_id,
+                enabled,
+                cleared_roles,
+            } => {
+                // Host Data 确认（回执即写后状态，ADR-055 D2/D3）：弹层先
+                // 按回执收敛，再重查权威全态（角色默认 / Composer / 两套
+                // 目录口径一致）；cleared_roles 诚实说明，不静默换绑。
+                self.projection.settings_providers.model_write_pending = None;
+                self.projection.settings_providers.confirm_model_enabled(
+                    &provider_id,
+                    &model_id,
+                    enabled,
+                );
+                self.apply_model_cleared_note(&cleared_roles);
+                self.refresh_models_authority();
+            }
+            ControllerEvent::ProviderModelsEnabledConfirmed {
+                provider_id,
+                enabled,
+                cleared_roles,
+            } => {
+                self.projection.settings_providers.model_write_pending = None;
+                self.projection
+                    .settings_providers
+                    .confirm_provider_models_enabled(&provider_id, enabled);
+                self.apply_model_cleared_note(&cleared_roles);
+                self.refresh_models_authority();
             }
             ControllerEvent::PermissionsSettingsLoaded(data) => {
                 self.projection.settings_permissions.apply_loaded(data);
@@ -1644,6 +1750,20 @@ impl AppView {
                 }
                 if action == "set provider use proxy" {
                     let message = format!("Could not change provider proxy · {reason}");
+                    self.projection.settings_providers.apply_failed(&message);
+                }
+                if action == "set model enabled" || action == "set provider models enabled" {
+                    // 写失败保旧：目录 / 角色默认不动；清在途标记并沿
+                    // settings 错误行呈现原因。
+                    self.projection.settings_providers.model_write_pending = None;
+                    let message = format!("Could not change model enablement · {reason}");
+                    self.projection.settings_providers.apply_failed(&message);
+                }
+                if action == "set default role model" {
+                    // 写失败保旧：回执未到，角色键对不动；清在途标记并沿
+                    // settings 错误行呈现原因。
+                    self.settings_role_pending = None;
+                    let message = format!("Could not save default model · {reason}");
                     self.projection.settings_providers.apply_failed(&message);
                 }
                 if action == "load general settings" || action == "set proxy url" {
@@ -1703,7 +1823,8 @@ impl AppView {
                 // 清掉 B 的 timeline_paging（否则 settle barrier 提前放行）。
                 if self.projection.active_session_id.as_deref() == Some(&session_id) {
                     self.timeline_paging = false;
-                    self.status_hint = Some(i18n::t("status.open_session_failed").replace("{}", &reason));
+                    self.status_hint =
+                        Some(i18n::t("status.open_session_failed").replace("{}", &reason));
                 }
             }
             ControllerEvent::DiffFilesLoaded {
@@ -1748,7 +1869,8 @@ impl AppView {
             }
             ControllerEvent::DiffFilesFailed { epoch, reason } => {
                 if self.changes.mark_failed_for_epoch(epoch, &reason) {
-                    self.status_hint = Some(i18n::t("status.load_changes_failed").replace("{}", &reason));
+                    self.status_hint =
+                        Some(i18n::t("status.load_changes_failed").replace("{}", &reason));
                 }
             }
             ControllerEvent::DiffContentFailed {
@@ -1760,12 +1882,14 @@ impl AppView {
                     .changes
                     .mark_diff_failed_for_epoch(epoch, &path, &reason)
                 {
-                    self.status_hint = Some(i18n::t("status.load_diff_failed").replace("{}", &reason));
+                    self.status_hint =
+                        Some(i18n::t("status.load_diff_failed").replace("{}", &reason));
                 }
             }
             ControllerEvent::McpServersFailed { epoch, reason } => {
                 if self.resources.mark_failed_for_epoch(epoch, &reason) {
-                    self.status_hint = Some(i18n::t("status.load_resources_failed").replace("{}", &reason));
+                    self.status_hint =
+                        Some(i18n::t("status.load_resources_failed").replace("{}", &reason));
                 }
             }
         }
@@ -1935,14 +2059,18 @@ impl AppView {
             }
             Ok(Err(error)) => {
                 this.update(cx, |view, cx| {
-                    view.status_hint = Some(i18n::t("status.open_project_failed").replace("{}", &error.to_string()));
+                    view.status_hint = Some(
+                        i18n::t("status.open_project_failed").replace("{}", &error.to_string()),
+                    );
                     cx.notify();
                 })
                 .ok();
             }
             Err(error) => {
                 this.update(cx, |view, cx| {
-                    view.status_hint = Some(i18n::t("status.open_project_failed").replace("{}", &error.to_string()));
+                    view.status_hint = Some(
+                        i18n::t("status.open_project_failed").replace("{}", &error.to_string()),
+                    );
                     cx.notify();
                 })
                 .ok();
@@ -2018,7 +2146,12 @@ impl AppView {
 
     /// 改名提交后的收口：退出编辑态并把焦点送回该会话行（与菜单关闭
     /// 回焦触发器同规）。
-    fn end_session_rename(&mut self, session_id: &str, window: &mut Window, cx: &mut Context<Self>) {
+    fn end_session_rename(
+        &mut self,
+        session_id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.session_rename = None;
         let focus_key = rail_session_focus_key(session_id);
         if let Some(handle) = self.rail_row_focus.get(&focus_key) {
@@ -2347,6 +2480,8 @@ impl AppView {
             Some("inspector-collapse")
         } else if self.inspector_activity_focus.is_focused(window) && activate {
             Some("inspector-toggle")
+        } else if self.inspector_expand_focus.is_focused(window) && activate {
+            Some("inspector-expand")
         } else if self.changes_refresh_focus.is_focused(window) && activate {
             Some("changes-refresh")
         } else if self.resources_refresh_focus.is_focused(window) && activate {
@@ -2406,6 +2541,7 @@ impl AppView {
         match action {
             "inspector-collapse" => self.on_toggle_inspector(window, cx),
             "inspector-toggle" => self.toggle_menu(MenuKind::Activity, None, cx),
+            "inspector-expand" => self.on_toggle_inspector(window, cx),
             "changes-refresh" => self.refresh_changes(cx),
             "resources-refresh" => self.refresh_resources(cx),
             "terminal-resize" => self.on_apply_terminal_size(window, cx),
@@ -2444,6 +2580,16 @@ impl AppView {
         let trigger = match kind {
             MenuKind::Scope => self.scope_focus.clone(),
             MenuKind::Model => self.model_focus.clone(),
+            MenuKind::SettingsRole(role) => self
+                .settings_action_focus
+                .get(&settings::settings_role_trigger_identifier(role))
+                .cloned()
+                .unwrap_or_else(|| self.focus_handle.clone()),
+            MenuKind::SettingsProviderModels(provider_id) => self
+                .settings_action_focus
+                .get(&settings::settings_manage_models_identifier(&provider_id))
+                .cloned()
+                .unwrap_or_else(|| self.focus_handle.clone()),
             MenuKind::Entry(event_id) => self
                 .timeline_entry_action_focus
                 .get(&event_id)
@@ -2462,8 +2608,23 @@ impl AppView {
         match self.open_menu.as_ref() {
             Some(MenuKind::Scope) => self.projection.project_scope_options().len() + 1,
             Some(MenuKind::Model) => self.projection.models.len(),
+            // 清除行 + 候选行；空候选（无已连接 / 已启用模型）无可选项。
+            Some(MenuKind::SettingsRole(_)) => {
+                let entries = settings::settings_role_menu_entries(
+                    &self.projection.models,
+                    &self.projection.settings_providers.providers,
+                );
+                if entries.is_empty() {
+                    0
+                } else {
+                    entries.len() + 1
+                }
+            }
             Some(MenuKind::Entry(_)) => 1,
             Some(MenuKind::Activity) => 1,
+            // 弹层行是可聚焦 Switch（Tab / Enter / Space 自理），不进
+            // MenuRow 键盘分派；↑/↓ 无可移动项。
+            Some(MenuKind::SettingsProviderModels(_)) => 0,
             None => 0,
         }
     }
@@ -2486,6 +2647,25 @@ impl AppView {
                         .position(|model| model.provider_id == *provider && model.id == *id)
                 })
                 .unwrap_or(0),
+            // 行 0 = 清除；当前值落在候选行时为其位 +1，未设置回落清除行。
+            Some(MenuKind::SettingsRole(role)) => {
+                let entries = settings::settings_role_menu_entries(
+                    &self.projection.models,
+                    &self.projection.settings_providers.providers,
+                );
+                self.projection
+                    .settings_providers
+                    .role_value(*role)
+                    .and_then(|(provider, model)| {
+                        entries
+                            .iter()
+                            .position(|entry| entry.provider_id == *provider && entry.id == *model)
+                    })
+                    .map(|ix| ix + 1)
+                    .unwrap_or(0)
+            }
+            // Switch 自带键盘激活；无 MenuRow 高亮行。
+            Some(MenuKind::SettingsProviderModels(_)) => 0,
             _ => 0,
         }
     }
@@ -2535,6 +2715,26 @@ impl AppView {
                     self.on_select_model(model.clone(), cx);
                 }
             }
+            MenuKind::SettingsRole(role) => {
+                let entries = settings::settings_role_menu_entries(
+                    &self.projection.models,
+                    &self.projection.settings_providers.providers,
+                );
+                if entries.is_empty() {
+                    return;
+                }
+                if ix == 0 {
+                    self.on_select_settings_role(role, None, cx);
+                } else if let Some(model) = entries.get(ix - 1) {
+                    self.on_select_settings_role(
+                        role,
+                        Some((model.provider_id.clone(), model.id.clone())),
+                        cx,
+                    );
+                }
+            }
+            // 弹层控件自带键盘激活（Switch / 按钮），无 MenuRow 行。
+            MenuKind::SettingsProviderModels(_) => {}
             MenuKind::Entry(event_id) => {
                 if ix == 0 && self.can_fork_entry(&event_id) {
                     self.close_open_menu(cx);
@@ -2715,10 +2915,42 @@ impl AppView {
     fn refresh_all_settings(&mut self, cx: &mut Context<Self>) {
         self.refresh_provider_status();
         self.controller.load_models();
+        // 全量目录口径（include_disabled=true）：OPT-3a「Manage models」
+        // 弹层与页级刷新同路径取权威状态。
+        self.controller.load_model_catalog();
         self.refresh_general_settings();
         self.refresh_permissions_settings();
         self.refresh_terminal_settings();
         self.refresh_resources(cx);
+    }
+
+    /// 模型启用写回执后的权威重查（ADR-055 D2）：provider_auth_status
+    /// （角色默认）+ 两套 model_list 口径（过滤 / 全量），让弹层 Switch、
+    /// 四角色区与 Composer 一致。断线时保留 stale 只读结果。
+    fn refresh_models_authority(&mut self) {
+        self.refresh_provider_status();
+        self.controller.load_models();
+        self.controller.load_model_catalog();
+    }
+
+    /// cleared_roles 诚实说明（ADR-055 D3）：Host 清除的角色默认对按
+    /// 回执序列出（未知 wire 名原样保留，不臆造）；空回执清旧说明。
+    fn apply_model_cleared_note(&mut self, cleared_roles: &[String]) {
+        if cleared_roles.is_empty() {
+            self.projection.settings_providers.model_cleared_note = None;
+            return;
+        }
+        let roles = cleared_roles
+            .iter()
+            .map(|role| {
+                SettingsRole::from_wire_name(role)
+                    .map(|role| role.label().to_string())
+                    .unwrap_or_else(|| role.clone())
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.projection.settings_providers.model_cleared_note =
+            Some(i18n::t("settings.providers.models_cleared_roles").replace("{}", &roles));
     }
 
     fn remark_settings_stale_if_disconnected(&mut self) {
@@ -2821,7 +3053,8 @@ impl AppView {
                 window.focus(&self.settings_nav_providers_focus);
             }
         }
-        self.settings_scroll.set_offset(gpui::point(px(0.0), px(0.0)));
+        self.settings_scroll
+            .set_offset(gpui::point(px(0.0), px(0.0)));
         cx.notify();
     }
 
@@ -3152,17 +3385,14 @@ impl AppView {
         }
         self.text_scale = scale;
         window.set_rem_size(px(scale.rem_pixels()));
-        self.status_hint = Some(i18n::t("status.text_scale").replace("{}", &scale.percent().to_string()));
+        self.status_hint =
+            Some(i18n::t("status.text_scale").replace("{}", &scale.percent().to_string()));
         cx.notify();
     }
 
     /// 切换界面语言（i18n）：更新全局值与本地镜像，给出状态提示并重渲染。
     /// 与 set_text_scale 同构：仅本地 presentation，不触碰 Host / 会话状态。
-    fn set_language(
-        &mut self,
-        language: i18n::Language,
-        cx: &mut Context<Self>,
-    ) {
+    fn set_language(&mut self, language: i18n::Language, cx: &mut Context<Self>) {
         if self.language == language {
             return;
         }
@@ -3243,8 +3473,7 @@ impl AppView {
         if self.projection.terminal.session_id.is_some()
             && !terminal_can_operate(&self.projection.connection, &self.projection.terminal)
         {
-            self.status_hint =
-                Some(i18n::t("status.terminal_not_ready").into());
+            self.status_hint = Some(i18n::t("status.terminal_not_ready").into());
             cx.notify();
             return;
         }
@@ -3329,6 +3558,16 @@ impl AppView {
             && !self.projection.models.is_empty()
     }
 
+    /// model 菜单能否打开：已连接、无进行中 run，且要么已有目录、要么
+    /// 目录查询已完成（结果可为空——全关空态仍要从触发器上方打开说明行）。
+    fn can_open_model_menu(&self) -> bool {
+        matches!(
+            self.projection.connection,
+            ConnectionState::Connected { .. }
+        ) && self.projection.active_run_id.is_none()
+            && (!self.projection.models.is_empty() || self.projection.models_loaded)
+    }
+
     fn composer_has_sendable_text(&self, cx: &App) -> bool {
         !self.text_input.read(cx).text().trim().is_empty()
     }
@@ -3339,6 +3578,8 @@ impl AppView {
             ConnectionState::Connected { .. }
         ) && self.projection.active_session_id.is_some()
             && self.projection.active_run_id.is_none()
+            // 全关空态 fail-closed：无已启用模型不发送、不编造模型。
+            && !self.model_catalog_empty()
             && self.composer_has_sendable_text(cx)
     }
 
@@ -3782,10 +4023,10 @@ impl Render for AppView {
             self.projection.connection,
             ConnectionState::Connected { .. }
         );
-        let can_switch_model = self.can_switch_model();
-        // can_switch_model 翻假期间归一化：打开中的 model 菜单随之关闭，
-        // 避免条件恢复后面板无需点击自行重现。
-        if matches!(self.open_menu, Some(MenuKind::Model)) && !can_switch_model {
+        let can_open_model_menu = self.can_open_model_menu();
+        // can_open_model_menu 翻假期间归一化：打开中的 model 菜单随之关闭，
+        // 避免条件恢复后面板无需点击自行重现。全关空态仍保持可开（说明行）。
+        if matches!(self.open_menu, Some(MenuKind::Model)) && !can_open_model_menu {
             self.open_menu = None;
         }
         let now_ms = now_unix_ms();
@@ -3904,12 +4145,9 @@ impl Render for AppView {
                     // F-12（R6 Wave A）迁至 Workspace Header。P2-1：
                     // StatusBar 只在工作台渲染，Settings 壳不显示
                     // RunStatusBar（render 与 AX 同源）。
-                    .when(
-                        matches!(self.route, AppRoute::Workspace),
-                        |column| {
-                            column.child(StatusBar::new().centered(Badge::new(run_status)))
-                        },
-                    ),
+                    .when(matches!(self.route, AppRoute::Workspace), |column| {
+                        column.child(StatusBar::new().centered(Badge::new(run_status)))
+                    }),
             )
     }
 }
@@ -4011,7 +4249,7 @@ mod tests {
     #[test]
     fn composer_action_slot_is_single_tab_stop() {
         assert!(MAIN_PATH_TAB_STOP_IDS.contains(&"composer-action"));
-        assert_eq!(crate::ui::theme::metrics::COMPOSER_SEND_SIZE, 32.0);
+        assert_eq!(crate::ui::theme::metrics::COMPOSER_SEND_SIZE, 36.0);
         let height =
             AppView::composer_panel_height(crate::ui::theme::metrics::COMPOSER_INPUT_MIN_HEIGHT);
         assert!(height <= 94.0 && height >= 88.0);

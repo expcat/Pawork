@@ -236,6 +236,8 @@ pub mod font {
     pub const BODY: Rems = from_pixels(16.0);
     /// 20px：页面与应用标题。
     pub const TITLE: Rems = from_pixels(20.0);
+    /// 20px：主操作图标字形（OPT-D 签字：可见图标 20–22px）。
+    pub const ICON: Rems = from_pixels(20.0);
     /// 11px：提示 / 标签 / 次级行。
     pub const XS: Rems = from_pixels(11.0);
     /// 12px：meta 与紧凑辅助文字。
@@ -262,8 +264,9 @@ pub mod metrics {
     pub const SURFACE_RADIUS: f32 = 8.0;
     /// 键盘焦点环宽度；组件 focus state 只改视觉，不缩放控件。
     pub const FOCUS_RING_WIDTH: f32 = 2.0;
-    /// 普通 icon button 命中区；Composer Send / Cancel 另有 32px 专用槽。
-    pub const ICON_BUTTON_SIZE: f32 = 28.0;
+    /// 普通 icon button 命中区（OPT-D 签字：主操作命中区 ≥36×36）；
+    /// Composer Send / Cancel 另有 36px 专用槽。
+    pub const ICON_BUTTON_SIZE: f32 = 36.0;
     /// 通用菜单几何。
     pub const MENU_ANCHOR_GAP: f32 = SPACE_2;
     pub const MENU_MIN_WIDTH: f32 = 220.0;
@@ -279,7 +282,8 @@ pub mod metrics {
     pub const RAIL_CONTENT_INSET: f32 = 20.0;
     /// 12：rail 内层水平内边距（Panel p_2 帧 8 + 12 = 统一 inset 20）。
     pub const RAIL_INNER_PAD: f32 = 12.0;
-    /// 28：rail 角标按钮边长（grouping / 全局与定向新建；量图 28–30，hit area ≥24）。
+    /// 36：rail 角标按钮边长（grouping / 全局与定向新建 / gear；
+    /// OPT-D 签字：主操作命中区 ≥36×36）。
     pub const RAIL_ICON_BUTTON_SIZE: f32 = ICON_BUTTON_SIZE;
     /// 32：会话行改名 / 归档按钮边长（OPT-D 签字约束：Session 行动作
     /// hit area ≥32×32，行高 44 内垂直居中）。
@@ -340,6 +344,9 @@ pub mod metrics {
     pub const HEADER_ACTION_HEIGHT: f32 = 37.0;
     /// 4：Header 动作按钮圆角（量图 r≈3±1 取 4 与组件库一致）。
     pub const HEADER_ACTION_RADIUS: f32 = 4.0;
+    /// 4：Header 右侧相邻动作槽（Activity 与 inspector-expand）的间距
+    ///（OPT-4b；render 与 AX 几何同源）。
+    pub const HEADER_ACTION_GAP: f32 = 4.0;
     /// 618：Timeline 可读列最大宽（state-a 内容 x326–944；state-b
     /// x=347..962 = 615，取 618，两态同值；防折叠态无限拉宽）。
     pub const TIMELINE_READABLE_WIDTH: f32 = 618.0;
@@ -390,7 +397,7 @@ pub mod metrics {
     /// 440：Inspector 面板宽度。
     pub const INSPECTOR_WIDTH: f32 = 440.0;
     /// 88：Composer 面板常态总高（F-09 合同下限；不是输入框 min）。
-    /// 布局实测 91 落在 88–94；常量为合同下限而非逐像素预测。
+    /// 布局自然高 89 落在 88–94；常量为合同下限而非逐像素预测。
     pub const COMPOSER_MIN_HEIGHT: f32 = 88.0;
     /// 220：Composer 面板增长上限（超限后输入内部滚动属 Wave B）。
     pub const COMPOSER_MAX_HEIGHT: f32 = 220.0;
@@ -406,8 +413,8 @@ pub mod metrics {
     pub const COMPOSER_INPUT_MIN_HEIGHT: f32 = 28.0;
     /// 28：Composer footer 控件高（model / workspace / ContextMeter）。
     pub const COMPOSER_FOOTER_CONTROL: f32 = 28.0;
-    /// 32：Composer Send / Cancel 同槽圆形按钮边长。
-    pub const COMPOSER_SEND_SIZE: f32 = 32.0;
+    /// 36：Composer Send / Cancel 同槽圆形按钮边长（OPT-D 命中区 ≥36×36）。
+    pub const COMPOSER_SEND_SIZE: f32 = 36.0;
     /// 88：COMPOSER_MIN_HEIGHT 的面板语义别名。
     pub const COMPOSER_PANEL_MIN_HEIGHT: f32 = COMPOSER_MIN_HEIGHT;
     /// 220：COMPOSER_MAX_HEIGHT 的面板语义别名。
@@ -575,7 +582,7 @@ mod tests {
         assert_eq!(metrics::INPUT_MENU_RADIUS, 6.0);
         assert_eq!(metrics::SURFACE_RADIUS, 8.0);
         assert_eq!(metrics::FOCUS_RING_WIDTH, 2.0);
-        assert_eq!(metrics::ICON_BUTTON_SIZE, 28.0);
+        assert_eq!(metrics::ICON_BUTTON_SIZE, 36.0);
         assert_eq!(metrics::MENU_ANCHOR_GAP, 8.0);
         assert_eq!(metrics::MENU_MIN_WIDTH, 220.0);
         assert_eq!(metrics::MENU_MAX_WIDTH, 360.0);
@@ -591,7 +598,7 @@ mod tests {
         assert_eq!(font::default_pixels(font::BODY_SM), 12.0);
         assert_eq!(metrics::RAIL_CONTENT_INSET, 20.0);
         assert_eq!(metrics::RAIL_INNER_PAD, 12.0);
-        assert_eq!(metrics::RAIL_ICON_BUTTON_SIZE, 28.0);
+        assert_eq!(metrics::RAIL_ICON_BUTTON_SIZE, 36.0);
         assert_eq!(metrics::RAIL_STATUS_DOT_SIZE, 10.0);
         assert_eq!(metrics::RAIL_CONNECTION_ADD_GAP, 8.0);
         assert_eq!(metrics::RAIL_TOP_ROW_HEIGHT, 36.0);
@@ -627,6 +634,7 @@ mod tests {
         assert_eq!(metrics::HEADER_ACTION_WIDTH, 40.0);
         assert_eq!(metrics::HEADER_ACTION_HEIGHT, 37.0);
         assert_eq!(metrics::HEADER_ACTION_RADIUS, 4.0);
+        assert_eq!(metrics::HEADER_ACTION_GAP, 4.0);
         assert_eq!(metrics::TIMELINE_READABLE_WIDTH, 618.0);
         assert_eq!(metrics::TIMELINE_TOP_GAP, 28.0);
         assert_eq!(metrics::MSG_LINE_HEIGHT, 24.0);
@@ -669,8 +677,8 @@ mod tests {
     }
 
     /// R5 Wave A Composer 几何合同（design/README.md §2：常态总高 88–94，
-    /// footer 控件 28–30，Send 32）。COMPOSER_MIN_HEIGHT 语义改为面板总高，
-    /// 不再当作输入框 min。
+    /// footer 控件 28–30，Send 36 / OPT-D 命中区 ≥36×36）。
+    /// COMPOSER_MIN_HEIGHT 语义改为面板总高，不再当作输入框 min。
     #[test]
     fn composer_geometry_constants_match_frozen_tiers() {
         assert_eq!(metrics::COMPOSER_MIN_HEIGHT, 88.0);
@@ -683,15 +691,17 @@ mod tests {
         assert_eq!(metrics::COMPOSER_BORDER, 1.0);
         assert_eq!(metrics::COMPOSER_INPUT_MIN_HEIGHT, 28.0);
         assert_eq!(metrics::COMPOSER_FOOTER_CONTROL, 28.0);
-        assert_eq!(metrics::COMPOSER_SEND_SIZE, 32.0);
+        assert_eq!(metrics::COMPOSER_SEND_SIZE, 36.0);
         let laid_out = metrics::COMPOSER_BORDER
             + metrics::COMPOSER_PAD * 2.0
             + metrics::COMPOSER_INPUT_MIN_HEIGHT
             + metrics::COMPOSER_GAP
             + metrics::COMPOSER_SEND_SIZE;
-        // 1+8+8+28+8+32 = 85；面板合同下限 88 覆盖实测 91，不把余量写进常量公式。
-        assert_eq!(laid_out, 85.0);
+        // 1+8+8+28+8+36 = 89：常态总高落 88–94 合同区间，下限仍是合同
+        // 下限而非逐像素预测。
+        assert_eq!(laid_out, 89.0);
         assert!(metrics::COMPOSER_PANEL_MIN_HEIGHT <= 94.0);
-        assert!(laid_out <= metrics::COMPOSER_PANEL_MIN_HEIGHT);
+        assert!(laid_out >= metrics::COMPOSER_PANEL_MIN_HEIGHT);
+        assert!(laid_out <= 94.0);
     }
 }

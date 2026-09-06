@@ -87,6 +87,18 @@ fn config_write_error(error: pawork_workspace::config::ConfigError) -> GuiHostEr
     GuiHostAdapter::host_error("config_write", error.to_string())
 }
 
+/// 盘上持久化配置（Builtin + Global 文件，不含 Session/Run 覆盖）。
+/// 角色默认对的清除判定以此为准：内存生效配置可能含 CLI
+/// `--provider/--model` 覆盖（不落盘），据此清盘会误删真实默认对。
+fn persisted_config(
+    path: &std::path::Path,
+) -> Result<pawork_workspace::config::PaworkConfig, GuiHostError> {
+    pawork_workspace::config::Loader::discover_from(Some(path), None)
+        .resolve()
+        .map(|resolved| resolved.config)
+        .map_err(config_write_error)
+}
+
 fn auth_state(
     core: &AppCore,
     flights: &AuthFlights,
@@ -386,7 +398,7 @@ pub(crate) async fn set_model_enabled(
     };
     let id = provider_id.as_str();
     let model = model_id.as_str();
-    let (disabled, cleared) = {
+    let disabled = {
         let core = adapter.core.read().await;
         if !known_provider(&core, id) {
             return Err(GuiHostAdapter::host_error(
@@ -412,26 +424,31 @@ pub(crate) async fn set_model_enabled(
             .find(|provider| provider.id == id)
             .map(|provider| provider.disabled_models.clone())
             .unwrap_or_default();
-        let mut cleared = Vec::new();
         if *enabled {
             disabled.retain(|entry| entry != model);
-        } else {
+        } else if !disabled.iter().any(|entry| entry == model) {
             // 幂等：重复同态写为最终覆盖语义。
-            if !disabled.iter().any(|entry| entry == model) {
-                disabled.push(model.to_string());
-            }
-            for kind in RoleModelKind::ALL {
-                if kind.pair_in_config(core.config()) == Some((id.to_string(), model.to_string())) {
-                    cleared.push(kind);
-                }
-            }
+            disabled.push(model.to_string());
         }
-        (disabled, cleared)
+        disabled
     };
     let path = global_config_file()?;
+    // 清除判定按盘上持久化配置：只有真实写盘的默认对才允许同批清除。
+    let cleared: Vec<(RoleModelKind, (String, String))> = if *enabled {
+        Vec::new()
+    } else {
+        let persisted = persisted_config(&path)?;
+        RoleModelKind::ALL
+            .into_iter()
+            .filter_map(|kind| {
+                let pair = kind.pair_in_config(&persisted)?;
+                (pair.0 == id && pair.1 == model).then_some((kind, pair))
+            })
+            .collect()
+    };
     pawork_workspace::config::write_provider_disabled_models(&path, id, &disabled)
         .map_err(config_write_error)?;
-    for kind in &cleared {
+    for (kind, _) in &cleared {
         pawork_workspace::config::write_model_pair(
             &path,
             kind.provider_key(),
@@ -443,8 +460,11 @@ pub(crate) async fn set_model_enabled(
     {
         let mut core = adapter.core.write().await;
         core.set_provider_disabled_models(id, disabled);
-        for kind in &cleared {
-            core.set_role_model_pair(*kind, None);
+        for (kind, pair) in &cleared {
+            // 内存仅在与被清持久化对一致时同步清除，保留 CLI 覆盖的生效值。
+            if kind.pair_in_config(core.config()).as_ref() == Some(pair) {
+                core.set_role_model_pair(*kind, None);
+            }
         }
     }
     Ok(settings_data(SetModelEnabledData {
@@ -453,7 +473,7 @@ pub(crate) async fn set_model_enabled(
         enabled: *enabled,
         cleared_roles: cleared
             .iter()
-            .map(|kind| kind.wire_name().to_string())
+            .map(|(kind, _)| kind.wire_name().to_string())
             .collect(),
     }))
 }
@@ -474,7 +494,7 @@ pub(crate) async fn set_provider_models_enabled(
         unreachable!("set_provider_models_enabled handler receives SetProviderModelsEnabled")
     };
     let id = provider_id.as_str();
-    let (disabled, cleared) = {
+    let disabled = {
         let core = adapter.core.read().await;
         if !known_provider(&core, id) {
             return Err(GuiHostAdapter::host_error(
@@ -483,7 +503,7 @@ pub(crate) async fn set_provider_models_enabled(
             ));
         }
         if *enabled {
-            (Vec::new(), Vec::new())
+            Vec::new()
         } else {
             let mut models: Vec<String> = core
                 .models_overview()
@@ -500,21 +520,27 @@ pub(crate) async fn set_provider_models_enabled(
                     format!("provider {id} has no runnable catalog to disable"),
                 ));
             }
-            // 全关展开使命中该 provider 的任一角色默认对整体失效。
-            let cleared = RoleModelKind::ALL
-                .into_iter()
-                .filter(|kind| {
-                    kind.pair_in_config(core.config())
-                        .is_some_and(|(provider, _)| provider == id)
-                })
-                .collect::<Vec<_>>();
-            (models, cleared)
+            models
         }
     };
     let path = global_config_file()?;
+    // 全关展开使命中该 provider 的任一角色默认对整体失效；清除判定
+    // 按盘上持久化配置（内存可能含不落盘的 CLI 覆盖）。
+    let cleared: Vec<(RoleModelKind, (String, String))> = if *enabled {
+        Vec::new()
+    } else {
+        let persisted = persisted_config(&path)?;
+        RoleModelKind::ALL
+            .into_iter()
+            .filter_map(|kind| {
+                let pair = kind.pair_in_config(&persisted)?;
+                (pair.0 == id).then_some((kind, pair))
+            })
+            .collect()
+    };
     pawork_workspace::config::write_provider_disabled_models(&path, id, &disabled)
         .map_err(config_write_error)?;
-    for kind in &cleared {
+    for (kind, _) in &cleared {
         pawork_workspace::config::write_model_pair(
             &path,
             kind.provider_key(),
@@ -526,8 +552,11 @@ pub(crate) async fn set_provider_models_enabled(
     {
         let mut core = adapter.core.write().await;
         core.set_provider_disabled_models(id, disabled);
-        for kind in &cleared {
-            core.set_role_model_pair(*kind, None);
+        for (kind, pair) in &cleared {
+            // 内存仅在与被清持久化对一致时同步清除，保留 CLI 覆盖的生效值。
+            if kind.pair_in_config(core.config()).as_ref() == Some(pair) {
+                core.set_role_model_pair(*kind, None);
+            }
         }
     }
     Ok(settings_data(SetProviderModelsEnabledData {
@@ -535,7 +564,7 @@ pub(crate) async fn set_provider_models_enabled(
         enabled: *enabled,
         cleared_roles: cleared
             .iter()
-            .map(|kind| kind.wire_name().to_string())
+            .map(|(kind, _)| kind.wire_name().to_string())
             .collect(),
     }))
 }
