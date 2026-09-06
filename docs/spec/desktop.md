@@ -10,7 +10,8 @@
 - **D2 `SessionRename{session_id, title}`**：两字段必填；title trim 后为空为结构化错误，不写盘。写盘成功后回执 Data（session_view，即写后状态）。
 - **D3 `SessionArchive{session_id, archived: bool}`**：两字段必填。归档后 `list_sessions`/snapshot 隐藏；归档不删除事件与投影，`SessionOpen` 仍可读；wire 保留 `archived: false` 反向写口，本阶段不提供永久删除，Desktop 只暴露归档入口。
 - **D4 命名模型与自动标题**：Global 配置 `naming_provider` / `naming_model`（分层与 `default_provider`/`default_model` 相同；凭证仍只进 auth backend）。未配置则不自动命名，不用启发式冒充模型命名。会话标题仍为占位名（`New session`）且 Run 达成功终态时，Host 用命名模型做一次无工具一次性补全；成功才写回标题，失败/超时保留占位名。Settings 四默认角色的 GUI 入口属 OPT-3b，本阶段只落配置键与 Host 消费。
-- **D5 `AppEvent::SessionMetaChanged{session_id, title, archived}`**：改名/归档/自动标题写回后由 Host 经 EventHub 广播；Desktop 收到后重取 snapshot，列表即时反映写后状态。
+- **D4a 自动命名并发收口（2026-09-06 审查修复）**：读取素材只读重放，不决议 pending approval、不追加 Agent 事件；命名任务快照依赖后释放 Core 锁，装配、目录解析、补全共用 20s 超时。写回前确认命名配置仍有效，以单条条件 UPDATE 校验占位标题并写入，避免覆盖手动改名；改名/配置清除期间返回的旧结果丢弃。
+- **D5 `AppEvent::SessionMetaChanged{session_id, title, archived}`**：改名/归档/自动标题写回后由 Host 经 EventHub 广播；Desktop 收到后重取 snapshot，列表即时反映写后状态。当前会话归档时一并收口 Composer、分页、Changes 与 Terminal workspace 草稿；重复刷新保持当前 UI scope。新建会话严格使用创建回执的 session_id，不从列表顺序猜测。
 
 ## 1. 产品定位
 

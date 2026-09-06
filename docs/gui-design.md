@@ -92,6 +92,7 @@
 - 全局 `AddTaskButton` 在连接行；每个项目头另有定向新建，绑定该项目 canonical `workspace_id`。断线与 stale 时两类入口均禁用。
 - ADR-054 / OPT-2：`All projects` 作用域下全局 New task 直接创建无项目会话（归 Unassigned），不再弹 WorkspaceConfirm 项目确认浮层；项目作用域与项目头「+」仍定向新建。
 - ADR-054 / OPT-2：Session 行右侧提供改名 / 归档图标按钮（命中区 ≥32×32，键盘与 AX 可达）；改名为行内编辑（Enter 提交、Esc 取消、空白不提交），归档立即生效（仅隐藏、不删除）。改名/归档/自动标题写回经 `SessionMetaChanged` 推送后重取 snapshot。
+- OPT-2 审查修复：创建后打开 Host 回执点名的会话；当前会话归档时保存其 Composer 草稿并恢复无会话草稿，清理旧分页与 Changes，同时切换 Terminal 的 workspace 与草稿；重复 snapshot 不把旧项目输入带入其他终端。
 - ADR-054 / OPT-2：无项目会话激活时 Composer 底栏显示 No project 状态 chip 与「文件工具不可用」诚实提示；该 chip 纯展示，不提供挂载项目写口。
 - Timeline 层级：日期（Today / Yesterday / Previous 7 days / Earlier）→ 项目 → Task，均按最近活动倒序；Task 行不再重复项目名。
 - Projects 按 canonical Workspace 分组；缺失元数据的 Session 进入 `Unassigned`。

@@ -266,6 +266,36 @@ impl SessionStore {
             .await?
     }
 
+    /// 仅当标题仍为预期值时原子改名；条件不匹配返回 false，缺失报错。
+    /// 自动命名使用此写口，避免检查标题与写回之间覆盖用户改名。
+    pub async fn rename_session_if_title(
+        &self,
+        session_id: &SessionId,
+        expected_title: &str,
+        title: &str,
+        now_ms: i64,
+    ) -> Result<bool, SessionStoreError> {
+        let lookup = session_id.to_string();
+        let expected_title = expected_title.to_string();
+        let title = title.to_string();
+        self.database()
+            .call(move |connection| -> Result<bool, SessionStoreError> {
+                let updated = connection.execute(
+                    "UPDATE sessions SET title=?2, updated_at_ms=?3 WHERE session_id=?1 AND title=?4",
+                    params![lookup, title, now_ms, expected_title],
+                )?;
+                if updated == 0 && !connection.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sessions WHERE session_id=?1)",
+                    params![lookup],
+                    |row| row.get::<_, bool>(0),
+                )? {
+                    return Err(SessionStoreError::SessionNotFound(lookup));
+                }
+                Ok(updated != 0)
+            })
+            .await?
+    }
+
     /// ADR-054：归档 / 反归档。归档只改 `archived` 标记与 `updated_at_ms`，
     /// 不删事件与投影；会话不存在报 `SessionNotFound`。
     pub async fn archive_session(
@@ -398,6 +428,31 @@ mod tests {
         let record = store.get_session(&session).await.expect("renamed record");
         assert_eq!(record.title, "new title");
         assert_eq!(record.updated_at_ms, 500);
+        assert!(!store
+            .rename_session_if_title(&session, "old", "stale title", 600)
+            .await
+            .expect("stale naming"));
+        assert_eq!(
+            store.get_session(&session).await.expect("unchanged"),
+            record
+        );
+        assert!(store
+            .rename_session_if_title(&session, "new title", "model title", 700)
+            .await
+            .expect("matching naming"));
+        let renamed = store.get_session(&session).await.expect("renamed");
+        assert_eq!(renamed.title, "model title");
+        assert_eq!(renamed.updated_at_ms, 700);
+        assert!(!store
+            .rename_session_if_title(&session, "new title", "second model title", 800)
+            .await
+            .expect("one naming write wins"));
+        assert!(matches!(
+            store
+                .rename_session_if_title(&SessionId::from("missing"), "old", "x", 900)
+                .await,
+            Err(SessionStoreError::SessionNotFound(_))
+        ));
         let error = store
             .rename_session(&SessionId::from("missing"), "x", 600)
             .await

@@ -1356,7 +1356,27 @@ impl AppView {
                 self.status_hint = Some(i18n::t("status.connection_lost").into());
             }
             ControllerEvent::Snapshot(snapshot) => {
+                let had_active_session = self.projection.active_session_id.is_some();
+                if had_active_session {
+                    self.stash_composer_draft(cx);
+                }
                 self.projection.merge_snapshot(&snapshot);
+                if had_active_session && self.projection.active_session_id.is_none() {
+                    // 当前会话归档与切走会话同样收口；先前已按原 session
+                    // 保存草稿，不能把旧文本归到无会话槽或另一项目终端。
+                    self.close_open_menu(cx);
+                    self.timeline_paging = false;
+                    self.changes.reset_for_session();
+                    self.restore_composer_draft(cx);
+                    self.reconcile_terminal_workspace(cx);
+                    self.pending_scope_focus = true;
+                } else {
+                    // projection 不持有 rail scope；重复快照仍须以当前 UI
+                    // scope 选择终端，避免归档后的第二次刷新回落错误项目。
+                    let workspace_id = self.inspector_workspace_id();
+                    self.projection
+                        .select_terminal_for_workspace(workspace_id.as_deref());
+                }
                 // 编辑中的 session 已从快照消失（他端归档等）：静默退出
                 // 编辑态，不提交。
                 if self.session_rename.as_ref().is_some_and(|rename| {
@@ -4221,6 +4241,74 @@ mod tests {
             "s-b"
         ));
         assert!(!AppView::message_sent_clears_visible_composer(None, "s-b"));
+    }
+
+    #[gpui::test]
+    fn archived_active_session_restores_drafts_and_terminal_scope(cx: &mut gpui::TestAppContext) {
+        use gpui::AppContext;
+        use serde_json::json;
+
+        let platform = Arc::new(Platform::new());
+        let socket = std::env::temp_dir().join("opt2-archive-snapshot-test.sock");
+        let view = cx.new(|cx| AppView::new(platform, socket, None, cx));
+        let mut snapshot: pawork_client::Snapshot = serde_json::from_value(json!({
+            "instance_id": "test", "snapshot_sequence": 1, "generated_at": 1,
+            "sections": [
+                {"kind": "workspaces", "revision": 1, "data": [
+                    {"id": "ws-a", "name": "A", "trusted": true},
+                    {"id": "ws-b", "name": "B", "trusted": true}
+                ]},
+                {"kind": "session_tree", "revision": 1, "data": [
+                    {"session_id": "s-a", "title": "A", "workspace_id": "ws-a", "updated_at_ms": 1}
+                ]},
+                {"kind": "terminal_sessions", "revision": 1, "data": [
+                    {"id": "term-a", "workspace_id": "ws-a", "state": "running"},
+                    {"id": "term-b", "workspace_id": "ws-b", "state": "running"}
+                ]}
+            ]
+        }))
+        .unwrap();
+        view.update(cx, |view, cx| {
+            view.projection.merge_snapshot(&snapshot);
+            view.projection.select_session("s-a");
+            // 切 scope 保留当前会话；归档后应回到 scope B，而非默认 A。
+            view.scope_workspace_id = Some("ws-b".into());
+            view.reconcile_terminal_workspace(cx);
+            view.terminal_input
+                .update(cx, |input, cx| input.set_text("command for A", cx));
+            view.terminal_drafts
+                .insert("ws-b".into(), "command for B".into());
+            view.text_input
+                .update(cx, |input, cx| input.set_text("draft for A", cx));
+            view.no_session_draft = "no session draft".into();
+            view.timeline_paging = true;
+            view.changes.selected = Some("old-file".into());
+        });
+        snapshot.sections[1].data = Some(json!([]));
+        // 回执与 SessionMetaChanged 各触发一次刷新，两次均不串草稿/终端。
+        for _ in 0..2 {
+            view.update(cx, |view, cx| {
+                view.handle_controller_event(ControllerEvent::Snapshot(snapshot.clone()), cx);
+                assert!(view.projection.active_session_id.is_none());
+                assert!(!view.timeline_paging);
+                assert!(view.changes.selected.is_none());
+                assert_eq!(
+                    view.composer_drafts.get("s-a").map(String::as_str),
+                    Some("draft for A")
+                );
+                assert_eq!(view.text_input.read(cx).text(), "no session draft");
+                assert_eq!(
+                    view.terminal_drafts.get("ws-a").map(String::as_str),
+                    Some("command for A")
+                );
+                assert_eq!(view.terminal_input_workspace.as_deref(), Some("ws-b"));
+                assert_eq!(
+                    view.projection.terminal.session_id.as_deref(),
+                    Some("term-b")
+                );
+                assert_eq!(view.terminal_input.read(cx).text(), "command for B");
+            });
+        }
     }
 
     #[test]

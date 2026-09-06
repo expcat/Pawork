@@ -1,6 +1,6 @@
 # Pawork 活动路线图：Desktop 优化（OPT）
 
-> 基线日期：2026-09-05。状态：**OPT-D 六张候选稿已交付、已获视觉签字；OPT-1 已实现并通过定向验证；OPT-2 已实现且真窗口验收通过（§10.3）；OPT-3 内核/协议/配置半区已实现（3a/3b，ADR-055，API 1.12，§10.4），GUI 控件批次（启用弹层/四默认角色/代理 Switch）已实现并经定向门禁与协议层验收（§10.5），代理 Switch 像素级复验已通过（§10.6）；OPT-4 已实现（4a–4e，§10.6）且真窗口对照新图验收通过（§10.7）；OPT-3d/3e 已实现（ADR-056，API 1.13）并真窗口验收通过（§10.8），desktop 门禁 210/210**。来源：当日正式 Desktop 真窗口走查（11 条反馈）。本文件是当前活动线的任务规划，**不是**源码或冻结契约的事实源。P0–P2 收尾证据仍见 [Desktop Spec §8](spec/desktop.md#8-gui-收尾验收记录2026-09-05)；未排期候选仍见 [backlog.md](spec/backlog.md)。
+> 基线日期：2026-09-05。状态：**OPT-D 六张候选稿已交付、已获视觉签字；OPT-1 已实现并通过定向验证；OPT-2 已实现且真窗口验收通过（§10.3），完成效果审查修复 5 项缺陷并通过定向测试与真窗口复验（§10.10）；OPT-3 内核/协议/配置半区已实现（3a/3b，ADR-055，API 1.12，§10.4），GUI 控件批次（启用弹层/四默认角色/代理 Switch）已实现并经定向门禁与协议层验收（§10.5），代理 Switch 像素级复验已通过（§10.6）；OPT-4 已实现（4a–4e，§10.6）且真窗口对照新图验收通过（§10.7）；OPT-3d/3e 已实现（ADR-056，API 1.13）并真窗口验收通过（§10.8），desktop 门禁 210/210**。来源：当日正式 Desktop 真窗口走查（11 条反馈）。本文件是当前活动线的任务规划，**不是**源码或冻结契约的事实源。P0–P2 收尾证据仍见 [Desktop Spec §8](spec/desktop.md#8-gui-收尾验收记录2026-09-05)；未排期候选仍见 [backlog.md](spec/backlog.md)。
 
 **闸门**：凡涉及显示效果的条目，必须先完成 **OPT-D 统一 UI Design**（一体出图），再改像素与布局。内核/配置/协议可与出图并行准备，但 GUI 落地以设计稿为准。
 
@@ -168,7 +168,7 @@ F3「代理保存到对应配置」：现行 Global `[[providers]].use_proxy` �
 | --- | --- |
 | OPT-D | 六张统一候选稿已交付、尺寸/状态走查通过；**用户视觉签字通过**（设计闸门已放行） |
 | OPT-1 | 1a–1d 已实现；本轮审查修复 3 项缺陷，608 项定向测试、Desktop 构建与单窗口外观保存/重启复验通过（§10.9）；未归档/未发布 |
-| OPT-2 | 2a–2d 已实现（ADR-054，API 1.11）；定向自动验证与真窗口验收通过（验收中修复无项目会话无法问答，见 §10.3）；未归档/未发布 |
+| OPT-2 | 2a–2d 已实现（ADR-054，API 1.11）；初次验收见 §10.3；本轮审查修复 5 项缺陷，622 项定向测试、CLI/Desktop 构建与真窗口复验通过（§10.10）；未归档/未发布 |
 | OPT-3 | 3a/3b 内核·协议·配置已实现（ADR-055，API 1.12）；GUI 控件批次已实现（§10.5），协议层验收通过、修复 D3a 缺陷；代理 Switch 像素级复验已通过（§10.6）；3d/3e 已实现（ADR-056，API 1.13）且真窗口验收通过（§10.8），desktop 门禁 210/210 |
 | OPT-4 | 4a–4e 已实现（§10.6）：图标命中区/字形、Inspector 默认折叠 + 重开入口、Settings 全宽与导航零位移、4e 核对一致；desktop 门禁 207/207；真窗口对照新图验收通过（§10.7） |
 
@@ -357,4 +357,35 @@ Full workspace gate: NOT RUN（当前未设置全量门禁）。
 
 Validated: 上表实际命令、真窗口 AX/截图、隔离偏好文件与进程 argv；用户原配置哈希不变。
 Targeted regressions: 目标项目信任隔离、非 Global 权限键先剥离后校验、外观单项保存保留另一项。
+Full workspace gate: NOT RUN（当前未设置全量门禁）。
+
+
+### 10.10 OPT-2 完成效果审查与修复（2026-09-06）
+
+对照 §5 的 2a–2d 和 ADR-054，核对 Host、storage、Desktop 与现有回归；发现并修复五项缺陷：
+
+- **命名误决议审批（P1）**：读取首条用户消息使用了会封闭 pending approval 的恢复入口，延迟执行的命名任务可能拒绝下一回合审批并追加事件。改用 `resume_messages_keep_pending` 只读重放；回归比较完整事件账本与待审批状态，旧实现先红、修复后绿。
+- **自动标题覆盖手动改名（P2）**：读标题后再 UPDATE 存在竞争窗口。storage 增 `rename_session_if_title`，以单条条件 UPDATE 校验占位名并写回；不匹配时标题与更新时间均不变，多个结果只允许首个匹配者写入。
+- **命名请求阻塞配置操作（P2）**：命名网络请求全程持有 Core 读锁，模型切换等写操作需等待。改为同步快照依赖后释放锁，装配、目录解析与补全共用 20s 上限；返回时复核命名配置仍有效，手动改名或清除角色后旧结果不落盘、不广播。暂停 Provider 的回归实证网络等待期间可取得 Core 写锁。
+- **新建后打开错误会话（P2）**：Desktop 忽略创建回执、猜测刷新列表首项，在并发更新时可能选错。改为只使用成功 Data 回执中的非空 `session_id`；缺键、畸形或失败回执报错，snapshot 只刷新列表。
+- **归档后草稿与终端项目错位（P1）**：当前会话从 snapshot 消失时，AppView 未同步 Composer 草稿和 Terminal workspace。改为保存原会话草稿、恢复无会话草稿、复位分页与 Changes，并切换 Terminal 的 workspace 与输入草稿；连续 snapshot 仍按当前 UI scope 选终端。真实 AppView 回归覆盖原会话项目与归档后 scope 不同、重复刷新两次的情况。
+
+实现改动限于 6 个源码文件，无新增依赖、schema 或 wire 变化；ADR-054、GUI 设计及 app/storage/desktop 包级 Spec 同批同步。自动验证后只读收口审查通过。
+
+真窗口使用隔离 HOME、数据目录、凭证目录与平行 bundle（`--instance opt2-review`），Host 当次指定 `--provider opencode-go --model glm-5.3-flash`，不写持久默认。验证结果：
+
+- All projects 的 New task 在 SQLite 落为 NULL workspace，界面归 Unassigned 并显示 No project / 文件工具不可用；行内改名 Enter 提交后 Header 与数据库一致，归档后列表隐藏且数据库 `archived=1`。
+- 两个真实临时项目各建一个 PTY；项目 B 会话激活时分别填入 Composer 与 Terminal 草稿。归档 B 后恢复无会话 Composer 草稿、项目 A 的 Terminal 草稿与 PTY；实际发送恢复的命令成功，再写入标记文件，确认文件只在项目 A 出现、项目 B 未误写。经协议反归档并重新打开 B 后，两份 B 草稿恢复。
+- 结论由窗口截图、AX 状态、Host snapshot、SQLite 与实际文件交叉验证。此轮隔离环境无凭证，未新跑真实模型问答或自动命名；命名边界由上述自动回归验证，既有 live 验收记录见 §10.3。用户原 `config.toml` 哈希及 `desktop.json` 不存在状态前后不变；收尾已关闭两个 PTY 与测试 Desktop/Host，无残留测试进程。
+
+| 检查 | 结果 |
+| --- | --- |
+| `cargo test -p pawork-storage -p pawork-app --offline --lib --tests` | 410 passed，1 ignored（既有 golden 写入器） |
+| `cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders` | 212 passed |
+| `cargo build -p pawork -p pawork-desktop --offline --bins --features gpui/runtime_shaders` | 通过 |
+| 无项目创建、改名、归档、草稿恢复与跨项目 PTY 路由 | 真窗口复验通过（范围见上段） |
+| `git diff --check`、变更文档本地链接 | 通过 |
+
+Validated: 上表实际命令、真窗口 AX/截图、Host snapshot、SQLite 与项目内标记文件；日志及截图留本机 /tmp，不检入仓库。
+Targeted regressions: 命名不改审批/事件账本、原子标题写回、命名释放 Core 锁与丢弃失效结果、创建回执定位、归档后草稿与 Terminal scope 一致。
 Full workspace gate: NOT RUN（当前未设置全量门禁）。

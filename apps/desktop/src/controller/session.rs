@@ -2,6 +2,54 @@
 
 use super::*;
 
+fn created_session_id(response: &AppResponse) -> Result<String, String> {
+    match response {
+        AppResponse::Data(data) => data
+            .get("session_id")
+            .and_then(serde_json::Value::as_str)
+            .filter(|id| !id.trim().is_empty())
+            .map(str::to_string)
+            .ok_or_else(|| "SessionCreate response has no valid session_id".into()),
+        AppResponse::Error(error) => Err(error.message.clone()),
+        _ => Err("SessionCreate did not return a session_view response".into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn created_session_id_uses_receipt_and_rejects_invalid_responses() {
+        assert_eq!(
+            created_session_id(&AppResponse::Data(json!({"session_id": "s-created"}))),
+            Ok("s-created".into())
+        );
+        for data in [
+            json!({}),
+            json!({"session_id": 1}),
+            json!({"session_id": " "}),
+        ] {
+            assert!(created_session_id(&AppResponse::Data(data)).is_err());
+        }
+        let accepted = serde_json::from_value(json!({
+            "type": "accepted", "data": {"command_id": "cmd-create"}
+        }))
+        .unwrap();
+        assert!(created_session_id(&accepted).is_err());
+        let error = serde_json::from_value(json!({
+            "type": "error", "data": {
+                "category": "invalid_request", "message": "workspace is missing", "retryable": false
+            }
+        }))
+        .unwrap();
+        assert_eq!(
+            created_session_id(&error),
+            Err("workspace is missing".into())
+        );
+    }
+}
+
 impl DesktopController {
     /// 分页加载 session 时间线：SessionGet 按 timeline_after_sequence 链式
     /// 拉取直到 complete；分页期间先到的 live 事件由 projection 按 sequence
@@ -80,8 +128,8 @@ impl DesktopController {
         });
     }
 
-    /// 新建 session：SessionCreate 只回 Accepted（无 session id），重取 snapshot
-    /// 挑 updated_at_ms 最新的 session 返回（host gui_host 行为）。
+    /// 新建 session：使用 SessionCreate 的 session_view 回执定位新会话，
+    /// snapshot 只负责刷新列表，不按更新时间猜测创建结果。
     /// ADR-054 D1：workspace_id = None 直建无归属会话（All projects 下的
     /// 全局 New task），不经过任何工作区确认。
     pub fn create_session(&self, workspace_id: Option<String>) {
@@ -95,24 +143,35 @@ impl DesktopController {
         let events = self.event_sender();
         self.runtime.spawn(async move {
             let command = session_create_command(workspace_id.as_deref());
-            if let Err(error) = client
+            let response = match client
                 .command(command, command_source(), actor_identity())
                 .await
             {
-                let _ = events
-                    .send(ControllerEvent::OperationFailed {
-                        action: "create session",
-                        reason: error.to_string(),
-                    })
-                    .await;
-                return;
-            }
+                Ok(response) => response,
+                Err(error) => {
+                    let _ = events
+                        .send(ControllerEvent::OperationFailed {
+                            action: "create session",
+                            reason: error.to_string(),
+                        })
+                        .await;
+                    return;
+                }
+            };
+            let session_id = match created_session_id(&response.response) {
+                Ok(session_id) => session_id,
+                Err(reason) => {
+                    let _ = events
+                        .send(ControllerEvent::OperationFailed {
+                            action: "create session",
+                            reason,
+                        })
+                        .await;
+                    return;
+                }
+            };
             match client.snapshot().await {
                 Ok(snapshot) => {
-                    let latest = sessions_in_snapshot(&snapshot)
-                        .into_iter()
-                        .map(|session| session.session_id)
-                        .next();
                     if events
                         .send(ControllerEvent::Snapshot(snapshot))
                         .await
@@ -120,19 +179,9 @@ impl DesktopController {
                     {
                         return;
                     }
-                    if let Some(session_id) = latest {
-                        let _ = events
-                            .send(ControllerEvent::SessionCreated { session_id })
-                            .await;
-                    } else {
-                        let _ = events
-                            .send(ControllerEvent::OperationFailed {
-                                action: "create session",
-                                reason: "host accepted SessionCreate but snapshot has no sessions"
-                                    .into(),
-                            })
-                            .await;
-                    }
+                    let _ = events
+                        .send(ControllerEvent::SessionCreated { session_id })
+                        .await;
                 }
                 Err(error) => {
                     let _ = events

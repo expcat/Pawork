@@ -31,7 +31,7 @@
 | `src/session/event_store.rs` | ~2250 | 事件读写核心：`create_session(_with_identity/_with_workspace)`/`create_branch`/`switch_branch`/`append_event`/`replay_events`/`tail_events`/`events_by_branch`；`set_session_workspace`（ADR-043 既有会话归属写穿）；写前 Secret 脱敏（`redact_sensitive_json`、`sanitize_reasoning_metadata`）与 legacy provider hint 键只读映射；`persist_event_in_transaction` 供导入复用 |
 | `src/session/projection.rs` | ~1590 | 投影写入 `apply_projection`、读取 `ProjectionSnapshot`（messages/runs/tool_calls/server_tool_events/program_output/screenshots/transcript_envelopes）、compaction 水位折叠、`rebuild_projection` |
 | `src/session/session_tree.rs` | ~580 | 分支树单点：`load_ancestor_lineage`/`visible_on_lineage`/`events_on_lineage`/`fork_from_event`/`session_tree`；fork 边界校验与幂等 |
-| `src/session/catalog.rs` | ~290 | 会话目录：`list_sessions`/`get_session` 与 `SessionRecord`（v13 起含 `workspace_id: Option<String>` 归属弱引用）；`rename_session`/`archive_session`（ADR-054：更新 title/archived 与 `updated_at_ms`，缺失报 `SessionNotFound`）；`list_session_workspace_bindings` 返回含 archived 的全部非 NULL 绑定；v14 起含项目注册表 `WorkspaceRecord` 与 `register_workspace`/`list_workspaces` |
+| `src/session/catalog.rs` | ~290 | 会话目录：`list_sessions`/`get_session` 与 `SessionRecord`（v13 起含 `workspace_id: Option<String>` 归属弱引用）；`rename_session`/`rename_session_if_title`/`archive_session`（ADR-054：更新 title/archived 与 `updated_at_ms`，缺失报 `SessionNotFound`）；`list_session_workspace_bindings` 返回含 archived 的全部非 NULL 绑定；v14 起含项目注册表 `WorkspaceRecord` 与 `register_workspace`/`list_workspaces` |
 | `src/session/command_ledger.rs` | ~730 | `CommandLedger`：`check`/`record`/`release`/`reclaim_inflight`/`stats`，容量 4096 全局淘汰；`waiting_tool_call(s)` 审批恢复查询 |
 | `src/session/client_adapter.rs` | ~530 | `SqliteClientSessionRegistryStore`：以 SQLite 实现 domain 的 `SessionRegistryStore`（load_all/insert/compare_and_swap/remove_if_owner，乐观并发） |
 | `src/session/test_support.rs` | ~340 | `cfg(test)` 种子场景（fork_tree/interleaved/compaction），供迁移 golden 复现历史库形态 |
@@ -113,6 +113,7 @@
 ### 3.7 目录、标签与身份
 
 - `list_sessions()`（固定过滤 `archived=0`、按 `updated_at_ms` 降序，无参数）/ `get_session(&SessionId)`（缺失报 `SessionNotFound`）：`SessionRecord { session_id, title, created_at_ms, updated_at_ms, archived, active_branch }`。`rename_session(&SessionId, title, now_ms)` / `archive_session(&SessionId, archived, now_ms)`（ADR-054）：UPDATE 单行走 `updated_at_ms` 刷新，缺失报 `SessionNotFound`；归档不删事件与投影，`get_session` 仍可读。
+- `rename_session_if_title(&SessionId, expected_title, title, now_ms) -> bool`：单条条件 UPDATE 原子校验旧标题并更新；不匹配返回 false，标题与时间戳保持不变；缺失报 `SessionNotFound`。自动命名使用此口，多个命名结果仅首个匹配者写回，已改名会话不被旧结果覆盖；不改 schema。
 - `add_tags(session, &[&str])`：幂等插入 `session_tags`。
 - `get_session_identity(session) -> (tenant_id, principal_id)`。
 
@@ -258,7 +259,7 @@ feature 依赖有传递关系：`compaction ⇒ session`，`checkpoint ⇒ blob`
 | `event_store.rs` tests | Secret 脱敏矩阵（provider metadata / server tool / envelope / reasoning hints 超限拒绝）、legacy 键映射与旧行读回、sequence/parent 校验、分支隔离分页 |
 | `projection.rs` tests | 折叠后投影窗口、事件-投影一致性、append-only 触发器、`rebuild_projection` 与增量投影等价 |
 | `session_tree.rs` tests | fork 四类边界与拒绝、幂等、lineage 排除 fork 后父分支追加 |
-| `catalog.rs` / `client_adapter.rs` tests | 目录排序/归档过滤；Registry insert/CAS/remove 乐观并发（借 `pawork-protocol` adapter 消费）；workspace 注册表幂等重登、跨重开存活、同 id 异 root fail-closed |
+| `catalog.rs` / `client_adapter.rs` tests | 目录排序/归档过滤；条件改名匹配写入、失配不更新时间、缺失拒绝；Registry insert/CAS/remove 乐观并发（借 `pawork-protocol` adapter 消费）；workspace 注册表幂等重登、跨重开存活、同 id 异 root fail-closed |
 | `test_support.rs`（cfg(test)） | fork_tree/interleaved/compaction 三个种子场景构造器，供迁移 golden 与 lineage 断言复现历史库形态 |
 | `command_ledger.rs` tests | New/Replay/InFlight 分类、key 冲突、重启 reclaim、容量 4096 全局淘汰（跨 tenant/scope） |
 | `compaction/*` tests | retention 各策略保留集、engine 产出 recovery 分支与快照（含同 head 重试复用）、snapshot v1 serde golden |
@@ -287,7 +288,7 @@ cargo test -p pawork-storage --offline --lib --tests --features compaction,check
 ## 8. 注意事项与已知限制
 
 - **休眠 DDL**：`session_leases`（v3）与 `session_bindings`（v9）建表后当前**无任何生产读写入口**；`SessionStoreError::LeaseHeld` / `LeaseNotHeld` / `SessionHasEvents` 错误变体同样无触发路径——属预留位，勿据此假设租约/绑定功能已可用（v9 注释明示 binding 状态机已随 R0/ADR-038 归档，留表只为 append-only）。
-- **无归档/删除写口**：没有 `archive_session`、`delete_session`、`delete_branch` 之类的公开 API；`archived` 标记只能经 `import_session` 从导出恢复，目录查询固定隐藏 archived 行。
+- **无永久删除写口**：`archive_session` 已提供归档/反归档；没有 `delete_session`、`delete_branch` 公开 API，目录查询固定隐藏 archived 行。
 - `replay_events` 跨分支合并、`events_by_branch` 不含祖先：两者都**不是**恢复语义，恢复一律走 `events_on_lineage`。
 - 物化 `messages` 表在 compaction 折叠后存在盲区，读消息请走 `ProjectionSnapshot`（事件账本重建）而非直查表；`runs`/`tool_calls` 等物化表为全 session 维度，不区分分支。
 - CommandLedger 容量淘汰是**全局** 4096（非按 tenant/scope 配额）；淘汰后旧命令重放会得到 `New` 而非 `Replay`。

@@ -87,6 +87,163 @@ async fn run_success_auto_titles_placeholder_session_and_broadcasts() {
 }
 
 #[tokio::test]
+async fn auto_title_preserves_pending_approval_and_event_ledger() {
+    let (mut core, _dir) = crate::testsupport::mock_core(Vec::new()).await;
+    core.provider = Arc::new(naming_mock_provider(vec![MockScript::new()
+        .text("保留审批的标题")
+        .complete()]));
+    core.config.naming_provider = Some("mock".into());
+    core.config.naming_model = Some("model-1".into());
+    let session = core.create_session("New session").await.expect("session");
+    let run = RunId::from("run-before-naming");
+    let mut sequence = core.next_sequence(&session).await.expect("sequence");
+    core.append_payload(
+        &session,
+        &run,
+        &mut sequence,
+        AgentEvent::MessageCommitted {
+            message: crate::testsupport::user_hello(),
+        },
+    )
+    .await
+    .expect("user message");
+    // 成功回合的命名任务延后调度时，下一回合可能已在等审批。
+    super::approval::append_waiting_write(
+        &core,
+        &session,
+        &run,
+        &pawork_domain::ToolCallId::from("call-next"),
+        "pending-next",
+        sequence,
+    )
+    .await;
+    let store = core.store().expect("store").clone();
+    let before = store.replay_events(&session, 1, 64).await.expect("events");
+    let adapter = GuiHostAdapter::new(Arc::new(core));
+    crate::gui_host::auto_title::auto_title_after_successful_run(
+        Arc::clone(&adapter.core),
+        Arc::clone(&adapter.bus),
+        adapter.instance.clone(),
+        session.clone(),
+    )
+    .await;
+    assert_session_title(&adapter, &session, "保留审批的标题").await;
+    assert_eq!(
+        store.replay_events(&session, 1, 64).await.expect("events"),
+        before
+    );
+    let snapshot = store.projection_snapshot(&session).await.expect("snapshot");
+    assert_eq!(snapshot.tool_calls[0].state, "waiting_for_approval");
+}
+
+#[tokio::test]
+async fn auto_title_releases_core_and_respects_manual_rename_or_role_clear() {
+    use pawork_domain::{
+        CanonicalModelRequest, ModelDefinition, ModelProvider, ModelResponseSummary, ProviderError,
+        ProviderEventSink, ProviderId, ResolvedCredential,
+    };
+    struct PausedTitle {
+        provider: MockProvider,
+        started: tokio::sync::Notify,
+        resume: tokio::sync::Notify,
+    }
+    #[async_trait]
+    impl ModelProvider for PausedTitle {
+        fn id(&self) -> ProviderId {
+            self.provider.id()
+        }
+        async fn list_models(
+            &self,
+            credential: Option<&ResolvedCredential>,
+        ) -> Result<Vec<ModelDefinition>, ProviderError> {
+            self.provider.list_models(credential).await
+        }
+        async fn stream(
+            &self,
+            request: CanonicalModelRequest,
+            sink: &dyn ProviderEventSink,
+            cancel: CancellationToken,
+        ) -> Result<ModelResponseSummary, ProviderError> {
+            self.started.notify_one();
+            self.resume.notified().await;
+            self.provider.stream(request, sink, cancel).await
+        }
+    }
+    for manual_rename in [true, false] {
+        let (mut core, _dir) = crate::testsupport::mock_core(Vec::new()).await;
+        let provider = Arc::new(PausedTitle {
+            provider: naming_mock_provider(vec![MockScript::new().text("过期自动标题").complete()]),
+            started: Default::default(),
+            resume: Default::default(),
+        });
+        core.provider = provider.clone();
+        core.config.naming_provider = Some("mock".into());
+        core.config.naming_model = Some("model-1".into());
+        let session = core.create_session("New session").await.expect("session");
+        let mut sequence = core.next_sequence(&session).await.expect("sequence");
+        core.append_payload(
+            &session,
+            &RunId::from("finished"),
+            &mut sequence,
+            AgentEvent::MessageCommitted {
+                message: crate::testsupport::user_hello(),
+            },
+        )
+        .await
+        .expect("message");
+        let adapter = GuiHostAdapter::new(Arc::new(core));
+        let mut events = adapter.subscribe_events();
+        let naming = tokio::spawn(
+            crate::gui_host::auto_title::auto_title_after_successful_run(
+                Arc::clone(&adapter.core),
+                Arc::clone(&adapter.bus),
+                adapter.instance.clone(),
+                session.clone(),
+            ),
+        );
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            provider.started.notified(),
+        )
+        .await
+        .expect("naming started");
+        let mut locked =
+            tokio::time::timeout(std::time::Duration::from_secs(1), adapter.core.write())
+                .await
+                .expect("naming must not hold Core across network I/O");
+        if manual_rename {
+            locked
+                .rename_session(&session, "用户标题", 500)
+                .await
+                .expect("rename");
+        } else {
+            locked.config.naming_provider = None;
+            locked.config.naming_model = None;
+        }
+        drop(locked);
+        provider.resume.notify_one();
+        tokio::time::timeout(std::time::Duration::from_secs(5), naming)
+            .await
+            .expect("naming finished")
+            .expect("join");
+        assert_session_title(
+            &adapter,
+            &session,
+            if manual_rename {
+                "用户标题"
+            } else {
+                "New session"
+            },
+        )
+        .await;
+        assert!(
+            events.try_recv().is_err(),
+            "stale naming must not broadcast"
+        );
+    }
+}
+
+#[tokio::test]
 async fn auto_title_without_naming_config_skips_provider_call() {
     let dir = tempfile::tempdir().expect("store");
     let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))

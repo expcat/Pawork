@@ -240,65 +240,74 @@ impl AppCore {
         Ok(())
     }
 
-    /// ADR-054 D4：用命名模型做一次无工具一次性补全，产出会话标题。
-    ///
-    /// 命名 provider 与当前已装配 provider 相同且凭证就绪时复用既有
-    /// adapter / 凭证（避免重复装配）；否则经 assemble_provider 全量装配。
-    /// 调用带超时；任何失败由调用方决定保留占位名，本方法不产生用户可见
-    /// 错误。输出 trim 后取首个非空行并限长，空结果返回 None。
-    pub(crate) async fn generate_session_title(
+    /// ADR-054 D4：同步快照命名所需状态，返回不借用 Core 的补全任务。
+    /// 装配、目录解析与补全共用 20s 上限，不阻塞 Core 的配置写者。
+    pub(crate) fn generate_session_title(
         &self,
         first_user_text: &str,
-    ) -> Result<Option<String>, AppError> {
-        let (provider, model) = match (
-            self.config.naming_provider.as_deref(),
-            self.config.naming_model.as_deref(),
-        ) {
-            (Some(provider), Some(model)) => (provider.to_string(), model.to_string()),
-            _ => return Ok(None),
-        };
-        let provider_id = ProviderId::new(provider);
-        let (adapter, credential, mut registry) =
-            if provider_id == self.provider_id && !self.provider_pending {
-                (
-                    Arc::clone(&self.provider),
-                    self.credential.clone(),
-                    self.registry.as_ref().clone(),
-                )
-            } else {
-                let assembled = assemble_provider(
-                    &self.config,
-                    &provider_id,
-                    &self.backend,
-                    true,
-                    Arc::clone(&self.reasoning_protector) as Arc<dyn ReasoningProtector>,
+    ) -> impl std::future::Future<Output = Result<Option<String>, AppError>> + Send + 'static {
+        let config = self.config.clone();
+        let backend = Arc::clone(&self.backend);
+        let protector = Arc::clone(&self.reasoning_protector);
+        let reuse = (!self.provider_pending).then(|| {
+            (
+                self.provider_id.clone(),
+                Arc::clone(&self.provider),
+                self.credential.clone(),
+                self.registry.as_ref().clone(),
+            )
+        });
+        let first_user_text = first_user_text.to_string();
+        async move {
+            tokio::time::timeout(NAMING_TIMEOUT, async move {
+                let (provider, model) = match (
+                    config.naming_provider.as_deref(),
+                    config.naming_model.as_deref(),
+                ) {
+                    (Some(provider), Some(model)) if config.is_model_enabled(provider, model) => {
+                        (ProviderId::new(provider), model)
+                    }
+                    _ => return Ok(None),
+                };
+                let (adapter, credential, mut registry) = match reuse {
+                    Some((id, adapter, credential, registry)) if id == provider => {
+                        (adapter, credential, registry)
+                    }
+                    _ => {
+                        let assembled = assemble_provider(
+                            &config,
+                            &provider,
+                            &backend,
+                            true,
+                            protector as Arc<dyn ReasoningProtector>,
+                        )
+                        .await?;
+                        (assembled.adapter, assembled.credential, assembled.registry)
+                    }
+                };
+                let entry = resolve_provider_model(
+                    &mut registry,
+                    adapter.as_ref(),
+                    credential.as_ref(),
+                    &provider,
+                    model,
                 )
                 .await?;
-                (assembled.adapter, assembled.credential, assembled.registry)
-            };
-        let entry = resolve_provider_model(
-            &mut registry,
-            adapter.as_ref(),
-            credential.as_ref(),
-            &provider_id,
-            &model,
-        )
-        .await?;
-        let request = naming_request(entry.id.clone(), first_user_text);
-        let sink = TitleTextSink::default();
-        let streamed = tokio::time::timeout(
-            NAMING_TIMEOUT,
-            adapter.stream(request, &sink, CancellationToken::new()),
-        )
-        .await
-        .map_err(|_| {
-            AppError::from(ProviderError::new(
-                ProviderErrorKind::Timeout,
-                "session naming timed out",
-            ))
-        })??;
-        let _ = streamed;
-        Ok(sink.single_line_title())
+                let request = naming_request(entry.id.clone(), &first_user_text);
+                let sink = TitleTextSink::default();
+                adapter
+                    .stream(request, &sink, CancellationToken::new())
+                    .await?;
+                Ok(sink.single_line_title())
+            })
+            .await
+            .map_err(|_| {
+                AppError::from(ProviderError::new(
+                    ProviderErrorKind::Timeout,
+                    "session naming timed out",
+                ))
+            })?
+        }
     }
 
     /// 追加 model.switched 诊断事件（冻结的 Diagnostic 变体，不新增枚举形状）。

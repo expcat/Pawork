@@ -201,6 +201,8 @@ AX 焦点口径：grouping 是直接按钮，name 表达目标动作、value 表
 4. 时间线每次变化 `timeline_changed()` 递增代次；render 前 `sync_list` 对 `ListState` 统一 `reset(len + pending_approval)`（projection 有条目替换语义，splice 不安全）。R4 Wave A 起为 Top 对齐 + 显式跟随：跟随态由 `timeline_following` 单一表达（滚动事件 `visible_range` 覆盖末项即贴底），reset 后跟随臂显式 `scroll_to` 末项底；脱钩读史恢复 reset 前偏移（item_ix 越界钳制），视口不跳；回底 = BackToBottom / 滚回底部重挂。
 5. run 终态（completed / cancelled / failed / interrupted）清 `active_run_id`（Composer 恢复可用）、清该 run 的审批卡，并触发 Changes 刷新；run 进行中由 1s 时钟驱动时长徽标重绘。
 
+OPT-2 审查修复（2026-09-06）：`session_create` 仅从成功 Data 回执的非空 `session_id` 定位新会话，拒绝 Error / 缺键 / 畸形回执，snapshot 只刷新列表。当前会话因归档从 snapshot 消失时，AppView 保存原会话 Composer 草稿、恢复无会话草稿、复位分页与 Changes、收口 Terminal workspace 与对应输入草稿；重复 snapshot 仍按 UI scope 选终端。定向测试：`created_session_id_uses_receipt_and_rejects_invalid_responses`、`archived_active_session_restores_drafts_and_terminal_scope`（真实 AppView handler 连续两次刷新）。
+
 ### 4.3 审批卡交互
 
 1. live `ToolApprovalRequired{ run_id, tool_call_id, reason }` 或 snapshot `pending_tool_approvals` 段 → `pending_approval`（tool_name 从 reason 首段提取；snapshot 形态含 relative_path / preview）。

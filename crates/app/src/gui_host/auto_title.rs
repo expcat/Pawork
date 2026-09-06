@@ -21,17 +21,16 @@ pub(crate) async fn auto_title_after_successful_run(
     instance: pawork_domain::CoreInstanceId,
     session_id: SessionId,
 ) {
-    // 与 chat turn 相同口径：全程持读锁；只阻塞 provider/默认模型切换等
-    // 写者，读侧并发不受影响。
-    let core = core.read().await;
-    match core.get_session(&session_id).await {
+    // 仅快照配置、读取消息与写回时持锁，网络请求不阻塞用户操作。
+    let locked = core.read().await;
+    match locked.get_session(&session_id).await {
         Ok(record) if record.title == PLACEHOLDER_SESSION_TITLE => {}
         other => {
             tracing::debug!(title = ?other.map(|record| record.title), "session auto naming skipped: title not placeholder");
             return;
         }
     }
-    let config = core.config();
+    let config = locked.config();
     match (
         config.naming_provider.as_deref(),
         config.naming_model.as_deref(),
@@ -54,11 +53,14 @@ pub(crate) async fn auto_title_after_successful_run(
             return;
         }
     }
-    let Some(first_user_text) = first_user_text(&core, &session_id).await else {
+    let Some(first_user_text) = first_user_text(&locked, &session_id).await else {
         tracing::debug!("session auto naming skipped: no first user text");
         return;
     };
-    let title = match core.generate_session_title(&first_user_text).await {
+    let naming_pair = (config.naming_provider.clone(), config.naming_model.clone());
+    let generate = locked.generate_session_title(&first_user_text);
+    drop(locked);
+    let title = match generate.await {
         Ok(Some(title)) => title,
         Ok(None) => return,
         Err(error) => {
@@ -66,24 +68,37 @@ pub(crate) async fn auto_title_after_successful_run(
             return;
         }
     };
-    // 写回前复核：命名补全期间标题可能已被用户改动，此时放弃写回。
-    if let Ok(record) = core.get_session(&session_id).await {
-        if record.title != PLACEHOLDER_SESSION_TITLE {
-            return;
-        }
+    let locked = core.read().await;
+    let config = locked.config();
+    if (config.naming_provider.clone(), config.naming_model.clone()) != naming_pair
+        || !config.is_model_enabled(
+            naming_pair.0.as_deref().expect("configured provider"),
+            naming_pair.1.as_deref().expect("configured model"),
+        )
+    {
+        return;
     }
-    if let Err(error) = core
-        .rename_session(
+    let Ok(store) = locked.store() else {
+        return;
+    };
+    // 条件判断与 UPDATE 同一条 SQL：用户改名与多个命名任务只允许匹配者写回。
+    match store
+        .rename_session_if_title(
             &session_id,
+            PLACEHOLDER_SESSION_TITLE,
             &title,
             now_timestamp().as_unix_millis() as i64,
         )
         .await
     {
-        tracing::debug!(error = %error, "session auto naming rename failed");
-        return;
+        Ok(true) => {}
+        Ok(false) => return,
+        Err(error) => {
+            tracing::debug!(error = %error, "session auto naming rename failed");
+            return;
+        }
     }
-    let Ok(record) = core.get_session(&session_id).await else {
+    let Ok(record) = locked.get_session(&session_id).await else {
         return;
     };
     bus.publish_raw(
@@ -99,7 +114,7 @@ pub(crate) async fn auto_title_after_successful_run(
 
 /// 会话首条用户消息的正文 Text part（@附件等独立 part 不参与命名输入）。
 async fn first_user_text(core: &AppCore, session_id: &SessionId) -> Option<String> {
-    let messages = core.resume_messages(session_id).await.ok()?;
+    let messages = core.resume_messages_keep_pending(session_id).await.ok()?;
     messages
         .iter()
         .find(|message| message.role == MessageRole::User)
