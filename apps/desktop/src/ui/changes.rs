@@ -10,6 +10,7 @@ use gpui::{div, prelude::*, px, Context, Div, MouseDownEvent, ScrollHandle};
 use crate::controller::{DiffFileDetail, DiffFileSummary, DiffLineKind, GitDiffInfo};
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
 use crate::ui::components::dropdown::{MenuPanel, MenuRow};
+use crate::ui::components::focus_ring::focus_ring;
 use crate::ui::components::label::Label;
 use crate::ui::components::list_row::ListRow;
 use crate::ui::i18n::t;
@@ -259,7 +260,11 @@ impl ChangesPanelState {
 
 impl AppView {
     /// Changes 页内容（二级页签 + Files / Summary）。
-    pub(super) fn changes_element(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn changes_element(
+        &self,
+        window: &gpui::Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let tab = self.changes.tab;
         let secondary_tab =
             |id: &'static str, label: &'static str, current: bool, target: ChangesTab| {
@@ -274,7 +279,13 @@ impl AppView {
                     .cursor_pointer()
                     .tab_stop(true)
                     .track_focus(&self.changes_tab_focus[target as usize])
-                    .focus(|style| style.border_1().border_color(dark().accent.primary))
+                    // 聚焦描边走覆盖层（零布局参与，见
+                    // components/focus_ring.rs）：固定尺寸页签加边框虽不改
+                    // 外壳尺寸，但会压缩内容盒、推动居中文字位移。
+                    .when(
+                        self.changes_tab_focus[target as usize].is_focused(window),
+                        |tab| tab.child(focus_ring(px(0.0))),
+                    )
                     .text_size(font::BODY_SM)
                     .text_color(if current {
                         dark().text.primary

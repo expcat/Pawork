@@ -7,6 +7,7 @@ use gpui::{div, prelude::*, px, Context, FocusHandle, Window};
 
 use crate::projection::{ConnectionState, TerminalState, TERMINAL_CWD_UNKNOWN};
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
+use crate::ui::components::focus_ring::focus_ring;
 use crate::ui::components::follow_scroll::BackToBottom;
 use crate::ui::components::panel::Panel;
 use crate::ui::i18n::t;
@@ -211,7 +212,12 @@ fn terminal_stepper(
 }
 
 impl AppView {
-    pub(super) fn inspector_element(&self, connected: bool, cx: &mut Context<Self>) -> Panel {
+    pub(super) fn inspector_element(
+        &self,
+        connected: bool,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Panel {
         let current = self.inspector_tab;
         let mut tabs = div().flex().flex_row().items_center().gap_1();
         for tab in [
@@ -236,7 +242,13 @@ impl AppView {
                     .cursor_pointer()
                     .tab_stop(true)
                     .track_focus(&self.inspector_tab_focus[tab as usize])
-                    .focus(|style| style.border_1().border_color(dark().accent.primary))
+                    // 聚焦描边走覆盖层（零布局参与，见
+                    // components/focus_ring.rs）：固定尺寸页签加边框虽不改
+                    // 外壳尺寸，但会压缩内容盒、推动居中文字位移。
+                    .when(
+                        self.inspector_tab_focus[tab as usize].is_focused(window),
+                        |tab| tab.child(focus_ring(px(0.0))),
+                    )
                     .text_size(font::BODY)
                     .text_color(if selected {
                         dark().text.primary
@@ -300,7 +312,7 @@ impl AppView {
         Panel::side_left(px(metrics::INSPECTOR_WIDTH))
             .child(header)
             .child(match current {
-                InspectorTab::Changes => self.changes_element(cx).into_any_element(),
+                InspectorTab::Changes => self.changes_element(window, cx).into_any_element(),
                 InspectorTab::Terminal => {
                     self.terminal_page_element(connected, cx).into_any_element()
                 }

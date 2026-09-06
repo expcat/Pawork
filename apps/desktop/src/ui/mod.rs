@@ -4095,13 +4095,13 @@ impl Render for AppView {
                             .id("shell-inspector")
                             .debug_selector(|| "shell-inspector".into())
                             .flex()
-                            .child(self.inspector_element(connected, cx)),
+                            .child(self.inspector_element(connected, window, cx)),
                     );
                 }
                 (sidebar, main)
             }
             AppRoute::Settings => {
-                let sidebar = self.settings_rail_element(px(shell.rail_width), cx);
+                let sidebar = self.settings_rail_element(px(shell.rail_width), window, cx);
                 let main = div().flex().flex_row().flex_1().min_w_0().min_h_0().child(
                     div()
                         .id("shell-settings")

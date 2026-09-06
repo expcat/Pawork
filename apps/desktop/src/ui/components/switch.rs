@@ -8,10 +8,11 @@
 
 use gpui::{
     div, prelude::*, px, App, ClickEvent, FocusHandle, IntoElement, KeyDownEvent, RenderOnce,
-    SharedString, Styled, Window,
+    SharedString, Window,
 };
 
-use crate::ui::theme::{dark, metrics};
+use crate::ui::components::focus_ring::focus_ring;
+use crate::ui::theme::dark;
 
 /// 轨道宽（含 2px 内缩的圆点行程）。
 pub const SWITCH_TRACK_WIDTH: f32 = 36.0;
@@ -87,13 +88,8 @@ impl Switch {
     }
 }
 
-fn switch_focus_ring_style<T: Styled>(this: T) -> T {
-    this.border(px(metrics::FOCUS_RING_WIDTH))
-        .border_color(dark().accent.primary)
-}
-
 impl RenderOnce for Switch {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let enabled = !self.disabled;
         // 轨道色：开 = 主色；关 / 禁用 = strong 描边色（禁用不另开色档）。
         let track_bg = if self.checked {
@@ -124,10 +120,16 @@ impl RenderOnce for Switch {
                     .bg(dot_color),
             );
         if let Some(focus) = self.focus.as_ref() {
-            switch = switch
-                .tab_stop(true)
-                .track_focus(focus)
-                .focus(switch_focus_ring_style);
+            switch = switch.tab_stop(true).track_focus(focus).relative();
+        }
+        // 聚焦描边以覆盖层绘制（零布局参与，见 components/focus_ring.rs），
+        // 否则 2px 边框会挤占固定轨道的内容盒、推动圆点位移。
+        if self
+            .focus
+            .as_ref()
+            .is_some_and(|focus| focus.is_focused(window))
+        {
+            switch = switch.child(focus_ring(px(SWITCH_TRACK_HEIGHT / 2.0)));
         }
         if enabled {
             switch = switch

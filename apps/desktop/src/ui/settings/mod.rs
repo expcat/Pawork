@@ -23,6 +23,7 @@
 pub(super) use gpui::{div, prelude::*, px, App, Context, FontWeight, Pixels};
 
 pub(super) use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
+pub(super) use crate::ui::components::focus_ring::focus_ring;
 pub(super) use crate::ui::components::label::Label;
 pub(super) use crate::ui::components::list_row::ListRow;
 pub(super) use crate::ui::components::panel::Panel;
@@ -1044,6 +1045,7 @@ impl AppView {
     pub(super) fn settings_rail_element(
         &mut self,
         rail_width: Pixels,
+        window: &gpui::Window,
         cx: &mut Context<Self>,
     ) -> Panel {
         let back_focus = self.settings_back_focus.clone();
@@ -1104,6 +1106,7 @@ impl AppView {
                 t("settings.nav.providers"),
                 current_page == SettingsPage::Providers,
                 SettingsPage::Providers,
+                window,
                 cx,
             ));
         if general_available {
@@ -1112,6 +1115,7 @@ impl AppView {
                 t("settings.nav.general"),
                 current_page == SettingsPage::General,
                 SettingsPage::General,
+                window,
                 cx,
             ));
         }
@@ -1121,6 +1125,7 @@ impl AppView {
                 t("settings.nav.permissions"),
                 current_page == SettingsPage::Permissions,
                 SettingsPage::Permissions,
+                window,
                 cx,
             ));
         }
@@ -1130,6 +1135,7 @@ impl AppView {
                 t("settings.nav.tools"),
                 current_page == SettingsPage::Tools,
                 SettingsPage::Tools,
+                window,
                 cx,
             ));
         }
@@ -1139,6 +1145,7 @@ impl AppView {
                 t("settings.nav.terminal"),
                 current_page == SettingsPage::Terminal,
                 SettingsPage::Terminal,
+                window,
                 cx,
             ));
         }
@@ -1147,6 +1154,7 @@ impl AppView {
             t("settings.nav.appearance"),
             current_page == SettingsPage::Appearance,
             SettingsPage::Appearance,
+            window,
             cx,
         ));
         rail = rail.child(self.settings_nav_item(
@@ -1154,6 +1162,7 @@ impl AppView {
             t("settings.nav.advanced"),
             current_page == SettingsPage::Advanced,
             SettingsPage::Advanced,
+            window,
             cx,
         ));
         if about_available {
@@ -1162,6 +1171,7 @@ impl AppView {
                 t("settings.nav.about"),
                 current_page == SettingsPage::About,
                 SettingsPage::About,
+                window,
                 cx,
             ));
         }
@@ -1227,14 +1237,16 @@ impl AppView {
     /// OPT-4d（F4）：导航选中态零位移。选中与未选中共用同一外壳几何
     ///（同 w_full / 行高 / 水平 padding / 圆角 / 间距 / 字阶），差异只落在
     /// 背景色、字重与不参与布局的左缘指示条。gpui 的 border 参与 Taffy
-    /// 布局（按需出现会推移内容），因此两态常驻 1px 透明描边、焦点只换
-    /// 色，文字坐标在选中切换与焦点切换下逐像素不变。
+    /// 布局（按需出现会推移内容），焦点描边改为持焦时挂载 focus_ring
+    /// 覆盖层（零布局参与，见 components/focus_ring.rs），文字坐标在选中
+    /// 切换与焦点切换下逐像素不变。
     fn settings_nav_item(
         &mut self,
         id: &'static str,
         label: &'static str,
         selected: bool,
         page: SettingsPage,
+        window: &gpui::Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let focus = match page {
@@ -1271,9 +1283,9 @@ impl AppView {
             .px(px(metrics::RAIL_INNER_PAD))
             .rounded(px(4.0))
             .text_size(font::BODY_SM)
-            .border_1()
-            .border_color(gpui::transparent_black())
-            .focus(|style| style.border_color(dark().accent.primary))
+            .when(focus.is_focused(window), |item| {
+                item.child(focus_ring(px(4.0)))
+            })
             .child(label_element);
         if selected {
             // 选中表达：raised 背景 + 绝对定位左缘指示条（零布局参与）。

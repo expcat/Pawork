@@ -5,6 +5,7 @@
 
 pub mod button;
 pub mod dropdown;
+pub mod focus_ring;
 pub mod follow_scroll;
 pub mod label;
 pub mod list_row;

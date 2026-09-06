@@ -5,10 +5,11 @@
 //! raised 行 → surface.hover），pressed 使用更沉的 surface.pressed。
 
 use gpui::{
-    div, prelude::*, px, AnyElement, App, ClickEvent, FocusHandle, IntoElement, KeyDownEvent,
-    RenderOnce, SharedString, Styled, Window,
+    div, prelude::*, px, rems, AbsoluteLength, AnyElement, App, ClickEvent, FocusHandle,
+    IntoElement, KeyDownEvent, RenderOnce, SharedString, Window,
 };
 
+use crate::ui::components::focus_ring::focus_ring;
 use crate::ui::theme::{dark, metrics};
 
 /// 列表行形态。
@@ -56,7 +57,7 @@ impl ListRow {
     }
 
     /// 键盘焦点三件套（R3 Wave B rail 导航）：tab_stop + track_focus +
-    /// 聚焦描边（tab_index 档位由调用方的 focus handle 携带）。
+    /// 聚焦描边覆盖层（tab_index 档位由调用方的 focus handle 携带）。
     pub fn track_focus(mut self, focus: &FocusHandle) -> Self {
         self.focus = Some(focus.clone());
         self
@@ -98,15 +99,13 @@ impl ListRow {
 }
 
 impl RenderOnce for ListRow {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let mut row = div().id(self.id).cursor_pointer();
         if let Some(focus) = self.focus.as_ref() {
-            row = row.tab_stop(true).track_focus(focus).focus(|style| {
-                style
-                    .border(px(metrics::FOCUS_RING_WIDTH))
-                    .border_color(dark().accent.primary)
-            });
+            row = row.tab_stop(true).track_focus(focus).relative();
         }
+        // 聚焦描边覆盖层圆角与行外壳同源：两形态外壳均为 rounded_sm。
+        let ring_radius: AbsoluteLength = rems(0.25).into();
         let hover = match self.kind {
             ListRowKind::Task { selected } => {
                 // flex_row + min_w_0：让子项 flex_1/truncate 拿到 Definite 宽度
@@ -146,6 +145,15 @@ impl RenderOnce for ListRow {
         row = row.active(|style| style.bg(dark().surface.pressed));
         for child in self.children {
             row = row.child(child);
+        }
+        // 聚焦描边以覆盖层绘制（零布局参与，见 components/focus_ring.rs），
+        // 作为最后子项压在行内容之上。
+        if self
+            .focus
+            .as_ref()
+            .is_some_and(|focus| focus.is_focused(window))
+        {
+            row = row.child(focus_ring(ring_radius));
         }
         if let Some(on_click) = self.on_click {
             row = row.on_click(on_click);

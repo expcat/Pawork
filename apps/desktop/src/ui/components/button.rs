@@ -7,9 +7,10 @@
 
 use gpui::{
     div, prelude::*, px, App, ClickEvent, FocusHandle, IntoElement, KeyDownEvent, Pixels, Rems,
-    RenderOnce, Rgba, SharedString, Styled, Window,
+    RenderOnce, Rgba, SharedString, Window,
 };
 
+use crate::ui::components::focus_ring::focus_ring;
 use crate::ui::theme::{dark, font, metrics};
 
 /// 按钮形态：决定底色、文字色与 hover / active 映射（design/README.md §8.1）。
@@ -283,13 +284,8 @@ impl ButtonVariant {
     }
 }
 
-fn focus_ring_style<T: Styled>(this: T) -> T {
-    this.border(px(metrics::FOCUS_RING_WIDTH))
-        .border_color(dark().accent.primary)
-}
-
 impl RenderOnce for Button {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let enabled = !self.disabled;
         let (rest_bg, hover, pressed) = self.variant.colors();
         let bg = if enabled {
@@ -312,10 +308,7 @@ impl RenderOnce for Button {
             button = button.flex().items_center();
         }
         if let Some(focus) = self.focus.as_ref() {
-            button = button
-                .tab_stop(true)
-                .track_focus(focus)
-                .focus(focus_ring_style);
+            button = button.tab_stop(true).track_focus(focus).relative();
         }
         if enabled {
             button = button.cursor_pointer();
@@ -327,6 +320,13 @@ impl RenderOnce for Button {
             button = button.text_color(color);
         }
         button = button.text_size(self.text_size.unwrap_or(font::BASE));
+        // 聚焦描边覆盖层圆角与外壳 rounded 同源（IconCircle / circle 的
+        // radius 由 icon_circle 钉死为 size/2）。
+        let ring_radius = match self.radius {
+            Some(radius) => px(radius),
+            None if matches!(self.variant, ButtonVariant::IconCircle) || self.circle => px(0.0),
+            None => px(metrics::CONTROL_RADIUS),
+        };
         if !matches!(self.variant, ButtonVariant::IconCircle) && !self.circle {
             button = button.rounded(px(metrics::CONTROL_RADIUS));
         }
@@ -363,6 +363,15 @@ impl RenderOnce for Button {
             } else {
                 button = button.child(label);
             }
+        }
+        // 聚焦描边以覆盖层绘制（零布局参与，见 components/focus_ring.rs），
+        // 作为最后子项压在内容之上。
+        if self
+            .focus
+            .as_ref()
+            .is_some_and(|focus| focus.is_focused(window))
+        {
+            button = button.child(focus_ring(ring_radius));
         }
         if let Some(tooltip) = self.tooltip {
             button = button.tooltip(move |_, cx| crate::ui::tooltip_text(tooltip.clone(), cx));
