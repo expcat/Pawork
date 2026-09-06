@@ -88,7 +88,7 @@
 >
 > **CLN-5 模块增量（2026-09-04）**：删除 `projection.rs` / `controller.rs` / `ui/settings.rs` 神文件（无 shim）；Settings JSON 经 `pawork_client` protocol 类型反序列化；`SettingsQueryGate` 统一 loading/stale/写 gate；断线 `refresh_all_settings` + `mark_settings_stale` 单点扇出；AX identifier 不漂。`SetApprovalMode.mode` 仍为 String。
 
-ADR-053 新增 `src/platform/preferences.rs`：标准用户配置目录的 `desktop.json`；std + serde_json、串行 read/modify/write + 同目录临时文件 rename，保留未知键；缺文件默认，损坏/权限失败保旧并经 Appearance 的可见提示与 AX 同源展示。`AppView::restore_appearance` 只由正式窗口 bootstrap 在首帧前调用，恢复语言和 window rem；纯 UI 状态构造不访问用户磁盘。无新增业务依赖。`preferences_restore_and_preserve_other_keys` / `damaged_preferences_are_not_overwritten` 为本次定向回归。
+ADR-053 新增 `src/platform/preferences.rs`：标准用户配置目录的 `desktop.json`；std + serde_json、进程内串行 read/modify/write + 同目录临时文件 rename，保存只修改用户操作的单项，另一项沿用磁盘最新值（避免多个实例依次保存时旧快照覆盖），保留未知键；缺文件默认，损坏/权限失败保旧并经 Appearance 的可见提示与 AX 同源展示。`AppView::restore_appearance` 只由正式窗口 bootstrap 在首帧前调用，恢复语言和 window rem；纯 UI 状态构造不访问用户磁盘。无新增业务依赖。`preferences_restore_and_preserve_other_keys` 覆盖两个旧窗口快照依次修改不同字段且互不覆盖；`damaged_preferences_are_not_overwritten` 覆盖损坏文件保护。
 
 ## 3. 用户可见界面与交互面
 

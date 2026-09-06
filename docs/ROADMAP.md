@@ -167,7 +167,7 @@ F3「代理保存到对应配置」：现行 Global `[[providers]].use_proxy` �
 | 阶段 | 状态 |
 | --- | --- |
 | OPT-D | 六张统一候选稿已交付、尺寸/状态走查通过；**用户视觉签字通过**（设计闸门已放行） |
-| OPT-1 | 1a–1d 已实现；定向自动验证通过；Appearance 真窗口重启恢复通过；未归档/未发布 |
+| OPT-1 | 1a–1d 已实现；本轮审查修复 3 项缺陷，608 项定向测试、Desktop 构建与单窗口外观保存/重启复验通过（§10.9）；未归档/未发布 |
 | OPT-2 | 2a–2d 已实现（ADR-054，API 1.11）；定向自动验证与真窗口验收通过（验收中修复无项目会话无法问答，见 §10.3）；未归档/未发布 |
 | OPT-3 | 3a/3b 内核·协议·配置已实现（ADR-055，API 1.12）；GUI 控件批次已实现（§10.5），协议层验收通过、修复 D3a 缺陷；代理 Switch 像素级复验已通过（§10.6）；3d/3e 已实现（ADR-056，API 1.13）且真窗口验收通过（§10.8），desktop 门禁 210/210 |
 | OPT-4 | 4a–4e 已实现（§10.6）：图标命中区/字形、Inspector 默认折叠 + 重开入口、Settings 全宽与导航零位移、4e 核对一致；desktop 门禁 207/207；真窗口对照新图验收通过（§10.7） |
@@ -333,4 +333,28 @@ Full workspace gate: NOT RUN（当前未设置全量门禁）。
 
 Validated: 上表实际命令 + 真窗口 AX/截图对照签字稿 + Global config diff。
 Targeted regressions: 上述 ADR-056 契约与行为。
+Full workspace gate: NOT RUN（当前未设置全量门禁）。
+
+### 10.9 OPT-1 完成效果审查与修复（2026-09-06）
+
+对照 §4 的 1a–1d 和 ADR-053，核对当前实现、八页盘点与实际测试；发现并修复三项缺陷：
+
+- **项目信任隔离（P1）**：工具 Run/Terminal 已按目标项目判断，但 AGENTS/Skills 指令注入仍读取 attached 项目信任。改用目标 workspace 的 canonical roots，防止受信任的 attached 项目放行其他不受信任项目的指令，也避免反向漏载。`session_instructions_follow_target_workspace_trust` 用两个真实临时项目、AGENTS 与有效 Skill manifest，覆盖两种相反信任状态及 Global true 下显式 false 优先；旧实现先红，修复后绿。
+- **非 Global 权限键剥离（P2）**：文件先做 schema 校验，仓库层非法 `approval_mode` / `workspace_trust` 会在应被忽略前阻断启动。改为先按层剥离，再逐文件校验；Global 非法值与其他 schema 错误仍带来源路径拒绝。`file_permissions_are_stripped_before_schema_validation` 覆盖 Profile/Workspace/Session/Run 文件层、告警与 Global 拒绝；旧实现先红，修复后绿。
+- **外观旧快照覆盖（P2）**：两个窗口依次修改不同外观项，后写窗口会连同缓存的另一项一起覆盖磁盘。保存改为读取当前磁盘值、仅更新用户操作的字段；扩充既有保存重读测试验证语言/字号互不覆盖，未知键及损坏文件保护保留。本次不声称跨进程同时写入互斥。
+
+实现只改 4 个源码文件，无新增依赖、协议或 schema 变化；ADR-053 与 app/workspace/desktop 包级 Spec 同批同步。只读收口审查通过。
+
+真窗口使用隔离 HOME 与平行 bundle（`--instance opt1-review-a`），不连接 Host。窗口保留英文/100% 旧快照时，外部将隔离 `desktop.json` 改为中文/100%，再在窗口选择 125%；磁盘结果为中文/125%，没有覆盖语言。窗口切换中文立即生效；终止旧进程并启动新进程后，AX 与截图确认中文/125% 恢复，实际 argv 与磁盘文件交叉核对。用户原 `desktop.json` / `config.toml` 验收前后哈希一致。两窗口直接切换因原生焦点回调阻塞未完成；两份旧快照顺序保存由自动回归覆盖，实机仅声称上述单窗口与外部更新验证通过，不作为新的人工视觉签字。
+
+| 检查 | 结果 |
+| --- | --- |
+| `cargo test -p pawork-workspace -p pawork-app --offline --lib --tests` | 398 passed（app 214 + 集成 23；workspace 133 + 集成 28） |
+| `cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders` | 210 passed |
+| `cargo build -p pawork-desktop --offline --bins --features gpui/runtime_shaders` | 通过 |
+| 外观旧快照保存、语言立即生效与重启恢复 | 单窗口真机复验通过（方法与限制见上段） |
+| `git diff --check`、变更文档本地链接 | 通过 |
+
+Validated: 上表实际命令、真窗口 AX/截图、隔离偏好文件与进程 argv；用户原配置哈希不变。
+Targeted regressions: 目标项目信任隔离、非 Global 权限键先剥离后校验、外观单项保存保留另一项。
 Full workspace gate: NOT RUN（当前未设置全量门禁）。

@@ -121,7 +121,7 @@ impl ExtensionService {
                 .instructions
                 .into_iter()
                 .filter(|instruction| {
-                    core.workspace_trusted()
+                    core.workspace_trusted_for_roots(&workspace.roots)
                         || !matches!(
                             instruction.provenance.origin,
                             pawork_workspace::resources::ResourceOrigin::Workspace { .. }
@@ -323,6 +323,52 @@ mod tests {
             }),
             "{layers:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn session_instructions_follow_target_workspace_trust() {
+        let attached = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        std::fs::write(target.path().join("AGENTS.md"), "target-project-rule").unwrap();
+        let skills = target.path().join(".pawork/skills/target-skill");
+        std::fs::create_dir_all(&skills).unwrap();
+        std::fs::write(
+            skills.join("manifest.toml"),
+            "id = 'target-skill'\nversion = '1.0.0'\n",
+        )
+        .unwrap();
+        std::fs::write(
+            skills.join("SKILL.md"),
+            "---\nname: target-skill\n---\ntarget-project-skill\n",
+        )
+        .unwrap();
+        let (mut core, _store) = crate::testsupport::mock_core(Vec::new()).await;
+        core.attach_workspace(attached.path()).unwrap();
+        let attached_root = core.workspace_by_id(core.workspace_id()).unwrap().roots[0]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let target = core.register_workspace(target.path()).await.unwrap();
+        let target_root = target.root_path.to_str().unwrap().to_owned();
+        core.attach_workspace(attached.path()).unwrap();
+        let session = core
+            .create_session_with_workspace("target", target.workspace_id)
+            .await
+            .unwrap();
+        // 显式 false 必须盖过全局 true，也不能借用 attached 项目的 true。
+        core.config.trust_workspaces = Some(true);
+        for (attached_trusted, target_trusted) in [(true, false), (false, true)] {
+            core.set_workspace_trusted(attached_root.clone(), attached_trusted);
+            core.set_workspace_trusted(target_root.clone(), target_trusted);
+            let layers = core.load_injected_layers_for_session(&session).await;
+            for marker in ["target-project-rule", "target-project-skill"] {
+                assert_eq!(
+                    layers.iter().any(|layer| layer.content.contains(marker)),
+                    target_trusted,
+                    "{marker}: attached={attached_trusted}, target={target_trusted}: {layers:?}"
+                );
+            }
+        }
     }
 
     #[tokio::test]

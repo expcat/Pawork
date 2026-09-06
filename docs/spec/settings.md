@@ -41,8 +41,8 @@
 
 - **D1 审批默认**：Global `config.toml` 新增可选 `approval_mode`，复用 Policy 五种 snake_case 值；缺失为 `read_only`，非法值拒绝加载。启动显式 `AppLoadOptions.approval_mode` 优先，只覆盖当前进程。`set_approval_mode` 先原子写 Global，再更新当前 Host 与 scheduler；写入失败返回 `config_write` 并保留旧运行态。
 - **D2 项目信任**：Global 新增 `workspace_trust` 表，键为 Host 解析的 canonical workspace 根路径、值为 bool；当前项目显式 true/false 优先于 `trust_workspaces` 全局默认。`workspace_trust` 命令只接 attached workspace id，Host 自行解析路径后写盘，不能用其他 id 或客户端任意路径写入。不得将信任一个项目扩大到全部项目；没有可解析根路径时 fail-closed。重启恢复同一路径的选择；新项目沿用全局默认。显式启动 trust 覆盖只影响当次进程；用户在 Settings 保存当前项目信任后，清除该启动覆盖，后续按各项目保存值/全局默认解析。
-- **D3 安全边界**：Profile / Workspace / Session / Run 配置层的 `approval_mode` 和 `workspace_trust` 整段剥离并记录 warning，与既有 `trust_workspaces` 一致。写盘及内存更新串行化；进行中的 Run 继续使用已捕获 scheduler，后续 Run 用新值。Secret、Policy、Sandbox 与路径边界不变。
-- **D4 外观**：Desktop 自有用户配置目录 `desktop.json` 保存 `language`（`en`/`zh`）与 `text_scale`（100/125/150）。仅使用现有 Rust/std/serde_json，不增加业务依赖。启动恢复，缺文件用默认；损坏或无法读取时显示失败提示且不覆盖原文件。修改先原子写盘，失败保旧并提示。快捷键和 Settings 走同一写入口；Desktop 不读写 Host `config.toml` 业务键。
+- **D3 安全边界**：Profile / Workspace / Session / Run 配置层的 `approval_mode` 和 `workspace_trust` 整段剥离并记录 warning，与既有 `trust_workspaces` 一致；文件层先剥离再做 schema 校验，忽略键的非法值不阻断启动，Global 非法值仍拒绝。Run/Terminal 与 AGENTS/Skills 注入均按实际目标项目解析信任。写盘及内存更新串行化；进行中的 Run 继续使用已捕获 scheduler，后续 Run 用新值。Secret、Policy、Sandbox 与路径边界不变。
+- **D4 外观**：Desktop 自有用户配置目录 `desktop.json` 保存 `language`（`en`/`zh`）与 `text_scale`（100/125/150）。仅使用现有 Rust/std/serde_json，不增加业务依赖。启动恢复，缺文件用默认；损坏或无法读取时显示失败提示且不覆盖原文件。修改先读取磁盘值、仅更新用户操作的字段再原子写盘，避免多个实例依次保存时覆盖另一项；失败保旧并提示。快捷键和 Settings 走同一写入口；Desktop 不读写 Host `config.toml` 业务键。
 - **验收**：先固定配置加载/安全剥离 golden，再实施；复用 Host Settings 测试验证保存、重新装配、非法输入/写盘失败保旧与无匹配项目拒绝；外观覆盖保存后重读及损坏文件保留。使用真实窗口复验语言/字号重启恢复，证据不得当作设计签字。
 
 ## OPT-1a：八页持久化盘点

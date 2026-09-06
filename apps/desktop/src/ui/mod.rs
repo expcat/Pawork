@@ -3347,23 +3347,13 @@ impl AppView {
 
     fn save_appearance(
         &mut self,
-        language: i18n::Language,
-        scale: font::TextScale,
+        update: impl FnOnce(&mut crate::platform::DesktopPreferences),
         cx: &mut Context<Self>,
     ) -> bool {
         if !self.persist_appearance {
             return true;
         }
-        let prefs = crate::platform::DesktopPreferences {
-            language: if language == i18n::Language::Chinese {
-                "zh"
-            } else {
-                "en"
-            }
-            .into(),
-            text_scale: scale.percent(),
-        };
-        if let Err(reason) = crate::platform::save_preferences(&prefs) {
+        if let Err(reason) = crate::platform::save_preferences(update) {
             let error = format!("{}: {reason}", i18n::t("settings.appearance.save_failed"));
             self.status_hint = Some(error.clone());
             self.appearance_error = Some(error);
@@ -3380,7 +3370,7 @@ impl AppView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.save_appearance(self.language, scale, cx) {
+        if !self.save_appearance(|prefs| prefs.text_scale = scale.percent(), cx) {
             return;
         }
         self.text_scale = scale;
@@ -3396,7 +3386,17 @@ impl AppView {
         if self.language == language {
             return;
         }
-        if !self.save_appearance(language, self.text_scale, cx) {
+        if !self.save_appearance(
+            |prefs| {
+                prefs.language = if language == i18n::Language::Chinese {
+                    "zh"
+                } else {
+                    "en"
+                }
+                .into();
+            },
+            cx,
+        ) {
             return;
         }
         self.language = language;

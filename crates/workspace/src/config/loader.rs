@@ -217,7 +217,7 @@ impl Loader {
         )
     }
 
-    /// 添加一个文件来源，读取、解析并校验 schema。
+    /// 添加一个文件来源；schema 在 resolve 中剥离非 Global 权限键后校验。
     pub fn with_file(
         mut self,
         tier: ConfigTier,
@@ -226,7 +226,7 @@ impl Loader {
     ) -> Self {
         let path = path.as_ref().to_path_buf();
         match parse_file(&path) {
-            Ok((value, _)) => self.sources.push(ConfigSource {
+            Ok(value) => self.sources.push(ConfigSource {
                 tier,
                 source_key: source_key.into(),
                 path: Some(path),
@@ -253,8 +253,8 @@ fn builtin_config_value() -> ConfigValue {
     )
 }
 
-/// 解析单个配置文件：先 TOML 语法解析，再 schema 投影校验，返回可合并的 JSON 值。
-pub(crate) fn parse_file(path: &Path) -> Result<(ConfigValue, PaworkConfig), ConfigError> {
+/// 解析单个配置文件的 TOML 语法；层级剥离与 schema 校验由 resolve 负责。
+fn parse_file(path: &Path) -> Result<ConfigValue, ConfigError> {
     let content = std::fs::read_to_string(path).map_err(|source| ConfigError::Io {
         path: path.to_path_buf(),
         source: Box::new(source),
@@ -267,15 +267,7 @@ pub(crate) fn parse_file(path: &Path) -> Result<(ConfigValue, PaworkConfig), Con
     })?;
     let mut json_value: Value = toml_to_json(toml_value);
     sanitize_secrets(&mut json_value);
-    let mut config: PaworkConfig =
-        serde_json::from_value(json_value.clone()).map_err(|source| {
-            ConfigError::Parse(ConfigParseError::Schema {
-                path: path.to_path_buf(),
-                source: Box::new(source),
-            })
-        })?;
-    config.extra.remove("api_key");
-    Ok((ConfigValue::new(json_value), config))
+    Ok(ConfigValue::new(json_value))
 }
 
 /// 把 `toml::Value` 转为 `serde_json::Value`（通过 JSON 往返，保证数组/表语义一致）。
@@ -356,6 +348,15 @@ fn resolve_sources(mut sources: Vec<ConfigSource>) -> Result<ResolvedConfig, Con
     let mut final_order: Vec<LoadedSource> = Vec::new();
     let mut merged = ConfigValue::new(Value::Object(Default::default()));
     for src in final_sources {
+        // 文件层仍逐一校验并保留错误路径；被忽略的权限键不应阻断启动。
+        if let Some(path) = &src.path {
+            serde_json::from_value::<PaworkConfig>(src.value.as_value().clone()).map_err(
+                |source| ConfigError::Parse(ConfigParseError::Schema {
+                    path: path.clone(),
+                    source: Box::new(source),
+                }),
+            )?;
+        }
         merged.merge(&src.value);
         final_order.push(loaded_from(src));
     }
@@ -641,6 +642,43 @@ mod tests {
             )
             .resolve()
             .is_err());
+    }
+
+    #[test]
+    fn file_permissions_are_stripped_before_schema_validation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "approval_mode = 'yolo'\nworkspace_trust = 'invalid'\ndefault_model = 'kept'\n",
+        )
+        .unwrap();
+        for tier in [
+            ConfigTier::Profile,
+            ConfigTier::Workspace,
+            ConfigTier::Session,
+            ConfigTier::Run,
+        ] {
+            let resolved = Loader::new()
+                .with_builtin()
+                .with_file(tier, "file", &path)
+                .resolve()
+                .expect("non-Global permissions must be ignored");
+            assert_eq!(resolved.config.approval_mode, None);
+            assert!(resolved.config.workspace_trust.is_empty());
+            assert_eq!(resolved.config.default_model.as_deref(), Some("kept"));
+            assert_eq!(resolved.warnings.len(), 2);
+            for warning in &resolved.warnings {
+                assert!(matches!(warning, ConfigWarning::PermissionsIgnored {
+                    tier: source_tier, path: Some(source_path), ..
+                } if *source_tier == tier && source_path == &path));
+            }
+        }
+        let error = Loader::new()
+            .with_file(ConfigTier::Global, "global", &path)
+            .resolve()
+            .expect_err("invalid Global permissions must still fail");
+        assert_eq!(error.path(), Some(path.as_path()));
     }
 
     #[test]

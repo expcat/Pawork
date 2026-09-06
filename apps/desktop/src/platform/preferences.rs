@@ -76,9 +76,11 @@ fn read(
 static WRITE_LOCK: Mutex<()> = Mutex::new(());
 static SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-fn write(path: &Path, prefs: &DesktopPreferences) -> io::Result<()> {
+fn write(path: &Path, update: impl FnOnce(&mut DesktopPreferences)) -> io::Result<()> {
     let _guard = WRITE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    let (_, mut table) = read(path)?; // 损坏文件不覆盖；保留未知键。
+    let (mut prefs, mut table) = read(path)?; // 损坏文件不覆盖；保留未知键。
+    // 仅修改用户操作的字段，其余偏好沿用磁盘值，避免旧窗口快照覆盖新设置。
+    update(&mut prefs);
     if !matches!(prefs.language.as_str(), "en" | "zh")
         || !matches!(prefs.text_scale, 100 | 125 | 150)
     {
@@ -112,9 +114,9 @@ pub fn load_preferences() -> Result<DesktopPreferences, String> {
         .map_err(|e| e.to_string())
 }
 
-pub fn save_preferences(prefs: &DesktopPreferences) -> Result<(), String> {
+pub fn save_preferences(update: impl FnOnce(&mut DesktopPreferences)) -> Result<(), String> {
     config_path()
-        .and_then(|path| write(&path, prefs))
+        .and_then(|path| write(&path, update))
         .map_err(|e| e.to_string())
 }
 
@@ -128,14 +130,19 @@ mod tests {
         let path = dir.path().join("desktop.json");
         assert_eq!(read(&path).unwrap().0, DesktopPreferences::default());
         std::fs::write(&path, r#"{"future":true}"#).unwrap();
-        let prefs = DesktopPreferences {
-            language: "zh".into(),
-            text_scale: 125,
-        };
-        write(&path, &prefs).unwrap();
+        let mut language_window = read(&path).unwrap().0;
+        let mut scale_window = read(&path).unwrap().0;
+        language_window.language = "zh".into();
+        scale_window.text_scale = 125;
+        write(&path, |prefs| prefs.language = language_window.language).unwrap();
+        write(&path, |prefs| prefs.text_scale = scale_window.text_scale).unwrap();
         let (loaded, table) = read(&path).unwrap();
-        assert_eq!(loaded, prefs);
+        assert_eq!(loaded.language, "zh");
+        assert_eq!(loaded.text_scale, 125);
         assert_eq!(table["future"], true);
+        // 反向修改同样保留另一窗口已保存的字号。
+        write(&path, |prefs| prefs.language = "en".into()).unwrap();
+        assert_eq!(read(&path).unwrap().0.text_scale, 125);
     }
 
     #[test]
@@ -144,7 +151,7 @@ mod tests {
         let path = dir.path().join("desktop.json");
         std::fs::write(&path, "{broken").unwrap();
         assert!(read(&path).is_err());
-        assert!(write(&path, &DesktopPreferences::default()).is_err());
+        assert!(write(&path, |prefs| prefs.text_scale = 125).is_err());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "{broken");
     }
 }

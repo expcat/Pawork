@@ -86,7 +86,7 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 | `tests/gui_server/session.rs` | ~1000 | 具名 test bin `gui_server_session`：握手/版本/capability/resume/心跳/慢消费 |
 | `tests/gui_server/multi_gui_runtime.rs` | ~830 | 具名 test bin `gui_server_multi_gui_runtime`：多 GUI 一致性/重连 replay/慢客户端隔离 |
 
-ADR-053 启动：显式 `AppLoadOptions.approval_mode` > Global 审批 > ReadOnly；显式 `trust_workspaces` 仅当次进程，缺省为当前根路径选择 > Global 全项目信任默认。`set_approval_host` 只替换交互入口，GUI/CLI 装配不再把已解析 trust 伪装成显式启动覆盖。Settings 修改当前信任时清除当次启动 trust 覆盖，以保存选择为准；其他项目回到各自配置。Host 持写锁跨写盘和内存更新，失败不改变 scheduler。现有 Settings 测试扩充为落盘/重载、项目隔离、未知模式拒绝与损坏 Global 文件保旧。
+ADR-053 启动：显式 `AppLoadOptions.approval_mode` > Global 审批 > ReadOnly；显式 `trust_workspaces` 仅当次进程，缺省为当前根路径选择 > Global 全项目信任默认。`set_approval_host` 只替换交互入口，GUI/CLI 装配不再把已解析 trust 伪装成显式启动覆盖。Settings 修改当前信任时清除当次启动 trust 覆盖，以保存选择为准；其他项目回到各自配置。Host 持写锁跨写盘和内存更新，失败不改变 scheduler。现有 Settings 测试扩充为落盘/重载、项目隔离、未知模式拒绝与损坏 Global 文件保旧。`session_instructions_follow_target_workspace_trust` 验证 attached 与目标项目信任相反时，AGENTS/Skills 注入只遵循目标项目（含显式 false 覆盖 Global true）。
 
 ## 3. 对外 API 面
 
@@ -102,7 +102,7 @@ ADR-053 启动：显式 `AppLoadOptions.approval_mode` > Global 审批 > ReadOnl
   - `open_store(path)`：打开会话库跑迁移后读 v14 项目注册表、对 legacy 启动目录补登记（注册表为空时固定 `ws-default`）、按注册表重建 WorkspaceService 与内建工具并预载全部 session 归属绑定；`open_checkpoints(root)` / `open_control_plane(dir)`：分别打开检查点服务、usage/quota/audit 运行时；
   - `register_workspace(root) -> WorkspaceRecord`：持久幂等登记（同 canonical root 复用既有 stable id，同 id 异 root fail-closed），GUI `workspace_add` 入口；
   - `configure_approval(mode, trusted)`：设置审批模式与 workspace 信任并重建 `ToolScheduler` 配置（启动装配专用）；
-  - `set_approval_mode(mode)` / `set_workspace_trusted(root, trusted)`（ADR-053，pub(crate)）：Host handler 写盘成功后更新配置内存与 scheduler 快照；进行中 run 不变。`workspace_trusted_for_roots` 按实际目标根路径读取逐项目信任，Run/Terminal 不借用其他项目信任；
+  - `set_approval_mode(mode)` / `set_workspace_trusted(root, trusted)`（ADR-053，pub(crate)）：Host handler 写盘成功后更新配置内存与 scheduler 快照；进行中 run 不变。`workspace_trusted_for_roots` 按实际目标根路径读取逐项目信任，Run/Terminal 与 AGENTS/Skills 指令注入均不借用 attached 项目的信任；
   - `prime_extensions()`：file-index 扫描（失败仅 warn）+ MCP auto-start（失败不拖垮装配）。
 - `shutdown(self) -> Result<(), AppError>`：关停 MCP 客户端、落 tasks 快照、关闭 store；消费 self。
 - 只读访问器：`provider_id()` / `model()` / `adapter_protocol()` / `config()` / `auth_backend()` / `store()`（无 store 时 `Err`）/ `workspace_id()` / `workspace_name()` / `workspace_trusted()` / `approval_mode()` / `approval_host()` / `tool_names()` / `turn_context()`；workspace 注册表查询 `registered_workspaces()` / `workspace_by_id()` / `workspace_for_session()` / `latest_session_for_workspace()`。
