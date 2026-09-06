@@ -77,6 +77,21 @@ impl Drop for RestoreHome {
     }
 }
 
+/// 设置进程 env 变量并在 Drop 时恢复原值（含 panic 路径）。
+pub(super) struct RestoreEnvVar(String, Option<std::ffi::OsString>);
+
+impl Drop for RestoreEnvVar {
+    fn drop(&mut self) {
+        match self.1.take() {
+            Some(value) => crate::testsupport::set_env(
+                &self.0,
+                value.to_str().expect("env value is utf-8"),
+            ),
+            None => crate::testsupport::remove_env(&self.0),
+        }
+    }
+}
+
 #[tokio::test]
 async fn provider_auth_status_reports_persisted_default_pair() {
     let backend = Arc::new(pawork_auth::MemoryBackend::new());
@@ -1439,7 +1454,7 @@ async fn xai_auth_set_api_key_main_path_connects_via_api_key() {
 }
 
 #[tokio::test]
-async fn xai_auth_set_api_key_replaces_stored_oauth_credential() {
+async fn xai_auth_set_api_key_keeps_stored_oauth_credential() {
     use pawork_auth::SecretBackend as _;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -1480,20 +1495,20 @@ async fn xai_auth_set_api_key_replaces_stored_oauth_credential() {
             api_key: pawork_protocol::ApiKeySecret::new(secret),
         }))
         .await
-        .expect("switching auth method must succeed");
+        .expect("writing api key must succeed");
 
-    // 替换语义：一切换认证方式 = 替换连接——旧 OAuth 条目被移除。
+    // ADR-056 D1 共存语义：api key 写入不删除 OAuth default 条目。
     assert!(
         pawork_auth::load_default_oauth_meta(backend.as_ref(), &provider)
             .expect("load meta")
-            .is_none(),
-        "old oauth meta must be removed"
+            .is_some(),
+        "oauth meta must survive api key write"
     );
     assert!(
         pawork_auth::load_default_oauth_credential(backend.as_ref(), &provider)
             .expect("load credential")
-            .is_none(),
-        "old oauth credential must be removed"
+            .is_some(),
+        "oauth credential must survive api key write"
     );
     assert_eq!(
         backend
@@ -1501,7 +1516,161 @@ async fn xai_auth_set_api_key_replaces_stored_oauth_credential() {
             .expect("api key stored"),
         secret
     );
+
+    // GUI 写入路径下 credentials 列表透出双凭证（固定序：api_key 在前）。
+    let status = adapter
+        .query(&query_envelope(AppQuery::ProviderAuthStatus {
+            provider_id: Some(provider.clone()),
+        }))
+        .await
+        .expect("provider auth status");
+    let AppResponse::Data(status) = status else {
+        panic!("ProviderAuthStatus must return Data: {status:?}")
+    };
+    let credentials = status["providers"][0]["credentials"]
+        .as_array()
+        .expect("credentials array");
+    assert_eq!(credentials.len(), 2, "dual credentials: {credentials:?}");
+    assert_eq!(credentials[0]["kind"], "api_key");
+    assert_eq!(credentials[1]["kind"], "oauth");
     server.verify().await;
+}
+
+// ---- ADR-056 OPT-3d：provider_auth_status.credentials 列表 ----
+
+#[tokio::test]
+async fn provider_auth_status_lists_dual_credentials_in_fixed_order() {
+    let backend = Arc::new(pawork_auth::MemoryBackend::new());
+    let provider = pawork_domain::ProviderId::from("xai");
+    pawork_auth::store_default_api_key(backend.as_ref(), &provider, "xai-stored-key-00000001")
+        .expect("seed api key");
+    pawork_auth::store_default_oauth_token(
+        backend.as_ref(),
+        provider,
+        &pawork_auth::TokenSet {
+            access_token: "xai-oauth-access-0002".into(),
+            refresh_token: Some("xai-oauth-refresh-0002".into()),
+            id_token: None,
+            expires_in: Some(3600),
+            token_type: "Bearer".into(),
+            scope: None,
+        },
+    )
+    .expect("seed oauth token");
+    let (adapter, _dir) =
+        settings_adapter_for_channel("xai", "grok-4", "http://127.0.0.1:1".into(), backend).await;
+
+    let status = adapter
+        .query(&query_envelope(AppQuery::ProviderAuthStatus {
+            provider_id: Some(pawork_domain::ProviderId::from("xai")),
+        }))
+        .await
+        .expect("provider auth status");
+    let AppResponse::Data(status) = status else {
+        panic!("ProviderAuthStatus must return Data: {status:?}")
+    };
+    let entry = &status["providers"][0];
+    let credentials = entry["credentials"]
+        .as_array()
+        .expect("credentials array");
+    assert_eq!(credentials.len(), 2, "dual credentials: {credentials:?}");
+    // 固定序：api_key 在前、oauth 在后；api key 的 expires_at 为 null 但键保留。
+    assert_eq!(credentials[0]["kind"], "api_key");
+    assert_eq!(credentials[0]["expired"], false);
+    assert_eq!(credentials[0]["expires_at"], serde_json::json!(null));
+    assert!(credentials[0]["masked_credential"].as_str().is_some());
+    assert_eq!(credentials[1]["kind"], "oauth");
+    assert_eq!(credentials[1]["expired"], false);
+    assert!(
+        credentials[1]["expires_at"]
+            .as_str()
+            .is_some_and(|value| value.ends_with('Z')),
+        "oauth expires_at must be ISO-8601: {credentials:?}"
+    );
+    assert!(credentials[1]["masked_credential"].as_str().is_some());
+    // 诚实性边界：明文不入列。
+    let wire = serde_json::to_string(&status).expect("serialize status");
+    assert!(
+        !wire.contains("xai-stored-key-00000001"),
+        "credentials leak plaintext"
+    );
+    assert!(
+        !wire.contains("xai-oauth-access-0002"),
+        "credentials leak plaintext"
+    );
+}
+
+#[tokio::test]
+async fn provider_auth_status_marks_expired_oauth_credential() {
+    let backend = Arc::new(pawork_auth::MemoryBackend::new());
+    let provider = pawork_domain::ProviderId::from("xai");
+    // expires_in = 0：到期时刻即写入时刻，查询时已过当前时刻。
+    pawork_auth::store_default_oauth_token(
+        backend.as_ref(),
+        provider,
+        &pawork_auth::TokenSet {
+            access_token: "xai-oauth-access-0003".into(),
+            refresh_token: Some("xai-oauth-refresh-0003".into()),
+            id_token: None,
+            expires_in: Some(0),
+            token_type: "Bearer".into(),
+            scope: None,
+        },
+    )
+    .expect("seed oauth token");
+    let (adapter, _dir) =
+        settings_adapter_for_channel("xai", "grok-4", "http://127.0.0.1:1".into(), backend).await;
+
+    let status = adapter
+        .query(&query_envelope(AppQuery::ProviderAuthStatus {
+            provider_id: Some(pawork_domain::ProviderId::from("xai")),
+        }))
+        .await
+        .expect("provider auth status");
+    let AppResponse::Data(status) = status else {
+        panic!("ProviderAuthStatus must return Data: {status:?}")
+    };
+    let credentials = status["providers"][0]["credentials"]
+        .as_array()
+        .expect("credentials array");
+    assert_eq!(credentials.len(), 1, "only the oauth entry: {credentials:?}");
+    assert_eq!(credentials[0]["kind"], "oauth");
+    assert_eq!(credentials[0]["expired"], true);
+    assert!(credentials[0]["expires_at"].as_str().is_some());
+}
+
+#[tokio::test]
+async fn provider_auth_status_env_fallback_not_listed_as_credential() {
+    let _restore_env = RestoreEnvVar(
+        "PAWORK_API_KEY_GLM_CODING".into(),
+        std::env::var_os("PAWORK_API_KEY_GLM_CODING"),
+    );
+    crate::testsupport::set_env("PAWORK_API_KEY_GLM_CODING", "sk-env-fallback-0001");
+    let backend = Arc::new(pawork_auth::MemoryBackend::new());
+    let (adapter, _dir) = settings_adapter("http://127.0.0.1:1".into(), backend).await;
+
+    let status = adapter
+        .query(&query_envelope(AppQuery::ProviderAuthStatus {
+            provider_id: Some(pawork_domain::ProviderId::from("glm-coding")),
+        }))
+        .await
+        .expect("provider auth status");
+    let AppResponse::Data(status) = status else {
+        panic!("ProviderAuthStatus must return Data: {status:?}")
+    };
+    let entry = &status["providers"][0];
+    // env 命中仍是 provider 级 Connected（masked null），但 env fallback
+    // 不是存储凭证，不入 credentials 列表。
+    assert_eq!(entry["auth"]["type"], "connected");
+    assert_eq!(entry["auth"]["method"], "api_key");
+    assert_eq!(entry["auth"]["masked_credential"], serde_json::json!(null));
+    assert_eq!(
+        entry["credentials"],
+        serde_json::json!([]),
+        "env fallback is not a stored credential"
+    );
+    let wire = serde_json::to_string(&status).expect("serialize status");
+    assert!(!wire.contains("sk-env-fallback-0001"), "env value leaks");
 }
 
 #[tokio::test]

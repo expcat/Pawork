@@ -63,12 +63,15 @@ pub enum OAuthLogin {
 
 impl AppCore {
     /// 首发通道 + config 自定义 provider 的凭证状态（无网络、无明文）。
-    /// 双认证通道（xAI）按实际存储形态展示：先查 api key 凭证，再查 OAuth
-    /// meta（SET-4 A3：显示 method 与实际凭证一致，不按 kind 猜）。
+    /// ADR-056 D6：双形态通道（同时声明 api_key 与 oauth，如 xAI）api key
+    /// 命中后不再提前收束，继续输出 OAuth 行——两种已存凭证各占一行；
+    /// 未存储的 kind 维持「声明即出行、无 meta 则 source None」口径。
     pub fn auth_status(&self) -> Result<Vec<AuthChannelStatus>, AppError> {
         let mut rows = Vec::new();
         for channel in channels::FIRST_PARTY_CHANNELS.iter() {
             let methods = channel.auth_methods();
+            // api key 行是否已出行；单 api_key 通道据此跳过兜底行。
+            let mut api_key_row_emitted = false;
             if methods.contains(&"api_key") {
                 match pawork_auth::resolve_provider_credential(
                     self.auth_backend().as_ref(),
@@ -82,7 +85,7 @@ impl AppCore {
                             masked: Some(stored.masked.as_str().to_string()),
                             expires_at_ms: None,
                         });
-                        continue;
+                        api_key_row_emitted = true;
                     }
                     pawork_auth::CredentialSource::EnvFallback(_) => {
                         rows.push(AuthChannelStatus {
@@ -92,12 +95,13 @@ impl AppCore {
                             masked: None,
                             expires_at_ms: None,
                         });
-                        continue;
+                        api_key_row_emitted = true;
                     }
                     pawork_auth::CredentialSource::None => {}
                 }
             }
             if methods.contains(&"oauth") {
+                // 声明即出行：无 meta 时仍输出 source None 的 oauth 行。
                 let provider = ProviderId::new(channel.id);
                 let meta =
                     pawork_auth::load_default_oauth_meta(self.auth_backend().as_ref(), &provider)?;
@@ -112,6 +116,9 @@ impl AppCore {
                     masked: meta.as_ref().map(|meta| meta.masked.as_str().to_string()),
                     expires_at_ms: meta.as_ref().and_then(|meta| meta.expires_at_ms),
                 });
+                continue;
+            }
+            if api_key_row_emitted {
                 continue;
             }
             rows.push(AuthChannelStatus {
@@ -140,14 +147,9 @@ impl AppCore {
         let provider = ProviderId::new(provider_id);
         let stored =
             pawork_auth::store_default_api_key(self.auth_backend().as_ref(), &provider, secret)?;
-        // 替换语义（SET-4 A3）：一切换认证方式 = 替换连接；声明 oauth 的
-        // 通道写入 api key 后移除旧 OAuth 条目（删除失败 fail-closed 上报）。
-        if channels::first_party_channel(provider_id)
-            .map(|channel| channel.auth_methods().contains(&"oauth"))
-            .unwrap_or(false)
-        {
-            pawork_auth::delete_default_oauth_token(self.auth_backend().as_ref(), &provider)?;
-        }
+        // ADR-056 D1 共存语义：写入 api key 不删除该 provider 的 OAuth
+        // default 条目；替换缩窄为同 kind 覆盖（store_default_api_key
+        // 同账户覆盖写），跨 kind 清理只属于 auth_logout。
         Ok(stored.masked)
     }
 
@@ -255,9 +257,9 @@ pub(crate) async fn oauth_finish(
         }
     };
     let stored = store_default_oauth_token(backend, ProviderId::new(&provider), &tokens)?;
-    // 替换语义（SET-4 A3）：OAuth 登录成功写入后移除旧 API key 条目
-    //（幂等；删除失败 fail-closed 上报，不静默）。
-    pawork_auth::delete_default_api_key(backend, &ProviderId::new(&provider))?;
+    // ADR-056 D1 共存语义：OAuth 写入不删除该 provider 的 api key default
+    // 条目；替换缩窄为同 kind 覆盖（store_default_oauth_token 同账户
+    // 覆盖写），跨 kind 清理只属于 auth_logout。
     Ok(stored)
 }
 
@@ -334,6 +336,146 @@ mod tests {
             None,
         )
         .with_state(config, Arc::new(MemoryBackend::new()))
+    }
+
+    fn core_with_backend(backend: Arc<MemoryBackend>) -> AppCore {
+        AppCore::from_parts(
+            Arc::new(NoopProvider),
+            None,
+            ModelId::from("grok-4"),
+            ProviderId::from("xai"),
+            None,
+        )
+        .with_state(PaworkConfig::default(), backend)
+    }
+
+    /// 直接构造 Device 登录（跳过设备码端点），供 oauth_finish 单测驱动。
+    fn device_login(token_url: String) -> OAuthLogin {
+        OAuthLogin::Device {
+            provider: "xai".into(),
+            config: DeviceFlowConfig {
+                client_id: "test-client".into(),
+                device_auth_url: format!("{token_url}/device"),
+                token_url,
+                scopes: Vec::new(),
+                provider: ProviderId::new("xai"),
+            },
+            prompt: DeviceUserPrompt {
+                user_code: "USER-CODE".into(),
+                verification_uri: "https://example.test/device".into(),
+                verification_uri_complete: None,
+                device_code: "DEVICE-SECRET".into(),
+                expires_in: 600,
+                interval: 1,
+            },
+        }
+    }
+
+    /// ADR-056 D1：双形态通道（xAI）api key 与 OAuth default 条目共存
+    /// roundtrip——set key 后 OAuth meta 仍在；再次 OAuth 写入后 api key 仍在。
+    #[tokio::test]
+    async fn xai_api_key_and_oauth_default_entries_coexist() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/oauth2/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "access_token": "xai-access-secret",
+                "refresh_token": "xai-refresh-secret",
+                "expires_in": 3600,
+                "token_type": "Bearer",
+            })))
+            .expect(2)
+            .mount(&server)
+            .await;
+        let backend = Arc::new(MemoryBackend::new());
+        let http = pawork_auth::http_client().expect("http client");
+        let provider = ProviderId::new("xai");
+
+        oauth_finish(
+            device_login(format!("{}/oauth2/token", server.uri())),
+            backend.as_ref(),
+            &http,
+            Duration::from_secs(30),
+        )
+        .await
+        .expect("first oauth finish");
+        assert!(
+            pawork_auth::load_default_oauth_meta(backend.as_ref(), &provider)
+                .expect("load meta")
+                .is_some()
+        );
+
+        // set key 不再跨删 OAuth default 条目（同 kind 覆盖由 store 自身保证）。
+        let core = core_with_backend(backend.clone());
+        core.auth_set_key("xai", "xai-coexist-key-00000001")
+            .expect("set key");
+        assert!(
+            pawork_auth::load_default_oauth_meta(backend.as_ref(), &provider)
+                .expect("load meta after set key")
+                .is_some(),
+            "oauth meta must survive api key write"
+        );
+
+        // 再次 OAuth 写入同样不跨删 api key default 条目。
+        oauth_finish(
+            device_login(format!("{}/oauth2/token", server.uri())),
+            backend.as_ref(),
+            &http,
+            Duration::from_secs(30),
+        )
+        .await
+        .expect("second oauth finish");
+        assert!(
+            matches!(
+                pawork_auth::resolve_provider_credential(backend.as_ref(), "xai")
+                    .expect("resolve after oauth finish"),
+                pawork_auth::CredentialSource::AuthFile(_)
+            ),
+            "api key must survive oauth write"
+        );
+        assert!(
+            pawork_auth::load_default_oauth_meta(backend.as_ref(), &provider)
+                .expect("load meta after second finish")
+                .is_some()
+        );
+        server.verify().await;
+    }
+
+    /// ADR-056 D6：双形态通道两种已存凭证各占一行（api-key 行在前）。
+    #[test]
+    fn auth_status_lists_both_rows_for_dual_form_channel() {
+        let backend = Arc::new(MemoryBackend::new());
+        let provider = ProviderId::new("xai");
+        pawork_auth::store_default_api_key(backend.as_ref(), &provider, "xai-stored-key-00000001")
+            .expect("seed api key");
+        pawork_auth::store_default_oauth_token(
+            backend.as_ref(),
+            provider,
+            &pawork_auth::TokenSet {
+                access_token: "xai-oauth-access-0001".into(),
+                refresh_token: Some("xai-oauth-refresh-0001".into()),
+                id_token: None,
+                expires_in: Some(3600),
+                token_type: "Bearer".into(),
+                scope: None,
+            },
+        )
+        .expect("seed oauth token");
+
+        let xai_rows: Vec<AuthChannelStatus> = core_with_backend(backend)
+            .auth_status()
+            .expect("auth status")
+            .into_iter()
+            .filter(|row| row.provider == "xai")
+            .collect();
+        assert_eq!(xai_rows.len(), 2, "dual-form channel emits two rows");
+        assert_eq!(xai_rows[0].kind, "api-key");
+        assert_eq!(xai_rows[0].source, AuthSource::File);
+        assert!(xai_rows[0].masked.is_some());
+        assert_eq!(xai_rows[1].kind, "oauth");
+        assert_eq!(xai_rows[1].source, AuthSource::File);
+        assert!(xai_rows[1].masked.is_some());
+        assert!(xai_rows[1].expires_at_ms.is_some());
     }
 
     #[tokio::test]

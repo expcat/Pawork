@@ -343,6 +343,34 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         }
         "settings.providers.section_providers" => ("Providers", "提供商"),
         "settings.providers.no_auth_method" => ("No auth method", "无认证方式"),
+        // ── Provider 卡展开区（ADR-056 D4/D5）──
+        "settings.providers.expand_tooltip" => {
+            ("Show provider settings", "显示提供商设置")
+        }
+        "settings.providers.collapse_tooltip" => {
+            ("Hide provider settings", "收起提供商设置")
+        }
+        "settings.providers.expanded" => ("Expanded", "已展开"),
+        "settings.providers.collapsed" => ("Collapsed", "已折叠"),
+        "settings.providers.proxy_title" => ("Proxy", "代理"),
+        "settings.providers.proxy_subtitle" => (
+            "Route requests through a proxy server",
+            "通过代理服务器路由请求",
+        ),
+        "settings.providers.credentials_title" => ("Credentials", "凭证"),
+        "settings.providers.credentials_subtitle" => {
+            ("Manage your API credentials", "管理你的 API 凭证")
+        }
+        "settings.providers.credentials_empty" => {
+            ("No stored credentials", "没有已存储的凭证")
+        }
+        "settings.providers.credentials_kind_api_key" => ("API key", "API key"),
+        "settings.providers.credentials_kind_oauth" => ("OAuth", "OAuth"),
+        "settings.providers.credentials_expired" => ("Expired", "已过期"),
+        "settings.providers.usage_title" => ("Usage", "使用量"),
+        "settings.providers.usage_unavailable" => {
+            ("Usage unavailable", "使用量不可用")
+        }
         "settings.providers.tooltip_remove_credential" => {
             ("Remove the stored credential.", "移除已存储的凭证。")
         }

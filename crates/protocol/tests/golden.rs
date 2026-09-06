@@ -694,6 +694,12 @@ fn golden_auth_provider_slices() {
                     "display_name": "GLM Coding",
                     "endpoint_label": "https://api.z.ai/api/coding/paas/v4",
                     "auth_methods": ["api_key"],
+                    "credentials": [{
+                        "kind": "api_key",
+                        "masked_credential": "sk-…wxyz",
+                        "expired": false,
+                        "expires_at": null
+                    }],
                     "auth": {
                         "type": "connected",
                         "method": "api_key",

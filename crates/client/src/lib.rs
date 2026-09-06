@@ -49,7 +49,8 @@ pub use pawork_protocol::{
     AppQuery, AppQueryEnvelope, AppResponse, AppResponseEnvelope, ApprovalModeWire, AuthStartData,
     ClientAuthentication, CommandSource, DefaultModelPair, EventStream, GeneralSettingsData,
     GlobalSequence, GuiCapability, PermissionsSettingsData, ProtocolErrorCode, ProviderAuthState,
-    ProviderAuthStatusData, ProviderAuthStatusEntry, ProviderCatalogState, ProviderUseProxyData,
+    ProviderAuthStatusData, ProviderAuthStatusEntry, ProviderCatalogState, ProviderCredentialStatus,
+    ProviderUseProxyData,
     RoleDefaultsData, RunState, Snapshot, TerminalExitReason, TerminalSettingsData, TimelineItem,
     TimelineItemKind, TimelinePage,
 };

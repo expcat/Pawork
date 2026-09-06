@@ -207,6 +207,11 @@ pub struct SettingsProvidersState {
     /// 禁用命中角色默认对时的诚实说明（Host cleared_roles 回执，ADR-055
     /// D3）：随权威重查不消失，下次写回执替换、离开 Settings 清空。
     pub model_cleared_note: Option<String>,
+    /// 展开态 provider 卡（ADR-056 D4）：显式展开的 provider id 集合，
+    /// 默认全部折叠。编辑器 / OAuth 等待 / Remove 二次确认等流程态由
+    /// UI 层组合成「有效展开」（流程打开时保持展开区可见），本集合只
+    /// 记录 chevron 的显式翻转结果。
+    pub expanded_providers: HashSet<String>,
 }
 
 /// 模型启用写在途种类（OPT-3a）。
@@ -251,6 +256,7 @@ impl Default for SettingsProvidersState {
             model_catalog: Vec::new(),
             model_write_pending: None,
             model_cleared_note: None,
+            expanded_providers: HashSet::new(),
         }
     }
 }
@@ -282,6 +288,22 @@ impl SettingsProvidersState {
             vision: data.role_defaults.vision.map(default_pair_to_tuple),
             search: data.role_defaults.search.map(default_pair_to_tuple),
         };
+        // 展开态按 provider_id 跟随清单：权威重查后只保留仍存在的条目，
+        // 不为已消失的 provider 维持幽灵展开位。
+        self.expanded_providers
+            .retain(|id| self.providers.iter().any(|entry| &entry.provider_id == id));
+    }
+
+    /// 卡片显式展开态（chevron 翻转；本地视图态，不发 Host 命令）。
+    pub fn provider_expanded(&self, provider_id: &str) -> bool {
+        self.expanded_providers.contains(provider_id)
+    }
+
+    /// 翻转显式展开态。
+    pub fn toggle_provider_expanded(&mut self, provider_id: &str) {
+        if !self.expanded_providers.insert(provider_id.to_string()) {
+            self.expanded_providers.remove(provider_id);
+        }
     }
 
     /// 当前角色的键对（conversation 即顶层 default）。

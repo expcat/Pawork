@@ -112,6 +112,9 @@ cargo test -p <crate> --offline --lib --tests
 **gpui 前台执行器无 tokio reactor**
 Desktop 真窗口启动崩溃（exit 134），probe-smoke 不复现。握手后 `ack`/`subscribe_all` 若在 gpui 前台执行器上 await，`tokio::time` 会 panic。修法：握手与订阅全部 `runtime.spawn`；真窗口启动没有自动门禁，改连接路径时要人工开窗。
 
+**gpui flex_col 链路 min_w_0 截断投毒**
+展开区/卡片里 nowrap 文本真窗口渲染成「…」但 AX 与布局 bounds 正常：flex_col 祖先链上任何显式 min_w_0 会让 taffy 0.9 MinContent 测量趟以 Definite(0) 下探，gpui 0.2.2 StyledText 首测量按 0 宽截断且 nowrap 测量缓存短路后续修正。修法：文本列用 flex_row + flex_1 + min_w_0 同层（确定 flex-basis 躲过内容测量趟），truncate div 自身不加 min_w_0；只信真窗口像素复验，AX 钉板观测不到该缺陷。
+
 **FollowScroll 滚轮双计**
 gpui 0.2.2 Bubble 相监听按注册逆序分发，容器先应用偏移、用户监听再投影 delta，同一次滚动计两次。修法：放弃 delta 投影，直读 `is_scrolled_to_bottom()`。
 

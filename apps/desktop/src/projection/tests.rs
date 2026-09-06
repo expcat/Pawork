@@ -35,6 +35,14 @@ fn provider_status_entries_map_host_wire_to_readonly_labels() {
                     "method": "api_key",
                     "masked_credential": "sk-…ab12"
                 },
+                "credentials": [
+                    {
+                        "kind": "api_key",
+                        "masked_credential": "sk-…ab12",
+                        "expired": false,
+                        "expires_at": null
+                    }
+                ],
                 "use_proxy": true,
                 "catalog": { "type": "remote", "fetched_at": "2026-09-02T08:00:00Z" }
             },
@@ -44,6 +52,7 @@ fn provider_status_entries_map_host_wire_to_readonly_labels() {
                 "endpoint_label": "https://api.moonshot.cn",
                 "auth_methods": ["api_key", "oauth"],
                 "auth": { "type": "none" },
+                "credentials": [],
                 "use_proxy": false,
                 "catalog": {
                     "type": "fixed_fallback",
@@ -69,6 +78,14 @@ fn provider_status_entries_map_host_wire_to_readonly_labels() {
     );
     assert_eq!(entries[1].auth_methods_label(), "API key / OAuth");
     assert_eq!(entries[1].auth_label(), "Not connected");
+    // ADR-056 D2：credentials 必填；api_key 单条 / 空数组（键保留）均
+    // 合法解码，masked 为脱敏串。
+    assert_eq!(entries[0].credentials.len(), 1);
+    assert_eq!(entries[0].credentials[0].kind, "api_key");
+    assert_eq!(entries[0].credentials[0].masked_credential, "sk-…ab12");
+    assert!(!entries[0].credentials[0].expired);
+    assert_eq!(entries[0].credentials[0].expires_at, None);
+    assert!(entries[1].credentials.is_empty());
     assert_eq!(
         entries[1].catalog_label(),
         "Built-in catalog fallback · models.dev@v1"
@@ -303,6 +320,7 @@ fn default_model_unavailable_flag_tracks_connection_and_catalog() {
         display_name: "Kimi".into(),
         endpoint_label: "https://api.kimi.com".into(),
         auth_methods: vec!["oauth".into()],
+        credentials: Vec::new(),
         auth,
         catalog: ProviderCatalogState::Unavailable {
             error: "offline".into(),
@@ -365,6 +383,7 @@ fn provider_status_refresh_failure_keeps_last_list_and_default() {
             display_name: "Kimi".into(),
             endpoint_label: "https://api.kimi.com".into(),
             auth_methods: vec!["oauth".into()],
+            credentials: Vec::new(),
             auth: ProviderAuthState::None,
             catalog: ProviderCatalogState::Unavailable {
                 error: "offline".into(),
@@ -386,6 +405,53 @@ fn provider_status_refresh_failure_keeps_last_list_and_default() {
     );
     assert_eq!(state.query.error.as_deref(), Some("query failed"));
     assert!(!state.query.loading);
+}
+
+#[test]
+fn provider_card_expansion_defaults_collapsed_and_trims_to_list() {
+    // ADR-056 D4：展开态按 provider_id 记忆；默认全部折叠；权威重查后
+    // 只保留仍存在的条目，不为消失的 provider 维持幽灵展开位。
+    let entry = |provider_id: &str| ProviderAuthStatusEntry {
+        provider_id: provider_id.into(),
+        display_name: provider_id.into(),
+        endpoint_label: String::new(),
+        auth_methods: vec!["api_key".into()],
+        credentials: Vec::new(),
+        auth: ProviderAuthState::None,
+        catalog: ProviderCatalogState::Unavailable {
+            error: "offline".into(),
+            fetched_at: None,
+        },
+        use_proxy: true,
+    };
+    let mut state = SettingsProvidersState::default();
+    state.apply_loaded(ProviderAuthStatusData {
+        providers: vec![entry("kimi"), entry("glm")],
+        default: None,
+        role_defaults: Default::default(),
+    });
+    assert!(!state.provider_expanded("kimi"));
+    assert!(!state.provider_expanded("glm"));
+    state.toggle_provider_expanded("kimi");
+    assert!(state.provider_expanded("kimi"));
+    // 再点一次折叠；不同 provider 互不影响。
+    state.toggle_provider_expanded("kimi");
+    assert!(!state.provider_expanded("kimi"));
+    state.toggle_provider_expanded("glm");
+    assert!(state.provider_expanded("glm"));
+    assert!(!state.provider_expanded("kimi"));
+    // 权威重查（glm 已消失）：kimi 展开保留、glm 展开随清单裁剪。
+    state.toggle_provider_expanded("kimi");
+    state.apply_loaded(ProviderAuthStatusData {
+        providers: vec![entry("kimi")],
+        default: None,
+        role_defaults: Default::default(),
+    });
+    assert!(state.provider_expanded("kimi"));
+    assert!(!state.provider_expanded("glm"));
+    // 查询失败保留旧清单与展开态（不清、不伪造）。
+    state.apply_failed("query failed");
+    assert!(state.provider_expanded("kimi"));
 }
 
 #[test]
@@ -648,6 +714,7 @@ fn settings_state_with_provider(auth_methods: &[&str]) -> SettingsProvidersState
                 .iter()
                 .map(|method| method.to_string())
                 .collect(),
+            credentials: Vec::new(),
             auth: ProviderAuthState::None,
             catalog: ProviderCatalogState::Unavailable {
                 error: "offline".into(),

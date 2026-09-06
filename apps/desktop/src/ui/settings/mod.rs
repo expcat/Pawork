@@ -70,6 +70,16 @@ pub(crate) const SETTINGS_MODELS_MENU_MAX_HEIGHT: f32 = 320.0;
 pub(crate) const SETTINGS_MODELS_MENU_HEADER_HEIGHT: f32 = 28.0;
 pub(crate) const SETTINGS_MODELS_MENU_ROW_HEIGHT: f32 = 44.0;
 pub(crate) const SETTINGS_MODELS_MENU_EMPTY_HEIGHT: f32 = 104.0;
+/// 展开区行高（Proxy / Manage models / Usage 行；render 与 AX 同源；
+/// ADR-056 D4）。
+pub(crate) const SETTINGS_PROVIDER_ROW_HEIGHT: f32 = 48.0;
+/// Credentials 区头部高度（标题 + 副标题两行）。
+pub(crate) const SETTINGS_PROVIDER_CREDENTIALS_HEADER_HEIGHT: f32 = 40.0;
+/// 单条凭证行高度。
+pub(crate) const SETTINGS_PROVIDER_CREDENTIAL_ROW_HEIGHT: f32 = 28.0;
+/// Usage 进度条槽位几何（固定槽位，恒无填充；ADR-056 D5）。
+pub(crate) const SETTINGS_PROVIDER_USAGE_BAR_WIDTH: f32 = 120.0;
+pub(crate) const SETTINGS_PROVIDER_USAGE_BAR_HEIGHT: f32 = 4.0;
 /// 「模型与默认项」区失效提示（render 与 AX 同源；只声明事实，不切换）。
 pub(crate) fn settings_default_unavailable_note() -> &'static str {
     t("settings.default_unavailable_note")
@@ -140,6 +150,26 @@ pub(crate) fn provider_catalog_overview_label(
         crate::projection::ProviderCatalogState::Unavailable { .. } => {
             t("settings.providers.catalog_unavailable").to_string()
         }
+    }
+}
+
+/// 凭证类型标签（ADR-056 D4）：已知 kind 映射显示名，未知值原样保留
+/// （不臆造能力）；render 与 AX 同源。
+pub(crate) fn provider_credential_kind_label(kind: &str) -> String {
+    match kind {
+        "api_key" => t("settings.providers.credentials_kind_api_key").to_string(),
+        "oauth" => t("settings.providers.credentials_kind_oauth").to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// 凭证状态词（ADR-056 D3）：expired 只陈述过期事实；未过期复用
+/// provider 连接态词条 Connected。render 与 AX 同源。
+pub(crate) fn provider_credential_status_label(expired: bool) -> &'static str {
+    if expired {
+        t("settings.providers.credentials_expired")
+    } else {
+        t("provider.auth_connected")
     }
 }
 /// 外观页字号按钮的固定几何；render 与 AX bounds 共用，避免缩放后命中框漂移。
@@ -408,6 +438,9 @@ pub(crate) enum SettingsControl {
     /// 供应商代理开关（ADR-052 SET-6h）：携带转义后的 provider id，由
     /// AppView 对照 provider 清单还原（未知 fail-closed）。
     UseProxy(String),
+    /// 卡片展开 / 折叠 chevron（ADR-056 D4）：本地视图态，携带转义后的
+    /// provider id，由 AppView 对照 provider 清单还原（未知 fail-closed）。
+    Expand(String),
 }
 
 pub(crate) fn settings_api_key_input_identifier(provider_id: &str) -> String {
@@ -423,6 +456,15 @@ pub(crate) fn settings_use_proxy_identifier(provider_id: &str) -> String {
     format!(
         "{SETTINGS_CONTROL_PREFIX}{}",
         dynamic_identifier("use-proxy", provider_id)
+    )
+}
+
+/// 卡片展开 / 折叠 chevron identifier（render 按钮 id / AX 节点 id /
+/// 派发键三用；provider id 经 dynamic_identifier 转义；ADR-056 D4）。
+pub(crate) fn settings_provider_expand_identifier(provider_id: &str) -> String {
+    format!(
+        "{SETTINGS_CONTROL_PREFIX}{}",
+        dynamic_identifier("expand", provider_id)
     )
 }
 
@@ -638,6 +680,9 @@ pub(crate) fn parse_settings_control(identifier: &str) -> Option<SettingsControl
     if let Some(provider) = rest.strip_prefix("use-proxy-") {
         return Some(SettingsControl::UseProxy(provider.to_string()));
     }
+    if let Some(provider) = rest.strip_prefix("expand-") {
+        return Some(SettingsControl::Expand(provider.to_string()));
+    }
     // 已知 action key 集合有限且互不为前缀（均以 '-' 收尾成段），
     // 逐个前缀匹配消解复合 key（connect-oauth 等）。
     for key in [
@@ -799,13 +844,14 @@ pub(super) fn status_line(text: &str, color: gpui::Rgba) -> impl IntoElement {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_settings_models_control, parse_settings_role_control, parse_terminal_dimension,
-        parse_terminal_shell, settings_manage_models_identifier, settings_model_switch_identifier,
-        settings_models_disable_all_identifier, settings_models_enable_all_identifier,
-        settings_models_refresh_identifier, settings_role_candidates,
+        parse_settings_control, parse_settings_models_control, parse_settings_role_control,
+        parse_terminal_dimension, parse_terminal_shell, settings_manage_models_identifier,
+        settings_model_switch_identifier, settings_models_disable_all_identifier,
+        settings_models_enable_all_identifier, settings_models_refresh_identifier,
+        settings_provider_expand_identifier, settings_role_candidates,
         settings_role_clear_identifier, settings_role_item_identifier, settings_role_menu_entries,
-        settings_role_trigger_identifier, terminal_save_enabled, SettingsModelsControl,
-        SettingsRoleControl,
+        settings_role_trigger_identifier, terminal_save_enabled, SettingsControl,
+        SettingsModelsControl, SettingsRoleControl,
     };
     use crate::projection::{
         ModelEntry, ProviderAuthState, ProviderAuthStatusEntry, ProviderCatalogState, SettingsRole,
@@ -839,6 +885,7 @@ mod tests {
             display_name: provider_id.to_string(),
             endpoint_label: String::new(),
             auth_methods: vec!["api_key".to_string()],
+            credentials: Vec::new(),
             auth,
             catalog: ProviderCatalogState::Unavailable {
                 error: "offline".to_string(),
@@ -957,6 +1004,21 @@ mod tests {
             None
         );
         assert_eq!(parse_settings_models_control("use-proxy-glm-coding"), None);
+    }
+
+    /// ADR-056 D4：卡片展开 chevron identifier 三路径（render / 键盘 /
+    /// AX）同源——构造与解析互逆；与代理开关等其他控件前缀不冲突。
+    #[test]
+    fn settings_provider_expand_identifier_roundtrips() {
+        let id = settings_provider_expand_identifier("glm-coding");
+        assert_eq!(id, "settings-action-expand-glm-coding");
+        assert_eq!(
+            parse_settings_control(&id),
+            Some(SettingsControl::Expand("glm-coding".into()))
+        );
+        // 空转义段与既有 use-proxy 形状一致：派发侧按 provider 清单
+        // 还原，未知 fail-closed；非本控件前缀不解析。
+        assert_eq!(parse_settings_control("settings-expand-glm-coding"), None);
     }
 }
 

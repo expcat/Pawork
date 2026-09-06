@@ -4,8 +4,9 @@ use pawork_auth::CredentialSource;
 use pawork_domain::ProviderId;
 use pawork_protocol::{
     AppCommand, AppCommandEnvelope, AppQuery, AppResponse, DefaultModelPair, ProviderAuthState,
-    ProviderAuthStatusData, ProviderAuthStatusEntry, ProviderCatalogState, ProviderUseProxyData,
-    RoleDefaultsData, SetDefaultRoleModelData, SetModelEnabledData, SetProviderModelsEnabledData,
+    ProviderAuthStatusData, ProviderAuthStatusEntry, ProviderCatalogState, ProviderCredentialStatus,
+    ProviderUseProxyData, RoleDefaultsData, SetDefaultRoleModelData, SetModelEnabledData,
+    SetProviderModelsEnabledData,
 };
 use pawork_providers::ReasoningProtector;
 
@@ -150,6 +151,45 @@ fn auth_state(
     ProviderAuthState::None
 }
 
+/// ADR-056 D2：盘上存储凭证列表（固定序：api_key 在前、oauth 在后）。
+/// 只枚举 auth backend 命中的存储条目：env fallback 不是存储凭证不入列；
+/// 后端读取异常不推条目（provider 级 auth 态已按 Error 口径上报）。
+fn stored_credentials(
+    core: &AppCore,
+    channel: &channels::FirstPartyChannel,
+) -> Vec<ProviderCredentialStatus> {
+    let methods = channel.auth_methods();
+    let backend = core.auth_backend();
+    let mut credentials = Vec::new();
+    if methods.contains(&"api_key") {
+        if let Ok(CredentialSource::AuthFile(stored)) =
+            pawork_auth::resolve_provider_credential(backend.as_ref(), channel.id)
+        {
+            credentials.push(ProviderCredentialStatus {
+                kind: "api_key".into(),
+                masked_credential: stored.masked.as_str().to_string(),
+                expired: false,
+                expires_at: None,
+            });
+        }
+    }
+    if methods.contains(&"oauth") {
+        let provider = ProviderId::new(channel.id);
+        if let Ok(Some(meta)) = pawork_auth::load_default_oauth_meta(backend.as_ref(), &provider) {
+            // 无 expires_at 视为未过期（同 oauth::needs_refresh 的 None 口径）。
+            let now = now_millis();
+            let expired = meta.expires_at_ms.is_some_and(|expires| expires <= now);
+            credentials.push(ProviderCredentialStatus {
+                kind: "oauth".into(),
+                masked_credential: meta.masked.as_str().to_string(),
+                expired,
+                expires_at: meta.expires_at_ms.map(iso8601_utc),
+            });
+        }
+    }
+    credentials
+}
+
 /// 目录三态：探测成功 remote / 探测失败但有静态条目 fixed_fallback / 否则
 /// unavailable（复用 models_overview 的装配 + 探测机制，不新增缓存）。
 async fn catalog_state(
@@ -250,6 +290,8 @@ pub(crate) async fn provider_auth_status(
                 .iter()
                 .map(|method| (*method).to_string())
                 .collect(),
+            // ADR-056 D2：盘上存储凭证逐条列出；flight 不回写本列表。
+            credentials: stored_credentials(&core, channel),
             auth: auth_state(&core, &adapter.auth_flights, channel),
             catalog,
             // ADR-052 SET-6h：生效值 = 未显式 `use_proxy = false`。

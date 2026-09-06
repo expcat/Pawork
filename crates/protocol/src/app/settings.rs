@@ -158,13 +158,35 @@ pub enum ProviderCatalogState {
     },
 }
 
+/// `provider_auth_status.providers[].credentials` 中的一条存储凭证状态
+/// （ADR-056 D2，API 1.13）：只枚举盘上存储条目，不含明文与 env 片段。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
+pub struct ProviderCredentialStatus {
+    /// 凭证类型：`"api_key"` / `"oauth"`。
+    pub kind: String,
+    /// 脱敏串（存储凭证恒可脱敏，非可选；如 `sk-…wxyz`）。
+    pub masked_credential: String,
+    /// OAuth 按 `expires_at_ms` 与当前时刻比较得出；无过期时间视为未过期。
+    pub expired: bool,
+    /// ISO-8601，仅 OAuth 有值；api key 为 JSON `null` 但键必须保留
+    /// （required-nullable，缺键 fail-closed）。
+    #[serde(deserialize_with = "deserialize_required_option")]
+    pub expires_at: Option<String>,
+}
+
 /// `provider_auth_status` 数组中的一项。
+///
+/// `credentials` 自 ADR-056 D2（API 1.13）起必填。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderAuthStatusEntry {
     pub provider_id: String,
     pub display_name: String,
     pub endpoint_label: String,
     pub auth_methods: Vec<String>,
+    /// 盘上存储凭证状态（ADR-056 D2）：api_key 在前、oauth 在后（固定序）；
+    /// 皆无存储时为空数组，env fallback 不入列。
+    pub credentials: Vec<ProviderCredentialStatus>,
     pub auth: ProviderAuthState,
     pub catalog: ProviderCatalogState,
     /// 该 provider 是否跟随 Global `proxy_url`（ADR-052 SET-6h）。
@@ -367,6 +389,7 @@ mod tests {
                 "display_name": "GLM Coding",
                 "endpoint_label": "https://api.z.ai/api/coding/paas/v4",
                 "auth_methods": ["api_key"],
+                "credentials": [],
                 "auth": {
                     "type": "connected",
                     "method": "api_key",
@@ -395,6 +418,7 @@ mod tests {
             }
         );
         assert!(status.default.is_none());
+        assert!(status.providers[0].credentials.is_empty());
         assert_eq!(serde_json::to_value(&status).expect("serialize"), json);
 
         let connected = ProviderAuthState::Connected {
@@ -410,6 +434,66 @@ mod tests {
             })
         );
         assert_eq!(roundtrip(&connected), connected);
+    }
+
+    #[test]
+    fn opt3d_credential_status_roundtrip_and_fail_closed() {
+        let credentials = json!([
+            {
+                "kind": "api_key",
+                "masked_credential": "sk-…wxyz",
+                "expired": false,
+                "expires_at": null
+            },
+            {
+                "kind": "oauth",
+                "masked_credential": "acc…9f2c",
+                "expired": true,
+                "expires_at": "2026-09-05T00:00:00Z"
+            }
+        ]);
+        let decoded: Vec<ProviderCredentialStatus> =
+            serde_json::from_value(credentials.clone()).expect("credential status");
+        assert_eq!(
+            decoded,
+            vec![
+                ProviderCredentialStatus {
+                    kind: "api_key".into(),
+                    masked_credential: "sk-…wxyz".into(),
+                    expired: false,
+                    expires_at: None,
+                },
+                ProviderCredentialStatus {
+                    kind: "oauth".into(),
+                    masked_credential: "acc…9f2c".into(),
+                    expired: true,
+                    expires_at: Some("2026-09-05T00:00:00Z".into()),
+                },
+            ]
+        );
+        assert_eq!(
+            serde_json::to_value(&decoded).expect("serialize"),
+            credentials
+        );
+
+        // expires_at required-nullable：缺键 fail-closed（同 role_defaults 口径）。
+        assert!(serde_json::from_value::<ProviderCredentialStatus>(json!({
+            "kind": "api_key",
+            "masked_credential": "sk-…wxyz",
+            "expired": false
+        }))
+        .is_err());
+        // credentials 必填：缺键 fail-closed。
+        assert!(serde_json::from_value::<ProviderAuthStatusEntry>(json!({
+            "provider_id": "glm-coding",
+            "display_name": "GLM Coding",
+            "endpoint_label": "https://api.z.ai/api/coding/paas/v4",
+            "auth_methods": ["api_key"],
+            "auth": {"type": "none"},
+            "catalog": {"type": "remote", "fetched_at": "2026-09-04T00:00:00Z"},
+            "use_proxy": true
+        }))
+        .is_err());
     }
 
     #[test]

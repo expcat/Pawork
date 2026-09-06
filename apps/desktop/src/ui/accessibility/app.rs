@@ -451,6 +451,14 @@ impl AppView {
                                 return true;
                             }
                         }
+                        Some(SettingsControl::Expand(escaped)) => {
+                            if let Some(provider_id) =
+                                self.settings_provider_id_for_escaped(&escaped)
+                            {
+                                self.on_toggle_settings_provider_expanded(provider_id, cx);
+                                return true;
+                            }
+                        }
                         _ => {}
                     }
                     return false;
@@ -3703,6 +3711,7 @@ mod tests {
                                 display_name: "Kimi".into(),
                                 endpoint_label: "https://api.moonshot.cn".into(),
                                 auth_methods: vec!["api_key".into()],
+                                credentials: Vec::new(),
                                 auth: crate::projection::ProviderAuthState::None,
                                 catalog: crate::projection::ProviderCatalogState::Unavailable {
                                     error: "offline".into(),
@@ -3715,6 +3724,7 @@ mod tests {
                                 display_name: "Connected provider".into(),
                                 endpoint_label: "https://provider.example".into(),
                                 auth_methods: vec!["api_key".into()],
+                                credentials: Vec::new(),
                                 auth: crate::projection::ProviderAuthState::Connected {
                                     method: "api_key".into(),
                                     masked_credential: Some("masked-fragment-sentinel".into()),
@@ -4022,6 +4032,7 @@ mod tests {
             display_name: provider_id.to_string(),
             endpoint_label: String::new(),
             auth_methods: vec!["api_key".to_string()],
+            credentials: Vec::new(),
             auth,
             catalog: ProviderCatalogState::Unavailable {
                 error: "offline".to_string(),
@@ -4223,6 +4234,7 @@ mod tests {
             display_name: provider_id.to_string(),
             endpoint_label: String::new(),
             auth_methods: vec!["api_key".to_string()],
+            credentials: Vec::new(),
             auth,
             catalog: catalog_remote(),
             use_proxy: true,
@@ -4273,6 +4285,12 @@ mod tests {
                     },
                 ]);
                 view.projection.settings_general.proxy_url = Some("http://127.0.0.1:7890".into());
+                // ADR-056 D4：Manage models / 代理 Switch 迁入展开区——
+                // 断言前先显式展开三张卡（chevron 状态存 projection）。
+                view.projection
+                    .settings_providers
+                    .expanded_providers
+                    .extend(["kimi", "glm", "empty"].map(String::from));
                 view.open_menu = Some(MenuKind::SettingsProviderModels("kimi".into()));
             });
         });
@@ -4400,6 +4418,257 @@ mod tests {
                 .expect("kimi proxy switch still present");
             assert!(!proxy.enabled);
             assert!(!tree.permits(&press(settings_use_proxy_identifier("kimi"))));
+        });
+    }
+
+    /// ADR-056 D4/D5：展开卡 AX——默认折叠只有 chevron（value Collapsed）；
+    /// chevron Press 展开后 Credentials 行（kind + masked + Connected /
+    /// Expired）与 Usage 行（恒「Usage unavailable」，无数字）入树；空
+    /// 凭证列表给诚实空态；proxy_url 未配置时不发布代理 Switch。
+    #[gpui::test]
+    fn settings_provider_expanded_card_ax_pins_credentials_and_usage(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use gpui::AppContext;
+
+        use crate::projection::ProviderAuthStatusEntry;
+        use crate::ui::settings::{
+            provider_credential_kind_label, settings_provider_expand_identifier,
+            settings_use_proxy_identifier,
+        };
+
+        struct AxExpandedHost {
+            view: gpui::Entity<AppView>,
+        }
+        impl gpui::Render for AxExpandedHost {
+            fn render(
+                &mut self,
+                _window: &mut Window,
+                _cx: &mut Context<Self>,
+            ) -> impl gpui::IntoElement {
+                gpui::div()
+            }
+        }
+
+        let platform = std::sync::Arc::new(crate::platform::Platform::new());
+        let socket = std::env::temp_dir().join("opt3d-expanded-card-ax.sock");
+        let (host, cx) = cx.add_window_view(|_window, cx| {
+            let view = cx.new(|cx| AppView::new(platform, socket, None, cx));
+            AxExpandedHost { view }
+        });
+        let view = cx.update(|_window, cx| host.read(cx).view.clone());
+        // ProviderCredentialStatus 未在 pawork-client re-export 面上，测试
+        // 经 wire JSON 解码构造（与投影层 fail-closed 解析同一路径）。
+        let provider = |provider_id: &str, credentials: serde_json::Value| {
+            serde_json::from_value::<ProviderAuthStatusEntry>(serde_json::json!({
+                "provider_id": provider_id,
+                "display_name": provider_id,
+                "endpoint_label": "",
+                "auth_methods": ["api_key"],
+                "credentials": credentials,
+                "auth": { "type": "connected", "method": "api_key",
+                          "masked_credential": null },
+                "catalog": { "type": "remote",
+                             "fetched_at": "2026-09-05T00:00:00Z" },
+                "use_proxy": true,
+            }))
+            .expect("decode ProviderAuthStatusEntry")
+        };
+        cx.update(|_window, cx| {
+            view.update(cx, |view, _cx| {
+                view.projection.set_connection(ConnectionState::Connected {
+                    instance_id: "test".into(),
+                });
+                view.route = AppRoute::Settings;
+                view.projection.settings_providers.apply_loaded(
+                    crate::projection::ProviderAuthStatusData {
+                        providers: vec![
+                            provider(
+                                "dual",
+                                serde_json::json!([
+                                    { "kind": "api_key", "masked_credential": "sk-…ab12",
+                                      "expired": false, "expires_at": null },
+                                    { "kind": "oauth", "masked_credential": "oauth-…wxyz",
+                                      "expired": true,
+                                      "expires_at": "2026-09-01T00:00:00Z" },
+                                ]),
+                            ),
+                            provider("empty", serde_json::json!([])),
+                        ],
+                        default: None,
+                        role_defaults: Default::default(),
+                    },
+                );
+            });
+        });
+        let expand_dual = settings_provider_expand_identifier("dual");
+        let expand_empty = settings_provider_expand_identifier("empty");
+
+        // 默认折叠：chevron 常驻（value Collapsed、可按），展开区节点
+        // （Credentials / Usage / 代理 Switch）不入树。
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            let tree = view.accessibility_tree(window, cx);
+            tree.validate().expect("collapsed cards AX tree validates");
+            let chevron = tree
+                .find(&expand_dual)
+                .expect("collapsed card pins its chevron");
+            assert_eq!(chevron.value.as_deref(), Some("Collapsed"));
+            assert!(chevron.enabled);
+            assert!(tree.permits(&AxRequest {
+                identifier: expand_dual.clone(),
+                action: AxAction::Press,
+                value: None,
+            }));
+            assert!(tree.find(&dynamic_identifier("settings-provider-credentials", "dual")).is_none());
+            assert!(tree.find(&dynamic_identifier("settings-provider-usage", "dual")).is_none());
+            assert!(tree
+                .find(&settings_use_proxy_identifier("dual"))
+                .is_none());
+        });
+
+        // chevron Press（AX 与 render / 键盘同入口）：dual 展开。
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.handle_accessibility_request(
+                    AxRequest {
+                        identifier: expand_dual.clone(),
+                        action: AxAction::Press,
+                        value: None,
+                    },
+                    window,
+                    cx,
+                );
+            });
+        });
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            let tree = view.accessibility_tree(window, cx);
+            tree.validate().expect("expanded card AX tree validates");
+            let chevron = tree
+                .find(&expand_dual)
+                .expect("expanded card keeps its chevron");
+            assert_eq!(chevron.value.as_deref(), Some("Expanded"));
+            let credentials = tree
+                .find(&dynamic_identifier("settings-provider-credentials", "dual"))
+                .expect("expanded card pins the credentials group");
+            assert_eq!(credentials.label, "Credentials");
+            // 区头部标题 / 副标题入 AX label/value（同 manage 行：标题
+            // 文案面非省略的回归钉板；render 截断 gpui 测试体系不可观测）。
+            let credentials_header = tree
+                .find(&dynamic_identifier(
+                    "settings-provider-credentials-header",
+                    "dual",
+                ))
+                .expect("expanded card pins the credentials header text");
+            assert_eq!(
+                credentials_header.label,
+                t("settings.providers.credentials_title")
+            );
+            assert_eq!(
+                credentials_header.value.as_deref(),
+                Some(t("settings.providers.credentials_subtitle"))
+            );
+            // 凭证行：kind + masked + 状态词；api_key 在前（Host 固定序）。
+            let api_key = tree
+                .find(&dynamic_identifier("settings-provider-credential-0", "dual"))
+                .expect("api_key credential row pinned");
+            assert_eq!(
+                api_key.label,
+                provider_credential_kind_label("api_key")
+            );
+            assert_eq!(api_key.value.as_deref(), Some("sk-…ab12 · Connected"));
+            let oauth = tree
+                .find(&dynamic_identifier("settings-provider-credential-1", "dual"))
+                .expect("oauth credential row pinned");
+            assert_eq!(oauth.label, provider_credential_kind_label("oauth"));
+            assert_eq!(oauth.value.as_deref(), Some("oauth-…wxyz · Expired"));
+            // Usage 行：固定槽位 + 诚实空态，value 不含任何数字 / 百分比。
+            let usage = tree
+                .find(&dynamic_identifier("settings-provider-usage", "dual"))
+                .expect("expanded card pins the usage row");
+            assert_eq!(usage.label, "Usage");
+            assert_eq!(usage.value.as_deref(), Some("Usage unavailable"));
+            // 展开区行标题 / 副标题入 AX value（标题文案面非省略的回归
+            // 钉板；render 文本截断 gpui 测试体系不可观测，见 providers.rs
+            // min_w_0 注释）。
+            let manage_text = tree
+                .find(&dynamic_identifier("settings-provider-manage-text", "dual"))
+                .expect("expanded card pins the manage models row text");
+            assert_eq!(manage_text.label, t("settings.providers.manage_models"));
+            assert_eq!(
+                manage_text.value.as_deref(),
+                Some(t("settings.providers.manage_models_tooltip"))
+            );
+            // proxy_url 未配置：代理 Switch 不发布（gate 与 render 同源）。
+            assert!(tree
+                .find(&dynamic_identifier("settings-provider-proxy-text", "dual"))
+                .is_none());
+            assert!(tree
+                .find(&settings_use_proxy_identifier("dual"))
+                .is_none());
+            // 未展开的 empty 卡仍只有 chevron。
+            assert!(tree
+                .find(&dynamic_identifier("settings-provider-credentials-empty", "empty"))
+                .is_none());
+        });
+
+        // empty 卡展开：空凭证列表发布诚实空态，不渲染假行。
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.handle_accessibility_request(
+                    AxRequest {
+                        identifier: expand_empty.clone(),
+                        action: AxAction::Press,
+                        value: None,
+                    },
+                    window,
+                    cx,
+                );
+            });
+        });
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            let tree = view.accessibility_tree(window, cx);
+            tree.validate().expect("empty expanded card AX tree validates");
+            let empty = tree
+                .find(&dynamic_identifier(
+                    "settings-provider-credentials-empty",
+                    "empty",
+                ))
+                .expect("empty credentials state pinned");
+            assert_eq!(empty.value.as_deref(), Some("No stored credentials"));
+            assert!(tree
+                .find(&dynamic_identifier("settings-provider-credential-0", "empty"))
+                .is_none());
+        });
+
+        // 配置全局 proxy_url 后：Proxy 行文本（标题 + 副标题）与 Switch
+        // 随 gate 打开发布（与 render 同源）。
+        cx.update(|_window, cx| {
+            view.update(cx, |view, _cx| {
+                view.projection.settings_general.apply_loaded(
+                    pawork_client::GeneralSettingsData {
+                        proxy_url: Some("http://127.0.0.1:7890".into()),
+                    },
+                );
+            });
+        });
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            let tree = view.accessibility_tree(window, cx);
+            let proxy_text = tree
+                .find(&dynamic_identifier("settings-provider-proxy-text", "dual"))
+                .expect("proxy row text pinned once proxy_url is set");
+            assert_eq!(proxy_text.label, t("settings.providers.proxy_title"));
+            assert_eq!(
+                proxy_text.value.as_deref(),
+                Some(t("settings.providers.proxy_subtitle"))
+            );
+            let proxy_switch = tree
+                .find(&settings_use_proxy_identifier("dual"))
+                .expect("proxy switch pinned once proxy_url is set");
+            assert!(proxy_switch.enabled);
         });
     }
 }

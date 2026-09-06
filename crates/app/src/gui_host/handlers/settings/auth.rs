@@ -119,12 +119,9 @@ async fn verify_and_store(
         })?;
     let stored = pawork_auth::store_default_api_key(backend.as_ref(), provider_id, candidate)
         .map_err(|error| GuiHostAdapter::app_error(error.into()))?;
-    // 替换语义（SET-4 A3）：一切换认证方式 = 替换连接。声明 oauth 的通道
-    // 写入 api key 后移除旧 OAuth 条目；删除失败 fail-closed 上报，不静默。
-    if preset.auth_methods.contains(&"oauth") {
-        pawork_auth::delete_default_oauth_token(backend.as_ref(), provider_id)
-            .map_err(|error| GuiHostAdapter::app_error(error.into()))?;
-    }
+    // ADR-056 D1 共存语义：api key 写入不删除该 provider 的 OAuth default
+    // 条目；同 kind 覆盖由 store_default_api_key 同账户覆盖写保证，
+    // 跨 kind 清理只属于 auth_remove / auth_logout。
     Ok(stored.masked.as_str().to_string())
 }
 

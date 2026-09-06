@@ -1,6 +1,6 @@
 # Pawork 活动路线图：Desktop 优化（OPT）
 
-> 基线日期：2026-09-05。状态：**OPT-D 六张候选稿已交付、已获视觉签字；OPT-1 已实现并通过定向验证；OPT-2 已实现且真窗口验收通过（§10.3）；OPT-3 内核/协议/配置半区已实现（3a/3b，ADR-055，API 1.12，§10.4），GUI 控件批次（启用弹层/四默认角色/代理 Switch）已实现并经定向门禁与协议层验收（§10.5），代理 Switch 像素级复验已通过（§10.6）；OPT-4 已实现（4a–4e，§10.6），desktop 门禁 207/207**。来源：当日正式 Desktop 真窗口走查（11 条反馈）。本文件是当前活动线的任务规划，**不是**源码或冻结契约的事实源。P0–P2 收尾证据仍见 [Desktop Spec §8](spec/desktop.md#8-gui-收尾验收记录2026-09-05)；未排期候选仍见 [backlog.md](spec/backlog.md)。
+> 基线日期：2026-09-05。状态：**OPT-D 六张候选稿已交付、已获视觉签字；OPT-1 已实现并通过定向验证；OPT-2 已实现且真窗口验收通过（§10.3）；OPT-3 内核/协议/配置半区已实现（3a/3b，ADR-055，API 1.12，§10.4），GUI 控件批次（启用弹层/四默认角色/代理 Switch）已实现并经定向门禁与协议层验收（§10.5），代理 Switch 像素级复验已通过（§10.6）；OPT-4 已实现（4a–4e，§10.6）且真窗口对照新图验收通过（§10.7）；OPT-3d/3e 已实现（ADR-056，API 1.13）并真窗口验收通过（§10.8），desktop 门禁 210/210**。来源：当日正式 Desktop 真窗口走查（11 条反馈）。本文件是当前活动线的任务规划，**不是**源码或冻结契约的事实源。P0–P2 收尾证据仍见 [Desktop Spec §8](spec/desktop.md#8-gui-收尾验收记录2026-09-05)；未排期候选仍见 [backlog.md](spec/backlog.md)。
 
 **闸门**：凡涉及显示效果的条目，必须先完成 **OPT-D 统一 UI Design**（一体出图），再改像素与布局。内核/配置/协议可与出图并行准备，但 GUI 落地以设计稿为准。
 
@@ -169,10 +169,10 @@ F3「代理保存到对应配置」：现行 Global `[[providers]].use_proxy` �
 | OPT-D | 六张统一候选稿已交付、尺寸/状态走查通过；**用户视觉签字通过**（设计闸门已放行） |
 | OPT-1 | 1a–1d 已实现；定向自动验证通过；Appearance 真窗口重启恢复通过；未归档/未发布 |
 | OPT-2 | 2a–2d 已实现（ADR-054，API 1.11）；定向自动验证与真窗口验收通过（验收中修复无项目会话无法问答，见 §10.3）；未归档/未发布 |
-| OPT-3 | 3a/3b 内核·协议·配置已实现（ADR-055，API 1.12）；GUI 控件批次已实现（§10.5），desktop 门禁 207/207、协议层验收通过、修复清除判定误删盘上默认对的 D3a 缺陷；代理 Switch 像素级复验已通过（§10.6）；3d/3e 未开始 |
-| OPT-4 | 4a–4e 已实现（§10.6）：图标命中区/字形、Inspector 默认折叠 + 重开入口、Settings 全宽与导航零位移、4e 核对一致；desktop 门禁 207/207；真窗口对照新图验收待做 |
+| OPT-3 | 3a/3b 内核·协议·配置已实现（ADR-055，API 1.12）；GUI 控件批次已实现（§10.5），协议层验收通过、修复 D3a 缺陷；代理 Switch 像素级复验已通过（§10.6）；3d/3e 已实现（ADR-056，API 1.13）且真窗口验收通过（§10.8），desktop 门禁 210/210 |
+| OPT-4 | 4a–4e 已实现（§10.6）：图标命中区/字形、Inspector 默认折叠 + 重开入口、Settings 全宽与导航零位移、4e 核对一致；desktop 门禁 207/207；真窗口对照新图验收通过（§10.7） |
 
-本线整体仍未完成：OPT-3 剩 3d/3e、OPT-4 真窗口对照新图验收待做；后续验收与发布分别记录，不由本批自动推定。
+本线 OPT-1～OPT-4 全部任务已实现并验收；发布与全量门禁仍是 BK-RELEASE-01（未授权），不随本线推定。
 
 
 ### 10.1 本批交付与证据（2026-09-05）
@@ -296,4 +296,41 @@ Full workspace gate: NOT RUN（当前未设置全量门禁）。
 
 Validated: 上表实际命令 + 真窗口 AX / 像素点击 / 盘上配置交叉验证。
 Targeted regressions: 上述 OPT-4 几何与行为；代理 Switch 像素级开关写读往返。
+Full workspace gate: NOT RUN（当前未设置全量门禁）。
+
+### 10.7 本批交付与证据（2026-09-06，OPT-4 真窗口对照新图验收）
+
+- **环境**：macOS 真窗口，隔离实例 `opt4v` + 平行 bundle `target/pawork-desktop-runtime/Pawork-opt4v.app`（`open -na` launchd 托管），Host 常驻 exec 会话当次 `--instance opt4v --provider opencode-go --model glm-5.3-flash` 覆盖（不写持久默认）；生产实例（pid 68191）与运行中的 opt3acc 旧实例全程未触碰；验收前备份 Global config（87 字节）、验收后 diff 确认零写入（本批纯视觉验收，无配置写操作）；二进制为 HEAD（2ba21cd）无改动增量构建（1.84s no-op 证明新鲜）。
+- **4b Inspector**：默认折叠（AX 树无 Inspector 容器）；Header 最右 Activity（inspector-toggle）+ Open inspector（inspector-expand，⤢ 字形渲染正常）并存；点击展开后出现 Changes/Terminal/Resources 三 tab 与面板内 Hide inspector 折叠控件、Changes 诚实空态「No active session」；折叠后回到双按钮并存态。对照 `opt-workbench-inspector-collapsed/open-v1.png` 结构一致（签字稿空态装饰性气泡图标按 §10.6 决议不采纳）。
+- **4a 图标**：rail 分组切换（Timeline↔Projects 真实切换验证）、左栏 +、Settings 齿轮、header-new-task、inspector-expand/collapse 全部经真实点击/AX Press 生效；命中区与 20px 字形几何由 desktop 门禁 token 钉板覆盖（§10.6，207/207），真窗口抽查功能与渲染正常。
+- **4c Settings 全宽**：Models & providers 与 Network 两页内容列均用满 rail 外宽度（卡片与 Save/Clear 抵右缘），对照 `opt-settings-shell-default-roles-v1.png` 一致。
+- **4d 导航选中零位移**：选中态左缘 3px 指示条 + 背景高亮，选中/未选中文字基线 x 坐标截图对比一致（点击产生的焦点描边只换色不挤布局）。
+- **4e 锚点与 F9 行为**：空态 New task 与左栏 + 均直建无项目会话归 Unassigned（无 WorkspaceConfirm 浮层），Composer 显示 No project 与文件工具不可用诚实提示；会话行右侧 Rename/Archive 按钮在选中行可见可用。
+- **收尾**：kill Desktop 与 Host 进程，无残留 opt4v 进程；Global config 还原校验通过（本无写入）；测试会话留存于实例私有 `~/.pawork/opt4v/session.db`，不影响生产实例数据。
+
+Validated: 真窗口 AX 树 + 截图逐条对照六张签字稿中与本批相关的四张；Global config 验收前后 diff。
+Targeted regressions: 本批纯验收无代码改动；几何/行为钉板沿用 §10.6 desktop 门禁 207/207。
+Full workspace gate: NOT RUN（当前未设置全量门禁）。
+
+### 10.8 本批交付与证据（2026-09-06，OPT-3d/3e 多凭证共存与额度槽）
+
+- **ADR-056**（[settings Spec](spec/settings.md#adr-056opt-3d3e-同供应商多凭证最小切片与额度槽诚实空态2026-09-06)）先行：API 1.12 → 1.13（additive），golden/typegen 先红后绿。范围：同 provider 的 API key 与 OAuth 凭证共存（SET-4 A3 替换语义缩窄为同 kind 覆盖）、`provider_auth_status` Entry 增 `credentials` 逐条状态、provider 卡展开区（Proxy/Manage models/Credentials/Usage 四区）、Usage 恒「Usage unavailable」诚实空态。同 kind 多账户与账户选择/路由不做（G1  backlog）。
+- **实现方式**：glm 子代理三片串行（protocol → app+cli → desktop，互不重叠写入集、各自跑本层门禁）；主代理撰写 ADR 与全部 Spec 同步、补 `pawork-client` 的 `ProviderCredentialStatus` 再导出、收口全量门禁与真窗口验收。
+- **验收中发现并修复 gpui 文本截断缺陷（两轮）**：展开区行标题/副标题在真窗口渲染为「…」（AX 与几何正常，仅像素截断）。根因：region 根 `min_w_0` 在 taffy 0.9 MinContent 测量趟以 Definite(0) 下探，gpui 0.2.2 nowrap 文本首测量即按 0 宽截断并整帧缓存毒化；flex_row+flex_1 文本列（确定 flex-basis）可躲过内容测量趟。第一轮（worker）修 Proxy/Manage models/Usage 行与 chevron 字形（12px 极小 → 20px `font::ICON` + 36×36 槽）；第二轮 Credentials 区头部仍复现，主代理按同机制把 header 文本列改为 flex_row+flex_1 骨架后真窗口转绿。经验记入 AGENTS.md §11。
+- **真窗口验收**（隔离实例 `opt4v` + 平行 bundle，Host 当次 `--provider opencode-go --model glm-5.3-flash` 覆盖；Global config 验收前备份、验收后 diff 零写入；生产实例未触碰）：八张 provider 卡默认折叠、chevron 清晰可见；xAI 展开卡四区齐全——Proxy 行标题/副标题/Switch、Manage models 行、Credentials 区（OAuth `eyJ…c1QQ · Expired`，过期状态诚实呈现）、Usage 槽「Usage unavailable」无数字；GLM Coding 展开卡 API key `ba0…fHL9 · Connected`；Replace/Remove 动作在 Credentials 区下方保留。
+- **配置影响**：本批验收纯只读（展开/查看），Global config 零写入（diff 实证）；测试会话留存于实例私有 `~/.pawork/opt4v/session.db`。
+
+| 检查 | 结果 |
+| --- | --- |
+| `cargo test -p pawork-protocol --offline --lib --tests`（protocol 切片） | 通过（golden 12/12；缺键 fail-closed、双 kind roundtrip） |
+| `cargo run -p pawork-protocol --features typegen --bin pawork-protocol-typegen` + `--check` | 通过（schemas 零漂移，仅 versions.d.ts 增 1.13） |
+| `cargo test -p pawork-app -p pawork-cli --offline --lib --tests`（app 切片 + 主代理收口复跑） | 通过（app lib 213/213、gui_server 集成 6/6+15/15、cli 44/44、acp 全绿；含共存 roundtrip、credentials 固定序/expired/env 不入列、auth_status 双行） |
+| `cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`（desktop 切片 + 截断修复后复跑） | 210 passed（含展开卡 AX 钉板：chevron、凭证行、Usage 恒无数字、proxy gate、空凭证诚实空态） |
+| `cargo check -p pawork --offline`（主代理收口） | 通过 |
+| 真窗口展开卡对照签字稿（上段） | 通过 |
+
+定向回归：共存 roundtrip（互删语义移除）、credentials 固定序与缺键 fail-closed、auth_status 双行、展开态状态机（显式 ∨ 流程态）、截断修复后 AX 钉板。`git diff --check` 与文档本地链接通过。日志在本机 /tmp，不检入仓库。
+
+Validated: 上表实际命令 + 真窗口 AX/截图对照签字稿 + Global config diff。
+Targeted regressions: 上述 ADR-056 契约与行为。
 Full workspace gate: NOT RUN（当前未设置全量门禁）。

@@ -54,7 +54,10 @@ pub const V1_11: ApiVersion = ApiVersion { major: 1, minor: 11 };
 /// ModelList.include_disabled；provider_auth_status.role_defaults）。
 pub const V1_12: ApiVersion = ApiVersion { major: 1, minor: 12 };
 
-pub const API_VERSION: ApiVersion = V1_12;
+/// ADR-056 OPT-3d：同供应商多凭证状态（provider_auth_status.credentials）。
+pub const V1_13: ApiVersion = ApiVersion { major: 1, minor: 13 };
+
+pub const API_VERSION: ApiVersion = V1_13;
 
 /// 宿主支持的完整 API 版本表（P13-10 schema 版本化）。
 ///
@@ -63,6 +66,7 @@ pub const API_VERSION: ApiVersion = V1_12;
 pub const SUPPORTED_API_VERSIONS: &[ApiVersion] =
     &[
         V1_0, V1_1, V1_2, V1_3, V1_4, V1_5, V1_6, V1_7, V1_8, V1_9, V1_10, V1_11, V1_12,
+        V1_13,
     ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -172,6 +176,11 @@ pub const PROTOCOL_CRATE_COMPATIBILITY: &[ProtocolCrateCompatibility] = &[
         crate_version: "0.1.0",
         note: "ADR-055 OPT-3 模型启用集与默认角色（set_model_enabled / set_provider_models_enabled / set_default_role_model）",
     },
+    ProtocolCrateCompatibility {
+        api: ApiVersion { major: 1, minor: 13 },
+        crate_version: "0.1.0",
+        note: "ADR-056 OPT-3d 同供应商多凭证状态（provider_auth_status.credentials）",
+    },
 ];
 
 // =========================================================================
@@ -236,7 +245,7 @@ mod tests {
 
     #[test]
     fn version_helpers_and_supported_table_are_consistent() {
-        assert_eq!(ApiVersion::new(1, 12), API_VERSION);
+        assert_eq!(ApiVersion::new(1, 13), API_VERSION);
         assert_eq!(V1_1, ApiVersion::new(1, 1));
         assert_eq!(V1_3, ApiVersion::new(1, 3));
         assert_eq!(V1_4, ApiVersion::new(1, 4));
@@ -249,6 +258,7 @@ mod tests {
         assert_eq!(ApiVersion::new(1, 9).bump_minor(), ApiVersion::new(1, 10));
         assert_eq!(ApiVersion::new(1, 10).bump_minor(), ApiVersion::new(1, 11));
         assert_eq!(ApiVersion::new(1, 11).bump_minor(), ApiVersion::new(1, 12));
+        assert_eq!(ApiVersion::new(1, 12).bump_minor(), ApiVersion::new(1, 13));
         assert_eq!(
             ApiVersion::new(1, 2).bump_minor().bump_minor(),
             ApiVersion::new(1, 4)
@@ -259,7 +269,8 @@ mod tests {
         assert_eq!(
             SUPPORTED_API_VERSIONS,
             &[
-                V1_0, V1_1, V1_2, V1_3, V1_4, V1_5, V1_6, V1_7, V1_8, V1_9, V1_10, V1_11, V1_12
+                V1_0, V1_1, V1_2, V1_3, V1_4, V1_5, V1_6, V1_7, V1_8, V1_9, V1_10, V1_11, V1_12,
+                V1_13
             ]
         );
         assert!(SUPPORTED_API_VERSIONS
@@ -285,7 +296,7 @@ mod tests {
         assert!(json.get("crate_version").is_none());
         assert!(!json.to_string().contains("crate_version"));
         let version = serde_json::to_value(API_VERSION).expect("serialize version");
-        assert_eq!(version, serde_json::json!({"major": 1, "minor": 12}));
+        assert_eq!(version, serde_json::json!({"major": 1, "minor": 13}));
     }
 
     #[test]

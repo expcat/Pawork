@@ -8,18 +8,20 @@ use crate::ui::components::dropdown::{ANCHOR_GAP_Y, MENU_MAX_HEIGHT};
 use crate::ui::components::switch::SWITCH_TRACK_WIDTH;
 use crate::ui::i18n::t;
 use crate::ui::settings::{
-    provider_catalog_overview_label, provider_status_lines, settings_api_key_input_identifier,
+    provider_catalog_overview_label, provider_credential_kind_label,
+    provider_credential_status_label, provider_status_lines, settings_api_key_input_identifier,
     settings_default_unavailable_note, settings_manage_models_identifier,
     settings_model_switch_identifier, settings_models_disable_all_identifier,
     settings_models_enable_all_identifier, settings_models_menu_identifier,
-    settings_models_refresh_identifier, settings_role_candidates, settings_role_clear_identifier,
-    settings_role_description_label, settings_role_item_identifier,
-    settings_role_trigger_identifier, settings_use_proxy_identifier, SettingsRole,
-    PROVIDER_OVERVIEW_HEIGHT, SETTINGS_CONTENT_PAD, SETTINGS_MODELS_MENU_EMPTY_HEIGHT,
-    SETTINGS_MODELS_MENU_HEADER_HEIGHT, SETTINGS_MODELS_MENU_MAX_HEIGHT,
-    SETTINGS_MODELS_MENU_ROW_HEIGHT, SETTINGS_MODELS_MENU_WIDTH, SETTINGS_ROLE_LABEL_WIDTH,
-    SETTINGS_ROLE_MENU_EMPTY_HEIGHT, SETTINGS_ROLE_MENU_GROUP_HEADER_HEIGHT,
-    SETTINGS_ROLE_MENU_WIDTH, SETTINGS_ROLE_ROW_HEIGHT,
+    settings_models_refresh_identifier, settings_provider_expand_identifier,
+    settings_role_candidates, settings_role_clear_identifier, settings_role_description_label,
+    settings_role_item_identifier, settings_role_trigger_identifier,
+    settings_use_proxy_identifier, SettingsRole, PROVIDER_OVERVIEW_HEIGHT,
+    SETTINGS_CONTENT_PAD, SETTINGS_MODELS_MENU_EMPTY_HEIGHT, SETTINGS_MODELS_MENU_HEADER_HEIGHT,
+    SETTINGS_MODELS_MENU_MAX_HEIGHT, SETTINGS_MODELS_MENU_ROW_HEIGHT, SETTINGS_MODELS_MENU_WIDTH,
+    SETTINGS_PROVIDER_CREDENTIALS_HEADER_HEIGHT, SETTINGS_PROVIDER_CREDENTIAL_ROW_HEIGHT,
+    SETTINGS_PROVIDER_ROW_HEIGHT, SETTINGS_ROLE_LABEL_WIDTH, SETTINGS_ROLE_MENU_EMPTY_HEIGHT,
+    SETTINGS_ROLE_MENU_GROUP_HEADER_HEIGHT, SETTINGS_ROLE_MENU_WIDTH, SETTINGS_ROLE_ROW_HEIGHT,
 };
 use crate::ui::theme::metrics;
 use crate::ui::AppView;
@@ -233,8 +235,6 @@ impl AppView {
                     )
                 })
                 .collect();
-            // 认证动作使用独立详情行，避免窄窗 / 150% 下挤压目录列。
-            let actions_in_details = !row_actions.is_empty();
             let editor_row = editor_open
                 && self
                     .settings_api_key_inputs
@@ -251,6 +251,8 @@ impl AppView {
                     crate::projection::ProviderCatalogState::Unavailable { .. },
                 )
             );
+            // 流程详情（OAuth 等待 / 瞬态反馈 / 错误 / endpoint）迁入
+            // Credentials 区；文案与 render 同源。
             let mut detail_values = Vec::new();
             if let (crate::projection::ProviderAuthState::Connecting, Some(wait)) =
                 (&provider.auth, wait)
@@ -280,20 +282,33 @@ impl AppView {
                     t("settings.providers.endpoint_row").replace("{}", &provider.endpoint_label),
                 );
             }
-            let detail_actions = actions_in_details.then_some(row_actions.len()).unwrap_or(0);
-            let detail_visible = !detail_values.is_empty() || editor_row || detail_actions > 0;
-            let text_height = detail_values.len() as f32 * TEXT_ROW;
-            let control_rows = editor_row as u8 as f32 + (detail_actions > 0) as u8 as f32;
-            let detail_height = if detail_visible {
-                CARD_PAD
-                    + text_height
-                    + control_rows * CONTROL_ROW
-                    + (detail_values.len() as f32 + control_rows - 1.0).max(0.0) * CARD_GAP
-                    + CARD_PAD
-            } else {
-                0.0
-            };
-            let card_height = PROVIDER_OVERVIEW_HEIGHT + detail_height;
+            // 有效展开态（与 render 同源）：显式展开 ∨ 流程态。
+            let expanded = self.settings_provider_card_expanded(
+                &provider.provider_id,
+                editor_open,
+                wait.is_some(),
+                remove_confirm,
+            );
+            // 展开区高度估值（与 render 行高同源常数）：Proxy 行（gate 同
+            // render）→ Manage models 行 → Credentials 区（头部 + 凭证行 /
+            // 空态 + 详情行 + 编辑器 + 动作按钮）→ Usage 行。
+            let proxy_visible = self.projection.settings_general.proxy_url.is_some();
+            let credential_rows = provider.credentials.len().max(1) as f32;
+            let control_rows = editor_row as u8 as f32 + (!row_actions.is_empty()) as u8 as f32;
+            let credentials_height = CARD_PAD
+                + SETTINGS_PROVIDER_CREDENTIALS_HEADER_HEIGHT
+                + credential_rows * SETTINGS_PROVIDER_CREDENTIAL_ROW_HEIGHT
+                + detail_values.len() as f32 * TEXT_ROW
+                + control_rows * CONTROL_ROW
+                + (credential_rows + detail_values.len() as f32 + control_rows).max(0.0) * CARD_GAP
+                + CARD_PAD;
+            let expanded_height = usize::from(proxy_visible) as f32
+                * SETTINGS_PROVIDER_ROW_HEIGHT
+                + SETTINGS_PROVIDER_ROW_HEIGHT
+                + credentials_height
+                + SETTINGS_PROVIDER_ROW_HEIGHT;
+            let card_height = PROVIDER_OVERVIEW_HEIGHT
+                + if expanded { expanded_height } else { 0.0 };
             let card_x = frame.x + SETTINGS_CONTENT_PAD;
             let model_count = self
                 .projection
@@ -350,217 +365,356 @@ impl AppView {
                 .value(catalog_summary),
             );
 
-            let header_actions: Vec<_> = if actions_in_details {
-                Vec::new()
-            } else {
-                row_actions.clone()
-            };
-            // 「Manage models」入口（OPT-3a）：常驻一个 114px 位（未连接 /
-            // 目录不可用禁用，disabled 不发布 Press）；供应商级代理开关
-            //（OPT-3c Switch + 状态文案）占最右 64px 位，与 render 同源
-            // 可见条件与 gate。
-            let proxy_visible = self.projection.settings_general.proxy_url.is_some();
-            let header_button_count = header_actions.len() + 1;
-            let proxy_slot = usize::from(proxy_visible) as f32 * (SWITCH_GROUP_WIDTH + 8.0);
-            let mut button_x =
-                card_x + width - 8.0 - header_button_count as f32 * 114.0 - proxy_slot;
-            let manage_identifier = settings_manage_models_identifier(&provider.provider_id);
-            let manage_enabled = self.settings_manage_models_enabled(provider);
-            let manage_focused = self
+            // 展开 / 折叠 chevron（卡头最右 36×36 图标位，OPT-4a 可见
+            // 字形 20px；本地视图动作，不受写总闸限制，Press 与 render /
+            // 键盘同入口）。
+            let expand_identifier = settings_provider_expand_identifier(&provider.provider_id);
+            let expand_focused = self
                 .settings_action_focus
-                .get(&manage_identifier)
+                .get(&expand_identifier)
                 .is_some_and(|focus| self.open_menu.is_none() && focus.is_focused(window));
-            let mut manage = AxNode::new(
-                manage_identifier,
+            let chevron = AxNode::new(
+                expand_identifier,
                 AxRole::Button,
-                t("settings.providers.manage_models"),
+                if expanded {
+                    t("settings.providers.collapse_tooltip")
+                } else {
+                    t("settings.providers.expand_tooltip")
+                },
                 AxRect::new(
-                    button_x,
-                    y + (PROVIDER_OVERVIEW_HEIGHT - CONTROL_ROW) / 2.0,
-                    110.0,
-                    CONTROL_ROW,
+                    card_x + width - 8.0 - metrics::ICON_BUTTON_SIZE,
+                    y + (PROVIDER_OVERVIEW_HEIGHT - metrics::ICON_BUTTON_SIZE) / 2.0,
+                    metrics::ICON_BUTTON_SIZE,
+                    metrics::ICON_BUTTON_SIZE,
                 ),
             )
-            .description(t("settings.providers.manage_models_tooltip"))
-            .enabled(manage_enabled)
-            .focused(manage_focused);
-            if manage_enabled {
-                manage = manage.action(AxAction::Press);
-            }
-            card = card.child(manage);
-            let manage_button_x = button_x;
-            button_x += 114.0;
-            if proxy_visible {
-                let identifier = settings_use_proxy_identifier(&provider.provider_id);
-                let enabled = writes;
-                let focused = self
-                    .settings_action_focus
-                    .get(&identifier)
-                    .is_some_and(|focus| self.open_menu.is_none() && focus.is_focused(window));
-                let value = if provider.use_proxy {
-                    t("settings.providers.switch_on")
-                } else {
-                    t("settings.providers.switch_off")
-                };
-                let mut toggle = AxNode::new(
-                    identifier,
-                    AxRole::Button,
-                    t("settings.providers.ax_use_proxy"),
-                    AxRect::new(
-                        card_x + width - 8.0 - SWITCH_GROUP_WIDTH,
-                        y + (PROVIDER_OVERVIEW_HEIGHT - CONTROL_ROW) / 2.0,
-                        SWITCH_GROUP_WIDTH,
-                        CONTROL_ROW,
-                    ),
-                )
-                .value(value)
-                .selected(provider.use_proxy)
-                .enabled(enabled)
-                .focused(focused);
-                if enabled {
-                    toggle = toggle.action(AxAction::Press);
+            .value(if expanded {
+                t("settings.providers.expanded")
+            } else {
+                t("settings.providers.collapsed")
+            })
+            .enabled(true)
+            .focused(expand_focused)
+            .action(AxAction::Press);
+            card = card.child(chevron);
+
+            if expanded {
+                // ── Proxy 行（gate 与 render 同源：仅全局 proxy_url 已配置）──
+                let mut row_y = y + PROVIDER_OVERVIEW_HEIGHT;
+                if proxy_visible {
+                    // 行文本（标题 + 副标题）：与 render 同一 i18n 词条，
+                    // 钉住「标题实际非省略」的文案面（ADR-056 D4）。
+                    card = card.child(
+                        AxNode::new(
+                            dynamic_identifier(
+                                "settings-provider-proxy-text",
+                                &provider.provider_id,
+                            ),
+                            AxRole::StaticText,
+                            t("settings.providers.proxy_title"),
+                            AxRect::new(
+                                card_x + 8.0,
+                                row_y,
+                                width - 16.0,
+                                SETTINGS_PROVIDER_ROW_HEIGHT,
+                            ),
+                        )
+                        .value(t("settings.providers.proxy_subtitle")),
+                    );
+                    let identifier = settings_use_proxy_identifier(&provider.provider_id);
+                    let enabled = writes;
+                    let focused = self
+                        .settings_action_focus
+                        .get(&identifier)
+                        .is_some_and(|focus| self.open_menu.is_none() && focus.is_focused(window));
+                    let value = if provider.use_proxy {
+                        t("settings.providers.switch_on")
+                    } else {
+                        t("settings.providers.switch_off")
+                    };
+                    let mut toggle = AxNode::new(
+                        identifier,
+                        AxRole::Button,
+                        t("settings.providers.ax_use_proxy"),
+                        AxRect::new(
+                            card_x + width - 8.0 - SWITCH_GROUP_WIDTH,
+                            row_y + (SETTINGS_PROVIDER_ROW_HEIGHT - CONTROL_ROW) / 2.0,
+                            SWITCH_GROUP_WIDTH,
+                            CONTROL_ROW,
+                        ),
+                    )
+                    .value(value)
+                    .selected(provider.use_proxy)
+                    .enabled(enabled)
+                    .focused(focused);
+                    if enabled {
+                        toggle = toggle.action(AxAction::Press);
+                    }
+                    card = card.child(toggle);
+                    row_y += SETTINGS_PROVIDER_ROW_HEIGHT;
                 }
-                card = card.child(toggle);
-            }
-            for action in header_actions {
-                let identifier = action.identifier(&provider.provider_id);
-                let enabled =
-                    self.settings_action_enabled(action, &provider.provider_id, writes, cx);
-                let focused = self
+
+                // ── Manage models 行（触发器 gate 与 render 同源）──
+                card = card.child(
+                    AxNode::new(
+                        dynamic_identifier(
+                            "settings-provider-manage-text",
+                            &provider.provider_id,
+                        ),
+                        AxRole::StaticText,
+                        t("settings.providers.manage_models"),
+                        AxRect::new(
+                            card_x + 8.0,
+                            row_y,
+                            width - 16.0,
+                            SETTINGS_PROVIDER_ROW_HEIGHT,
+                        ),
+                    )
+                    .value(t("settings.providers.manage_models_tooltip")),
+                );
+                let manage_identifier = settings_manage_models_identifier(&provider.provider_id);
+                let manage_enabled = self.settings_manage_models_enabled(provider);
+                let manage_focused = self
                     .settings_action_focus
-                    .get(&identifier)
+                    .get(&manage_identifier)
                     .is_some_and(|focus| self.open_menu.is_none() && focus.is_focused(window));
-                let mut button = AxNode::new(
-                    identifier,
+                let manage_button_x = card_x + width - 8.0 - 110.0;
+                let mut manage = AxNode::new(
+                    manage_identifier,
                     AxRole::Button,
-                    action.label(),
+                    t("settings.providers.manage_models"),
                     AxRect::new(
-                        button_x,
-                        y + (PROVIDER_OVERVIEW_HEIGHT - CONTROL_ROW) / 2.0,
+                        manage_button_x,
+                        row_y + (SETTINGS_PROVIDER_ROW_HEIGHT - CONTROL_ROW) / 2.0,
                         110.0,
                         CONTROL_ROW,
                     ),
                 )
-                .enabled(enabled)
-                .focused(focused);
-                if enabled {
-                    button = button.action(AxAction::Press);
+                .description(t("settings.providers.manage_models_tooltip"))
+                .enabled(manage_enabled)
+                .focused(manage_focused);
+                if manage_enabled {
+                    manage = manage.action(AxAction::Press);
                 }
-                card = card.child(button);
-                button_x += 114.0;
-            }
-            if matches!(&self.open_menu, Some(MenuKind::SettingsProviderModels(open)) if open == &provider.provider_id)
-            {
-                let menu_y = y + (PROVIDER_OVERVIEW_HEIGHT + CONTROL_ROW) / 2.0 + ANCHOR_GAP_Y;
-                card = card.child(self.settings_models_menu_ax(
-                    &provider.provider_id,
-                    manage_button_x,
-                    menu_y,
-                    window,
-                ));
-            }
+                card = card.child(manage);
+                if matches!(&self.open_menu, Some(MenuKind::SettingsProviderModels(open)) if open == &provider.provider_id)
+                {
+                    let menu_y = row_y
+                        + (SETTINGS_PROVIDER_ROW_HEIGHT + CONTROL_ROW) / 2.0
+                        + ANCHOR_GAP_Y;
+                    card = card.child(self.settings_models_menu_ax(
+                        &provider.provider_id,
+                        manage_button_x,
+                        menu_y,
+                        window,
+                    ));
+                }
+                row_y += SETTINGS_PROVIDER_ROW_HEIGHT;
 
-            let mut detail_y = y + PROVIDER_OVERVIEW_HEIGHT + CARD_PAD;
-            if !detail_values.is_empty() {
-                card = card.child(
+                // ── Credentials 区（组 + 头部 + 凭证行 / 空态 + 流程详情 +
+                //    编辑器 + 动作按钮；几何为 render 行高估值）──
+                let mut cred_y = row_y + CARD_PAD;
+                let mut credentials = AxNode::new(
+                    dynamic_identifier("settings-provider-credentials", &provider.provider_id),
+                    AxRole::Group,
+                    t("settings.providers.credentials_title"),
+                    AxRect::new(
+                        card_x,
+                        row_y,
+                        width,
+                        credentials_height,
+                    ),
+                )
+                .child(
                     AxNode::new(
-                        dynamic_identifier("settings-provider-details", &provider.provider_id),
+                        dynamic_identifier(
+                            "settings-provider-credentials-header",
+                            &provider.provider_id,
+                        ),
                         AxRole::StaticText,
-                        t("settings.providers.ax_details"),
-                        AxRect::new(card_x + 8.0, detail_y, width - 16.0, text_height),
-                    )
-                    .value(detail_values.join(" · ")),
-                );
-                detail_y += text_height + CARD_GAP;
-            }
-            if editor_row {
-                if let Some(input) = self.settings_api_key_inputs.get(&provider.provider_id) {
-                    let masked = input.read(cx).secure_mask().unwrap_or_default();
-                    let mut input_node = AxNode::new(
-                        settings_api_key_input_identifier(&provider.provider_id),
-                        AxRole::TextArea,
-                        t("settings.providers.ax_api_key"),
+                        t("settings.providers.credentials_title"),
                         AxRect::new(
                             card_x + 8.0,
-                            detail_y,
-                            (width - 16.0 - 240.0).max(120.0),
-                            CONTROL_ROW,
+                            cred_y,
+                            width - 16.0,
+                            SETTINGS_PROVIDER_CREDENTIALS_HEADER_HEIGHT,
                         ),
                     )
-                    .value(masked)
-                    .enabled(writes)
-                    .focused(
-                        self.open_menu.is_none()
-                            && input.read(cx).focus_handle(cx).is_focused(window),
-                    );
-                    if writes {
-                        input_node = input_node
-                            .action(AxAction::Focus)
-                            .action(AxAction::SetValue);
-                    }
-                    card = card.child(input_node);
-                }
-                let editor_actions: Vec<_> = actions
-                    .iter()
-                    .copied()
-                    .filter(|action| {
-                        matches!(
-                            action,
-                            crate::ui::settings::SettingsAuthAction::VerifyApiKey
-                                | crate::ui::settings::SettingsAuthAction::CancelApiKeyInput
+                    .value(t("settings.providers.credentials_subtitle")),
+                );
+                cred_y += SETTINGS_PROVIDER_CREDENTIALS_HEADER_HEIGHT + CARD_GAP;
+                if provider.credentials.is_empty() {
+                    // 空列表诚实空态：不发布假凭证行。
+                    credentials = credentials.child(
+                        AxNode::new(
+                            dynamic_identifier(
+                                "settings-provider-credentials-empty",
+                                &provider.provider_id,
+                            ),
+                            AxRole::StaticText,
+                            t("settings.providers.credentials_title"),
+                            AxRect::new(
+                                card_x + 8.0,
+                                cred_y,
+                                width - 16.0,
+                                SETTINGS_PROVIDER_CREDENTIAL_ROW_HEIGHT,
+                            ),
                         )
-                    })
-                    .collect();
-                let mut editor_button_x =
-                    card_x + width - 8.0 - editor_actions.len() as f32 * 114.0;
-                for action in editor_actions {
-                    let identifier = action.identifier(&provider.provider_id);
-                    let enabled =
-                        self.settings_action_enabled(action, &provider.provider_id, writes, cx);
-                    let focused = self
-                        .settings_action_focus
-                        .get(&identifier)
-                        .is_some_and(|focus| self.open_menu.is_none() && focus.is_focused(window));
-                    let mut button = AxNode::new(
-                        identifier,
-                        AxRole::Button,
-                        action.label(),
-                        AxRect::new(editor_button_x, detail_y, 110.0, CONTROL_ROW),
-                    )
-                    .enabled(enabled)
-                    .focused(focused);
-                    if enabled {
-                        button = button.action(AxAction::Press);
+                        .value(t("settings.providers.credentials_empty")),
+                    );
+                    cred_y += SETTINGS_PROVIDER_CREDENTIAL_ROW_HEIGHT + CARD_GAP;
+                } else {
+                    for (ix, credential) in provider.credentials.iter().enumerate() {
+                        let status =
+                            provider_credential_status_label(credential.expired);
+                        credentials = credentials.child(
+                            AxNode::new(
+                                dynamic_identifier(
+                                    &format!("settings-provider-credential-{ix}"),
+                                    &provider.provider_id,
+                                ),
+                                AxRole::StaticText,
+                                provider_credential_kind_label(&credential.kind),
+                                AxRect::new(
+                                    card_x + 8.0,
+                                    cred_y,
+                                    width - 16.0,
+                                    SETTINGS_PROVIDER_CREDENTIAL_ROW_HEIGHT,
+                                ),
+                            )
+                            .value(format!(
+                                "{} · {}",
+                                credential.masked_credential, status
+                            )),
+                        );
+                        cred_y += SETTINGS_PROVIDER_CREDENTIAL_ROW_HEIGHT + CARD_GAP;
                     }
-                    card = card.child(button);
-                    editor_button_x += 114.0;
                 }
-                detail_y += CONTROL_ROW + CARD_GAP;
-            }
-            if detail_actions > 0 {
-                let mut detail_button_x = card_x + 8.0;
-                for action in row_actions {
-                    let identifier = action.identifier(&provider.provider_id);
-                    let enabled =
-                        self.settings_action_enabled(action, &provider.provider_id, writes, cx);
-                    let focused = self
-                        .settings_action_focus
-                        .get(&identifier)
-                        .is_some_and(|focus| self.open_menu.is_none() && focus.is_focused(window));
-                    let mut button = AxNode::new(
-                        identifier,
-                        AxRole::Button,
-                        action.label(),
-                        AxRect::new(detail_button_x, detail_y, 110.0, CONTROL_ROW),
-                    )
-                    .enabled(enabled)
-                    .focused(focused);
-                    if enabled {
-                        button = button.action(AxAction::Press);
+                if !detail_values.is_empty() {
+                    let text_height = detail_values.len() as f32 * TEXT_ROW;
+                    credentials = credentials.child(
+                        AxNode::new(
+                            dynamic_identifier("settings-provider-details", &provider.provider_id),
+                            AxRole::StaticText,
+                            t("settings.providers.ax_details"),
+                            AxRect::new(card_x + 8.0, cred_y, width - 16.0, text_height),
+                        )
+                        .value(detail_values.join(" · ")),
+                    );
+                    cred_y += text_height + CARD_GAP;
+                }
+                if editor_row {
+                    if let Some(input) = self.settings_api_key_inputs.get(&provider.provider_id) {
+                        let masked = input.read(cx).secure_mask().unwrap_or_default();
+                        let mut input_node = AxNode::new(
+                            settings_api_key_input_identifier(&provider.provider_id),
+                            AxRole::TextArea,
+                            t("settings.providers.ax_api_key"),
+                            AxRect::new(
+                                card_x + 8.0,
+                                cred_y,
+                                (width - 16.0 - 240.0).max(120.0),
+                                CONTROL_ROW,
+                            ),
+                        )
+                        .value(masked)
+                        .enabled(writes)
+                        .focused(
+                            self.open_menu.is_none()
+                                && input.read(cx).focus_handle(cx).is_focused(window),
+                        );
+                        if writes {
+                            input_node = input_node
+                                .action(AxAction::Focus)
+                                .action(AxAction::SetValue);
+                        }
+                        credentials = credentials.child(input_node);
                     }
-                    card = card.child(button);
-                    detail_button_x += 114.0;
+                    let editor_actions: Vec<_> = actions
+                        .iter()
+                        .copied()
+                        .filter(|action| {
+                            matches!(
+                                action,
+                                crate::ui::settings::SettingsAuthAction::VerifyApiKey
+                                    | crate::ui::settings::SettingsAuthAction::CancelApiKeyInput
+                            )
+                        })
+                        .collect();
+                    let mut editor_button_x =
+                        card_x + width - 8.0 - editor_actions.len() as f32 * 114.0;
+                    for action in editor_actions {
+                        let identifier = action.identifier(&provider.provider_id);
+                        let enabled =
+                            self.settings_action_enabled(action, &provider.provider_id, writes, cx);
+                        let focused = self
+                            .settings_action_focus
+                            .get(&identifier)
+                            .is_some_and(|focus| {
+                                self.open_menu.is_none() && focus.is_focused(window)
+                            });
+                        let mut button = AxNode::new(
+                            identifier,
+                            AxRole::Button,
+                            action.label(),
+                            AxRect::new(editor_button_x, cred_y, 110.0, CONTROL_ROW),
+                        )
+                        .enabled(enabled)
+                        .focused(focused);
+                        if enabled {
+                            button = button.action(AxAction::Press);
+                        }
+                        credentials = credentials.child(button);
+                        editor_button_x += 114.0;
+                    }
+                    cred_y += CONTROL_ROW + CARD_GAP;
                 }
+                if !row_actions.is_empty() {
+                    let mut detail_button_x = card_x + 8.0;
+                    for action in &row_actions {
+                        let identifier = action.identifier(&provider.provider_id);
+                        let enabled =
+                            self.settings_action_enabled(*action, &provider.provider_id, writes, cx);
+                        let focused = self
+                            .settings_action_focus
+                            .get(&identifier)
+                            .is_some_and(|focus| {
+                                self.open_menu.is_none() && focus.is_focused(window)
+                            });
+                        let mut button = AxNode::new(
+                            identifier,
+                            AxRole::Button,
+                            action.label(),
+                            AxRect::new(detail_button_x, cred_y, 110.0, CONTROL_ROW),
+                        )
+                        .enabled(enabled)
+                        .focused(focused);
+                        if enabled {
+                            button = button.action(AxAction::Press);
+                        }
+                        credentials = credentials.child(button);
+                        detail_button_x += 114.0;
+                    }
+                }
+                card = card.child(credentials);
+
+                // ── Usage 行（恒为诚实空态：固定槽位 + Usage unavailable，
+                //    不发布任何数字 / 百分比 / 填充值）──
+                let usage_y = row_y + credentials_height;
+                card = card.child(
+                    AxNode::new(
+                        dynamic_identifier("settings-provider-usage", &provider.provider_id),
+                        AxRole::StaticText,
+                        t("settings.providers.usage_title"),
+                        AxRect::new(
+                            card_x + 8.0,
+                            usage_y,
+                            width - 16.0,
+                            SETTINGS_PROVIDER_ROW_HEIGHT,
+                        ),
+                    )
+                    .value(t("settings.providers.usage_unavailable")),
+                );
             }
             page = page.child(card);
             y += card_height + 8.0;

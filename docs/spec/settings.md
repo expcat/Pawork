@@ -1,5 +1,21 @@
 # Settings：模型与供应商
 
+## ADR-056：OPT-3d/3e 同供应商多凭证最小切片与额度槽诚实空态（2026-09-06）
+
+状态：Accepted（实现与门禁证据见 ROADMAP 对应批次记录）。落地 [ROADMAP §6](../ROADMAP.md#6-opt-3--供应商模型启用与默认角色) OPT-3d/3e：同一 provider 的 API key 与 OAuth 两类凭证可**共存**并在 Settings 展开卡内逐条列出状态；额度槽（Usage）在无权威 QuotaSnapshot 来源前只呈现诚实空态，不渲染数字。GUI API 1.12 → 1.13（minor 只增，additive）。对照 OPT-D 签字稿 `design/opt-settings-providers-expanded-v1.png`。
+
+- **D1 共存语义（修订 SET-4 A3 替换语义）**：`auth_set_key` 写入 API key 不再删除该 provider 的 OAuth default 条目；`oauth_finish` 写入 OAuth 不再删除 API key default 条目。替换语义缩窄为**同 kind 覆盖**：Replace API key 覆盖 api key default 条目，Replace OAuth 覆盖 oauth default 三账户。Remove（`auth_logout`）维持 provider 级语义：删除该 provider 全部存储凭证（幂等）。运行期解析链不变：装配仍按通道固定顺序（api_key 通道只查 api key；xAI api-key 优先、OAuth 兜底；ChatGPT/Kimi Code 只走 OAuth），即「生效凭证」由通道形态决定，本切片不引入账户选择/亲和路由（G1–G6 仍在 backlog）。同 kind 多账户（两个 API key）不在本切片：存储层 `SecretBackend` 结构天然容纳，但选择语义与命名 UX 属 G1 账户池，签字稿未呈现。
+- **D2 wire（API 1.13）**：`provider_auth_status` 的 `ProviderAuthStatusEntry` additive 增 `credentials: Vec<ProviderCredentialStatus>`：
+  - `ProviderCredentialStatus { kind, masked_credential, expired, expires_at }`：`kind` 为 `"api_key"` / `"oauth"`；`masked_credential` 为脱敏串（存储凭证恒可脱敏，非可选）；`expired: bool` 由 OAuth meta `expires_at_ms` 与当前时刻比较得出，无 `expires_at` 视为未过期（同 `needs_refresh` 口径）；`expires_at` 仅 OAuth 有值（ISO-8601），api key 为 null 但键必须保留（required-nullable 口径同既有 fixture）。
+  - 列表只枚举**盘上存储条目**（auth backend）：api key default 命中 → 一条 api_key；oauth default meta 命中 → 一条 oauth；两者皆有 → 两条（api_key 在前，固定序）；皆无 → 空数组（键保留）。env fallback 不是存储凭证，不入列；provider 级 `auth` 字段口径不变（env 命中仍 `Connected{masked_credential: null}`）。
+  - `Connecting` flight 期间列表照常返回盘上状态（flight 只影响 provider 级 `auth` 态，不回写 credentials）。
+  - 无新增命令：Connect/Replace/Remove 复用既有 `auth_start` / `auth_set_api_key` / `auth_logout` 等价物，仅 D1 删除语义变化。
+- **D3 诚实性边界**：credentials 列表不含明文、不含 env 值片段；`expired` 只陈述过期事实，不暗示自动刷新结果。双凭证共存时运行期生效方由通道固定顺序决定（xAI 为 api key 优先），本切片 GUI 不呈现「active」标记（签字稿无此元素）；用户切换生效凭证的手段是 Remove 另一方。该限制写入本 ADR 即产品口径，不视为缺陷。
+- **D4 GUI（OPT-D 签字稿）**：provider 卡右侧增展开/折叠 chevron；展开区自上而下为 Proxy 行（既有 Switch 写回 `set_provider_use_proxy` 不变）、Manage models 行（既有弹层触发器不变）、Credentials 区（每条凭证一行：类型标签 + 状态点 Connected/Expired + masked）、Usage 行。Connect/Replace/Remove 动作按钮移入展开区 Credentials 区下方，动作流（内联 API key 编辑器、OAuth 等待详情、Remove 二次确认）不变。折叠态卡头五列（名称/认证方式/连接状态/目录/右侧 chevron）保持现有信息密度。
+- **D5 额度槽（OPT-3e）**：展开区 Usage 行渲染固定槽位 + 「Usage unavailable」文案（对照签字稿），不渲染任何数字、百分比或进度填充；G2 的 QuotaSnapshot 权威来源落地前该行恒为空态，禁止以任何本地推断填值。
+- **D6 CLI**：`pawork auth list` 双形态通道（xAI）两种已存凭证各占一行（移除 api key 命中后的提前 `continue`）；未存储的 kind 维持现行单行 None 呈现，不为本切片重排 CLI 版式。
+- **D7 golden/typegen 先行**：`server_response_provider_auth_status.json` 等含 Entry 的 fixture 增补 `credentials` 键（先红后绿）；registry 不变（无新命令），版本表增 V1_13，`schemas/` typegen 三产物同批检入。
+
 ## ADR-055：OPT-3 模型启用集与默认角色（2026-09-05）
 
 状态：Accepted（protocol / workspace / app 已实现并通过各自定向门禁与合并收口，API 1.12，golden/typegen 先红后绿，证据见 [ROADMAP §10.4](../ROADMAP.md#104-本批交付与证据2026-09-05opt-3a3b-内核协议配置)；Desktop GUI 控件批次已实现（§10.5，desktop 门禁 207/207、协议层验收通过；代理 Switch 像素级复验已通过，见 §10.6）；验收中修复清除判定口径，见 D3a）。落地 OPT-3a/3b 的内核、协议与配置半区：模型启用集（3a）与四默认角色配置键与读写（3b）。Desktop 控件（模型启用弹层、四默认角色区、代理 Switch）已按 OPT-D 签字稿落地（见 ROADMAP §10.5）；OPT-3d/3e（多凭证、额度槽）不在本 ADR 范围。GUI API 1.11 → 1.12（minor 只增）。对应 [ROADMAP §6](../ROADMAP.md#6-opt-3--供应商模型启用与默认角色)。
@@ -33,7 +49,7 @@
 
 | 页面 | 可改项与持久化归属 | OPT-1 处理 |
 | --- | --- | --- |
-| Models & providers | 默认对话 `default_provider/default_model`、`providers[].use_proxy` → Global `config.toml`；命名 `naming_provider/naming_model` → Global `config.toml`（ADR-054 D4，OPT-2d 落键与 Host 消费，GUI 入口留 OPT-3b）；API key/OAuth → auth backend | 默认对话/代理已有，不重做；F8 识图/搜索键与四默认角色配置已由 ADR-055 落键（vision/search 只保存不接路由）；四默认角色区、模型启用弹层与代理 Switch GUI 已随 OPT-3 GUI 批次落地（2026-09-06） |
+| Models & providers | 默认对话 `default_provider/default_model`、`providers[].use_proxy` → Global `config.toml`；命名 `naming_provider/naming_model` → Global `config.toml`（ADR-054 D4，OPT-2d 落键与 Host 消费，GUI 入口留 OPT-3b）；API key/OAuth → auth backend | 默认对话/代理已有，不重做；F8 识图/搜索键与四默认角色配置已由 ADR-055 落键（vision/search 只保存不接路由）；四默认角色区、模型启用弹层与代理 Switch GUI 已随 OPT-3 GUI 批次落地（2026-09-06）；ADR-056 起同 provider 的 API key 与 OAuth 凭证可共存并在展开卡 Credentials 区逐条列出，Usage 行恒为「Usage unavailable」诚实空态（G2 无权威来源不渲染数字） |
 | Network | `proxy_url` → Global `config.toml` | 已有，不重做 |
 | Approvals | 审批模式、当前项目 trust 原为 Host 内存；`trust_workspaces` 是 Global 只读默认 | 新增 `approval_mode` / `workspace_trust`，见 ADR-053 |
 | Tools & MCP | Remove → Global `mcp.servers` + 独立 MCP 凭证；Test 是即时连接检查 | 已有，不把检测结果当偏好保存 |

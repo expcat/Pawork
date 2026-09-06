@@ -88,7 +88,7 @@ OPT-1 / ADR-053：`gui::run_gui` 经 `AppCore::set_approval_host` 只接线 GUI 
 | 命令 | 用途 | 关键参数 | 输出 / 交互形态 | 安全 / 审批语义 |
 | --- | --- | --- | --- | --- |
 | `models` | 列 provider 模型目录 | 全局 `-p` 可切目录视角 | 文本按六首发通道顺序聚合 + config 自定义 provider，无静态条目的通道提示「login/set-key 后运行期探测」；定价按 micros → 每 M token 货币展示；`--json` 形状标注 unstable | 目录兜底装配（允许默认 provider 缺凭证） |
-| `auth list` | 各通道凭证状态 | — | 表格：provider / kind / source / **掩码** / 过期时间 | 不显示明文 |
+| `auth list` | 各通道凭证状态 | — | 表格：provider / kind / source / **掩码** / 过期时间；ADR-056 起双形态通道两类已存凭证各占一行 | 不显示明文 |
 | `auth set-key <provider>` | 写入 API key | — | key 从 stdin 单行读入；结果只回显掩码 | 明文只经 stdin 进 auth 文件，不回显、不落日志 |
 | `auth login <provider>` | OAuth 登录 | — | PKCE 回调或 Device Flow；URL / user code 走 stderr；最长等待 5 分钟 | token 落 auth 文件 default 条目 |
 | `auth logout <provider>` | 删除凭证 | — | 删 auth 文件 default 条目 | env fallback 不受影响 |
