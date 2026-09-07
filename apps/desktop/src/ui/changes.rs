@@ -18,8 +18,7 @@ use crate::ui::theme::{dark, font, metrics};
 
 use super::{AppView, MenuKind};
 
-/// Changes 内容区二级页签（§8.5：字号 17；R6 Wave A：56px 条 + accent
-/// 下划线，与顶层 58px 层次区分）。
+/// Changes 内容区二级页签：紧凑字阶、选中背景与短中性下划线。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(super) enum ChangesTab {
     #[default]
@@ -273,6 +272,7 @@ impl AppView {
                     .relative()
                     .w(px(metrics::CHANGES_TAB_WIDTH))
                     .h(px(metrics::CHANGES_TAB_HEIGHT))
+                    .flex_none()
                     .flex()
                     .items_center()
                     .justify_center()
@@ -292,18 +292,23 @@ impl AppView {
                     } else {
                         dark().text.secondary
                     })
-                    .hover(move |style| style.text_color(dark().text.primary))
+                    .when(current, |tab| tab.bg(dark().surface.raised))
+                    .hover(|style| {
+                        style
+                            .bg(dark().surface.hover)
+                            .text_color(dark().text.primary)
+                    })
+                    .active(|style| style.bg(dark().surface.pressed))
                     .child(div().child(label))
                     .when(current, |tab| {
                         tab.child(
                             div()
                                 .absolute()
-                                .left_0()
-                                .right_0()
+                                .left(px((metrics::CHANGES_TAB_WIDTH - 24.0) / 2.0))
                                 .bottom_0()
-                                .w_full()
+                                .w(px(24.0))
                                 .h(px(metrics::TAB_UNDERLINE_HEIGHT))
-                                .bg(dark().accent.primary),
+                                .bg(dark().text.secondary),
                         )
                     })
                     .on_click(cx.listener(move |view, event, _window, cx| {
@@ -320,6 +325,7 @@ impl AppView {
             .pl_3()
             .pr_2()
             .h(px(metrics::CHANGES_TAB_HEIGHT))
+            .flex_none()
             .border_b_1()
             .border_color(dark().border.subtle)
             .child(secondary_tab(

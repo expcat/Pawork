@@ -35,6 +35,19 @@
 
 ---
 
+### UI-1 工作台视觉更新（2026-09-07）
+
+本线用 [UI-1 规格示意](../design/ui1-workbench-tokens.svg) 记录共享 token；下文旧阶段尺寸与本节冲突时，以本节及源码为准。参照 [Zed Agent Panel](https://zed.dev/docs/ai/agent-panel) 的对话 / 工具面板分层，本批采用中性炭灰背景、紧凑工具栏和低强调页签；这是 Pawork 的设计取舍。
+
+- 色板：canvas `#1e1e21`、panel `#18181b`、menu `#252528`、raised `#26262a`、hover `#303035`、pressed `#222225`；正文 `#f2f2f3`、次要文字 `#aaaab2`、辅助文字 `#9b9ba4`，蓝色主动作 / 焦点继续 `#2f6fed`。次要文字在所有允许背景上对比度 ≥4.5。
+- 字阶：Header 18px、面板页签 14px、元信息 12px，继续随 100% / 125% / 150% rem 缩放。共享圆角为 6 / 8 / 12px，间距继续 4 / 8 / 12 / 16 / 24 / 32px，focus ring 2px；普通面板无阴影，仅浮层使用既有 elevation。
+- Header 总高 80px，顶部留 24px，标题与元信息间距 12px；动作维持 40×37px 命中区，改用无边框 Ghost、6px 圆角。元信息来自原有权威投影；缺字段隐藏。
+- Inspector 宽度仍为 440px，顶层 / 二级页签条 48 / 40px；选中背景与居中 24×2px 中性下划线不推动文字位置。hover / pressed / focus 即时反馈。
+- Inspector 开合为 180ms cubic ease-out 宽度过渡，快速反向从当前宽度续接；每帧使 Timeline 测高失效，空间不足立即归零（100% 至少 1288px，150% 至少 1320px，中央始终 ≥560px），resize 不写用户偏好。默认收起、显式重开、cmd-i 和 Changes / Terminal / Resources 原入口保留。
+- 状态栏高 30px，将真实状态文案分成四组元信息居中呈现；Quota unavailable、未知 token 与吞吐继续如实展示。
+
+本批实现与自动验证、代理真窗口检查、用户人工视觉验收分别记录在 [ROADMAP](ROADMAP.md)。UI-2～UI-6 的模块结构与交互仍按各自任务处理。
+
 ## 3. 信息架构
 
 ```text
@@ -103,7 +116,7 @@
 
 - Composer 常态高 88–94 px，同行控件高 28–30 px；模型 / reasoning 只在模型选择器显示。
 - `ContextMeter`：当前请求上下文估算 / model catalog context window。容量未知时显示 unavailable，不用 Session 累计 token 冒充。
-- Workspace 与 Inspector 底部共享 24 px `RunStatusBar`：Task 累计 token、Provider 剩余额度、output tokens/s 与 Run duration；缺权威来源时显示 unknown / `—`。
+- Workspace 与 Inspector 底部共享 30 px `RunStatusBar`：Task 累计 token、Provider 剩余额度、output tokens/s 与 Run duration；缺权威来源时显示 unknown / `—`。
 - Inspector 顶层：Changes / Terminal / Resources。OPT-4b（F6）起默认折叠（宽屏同样），折叠时宽度归零；Workspace Header 右上 `Activity` 触发器与最右 `inspector-expand` 重开按钮并存（OPT-D 签字稿 collapsed 态），`ActivityPopover` 只摘要已有的 Changes 事实；显式动作（重开入口、Activity 摘要、Review changes）展开面板，空间不足（窄窗 / 大字号）保持折叠。Surface 未接通时隐藏对应分区，不做可点击假入口。
 - 只消费 projection / Host capability，经 controller → `pawork-client`；GUI 不直连 Provider、quota、Git、PTY 或数据库。
 

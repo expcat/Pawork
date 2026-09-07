@@ -1,25 +1,7 @@
-//! UI 主题 token（R2 Wave A 校准，2026-08-27）。
-//!
-//! 深色单主题。当前值以 design/README.md §2.1「2026-08-26 重定 token」表为准
-//! （用户拍板）：bg / surface / border / text / accent.hover / success_hover 按
-//! R1 量图实测或派生值落地，取代 R8 波 A「与硬编码逐值相等（视觉零变化）」
-//! 旧口径；accent.primary / selection 与 danger / warning 系保持 R8 值。
-//!
-//! R2 Wave A 同时做三项收敛 / 新增：
-//! - text.assistant 收敛到 text.emphasis、text.tool 收敛到 text.secondary——
-//!   两字段删除，唯一消费点 timeline_entry.rs 已同批切换；
-//! - text.placeholder 由「白 30% 透明」改为不透明 #7f7f7f，避免透明色叠在
-//!   新深色 surface 后跌破小字对比度门槛；
-//! - 新增 semantic.success_fg #74c94c（状态点绿）。
-//!
-//! 可访问性按「文字角色 × 允许 surface」组合判定（WCAG 相对亮度对比度），
-//! 通过值由本文件 #[cfg(test)] 定向断言钉住（容差 ±0.05）：secondary ×
-//! surface.hover ≈ 4.82、tertiary / placeholder × surface.raised ≈ 4.52、
-//! 白字 × accent.hover ≈ 4.55、白字 × success_hover ≈ 4.61；placeholder ×
-//! surface.hover ≈ 4.04 须保持 <4.5，钉住其不得用于 hover surface 的约束。
-//!
-//! 运行时只有一套 dark 主题；不读取系统 Increase Contrast。Global 实现
-//! 保留为未来主题挂载点，当前未 set_global。
+//! UI-1 共享深色工作台 token（2026-09-07）。
+//! 中性炭灰背景、低对比分区与高对比正文；蓝色只承担主动作 / 焦点。
+//! 色板、字阶、圆角、间距与动效由这里统一提供。普通面板无阴影，
+//! 仅浮层保留 elevation；运行时仍为单一 dark 主题。
 
 use gpui::{rgb, rgba, Global, Rgba};
 
@@ -45,43 +27,43 @@ impl Global for Theme {}
 
 #[derive(Debug, Clone, Copy)]
 pub struct BackgroundColors {
-    /// #07121a：根背景。
+    /// #1e1e21：根背景。
     pub base: Rgba,
-    /// #061219：侧栏 / Inspector / 状态栏等面板背景。
+    /// #18181b：侧栏 / Inspector / 状态栏等面板背景。
     pub panel: Rgba,
-    /// #0e171d：菜单 / 浮层背景与其未选中项。
+    /// #252528：菜单 / 浮层背景与其未选中项。
     pub menu: Rgba,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct SurfaceColors {
-    /// #10171c：可用态控件面 / 选中面 / 输入框背景。
+    /// #26262a：可用态控件面 / 选中面 / 输入框背景。
     pub raised: Rgba,
-    /// #0c161c：禁用态控件面。
+    /// #202023：禁用态控件面。
     pub disabled: Rgba,
-    /// #182229：surface.raised 控件与选中行的 hover / active 背景。
+    /// #303035：surface.raised 控件与选中行的 hover / active 背景。
     pub hover: Rgba,
-    /// #0e181f：raised 控件的 pressed 背景；比 hover 更沉，不靠缩放表达按下。
+    /// #222225：raised 控件的 pressed 背景；比 hover 更沉，不靠缩放表达按下。
     pub pressed: Rgba,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct BorderColors {
-    /// #1a2129：面板分隔线。
+    /// #2b2b30：面板分隔线。
     pub subtle: Rgba,
-    /// #2c3338：浮层描边；亦作禁用态操作按钮背景（值 1:1，不拆分）。
+    /// #424248：浮层描边；亦作禁用态操作按钮背景（值 1:1，不拆分）。
     pub strong: Rgba,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct TextColors {
-    /// #f0efec：正文。
+    /// #f2f2f3：正文。
     pub primary: Rgba,
-    /// #d0d0d0：面板内强调正文（项目名 / 终端输出 / Assistant 消息）。
+    /// #dedee2：面板内强调正文（项目名 / 终端输出 / Assistant 消息）。
     pub emphasis: Rgba,
-    /// #8a8d8c：次要文字（含工具调用名，收敛自 text.tool）。
+    /// #aaaab2：次要文字（含工具调用名，收敛自 text.tool）。
     pub secondary: Rgba,
-    /// #7f7f7f：辅助文字（时间 / 提示）。
+    /// #9b9ba4：辅助文字（时间 / 提示）。
     pub tertiary: Rgba,
     /// #8f8f8f：禁用态控件文字。
     pub disabled: Rgba,
@@ -91,7 +73,7 @@ pub struct TextColors {
     pub on_accent: Rgba,
     /// #b8b8b8：审批卡详情。
     pub detail: Rgba,
-    /// #7f7f7f（不透明）：composer 占位文字；不得用于 surface.hover。
+    /// #9b9ba4（不透明）：composer 占位文字；适用于交互面。
     pub placeholder: Rgba,
 }
 
@@ -127,35 +109,35 @@ pub struct SemanticColors {
     pub danger_hover: Rgba,
 }
 
-/// 深色主题访问器。运行时保持 R2 冻结的单一 dark palette；
+/// 深色主题访问器。运行时使用 UI-1 单一 dark palette；
 /// 不读取 macOS Increase Contrast，也不派生第二套可访问 palette。
 pub fn dark() -> Theme {
     Theme {
         bg: BackgroundColors {
-            base: rgb(0x07121a),
-            panel: rgb(0x061219),
-            menu: rgb(0x0e171d),
+            base: rgb(0x1e1e21),
+            panel: rgb(0x18181b),
+            menu: rgb(0x252528),
         },
         surface: SurfaceColors {
-            raised: rgb(0x10171c),
-            disabled: rgb(0x0c161c),
-            hover: rgb(0x182229),
-            pressed: rgb(0x0e181f),
+            raised: rgb(0x26262a),
+            disabled: rgb(0x202023),
+            hover: rgb(0x303035),
+            pressed: rgb(0x222225),
         },
         border: BorderColors {
-            subtle: rgb(0x1a2129),
-            strong: rgb(0x2c3338),
+            subtle: rgb(0x2b2b30),
+            strong: rgb(0x424248),
         },
         text: TextColors {
-            primary: rgb(0xf0efec),
-            emphasis: rgb(0xd0d0d0),
-            secondary: rgb(0x8a8d8c),
-            tertiary: rgb(0x7f7f7f),
+            primary: rgb(0xf2f2f3),
+            emphasis: rgb(0xdedee2),
+            secondary: rgb(0xaaaab2),
+            tertiary: rgb(0x9b9ba4),
             disabled: rgb(0x8f8f8f),
             ghost: rgb(0x5a5a5a),
             on_accent: rgb(0xffffff),
             detail: rgb(0xb8b8b8),
-            placeholder: rgb(0x7f7f7f),
+            placeholder: rgb(0x9b9ba4),
         },
         accent: AccentColors {
             primary: rgb(0x2f6fed),
@@ -174,6 +156,11 @@ pub fn dark() -> Theme {
             danger_hover: rgb(0x9c463c),
         },
     }
+}
+
+/// 开合采用 180ms ease-out；hover / pressed / focus 即时反馈，不循环闪动。
+pub mod motion {
+    pub const PANEL_DURATION: std::time::Duration = std::time::Duration::from_millis(180);
 }
 
 /// 字阶以 16px 根字号的 rem 表达；100% 时与冻结 px 值逐项相等，窗口调整
@@ -229,7 +216,7 @@ pub mod font {
     }
 
     /// 22px：Workspace Header 任务标题。
-    pub const HEADER_TITLE: Rems = from_pixels(22.0);
+    pub const HEADER_TITLE: Rems = from_pixels(18.0);
     /// 12px：次级信息（相对时间 / 项目计数 / 连接行 / 时间戳）。
     pub const BODY_SM: Rems = from_pixels(12.0);
     /// 16px：Timeline 正文与 section title。
@@ -258,10 +245,10 @@ pub mod metrics {
     pub const SPACE_4: f32 = 16.0;
     pub const SPACE_6: f32 = 24.0;
     pub const SPACE_8: f32 = 32.0;
-    /// 小控件 / 输入与菜单 / 内容 surface 的三档圆角。
-    pub const CONTROL_RADIUS: f32 = 4.0;
-    pub const INPUT_MENU_RADIUS: f32 = 6.0;
-    pub const SURFACE_RADIUS: f32 = 8.0;
+    /// UI-1：6px，共享几何。
+    pub const CONTROL_RADIUS: f32 = 6.0;
+    pub const INPUT_MENU_RADIUS: f32 = 8.0;
+    pub const SURFACE_RADIUS: f32 = 12.0;
     /// 键盘焦点环宽度；组件 focus state 只改视觉，不缩放控件。
     pub const FOCUS_RING_WIDTH: f32 = 2.0;
     /// 普通 icon button 命中区（OPT-D 签字：主操作命中区 ≥36×36）；
@@ -320,30 +307,29 @@ pub mod metrics {
     /// 56：项目计数 / 相对时间共用的右对齐元信息槽；100%/150% 均保留
     /// `now` / `244d` 与三位计数的稳定列，不让长标题挤占。
     pub const RAIL_META_SLOT_WIDTH: f32 = 56.0;
-    /// 24：底部状态栏高度。
-    pub const STATUS_BAR_HEIGHT: f32 = 24.0;
+    /// UI-1：30px，共享几何。
+    pub const STATUS_BAR_HEIGHT: f32 = 30.0;
     // ── Workspace Header / Timeline 几何（R4 Wave A，state-a §2.2/§2.3 与
     // state-b §2 量图取档；render 与 AX 树共用单一来源）──
-    /// 36：Header 顶部 traffic-light 安全条（与 rail 顶安全区同源）。
-    pub const HEADER_SAFE_STRIP: f32 = 36.0;
-    /// 104：Workspace Header 总高（state-a zones header 区 y0–104；
-    /// state-b 安全条 48 下 Header 本体 49，两态同一组件取 104 含安全条）。
-    pub const HEADER_HEIGHT: f32 = 104.0;
+    /// UI-1：24px，共享几何。
+    pub const HEADER_SAFE_STRIP: f32 = 24.0;
+    /// UI-1：80px，共享几何。
+    pub const HEADER_HEIGHT: f32 = 80.0;
     /// 28：Workspace 内容统一左 inset（标题 x328 / 首标签 x328 / 工具面板
     /// x326，相对 workspace 左缘 300，量图 26–28 取 28）。
     pub const TIMELINE_CONTENT_INSET: f32 = 28.0;
-    /// 25：Header 右缘 inset（量图右缘 951，相对 workspace 右缘 976）。
-    pub const HEADER_INSET_RIGHT: f32 = 25.0;
-    /// 35：Header 标题尾到 branch 图标间距（量图 563→598）。
-    pub const HEADER_TITLE_META_GAP: f32 = 35.0;
-    /// 10：Header 终态圆点直径（量图 Ø~10）。
-    pub const HEADER_STATUS_DOT_SIZE: f32 = 10.0;
+    /// UI-1：24px，共享几何。
+    pub const HEADER_INSET_RIGHT: f32 = 24.0;
+    /// UI-1：12px，共享几何。
+    pub const HEADER_TITLE_META_GAP: f32 = 12.0;
+    /// UI-1：6px，共享几何。
+    pub const HEADER_STATUS_DOT_SIZE: f32 = 6.0;
     /// 40：Header 右侧动作按钮宽（量图 40×37）。
     pub const HEADER_ACTION_WIDTH: f32 = 40.0;
     /// 37：Header 右侧动作按钮高（量图 40×37）。
     pub const HEADER_ACTION_HEIGHT: f32 = 37.0;
-    /// 4：Header 动作按钮圆角（量图 r≈3±1 取 4 与组件库一致）。
-    pub const HEADER_ACTION_RADIUS: f32 = 4.0;
+    /// UI-1：6px，共享几何。
+    pub const HEADER_ACTION_RADIUS: f32 = 6.0;
     /// 4：Header 右侧相邻动作槽（Activity 与 inspector-expand）的间距
     ///（OPT-4b；render 与 AX 几何同源）。
     pub const HEADER_ACTION_GAP: f32 = 4.0;
@@ -431,12 +417,12 @@ pub mod metrics {
     pub const ACTIVITY_POPOVER_WIDTH: f32 = 320.0;
     /// 144：当前只有 Changes 摘要时按内容收缩，不为未实现的 Agent 状态留空。
     pub const ACTIVITY_POPOVER_HEIGHT: f32 = 144.0;
-    /// 58：Inspector 顶层页签条高度（R6 Wave A 两级页签）。
-    pub const INSPECTOR_TAB_HEIGHT: f32 = 58.0;
+    /// UI-1：48px，共享几何。
+    pub const INSPECTOR_TAB_HEIGHT: f32 = 48.0;
     /// 100：Inspector 顶层单个页签的固定命中宽度。
     pub const INSPECTOR_TAB_WIDTH: f32 = 100.0;
-    /// 56：Changes 二级页签条高度（与顶层 58 形成层次差）。
-    pub const CHANGES_TAB_HEIGHT: f32 = 56.0;
+    /// UI-1：40px，共享几何。
+    pub const CHANGES_TAB_HEIGHT: f32 = 40.0;
     /// 96：Changes 二级单个页签的固定命中宽度。
     pub const CHANGES_TAB_WIDTH: f32 = 96.0;
     /// 2：选中页签的 accent 下划线厚度。
@@ -495,24 +481,26 @@ mod tests {
         );
     }
 
-    /// §2.1：text.secondary × surface.hover ≈ 4.82；tertiary / placeholder ×
-    /// surface.raised ≈ 4.52（placeholder 为不透明 #7f7f7f，与 tertiary 同值）。
+    /// UI-1：全部次要文字在实际最亮交互面上达到 AA。
     #[test]
-    fn wcag_text_on_surface_pairs_match_frozen_targets() {
+    fn wcag_text_on_surface_pairs_meet_aa() {
         let theme = dark();
-        assert_contrast_approx(
-            contrast_ratio(theme.text.secondary, theme.surface.hover),
-            4.82,
-        );
-        assert_contrast_approx(
-            contrast_ratio(theme.text.tertiary, theme.surface.raised),
-            4.52,
-        );
+        for foreground in [
+            theme.text.secondary,
+            theme.text.tertiary,
+            theme.text.placeholder,
+        ] {
+            for background in [
+                theme.bg.base,
+                theme.bg.panel,
+                theme.bg.menu,
+                theme.surface.raised,
+                theme.surface.hover,
+            ] {
+                assert!(contrast_ratio(foreground, background) >= 4.5);
+            }
+        }
         assert_eq!(theme.text.placeholder.a, 1.0);
-        assert_contrast_approx(
-            contrast_ratio(theme.text.placeholder, theme.surface.raised),
-            4.52,
-        );
     }
 
     /// §2.1：白字（on_accent）× accent.hover ≈ 4.55、× success_hover ≈ 4.61。
@@ -526,18 +514,6 @@ mod tests {
         assert_contrast_approx(
             contrast_ratio(theme.text.on_accent, theme.semantic.success_hover),
             4.61,
-        );
-    }
-
-    /// §2.1：placeholder 落 surface.hover 约 4.04，须保持 <4.5，钉住其
-    /// 不得用于 hover surface 的约束。
-    #[test]
-    fn wcag_placeholder_stays_below_aa_on_hover_surface() {
-        let theme = dark();
-        let ratio = contrast_ratio(theme.text.placeholder, theme.surface.hover);
-        assert!(
-            ratio < 4.5,
-            "placeholder × surface.hover contrast {ratio:.4} must stay below 4.5"
         );
     }
 
@@ -560,7 +536,7 @@ mod tests {
         assert_eq!(TextScale::Percent100.rem_pixels(), 16.0);
         assert_eq!(TextScale::Percent125.rem_pixels(), 20.0);
         assert_eq!(TextScale::Percent150.rem_pixels(), 24.0);
-        assert_eq!(font::default_pixels(font::HEADER_TITLE), 22.0);
+        assert_eq!(font::default_pixels(font::HEADER_TITLE), 18.0);
         assert_eq!(font::default_pixels(font::TITLE), 20.0);
         assert_eq!(font::default_pixels(font::BODY), 16.0);
         assert_eq!(font::default_pixels(font::BASE), 14.0);
@@ -578,9 +554,9 @@ mod tests {
             ],
             [4.0, 8.0, 12.0, 16.0, 24.0, 32.0]
         );
-        assert_eq!(metrics::CONTROL_RADIUS, 4.0);
-        assert_eq!(metrics::INPUT_MENU_RADIUS, 6.0);
-        assert_eq!(metrics::SURFACE_RADIUS, 8.0);
+        assert_eq!(metrics::CONTROL_RADIUS, 6.0);
+        assert_eq!(metrics::INPUT_MENU_RADIUS, 8.0);
+        assert_eq!(metrics::SURFACE_RADIUS, 12.0);
         assert_eq!(metrics::FOCUS_RING_WIDTH, 2.0);
         assert_eq!(metrics::ICON_BUTTON_SIZE, 36.0);
         assert_eq!(metrics::MENU_ANCHOR_GAP, 8.0);
@@ -620,20 +596,20 @@ mod tests {
     /// state-b §2 量图取档）：钉住数值防静默漂移。
     #[test]
     fn workspace_timeline_geometry_constants_match_frozen_tiers() {
-        assert_eq!(font::default_pixels(font::HEADER_TITLE), 22.0);
+        assert_eq!(font::default_pixels(font::HEADER_TITLE), 18.0);
         assert_eq!(
             font::default_pixels(font::from_pixels(metrics::MSG_LINE_HEIGHT)),
             24.0
         );
-        assert_eq!(metrics::HEADER_SAFE_STRIP, 36.0);
-        assert_eq!(metrics::HEADER_HEIGHT, 104.0);
+        assert_eq!(metrics::HEADER_SAFE_STRIP, 24.0);
+        assert_eq!(metrics::HEADER_HEIGHT, 80.0);
         assert_eq!(metrics::TIMELINE_CONTENT_INSET, 28.0);
-        assert_eq!(metrics::HEADER_INSET_RIGHT, 25.0);
-        assert_eq!(metrics::HEADER_TITLE_META_GAP, 35.0);
-        assert_eq!(metrics::HEADER_STATUS_DOT_SIZE, 10.0);
+        assert_eq!(metrics::HEADER_INSET_RIGHT, 24.0);
+        assert_eq!(metrics::HEADER_TITLE_META_GAP, 12.0);
+        assert_eq!(metrics::HEADER_STATUS_DOT_SIZE, 6.0);
         assert_eq!(metrics::HEADER_ACTION_WIDTH, 40.0);
         assert_eq!(metrics::HEADER_ACTION_HEIGHT, 37.0);
-        assert_eq!(metrics::HEADER_ACTION_RADIUS, 4.0);
+        assert_eq!(metrics::HEADER_ACTION_RADIUS, 6.0);
         assert_eq!(metrics::HEADER_ACTION_GAP, 4.0);
         assert_eq!(metrics::TIMELINE_READABLE_WIDTH, 618.0);
         assert_eq!(metrics::TIMELINE_TOP_GAP, 28.0);
@@ -662,9 +638,9 @@ mod tests {
     /// accent 下划线 2px；折叠态 Activity 仅按当前真实内容保留 144px。
     #[test]
     fn inspector_tabs_and_activity_popover_constants_match_frozen_tiers() {
-        assert_eq!(metrics::INSPECTOR_TAB_HEIGHT, 58.0);
+        assert_eq!(metrics::INSPECTOR_TAB_HEIGHT, 48.0);
         assert_eq!(metrics::INSPECTOR_TAB_WIDTH, 100.0);
-        assert_eq!(metrics::CHANGES_TAB_HEIGHT, 56.0);
+        assert_eq!(metrics::CHANGES_TAB_HEIGHT, 40.0);
         assert_eq!(metrics::CHANGES_TAB_WIDTH, 96.0);
         assert_eq!(metrics::TAB_UNDERLINE_HEIGHT, 2.0);
         assert_eq!(metrics::ACTIVITY_POPOVER_WIDTH, 320.0);

@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="660" viewBox="0 0 1120 660" role="img" aria-labelledby="title desc">
+  <title id="title">Pawork UI-1 Workbench tokens</title>
+  <desc id="desc">设计规格示意：中性深色工作台，紧凑 Header，Inspector 双层页签，180ms 面板开合；非产品截图。</desc>
+  <rect width="1120" height="660" fill="#18181b"/>
+  <g font-family="system-ui, sans-serif" fill="#f2f2f3">
+    <text x="36" y="46" font-size="22" font-weight="500">Pawork · UI-1 Workbench</text>
+    <text x="36" y="76" font-size="14" fill="#aaaab2">Design specification · 2026-09-07 · schematic, not a screenshot</text>
+    <rect x="36" y="112" width="1048" height="330" rx="12" fill="#1e1e21" stroke="#424248"/>
+    <path d="M244 112V442 M804 112V412 M244 412H1084" fill="none" stroke="#2b2b30"/>
+    <text x="60" y="153" font-size="14">TaskRail</text>
+    <text x="60" y="181" font-size="12" fill="#aaaab2">288 / 240 / 320px</text>
+    <text x="272" y="159" font-size="18" font-weight="500">Workspace header</text>
+    <text x="272" y="190" font-size="12" fill="#aaaab2">80px · title 18px · actions 40 × 37px</text>
+    <text x="824" y="151" font-size="14">Changes</text>
+    <text x="912" y="151" font-size="14" fill="#aaaab2">Terminal</text>
+    <text x="994" y="151" font-size="14" fill="#aaaab2">Resources</text>
+    <path d="M244 202H1084" stroke="#2b2b30"/>
+    <path d="M840 167H864" stroke="#aaaab2" stroke-width="2"/>
+    <text x="824" y="188" font-size="12" fill="#aaaab2">Files / Summary · 48px + 40px tabs</text>
+    <text x="424" y="284" font-size="16" fill="#aaaab2">Conversation</text>
+    <text x="824" y="256" font-size="14">Inspector · 440px</text>
+    <text x="824" y="284" font-size="12" fill="#aaaab2">180ms ease-out</text>
+    <text x="824" y="308" font-size="12" fill="#aaaab2">Reverse from current width</text>
+    <text x="824" y="332" font-size="12" fill="#aaaab2">Collapse when space is limited</text>
+    <text x="424" y="376" font-size="14" fill="#aaaab2">Composer · UI-4</text>
+    <text x="386" y="432" font-size="12" fill="#aaaab2">Task — tokens     Quota unavailable     — tok/s     Run idle</text>
+    <text x="36" y="485" font-size="14" font-weight="500">Shared palette</text>
+    <rect x="36" y="504" width="170" height="44" rx="6" fill="#1e1e21" stroke="#424248"/>
+    <rect x="220" y="504" width="170" height="44" rx="6" fill="#26262a"/>
+    <rect x="404" y="504" width="170" height="44" rx="6" fill="#303035"/>
+    <rect x="588" y="504" width="170" height="44" rx="6" fill="#f2f2f3"/>
+    <rect x="772" y="504" width="170" height="44" rx="6" fill="#aaaab2"/>
+    <rect x="956" y="504" width="128" height="44" rx="6" fill="#2f6fed"/>
+    <g font-size="12" fill="#aaaab2">
+      <text x="36" y="573">Canvas #1e1e21</text><text x="220" y="573">Raised #26262a</text>
+      <text x="404" y="573">Hover #303035</text><text x="588" y="573">Text #f2f2f3</text>
+      <text x="772" y="573">Secondary #aaaab2</text><text x="956" y="573">Action #2f6fed</text>
+      <text x="36" y="622">Space 4 / 8 / 12 / 16 / 24 / 32 · Radius 6 / 8 / 12 · Focus 2px · Shadows only on popovers</text>
+    </g>
+  </g>
+</svg>

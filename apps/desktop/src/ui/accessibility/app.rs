@@ -705,11 +705,11 @@ impl AppView {
             self.text_scale == font::TextScale::Percent150,
         );
         let sidebar_width = shell.rail_width.min(width);
-        let inspector_width = if shell.inspector_open {
-            metrics::INSPECTOR_WIDTH.min((width - sidebar_width).max(0.0))
-        } else {
-            0.0
-        };
+        // UI-1：render 先更新本帧过渡宽度；开合期间也按可见宽度布局，
+        // Header 动作仍使用下方逻辑终态 shell.inspector_open。
+        let inspector_width = self
+            .inspector_render_width
+            .min((width - sidebar_width).max(0.0));
         let workspace_width = (width - sidebar_width - inspector_width).max(0.0);
         let workspace_x = sidebar_width;
 
@@ -744,17 +744,26 @@ impl AppView {
                         AxRect::new(workspace_x, 0.0, workspace_width, content_height),
                         shell.inspector_open,
                     ));
-                if shell.inspector_open {
-                    tree = tree.child(self.inspector_ax(
+                if inspector_width > 0.0 {
+                    let mut inspector = self.inspector_ax(
                         window,
                         cx,
                         AxRect::new(
                             width - inspector_width,
                             0.0,
-                            inspector_width,
+                            metrics::INSPECTOR_WIDTH,
                             content_height,
                         ),
-                    ));
+                    );
+                    // 与 shell-inspector overflow_hidden 同源：内部保持
+                    // 440px 排版，只裁剪右缘；完全不可见的节点不发布动作。
+                    fn clip_right(node: &mut AxNode, right: f32) -> bool {
+                        node.bounds.width = node.bounds.width.min((right - node.bounds.x).max(0.0));
+                        node.children.retain_mut(|child| clip_right(child, right));
+                        node.bounds.width > 0.0 && node.bounds.height > 0.0
+                    }
+                    clip_right(&mut inspector, width);
+                    tree = tree.child(inspector);
                 }
                 tree
             };
@@ -2665,10 +2674,9 @@ impl AppView {
     /// StatusBar 只保留居中的 run-status 信息串。
     fn status_ax(&self, frame: AxRect) -> AxNode {
         let now = super::super::now_unix_ms();
-        // F-13：run-status 信息串在状态行内居中（与 render 同源）；宽度按
-        // 定稿文案留 320px，行宽不足时收缩到整行。
-        let run_status_width = 320.0_f32.min(frame.width);
-        let run_status_x = frame.x + ((frame.width - run_status_width) / 2.0).max(0.0);
+        // UI-1：四组元信息居中，共享状态栏可用区域。
+        let run_status_width = frame.width;
+        let run_status_x = frame.x;
         let status = AxNode::new("status-bar", AxRole::Group, "Status", frame).child(
             AxNode::new(
                 "run-status",
@@ -2878,17 +2886,17 @@ mod tests {
     fn activity_header_ax_geometry_matches_render_anchor_contract() {
         let header = AxRect::new(240.0, 0.0, 840.0, metrics::HEADER_HEIGHT);
         let trigger = header_action_ax_rect(header);
-        assert_eq!(trigger, AxRect::new(1015.0, 51.5, 40.0, 37.0));
+        assert_eq!(trigger, AxRect::new(1016.0, 33.5, 40.0, 37.0));
         // OPT-4b：折叠态 Activity 左移一格（40 槽 + 4 间距），重开按钮占最右。
         let toggle = header_activity_ax_rect(header);
-        assert_eq!(toggle, AxRect::new(971.0, 51.5, 40.0, 37.0));
+        assert_eq!(toggle, AxRect::new(972.0, 33.5, 40.0, 37.0));
 
         let popover = activity_popover_ax_geometry(header, trigger, 16.0);
-        assert_eq!(popover.frame, AxRect::new(717.0, 96.5, 338.0, 162.0));
-        assert_eq!(popover.heading, AxRect::new(751.0, 163.5, 270.0, 18.0));
+        assert_eq!(popover.frame, AxRect::new(718.0, 78.5, 338.0, 162.0));
+        assert_eq!(popover.heading, AxRect::new(752.0, 145.5, 270.0, 18.0));
         assert_eq!(
             popover.open_changes,
-            AxRect::new(751.0, 185.5, 270.0, metrics::MENU_ROW_HEIGHT)
+            AxRect::new(752.0, 167.5, 270.0, metrics::MENU_ROW_HEIGHT)
         );
         let large = activity_popover_ax_geometry(header, trigger, 24.0);
         assert_eq!(large.frame.height, 234.0);
@@ -3143,6 +3151,40 @@ mod tests {
         // Activity 摘要 / inspector-expand）仍可展开。
         cx.update(|_window, cx| {
             assert!(!view.read(cx).inspector_open);
+        });
+
+        // UI-1：折叠过渡中保留可见页签，部分可见的页签裁到窗口右缘；
+        // 完全隐藏的操作（含旧 AX 客户端保留的对象）不可再调用。
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.inspector_render_width = 160.0;
+                let tree = view.accessibility_tree(window, cx);
+                let inspector = tree.find("inspector").unwrap();
+                let workspace = tree.find("workspace").unwrap();
+                let terminal = tree.find("inspector-tab-terminal").unwrap();
+                assert_eq!(inspector.bounds.width, 160.0);
+                assert_eq!(
+                    workspace.bounds.x + workspace.bounds.width,
+                    inspector.bounds.x
+                );
+                assert_eq!(
+                    terminal.bounds.x + terminal.bounds.width,
+                    tree.viewport.width
+                );
+                assert!(terminal.bounds.width < metrics::INSPECTOR_TAB_WIDTH);
+                assert!(tree.find("inspector-tab-resources").is_none());
+                assert!(!tree.permits(&AxRequest {
+                    identifier: "inspector-collapse".into(),
+                    action: AxAction::Press,
+                    value: None,
+                }));
+                assert!(tree.find("inspector-expand").is_some());
+                view.inspector_render_width = 0.0;
+                assert!(view
+                    .accessibility_tree(window, cx)
+                    .find("inspector")
+                    .is_none());
+            });
         });
 
         cx.update(|window, cx| {

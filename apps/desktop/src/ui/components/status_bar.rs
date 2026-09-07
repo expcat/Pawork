@@ -4,11 +4,11 @@ use gpui::{div, prelude::*, px, AnyElement, App, IntoElement, RenderOnce, Styled
 
 use crate::ui::theme::{dark, font, metrics};
 
-/// 底部 24px 状态行：bg.panel + 顶描边 + SM 次要文字。
+/// 底部 30px 状态行：bg.panel + 顶描边 + SM 次要文字。
 ///
 /// F-13 布局：信息串（RunStatusBar）在行内绝对居中。R6 Wave A 已把
 /// Inspector 折叠态 Activity 触发器迁至 Workspace Header，StatusBar
-/// 不再承载动作。高度与描边不动。
+/// 不再承载动作。UI-1 高度调整为 30px，四组元信息独立排布。
 #[derive(IntoElement)]
 pub struct StatusBar {
     centered: Option<AnyElement>,

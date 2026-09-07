@@ -226,16 +226,15 @@ impl AppView {
             InspectorTab::Resources,
         ] {
             let selected = tab == current;
-            let hover = dark().surface.raised;
             tabs = tabs.child(
-                // R6 Wave A：页签不再是 Raised/Ghost 按钮，改为 58px 条内
-                // 文本级页签，选中态 accent 下划线（与二级 56px 层次区分）；
-                // hover / active 只改背景，active 复用 hover 色（基准 §8.1）。
+                // UI-1：固定页签槽位，选中背景与短中性下划线只改变绘制；
+                // hover / pressed 不参与布局，键盘与 AX 继续复用原入口。
                 div()
                     .id(tab.button_id())
                     .relative()
                     .w(px(metrics::INSPECTOR_TAB_WIDTH))
                     .h(px(metrics::INSPECTOR_TAB_HEIGHT))
+                    .flex_none()
                     .flex()
                     .items_center()
                     .justify_center()
@@ -249,25 +248,29 @@ impl AppView {
                         self.inspector_tab_focus[tab as usize].is_focused(window),
                         |tab| tab.child(focus_ring(px(0.0))),
                     )
-                    .text_size(font::BODY)
+                    .text_size(font::BASE)
                     .text_color(if selected {
                         dark().text.primary
                     } else {
                         dark().text.secondary
                     })
-                    .hover(move |style| style.bg(hover))
-                    .active(move |style| style.bg(hover))
+                    .when(selected, |tab| tab.bg(dark().surface.raised))
+                    .hover(|style| {
+                        style
+                            .bg(dark().surface.hover)
+                            .text_color(dark().text.primary)
+                    })
+                    .active(|style| style.bg(dark().surface.pressed))
                     .child(div().child(tab.label()))
                     .when(selected, |tab| {
                         tab.child(
                             div()
                                 .absolute()
-                                .left_0()
-                                .right_0()
+                                .left(px((metrics::INSPECTOR_TAB_WIDTH - 24.0) / 2.0))
                                 .bottom_0()
-                                .w_full()
+                                .w(px(24.0))
                                 .h(px(metrics::TAB_UNDERLINE_HEIGHT))
-                                .bg(dark().accent.primary),
+                                .bg(dark().text.secondary),
                         )
                     })
                     .on_click(cx.listener(move |view, event, _window, cx| {
@@ -286,6 +289,7 @@ impl AppView {
             .pl_3()
             .pr_2()
             .h(px(metrics::INSPECTOR_TAB_HEIGHT))
+            .flex_none()
             .border_b_1()
             .border_color(dark().border.subtle)
             .child(tabs)

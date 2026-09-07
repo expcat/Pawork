@@ -463,6 +463,8 @@ pub struct AppView {
     /// P1-2：以首个 tool event id 标识的本地折叠偏好；不进入 wire / replay。
     collapsed_tool_groups: HashSet<String>,
     inspector_open: bool,
+    inspector_motion: shell_layout::InspectorMotion,
+    inspector_render_width: f32,
     /// Inspector 顶层页签（Changes / Terminal / Resources）。
     inspector_tab: InspectorTab,
     /// Changes 面状态（Files / Summary、清单与选中 diff、滚动句柄）。
@@ -693,6 +695,8 @@ impl AppView {
             // OPT-4b（F6）：默认折叠（宽屏同样）；显式动作（Review changes、
             // Activity 摘要等）仍可展开。
             inspector_open: false,
+            inspector_motion: shell_layout::InspectorMotion::default(),
+            inspector_render_width: 0.0,
             inspector_tab: InspectorTab::default(),
             changes: ChangesPanelState::default(),
             resources: ResourcesPanelState::default(),
@@ -919,7 +923,6 @@ impl AppView {
         let mut new_task = Button::new("header-new-task")
             .track_focus(&self.header_new_task_focus)
             .variant(ButtonVariant::Ghost)
-            .bordered()
             .disabled(!can_create)
             .padding(ButtonPadding::None)
             .width(px(metrics::HEADER_ACTION_WIDTH))
@@ -955,7 +958,6 @@ impl AppView {
         let activity_trigger = activity_trigger_visible.then(|| {
             let trigger = Button::new("inspector-toggle")
                 .variant(ButtonVariant::Ghost)
-                .bordered()
                 .padding(ButtonPadding::None)
                 .width(px(metrics::HEADER_ACTION_WIDTH))
                 .height(px(metrics::HEADER_ACTION_HEIGHT))
@@ -1002,7 +1004,6 @@ impl AppView {
         let inspector_expand = Button::new("inspector-expand")
             .track_focus(&self.inspector_expand_focus)
             .variant(ButtonVariant::Ghost)
-            .bordered()
             .padding(ButtonPadding::None)
             .width(px(metrics::HEADER_ACTION_WIDTH))
             .height(px(metrics::HEADER_ACTION_HEIGHT))
@@ -1011,7 +1012,7 @@ impl AppView {
             .radius(metrics::HEADER_ACTION_RADIUS)
             .text_size(font::ICON)
             .text_color(dark().text.emphasis)
-            .label("⤢")
+            .label("◧")
             .tooltip(i18n::t("header.tooltip_open_inspector"))
             .on_click(cx.listener(|view, event, window, cx| {
                 if view.consume_button_key_click("inspector-expand", event) {
@@ -1040,8 +1041,7 @@ impl AppView {
             .pt(px(metrics::HEADER_SAFE_STRIP))
             .pl(px(metrics::TIMELINE_CONTENT_INSET))
             .pr(px(metrics::HEADER_INSET_RIGHT))
-            .border_b_1()
-            .border_color(dark().border.subtle)
+            .bg(dark().bg.base)
             .child(
                 div()
                     .flex()
@@ -1053,7 +1053,7 @@ impl AppView {
                     .when_some(title, |row, title| {
                         row.child(
                             div()
-                                .min_w_0()
+                                .flex_shrink()
                                 .truncate()
                                 .text_size(font::HEADER_TITLE)
                                 .font_weight(FontWeight::MEDIUM)
@@ -1068,10 +1068,12 @@ impl AppView {
                                 .flex_row()
                                 .items_center()
                                 .gap_1()
+                                .max_w(px(140.0))
+                                .overflow_hidden()
                                 .text_size(font::BODY_SM)
                                 .text_color(dark().text.secondary)
                                 .child("⑂")
-                                .child(branch),
+                                .child(div().truncate().child(branch)),
                         )
                     })
                     .when_some(status, |row, status| {
@@ -1081,7 +1083,8 @@ impl AppView {
                                 .flex()
                                 .flex_row()
                                 .items_center()
-                                .gap_6()
+                                .gap_2()
+                                .flex_none()
                                 .text_size(font::BODY_SM)
                                 .text_color(dark().text.secondary)
                                 .child(
@@ -1104,6 +1107,7 @@ impl AppView {
                         div()
                             .flex()
                             .flex_row()
+                            .flex_none()
                             .gap(px(metrics::HEADER_ACTION_GAP))
                             .child(trigger)
                             .child(inspector_expand),
@@ -4042,7 +4046,6 @@ impl Render for AppView {
                 }
             }
         }
-        self.sync_accessibility(window, cx);
         if self.pending_scope_menu_scroll {
             if !matches!(self.open_menu, Some(MenuKind::Scope)) {
                 self.pending_scope_menu_scroll = false;
@@ -4087,6 +4090,27 @@ impl Render for AppView {
             self.text_scale == font::TextScale::Percent150,
         );
         let inspector_open = shell.inspector_open;
+        let can_fit_inspector = shell_layout::resolve(
+            window.viewport_size().width,
+            true,
+            self.text_scale == font::TextScale::Percent150,
+        )
+        .inspector_open && self.route == AppRoute::Workspace;
+        let (inspector_width, inspector_animating) = self.inspector_motion.width(
+            inspector_open,
+            can_fit_inspector,
+            std::time::Instant::now(),
+        );
+        if inspector_width != self.inspector_render_width {
+            // 包括最后一帧与窄窗归零，避免文本沿用过渡中间帧的测高。
+            self.inspector_render_width = inspector_width;
+            self.timeline_changed();
+        }
+        if inspector_animating {
+            window.request_animation_frame();
+        }
+        self.sync_accessibility(window, cx);
+
         let (activity_trigger_visible, activity_popover_open) = activity_header_visibility(
             inspector_open,
             matches!(self.open_menu, Some(MenuKind::Activity)),
@@ -4116,11 +4140,14 @@ impl Render for AppView {
                     .child(composer);
 
                 let mut main = div().flex().flex_row().flex_1().min_w_0().child(workspace);
-                if inspector_open {
+                if inspector_width > 0.0 {
                     main = main.child(
                         div()
                             .id("shell-inspector")
                             .debug_selector(|| "shell-inspector".into())
+                            .w(px(inspector_width))
+                            .flex_none()
+                            .overflow_hidden()
                             .flex()
                             .child(self.inspector_element(connected, window, cx)),
                     );
@@ -4200,7 +4227,13 @@ impl Render for AppView {
                     // StatusBar 只在工作台渲染，Settings 壳不显示
                     // RunStatusBar（render 与 AX 同源）。
                     .when(matches!(self.route, AppRoute::Workspace), |column| {
-                        column.child(StatusBar::new().centered(Badge::new(run_status)))
+                        column.child(StatusBar::new().centered(
+                            div().flex().items_center().gap_4().children(
+                                run_status
+                                    .split(" | ")
+                                    .map(|metric| Badge::new(metric.to_string())),
+                            ),
+                        ))
                     }),
             )
     }

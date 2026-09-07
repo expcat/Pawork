@@ -1,7 +1,7 @@
 //! R2 Wave A 轨 2：窗口壳布局合同（F-01/F-02 / 响应式 / U1 不变量）。
 //!
 //! 合同（design/README.md §2）：宽窗三栏 TaskRail 288 / Workspace 弹性 /
-//! Inspector 440，StatusBar 24；窗口宽 1080–1279 时 rail 收敛 240、
+//! Inspector 440，StatusBar 30；窗口宽 1080–1279 时 rail 收敛 240、
 //! Inspector 折叠为 ActivityPopover 抽屉、Workspace ≥560；150% 文本
 //! 缩放时 rail 扩为 320，窗口不足 1320 时保持 Inspector 折叠。resolve 是
 //! AppView::render 与本模块 #[gpui::test] 共享的唯一计算入口；探针主机
@@ -38,7 +38,7 @@ pub(crate) struct ShellLayout {
 
 /// 由窗口内容宽度与用户 Inspector 偏好解析壳层几何。
 ///
-/// 默认字号在窄窗强制折叠 Inspector；150% 字号需至少
+/// 默认字号至少 1288px 才展开 Inspector，保证 Workspace ≥560；150% 字号需至少
 /// 320+440+560=1320 才展开。偏好值不在 resize 时改写，窗口加宽后按偏好
 /// 自动恢复。
 pub(crate) fn resolve(
@@ -60,7 +60,71 @@ pub(crate) fn resolve(
                 window_width >= px(LARGE_TEXT_INSPECTOR_MIN_WIDTH)
             } else {
                 !narrow
+                    && window_width
+                        >= px(metrics::SIDEBAR_WIDTH
+                            + metrics::INSPECTOR_WIDTH
+                            + WORKSPACE_MIN_WIDTH)
             },
+    }
+}
+
+/// UI-1 面板宽度过渡；反向操作从当前帧续接，窄窗直接归零。
+/// 只保存瞬时呈现，不写入 Inspector 偏好或协议。
+pub(crate) struct InspectorMotion {
+    from: f32,
+    target: f32,
+    started: std::time::Instant,
+}
+
+impl Default for InspectorMotion {
+    fn default() -> Self {
+        Self {
+            from: 0.0,
+            target: 0.0,
+            started: std::time::Instant::now(),
+        }
+    }
+}
+
+impl InspectorMotion {
+    fn value(&self, now: std::time::Instant) -> f32 {
+        let progress = (now.duration_since(self.started).as_secs_f32()
+            / super::theme::motion::PANEL_DURATION.as_secs_f32())
+        .min(1.0);
+        self.from + (self.target - self.from) * (1.0 - (1.0 - progress).powi(3))
+    }
+
+    pub(crate) fn width(
+        &mut self,
+        open: bool,
+        can_fit: bool,
+        now: std::time::Instant,
+    ) -> (f32, bool) {
+        let target = if open && can_fit {
+            metrics::INSPECTOR_WIDTH
+        } else {
+            0.0
+        };
+        if !can_fit {
+            self.from = 0.0;
+            self.target = 0.0;
+            return (0.0, false);
+        }
+        if self.target != target {
+            self.from = self.value(now);
+            self.target = target;
+            self.started = now;
+        }
+        let animating = self.from != self.target
+            && now.duration_since(self.started) < super::theme::motion::PANEL_DURATION;
+        (
+            if animating {
+                self.value(now)
+            } else {
+                self.target
+            },
+            animating,
+        )
     }
 }
 
@@ -156,6 +220,31 @@ mod tests {
     }
 
     #[test]
+    fn inspector_motion_reverses_without_jump_and_snaps_when_narrow() {
+        use std::time::{Duration, Instant};
+        let mut motion = InspectorMotion::default();
+        let now = Instant::now();
+        assert_eq!(motion.width(true, true, now), (0.0, true));
+        let halfway = now + Duration::from_millis(90);
+        let width = motion.width(true, true, halfway).0;
+        assert!(width > 0.0 && width < metrics::INSPECTOR_WIDTH);
+        assert_eq!(motion.width(false, true, halfway), (width, true));
+        assert_eq!(
+            motion.width(false, true, halfway + Duration::from_millis(180)),
+            (0.0, false)
+        );
+        motion.width(true, true, halfway + Duration::from_millis(200));
+        assert_eq!(
+            motion.width(true, true, halfway + Duration::from_millis(380)),
+            (metrics::INSPECTOR_WIDTH, false)
+        );
+        assert_eq!(
+            motion.width(true, false, halfway + Duration::from_millis(390)),
+            (0.0, false)
+        );
+    }
+
+    #[test]
     fn resolve_switches_rail_width_at_1280() {
         let narrow = resolve(px(1279.), true, false);
         assert_eq!(narrow.rail_width, RAIL_NARROW_WIDTH);
@@ -166,7 +255,8 @@ mod tests {
 
         let wide = resolve(px(1280.), true, false);
         assert_eq!(wide.rail_width, metrics::SIDEBAR_WIDTH);
-        assert!(wide.inspector_open);
+        assert!(!wide.inspector_open);
+        assert!(resolve(px(1288.), true, false).inspector_open);
 
         assert!(!resolve(px(1440.), false, false).inspector_open);
         assert_eq!(
@@ -223,7 +313,7 @@ mod tests {
             px(1024. - metrics::STATUS_BAR_HEIGHT)
         );
 
-        // StatusBar 24px 连续横贯 workspace+inspector，不覆盖左栏账户区。
+        // StatusBar 30px 连续横贯 workspace+inspector，不覆盖左栏账户区。
         assert_eq!(status.origin.x, rail.size.width);
         assert_eq!(status.size.width, px(1440. - metrics::SIDEBAR_WIDTH));
         assert_eq!(status.origin.y, px(1024. - metrics::STATUS_BAR_HEIGHT));
