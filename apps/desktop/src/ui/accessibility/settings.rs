@@ -2,7 +2,6 @@
 
 use gpui::{App, Window};
 
-use super::app::PAD;
 use super::{AxAction, AxNode, AxRect, AxRole};
 use crate::ui::i18n::t;
 use crate::ui::shell_layout;
@@ -42,10 +41,11 @@ impl AppView {
     /// OPT-4d（F4）后导航项两态共用同一外壳几何，选中不改变行位。
     pub(crate) fn settings_rail_ax(&self, window: &Window, frame: AxRect) -> AxNode {
         const TITLE_HEIGHT: f32 = 28.0;
-        let title_y = PAD + shell_layout::TRAFFIC_LIGHT_SAFE_HEIGHT + PAD;
-        let back_y = title_y + TITLE_HEIGHT + PAD;
-        let nav_y = back_y + metrics::RAIL_TOP_ROW_HEIGHT + PAD;
-        let width = (frame.width - PAD * 2.0).max(0.0);
+        let pad = f32::from(window.rem_size()) * 0.5; // Panel p_2 / gap_2
+        let title_y = pad + shell_layout::TRAFFIC_LIGHT_SAFE_HEIGHT + pad;
+        let back_y = title_y + TITLE_HEIGHT + pad;
+        let nav_y = back_y + metrics::RAIL_TOP_ROW_HEIGHT + pad;
+        let width = (frame.width - pad * 2.0 - 1.0).max(0.0);
         let general_available = self.projection.settings_general.query.available;
         let permissions_available = self.projection.settings_permissions.query.available;
         let tools_available = self.resources.available;
@@ -69,7 +69,7 @@ impl AppView {
                 "settings-rail-title",
                 AxRole::StaticText,
                 t("settings.rail_title"),
-                AxRect::new(frame.x + PAD, frame.y + title_y, width, TITLE_HEIGHT),
+                AxRect::new(frame.x + pad, frame.y + title_y, width, TITLE_HEIGHT),
             ))
             .child(
                 AxNode::new(
@@ -77,7 +77,7 @@ impl AppView {
                     AxRole::Button,
                     t("settings.back_tooltip"),
                     AxRect::new(
-                        frame.x + PAD,
+                        frame.x + pad,
                         frame.y + back_y,
                         width,
                         metrics::RAIL_TOP_ROW_HEIGHT,
@@ -92,21 +92,21 @@ impl AppView {
                 current_page == SettingsPage::Providers,
                 self.open_menu.is_none() && self.settings_nav_providers_focus.is_focused(window),
                 AxRect::new(
-                    frame.x + PAD,
+                    frame.x + pad,
                     frame.y + nav_y,
                     width,
                     metrics::RAIL_TOP_ROW_HEIGHT,
                 ),
             ));
         if general_available {
-            let general_y = nav_y + metrics::RAIL_TOP_ROW_HEIGHT + PAD;
+            let general_y = nav_y + metrics::RAIL_TOP_ROW_HEIGHT + pad;
             rail = rail.child(settings_nav_ax(
                 "settings-nav-general",
                 t("settings.nav.general"),
                 current_page == SettingsPage::General,
                 self.open_menu.is_none() && self.settings_nav_general_focus.is_focused(window),
                 AxRect::new(
-                    frame.x + PAD,
+                    frame.x + pad,
                     frame.y + general_y,
                     width,
                     metrics::RAIL_TOP_ROW_HEIGHT,
@@ -116,9 +116,9 @@ impl AppView {
         if permissions_available {
             // 几何与 render 同源：通用项之后递增一行（无通用项时紧随
             // 供应商项）。
-            let mut permissions_y = nav_y + metrics::RAIL_TOP_ROW_HEIGHT + PAD;
+            let mut permissions_y = nav_y + metrics::RAIL_TOP_ROW_HEIGHT + pad;
             if general_available {
-                permissions_y += metrics::RAIL_TOP_ROW_HEIGHT + PAD;
+                permissions_y += metrics::RAIL_TOP_ROW_HEIGHT + pad;
             }
             rail = rail.child(settings_nav_ax(
                 "settings-nav-permissions",
@@ -126,7 +126,7 @@ impl AppView {
                 current_page == SettingsPage::Permissions,
                 self.open_menu.is_none() && self.settings_nav_permissions_focus.is_focused(window),
                 AxRect::new(
-                    frame.x + PAD,
+                    frame.x + pad,
                     frame.y + permissions_y,
                     width,
                     metrics::RAIL_TOP_ROW_HEIGHT,
@@ -135,12 +135,12 @@ impl AppView {
         }
         if tools_available {
             // 几何与 render 同源：权限项之后递增一行（按可用项累计）。
-            let mut tools_y = nav_y + metrics::RAIL_TOP_ROW_HEIGHT + PAD;
+            let mut tools_y = nav_y + metrics::RAIL_TOP_ROW_HEIGHT + pad;
             if general_available {
-                tools_y += metrics::RAIL_TOP_ROW_HEIGHT + PAD;
+                tools_y += metrics::RAIL_TOP_ROW_HEIGHT + pad;
             }
             if permissions_available {
-                tools_y += metrics::RAIL_TOP_ROW_HEIGHT + PAD;
+                tools_y += metrics::RAIL_TOP_ROW_HEIGHT + pad;
             }
             rail = rail.child(settings_nav_ax(
                 "settings-nav-tools",
@@ -148,7 +148,7 @@ impl AppView {
                 current_page == SettingsPage::Tools,
                 self.open_menu.is_none() && self.settings_nav_tools_focus.is_focused(window),
                 AxRect::new(
-                    frame.x + PAD,
+                    frame.x + pad,
                     frame.y + tools_y,
                     width,
                     metrics::RAIL_TOP_ROW_HEIGHT,
@@ -157,15 +157,15 @@ impl AppView {
         }
         if terminal_available {
             // 几何与 render 同源：工具项之后递增一行（按可用项累计）。
-            let mut terminal_y = nav_y + metrics::RAIL_TOP_ROW_HEIGHT + PAD;
+            let mut terminal_y = nav_y + metrics::RAIL_TOP_ROW_HEIGHT + pad;
             if general_available {
-                terminal_y += metrics::RAIL_TOP_ROW_HEIGHT + PAD;
+                terminal_y += metrics::RAIL_TOP_ROW_HEIGHT + pad;
             }
             if permissions_available {
-                terminal_y += metrics::RAIL_TOP_ROW_HEIGHT + PAD;
+                terminal_y += metrics::RAIL_TOP_ROW_HEIGHT + pad;
             }
             if tools_available {
-                terminal_y += metrics::RAIL_TOP_ROW_HEIGHT + PAD;
+                terminal_y += metrics::RAIL_TOP_ROW_HEIGHT + pad;
             }
             rail = rail.child(settings_nav_ax(
                 "settings-nav-terminal",
@@ -173,7 +173,7 @@ impl AppView {
                 current_page == SettingsPage::Terminal,
                 self.open_menu.is_none() && self.settings_nav_terminal_focus.is_focused(window),
                 AxRect::new(
-                    frame.x + PAD,
+                    frame.x + pad,
                     frame.y + terminal_y,
                     width,
                     metrics::RAIL_TOP_ROW_HEIGHT,
@@ -182,18 +182,18 @@ impl AppView {
         }
         // SET-6e 外观是 Desktop 本地能力，始终在所有 Host 可用页之后
         // 显示；位置按实际可见项累计，与 render 同源。
-        let mut appearance_y = nav_y + metrics::RAIL_TOP_ROW_HEIGHT + PAD;
+        let mut appearance_y = nav_y + metrics::RAIL_TOP_ROW_HEIGHT + pad;
         if general_available {
-            appearance_y += metrics::RAIL_TOP_ROW_HEIGHT + PAD;
+            appearance_y += metrics::RAIL_TOP_ROW_HEIGHT + pad;
         }
         if permissions_available {
-            appearance_y += metrics::RAIL_TOP_ROW_HEIGHT + PAD;
+            appearance_y += metrics::RAIL_TOP_ROW_HEIGHT + pad;
         }
         if tools_available {
-            appearance_y += metrics::RAIL_TOP_ROW_HEIGHT + PAD;
+            appearance_y += metrics::RAIL_TOP_ROW_HEIGHT + pad;
         }
         if terminal_available {
-            appearance_y += metrics::RAIL_TOP_ROW_HEIGHT + PAD;
+            appearance_y += metrics::RAIL_TOP_ROW_HEIGHT + pad;
         }
         rail = rail.child(settings_nav_ax(
             "settings-nav-appearance",
@@ -201,34 +201,34 @@ impl AppView {
             current_page == SettingsPage::Appearance,
             self.open_menu.is_none() && self.settings_nav_appearance_focus.is_focused(window),
             AxRect::new(
-                frame.x + PAD,
+                frame.x + pad,
                 frame.y + appearance_y,
                 width,
                 metrics::RAIL_TOP_ROW_HEIGHT,
             ),
         ));
-        let advanced_y = appearance_y + metrics::RAIL_TOP_ROW_HEIGHT + PAD;
+        let advanced_y = appearance_y + metrics::RAIL_TOP_ROW_HEIGHT + pad;
         rail = rail.child(settings_nav_ax(
             "settings-nav-advanced",
             t("settings.nav.advanced"),
             current_page == SettingsPage::Advanced,
             self.open_menu.is_none() && self.settings_nav_advanced_focus.is_focused(window),
             AxRect::new(
-                frame.x + PAD,
+                frame.x + pad,
                 frame.y + advanced_y,
                 width,
                 metrics::RAIL_TOP_ROW_HEIGHT,
             ),
         ));
         if about_available {
-            let about_y = advanced_y + metrics::RAIL_TOP_ROW_HEIGHT + PAD;
+            let about_y = advanced_y + metrics::RAIL_TOP_ROW_HEIGHT + pad;
             rail = rail.child(settings_nav_ax(
                 "settings-nav-about",
                 t("settings.nav.about"),
                 current_page == SettingsPage::About,
                 self.open_menu.is_none() && self.settings_nav_about_focus.is_focused(window),
                 AxRect::new(
-                    frame.x + PAD,
+                    frame.x + pad,
                     frame.y + about_y,
                     width,
                     metrics::RAIL_TOP_ROW_HEIGHT,
@@ -297,10 +297,12 @@ mod tests {
         impl gpui::Render for NavHost {
             fn render(
                 &mut self,
-                _window: &mut Window,
-                _cx: &mut gpui::Context<Self>,
+                window: &mut Window,
+                cx: &mut gpui::Context<Self>,
             ) -> impl gpui::IntoElement {
-                gpui::div()
+                self.view.update(cx, |view, cx| {
+                    view.settings_rail_element(gpui::px(288.0), window, cx)
+                })
             }
         }
 
@@ -332,35 +334,42 @@ mod tests {
                 view.settings_page = SettingsPage::Appearance;
             });
         });
-        let appearance_selected =
-            cx.update(|window, cx| nav_rows(&view.read(cx).settings_rail_ax(window, frame)));
-        cx.update(|_window, cx| {
-            view.update(cx, |view, _cx| {
-                view.settings_page = SettingsPage::Providers;
-            });
-        });
-        let providers_selected =
-            cx.update(|window, cx| nav_rows(&view.read(cx).settings_rail_ax(window, frame)));
-
-        // 两态确实不同（选中项从 Appearance 换到 Providers），但任何
-        // 导航行的 frame 不得移动。
-        let appearance_row_before = appearance_selected
-            .iter()
-            .find(|(id, _, _)| id == "settings-nav-appearance");
-        let appearance_row_after = providers_selected
-            .iter()
-            .find(|(id, _, _)| id == "settings-nav-appearance");
-        assert_eq!(appearance_row_before.map(|(_, role, _)| *role), Some(AxRole::StaticText));
-        assert_eq!(appearance_row_after.map(|(_, role, _)| *role), Some(AxRole::Button));
-        assert_eq!(appearance_selected.len(), providers_selected.len());
-        for ((id_a, _, rect_a), (id_b, _, rect_b)) in
-            appearance_selected.iter().zip(providers_selected.iter())
-        {
-            assert_eq!(id_a, id_b);
-            assert_eq!(
-                rect_a, rect_b,
-                "nav row moved on selection change: {id_a}"
-            );
+        for rem in [16.0, 20.0, 24.0] {
+            cx.update(|window, _cx| window.set_rem_size(gpui::px(rem)));
+            let mut previous = None;
+            for page in [SettingsPage::Appearance, SettingsPage::Providers] {
+                cx.update(|_window, cx| {
+                    view.update(cx, |view, cx| {
+                        view.settings_page = page;
+                        cx.notify();
+                    });
+                });
+                cx.refresh().unwrap();
+                cx.run_until_parked();
+                let rows = cx.update(|window, cx| {
+                    nav_rows(&view.read(cx).settings_rail_ax(window, frame))
+                });
+                for (id, _, ax) in &rows {
+                    let selector = [
+                        "settings-nav-providers", "settings-nav-general",
+                        "settings-nav-permissions", "settings-nav-tools",
+                        "settings-nav-terminal", "settings-nav-appearance",
+                        "settings-nav-advanced", "settings-nav-about",
+                    ].into_iter().find(|candidate| *candidate == id).unwrap();
+                    let actual = cx.debug_bounds(selector).expect("rendered navigation row");
+                    assert_eq!(*ax, AxRect::new(
+                        actual.origin.x.into(), actual.origin.y.into(),
+                        actual.size.width.into(), actual.size.height.into(),
+                    ), "{id} at rem={rem}");
+                }
+                if let Some(previous) = previous {
+                    let previous: Vec<(String, AxRole, AxRect)> = previous;
+                    for ((id, _, before), (_, _, after)) in previous.iter().zip(&rows) {
+                        assert_eq!(before, after, "{id} moved on selection change");
+                    }
+                }
+                previous = Some(rows);
+            }
         }
     }
 }

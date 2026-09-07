@@ -1273,6 +1273,7 @@ impl AppView {
         };
         let mut item = div()
             .id(id)
+            .debug_selector(move || id.into())
             .tab_stop(true)
             .track_focus(&focus)
             .relative()

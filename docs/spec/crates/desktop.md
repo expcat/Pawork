@@ -327,8 +327,8 @@ domain id 类型未从 client re-export，命令 / 查询经冻结的 serde 形�
 | `ui/settings/mod.rs` | 4 | SET-6d：空 shell Save 映射为 null、尺寸合法才可保存；OPT-3 角色区与 Manage models 弹层渲染 gate；角色控件 identifier 构造/解析互逆。 |
 | `ui/mod.rs` | 17 | 既有键位、tab_stop、TaskRail 导航、Composer 与 per-session 草稿接线；进入/Refresh/重连 `refresh_all_settings`；R6 Wave A Header Activity；R6 Wave B Inspector 键盘目标、terminal gate 与 workspace 草稿/回执归属；R7 Wave C 钉字号放大/缩小/重置键位登记；P3 增已知 exited 终端 Start 重建 gate |
 | `ui/accessibility.rs` | 3 | identifier 唯一与父子关系校验；focus 单一性；bounds hit-test 与无效树拒绝 |
-| `ui/accessibility/settings.rs` | 1 | OPT-4d：同一导航项选中/未选中两态 AX frame 原点与尺寸逐像素一致（F4 零位移主路径断言） |
-| `ui/accessibility/app.rs` | 17 | 稳定 identifier、TaskRail/Timeline/审批/菜单焦点与几何同源回归；Activity 320px 内容宽，内容高随字号为 144/180/216px 锚点；secure API key 只发布等长掩码、普通 provider summary 不发布 masked credential、provider 列几何与 render 全宽内容列同源（`SETTINGS_CONTENT_PAD` 32×2，OPT-4c），stale 后输入与写动作 fail-closed；model 菜单裁剪框外行不入树；本地 Settings 页覆盖 Advanced 离线导航、连接摘要、Reconnect gate 与 Appearance AX Press 150%。 |
+| `ui/accessibility/settings.rs` | 1 | OPT-4d：100%/125%/150% 下导航 AX 与真实 render bounds 一致，同一项选中/未选中零位移 |
+| `ui/accessibility/app.rs` | 19 | 稳定 identifier、TaskRail/Timeline/审批/菜单焦点与几何同源回归；Activity 320px 内容宽，内容高随字号为 144/180/216px 锚点；secure API key 只发布等长掩码、普通 provider summary 不发布 masked credential、provider 列几何与 render 全宽内容列同源（`SETTINGS_CONTENT_PAD` 32×2，OPT-4c），stale 后输入与写动作 fail-closed；model 菜单裁剪框外行不入树；OPT-4 审查新增 Scope 多项目菜单实测裁剪/滚动/键盘高亮主路径；本地 Settings 页覆盖 Advanced 离线导航、连接摘要、Reconnect gate 与 Appearance AX Press 150%。 |
 | `ui/accessibility/macos.rs` | 6 | 顶左 bounds → AppKit parent space 坐标转换；value-change diff；结构骨架比较（属性变化不触发重建）；settable/action 双门拒绝越权 value / focus 写入；disabled action fail-closed（macOS） |
 | `ui/barriers.rs` | 1 | timeline_stable 重写且 settle_seq 单调、字段形状齐全；approval_visible 写入（含 tool 名）与消失删除；未启用（None）零写入 |
 | `ui/input_area.rs` | 4 | Composer placeholder 状态机；F-09 footer/model/workspace/context/action 槽结构；Send/Cancel 单槽互换与诚实缺省；OPT-3 增全禁用「No enabled models」空态 fail-closed |
@@ -364,9 +364,11 @@ cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders
 
 2026-09-06 OPT-3 GUI 控件批次（对照 OPT-D 签字稿）：Manage models 启用弹层（单模型 Switch + Enable all/Disable all + 空目录诚实空态）、页首四默认角色区（候选 = 已连接且已启用，vision/search 只保存标注）、代理开关改 Switch（OPT-3c）、Composer 过滤禁用模型与全禁用空态。门禁 207/207（含弹层/角色区/Switch/空态 AX 钉板、角色 identifier 互逆与 OPT-4d 导航零位移）。真窗口经 AX + 截图核对角色菜单分组（含 240px 折叠滚动）、Composer 与启用弹层；验收中经真窗口+协议层发现并修复 Host 侧清除判定误删盘上默认对缺陷（ADR-055 D3a，pawork-app 208 lib 含回归），协议层复验 Enable/Disable-all 与 cleared_roles 口径通过；代理 Switch 像素级复验已通过（见 [ROADMAP §10.6](../../ROADMAP.md#106-本批交付与证据2026-09-06opt-4-工作台与-settings-壳层落地)）。详见 [ROADMAP §10.5](../../ROADMAP.md#105-本批交付与证据2026-09-06opt-3-gui-控件批次)。
 
-2026-09-06 OPT-4 工作台与 Settings 壳层：六处主操作命中区 ≥36×36、可见字形 20px；Inspector 默认折叠并在 Header 增加 inspector-expand 重开入口；Settings 内容取消 820px 上限（两侧 32px padding，render/AX 同源）；导航选中/未选中文字坐标零位移。门禁 207/207。真窗口对照新图验收仍待补做。详见 [ROADMAP §10.6](../../ROADMAP.md#106-本批交付与证据2026-09-06opt-4-工作台与-settings-壳层落地)。
+2026-09-06 OPT-4 工作台与 Settings 壳层：六处主操作命中区 ≥36×36、可见字形 20px；Inspector 默认折叠并在 Header 增加 inspector-expand 重开入口；Settings 内容取消 820px 上限（两侧 32px padding，render/AX 同源）；导航选中/未选中文字坐标零位移。门禁 207/207。首次真窗口对照新图验收已通过（[ROADMAP §10.7](../../ROADMAP.md#107-本批交付与证据2026-09-06opt-4-真窗口对照新图验收)）。详见 [ROADMAP §10.6](../../ROADMAP.md#106-本批交付与证据2026-09-06opt-4-工作台与-settings-壳层落地)。
 
 2026-09-04 按用户要求移除 macOS Increase Contrast 支持与全部 VoiceOver 验收门禁：删除 `ui/platform_preferences.rs`（NSWorkspace 显示偏好桥），`theme::dark()` 回归单一冻结 palette 并移除对应定向测试（Desktop 门禁 187→186），Appearance 页主题说明同步更新；AX tree 与键盘支持保留。
+
+2026-09-07 OPT-4 完成效果审查：修复 Settings 导航在大字号下 AX 间距漂移、外观页字号/语言按钮仍用旧原点与估算纵坐标、Scope 长菜单 AX 未裁剪且键盘高亮不滚动三项缺口。导航沿用 rem 布局，外观按钮和 Scope 菜单经宿主 `ScrollHandle` 读取 GPUI 实测位置；Scope 使用 `MenuPanel::track_scroll`，首帧布局后滚入当前项、键盘移动时滚入高亮项；AX 在布局完成后同步。复用导航/外观测试，新增一个 Scope 多项目滚动主路径。验证状态见 [ROADMAP §10.12](../../ROADMAP.md#1012-opt-4-完成效果审查与修复2026-09-07)。
 
 ## 8. 注意事项与已知限制
 

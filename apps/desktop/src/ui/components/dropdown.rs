@@ -10,7 +10,7 @@
 use gpui::{
     anchored, deferred, div, point, prelude::*, px, AnchoredPositionMode, AnyElement, App,
     ClickEvent, Corner, IntoElement, MouseDownEvent, Pixels, Point, RenderOnce, SharedString,
-    Styled, Window,
+    ScrollHandle, Styled, Window,
 };
 
 use crate::ui::theme::{dark, font, metrics};
@@ -127,6 +127,7 @@ pub struct MenuPanel {
     id: SharedString,
     children: Vec<AnyElement>,
     max_height: f32,
+    scroll: Option<ScrollHandle>,
     on_outside_click: Option<Box<dyn Fn(&MouseDownEvent, &mut Window, &mut App) + 'static>>,
 }
 
@@ -136,6 +137,7 @@ impl MenuPanel {
             id: id.into(),
             children: Vec::new(),
             max_height: MENU_MAX_HEIGHT,
+            scroll: None,
             on_outside_click: None,
         }
     }
@@ -156,6 +158,12 @@ impl MenuPanel {
     /// 普通下拉菜单仍保持 240px 并在面板内滚动。
     pub fn max_height(mut self, max_height: f32) -> Self {
         self.max_height = max_height;
+        self
+    }
+
+    /// 使用宿主的滚动句柄，让键盘与 AX 读取同一份实际布局。
+    pub fn track_scroll(mut self, scroll: &ScrollHandle) -> Self {
+        self.scroll = Some(scroll.clone());
         self
     }
 
@@ -185,6 +193,9 @@ impl RenderOnce for MenuPanel {
             .shadow_md()
             // 拦截面板命中区内的下层点击与滚轮（§8.2 滚轮无穿透）。
             .occlude();
+        if let Some(scroll) = self.scroll.as_ref() {
+            panel = panel.track_scroll(scroll);
+        }
         if let Some(listener) = self.on_outside_click {
             panel = panel.on_mouse_down_out(listener);
         }

@@ -134,8 +134,9 @@ Settings 沿用深色主题、8px 节奏和 1440×1024 基线，不把工作台�
 └──────────────────┴────────────────────────────────────────────┘
 ```
 
-- 入口位于 TaskRail 底部 `Local` 行右侧 gear。进入后左栏换成 Settings Rail；Timeline、Composer、Inspector 不渲染。OPT-4d（F4）起导航选中态零位移：选中与未选中共用同一外壳几何，差异仅为背景、字重与不参与布局的左缘指示条（1px 描边两态常驻、焦点只换色），文字坐标逐像素不变。
+- 入口位于 TaskRail 底部 `Local` 行右侧 gear。进入后左栏换成 Settings Rail；Timeline、Composer、Inspector 不渲染。OPT-4d（F4）起导航选中态零位移：选中与未选中共用同一外壳几何，差异仅为背景、字重与不参与布局的左缘指示条（焦点描边用绝对定位覆盖层，不参与布局），文字坐标逐像素不变。
 - `← Back to workspace` 恢复进入前的 session、Timeline 位置、Composer 草稿、Inspector 和 Run；Settings 不取消 Run。各页内容在受限高度内纵向滚动，切页回到顶部；输入框至少容纳当前字号的一行与内边距。
+- Settings 导航 AX 随 `Panel` 的 rem padding/gap 同步缩放，并扣除侧栏分隔线；外观页字号与语言按钮直接使用 GPUI 实测框，只发布滚动视口中的可见部分。项目 Scope 菜单同样使用实测框与滚动偏移，超过 240px 时只发布可见选项；键盘高亮与打开菜单时的当前选项滚入视口。
 - 导航与页内可见文案默认 English，可在 Appearance 页切换为简体中文（即时生效，保存到用户目录 `desktop.json`，重启恢复）；顺序为 Models & providers → Network → Approvals → Tools & MCP → Terminal → Appearance → Advanced → About。没有真实读写能力的页不显示；Advanced 离线仍可进入。
 - 翻译边界：只翻译界面 chrome 文案（按钮、提示、空态、状态提示、tooltip）；session 标题、provider / model id、文件路径、工具输出与 wire 错误原因等数据内容保持原文；品牌名「Pawork」、功能符号与示例数据不翻译。render 与 AX 经同一目录同源取词，AX 节点 id 保持英文。
 - **Models & providers**：OPT-4c（F2）起内容用满 Rail 外可用宽度、两侧各 32px padding，不再保留 820px 上限（render 与 AX 几何经 `SETTINGS_CONTENT_PAD` 同源）；provider 使用 64px 概览行，分列显示认证方式、连接状态与目录 / 模型数；认证操作放在独立详情行，避免窄窗与大字号挤压信息列。Host `provider_auth_status` 是权威数据，Desktop 不按供应商名称硬编码 OAuth/API key 分支。普通行与 AX summary 不显示 masked credential、endpoint、catalog error 或 raw model id；endpoint / 错误只在连接、等待或删除确认详情出现。API key editor 仅在 Connect / Replace 后展开，secure input 的完整值不得进 AX tree、日志或状态文本。OAuth 只显示授权 URL、device code、到期/取消，不接触 token。认证成功与目录成功是两个状态。OPT-3 起页首为「Default models」四默认角色区（对话/命名/识图/搜索；候选 = 已连接且已启用的模型；无候选时仍保留 Clear，可清除失效默认项；识图/搜索在路由落地前标注「只保存」）。每 provider 行提供 Manage models 弹层：单模型 Switch、Enable all / Disable all；禁用命中角色默认对时 Host 同批清除该键对并如实提示；目录为空显示诚实空态，不渲染全开假按钮。当 Global `proxy_url` 已配置时，行右侧追加供应商级代理 Switch（OPT-3c 起为 Switch 控件，On/Off 状态词，tooltip 说明走代理/直连）；click / Enter / Space / AX Press 同一 handler，Host `set_provider_use_proxy` 回执即写后状态，不乐观更新。未配置全局代理时不渲染该开关。

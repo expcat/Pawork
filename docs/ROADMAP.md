@@ -409,3 +409,20 @@ Full workspace gate: NOT RUN（当前未设置全量门禁）。
 Validated: `cargo test -p pawork-workspace --offline --lib --tests`（162 passed）；`cargo test -p pawork-auth -p pawork-app --offline --lib --tests`（314 passed，1 ignored）；adapter 失效状态调整后 `cargo test -p pawork-app --offline --lib`（216 passed）；`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`（212 passed）；`cargo build -p pawork -p pawork-desktop --offline --bins --features gpui/runtime_shaders`（通过）；`git diff --check`（通过）；隔离实例真窗口 AX 复验（上段）。
 Targeted regressions: 磁盘旧快照/暂退目录禁用项保留、禁用与角色清除原子写失败保旧、同名模型分供应商保留、空候选 Clear、加载为空时默认失效、认证代理路由、旧 refresh 不跨账号继承、认证期间 Remove 拒绝、同模型下一轮不复用旧凭证。
 Full workspace gate: NOT RUN（当前未设置全量门禁）。
+
+
+### 10.12 OPT-4 完成效果审查与修复（2026-09-07）
+
+对照 §7 的 4a–4e、OPT-D 签字稿和当前源码，审查发现三项实现缺口：
+
+- **Settings 导航大字号坐标**：AX 仍按固定 8px padding/gap 推算，实际 `Panel p_2/gap_2` 随 rem 缩放；改为同源 rem 间距并计入右侧 1px 分隔线。原选中态零位移测试改为比较真实 render bounds，覆盖 100%/125%/150% 与选中切换。
+- **Appearance 控件坐标**：字号与语言按钮遗漏 16→32px 原点迁移，纵向估算也未跟随实际排版；改读 GPUI 实测框并裁剪至内容滚动视口，复用外观 AX 行为测试覆盖。
+- **项目菜单滚动**：原 AX 固定发布 200px 菜单框及全部选项，超过真实 240px 菜单视口后仍给出屏外可执行坐标，键盘高亮也不会滚入视口。菜单与 AX 共用滚动句柄、实测外框和行框；打开时滚入当前项，方向键移动时滚入高亮项，屏外选项不发布。新增一个多项目菜单主路径回归。
+
+本批只修改 Desktop 与相关文档，无生产依赖、配置或协议变化。包级 Spec 中仍写「OPT-4 首次真窗口验收待补做」的过时状态同步更正为 §10.7；本轮修复复验独立记录，不沿用历史验收充当本次结果。
+
+当前状态：代码修复已实现，定向测试、修复后的真窗口复验与增量代码审查均已通过；未归档、未发布。
+
+Validated: `cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`（213/213）；`cargo build -p pawork-desktop --offline --features gpui/runtime_shaders`；`git diff --check`；隔离实例 `opt4-review`（平行 bundle，binary sha256 `3a84002b…211a`，Host 当次 `--provider opencode-go --model glm-5.3-flash`）真窗口复验通过：Inspector 默认折叠且重开/收起可用；Scope 菜单只发布视口内项目，键盘高亮滚至 Add project，选择末尾 Project-09 后重开自动滚入当前项；Settings 内容全宽，Appearance 按钮 150% 可点击并即时生效，恢复 100%；修复前后 AX/截图证据在本机 `/tmp/pawork-opt4-review/screens`，用户 Global 配置指纹验收前后一致。
+Targeted regressions: Settings 三档字号导航实际几何、外观按钮位置/行为、Scope 多项目滚动与键盘高亮；增量代码审查确认 GPUI render 期 `cx.notify()` 抑制问题已改用 `defer_in`，无残留阻塞项。
+Full workspace gate: NOT RUN（当前未设置全量门禁）。

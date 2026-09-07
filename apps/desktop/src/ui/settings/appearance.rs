@@ -15,6 +15,8 @@ impl AppView {
         let current = self.text_scale;
         let current_language = self.language;
         let mut scale_controls = div()
+            .id("settings-scale-controls")
+            .track_scroll(&self.settings_scale_layout)
             .flex()
             .flex_row()
             .items_center()
@@ -66,6 +68,8 @@ impl AppView {
         }
 
         let mut language_controls = div()
+            .id("settings-language-controls")
+            .track_scroll(&self.settings_language_layout)
             .flex()
             .flex_row()
             .items_center()

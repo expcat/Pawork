@@ -604,6 +604,10 @@ pub struct AppView {
     settings_terminal_clear_focus: FocusHandle,
     /// Settings 内容滚动句柄（供应商列表可能超出视口）。
     settings_scroll: ScrollHandle,
+    settings_scale_layout: ScrollHandle,
+    settings_language_layout: ScrollHandle,
+    scope_menu_scroll: ScrollHandle,
+    pending_scope_menu_scroll: bool,
     /// SET-4：按 provider 懒建的 API key secure 输入实体（明文只留在
     /// 实体内，提交 / 取消 / 离开页面即清空，含 undo 栈）。
     settings_api_key_inputs: HashMap<String, Entity<crate::ui::text_input::TextInput>>,
@@ -861,6 +865,10 @@ impl AppView {
             settings_terminal_save_focus: cx.focus_handle().tab_stop(true),
             settings_terminal_clear_focus: cx.focus_handle().tab_stop(true),
             settings_scroll: ScrollHandle::new(),
+            settings_scale_layout: ScrollHandle::new(),
+            settings_language_layout: ScrollHandle::new(),
+            scope_menu_scroll: ScrollHandle::new(),
+            pending_scope_menu_scroll: false,
             settings_api_key_inputs: HashMap::new(),
             settings_api_key_editors: HashSet::new(),
             settings_remove_confirm: None,
@@ -2706,6 +2714,9 @@ impl AppView {
             (current + len - 1) % len
         };
         self.menu_highlight = Some(next);
+        if matches!(self.open_menu, Some(MenuKind::Scope)) {
+            self.scope_menu_scroll.scroll_to_item(next);
+        }
     }
 
     /// Enter 选择高亮行：等价点击对应 MenuRow（复用既有 select 路径，含
@@ -4032,6 +4043,29 @@ impl Render for AppView {
             }
         }
         self.sync_accessibility(window, cx);
+        if self.pending_scope_menu_scroll {
+            if !matches!(self.open_menu, Some(MenuKind::Scope)) {
+                self.pending_scope_menu_scroll = false;
+            } else if self.scope_menu_scroll.bounds().size.height > px(0.0) {
+                let selected = self.menu_highlight_effective(self.menu_selected_index());
+                self.scope_menu_scroll.scroll_to_item(selected);
+                self.pending_scope_menu_scroll = false;
+            } else {
+                // 新句柄还没有 bounds/overflow，完成首帧后再发滚入请求。
+                cx.defer_in(window, |_view, _window, cx| cx.notify());
+            }
+        }
+        // 这些控件的 AX 读取 GPUI 实测布局；首帧及滚动后的 prepaint 完成后
+        // 再同步一次，不依赖网络事件或 Run 时钟刷新，也不产生重绘循环。
+        if self.ax_bridge.is_some()
+            && (matches!(self.open_menu, Some(MenuKind::Scope))
+                || (self.route == AppRoute::Settings && self.settings_page == SettingsPage::Appearance))
+        {
+            let view = cx.entity().downgrade();
+            window.on_next_frame(move |window, cx| {
+                let _ = view.update(cx, |view, cx| view.sync_accessibility(window, cx));
+            });
+        }
         let connected = matches!(
             self.projection.connection,
             ConnectionState::Connected { .. }
@@ -4127,6 +4161,13 @@ impl Render for AppView {
                     view.handle_root_key(event, window, cx);
                 },
             ))
+            .on_scroll_wheel(cx.listener(|view, _event, _window, cx| {
+                if matches!(view.open_menu, Some(MenuKind::Scope))
+                    || (view.route == AppRoute::Settings && view.settings_page == SettingsPage::Appearance)
+                {
+                    cx.notify();
+                }
+            }))
             .on_action(cx.listener(Self::on_send_message))
             .on_action(cx.listener(Self::on_approve_once))
             .on_action(cx.listener(Self::on_approve_for_run))

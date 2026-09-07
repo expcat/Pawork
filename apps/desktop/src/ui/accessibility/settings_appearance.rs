@@ -4,8 +4,7 @@ use gpui::Window;
 
 use super::{AxAction, AxNode, AxRect, AxRole};
 use crate::ui::settings::{
-    settings_text_scale_identifier, SETTINGS_APPEARANCE_CONTROL_GAP,
-    SETTINGS_APPEARANCE_CONTROL_HEIGHT, SETTINGS_APPEARANCE_CONTROL_WIDTH,
+    settings_text_scale_identifier, SETTINGS_APPEARANCE_CONTROL_HEIGHT,
     SETTINGS_CONTENT_PAD, SETTINGS_TEXT_SCALES,
 };
 use crate::ui::i18n::{t, LANGUAGES};
@@ -65,6 +64,13 @@ impl AppView {
         );
         y += STATUS_HEIGHT * 2.0 + 8.0;
         for (index, scale) in SETTINGS_TEXT_SCALES.into_iter().enumerate() {
+            let Some(bounds) = self.settings_scale_layout.bounds_for_item(index) else {
+                continue;
+            };
+            let bounds = bounds.intersect(&self.settings_scroll.bounds());
+            if bounds.size.width <= gpui::px(0.0) || bounds.size.height <= gpui::px(0.0) {
+                continue;
+            }
             let id = settings_text_scale_identifier(scale);
             let selected = self.text_scale == scale;
             let focused = self
@@ -78,14 +84,10 @@ impl AppView {
                     t("settings.appearance.scale_button")
                         .replace("{}", &scale.percent().to_string()),
                     AxRect::new(
-                        frame.x
-                            + 16.0
-                            + index as f32
-                                * (SETTINGS_APPEARANCE_CONTROL_WIDTH
-                                    + SETTINGS_APPEARANCE_CONTROL_GAP),
-                        y,
-                        SETTINGS_APPEARANCE_CONTROL_WIDTH,
-                        SETTINGS_APPEARANCE_CONTROL_HEIGHT,
+                        bounds.origin.x.into(),
+                        bounds.origin.y.into(),
+                        bounds.size.width.into(),
+                        bounds.size.height.into(),
                     ),
                 )
                 .value(if selected {
@@ -137,6 +139,13 @@ impl AppView {
         );
         y += STATUS_HEIGHT * 2.0 + 8.0;
         for (index, language) in LANGUAGES.into_iter().enumerate() {
+            let Some(bounds) = self.settings_language_layout.bounds_for_item(index) else {
+                continue;
+            };
+            let bounds = bounds.intersect(&self.settings_scroll.bounds());
+            if bounds.size.width <= gpui::px(0.0) || bounds.size.height <= gpui::px(0.0) {
+                continue;
+            }
             let id = language.identifier();
             let selected = self.language == language;
             let focused = self
@@ -149,14 +158,10 @@ impl AppView {
                     AxRole::Button,
                     language.display_name(),
                     AxRect::new(
-                        frame.x
-                            + 16.0
-                            + index as f32
-                                * (SETTINGS_APPEARANCE_CONTROL_WIDTH
-                                    + SETTINGS_APPEARANCE_CONTROL_GAP),
-                        y,
-                        SETTINGS_APPEARANCE_CONTROL_WIDTH,
-                        SETTINGS_APPEARANCE_CONTROL_HEIGHT,
+                        bounds.origin.x.into(),
+                        bounds.origin.y.into(),
+                        bounds.size.width.into(),
+                        bounds.size.height.into(),
                     ),
                 )
                 .value(if selected {

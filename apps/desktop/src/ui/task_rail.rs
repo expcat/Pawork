@@ -348,6 +348,7 @@ impl AppView {
                 .unwrap_or(0),
         );
         let mut panel = MenuPanel::new("scope-menu")
+            .track_scroll(&self.scope_menu_scroll)
             .dismiss_on_outside(cx.listener(|view, event: &gpui::MouseDownEvent, _, cx| {
                 view.dismiss_menu_on_outside(MenuKind::Scope, event.position, cx);
             }))
@@ -901,6 +902,7 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         self.toggle_menu(MenuKind::Scope, down_position, cx);
+        self.pending_scope_menu_scroll = matches!(self.open_menu, Some(MenuKind::Scope));
     }
 
     pub(super) fn on_select_scope(
