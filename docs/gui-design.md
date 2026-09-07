@@ -46,7 +46,7 @@
 - Inspector 开合为 180ms cubic ease-out 宽度过渡，快速反向从当前宽度续接；每帧使 Timeline 测高失效，空间不足立即归零（100% 至少 1288px，150% 至少 1320px，中央始终 ≥560px），resize 不写用户偏好。默认收起、显式重开、cmd-i 和 Changes / Terminal / Resources 原入口保留。
 - 状态栏高 30px，将真实状态文案分成四组元信息居中呈现；Quota unavailable、未知 token 与吞吐继续如实展示。
 
-本批实现与自动验证、代理真窗口检查、用户人工视觉验收分别记录在 [ROADMAP](ROADMAP.md)。UI-2～UI-6 的模块结构与交互仍按各自任务处理。
+本批实现、自动验证、代理真窗口检查与用户人工视觉验收分别记录在 [ROADMAP](ROADMAP.md)；2026-09-07 用户确认 UI-1 视觉通过。UI-2～UI-6 的模块结构与交互仍按各自任务处理。
 
 ## 3. 信息架构
 

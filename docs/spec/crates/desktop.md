@@ -265,7 +265,7 @@ domain id 类型未从 client re-export，命令 / 查询经冻结的 serde 形�
 
 ## 5. 契约与不变量
 
-- **UI-1（2026-09-07）**：共享中性深色 token、6/8/12px 圆角，Header 80px（顶留 24px，标题 18px，动作 40×37px），Inspector 页签 48/40px，状态栏 30px。InspectorMotion 只保存瞬时宽度，以 180ms cubic ease-out 开合，反向连续，空间不足直接收起；每次实际宽度变化（含终帧）刷新 Timeline 测高缓存；AX 使用本帧相同宽度并裁去不可见动作，不改变偏好 / 四层架构 / wire。hover、pressed、焦点即时反馈。新规格见 [GUI 设计](../../gui-design.md#ui-1-工作台视觉更新2026-09-07)，旧阶段尺寸与色值不覆盖本项；自动验证与用户人工验收分开记录。
+- **UI-1（2026-09-07）**：共享中性深色 token、6/8/12px 圆角，Header 80px（顶留 24px，标题 18px，动作 40×37px），Inspector 页签 48/40px，状态栏 30px。InspectorMotion 只保存瞬时宽度，以 180ms cubic ease-out 开合，反向连续，空间不足直接收起；每次实际宽度变化（含终帧）刷新 Timeline 测高缓存；AX 使用本帧相同宽度并裁去不可见动作，不改变偏好 / 四层架构 / wire。hover、pressed、焦点即时反馈。新规格见 [GUI 设计](../../gui-design.md#ui-1-工作台视觉更新2026-09-07)，旧阶段尺寸与色值不覆盖本项；自动验证与用户人工验收分开记录，后者已于 2026-09-07 通过。
 
 - **视觉基准事实源**：[../../../design/README.md](../../../design/README.md)（P0–P2 三张 1440×1024 逻辑尺寸阶段目标设计图） 与 [../../gui-design.md](../../gui-design.md)。P0-1 已把基础字阶、六档 spacing、三档 radius、2px focus ring、icon/menu 几何与 hover/pressed 状态冻结到 `theme.rs`；普通 panel 无 shadow，menu/popover 才有 elevation。2026-09-04 已完成三张阶段图的当前构建真窗口视觉签字；2026-09-05 又完成 P0 系统 IME 与 P1 真实 Provider / Review / Approval 补证，并完成 P2 八页、三档字号与窄窗收尾复验；实际记录见 [Desktop Spec §8](../desktop.md#8-gui-收尾验收记录2026-09-05)。以上证据仍不得由 token 测试替代，也不扩张为跨平台或发布级保证。
 - **R9 / P1 可见层级合同**：Timeline 满宽 + 618px readable wrapper、40/12px summary 节奏；TaskRail 56px meta 槽；Composer surface 与 unavailable 对比；Changes 20/72/76px 文件槽、36px 横滚外 header、24px gutter；ActivityPopover 内容宽 320px，高度随字号为 144/180/216px，外框另计 padding/border，保持 capability honesty。`Ready for review`、Review CTA、summary 行高与 AX 都由 active session 的非空可审阅文件 gate 同源驱动；空文件列表必须显示轻量 `Run completed`。这里只冻结可见实现；阶段图与 P1 真窗口签字已单列通过，但不扩张为 Timeline/Changes 全状态 AX 几何的自动覆盖。
@@ -372,7 +372,7 @@ cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders
 
 2026-09-07 OPT-4 完成效果审查：修复 Settings 导航在大字号下 AX 间距漂移、外观页字号/语言按钮仍用旧原点与估算纵坐标、Scope 长菜单 AX 未裁剪且键盘高亮不滚动三项缺口。导航沿用 rem 布局，外观按钮和 Scope 菜单经宿主 `ScrollHandle` 读取 GPUI 实测位置；Scope 使用 `MenuPanel::track_scroll`，首帧布局后滚入当前项、键盘移动时滚入高亮项；AX 在布局完成后同步。复用导航/外观测试，新增一个 Scope 多项目滚动主路径。验证状态见 [ROADMAP §10.12](../../review/roadmap-opt-2026-09-05.md#1012-opt-4-完成效果审查与修复2026-09-07)。
 
-2026-09-07 UI-1 已实现；Desktop 定向测试 213/213 与构建通过（本机使用临时库搜索索引，未改 Cargo 配置）。新增覆盖开合反向连续、窄窗归零、过渡期 AX 裁剪与不可见动作拒绝；共享文字对比度改按 AA 下限验证。代理真窗口检查通过：真实 Host 连接、Inspector 开合 / 连续切换与三页签、Activity → Changes、宽窄布局及 100% / 125% / 150% 字号；probe 确认 1 个空测试会话与 13 个模型，未发起 Run。用户人工视觉验收未完成、未归档；证据见 [ROADMAP UI-1](../../ROADMAP.md#ui-1-本批证据2026-09-07)。
+2026-09-07 UI-1 已实现；Desktop 定向测试 213/213 与构建通过（本机使用临时库搜索索引，未改 Cargo 配置）。新增覆盖开合反向连续、窄窗归零、过渡期 AX 裁剪与不可见动作拒绝；共享文字对比度改按 AA 下限验证。代理真窗口检查通过：真实 Host 连接、Inspector 开合 / 连续切换与三页签、Activity → Changes、宽窄布局及 100% / 125% / 150% 字号；probe 确认 1 个空测试会话与 13 个模型，未发起 Run。用户人工视觉验收已通过（2026-09-07），未归档；证据见 [ROADMAP UI-1](../../ROADMAP.md#ui-1-本批证据2026-09-07)。
 
 ## 8. 注意事项与已知限制
 
