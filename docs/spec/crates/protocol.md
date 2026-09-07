@@ -1,6 +1,6 @@
 # pawork-protocol
 
-OPT-1 / [ADR-053](../settings.md#adr-053opt-1-设置持久化2026-09-05)：Settings 审批模式保存为 Global 默认，信任选择按 canonical workspace 根路径保存；非 Global 高层禁止覆盖；命令与回执 JSON 形状保持不变。Appearance 保存用户目录 `desktop.json`。实现/自动验证/人工验收状态分别见 [ROADMAP](../../ROADMAP.md)。
+OPT-1 / [ADR-053](../settings.md#adr-053opt-1-设置持久化2026-09-05)：Settings 审批模式保存为 Global 默认，信任选择按 canonical workspace 根路径保存；非 Global 高层禁止覆盖；命令与回执 JSON 形状保持不变。Appearance 保存用户目录 `desktop.json`。实现/自动验证/人工验收状态分别见 [OPT 归档](../../review/roadmap-opt-2026-09-05.md#101-本批交付与证据2026-09-05)。
 
 > CLI/Core 宿主与所有客户端之间的协议层：core-api 信封 + GUI Connection Protocol 帧 + headless-json（NDJSON）+ 外部客户端 adapter + 共享 timeline 投影 + TS typegen；只依赖 `pawork-domain`，不含任何业务执行逻辑。
 

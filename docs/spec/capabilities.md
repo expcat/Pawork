@@ -1,6 +1,6 @@
 # Pawork 能力与入口矩阵
 
-OPT-1 / [ADR-053](settings.md#adr-053opt-1-设置持久化2026-09-05)：Settings 审批模式保存为 Global 默认，信任选择按 canonical workspace 根路径保存；非 Global 高层禁止覆盖；命令与回执 JSON 形状保持不变。Appearance 保存用户目录 `desktop.json`。实现/自动验证/人工验收状态分别见 [ROADMAP](../ROADMAP.md)。
+OPT-1 / [ADR-053](settings.md#adr-053opt-1-设置持久化2026-09-05)：Settings 审批模式保存为 Global 默认，信任选择按 canonical workspace 根路径保存；非 Global 高层禁止覆盖；命令与回执 JSON 形状保持不变。Appearance 保存用户目录 `desktop.json`。实现/自动验证/人工验收状态分别见 [OPT 归档](../review/roadmap-opt-2026-09-05.md#101-本批交付与证据2026-09-05)。
 
 > 基线日期：2026-09-03。状态词汇见 [README.md](README.md#3-状态词汇)。本表记录生产可见面，不以“代码存在”替代当前阶段复验或发布证明。
 

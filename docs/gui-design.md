@@ -1,6 +1,6 @@
 # Pawork Desktop GUI 设计
 
-> Desktop GUI 的设计事实源。P0–P2 收尾记录见 [Desktop Spec](spec/desktop.md#8-gui-收尾验收记录2026-09-05)；当前活动线见 [ROADMAP.md](ROADMAP.md)（显示项须先统一 UI Design）。视觉实施基准见 [../design/README.md](../design/README.md)。产品/验收汇总见 [spec/desktop.md](spec/desktop.md)；包级 Spec 见 [spec/crates/desktop.md](spec/crates/desktop.md)。
+> Desktop GUI 的设计事实源。P0–P2 收尾记录见 [Desktop Spec](spec/desktop.md#8-gui-收尾验收记录2026-09-05)；当前活动线见 [ROADMAP.md](ROADMAP.md)（每个任务重做一个模块的 UI 与交互；OPT-D 旧稿不再否决本线新视觉）。视觉实施基准见 [../design/README.md](../design/README.md)。产品/验收汇总见 [spec/desktop.md](spec/desktop.md)；包级 Spec 见 [spec/crates/desktop.md](spec/crates/desktop.md)。
 
 ---
 
@@ -237,8 +237,8 @@ Snapshot 只有会话树、活动 Run、待审批与 Provider 等状态，**没�
 
 ## 8. OPT-D 统一候选稿（已签字）
 
-2026-09-05 按 [ROADMAP OPT-D](ROADMAP.md#3-opt-d--统一-ui-design闸门) 新增六张 1440×1024 设计稿，覆盖工作台收起/打开、Composer 启用模型菜单、全宽 Settings、供应商展开凭证/代理 Switch/四默认角色，以及模型启用四状态。资产、图标命中区、宽度、状态规则与样例边界统一见 [design/README.md §0](../design/README.md#0-opt-d-统一设计交付2026-09-05已签字)。
+2026-09-05 按 [OPT-D 归档](review/roadmap-opt-2026-09-05.md#3-opt-d--统一-ui-design闸门) 新增六张 1440×1024 设计稿，覆盖工作台收起/打开、Composer 启用模型菜单、全宽 Settings、供应商展开凭证/代理 Switch/四默认角色，以及模型启用四状态。资产、图标命中区、宽度、状态规则与样例边界统一见 [design/README.md §0](../design/README.md#0-opt-d-统一设计交付2026-09-05已签字)。
 
-用户视觉签字已于 2026-09-05 确认（见 ROADMAP §10）。签字后 OPT-2/3/4 已将新设计替换对应生产合同：OPT-2 会话生命周期、OPT-3 模型启用与默认角色、OPT-4（2026-09-06）落地 Inspector 默认折叠与重开入口、六处主操作图标 36×36/20–22px、Settings 全宽与导航零位移选中态；真窗口对照新图验收另行记录。旧 P0–P2 图继续保留。
+用户视觉签字已于 2026-09-05 确认（见 [OPT 归档 §10](review/roadmap-opt-2026-09-05.md#10-状态)）。签字后 OPT-2/3/4 已将新设计替换对应生产合同：OPT-2 会话生命周期、OPT-3 模型启用与默认角色、OPT-4（2026-09-06）落地 Inspector 默认折叠与重开入口、六处主操作图标 36×36/20–22px、Settings 全宽与导航零位移选中态；真窗口对照新图验收另行记录。旧 P0–P2 图继续保留。
 
-OPT-1 行为已同步到 §3.5：审批与项目信任由 Host 保存 Global 配置，语言/字号由 Desktop 保存 `desktop.json`，见 [ADR-053](spec/settings.md#adr-053opt-1-设置持久化2026-09-05)。这种持久化改动不代表 OPT 视觉已落地或已签字。
+OPT-1 行为已同步到 §3.5：审批与项目信任由 Host 保存 Global 配置，语言/字号由 Desktop 保存 `desktop.json`，见 [ADR-053](spec/settings.md#adr-053opt-1-设置持久化2026-09-05)。这种持久化改动不代表 OPT 视觉已落地或已签字。2026-09-07 起当前活动线为模块重设计 UI-1～UI-6；OPT-D 签字稿保留为历史资产，不再否决本线新视觉。

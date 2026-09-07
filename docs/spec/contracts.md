@@ -1,6 +1,6 @@
 # 稳定契约规格
 
-OPT-1 / [ADR-053](settings.md#adr-053opt-1-设置持久化2026-09-05)：Settings 审批模式保存为 Global 默认，信任选择按 canonical workspace 根路径保存；非 Global 高层禁止覆盖；命令与回执 JSON 形状保持不变。Appearance 保存用户目录 `desktop.json`。实现/自动验证/人工验收状态分别见 [ROADMAP](../ROADMAP.md)。
+OPT-1 / [ADR-053](settings.md#adr-053opt-1-设置持久化2026-09-05)：Settings 审批模式保存为 Global 默认，信任选择按 canonical workspace 根路径保存；非 Global 高层禁止覆盖；命令与回执 JSON 形状保持不变。Appearance 保存用户目录 `desktop.json`。实现/自动验证/人工验收状态分别见 [OPT 归档](../review/roadmap-opt-2026-09-05.md#101-本批交付与证据2026-09-05)。
 
 OPT-2 / [ADR-054](desktop.md#adr-054opt-2-会话生命周期与自动标题2026-09-05)：GUI API 1.11。`session_create.workspace_id` 改可选（缺省/null → 无归属 Unassigned）；新增 `session_rename` / `session_archive` 与 `SessionMetaChanged` 事件；Global 配置增 `naming_provider`/`naming_model` 自动命名键（未配置不命名，不用启发式）。
 

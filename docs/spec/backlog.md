@@ -15,14 +15,14 @@
 
 小功能直接以任务书承载，只有跨任务共享且内容足够大时才使用 [Feature Spec 模板](feature-template.md)。不会用 P20 或批量空任务书预占未来进度。
 
-## 2. 已确认、未排期：多账户与缓存功能族
+## 2. 已确认：多账户与缓存功能族
 
-用户已确认 G1–G6 的方向，但尚未立项和实现完整产品面；G7/F6 明确维持不内建。
+用户已确认 G1–G6 的方向。G1 同 kind 多账户的 Settings 产品面与 G2 有权威来源后的额度切换进入当前活动线 UI-6；其余仍未排期完整产品面。G7/F6 明确维持不内建。
 
 | ID | 功能 | 优先级 | 状态/激活要求 |
 | --- | --- | --- | --- |
-| G1 | 同 Provider 多账户池与订阅 plan 凭证 | P1 | 已确认未排期；需重写 account factory 装配和 `pawork accounts` 产品面。 |
-| G2 | 额度窗口跟踪与预算 gate | P1 | 已确认未排期；需定义 QuotaSnapshot 来源、错误/响应头归一和远端适配边界。 |
+| G1 | 同 Provider 多账户池与订阅 plan 凭证 | P1 | 部分进入 [UI-6b](../ROADMAP.md#8-ui-6--providers供应商目录多账号)：Settings 同供应商多 OAuth / 多 API key 与账号切换。account factory 与 `pawork accounts` CLI 完整产品面仍未排期。 |
+| G2 | 额度窗口跟踪与预算 gate | P1 | 部分进入 [UI-6b](../ROADMAP.md#8-ui-6--providers供应商目录多账号)：有权威 QuotaSnapshot 才接按额度切换，无来源不画数字。完整预算 gate 仍未排期。 |
 | G3 | 缓存感知的会话—账户亲和路由 | P1 | 已确认未排期；默认 sticky、新会话再平衡、分类错误 rebind。 |
 | G4 | 子 Agent 声明式 provider/model/account 绑定 | P1 | 已确认未排期；需 RouteContext 与 budget gate 接线。 |
 | G5 | canonical 输入缓存策略控制 | P1 | 已确认未排期；会扩展 canonical request/usage，必须 golden 先行。 |
@@ -96,9 +96,9 @@
 
 ## 6. Settings 线收口后的候选纪律
 
-Settings 活动线已实现并通过本机真窗口验收（2026-09-05，证据见 [desktop.md §8](desktop.md#8-gui-收尾验收记录2026-09-05)）。当前活动线是 [Desktop 优化 OPT](../ROADMAP.md)（真窗口 11 条反馈）；未创建发布版本。OPT 只吸收路线图写明的切片（含 G1 多凭证最小面、宽屏 Inspector 默认隐藏与 BK-RESP-01 合并验收），下列候选仍不自动并入：
+Settings 活动线已实现并通过本机真窗口验收（2026-09-05，证据见 [desktop.md §8](desktop.md#8-gui-收尾验收记录2026-09-05)）。OPT 活动线已关闭，全文见 [roadmap-opt-2026-09-05.md](../review/roadmap-opt-2026-09-05.md)。当前活动线是 [Desktop 模块重设计 UI](../ROADMAP.md)（2026-09-07 真窗口走查 #01–#05）；未创建发布版本。UI-6 吸收 G1 同 kind 多账户的 Settings 产品面，以及 G2 在有权威 QuotaSnapshot 后的额度切换。下列候选仍不自动并入：
 
-1. **本机多账户与成本效率**：G1–G6；
+1. **本机多账户与成本效率**：G3–G6，以及 G1/G2 超出 UI-6 的部分（account factory、`pawork accounts` CLI、完整预算 gate）；
 2. **Desktop 完整编码工作台**：Git 写入、`@` 补全、规则可见性等；
 3. **分发与集成**：IDE/CI/Web/安装发布等 D 类候选。
 

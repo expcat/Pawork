@@ -2,7 +2,7 @@
 
 ## ADR-056：OPT-3d/3e 同供应商多凭证最小切片与额度槽诚实空态（2026-09-06）
 
-状态：Accepted（实现与门禁证据见 ROADMAP 对应批次记录）。落地 [ROADMAP §6](../ROADMAP.md#6-opt-3--供应商模型启用与默认角色) OPT-3d/3e：同一 provider 的 API key 与 OAuth 两类凭证可**共存**并在 Settings 展开卡内逐条列出状态；额度槽（Usage）在无权威 QuotaSnapshot 来源前只呈现诚实空态，不渲染数字。GUI API 1.12 → 1.13（minor 只增，additive）。对照 OPT-D 签字稿 `design/opt-settings-providers-expanded-v1.png`。
+状态：Accepted（实现与门禁证据见 OPT 归档对应批次记录）。落地 [ROADMAP §6](../review/roadmap-opt-2026-09-05.md#6-opt-3--供应商模型启用与默认角色) OPT-3d/3e：同一 provider 的 API key 与 OAuth 两类凭证可**共存**并在 Settings 展开卡内逐条列出状态；额度槽（Usage）在无权威 QuotaSnapshot 来源前只呈现诚实空态，不渲染数字。GUI API 1.12 → 1.13（minor 只增，additive）。对照 OPT-D 签字稿 `design/opt-settings-providers-expanded-v1.png`。
 
 - **D1 共存语义（修订 SET-4 A3 替换语义）**：`auth_set_key` 写入 API key 不再删除该 provider 的 OAuth default 条目；`oauth_finish` 写入 OAuth 不再删除 API key default 条目。替换语义缩窄为**同 kind 覆盖**：Replace API key 覆盖 api key default 条目，Replace OAuth 原子覆盖 oauth default 三账户，新登录未返回 refresh_token 时同批删除旧账号 refresh；只有刷新响应缺 refresh_token 时保留当前账号 refresh。Remove（`auth_logout`）维持 provider 级语义：删除该 provider 全部存储凭证（幂等）。运行期解析链不变：装配仍按通道固定顺序（api_key 通道只查 api key；xAI api-key 优先、OAuth 兜底；ChatGPT/Kimi Code 只走 OAuth），即「生效凭证」由通道形态决定，本切片不引入账户选择/亲和路由（G1–G6 仍在 backlog）。同 kind 多账户（两个 API key）不在本切片：存储层 `SecretBackend` 结构天然容纳，但选择语义与命名 UX 属 G1 账户池，签字稿未呈现。
 - **D1a 生效与互斥**：认证或供应商代理设置变化后，当前 adapter 标记失效；下一次 Run（即使 provider/model 未改变）重新装配。`AuthRemove` 与同 provider 的认证写入共用单飞闸，验证/授权尚未结束时返回 `busy`。API key 验证、OAuth device start/token exchange/refresh 与模型请求统一遵循该 provider 的 `use_proxy` 设置。
@@ -19,7 +19,7 @@
 
 ## ADR-055：OPT-3 模型启用集与默认角色（2026-09-05）
 
-状态：Accepted（protocol / workspace / app 已实现并通过各自定向门禁与合并收口，API 1.12，golden/typegen 先红后绿，证据见 [ROADMAP §10.4](../ROADMAP.md#104-本批交付与证据2026-09-05opt-3a3b-内核协议配置)；Desktop GUI 控件批次已实现（§10.5，desktop 门禁 207/207、协议层验收通过；代理 Switch 像素级复验已通过，见 §10.6）；验收中修复清除判定口径，见 D3a）。落地 OPT-3a/3b 的内核、协议与配置半区：模型启用集（3a）与四默认角色配置键与读写（3b）。Desktop 控件（模型启用弹层、四默认角色区、代理 Switch）已按 OPT-D 签字稿落地（见 ROADMAP §10.5）；OPT-3d/3e（多凭证、额度槽）不在本 ADR 范围。GUI API 1.11 → 1.12（minor 只增）。对应 [ROADMAP §6](../ROADMAP.md#6-opt-3--供应商模型启用与默认角色)。
+状态：Accepted（protocol / workspace / app 已实现并通过各自定向门禁与合并收口，API 1.12，golden/typegen 先红后绿，证据见 [ROADMAP §10.4](../review/roadmap-opt-2026-09-05.md#104-本批交付与证据2026-09-05opt-3a3b-内核协议配置)；Desktop GUI 控件批次已实现（§10.5，desktop 门禁 207/207、协议层验收通过；代理 Switch 像素级复验已通过，见 §10.6）；验收中修复清除判定口径，见 D3a）。落地 OPT-3a/3b 的内核、协议与配置半区：模型启用集（3a）与四默认角色配置键与读写（3b）。Desktop 控件（模型启用弹层、四默认角色区、代理 Switch）已按 OPT-D 签字稿落地（见 [OPT 归档 §10.5](../review/roadmap-opt-2026-09-05.md#105-本批交付与证据2026-09-06opt-3-gui-控件批次)）；OPT-3d/3e（多凭证、额度槽）不在本 ADR 范围。GUI API 1.11 → 1.12（minor 只增）。对应 [ROADMAP §6](../review/roadmap-opt-2026-09-05.md#6-opt-3--供应商模型启用与默认角色)。
 
 - **D1 启用集存储**：Global `[[providers]]` 条目新增 `disabled_models: Vec<String>`（denylist）。键缺失或空数组 = 该 provider 模型全部启用；运行期目录新出现的模型默认启用，无需配置迁移，这是选 denylist 而非 enabled 字段的原因。启用语义属于「某 provider 的某模型」，放 `[[providers]]` 条目内而不放扁平 `[[models]]`（后者无 provider 归属，跨供应商会撞 id）。`disabled_models` 是 Global 独占偏好：非 Global 层出现即剥离并记录 warning（与 `use_proxy` 同闸，loader 扩展现有 provider 条目剥离）。
 - **D2 协议词汇（API 1.12）**：
@@ -38,7 +38,7 @@
 
 ## ADR-053：OPT-1 设置持久化（2026-09-05）
 
-状态：OPT-1 已实现、定向自动验证通过、Appearance 真窗口重启恢复通过；用户视觉签字与发布独立记录（[本批证据](../ROADMAP.md#101-本批交付与证据2026-09-05)）；替代 ADR-048 的「审批与会话信任不持久化」语义。GUI command / response 形状不变，无数据库迁移。设计像素仍受 OPT-D 签字闸门约束。
+状态：OPT-1 已实现、定向自动验证通过、Appearance 真窗口重启恢复通过；用户视觉签字与发布独立记录（[本批证据](../review/roadmap-opt-2026-09-05.md#101-本批交付与证据2026-09-05)）；替代 ADR-048 的「审批与会话信任不持久化」语义。GUI command / response 形状不变，无数据库迁移。设计像素仍受 OPT-D 签字闸门约束。
 
 - **D1 审批默认**：Global `config.toml` 新增可选 `approval_mode`，复用 Policy 五种 snake_case 值；缺失为 `read_only`，非法值拒绝加载。启动显式 `AppLoadOptions.approval_mode` 优先，只覆盖当前进程。`set_approval_mode` 先原子写 Global，再更新当前 Host 与 scheduler；写入失败返回 `config_write` 并保留旧运行态。
 - **D2 项目信任**：Global 新增 `workspace_trust` 表，键为 Host 解析的 canonical workspace 根路径、值为 bool；当前项目显式 true/false 优先于 `trust_workspaces` 全局默认。`workspace_trust` 命令只接 attached workspace id，Host 自行解析路径后写盘，不能用其他 id 或客户端任意路径写入。不得将信任一个项目扩大到全部项目；没有可解析根路径时 fail-closed。重启恢复同一路径的选择；新项目沿用全局默认。显式启动 trust 覆盖只影响当次进程；用户在 Settings 保存当前项目信任后，清除该启动覆盖，后续按各项目保存值/全局默认解析。

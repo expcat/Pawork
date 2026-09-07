@@ -4,7 +4,7 @@
 
 ## ADR-054：OPT-2 会话生命周期与自动标题（2026-09-05）
 
-背景：OPT-2（[ROADMAP](../ROADMAP.md) §5，反馈 F7/F9 与 F8 的自动命名）。设计闸门 OPT-D 已签字（[design/README §0](../../design/README.md)）。GUI API minor 1.10 → 1.11，golden/typegen 先行。
+背景：OPT-2（[OPT 归档](../review/roadmap-opt-2026-09-05.md#5-opt-2--会话与无项目任务) §5，反馈 F7/F9 与 F8 的自动命名）。设计闸门 OPT-D 已签字（[design/README §0](../../design/README.md)）。GUI API minor 1.10 → 1.11，golden/typegen 先行。
 
 - **D1 `SessionCreate.workspace_id` 改可选（since 1.11）**：wire 上字段可缺省或显式 `null` → Host 落盘 `workspace_id = NULL`，归 Unassigned；显式传值行为不变。无项目会话不获得任何 workspace 授权面：文件类工具按现有 Policy 对无 workspace 会话 fail-closed，只适用于问答等不碰仓库的任务。
 - **D2 `SessionRename{session_id, title}`**：两字段必填；title trim 后为空为结构化错误，不写盘。写盘成功后回执 Data（session_view，即写后状态）。
@@ -141,6 +141,6 @@ GUI P0–P2 及追加中文/供应商代理开关均已实现；本机 E2 自动
 
 ### 8.1 OPT-2 会话生命周期真窗口验收（2026-09-05）
 
-隔离实例 `opt2acc`，Host 当次 `--provider opencode-go --model glm-5.3-flash`（不写持久默认），生产实例 `desktop` 未受影响。逐项窗口 + AX + SQLite 交叉验证：全局 New task 直建 Unassigned 会话（DB `workspace_id` NULL，无 WorkspaceConfirm）；Composer No project 与文件工具不可用提示；真实问答 Run 三次 completed；行内改名 Enter 提交/Esc 取消（DB 写后状态一致）；归档后列表隐藏且 `archived=1` 未删除；临时配置命名模型后占位标题在 Run 成功终态自动改写并经 SessionMetaChanged 即时刷新；Host 重启后 Reconnect 恢复连接与草稿。验收中发现并修复：ADR-044 D3 对未绑定会话的 fail-closed 与 ADR-054 D1 冲突，致无项目会话无法问答——显式 NULL 归属改以空授权面 `ws-unbound` 运行，文件工具仍 Policy fail-closed（详见 [ROADMAP §10.3](../ROADMAP.md)）。命名用配置已还原，本批不推定 OPT-3/4 与发布状态。
+隔离实例 `opt2acc`，Host 当次 `--provider opencode-go --model glm-5.3-flash`（不写持久默认），生产实例 `desktop` 未受影响。逐项窗口 + AX + SQLite 交叉验证：全局 New task 直建 Unassigned 会话（DB `workspace_id` NULL，无 WorkspaceConfirm）；Composer No project 与文件工具不可用提示；真实问答 Run 三次 completed；行内改名 Enter 提交/Esc 取消（DB 写后状态一致）；归档后列表隐藏且 `archived=1` 未删除；临时配置命名模型后占位标题在 Run 成功终态自动改写并经 SessionMetaChanged 即时刷新；Host 重启后 Reconnect 恢复连接与草稿。验收中发现并修复：ADR-044 D3 对未绑定会话的 fail-closed 与 ADR-054 D1 冲突，致无项目会话无法问答——显式 NULL 归属改以空授权面 `ws-unbound` 运行，文件工具仍 Policy fail-closed（详见 [OPT 归档 §10.3](../review/roadmap-opt-2026-09-05.md#103-本批交付与证据2026-09-05opt-2-真窗口验收--无项目问答修复)）。命名用配置已还原，本批不推定 OPT-3/4 与发布状态。
 
 Full workspace gate: NOT RUN（当前未设置全量门禁）。

@@ -1,6 +1,6 @@
 # Pawork 产品规格
 
-> 基线日期：2026-09-05。既有功能与旧 Desktop 阶段已归档；[Settings：模型与供应商](settings.md) 活动线已实现并通过本机真窗口验收（2026-09-05），四家真实账号认证矩阵人工验收仍 pending；当前活动线为 [Desktop 优化 OPT](../ROADMAP.md)：OPT-D 已签字、OPT-1 已实现并验证。Pawork 当前是本机开发产品，不是已发布发行版。
+> 基线日期：2026-09-07。既有功能与旧 Desktop 阶段已归档；[Settings：模型与供应商](settings.md) 活动线已实现并通过本机真窗口验收（2026-09-05），四家真实账号认证矩阵人工验收仍 pending；OPT 活动线已关闭（[归档](../review/roadmap-opt-2026-09-05.md)）。当前活动线为 [Desktop 模块重设计 UI](../ROADMAP.md)：UI-1～UI-6 已立项、尚未实现。Pawork 当前是本机开发产品，不是已发布发行版。
 
 ## 1. 产品定义
 
