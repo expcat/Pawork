@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="460" viewBox="0 0 1040 460">
+  <title>UI-2 TaskRail 会话行状态规格</title>
+  <desc>规格示意而非产品截图。普通行、悬停行和键盘聚焦行共用几何，时间戳与两个动作共用固定的 64 像素槽位。当前会话显示中性选中面，焦点独立显示描边。</desc>
+  <rect width="1040" height="460" fill="#1e1e21"/>
+  <g font-family="system-ui, sans-serif" fill="#eeeeef">
+    <text x="36" y="48" font-size="22" font-weight="600">UI-2 · TaskRail</text>
+    <text x="36" y="78" font-size="14" fill="#aaaab3">状态规格示意 · 沿用 UI-1 token · 非产品截图</text>
+    <g transform="translate(36 116)">
+      <rect width="288" height="236" rx="12" fill="#18181b"/>
+      <text x="20" y="30" font-size="12" fill="#aaaab3">Today</text>
+      <text x="20" y="66" font-size="14" font-weight="500">▾ Pawork</text>
+      <text x="240" y="66" font-size="12" fill="#aaaab3">3</text>
+      <circle cx="33" cy="103" r="5" fill="none" stroke="#aaaab3"/>
+      <text x="46" y="108" font-size="14">整理文档</text>
+      <text x="252" y="108" font-size="12" text-anchor="end" fill="#aaaab3">2h</text>
+      <rect x="20" y="126" width="248" height="44" rx="6" fill="#26262a"/>
+      <circle cx="33" cy="148" r="5" fill="none" stroke="#aaaab3"/>
+      <text x="46" y="153" font-size="14">会话列表交互</text>
+      <text x="211" y="153" font-size="16" fill="#aaaab3">✎</text>
+      <g transform="translate(236 140)" stroke="#aaaab3" fill="none"><rect x="2" y="6" width="12" height="8" rx="1"/><rect x="1" y="2" width="14" height="4" rx="1"/><path d="M6 8h4"/></g>
+      <rect x="20" y="170" width="248" height="44" rx="6" fill="none" stroke="#2f6fed" stroke-width="2"/>
+      <circle cx="33" cy="192" r="5" fill="none" stroke="#aaaab3"/>
+      <text x="46" y="197" font-size="14">检查长标题…</text>
+      <text x="211" y="197" font-size="16" fill="#aaaab3">✎</text>
+      <g transform="translate(236 184)" stroke="#aaaab3" fill="none"><rect x="2" y="6" width="12" height="8" rx="1"/><rect x="1" y="2" width="14" height="4" rx="1"/><path d="M6 8h4"/></g>
+    </g>
+    <g transform="translate(374 132)" font-size="15">
+      <text y="0" font-weight="600">普通行</text><text y="28" fill="#aaaab3">相对时间右对齐；标题单行截断。</text>
+      <text y="78" font-weight="600">悬停 / 当前会话</text><text y="106" fill="#aaaab3">时间槽换成改名与归档，各 32 × 32px，标题宽度不变。</text>
+      <text y="156" font-weight="600">键盘聚焦</text><text y="184" fill="#aaaab3">立即露出动作；Tab 进入按钮后继续保持，焦点与当前会话分离。</text>
+      <text y="246" fill="#aaaab3">行高 44px · 标题 14px · 时间 12px · 控件圆角 6px</text>
+    </g>
+    <text x="36" y="416" font-size="13" fill="#aaaab3">改名 / 归档沿用既有 Host 写口；归档仅隐藏。断线禁写；行内改名期间隐藏动作，Enter 提交 / Esc 取消。</text>
+  </g>
+</svg>

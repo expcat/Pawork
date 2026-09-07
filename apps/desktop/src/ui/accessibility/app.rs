@@ -1067,7 +1067,16 @@ impl AppView {
             rail_project_identifier(bucket, &key),
             AxRole::Button,
             project.name.clone(),
-            AxRect::new(inset, top, width, metrics::RAIL_TASK_ROW_HEIGHT),
+            AxRect::new(
+                inset,
+                top,
+                if !project.is_unassigned() && project.workspace_id.is_some() {
+                    (width - metrics::RAIL_ICON_BUTTON_SIZE - 8.0).max(0.0)
+                } else {
+                    width
+                },
+                metrics::RAIL_TASK_ROW_HEIGHT,
+            ),
         )
         .value(format!("{} tasks", project.task_count()))
         .description(if expanded { "Expanded" } else { "Collapsed" })
@@ -1168,8 +1177,8 @@ impl AppView {
                     }
                 } else {
                     row = row.action(AxAction::Press);
-                    // OPT-D：选中行右侧改名 / 归档按钮与 render 同源发布。
-                    if is_active {
+                    // UI-2：悬停 / 行或动作聚焦 / 当前会话，与 render 共用可见性。
+                    if self.session_actions_visible(&session.session_id, window) {
                         let rename_focus_key = rail_session_rename_focus_key(&session.session_id);
                         let archive_focus_key = rail_session_archive_focus_key(&session.session_id);
                         row = row
@@ -1179,7 +1188,7 @@ impl AppView {
                                     AxRole::Button,
                                     t("taskrail.rename"),
                                     AxRect::new(
-                                        (inset + width - metrics::RAIL_SESSION_ACTION_SIZE * 2.0)
+                                        (inset + width - 8.0 - metrics::RAIL_SESSION_ACTION_SIZE * 2.0)
                                             .max(inset),
                                         action_y,
                                         metrics::RAIL_SESSION_ACTION_SIZE,
@@ -1202,7 +1211,7 @@ impl AppView {
                                     AxRole::Button,
                                     t("taskrail.archive"),
                                     AxRect::new(
-                                        (inset + width - metrics::RAIL_SESSION_ACTION_SIZE)
+                                        (inset + width - 8.0 - metrics::RAIL_SESSION_ACTION_SIZE)
                                             .max(inset),
                                         action_y,
                                         metrics::RAIL_SESSION_ACTION_SIZE,
@@ -2673,7 +2682,7 @@ impl AppView {
     /// R6 Wave A：Activity 触发器迁至 Workspace Header（header_ax），
     /// StatusBar 只保留居中的 run-status 信息串。
     fn status_ax(&self, frame: AxRect) -> AxNode {
-        let now = super::super::now_unix_ms();
+        let now = crate::ui::now_unix_ms();
         // UI-1：四组元信息居中，共享状态栏可用区域。
         let run_status_width = frame.width;
         let run_status_x = frame.x;
@@ -3115,6 +3124,155 @@ mod tests {
             approval_button_row_y(AxRect::new(288.0, pinned_y, 618.0, card_height), 16.0),
             pinned_y + card_height - APPROVAL_CARD_PAD_REMS * 16.0 - APPROVAL_BUTTON_HEIGHT
         );
+    }
+
+    /// UI-2：真实 hover / Tab / click 驱动非当前会话动作，不先打开会话。
+    #[gpui::test]
+    fn session_actions_follow_hover_and_keyboard_without_opening(cx: &mut gpui::TestAppContext) {
+        use gpui::{prelude::*, px, AppContext, Modifiers};
+        struct RailHost(gpui::Entity<AppView>);
+        impl gpui::Render for RailHost {
+            fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+                let rail = self
+                    .0
+                    .update(cx, |view, cx| view.sidebar_element(px(288.0), window, cx));
+                gpui::div()
+                    .size_full()
+                    .flex()
+                    .child(rail)
+                    .on_key_down(cx.listener(|host, event, window, cx| {
+                        host.0
+                            .update(cx, |view, cx| view.handle_root_key(event, window, cx));
+                    }))
+            }
+        }
+        let platform = std::sync::Arc::new(crate::platform::Platform::new());
+        let (host, cx) = cx.add_window_view(|_, cx| {
+            RailHost(cx.new(|cx| {
+                AppView::new(
+                    platform,
+                    std::env::temp_dir().join("ui2-rail.sock"),
+                    None,
+                    cx,
+                )
+            }))
+        });
+        let view = cx.update(|_, cx| host.read(cx).0.clone());
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.set_connection(ConnectionState::Connected {
+                    instance_id: "test".into(),
+                });
+                view.projection.sessions = ["current", "other"]
+                    .map(|id| crate::projection::SessionSummary {
+                        session_id: id.into(),
+                        title: format!("{id} long session title"),
+                        updated_at_ms: crate::ui::now_unix_ms(),
+                        workspace_id: None,
+                        parent_branch_id: None,
+                        forked_from_event_id: None,
+                        active: id == "current",
+                    })
+                    .into();
+                view.projection.active_session_id = Some("current".into());
+                window.focus(&view.scope_focus);
+                cx.notify();
+            })
+        });
+        cx.simulate_resize(gpui::size(px(1440.0), px(1024.0)));
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        let row_bounds = cx.update(|window, cx| {
+            let tree = view.read(cx).accessibility_tree(window, cx);
+            assert!(tree.find(&session_rename_identifier("other")).is_none());
+            tree.find(&session_identifier("other")).unwrap().bounds
+        });
+        cx.simulate_mouse_move(
+            gpui::point(px(row_bounds.x + 30.0), px(row_bounds.y + 22.0)),
+            None,
+            Modifiers::none(),
+        );
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        let rename_bounds = cx.update(|window, cx| {
+            let view = view.read(cx);
+            let tree = view.accessibility_tree(window, cx);
+            assert_eq!(
+                view.projection.active_session_id.as_deref(),
+                Some("current")
+            );
+            assert_eq!(
+                tree.find(&session_identifier("other")).unwrap().bounds,
+                row_bounds
+            );
+            let rename = tree
+                .find(&session_rename_identifier("other"))
+                .expect("hover reveals rename");
+            assert!(rename.enabled);
+            rename.bounds
+        });
+        cx.simulate_mouse_move(
+            gpui::point(px(rename_bounds.x + 16.0), px(rename_bounds.y + 16.0)),
+            None,
+            Modifiers::none(),
+        );
+        cx.run_until_parked();
+        cx.simulate_click(
+            gpui::point(px(rename_bounds.x + 16.0), px(rename_bounds.y + 16.0)),
+            Modifiers::none(),
+        );
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                assert_eq!(view.session_rename.as_ref().unwrap().session_id, "other");
+                assert_eq!(
+                    view.projection.active_session_id.as_deref(),
+                    Some("current")
+                );
+                assert!(view
+                    .accessibility_tree(window, cx)
+                    .find(&session_archive_identifier("other"))
+                    .is_none());
+                view.cancel_session_rename(window, cx);
+            })
+        });
+        cx.simulate_mouse_move(gpui::point(px(700.0), px(500.0)), None, Modifiers::none());
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        // Cancel 回到该行；指针移走仍保持动作，Tab 可进入动作自身。
+        cx.simulate_keystrokes("tab");
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                let focus = &view.rail_row_focus[&rail_session_rename_focus_key("other")];
+                assert!(
+                    focus.is_focused(window),
+                    "Tab reaches rename without opening the session"
+                );
+                assert!(view.session_actions_visible("other", window));
+                view.projection
+                    .set_connection(ConnectionState::Disconnected {
+                        reason: "test".into(),
+                    });
+                let tree = view.accessibility_tree(window, cx);
+                assert!(
+                    !tree
+                        .find(&session_rename_identifier("other"))
+                        .unwrap()
+                        .enabled
+                );
+                assert!(
+                    !tree
+                        .find(&session_archive_identifier("other"))
+                        .unwrap()
+                        .enabled
+                );
+                window.focus(&view.scope_focus);
+                assert!(view
+                    .accessibility_tree(window, cx)
+                    .find(&session_rename_identifier("other"))
+                    .is_none());
+            })
+        });
     }
 
     /// P0-2：grouping AXPress 直接双向切换且不生成菜单，并保留 session / scope /

@@ -58,10 +58,74 @@ fn status_dot(filled: bool, color: Rgba) -> gpui::Div {
     }
 }
 
+/// 16px 归档盒：盖、盒身与短把手，避免彩色 emoji 随平台变形。
+fn archive_icon(color: Rgba) -> impl IntoElement {
+    div()
+        .relative()
+        .w(px(16.0))
+        .h(px(16.0))
+        .child(
+            div()
+                .absolute()
+                .left(px(2.0))
+                .top(px(6.0))
+                .w(px(12.0))
+                .h(px(8.0))
+                .border_1()
+                .border_color(color)
+                .rounded(px(1.0)),
+        )
+        .child(
+            div()
+                .absolute()
+                .left(px(1.0))
+                .top(px(2.0))
+                .w(px(14.0))
+                .h(px(4.0))
+                .border_1()
+                .border_color(color)
+                .rounded(px(1.0)),
+        )
+        .child(
+            div()
+                .absolute()
+                .left(px(6.0))
+                .top(px(8.0))
+                .w(px(4.0))
+                .h(px(1.0))
+                .bg(color),
+        )
+}
+
 impl AppView {
+    pub(super) fn session_actions_visible(&self, session_id: &str, window: &Window) -> bool {
+        !self
+            .session_rename
+            .as_ref()
+            .is_some_and(|state| state.session_id == session_id)
+            && (self.projection.active_session_id.as_deref() == Some(session_id)
+                || self.rail_hovered_session.as_deref() == Some(session_id)
+                || [
+                    rail_session_focus_key(session_id),
+                    rail_session_rename_focus_key(session_id),
+                    rail_session_archive_focus_key(session_id),
+                ]
+                .iter()
+                .any(|key| {
+                    self.rail_row_focus
+                        .get(key)
+                        .is_some_and(|focus| focus.is_focused(window))
+                }))
+    }
+
     /// rail 宽由 shell_layout::resolve 按窗口带宽与文本缩放给出
     ///（默认 288 / 窄窗 240 / 150% 文本 320）。
-    pub(super) fn sidebar_element(&mut self, rail_width: Pixels, cx: &mut Context<Self>) -> Panel {
+    pub(super) fn sidebar_element(
+        &mut self,
+        rail_width: Pixels,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Panel {
         let can_create = self.can_create_task();
         // 图标表达下一步动作，而不是重复当前模式。
         let grouping_glyph = match self.grouping {
@@ -88,7 +152,7 @@ impl AppView {
             .width(px(metrics::RAIL_ICON_BUTTON_SIZE))
             .height(px(metrics::RAIL_ICON_BUTTON_SIZE))
             .center()
-            .radius(4.0)
+            .radius(metrics::CONTROL_RADIUS)
             .text_size(font::ICON)
             .label(grouping_glyph)
             .tooltip(grouping_tooltip)
@@ -114,7 +178,7 @@ impl AppView {
             .padding(ButtonPadding::Horizontal(metrics::RAIL_INNER_PAD))
             .height(px(metrics::RAIL_TOP_ROW_HEIGHT))
             .vcenter()
-            .radius(4.0)
+            .radius(metrics::CONTROL_RADIUS)
             .bordered()
             .text_size(font::BODY)
             .label(format!("{scope_label} ▾"))
@@ -161,7 +225,7 @@ impl AppView {
             .width(px(metrics::RAIL_ICON_BUTTON_SIZE))
             .height(px(metrics::RAIL_ICON_BUTTON_SIZE))
             .center()
-            .radius(4.0)
+            .radius(metrics::CONTROL_RADIUS)
             .text_size(font::ICON)
             .label("+")
             .tooltip(add_task_tooltip)
@@ -284,7 +348,7 @@ impl AppView {
                 ),
             );
         }
-        content = content.child(self.task_rail_list(now_ms, can_create, cx));
+        content = content.child(self.task_rail_list(now_ms, can_create, window, cx));
         // TR-12 honest-hidden：只保留「Local」本机身份行，不画头像 / 姓名 /
         // quota（无权威账户 capability）。SET-3 起右侧 gear 是真实 Settings
         // 入口（可见 / 键盘 / AX 同 gate），不是占位图标。
@@ -312,7 +376,7 @@ impl AppView {
                         .width(px(metrics::RAIL_ICON_BUTTON_SIZE))
                         .height(px(metrics::RAIL_ICON_BUTTON_SIZE))
                         .center()
-                        .radius(4.0)
+                        .radius(metrics::CONTROL_RADIUS)
                         .text_size(font::ICON)
                         .label("⚙")
                         .tooltip(t("rail.tooltip_settings"))
@@ -383,6 +447,7 @@ impl AppView {
         &mut self,
         now_ms: u64,
         can_create: bool,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let rail = match self.grouping {
@@ -452,7 +517,7 @@ impl AppView {
                         .pl_2()
                         .child(
                             div()
-                                .text_size(font::BODY)
+                                .text_size(font::BODY_SM)
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(dark().text.secondary)
                                 .child(group.bucket.display_label().to_string()),
@@ -476,6 +541,7 @@ impl AppView {
                             &active,
                             now_ms,
                             can_create,
+                            window,
                             cx,
                         );
                         if has_active {
@@ -497,8 +563,9 @@ impl AppView {
                     } else {
                         0.0
                     };
-                    let (children, active_offset, has_active) = self
-                        .project_block(&project, None, header_gap, &active, now_ms, can_create, cx);
+                    let (children, active_offset, has_active) = self.project_block(
+                        &project, None, header_gap, &active, now_ms, can_create, window, cx,
+                    );
                     if has_active {
                         active_header_child = Some(child_index);
                         if let Some(offset) = active_offset {
@@ -532,6 +599,7 @@ impl AppView {
         active: &Option<String>,
         now_ms: u64,
         can_create: bool,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> (Vec<AnyElement>, Option<usize>, bool) {
         let key = rail_project_key(project.workspace_id.as_deref());
@@ -553,7 +621,7 @@ impl AppView {
         let activate_toggle_key = key.clone();
         let header_row_key = format!("project-{key}");
         let header_row_key_click = header_row_key.clone();
-        // F-04 项目头：chevron + 名称（18 medium emphasis）+ 独立右对齐计数 +
+        // UI-2 项目头：chevron、名称与右对齐计数共用完整悬停 / 焦点面；
         // 定向「+」（36×36、字形 20px / OPT-D；Unassigned 无 +）。折叠态只显示头。
         let mut header = div()
             .mt(px(header_gap))
@@ -563,6 +631,7 @@ impl AppView {
             .gap_2()
             .child(
                 ListRow::project_header(header_id)
+                    .radius(metrics::CONTROL_RADIUS)
                     .track_focus(&header_focus)
                     .child(
                         div()
@@ -570,18 +639,26 @@ impl AppView {
                             .flex_row()
                             .items_center()
                             .gap_1()
+                            .flex_1()
                             .min_w_0()
-                            .text_size(font::BODY)
+                            .text_size(font::BASE)
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(dark().text.emphasis)
                             .child(if expanded { "▾" } else { "▸" })
                             // 长项目头标题 truncate（flex_1 + min_w_0）。
+                            .child(div().flex_1().truncate().child(project.name.clone())),
+                    )
+                    .child(
+                        div()
+                            .w(px(metrics::RAIL_META_SLOT_WIDTH))
+                            .pr(px(8.0))
+                            .flex_none()
+                            .flex()
+                            .justify_end()
                             .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .truncate()
-                                    .child(project.name.clone()),
+                                Label::new(project.task_count().to_string())
+                                    .size(font::BODY_SM)
+                                    .color(dark().text.secondary),
                             ),
                     )
                     .on_click(cx.listener(move |view, event: &ClickEvent, window, cx| {
@@ -604,18 +681,6 @@ impl AppView {
                         view.on_toggle_project(activate_toggle_key.clone(), window, cx);
                         cx.stop_propagation();
                     })),
-            )
-            .child(
-                div()
-                    .w(px(metrics::RAIL_META_SLOT_WIDTH))
-                    .flex_none()
-                    .flex()
-                    .justify_end()
-                    .child(
-                        Label::new(project.task_count().to_string())
-                            .size(font::BODY_SM)
-                            .color(dark().text.secondary),
-                    ),
             );
         if !project.is_unassigned() {
             if let Some(workspace_id) = workspace_id {
@@ -639,7 +704,7 @@ impl AppView {
                         .width(px(metrics::RAIL_ICON_BUTTON_SIZE))
                         .height(px(metrics::RAIL_ICON_BUTTON_SIZE))
                         .center()
-                        .radius(4.0)
+                        .radius(metrics::CONTROL_RADIUS)
                         .text_size(font::ICON)
                         .label("+")
                         .on_click(cx.listener(move |view, event: &ClickEvent, window, cx| {
@@ -677,6 +742,7 @@ impl AppView {
                 let task_row_key_click = task_row_key.clone();
                 let is_active = active.as_deref() == Some(task.session_id.as_str());
                 let unread = self.projection.session_unread(&task.session_id);
+                let show_actions = self.session_actions_visible(&task.session_id, window);
                 let task_focus =
                     self.rail_row_focus_handle(&rail_session_focus_key(&task.session_id), &*cx);
                 // ADR-054 D2：该行处于行内改名编辑态时，标题槽换成输入框，
@@ -711,9 +777,8 @@ impl AppView {
                     Some(input) => div().flex_1().min_w_0().child(input),
                     None => div()
                         .flex_1()
-                        .min_w_0()
                         .truncate()
-                        .text_size(font::BODY)
+                        .text_size(font::BASE)
                         .font_weight(if is_active {
                             FontWeight::MEDIUM
                         } else if unread {
@@ -729,6 +794,7 @@ impl AppView {
                         .child(task.title.clone()),
                 };
                 let mut row = ListRow::task(SharedString::from(session_id.clone()), is_active)
+                    .radius(metrics::CONTROL_RADIUS)
                     .track_focus(&task_focus)
                     .child(
                         div()
@@ -746,14 +812,18 @@ impl AppView {
                     .child(
                         div()
                             .ml_2()
-                            .w(px(metrics::RAIL_META_SLOT_WIDTH))
+                            .w(px(metrics::RAIL_SESSION_ACTION_SIZE * 2.0))
                             .flex_none()
                             .flex()
                             .justify_end()
                             .child(
-                                Label::new(relative_activity(task.updated_at_ms, now_ms))
-                                    .size(font::BODY_SM)
-                                    .color(dark().text.secondary),
+                                Label::new(if show_actions {
+                                    String::new()
+                                } else {
+                                    relative_activity(task.updated_at_ms, now_ms)
+                                })
+                                .size(font::BODY_SM)
+                                .color(dark().text.secondary),
                             ),
                     );
                 if !renaming {
@@ -780,9 +850,27 @@ impl AppView {
                             },
                         ));
                 }
-                // OPT-D：选中行右侧改名 / 归档按钮（hit area ≥32×32；与行
-                // 点击区解耦，按钮 click 不冒泡成「打开会话」）。
-                if is_active && !renaming {
+                // UI-2：固定 64px 槽在时间戳 / 两个动作间切换，标题宽度不跳动。
+                // 动作是行的覆盖层兄弟节点，点击不会冒泡成打开会话。
+                let hovered_id = task.session_id.clone();
+                let mut shell = div()
+                    .id(SharedString::from(format!(
+                        "session-shell-{}",
+                        task.session_id
+                    )))
+                    .mt(px(row_gap))
+                    .relative()
+                    .on_hover(cx.listener(move |view, hovered: &bool, _window, cx| {
+                        if *hovered {
+                            view.rail_hovered_session = Some(hovered_id.clone());
+                        } else if view.rail_hovered_session.as_deref() == Some(hovered_id.as_str())
+                        {
+                            view.rail_hovered_session = None;
+                        }
+                        cx.notify();
+                    }))
+                    .child(row);
+                if show_actions {
                     let rename_focus = self.rail_row_focus_handle(
                         &rail_session_rename_focus_key(&task.session_id),
                         &*cx,
@@ -793,28 +881,26 @@ impl AppView {
                     );
                     let begin_rename_id = task.session_id.clone();
                     let activate_rename_id = begin_rename_id.clone();
-                    let rename_button = Button::new(format!(
-                        "session-rename-{}",
-                        task.session_id
-                    ))
-                    .track_focus(&rename_focus)
-                    .variant(ButtonVariant::Ghost)
-                    .disabled(!can_create)
-                    .padding(ButtonPadding::None)
-                    .width(px(metrics::RAIL_SESSION_ACTION_SIZE))
-                    .height(px(metrics::RAIL_SESSION_ACTION_SIZE))
-                    .center()
-                    .radius(4.0)
-                    .text_size(font::BASE)
-                    .text_color(dark().text.secondary)
-                    .label("✎")
-                    .tooltip(t("taskrail.rename"))
-                    .on_click(cx.listener(move |view, event: &ClickEvent, window, cx| {
-                        if view.consume_button_key_click(&begin_rename_id, event) {
-                            return;
-                        }
-                        view.begin_session_rename(&begin_rename_id, window, cx);
-                    }))
+                    let rename_button = Button::new(format!("session-rename-{}", task.session_id))
+                        .track_focus(&rename_focus)
+                        .variant(ButtonVariant::Ghost)
+                        .disabled(!can_create)
+                        .padding(ButtonPadding::None)
+                        .width(px(metrics::RAIL_SESSION_ACTION_SIZE))
+                        .height(px(metrics::RAIL_SESSION_ACTION_SIZE))
+                        .center()
+                        .radius(metrics::CONTROL_RADIUS)
+                        .text_size(font::BASE)
+                        .text_color(dark().text.secondary)
+                        .label("✎")
+                        .tooltip(t("taskrail.rename"))
+                        .on_click(cx.listener(move |view, event: &ClickEvent, window, cx| {
+                            if view.consume_button_key_click(&begin_rename_id, event) {
+                                return;
+                            }
+                            view.begin_session_rename(&begin_rename_id, window, cx);
+                            cx.stop_propagation();
+                        }))
                         .on_activate(cx.listener(
                             move |view, _event: &KeyDownEvent, window, cx| {
                                 if view.open_menu.is_some() {
@@ -828,52 +914,56 @@ impl AppView {
                         ));
                     let archive_click_id = task.session_id.clone();
                     let archive_activate_id = task.session_id.clone();
-                    let archive_button = Button::new(format!(
-                        "session-archive-{}",
-                        task.session_id
-                    ))
-                    .track_focus(&archive_focus)
-                    .variant(ButtonVariant::Ghost)
-                    .disabled(!can_create)
-                    .padding(ButtonPadding::None)
-                    .width(px(metrics::RAIL_SESSION_ACTION_SIZE))
-                    .height(px(metrics::RAIL_SESSION_ACTION_SIZE))
-                    .center()
-                    .radius(4.0)
-                    .text_size(font::BASE)
-                    .text_color(dark().text.secondary)
-                    .label("🗄")
-                    .tooltip(t("taskrail.archive"))
-                    .on_click(cx.listener(move |view, event: &ClickEvent, _window, cx| {
-                        if view.consume_button_key_click(&archive_click_id, event) {
-                            return;
-                        }
-                        view.on_session_archive(archive_click_id.clone(), cx);
-                    }))
-                    .on_activate(cx.listener(
-                        move |view, _event: &KeyDownEvent, _window, cx| {
-                            if view.open_menu.is_some() {
-                                view.note_button_key_activate(&archive_activate_id);
-                                return;
-                            }
-                            view.note_button_key_activate(&archive_activate_id);
-                            view.on_session_archive(archive_activate_id.clone(), cx);
-                            cx.stop_propagation();
-                        },
-                    ));
-                    children.push(
+                    let archive_button =
+                        Button::new(format!("session-archive-{}", task.session_id))
+                            .track_focus(&archive_focus)
+                            .variant(ButtonVariant::Ghost)
+                            .disabled(!can_create)
+                            .padding(ButtonPadding::None)
+                            .width(px(metrics::RAIL_SESSION_ACTION_SIZE))
+                            .height(px(metrics::RAIL_SESSION_ACTION_SIZE))
+                            .center()
+                            .radius(metrics::CONTROL_RADIUS)
+                            .text_size(font::BASE)
+                            .text_color(dark().text.secondary)
+                            .child(archive_icon(if can_create {
+                                dark().text.secondary
+                            } else {
+                                dark().text.disabled
+                            }))
+                            .tooltip(t("taskrail.archive"))
+                            .on_click(cx.listener(move |view, event: &ClickEvent, _window, cx| {
+                                if view.consume_button_key_click(&archive_click_id, event) {
+                                    return;
+                                }
+                                view.on_session_archive(archive_click_id.clone(), cx);
+                                cx.stop_propagation();
+                            }))
+                            .on_activate(cx.listener(
+                                move |view, _event: &KeyDownEvent, _window, cx| {
+                                    if view.open_menu.is_some() {
+                                        view.note_button_key_activate(&archive_activate_id);
+                                        return;
+                                    }
+                                    view.note_button_key_activate(&archive_activate_id);
+                                    view.on_session_archive(archive_activate_id.clone(), cx);
+                                    cx.stop_propagation();
+                                },
+                            ));
+                    shell = shell.child(
                         div()
-                            .mt(px(row_gap))
+                            .absolute()
+                            .right(px(8.0))
+                            .top(px((metrics::RAIL_TASK_ROW_HEIGHT
+                                - metrics::RAIL_SESSION_ACTION_SIZE)
+                                / 2.0))
                             .flex()
                             .items_center()
-                            .child(div().flex_1().min_w_0().child(row))
                             .child(rename_button)
-                            .child(archive_button)
-                            .into_any_element(),
+                            .child(archive_button),
                     );
-                } else {
-                    children.push(div().mt(px(row_gap)).child(row).into_any_element());
                 }
+                children.push(shell.into_any_element());
                 if is_active {
                     active_offset = Some(children.len() - 1);
                 }

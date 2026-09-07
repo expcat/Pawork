@@ -34,7 +34,7 @@ flowchart LR
 
 | 区域 | 必须呈现 | 当前限制 |
 | --- | --- | --- |
-| TaskRail | 会话/任务条目、新任务、项目范围、`Add project…`、选中态、长标题截断 | 项目通过系统目录选择器和 Host `workspace_add` 注册；当前 project/session 持久化生命周期仍不完整。100%：宽窗 288px、1080–1279 为 240px；150% 时 320px。 |
+| TaskRail | 会话/任务条目、新任务、项目范围、`Add project…`、选中态、长标题截断；UI-2 悬停 / 聚焦行操作 | 项目通过系统目录选择器和 Host `workspace_add` 注册；当前 project/session 持久化生命周期仍不完整。100%：宽窗 288px、1080–1279 为 240px；150% 时 320px。 |
 | Timeline | 用户/助手/工具/诊断/Run 状态、流式内容、审批卡、fork 边界、回到底部 | 变高虚拟化；菜单锚点卸载、follow-scroll 与千级事件仍需按风险定向复验。 |
 | Composer | 多行输入、发送、附件/`@` 引用反馈 | host 已展开 `@token`；无模糊候选浮层。系统 IME composing 已取得本机证据；多行粘贴与草稿有定向测试，跨平台输入仍需专项验收。 |
 | Inspector / Changes | OPT-4b 起默认折叠（Header `inspector-expand` 重开）；顶层 Changes/Terminal/Resources 与二级 Files/Summary 分层；DiffView；折叠态 Header ActivityPopover | 只读；无 stage/unstage/hunk 命令。 |
@@ -83,7 +83,7 @@ flowchart LR
 ### 4.1 当前可见合同
 
 - Timeline wrapper 使用满宽 + 618px 可读列，独立 summary 与 tool-group summary 分别使用 40px / 12px 节奏；关键元信息提升到 secondary。
-- TaskRail project count / task time 使用 56px 右对齐尾槽；Header 为 medium；24px StatusBar 使用 12px 字阶和窄窗裁切。
+- TaskRail project count 使用 56px 右对齐尾槽；UI-2 task time / 行操作共用 64px 固定尾槽；Header 为 medium；24px StatusBar 使用 12px 字阶和窄窗裁切。
 - Composer 的 input/footer 共属同一 panel surface，unavailable Context 使用 tertiary；常态高度、220px 增长上限和 Send/Cancel 单槽不变。
 - Changes 文件行使用稳定前后槽；DiffView 的只读路径 header 位于横滚外，24px 语义 gutter 与中性正文分离；ActivityPopover 内容宽 320px，内容高随 100%/125%/150% 为 144/180/216px，外框包含 8px padding 与 1px border，摘要可见且保持 capability honesty。
 - 三张阶段图与本机视觉走查已收口；此结论不扩张为 Timeline/Changes 全状态 AX 几何覆盖或发布级签字。

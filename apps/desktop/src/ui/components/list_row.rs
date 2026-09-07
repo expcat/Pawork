@@ -27,6 +27,7 @@ pub struct ListRow {
     id: SharedString,
     kind: ListRowKind,
     height: f32,
+    radius: Option<f32>,
     focus: Option<FocusHandle>,
     children: Vec<AnyElement>,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
@@ -49,6 +50,7 @@ impl ListRow {
             id: id.into(),
             kind,
             height: metrics::RAIL_TASK_ROW_HEIGHT,
+            radius: None,
             focus: None,
             children: Vec::new(),
             on_click: None,
@@ -66,6 +68,11 @@ impl ListRow {
     /// 多行设置项可按当前字号提供行高；TaskRail 保持默认 44px。
     pub fn height(mut self, height: f32) -> Self {
         self.height = height;
+        self
+    }
+
+    pub fn radius(mut self, radius: f32) -> Self {
+        self.radius = Some(radius);
         self
     }
 
@@ -104,13 +111,17 @@ impl RenderOnce for ListRow {
         if let Some(focus) = self.focus.as_ref() {
             row = row.tab_stop(true).track_focus(focus).relative();
         }
-        // 聚焦描边覆盖层圆角与行外壳同源：两形态外壳均为 rounded_sm。
-        let ring_radius: AbsoluteLength = rems(0.25).into();
+        // 聚焦描边覆盖层圆角与行外壳同源；未指定时默认 rounded_sm，
+        // TaskRail 传入 CONTROL_RADIUS。
+        let ring_radius: AbsoluteLength = self
+            .radius
+            .map(|radius| px(radius).into())
+            .unwrap_or_else(|| rems(0.25).into());
         let hover = match self.kind {
             ListRowKind::Task { selected } => {
                 // flex_row + min_w_0：让子项 flex_1/truncate 拿到 Definite 宽度
                 // （R8 波 C 长标题截断依赖此约束）。R3 Wave A：行高 44（量图
-                // 43–44 取 44）+ 内容垂直居中；选中面 rounded_sm(4) 不变。
+                // 43–44 取 44）+ 内容垂直居中；选中面圆角与外壳同源。
                 row = row
                     .flex()
                     .flex_row()
@@ -118,7 +129,7 @@ impl RenderOnce for ListRow {
                     .min_w_0()
                     .h(px(self.height))
                     .px_2()
-                    .rounded_sm();
+                    .rounded(ring_radius);
                 if selected {
                     row = row.bg(dark().surface.raised);
                     dark().surface.hover
@@ -137,7 +148,7 @@ impl RenderOnce for ListRow {
                     .items_center()
                     .gap_1()
                     .h(px(self.height))
-                    .rounded_sm();
+                    .rounded(ring_radius);
                 dark().surface.raised
             }
         };

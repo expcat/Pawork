@@ -550,6 +550,8 @@ pub struct AppView {
     /// rail 行级焦点句柄（按 RailStop::focus_key 懒建，会话删除后遗留条目
     /// 无副作用，随窗口生命周期回收）。
     rail_row_focus: BTreeMap<String, FocusHandle>,
+    /// UI-2：整行（含动作槽）的指针悬停，与当前会话独立。
+    rail_hovered_session: Option<String>,
     /// ADR-054 D2：TaskRail 行内改名编辑器（同一时刻至多一个；None =
     /// 无行处于编辑态）。输入框实体进入编辑态时懒建，退出即随状态丢弃。
     session_rename: Option<SessionRenameState>,
@@ -810,6 +812,7 @@ impl AppView {
                 .tab_stop(true)
                 .tab_index(INSPECTOR_TAB_INDEX),
             rail_row_focus: BTreeMap::new(),
+            rail_hovered_session: None,
             session_rename: None,
             rail_scroll: ScrollHandle::new(),
             rail_scroll_to_active: false,
@@ -4120,7 +4123,7 @@ impl Render for AppView {
         // 保留在 AppView 字段，返回即原样恢复。
         let (sidebar, main) = match self.route {
             AppRoute::Workspace => {
-                let sidebar = self.sidebar_element(px(shell.rail_width), cx);
+                let sidebar = self.sidebar_element(px(shell.rail_width), window, cx);
                 let header = self.workspace_header_element(
                     activity_trigger_visible,
                     activity_popover_open,

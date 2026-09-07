@@ -112,6 +112,17 @@
 - 切换分组不改变 active session、Composer 草稿、Run 或主 Timeline。
 - 分组方式、范围筛选和项目展开状态是本地 presentation preference，不新增 domain 事件，也不改协议。
 
+#### UI-2 会话行更新（2026-09-07）
+
+交互参照 [Zed Threads Sidebar](https://zed.dev/docs/ai/parallel-agents) 的悬停归档入口；Pawork 同时提供改名，并保留现有 Host 写口。规格示意见 [UI-2 状态图](../design/ui2-taskrail-states.svg)，这是本线新增规格，不是产品截图。
+
+- 当前会话、指针悬停行、键盘聚焦的行或其动作都立即显示改名 / 归档；键盘聚焦与当前会话独立，不必先打开会话。
+- 44px 行高、14px 标题、12px 相对时间；时间与动作共用固定 64px 尾槽，两个按钮各 32×32px，显示切换不挤动标题。长标题保持单行截断。
+- 项目头的名称、计数共用完整悬停与焦点面，覆盖到会话行同一右缘；有项目「+」时仍保留独立新建按钮。
+- 当前会话使用中性选中面，悬停即时反馈，键盘焦点描边独立显示；沿用 UI-1 色板和 6px 控件圆角。归档用单色 16px 盒形图标。
+- 改名编辑期间隐藏行操作，Enter 提交、Esc 取消；断线禁写，归档仅隐藏。可见控件与 AX 共享显示规则，动作点击不打开该会话。
+- 范围筛选、分组、项目折叠与定向新建保留既有行为。实现、自动检查与人工视觉验收状态分别见 [路线图](ROADMAP.md)。
+
 ### 3.3 Context、运行信息与 Inspector
 
 - Composer 常态高 88–94 px，同行控件高 28–30 px；模型 / reasoning 只在模型选择器显示。
@@ -124,7 +135,7 @@
 
 - Timeline 消息、tool 与 summary 占满可用宽度，以 618px 可读列封顶。同一 Run 的连续 tool 合并为一个 group，标题汇总数量与真实状态，默认展开并可由 click、Enter、Space、AX Press 折叠；折叠键取首个 tool event id，live 与 replay 结构一致。
 - Run 终态只保留一个 summary；只有当前 Session 存在至少一个真实、可审阅的 Changes 文件时才显示 `Ready for review` 与 `Review changes`，并打开、聚焦 Changes；文件列表为空时显示轻量 `Run completed`，不画假 CTA。失败、取消与审批状态均使用文字 / 图标，不只依赖颜色。
-- TaskRail 项目计数和任务时间使用 56px 右对齐 meta 槽；标题 `truncate`。
+- TaskRail 项目计数使用 56px 右对齐 meta 槽，UI-2 任务时间与动作共用 64px 尾槽；标题 `truncate`。
 - Changes 文件行使用固定槽；DiffView 有只读路径 header 与增删 marker gutter；Changes / Resources 的 empty、error、stale 各自给出诚实说明。
 - ActivityPopover 内容宽 320px，100%/125%/150% 下内容高 144/180/216px；含 padding/border 的外框为 338×162/198/234px，右缘对齐触发器并保持 8px 下方间距，AX 几何同源；来源说明按实际内容追加。
 

@@ -6,8 +6,8 @@
 //! 面板统一走 Dropdown（轨 2）。
 
 use gpui::{
-    div, prelude::*, px, App, ClickEvent, FocusHandle, IntoElement, KeyDownEvent, Pixels, Rems,
-    RenderOnce, Rgba, SharedString, Window,
+    div, prelude::*, px, AnyElement, App, ClickEvent, FocusHandle, IntoElement, KeyDownEvent,
+    Pixels, Rems, RenderOnce, Rgba, SharedString, Window,
 };
 
 use crate::ui::components::focus_ring::focus_ring;
@@ -51,6 +51,7 @@ pub struct Button {
     variant: ButtonVariant,
     disabled: bool,
     label: Option<SharedString>,
+    content: Option<AnyElement>,
     tooltip: Option<SharedString>,
     focus: Option<FocusHandle>,
     text_size: Option<Rems>,
@@ -76,6 +77,7 @@ impl Button {
             variant: ButtonVariant::Primary,
             disabled: false,
             label: None,
+            content: None,
             tooltip: None,
             focus: None,
             text_size: None,
@@ -108,6 +110,12 @@ impl Button {
 
     pub fn label(mut self, label: impl Into<SharedString>) -> Self {
         self.label = Some(label.into());
+        self
+    }
+
+    /// 自绘图标等非文本按钮内容，复用按钮的焦点、命中区与激活行为。
+    pub fn child(mut self, content: impl IntoElement) -> Self {
+        self.content = Some(content.into_any_element());
         self
     }
 
@@ -363,6 +371,9 @@ impl RenderOnce for Button {
             } else {
                 button = button.child(label);
             }
+        }
+        if let Some(content) = self.content {
+            button = button.child(content);
         }
         // 聚焦描边以覆盖层绘制（零布局参与，见 components/focus_ring.rs），
         // 作为最后子项压在内容之上。

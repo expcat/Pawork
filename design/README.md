@@ -2,6 +2,10 @@
 
 > 本目录保留 P0–P2 三张已交付目标设计图，并新增 OPT-D 六张统一候选稿（已获用户签字）。行为事实源：[GUI 设计](../docs/gui-design.md)；P0–P2 收尾证据见 [Desktop Spec](../docs/spec/desktop.md#8-gui-收尾验收记录2026-09-05)。当前活动线是 [Desktop 模块重设计 UI](../docs/ROADMAP.md)；OPT-D 旧稿**不再否决**本线新视觉。本线新图另存本目录，不覆盖下列历史资产。
 
+## UI-2 会话行规格（2026-09-07）
+
+[TaskRail 状态示意](ui2-taskrail-states.svg) 记录普通、悬停 / 当前会话与键盘聚焦的几何和层级：44px 行、14px 标题、12px 时间、64px 固定尾槽、两个 32px 动作。图为规格示意，非产品截图；交互与验收状态见 [GUI 设计](../docs/gui-design.md#ui-2-会话行更新2026-09-07) 和 [路线图](../docs/ROADMAP.md)。
+
 ## UI-1 当前工作台规格（2026-09-07）
 
 [工作台与共享 token 示意](ui1-workbench-tokens.svg) 为本线新增矢量规格图，非产品截图。Header 80px、Inspector 页签 48 / 40px、状态栏 30px、中性炭灰色板、6 / 8 / 12px 圆角与 180ms 开合过渡，详见 [GUI 设计 UI-1](../docs/gui-design.md#ui-1-工作台视觉更新2026-09-07)。其余模块沿用共享 token，结构在后续模块任务中调整。下文为历史阶段基线，不覆盖本批更新；真窗口截图不检入仓库。用户人工视觉验收已于 2026-09-07 通过，状态见 [路线图](../docs/ROADMAP.md#ui-1-本批证据2026-09-07)。
