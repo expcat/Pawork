@@ -264,7 +264,23 @@ pub fn write_provider_disabled_models(
     provider_id: &str,
     disabled: &[String],
 ) -> Result<(), ConfigError> {
+    write_provider_model_preferences(path, provider_id, disabled, &[])
+}
+
+/// 同一次原子写保存禁用集并清除命中的角色键对；失败时全部保旧。
+/// `clear_pairs` 由 Host 按持久化配置判定，不接受运行时默认覆盖值。
+pub fn write_provider_model_preferences(
+    path: &Path,
+    provider_id: &str,
+    disabled: &[String],
+    clear_pairs: &[(&str, &str)],
+) -> Result<(), ConfigError> {
     rmw_global_config(path, |table| {
+        let mut cleared = false;
+        for (provider_key, model_key) in clear_pairs {
+            cleared |= table.remove(*provider_key).is_some();
+            cleared |= table.remove(*model_key).is_some();
+        }
         let disabled_value = || {
             toml::Value::try_from(disabled).map_err(|source| ConfigError::Write {
                 path: path.to_path_buf(),
@@ -296,7 +312,7 @@ pub fn write_provider_disabled_models(
             Some(toml::Value::Table(entry)) => {
                 if disabled.is_empty() {
                     let removed = entry.remove("disabled_models").is_some();
-                    Ok((removed, ()))
+                    Ok((removed || cleared, ()))
                 } else {
                     entry.insert("disabled_models".into(), disabled_value()?);
                     Ok((true, ()))
@@ -304,7 +320,7 @@ pub fn write_provider_disabled_models(
             }
             _ => {
                 if disabled.is_empty() {
-                    return Ok((false, ()));
+                    return Ok((cleared, ()));
                 }
                 let mut created = toml::Table::new();
                 created.insert("id".into(), toml::Value::String(provider_id.to_string()));
@@ -736,6 +752,41 @@ mod tests {
             std::fs::read_to_string(&path).expect("unchanged"),
             "providers = 1\n"
         );
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn model_preferences_clear_roles_atomically_and_preserve_on_error() {
+        let path = temp_path("model-preferences");
+        let original =
+            "default_provider = \"glm-coding\"\ndefault_model = \"glm-5.2\"\ncustom = 7\n";
+        std::fs::write(&path, original).expect("seed config");
+        write_provider_model_preferences(
+            &path,
+            "glm-coding",
+            &["glm-5.2".into()],
+            &[("default_provider", "default_model")],
+        )
+        .expect("save preferences");
+        let table: toml::Table = toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(!table.contains_key("default_provider"));
+        assert!(!table.contains_key("default_model"));
+        assert_eq!(table["custom"].as_integer(), Some(7));
+        assert_eq!(
+            table["providers"][0]["disabled_models"][0].as_str(),
+            Some("glm-5.2")
+        );
+
+        let invalid = format!("{original}providers = 1\n");
+        std::fs::write(&path, &invalid).unwrap();
+        assert!(write_provider_model_preferences(
+            &path,
+            "glm-coding",
+            &["glm-5.2".into()],
+            &[("default_provider", "default_model")],
+        )
+        .is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), invalid);
         std::fs::remove_file(&path).ok();
     }
 }

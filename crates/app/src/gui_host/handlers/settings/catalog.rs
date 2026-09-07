@@ -65,6 +65,11 @@ async fn validate_runnable_model(
             format!("model {model_id} is not in the runnable catalog of provider {id}"),
         ));
     }
+    Ok(())
+}
+
+// 目录探测之后、配置写锁之内复核，防止校验后被另一条命令禁用。
+fn validate_model_enabled(core: &AppCore, id: &str, model_id: &str) -> Result<(), GuiHostError> {
     if !core.config().is_model_enabled(id, model_id) {
         return Err(GuiHostAdapter::host_error(
             "model_disabled",
@@ -359,14 +364,13 @@ pub(crate) async fn set_default_model(
             "global config directory is not available on this platform",
         )
     })?;
+    let mut core = adapter.core.write().await;
+    validate_model_enabled(&core, id, model_id)?;
     pawork_workspace::config::write_default_model_pair(&path, id, model_id)
         .map_err(|error| GuiHostAdapter::host_error("config_write", error.to_string()))?;
     // SET-5：写盘成功即同步内存生效配置（短写锁，校验读锁已释放），
     // 保证同会话重查 provider_auth_status 的 default 即为新值。
-    {
-        let mut core = adapter.core.write().await;
-        core.set_default_model_pair(id, model_id);
-    }
+    core.set_default_model_pair(id, model_id);
     Ok(settings_data(DefaultModelPair {
         provider_id: id.to_string(),
         model_id: model_id.clone(),
@@ -410,11 +414,12 @@ pub(crate) async fn set_provider_use_proxy(
             "global config directory is not available on this platform",
         )
     })?;
+    let mut core = adapter.core.write().await;
     pawork_workspace::config::write_provider_use_proxy(&path, id, *use_proxy)
         .map_err(|error| GuiHostAdapter::host_error("config_write", error.to_string()))?;
-    {
-        let mut core = adapter.core.write().await;
-        core.set_provider_use_proxy(id, *use_proxy);
+    core.set_provider_use_proxy(id, *use_proxy);
+    if core.provider_id().as_str() == id {
+        core.provider_stale = true;
     }
     Ok(settings_data(ProviderUseProxyData {
         provider_id: id.to_string(),
@@ -440,7 +445,7 @@ pub(crate) async fn set_model_enabled(
     };
     let id = provider_id.as_str();
     let model = model_id.as_str();
-    let disabled = {
+    {
         let core = adapter.core.read().await;
         if !known_provider(&core, id) {
             return Err(GuiHostAdapter::host_error(
@@ -459,27 +464,26 @@ pub(crate) async fn set_model_enabled(
                 format!("model {model} is not in the runnable catalog of provider {id}"),
             ));
         }
-        let mut disabled: Vec<String> = core
-            .config()
-            .providers
-            .iter()
-            .find(|provider| provider.id == id)
-            .map(|provider| provider.disabled_models.clone())
-            .unwrap_or_default();
-        if *enabled {
-            disabled.retain(|entry| entry != model);
-        } else if !disabled.iter().any(|entry| entry == model) {
-            // 幂等：重复同态写为最终覆盖语义。
-            disabled.push(model.to_string());
-        }
-        disabled
-    };
+    }
     let path = global_config_file()?;
+    // 写盘与内存同步共用写锁；单项修改基于最新磁盘，保留其他实例的选择。
+    let mut core = adapter.core.write().await;
+    let persisted = persisted_config(&path)?;
+    let mut disabled = persisted
+        .providers
+        .iter()
+        .find(|provider| provider.id == id)
+        .map(|provider| provider.disabled_models.clone())
+        .unwrap_or_default();
+    if *enabled {
+        disabled.retain(|entry| entry != model);
+    } else if !disabled.iter().any(|entry| entry == model) {
+        disabled.push(model.to_string());
+    }
     // 清除判定按盘上持久化配置：只有真实写盘的默认对才允许同批清除。
     let cleared: Vec<(RoleModelKind, (String, String))> = if *enabled {
         Vec::new()
     } else {
-        let persisted = persisted_config(&path)?;
         RoleModelKind::ALL
             .into_iter()
             .filter_map(|kind| {
@@ -488,19 +492,13 @@ pub(crate) async fn set_model_enabled(
             })
             .collect()
     };
-    pawork_workspace::config::write_provider_disabled_models(&path, id, &disabled)
+    let clear_pairs: Vec<_> = cleared
+        .iter()
+        .map(|(kind, _)| (kind.provider_key(), kind.model_key()))
+        .collect();
+    pawork_workspace::config::write_provider_model_preferences(&path, id, &disabled, &clear_pairs)
         .map_err(config_write_error)?;
-    for (kind, _) in &cleared {
-        pawork_workspace::config::write_model_pair(
-            &path,
-            kind.provider_key(),
-            kind.model_key(),
-            None,
-        )
-        .map_err(config_write_error)?;
-    }
     {
-        let mut core = adapter.core.write().await;
         core.set_provider_disabled_models(id, disabled);
         for (kind, pair) in &cleared {
             // 内存仅在与被清持久化对一致时同步清除，保留 CLI 覆盖的生效值。
@@ -536,7 +534,7 @@ pub(crate) async fn set_provider_models_enabled(
         unreachable!("set_provider_models_enabled handler receives SetProviderModelsEnabled")
     };
     let id = provider_id.as_str();
-    let disabled = {
+    let mut disabled = {
         let core = adapter.core.read().await;
         if !known_provider(&core, id) {
             return Err(GuiHostAdapter::host_error(
@@ -566,12 +564,25 @@ pub(crate) async fn set_provider_models_enabled(
         }
     };
     let path = global_config_file()?;
+    let mut core = adapter.core.write().await;
+    let persisted = persisted_config(&path)?;
+    if !*enabled {
+        // 全关不能重新启用暂时退出目录、随后可能回来的已禁用模型。
+        if let Some(provider) = persisted
+            .providers
+            .iter()
+            .find(|provider| provider.id == id)
+        {
+            disabled.extend(provider.disabled_models.iter().cloned());
+            disabled.sort();
+            disabled.dedup();
+        }
+    }
     // 全关展开使命中该 provider 的任一角色默认对整体失效；清除判定
     // 按盘上持久化配置（内存可能含不落盘的 CLI 覆盖）。
     let cleared: Vec<(RoleModelKind, (String, String))> = if *enabled {
         Vec::new()
     } else {
-        let persisted = persisted_config(&path)?;
         RoleModelKind::ALL
             .into_iter()
             .filter_map(|kind| {
@@ -580,19 +591,13 @@ pub(crate) async fn set_provider_models_enabled(
             })
             .collect()
     };
-    pawork_workspace::config::write_provider_disabled_models(&path, id, &disabled)
+    let clear_pairs: Vec<_> = cleared
+        .iter()
+        .map(|(kind, _)| (kind.provider_key(), kind.model_key()))
+        .collect();
+    pawork_workspace::config::write_provider_model_preferences(&path, id, &disabled, &clear_pairs)
         .map_err(config_write_error)?;
-    for (kind, _) in &cleared {
-        pawork_workspace::config::write_model_pair(
-            &path,
-            kind.provider_key(),
-            kind.model_key(),
-            None,
-        )
-        .map_err(config_write_error)?;
-    }
     {
-        let mut core = adapter.core.write().await;
         core.set_provider_disabled_models(id, disabled);
         for (kind, pair) in &cleared {
             // 内存仅在与被清持久化对一致时同步清除，保留 CLI 覆盖的生效值。
@@ -640,10 +645,14 @@ pub(crate) async fn set_default_role_model(
         None => None,
     };
     let path = global_config_file()?;
+    let mut core = adapter.core.write().await;
     let write_pair = match &pair {
         Some((provider_id, model_id)) => Some((provider_id.as_str(), model_id.as_str())),
         None => None,
     };
+    if let Some((provider_id, model_id)) = write_pair {
+        validate_model_enabled(&core, provider_id, model_id)?;
+    }
     pawork_workspace::config::write_model_pair(
         &path,
         kind.provider_key(),
@@ -651,10 +660,7 @@ pub(crate) async fn set_default_role_model(
         write_pair,
     )
     .map_err(config_write_error)?;
-    {
-        let mut core = adapter.core.write().await;
-        core.set_role_model_pair(kind, write_pair);
-    }
+    core.set_role_model_pair(kind, write_pair);
     Ok(settings_data(SetDefaultRoleModelData {
         role: kind.wire_name().to_string(),
         value: pair.map(|(provider_id, model_id)| DefaultModelPair {

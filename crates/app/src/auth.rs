@@ -214,7 +214,8 @@ impl AppCore {
                     scopes: preset.scopes,
                     provider: ProviderId::new(provider_id),
                 };
-                let prompt = request_device_authorization(&config, &self.http).await?;
+                let http = crate::provider_assembly::provider_http(self.config(), provider_id)?;
+                let prompt = request_device_authorization(&config, &http).await?;
                 Ok(OAuthLogin::Device {
                     provider: provider_id.to_string(),
                     config,
@@ -230,7 +231,11 @@ impl AppCore {
         login: OAuthLogin,
         timeout: Duration,
     ) -> Result<StoredCredential, AppError> {
-        oauth_finish(login, self.auth_backend().as_ref(), &self.http, timeout).await
+        let provider = match &login {
+            OAuthLogin::Pkce { provider, .. } | OAuthLogin::Device { provider, .. } => provider,
+        };
+        let http = crate::provider_assembly::provider_http(self.config(), provider)?;
+        oauth_finish(login, self.auth_backend().as_ref(), &http, timeout).await
     }
 }
 
@@ -517,7 +522,14 @@ mod tests {
             .mount(&server)
             .await;
 
-        let core = core_with_device_override(server.uri());
+        let mut core = core_with_device_override(server.uri());
+        core.config.proxy_url = Some("http://[invalid-proxy".into());
+        core.set_provider_use_proxy("xai", false);
+        // 旧共享客户端故意指向不可达代理；开始与完成均须按 provider 重建。
+        core.http = reqwest::Client::builder()
+            .proxy(reqwest::Proxy::all("http://127.0.0.1:1").expect("proxy"))
+            .build()
+            .expect("http client");
         let login = core.oauth_begin("xai").await.expect("device begin");
         let OAuthLogin::Device { prompt, .. } = &login else {
             panic!("xai login must be device flow");

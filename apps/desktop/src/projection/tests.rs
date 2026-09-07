@@ -337,6 +337,13 @@ fn default_model_unavailable_flag_tracks_connection_and_catalog() {
     projection.settings_providers.default_model =
         Some(("kimi".into(), "kimi-k2-0905-preview".into()));
     assert!(!projection.default_model_unavailable());
+    let saved_default = projection.settings_providers.default_model.clone();
+    projection.selected_model = saved_default.clone();
+    projection.set_models(vec![]);
+    // 成功加载为空（包括全禁用）明确失效，保留默认与 Composer，不静默换绑。
+    assert!(projection.default_model_unavailable());
+    assert_eq!(projection.settings_providers.default_model, saved_default);
+    assert_eq!(projection.selected_model, saved_default);
     projection.set_models(vec![ModelEntry {
         provider_id: "kimi".into(),
         id: "kimi-k2-0905-preview".into(),

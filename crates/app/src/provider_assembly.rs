@@ -14,9 +14,9 @@ use pawork_auth::{
     SecretBackend,
 };
 use pawork_domain::{
-    AgentEvent, CanonicalModelRequest, CancellationToken, ContentPart, Message, MessageId,
+    AgentEvent, CancellationToken, CanonicalModelRequest, ContentPart, Message, MessageId,
     MessageRole, ModelDefinition, ModelId, ModelProvider, ProviderError, ProviderErrorKind,
-    ProviderEventSink, ProviderStreamEvent, ProviderId, RequestId, ResolvedCredential, RunId,
+    ProviderEventSink, ProviderId, ProviderStreamEvent, RequestId, ResolvedCredential, RunId,
     SessionId, TextContent,
 };
 use pawork_providers::ReasoningProtector;
@@ -232,6 +232,8 @@ impl AppCore {
         self.registry = Arc::new(assembled.registry);
         self.provider_id = target;
         self.model = target_model;
+        self.provider_pending = false;
+        self.provider_stale = false;
         self.rebind_persistent_protector();
         let to = (self.provider_id.clone(), self.model.clone());
         if let Some(session) = session {
@@ -249,7 +251,7 @@ impl AppCore {
         let config = self.config.clone();
         let backend = Arc::clone(&self.backend);
         let protector = Arc::clone(&self.reasoning_protector);
-        let reuse = (!self.provider_pending).then(|| {
+        let reuse = (!self.provider_needs_rebuild()).then(|| {
             (
                 self.provider_id.clone(),
                 Arc::clone(&self.provider),
@@ -393,7 +395,9 @@ impl AppCore {
             }
         }
 
-        let mut catalog = ModelRegistry::empty();
+        // 聚合目录按 (provider, model) 保留同名项；单供应商 Registry 按 model
+        // 索引，不能拿它跨供应商去重，否则默认角色与启用弹层会缺模型。
+        let mut catalog: Vec<CatalogEntry> = Vec::new();
         for id in &provider_ids {
             let channel = channels::first_party_channel(id.as_str());
             let protocol = match channel_protocol(channel, &self.config, id.as_str()) {
@@ -402,14 +406,14 @@ impl AppCore {
             };
             let registry = assemble_registry(&self.config, id, protocol, channel);
             for entry in registry.list() {
-                if catalog.resolve(entry.id.as_str()).is_none() {
-                    catalog.extend_with(vec![entry.clone()]);
+                if entry.provider == *id {
+                    catalog.push(entry.clone());
                 }
             }
         }
         let mut probe_jobs = Vec::new();
         for id in provider_ids {
-            let assembled = if id.as_str() == self.provider_id.as_str() && !self.provider_pending {
+            let assembled = if id.as_str() == self.provider_id.as_str() && !self.provider_needs_rebuild() {
                 Some((Arc::clone(&self.provider), self.credential.clone()))
             } else {
                 match assemble_provider(
@@ -429,7 +433,7 @@ impl AppCore {
                 probe_jobs.push((id, adapter, credential));
             }
         }
-        let catalog_for_probe = catalog.clone();
+        let catalog_for_probe = ModelRegistry::empty();
         // 单通道探测若挂起（临期 OAuth / 不可达厂商），不得拖死 Desktop
         // ModelList：客户端默认 10s 超时，静态目录已含 §1.1 低消耗模型。
         const OVERVIEW_PROBE_TIMEOUT: Duration = Duration::from_secs(4);
@@ -463,8 +467,11 @@ impl AppCore {
                 }
                 Ok(probe) => {
                     for definition in &probe.definitions {
-                        if catalog.resolve(definition.id.as_str()).is_none() {
-                            catalog.extend_with(vec![CatalogEntry {
+                        if !catalog
+                            .iter()
+                            .any(|entry| entry.provider == id && entry.id == definition.id)
+                        {
+                            catalog.push(CatalogEntry {
                                 id: definition.id.clone(),
                                 provider: id.clone(),
                                 display_name: definition.display_name.clone(),
@@ -473,13 +480,14 @@ impl AppCore {
                                 capabilities: definition.capabilities.clone(),
                                 pricing: None,
                                 aliases: Vec::new(),
-                            }]);
+                            });
                         }
                     }
                 }
             }
         }
-        catalog.list().into_iter().cloned().collect()
+        catalog.sort_by(|a, b| a.id.cmp(&b.id).then(a.provider.cmp(&b.provider)));
+        catalog
     }
 }
 
@@ -557,7 +565,7 @@ fn find_provider<'a>(
 /// 该 provider 出站应使用的代理（ADR-052 SET-6h）：Global `proxy_url`
 /// 生效，除非该 provider 显式 `use_proxy = false`。未按 id 特判，
 /// 仅查配置。
-fn provider_proxy(config: &PaworkConfig, provider_id: &str) -> Option<String> {
+pub(crate) fn provider_proxy(config: &PaworkConfig, provider_id: &str) -> Option<String> {
     let bypass = config
         .providers
         .iter()
@@ -568,6 +576,14 @@ fn provider_proxy(config: &PaworkConfig, provider_id: &str) -> Option<String> {
     } else {
         config.proxy_url.clone()
     }
+}
+
+/// 认证请求与模型请求共用该 provider 的代理选择。
+pub(crate) fn provider_http(
+    config: &PaworkConfig,
+    provider_id: &str,
+) -> Result<reqwest::Client, AppError> {
+    AppCore::http_with_proxy(provider_proxy(config, provider_id).as_deref())
 }
 
 /// 通道协议解析（无凭证依赖）：首发通道固定，其余走 config provider_protocols。
@@ -805,7 +821,7 @@ async fn oauth_credential(
     };
     if refresh {
         let preset = oauth_refresh_endpoint(config, id)?;
-        let http = AppCore::http_from_config(config)?;
+        let http = provider_http(config, id)?;
         let refresh_config = OAuthRefreshConfig {
             token_url: preset.token_url,
             client_id: preset.client_id,
@@ -1010,7 +1026,11 @@ mod tests {
 
     #[tokio::test]
     async fn models_overview_aggregates_six_channels() {
-        let (core, _dir) = mock_core(Vec::new()).await;
+        let (mut core, _dir) = mock_core(Vec::new()).await;
+        core.config.providers.push(ProviderConfig {
+            id: "mock".into(),
+            ..Default::default()
+        });
         let overview = core.models_overview().await;
         let providers: std::collections::BTreeSet<String> = overview
             .iter()
@@ -1033,6 +1053,15 @@ mod tests {
             overview.iter().any(|entry| entry.id.as_str() == "grok-4"),
             "xai static models missing"
         );
+        for provider in ["glm-coding", "mock"] {
+            assert!(
+                overview
+                    .iter()
+                    .any(|entry| entry.provider.as_str() == provider
+                        && entry.id.as_str() == "glm-5.2"),
+                "same model id must remain selectable under {provider}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -1182,6 +1211,12 @@ mod tests {
         .expect("store default oauth");
 
         let mut config = PaworkConfig::default();
+        config.proxy_url = Some("http://[invalid-proxy".into());
+        config.providers.push(ProviderConfig {
+            id: "xai".into(),
+            use_proxy: Some(false),
+            ..Default::default()
+        });
         config.extra.insert(
             "oauth".into(),
             serde_json::json!({

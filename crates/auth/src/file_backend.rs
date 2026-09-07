@@ -145,8 +145,24 @@ impl SecretBackend for FileBackend {
     }
 
     fn store_batch(&self, updates: &[(&str, &str, &str)]) -> Result<(), AuthError> {
+        self.replace_batch(updates, &[])
+    }
+
+    fn replace_batch(
+        &self,
+        updates: &[(&str, &str, &str)],
+        deletions: &[(&str, &str)],
+    ) -> Result<(), AuthError> {
         let _guard = acquire_file_lock(&self.write_lock_path(), WRITE_LOCK_TIMEOUT)?;
         let mut entries = self.load()?;
+        for &(service, account) in deletions {
+            if let Some(accounts) = entries.get_mut(service) {
+                accounts.remove(account);
+                if accounts.is_empty() {
+                    entries.remove(service);
+                }
+            }
+        }
         for &(service, account, secret) in updates {
             entries
                 .entry(service.to_string())

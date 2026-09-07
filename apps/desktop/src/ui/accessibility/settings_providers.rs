@@ -723,7 +723,7 @@ impl AppView {
     }
 
     /// 角色菜单展开态 AX（与 render 浮层同源）：清除行 + 已连接 provider
-    /// 分组的启用模型；空候选只发布诚实说明行（无 Press，不编造模型）。
+    /// 分组的启用模型；空候选保留清除行并发布诚实说明，不编造模型。
     /// 面板高度按内容估值并在 MENU_MAX_HEIGHT 内裁剪，与 render 自滚一致。
     fn settings_role_menu_ax(&self, role: SettingsRole, menu_x: f32, menu_y: f32) -> AxNode {
         let candidates = settings_role_candidates(
@@ -733,7 +733,7 @@ impl AppView {
         let current = self.projection.settings_providers.role_value(role);
         let highlight = self.menu_highlight_effective(self.menu_selected_index());
         let content_height = if candidates.is_empty() {
-            metrics::MENU_PADDING * 2.0 + SETTINGS_ROLE_MENU_EMPTY_HEIGHT
+            metrics::MENU_PADDING * 2.0 + metrics::MENU_ROW_HEIGHT + SETTINGS_ROLE_MENU_EMPTY_HEIGHT
         } else {
             let entry_count: usize = candidates.iter().map(|(_, models)| models.len()).sum();
             metrics::MENU_PADDING * 2.0
@@ -749,22 +749,6 @@ impl AppView {
         );
         let mut item_y = menu_y + metrics::MENU_PADDING;
         let menu_bottom = menu_y + menu_height;
-        if candidates.is_empty() {
-            return menu.child(
-                AxNode::new(
-                    format!("settings-role-menu-empty-{}", role.wire_name()),
-                    AxRole::StaticText,
-                    t("settings.roles.empty_title"),
-                    AxRect::new(
-                        menu_x,
-                        item_y,
-                        SETTINGS_ROLE_MENU_WIDTH,
-                        SETTINGS_ROLE_MENU_EMPTY_HEIGHT,
-                    ),
-                )
-                .value(t("settings.roles.empty_hint")),
-            );
-        }
         let can_write = self.settings_role_menu_enabled(role);
         let mut clear = AxNode::new(
             settings_role_clear_identifier(role),
@@ -785,6 +769,22 @@ impl AppView {
         }
         menu = menu.child(clear);
         item_y += metrics::MENU_ROW_HEIGHT;
+        if candidates.is_empty() {
+            return menu.child(
+                AxNode::new(
+                    format!("settings-role-menu-empty-{}", role.wire_name()),
+                    AxRole::StaticText,
+                    t("settings.roles.empty_title"),
+                    AxRect::new(
+                        menu_x,
+                        item_y,
+                        SETTINGS_ROLE_MENU_WIDTH,
+                        SETTINGS_ROLE_MENU_EMPTY_HEIGHT,
+                    ),
+                )
+                .value(t("settings.roles.empty_hint")),
+            );
+        }
         let mut item_ix = 1;
         for (provider_id, models) in candidates {
             // 组头显示名取 provider 权威清单（与 render 同源回落）。

@@ -144,20 +144,6 @@ pub(crate) async fn run_start(
         let workspace = core
             .workspace_for_session_or_unbound(session_id)
             .map_err(GuiHostAdapter::app_error)?;
-        if core.provider_pending() {
-            return Ok(AppResponse::Error(ErrorContext {
-                category: ErrorCategory::Authentication,
-                message: format!(
-                    "provider {} 未装配凭证：先 pawork auth set-key {} 或 pawork auth login {}",
-                    core.provider_id().as_str(),
-                    core.provider_id().as_str(),
-                    core.provider_id().as_str()
-                ),
-                retryable: false,
-                retry_after_ms: None,
-                diagnostics: Default::default(),
-            }));
-        }
         (
             core.resume_messages_keep_pending(session_id)
                 .await
@@ -275,6 +261,18 @@ pub(crate) async fn run_start(
                     }),
                 );
             }
+        }
+    }
+    // 凭证或供应商代理变化后，同 provider/model 也必须重装配；先完成
+    // 上面的显式模型选择，保留旧客户端仅传 model 的解析顺序。
+    {
+        let mut core = adapter.core.write().await;
+        if core.provider_needs_rebuild() {
+            let provider = core.provider_id().as_str().to_string();
+            let model = core.model().as_str().to_string();
+            core.switch_provider(None, &provider, Some(&model))
+                .await
+                .map_err(GuiHostAdapter::app_error)?;
         }
     }
     // ADR-055 D4：会话当前生效模型被禁用时结构化 fail-closed——不启动

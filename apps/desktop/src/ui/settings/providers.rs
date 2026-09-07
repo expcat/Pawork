@@ -1096,9 +1096,18 @@ impl AppView {
                 view.dismiss_menu_on_outside(MenuKind::SettingsRole(role), event.position, cx);
             },
         ));
+        panel = panel.child(
+            MenuRow::new(settings_role_clear_identifier(role))
+                .label(t("settings.roles.clear"))
+                .selected(current.is_none())
+                .highlighted(0 == highlight)
+                .on_click(cx.listener(move |view, _event, _window, cx| {
+                    view.on_select_settings_role(role, None, cx);
+                })),
+        );
         if candidates.is_empty() {
             // 无已连接 / 已启用模型：菜单仍可打开，给标题 + 一行指引的
-            // 诚实空态；无可选项，不编造模型。
+            // 诚实空态；清除行仍可操作，不编造模型。
             return panel.child(
                 div()
                     .flex()
@@ -1121,15 +1130,6 @@ impl AppView {
                     ),
             );
         }
-        panel = panel.child(
-            MenuRow::new(settings_role_clear_identifier(role))
-                .label(t("settings.roles.clear"))
-                .selected(current.is_none())
-                .highlighted(0 == highlight)
-                .on_click(cx.listener(move |view, _event, _window, cx| {
-                    view.on_select_settings_role(role, None, cx);
-                })),
-        );
         let mut item_ix = 1;
         for (provider_id, models) in candidates {
             // 组头显示名取 provider 权威清单；候选已按连接态过滤，此处

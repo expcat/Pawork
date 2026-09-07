@@ -708,8 +708,8 @@ impl DesktopProjection {
 
     /// Settings「模型与默认项」失效判定：默认 provider 未连接，或默认
     /// model 不在该 provider 当前可运行目录（projection.models）。无默认
-    /// 返回 false；目录为空（尚未成功加载或 model_list 失败）时无法判定，
-    /// 抑制提示不误报；只判定显式提示，不做任何静默切换。
+    /// 返回 false；空目录仅在尚未成功加载时抑制提示，已加载为空表示
+    /// 默认模型明确不可用；只判定显式提示，不做任何静默切换。
     pub fn default_model_unavailable(&self) -> bool {
         let Some((provider_id, model_id)) = &self.settings_providers.default_model else {
             return false;
@@ -721,9 +721,8 @@ impl DesktopProjection {
         if !connected {
             return true;
         }
-        // 目录为空 = 无成功目录数据：区分「无目录数据」与「目录明确
-        // 不含」，不误报失效。
-        if self.models.is_empty() {
+        // 尚无成功目录数据时不误报；已加载的空目录也能明确判定不含。
+        if self.models.is_empty() && !self.models_loaded {
             return false;
         }
         !self

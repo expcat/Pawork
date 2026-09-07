@@ -86,7 +86,12 @@ pub fn store_default_oauth_token(
         tokens.access_token.as_str(),
     ));
     updates.push((service.as_str(), meta_account.as_str(), meta_json.as_str()));
-    backend.store_batch(&updates)?;
+    if tokens.refresh_token.is_none() {
+        // 重新登录的缺省 refresh 表示新账号没有刷新令牌，不能继承旧账号。
+        backend.replace_batch(&updates, &[(service.as_str(), refresh_account.as_str())])?;
+    } else {
+        backend.store_batch(&updates)?;
+    }
     Ok(stored_from_meta(provider, meta))
 }
 
@@ -345,6 +350,57 @@ mod tests {
     }
 
     #[test]
+    fn replacing_login_without_refresh_drops_old_account_token() {
+        let file_path =
+            std::env::temp_dir().join(format!("pawork-replace-oauth-{}.json", std::process::id()));
+        for backend in [
+            Box::new(MemoryBackend::new()) as Box<dyn SecretBackend>,
+            Box::new(FileBackend::with_path(&file_path)),
+        ] {
+            let provider = ProviderId::new("xai");
+            crate::store_default_api_key(backend.as_ref(), &provider, "api-key-kept")
+                .expect("coexisting api key");
+            let old =
+                store_default_oauth_token(backend.as_ref(), provider.clone(), &token_set(None))
+                    .expect("old login");
+            let mut replacement = token_set(None);
+            replacement.access_token = "new-account-access".into();
+            replacement.refresh_token = Some(String::new());
+            assert!(
+                store_default_oauth_token(backend.as_ref(), provider.clone(), &replacement)
+                    .is_err()
+            );
+            assert_eq!(
+                read_refresh_token(&old, backend.as_ref()).unwrap(),
+                "refresh-secret-value-654321"
+            );
+            assert_eq!(
+                load_default_oauth_credential(backend.as_ref(), &provider).unwrap(),
+                Some(old)
+            );
+
+            replacement.refresh_token = None;
+            let new = store_default_oauth_token(backend.as_ref(), provider, &replacement)
+                .expect("replacement login");
+            assert!(matches!(
+                read_refresh_token(&new, backend.as_ref()),
+                Err(AuthError::NotFound)
+            ));
+            assert_eq!(
+                backend
+                    .get(&new.secret_service, &new.secret_account)
+                    .unwrap(),
+                "new-account-access"
+            );
+            assert_eq!(
+                backend.get("pawork.xai", "default").unwrap(),
+                "api-key-kept"
+            );
+        }
+        std::fs::remove_file(file_path).ok();
+    }
+
+    #[test]
     fn missing_entry_returns_none_and_delete_is_idempotent() {
         let backend = MemoryBackend::new();
         let provider = ProviderId::new("xai");
@@ -399,6 +455,15 @@ mod tests {
             .expect("present");
         assert_eq!(loaded, stored);
         assert_eq!(loaded.scopes, vec!["openid".to_string()]);
+        // 刷新响应省略 refresh 与重新登录不同：仍须保留当前账号的 refresh。
+        let mut without_refresh = rotated;
+        without_refresh.refresh_token = None;
+        update_default_oauth_token(&backend, &mut stored, &without_refresh)
+            .expect("refresh without rotation");
+        assert_eq!(
+            read_refresh_token(&stored, &backend).unwrap(),
+            "refresh-rotated-123456789"
+        );
     }
 
     #[test]

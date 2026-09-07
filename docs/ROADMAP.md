@@ -1,6 +1,6 @@
 # Pawork 活动路线图：Desktop 优化（OPT）
 
-> 基线日期：2026-09-05。状态：**OPT-D 六张候选稿已交付、已获视觉签字；OPT-1 已实现并通过定向验证；OPT-2 已实现且真窗口验收通过（§10.3），完成效果审查修复 5 项缺陷并通过定向测试与真窗口复验（§10.10）；OPT-3 内核/协议/配置半区已实现（3a/3b，ADR-055，API 1.12，§10.4），GUI 控件批次（启用弹层/四默认角色/代理 Switch）已实现并经定向门禁与协议层验收（§10.5），代理 Switch 像素级复验已通过（§10.6）；OPT-4 已实现（4a–4e，§10.6）且真窗口对照新图验收通过（§10.7）；OPT-3d/3e 已实现（ADR-056，API 1.13）并真窗口验收通过（§10.8），desktop 门禁 210/210**。来源：当日正式 Desktop 真窗口走查（11 条反馈）。本文件是当前活动线的任务规划，**不是**源码或冻结契约的事实源。P0–P2 收尾证据仍见 [Desktop Spec §8](spec/desktop.md#8-gui-收尾验收记录2026-09-05)；未排期候选仍见 [backlog.md](spec/backlog.md)。
+> 基线日期：2026-09-05。状态：**OPT-D 六张候选稿已交付、已获视觉签字；OPT-1 已实现并通过定向验证；OPT-2 已实现且真窗口验收通过（§10.3），完成效果审查修复 5 项缺陷并通过定向测试与真窗口复验（§10.10）；OPT-3 内核/协议/配置半区已实现（3a/3b，ADR-055，API 1.12，§10.4），GUI 控件批次（启用弹层/四默认角色/代理 Switch）已实现并经定向门禁与协议层验收（§10.5），代理 Switch 像素级复验已通过（§10.6）；OPT-4 已实现（4a–4e，§10.6）且真窗口对照新图验收通过（§10.7）；OPT-3d/3e 已实现（ADR-056，API 1.13）并真窗口验收通过（§10.8），desktop 门禁 210/210；OPT-3 完成效果审查修复 5 项缺陷并通过定向测试、CLI/Desktop 构建与隔离实例真窗口复验（§10.11，desktop 门禁 212/212）**。来源：当日正式 Desktop 真窗口走查（11 条反馈）。本文件是当前活动线的任务规划，**不是**源码或冻结契约的事实源。P0–P2 收尾证据仍见 [Desktop Spec §8](spec/desktop.md#8-gui-收尾验收记录2026-09-05)；未排期候选仍见 [backlog.md](spec/backlog.md)。
 
 **闸门**：凡涉及显示效果的条目，必须先完成 **OPT-D 统一 UI Design**（一体出图），再改像素与布局。内核/配置/协议可与出图并行准备，但 GUI 落地以设计稿为准。
 
@@ -169,7 +169,7 @@ F3「代理保存到对应配置」：现行 Global `[[providers]].use_proxy` �
 | OPT-D | 六张统一候选稿已交付、尺寸/状态走查通过；**用户视觉签字通过**（设计闸门已放行） |
 | OPT-1 | 1a–1d 已实现；本轮审查修复 3 项缺陷，608 项定向测试、Desktop 构建与单窗口外观保存/重启复验通过（§10.9）；未归档/未发布 |
 | OPT-2 | 2a–2d 已实现（ADR-054，API 1.11）；初次验收见 §10.3；本轮审查修复 5 项缺陷，622 项定向测试、CLI/Desktop 构建与真窗口复验通过（§10.10）；未归档/未发布 |
-| OPT-3 | 3a/3b 内核·协议·配置已实现（ADR-055，API 1.12）；GUI 控件批次已实现（§10.5），协议层验收通过、修复 D3a 缺陷；代理 Switch 像素级复验已通过（§10.6）；3d/3e 已实现（ADR-056，API 1.13）且真窗口验收通过（§10.8），desktop 门禁 210/210 |
+| OPT-3 | 3a/3b 内核·协议·配置已实现（ADR-055，API 1.12）；GUI 控件批次已实现（§10.5），协议层验收通过、修复 D3a 缺陷；代理 Switch 像素级复验已通过（§10.6）；3d/3e 已实现（ADR-056，API 1.13）且真窗口验收通过（§10.8），desktop 门禁 210/210；完成效果审查修复 5 项缺陷，workspace/auth/app/desktop 定向测试、CLI/Desktop 构建与隔离实例真窗口复验通过（§10.11，desktop 门禁 212/212） |
 | OPT-4 | 4a–4e 已实现（§10.6）：图标命中区/字形、Inspector 默认折叠 + 重开入口、Settings 全宽与导航零位移、4e 核对一致；desktop 门禁 207/207；真窗口对照新图验收通过（§10.7） |
 
 本线 OPT-1～OPT-4 全部任务已实现并验收；发布与全量门禁仍是 BK-RELEASE-01（未授权），不随本线推定。
@@ -388,4 +388,24 @@ Full workspace gate: NOT RUN（当前未设置全量门禁）。
 
 Validated: 上表实际命令、真窗口 AX/截图、Host snapshot、SQLite 与项目内标记文件；日志及截图留本机 /tmp，不检入仓库。
 Targeted regressions: 命名不改审批/事件账本、原子标题写回、命名释放 Core 锁与丢弃失效结果、创建回执定位、归档后草稿与 Terminal scope 一致。
+Full workspace gate: NOT RUN（当前未设置全量门禁）。
+
+### 10.11 OPT-3 完成效果审查与修复（2026-09-06）
+
+对照 §6 的 3a–3e、ADR-055/056 与当前源码，完成效果审查发现并修复以下缺口：
+
+- **模型启用集与默认项一致性**：单项保存改读最新磁盘值，保留其他实例已保存的禁用项；全关合并已有 denylist，避免暂时离开目录的模型恢复后被重新启用。禁用集与命中角色清除合并为一次原子写盘，失败全部保旧；同一 Host 的写盘与内存更新持同一 Core 写锁，设置角色默认值在写锁内复核启用状态。覆盖旧快照顺序写入，不声称跨进程同时写入互斥。
+- **跨供应商同名模型**：聚合目录原先仅按 model id 去重，会丢失另一供应商的同名条目；改按 provider + model 保留，模型弹层与默认角色候选均使用修正后的目录。
+- **默认角色空态**：无已连接/已启用候选时保留 Clear，渲染、键盘与 AX 一致；目录成功加载为空时明确判定默认模型失效，保留原选择，不静默切换。
+- **代理与凭证实际生效**：API key 验证、OAuth device start/token exchange/refresh 统一遵循供应商代理选择；凭证更新/移除或供应商代理设置变化后，下一轮即使 provider/model 相同也重新装配，避免复用旧凭证或代理。缺凭证启动的目录模式也可在连接后重装配。
+- **OAuth 替换与移除竞争**：新登录未返回 refresh_token 时原子删除旧账号 refresh，同时保留共存 API key；普通刷新省略 refresh_token 时仍保留当前账号 refresh。AuthRemove 与同 provider 认证写入共用单飞闸，进行中的认证返回 busy，避免删除后被写回。
+
+3d 仍为同 provider 的 API key + OAuth 共存、同 kind 覆盖、整组 Remove；同 kind 多账户不在本切片。3e 保持 Usage unavailable，不展示无权威来源的额度数字；vision/search 仍只保存选择。无新增生产依赖、schema 或 wire 变化，相关包级 Spec 与 Settings/GUI 设计同批同步。
+
+当前状态：修复已实现；workspace/auth/app/desktop 定向测试、CLI/Desktop 构建与隔离实例真窗口复验全部通过。本次未归档、未发布。
+
+真窗口复验（隔离实例 `opt3-review-live` + 平行 bundle，独立 HOME/数据/auth 目录，本地 mock `/models`；用户真实 config/auth 验收前后哈希一致、未污染）：未连接供应商显示默认模型失效告警；命名角色菜单空候选时 Clear 与空态说明并存，清除后落盘移除 naming 对、行显示 Not set；GLM 展开区 Proxy/Manage models/Credentials/Usage unavailable 齐备，代理 Switch Off 落盘 `use_proxy = false`；经 GUI 连接隔离 key 后 Manage models 可用，Disable all 原子写入 `disabled_models` 并同批清空命中的 default 对，AX 同步为 Off / Not set；Composer 选择器不再出现 GLM 已禁模型，当前标签保留旧选择不被静默改写（fail-closed 设计）。日志与 AX 转储留本机 /tmp（pawork-opt3-review-*），不检入仓库。
+
+Validated: `cargo test -p pawork-workspace --offline --lib --tests`（162 passed）；`cargo test -p pawork-auth -p pawork-app --offline --lib --tests`（314 passed，1 ignored）；adapter 失效状态调整后 `cargo test -p pawork-app --offline --lib`（216 passed）；`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`（212 passed）；`cargo build -p pawork -p pawork-desktop --offline --bins --features gpui/runtime_shaders`（通过）；`git diff --check`（通过）；隔离实例真窗口 AX 复验（上段）。
+Targeted regressions: 磁盘旧快照/暂退目录禁用项保留、禁用与角色清除原子写失败保旧、同名模型分供应商保留、空候选 Clear、加载为空时默认失效、认证代理路由、旧 refresh 不跨账号继承、认证期间 Remove 拒绝、同模型下一轮不复用旧凭证。
 Full workspace gate: NOT RUN（当前未设置全量门禁）。

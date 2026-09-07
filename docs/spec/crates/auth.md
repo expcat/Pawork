@@ -14,7 +14,7 @@
 | --- | --- | --- |
 | `src/lib.rs` | ~50 | crate 门面：红线说明；`locator` / `oauth` 为 pub 模块，其余私有模块 + 选择性 re-export |
 | `src/error.rs` | ~60 | `AuthError`：`Storage` / `NotFound` / `InvalidSecret` / `MalformedMetadata` / `OAuth` / `TokenEndpoint{error,description}` / `ExpiredToken` / `Callback` / `Http` / `Io` / `Url`；任何变体 Display 不含明文。`Http` 只保留错误类别与 scheme/host/port，剥掉 userinfo/path/query |
-| `src/backend.rs` | ~200 | `SecretBackend` trait（`store` / `store_batch` / `get` / `delete` / 隐藏扩展点 `refresh_lock_path`）；`MemoryBackend`（测试用，故意不派生 Debug） |
+| `src/backend.rs` | ~200 | `SecretBackend` trait（`store` / `store_batch` / `replace_batch` / `get` / `delete` / 隐藏扩展点 `refresh_lock_path`）；`MemoryBackend`（测试用，故意不派生 Debug） |
 | `src/file_backend.rs` | ~580 | `FileBackend`：单 JSON 文件（`version` + `service→account→secret`）、0600、独立临时文件 + rename 原子写、跨进程 write/refresh 锁、损坏 fail-closed；`try_acquire_file_lock` / `FileLockGuard`（crate 内共用） |
 | `src/locator.rs` | ~70 | 命名单一事实源：`PROVIDER_SERVICE_PREFIX`（`pawork`）、`MCP_SERVICE_PREFIX`（`pawork.mcp.`）、`MCP_AUTH_FILE_NAME`（`mcp-auth.json`）、`secret_service_for` / `oauth_secret_service` / `is_mcp_secret_service` / `api_key_env_name` / `read_api_key_from_env` |
 | `src/masked.rs` | ~110 | `MaskedCredential`：`mask`（按字符数分档脱敏）/ `from_masked` / `as_str`；`Display`/`Debug`/`Serialize` 永不含明文 |
@@ -30,7 +30,7 @@
 
 ### 3.1 Secret 后端
 
-- `SecretBackend`（`Send + Sync`）：以 `(service, account)` 定位。`store` / `get`（缺失报 `NotFound`）/ `delete`；`store_batch` 默认逐条写，正式后端（FileBackend）覆写为单次原子提交；`refresh_lock_path()`（`#[doc(hidden)]` 扩展点）返回跨进程 refresh 锁路径，默认 `None`。
+- `SecretBackend`（`Send + Sync`）：以 `(service, account)` 定位。`store` / `get`（缺失报 `NotFound`）/ `delete`；`store_batch` 默认逐条写，正式后端（FileBackend）覆写为单次原子提交；`replace_batch(entries, deletions)` 原子写入并删除旧条目（FileBackend/MemoryBackend 实现；其他后端默认拒绝，不部分提交）；`refresh_lock_path()`（`#[doc(hidden)]` 扩展点）返回跨进程 refresh 锁路径，默认 `None`。
 - `FileBackend::new()`：默认路径 `$PAWORK_HOME/auth.json`，未设时 `~/.pawork/auth.json`；`with_path`（测试）；`path()` 诊断（不含 secret）。
 - 文件格式：`{ version: 1, entries: { service: { account: secret } } }`；只接受 `FORMAT_VERSION = 1`，版本不符 fail-closed。
 - 锁文件（与 auth 文件同目录、非机密）：写锁 `auth.write.lock`（10ms 重试、30s 超时）；OAuth refresh 锁 `auth.refresh.lock`（经 `refresh_lock_path` 暴露给 refresh 编排）。
@@ -48,7 +48,7 @@
 - `ApiKeyCredential::store(_with_scopes)`（写后端 + 返回元数据）/ `from_stored`（校验形态）/ `resolve`（→ `ResolvedCredential`，`CredentialKind::ApiKey`）/ `delete`。
 - `resolve_provider_credential(backend, provider_id) -> Result<CredentialSource, AuthError>`：见 §4.1。`store_default_api_key` / `delete_default_api_key` 操作主条目（account 固定 `default`，删除幂等）。
 - default OAuth 条目（每 provider 唯一，`OAUTH_DEFAULT_ACCOUNT = "default"`）：
-  - 写：`store_default_oauth_token`（`default.access` / `.refresh` / `.meta` 三账户一次 `store_batch`）；`update_default_oauth_token`（refresh 后轮换写回）；`delete_default_oauth_token`。
+  - 写：`store_default_oauth_token`（`default.access` / `.refresh` / `.meta` 三账户一次原子提交；重新登录缺 refresh 时通过 `replace_batch` 同批删除旧账号 refresh，刷新缺 refresh 则保留当前值）；`update_default_oauth_token`（refresh 后轮换写回）；`delete_default_oauth_token`。
   - 读：`load_default_oauth_credential`（由 meta 无网络重建 `StoredCredential`）与 `load_default_oauth_meta`（`auth list` 展示用）；条目不存在返回 `None`，由调用方 fail-closed。
   - 刷新：`refresh_default_oauth_credential_if_needed`、`default_oauth_needs_refresh`（内置 30s grace）。
   - `DefaultOAuthMeta { masked, created_at_ms, expires_at_ms, scopes, account_id }`：非机密 JSON（可打印、存 meta 账户）；meta 损坏报 `MalformedMetadata`。
@@ -127,7 +127,7 @@
 | `backend.rs` / `file_backend.rs` | store/get/delete 往返、`store_batch` 原子性、0600 权限、原子替换、损坏文件与版本不符 fail-closed、write 锁竞争（测试用 `std::env::temp_dir()` 唯一路径） |
 | `locator.rs` / `resolve.rs` | env 名推导（大写、`-`→`_`）、解析链三分支、仅 `NotFound` 降级、损坏上抛、env 值不入日志字段 |
 | `masked.rs` / `base64url.rs` | 三档脱敏边界、Unicode 安全、非规范 base64url 拒绝 |
-| `credential.rs` / `default_credential.rs` | 元数据序列化无明文、default 三账户读写、meta 损坏报 `MalformedMetadata`、ChatGPT account_id claim 提取 |
+| `credential.rs` / `default_credential.rs` | 元数据序列化无明文、default 三账户读写、Memory/File 两后端 OAuth 替换缺 refresh 不继承旧账号且 API key 共存不变、非法替换保旧、刷新缺 refresh 保留当前值、meta 损坏报 `MalformedMetadata`、ChatGPT account_id claim 提取 |
 | `oauth.rs` | PKCE 与 Device 全流程、refresh 语义、回调服务器行为（见下） |
 
 `oauth.rs` 内联回归要点：

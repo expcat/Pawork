@@ -26,6 +26,16 @@ pub trait SecretBackend: Send + Sync {
         }
         Ok(())
     }
+    /// 原子写入并删除指定旧条目。无法保证原子替换的后端必须拒绝，不能部分提交。
+    fn replace_batch(
+        &self,
+        _entries: &[(&str, &str, &str)],
+        _deletions: &[(&str, &str)],
+    ) -> Result<(), AuthError> {
+        Err(AuthError::Storage(
+            "backend does not support atomic replacement".into(),
+        ))
+    }
     /// 读取一条 secret；不存在时返回 [`AuthError::NotFound`]。
     fn get(&self, service: &str, account: &str) -> Result<String, AuthError>;
     /// 删除一条 secret；不存在时返回 [`AuthError::NotFound`]。
@@ -105,7 +115,18 @@ impl SecretBackend for MemoryBackend {
     }
 
     fn store_batch(&self, entries: &[(&str, &str, &str)]) -> Result<(), AuthError> {
+        self.replace_batch(entries, &[])
+    }
+
+    fn replace_batch(
+        &self,
+        entries: &[(&str, &str, &str)],
+        deletions: &[(&str, &str)],
+    ) -> Result<(), AuthError> {
         let mut stored = self.entries.lock().expect("MemoryBackend mutex poisoned");
+        for &(service, account) in deletions {
+            stored.remove(&(service.to_string(), account.to_string()));
+        }
         for &(service, account, secret) in entries {
             stored.insert(
                 (service.to_string(), account.to_string()),

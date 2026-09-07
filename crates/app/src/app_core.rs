@@ -339,6 +339,8 @@ pub struct AppCore {
     /// true 表示默认 provider 因缺凭证未装配（目录/凭证命令仍可用；
     /// chat 走 CatalogOnlyProvider 的 Authentication 错误 fail-closed）。
     pub(crate) provider_pending: bool,
+    /// 凭证或供应商配置已更新，下一轮前重新装配。
+    pub(crate) provider_stale: bool,
     pub(crate) credential: Option<ResolvedCredential>,
     pub(crate) model: ModelId,
     pub(crate) provider_id: ProviderId,
@@ -695,6 +697,7 @@ impl AppCore {
         Self {
             provider,
             provider_pending: false,
+            provider_stale: false,
             credential,
             model,
             provider_id,
@@ -756,10 +759,14 @@ impl AppCore {
     /// 未配置时保持 reqwest 默认（读 `HTTPS_PROXY` 等环境变量）；配置后
     /// 显式代理优先生效，回环/`.local` 目标直连（`loopback_aware_proxy`）。
     pub(crate) fn http_from_config(config: &PaworkConfig) -> Result<reqwest::Client, AppError> {
+        Self::http_with_proxy(config.proxy_url.as_deref())
+    }
+
+    pub(crate) fn http_with_proxy(proxy_url: Option<&str>) -> Result<reqwest::Client, AppError> {
         // F06: OAuth/探测客户端与 HttpClient 一样禁止跟随跨 origin 跳转
         // （默认政策会带出 x-api-key）。workspace 层 proxy_url 已在 loader 剥离。
         let redirect = reqwest::redirect::Policy::none();
-        match &config.proxy_url {
+        match proxy_url {
             Some(proxy) => {
                 let proxy = pawork_providers::net::http::loopback_aware_proxy(proxy)
                     .map_err(|err| AppError::InvalidProxy(err))?;
@@ -1184,14 +1191,13 @@ impl AppCore {
         &self.backend
     }
 
-    /// OAuth 刷新 / token 交换用的共享 HTTP 客户端（SET-2 后台认证任务用）。
-    pub(crate) fn http_client(&self) -> &reqwest::Client {
-        &self.http
-    }
-
     /// 默认 provider 是否因缺凭证未装配（目录兜底模式）。
     pub fn provider_pending(&self) -> bool {
         self.provider_pending
+    }
+
+    pub(crate) fn provider_needs_rebuild(&self) -> bool {
+        self.provider_pending || self.provider_stale
     }
 
     pub fn workspace_id(&self) -> &WorkspaceId {

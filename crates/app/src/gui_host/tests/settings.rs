@@ -83,10 +83,9 @@ pub(super) struct RestoreEnvVar(String, Option<std::ffi::OsString>);
 impl Drop for RestoreEnvVar {
     fn drop(&mut self) {
         match self.1.take() {
-            Some(value) => crate::testsupport::set_env(
-                &self.0,
-                value.to_str().expect("env value is utf-8"),
-            ),
+            Some(value) => {
+                crate::testsupport::set_env(&self.0, value.to_str().expect("env value is utf-8"))
+            }
             None => crate::testsupport::remove_env(&self.0),
         }
     }
@@ -900,6 +899,11 @@ async fn auth_set_api_key_verifies_replaces_and_masks_end_to_end() {
 
     let backend = Arc::new(pawork_auth::MemoryBackend::new());
     let (adapter, dir) = settings_adapter(server.uri(), backend).await;
+    {
+        let mut core = adapter.core.write().await;
+        core.config.proxy_url = Some("http://[invalid-proxy".into());
+        core.set_provider_use_proxy("glm-coding", false);
+    }
     let mut events = adapter.subscribe_events();
 
     let response = adapter
@@ -945,6 +949,47 @@ async fn auth_set_api_key_verifies_replaces_and_masks_end_to_end() {
     assert_eq!(entry["auth"]["method"], "api_key");
     let masked = entry["auth"]["masked_credential"].as_str().expect("masked");
     assert!(!masked.contains(secret), "status leaks plaintext: {masked}");
+
+    // 同 provider/model 连接成功后下一轮必须重装配，不能继续使用旧 Mock adapter。
+    let session = adapter
+        .core
+        .read()
+        .await
+        .create_session_unbound("auth refresh")
+        .await
+        .unwrap();
+    let run = command_envelope(AppCommand::RunStart {
+        session_id: session,
+        user_message: "hi".into(),
+        model: Some("glm-5.2".into()),
+        provider: Some("glm-coding".into()),
+        profile: None,
+    });
+    assert!(adapter.core.read().await.provider_needs_rebuild());
+    assert!(matches!(
+        adapter.command(&run).await.unwrap(),
+        AppResponse::Accepted { .. }
+    ));
+    {
+        let core = adapter.core.read().await;
+        assert!(!core.provider_needs_rebuild());
+        assert_eq!(core.credential.as_ref().unwrap().expose_secret(), secret);
+    }
+    adapter
+        .command(&command_envelope(AppCommand::AuthRemove {
+            provider_id: "glm-coding".into(),
+        }))
+        .await
+        .expect("remove stored key");
+    assert!(adapter.core.read().await.provider_needs_rebuild());
+    let retry = command_envelope(run.command);
+    // 文件凭证移除后允许恢复 env fallback，但不能复用被移除的 adapter/key。
+    if let Ok(response) = adapter.command(&retry).await {
+        assert!(matches!(response, AppResponse::Accepted { .. }));
+        let core = adapter.core.read().await;
+        assert!(!core.provider_needs_rebuild());
+        assert!(core.credential.as_ref().unwrap().expose_secret() != secret);
+    }
 
     // ADR-046 D6 Secret 负断言：命令完成后，临时目录内任何持久化文件
     //（command ledger / session.db 及其 -wal/-shm）都不得含明文——
@@ -1012,7 +1057,9 @@ async fn auth_set_api_key_verify_failure_keeps_old_credential() {
 
 /// 构造带 MCP 段生效配置的 adapter：merged 视图经 extra 注入（模拟
 /// loader 已发现 Global 层），盘上内容由测试自行播种保持一致。
-pub(super) async fn mcp_settings_adapter(mcp: serde_json::Value) -> (GuiHostAdapter, tempfile::TempDir) {
+pub(super) async fn mcp_settings_adapter(
+    mcp: serde_json::Value,
+) -> (GuiHostAdapter, tempfile::TempDir) {
     let dir = tempfile::tempdir().expect("tempdir");
     let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
         .await
@@ -1226,7 +1273,9 @@ async fn mcp_test_unknown_name_fails_closed_and_keeps_list() {
         .await
         .expect("mcp list before");
     let error = adapter
-        .command(&command_envelope(AppCommand::McpTest { name: "ghost".into() }))
+        .command(&command_envelope(AppCommand::McpTest {
+            name: "ghost".into(),
+        }))
         .await
         .expect_err("unknown server must fail closed");
     assert_eq!(error.code, "unknown_mcp_server");
@@ -1270,7 +1319,9 @@ async fn mcp_test_unreachable_http_fails_closed_and_keeps_slot_state() {
         .await
         .expect("mcp list before");
     let error = adapter
-        .command(&command_envelope(AppCommand::McpTest { name: "demo".into() }))
+        .command(&command_envelope(AppCommand::McpTest {
+            name: "demo".into(),
+        }))
         .await
         .expect_err("unreachable http server must fail closed");
     assert_eq!(error.code, "app_error");
@@ -1674,7 +1725,7 @@ async fn provider_auth_status_env_fallback_not_listed_as_credential() {
 }
 
 #[tokio::test]
-async fn xai_api_key_verification_flight_rejects_auth_cancel() {
+async fn xai_api_key_verification_flight_rejects_auth_cancel_and_remove() {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -1718,6 +1769,13 @@ async fn xai_api_key_verification_flight_rejects_auth_cancel() {
             }
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
+        let remove_error = adapter
+            .command(&command_envelope(AppCommand::AuthRemove {
+                provider_id: pawork_domain::ProviderId::from("xai"),
+            }))
+            .await
+            .expect_err("remove must not race with credential verification");
+        assert_eq!(remove_error.code, "busy");
         adapter
             .command(&command_envelope(AppCommand::AuthCancel {
                 provider_id: pawork_domain::ProviderId::from("xai"),
@@ -1745,6 +1803,13 @@ async fn xai_api_key_verification_flight_rejects_auth_cancel() {
         !event_wire.contains("\"cancelled\""),
         "rejected cancel must not emit Cancelled: {event_wire}"
     );
+    adapter
+        .command(&command_envelope(AppCommand::AuthRemove {
+            provider_id: pawork_domain::ProviderId::from("xai"),
+        }))
+        .await
+        .expect("remove succeeds once verification has finished");
+    assert!(adapter.auth_flights.lock().expect("flights").is_empty());
     server.verify().await;
 }
 
@@ -1971,6 +2036,13 @@ async fn disable_keeps_persisted_role_pairs_under_memory_override() {
         Some(("deepseek", "deepseek-chat")),
     )
     .expect("seed persisted default pair");
+    // 另一实例已保存的禁用项尚未进入本 Host 内存，单项操作必须保留。
+    pawork_workspace::config::write_provider_disabled_models(
+        &config_path,
+        "glm-coding",
+        &["temporarily-unlisted-model".into()],
+    )
+    .expect("seed newer persisted denylist");
     let provider = pawork_domain::ProviderId::from("glm-coding");
 
     // 单模型禁用：覆盖值命中内存默认对，但盘上默认对不属于该 provider。
@@ -1987,6 +2059,10 @@ async fn disable_keeps_persisted_role_pairs_under_memory_override() {
     };
     assert_eq!(data["cleared_roles"], serde_json::json!([]));
     let persisted = std::fs::read_to_string(&config_path).expect("persisted config");
+    assert!(
+        persisted.contains("temporarily-unlisted-model"),
+        "single-model disable must preserve newer persisted choices: {persisted}"
+    );
     assert!(
         persisted.contains("default_provider = \"deepseek\"")
             && persisted.contains("default_model = \"deepseek-chat\""),
@@ -2034,6 +2110,10 @@ async fn disable_keeps_persisted_role_pairs_under_memory_override() {
         persisted.contains("default_provider = \"deepseek\"")
             && persisted.contains("default_model = \"deepseek-chat\""),
         "persisted default pair must survive disable-all: {persisted}"
+    );
+    assert!(
+        persisted.contains("temporarily-unlisted-model"),
+        "disable-all must retain disabled models absent from today's catalog: {persisted}"
     );
     let status = adapter
         .query(&query_envelope(AppQuery::ProviderAuthStatus {

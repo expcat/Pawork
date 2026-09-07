@@ -4164,6 +4164,65 @@ mod tests {
                 ))
                 .is_none());
         });
+        // Provider 全断开与启用目录全空都保留 Clear：AX / 键盘均可派出
+        // 清除请求；回执前保留已保存值，不能静默绑定候选或乐观清空。
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                let role = SettingsRole::Naming;
+                let saved = Some(("kimi".to_string(), "kimi-k2".to_string()));
+                for empty_catalog in [false, true] {
+                    if empty_catalog {
+                        view.projection.set_models(vec![]);
+                        view.projection.settings_providers.providers[0].auth =
+                            ProviderAuthState::Connected {
+                                method: "api_key".into(),
+                                masked_credential: None,
+                            };
+                    } else {
+                        view.projection.settings_providers.providers[0].auth =
+                            ProviderAuthState::None;
+                    }
+                    view.projection
+                        .settings_providers
+                        .confirm_role_default(role, saved.clone());
+                    view.settings_role_pending = None;
+                    view.open_menu = Some(MenuKind::SettingsRole(role));
+                    view.menu_highlight = None;
+                    assert_eq!(view.menu_item_count(), 1);
+                    view.move_menu_highlight(true);
+                    assert_eq!(view.menu_highlight, Some(0));
+                    let tree = view.accessibility_tree(window, cx);
+                    tree.validate().expect("empty role menu AX tree validates");
+                    let clear_id = settings_role_clear_identifier(role);
+                    let clear = tree
+                        .find(&clear_id)
+                        .expect("Clear survives empty candidates");
+                    let empty = tree
+                        .find("settings-role-menu-empty-naming")
+                        .expect("empty candidates retain the explanation");
+                    assert!(empty.bounds.y >= clear.bounds.y + clear.bounds.height);
+                    let request = AxRequest {
+                        identifier: clear_id,
+                        action: AxAction::Press,
+                        value: None,
+                    };
+                    assert!(tree.permits(&request));
+                    if empty_catalog {
+                        view.activate_menu_item(MenuKind::SettingsRole(role), 0, window, cx);
+                    } else {
+                        view.handle_accessibility_request(request, window, cx);
+                    }
+                    assert_eq!(view.settings_role_pending, Some(role));
+                    assert!(view.open_menu.is_none());
+                    assert_eq!(
+                        view.projection.settings_providers.role_value(role),
+                        saved.as_ref()
+                    );
+                }
+                view.settings_role_pending = None;
+                view.open_menu = Some(MenuKind::SettingsRole(role));
+            });
+        });
         // 断线 stale：角色写禁用，Press fail-closed。
         cx.update(|_window, cx| {
             view.update(cx, |view, _cx| {

@@ -2628,17 +2628,13 @@ impl AppView {
         match self.open_menu.as_ref() {
             Some(MenuKind::Scope) => self.projection.project_scope_options().len() + 1,
             Some(MenuKind::Model) => self.projection.models.len(),
-            // 清除行 + 候选行；空候选（无已连接 / 已启用模型）无可选项。
+            // 清除行始终可选；空候选时仍可移除已保存的默认角色。
             Some(MenuKind::SettingsRole(_)) => {
                 let entries = settings::settings_role_menu_entries(
                     &self.projection.models,
                     &self.projection.settings_providers.providers,
                 );
-                if entries.is_empty() {
-                    0
-                } else {
-                    entries.len() + 1
-                }
+                entries.len() + 1
             }
             Some(MenuKind::Entry(_)) => 1,
             Some(MenuKind::Activity) => 1,
@@ -2740,9 +2736,6 @@ impl AppView {
                     &self.projection.models,
                     &self.projection.settings_providers.providers,
                 );
-                if entries.is_empty() {
-                    return;
-                }
                 if ix == 0 {
                     self.on_select_settings_role(role, None, cx);
                 } else if let Some(model) = entries.get(ix - 1) {
