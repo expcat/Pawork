@@ -333,37 +333,34 @@ pub mod metrics {
     /// 4：Header 右侧相邻动作槽（Activity 与 inspector-expand）的间距
     ///（OPT-4b；render 与 AX 几何同源）。
     pub const HEADER_ACTION_GAP: f32 = 4.0;
-    /// 618：Timeline 可读列最大宽（state-a 内容 x326–944；state-b
-    /// x=347..962 = 615，取 618，两态同值；防折叠态无限拉宽）。
-    pub const TIMELINE_READABLE_WIDTH: f32 = 618.0;
+    /// UI-3：880px 居中阅读列，窄窗保留两侧 CONTENT_INSET。
+    pub const TIMELINE_READABLE_WIDTH: f32 = 880.0;
     /// 28：Header 底到首条 Timeline 标签顶（state-a y104→132）。
     pub const TIMELINE_TOP_GAP: f32 = 28.0;
-    /// 24：消息正文行高（量图段内行距 ≈24）。
-    pub const MSG_LINE_HEIGHT: f32 = 24.0;
-    /// 12：消息标签行（You/Pawork+时间）底到正文顶（量图 144→167=23，
-    /// 标签行 24 线高后余 11，取 12）。
+    /// UI-3：16px 正文、26px 行高。
+    pub const MSG_LINE_HEIGHT: f32 = 26.0;
+    /// UI-3：作者行与正文间距 12px。
     pub const MSG_LABEL_BODY_GAP: f32 = 12.0;
-    /// 28：正文段落间隙（量图 ≈27 取 28）。
-    pub const MSG_PARAGRAPH_GAP: f32 = 28.0;
-    /// 40：相邻消息条目间距（量图标签顶到标签顶 100 − 标签24 − 间12 −
-    /// 单行正文24，取 40；多行正文按实际高度累加）。
-    pub const MSG_ENTRY_GAP: f32 = 40.0;
+    /// UI-3：用户消息浅底卡片内边距。
+    pub const MSG_USER_INSET: f32 = 20.0;
+    /// UI-3：正文段落间隙 12px。
+    pub const MSG_PARAGRAPH_GAP: f32 = 12.0;
+    /// UI-3：32px 消息间距，计入虚拟列表条目高度。
+    pub const MSG_ENTRY_GAP: f32 = 32.0;
     /// 8：Tool activity / Run summary 与 Composer 使用同一主要 surface 圆角。
     pub const TOOL_GROUP_RADIUS: f32 = 8.0;
-    /// 44：Tool group 可折叠标题行；与共享可点击 Row 高度一致。
-    pub const TOOL_GROUP_HEADER_HEIGHT: f32 = 44.0;
+    /// UI-3：轻量工具摘要命中行。
+    pub const TOOL_GROUP_HEADER_HEIGHT: f32 = 36.0;
     /// 15：Tool activity 面板内左 inset（量图图标 x341，面板 x326）。
     pub const TOOL_GROUP_INNER_INSET: f32 = 15.0;
     /// 52：Tool 行高（量图行距 ≈54 − 分隔线 2）。
     pub const TOOL_ROW_HEIGHT: f32 = 52.0;
-    /// 2：Tool 行间分隔线厚度（量图 2px）。
-    pub const TOOL_ROW_DIVIDER: f32 = 2.0;
-    /// 19：Tool 行左侧图标槽（量图 x341–360）。
-    pub const TOOL_ICON_SIZE: f32 = 19.0;
+    /// UI-3：工具行分隔线 1px。
+    pub const TOOL_ROW_DIVIDER: f32 = 1.0;
     /// 14：Tool 行状态 ✓ 直径（量图 Ø14）。
     pub const TOOL_CHECK_SIZE: f32 = 14.0;
-    /// 48：上文到底部 Tool 面板 / 摘要卡组间距（量图 49 取 48）。
-    pub const TOOL_GROUP_TOP_GAP: f32 = 48.0;
+    /// UI-3：上文到工具摘要的间距 16px。
+    pub const TOOL_GROUP_TOP_GAP: f32 = 16.0;
     /// 12：Tool 面板 → Run 摘要卡间距（量图 13 取 12）。
     pub const SUMMARY_CARD_GAP: f32 = 12.0;
     /// 40：Run 摘要卡 ✓ 状态圆直径（量图 Ø40）。
@@ -376,8 +373,8 @@ pub mod metrics {
     pub const SUMMARY_BUTTON_RADIUS: f32 = 8.0;
     /// 20：摘要卡两动作按钮间距（量图 19 取 20）。
     pub const SUMMARY_BUTTON_GAP: f32 = 20.0;
-    /// 24：摘要卡底到 Timeline 页脚（量图 23 取 24）。
-    pub const TIMELINE_FOOTER_GAP: f32 = 24.0;
+    /// UI-3：摘要卡底到 Timeline 页脚 12px。
+    pub const TIMELINE_FOOTER_GAP: f32 = 12.0;
     /// 288：TaskRail 侧栏宽度。
     pub const SIDEBAR_WIDTH: f32 = 288.0;
     /// 440：Inspector 面板宽度。
@@ -599,7 +596,7 @@ mod tests {
         assert_eq!(font::default_pixels(font::HEADER_TITLE), 18.0);
         assert_eq!(
             font::default_pixels(font::from_pixels(metrics::MSG_LINE_HEIGHT)),
-            24.0
+            26.0
         );
         assert_eq!(metrics::HEADER_SAFE_STRIP, 24.0);
         assert_eq!(metrics::HEADER_HEIGHT, 80.0);
@@ -611,27 +608,26 @@ mod tests {
         assert_eq!(metrics::HEADER_ACTION_HEIGHT, 37.0);
         assert_eq!(metrics::HEADER_ACTION_RADIUS, 6.0);
         assert_eq!(metrics::HEADER_ACTION_GAP, 4.0);
-        assert_eq!(metrics::TIMELINE_READABLE_WIDTH, 618.0);
+        assert_eq!(metrics::TIMELINE_READABLE_WIDTH, 880.0);
         assert_eq!(metrics::TIMELINE_TOP_GAP, 28.0);
-        assert_eq!(metrics::MSG_LINE_HEIGHT, 24.0);
+        assert_eq!(metrics::MSG_LINE_HEIGHT, 26.0);
         assert_eq!(metrics::MSG_LABEL_BODY_GAP, 12.0);
-        assert_eq!(metrics::MSG_PARAGRAPH_GAP, 28.0);
-        assert_eq!(metrics::MSG_ENTRY_GAP, 40.0);
+        assert_eq!(metrics::MSG_PARAGRAPH_GAP, 12.0);
+        assert_eq!(metrics::MSG_ENTRY_GAP, 32.0);
         assert_eq!(metrics::TOOL_GROUP_RADIUS, 8.0);
-        assert_eq!(metrics::TOOL_GROUP_HEADER_HEIGHT, 44.0);
+        assert_eq!(metrics::TOOL_GROUP_HEADER_HEIGHT, 36.0);
         assert_eq!(metrics::TOOL_GROUP_INNER_INSET, 15.0);
         assert_eq!(metrics::TOOL_ROW_HEIGHT, 52.0);
-        assert_eq!(metrics::TOOL_ROW_DIVIDER, 2.0);
-        assert_eq!(metrics::TOOL_ICON_SIZE, 19.0);
+        assert_eq!(metrics::TOOL_ROW_DIVIDER, 1.0);
         assert_eq!(metrics::TOOL_CHECK_SIZE, 14.0);
-        assert_eq!(metrics::TOOL_GROUP_TOP_GAP, 48.0);
+        assert_eq!(metrics::TOOL_GROUP_TOP_GAP, 16.0);
         assert_eq!(metrics::SUMMARY_CARD_GAP, 12.0);
         assert_eq!(metrics::SUMMARY_CHECK_CIRCLE, 40.0);
         assert_eq!(metrics::SUMMARY_BUTTON_WIDTH, 168.0);
         assert_eq!(metrics::SUMMARY_BUTTON_HEIGHT, 40.0);
         assert_eq!(metrics::SUMMARY_BUTTON_RADIUS, 8.0);
         assert_eq!(metrics::SUMMARY_BUTTON_GAP, 20.0);
-        assert_eq!(metrics::TIMELINE_FOOTER_GAP, 24.0);
+        assert_eq!(metrics::TIMELINE_FOOTER_GAP, 12.0);
     }
 
     /// R6 Wave A 两级页签 / ActivityPopover 合同：顶层 58、二级 56、

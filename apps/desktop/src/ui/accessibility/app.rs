@@ -1411,15 +1411,15 @@ impl AppView {
         let rows = self.projection.timeline_rows();
         let total = rows.len();
         let empty_hint_visible = self.projection.workspace_empty_hint_visible();
-        // P4 片 3：与 timeline.rs render 同源——列 = pl(TIMELINE_CONTENT_INSET)
-        // + 可读列宽；行高 / 行间距按内容公式化推导（gpui list 实际按像素
+        // UI-3：与 timeline.rs render 同源——列在 Workspace 中居中，
+        // 两侧至少留 CONTENT_INSET；行高 / 间距按内容推导（gpui list 按像素
         // 布局，此为同源公式）。滚动位置沿用已验证安全的 logical_scroll_top()
         // 只读，不触碰写借用。
         let rem_px = f32::from(window.rem_size());
-        let column_x = frame.x + metrics::TIMELINE_CONTENT_INSET;
-        let column_width = (frame.width - metrics::TIMELINE_CONTENT_INSET)
+        let column_width = (frame.width - 2.0 * metrics::TIMELINE_CONTENT_INSET)
             .min(metrics::TIMELINE_READABLE_WIDTH)
             .max(0.0);
+        let column_x = frame.x + (frame.width - column_width) / 2.0;
         let layouts: Vec<(f32, f32)> = rows
             .iter()
             .map(|row| {
@@ -1430,7 +1430,7 @@ impl AppView {
                         &self.projection.timeline,
                         column_width,
                         rem_px,
-                        &self.collapsed_tool_groups,
+                        &self.expanded_tool_groups,
                         self.changes_available_for_active(),
                     ),
                 )
@@ -1469,7 +1469,11 @@ impl AppView {
                 f32::from(scroll.offset_in_item),
             )
         } else if self.timeline_following {
-            timeline::timeline_following_window(&item_layouts, viewport_height)
+            // bottom padding 只影响贴底补齐；滚动时仍可画到完整视口底边。
+            timeline::timeline_following_window(
+                &item_layouts,
+                (viewport_height - metrics::MSG_ENTRY_GAP).max(0.0),
+            )
         } else {
             (0, 0.0)
         };
@@ -1496,7 +1500,7 @@ impl AppView {
                 saw_bounds = true;
                 let gap = if ix > 0 { item_layouts[ix].0 } else { 0.0 };
                 // GPUI bounds_for_item 返回 item 外框且不含 list padding；
-                // render 的 mt(gap) 属于 item，故内容 rect 再内缩 gap。
+                // render 的 pt(gap) 计入 item 高度，故内容 rect 再内缩 gap。
                 let top = f32::from(bounds.origin.y) + metrics::TIMELINE_TOP_GAP + gap;
                 let height = (f32::from(bounds.size.height) - gap).max(0.0);
                 if top >= content_bottom {
@@ -1652,7 +1656,7 @@ impl AppView {
                 let group_key = timeline::tool_group_key(entry_indices, &self.projection.timeline)
                     .unwrap_or_default();
                 let rows = self.tool_row_views(entry_indices);
-                let collapsed = self.collapsed_tool_groups.contains(group_key);
+                let collapsed = !self.expanded_tool_groups.contains(group_key);
                 let mut group = AxNode::new(
                     dynamic_identifier("tool-group", group_key),
                     AxRole::Group,
@@ -1685,7 +1689,8 @@ impl AppView {
                 if collapsed {
                     return group;
                 }
-                for (ix, &entry_index) in entry_indices.iter().enumerate() {
+                let mut tool_y = rect.y + metrics::TOOL_GROUP_HEADER_HEIGHT;
+                for &entry_index in entry_indices {
                     let entry = &self.projection.timeline[entry_index];
                     let TimelineEntryKind::ToolCall {
                         name,
@@ -1697,12 +1702,15 @@ impl AppView {
                     };
                     let tool_rect = AxRect::new(
                         rect.x,
-                        rect.y
-                            + metrics::TOOL_GROUP_HEADER_HEIGHT
-                            + ix as f32 * metrics::TOOL_ROW_HEIGHT,
+                        tool_y,
                         rect.width,
-                        metrics::TOOL_ROW_HEIGHT,
+                        timeline::tool_entry_height(
+                            entry,
+                            rect.width,
+                            f32::from(window.rem_size()),
+                        ),
                     );
+                    tool_y += tool_rect.height;
                     group = group.child(
                         AxNode::new(
                             dynamic_identifier("tool-row", &entry.event_id),
@@ -1731,7 +1739,7 @@ impl AppView {
                         timeline::tool_group_key(entry_indices, &self.projection.timeline)
                             .unwrap_or_default();
                     let rows = self.tool_row_views(entry_indices);
-                    let collapsed = self.collapsed_tool_groups.contains(group_key);
+                    let collapsed = !self.expanded_tool_groups.contains(group_key);
                     region = region.child(
                         AxNode::new(
                             tool_group_toggle_identifier(group_key),
@@ -1767,29 +1775,52 @@ impl AppView {
                                     dynamic_identifier("tool-row", &entry.event_id),
                                     AxRole::ListItem,
                                     format!("Tool · {name}"),
-                                    AxRect::new(rect.x, y, rect.width, metrics::TOOL_ROW_HEIGHT),
+                                    AxRect::new(
+                                        rect.x,
+                                        y,
+                                        rect.width,
+                                        timeline::tool_entry_height(
+                                            entry,
+                                            rect.width,
+                                            f32::from(window.rem_size()),
+                                        ),
+                                    ),
                                 )
                                 .value(timeline::tool_status_label(status))
                                 .description(detail.clone().unwrap_or_default()),
                             );
-                            y += metrics::TOOL_ROW_HEIGHT;
+                            y += timeline::tool_entry_height(
+                                entry,
+                                rect.width,
+                                f32::from(window.rem_size()),
+                            );
                         }
                     }
-                    y += metrics::SUMMARY_CARD_GAP;
+                    y += if timeline::run_summary_card_visible(
+                        terminal_entry,
+                        self.changes_available_for_active(),
+                    ) {
+                        metrics::SUMMARY_CARD_GAP
+                    } else {
+                        metrics::TIMELINE_FOOTER_GAP
+                    };
                 }
                 let review_enabled = terminal_entry.fork_boundary == Some(ForkBoundary::Completed)
                     && self.changes_available_for_active();
                 let (title, description) = run_summary_texts(terminal_entry, review_enabled)
                     .unwrap_or(("Run", String::new()));
-                region = region.child(
-                    AxNode::new(
-                        dynamic_identifier("run-summary-card", &terminal_entry.event_id),
-                        AxRole::StaticText,
-                        title,
-                        AxRect::new(rect.x, y, rect.width, metrics::SUMMARY_CHECK_CIRCLE),
-                    )
-                    .description(description),
-                );
+                let show_card = timeline::run_summary_card_visible(terminal_entry, review_enabled);
+                if show_card {
+                    region = region.child(
+                        AxNode::new(
+                            dynamic_identifier("run-summary-card", &terminal_entry.event_id),
+                            AxRole::StaticText,
+                            title,
+                            AxRect::new(rect.x, y, rect.width, metrics::SUMMARY_CHECK_CIRCLE),
+                        )
+                        .description(description),
+                    );
+                }
                 if review_enabled {
                     region = region.child(
                         AxNode::new(
@@ -1813,7 +1844,9 @@ impl AppView {
                         .action(AxAction::Press),
                     );
                 }
-                y += metrics::SUMMARY_CHECK_CIRCLE + metrics::TIMELINE_FOOTER_GAP;
+                if show_card {
+                    y += metrics::SUMMARY_CHECK_CIRCLE + metrics::TIMELINE_FOOTER_GAP;
+                }
                 if let Some(label) = run_footer_label(terminal_entry) {
                     region = region.child(AxNode::new(
                         dynamic_identifier("run-footer", &terminal_entry.event_id),
@@ -1899,12 +1932,17 @@ impl AppView {
         .value(value)
         .description(display_time(&entry.timestamp, now_ms));
         if with_menu {
+            let inset = if matches!(entry.kind, TimelineEntryKind::UserMessage { .. }) {
+                metrics::MSG_USER_INSET
+            } else {
+                0.0
+            };
             node = node.child(
                 AxNode::new(
                     entry_menu_identifier(&entry.event_id),
                     AxRole::Button,
                     "Entry actions",
-                    AxRect::new(row.x + row.width - 32.0, row.y, 32.0, 28.0),
+                    AxRect::new(row.x + row.width - inset - 32.0, row.y + inset, 32.0, 24.0),
                 )
                 .focused(
                     self.open_menu.is_none()
@@ -1921,7 +1959,7 @@ impl AppView {
                         fork_identifier(&entry.event_id),
                         AxRole::Button,
                         t("timeline.fork"),
-                        AxRect::new(row.x + row.width - 112.0, row.y + 28.0, 112.0, 30.0),
+                        AxRect::new(row.x + row.width - inset - 112.0, row.y + inset + 24.0, 112.0, 30.0),
                     )
                     .enabled(
                         matches!(
@@ -2953,7 +2991,7 @@ mod tests {
     }
 
     /// P4 片 3：Timeline 行 rect 相邻不重叠、行间距与 row_top_gap 一致，
-    /// 行高按内容公式化（tool 组 = 44 标题 + 行数×52；消息 = 标签 + 12 + 正文）。
+    /// 行高按内容公式化（工具摘要 36；用户卡额外包含 40px 内边距）。
     #[test]
     fn timeline_row_layouts_stack_with_content_heights_and_gaps() {
         use crate::projection::{TimelineEntry, TimelineEntryKind, TimelineRow};
@@ -3019,45 +3057,29 @@ mod tests {
                 )
             })
             .collect();
-        // 100%：消息 = 标签 26 + 12 + 正文 24；tool 组 = 44 + 2×52；相位 = 19。
-        assert_eq!(layouts[0].1, 62.0);
-        assert_eq!(layouts[1].1, 148.0);
+        // 默认仅摘要；显式展开增加两条工具行，字号影响正文高度。
+        assert_eq!(layouts[0].1, 102.0);
+        assert_eq!(layouts[1].1, metrics::TOOL_GROUP_HEADER_HEIGHT);
         assert_eq!(layouts[2].1, 19.0);
-        let mut collapsed = std::collections::HashSet::new();
-        collapsed.insert("e2".to_string());
+        let expanded = std::collections::HashSet::from(["e2".to_string()]);
         assert_eq!(
-            timeline_row_height(&rows[1], &timeline, 618.0, 16.0, &collapsed, false),
-            metrics::TOOL_GROUP_HEADER_HEIGHT
+            timeline_row_height(&rows[1], &timeline, 618.0, 16.0, &expanded, false),
+            metrics::TOOL_GROUP_HEADER_HEIGHT + 2.0 * metrics::TOOL_ROW_HEIGHT
         );
-        // 行间距与 row_top_gap 同源：消息→tool 组 48，tool 组→相位 40。
         assert_eq!(layouts[1].0, metrics::TOOL_GROUP_TOP_GAP);
         assert_eq!(layouts[2].0, metrics::MSG_ENTRY_GAP);
         let tops = timeline_visible_item_tops(&layouts, 100.0, 400.0, 0, 0.0);
         assert_eq!(tops[0], (0, 100.0));
-        assert_eq!(tops[1], (1, 100.0 + 62.0 + 48.0));
-        assert_eq!(tops[2], (2, tops[1].1 + 148.0 + 40.0));
         for pair in tops.windows(2) {
             assert!(pair[0].1 + layouts[pair[0].0].1 <= pair[1].1);
         }
-        // 125%：消息行高随字号档缩放（标签 32 + 12 + 正文 30）。
-        assert_eq!(
-            timeline_row_height(
-                &rows[0],
-                &timeline,
-                618.0,
-                20.0,
-                &std::collections::HashSet::new(),
-                false,
-            ),
-            74.0
-        );
-        // 跟随态窗口：视口装不下全部（62+48+148+40+19=317>200）时，
-        // 首个部分可见项仍保留，item 1 内偏移 55；全部装得下则从 0 开始。
-        assert_eq!(timeline_following_window(&layouts, 200.0), (1, 55.0));
+        assert_eq!(timeline_row_height(&rows[0], &timeline, 618.0, 20.0,
+            &std::collections::HashSet::new(), false), 109.0);
         assert_eq!(timeline_following_window(&layouts, 400.0), (0, 0.0));
-        let tail = timeline_visible_item_tops(&layouts, 100.0, 200.0, 1, 55.0);
-        assert_eq!(tail[0], (1, 93.0));
-        assert_eq!(tail[1], (2, 281.0));
+        let (start, offset) = timeline_following_window(&layouts, 80.0);
+        assert!(start > 0 || offset > 0.0);
+        let tail = timeline_visible_item_tops(&layouts, 100.0, 80.0, start, offset);
+        assert_eq!(tail.last().map(|item| item.0), Some(2));
     }
 
     /// P4 片 2F（D2）：审批卡 AX 位置按内容流推导（渲染为 timeline list

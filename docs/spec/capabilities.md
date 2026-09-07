@@ -78,7 +78,7 @@ OPT-1 / [ADR-053](settings.md#adr-053opt-1-设置持久化2026-09-05)：Settings
 | --- | --- | --- |
 | Workbench | 紧凑 Header、Inspector 开合 / 页签、分组运行状态、共享主题 token | UI-1 已实现；自动验证与真窗口检查见 [路线图](../ROADMAP.md)；用户人工视觉验收已通过（2026-09-07），未归档。 |
 | TaskRail | 会话/任务选择、新建、长标题截断；悬停或键盘聚焦即可改名 / 归档 | UI-2 已实现；214 项自动检查与代理真窗口检查通过；等待用户人工视觉验收，见 [路线图](../ROADMAP.md)。 |
-| Timeline | 变高虚拟化、流式条目、审批、fork 边界、回底 | 生产入口已实现；完整视觉/长会话仍按风险专项复验。 |
+| Timeline | 居中阅读列、用户消息卡片、变高虚拟化、流式条目、Markdown 子集、默认折叠工具详情、审批、fork 边界、回底 | UI-3 主体实现，自动检查通过；思考尚无独立 GUI 投影，完整视觉验收未完成，详见 [路线图](../ROADMAP.md)。 |
 | Composer | 输入、发送、`@` host 展开 | 部分实现；真实 IME/粘贴仍待人工，`@` 候选仅在 Host capability 存在时实现。 |
 | Changes | Files/Summary/DiffView/ActivityPopover | 只读生产入口已实现；写操作仍是 ADR 候选。 |
 | Terminal | 创建、输入、resize、Stop/Close、输出 | 生产入口已实现；真 PTY 主路径已验收。 |

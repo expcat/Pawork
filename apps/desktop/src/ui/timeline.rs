@@ -37,7 +37,7 @@ use crate::ui::theme::{dark, font, metrics};
 
 use super::timeline_entry::{
     default_text_line_height, display_time, estimated_wrapped_lines, message_block_line_counts,
-    RunSummaryTerminal, RunSummaryView, ToolRowView,
+    tool_row_height, RunSummaryTerminal, RunSummaryView, ToolRowView,
 };
 use super::{now_unix_ms, workspace_empty_hint, workspace_empty_title, AppView, MenuKind};
 
@@ -105,9 +105,7 @@ pub(super) fn tool_status_label(status: &str) -> String {
     }
 }
 
-/// 行与前一行的垂直间距（§4.2/§4.3 量图冻结值）：消息 / 错误 / 中间相位
-/// 40；独立 tool 组 48；摘要区域带组时 48（组面板即区域首元素），无组按
-/// 普通 entry 保持 40。12 只用于 tool panel → summary 的组内间距。
+/// UI-3：消息间距 32px，工具组前 16px；独立终态页脚前 12px。
 pub(super) fn row_top_gap(row: &TimelineRow) -> f32 {
     match row {
         TimelineRow::Message { .. } | TimelineRow::Error { .. } | TimelineRow::RunPhase { .. } => {
@@ -118,33 +116,26 @@ pub(super) fn row_top_gap(row: &TimelineRow) -> f32 {
             if group.is_some() {
                 metrics::TOOL_GROUP_TOP_GAP
             } else {
-                metrics::MSG_ENTRY_GAP
+                metrics::TIMELINE_FOOTER_GAP
             }
         }
     }
 }
 
-/// entry_shell 右侧「···」菜单槽 + gap_2 的合并宽度估计（消息正文列宽
-/// 折算用；按钮实际宽随文案缩放，取冻结估计槽）。
-const ENTRY_ACTIONS_SLOT_ESTIMATE: f32 = 32.0;
-
-/// 消息 / 错误条目内容高度（entry_shell 同源）：标签行（BODY 与 BODY_SM
-/// 默认行高取大）+ MSG_LABEL_BODY_GAP + 正文（行高 1.5rem、块间
-/// MSG_PARAGRAPH_GAP，行数按公式估算）。正文列恒高于右侧「···」按钮，
-/// 不再与按钮行取大。
-fn message_entry_height(text: &str, column_width: f32, rem_px: f32) -> f32 {
-    let label = default_text_line_height(font::BODY.0 * rem_px)
-        .max(default_text_line_height(font::BODY_SM.0 * rem_px));
+/// 消息测高与 entry_shell 同源：作者/动作行 + 段落；用户消息另计卡片内边距。
+fn message_entry_height(text: &str, column_width: f32, rem_px: f32, user: bool) -> f32 {
+    let inset = if user { metrics::MSG_USER_INSET } else { 0.0 };
+    let label = default_text_line_height(font::BODY_SM.0 * rem_px).max(24.0);
     let body_font_px = font::BODY.0 * rem_px;
     let body_line_height = (font::from_pixels(metrics::MSG_LINE_HEIGHT).0 * rem_px).round();
-    let body_width = (column_width - ENTRY_ACTIONS_SLOT_ESTIMATE).max(0.0);
+    let body_width = (column_width - 2.0 * inset).max(0.0);
     let blocks = message_block_line_counts(text, body_width, body_font_px);
     let body = blocks
         .iter()
         .map(|lines| *lines as f32 * body_line_height)
         .sum::<f32>()
         + metrics::MSG_PARAGRAPH_GAP * blocks.len().saturating_sub(1) as f32;
-    label + metrics::MSG_LABEL_BODY_GAP + body
+    2.0 * inset + label + metrics::MSG_LABEL_BODY_GAP + body
 }
 
 /// Run 摘要卡高度（run_summary_element 同源）：py_6×2 + max(左列, 40 槽)；
@@ -201,9 +192,30 @@ pub(super) fn tool_group_key<'a>(
 fn tool_group_is_collapsed(
     entry_indices: &[usize],
     timeline: &[TimelineEntry],
-    collapsed_tool_groups: &HashSet<String>,
+    expanded_tool_groups: &HashSet<String>,
 ) -> bool {
-    tool_group_key(entry_indices, timeline).is_some_and(|key| collapsed_tool_groups.contains(key))
+    tool_group_key(entry_indices, timeline).is_some_and(|key| !expanded_tool_groups.contains(key))
+}
+
+pub(super) fn tool_entry_height(entry: &TimelineEntry, width: f32, rem: f32) -> f32 {
+    if let TimelineEntryKind::ToolCall {
+        name,
+        status,
+        detail,
+    } = &entry.kind
+    {
+        tool_row_height(
+            &ToolRowView::from_parts(name, status, detail.as_deref()),
+            width,
+            rem,
+        )
+    } else {
+        0.0
+    }
+}
+
+pub(super) fn run_summary_card_visible(entry: &TimelineEntry, review: bool) -> bool {
+    entry.fork_boundary != Some(ForkBoundary::Completed) || review
 }
 
 /// Timeline 单行内容高度公式（render 组装同源；AX 行 rect 共用）。文本
@@ -214,7 +226,7 @@ pub(super) fn timeline_row_height(
     timeline: &[TimelineEntry],
     column_width: f32,
     rem_px: f32,
-    collapsed_tool_groups: &HashSet<String>,
+    expanded_tool_groups: &HashSet<String>,
     review_changes_available: bool,
 ) -> f32 {
     match row {
@@ -225,7 +237,15 @@ pub(super) fn timeline_row_height(
                 | TimelineEntryKind::Error(text) => text,
                 _ => "",
             };
-            message_entry_height(text, column_width, rem_px)
+            message_entry_height(
+                text,
+                column_width,
+                rem_px,
+                matches!(
+                    timeline[*entry_index].kind,
+                    TimelineEntryKind::UserMessage { .. }
+                ),
+            )
         }
         TimelineRow::RunPhase { entry_index } => {
             // 非终态中间相位保持单行（§4.5）；与 render 相同只认 RunState。
@@ -238,30 +258,43 @@ pub(super) fn timeline_row_height(
         }
         TimelineRow::ToolGroup { entry_indices } => {
             metrics::TOOL_GROUP_HEADER_HEIGHT
-                + if tool_group_is_collapsed(entry_indices, timeline, collapsed_tool_groups) {
+                + if tool_group_is_collapsed(entry_indices, timeline, expanded_tool_groups) {
                     0.0
                 } else {
-                    metrics::TOOL_ROW_HEIGHT * entry_indices.len() as f32
+                    entry_indices
+                        .iter()
+                        .map(|&ix| tool_entry_height(&timeline[ix], column_width, rem_px))
+                        .sum::<f32>()
                 }
         }
         TimelineRow::RunSummary { group, terminal } => {
             let mut height = 0.0;
             if let Some(group) = group {
                 height += metrics::TOOL_GROUP_HEADER_HEIGHT;
-                if !tool_group_is_collapsed(group, timeline, collapsed_tool_groups) {
-                    height += metrics::TOOL_ROW_HEIGHT * group.len() as f32;
+                if !tool_group_is_collapsed(group, timeline, expanded_tool_groups) {
+                    height += group
+                        .iter()
+                        .map(|&ix| tool_entry_height(&timeline[ix], column_width, rem_px))
+                        .sum::<f32>();
                 }
-                height += metrics::SUMMARY_CARD_GAP;
+                height +=
+                    if run_summary_card_visible(&timeline[*terminal], review_changes_available) {
+                        metrics::SUMMARY_CARD_GAP
+                    } else {
+                        metrics::TIMELINE_FOOTER_GAP
+                    };
             }
             let review_changes_visible = review_changes_available
                 && timeline[*terminal].fork_boundary == Some(ForkBoundary::Completed);
-            height += run_summary_card_height(
-                &timeline[*terminal],
-                column_width,
-                rem_px,
-                review_changes_visible,
-            );
-            height += metrics::TIMELINE_FOOTER_GAP;
+            if run_summary_card_visible(&timeline[*terminal], review_changes_visible) {
+                height += run_summary_card_height(
+                    &timeline[*terminal],
+                    column_width,
+                    rem_px,
+                    review_changes_visible,
+                );
+                height += metrics::TIMELINE_FOOTER_GAP;
+            }
             // 页脚行（BODY_SM 标签恒高于「···」按钮）。
             height += default_text_line_height(font::BODY_SM.0 * rem_px);
             height
@@ -271,7 +304,7 @@ pub(super) fn timeline_row_height(
 
 /// 公式化可见窗口：自 start item 起按（上间距, 内容高）堆叠，返回
 /// （item 序号, 内容 top）。全局首项无上间距；其余项的上间距归属该项
-///（与 render 的 `mt` 一致）。`offset_in_first_item` 对应 GPUI
+///（与 render 的 `pt` 一致）。`offset_in_first_item` 对应 GPUI
 /// `ListOffset::offset_in_item`，因此首项可只露出尾部；完全不可见的项不发布。
 pub(super) fn timeline_visible_item_tops(
     layouts: &[(f32, f32)],
@@ -339,7 +372,7 @@ impl AppView {
                         let gap = row_top_gap(&rows[ix]);
                         if ix > 0 {
                             div()
-                                .mt(px(gap))
+                                .pt(px(gap))
                                 .w_full()
                                 .max_w(px(metrics::TIMELINE_READABLE_WIDTH))
                                 .min_w_0()
@@ -357,7 +390,7 @@ impl AppView {
                         let card = view.approval_card_element(cx);
                         if len > 0 {
                             div()
-                                .mt(px(metrics::MSG_ENTRY_GAP))
+                                .pt(px(metrics::MSG_ENTRY_GAP))
                                 .w_full()
                                 .max_w(px(metrics::TIMELINE_READABLE_WIDTH))
                                 .min_w_0()
@@ -376,8 +409,10 @@ impl AppView {
             ),
         )
         .flex_1()
-        .pl(px(metrics::TIMELINE_CONTENT_INSET))
-        .pt(px(metrics::TIMELINE_TOP_GAP));
+        .w_full()
+        .max_w(px(metrics::TIMELINE_READABLE_WIDTH))
+        .pt(px(metrics::TIMELINE_TOP_GAP))
+        .pb(px(metrics::MSG_ENTRY_GAP));
         // P0-3 空态：无 active session 且条目数为 0 时只给出一个清楚的
         // Primary New task 路径；Disconnected 保留旧条目时不进入本分支。
         let content = if empty_hint_visible {
@@ -427,7 +462,15 @@ impl AppView {
                 .child(div().mt(px(metrics::SPACE_2)).child(new_task))
                 .into_any_element()
         } else {
-            entries.into_any_element()
+            div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .items_center()
+                .pl(px(metrics::TIMELINE_CONTENT_INSET))
+                .pr(px(metrics::TIMELINE_CONTENT_INSET))
+                .child(entries)
+                .into_any_element()
         };
         // 脱钩时右下浮出回底控件（§8.3）；跟随态隐藏。
         let following = self.timeline_following;
@@ -515,18 +558,18 @@ impl AppView {
                     if let Some(group_key) =
                         tool_group_key(entry_indices, &self.projection.timeline).map(str::to_string)
                     {
-                        region =
-                            region
-                                .child(self.tool_group_element(&group_key, &rows, cx))
-                                .child(div().mt(px(metrics::SUMMARY_CARD_GAP)).child(
-                                    self.run_summary_element(&summary, &entry.event_id, cx),
-                                ));
-                    } else {
-                        region =
-                            region.child(self.run_summary_element(&summary, &entry.event_id, cx));
+                        region = region.child(self.tool_group_element(&group_key, &rows, cx));
                     }
-                } else {
-                    region = region.child(self.run_summary_element(&summary, &entry.event_id, cx));
+                }
+                let show_card = run_summary_card_visible(&entry, summary.review_changes_enabled);
+                if show_card {
+                    region = region.child(
+                        div()
+                            .when(group.is_some(), |item| {
+                                item.mt(px(metrics::SUMMARY_CARD_GAP))
+                            })
+                            .child(self.run_summary_element(&summary, &entry.event_id, cx)),
+                    );
                 }
                 let footer_label = run_footer_label(&entry).unwrap_or("Run");
                 let footer_time = display_time(&entry.timestamp, now_unix_ms());
@@ -535,7 +578,9 @@ impl AppView {
                 region
                     .child(
                         div()
-                            .mt(px(metrics::TIMELINE_FOOTER_GAP))
+                            .when(show_card || group.is_some(), |footer| {
+                                footer.mt(px(metrics::TIMELINE_FOOTER_GAP))
+                            })
                             .flex()
                             .flex_row()
                             .items_center()
@@ -573,9 +618,11 @@ impl AppView {
     }
 
     pub(super) fn toggle_tool_group(&mut self, group_key: &str, cx: &mut Context<Self>) {
-        if !self.collapsed_tool_groups.remove(group_key) {
-            self.collapsed_tool_groups.insert(group_key.to_string());
+        if !self.expanded_tool_groups.remove(group_key) {
+            self.expanded_tool_groups.insert(group_key.to_string());
         }
+        // 用户展开详情时保留当前视口，不因旧贴底状态把标题推到屏幕外。
+        self.timeline_following = false;
         self.timeline_changed();
         cx.notify();
     }

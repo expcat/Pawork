@@ -56,9 +56,10 @@ pub fn run_summary_texts(
             t("run.ready_for_review"),
             t("run.summary_review_desc").to_string(),
         )),
-        Some(ForkBoundary::Completed) => {
-            Some((t("run.footer_completed"), t("run.completed_desc").to_string()))
-        }
+        Some(ForkBoundary::Completed) => Some((
+            t("run.footer_completed"),
+            t("run.completed_desc").to_string(),
+        )),
         Some(ForkBoundary::Cancelled) => Some((
             t("run.footer_cancelled"),
             t("run.cancelled_desc").to_string(),
@@ -114,6 +115,10 @@ impl DesktopProjection {
         let mut ix = 0;
         while ix < entries.len() {
             match &entries[ix].kind {
+                TimelineEntryKind::AssistantMessage { text } if text.trim().is_empty() => {
+                    // 仅含工具/非正文 content 的 committed 消息不画空作者行。
+                    ix += 1;
+                }
                 TimelineEntryKind::UserMessage { .. }
                 | TimelineEntryKind::AssistantMessage { .. } => {
                     rows.push(TimelineRow::Message { entry_index: ix });
@@ -129,12 +134,14 @@ impl DesktopProjection {
                     ix += 1;
                     while ix < entries.len() {
                         let next = &entries[ix];
-                        if !matches!(next.kind, TimelineEntryKind::ToolCall { .. })
-                            || next.run_id != run_id
-                        {
+                        if next.run_id != run_id {
                             break;
                         }
-                        group.push(ix);
+                        match &next.kind {
+                            TimelineEntryKind::ToolCall { .. } => group.push(ix),
+                            TimelineEntryKind::AssistantMessage { text } if text.trim().is_empty() => {}
+                            _ => break,
+                        }
                         ix += 1;
                     }
                     // 紧邻其后的 run 终态条目吸收该组为摘要区域；终态必须
@@ -161,7 +168,12 @@ impl DesktopProjection {
                             group: None,
                             terminal: ix,
                         });
-                    } else {
+                    } else if !entries[ix + 1..].iter().any(|next| {
+                        entries[ix].run_id.is_some()
+                            && next.run_id == entries[ix].run_id
+                            && matches!(next.kind, TimelineEntryKind::RunState(_))
+                    }) {
+                        // 只投影该 Run 最新相位；原始事件仍完整留在 reducer。
                         rows.push(TimelineRow::RunPhase { entry_index: ix });
                     }
                     ix += 1;

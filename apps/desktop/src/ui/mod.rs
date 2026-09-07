@@ -11,6 +11,7 @@ mod components;
 pub(crate) mod i18n;
 mod input_area;
 mod inspector;
+mod markdown;
 mod resources;
 mod settings;
 mod shell_layout;
@@ -462,7 +463,7 @@ pub struct AppView {
     scope_workspace_id: Option<String>,
     collapsed_projects: BTreeSet<String>,
     /// P1-2：以首个 tool event id 标识的本地折叠偏好；不进入 wire / replay。
-    collapsed_tool_groups: HashSet<String>,
+    expanded_tool_groups: HashSet<String>,
     inspector_open: bool,
     inspector_motion: shell_layout::InspectorMotion,
     inspector_render_width: f32,
@@ -694,7 +695,7 @@ impl AppView {
             grouping: TaskRailGrouping::Timeline,
             scope_workspace_id: None,
             collapsed_projects: BTreeSet::new(),
-            collapsed_tool_groups: HashSet::new(),
+            expanded_tool_groups: HashSet::new(),
             // OPT-4b（F6）：默认折叠（宽屏同样）；显式动作（Review changes、
             // Activity 摘要等）仍可展开。
             inspector_open: false,

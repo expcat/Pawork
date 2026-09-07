@@ -3100,7 +3100,7 @@ fn timeline_rows_group_adjacent_tools_and_absorb_into_summary() {
 }
 
 #[test]
-fn timeline_rows_terminal_without_group_and_phases_stay_single() {
+fn timeline_rows_terminal_absorbs_obsolete_phases() {
     let mut projection = DesktopProjection::default();
     projection.timeline.entries = vec![
         raw_entry(
@@ -3119,14 +3119,13 @@ fn timeline_rows_terminal_without_group_and_phases_stay_single() {
             Some("r-1"),
         ),
         terminal_entry(4, ForkBoundary::Failed),
+        raw_entry(5, TimelineEntryKind::AssistantMessage { text: " \n".into() }, Some("r-1")),
     ];
     let rows = projection.timeline_rows();
     assert_eq!(
         rows,
         vec![
             TimelineRow::Message { entry_index: 0 },
-            TimelineRow::RunPhase { entry_index: 1 },
-            TimelineRow::RunPhase { entry_index: 2 },
             TimelineRow::RunSummary {
                 group: None,
                 terminal: 3,

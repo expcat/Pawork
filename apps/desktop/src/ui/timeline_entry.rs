@@ -1,29 +1,5 @@
-//! Timeline 条目渲染（R4 Wave A：F-07 消息层级 / F-08 tool group 与 Run 摘要）。
-//!
-//! 消息条目升级为「标签行（角色 + 时间）+ 正文」层级：正文 18px / 行高 24，
-//! 空行分段（段落间隙 28），段内“- ”前缀连续行渲染为 • 列表（两级切分，
-//! 不引入 markdown 引擎）。连续 ToolCall 条目由 timeline.rs 组装为 tool
-//! group 面板（本文件只负责行渲染）；Run 终态摘要卡与 Timeline 页脚按
-//! state-a §2.3 量图几何渲染。颜色 / 字阶 / 几何一律走 theme token 与本波
-//! 冻结 metrics；wire 无 tool 耗时与 run 终态时长字段，对应列一律不画
-//! （诚实显示，不伪造）。
-//!
-//! # 对外 contract（Worker B / timeline.rs 直接调用）
-//!
-//! - pub(super) fn message_entry_element(&self, entry: &TimelineEntry, menu_open: bool, can_fork: bool, cx: &mut Context<Self>) -> gpui::Div
-//! - pub(super) struct ToolRowView { pub name: String, pub status_label: String, pub status: ToolRowStatus, pub detail: Option<String> }
-//! - pub(super) enum ToolRowStatus { Pending, Running, Succeeded, Failed, Cancelled, Other }
-//! - pub(super) fn tool_group_element(&mut self, group_key: &str, rows: &[ToolRowView], cx: &mut Context<Self>) -> gpui::Div
-//! - pub(super) struct RunSummaryView { pub title: String, pub description: String, pub review_changes_enabled: bool }
-//! - pub(super) fn run_summary_element(&mut self, view: &RunSummaryView, event_id: &str, cx: &mut Context<Self>) -> gpui::Div（内部经 cx.listener 调 AppView 的 event-specific Review handler，mod.rs 实现）
-//! - pub(super) fn run_footer_element(&self, label: &str, time: &str) -> gpui::Div
-//! - pub(super) fn error_entry_element(&mut self, entry: &TimelineEntry, menu_open: bool, can_fork: bool, cx: &mut Context<Self>) -> gpui::Div
-//! - pub(super) fn display_time(timestamp: &str, now_ms: u64) -> String（epoch 串→相对时间词，render/AX 同源；解析失败原样兜底）
-//!
-//! 构造辅助：ToolRowView::from_parts(name, status, detail) 把 wire 原文
-//! status 归类为 ToolRowStatus 并映射状态词（succeeded → “Completed”，其余
-//! 原文，未知状态原样显示不伪造）。条目「···」fork 菜单（identifier 与
-//! 行为冻结）迁入 message / error 条目；旧 timeline_entry_element 删除。
+//! UI-3 Timeline 条目：Markdown 正文、默认收起的工具摘要与诚实 Run 终态。
+//! 渲染和 AX 共用 presentation state 与高度模型；折叠不删除 reducer 事件。
 
 use gpui::{div, prelude::*, px, Context, FontWeight, Rgba, SharedString, Window};
 
@@ -153,45 +129,6 @@ fn tool_row_status(status: &str) -> ToolRowStatus {
     }
 }
 
-/// 消息正文块（F-07 两级切分）：段内普通行 / “- ”前缀连续列表项。
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum MessageBlock {
-    Paragraph(Vec<String>),
-    List(Vec<String>),
-}
-
-/// 空行分段（两个换行）；段内按“- ”前缀把连续行切成段落 / 列表交替块。
-fn split_message_blocks(text: &str) -> Vec<MessageBlock> {
-    fn push_paragraph(buffer: &mut Vec<String>, blocks: &mut Vec<MessageBlock>) {
-        if !buffer.is_empty() {
-            blocks.push(MessageBlock::Paragraph(std::mem::take(buffer)));
-        }
-    }
-    fn push_list(buffer: &mut Vec<String>, blocks: &mut Vec<MessageBlock>) {
-        if !buffer.is_empty() {
-            blocks.push(MessageBlock::List(std::mem::take(buffer)));
-        }
-    }
-
-    let mut blocks = Vec::new();
-    for chunk in text.split("\n\n") {
-        let mut paragraph: Vec<String> = Vec::new();
-        let mut list: Vec<String> = Vec::new();
-        for line in chunk.lines() {
-            if let Some(item) = line.strip_prefix("- ") {
-                push_paragraph(&mut paragraph, &mut blocks);
-                list.push(item.to_string());
-            } else {
-                push_list(&mut list, &mut blocks);
-                paragraph.push(line.to_string());
-            }
-        }
-        push_paragraph(&mut paragraph, &mut blocks);
-        push_list(&mut list, &mut blocks);
-    }
-    blocks
-}
-
 /// gpui 默认行高（TextStyle::default 的 φ 比例，经 line_height_in_pixels
 /// 四舍五入）。render 未显式设 line_height 的文本按此推导高度；AX 几何
 /// 公式与 render 同源共用本函数，不另造第二套行高。
@@ -209,30 +146,10 @@ pub(super) fn estimated_wrapped_lines(text: &str, width_px: f32, font_px: f32) -
         .sum()
 }
 
-/// 消息正文的块 / 行模型（与 render 的 split_message_blocks 同源）：返回
-/// 每块的估算行数（列表项计入「• 」前缀），块间由 MSG_PARAGRAPH_GAP 分隔。
-/// AX 行高公式共用，保证段落切分口径一致。
-pub(super) fn message_block_line_counts(text: &str, width_px: f32, font_px: f32) -> Vec<usize> {
-    let chars_per_line = ((width_px / (font_px * 0.6)).floor() as usize).max(1);
-    let line_count = |raw: &str, extra_chars: usize| {
-        (raw.chars().count() + extra_chars)
-            .div_ceil(chars_per_line)
-            .max(1)
-    };
-    split_message_blocks(text)
-        .into_iter()
-        .map(|block| match block {
-            MessageBlock::Paragraph(lines) => {
-                lines.iter().map(|line| line_count(line, 0)).sum::<usize>()
-            }
-            MessageBlock::List(items) => {
-                items.iter().map(|item| line_count(item, 2)).sum::<usize>()
-            }
-        })
-        .collect()
-}
+pub(super) use super::markdown::message_block_line_counts;
+use super::markdown::message_body_element;
 
-/// 标签行：角色（18px medium）+ 时间（17px secondary，display_time 相对词）。
+/// 作者和时间都是 12px 元信息，正文独占主层级。
 fn message_label_element(role: &str, time: &str, role_color: Rgba) -> gpui::Div {
     div()
         .flex()
@@ -241,7 +158,7 @@ fn message_label_element(role: &str, time: &str, role_color: Rgba) -> gpui::Div 
         .gap_3()
         .child(
             div()
-                .text_size(font::BODY)
+                .text_size(font::BODY_SM)
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(role_color)
                 .child(role.to_string()),
@@ -253,34 +170,6 @@ fn message_label_element(role: &str, time: &str, role_color: Rgba) -> gpui::Div 
                 .truncate()
                 .child(time.to_string()),
         )
-}
-
-/// 正文：段落 / 列表块渲染（行高 24，块间 28；列表项 • 前缀）。
-fn message_body_element(text: &str, color: Rgba) -> gpui::Div {
-    let mut body = div()
-        .flex()
-        .flex_col()
-        .gap(px(metrics::MSG_PARAGRAPH_GAP))
-        .text_size(font::BODY)
-        .line_height(font::from_pixels(metrics::MSG_LINE_HEIGHT))
-        .text_color(color);
-    for block in split_message_blocks(text) {
-        let mut block_element = div().flex().flex_col();
-        match block {
-            MessageBlock::Paragraph(lines) => {
-                for line in lines {
-                    block_element = block_element.child(div().child(line));
-                }
-            }
-            MessageBlock::List(items) => {
-                for item in items {
-                    block_element = block_element.child(div().child(format!("• {item}")));
-                }
-            }
-        }
-        body = body.child(block_element);
-    }
-    body
 }
 
 /// 条目「···」fork 菜单（identifier 与行为自旧 timeline_entry_element 冻结迁移）。
@@ -296,6 +185,7 @@ fn entry_actions_element(
     let entry_focus = view.timeline_entry_focus(&event_id, cx);
     let actions_button = Button::new(button_id.clone())
         .variant(ButtonVariant::Ghost)
+        .height(px(24.0))
         .text_size(font::XS)
         .text_color(dark().text.secondary)
         .padding(ButtonPadding::Horizontal(metrics::PADDING_XS))
@@ -353,8 +243,7 @@ fn entry_actions_element(
     actions
 }
 
-/// 条目壳层：左列（标签行 + 正文，min_w_0 保证正文在可读列宽内 wrap）+
-/// 右侧「···」菜单。行宽不超 TIMELINE_READABLE_WIDTH（防无限拉宽）。
+/// 作者和操作共用一行，正文使用完整列宽；用户消息用浅底卡片区分轮次。
 fn entry_shell_element(
     view: &mut AppView,
     cx: &mut Context<AppView>,
@@ -367,41 +256,28 @@ fn entry_shell_element(
     let actions = entry_actions_element(view, cx, entry, menu_open, can_fork);
     div()
         .flex()
-        .flex_row()
-        .items_start()
-        .justify_between()
-        .gap_2()
-        .max_w(px(metrics::TIMELINE_READABLE_WIDTH))
+        .flex_col()
+        .w_full()
+        .gap(px(metrics::MSG_LABEL_BODY_GAP))
+        .when(
+            matches!(entry.kind, TimelineEntryKind::UserMessage { .. }),
+            |element| {
+                element
+                    .p(px(metrics::MSG_USER_INSET))
+                    .bg(dark().surface.raised)
+                    .rounded(px(12.0))
+            },
+        )
         .child(
             div()
                 .flex()
-                .flex_col()
-                .flex_1()
-                .min_w_0()
-                .gap(px(metrics::MSG_LABEL_BODY_GAP))
+                .items_center()
+                .justify_between()
+                .min_h(px(24.0))
                 .child(label)
-                .child(body),
+                .child(actions),
         )
-        .child(actions)
-}
-
-/// Tool 行图标槽（19px）：无既有 glyph 体系，按工具名首字母块呈现（禁 emoji）。
-fn tool_icon_element(name: &str) -> gpui::Div {
-    let glyph = name
-        .chars()
-        .next()
-        .map(|first| first.to_uppercase().to_string())
-        .unwrap_or_default();
-    div()
-        .w(px(metrics::TOOL_ICON_SIZE))
-        .h(px(metrics::TOOL_ICON_SIZE))
-        .flex()
-        .flex_none()
-        .items_center()
-        .justify_center()
-        .text_size(font::BASE)
-        .text_color(dark().text.secondary)
-        .child(glyph)
+        .child(body)
 }
 
 /// Tool 行状态槽：succeeded = ✓（Ø14，success_fg）+ 状态词；
@@ -452,49 +328,58 @@ fn tool_status_element(row: &ToolRowView) -> gpui::Div {
     }
 }
 
-/// Tool 面板单行：图标槽 + 名称（truncate）+ detail（单行 truncate）+ 状态。
+/// 展开后工具名与状态独占一行，输出在下方换行，不与下一条工具重叠。
 fn tool_row_element(row: &ToolRowView) -> gpui::Div {
-    let mut middle = div()
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap_3()
-        .flex_1()
-        .min_w_0();
-    middle = middle.child(
-        div()
-            .min_w_0()
-            .truncate()
-            .text_size(font::BODY)
-            .text_color(dark().text.emphasis)
-            .child(row.name.clone()),
-    );
-    if let Some(detail) = row.detail.as_deref() {
-        middle = middle.child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .truncate()
-                .text_size(font::BODY_SM)
-                .text_color(dark().text.secondary)
-                .child(detail.to_string()),
-        );
-    }
     div()
         .flex()
-        .flex_row()
-        .items_center()
-        .h(px(metrics::TOOL_ROW_HEIGHT))
-        .pl(px(metrics::TOOL_GROUP_INNER_INSET))
-        .pr_3()
-        .gap_3()
-        .child(tool_icon_element(&row.name))
-        .child(middle)
-        .child(tool_status_element(row))
+        .flex_col()
+        .flex_none()
+        .overflow_hidden()
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .h(px(metrics::TOOL_ROW_HEIGHT))
+                .flex_none()
+                .px_3()
+                .gap_3()
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_size(font::BASE)
+                        .text_color(dark().text.primary)
+                        .child(row.name.clone()),
+                )
+                .child(tool_status_element(row)),
+        )
+        .when_some(row.detail.clone(), |element, detail| {
+            element.child(
+                div()
+                    .px_3()
+                    .pb_3()
+                    .text_size(font::XS)
+                    .line_height(font::from_pixels(20.0))
+                    .font_family("monospace")
+                    .text_color(dark().text.secondary)
+                    .child(detail),
+            )
+        })
+}
+
+/// AX 首帧估算；稳定帧仍优先使用 GPUI 的实际条目 bounds。
+pub(super) fn tool_row_height(row: &ToolRowView, width: f32, rem: f32) -> f32 {
+    metrics::TOOL_ROW_HEIGHT
+        + row.detail.as_deref().map_or(0.0, |detail| {
+            estimated_wrapped_lines(detail, (width - 1.5 * rem).max(1.0), font::XS.0 * rem) as f32
+                * (20.0 / 16.0 * rem).round()
+                + 0.75 * rem
+        })
 }
 
 impl AppView {
-    /// F-07 消息条目：标签行（You / Pawork + 时间）+ 正文（段落 / 列表两级）。
+    /// 消息条目：低强调作者行 + Markdown 正文。
     pub(super) fn message_entry_element(
         &mut self,
         entry: &TimelineEntry,
@@ -506,12 +391,12 @@ impl AppView {
         let (role, label_color, body) = match &entry.kind {
             TimelineEntryKind::UserMessage { text } => (
                 "You",
-                dark().text.emphasis,
+                dark().text.secondary,
                 message_body_element(text, dark().text.emphasis),
             ),
             TimelineEntryKind::AssistantMessage { text } => (
                 "Pawork",
-                dark().text.emphasis,
+                dark().text.secondary,
                 message_body_element(text, dark().text.emphasis),
             ),
             // 兜底臂（Worker B 组装层不会把 tool / run 态交给消息条目）：
@@ -560,7 +445,7 @@ impl AppView {
         )
     }
 
-    /// P1-2 Tool activity：44px 标题汇总真实状态，默认展开；mouse、
+    /// Tool activity：36px 轻量摘要，默认折叠；mouse、
     /// Enter / Space 与 AX 都切换同一个本地 presentation state。
     pub(super) fn tool_group_element(
         &mut self,
@@ -568,7 +453,7 @@ impl AppView {
         rows: &[ToolRowView],
         cx: &mut Context<Self>,
     ) -> gpui::Div {
-        let collapsed = self.collapsed_tool_groups.contains(group_key);
+        let collapsed = !self.expanded_tool_groups.contains(group_key);
         let row_id = format!("tool-group-toggle-{group_key}");
         let click_id = row_id.clone();
         let click_key = group_key.to_string();
@@ -576,6 +461,7 @@ impl AppView {
         let activate_key = group_key.to_string();
         let focus = self.timeline_tool_group_focus(group_key, cx);
         let header = ListRow::project_header(row_id)
+            .height(metrics::TOOL_GROUP_HEADER_HEIGHT)
             .track_focus(&focus)
             .child(
                 div()
@@ -601,7 +487,7 @@ impl AppView {
                             .truncate()
                             .text_size(font::BODY_SM)
                             .font_weight(FontWeight::MEDIUM)
-                            .text_color(dark().text.primary)
+                            .text_color(dark().text.secondary)
                             .child(tool_group_summary(rows)),
                     ),
             )
@@ -620,14 +506,15 @@ impl AppView {
             .flex()
             .flex_col()
             .max_w(px(metrics::TIMELINE_READABLE_WIDTH))
-            .bg(dark().surface.raised)
-            .border_1()
-            .border_color(dark().border.subtle)
+            .when(!collapsed, |panel| {
+                panel.border_l_1().border_color(dark().border.subtle)
+            })
             .rounded(px(metrics::TOOL_GROUP_RADIUS))
             .overflow_hidden()
             .child(
                 div()
                     .h(px(metrics::TOOL_GROUP_HEADER_HEIGHT))
+                    .flex_none()
                     .flex()
                     .items_center()
                     .when(!collapsed, |header| {
@@ -917,50 +804,6 @@ mod tests {
         };
         assert_eq!(view.title, "Ready for review");
         assert!(!view.review_changes_enabled);
-    }
-
-    /// 段落 / 列表切分：空行分段；“- ”前缀连续行为列表项（前缀剥离）；
-    /// 混合段内按连续行交替成块。
-    #[test]
-    fn message_blocks_split_paragraphs_and_lists() {
-        use MessageBlock::{List, Paragraph};
-
-        assert_eq!(
-            split_message_blocks("Refine the header.\n\nThen ship it."),
-            vec![
-                Paragraph(vec!["Refine the header.".into()]),
-                Paragraph(vec!["Then ship it.".into()]),
-            ]
-        );
-        assert_eq!(
-            split_message_blocks("- first\n- second\n- third"),
-            vec![List(vec!["first".into(), "second".into(), "third".into()])]
-        );
-        assert_eq!(
-            split_message_blocks("Plan:\n- a\n- b\nOutro"),
-            vec![
-                Paragraph(vec!["Plan:".into()]),
-                List(vec!["a".into(), "b".into()]),
-                Paragraph(vec!["Outro".into()]),
-            ]
-        );
-    }
-
-    /// 边界：空文本 / 纯空行不产生块；单换行保留为段内行；首尾空行剪除。
-    #[test]
-    fn message_blocks_handle_edges() {
-        use MessageBlock::Paragraph;
-
-        assert_eq!(split_message_blocks(""), Vec::new());
-        assert_eq!(split_message_blocks("\n\n"), Vec::new());
-        assert_eq!(
-            split_message_blocks("a\n\n"),
-            vec![Paragraph(vec!["a".into()])]
-        );
-        assert_eq!(
-            split_message_blocks("one\ntwo"),
-            vec![Paragraph(vec!["one".into(), "two".into()])]
-        );
     }
 
     /// 相对时间词合同（与 task_rail::relative_activity 同源）：now / 1m /
