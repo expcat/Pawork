@@ -348,7 +348,8 @@ fn install_appkit_tab_monitor(window: &Window, cx: &App) {
         let forward = flags & FLAG_SHIFT == 0;
         let handled = TAB_WINDOW.with_borrow_mut(|slot| {
             slot.as_mut().map(|cx| {
-                cx.update(|window, _| {
+                cx.update(|window, cx| {
+                    components::focus_ring::set_keyboard_focus(true, window, cx);
                     if forward {
                         window.focus_next();
                     } else {
@@ -4174,6 +4175,8 @@ impl Render for AppView {
         div()
             .key_context("AppView")
             .track_focus(&self.focus_handle)
+            .child(components::focus_ring::track_pointer_input())
+            .capture_key_down(components::focus_ring::key_down)
             .flex()
             .size_full()
             .bg(dark().bg.base)

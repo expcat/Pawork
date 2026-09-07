@@ -214,7 +214,7 @@ Snapshot 只有会话树、活动 Run、待审批与 Provider 等状态，**没�
 - Timeline 只在用户位于底部时追随流式输出；用户向上阅读后不得抢滚动位置。向上脱钩的滚动区提供回底控件。
 - 连接、Run、tool 与审批状态必须有文本/图标语义，不能只靠颜色；主路径可全键盘操作。
 - Accessibility 以 Desktop 显式语义树为唯一来源：稳定 identifier 与可本地化 label 分离；macOS 由 AppKit bridge 导出。应用内字号 `Cmd+=` / `Cmd++`、`Cmd+-`、`Cmd+0` 在 100%/125%/150% 间切换。新增可见交互必须同批补语义。当前 UI 无动画，Reduce Motion 无渲染分支。
-- 可交互控件必须有 hover 与按下态；hover / active 只改背景，不引起布局移动。
+- 可交互控件必须有 hover 与按下态；hover / active 只改背景，不引起布局移动。 鼠标点击不显示焦点边框；Tab / 方向键导航才显示 2px 中性焦点描边（`text.secondary`），切回鼠标按下立即清除。按钮、列表行、Switch、Settings 导航与 Inspector / Changes 页签共用此规则；业务选中态由背景、下划线或开关位置表达，失焦不改变。
 - scope、model、entry、Activity 菜单为 `anchored()/deferred()` 浮层，同一时刻单开互斥；选择 / 再点触发器 / `Escape` / 点击浮层外关闭；打开时滚轮不穿透。Timeline / Projects 直接切换按钮不属于菜单。
 - 用户发起的 task 切换、审批决策后焦点回到 Composer；session reset 先关闭旧菜单。
 - Timeline 条目经变高虚拟化；侧栏长标题单行省略号截断。

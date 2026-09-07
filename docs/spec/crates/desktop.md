@@ -74,7 +74,7 @@
 | `src/ui/components/switch.rs` | ~160 | `Switch`（OPT-3c）：36×20 轨道 + 16px 滑块，On/Off 状态词由调用方并排渲染；disabled 无 Press；mouse / Enter / Space / AX Press 同源 |
 | `src/ui/components/button.rs` | ~407 | `Button`：六 variant（Primary / Ghost / Danger / Success / Raised / IconCircle；IconCircle 为 Composer 32×32 圆形动作槽）的底色·文字色·hover/pressed 映射；默认 14px control / `CONTROL_RADIUS`；`child()` 承载自绘图标；焦点描边经 `focus_ring` 覆盖层（零布局参与）；`ButtonPadding` 四档及描边/尺寸/对齐 builder；disabled 无 pointer cursor、mouse press、hover 或 keyboard activate，仍保留可读文字与 tooltip |
 | `src/ui/components/dropdown.rs` | ~270 | `Dropdown`（触发器 + `deferred(anchored())` 浮层；可选局部 Corner/Point 锚点，anchored 负责窗口碰撞）、`MenuPanel`（220–360px、8px padding、r6、strong border + menu-only shadow、默认最大高 240px、内部滚动、`occlude()` + 外点关闭）、`MenuRow`（34px；选中用 accent check + raised surface，不用整行亮蓝；hover/pressed/disabled/键盘高亮语义；长 label 单行截断）、`ANCHOR_GAP_Y`=8px |
-| `src/ui/components/focus_ring.rs` | ~30 | `focus_ring(radius)` 聚焦描边覆盖层：`absolute + inset_0` 贴控件 padding box 内缘绘制 2px accent 描边，无 hitbox、不 track_focus、不参与布局；可聚焦控件 render 期按 `focus.is_focused(window)` 挂载，圆角与外壳同源。约定：禁止在 `.focus(...)` 等动态样式里设置 border 等参与布局的属性（gpui border 参与 Taffy 盒模型，聚焦加边框会膨胀控件或压缩内容盒，OPT-4d 微移根因） |
+| `src/ui/components/focus_ring.rs` | ~133 | `focus_ring(radius)` 返回 `FocusRing`：持焦且使用键盘导航时以 `absolute + inset_0` 绘制 2px `text.secondary` 中性描边；鼠标点击不绘制。单窗口输入方式由窗口 mouse capture、根 key capture 与 AppKit Tab 监听器同步；菜单遮挡或子控件停止冒泡仍会清除鼠标路径描边。覆盖层无 hitbox、不 track_focus、不参与布局，圆角与外壳同源；1 个 GPUI 输入切换回归。约定：禁止在 `.focus(...)` 等动态样式里设置 border 等参与布局的属性（gpui border 参与 Taffy 盒模型，聚焦加边框会膨胀控件或压缩内容盒，OPT-4d 微移根因） |
 | `src/ui/components/follow_scroll.rs` | ~90 | `FollowScroll`（`ScrollHandle` + 跟随位：贴底判定 / 脱钩 / 重挂；现仅终端使用）与 `BackToBottom` 回底控件容器（绝对定位右下） |
 | `src/ui/components/label.rs` | ~70 | `Label`（单行文本，token 化字号 / 颜色）与 `Badge`（状态徽标别名，默认 12px meta + text.secondary） |
 | `src/ui/components/list_row.rs` | ~184 | `ListRow`：Task 行与 ProjectHeader 行两形态，默认行高 44 + 垂直居中；`height()` 供两行 Settings 审批项使用 3.5rem（56/70/84px），不改变 TaskRail 默认；`radius()` 覆盖外壳与焦点描边圆角；`min_w_0` 保证子项 truncate 拿到确定宽度；selected/hover/pressed 使用 raised/hover/pressed surface，焦点描边经 `focus_ring` 覆盖层（零布局参与）；裸 Enter / Space 调用与 click 同一激活 handler |
@@ -319,6 +319,8 @@ domain id 类型未从 client re-export，命令 / 查询经冻结的 serde 形�
 - **运行时对端**：`pawork gui serve`（host 侧 gui-server）。数据目录规则镜像 app（`PAWORK_DATA_DIR` →（Windows）`%LOCALAPPDATA%/pawork` → `~/.pawork` → 临时目录/pawork），但按分层约束**不**依赖 `pawork-app` crate。
 
 ## 7. 测试与验证资产
+
+焦点反馈回归 `pointer_focus_stays_functional_without_ring_and_keyboard_restores_it` 使用真实 GPUI 鼠标 / Tab 事件，覆盖点击保留功能焦点、键盘恢复提示、点击遮挡并吞事件的控件仍清除提示。
 
 UI-2 新增 `session_actions_follow_hover_and_keyboard_without_opening`：真实 GPUI 鼠标 / Tab 驱动非当前会话动作，核对悬停可见、点击改名不切会话、取消后焦点保留、断线禁写与 AX 同源；本批实际命令与结果见 [路线图](../../ROADMAP.md)。
 
