@@ -115,8 +115,10 @@ UI-2 / UI-3 / UI-4 写入集不重叠，可在 UI-1 token 稳定后并行。UI-5
 
 | 任务 | 内容 | 内核 |
 | --- | --- | --- |
-| UI-6a | 重做供应商卡与模型弹层的 UI/交互；探测成功时该 provider **以远端 /models 为权威**（替换静态条目，失败才 fallback）。DeepSeek 因此只出现 v4 三模型。禁止按 id 黑名单隐藏 chat/reasoner。 | models_overview / model_catalog 的并集改替换；静态 builtin_entries 只作探测失败回退 |
+| UI-6a | 重做供应商卡与模型弹层的 UI/交互；探测成功时该 provider **以供应商目录接口返回的 ID 集合为准**（替换静态条目，失败才 fallback），再按 adapter 支持的模态与协议筛选。公开目录不能当作凭证验证或账号权限证明。DeepSeek 因此只出现当次远端的 v4 三模型。禁止按 id 黑名单隐藏 chat/reasoner。 | models_overview / model_catalog 的并集改替换；静态 builtin_entries 只作探测失败回退；逐模型协议、能力和认证验证缺口见核查报告 |
 | UI-6b | 同一供应商可按其支持的方式添加**多个** OAuth 订阅或 API key（同 kind 多账户，不再只是 key 与 OAuth 两类各一份）。可在账号间切换；有权威额度后再按剩余额度切换，无来源时不画假数字，但切换入口要先在。 | 将 backlog G1 账户池纳入本线；G2 QuotaSnapshot 有来源才接自动切换。Secret 仍只进 auth backend |
+
+目录前置核查已完成（2026-09-08）：覆盖八条正式通道与现有 Anthropic / OpenAI-compatible 适配器。真实 GET 复现 DeepSeek 静态旧模型残留、Go 公开目录无法验证 key、Qwen 非聊天模型进入目录；逐供应商结果和参照项目依据见 [模型目录核查报告](review/model-catalog-audit-2026-09-08.md)。**实现未开始，未通过修复后的自动门禁或人工验收。**
 
 ---
 
@@ -150,7 +152,7 @@ UI-2 / UI-3 / UI-4 写入集不重叠，可在 UI-1 token 稳定后并行。UI-5
 | UI-3 Timeline | 进行中：Markdown、工具折叠与终态呈现已实现，215 项自动检查通过；思考投影待契约确认；live Run 的 HTTP 400 已定位为缺少会话请求头，修复未实施；未完成人工视觉验收 |
 | UI-4 Composer | 已立项，未开始 |
 | UI-5 Settings | 已立项，未开始 |
-| UI-6 Providers | 已立项，未开始 |
+| UI-6 Providers | 目录前置核查完成（2026-09-08）；实现未开始，未归档；见 [核查报告](review/model-catalog-audit-2026-09-08.md) |
 
 走查原文与截图在本机走查笔记中，不检入仓库。
 

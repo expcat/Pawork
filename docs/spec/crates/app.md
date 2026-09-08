@@ -124,7 +124,7 @@ ADR-053 启动：显式 `AppLoadOptions.approval_mode` > Global 审批 > ReadOnl
 ### 3.3 模型、凭证与通道
 
 - `list_models()`：当前 provider 实时列举（走网络，缺凭证时经 `CatalogOnlyProvider` 返回静态目录）。
-- `model_catalog()` / `models_overview()` / `provider_models()`：聚合 `CatalogEntry`（builtin 目录 + config 覆盖 + 运行期探测缓存），不发网络请求，GUI ModelList 即消费 overview。
+- `model_catalog()` / `models_overview()`：聚合 `CatalogEntry`（builtin 目录 + config 覆盖 + 运行期远端探测），**可发网络请求**，GUI ModelList 消费 overview。当前探测成功只追加未知 ID，仍保留静态条目且不更新同 ID 元数据；与目标目录权威规则的差距见 [2026-09-08 核查](../../review/model-catalog-audit-2026-09-08.md)。`provider_models()` 仅读当前 provider 的内存 registry，不发网络请求。
 - `switch_model(model)`：同 registry 内切换默认 model；未知 id fail-closed 报错，不静默沿用。
 - `switch_provider(provider, model)`：重装配 provider（重新走凭证链与协议解析），成功后发 ModelSwitched 诊断事件；带 provider 而 model 未指明时不得静默保留旧 model id；ADR-055 起目标模型禁用即 `ModelDisabled` fail-closed。
 - `auth_status() -> Vec<AuthChannelStatus>`：逐通道报 `AuthSource`{File/Env/None}，永不回显 key 本体。
