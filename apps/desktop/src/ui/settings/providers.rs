@@ -43,6 +43,197 @@ fn oauth_browser_links_reject_non_web_targets() {
 }
 
 impl AppView {
+    pub(crate) fn settings_accounts_supported(&self) -> bool {
+        self.handshake_info
+            .as_ref()
+            .and_then(|info| info.api_version.split_once('.'))
+            .is_some_and(|(major, minor)| {
+                major == "1" && minor.parse::<u16>().is_ok_and(|minor| minor >= 15)
+            })
+    }
+
+    pub(crate) fn settings_credentials_subtitle(&self) -> &'static str {
+        t(if self.settings_accounts_supported() {
+            "settings.providers.account_subtitle"
+        } else {
+            "settings.providers.credentials_subtitle"
+        })
+    }
+
+    pub(crate) fn settings_provider_auth_actions(
+        &self,
+        provider: &ProviderAuthStatusEntry,
+        editor: bool,
+        remove: bool,
+        wait: bool,
+    ) -> Vec<SettingsAuthAction> {
+        settings_auth_actions(provider, editor, remove, wait)
+            .into_iter()
+            .filter(|action| {
+                !self.settings_accounts_supported()
+                    || !matches!(
+                        action,
+                        SettingsAuthAction::Remove
+                            | SettingsAuthAction::ConfirmRemove
+                            | SettingsAuthAction::KeepRemove
+                    )
+            })
+            .collect()
+    }
+
+    pub(crate) fn settings_auth_action_label(&self, action: SettingsAuthAction) -> &'static str {
+        if self.settings_accounts_supported() {
+            match action {
+                SettingsAuthAction::ConnectApiKey | SettingsAuthAction::ReplaceApiKey => {
+                    return t("settings.providers.add_api_key")
+                }
+                SettingsAuthAction::ConnectOauth | SettingsAuthAction::ReplaceOauth => {
+                    return t("settings.providers.add_oauth")
+                }
+                _ => {}
+            }
+        }
+        action.label()
+    }
+
+    fn settings_account_name(&mut self, provider: &str, cx: &mut Context<Self>) -> Option<String> {
+        if !self.settings_accounts_supported() {
+            return None;
+        }
+        let input = self.settings_account_names.get(provider)?;
+        let name = input.read(cx).text().trim().to_string();
+        input.update(cx, |input, cx| input.reset_text("", cx));
+        Some(name)
+    }
+
+    pub(crate) fn settings_account_action_enabled(
+        &self,
+        provider: &ProviderAuthStatusEntry,
+        credential: &pawork_client::ProviderCredentialStatus,
+        remove: bool,
+    ) -> bool {
+        self.settings_accounts_supported()
+            && self.settings_writes_enabled()
+            && !matches!(provider.auth, ProviderAuthState::Connecting)
+            && !credential.credential_id.is_empty()
+            && if remove {
+                !credential.selected || provider.credentials.len() == 1
+            } else {
+                !credential.selected
+            }
+    }
+
+    pub(crate) fn settings_account_action_label(
+        &self,
+        identifier: &str,
+        remove: bool,
+    ) -> &'static str {
+        t(if !remove {
+            "settings.providers.account_use"
+        } else if self.settings_account_remove_confirm.as_deref() == Some(identifier) {
+            "settings.providers.action_confirm_remove"
+        } else {
+            "settings.providers.action_remove"
+        })
+    }
+
+    fn settings_account_button(
+        &mut self,
+        provider: &ProviderAuthStatusEntry,
+        credential: &pawork_client::ProviderCredentialStatus,
+        remove: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let id = settings_account_action_identifier(
+            &provider.provider_id,
+            &credential.credential_id,
+            remove,
+        );
+        let enabled = self.settings_account_action_enabled(provider, credential, remove);
+        let focus = self
+            .settings_action_focus
+            .entry(id.clone())
+            .or_insert_with(|| cx.focus_handle().tab_stop(true))
+            .clone();
+        let click_id = id.clone();
+        let activate_id = id.clone();
+        let button = Button::new(id.clone())
+            .track_focus(&focus)
+            .variant(ButtonVariant::Raised)
+            .height(px(SETTINGS_CONTROL_HEIGHT))
+            .vcenter()
+            .radius(6.0)
+            .bordered()
+            .text_size(font::BODY_SM)
+            .label(self.settings_account_action_label(&id, remove))
+            .disabled(!enabled)
+            .tooltip(
+                if remove && credential.selected && provider.credentials.len() > 1 {
+                    t("settings.providers.account_remove_hint")
+                } else {
+                    ""
+                },
+            )
+            .on_click(cx.listener(move |view, event, _window, cx| {
+                if !view.consume_button_key_click(&click_id, event) {
+                    view.on_settings_account_action(&click_id, cx);
+                }
+            }))
+            .on_activate(cx.listener(move |view, _, _window, cx| {
+                view.note_button_key_activate(&activate_id);
+                view.on_settings_account_action(&activate_id, cx);
+                cx.stop_propagation();
+            }));
+        self.settings_element(id).flex_none().child(button)
+    }
+
+    pub(crate) fn on_settings_account_action(
+        &mut self,
+        identifier: &str,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self
+            .settings_account_remove_confirm
+            .as_ref()
+            .is_some_and(|id| format!("{id}-keep") == identifier)
+        {
+            self.settings_account_remove_confirm = None;
+            cx.notify();
+            return true;
+        }
+        for provider in &self.projection.settings_providers.providers {
+            for credential in &provider.credentials {
+                for remove in [false, true] {
+                    if settings_account_action_identifier(
+                        &provider.provider_id,
+                        &credential.credential_id,
+                        remove,
+                    ) == identifier
+                    {
+                        if self.settings_account_action_enabled(provider, credential, remove) {
+                            if remove
+                                && self.settings_account_remove_confirm.as_deref()
+                                    != Some(identifier)
+                            {
+                                self.settings_account_remove_confirm = Some(identifier.to_string());
+                            } else {
+                                self.settings_account_remove_confirm = None;
+                                self.controller.auth_account_change(
+                                    provider.provider_id.clone(),
+                                    credential.credential_id.clone(),
+                                    remove,
+                                );
+                            }
+                            cx.notify();
+                        }
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
     pub(super) fn settings_providers_page_element(
         &mut self,
         cx: &mut Context<Self>,
@@ -155,7 +346,12 @@ impl AppView {
         let editor_open = self.settings_api_key_editor_visible(provider);
         let remove_confirm = self.settings_remove_confirm.as_deref() == Some(provider_id.as_str());
         let oauth_waiting = oauth_waits.contains_key(&provider_id);
-        let actions = settings_auth_actions(provider, editor_open, remove_confirm, oauth_waiting);
+        let actions = self.settings_provider_auth_actions(
+            provider,
+            editor_open,
+            remove_confirm,
+            oauth_waiting,
+        );
         let row_actions: Vec<SettingsAuthAction> = actions
             .iter()
             .copied()
@@ -650,74 +846,126 @@ impl AppView {
                 .flex_col()
                 .gap_1()
                 .child(settings_label(t("settings.providers.credentials_title")))
-                .child(settings_copy(t("settings.providers.credentials_subtitle"))),
+                .child(settings_copy(self.settings_credentials_subtitle())),
             );
-        // 凭证行：只列盘上存储条目（kind + masked + 状态点）；空列表给
-        // 诚实空态，不渲染假行（env fallback 不入列，Host 口径）。
         if provider.credentials.is_empty() {
             block = block.child(self.settings_note(
                 dynamic_identifier("settings-provider-credentials-empty", &provider_id),
                 t("settings.providers.credentials_empty"),
             ));
-        } else {
-            for (ix, credential) in provider.credentials.iter().enumerate() {
-                let expired = credential.expired;
-                let status_color = if expired {
-                    dark().semantic.danger_text
-                } else {
-                    dark().semantic.success_fg
-                };
-                block = block.child(
-                    self.settings_element(dynamic_identifier(
-                        &format!("settings-provider-credential-{ix}"),
-                        &provider_id,
-                    ))
-                    .flex()
-                    .flex_wrap()
-                    .items_center()
-                    .gap_3()
-                    .py_2()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_1()
-                            .min_w_0()
-                            .flex_row()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                Label::new(provider_credential_kind_label(&credential.kind))
+        }
+        for (ix, credential) in provider.credentials.iter().enumerate() {
+            let mut row = self
+                .settings_element(settings_credential_row_identifier(
+                    &provider_id,
+                    credential,
+                    ix,
+                ))
+                .flex()
+                .flex_col()
+                .gap_2()
+                .py_2()
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            div().flex_1().min_w_0().child(
+                                div().truncate().child(
+                                    Label::new(if credential.display_name.is_empty() {
+                                        provider_credential_kind_label(&credential.kind).to_string()
+                                    } else {
+                                        credential.display_name.clone()
+                                    })
                                     .size(font::BODY_SM)
                                     .color(dark().text.primary),
-                            )
-                            .child(
-                                div().min_w_0().truncate().child(
-                                    Label::new(credential.masked_credential.clone())
-                                        .size(font::BODY_SM)
-                                        .color(dark().text.tertiary),
                                 ),
                             ),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_none()
-                            .items_center()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .flex_none()
-                                    .w(px(6.0))
-                                    .h(px(6.0))
-                                    .rounded_full()
-                                    .bg(status_color),
-                            )
-                            .child(
-                                Label::new(provider_credential_status_label(expired))
+                        )
+                        .when(credential.selected, |row| {
+                            row.child(
+                                Label::new(t("settings.providers.account_selected"))
                                     .size(font::BODY_SM)
-                                    .color(status_color),
-                            ),
+                                    .color(dark().semantic.success_fg),
+                            )
+                        }),
+                )
+                .child(
+                    div().flex().flex_wrap().items_center().gap_3().child(
+                        Label::new(format!(
+                            "{} · {} · {}",
+                            provider_credential_kind_label(&credential.kind),
+                            credential.masked_credential,
+                            provider_credential_status_label(credential.expired)
+                        ))
+                        .size(font::BODY_SM)
+                        .color(if credential.expired {
+                            dark().semantic.danger_text
+                        } else {
+                            dark().text.tertiary
+                        }),
                     ),
+                );
+            if self.settings_accounts_supported() && !credential.credential_id.is_empty() {
+                row = row.child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .gap_2()
+                        .child(self.settings_account_button(provider, credential, false, cx))
+                        .child(self.settings_account_button(provider, credential, true, cx)),
+                );
+            }
+            let remove_id =
+                settings_account_action_identifier(&provider_id, &credential.credential_id, true);
+            if self.settings_account_remove_confirm.as_deref() == Some(&remove_id) {
+                let keep_id = format!("{remove_id}-keep");
+                let focus = self
+                    .settings_action_focus
+                    .entry(keep_id.clone())
+                    .or_insert_with(|| cx.focus_handle().tab_stop(true))
+                    .clone();
+                let click_id = keep_id.clone();
+                let activate_id = keep_id.clone();
+                row = row.child(
+                    div().flex().child(
+                        self.settings_element(keep_id.clone()).flex_none().child(
+                            Button::new(keep_id)
+                                .track_focus(&focus)
+                                .variant(ButtonVariant::Raised)
+                                .label(t("settings.providers.action_keep"))
+                                .height(px(SETTINGS_CONTROL_HEIGHT))
+                                .radius(6.0)
+                                .bordered()
+                                .text_size(font::BODY_SM)
+                                .on_click(cx.listener(move |view, event, _, cx| {
+                                    if !view.consume_button_key_click(&click_id, event) {
+                                        view.on_settings_account_action(&click_id, cx);
+                                    }
+                                }))
+                                .on_activate(cx.listener(move |view, _, _, cx| {
+                                    view.note_button_key_activate(&activate_id);
+                                    view.on_settings_account_action(&activate_id, cx);
+                                    cx.stop_propagation();
+                                })),
+                        ),
+                    ),
+                );
+            }
+            block = block.child(row);
+        }
+        if self.settings_accounts_supported()
+            && !matches!(provider.auth, ProviderAuthState::Connecting)
+        {
+            if let Some(input) = self.settings_account_names.get(&provider_id).cloned() {
+                block = block.child(
+                    self.settings_element(dynamic_identifier(
+                        "settings-account-name",
+                        &provider_id,
+                    ))
+                    .child(input),
                 );
             }
         }
@@ -860,7 +1108,7 @@ impl AppView {
                 row = row.child(self.settings_action_button(
                     *action,
                     &provider_id,
-                    writes,
+                    self.settings_action_enabled(*action, &provider_id, writes, cx),
                     tooltip,
                     cx,
                 ));
@@ -1281,6 +1529,20 @@ impl AppView {
         if !writes {
             return false;
         }
+        if self.settings_accounts_supported()
+            && matches!(
+                action,
+                SettingsAuthAction::VerifyApiKey
+                    | SettingsAuthAction::ConnectOauth
+                    | SettingsAuthAction::ReplaceOauth
+            )
+            && self
+                .settings_account_names
+                .get(provider_id)
+                .is_none_or(|input| input.read(cx).text().trim().is_empty())
+        {
+            return false;
+        }
         if action != SettingsAuthAction::VerifyApiKey {
             return true;
         }
@@ -1348,7 +1610,7 @@ impl AppView {
                 {
                     t("settings.providers.copied")
                 } else {
-                    action.label()
+                    self.settings_auth_action_label(action)
                 },
             )
             .disabled(!enabled)
@@ -1880,7 +2142,8 @@ impl AppView {
         {
             entry.auth = ProviderAuthState::Connecting;
         }
-        self.controller.auth_start(provider_id);
+        let name = self.settings_account_name(&provider_id, cx);
+        self.controller.auth_start(provider_id, name);
         cx.notify();
     }
 
@@ -1919,7 +2182,8 @@ impl AppView {
         {
             entry.auth = ProviderAuthState::Connecting;
         }
-        self.controller.auth_set_api_key(provider_id, key);
+        let name = self.settings_account_name(&provider_id, cx);
+        self.controller.auth_set_api_key(provider_id, key, name);
         cx.notify();
     }
 
@@ -1933,6 +2197,30 @@ impl AppView {
     /// 按当前 provider 清单懒建 / 回收 secure 输入实体与焦点句柄（含
     /// 「设为默认」按钮随模型目录的回收）。
     pub(crate) fn ensure_settings_api_key_inputs(&mut self, cx: &mut Context<Self>) {
+        self.settings_account_names.retain(|id, _| {
+            self.projection
+                .settings_providers
+                .providers
+                .iter()
+                .any(|p| &p.provider_id == id)
+        });
+        for provider in &self.projection.settings_providers.providers {
+            self.settings_account_names
+                .entry(provider.provider_id.clone())
+                .or_insert_with(|| {
+                    cx.new(|cx| {
+                        TextInput::with_placeholder(t("settings.providers.account_name"), cx)
+                            .id(dynamic_identifier(
+                                "settings-account-name",
+                                &provider.provider_id,
+                            ))
+                            .height_clamp(
+                                metrics::COMPOSER_INPUT_MIN_HEIGHT,
+                                metrics::COMPOSER_INPUT_MIN_HEIGHT,
+                            )
+                    })
+                });
+        }
         self.settings_auth_details.retain(|id, _| {
             self.projection
                 .settings_providers
@@ -1956,6 +2244,23 @@ impl AppView {
         // 白名单比对，不用子串匹配（会误伤 id 段重叠的无关条目）。
         let mut action_ids = HashSet::new();
         for entry in &self.projection.settings_providers.providers {
+            for credential in &entry.credentials {
+                for remove in [false, true] {
+                    action_ids.insert(settings_account_action_identifier(
+                        &entry.provider_id,
+                        &credential.credential_id,
+                        remove,
+                    ));
+                }
+                action_ids.insert(format!(
+                    "{}-keep",
+                    settings_account_action_identifier(
+                        &entry.provider_id,
+                        &credential.credential_id,
+                        true
+                    )
+                ));
+            }
             for action in SettingsAuthAction::ALL {
                 action_ids.insert(action.identifier(&entry.provider_id));
             }
@@ -2102,6 +2407,8 @@ impl AppView {
         self.settings_terminal_rows_input
             .update(cx, |input, cx| input.reset_text("", cx));
         self.settings_api_key_editors.clear();
+        self.settings_account_names.clear();
+        self.settings_account_remove_confirm = None;
         self.settings_remove_confirm = None;
         self.settings_mcp_remove_confirm = None;
         // OPT-3a 弹层本地编辑状态：在途标记与 cleared_roles 说明随离开

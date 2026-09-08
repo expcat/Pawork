@@ -805,10 +805,24 @@ pub(crate) async fn refresh_oauth_credential_with(
         }
     }
 
-    let refresh_token = read_refresh_token(stored, backend)?;
-    let tokens =
-        refresh_access_token(&config.token_url, &config.client_id, &refresh_token, http).await?;
-    persist(backend, stored, &tokens)?;
+    let before = backend_token_snapshot(stored, backend)?;
+    let tokens = refresh_access_token(
+        &config.token_url,
+        &config.client_id,
+        &before.refresh_token,
+        http,
+    )
+    .await?;
+    // Network waits never hold the write lock. Compare inside the atomic commit so
+    // a concurrent removal/relogin cannot be resurrected or overwritten by refresh.
+    backend.transaction(&mut |transaction| {
+        if backend_token_snapshot(stored, transaction)? != before {
+            return Err(AuthError::OAuth(
+                "credential changed during refresh; retry request".into(),
+            ));
+        }
+        persist(transaction, stored, &tokens)
+    })?;
     gate.publish(stored, &tokens.access_token);
     Ok(true)
 }

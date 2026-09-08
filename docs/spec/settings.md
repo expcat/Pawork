@@ -1,5 +1,16 @@
 # Settings：模型与供应商
 
+## ADR-059：UI-6b 命名账号与持久选择（2026-09-08）
+
+状态：Accepted。用户在 [实施方案](../review/ui6b-accounts-plan-2026-09-08.md) 后明确回复「确认实施」。G1 已实现，定向自动检查与代理真窗口检查通过，等待用户人工视觉验收，G2 权威额度与自动切换仍是后续检查点；不表示 UI-6b 整体完成。以下决策取代 ADR-056 的单 kind 默认槽与 provider 级 GUI 操作限制。
+
+- **D1 存储**：每 provider 在 auth backend 的 `pawork.<provider>/accounts.meta` 保存版本 1 索引、递增 revision、账号名称/ID/kind/创建时间与显式选择。新账号使用 opaque `cred_*` ID；API key 为同 service 下 ID 槽，OAuth 为 `pawork.<provider>.oauth` 下 ID 的 `.access/.refresh/.meta` 槽。旧 key/OAuth 保留 `default` 定位，隐式读为 `default-api-key` / `default-oauth`，首次写入才登记索引。FileBackend 外层 version 1 不变，无数据库或 config 迁移，无新增依赖。
+- **D2 原子性**：索引与 secret 在同一个 backend transaction 中提交；FileBackend 沿用跨进程写锁、单次 load 与原子 rename，MemoryBackend 同样回滚失败操作。OAuth 共用参数化的持久化与 refresh 核心，成功轮换同步推进 revision，让其他 Host 丢弃旧 bearer；网络在写锁外，提交时重核原 access/refresh，防止删除后复活或覆盖新登录。OAuth cancel 与完成落盘在同一 flight 锁下串行化。索引损坏、选择失效或缺 secret 均 fail-closed。
+- **D3 选择**：显式选择优先且须符合通道认证方式；没有选择时沿用 default key → env → default OAuth 的通道规则。首个新增账号只在没有旧存储凭证及可用 env 时自动选择。每次新 Run、手动 compact、自动命名均在请求边界核对；已开始的 Run 保留 adapter 凭证快照，工具续轮不换身份。Host 比较持久 revision，另一 Host 的改动同样使下次请求重新装配。
+- **D4 删除与兼容**：新 GUI 逐 ID 删除，选中条目仍有其他存储账号时拒删，先选择另一条；最后一条删除后允许 env fallback。旧 `auth_set_api_key` / `auth_start` 仍替换 default；`auth_remove` / CLI logout 删除全部存储账号。添加、选择、删除与同 provider 未完成的认证共享单飞闸。
+- **D5 GUI 1.15**：新增 `auth_account_add_api_key(provider_id, display_name, api_key)`、`auth_account_start(provider_id, display_name, flow)`、`auth_account_select(provider_id, credential_id)`、`auth_account_remove(provider_id, credential_id)`，仅 GUI、since 1.15；Secret 使用现有 `ApiKeySecret` 脱敏类型。新增 key 回执给 ID/名称/掩码/选择状态；select 回 `selected_credential_id`；remove 回被删 ID 与写后 selected ID。`ProviderCredentialStatus` 增 ID、display_name、selected；其余字段不变。复用 `AuthChanged` 重查列表，不加事件族。旧 minor 的状态响应剥离新增字段，新 Desktop 解码旧状态时默认空 ID/名称与未选择，只发送旧命令。
+- **D6 界面与边界**：Credentials 内名称输入、Add API key/OAuth、逐账号 Use/Remove，删除二次确认；按钮、行、AX 实测框按 ID 绑定。selected 文案表示用于后续请求；env 不列入账号，OAuth expired 仅陈述时间事实。Usage 保持 unavailable，无虚构余额。账号重命名/导入/account factory/完整 accounts CLI、会话亲和、Run 中途切换及 G2 自动路由均不在本切片。
+
 ## ADR-058：UI-6a 目录权威与凭证验证（2026-09-08）
 
 状态：已实现，定向检查与代理真窗口检查通过，等待用户人工视觉验收，见 [ROADMAP UI-6a](../ROADMAP.md#8-ui-6--providers供应商目录多账号)。GUI wire、配置 schema、认证存储和 domain 形状不变；自动检查与视觉验收分别记录在路线图。
@@ -8,7 +19,7 @@
 - **D2 可运行过滤**：Go / Qwen 的混合目录使用随实现固定的官方逐模型协议声明，目录过滤和请求路由同源；未声明协议或仅支持 Messages 的模型暂不进入这两条 API-key 通道的可运行目录，直接请求也在网络前拒绝。显式 transport 配置仍优先。没有按 ID 黑名单隐藏旧模型。未知窗口/输出为 0（unknown），未知工具能力不宣称支持；Kimi/xAI/ChatGPT 消费有证据的远端字段。
 - **D3 解析失败**：缺失/非数组目录、缺失/无效模型 ID 都是错误；合法空数组是远端成功。通用目录出现 `has_more=true` 时显式报尚不支持分页，避免把第一页当完整 ID 集合。ChatGPT 使用 `client_version=0.153.0`；空/null/none-only reasoning levels 不再宣称思考能力。
 - **D4 验证与发现分离**：Go 保存候选 key 前调用 `GET {base_url}/usage`，沿用代理、超时与 Bearer 安全边界；仅合法 rolling/weekly/monthly 用量响应算验证成功，rate-limited 仍是有效认证。401、403、超时或畸形响应均失败并保留旧 key。目录仍使用公开 `/models`，不作为 key 或账号权限证明。其余已认证目录渠道沿用严格的 `/models` 验证；不发验证用推理请求，不引入“未验证保存”。依据：[Go 官方实现固定快照](https://github.com/anomalyco/opencode/blob/d4704347465c1ee63d0c213ed00e648e7f0231c5/packages/console/app/src/routes/zen/go/v1/usage.ts)。
-- **D5 边界**：UI-6b 同 kind 多账号与切换尚未实施；本次 /usage 仅用于认证，不产生 GUI QuotaSnapshot 或自动切换。Anthropic 静态目录、分页与 Kimi 视频输入属于现有适配缺口，不因此新增协议能力。
+- **D5 边界**：UI-6a 收口时 UI-6b 同 kind 多账号与切换尚未实施（后续见 ADR-059）；本次 /usage 仅用于认证，不产生 GUI QuotaSnapshot 或自动切换。Anthropic 静态目录、分页与 Kimi 视频输入属于现有适配缺口，不因此新增协议能力。
 
 ## ADR-056：OPT-3d/3e 同供应商多凭证最小切片与额度槽诚实空态（2026-09-06）
 
@@ -88,7 +99,7 @@ macOS 外观路径：`~/Library/Application Support/dev.pawork.pawork/desktop.js
 - **当前问题**：Desktop 只有 Composer 模型选择器，没有 Settings 路由、凭证状态、添加供应商或登录流程；Provider/auth 能力散落在 CLI/AppCore，GUI 只消费模型列表。
 - **用户场景/JTBD**：打开 Settings，添加一个供应商连接，以其支持的 API key 或 OAuth 登录，确认可用模型，并把其中一个设为下一轮默认模型。
 - **成功指标**：首批四家供应商各至少一条真实认证路径可用；模型目录来源和回退可辨；重启后默认项恢复；Secret 泄漏种子为零；断线、取消、错误不会显示假成功。
-- **非目标**：发布、安装器、自更新、同供应商多账户池、额度路由、团队 Secret、首批任意自定义端点、假 quota/假模型、Desktop 直连业务服务。
+- **非目标**：发布、安装器、自更新、完整 account factory、额度路由、团队 Secret、首批任意自定义端点、假 quota/假模型、Desktop 直连业务服务。
 
 本功能是现有 CLI 能力的 Desktop 产品化，不创建第二套 Provider 或 auth 实现。
 
@@ -295,7 +306,7 @@ SET-6h 本机证据（2026-09-05，macOS）：Global `config.toml` 配置 `proxy
 | SET-D01 | Settings 是否替换工作台内容 | Settings Rail 替换 TaskRail，右侧占完整内容；返回恢复工作台状态 | Accepted |
 | SET-D02 | 首批供应商 | Z.AI/GLM、Kimi、DeepSeek、xAI/Grok | Accepted |
 | SET-D03 | 认证方法由谁决定 | Host descriptor 声明，Desktop 不硬编码品牌 | Accepted |
-| SET-D04 | 首期连接数量 | 每 provider 一个活动连接；多账户池不在范围 | Accepted |
+| SET-D04 | 首期连接数量 | 首期每 provider 一个活动连接；UI-6b 的命名账号与持久选择由 ADR-059 扩展 | Accepted |
 | SET-D05 | 模型目录优先级 | 已认证远端优先，固定目录有版本标记回退，第三方不作运行时权限源 | Accepted |
 | SET-D06 | 发布是否进入计划 | 不进入；由用户后续单独指定 | Accepted |
 | SET-D07 | API key 的 GUI wire/ledger 形状 | ADR-046 已拍板非重放 `ApiKeySecret` + ledger 只缓存脱敏响应 | Accepted |

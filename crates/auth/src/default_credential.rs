@@ -1,9 +1,10 @@
-//! 每 Provider 唯一的 default OAuth 条目（S6 波 C）。
+//! OAuth 条目存储与刷新，保留旧 default 入口。
 //!
-//! 首发阶段每 provider 只保存一条 OAuth 凭证，使用确定性 SecretBackend 定位：
+//! default 与命名账号复用同一组 SecretBackend 槽位：
 //! service = pawork.<provider>.oauth，account 为 default.access / default.refresh /
 //! default.meta。meta 是仅含掩码与过期时间的 JSON（非 secret），供装配期无网络
-//! 重建 StoredCredential 并判断是否需要刷新。多凭证/账号池留 S11。
+//! 重建 StoredCredential 并判断是否需要刷新。命名账号以 credential ID 替换
+//! default 前缀；账号索引和选择由 accounts 模块维护。
 
 use std::time::Duration;
 
@@ -38,22 +39,23 @@ pub struct DefaultOAuthMeta {
     pub account_id: Option<String>,
 }
 
-fn access_account() -> String {
-    format!("{OAUTH_DEFAULT_ACCOUNT}.access")
+fn access_account(account: &str) -> String {
+    format!("{account}.access")
 }
 
-fn refresh_account() -> String {
-    format!("{OAUTH_DEFAULT_ACCOUNT}.refresh")
+fn refresh_account(account: &str) -> String {
+    format!("{account}.refresh")
 }
 
-fn meta_account() -> String {
-    format!("{OAUTH_DEFAULT_ACCOUNT}.meta")
+fn meta_account(account: &str) -> String {
+    format!("{account}.meta")
 }
 
 /// 把一次 OAuth 交换结果写入 default 条目（access/refresh/meta 三账户）。
-pub fn store_default_oauth_token(
+pub(crate) fn store_oauth_at(
     backend: &dyn SecretBackend,
     provider: ProviderId,
+    account: &str,
     tokens: &TokenSet,
 ) -> Result<StoredCredential, AuthError> {
     if tokens.access_token.is_empty() {
@@ -63,9 +65,9 @@ pub fn store_default_oauth_token(
         return Err(AuthError::InvalidSecret("refresh_token is empty".into()));
     }
     let service = oauth_secret_service(&provider);
-    let access_account = access_account();
-    let refresh_account = refresh_account();
-    let meta_account = meta_account();
+    let access_account = access_account(account);
+    let refresh_account = refresh_account(account);
+    let meta_account = meta_account(account);
     let mut updates = Vec::with_capacity(3);
     if let Some(refresh) = tokens.refresh_token.as_deref() {
         updates.push((service.as_str(), refresh_account.as_str(), refresh));
@@ -92,31 +94,33 @@ pub fn store_default_oauth_token(
     } else {
         backend.store_batch(&updates)?;
     }
-    Ok(stored_from_meta(provider, meta))
+    Ok(stored_from_meta(provider, account, meta))
 }
 
 /// 读取 default 条目元数据；条目不存在返回 None（调用方 fail-closed）。
-pub fn load_default_oauth_credential(
+pub(crate) fn load_oauth_at(
     backend: &dyn SecretBackend,
     provider: &ProviderId,
+    account: &str,
 ) -> Result<Option<StoredCredential>, AuthError> {
     let service = oauth_secret_service(provider);
-    let meta_json = match backend.get(&service, &meta_account()) {
+    let meta_json = match backend.get(&service, &meta_account(account)) {
         Ok(value) => value,
         Err(AuthError::NotFound) => return Ok(None),
         Err(error) => return Err(error),
     };
     let meta: DefaultOAuthMeta = serde_json::from_str(&meta_json)
         .map_err(|error| AuthError::MalformedMetadata(format!("default oauth meta: {error}")))?;
-    Ok(Some(stored_from_meta(provider.clone(), meta)))
+    Ok(Some(stored_from_meta(provider.clone(), account, meta)))
 }
 
 /// 读取 meta（auth list 展示用）；条目不存在返回 None。
-pub fn load_default_oauth_meta(
+pub(crate) fn load_oauth_meta_at(
     backend: &dyn SecretBackend,
     provider: &ProviderId,
+    account: &str,
 ) -> Result<Option<DefaultOAuthMeta>, AuthError> {
-    match backend.get(&oauth_secret_service(provider), &meta_account()) {
+    match backend.get(&oauth_secret_service(provider), &meta_account(account)) {
         Ok(meta_json) => serde_json::from_str(&meta_json)
             .map(Some)
             .map_err(|error| AuthError::MalformedMetadata(format!("default oauth meta: {error}"))),
@@ -126,12 +130,17 @@ pub fn load_default_oauth_meta(
 }
 
 /// 删除 default 条目全部账户（幂等：meta 不存在时仍尝试清理 token 账户）。
-pub fn delete_default_oauth_token(
+pub(crate) fn delete_oauth_at(
     backend: &dyn SecretBackend,
     provider: &ProviderId,
+    account: &str,
 ) -> Result<(), AuthError> {
     let service = oauth_secret_service(provider);
-    for account in [access_account(), refresh_account(), meta_account()] {
+    for account in [
+        access_account(account),
+        refresh_account(account),
+        meta_account(account),
+    ] {
         match backend.delete(&service, &account) {
             Ok(()) | Err(AuthError::NotFound) => {}
             Err(error) => return Err(error),
@@ -146,8 +155,17 @@ pub fn update_default_oauth_token(
     stored: &mut StoredCredential,
     tokens: &TokenSet,
 ) -> Result<(), AuthError> {
+    crate::accounts::refresh_account_tokens(backend, stored, tokens)
+}
+
+pub(crate) fn update_oauth_at(
+    backend: &dyn SecretBackend,
+    stored: &mut StoredCredential,
+    tokens: &TokenSet,
+) -> Result<(), AuthError> {
+    let account = oauth_prefix(stored)?;
     let service = oauth_secret_service(&stored.provider);
-    if stored.secret_service != service || stored.secret_account != access_account() {
+    if stored.secret_service != service || stored.secret_account != access_account(account) {
         return Err(AuthError::MalformedMetadata(
             "credential is not the default oauth entry".into(),
         ));
@@ -170,7 +188,7 @@ pub fn update_default_oauth_token(
     }
     // 刷新响应通常不携带 id_token：保留旧 meta 的 account_id，避免 ChatGPT
     // 路由头信息在自动刷新后丢失。
-    let previous_meta = load_default_oauth_meta(backend, &stored.provider)?;
+    let previous_meta = load_oauth_meta_at(backend, &stored.provider, account)?;
     let account_id = chatgpt_account_id(tokens).or_else(|| {
         previous_meta
             .as_ref()
@@ -183,9 +201,9 @@ pub fn update_default_oauth_token(
         scopes: updated.scopes.clone(),
         account_id,
     };
-    let access_account = access_account();
-    let refresh_account = refresh_account();
-    let meta_account = meta_account();
+    let access_account = access_account(account);
+    let refresh_account = refresh_account(account);
+    let meta_account = meta_account(account);
     let meta_json = serialize_meta(&meta)?;
     let mut updates = Vec::with_capacity(3);
     if let Some(refresh) = tokens.refresh_token.as_deref() {
@@ -238,7 +256,7 @@ fn reload_default_oauth_credential(
     backend: &dyn SecretBackend,
     stored: &StoredCredential,
 ) -> Result<Option<StoredCredential>, AuthError> {
-    load_default_oauth_credential(backend, &stored.provider)
+    load_oauth_at(backend, &stored.provider, oauth_prefix(stored)?)
 }
 
 fn serialize_meta(meta: &DefaultOAuthMeta) -> Result<String, AuthError> {
@@ -246,15 +264,19 @@ fn serialize_meta(meta: &DefaultOAuthMeta) -> Result<String, AuthError> {
         .map_err(|error| AuthError::MalformedMetadata(format!("serialize meta: {error}")))
 }
 
-fn stored_from_meta(provider: ProviderId, meta: DefaultOAuthMeta) -> StoredCredential {
+fn stored_from_meta(
+    provider: ProviderId,
+    account: &str,
+    meta: DefaultOAuthMeta,
+) -> StoredCredential {
     let service = oauth_secret_service(&provider);
     StoredCredential {
-        id: CredentialId::new(OAUTH_DEFAULT_ACCOUNT),
+        id: CredentialId::new(account),
         provider,
         display_name: "default oauth".into(),
         masked: meta.masked,
         secret_service: service,
-        secret_account: access_account(),
+        secret_account: access_account(account),
         created_at: Timestamp::from_unix_millis(meta.created_at_ms),
         expires_at: meta.expires_at_ms.map(Timestamp::from_unix_millis),
         scopes: meta.scopes,
@@ -281,11 +303,51 @@ fn chatgpt_account_id(tokens: &TokenSet) -> Option<String> {
         .map(str::to_string)
 }
 
-fn now_unix_millis() -> u64 {
+pub(crate) fn now_unix_millis() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or_default()
+}
+
+pub(crate) fn oauth_prefix(stored: &StoredCredential) -> Result<&str, AuthError> {
+    stored
+        .secret_account
+        .strip_suffix(".access")
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| AuthError::MalformedMetadata("invalid OAuth locator".into()))
+}
+
+pub fn store_default_oauth_token(
+    backend: &dyn SecretBackend,
+    provider: ProviderId,
+    tokens: &TokenSet,
+) -> Result<StoredCredential, AuthError> {
+    crate::accounts::store_legacy_oauth(backend, provider, tokens)
+}
+pub fn load_default_oauth_credential(
+    backend: &dyn SecretBackend,
+    provider: &ProviderId,
+) -> Result<Option<StoredCredential>, AuthError> {
+    load_oauth_at(backend, provider, OAUTH_DEFAULT_ACCOUNT)
+}
+pub fn load_default_oauth_meta(
+    backend: &dyn SecretBackend,
+    provider: &ProviderId,
+) -> Result<Option<DefaultOAuthMeta>, AuthError> {
+    load_oauth_meta_at(backend, provider, OAUTH_DEFAULT_ACCOUNT)
+}
+pub fn load_account_oauth_meta(
+    backend: &dyn SecretBackend,
+    stored: &StoredCredential,
+) -> Result<Option<DefaultOAuthMeta>, AuthError> {
+    load_oauth_meta_at(backend, &stored.provider, oauth_prefix(stored)?)
+}
+pub fn delete_default_oauth_token(
+    backend: &dyn SecretBackend,
+    provider: &ProviderId,
+) -> Result<(), AuthError> {
+    crate::accounts::remove_legacy(backend, provider, crate::accounts::LEGACY_OAUTH_ID)
 }
 
 #[cfg(test)]
@@ -449,7 +511,12 @@ mod tests {
             token_type: "Bearer".into(),
             scope: Some("openid".into()),
         };
+        let revision = crate::provider_accounts_revision(&backend, &provider).unwrap();
         update_default_oauth_token(&backend, &mut stored, &rotated).expect("update");
+        assert!(
+            crate::provider_accounts_revision(&backend, &provider).unwrap() > revision,
+            "other Hosts must rebuild cached adapters after refresh"
+        );
         let loaded = load_default_oauth_credential(&backend, &provider)
             .expect("load")
             .expect("present");

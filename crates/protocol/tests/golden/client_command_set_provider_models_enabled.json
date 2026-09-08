@@ -2,7 +2,7 @@
   "data": {
     "api_version": {
       "major": 1,
-      "minor": 14
+      "minor": 15
     },
     "command": {
       "method": "set_provider_models_enabled",

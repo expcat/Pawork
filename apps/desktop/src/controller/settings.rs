@@ -651,7 +651,7 @@ impl DesktopController {
 
     /// 发起 OAuth 授权（auth_start）。响应只携带 verification_url /
     /// user_code / expires_at，进度经 AuthChanged 事件收敛。
-    pub fn auth_start(&self, provider_id: String) {
+    pub fn auth_start(&self, provider_id: String, display_name: Option<String>) {
         let Some(client) = self.current_client() else {
             self.emit_reliable(ControllerEvent::OperationFailed {
                 action: "start provider auth".into(),
@@ -661,7 +661,10 @@ impl DesktopController {
         };
         let events = self.event_sender();
         self.runtime.spawn(async move {
-            let command = auth_start_command(&provider_id, "oauth");
+            let command = if let Some(display_name) = display_name {
+                if client.api_version().minor < 15 { return; }
+                serde_json::from_value(json!({"method":"auth_account_start", "params": {"provider_id":provider_id, "display_name":display_name, "flow":"oauth"}})).expect("account OAuth command")
+            } else { auth_start_command(&provider_id, "oauth") };
             let response = match client
                 .command(command, command_source(), actor_identity())
                 .await
@@ -698,7 +701,12 @@ impl DesktopController {
     /// 提交并验证 API key（auth_set_api_key，非重放命令）。明文只在本次
     /// 调用栈上转成冻结 wire 命令后即弃：不写日志、不进事件 / projection /
     /// 持久状态；结果（含失败原因）由 Host 经 AuthChanged 下发。
-    pub fn auth_set_api_key(&self, provider_id: String, api_key: String) {
+    pub fn auth_set_api_key(
+        &self,
+        provider_id: String,
+        api_key: String,
+        display_name: Option<String>,
+    ) {
         let Some(client) = self.current_client() else {
             self.emit_reliable(ControllerEvent::OperationFailed {
                 action: "verify api key".into(),
@@ -708,7 +716,10 @@ impl DesktopController {
         };
         let events = self.event_sender();
         self.runtime.spawn(async move {
-            let command = auth_set_api_key_command(&provider_id, &api_key);
+            let command = if let Some(display_name) = display_name {
+                if client.api_version().minor < 15 { return; }
+                serde_json::from_value(json!({"method":"auth_account_add_api_key", "params": {"provider_id":provider_id, "display_name":display_name, "api_key":api_key}})).expect("account API key command")
+            } else { auth_set_api_key_command(&provider_id, &api_key) };
             if let Err(error) = client
                 .command(command, command_source(), actor_identity())
                 .await
@@ -775,6 +786,34 @@ impl DesktopController {
                     &events,
                     ControllerEvent::OperationFailed {
                         action: "remove provider auth",
+                        reason: error.to_string(),
+                    },
+                );
+            }
+        });
+    }
+    pub fn auth_account_change(&self, provider_id: String, credential_id: String, remove: bool) {
+        let Some(client) = self
+            .current_client()
+            .filter(|client| client.api_version().minor >= 15)
+        else {
+            return;
+        };
+        let events = self.event_sender();
+        self.runtime.spawn(async move {
+            let command = serde_json::from_value(json!({
+                "method": if remove { "auth_account_remove" } else { "auth_account_select" },
+                "params": { "provider_id": provider_id, "credential_id": credential_id }
+            }))
+            .expect("account mutation command");
+            if let Err(error) = client
+                .command(command, command_source(), actor_identity())
+                .await
+            {
+                try_emit(
+                    &events,
+                    ControllerEvent::OperationFailed {
+                        action: "change provider account",
                         reason: error.to_string(),
                     },
                 );

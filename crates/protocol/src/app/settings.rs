@@ -163,6 +163,13 @@ pub enum ProviderCatalogState {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "typegen", derive(TS))]
 pub struct ProviderCredentialStatus {
+    /// Empty only when decoding a pre-1.15 Host response.
+    #[serde(default)]
+    pub credential_id: String,
+    #[serde(default)]
+    pub display_name: String,
+    #[serde(default)]
+    pub selected: bool,
     /// 凭证类型：`"api_key"` / `"oauth"`。
     pub kind: String,
     /// 脱敏串（存储凭证恒可脱敏，非可选；如 `sk-…wxyz`）。
@@ -441,12 +448,14 @@ mod tests {
         let credentials = json!([
             {
                 "kind": "api_key",
+                "credential_id": "", "display_name": "", "selected": false,
                 "masked_credential": "sk-…wxyz",
                 "expired": false,
                 "expires_at": null
             },
             {
                 "kind": "oauth",
+                "credential_id": "", "display_name": "", "selected": false,
                 "masked_credential": "acc…9f2c",
                 "expired": true,
                 "expires_at": "2026-09-05T00:00:00Z"
@@ -458,12 +467,18 @@ mod tests {
             decoded,
             vec![
                 ProviderCredentialStatus {
+                    credential_id: String::new(),
+                    display_name: String::new(),
+                    selected: false,
                     kind: "api_key".into(),
                     masked_credential: "sk-…wxyz".into(),
                     expired: false,
                     expires_at: None,
                 },
                 ProviderCredentialStatus {
+                    credential_id: String::new(),
+                    display_name: String::new(),
+                    selected: false,
                     kind: "oauth".into(),
                     masked_credential: "acc…9f2c".into(),
                     expired: true,
@@ -640,5 +655,34 @@ mod tests {
             "default": null
         }))
         .is_err());
+    }
+}
+
+/// Strip GUI 1.15 account metadata for older peers with strict status decoders.
+pub fn provider_auth_status_for_api_version(
+    data: &mut serde_json::Value,
+    version: super::version::ApiVersion,
+) {
+    if version.minor >= 15 {
+        return;
+    }
+    if let Some(providers) = data
+        .get_mut("providers")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for provider in providers {
+            if let Some(credentials) = provider
+                .get_mut("credentials")
+                .and_then(serde_json::Value::as_array_mut)
+            {
+                for credential in credentials {
+                    if let Some(fields) = credential.as_object_mut() {
+                        for field in ["credential_id", "display_name", "selected"] {
+                            fields.remove(field);
+                        }
+                    }
+                }
+            }
+        }
     }
 }

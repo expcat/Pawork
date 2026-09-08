@@ -1,12 +1,11 @@
 use std::sync::Arc;
 
-use pawork_auth::CredentialSource;
 use pawork_domain::ProviderId;
 use pawork_protocol::{
     AppCommand, AppCommandEnvelope, AppQuery, AppResponse, DefaultModelPair, ProviderAuthState,
-    ProviderAuthStatusData, ProviderAuthStatusEntry, ProviderCatalogState, ProviderCredentialStatus,
-    ProviderUseProxyData, RoleDefaultsData, SetDefaultRoleModelData, SetModelEnabledData,
-    SetProviderModelsEnabledData,
+    ProviderAuthStatusData, ProviderAuthStatusEntry, ProviderCatalogState,
+    ProviderCredentialStatus, ProviderUseProxyData, RoleDefaultsData, SetDefaultRoleModelData,
+    SetModelEnabledData, SetProviderModelsEnabledData,
 };
 use pawork_providers::ReasoningProtector;
 
@@ -114,85 +113,60 @@ fn auth_state(
         return ProviderAuthState::Connecting;
     }
     let provider = ProviderId::new(channel.id);
-    // SET-4 A3：按 auth_methods 数据判定（不按 kind 猜）。声明 api_key 的
-    // 通道先查 api key 凭证，再查 OAuth meta——双认证通道显示 method 与
-    // 实际存储凭证一致。
-    let methods = channel.auth_methods();
-    if methods.contains(&"api_key") {
-        match pawork_auth::resolve_provider_credential(core.auth_backend().as_ref(), channel.id) {
-            Ok(CredentialSource::AuthFile(stored)) => {
-                return ProviderAuthState::Connected {
-                    method: "api_key".into(),
-                    masked_credential: Some(stored.masked.as_str().to_string()),
-                };
-            }
-            // env 命中同样是可运行连接，但按脱敏规则不展示任何值片段。
-            Ok(CredentialSource::EnvFallback(_)) => {
-                return ProviderAuthState::Connected {
-                    method: "api_key".into(),
-                    masked_credential: None,
-                };
-            }
-            Ok(CredentialSource::None) => {}
-            Err(error) => {
-                return ProviderAuthState::Error {
-                    message: error.to_string(),
-                }
+    match crate::auth::effective_provider_account(core.auth_backend().as_ref(), &provider) {
+        Ok(Some(account)) => ProviderAuthState::Connected {
+            method: account.kind.as_str().into(),
+            masked_credential: Some(account.stored.masked.as_str().into()),
+        },
+        Ok(None)
+            if channel.auth_methods().contains(&"api_key")
+                && !crate::auth::activate_first_account(channel.id) =>
+        {
+            ProviderAuthState::Connected {
+                method: "api_key".into(),
+                masked_credential: None,
             }
         }
+        Ok(None) => ProviderAuthState::None,
+        Err(error) => ProviderAuthState::Error {
+            message: error.to_string(),
+        },
     }
-    if methods.contains(&"oauth") {
-        return match pawork_auth::load_default_oauth_meta(core.auth_backend().as_ref(), &provider) {
-            Ok(Some(meta)) => ProviderAuthState::Connected {
-                method: "oauth".into(),
-                masked_credential: Some(meta.masked.as_str().to_string()),
-            },
-            Ok(None) => ProviderAuthState::None,
-            Err(error) => ProviderAuthState::Error {
-                message: error.to_string(),
-            },
-        };
-    }
-    ProviderAuthState::None
 }
 
-/// ADR-056 D2：盘上存储凭证列表（固定序：api_key 在前、oauth 在后）。
-/// 只枚举 auth backend 命中的存储条目：env fallback 不是存储凭证不入列；
-/// 后端读取异常不推条目（provider 级 auth 态已按 Error 口径上报）。
 fn stored_credentials(
     core: &AppCore,
     channel: &channels::FirstPartyChannel,
 ) -> Vec<ProviderCredentialStatus> {
-    let methods = channel.auth_methods();
     let backend = core.auth_backend();
-    let mut credentials = Vec::new();
-    if methods.contains(&"api_key") {
-        if let Ok(CredentialSource::AuthFile(stored)) =
-            pawork_auth::resolve_provider_credential(backend.as_ref(), channel.id)
-        {
-            credentials.push(ProviderCredentialStatus {
-                kind: "api_key".into(),
-                masked_credential: stored.masked.as_str().to_string(),
-                expired: false,
-                expires_at: None,
-            });
-        }
-    }
-    if methods.contains(&"oauth") {
-        let provider = ProviderId::new(channel.id);
-        if let Ok(Some(meta)) = pawork_auth::load_default_oauth_meta(backend.as_ref(), &provider) {
-            // 无 expires_at 视为未过期（同 oauth::needs_refresh 的 None 口径）。
-            let now = now_millis();
-            let expired = meta.expires_at_ms.is_some_and(|expires| expires <= now);
-            credentials.push(ProviderCredentialStatus {
-                kind: "oauth".into(),
-                masked_credential: meta.masked.as_str().to_string(),
-                expired,
-                expires_at: meta.expires_at_ms.map(iso8601_utc),
-            });
-        }
-    }
-    credentials
+    let provider = ProviderId::new(channel.id);
+    let Ok(inventory) = pawork_auth::list_provider_accounts(backend.as_ref(), &provider) else {
+        return Vec::new();
+    };
+    let effective = crate::auth::effective_provider_account(backend.as_ref(), &provider)
+        .ok()
+        .flatten();
+    inventory
+        .accounts
+        .into_iter()
+        .map(|account| ProviderCredentialStatus {
+            selected: effective
+                .as_ref()
+                .is_some_and(|current| current.credential_id == account.credential_id),
+            credential_id: account.credential_id,
+            display_name: account.display_name,
+            kind: account.kind.as_str().into(),
+            masked_credential: account.stored.masked.as_str().into(),
+            expired: account
+                .stored
+                .expires_at
+                .is_some_and(|expires| expires.as_unix_millis() <= now_millis()),
+            expires_at: account
+                .stored
+                .expires_at
+                .map(|expires| iso8601_utc(expires.as_unix_millis())),
+        })
+        .collect()
 }
 
 /// 目录三态：探测成功 remote / 探测失败但有静态条目 fixed_fallback / 否则

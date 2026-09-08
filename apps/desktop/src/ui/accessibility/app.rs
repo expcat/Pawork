@@ -164,6 +164,20 @@ impl AppView {
                 SettingsControl::ApiKeyInput(escaped) => Some(escaped),
                 _ => None,
             });
+        if let Some(input) = self.settings_account_names.iter().find_map(|(id, input)| {
+            (dynamic_identifier("settings-account-name", id) == request.identifier)
+                .then_some(input.clone())
+        }) {
+            match request.action {
+                AxAction::Focus => window.focus(&input.read(cx).focus_handle(cx)),
+                AxAction::SetValue => input.update(cx, |input, cx| {
+                    input.set_text(request.value.unwrap_or_default(), cx)
+                }),
+                AxAction::Press => return,
+            }
+            cx.notify();
+            return;
+        }
         match request.action {
             AxAction::Focus => match request.identifier.as_str() {
                 "composer-input" => self.focus_composer(window, cx),
@@ -454,6 +468,9 @@ impl AppView {
             "terminal-close" => self.on_close_terminal(window, cx),
             "activity-open-changes" => self.on_activity_open_changes(window, cx),
             _ => {
+                if self.on_settings_account_action(identifier, cx) {
+                    return true;
+                }
                 // SET-4/5：settings 写动作与「设为默认」均与可见按钮同源
                 // 派发（入口复核 gate；permits 已按当前树核对 disabled）。
                 if identifier.starts_with(SETTINGS_CONTROL_PREFIX) {
@@ -5437,7 +5454,10 @@ mod tests {
                 ))
                 .expect("api_key credential row pinned");
             assert_eq!(api_key.label, provider_credential_kind_label("api_key"));
-            assert_eq!(api_key.value.as_deref(), Some("sk-…ab12 · Connected"));
+            assert_eq!(
+                api_key.value.as_deref(),
+                Some("API key · sk-…ab12 · Connected")
+            );
             let oauth = tree
                 .find(&dynamic_identifier(
                     "settings-provider-credential-1",
@@ -5445,7 +5465,10 @@ mod tests {
                 ))
                 .expect("oauth credential row pinned");
             assert_eq!(oauth.label, provider_credential_kind_label("oauth"));
-            assert_eq!(oauth.value.as_deref(), Some("oauth-…wxyz · Expired"));
+            assert_eq!(
+                oauth.value.as_deref(),
+                Some("OAuth · oauth-…wxyz · Expired")
+            );
             // Usage 行：固定槽位 + 诚实空态，value 不含任何数字 / 百分比。
             let usage = tree
                 .find(&dynamic_identifier("settings-provider-usage", "dual"))
@@ -5546,6 +5569,104 @@ mod tests {
                 .find(&settings_use_proxy_identifier("dual"))
                 .expect("proxy switch pinned once proxy_url is set");
             assert!(proxy_switch.enabled);
+        });
+        // GUI 1.15 reuses this layout path with stable per-account IDs.
+        cx.update(|_, cx| {
+            view.update(cx, |view, _| {
+                view.handshake_info = Some(crate::controller::DesktopHandshakeInfo {
+                    runtime_id: "test".into(),
+                    api_version: "1.15".into(),
+                    capabilities: vec![],
+                    host_data_dir: None,
+                });
+                let credentials = &mut view.projection.settings_providers.providers[0].credentials;
+                credentials[0].credential_id = "cred_first".into();
+                credentials[0].display_name = "Personal".into();
+                credentials[0].selected = true;
+                credentials[1].credential_id = "cred_second".into();
+                credentials[1].display_name = "Work".into();
+            })
+        });
+        cx.update(|_, cx| host.update(cx, |_, cx| cx.notify()));
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        let remove_second =
+            crate::ui::settings::settings_account_action_identifier("dual", "cred_second", true);
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                let tree = view.accessibility_tree(window, cx);
+                let use_first = crate::ui::settings::settings_account_action_identifier(
+                    "dual",
+                    "cred_first",
+                    false,
+                );
+                let remove_first = crate::ui::settings::settings_account_action_identifier(
+                    "dual",
+                    "cred_first",
+                    true,
+                );
+                let use_second = crate::ui::settings::settings_account_action_identifier(
+                    "dual",
+                    "cred_second",
+                    false,
+                );
+                assert!(!tree.find(&use_first).unwrap().enabled);
+                assert!(!tree.find(&remove_first).unwrap().enabled);
+                assert!(tree.find(&use_second).unwrap().enabled);
+                assert!(tree
+                    .find("settings-account-name-dual")
+                    .unwrap()
+                    .actions
+                    .contains(&AxAction::SetValue));
+                view.handle_accessibility_request(
+                    AxRequest {
+                        identifier: remove_second.clone(),
+                        action: AxAction::Press,
+                        value: None,
+                    },
+                    window,
+                    cx,
+                );
+                assert_eq!(
+                    view.settings_account_remove_confirm.as_deref(),
+                    Some(remove_second.as_str())
+                );
+                // Removing/reordering the earlier row must preserve the target ID.
+                view.projection.settings_providers.providers[0]
+                    .credentials
+                    .remove(0);
+            })
+        });
+        cx.update(|_, cx| host.update(cx, |_, cx| cx.notify()));
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                let tree = view.accessibility_tree(window, cx);
+                assert_eq!(
+                    tree.find(&remove_second).unwrap().label,
+                    t("settings.providers.action_confirm_remove")
+                );
+                let keep = tree.find(&format!("{remove_second}-keep")).unwrap();
+                assert!(keep.bounds.width > 0.0 && keep.bounds.width < 150.0);
+                assert!(tree
+                    .find(&crate::ui::settings::settings_credential_row_identifier(
+                        "dual",
+                        &view.projection.settings_providers.providers[0].credentials[0],
+                        0
+                    ))
+                    .is_some());
+                view.handle_accessibility_request(
+                    AxRequest {
+                        identifier: format!("{remove_second}-keep"),
+                        action: AxAction::Press,
+                        value: None,
+                    },
+                    window,
+                    cx,
+                );
+                assert!(view.settings_account_remove_confirm.is_none());
+            })
         });
         // 窄窗三档字号：真实页面滚动后，离屏标题消失，底部控件框跟随 prepaint。
         for scale in [

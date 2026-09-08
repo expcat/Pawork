@@ -1502,3 +1502,36 @@ impl AppView {
         connected && self.resources.available && self.resources.stale_reason.is_none()
     }
 }
+
+pub(crate) fn settings_account_action_identifier(
+    provider: &str,
+    credential: &str,
+    remove: bool,
+) -> String {
+    dynamic_identifier(
+        &dynamic_identifier(
+            if remove {
+                "settings-account-remove"
+            } else {
+                "settings-account-select"
+            },
+            provider,
+        ),
+        credential,
+    )
+}
+
+pub(crate) fn settings_credential_row_identifier(
+    provider: &str,
+    credential: &pawork_client::ProviderCredentialStatus,
+    index: usize,
+) -> String {
+    if credential.credential_id.is_empty() {
+        dynamic_identifier(&format!("settings-provider-credential-{index}"), provider)
+    } else {
+        dynamic_identifier(
+            &dynamic_identifier("settings-provider-credential", provider),
+            &credential.credential_id,
+        )
+    }
+}

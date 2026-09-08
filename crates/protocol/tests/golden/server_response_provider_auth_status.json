@@ -2,7 +2,7 @@
   "data": {
     "api_version": {
       "major": 1,
-      "minor": 14
+      "minor": 15
     },
     "request_id": "query-auth-status",
     "responded_at": 3,
@@ -28,7 +28,10 @@
                 "expired": false,
                 "expires_at": null,
                 "kind": "api_key",
-                "masked_credential": "sk-…wxyz"
+                "masked_credential": "sk-…wxyz",
+                "credential_id": "default-api-key",
+                "display_name": "Default API key",
+                "selected": true
               }
             ],
             "display_name": "GLM Coding",
@@ -41,7 +44,8 @@
           "naming": null,
           "search": null,
           "vision": null
-        }
+        },
+        "default": null
       },
       "type": "data"
     }

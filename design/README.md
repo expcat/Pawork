@@ -96,3 +96,7 @@
 - 不把 Desktop 改成 WebView、IDE 或多 Agent 控制中心。
 - 不为匹配设计图写入演示数据、假 quota、假 diff、假 Agent 或不可用按钮。
 - 不在视觉修复中演进 GUI wire、绕过 Workspace/Policy/Sandbox，或让 Desktop 直连 Core 服务。
+
+### UI-6b 账号状态
+
+在 UI-6a 供应商卡内增加名称输入、逐账号选择与删除确认，账号 ID 同源绑定渲染/键盘/AX；选择只用于后续请求，Usage 无来源时不画数字。详见 [GUI 设计](../docs/gui-design.md#ui-6b-账号交互更新2026-09-08) 与 [ADR-059](../docs/spec/settings.md#adr-059ui-6b-命名账号与持久选择2026-09-08)。验证与用户验收分别记录于路线图，截图不检入仓库。

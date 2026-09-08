@@ -94,6 +94,9 @@ ADR-057：Host 转发可见 ThinkingDelta，历史和 live 进入同一 reducer 
 
 ## 4. 凭证与脱敏
 
+UI-6b / [ADR-059](settings.md#adr-059ui-6b-命名账号与持久选择2026-09-08)：auth 账号索引与 secret 同事务；App 在请求边界先核对持久选择，OAuth bearer 与上游 routing claim 从同一快照读取。当前 Run 保持 adapter，后续 Run/compact/命名重核选择。Desktop 只经 GUI 1.15 命令修改，AuthChanged 后重查脱敏列表；旧 minor 过滤新字段。
+
+
 明文 token 的允许停留点：`SecretBackend` 内部、adapter 瞬时 `expose_secret()`、受保护 AEAD 信封。其它地方必须是引用或 `[REDACTED]`。
 
 解析链：

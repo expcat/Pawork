@@ -5,13 +5,11 @@
       "minor": 15
     },
     "command": {
-      "method": "set_default_role_model",
+      "method": "auth_account_start",
       "params": {
-        "role": "naming",
-        "value": {
-          "model_id": "glm-4.7",
-          "provider_id": "glm-coding"
-        }
+        "provider_id": "glm-coding",
+        "display_name": "Work",
+        "flow": "oauth"
       }
     },
     "command_id": "command-auth-1",

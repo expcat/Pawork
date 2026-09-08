@@ -706,6 +706,7 @@ fn golden_auth_provider_slices() {
             request_id: pawork_domain::QueryId::from("query-auth-status"),
             responded_at: Timestamp::from_unix_millis(3),
             response: AppResponse::Data(serde_json::json!({
+                "default": null,
                 "providers": [{
                     "provider_id": "glm-coding",
                     "display_name": "GLM Coding",
@@ -714,6 +715,7 @@ fn golden_auth_provider_slices() {
                     "credentials": [{
                         "kind": "api_key",
                         "masked_credential": "sk-…wxyz",
+                        "credential_id": "default-api-key", "display_name": "Default API key", "selected": true,
                         "expired": false,
                         "expires_at": null
                     }],
@@ -1118,4 +1120,70 @@ fn golden_opt3_model_enablement_slices() {
             },
         })),
     );
+}
+
+#[test]
+fn golden_provider_accounts() {
+    let provider_id = pawork_domain::ProviderId::from("glm-coding");
+    let commands = [
+        (
+            "auth_account_add_api_key",
+            AppCommand::AuthAccountAddApiKey {
+                provider_id: provider_id.clone(),
+                display_name: "Work".into(),
+                api_key: ApiKeySecret::new("sk-test-fixture-not-a-real-key"),
+            },
+        ),
+        (
+            "auth_account_start",
+            AppCommand::AuthAccountStart {
+                provider_id: provider_id.clone(),
+                display_name: "Work".into(),
+                flow: "oauth".into(),
+            },
+        ),
+        (
+            "auth_account_select",
+            AppCommand::AuthAccountSelect {
+                provider_id: provider_id.clone(),
+                credential_id: "credential-1".into(),
+            },
+        ),
+        (
+            "auth_account_remove",
+            AppCommand::AuthAccountRemove {
+                provider_id,
+                credential_id: "credential-1".into(),
+            },
+        ),
+    ];
+    for (name, command) in commands {
+        assert!(!format!("{command:?}").contains("sk-test-fixture-not-a-real-key"));
+        assert_golden(
+            &format!("client_command_{name}.json"),
+            encode_client(&client_auth_command_frame(command)),
+        );
+    }
+}
+
+#[test]
+fn account_status_supports_old_peers() {
+    let frame: serde_json::Value = serde_json::from_str(include_str!(
+        "golden/server_response_provider_auth_status.json"
+    ))
+    .unwrap();
+    let mut data = frame["data"]["response"]["data"].clone();
+    let latest: pawork_protocol::ProviderAuthStatusData =
+        serde_json::from_value(data.clone()).unwrap();
+    assert!(latest.providers[0].credentials[0].selected);
+    pawork_protocol::provider_auth_status_for_api_version(
+        &mut data,
+        pawork_protocol::ApiVersion::new(1, 14),
+    );
+    let credential = &data["providers"][0]["credentials"][0];
+    assert!(credential.get("credential_id").is_none());
+    assert!(credential.get("display_name").is_none());
+    assert!(credential.get("selected").is_none());
+    let older: pawork_protocol::ProviderAuthStatusData = serde_json::from_value(data).unwrap();
+    assert!(older.providers[0].credentials[0].credential_id.is_empty());
 }

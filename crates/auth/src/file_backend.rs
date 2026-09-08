@@ -172,6 +172,22 @@ impl SecretBackend for FileBackend {
         self.save(&entries)
     }
 
+    fn transaction(
+        &self,
+        operation: &mut dyn FnMut(&dyn SecretBackend) -> Result<(), AuthError>,
+    ) -> Result<(), AuthError> {
+        let _guard = acquire_file_lock(&self.write_lock_path(), WRITE_LOCK_TIMEOUT)?;
+        let original = self.load()?;
+        let snapshot = crate::MemoryBackend::from_entries(original.clone());
+        operation(&snapshot)?;
+        let updated = snapshot.into_entries();
+        if updated == original {
+            Ok(())
+        } else {
+            self.save(&updated)
+        }
+    }
+
     fn get(&self, service: &str, account: &str) -> Result<String, AuthError> {
         self.load()?
             .get(service)

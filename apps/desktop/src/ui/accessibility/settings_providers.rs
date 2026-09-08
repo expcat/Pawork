@@ -9,8 +9,9 @@ use crate::projection::{
 use crate::ui::i18n::t;
 use crate::ui::settings::{
     provider_catalog_overview_label, provider_credential_kind_label,
-    provider_credential_status_label, provider_status_lines, settings_api_key_input_identifier,
-    settings_auth_actions, settings_default_unavailable_note, settings_manage_models_identifier,
+    provider_credential_status_label, provider_status_lines, settings_account_action_identifier,
+    settings_api_key_input_identifier, settings_credential_row_identifier,
+    settings_default_unavailable_note, settings_manage_models_identifier,
     settings_model_switch_identifier, settings_models_disable_all_identifier,
     settings_models_enable_all_identifier, settings_models_menu_identifier,
     settings_models_refresh_identifier, settings_provider_expand_identifier,
@@ -149,7 +150,8 @@ impl AppView {
             let editor = self.settings_api_key_editor_visible(provider);
             let remove = self.settings_remove_confirm.as_deref() == Some(id.as_str());
             let expanded = self.settings_provider_card_expanded(id, editor, wait.is_some(), remove);
-            let actions = settings_auth_actions(provider, editor, remove, wait.is_some());
+            let actions =
+                self.settings_provider_auth_actions(provider, editor, remove, wait.is_some());
             let count = self
                 .projection
                 .models
@@ -251,7 +253,7 @@ impl AppView {
                 .child(text(
                     dynamic_identifier("settings-provider-credentials-header", id),
                     t("settings.providers.credentials_title"),
-                    t("settings.providers.credentials_subtitle").into(),
+                    self.settings_credentials_subtitle().into(),
                 ));
                 if provider.credentials.is_empty() {
                     credentials = credentials.child(text(
@@ -261,15 +263,77 @@ impl AppView {
                     ));
                 }
                 for (ix, credential) in provider.credentials.iter().enumerate() {
+                    let name = if credential.display_name.is_empty() {
+                        provider_credential_kind_label(&credential.kind)
+                    } else {
+                        credential.display_name.clone()
+                    };
                     credentials = credentials.child(text(
-                        dynamic_identifier(&format!("settings-provider-credential-{ix}"), id),
-                        &provider_credential_kind_label(&credential.kind),
+                        settings_credential_row_identifier(id, credential, ix),
+                        &name,
                         format!(
-                            "{} · {}",
+                            "{} · {} · {}{}",
+                            provider_credential_kind_label(&credential.kind),
                             credential.masked_credential,
-                            provider_credential_status_label(credential.expired)
+                            provider_credential_status_label(credential.expired),
+                            if credential.selected {
+                                format!(" · {}", t("settings.providers.account_selected"))
+                            } else {
+                                String::new()
+                            }
                         ),
                     ));
+                    if self.settings_accounts_supported() && !credential.credential_id.is_empty() {
+                        for remove in [false, true] {
+                            credentials = credentials.child(button(
+                                settings_account_action_identifier(
+                                    id,
+                                    &credential.credential_id,
+                                    remove,
+                                ),
+                                self.settings_account_action_label(
+                                    &settings_account_action_identifier(
+                                        id,
+                                        &credential.credential_id,
+                                        remove,
+                                    ),
+                                    remove,
+                                ),
+                                self.settings_account_action_enabled(provider, credential, remove),
+                            ));
+                        }
+                    }
+                }
+                if let Some(remove_id) = &self.settings_account_remove_confirm {
+                    if provider.credentials.iter().any(|c| {
+                        settings_account_action_identifier(id, &c.credential_id, true) == *remove_id
+                    }) {
+                        credentials = credentials.child(button(
+                            format!("{remove_id}-keep"),
+                            t("settings.providers.action_keep"),
+                            true,
+                        ));
+                    }
+                }
+                if self.settings_accounts_supported()
+                    && !matches!(provider.auth, ProviderAuthState::Connecting)
+                {
+                    if let Some(input) = self.settings_account_names.get(id) {
+                        let input_id = dynamic_identifier("settings-account-name", id);
+                        let mut node = AxNode::new(
+                            input_id.clone(),
+                            AxRole::TextArea,
+                            t("settings.providers.account_name"),
+                            self.settings_element_bounds(&input_id),
+                        )
+                        .value(input.read(cx).text())
+                        .enabled(writes)
+                        .focused(input.read(cx).focus_handle(cx).is_focused(window));
+                        if writes {
+                            node = node.action(AxAction::Focus).action(AxAction::SetValue);
+                        }
+                        credentials = credentials.child(node);
+                    }
                 }
                 let mut details = Vec::new();
                 if let (ProviderAuthState::Connecting, Some(wait)) = (&provider.auth, wait) {
@@ -373,7 +437,7 @@ impl AppView {
                     }
                     credentials = credentials.child(button(
                         action.identifier(id),
-                        action.label(),
+                        self.settings_auth_action_label(action),
                         self.settings_action_enabled(action, id, writes, cx),
                     ));
                 }

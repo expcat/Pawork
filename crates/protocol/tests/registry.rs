@@ -21,9 +21,18 @@ const V1_5: ApiVersion = ApiVersion { major: 1, minor: 5 };
 const V1_6: ApiVersion = ApiVersion { major: 1, minor: 6 };
 const V1_7: ApiVersion = ApiVersion { major: 1, minor: 7 };
 const V1_8: ApiVersion = ApiVersion { major: 1, minor: 8 };
-const V1_10: ApiVersion = ApiVersion { major: 1, minor: 10 };
-const V1_11: ApiVersion = ApiVersion { major: 1, minor: 11 };
-const V1_12: ApiVersion = ApiVersion { major: 1, minor: 12 };
+const V1_10: ApiVersion = ApiVersion {
+    major: 1,
+    minor: 10,
+};
+const V1_11: ApiVersion = ApiVersion {
+    major: 1,
+    minor: 11,
+};
+const V1_12: ApiVersion = ApiVersion {
+    major: 1,
+    minor: 12,
+};
 
 /// (wire 名, 最小 params 样本；None = unit 变体无 params)。
 fn command_samples() -> Vec<(&'static str, Option<Value>)> {
@@ -72,6 +81,22 @@ fn command_samples() -> Vec<(&'static str, Option<Value>)> {
             "auth_set_api_key",
             Some(json!({"provider_id": "glm-coding", "api_key": "sk-test-fixture"})),
         ),
+        (
+            "auth_account_add_api_key",
+            Some(json!({"provider_id":"glm-coding", "display_name":"Work", "api_key":"fixture"})),
+        ),
+        (
+            "auth_account_start",
+            Some(json!({"provider_id":"glm-coding", "display_name":"Work", "flow":"oauth"})),
+        ),
+        (
+            "auth_account_select",
+            Some(json!({"provider_id":"glm-coding", "credential_id":"credential-1"})),
+        ),
+        (
+            "auth_account_remove",
+            Some(json!({"provider_id":"glm-coding", "credential_id":"credential-1"})),
+        ),
         ("auth_cancel", Some(json!({"provider_id": "glm-coding"}))),
         (
             "set_default_model",
@@ -95,12 +120,11 @@ fn command_samples() -> Vec<(&'static str, Option<Value>)> {
         ),
         (
             "set_default_role_model",
-            Some(json!({"role": "naming", "value": {"provider_id": "glm-coding", "model_id": "glm-4.7"}})),
+            Some(
+                json!({"role": "naming", "value": {"provider_id": "glm-coding", "model_id": "glm-4.7"}}),
+            ),
         ),
-        (
-            "set_approval_mode",
-            Some(json!({"mode": "ask_for_writes"})),
-        ),
+        ("set_approval_mode", Some(json!({"mode": "ask_for_writes"}))),
         (
             "set_terminal_settings",
             Some(json!({"shell": null, "columns": 80, "rows": 24})),
@@ -225,7 +249,7 @@ fn wire_names_are_bijective_with_serde_tags() {
 fn registry_tables_are_complete_and_unique() {
     let commands = command_entries();
     let queries = query_entries();
-    assert_eq!(commands.len(), 34);
+    assert_eq!(commands.len(), 38);
     assert_eq!(queries.len(), 15);
     for wire_name in commands.iter().map(|entry| entry.wire_name) {
         assert_eq!(
@@ -490,6 +514,22 @@ fn command_registry_covers_every_variant_without_wildcard() {
                 true,
                 V1_4,
             ),
+            AppCommand::AuthAccountAddApiKey { .. }
+            | AppCommand::AuthAccountStart { .. }
+            | AppCommand::AuthAccountSelect { .. }
+            | AppCommand::AuthAccountRemove { .. } => {
+                let name = command_wire_name(&command);
+                assert_command_entry(
+                    &command,
+                    name,
+                    true,
+                    None,
+                    None,
+                    false,
+                    matches!(name, "auth_account_select" | "auth_account_remove"),
+                    pawork_protocol::V1_15,
+                );
+            }
             AppCommand::AuthCancel { .. } => {
                 assert_command_entry(&command, "auth_cancel", true, None, None, false, true, V1_4)
             }

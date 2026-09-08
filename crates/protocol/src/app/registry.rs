@@ -11,7 +11,7 @@ use crate::GuiCapability;
 use super::command::AppCommand;
 use super::query::AppQuery;
 use super::version::{
-    ApiVersion, V1_0, V1_1, V1_2, V1_3, V1_4, V1_5, V1_6, V1_7, V1_8, V1_10, V1_11, V1_12,
+    ApiVersion, V1_0, V1_1, V1_10, V1_11, V1_12, V1_15, V1_2, V1_3, V1_4, V1_5, V1_6, V1_7, V1_8,
 };
 
 /// GUI 通道访问规格：是否可用 + 命令级所需能力。
@@ -50,7 +50,7 @@ pub const GUI_INTRINSIC_CAPABILITIES: &[GuiCapability] =
     &[GuiCapability::Events, GuiCapability::Snapshots];
 
 static COMMANDS: &[RegistryEntry] = &[
-    // --- AppCommand（34）---
+    // --- AppCommand（38）---
     RegistryEntry {
         wire_name: "core_initialize",
         gui: GuiChannelAccess {
@@ -248,6 +248,50 @@ static COMMANDS: &[RegistryEntry] = &[
         acp: false,
         idempotent: true,
         since: V1_4,
+    },
+    RegistryEntry {
+        wire_name: "auth_account_add_api_key",
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
+        headless: None,
+        acp: false,
+        idempotent: false,
+        since: V1_15,
+    },
+    RegistryEntry {
+        wire_name: "auth_account_start",
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
+        headless: None,
+        acp: false,
+        idempotent: false,
+        since: V1_15,
+    },
+    RegistryEntry {
+        wire_name: "auth_account_select",
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
+        headless: None,
+        acp: false,
+        idempotent: true,
+        since: V1_15,
+    },
+    RegistryEntry {
+        wire_name: "auth_account_remove",
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
+        headless: None,
+        acp: false,
+        idempotent: true,
+        since: V1_15,
     },
     RegistryEntry {
         wire_name: "auth_cancel",
@@ -644,6 +688,10 @@ pub fn command_wire_name(command: &AppCommand) -> &'static str {
         AppCommand::AuthStart { .. } => "auth_start",
         AppCommand::AuthRemove { .. } => "auth_remove",
         AppCommand::AuthSetApiKey { .. } => "auth_set_api_key",
+        AppCommand::AuthAccountAddApiKey { .. } => "auth_account_add_api_key",
+        AppCommand::AuthAccountStart { .. } => "auth_account_start",
+        AppCommand::AuthAccountSelect { .. } => "auth_account_select",
+        AppCommand::AuthAccountRemove { .. } => "auth_account_remove",
         AppCommand::AuthCancel { .. } => "auth_cancel",
         AppCommand::SetDefaultModel { .. } => "set_default_model",
         AppCommand::SetProxyUrl { .. } => "set_proxy_url",

@@ -20,11 +20,13 @@
 | `src/masked.rs` | ~110 | `MaskedCredential`：`mask`（按字符数分档脱敏）/ `from_masked` / `as_str`；`Display`/`Debug`/`Serialize` 永不含明文 |
 | `src/credential.rs` | ~390 | `StoredCredential`（纯元数据 + 定位，可序列化）、`ApiKeyCredential`（store / store_with_scopes / from_stored / resolve / delete）、`CredentialId`、crate 内 `generate_credential_id` |
 | `src/resolve.rs` | ~240 | `resolve_provider_credential` 解析链、`CredentialSource`（AuthFile / EnvFallback / None）、`store_default_api_key` / `delete_default_api_key`、`PROVIDER_DEFAULT_ACCOUNT` |
-| `src/default_credential.rs` | ~670 | 每 provider 唯一 default OAuth 条目（`default.access` / `.refresh` / `.meta` 三账户）：store/load/update/delete、`DefaultOAuthMeta`（含 ChatGPT `account_id` claim 提取）、`refresh_default_oauth_credential_if_needed` / `default_oauth_needs_refresh` |
+| `src/default_credential.rs` | ~670 | 参数化 OAuth 条目（账号 `.access` / `.refresh` / `.meta`，兼容旧 default）：store/load/update/delete、`DefaultOAuthMeta`（含 ChatGPT `account_id` claim 提取）、`refresh_default_oauth_credential_if_needed` / `default_oauth_needs_refresh` |
 | `src/oauth.rs` | ~1.9k | PKCE / Device / refresh / `CallbackServer` / `TokenSet`；**`http_client()`**（`redirect(Policy::none())`，F06，crate 根 re-export）；crate 内 `decode_jwt_payload` |
 | `src/base64url.rs` | ~240 | 本地 base64url（URL-safe、无填充）`encode` / `decode` 与 `Base64UrlDecodeError`；拒绝非规范输入（填充、`len%4==1`、余位非零） |
 
 共 11 个 `.rs` 文件，约 4.5k 行；无独立 `tests/` 目录，回归全部内联在各文件 `#[cfg(test)]`。
+
+| `src/accounts.rs` | — | UI-6b 账号索引、legacy 隐式登记、命名 API key/OAuth 新增、选择与删除；索引与 secret 原子事务、revision 与失败关闭 |
 
 ## 3. 对外 API 面
 
@@ -36,6 +38,10 @@
 - 锁文件（与 auth 文件同目录、非机密）：写锁 `auth.write.lock`（10ms 重试、30s 超时）；OAuth refresh 锁 `auth.refresh.lock`（经 `refresh_lock_path` 暴露给 refresh 编排）。
 - `MemoryBackend::new()` / `len` / `is_empty`：进程内 HashMap，仅单元测试用；故意不派生 Debug 防明文入断言输出。
 - OS Keychain 后端已按用户决策移除；secret 统一走文件后端（参照 Codex CLI auth.json 形态）。
+
+`SecretBackend::transaction` 在写锁内提供隔离快照，回调失败不提交；FileBackend load-modify-save 一次，MemoryBackend 复制并提交，未实现事务的 backend 显式拒绝。回调不能持原 backend 或跨网络等待。
+
+账号面导出 `ProviderAccountKind / ProviderAccount / ProviderAccounts`、`list_provider_accounts`、`provider_accounts_revision`、`validate_account_name`、`add_api_key_account` / `add_oauth_account`、`select_provider_account`、`remove_provider_account` / `remove_all_provider_accounts`。`load_account_oauth_meta` 读取指定 OAuth 记录；旧 default helper 是统一存储的入口。细节见 [ADR-059](../settings.md#adr-059ui-6b-命名账号与持久选择2026-09-08)。
 
 ### 3.2 命名与定位（locator 单一事实源）
 
@@ -74,6 +80,8 @@
 3. 仅 `NotFound` 允许降级：读 `PAWORK_API_KEY_<ID>` env，命中 → `CredentialSource::EnvFallback(ResolvedCredential)`（env 值只进 `ResolvedCredential`，Debug 脱敏，不落日志）。
 4. 两级都缺 → `CredentialSource::None`，调用方 fail-closed（绝不构造伪凭证）。
 5. 后端损坏 / IO 失败原样上抛 `AuthError`，不降级到 env——损坏状态不可静默绕过。
+
+UI-6b 起先解析账号索引：显式 API key 选择返回该账号；显式 OAuth 选择令 API key 解析返回 None，由 app 走 OAuth 路径。无显式选择才使用上述 legacy/env 顺序。索引损坏、无效 ID 或缺凭证不回退；列表只包含存储凭证。索引 `accounts.meta` 与相关 secret 同事务提交；外层文件 version 1 不变。
 
 ### 4.2 OAuth 登录（PKCE 与 Device）
 
@@ -139,11 +147,13 @@
 - `concurrent_refreshes_share_one_singleflight_exchange`：并发刷新只发生一次 token exchange（`.expect(1)`）；
 - 回调服务器：code/state 解析、错误回调不反射 query 输入、分片请求头（8 KiB cookie）读取、PKCE 回调流使用实际监听端口。
 
+UI-6b 定向回归覆盖 legacy 无写读取、同 kind 多账号、选择/重开、选中删除保护、并发 writer 保留全部账号、事务失败不落部分写入，以及 refresh 期间删除/重新登录不被迟到结果覆盖。
+
 ## 8. 注意事项与已知限制
 
 - 任务说明中常提的「master.key 与并发首建」不在本包：reasoning blob 加密的 master key 由 `pawork-app` protected 模块管理（见 [app.md](app.md)）；本包的并发原语是 OAuth refresh 的 singleflight gate 与 `auth.refresh.lock` 跨进程锁。
-- 首发阶段每 provider 只有一条 default OAuth 条目（`default.access/.refresh/.meta`）；多凭证/账号池是登记在案的后续项（见 [../backlog.md](../backlog.md)）。多凭证形态的 `store_oauth_token`（`<cred_id>.access/.refresh`）已可用但无独立 meta 持久化。
-- `MemoryBackend` 的 `store_batch` 是逐条语义（默认实现），不具备 FileBackend 的整批原子性；测试断言原子回滚行为时需注意。
+- UI-6b 命名 OAuth 账号使用独立 `.access/.refresh/.meta`，旧 default 槽继续兼容；历史通用 `store_oauth_token` 无独立 meta，不作为命名账号入口。完整 account factory / accounts CLI 仍见 [backlog](../backlog.md)。
+- 账号存取经 `transaction` 获得一致快照；回调失败不提交。FileBackend 只读事务不改写 auth 文件，`MemoryBackend` 同样实现事务隔离；通用 `store_batch` 的默认逐条语义不代替事务。
 - `decode_jwt_payload` 不验签，只用于提取非机密路由 claim，不构成信任边界。
 - 回调服务器一次性、单连接、固定 200 文本响应；不支持 https redirect（上游 allow-list 均为本机 http）。`CallbackServer::start` 需要已存在的 tokio runtime（`Handle::try_current`），纯同步上下文无法启动。
 - 时间口径统一为 Unix 毫秒（`now_unix_millis`），到期判断依赖本机时钟；`refresh_skew` / 30s grace 用于吸收时钟偏差与网络延迟。

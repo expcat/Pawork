@@ -25,8 +25,8 @@ OPT-2 / [ADR-054](desktop.md#adr-054opt-2-会话生命周期与自动标题2026-
 | CON-BLOB-01 | Artifact/Protected Blob | `PWB1_MAGIC`，`PWB1_VERSION = 1`；protected 使用 AEAD | checkpoint/reasoning → artifact/protected stores | [blob](../../crates/storage/src/blob)；[PWB1 golden](../../crates/storage/tests/golden) |
 | CON-POLICY-01 | Policy 决策 | `PolicyDecision` 四变体；`ApprovalMode` 五档，默认 `ReadOnly` | tools/app → CLI/Desktop/exec | [policy](../../crates/policy/src)；[security.md](security.md) |
 | CON-CONFIG-01 | 配置 schema/层级 | `Builtin < Global < Profile < Workspace < Session < Run`；`ProviderConfig` 无 `api_key` | workspace loader → app/providers | [workspace config](../../crates/workspace/src/config) |
-| CON-GUI-01 | GUI Connection Protocol | API `1.14`；支持 `1.0`–`1.14`；Accepted 握手可选 `host_data_dir`；`ClientFrame`/`ServerFrame`；上限 1 MiB | app GUI host ↔ client/Desktop | [protocol](../../crates/protocol/src)；[schemas/gui-protocol](../../schemas/gui-protocol)；protocol fixtures/golden |
-| CON-REGISTRY-01 | Command/Capability Registry | 31 `AppCommand`、15 `AppQuery`；GUI/headless/ACP 可用性同源 | protocol registry → app/cli/client | [registry](../../crates/protocol/src/app/registry.rs) |
+| CON-GUI-01 | GUI Connection Protocol | API `1.15`；支持 `1.0`–`1.15`；Accepted 握手可选 `host_data_dir`；`ClientFrame`/`ServerFrame`；上限 1 MiB | app GUI host ↔ client/Desktop | [protocol](../../crates/protocol/src)；[schemas/gui-protocol](../../schemas/gui-protocol)；protocol fixtures/golden |
+| CON-REGISTRY-01 | Command/Capability Registry | 38 `AppCommand`、15 `AppQuery`；GUI/headless/ACP 可用性同源 | protocol registry → app/cli/client | [registry](../../crates/protocol/src/app/registry.rs) |
 | CON-HEADLESS-01 | Headless JSON | 与 GUI 帧正交的 request/response JSONL；stdout-only | CLI stdio ↔ SDK/automation | [headless protocol](../../crates/protocol/src/headless)；[schemas/headless-json](../../schemas/headless-json) |
 | CON-ACP-01 | ACP 映射 | ACP adapter 只接 registry 允许的能力，未登记拒绝 | IDE/ACP client ↔ CLI/AppCore | [CLI ACP](../../crates/cli/src/channels/acp)；ACP fixtures |
 | CON-USAGE-01 | Usage 与审计 | usage `dedup_key`；audit 为 JSONL | app/control-plane → usage ledger/audit | [control-plane](../../crates/control-plane/src)；对应 golden |
@@ -67,6 +67,7 @@ OPT-2 / [ADR-054](desktop.md#adr-054opt-2-会话生命周期与自动标题2026-
 - `ArtifactStreaming` 枚举可保留，但生产宿主当前不得宣告。
 - `WorkspaceRelativePath` 拒绝绝对路径与 `..`；客户端不因 UI 便利绕过 host Policy。
 
+- API 1.15（[ADR-059](settings.md#adr-059ui-6b-命名账号与持久选择2026-09-08)）：四个 GUI account 命令和 credential ID/名称/selected；旧 minor 响应过滤新字段，新客户端默认解码旧状态。账号索引与 secret 同事务，选择在后续请求边界生效。
 - API 1.14（[ADR-057](desktop.md#adr-057ui-3-思考投影与会话身份2026-09-08)）：历史新增 `thinking_delta` 与可选 `message_id` / `thinking_text`；同一事件保持一条 wire 条目，只投影可见思考。旧 minor 响应过滤新 kind/字段但保留分页游标。Provider 请求新增可选 `session_id`，旧 JSON 缺省 None；Engine 与命名入口传真实会话，只有 OpenCode Go 映射 HTTP 会话头。
 
 ### 4.3 配置与凭证

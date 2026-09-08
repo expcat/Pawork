@@ -83,6 +83,7 @@ impl RunService {
         render: &dyn AgentEventSink,
         cancel: CancellationToken,
     ) -> Result<ModelResponseSummary, AppError> {
+        let provider = core.request_provider_snapshot().await?;
         let n = core.next_request.fetch_add(1, Ordering::Relaxed);
         let trigger = messages.last_mut().ok_or(AppError::EmptyTurn)?;
         if trigger.role != MessageRole::User {
@@ -174,7 +175,7 @@ impl RunService {
             }
         };
         let result = run_session(
-            core.provider.as_ref(),
+            provider.as_ref(),
             request,
             turn,
             &sink,
@@ -235,6 +236,7 @@ impl RunService {
         render: &dyn AgentEventSink,
         cancel: CancellationToken,
     ) -> Result<Vec<Message>, AppError> {
+        let provider = core.request_provider_snapshot().await?;
         let run_workspace = core.workspace_for_session_or_unbound(session_id)?;
         let messages = core.resume_messages(session_id).await?;
         let trigger = messages.last().cloned().ok_or(AppError::EmptyTurn)?;
@@ -284,7 +286,7 @@ impl RunService {
             workspace_roots: run_workspace.roots.clone(),
         };
         Ok(run_manual_compaction(
-            core.provider.as_ref(),
+            provider.as_ref(),
             request,
             turn,
             &sink,

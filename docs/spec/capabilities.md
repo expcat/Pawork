@@ -1,6 +1,6 @@
 # Pawork 能力与入口矩阵
 
-UI-6a / [ADR-058](settings.md#adr-058ui-6a-目录权威与凭证验证2026-09-08)：远端成功替换静态模型 ID，Go/Qwen 按实际支持的请求协议过滤，模型选择同步核对；Go 用已认证 `/usage` 验证候选 key，公开目录不证明认证。多账号与 QuotaSnapshot 尚属 UI-6b；实现/自动检查/人工验收分别见 [路线图](../ROADMAP.md)。
+UI-6a / [ADR-058](settings.md#adr-058ui-6a-目录权威与凭证验证2026-09-08)：远端成功替换静态模型 ID，Go/Qwen 按实际支持的请求协议过滤，模型选择同步核对；Go 用已认证 `/usage` 验证候选 key，公开目录不证明认证。UI-6b / [ADR-059](settings.md#adr-059ui-6b-命名账号与持久选择2026-09-08) 增同供应商命名 API key/OAuth 账号、持久选择与逐账号删除；后续请求使用选择，进行中的 Run 保持凭证快照；QuotaSnapshot 与自动切换仍待 G2；实现/自动检查/人工验收分别见 [路线图](../ROADMAP.md)。
 
 OPT-1 / [ADR-053](settings.md#adr-053opt-1-设置持久化2026-09-05)：Settings 审批模式保存为 Global 默认，信任选择按 canonical workspace 根路径保存；非 Global 高层禁止覆盖；命令与回执 JSON 形状保持不变。Appearance 保存用户目录 `desktop.json`。实现/自动验证/人工验收状态分别见 [OPT 归档](../review/roadmap-opt-2026-09-05.md#101-本批交付与证据2026-09-05)。
 
@@ -89,4 +89,4 @@ OPT-1 / [ADR-053](settings.md#adr-053opt-1-设置持久化2026-09-05)：Settings
 
 ## 5. 不可宣称为已交付
 
-以下能力仅为已确认未排期、候选或归档：多账户池与缓存感知路由、远程 GUI、Web/Cloud、完整 teams/goal/automation/monitor、GUI stage/unstage/hunk、WASM 插件生态、第一方 IDE 扩展、MCP Server、自更新/安装器、企业 SSO、发布与三平台门禁。完整列表见 [backlog.md](backlog.md)。
+以下能力仅为已确认未排期、候选或归档：完整 account factory 与缓存感知路由、远程 GUI、Web/Cloud、完整 teams/goal/automation/monitor、GUI stage/unstage/hunk、WASM 插件生态、第一方 IDE 扩展、MCP Server、自更新/安装器、企业 SSO、发布与三平台门禁。完整列表见 [backlog.md](backlog.md)。

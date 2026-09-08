@@ -1,6 +1,6 @@
 # Pawork 活动路线图：Desktop 模块重设计（UI）
 
-> 基线日期：2026-09-07。状态：**UI-1 已实现、自动检查通过、用户人工视觉验收通过；未归档。UI-2 已实现、自动检查与代理真窗口检查通过，等待用户人工视觉验收；UI-3 已实现，定向自动检查、真实 Run 与重启回放检查通过，等待用户人工视觉验收，未归档；UI-4 已实现，自动检查与代理真窗口检查通过，等待用户人工视觉验收，未归档；UI-5 已实现，自动检查与代理真窗口检查通过，等待用户人工视觉验收，未归档；UI-6a 已实现，后端与 Desktop 定向检查通过，代理真窗口检查通过；UI-6b 未开始**。来源：当日正式 Desktop 真窗口人工走查（#01–#05）。本文件是当前活动线的任务规划，**不是**源码或冻结契约的事实源。上一条 OPT-D / OPT-1～OPT-4 已关闭，全文与验收证据见 [review/roadmap-opt-2026-09-05.md](review/roadmap-opt-2026-09-05.md)。P0–P2 收尾证据仍见 [Desktop Spec §8](spec/desktop.md#8-gui-收尾验收记录2026-09-05)；未排期候选仍见 [backlog.md](spec/backlog.md)。
+> 基线日期：2026-09-07。状态：**UI-1 已实现、自动检查通过、用户人工视觉验收通过；未归档。UI-2 已实现、自动检查与代理真窗口检查通过，等待用户人工视觉验收；UI-3 已实现，定向自动检查、真实 Run 与重启回放检查通过，等待用户人工视觉验收，未归档；UI-4 已实现，自动检查与代理真窗口检查通过，等待用户人工视觉验收，未归档；UI-5 已实现，自动检查与代理真窗口检查通过，等待用户人工视觉验收，未归档；UI-6a 已实现，后端与 Desktop 定向检查通过，代理真窗口检查通过；UI-6b G1 已实现，定向自动检查、代理真窗口交互与真实 Run 检查通过，等待用户人工视觉验收；G2 已完成启动核查与实施方案，待确认 GUI 1.16 契约后接线**。来源：当日正式 Desktop 真窗口人工走查（#01–#05）。本文件是当前活动线的任务规划，**不是**源码或冻结契约的事实源。上一条 OPT-D / OPT-1～OPT-4 已关闭，全文与验收证据见 [review/roadmap-opt-2026-09-05.md](review/roadmap-opt-2026-09-05.md)。P0–P2 收尾证据仍见 [Desktop Spec §8](spec/desktop.md#8-gui-收尾验收记录2026-09-05)；未排期候选仍见 [backlog.md](spec/backlog.md)。
 
 **做法**：每个任务重新设计**一个模块**的 UI 和交互，对照竞品与 [gui-design.md](gui-design.md) 参照项目（Codex Desktop、OpenCode、Cursor Agent、Zed Agent Panel、DeepSeek Harness）拉到同一美观度；静态观感和动态交互一起做。OPT-D 旧签字稿保留为历史，**不再否决**本线新视觉。
 
@@ -118,7 +118,7 @@ UI-2 / UI-3 / UI-4 写入集不重叠，可在 UI-1 token 稳定后并行。UI-5
 | UI-6a | 重做供应商卡与模型弹层的 UI/交互；探测成功时该 provider **以供应商目录接口返回的 ID 集合为准**（替换静态条目，失败才 fallback），再按 adapter 支持的模态与协议筛选。公开目录不能当作凭证验证或账号权限证明。DeepSeek 因此只出现当次远端的 v4 三模型。禁止按 id 黑名单隐藏 chat/reasoner。 | models_overview / model_catalog 的并集改替换；静态 builtin_entries 只作探测失败回退；逐模型协议、能力和认证验证缺口见核查报告 |
 | UI-6b | 同一供应商可按其支持的方式添加**多个** OAuth 订阅或 API key（同 kind 多账户，不再只是 key 与 OAuth 两类各一份）。可在账号间切换；有权威额度后再按剩余额度切换，无来源时不画假数字，但切换入口要先在。 | 将 backlog G1 账户池纳入本线；G2 QuotaSnapshot 有来源才接自动切换。Secret 仍只进 auth backend |
 
-目录前置核查已完成（2026-09-08）：覆盖八条正式通道与现有 Anthropic / OpenAI-compatible 适配器。真实 GET 复现 DeepSeek 静态旧模型残留、Go 公开目录无法验证 key、Qwen 非聊天模型进入目录；逐供应商结果和参照项目依据见 [模型目录核查报告](review/model-catalog-audit-2026-09-08.md)。**UI-6a 已实现：远端 ID 替换、能力与协议筛选、Go 凭证验证及供应商页重设计；后端与 Desktop 定向门禁通过，代理真窗口检查通过，等待用户人工视觉验收。UI-6b 尚未开始。**
+目录前置核查已完成（2026-09-08）：覆盖八条正式通道与现有 Anthropic / OpenAI-compatible 适配器。真实 GET 复现 DeepSeek 静态旧模型残留、Go 公开目录无法验证 key、Qwen 非聊天模型进入目录；逐供应商结果和参照项目依据见 [模型目录核查报告](review/model-catalog-audit-2026-09-08.md)。**UI-6a 已实现：远端 ID 替换、能力与协议筛选、Go 凭证验证及供应商页重设计；后端与 Desktop 定向门禁通过，代理真窗口检查通过，等待用户人工视觉验收。UI-6b [实施方案](review/ui6b-accounts-plan-2026-09-08.md)已获用户确认，GUI 1.15 / ADR-059 已登记，G1 已实现，定向自动检查与代理真窗口检查通过，等待用户人工视觉验收；G2 已完成[启动核查与实施方案](review/ui6b-quota-plan-2026-09-09.md)，待确认 GUI 1.16 契约后接线。**
 
 ---
 
@@ -152,7 +152,7 @@ UI-2 / UI-3 / UI-4 写入集不重叠，可在 UI-1 token 稳定后并行。UI-5
 | UI-3 Timeline | 已实现：Markdown、工具与思考折叠、终态呈现及 OpenCode Go 会话请求头（ADR-057）；定向自动检查、真实 Run 与重启回放检查通过，等待用户人工视觉验收；未归档 |
 | UI-4 Composer | 已实现：居中输入卡片、模型 / 发送与外部项目 / 上下文分层；自动检查与代理真窗口检查通过，等待用户人工视觉验收；未归档 |
 | UI-5 Settings | 已实现：设置导航与七个非供应商页重设计，AX 使用实际布局；自动检查与代理真窗口检查通过，等待用户人工视觉验收；未归档 |
-| UI-6 Providers | UI-6a 已实现；后端与 Desktop 定向门禁通过，代理真窗口检查通过，等待用户人工视觉验收；UI-6b 未开始，未归档；见 [核查报告](review/model-catalog-audit-2026-09-08.md) |
+| UI-6 Providers | UI-6a 已实现；后端与 Desktop 定向门禁通过，代理真窗口检查通过，等待用户人工视觉验收；UI-6b G1 已实现，定向自动检查与代理真窗口检查通过，等待用户人工视觉验收；G2 [启动核查与实施方案](review/ui6b-quota-plan-2026-09-09.md)已完成，待确认 GUI 1.16 契约，尚未接线；未归档；见 [多账号方案](review/ui6b-accounts-plan-2026-09-08.md) 与 [核查报告](review/model-catalog-audit-2026-09-08.md) |
 
 走查原文与截图在本机走查笔记中，不检入仓库。
 
@@ -248,3 +248,32 @@ UI-2 / UI-3 / UI-4 写入集不重叠，可在 UI-1 token 稳定后并行。UI-5
 - **窗口外事实**：隔离 Host `ui6a-review` 固定使用当次 `opencode-go / glm-5.3-flash`、read-only 审批。真窗口会话 `ses-1788853858278-1` / Run `run-gui-1788853881041-1` 返回 `UI6_CATALOG_OK`，SQLite 终态 `run_completed`、assistant committed 正文一致，0 工具调用；证据 `/tmp/pawork-ui6a-evidence.json`。外观偏好恢复 English / 100%，未改持久模型默认或认证。
 - **最终候选**：`target/pawork-desktop-runtime/Pawork-UI6a-final.app` 已打开并连接隔离 Host；最终二进制 / bundle SHA-256 一致：`7f36f4e624ec8098bc57bef2a59b317bc6556848234902d556af23b62273f415`。使用独立 bundle，没有覆盖运行中的正式应用；保留宽窗、English / 100% 供用户视觉验收。`git diff --check` 与本批文档相对文件链接检查通过。
 - **状态边界**：UI-6b 同 kind 多账号和额度切换未开始；Anthropic 目录、分页、Kimi 视频模态仍为现有边界。等待用户人工视觉验收，未归档、未推送、未发布；全量 workspace 门禁未运行。
+
+
+### UI-6b G1 本批证据（2026-09-08）
+
+- **已实现**：按用户「确认实施」与 [ADR-059](spec/settings.md#adr-059ui-6b-命名账号与持久选择2026-09-08) 落地同供应商命名 API key/OAuth 账号、逐账号删除、持久选择与下一请求生效。旧 default 原槽兼容，索引与 secret 原子提交；OAuth 迟到刷新不能复活删除账号或覆盖新登录。GUI API 1.15、四个新命令、旧 minor 字段降级与 typegen 同批更新；Desktop 按稳定 ID 绑定名称、动作与 AX。没有新增包或生产依赖。
+- **后端定向检查通过**：`cargo test -p pawork-auth -p pawork-protocol -p pawork-app --offline --lib --tests --features pawork-protocol/typegen -- --test-threads=1`，489 passed / 0 failed / 1 既有 ignored（子进程辅助用例），日志 `/tmp/pawork-ui6b-host-final.log`。覆盖同 kind 共存、重开选择、并发 writer、事务回滚、删除/重新登录与刷新竞态、脱敏以及协议 golden/typegen。首次并行测试出现既有 native file lock 子进程释放断言失败，串行复验通过，未据此改变锁语义。
+- **请求与删除回归**：扩展已有 `auth_set_api_key_verifies_replaces_and_masks_end_to_end`：两把不同测试 key 验证后共存，持当前 Run 的 Core 读锁仍可添加/选择，选中账号拒删；下一 Run 的真实 mock HTTP POST 命中所选 Bearer，ledger/DB 不含明文。窗口发现删除未选中账号会短暂显示整个供应商断开，已改为继续发布剩余账号的连接状态；上述用例最终复验通过，日志 `/tmp/pawork-ui6b-remove-regression.log`。
+- **Desktop 定向检查通过**：`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`，219 passed / 0 failed，日志 `/tmp/pawork-ui6b-desktop-final.log`。扩展既有 Providers 回归，覆盖旧 Host gate、名称必填、selected 删除保护、确认对象重排稳定，以及 1080×720 三档字号的实际布局/滚动。保留按钮收紧后单独复跑 `settings_provider_expanded_card_ax_pins_credentials_and_usage` 通过，日志 `/tmp/pawork-ui6b-keep-regression.log`。
+- **构建与本机缓存**：`cargo build -p pawork -p pawork-desktop --offline --bins --features gpui/runtime_shaders` 通过（`/tmp/pawork-ui6b-build-final.log`）；最后一处 Desktop 按钮命中框调整后再构建该应用通过（`/tmp/pawork-ui6b-keep-build.log`）。沿用 `/tmp/pawork-ui4-rustc-wrapper.py` 与 `/tmp/pawork-ui3-test-runner.py` 复用默认 target 和小依赖索引；没有更改仓库构建配置或清理缓存。
+- **代理真窗口检查**：隔离 `ui6b-review` Host 与独立候选中，使用预置的 Alpha/Beta 两条一次性 GLM 测试记录检查切换、选中保护、二次删除、保留、重启恢复；Beta 持久选中，Alpha 的索引及 secret 已按 ID 删除。新增表单检查空名称禁验证、输入名称后可验证、key 遮罩与取消；1080×768 的 100% / 125% / 150% 下账号文字与动作可用，最终恢复原中文 / 100%。成功新增与验证失败保旧由 mock 自动回归证明，本次没有完成两个真实 OAuth 登录或真实 GLM key 验证；测试记录不能算真实供应商账号认证成功。截图不检入仓库。
+- **窗口外事实**：隔离认证文件只复用既有 Go 凭证执行指定模型请求，未修改用户原认证和持久模型默认。会话 `ses-1788881571688-1` / Run `run-gui-1788881599845-1` 使用当次 `opencode-go / glm-5.3-flash`，正文 `UI6B_ACCOUNT_RUN_OK`，SQLite 终态 `run_completed`、1 次 Provider 请求、0 工具调用，与窗口一致；最终 Host/候选重启后正文、思考折叠与终态回放正常。脱敏记录 `/tmp/pawork-ui6b-fixture/evidence.json`。
+- **最终候选**：`target/pawork-desktop-runtime/Pawork-UI6b-accounts.app` 已打开，连接隔离 Host；候选与 build SHA-256 相同：`146140e42c1a4a799903ee45464ce8e213d183f7ed434b651d804c7ecbf814a4`。最终真窗口复验保留按钮命中与取消成功，自动回归同时断言其 AX 框不再覆盖整行。没有覆盖原运行 bundle。
+- **收口检查**：主代理复核 auth 事务/刷新、请求快照与 GUI 兼容路径；独立代理任务因加密任务传输格式不兼容在执行前失败，没有独立审查结论。Rust 格式、文档本地链接与 `git diff --check` 通过。
+- **审查与状态边界**：提交前主代理审查在最终写入集复跑定向门禁（auth/protocol/app 489 passed、Desktop 219 passed、protocol 171 passed，均 0 failed），修正 auth_account_add_api_key registry 幂等标记（每次调用新建账号，非幂等）并补齐 protocol Spec 计数，无其他阻塞发现。G1 已实现，自动检查与以上代理真窗口检查通过；等待用户人工视觉验收，未归档。G2 逐账号权威额度与自动切换尚未接线，Usage 继续 unavailable；UI-6b 整体未完成。已提交、未推送、未发布；全量 workspace 门禁未运行。
+
+### UI-6b 启动核查（2026-09-08，实施前历史）
+
+- **已完成准备**：基于 `main` / `697f5fc3` 干净工作区核对 auth 存储、OAuth refresh、Provider 装配、GUI 命令/状态与账号行交互，形成[可审阅方案](review/ui6b-accounts-plan-2026-09-08.md)。现状仍是同 kind 唯一 default，缺稳定账号身份与选择写口。
+- **拟实施**：同 kind 多账号、验证后新增、逐账号删除、持久选择与下一 Run 生效；复用 auth backend 和既有刷新核心，保留旧凭证。需要新增 GUI 命令和账号状态字段，按 AGENTS.md §5 等待用户确认 API 1.15 契约扩展后实施，golden 先行。
+- **额度事实**：Go 已有 `/usage` 认证验证入口，但当前不产出逐账号快照；GUI quota 查询尚未消费 account/credential 身份。G1 手动选择与 G2 额度接线分别记录，后者完成前保留无数字空态，不将本地用量当作剩余额度。
+- **本批验证与状态**：文档相对文件链接、`git diff --check` 与差异范围检查通过；仅变更路线图和方案文档，未运行 Cargo。生产实现、定向自动门禁与真窗口检查未开始；未归档、未提交、未推送、未发布，全量 workspace 门禁未运行。
+
+
+### UI-6b G2 启动核查（2026-09-09）
+
+- **已完成准备**：在 `main` / `697f5fc3` 与既有 G1 未提交改动上核查逐账号凭证、Go `/usage`、quota 查询、单位与 Run 前装配，形成[可审阅方案](review/ui6b-quota-plan-2026-09-09.md)。G1 改动完整保留，没有重复实施或重跑其门禁。
+- **权威来源已核实**：Go 官方源码按 key 对应的 workspace/user 读取订阅，返回三窗整数已用百分比与 UTC 重置时刻，但不返回可用于共享订阅识别的身份。现有 Host quota 查询只使用 provider、返回本地账本；协议缺 Percent 单位。不能用 token 汇总、认证成功或两把 key 推导独立余额。
+- **拟实施**：逐账号三窗展示、按需刷新，以及默认关闭的“额度耗尽时切换”；仅在新 Run 前凭新鲜完整读数选候选，复用 G1 原子索引与请求快照。拟追加 GUI 1.16 Percent、模式命令/状态与逐账号查询语义，具体兼容和竞态边界见方案。按 AGENTS.md §5，完成准备后等待该具体 wire 扩展确认；G1 的 1.15 授权不重复请求。
+- **验证与状态**：本批仅变更路线图与 G2 方案；文档相对文件链接、`git diff --check` 与本批写入集检查通过。未运行 Cargo、未读真实凭证、未发起认证请求或 Run；生产实现、自动门禁与真窗口检查未开始。未归档、未提交、未推送、未发布；全量 workspace 门禁未运行。

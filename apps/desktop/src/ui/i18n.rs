@@ -357,6 +357,13 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             "Route requests through a proxy server",
             "通过代理服务器路由请求",
         ),
+        "settings.providers.account_name" => ("Account name", "账号名称"),
+        "settings.providers.add_api_key" => ("Add API key", "添加 API key"),
+        "settings.providers.add_oauth" => ("Add OAuth account", "添加 OAuth 账号"),
+        "settings.providers.account_use" => ("Use", "使用"),
+        "settings.providers.account_selected" => ("For next requests", "用于后续请求"),
+        "settings.providers.account_subtitle" => ("Name each account. Switching applies to future requests.", "为每个账号命名。切换后用于后续请求。"),
+        "settings.providers.account_remove_hint" => ("Select another account before removing this one", "请先选择其他账号，再移除此账号"),
         "settings.providers.credentials_title" => ("Credentials", "凭证"),
         "settings.providers.credentials_subtitle" => {
             ("Manage your API credentials", "管理你的 API 凭证")

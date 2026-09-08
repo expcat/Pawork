@@ -29,20 +29,7 @@ pub fn store_default_api_key(
     provider: &ProviderId,
     secret: &str,
 ) -> Result<StoredCredential, AuthError> {
-    if secret.is_empty() {
-        return Err(AuthError::InvalidSecret("secret is empty".into()));
-    }
-    let service = secret_service_for(provider);
-    backend.store(&service, PROVIDER_DEFAULT_ACCOUNT, secret)?;
-    Ok(StoredCredential::new(
-        CredentialId::new(PROVIDER_DEFAULT_ACCOUNT),
-        provider.clone(),
-        format!("{} default", provider.as_str()),
-        MaskedCredential::mask(secret),
-        service,
-        PROVIDER_DEFAULT_ACCOUNT,
-        Vec::new(),
-    ))
+    crate::accounts::store_legacy_api_key(backend, provider, secret)
 }
 
 /// 删除 Provider 主条目（幂等：条目不存在视为成功）。env fallback 不受影响。
@@ -50,10 +37,7 @@ pub fn delete_default_api_key(
     backend: &dyn SecretBackend,
     provider: &ProviderId,
 ) -> Result<(), AuthError> {
-    match backend.delete(&secret_service_for(provider), PROVIDER_DEFAULT_ACCOUNT) {
-        Ok(()) | Err(AuthError::NotFound) => Ok(()),
-        Err(error) => Err(error),
-    }
+    crate::accounts::remove_legacy(backend, provider, crate::accounts::LEGACY_API_KEY_ID)
 }
 
 /// [`resolve_provider_credential`] 的解析结果（来源标记，不含明文 secret）。
@@ -83,6 +67,15 @@ pub fn resolve_provider_credential(
     provider_id: &str,
 ) -> Result<CredentialSource, AuthError> {
     let provider = ProviderId::new(provider_id);
+    let accounts = crate::list_provider_accounts(backend, &provider)?;
+    if let Some(selected) = accounts.selected() {
+        return Ok(match selected.kind {
+            crate::ProviderAccountKind::ApiKey => {
+                CredentialSource::AuthFile(selected.stored.clone())
+            }
+            crate::ProviderAccountKind::OAuth => CredentialSource::None,
+        });
+    }
     let service = secret_service_for(&provider);
     match backend.get(&service, PROVIDER_DEFAULT_ACCOUNT) {
         Ok(secret) => {

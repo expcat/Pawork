@@ -141,6 +141,8 @@ ADR-053 启动：显式 `AppLoadOptions.approval_mode` > Global 审批 > ReadOnl
 - `git_status_note(roots) -> Option<String>`：短 git 状态行（branch + dirty 数），任何失败返回 None 不阻断对话。
 - `list_checkpoints(&SessionId) -> Vec<CheckpointSummary>`；`rollback(&SessionId, spec) -> RollbackOutcome`：按快照恢复文件并持久化 `CheckpointRolledBack` 事件。
 
+UI-6b（[ADR-059](../settings.md#adr-059ui-6b-命名账号与持久选择2026-09-08)）：`auth::effective_provider_account` 统一选择与通道 kind 校验；GUI 四个 account 命令复用 settings auth handler、验证器与 OAuth flight。账号写入只取 backend 快照，不等待当前 Run 的 core 读锁。`provider_auth_revision` 与 `request_provider_snapshot` 在 Run/compact 边界检查持久变更，命名入口同样复核；单 Run 始终持同一 adapter。旧 logout 全删所有账号，旧 default 替换仍指向原槽。
+
 ### 3.5 扩展、MCP、导入、tasks/plan/编排
 
 - `expand_at_refs(session_id, text) -> Vec<ContentPart>`（async，ADR-044 起按 session 归属 workspace 的 file-index 路由）：`@token` 命中时正文作为**独立** Text part 追加（不拼进 user text），单文件 64 KiB 截断并标记；无 `@` 时返回单 Text part。`complete_at(query, limit)` 补全候选（未索引 workspace 自动先扫描）。`workspace_root()`。
@@ -330,6 +332,8 @@ OPT-2 审查回归（2026-09-06）：`auto_title_preserves_pending_approval_and_
 ADR-058 定向回归：`remote_catalog_replaces_static_ids_and_validates_selection` 覆盖远端替换、元数据/显式窗口覆盖、合法空目录、失败回退与旧 ID 拒选；Go auth 回归覆盖公开目录不能验证、401/畸形响应保留旧凭证、错误/事件脱敏与 rate-limited 认证成功。Settings/mock fixtures 显式提供可选模型，空数组继续按真实空目录处理。
 
 API-key 渠道静态 / 配置回退复用 `ApiKeyChannelConfig::transport_for`，不让未声明或仅支持 Messages 的混合渠道模型进入目录与选择器；显式 transport 覆盖优先，目录 metadata 与实际路由一致。远端替换既有回归同时覆盖 503 下 Go 不支持模型拒选 / 概览过滤和 Responses 路由标记。
+
+UI-6b 扩展已有 key 端到端用例：添加第二个 key、持 Run 读锁选择不阻塞、选中删除拒绝、删除非选中账号保留连接状态、旧 minor 过滤字段、下一 Run 命中第二个 Bearer、ledger/DB 无明文。
 
 ## 8. 注意事项与已知限制
 

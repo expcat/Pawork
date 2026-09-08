@@ -36,6 +36,17 @@ pub trait SecretBackend: Send + Sync {
             "backend does not support atomic replacement".into(),
         ))
     }
+    /// 在一个原子读改写事务中操作凭证。错误回滚；回调不得执行网络或调用外层后端。
+    /// 用于账号索引与 Secret 同次提交，以及刷新提交前复核。
+    fn transaction(
+        &self,
+        _operation: &mut dyn FnMut(&dyn SecretBackend) -> Result<(), AuthError>,
+    ) -> Result<(), AuthError> {
+        Err(AuthError::Storage(
+            "backend does not support atomic transactions".into(),
+        ))
+    }
+
     /// 读取一条 secret；不存在时返回 [`AuthError::NotFound`]。
     fn get(&self, service: &str, account: &str) -> Result<String, AuthError>;
     /// 删除一条 secret；不存在时返回 [`AuthError::NotFound`]。
@@ -67,6 +78,38 @@ impl MemoryBackend {
         Self {
             entries: Mutex::new(HashMap::new()),
         }
+    }
+
+    pub(crate) fn from_entries(
+        entries: std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>,
+    ) -> Self {
+        Self {
+            entries: Mutex::new(
+                entries
+                    .into_iter()
+                    .flat_map(|(service, accounts)| {
+                        accounts
+                            .into_iter()
+                            .map(move |(account, value)| ((service.clone(), account), value))
+                    })
+                    .collect(),
+            ),
+        }
+    }
+
+    pub(crate) fn into_entries(
+        self,
+    ) -> std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>> {
+        let mut result =
+            std::collections::BTreeMap::<String, std::collections::BTreeMap<String, String>>::new();
+        for ((service, account), value) in self
+            .entries
+            .into_inner()
+            .expect("MemoryBackend mutex poisoned")
+        {
+            result.entry(service).or_default().insert(account, value);
+        }
+        result
     }
 
     /// 当前存储的条目数量（不含明文，可用于断言）。
@@ -133,6 +176,22 @@ impl SecretBackend for MemoryBackend {
                 secret.to_string(),
             );
         }
+        Ok(())
+    }
+
+    fn transaction(
+        &self,
+        operation: &mut dyn FnMut(&dyn SecretBackend) -> Result<(), AuthError>,
+    ) -> Result<(), AuthError> {
+        let mut entries = self.entries.lock().expect("MemoryBackend mutex poisoned");
+        let snapshot = Self {
+            entries: Mutex::new(entries.clone()),
+        };
+        operation(&snapshot)?;
+        *entries = snapshot
+            .entries
+            .into_inner()
+            .expect("MemoryBackend mutex poisoned");
         Ok(())
     }
 

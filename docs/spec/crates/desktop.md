@@ -179,6 +179,8 @@ Tab 焦点顺序（design §3.6，R3 Wave B）：rail 前缀三档 `RAIL_TAB_STO
 
 AX 焦点口径：grouping 是直接按钮，name 表达目标动作、value 表达当前视图且 Press 后焦点仍在按钮；其余浮层菜单打开时触发器让出 focused，高亮菜单项成为树内唯一 focused 节点。Timeline 行级动作仍与 click 同 handler / gate。
 
+UI-6b 命名账号（[ADR-059](../settings.md#adr-059ui-6b-命名账号与持久选择2026-09-08)）：Settings credentials 显示名称、kind、掩码、过期与后续请求选择；名称输入与 API key/OAuth 新增复用 inline 流程。行与 Use/Remove/确认按 credential ID 绑定，AX 与键盘动作同源，选中账号仍有其他记录时禁删。握手 minor ≥15 才显示新增账号能力；旧 Host 保留原操作与旧状态解码。controller 通过现有 pawork-client 通用命令发送，不新增业务依赖。
+
 ### 3.4 语言（i18n）
 
 - 界面 chrome 文案集中在 `ui/i18n.rs` 目录，`t(key)` / `t2(key, a, b)` 按当前语言返回 `&'static str`；未知 key 原样返回，不 panic。

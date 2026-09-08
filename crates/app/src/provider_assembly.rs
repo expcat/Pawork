@@ -8,7 +8,6 @@ use std::time::Duration;
 
 use pawork_auth::locator::api_key_env_name;
 use pawork_auth::{
-    load_default_oauth_credential, load_default_oauth_meta,
     refresh_default_oauth_credential_if_needed, resolve_oauth_credential,
     resolve_provider_credential, ApiKeyCredential, AuthError, CredentialSource, OAuthRefreshConfig,
     SecretBackend,
@@ -118,6 +117,24 @@ pub(crate) fn is_credential_pending(err: &AppError) -> bool {
 }
 
 impl AppCore {
+    /// Freeze one credential-bearing adapter for an entire Run or manual compact.
+    pub(crate) async fn request_provider_snapshot(
+        &self,
+    ) -> Result<Arc<dyn ModelProvider>, AppError> {
+        if !self.provider_needs_rebuild() {
+            return Ok(Arc::clone(&self.provider));
+        }
+        Ok(assemble_provider(
+            &self.config,
+            &self.provider_id,
+            &self.backend,
+            true,
+            Arc::clone(&self.reasoning_protector) as Arc<dyn ReasoningProtector>,
+        )
+        .await?
+        .adapter)
+    }
+
     /// 当前 provider 在 registry 的静态目录（REPL /model 列表用）。
     pub fn provider_models(&self) -> Vec<CatalogEntry> {
         self.registry
@@ -242,6 +259,7 @@ impl AppCore {
         }
 
         let from = (self.provider_id.clone(), self.model.clone());
+        self.provider_auth_revision = assembled.auth_revision;
         self.provider = assembled.adapter;
         self.credential = assembled.credential;
         self.adapter_protocol = assembled.protocol;
@@ -707,6 +725,7 @@ pub(crate) fn assemble_registry(
 
 /// 装配产物：adapter + 凭证 + 协议标记 + 全量 registry。
 pub(crate) struct AssembledProvider {
+    pub(crate) auth_revision: Option<u64>,
     pub(crate) adapter: Arc<dyn ModelProvider>,
     pub(crate) credential: Option<ResolvedCredential>,
     pub(crate) protocol: AdapterProtocol,
@@ -724,8 +743,10 @@ pub(crate) async fn assemble_provider(
     refresh_oauth: bool,
     reasoning_protector: Arc<dyn ReasoningProtector>,
 ) -> Result<AssembledProvider, AppError> {
+    let auth_revision = pawork_auth::provider_accounts_revision(backend.as_ref(), provider_id)?;
     let id = provider_id.as_str();
     let channel = channels::first_party_channel(id);
+    crate::auth::effective_provider_account(backend.as_ref(), provider_id)?;
     let config_base = find_provider(&config.providers, id)
         .ok()
         .and_then(|provider| provider.base_url.clone());
@@ -856,6 +877,7 @@ pub(crate) async fn assemble_provider(
     };
 
     Ok(AssembledProvider {
+        auth_revision,
         adapter,
         credential,
         protocol,
@@ -896,7 +918,15 @@ async fn oauth_credential(
     refresh: bool,
 ) -> Result<(ResolvedCredential, Option<String>), AppError> {
     let provider = ProviderId::new(id);
-    let Some(mut stored) = load_default_oauth_credential(backend.as_ref(), &provider)? else {
+    let Some(account) = crate::auth::effective_provider_account(backend.as_ref(), &provider)?
+    else {
+        return Err(AppError::OAuthLoginRequired(id.to_string()));
+    };
+    if account.kind != pawork_auth::ProviderAccountKind::OAuth {
+        return Err(AppError::OAuthLoginRequired(id.to_string()));
+    }
+    let mut stored = account.stored;
+    if stored.secret_account.is_empty() {
         return Err(AppError::OAuthLoginRequired(id.to_string()));
     };
     if refresh {
@@ -924,10 +954,18 @@ async fn oauth_credential(
             Err(error) => return Err(AppError::Auth(error)),
         }
     }
-    let account_id =
-        load_default_oauth_meta(backend.as_ref(), &provider)?.and_then(|meta| meta.account_id);
-    let credential = resolve_oauth_credential(&stored, backend.as_ref())?;
-    Ok((credential, account_id))
+    let mut resolved = None;
+    // Keep the upstream OAuth routing claim and bearer from one committed record.
+    backend.transaction(&mut |snapshot| {
+        let meta =
+            pawork_auth::load_account_oauth_meta(snapshot, &stored)?.ok_or(AuthError::NotFound)?;
+        resolved = Some((
+            resolve_oauth_credential(&stored, snapshot)?,
+            meta.account_id,
+        ));
+        Ok(())
+    })?;
+    resolved.ok_or_else(|| AppError::Auth(AuthError::NotFound))
 }
 
 /// OAuth 刷新端点：config [oauth.<id>] 覆盖 → 通道预设（xAI 无预设则报错）。
@@ -1425,14 +1463,14 @@ mod tests {
             assert!(account_id.is_none());
         }
 
-        let stored = load_default_oauth_credential(backend.as_ref(), &provider)
+        let stored = pawork_auth::load_default_oauth_credential(backend.as_ref(), &provider)
             .expect("load default oauth")
             .expect("default oauth present");
         assert_eq!(
             pawork_auth::read_refresh_token(&stored, backend.as_ref()).expect("rotated refresh"),
             "singleflight-refresh"
         );
-        let meta = load_default_oauth_meta(backend.as_ref(), &provider)
+        let meta = pawork_auth::load_default_oauth_meta(backend.as_ref(), &provider)
             .expect("load meta")
             .expect("meta present");
         assert_eq!(meta.masked, stored.masked);

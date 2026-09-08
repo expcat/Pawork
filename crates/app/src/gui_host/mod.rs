@@ -537,6 +537,15 @@ impl GuiHost for GuiHostAdapter {
                 }
             }
         }
+        if matches!(
+            envelope.query,
+            pawork_protocol::AppQuery::ProviderAuthStatus { .. }
+        ) && envelope.api_version.minor < 15
+        {
+            if let AppResponse::Data(data) = &mut response {
+                pawork_protocol::provider_auth_status_for_api_version(data, envelope.api_version);
+            }
+        }
         Ok(response)
     }
 
@@ -1032,6 +1041,10 @@ static COMMAND_HANDLERS: &[(&str, CommandHandler)] = &[
     ("auth_start", command_auth_start),
     ("auth_remove", command_auth_remove),
     ("auth_set_api_key", command_auth_set_api_key),
+    ("auth_account_add_api_key", command_auth_set_api_key),
+    ("auth_account_start", command_auth_start),
+    ("auth_account_select", command_auth_remove),
+    ("auth_account_remove", command_auth_remove),
     ("auth_cancel", command_auth_cancel),
     ("set_default_model", command_set_default_model),
     ("set_proxy_url", command_set_proxy_url),

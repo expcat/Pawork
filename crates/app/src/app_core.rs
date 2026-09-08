@@ -341,6 +341,7 @@ pub struct AppCore {
     pub(crate) provider_pending: bool,
     /// 凭证或供应商配置已更新，下一轮前重新装配。
     pub(crate) provider_stale: bool,
+    pub(crate) provider_auth_revision: Option<u64>,
     pub(crate) credential: Option<ResolvedCredential>,
     pub(crate) model: ModelId,
     pub(crate) provider_id: ProviderId,
@@ -554,6 +555,7 @@ impl AppCore {
             assembled.registry,
         )
         .with_state(config, backend);
+        core.provider_auth_revision = assembled.auth_revision;
         core.reasoning_protector = reasoning_protector;
         core.http = Self::http_from_config(&core.config)?;
         Ok(core)
@@ -607,6 +609,7 @@ impl AppCore {
         let reasoning_protector =
             std::sync::Arc::new(crate::protected::SwappableReasoningProtector::in_memory());
         let mut pending = false;
+        let mut auth_revision = None;
         let core = if provider_missing {
             Self::from_parts_with_protocol(
                 Arc::new(CatalogOnlyProvider {
@@ -630,15 +633,18 @@ impl AppCore {
             )
             .await
             {
-                Ok(assembled) => Self::from_parts_with_protocol(
-                    assembled.adapter,
-                    assembled.credential,
-                    ModelId::from(model_id.as_str()),
-                    provider_ref,
-                    assembled.protocol,
-                    None,
-                    assembled.registry,
-                ),
+                Ok(assembled) => {
+                    auth_revision = assembled.auth_revision;
+                    Self::from_parts_with_protocol(
+                        assembled.adapter,
+                        assembled.credential,
+                        ModelId::from(model_id.as_str()),
+                        provider_ref,
+                        assembled.protocol,
+                        None,
+                        assembled.registry,
+                    )
+                }
                 Err(err) if allow_pending && is_credential_pending(&err) => {
                     pending = true;
                     emit_missing_credential_degrade(&provider_ref);
@@ -661,6 +667,7 @@ impl AppCore {
         core.reasoning_protector = reasoning_protector;
         core.http = Self::http_from_config(&core.config)?;
         core.provider_pending = pending;
+        core.provider_auth_revision = auth_revision;
         Ok(core)
     }
 
@@ -698,6 +705,7 @@ impl AppCore {
             provider,
             provider_pending: false,
             provider_stale: false,
+            provider_auth_revision: None,
             credential,
             model,
             provider_id,
@@ -750,6 +758,10 @@ impl AppCore {
         );
         self.config = config;
         self.refresh_scheduler_approval();
+        self.provider_auth_revision =
+            pawork_auth::provider_accounts_revision(backend.as_ref(), &self.provider_id)
+                .ok()
+                .flatten();
         self.backend = backend;
         self
     }
@@ -1056,13 +1068,14 @@ impl AppCore {
             .find(|provider| provider.id == provider_id)
         {
             Some(provider) => provider.use_proxy = Some(use_proxy),
-            None => self.config.providers.push(
-                pawork_workspace::config::ProviderConfig {
+            None => self
+                .config
+                .providers
+                .push(pawork_workspace::config::ProviderConfig {
                     id: provider_id.to_string(),
                     use_proxy: Some(use_proxy),
                     ..Default::default()
-                },
-            ),
+                }),
         }
     }
 
@@ -1127,12 +1140,7 @@ impl AppCore {
 
     /// SET-6 终端页（ADR-050 D3）：`set_terminal_settings` 写盘成功后
     /// 直接赋值内存 `[terminal]` 段（全态写，禁止 merge_with）。
-    pub(crate) fn set_terminal_settings(
-        &mut self,
-        shell: Option<String>,
-        columns: u16,
-        rows: u16,
-    ) {
+    pub(crate) fn set_terminal_settings(&mut self, shell: Option<String>, columns: u16, rows: u16) {
         self.config.terminal = Some(TerminalConfig {
             shell,
             columns: Some(columns),
@@ -1197,7 +1205,19 @@ impl AppCore {
     }
 
     pub(crate) fn provider_needs_rebuild(&self) -> bool {
-        self.provider_pending || self.provider_stale
+        self.provider_pending
+            || self.provider_stale
+            || pawork_auth::provider_accounts_revision(self.backend.as_ref(), &self.provider_id)
+                .map(|revision| revision != self.provider_auth_revision)
+                .unwrap_or(true)
+            || crate::auth::effective_provider_account(self.backend.as_ref(), &self.provider_id)
+                .map(|account| {
+                    account.is_some_and(|a| {
+                        a.kind == pawork_auth::ProviderAccountKind::OAuth
+                            && pawork_auth::default_oauth_needs_refresh(&a.stored)
+                    })
+                })
+                .unwrap_or(true)
     }
 
     pub fn workspace_id(&self) -> &WorkspaceId {
@@ -1410,7 +1430,10 @@ impl AppCore {
             .await
     }
 
-    pub(crate) async fn session_active_branch(&self, session_id: &SessionId) -> Result<String, AppError> {
+    pub(crate) async fn session_active_branch(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<String, AppError> {
         self.session.session_active_branch(self, session_id).await
     }
 

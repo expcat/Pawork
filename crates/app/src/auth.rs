@@ -7,8 +7,8 @@ use std::time::Duration;
 
 use pawork_auth::{
     exchange_pkce_code, poll_device_token, request_device_authorization,
-    start_pkce_flow_with_callback, store_default_oauth_token, CallbackServer, DeviceFlowConfig,
-    DeviceUserPrompt, PkceSession, StoredCredential,
+    start_pkce_flow_with_callback, store_default_oauth_token, AuthError, CallbackServer,
+    DeviceFlowConfig, DeviceUserPrompt, PkceSession, StoredCredential,
 };
 use pawork_domain::ProviderId;
 
@@ -70,6 +70,38 @@ impl AppCore {
         let mut rows = Vec::new();
         for channel in channels::FIRST_PARTY_CHANNELS.iter() {
             let methods = channel.auth_methods();
+            let inventory = pawork_auth::list_provider_accounts(
+                self.auth_backend().as_ref(),
+                &ProviderId::new(channel.id),
+            )?;
+            if !inventory.accounts.is_empty() {
+                for account in &inventory.accounts {
+                    rows.push(AuthChannelStatus {
+                        provider: channel.id.into(),
+                        kind: method_label(Some(account.kind.as_str())),
+                        source: AuthSource::File,
+                        masked: Some(account.stored.masked.as_str().into()),
+                        expires_at_ms: account.stored.expires_at.map(|time| time.as_unix_millis()),
+                    });
+                }
+                if methods.contains(&"api_key")
+                    && !inventory
+                        .accounts
+                        .iter()
+                        .any(|a| a.kind == pawork_auth::ProviderAccountKind::ApiKey)
+                    && pawork_auth::locator::read_api_key_from_env(channel.id).is_some()
+                {
+                    rows.push(AuthChannelStatus {
+                        provider: channel.id.into(),
+                        kind: "api-key",
+                        source: AuthSource::Env,
+                        masked: None,
+                        expires_at_ms: None,
+                    });
+                }
+                continue;
+            }
+
             // api key 行是否已出行；单 api_key 通道据此跳过兜底行。
             let mut api_key_row_emitted = false;
             if methods.contains(&"api_key") {
@@ -159,15 +191,7 @@ impl AppCore {
     pub fn auth_logout(&self, provider_id: &str) -> Result<(), AppError> {
         let provider = ProviderId::new(provider_id);
         let backend = self.auth_backend();
-        let methods = channels::first_party_channel(provider_id)
-            .map(|channel| channel.auth_methods())
-            .unwrap_or(&["api_key"]);
-        if methods.contains(&"oauth") {
-            pawork_auth::delete_default_oauth_token(backend.as_ref(), &provider)?;
-        }
-        if methods.contains(&"api_key") {
-            pawork_auth::delete_default_api_key(backend.as_ref(), &provider)?;
-        }
+        pawork_auth::remove_all_provider_accounts(backend.as_ref(), &provider)?;
         Ok(())
     }
 
@@ -247,8 +271,19 @@ pub(crate) async fn oauth_finish(
     http: &reqwest::Client,
     timeout: Duration,
 ) -> Result<StoredCredential, AppError> {
+    let (provider, tokens) = oauth_exchange(login, http, timeout).await?;
+    Ok(store_default_oauth_token(backend, provider, &tokens)?)
+}
+
+pub(crate) async fn oauth_exchange(
+    login: OAuthLogin,
+    http: &reqwest::Client,
+    timeout: Duration,
+) -> Result<(ProviderId, pawork_auth::TokenSet), AppError> {
     let provider = match &login {
-        OAuthLogin::Pkce { provider, .. } | OAuthLogin::Device { provider, .. } => provider.clone(),
+        OAuthLogin::Pkce { provider, .. } | OAuthLogin::Device { provider, .. } => {
+            ProviderId::new(provider)
+        }
     };
     let tokens = match login {
         OAuthLogin::Pkce {
@@ -261,11 +296,49 @@ pub(crate) async fn oauth_finish(
             poll_device_token(&config, &prompt, http, timeout).await?
         }
     };
-    let stored = store_default_oauth_token(backend, ProviderId::new(&provider), &tokens)?;
-    // ADR-056 D1 共存语义：OAuth 写入不删除该 provider 的 api key default
-    // 条目；替换缩窄为同 kind 覆盖（store_default_oauth_token 同账户
-    // 覆盖写），跨 kind 清理只属于 auth_logout。
-    Ok(stored)
+    Ok((provider, tokens))
+}
+
+/// Single effective account policy for assembly, Settings and request refresh.
+/// None denotes env fallback or no stored credential, never an invented account.
+pub(crate) fn effective_provider_account(
+    backend: &dyn pawork_auth::SecretBackend,
+    provider: &ProviderId,
+) -> Result<Option<pawork_auth::ProviderAccount>, AppError> {
+    let inventory = pawork_auth::list_provider_accounts(backend, provider)?;
+    let methods = channels::first_party_channel(provider.as_str())
+        .map(|c| c.auth_methods())
+        .unwrap_or(&["api_key"]);
+    if let Some(account) = inventory.selected() {
+        if !methods.contains(&account.kind.as_str()) {
+            return Err(AppError::Auth(AuthError::MalformedMetadata(
+                "selected account kind is unsupported by provider".into(),
+            )));
+        }
+        return Ok(Some(account.clone()));
+    }
+    if methods.contains(&"api_key") {
+        if let Some(account) = inventory
+            .accounts
+            .iter()
+            .find(|a| a.credential_id == pawork_auth::LEGACY_API_KEY_ID)
+        {
+            return Ok(Some(account.clone()));
+        }
+        if pawork_auth::locator::read_api_key_from_env(provider.as_str()).is_some() {
+            return Ok(None);
+        }
+    }
+    Ok(inventory
+        .accounts
+        .into_iter()
+        .find(|a| methods.contains(&"oauth") && a.credential_id == pawork_auth::LEGACY_OAUTH_ID))
+}
+
+pub(crate) fn activate_first_account(provider: &str) -> bool {
+    let uses_key = channels::first_party_channel(provider)
+        .is_none_or(|c| c.auth_methods().contains(&"api_key"));
+    !uses_key || pawork_auth::locator::read_api_key_from_env(provider).is_none()
 }
 
 /// auth list 展示标签：api_key 方法 → api-key，其余（oauth）→ oauth。

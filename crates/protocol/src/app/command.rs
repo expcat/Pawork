@@ -250,9 +250,7 @@ impl ClientContextSnapshot {
 /// 必填但可空的字符串字段（ADR-047 `SetProxyUrl.proxy_url`）：显式
 /// `null` 解码为 `None`；挂上本函数即取消 serde 对 Option 的隐式
 /// default，缺字段变成 missing-field 解码错误而非静默 `None`。
-fn deserialize_required_nullable_string<'de, D>(
-    deserializer: D,
-) -> Result<Option<String>, D::Error>
+fn deserialize_required_nullable_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -423,6 +421,24 @@ pub enum AppCommand {
     AuthSetApiKey {
         provider_id: ProviderId,
         api_key: ApiKeySecret,
+    },
+    AuthAccountAddApiKey {
+        provider_id: ProviderId,
+        display_name: String,
+        api_key: ApiKeySecret,
+    },
+    AuthAccountStart {
+        provider_id: ProviderId,
+        display_name: String,
+        flow: String,
+    },
+    AuthAccountSelect {
+        provider_id: ProviderId,
+        credential_id: String,
+    },
+    AuthAccountRemove {
+        provider_id: ProviderId,
+        credential_id: String,
     },
     AuthCancel {
         provider_id: ProviderId,

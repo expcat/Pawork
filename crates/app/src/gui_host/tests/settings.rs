@@ -507,7 +507,10 @@ async fn set_terminal_settings_updates_and_clears_shell_within_same_session() {
 
     let config_path = pawork_workspace::config::global_config_path().expect("global path");
     let persisted = std::fs::read_to_string(&config_path).expect("persisted config");
-    assert!(persisted.contains("[terminal]"), "missing [terminal]: {persisted}");
+    assert!(
+        persisted.contains("[terminal]"),
+        "missing [terminal]: {persisted}"
+    );
     assert!(
         persisted.contains(format!("shell = \"{shell}\"").as_str()),
         "persisted config misses shell: {persisted}"
@@ -525,7 +528,10 @@ async fn set_terminal_settings_updates_and_clears_shell_within_same_session() {
     let AppResponse::Data(data) = response else {
         panic!("SetTerminalSettings clear must return Data: {response:?}")
     };
-    assert!(data["shell"].is_null(), "clear receipt must be null: {data}");
+    assert!(
+        data["shell"].is_null(),
+        "clear receipt must be null: {data}"
+    );
 
     let after = adapter
         .query(&query_envelope(AppQuery::TerminalSettings))
@@ -838,8 +844,16 @@ async fn workspace_trust_toggles_session_trust_for_attached_workspace() {
     let mut restarted = AppCore::load_for_catalog(options.clone()).await.unwrap();
     assert!(restarted.workspace_trusted());
     restarted.attach_workspace(other_dir.path()).unwrap();
-    assert!(!restarted.workspace_trusted(), "trust must not escape to another project");
-    let original = adapter.core.read().await.workspace_by_id(&workspace_id).unwrap();
+    assert!(
+        !restarted.workspace_trusted(),
+        "trust must not escape to another project"
+    );
+    let original = adapter
+        .core
+        .read()
+        .await
+        .workspace_by_id(&workspace_id)
+        .unwrap();
     assert!(restarted.workspace_trusted_for_roots(&original.roots));
     drop(restarted);
     options.trust_workspaces = Some(false);
@@ -959,7 +973,96 @@ async fn auth_set_api_key_verifies_replaces_and_masks_end_to_end() {
     let masked = entry["auth"]["masked_credential"].as_str().expect("masked");
     assert!(!masked.contains(secret), "status leaks plaintext: {masked}");
 
+    // UI-6b: additive keys and account commands do not wait for a running
+    // Run's core read guard. The cached provider remains a snapshot until next Run.
+    let second_secret = "sk-second-account-1234567890wxyz";
+    Mock::given(method("GET"))
+        .and(path("/models"))
+        .and(header("authorization", &format!("Bearer {second_secret}")))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({"data":[{"id":"glm-5.2"}]})),
+        )
+        .mount(&server)
+        .await;
+    let guard = adapter.core.read().await;
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        adapter.command(&command_envelope(AppCommand::AuthAccountAddApiKey {
+            provider_id: "glm-coding".into(),
+            display_name: "Work".into(),
+            api_key: pawork_protocol::ApiKeySecret::new(second_secret),
+        })),
+    )
+    .await
+    .expect("add must not wait for core write lock")
+    .unwrap();
+    let inventory =
+        pawork_auth::list_provider_accounts(guard.auth_backend().as_ref(), &"glm-coding".into())
+            .unwrap();
+    assert_eq!(inventory.accounts.len(), 2);
+    let account_id = inventory.accounts[1].credential_id.clone();
+    let selection = command_envelope(AppCommand::AuthAccountSelect {
+        provider_id: "glm-coding".into(),
+        credential_id: account_id.clone(),
+    });
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        adapter.command(&selection),
+    )
+    .await
+    .expect("select must not wait for running Run")
+    .unwrap();
+    assert!(guard.provider_needs_rebuild());
+    assert!(adapter
+        .command(&command_envelope(AppCommand::AuthAccountRemove {
+            provider_id: "glm-coding".into(),
+            credential_id: account_id
+        }))
+        .await
+        .is_err());
+    drop(guard);
+    let mut removed_events = adapter.subscribe_events();
+    adapter
+        .command(&command_envelope(AppCommand::AuthAccountRemove {
+            provider_id: "glm-coding".into(),
+            credential_id: pawork_auth::LEGACY_API_KEY_ID.into(),
+        }))
+        .await
+        .expect("remove only the unselected account");
+    let event_wire = serde_json::to_string(&removed_events.try_recv().unwrap()).unwrap();
+    assert!(
+        event_wire.contains("\"succeeded\""),
+        "remaining account stays connected"
+    );
+    assert!(!event_wire.contains(second_secret));
+    let mut old_query = query_envelope(AppQuery::ProviderAuthStatus {
+        provider_id: Some("glm-coding".into()),
+    });
+    old_query.api_version = pawork_protocol::ApiVersion::new(1, 14);
+    let AppResponse::Data(old_status) = adapter.query(&old_query).await.unwrap() else {
+        panic!("status");
+    };
+    assert!(old_status["providers"][0]["credentials"][0]
+        .get("credential_id")
+        .is_none());
+
     // 同 provider/model 连接成功后下一轮必须重装配，不能继续使用旧 Mock adapter。
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(header("authorization", &format!("Bearer {second_secret}")))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(concat!(
+                    "data: {\"id\":\"account-run\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"selected account\"},\"finish_reason\":null}]}\n\n",
+                    "data: {\"id\":\"account-run\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+                    "data: [DONE]\n\n"
+                )),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
     let session = adapter
         .core
         .read()
@@ -975,14 +1078,23 @@ async fn auth_set_api_key_verifies_replaces_and_masks_end_to_end() {
         profile: None,
     });
     assert!(adapter.core.read().await.provider_needs_rebuild());
-    assert!(matches!(
-        adapter.command(&run).await.unwrap(),
-        AppResponse::Accepted { .. }
-    ));
+    let mut run_events = adapter.subscribe_events();
+    let AppResponse::Accepted {
+        run_id: Some(run_id),
+        ..
+    } = adapter.command(&run).await.unwrap()
+    else {
+        panic!("run must be accepted");
+    };
+    wait_run_completed(&mut run_events, &run_id).await;
+    server.verify().await;
     {
         let core = adapter.core.read().await;
         assert!(!core.provider_needs_rebuild());
-        assert_eq!(core.credential.as_ref().unwrap().expose_secret(), secret);
+        assert_eq!(
+            core.credential.as_ref().unwrap().expose_secret(),
+            second_secret
+        );
     }
     adapter
         .command(&command_envelope(AppCommand::AuthRemove {
@@ -997,7 +1109,7 @@ async fn auth_set_api_key_verifies_replaces_and_masks_end_to_end() {
         assert!(matches!(response, AppResponse::Accepted { .. }));
         let core = adapter.core.read().await;
         assert!(!core.provider_needs_rebuild());
-        assert!(core.credential.as_ref().unwrap().expose_secret() != secret);
+        assert!(core.credential.as_ref().unwrap().expose_secret() != second_secret);
     }
 
     // ADR-046 D6 Secret 负断言：命令完成后，临时目录内任何持久化文件
@@ -1008,7 +1120,7 @@ async fn auth_set_api_key_verifies_replaces_and_masks_end_to_end() {
         let bytes = std::fs::read(&path).expect("read persisted file");
         let persisted = String::from_utf8_lossy(&bytes);
         assert!(
-            !persisted.contains(secret),
+            !persisted.contains(secret) && !persisted.contains(second_secret),
             "persisted file {} leaks plaintext",
             path.display()
         );
@@ -1250,7 +1362,10 @@ transport = { kind = "http", url = "https://keep.example.com/mcp" }
 
     // 盘：demo 条目消失；未知字段与其它 server 原样保留。
     let persisted = std::fs::read_to_string(&config_path).expect("persisted config");
-    assert!(!persisted.contains("demo"), "demo must be gone: {persisted}");
+    assert!(
+        !persisted.contains("demo"),
+        "demo must be gone: {persisted}"
+    );
     assert!(persisted.contains("trust_workspaces = true"));
     // toml 序列化会把单键子表折叠为 [mcp.servers.keep.transport] 形态的
     // header，按前缀断言，不写死 header 形态。
@@ -1398,14 +1513,16 @@ async fn mcp_test_unreachable_http_fails_closed_and_keeps_slot_state() {
     {
         let mut core = adapter.core.write().await;
         core.attach_workspace(ws.path()).expect("attach workspace");
-        core.extensions.mcp_servers.push(crate::extensions::McpServerSlot {
-            name: "demo".into(),
-            transport: "http".into(),
-            state: "connected".into(),
-            last_error: None,
-            tools: Vec::new(),
-            client: None,
-        });
+        core.extensions
+            .mcp_servers
+            .push(crate::extensions::McpServerSlot {
+                name: "demo".into(),
+                transport: "http".into(),
+                state: "connected".into(),
+                last_error: None,
+                tools: Vec::new(),
+                client: None,
+            });
     }
 
     let before = adapter
@@ -1715,9 +1832,7 @@ async fn provider_auth_status_lists_dual_credentials_in_fixed_order() {
         panic!("ProviderAuthStatus must return Data: {status:?}")
     };
     let entry = &status["providers"][0];
-    let credentials = entry["credentials"]
-        .as_array()
-        .expect("credentials array");
+    let credentials = entry["credentials"].as_array().expect("credentials array");
     assert_eq!(credentials.len(), 2, "dual credentials: {credentials:?}");
     // 固定序：api_key 在前、oauth 在后；api key 的 expires_at 为 null 但键保留。
     assert_eq!(credentials[0]["kind"], "api_key");
@@ -1778,7 +1893,11 @@ async fn provider_auth_status_marks_expired_oauth_credential() {
     let credentials = status["providers"][0]["credentials"]
         .as_array()
         .expect("credentials array");
-    assert_eq!(credentials.len(), 1, "only the oauth entry: {credentials:?}");
+    assert_eq!(
+        credentials.len(),
+        1,
+        "only the oauth entry: {credentials:?}"
+    );
     assert_eq!(credentials[0]["kind"], "oauth");
     assert_eq!(credentials[0]["expired"], true);
     assert!(credentials[0]["expires_at"].as_str().is_some());
