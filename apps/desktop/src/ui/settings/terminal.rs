@@ -38,11 +38,11 @@ impl AppView {
         let refresh = Button::new("settings-refresh")
             .track_focus(&refresh_focus)
             .variant(ButtonVariant::Raised)
-            .height(px(SETTINGS_ACTION_HEIGHT))
+            .height(px(SETTINGS_CONTROL_HEIGHT))
             .vcenter()
-            .radius(4.0)
+            .radius(6.0)
             .bordered()
-            .text_size(font::BODY_SM)
+            .text_size(font::BASE)
             .label(t("settings.refresh"))
             .tooltip(t("settings.terminal.refresh_tooltip"))
             .disabled(!connected)
@@ -59,12 +59,12 @@ impl AppView {
             }));
         let save = Button::new("settings-terminal-save")
             .track_focus(&save_focus)
-            .variant(ButtonVariant::Raised)
-            .height(px(SETTINGS_ACTION_HEIGHT))
+            .variant(ButtonVariant::Primary)
+            .height(px(SETTINGS_CONTROL_HEIGHT))
             .vcenter()
-            .radius(4.0)
+            .radius(6.0)
             .bordered()
-            .text_size(font::BODY_SM)
+            .text_size(font::BASE)
             .label(t("settings.save"))
             .tooltip(t("settings.terminal.save_tooltip"))
             .disabled(!save_enabled)
@@ -82,11 +82,11 @@ impl AppView {
         let clear = Button::new("settings-terminal-clear")
             .track_focus(&clear_focus)
             .variant(ButtonVariant::Raised)
-            .height(px(SETTINGS_ACTION_HEIGHT))
+            .height(px(SETTINGS_CONTROL_HEIGHT))
             .vcenter()
-            .radius(4.0)
+            .radius(6.0)
             .bordered()
-            .text_size(font::BODY_SM)
+            .text_size(font::BASE)
             .label(t("settings.clear"))
             .tooltip(t("settings.terminal.clear_tooltip"))
             .disabled(!clear_enabled)
@@ -102,118 +102,110 @@ impl AppView {
                 cx.stop_propagation();
             }));
 
-        let mut content = div()
-            .flex()
-            .flex_col()
-            .min_w_0()
-            .gap_2()
+        let mut content = settings_column().child(
+            div()
+                .flex()
+                .items_start()
+                .gap_6()
+                .child(self.settings_heading(
+                    t("settings.terminal.title"),
+                    t("settings.terminal.subtitle"),
+                ))
+                .child(
+                    self.settings_element("settings-refresh")
+                        .flex_none()
+                        .child(refresh),
+                ),
+        );
+        for (kind, line) in status_lines {
+            content = content.child(self.settings_status(kind, line));
+        }
+        let shell = settings_section()
+            .child(settings_label(t("settings.terminal.shell_label")))
+            .child(self.settings_note(
+                "settings-terminal-shell-current",
+                t("settings.terminal.current_shell").replace("{}", &shell_current),
+            ))
+            .child(
+                div()
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(
+                        self.settings_element("settings-terminal-shell-input")
+                            .flex()
+                            .flex_1()
+                            .min_w_0()
+                            .when(!writes, |el| el.opacity(0.55))
+                            .child(shell_input),
+                    )
+                    .child(
+                        self.settings_element("settings-terminal-clear")
+                            .flex_none()
+                            .child(clear),
+                    ),
+            );
+        let size = settings_section()
+            .child(settings_label(t("settings.terminal.size_label")))
+            .child(self.settings_note(
+                "settings-terminal-size-current",
+                t("settings.terminal.current_size").replace("{}", &size_current),
+            ))
             .child(
                 div()
                     .flex()
-                    .flex_row()
-                    .items_start()
-                    .gap_2()
+                    .items_end()
+                    .gap_3()
                     .child(
                         div()
                             .flex()
                             .flex_col()
-                            .min_w_0()
+                            .gap_2()
+                            .child(settings_copy(t("settings.terminal.ax_columns")))
                             .child(
-                                div().font_weight(FontWeight::MEDIUM).child(
-                                    Label::new(t("settings.terminal.title"))
-                                        .size(font::TITLE)
-                                        .color(dark().text.primary),
-                                ),
-                            )
-                            .child(
-                                Label::new(t("settings.terminal.subtitle"))
-                                    .size(font::BODY_SM)
-                                    .color(dark().text.secondary),
+                                self.settings_element("settings-terminal-columns-input")
+                                    .flex()
+                                    .w(px(112.0))
+                                    .when(!writes, |el| el.opacity(0.55))
+                                    .child(columns_input),
                             ),
                     )
-                    .child(div().flex_1())
-                    .child(div().flex_none().pt_1().child(refresh)),
-            );
-        for (kind, line) in status_lines {
-            let color = if kind == "error" {
-                dark().semantic.danger_text
-            } else {
-                dark().text.secondary
-            };
-            content = content.child(status_line(&line, color));
-        }
-        content = content
-            .child(
-                Label::new(t("settings.terminal.current_shell").replace("{}", &shell_current))
-                    .size(font::BODY)
-                    .color(dark().text.primary),
-            )
-            .child(
-                Label::new(t("settings.terminal.current_size").replace("{}", &size_current))
-                    .size(font::BODY)
-                    .color(dark().text.primary),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_1()
-                    .min_w_0()
-                    .child(
-                        Label::new(t("settings.terminal.shell_label"))
-                            .size(font::BODY_SM)
-                            .color(dark().text.secondary),
-                    )
                     .child(
                         div()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(settings_copy(t("settings.terminal.ax_rows")))
+                            .child(
+                                self.settings_element("settings-terminal-rows-input")
+                                    .flex()
+                                    .w(px(112.0))
+                                    .when(!writes, |el| el.opacity(0.55))
+                                    .child(rows_input),
+                            ),
+                    ),
+            );
+        content.child(shell).child(size).child(
+            settings_section().child(
+                div()
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .gap_6()
+                    .child(
+                        self.settings_element("settings-terminal-effect")
                             .flex_1()
                             .min_w_0()
-                            .when(!writes, |el| el.bg(dark().surface.disabled).opacity(0.55))
-                            .child(shell_input),
-                    )
-                    .child(clear),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_1()
-                    .min_w_0()
-                    .child(
-                        Label::new(t("settings.terminal.size_label"))
-                            .size(font::BODY_SM)
-                            .color(dark().text.secondary),
+                            .child(settings_copy(settings_terminal_effect_note())),
                     )
                     .child(
-                        div()
-                            .w(px(96.0))
-                            .when(!writes, |el| el.bg(dark().surface.disabled).opacity(0.55))
-                            .child(columns_input),
-                    )
-                    .child(
-                        Label::new("×")
-                            .size(font::BODY_SM)
-                            .color(dark().text.secondary),
-                    )
-                    .child(
-                        div()
-                            .w(px(96.0))
-                            .when(!writes, |el| el.bg(dark().surface.disabled).opacity(0.55))
-                            .child(rows_input),
-                    )
-                    .child(div().flex_1())
-                    .child(save),
-            )
-            .child(
-                Label::new(settings_terminal_effect_note())
-                    .size(font::BODY_SM)
-                    .color(dark().text.secondary),
-            );
-
-        // OPT-4c（F2）：外层脚手架统一在 settings_page_element。
-        content
+                        self.settings_element("settings-terminal-save")
+                            .flex_none()
+                            .child(save),
+                    ),
+            ),
+        )
     }
 
     /// 终端页 Save（SET-6d；三路径同源）：shell/columns/rows 三字段全态

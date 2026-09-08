@@ -19,11 +19,11 @@ impl AppView {
         let refresh = Button::new("settings-refresh")
             .track_focus(&refresh_focus)
             .variant(ButtonVariant::Raised)
-            .height(px(SETTINGS_ACTION_HEIGHT))
+            .height(px(SETTINGS_CONTROL_HEIGHT))
             .vcenter()
-            .radius(4.0)
+            .radius(6.0)
             .bordered()
-            .text_size(font::BODY_SM)
+            .text_size(font::BASE)
             .label(t("settings.refresh"))
             .tooltip(t("settings.tools.refresh_tooltip"))
             .disabled(!connected)
@@ -39,47 +39,22 @@ impl AppView {
                 cx.stop_propagation();
             }));
 
-        let mut content = div()
-            .flex()
-            .flex_col()
-            .min_w_0()
-            .gap_2()
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_start()
-                    .gap_2()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .min_w_0()
-                            .child(
-                                div().font_weight(FontWeight::MEDIUM).child(
-                                    Label::new(t("settings.tools.title"))
-                                        .size(font::TITLE)
-                                        .color(dark().text.primary),
-                                ),
-                            )
-                            .child(
-                                Label::new(
-                                    t("settings.tools.subtitle"),
-                                )
-                                .size(font::BODY_SM)
-                                .color(dark().text.secondary),
-                            ),
-                    )
-                    .child(div().flex_1())
-                    .child(div().flex_none().pt_1().child(refresh)),
-            );
+        let mut content = settings_column().child(
+            div()
+                .flex()
+                .items_start()
+                .gap_6()
+                .child(
+                    self.settings_heading(t("settings.tools.title"), t("settings.tools.subtitle")),
+                )
+                .child(
+                    self.settings_element("settings-refresh")
+                        .flex_none()
+                        .child(refresh),
+                ),
+        );
         for (kind, line) in status_lines {
-            let color = if kind == "error" || kind == "action" {
-                dark().semantic.danger_text
-            } else {
-                dark().text.secondary
-            };
-            content = content.child(status_line(&line, color));
+            content = content.child(self.settings_status(kind, line));
         }
         for (ix, server) in servers.iter().enumerate() {
             content = content.child(self.settings_mcp_server_card(
@@ -91,7 +66,10 @@ impl AppView {
             ));
         }
         // 生效边界诚实文案（ADR-049 D2 快照语义）。
-        content = content.child(status_line(settings_mcp_effect_note(), dark().text.secondary));
+        content = content.child(
+            settings_section()
+                .child(self.settings_note("settings-mcp-effect", settings_mcp_effect_note())),
+        );
 
         // OPT-4c（F2）：外层脚手架统一在 settings_page_element。
         content
@@ -109,13 +87,13 @@ impl AppView {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let confirming = remove_confirm == Some(server.name.as_str());
-        let mut card = div()
-            .id(("settings-mcp-server", ix))
+        let _ = ix;
+        let mut card = self
+            .settings_element(dynamic_identifier("settings-mcp-server", &server.name))
             .flex()
             .flex_col()
-            .min_w_0()
-            .gap_1()
-            .p(px(PROVIDER_CARD_PAD))
+            .gap_3()
+            .p_4()
             .rounded(px(4.0))
             .border_1()
             .border_color(if confirming {
@@ -127,8 +105,9 @@ impl AppView {
             .child(mcp_server_name_row(server))
             .child(
                 div()
-                    .text_size(font::XS)
-                    .text_color(dark().text.tertiary)
+                    .whitespace_normal()
+                    .text_size(font::BASE)
+                    .text_color(dark().text.secondary)
                     .child(mcp_server_meta_text(server)),
             );
         if confirming {
@@ -144,7 +123,7 @@ impl AppView {
         } else {
             actions.push(SettingsMcpAction::Remove);
         }
-        let mut row = div().flex().flex_row().gap_1().flex_wrap();
+        let mut row = div().flex().flex_row().gap_2().flex_wrap();
         for action in actions {
             let tooltip = match action {
                 SettingsMcpAction::Test => t("settings.tools.tooltip_test"),
@@ -153,13 +132,12 @@ impl AppView {
                 }
                 SettingsMcpAction::KeepRemove => "",
             };
-            row = row.child(self.settings_mcp_action_button(
-                action,
-                &server.name,
-                writes,
-                tooltip,
-                cx,
-            ));
+            let button = self.settings_mcp_action_button(action, &server.name, writes, tooltip, cx);
+            row = row.child(
+                self.settings_element(action.identifier(&server.name))
+                    .flex_none()
+                    .child(button),
+            );
         }
         card.child(row)
     }
@@ -188,11 +166,11 @@ impl AppView {
         let button = Button::new(id)
             .track_focus(&focus)
             .variant(ButtonVariant::Raised)
-            .height(px(SETTINGS_ACTION_HEIGHT))
+            .height(px(SETTINGS_CONTROL_HEIGHT))
             .vcenter()
-            .radius(4.0)
+            .radius(6.0)
             .bordered()
-            .text_size(font::BODY_SM)
+            .text_size(font::BASE)
             .label(action.label())
             .disabled(!writes)
             .on_click(cx.listener(move |view, event, _window, cx| {

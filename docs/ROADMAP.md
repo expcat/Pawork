@@ -1,6 +1,6 @@
 # Pawork 活动路线图：Desktop 模块重设计（UI）
 
-> 基线日期：2026-09-07。状态：**UI-1 已实现、自动检查通过、用户人工视觉验收通过；未归档。UI-2 已实现、自动检查与代理真窗口检查通过，等待用户人工视觉验收；UI-3 已实现，定向自动检查、真实 Run 与重启回放检查通过，等待用户人工视觉验收，未归档；UI-4 已实现，自动检查与代理真窗口检查通过，等待用户人工视觉验收，未归档；UI-5～UI-6 未开始**。来源：当日正式 Desktop 真窗口人工走查（#01–#05）。本文件是当前活动线的任务规划，**不是**源码或冻结契约的事实源。上一条 OPT-D / OPT-1～OPT-4 已关闭，全文与验收证据见 [review/roadmap-opt-2026-09-05.md](review/roadmap-opt-2026-09-05.md)。P0–P2 收尾证据仍见 [Desktop Spec §8](spec/desktop.md#8-gui-收尾验收记录2026-09-05)；未排期候选仍见 [backlog.md](spec/backlog.md)。
+> 基线日期：2026-09-07。状态：**UI-1 已实现、自动检查通过、用户人工视觉验收通过；未归档。UI-2 已实现、自动检查与代理真窗口检查通过，等待用户人工视觉验收；UI-3 已实现，定向自动检查、真实 Run 与重启回放检查通过，等待用户人工视觉验收，未归档；UI-4 已实现，自动检查与代理真窗口检查通过，等待用户人工视觉验收，未归档；UI-5 已实现，自动检查与代理真窗口检查通过，等待用户人工视觉验收，未归档；UI-6 未开始**。来源：当日正式 Desktop 真窗口人工走查（#01–#05）。本文件是当前活动线的任务规划，**不是**源码或冻结契约的事实源。上一条 OPT-D / OPT-1～OPT-4 已关闭，全文与验收证据见 [review/roadmap-opt-2026-09-05.md](review/roadmap-opt-2026-09-05.md)。P0–P2 收尾证据仍见 [Desktop Spec §8](spec/desktop.md#8-gui-收尾验收记录2026-09-05)；未排期候选仍见 [backlog.md](spec/backlog.md)。
 
 **做法**：每个任务重新设计**一个模块**的 UI 和交互，对照竞品与 [gui-design.md](gui-design.md) 参照项目（Codex Desktop、OpenCode、Cursor Agent、Zed Agent Panel、DeepSeek Harness）拉到同一美观度；静态观感和动态交互一起做。OPT-D 旧签字稿保留为历史，**不再否决**本线新视觉。
 
@@ -151,7 +151,7 @@ UI-2 / UI-3 / UI-4 写入集不重叠，可在 UI-1 token 稳定后并行。UI-5
 | UI-2 TaskRail | 已实现；Desktop 自动检查 214/214 通过；代理真窗口检查通过；等待用户人工视觉验收；未归档 |
 | UI-3 Timeline | 已实现：Markdown、工具与思考折叠、终态呈现及 OpenCode Go 会话请求头（ADR-057）；定向自动检查、真实 Run 与重启回放检查通过，等待用户人工视觉验收；未归档 |
 | UI-4 Composer | 已实现：居中输入卡片、模型 / 发送与外部项目 / 上下文分层；自动检查与代理真窗口检查通过，等待用户人工视觉验收；未归档 |
-| UI-5 Settings | 已立项，未开始 |
+| UI-5 Settings | 已实现：设置导航与七个非供应商页重设计，AX 使用实际布局；自动检查与代理真窗口检查通过，等待用户人工视觉验收；未归档 |
 | UI-6 Providers | 目录前置核查完成（2026-09-08）；实现未开始，未归档；见 [核查报告](review/model-catalog-audit-2026-09-08.md) |
 
 走查原文与截图在本机走查笔记中，不检入仓库。
@@ -226,3 +226,13 @@ UI-2 / UI-3 / UI-4 写入集不重叠，可在 UI-1 token 稳定后并行。UI-5
 - **窗口外事实**：仅在新建会话 `ses-1788835050699-2`（`UI-4 · 输入栏验收`，无项目）发起两轮无工具请求。SQLite 确认 `run-gui-1788835159163-2` 为 completed，assistant committed 正文为 `UI4_SEND_OK`；`run-gui-1788835192573-3` 为 cancelled，均与窗口终态一致。只读证据 `/tmp/pawork-ui4-evidence.json`；未改持久默认、认证或代理配置。
 - **当前候选**：`target/pawork-desktop-runtime/Pawork-UI4-final.app` 已打开，候选与最终 build SHA-256 均为 `d9df3f6f0be7def2ab431aabcd91ec0d0594c7873e1b7ed669aaba00e2791b7a`；使用独立 bundle，未覆盖原运行 bundle。
 - **状态边界**：已实现、自动检查通过、代理真窗口检查通过；**等待用户人工视觉验收，未归档**。未提交、未推送、未发布；全量 workspace 门禁未运行。UI-5～UI-6 实现未开始。
+
+### UI-5 本批证据（2026-09-08）
+
+- **已实现**：Settings 导航、Network / Approvals / Tools / Terminal / Appearance / Advanced / About 的分区与控件重设计；七页 AX 改读实际布局并裁剪离屏项。保留 UI-1 token 与现有设置行为、Host gate、持久化和 wire；规格见 [GUI 设计 UI-5](gui-design.md#ui-5-设置更新2026-09-08)。供应商卡、多账号与目录权威留给 UI-6。
+- **自动检查通过**：`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`，217 passed / 0 failed；`cargo build -p pawork-desktop --offline --bins --features gpui/runtime_shaders` 成功。新增一个真实 GPUI 回归，覆盖 100% / 125% / 150%、输入实际命中与 AX 对齐、网络表单不重叠且用满行宽、滚动离屏裁剪及断线禁写；其余沿用既有设置 gate / 本地偏好回归。`git diff --check`、Rust 格式及本批文档本地链接检查通过。日志：`/tmp/pawork-ui5/tests.log`、`/tmp/pawork-ui5/build.log`。
+- **本机缓存复用**：沿用 `RUSTC_WRAPPER=/tmp/pawork-ui4-rustc-wrapper.py` 和测试 `CARGO_TARGET_AARCH64_APPLE_DARWIN_RUNNER=/tmp/pawork-ui3-test-runner.py`，复用现有依赖并在小目录运行测试二进制；未改 Cargo 配置、依赖或 feature，未清理 target。
+- **代理真窗口检查通过**：七页内容、1080×720 窄窗与宽窗、三档字号、English / 中文即时切换、页内滚动、网络输入到 Save 的 Tab 焦点、Advanced → About 的 Tab / Enter 导航、返回工作台。原生走查发现并修复网络表单收缩 / 重叠，最终中英文 150% 窄窗均恢复全宽；Terminal Save、Approvals 信任区和 Advanced 长路径可滚动到达。Tools 如实显示未配置 MCP 的空态。最终恢复宽窗、English / 100%，截图不检入仓库。
+- **窗口外事实**：独立 `target/pawork-desktop-runtime/Pawork-UI5-review.app` 连接既有 `ui3-thinking` Host（当次参数 `opencode-go / glm-5.3-flash`）。按 `CFBundleExecutable` 核对实际入口，候选与最终 build SHA-256 均为 `ce58a3cf6344f9cf0ad11b18f5b7cbbcd9cc6eae7237320cc317dca9fa3d3afe`；候选 `--probe` 成功。偏好文件确认 `language=en, text_scale=100`，证据见 `/tmp/pawork-ui5/final-evidence.json` 与 `/tmp/pawork-ui5/probe.log`。本批没有发起 Run，也未操作 Host 代理、审批、信任、凭证或 MCP 写入口；这些写入行为沿用既有实现与自动回归。
+- **审查**：确定性检查后独立只读审查完成；重连按钮的 AX 全行命中区已收敛至按钮，最终分区与输入布局修正后无未解决发现。
+- **状态边界**：已实现、自动检查通过、代理真窗口检查通过；**等待用户人工视觉验收，未归档**。本提交收录实现与规格，未推送、未发布；全量 workspace 门禁未运行；UI-6 实现未开始。

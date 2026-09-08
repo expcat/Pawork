@@ -50,6 +50,23 @@
 
 **实现边界**：思考投影与默认折叠已按 [ADR-057](spec/desktop.md#adr-057ui-3-思考投影与会话身份2026-09-08) 实现；历史与 live 共用 reducer，committed 全文替换增量并保留思考首次出现的位置，分页与重放不重复、不跨工具移位。只展示可见 thinking，redacted 与 opaque reasoning 不进入 GUI。实现、自动检查、代理真窗口检查和用户人工验收分别见 [路线图](ROADMAP.md)。
 
+### UI-5 设置更新（2026-09-08）
+
+沿用 UI-1 中性深色 token，设置内容用满侧栏外宽度，两侧各留 32px；非供应商页首尾在 100% 字号下各留 32px，纵向留白与分区间距随字号缩放。参照本节列出的 Codex / OpenCode 设置导航与分区方式，把当前值、编辑控件和生效说明分开组织，保持原有八页与真实能力 gate。
+
+| 区域 | 当前呈现与交互 |
+| --- | --- |
+| Settings Rail | 40px 导航行、14px 文字、6px 圆角；选中用中性 raised 底与 medium 字重，焦点用共享覆盖描边。返回为低强调按钮，选中与焦点切换不移动文字。 |
+| 页头与分区 | 20px 标题、14px 次级文字；页头刷新靠右。分区间距 24px，1px subtle 分隔线后留 24px，区内 12px；说明自然换行。 |
+| 控件 | 非供应商页按钮 36px 高、6px 圆角、14px 字；Network / Terminal 的 Save 为 Primary，输入沿用 TextInput，失效态保持原写 gate。 |
+| Network / Terminal | 当前值位于输入上方；Terminal 将 Shell 与列数 / 行数分区，尺寸输入有独立可见标签，统一 Save 提交既有三个字段。生效说明单独成区。 |
+| Approvals | 五档整行选择保留两行说明与当前状态，下面独立呈现项目信任与 Global 只读默认。没有新增权限模式或写入口。 |
+| Tools / Appearance | MCP 空态与错误使用清楚的状态区；服务器卡内留 16px，保留 Test 和两步 Remove。外观分为深色主题、字号与预览、语言；100% / 125% / 150% 与双语选择仍本地即时生效并持久化。 |
+| Advanced / About | 标签与值按两列对齐，以细分隔线分行；长路径和值自然换行。Advanced 断线仍能进入并重连，About 仍以认证握手提供数据目录为可用条件。 |
+| 无障碍与滚动 | 七个非供应商页用 ScrollHandle 记录真实元素框，prepaint 后同步 AX；只发布滚动视口中的可见部分，离屏节点不发布动作。切页清除上一页测量，字号与语言按钮沿用既有实测框。 |
+
+UI-5 不改变供应商卡、目录、多账号、Host 设置写入或 wire。实现、自动检查和人工验收状态分别见 [路线图 UI-5](ROADMAP.md#ui-5-本批证据2026-09-08)。
+
 ### UI-4 输入栏更新（2026-09-08）
 
 Composer 沿用 UI-1 色板与圆角，与 UI-3 的 880px 阅读列居中对齐。设计参考 [Zed Agent Panel](https://zed.dev/docs/ai/agent-panel#changing-models) 将模型选择放在消息编辑器附近、[上下文用量](https://zed.dev/docs/ai/agent-panel#token-usage-and-compaction) 靠近输入区的组织方式；下列尺寸与分层是 Pawork 的设计取舍。
@@ -184,9 +201,9 @@ Settings 沿用深色主题、8px 节奏和 1440×1024 基线，不把工作台�
 └──────────────────┴────────────────────────────────────────────┘
 ```
 
-- 入口位于 TaskRail 底部 `Local` 行右侧 gear。进入后左栏换成 Settings Rail；Timeline、Composer、Inspector 不渲染。OPT-4d（F4）起导航选中态零位移：选中与未选中共用同一外壳几何，差异仅为背景、字重与不参与布局的左缘指示条（焦点描边用绝对定位覆盖层，不参与布局），文字坐标逐像素不变。
+- 入口位于 TaskRail 底部 `Local` 行右侧 gear。进入后左栏换成 Settings Rail；Timeline、Composer、Inspector 不渲染。OPT-4d（F4）起导航选中态零位移：选中与未选中共用同一外壳几何，UI-5 起差异仅为中性背景与字重（焦点描边用绝对定位覆盖层，不参与布局），文字坐标逐像素不变。
 - `← Back to workspace` 恢复进入前的 session、Timeline 位置、Composer 草稿、Inspector 和 Run；Settings 不取消 Run。各页内容在受限高度内纵向滚动，切页回到顶部；输入框至少容纳当前字号的一行与内边距。
-- Settings 导航 AX 随 `Panel` 的 rem padding/gap 同步缩放，并扣除侧栏分隔线；外观页字号与语言按钮直接使用 GPUI 实测框，只发布滚动视口中的可见部分。项目 Scope 菜单同样使用实测框与滚动偏移，超过 240px 时只发布可见选项；键盘高亮与打开菜单时的当前选项滚入视口。
+- Settings 导航 AX 随 `Panel` 的 rem padding/gap 同步缩放，并扣除侧栏分隔线；UI-5 七个非供应商页均使用 GPUI 实测框，只发布滚动视口中的可见部分。项目 Scope 菜单同样使用实测框与滚动偏移，超过 240px 时只发布可见选项；键盘高亮与打开菜单时的当前选项滚入视口。
 - 导航与页内可见文案默认 English，可在 Appearance 页切换为简体中文（即时生效，保存到用户目录 `desktop.json`，重启恢复）；顺序为 Models & providers → Network → Approvals → Tools & MCP → Terminal → Appearance → Advanced → About。没有真实读写能力的页不显示；Advanced 离线仍可进入。
 - 翻译边界：只翻译界面 chrome 文案（按钮、提示、空态、状态提示、tooltip）；session 标题、provider / model id、文件路径、工具输出与 wire 错误原因等数据内容保持原文；品牌名「Pawork」、功能符号与示例数据不翻译。render 与 AX 经同一目录同源取词，AX 节点 id 保持英文。
 - **Models & providers**：OPT-4c（F2）起内容用满 Rail 外可用宽度、两侧各 32px padding，不再保留 820px 上限（render 与 AX 几何经 `SETTINGS_CONTENT_PAD` 同源）；provider 使用 64px 概览行，分列显示认证方式、连接状态与目录 / 模型数；认证操作放在独立详情行，避免窄窗与大字号挤压信息列。Host `provider_auth_status` 是权威数据，Desktop 不按供应商名称硬编码 OAuth/API key 分支。普通行与 AX summary 不显示 masked credential、endpoint、catalog error 或 raw model id；endpoint / 错误只在连接、等待或删除确认详情出现。API key editor 仅在 Connect / Replace 后展开，secure input 的完整值不得进 AX tree、日志或状态文本。OAuth 只显示授权 URL、device code、到期/取消，不接触 token。认证成功与目录成功是两个状态。OPT-3 起页首为「Default models」四默认角色区（对话/命名/识图/搜索；候选 = 已连接且已启用的模型；无候选时仍保留 Clear，可清除失效默认项；识图/搜索在路由落地前标注「只保存」）。每 provider 行提供 Manage models 弹层：单模型 Switch、Enable all / Disable all；禁用命中角色默认对时 Host 同批清除该键对并如实提示；目录为空显示诚实空态，不渲染全开假按钮。当 Global `proxy_url` 已配置时，行右侧追加供应商级代理 Switch（OPT-3c 起为 Switch 控件，On/Off 状态词，tooltip 说明走代理/直连）；click / Enter / Space / AX Press 同一 handler，Host `set_provider_use_proxy` 回执即写后状态，不乐观更新。未配置全局代理时不渲染该开关。

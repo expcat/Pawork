@@ -31,8 +31,14 @@ fn settings_nav_ax(
 /// 所有 settings_* 页 AX 几何必须经此取值，否则 AX 高亮框会与 render
 /// 内容列系统性漂移。
 pub(crate) fn settings_content_ax_width(frame: AxRect) -> f32 {
-    (frame.width - crate::ui::settings::SETTINGS_CONTENT_PAD * 2.0)
-        .max(0.0)
+    (frame.width - crate::ui::settings::SETTINGS_CONTENT_PAD * 2.0).max(0.0)
+}
+
+/// Unrendered/offscreen page nodes cannot expose actions at stale coordinates.
+fn visible_settings_page(mut page: AxNode) -> AxNode {
+    page.children
+        .retain(|node| node.bounds.width > 0.0 && node.bounds.height > 0.0);
+    page
 }
 
 impl AppView {
@@ -65,41 +71,41 @@ impl AppView {
             t("settings.rail_title"),
             frame,
         )
-            .child(AxNode::new(
-                "settings-rail-title",
-                AxRole::StaticText,
-                t("settings.rail_title"),
-                AxRect::new(frame.x + pad, frame.y + title_y, width, TITLE_HEIGHT),
-            ))
-            .child(
-                AxNode::new(
-                    "settings-back",
-                    AxRole::Button,
-                    t("settings.back_tooltip"),
-                    AxRect::new(
-                        frame.x + pad,
-                        frame.y + back_y,
-                        width,
-                        metrics::RAIL_TOP_ROW_HEIGHT,
-                    ),
-                )
-                .focused(self.settings_back_focus.is_focused(window))
-                .action(AxAction::Press),
-            )
-            .child(settings_nav_ax(
-                "settings-nav-providers",
-                t("settings.nav.providers"),
-                current_page == SettingsPage::Providers,
-                self.open_menu.is_none() && self.settings_nav_providers_focus.is_focused(window),
+        .child(AxNode::new(
+            "settings-rail-title",
+            AxRole::StaticText,
+            t("settings.rail_title"),
+            AxRect::new(frame.x + pad, frame.y + title_y, width, TITLE_HEIGHT),
+        ))
+        .child(
+            AxNode::new(
+                "settings-back",
+                AxRole::Button,
+                t("settings.back_tooltip"),
                 AxRect::new(
                     frame.x + pad,
-                    frame.y + nav_y,
+                    frame.y + back_y,
                     width,
                     metrics::RAIL_TOP_ROW_HEIGHT,
                 ),
-            ));
+            )
+            .focused(self.settings_back_focus.is_focused(window))
+            .action(AxAction::Press),
+        )
+        .child(settings_nav_ax(
+            "settings-nav-providers",
+            t("settings.nav.providers"),
+            current_page == SettingsPage::Providers,
+            self.open_menu.is_none() && self.settings_nav_providers_focus.is_focused(window),
+            AxRect::new(
+                frame.x + pad,
+                frame.y + nav_y,
+                width,
+                crate::ui::settings::SETTINGS_NAV_HEIGHT,
+            ),
+        ));
         if general_available {
-            let general_y = nav_y + metrics::RAIL_TOP_ROW_HEIGHT + pad;
+            let general_y = nav_y + crate::ui::settings::SETTINGS_NAV_HEIGHT + pad;
             rail = rail.child(settings_nav_ax(
                 "settings-nav-general",
                 t("settings.nav.general"),
@@ -109,16 +115,16 @@ impl AppView {
                     frame.x + pad,
                     frame.y + general_y,
                     width,
-                    metrics::RAIL_TOP_ROW_HEIGHT,
+                    crate::ui::settings::SETTINGS_NAV_HEIGHT,
                 ),
             ));
         }
         if permissions_available {
             // 几何与 render 同源：通用项之后递增一行（无通用项时紧随
             // 供应商项）。
-            let mut permissions_y = nav_y + metrics::RAIL_TOP_ROW_HEIGHT + pad;
+            let mut permissions_y = nav_y + crate::ui::settings::SETTINGS_NAV_HEIGHT + pad;
             if general_available {
-                permissions_y += metrics::RAIL_TOP_ROW_HEIGHT + pad;
+                permissions_y += crate::ui::settings::SETTINGS_NAV_HEIGHT + pad;
             }
             rail = rail.child(settings_nav_ax(
                 "settings-nav-permissions",
@@ -129,18 +135,18 @@ impl AppView {
                     frame.x + pad,
                     frame.y + permissions_y,
                     width,
-                    metrics::RAIL_TOP_ROW_HEIGHT,
+                    crate::ui::settings::SETTINGS_NAV_HEIGHT,
                 ),
             ));
         }
         if tools_available {
             // 几何与 render 同源：权限项之后递增一行（按可用项累计）。
-            let mut tools_y = nav_y + metrics::RAIL_TOP_ROW_HEIGHT + pad;
+            let mut tools_y = nav_y + crate::ui::settings::SETTINGS_NAV_HEIGHT + pad;
             if general_available {
-                tools_y += metrics::RAIL_TOP_ROW_HEIGHT + pad;
+                tools_y += crate::ui::settings::SETTINGS_NAV_HEIGHT + pad;
             }
             if permissions_available {
-                tools_y += metrics::RAIL_TOP_ROW_HEIGHT + pad;
+                tools_y += crate::ui::settings::SETTINGS_NAV_HEIGHT + pad;
             }
             rail = rail.child(settings_nav_ax(
                 "settings-nav-tools",
@@ -151,21 +157,21 @@ impl AppView {
                     frame.x + pad,
                     frame.y + tools_y,
                     width,
-                    metrics::RAIL_TOP_ROW_HEIGHT,
+                    crate::ui::settings::SETTINGS_NAV_HEIGHT,
                 ),
             ));
         }
         if terminal_available {
             // 几何与 render 同源：工具项之后递增一行（按可用项累计）。
-            let mut terminal_y = nav_y + metrics::RAIL_TOP_ROW_HEIGHT + pad;
+            let mut terminal_y = nav_y + crate::ui::settings::SETTINGS_NAV_HEIGHT + pad;
             if general_available {
-                terminal_y += metrics::RAIL_TOP_ROW_HEIGHT + pad;
+                terminal_y += crate::ui::settings::SETTINGS_NAV_HEIGHT + pad;
             }
             if permissions_available {
-                terminal_y += metrics::RAIL_TOP_ROW_HEIGHT + pad;
+                terminal_y += crate::ui::settings::SETTINGS_NAV_HEIGHT + pad;
             }
             if tools_available {
-                terminal_y += metrics::RAIL_TOP_ROW_HEIGHT + pad;
+                terminal_y += crate::ui::settings::SETTINGS_NAV_HEIGHT + pad;
             }
             rail = rail.child(settings_nav_ax(
                 "settings-nav-terminal",
@@ -176,24 +182,24 @@ impl AppView {
                     frame.x + pad,
                     frame.y + terminal_y,
                     width,
-                    metrics::RAIL_TOP_ROW_HEIGHT,
+                    crate::ui::settings::SETTINGS_NAV_HEIGHT,
                 ),
             ));
         }
         // SET-6e 外观是 Desktop 本地能力，始终在所有 Host 可用页之后
         // 显示；位置按实际可见项累计，与 render 同源。
-        let mut appearance_y = nav_y + metrics::RAIL_TOP_ROW_HEIGHT + pad;
+        let mut appearance_y = nav_y + crate::ui::settings::SETTINGS_NAV_HEIGHT + pad;
         if general_available {
-            appearance_y += metrics::RAIL_TOP_ROW_HEIGHT + pad;
+            appearance_y += crate::ui::settings::SETTINGS_NAV_HEIGHT + pad;
         }
         if permissions_available {
-            appearance_y += metrics::RAIL_TOP_ROW_HEIGHT + pad;
+            appearance_y += crate::ui::settings::SETTINGS_NAV_HEIGHT + pad;
         }
         if tools_available {
-            appearance_y += metrics::RAIL_TOP_ROW_HEIGHT + pad;
+            appearance_y += crate::ui::settings::SETTINGS_NAV_HEIGHT + pad;
         }
         if terminal_available {
-            appearance_y += metrics::RAIL_TOP_ROW_HEIGHT + pad;
+            appearance_y += crate::ui::settings::SETTINGS_NAV_HEIGHT + pad;
         }
         rail = rail.child(settings_nav_ax(
             "settings-nav-appearance",
@@ -204,10 +210,10 @@ impl AppView {
                 frame.x + pad,
                 frame.y + appearance_y,
                 width,
-                metrics::RAIL_TOP_ROW_HEIGHT,
+                crate::ui::settings::SETTINGS_NAV_HEIGHT,
             ),
         ));
-        let advanced_y = appearance_y + metrics::RAIL_TOP_ROW_HEIGHT + pad;
+        let advanced_y = appearance_y + crate::ui::settings::SETTINGS_NAV_HEIGHT + pad;
         rail = rail.child(settings_nav_ax(
             "settings-nav-advanced",
             t("settings.nav.advanced"),
@@ -217,11 +223,11 @@ impl AppView {
                 frame.x + pad,
                 frame.y + advanced_y,
                 width,
-                metrics::RAIL_TOP_ROW_HEIGHT,
+                crate::ui::settings::SETTINGS_NAV_HEIGHT,
             ),
         ));
         if about_available {
-            let about_y = advanced_y + metrics::RAIL_TOP_ROW_HEIGHT + pad;
+            let about_y = advanced_y + crate::ui::settings::SETTINGS_NAV_HEIGHT + pad;
             rail = rail.child(settings_nav_ax(
                 "settings-nav-about",
                 t("settings.nav.about"),
@@ -231,7 +237,7 @@ impl AppView {
                     frame.x + pad,
                     frame.y + about_y,
                     width,
-                    metrics::RAIL_TOP_ROW_HEIGHT,
+                    crate::ui::settings::SETTINGS_NAV_HEIGHT,
                 ),
             ));
         }
@@ -246,32 +252,32 @@ impl AppView {
         if self.settings_page == SettingsPage::General
             && self.projection.settings_general.query.available
         {
-            return self.settings_general_page_ax(window, cx, frame);
+            return visible_settings_page(self.settings_general_page_ax(window, cx, frame));
         }
         if self.settings_page == SettingsPage::Permissions
             && self.projection.settings_permissions.query.available
         {
-            return self.settings_permissions_page_ax(window, cx, frame);
+            return visible_settings_page(self.settings_permissions_page_ax(window, cx, frame));
         }
         if self.settings_page == SettingsPage::Tools && self.resources.available {
-            return self.settings_tools_page_ax(window, frame);
+            return visible_settings_page(self.settings_tools_page_ax(window, frame));
         }
         if self.settings_page == SettingsPage::Terminal
             && self.projection.settings_terminal.query.available
         {
-            return self.settings_terminal_page_ax(window, cx, frame);
+            return visible_settings_page(self.settings_terminal_page_ax(window, cx, frame));
         }
         if self.settings_page == SettingsPage::Appearance {
-            return self.settings_appearance_page_ax(window, frame);
+            return visible_settings_page(self.settings_appearance_page_ax(window, frame));
         }
         if self.settings_page == SettingsPage::Advanced {
-            return self.settings_advanced_page_ax(window, frame);
+            return visible_settings_page(self.settings_advanced_page_ax(window, frame));
         }
         if self.settings_page == SettingsPage::About {
             if self.settings_about_rows().is_some() {
-                return self.settings_about_page_ax(frame);
+                return visible_settings_page(self.settings_about_page_ax(frame));
             }
-            return self.settings_advanced_page_ax(window, frame);
+            return visible_settings_page(self.settings_advanced_page_ax(window, frame));
         }
         self.settings_providers_page_ax(window, cx, frame)
     }
@@ -286,9 +292,7 @@ mod tests {
     /// 两态下 AX frame 原点与尺寸完全一致（选中切换只换背景 / 角色，
     /// 不得移动行位）。
     #[gpui::test]
-    fn settings_nav_ax_frames_stay_put_across_selection_change(
-        cx: &mut gpui::TestAppContext,
-    ) {
+    fn settings_nav_ax_frames_stay_put_across_selection_change(cx: &mut gpui::TestAppContext) {
         use gpui::AppContext;
 
         struct NavHost {
@@ -318,13 +322,7 @@ mod tests {
             rail.children
                 .iter()
                 .filter(|child| child.identifier.starts_with("settings-nav-"))
-                .map(|child| {
-                    (
-                        child.identifier.clone(),
-                        child.role,
-                        child.bounds,
-                    )
-                })
+                .map(|child| (child.identifier.clone(), child.role, child.bounds))
                 .collect()
         };
 
@@ -346,21 +344,33 @@ mod tests {
                 });
                 cx.refresh().unwrap();
                 cx.run_until_parked();
-                let rows = cx.update(|window, cx| {
-                    nav_rows(&view.read(cx).settings_rail_ax(window, frame))
-                });
+                let rows = cx
+                    .update(|window, cx| nav_rows(&view.read(cx).settings_rail_ax(window, frame)));
                 for (id, _, ax) in &rows {
                     let selector = [
-                        "settings-nav-providers", "settings-nav-general",
-                        "settings-nav-permissions", "settings-nav-tools",
-                        "settings-nav-terminal", "settings-nav-appearance",
-                        "settings-nav-advanced", "settings-nav-about",
-                    ].into_iter().find(|candidate| *candidate == id).unwrap();
+                        "settings-nav-providers",
+                        "settings-nav-general",
+                        "settings-nav-permissions",
+                        "settings-nav-tools",
+                        "settings-nav-terminal",
+                        "settings-nav-appearance",
+                        "settings-nav-advanced",
+                        "settings-nav-about",
+                    ]
+                    .into_iter()
+                    .find(|candidate| *candidate == id)
+                    .unwrap();
                     let actual = cx.debug_bounds(selector).expect("rendered navigation row");
-                    assert_eq!(*ax, AxRect::new(
-                        actual.origin.x.into(), actual.origin.y.into(),
-                        actual.size.width.into(), actual.size.height.into(),
-                    ), "{id} at rem={rem}");
+                    assert_eq!(
+                        *ax,
+                        AxRect::new(
+                            actual.origin.x.into(),
+                            actual.origin.y.into(),
+                            actual.size.width.into(),
+                            actual.size.height.into(),
+                        ),
+                        "{id} at rem={rem}"
+                    );
                 }
                 if let Some(previous) = previous {
                     let previous: Vec<(String, AxRole, AxRect)> = previous;
@@ -371,5 +381,150 @@ mod tests {
                 previous = Some(rows);
             }
         }
+    }
+    /// UI-5：真实布局下输入、按钮与滚动后的 AX 同步，断线仍拒绝写入。
+    #[gpui::test]
+    fn settings_controls_follow_layout_and_scroll(cx: &mut gpui::TestAppContext) {
+        use crate::projection::ConnectionState;
+        use crate::ui::theme::font::TextScale;
+        use gpui::{point, px, size, Focusable, Modifiers};
+        let platform = std::sync::Arc::new(crate::platform::Platform::new());
+        let (view, cx) = cx.add_window_view(|_, cx| {
+            AppView::new(
+                platform,
+                std::env::temp_dir().join("ui5-settings-layout.sock"),
+                None,
+                cx,
+            )
+        });
+        for (width, height, scale) in [
+            (1440.0, 1024.0, TextScale::Percent100),
+            (1080.0, 720.0, TextScale::Percent125),
+            (1080.0, 720.0, TextScale::Percent150),
+        ] {
+            cx.simulate_resize(size(px(width), px(height)));
+            cx.update(|window, cx| {
+                view.update(cx, |view, cx| {
+                    view.route = AppRoute::Settings;
+                    view.settings_page = SettingsPage::Terminal;
+                    view.text_scale = scale;
+                    window.set_rem_size(px(scale.rem_pixels()));
+                    view.projection.settings_terminal.query.mark_ready();
+                    view.projection.settings_terminal.columns = 80;
+                    view.projection.settings_terminal.rows = 24;
+                    view.projection
+                        .set_connection(ConnectionState::Disconnected {
+                            reason: "layout test".into(),
+                        });
+                    view.settings_scroll.set_offset(point(px(0.0), px(0.0)));
+                    cx.notify();
+                })
+            });
+            cx.refresh().unwrap();
+            cx.run_until_parked();
+            for id in [
+                "settings-refresh",
+                "settings-terminal-shell-input",
+                "settings-terminal-columns-input",
+                "settings-terminal-rows-input",
+            ] {
+                let actual = cx.debug_bounds(id).expect(id);
+                cx.update(|window, cx| {
+                    let tree = view.read(cx).settings_page_ax(
+                        window,
+                        cx,
+                        AxRect::new(0.0, 0.0, 1440.0, 1024.0),
+                    );
+                    let node = tree.find(id).expect(id);
+                    assert_eq!(
+                        node.bounds,
+                        AxRect::new(
+                            actual.origin.x.into(),
+                            actual.origin.y.into(),
+                            actual.size.width.into(),
+                            actual.size.height.into()
+                        ),
+                        "{id} at {scale:?}"
+                    );
+                    assert!(!node.enabled, "offline setting cannot write");
+                });
+            }
+            // Mouse coordinates from the AX tree must focus the actual editor.
+            let input = cx.debug_bounds("settings-terminal-columns-input").unwrap();
+            cx.simulate_click(input.center(), Modifiers::none());
+            cx.update(|window, cx| {
+                assert!(view
+                    .read(cx)
+                    .settings_terminal_columns_input
+                    .read(cx)
+                    .focus_handle(cx)
+                    .is_focused(window));
+            });
+        }
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.settings_page = SettingsPage::General;
+                view.projection.settings_general.query.mark_ready();
+                view.settings_proxy_input.update(cx, |input, cx| {
+                    input.reset_text("http://127.0.0.1:38081", cx)
+                });
+                cx.notify();
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            let view = view.read(cx);
+            let input = &view.settings_element_layouts["settings-proxy-input"];
+            let child = input.bounds_for_item(0).unwrap();
+            let save = view.settings_element_layouts["settings-proxy-save"].bounds();
+            let clear = view.settings_element_layouts["settings-proxy-clear"].bounds();
+            assert!(
+                (clear.right() - view.settings_scroll.bounds().right()).abs() < px(1.0),
+                "clear {:?}, viewport {:?}",
+                clear,
+                view.settings_scroll.bounds()
+            );
+            assert!(
+                child.right() <= save.left(),
+                "input {:?}, wrapper {:?}, save {:?}",
+                child,
+                input.bounds(),
+                save
+            );
+        });
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.settings_page = SettingsPage::Permissions;
+                view.projection.settings_permissions.query.mark_ready();
+                cx.notify();
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.settings_scroll.scroll_to_bottom();
+                cx.notify();
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let tree =
+                view.read(cx)
+                    .settings_page_ax(window, cx, AxRect::new(0.0, 0.0, 1440.0, 1024.0));
+            assert!(
+                tree.find("settings-page-title").is_none(),
+                "scrolled-out heading is absent"
+            );
+            let trust = tree
+                .find("settings-workspace-trust")
+                .expect("trust control scrolls into view");
+            assert!(!trust.enabled);
+            let viewport = view.read(cx).settings_scroll.bounds();
+            assert!(trust.bounds.y >= f32::from(viewport.top()));
+            assert!(trust.bounds.y + trust.bounds.height <= f32::from(viewport.bottom()));
+        });
     }
 }

@@ -9,49 +9,28 @@ impl AppView {
         &mut self,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let mut content = div()
-            .flex()
-            .flex_col()
-            .min_w_0()
-            .gap_2()
-            .child(
-                div().font_weight(FontWeight::MEDIUM).child(
-                    Label::new(t("settings.advanced.title"))
-                        .size(font::TITLE)
-                        .color(dark().text.primary),
-                ),
-            )
-            .child(
-                Label::new(t("settings.advanced.subtitle"))
-                    .size(font::BODY_SM)
-                    .color(dark().text.secondary),
-            );
+        let mut content = settings_column().child(self.settings_heading(
+            t("settings.advanced.title"),
+            t("settings.advanced.subtitle"),
+        ));
 
         for (id, label, value) in self.settings_advanced_diagnostic_rows() {
             content = content.child(
-                div()
-                    .id(id)
-                    .min_w_0()
+                self.settings_element(id)
+                    .w_full()
                     .flex()
-                    .flex_row()
                     .items_start()
-                    .gap_2()
-                    .py_1()
+                    .gap_6()
+                    .pb_4()
                     .border_b_1()
                     .border_color(dark().border.subtle)
-                    .child(
-                        div().w(px(184.0)).flex_none().child(
-                            Label::new(label)
-                                .size(font::BODY_SM)
-                                .color(dark().text.secondary),
-                        ),
-                    )
+                    .child(div().w(px(184.0)).flex_none().child(settings_copy(label)))
                     .child(
                         div()
                             .flex_1()
                             .min_w_0()
                             .whitespace_normal()
-                            .text_size(font::BODY)
+                            .text_size(font::BASE)
                             .text_color(dark().text.primary)
                             .child(value),
                     ),
@@ -61,53 +40,44 @@ impl AppView {
         if self.projection.show_reconnect() {
             let reconnect_focus = self.reconnect_focus.clone();
             content = content.child(
-                div().pt_1().child(
-                    Button::new("reconnect")
-                        .track_focus(&reconnect_focus)
-                        .variant(ButtonVariant::Primary)
-                        .height(px(SETTINGS_ACTION_HEIGHT))
-                        .padding(ButtonPadding::Wide)
-                        .center()
-                        .radius(4.0)
-                        .text_size(font::BODY_SM)
-                        .label(t("settings.advanced.reconnect"))
-                        .on_click(cx.listener(|view, event, window, cx| {
-                            if view.consume_button_key_click("reconnect", event) {
-                                return;
-                            }
-                            view.on_reconnect(window, cx);
-                        }))
-                        .on_activate(cx.listener(|view, _event, window, cx| {
-                            view.note_button_key_activate("reconnect");
-                            view.on_reconnect(window, cx);
-                            cx.stop_propagation();
-                        })),
+                div().flex().child(
+                    self.settings_element("reconnect").flex_none().child(
+                        Button::new("reconnect")
+                            .track_focus(&reconnect_focus)
+                            .variant(ButtonVariant::Primary)
+                            .height(px(SETTINGS_CONTROL_HEIGHT))
+                            .padding(ButtonPadding::Wide)
+                            .center()
+                            .radius(6.0)
+                            .text_size(font::BASE)
+                            .label(t("settings.advanced.reconnect"))
+                            .on_click(cx.listener(|view, event, window, cx| {
+                                if view.consume_button_key_click("reconnect", event) {
+                                    return;
+                                }
+                                view.on_reconnect(window, cx);
+                            }))
+                            .on_activate(cx.listener(|view, _event, window, cx| {
+                                view.note_button_key_activate("reconnect");
+                                view.on_reconnect(window, cx);
+                                cx.stop_propagation();
+                            })),
+                    ),
                 ),
             );
         }
 
-        content = content
-            .child(
-                div()
-                    .w_full()
-                    .min_w_0()
-                    .whitespace_normal()
-                    .text_size(font::BODY_SM)
-                    .text_color(dark().text.secondary)
-                    .child(settings_advanced_target_note()),
-            )
-            .child(
-                div()
-                    .w_full()
-                    .min_w_0()
-                    .whitespace_normal()
-                    .text_size(font::BODY_SM)
-                    .text_color(dark().text.secondary)
-                    .child(settings_advanced_doctor_note()),
-            );
-
-        // OPT-4c（F2）：外层脚手架统一在 settings_page_element。
-        content
+        content.child(
+            settings_section()
+                .child(self.settings_note(
+                    "settings-advanced-target-note",
+                    settings_advanced_target_note(),
+                ))
+                .child(self.settings_note(
+                    "settings-advanced-doctor-note",
+                    settings_advanced_doctor_note(),
+                )),
+        )
     }
 
     /// 「高级」页诊断行（SET-6f）：render / AX 共用；未连接时协商字段
@@ -143,14 +113,26 @@ impl AppView {
                 unavailable.into(),
             ),
         };
-        let last_ack = self
-            .controller
-            .last_acked_sequence()
-            .map_or_else(|| t("settings.advanced.unavailable").into(), |sequence| sequence.to_string());
+        let last_ack = self.controller.last_acked_sequence().map_or_else(
+            || t("settings.advanced.unavailable").into(),
+            |sequence| sequence.to_string(),
+        );
         vec![
-            ("settings-advanced-connection", t("settings.advanced.row_connection"), connection),
-            ("settings-advanced-runtime", t("settings.advanced.row_runtime"), runtime_id),
-            ("settings-advanced-api", t("settings.advanced.row_api"), api_version),
+            (
+                "settings-advanced-connection",
+                t("settings.advanced.row_connection"),
+                connection,
+            ),
+            (
+                "settings-advanced-runtime",
+                t("settings.advanced.row_runtime"),
+                runtime_id,
+            ),
+            (
+                "settings-advanced-api",
+                t("settings.advanced.row_api"),
+                api_version,
+            ),
             (
                 "settings-advanced-capabilities",
                 t("settings.advanced.row_capabilities"),
@@ -161,7 +143,11 @@ impl AppView {
                 t("settings.advanced.row_endpoint"),
                 self.socket.display().to_string(),
             ),
-            ("settings-advanced-resume", t("settings.advanced.row_resume"), resume),
+            (
+                "settings-advanced-resume",
+                t("settings.advanced.row_resume"),
+                resume,
+            ),
             (
                 "settings-advanced-last-ack",
                 t("settings.advanced.row_last_ack"),

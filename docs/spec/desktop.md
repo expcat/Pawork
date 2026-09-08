@@ -101,6 +101,8 @@ flowchart LR
 - Changes 文件行使用稳定前后槽；DiffView 的只读路径 header 位于横滚外，24px 语义 gutter 与中性正文分离；ActivityPopover 内容宽 320px，内容高随 100%/125%/150% 为 144/180/216px，外框包含 8px padding 与 1px border，摘要可见且保持 capability honesty。
 - 三张阶段图与本机视觉走查已收口；此结论不扩张为 Timeline/Changes 全状态 AX 几何覆盖或发布级签字。
 
+UI-5 设置壳与七个非供应商页沿用 UI-1 token，改为 40px 导航、36px 动作与全宽分区布局；页内命中框按 GPUI 实际布局和滚动视口同步，离屏项不暴露动作。原有设置持久化、可用性与断线 gate 不变，供应商页产品改动属于 UI-6。规格见 [GUI 设计 UI-5](../gui-design.md#ui-5-设置更新2026-09-08)，验收状态见 [路线图](../ROADMAP.md#ui-5-本批证据2026-09-08)。
+
 ## 5. 键盘、IME 与可访问性
 
 最低验收要求：
@@ -111,7 +113,7 @@ flowchart LR
 - 菜单支持键盘到达、选择与关闭；长标题以 truncate + 可辨识上下文呈现；
 - 长会话、长 diff 和窄窗不让主要操作不可达。
 - AX identifier 与用户可见/可本地化 label 分离；disabled 控件不发布可执行 action，未知 action fail-closed；新增可见交互须同批补语义节点。
-- 应用内字号支持 100% / 125% / 150%：`Cmd+=` / `Cmd++` 放大、`Cmd+-` 缩小、`Cmd+0` 重置；SET-6e 外观页提供同源三档按钮及当前值/AX selected。字号只在当前 Desktop 会话生效，重启恢复 100%；150% + 1080×720 使用 320px TaskRail，Workspace 保留 760px。
+- 应用内字号支持 100% / 125% / 150%：`Cmd+=` / `Cmd++` 放大、`Cmd+-` 缩小、`Cmd+0` 重置；SET-6e 外观页提供同源三档按钮及当前值/AX selected。字号即时生效并保存到用户目录 `desktop.json`，重启恢复选择；150% + 1080×720 使用 320px TaskRail，Workspace 保留 760px。
 - 主题为单一深色 palette，不读取系统显示偏好（Increase Contrast 支持已于 2026-09-04 移除）；当前 UI 无动画，Reduce Motion 无渲染分支。
 
 当前锁定 GPUI 0.2.2 不原生导出元素级 AX tree；ADR-042 已由 Desktop 显式 `AxTree` + AppKit 虚拟元素补救。菜单方向键、grouping/scope tab stop 与全局焦点等价路径已经存在；已知缺口为 Windows/Linux 平台 AX；VoiceOver 屏幕朗读与系统显示偏好验收已于 2026-09-04 按用户要求移出范围。

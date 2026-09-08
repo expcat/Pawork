@@ -610,6 +610,7 @@ pub struct AppView {
     settings_terminal_clear_focus: FocusHandle,
     /// Settings 内容滚动句柄（供应商列表可能超出视口）。
     settings_scroll: ScrollHandle,
+    settings_element_layouts: HashMap<String, ScrollHandle>,
     settings_scale_layout: ScrollHandle,
     settings_language_layout: ScrollHandle,
     scope_menu_scroll: ScrollHandle,
@@ -874,6 +875,7 @@ impl AppView {
             settings_terminal_save_focus: cx.focus_handle().tab_stop(true),
             settings_terminal_clear_focus: cx.focus_handle().tab_stop(true),
             settings_scroll: ScrollHandle::new(),
+            settings_element_layouts: HashMap::new(),
             settings_scale_layout: ScrollHandle::new(),
             settings_language_layout: ScrollHandle::new(),
             scope_menu_scroll: ScrollHandle::new(),
@@ -4066,9 +4068,7 @@ impl Render for AppView {
         // 这些控件的 AX 读取 GPUI 实测布局；首帧及滚动后的 prepaint 完成后
         // 再同步一次，不依赖网络事件或 Run 时钟刷新，也不产生重绘循环。
         if self.ax_bridge.is_some()
-            && (matches!(self.open_menu, Some(MenuKind::Scope))
-                || (self.route == AppRoute::Settings
-                    && self.settings_page == SettingsPage::Appearance))
+            && (matches!(self.open_menu, Some(MenuKind::Scope)) || self.route == AppRoute::Settings)
         {
             let view = cx.entity().downgrade();
             window.on_next_frame(move |window, cx| {

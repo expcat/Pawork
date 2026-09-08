@@ -6,9 +6,8 @@ use super::{AxAction, AxNode, AxRect, AxRole};
 use crate::projection::ConnectionState;
 use crate::ui::i18n::t;
 use crate::ui::settings::{
-    parse_terminal_dimension, terminal_save_enabled, terminal_status_lines,
-    settings_terminal_effect_note, settings_terminal_shell_unset,
-    SETTINGS_CONTENT_PAD,
+    parse_terminal_dimension, settings_terminal_effect_note, settings_terminal_shell_unset,
+    terminal_save_enabled, terminal_status_lines,
 };
 use crate::ui::AppView;
 
@@ -23,10 +22,6 @@ impl AppView {
         cx: &App,
         frame: AxRect,
     ) -> AxNode {
-        const HEADING_HEIGHT: f32 = 28.0;
-        const SUBTITLE_HEIGHT: f32 = 20.0;
-        const STATUS_HEIGHT: f32 = 20.0;
-        const CONTROL_ROW: f32 = 28.0;
         let state = &self.projection.settings_terminal;
         let writes = self.settings_terminal_writes_enabled();
         let connected = matches!(
@@ -52,50 +47,44 @@ impl AppView {
         let clear_enabled = writes && state.shell.is_some();
         let refresh_focused =
             self.open_menu.is_none() && self.settings_refresh_focus.is_focused(window);
-        let width = super::settings::settings_content_ax_width(frame);
-        let mut page = AxNode::new("settings-page", AxRole::Group, t("settings.terminal.title"), frame)
-            .child(
-                AxNode::new(
-                    "settings-page-title",
-                    AxRole::StaticText,
-                    t("settings.terminal.title"),
-                    AxRect::new(
-                        frame.x + SETTINGS_CONTENT_PAD,
-                        frame.y + 16.0,
-                        (width - 136.0).max(0.0),
-                        HEADING_HEIGHT + SUBTITLE_HEIGHT,
-                    ),
-                )
-                .value(t("settings.terminal.subtitle")),
+
+        let mut page = AxNode::new(
+            "settings-page",
+            AxRole::Group,
+            t("settings.terminal.title"),
+            frame,
+        )
+        .child(
+            AxNode::new(
+                "settings-page-title",
+                AxRole::StaticText,
+                t("settings.terminal.title"),
+                self.settings_element_bounds("settings-page-title"),
             )
-            .child(
-                AxNode::new(
-                    "settings-refresh",
-                    AxRole::Button,
-                    t("settings.refresh"),
-                    AxRect::new(
-                        frame.x + SETTINGS_CONTENT_PAD + width - 96.0,
-                        frame.y + 16.0,
-                        96.0,
-                        CONTROL_ROW,
-                    ),
-                )
-                .enabled(connected)
-                .focused(refresh_focused)
-                .action(AxAction::Press),
-            );
-        let mut y = frame.y + 16.0 + HEADING_HEIGHT + SUBTITLE_HEIGHT + 8.0;
+            .value(t("settings.terminal.subtitle")),
+        )
+        .child(
+            AxNode::new(
+                "settings-refresh",
+                AxRole::Button,
+                t("settings.refresh"),
+                self.settings_element_bounds("settings-refresh"),
+            )
+            .enabled(connected)
+            .focused(refresh_focused)
+            .action(AxAction::Press),
+        );
+
         for (kind, label) in terminal_status_lines(state) {
             page = page.child(
                 AxNode::new(
                     format!("settings-status-{kind}"),
                     AxRole::StaticText,
                     t("settings.terminal.ax_status"),
-                    AxRect::new(frame.x + SETTINGS_CONTENT_PAD, y, width, STATUS_HEIGHT),
+                    self.settings_element_bounds(&format!("settings-status-{kind}")),
                 )
                 .value(label),
             );
-            y += STATUS_HEIGHT + 8.0;
         }
         page = page
             .child(
@@ -103,7 +92,7 @@ impl AppView {
                     "settings-terminal-shell-current",
                     AxRole::StaticText,
                     t("settings.terminal.ax_default_shell"),
-                    AxRect::new(frame.x + SETTINGS_CONTENT_PAD, y, width, STATUS_HEIGHT),
+                    self.settings_element_bounds("settings-terminal-shell-current"),
                 )
                 .value(shell_current),
             )
@@ -112,16 +101,11 @@ impl AppView {
                     "settings-terminal-size-current",
                     AxRole::StaticText,
                     t("settings.terminal.ax_default_size"),
-                    AxRect::new(
-                        frame.x + SETTINGS_CONTENT_PAD,
-                        y + STATUS_HEIGHT + 8.0,
-                        width,
-                        STATUS_HEIGHT,
-                    ),
+                    self.settings_element_bounds("settings-terminal-size-current"),
                 )
                 .value(size_current),
             );
-        y += STATUS_HEIGHT * 2.0 + 16.0;
+
         let shell_input_focused = self.open_menu.is_none()
             && self
                 .settings_terminal_shell_input
@@ -134,12 +118,7 @@ impl AppView {
                     "settings-terminal-shell-input",
                     AxRole::TextArea,
                     t("settings.terminal.shell_label"),
-                    AxRect::new(
-                        frame.x + SETTINGS_CONTENT_PAD,
-                        y,
-                        (width - 88.0).max(120.0),
-                        CONTROL_ROW,
-                    ),
+                    self.settings_element_bounds("settings-terminal-shell-input"),
                 )
                 .value(shell_text)
                 .enabled(writes)
@@ -152,12 +131,7 @@ impl AppView {
                     "settings-terminal-clear",
                     AxRole::Button,
                     t("settings.clear"),
-                    AxRect::new(
-                        frame.x + SETTINGS_CONTENT_PAD + width - 80.0,
-                        y,
-                        80.0,
-                        CONTROL_ROW,
-                    ),
+                    self.settings_element_bounds("settings-terminal-clear"),
                 )
                 .enabled(clear_enabled)
                 .focused(
@@ -166,7 +140,7 @@ impl AppView {
                 )
                 .action(AxAction::Press),
             );
-        y += CONTROL_ROW + 8.0;
+
         let columns_input_focused = self.open_menu.is_none()
             && self
                 .settings_terminal_columns_input
@@ -185,7 +159,7 @@ impl AppView {
                     "settings-terminal-columns-input",
                     AxRole::TextArea,
                     t("settings.terminal.ax_columns"),
-                    AxRect::new(frame.x + SETTINGS_CONTENT_PAD, y, 96.0, CONTROL_ROW),
+                    self.settings_element_bounds("settings-terminal-columns-input"),
                 )
                 .value(
                     self.settings_terminal_columns_input
@@ -203,7 +177,7 @@ impl AppView {
                     "settings-terminal-rows-input",
                     AxRole::TextArea,
                     t("settings.terminal.ax_rows"),
-                    AxRect::new(frame.x + SETTINGS_CONTENT_PAD + 96.0 + 16.0, y, 96.0, CONTROL_ROW),
+                    self.settings_element_bounds("settings-terminal-rows-input"),
                 )
                 .value(
                     self.settings_terminal_rows_input
@@ -221,12 +195,7 @@ impl AppView {
                     "settings-terminal-save",
                     AxRole::Button,
                     t("settings.save"),
-                    AxRect::new(
-                        frame.x + SETTINGS_CONTENT_PAD + width - 80.0,
-                        y,
-                        80.0,
-                        CONTROL_ROW,
-                    ),
+                    self.settings_element_bounds("settings-terminal-save"),
                 )
                 .enabled(save_enabled)
                 .focused(
@@ -235,13 +204,13 @@ impl AppView {
                 )
                 .action(AxAction::Press),
             );
-        y += CONTROL_ROW + 8.0;
+
         page.child(
             AxNode::new(
                 "settings-terminal-effect",
                 AxRole::StaticText,
                 t("settings.terminal.ax_effect"),
-                AxRect::new(frame.x + SETTINGS_CONTENT_PAD, y, width, STATUS_HEIGHT * 2.0),
+                self.settings_element_bounds("settings-terminal-effect"),
             )
             .value(settings_terminal_effect_note()),
         )

@@ -6,50 +6,26 @@ impl AppView {
     /// 「关于」页（SET-6g / ADR-051）：仅呈现当前连接的三项权威事实，
     /// 不提供 updater、release、License 或任何写动作。
     pub(super) fn settings_about_page_element(&mut self) -> impl IntoElement {
-        let mut content = div()
-            .flex()
-            .flex_col()
-            .min_w_0()
-            .gap_2()
-            .child(
-                div().font_weight(FontWeight::MEDIUM).child(
-                    Label::new(t("settings.about.title"))
-                        .size(font::TITLE)
-                        .color(dark().text.primary),
-                ),
-            )
-            .child(
-                Label::new(t("settings.about.subtitle"))
-                    .size(font::BODY_SM)
-                    .color(dark().text.secondary),
-            );
+        let mut content = settings_column()
+            .child(self.settings_heading(t("settings.about.title"), t("settings.about.subtitle")));
 
         for (id, label, value) in self.settings_about_rows().unwrap_or_default() {
             content = content.child(
-                div()
-                    .id(id)
+                self.settings_element(id)
                     .w_full()
-                    .min_w_0()
                     .flex()
-                    .flex_row()
                     .items_start()
-                    .gap_2()
-                    .py_1()
+                    .gap_6()
+                    .pb_4()
                     .border_b_1()
                     .border_color(dark().border.subtle)
-                    .child(
-                        div().w(px(184.0)).flex_none().child(
-                            Label::new(label)
-                                .size(font::BODY_SM)
-                                .color(dark().text.secondary),
-                        ),
-                    )
+                    .child(div().w(px(184.0)).flex_none().child(settings_copy(label)))
                     .child(
                         div()
                             .flex_1()
                             .min_w_0()
                             .whitespace_normal()
-                            .text_size(font::BODY)
+                            .text_size(font::BASE)
                             .text_color(dark().text.primary)
                             .child(value),
                     ),

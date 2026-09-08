@@ -13,7 +13,7 @@
 //! MCP」页（复用 Resources 的 mcp_list 数据链 + mcp_test /
 //! mcp_server_remove 写动作）；SET-6d 增「终端」页（terminal_settings
 //! 读取 + set_terminal_settings 全态写）；SET-6e 复用 Desktop 已有的
-//! 100% / 125% / 150% 会话级字号能力，不经 Host；SET-6f 只读展示当前
+//! 100% / 125% / 150% 本地持久字号能力，不经 Host；SET-6f 只读展示当前
 //! 连接的握手摘要、启动 endpoint、恢复游标，并复用既有 Reconnect。Host 查询失败 /
 //! 未知则隐藏对应导航项且不渲染写入口。断线保留 stale 只读结果
 //! 并禁用 Host 写动作；外观 / 高级页作为本地能力始终可用。SET-6g 仅在
@@ -53,8 +53,11 @@ pub(super) const SETTINGS_CONTENT_PAD: f32 = 32.0;
 pub(super) const PROVIDER_CARD_PAD: f32 = 8.0;
 /// Provider 普通概览行高度；详情仅在连接流程、错误或二次确认时展开。
 pub(crate) const PROVIDER_OVERVIEW_HEIGHT: f32 = 64.0;
-/// 写动作按钮高度（与 Composer 28px 动作槽同节奏）。
+/// Provider 页写动作按钮高度（UI-6 前保留既有 28px 槽位）。
 pub(super) const SETTINGS_ACTION_HEIGHT: f32 = 28.0;
+/// UI-5：非供应商页动作与导航沿用工作台的 36px / 40px 命中区。
+pub(super) const SETTINGS_CONTROL_HEIGHT: f32 = 36.0;
+pub(crate) const SETTINGS_NAV_HEIGHT: f32 = 40.0;
 /// 两行审批说明与内边距随字号一起增长（render / AX 同源）。
 pub(crate) const SETTINGS_APPROVAL_ROW_REMS: f32 = 3.5;
 /// 「Default models」角色行几何（render 与 AX 同源；OPT-3b / ADR-055 D5）。
@@ -174,7 +177,7 @@ pub(crate) fn provider_credential_status_label(expired: bool) -> &'static str {
     }
 }
 /// 外观页字号按钮的固定几何；render 与 AX bounds 共用，避免缩放后命中框漂移。
-pub(crate) const SETTINGS_APPEARANCE_CONTROL_HEIGHT: f32 = SETTINGS_ACTION_HEIGHT;
+pub(crate) const SETTINGS_APPEARANCE_CONTROL_HEIGHT: f32 = SETTINGS_CONTROL_HEIGHT;
 pub(crate) const SETTINGS_APPEARANCE_CONTROL_WIDTH: f32 = 112.0;
 pub(crate) const SETTINGS_APPEARANCE_CONTROL_GAP: f32 = 8.0;
 
@@ -834,6 +837,40 @@ pub(crate) fn settings_auth_actions(
     actions
 }
 
+/// UI-5：全宽分区以间距和细分隔线组织；正文允许自然换行。
+fn settings_column() -> gpui::Div {
+    div().w_full().flex().flex_col().gap_6()
+}
+
+// flex_col 的横向 stretch 决定分区宽度；百分比宽度会在内容测量时收缩。
+fn settings_section() -> gpui::Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap_3()
+        .pt_6()
+        .border_t_1()
+        .border_color(dark().border.subtle)
+}
+
+fn settings_copy(text: impl Into<String>) -> gpui::Div {
+    div()
+        .w_full()
+        .whitespace_normal()
+        .text_size(font::BASE)
+        .line_height(gpui::rems(1.4))
+        .text_color(dark().text.secondary)
+        .child(text.into())
+}
+
+fn settings_label(text: &'static str) -> gpui::Div {
+    div()
+        .text_size(font::BODY)
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(dark().text.primary)
+        .child(text)
+}
+
 pub(super) fn status_line(text: &str, color: gpui::Rgba) -> impl IntoElement {
     div().child(
         Label::new(text.to_string())
@@ -1039,6 +1076,74 @@ pub(crate) use approval_labels::{
 };
 
 impl AppView {
+    /// UI-5：记录本页元素实际布局，AX 在 prepaint 后读取并裁剪。
+    fn settings_element(&mut self, id: impl Into<String>) -> gpui::Stateful<gpui::Div> {
+        let id = id.into();
+        let handle = self.settings_element_layouts.entry(id.clone()).or_default();
+        div()
+            .id(gpui::SharedString::from(format!("settings-layout-{id}")))
+            .debug_selector(move || id.clone().into())
+            .track_scroll(handle)
+    }
+
+    pub(crate) fn settings_element_bounds(&self, id: &str) -> super::accessibility::AxRect {
+        let Some(handle) = self.settings_element_layouts.get(id) else {
+            return super::accessibility::AxRect::new(0.0, 0.0, 0.0, 0.0);
+        };
+        let bounds = handle.bounds().intersect(&self.settings_scroll.bounds());
+        super::accessibility::AxRect::new(
+            bounds.origin.x.into(),
+            bounds.origin.y.into(),
+            f32::from(bounds.size.width).max(0.0),
+            f32::from(bounds.size.height).max(0.0),
+        )
+    }
+
+    fn settings_heading(
+        &mut self,
+        title: &'static str,
+        subtitle: &'static str,
+    ) -> impl IntoElement {
+        self.settings_element("settings-page-title")
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                div()
+                    .text_size(font::TITLE)
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(dark().text.primary)
+                    .child(title),
+            )
+            .child(settings_copy(subtitle))
+    }
+
+    fn settings_note(
+        &mut self,
+        id: impl Into<String>,
+        text: impl Into<String>,
+    ) -> impl IntoElement {
+        self.settings_element(id).child(settings_copy(text))
+    }
+
+    fn settings_status(&mut self, kind: &str, text: String) -> impl IntoElement {
+        self.settings_element(format!("settings-status-{kind}"))
+            .py_3()
+            .px_4()
+            .rounded(px(6.0))
+            .bg(dark().surface.raised)
+            .text_size(font::BASE)
+            .whitespace_normal()
+            .text_color(if matches!(kind, "error" | "action") {
+                dark().semantic.danger_text
+            } else {
+                dark().text.secondary
+            })
+            .child(text)
+    }
+
     /// Settings 左栏（SET-3）：返回工作台 + 首个导航项「Models & providers」。
     /// 宽度沿用 TaskRail 的响应式 rail（288 / 240 / 320），进入时整体替换
     /// TaskRail；未接通页面不显示（无假导航项）。
@@ -1051,13 +1156,12 @@ impl AppView {
         let back_focus = self.settings_back_focus.clone();
         let back = Button::new("settings-back")
             .track_focus(&back_focus)
-            .variant(ButtonVariant::Raised)
+            .variant(ButtonVariant::Ghost)
             .padding(ButtonPadding::Horizontal(metrics::RAIL_INNER_PAD))
             .height(px(metrics::RAIL_TOP_ROW_HEIGHT))
             .vcenter()
-            .radius(4.0)
-            .bordered()
-            .text_size(font::BODY)
+            .radius(6.0)
+            .text_size(font::BASE)
             .label(t("settings.back"))
             .tooltip(t("settings.back_tooltip"))
             .on_click(cx.listener(|view, event, window, cx| {
@@ -1182,6 +1286,7 @@ impl AppView {
     /// projection（Host 权威 / stale / error）；卡片动作由 descriptor 驱动，
     /// 断线（stale）时可见 / 键盘 / AX 同时禁用。
     pub(super) fn settings_page_element(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        self.settings_element_layouts.clear();
         let content = if self.settings_page == SettingsPage::General
             && self.projection.settings_general.query.available
         {
@@ -1189,8 +1294,7 @@ impl AppView {
         } else if self.settings_page == SettingsPage::Permissions
             && self.projection.settings_permissions.query.available
         {
-            self
-                .settings_permissions_page_element(cx)
+            self.settings_permissions_page_element(cx)
                 .into_any_element()
         } else if self.settings_page == SettingsPage::Tools && self.resources.available {
             self.settings_tools_page_element(cx).into_any_element()
@@ -1230,13 +1334,16 @@ impl AppView {
                     .min_h_0()
                     .overflow_y_scroll()
                     .track_scroll(&self.settings_scroll)
+                    .when(self.settings_page != SettingsPage::Providers, |el| {
+                        el.py_4()
+                    })
                     .child(content),
             )
     }
 
     /// OPT-4d（F4）：导航选中态零位移。选中与未选中共用同一外壳几何
     ///（同 w_full / 行高 / 水平 padding / 圆角 / 间距 / 字阶），差异只落在
-    /// 背景色、字重与不参与布局的左缘指示条。gpui 的 border 参与 Taffy
+    /// 背景色与字重。gpui 的 border 参与 Taffy
     /// 布局（按需出现会推移内容），焦点描边改为持焦时挂载 focus_ring
     /// 覆盖层（零布局参与，见 components/focus_ring.rs），文字坐标在选中
     /// 切换与焦点切换下逐像素不变。
@@ -1264,12 +1371,12 @@ impl AppView {
                 .font_weight(FontWeight::MEDIUM)
                 .child(
                     Label::new(label)
-                        .size(font::BODY_SM)
+                        .size(font::BASE)
                         .color(dark().text.primary),
                 )
                 .into_any_element()
         } else {
-            Label::new(label).size(font::BODY_SM).into_any_element()
+            Label::new(label).size(font::BASE).into_any_element()
         };
         let mut item = div()
             .id(id)
@@ -1278,29 +1385,18 @@ impl AppView {
             .track_focus(&focus)
             .relative()
             .w_full()
-            .h(px(metrics::RAIL_TOP_ROW_HEIGHT))
+            .h(px(SETTINGS_NAV_HEIGHT))
             .flex()
             .items_center()
             .px(px(metrics::RAIL_INNER_PAD))
-            .rounded(px(4.0))
-            .text_size(font::BODY_SM)
+            .rounded(px(6.0))
+            .text_size(font::BASE)
             .when(focus.is_focused(window), |item| {
-                item.child(focus_ring(px(4.0)))
+                item.child(focus_ring(px(6.0)))
             })
             .child(label_element);
         if selected {
-            // 选中表达：raised 背景 + 绝对定位左缘指示条（零布局参与）。
-            item = item
-                .bg(dark().surface.raised)
-                .child(
-                    div()
-                        .absolute()
-                        .left_0()
-                        .top_0()
-                        .bottom_0()
-                        .w(px(3.0))
-                        .bg(dark().accent.primary),
-                );
+            item = item.bg(dark().surface.raised);
         } else {
             // 未选中：Ghost 同款 hover / active 色映射；click / Enter /
             // Space 与 AX Press 同一 handler（consume_button_key_click
@@ -1323,8 +1419,7 @@ impl AppView {
                         // 与 Button::render 的 on_activate 同一激活语义：
                         // 无修饰键的裸 Enter / Space 直接激活。
                         if !event.keystroke.modifiers.modified()
-                            && (event.keystroke.key == "enter"
-                                || event.keystroke.key == "space")
+                            && (event.keystroke.key == "enter" || event.keystroke.key == "space")
                         {
                             view.note_button_key_activate(id);
                             view.on_select_settings_page(page, window, cx);

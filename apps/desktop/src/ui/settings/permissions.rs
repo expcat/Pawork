@@ -23,11 +23,11 @@ impl AppView {
         let refresh = Button::new("settings-refresh")
             .track_focus(&refresh_focus)
             .variant(ButtonVariant::Raised)
-            .height(px(SETTINGS_ACTION_HEIGHT))
+            .height(px(SETTINGS_CONTROL_HEIGHT))
             .vcenter()
-            .radius(4.0)
+            .radius(6.0)
             .bordered()
-            .text_size(font::BODY_SM)
+            .text_size(font::BASE)
             .label(t("settings.refresh"))
             .tooltip(t("settings.permissions.refresh_tooltip"))
             .disabled(!connected)
@@ -43,45 +43,23 @@ impl AppView {
                 cx.stop_propagation();
             }));
 
-        let mut content = div()
-            .flex()
-            .flex_col()
-            .min_w_0()
-            .gap_2()
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_start()
-                    .gap_2()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .min_w_0()
-                            .child(
-                                div().font_weight(FontWeight::MEDIUM).child(
-                                    Label::new(t("settings.permissions.title"))
-                                        .size(font::TITLE)
-                                        .color(dark().text.primary),
-                                ),
-                            )
-                            .child(
-                                Label::new(t("settings.permissions.subtitle"))
-                                    .size(font::BODY_SM)
-                                    .color(dark().text.secondary),
-                            ),
-                    )
-                    .child(div().flex_1())
-                    .child(div().flex_none().pt_1().child(refresh)),
-            );
+        let mut content = settings_column().child(
+            div()
+                .flex()
+                .items_start()
+                .gap_6()
+                .child(self.settings_heading(
+                    t("settings.permissions.title"),
+                    t("settings.permissions.subtitle"),
+                ))
+                .child(
+                    self.settings_element("settings-refresh")
+                        .flex_none()
+                        .child(refresh),
+                ),
+        );
         for (kind, line) in status_lines {
-            let color = if kind == "error" {
-                dark().semantic.danger_text
-            } else {
-                dark().text.secondary
-            };
-            content = content.child(status_line(&line, color));
+            content = content.child(self.settings_status(kind, line));
         }
 
         // ① 五档审批模式：当前值高亮只读，其余档位显式「选择」。
@@ -89,24 +67,28 @@ impl AppView {
             .approval_mode
             .map(approval_mode_label)
             .unwrap_or(t("settings.permissions.unknown_mode"));
-        content = content
-            .child(
-                div().font_weight(FontWeight::MEDIUM).child(
-                    Label::new(t("settings.permissions.mode_title"))
-                        .size(font::BODY)
-                        .color(dark().text.primary),
-                ),
-            )
-            .child(
-                Label::new(t("settings.current").replace("{}", current_mode_label))
-                    .size(font::BODY_SM)
-                    .color(dark().text.secondary),
-            );
-        let mut modes = div().flex().flex_col().min_w_0().gap_1();
+        let mut modes = div().flex().flex_col().gap_2();
         for mode in APPROVAL_MODE_ALL {
-            modes = modes.child(self.settings_approval_mode_row(mode, &state, writes, cx));
+            let row = self.settings_approval_mode_row(mode, &state, writes, cx);
+            modes = modes.child(
+                self.settings_element(format!("settings-approval-mode-{}", mode.as_str()))
+                    .child(row),
+            );
         }
-        content = content.child(modes);
+        content = content.child(
+            settings_section()
+                .child(
+                    self.settings_element("settings-approval-mode-header")
+                        .flex()
+                        .items_center()
+                        .gap_4()
+                        .child(settings_label(t("settings.permissions.mode_title")))
+                        .child(settings_copy(
+                            t("settings.current").replace("{}", current_mode_label),
+                        )),
+                )
+                .child(modes),
+        );
 
         // ② 会话信任开关：workspace_id 取 Host permissions_settings 透出的
         // attached id；缺 id 禁用（fail-closed，不猜注册表首项）。
@@ -124,11 +106,11 @@ impl AppView {
         let trust_toggle = Button::new("settings-workspace-trust")
             .track_focus(&trust_focus)
             .variant(ButtonVariant::Raised)
-            .height(px(SETTINGS_ACTION_HEIGHT))
+            .height(px(SETTINGS_CONTROL_HEIGHT))
             .vcenter()
-            .radius(4.0)
+            .radius(6.0)
             .bordered()
-            .text_size(font::BODY_SM)
+            .text_size(font::BASE)
             .label(trust_label)
             .tooltip(t("settings.permissions.trust_toggle_tooltip"))
             .disabled(!trust_enabled)
@@ -151,41 +133,33 @@ impl AppView {
             t("settings.permissions.trust_state_untrusted")
         };
         content = content.child(
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap_2()
-                .min_w_0()
-                .p(px(PROVIDER_CARD_PAD))
-                .rounded(px(4.0))
-                .border_1()
-                .border_color(dark().border.subtle)
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .flex()
-                        .flex_col()
-                        .child(
-                            Label::new(t("settings.permissions.session_trust_title"))
-                                .size(font::BODY)
-                                .color(dark().text.primary),
-                        )
-                        .child(
-                            Label::new(t("settings.permissions.session_trust_desc"))
-                                .size(font::BODY_SM)
-                                .color(dark().text.secondary),
-                        ),
-                )
-                .child(
-                    div().flex_none().child(
-                        Label::new(t("settings.current").replace("{}", trust_state_label))
-                            .size(font::BODY_SM)
-                            .color(dark().text.secondary),
+            settings_section().child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_6()
+                    .child(
+                        self.settings_element("settings-workspace-trust-status")
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(settings_label(t(
+                                "settings.permissions.session_trust_title",
+                            )))
+                            .child(settings_copy(format!(
+                                "{} · {}",
+                                t("settings.current").replace("{}", trust_state_label),
+                                t("settings.permissions.session_trust_desc")
+                            ))),
+                    )
+                    .child(
+                        self.settings_element("settings-workspace-trust")
+                            .flex_none()
+                            .child(trust_toggle),
                     ),
-                )
-                .child(div().flex_none().child(trust_toggle)),
+            ),
         );
 
         // ③ Global 默认只读行（本片不写 Global trust）。
@@ -194,21 +168,15 @@ impl AppView {
             Some(true) => t("settings.permissions.global_trust_all"),
             Some(false) => t("settings.permissions.global_distrust_all"),
         };
-        content = content.child(
-            Label::new(t("settings.permissions.global_readonly").replace("{}", global_text))
-                .size(font::BODY_SM)
-                .color(dark().text.secondary),
-        );
-
-        // ④ 生效边界诚实文案。
-        content = content.child(
-            Label::new(settings_permissions_effect_note())
-                .size(font::BODY_SM)
-                .color(dark().text.secondary),
-        );
-
-        // OPT-4c（F2）：外层脚手架统一在 settings_page_element。
         content
+            .child(self.settings_note(
+                "settings-trust-global",
+                t("settings.permissions.global_readonly").replace("{}", global_text),
+            ))
+            .child(self.settings_note(
+                "settings-permissions-effect",
+                settings_permissions_effect_note(),
+            ))
     }
 
     /// 单个审批模式行：整行即 radio；mouse、Enter、Space 与 AX Press
@@ -242,7 +210,7 @@ impl AppView {
             .height(SETTINGS_APPROVAL_ROW_REMS * self.text_scale.rem_pixels())
             .track_focus(&focus)
             .child(
-                div().w(px(20.0)).flex_none().child(
+                div().w(px(32.0)).flex_none().child(
                     Label::new(if current { "●" } else { "○" })
                         .size(font::BODY)
                         .color(radio_color),
@@ -261,7 +229,7 @@ impl AppView {
                     )
                     .child(
                         Label::new(approval_mode_description(mode))
-                            .size(font::BODY_SM)
+                            .size(font::BASE)
                             .color(dark().text.secondary),
                     ),
             );

@@ -28,11 +28,11 @@ impl AppView {
         let refresh = Button::new("settings-refresh")
             .track_focus(&refresh_focus)
             .variant(ButtonVariant::Raised)
-            .height(px(SETTINGS_ACTION_HEIGHT))
+            .height(px(SETTINGS_CONTROL_HEIGHT))
             .vcenter()
-            .radius(4.0)
+            .radius(6.0)
             .bordered()
-            .text_size(font::BODY_SM)
+            .text_size(font::BASE)
             .label(t("settings.refresh"))
             .tooltip(t("settings.network.refresh_tooltip"))
             .disabled(!connected)
@@ -49,12 +49,12 @@ impl AppView {
             }));
         let save = Button::new("settings-proxy-save")
             .track_focus(&save_focus)
-            .variant(ButtonVariant::Raised)
-            .height(px(SETTINGS_ACTION_HEIGHT))
+            .variant(ButtonVariant::Primary)
+            .height(px(SETTINGS_CONTROL_HEIGHT))
             .vcenter()
-            .radius(4.0)
+            .radius(6.0)
             .bordered()
-            .text_size(font::BODY_SM)
+            .text_size(font::BASE)
             .label(t("settings.save"))
             .tooltip(t("settings.network.save_tooltip"))
             .disabled(!save_enabled)
@@ -72,11 +72,11 @@ impl AppView {
         let clear = Button::new("settings-proxy-clear")
             .track_focus(&clear_focus)
             .variant(ButtonVariant::Raised)
-            .height(px(SETTINGS_ACTION_HEIGHT))
+            .height(px(SETTINGS_CONTROL_HEIGHT))
             .vcenter()
-            .radius(4.0)
+            .radius(6.0)
             .bordered()
-            .text_size(font::BODY_SM)
+            .text_size(font::BASE)
             .label(t("settings.clear"))
             .tooltip(t("settings.network.clear_tooltip"))
             .disabled(!clear_enabled)
@@ -92,93 +92,64 @@ impl AppView {
                 cx.stop_propagation();
             }));
 
-        let mut content = div()
-            .flex()
-            .flex_col()
-            .min_w_0()
-            .gap_2()
-            .child(
+        let mut content =
+            settings_column().child(
                 div()
                     .flex()
-                    .flex_row()
                     .items_start()
-                    .gap_2()
+                    .gap_6()
+                    .child(self.settings_heading(
+                        t("settings.network.title"),
+                        t("settings.network.subtitle"),
+                    ))
                     .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .min_w_0()
-                            .child(
-                                div().font_weight(FontWeight::MEDIUM).child(
-                                    Label::new(t("settings.network.title"))
-                                        .size(font::TITLE)
-                                        .color(dark().text.primary),
-                                ),
-                            )
-                            .child(
-                                Label::new(t("settings.network.subtitle"))
-                                    .size(font::BODY_SM)
-                                    .color(dark().text.secondary),
-                            ),
-                    )
-                    .child(div().flex_1())
-                    .child(div().flex_none().pt_1().child(refresh)),
+                        self.settings_element("settings-refresh")
+                            .flex_none()
+                            .child(refresh),
+                    ),
             );
         for (kind, line) in status_lines {
-            let color = if kind == "error" {
-                dark().semantic.danger_text
-            } else {
-                dark().text.secondary
-            };
-            content = content.child(status_line(&line, color));
+            content = content.child(self.settings_status(kind, line));
         }
-        content = content
+        let proxy = settings_section()
             .child(
-                div().font_weight(FontWeight::MEDIUM).child(
-                    Label::new(t("settings.network.proxy_title"))
-                        .size(font::BODY)
-                        .color(dark().text.primary),
-                ),
+                self.settings_element("settings-proxy-heading")
+                    .child(settings_label(t("settings.network.proxy_title"))),
             )
-            .child(
-                Label::new(t("settings.current").replace("{}", &current))
-                    .size(font::BODY_SM)
-                    .color(dark().text.secondary),
-            )
+            .child(self.settings_note(
+                "settings-proxy-current",
+                t("settings.current").replace("{}", &current),
+            ))
             .child(
                 div()
+                    .w_full()
                     .flex()
-                    .flex_row()
                     .items_center()
-                    .gap_1()
-                    .min_w_0()
+                    .gap_3()
                     .child(
-                        div()
+                        self.settings_element("settings-proxy-input")
+                            .flex()
                             .flex_1()
                             .min_w_0()
-                            .when(!writes, |el| el.bg(dark().surface.disabled).opacity(0.55))
+                            .when(!writes, |el| el.opacity(0.55))
                             .child(proxy_input),
                     )
-                    .child(save)
-                    .child(clear),
-            )
-            .child(
-                div().max_w(px(640.0)).child(
-                    Label::new(settings_proxy_effect_note())
-                        .size(font::BODY_SM)
-                        .color(dark().text.secondary),
-                ),
-            )
-            .child(
-                div().max_w(px(640.0)).child(
-                    Label::new(settings_proxy_storage_note())
-                        .size(font::BODY_SM)
-                        .color(dark().text.secondary),
-                ),
+                    .child(
+                        self.settings_element("settings-proxy-save")
+                            .flex_none()
+                            .child(save),
+                    )
+                    .child(
+                        self.settings_element("settings-proxy-clear")
+                            .flex_none()
+                            .child(clear),
+                    ),
             );
-
-        // OPT-4c（F2）：外层脚手架统一在 settings_page_element。
-        content
+        content.child(proxy).child(
+            settings_section()
+                .child(self.settings_note("settings-proxy-effect", settings_proxy_effect_note()))
+                .child(self.settings_note("settings-proxy-storage", settings_proxy_storage_note())),
+        )
     }
 
     /// proxy Save（SET-6a；三路径同源）。空 trim 禁 Save。

@@ -2,18 +2,12 @@
 
 use super::{AxNode, AxRect, AxRole};
 use crate::ui::i18n::t;
-use crate::ui::settings::SETTINGS_CONTENT_PAD;
 use crate::ui::AppView;
 
 impl AppView {
     /// 「关于」页 AX（SET-6g）：三项只读事实；`host_data_dir` 非空 gate；
     /// 没有动作节点，也不保留断线前路径。
     pub(crate) fn settings_about_page_ax(&self, frame: AxRect) -> AxNode {
-        const HEADING_HEIGHT: f32 = 28.0;
-        const SUBTITLE_HEIGHT: f32 = 20.0;
-        const ROW_HEIGHT: f32 = 40.0;
-        let width = super::settings::settings_content_ax_width(frame);
-        let mut y = frame.y + 16.0 + HEADING_HEIGHT + SUBTITLE_HEIGHT + 8.0;
         let mut page = AxNode::new(
             "settings-page",
             AxRole::Group,
@@ -25,12 +19,7 @@ impl AppView {
                 "settings-page-title",
                 AxRole::StaticText,
                 t("settings.about.title"),
-                AxRect::new(
-                    frame.x + SETTINGS_CONTENT_PAD,
-                    frame.y + 16.0,
-                    width,
-                    HEADING_HEIGHT + SUBTITLE_HEIGHT,
-                ),
+                self.settings_element_bounds("settings-page-title"),
             )
             .value(t("settings.about.subtitle")),
         );
@@ -40,11 +29,10 @@ impl AppView {
                     id,
                     AxRole::StaticText,
                     label,
-                    AxRect::new(frame.x + SETTINGS_CONTENT_PAD, y, width, ROW_HEIGHT),
+                    self.settings_element_bounds(id),
                 )
                 .value(value),
             );
-            y += ROW_HEIGHT;
         }
         page
     }

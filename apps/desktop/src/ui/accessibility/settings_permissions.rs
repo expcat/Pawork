@@ -6,9 +6,8 @@ use super::{AxAction, AxNode, AxRect, AxRole};
 use crate::projection::ConnectionState;
 use crate::ui::i18n::t;
 use crate::ui::settings::{
-    approval_mode_description, approval_mode_label, permissions_status_lines, APPROVAL_MODE_ALL,
-    settings_permissions_effect_note, settings_trust_unset,
-    SETTINGS_CONTENT_PAD,
+    approval_mode_description, approval_mode_label, permissions_status_lines,
+    settings_permissions_effect_note, settings_trust_unset, APPROVAL_MODE_ALL,
 };
 use crate::ui::AppView;
 
@@ -22,13 +21,6 @@ impl AppView {
         _cx: &App,
         frame: AxRect,
     ) -> AxNode {
-        const HEADING_HEIGHT: f32 = 28.0;
-        const SUBTITLE_HEIGHT: f32 = 20.0;
-        const STATUS_HEIGHT: f32 = 20.0;
-        const CONTROL_ROW: f32 = 28.0;
-        let mode_row_height = crate::ui::settings::SETTINGS_APPROVAL_ROW_REMS
-            * f32::from(window.rem_size());
-        const ROW_GAP: f32 = 4.0;
         let state = &self.projection.settings_permissions;
         let writes = self.settings_permissions_writes_enabled();
         let connected = matches!(
@@ -37,55 +29,44 @@ impl AppView {
         );
         let refresh_focused =
             self.open_menu.is_none() && self.settings_refresh_focus.is_focused(window);
-        let width = super::settings::settings_content_ax_width(frame);
+
         let mut page = AxNode::new(
             "settings-page",
             AxRole::Group,
             t("settings.permissions.title"),
             frame,
         )
-            .child(
-                AxNode::new(
-                    "settings-page-title",
-                    AxRole::StaticText,
-                    t("settings.permissions.title"),
-                    AxRect::new(
-                        frame.x + SETTINGS_CONTENT_PAD,
-                        frame.y + 16.0,
-                        (width - 136.0).max(0.0),
-                        HEADING_HEIGHT + SUBTITLE_HEIGHT,
-                    ),
-                )
-                .value(t("settings.permissions.subtitle")),
+        .child(
+            AxNode::new(
+                "settings-page-title",
+                AxRole::StaticText,
+                t("settings.permissions.title"),
+                self.settings_element_bounds("settings-page-title"),
             )
-            .child(
-                AxNode::new(
-                    "settings-refresh",
-                    AxRole::Button,
-                    t("settings.refresh"),
-                    AxRect::new(
-                        frame.x + SETTINGS_CONTENT_PAD + width - 96.0,
-                        frame.y + 16.0,
-                        96.0,
-                        CONTROL_ROW,
-                    ),
-                )
-                .enabled(connected)
-                .focused(refresh_focused)
-                .action(AxAction::Press),
-            );
-        let mut y = frame.y + 16.0 + HEADING_HEIGHT + SUBTITLE_HEIGHT + 8.0;
+            .value(t("settings.permissions.subtitle")),
+        )
+        .child(
+            AxNode::new(
+                "settings-refresh",
+                AxRole::Button,
+                t("settings.refresh"),
+                self.settings_element_bounds("settings-refresh"),
+            )
+            .enabled(connected)
+            .focused(refresh_focused)
+            .action(AxAction::Press),
+        );
+
         for (kind, label) in permissions_status_lines(state) {
             page = page.child(
                 AxNode::new(
                     format!("settings-status-{kind}"),
                     AxRole::StaticText,
                     t("settings.permissions.ax_status"),
-                    AxRect::new(frame.x + SETTINGS_CONTENT_PAD, y, width, STATUS_HEIGHT),
+                    self.settings_element_bounds(&format!("settings-status-{kind}")),
                 )
                 .value(label),
             );
-            y += STATUS_HEIGHT + 8.0;
         }
 
         // ① 五档审批模式：每档是一个整行 radio；selected、enabled 与
@@ -99,11 +80,11 @@ impl AppView {
                 "settings-approval-mode-header",
                 AxRole::StaticText,
                 t("settings.permissions.mode_title"),
-                AxRect::new(frame.x + SETTINGS_CONTENT_PAD, y, width, STATUS_HEIGHT),
+                self.settings_element_bounds("settings-approval-mode-header"),
             )
             .value(t("settings.current").replace("{}", current_mode_label)),
         );
-        y += STATUS_HEIGHT + 8.0;
+
         for mode in APPROVAL_MODE_ALL {
             let current = state.approval_mode == Some(mode);
             let mut value = format!(
@@ -121,10 +102,10 @@ impl AppView {
                 .get(&button_id)
                 .is_some_and(|focus| self.open_menu.is_none() && focus.is_focused(window));
             let mut row = AxNode::new(
-                button_id,
+                button_id.clone(),
                 AxRole::Tab,
                 approval_mode_label(mode),
-                AxRect::new(frame.x + SETTINGS_CONTENT_PAD, y, width, mode_row_height),
+                self.settings_element_bounds(&button_id),
             )
             .value(value)
             .selected(current)
@@ -136,7 +117,6 @@ impl AppView {
                 row = row.action(AxAction::Press);
             }
             page = page.child(row);
-            y += mode_row_height + ROW_GAP;
         }
 
         // ② 会话信任开关：状态行 + 切换按钮（与 render 同 gate，缺 Host
@@ -163,12 +143,7 @@ impl AppView {
                     "settings-workspace-trust-status",
                     AxRole::StaticText,
                     t("settings.permissions.session_trust_title"),
-                    AxRect::new(
-                        frame.x + SETTINGS_CONTENT_PAD,
-                        y,
-                        (width - 180.0).max(60.0),
-                        mode_row_height,
-                    ),
+                    self.settings_element_bounds("settings-workspace-trust-status"),
                 )
                 .value(format!(
                     "{} · {}",
@@ -181,18 +156,12 @@ impl AppView {
                     "settings-workspace-trust",
                     AxRole::Button,
                     trust_label,
-                    AxRect::new(
-                        frame.x + SETTINGS_CONTENT_PAD + width - 116.0,
-                        y + (mode_row_height - CONTROL_ROW) / 2.0,
-                        116.0,
-                        CONTROL_ROW,
-                    ),
+                    self.settings_element_bounds("settings-workspace-trust"),
                 )
                 .enabled(trust_enabled)
                 .focused(trust_focused)
                 .action(AxAction::Press),
             );
-        y += mode_row_height + 8.0;
 
         // ③ Global 默认只读行。
         let global_text = match state.trust_workspaces_global {
@@ -205,11 +174,10 @@ impl AppView {
                 "settings-trust-global",
                 AxRole::StaticText,
                 t("settings.permissions.ax_global_title"),
-                AxRect::new(frame.x + SETTINGS_CONTENT_PAD, y, width, STATUS_HEIGHT),
+                self.settings_element_bounds("settings-trust-global"),
             )
             .value(global_text),
         );
-        y += STATUS_HEIGHT + 8.0;
 
         // ④ 生效边界（与 render 同源文案）。
         page.child(
@@ -217,7 +185,7 @@ impl AppView {
                 "settings-permissions-effect",
                 AxRole::StaticText,
                 t("settings.permissions.ax_effect"),
-                AxRect::new(frame.x + SETTINGS_CONTENT_PAD, y, width, STATUS_HEIGHT * 2.0),
+                self.settings_element_bounds("settings-permissions-effect"),
             )
             .value(settings_permissions_effect_note()),
         )

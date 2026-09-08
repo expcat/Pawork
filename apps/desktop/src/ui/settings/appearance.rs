@@ -7,7 +7,7 @@ impl AppView {
     /// 「外观」页（SET-6e）：不经 Host，直接复用 Desktop 已有的
     /// 100% / 125% / 150% `TextScale`。三个按钮始终可达，当前档以
     /// 文字 + 视觉 + AX selected 同时标记；断线不禁用本地能力。
-    /// 语言切换（i18n）与字号同口径：本地、即时、不持久化。
+    /// 语言切换（i18n）与字号同口径：本地、即时、保存后重启恢复。
     pub(super) fn settings_appearance_page_element(
         &mut self,
         cx: &mut Context<Self>,
@@ -48,9 +48,9 @@ impl AppView {
                 .width(px(SETTINGS_APPEARANCE_CONTROL_WIDTH))
                 .padding(ButtonPadding::Wide)
                 .center()
-                .radius(4.0)
+                .radius(6.0)
                 .bordered()
-                .text_size(font::BODY_SM)
+                .text_size(font::BASE)
                 .label(format!("{}%", scale.percent()))
                 .tooltip(tooltip)
                 .on_click(cx.listener(move |view, event, window, cx| {
@@ -87,8 +87,7 @@ impl AppView {
                 t("settings.appearance.language.tooltip_current")
                     .replace("{}", language.display_name())
             } else {
-                t("settings.appearance.language.tooltip_set")
-                    .replace("{}", language.display_name())
+                t("settings.appearance.language.tooltip_set").replace("{}", language.display_name())
             };
             let button = Button::new(id)
                 .track_focus(&focus)
@@ -101,9 +100,9 @@ impl AppView {
                 .width(px(SETTINGS_APPEARANCE_CONTROL_WIDTH))
                 .padding(ButtonPadding::Wide)
                 .center()
-                .radius(4.0)
+                .radius(6.0)
                 .bordered()
-                .text_size(font::BODY_SM)
+                .text_size(font::BASE)
                 .label(language.display_name())
                 .tooltip(tooltip)
                 .on_click(cx.listener(move |view, event, _window, cx| {
@@ -120,116 +119,96 @@ impl AppView {
             language_controls = language_controls.child(button);
         }
 
-        let content = div()
-            .flex()
-            .flex_col()
-            .min_w_0()
-            .gap_2()
+        settings_column()
+            .child(self.settings_heading(
+                t("settings.appearance.title"),
+                t("settings.appearance.subtitle"),
+            ))
             .child(
-                div().font_weight(FontWeight::MEDIUM).child(
-                    Label::new(t("settings.appearance.title"))
-                        .size(font::TITLE)
-                        .color(dark().text.primary),
+                settings_section().child(
+                    self.settings_element("settings-appearance-theme")
+                        .flex()
+                        .items_center()
+                        .gap_4()
+                        .child(
+                            div()
+                                .w(px(48.0))
+                                .h(px(36.0))
+                                .flex_none()
+                                .rounded(px(6.0))
+                                .border_1()
+                                .border_color(dark().border.strong)
+                                .bg(dark().bg.panel),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .flex()
+                                .flex_col()
+                                .gap_2()
+                                .child(settings_label(t("settings.appearance.theme")))
+                                .child(settings_copy(t("settings.appearance.theme_note"))),
+                        ),
                 ),
             )
             .child(
-                Label::new(t("settings.appearance.subtitle"))
-                    .size(font::BODY_SM)
-                    .color(dark().text.secondary),
-            )
-            .child(
-                Label::new(t("settings.appearance.theme"))
-                    .size(font::BODY)
-                    .color(dark().text.primary),
-            )
-            .child(
-                div()
-                    .w_full()
-                    .min_w_0()
-                    .whitespace_normal()
-                    .text_size(font::BODY_SM)
-                    .text_color(dark().text.secondary)
-                    .child(t("settings.appearance.theme_note")),
-            )
-            .child(
-                div().font_weight(FontWeight::MEDIUM).child(
-                    Label::new(t("settings.appearance.text_size"))
-                        .size(font::BODY)
-                        .color(dark().text.primary),
-                ),
-            )
-            .child(
-                Label::new(
-                    t("settings.appearance.current_scale")
-                        .replace("{}", &current.percent().to_string()),
-                )
-                    .size(font::BODY_SM)
-                    .color(dark().text.secondary),
-            )
-            .child(scale_controls)
-            .child(
-                div()
-                    .id("settings-appearance-sample")
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .p_2()
-                    .rounded(px(6.0))
-                    .border_1()
-                    .border_color(dark().border.subtle)
-                    .bg(dark().surface.raised)
+                settings_section()
                     .child(
-                        Label::new(t("settings.appearance.sample_body"))
-                            .size(font::BODY)
-                            .color(dark().text.primary),
+                        self.settings_element("settings-appearance-text-size")
+                            .flex()
+                            .items_center()
+                            .gap_4()
+                            .child(settings_label(t("settings.appearance.text_size")))
+                            .child(settings_copy(
+                                t("settings.appearance.current_scale")
+                                    .replace("{}", &current.percent().to_string()),
+                            )),
                     )
+                    .child(scale_controls)
                     .child(
-                        Label::new(t("settings.appearance.sample_sub"))
-                            .size(font::BODY_SM)
-                            .color(dark().text.secondary),
+                        self.settings_element("settings-appearance-sample")
+                            .flex()
+                            .flex_col()
+                            .gap_3()
+                            .p_4()
+                            .rounded(px(8.0))
+                            .bg(dark().surface.raised)
+                            .child(
+                                div()
+                                    .text_size(font::BODY)
+                                    .text_color(dark().text.primary)
+                                    .child(t("settings.appearance.sample_body")),
+                            )
+                            .child(settings_copy(t("settings.appearance.sample_sub"))),
+                    )
+                    .child(self.settings_note(
+                        "settings-appearance-effect",
+                        t("settings.appearance.effect_note"),
+                    )),
+            )
+            .child(
+                settings_section()
+                    .child(
+                        self.settings_element("settings-appearance-language")
+                            .flex()
+                            .items_center()
+                            .gap_4()
+                            .child(settings_label(t("settings.appearance.language")))
+                            .child(settings_copy(
+                                t("settings.appearance.language.current")
+                                    .replace("{}", current_language.display_name()),
+                            )),
+                    )
+                    .child(language_controls)
+                    .child(
+                        self.settings_note(
+                            "settings-appearance-language-hint",
+                            self.appearance_error.clone().unwrap_or_else(|| {
+                                t("settings.appearance.language.hint").to_owned()
+                            }),
+                        ),
                     ),
             )
-            .child(
-                div()
-                    .w_full()
-                    .min_w_0()
-                    .whitespace_normal()
-                    .text_size(font::BODY_SM)
-                    .text_color(dark().text.secondary)
-                    .child(t("settings.appearance.effect_note")),
-            )
-            .child(
-                div().font_weight(FontWeight::MEDIUM).child(
-                    Label::new(t("settings.appearance.language"))
-                        .size(font::BODY)
-                        .color(dark().text.primary),
-                ),
-            )
-            .child(
-                Label::new(
-                    t("settings.appearance.language.current")
-                        .replace("{}", current_language.display_name()),
-                )
-                .size(font::BODY_SM)
-                .color(dark().text.secondary),
-            )
-            .child(language_controls)
-            .child(
-                div()
-                    .w_full()
-                    .min_w_0()
-                    .whitespace_normal()
-                    .text_size(font::BODY_SM)
-                    .text_color(dark().text.secondary)
-                    .child(
-                        self.appearance_error
-                            .as_deref()
-                            .unwrap_or(t("settings.appearance.language.hint")).to_owned(),
-                    ),
-            );
-
-        // OPT-4c（F2）：外层脚手架统一在 settings_page_element。
-        content
     }
 
     /// 外观页字号选择入口（SET-6e）：只在当前 Settings / 外观页生效。
