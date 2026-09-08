@@ -618,6 +618,9 @@ pub struct AppView {
     /// SET-4：按 provider 懒建的 API key secure 输入实体（明文只留在
     /// 实体内，提交 / 取消 / 离开页面即清空，含 undo 栈）。
     settings_api_key_inputs: HashMap<String, Entity<crate::ui::text_input::TextInput>>,
+    /// 非 Secret 登录详情，支持选中复制；不作为认证状态来源。
+    settings_auth_details: HashMap<String, Entity<crate::ui::text_input::TextInput>>,
+    settings_copied_auth: Option<(String, settings::SettingsAuthAction)>,
     /// SET-4：connected 态经 Replace 展开内联编辑器的 provider 集合。
     settings_api_key_editors: HashSet<String>,
     /// SET-4：Remove 二次确认中的 provider（不静默删除已存凭证）。
@@ -881,6 +884,8 @@ impl AppView {
             scope_menu_scroll: ScrollHandle::new(),
             pending_scope_menu_scroll: false,
             settings_api_key_inputs: HashMap::new(),
+            settings_auth_details: HashMap::new(),
+            settings_copied_auth: None,
             settings_api_key_editors: HashSet::new(),
             settings_remove_confirm: None,
             settings_mcp_remove_confirm: None,
@@ -1775,6 +1780,7 @@ impl AppView {
                 self.remark_settings_stale_if_disconnected();
             }
             ControllerEvent::AuthStarted { provider_id, data } => {
+                self.settings_copied_auth = None;
                 // SET-4：登记 OAuth 等待信息并置 Connecting；进度由
                 // AuthChanged 事件收敛。
                 self.projection

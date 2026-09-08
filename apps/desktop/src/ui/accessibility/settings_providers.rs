@@ -273,6 +273,26 @@ impl AppView {
                 }
                 let mut details = Vec::new();
                 if let (ProviderAuthState::Connecting, Some(wait)) = (&provider.auth, wait) {
+                    for action in [
+                        SettingsAuthAction::OpenOauth,
+                        SettingsAuthAction::CopyOauthUrl,
+                        SettingsAuthAction::CopyOauthCode,
+                    ] {
+                        if action == SettingsAuthAction::CopyOauthCode && wait.user_code.is_none() {
+                            continue;
+                        }
+                        credentials = credentials.child(button(
+                            action.identifier(id),
+                            if self.settings_copied_auth.as_ref().is_some_and(
+                                |(provider, copied)| provider == id && *copied == action,
+                            ) {
+                                t("settings.providers.copied")
+                            } else {
+                                action.label()
+                            },
+                            self.settings_action_enabled(action, id, writes, cx),
+                        ));
+                    }
                     details.push(
                         t("settings.providers.authorize_at").replace("{}", &wait.verification_url),
                     );
@@ -305,11 +325,22 @@ impl AppView {
                     );
                 }
                 if !details.is_empty() {
-                    credentials = credentials.child(text(
-                        dynamic_identifier("settings-provider-details", id),
-                        t("settings.providers.ax_details"),
-                        details.join(" · "),
-                    ));
+                    let details_id = dynamic_identifier("settings-provider-details", id);
+                    let focused = self
+                        .settings_auth_details
+                        .get(id)
+                        .is_some_and(|input| input.read(cx).focus_handle(cx).is_focused(window));
+                    credentials = credentials.child(
+                        AxNode::new(
+                            details_id.clone(),
+                            AxRole::TextArea,
+                            t("settings.providers.ax_details"),
+                            self.settings_element_bounds(&details_id),
+                        )
+                        .value(details.join("\n"))
+                        .focused(focused)
+                        .action(AxAction::Focus),
+                    );
                 }
                 if editor {
                     if let Some(input) = self.settings_api_key_inputs.get(id) {

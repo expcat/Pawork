@@ -159,3 +159,13 @@ GUI P0–P2 及追加中文/供应商代理开关均已实现；本机 E2 自动
 隔离实例 `opt2acc`，Host 当次 `--provider opencode-go --model glm-5.3-flash`（不写持久默认），生产实例 `desktop` 未受影响。逐项窗口 + AX + SQLite 交叉验证：全局 New task 直建 Unassigned 会话（DB `workspace_id` NULL，无 WorkspaceConfirm）；Composer No project 与文件工具不可用提示；真实问答 Run 三次 completed；行内改名 Enter 提交/Esc 取消（DB 写后状态一致）；归档后列表隐藏且 `archived=1` 未删除；临时配置命名模型后占位标题在 Run 成功终态自动改写并经 SessionMetaChanged 即时刷新；Host 重启后 Reconnect 恢复连接与草稿。验收中发现并修复：ADR-044 D3 对未绑定会话的 fail-closed 与 ADR-054 D1 冲突，致无项目会话无法问答——显式 NULL 归属改以空授权面 `ws-unbound` 运行，文件工具仍 Policy fail-closed（详见 [OPT 归档 §10.3](../review/roadmap-opt-2026-09-05.md#103-本批交付与证据2026-09-05opt-2-真窗口验收--无项目问答修复)）。命名用配置已还原，本批不推定 OPT-3/4 与发布状态。
 
 Full workspace gate: NOT RUN（当前未设置全量门禁）。
+
+### OAuth 登录详情交互（2026-09-08）
+
+已实现：授权等待区提供打开浏览器、复制完整授权链接、复制可选验证码；登录详情支持鼠标拖选与键盘复制，长 URL 可横滚，复制按钮显示反馈；终态收起动作。xAI Device Flow 与无验证码的 PKCE 共用 Host 返回数据，不硬编码供应商。只读字段无 AX SetValue，API key secure 输入维持掩码与复制保护。交互规格见 [GUI 设计](../gui-design.md)。
+
+自动验证：`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders -j 2` 通过 219 项，`cargo build -p pawork-desktop --offline --features gpui/runtime_shaders -j 2` 通过；定向回归覆盖只读编辑保护、完整复制、页面滚动后的行选取、长链接横滚坐标与非 HTTP(S) 链接拒绝。
+
+代理真窗口复验：隔离实例 `oauth-gui-review`（Host 当次 `--provider opencode-go --model glm-5.3-flash`），xAI 授权按钮在系统浏览器打开实际设备授权页；链接、验证码与全选详情经本地文本编辑器粘贴核对；窗口随后显示已连接，CLI `auth list` 确认 OAuth 凭证存在。最终构建另用 ChatGPT PKCE 等待态确认无验证码按钮，滚动后拖选第二行并核对粘贴原文，取消后授权动作收起。复验发现的祖先滚动导致误选首行问题已修复。已完成代理窗口检查，等待用户人工验收；未发布。
+
+Full workspace gate: NOT RUN（当前未设置全量门禁）。

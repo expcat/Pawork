@@ -9,6 +9,39 @@ use crate::ui::components::dropdown::{Dropdown, MenuPanel, MenuRow};
 use crate::ui::components::switch::Switch;
 use crate::ui::MenuKind;
 
+/// 授权按钮只交给浏览器 HTTP(S) 链接，不启动任意系统协议。
+fn oauth_url_can_open(url: &str) -> bool {
+    url.strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .is_some_and(|rest| {
+            !rest
+                .split(['/', '?', '#'])
+                .next()
+                .unwrap_or_default()
+                .is_empty()
+                && !url.chars().any(|ch| ch.is_whitespace() || ch.is_control())
+        })
+}
+
+#[test]
+fn oauth_browser_links_reject_non_web_targets() {
+    assert!(oauth_url_can_open(
+        "https://accounts.x.ai/activate?code=ABCD-1234"
+    ));
+    assert!(oauth_url_can_open("http://localhost:1455/authorize"));
+    for url in [
+        "",
+        "https://",
+        "https:///missing-host",
+        "javascript:alert(1)",
+        "file:///tmp/auth",
+        "pawork://authorize",
+        "https://example.com/\nother",
+    ] {
+        assert!(!oauth_url_can_open(url), "{url:?}");
+    }
+}
+
 impl AppView {
     pub(super) fn settings_providers_page_element(
         &mut self,
@@ -689,75 +722,82 @@ impl AppView {
             }
         }
 
-        let mut details = self
-            .settings_element(dynamic_identifier(
-                "settings-provider-details",
-                &provider_id,
-            ))
-            .flex()
-            .flex_col()
-            .gap_2();
-        // OAuth 授权等待详情：Desktop 只显示 URL / user code / 到期，
-        // 不接触 token；取消走 auth_cancel。
+        // 登录详情保持原文，长 URL 可横滚、所有可见信息可选中复制。
+        let mut details = Vec::new();
         if let (ProviderAuthState::Connecting, Some(wait)) =
             (&provider.auth, oauth_waits.get(&provider_id))
         {
-            details = details.child(
-                Label::new(
-                    t("settings.providers.authorize_at").replace("{}", &wait.verification_url),
-                )
-                .size(font::BODY_SM)
-                .color(dark().text.secondary),
-            );
+            let mut actions = div().flex().flex_wrap().gap_2();
+            for action in [
+                SettingsAuthAction::OpenOauth,
+                SettingsAuthAction::CopyOauthUrl,
+                SettingsAuthAction::CopyOauthCode,
+            ] {
+                if action == SettingsAuthAction::CopyOauthCode && wait.user_code.is_none() {
+                    continue;
+                }
+                actions = actions.child(self.settings_action_button(
+                    action,
+                    &provider_id,
+                    self.settings_action_enabled(action, &provider_id, writes, cx),
+                    "",
+                    cx,
+                ));
+            }
+            block = block.child(actions);
+            details
+                .push(t("settings.providers.authorize_at").replace("{}", &wait.verification_url));
             if let Some(code) = &wait.user_code {
-                details = details.child(
-                    Label::new(t("settings.providers.oauth_code").replace("{}", code))
-                        .size(font::BODY_SM)
-                        .color(dark().text.secondary),
-                );
+                details.push(t("settings.providers.oauth_code").replace("{}", code));
             }
             if let Some(expires) = &wait.expires_at {
-                details = details.child(
-                    Label::new(t("settings.providers.oauth_expires").replace("{}", expires))
-                        .size(font::BODY_SM)
-                        .color(dark().text.tertiary),
-                );
+                details.push(t("settings.providers.oauth_expires").replace("{}", expires));
             }
         }
-
-        // 终态 AuthChanged 的瞬态反馈（取消 / 过期 / 移除）。
         if let Some(note) = auth_notes.get(&provider_id) {
-            details = details.child(status_line(note, dark().text.secondary));
+            details.push(note.clone());
         }
         if let Some(message) = auth_error {
-            details = details.child(status_line(
-                &t("settings.providers.connection_error").replace("{}", message),
-                dark().semantic.danger_text,
-            ));
+            details.push(t("settings.providers.connection_error").replace("{}", message));
         }
         if catalog_error {
-            details = details.child(status_line(
-                &provider.catalog_label(),
-                dark().semantic.danger_text,
-            ));
+            details.push(provider.catalog_label());
         }
         if endpoint_visible {
-            details = details.child(
-                Label::new(
-                    t("settings.providers.endpoint_row").replace("{}", &provider.endpoint_label),
-                )
-                .size(font::BODY_SM)
-                .color(dark().text.tertiary),
-            );
+            details
+                .push(t("settings.providers.endpoint_row").replace("{}", &provider.endpoint_label));
         }
-
-        if oauth_waiting
-            || auth_notes.contains_key(&provider_id)
-            || auth_error.is_some()
-            || catalog_error
-            || endpoint_visible
-        {
-            block = block.child(details);
+        if !details.is_empty() {
+            let details_id = dynamic_identifier("settings-provider-details", &provider_id);
+            let value = details.join("\n");
+            let input = self
+                .settings_auth_details
+                .entry(provider_id.clone())
+                .or_insert_with(|| {
+                    cx.new(|cx| {
+                        crate::ui::text_input::TextInput::with_placeholder("", cx)
+                            .id(details_id.clone())
+                            .read_only()
+                            .height_clamp(28., 180.)
+                    })
+                })
+                .clone();
+            if input.read(cx).text() != value {
+                input.update(cx, |input, cx| input.reset_text(value, cx));
+            }
+            block = block.child(
+                self.settings_element(details_id)
+                    .w_full()
+                    .min_w_0()
+                    .text_color(if auth_error.is_some() || catalog_error {
+                        dark().semantic.danger_text
+                    } else {
+                        dark().text.secondary
+                    })
+                    .child(input),
+            );
+        } else {
+            self.settings_auth_details.remove(&provider_id);
         }
 
         // API key secure 输入（内联）：none / error 常驻；connected 由
@@ -1211,6 +1251,33 @@ impl AppView {
         writes: bool,
         cx: &App,
     ) -> bool {
+        if matches!(
+            action,
+            SettingsAuthAction::OpenOauth
+                | SettingsAuthAction::CopyOauthUrl
+                | SettingsAuthAction::CopyOauthCode
+        ) {
+            let state = &self.projection.settings_providers;
+            if !state.providers.iter().any(|entry| {
+                entry.provider_id == provider_id
+                    && matches!(entry.auth, ProviderAuthState::Connecting)
+            }) {
+                return false;
+            }
+            let Some(wait) = state.oauth_waits.get(provider_id) else {
+                return false;
+            };
+            return match action {
+                SettingsAuthAction::OpenOauth => {
+                    writes && oauth_url_can_open(&wait.verification_url)
+                }
+                SettingsAuthAction::CopyOauthUrl => !wait.verification_url.is_empty(),
+                SettingsAuthAction::CopyOauthCode => {
+                    wait.user_code.as_ref().is_some_and(|code| !code.is_empty())
+                }
+                _ => unreachable!(),
+            };
+        }
         if !writes {
             return false;
         }
@@ -1273,7 +1340,17 @@ impl AppView {
             .radius(6.0)
             .bordered()
             .text_size(font::BODY_SM)
-            .label(action.label())
+            .label(
+                if self
+                    .settings_copied_auth
+                    .as_ref()
+                    .is_some_and(|(id, copied)| id == provider_id && *copied == action)
+                {
+                    t("settings.providers.copied")
+                } else {
+                    action.label()
+                },
+            )
             .disabled(!enabled)
             .on_click(cx.listener(move |view, event, _window, cx| {
                 if view.consume_button_key_click(&click_id, event) {
@@ -1305,6 +1382,30 @@ impl AppView {
             return;
         }
         match action {
+            SettingsAuthAction::OpenOauth
+            | SettingsAuthAction::CopyOauthUrl
+            | SettingsAuthAction::CopyOauthCode => {
+                let Some(wait) = self
+                    .projection
+                    .settings_providers
+                    .oauth_waits
+                    .get(&provider_id)
+                else {
+                    return;
+                };
+                if action == SettingsAuthAction::OpenOauth {
+                    cx.open_url(&wait.verification_url);
+                } else {
+                    let value = if action == SettingsAuthAction::CopyOauthCode {
+                        wait.user_code.clone().unwrap_or_default()
+                    } else {
+                        wait.verification_url.clone()
+                    };
+                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(value));
+                    self.settings_copied_auth = Some((provider_id, action));
+                    cx.notify();
+                }
+            }
             SettingsAuthAction::ConnectOauth | SettingsAuthAction::ReplaceOauth => {
                 self.on_settings_connect_oauth(provider_id, cx);
             }
@@ -1832,6 +1933,13 @@ impl AppView {
     /// 按当前 provider 清单懒建 / 回收 secure 输入实体与焦点句柄（含
     /// 「设为默认」按钮随模型目录的回收）。
     pub(crate) fn ensure_settings_api_key_inputs(&mut self, cx: &mut Context<Self>) {
+        self.settings_auth_details.retain(|id, _| {
+            self.projection
+                .settings_providers
+                .providers
+                .iter()
+                .any(|entry| &entry.provider_id == id)
+        });
         let ids: Vec<String> = self
             .projection
             .settings_providers
@@ -1980,6 +2088,8 @@ impl AppView {
     /// 离开 Settings：清空 secure 缓冲（含 undo 栈）与进行中的本地编辑
     /// 状态；不触碰工作台 / 会话 / 草稿 / Run。
     pub(crate) fn clear_settings_buffers(&mut self, cx: &mut Context<Self>) {
+        self.settings_auth_details.clear();
+        self.settings_copied_auth = None;
         for input in self.settings_api_key_inputs.values() {
             input.update(cx, |input, cx| input.reset_text("", cx));
         }

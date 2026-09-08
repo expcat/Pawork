@@ -48,6 +48,7 @@ pub struct TextInput {
     placeholder: SharedString,
     element_id: SharedString,
     secure: bool,
+    read_only: bool,
     min_height: f32,
     max_height: f32,
     selected_range: Range<usize>,
@@ -97,6 +98,7 @@ impl TextInput {
             placeholder: placeholder.into(),
             element_id: SharedString::from("composer-input"),
             secure: false,
+            read_only: false,
             min_height: metrics::COMPOSER_INPUT_MIN_HEIGHT,
             max_height: composer_input_max_height(),
             selected_range: 0..0,
@@ -173,6 +175,13 @@ impl TextInput {
     /// AX value 由宿主发布掩码（本组件不参与 AX 树构建）。
     pub fn secure(mut self) -> Self {
         self.secure = true;
+        self
+    }
+
+    /// 可选中复制的只读信息；内部 reset_text 仍可跟随 Host 更新。
+    pub fn read_only(mut self) -> Self {
+        self.read_only = true;
+        self.focus_handle = self.focus_handle.tab_stop(true);
         self
     }
 
@@ -365,7 +374,7 @@ impl TextInput {
 
     fn cut(&mut self, _: &Cut, window: &mut Window, cx: &mut Context<Self>) {
         // SET-010：secure 输入禁止 Cut 泄漏明文。
-        if self.secure {
+        if self.secure || self.read_only {
             return;
         }
         if self.selected_range.is_empty() {
@@ -378,6 +387,9 @@ impl TextInput {
     }
 
     fn undo(&mut self, _: &Undo, _: &mut Window, cx: &mut Context<Self>) {
+        if self.read_only {
+            return;
+        }
         let Some(prev) = self.undo_stack.pop() else {
             return;
         };
@@ -387,6 +399,9 @@ impl TextInput {
     }
 
     fn redo(&mut self, _: &Redo, _: &mut Window, cx: &mut Context<Self>) {
+        if self.read_only {
+            return;
+        }
         let Some(next) = self.redo_stack.pop() else {
             return;
         };
@@ -395,6 +410,9 @@ impl TextInput {
         cx.notify();
     }
     fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
+        if self.read_only {
+            return;
+        }
         if self.selected_range.is_empty() {
             self.select_to(self.previous_boundary(self.cursor_offset()), cx)
         }
@@ -402,6 +420,9 @@ impl TextInput {
     }
 
     fn delete(&mut self, _: &Delete, window: &mut Window, cx: &mut Context<Self>) {
+        if self.read_only {
+            return;
+        }
         if self.selected_range.is_empty() {
             self.select_to(self.next_boundary(self.cursor_offset()), cx)
         }
@@ -530,7 +551,7 @@ impl TextInput {
         index = index.min(lines.len() - 1);
         let line = &lines[index];
         let start = *self.last_line_starts.get(index).unwrap_or(&0);
-        let local = line.closest_index_for_x(position.x - bounds.left());
+        let local = line.closest_index_for_x(position.x - bounds.left() - self.scroll.offset().x);
         // last_layout 为显示文本（secure 掩码）空间：换算回 content 偏移。
         let display_index = (start + local).min(self.display_text_len());
         self.from_display_offset(display_index)
@@ -561,8 +582,26 @@ impl TextInput {
         } else if line_bottom + current > viewport {
             next = viewport - line_bottom;
         }
-        if (next - current).abs() > f32::EPSILON {
-            self.scroll.set_offset(point(px(metrics::ZERO), px(next)));
+        let mut offset = self.scroll.offset();
+        if self.read_only {
+            if let Some(line) = self
+                .last_layout
+                .as_ref()
+                .and_then(|lines| lines.get(line_index))
+            {
+                let cursor = self.cursor_offset() - self.last_line_starts[line_index];
+                let x = line.x_for_index(cursor);
+                let width = self.scroll.bounds().size.width - px(16.);
+                if x + offset.x < px(0.) {
+                    offset.x = -x;
+                } else if x + offset.x > width {
+                    offset.x = width - x;
+                }
+            }
+        }
+        offset.y = px(next);
+        if offset != self.scroll.offset() {
+            self.scroll.set_offset(offset);
         }
         self.pending_caret_scroll = false;
     }
@@ -667,6 +706,9 @@ impl EntityInputHandler for TextInput {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.read_only {
+            return;
+        }
         let range = range_utf16
             .as_ref()
             .map(|range_utf16| self.range_from_utf16(range_utf16))
@@ -693,6 +735,9 @@ impl EntityInputHandler for TextInput {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.read_only {
+            return;
+        }
         let range = range_utf16
             .as_ref()
             .map(|range_utf16| self.range_from_utf16(range_utf16))
@@ -771,7 +816,9 @@ impl EntityInputHandler for TextInput {
         }
         index = index.min(lines.len() - 1);
         let line = &lines[index];
-        let utf8_index = line.index_for_x(line_point.x).unwrap_or(line.len());
+        let utf8_index = line
+            .index_for_x(line_point.x - self.scroll.offset().x)
+            .unwrap_or(line.len());
         let start = *self.last_line_starts.get(index).unwrap_or(&0);
         Some(self.offset_to_utf16(self.from_display_offset(start + utf8_index)))
     }
@@ -910,6 +957,36 @@ impl Element for TextElement {
     ) -> (LayoutId, Self::RequestLayoutState) {
         let mut style = Style::default();
         style.size.width = relative(1.).into();
+        // 授权 URL 常比视口长；只读字段保留原文，通过横滚查看和选择。
+        let input = self.input.read(cx);
+        if input.read_only && !input.secure {
+            let text_style = window.text_style();
+            let font_size = text_style.font_size.to_pixels(window.rem_size());
+            let width = input
+                .content
+                .lines()
+                .map(|line| {
+                    window
+                        .text_system()
+                        .shape_line(
+                            line.to_string().into(),
+                            font_size,
+                            &[TextRun {
+                                len: line.len(),
+                                font: text_style.font(),
+                                color: text_style.color,
+                                background_color: None,
+                                underline: None,
+                                strikethrough: None,
+                            }],
+                            None,
+                        )
+                        .width
+                })
+                .fold(px(0.), |width, next| width.max(next));
+            style.min_size.width = (width + px(metrics::COMPOSER_TEXT_INSET)).into();
+            style.flex_shrink = 0.;
+        }
         let line_count = self.input.read(cx).visual_line_count();
         // 完整内容高交给父 overflow 视口；此处只保底单行，不 clamp 到 max。
         let min_height = self.input.read(cx).min_height;
@@ -929,7 +1006,9 @@ impl Element for TextElement {
         cx: &mut App,
     ) -> Self::PrepaintState {
         let content_bounds = gpui::Bounds {
-            origin: bounds.origin - window.element_offset(),
+            // 只去掉输入框自身滚动，保留 Settings 等祖先的位移；否则
+            // 页面滚动后的鼠标坐标会被错误映射到内容首行。
+            origin: bounds.origin - self.input.read(cx).scroll.offset(),
             size: bounds.size,
         };
         let input = self.input.read(cx);
@@ -1115,6 +1194,13 @@ impl Render for TextInput {
             .on_action(cx.listener(Self::cut))
             .on_action(cx.listener(Self::undo))
             .on_action(cx.listener(Self::redo))
+            .on_action(cx.listener(|input, _: &SendMessage, _, cx| {
+                if input.read_only {
+                    cx.stop_propagation();
+                } else {
+                    cx.propagate();
+                }
+            }))
             .id(self.element_id.clone())
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
@@ -1127,6 +1213,7 @@ impl Render for TextInput {
             .bg(dark().surface.raised)
             .text_size(font::BASE)
             .overflow_y_scroll()
+            .when(self.read_only, |element| element.overflow_x_scroll())
             .track_scroll(&self.scroll)
             .child(TextElement { input: cx.entity() })
     }
@@ -1288,6 +1375,104 @@ mod tests {
         assert_eq!(input.read_with(cx, |i, _| i.selected_range()), 1..2);
         let selected = input.read_with(cx, |i, _| i.text()[i.selected_range()].to_string());
         assert_eq!(selected, "b");
+    }
+
+    #[gpui::test]
+    fn readonly_login_text_selects_copies_and_rejects_edits(cx: &mut TestAppContext) {
+        use gpui::{div, prelude::*, Context, Entity, ScrollHandle, Window};
+        struct LoginPage {
+            input: Entity<TextInput>,
+            scroll: ScrollHandle,
+        }
+        impl Render for LoginPage {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .id("login-page")
+                    .size_full()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll)
+                    .child(div().h(px(200.)))
+                    .child(self.input.clone())
+                    .child(div().h(px(400.)))
+            }
+        }
+        cx.update(|cx| crate::ui::install_keybindings(cx));
+        let (page, cx) = cx.add_window_view(|_, cx| LoginPage {
+            input: cx.new(|cx| TextInput::new(cx).read_only()),
+            scroll: ScrollHandle::new(),
+        });
+        let input = page.read_with(cx, |page, _| page.input.clone());
+        cx.simulate_resize(PROBE_WINDOW);
+        let text = format!(
+            "https://example.com/authorize?state={}\nCode ABCD-1234",
+            "a".repeat(160)
+        );
+        input.update(cx, |input, cx| input.reset_text(text.clone(), cx));
+        focus_input(&input, cx);
+        page.update(cx, |page, _| {
+            page.scroll.set_offset(point(px(0.), px(-160.)))
+        });
+        cx.refresh().unwrap();
+        let code_click = input.read_with(cx, |input, _| {
+            let viewport = input.scroll.bounds();
+            point(
+                viewport.left() + px(12.),
+                viewport.top() + input.last_line_height * 1.5 + px(4.),
+            )
+        });
+        cx.simulate_click(code_click, Modifiers::none());
+        cx.run_until_parked();
+        assert!(
+            input.read_with(cx, |input, _| input.selected_range().start) > text.find('\n').unwrap(),
+            "clicking the code after page scroll must select the code line"
+        );
+        cx.dispatch_action(super::SelectAll);
+        cx.dispatch_action(super::Copy);
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            assert_eq!(
+                cx.read_from_clipboard().and_then(|item| item.text()),
+                Some(text.clone())
+            )
+        });
+        assert!(
+            input.read_with(cx, |input, _| input.scroll.max_offset().width > px(0.)),
+            "long URL must scroll horizontally"
+        );
+        cx.dispatch_action(super::Cut);
+        cx.dispatch_action(super::Paste);
+        cx.dispatch_action(super::Backspace);
+        cx.dispatch_action(super::Delete);
+        cx.dispatch_action(super::NewLine);
+        cx.dispatch_action(super::Undo);
+        cx.dispatch_action(super::Redo);
+        cx.update(|window, cx| {
+            input.update(cx, |input, cx| {
+                input.replace_text_in_range(None, "changed", window, cx);
+                input.replace_and_mark_text_in_range(None, "ni", None, window, cx);
+                assert_eq!(input.text(), text);
+                assert!(!input.is_composing());
+                assert_eq!(input.undo_len(), 0);
+            })
+        });
+        // 横滚后点击仍映回真实原文位置，不能把 offset 漏计进选择。
+        let click = input.update(cx, |input, _| {
+            let bounds = input.last_bounds.unwrap();
+            let x = input.last_layout.as_ref().unwrap()[0].x_for_index(100);
+            input.scroll.set_offset(point(px(20.) - x, px(0.)));
+            input.pending_caret_scroll = false;
+            point(
+                bounds.left() + px(20.),
+                bounds.top() + input.last_line_height / 2.,
+            )
+        });
+        cx.refresh().unwrap();
+        cx.simulate_click(click, Modifiers::none());
+        cx.run_until_parked();
+        assert_eq!(
+            input.read_with(cx, |input, _| input.selected_range()),
+            100..100
+        );
     }
 
     #[gpui::test]

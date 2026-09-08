@@ -208,6 +208,17 @@ impl AppView {
                         }
                     }
                 }
+                _ if request.identifier.starts_with("settings-provider-details-") => {
+                    if let Some(input) =
+                        self.settings_auth_details.iter().find_map(|(id, input)| {
+                            (dynamic_identifier("settings-provider-details", id)
+                                == request.identifier)
+                                .then_some(input)
+                        })
+                    {
+                        window.focus(&input.read(cx).focus_handle(cx));
+                    }
+                }
                 _ => return,
             },
             AxAction::SetValue => {
