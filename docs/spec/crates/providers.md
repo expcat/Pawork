@@ -33,7 +33,7 @@
 | `src/net/retry.rs` | ~220 | `classify_status` / `classify_request_error`（HTTP 状态与 reqwest 错误 → `ProviderError`，解析 `Retry-After`，消息脱敏）、`parse_retry_after` |
 | `src/channels/mod.rs` | ~60 | 八通道 feature 门控的模块声明与 re-export |
 | `src/channels/registry.rs` | ~360 | `CHANNEL_REGISTRY`（八行静态 preset）、`ChannelPreset`（含 `display_name` 与 `auth_methods` 数据字段，SET-4 起不再按 kind 派生）/ `ChannelKind`、`OAuthPreset(Data)` / `OAuthFlow(Data)`、`channel_preset`、`is_enabled`（唯一 cfg 求值点） |
-| `src/channels/api_key.rs` | ~230 | `ApiKeyChannelConfig` / `ApiKeyChannelProvider`：API-key 通道共用适配器（五行，含 kimi-platform；xAI 双认证亦复用 `verify_api_key`）；默认 Chat Completions，逐模型显式声明才走 Responses；`verify_api_key` 用候选 key 发一次性 `GET /models` 做写前验证（不持久化） |
+| `src/channels/api_key.rs` | ~230 | `ApiKeyChannelConfig` / `ApiKeyChannelProvider`：API-key 通道共用适配器（五行，含 kimi-platform；xAI 双认证亦复用 `verify_api_key`）；默认 Chat Completions，逐模型显式声明才走 Responses；`verify_api_key` 用候选 key 发已认证 GET 做写前验证（Go `/usage`，其余 `/models`，不持久化） |
 | `src/channels/chatgpt.rs` | ~280 | `ChatGptConfig` / `ChatGptProvider`：ChatGPT OAuth 通道（Responses transport、`chatgpt-account-id` / `originator` 头、`client_version` 校验、`DEFAULT_BASE_URL`） |
 | `src/channels/xai.rs` | ~360 | `XaiConfig` / `XaiProvider`：xAI Grok OAuth 通道，按模型 capability 声明选 Responses 或 Chat Completions；SET-5 起 `list_models` 走远端 `GET {base}/language-models`（output_modalities 含 "text" 才入目录，已知 id 沿用 `xai_builtin_models` 元数据，未知 id 给保守默认）；`DEFAULT_BASE_URL` |
 | `src/channels/kimi.rs` | ~260 | `KimiCodeConfig` / `KimiCodeProvider`：Kimi Code OAuth 通道（SET-4 A2），只接受 OAuth bearer、只走 Chat Completions（`https://api.kimi.com/coding/v1`）；SET-5 起 `list_models` 走远端 `GET {base}/models`（OpenAI 风格 `data[]`，已知 id 沿用 `builtin_models` 元数据，未知 id 给保守默认；`builtin_models` 仅作元数据来源与静态兜底） |
@@ -56,7 +56,7 @@ trait 面为 `id()` / `list_models(credential)` / `stream(request, sink, cancel)
 - `XaiProvider`（feature `xai-oauth`）：OAuth Bearer 或 API key（SET-4 A3 双认证，Bearer 用法相同）；按模型 capability 的 `transport` 声明路由 Responses / Chat Completions。SET-5 起 `list_models` 请求 `GET {base}/language-models`（官方端点，见 <https://docs.x.ai/developers/rest-api-reference/inference/models>）：仅保留 `output_modalities` 含 `"text"` 的模型；已知 id 沿用 builtin 元数据（display_name / 窗口 / transport），未知 id 只给保守默认（text 声明 + Chat Completions 基线 + 窗口 0）；无凭证（构造即失败）、请求失败或响应缺 `models` 数组一律 `Err`，由 app 层落 fixed_fallback。
 - `KimiCodeProvider`（feature `kimi-code`）：OAuth Bearer；固定 Chat Completions。SET-5 起 `list_models` 请求 `GET {base}/models`（与官方 kimi-cli 同端点，证据见 MoonshotAI/kimi-cli 源码与 repo issue 中的真实请求实例）：OpenAI 风格 `data[].id` 解析，已知 id 沿用 builtin 元数据，未知 id 只给保守默认；形状不符（缺 `data` 数组）、请求失败或无凭证一律 `Err`，禁止猜测兼容。
 - `ApiKeyChannelProvider`（任一 API-key feature）：以 `&'static ChannelPreset` 构造，构造期 fail-closed——preset 必须声明 api_key 认证方法（`auth_methods` 数据字段）且 `is_enabled`，凭证必须存在且为 API key 形态，config 固定头不得含凭证头。
-- `verify_api_key(config, candidate_key)`（async，任一 API-key feature）：SET-2 写前验证入口——用候选 key 构造一次性 adapter 发 `GET /models`，只返回 `Ok(())` / `ProviderError`；key 只在内存短暂停留、不落任何后端，供宿主 `auth_set_api_key` 在 `store_default_api_key` 之前校验。
+- `verify_api_key(config, candidate_key)`（async，任一 API-key feature）：SET-2 写前验证入口——用候选 key 构造一次性 adapter 校验凭证边界；Go 请求 `/usage` 验证 key/订阅，其余请求严格 `/models`，只返回 `Ok(())` / `ProviderError`；key 只在内存短暂停留、不落任何后端，供宿主 `auth_set_api_key` 在 `store_default_api_key` 之前校验。
 
 四种 transport 形态对照：
 
@@ -94,6 +94,10 @@ trait 面为 `id()` / `list_models(credential)` / `stream(request, sink, cancel)
 - `ModelRegistry`：`empty()` / `builtin()` 构造；`register` / `try_register`（`RegistryError::DuplicateModelId` / `DuplicateAlias` 拒绝重复登记，`resolve` 未命中对应 `NotFound` 语义）；`extend_with`（批量合并）；`merge_provider_models` / `merge_provider_source`（把 Provider `list_models` 发现结果并入，静态已有时逐字段交集收窄）；`resolve(id_or_alias)`（模型 id 与别名同一命名空间查找）；`list` / `filter(required)`（按能力子集筛选）；`validate_context(id, input_tokens)` / `estimate_cost(id, usage)`（经 `CatalogEntry` 的 pricing）。`CatalogEntry::to_definition()` 转 domain `ModelDefinition`。
 - 能力三源：`CapabilitySource::{Static, Probe, Override}`；`CapabilityEvidence { static_declared, probe_declared, override_declared }`，`merged()` 对已出现的来源逐字段取交集（缺失来源不约束）。运行期可 `set_override` / `remove_override`（override 只能收窄）、`record_probe` / `clear_probe`（探测结果按 provider 记录）。`capability_evidence(model)` / `capability_snapshot()` 导出证据。
 - `ProviderCapabilitySource` trait / `ProviderProbe` / `ProbeError`：动态探测抽象。`caps(...)` 是测试与静态目录用的 `ModelCapabilities` 构造 helper。
+
+UI-6a / ADR-058：`ApiKeyChannelConfig::transport_for` 与 adapter 共用协议解析，Host 静态 / 配置回退同样过滤不可运行模型并同步 transport，显式覆盖仍优先。通用、ChatGPT、Kimi、xAI 目录使用严格形状与非空 ID 校验，合法空数组仍成功。通用未知窗口/输出为 0、未知工具能力 false；已知 ID 仅从同 provider 静态条目补证据，远端实际字段优先。Kimi 消费 display_name/context_length/supports_reasoning/supports_image_in；xAI 消费输入模态和窗口，aliases 仅辅助找静态证据；ChatGPT 空/null/none-only reasoning levels 不算思考。通用 `has_more=true` 显式拒绝，尚未实现翻页。
+
+`ApiKeyChannelConfig` 初始化 Go/Qwen 官方逐模型 transport 表；显式 `with_model_transport` 覆盖单项。混合通道的目录过滤与 `stream` 共用 `transport_for`：只保留 ChatCompletions/Responses；未声明或 Messages-only 直接请求也在 HTTP 前拒绝。新 ID 需更新有来源的声明或显式配置；其它 Chat 通道仍采用兼容文本基线。来源与协议/认证边界见 [ADR-058](../settings.md#adr-058ui-6a-目录权威与凭证验证2026-09-08)。
 
 ### 3.4 能力协商（negotiate）
 
@@ -244,12 +248,14 @@ dev-dependencies：`wiremock`（HTTP mock）、`proptest`、多线程 tokio。�
 
 ADR-057：`tests/api_key_channels.rs` 在既有通道契约测试中核验 Chat / Responses 的会话头、连续请求身份隔离与其他通道不携带；非法会话头定向回归断言不发请求且错误不回显原值。
 
+UI-6a 回归扩充现有 contract / Kimi / xAI / ChatGPT 解析用例，补混合目录与 mock transport 一致性主路径（含未支持协议无网络拒绝）。Go 验证失败保旧与成功脱敏在 app 的 Settings 真实 Host 回归覆盖。
+
 ## 8. 注意事项与已知限制
 
 - `ReasoningProtector` 的生产实现（`SwappableReasoningProtector`，含 master key 管理）在 `pawork-app` 的 protected 模块，本包只有内存实现；跨包链路见 [../flows.md](../flows.md)。
 - `builtin_models`（Anthropic）静态目录只含 claude-3-5-sonnet / claude-3-5-haiku 两条基线；线上新模型依赖 registry 动态合并或 config 声明。
 - `BUILTIN_RATE_VERSION = "2026-08-15"`：内置费率卡有版本口径，厂商调价后需要更新数据表（非代码逻辑）。
-- ChatGPT 通道的 `client_version`（当前 `0.147.0`）参与后端 `/models` 目录过滤与 UA 构造，版本过旧会拿到空目录；redirect URI 固定 `localhost:1455`（上游 allow-list 精确匹配，host/port 不可改）。
+- ChatGPT 通道的 `client_version`（当前 `0.153.0`）参与后端 `/models` 目录过滤与 UA 构造，版本过旧会拿到空目录；redirect URI 固定 `localhost:1455`（上游 allow-list 精确匹配，host/port 不可改）。
 - `error_table` 是子串匹配的经验规则表，厂商错误文案变化时可能失配（回退到通用分类，不影响正确性只影响精度）。
 - 本包不做重试编排；`retry` 模块只负责分类与 `Retry-After` 解析（HTTP-date 用内置最小解析器，仅识别 IMF-fixdate GMT），重试策略由上层决定。
 - `OpenAiCompatibleConfig.request_timeout` 是「建连及流式读取无数据超时」的便捷字段（设置时覆盖 `http.timeout`）；配合逐 chunk 重置语义，长流只要持续有数据就不会误杀。

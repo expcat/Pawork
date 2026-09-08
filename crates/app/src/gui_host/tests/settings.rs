@@ -47,7 +47,16 @@ pub(super) async fn settings_adapter_with_default(
         config.default_model = Some(default_model.into());
     }
     let core = AppCore::from_parts(
-        Arc::new(MockProvider::sequence(Vec::new())),
+        Arc::new(
+            MockProvider::sequence(Vec::new()).with_models(
+                pawork_providers::ModelRegistry::builtin()
+                    .list()
+                    .into_iter()
+                    .filter(|entry| entry.provider.as_str() == provider_id)
+                    .map(|entry| entry.to_definition())
+                    .collect(),
+            ),
+        ),
         None,
         pawork_domain::ModelId::from(model_id),
         pawork_domain::ProviderId::from(provider_id),
@@ -1004,6 +1013,91 @@ async fn auth_set_api_key_verifies_replaces_and_masks_end_to_end() {
             path.display()
         );
     }
+}
+
+#[tokio::test]
+async fn go_key_verification_uses_authenticated_usage_and_preserves_old_key_on_failure() {
+    use pawork_auth::SecretBackend as _;
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    let backend = Arc::new(pawork_auth::MemoryBackend::new());
+    let old = "sk-go-old-test-credential";
+    backend.store("pawork.opencode-go", "default", old).unwrap();
+    let (adapter, _dir) = settings_adapter(server.uri(), backend.clone()).await;
+    {
+        let mut core = adapter.core.write().await;
+        core.config
+            .providers
+            .push(pawork_workspace::config::ProviderConfig {
+                id: "opencode-go".into(),
+                base_url: Some(server.uri()),
+                use_proxy: Some(false),
+                ..Default::default()
+            });
+    }
+    let mut events = adapter.subscribe_events();
+    let candidate = "sk-go-new-test-credential";
+    for response in [
+        ResponseTemplate::new(401).set_body_string(candidate),
+        ResponseTemplate::new(200)
+            .set_body_json(serde_json::json!({"data": [{"id": "public-model"}]})),
+    ] {
+        Mock::given(method("GET"))
+            .and(path("/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"data": []})))
+            .expect(0)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/usage"))
+            .and(header("authorization", format!("Bearer {candidate}")))
+            .respond_with(response)
+            .expect(1)
+            .mount(&server)
+            .await;
+        let error = adapter
+            .command(&command_envelope(AppCommand::AuthSetApiKey {
+                provider_id: "opencode-go".into(),
+                api_key: pawork_protocol::ApiKeySecret::new(candidate),
+            }))
+            .await
+            .expect_err("public catalog / invalid key must not verify");
+        assert_eq!(error.code, "auth_verify");
+        assert!(!error.message.contains(candidate));
+        assert_eq!(backend.get("pawork.opencode-go", "default").unwrap(), old);
+        let event = serde_json::to_string(&events.try_recv().unwrap()).unwrap();
+        assert!(event.contains("failed"));
+        assert!(!event.contains(candidate));
+        server.verify().await;
+        server.reset().await;
+    }
+    let usage = serde_json::json!({"status": "rate-limited", "percent": 100, "resetsAt": "2026-09-08T20:00:00Z"});
+    Mock::given(method("GET"))
+        .and(path("/usage"))
+        .and(header("authorization", format!("Bearer {candidate}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "usage": {"rolling": usage, "weekly": usage, "monthly": usage}
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let response = adapter
+        .command(&command_envelope(AppCommand::AuthSetApiKey {
+            provider_id: "opencode-go".into(),
+            api_key: pawork_protocol::ApiKeySecret::new(candidate),
+        }))
+        .await
+        .expect("rate-limited is still an authenticated subscription");
+    assert!(!serde_json::to_string(&response)
+        .unwrap()
+        .contains(candidate));
+    assert_eq!(
+        backend.get("pawork.opencode-go", "default").unwrap(),
+        candidate
+    );
+    server.verify().await;
 }
 
 #[tokio::test]

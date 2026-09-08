@@ -212,10 +212,8 @@ async fn bearer_session_headers_are_scoped_to_opencode_on_both_transports() {
                 .expect(3)
                 .mount(&server)
                 .await;
-            let mut config = config_for(preset, server.uri());
-            if transport == ModelTransport::Responses {
-                config = config.with_model_transport("test-model", transport);
-            }
+            let config =
+                config_for(preset, server.uri()).with_model_transport("test-model", transport);
             let provider = ApiKeyChannelProvider::new(config, Some(api_key())).unwrap();
             // 同一 adapter 跨会话使用，以及无会话请求，不得残留上一次身份。
             for session in [Some("session-one"), Some("session-two"), None] {
@@ -285,4 +283,88 @@ async fn invalid_opencode_session_header_fails_without_network_or_value_disclosu
         assert!(!error.contains("sk-channel-test"));
     }
     assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn mixed_catalog_and_stream_share_documented_transports() {
+    for (channel, chat_id, responses_id, excluded) in [
+        (
+            "opencode-go",
+            "glm-5.3-flash",
+            Some("grok-4.6"),
+            "qwen3.8-max",
+        ),
+        ("qwen-token-plan", "qwen3.8-max", None, "wan2.7-image"),
+    ] {
+        let server = MockServer::start().await;
+        let mut ids = vec![chat_id, excluded, "unknown-model"];
+        ids.extend(responses_id);
+        Mock::given(method("GET"))
+            .and(path("/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": ids.iter().map(|id| serde_json::json!({"id": id})).collect::<Vec<_>>()
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let provider = ApiKeyChannelProvider::new(
+            config_for(channel_preset(channel).unwrap(), server.uri()),
+            Some(api_key()),
+        )
+        .unwrap();
+        let models = provider.list_models(None).await.unwrap();
+        assert_eq!(models.len(), 1 + usize::from(responses_id.is_some()));
+        assert_eq!(models[0].id.as_str(), chat_id);
+        for model in models {
+            let endpoint = match model.capabilities.transport {
+                ModelTransport::ChatCompletions => "/chat/completions",
+                ModelTransport::Responses => "/responses",
+                ModelTransport::Messages => panic!("unsupported transport in runnable catalog"),
+            };
+            let body = if endpoint == "/responses" {
+                sse_body(&[r#"{"type":"response.completed","response":{"status":"completed"}}"#])
+            } else {
+                sse_body(&[r#"{"choices":[{"delta":{},"finish_reason":"stop"}]}"#])
+            };
+            Mock::given(method("POST"))
+                .and(path(endpoint))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .insert_header("content-type", "text/event-stream")
+                        .set_body_string(body),
+                )
+                .expect(1)
+                .mount(&server)
+                .await;
+            let mut req = request();
+            req.model = model.id;
+            provider
+                .stream(
+                    req,
+                    &RecordingProviderSink::default(),
+                    CancellationToken::new(),
+                )
+                .await
+                .expect("documented route");
+        }
+        let before = server.received_requests().await.unwrap().len();
+        for id in [excluded, "unknown-model"] {
+            let mut req = request();
+            req.model = ModelId::new(id);
+            assert_eq!(
+                provider
+                    .stream(
+                        req,
+                        &RecordingProviderSink::default(),
+                        CancellationToken::new()
+                    )
+                    .await
+                    .unwrap_err()
+                    .kind,
+                ProviderErrorKind::InvalidRequest
+            );
+        }
+        assert_eq!(server.received_requests().await.unwrap().len(), before);
+        server.verify().await;
+    }
 }

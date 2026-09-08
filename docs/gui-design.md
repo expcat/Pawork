@@ -206,7 +206,7 @@ Settings 沿用深色主题、8px 节奏和 1440×1024 基线，不把工作台�
 - Settings 导航 AX 随 `Panel` 的 rem padding/gap 同步缩放，并扣除侧栏分隔线；UI-5 七个非供应商页均使用 GPUI 实测框，只发布滚动视口中的可见部分。项目 Scope 菜单同样使用实测框与滚动偏移，超过 240px 时只发布可见选项；键盘高亮与打开菜单时的当前选项滚入视口。
 - 导航与页内可见文案默认 English，可在 Appearance 页切换为简体中文（即时生效，保存到用户目录 `desktop.json`，重启恢复）；顺序为 Models & providers → Network → Approvals → Tools & MCP → Terminal → Appearance → Advanced → About。没有真实读写能力的页不显示；Advanced 离线仍可进入。
 - 翻译边界：只翻译界面 chrome 文案（按钮、提示、空态、状态提示、tooltip）；session 标题、provider / model id、文件路径、工具输出与 wire 错误原因等数据内容保持原文；品牌名「Pawork」、功能符号与示例数据不翻译。render 与 AX 经同一目录同源取词，AX 节点 id 保持英文。
-- **Models & providers**：OPT-4c（F2）起内容用满 Rail 外可用宽度、两侧各 32px padding，不再保留 820px 上限（render 与 AX 几何经 `SETTINGS_CONTENT_PAD` 同源）；provider 使用 64px 概览行，分列显示认证方式、连接状态与目录 / 模型数；认证操作放在独立详情行，避免窄窗与大字号挤压信息列。Host `provider_auth_status` 是权威数据，Desktop 不按供应商名称硬编码 OAuth/API key 分支。普通行与 AX summary 不显示 masked credential、endpoint、catalog error 或 raw model id；endpoint / 错误只在连接、等待或删除确认详情出现。API key editor 仅在 Connect / Replace 后展开，secure input 的完整值不得进 AX tree、日志或状态文本。OAuth 只显示授权 URL、device code、到期/取消，不接触 token。认证成功与目录成功是两个状态。OPT-3 起页首为「Default models」四默认角色区（对话/命名/识图/搜索；候选 = 已连接且已启用的模型；无候选时仍保留 Clear，可清除失效默认项；识图/搜索在路由落地前标注「只保存」）。每 provider 行提供 Manage models 弹层：单模型 Switch、Enable all / Disable all；禁用命中角色默认对时 Host 同批清除该键对并如实提示；目录为空显示诚实空态，不渲染全开假按钮。当 Global `proxy_url` 已配置时，行右侧追加供应商级代理 Switch（OPT-3c 起为 Switch 控件，On/Off 状态词，tooltip 说明走代理/直连）；click / Enter / Space / AX Press 同一 handler，Host `set_provider_use_proxy` 回执即写后状态，不乐观更新。未配置全局代理时不渲染该开关。
+- **Models & providers**：OPT-4c（F2）起内容用满 Rail 外可用宽度、两侧各 32px padding，不再保留 820px 上限（render 与 AX 几何经 `SETTINGS_CONTENT_PAD` 同源）；UI-6a provider 使用自然增高卡片，分组显示名称 / 认证方式与连接状态 / 目录模型数；认证操作放在独立详情行，避免窄窗与大字号挤压信息列。Host `provider_auth_status` 是权威数据，Desktop 不按供应商名称硬编码 OAuth/API key 分支。普通行与 AX summary 不显示 masked credential、endpoint、catalog error 或 raw model id；endpoint / 错误只在连接、等待或删除确认详情出现。API key editor 仅在 Connect / Replace 后展开，secure input 的完整值不得进 AX tree、日志或状态文本。OAuth 只显示授权 URL、device code、到期/取消，不接触 token。认证成功与目录成功是两个状态。OPT-3 起页首为「Default models」四默认角色区（对话/命名/识图/搜索；候选 = 已连接且已启用的模型；无候选时仍保留 Clear，可清除失效默认项；识图/搜索在路由落地前标注「只保存」）。每 provider 行提供 Manage models 弹层：单模型 Switch、Enable all / Disable all；禁用命中角色默认对时 Host 同批清除该键对并如实提示；目录为空显示诚实空态，不渲染全开假按钮。当 Global `proxy_url` 已配置时，行右侧追加供应商级代理 Switch（OPT-3c 起为 Switch 控件，On/Off 状态词，tooltip 说明走代理/直连）；click / Enter / Space / AX Press 同一 handler，Host `set_provider_use_proxy` 回执即写后状态，不乐观更新。未配置全局代理时不渲染该开关。
 - **Network**：Global `proxy_url`；可在 GUI 填写，也可手动写入标准用户配置目录中的 `config.toml`。该文件位于 workspace 外，不会进入仓库；workspace `.pawork/config.toml` 中的代理值会被忽略。未设置显示 `Not set (uses system environment variables)`；新 OAuth / 验证 / 目录同会话生效，当前供应商模型流量于切换或重启后生效。代理是全局开关，供应商级绕过经 Models & providers 页的代理开关表达（`use_proxy = false` 时该 provider 出站直连）。
 - **权限与审批**：五档审批模式使用整行 radio，两行说明的行高随字号为 56/70/84px，row click、Enter、Space 与 AX Press 同一 handler；项目信任开关与 Global 默认只读行并列。审批默认与当前 canonical 根路径的信任选择保存到 Global 配置；进行中 Run 不受影响，后续 Run 按实际目标项目取信任。
 - **Tools & MCP**：复用 Host `mcp_list`，提供 Test / Remove。
@@ -230,6 +230,14 @@ GPUI view  →  projection（纯 Rust，可从 snapshot+events 重建）
 ```
 
 `apps/desktop` 的直接业务依赖只允许 `pawork-client`。`projection` 不导入 GPUI 或 OS API；`platform` 只允许窗口、剪贴板、选工作区目录与拉起固定 `pawork` 二进制。GPUI 锁定精确 revision `=0.2.2`。
+
+#### UI-6a 供应商更新（2026-09-08）
+
+沿用 UI-5 全宽内容与共享控件。供应商卡按内容自然增高，基础内边距 16px，动作高 36px；名称 / 认证方式和连接 / 目录状态分组，展开后依次显示代理、模型管理、凭证与 Usage。四默认角色以左侧名称和可换行说明、右侧选择器排列；凭证输入和操作按钮分行，适配窄窗与大字号。
+
+Manage models 弹层宽 320px、最高 400px，显示真实启用数、目录与账号权限的边界说明、批量操作和可滚动模型行。重绘保留滚动位置；默认角色菜单打开时滚入当前项，上下键移动时自动跟随高亮，分组头不计入选择索引。未知 context window 显示不可用，不把远端 0 哨兵显示成 0 容量。供应商页、角色菜单与模型弹层的 AX 读取 GPUI 实测框并裁剪视口外控件，鼠标、键盘与 AX 沿用同一写入 gate。额度无权威数据时仅显示不可用文案与空轨道，不画余额或百分比；多账户属于 UI-6b。
+
+目录与凭证语义见 [ADR-058](spec/settings.md#adr-058ui-6a-目录权威与凭证验证2026-09-08)，验证状态见 [路线图 UI-6a](ROADMAP.md#ui-6a-本批证据2026-09-08)。
 
 ### 4.1 Timeline 恢复
 

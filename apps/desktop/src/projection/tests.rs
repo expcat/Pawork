@@ -1889,6 +1889,8 @@ fn context_meter_uses_catalog_window_and_stays_honest() {
     }]);
     projection.set_pending_model("glm-coding".into(), "glm-4.7".into());
     assert_eq!(projection.context_meter_label(), "Context · — / 200000");
+    projection.models[0].context_window_tokens = Some(0);
+    assert_eq!(projection.context_meter_label(), "Context · unavailable");
 }
 
 #[test]

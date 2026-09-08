@@ -41,7 +41,7 @@ impl Default for ChatGptConfig {
             // /models 按 minimal_client_version 过滤目录：过旧的版本号会拿到
             // 空列表，且退役模型（如 gpt-5.1-codex）在 /responses 直接 400。
             // 须对齐近期 codex_cli_rs 版本而非 pawork 自身版本号。
-            client_version: "0.147.0".into(),
+            client_version: "0.153.0".into(),
             http: HttpClientConfig::default(),
             request_timeout: None,
         }
@@ -138,7 +138,7 @@ impl ModelProvider for ChatGptProvider {
         _credential: Option<&ResolvedCredential>,
     ) -> Result<Vec<ModelDefinition>, ProviderError> {
         let value = self.transport.get_json(&self.models_url).await?;
-        Ok(chatgpt_models(&value))
+        chatgpt_models(&value)
     }
 
     async fn stream(
@@ -171,64 +171,66 @@ fn require_oauth(
     Ok(credential)
 }
 
-fn chatgpt_models(value: &Value) -> Vec<ModelDefinition> {
-    value
-        .get("models")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|model| {
-            let id = model
-                .get("slug")
-                .or_else(|| model.get("id"))
-                .and_then(Value::as_str)?;
-            // 上游只把 visibility=list 的模型暴露给选择器；hide 的是后端内部
-            // 模型（如 codex-auto-review），不应进入 pawork 模型目录。
-            if model
-                .get("visibility")
+fn chatgpt_models(value: &Value) -> Result<Vec<ModelDefinition>, ProviderError> {
+    let mut definitions = Vec::new();
+    for model in crate::provider::catalog_entries(value, "models")? {
+        let id = crate::provider::catalog_model_id(model, "slug")?;
+        // Codex 官方 models.json 的 visibility 控制选择器可见性。
+        if model
+            .get("visibility")
+            .and_then(Value::as_str)
+            .is_some_and(|visibility| visibility != "list")
+        {
+            continue;
+        }
+        let parallel_tool_calls = model
+            .get("supports_parallel_tool_calls")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        definitions.push(ModelDefinition {
+            id: ModelId::new(id),
+            display_name: model
+                .get("display_name")
                 .and_then(Value::as_str)
-                .is_some_and(|visibility| visibility != "list")
-            {
-                return None;
-            }
-            let input_modalities = model
-                .get("input_modalities")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
-            Some(ModelDefinition {
-                id: ModelId::new(id),
-                display_name: model
-                    .get("display_name")
-                    .and_then(Value::as_str)
-                    .unwrap_or(id)
-                    .to_string(),
-                context_window_tokens: model
-                    .get("context_window")
-                    .or_else(|| model.get("max_context_window"))
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0),
-                max_output_tokens: model
-                    .get("max_output_tokens")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0),
-                capabilities: ModelCapabilities {
-                    text: true,
-                    image_input: input_modalities
-                        .iter()
-                        .any(|modality| modality.as_str() == Some("image")),
-                    tool_calls: true,
-                    parallel_tool_calls: model
-                        .get("supports_parallel_tool_calls")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(true),
-                    thinking: model.get("supported_reasoning_levels").is_some(),
-                    transport: ModelTransport::Responses,
-                    ..ModelCapabilities::default()
-                },
-            })
-        })
-        .collect()
+                .unwrap_or(id)
+                .to_string(),
+            context_window_tokens: model
+                .get("context_window")
+                .and_then(Value::as_u64)
+                .or_else(|| model.get("max_context_window").and_then(Value::as_u64))
+                .unwrap_or(0),
+            max_output_tokens: model
+                .get("max_output_tokens")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            capabilities: ModelCapabilities {
+                text: true,
+                image_input: model
+                    .get("input_modalities")
+                    .and_then(Value::as_array)
+                    .is_some_and(|modalities| {
+                        modalities.iter().any(|m| m.as_str() == Some("image"))
+                    }),
+                // 并行工具声明能证明工具能力；未知模型不再无条件获授工具。
+                tool_calls: parallel_tool_calls,
+                parallel_tool_calls,
+                thinking: model
+                    .get("supported_reasoning_levels")
+                    .and_then(Value::as_array)
+                    .is_some_and(|levels| {
+                        levels.iter().any(|level| {
+                            level
+                                .as_str()
+                                .or_else(|| level.get("effort").and_then(Value::as_str))
+                                .is_some_and(|effort| !effort.is_empty() && effort != "none")
+                        })
+                    }),
+                transport: ModelTransport::Responses,
+                ..ModelCapabilities::default()
+            },
+        });
+    }
+    Ok(definitions)
 }
 
 #[cfg(test)]
@@ -262,12 +264,42 @@ mod tests {
             "display_name": "Codex Test",
             "context_window": 200000,
             "supports_parallel_tool_calls": true,
-            "supported_reasoning_levels": ["medium"],
+            "supported_reasoning_levels": [{"effort": "medium", "description": "Medium"}],
             "input_modalities": ["text", "image"]
-        }]}));
+        }]}))
+        .unwrap();
         assert_eq!(models[0].capabilities.transport, ModelTransport::Responses);
         assert!(models[0].capabilities.image_input);
         assert!(models[0].capabilities.thinking);
+        assert!(models[0].capabilities.tool_calls);
+        for levels in [
+            serde_json::Value::Null,
+            serde_json::json!([]),
+            serde_json::json!(["none"]),
+        ] {
+            let models = chatgpt_models(&serde_json::json!({"models": [{
+                "slug": "unknown", "supported_reasoning_levels": levels
+            }]}))
+            .unwrap();
+            assert!(!models[0].capabilities.thinking);
+            assert!(!models[0].capabilities.parallel_tool_calls);
+            assert!(!models[0].capabilities.tool_calls);
+            assert_eq!(models[0].context_window_tokens, 0);
+        }
+        assert!(chatgpt_models(&serde_json::json!({"models": []}))
+            .unwrap()
+            .is_empty());
+        for payload in [
+            serde_json::json!({}),
+            serde_json::json!({"models": null}),
+            serde_json::json!({"models": {}}),
+            serde_json::json!({"models": [{}]}),
+        ] {
+            assert_eq!(
+                chatgpt_models(&payload).unwrap_err().kind,
+                ProviderErrorKind::InvalidRequest
+            );
+        }
     }
 
     #[test]
@@ -275,7 +307,8 @@ mod tests {
         let models = chatgpt_models(&serde_json::json!({"models": [
             {"slug": "gpt-5.6-luna", "visibility": "list", "context_window": 272000},
             {"slug": "codex-auto-review", "visibility": "hide", "context_window": 272000}
-        ]}));
+        ]}))
+        .unwrap();
         assert_eq!(models.len(), 1);
         assert_eq!(models[0].id.as_str(), "gpt-5.6-luna");
     }

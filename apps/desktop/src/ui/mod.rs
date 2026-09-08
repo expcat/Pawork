@@ -2725,8 +2725,12 @@ impl AppView {
             (current + len - 1) % len
         };
         self.menu_highlight = Some(next);
-        if matches!(self.open_menu, Some(MenuKind::Scope)) {
-            self.scope_menu_scroll.scroll_to_item(next);
+        match self.open_menu {
+            Some(MenuKind::Scope) => self.scope_menu_scroll.scroll_to_item(next),
+            Some(MenuKind::SettingsRole(role)) => {
+                self.scroll_settings_role_menu_to_item(role, next)
+            }
+            _ => {}
         }
     }
 

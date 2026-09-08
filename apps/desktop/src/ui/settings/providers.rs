@@ -24,13 +24,7 @@ impl AppView {
         let providers = state.providers.clone();
         let oauth_waits = state.oauth_waits.clone();
         let auth_notes = state.auth_notes.clone();
-        // OPT-4c（F2）：外层脚手架（全宽 + 两侧 32px + 滚动）统一在
-        // settings_page_element；本页只提供内容列。
-        let mut content = div()
-            .flex()
-            .flex_col()
-            .min_w_0()
-            .gap_2();
+        let mut content = settings_column();
         // 页级刷新（SET-5）：重查 provider_auth_status + model_list；断线
         // 禁用（与 AX / 入口 gate 同源）。
         let refresh_enabled = connected;
@@ -38,9 +32,9 @@ impl AppView {
         let refresh = Button::new("settings-refresh")
             .track_focus(&refresh_focus)
             .variant(ButtonVariant::Raised)
-            .height(px(SETTINGS_ACTION_HEIGHT))
+            .height(px(SETTINGS_CONTROL_HEIGHT))
             .vcenter()
-            .radius(4.0)
+            .radius(6.0)
             .bordered()
             .text_size(font::BODY_SM)
             .label(t("settings.refresh"))
@@ -60,40 +54,20 @@ impl AppView {
         content = content.child(
             div()
                 .flex()
-                .flex_row()
                 .items_start()
-                .gap_2()
+                .gap_6()
+                .child(self.settings_heading(
+                    t("settings.providers.title"),
+                    t("settings.providers.subtitle"),
+                ))
                 .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .min_w_0()
-                        .child(
-                            div().font_weight(FontWeight::MEDIUM).child(
-                                Label::new(t("settings.providers.title"))
-                                    .size(font::TITLE)
-                                    .color(dark().text.primary),
-                            ),
-                        )
-                        .child(
-                            Label::new(t("settings.providers.subtitle"))
-                                .size(font::BODY_SM)
-                                .color(dark().text.secondary),
-                        ),
-                )
-                .child(div().flex_1())
-                .child(div().flex_none().pt_1().child(refresh)),
+                    self.settings_element("settings-refresh")
+                        .flex_none()
+                        .child(refresh),
+                ),
         );
-
-        // 状态行（不只靠颜色区分）：与 AX 共用 provider_status_lines，
-        // stale / loading / error / 空态独立发布。
         for (kind, line) in status_lines {
-            let color = if kind == "error" {
-                dark().semantic.danger_text
-            } else {
-                dark().text.secondary
-            };
-            content = content.child(status_line(&line, color));
+            content = content.child(self.settings_status(kind, line));
         }
 
         // OPT-3b / ADR-055 D5：「Default models」四角色区（刷新行之下、
@@ -101,15 +75,12 @@ impl AppView {
         content = content.child(self.settings_default_roles_section(cx));
 
         content = content.child(
-            div().font_weight(FontWeight::MEDIUM).child(
-                Label::new(t("settings.providers.section_providers"))
-                    .size(font::BODY)
-                    .color(dark().text.primary),
-            ),
+            self.settings_element("settings-providers-heading")
+                .child(settings_label(t("settings.providers.section_providers"))),
         );
 
         if !providers.is_empty() {
-            let mut cards = div().flex().flex_col().min_w_0().gap_2();
+            let mut cards = div().flex().flex_col().gap_3();
             for (ix, provider) in providers.iter().enumerate() {
                 let model_count = self
                     .projection
@@ -133,8 +104,8 @@ impl AppView {
         content
     }
 
-    /// Provider 卡（ADR-056 D4）：64px 概览头（名称 / 认证方式 / 连接态 /
-    /// 目录 / chevron）+ 展开区（Proxy → Manage models → Credentials →
+    /// Provider 卡：两组概览（名称 / 认证方式、连接态 / 目录）随字号自然
+    /// 增高；chevron 展开区（Proxy → Manage models → Credentials →
     /// Usage）。默认折叠；流程态（编辑器 / OAuth 等待 / Remove 二次确认 /
     /// 瞬态反馈）保持展开区可见。
     pub(super) fn settings_provider_card(
@@ -180,69 +151,75 @@ impl AppView {
         } else {
             auth_methods
         };
-        // 折叠态卡头五列信息密度不变；右侧动作区收敛为展开 chevron
-        //（Manage models / 代理 Switch / 认证动作全部迁入展开区）。
+        // 两组信息随列宽自然收缩，名称与连接状态不再争抢五个固定槽。
+        let expand = self.settings_provider_expand_button(&provider_id, expanded, cx);
         let header = div()
             .id(("settings-provider-overview", ix))
-            .h(px(PROVIDER_OVERVIEW_HEIGHT))
             .flex()
-            .flex_row()
             .items_center()
-            .gap_2()
-            .min_w_0()
-            .px_2()
+            .gap_4()
+            .px_4()
+            .py_4()
             .when(expanded, |el| {
                 el.border_b_1().border_color(dark().border.subtle)
             })
             .child(
-                div()
-                    .w(px(172.0))
+                self.settings_element(dynamic_identifier("settings-provider-name", &provider_id))
+                    .flex()
+                    .flex_col()
+                    .flex_1()
                     .min_w_0()
-                    .truncate()
-                    .font_weight(FontWeight::MEDIUM)
+                    .gap_1()
                     .child(
-                        Label::new(provider.display_name.clone())
-                            .size(font::BODY)
-                            .color(dark().text.primary),
+                        div()
+                            .text_size(font::BODY)
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(dark().text.primary)
+                            .child(provider.display_name.clone()),
+                    )
+                    .child(
+                        div()
+                            .text_size(font::BASE)
+                            .text_color(dark().text.secondary)
+                            .child(auth_methods),
                     ),
-            )
-            .child(
-                div().w(px(104.0)).min_w_0().truncate().child(
-                    Label::new(auth_methods)
-                        .size(font::BODY_SM)
-                        .color(dark().text.secondary),
-                ),
-            )
-            .child(
-                div().w(px(132.0)).min_w_0().truncate().child(
-                    Label::new(provider.auth_label())
-                        .size(font::BODY_SM)
-                        .color(connection_color),
-                ),
-            )
-            .child(
-                div().w(px(132.0)).min_w_0().truncate().child(
-                    Label::new(catalog_summary)
-                        .size(font::BODY_SM)
-                        .color(dark().text.secondary),
-                ),
             )
             .child(
                 div()
                     .flex()
+                    .flex_col()
                     .flex_1()
                     .min_w_0()
-                    .items_center()
-                    .justify_end()
                     .gap_1()
-                    .child(self.settings_provider_expand_button(&provider_id, expanded, cx)),
+                    .child(
+                        self.settings_element(dynamic_identifier(
+                            "settings-provider-connection",
+                            &provider_id,
+                        ))
+                        .text_size(font::BASE)
+                        .text_color(connection_color)
+                        .child(provider.auth_label()),
+                    )
+                    .child(
+                        self.settings_element(dynamic_identifier(
+                            "settings-provider-catalog",
+                            &provider_id,
+                        ))
+                        .text_size(font::XS)
+                        .text_color(dark().text.secondary)
+                        .child(catalog_summary),
+                    ),
+            )
+            .child(
+                self.settings_element(settings_provider_expand_identifier(&provider_id))
+                    .flex_none()
+                    .child(expand),
             );
-        let mut card = div()
-            .id(("settings-provider", ix))
+        let mut card = self
+            .settings_element(dynamic_identifier("settings-provider", &provider_id))
             .flex()
             .flex_col()
-            .min_w_0()
-            .rounded(px(6.0))
+            .rounded(px(metrics::INPUT_MENU_RADIUS))
             .border_1()
             .border_color(dark().border.subtle)
             .bg(dark().surface.raised)
@@ -312,7 +289,7 @@ impl AppView {
             .width(px(metrics::ICON_BUTTON_SIZE))
             .height(px(metrics::ICON_BUTTON_SIZE))
             .center()
-            .radius(4.0)
+            .radius(6.0)
             .text_size(font::ICON)
             .label(if expanded { "▾" } else { "▸" })
             .tooltip(if expanded {
@@ -320,12 +297,14 @@ impl AppView {
             } else {
                 t("settings.providers.expand_tooltip")
             })
-            .on_click(cx.listener(move |view, event: &gpui::ClickEvent, _window, cx| {
-                if view.consume_button_key_click(&click_id, event) {
-                    return;
-                }
-                view.on_toggle_settings_provider_expanded(click_provider.clone(), cx);
-            }))
+            .on_click(
+                cx.listener(move |view, event: &gpui::ClickEvent, _window, cx| {
+                    if view.consume_button_key_click(&click_id, event) {
+                        return;
+                    }
+                    view.on_toggle_settings_provider_expanded(click_provider.clone(), cx);
+                }),
+            )
             .on_activate(cx.listener(move |view, _event, _window, cx| {
                 view.note_button_key_activate(&activate_id);
                 view.on_toggle_settings_provider_expanded(activate_provider.clone(), cx);
@@ -386,13 +365,15 @@ impl AppView {
             cx,
         ));
         // Usage 行：固定槽位 + 诚实空态（ADR-056 D5，恒无数字 / 填充）。
-        region = region.child(Self::settings_provider_usage_row());
+        region = region.child(self.settings_provider_usage_row(&provider.provider_id));
         region
     }
 
     /// 展开区「标题 + 副标题 + 右侧控件」行（Proxy / Manage models /
     /// Usage 共用骨架；行间以 subtle 分隔线收口，对照签字稿）。
     fn settings_provider_row(
+        &mut self,
+        id: String,
         title: &'static str,
         subtitle: &'static str,
         divider: bool,
@@ -400,54 +381,24 @@ impl AppView {
     ) -> impl IntoElement {
         div()
             .flex()
-            .flex_row()
             .items_center()
-            .gap_2()
-            .min_w_0()
-            .h(px(SETTINGS_PROVIDER_ROW_HEIGHT))
-            .px_2()
+            .gap_4()
+            .px_4()
+            .py_4()
             .when(divider, |el| {
                 el.border_b_1().border_color(dark().border.subtle)
             })
             .child(
-                div()
+                self.settings_element(id)
                     .flex()
                     .flex_col()
-                    .min_w_0()
                     .flex_1()
-                    .child(
-                        // 注意：嵌套在 flex_col 内的 truncate div 不能再加
-                        // min_w_0——gpui 0.2.2 / taffy 0.9 下，显式
-                        // min-width:0 会让内蕴尺寸测量以 Definite(0) 下探，
-                        // 文本按 0 宽截断成「…」且 nowrap 测量缓存整帧毒化
-                        //（真窗口「标题全部 …」缺陷）。truncate 自带的
-                        // overflow:hidden 已提供收缩所需的最小尺寸。
-                        div()
-                            .truncate()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(
-                                Label::new(title)
-                                    .size(font::BODY)
-                                    .color(dark().text.primary),
-                            ),
-                    )
-                    .child(
-                        div().truncate().child(
-                            Label::new(subtitle)
-                                .size(font::BODY_SM)
-                                .color(dark().text.secondary),
-                        ),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .flex_row()
-                    .items_center()
+                    .min_w_0()
                     .gap_1()
-                    .child(right),
+                    .child(settings_label(title))
+                    .child(settings_copy(subtitle)),
             )
+            .child(div().flex().flex_none().items_center().child(right))
     }
 
     /// Proxy 行（ADR-052 SET-6h / OPT-3c）：Switch 写回 set_provider_use_proxy
@@ -474,7 +425,7 @@ impl AppView {
         let click_provider = provider_id.clone();
         let activate_id = id.clone();
         let activate_provider = provider_id.clone();
-        let toggle = Switch::new(id)
+        let toggle = Switch::new(id.clone())
             .track_focus(&focus)
             .checked(provider.use_proxy)
             .tooltip(tooltip)
@@ -495,7 +446,9 @@ impl AppView {
         } else {
             t("settings.providers.switch_off")
         };
-        Self::settings_provider_row(
+        let toggle = self.settings_element(id).flex_none().child(toggle);
+        self.settings_provider_row(
+            dynamic_identifier("settings-provider-proxy-text", &provider_id),
             t("settings.providers.proxy_title"),
             t("settings.providers.proxy_subtitle"),
             true,
@@ -528,18 +481,17 @@ impl AppView {
             .entry(manage_id.clone())
             .or_insert_with(|| cx.focus_handle().tab_stop(true))
             .clone();
-        let models_menu_open =
-            matches!(&self.open_menu, Some(MenuKind::SettingsProviderModels(open)) if open == &provider_id);
+        let models_menu_open = matches!(&self.open_menu, Some(MenuKind::SettingsProviderModels(open)) if open == &provider_id);
         let manage_click_id = manage_id.clone();
         let manage_click_provider = provider_id.clone();
         let manage_activate_id = manage_id.clone();
         let manage_activate_provider = provider_id.clone();
-        let manage_trigger = Button::new(manage_id)
+        let manage_trigger = Button::new(manage_id.clone())
             .track_focus(&focus)
             .variant(ButtonVariant::Raised)
-            .height(px(SETTINGS_ACTION_HEIGHT))
+            .height(px(SETTINGS_CONTROL_HEIGHT))
             .vcenter()
-            .radius(4.0)
+            .radius(6.0)
             .bordered()
             .text_size(font::BODY_SM)
             .label(t("settings.providers.manage_models"))
@@ -580,14 +532,16 @@ impl AppView {
         } else {
             manage_trigger
         };
-        let mut manage_picker = Dropdown::new(manage_trigger);
+        let mut manage_picker =
+            Dropdown::new(self.settings_element(manage_id).child(manage_trigger));
         if models_menu_open && manage_enabled {
             manage_picker =
                 manage_picker.panel(self.settings_models_menu_element(&provider_id, cx));
         }
-        Self::settings_provider_row(
+        self.settings_provider_row(
+            dynamic_identifier("settings-provider-manage-text", &provider_id),
             t("settings.providers.manage_models"),
-            t("settings.providers.manage_models_tooltip"),
+            t("settings.providers.catalog_scope"),
             true,
             manage_picker,
         )
@@ -596,31 +550,19 @@ impl AppView {
     /// Usage 行（ADR-056 D5 / OPT-3e）：固定进度条槽位 + 「Usage
     /// unavailable」诚实空态；无权威 QuotaSnapshot 来源前不渲染任何数字、
     /// 百分比或填充。
-    fn settings_provider_usage_row() -> impl IntoElement {
-        Self::settings_provider_row(
+    fn settings_provider_usage_row(&mut self, provider_id: &str) -> impl IntoElement {
+        self.settings_provider_row(
+            dynamic_identifier("settings-provider-usage", provider_id),
             t("settings.providers.usage_title"),
             t("settings.providers.usage_unavailable"),
             false,
             div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap_2()
-                .child(
-                    // 固定槽位：空轨道，恒无填充。
-                    div()
-                        .flex_none()
-                        .w(px(SETTINGS_PROVIDER_USAGE_BAR_WIDTH))
-                        .h(px(SETTINGS_PROVIDER_USAGE_BAR_HEIGHT))
-                        .rounded(px(SETTINGS_PROVIDER_USAGE_BAR_HEIGHT / 2.0))
-                        .border_1()
-                        .border_color(dark().border.subtle),
-                )
-                .child(
-                    Label::new(t("settings.providers.usage_unavailable"))
-                        .size(font::BODY_SM)
-                        .color(dark().text.secondary),
-                ),
+                .flex_none()
+                .w(px(SETTINGS_PROVIDER_USAGE_BAR_WIDTH))
+                .h(px(SETTINGS_PROVIDER_USAGE_BAR_HEIGHT))
+                .rounded(px(SETTINGS_PROVIDER_USAGE_BAR_HEIGHT / 2.0))
+                .border_1()
+                .border_color(dark().border.subtle),
         )
     }
 
@@ -654,65 +596,38 @@ impl AppView {
                 crate::projection::ProviderCatalogState::Unavailable { .. },
             )
         );
-        let mut block = div()
+        let mut block = self
+            .settings_element(dynamic_identifier(
+                "settings-provider-credentials",
+                &provider_id,
+            ))
             .flex()
             .flex_col()
-            .px_2()
-            .py_2()
-            .gap_1()
+            .px_4()
+            .py_4()
+            .gap_3()
             .border_b_1()
             .border_color(dark().border.subtle)
             .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .min_w_0()
-                            .flex_1()
-                    .child(
-                        // 同 settings_provider_row：flex_col 链路上任何
-                        // 节点都不加 min_w_0（包括本 header col 与 block
-                        // 本身）——taffy 0.9 MinContent 趟会把显式
-                        // min-width:0 以 Definite(0) 下探到子树，gpui 0.2.2
-                        // nowrap 截断文本首测量即缓存「…」，整帧毒化（真
-                        // 窗口「区标题 … / 副标题 ..」缺陷）。truncate 自
-                        // 带的 overflow:hidden 已提供收缩所需最小尺寸。
-                        // 注意 region 根的 min_w_0 仍在：auto-basis 裸
-                        // flex_col 文本列照样被 Definite(0) 测量毒化，
-                        // 必须像 settings_provider_row 一样外套 flex_row
-                        // 并给文本列 flex_1（确定 flex-basis 躲过内容测
-                        // 量趟）——本 header 实测复现后按此修复。
-                        div()
-                            .truncate()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(
-                                Label::new(t("settings.providers.credentials_title"))
-                                    .size(font::BODY)
-                                    .color(dark().text.primary),
-                            ),
-                    )
-                    .child(
-                        div().truncate().child(
-                            Label::new(t("settings.providers.credentials_subtitle"))
-                                .size(font::BODY_SM)
-                                .color(dark().text.secondary),
-                        ),
-                    ),
-                    ),
+                self.settings_element(dynamic_identifier(
+                    "settings-provider-credentials-header",
+                    &provider_id,
+                ))
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(settings_label(t("settings.providers.credentials_title")))
+                .child(settings_copy(t("settings.providers.credentials_subtitle"))),
             );
         // 凭证行：只列盘上存储条目（kind + masked + 状态点）；空列表给
         // 诚实空态，不渲染假行（env fallback 不入列，Host 口径）。
         if provider.credentials.is_empty() {
-            block = block.child(
-                Label::new(t("settings.providers.credentials_empty"))
-                    .size(font::BODY_SM)
-                    .color(dark().text.secondary),
-            );
+            block = block.child(self.settings_note(
+                dynamic_identifier("settings-provider-credentials-empty", &provider_id),
+                t("settings.providers.credentials_empty"),
+            ));
         } else {
-            for credential in &provider.credentials {
+            for (ix, credential) in provider.credentials.iter().enumerate() {
                 let expired = credential.expired;
                 let status_color = if expired {
                     dark().semantic.danger_text
@@ -720,64 +635,74 @@ impl AppView {
                     dark().semantic.success_fg
                 };
                 block = block.child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap_2()
-                        .min_w_0()
-                        .h(px(SETTINGS_PROVIDER_CREDENTIAL_ROW_HEIGHT))
-                        .child(
-                            div()
-                                .flex()
-                                .flex_1()
-                                .min_w_0()
-                                .flex_row()
-                                .items_center()
-                                .gap_2()
-                                .child(
-                                    Label::new(provider_credential_kind_label(&credential.kind))
+                    self.settings_element(dynamic_identifier(
+                        &format!("settings-provider-credential-{ix}"),
+                        &provider_id,
+                    ))
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap_3()
+                    .py_2()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_1()
+                            .min_w_0()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                Label::new(provider_credential_kind_label(&credential.kind))
+                                    .size(font::BODY_SM)
+                                    .color(dark().text.primary),
+                            )
+                            .child(
+                                div().min_w_0().truncate().child(
+                                    Label::new(credential.masked_credential.clone())
                                         .size(font::BODY_SM)
-                                        .color(dark().text.primary),
-                                )
-                                .child(
-                                    div().min_w_0().truncate().child(
-                                        Label::new(credential.masked_credential.clone())
-                                            .size(font::BODY_SM)
-                                            .color(dark().text.tertiary),
-                                    ),
+                                        .color(dark().text.tertiary),
                                 ),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .flex_none()
-                                .items_center()
-                                .gap_1()
-                                .child(
-                                    div()
-                                        .flex_none()
-                                        .w(px(6.0))
-                                        .h(px(6.0))
-                                        .rounded_full()
-                                        .bg(status_color),
-                                )
-                                .child(
-                                    Label::new(provider_credential_status_label(expired))
-                                        .size(font::BODY_SM)
-                                        .color(status_color),
-                                ),
-                        ),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_none()
+                            .items_center()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .w(px(6.0))
+                                    .h(px(6.0))
+                                    .rounded_full()
+                                    .bg(status_color),
+                            )
+                            .child(
+                                Label::new(provider_credential_status_label(expired))
+                                    .size(font::BODY_SM)
+                                    .color(status_color),
+                            ),
+                    ),
                 );
             }
         }
 
+        let mut details = self
+            .settings_element(dynamic_identifier(
+                "settings-provider-details",
+                &provider_id,
+            ))
+            .flex()
+            .flex_col()
+            .gap_2();
         // OAuth 授权等待详情：Desktop 只显示 URL / user code / 到期，
         // 不接触 token；取消走 auth_cancel。
         if let (ProviderAuthState::Connecting, Some(wait)) =
             (&provider.auth, oauth_waits.get(&provider_id))
         {
-            block = block.child(
+            details = details.child(
                 Label::new(
                     t("settings.providers.authorize_at").replace("{}", &wait.verification_url),
                 )
@@ -785,14 +710,14 @@ impl AppView {
                 .color(dark().text.secondary),
             );
             if let Some(code) = &wait.user_code {
-                block = block.child(
+                details = details.child(
                     Label::new(t("settings.providers.oauth_code").replace("{}", code))
                         .size(font::BODY_SM)
                         .color(dark().text.secondary),
                 );
             }
             if let Some(expires) = &wait.expires_at {
-                block = block.child(
+                details = details.child(
                     Label::new(t("settings.providers.oauth_expires").replace("{}", expires))
                         .size(font::BODY_SM)
                         .color(dark().text.tertiary),
@@ -802,28 +727,37 @@ impl AppView {
 
         // 终态 AuthChanged 的瞬态反馈（取消 / 过期 / 移除）。
         if let Some(note) = auth_notes.get(&provider_id) {
-            block = block.child(status_line(note, dark().text.secondary));
+            details = details.child(status_line(note, dark().text.secondary));
         }
         if let Some(message) = auth_error {
-            block = block.child(status_line(
+            details = details.child(status_line(
                 &t("settings.providers.connection_error").replace("{}", message),
                 dark().semantic.danger_text,
             ));
         }
         if catalog_error {
-            block = block.child(status_line(
+            details = details.child(status_line(
                 &provider.catalog_label(),
                 dark().semantic.danger_text,
             ));
         }
         if endpoint_visible {
-            block = block.child(
+            details = details.child(
                 Label::new(
                     t("settings.providers.endpoint_row").replace("{}", &provider.endpoint_label),
                 )
                 .size(font::BODY_SM)
                 .color(dark().text.tertiary),
             );
+        }
+
+        if oauth_waiting
+            || auth_notes.contains_key(&provider_id)
+            || auth_error.is_some()
+            || catalog_error
+            || endpoint_visible
+        {
+            block = block.child(details);
         }
 
         // API key secure 输入（内联）：none / error 常驻；connected 由
@@ -836,8 +770,12 @@ impl AppView {
                     writes,
                     cx,
                 );
-                let mut editor = div().flex().flex_row().items_center().gap_1().min_w_0();
-                editor = editor.child(div().flex_1().min_w_0().child(input));
+                let mut editor = div().flex().flex_col().gap_3();
+                editor = editor.child(
+                    self.settings_element(settings_api_key_input_identifier(&provider_id))
+                        .child(input),
+                );
+                let mut editor_actions = div().flex().flex_wrap().gap_2();
                 for action in [
                     SettingsAuthAction::VerifyApiKey,
                     SettingsAuthAction::CancelApiKeyInput,
@@ -857,7 +795,7 @@ impl AppView {
                     } else {
                         (writes, "")
                     };
-                    editor = editor.child(self.settings_action_button(
+                    editor_actions = editor_actions.child(self.settings_action_button(
                         action,
                         &provider_id,
                         enabled,
@@ -865,14 +803,14 @@ impl AppView {
                         cx,
                     ));
                 }
-                block = block.child(editor);
+                block = block.child(editor.child(editor_actions));
             }
         }
 
         // 认证动作按钮（Connect / Replace / Remove / Cancel 等）位于
         // Credentials 区下方；行为不变。
         if !row_actions.is_empty() {
-            let mut row = div().flex().flex_row().gap_1().flex_wrap();
+            let mut row = div().flex().flex_row().gap_2().flex_wrap();
             for action in row_actions {
                 let tooltip = if *action == SettingsAuthAction::Remove {
                     t("settings.providers.tooltip_remove_credential")
@@ -902,53 +840,41 @@ impl AppView {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let unavailable = self.projection.default_model_unavailable();
-        let mut section = div()
-            .id("settings-default-roles")
+        let mut section = self
+            .settings_element("settings-default-roles")
             .flex()
             .flex_col()
-            .min_w_0()
-            .gap_2()
+            .gap_3()
+            .pt_6()
+            .border_t_1()
+            .border_color(dark().border.subtle)
             .child(
-                div()
+                self.settings_element("settings-default-roles-title")
                     .flex()
                     .flex_col()
-                    .min_w_0()
-                    .child(
-                        div().font_weight(FontWeight::MEDIUM).child(
-                            Label::new(t("settings.roles.title"))
-                                .size(font::TITLE)
-                                .color(dark().text.primary),
-                        ),
-                    )
-                    .child(
-                        Label::new(t("settings.roles.subtitle"))
-                            .size(font::BODY_SM)
-                            .color(dark().text.secondary),
-                    ),
+                    .gap_2()
+                    .child(settings_label(t("settings.roles.title")))
+                    .child(settings_copy(t("settings.roles.subtitle"))),
             );
         if unavailable {
-            section = section.child(status_line(
-                settings_default_unavailable_note(),
-                dark().semantic.danger_text,
-            ));
+            section = section.child(
+                self.settings_element("settings-default-roles-unavailable")
+                    .text_size(font::BASE)
+                    .text_color(dark().semantic.danger_text)
+                    .child(settings_default_unavailable_note()),
+            );
         }
-        let mut card = div()
-            .id("settings-default-roles-card")
+        let mut card = self
+            .settings_element("settings-default-roles-card")
             .flex()
-            .flex_col()
-            .min_w_0()
-            .rounded(px(6.0))
-            .border_1()
-            .border_color(dark().border.subtle)
-            .bg(dark().surface.raised);
+            .flex_col();
         for (ix, role) in SettingsRole::ALL.into_iter().enumerate() {
             card = card.child(self.settings_role_row(ix, role, cx));
         }
         section.child(card)
     }
 
-    /// 单个角色行：左角色名、中下拉触发器（Dropdown 浮层面板）、右用途
-    /// 说明。可见 / 键盘 / AX 三路径同 identifier、同 gate（断线 / stale /
+    /// 单个角色行：左侧角色名与用途说明，右侧下拉触发器。可见 / 键盘 / AX 三路径同 identifier、同 gate（断线 / stale /
     /// 该角色写中禁用，disabled 不发布 Press）。
     pub(super) fn settings_role_row(
         &mut self,
@@ -967,13 +893,13 @@ impl AppView {
             .clone();
         let click_id = identifier.clone();
         let activate_id = identifier.clone();
-        let trigger = Button::new(identifier)
+        let trigger = Button::new(identifier.clone())
             .track_focus(&focus)
             .variant(ButtonVariant::Raised)
-            .height(px(SETTINGS_ACTION_HEIGHT))
+            .height(px(SETTINGS_CONTROL_HEIGHT))
             .width(px(SETTINGS_ROLE_MENU_WIDTH))
             .vcenter()
-            .radius(4.0)
+            .radius(6.0)
             .bordered()
             .text_size(font::BODY_SM)
             .label(self.settings_role_value_label(role))
@@ -1004,41 +930,30 @@ impl AppView {
         } else {
             trigger
         };
-        let mut picker = Dropdown::new(trigger);
+        let mut picker = Dropdown::new(self.settings_element(identifier).child(trigger));
         if menu_open && enabled {
             picker = picker.panel(self.settings_role_menu_element(role, cx));
         }
         div()
             .id(("settings-role-row", ix))
-            .h(px(SETTINGS_ROLE_ROW_HEIGHT))
             .flex()
-            .flex_row()
             .items_center()
-            .gap_2()
-            .min_w_0()
-            .px_2()
+            .gap_4()
+            .py_4()
             .when(ix + 1 < SettingsRole::ALL.len(), |row| {
                 row.border_b_1().border_color(dark().border.subtle)
             })
             .child(
-                div()
-                    .w(px(SETTINGS_ROLE_LABEL_WIDTH))
+                self.settings_element(format!("settings-role-label-{}", role.wire_name()))
+                    .flex()
+                    .flex_col()
+                    .flex_1()
                     .min_w_0()
-                    .truncate()
-                    .child(
-                        Label::new(role.label())
-                            .size(font::BODY)
-                            .color(dark().text.primary),
-                    ),
+                    .gap_1()
+                    .child(settings_label(role.label()))
+                    .child(settings_copy(settings_role_description_label(role))),
             )
             .child(div().flex_none().child(picker))
-            .child(
-                div().flex_1().min_w_0().truncate().child(
-                    Label::new(settings_role_description_label(role))
-                        .size(font::BODY_SM)
-                        .color(dark().text.secondary),
-                ),
-            )
     }
 
     /// 角色下拉当前值文案（render 与 AX 同源）：Provider · Model 显示名
@@ -1087,29 +1002,51 @@ impl AppView {
         let current = self.projection.settings_providers.role_value(role).cloned();
         let selected_ix = self.menu_selected_index();
         let highlight = self.menu_highlight_effective(selected_ix);
-        let mut panel = MenuPanel::new(SharedString::from(format!(
-            "settings-role-menu-{}",
-            role.wire_name()
-        )))
-        .dismiss_on_outside(cx.listener(
-            move |view, event: &gpui::MouseDownEvent, _, cx| {
-                view.dismiss_menu_on_outside(MenuKind::SettingsRole(role), event.position, cx);
-            },
-        ));
+        let menu_id = format!("settings-role-menu-{}", role.wire_name());
+        let menu_scroll = self
+            .settings_element_layouts
+            .entry(menu_id.clone())
+            .or_default()
+            .clone();
+        if menu_scroll.bounds().size.height == px(0.0) {
+            // 首次 prepaint 前 ScrollHandle 尚无 viewport/overflow；等本帧
+            // 布局完成后定位当前项，再重绘，避免首帧滚入请求被空几何吞掉。
+            let view = cx.entity().downgrade();
+            cx.defer(move |cx| {
+                let _ = view.update(cx, |view, cx| {
+                    if matches!(view.open_menu, Some(MenuKind::SettingsRole(open)) if open == role)
+                    {
+                        let highlight = view.menu_highlight_effective(view.menu_selected_index());
+                        view.scroll_settings_role_menu_to_item(role, highlight);
+                        cx.notify();
+                    }
+                });
+            });
+        }
+        let mut panel = MenuPanel::new(SharedString::from(menu_id))
+            .track_scroll(&menu_scroll)
+            .dismiss_on_outside(
+                cx.listener(move |view, event: &gpui::MouseDownEvent, _, cx| {
+                    view.dismiss_menu_on_outside(MenuKind::SettingsRole(role), event.position, cx);
+                }),
+            );
         panel = panel.child(
-            MenuRow::new(settings_role_clear_identifier(role))
-                .label(t("settings.roles.clear"))
-                .selected(current.is_none())
-                .highlighted(0 == highlight)
-                .on_click(cx.listener(move |view, _event, _window, cx| {
-                    view.on_select_settings_role(role, None, cx);
-                })),
+            self.settings_element(settings_role_clear_identifier(role))
+                .child(
+                    MenuRow::new(settings_role_clear_identifier(role))
+                        .label(t("settings.roles.clear"))
+                        .selected(current.is_none())
+                        .highlighted(0 == highlight)
+                        .on_click(cx.listener(move |view, _event, _window, cx| {
+                            view.on_select_settings_role(role, None, cx);
+                        })),
+                ),
         );
         if candidates.is_empty() {
             // 无已连接 / 已启用模型：菜单仍可打开，给标题 + 一行指引的
             // 诚实空态；清除行仍可操作，不编造模型。
             return panel.child(
-                div()
+                self.settings_element(format!("settings-role-menu-empty-{}", role.wire_name()))
                     .flex()
                     .flex_col()
                     .gap(px(metrics::SPACE_1))
@@ -1143,44 +1080,78 @@ impl AppView {
                 .map(|entry| entry.display_name.clone())
                 .unwrap_or_else(|| provider_id.to_string());
             panel = panel.child(
-                div()
-                    .h(px(SETTINGS_ROLE_MENU_GROUP_HEADER_HEIGHT))
-                    .px_2()
-                    .flex()
-                    .items_center()
-                    .min_w_0()
-                    .truncate()
-                    .text_size(font::SM)
-                    .text_color(dark().text.secondary)
-                    .child(display_name),
+                self.settings_element(dynamic_identifier(
+                    &format!("settings-role-menu-group-{}", role.wire_name()),
+                    &provider_id,
+                ))
+                .min_h(gpui::rems(1.5))
+                .px_2()
+                .flex()
+                .items_center()
+                .min_w_0()
+                .truncate()
+                .text_size(font::SM)
+                .text_color(dark().text.secondary)
+                .child(display_name),
             );
             for model in models {
                 let selected = current.as_ref().is_some_and(|(provider, id)| {
                     provider == &model.provider_id && id == &model.id
                 });
+                let item_id = settings_role_item_identifier(role, &model.provider_id, &model.id);
                 panel = panel.child(
-                    MenuRow::new(settings_role_item_identifier(
-                        role,
-                        &model.provider_id,
-                        &model.id,
-                    ))
-                    .label(model.display_name.clone())
-                    .selected(selected)
-                    .highlighted(item_ix == highlight)
-                    .on_click(cx.listener(
-                        move |view, _event, _window, cx| {
-                            view.on_select_settings_role(
-                                role,
-                                Some((model.provider_id.clone(), model.id.clone())),
-                                cx,
-                            );
-                        },
-                    )),
+                    self.settings_element(item_id).child(
+                        MenuRow::new(settings_role_item_identifier(
+                            role,
+                            &model.provider_id,
+                            &model.id,
+                        ))
+                        .label(model.display_name.clone())
+                        .selected(selected)
+                        .highlighted(item_ix == highlight)
+                        .on_click(cx.listener(
+                            move |view, _event, _window, cx| {
+                                view.on_select_settings_role(
+                                    role,
+                                    Some((model.provider_id.clone(), model.id.clone())),
+                                    cx,
+                                );
+                            },
+                        )),
+                    ),
                 );
                 item_ix += 1;
             }
         }
         panel
+    }
+
+    /// 键盘索引只计 Clear 与模型；滚动索引还包含每个供应商组头。
+    pub(crate) fn scroll_settings_role_menu_to_item(&self, role: SettingsRole, item: usize) {
+        let Some(scroll) = self
+            .settings_element_layouts
+            .get(&format!("settings-role-menu-{}", role.wire_name()))
+        else {
+            return;
+        };
+        if item == 0 {
+            scroll.scroll_to_item(0);
+            return;
+        }
+        let mut logical = 1;
+        let mut child = 1;
+        for (_, models) in settings_role_candidates(
+            &self.projection.models,
+            &self.projection.settings_providers.providers,
+        ) {
+            child += 1; // provider header
+            if item < logical + models.len() {
+                scroll.scroll_to_item(child + item - logical);
+                return;
+            }
+            logical += models.len();
+            child += models.len();
+        }
     }
 
     /// 角色菜单触发器 toggle（render 点击 / 键盘激活 / AX Press 三路径
@@ -1196,6 +1167,10 @@ impl AppView {
             return;
         }
         self.toggle_menu(MenuKind::SettingsRole(role), down_position, cx);
+        if matches!(self.open_menu, Some(MenuKind::SettingsRole(open)) if open == role) {
+            self.settings_element_layouts
+                .remove(&format!("settings-role-menu-{}", role.wire_name()));
+        }
     }
 
     /// 角色选择统一入口（菜单点击 / 键盘 Enter / AX Press 三路径同源；
@@ -1279,7 +1254,7 @@ impl AppView {
         enabled: bool,
         tooltip: &'static str,
         cx: &mut Context<Self>,
-    ) -> Button {
+    ) -> impl IntoElement {
         let id = action.identifier(provider_id);
         let focus = self
             .settings_action_focus
@@ -1290,12 +1265,12 @@ impl AppView {
         let click_provider = provider_id.to_string();
         let activate_id = id.clone();
         let activate_provider = provider_id.to_string();
-        let button = Button::new(id)
+        let button = Button::new(id.clone())
             .track_focus(&focus)
             .variant(ButtonVariant::Raised)
-            .height(px(SETTINGS_ACTION_HEIGHT))
+            .height(px(SETTINGS_CONTROL_HEIGHT))
             .vcenter()
-            .radius(4.0)
+            .radius(6.0)
             .bordered()
             .text_size(font::BODY_SM)
             .label(action.label())
@@ -1311,11 +1286,12 @@ impl AppView {
                 view.on_settings_action(action, activate_provider.clone(), cx);
                 cx.stop_propagation();
             }));
-        if tooltip.is_empty() {
+        let button = if tooltip.is_empty() {
             button
         } else {
             button.tooltip(tooltip)
-        }
+        };
+        self.settings_element(id).flex_none().child(button)
     }
 
     /// settings 写动作统一入口（三路径同源；入口级复核 gate 与 descriptor）。
@@ -1541,38 +1517,56 @@ impl AppView {
             .cloned()
             .collect();
         let dismiss_provider = provider_id.to_string();
-        let mut panel = MenuPanel::new(SharedString::from(settings_models_menu_identifier(
-            provider_id,
-        )))
-        .max_height(SETTINGS_MODELS_MENU_MAX_HEIGHT)
-        .dismiss_on_outside(cx.listener(
-            move |view, event: &gpui::MouseDownEvent, _, cx| {
-                view.dismiss_menu_on_outside(
-                    MenuKind::SettingsProviderModels(dismiss_provider.clone()),
-                    event.position,
-                    cx,
-                );
-            },
-        ));
+        let menu_id = settings_models_menu_identifier(provider_id);
+        let menu_scroll = self
+            .settings_element_layouts
+            .entry(menu_id.clone())
+            .or_default()
+            .clone();
+        let mut panel = MenuPanel::new(SharedString::from(menu_id))
+            .track_scroll(&menu_scroll)
+            .max_height(SETTINGS_MODELS_MENU_MAX_HEIGHT)
+            .dismiss_on_outside(
+                cx.listener(move |view, event: &gpui::MouseDownEvent, _, cx| {
+                    view.dismiss_menu_on_outside(
+                        MenuKind::SettingsProviderModels(dismiss_provider.clone()),
+                        event.position,
+                        cx,
+                    );
+                }),
+            );
         // 头行：标题 + Enable all / Disable all（空目录两者禁用）。
         let all_enabled = writes && !pending && !models.is_empty();
         let mut header = div()
+            .w(px(SETTINGS_MODELS_MENU_WIDTH))
             .flex()
-            .flex_row()
-            .items_center()
-            .gap_1()
-            .min_w_0()
-            .h(px(SETTINGS_MODELS_MENU_HEADER_HEIGHT))
+            .flex_col()
+            .gap_3()
+            .px_2()
+            .py_2()
             .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .text_size(font::SM)
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(dark().text.primary)
-                    .child(t("settings.providers.models_title")),
+                self.settings_element(format!("settings-models-heading-{provider_id}"))
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(settings_label(t("settings.providers.models_title")))
+                    .child(settings_copy(crate::ui::i18n::t2(
+                        "settings.providers.models_count",
+                        &models
+                            .iter()
+                            .filter(|model| model.enabled)
+                            .count()
+                            .to_string(),
+                        &models.len().to_string(),
+                    ))),
+            )
+            .child(
+                self.settings_element(format!("settings-models-scope-{provider_id}"))
+                    .text_size(font::XS)
+                    .text_color(dark().text.secondary)
+                    .child(t("settings.providers.catalog_scope")),
             );
+        let mut bulk_actions = div().flex().flex_wrap().gap_2();
         for (identifier, label, target) in [
             (
                 settings_models_enable_all_identifier(provider_id),
@@ -1594,12 +1588,12 @@ impl AppView {
             let click_provider = provider_id.to_string();
             let activate_id = identifier.clone();
             let activate_provider = provider_id.to_string();
-            let button = Button::new(identifier)
+            let button = Button::new(identifier.clone())
                 .track_focus(&focus)
                 .variant(ButtonVariant::Raised)
-                .height(px(SETTINGS_MODELS_MENU_HEADER_HEIGHT))
+                .height(px(SETTINGS_CONTROL_HEIGHT))
                 .vcenter()
-                .radius(4.0)
+                .radius(6.0)
                 .bordered()
                 .text_size(font::SM)
                 .label(label)
@@ -1615,8 +1609,10 @@ impl AppView {
                     view.on_toggle_provider_models_all(activate_provider.clone(), target, cx);
                     cx.stop_propagation();
                 }));
-            header = header.child(button);
+            bulk_actions =
+                bulk_actions.child(self.settings_element(identifier).flex_none().child(button));
         }
+        header = header.child(bulk_actions);
         panel = panel.child(header);
         if models.is_empty() {
             // 空目录诚实空态：Enable / Disable all 已禁用，Refresh 复用
@@ -1629,12 +1625,12 @@ impl AppView {
                 .clone();
             let refresh_click_id = refresh_id.clone();
             let refresh_activate_id = refresh_id.clone();
-            let refresh = Button::new(refresh_id)
+            let refresh = Button::new(refresh_id.clone())
                 .track_focus(&refresh_focus)
                 .variant(ButtonVariant::Raised)
-                .height(px(SETTINGS_ACTION_HEIGHT))
+                .height(px(SETTINGS_CONTROL_HEIGHT))
                 .vcenter()
-                .radius(4.0)
+                .radius(6.0)
                 .bordered()
                 .text_size(font::SM)
                 .label(t("settings.providers.models_refresh"))
@@ -1651,7 +1647,7 @@ impl AppView {
                     cx.stop_propagation();
                 }));
             return panel.child(
-                div()
+                self.settings_element(format!("settings-models-empty-{provider_id}"))
                     .flex()
                     .flex_col()
                     .gap(px(metrics::SPACE_1))
@@ -1670,7 +1666,12 @@ impl AppView {
                             .text_color(dark().text.secondary)
                             .child(t("settings.providers.models_empty_hint")),
                     )
-                    .child(div().flex_none().pt_1().child(refresh)),
+                    .child(
+                        self.settings_element(refresh_id)
+                            .flex_none()
+                            .pt_1()
+                            .child(refresh),
+                    ),
             );
         }
         for model in models {
@@ -1686,7 +1687,7 @@ impl AppView {
             let activate_id = switch_id.clone();
             let activate_provider = provider_id.to_string();
             let activate_model = model.id.clone();
-            let row_switch = Switch::new(switch_id)
+            let row_switch = Switch::new(switch_id.clone())
                 .track_focus(&focus)
                 .checked(model.enabled)
                 .disabled(!writes || pending)
@@ -1712,7 +1713,10 @@ impl AppView {
                     .items_center()
                     .gap_2()
                     .min_w_0()
-                    .h(px(SETTINGS_MODELS_MENU_ROW_HEIGHT))
+                    .min_h(gpui::rems(3.5))
+                    .py_2()
+                    .border_t_1()
+                    .border_color(dark().border.subtle)
                     .px_1()
                     .child(
                         div()
@@ -1722,7 +1726,6 @@ impl AppView {
                             .flex_1()
                             .child(
                                 div()
-                                    .min_w_0()
                                     .truncate()
                                     .text_size(font::SM)
                                     .text_color(dark().text.primary)
@@ -1730,14 +1733,17 @@ impl AppView {
                             )
                             .child(
                                 div()
-                                    .min_w_0()
                                     .truncate()
                                     .text_size(font::XS)
                                     .text_color(dark().text.tertiary)
                                     .child(model.id.clone()),
                             ),
                     )
-                    .child(div().flex_none().child(row_switch)),
+                    .child(
+                        self.settings_element(switch_id)
+                            .flex_none()
+                            .child(row_switch),
+                    ),
             );
         }
         panel

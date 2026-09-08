@@ -47,40 +47,17 @@ pub(super) use super::{AppRoute, AppView, SettingsPage};
 use crate::ui::i18n::t;
 
 /// Settings 内容区水平 padding（OPT-4c / F2）：Rail 外全宽、两侧 32px，
-/// 不保留 820px 内容列上限；AX 经 `settings_content_ax_width` 同源取值。
+/// 不保留 820px 内容列上限；AX 读取实际元素框。
 pub(super) const SETTINGS_CONTENT_PAD: f32 = 32.0;
-/// Provider 卡片内边距（8px 节奏）。
-pub(super) const PROVIDER_CARD_PAD: f32 = 8.0;
-/// Provider 普通概览行高度；详情仅在连接流程、错误或二次确认时展开。
-pub(crate) const PROVIDER_OVERVIEW_HEIGHT: f32 = 64.0;
-/// Provider 页写动作按钮高度（UI-6 前保留既有 28px 槽位）。
-pub(super) const SETTINGS_ACTION_HEIGHT: f32 = 28.0;
-/// UI-5：非供应商页动作与导航沿用工作台的 36px / 40px 命中区。
+/// Settings 动作与导航沿用工作台的 36px / 40px 命中区。
 pub(super) const SETTINGS_CONTROL_HEIGHT: f32 = 36.0;
 pub(crate) const SETTINGS_NAV_HEIGHT: f32 = 40.0;
 /// 两行审批说明与内边距随字号一起增长（render / AX 同源）。
 pub(crate) const SETTINGS_APPROVAL_ROW_REMS: f32 = 3.5;
-/// 「Default models」角色行几何（render 与 AX 同源；OPT-3b / ADR-055 D5）。
-pub(crate) const SETTINGS_ROLE_ROW_HEIGHT: f32 = 48.0;
-pub(crate) const SETTINGS_ROLE_LABEL_WIDTH: f32 = 172.0;
+/// Provider 页内容高度自然排版，AX 读取实际框；这里只固定控件宽度。
 pub(crate) const SETTINGS_ROLE_MENU_WIDTH: f32 = 260.0;
-/// 角色菜单 provider 分组头高度（render 与 AX 几何共用）。
-pub(crate) const SETTINGS_ROLE_MENU_GROUP_HEADER_HEIGHT: f32 = 24.0;
-/// 角色菜单空态说明块高度（标题 + 指引一行）。
-pub(crate) const SETTINGS_ROLE_MENU_EMPTY_HEIGHT: f32 = 56.0;
-/// 「Manage models」弹层几何（render 与 AX 同源；OPT-3a / ADR-055 D2）。
 pub(crate) const SETTINGS_MODELS_MENU_WIDTH: f32 = 320.0;
-pub(crate) const SETTINGS_MODELS_MENU_MAX_HEIGHT: f32 = 320.0;
-pub(crate) const SETTINGS_MODELS_MENU_HEADER_HEIGHT: f32 = 28.0;
-pub(crate) const SETTINGS_MODELS_MENU_ROW_HEIGHT: f32 = 44.0;
-pub(crate) const SETTINGS_MODELS_MENU_EMPTY_HEIGHT: f32 = 104.0;
-/// 展开区行高（Proxy / Manage models / Usage 行；render 与 AX 同源；
-/// ADR-056 D4）。
-pub(crate) const SETTINGS_PROVIDER_ROW_HEIGHT: f32 = 48.0;
-/// Credentials 区头部高度（标题 + 副标题两行）。
-pub(crate) const SETTINGS_PROVIDER_CREDENTIALS_HEADER_HEIGHT: f32 = 40.0;
-/// 单条凭证行高度。
-pub(crate) const SETTINGS_PROVIDER_CREDENTIAL_ROW_HEIGHT: f32 = 28.0;
+pub(crate) const SETTINGS_MODELS_MENU_MAX_HEIGHT: f32 = 400.0;
 /// Usage 进度条槽位几何（固定槽位，恒无填充；ADR-056 D5）。
 pub(crate) const SETTINGS_PROVIDER_USAGE_BAR_WIDTH: f32 = 120.0;
 pub(crate) const SETTINGS_PROVIDER_USAGE_BAR_HEIGHT: f32 = 4.0;
@@ -1099,6 +1076,27 @@ impl AppView {
         )
     }
 
+    /// 浮层可超出页面滚动框，子项只按该菜单的实际视口裁剪。
+    pub(crate) fn settings_menu_element_bounds(
+        &self,
+        id: &str,
+        menu_id: &str,
+    ) -> super::accessibility::AxRect {
+        let Some(handle) = self.settings_element_layouts.get(id) else {
+            return super::accessibility::AxRect::new(0.0, 0.0, 0.0, 0.0);
+        };
+        let Some(menu) = self.settings_element_layouts.get(menu_id) else {
+            return super::accessibility::AxRect::new(0.0, 0.0, 0.0, 0.0);
+        };
+        let bounds = handle.bounds().intersect(&menu.bounds());
+        super::accessibility::AxRect::new(
+            bounds.origin.x.into(),
+            bounds.origin.y.into(),
+            f32::from(bounds.size.width).max(0.0),
+            f32::from(bounds.size.height).max(0.0),
+        )
+    }
+
     fn settings_heading(
         &mut self,
         title: &'static str,
@@ -1286,7 +1284,18 @@ impl AppView {
     /// projection（Host 权威 / stale / error）；卡片动作由 descriptor 驱动，
     /// 断线（stale）时可见 / 键盘 / AX 同时禁用。
     pub(super) fn settings_page_element(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        self.settings_element_layouts.clear();
+        // 实测子项每帧重建，打开的菜单视口保留滚动偏移。
+        let active_menu = match &self.open_menu {
+            Some(super::MenuKind::SettingsProviderModels(provider)) => {
+                Some(settings_models_menu_identifier(provider))
+            }
+            Some(super::MenuKind::SettingsRole(role)) => {
+                Some(format!("settings-role-menu-{}", role.wire_name()))
+            }
+            _ => None,
+        };
+        self.settings_element_layouts
+            .retain(|id, _| active_menu.as_ref() == Some(id));
         let content = if self.settings_page == SettingsPage::General
             && self.projection.settings_general.query.available
         {
@@ -1317,7 +1326,7 @@ impl AppView {
         };
         // OPT-4c（F2）：内容脚手架统一在共享层——Rail 外全宽、两侧 32px
         //（垂直仍 16px）、受限高度纵向滚动；各页只提供内容列，不再各自
-        // 复制 p_4 + 820px 钳制。AX 几何经 settings_content_ax_width 同源。
+        // 复制 p_4 + 820px 钳制。AX 几何读取实际元素框。
         div()
             .id("settings-page")
             .flex()
@@ -1334,9 +1343,7 @@ impl AppView {
                     .min_h_0()
                     .overflow_y_scroll()
                     .track_scroll(&self.settings_scroll)
-                    .when(self.settings_page != SettingsPage::Providers, |el| {
-                        el.py_4()
-                    })
+                    .py_4()
                     .child(content),
             )
     }

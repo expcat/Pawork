@@ -26,14 +26,6 @@ fn settings_nav_ax(
     }
 }
 
-/// Settings 内容列宽（与 render 的 `SETTINGS_CONTENT_PAD` 同源，
-/// OPT-4c / F2）：Rail 外全宽、两侧 32px padding，不保留 820px 上限。
-/// 所有 settings_* 页 AX 几何必须经此取值，否则 AX 高亮框会与 render
-/// 内容列系统性漂移。
-pub(crate) fn settings_content_ax_width(frame: AxRect) -> f32 {
-    (frame.width - crate::ui::settings::SETTINGS_CONTENT_PAD * 2.0).max(0.0)
-}
-
 /// Unrendered/offscreen page nodes cannot expose actions at stale coordinates.
 fn visible_settings_page(mut page: AxNode) -> AxNode {
     page.children

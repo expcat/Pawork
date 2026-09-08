@@ -1,5 +1,15 @@
 # Settings：模型与供应商
 
+## ADR-058：UI-6a 目录权威与凭证验证（2026-09-08）
+
+状态：已实现，定向检查与代理真窗口检查通过，等待用户人工视觉验收，见 [ROADMAP UI-6a](../ROADMAP.md#8-ui-6--providers供应商目录多账号)。GUI wire、配置 schema、认证存储和 domain 形状不变；自动检查与视觉验收分别记录在路线图。
+
+- **D1 ID 集合**：成功的远端目录替换该 provider 静态 ID 集合，包括合法空数组；不保留远端已消失的静态或 `[[models]]` 条目。静态仅为仍存在的相同 ID 补已有证据、定价与别名；用户 `[[models]]` 的窗口/输出覆盖仅作用于仍存在的 ID。目录失败保留回退；选择模型（含静态命中）也重新核对远端，禁止静默选用已下线 ID。聚合仍以 `(provider, model)` 保留跨供应商同名项。
+- **D2 可运行过滤**：Go / Qwen 的混合目录使用随实现固定的官方逐模型协议声明，目录过滤和请求路由同源；未声明协议或仅支持 Messages 的模型暂不进入这两条 API-key 通道的可运行目录，直接请求也在网络前拒绝。显式 transport 配置仍优先。没有按 ID 黑名单隐藏旧模型。未知窗口/输出为 0（unknown），未知工具能力不宣称支持；Kimi/xAI/ChatGPT 消费有证据的远端字段。
+- **D3 解析失败**：缺失/非数组目录、缺失/无效模型 ID 都是错误；合法空数组是远端成功。通用目录出现 `has_more=true` 时显式报尚不支持分页，避免把第一页当完整 ID 集合。ChatGPT 使用 `client_version=0.153.0`；空/null/none-only reasoning levels 不再宣称思考能力。
+- **D4 验证与发现分离**：Go 保存候选 key 前调用 `GET {base_url}/usage`，沿用代理、超时与 Bearer 安全边界；仅合法 rolling/weekly/monthly 用量响应算验证成功，rate-limited 仍是有效认证。401、403、超时或畸形响应均失败并保留旧 key。目录仍使用公开 `/models`，不作为 key 或账号权限证明。其余已认证目录渠道沿用严格的 `/models` 验证；不发验证用推理请求，不引入“未验证保存”。依据：[Go 官方实现固定快照](https://github.com/anomalyco/opencode/blob/d4704347465c1ee63d0c213ed00e648e7f0231c5/packages/console/app/src/routes/zen/go/v1/usage.ts)。
+- **D5 边界**：UI-6b 同 kind 多账号与切换尚未实施；本次 /usage 仅用于认证，不产生 GUI QuotaSnapshot 或自动切换。Anthropic 静态目录、分页与 Kimi 视频输入属于现有适配缺口，不因此新增协议能力。
+
 ## ADR-056：OPT-3d/3e 同供应商多凭证最小切片与额度槽诚实空态（2026-09-06）
 
 状态：Accepted（实现与门禁证据见 OPT 归档对应批次记录）。落地 [ROADMAP §6](../review/roadmap-opt-2026-09-05.md#6-opt-3--供应商模型启用与默认角色) OPT-3d/3e：同一 provider 的 API key 与 OAuth 两类凭证可**共存**并在 Settings 展开卡内逐条列出状态；额度槽（Usage）在无权威 QuotaSnapshot 来源前只呈现诚实空态，不渲染数字。GUI API 1.12 → 1.13（minor 只增，additive）。对照 OPT-D 签字稿 `design/opt-settings-providers-expanded-v1.png`。
@@ -138,9 +148,9 @@ flowchart LR
 
 ### 3.4 模型目录规则
 
-1. **远端优先**：凭证可用且供应商有稳定目录接口时，由 Host 发起已认证查询。只有按账号授权过滤的目录才能代表该账号可见模型；公开目录仅代表供应商公布的 ID，不能证明凭证有效或该账号有调用权限。当前 Go 把公开目录用于 key 验证的实现缺口见 [2026-09-08 核查](../review/model-catalog-audit-2026-09-08.md)。
+1. **远端优先**：凭证可用且供应商有稳定目录接口时，由 Host 发起已认证查询。只有按账号授权过滤的目录才能代表该账号可见模型；公开目录仅代表供应商公布的 ID，不能证明凭证有效或该账号有调用权限。Go 按 ADR-058 独立用 `/usage` 验证，`/models` 仅发现目录。
 2. **固定回退**：目录接口缺失、超时或拒绝时，使用随代码版本固定的供应商目录；页面显示来源、快照日期和失败原因，不把回退写成“实时可用”。
-3. **保守合并**：远端 ID 与固定元数据按 ID 合并。未知能力、上下文窗或工具支持为 unknown；不得凭品牌推断为支持。能力冲突取交集/fail-closed。
+3. **目录替换与元数据**：成功远端决定 ID 集合，固定元数据只补仍存在的相同 ID；合法空目录不回添静态项。未知能力、上下文窗或工具支持为 unknown；不得凭品牌推断为支持。能力冲突取交集/fail-closed。
 4. **可运行过滤**：只向 Composer 暴露当前 Pawork adapter 能构造请求和解析响应的模型；xAI 图像/视频等非聊天模型即使远端返回也不展示为可选。
 5. **显式刷新**：用户动作触发刷新；首期不新增持久模型缓存或后台轮询。刷新失败保留当前列表并标 stale/fallback。
 6. **选择有效性**：default model 必须属于所选连接当前可运行目录；目录变化导致失效时显示“默认模型不可用”，不静默换到另一供应商。
@@ -209,7 +219,7 @@ Settings 沿用参考设计的 1440×1024 深色语言和 8px 节奏，不另起
 - TaskRail 底部 `Local` 行右侧新增 Settings gear。
 - Settings Rail 首项固定为 `← Back to workspace`；八页导航默认 English（Appearance 页可切换简体中文，ADR-053 起即时生效并持久化），首个可用页为 `Models & providers`；OPT-4c 起内容用满 Rail 外可用宽度、两侧各 32px padding，不再保留 820px 上限。
 - 内容区使用稳定的 page header / section / field / feedback 层级；不显示工作台 RunStatusBar。
-- provider 默认层为 64px 概览行，只显示名称、认证方法、连接状态、目录 availability / 模型数和可用动作；普通 render 与 AX summary 不发布 masked credential、endpoint、catalog error、raw model id 或无权威来源余额。endpoint / 错误仅在连接、等待或删除确认详情显示；API key editor 仅在 Connect / Replace 后展开。
+- UI-6a provider 默认层改为随内容与字号增高的卡片，分组显示名称 / 认证方式与连接状态 / 目录模型数；默认角色说明和选择器分列，凭证输入与动作分行。Manage models 为 320px 宽、最高 400px 的滚动弹层，显示真实启用数与目录不代表账号权限的说明；页面与弹层 AX 使用实际布局并裁剪离屏控件；普通 render 与 AX summary 不发布 masked credential、endpoint、catalog error、raw model id 或无权威来源余额。endpoint / 错误仅在连接、等待或删除确认详情显示；API key editor 仅在 Connect / Replace 后展开。
 - 默认模型使用独立 section；认证成功与目录成功继续分开表达，Remove 仍需二次确认。
 - 添加流程用同一内容区内的 stepper/panel，不弹出第二窗口。
 

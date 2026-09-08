@@ -248,33 +248,53 @@ impl ModelProvider for OpenAiCompatibleProvider {
             )
             .await?;
 
-        let models = value
-            .get("data")
-            .and_then(|d| d.as_array())
-            .cloned()
-            .unwrap_or_default();
-
-        Ok(models
-            .into_iter()
-            .filter_map(|m| {
-                let id = m.get("id").and_then(|i| i.as_str())?.to_string();
-                Some(ModelDefinition {
-                    id: ModelId::new(id),
-                    display_name: m
-                        .get("id")
-                        .and_then(|i| i.as_str())
-                        .unwrap_or_default()
-                        .to_string(),
-                    context_window_tokens: 128_000,
-                    max_output_tokens: 16_384,
-                    capabilities: ModelCapabilities {
-                        text: true,
-                        tool_calls: true,
-                        ..ModelCapabilities::default()
-                    },
-                })
+        let models = catalog_entries(&value, "data")?;
+        // 未实现的分页不能把第一页冒充完整目录并删除其余模型。
+        if value.get("has_more").and_then(Value::as_bool) == Some(true) {
+            return Err(ProviderError::new(
+                ProviderErrorKind::InvalidRequest,
+                "models response requires unsupported pagination",
+            ));
+        }
+        let baseline = crate::registry::ModelRegistry::builtin();
+        models
+            .iter()
+            .map(|model| {
+                let id = catalog_model_id(model, "id")?;
+                let mut definition = baseline
+                    .resolve(id)
+                    .filter(|entry| {
+                        entry.provider == self.config.provider_id && entry.id.as_str() == id
+                    })
+                    .map(|entry| entry.to_definition())
+                    .unwrap_or_else(|| ModelDefinition {
+                        id: ModelId::new(id),
+                        display_name: id.to_owned(),
+                        // /models 的 ID 本身不是窗口、输出上限或工具能力的证据。
+                        context_window_tokens: 0,
+                        max_output_tokens: 0,
+                        capabilities: ModelCapabilities {
+                            text: true,
+                            ..ModelCapabilities::default()
+                        },
+                    });
+                // 只补逐 ID 已有的静态证据；远端实际给出的元数据仍覆盖静态值。
+                // Kimi Platform 字段契约：MoonshotAI/kimi-cli auth/platforms.py（2026-09-08）。
+                if let Some(name) = model.get("display_name").and_then(Value::as_str) {
+                    definition.display_name = name.to_owned();
+                }
+                if let Some(context) = model.get("context_length").and_then(Value::as_u64) {
+                    definition.context_window_tokens = context;
+                }
+                if let Some(image) = model.get("supports_image_in").and_then(Value::as_bool) {
+                    definition.capabilities.image_input = image;
+                }
+                if let Some(thinking) = model.get("supports_reasoning").and_then(Value::as_bool) {
+                    definition.capabilities.thinking = thinking;
+                }
+                Ok(definition)
             })
-            .collect())
+            .collect()
     }
 
     async fn stream(
@@ -339,4 +359,30 @@ pub(crate) fn opencode_session_header(
         )
     })?;
     Ok(Some(("x-opencode-session".into(), session_id.to_string())))
+}
+
+/// 合法空数组是成功；缺字段、类型错误或无效 ID 是目录格式错误。
+pub(crate) fn catalog_entries<'a>(
+    value: &'a Value,
+    key: &str,
+) -> Result<&'a Vec<Value>, ProviderError> {
+    value.get(key).and_then(Value::as_array).ok_or_else(|| {
+        ProviderError::new(
+            ProviderErrorKind::InvalidRequest,
+            format!("models response must contain a {key} array"),
+        )
+    })
+}
+
+pub(crate) fn catalog_model_id<'a>(value: &'a Value, key: &str) -> Result<&'a str, ProviderError> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .filter(|id| !id.trim().is_empty())
+        .ok_or_else(|| {
+            ProviderError::new(
+                ProviderErrorKind::InvalidRequest,
+                "models response contains an invalid model ID",
+            )
+        })
 }

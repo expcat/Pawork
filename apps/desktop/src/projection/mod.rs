@@ -434,7 +434,7 @@ impl DesktopProjection {
         let (provider, id) = self.effective_model()?;
         self.models.iter().find_map(|entry| {
             if entry.provider_id == *provider && entry.id == *id {
-                entry.context_window_tokens
+                entry.context_window_tokens.filter(|window| *window > 0)
             } else {
                 None
             }

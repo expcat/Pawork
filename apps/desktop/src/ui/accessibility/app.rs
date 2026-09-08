@@ -4171,7 +4171,7 @@ mod tests {
     /// permits 拒绝（可见 / 键盘 / AX 三路径同 gate）。
     #[gpui::test]
     fn settings_ax_masks_api_key_and_gates_writes_when_stale(cx: &mut gpui::TestAppContext) {
-        use gpui::AppContext;
+        use gpui::{prelude::*, px, AppContext};
 
         struct AxSettingsHost {
             view: gpui::Entity<AppView>,
@@ -4179,10 +4179,17 @@ mod tests {
         impl gpui::Render for AxSettingsHost {
             fn render(
                 &mut self,
-                _window: &mut Window,
-                _cx: &mut Context<Self>,
+                window: &mut Window,
+                cx: &mut Context<Self>,
             ) -> impl gpui::IntoElement {
+                window.set_rem_size(px(16.0));
                 gpui::div()
+                    .size_full()
+                    .flex()
+                    .child(self.view.update(cx, |view, cx| {
+                        view.ensure_settings_api_key_inputs(cx);
+                        view.settings_page_element(cx)
+                    }))
             }
         }
 
@@ -4206,6 +4213,10 @@ mod tests {
             let view = cx.new(|cx| AppView::new(platform, socket, None, cx));
             AxSettingsHost { view }
         });
+        // Host 直接装配子 view 的元素，须在每次验收前通知 Host 重绘；
+        // 单独 refresh window 不会使已缓存的 Host render 失效。
+        // 语义断言覆盖完整页面；窄窗与菜单裁剪另在本测试内实际滚动。
+        cx.simulate_resize(gpui::size(px(1440.0), px(2400.0)));
         let view = cx.update(|_window, cx| host.read(cx).view.clone());
         cx.update(|_window, cx| {
             view.update(cx, |view, cx| {
@@ -4264,9 +4275,13 @@ mod tests {
         let expected_mask = "•".repeat("sk-live-plaintext".chars().count());
 
         // 连接态：掩码 value 发布、按钮 enabled、Press 许可。
+        cx.update(|_, cx| host.update(cx, |_, cx| cx.notify()));
+        cx.refresh().unwrap();
+        cx.run_until_parked();
         cx.update(|window, cx| {
             let view = view.read(cx);
             let tree = view.accessibility_tree(window, cx);
+
             tree.validate().expect("settings AX tree validates");
             let secret = "sk-live-plaintext";
             for child in &tree.children {
@@ -4279,28 +4294,46 @@ mod tests {
             assert!(connected.value.as_deref().is_some_and(|value| {
                 value.contains("Connected") && !value.contains("masked-fragment-sentinel")
             }));
-            // 列几何与 render 同源：auth-methods 列并入 name value 后，
-            // connection / catalog 必须平移 112px（104 列 + 8 间距）。
-            let connection = tree
-                .find(&dynamic_identifier(
-                    "settings-provider-connection",
-                    "connected",
-                ))
-                .expect("connection column has an AX node");
-            let catalog = tree
-                .find(&dynamic_identifier(
-                    "settings-provider-catalog",
-                    "connected",
-                ))
-                .expect("catalog column has an AX node");
-            assert_eq!(connection.bounds.x, connected.bounds.x + 300.0);
-            assert_eq!(catalog.bounds.x, connected.bounds.x + 440.0);
+            // 名称、连接与目录的 AX 框直接对照本次 prepaint 的真实元素。
+            for prefix in [
+                "settings-provider-name",
+                "settings-provider-connection",
+                "settings-provider-catalog",
+            ] {
+                let id = dynamic_identifier(prefix, "connected");
+                let actual = view.settings_element_layouts[&id].bounds();
+                let node = tree
+                    .find(&id)
+                    .expect("rendered overview text has an AX node");
+                assert_eq!(
+                    node.bounds,
+                    AxRect::new(
+                        actual.origin.x.into(),
+                        actual.origin.y.into(),
+                        actual.size.width.into(),
+                        actual.size.height.into()
+                    )
+                );
+            }
             let input = tree.find(&input_id).expect("secure input has an AX node");
             assert_eq!(input.role, AxRole::TextArea);
             assert_eq!(input.value.as_deref(), Some(expected_mask.as_str()));
             assert!(input.enabled);
             let verify = tree.find(&verify_id).expect("verify button has an AX node");
             assert!(verify.enabled);
+            for id in [&input_id, &verify_id] {
+                let actual = view.settings_element_layouts[id].bounds();
+                let node = tree.find(id).expect("rendered auth control");
+                assert_eq!(
+                    node.bounds,
+                    AxRect::new(
+                        actual.origin.x.into(),
+                        actual.origin.y.into(),
+                        actual.size.width.into(),
+                        actual.size.height.into()
+                    )
+                );
+            }
             assert!(tree.permits(&AxRequest {
                 identifier: verify_id.clone(),
                 action: AxAction::Press,
@@ -4316,6 +4349,9 @@ mod tests {
                     .mark_stale("socket closed");
             });
         });
+        cx.update(|_, cx| host.update(cx, |_, cx| cx.notify()));
+        cx.refresh().unwrap();
+        cx.run_until_parked();
         cx.update(|window, cx| {
             let view = view.read(cx);
             let tree = view.accessibility_tree(window, cx);
@@ -4507,7 +4543,7 @@ mod tests {
     fn settings_role_defaults_ax_shape_pins_triggers_menu_and_filter(
         cx: &mut gpui::TestAppContext,
     ) {
-        use gpui::AppContext;
+        use gpui::{prelude::*, px, AppContext};
 
         use crate::projection::{
             ProviderAuthState, ProviderAuthStatusEntry, ProviderCatalogState, SettingsRole,
@@ -4523,10 +4559,17 @@ mod tests {
         impl gpui::Render for AxRolesHost {
             fn render(
                 &mut self,
-                _window: &mut Window,
-                _cx: &mut Context<Self>,
+                window: &mut Window,
+                cx: &mut Context<Self>,
             ) -> impl gpui::IntoElement {
+                window.set_rem_size(px(16.0));
                 gpui::div()
+                    .size_full()
+                    .flex()
+                    .child(self.view.update(cx, |view, cx| {
+                        view.ensure_settings_api_key_inputs(cx);
+                        view.settings_page_element(cx)
+                    }))
             }
         }
 
@@ -4536,6 +4579,10 @@ mod tests {
             let view = cx.new(|cx| AppView::new(platform, socket, None, cx));
             AxRolesHost { view }
         });
+        // Host 直接装配子 view 的元素，须在每次验收前通知 Host 重绘；
+        // 单独 refresh window 不会使已缓存的 Host render 失效。
+        // 语义断言覆盖完整页面；窄窗与菜单裁剪另在本测试内实际滚动。
+        cx.simulate_resize(gpui::size(px(1440.0), px(2400.0)));
         let view = cx.update(|_window, cx| host.read(cx).view.clone());
         let provider = |provider_id: &str, auth: ProviderAuthState| ProviderAuthStatusEntry {
             provider_id: provider_id.to_string(),
@@ -4598,9 +4645,13 @@ mod tests {
                 view.open_menu = Some(MenuKind::SettingsRole(SettingsRole::Naming));
             });
         });
+        cx.update(|_, cx| host.update(cx, |_, cx| cx.notify()));
+        cx.refresh().unwrap();
+        cx.run_until_parked();
         cx.update(|window, cx| {
             let view = view.read(cx);
             let tree = view.accessibility_tree(window, cx);
+
             tree.validate().expect("role defaults AX tree validates");
             for role in SettingsRole::ALL {
                 let identifier = settings_role_trigger_identifier(role);
@@ -4674,13 +4725,109 @@ mod tests {
                 ))
                 .is_none());
         });
-        // Provider 全断开与启用目录全空都保留 Clear：AX / 键盘均可派出
-        // 清除请求；回执前保留已保存值，不能静默绑定候选或乐观清空。
+        // 两个供应商分组的长菜单：打开时当前末项可见，上下键跨越
+        // Clear / 分组边界时新高亮项始终可见，AX 框仍来自真实菜单视口。
+        let original_models = cx.update(|_, cx| view.read(cx).projection.models.clone());
         cx.update(|window, cx| {
             view.update(cx, |view, cx| {
-                let role = SettingsRole::Naming;
-                let saved = Some(("kimi".to_string(), "kimi-k2".to_string()));
-                for empty_catalog in [false, true] {
+                view.projection.settings_providers.providers[1].auth =
+                    ProviderAuthState::Connected {
+                        method: "api_key".into(),
+                        masked_credential: None,
+                    };
+                let models = ["kimi", "glm"]
+                    .into_iter()
+                    .flat_map(|provider| {
+                        (0..12).map(move |ix| ModelEntry {
+                            provider_id: provider.into(),
+                            id: format!("long-{ix}"),
+                            display_name: format!("Model {ix}"),
+                            context_window_tokens: None,
+                            enabled: true,
+                        })
+                    })
+                    .collect();
+                view.projection.set_models(models);
+                view.projection.settings_providers.confirm_role_default(
+                    SettingsRole::Naming,
+                    Some(("glm".into(), "long-11".into())),
+                );
+                view.open_menu = None;
+                view.on_toggle_settings_role_menu(SettingsRole::Naming, None, window, cx);
+            });
+        });
+        // 首帧建立视口；defer 定位当前项，第二帧执行滚动。
+        for _ in 0..2 {
+            cx.update(|_, cx| host.update(cx, |_, cx| cx.notify()));
+            cx.refresh().unwrap();
+            cx.run_until_parked();
+        }
+        let last_id = settings_role_item_identifier(SettingsRole::Naming, "glm", "long-11");
+        let clear_id = settings_role_clear_identifier(SettingsRole::Naming);
+        let menu_id = "settings-role-menu-naming";
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            let tree = view.accessibility_tree(window, cx);
+            let last = tree
+                .find(&last_id)
+                .expect("current last model scrolls into view on open");
+            assert!(last.selected && last.focused);
+            assert!(tree.find(&clear_id).is_none());
+        });
+        for (forward, expected_id) in [
+            (true, clear_id.clone()), // last → Clear
+            (false, last_id.clone()), // Clear → last
+            (
+                false,
+                settings_role_item_identifier(SettingsRole::Naming, "glm", "long-10"),
+            ),
+        ] {
+            cx.update(|_, cx| {
+                view.update(cx, |view, cx| {
+                    view.move_menu_highlight(forward);
+                    cx.notify();
+                })
+            });
+            cx.update(|_, cx| host.update(cx, |_, cx| cx.notify()));
+            cx.refresh().unwrap();
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                let view = view.read(cx);
+                let tree = view.accessibility_tree(window, cx);
+                let node = tree
+                    .find(&expected_id)
+                    .expect("keyboard highlight remains visible");
+                assert!(node.focused);
+                let actual = view.settings_element_layouts[&expected_id].bounds();
+                let menu = view.settings_element_layouts[menu_id].bounds();
+                assert!(actual.top() >= menu.top() && actual.bottom() <= menu.bottom());
+                assert_eq!(
+                    node.bounds,
+                    AxRect::new(
+                        actual.origin.x.into(),
+                        actual.origin.y.into(),
+                        actual.size.width.into(),
+                        actual.size.height.into()
+                    )
+                );
+            });
+        }
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.set_models(original_models);
+                view.projection.settings_providers.providers[1].auth = ProviderAuthState::None;
+                view.open_menu = None;
+                view.settings_element_layouts.remove(menu_id);
+                cx.notify();
+            })
+        });
+
+        // 清除路径分别从 AX 和键盘进入，每次先渲染对应的真实空菜单。
+        let role = SettingsRole::Naming;
+        let saved = Some(("kimi".to_string(), "kimi-k2".to_string()));
+        for empty_catalog in [false, true] {
+            cx.update(|_, cx| {
+                view.update(cx, |view, cx| {
                     if empty_catalog {
                         view.projection.set_models(vec![]);
                         view.projection.settings_providers.providers[0].auth =
@@ -4701,6 +4848,14 @@ mod tests {
                     assert_eq!(view.menu_item_count(), 1);
                     view.move_menu_highlight(true);
                     assert_eq!(view.menu_highlight, Some(0));
+                    cx.notify();
+                });
+            });
+            cx.update(|_, cx| host.update(cx, |_, cx| cx.notify()));
+            cx.refresh().unwrap();
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                view.update(cx, |view, cx| {
                     let tree = view.accessibility_tree(window, cx);
                     tree.validate().expect("empty role menu AX tree validates");
                     let clear_id = settings_role_clear_identifier(role);
@@ -4728,9 +4883,14 @@ mod tests {
                         view.projection.settings_providers.role_value(role),
                         saved.as_ref()
                     );
-                }
+                });
+            });
+        }
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
                 view.settings_role_pending = None;
                 view.open_menu = Some(MenuKind::SettingsRole(role));
+                cx.notify();
             });
         });
         // 断线 stale：角色写禁用，Press fail-closed。
@@ -4741,6 +4901,9 @@ mod tests {
                     .mark_stale("socket closed");
             });
         });
+        cx.update(|_, cx| host.update(cx, |_, cx| cx.notify()));
+        cx.refresh().unwrap();
+        cx.run_until_parked();
         cx.update(|window, cx| {
             let view = view.read(cx);
             let tree = view.accessibility_tree(window, cx);
@@ -4763,7 +4926,7 @@ mod tests {
     /// 录 Refresh 的可操作性、代理 Switch value 与 Press；stale 关闸。
     #[gpui::test]
     fn settings_models_menu_ax_pins_gates_switches_and_empty_state(cx: &mut gpui::TestAppContext) {
-        use gpui::AppContext;
+        use gpui::{prelude::*, px, AppContext};
 
         use crate::projection::{
             ModelEntry, ProviderAuthState, ProviderAuthStatusEntry, ProviderCatalogState,
@@ -4781,10 +4944,17 @@ mod tests {
         impl gpui::Render for AxModelsHost {
             fn render(
                 &mut self,
-                _window: &mut Window,
-                _cx: &mut Context<Self>,
+                window: &mut Window,
+                cx: &mut Context<Self>,
             ) -> impl gpui::IntoElement {
+                window.set_rem_size(px(16.0));
                 gpui::div()
+                    .size_full()
+                    .flex()
+                    .child(self.view.update(cx, |view, cx| {
+                        view.ensure_settings_api_key_inputs(cx);
+                        view.settings_page_element(cx)
+                    }))
             }
         }
 
@@ -4794,6 +4964,10 @@ mod tests {
             let view = cx.new(|cx| AppView::new(platform, socket, None, cx));
             AxModelsHost { view }
         });
+        // Host 直接装配子 view 的元素，须在每次验收前通知 Host 重绘；
+        // 单独 refresh window 不会使已缓存的 Host render 失效。
+        // 语义断言覆盖完整页面；窄窗与菜单裁剪另在本测试内实际滚动。
+        cx.simulate_resize(gpui::size(px(1440.0), px(2400.0)));
         let view = cx.update(|_window, cx| host.read(cx).view.clone());
         let catalog_remote = || ProviderCatalogState::Remote {
             fetched_at: "2026-09-05T00:00:00Z".into(),
@@ -4868,9 +5042,13 @@ mod tests {
             action: AxAction::Press,
             value: None,
         };
+        cx.update(|_, cx| host.update(cx, |_, cx| cx.notify()));
+        cx.refresh().unwrap();
+        cx.run_until_parked();
         cx.update(|window, cx| {
             let view = view.read(cx);
             let tree = view.accessibility_tree(window, cx);
+
             tree.validate().expect("models menu AX tree validates");
             // 已连接 + 目录可用：Manage 可按；未连接禁用且不发布 Press。
             let manage = tree
@@ -4931,6 +5109,78 @@ mod tests {
             assert!(tree.permits(&press(settings_use_proxy_identifier("kimi"))));
         });
 
+        // 目录超过菜单视口：真滚动后 AX 只发布当前可见 Switch，重绘不归零。
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                let mut catalog = view.projection.settings_providers.model_catalog.clone();
+                catalog.extend((0..16).map(|ix| ModelEntry {
+                    provider_id: "kimi".into(),
+                    id: format!("scroll-{ix}"),
+                    display_name: format!("Scroll model {ix}"),
+                    context_window_tokens: None,
+                    enabled: true,
+                }));
+                view.projection
+                    .settings_providers
+                    .apply_model_catalog(catalog);
+                cx.notify();
+            });
+        });
+        cx.update(|_, cx| host.update(cx, |_, cx| cx.notify()));
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        let last_id = settings_model_switch_identifier("kimi", "scroll-15");
+        let menu_id = settings_models_menu_identifier("kimi");
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                let tree = view.accessibility_tree(window, cx);
+                assert!(
+                    tree.find(&last_id).is_none(),
+                    "offscreen last model has no AX action"
+                );
+                view.settings_element_layouts[&menu_id].scroll_to_bottom();
+                cx.notify();
+            });
+        });
+        cx.update(|_, cx| host.update(cx, |_, cx| cx.notify()));
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        let scrolled_offset = cx.update(|window, cx| {
+            let view = view.read(cx);
+            let tree = view.accessibility_tree(window, cx);
+            assert!(tree
+                .find(&settings_model_switch_identifier("kimi", "kimi-k2"))
+                .is_none());
+            let last = tree.find(&last_id).expect("last model scrolls into view");
+            let viewport = view.settings_element_layouts[&menu_id].bounds();
+            let actual = view.settings_element_layouts[&last_id]
+                .bounds()
+                .intersect(&viewport);
+            assert_eq!(
+                last.bounds,
+                AxRect::new(
+                    actual.origin.x.into(),
+                    actual.origin.y.into(),
+                    actual.size.width.into(),
+                    actual.size.height.into()
+                )
+            );
+            assert!(tree.permits(&press(last_id.clone())));
+            let offset = view.settings_element_layouts[&menu_id].offset();
+            assert!(offset.y < px(0.0));
+            offset
+        });
+        cx.update(|_, cx| view.update(cx, |_, cx| cx.notify()));
+        cx.update(|_, cx| host.update(cx, |_, cx| cx.notify()));
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            assert_eq!(
+                view.read(cx).settings_element_layouts[&menu_id].offset(),
+                scrolled_offset
+            )
+        });
+
         // 空目录弹层（connected + catalog 可用但目录无条目）：诚实空态 +
         // Refresh 可按；Enable / Disable all 禁用不发布 Press。
         cx.update(|_window, cx| {
@@ -4938,6 +5188,9 @@ mod tests {
                 view.open_menu = Some(MenuKind::SettingsProviderModels("empty".into()));
             });
         });
+        cx.update(|_, cx| host.update(cx, |_, cx| cx.notify()));
+        cx.refresh().unwrap();
+        cx.run_until_parked();
         cx.update(|window, cx| {
             let view = view.read(cx);
             let tree = view.accessibility_tree(window, cx);
@@ -4974,6 +5227,9 @@ mod tests {
                     .mark_stale("socket closed");
             });
         });
+        cx.update(|_, cx| host.update(cx, |_, cx| cx.notify()));
+        cx.refresh().unwrap();
+        cx.run_until_parked();
         cx.update(|window, cx| {
             let view = view.read(cx);
             let tree = view.accessibility_tree(window, cx);
@@ -4998,7 +5254,7 @@ mod tests {
     fn settings_provider_expanded_card_ax_pins_credentials_and_usage(
         cx: &mut gpui::TestAppContext,
     ) {
-        use gpui::AppContext;
+        use gpui::{prelude::*, px, AppContext};
 
         use crate::projection::ProviderAuthStatusEntry;
         use crate::ui::settings::{
@@ -5012,10 +5268,17 @@ mod tests {
         impl gpui::Render for AxExpandedHost {
             fn render(
                 &mut self,
-                _window: &mut Window,
-                _cx: &mut Context<Self>,
+                window: &mut Window,
+                cx: &mut Context<Self>,
             ) -> impl gpui::IntoElement {
+                window.set_rem_size(px(self.view.read(cx).text_scale.rem_pixels()));
                 gpui::div()
+                    .size_full()
+                    .flex()
+                    .child(self.view.update(cx, |view, cx| {
+                        view.ensure_settings_api_key_inputs(cx);
+                        view.settings_page_element(cx)
+                    }))
             }
         }
 
@@ -5025,6 +5288,10 @@ mod tests {
             let view = cx.new(|cx| AppView::new(platform, socket, None, cx));
             AxExpandedHost { view }
         });
+        // Host 直接装配子 view 的元素，须在每次验收前通知 Host 重绘；
+        // 单独 refresh window 不会使已缓存的 Host render 失效。
+        // 语义断言覆盖完整页面；窄窗与菜单裁剪另在本测试内实际滚动。
+        cx.simulate_resize(gpui::size(px(1440.0), px(2400.0)));
         let view = cx.update(|_window, cx| host.read(cx).view.clone());
         // ProviderCredentialStatus 未在 pawork-client re-export 面上，测试
         // 经 wire JSON 解码构造（与投影层 fail-closed 解析同一路径）。
@@ -5049,6 +5316,7 @@ mod tests {
                     instance_id: "test".into(),
                 });
                 view.route = AppRoute::Settings;
+                view.text_scale = crate::ui::theme::font::TextScale::Percent100;
                 view.projection.settings_providers.apply_loaded(
                     crate::projection::ProviderAuthStatusData {
                         providers: vec![
@@ -5075,9 +5343,13 @@ mod tests {
 
         // 默认折叠：chevron 常驻（value Collapsed、可按），展开区节点
         // （Credentials / Usage / 代理 Switch）不入树。
+        cx.update(|_, cx| host.update(cx, |_, cx| cx.notify()));
+        cx.refresh().unwrap();
+        cx.run_until_parked();
         cx.update(|window, cx| {
             let view = view.read(cx);
             let tree = view.accessibility_tree(window, cx);
+
             tree.validate().expect("collapsed cards AX tree validates");
             let chevron = tree
                 .find(&expand_dual)
@@ -5099,6 +5371,9 @@ mod tests {
         });
 
         // chevron Press（AX 与 render / 键盘同入口）：dual 展开。
+        cx.update(|_, cx| host.update(cx, |_, cx| cx.notify()));
+        cx.refresh().unwrap();
+        cx.run_until_parked();
         cx.update(|window, cx| {
             view.update(cx, |view, cx| {
                 view.handle_accessibility_request(
@@ -5112,6 +5387,9 @@ mod tests {
                 );
             });
         });
+        cx.update(|_, cx| host.update(cx, |_, cx| cx.notify()));
+        cx.refresh().unwrap();
+        cx.run_until_parked();
         cx.update(|window, cx| {
             let view = view.read(cx);
             let tree = view.accessibility_tree(window, cx);
@@ -5172,7 +5450,7 @@ mod tests {
             assert_eq!(manage_text.label, t("settings.providers.manage_models"));
             assert_eq!(
                 manage_text.value.as_deref(),
-                Some(t("settings.providers.manage_models_tooltip"))
+                Some(t("settings.providers.catalog_scope"))
             );
             // proxy_url 未配置：代理 Switch 不发布（gate 与 render 同源）。
             assert!(tree
@@ -5189,6 +5467,9 @@ mod tests {
         });
 
         // empty 卡展开：空凭证列表发布诚实空态，不渲染假行。
+        cx.update(|_, cx| host.update(cx, |_, cx| cx.notify()));
+        cx.refresh().unwrap();
+        cx.run_until_parked();
         cx.update(|window, cx| {
             view.update(cx, |view, cx| {
                 view.handle_accessibility_request(
@@ -5202,6 +5483,9 @@ mod tests {
                 );
             });
         });
+        cx.update(|_, cx| host.update(cx, |_, cx| cx.notify()));
+        cx.refresh().unwrap();
+        cx.run_until_parked();
         cx.update(|window, cx| {
             let view = view.read(cx);
             let tree = view.accessibility_tree(window, cx);
@@ -5233,6 +5517,9 @@ mod tests {
                     });
             });
         });
+        cx.update(|_, cx| host.update(cx, |_, cx| cx.notify()));
+        cx.refresh().unwrap();
+        cx.run_until_parked();
         cx.update(|window, cx| {
             let view = view.read(cx);
             let tree = view.accessibility_tree(window, cx);
@@ -5249,5 +5536,64 @@ mod tests {
                 .expect("proxy switch pinned once proxy_url is set");
             assert!(proxy_switch.enabled);
         });
+        // 窄窗三档字号：真实页面滚动后，离屏标题消失，底部控件框跟随 prepaint。
+        for scale in [
+            crate::ui::theme::font::TextScale::Percent100,
+            crate::ui::theme::font::TextScale::Percent125,
+            crate::ui::theme::font::TextScale::Percent150,
+        ] {
+            cx.simulate_resize(gpui::size(px(1080.0), px(720.0)));
+            cx.update(|_, cx| {
+                view.update(cx, |view, cx| {
+                    view.text_scale = scale;
+                    view.projection
+                        .settings_providers
+                        .expanded_providers
+                        .remove("empty");
+                    cx.notify();
+                });
+            });
+            cx.update(|_, cx| host.update(cx, |_, cx| cx.notify()));
+            cx.refresh().unwrap();
+            cx.run_until_parked();
+            cx.update(|_, cx| {
+                view.update(cx, |view, cx| {
+                    view.settings_scroll.scroll_to_bottom();
+                    cx.notify();
+                });
+            });
+            cx.update(|_, cx| host.update(cx, |_, cx| cx.notify()));
+            cx.refresh().unwrap();
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                let view = view.read(cx);
+                let tree = view.accessibility_tree(window, cx);
+                assert!(tree.find("settings-page-title").is_none());
+                for id in [
+                    dynamic_identifier("settings-provider-usage", "dual"),
+                    expand_empty.clone(),
+                ] {
+                    let node = tree.find(&id).expect("bottom provider content is visible");
+                    let actual = view.settings_element_layouts[&id]
+                        .bounds()
+                        .intersect(&view.settings_scroll.bounds());
+                    assert_eq!(
+                        node.bounds,
+                        AxRect::new(
+                            actual.origin.x.into(),
+                            actual.origin.y.into(),
+                            actual.size.width.into(),
+                            actual.size.height.into()
+                        ),
+                        "{id} at {scale:?}"
+                    );
+                }
+                assert!(tree.permits(&AxRequest {
+                    identifier: expand_empty.clone(),
+                    action: AxAction::Press,
+                    value: None
+                }));
+            });
+        }
     }
 }

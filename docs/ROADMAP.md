@@ -1,6 +1,6 @@
 # Pawork 活动路线图：Desktop 模块重设计（UI）
 
-> 基线日期：2026-09-07。状态：**UI-1 已实现、自动检查通过、用户人工视觉验收通过；未归档。UI-2 已实现、自动检查与代理真窗口检查通过，等待用户人工视觉验收；UI-3 已实现，定向自动检查、真实 Run 与重启回放检查通过，等待用户人工视觉验收，未归档；UI-4 已实现，自动检查与代理真窗口检查通过，等待用户人工视觉验收，未归档；UI-5 已实现，自动检查与代理真窗口检查通过，等待用户人工视觉验收，未归档；UI-6 未开始**。来源：当日正式 Desktop 真窗口人工走查（#01–#05）。本文件是当前活动线的任务规划，**不是**源码或冻结契约的事实源。上一条 OPT-D / OPT-1～OPT-4 已关闭，全文与验收证据见 [review/roadmap-opt-2026-09-05.md](review/roadmap-opt-2026-09-05.md)。P0–P2 收尾证据仍见 [Desktop Spec §8](spec/desktop.md#8-gui-收尾验收记录2026-09-05)；未排期候选仍见 [backlog.md](spec/backlog.md)。
+> 基线日期：2026-09-07。状态：**UI-1 已实现、自动检查通过、用户人工视觉验收通过；未归档。UI-2 已实现、自动检查与代理真窗口检查通过，等待用户人工视觉验收；UI-3 已实现，定向自动检查、真实 Run 与重启回放检查通过，等待用户人工视觉验收，未归档；UI-4 已实现，自动检查与代理真窗口检查通过，等待用户人工视觉验收，未归档；UI-5 已实现，自动检查与代理真窗口检查通过，等待用户人工视觉验收，未归档；UI-6a 已实现，后端与 Desktop 定向检查通过，代理真窗口检查通过；UI-6b 未开始**。来源：当日正式 Desktop 真窗口人工走查（#01–#05）。本文件是当前活动线的任务规划，**不是**源码或冻结契约的事实源。上一条 OPT-D / OPT-1～OPT-4 已关闭，全文与验收证据见 [review/roadmap-opt-2026-09-05.md](review/roadmap-opt-2026-09-05.md)。P0–P2 收尾证据仍见 [Desktop Spec §8](spec/desktop.md#8-gui-收尾验收记录2026-09-05)；未排期候选仍见 [backlog.md](spec/backlog.md)。
 
 **做法**：每个任务重新设计**一个模块**的 UI 和交互，对照竞品与 [gui-design.md](gui-design.md) 参照项目（Codex Desktop、OpenCode、Cursor Agent、Zed Agent Panel、DeepSeek Harness）拉到同一美观度；静态观感和动态交互一起做。OPT-D 旧签字稿保留为历史，**不再否决**本线新视觉。
 
@@ -118,7 +118,7 @@ UI-2 / UI-3 / UI-4 写入集不重叠，可在 UI-1 token 稳定后并行。UI-5
 | UI-6a | 重做供应商卡与模型弹层的 UI/交互；探测成功时该 provider **以供应商目录接口返回的 ID 集合为准**（替换静态条目，失败才 fallback），再按 adapter 支持的模态与协议筛选。公开目录不能当作凭证验证或账号权限证明。DeepSeek 因此只出现当次远端的 v4 三模型。禁止按 id 黑名单隐藏 chat/reasoner。 | models_overview / model_catalog 的并集改替换；静态 builtin_entries 只作探测失败回退；逐模型协议、能力和认证验证缺口见核查报告 |
 | UI-6b | 同一供应商可按其支持的方式添加**多个** OAuth 订阅或 API key（同 kind 多账户，不再只是 key 与 OAuth 两类各一份）。可在账号间切换；有权威额度后再按剩余额度切换，无来源时不画假数字，但切换入口要先在。 | 将 backlog G1 账户池纳入本线；G2 QuotaSnapshot 有来源才接自动切换。Secret 仍只进 auth backend |
 
-目录前置核查已完成（2026-09-08）：覆盖八条正式通道与现有 Anthropic / OpenAI-compatible 适配器。真实 GET 复现 DeepSeek 静态旧模型残留、Go 公开目录无法验证 key、Qwen 非聊天模型进入目录；逐供应商结果和参照项目依据见 [模型目录核查报告](review/model-catalog-audit-2026-09-08.md)。**实现未开始，未通过修复后的自动门禁或人工验收。**
+目录前置核查已完成（2026-09-08）：覆盖八条正式通道与现有 Anthropic / OpenAI-compatible 适配器。真实 GET 复现 DeepSeek 静态旧模型残留、Go 公开目录无法验证 key、Qwen 非聊天模型进入目录；逐供应商结果和参照项目依据见 [模型目录核查报告](review/model-catalog-audit-2026-09-08.md)。**UI-6a 已实现：远端 ID 替换、能力与协议筛选、Go 凭证验证及供应商页重设计；后端与 Desktop 定向门禁通过，代理真窗口检查通过，等待用户人工视觉验收。UI-6b 尚未开始。**
 
 ---
 
@@ -152,7 +152,7 @@ UI-2 / UI-3 / UI-4 写入集不重叠，可在 UI-1 token 稳定后并行。UI-5
 | UI-3 Timeline | 已实现：Markdown、工具与思考折叠、终态呈现及 OpenCode Go 会话请求头（ADR-057）；定向自动检查、真实 Run 与重启回放检查通过，等待用户人工视觉验收；未归档 |
 | UI-4 Composer | 已实现：居中输入卡片、模型 / 发送与外部项目 / 上下文分层；自动检查与代理真窗口检查通过，等待用户人工视觉验收；未归档 |
 | UI-5 Settings | 已实现：设置导航与七个非供应商页重设计，AX 使用实际布局；自动检查与代理真窗口检查通过，等待用户人工视觉验收；未归档 |
-| UI-6 Providers | 目录前置核查完成（2026-09-08）；实现未开始，未归档；见 [核查报告](review/model-catalog-audit-2026-09-08.md) |
+| UI-6 Providers | UI-6a 已实现；后端与 Desktop 定向门禁通过，代理真窗口检查通过，等待用户人工视觉验收；UI-6b 未开始，未归档；见 [核查报告](review/model-catalog-audit-2026-09-08.md) |
 
 走查原文与截图在本机走查笔记中，不检入仓库。
 
@@ -236,3 +236,15 @@ UI-2 / UI-3 / UI-4 写入集不重叠，可在 UI-1 token 稳定后并行。UI-5
 - **窗口外事实**：独立 `target/pawork-desktop-runtime/Pawork-UI5-review.app` 连接既有 `ui3-thinking` Host（当次参数 `opencode-go / glm-5.3-flash`）。按 `CFBundleExecutable` 核对实际入口，候选与最终 build SHA-256 均为 `ce58a3cf6344f9cf0ad11b18f5b7cbbcd9cc6eae7237320cc317dca9fa3d3afe`；候选 `--probe` 成功。偏好文件确认 `language=en, text_scale=100`，证据见 `/tmp/pawork-ui5/final-evidence.json` 与 `/tmp/pawork-ui5/probe.log`。本批没有发起 Run，也未操作 Host 代理、审批、信任、凭证或 MCP 写入口；这些写入行为沿用既有实现与自动回归。
 - **审查**：确定性检查后独立只读审查完成；重连按钮的 AX 全行命中区已收敛至按钮，最终分区与输入布局修正后无未解决发现。
 - **状态边界**：已实现、自动检查通过、代理真窗口检查通过；**等待用户人工视觉验收，未归档**。本提交收录实现与规格，未推送、未发布；全量 workspace 门禁未运行；UI-6 实现未开始。
+
+
+### UI-6a 本批证据（2026-09-08）
+
+- **已实现**：供应商卡与 Manage models 重设计，默认角色说明 / 选择器分列、凭证输入 / 动作分行，页面与弹层 AX 读取实际布局并裁剪离屏项。成功目录替换该 provider 的静态 / 配置 ID，合法空列表同样权威；失败才回退，回退同样过滤不可运行协议。Go / Qwen 目录与 stream 共用官方逐模型协议声明；Kimi / xAI / ChatGPT 消费远端能力字段，未知窗口 / 输出如实保留 unknown。Go 保存 key 改用认证 `/usage`，失败保留旧 key。设计见 [GUI 设计 UI-6a](gui-design.md#ui-6a-供应商更新2026-09-08)，语义见 [ADR-058](spec/settings.md#adr-058ui-6a-目录权威与凭证验证2026-09-08)。GUI wire、domain、配置 schema 与业务依赖不变。
+- **后端定向检查通过**：`cargo test -p pawork-app -p pawork-providers --offline --lib --tests`，448 passed / 0 failed；复用已有目录、切换与 adapter 回归，增加 Go 验证保旧的必要安全回归。覆盖远端替换旧 ID、合法空目录、错误回退、不可运行协议拒选、Responses metadata 与 stream 同源、畸形响应拒绝及凭证脱敏。只读审查发现的配置回退协议漏洞已修复并复验。日志 `/tmp/pawork-ui6-core-tests.log`。
+- **真实目录**：新 Host 二进制运行 `pawork --instance ui6a-catalog --provider opencode-go --model glm-5.3-flash --json models`，DeepSeek 返回当次 v4 三模型，旧 `deepseek-chat/reasoner` 无残留；Go 20、Qwen 8、GLM 10、Kimi 4。xAI 探测失败，如实回退 4 个静态项，不记作远端成功。目录与脱敏证据 `/tmp/pawork-ui6a-models.json`、`/tmp/pawork-ui6a-evidence.json`；模型数是当次观测，不是硬编码验收名单。
+- **Desktop 定向检查通过**：`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`，217 passed / 0 failed；`cargo build -p pawork-desktop --offline --bin pawork-desktop --features gpui/runtime_shaders` 通过。四个既有 Provider AX 测试改用实测框，覆盖脱敏、gate、角色过滤 / 清除、滚动 / 裁剪与三档字号；角色长目录补齐打开定位与方向键跟随，Context 的远端 0 哨兵显示 unavailable。日志 `/tmp/pawork-ui6-desktop-tests.log`、`/tmp/pawork-ui6-desktop-build.log`。后端构建命令 `cargo build -p pawork --offline --bin pawork` 通过，日志 `/tmp/pawork-ui6-host-build.log`。本机沿用 `/tmp` rustc wrapper / test runner 复用 `target/` 与小依赖索引，未改 Cargo 配置或清理缓存。
+- **代理真窗口检查**：供应商卡、Go / DeepSeek 展开详情、真实目录弹层、20 模型滚动与离屏 AX、Usage 无数字空态，以及 1440×1024 宽窗的 100% / 125% / 150% 与 1080×720 窄窗 150% 布局。最终候选已复验角色菜单打开时自动滚入当前模型，↑/↓ 跟随高亮、Esc 恢复触发器焦点，默认值未改变；未知 context window 显示 unavailable。实际 API key / OAuth 更新、代理与启用开关未在本机凭证上写入，写入语义由定向回归覆盖。截图不检入仓库。
+- **窗口外事实**：隔离 Host `ui6a-review` 固定使用当次 `opencode-go / glm-5.3-flash`、read-only 审批。真窗口会话 `ses-1788853858278-1` / Run `run-gui-1788853881041-1` 返回 `UI6_CATALOG_OK`，SQLite 终态 `run_completed`、assistant committed 正文一致，0 工具调用；证据 `/tmp/pawork-ui6a-evidence.json`。外观偏好恢复 English / 100%，未改持久模型默认或认证。
+- **最终候选**：`target/pawork-desktop-runtime/Pawork-UI6a-final.app` 已打开并连接隔离 Host；最终二进制 / bundle SHA-256 一致：`7f36f4e624ec8098bc57bef2a59b317bc6556848234902d556af23b62273f415`。使用独立 bundle，没有覆盖运行中的正式应用；保留宽窗、English / 100% 供用户视觉验收。`git diff --check` 与本批文档相对文件链接检查通过。
+- **状态边界**：UI-6b 同 kind 多账号和额度切换未开始；Anthropic 目录、分页、Kimi 视频模态仍为现有边界。等待用户人工视觉验收，未归档、未推送、未发布；全量 workspace 门禁未运行。

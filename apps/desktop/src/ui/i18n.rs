@@ -390,7 +390,12 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "settings.providers.manage_models_tooltip" => {
             ("View and manage enabled models", "查看并管理已启用模型")
         }
-        "settings.providers.models_title" => ("Enabled models", "已启用模型"),
+        "settings.providers.models_title" => ("Models", "模型"),
+        "settings.providers.models_count" => ("{} of {} enabled", "已启用 {} / {}"),
+        "settings.providers.catalog_scope" => (
+            "Catalog discovery does not verify credentials or account access.",
+            "发现模型不代表凭证有效，也不代表账号拥有访问权限。",
+        ),
         "settings.providers.models_enable_all" => ("Enable all", "全部启用"),
         "settings.providers.models_disable_all" => ("Disable all", "全部禁用"),
         "settings.providers.models_empty_title" => ("No models returned", "未返回模型"),

@@ -1,5 +1,7 @@
 # Pawork 能力与入口矩阵
 
+UI-6a / [ADR-058](settings.md#adr-058ui-6a-目录权威与凭证验证2026-09-08)：远端成功替换静态模型 ID，Go/Qwen 按实际支持的请求协议过滤，模型选择同步核对；Go 用已认证 `/usage` 验证候选 key，公开目录不证明认证。多账号与 QuotaSnapshot 尚属 UI-6b；实现/自动检查/人工验收分别见 [路线图](../ROADMAP.md)。
+
 OPT-1 / [ADR-053](settings.md#adr-053opt-1-设置持久化2026-09-05)：Settings 审批模式保存为 Global 默认，信任选择按 canonical workspace 根路径保存；非 Global 高层禁止覆盖；命令与回执 JSON 形状保持不变。Appearance 保存用户目录 `desktop.json`。实现/自动验证/人工验收状态分别见 [OPT 归档](../review/roadmap-opt-2026-09-05.md#101-本批交付与证据2026-09-05)。
 
 > 基线日期：2026-09-03。状态词汇见 [README.md](README.md#3-状态词汇)。本表记录生产可见面，不以“代码存在”替代当前阶段复验或发布证明。
@@ -37,7 +39,7 @@ OPT-1 / [ADR-053](settings.md#adr-053opt-1-设置持久化2026-09-05)：Settings
 | `chat` | 交互式流式会话 | 已实现；TTY 才可交互审批。 |
 | `sessions` | `list/show/export/import/fork` | 已实现；resume 通过全局/命令参数进入。 |
 | `run` | 非交互单次任务 | 已实现；JSON/非 TTY deny-all approvals。 |
-| `models` | 聚合静态与运行期模型目录 | 已实现。 |
+| `models` | 远端权威目录与失败回退 | 已实现。 |
 | `auth` | `list/set-key/login/logout` | 已实现；auth file 为当前 Secret 后端。 |
 | `gui` | `serve` 本机 GUI 连接服务 | 已实现；需要 token 认证。 |
 | `diff` | 查看工作区变更 | 已实现。 |

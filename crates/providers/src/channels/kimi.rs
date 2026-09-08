@@ -113,24 +113,29 @@ impl ModelProvider for KimiCodeProvider {
             )
             .await?;
         // OpenAI 风格 data[]；形状不符按 Err 处理，由 app 层落 fixed_fallback。
-        let entries = value.get("data").and_then(Value::as_array).ok_or_else(|| {
-            ProviderError::new(
-                ProviderErrorKind::InvalidRequest,
-                "Kimi Code models response must contain a data array",
-            )
-        })?;
+        let entries = crate::provider::catalog_entries(&value, "data")?;
         let mut definitions = Vec::new();
         for entry in entries {
-            let Some(id) = entry.get("id").and_then(Value::as_str) else {
-                continue;
-            };
-            match builtin_models()
+            let id = crate::provider::catalog_model_id(entry, "id")?;
+            let mut definition = builtin_models()
                 .into_iter()
                 .find(|definition| definition.id.as_str() == id)
-            {
-                Some(definition) => definitions.push(definition),
-                None => definitions.push(unknown_model(id)),
+                .unwrap_or_else(|| unknown_model(id));
+            // 官方 kimi-cli auth/platforms.py ModelInfo（2026-09-08）。
+            if let Some(name) = entry.get("display_name").and_then(Value::as_str) {
+                definition.display_name = name.to_owned();
             }
+            if let Some(context) = entry.get("context_length").and_then(Value::as_u64) {
+                definition.context_window_tokens = context;
+            }
+            if let Some(thinking) = entry.get("supports_reasoning").and_then(Value::as_bool) {
+                definition.capabilities.thinking = thinking;
+            }
+            if let Some(image_input) = entry.get("supports_image_in").and_then(Value::as_bool) {
+                definition.capabilities.image_input = image_input;
+            }
+            // supports_video_in 无 canonical 字段，不能冒充 image_input。
+            definitions.push(definition);
         }
         Ok(definitions)
     }
@@ -242,7 +247,11 @@ mod tests {
             .and(path("/models"))
             .and(header("authorization", "Bearer oauth-token"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "data": [{"id": "kimi-for-coding"}, {"id": "kimi-new"}]
+                "data": [
+                    {"id": "kimi-for-coding", "display_name": "Current Code", "context_length": 262144,
+                     "supports_reasoning": true, "supports_image_in": true},
+                    {"id": "kimi-new", "supports_video_in": true}
+                ]
             })))
             .expect(1)
             .mount(&server)
@@ -263,7 +272,10 @@ mod tests {
         let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
         assert_eq!(ids, ["kimi-for-coding", "kimi-new"]);
         let known = &models[0];
-        assert_eq!(known.display_name, "Kimi K2.7 Code");
+        assert_eq!(known.display_name, "Current Code");
+        assert_eq!(known.context_window_tokens, 262144);
+        assert!(known.capabilities.thinking);
+        assert!(known.capabilities.image_input);
         assert_eq!(
             known.capabilities.transport,
             ModelTransport::ChatCompletions
@@ -272,6 +284,8 @@ mod tests {
         assert_eq!(unknown.display_name, "kimi-new");
         assert_eq!(unknown.context_window_tokens, 0);
         assert_eq!(unknown.max_output_tokens, 0);
+        assert!(!unknown.capabilities.image_input);
+        assert!(!unknown.capabilities.tool_calls);
         assert_eq!(
             unknown.capabilities.transport,
             ModelTransport::ChatCompletions

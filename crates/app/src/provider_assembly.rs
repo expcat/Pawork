@@ -143,6 +143,7 @@ impl AppCore {
             credential.as_ref(),
             &provider_id,
             model,
+            &self.config,
         )
         .await?;
         // ADR-055 D4：会话内模型切换同闸——目标模型禁用时结构化
@@ -189,8 +190,17 @@ impl AppCore {
         )
         .await?;
 
-        // 目标模型：显式参数 → 当前模型（若属于目标 provider）→ 目标 provider
-        // 的第一个 registry 条目；都无则要求显式 /model。
+        // 未显式指定模型时，也先按远端目录核对当前项及默认候选。
+        if model.is_none() {
+            refresh_provider_registry(
+                &mut assembled.registry,
+                assembled.adapter.as_ref(),
+                assembled.credential.as_ref(),
+                &target,
+                &self.config,
+            )
+            .await;
+        }
         let target_model = if let Some(model) = model {
             resolve_provider_model(
                 &mut assembled.registry,
@@ -198,10 +208,11 @@ impl AppCore {
                 assembled.credential.as_ref(),
                 &target,
                 model,
+                &self.config,
             )
             .await?
             .id
-        } else if self
+        } else if assembled
             .registry
             .resolve(self.model.as_str())
             .is_some_and(|entry| entry.provider == target)
@@ -300,6 +311,7 @@ impl AppCore {
                     credential.as_ref(),
                     &provider,
                     model,
+                    &config,
                 )
                 .await?;
                 let request = naming_request(entry.id.clone(), session_id, &first_user_text);
@@ -353,43 +365,22 @@ impl AppCore {
         .map(|_| ())
     }
 
-    /// 模型目录（builtin + config 覆盖 + 运行期 /models 探测合并，探测失败退回静态）。
+    /// 远端成功时替换当前供应商的 ID 集合，失败才保留静态目录。
     pub async fn model_catalog(&self) -> Vec<CatalogEntry> {
-        let mut catalog = self.registry.as_ref().clone();
-        match catalog
-            .probe_provider(self.provider.as_ref(), self.credential.as_ref())
-            .await
-        {
-            Err(error) => {
-                tracing::warn!(
-                    provider = %self.provider_id,
-                    error = %error,
-                    "runtime model probe failed; falling back to static catalog"
-                );
-            }
-            Ok(probe) => {
-                for definition in &probe.definitions {
-                    if catalog.resolve(definition.id.as_str()).is_none() {
-                        catalog.extend_with(vec![CatalogEntry {
-                            id: definition.id.clone(),
-                            provider: self.provider_id.clone(),
-                            display_name: definition.display_name.clone(),
-                            context_window_tokens: definition.context_window_tokens,
-                            max_output_tokens: definition.max_output_tokens,
-                            capabilities: definition.capabilities.clone(),
-                            pricing: None,
-                            aliases: Vec::new(),
-                        }]);
-                    }
-                }
-            }
-        }
-        catalog.list().into_iter().cloned().collect()
+        let mut registry = self.registry.as_ref().clone();
+        refresh_provider_registry(
+            &mut registry,
+            self.provider.as_ref(),
+            self.credential.as_ref(),
+            &self.provider_id,
+            &self.config,
+        )
+        .await;
+        registry.list().into_iter().cloned().collect()
     }
 
-    /// pawork models 聚合目录：六通道静态条目 + config providers（Messages
-    /// 静态目录与 models 覆盖）+ 所有能装配成功的通道的运行期探测（探测失败
-    /// 静默退回该通道静态，与单通道目录一致）。未登记协议或无凭证的通道跳过探测。
+    /// pawork models 聚合目录：成功探测替换该通道 ID 集合，失败保留经过
+    /// adapter 协议过滤的静态 / config 回退。未登记协议或无凭证的通道跳过探测。
     pub async fn models_overview(&self) -> Vec<CatalogEntry> {
         let mut provider_ids: Vec<ProviderId> = channels::FIRST_PARTY_CHANNELS
             .iter()
@@ -474,23 +465,18 @@ impl AppCore {
                     );
                 }
                 Ok(probe) => {
-                    for definition in &probe.definitions {
-                        if !catalog
-                            .iter()
-                            .any(|entry| entry.provider == id && entry.id == definition.id)
-                        {
-                            catalog.push(CatalogEntry {
-                                id: definition.id.clone(),
-                                provider: id.clone(),
-                                display_name: definition.display_name.clone(),
-                                context_window_tokens: definition.context_window_tokens,
-                                max_output_tokens: definition.max_output_tokens,
-                                capabilities: definition.capabilities.clone(),
-                                pricing: None,
-                                aliases: Vec::new(),
-                            });
-                        }
-                    }
+                    let baseline: Vec<_> = catalog
+                        .iter()
+                        .filter(|entry| entry.provider == id)
+                        .cloned()
+                        .collect();
+                    catalog.retain(|entry| entry.provider != id);
+                    catalog.extend(remote_catalog_entries(
+                        &id,
+                        &probe.definitions,
+                        &baseline,
+                        &self.config,
+                    ));
                 }
             }
         }
@@ -515,42 +501,98 @@ fn catalog_entry_from_definition(
     }
 }
 
-/// 按明确的 `(provider, model)` 解析模型。静态目录未命中目标 provider 时，
-/// 对该 provider 探测一次并惰性合并；探测仍未命中则保持 fail-closed。
+/// 远端决定 ID / 能力；静态只补定价、别名，显式配置只覆盖仍存在模型的窗口。
+fn remote_catalog_entries(
+    provider_id: &ProviderId,
+    definitions: &[ModelDefinition],
+    baseline: &[CatalogEntry],
+    config: &PaworkConfig,
+) -> Vec<CatalogEntry> {
+    let mut entries = std::collections::BTreeMap::new();
+    for definition in definitions {
+        let mut entry = catalog_entry_from_definition(provider_id, definition);
+        if let Some(previous) = baseline.iter().find(|entry| entry.id == definition.id) {
+            entry.pricing = previous.pricing.clone();
+            entry.aliases = previous.aliases.clone();
+        }
+        if let Some(overrides) = config
+            .models
+            .iter()
+            .find(|model| model.id == entry.id.as_str())
+        {
+            if let Some(window) = overrides.context_window {
+                entry.context_window_tokens = window;
+            }
+            if let Some(output) = overrides.max_output {
+                entry.max_output_tokens = output;
+            }
+        }
+        entries.insert(entry.id.clone(), entry);
+    }
+    entries.into_values().collect()
+}
+
+/// 每次选择都重新核对目录；合法空响应也删除静态旧 ID，超时/错误才回退。
+async fn refresh_provider_registry(
+    registry: &mut ModelRegistry,
+    provider: &dyn ModelProvider,
+    credential: Option<&ResolvedCredential>,
+    provider_id: &ProviderId,
+    config: &PaworkConfig,
+) {
+    let definitions = match tokio::time::timeout(
+        Duration::from_secs(4),
+        provider.list_models(credential),
+    )
+    .await
+    {
+        Ok(Ok(definitions)) => definitions,
+        outcome => {
+            let error = match outcome {
+                Ok(Err(error)) => error.to_string(),
+                Err(_) => "runtime model probe timed out".into(),
+                Ok(Ok(_)) => unreachable!(),
+            };
+            tracing::warn!(provider = %provider_id, %error, "runtime model probe failed; falling back to catalog");
+            return;
+        }
+    };
+    let baseline: Vec<_> = registry.list().into_iter().cloned().collect();
+    let mut entries: Vec<_> = baseline
+        .iter()
+        .filter(|entry| entry.provider != *provider_id)
+        .cloned()
+        .collect();
+    let provider_baseline: Vec<_> = baseline
+        .into_iter()
+        .filter(|entry| entry.provider == *provider_id)
+        .collect();
+    entries.extend(remote_catalog_entries(
+        provider_id,
+        &definitions,
+        &provider_baseline,
+        config,
+    ));
+    let mut refreshed = ModelRegistry::empty();
+    refreshed.extend_with(entries);
+    *registry = refreshed;
+}
+
+/// 按明确的 `(provider, model)` 解析，静态命中同样受成功的远端目录约束。
 pub(crate) async fn resolve_provider_model(
     registry: &mut ModelRegistry,
     provider: &dyn ModelProvider,
     credential: Option<&ResolvedCredential>,
     provider_id: &ProviderId,
     model: &str,
+    config: &PaworkConfig,
 ) -> Result<CatalogEntry, AppError> {
-    if let Some(entry) = registry
-        .resolve(model)
-        .filter(|entry| entry.provider == *provider_id)
-        .cloned()
-    {
-        return Ok(entry);
-    }
-
-    let static_owner = registry
-        .resolve(model)
-        .map(|entry| entry.provider.as_str().to_string());
-    let discovered = provider
-        .list_models(credential)
-        .await
-        .unwrap_or_default()
-        .into_iter()
-        .find(|definition| definition.id.as_str() == model)
-        .map(|definition| catalog_entry_from_definition(provider_id, &definition));
-    if let Some(entry) = discovered {
-        registry.extend_with(vec![entry.clone()]);
-        return Ok(entry);
-    }
-
-    match static_owner {
-        Some(owner) => Err(AppError::ModelBelongsToProvider {
+    refresh_provider_registry(registry, provider, credential, provider_id, config).await;
+    match registry.resolve(model) {
+        Some(entry) if entry.provider == *provider_id => Ok(entry.clone()),
+        Some(entry) => Err(AppError::ModelBelongsToProvider {
             model: model.to_string(),
-            owner,
+            owner: entry.provider.as_str().to_string(),
             current: provider_id.as_str().to_string(),
         }),
         None => Err(AppError::UnknownModel {
@@ -630,6 +672,36 @@ pub(crate) fn assemble_registry(
     }
     apply_config_models(&mut registry, &config.models, provider_id);
     apply_transport_overrides(&mut registry, config);
+    if channel.is_some_and(|channel| channel.kind == ChannelKind::ApiKey) {
+        if let Some(preset) = channels::api_key_channel(provider_id.as_str()) {
+            if let Ok(mut channel_config) = ApiKeyChannelConfig::new(preset) {
+                for (model, transport) in model_transport_overrides(config) {
+                    channel_config = channel_config.with_model_transport(model, transport);
+                }
+                let entries = registry
+                    .list()
+                    .into_iter()
+                    .filter_map(|entry| {
+                        let mut entry = entry.clone();
+                        if &entry.provider == provider_id {
+                            let transport = channel_config.transport_for(&entry.id)?;
+                            if !matches!(
+                                transport,
+                                pawork_domain::ModelTransport::ChatCompletions
+                                    | pawork_domain::ModelTransport::Responses
+                            ) {
+                                return None;
+                            }
+                            entry.capabilities.transport = transport;
+                        }
+                        Some(entry)
+                    })
+                    .collect();
+                registry = ModelRegistry::empty();
+                registry.extend_with(entries);
+            }
+        }
+    }
     registry
 }
 
@@ -1073,14 +1145,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn switch_provider_accepts_runtime_discovered_model() {
+    async fn remote_catalog_replaces_static_ids_and_validates_selection() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/v1/models"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "data": [{"id": "runtime-only-model"}]
+                "data": [{"id": "runtime-only-model", "display_name": "Remote model", "context_length": 4096}]
             })))
-            .expect(1)
+            .expect(4)
             .mount(&server)
             .await;
 
@@ -1095,6 +1167,17 @@ mod tests {
                 base_url: Some(format!("{}/v1", server.uri())),
                 ..ProviderConfig::default()
             }],
+            models: vec![
+                pawork_workspace::config::ModelConfig {
+                    id: "retired-model".into(),
+                    ..Default::default()
+                },
+                pawork_workspace::config::ModelConfig {
+                    id: "runtime-only-model".into(),
+                    max_output: Some(2048),
+                    ..Default::default()
+                },
+            ],
             ..PaworkConfig::default()
         };
         let mut core =
@@ -1112,7 +1195,98 @@ mod tests {
                 .map(|entry| &entry.provider),
             Some(&provider_id)
         );
+        let selected = core.registry.resolve("runtime-only-model").unwrap();
+        assert_eq!(selected.display_name, "Remote model");
+        assert_eq!(selected.context_window_tokens, 4096);
+        assert_eq!(selected.max_output_tokens, 2048);
+        let catalog = core.model_catalog().await;
+        assert!(catalog
+            .iter()
+            .any(|entry| entry.id.as_str() == "runtime-only-model"));
+        assert!(!catalog
+            .iter()
+            .any(|entry| entry.id.as_str() == "retired-model"));
+        assert!(core
+            .models_overview()
+            .await
+            .iter()
+            .filter(|entry| entry.provider == provider_id)
+            .all(|entry| entry.id.as_str() == "runtime-only-model"));
+        assert!(matches!(
+            core.switch_provider(None, provider_id.as_str(), Some("retired-model"))
+                .await,
+            Err(AppError::UnknownModel { .. })
+        ));
+        assert_eq!(core.model().as_str(), "runtime-only-model");
         server.verify().await;
+        server.reset().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(503))
+            .expect(1)
+            .mount(&server)
+            .await;
+        core.switch_provider(None, provider_id.as_str(), Some("retired-model"))
+            .await
+            .expect("failed remote query permits explicit configured fallback");
+        server.verify().await;
+        server.reset().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"data": []})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        assert!(matches!(
+            core.switch_model(None, "retired-model").await,
+            Err(AppError::UnknownModel { .. })
+        ));
+        server.verify().await;
+
+        // 失败回退同样遵守 adapter 的协议表，配置不能让不可运行模型进入选择器。
+        server.reset().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&server)
+            .await;
+        let go = ProviderId::from("opencode-go");
+        pawork_auth::store_default_api_key(core.backend.as_ref(), &go, "test-go-key")
+            .expect("store Go credential");
+        core.config.providers.push(ProviderConfig {
+            id: go.to_string(),
+            base_url: Some(format!("{}/v1", server.uri())),
+            use_proxy: Some(false),
+            ..Default::default()
+        });
+        for id in ["minimax-m3", "unlisted-model", "grok-4.6"] {
+            core.config
+                .models
+                .push(pawork_workspace::config::ModelConfig {
+                    id: id.into(),
+                    ..Default::default()
+                });
+        }
+        for id in ["minimax-m3", "unlisted-model"] {
+            assert!(matches!(
+                core.switch_provider(None, go.as_str(), Some(id)).await,
+                Err(AppError::UnknownModel { .. })
+            ));
+        }
+        core.switch_provider(None, go.as_str(), Some("grok-4.6"))
+            .await
+            .expect("documented Responses model remains selectable");
+        assert_eq!(
+            core.registry
+                .resolve("grok-4.6")
+                .unwrap()
+                .capabilities
+                .transport,
+            pawork_domain::ModelTransport::Responses
+        );
+        let overview = core.models_overview().await;
+        assert!(!overview.iter().any(|entry| entry.provider == go
+            && matches!(entry.id.as_str(), "minimax-m3" | "unlisted-model")));
     }
 
     #[tokio::test]
@@ -1143,7 +1317,11 @@ mod tests {
                     response_id: None,
                     provider_metadata: Default::default(),
                 },
-                models: Vec::new(),
+                models: registry
+                    .list()
+                    .into_iter()
+                    .map(CatalogEntry::to_definition)
+                    .collect(),
             }),
             None,
             ModelId::from("m-a"),

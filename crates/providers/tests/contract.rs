@@ -664,22 +664,42 @@ async fn contract_partial_json_tool_arguments() {
 #[tokio::test]
 async fn contract_list_models() {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/models"))
-        .and(header("authorization", "Bearer sk-test"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "data": [
-                {"id": "gpt-4o"},
-                {"id": "llama-3"}
-            ]
-        })))
-        .mount(&server)
-        .await;
-
     let p = provider(&server, None);
-    let models = p.list_models(None).await.expect("list models");
-    assert_eq!(models.len(), 2);
-    assert_eq!(models[0].id, ModelId::new("gpt-4o"));
+    for (payload, expected_count) in [
+        (
+            serde_json::json!({"data": [{"id": "gpt-4o"}, {"id": "llama-3"}]}),
+            Some(2),
+        ),
+        (serde_json::json!({"data": []}), Some(0)),
+        (serde_json::json!({}), None),
+        (serde_json::json!({"data": null}), None),
+        (serde_json::json!({"data": [], "has_more": true}), None),
+        (serde_json::json!({"data": {}}), None),
+        (serde_json::json!({"data": [{}]}), None),
+        (serde_json::json!({"data": [{"id": ""}]}), None),
+    ] {
+        server.reset().await;
+        Mock::given(method("GET"))
+            .and(path("/models"))
+            .and(header("authorization", "Bearer sk-test"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(payload))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let result = p.list_models(None).await;
+        if let Some(count) = expected_count {
+            let models = result.expect("valid list");
+            assert_eq!(models.len(), count);
+            for model in models {
+                assert_eq!(model.context_window_tokens, 0);
+                assert_eq!(model.max_output_tokens, 0);
+                assert!(!model.capabilities.tool_calls);
+            }
+        } else {
+            assert_eq!(result.unwrap_err().kind, ProviderErrorKind::InvalidRequest);
+        }
+        server.verify().await;
+    }
 }
 
 #[tokio::test]

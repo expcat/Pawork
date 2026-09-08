@@ -136,20 +136,10 @@ impl ModelProvider for XaiProvider {
                 CancellationToken::new(),
             )
             .await?;
-        let entries = value
-            .get("models")
-            .and_then(Value::as_array)
-            .ok_or_else(|| {
-                ProviderError::new(
-                    ProviderErrorKind::InvalidRequest,
-                    "xAI language-models response must contain a models array",
-                )
-            })?;
+        let entries = crate::provider::catalog_entries(&value, "models")?;
         let mut definitions = Vec::new();
         for entry in entries {
-            let Some(id) = entry.get("id").and_then(Value::as_str) else {
-                continue;
-            };
+            let id = crate::provider::catalog_model_id(entry, "id")?;
             // 只保留可输出文本的模型；modalities 缺失视为未证明，不入目录。
             let text_output = entry
                 .get("output_modalities")
@@ -158,13 +148,32 @@ impl ModelProvider for XaiProvider {
             if !text_output {
                 continue;
             }
-            match builtin_models()
+            let mut definition = builtin_models()
                 .into_iter()
-                .find(|definition| definition.id.as_str() == id)
-            {
-                Some(definition) => definitions.push(definition),
-                None => definitions.push(unknown_text_model(id)),
+                .find(|definition| {
+                    definition.id.as_str() == id
+                        || entry
+                            .get("aliases")
+                            .and_then(Value::as_array)
+                            .is_some_and(|aliases| {
+                                aliases
+                                    .iter()
+                                    .any(|alias| alias.as_str() == Some(definition.id.as_str()))
+                            })
+                })
+                .unwrap_or_else(|| unknown_text_model(id));
+            definition.id = ModelId::new(id);
+            // canonical ID 与 stream 使用相同路由；别名只补能力，不改变实际请求路径。
+            definition.capabilities.transport = Self::transport_for(&definition.id);
+            if let Some(modalities) = entry.get("input_modalities").and_then(Value::as_array) {
+                definition.capabilities.image_input = modalities
+                    .iter()
+                    .any(|modality| modality.as_str() == Some("image"));
             }
+            if let Some(context) = entry.get("context_length").and_then(Value::as_u64) {
+                definition.context_window_tokens = context;
+            }
+            definitions.push(definition);
         }
         Ok(definitions)
     }
@@ -374,6 +383,7 @@ mod tests {
                 "models": [
                     {
                         "id": "grok-4",
+                        "context_length": 262144,
                         "input_modalities": ["text", "image"],
                         "output_modalities": ["text"]
                     },
@@ -384,6 +394,12 @@ mod tests {
                     },
                     {
                         "id": "grok-future",
+                        "input_modalities": ["text", "image"],
+                        "output_modalities": ["text"]
+                    },
+                    {
+                        "id": "grok-3-current",
+                        "aliases": ["grok-3"],
                         "input_modalities": ["text"],
                         "output_modalities": ["text"]
                     }
@@ -405,17 +421,27 @@ mod tests {
         let models = provider.list_models(None).await.expect("remote models");
 
         let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
-        assert_eq!(ids, ["grok-4", "grok-future"]);
+        assert_eq!(ids, ["grok-4", "grok-future", "grok-3-current"]);
         let grok4 = &models[0];
         assert_eq!(grok4.display_name, "Grok 4");
-        assert_eq!(grok4.context_window_tokens, 256_000);
+        assert_eq!(grok4.context_window_tokens, 262_144);
         assert_eq!(grok4.capabilities.transport, ModelTransport::Responses);
         let future = &models[1];
         assert_eq!(future.display_name, "grok-future");
         assert_eq!(future.context_window_tokens, 0);
         assert_eq!(future.max_output_tokens, 0);
+        assert!(future.capabilities.image_input);
+        assert!(!future.capabilities.tool_calls);
         assert_eq!(
             future.capabilities.transport,
+            ModelTransport::ChatCompletions
+        );
+        let alias = &models[2];
+        assert_eq!(alias.context_window_tokens, 131_072);
+        assert!(alias.capabilities.tool_calls);
+        assert!(!alias.capabilities.image_input);
+        assert_eq!(
+            alias.capabilities.transport,
             ModelTransport::ChatCompletions
         );
         server.verify().await;

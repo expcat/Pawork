@@ -175,7 +175,12 @@ pub(crate) fn core_with_registry(registry: ModelRegistry, model: &str) -> AppCor
                 response_id: Some("resp-1".into()),
                 provider_metadata: Default::default(),
             },
-            models: Vec::new(),
+            models: registry
+                .list()
+                .into_iter()
+                .filter(|entry| entry.provider.as_str() == "mock")
+                .map(|entry| entry.to_definition())
+                .collect(),
         }),
         None,
         ModelId::from(model),
