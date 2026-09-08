@@ -379,26 +379,32 @@ pub mod metrics {
     pub const SIDEBAR_WIDTH: f32 = 288.0;
     /// 440：Inspector 面板宽度。
     pub const INSPECTOR_WIDTH: f32 = 440.0;
-    /// 88：Composer 面板常态总高（F-09 合同下限；不是输入框 min）。
-    /// 布局自然高 89 落在 88–94；常量为合同下限而非逐像素预测。
-    pub const COMPOSER_MIN_HEIGHT: f32 = 88.0;
+    /// UI-4：输入卡片常态高 110px，不含外围留白与元信息。
+    pub const COMPOSER_MIN_HEIGHT: f32 = 110.0;
     /// 220：Composer 面板增长上限（超限后输入内部滚动属 Wave B）。
     pub const COMPOSER_MAX_HEIGHT: f32 = 220.0;
     /// 8：Composer 输入行高计算的内边距余量（TextInput py_1 上下各 4）。
     pub const COMPOSER_TEXT_INSET: f32 = 8.0;
-    /// 8：Composer 面板内边距（GPUI p_2 = 0.5rem = 8px）。
-    pub const COMPOSER_PAD: f32 = 8.0;
-    /// 8：Composer 输入行与 footer 间距（GPUI gap_2 = 8px）。
-    pub const COMPOSER_GAP: f32 = 8.0;
-    /// 1：Composer 顶部分隔线厚度（border_t_1）。
-    pub const COMPOSER_BORDER: f32 = 1.0;
+    /// UI-4：卡片内边距 16px，输入与动作间距 12px。
+    pub const COMPOSER_PAD: f32 = 16.0;
+    pub const COMPOSER_GAP: f32 = 12.0;
+    /// 上下两条 1px 边框的总高度。
+    pub const COMPOSER_BORDER: f32 = 2.0;
+    /// 与 Timeline 同列；两侧至少 28px，顶部 16px、底部 24px。
+    pub const COMPOSER_OUTER_X: f32 = 28.0;
+    pub const COMPOSER_OUTER_TOP: f32 = 16.0;
+    pub const COMPOSER_OUTER_BOTTOM: f32 = 24.0;
+    pub const COMPOSER_META_GAP: f32 = 8.0;
+    /// 以 100% 字号为基准；元信息随字号增长。
+    pub const COMPOSER_META_HEIGHT: f32 = 24.0;
+    pub const COMPOSER_MODEL_WIDTH: f32 = 220.0;
     /// 28：Composer 输入区单行最小高（行高 20 + py_1 上下 4+4）。
     pub const COMPOSER_INPUT_MIN_HEIGHT: f32 = 28.0;
-    /// 28：Composer footer 控件高（model / workspace / ContextMeter）。
-    pub const COMPOSER_FOOTER_CONTROL: f32 = 28.0;
+    /// UI-4：模型与发送统一 36px 命中区。
+    pub const COMPOSER_FOOTER_CONTROL: f32 = 36.0;
     /// 36：Composer Send / Cancel 同槽圆形按钮边长（OPT-D 命中区 ≥36×36）。
     pub const COMPOSER_SEND_SIZE: f32 = 36.0;
-    /// 88：COMPOSER_MIN_HEIGHT 的面板语义别名。
+    /// COMPOSER_MIN_HEIGHT 的面板语义别名。
     pub const COMPOSER_PANEL_MIN_HEIGHT: f32 = COMPOSER_MIN_HEIGHT;
     /// 220：COMPOSER_MAX_HEIGHT 的面板语义别名。
     pub const COMPOSER_PANEL_MAX_HEIGHT: f32 = COMPOSER_MAX_HEIGHT;
@@ -648,32 +654,23 @@ mod tests {
         assert_eq!(metrics::DIFF_HEADER_HEIGHT, 36.0);
     }
 
-    /// R5 Wave A Composer 几何合同（design/README.md §2：常态总高 88–94，
-    /// footer 控件 28–30，Send 36 / OPT-D 命中区 ≥36×36）。
-    /// COMPOSER_MIN_HEIGHT 语义改为面板总高，不再当作输入框 min。
+    /// UI-4 卡片预算；外围元信息不抢占输入区增长上限。
     #[test]
     fn composer_geometry_constants_match_frozen_tiers() {
-        assert_eq!(metrics::COMPOSER_MIN_HEIGHT, 88.0);
-        assert_eq!(metrics::COMPOSER_MAX_HEIGHT, 220.0);
-        assert_eq!(metrics::COMPOSER_PANEL_MIN_HEIGHT, 88.0);
-        assert_eq!(metrics::COMPOSER_PANEL_MAX_HEIGHT, 220.0);
-        assert_eq!(metrics::COMPOSER_TEXT_INSET, 8.0);
-        assert_eq!(metrics::COMPOSER_PAD, 8.0);
-        assert_eq!(metrics::COMPOSER_GAP, 8.0);
-        assert_eq!(metrics::COMPOSER_BORDER, 1.0);
-        assert_eq!(metrics::COMPOSER_INPUT_MIN_HEIGHT, 28.0);
-        assert_eq!(metrics::COMPOSER_FOOTER_CONTROL, 28.0);
-        assert_eq!(metrics::COMPOSER_SEND_SIZE, 36.0);
         let laid_out = metrics::COMPOSER_BORDER
             + metrics::COMPOSER_PAD * 2.0
             + metrics::COMPOSER_INPUT_MIN_HEIGHT
             + metrics::COMPOSER_GAP
             + metrics::COMPOSER_SEND_SIZE;
-        // 1+8+8+28+8+36 = 89：常态总高落 88–94 合同区间，下限仍是合同
-        // 下限而非逐像素预测。
-        assert_eq!(laid_out, 89.0);
-        assert!(metrics::COMPOSER_PANEL_MIN_HEIGHT <= 94.0);
-        assert!(laid_out >= metrics::COMPOSER_PANEL_MIN_HEIGHT);
-        assert!(laid_out <= 94.0);
+        assert_eq!(laid_out, metrics::COMPOSER_PANEL_MIN_HEIGHT);
+        assert_eq!(laid_out, 110.0);
+        assert_eq!(metrics::COMPOSER_PANEL_MAX_HEIGHT, 220.0);
+        assert_eq!(
+            metrics::COMPOSER_FOOTER_CONTROL,
+            metrics::COMPOSER_SEND_SIZE
+        );
+        assert_eq!(metrics::COMPOSER_SEND_SIZE, 36.0);
+        assert_eq!(metrics::COMPOSER_OUTER_X, 28.0);
+        assert_eq!(metrics::COMPOSER_OUTER_BOTTOM, 24.0);
     }
 }

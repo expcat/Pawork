@@ -97,7 +97,7 @@ flowchart LR
 
 - Timeline 使用 880px 居中可读列，两侧至少各留 28px；16px / 26px 正文、32px 消息间距，用户浅底卡片与 36px 轻量工具摘要区分层次；独立完成页脚前留 12px。
 - TaskRail project count 使用 56px 右对齐尾槽；UI-2 task time / 行操作共用 64px 固定尾槽；Header 为 medium；24px StatusBar 使用 12px 字阶和窄窗裁切。
-- Composer 的 input/footer 共属同一 panel surface，unavailable Context 使用 tertiary；常态高度、220px 增长上限和 Send/Cancel 单槽不变。
+- UI-4 Composer 的 input / 模型 / Send/Cancel 共属居中卡片（至少 110px、最高 220px），项目与上下文移到卡片下方；缺值仍如实显示 unavailable。留白、字号与交互见 [GUI 设计](../gui-design.md#ui-4-输入栏更新2026-09-08)，当前验收状态见 [路线图](../ROADMAP.md#ui-4-本批证据2026-09-08)。
 - Changes 文件行使用稳定前后槽；DiffView 的只读路径 header 位于横滚外，24px 语义 gutter 与中性正文分离；ActivityPopover 内容宽 320px，内容高随 100%/125%/150% 为 144/180/216px，外框包含 8px padding 与 1px border，摘要可见且保持 capability honesty。
 - 三张阶段图与本机视觉走查已收口；此结论不扩张为 Timeline/Changes 全状态 AX 几何覆盖或发布级签字。
 

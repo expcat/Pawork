@@ -4134,7 +4134,7 @@ impl Render for AppView {
                     cx,
                 );
                 let timeline_area = self.timeline_area(cx);
-                let composer = self.composer_element(cx);
+                let composer = self.composer_element(window, cx);
                 let workspace = div()
                     .id("shell-workspace")
                     .debug_selector(|| "shell-workspace".into())
@@ -4419,7 +4419,7 @@ mod tests {
         assert_eq!(crate::ui::theme::metrics::COMPOSER_SEND_SIZE, 36.0);
         let height =
             AppView::composer_panel_height(crate::ui::theme::metrics::COMPOSER_INPUT_MIN_HEIGHT);
-        assert!(height <= 94.0 && height >= 88.0);
+        assert_eq!(height, metrics::COMPOSER_PANEL_MIN_HEIGHT);
     }
 
     /// ADR-054 D2：行内改名提交裁决——空标题（含纯空白）不提交，保持

@@ -1,5 +1,5 @@
-//! Composer 输入区（InputArea）：两行结构（R5 Wave A）。
-//! 行 1 输入区；行 2 footer（model / workspace / ContextMeter / 瞬态 status_hint / 36×36 动作槽）。
+//! UI-4：居中输入卡片（草稿 + 模型 / 发送），外围保留留白。
+//! 项目、ContextMeter 与瞬态提示在卡片下方，避免争抢动作行。
 //! Send 与 Cancel 同槽互换（element id `composer-action`）；placeholder 只走状态机，
 //! Forked / 发送失败等瞬态反馈落 footer Label。
 
@@ -41,7 +41,7 @@ pub(super) fn model_catalog_empty_state(
 }
 
 impl AppView {
-    pub(super) fn composer_element(&self, cx: &mut Context<Self>) -> gpui::Div {
+    pub(super) fn composer_element(&self, window: &Window, cx: &mut Context<Self>) -> gpui::Div {
         let can_send = self.can_send(cx);
         let can_cancel = self.can_cancel();
         let can_switch_model = self.can_switch_model();
@@ -50,7 +50,13 @@ impl AppView {
             matches!(self.open_menu, Some(MenuKind::Model)) && can_open_model_menu;
         let composer_hint = self.composer_placeholder_hint();
         let context_meter = self.projection.context_meter_label();
-        let context_available = context_meter != "Context · unavailable";
+        let workspace_label = if self.composer_workspace_no_project() {
+            t("composer.no_project_chip").to_string()
+        } else {
+            self.composer_workspace_label()
+        };
+        let meta_height = Self::composer_meta_height(window);
+        let input_focused = self.composer_focus_handle(cx).is_focused(window);
         self.sync_composer_placeholder(composer_hint.clone(), cx);
 
         let model_tooltip = if can_switch_model {
@@ -66,12 +72,27 @@ impl AppView {
         let model_focus = self.model_focus.clone();
         let mut model_button = Button::new("model-picker")
             .track_focus(&model_focus)
-            .variant(ButtonVariant::Raised)
+            .variant(ButtonVariant::Ghost)
+            .text_color(dark().text.secondary)
             .disabled(!can_open_model_menu)
-            .label(self.model_label())
+            .child(
+                div()
+                    .flex()
+                    .w_full()
+                    .items_center()
+                    .gap(px(metrics::SPACE_2))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .child(div().truncate().child(self.model_label())),
+                    )
+                    .child("▾"),
+            )
             .tooltip(model_tooltip)
             .height(px(metrics::COMPOSER_FOOTER_CONTROL))
-            .max_width(px(220.0))
+            .width(px(metrics::COMPOSER_MODEL_WIDTH))
+            .max_width(px(metrics::COMPOSER_MODEL_WIDTH))
             .vcenter();
         // 全关空态下按钮保持可点：菜单从触发器上方打开给诚实说明行，
         // 但不提供任何可选项（选择路径仍由 can_switch_model fail-closed）。
@@ -140,7 +161,7 @@ impl AppView {
         } else {
             let action_focus = self.composer_action_focus.clone();
             let send_tooltip = if can_send {
-                SharedString::from("Send message (Enter)")
+                SharedString::from(t("composer.send_tooltip"))
             } else {
                 SharedString::from(self.send_disabled_reason())
             };
@@ -175,15 +196,22 @@ impl AppView {
             send.into_any_element()
         };
 
-        div()
+        let card = div()
+            .id("composer-card")
+            .debug_selector(|| "composer-card".into())
             .flex()
             .flex_col()
+            .flex_none()
             .gap(px(metrics::COMPOSER_GAP))
             .p(px(metrics::COMPOSER_PAD))
             .min_h(px(metrics::COMPOSER_PANEL_MIN_HEIGHT))
             .max_h(px(metrics::COMPOSER_PANEL_MAX_HEIGHT))
             .border_1()
-            .border_color(dark().border.subtle)
+            .border_color(if input_focused {
+                dark().border.strong
+            } else {
+                dark().border.subtle
+            })
             .rounded(px(metrics::SURFACE_RADIUS))
             .bg(dark().surface.raised)
             .child(
@@ -191,94 +219,125 @@ impl AppView {
                     .flex()
                     .flex_row()
                     .min_h(px(metrics::COMPOSER_INPUT_MIN_HEIGHT))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_h(px(metrics::COMPOSER_INPUT_MIN_HEIGHT))
-                            .child(self.text_input.clone()),
-                    ),
+                    .child(div().flex_1().min_w_0().child(self.text_input.clone())),
             )
             .child(
                 div()
                     .flex()
                     .flex_row()
                     .items_center()
-                    .gap_2()
+                    .gap(px(metrics::SPACE_2))
                     .h(px(metrics::COMPOSER_SEND_SIZE))
+                    .flex_none()
                     .child(
                         div()
-                            .max_w(px(220.0))
-                            .min_w_0()
-                            .overflow_hidden()
+                            .id("composer-model-slot")
+                            .debug_selector(|| "composer-model-slot".into())
+                            .flex_none()
                             .child(model_picker),
                     )
-                    .child(
-                        div().max_w(px(180.0)).min_w_0().overflow_hidden().child(
-                            // OPT-D / ADR-054 D1：无项目上下文用 chip 呈现
-                            //（纯状态展示）；有项目沿用文字 scope 标签。
-                            match self.composer_workspace_no_project() {
-                                true => div()
-                                    .px_2()
-                                    .py(px(metrics::SPACE_1))
-                                    .border_1()
-                                    .border_color(dark().border.subtle)
-                                    .rounded(px(metrics::CONTROL_RADIUS))
-                                    .truncate()
-                                    .child(
-                                        Label::new(t("composer.no_project_chip"))
-                                            .size(font::XS)
-                                            .color(dark().text.secondary),
-                                    ),
-                                false => div().truncate().child(
-                                    Label::new(self.composer_workspace_label())
-                                        .size(font::XS)
-                                        .color(dark().text.secondary),
-                                ),
-                            },
-                        ),
-                    )
-                    .when(self.composer_file_tools_unavailable_visible(), |footer| {
-                        footer.child(
-                            div().max_w(px(320.0)).min_w_0().overflow_hidden().child(
-                                div().truncate().child(
-                                    Label::new(t("composer.file_tools_unavailable"))
-                                        .size(font::XS)
-                                        .color(dark().text.tertiary),
-                                ),
-                            ),
-                        )
-                    })
-                    .child(
-                        Label::new(context_meter)
-                            .size(font::XS)
-                            .color(if context_available {
-                                dark().text.secondary
-                            } else {
-                                dark().text.tertiary
-                            }),
-                    )
-                    .when_some(self.status_hint.as_ref(), |footer, hint| {
-                        footer.child(
-                            div().max_w(px(360.0)).min_w_0().overflow_hidden().child(
-                                div().truncate().child(
-                                    Label::new(hint.clone())
-                                        .size(font::XS)
-                                        .color(dark().semantic.warning_text),
-                                ),
-                            ),
-                        )
-                    })
                     .child(div().flex_1())
                     .child(
                         div()
+                            .id("composer-action-slot")
+                            .debug_selector(|| "composer-action-slot".into())
                             .w(px(metrics::COMPOSER_SEND_SIZE))
                             .h(px(metrics::COMPOSER_SEND_SIZE))
-                            .flex()
-                            .items_center()
-                            .justify_center()
+                            .flex_none()
                             .child(action_slot),
                     ),
-            )
+            );
+
+        let mut column = div()
+            .w_full()
+            .max_w(px(metrics::TIMELINE_READABLE_WIDTH))
+            .flex()
+            .flex_col()
+            .gap(px(metrics::COMPOSER_META_GAP))
+            .child(card)
+            .child(
+                div()
+                    .id("composer-meta")
+                    .debug_selector(|| "composer-meta".into())
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(metrics::SPACE_2))
+                    .h(px(meta_height))
+                    .flex_none()
+                    .child(
+                        div().flex_1().min_w_0().flex().child(
+                            div()
+                                .truncate()
+                                .px(px(metrics::SPACE_2))
+                                .rounded(px(metrics::CONTROL_RADIUS))
+                                .bg(dark().bg.panel)
+                                .child(
+                                    Label::new(workspace_label)
+                                        .size(font::XS)
+                                        .color(dark().text.secondary),
+                                ),
+                        ),
+                    )
+                    .child(
+                        div().flex_1().min_w_0().flex().justify_end().child(
+                            div().truncate().child(
+                                Label::new(context_meter)
+                                    .size(font::XS)
+                                    .color(dark().text.tertiary),
+                            ),
+                        ),
+                    ),
+            );
+        for (id, note) in self.composer_notes() {
+            column = column.child(
+                div().id(id).flex().h(px(meta_height)).items_center().child(
+                    div().flex_1().min_w_0().flex().child(
+                        div().truncate().child(
+                            Label::new(note)
+                                .size(font::XS)
+                                .color(dark().semantic.warning_text),
+                        ),
+                    ),
+                ),
+            );
+        }
+        div()
+            .flex()
+            .flex_row()
+            .justify_center()
+            .flex_none()
+            .px(px(metrics::COMPOSER_OUTER_X))
+            .pt(px(metrics::COMPOSER_OUTER_TOP))
+            .pb(px(metrics::COMPOSER_OUTER_BOTTOM))
+            .child(column)
+    }
+
+    pub(super) fn composer_meta_height(window: &Window) -> f32 {
+        metrics::COMPOSER_META_HEIGHT * f32::from(window.rem_size()) / 16.0
+    }
+
+    /// Render 与 AX 共用可见说明及顺序；失败提示不再挤压模型或发送。
+    pub(super) fn composer_notes(&self) -> Vec<(&'static str, String)> {
+        let mut notes = Vec::new();
+        if self.composer_file_tools_unavailable_visible() {
+            notes.push((
+                "composer-file-tools-hint",
+                t("composer.file_tools_unavailable").into(),
+            ));
+        }
+        if let Some(hint) = &self.status_hint {
+            notes.push(("composer-status-hint", hint.clone()));
+        }
+        notes
+    }
+
+    pub(super) fn composer_outer_height(&self, input_height: f32, window: &Window) -> f32 {
+        Self::composer_panel_height(input_height)
+            + metrics::COMPOSER_OUTER_TOP
+            + metrics::COMPOSER_OUTER_BOTTOM
+            + (metrics::COMPOSER_META_GAP + Self::composer_meta_height(window))
+                * (1 + self.composer_notes().len()) as f32
     }
 
     fn model_label(&self) -> String {
@@ -584,7 +643,7 @@ mod tests {
         };
         assert_eq!(
             composer_placeholder_hint(&connected, true, false),
-            "Message Pawork… (Enter to send, Shift+Enter for newline)"
+            "Message Pawork…"
         );
         assert_eq!(
             composer_placeholder_hint(&connected, false, false),
@@ -628,9 +687,7 @@ mod tests {
     #[test]
     fn composer_panel_height_clamps_across_input_sizes() {
         let idle = AppView::composer_panel_height(metrics::COMPOSER_INPUT_MIN_HEIGHT);
-        assert!(idle >= 88.0 && idle <= 94.0, "idle panel {idle}");
-        // OPT-D 动作槽 36：常态自然高 89（仍落 88–94 合同），不再是下限本身。
-        assert_eq!(idle, 89.0);
+        assert_eq!(idle, metrics::COMPOSER_PANEL_MIN_HEIGHT);
         let mid = AppView::composer_panel_height(80.0);
         assert!(mid > idle);
         assert!(mid < metrics::COMPOSER_PANEL_MAX_HEIGHT);

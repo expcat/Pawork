@@ -1277,7 +1277,9 @@ impl AppView {
                 metrics::COMPOSER_INPUT_MIN_HEIGHT,
                 Self::composer_input_ax_max(),
             );
-        let composer_height = Self::composer_panel_height(input_height).min(frame.height);
+        let composer_height = self
+            .composer_outer_height(input_height, window)
+            .min(frame.height);
         let header_height = metrics::HEADER_HEIGHT.min(frame.height);
         let timeline_height = (frame.height - composer_height - header_height).max(0.0);
         AxNode::new("workspace", AxRole::Group, "Workspace", frame)
@@ -2070,13 +2072,29 @@ impl AppView {
     }
 
     fn composer_ax(&self, window: &Window, cx: &App, frame: AxRect) -> AxNode {
-        let pad = metrics::COMPOSER_PAD;
-        let input_y = frame.y + pad;
-        let footer_y = frame.y + frame.height - pad - metrics::COMPOSER_SEND_SIZE;
-        let input_height =
-            (footer_y - metrics::COMPOSER_GAP - input_y).max(metrics::COMPOSER_INPUT_MIN_HEIGHT);
-        let action_x = frame.x + frame.width - pad - metrics::COMPOSER_SEND_SIZE;
-        let input_width = (action_x - pad - (frame.x + pad)).max(0.0);
+        let width = (frame.width - metrics::COMPOSER_OUTER_X * 2.0)
+            .max(0.0)
+            .min(metrics::TIMELINE_READABLE_WIDTH);
+        let column_x = frame.x + (frame.width - width) / 2.0;
+        let meta_height = Self::composer_meta_height(window);
+        let card_height = frame.height
+            - metrics::COMPOSER_OUTER_TOP
+            - metrics::COMPOSER_OUTER_BOTTOM
+            - (metrics::COMPOSER_META_GAP + meta_height) * (1 + self.composer_notes().len()) as f32;
+        let card = AxRect::new(
+            column_x,
+            frame.y + metrics::COMPOSER_OUTER_TOP,
+            width,
+            card_height,
+        );
+        let pad = metrics::COMPOSER_PAD + metrics::COMPOSER_BORDER / 2.0;
+        let input_y = card.y + pad;
+        let footer_y = card.y + card.height - pad - metrics::COMPOSER_SEND_SIZE;
+        let input_height = (footer_y - metrics::COMPOSER_GAP - input_y).max(0.0);
+        let action_x = card.x + card.width - pad - metrics::COMPOSER_SEND_SIZE;
+        let input_width = (card.width - pad * 2.0).max(0.0);
+        let meta_y = card.y + card.height + metrics::COMPOSER_META_GAP;
+        let meta_width = (width - metrics::SPACE_2) / 2.0;
         let running = self.projection.active_run_id.is_some();
         let current_model = if self.model_catalog_empty() {
             // 全关空态：与可见按钮同文案（i18n 同源），不报「No model」。
@@ -2097,7 +2115,7 @@ impl AppView {
                     "composer-input",
                     AxRole::TextArea,
                     "Message",
-                    AxRect::new(frame.x + pad, input_y, input_width, input_height),
+                    AxRect::new(card.x + pad, input_y, input_width, input_height),
                 )
                 .value(input_value)
                 .focused(self.open_menu.is_none() && input_focus.is_focused(window))
@@ -2110,9 +2128,9 @@ impl AppView {
                     AxRole::Button,
                     "Model",
                     AxRect::new(
-                        frame.x + pad,
+                        card.x + pad,
                         footer_y,
-                        220.0_f32.min(frame.width),
+                        metrics::COMPOSER_MODEL_WIDTH,
                         metrics::COMPOSER_FOOTER_CONTROL,
                     ),
                 )
@@ -2129,12 +2147,7 @@ impl AppView {
                     "composer-workspace",
                     AxRole::StaticText,
                     "Workspace context",
-                    AxRect::new(
-                        frame.x + pad + 228.0,
-                        footer_y,
-                        180.0_f32.min(frame.width),
-                        metrics::COMPOSER_FOOTER_CONTROL,
-                    ),
+                    AxRect::new(column_x, meta_y, meta_width, meta_height),
                 )
                 .value(if self.composer_workspace_no_project() {
                     t("composer.no_project_chip").to_string()
@@ -2142,40 +2155,38 @@ impl AppView {
                     self.composer_workspace_label()
                 }),
             );
-        if self.composer_file_tools_unavailable_visible() {
-            let hint_x = frame.x + pad + 412.0;
-            let hint_width = (action_x - pad - hint_x).max(0.0);
+        composer = composer.child(
+            AxNode::new(
+                "composer-context",
+                AxRole::StaticText,
+                "Context",
+                AxRect::new(
+                    column_x + meta_width + metrics::SPACE_2,
+                    meta_y,
+                    meta_width,
+                    meta_height,
+                ),
+            )
+            .value(self.projection.context_meter_label()),
+        );
+        for (index, (id, note)) in self.composer_notes().into_iter().enumerate() {
             composer = composer.child(
                 AxNode::new(
-                    "composer-file-tools-hint",
+                    id,
                     AxRole::StaticText,
-                    "File tools",
+                    if id == "composer-file-tools-hint" {
+                        "File tools"
+                    } else {
+                        "Status"
+                    },
                     AxRect::new(
-                        hint_x,
-                        footer_y,
-                        hint_width,
-                        metrics::COMPOSER_FOOTER_CONTROL,
+                        column_x,
+                        meta_y + (metrics::COMPOSER_META_GAP + meta_height) * (index + 1) as f32,
+                        width,
+                        meta_height,
                     ),
                 )
-                .value(t("composer.file_tools_unavailable")),
-            );
-        }
-        if let Some(hint) = self.status_hint.as_ref() {
-            let hint_x = frame.x + pad + 228.0;
-            let hint_width = (action_x - pad - hint_x).max(0.0);
-            composer = composer.child(
-                AxNode::new(
-                    "composer-status-hint",
-                    AxRole::StaticText,
-                    "Status",
-                    AxRect::new(
-                        hint_x,
-                        footer_y,
-                        hint_width,
-                        metrics::COMPOSER_FOOTER_CONTROL,
-                    ),
-                )
-                .value(hint.clone()),
+                .value(note),
             );
         }
         let action_rect = AxRect::new(
@@ -2224,7 +2235,7 @@ impl AppView {
                     + entries.len() as f32 * metrics::MENU_ROW_HEIGHT
             };
             let menu_height = content_height.min(MENU_MAX_HEIGHT);
-            let menu_x = frame.x + pad;
+            let menu_x = card.x + pad;
             let menu_y = (footer_y - ANCHOR_GAP_Y - menu_height).max(0.0);
             let mut menu = AxNode::new(
                 "model-menu",
@@ -2947,6 +2958,73 @@ fn tail_chars(value: &str, limit: usize) -> String {
 mod tests {
     use super::*;
 
+    /// UI-4：实际 GPUI 布局与 AX 操作区对齐，覆盖窄窗、大字号、长草稿。
+    #[gpui::test]
+    fn composer_layout_keeps_controls_in_card_and_ax_aligned(cx: &mut gpui::TestAppContext) {
+        use crate::ui::theme::font::TextScale;
+        use gpui::{px, size};
+        let platform = std::sync::Arc::new(crate::platform::Platform::new());
+        let (view, cx) = cx.add_window_view(|_, cx| {
+            AppView::new(
+                platform,
+                std::env::temp_dir().join("ui4-layout.sock"),
+                None,
+                cx,
+            )
+        });
+        for (width, height, scale, lines) in [
+            (1440.0, 1024.0, TextScale::Percent100, 1),
+            (1080.0, 720.0, TextScale::Percent125, 3),
+            (1080.0, 720.0, TextScale::Percent150, 80),
+        ] {
+            cx.simulate_resize(size(px(width), px(height)));
+            cx.update(|window, cx| {
+                view.update(cx, |view, cx| {
+                    view.text_scale = scale;
+                    window.set_rem_size(px(scale.rem_pixels()));
+                    view.text_input.update(cx, |input, cx| {
+                        input.reset_text(&vec!["验收草稿"; lines].join("\n"), cx);
+                    });
+                    cx.notify();
+                })
+            });
+            cx.refresh().unwrap();
+            cx.run_until_parked();
+            let workspace = cx.debug_bounds("shell-workspace").unwrap();
+            let card = cx.debug_bounds("composer-card").unwrap();
+            let meta = cx.debug_bounds("composer-meta").unwrap();
+            let model = cx.debug_bounds("composer-model-slot").unwrap();
+            let action = cx.debug_bounds("composer-action-slot").unwrap();
+            assert!(card.size.width <= px(metrics::TIMELINE_READABLE_WIDTH));
+            assert!(card.left() >= workspace.left() + px(metrics::COMPOSER_OUTER_X));
+            assert!(card.right() <= workspace.right() - px(metrics::COMPOSER_OUTER_X));
+            assert!(meta.bottom() <= workspace.bottom() - px(metrics::COMPOSER_OUTER_BOTTOM));
+            assert!(card.size.height <= px(metrics::COMPOSER_PANEL_MAX_HEIGHT));
+            assert!(model.right() < action.left());
+            cx.update(|window, cx| {
+                let tree = view.read(cx).accessibility_tree(window, cx);
+                for (id, actual) in [("model-picker", model), ("send", action)] {
+                    let node = tree.find(id).unwrap();
+                    for (expected, measured) in [
+                        (node.bounds.x, f32::from(actual.left())),
+                        (node.bounds.y, f32::from(actual.top())),
+                        (node.bounds.width, f32::from(actual.size.width)),
+                        (node.bounds.height, f32::from(actual.size.height)),
+                    ] {
+                        assert!(
+                            (expected - measured).abs() < 1.0,
+                            "{id} at {scale:?}: AX {expected}, render {measured}"
+                        );
+                    }
+                }
+                let context = tree.find("composer-context").unwrap();
+                assert_eq!(context.value.as_deref(), Some("Context · unavailable"));
+                assert!((context.bounds.y - f32::from(meta.top())).abs() < 1.0);
+                assert!(!tree.find("send").unwrap().enabled, "offline never sends");
+            });
+        }
+    }
+
     #[test]
     fn dynamic_identifier_is_stable_and_collision_resistant_for_escape_marker() {
         assert_eq!(dynamic_identifier("session", "abc-1"), "session-abc-1");
@@ -3006,8 +3084,7 @@ mod tests {
     fn composer_ax_panel_formula_drops_plus_68_drift() {
         let input = crate::ui::theme::metrics::COMPOSER_INPUT_MIN_HEIGHT;
         let height = crate::ui::AppView::composer_panel_height(input);
-        assert!(height <= 94.0);
-        assert_ne!(height, input + 68.0);
+        assert_eq!(height, metrics::COMPOSER_PANEL_MIN_HEIGHT);
         assert_eq!(crate::ui::theme::metrics::COMPOSER_SEND_SIZE, 36.0);
     }
 

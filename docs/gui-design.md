@@ -50,6 +50,17 @@
 
 **实现边界**：思考投影与默认折叠已按 [ADR-057](spec/desktop.md#adr-057ui-3-思考投影与会话身份2026-09-08) 实现；历史与 live 共用 reducer，committed 全文替换增量并保留思考首次出现的位置，分页与重放不重复、不跨工具移位。只展示可见 thinking，redacted 与 opaque reasoning 不进入 GUI。实现、自动检查、代理真窗口检查和用户人工验收分别见 [路线图](ROADMAP.md)。
 
+### UI-4 输入栏更新（2026-09-08）
+
+Composer 沿用 UI-1 色板与圆角，与 UI-3 的 880px 阅读列居中对齐。设计参考 [Zed Agent Panel](https://zed.dev/docs/ai/agent-panel#changing-models) 将模型选择放在消息编辑器附近、[上下文用量](https://zed.dev/docs/ai/agent-panel#token-usage-and-compaction) 靠近输入区的组织方式；下列尺寸与分层是 Pawork 的设计取舍。
+
+- 输入卡片两侧至少 28px，顶部 16px，底部元信息到状态栏保留 24px。卡片内边距 16px，输入与动作行相隔 12px，沿用 raised surface、1px 边框与 12px 圆角；聚焦草稿时增强边框，不改变布局。
+- 卡片内只保留草稿、模型和发送 / 取消。模型选择使用低强调按钮与下拉提示，220px 固定槽，完整 provider / id 保留在 tooltip 和菜单中；模型和发送均为 36px 高命中区。菜单继续向上打开，键盘、鼠标和 AX 共用既有选择路径。
+- 卡片下方一行分别显示只读项目 chip 与真实 ContextMeter，缺容量仍显示 unavailable；无项目的文件工具提示与瞬态反馈各占独立行，避免挤压模型和发送。元信息行以 24px 为基准随字号增长，长文字在所属槽内截断。
+- 常态卡片至少 110px，多行草稿向上增长到 220px 后内部滚动；卡片外的留白与元信息不占这份增长预算。占位缩短为「给 Pawork 发消息…」，发送 tooltip 提示 Enter / Shift+Enter。草稿按会话保存、IME composing 阻止发送、空白输入禁用发送、运行中同槽取消、断线保留草稿与全禁用模型空态均沿用既有行为。
+
+实现、自动检查、真窗口与用户人工视觉验收分别记录在 [路线图 UI-4](ROADMAP.md#ui-4-本批证据2026-09-08)。
+
 ### UI-1 工作台视觉更新（2026-09-07）
 
 本线用 [UI-1 规格示意](../design/ui1-workbench-tokens.svg) 记录共享 token；下文旧阶段尺寸与本节冲突时，以本节及源码为准。参照 [Zed Agent Panel](https://zed.dev/docs/ai/agent-panel) 的对话 / 工具面板分层，本批采用中性炭灰背景、紧凑工具栏和低强调页签；这是 Pawork 的设计取舍。
@@ -140,7 +151,7 @@
 
 ### 3.3 Context、运行信息与 Inspector
 
-- Composer 常态高 88–94 px，同行控件高 28–30 px；模型 / reasoning 只在模型选择器显示。
+- Composer 以本页 UI-4 规格为准：居中卡片至少 110px、最高 220px，模型 / 发送 36px 命中区，项目与上下文位于卡片下方。
 - `ContextMeter`：当前请求上下文估算 / model catalog context window。容量未知时显示 unavailable，不用 Session 累计 token 冒充。
 - Workspace 与 Inspector 底部共享 30 px `RunStatusBar`：Task 累计 token、Provider 剩余额度、output tokens/s 与 Run duration；缺权威来源时显示 unknown / `—`。
 - Inspector 顶层：Changes / Terminal / Resources。OPT-4b（F6）起默认折叠（宽屏同样），折叠时宽度归零；Workspace Header 右上 `Activity` 触发器与最右 `inspector-expand` 重开按钮并存（OPT-D 签字稿 collapsed 态），`ActivityPopover` 只摘要已有的 Changes 事实；显式动作（重开入口、Activity 摘要、Review changes）展开面板，空间不足（窄窗 / 大字号）保持折叠。Surface 未接通时隐藏对应分区，不做可点击假入口。

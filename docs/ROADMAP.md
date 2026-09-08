@@ -1,6 +1,6 @@
 # Pawork 活动路线图：Desktop 模块重设计（UI）
 
-> 基线日期：2026-09-07。状态：**UI-1 已实现、自动检查通过、用户人工视觉验收通过；未归档。UI-2 已实现、自动检查与代理真窗口检查通过，等待用户人工视觉验收；UI-3 已实现，定向自动检查、真实 Run 与重启回放检查通过，等待用户人工视觉验收，未归档；UI-4～UI-6 未开始**。来源：当日正式 Desktop 真窗口人工走查（#01–#05）。本文件是当前活动线的任务规划，**不是**源码或冻结契约的事实源。上一条 OPT-D / OPT-1～OPT-4 已关闭，全文与验收证据见 [review/roadmap-opt-2026-09-05.md](review/roadmap-opt-2026-09-05.md)。P0–P2 收尾证据仍见 [Desktop Spec §8](spec/desktop.md#8-gui-收尾验收记录2026-09-05)；未排期候选仍见 [backlog.md](spec/backlog.md)。
+> 基线日期：2026-09-07。状态：**UI-1 已实现、自动检查通过、用户人工视觉验收通过；未归档。UI-2 已实现、自动检查与代理真窗口检查通过，等待用户人工视觉验收；UI-3 已实现，定向自动检查、真实 Run 与重启回放检查通过，等待用户人工视觉验收，未归档；UI-4 已实现，自动检查与代理真窗口检查通过，等待用户人工视觉验收，未归档；UI-5～UI-6 未开始**。来源：当日正式 Desktop 真窗口人工走查（#01–#05）。本文件是当前活动线的任务规划，**不是**源码或冻结契约的事实源。上一条 OPT-D / OPT-1～OPT-4 已关闭，全文与验收证据见 [review/roadmap-opt-2026-09-05.md](review/roadmap-opt-2026-09-05.md)。P0–P2 收尾证据仍见 [Desktop Spec §8](spec/desktop.md#8-gui-收尾验收记录2026-09-05)；未排期候选仍见 [backlog.md](spec/backlog.md)。
 
 **做法**：每个任务重新设计**一个模块**的 UI 和交互，对照竞品与 [gui-design.md](gui-design.md) 参照项目（Codex Desktop、OpenCode、Cursor Agent、Zed Agent Panel、DeepSeek Harness）拉到同一美观度；静态观感和动态交互一起做。OPT-D 旧签字稿保留为历史，**不再否决**本线新视觉。
 
@@ -150,7 +150,7 @@ UI-2 / UI-3 / UI-4 写入集不重叠，可在 UI-1 token 稳定后并行。UI-5
 | UI-1 Workbench | 已实现；Desktop 定向自动检查 213/213 通过；代理真窗口检查通过；用户人工视觉验收通过（2026-09-07）；未归档 |
 | UI-2 TaskRail | 已实现；Desktop 自动检查 214/214 通过；代理真窗口检查通过；等待用户人工视觉验收；未归档 |
 | UI-3 Timeline | 已实现：Markdown、工具与思考折叠、终态呈现及 OpenCode Go 会话请求头（ADR-057）；定向自动检查、真实 Run 与重启回放检查通过，等待用户人工视觉验收；未归档 |
-| UI-4 Composer | 已立项，未开始 |
+| UI-4 Composer | 已实现：居中输入卡片、模型 / 发送与外部项目 / 上下文分层；自动检查与代理真窗口检查通过，等待用户人工视觉验收；未归档 |
 | UI-5 Settings | 已立项，未开始 |
 | UI-6 Providers | 目录前置核查完成（2026-09-08）；实现未开始，未归档；见 [核查报告](review/model-catalog-audit-2026-09-08.md) |
 
@@ -215,3 +215,14 @@ UI-2 / UI-3 / UI-4 写入集不重叠，可在 UI-1 token 稳定后并行。UI-5
 - **构建与真窗口**：`cargo build -p pawork -p pawork-desktop --offline --bins --features gpui/runtime_shaders` 通过，日志 `/tmp/pawork-ui3-thinking-final-build.log`。真实窗口以当次 `opencode-go / glm-5.3-flash` 完成会话 `ses-1788830262399-1` / Run `run-gui-1788830279780-1`：两次 Provider 请求、一次成功的 `read_file`、265 个思考增量、两段可见思考及 Markdown 正文，终态 `run_completed`，输出包含 `UI3_THINKING_OK`；SQLite 与验收文件 SHA-256 交叉验证，文件未修改，脱敏证据 `/tmp/pawork-ui3-thinking-evidence.json`。鼠标和 Enter / Space 可展开、收起思考，收起时 AX 不含正文；最终候选重开同一持久化会话，像素与 AX 均确认「思考 → 工具 → 思考 → 正文」、默认折叠、全文展开与无重复条目。
 - **当前候选**：`target/pawork-desktop-runtime/Pawork-UI3-thinking-final.app` 已打开，连接隔离实例 `ui3-thinking`；候选与最终 build SHA-256 均为 `e251459274b16cd42f7d3c78498b3c4ba0aff2f61cdbd2054282563a2e168677`。复用默认 `target/` 缓存；因历史 deps 目录枚举缓慢，本机验证使用 `/tmp` rustc wrapper / test runner 缩小依赖检索与可执行文件启动目录，未修改仓库构建配置。
 - **状态边界**：等待用户人工视觉验收；未归档、未提交本批、未推送、未发布；全量 workspace 门禁未运行。
+
+### UI-4 本批证据（2026-09-08）
+
+- **已实现**：输入卡片与 UI-3 的 880px 阅读列居中对齐，两侧至少 28px、顶部 16px、底部 24px 留白；卡片内草稿与模型 / 发送分层，项目 / 上下文位于卡片外。模型与发送使用 36px 命中区，卡片 110–220px，长草稿内部滚动；AX 与可见操作区同源。沿用 UI-1 token 与现有发送 / 草稿 / 模型 gate，不改业务依赖或 wire。规格见 [GUI 设计 UI-4](gui-design.md#ui-4-输入栏更新2026-09-08)。
+- **自动检查通过**：`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`，216 passed / 0 failed；`cargo build -p pawork-desktop --offline --bins --features gpui/runtime_shaders` 成功。新增一个实际 GPUI 布局回归，覆盖宽窄窗、100% / 125% / 150% 字号、80 行草稿高度上限、模型 / 发送与 AX 坐标一致、离线禁发；现有草稿、IME、发送与空模型测试通过。日志 `/tmp/pawork-ui4-tests-final.log`、`/tmp/pawork-ui4-build-final.log`。`git diff --check`、本批 Rust 格式与文档本地文件链接检查通过；未运行全量 workspace 门禁。
+- **本机缓存复用**：继续使用默认 `target/`；本批 `RUSTC_WRAPPER=/tmp/pawork-ui4-rustc-wrapper.py` 指向小依赖目录 `target/ui4-rustc-deps`（rlib / rmeta 链接、135 个宏动态库实际复制），测试另用 `CARGO_TARGET_AARCH64_APPLE_DARWIN_RUNNER=/tmp/pawork-ui3-test-runner.py` 从 `/tmp` 启动已编译二进制，绕过历史 deps 大目录的加载等待；不修改 Cargo 配置或依赖，未执行清理命令。
+- **审查**：确定性检查后独立只读审查发现无项目 chip 的可见文字与 AX 不一致，已统一使用 No project 分支并复跑上述测试与构建；无未解决发现。
+- **代理真窗口检查通过**：独立候选连接既有 `ui3-thinking` 测试 Host（当次参数固定 `opencode-go / glm-5.3-flash`）。检查模型菜单向上展开 / Esc 关闭、空输入禁发、点击发送、Enter 发送、运行中同槽取消、Shift+Enter 与多行粘贴、会话切换恢复草稿、80 行草稿内部滚动、100% / 125% / 150% 字号和 1080×720 窄窗；项目与 Context 行未覆盖操作区。最终恢复宽窗、100% 字号与空草稿，保留候选供用户验收。系统 IME 组合输入、连接中断与全禁用模型本批未另做真窗口操作；相关既有自动回归通过。截图不检入仓库。
+- **窗口外事实**：仅在新建会话 `ses-1788835050699-2`（`UI-4 · 输入栏验收`，无项目）发起两轮无工具请求。SQLite 确认 `run-gui-1788835159163-2` 为 completed，assistant committed 正文为 `UI4_SEND_OK`；`run-gui-1788835192573-3` 为 cancelled，均与窗口终态一致。只读证据 `/tmp/pawork-ui4-evidence.json`；未改持久默认、认证或代理配置。
+- **当前候选**：`target/pawork-desktop-runtime/Pawork-UI4-final.app` 已打开，候选与最终 build SHA-256 均为 `d9df3f6f0be7def2ab431aabcd91ec0d0594c7873e1b7ed669aaba00e2791b7a`；使用独立 bundle，未覆盖原运行 bundle。
+- **状态边界**：已实现、自动检查通过、代理真窗口检查通过；**等待用户人工视觉验收，未归档**。未提交、未推送、未发布；全量 workspace 门禁未运行。UI-5～UI-6 实现未开始。

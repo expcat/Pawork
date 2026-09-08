@@ -525,9 +525,10 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             "Run in progress — sending is disabled. Cancel remains available.",
             "任务运行中——发送已禁用，仍可取消。",
         ),
-        "composer.placeholder_message" => (
-            "Message Pawork… (Enter to send, Shift+Enter for newline)",
-            "给 Pawork 发消息…（Enter 发送，Shift+Enter 换行）",
+        "composer.placeholder_message" => ("Message Pawork…", "给 Pawork 发消息…"),
+        "composer.send_tooltip" => (
+            "Send message (Enter). Shift+Enter for a new line.",
+            "发送消息（Enter），Shift+Enter 换行。",
         ),
         "composer.placeholder_open_session" => {
             ("Open a session to send messages.", "打开会话后才能发送消息。")
