@@ -286,6 +286,7 @@ mod tests {
     fn base_request() -> CanonicalModelRequest {
         use std::collections::BTreeMap;
         CanonicalModelRequest {
+            session_id: None,
             request_id: pawork_domain::RequestId::from("r1"),
             model: pawork_domain::ModelId::from("gpt-4o"),
             messages: vec![user("hi")],

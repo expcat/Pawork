@@ -7,7 +7,7 @@
 //! tool 回填在两端不一致。本模块把两臂收敛到同一合并核：
 //!
 //! - [`project_event`]：持久化 `AgentEventEnvelope` → presentation-safe
-//!   `TimelineItem`（自 app host 逐字平移，wire 形状不变）；
+//!   `TimelineItem`（每个持久序号一条，正文与思考共享 committed）；
 //! - [`TimelineProjection`]：去重（session sequence）、有序插入
 //!   （partition_point）、assistant delta 合并与 committed 替换、tool 身份锚点
 //!   （live / 历史统一使用 `run+tool_call_id`）全部单一实现；
@@ -21,7 +21,7 @@
 //! 序列化只发生在测试渲染层。分页游标元数据（next_sequence/complete）留在
 //! 消费方适配层，reducer 只管 entries 语义。
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Deref;
 
 use pawork_domain::{AgentEvent, AgentEventEnvelope, ApprovalDecision, ContentPart, MessageRole};
@@ -34,9 +34,8 @@ const TOOL_CONTEXT_DETAIL_KEY: &str = "detail";
 
 /// 把持久化的 Agent 事件投影为 presentation-safe 的 Timeline 条目。
 ///
-/// 自 app `gui_host::project_timeline_item` 逐字平移（R3 波 C）：host
-/// `timeline()` 与本模块历史臂共用同一映射，wire 形状（serde tag/rename）
-/// 保持冻结不变。
+/// Host `timeline()` 与历史臂共用映射；API 1.14 增加可见思考和
+/// message identity，单个 committed 不拆成多个相同 sequence 的 wire 条目。
 pub fn project_event(envelope: &AgentEventEnvelope) -> Option<TimelineItem> {
     let (kind, text, tool_name, status, detail) = match &envelope.payload {
         AgentEvent::MessageCommitted { message } => match message.role {
@@ -58,6 +57,13 @@ pub fn project_event(envelope: &AgentEventEnvelope) -> Option<TimelineItem> {
         },
         AgentEvent::AssistantTextDelta { delta, .. } => (
             TimelineItemKind::AssistantDelta,
+            Some(delta.clone()),
+            None,
+            None,
+            None,
+        ),
+        AgentEvent::AssistantThinkingDelta { delta, .. } => (
+            TimelineItemKind::ThinkingDelta,
             Some(delta.clone()),
             None,
             None,
@@ -151,12 +157,38 @@ pub fn project_event(envelope: &AgentEventEnvelope) -> Option<TimelineItem> {
         ),
         _ => return None,
     };
+    let (message_id, thinking_text) = match &envelope.payload {
+        AgentEvent::MessageCommitted { message } if message.role == MessageRole::Assistant => {
+            let text = message
+                .content
+                .iter()
+                .filter_map(|part| match part {
+                    ContentPart::Thinking(content) if !content.redacted => {
+                        Some(content.text.as_str())
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            (
+                Some(message.id.as_str().to_string()),
+                (!text.is_empty()).then_some(text),
+            )
+        }
+        AgentEvent::AssistantTextDelta { message_id, .. }
+        | AgentEvent::AssistantThinkingDelta { message_id, .. } => {
+            (Some(message_id.as_str().to_string()), None)
+        }
+        _ => (None, None),
+    };
     Some(TimelineItem {
         sequence: envelope.sequence.0,
         event_id: envelope.event_id.as_str().to_string(),
         kind,
         run_id: Some(envelope.run_id.as_str().to_string()),
         text,
+        message_id,
+        thinking_text,
         tool_name,
         status,
         detail,
@@ -250,6 +282,9 @@ pub enum TimelineEntryKind {
     AssistantMessage {
         text: String,
     },
+    Thinking {
+        text: String,
+    },
     ToolCall {
         name: String,
         status: String,
@@ -301,6 +336,9 @@ struct AssistantAnchor {
     /// 历史 committed 已用权威全文替换该 live message；后到的同 message delta
     /// 只标记 sequence 已消费，不得再次追加或新开条目。
     committed: bool,
+    thinking: bool,
+    /// Uncommitted fragments stay sequence-ordered across late history pages.
+    fragments: BTreeMap<u64, (String, String, String)>,
 }
 
 /// Tool 条目锚点：ToolCompleted/ToolOutput 优先按 run + tool_call_id 回填；
@@ -328,7 +366,7 @@ pub struct TimelineProjection {
     pub entries: Vec<TimelineEntry>,
     /// 已消费的 session sequence（live 与分页共用的去重集）。
     seen: BTreeSet<u64>,
-    assistant_anchor: Option<AssistantAnchor>,
+    assistant_anchors: Vec<AssistantAnchor>,
     tool_anchors: Vec<ToolAnchor>,
 }
 
@@ -360,15 +398,16 @@ impl TimelineProjection {
                     });
                 }
             }
-            TimelineItemKind::AssistantDelta => {
+            TimelineItemKind::AssistantDelta | TimelineItemKind::ThinkingDelta => {
                 if self.seen.insert(item.sequence) {
                     self.append_assistant_delta(
                         item.sequence,
                         item.event_id.clone(),
                         item.timestamp.clone(),
-                        item.run_id.as_deref().unwrap_or_default(),
-                        None,
+                        item.run_id.as_deref(),
+                        item.message_id.as_deref(),
                         item.text.as_deref().unwrap_or_default(),
+                        item.kind == TimelineItemKind::ThinkingDelta,
                     );
                 }
             }
@@ -376,61 +415,14 @@ impl TimelineProjection {
                 if !self.seen.insert(item.sequence) {
                     return;
                 }
-                let committed = item.text.clone().unwrap_or_default();
-                let matching_anchor = self.assistant_anchor.clone().filter(|anchor| {
-                    anchor.run_id == item.run_id && anchor.sequence < item.sequence
-                });
-                if let Some(anchor) = matching_anchor {
-                    if let Some(index) =
-                        self.entry_index_by_identity(&anchor.event_id, anchor.sequence)
-                    {
-                        if matches!(
-                            self.entries.get(index).map(|entry| &entry.kind),
-                            Some(TimelineEntryKind::AssistantMessage { .. })
-                        ) {
-                            // committed 采用自己的 sequence；必须移除后重新按序
-                            // 插入，不能原位改 sequence，否则中间到达的 tool/run
-                            // 条目会让 entries 失序。
-                            let replacement = TimelineEntry {
-                                sequence: item.sequence,
-                                event_id: item.event_id.clone(),
-                                kind: TimelineEntryKind::AssistantMessage { text: committed },
-                                fork_boundary: None,
-                                timestamp: item.timestamp.clone(),
-                                run_id: item.run_id.clone(),
-                            };
-                            self.entries.remove(index);
-                            self.insert_entry(replacement);
-                            // live anchor 携带 message_id：保留为 committed tombstone，
-                            // 吞掉已包含在权威全文中的迟到同-message delta；纯历史
-                            // anchor 无 message_id，直接结束，避免下一轮复用。
-                            self.assistant_anchor =
-                                anchor.message_id.map(|message_id| AssistantAnchor {
-                                    run_id: item.run_id.clone(),
-                                    message_id: Some(message_id),
-                                    event_id: item.event_id.clone(),
-                                    sequence: item.sequence,
-                                    committed: true,
-                                });
-                            return;
-                        }
-                    }
-                }
-                self.insert_entry(TimelineEntry {
-                    sequence: item.sequence,
-                    event_id: item.event_id.clone(),
-                    kind: TimelineEntryKind::AssistantMessage { text: committed },
-                    fork_boundary: None,
-                    timestamp: item.timestamp.clone(),
-                    run_id: item.run_id.clone(),
-                });
-                // 较新的 live anchor 可能先于较旧历史页到达；旧 committed 不得
-                // 清掉它。只有同 run 且早于当前 committed 的失效锚点才收口。
-                if self.assistant_anchor.as_ref().is_some_and(|anchor| {
-                    anchor.run_id == item.run_id && anchor.sequence < item.sequence
-                }) {
-                    self.assistant_anchor = None;
-                }
+                self.commit_assistant_text(item, false, item.text.as_deref().unwrap_or_default());
+                // Even an empty committed thinking block closes its stream so
+                // late deltas cannot resurrect non-visible/redacted content.
+                self.commit_assistant_text(
+                    item,
+                    true,
+                    item.thinking_text.as_deref().unwrap_or_default(),
+                );
             }
             TimelineItemKind::ToolStarted => {
                 if !self.seen.insert(item.sequence) {
@@ -641,6 +633,11 @@ impl TimelineProjection {
                 run_id,
                 message_id,
                 delta,
+            }
+            | AppEvent::ThinkingDelta {
+                run_id,
+                message_id,
+                delta,
             } => {
                 if !self.seen.insert(sequence) {
                     return false;
@@ -649,9 +646,10 @@ impl TimelineProjection {
                     sequence,
                     event_id,
                     timestamp,
-                    run_id.as_str(),
+                    Some(run_id.as_str()),
                     Some(message_id.as_str()),
                     delta,
+                    matches!(&envelope.payload, AppEvent::ThinkingDelta { .. }),
                 );
             }
             AppEvent::ToolStarted {
@@ -777,65 +775,220 @@ impl TimelineProjection {
     pub fn reset_baseline(&mut self) {
         self.entries.clear();
         self.seen.clear();
-        self.assistant_anchor = None;
+        self.assistant_anchors.clear();
         self.tool_anchors.clear();
     }
 
-    /// 追加 assistant delta：命中锚点则合并，否则新开条目。
+    /// Prefer exact run/message identity. Legacy history without message_id
+    /// can only be associated by the nearest enclosing committed boundary or
+    /// an earlier open stream; known distinct message ids never match.
+    fn assistant_anchor_index(
+        &self,
+        run: Option<&str>,
+        message: Option<&str>,
+        thinking: bool,
+        sequence: u64,
+        committed: bool,
+    ) -> Option<usize> {
+        let matches_stream = |anchor: &&AssistantAnchor| {
+            anchor.run_id.as_deref() == run && anchor.thinking == thinking
+        };
+        if message.is_some() {
+            if let Some(index) = self.assistant_anchors.iter().position(|anchor| {
+                matches_stream(&anchor) && anchor.message_id.as_deref() == message
+            }) {
+                return Some(index);
+            }
+        }
+        let candidates = self
+            .assistant_anchors
+            .iter()
+            .enumerate()
+            .filter(|(_, anchor)| {
+                matches_stream(anchor) && (message.is_none() || anchor.message_id.is_none())
+            });
+        if !committed {
+            if let Some((index, _)) = candidates
+                .clone()
+                .filter(|(_, anchor)| anchor.committed && anchor.sequence > sequence)
+                .min_by_key(|(_, anchor)| anchor.sequence)
+            {
+                return Some(index);
+            }
+        }
+        candidates
+            .filter(|(_, anchor)| !anchor.committed && (!committed || anchor.sequence < sequence))
+            .max_by_key(|(_, anchor)| anchor.sequence)
+            .map(|(index, _)| index)
+    }
+
+    fn assistant_event_id(
+        event: &str,
+        run: Option<&str>,
+        message: Option<&str>,
+        thinking: bool,
+    ) -> String {
+        if thinking {
+            match message {
+                Some(message) => format!("thinking:{}:{message}", run.unwrap_or_default()),
+                None => format!("{event}:thinking"),
+            }
+        } else {
+            event.to_string()
+        }
+    }
+
+    fn commit_assistant_text(&mut self, item: &TimelineItem, thinking: bool, text: &str) {
+        let index = self.assistant_anchor_index(
+            item.run_id.as_deref(),
+            item.message_id.as_deref(),
+            thinking,
+            item.sequence,
+            true,
+        );
+        let previous = index.map(|index| self.assistant_anchors.remove(index));
+        // Committing a thought replaces its text, not its position before tools.
+        let (sequence, timestamp) = previous
+            .as_ref()
+            .filter(|_| thinking)
+            .and_then(|anchor| {
+                self.entries
+                    .iter()
+                    .find(|entry| entry.event_id == anchor.event_id)
+            })
+            .map(|entry| (entry.sequence, entry.timestamp.clone()))
+            .unwrap_or((item.sequence, item.timestamp.clone()));
+        if let Some(anchor) = &previous {
+            self.entries
+                .retain(|entry| entry.event_id != anchor.event_id);
+        }
+        let message_id = item
+            .message_id
+            .clone()
+            .or_else(|| previous.and_then(|anchor| anchor.message_id));
+        let event_id = Self::assistant_event_id(
+            &item.event_id,
+            item.run_id.as_deref(),
+            message_id.as_deref(),
+            thinking,
+        );
+        if !thinking || !text.is_empty() {
+            self.insert_entry(TimelineEntry {
+                sequence,
+                event_id: event_id.clone(),
+                kind: if thinking {
+                    TimelineEntryKind::Thinking { text: text.into() }
+                } else {
+                    TimelineEntryKind::AssistantMessage { text: text.into() }
+                },
+                fork_boundary: None,
+                timestamp,
+                run_id: item.run_id.clone(),
+            });
+        }
+        self.assistant_anchors.push(AssistantAnchor {
+            run_id: item.run_id.clone(),
+            message_id,
+            event_id,
+            sequence,
+            committed: true,
+            thinking,
+            fragments: BTreeMap::new(),
+        });
+    }
+
+    /// Both text streams share sequence ordering and committed tombstones.
+    #[allow(clippy::too_many_arguments)]
     fn append_assistant_delta(
         &mut self,
         sequence: u64,
         event_id: String,
         timestamp: String,
-        run_id: &str,
+        run_id: Option<&str>,
         message_id: Option<&str>,
         delta: &str,
+        thinking: bool,
     ) -> bool {
-        let run = Some(run_id.to_string());
-        let message = message_id.map(str::to_string);
-        if let Some(anchor) = &self.assistant_anchor {
-            if anchor.run_id == run && anchor.message_id == message {
-                if anchor.committed {
+        let index = self.assistant_anchor_index(run_id, message_id, thinking, sequence, false);
+        let mut anchor = match index {
+            Some(index) => {
+                if self.assistant_anchors[index].committed {
+                    let anchor = &mut self.assistant_anchors[index];
+                    if thinking && sequence < anchor.sequence {
+                        if let Some(entry_index) = self
+                            .entries
+                            .iter()
+                            .position(|entry| entry.event_id == anchor.event_id)
+                        {
+                            // A late page can reveal the original position, but
+                            // must never append text or resurrect redacted content.
+                            anchor.sequence = sequence;
+                            let mut entry = self.entries.remove(entry_index);
+                            entry.sequence = sequence;
+                            entry.timestamp = timestamp;
+                            self.insert_entry(entry);
+                            return true;
+                        }
+                    }
                     return false;
                 }
-                if let Some(index) = self.entry_index_by_identity(&anchor.event_id, anchor.sequence)
-                {
-                    if let Some(TimelineEntryKind::AssistantMessage { text }) =
-                        self.entries.get_mut(index).map(|entry| &mut entry.kind)
-                    {
-                        text.push_str(delta);
-                        return true;
-                    }
-                }
+                self.assistant_anchors.remove(index)
             }
+            None => AssistantAnchor {
+                run_id: run_id.map(str::to_string),
+                message_id: message_id.map(str::to_string),
+                event_id: String::new(),
+                sequence,
+                committed: false,
+                thinking,
+                fragments: BTreeMap::new(),
+            },
+        };
+        self.entries
+            .retain(|entry| entry.event_id != anchor.event_id);
+        if anchor.message_id.is_none() {
+            anchor.message_id = message_id.map(str::to_string);
         }
+        anchor
+            .fragments
+            .insert(sequence, (event_id, timestamp, delta.to_string()));
+        let (&first_sequence, (first_event, first_timestamp, _)) =
+            anchor.fragments.first_key_value().unwrap();
+        let text = anchor
+            .fragments
+            .values()
+            .map(|(_, _, text)| text.as_str())
+            .collect::<String>();
+        anchor.sequence = first_sequence;
+        anchor.event_id =
+            Self::assistant_event_id(first_event, run_id, anchor.message_id.as_deref(), thinking);
         self.insert_entry(TimelineEntry {
-            sequence,
-            event_id: event_id.clone(),
-            kind: TimelineEntryKind::AssistantMessage {
-                text: delta.to_string(),
+            sequence: first_sequence,
+            event_id: anchor.event_id.clone(),
+            kind: if thinking {
+                TimelineEntryKind::Thinking { text }
+            } else {
+                TimelineEntryKind::AssistantMessage { text }
             },
             fork_boundary: None,
-            timestamp,
-            run_id: run.clone(),
+            timestamp: first_timestamp.clone(),
+            run_id: anchor.run_id.clone(),
         });
-        if let Some(identity) = self.anchor_after_insert(&event_id, sequence) {
-            self.assistant_anchor = Some(AssistantAnchor {
-                run_id: run,
-                message_id: message,
-                event_id: identity.event_id,
-                sequence: identity.sequence,
-                committed: false,
-            });
-        }
+        self.assistant_anchors.push(anchor);
         true
     }
 
     /// 按 sequence 有序插入（页数据可能晚于已到达的 live 事件）。
     fn insert_entry(&mut self, entry: TimelineEntry) {
-        let position = self
-            .entries
-            .partition_point(|existing| existing.sequence < entry.sequence);
+        let position = self.entries.partition_point(|existing| {
+            (
+                existing.sequence,
+                !matches!(existing.kind, TimelineEntryKind::Thinking { .. }),
+            ) < (
+                entry.sequence,
+                !matches!(entry.kind, TimelineEntryKind::Thinking { .. }),
+            )
+        });
         self.entries.insert(position, entry);
     }
 

@@ -169,6 +169,7 @@ pub async fn run_session(
     }
 
     let mut current = apply_injected_layers(request, &context.injected_layers);
+    current.session_id = Some(turn.session_id.clone());
     if !context.injected_layers.is_empty() {
         emitter
             .emit(AgentEvent::Diagnostic {

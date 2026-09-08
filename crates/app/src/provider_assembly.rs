@@ -40,8 +40,15 @@ const NAMING_INPUT_MAX_CHARS: usize = 4_000;
 const NAMING_MAX_OUTPUT_TOKENS: u64 = 64;
 
 /// 构造无工具的命名补全请求：system 指令 + 截断后的首条用户消息。
-fn naming_request(model: ModelId, first_user_text: &str) -> CanonicalModelRequest {
-    let truncated: String = first_user_text.chars().take(NAMING_INPUT_MAX_CHARS).collect();
+fn naming_request(
+    model: ModelId,
+    session_id: SessionId,
+    first_user_text: &str,
+) -> CanonicalModelRequest {
+    let truncated: String = first_user_text
+        .chars()
+        .take(NAMING_INPUT_MAX_CHARS)
+        .collect();
     let mut request = pawork_engine::assemble_request(
         RequestId::from(format!(
             "req-naming-{}",
@@ -65,6 +72,7 @@ fn naming_request(model: ModelId, first_user_text: &str) -> CanonicalModelReques
             },
         ],
     );
+    request.session_id = Some(session_id);
     request.max_output_tokens = Some(NAMING_MAX_OUTPUT_TOKENS);
     request
 }
@@ -91,10 +99,7 @@ impl TitleTextSink {
 impl ProviderEventSink for TitleTextSink {
     async fn emit(&self, event: ProviderStreamEvent) -> Result<(), ProviderError> {
         if let ProviderStreamEvent::TextDelta(delta) = event {
-            self.text
-                .lock()
-                .expect("title sink mutex")
-                .push_str(&delta);
+            self.text.lock().expect("title sink mutex").push_str(&delta);
         }
         Ok(())
     }
@@ -246,6 +251,7 @@ impl AppCore {
     /// 装配、目录解析与补全共用 20s 上限，不阻塞 Core 的配置写者。
     pub(crate) fn generate_session_title(
         &self,
+        session_id: &SessionId,
         first_user_text: &str,
     ) -> impl std::future::Future<Output = Result<Option<String>, AppError>> + Send + 'static {
         let config = self.config.clone();
@@ -259,6 +265,7 @@ impl AppCore {
                 self.registry.as_ref().clone(),
             )
         });
+        let session_id = session_id.clone();
         let first_user_text = first_user_text.to_string();
         async move {
             tokio::time::timeout(NAMING_TIMEOUT, async move {
@@ -295,7 +302,7 @@ impl AppCore {
                     model,
                 )
                 .await?;
-                let request = naming_request(entry.id.clone(), &first_user_text);
+                let request = naming_request(entry.id.clone(), session_id, &first_user_text);
                 let sink = TitleTextSink::default();
                 adapter
                     .stream(request, &sink, CancellationToken::new())
@@ -413,22 +420,23 @@ impl AppCore {
         }
         let mut probe_jobs = Vec::new();
         for id in provider_ids {
-            let assembled = if id.as_str() == self.provider_id.as_str() && !self.provider_needs_rebuild() {
-                Some((Arc::clone(&self.provider), self.credential.clone()))
-            } else {
-                match assemble_provider(
-                    &self.config,
-                    &id,
-                    &self.backend,
-                    false,
-                    Arc::clone(&self.reasoning_protector) as Arc<dyn ReasoningProtector>,
-                )
-                .await
-                {
-                    Ok(assembled) => Some((assembled.adapter, assembled.credential)),
-                    Err(_) => None,
-                }
-            };
+            let assembled =
+                if id.as_str() == self.provider_id.as_str() && !self.provider_needs_rebuild() {
+                    Some((Arc::clone(&self.provider), self.credential.clone()))
+                } else {
+                    match assemble_provider(
+                        &self.config,
+                        &id,
+                        &self.backend,
+                        false,
+                        Arc::clone(&self.reasoning_protector) as Arc<dyn ReasoningProtector>,
+                    )
+                    .await
+                    {
+                        Ok(assembled) => Some((assembled.adapter, assembled.credential)),
+                        Err(_) => None,
+                    }
+                };
             if let Some((adapter, credential)) = assembled {
                 probe_jobs.push((id, adapter, credential));
             }

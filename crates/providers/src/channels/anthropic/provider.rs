@@ -795,6 +795,7 @@ mod tests {
                 .expect("adapter")
                 .with_registry(Arc::new(registry));
         let request = CanonicalModelRequest {
+            session_id: None,
             request_id: pawork_domain::RequestId::from("r1"),
             model: ModelId::from("unknown-model"),
             messages: Vec::new(),
@@ -853,6 +854,7 @@ mod tests {
 
     fn sample_request() -> CanonicalModelRequest {
         CanonicalModelRequest {
+            session_id: None,
             request_id: pawork_domain::RequestId::from("r1"),
             model: ModelId::from("claude-3-5-sonnet"),
             messages: Vec::new(),

@@ -68,6 +68,7 @@ pub struct ResponsesTransport {
     client: HttpClient,
     credential: ResolvedCredential,
     reasoning_protector: Arc<dyn ReasoningProtector>,
+    opencode_session: bool,
 }
 
 impl ResponsesTransport {
@@ -95,7 +96,13 @@ impl ResponsesTransport {
             client: HttpClient::new(http)?,
             credential,
             reasoning_protector: Arc::new(InMemoryReasoningProtector::default()),
+            opencode_session: false,
         })
+    }
+
+    pub(crate) fn with_opencode_session(mut self) -> Self {
+        self.opencode_session = true;
+        self
     }
 
     pub fn with_reasoning_protector(mut self, protector: Arc<dyn ReasoningProtector>) -> Self {
@@ -151,6 +158,10 @@ impl ResponsesTransport {
             ));
         }
 
+        let mut headers = self.request_headers();
+        if self.opencode_session {
+            headers.extend(crate::provider::opencode_session_header(&request)?);
+        }
         let reasoning_inputs =
             resolve_reasoning_inputs(&request, self.reasoning_protector.as_ref()).await;
         let body = to_responses_body(&request, reasoning_inputs, self.config.wire);
@@ -160,7 +171,7 @@ impl ResponsesTransport {
                 &self.responses_url(),
                 body,
                 request.trace_id.as_deref(),
-                &self.request_headers(),
+                &headers,
                 cancel.clone(),
             )
             .await

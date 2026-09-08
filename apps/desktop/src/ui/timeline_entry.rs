@@ -394,6 +394,11 @@ impl AppView {
                 dark().text.secondary,
                 message_body_element(text, dark().text.emphasis),
             ),
+            TimelineEntryKind::Thinking { text } => (
+                t("timeline.thinking"),
+                dark().text.secondary,
+                message_body_element(text, dark().text.secondary),
+            ),
             TimelineEntryKind::AssistantMessage { text } => (
                 "Pawork",
                 dark().text.secondary,
@@ -445,22 +450,22 @@ impl AppView {
         )
     }
 
-    /// Tool activity：36px 轻量摘要，默认折叠；mouse、
-    /// Enter / Space 与 AX 都切换同一个本地 presentation state。
-    pub(super) fn tool_group_element(
+    /// 思考与工具摘要共用焦点、鼠标和键盘折叠交互。
+    fn timeline_detail_header(
         &mut self,
         group_key: &str,
-        rows: &[ToolRowView],
+        prefix: &str,
+        label: String,
         cx: &mut Context<Self>,
-    ) -> gpui::Div {
-        let collapsed = !self.expanded_tool_groups.contains(group_key);
-        let row_id = format!("tool-group-toggle-{group_key}");
+    ) -> ListRow {
+        let collapsed = !self.expanded_timeline_details.contains(group_key);
+        let row_id = format!("{prefix}-{group_key}");
         let click_id = row_id.clone();
         let click_key = group_key.to_string();
         let activate_id = row_id.clone();
         let activate_key = group_key.to_string();
-        let focus = self.timeline_tool_group_focus(group_key, cx);
-        let header = ListRow::project_header(row_id)
+        let focus = self.timeline_detail_focus(group_key, cx);
+        ListRow::project_header(row_id)
             .height(metrics::TOOL_GROUP_HEADER_HEIGHT)
             .track_focus(&focus)
             .child(
@@ -488,20 +493,61 @@ impl AppView {
                             .text_size(font::BODY_SM)
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(dark().text.secondary)
-                            .child(tool_group_summary(rows)),
+                            .child(label),
                     ),
             )
             .on_click(cx.listener(move |view, event, _window, cx| {
                 if view.consume_row_key_click(&click_id, event) {
                     return;
                 }
-                view.toggle_tool_group(&click_key, cx);
+                view.toggle_timeline_detail(&click_key, cx);
             }))
             .on_activate(cx.listener(move |view, _event, _window, cx| {
                 view.note_row_key_activate(&activate_id);
-                view.toggle_tool_group(&activate_key, cx);
+                view.toggle_timeline_detail(&activate_key, cx);
                 cx.stop_propagation();
-            }));
+            }))
+    }
+
+    pub(super) fn thinking_entry_element(
+        &mut self,
+        key: &str,
+        text: &str,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let expanded = self.expanded_timeline_details.contains(key);
+        let header =
+            self.timeline_detail_header(key, "thinking-toggle", t("timeline.thinking").into(), cx);
+        div()
+            .flex()
+            .flex_col()
+            .w_full()
+            .child(header)
+            .when(expanded, |panel| {
+                panel.child(
+                    div()
+                        .p(px(12.0))
+                        .text_size(font::BASE)
+                        .text_color(dark().text.secondary)
+                        .child(text.to_string()),
+                )
+            })
+    }
+
+    /// Tool activity：36px 轻量摘要，默认折叠。
+    pub(super) fn tool_group_element(
+        &mut self,
+        group_key: &str,
+        rows: &[ToolRowView],
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let collapsed = !self.expanded_timeline_details.contains(group_key);
+        let header = self.timeline_detail_header(
+            group_key,
+            "tool-group-toggle",
+            tool_group_summary(rows),
+            cx,
+        );
         let mut panel = div()
             .flex()
             .flex_col()

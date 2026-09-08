@@ -8,6 +8,7 @@ use std::{env, fs, path::PathBuf};
 use pawork_domain::{
     ArtifactId, CommandId, ConnectionId, CoreInstanceId, EventId, GuiClientId, RunId, Timestamp,
 };
+use pawork_protocol::DefaultModelPair;
 use pawork_protocol::{
     encode_client_frame, encode_server_frame, AppQuery, AppQueryEnvelope, AppResponse,
     AppResponseEnvelope, ArtifactChunk, ArtifactReadRequest, ClientAuthentication, ClientFrame,
@@ -21,7 +22,6 @@ use pawork_protocol::{
     AppEventEnvelope, AuthChangeState, CommandSource, EventSource, EventStream, GlobalSequence,
     RunState, API_VERSION,
 };
-use pawork_protocol::DefaultModelPair;
 use serde_json::Value;
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/golden");
@@ -333,6 +333,8 @@ fn timeline_page() -> TimelinePage {
                 kind: TimelineItemKind::UserMessage,
                 run_id: None,
                 text: Some("hello".into()),
+                message_id: None,
+                thinking_text: None,
                 tool_name: None,
                 status: None,
                 detail: None,
@@ -344,10 +346,25 @@ fn timeline_page() -> TimelinePage {
                 kind: TimelineItemKind::AssistantMessage,
                 run_id: Some("run-1".into()),
                 text: Some("hi".into()),
+                message_id: Some("message-1".into()),
+                thinking_text: Some("Let me think.".into()),
                 tool_name: None,
                 status: None,
                 detail: None,
                 timestamp: "2026-01-01T00:00:01Z".into(),
+            },
+            TimelineItem {
+                sequence: 13,
+                event_id: "event-13".into(),
+                kind: TimelineItemKind::ThinkingDelta,
+                run_id: Some("run-1".into()),
+                text: Some("Next thought".into()),
+                message_id: Some("message-2".into()),
+                thinking_text: None,
+                tool_name: None,
+                status: None,
+                detail: None,
+                timestamp: "2026-01-01T00:00:02Z".into(),
             },
         ],
         next_sequence: Some(13),
@@ -770,10 +787,12 @@ fn golden_general_settings_slices() {
     );
     assert_golden(
         "client_command_set_provider_use_proxy.json",
-        encode_client(&client_auth_command_frame(AppCommand::SetProviderUseProxy {
-            provider_id: provider_id.clone(),
-            use_proxy: false,
-        })),
+        encode_client(&client_auth_command_frame(
+            AppCommand::SetProviderUseProxy {
+                provider_id: provider_id.clone(),
+                use_proxy: false,
+            },
+        )),
     );
     assert_golden(
         "server_response_general_settings.json",
@@ -970,19 +989,23 @@ fn golden_terminal_settings_slices() {
     );
     assert_golden(
         "client_command_set_terminal_settings.json",
-        encode_client(&client_auth_command_frame(AppCommand::SetTerminalSettings {
-            shell: Some("/bin/zsh".into()),
-            columns: 120,
-            rows: 40,
-        })),
+        encode_client(&client_auth_command_frame(
+            AppCommand::SetTerminalSettings {
+                shell: Some("/bin/zsh".into()),
+                columns: 120,
+                rows: 40,
+            },
+        )),
     );
     assert_golden(
         "client_command_set_terminal_settings_clear.json",
-        encode_client(&client_auth_command_frame(AppCommand::SetTerminalSettings {
-            shell: None,
-            columns: 120,
-            rows: 40,
-        })),
+        encode_client(&client_auth_command_frame(
+            AppCommand::SetTerminalSettings {
+                shell: None,
+                columns: 120,
+                rows: 40,
+            },
+        )),
     );
     assert_golden(
         "server_response_terminal_settings.json",

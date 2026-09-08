@@ -16,7 +16,7 @@ use pawork_domain::{
     ModelId, PromptCachePreference, ProtectedBlobRef, ProviderError, ProviderErrorKind,
     ProviderStreamEvent, ProviderTranscriptEnvelope, ReasoningConfig, ReasoningEffort,
     ReasoningItem, ReasoningItemId, RequestBudget, RequestId, ResponseFormat, ServerToolEvent,
-    StopReason, TextContent, ThinkingConfig, ThinkingLevel, TokenUsage, ToolCallId,
+    SessionId, StopReason, TextContent, ThinkingConfig, ThinkingLevel, TokenUsage, ToolCallId,
     ToolCapabilityTag, ToolChoice, ToolDefinition, ToolResult, TranscriptItem,
 };
 use serde::Serialize;
@@ -131,6 +131,7 @@ fn all_stream_events() -> Vec<ProviderStreamEvent> {
 fn full_request() -> CanonicalModelRequest {
     CanonicalModelRequest {
         request_id: RequestId::from("request-1"),
+        session_id: Some(SessionId::from("session-1")),
         model: ModelId::from("glm-4.7"),
         messages: vec![Message {
             id: MessageId::from("message-1"),
@@ -242,6 +243,12 @@ fn canonical_model_request_byte_golden() {
         "CanonicalModelRequest",
         &[full_request()],
     );
+    // 旧请求无 session_id 仍可读取，None 序列化时不添加字段。
+    let mut legacy = serde_json::to_value(full_request()).unwrap();
+    legacy.as_object_mut().unwrap().remove("session_id");
+    let decoded: CanonicalModelRequest = serde_json::from_value(legacy.clone()).unwrap();
+    assert_eq!(decoded.session_id, None);
+    assert_eq!(serde_json::to_value(decoded).unwrap(), legacy);
 }
 
 #[test]

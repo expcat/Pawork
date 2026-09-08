@@ -14,6 +14,8 @@ use super::{DesktopProjection, ForkBoundary, TimelineEntry, TimelineEntryKind};
 pub enum TimelineRow {
     /// user / assistant 消息条目。
     Message { entry_index: usize },
+    /// 可见思考文本，默认折叠为摘要。
+    Thinking { entry_index: usize },
     /// error 条目（Diagnostic）。
     Error { entry_index: usize },
     /// tool activity 组：同 run 相邻的连续 ToolCall 条目。
@@ -115,8 +117,15 @@ impl DesktopProjection {
         let mut ix = 0;
         while ix < entries.len() {
             match &entries[ix].kind {
-                TimelineEntryKind::AssistantMessage { text } if text.trim().is_empty() => {
+                TimelineEntryKind::AssistantMessage { text }
+                | TimelineEntryKind::Thinking { text }
+                    if text.trim().is_empty() =>
+                {
                     // 仅含工具/非正文 content 的 committed 消息不画空作者行。
+                    ix += 1;
+                }
+                TimelineEntryKind::Thinking { .. } => {
+                    rows.push(TimelineRow::Thinking { entry_index: ix });
                     ix += 1;
                 }
                 TimelineEntryKind::UserMessage { .. }
@@ -139,7 +148,8 @@ impl DesktopProjection {
                         }
                         match &next.kind {
                             TimelineEntryKind::ToolCall { .. } => group.push(ix),
-                            TimelineEntryKind::AssistantMessage { text } if text.trim().is_empty() => {}
+                            TimelineEntryKind::AssistantMessage { text }
+                                if text.trim().is_empty() => {}
                             _ => break,
                         }
                         ix += 1;
@@ -217,5 +227,4 @@ impl DesktopProjection {
         });
         true
     }
-
 }

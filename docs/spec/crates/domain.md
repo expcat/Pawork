@@ -155,6 +155,8 @@
 5. **能力协商**：目录侧声明 `ModelCapabilities` → 请求侧给 `CapabilityRequirements` → 协商产出 `ResolvedCapabilities`，不满足项逐个记录 fallback 或 Reject；缺失 v2 字段一律按"不支持"处理（fail-closed），显式 `clamp_effort_to_thinking_level` 才允许降档。
 6. **降级双通道**：接点构造 `DegradeEvent` → 按 `default_sink()` 分流——可重放接点 `to_agent_event()` 落 `AgentEvent::Diagnostic`（persist-first），启动期/流受损接点只发 protocol 实时帧 + stderr（帧转换 `From<&DegradeEvent> for AppEvent` 定义在 pawork-protocol）。
 
+ADR-057：`CanonicalModelRequest` 增加可选 `session_id: Option<SessionId>`，serde 缺省 None、None 不上 JSON；与 request_id / trace_id 分离，由真实会话入口填充。`contract_golden` 同时覆盖完整请求与旧 JSON 缺省解码，domain 不引入 HTTP 依赖。
+
 ## 5. 契约与不变量
 
 - **信封版本独立**：`CURRENT_SCHEMA_VERSION = 1` 是磁盘/线上信封契约版本，与 session-store 的 SQLite migration 链版本（`crates/storage/src/session/migration.rs`，当前至 version 13）相互独立：加迁移不必动信封版本，反之亦然。

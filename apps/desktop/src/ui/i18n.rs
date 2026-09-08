@@ -606,6 +606,7 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "timeline.new_task" => ("New task", "新建任务"),
         "timeline.new_task_tooltip" => ("New task (Cmd+N)", "新建任务（Cmd+N）"),
         "timeline.back_to_bottom" => ("↓ Back to bottom", "↓ 回到底部"),
+        "timeline.thinking" => ("Thinking", "思考"),
         "timeline.ax_back_to_bottom" => ("Back to bottom", "回到底部"),
         "timeline.fork" => ("Fork", "分叉"),
         "timeline.review_changes" => ("Review changes", "查看变更"),

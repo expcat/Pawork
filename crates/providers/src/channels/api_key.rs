@@ -105,7 +105,7 @@ impl ApiKeyChannelProvider {
     ) -> Result<Self, ProviderError> {
         let credential = require_api_key(credential)?;
         let provider_id = ProviderId::new(config.preset.id);
-        let chat = OpenAiCompatibleProvider::new(
+        let mut chat = OpenAiCompatibleProvider::new(
             OpenAiCompatibleConfig {
                 base_url: config.base_url.clone(),
                 provider_id: provider_id.clone(),
@@ -121,10 +121,15 @@ impl ApiKeyChannelProvider {
             store: None,
             include_encrypted_reasoning: true,
         };
+        let mut responses = ResponsesTransport::new(responses, credential)?;
+        if config.preset.id == "opencode-go" {
+            chat = chat.with_opencode_session();
+            responses = responses.with_opencode_session();
+        }
         Ok(Self {
             preset: config.preset,
             chat,
-            responses: ResponsesTransport::new(responses, credential)?,
+            responses,
             model_transports: config.model_transports,
         })
     }

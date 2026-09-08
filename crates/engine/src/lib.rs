@@ -38,13 +38,14 @@ pub use tool_loop::{
 /// 用冻结契约的默认值填满 CanonicalModelRequest（tools/hosted/extensions 空，
 /// thinking/reasoning None，temperature/max_output_tokens None，
 /// tool_choice Auto，response_format Text，prompt_cache Automatic，
-/// budget default，provider_options 空，trace_id None）。
+/// budget default，provider_options 空，session_id / trace_id None）。
 pub fn assemble_request(
     request_id: RequestId,
     model: ModelId,
     messages: Vec<Message>,
 ) -> CanonicalModelRequest {
     CanonicalModelRequest {
+        session_id: None,
         request_id,
         model,
         messages,
@@ -271,6 +272,7 @@ mod tests {
         assert_eq!(
             request,
             CanonicalModelRequest {
+                session_id: None,
                 request_id: RequestId::from("request-1"),
                 model: ModelId::from("model-1"),
                 messages,

@@ -12,10 +12,21 @@
     {
       "event_id": "event-12",
       "kind": "assistant_message",
+      "message_id": "message-1",
       "run_id": "run-1",
       "sequence": 12,
       "text": "hi",
+      "thinking_text": "Let me think.",
       "timestamp": "2026-01-01T00:00:01Z"
+    },
+    {
+      "event_id": "event-13",
+      "kind": "thinking_delta",
+      "message_id": "message-2",
+      "run_id": "run-1",
+      "sequence": 13,
+      "text": "Next thought",
+      "timestamp": "2026-01-01T00:00:02Z"
     }
   ],
   "next_sequence": 13

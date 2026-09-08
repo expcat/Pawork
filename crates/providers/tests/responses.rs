@@ -12,6 +12,7 @@ use pawork_providers::responses::{to_responses_body, ResponsesWireOptions};
 #[test]
 fn responses_body_preserves_canonical_tools_and_blocks_reserved_overrides() {
     let mut request = CanonicalModelRequest {
+        session_id: None,
         request_id: pawork_domain::RequestId::new("r1"),
         model: ModelId::new("test-model"),
         messages: vec![Message {

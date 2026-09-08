@@ -2,6 +2,17 @@
 
 > 基线日期：2026-09-05。GUI P0–P2（含中文与供应商代理开关）已实现，定向自动验证与本机真窗口验收完成，证据见 §8；工程约定见 [AGENTS.md](../../AGENTS.md)。
 
+## ADR-057：UI-3 思考投影与会话身份（2026-09-08）
+
+状态：**Accepted**，用户在本次会话明确「确认实施」。实现、自动验证、代理真窗口检查和用户人工视觉验收分别登记在 [路线图](../ROADMAP.md)。
+
+- **GUI API 1.14**：复用 live `AppEvent::ThinkingDelta`；历史新增 `TimelineItemKind::ThinkingDelta` 与可选 `message_id` / `thinking_text`。每个持久事件仍只对应一条 wire 条目，`MessageCommitted` 的正文与思考同载于 `AssistantMessage`，共享 reducer 再拆成显示行，不改变磁盘事件 schema 或 SQLite 版本。
+- **合并与降级**：reducer 按 run/message/正文或思考维度合并有序增量，committed 全文替换累积体并阻止迟到增量重复追加；思考保留首次增量的 sequence/timestamp，迟到增量只可前移已有思考行，不恢复隐藏内容；分页、live 和重放收敛。Host 对 API <1.14 的历史响应移除新 kind 与新字段，保留原 `next_sequence` / `head_sequence` / `complete`，包括整页被过滤时的游标。
+- **可见范围**：只投影可见 `Thinking` 文本，排除 redacted 文本、reasoning signature、encrypted content 和 protected blob reference。Desktop 以稳定的 run/message 锚点显示默认收起的「思考」摘要；鼠标、Enter / Space 与 AX 共享展开状态，收起时 AX 不暴露正文。无权威耗时就不显示时长。
+- **Canonical Provider 契约**：`CanonicalModelRequest.session_id: Option<SessionId>` 缺省为 None 且不序列化空值，旧请求仍可解码。真实 `SessionTurn` 覆盖请求会话身份；主请求、工具续轮、自动/手动压缩及自动命名沿用真实会话，`trace_id` 保持原含义，Engine 无 Provider 名特例。
+- **OpenCode Go 请求头**：仅该 API-key 通道在 Chat / Responses 两条传输路径把可用的 canonical session ID 映射到 `x-opencode-session`；每次请求重新取值，其他通道不发送。非法 header 值在发网前返回脱敏 `InvalidRequest`，不把身份塞进请求 body 或配置扩展。
+
+
 ## ADR-054：OPT-2 会话生命周期与自动标题（2026-09-05）
 
 背景：OPT-2（[OPT 归档](../review/roadmap-opt-2026-09-05.md#5-opt-2--会话与无项目任务) §5，反馈 F7/F9 与 F8 的自动命名）。设计闸门 OPT-D 已签字（[design/README §0](../../design/README.md)）。GUI API minor 1.10 → 1.11，golden/typegen 先行。
@@ -13,7 +24,7 @@
 - **D4a 自动命名并发收口（2026-09-06 审查修复）**：读取素材只读重放，不决议 pending approval、不追加 Agent 事件；命名任务快照依赖后释放 Core 锁，装配、目录解析、补全共用 20s 超时。写回前确认命名配置仍有效，以单条条件 UPDATE 校验占位标题并写入，避免覆盖手动改名；改名/配置清除期间返回的旧结果丢弃。
 - **D5 `AppEvent::SessionMetaChanged{session_id, title, archived}`**：改名/归档/自动标题写回后由 Host 经 EventHub 广播；Desktop 收到后重取 snapshot，列表即时反映写后状态。当前会话归档时一并收口 Composer、分页、Changes 与 Terminal workspace 草稿；重复刷新保持当前 UI scope。新建会话严格使用创建回执的 session_id，不从列表顺序猜测。
 
-当前活动线 UI-3 的 Markdown、工具折叠与 Run 终态呈现更新见 [GUI 设计](../gui-design.md#ui-3-时间线更新2026-09-08进行中)；下文旧阶段数值不覆盖本次规格。独立思考投影仍缺失，UI-3 尚未完成；自动检查、真窗口与人工验收分别见 [路线图](../ROADMAP.md)。
+当前活动线 UI-3 的 Markdown、工具折叠与 Run 终态呈现更新见 [GUI 设计](../gui-design.md#ui-3-时间线更新2026-09-08进行中)；下文旧阶段数值不覆盖本次规格。独立思考投影与默认折叠已按 ADR-057 实现，UI-3 等待用户人工视觉验收；自动检查、真窗口与人工验收分别见 [路线图](../ROADMAP.md)。
 
 ## 1. 产品定位
 

@@ -491,7 +491,11 @@ async fn mock_provider_completes_multi_turn_tool_loop() {
 
     let summary = run_session(
         &provider,
-        sample_request(vec![echo_tool_def()]),
+        {
+            let mut request = sample_request(vec![echo_tool_def()]);
+            request.session_id = Some(SessionId::from("stale-session"));
+            request
+        },
         sample_turn(),
         &sink,
         CancellationToken::new(),
@@ -525,6 +529,9 @@ async fn mock_provider_completes_multi_turn_tool_loop() {
     assert!(!types.contains(&"ToolApprovalRequested"));
 
     let requests = provider.requests();
+    assert!(requests
+        .iter()
+        .all(|request| request.session_id.as_ref() == Some(&sample_turn().session_id)));
     assert_eq!(requests.len(), 2);
     assert!(
         requests[1]
@@ -1726,7 +1733,11 @@ async fn soft_limit_compaction_summarizes_and_rebuilds_history() {
 
     let summary = run_session(
         &provider,
-        request_with_messages(numbered_messages(6, "with some body")),
+        {
+            let mut request = request_with_messages(numbered_messages(6, "with some body"));
+            request.session_id = Some(SessionId::from("stale-session"));
+            request
+        },
         sample_turn(),
         &sink,
         CancellationToken::new(),
@@ -1787,6 +1798,9 @@ async fn soft_limit_compaction_summarizes_and_rebuilds_history() {
     assert_eq!(completed.1, EventSequence::new(0));
 
     let requests = provider.requests();
+    assert!(requests
+        .iter()
+        .all(|request| request.session_id.as_ref() == Some(&sample_turn().session_id)));
     assert_eq!(requests.len(), 2);
     // 摘要请求：无 tools，单条 User 指令 + 被压缩区间文本。
     assert!(requests[0].tools.is_empty());
@@ -2061,7 +2075,11 @@ async fn manual_compaction_emits_events_and_returns_rebuilt_messages() {
 
     let rebuilt = run_manual_compaction(
         &provider,
-        request_with_messages(messages.clone()),
+        {
+            let mut request = request_with_messages(messages.clone());
+            request.session_id = Some(SessionId::from("stale-session"));
+            request
+        },
         sample_turn(),
         &sink,
         CancellationToken::new(),
@@ -2088,6 +2106,9 @@ async fn manual_compaction_emits_events_and_returns_rebuilt_messages() {
         ]
     );
     let requests = provider.requests();
+    assert!(requests
+        .iter()
+        .all(|request| request.session_id.as_ref() == Some(&sample_turn().session_id)));
     assert_eq!(requests.len(), 1);
     assert!(requests[0].tools.is_empty());
     let completed = sink

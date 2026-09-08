@@ -162,6 +162,7 @@ fn user(text: &str) -> Message {
 
 fn request(model: &str) -> CanonicalModelRequest {
     CanonicalModelRequest {
+        session_id: None,
         request_id: pawork_domain::RequestId::from("r1"),
         model: ModelId::from(model),
         messages: vec![user("hi")],

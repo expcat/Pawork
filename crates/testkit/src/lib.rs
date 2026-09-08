@@ -466,6 +466,7 @@ mod tests {
 
     fn request(id: &str) -> CanonicalModelRequest {
         CanonicalModelRequest {
+            session_id: None,
             request_id: RequestId::from(id),
             model: ModelId::from("mock-model"),
             messages: vec![Message {

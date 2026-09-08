@@ -149,6 +149,8 @@ trait 面为 `id()` / `list_models(credential)` / `stream(request, sink, cancel)
 7. 每收到一个 chunk 重置读超时（长流不误杀）；流中断（未见完成信号）报 `StreamInterrupted`；取消点贯穿字节循环与事件循环。
 8. `ApiKeyChannelProvider` 额外一步：若模型 capability 显式声明 Responses transport，则路由到共享 `ResponsesTransport`——按能力数据路由，不按通道名分支。
 
+ADR-057：`ApiKeyChannelProvider` 仅为 `opencode-go` 启用内部会话头映射，Chat 与下述 Responses 共用 `opencode_session_header` 校验；每次从 `CanonicalModelRequest.session_id` 取 `x-opencode-session`，None 不发送、其他通道不发送。非法 header 值在发网前返回固定脱敏 `InvalidRequest`；不写入 body、trace_id 或持久配置。
+
 ### 4.2 Responses transport（ChatGPT / xAI Responses 模型）
 
 1. `requirements_from_request` → `CapabilityNegotiator::negotiate`；被拒能力（`Reject`）在发 HTTP 前变成 `InvalidRequest` 错误。
@@ -239,6 +241,8 @@ trait 面为 `id()` / `list_models(credential)` / `stream(request, sink, cancel)
 - thinking signature 走 protect、不以明文出现在事件流（`contract_thinking_signature_is_protected_not_emitted`）。
 
 dev-dependencies：`wiremock`（HTTP mock）、`proptest`、多线程 tokio。产品级验证边界见 [../verification.md](../verification.md)。
+
+ADR-057：`tests/api_key_channels.rs` 在既有通道契约测试中核验 Chat / Responses 的会话头、连续请求身份隔离与其他通道不携带；非法会话头定向回归断言不发请求且错误不回显原值。
 
 ## 8. 注意事项与已知限制
 

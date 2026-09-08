@@ -11,7 +11,11 @@ fn naming_mock_provider(scripts: Vec<MockScript>) -> MockProvider {
     }])
 }
 
-async fn assert_session_title(adapter: &GuiHostAdapter, session: &pawork_domain::SessionId, expected: &str) {
+async fn assert_session_title(
+    adapter: &GuiHostAdapter,
+    session: &pawork_domain::SessionId,
+    expected: &str,
+) {
     let response = adapter
         .command(&command_envelope(AppCommand::SessionOpen {
             session_id: session.clone(),
@@ -33,7 +37,9 @@ async fn run_success_auto_titles_placeholder_session_and_broadcasts() {
     let provider = naming_mock_provider(vec![
         MockScript::new().text("ok").complete(),
         // 命名输出带前后空白与第二行：必须 trim 取首个非空行。
-        MockScript::new().text("  帮我修登录 bug\n多余的第二行\n").complete(),
+        MockScript::new()
+            .text("  帮我修登录 bug\n多余的第二行\n")
+            .complete(),
     ]);
     let mut core = AppCore::from_parts(
         Arc::new(provider),
@@ -144,6 +150,7 @@ async fn auto_title_releases_core_and_respects_manual_rename_or_role_clear() {
     };
     struct PausedTitle {
         provider: MockProvider,
+        session_id: std::sync::Mutex<Option<SessionId>>,
         started: tokio::sync::Notify,
         resume: tokio::sync::Notify,
     }
@@ -164,6 +171,7 @@ async fn auto_title_releases_core_and_respects_manual_rename_or_role_clear() {
             sink: &dyn ProviderEventSink,
             cancel: CancellationToken,
         ) -> Result<ModelResponseSummary, ProviderError> {
+            *self.session_id.lock().unwrap() = request.session_id.clone();
             self.started.notify_one();
             self.resume.notified().await;
             self.provider.stream(request, sink, cancel).await
@@ -173,6 +181,7 @@ async fn auto_title_releases_core_and_respects_manual_rename_or_role_clear() {
         let (mut core, _dir) = crate::testsupport::mock_core(Vec::new()).await;
         let provider = Arc::new(PausedTitle {
             provider: naming_mock_provider(vec![MockScript::new().text("过期自动标题").complete()]),
+            session_id: Default::default(),
             started: Default::default(),
             resume: Default::default(),
         });
@@ -207,6 +216,7 @@ async fn auto_title_releases_core_and_respects_manual_rename_or_role_clear() {
         )
         .await
         .expect("naming started");
+        assert_eq!(*provider.session_id.lock().unwrap(), Some(session.clone()));
         let mut locked =
             tokio::time::timeout(std::time::Duration::from_secs(1), adapter.core.write())
                 .await

@@ -1,6 +1,6 @@
 # Pawork 活动路线图：Desktop 模块重设计（UI）
 
-> 基线日期：2026-09-07。状态：**UI-1 已实现、自动检查通过、用户人工视觉验收通过；未归档。UI-2 已实现、自动检查与代理真窗口检查通过，等待用户人工视觉验收；UI-3 主体已实现、自动检查通过，思考投影与验收仍有缺口；UI-4～UI-6 未开始**。来源：当日正式 Desktop 真窗口人工走查（#01–#05）。本文件是当前活动线的任务规划，**不是**源码或冻结契约的事实源。上一条 OPT-D / OPT-1～OPT-4 已关闭，全文与验收证据见 [review/roadmap-opt-2026-09-05.md](review/roadmap-opt-2026-09-05.md)。P0–P2 收尾证据仍见 [Desktop Spec §8](spec/desktop.md#8-gui-收尾验收记录2026-09-05)；未排期候选仍见 [backlog.md](spec/backlog.md)。
+> 基线日期：2026-09-07。状态：**UI-1 已实现、自动检查通过、用户人工视觉验收通过；未归档。UI-2 已实现、自动检查与代理真窗口检查通过，等待用户人工视觉验收；UI-3 已实现，定向自动检查、真实 Run 与重启回放检查通过，等待用户人工视觉验收，未归档；UI-4～UI-6 未开始**。来源：当日正式 Desktop 真窗口人工走查（#01–#05）。本文件是当前活动线的任务规划，**不是**源码或冻结契约的事实源。上一条 OPT-D / OPT-1～OPT-4 已关闭，全文与验收证据见 [review/roadmap-opt-2026-09-05.md](review/roadmap-opt-2026-09-05.md)。P0–P2 收尾证据仍见 [Desktop Spec §8](spec/desktop.md#8-gui-收尾验收记录2026-09-05)；未排期候选仍见 [backlog.md](spec/backlog.md)。
 
 **做法**：每个任务重新设计**一个模块**的 UI 和交互，对照竞品与 [gui-design.md](gui-design.md) 参照项目（Codex Desktop、OpenCode、Cursor Agent、Zed Agent Panel、DeepSeek Harness）拉到同一美观度；静态观感和动态交互一起做。OPT-D 旧签字稿保留为历史，**不再否决**本线新视觉。
 
@@ -149,7 +149,7 @@ UI-2 / UI-3 / UI-4 写入集不重叠，可在 UI-1 token 稳定后并行。UI-5
 | --- | --- |
 | UI-1 Workbench | 已实现；Desktop 定向自动检查 213/213 通过；代理真窗口检查通过；用户人工视觉验收通过（2026-09-07）；未归档 |
 | UI-2 TaskRail | 已实现；Desktop 自动检查 214/214 通过；代理真窗口检查通过；等待用户人工视觉验收；未归档 |
-| UI-3 Timeline | 进行中：Markdown、工具折叠与终态呈现已实现，215 项自动检查通过；思考投影待契约确认；live Run 的 HTTP 400 已定位为缺少会话请求头，修复未实施；未完成人工视觉验收 |
+| UI-3 Timeline | 已实现：Markdown、工具与思考折叠、终态呈现及 OpenCode Go 会话请求头（ADR-057）；定向自动检查、真实 Run 与重启回放检查通过，等待用户人工视觉验收；未归档 |
 | UI-4 Composer | 已立项，未开始 |
 | UI-5 Settings | 已立项，未开始 |
 | UI-6 Providers | 目录前置核查完成（2026-09-08）；实现未开始，未归档；见 [核查报告](review/model-catalog-audit-2026-09-08.md) |
@@ -177,7 +177,7 @@ UI-2 / UI-3 / UI-4 写入集不重叠，可在 UI-1 token 稳定后并行。UI-5
 - **用户视觉反馈修正**：项目头计数移入同一交互区域，悬停背景与键盘焦点边框完整覆盖右侧计数；同步 AX 点击区域。有项目的独立「+」按钮保持独立。修正后上述 Desktop 测试仍为 214 passed / 0 failed，构建成功（`/tmp/pawork-ui2-header-tests.log`、`/tmp/pawork-ui2-header-build.log`）。独立 `target/pawork-desktop-runtime/Pawork-UI2-header.app` 真窗口确认完整高亮、点击计数折叠、Enter 展开及完整焦点边框；候选与 build SHA-256 均为 `000653aac319d4c28cd51c14c97f08c5001f0a400e6a415a0582e0f721b38620`，保留修正窗口供用户验收。
 - **状态边界**：已实现、自动检查通过、代理真窗口检查通过；**等待用户人工视觉验收，未归档**。本提交收录实现与规格，未推送、未发布；未运行全量 workspace 门禁。UI-3～UI-6 未开始。
 
-### UI-3 本批证据（2026-09-08，进行中）
+### UI-3 主体实现证据（2026-09-08，思考链路实施前历史）
 
 - **主体已实现**：16px Markdown 正文、880px 居中阅读列、用户浅底卡片与低强调作者行、两侧至少各留 28px；工具默认折叠、展开后完整输出换行；空助手消息不画作者行，相邻工具可跨空消息归组；展开时保留当前视口，旧 RunPhase 由同 Run 后继状态吸收；成功无 Changes 只保留完成页脚与 Fork，失败/取消与 Review 入口继续保留。详见 [GUI 设计 UI-3](gui-design.md#ui-3-时间线更新2026-09-08进行中)。未增加依赖，未改持久事件或 wire。
 - **自动检查通过**：`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`，215 passed / 0 failed；`cargo build -p pawork-desktop --offline --bins --features gpui/runtime_shaders` 成功。复用本机临时依赖 wrapper 与测试 runner，不修改 Cargo 配置。日志 `/tmp/pawork-ui3-tests.log`、`/tmp/pawork-ui3-build.log`。Markdown 主路径 / Unicode 流式边界替代旧段落切分测试，现有投影与 AX 几何回归覆盖空消息、旧相位收敛、默认折叠与展开高度。
@@ -187,21 +187,31 @@ UI-2 / UI-3 / UI-4 写入集不重叠，可在 UI-1 token 稳定后并行。UI-5
 - **用户反馈后修正**：初版用户视觉验收未通过，截图指出时间线偏在左侧窄列、正文密集、工具底板抢眼。修正版改为最大 880px 居中阅读列；16px / 26px 正文、12px 作者与段落间距、32px 消息间距，用户消息使用 20px 内边距浅底卡片。已确认 GPUI list 把每个条目按 `layout_as_root` 的高度累计，外 margin 不计入条目高度；改为内部 padding，真实窗口间距才兑现。工具摘要改为 36px 无底色行，去掉首字母图标，展开保留细边线与完整输出。
 - **修正版验证**：同一 Desktop 测试命令再次 215 passed / 0 failed，构建成功；日志 `/tmp/pawork-ui3-redesign-tests.log`、`/tmp/pawork-ui3-redesign-build.log`。审查发现新增 bottom padding 会漏报底部可见 AX 条目，已把贴底补齐高度与实际可见边界分开，并在修正后复跑上述检查。未新增测试框架或依赖。
 - **修正版真窗口**：同一真实历史副本中检查宽窗居中、1080×720 窄窗、100% / 125% / 150% 正文与用户卡片换行、工具点击展开 / Return 收起、展开时视口保留、用户卡片菜单 AX 命中与回到底部。最终恢复 100% 与工具默认收起。首次候选连接时模型探测曾导致设置请求超时，后续读取恢复，最终候选连接及模型目录可用；本次只做展示交互，未新发起 Run。截图保存在 `/tmp/pawork-ui3-design-review/`，未检入仓库。
-- **当前候选**：`target/pawork-desktop-runtime/Pawork-UI3-design-final.app` 已打开，连接 `ui3-history`；候选与 build SHA-256 均为 `e10b655db768cf630420bd502f4e869c20c0f3927110d26b27fb14b8ce16e2b8`。初版 `Pawork-UI3-final.app` 已被本修正版替代，不作为当前验收对象。
-- **状态边界**：UI-3 仍进行中，**不是全项已实现或人工验收通过**；本批已提交；未发布，未运行全量 workspace 门禁。
+- **当时候选**：`target/pawork-desktop-runtime/Pawork-UI3-design-final.app`，连接 `ui3-history`；候选与 build SHA-256 均为 `e10b655db768cf630420bd502f4e869c20c0f3927110d26b27fb14b8ce16e2b8`。该候选现已由文末的思考链路最终候选替代。
+- **当时状态**：UI-3 尚缺思考链路，未人工验收；主体实现已提交；未发布，未运行全量 workspace 门禁。当前状态见文末。
 
-#### UI-3 剩余思考链路：待确认的具体变更
+#### UI-3 思考链路方案（2026-09-08 已确认实施）
 
-事实：domain 已持久化 `AssistantThinkingDelta`，GUI 已定义 `AppEvent::ThinkingDelta`，但 `gui_host/events.rs` 未转发它、共享 reducer 未消费它，历史 `TimelineItemKind` 也无独立思考条目；`join_text` 只提取正文。因此只改 Desktop 无法完成可重放的思考折叠。
+实施前事实：domain 已持久化 `AssistantThinkingDelta`，GUI 已定义 `AppEvent::ThinkingDelta`，但 `gui_host/events.rs` 未转发它、共享 reducer 未消费它，历史 `TimelineItemKind` 也无独立思考条目；`join_text` 只提取正文。因此只改 Desktop 无法完成可重放的思考折叠。
 
-拟补齐（2026-09-08 源码复核后修订）：复用已有 live `ThinkingDelta`；历史 `TimelineItemKind` 增加 `ThinkingDelta`，`TimelineItem` 增加可选 `message_id` / `thinking_text`。同一 `MessageCommitted` 的正文和思考仍装在一条 `AssistantMessage` 中，由共享 reducer 投影为独立显示条目；不把同一事件拆成两条共用 sequence 的 wire 条目，以免被既有按 sequence 去重吞掉其中一条。历史 delta 与 committed 思考按 run/message 锚点合并，committed 全文替换 delta，分页与 live 交错不重复。Desktop 默认显示可展开的“思考”摘要。只展示可见 thinking 文本，redacted 内容不还原，不传递 reasoning signature / encrypted content。实现前补 golden 验证重放一致性；同步协议版本/typegen、旧协商版本的历史响应降级、架构与相关包 Spec。
+已确认方案（2026-09-08 源码复核后修订）：复用已有 live `ThinkingDelta`；历史 `TimelineItemKind` 增加 `ThinkingDelta`，`TimelineItem` 增加可选 `message_id` / `thinking_text`。同一 `MessageCommitted` 的正文和思考仍装在一条 `AssistantMessage` 中，由共享 reducer 投影为独立显示条目；不把同一事件拆成两条共用 sequence 的 wire 条目，以免被既有按 sequence 去重吞掉其中一条。历史 delta 与 committed 思考按 run/message 锚点合并，committed 全文替换 delta，分页与 live 交错不重复。Desktop 默认显示可展开的“思考”摘要。只展示可见 thinking 文本，redacted 内容不还原，不传递 reasoning signature / encrypted content。实现前补 golden 验证重放一致性；同步协议版本/typegen、旧协商版本的历史响应降级、架构与相关包 Spec。
 
-此项触及冻结 GUI schema，按 [AGENTS.md §5](../AGENTS.md#5-验证决策)“schema/wire 演进须用户确认”等待确认后实施。当前没有用普通 assistant 正文猜测或伪造思考块。剩余验收包括指定模型成功 live Run 与用户人工视觉验收。
+此项及下述 Provider 契约变更已获用户「确认实施」，决策登记在 [ADR-057](spec/desktop.md#adr-057ui-3-思考投影与会话身份2026-09-08)。以下诊断保留为实施前证据，本批实现和验收见文末。
 
-#### UI-3 验收阻塞复核（2026-09-08）
+#### UI-3 验收阻塞复核（2026-09-08，实施前历史）
 
 - **已复现**：当前 `target/debug/pawork` 以隔离实例 `ui3-followup`、当次 `opencode-go / glm-5.3-flash`、只读审批发起最小 Run，仍为 `invalid_request / HTTP 400`。会话 `ses-1788824300774-1`、Run `run-gui-1788824300783-1`，落盘只有 started / user committed / context prepared / provider request / failed；日志 `/tmp/pawork-ui3-followup-run.jsonl`。未改持久默认、代理或认证配置。
 - **已定位**：使用同一认证、已配置代理、`User-Agent: pawork` 和指定模型请求官方 Chat Completions 端点，上游明确返回 `MissingSessionID`，要求 `x-opencode-session`。这与 [OpenCode Go 官方接入要求](https://opencode.ai/docs/go/#where-can-i-use-it) 一致：每个 conversation 应携带稳定的 session ID。脱敏诊断证据 `/tmp/pawork-ui3-configured-proxy.json`。首次未采用 Pawork 已配置代理的探测为 403，不能用来判断 Pawork 原 400 的原因。
 - **对照请求成功**：保持上述 400 请求的 body、认证、代理、User-Agent、模型完全相同，只增加 `x-opencode-session: ses-1788824300774-1`，得到 HTTP 200、正文 `UI3_OK`、274 个字符的可见思考增量、`finish_reason=stop` 与 `[DONE]`；证据 `/tmp/pawork-ui3-session-header-ab.json`。这验证了会话头缺失的诊断，不代表产品接线已修复。
 - **修复准备**：`CanonicalModelRequest` 当前只有 request_id / trace_id，没有 session_id；trace_id 不应改作会话身份，首条消息 id 也不能在压缩后保证稳定。拟追加可选的 canonical `session_id`，由真实会话入口传入，主请求、工具续轮、压缩与自动命名保留同一身份；仅 OpenCode Go 通道将其映射到 `x-opencode-session`，Chat / Responses 两条传输路径都覆盖，Engine 不判断 Provider 名。此项也触及 [架构 §3.2](architecture.md#32-冻结契约激活即采用完整形状golden-先于实现改动) 的 Provider 契约，须随本次方案确认后实施，golden 先行。
 - **状态边界**：本轮只完成源码定位、诊断与方案修订；尚未修改生产代码或冻结契约，既有 Desktop 改动完整保留。外部诊断请求不计作 Pawork 真窗口 Run 验收通过。思考投影、Provider 会话头接线和用户视觉验收仍未完成。
+
+
+#### UI-3 思考链路与会话头实施（2026-09-08）
+
+- **已实现**：按 ADR-057 将历史、live 与 committed 可见思考接入共享 reducer；同一持久 sequence 保持一条 wire 条目，GUI API 1.14，对旧 minor 过滤新内容且保留分页游标。Desktop 默认折叠「思考」，展开状态以 run/message 锚点保持，鼠标、键盘、AX 和测高同源。
+- **已实现**：canonical 请求增加可选 session_id；真实会话入口、工具续轮、自动/手动压缩和自动命名保留身份，仅 OpenCode Go Chat / Responses 写入 x-opencode-session。非法头值在发网前脱敏拒绝；不改持久默认、认证或代理配置。
+- **自动验证**：`cargo test -p pawork-domain -p pawork-engine -p pawork-providers -p pawork-app -p pawork-testkit -p pawork-protocol --offline --lib --tests`（启用 typegen 与全部首发 Provider 测试 feature），755 passed / 0 failed / 1 既有 ignored，日志 `/tmp/pawork-ui3-core-tests-final.log`。typegen 与 golden 检查通过；旧 fork fixture 的分支 committed 身份修正为共享增量的 m-1，显示期望不变。真窗口发现思考被 committed 推到工具之后，修正为保留首次增量位置；迟到增量只前移已有行，不追加全文或恢复隐藏内容。随后 Protocol / App 定向复验 409 passed，投影 golden 8 passed，日志分别为 `/tmp/pawork-ui3-thinking-order-tests.log`、`/tmp/pawork-ui3-thinking-order-golden.log`。Desktop 命令 `cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders` 最终复验 215 passed，日志 `/tmp/pawork-ui3-thinking-desktop-final.log`；以上均 0 failed，独立只读审查无未解决问题。
+- **构建与真窗口**：`cargo build -p pawork -p pawork-desktop --offline --bins --features gpui/runtime_shaders` 通过，日志 `/tmp/pawork-ui3-thinking-final-build.log`。真实窗口以当次 `opencode-go / glm-5.3-flash` 完成会话 `ses-1788830262399-1` / Run `run-gui-1788830279780-1`：两次 Provider 请求、一次成功的 `read_file`、265 个思考增量、两段可见思考及 Markdown 正文，终态 `run_completed`，输出包含 `UI3_THINKING_OK`；SQLite 与验收文件 SHA-256 交叉验证，文件未修改，脱敏证据 `/tmp/pawork-ui3-thinking-evidence.json`。鼠标和 Enter / Space 可展开、收起思考，收起时 AX 不含正文；最终候选重开同一持久化会话，像素与 AX 均确认「思考 → 工具 → 思考 → 正文」、默认折叠、全文展开与无重复条目。
+- **当前候选**：`target/pawork-desktop-runtime/Pawork-UI3-thinking-final.app` 已打开，连接隔离实例 `ui3-thinking`；候选与最终 build SHA-256 均为 `e251459274b16cd42f7d3c78498b3c4ba0aff2f61cdbd2054282563a2e168677`。复用默认 `target/` 缓存；因历史 deps 目录枚举缓慢，本机验证使用 `/tmp` rustc wrapper / test runner 缩小依赖检索与可执行文件启动目录，未修改仓库构建配置。
+- **状态边界**：等待用户人工视觉验收；未归档、未提交本批、未推送、未发布；全量 workspace 门禁未运行。

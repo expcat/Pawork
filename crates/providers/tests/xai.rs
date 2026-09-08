@@ -29,6 +29,7 @@ impl ProviderEventSink for Sink {
 
 fn request(model: &str) -> CanonicalModelRequest {
     CanonicalModelRequest {
+        session_id: Some(pawork_domain::SessionId::from("session-other-provider")),
         request_id: pawork_domain::RequestId::new("r1"),
         model: ModelId::new(model),
         messages: vec![Message {
@@ -100,6 +101,12 @@ async fn model_capability_selects_responses_or_chat() {
         )
         .await
         .unwrap();
+    assert!(server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .all(|request| !request.headers.contains_key("x-opencode-session")));
     server.verify().await;
 }
 
@@ -155,5 +162,11 @@ async fn grok4_responses_round_trip_streams_events_with_oauth_bearer() {
     assert_eq!(summary.usage.input_tokens, 11);
     assert_eq!(summary.usage.output_tokens, 7);
     assert_eq!(summary.response_id.as_deref(), Some("resp_xai_1"));
+    assert!(server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .all(|request| !request.headers.contains_key("x-opencode-session")));
     server.verify().await;
 }

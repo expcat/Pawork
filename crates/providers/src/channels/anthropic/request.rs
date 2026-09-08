@@ -392,6 +392,7 @@ mod tests {
 
     fn base_request() -> CanonicalModelRequest {
         CanonicalModelRequest {
+            session_id: None,
             request_id: pawork_domain::RequestId::from("r1"),
             model: pawork_domain::ModelId::from("claude-3-5-sonnet"),
             messages: vec![user("hi")],

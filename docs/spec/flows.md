@@ -10,7 +10,7 @@
 
 1. CLI `chat` / `run` 或 GUI `run_start` → `AppCore::chat_turn*`（实现在 `crates/app/src/services/run.rs`）。
 2. 宿主装配 `SessionLoopCtx`（`crates/app/src/loop_ctx.rs`）实现 `pawork_engine::LoopContext`。
-3. `pawork_engine::run_session`（`crates/engine/src/tool_loop/`）调 `ModelProvider::stream`，把 `ProviderStreamEvent` 映射为 `AgentEvent`。
+3. Engine 以 `SessionTurn.session_id` 覆盖 canonical 请求会话身份，主请求、工具续轮和压缩保留；仅 OpenCode Go adapter 转为 HTTP 会话头（ADR-057）。`pawork_engine::run_session`（`crates/engine/src/tool_loop/`）调 `ModelProvider::stream`，把 `ProviderStreamEvent` 映射为 `AgentEvent`。
 4. 收集到 tool call 后：`request_approval`（**等待前**必须 emit `ToolApprovalRequested`）→ `execute_tools` → `ToolScheduler`（`pawork-tools`）→ 各 `AgentTool`。
 5. 轮数上限 `DEFAULT_MAX_TOOL_ROUNDS = 20`。压缩走 `LoopContext::compact_history`（host 负责 session fork/snapshot）。
 
@@ -58,6 +58,8 @@ Headless / ACP：
 - ACP：`pawork acp serve`；`AcpHost` 不消费 GUI 帧、不持有凭证、不构造第二个 Core。
 
 相关包：[desktop](crates/desktop.md) · [client](crates/client.md) · [transport](crates/transport.md) · [protocol](crates/protocol.md) · [app](crates/app.md) · [cli](crates/cli.md)
+
+ADR-057：Host 转发可见 ThinkingDelta，历史和 live 进入同一 reducer 按 run/message 合并；Desktop 默认折叠。API <1.14 的 SessionGet 过滤新增思考 kind/字段但保留原分页游标；redacted / opaque reasoning 不进入 GUI。
 
 ## 3. 事件持久化与重放
 

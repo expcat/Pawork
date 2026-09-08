@@ -35,7 +35,7 @@
 
 ### 3.1 请求装配
 
-- `assemble_request(request_id, model, messages) -> CanonicalModelRequest`：以冻结契约默认值填满其余字段（tools/hosted/extensions 空、`ToolChoice::Auto`、`ResponseFormat::Text`、`PromptCachePreference::Automatic`、`RequestBudget::default()`、thinking/reasoning/temperature/max_output_tokens 为 None）。
+- `assemble_request(request_id, model, messages) -> CanonicalModelRequest`：以冻结契约默认值填满其余字段（tools/hosted/extensions 空、`ToolChoice::Auto`、`ResponseFormat::Text`、`PromptCachePreference::Automatic`、`RequestBudget::default()`、session_id/thinking/reasoning/temperature/max_output_tokens 为 None）。
 - `assemble_request_with_tools(...)`：同上但 `tools` 取入参。
 
 ### 3.2 多轮循环 `run_session`
@@ -59,7 +59,7 @@
 
 - `run_manual_compaction(provider, request, turn, events, cancel, loop_ctx, context) -> Result<Vec<Message>, EngineError>`：REPL `/compact` 等入口。不是 run：不发 `RunStarted` / `RunCancelled`，事件序直接 `CompactionStarted → MessageCommitted(summary) → CompactionCompleted`（复用自动链同一内部函数，reason 为 `AutoCompactionReason::Manual`）。`messages.len() <= retained_messages` 时返回 `Err`（nothing to compact）。返回重建后的消息列表（summary + retained tail）。
 - `run_session_turn(provider, request, turn, events, cancel)`：单轮事件化（无工具循环、无 TurnContext）：`RunStarted → MessageCommitted(user) → ContextPrepared(estimated=0) → ProviderRequestStarted → 流式事件 → MessageCommitted(assistant) → RunCompleted`。半轮取消 / 失败不提交未完成的助手消息。
-- `SessionTurn { session_id, run_id, provider_id, model, start_sequence, trigger_message, timestamp }`；`SessionTurn::new` 以 `now_timestamp()` 取当前时间。
+- `SessionTurn { session_id, run_id, provider_id, model, start_sequence, trigger_message, timestamp }`；`SessionTurn::new` 以 `now_timestamp()` 取当前时间。ADR-057：`run_session`、`run_session_turn` 与手动压缩以该 turn 的真实 session_id 覆盖请求值；工具续轮与自动/手动摘要请求保留此身份，不按 Provider 名称分支。
 
 ### 3.5 事件与错误
 
@@ -129,7 +129,7 @@
 
 1. `messages.len() <= retained_messages` → 不压缩（自动路径静默跳过，手动路径在入口即报错）。
 2. 切分：前段 = 被压缩区间，尾段 = 最后 `retained_messages` 条。
-3. `summarize_history`：向 provider 发**内部**摘要请求（`assemble_request`、无 tools、固定 User 指令前缀）；该请求不进 `AgentEventSink`、usage 不计入 run。失败或空摘要时降级结构性摘要（首条 User 消息截 2000 chars + 最后一条截 500 chars）。
+3. `summarize_history`：向 provider 发**内部**摘要请求（`assemble_request`、保留原请求 session_id、无 tools、固定 User 指令前缀）；该请求不进 `AgentEventSink`、usage 不计入 run。失败或空摘要时降级结构性摘要（首条 User 消息截 2000 chars + 最后一条截 500 chars）。
 4. `LoopContext::compact_history(reason, summary_text)`：`Err` → 终止当前 run；`Ok(outcome)` 提供持久化水位。
 5. 事件三连：`CompactionStarted { source_event_count }`（host 回传值，无 outcome 时用被压缩消息数）→ `MessageCommitted`（summary 为 User 角色新消息）→ `CompactionCompleted { summary_message_id, compacted_through }`（无 outcome 时 `compacted_through = 0`，fail-safe：无持久化水位不折叠任何已投影消息）。
 6. 重建消息列表 = `[summary] + retained tail`（自动路径随后重注入资源层前缀）。
@@ -175,6 +175,8 @@
 | `appender.rs` / `cancel.rs` / `context/*` 内联测试 | 流式折叠、取消幂等与杀树计数、预算推导 / 触发优先级 / 估算口径 / 裁剪分级边界 |
 
 默认验证命令：`cargo test -p pawork-engine --offline --lib --tests`。
+
+ADR-057 扩展既有单轮、多轮与压缩测试：捕获 Provider 请求，验证真实 SessionTurn 覆盖错误身份，并在工具续轮、自动/手动压缩中稳定传递。
 
 ## 8. 注意事项与已知限制
 

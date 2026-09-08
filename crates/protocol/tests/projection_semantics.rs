@@ -83,6 +83,8 @@ fn history_item(sequence: u64, kind: TimelineItemKind) -> TimelineItem {
         kind,
         run_id: Some("r-1".into()),
         text: None,
+        message_id: None,
+        thinking_text: None,
         tool_name: None,
         status: None,
         detail: None,

@@ -78,6 +78,7 @@ fn render_kind(kind: &TimelineEntryKind) -> serde_json::Value {
         TimelineEntryKind::AssistantMessage { text } => {
             serde_json::json!({ "assistant_message": { "text": text } })
         }
+        TimelineEntryKind::Thinking { text } => serde_json::json!({ "thinking": { "text": text } }),
         TimelineEntryKind::ToolCall {
             name,
             status,
@@ -268,6 +269,7 @@ fn golden_fork_branch_switch_rebuilds_by_lineage() {
     assert_eq!(projection.entries.len(), 3, "branch A baseline");
 
     // 切支：清基线，按新 lineage 页重建（共享前缀 + B 独有 6-7）。
+    // 两支 committed 都收口共享增量的 m-1；不同 message_id 不得互相替换。
     projection.reset_baseline();
     let branch_b = [&lines[0], &lines[1], &lines[2], &lines[5], &lines[6]];
     for line in branch_b {
@@ -364,6 +366,8 @@ fn golden_sandbox_fallback_diagnostic_label_branches() {
         kind: pawork_protocol::TimelineItemKind::Diagnostic,
         run_id: Some("run-golden".into()),
         text: None,
+        message_id: None,
+        thinking_text: None,
         tool_name: None,
         status: None,
         detail: Some("sandbox.fallback: {\"message\":\"沙箱回退：history\"}".into()),
@@ -375,6 +379,8 @@ fn golden_sandbox_fallback_diagnostic_label_branches() {
         kind: pawork_protocol::TimelineItemKind::Diagnostic,
         run_id: Some("run-golden".into()),
         text: None,
+        message_id: None,
+        thinking_text: None,
         tool_name: None,
         status: None,
         detail: Some("resources.injected: {\"layers\":[]}".into()),
@@ -412,6 +418,8 @@ fn golden_checkpoint_snapshot_failed_renders_identically_in_both_arms() {
         kind: pawork_protocol::TimelineItemKind::Diagnostic,
         run_id: Some("run-golden".into()),
         text: None,
+        message_id: None,
+        thinking_text: None,
         tool_name: None,
         status: None,
         detail: Some(format!("checkpoint.snapshot_failed: {details}")),
@@ -427,4 +435,130 @@ fn golden_checkpoint_snapshot_failed_renders_identically_in_both_arms() {
                 if text == "checkpoint snapshot failed — write proceeded without rollback point"
         ));
     }
+}
+
+/// UI-3: message identity is shared by live/history; committed pages replace both
+/// text streams atomically, including when those pages precede late deltas.
+#[test]
+fn golden_thinking_live_history_pages_and_reset_converge() {
+    let lines = load_fixture("thinking.jsonl");
+    assert_fixture_items_match_project_event(&lines, "thinking");
+    let expected = expected_state("thinking.expected.json");
+    let mut history = TimelineProjection::default();
+    apply_history(&mut history, &lines);
+    assert_eq!(render(&history), expected);
+
+    // A later live fragment may arrive before an older historical page.
+    let mut mixed = TimelineProjection::default();
+    mixed.apply_event(lines[1].wire.as_ref().unwrap());
+    apply_history(&mut mixed, &lines[..5]);
+    assert!(matches!(&mixed.entries[0].kind,
+        TimelineEntryKind::Thinking { text } if text == "First thought"));
+    let thinking_id = mixed.entries[0].event_id.clone();
+    apply_history(&mut mixed, &lines[5..]);
+    assert_eq!(mixed.entries[0].event_id, thinking_id);
+    assert_eq!(render(&mixed), expected);
+
+    // A committed-only page followed by live deltas restores the original
+    // thinking position before the tool, without appending to committed text.
+    let mut live_after_commit = TimelineProjection::default();
+    for item in lines.iter().filter_map(|line| line.item.as_ref()) {
+        if !matches!(
+            item.kind,
+            pawork_protocol::TimelineItemKind::ThinkingDelta
+                | pawork_protocol::TimelineItemKind::AssistantDelta
+        ) {
+            live_after_commit.apply_item(item);
+        }
+    }
+    for line in lines.iter().rev() {
+        if let Some(wire) = &line.wire {
+            let changed = live_after_commit.apply_event(wire);
+            if matches!(wire.payload, AppEvent::ThinkingDelta { .. }) {
+                assert!(changed, "late live thinking moves its rendered anchor");
+            }
+        }
+    }
+    assert_eq!(render(&live_after_commit), expected);
+
+    // Committed-first, reverse pages, overlapping live replay, and distinct
+    // messages in one run must all reach exactly the same five rendered rows.
+    let mut committed_first = TimelineProjection::default();
+    for line in lines.iter().rev() {
+        if let Some(item) = &line.item {
+            committed_first.apply_item(item);
+        }
+    }
+    for line in &lines {
+        if let Some(wire) = &line.wire {
+            committed_first.apply_event(wire);
+        }
+    }
+    assert_eq!(render(&committed_first), expected);
+    committed_first.apply_resume_disposition(&ResumeDisposition::Replay {
+        from_sequence: GlobalSequence(1),
+        through_sequence: GlobalSequence(7),
+    });
+    apply_history(&mut committed_first, &lines);
+    assert_eq!(render(&committed_first), expected);
+    committed_first.apply_resume_disposition(&ResumeDisposition::SnapshotRequired {
+        earliest_available_sequence: GlobalSequence(1),
+    });
+    assert!(committed_first.entries.is_empty());
+    apply_history(&mut committed_first, &lines);
+    assert_eq!(render(&committed_first), expected);
+}
+
+#[test]
+fn golden_thinking_excludes_secrets_and_downgrades_without_moving_cursor() {
+    let lines = load_fixture("thinking.jsonl");
+    let mut hidden = TimelineProjection::default();
+    hidden.apply_event(lines[3].wire.as_ref().unwrap());
+    let mut committed = lines.last().unwrap().item.clone().unwrap();
+    committed.thinking_text = None;
+    hidden.apply_item(&committed);
+    assert!(!hidden.apply_event(lines[4].wire.as_ref().unwrap()));
+    assert!(
+        hidden
+            .entries
+            .iter()
+            .all(|entry| !matches!(entry.kind, TimelineEntryKind::Thinking { .. })),
+        "late delta must not revive hidden thinking"
+    );
+    let page = pawork_protocol::TimelinePage {
+        items: lines
+            .iter()
+            .filter_map(|line| project_event(&line.domain))
+            .collect(),
+        next_sequence: Some(8),
+        head_sequence: 20,
+        complete: false,
+    };
+    let encoded = serde_json::to_string(&page).unwrap();
+    for secret in [
+        "REDACTED_SECRET",
+        "LEGACY_SIGNATURE",
+        "PROTECTED_REFERENCE",
+        "ENCRYPTED_SECRET",
+        "OPAQUE_SIGNATURE",
+        "not a visible thinking block",
+    ] {
+        assert!(!encoded.contains(secret), "presentation leaked {secret}");
+    }
+    assert_eq!(page.clone().for_api_version(pawork_protocol::V1_14), page);
+    let legacy = page.for_api_version(pawork_protocol::V1_13);
+    assert_eq!(
+        (legacy.next_sequence, legacy.head_sequence, legacy.complete),
+        (Some(8), 20, false)
+    );
+    assert_eq!(legacy.items.len(), 4);
+    let encoded = serde_json::to_string(&legacy).unwrap();
+    for field in ["thinking_delta", "thinking_text", "message_id"] {
+        assert!(!encoded.contains(field));
+    }
+    let mut old_history = TimelineProjection::default();
+    for item in &legacy.items {
+        old_history.apply_item(item);
+    }
+    assert_eq!(old_history.entries.len(), 3);
 }

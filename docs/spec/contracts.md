@@ -18,14 +18,14 @@ OPT-2 / [ADR-054](desktop.md#adr-054opt-2-会话生命周期与自动标题2026-
 
 | ID | 契约 | 当前版本/形状锚 | 生产者 → 消费者 | 精确事实源 |
 | --- | --- | --- | --- | --- |
-| CON-PROVIDER-01 | Canonical Provider | `ModelProvider`、`CanonicalModelRequest`、`ProviderStreamEvent`、`ModelResponseSummary`、`ResolvedCredential`、`ProviderError` | providers adapter → engine/app | [domain provider API](../../crates/domain/src/provider_api.rs)；[architecture §3.2](../architecture.md#32-冻结契约激活即采用完整形状golden-先于实现改动) |
+| CON-PROVIDER-01 | Canonical Provider | `ModelProvider`、`CanonicalModelRequest`（可选 `session_id`，ADR-057）、`ProviderStreamEvent`、`ModelResponseSummary`、`ResolvedCredential`、`ProviderError` | providers adapter → engine/app | [domain provider API](../../crates/domain/src/provider_api.rs)；[architecture §3.2](../architecture.md#32-冻结契约激活即采用完整形状golden-先于实现改动) |
 | CON-EVENT-01 | Agent 事件信封 | `AgentEventEnvelope.schema_version = 1`；append-only、全局 sequence、parent link | engine/app → storage/protocol/projection | [domain events](../../crates/domain/src/events.rs)；事件 golden；[storage](../../crates/storage/src/session) |
 | CON-STORAGE-01 | Session SQLite | `CURRENT_SCHEMA_VERSION = 14`；v11 增 `command_ledger`，v12 原生 branch lineage，v13 持久化 Session→Workspace 归属，v14 持久项目注册表 `workspaces` | app/storage → resume/fork/compact/import | [migration](../../crates/storage/src/session/migration.rs)；[升级 fixtures](../../crates/storage/src/session/fixtures) |
 | CON-EXPORT-01 | Session 导出 | `EXPORT_SCHEMA_VERSION = 3` | `sessions export` → import/外部备份 | [session import/export](../../crates/storage/src/session/import) |
 | CON-BLOB-01 | Artifact/Protected Blob | `PWB1_MAGIC`，`PWB1_VERSION = 1`；protected 使用 AEAD | checkpoint/reasoning → artifact/protected stores | [blob](../../crates/storage/src/blob)；[PWB1 golden](../../crates/storage/tests/golden) |
 | CON-POLICY-01 | Policy 决策 | `PolicyDecision` 四变体；`ApprovalMode` 五档，默认 `ReadOnly` | tools/app → CLI/Desktop/exec | [policy](../../crates/policy/src)；[security.md](security.md) |
 | CON-CONFIG-01 | 配置 schema/层级 | `Builtin < Global < Profile < Workspace < Session < Run`；`ProviderConfig` 无 `api_key` | workspace loader → app/providers | [workspace config](../../crates/workspace/src/config) |
-| CON-GUI-01 | GUI Connection Protocol | API `1.11`；支持 `1.0/1.1/1.2/1.3/1.4/1.5/1.6/1.7/1.8/1.9/1.10/1.11`；Accepted 握手可选 `host_data_dir`；`ClientFrame`/`ServerFrame`；上限 1 MiB | app GUI host ↔ client/Desktop | [protocol](../../crates/protocol/src)；[schemas/gui-protocol](../../schemas/gui-protocol)；protocol fixtures/golden |
+| CON-GUI-01 | GUI Connection Protocol | API `1.14`；支持 `1.0`–`1.14`；Accepted 握手可选 `host_data_dir`；`ClientFrame`/`ServerFrame`；上限 1 MiB | app GUI host ↔ client/Desktop | [protocol](../../crates/protocol/src)；[schemas/gui-protocol](../../schemas/gui-protocol)；protocol fixtures/golden |
 | CON-REGISTRY-01 | Command/Capability Registry | 31 `AppCommand`、15 `AppQuery`；GUI/headless/ACP 可用性同源 | protocol registry → app/cli/client | [registry](../../crates/protocol/src/app/registry.rs) |
 | CON-HEADLESS-01 | Headless JSON | 与 GUI 帧正交的 request/response JSONL；stdout-only | CLI stdio ↔ SDK/automation | [headless protocol](../../crates/protocol/src/headless)；[schemas/headless-json](../../schemas/headless-json) |
 | CON-ACP-01 | ACP 映射 | ACP adapter 只接 registry 允许的能力，未登记拒绝 | IDE/ACP client ↔ CLI/AppCore | [CLI ACP](../../crates/cli/src/channels/acp)；ACP fixtures |
@@ -66,6 +66,8 @@ OPT-2 / [ADR-054](desktop.md#adr-054opt-2-会话生命周期与自动标题2026-
 - request-scoped error 只能路由给匹配 request；连接级 error 不得被事件泵吞掉。
 - `ArtifactStreaming` 枚举可保留，但生产宿主当前不得宣告。
 - `WorkspaceRelativePath` 拒绝绝对路径与 `..`；客户端不因 UI 便利绕过 host Policy。
+
+- API 1.14（[ADR-057](desktop.md#adr-057ui-3-思考投影与会话身份2026-09-08)）：历史新增 `thinking_delta` 与可选 `message_id` / `thinking_text`；同一事件保持一条 wire 条目，只投影可见思考。旧 minor 响应过滤新 kind/字段但保留分页游标。Provider 请求新增可选 `session_id`，旧 JSON 缺省 None；Engine 与命名入口传真实会话，只有 OpenCode Go 映射 HTTP 会话头。
 
 ### 4.3 配置与凭证
 

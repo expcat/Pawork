@@ -35,8 +35,8 @@ use crate::{
     PendingToolApproval, DEFAULT_HUB_CAPACITY, DEFAULT_IDEMPOTENCY_CAPACITY,
 };
 
-mod bus;
 mod auto_title;
+mod bus;
 mod events;
 mod handlers;
 #[cfg(test)]
@@ -302,11 +302,7 @@ impl GuiHostAdapter {
 
     #[cfg(test)]
     pub(crate) async fn command_record_failure_count(&self) -> u64 {
-        self.waiters
-            .stats()
-            .await
-            .expect("stats")
-            .record_failures
+        self.waiters.stats().await.expect("stats").record_failures
     }
 }
 
@@ -526,7 +522,22 @@ impl GuiHost for GuiHostAdapter {
                 ),
             ));
         };
-        handler(self, &envelope.query).await
+        let mut response = handler(self, &envelope.query).await?;
+        // SessionGet 的历史形状按请求版本降级；GUI 入站版本不得高于协商值。
+        // 保留原始分页游标，即使这一页只有旧客户端不能识别的思考增量。
+        if matches!(envelope.query, pawork_protocol::AppQuery::SessionGet { .. })
+            && envelope.api_version.minor < 14
+        {
+            if let AppResponse::Data(data) = &mut response {
+                if let Some(value) = data.get_mut("timeline_page") {
+                    let page: TimelinePage = serde_json::from_value(value.take())
+                        .map_err(|error| Self::host_error("internal", error.to_string()))?;
+                    *value = serde_json::to_value(page.for_api_version(envelope.api_version))
+                        .map_err(|error| Self::host_error("internal", error.to_string()))?;
+                }
+            }
+        }
+        Ok(response)
     }
 
     async fn command(&self, envelope: &AppCommandEnvelope) -> Result<AppResponse, GuiHostError> {
@@ -990,9 +1001,7 @@ fn command_mcp_server_remove<'a>(
     envelope: &'a AppCommandEnvelope,
     command: &'a AppCommand,
 ) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::mcp::mcp_server_remove(
-        adapter, envelope, command,
-    ))
+    Box::pin(handlers::mcp::mcp_server_remove(adapter, envelope, command))
 }
 
 static QUERY_HANDLERS: &[(&str, QueryHandler)] = &[

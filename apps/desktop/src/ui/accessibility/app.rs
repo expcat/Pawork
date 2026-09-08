@@ -372,6 +372,18 @@ impl AppView {
             "approve-for-run" => self.on_approve("approve_for_run", window, cx),
             "approve-deny" => self.on_approve("deny", window, cx),
             "timeline-back-to-bottom" => self.timeline_jump_to_bottom(),
+            other if other.starts_with("thinking-toggle-") => {
+                let Some(key) = self.projection.timeline_rows().iter().find_map(|row| {
+                    let TimelineRow::Thinking { entry_index } = row else {
+                        return None;
+                    };
+                    let key = &self.projection.timeline[*entry_index].event_id;
+                    (dynamic_identifier("thinking-toggle", key) == other).then(|| key.clone())
+                }) else {
+                    return false;
+                };
+                self.toggle_timeline_detail(&key, cx);
+            }
             other if other.starts_with("tool-group-toggle-") => {
                 let Some(group_key) = self
                     .projection
@@ -390,7 +402,7 @@ impl AppView {
                 else {
                     return false;
                 };
-                self.toggle_tool_group(&group_key, cx);
+                self.toggle_timeline_detail(&group_key, cx);
             }
             // Inspector 折叠态触发器的可见语义是弹出 ActivityPopover（R6
             // Wave A 起位于 Workspace Header），摘要行才展开 Inspector；
@@ -979,10 +991,14 @@ impl AppView {
 
         if matches!(self.open_menu, Some(MenuKind::Scope)) {
             let bounds = self.scope_menu_scroll.bounds();
-            let rect = |bounds: gpui::Bounds<gpui::Pixels>| AxRect::new(
-                bounds.origin.x.into(), bounds.origin.y.into(),
-                bounds.size.width.into(), bounds.size.height.into(),
-            );
+            let rect = |bounds: gpui::Bounds<gpui::Pixels>| {
+                AxRect::new(
+                    bounds.origin.x.into(),
+                    bounds.origin.y.into(),
+                    bounds.size.width.into(),
+                    bounds.size.height.into(),
+                )
+            };
             let mut menu = AxNode::new(
                 "scope-menu",
                 AxRole::Group,
@@ -991,12 +1007,20 @@ impl AppView {
             );
             let options = self.projection.project_scope_options();
             let highlight = self.menu_highlight_effective(self.menu_selected_index());
-            let rows = options.into_iter().map(|(workspace_id, label)| {
-                (scope_identifier(workspace_id.as_deref()), label,
-                 self.scope_workspace_id == workspace_id)
-            }).chain(std::iter::once((
-                "scope-add-project".to_string(), t("common.add_project").to_string(), false,
-            )));
+            let rows = options
+                .into_iter()
+                .map(|(workspace_id, label)| {
+                    (
+                        scope_identifier(workspace_id.as_deref()),
+                        label,
+                        self.scope_workspace_id == workspace_id,
+                    )
+                })
+                .chain(std::iter::once((
+                    "scope-add-project".to_string(),
+                    t("common.add_project").to_string(),
+                    false,
+                )));
             for (ix, (identifier, label, selected)) in rows.enumerate() {
                 let Some(mut row) = self.scope_menu_scroll.bounds_for_item(ix) else {
                     continue;
@@ -1188,7 +1212,9 @@ impl AppView {
                                     AxRole::Button,
                                     t("taskrail.rename"),
                                     AxRect::new(
-                                        (inset + width - 8.0 - metrics::RAIL_SESSION_ACTION_SIZE * 2.0)
+                                        (inset + width
+                                            - 8.0
+                                            - metrics::RAIL_SESSION_ACTION_SIZE * 2.0)
                                             .max(inset),
                                         action_y,
                                         metrics::RAIL_SESSION_ACTION_SIZE,
@@ -1430,7 +1456,7 @@ impl AppView {
                         &self.projection.timeline,
                         column_width,
                         rem_px,
-                        &self.expanded_tool_groups,
+                        &self.expanded_timeline_details,
                         self.changes_available_for_active(),
                     ),
                 )
@@ -1641,6 +1667,59 @@ impl AppView {
     /// 摘要区域为新结构节点。
     fn timeline_row_ax(&self, window: &Window, row: &TimelineRow, rect: AxRect) -> AxNode {
         match row {
+            TimelineRow::Thinking { entry_index } => {
+                let entry = &self.projection.timeline[*entry_index];
+                let key = &entry.event_id;
+                let expanded = self.expanded_timeline_details.contains(key);
+                let mut group = AxNode::new(
+                    dynamic_identifier("thinking", key),
+                    AxRole::Group,
+                    t("timeline.thinking"),
+                    rect,
+                )
+                .child(
+                    AxNode::new(
+                        dynamic_identifier("thinking-toggle", key),
+                        AxRole::Button,
+                        t("timeline.thinking"),
+                        AxRect::new(
+                            rect.x,
+                            rect.y,
+                            rect.width,
+                            metrics::TOOL_GROUP_HEADER_HEIGHT,
+                        ),
+                    )
+                    .description(if expanded { "Expanded" } else { "Collapsed" })
+                    .focused(
+                        self.open_menu.is_none()
+                            && self
+                                .timeline_detail_focus
+                                .get(key)
+                                .is_some_and(|focus| focus.is_focused(window)),
+                    )
+                    .action(AxAction::Press),
+                );
+                if expanded {
+                    if let TimelineEntryKind::Thinking { text } = &entry.kind {
+                        group = group.child(
+                            AxNode::new(
+                                dynamic_identifier("thinking-text", key),
+                                AxRole::StaticText,
+                                t("timeline.thinking"),
+                                AxRect::new(
+                                    rect.x + 12.0,
+                                    rect.y + metrics::TOOL_GROUP_HEADER_HEIGHT + 12.0,
+                                    (rect.width - 24.0).max(0.0),
+                                    (rect.height - metrics::TOOL_GROUP_HEADER_HEIGHT - 24.0)
+                                        .max(0.0),
+                                ),
+                            )
+                            .value(text.clone()),
+                        );
+                    }
+                }
+                group
+            }
             TimelineRow::Message { entry_index } => {
                 self.timeline_entry_ax(window, &self.projection.timeline[*entry_index], rect, true)
             }
@@ -1656,7 +1735,7 @@ impl AppView {
                 let group_key = timeline::tool_group_key(entry_indices, &self.projection.timeline)
                     .unwrap_or_default();
                 let rows = self.tool_row_views(entry_indices);
-                let collapsed = !self.expanded_tool_groups.contains(group_key);
+                let collapsed = !self.expanded_timeline_details.contains(group_key);
                 let mut group = AxNode::new(
                     dynamic_identifier("tool-group", group_key),
                     AxRole::Group,
@@ -1680,7 +1759,7 @@ impl AppView {
                     .focused(
                         self.open_menu.is_none()
                             && self
-                                .timeline_tool_group_focus
+                                .timeline_detail_focus
                                 .get(group_key)
                                 .is_some_and(|focus| focus.is_focused(window)),
                     )
@@ -1739,7 +1818,7 @@ impl AppView {
                         timeline::tool_group_key(entry_indices, &self.projection.timeline)
                             .unwrap_or_default();
                     let rows = self.tool_row_views(entry_indices);
-                    let collapsed = !self.expanded_tool_groups.contains(group_key);
+                    let collapsed = !self.expanded_timeline_details.contains(group_key);
                     region = region.child(
                         AxNode::new(
                             tool_group_toggle_identifier(group_key),
@@ -1752,7 +1831,7 @@ impl AppView {
                         .focused(
                             self.open_menu.is_none()
                                 && self
-                                    .timeline_tool_group_focus
+                                    .timeline_detail_focus
                                     .get(group_key)
                                     .is_some_and(|focus| focus.is_focused(window)),
                         )
@@ -1959,7 +2038,12 @@ impl AppView {
                         fork_identifier(&entry.event_id),
                         AxRole::Button,
                         t("timeline.fork"),
-                        AxRect::new(row.x + row.width - inset - 112.0, row.y + inset + 24.0, 112.0, 30.0),
+                        AxRect::new(
+                            row.x + row.width - inset - 112.0,
+                            row.y + inset + 24.0,
+                            112.0,
+                            30.0,
+                        ),
                     )
                     .enabled(
                         matches!(
@@ -2741,6 +2825,7 @@ fn timeline_accessible_text(entry: &TimelineEntry) -> (String, String) {
     match &entry.kind {
         TimelineEntryKind::UserMessage { text } => ("You".into(), text.clone()),
         TimelineEntryKind::AssistantMessage { text } => ("Pawork".into(), text.clone()),
+        TimelineEntryKind::Thinking { text } => (t("timeline.thinking").into(), text.clone()),
         TimelineEntryKind::ToolCall {
             name,
             status,
@@ -3073,8 +3158,17 @@ mod tests {
         for pair in tops.windows(2) {
             assert!(pair[0].1 + layouts[pair[0].0].1 <= pair[1].1);
         }
-        assert_eq!(timeline_row_height(&rows[0], &timeline, 618.0, 20.0,
-            &std::collections::HashSet::new(), false), 109.0);
+        assert_eq!(
+            timeline_row_height(
+                &rows[0],
+                &timeline,
+                618.0,
+                20.0,
+                &std::collections::HashSet::new(),
+                false
+            ),
+            109.0
+        );
         assert_eq!(timeline_following_window(&layouts, 400.0), (0, 0.0));
         let (start, offset) = timeline_following_window(&layouts, 80.0);
         assert!(start > 0 || offset > 0.0);
@@ -3519,6 +3613,68 @@ mod tests {
                 );
             });
         }
+        // UI-3：思考只读详情默认收起；AX 与鼠标/键盘共用展开状态。
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.timeline.entries = vec![TimelineEntry {
+                    sequence: 1,
+                    event_id: "thinking-test".into(),
+                    kind: TimelineEntryKind::Thinking {
+                        text: "核对输入，再组织回答。".into(),
+                    },
+                    fork_boundary: None,
+                    timestamp: "1".into(),
+                    run_id: Some("run-1".into()),
+                }];
+                let row = view.projection.timeline_rows().remove(0);
+                assert!(matches!(row, TimelineRow::Thinking { .. }));
+                let rect = AxRect::new(300.0, 100.0, 560.0, metrics::TOOL_GROUP_HEADER_HEIGHT);
+                let collapsed = view.timeline_row_ax(window, &row, rect);
+                assert_eq!(
+                    collapsed.children.len(),
+                    1,
+                    "collapsed thinking must not expose body"
+                );
+                assert_eq!(
+                    timeline::timeline_row_height(
+                        &row,
+                        &view.projection.timeline,
+                        rect.width,
+                        16.0,
+                        &view.expanded_timeline_details,
+                        false
+                    ),
+                    rect.height
+                );
+                assert!(view.handle_accessibility_press(
+                    "thinking-toggle-thinking-test",
+                    window,
+                    cx
+                ));
+                assert!(!view.timeline_following, "expansion preserves the viewport");
+                let height = timeline::timeline_row_height(
+                    &row,
+                    &view.projection.timeline,
+                    rect.width,
+                    16.0,
+                    &view.expanded_timeline_details,
+                    false,
+                );
+                assert!(height > rect.height);
+                let expanded = view.timeline_row_ax(window, &row, AxRect { height, ..rect });
+                assert_eq!(expanded.children.len(), 2);
+                assert_eq!(
+                    expanded.children[1].value.as_deref(),
+                    Some("核对输入，再组织回答。")
+                );
+                assert!(view.handle_accessibility_press(
+                    "thinking-toggle-thinking-test",
+                    window,
+                    cx
+                ));
+                assert!(view.expanded_timeline_details.is_empty());
+            });
+        });
     }
 
     /// 多项目菜单使用实测滚动几何；键盘高亮不能停在视口之外。
@@ -3526,48 +3682,67 @@ mod tests {
     fn scope_menu_ax_follows_scrolling_and_keyboard_highlight(cx: &mut gpui::TestAppContext) {
         let platform = std::sync::Arc::new(crate::platform::Platform::new());
         let (view, cx) = cx.add_window_view(|_window, cx| {
-            AppView::new(platform, std::env::temp_dir().join("opt4-scope.sock"), None, cx)
+            AppView::new(
+                platform,
+                std::env::temp_dir().join("opt4-scope.sock"),
+                None,
+                cx,
+            )
         });
         cx.simulate_resize(gpui::size(gpui::px(1440.0), gpui::px(1024.0)));
-        cx.update(|window, cx| view.update(cx, |view, cx| {
-            view.projection.workspaces = (0..10).map(|ix| crate::projection::WorkspaceSummary {
-                id: format!("ws-{ix}"), name: format!("Project {ix}"),
-            }).collect();
-            view.scope_workspace_id = Some("ws-9".into());
-            view.on_toggle_scope_menu(None, window, cx);
-        }));
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.workspaces = (0..10)
+                    .map(|ix| crate::projection::WorkspaceSummary {
+                        id: format!("ws-{ix}"),
+                        name: format!("Project {ix}"),
+                    })
+                    .collect();
+                view.scope_workspace_id = Some("ws-9".into());
+                view.on_toggle_scope_menu(None, window, cx);
+            })
+        });
         cx.refresh().unwrap();
         cx.run_until_parked();
         cx.update(|window, cx| {
             let tree = view.read(cx).accessibility_tree(window, cx);
             let menu = tree.find("scope-menu").unwrap();
             assert!(menu.bounds.height <= MENU_MAX_HEIGHT);
-            let current = tree.find("scope-ws-9").expect("current project visible on first open");
+            let current = tree
+                .find("scope-ws-9")
+                .expect("current project visible on first open");
             assert!(current.selected);
             assert!(current.bounds.y + current.bounds.height <= menu.bounds.y + menu.bounds.height);
             assert!(tree.find("scope-all").is_none());
         });
         // 从当前项目向下到最后一项 Add project，必须滚入视口。
-        cx.update(|_window, cx| view.update(cx, |view, cx| {
-            view.move_menu_highlight(true);
-            cx.notify();
-        }));
+        cx.update(|_window, cx| {
+            view.update(cx, |view, cx| {
+                view.move_menu_highlight(true);
+                cx.notify();
+            })
+        });
         cx.refresh().unwrap();
         cx.run_until_parked();
         cx.update(|window, cx| {
             let tree = view.read(cx).accessibility_tree(window, cx);
             let menu = tree.find("scope-menu").unwrap();
-            let add = tree.find("scope-add-project").expect("last row scrolled into view");
+            let add = tree
+                .find("scope-add-project")
+                .expect("last row scrolled into view");
             assert!(add.focused);
             assert!(add.bounds.y >= menu.bounds.y);
             assert!(add.bounds.y + add.bounds.height <= menu.bounds.y + menu.bounds.height);
             assert!(tree.find("scope-all").is_none());
         });
         // 与滚轮同源修改 offset，原点回到顶部后 AX 也恢复首项。
-        cx.update(|_window, cx| view.update(cx, |view, cx| {
-            view.scope_menu_scroll.set_offset(gpui::point(gpui::px(0.0), gpui::px(0.0)));
-            cx.notify();
-        }));
+        cx.update(|_window, cx| {
+            view.update(cx, |view, cx| {
+                view.scope_menu_scroll
+                    .set_offset(gpui::point(gpui::px(0.0), gpui::px(0.0)));
+                cx.notify();
+            })
+        });
         cx.refresh().unwrap();
         cx.run_until_parked();
         cx.update(|window, cx| {
@@ -3859,7 +4034,10 @@ mod tests {
             let scale_150 = tree.find("settings-text-scale-150").unwrap();
             let title = tree.find("settings-page-title").unwrap();
             assert_eq!(scale_100.bounds.x, title.bounds.x);
-            assert_eq!(tree.find("settings-language-en").unwrap().bounds.x, title.bounds.x);
+            assert_eq!(
+                tree.find("settings-language-en").unwrap().bounds.x,
+                title.bounds.x
+            );
             assert!(scale_100.selected);
             assert!(!scale_125.selected);
             assert!(!scale_150.selected);
@@ -4834,11 +5012,13 @@ mod tests {
                 action: AxAction::Press,
                 value: None,
             }));
-            assert!(tree.find(&dynamic_identifier("settings-provider-credentials", "dual")).is_none());
-            assert!(tree.find(&dynamic_identifier("settings-provider-usage", "dual")).is_none());
             assert!(tree
-                .find(&settings_use_proxy_identifier("dual"))
+                .find(&dynamic_identifier("settings-provider-credentials", "dual"))
                 .is_none());
+            assert!(tree
+                .find(&dynamic_identifier("settings-provider-usage", "dual"))
+                .is_none());
+            assert!(tree.find(&settings_use_proxy_identifier("dual")).is_none());
         });
 
         // chevron Press（AX 与 render / 键盘同入口）：dual 展开。
@@ -4885,15 +5065,18 @@ mod tests {
             );
             // 凭证行：kind + masked + 状态词；api_key 在前（Host 固定序）。
             let api_key = tree
-                .find(&dynamic_identifier("settings-provider-credential-0", "dual"))
+                .find(&dynamic_identifier(
+                    "settings-provider-credential-0",
+                    "dual",
+                ))
                 .expect("api_key credential row pinned");
-            assert_eq!(
-                api_key.label,
-                provider_credential_kind_label("api_key")
-            );
+            assert_eq!(api_key.label, provider_credential_kind_label("api_key"));
             assert_eq!(api_key.value.as_deref(), Some("sk-…ab12 · Connected"));
             let oauth = tree
-                .find(&dynamic_identifier("settings-provider-credential-1", "dual"))
+                .find(&dynamic_identifier(
+                    "settings-provider-credential-1",
+                    "dual",
+                ))
                 .expect("oauth credential row pinned");
             assert_eq!(oauth.label, provider_credential_kind_label("oauth"));
             assert_eq!(oauth.value.as_deref(), Some("oauth-…wxyz · Expired"));
@@ -4918,12 +5101,13 @@ mod tests {
             assert!(tree
                 .find(&dynamic_identifier("settings-provider-proxy-text", "dual"))
                 .is_none());
-            assert!(tree
-                .find(&settings_use_proxy_identifier("dual"))
-                .is_none());
+            assert!(tree.find(&settings_use_proxy_identifier("dual")).is_none());
             // 未展开的 empty 卡仍只有 chevron。
             assert!(tree
-                .find(&dynamic_identifier("settings-provider-credentials-empty", "empty"))
+                .find(&dynamic_identifier(
+                    "settings-provider-credentials-empty",
+                    "empty"
+                ))
                 .is_none());
         });
 
@@ -4944,7 +5128,8 @@ mod tests {
         cx.update(|window, cx| {
             let view = view.read(cx);
             let tree = view.accessibility_tree(window, cx);
-            tree.validate().expect("empty expanded card AX tree validates");
+            tree.validate()
+                .expect("empty expanded card AX tree validates");
             let empty = tree
                 .find(&dynamic_identifier(
                     "settings-provider-credentials-empty",
@@ -4953,7 +5138,10 @@ mod tests {
                 .expect("empty credentials state pinned");
             assert_eq!(empty.value.as_deref(), Some("No stored credentials"));
             assert!(tree
-                .find(&dynamic_identifier("settings-provider-credential-0", "empty"))
+                .find(&dynamic_identifier(
+                    "settings-provider-credential-0",
+                    "empty"
+                ))
                 .is_none());
         });
 
@@ -4961,11 +5149,11 @@ mod tests {
         // 随 gate 打开发布（与 render 同源）。
         cx.update(|_window, cx| {
             view.update(cx, |view, _cx| {
-                view.projection.settings_general.apply_loaded(
-                    pawork_client::GeneralSettingsData {
+                view.projection
+                    .settings_general
+                    .apply_loaded(pawork_client::GeneralSettingsData {
                         proxy_url: Some("http://127.0.0.1:7890".into()),
-                    },
-                );
+                    });
             });
         });
         cx.update(|window, cx| {

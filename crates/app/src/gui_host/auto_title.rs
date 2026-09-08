@@ -58,7 +58,7 @@ pub(crate) async fn auto_title_after_successful_run(
         return;
     };
     let naming_pair = (config.naming_provider.clone(), config.naming_model.clone());
-    let generate = locked.generate_session_title(&first_user_text);
+    let generate = locked.generate_session_title(&session_id, &first_user_text);
     drop(locked);
     let title = match generate.await {
         Ok(Some(title)) => title,

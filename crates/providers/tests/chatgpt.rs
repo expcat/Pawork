@@ -29,6 +29,7 @@ impl ProviderEventSink for Sink {
 
 fn request() -> CanonicalModelRequest {
     CanonicalModelRequest {
+        session_id: Some(pawork_domain::SessionId::from("session-other-provider")),
         request_id: pawork_domain::RequestId::new("r1"),
         model: ModelId::new("codex-test"),
         messages: vec![Message {
@@ -115,6 +116,12 @@ async fn oauth_headers_models_and_responses_path_are_wired() {
         .unwrap();
     assert_eq!(summary.stop_reason, StopReason::Completed);
     assert_eq!(summary.response_id.as_deref(), Some("resp_1"));
+    assert!(server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .all(|request| !request.headers.contains_key("x-opencode-session")));
     server.verify().await;
 }
 
@@ -140,5 +147,11 @@ async fn malformed_responses_event_fails_even_if_completion_follows() {
         .await
         .expect_err("malformed event must terminate the stream");
     assert_eq!(error.kind, ProviderErrorKind::MalformedResponse);
+    assert!(server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .all(|request| !request.headers.contains_key("x-opencode-session")));
     server.verify().await;
 }

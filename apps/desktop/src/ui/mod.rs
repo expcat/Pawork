@@ -463,7 +463,7 @@ pub struct AppView {
     scope_workspace_id: Option<String>,
     collapsed_projects: BTreeSet<String>,
     /// P1-2：以首个 tool event id 标识的本地折叠偏好；不进入 wire / replay。
-    expanded_tool_groups: HashSet<String>,
+    expanded_timeline_details: HashSet<String>,
     inspector_open: bool,
     inspector_motion: shell_layout::InspectorMotion,
     inspector_render_width: f32,
@@ -530,7 +530,7 @@ pub struct AppView {
     /// Timeline 虚拟化 action 按 event_id 懒建稳定焦点句柄；条目卸载/重挂
     /// 不丢普通键盘焦点语义，删除后的遗留项随窗口生命周期回收。
     timeline_entry_action_focus: BTreeMap<String, FocusHandle>,
-    timeline_tool_group_focus: BTreeMap<String, FocusHandle>,
+    timeline_detail_focus: BTreeMap<String, FocusHandle>,
     timeline_review_changes_focus: BTreeMap<String, FocusHandle>,
     inspector_tab_focus: [FocusHandle; 3],
     inspector_collapse_focus: FocusHandle,
@@ -695,7 +695,7 @@ impl AppView {
             grouping: TaskRailGrouping::Timeline,
             scope_workspace_id: None,
             collapsed_projects: BTreeSet::new(),
-            expanded_tool_groups: HashSet::new(),
+            expanded_timeline_details: HashSet::new(),
             // OPT-4b（F6）：默认折叠（宽屏同样）；显式动作（Review changes、
             // Activity 摘要等）仍可展开。
             inspector_open: false,
@@ -748,7 +748,7 @@ impl AppView {
                 .tab_stop(true)
                 .tab_index(INSPECTOR_TAB_INDEX),
             timeline_entry_action_focus: BTreeMap::new(),
-            timeline_tool_group_focus: BTreeMap::new(),
+            timeline_detail_focus: BTreeMap::new(),
             timeline_review_changes_focus: BTreeMap::new(),
             inspector_tab_focus: std::array::from_fn(|_| {
                 cx.focus_handle()
@@ -1183,12 +1183,12 @@ impl AppView {
             .clone()
     }
 
-    pub(super) fn timeline_tool_group_focus(
+    pub(super) fn timeline_detail_focus(
         &mut self,
         group_key: &str,
         cx: &mut Context<Self>,
     ) -> FocusHandle {
-        self.timeline_tool_group_focus
+        self.timeline_detail_focus
             .entry(group_key.to_string())
             .or_insert_with(|| {
                 cx.focus_handle()
@@ -4067,7 +4067,8 @@ impl Render for AppView {
         // 再同步一次，不依赖网络事件或 Run 时钟刷新，也不产生重绘循环。
         if self.ax_bridge.is_some()
             && (matches!(self.open_menu, Some(MenuKind::Scope))
-                || (self.route == AppRoute::Settings && self.settings_page == SettingsPage::Appearance))
+                || (self.route == AppRoute::Settings
+                    && self.settings_page == SettingsPage::Appearance))
         {
             let view = cx.entity().downgrade();
             window.on_next_frame(move |window, cx| {
@@ -4100,7 +4101,8 @@ impl Render for AppView {
             true,
             self.text_scale == font::TextScale::Percent150,
         )
-        .inspector_open && self.route == AppRoute::Workspace;
+        .inspector_open
+            && self.route == AppRoute::Workspace;
         let (inspector_width, inspector_animating) = self.inspector_motion.width(
             inspector_open,
             can_fit_inspector,
@@ -4197,7 +4199,8 @@ impl Render for AppView {
             ))
             .on_scroll_wheel(cx.listener(|view, _event, _window, cx| {
                 if matches!(view.open_menu, Some(MenuKind::Scope))
-                    || (view.route == AppRoute::Settings && view.settings_page == SettingsPage::Appearance)
+                    || (view.route == AppRoute::Settings
+                        && view.settings_page == SettingsPage::Appearance)
                 {
                     cx.notify();
                 }
@@ -4234,13 +4237,15 @@ impl Render for AppView {
                     // StatusBar 只在工作台渲染，Settings 壳不显示
                     // RunStatusBar（render 与 AX 同源）。
                     .when(matches!(self.route, AppRoute::Workspace), |column| {
-                        column.child(StatusBar::new().centered(
-                            div().flex().items_center().gap_4().children(
-                                run_status
-                                    .split(" | ")
-                                    .map(|metric| Badge::new(metric.to_string())),
+                        column.child(
+                            StatusBar::new().centered(
+                                div().flex().items_center().gap_4().children(
+                                    run_status
+                                        .split(" | ")
+                                        .map(|metric| Badge::new(metric.to_string())),
+                                ),
                             ),
-                        ))
+                        )
                     }),
             )
     }

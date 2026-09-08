@@ -60,7 +60,7 @@ pub fn now_timestamp() -> Timestamp {
 /// persist 失败时不再补终态（磁盘已停在最后一条成功 append）。
 pub async fn run_session_turn(
     provider: &dyn ModelProvider,
-    request: CanonicalModelRequest,
+    mut request: CanonicalModelRequest,
     turn: SessionTurn,
     events: &dyn AgentEventSink,
     cancel: CancellationToken,
@@ -71,6 +71,7 @@ pub async fn run_session_turn(
         ));
     }
 
+    request.session_id = Some(turn.session_id.clone());
     let next_sequence = AtomicU64::new(turn.start_sequence);
     let emitter = EventEmitter::new(
         turn.session_id.clone(),
@@ -272,10 +273,11 @@ mod tests {
 
         async fn stream(
             &self,
-            _request: CanonicalModelRequest,
+            request: CanonicalModelRequest,
             sink: &dyn ProviderEventSink,
             _cancel: CancellationToken,
         ) -> Result<ModelResponseSummary, ProviderError> {
+            assert_eq!(request.session_id, Some(SessionId::from("ses-1")));
             for event in &self.events {
                 sink.emit(event.clone()).await?;
             }
@@ -363,11 +365,13 @@ mod tests {
     }
 
     fn sample_request() -> CanonicalModelRequest {
-        assemble_request(
+        let mut request = assemble_request(
             RequestId::from("request-1"),
             ModelId::from("model-1"),
             vec![user_hello()],
-        )
+        );
+        request.session_id = Some(SessionId::from("stale-session"));
+        request
     }
 
     fn completed_summary() -> ModelResponseSummary {

@@ -111,7 +111,7 @@ pub(super) fn row_top_gap(row: &TimelineRow) -> f32 {
         TimelineRow::Message { .. } | TimelineRow::Error { .. } | TimelineRow::RunPhase { .. } => {
             metrics::MSG_ENTRY_GAP
         }
-        TimelineRow::ToolGroup { .. } => metrics::TOOL_GROUP_TOP_GAP,
+        TimelineRow::ToolGroup { .. } | TimelineRow::Thinking { .. } => metrics::TOOL_GROUP_TOP_GAP,
         TimelineRow::RunSummary { group, .. } => {
             if group.is_some() {
                 metrics::TOOL_GROUP_TOP_GAP
@@ -136,6 +136,13 @@ fn message_entry_height(text: &str, column_width: f32, rem_px: f32, user: bool) 
         .sum::<f32>()
         + metrics::MSG_PARAGRAPH_GAP * blocks.len().saturating_sub(1) as f32;
     2.0 * inset + label + metrics::MSG_LABEL_BODY_GAP + body
+}
+
+/// 思考展开区与渲染共用 12px 内边距和次级正文字号。
+pub(super) fn thinking_body_height(text: &str, width: f32, rem: f32) -> f32 {
+    let font_px = font::BASE.0 * rem;
+    24.0 + default_text_line_height(font_px)
+        * estimated_wrapped_lines(text, (width - 24.0).max(0.0), font_px).max(1) as f32
 }
 
 /// Run 摘要卡高度（run_summary_element 同源）：py_6×2 + max(左列, 40 槽)；
@@ -192,9 +199,10 @@ pub(super) fn tool_group_key<'a>(
 fn tool_group_is_collapsed(
     entry_indices: &[usize],
     timeline: &[TimelineEntry],
-    expanded_tool_groups: &HashSet<String>,
+    expanded_timeline_details: &HashSet<String>,
 ) -> bool {
-    tool_group_key(entry_indices, timeline).is_some_and(|key| !expanded_tool_groups.contains(key))
+    tool_group_key(entry_indices, timeline)
+        .is_some_and(|key| !expanded_timeline_details.contains(key))
 }
 
 pub(super) fn tool_entry_height(entry: &TimelineEntry, width: f32, rem: f32) -> f32 {
@@ -226,10 +234,22 @@ pub(super) fn timeline_row_height(
     timeline: &[TimelineEntry],
     column_width: f32,
     rem_px: f32,
-    expanded_tool_groups: &HashSet<String>,
+    expanded_timeline_details: &HashSet<String>,
     review_changes_available: bool,
 ) -> f32 {
     match row {
+        TimelineRow::Thinking { entry_index } => {
+            let entry = &timeline[*entry_index];
+            let TimelineEntryKind::Thinking { text } = &entry.kind else {
+                return 0.0;
+            };
+            metrics::TOOL_GROUP_HEADER_HEIGHT
+                + if expanded_timeline_details.contains(&entry.event_id) {
+                    thinking_body_height(text, column_width, rem_px)
+                } else {
+                    0.0
+                }
+        }
         TimelineRow::Message { entry_index } | TimelineRow::Error { entry_index } => {
             let text = match &timeline[*entry_index].kind {
                 TimelineEntryKind::UserMessage { text }
@@ -258,7 +278,7 @@ pub(super) fn timeline_row_height(
         }
         TimelineRow::ToolGroup { entry_indices } => {
             metrics::TOOL_GROUP_HEADER_HEIGHT
-                + if tool_group_is_collapsed(entry_indices, timeline, expanded_tool_groups) {
+                + if tool_group_is_collapsed(entry_indices, timeline, expanded_timeline_details) {
                     0.0
                 } else {
                     entry_indices
@@ -271,7 +291,7 @@ pub(super) fn timeline_row_height(
             let mut height = 0.0;
             if let Some(group) = group {
                 height += metrics::TOOL_GROUP_HEADER_HEIGHT;
-                if !tool_group_is_collapsed(group, timeline, expanded_tool_groups) {
+                if !tool_group_is_collapsed(group, timeline, expanded_timeline_details) {
                     height += group
                         .iter()
                         .map(|&ix| tool_entry_height(&timeline[ix], column_width, rem_px))
@@ -514,6 +534,14 @@ impl AppView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         match row {
+            TimelineRow::Thinking { entry_index } => {
+                let entry = self.projection.timeline[*entry_index].clone();
+                let TimelineEntryKind::Thinking { text } = &entry.kind else {
+                    return div().into_any_element();
+                };
+                self.thinking_entry_element(&entry.event_id, text, cx)
+                    .into_any_element()
+            }
             TimelineRow::Message { entry_index } | TimelineRow::Error { entry_index } => {
                 let entry = self.projection.timeline[*entry_index].clone();
                 let menu_open = self.entry_menu_open(&entry);
@@ -617,9 +645,9 @@ impl AppView {
             .collect()
     }
 
-    pub(super) fn toggle_tool_group(&mut self, group_key: &str, cx: &mut Context<Self>) {
-        if !self.expanded_tool_groups.remove(group_key) {
-            self.expanded_tool_groups.insert(group_key.to_string());
+    pub(super) fn toggle_timeline_detail(&mut self, group_key: &str, cx: &mut Context<Self>) {
+        if !self.expanded_timeline_details.remove(group_key) {
+            self.expanded_timeline_details.insert(group_key.to_string());
         }
         // 用户展开详情时保留当前视口，不因旧贴底状态把标题推到屏幕外。
         self.timeline_following = false;

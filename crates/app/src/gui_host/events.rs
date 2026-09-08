@@ -14,6 +14,11 @@ pub(in crate::gui_host) fn broadcast_event(envelope: &AgentEventEnvelope) -> Opt
             message_id: message_id.clone(),
             delta: delta.clone(),
         },
+        AgentEvent::AssistantThinkingDelta { message_id, delta } => AppEvent::ThinkingDelta {
+            run_id: run,
+            message_id: message_id.clone(),
+            delta: delta.clone(),
+        },
         AgentEvent::ToolCallStarted { tool_call_id, name } => AppEvent::ToolStarted {
             run_id: run,
             tool_call_id: tool_call_id.clone(),
@@ -121,6 +126,22 @@ mod tests {
             Timestamp::from_unix_millis(1),
             payload,
         )
+    }
+
+    #[test]
+    fn thinking_delta_keeps_persisted_message_identity() {
+        let message_id = pawork_domain::MessageId::from("assistant-1");
+        assert_eq!(
+            broadcast_event(&envelope(AgentEvent::AssistantThinkingDelta {
+                message_id: message_id.clone(),
+                delta: "先核对输入".into(),
+            })),
+            Some(AppEvent::ThinkingDelta {
+                run_id: RunId::from("run-1"),
+                message_id,
+                delta: "先核对输入".into(),
+            })
+        );
     }
 
     #[test]

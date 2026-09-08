@@ -47,6 +47,7 @@ fn user(text: &str) -> Message {
 
 fn request() -> CanonicalModelRequest {
     CanonicalModelRequest {
+        session_id: None,
         request_id: pawork_domain::RequestId::from("r1"),
         model: ModelId::from("test-model"),
         messages: vec![user("hi")],
@@ -180,67 +181,108 @@ fn fixed_credential_headers_are_rejected_for_all_channels() {
 }
 
 #[tokio::test]
-async fn bearer_chat_path_covers_all_channels() {
+async fn bearer_session_headers_are_scoped_to_opencode_on_both_transports() {
     for preset in api_key_presets() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/chat/completions"))
-            .and(header("authorization", "Bearer sk-channel-test"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .insert_header("content-type", "text/event-stream")
-                    .set_body_string(sse_body(&[
+        for transport in [ModelTransport::ChatCompletions, ModelTransport::Responses] {
+            let server = MockServer::start().await;
+            let (endpoint, body) = match transport {
+                ModelTransport::ChatCompletions => (
+                    "/chat/completions",
+                    sse_body(&[
                         r#"{"choices":[{"delta":{"content":"ok"}}]}"#,
                         r#"{"choices":[{"delta":{},"finish_reason":"stop"}]}"#,
-                    ])),
-            )
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let provider =
-            ApiKeyChannelProvider::new(config_for(preset, server.uri()), Some(api_key()))
-                .expect("construct");
-        assert_eq!(provider.id().as_str(), preset.id);
-
-        let sink = RecordingProviderSink::default();
-        let summary = provider
-            .stream(request(), &sink, CancellationToken::new())
-            .await
-            .expect("stream");
-        assert_eq!(summary.stop_reason, StopReason::Completed);
-        server.verify().await;
+                    ]),
+                ),
+                ModelTransport::Responses => (
+                    "/responses",
+                    sse_body(&[
+                        r#"{"type":"response.completed","response":{"status":"completed"}}"#,
+                    ]),
+                ),
+                ModelTransport::Messages => unreachable!(),
+            };
+            Mock::given(method("POST"))
+                .and(path(endpoint))
+                .and(header("authorization", "Bearer sk-channel-test"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .insert_header("content-type", "text/event-stream")
+                        .set_body_string(body),
+                )
+                .expect(3)
+                .mount(&server)
+                .await;
+            let mut config = config_for(preset, server.uri());
+            if transport == ModelTransport::Responses {
+                config = config.with_model_transport("test-model", transport);
+            }
+            let provider = ApiKeyChannelProvider::new(config, Some(api_key())).unwrap();
+            // 同一 adapter 跨会话使用，以及无会话请求，不得残留上一次身份。
+            for session in [Some("session-one"), Some("session-two"), None] {
+                let mut request = request();
+                request.session_id = session.map(pawork_domain::SessionId::from);
+                let summary = provider
+                    .stream(
+                        request,
+                        &RecordingProviderSink::default(),
+                        CancellationToken::new(),
+                    )
+                    .await
+                    .expect("stream");
+                assert_eq!(summary.stop_reason, StopReason::Completed);
+            }
+            let requests = server.received_requests().await.unwrap();
+            for (request, session) in
+                requests
+                    .iter()
+                    .zip([Some("session-one"), Some("session-two"), None])
+            {
+                let expected = if preset.id == "opencode-go" {
+                    session
+                } else {
+                    None
+                };
+                assert_eq!(
+                    request
+                        .headers
+                        .get("x-opencode-session")
+                        .map(|value| value.to_str().unwrap()),
+                    expected,
+                    "{} {transport:?}",
+                    preset.id,
+                );
+                let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+                assert!(body.get("session_id").is_none());
+                assert!(body.get("x-opencode-session").is_none());
+            }
+            server.verify().await;
+        }
     }
 }
 
 #[tokio::test]
-async fn declared_model_transport_selects_responses_without_channel_branching() {
+async fn invalid_opencode_session_header_fails_without_network_or_value_disclosure() {
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/responses"))
-        .and(header("authorization", "Bearer sk-channel-test"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .insert_header("content-type", "text/event-stream")
-                .set_body_string(
-                    "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n",
-                ),
-        )
-        .expect(1)
-        .mount(&server)
-        .await;
-
-    let opencode_go = channel_preset("opencode-go").expect("opencode-go row");
-    let config = config_for(opencode_go, server.uri())
-        .with_model_transport("test-model", ModelTransport::Responses);
-    let provider = ApiKeyChannelProvider::new(config, Some(api_key())).unwrap();
-    provider
-        .stream(
-            request(),
-            &RecordingProviderSink::default(),
-            CancellationToken::new(),
-        )
-        .await
-        .unwrap();
-    server.verify().await;
+    for transport in [ModelTransport::ChatCompletions, ModelTransport::Responses] {
+        let config = config_for(channel_preset("opencode-go").unwrap(), server.uri())
+            .with_model_transport("test-model", transport);
+        let provider = ApiKeyChannelProvider::new(config, Some(api_key())).unwrap();
+        let mut request = request();
+        request.session_id = Some(pawork_domain::SessionId::from(
+            "private-session\r\nx-injected: value",
+        ));
+        let error = provider
+            .stream(
+                request,
+                &RecordingProviderSink::default(),
+                CancellationToken::new(),
+            )
+            .await
+            .expect_err("invalid header");
+        assert_eq!(error.kind, ProviderErrorKind::InvalidRequest);
+        let error = format!("{error:?}");
+        assert!(!error.contains("private-session"));
+        assert!(!error.contains("sk-channel-test"));
+    }
+    assert!(server.received_requests().await.unwrap().is_empty());
 }

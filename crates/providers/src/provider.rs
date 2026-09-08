@@ -60,6 +60,7 @@ pub struct OpenAiCompatibleProvider {
     config: OpenAiCompatibleConfig,
     client: HttpClient,
     credential: Option<ResolvedCredential>,
+    opencode_session: bool,
 }
 
 impl OpenAiCompatibleProvider {
@@ -93,7 +94,13 @@ impl OpenAiCompatibleProvider {
             config,
             client,
             credential,
+            opencode_session: false,
         })
+    }
+
+    pub(crate) fn with_opencode_session(mut self) -> Self {
+        self.opencode_session = true;
+        self
     }
 
     fn auth_header(&self) -> Option<(String, String)> {
@@ -115,16 +122,10 @@ impl OpenAiCompatibleProvider {
         let body = crate::request::to_chat_completions_body(request);
 
         // 认证头（明文 secret 只在此短暂存在，不持久化、不记录）
-        let auth_header = self.auth_header();
-        let per_request_headers: [(String, String); 1] = match &auth_header {
-            Some(pair) => [pair.clone()],
-            None => [("".to_string(), "".to_string())],
-        };
-        let per_request_headers: &[(String, String)] = if auth_header.is_some() {
-            &per_request_headers[..]
-        } else {
-            &[]
-        };
+        let mut per_request_headers: Vec<_> = self.auth_header().into_iter().collect();
+        if self.opencode_session {
+            per_request_headers.extend(opencode_session_header(request)?);
+        }
 
         // 发起 POST 流式请求
         let mut byte_stream = self
@@ -133,7 +134,7 @@ impl OpenAiCompatibleProvider {
                 &self.config.chat_url(),
                 body,
                 request.trace_id.as_deref(),
-                per_request_headers,
+                &per_request_headers,
                 cancel.clone(),
             )
             .await?;
@@ -322,4 +323,20 @@ mod tests {
             .expect("duplicate credential header must fail");
         assert_eq!(error.kind, ProviderErrorKind::InvalidRequest);
     }
+}
+
+/// OpenCode Go 的会话请求头只取 canonical 身份，非法值不进入网络或错误文案。
+pub(crate) fn opencode_session_header(
+    request: &CanonicalModelRequest,
+) -> Result<Option<(String, String)>, ProviderError> {
+    let Some(session_id) = &request.session_id else {
+        return Ok(None);
+    };
+    reqwest::header::HeaderValue::from_str(session_id.as_str()).map_err(|_| {
+        ProviderError::new(
+            ProviderErrorKind::InvalidRequest,
+            "invalid session identity header",
+        )
+    })?;
+    Ok(Some(("x-opencode-session".into(), session_id.to_string())))
 }

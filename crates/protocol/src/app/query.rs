@@ -98,6 +98,22 @@ pub struct TimelinePage {
     pub complete: bool,
 }
 
+impl TimelinePage {
+    /// Preserve the persisted sequence cursor even if an older client cannot
+    /// represent some rows. The host applies this after querying the page.
+    pub fn for_api_version(mut self, version: ApiVersion) -> Self {
+        if version < super::version::V1_14 {
+            self.items
+                .retain(|item| item.kind != TimelineItemKind::ThinkingDelta);
+            for item in &mut self.items {
+                item.message_id = None;
+                item.thinking_text = None;
+            }
+        }
+        self
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "typegen", derive(TS))]
 pub struct TimelineItem {
@@ -108,6 +124,12 @@ pub struct TimelineItem {
     pub run_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    /// API 1.14: stable assistant message identity for live/history merging.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_id: Option<String>,
+    /// API 1.14: visible committed thinking only; never opaque reasoning data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking_text: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -123,6 +145,7 @@ pub struct TimelineItem {
 pub enum TimelineItemKind {
     UserMessage,
     AssistantDelta,
+    ThinkingDelta,
     AssistantMessage,
     ToolStarted,
     ToolOutput,

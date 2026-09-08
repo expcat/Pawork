@@ -113,6 +113,8 @@ impl GuiHost for MockHost {
                 kind: TimelineItemKind::UserMessage,
                 run_id: None,
                 text: Some("hello".into()),
+                message_id: None,
+                thinking_text: None,
                 tool_name: None,
                 status: None,
                 detail: None,

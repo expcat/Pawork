@@ -7,7 +7,7 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 use pawork_domain::{
     AgentEvent, CancellationToken, ContentPart, EventSequence, Message, MessageId, MessageRole,
-    ModelId, TextContent,
+    ModelId, SessionId, TextContent,
 };
 use pawork_domain::{
     CanonicalModelRequest, ModelProvider, ProviderError, ProviderEventSink, ProviderStreamEvent,
@@ -183,6 +183,7 @@ pub(super) async fn apply_context_limits(
                 emitter,
                 loop_ctx,
                 model,
+                current.session_id.as_ref(),
                 AutoCompactionReason::from(trigger.reason),
                 &current.messages,
                 context.retained_messages,
@@ -247,6 +248,7 @@ async fn summarize_history(
     provider: &dyn ModelProvider,
     loop_ctx: &dyn LoopContext,
     model: &ModelId,
+    session_id: Option<&SessionId>,
     compacted_range: &[Message],
     cancel: CancellationToken,
 ) -> String {
@@ -261,7 +263,7 @@ async fn summarize_history(
         }
         transcript.push_str(&text);
     }
-    let request = crate::assemble_request(
+    let mut request = crate::assemble_request(
         loop_ctx.next_request_id(),
         model.clone(),
         vec![Message {
@@ -273,6 +275,8 @@ async fn summarize_history(
             metadata: Default::default(),
         }],
     );
+
+    request.session_id = session_id.cloned();
 
     let sink = SummaryTextSink(Mutex::new(String::new()));
     // 注意：摘要请求的 usage 不计入 run_usage，也不进 AgentEventSink。
@@ -338,6 +342,7 @@ async fn compact_messages(
     emitter: &EventEmitter<'_>,
     loop_ctx: &dyn LoopContext,
     model: &ModelId,
+    session_id: Option<&SessionId>,
     reason: AutoCompactionReason,
     messages: &[Message],
     retained_messages: usize,
@@ -348,8 +353,15 @@ async fn compact_messages(
     }
     let split = messages.len() - retained_messages;
     let (compacted_range, retained) = messages.split_at(split);
-    let summary_text =
-        summarize_history(provider, loop_ctx, model, compacted_range, cancel.clone()).await;
+    let summary_text = summarize_history(
+        provider,
+        loop_ctx,
+        model,
+        session_id,
+        compacted_range,
+        cancel.clone(),
+    )
+    .await;
 
     let outcome = loop_ctx
         .compact_history(reason, &summary_text, cancel)
@@ -463,6 +475,7 @@ pub async fn run_manual_compaction(
         &emitter,
         loop_ctx,
         &turn.model,
+        Some(&turn.session_id),
         AutoCompactionReason::Manual,
         &request.messages,
         context.retained_messages,

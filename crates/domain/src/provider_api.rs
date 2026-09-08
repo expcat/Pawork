@@ -15,7 +15,7 @@ use std::{
 use crate::{
     CancellationToken, ErrorCategory, ErrorContext, Message, ModelId, ProviderId,
     ProviderTranscriptEnvelope, ReasoningEffort, ReasoningItem, RequestId, ServerToolEvent,
-    StopReason, TokenUsage, ToolCallId, ToolCapabilityTag,
+    SessionId, StopReason, TokenUsage, ToolCallId, ToolCapabilityTag,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -25,6 +25,9 @@ use thiserror::Error;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CanonicalModelRequest {
     pub request_id: RequestId,
+    /// 当前真实会话的稳定身份；无会话的一次性请求可省略。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<SessionId>,
     pub model: ModelId,
     pub messages: Vec<Message>,
     /// ClientFunction 工具定义（Core 本地执行，随请求带给 Provider）。
@@ -680,6 +683,7 @@ mod tests {
 
     fn request() -> CanonicalModelRequest {
         CanonicalModelRequest {
+            session_id: None,
             request_id: RequestId::from("request-1"),
             model: ModelId::from("model-1"),
             messages: vec![Message {

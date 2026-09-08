@@ -43,31 +43,47 @@ pub const V1_9: ApiVersion = ApiVersion { major: 1, minor: 9 };
 
 /// ADR-052 SET-6h：供应商级代理开关（set_provider_use_proxy 命令 /
 /// provider_auth_status.use_proxy 字段）。
-pub const V1_10: ApiVersion = ApiVersion { major: 1, minor: 10 };
+pub const V1_10: ApiVersion = ApiVersion {
+    major: 1,
+    minor: 10,
+};
 
 /// ADR-054 OPT-2：会话生命周期词汇（session_rename / session_archive /
 /// SessionMetaChanged；SessionCreate.workspace_id 可选化）。
-pub const V1_11: ApiVersion = ApiVersion { major: 1, minor: 11 };
+pub const V1_11: ApiVersion = ApiVersion {
+    major: 1,
+    minor: 11,
+};
 
 /// ADR-055 OPT-3：模型启用集与默认角色（set_model_enabled /
 /// set_provider_models_enabled / set_default_role_model；
 /// ModelList.include_disabled；provider_auth_status.role_defaults）。
-pub const V1_12: ApiVersion = ApiVersion { major: 1, minor: 12 };
+pub const V1_12: ApiVersion = ApiVersion {
+    major: 1,
+    minor: 12,
+};
 
 /// ADR-056 OPT-3d：同供应商多凭证状态（provider_auth_status.credentials）。
-pub const V1_13: ApiVersion = ApiVersion { major: 1, minor: 13 };
+pub const V1_13: ApiVersion = ApiVersion {
+    major: 1,
+    minor: 13,
+};
 
-pub const API_VERSION: ApiVersion = V1_13;
+/// UI-3: replayable visible thinking and assistant message identity.
+pub const V1_14: ApiVersion = ApiVersion {
+    major: 1,
+    minor: 14,
+};
+
+pub const API_VERSION: ApiVersion = V1_14;
 
 /// 宿主支持的完整 API 版本表（P13-10 schema 版本化）。
 ///
 /// 同 major 内 minor 只增、已发布 minor 必须继续支持；删除或新增 major 走
 /// [ADR-036](../../../../../Pawork_v1/docs/adr/ADR-036-gui-protocol-versioning.md) 定义的废弃与删除流程。
-pub const SUPPORTED_API_VERSIONS: &[ApiVersion] =
-    &[
-        V1_0, V1_1, V1_2, V1_3, V1_4, V1_5, V1_6, V1_7, V1_8, V1_9, V1_10, V1_11, V1_12,
-        V1_13,
-    ];
+pub const SUPPORTED_API_VERSIONS: &[ApiVersion] = &[
+    V1_0, V1_1, V1_2, V1_3, V1_4, V1_5, V1_6, V1_7, V1_8, V1_9, V1_10, V1_11, V1_12, V1_13, V1_14,
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[cfg_attr(feature = "typegen", derive(TS))]
@@ -181,6 +197,11 @@ pub const PROTOCOL_CRATE_COMPATIBILITY: &[ProtocolCrateCompatibility] = &[
         crate_version: "0.1.0",
         note: "ADR-056 OPT-3d 同供应商多凭证状态（provider_auth_status.credentials）",
     },
+    ProtocolCrateCompatibility {
+        api: V1_14,
+        crate_version: "0.1.0",
+        note: "UI-3 可重放思考投影（thinking_delta / message_id / thinking_text）",
+    },
 ];
 
 // =========================================================================
@@ -245,7 +266,7 @@ mod tests {
 
     #[test]
     fn version_helpers_and_supported_table_are_consistent() {
-        assert_eq!(ApiVersion::new(1, 13), API_VERSION);
+        assert_eq!(ApiVersion::new(1, 14), API_VERSION);
         assert_eq!(V1_1, ApiVersion::new(1, 1));
         assert_eq!(V1_3, ApiVersion::new(1, 3));
         assert_eq!(V1_4, ApiVersion::new(1, 4));
@@ -270,7 +291,7 @@ mod tests {
             SUPPORTED_API_VERSIONS,
             &[
                 V1_0, V1_1, V1_2, V1_3, V1_4, V1_5, V1_6, V1_7, V1_8, V1_9, V1_10, V1_11, V1_12,
-                V1_13
+                V1_13, V1_14
             ]
         );
         assert!(SUPPORTED_API_VERSIONS
@@ -296,7 +317,7 @@ mod tests {
         assert!(json.get("crate_version").is_none());
         assert!(!json.to_string().contains("crate_version"));
         let version = serde_json::to_value(API_VERSION).expect("serialize version");
-        assert_eq!(version, serde_json::json!({"major": 1, "minor": 13}));
+        assert_eq!(version, serde_json::json!({"major": 1, "minor": 14}));
     }
 
     #[test]
