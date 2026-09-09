@@ -16,6 +16,8 @@ pub struct TerminalState {
     /// workspace，而不是当前打开的 task/session。
     pub workspace_id: Option<String>,
     pub output: String,
+    /// 最近一次 I/O 失败，仅作本地反馈，不改变 Host 的进程状态。
+    pub last_error: Option<String>,
     pub columns: u16,
     pub rows: u16,
     /// 仅 workspace 相对路径。
@@ -51,6 +53,7 @@ impl Default for TerminalState {
             session_id: None,
             workspace_id: None,
             output: String::new(),
+            last_error: None,
             columns: 80,
             rows: 24,
             cwd: ".".into(),
@@ -258,6 +261,7 @@ impl DesktopProjection {
         rows: u16,
     ) -> bool {
         self.update_terminal(terminal_session_id, |terminal| {
+            terminal.last_error = None;
             terminal.columns = columns;
             terminal.rows = rows;
         })
@@ -265,6 +269,7 @@ impl DesktopProjection {
 
     pub fn mark_terminal_ready(&mut self, terminal_session_id: &str) -> bool {
         self.update_terminal(terminal_session_id, |terminal| {
+            terminal.last_error = None;
             terminal.runtime_state = Some("running".into());
             terminal.availability = TerminalAvailability::Ready;
         })
@@ -322,8 +327,8 @@ impl DesktopProjection {
 
     /// write/resize 的瞬态失败归因：终端本体仍 running（Host 事实未变）
     /// 时不降级可用性——wire 无 live exit/failure 事件，一次 IO 失败不能
-    /// 把可写终端锁死，报错交给调用方的 status_hint；非 running（含状态
-    /// 未知）保持既有 Failed 归因。
+    /// 把可写终端锁死；last_error 留在对应终端，非 running（含状态
+    /// 未知）保持既有 Failed 归因。返回值仍只表示可用性是否改变。
     pub fn note_terminal_io_failed(
         &mut self,
         terminal_session_id: &str,
@@ -338,10 +343,13 @@ impl DesktopProjection {
                     .then(|| &self.terminal)
             })
             .is_some_and(|terminal| terminal.runtime_state.as_deref() == Some("running"));
+        let reason = reason.into();
+        self.update_terminal(terminal_session_id, |terminal| {
+            terminal.last_error = Some(reason.clone());
+        });
         if running {
             return false;
         }
-        let reason = reason.into();
         self.update_terminal(terminal_session_id, |terminal| {
             terminal.mark_failed(reason.clone());
         })
@@ -393,6 +401,7 @@ impl DesktopProjection {
         rows: u16,
     ) -> bool {
         self.update_terminal(terminal_session_id, |terminal| {
+            terminal.last_error = None;
             terminal.columns = columns;
             terminal.rows = rows;
             terminal.resize_confirmed = true;

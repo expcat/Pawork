@@ -121,7 +121,7 @@ UX-03 项目引导：侧栏触发器标明「筛选 · 项目名」，切换不�
 | Settings | 独立 Settings Rail + 全宽内容 | 无真实读写能力的页不显示；不画 updater/License 占位 |
 | Workflow | 隐藏 | 真实产品面另行设计 |
 
-空态：无会话时主区只有一句提示和 Composer。不以假卡片冒充未实现能力。
+空态：已连接且无会话时主区只有一句提示和 Composer。不以假卡片冒充未实现能力。
 
 ### 3.1 主路径与状态
 
@@ -136,6 +136,8 @@ UX-03 项目引导：侧栏触发器标明「筛选 · 项目名」，切换不�
 | Run 已完成 / 失败 / 取消 | 终态留在 Timeline | 继续下一轮；失败信息可复制 |
 | 重连中 | 保留内存 projection 但整体标为 stale / 只读 | 禁用发送、模型切换与审批；不得把本地 pending 当权威结果 |
 | 协议不兼容 | 明确显示版本不兼容 | 只允许退出/重试；不得降级走 `--json` |
+
+UX-04：连接失败 / 断线在主区显示可读原因、重试与连接诊断；无任务时替代新任务空态，有任务时保留现有 Timeline 和草稿。重试期间显示正在重连，立即再次失败也显示连接尝试次数。诊断进入 Advanced；模型入口同步区分未连接、连接中 / 重连中、失败、目录加载中与无模型。
 
 模型选择器只列 Host 返回的已配置条目；切换只影响下一轮，并以 Core 的确认事件覆盖本地 pending。审批按钮映射 `ApproveOnce / ApproveForRun / Deny`；关闭审批卡片不能等价于允许。
 
@@ -212,6 +214,7 @@ Settings 沿用深色主题、8px 节奏和 1440×1024 基线，不把工作台�
 - **Network**：Global `proxy_url`；可在 GUI 填写，也可手动写入标准用户配置目录中的 `config.toml`。该文件位于 workspace 外，不会进入仓库；workspace `.pawork/config.toml` 中的代理值会被忽略。未设置显示 `Not set (uses system environment variables)`；新 OAuth / 验证 / 目录同会话生效，当前供应商模型流量于切换或重启后生效。代理是全局开关，供应商级绕过经 Models & providers 页的代理开关表达（`use_proxy = false` 时该 provider 出站直连）。
 - **权限与审批**：五档审批模式使用整行 radio，两行说明的行高随字号为 56/70/84px，row click、Enter、Space 与 AX Press 同一 handler；项目信任开关与 Global 默认只读行并列。审批默认与当前 canonical 根路径的信任选择保存到 Global 配置；进行中 Run 不受影响，后续 Run 按实际目标项目取信任。
 - **Tools & MCP**：复用 Host `mcp_list`，提供 Test / Remove。
+- **Terminal 错误（UX-04）**：终端面板就地解释只读限制、断线、启动中和操作失败，技术详情在输出区展开并自然换行。有效只读权限或当前连接收到的明确只读拒绝禁用创建；权限未知时保留 Host 裁决，stale 权限不作预检依据。恢复入口按实际可用性进入审批设置或连接诊断，不自动降低审批。运行中 I/O 失败仍保留终端可操作状态；错误不写入 Composer。新增按钮支持鼠标、键盘与实际可见框同源的 AX。
 - **Terminal**：Global `[terminal]`（shell / columns / rows）；只影响之后创建的终端。
 - **Appearance**：Desktop 本地；三档 100%/125%/150% 与 `Cmd+=` / `Cmd+-` / `Cmd+0` 共用 `TextScale`，并显示随选择即时变化的正文 / control 字阶样例；立即生效，保存到用户目录 `desktop.json`，重启恢复选择。主题只读深色，不画 light/system 控件。同页提供语言切换（English / 中文）：两个同源按钮，切换后整界面即时重渲染，保存到同一 `desktop.json`，重启恢复选择。
 - **Advanced**：本地连接诊断；断线仍可达。只读 runtime ID、协商 API、capabilities、endpoint、resume/ack，以 definition list 呈现，长路径换行且页尾说明可滚动到达。不展示 GUI token，不从 endpoint 反推 data directory。
@@ -298,6 +301,7 @@ Snapshot 只有会话树、活动 Run、待审批与 Provider 等状态，**没�
 | `approval_card.rs` | 内嵌审批卡 |
 | `input_area.rs` | Composer + model 菜单 + workspace 确认 |
 | `inspector.rs` | Changes / Terminal / Resources |
+| `recovery.rs` | 连接与终端局部错误、恢复动作、技术详情与 AX |
 | `changes.rs` | Files / Summary + DiffView + ActivityPopover |
 | `resources.rs` | MCP 只读列表 |
 | `task_rail.rs` | 侧栏 + grouping 直接切换 + scope 菜单 |

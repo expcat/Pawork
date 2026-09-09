@@ -2515,7 +2515,7 @@ fn terminal_snapshot_restores_cwd_or_shows_unknown() {
 }
 
 /// G2：write/resize 瞬态失败不把 running 终端锁死（可用性保持
-/// Ready，报错走 status_hint）；非 running 终端保留 Failed 归因。
+/// Ready，报错保存在对应终端）；非 running 终端保留 Failed 归因。
 #[test]
 fn terminal_io_failure_keeps_running_terminal_operable() {
     let mut projection = DesktopProjection::default();
@@ -2523,6 +2523,12 @@ fn terminal_io_failure_keeps_running_terminal_operable() {
     projection.apply_terminal_created("ws-a".into(), "term-a".into());
 
     assert!(!projection.note_terminal_io_failed("term-a", "transient write error"));
+    assert_eq!(
+        projection.terminal.last_error.as_deref(),
+        Some("transient write error")
+    );
+    projection.mark_terminal_ready("term-a");
+    assert!(projection.terminal.last_error.is_none());
     assert!(matches!(
         projection.terminal.availability,
         TerminalAvailability::Ready

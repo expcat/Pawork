@@ -435,7 +435,20 @@ impl AppView {
         .pb(px(metrics::MSG_ENTRY_GAP));
         // P0-3 空态：无 active session 且条目数为 0 时只给出一个清楚的
         // Primary New task 路径；Disconnected 保留旧条目时不进入本分支。
-        let content = if empty_hint_visible {
+        let offline = !matches!(
+            self.projection.connection,
+            ConnectionState::Connected { .. }
+        );
+        let content = if empty_hint_visible && offline {
+            div()
+                .flex_1()
+                .flex()
+                .flex_col()
+                .justify_center()
+                .px_4()
+                .child(self.connection_notice_element(cx))
+                .into_any_element()
+        } else if empty_hint_visible {
             let can_create = self.can_create_task();
             let tooltip = SharedString::from(if can_create {
                 t("timeline.new_task_tooltip").to_string()
@@ -500,6 +513,9 @@ impl AppView {
             .flex()
             .flex_col()
             .flex_1()
+            .when(offline && !empty_hint_visible, |area| {
+                area.child(self.connection_notice_element(cx))
+            })
             .child(content)
             .when(!following, |area| {
                 area.child(BackToBottom::new(

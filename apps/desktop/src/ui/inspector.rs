@@ -14,8 +14,7 @@ use crate::ui::i18n::t;
 use crate::ui::theme::{dark, font, metrics};
 
 use super::{
-    terminal_can_operate, terminal_can_reopen, terminal_close_label, terminal_known_ended,
-    terminal_start_enabled, AppView,
+    terminal_can_operate, terminal_can_reopen, terminal_close_label, terminal_known_ended, AppView,
 };
 
 /// Terminal 页无输出时的占位文案（R2 Wave B）：视觉与 AX 树共用同源。
@@ -327,8 +326,13 @@ impl AppView {
     /// Terminal 页（波 C 的面板内容，页签头外移到顶层 strip 后保持原样）。
     fn terminal_page_element(&self, _connected: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let terminal = &self.projection.terminal;
+        let notice = self.terminal_notice_text();
         let output = if terminal.output.is_empty() {
-            terminal_empty_output().to_string()
+            if notice.is_some() {
+                String::new()
+            } else {
+                terminal_empty_output().to_string()
+            }
         } else {
             plain_terminal_output(&terminal.output)
         };
@@ -338,7 +342,11 @@ impl AppView {
         let started = terminal.session_id.is_some();
         let apply_size = started && !terminal_known_ended(terminal);
         let owner = terminal.workspace_id.as_deref().unwrap_or("unassigned");
-        let mut state_label = terminal.availability_label();
+        let mut state_label = if notice.is_some() {
+            String::new()
+        } else {
+            terminal.availability_label()
+        };
         if terminal.dropped_events > 0 {
             state_label.push_str(&format!(
                 " · {} output events dropped",
@@ -351,12 +359,7 @@ impl AppView {
             state_label.push_str(&format!(" · {resize_status}"));
         }
         let terminal_operable = terminal_can_operate(&self.projection.connection, terminal);
-        let terminal_start_enabled = terminal_start_enabled(
-            &self.projection.connection,
-            terminal,
-            self.terminal_pending_create_workspace.as_ref(),
-            self.terminal_pending_resize.is_some(),
-        );
+        let terminal_start_enabled = self.terminal_start_available();
         let terminal_resize_enabled = terminal_operable && self.terminal_pending_resize.is_none();
         // ADR-045：running 显示 Stop（真实 terminal_close 终止）；已知
         // exited/killed/failed 显示 Close（清理 Host tombstone 与本地条目）；
@@ -463,12 +466,14 @@ impl AppView {
                     .flex()
                     .flex_col()
                     .flex_1()
+                    .min_h_0()
                     .child(
                         div()
                             .id("terminal-output")
                             .flex()
                             .flex_col()
                             .flex_1()
+                            .min_h_0()
                             .track_scroll(self.terminal_scroll.handle())
                             .overflow_y_scroll()
                             .px_2()
@@ -479,6 +484,9 @@ impl AppView {
                                 view.terminal_scroll.on_scroll_wheel();
                                 cx.notify();
                             }))
+                            .when(notice.is_some(), |area| {
+                                area.child(self.terminal_notice_element(cx))
+                            })
                             .child(output),
                     )
                     .when(!self.terminal_scroll.is_following(), |area| {
@@ -539,11 +547,11 @@ impl AppView {
                             // 已知 exited/killed：单槽变「New」——新建终端入
                             // 口，不伪造旧终端生命周期（G2）。
                             .label(if apply_size {
-                                "Size"
+                                t("inspector.tooltip_apply_size")
                             } else if terminal_can_reopen(terminal) {
-                                "New"
+                                t("recovery.terminal_new")
                             } else {
-                                "Start"
+                                t("recovery.terminal_start")
                             })
                             .track_focus(&self.terminal_start_focus)
                             .on_click(cx.listener(move |view, event, window, cx| {
@@ -576,7 +584,6 @@ impl AppView {
             self.projection.connection,
             ConnectionState::Connected { .. }
         ) {
-            self.status_hint = Some("Terminal needs a live connection.".into());
             cx.notify();
             return;
         }
@@ -668,21 +675,22 @@ impl AppView {
     /// workspace 守卫、请求 cwd 记账集中在一处（首次 Start 与 exited 终端
     /// 的新建入口共用）。
     fn begin_terminal_create(&mut self, workspace: Option<String>, cwd: Option<String>) {
+        if self.terminal_create_blocked() {
+            return;
+        }
         if self.terminal_pending_create_workspace.is_some() {
-            self.status_hint = Some("Waiting for the current terminal creation.".into());
             return;
         }
         if !matches!(
             self.projection.connection,
             ConnectionState::Connected { .. }
         ) {
-            self.status_hint = Some("Terminal needs a live connection.".into());
             return;
         }
         let Some(workspace) = workspace else {
-            self.status_hint = Some("Choose a project before opening Terminal.".into());
             return;
         };
+        self.terminal_details_open = None;
         self.terminal_pending_create_workspace = Some(workspace.clone());
         // 与 workspace 槽同生命周期：失败/断连清理后不得把上一次请求
         // 的 cwd 误贴到下一次新建（无条件覆盖，None 即清除）。

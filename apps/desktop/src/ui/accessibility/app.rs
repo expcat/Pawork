@@ -38,9 +38,8 @@ use crate::ui::timeline_entry::{display_time, tool_group_summary};
 use crate::ui::{
     activity_header_visibility, rail_project_occurrence_key, rail_session_archive_focus_key,
     rail_session_focus_key, rail_session_rename_focus_key, terminal_can_operate,
-    terminal_can_reopen, terminal_close_label, terminal_known_ended, terminal_start_enabled,
-    timeline, workspace_empty_hint, workspace_empty_title, AppRoute, AppView, MenuKind,
-    SettingsPage,
+    terminal_can_reopen, terminal_close_label, terminal_known_ended, timeline,
+    workspace_empty_hint, workspace_empty_title, AppRoute, AppView, MenuKind, SettingsPage,
 };
 
 pub(crate) const PAD: f32 = 8.0;
@@ -312,6 +311,10 @@ impl AppView {
                 self.on_new_session(window, cx)
             }
             "reconnect" => self.on_reconnect(window, cx),
+            "connection-retry"
+            | "connection-diagnostics"
+            | "terminal-permissions"
+            | "terminal-details" => self.on_recovery_action(identifier, window, cx),
             // SET-3：Settings 进出与可见 / 键盘路径同一 handler。
             "open-settings" => self.on_open_settings(window, cx),
             "settings-back" => self.on_close_settings(window, cx),
@@ -1589,7 +1592,14 @@ impl AppView {
                 .collect()
         });
         let mut list = AxNode::new("timeline", AxRole::List, "Timeline", frame);
-        if empty_hint_visible {
+        let offline = !matches!(
+            self.projection.connection,
+            ConnectionState::Connected { .. }
+        );
+        if offline {
+            list = list.child(self.recovery_ax(window, frame, false));
+        }
+        if empty_hint_visible && !offline {
             // P0-3：与 timeline_area 同源的 title / description / Primary
             // action。Header 同态不发布重复 New task 节点，保证 identifier
             // 唯一；disabled 时不发布 Press action。
@@ -2154,15 +2164,7 @@ impl AppView {
         let meta_y = card.y + card.height + metrics::COMPOSER_META_GAP;
         let meta_width = (width - metrics::SPACE_2) / 2.0;
         let running = self.projection.active_run_id.is_some();
-        let current_model = if self.model_catalog_empty() {
-            // 全关空态：与可见按钮同文案（i18n 同源），不报「No model」。
-            t("composer.model_none_available").to_string()
-        } else {
-            self.projection
-                .effective_model()
-                .map(|(provider, model)| format!("{provider} / {model}"))
-                .unwrap_or_else(|| "No model".into())
-        };
+        let current_model = self.model_label();
         let input_focus = self.text_input.read(cx).focus_handle(cx);
         // AXValue 恒为纯文本：空输入即空串，placeholder 不得回退进 value
         // （R4 U2 composer-cleared / R5 r5-1 契约）。
@@ -2498,7 +2500,11 @@ impl AppView {
         let focus = self.terminal_input.read(cx).focus_handle(cx);
         let output = if self.projection.terminal.output.is_empty() {
             // 与可见 Terminal 页占位同源（terminal_empty_output()）。
-            terminal_empty_output().to_string()
+            if self.terminal_notice_text().is_some() {
+                String::new()
+            } else {
+                terminal_empty_output().to_string()
+            }
         } else {
             tail_chars(
                 &plain_terminal_output(&self.projection.terminal.output),
@@ -2533,12 +2539,7 @@ impl AppView {
         }
         let terminal_operable =
             terminal_can_operate(&self.projection.connection, &self.projection.terminal);
-        let terminal_start_enabled = terminal_start_enabled(
-            &self.projection.connection,
-            &self.projection.terminal,
-            self.terminal_pending_create_workspace.as_ref(),
-            self.terminal_pending_resize.is_some(),
-        );
+        let terminal_start_enabled = self.terminal_start_available();
         let terminal_resize_enabled = terminal_operable && self.terminal_pending_resize.is_none();
         // 与可见按钮（inspector.rs）同 gate：running → Stop，已知
         // exited/killed/failed → Close，其余状态不发布节点。
@@ -2674,6 +2675,15 @@ impl AppView {
                 .enabled(terminal_start_enabled)
                 .action(AxAction::Press),
             );
+        if self.terminal_notice_text().is_some() {
+            let clip = AxRect::new(
+                frame.x,
+                frame.y + header_height,
+                frame.width,
+                (input_y - frame.y - header_height).max(0.0),
+            );
+            terminal = terminal.child(self.recovery_ax(window, clip, true));
+        }
         if let Some(close_label) = terminal_close_label {
             terminal = terminal.child(
                 AxNode::new(
@@ -3048,6 +3058,129 @@ fn tail_chars(value: &str, limit: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    fn recovery_keeps_errors_local_and_preserves_drafts(cx: &mut gpui::TestAppContext) {
+        use crate::controller::ControllerEvent;
+        use gpui::px;
+        let (view, cx) = cx.add_window_view(|_, cx| {
+            AppView::new(
+                std::sync::Arc::new(crate::platform::Platform::new()),
+                std::env::temp_dir().join("ux04-missing.sock"),
+                None,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        cx.simulate_resize(gpui::size(px(1440.0), px(1024.0)));
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.connection = ConnectionState::Failed {
+                    reason: "connection refused".into(),
+                };
+                view.status_hint = Some("unrelated feedback".into());
+                view.text_input
+                    .update(cx, |input, cx| input.set_text("keep this draft", cx));
+                cx.notify();
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let v = view.read(cx);
+            let tree = v.accessibility_tree(window, cx);
+            tree.validate().unwrap();
+            assert!(tree.find("workspace-empty-title").is_none());
+            assert!(tree.find("connection-retry").is_some());
+            assert!(tree.find("connection-diagnostics").is_some());
+            assert_eq!(v.model_label(), t("recovery.model_failed"));
+            assert!(v.connection_notice_text().1.contains("address"));
+        });
+        cx.update(|window, cx| view.update(cx, |v, cx| {
+            v.on_recovery_action("connection-diagnostics", window, cx);
+            assert_eq!(v.settings_page, SettingsPage::Advanced);
+            assert_eq!(v.text_input.read(cx).text(), "keep this draft");
+            v.on_close_settings(window, cx);
+            v.projection.connection = ConnectionState::Connecting;
+            v.connection_attempts = 2;
+            assert_eq!(v.model_label(), t("recovery.reconnecting"));
+            v.projection.connection = ConnectionState::Connected { instance_id: "ux04".into() };
+            v.projection.set_models(Vec::new());
+            assert_eq!(v.model_label(), t("composer.model_none_available"));
+            v.projection.workspace_id = Some("ws-a".into());
+            v.projection.terminal.workspace_id = Some("ws-a".into());
+            v.projection.settings_permissions.query.mark_ready();
+            v.projection.settings_permissions.approval_mode = Some(ApprovalModeWire::ReadOnly);
+            v.inspector_open = true;
+            v.inspector_motion.width(true, true, std::time::Instant::now() - std::time::Duration::from_secs(1));
+            v.inspector_tab = InspectorTab::Terminal;
+            v.on_start_terminal(window, cx);
+            assert!(v.terminal_pending_create_workspace.is_none());
+            assert!(!v.terminal_start_available());
+            assert_eq!(v.terminal_notice_text().as_deref(), Some(t("recovery.terminal_read_only")));
+            v.status_hint = Some("unrelated feedback".into());
+            v.handle_controller_event(ControllerEvent::TerminalCreateFailed {
+                workspace_id: "ws-a".into(),
+                reason: "ProtocolError: 审批档 read_only 禁止创建终端:ADR-041 D2 决议该档拒绝创建交互 shell(fail-closed)".into(),
+            }, cx);
+            assert_eq!(v.status_hint.as_deref(), Some("unrelated feedback"));
+            assert_eq!(v.text_input.read(cx).text(), "keep this draft");
+            v.projection.settings_permissions.available = false;
+            assert!(!v.terminal_start_available(), "explicit Host read-only rejection also blocks repeated creation");
+            assert_eq!(v.terminal_notice_text().as_deref(), Some(t("recovery.terminal_read_only_unknown")));
+            cx.notify();
+        }));
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let v = view.read(cx);
+            let tree = v.accessibility_tree(window, cx);
+            tree.validate().unwrap();
+            assert!(!tree.find("terminal-start").unwrap().enabled);
+            assert!(tree
+                .find("terminal-notice")
+                .unwrap()
+                .label
+                .contains("Read-only"));
+            assert!(tree.find("terminal-details").is_some());
+        });
+        cx.update(|window, cx| {
+            view.update(cx, |v, cx| {
+                v.on_recovery_action("terminal-details", window, cx);
+                assert!(v.terminal_details_open.is_some());
+                v.projection
+                    .settings_permissions
+                    .query
+                    .mark_stale("connection changed");
+                assert!(
+                    !v.terminal_read_only(),
+                    "old permissions cannot describe a new connection"
+                );
+                v.projection
+                    .apply_terminal_created("ws-a".into(), "term-a".into());
+                v.handle_controller_event(
+                    ControllerEvent::TerminalWriteFailed {
+                        terminal_session_id: "term-a".into(),
+                        reason: "write failed".into(),
+                    },
+                    cx,
+                );
+                assert!(terminal_can_operate(
+                    &v.projection.connection,
+                    &v.projection.terminal
+                ));
+                assert!(v.terminal_notice_text().is_some());
+                assert_eq!(v.status_hint.as_deref(), Some("unrelated feedback"));
+                v.handle_controller_event(
+                    ControllerEvent::TerminalWriteSucceeded {
+                        terminal_session_id: "term-a".into(),
+                    },
+                    cx,
+                );
+                assert!(v.projection.terminal.last_error.is_none());
+            })
+        });
+    }
 
     #[gpui::test]
     fn reply_actions_copy_exact_content_and_use_closed_turn_boundary(
@@ -4847,7 +4980,7 @@ mod tests {
                 .find("model-picker")
                 .expect("model picker has an AX node");
             assert!(!picker.enabled);
-            assert_eq!(picker.value.as_deref(), Some("No model"));
+            assert_eq!(picker.value.as_deref(), Some(t("composer.model_loading")));
             // 加载中不误报全关：发送仍可用（现有行为，Host 侧权威默认）。
             assert!(tree.find("send").expect("send has an AX node").enabled);
         });

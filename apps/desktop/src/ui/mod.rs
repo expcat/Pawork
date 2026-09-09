@@ -12,6 +12,7 @@ pub(crate) mod i18n;
 mod input_area;
 mod inspector;
 mod markdown;
+mod recovery;
 mod resources;
 mod settings;
 mod shell_layout;
@@ -526,6 +527,10 @@ pub struct AppView {
     header_new_task_focus: FocusHandle,
     /// 断线态 Reconnect 按钮焦点（track_focus + 行级激活，R6B 键盘补全）。
     reconnect_focus: FocusHandle,
+    connection_attempts: usize,
+    recovery_layouts: HashMap<&'static str, ScrollHandle>,
+    recovery_focus: HashMap<&'static str, FocusHandle>,
+    terminal_details_open: Option<(Option<String>, String)>,
     model_focus: FocusHandle,
     timeline_back_to_bottom_focus: FocusHandle,
     /// Timeline 虚拟化 action 按 event_id 懒建稳定焦点句柄；条目卸载/重挂
@@ -752,6 +757,16 @@ impl AppView {
                 .focus_handle()
                 .tab_stop(true)
                 .tab_index(RAIL_TAB_INDEX_RECONNECT),
+            connection_attempts: 0,
+            recovery_layouts: recovery::RECOVERY_IDS
+                .into_iter()
+                .map(|id| (id, ScrollHandle::new()))
+                .collect(),
+            recovery_focus: recovery::RECOVERY_IDS
+                .into_iter()
+                .map(|id| (id, cx.focus_handle().tab_stop(true)))
+                .collect(),
+            terminal_details_open: None,
             model_focus: cx.focus_handle().tab_stop(true),
             timeline_back_to_bottom_focus: cx
                 .focus_handle()
@@ -1253,6 +1268,7 @@ impl AppView {
     }
 
     fn start_connect(&mut self, cx: &mut Context<Self>) {
+        self.connection_attempts += 1;
         self.barriers.remove_timeline_stable();
         self.barriers.remove_approval_visible();
         self.handshake_info = None;
@@ -1287,7 +1303,6 @@ impl AppView {
                     this.update(cx, |view, cx| {
                         view.projection
                             .set_connection(ConnectionState::Failed { reason });
-                        view.status_hint = Some(i18n::t("status.connect_failed_retry").into());
                         cx.notify();
                     })
                     .ok();
@@ -1409,7 +1424,6 @@ impl AppView {
                 self.terminal_pending_resize = None;
                 // 断连终止一切进行中分页，避免 settle barrier 永久停发。
                 self.timeline_paging = false;
-                self.status_hint = Some(i18n::t("status.connection_lost").into());
             }
             ControllerEvent::Snapshot(snapshot) => {
                 let had_active_session = self.projection.active_session_id.is_some();
@@ -1571,8 +1585,6 @@ impl AppView {
                 self.projection
                     .mark_terminal_create_failed(&workspace_id, reason.clone());
                 self.reconcile_terminal_workspace(cx);
-                self.status_hint =
-                    Some(i18n::t("status.terminal_create_failed").replace("{}", &reason));
             }
             ControllerEvent::TerminalWriteSucceeded {
                 terminal_session_id,
@@ -1605,8 +1617,6 @@ impl AppView {
                 self.terminal_pending_write = None;
                 self.projection
                     .note_terminal_io_failed(&terminal_session_id, reason.clone());
-                self.status_hint =
-                    Some(i18n::t("status.terminal_write_failed").replace("{}", &reason));
             }
             ControllerEvent::TerminalResizeSucceeded {
                 terminal_session_id,
@@ -1655,12 +1665,6 @@ impl AppView {
                 }
                 self.projection
                     .note_terminal_io_failed(&terminal_session_id, reason.clone());
-                if self.projection.terminal.session_id.as_deref()
-                    == Some(terminal_session_id.as_str())
-                {
-                    self.status_hint =
-                        Some(i18n::t("status.terminal_resize_failed").replace("{}", &reason));
-                }
             }
             ControllerEvent::TerminalCloseSucceeded {
                 terminal_session_id,
@@ -1691,8 +1695,8 @@ impl AppView {
                 {
                     self.terminal_pending_close = None;
                 }
-                self.status_hint =
-                    Some(i18n::t("status.terminal_close_failed").replace("{}", &reason));
+                self.projection
+                    .note_terminal_io_failed(&terminal_session_id, reason);
             }
             ControllerEvent::MessageSent {
                 session_id,
@@ -2663,12 +2667,7 @@ impl AppView {
             Some("terminal-close")
         } else if self.terminal_start_focus.is_focused(window)
             && activate
-            && terminal_start_enabled(
-                &self.projection.connection,
-                &self.projection.terminal,
-                self.terminal_pending_create_workspace.as_ref(),
-                self.terminal_pending_resize.is_some(),
-            )
+            && self.terminal_start_available()
         {
             Some("terminal-start")
         } else {
@@ -3611,7 +3610,6 @@ impl AppView {
             self.projection.connection,
             ConnectionState::Connected { .. }
         ) {
-            self.status_hint = Some(i18n::t("status.terminal_needs_connection").into());
             cx.notify();
             return;
         }
@@ -3629,7 +3627,6 @@ impl AppView {
         }
         if self.projection.terminal.session_id.is_none() {
             self.ensure_terminal(cx);
-            self.status_hint = Some(i18n::t("status.terminal_starting").into());
             cx.notify();
             return;
         }

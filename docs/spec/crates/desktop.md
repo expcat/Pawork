@@ -17,7 +17,7 @@
 
 ## 2. 模块与文件地图
 
-61 个 `.rs` 文件、约 41.1k 行，全部在 `[[bin]] pawork-desktop` target 内（无 lib target、无 crate `tests/` 目录）。
+63 个 `.rs` 文件，全部在 `[[bin]] pawork-desktop` target 内（无 lib target、无 crate `tests/` 目录）。
 
 | 路径 | 行数 | 承载内容 |
 | --- | --- | --- |
@@ -30,10 +30,11 @@
 | `src/projection/mod.rs` | ~500 | `DesktopProjection` 装配与 live 事件应用；Settings 断线 `mark_settings_stale` 单点扇出 |
 | `src/projection/session.rs` | ~710 | `ConnectionState` / `ResumeState` / `PendingApproval` / `ModelEntry` / `ActiveRun` / session·workspace 摘要 / TaskRail 分组；P0-2 将 grouping 当前 `view_label`、目标 `toggle_action_label` 与 `toggled` 分开，避免 AX name/value 混写；`group_models_by_provider` |
 | `src/projection/settings.rs` | ~710 | `SettingsQueryGate`（loading/stale/available/writes_enabled）与各 Settings 页 wrapper；Host Data 走 `pawork_client` protocol 类型 `from_value` fail-closed（缺 nullable 键不算未设置）；`parse_auth_change`（AuthChanged 非 CLN-4 Data）；`ProviderStatusLabels::auth_label` 只返回连接态，不拼接 masked credential 或错误详情；`confirm_use_proxy` 落地 ADR-052 `set_provider_use_proxy` 写回执（回执即写后状态，不另重查）；ADR-055 增 `SettingsRole` 四角色（conversation/naming/vision/search）、`RoleDefaultsState` 与角色键对确认、`model_catalog` 启用集投影（确认回执改 enabled，不整表重拉）、`model_cleared_note` 清除反馈 |
-| `src/projection/terminal.rs` | ~470 | `TerminalState` / 多 workspace 终端 / live exit / Close 清理 / 新建终端初始尺寸 |
+| `src/projection/terminal.rs` | ~470 | `TerminalState` / 多 workspace 终端 / live exit / Close 清理 / 新建终端初始尺寸；UX-04 `last_error` 保存操作错误，运行态不因 I/O 失败丢失，成功写入 / 尺寸确认后清除 |
 | `src/projection/timeline.rs` | ~200 | Timeline 行分组与 Run footer/summary 文案 |
 | `src/projection/tests.rs` | ~3230 | 67 个投影测试（snapshot/replay、Run/Timeline/Terminal、Settings typed 解析 fail-closed） |
 | `src/ui/mod.rs` | ~4593 | `AppView` 宿主：Workspace Header、Timeline、Composer 与 Inspector 三栏装配；SET-3 增顶层路由 `AppRoute`（Settings 壳与工作台互斥渲染，工作台状态保存在字段、返回即恢复；进入拉取 provider 状态并断线 mark_stale）；SET-4 增 Settings 写操作宿主字段（secure 输入实体 / Replace 编辑器 / Remove 确认 / 动作焦点）、`AuthStarted` 消费、Succeeded 后再查 provider 状态、auth_start 失败回滚乐观态，离开 Settings 清空 secure 缓冲（含 undo 栈）；SET-5 增 `DefaultModelConfirmed` 消费（Composer 同步已确认默认）、页级 Refresh 入口（重查 provider_auth_status + model_list，失败保留旧列表并显示错误）、进入 Settings 即补拉模型目录（与 Refresh 对称、断线 no-op）与 ModelsLoaded 后「设为默认」按钮焦点回收；SET-6a 增 `SettingsPage`（Network 仅在 `general_settings` 查询成功后可选；内部 enum/wire 保留 General 兼容名）、进入/Refresh 同拉 `general_settings`、断线 `mark_stale`、`GeneralSettingsLoaded` / `ProxyUrlConfirmed` 以回执为权威生效值（迟到响应仍重标 stale）；SET-6b 增 `SettingsPage::Permissions`（查询成功后可选）、进入/Refresh/重连同拉 `permissions_settings`、断线 mark_stale、`PermissionsSettingsLoaded` / `ApprovalModeConfirmed` / `WorkspaceTrustConfirmed` 以回执为权威生效值（迟到响应仍重标 stale）；SET-6c 增 `SettingsPage::Tools`（`mcp_list` 成功后可选，可用性=resources.available）、进入/Refresh/重连同拉 `refresh_resources`、`McpServersReceipt` 以回执为权威生效值、Remove 两步确认 `settings_mcp_remove_confirm`（离开 Settings 清空）；SET-6d 增 `SettingsPage::Terminal`（`terminal_settings` 查询成功后可选）、进入/Refresh/重连同拉 `terminal_settings`（重连同批预热新建终端初始尺寸查询缓存）、断线 mark_stale、`TerminalSettingsLoaded` / `TerminalSettingsConfirmed` 以回执为权威生效值并回填输入框（迟到响应仍重标 stale）、`TerminalCreated` 回执后投影初始尺寸与当次 `terminal_resize` 改用生效 columns/rows（未查询到回落 80×24）；SET-6e 增 `SettingsPage::Appearance`（本地外观页常在，导航焦点 + 三档字号 HashMap 焦点）；SET-6f 增 `SettingsPage::Advanced`、握手摘要与导航焦点；Connecting/断线清空摘要，连接成功刷新，避免旧 Host 信息冒充当前状态；Scope 菜单的 `Add project…` 通过 GPUI 系统目录选择器调用 controller `open_workspace`，成功后切换 scope、同步 terminal 并显示项目名；其余承载 Activity、按 workspace 隔离的 terminal 草稿、尺寸草稿/键盘 stepper、终端生命周期、焦点、字号、五种浮层菜单与 barrier settle；P0-2 移除 `MenuKind::Grouping` 分派；OPT-2a 移除 `MenuKind::WorkspaceConfirm`（ADR-054）；P0-3 让 Header 以 subtle divider 收口，并在无 Task 时隐藏重复 Header 新建动作；OPT-4b（F6）：Inspector 初始默认折叠（显式动作仍可展开），折叠态 Header 最右新增 inspector-expand 重开按钮（40×37 槽、font::ICON 20px 字形，与 Activity 触发器并存）；OPT-4a：header-new-task / inspector-toggle 字形提至 20px；17 个测试 |
+| `src/ui/recovery.rs` | ~380 | UX-04 连接 / 终端原因与恢复入口、创建 gate、技术详情、按实际布局裁剪的 AX；恢复动作不修改 Host 权限 |
 | `src/ui/shell_layout.rs` | ~295 | R2 Wave A 壳层几何合同：`resolve`（唯一计算入口，render 与 AX 树共享）——宽窗 rail=288 / Inspector 打开时 440（OPT-4b 起 AppView 初始偏好为折叠，resolve 合同不变），窗口宽 ≤1279 时 rail=240 且 Inspector 强制折叠（Workspace ≥560）；R7 Wave C 在 150% 字号下改用 320px rail，宽度不足 1320 时保持 Inspector 折叠，1080 窗口保留 760px Workspace；固定侧栏 `flex_none`，防长文本 min-content 挤窄 Inspector；rail 顶部 36px traffic-light 安全区；4 个 GPUI 布局测试 |
 | `src/ui/accessibility.rs` | ~410 | 平台无关 `AxTree` / `AxNode` / role / action / request / rect 模型；声明 Settings AX 子模块；3 个测试 |
 | `src/ui/accessibility/app.rs` | ~4966 | 工作台三栏语义树与 Press 白名单（含 Settings identifier 派发）；P0-2 的 `task-rail-grouping` 发布目标动作 name + 当前视图 value，Press 直接切换，不再发布 expanded/menu child；P0-3 空态发布 title / description / 单一 New task action，disabled 时不发布 Press；P1 的 tool group / Review 与 Activity 几何、P2 的 credential summary 隐藏和 Settings 写 gate 与 render 同源；model 菜单超 240px 时只发布裁剪框内子节点（render 内部滚动，首帧顶部）；Settings 页树拆到 `settings_*.rs`；OPT-3 增 Manage models 弹层（触发器 / 单模型 Switch / 全开全关 / 空目录）与四默认角色触发器·菜单的 identifier 派发；ADR-056 增展开 chevron（Press、value Collapsed/Expanded）与展开区 Credentials 凭证行 / Usage 空态节点；UI-2 会话行动作与项目头计数 AX 几何跟 render 同源；20 个测试 |
@@ -96,6 +97,8 @@ ADR-053 新增 `src/platform/preferences.rs`：标准用户配置目录的 `desk
 > **UI-5 Settings（2026-09-08）**：`ui/settings/mod.rs` 增非供应商页共享分区样式及本页 `settings_element_layouts` 实测框；`ui/mod.rs` 在所有 Settings 页 prepaint 后同步 AX。七个 `ui/settings/{general,permissions,tools,terminal,appearance,advanced,about}.rs` 重排页内层级，对应 `ui/accessibility/settings_*.rs` 删除估算纵坐标，使用实际框并经 `settings_page_ax` 裁掉离屏项。Settings 导航 40px / 14px / r6，按钮 36px / 14px / r6，内容仍全宽、水平 32px，非供应商页垂直留白在 100% 下为 32px 并随字号缩放；详见 [GUI 设计 UI-5](../../gui-design.md#ui-5-设置更新2026-09-08)。增加一个实际布局 / 滚动 / 断线回归；无新模块、依赖、feature 或 wire。
 
 UX-01：Composer（`TextInput::new`）按可用宽度自然换行，GPUI 换行边界对齐完整 grapheme，并以最终显示字宽复核；测高、绘制、光标、选择、鼠标 / IME 定位与滚动共用显示行及原文 byte 起点，软换行不改草稿原文。`with_placeholder` 的终端 / Settings 字段保留既有换行策略，secure 与只读 URL 不开启软换行。IME 组合选区相对当次组合文字计算 UTF-16 偏移；组合更新、宽度与字号变化后光标滚入视口。Composer 仍遵守 220px 卡片上限与逐会话草稿语义；AX 布局优先使用实际输入视口高度。
+
+UX-04：连接失败 / 断线的原因在主区呈现，无任务时替代新任务空态，有任务时保留 Timeline 与草稿；重试显示连接中及重复失败次数，诊断进入 Advanced。模型按钮文案与 AX 同源区分连接状态、目录加载中和无模型。Terminal 操作失败只写终端投影，不挤占 Composer；原因、下一步和可展开技术详情位于终端输出滚动区。有效只读权限预先禁用创建；权限未知但当前连接已收到明确只读拒绝时同样阻止重复创建，stale 权限不作预检依据。权限可用时提供审批设置入口，未知时提供连接诊断；均不更改安全默认。运行中 I/O 失败保留终端标识与可操作状态，后续成功回执清除局部错误。
 
 ## 3. 用户可见界面与交互面
 
@@ -336,6 +339,8 @@ domain id 类型未从 client re-export，命令 / 查询经冻结的 serde 形�
 UX-03 定向回归 `project_task_guidance_preserves_context_and_wraps`：项目筛选不重绑 / 不改草稿，项目新建菜单排除「所有项目」，Esc 回焦与第二次 Enter 确认，宽窄窗 × 三档字号下元信息实际框不重叠 / 不越界；有项目后移除限制与新建入口但保留其他反馈。复用既有 Composer 布局、会话草稿与目录菜单滚动测试；真窗口证据与用户验收状态见 [路线图 UX-03](../../ROADMAP.md#ux-03-新任务与项目上下文引导)。
 
 ## 7. 测试与验证资产
+
+UX-04 新增 `recovery_keeps_errors_local_and_preserves_drafts`：覆盖离线空态、诊断 / 重试、草稿保留、模型状态、只读创建阻止、实际拒绝的局部提示、权限未知与 stale gate、终端 I/O 错误及成功恢复；复用并扩充 `terminal_io_failure_keeps_running_terminal_operable`。本批 Desktop 223 项测试通过；真实 read-only 拒绝、连接恢复及三档字号证据与验收边界见 [路线图 UX-04](../../ROADMAP.md#ux-04-错误在发生处解释并提供下一步)。
 
 UX-01 新增 `wrapped_draft_keeps_text_hit_testing_and_ime_in_sync`：三档字号、两档输入宽度下覆盖长中文、无空格路径、emoji / 组合字符与显式空行，核对完整原文、字宽、滚动、鼠标与 IME 坐标往返、组合更新及单次撤销。既有 Composer 实际布局 / AX 用例改用长段落，继续核对宽窄窗控件位置、卡片预算和断线禁发；测试与真窗口完成状态见 [活动路线图 UX-01](../../ROADMAP.md#ux-01-长草稿自然换行与编辑)。
 

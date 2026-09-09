@@ -411,7 +411,13 @@ impl AppView {
         self.pending_scope_menu_scroll = matches!(self.open_menu, Some(MenuKind::ProjectTask));
     }
 
-    fn model_label(&self) -> String {
+    pub(super) fn model_label(&self) -> String {
+        match self.projection.connection {
+            ConnectionState::Connecting => return self.connection_notice_text().0.into(),
+            ConnectionState::Disconnected { .. } => return t("recovery.model_offline").into(),
+            ConnectionState::Failed { .. } => return t("recovery.model_failed").into(),
+            ConnectionState::Connected { .. } => {}
+        }
         if self.model_catalog_empty() {
             // 全关 / 空目录：不回退展示旧默认对（Host 已清除角色默认）。
             return t("composer.model_none_available").into();
