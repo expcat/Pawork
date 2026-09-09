@@ -1,12 +1,12 @@
 # Pawork 能力与入口矩阵
 
-UI-6a / [ADR-058](settings.md#adr-058ui-6a-目录权威与凭证验证2026-09-08)：远端成功替换静态模型 ID，Go/Qwen 按实际支持的请求协议过滤，模型选择同步核对；Go 用已认证 `/usage` 验证候选 key，公开目录不证明认证。UI-6b / [ADR-059](settings.md#adr-059ui-6b-命名账号与持久选择2026-09-08) 增同供应商命名 API key/OAuth 账号、持久选择与逐账号删除；后续请求使用选择，进行中的 Run 保持凭证快照；QuotaSnapshot 与自动切换仍待 G2；实现/自动检查/人工验收分别见 [路线图](../ROADMAP.md)。
+UI-6a / [ADR-058](settings.md#adr-058ui-6a-目录权威与凭证验证2026-09-08)：远端成功替换静态模型 ID，Go/Qwen 按实际支持的请求协议过滤，模型选择同步核对；Go 用已认证 `/usage` 验证候选 key，公开目录不证明认证。UI-6b / [ADR-059](settings.md#adr-059ui-6b-命名账号与持久选择2026-09-08) 增同供应商命名 API key/OAuth 账号、持久选择与逐账号删除；后续请求使用选择，进行中的 Run 保持凭证快照；QuotaSnapshot 与自动切换仍待 G2；实现/自动检查/人工验收分别见 [路线图](../review/roadmap-ui-2026-09-09.md)。
 
 OPT-1 / [ADR-053](settings.md#adr-053opt-1-设置持久化2026-09-05)：Settings 审批模式保存为 Global 默认，信任选择按 canonical workspace 根路径保存；非 Global 高层禁止覆盖；命令与回执 JSON 形状保持不变。Appearance 保存用户目录 `desktop.json`。实现/自动验证/人工验收状态分别见 [OPT 归档](../review/roadmap-opt-2026-09-05.md#101-本批交付与证据2026-09-05)。
 
 > 基线日期：2026-09-03。状态词汇见 [README.md](README.md#3-状态词汇)。本表记录生产可见面，不以“代码存在”替代当前阶段复验或发布证明。
 
-UI-6b G2 已接线：Go 存储账号可读取官方三窗已用百分比与重置时刻；默认手动选择，可开启“额度耗尽时切换”，仅影响下一 Run。无来源/失败/过期不推算额度，多个 key 不相加为独立预算。自动与人工验证状态见 [ROADMAP](../ROADMAP.md)，具体边界见 [ADR-060](settings.md#adr-060ui-6b-g2-逐账号额度与耗尽切换2026-09-09)。
+UI-6b G2 已接线：Go 存储账号可读取官方三窗已用百分比与重置时刻；默认手动选择，可开启“额度耗尽时切换”，仅影响下一 Run。无来源/失败/过期不推算额度，多个 key 不相加为独立预算。自动与人工验证状态见 [ROADMAP](../review/roadmap-ui-2026-09-09.md)，具体边界见 [ADR-060](settings.md#adr-060ui-6b-g2-逐账号额度与耗尽切换2026-09-09)。
 
 ## 1. 产品能力
 
@@ -80,9 +80,9 @@ UI-6b G2 已接线：Go 存储账号可读取官方三窗已用百分比与重�
 
 | 面 | 当前能力 | 状态 |
 | --- | --- | --- |
-| Workbench | 紧凑 Header、Inspector 开合 / 页签、分组运行状态、共享主题 token | UI-1 已实现；自动验证与真窗口检查见 [路线图](../ROADMAP.md)；用户人工视觉验收已通过（2026-09-07），未归档。 |
-| TaskRail | 会话/任务选择、新建、长标题截断；悬停或键盘聚焦即可改名 / 归档 | UI-2 已实现；214 项自动检查与代理真窗口检查通过；等待用户人工视觉验收，见 [路线图](../ROADMAP.md)。 |
-| Timeline | 居中阅读列、用户消息卡片、变高虚拟化、流式条目、Markdown 子集、默认折叠思考与工具详情、审批、fork 边界、回底 | UI-3 思考与正文独立投影已实现（ADR-057），完整用户视觉验收未完成，详见 [路线图](../ROADMAP.md)。 |
+| Workbench | 紧凑 Header、Inspector 开合 / 页签、分组运行状态、共享主题 token | UI-1 已实现；自动验证与真窗口检查见 [路线图](../review/roadmap-ui-2026-09-09.md)；用户人工视觉验收已通过（2026-09-07），未归档。 |
+| TaskRail | 会话/任务选择、新建、长标题截断；悬停或键盘聚焦即可改名 / 归档 | UI-2 已实现；214 项自动检查与代理真窗口检查通过；等待用户人工视觉验收，见 [路线图](../review/roadmap-ui-2026-09-09.md)。 |
+| Timeline | 居中阅读列、用户消息卡片、变高虚拟化、流式条目、Markdown 子集、默认折叠思考与工具详情、审批、fork 边界、回底 | UI-3 思考与正文独立投影已实现（ADR-057），完整用户视觉验收未完成，详见 [路线图](../review/roadmap-ui-2026-09-09.md)。 |
 | Composer | 输入、发送、`@` host 展开 | 部分实现；真实 IME/粘贴仍待人工，`@` 候选仅在 Host capability 存在时实现。 |
 | Changes | Files/Summary/DiffView/ActivityPopover | 只读生产入口已实现；写操作仍是 ADR 候选。 |
 | Terminal | 创建、输入、resize、Stop/Close、输出 | 生产入口已实现；真 PTY 主路径已验收。 |

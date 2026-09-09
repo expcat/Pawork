@@ -58,7 +58,7 @@ Pawork/                  # 仓库根 = Cargo workspace 根
 | 文档 | 职责 |
 | --- | --- |
 | [docs/architecture.md](docs/architecture.md) | 架构：红线、包布局与依赖方向、冻结契约、安全语义 |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | 当前活动线：Desktop 模块重设计（UI-1～UI-6） |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | 当前活动线：GUI 用户体验收口（UX-01～UX-09）；上一条 Desktop 模块重设计（UI-1～UI-6）全文见 [历史记录](docs/review/roadmap-ui-2026-09-09.md) |
 | [docs/design.md](docs/design.md) | 功能设计：能力域与参照项目映射、明确不做的形态 |
 | [docs/spec/README.md](docs/spec/README.md) | 产品与包级 Spec 总索引 |
 | [docs/spec/crates/](docs/spec/README.md#12-包级-spec) | 每包一篇 Spec（agent 辅助阅读主入口） |

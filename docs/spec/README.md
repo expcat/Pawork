@@ -91,7 +91,8 @@ Spec 中的能力状态不替代验证结论。某项“已实现”只说明生
 | 真实 Desktop 线 | E0–E2 / P1–P4 | 旧阶段已停止承载活动计划；完成事实检索走 git 历史。 |
 | Settings 线 | SET-0～SET-7 | SET-0～SET-6h 已实现，本机真窗口验收通过（2026-09-05，证据见 [desktop.md §8](desktop.md#8-gui-收尾验收记录2026-09-05)）；四家真实账号认证矩阵人工验收仍 pending，缺口见 [Settings Spec](settings.md)。 |
 | Desktop 优化线 | OPT-D、OPT-1～OPT-4 | **已关闭**（2026-09-07）。全文与验收证据见 [review/roadmap-opt-2026-09-05.md](../review/roadmap-opt-2026-09-05.md)。OPT-D 已签字；OPT-1～OPT-4 均已实现并验收。 |
-| Desktop 模块重设计线 | UI-1～UI-6 | 2026-09-07 真窗口走查立项；规划见 [ROADMAP.md](../ROADMAP.md)。状态：已立项，未开始。每个任务重设计一个模块的 UI 与交互。 |
+| Desktop 模块重设计线 | UI-1～UI-6 | 2026-09-07 真窗口走查立项，每个任务重设计一个模块的 UI 与交互；均已实现，全文与验收证据移存 [review/roadmap-ui-2026-09-09.md](../review/roadmap-ui-2026-09-09.md)。 |
+| GUI 用户体验收口线 | UX-01～UX-09 | 2026-09-09 用户视角真窗口验收立项，验收报告见 [review/gui-ux-audit-2026-09-09.md](../review/gui-ux-audit-2026-09-09.md)；规划见 [ROADMAP.md](../ROADMAP.md)。状态：待实施。 |
 
 因此不会创建 P20 作为当前阶段。本目录使用领域化 Spec 名称；活动线编号以路线图为准。
 

@@ -1,6 +1,6 @@
 # Pawork Desktop GUI 设计
 
-> Desktop GUI 的设计事实源。P0–P2 收尾记录见 [Desktop Spec](spec/desktop.md#8-gui-收尾验收记录2026-09-05)；当前活动线见 [ROADMAP.md](ROADMAP.md)（每个任务重做一个模块的 UI 与交互；OPT-D 旧稿不再否决本线新视觉）。视觉实施基准见 [../design/README.md](../design/README.md)。产品/验收汇总见 [spec/desktop.md](spec/desktop.md)；包级 Spec 见 [spec/crates/desktop.md](spec/crates/desktop.md)。
+> Desktop GUI 的设计事实源。P0–P2 收尾记录见 [Desktop Spec](spec/desktop.md#8-gui-收尾验收记录2026-09-05)；当前活动线见 [ROADMAP.md](ROADMAP.md)（GUI 用户体验收口）；上一条 Desktop 模块重设计线（UI-1～UI-6，每个任务重做一个模块的 UI 与交互，OPT-D 旧稿不再否决新视觉）全文见 [历史记录](review/roadmap-ui-2026-09-09.md)。视觉实施基准见 [../design/README.md](../design/README.md)。产品/验收汇总见 [spec/desktop.md](spec/desktop.md)；包级 Spec 见 [spec/crates/desktop.md](spec/crates/desktop.md)。
 
 ---
 
@@ -48,7 +48,7 @@
 | 思考 | ADR-057 接通历史与 live；默认收起为 36px「思考 / Thinking」摘要，行前留 16px。展开后显示 14px secondary 全文，四边 12px 内边距；点击、Enter / Space、AX 共用状态，展开保持视口。只显示可见思考，无耗时来源则不画时长；收起时 AX 不含正文。 |
 | Run | 同 Run 的旧相位被后继状态吸收；原始事件不删。成功且没有可审阅文件时只显示完成页脚与原有 Fork 菜单，不重复画空摘要卡，独立页脚前留 12px；失败/取消保留原因卡，有真实 Changes 时保留 Review。 |
 
-**实现边界**：思考投影与默认折叠已按 [ADR-057](spec/desktop.md#adr-057ui-3-思考投影与会话身份2026-09-08) 实现；历史与 live 共用 reducer，committed 全文替换增量并保留思考首次出现的位置，分页与重放不重复、不跨工具移位。只展示可见 thinking，redacted 与 opaque reasoning 不进入 GUI。实现、自动检查、代理真窗口检查和用户人工验收分别见 [路线图](ROADMAP.md)。
+**实现边界**：思考投影与默认折叠已按 [ADR-057](spec/desktop.md#adr-057ui-3-思考投影与会话身份2026-09-08) 实现；历史与 live 共用 reducer，committed 全文替换增量并保留思考首次出现的位置，分页与重放不重复、不跨工具移位。只展示可见 thinking，redacted 与 opaque reasoning 不进入 GUI。实现、自动检查、代理真窗口检查和用户人工验收分别见 [路线图](review/roadmap-ui-2026-09-09.md)。
 
 ### UI-5 设置更新（2026-09-08）
 
@@ -65,7 +65,7 @@
 | Advanced / About | 标签与值按两列对齐，以细分隔线分行；长路径和值自然换行。Advanced 断线仍能进入并重连，About 仍以认证握手提供数据目录为可用条件。 |
 | 无障碍与滚动 | 七个非供应商页用 ScrollHandle 记录真实元素框，prepaint 后同步 AX；只发布滚动视口中的可见部分，离屏节点不发布动作。切页清除上一页测量，字号与语言按钮沿用既有实测框。 |
 
-UI-5 不改变供应商卡、目录、多账号、Host 设置写入或 wire。实现、自动检查和人工验收状态分别见 [路线图 UI-5](ROADMAP.md#ui-5-本批证据2026-09-08)。
+UI-5 不改变供应商卡、目录、多账号、Host 设置写入或 wire。实现、自动检查和人工验收状态分别见 [路线图 UI-5](review/roadmap-ui-2026-09-09.md#ui-5-本批证据2026-09-08)。
 
 ### UI-4 输入栏更新（2026-09-08）
 
@@ -76,7 +76,7 @@ Composer 沿用 UI-1 色板与圆角，与 UI-3 的 880px 阅读列居中对齐�
 - 卡片下方一行分别显示只读项目 chip 与真实 ContextMeter，缺容量仍显示 unavailable；无项目的文件工具提示与瞬态反馈各占独立行，避免挤压模型和发送。元信息行以 24px 为基准随字号增长，长文字在所属槽内截断。
 - 常态卡片至少 110px，多行草稿向上增长到 220px 后内部滚动；卡片外的留白与元信息不占这份增长预算。占位缩短为「给 Pawork 发消息…」，发送 tooltip 提示 Enter / Shift+Enter。草稿按会话保存、IME composing 阻止发送、空白输入禁用发送、运行中同槽取消、断线保留草稿与全禁用模型空态均沿用既有行为。
 
-实现、自动检查、真窗口与用户人工视觉验收分别记录在 [路线图 UI-4](ROADMAP.md#ui-4-本批证据2026-09-08)。
+实现、自动检查、真窗口与用户人工视觉验收分别记录在 [路线图 UI-4](review/roadmap-ui-2026-09-09.md#ui-4-本批证据2026-09-08)。
 
 ### UI-1 工作台视觉更新（2026-09-07）
 
@@ -89,7 +89,7 @@ Composer 沿用 UI-1 色板与圆角，与 UI-3 的 880px 阅读列居中对齐�
 - Inspector 开合为 180ms cubic ease-out 宽度过渡，快速反向从当前宽度续接；每帧使 Timeline 测高失效，空间不足立即归零（100% 至少 1288px，150% 至少 1320px，中央始终 ≥560px），resize 不写用户偏好。默认收起、显式重开、cmd-i 和 Changes / Terminal / Resources 原入口保留。
 - 状态栏高 30px，将真实状态文案分成四组元信息居中呈现；Quota unavailable、未知 token 与吞吐继续如实展示。
 
-本批实现、自动验证、代理真窗口检查与用户人工视觉验收分别记录在 [ROADMAP](ROADMAP.md)；2026-09-07 用户确认 UI-1 视觉通过。UI-2～UI-6 的模块结构与交互仍按各自任务处理。
+本批实现、自动验证、代理真窗口检查与用户人工视觉验收分别记录在 [ROADMAP 历史记录](review/roadmap-ui-2026-09-09.md)；2026-09-07 用户确认 UI-1 视觉通过。UI-2～UI-6 的验收状态同文记录。
 
 ## 3. 信息架构
 
@@ -164,7 +164,7 @@ Composer 沿用 UI-1 色板与圆角，与 UI-3 的 880px 阅读列居中对齐�
 - 项目头的名称、计数共用完整悬停与焦点面，覆盖到会话行同一右缘；有项目「+」时仍保留独立新建按钮。
 - 当前会话使用中性选中面，悬停即时反馈，键盘焦点描边独立显示；沿用 UI-1 色板和 6px 控件圆角。归档用单色 16px 盒形图标。
 - 改名编辑期间隐藏行操作，Enter 提交、Esc 取消；断线禁写，归档仅隐藏。可见控件与 AX 共享显示规则，动作点击不打开该会话。
-- 范围筛选、分组、项目折叠与定向新建保留既有行为。实现、自动检查与人工视觉验收状态分别见 [路线图](ROADMAP.md)。
+- 范围筛选、分组、项目折叠与定向新建保留既有行为。实现、自动检查与人工视觉验收状态分别见 [路线图](review/roadmap-ui-2026-09-09.md)。
 
 ### 3.3 Context、运行信息与 Inspector
 
@@ -237,7 +237,7 @@ GPUI view  →  projection（纯 Rust，可从 snapshot+events 重建）
 
 Manage models 弹层宽 320px、最高 400px，显示真实启用数、目录与账号权限的边界说明、批量操作和可滚动模型行。重绘保留滚动位置；默认角色菜单打开时滚入当前项，上下键移动时自动跟随高亮，分组头不计入选择索引。未知 context window 显示不可用，不把远端 0 哨兵显示成 0 容量。供应商页、角色菜单与模型弹层的 AX 读取 GPUI 实测框并裁剪视口外控件，鼠标、键盘与 AX 沿用同一写入 gate。额度无权威数据时仅显示不可用文案与空轨道，不画余额或百分比；多账户属于 UI-6b。
 
-目录与凭证语义见 [ADR-058](spec/settings.md#adr-058ui-6a-目录权威与凭证验证2026-09-08)，验证状态见 [路线图 UI-6a](ROADMAP.md#ui-6a-本批证据2026-09-08)。
+目录与凭证语义见 [ADR-058](spec/settings.md#adr-058ui-6a-目录权威与凭证验证2026-09-08)，验证状态见 [路线图 UI-6a](review/roadmap-ui-2026-09-09.md#ui-6a-本批证据2026-09-08)。
 
 ### 4.1 Timeline 恢复
 
@@ -322,11 +322,11 @@ OPT-1 行为已同步到 §3.5：审批与项目信任由 Host 保存 Global 配
 
 GUI 1.15 的 Credentials 区沿用 UI-6a 卡片，账号按名称与状态分行：名称/后续请求标记在首行，认证方式/掩码/过期状态在详情行，Use 与 Remove 位于账号内部。名称输入与 Add API key / Add OAuth 沿用 inline 认证流程；空名称禁提交，验证或授权失败保留旧账号与选择。Remove 先进入该行确认，Keep 退出；选中账号仍有其他记录时禁删并解释先选其他账号。列表和动作的实际布局框按 credential ID 绑定，重排不改变删除对象。
 
-“用于后续请求”不表示当前 Run 已切换。env 不列为可删除账号，Usage 保持 unavailable。低于 1.15 的 Host 继续呈现原有操作，不发送新命令。契约见 [ADR-059](spec/settings.md#adr-059ui-6b-命名账号与持久选择2026-09-08)，实现、自动检查与人工验收状态分别见 [路线图](ROADMAP.md#8-ui-6--providers供应商目录多账号)。
+“用于后续请求”不表示当前 Run 已切换。env 不列为可删除账号，Usage 保持 unavailable。低于 1.15 的 Host 继续呈现原有操作，不发送新命令。契约见 [ADR-059](spec/settings.md#adr-059ui-6b-命名账号与持久选择2026-09-08)，实现、自动检查与人工验收状态分别见 [路线图](review/roadmap-ui-2026-09-09.md#8-ui-6--providers供应商目录多账号)。
 
 
 ## UI-6b G2 额度交互更新（2026-09-09）
 
 Go 命名账号行下显示 5 小时/每周/每月的已用百分比和距离重置的时间，各账号有刷新按钮；同一订阅的多个 key 不合并、不相加。供应商级“额度耗尽时切换”默认关闭，只有 Host 1.16 且有显式选中 Go API key 才能开启；手动选择恢复关闭。开关在途禁再次发送，回执成功后读取 Host 状态。
 
-刷新时保留旧读数并显示加载，失败立即标过期；读数超过 30 秒、重置时间已到或来源时间异常均标过期。删除、重新登录、离页、断线使旧请求失效。无来源保持 unavailable。刷新与开关复用现有 Button/Switch，AX 按实际按钮框和视口裁剪，支持键盘、三档字号和窄窗。决议见 [ADR-060](spec/settings.md#adr-060ui-6b-g2-逐账号额度与耗尽切换2026-09-09)，验证状态见 [ROADMAP](ROADMAP.md)。
+刷新时保留旧读数并显示加载，失败立即标过期；读数超过 30 秒、重置时间已到或来源时间异常均标过期。删除、重新登录、离页、断线使旧请求失效。无来源保持 unavailable。刷新与开关复用现有 Button/Switch，AX 按实际按钮框和视口裁剪，支持键盘、三档字号和窄窗。决议见 [ADR-060](spec/settings.md#adr-060ui-6b-g2-逐账号额度与耗尽切换2026-09-09)，验证状态见 [ROADMAP](review/roadmap-ui-2026-09-09.md)。

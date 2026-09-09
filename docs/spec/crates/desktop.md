@@ -275,7 +275,7 @@ domain id 类型未从 client re-export，命令 / 查询经冻结的 serde 形�
 
 ## 5. 契约与不变量
 
-- **UI-3（2026-09-08，进行中）**：Markdown 正文与工具组默认折叠已实现。`expanded_timeline_details` 以首个 event id 保存显式展开状态，render / AX / 测高同源；输出完整换行，工具行不再限定总高度。旧 RunPhase 由同 Run 后继状态吸收，完成且无 Changes 时仅留页脚，失败/取消与 Review 卡保留。用户视觉反馈后改为 880px 居中列、16px 正文、26px 行高、12px 作者间距与段距、32px 消息间距（条目 padding 参与虚拟列表测高），用户消息为 20px 内边距浅底卡片；工具摘要 36px、无底色，展开保留细边线；详见 [UI-3 规格](../../gui-design.md#ui-3-时间线更新2026-09-08进行中)。ADR-057 补齐共享思考投影与 API 1.14，持久事件与业务依赖不变。思考为独立默认折叠的 36px 摘要，展开显示 14px secondary 全文、四边 12px 内边距；使用稳定 run/message 键与工具共用展开/焦点机制，测高、render、AX 同源，收起时 AX 不含正文。既有 AX 交互测试追加思考折叠/展开与视口保留断言；实际窗口/Provider 状态以 [路线图](../../ROADMAP.md) 为准。
+- **UI-3（2026-09-08，进行中）**：Markdown 正文与工具组默认折叠已实现。`expanded_timeline_details` 以首个 event id 保存显式展开状态，render / AX / 测高同源；输出完整换行，工具行不再限定总高度。旧 RunPhase 由同 Run 后继状态吸收，完成且无 Changes 时仅留页脚，失败/取消与 Review 卡保留。用户视觉反馈后改为 880px 居中列、16px 正文、26px 行高、12px 作者间距与段距、32px 消息间距（条目 padding 参与虚拟列表测高），用户消息为 20px 内边距浅底卡片；工具摘要 36px、无底色，展开保留细边线；详见 [UI-3 规格](../../gui-design.md#ui-3-时间线更新2026-09-08进行中)。ADR-057 补齐共享思考投影与 API 1.14，持久事件与业务依赖不变。思考为独立默认折叠的 36px 摘要，展开显示 14px secondary 全文、四边 12px 内边距；使用稳定 run/message 键与工具共用展开/焦点机制，测高、render、AX 同源，收起时 AX 不含正文。既有 AX 交互测试追加思考折叠/展开与视口保留断言；实际窗口/Provider 状态以 [路线图](../../review/roadmap-ui-2026-09-09.md) 为准。
 - **UI-1（2026-09-07）**：共享中性深色 token、6/8/12px 圆角，Header 80px（顶留 24px，标题 18px，动作 40×37px），Inspector 页签 48/40px，状态栏 30px。InspectorMotion 只保存瞬时宽度，以 180ms cubic ease-out 开合，反向连续，空间不足直接收起；每次实际宽度变化（含终帧）刷新 Timeline 测高缓存；AX 使用本帧相同宽度并裁去不可见动作，不改变偏好 / 四层架构 / wire。hover、pressed、焦点即时反馈。新规格见 [GUI 设计](../../gui-design.md#ui-1-工作台视觉更新2026-09-07)，旧阶段尺寸与色值不覆盖本项；自动验证与用户人工验收分开记录，后者已于 2026-09-07 通过。
 
 - **视觉基准事实源**：[../../../design/README.md](../../../design/README.md)（P0–P2 三张 1440×1024 逻辑尺寸阶段目标设计图） 与 [../../gui-design.md](../../gui-design.md)。P0-1 已把基础字阶、六档 spacing、三档 radius、2px focus ring、icon/menu 几何与 hover/pressed 状态冻结到 `theme.rs`；普通 panel 无 shadow，menu/popover 才有 elevation。2026-09-04 已完成三张阶段图的当前构建真窗口视觉签字；2026-09-05 又完成 P0 系统 IME 与 P1 真实 Provider / Review / Approval 补证，并完成 P2 八页、三档字号与窄窗收尾复验；实际记录见 [Desktop Spec §8](../desktop.md#8-gui-收尾验收记录2026-09-05)。以上证据仍不得由 token 测试替代，也不扩张为跨平台或发布级保证。
@@ -284,7 +284,7 @@ domain id 类型未从 client re-export，命令 / 查询经冻结的 serde 形�
 - **P1 Run 工作单元（2026-09-04，2026-09-05 收口）**：不改 reducer / wire / sequence，只在 `timeline_rows()` 的既有 run/order 上组织视觉。连续 tool 以首个 event id 为稳定 group key，标题汇总真实数量与状态并可折叠；terminal summary 吸收同 Run 的重复相位，完成、失败、取消不混写。只有当前 Session 的 Changes 为 Ready、非 stale 且至少包含一个文件时显示 `Ready for review` / `Review changes`，mouse / keyboard / AX 进入同一 Changes handler；空列表显示 `Run completed`。Approval 继续占最高层级并保持三决策 fail-closed。Inspector 三页共享诚实 empty/error/stale 语言，Activity 仅呈现 Changes，内容宽 320px，高度随字号为 144/180/216px。
 - **`gui.token` fail-closed**：token 缺失、不可读或为空即连接失败，禁止无认证静默连接；错误信息只含路径，token 内容不落日志。
 - **Enter / IME 语义**：keybinding 仅 `TextInput` 聚焦时生效；Enter 冒泡到 AppView 后结合 `is_composing()`（`marked_range` 存在即组合中）与发送可用性裁决；Shift+Enter 恒为换行；终端输入框同规则。
-- **UI-4 Composer（2026-09-08）**：卡片与正文居中对齐，留白、输入 / 动作与外部项目 / 上下文分层见 [GUI 设计](../../gui-design.md#ui-4-输入栏更新2026-09-08)。AX 对齐卡片内模型 / 发送坐标，补充真实 ContextMeter 节点；无项目提示与瞬态反馈不覆盖操作区。自动检查与真窗口状态见 [路线图](../../ROADMAP.md#ui-4-本批证据2026-09-08)。
+- **UI-4 Composer（2026-09-08）**：卡片与正文居中对齐，留白、输入 / 动作与外部项目 / 上下文分层见 [GUI 设计](../../gui-design.md#ui-4-输入栏更新2026-09-08)。AX 对齐卡片内模型 / 发送坐标，补充真实 ContextMeter 节点；无项目提示与瞬态反馈不覆盖操作区。自动检查与真窗口状态见 [路线图](../../review/roadmap-ui-2026-09-09.md#ui-4-本批证据2026-09-08)。
 - **Composer 草稿与空输入**：per-session HashMap + 无 session 槽；切换 session 先 stash 再 restore（`reset_text`，终端不参与）；`MessageSent` 成功清该 session 草稿，断线保留。空/纯空白输入使 Send disabled（tooltip「Message is empty.」），消除空点击面。
 - **OAuth 登录交互（2026-09-08）**：统一按 `AuthStartData` 呈现「打开授权链接」「复制链接」与可选「复制验证码」，三种输入路径共用 Settings action handler。打开只允许 HTTP(S)，需要当前 Connecting 且写 gate 有效；复制使用 Host 原始值，无额外标签。登录详情为可选中复制的只读 `TextInput`，长 URL 横滚、AX TextArea 只发布 Focus 不发布 SetValue；错误、端点和到期信息同样可复制。`read_only()` 保留选择 / Copy，屏蔽编辑、Undo / Redo 与 IME，内部 `reset_text` 更新仍有效。终态不再提供授权动作，离开 Settings 清理详情实体及复制反馈。未改 Host / wire / Secret 语义；行为定向验证与真窗口验收分别记录于 [Desktop Spec](../desktop.md)。
 - **Settings 默认模型（SET-5）**：默认项只在 Host `set_default_model` Data 确认后更新 Composer（`selected_model` 同步、清 pending），随后重查 `provider_auth_status` 落地权威 `default`；失败走 OperationFailed 不落地乐观状态。默认失效（provider 未连接，或已加载目录不含该 model，包括成功加载为空）显式提示；尚未成功加载的空目录不判定不误报，不静默切换；`Set default` 要求 provider 已连接、非 stale、非当前默认（四路径同 gate）。刷新失败保留旧列表与默认项。
@@ -333,7 +333,7 @@ domain id 类型未从 client re-export，命令 / 查询经冻结的 serde 形�
 
 焦点反馈回归 `pointer_focus_stays_functional_without_ring_and_keyboard_restores_it` 使用真实 GPUI 鼠标 / Tab 事件，覆盖点击保留功能焦点、键盘恢复提示、点击遮挡并吞事件的控件仍清除提示。
 
-UI-2 新增 `session_actions_follow_hover_and_keyboard_without_opening`：真实 GPUI 鼠标 / Tab 驱动非当前会话动作，核对悬停可见、点击改名不切会话、取消后焦点保留、断线禁写与 AX 同源；本批实际命令与结果见 [路线图](../../ROADMAP.md)。
+UI-2 新增 `session_actions_follow_hover_and_keyboard_without_opening`：真实 GPUI 鼠标 / Tab 驱动非当前会话动作，核对悬停可见、点击改名不切会话、取消后焦点保留、断线禁写与 AX 同源；本批实际命令与结果见 [路线图](../../review/roadmap-ui-2026-09-09.md)。
 
 UI-4 本批实跑 216 个测试，全部内嵌于 bin target（`#[cfg(test)]` 模块；无 crate `tests/` 目录），下表保留历次测试资产分布，本批总数以实跑日志为准：
 
@@ -390,9 +390,9 @@ cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders
 
 2026-09-07 OPT-4 完成效果审查：修复 Settings 导航在大字号下 AX 间距漂移、外观页字号/语言按钮仍用旧原点与估算纵坐标、Scope 长菜单 AX 未裁剪且键盘高亮不滚动三项缺口。导航沿用 rem 布局，外观按钮和 Scope 菜单经宿主 `ScrollHandle` 读取 GPUI 实测位置；Scope 使用 `MenuPanel::track_scroll`，首帧布局后滚入当前项、键盘移动时滚入高亮项；AX 在布局完成后同步。复用导航/外观测试，新增一个 Scope 多项目滚动主路径。验证状态见 [ROADMAP §10.12](../../review/roadmap-opt-2026-09-05.md#1012-opt-4-完成效果审查与修复2026-09-07)。
 
-2026-09-07 UI-1 已实现；Desktop 定向测试 213/213 与构建通过（本机使用临时库搜索索引，未改 Cargo 配置）。新增覆盖开合反向连续、窄窗归零、过渡期 AX 裁剪与不可见动作拒绝；共享文字对比度改按 AA 下限验证。代理真窗口检查通过：真实 Host 连接、Inspector 开合 / 连续切换与三页签、Activity → Changes、宽窄布局及 100% / 125% / 150% 字号；probe 确认 1 个空测试会话与 13 个模型，未发起 Run。用户人工视觉验收已通过（2026-09-07），未归档；证据见 [ROADMAP UI-1](../../ROADMAP.md#ui-1-本批证据2026-09-07)。
+2026-09-07 UI-1 已实现；Desktop 定向测试 213/213 与构建通过（本机使用临时库搜索索引，未改 Cargo 配置）。新增覆盖开合反向连续、窄窗归零、过渡期 AX 裁剪与不可见动作拒绝；共享文字对比度改按 AA 下限验证。代理真窗口检查通过：真实 Host 连接、Inspector 开合 / 连续切换与三页签、Activity → Changes、宽窄布局及 100% / 125% / 150% 字号；probe 确认 1 个空测试会话与 13 个模型，未发起 Run。用户人工视觉验收已通过（2026-09-07），未归档；证据见 [ROADMAP UI-1](../../review/roadmap-ui-2026-09-09.md#ui-1-本批证据2026-09-07)。
 
-UI-6a 将目录 context window 的 0 哨兵视为 unknown，在 Context 显示 unavailable；复用既有投影用例覆盖该值。复用四个既有 Provider AX 测试，以真实 GPUI prepaint 对照元素框；覆盖 secure input 脱敏、角色过滤、模型启用与空目录、stale 禁写、角色长目录的当前项 / 上下键滚入、模型菜单滚动保持 / 离屏裁剪，以及 1080×720 下 100% / 125% / 150% 展开卡页面滚动。Provider 页面、四角色与模型弹层沿用 `settings_element` 实测框；无新依赖或 wire 变更。规格与验证分别见 [GUI 设计](../../gui-design.md#ui-6a-供应商更新2026-09-08) 和 [路线图](../../ROADMAP.md#ui-6a-本批证据2026-09-08)。
+UI-6a 将目录 context window 的 0 哨兵视为 unknown，在 Context 显示 unavailable；复用既有投影用例覆盖该值。复用四个既有 Provider AX 测试，以真实 GPUI prepaint 对照元素框；覆盖 secure input 脱敏、角色过滤、模型启用与空目录、stale 禁写、角色长目录的当前项 / 上下键滚入、模型菜单滚动保持 / 离屏裁剪，以及 1080×720 下 100% / 125% / 150% 展开卡页面滚动。Provider 页面、四角色与模型弹层沿用 `settings_element` 实测框；无新依赖或 wire 变更。规格与验证分别见 [GUI 设计](../../gui-design.md#ui-6a-供应商更新2026-09-08) 和 [路线图](../../review/roadmap-ui-2026-09-09.md#ui-6a-本批证据2026-09-08)。
 
 ## 8. 注意事项与已知限制
 

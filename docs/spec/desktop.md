@@ -4,7 +4,7 @@
 
 ## ADR-057：UI-3 思考投影与会话身份（2026-09-08）
 
-状态：**Accepted**，用户在本次会话明确「确认实施」。实现、自动验证、代理真窗口检查和用户人工视觉验收分别登记在 [路线图](../ROADMAP.md)。
+状态：**Accepted**，用户在本次会话明确「确认实施」。实现、自动验证、代理真窗口检查和用户人工视觉验收分别登记在 [路线图](../review/roadmap-ui-2026-09-09.md)。
 
 - **GUI API 1.14**：复用 live `AppEvent::ThinkingDelta`；历史新增 `TimelineItemKind::ThinkingDelta` 与可选 `message_id` / `thinking_text`。每个持久事件仍只对应一条 wire 条目，`MessageCommitted` 的正文与思考同载于 `AssistantMessage`，共享 reducer 再拆成显示行，不改变磁盘事件 schema 或 SQLite 版本。
 - **合并与降级**：reducer 按 run/message/正文或思考维度合并有序增量，committed 全文替换累积体并阻止迟到增量重复追加；思考保留首次增量的 sequence/timestamp，迟到增量只可前移已有思考行，不恢复隐藏内容；分页、live 和重放收敛。Host 对 API <1.14 的历史响应移除新 kind 与新字段，保留原 `next_sequence` / `head_sequence` / `complete`，包括整页被过滤时的游标。
@@ -24,7 +24,7 @@
 - **D4a 自动命名并发收口（2026-09-06 审查修复）**：读取素材只读重放，不决议 pending approval、不追加 Agent 事件；命名任务快照依赖后释放 Core 锁，装配、目录解析、补全共用 20s 超时。写回前确认命名配置仍有效，以单条条件 UPDATE 校验占位标题并写入，避免覆盖手动改名；改名/配置清除期间返回的旧结果丢弃。
 - **D5 `AppEvent::SessionMetaChanged{session_id, title, archived}`**：改名/归档/自动标题写回后由 Host 经 EventHub 广播；Desktop 收到后重取 snapshot，列表即时反映写后状态。当前会话归档时一并收口 Composer、分页、Changes 与 Terminal workspace 草稿；重复刷新保持当前 UI scope。新建会话严格使用创建回执的 session_id，不从列表顺序猜测。
 
-当前活动线 UI-3 的 Markdown、工具折叠与 Run 终态呈现更新见 [GUI 设计](../gui-design.md#ui-3-时间线更新2026-09-08进行中)；下文旧阶段数值不覆盖本次规格。独立思考投影与默认折叠已按 ADR-057 实现，UI-3 等待用户人工视觉验收；自动检查、真窗口与人工验收分别见 [路线图](../ROADMAP.md)。
+当前活动线 UI-3 的 Markdown、工具折叠与 Run 终态呈现更新见 [GUI 设计](../gui-design.md#ui-3-时间线更新2026-09-08进行中)；下文旧阶段数值不覆盖本次规格。独立思考投影与默认折叠已按 ADR-057 实现，UI-3 等待用户人工视觉验收；自动检查、真窗口与人工验收分别见 [路线图](../review/roadmap-ui-2026-09-09.md)。
 
 ## 1. 产品定位
 
@@ -97,11 +97,11 @@ flowchart LR
 
 - Timeline 使用 880px 居中可读列，两侧至少各留 28px；16px / 26px 正文、32px 消息间距，用户浅底卡片与 36px 轻量工具摘要区分层次；独立完成页脚前留 12px。
 - TaskRail project count 使用 56px 右对齐尾槽；UI-2 task time / 行操作共用 64px 固定尾槽；Header 为 medium；24px StatusBar 使用 12px 字阶和窄窗裁切。
-- UI-4 Composer 的 input / 模型 / Send/Cancel 共属居中卡片（至少 110px、最高 220px），项目与上下文移到卡片下方；缺值仍如实显示 unavailable。留白、字号与交互见 [GUI 设计](../gui-design.md#ui-4-输入栏更新2026-09-08)，当前验收状态见 [路线图](../ROADMAP.md#ui-4-本批证据2026-09-08)。
+- UI-4 Composer 的 input / 模型 / Send/Cancel 共属居中卡片（至少 110px、最高 220px），项目与上下文移到卡片下方；缺值仍如实显示 unavailable。留白、字号与交互见 [GUI 设计](../gui-design.md#ui-4-输入栏更新2026-09-08)，当前验收状态见 [路线图](../review/roadmap-ui-2026-09-09.md#ui-4-本批证据2026-09-08)。
 - Changes 文件行使用稳定前后槽；DiffView 的只读路径 header 位于横滚外，24px 语义 gutter 与中性正文分离；ActivityPopover 内容宽 320px，内容高随 100%/125%/150% 为 144/180/216px，外框包含 8px padding 与 1px border，摘要可见且保持 capability honesty。
 - 三张阶段图与本机视觉走查已收口；此结论不扩张为 Timeline/Changes 全状态 AX 几何覆盖或发布级签字。
 
-UI-5 设置壳与七个非供应商页沿用 UI-1 token，改为 40px 导航、36px 动作与全宽分区布局；页内命中框按 GPUI 实际布局和滚动视口同步，离屏项不暴露动作。原有设置持久化、可用性与断线 gate 不变，供应商页产品改动属于 UI-6。规格见 [GUI 设计 UI-5](../gui-design.md#ui-5-设置更新2026-09-08)，验收状态见 [路线图](../ROADMAP.md#ui-5-本批证据2026-09-08)。
+UI-5 设置壳与七个非供应商页沿用 UI-1 token，改为 40px 导航、36px 动作与全宽分区布局；页内命中框按 GPUI 实际布局和滚动视口同步，离屏项不暴露动作。原有设置持久化、可用性与断线 gate 不变，供应商页产品改动属于 UI-6。规格见 [GUI 设计 UI-5](../gui-design.md#ui-5-设置更新2026-09-08)，验收状态见 [路线图](../review/roadmap-ui-2026-09-09.md#ui-5-本批证据2026-09-08)。
 
 ## 5. 键盘、IME 与可访问性
 
