@@ -210,10 +210,11 @@ pub(super) fn tool_entry_height(entry: &TimelineEntry, width: f32, rem: f32) -> 
         name,
         status,
         detail,
+        arguments,
     } = &entry.kind
     {
         tool_row_height(
-            &ToolRowView::from_parts(name, status, detail.as_deref()),
+            &ToolRowView::from_facts(name, status, arguments.as_deref(), detail.as_deref()),
             width,
             rem,
         )
@@ -222,8 +223,23 @@ pub(super) fn tool_entry_height(entry: &TimelineEntry, width: f32, rem: f32) -> 
     }
 }
 
+pub(super) fn review_available_for_run(
+    timeline: &[TimelineEntry],
+    entry: &TimelineEntry,
+    available: bool,
+) -> bool {
+    available
+        && entry.fork_boundary == Some(ForkBoundary::Completed)
+        && entry.run_id.is_some()
+        && entry.run_id.as_deref()
+            == timeline
+                .iter()
+                .rev()
+                .find_map(|entry| entry.run_id.as_deref())
+}
+
 pub(super) fn run_summary_card_visible(entry: &TimelineEntry, review: bool) -> bool {
-    entry.fork_boundary != Some(ForkBoundary::Completed) || review
+    entry.fork_boundary == Some(ForkBoundary::Failed) || review
 }
 
 /// Timeline 单行内容高度公式（render 组装同源；AX 行 rect 共用）。文本
@@ -288,6 +304,8 @@ pub(super) fn timeline_row_height(
                 }
         }
         TimelineRow::RunSummary { group, terminal } => {
+            let review_changes_available =
+                review_available_for_run(timeline, &timeline[*terminal], review_changes_available);
             let mut height = 0.0;
             if let Some(group) = group {
                 height += metrics::TOOL_GROUP_HEADER_HEIGHT;
@@ -615,9 +633,19 @@ impl AppView {
                             .child(self.run_summary_element(&summary, &entry.event_id, cx)),
                     );
                 }
-                let footer_label = run_footer_label(&entry).unwrap_or("Run");
+                let footer_label = format!(
+                    "{} · {}",
+                    if show_card {
+                        ""
+                    } else {
+                        run_footer_label(&entry).unwrap_or("Run")
+                    },
+                    self.projection.run_usage_label(entry.run_id.as_deref())
+                )
+                .trim_start_matches(" · ")
+                .to_string();
                 let footer_time = display_time(&entry.timestamp, now_unix_ms());
-                let footer = self.run_footer_element(footer_label, &footer_time);
+                let footer = self.run_footer_element(&footer_label, &footer_time);
                 let menu = self.entry_menu_dropdown(&entry, fork_available, cx);
                 region
                     .child(
@@ -652,11 +680,12 @@ impl AppView {
                     name,
                     status,
                     detail,
+                    arguments,
                 } = &entry.kind
                 else {
                     return ToolRowView::from_parts("tool", "", None);
                 };
-                ToolRowView::from_parts(name, status, detail.as_deref())
+                ToolRowView::from_facts(name, status, arguments.as_deref(), detail.as_deref())
             })
             .collect()
     }
@@ -675,7 +704,12 @@ impl AppView {
     /// 非空 Changes 显示 Review changes，其余完成态使用轻量摘要）。
     fn run_summary_view(&self, entry: &TimelineEntry) -> RunSummaryView {
         let completed = entry.fork_boundary == Some(ForkBoundary::Completed);
-        let review_changes_enabled = completed && self.changes_available_for_active();
+        let review_changes_enabled = completed
+            && review_available_for_run(
+                &self.projection.timeline,
+                entry,
+                self.changes_available_for_active(),
+            );
         let (title, description) = run_summary_texts(entry, review_changes_enabled)
             .unwrap_or(("Run", "The run reached a terminal state.".to_string()));
         RunSummaryView {

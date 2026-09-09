@@ -55,6 +55,11 @@ impl DesktopController {
     /// 拉取直到 complete；分页期间先到的 live 事件由 projection 按 sequence
     /// 去重（gui-design §4.1 第 3 条）。
     pub fn open_session(&self, session_id: String) {
+        self.refresh_timeline(session_id, None);
+    }
+
+    /// Completion notifications hydrate only the current Run's persisted range.
+    pub fn refresh_timeline(&self, session_id: String, after: Option<u64>) {
         let Some(client) = self.current_client() else {
             self.emit_reliable(ControllerEvent::SessionOpenFailed {
                 session_id,
@@ -64,7 +69,7 @@ impl DesktopController {
         };
         let events = self.event_sender();
         self.runtime.spawn(async move {
-            let mut after: Option<u64> = None;
+            let mut after = after;
             for _ in 0..MAX_PAGES {
                 let query = session_get_query(&session_id, after);
                 let response = match client

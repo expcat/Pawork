@@ -1044,6 +1044,7 @@ fn tool_entry(sequence: u64, run_id: &str, name: &str, status: &str) -> Timeline
             name: name.into(),
             status: status.into(),
             detail: None,
+            arguments: None,
         },
         Some(run_id),
     )
@@ -1224,7 +1225,7 @@ fn snapshot_active_runs_restore_cancel_target_on_select() {
     );
     assert_eq!(
         projection.run_status_label(1_700_000_045_000),
-        "Task — tokens | Task quota — | — tok/s | Run 00:45"
+        "Run usage — | Duration 00:45"
     );
 }
 
@@ -1329,16 +1330,29 @@ fn session_live_status_running_needs_input_priority_and_plain() {
 #[test]
 fn run_status_label_uses_final_order_and_vertical_separators() {
     let mut projection = DesktopProjection::default();
+    assert_eq!(projection.run_status_label(0), "Run usage —");
+    projection.select_session("s-1");
+    let usage_page = page(
+        vec![history_item(
+            1,
+            "run_completed",
+            json!({
+                "text": r#"{"input_tokens":12,"output_tokens":7}"#
+            }),
+        )],
+        true,
+    );
+    projection.apply_timeline_page(&usage_page);
+    projection.apply_timeline_page(&usage_page);
     assert_eq!(
         projection.run_status_label(0),
-        "Task — tokens | Task quota — | — tok/s | Run idle"
+        "Run tokens · input 12 · output 7"
     );
+    projection.select_session("s-2");
+    assert_eq!(projection.run_status_label(0), "Run usage —");
     // active run 缺权威起始时间：时长诚实显示 —，不编造 mm:ss。
     projection.active_run_id = Some("r-unknown-start".into());
-    assert_eq!(
-        projection.run_status_label(0),
-        "Task — tokens | Task quota — | — tok/s | Run —"
-    );
+    assert_eq!(projection.run_status_label(0), "Run usage — | Duration —");
 }
 
 /// R3 Wave A 审查修复（P1）：live RunChanged 非终态登记 run 成员（含
@@ -1473,6 +1487,22 @@ fn note_user_echo_appends_active_then_wire_events_land_after() {
     // 非 active session（发送后已切走）不 echo：重放会补。
     assert!(!projection.note_user_echo("s-2", "r-3", "away", 6_000));
     assert_eq!(projection.timeline.len(), 3);
+    let persisted = page(
+        vec![history_item(
+            6,
+            "user_message",
+            json!({"run_id": "r-2", "text": "hello"}),
+        )],
+        true,
+    );
+    projection.apply_timeline_page(&persisted);
+    projection.apply_timeline_page(&persisted);
+    assert_eq!(projection.timeline.len(), 3);
+    assert!(!projection
+        .timeline
+        .iter()
+        .any(|entry| entry.event_id == "local-echo-r-2"));
+    assert!(!projection.note_user_echo("s-1", "r-2", "hello", 6_000));
 }
 
 /// R4 Wave B 评审 P2 修复：早死路径（engine 未报终态）的合成
@@ -2724,7 +2754,7 @@ fn live_tool_output_fills_running_entry() {
     assert!(projection.apply_event(&tool_output(11, "call-1", "chunk-a")));
     assert!(matches!(
         &projection.timeline[0].kind,
-        TimelineEntryKind::ToolCall { name, status, detail }
+        TimelineEntryKind::ToolCall { name, status, detail, .. }
             if name == "fs_read" && status == "running" && detail.as_deref() == Some("chunk-a")
     ));
     projection.apply_timeline_page(&page(
@@ -2743,6 +2773,7 @@ fn live_tool_output_fills_running_entry() {
                 name,
                 status,
                 detail,
+                ..
             } => Some((name.as_str(), status.as_str(), detail.as_deref())),
             _ => None,
         })

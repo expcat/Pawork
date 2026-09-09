@@ -213,7 +213,7 @@ fn timeline_items_dedup_by_sequence_and_merge_committed_text() {
     assert_eq!(projection.entries.len(), 3);
     assert!(matches!(
         &projection.entries[2].kind,
-        TimelineEntryKind::ToolCall { name, status, detail }
+        TimelineEntryKind::ToolCall { name, status, detail, .. }
             if name == "fs_read" && status == "succeeded" && detail.as_deref() == Some("42 bytes")
     ));
 
@@ -419,6 +419,7 @@ fn concurrent_historical_tools_keep_outputs_by_tool_call_id() {
                 name,
                 status,
                 detail,
+                ..
             } => Some((name.as_str(), status.as_str(), detail.as_deref())),
             _ => None,
         })
@@ -450,7 +451,7 @@ fn duplicate_live_start_enriches_legacy_history_tool_anchor() {
     assert_eq!(projection.entries.len(), 1);
     assert!(matches!(
         &projection.entries[0].kind,
-        TimelineEntryKind::ToolCall { name, status, detail }
+        TimelineEntryKind::ToolCall { name, status, detail, .. }
             if name == "fs_read"
                 && status == "succeeded"
                 && detail.as_deref() == Some("42 bytes")

@@ -638,16 +638,33 @@ impl DesktopProjection {
         }
     }
 
-    /// RunStatusBar：缺权威来源的字段显示 `—`，不伪造 token / quota / tok/s。
-    /// F-13 定稿语序与竖线分隔：Task tokens | quota | tok/s | Run 时长。
-    /// `now_ms` 由 UI 注入，投影层不读系统时钟。
-    pub fn run_status_label(&self, now_ms: u64) -> String {
-        let duration = match (self.active_run_id.as_ref(), self.active_run_started_at_ms) {
-            (Some(_), Some(started_at_ms)) => format_run_duration(started_at_ms, now_ms),
-            (Some(_), None) => "—".into(),
-            (None, _) => t("run.status_idle").into(),
+    /// Latest Run only; terminal usage comes from persisted cumulative usage, never stream snapshots.
+    pub fn run_usage_label(&self, run: Option<&str>) -> String {
+        let Some(usage) = run.and_then(|run| self.timeline.run_usage(run)) else {
+            return t("run.usage_unknown").into();
         };
-        t("run.status_bar").replace("{}", &duration)
+        t("run.usage")
+            .replace("{input}", &usage.input_tokens.to_string())
+            .replace("{output}", &usage.output_tokens.to_string())
+    }
+
+    pub fn run_status_label(&self, now_ms: u64) -> String {
+        let run = self.active_run_id.as_deref().or_else(|| {
+            self.timeline
+                .iter()
+                .rev()
+                .find_map(|entry| entry.run_id.as_deref())
+        });
+        let usage = self.run_usage_label(run);
+        match (self.active_run_id.as_ref(), self.active_run_started_at_ms) {
+            (Some(_), Some(start)) => format!(
+                "{usage} | {} {}",
+                t("run.duration"),
+                format_run_duration(start, now_ms)
+            ),
+            (Some(_), None) => format!("{usage} | {} —", t("run.duration")),
+            _ => usage,
+        }
     }
 
     /// Reconnect 相位（F-02 壳层校准）：仅 Disconnected / ConnectFailed 提供

@@ -143,7 +143,7 @@ pawork-desktop [--socket <path>] [--instance <name>] [--probe|--probe-smoke]
   - Changes：Files / Summary 二级页签 + ↻ 手动刷新。Files = 文件清单（路径 · status · `+A/−D`，≤200px 内滚动）+ DiffView（等宽 Menlo；hunk 头 raised 底 secondary 字；addition 行 success_bg 底 / deletion 行 danger_bg 底 / context 行 panel 底；长行 `overflow_x_scroll` 横滚不折行；binary 显示「Binary file — not rendered.」）。Summary = 七字段行（Session / Files / Lines / By status / Branch / Dirty files / Work dir，缺失显 unknown）。数据会话 ≠ 查看会话时顶端 banner 如实标注。
   - Terminal：host 流式 `TerminalOutput` 滚动文本（非 VT100、无本地 PTY）+ cwd 与尺寸组（`−W +W [列×行] −H +H`：stepper 只改本地草稿并钳制在 20–500 列 / 6–200 行，可见值与 AX value 同源；尺寸按钮把草稿经 `terminal_resize` 下发，在途时禁重复提交，仅匹配当前终端与当前草稿的回执才清草稿，终端切换也复位；缺/空 cwd 事实显示 `unknown`，G3）+ 终端输入（Enter 写入，未启动时先懒创建；write/resize 瞬态失败在终端仍 running 时不锁死，仅 status_hint 报错，G2）+ Start / New / Size 单槽（未创建 Start；可操作 Size；已知 exited/killed 变 New——同 workspace/cwd 新建终端，旧终端只读保留；failed 须先 Close 清理后回到 Start；create/resize 在途时同 gate 禁用，G2）+ ADR-045 Stop/Close 同槽（running Stop，终态 Close）+ 脱钩回底控件。
   - Resources：MCP server 只读表（name + state 徽标，`failed` 红字；`transport · N tools[ · last_error]` 次行）+ ↻ 刷新。
-- **StatusBar + ActivityPopover（R6 Wave A / P1-4）**：UI-1 底部 30px StatusBar 以四组元信息居中显示 RunStatusBar `Task — tokens | Task quota — | — tok/s | Run {mm:ss|—|idle}`（缺权威来源一律 `—`）。OPT-4b（F6）起 Inspector 默认折叠（宽屏同样），显式动作（重开 / Activity 摘要 / Review changes）才展开。Inspector 展开态由面板内右上 `inspector-collapse`（36×36、20px 字形）折叠；折叠态 Workspace Header 右上 `inspector-toggle` Activity 触发器与最右 `inspector-expand` 重开按钮并存（各 40×37 槽、4px 间距），点击后在触发器下方以右缘对齐展开 Popover（内容宽 320px，内容高随字号为 144/180/216px）：标题 Activity、Changes 标题与权威摘要 `N file(s) · +A/−D` 或 `unavailable`；点击摘要或 Run Summary 的 Review changes 均展开 Inspector、定位 Changes 并聚焦当前选中的 Changes 顶层页签；仅有 latest 会话差异时加来源说明。Agent/Add tool 无 capability 不画，也不为其保留空白高度。
+- **StatusBar + ActivityPopover（R6 Wave A / P1-4）**：UX-07 底部 30px StatusBar 显示当前 / 最近 Run 的输入、输出 tokens（缺失为 `本轮用量 —`），运行中附加时长。OPT-4b（F6）起 Inspector 默认折叠（宽屏同样），显式动作（重开 / Activity 摘要 / Review changes）才展开。Inspector 展开态由面板内右上 `inspector-collapse`（36×36、20px 字形）折叠；折叠态 Workspace Header 右上 `inspector-toggle` Activity 触发器与最右 `inspector-expand` 重开按钮并存（各 40×37 槽、4px 间距），点击后在触发器下方以右缘对齐展开 Popover（内容宽 320px，内容高随字号为 144/180/216px）：标题 Activity、Changes 标题与权威摘要 `N file(s) · +A/−D` 或 `unavailable`；点击摘要或 Run Summary 的 Review changes 均展开 Inspector、定位 Changes 并聚焦当前选中的 Changes 顶层页签；仅有 latest 会话差异时加来源说明。Agent/Add tool 无 capability 不画，也不为其保留空白高度。
 
 ### 3.3 键盘与焦点
 
@@ -199,6 +199,14 @@ UX-06（2026-09-09）：供应商列表按已连接优先稳定排序，render /
 - ADR-053：保存到用户配置目录 `desktop.json`，重启恢复；缺文件默认 English。不触碰 Host / 会话 / Run 状态。
 - 翻译边界：只翻译 chrome 文案（按钮、提示、空态、状态提示、tooltip、Settings 页）；session 标题、provider / model id、文件路径、工具输出、wire 错误原因等数据内容保持原文；品牌名「Pawork」、功能符号（✕ ↑ ⚙ + ▤ ◷ ↻ ↓）与示例数据不翻译。
 - render 与 AX 经同一 `t()` 调用同源取词；AX 节点 id 保持英文。
+
+#### UX-07 工具与运行事实（2026-09-09）
+
+展开工具共用 render / AX / 测高的参数、结果文本，参数 JSON 格式化显示；明确区分“尚无结果数据”“结果为空”，有权威目录 metadata 时显示相对路径与“0 项（空目录）”。工具完成及 Run 终态通知后，controller `refresh_timeline` 使用现有 SessionGet 从当前 Run 已知最早序号前补读，reducer 合并历史，不清草稿和时间线；跨任务迟到页继续经 session gate 拒绝。持久化用户消息回填时替换同 Run 的本地回显；迟到的发送回执不再追加第二份。
+
+Run 页脚和底栏使用 `run_usage_label` 显示对应 Run 输入 / 输出 tokens。累计值仅取持久化 Completed / Failed / Cancelled 的 `usage`；零值有效，缺值未知，活动 Run 不沿用上一轮读数。取消只保留轻量页脚；失败卡保留原因，页脚不重复状态；Review changes 仅挂到当前任务最近 Run，不能把当前差异挂到早先回合。底栏移除无信息的常驻 quota / tok/s / idle 占位，运行中保留真实开始时间驱动的时长；ContextMeter 与订阅额度范围不变。
+
+复用现有投影、本地回显、工具文本与 AX 行高测试，并与 protocol 的实时/历史 golden 同批验证。无新增生产依赖、wire 类型或安全默认变化；真窗口与用户验收状态见 [路线图 UX-07](../../ROADMAP.md#ux-07-工具与运行事实可核查)。
 
 ## 4. 核心行为与数据流
 
@@ -313,7 +321,7 @@ domain id 类型未从 client re-export，命令 / 查询经冻结的 serde 形�
 - **Workspace Header 诚实口径（R4 Wave A，F-05；P0-3）**：骨架常存；UI-1 起用留白与 Timeline 分层，不再画底部分隔线，缺字段只隐藏该项；branch 仅 GitDiffInfo.branch、有 active session 且无 session_mismatch 时显示（wire WorkspaceSummary 无 branch）；终态只画 live 可派生 Running / Needs input / Blocked（SessionLiveStatus 同源），wire 无终态字段不画 Completed 绿点；无 active Task 的空态由中央 Primary New task 承担唯一主路径，Header 同态不重复该动作。assistant 角色词 render 与 AX 统一为 Pawork；tool 行无耗时字段（wire 无 duration）；Run 摘要卡状态圆随终态种类（Completed 绿 ✓ / Failed danger ✕ / Cancelled —），不对失败/取消宣称成功；Review changes 走真实 Inspector/Changes 入口（先快照可用性再 refresh，Changes unavailable 时 disabled 给原因、Fetching 进行中不误报），Open in editor 无 capability 不画；消息/错误/页脚时间戳经 `display_time` 渲染为相对词 now/Nm/Nh/Nd（epoch millis 解析失败原样兜底，不伪造）。
 - **重连三态可见**：Replay / SnapshotRequired / UpToDate 必须以文字在侧栏区分（不只靠颜色）；仅 SnapshotRequired 换基线重分页。
 - **TaskRail 状态点诚实语义（R3 Wave A + Wave B）**：`SessionLiveStatus` 三态——NeedsInput（该 session 有待审批）> Running（`active_runs` 成员，含 live `RunChanged` 非终态登记）> Blocked（R3 Wave B live 派生：该 session 最近一条 `RunChanged` 为终态且 state ∈ failed / interrupted，completed / cancelled 不算；同 session 任何其它 `RunChanged` 清除；快照重建清空——wire 无终态来源，Replay 重放终态事件可重新派生）；其余会话一律空心灰圆，wire 无每会话终态字段故不画终态绿点；apply_event 在 active-session 闸门前跨会话维护成员关系，终态按 run_id 移除并清 pendings。unread 为独立通道（`session_unread()`）：非 active session 的 Session-stream 活动事件（RunChanged / AssistantDelta / ToolStarted / ToolOutput / ToolCompleted / MessageSent / Diagnostic；MessageSent 为本地 composer 回执只属 active session，不经 wire）标记，`select_session` 清除，首连 / 快照重建不产生（无 last-seen 基线）。
-- **诚实显示**：tokens / quota / tok/s 无权威来源一律 `—`；ContextMeter 只用 catalog 的 `context_window_tokens`；Changes / Resources 未拉取显 unavailable 而非 0；`now_ms` 由 UI 注入，投影层不读系统时钟。
+- **诚实显示**：Run tokens 仅取终态持久化累计用量，缺失为 `—`；底栏不再常驻 quota / tok/s 占位；ContextMeter 只用 catalog 的 `context_window_tokens`；Changes / Resources 未拉取显 unavailable 而非 0；`now_ms` 由 UI 注入，投影层不读系统时钟。
 - **终端约束**：`terminal_create` 的 cwd 只接受 workspace 相对路径（拒绝绝对路径、Windows 盘符前缀、`..` 分量）；终端面为滚动纯文本，无本地 PTY/VT emulator。显示层与 AX 同源过滤 CSI/OSC 等 ANSI/VT 控制序列并归一 CR 换行，不修改 Host 保存的原始 output。输入草稿和 create 失败按 workspace 隔离；ADR-045 已提供真实 `terminal_close` 与 live `TerminalExited`（API 1.3，旧 minor 不推新事件），running 显示 Stop、已知 exited/killed/failed 显示 Close，不写入 `exit` 文本伪造生命周期；仅 exited/killed 可经 Start/New 直接走 `terminal_create` 重建（沿用 workspace 与可证 cwd，cwd 未知时回落工作区根），failed 表示 forwarder 断流且进程可能仍运行，必须先 Close 清理后再 Start；旧终端只读保留；新建终端初始尺寸取 `terminal_settings` 生效 columns/rows（ADR-050 D4：查询缓存，未查询到回落 80×24；投影初始值与创建后那次 resize 同源，resize 回执才确认）；尺寸变更只经 `terminal_resize`（stepper 本地草稿、apply 下发、在途去重、匹配回执/切换复位）；write/resize 瞬态失败在 runtime_state==running 时保留可写、仅 status_hint 报错；快照 cwd 为 Host 权威，缺/空键诚实显示 `unknown`。
 - **Changes scope**：Host 的 `diff_list_files` / `diff_get` 均解析 latest session；UI 明示该 scope，且两次请求的 session id 不一致时 fail-closed 要求刷新，不能把新会话内容挂到旧列表。
 - **心跳配比**：独立 15s 心跳任务对 host 30s 超时的节拍不可静默改动；断线不取消 Run。

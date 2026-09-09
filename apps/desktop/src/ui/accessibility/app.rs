@@ -33,6 +33,7 @@ use crate::ui::settings::{
 };
 use crate::ui::shell_layout;
 use crate::ui::theme::{font, metrics};
+use crate::ui::timeline_entry::ToolRowView;
 use crate::ui::timeline_entry::{display_time, tool_group_summary};
 use crate::ui::{
     activity_header_visibility, rail_project_occurrence_key, rail_session_archive_focus_key,
@@ -1831,6 +1832,7 @@ impl AppView {
                         name,
                         status,
                         detail,
+                        arguments,
                     } = &entry.kind
                     else {
                         continue;
@@ -1854,13 +1856,27 @@ impl AppView {
                             tool_rect,
                         )
                         .value(timeline::tool_status_label(status))
-                        .description(detail.clone().unwrap_or_default()),
+                        .description(
+                            ToolRowView::from_facts(
+                                name,
+                                status,
+                                arguments.as_deref(),
+                                detail.as_deref(),
+                            )
+                            .detail
+                            .unwrap_or_default(),
+                        ),
                     );
                 }
                 group
             }
             TimelineRow::RunSummary { group, terminal } => {
                 let terminal_entry = &self.projection.timeline[*terminal];
+                let review_available = timeline::review_available_for_run(
+                    &self.projection.timeline,
+                    terminal_entry,
+                    self.changes_available_for_active(),
+                );
                 let now_ms = crate::ui::now_unix_ms();
                 let mut region = AxNode::new(
                     dynamic_identifier("run-summary", &terminal_entry.event_id),
@@ -1901,6 +1917,7 @@ impl AppView {
                                 name,
                                 status,
                                 detail,
+                                arguments,
                             } = &entry.kind
                             else {
                                 continue;
@@ -1922,7 +1939,16 @@ impl AppView {
                                     ),
                                 )
                                 .value(timeline::tool_status_label(status))
-                                .description(detail.clone().unwrap_or_default()),
+                                .description(
+                                    ToolRowView::from_facts(
+                                        name,
+                                        status,
+                                        arguments.as_deref(),
+                                        detail.as_deref(),
+                                    )
+                                    .detail
+                                    .unwrap_or_default(),
+                                ),
                             );
                             y += timeline::tool_entry_height(
                                 entry,
@@ -1931,17 +1957,14 @@ impl AppView {
                             );
                         }
                     }
-                    y += if timeline::run_summary_card_visible(
-                        terminal_entry,
-                        self.changes_available_for_active(),
-                    ) {
+                    y += if timeline::run_summary_card_visible(terminal_entry, review_available) {
                         metrics::SUMMARY_CARD_GAP
                     } else {
                         metrics::TIMELINE_FOOTER_GAP
                     };
                 }
                 let review_enabled = terminal_entry.fork_boundary == Some(ForkBoundary::Completed)
-                    && self.changes_available_for_active();
+                    && review_available;
                 let (title, description) = run_summary_texts(terminal_entry, review_enabled)
                     .unwrap_or(("Run", String::new()));
                 let show_card = timeline::run_summary_card_visible(terminal_entry, review_enabled);
@@ -1987,7 +2010,14 @@ impl AppView {
                         dynamic_identifier("run-footer", &terminal_entry.event_id),
                         AxRole::StaticText,
                         format!(
-                            "{label} · {}",
+                            "{}{} · {}",
+                            if show_card {
+                                String::new()
+                            } else {
+                                format!("{label} · ")
+                            },
+                            self.projection
+                                .run_usage_label(terminal_entry.run_id.as_deref()),
                             display_time(&terminal_entry.timestamp, now_ms)
                         ),
                         AxRect::new(rect.x, y, rect.width, ROW_HEIGHT),
@@ -2981,13 +3011,15 @@ fn timeline_accessible_text(entry: &TimelineEntry) -> (String, String) {
             name,
             status,
             detail,
+            arguments,
         } => (
             format!("Tool · {name}"),
-            detail
-                .as_ref()
-                .filter(|detail| !detail.is_empty())
-                .map(|detail| format!("{status} · {detail}"))
-                .unwrap_or_else(|| status.clone()),
+            format!(
+                "{status} · {}",
+                ToolRowView::from_facts(name, status, arguments.as_deref(), detail.as_deref())
+                    .detail
+                    .unwrap_or_default()
+            ),
         ),
         TimelineEntryKind::RunState(state) => ("Run".into(), state.clone()),
         TimelineEntryKind::Error(message) => ("Error".into(), message.clone()),
@@ -3712,6 +3744,7 @@ mod tests {
                     name: "read".into(),
                     status: "succeeded".into(),
                     detail: None,
+                    arguments: None,
                 },
             ),
             entry(
@@ -3720,6 +3753,7 @@ mod tests {
                     name: "bash".into(),
                     status: "running".into(),
                     detail: None,
+                    arguments: None,
                 },
             ),
             entry(4, TimelineEntryKind::RunState("Running".into())),
@@ -3754,7 +3788,8 @@ mod tests {
         let expanded = std::collections::HashSet::from(["e2".to_string()]);
         assert_eq!(
             timeline_row_height(&rows[1], &timeline, 618.0, 16.0, &expanded, false),
-            metrics::TOOL_GROUP_HEADER_HEIGHT + 2.0 * metrics::TOOL_ROW_HEIGHT
+            metrics::TOOL_GROUP_HEADER_HEIGHT
+                + 2.0 * (metrics::TOOL_ROW_HEIGHT + 5.0 * 20.0 + 12.0)
         );
         assert_eq!(layouts[1].0, metrics::TOOL_GROUP_TOP_GAP);
         assert_eq!(layouts[2].0, metrics::MSG_ENTRY_GAP);

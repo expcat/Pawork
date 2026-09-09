@@ -84,7 +84,57 @@ pub(super) fn tool_group_summary(rows: &[ToolRowView]) -> String {
     }
 }
 
+/// Shared by pixels, measurement and accessibility. Empty output is not missing output.
+pub(super) fn tool_detail_text(arguments: Option<&str>, result: Option<&str>) -> String {
+    let args = arguments
+        .filter(|text| !text.is_empty())
+        .map(|text| {
+            serde_json::from_str::<serde_json::Value>(text)
+                .ok()
+                .and_then(|value| serde_json::to_string_pretty(&value).ok())
+                .unwrap_or_else(|| text.into())
+        })
+        .unwrap_or_else(|| t("tool.arguments_missing").into());
+    let result = match result {
+        Some("") => t("tool.result_empty"),
+        Some(text) => text,
+        None => t("tool.result_missing"),
+    };
+    format!(
+        "{}\n{args}\n\n{}\n{result}",
+        t("tool.arguments"),
+        t("tool.result")
+    )
+}
+
 impl ToolRowView {
+    pub(super) fn from_facts(
+        name: &str,
+        status: &str,
+        arguments: Option<&str>,
+        result: Option<&str>,
+    ) -> Self {
+        let mut row = Self::from_parts(name, status, None);
+        let directory_empty = (name == "list_directory")
+            .then(|| result.and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok()))
+            .flatten()
+            .filter(|data| {
+                data["total"].as_u64() == Some(0)
+                    && data["offset"].as_u64() == Some(0)
+                    && data["truncated"].as_bool() == Some(false)
+            })
+            .and_then(|data| {
+                data["path"]
+                    .as_str()
+                    .map(|path| t("tool.directory_empty").replace("{}", path))
+            });
+        row.detail = Some(tool_detail_text(
+            arguments,
+            directory_empty.as_deref().or(result),
+        ));
+        row
+    }
+
     /// wire 原文字段 → 渲染视图。detail 空串归一为 None（旧渲染同语义）。
     pub(super) fn from_parts(name: &str, status: &str, detail: Option<&str>) -> Self {
         Self {
@@ -541,12 +591,14 @@ impl AppView {
                 name,
                 status,
                 detail,
+                arguments,
             } => ("Tool", dark().text.secondary, {
                 let mut element = div()
                     .py_1()
                     .text_color(dark().text.secondary)
                     .child(format!("{name} · {status}"));
-                if let Some(detail) = detail.as_deref().filter(|d| !d.is_empty()) {
+                let detail = tool_detail_text(arguments.as_deref(), detail.as_deref());
+                {
                     element = element.child(
                         div()
                             .text_size(font::XS)
@@ -841,6 +893,8 @@ impl AppView {
             .flex()
             .flex_row()
             .items_center()
+            .flex_wrap()
+            .gap_2()
             .justify_between()
             .max_w(px(metrics::TIMELINE_READABLE_WIDTH))
             .child(
@@ -941,6 +995,25 @@ mod tests {
     /// 视图构造：字段映射 + detail 空串归一 None（旧渲染同语义）。
     #[test]
     fn tool_row_view_from_parts_normalizes_detail() {
+        let row = ToolRowView::from_facts(
+            "list_directory",
+            "succeeded",
+            Some(r#"{"path":"."}"#),
+            Some(r#"{"path":".","total":0,"offset":0,"truncated":false}"#),
+        );
+        assert!(row
+            .detail
+            .unwrap()
+            .contains("Directory . · 0 entries (empty)"));
+        assert!(ToolRowView::from_facts("read", "succeeded", None, Some(""))
+            .detail
+            .unwrap()
+            .contains("Empty result"));
+        assert!(ToolRowView::from_facts("read", "succeeded", None, None)
+            .detail
+            .unwrap()
+            .contains("Result not provided"));
+
         let view = ToolRowView::from_parts("read_file", "succeeded", Some("src/main.rs"));
         assert_eq!(view.name, "read_file");
         assert_eq!(view.status_label, "Completed");

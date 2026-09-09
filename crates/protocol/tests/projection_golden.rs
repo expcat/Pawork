@@ -83,6 +83,7 @@ fn render_kind(kind: &TimelineEntryKind) -> serde_json::Value {
             name,
             status,
             detail,
+            ..
         } => {
             serde_json::json!({ "tool_call": { "name": name, "status": status, "detail": detail } })
         }
@@ -561,4 +562,154 @@ fn golden_thinking_excludes_secrets_and_downgrades_without_moving_cursor() {
         old_history.apply_item(item);
     }
     assert_eq!(old_history.entries.len(), 3);
+}
+
+/// UX-07: completion hydration uses persisted facts even after the live sequence was seen.
+#[test]
+fn golden_completed_tool_facts_and_run_usage_survive_live_history_overlap() {
+    let domain = |sequence, payload| {
+        AgentEventEnvelope::new(
+            EventId::from(format!("fact-{sequence}")),
+            SessionId::from("s"),
+            RunId::from("r"),
+            EventSequence::new(sequence),
+            Timestamp::from_unix_millis(sequence),
+            payload,
+        )
+    };
+    let start = domain(
+        1,
+        AgentEvent::ToolCallStarted {
+            tool_call_id: "call".into(),
+            name: "list_directory".into(),
+        },
+    );
+    let args = domain(
+        2,
+        AgentEvent::ToolCallArgumentsDelta {
+            tool_call_id: "call".into(),
+            json_delta: r#"{"path":"."}"#.into(),
+        },
+    );
+    let result = domain(
+        3,
+        AgentEvent::ToolExecutionCompleted {
+            tool_call_id: "call".into(),
+            result: ToolResultContent {
+                tool_call_id: "call".into(),
+                tool_name: Some("list_directory".into()),
+                content: vec![ContentPart::Text(TextContent {
+                    text: String::new(),
+                })],
+                is_error: false,
+                metadata: json!({"path":".","total":0,"offset":0,"truncated":false,"entries":[]}),
+                artifacts: vec![],
+            },
+        },
+    );
+    let end = domain(
+        4,
+        AgentEvent::RunCompleted {
+            stop_reason: pawork_domain::StopReason::Completed,
+            usage: pawork_domain::TokenUsage {
+                input_tokens: 123,
+                output_tokens: 45,
+                cache_read_tokens: 10,
+                cache_write_tokens: 0,
+            },
+        },
+    );
+    let items: Vec<_> = [&start, &args, &result, &end]
+        .into_iter()
+        .map(|event| project_event(event).unwrap())
+        .collect();
+    assert_eq!(items[1].kind, pawork_protocol::TimelineItemKind::Other);
+    assert_eq!(items[1].status.as_deref(), Some("tool_arguments"));
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(items[3].text.as_deref().unwrap()).unwrap(),
+        json!({"input_tokens":123,"output_tokens":45,"cache_read_tokens":10,"cache_write_tokens":0})
+    );
+    let mut live = TimelineProjection::default();
+    for (seq, payload) in [
+        (
+            1,
+            AppEvent::ToolStarted {
+                run_id: "r".into(),
+                tool_call_id: "call".into(),
+                name: "list_directory".into(),
+            },
+        ),
+        (
+            3,
+            AppEvent::ToolCompleted {
+                run_id: "r".into(),
+                tool_call_id: "call".into(),
+                success: true,
+            },
+        ),
+        (
+            4,
+            AppEvent::RunChanged {
+                run_id: "r".into(),
+                state: pawork_protocol::RunState::Completed,
+            },
+        ),
+    ] {
+        let mut event = diagnostic_envelope(seq, "", "");
+        event.payload = payload;
+        live.apply_event(&event);
+    }
+    let mut history = TimelineProjection::default();
+    for item in &items {
+        history.apply_item(item);
+        live.apply_item(item);
+        live.apply_item(item);
+    }
+    assert_eq!(live.entries.len(), 2);
+    assert_eq!(live.entries[0].kind, history.entries[0].kind);
+    assert!(
+        matches!(&live.entries[0].kind, TimelineEntryKind::ToolCall {arguments, detail, ..}
+        if arguments.as_deref()==Some(r#"{"path":"."}"#) && detail.as_deref().unwrap().contains("\"total\": 0"))
+    );
+    assert_eq!(live.run_usage("r"), history.run_usage("r"));
+    assert_eq!(live.run_usage("r").unwrap().input_tokens, 123);
+    assert!(live.run_usage("other").is_none());
+    live.reset_baseline();
+    assert!(live.run_usage("r").is_none());
+    let mut completion = diagnostic_envelope(3, "", "");
+    completion.payload = AppEvent::ToolCompleted {
+        run_id: "r".into(),
+        tool_call_id: "call".into(),
+        success: true,
+    };
+    live.apply_event(&completion);
+    for item in &items {
+        live.apply_item(item);
+    }
+    assert_eq!(live.entries.len(), 2);
+    assert_eq!(live.entries[0].kind, history.entries[0].kind);
+    let cancelled = domain(
+        5,
+        AgentEvent::RunCancelled {
+            reason: None,
+            usage: None,
+        },
+    );
+    let cancelled = project_event(&cancelled).unwrap();
+    let mut old = TimelineProjection::default();
+    old.apply_item(&cancelled);
+    assert!(old.run_usage("r").is_none());
+    let failed = domain(
+        6,
+        AgentEvent::RunFailed {
+            error: serde_json::from_value(
+                json!({"category":"invalid_request","message":"failure","retryable":false}),
+            )
+            .unwrap(),
+            usage: Some(pawork_domain::TokenUsage::default()),
+        },
+    );
+    let failed = project_event(&failed).unwrap();
+    old.apply_item(&failed);
+    assert_eq!(old.run_usage("r").unwrap().input_tokens, 0);
 }

@@ -176,7 +176,7 @@ UX-05：Composer 模型菜单打开后将当前项滚入视口，按名称 / ID 
 
 - Composer 以本页 UI-4 规格为准：居中卡片至少 110px、最高 220px，模型 / 发送 36px 命中区，项目与上下文位于卡片下方。
 - `ContextMeter`：当前请求上下文估算 / model catalog context window。容量未知时显示 unavailable，不用 Session 累计 token 冒充。
-- Workspace 与 Inspector 底部共享 30 px `RunStatusBar`：Task 累计 token、任务额度（当前无读数）、output tokens/s 与 Run duration；缺权威来源时显示 unknown / `—`。
+- Workspace 与 Inspector 底部共享 30 px `RunStatusBar`：UX-07 显示当前 / 最近 Run 的输入、输出 tokens，仅取持久化终态累计用量；缺值显示 `本轮用量 —`。运行中附加时长，完成后不常驻 quota / tok/s / idle 占位。每个 Run 页脚保留本轮用量；取消仅用页脚，失败原因仍在卡片。工具展开显示已有参数和最终结果，空目录明确显示路径与 0 项，缺结果不能冒充空结果。
 - Inspector 顶层：Changes / Terminal / Resources。OPT-4b（F6）起默认折叠（宽屏同样），折叠时宽度归零；Workspace Header 右上 `Activity` 触发器与最右 `inspector-expand` 重开按钮并存（OPT-D 签字稿 collapsed 态），`ActivityPopover` 只摘要已有的 Changes 事实；显式动作（重开入口、Activity 摘要、Review changes）展开面板，空间不足（窄窗 / 大字号）保持折叠。Surface 未接通时隐藏对应分区，不做可点击假入口。
 - 只消费 projection / Host capability，经 controller → `pawork-client`；GUI 不直连 Provider、quota、Git、PTY 或数据库。
 
@@ -263,7 +263,7 @@ Snapshot 只有会话树、活动 Run、待审批与 Provider 等状态，**没�
 
 - 原生桌面密度：侧栏窄、主栏宽、Composer 固定在底。不要仪表盘卡片墙。
 - 左栏必须提供 Timeline / Projects 两种组织方式；不得恢复占满整行的切换或新建按钮。
-- Composer 保持紧凑；ContextMeter 与 RunStatusBar 必须区分当前上下文、Session 累计 usage、quota、tokens/s 与 Run duration。缺值诚实显示 unavailable。
+- Composer 保持紧凑；ContextMeter、RunStatusBar 与账号页分别表达当前上下文、当前 / 最近 Run 累计 usage、订阅 quota；不把 Run 用量冒充 Session 总量或上下文占用。缺值诚实显示 unavailable。
 - 工具调用是 Timeline 里的折叠块，不是单独 IDE 面板。
 - 流式输出按 token/事件追加；取消只取消当轮，历史保留。
 - 审批 fail-closed：无用户动作不得当默认允许。

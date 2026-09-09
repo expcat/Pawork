@@ -95,6 +95,14 @@ pub fn run_footer_label(entry: &TimelineEntry) -> Option<&'static str> {
 impl DesktopProjection {
     pub fn apply_timeline_page(&mut self, page: &TimelinePage) {
         for item in &page.items {
+            if item.kind == TimelineItemKind::UserMessage {
+                if let Some(run_id) = item.run_id.as_deref() {
+                    let echo_id = format!("local-echo-{run_id}");
+                    self.timeline
+                        .entries
+                        .retain(|entry| entry.event_id != echo_id);
+                }
+            }
             // 条目语义（去重 / committed 替换 / tool 双键回填）走 protocol
             // reducer；这里只保留历史条目携带的 UI 态副作用。
             self.timeline.apply_item(item);
@@ -204,6 +212,12 @@ impl DesktopProjection {
         now_ms: u64,
     ) -> bool {
         if self.active_session_id.as_deref() != Some(session_id) {
+            return false;
+        }
+        if self.timeline.iter().any(|entry| {
+            entry.run_id.as_deref() == Some(run_id)
+                && matches!(entry.kind, TimelineEntryKind::UserMessage { .. })
+        }) {
             return false;
         }
         // 借用当前最大 wire sequence（entries 升序）：不进 seen、不占号段，

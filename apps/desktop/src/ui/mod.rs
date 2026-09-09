@@ -1520,6 +1520,38 @@ impl AppView {
                 if had_active_run && self.projection.active_run_id.is_none() {
                     self.refresh_changes(cx);
                 }
+                // Live notifications omit persisted arguments, final output and usage.
+                // Merge history after completion; the reducer enriches already-seen rows.
+                if let pawork_client::EventStream::Session(session) = &envelope.stream {
+                    if self.projection.active_session_id.as_deref() == Some(session.as_str())
+                        && matches!(
+                            &envelope.payload,
+                            AppEvent::ToolCompleted { .. }
+                                | AppEvent::RunChanged {
+                                    state: pawork_client::RunState::Completed
+                                        | pawork_client::RunState::Cancelled
+                                        | pawork_client::RunState::Failed,
+                                    ..
+                                }
+                        )
+                    {
+                        let run_id = match &envelope.payload {
+                            AppEvent::ToolCompleted { run_id, .. }
+                            | AppEvent::RunChanged { run_id, .. } => run_id.as_str(),
+                            _ => unreachable!(),
+                        };
+                        let after = self
+                            .projection
+                            .timeline
+                            .iter()
+                            .filter(|entry| entry.run_id.as_deref() == Some(run_id))
+                            .map(|entry| entry.sequence)
+                            .min()
+                            .map(|seq| seq.saturating_sub(1));
+                        self.controller
+                            .refresh_timeline(session.as_str().to_string(), after);
+                    }
+                }
                 // SET-4：Succeeded / Removed 落地后重查一次
                 // provider_auth_status（目录与 env 残留交权威裁决）。
                 if self

@@ -720,12 +720,15 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         ),
         "run.footer_failed" => ("Run failed", "运行失败"),
         "run.failed_desc_fallback" => ("The run failed.", "运行失败。"),
-        // ── Run 状态栏（缺权威来源的字段显示 —，不伪造）──
-        "run.status_bar" => (
-            "Task — tokens | Task quota — | — tok/s | Run {}",
-            "任务 — tokens | 任务额度 — | — tok/s | 运行 {}",
-        ),
-        "run.status_idle" => ("idle", "空闲"),
+        "run.usage_unknown" => ("Run usage —", "本轮用量 —"),
+        "run.usage" => ("Run tokens · input {input} · output {output}", "本轮 tokens · 输入 {input} · 输出 {output}"),
+        "run.duration" => ("Duration", "时长"),
+        "tool.arguments" => ("Arguments", "参数"),
+        "tool.result" => ("Result", "结果"),
+        "tool.arguments_missing" => ("Arguments not provided", "未提供参数"),
+        "tool.result_missing" => ("Result not provided", "尚无结果数据"),
+        "tool.directory_empty" => ("Directory {} · 0 entries (empty)", "目录 {} · 0 项（空目录）"),
+        "tool.result_empty" => ("Empty result", "结果为空"),
         // ── Provider 状态文案（render 与 AX 同源；credential 不出现）──
         "provider.auth_connected" => ("Connected", "已连接"),
         "provider.auth_not_connected" => ("Not connected", "未连接"),

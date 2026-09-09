@@ -24,7 +24,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Deref;
 
-use pawork_domain::{AgentEvent, AgentEventEnvelope, ApprovalDecision, ContentPart, MessageRole};
+use pawork_domain::{
+    AgentEvent, AgentEventEnvelope, ApprovalDecision, ContentPart, MessageRole, TokenUsage,
+};
 
 use crate::app::{AppEvent, AppEventEnvelope, RunState, TimelineItem, TimelineItemKind};
 use crate::ResumeDisposition;
@@ -76,6 +78,16 @@ pub fn project_event(envelope: &AgentEventEnvelope) -> Option<TimelineItem> {
             Some("running".into()),
             Some(tool_timeline_context(tool_call_id.as_str(), None)),
         ),
+        AgentEvent::ToolCallArgumentsDelta {
+            tool_call_id,
+            json_delta,
+        } => (
+            TimelineItemKind::Other,
+            Some(json_delta.clone()),
+            None,
+            Some("tool_arguments".into()),
+            Some(tool_timeline_context(tool_call_id.as_str(), None)),
+        ),
         AgentEvent::ToolOutputDelta {
             tool_call_id,
             delta,
@@ -94,7 +106,7 @@ pub fn project_event(envelope: &AgentEventEnvelope) -> Option<TimelineItem> {
             let display_detail = sandbox_timeline_detail(&result.metadata);
             (
                 TimelineItemKind::ToolCompleted,
-                Some(join_text(&result.content)),
+                Some(tool_result_text(result)),
                 result.tool_name.clone(),
                 Some(
                     if result.is_error {
@@ -125,11 +137,27 @@ pub fn project_event(envelope: &AgentEventEnvelope) -> Option<TimelineItem> {
             None,
         ),
         AgentEvent::RunStarted { .. } => (TimelineItemKind::RunStarted, None, None, None, None),
-        AgentEvent::RunCompleted { .. } => (TimelineItemKind::RunCompleted, None, None, None, None),
-        AgentEvent::RunCancelled { .. } => (TimelineItemKind::RunCancelled, None, None, None, None),
-        AgentEvent::RunFailed { error, .. } => (
-            TimelineItemKind::RunFailed,
+        AgentEvent::RunCompleted { usage, .. } => (
+            TimelineItemKind::RunCompleted,
+            serde_json::to_string(usage).ok(),
             None,
+            None,
+            None,
+        ),
+        AgentEvent::RunCancelled { usage, .. } => (
+            TimelineItemKind::RunCancelled,
+            usage
+                .as_ref()
+                .and_then(|usage| serde_json::to_string(usage).ok()),
+            None,
+            None,
+            None,
+        ),
+        AgentEvent::RunFailed { error, usage } => (
+            TimelineItemKind::RunFailed,
+            usage
+                .as_ref()
+                .and_then(|usage| serde_json::to_string(usage).ok()),
             None,
             Some("failed".into()),
             Some(error.message.clone()),
@@ -194,6 +222,34 @@ pub fn project_event(envelope: &AgentEventEnvelope) -> Option<TimelineItem> {
         detail,
         timestamp: envelope.timestamp.as_unix_millis().to_string(),
     })
+}
+
+/// Only the directory tool's documented result fields are included, never arbitrary metadata.
+fn tool_result_text(result: &pawork_domain::ToolResultContent) -> String {
+    let text = join_text(&result.content);
+    if result.tool_name.as_deref() == Some("list_directory") {
+        if let (Some(path), Some(total)) = (
+            result
+                .metadata
+                .get("path")
+                .and_then(serde_json::Value::as_str),
+            result
+                .metadata
+                .get("total")
+                .and_then(serde_json::Value::as_u64),
+        ) {
+            let summary = serde_json::to_string_pretty(&serde_json::json!({
+                "path": path, "total": total,
+                "offset": result.metadata.get("offset"), "truncated": result.metadata.get("truncated")
+            })).unwrap_or_default();
+            return if text.is_empty() {
+                summary
+            } else {
+                format!("{summary}\n{text}")
+            };
+        }
+    }
+    text
 }
 
 fn sandbox_timeline_detail(metadata: &serde_json::Value) -> Option<String> {
@@ -289,6 +345,7 @@ pub enum TimelineEntryKind {
         name: String,
         status: String,
         detail: Option<String>,
+        arguments: Option<String>,
     },
     RunState(String),
     Error(String),
@@ -368,6 +425,8 @@ pub struct TimelineProjection {
     seen: BTreeSet<u64>,
     assistant_anchors: Vec<AssistantAnchor>,
     tool_anchors: Vec<ToolAnchor>,
+    tool_arguments: BTreeMap<(String, String), BTreeMap<u64, String>>,
+    run_usages: BTreeMap<String, TokenUsage>,
 }
 
 impl Deref for TimelineProjection {
@@ -383,6 +442,23 @@ impl TimelineProjection {
     /// 末尾 committed 消息」：delta 逐段合并，committed 到达时以提交文本替换
     /// 累积文本，保证历史回放不双份渲染。
     pub fn apply_item(&mut self, item: &TimelineItem) {
+        // History carries authoritative completion facts omitted from the live notification.
+        // Hydrate them even when the live event already consumed the same sequence.
+        if matches!(
+            item.kind,
+            TimelineItemKind::RunCompleted
+                | TimelineItemKind::RunCancelled
+                | TimelineItemKind::RunFailed
+        ) {
+            if let (Some(run), Some(usage)) = (
+                item.run_id.as_ref(),
+                item.text
+                    .as_deref()
+                    .and_then(|text| serde_json::from_str::<TokenUsage>(text).ok()),
+            ) {
+                self.run_usages.insert(run.clone(), usage);
+            }
+        }
         match &item.kind {
             TimelineItemKind::UserMessage => {
                 if self.seen.insert(item.sequence) {
@@ -431,6 +507,34 @@ impl TimelineProjection {
                 let (tool_call_id, display_detail) =
                     parse_tool_timeline_context(item.detail.as_deref());
                 let name = item.tool_name.clone().unwrap_or_else(|| "tool".into());
+                // A live completion can arrive before its paged start. Move that
+                // placeholder onto the persisted start instead of creating another row.
+                if let Some(anchor_ix) = self.tool_anchors.iter().position(|anchor| {
+                    anchor.run_id == item.run_id
+                        && tool_call_id.is_some()
+                        && anchor.tool_call_id == tool_call_id
+                }) {
+                    let anchor = &self.tool_anchors[anchor_ix];
+                    if let Some(ix) =
+                        self.entry_index_by_identity(&anchor.event_id, anchor.sequence)
+                    {
+                        let mut entry = self.entries.remove(ix);
+                        entry.sequence = item.sequence;
+                        entry.event_id = item.event_id.clone();
+                        entry.timestamp = item.timestamp.clone();
+                        if let TimelineEntryKind::ToolCall { name: old_name, .. } = &mut entry.kind
+                        {
+                            *old_name = name.clone();
+                        }
+                        self.insert_entry(entry);
+                        let anchor = &mut self.tool_anchors[anchor_ix];
+                        anchor.sequence = item.sequence;
+                        anchor.event_id = item.event_id.clone();
+                        anchor.name = Some(name);
+                        self.refresh_tool_arguments();
+                        return;
+                    }
+                }
                 self.insert_entry(TimelineEntry {
                     sequence: item.sequence,
                     event_id: item.event_id.clone(),
@@ -438,6 +542,7 @@ impl TimelineProjection {
                         name: name.clone(),
                         status: item.status.clone().unwrap_or_else(|| "running".into()),
                         detail: display_detail,
+                        arguments: None,
                     },
                     fork_boundary: None,
                     timestamp: item.timestamp.clone(),
@@ -452,6 +557,7 @@ impl TimelineProjection {
                         sequence: identity.sequence,
                     });
                 }
+                self.refresh_tool_arguments();
             }
             TimelineItemKind::ToolOutput => {
                 if self.seen.insert(item.sequence) {
@@ -466,21 +572,20 @@ impl TimelineProjection {
                 }
             }
             TimelineItemKind::ToolCompleted => {
-                if !self.seen.insert(item.sequence) {
-                    return;
-                }
+                let fresh = self.seen.insert(item.sequence);
                 let status = item.status.as_deref().unwrap_or("succeeded");
                 let (tool_call_id, display_detail) =
                     parse_tool_timeline_context(item.detail.as_deref());
-                if self.update_tool_entry(
+                if let Some(index) = self.update_tool_entry(
                     item.run_id.as_deref(),
                     tool_call_id.as_deref(),
                     item.tool_name.as_deref(),
                     Some(status),
-                    display_detail.as_deref(),
+                    None,
                 ) {
+                    self.replace_tool_result(index, item, display_detail.as_deref());
                     return;
-                } else {
+                } else if fresh {
                     let name = item.tool_name.clone().unwrap_or_else(|| "tool".into());
                     self.insert_entry(TimelineEntry {
                         sequence: item.sequence,
@@ -488,12 +593,24 @@ impl TimelineProjection {
                         kind: TimelineEntryKind::ToolCall {
                             name: name.clone(),
                             status: status.to_string(),
-                            detail: display_detail,
+                            detail: match (&item.text, display_detail.as_deref()) {
+                                (Some(text), Some(extra)) => Some(format!("{text}\n{extra}")),
+                                _ => item.text.clone().or(display_detail),
+                            },
+                            arguments: None,
                         },
                         fork_boundary: None,
                         timestamp: item.timestamp.clone(),
                         run_id: item.run_id.clone(),
                     });
+                    self.tool_anchors.push(ToolAnchor {
+                        run_id: item.run_id.clone(),
+                        tool_call_id,
+                        name: Some(name),
+                        event_id: item.event_id.clone(),
+                        sequence: item.sequence,
+                    });
+                    self.refresh_tool_arguments();
                 }
             }
             TimelineItemKind::RunStarted
@@ -521,7 +638,18 @@ impl TimelineProjection {
                 }
             }
             TimelineItemKind::RunFailed => {
-                if self.seen.insert(item.sequence) {
+                if !self.seen.insert(item.sequence) {
+                    if let Some(entry) = self.entries.iter_mut().find(|entry| {
+                        entry.sequence == item.sequence && entry.run_id == item.run_id
+                    }) {
+                        if let Some(reason) =
+                            item.detail.as_deref().filter(|reason| !reason.is_empty())
+                        {
+                            entry.kind =
+                                TimelineEntryKind::RunState(format!("run failed · {reason}"));
+                        }
+                    }
+                } else {
                     let reason = item.detail.as_deref().unwrap_or_default();
                     let label = if reason.is_empty() {
                         "run failed".to_string()
@@ -600,6 +728,16 @@ impl TimelineProjection {
                     }
                 }
             }
+            TimelineItemKind::Other if item.status.as_deref() == Some("tool_arguments") => {
+                let (call, _) = parse_tool_timeline_context(item.detail.as_deref());
+                if let (Some(run), Some(call), Some(text)) = (&item.run_id, call, &item.text) {
+                    self.tool_arguments
+                        .entry((run.clone(), call))
+                        .or_default()
+                        .insert(item.sequence, text.clone());
+                    self.refresh_tool_arguments();
+                }
+            }
             TimelineItemKind::Other => {}
         }
     }
@@ -672,6 +810,7 @@ impl TimelineProjection {
                         name: name.clone(),
                         status: "running".into(),
                         detail: None,
+                        arguments: None,
                     },
                     fork_boundary: None,
                     timestamp,
@@ -697,13 +836,16 @@ impl TimelineProjection {
                 if !self.seen.insert(sequence) {
                     return false;
                 }
-                if self.update_tool_entry(
-                    Some(run_id.as_str()),
-                    Some(tool_call_id.as_str()),
-                    None,
-                    None,
-                    Some(delta),
-                ) {
+                if self
+                    .update_tool_entry(
+                        Some(run_id.as_str()),
+                        Some(tool_call_id.as_str()),
+                        None,
+                        None,
+                        Some(delta),
+                    )
+                    .is_some()
+                {
                     return true;
                 }
             }
@@ -716,26 +858,37 @@ impl TimelineProjection {
                     return false;
                 }
                 let status = if *success { "succeeded" } else { "failed" };
-                if self.update_tool_entry(
-                    Some(run_id.as_str()),
-                    Some(tool_call_id.as_str()),
-                    None,
-                    Some(status),
-                    None,
-                ) {
+                if self
+                    .update_tool_entry(
+                        Some(run_id.as_str()),
+                        Some(tool_call_id.as_str()),
+                        None,
+                        Some(status),
+                        None,
+                    )
+                    .is_some()
+                {
                     return true;
                 }
                 self.insert_entry(TimelineEntry {
                     sequence,
-                    event_id,
+                    event_id: event_id.clone(),
                     kind: TimelineEntryKind::ToolCall {
                         name: tool_call_id.as_str().to_string(),
                         status: status.into(),
                         detail: None,
+                        arguments: None,
                     },
                     fork_boundary: None,
                     timestamp,
                     run_id: Some(run_id.as_str().to_string()),
+                });
+                self.tool_anchors.push(ToolAnchor {
+                    run_id: Some(run_id.as_str().into()),
+                    tool_call_id: Some(tool_call_id.as_str().into()),
+                    name: None,
+                    event_id,
+                    sequence,
                 });
                 return true;
             }
@@ -762,6 +915,47 @@ impl TimelineProjection {
         false
     }
 
+    /// Persisted terminal usage for this Run. Missing is unknown, including old hosts.
+    pub fn run_usage(&self, run_id: &str) -> Option<&TokenUsage> {
+        self.run_usages.get(run_id)
+    }
+
+    fn refresh_tool_arguments(&mut self) {
+        for anchor in &self.tool_anchors {
+            let (Some(run), Some(call)) = (&anchor.run_id, &anchor.tool_call_id) else {
+                continue;
+            };
+            let Some(parts) = self.tool_arguments.get(&(run.clone(), call.clone())) else {
+                continue;
+            };
+            let Some(ix) = self.entry_index_by_identity(&anchor.event_id, anchor.sequence) else {
+                continue;
+            };
+            if let TimelineEntryKind::ToolCall { arguments, .. } = &mut self.entries[ix].kind {
+                *arguments = Some(parts.values().cloned().collect());
+            }
+        }
+    }
+
+    fn replace_tool_result(&mut self, index: usize, item: &TimelineItem, extra: Option<&str>) {
+        if let TimelineEntryKind::ToolCall { detail, .. } = &mut self.entries[index].kind {
+            if let Some(text) = &item.text {
+                *detail = Some(match extra {
+                    Some(extra) if !extra.is_empty() => format!("{text}\n{extra}"),
+                    _ => text.clone(),
+                });
+            } else if let Some(extra) = extra {
+                let text = detail.take().unwrap_or_default();
+                *detail = Some(if text.is_empty() {
+                    extra.into()
+                } else {
+                    format!("{text}\n{extra}")
+                });
+            }
+        }
+        self.refresh_tool_arguments();
+    }
+
     /// resume 三态的基线语义：Replay 保留基线、SnapshotRequired 清基线、
     /// UpToDate 不动。消费 [`crate::compute_resume_disposition`] 的输出。
     pub fn apply_resume_disposition(&mut self, disposition: &ResumeDisposition) {
@@ -777,6 +971,8 @@ impl TimelineProjection {
         self.seen.clear();
         self.assistant_anchors.clear();
         self.tool_anchors.clear();
+        self.tool_arguments.clear();
+        self.run_usages.clear();
     }
 
     /// Prefer exact run/message identity. Legacy history without message_id
@@ -1038,7 +1234,7 @@ impl TimelineProjection {
         name: Option<&str>,
         new_status: Option<&str>,
         detail_delta: Option<&str>,
-    ) -> bool {
+    ) -> Option<usize> {
         let run = run_id.map(str::to_string);
         let candidates = self
             .tool_anchors
@@ -1047,22 +1243,21 @@ impl TimelineProjection {
             .filter(|(_, anchor)| anchor.run_id == run)
             .filter(|(_, anchor)| match tool_call_id {
                 Some(expected) => anchor.tool_call_id.as_deref() == Some(expected),
-                None => match name {
-                    Some(expected) => anchor.name.as_deref() == Some(expected),
-                    None => true,
-                },
+                None => self.entry_index_by_identity(&anchor.event_id, anchor.sequence)
+                    .is_some_and(|ix| matches!(&self.entries[ix].kind, TimelineEntryKind::ToolCall {status, ..} if status == "running" || status == "pending"))
+                    && name.is_none_or(|expected| anchor.name.as_deref() == Some(expected)),
             })
             .map(|(index, _)| index)
             .collect::<Vec<_>>();
         let anchor_index = match candidates.as_slice() {
             [only] => *only,
-            _ => return false,
+            _ => return None,
         };
         let anchor = &self.tool_anchors[anchor_index];
         let event_id = anchor.event_id.clone();
         let sequence = anchor.sequence;
         let Some(index) = self.entry_index_by_identity(&event_id, sequence) else {
-            return false;
+            return None;
         };
         if let Some(TimelineEntryKind::ToolCall { status, detail, .. }) =
             self.entries.get_mut(index).map(|entry| &mut entry.kind)
@@ -1071,7 +1266,10 @@ impl TimelineProjection {
                 status.clear();
                 status.push_str(next);
             }
-            if let Some(delta) = detail_delta {
+            if let Some(delta) = detail_delta.filter(|_| {
+                new_status.is_some()
+                    || !matches!(status.as_str(), "succeeded" | "failed" | "cancelled")
+            }) {
                 if !delta.is_empty() {
                     let text = detail.take().unwrap_or_default();
                     let separator = if new_status.is_some() && !text.is_empty() {
@@ -1082,12 +1280,9 @@ impl TimelineProjection {
                     detail.replace(text + separator + delta);
                 }
             }
-            if new_status.is_some() {
-                self.tool_anchors.remove(anchor_index);
-            }
-            return true;
+            return Some(index);
         }
-        false
+        None
     }
 }
 
