@@ -3,4 +3,4 @@
 /**
  * Canonical 配额单位。`Cost` 携带 ISO-4217 币种。
  */
-export type QuotaUnit = { "kind": "count" } | { "kind": "token" } | { "kind": "cost", currency: string, };
+export type QuotaUnit = { "kind": "count" } | { "kind": "token" } | { "kind": "percent" } | { "kind": "cost", currency: string, };

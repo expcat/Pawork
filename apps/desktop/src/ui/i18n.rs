@@ -374,6 +374,16 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "settings.providers.credentials_kind_api_key" => ("API key", "API key"),
         "settings.providers.credentials_kind_oauth" => ("OAuth", "OAuth"),
         "settings.providers.credentials_expired" => ("Expired", "已过期"),
+        "settings.quota.rolling" => ("5-hour window", "5 小时窗口"),
+        "settings.quota.weekly" => ("Weekly", "周窗口"),
+        "settings.quota.monthly" => ("Monthly", "月窗口"),
+        "settings.quota.used" => ("Used {}%", "已用 {}%"),
+        "settings.quota.reset" => ("Resets in {} min", "{} 分钟后重置"),
+        "settings.quota.stale" => ("Stale · refresh required", "已过期 · 请刷新"),
+        "settings.quota.loading" => ("Loading usage…", "正在获取额度…"),
+        "settings.quota.refresh" => ("Refresh usage", "刷新额度"),
+        "settings.quota.auto" => ("Switch accounts when quota is exhausted", "额度耗尽时切换账号"),
+        "settings.quota.scope" => ("Keys may share a subscription. These windows are not added together.", "不同 Key 可能共享订阅；各窗口额度不相加。"),
         "settings.providers.usage_title" => ("Usage", "使用量"),
         "settings.providers.usage_unavailable" => {
             ("Usage unavailable", "使用量不可用")

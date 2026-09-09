@@ -118,3 +118,6 @@ UI-6b / [ADR-059](settings.md#adr-059ui-6b-命名账号与持久选择2026-09-08
 配置：`PaworkConfig` / `ProviderConfig` **无 `api_key` 字段**；`extra` 会剥离该键。compat 导入遇到明文 Secret 拒绝。
 
 相关包：[auth](crates/auth.md) · [providers](crates/providers.md) · [storage](crates/storage.md) · [pawork](crates/pawork.md)
+
+
+UI-6b G2 凭证补充（[ADR-060](settings.md#adr-060ui-6b-g2-逐账号额度与耗尽切换2026-09-09)）：Go 额度只按请求的 credential ID 从 auth backend 解析，借现有 provider HTTP 配置认证 GET，不写 DB/日志。Run 前按三窗新鲜读数选择，auth revision 条件提交后取得整轮 adapter 快照；持久 Diagnostic 只带 opaque ID 与掩码，GUI AuthChanged 触发权威重查。查询或验证失败不触发换号，当前 Run 的工具续轮不重新取选择。

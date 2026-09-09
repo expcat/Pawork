@@ -3,7 +3,7 @@
 //! 提供配额监控的 canonical 领域、适配器抽象、聚合缓存与 Ledger 对账：
 //! - 隔离作用域：tenant + account + provider + optional model（[`QuotaScope`]）。
 //! - 窗口：Overall / Rolling5h / Weekly / Monthly（[`QuotaWindow`]）。
-//! - 单位：Count / Token / Cost（[`QuotaUnit`]）。
+//! - 单位：Count / Token / Cost / Percent（[`QuotaUnit`]）。
 //! - 度量：used / limit / remaining，含 Infinite / Unknown（[`QuotaMeasure`]、[`QuotaValues`]）。
 //! - 重置：绝对 / 相对 + 不确定性（[`QuotaReset`]）。
 //! - 适配器获取方式：ApiKeyApi / OAuthApi / WebScrape / LocalLedger（[`AdapterKind`]）。

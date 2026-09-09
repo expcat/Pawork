@@ -97,6 +97,10 @@ fn command_samples() -> Vec<(&'static str, Option<Value>)> {
             "auth_account_remove",
             Some(json!({"provider_id":"glm-coding", "credential_id":"credential-1"})),
         ),
+        (
+            "auth_account_set_selection_mode",
+            Some(json!({"provider_id":"glm-coding", "mode":"when_exhausted"})),
+        ),
         ("auth_cancel", Some(json!({"provider_id": "glm-coding"}))),
         (
             "set_default_model",
@@ -249,7 +253,7 @@ fn wire_names_are_bijective_with_serde_tags() {
 fn registry_tables_are_complete_and_unique() {
     let commands = command_entries();
     let queries = query_entries();
-    assert_eq!(commands.len(), 38);
+    assert_eq!(commands.len(), 39);
     assert_eq!(queries.len(), 15);
     for wire_name in commands.iter().map(|entry| entry.wire_name) {
         assert_eq!(
@@ -530,6 +534,16 @@ fn command_registry_covers_every_variant_without_wildcard() {
                     pawork_protocol::V1_15,
                 );
             }
+            AppCommand::AuthAccountSetSelectionMode { .. } => assert_command_entry(
+                &command,
+                "auth_account_set_selection_mode",
+                true,
+                None,
+                None,
+                false,
+                true,
+                pawork_protocol::V1_16,
+            ),
             AppCommand::AuthCancel { .. } => {
                 assert_command_entry(&command, "auth_cancel", true, None, None, false, true, V1_4)
             }

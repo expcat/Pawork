@@ -1,8 +1,19 @@
 # Settings：模型与供应商
 
+## ADR-060：UI-6b G2 逐账号额度与耗尽切换（2026-09-09）
+
+状态：Accepted。用户在 [G2 实施方案](../review/ui6b-quota-plan-2026-09-09.md) 后回复「确认」，授权 GUI 1.16；实现与验证状态见 [ROADMAP](../ROADMAP.md)。
+
+- **D1 权威来源**：Go 按指定 provider/credential 的存储 API key 请求一次 `/usage`，读取 rolling/weekly/monthly 三窗。百分比采用官方整数精度，reset 严格解析官方 UTC ISO 毫秒格式；单窗畸形为 typed failure，不取本地账本补余额。同订阅多个 key 不算多份额度，不相加或猜测上游身份。
+- **D2 查询与版本**：GUI 1.16 在既有 `quota_overview` 上以明确 `provider_id + credential_id + unit=percent` 请求 `QuotaOverviewView`，限默认本地作用域、无 model；空 windows 为三窗，Overall unsupported。无凭证过滤的旧调用保留本地 `UsageOverview` 响应。旧 minor 在发网前拒绝新路径；Percent 是整数百分点，与 Token/Cost/Count 分离，本地 ledger 不支持该单位。
+- **D3 选择**：provider 级 `selection_mode=manual|when_exhausted` 保存在既有 auth 账号索引，缺省 manual。新增 GUI-only `auth_account_set_selection_mode`；自动模式仅允许已显式选中存储 API key 的 Go。手动选择（包括同 ID）恢复 manual；删除最后账号/清空重置模式。旧 minor 的 provider 状态剥离新字段。
+- **D4 Run 边界**：GUI/CLI 共用 app Run 入口；自动模式先读当前账号，只有三窗新鲜完整且至少一窗耗尽才查询候选。以三窗最小剩余值排序，平局稳定顺序；抓取距使用不超过 30 秒、未过 reset。提交以 revision、模式、原选中 ID 为 CAS 条件，竞态冲突不覆盖用户操作。查询失败/401/403/过期/无候选保持原选择；不增加预算 gate 或请求失败后的换号重试。
+- **D5 可重放与界面**：自动变更写既有持久 Diagnostic（`provider.account_selected`，本地 opaque ID 与掩码），GUI 同时通过 AuthChanged 重查状态；本 Run 凭证快照供全部工具续轮使用。账号行显示三窗已用比例、重置剩余时间、刷新和过期状态；离页/断线/删除/重新认证清理旧请求代次。无来源仍 unavailable。命名/压缩沿用 G1 持久选择，不主动触发自动策略。
+- **D6 范围**：只开放 Go 按需 GET；不恢复归档的六厂商远端适配器、RefreshScheduler，不启动后台轮询，不持久化额度。Client 仅补协议类型 re-export；无新增包或生产依赖。实现、自动验证、代理真窗口、用户人工视觉验收分别记录。
+
 ## ADR-059：UI-6b 命名账号与持久选择（2026-09-08）
 
-状态：Accepted。用户在 [实施方案](../review/ui6b-accounts-plan-2026-09-08.md) 后明确回复「确认实施」。G1 已实现，定向自动检查与代理真窗口检查通过，等待用户人工视觉验收，G2 权威额度与自动切换仍是后续检查点；不表示 UI-6b 整体完成。以下决策取代 ADR-056 的单 kind 默认槽与 provider 级 GUI 操作限制。
+状态：Accepted。用户在 [实施方案](../review/ui6b-accounts-plan-2026-09-08.md) 后明确回复「确认实施」。G1 已实现，定向自动检查与代理真窗口检查通过，等待用户人工视觉验收，G2 权威额度与自动切换后续由 ADR-060 接续；G1 验收不表示 UI-6b 整体完成。以下决策取代 ADR-056 的单 kind 默认槽与 provider 级 GUI 操作限制。
 
 - **D1 存储**：每 provider 在 auth backend 的 `pawork.<provider>/accounts.meta` 保存版本 1 索引、递增 revision、账号名称/ID/kind/创建时间与显式选择。新账号使用 opaque `cred_*` ID；API key 为同 service 下 ID 槽，OAuth 为 `pawork.<provider>.oauth` 下 ID 的 `.access/.refresh/.meta` 槽。旧 key/OAuth 保留 `default` 定位，隐式读为 `default-api-key` / `default-oauth`，首次写入才登记索引。FileBackend 外层 version 1 不变，无数据库或 config 迁移，无新增依赖。
 - **D2 原子性**：索引与 secret 在同一个 backend transaction 中提交；FileBackend 沿用跨进程写锁、单次 load 与原子 rename，MemoryBackend 同样回滚失败操作。OAuth 共用参数化的持久化与 refresh 核心，成功轮换同步推进 revision，让其他 Host 丢弃旧 bearer；网络在写锁外，提交时重核原 access/refresh，防止删除后复活或覆盖新登录。OAuth cancel 与完成落盘在同一 flight 锁下串行化。索引损坏、选择失效或缺 secret 均 fail-closed。

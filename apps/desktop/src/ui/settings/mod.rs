@@ -916,6 +916,7 @@ mod tests {
             endpoint_label: String::new(),
             auth_methods: vec!["api_key".to_string()],
             credentials: Vec::new(),
+            selection_mode: Default::default(),
             auth,
             catalog: ProviderCatalogState::Unavailable {
                 error: "offline".to_string(),
@@ -1058,7 +1059,9 @@ mod appearance;
 mod approval_labels;
 mod general;
 mod permissions;
+mod provider_quota;
 mod providers;
+pub(crate) use provider_quota::quota_identifier;
 mod terminal;
 mod tools;
 

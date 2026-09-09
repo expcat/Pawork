@@ -27,6 +27,14 @@ impl ProviderAccountKind {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderAccountSelectionMode {
+    #[default]
+    Manual,
+    WhenExhausted,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct AccountEntry {
     credential_id: String,
@@ -40,6 +48,8 @@ struct AccountIndex {
     version: u32,
     #[serde(default)]
     revision: u64,
+    #[serde(default)]
+    selection_mode: ProviderAccountSelectionMode,
     accounts: Vec<AccountEntry>,
     selected_credential_id: Option<String>,
 }
@@ -55,6 +65,8 @@ pub struct ProviderAccount {
 
 #[derive(Clone, Debug)]
 pub struct ProviderAccounts {
+    pub selection_mode: ProviderAccountSelectionMode,
+    pub revision: u64,
     pub accounts: Vec<ProviderAccount>,
     pub selected_credential_id: Option<String>,
 }
@@ -141,6 +153,7 @@ fn read_index(
     Ok(AccountIndex {
         version: 1,
         revision: 0,
+        selection_mode: ProviderAccountSelectionMode::Manual,
         accounts,
         selected_credential_id: None,
     })
@@ -209,6 +222,8 @@ pub fn list_provider_accounts(
     backend.transaction(&mut |snapshot| {
         let index = read_index(snapshot, provider)?;
         result = Some(ProviderAccounts {
+            selection_mode: index.selection_mode,
+            revision: index.revision,
             accounts: index
                 .accounts
                 .iter()
@@ -240,11 +255,19 @@ fn edit<T>(
     backend.transaction(&mut |transaction| {
         let mut index = read_index(transaction, provider)?;
         result = Some(operation(transaction, &mut index)?);
-        index.revision = index.revision.checked_add(1).ok_or_else(malformed)?;
-        let value = serde_json::to_string(&index).map_err(|_| malformed())?;
-        transaction.store(&secret_service_for(provider), INDEX_ACCOUNT, &value)
+        write_index(transaction, provider, &mut index)
     })?;
     result.ok_or_else(malformed)
+}
+
+fn write_index(
+    transaction: &dyn SecretBackend,
+    provider: &ProviderId,
+    index: &mut AccountIndex,
+) -> Result<(), AuthError> {
+    index.revision = index.revision.checked_add(1).ok_or_else(malformed)?;
+    let value = serde_json::to_string(index).map_err(|_| malformed())?;
+    transaction.store(&secret_service_for(provider), INDEX_ACCOUNT, &value)
 }
 
 pub fn validate_account_name(name: &str) -> Result<&str, AuthError> {
@@ -316,8 +339,83 @@ pub fn select_provider_account(
             .ok_or(AuthError::NotFound)?;
         load_account(transaction, provider, entry)?;
         index.selected_credential_id = Some(id.into());
+        index.selection_mode = ProviderAccountSelectionMode::Manual;
         Ok(())
     })
+}
+
+/// Persist selection mode after validating the selected stored API key in the transaction.
+pub fn set_provider_account_selection_mode(
+    backend: &dyn SecretBackend,
+    provider: &ProviderId,
+    mode: ProviderAccountSelectionMode,
+) -> Result<(), AuthError> {
+    edit(backend, provider, |transaction, index| {
+        if mode == ProviderAccountSelectionMode::WhenExhausted {
+            if provider.as_str() != "opencode-go" {
+                return Err(AuthError::InvalidSecret(
+                    "automatic account selection requires opencode-go".into(),
+                ));
+            }
+            let entry = index
+                .accounts
+                .iter()
+                .find(|entry| {
+                    Some(entry.credential_id.as_str()) == index.selected_credential_id.as_deref()
+                        && entry.kind == ProviderAccountKind::ApiKey
+                })
+                .ok_or_else(|| {
+                    AuthError::InvalidSecret(
+                        "automatic account selection requires a selected stored API key".into(),
+                    )
+                })?;
+            load_account(transaction, provider, entry)?;
+        }
+        index.selection_mode = mode;
+        Ok(())
+    })
+}
+
+/// Commit an automatic selection only while the observed account snapshot is current.
+/// Conflicts leave both the selection and revision untouched.
+pub fn select_provider_account_if_revision(
+    backend: &dyn SecretBackend,
+    provider: &ProviderId,
+    expected_revision: u64,
+    expected_selected_id: &str,
+    target_id: &str,
+) -> Result<bool, AuthError> {
+    let mut selected = false;
+    backend.transaction(&mut |transaction| {
+        let mut index = read_index(transaction, provider)?;
+        if index.revision != expected_revision
+            || index.selection_mode != ProviderAccountSelectionMode::WhenExhausted
+            || index.selected_credential_id.as_deref() != Some(expected_selected_id)
+        {
+            return Ok(());
+        }
+        if provider.as_str() != "opencode-go" {
+            return Err(malformed());
+        }
+        for id in [expected_selected_id, target_id] {
+            let entry = index
+                .accounts
+                .iter()
+                .find(|entry| entry.credential_id == id)
+                .ok_or(AuthError::NotFound)?;
+            if entry.kind != ProviderAccountKind::ApiKey {
+                return Err(AuthError::InvalidSecret(
+                    "automatic account selection requires stored API keys".into(),
+                ));
+            }
+            load_account(transaction, provider, entry)?;
+        }
+        index.selected_credential_id = Some(target_id.into());
+        write_index(transaction, provider, &mut index)?;
+        selected = true;
+        Ok(())
+    })?;
+    Ok(selected)
 }
 
 fn delete_entry(
@@ -360,6 +458,9 @@ pub fn remove_provider_account(
         if index.selected_credential_id.as_deref() == Some(id) {
             index.selected_credential_id = None;
         }
+        if index.selected_credential_id.is_none() {
+            index.selection_mode = ProviderAccountSelectionMode::Manual;
+        }
         Ok(())
     })
 }
@@ -376,6 +477,7 @@ pub fn remove_all_provider_accounts(
         delete_oauth_at(transaction, provider, "default")?;
         index.accounts.clear();
         index.selected_credential_id = None;
+        index.selection_mode = ProviderAccountSelectionMode::Manual;
         Ok(())
     })
 }
@@ -404,6 +506,9 @@ pub(crate) fn remove_legacy(
         index.accounts.retain(|entry| entry.credential_id != id);
         if index.selected_credential_id.as_deref() == Some(id) {
             index.selected_credential_id = None;
+        }
+        if index.selected_credential_id.is_none() {
+            index.selection_mode = ProviderAccountSelectionMode::Manual;
         }
         Ok(())
     })
@@ -600,6 +705,148 @@ mod tests {
             file.get(&oauth.stored.secret_service, &oauth.stored.secret_account),
             Err(AuthError::NotFound)
         ));
+    }
+
+    #[test]
+    fn automatic_selection_persists_and_rejects_stale_results() {
+        use ProviderAccountSelectionMode::{Manual, WhenExhausted};
+        let provider = ProviderId::new("opencode-go");
+        let directory = std::env::temp_dir().join(format!(
+            "pawork-selection-{}-{}",
+            std::process::id(),
+            now_unix_millis()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let path = directory.join("auth.json");
+        let backend = FileBackend::with_path(&path);
+        let first = add_api_key_account(&backend, &provider, "First", "first-key", true).unwrap();
+        let second =
+            add_api_key_account(&backend, &provider, "Second", "second-key", false).unwrap();
+        set_provider_account_selection_mode(&backend, &provider, WhenExhausted).unwrap();
+        let reopened = FileBackend::with_path(&path);
+        let a = first.credential_id.as_str();
+        let b = second.credential_id.as_str();
+        let auto_mode =
+            || set_provider_account_selection_mode(&backend, &provider, WhenExhausted).unwrap();
+        let cas = |revision, selected: &str, target: &str| {
+            select_provider_account_if_revision(&reopened, &provider, revision, selected, target)
+                .unwrap()
+        };
+        let before = list_provider_accounts(&reopened, &provider).unwrap();
+        assert_eq!(before.selection_mode, WhenExhausted);
+        assert_eq!(before.revision, 3);
+        assert!(cas(before.revision, a, b));
+        let after = list_provider_accounts(&backend, &provider).unwrap();
+        assert_eq!(after.revision, before.revision + 1);
+        assert_eq!(
+            after.selected().unwrap().credential_id,
+            second.credential_id
+        );
+        assert_eq!(after.selection_mode, WhenExhausted);
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(!cas(before.revision, a, b));
+        assert!(!cas(after.revision, a, b));
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        // A manual selection of the same ID still invalidates an in-flight decision.
+        select_provider_account(&backend, &provider, b).unwrap();
+        let manual = list_provider_accounts(&reopened, &provider).unwrap();
+        assert_eq!(manual.selection_mode, Manual);
+        assert_eq!(manual.revision, after.revision + 1);
+        assert!(!cas(after.revision, b, a));
+        assert!(!cas(manual.revision, b, a));
+        auto_mode();
+        let before_delete = list_provider_accounts(&backend, &provider).unwrap();
+        remove_provider_account(&reopened, &provider, a, None).unwrap();
+        assert!(!cas(before_delete.revision, b, a));
+        remove_provider_account(&backend, &provider, b, None).unwrap();
+        let empty = list_provider_accounts(&reopened, &provider).unwrap();
+        assert!(empty.selected().is_none());
+        assert_eq!(empty.selection_mode, Manual);
+        store_legacy_api_key(&backend, &provider, "legacy-key").unwrap();
+        select_provider_account(&backend, &provider, LEGACY_API_KEY_ID).unwrap();
+        auto_mode();
+        remove_legacy(&backend, &provider, LEGACY_API_KEY_ID).unwrap();
+        assert_eq!(
+            list_provider_accounts(&backend, &provider)
+                .unwrap()
+                .selection_mode,
+            Manual
+        );
+        add_api_key_account(&backend, &provider, "Again", "again-key", true).unwrap();
+        auto_mode();
+        remove_all_provider_accounts(&backend, &provider).unwrap();
+        assert_eq!(
+            list_provider_accounts(&reopened, &provider)
+                .unwrap()
+                .selection_mode,
+            Manual
+        );
+    }
+
+    #[test]
+    fn automatic_selection_validation_does_not_mutate_index() {
+        let backend = MemoryBackend::new();
+        use ProviderAccountSelectionMode::{Manual, WhenExhausted};
+        let provider = ProviderId::new("opencode-go");
+        let service = secret_service_for(&provider);
+        let first = add_api_key_account(&backend, &provider, "First", "first-key", false).unwrap();
+        let initial = backend.get(&service, INDEX_ACCOUNT).unwrap();
+        assert!(set_provider_account_selection_mode(&backend, &provider, WhenExhausted).is_err());
+        assert_eq!(backend.get(&service, INDEX_ACCOUNT).unwrap(), initial);
+        select_provider_account(&backend, &provider, &first.credential_id).unwrap();
+        set_provider_account_selection_mode(&backend, &provider, WhenExhausted).unwrap();
+        let oauth =
+            add_oauth_account(&backend, &provider, "OAuth", &tokens("access"), false).unwrap();
+        let second =
+            add_api_key_account(&backend, &provider, "Second", "second-key", false).unwrap();
+        backend.store(&service, &second.credential_id, "").unwrap();
+        let revision = provider_accounts_revision(&backend, &provider)
+            .unwrap()
+            .unwrap();
+        let initial = backend.get(&service, INDEX_ACCOUNT).unwrap();
+        for target in [
+            oauth.credential_id.as_str(),
+            second.credential_id.as_str(),
+            "cred_missing",
+        ] {
+            assert!(select_provider_account_if_revision(
+                &backend,
+                &provider,
+                revision,
+                &first.credential_id,
+                target
+            )
+            .is_err());
+            assert_eq!(backend.get(&service, INDEX_ACCOUNT).unwrap(), initial);
+        }
+        backend.store(&service, &first.credential_id, "").unwrap();
+        assert!(set_provider_account_selection_mode(&backend, &provider, WhenExhausted).is_err());
+        assert_eq!(backend.get(&service, INDEX_ACCOUNT).unwrap(), initial);
+        let other = ProviderId::new("xai");
+        add_api_key_account(&backend, &other, "Other", "other-key", true).unwrap();
+        let initial = backend
+            .get(&secret_service_for(&other), INDEX_ACCOUNT)
+            .unwrap();
+        assert!(set_provider_account_selection_mode(&backend, &other, WhenExhausted).is_err());
+        assert_eq!(
+            backend
+                .get(&secret_service_for(&other), INDEX_ACCOUNT)
+                .unwrap(),
+            initial
+        );
+        set_provider_account_selection_mode(&backend, &other, Manual).unwrap();
+        // Existing serialized indices omit the new field and must remain manual.
+        let mut old: serde_json::Value = serde_json::from_str(&initial).unwrap();
+        old.as_object_mut().unwrap().remove("selection_mode");
+        backend
+            .store(&secret_service_for(&other), INDEX_ACCOUNT, &old.to_string())
+            .unwrap();
+        assert_eq!(
+            list_provider_accounts(&backend, &other)
+                .unwrap()
+                .selection_mode,
+            Manual
+        );
     }
 
     #[tokio::test]

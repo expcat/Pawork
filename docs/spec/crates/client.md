@@ -64,6 +64,8 @@
 
 ## 4. 核心行为与数据流
 
+UI-6b G2：crate 根增加 `ProviderAccountSelectionMode`、`QuotaOverviewQuery/QuotaOverviewView`、`QuotaUnit/QuotaWindow/QuotaMeasure/QuotaReset/WindowReadView` re-export，Desktop 继续只经本包发送通用 query/command；连接、路由与请求超时机制不变。
+
 **一次 framed 连接全流程（GuiClient）**
 
 1. **connect**：`GuiTransportClient::connect(endpoint, options)` 建立字节帧连接（`max_frame_bytes` 通常 1 MiB；local 端点为 UDS 路径 / pipe 名）。
@@ -143,6 +145,8 @@
 2026-09-03 SET-6g 后该默认命令 41/41 通过（lib target 10、client_tests 22、contract 9）；contract 主路径同时锁定 `host_data_dir` 原样透传。Host 重启后的真实 policy fail-closed 另由 Desktop U2 矩阵覆盖。
 
 opt-in 复跑：`cargo test -p pawork-client --offline --features probe-self-test --test probe`；spawn_e2e 用 `--features spawn-e2e --test spawn_e2e`（2026-08-30 起默认死表不再编译这两箱）。
+
+本批沿用 headless `hello_ack.json` 的 1.9 fixture，握手回归断言协商结果 1.9，避免将旧 Host 响应误断言为当前 API_VERSION。
 
 ## 8. 注意事项与已知限制
 

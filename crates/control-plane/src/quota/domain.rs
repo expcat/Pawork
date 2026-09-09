@@ -69,6 +69,8 @@ pub enum QuotaUnit {
     #[default]
     Count,
     Token,
+    /// Integer percentage points (0–100), supplied by an authoritative source.
+    Percent,
     /// Monetary values are integer micros in the named ISO-4217 currency.
     Cost {
         currency: String,

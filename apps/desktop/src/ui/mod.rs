@@ -1242,6 +1242,11 @@ impl AppView {
         if self.settings_page == SettingsPage::About {
             self.settings_page = SettingsPage::Advanced;
         }
+        self.projection.settings_providers.account_quotas.clear();
+        self.projection
+            .settings_providers
+            .account_mode_pending
+            .clear();
         self.projection.set_connection(ConnectionState::Connecting);
         self.status_hint = None;
         cx.notify();
@@ -1301,6 +1306,7 @@ impl AppView {
         self.status_hint = self.projection.resume.label();
         self.timeline_changed();
         self.refresh_all_settings(cx);
+        self.refresh_expanded_account_quotas(true, cx);
         self.consume_events(events, cx);
         // 连接建立即武装 1s tick：barrier 启用而无 run 时也要常驻探测。
         self.arm_run_clock(cx);
@@ -1364,6 +1370,11 @@ impl AppView {
         self.barriers.remove_approval_visible();
         match event {
             ControllerEvent::Disconnected { reason } => {
+                self.projection.settings_providers.account_quotas.clear();
+                self.projection
+                    .settings_providers
+                    .account_mode_pending
+                    .clear();
                 let stale_reason = format!("connection lost · {reason}");
                 self.handshake_info = None;
                 if self.settings_page == SettingsPage::About {
@@ -1688,8 +1699,53 @@ impl AppView {
                     .settings_providers
                     .apply_model_catalog(models);
             }
+            ControllerEvent::AccountModeFinished {
+                provider_id,
+                epoch,
+                data,
+            } => {
+                if self
+                    .projection
+                    .settings_providers
+                    .account_mode_pending
+                    .get(&provider_id)
+                    == Some(&epoch)
+                {
+                    self.projection
+                        .settings_providers
+                        .account_mode_pending
+                        .remove(&provider_id);
+                    if let Some(data) = data {
+                        self.projection.settings_providers.apply_loaded(data);
+                        self.ensure_settings_api_key_inputs(cx);
+                        self.remark_settings_stale_if_disconnected();
+                    }
+                }
+            }
+            ControllerEvent::AccountQuotaLoaded {
+                provider_id,
+                credential_id,
+                epoch,
+                view,
+            } => {
+                if self.route == AppRoute::Settings
+                    && self.settings_page == SettingsPage::Providers
+                    && matches!(
+                        self.projection.connection,
+                        ConnectionState::Connected { .. }
+                    )
+                {
+                    self.projection.settings_providers.apply_quota(
+                        provider_id,
+                        credential_id,
+                        epoch,
+                        view,
+                    );
+                }
+            }
             ControllerEvent::ProviderStatusLoaded(data) => {
                 self.projection.settings_providers.apply_loaded(data);
+                self.refresh_expanded_account_quotas(false, cx);
                 self.ensure_settings_api_key_inputs(cx);
                 self.remark_settings_stale_if_disconnected();
             }
@@ -1949,7 +2005,9 @@ impl AppView {
     fn arm_run_clock(&mut self, cx: &mut Context<Self>) {
         // run 进行中驱动时长徽标重绘；barrier 启用时兼作 settle 探测心跳。
         if self.run_clock_running
-            || (self.projection.active_run_id.is_none() && !self.barriers.is_active())
+            || (self.projection.active_run_id.is_none()
+                && !self.barriers.is_active()
+                && !self.settings_quota_clock_needed())
         {
             return;
         }
@@ -1960,7 +2018,9 @@ impl AppView {
                 let keep = this
                     .update(cx, |view, cx| {
                         view.emit_settle_barriers();
-                        if view.projection.active_run_id.is_some() {
+                        if view.projection.active_run_id.is_some()
+                            || view.settings_quota_clock_needed()
+                        {
                             cx.notify();
                             true
                         } else if view.barriers.is_active() {
@@ -2945,6 +3005,7 @@ impl AppView {
         self.open_menu = None;
         self.menu_highlight = None;
         self.refresh_all_settings(cx);
+        self.refresh_expanded_account_quotas(true, cx);
         window.focus(&self.settings_back_focus);
         cx.notify();
     }
@@ -3102,6 +3163,14 @@ impl AppView {
                 window.focus(&self.settings_nav_providers_focus);
             }
         }
+        self.projection.settings_providers.account_quotas.clear();
+        self.projection
+            .settings_providers
+            .account_mode_pending
+            .clear();
+        if self.settings_page == SettingsPage::Providers {
+            self.refresh_expanded_account_quotas(true, cx);
+        }
         self.settings_scroll
             .set_offset(gpui::point(px(0.0), px(0.0)));
         cx.notify();
@@ -3118,6 +3187,7 @@ impl AppView {
             return;
         }
         self.refresh_all_settings(cx);
+        self.refresh_expanded_account_quotas(true, cx);
         cx.notify();
     }
 

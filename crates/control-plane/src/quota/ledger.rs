@@ -140,6 +140,11 @@ impl LedgerQuotaAdapter {
         if cancel.is_cancelled() {
             return Err(QuotaError::Cancelled);
         }
+        if remote.unit == QuotaUnit::Percent {
+            return Err(QuotaError::unsupported(
+                "local ledger cannot reconcile percentage quotas",
+            ));
+        }
         if remote.provenance.adapter_kind == AdapterKind::LocalLedger {
             return Err(QuotaError::other(
                 "reconcile baseline is already ledger-derived; refusing to overlay twice",
@@ -214,6 +219,9 @@ impl LedgerQuotaAdapter {
             })?;
 
         match &remote.unit {
+            QuotaUnit::Percent => Err(QuotaError::unsupported(
+                "local ledger cannot reconcile percentage quotas",
+            )),
             QuotaUnit::Count => Ok(records.len() as u64),
             QuotaUnit::Token => {
                 let mut total = 0u64;
@@ -260,12 +268,9 @@ impl QuotaAdapter for LedgerQuotaAdapter {
         AdapterKind::LocalLedger
     }
 
-    /// Supports every (scope, window, unit) combination. The aggregator still
-    /// ranks Exact remote reads above this Derived adapter, so an unsupported
-    /// remote capability naturally surfaces as Derived here when no exact
-    /// source exists.
-    fn supports(&self, _request: &QuotaRequest) -> bool {
-        true
+    /// Percentage quotas require an authoritative source; local usage cannot derive them.
+    fn supports(&self, request: &QuotaRequest) -> bool {
+        request.unit != QuotaUnit::Percent
     }
 
     async fn fetch(
@@ -278,6 +283,11 @@ impl QuotaAdapter for LedgerQuotaAdapter {
             return Err(QuotaError::Cancelled);
         }
 
+        if request.unit == QuotaUnit::Percent {
+            return Err(QuotaError::unsupported(
+                "local ledger cannot derive percentage quotas",
+            ));
+        }
         let now = self.clock.now();
         let now_ms = now.as_unix_millis();
         let window_start = window_start_ms(request.window, now_ms);
@@ -306,6 +316,11 @@ impl QuotaAdapter for LedgerQuotaAdapter {
         }
 
         let used = match request.unit {
+            QuotaUnit::Percent => {
+                return Err(QuotaError::unsupported(
+                    "local ledger cannot derive percentage quotas",
+                ))
+            }
             QuotaUnit::Count => {
                 QuotaMeasure::exact(u64::try_from(records.len()).map_err(|_| {
                     QuotaError::parse("ledger record count exceeds canonical u64 range")
@@ -600,6 +615,33 @@ mod tests {
         assert_eq!(snap.values.limit, QuotaMeasure::Infinite);
         assert_eq!(snap.values.remaining, QuotaMeasure::Infinite);
         assert_eq!(snap.reset, QuotaReset::Unknown);
+    }
+
+    #[tokio::test]
+    async fn percentage_quotas_are_never_derived_or_reconciled() {
+        let ledger: Arc<dyn UsageLedger> = Arc::new(InMemoryUsageLedger::new());
+        let adapter = LedgerQuotaAdapter::with_budget(
+            ledger,
+            clock_at(10_000),
+            BudgetCap::with_limit(QuotaMeasure::Exact(100)),
+        );
+        let request = QuotaRequest {
+            scope: scope(),
+            window: QuotaWindow::Rolling5h,
+            unit: QuotaUnit::Percent,
+        };
+        let cancel = CancellationToken::new();
+        assert!(!adapter.supports(&request));
+        assert!(matches!(
+            adapter.fetch(&request, None, &cancel).await,
+            Err(QuotaError::Unsupported { .. })
+        ));
+        assert!(matches!(
+            adapter
+                .reconcile(&remote_snapshot(QuotaUnit::Percent), &cancel)
+                .await,
+            Err(QuotaError::Unsupported { .. })
+        ));
     }
 
     #[tokio::test]

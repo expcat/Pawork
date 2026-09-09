@@ -242,6 +242,24 @@ impl GuiBroadcastSink {
 #[async_trait]
 impl AgentEventSink for GuiBroadcastSink {
     async fn emit(&self, envelope: AgentEventEnvelope) -> Result<(), EngineError> {
+        if let pawork_domain::AgentEvent::Diagnostic { code, details } = &envelope.payload {
+            if code == "provider.account_selected" {
+                if let (Some(provider), Some(method), Some(masked)) = (
+                    details["provider_id"].as_str(),
+                    details["method"].as_str(),
+                    details["masked_credential"].as_str(),
+                ) {
+                    self.bus.publish_provider_auth(
+                        self.instance.clone(),
+                        &provider.into(),
+                        AuthChangeState::Succeeded {
+                            method: method.into(),
+                            masked_credential: masked.into(),
+                        },
+                    );
+                }
+            }
+        }
         if let Some(event) = broadcast_event(&envelope) {
             self.bus.publish(self.instance.clone(), &envelope, event);
         }

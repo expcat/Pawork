@@ -1,0 +1,38 @@
+{
+  "scope": {
+    "tenant_id": "local",
+    "account_id": "local/default",
+    "provider_id": "opencode-go"
+  },
+  "window": "rolling5h",
+  "unit": {
+    "kind": "percent"
+  },
+  "values": {
+    "used": {
+      "kind": "exact",
+      "value": 25
+    },
+    "limit": {
+      "kind": "exact",
+      "value": 100
+    },
+    "remaining": {
+      "kind": "exact",
+      "value": 75
+    }
+  },
+  "reset": {
+    "kind": "absolute",
+    "at": 1800000000000,
+    "uncertain": false
+  },
+  "confidence": "exact",
+  "provenance": {
+    "adapter_kind": "api_key_api",
+    "source": "opencode-go /usage",
+    "fetched_at": 1799999990000,
+    "stale": false
+  },
+  "served_stale": false
+}

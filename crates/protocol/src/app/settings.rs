@@ -182,11 +182,24 @@ pub struct ProviderCredentialStatus {
     pub expires_at: Option<String>,
 }
 
+/// Provider account selection policy (GUI 1.16).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(TS))]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderAccountSelectionMode {
+    #[default]
+    Manual,
+    WhenExhausted,
+}
+
 /// `provider_auth_status` 数组中的一项。
 ///
 /// `credentials` 自 ADR-056 D2（API 1.13）起必填。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderAuthStatusEntry {
+    /// Missing on older Hosts; manual selection remains the default.
+    #[serde(default)]
+    pub selection_mode: ProviderAccountSelectionMode,
     pub provider_id: String,
     pub display_name: String,
     pub endpoint_label: String,
@@ -397,6 +410,7 @@ mod tests {
                 "endpoint_label": "https://api.z.ai/api/coding/paas/v4",
                 "auth_methods": ["api_key"],
                 "credentials": [],
+                "selection_mode": "manual",
                 "auth": {
                     "type": "connected",
                     "method": "api_key",
@@ -658,12 +672,12 @@ mod tests {
     }
 }
 
-/// Strip GUI 1.15 account metadata for older peers with strict status decoders.
+/// Strip account metadata and selection mode unsupported by older peers.
 pub fn provider_auth_status_for_api_version(
     data: &mut serde_json::Value,
     version: super::version::ApiVersion,
 ) {
-    if version.minor >= 15 {
+    if version.minor >= 16 {
         return;
     }
     if let Some(providers) = data
@@ -671,6 +685,12 @@ pub fn provider_auth_status_for_api_version(
         .and_then(serde_json::Value::as_array_mut)
     {
         for provider in providers {
+            if let Some(fields) = provider.as_object_mut() {
+                fields.remove("selection_mode");
+            }
+            if version.minor >= 15 {
+                continue;
+            }
             if let Some(credentials) = provider
                 .get_mut("credentials")
                 .and_then(serde_json::Value::as_array_mut)

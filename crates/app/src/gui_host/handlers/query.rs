@@ -169,6 +169,23 @@ pub(crate) async fn quota_overview(
     let AppQuery::QuotaOverview { query } = query else {
         unreachable!("quota_overview handler receives QuotaOverview")
     };
+    if crate::provider_quota::is_account_query(query) {
+        let (config, backend) = {
+            let core = adapter.core.read().await;
+            (core.config().clone(), core.auth_backend().clone())
+        };
+        let view = crate::provider_quota::account_quota(
+            &config,
+            backend.as_ref(),
+            query,
+            pawork_domain::CancellationToken::new(),
+        )
+        .await
+        .map_err(GuiHostAdapter::app_error)?;
+        return Ok(AppResponse::Data(serde_json::to_value(view).map_err(
+            |error| GuiHostAdapter::host_error("internal", error.to_string()),
+        )?));
+    }
     let provider = query
         .provider_id
         .as_ref()

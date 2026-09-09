@@ -12,7 +12,7 @@ use thiserror::Error;
 #[cfg(feature = "typegen")]
 use ts_rs::TS;
 
-use super::settings::DefaultModelPair;
+use super::settings::{DefaultModelPair, ProviderAccountSelectionMode};
 use super::version::{ApiVersion, DEFAULT_CONTROL_PLANE_PRINCIPAL};
 
 /// Provider API Key 明文 newtype（SET-1，ADR-046）。
@@ -435,6 +435,10 @@ pub enum AppCommand {
     AuthAccountSelect {
         provider_id: ProviderId,
         credential_id: String,
+    },
+    AuthAccountSetSelectionMode {
+        provider_id: ProviderId,
+        mode: ProviderAccountSelectionMode,
     },
     AuthAccountRemove {
         provider_id: ProviderId,

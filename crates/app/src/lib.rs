@@ -28,6 +28,7 @@ mod plan_host;
 mod protected;
 mod protocol;
 mod provider_assembly;
+mod provider_quota;
 mod services;
 mod tasks_host;
 #[cfg(test)]

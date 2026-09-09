@@ -58,6 +58,17 @@ pub enum ControllerEvent {
     /// provider_auth_status 查询成功（SET-3 只读供应商页；SET-5 起随载荷
     /// 携带 Host 权威默认模型）。
     ProviderStatusLoaded(ProviderAuthStatusData),
+    AccountModeFinished {
+        provider_id: String,
+        epoch: u64,
+        data: Option<ProviderAuthStatusData>,
+    },
+    AccountQuotaLoaded {
+        provider_id: String,
+        credential_id: String,
+        epoch: u64,
+        view: Option<pawork_client::QuotaOverviewView>,
+    },
     /// set_default_role_model 获 Host Data 确认（OPT-3b / ADR-055 D5；回执
     /// 即写后状态，不重查）：按角色落地键对；conversation 另同步 Composer
     /// 已确认默认。

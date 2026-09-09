@@ -70,10 +70,7 @@ fn run_changed(run: &str, state: &str) -> Value {
 async fn handshake_exposes_version_instance_and_capabilities() {
     let mock = hello_ack();
     let client = connect(&mock).await;
-    assert_eq!(
-        client.api_version().await,
-        Some(pawork_protocol::API_VERSION)
-    );
+    assert_eq!(client.api_version().await, Some(pawork_protocol::V1_9));
     assert_eq!(
         client.instance_id().await.as_deref(),
         Some("core-fixture-1")

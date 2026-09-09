@@ -42,6 +42,7 @@ export type { ModelId } from "./ModelId";
 export type { PlanId } from "./PlanId";
 export type { PlanVersionId } from "./PlanVersionId";
 export type { PluginId } from "./PluginId";
+export type { ProviderAccountSelectionMode } from "./ProviderAccountSelectionMode";
 export type { ProviderId } from "./ProviderId";
 export type { ProviderStatus } from "./ProviderStatus";
 export type { QueryId } from "./QueryId";

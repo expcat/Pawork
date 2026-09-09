@@ -792,6 +792,84 @@ impl DesktopController {
             }
         });
     }
+    pub fn load_account_quota(&self, provider_id: String, credential_id: String, epoch: u64) {
+        let Some(client) = self
+            .current_client()
+            .filter(|c| c.api_version().minor >= 16)
+        else {
+            return;
+        };
+        let events = self.event_sender();
+        let state = self.state.clone();
+        let generation = state.generation.load(Ordering::Acquire);
+        self.runtime.spawn(async move {
+            let mut query = pawork_client::QuotaOverviewQuery::default_local();
+            query.provider_id = Some(provider_id.clone().into());
+            query.credential_id = Some(credential_id.clone());
+            query.unit = Some(pawork_client::QuotaUnit::Percent);
+            let view = match client
+                .query(
+                    AppQuery::QuotaOverview { query },
+                    command_source(),
+                    actor_identity(),
+                )
+                .await
+            {
+                Ok(response) => match response.response {
+                    AppResponse::Data(data) => {
+                        serde_json::from_value::<pawork_client::QuotaOverviewView>(data)
+                            .ok()
+                            .filter(|view| view.scope.provider_id.as_str() == provider_id)
+                    }
+                    _ => None,
+                },
+                Err(_) => None,
+            };
+            if state.generation.load(Ordering::Acquire) == generation && client.is_connected() {
+                try_emit(
+                    &events,
+                    ControllerEvent::AccountQuotaLoaded {
+                        provider_id,
+                        credential_id,
+                        epoch,
+                        view,
+                    },
+                );
+            }
+        });
+    }
+
+    pub fn set_account_selection_mode(
+        &self,
+        provider_id: String,
+        mode: pawork_client::ProviderAccountSelectionMode,
+        epoch: u64,
+    ) {
+        let Some(client) = self
+            .current_client()
+            .filter(|c| c.api_version().minor >= 16)
+        else {
+            return;
+        };
+        let events = self.event_sender();
+        let state = self.state.clone();
+        let generation = state.generation.load(Ordering::Acquire);
+        self.runtime.spawn(async move {
+            let result = client.command(AppCommand::AuthAccountSetSelectionMode { provider_id: provider_id.clone().into(), mode }, command_source(), actor_identity()).await;
+            let succeeded = matches!(result, Ok(ref response) if matches!(response.response, AppResponse::Data(_)));
+            let data = match client.query(provider_auth_status_query(), command_source(), actor_identity()).await {
+                Ok(response) => parse_provider_status_response(&response).ok(),
+                Err(_) => None,
+            };
+            if state.generation.load(Ordering::Acquire) == generation && client.is_connected() {
+                if !succeeded || data.is_none() {
+                    try_emit(&events, ControllerEvent::OperationFailed { action: "change provider account mode", reason: "account mode update failed".into() });
+                }
+                try_emit(&events, ControllerEvent::AccountModeFinished { provider_id, epoch, data });
+            }
+        });
+    }
+
     pub fn auth_account_change(&self, provider_id: String, credential_id: String, remove: bool) {
         let Some(client) = self
             .current_client()
@@ -817,6 +895,19 @@ impl DesktopController {
                         reason: error.to_string(),
                     },
                 );
+            }
+            // 手动选择恢复 manual；从 Host 重查，不猜测选中与模式结果。
+            if let Ok(response) = client
+                .query(
+                    provider_auth_status_query(),
+                    command_source(),
+                    actor_identity(),
+                )
+                .await
+            {
+                if let Ok(data) = parse_provider_status_response(&response) {
+                    try_emit(&events, ControllerEvent::ProviderStatusLoaded(data));
+                }
             }
         });
     }

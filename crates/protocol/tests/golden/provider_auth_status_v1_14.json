@@ -1,0 +1,37 @@
+{
+  "providers": [
+    {
+      "auth": {
+        "masked_credential": "sk-****abcd",
+        "method": "api_key",
+        "type": "connected"
+      },
+      "auth_methods": [
+        "api_key"
+      ],
+      "catalog": {
+        "fetched_at": null,
+        "snapshot_label": "2026-09-01",
+        "type": "fixed_fallback"
+      },
+      "credentials": [
+        {
+          "expired": false,
+          "expires_at": null,
+          "kind": "api_key",
+          "masked_credential": "sk-…wxyz"
+        }
+      ],
+      "display_name": "GLM Coding",
+      "endpoint_label": "https://api.z.ai/api/coding/paas/v4",
+      "provider_id": "glm-coding",
+      "use_proxy": true
+    }
+  ],
+  "role_defaults": {
+    "naming": null,
+    "search": null,
+    "vision": null
+  },
+  "default": null
+}

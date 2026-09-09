@@ -48,7 +48,10 @@ pub use xai::{builtin_models as xai_builtin_models, XaiConfig, XaiProvider};
     feature = "deepseek",
     feature = "kimi-platform"
 ))]
-pub use api_key::{verify_api_key, ApiKeyChannelConfig, ApiKeyChannelProvider};
+pub use api_key::{
+    fetch_go_usage, verify_api_key, ApiKeyChannelConfig, ApiKeyChannelProvider, GoUsage,
+    GoUsageWindow,
+};
 
 #[cfg(feature = "kimi-code")]
 pub use kimi::{builtin_models as kimi_code_builtin_models, KimiCodeConfig, KimiCodeProvider};

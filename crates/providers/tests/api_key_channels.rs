@@ -368,3 +368,215 @@ async fn mixed_catalog_and_stream_share_documented_transports() {
         server.verify().await;
     }
 }
+
+fn go_usage_body() -> serde_json::Value {
+    serde_json::json!({"usage": {
+        "rolling": {"status": "ok", "percent": 0, "resetsAt": "1970-01-01T00:00:00.001Z"},
+        "weekly": {"status": "ok", "percent": 99, "resetsAt": "2000-02-29T12:34:56.789Z"},
+        "monthly": {"status": "rate-limited", "percent": 100, "resetsAt": "2026-09-09T00:00:00.000Z"}
+    }})
+}
+
+#[tokio::test]
+async fn go_usage_reads_three_windows_with_one_authenticated_get() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/usage"))
+        .and(header("authorization", "Bearer sk-channel-test"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(go_usage_body()))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let usage = pawork_providers::fetch_go_usage(
+        config_for(channel_preset("opencode-go").unwrap(), server.uri()),
+        &api_key(),
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(usage.rolling.unwrap().resets_at.as_unix_millis(), 1);
+    let weekly = usage.weekly.unwrap();
+    assert_eq!(weekly.used_percent, 99);
+    assert_eq!(weekly.resets_at.as_unix_millis(), 951_827_696_789);
+    assert_eq!(usage.monthly.unwrap().used_percent, 100);
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+    server.verify().await;
+}
+
+#[tokio::test]
+async fn go_usage_rejects_malformed_windows_and_preserves_auth_boundaries() {
+    use pawork_providers::{fetch_go_usage, verify_api_key};
+    use serde_json::json;
+    let server = MockServer::start().await;
+    let config = || config_for(channel_preset("opencode-go").unwrap(), server.uri());
+    // 不合法字段均只损坏所在窗口；同一解析器也禁止验证入口接受这些响应。
+    let mut malformed = vec![
+        ("percent", json!(-1)),
+        ("percent", json!(101)),
+        ("percent", json!(1.5)),
+        ("percent", json!(1.0)),
+        ("percent", json!("1")),
+        ("percent", json!(100)),
+        ("status", json!("rate-limited")),
+        ("status", json!("sk-channel-test")),
+    ];
+    for reset in [
+        "2026-02-29T00:00:00.000Z",
+        "2100-02-29T00:00:00.000Z",
+        "2026-04-31T00:00:00.000Z",
+        "2026-00-01T00:00:00.000Z",
+        "2026-01-00T00:00:00.000Z",
+        "2026-01-01T24:00:00.000Z",
+        "2026-01-01T00:60:00.000Z",
+        "2026-01-01T00:00:60.000Z",
+        "2026-01-01T00:00:00Z",
+        "2026-01-01T00:00:00.000+00:00",
+        "1969-12-31T23:59:59.999Z",
+        "sk-channel-test",
+    ] {
+        malformed.push(("resetsAt", json!(reset)));
+    }
+    for (field, value) in malformed {
+        let mut body = go_usage_body();
+        body["usage"]["rolling"][field] = value;
+        Mock::given(method("GET"))
+            .and(path("/usage"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .expect(2)
+            .mount(&server)
+            .await;
+        let usage = fetch_go_usage(config(), &api_key(), CancellationToken::new())
+            .await
+            .unwrap();
+        let error = usage.rolling.unwrap_err();
+        assert_eq!(error.kind, ProviderErrorKind::InvalidRequest);
+        assert!(!format!("{error:?}").contains("sk-channel-test"));
+        assert!(usage.weekly.is_ok() && usage.monthly.is_ok());
+        assert!(verify_api_key(config(), "sk-channel-test").await.is_err());
+        server.verify().await;
+        server.reset().await;
+    }
+    for body in [json!({}), json!({"usage": []})] {
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .expect(1)
+            .mount(&server)
+            .await;
+        assert_eq!(
+            fetch_go_usage(config(), &api_key(), CancellationToken::new())
+                .await
+                .unwrap_err()
+                .kind,
+            ProviderErrorKind::InvalidRequest
+        );
+        server.verify().await;
+        server.reset().await;
+    }
+    let cancel = CancellationToken::new();
+    cancel.cancel();
+    assert_eq!(
+        fetch_go_usage(config(), &api_key(), cancel)
+            .await
+            .unwrap_err()
+            .kind,
+        ProviderErrorKind::Cancelled
+    );
+    let wrong_key = ResolvedCredential::new(CredentialKind::OAuthBearer, "sk-channel-test");
+    assert_eq!(
+        fetch_go_usage(config(), &wrong_key, CancellationToken::new())
+            .await
+            .unwrap_err()
+            .kind,
+        ProviderErrorKind::Authentication
+    );
+    assert_eq!(
+        fetch_go_usage(
+            config_for(channel_preset("deepseek").unwrap(), server.uri()),
+            &api_key(),
+            CancellationToken::new()
+        )
+        .await
+        .unwrap_err()
+        .kind,
+        ProviderErrorKind::InvalidRequest
+    );
+    let mut fixed = config();
+    fixed
+        .http
+        .extra_headers
+        .push(("Authorization".into(), "sk-channel-test".into()));
+    assert_eq!(
+        fetch_go_usage(fixed, &api_key(), CancellationToken::new())
+            .await
+            .unwrap_err()
+            .kind,
+        ProviderErrorKind::InvalidRequest
+    );
+    assert!(server.received_requests().await.unwrap().is_empty());
+    for status in [401, 403, 302] {
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(status)
+                    .insert_header("location", format!("{}/redirect", server.uri()))
+                    .set_body_string("sk-channel-test"),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let error = fetch_go_usage(config(), &api_key(), CancellationToken::new())
+            .await
+            .unwrap_err();
+        assert!(!format!("{error:?}").contains("sk-channel-test"));
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
+        server.verify().await;
+        server.reset().await;
+    }
+    Mock::given(method("GET"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(go_usage_body())
+                .set_delay(std::time::Duration::from_secs(2)),
+        )
+        .mount(&server)
+        .await;
+    let cancel = CancellationToken::new();
+    let credential = api_key();
+    let fetch = fetch_go_usage(config(), &credential, cancel.clone());
+    let cancel_later = async {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        cancel.cancel();
+    };
+    let (result, _) = tokio::join!(fetch, cancel_later);
+    assert_eq!(result.unwrap_err().kind, ProviderErrorKind::Cancelled);
+
+    // 正文每 20ms 都有数据，不能靠 100ms read_timeout 结束；总期限必须生效。
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let drip = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(1)))
+            .unwrap();
+        let mut request = [0; 4096];
+        stream.read(&mut request).unwrap();
+        stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 1000\r\n\r\n").unwrap();
+        for _ in 0..25 {
+            if stream.write_all(b" ").is_err() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    });
+    let config = config_for(
+        channel_preset("opencode-go").unwrap(),
+        format!("http://{address}"),
+    )
+    .with_request_timeout(std::time::Duration::from_millis(100));
+    let error = fetch_go_usage(config, &credential, CancellationToken::new())
+        .await
+        .unwrap_err();
+    drip.join().unwrap();
+    assert_eq!(error.kind, ProviderErrorKind::Timeout);
+    assert_eq!(error.message, "Go usage request exceeded total timeout");
+}

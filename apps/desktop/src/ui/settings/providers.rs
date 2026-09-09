@@ -201,7 +201,7 @@ impl AppView {
             cx.notify();
             return true;
         }
-        for provider in &self.projection.settings_providers.providers {
+        for provider in self.projection.settings_providers.providers.clone() {
             for credential in &provider.credentials {
                 for remove in [false, true] {
                     if settings_account_action_identifier(
@@ -210,7 +210,7 @@ impl AppView {
                         remove,
                     ) == identifier
                     {
-                        if self.settings_account_action_enabled(provider, credential, remove) {
+                        if self.settings_account_action_enabled(&provider, credential, remove) {
                             if remove
                                 && self.settings_account_remove_confirm.as_deref()
                                     != Some(identifier)
@@ -218,6 +218,14 @@ impl AppView {
                                 self.settings_account_remove_confirm = Some(identifier.to_string());
                             } else {
                                 self.settings_account_remove_confirm = None;
+                                self.projection
+                                    .settings_providers
+                                    .account_quotas
+                                    .retain(|(id, _), _| id != &provider.provider_id);
+                                self.projection
+                                    .settings_providers
+                                    .account_mode_pending
+                                    .remove(&provider.provider_id);
                                 self.controller.auth_account_change(
                                     provider.provider_id.clone(),
                                     credential.credential_id.clone(),
@@ -560,6 +568,17 @@ impl AppView {
         self.projection
             .settings_providers
             .toggle_provider_expanded(&provider_id);
+        self.projection
+            .settings_providers
+            .account_quotas
+            .retain(|(p, _), _| p != &provider_id);
+        if self
+            .projection
+            .settings_providers
+            .provider_expanded(&provider_id)
+        {
+            self.refresh_expanded_account_quotas(true, cx);
+        }
         cx.notify();
     }
 
@@ -593,8 +612,12 @@ impl AppView {
             writes,
             cx,
         ));
-        // Usage 行：固定槽位 + 诚实空态（ADR-056 D5，恒无数字 / 填充）。
-        region = region.child(self.settings_provider_usage_row(&provider.provider_id));
+        if provider.provider_id != "opencode-go"
+            || !self.settings_quota_supported()
+            || provider.credentials.is_empty()
+        {
+            region = region.child(self.settings_provider_usage_row(&provider.provider_id));
+        }
         region
     }
 
@@ -954,7 +977,19 @@ impl AppView {
                     ),
                 );
             }
+            if self.account_quota_supported(&provider_id, credential) {
+                row = row.child(self.account_quota_element(
+                    &provider_id,
+                    &credential.credential_id,
+                    cx,
+                ));
+            }
             block = block.child(row);
+        }
+        if provider_id == "opencode-go" && self.settings_quota_supported() {
+            block = block
+                .child(self.account_mode_element(provider, cx))
+                .child(settings_copy(t("settings.quota.scope")));
         }
         if self.settings_accounts_supported()
             && !matches!(provider.auth, ProviderAuthState::Connecting)
@@ -2244,7 +2279,13 @@ impl AppView {
         // 白名单比对，不用子串匹配（会误伤 id 段重叠的无关条目）。
         let mut action_ids = HashSet::new();
         for entry in &self.projection.settings_providers.providers {
+            action_ids.insert(quota_identifier(&entry.provider_id, "", "mode"));
             for credential in &entry.credentials {
+                action_ids.insert(quota_identifier(
+                    &entry.provider_id,
+                    &credential.credential_id,
+                    "refresh",
+                ));
                 for remove in [false, true] {
                     action_ids.insert(settings_account_action_identifier(
                         &entry.provider_id,
@@ -2393,6 +2434,11 @@ impl AppView {
     /// 离开 Settings：清空 secure 缓冲（含 undo 栈）与进行中的本地编辑
     /// 状态；不触碰工作台 / 会话 / 草稿 / Run。
     pub(crate) fn clear_settings_buffers(&mut self, cx: &mut Context<Self>) {
+        self.projection.settings_providers.account_quotas.clear();
+        self.projection
+            .settings_providers
+            .account_mode_pending
+            .clear();
         self.settings_auth_details.clear();
         self.settings_copied_auth = None;
         for input in self.settings_api_key_inputs.values() {

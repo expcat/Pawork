@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -24,7 +24,7 @@ use pawork_transport::{
     ConnectOptions, GuiConnection, GuiListener, GuiTransportClient, LocalTransport,
     TransportEndpoint, TransportError, TransportErrorKind, TransportFrame,
 };
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, Notify};
 
 #[derive(Clone)]
 struct RecordedCommand {
@@ -49,6 +49,10 @@ struct MockHost {
     queries: Mutex<Vec<RecordedQuery>>,
     timelines: Mutex<Vec<(SessionId, Option<u64>, Option<u32>)>>,
     snapshot_seq: AtomicU64,
+    hold_quota: AtomicBool,
+    quota_started: Notify,
+    quota_release: Notify,
+    quota_dropped: Notify,
 }
 
 impl MockHost {
@@ -67,6 +71,10 @@ impl MockHost {
             queries: Mutex::new(Vec::new()),
             timelines: Mutex::new(Vec::new()),
             snapshot_seq: AtomicU64::new(1),
+            hold_quota: AtomicBool::new(false),
+            quota_started: Notify::new(),
+            quota_release: Notify::new(),
+            quota_dropped: Notify::new(),
         })
     }
 
@@ -158,6 +166,19 @@ impl GuiHost for MockHost {
     }
 
     async fn query(&self, envelope: &AppQueryEnvelope) -> Result<AppResponse, GuiHostError> {
+        if matches!(envelope.query, AppQuery::QuotaOverview { .. })
+            && self.hold_quota.load(Ordering::Acquire)
+        {
+            struct QuotaDrop<'a>(&'a Notify);
+            impl Drop for QuotaDrop<'_> {
+                fn drop(&mut self) {
+                    self.0.notify_one();
+                }
+            }
+            let _guard = QuotaDrop(&self.quota_dropped);
+            self.quota_started.notify_one();
+            self.quota_release.notified().await;
+        }
         self.queries.lock().expect("queries").push(RecordedQuery {
             query: envelope.query.clone(),
             source: envelope.source.clone(),
@@ -467,6 +488,75 @@ fn event(seq: u64) -> AppEventEnvelope {
 #[cfg(unix)]
 mod unix_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn slow_account_quota_allows_heartbeat_and_drops_on_disconnect() {
+        let harness = open_harness("quota-responsive").await;
+        handshake_and_snapshot(&harness.client).await;
+        harness.host.hold_quota.store(true, Ordering::Release);
+        let query = |id: &str| {
+            ClientFrame::Query(AppQueryEnvelope {
+                api_version: API_VERSION,
+                request_id: QueryId::from(id),
+                source: CommandSource::Automation,
+                identity: ActorIdentity::System,
+                issued_at: Timestamp::from_unix_millis(1),
+                query: AppQuery::QuotaOverview {
+                    query: pawork_protocol::QuotaOverviewQuery {
+                        provider_id: Some("opencode-go".into()),
+                        credential_id: Some("cred-quota".into()),
+                        unit: Some(pawork_protocol::QuotaUnit::Percent),
+                        ..pawork_protocol::QuotaOverviewQuery::default_local()
+                    },
+                },
+            })
+        };
+        harness.client.send(&query("quota-completes")).await;
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            harness.host.quota_started.notified(),
+        )
+        .await
+        .expect("quota entered host");
+        harness
+            .client
+            .send(&ClientFrame::Heartbeat { nonce: 42 })
+            .await;
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_secs(2), harness.client.recv()).await,
+            Ok(ServerFrame::Pong { nonce: 42 })
+        ));
+        harness.host.quota_release.notify_one();
+        let ServerFrame::Response(response) =
+            tokio::time::timeout(Duration::from_secs(2), harness.client.recv())
+                .await
+                .expect("quota completes after release")
+        else {
+            panic!("expected quota response");
+        };
+        assert_eq!(response.request_id.as_str(), "quota-completes");
+        harness.host.quota_dropped.notified().await;
+
+        harness.client.send(&query("quota-disconnects")).await;
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            harness.host.quota_started.notified(),
+        )
+        .await
+        .expect("second quota entered host");
+        harness
+            .client
+            .conn
+            .close()
+            .await
+            .expect("client disconnect");
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            harness.host.quota_dropped.notified(),
+        )
+        .await
+        .expect("disconnect drops pending quota without releasing it");
+    }
 
     #[tokio::test]
     async fn handshake_round_trip_then_snapshot() {

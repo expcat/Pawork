@@ -131,7 +131,7 @@
 | ID | 功能 | 说明 |
 | --- | --- | --- |
 | G1 | 同 Provider 多账户池与订阅 plan 凭证 | 激活账户层 + 订阅 plan OAuth kind + `auth.json` 多账户命名（0600、原子写、损坏 fail-closed） |
-| G2 | 额度窗口跟踪与预算 gate | LocalLedger 派生 + 响应头/错误体被动配额信号归一为 QuotaSnapshot；远端适配器保持冻结 |
+| G2 | 额度窗口跟踪与预算 gate | LocalLedger 与被动信号保留；UI-6b G2 按 [ADR-060](spec/settings.md#adr-060ui-6b-g2-逐账号额度与耗尽切换2026-09-09) 开放 Go 按需逐账号三窗读取与耗尽切换，归档远端适配器/RefreshScheduler 仍冻结 |
 | G3 | 缓存感知的会话-账户亲和路由 | SessionBinding 亲和默认开 + 新会话再平衡 + 「配额余量优先」；请求级轮换不作默认 |
 | G4 | 子 Agent 声明式 provider/model/账户绑定 | Profile/spawn 声明 → RouteContext；默认继承父绑定、显式覆盖；预算经 budget-gate |
 | G5 | canonical 输入缓存策略控制 | 无厂商字段的 cache 注解 + registry 能力表 + adapter 映射 + 用量入账；附加式契约，golden 先行 |

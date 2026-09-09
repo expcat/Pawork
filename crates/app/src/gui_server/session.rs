@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
+use futures::{stream::FuturesUnordered, StreamExt};
 use pawork_domain::{ActorId, ConnectionId, GuiClientId};
 use pawork_protocol::app::registry::{command_entry, query_entry, RegistryEntry};
 use pawork_protocol::codec::decode_client_frame;
@@ -195,11 +196,28 @@ async fn run(
     ));
     watchdog.set_missed_tick_behavior(MissedTickBehavior::Delay);
     watchdog.tick().await;
+    // Only remote account quota reads may wait on upstream I/O. Keep their
+    // futures owned by this connection so disconnect drops the requests too.
+    let mut quota_queries = FuturesUnordered::new();
 
     loop {
         tokio::select! {
             biased;
             _ = &mut close_rx => break,
+            Some(outcome) = quota_queries.next(), if !quota_queries.is_empty() => {
+                if let FrameOutcome::Reply(replies) = outcome {
+                    let mut sent = true;
+                    for reply in replies {
+                        if send_frame(connection.as_ref(), &reply, Some(negotiated)).await.is_err() {
+                            sent = false;
+                            break;
+                        }
+                    }
+                    if !sent {
+                        break;
+                    }
+                }
+            }
             Some(frame) = host_rx.recv() => {
                 if connection.send(frame).await.is_err() {
                     break;
@@ -263,6 +281,13 @@ async fn run(
                 if let Err(error) = inner.connections.heartbeat(&client_id, now_timestamp()) {
                     tracing::debug!(%client_id, %error, "gui heartbeat update failed");
                 }
+                if matches!(&frame, ClientFrame::Query(envelope)
+                    if matches!(&envelope.query, pawork_protocol::AppQuery::QuotaOverview { query }
+                        if crate::provider_quota::is_account_query(query)))
+                {
+                    quota_queries.push(handle_frame(&inner, frame, &client_id));
+                    continue;
+                }
                 match handle_frame(&inner, frame, &client_id).await {
                     FrameOutcome::None => {}
                     FrameOutcome::Reply(replies) => {
@@ -284,6 +309,7 @@ async fn run(
             }
         }
     }
+    drop(quota_queries);
     if let Err(error) = stop_tx.send(()) {
         tracing::debug!(%client_id, error = ?error, "gui forwarder stop signal dropped");
     }

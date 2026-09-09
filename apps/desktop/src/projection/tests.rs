@@ -321,6 +321,7 @@ fn default_model_unavailable_flag_tracks_connection_and_catalog() {
         endpoint_label: "https://api.kimi.com".into(),
         auth_methods: vec!["oauth".into()],
         credentials: Vec::new(),
+        selection_mode: Default::default(),
         auth,
         catalog: ProviderCatalogState::Unavailable {
             error: "offline".into(),
@@ -391,6 +392,7 @@ fn provider_status_refresh_failure_keeps_last_list_and_default() {
             endpoint_label: "https://api.kimi.com".into(),
             auth_methods: vec!["oauth".into()],
             credentials: Vec::new(),
+            selection_mode: Default::default(),
             auth: ProviderAuthState::None,
             catalog: ProviderCatalogState::Unavailable {
                 error: "offline".into(),
@@ -424,6 +426,7 @@ fn provider_card_expansion_defaults_collapsed_and_trims_to_list() {
         endpoint_label: String::new(),
         auth_methods: vec!["api_key".into()],
         credentials: Vec::new(),
+        selection_mode: Default::default(),
         auth: ProviderAuthState::None,
         catalog: ProviderCatalogState::Unavailable {
             error: "offline".into(),
@@ -722,6 +725,7 @@ fn settings_state_with_provider(auth_methods: &[&str]) -> SettingsProvidersState
                 .map(|method| method.to_string())
                 .collect(),
             credentials: Vec::new(),
+            selection_mode: Default::default(),
             auth: ProviderAuthState::None,
             catalog: ProviderCatalogState::Unavailable {
                 error: "offline".into(),
@@ -3121,7 +3125,11 @@ fn timeline_rows_terminal_absorbs_obsolete_phases() {
             Some("r-1"),
         ),
         terminal_entry(4, ForkBoundary::Failed),
-        raw_entry(5, TimelineEntryKind::AssistantMessage { text: " \n".into() }, Some("r-1")),
+        raw_entry(
+            5,
+            TimelineEntryKind::AssistantMessage { text: " \n".into() },
+            Some("r-1"),
+        ),
     ];
     let rows = projection.timeline_rows();
     assert_eq!(

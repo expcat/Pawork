@@ -71,7 +71,10 @@ pub use channels::{xai_builtin_models, XaiConfig, XaiProvider};
     feature = "deepseek",
     feature = "kimi-platform"
 ))]
-pub use channels::{verify_api_key, ApiKeyChannelConfig, ApiKeyChannelProvider};
+pub use channels::{
+    fetch_go_usage, verify_api_key, ApiKeyChannelConfig, ApiKeyChannelProvider, GoUsage,
+    GoUsageWindow,
+};
 
 #[cfg(feature = "kimi-code")]
 pub use channels::kimi::DEFAULT_BASE_URL as KIMI_CODE_DEFAULT_BASE_URL;

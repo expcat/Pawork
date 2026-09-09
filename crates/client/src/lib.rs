@@ -48,11 +48,12 @@ pub use pawork_protocol::{
     ActorIdentity, ApiVersion, AppCommand, AppCommandEnvelope, AppEvent, AppEventEnvelope,
     AppQuery, AppQueryEnvelope, AppResponse, AppResponseEnvelope, ApprovalModeWire, AuthStartData,
     ClientAuthentication, CommandSource, DefaultModelPair, EventStream, GeneralSettingsData,
-    GlobalSequence, GuiCapability, PermissionsSettingsData, ProtocolErrorCode, ProviderAuthState,
-    ProviderAuthStatusData, ProviderAuthStatusEntry, ProviderCatalogState, ProviderCredentialStatus,
-    ProviderUseProxyData,
+    GlobalSequence, GuiCapability, PermissionsSettingsData, ProtocolErrorCode,
+    ProviderAccountSelectionMode, ProviderAuthState, ProviderAuthStatusData,
+    ProviderAuthStatusEntry, ProviderCatalogState, ProviderCredentialStatus, ProviderUseProxyData,
+    QuotaMeasure, QuotaOverviewQuery, QuotaOverviewView, QuotaReset, QuotaUnit, QuotaWindow,
     RoleDefaultsData, RunState, Snapshot, TerminalExitReason, TerminalSettingsData, TimelineItem,
-    TimelineItemKind, TimelinePage,
+    TimelineItemKind, TimelinePage, WindowReadView,
 };
 pub use pawork_transport::{ConnectOptions, GuiTransportClient, LocalTransport, TransportEndpoint};
 

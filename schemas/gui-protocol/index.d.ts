@@ -52,6 +52,7 @@ export type { PluginId } from "./PluginId";
 export type { ProtocolError } from "./ProtocolError";
 export type { ProtocolErrorCode } from "./ProtocolErrorCode";
 export type { ProtocolErrorEnvelope } from "./ProtocolErrorEnvelope";
+export type { ProviderAccountSelectionMode } from "./ProviderAccountSelectionMode";
 export type { ProviderId } from "./ProviderId";
 export type { ProviderStatus } from "./ProviderStatus";
 export type { QueryId } from "./QueryId";

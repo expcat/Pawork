@@ -8,6 +8,6 @@ import type { WindowReadEntry } from "./WindowReadEntry";
  */
 export type QuotaOverviewView = { scope: QuotaScopeView, windows: Array<WindowReadEntry>, generated_at: Timestamp,
 /**
- * 是否来自 quota-service 缓存（false = 当前无缓存，全是 NoData）。
+ * 是否来自 quota-service 缓存；按需远端读取与无缓存视图均为 false。
  */
 from_cache: boolean, };

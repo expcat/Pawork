@@ -113,6 +113,8 @@
 
 ## 4. 核心行为与数据流
 
+UI-6b G2：`QuotaUnit::Percent` 表示整数百分点，与协议镜像同形；`LedgerQuotaAdapter::supports/fetch/reconcile` 对 Percent 显式拒绝，即使存在该单位 cap。Go 权威读数在 app 按需读取，不经本地快照发布、不混入 ledger 对账或预测；本包不新增远端适配器或缓存路径。定向回归覆盖 Percent 拒绝。
+
 **usage 记账与去重**
 
 1. 调用方构造 `UsageRecord`（宿主从 `CredentialLease` / `IdentityContext` 派生 `UsageAttribution`）→ `UsageLedger::record`。

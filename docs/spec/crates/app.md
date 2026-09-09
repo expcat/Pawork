@@ -29,6 +29,7 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 | --- | --- | --- |
 | `src/lib.rs` | ~80 | 模块声明与 crate 根 re-export 单点（CLI 消费面不变） |
 | `src/app_core.rs` | ~1790 | `AppLoadOptions`、`AppError`（30+ 变体错误汇聚）、`CatalogOnlyProvider`（缺凭证 fail-closed 占位 provider）、`AppCore` 结构体与装配（`load*`/`from_config`/`from_parts*`）、会话/运行/usage/diff/checkpoint 门面方法、`SessionTokenEstimatorBridge`、`session_title_from_text`；`from_parts_with_protocol` 的 HTTP 客户端为 `pawork_auth::http_client()`（F06 `redirect(Policy::none())`），带 proxy 的路径仍走 `http_from_config` |
+| `src/provider_quota.rs` | — | Go 指定账号三窗 Percent 查询、30s/reset 新鲜度与 Run 前 revision CAS 选择（ADR-060） |
 | `src/provider_assembly.rs` | ~1250 | provider 装配单点：`assemble_provider`/`assemble_registry`、通道→协议解析（KimiOAuth→ChatCompletions 装配 `KimiCodeProvider`；xAI SET-4 双认证按存储形态解析凭证——api key 优先、无则 OAuth 含刷新）、OAuth 刷新装配、`switch_model`/`switch_provider`（含 ModelSwitched 诊断事件；重装配成功清除 provider_pending / provider_stale；ADR-055 D4 起目标模型在 `disabled_models` denylist 时 `AppError::ModelDisabled` fail-closed）、`model_catalog`/`models_overview`/`provider_models` 目录聚合（以 provider+model 去重，保留跨供应商同名模型；成功远端替换该 provider ID 集合，失败回退；config 仅覆盖仍存在 ID 的窗口，kimi-code 静态目录作回退）、`is_credential_pending`、ADR-054/057 `generate_session_title(session_id, first_user_text)`（传递真实会话身份；命名 provider 与当前已装配相同且凭证就绪时复用 adapter，否则全量装配；无工具一次性补全，64 output tokens、同步快照依赖后返回不借用 Core 的任务；装配、目录解析与补全共用 20s 超时，输出取首个非空行限长 72）、ADR-052 `provider_proxy` 按 provider 解析生效代理（Global `proxy_url` 统一生效，仅当该 provider 显式 `use_proxy = false` 时绕过；模型装配与 API key 验证、OAuth device start/token exchange/refresh 统一接入，不按 provider 名称特判） |
 | `src/idempotency.rs` | ~660 | `IdempotencyStore`：以 storage `CommandLedger`（SQLite）为权威 CAS 持久态，内存 `Notify` 做 InFlight 有界等待；`IdempotencyCheck`{New/Replay/InFlight}、`should_cache`、容量逐出、`IdempotencyStats` |
 | `src/protected.rs` | ~620 | Reasoning 保护：`SwappableReasoningProtector`（内存 ↔ 持久动态绑定）、`ProtectedBlobStore` + `FileKeyResolver`（`master.key`）注入；instance 级 `BlobScope` `instance-reasoning` |
@@ -169,6 +170,8 @@ UI-6b（[ADR-059](../settings.md#adr-059ui-6b-命名账号与持久选择2026-09
 - 便捷 re-export：`AdapterProtocol`/`ProtocolError`；`ApprovalMode`/`RiskLevel`（policy）；`SessionRecord`/`SessionExport`/`EXPORT_SCHEMA_VERSION`（storage）；`PlanSnapshot`/`TaskSnapshot`（workflow）；`DiffFile`/`DiffPage`（git）；`CompatExternalSource`/`LocalSessionFile`/`LocalSessionSource`（workspace）。
 
 ## 4. 核心行为与数据流
+
+UI-6b G2：新增私有 `provider_quota.rs`，`account_quota` 消费指定存储账号、配置代理与三窗官方读数，转换为 Percent `QuotaOverviewView`；复核 auth revision 拒绝迟到快照。旧无凭证 quota 查询仍返回本地 usage。GUI session 单独异步处理账号 quota，保持收帧/心跳/命令可用，断线丢弃未完成查询。`RunService::chat_turn_with_run_id` 调用 `select_account_for_run`，通过新鲜三窗与原子 CAS 选账号，再取得整轮 provider 快照；选择写持久 Diagnostic，GuiBroadcastSink 发 AuthChanged。Settings 接新模式命令与状态、旧版本 gate；当前 Run/工具续轮、独立命名/压缩保持 G1 身份边界。已有 Settings 回归增加查询归属、实际 Bearer 命中、失败保旧与持久化脱敏检查；`gui_server_session::slow_account_quota_allows_heartbeat_and_drops_on_disconnect` 验证慢查询时心跳、原 request_id 回复和断线取消。
 
 ### 4.1 GUI RunStart 全流程
 

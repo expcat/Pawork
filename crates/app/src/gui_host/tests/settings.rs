@@ -1185,7 +1185,7 @@ async fn go_key_verification_uses_authenticated_usage_and_preserves_old_key_on_f
         server.verify().await;
         server.reset().await;
     }
-    let usage = serde_json::json!({"status": "rate-limited", "percent": 100, "resetsAt": "2026-09-08T20:00:00Z"});
+    let usage = serde_json::json!({"status": "rate-limited", "percent": 100, "resetsAt": "2026-09-08T20:00:00.000Z"});
     Mock::given(method("GET"))
         .and(path("/usage"))
         .and(header("authorization", format!("Bearer {candidate}")))
@@ -1210,6 +1210,256 @@ async fn go_key_verification_uses_authenticated_usage_and_preserves_old_key_on_f
         candidate
     );
     server.verify().await;
+}
+
+#[tokio::test]
+async fn go_account_quota_routes_next_run_and_preserves_manual_selection() {
+    use pawork_auth::{add_api_key_account, list_provider_accounts, ProviderAccountSelectionMode};
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    let backend = Arc::new(pawork_auth::MemoryBackend::new());
+    let provider = "opencode-go".into();
+    let first_key = "sk-g2-alpha-private-123456789";
+    let second_key = "sk-g2-beta-private-987654321";
+    let first = add_api_key_account(backend.as_ref(), &provider, "Alpha", first_key, true).unwrap();
+    let second =
+        add_api_key_account(backend.as_ref(), &provider, "Beta", second_key, false).unwrap();
+    let (adapter, dir) = settings_adapter_for_channel(
+        "opencode-go",
+        "glm-5.3-flash",
+        server.uri(),
+        backend.clone(),
+    )
+    .await;
+    adapter
+        .core
+        .write()
+        .await
+        .set_provider_use_proxy("opencode-go", false);
+    let body = |percent| {
+        let window = json!({"status": if percent == 100 {"rate-limited"} else {"ok"},
+            "percent": percent, "resetsAt": "2099-09-09T12:30:00.000Z"});
+        json!({"usage": {"rolling": window, "weekly": window, "monthly": window}})
+    };
+    for (key, percent) in [(first_key, 100), (second_key, 25)] {
+        Mock::given(method("GET"))
+            .and(path("/usage"))
+            .and(header("authorization", format!("Bearer {key}")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body(percent)))
+            .mount(&server)
+            .await;
+    }
+    Mock::given(method("GET"))
+        .and(path("/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({"data":[{"id":"glm-5.3-flash"}]})),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("POST")).and(path("/chat/completions"))
+        .and(header("authorization", format!("Bearer {second_key}")))
+        .respond_with(ResponseTemplate::new(200).insert_header("content-type", "text/event-stream")
+            .set_body_string(concat!(
+                "data: {\"id\":\"g2\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"G2_QUOTA_OK\"},\"finish_reason\":null}]}\n\n",
+                "data: {\"id\":\"g2\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+                "data: [DONE]\n\n")))
+        .expect(1).mount(&server).await;
+    let query = pawork_protocol::QuotaOverviewQuery {
+        provider_id: Some(provider.clone()),
+        credential_id: Some(second.credential_id.clone()),
+        unit: Some(pawork_protocol::QuotaUnit::Percent),
+        ..pawork_protocol::QuotaOverviewQuery::default_local()
+    };
+    let envelope = query_envelope(AppQuery::QuotaOverview {
+        query: query.clone(),
+    });
+    let AppResponse::Data(data) = adapter.query(&envelope).await.unwrap() else {
+        panic!("quota data");
+    };
+    let view: pawork_protocol::QuotaOverviewView = serde_json::from_value(data.clone()).unwrap();
+    assert_eq!(view.windows.len(), 3);
+    assert!(view.windows.iter().all(
+        |entry| matches!(&entry.read, pawork_protocol::WindowReadView::Ok { snapshot, .. }
+        if snapshot.values.used == pawork_protocol::QuotaMeasure::Exact(25))
+    ));
+    assert!(!data.to_string().contains(second_key));
+    let requests_before = server.received_requests().await.unwrap().len();
+    let mut old = envelope.clone();
+    old.api_version = pawork_protocol::V1_15;
+    assert_eq!(adapter.query(&old).await.unwrap_err().code, "unsupported");
+    assert_eq!(
+        server.received_requests().await.unwrap().len(),
+        requests_before
+    );
+    let mut wrong = query.clone();
+    wrong.account_id = "another-account".into();
+    assert!(adapter
+        .query(&query_envelope(AppQuery::QuotaOverview { query: wrong }))
+        .await
+        .is_err());
+    let AppResponse::Data(legacy) = adapter
+        .query(&query_envelope(AppQuery::QuotaOverview {
+            query: pawork_protocol::QuotaOverviewQuery {
+                provider_id: Some(provider.clone()),
+                ..pawork_protocol::QuotaOverviewQuery::default_local()
+            },
+        }))
+        .await
+        .unwrap()
+    else {
+        panic!("legacy quota");
+    };
+    assert!(legacy.get("ledger").is_some());
+    let mode = command_envelope(AppCommand::AuthAccountSetSelectionMode {
+        provider_id: provider.clone(),
+        mode: pawork_protocol::ProviderAccountSelectionMode::WhenExhausted,
+    });
+    adapter.command(&mode).await.unwrap();
+    let mut old_status = query_envelope(AppQuery::ProviderAuthStatus {
+        provider_id: Some(provider.clone()),
+    });
+    old_status.api_version = pawork_protocol::V1_15;
+    let AppResponse::Data(old_status) = adapter.query(&old_status).await.unwrap() else {
+        panic!("status");
+    };
+    assert!(old_status["providers"][0].get("selection_mode").is_none());
+    let session = adapter
+        .core
+        .read()
+        .await
+        .create_session_unbound("G2 quota routing")
+        .await
+        .unwrap();
+    let mut events = adapter.subscribe_events();
+    let AppResponse::Accepted {
+        run_id: Some(run), ..
+    } = adapter
+        .command(&command_envelope(AppCommand::RunStart {
+            session_id: session.clone(),
+            user_message: "hi".into(),
+            model: Some("glm-5.3-flash".into()),
+            provider: Some(provider.clone()),
+            profile: None,
+        }))
+        .await
+        .unwrap()
+    else {
+        panic!("accepted");
+    };
+    wait_run_completed(&mut events, &run).await;
+    let inventory = list_provider_accounts(backend.as_ref(), &provider).unwrap();
+    assert_eq!(
+        inventory.selected_credential_id.as_deref(),
+        Some(second.credential_id.as_str())
+    );
+    assert_eq!(
+        inventory.selection_mode,
+        ProviderAccountSelectionMode::WhenExhausted
+    );
+    server.verify().await;
+    let snapshot = adapter
+        .core
+        .read()
+        .await
+        .store()
+        .unwrap()
+        .projection_snapshot(&session)
+        .await
+        .unwrap();
+    assert!(serde_json::to_string(&snapshot.messages)
+        .unwrap()
+        .contains("G2_QUOTA_OK"));
+    adapter
+        .command(&command_envelope(AppCommand::AuthAccountSelect {
+            provider_id: provider.clone(),
+            credential_id: first.credential_id.clone(),
+        }))
+        .await
+        .unwrap();
+    let inventory = list_provider_accounts(backend.as_ref(), &provider).unwrap();
+    assert_eq!(
+        inventory.selection_mode,
+        ProviderAccountSelectionMode::Manual
+    );
+    let requests_before = server.received_requests().await.unwrap().len();
+    assert!(adapter
+        .core
+        .read()
+        .await
+        .select_account_for_run(&CancellationToken::new())
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        server.received_requests().await.unwrap().len(),
+        requests_before
+    );
+    // Exhausted aliases of the same subscription, malformed/expired readings,
+    // and upstream failures must never cause a speculative switch.
+    let mut expired = body(25);
+    for window in ["rolling", "weekly", "monthly"] {
+        expired["usage"][window]["resetsAt"] = json!("2000-01-01T00:00:00.000Z");
+    }
+    for response in [
+        body(100),
+        json!({"usage":{"rolling":{"status":"ok","percent":25,"resetsAt":"bad"}}}),
+        expired,
+    ] {
+        server.reset().await;
+        for (key, value) in [(first_key, body(100)), (second_key, response)] {
+            Mock::given(method("GET"))
+                .and(path("/usage"))
+                .and(header("authorization", format!("Bearer {key}")))
+                .respond_with(ResponseTemplate::new(200).set_body_json(value))
+                .mount(&server)
+                .await;
+        }
+        pawork_auth::set_provider_account_selection_mode(
+            backend.as_ref(),
+            &provider,
+            ProviderAccountSelectionMode::WhenExhausted,
+        )
+        .unwrap();
+        assert!(adapter
+            .core
+            .read()
+            .await
+            .select_account_for_run(&CancellationToken::new())
+            .await
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            list_provider_accounts(backend.as_ref(), &provider)
+                .unwrap()
+                .selected_credential_id
+                .as_deref(),
+            Some(first.credential_id.as_str())
+        );
+    }
+    server.reset().await;
+    Mock::given(method("GET"))
+        .and(path("/usage"))
+        .respond_with(ResponseTemplate::new(401).set_body_string(first_key))
+        .mount(&server)
+        .await;
+    assert!(adapter
+        .core
+        .read()
+        .await
+        .select_account_for_run(&CancellationToken::new())
+        .await
+        .unwrap()
+        .is_none());
+    for entry in std::fs::read_dir(dir.path()).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_file() {
+            let bytes = std::fs::read(&path).unwrap();
+            let text = String::from_utf8_lossy(&bytes);
+            assert!(!text.contains(first_key) && !text.contains(second_key));
+        }
+    }
 }
 
 #[tokio::test]

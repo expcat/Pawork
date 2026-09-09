@@ -261,6 +261,17 @@ pub(crate) async fn provider_auth_status(
         .iter()
         .zip(catalog_states)
         .map(|(channel, catalog)| ProviderAuthStatusEntry {
+            selection_mode: match pawork_auth::list_provider_accounts(
+                core.auth_backend().as_ref(),
+                &ProviderId::new(channel.id),
+            )
+            .map(|inventory| inventory.selection_mode)
+            {
+                Ok(pawork_auth::ProviderAccountSelectionMode::WhenExhausted) => {
+                    pawork_protocol::ProviderAccountSelectionMode::WhenExhausted
+                }
+                _ => pawork_protocol::ProviderAccountSelectionMode::Manual,
+            },
             provider_id: channel.id.to_string(),
             display_name: channel.display_name.to_string(),
             endpoint_label: endpoint_label(&core, channel),

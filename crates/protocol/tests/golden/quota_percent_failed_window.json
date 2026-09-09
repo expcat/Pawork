@@ -1,0 +1,13 @@
+{
+  "window": "weekly",
+  "read": {
+    "status": "failed",
+    "failures": [
+      {
+        "adapter_kind": "api_key_api",
+        "error_code": "parse",
+        "detail": "invalid usage window"
+      }
+    ]
+  }
+}

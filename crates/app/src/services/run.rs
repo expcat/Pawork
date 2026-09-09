@@ -83,7 +83,6 @@ impl RunService {
         render: &dyn AgentEventSink,
         cancel: CancellationToken,
     ) -> Result<ModelResponseSummary, AppError> {
-        let provider = core.request_provider_snapshot().await?;
         let n = core.next_request.fetch_add(1, Ordering::Relaxed);
         let trigger = messages.last_mut().ok_or(AppError::EmptyTurn)?;
         if trigger.role != MessageRole::User {
@@ -100,6 +99,18 @@ impl RunService {
         let trigger = trigger.clone();
         core.ensure_plan_allows_execution(session_id).await?;
         let run_workspace = core.workspace_for_session_or_unbound(session_id)?;
+        let account_change = core.select_account_for_run(&cancel).await?;
+        let provider = core.request_provider_snapshot().await?;
+        if let Some(change) = account_change {
+            let mut sequence = core.next_sequence(session_id).await?;
+            let event = self.append_payload(core, session_id, &run_id, &mut sequence,
+                AgentEvent::Diagnostic { code: "provider.account_selected".into(), details: serde_json::json!({
+                    "provider_id": core.provider_id.as_str(), "previous_credential_id": change.previous_id,
+                    "credential_id": change.account.credential_id, "reason": "quota_exhausted",
+                    "method": change.account.kind.as_str(), "masked_credential": change.account.stored.masked.as_str(),
+                }) }).await?;
+            render.emit(event).await?;
+        }
         let mut request_messages = messages;
         if let Err(error) = core
             .extensions

@@ -142,6 +142,8 @@ UI-6a / ADR-058：`ApiKeyChannelConfig::transport_for` 与 adapter 共用协议�
 
 ## 4. 核心行为与数据流
 
+UI-6b G2：`fetch_go_usage(config, &ResolvedCredential, cancel)` 单次认证 GET 返回 `GoUsage{rolling,weekly,monthly: Result<GoUsageWindow, ProviderError>}`；窗口包含 `used_percent` 与 `resets_at: Timestamp`。严格校验整数百分比/状态及 `YYYY-MM-DDTHH:mm:ss.sssZ` 日历；单窗失败独立，顶层畸形整体失败。`verify_api_key` Go 分支复用并要求三窗均成功；GET 与正文读取共用总期限（request_timeout → http.timeout → 60s），均可取消，错误不回显上游字段；Host 额度读取设为 10s。无新增依赖；必要回归位于既有 API-key 测试文件。
+
 ### 4.1 一次 Chat Completions stream 请求（OpenAiCompatible / ApiKeyChannel）
 
 1. 调用方（`pawork-app` 装配层）把 `ResolvedCredential` 注入 Provider 构造；构造期校验固定头无凭证头（含凭证头直接构造失败）。

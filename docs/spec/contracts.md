@@ -6,6 +6,8 @@ OPT-2 / [ADR-054](desktop.md#adr-054opt-2-会话生命周期与自动标题2026-
 
 > 基线日期：2026-08-25。本文是契约目录和演进规则；精确字节形状以源码、检入 schema 与 golden 为准，[docs/architecture.md](../architecture.md) §3.2 是冻结契约事实源。
 
+UI-6b G2（[ADR-060](settings.md#adr-060ui-6b-g2-逐账号额度与耗尽切换2026-09-09)）使用 GUI API 1.16：追加 Percent 单位、逐账号 quota 查询语义、GUI-only `auth_account_set_selection_mode` 与 provider 状态 `selection_mode`。旧无凭证查询保留本地账本响应；新查询限本地 tenant/account、指定 provider/credential、无 model，旧 minor 在发网前拒绝。旧 minor 的账号状态剥离模式字段。未变更持久事件/schema；自动选择用既有 Diagnostic 记录，golden/typegen 同步。
+
 ## 1. 契约原则
 
 1. 磁盘、wire、JSON、公开安全枚举和可重放事件不得静默破坏。
@@ -25,8 +27,8 @@ OPT-2 / [ADR-054](desktop.md#adr-054opt-2-会话生命周期与自动标题2026-
 | CON-BLOB-01 | Artifact/Protected Blob | `PWB1_MAGIC`，`PWB1_VERSION = 1`；protected 使用 AEAD | checkpoint/reasoning → artifact/protected stores | [blob](../../crates/storage/src/blob)；[PWB1 golden](../../crates/storage/tests/golden) |
 | CON-POLICY-01 | Policy 决策 | `PolicyDecision` 四变体；`ApprovalMode` 五档，默认 `ReadOnly` | tools/app → CLI/Desktop/exec | [policy](../../crates/policy/src)；[security.md](security.md) |
 | CON-CONFIG-01 | 配置 schema/层级 | `Builtin < Global < Profile < Workspace < Session < Run`；`ProviderConfig` 无 `api_key` | workspace loader → app/providers | [workspace config](../../crates/workspace/src/config) |
-| CON-GUI-01 | GUI Connection Protocol | API `1.15`；支持 `1.0`–`1.15`；Accepted 握手可选 `host_data_dir`；`ClientFrame`/`ServerFrame`；上限 1 MiB | app GUI host ↔ client/Desktop | [protocol](../../crates/protocol/src)；[schemas/gui-protocol](../../schemas/gui-protocol)；protocol fixtures/golden |
-| CON-REGISTRY-01 | Command/Capability Registry | 38 `AppCommand`、15 `AppQuery`；GUI/headless/ACP 可用性同源 | protocol registry → app/cli/client | [registry](../../crates/protocol/src/app/registry.rs) |
+| CON-GUI-01 | GUI Connection Protocol | API `1.16`；支持 `1.0`–`1.16`；Accepted 握手可选 `host_data_dir`；`ClientFrame`/`ServerFrame`；上限 1 MiB | app GUI host ↔ client/Desktop | [protocol](../../crates/protocol/src)；[schemas/gui-protocol](../../schemas/gui-protocol)；protocol fixtures/golden |
+| CON-REGISTRY-01 | Command/Capability Registry | 39 `AppCommand`、15 `AppQuery`；GUI/headless/ACP 可用性同源 | protocol registry → app/cli/client | [registry](../../crates/protocol/src/app/registry.rs) |
 | CON-HEADLESS-01 | Headless JSON | 与 GUI 帧正交的 request/response JSONL；stdout-only | CLI stdio ↔ SDK/automation | [headless protocol](../../crates/protocol/src/headless)；[schemas/headless-json](../../schemas/headless-json) |
 | CON-ACP-01 | ACP 映射 | ACP adapter 只接 registry 允许的能力，未登记拒绝 | IDE/ACP client ↔ CLI/AppCore | [CLI ACP](../../crates/cli/src/channels/acp)；ACP fixtures |
 | CON-USAGE-01 | Usage 与审计 | usage `dedup_key`；audit 为 JSONL | app/control-plane → usage ledger/audit | [control-plane](../../crates/control-plane/src)；对应 golden |

@@ -729,7 +729,8 @@ fn golden_auth_provider_slices() {
                         "snapshot_label": "2026-09-01",
                         "fetched_at": null
                     },
-                    "use_proxy": true
+                    "use_proxy": true,
+                    "selection_mode": "when_exhausted"
                 }],
                 "role_defaults": {
                     "naming": null,
@@ -1150,6 +1151,13 @@ fn golden_provider_accounts() {
             },
         ),
         (
+            "auth_account_set_selection_mode",
+            AppCommand::AuthAccountSetSelectionMode {
+                provider_id: provider_id.clone(),
+                mode: pawork_protocol::ProviderAccountSelectionMode::WhenExhausted,
+            },
+        ),
+        (
             "auth_account_remove",
             AppCommand::AuthAccountRemove {
                 provider_id,
@@ -1176,14 +1184,85 @@ fn account_status_supports_old_peers() {
     let latest: pawork_protocol::ProviderAuthStatusData =
         serde_json::from_value(data.clone()).unwrap();
     assert!(latest.providers[0].credentials[0].selected);
+    assert_eq!(
+        latest.providers[0].selection_mode,
+        pawork_protocol::ProviderAccountSelectionMode::WhenExhausted
+    );
+    let mut v15 = data.clone();
+    pawork_protocol::provider_auth_status_for_api_version(
+        &mut v15,
+        pawork_protocol::ApiVersion::new(1, 15),
+    );
+    assert_golden("provider_auth_status_v1_15.json", v15.clone());
+    let older: pawork_protocol::ProviderAuthStatusData = serde_json::from_value(v15).unwrap();
+    assert_eq!(
+        older.providers[0].selection_mode,
+        pawork_protocol::ProviderAccountSelectionMode::Manual
+    );
+    assert!(older.providers[0].credentials[0].selected);
     pawork_protocol::provider_auth_status_for_api_version(
         &mut data,
         pawork_protocol::ApiVersion::new(1, 14),
     );
+    assert_golden("provider_auth_status_v1_14.json", data.clone());
     let credential = &data["providers"][0]["credentials"][0];
     assert!(credential.get("credential_id").is_none());
     assert!(credential.get("display_name").is_none());
     assert!(credential.get("selected").is_none());
     let older: pawork_protocol::ProviderAuthStatusData = serde_json::from_value(data).unwrap();
     assert!(older.providers[0].credentials[0].credential_id.is_empty());
+}
+
+#[test]
+fn golden_percent_quota_payloads() {
+    use pawork_protocol::*;
+    let snapshot = QuotaSnapshotView {
+        scope: QuotaScopeView {
+            tenant_id: pawork_domain::TenantId::new("local"),
+            account_id: "local/default".into(),
+            provider_id: pawork_domain::ProviderId::new("opencode-go"),
+            model_id: None,
+            credential_hint: None,
+        },
+        window: QuotaWindow::Rolling5h,
+        unit: QuotaUnit::Percent,
+        values: QuotaValues {
+            used: QuotaMeasure::Exact(25),
+            limit: QuotaMeasure::Exact(100),
+            remaining: QuotaMeasure::Exact(75),
+        },
+        reset: QuotaReset::Absolute {
+            at: Timestamp::from_unix_millis(1800000000000),
+            uncertain: false,
+        },
+        confidence: QuotaConfidence::Exact,
+        provenance: QuotaProvenanceView {
+            adapter_kind: QuotaAdapterKind::ApiKeyApi,
+            source: "opencode-go /usage".into(),
+            fetched_at: Timestamp::from_unix_millis(1799999990000),
+            ..Default::default()
+        },
+        served_stale: false,
+    };
+    let value = serde_json::to_value(&snapshot).unwrap();
+    assert_golden("quota_percent_snapshot.json", value.clone());
+    assert_eq!(
+        serde_json::from_value::<QuotaSnapshotView>(value).unwrap(),
+        snapshot
+    );
+    assert_golden(
+        "quota_percent_failed_window.json",
+        serde_json::to_value(WindowReadEntry {
+            window: QuotaWindow::Weekly,
+            read: WindowReadView::Failed {
+                failures: vec![QuotaFailureView {
+                    adapter_kind: Some(QuotaAdapterKind::ApiKeyApi),
+                    error_code: "parse".into(),
+                    detail: "invalid usage window".into(),
+                    retry_after_ms: None,
+                }],
+            },
+        })
+        .unwrap(),
+    );
 }

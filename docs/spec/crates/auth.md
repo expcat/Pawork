@@ -73,6 +73,8 @@
 
 ## 4. 核心行为与数据流
 
+UI-6b G2（[ADR-060](../settings.md#adr-060ui-6b-g2-逐账号额度与耗尽切换2026-09-09)）：`ProviderAccountSelectionMode`、`ProviderAccounts.selection_mode/revision` 随索引同事务读取；`set_provider_account_selection_mode` 校验 Go 显式选中 API key；`select_provider_account_if_revision` 在事务内验证 revision/模式/原选中/目标，冲突不写 revision。手动选择恢复 Manual，删除最后/清空重置；既有外层 version 1、secret 隔离与刷新语义不变。
+
 ### 4.1 Provider 凭证解析链（装配期统一入口）
 
 1. `resolve_provider_credential` 查 `SecretBackend` 主条目（`pawork.<provider>` / account `default`）。

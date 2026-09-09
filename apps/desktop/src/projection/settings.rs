@@ -212,6 +212,18 @@ pub struct SettingsProvidersState {
     /// UI 层组合成「有效展开」（流程打开时保持展开区可见），本集合只
     /// 记录 chevron 的显式翻转结果。
     pub expanded_providers: HashSet<String>,
+    pub account_quotas: HashMap<(String, String), AccountQuota>,
+    pub quota_epoch: u64,
+    pub account_mode_pending: HashMap<String, u64>,
+}
+
+/// 请求身份保留在本地键中，不以脱敏 credential_hint 反推账号。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AccountQuota {
+    pub epoch: u64,
+    pub loading: bool,
+    pub stale: bool,
+    pub view: Option<pawork_client::QuotaOverviewView>,
 }
 
 /// 模型启用写在途种类（OPT-3a）。
@@ -257,6 +269,9 @@ impl Default for SettingsProvidersState {
             model_write_pending: None,
             model_cleared_note: None,
             expanded_providers: HashSet::new(),
+            account_quotas: HashMap::new(),
+            quota_epoch: 0,
+            account_mode_pending: HashMap::new(),
         }
     }
 }
@@ -275,6 +290,48 @@ impl DerefMut for SettingsProvidersState {
 }
 
 impl SettingsProvidersState {
+    pub fn begin_quota(&mut self, provider: &str, credential: &str) -> u64 {
+        self.quota_epoch = self.quota_epoch.wrapping_add(1);
+        let previous = self
+            .account_quotas
+            .remove(&(provider.into(), credential.into()));
+        self.account_quotas.insert(
+            (provider.into(), credential.into()),
+            AccountQuota {
+                epoch: self.quota_epoch,
+                loading: true,
+                stale: previous.as_ref().is_some_and(|entry| entry.stale),
+                view: previous.and_then(|entry| entry.view),
+            },
+        );
+        self.quota_epoch
+    }
+
+    pub fn apply_quota(
+        &mut self,
+        provider: String,
+        credential: String,
+        epoch: u64,
+        view: Option<pawork_client::QuotaOverviewView>,
+    ) {
+        if let Some(entry) = self.account_quotas.get_mut(&(provider, credential)) {
+            if entry.epoch == epoch {
+                entry.loading = false;
+                let has_snapshot = view.as_ref().is_some_and(|view| {
+                    view.windows.iter().any(|window| {
+                        matches!(&window.read, pawork_client::WindowReadView::Ok { .. })
+                    })
+                });
+                entry.stale = !has_snapshot;
+                // 全窗失败与传输失败同样保留旧读数，首次失败则保留 typed 空态。
+                // 部分成功直接展示当前窗口结果，不混合不同抓取时刻。
+                if has_snapshot || entry.view.is_none() {
+                    entry.view = view;
+                }
+            }
+        }
+    }
+
     /// 新数据到达：清 stale / error / loading，替换列表。
     pub fn apply_loaded(&mut self, data: ProviderAuthStatusData) {
         self.query.mark_ready();
@@ -282,6 +339,13 @@ impl SettingsProvidersState {
         self.auth_replacing_connected.clear();
         self.pending_status_refresh = false;
         self.providers = data.providers;
+        self.account_quotas.retain(|(provider, credential), _| {
+            self.providers.iter().any(|p| {
+                &p.provider_id == provider
+                    && p.credentials.iter().any(|c| &c.credential_id == credential)
+            })
+        });
+
         self.default_model = data.default.map(|pair| (pair.provider_id, pair.model_id));
         self.role_defaults = RoleDefaultsState {
             naming: data.role_defaults.naming.map(default_pair_to_tuple),
@@ -386,6 +450,9 @@ impl SettingsProvidersState {
     /// 写流程起点登记：provider 当前已 Connected 时记录 Replace 基线
     ///（UI 乐观置 Connecting 之前调用）。
     pub fn begin_auth_flow(&mut self, provider_id: &str) {
+        self.account_mode_pending.remove(provider_id);
+        self.account_quotas
+            .retain(|(provider, _), _| provider != provider_id);
         let connected = self.providers.iter().any(|entry| {
             entry.provider_id == provider_id
                 && matches!(entry.auth, ProviderAuthState::Connected { .. })
@@ -404,6 +471,8 @@ impl SettingsProvidersState {
     /// 应用 AuthChanged 事件（serde Value 形态；畸形载荷 fail-closed：
     /// 只记录错误，不落地任何认证状态变化）。
     pub fn apply_auth_changed_value(&mut self, provider_id: &str, state: &Value) -> bool {
+        self.account_quotas
+            .retain(|(provider, _), _| provider != provider_id);
         match parse_auth_change(state) {
             Ok(change) => self.apply_auth_change(provider_id, change),
             Err(reason) => {

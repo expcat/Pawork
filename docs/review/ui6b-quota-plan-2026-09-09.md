@@ -1,8 +1,8 @@
 # UI-6b G2 权威额度与切换方案（2026-09-09）
 
-状态：**启动核查与实施方案已完成，待确认 GUI 1.16 契约扩展；生产实现未开始**。本次从 [ROADMAP UI-6](../ROADMAP.md#8-ui-6--providers供应商目录多账号) 接续 G1，不重复多账号实现。启动基线为 `main` / `697f5fc3` 加 G1 未提交改动；检查期间仓库被并发提交为 `69c2cb51`，其中收录了路线图更新，本方案仍未提交。本任务未执行 git 提交；G1 既有验证记录不等于本次重新验证。
+状态：**用户已回复「确认」，GUI 1.16 契约扩展获准；已实现，定向自动检查、代理真窗口与真实 Run 检查通过；等待用户人工视觉验收，未归档**。本次从 [ROADMAP UI-6](../ROADMAP.md#8-ui-6--providers供应商目录多账号) 接续 G1，不重复多账号实现。启动基线为 `main` / `697f5fc3` 加 G1 未提交改动；检查期间仓库被并发提交为 `69c2cb51`，其中收录了路线图更新，本方案仍未提交。本任务未执行 git 提交；G1 既有验证记录不等于本次重新验证。
 
-## 1. 已核实的缺口
+## 1. 启动时核实的缺口（实施前）
 
 | 环节 | 当前源码事实 | G2 最小改动 |
 | --- | --- | --- |
@@ -58,9 +58,9 @@ flowchart TD
 
 查额度失败、401/403、无可用候选或快照过期时保持原选择；不增加本地预算拒绝、不把认证失败当额度耗尽、不在已发送请求失败后换账号重试。正常 Provider 请求仍返回其真实结果。自动变更通过既有 `AuthChanged` 刷新列表，原因用既有脱敏诊断记录；仅含本地 opaque ID，不记录 key。GUI 和 CLI 发起新 Run 的入口共用 app 层选择函数，Engine 不按 provider 名分支。
 
-## 5. 拟确认的 GUI API 1.16
+## 5. 已确认的 GUI API 1.16
 
-本次只提出以下附加式变化，**尚未修改版本、golden、typegen 或生产类型**：
+用户已确认以下附加式变化，实施时 golden 先行，版本与 typegen 同步：
 
 | 项目 | 拟定形状与兼容边界 |
 | --- | --- |
@@ -75,7 +75,7 @@ flowchart TD
 
 ## 6. 写入集与验收
 
-实现集中在六个既有包，不新增包、生产依赖、路由框架或配置层；Client 通用查询/命令发送可复用时不改 Client。providers 不依赖 control-plane，由 app 做 Go 返回值到 canonical 快照的转换；时间解析只支持该端点输出的 UTC ISO 形状并校验日历合法性，不新建通用日期库。
+实现集中在六个核心包与 Client 协议 re-export，不新增包、生产依赖、路由框架或配置层；Client 复用通用查询/命令发送，仅补 Desktop 所需类型 re-export。providers 不依赖 control-plane，由 app 做 Go 返回值到 canonical 快照的转换；时间解析只支持该端点输出的 UTC ISO 形状并校验日历合法性，不新建通用日期库。
 
 | 包 / Spec | 必要写入 |
 | --- | --- |
@@ -84,6 +84,7 @@ flowchart TD
 | [auth](../spec/crates/auth.md) | accounts 索引模式、手动选择与 revision 条件提交 |
 | [protocol](../spec/crates/protocol.md) | quota/settings/command/version/registry、golden 与 typegen |
 | [app](../spec/crates/app.md) | 逐账号查询、快照转换、Run 前选择与装配、旧版本 gate；复用现有 auth/HTTP 配置 |
+| [client](../spec/crates/client.md) | 通用协议类型 re-export 与既有握手版本回归 |
 | [desktop](../spec/crates/desktop.md) | Settings controller/状态、Providers 账号额度行、模式开关、AX、i18n |
 
 确认后登记 Settings ADR，同步 architecture/contracts、相关包 Spec、gui-design、capabilities、flows 与 ROADMAP。`design.md` 中 G2“远端适配器保持冻结”的历史边界须说明：本次只开放 Go 按需 GET；不复活归档的六厂商适配器、RefreshScheduler 或 G3–G6。
@@ -92,12 +93,17 @@ flowchart TD
 
 定向检查使用一个 Cargo 进程依次执行后端相关包测试（包括 providers 的 API-key 测试 feature、protocol/typegen），再执行 Desktop 既有测试和所改应用构建。真窗口在隔离实例验证展开/刷新/切换、三档字号与窄窗；真实 Run 固定当次 `opencode-go / glm-5.3-flash`。无第二个真实订阅时，自动选择依靠 mock 凭证命中证明，不把两个别名当成两份真实额度验收。
 
-## 7. 本次准备结果与确认依据
+## 7. 实施前准备结果与确认依据（历史）
 
 本批仅写本文与 ROADMAP；未修改已有生产代码、凭证、配置、golden 或生成物。工作区摘要检查检出 `docs/spec/crates/protocol.md` 的并发更新，随后确认其已随 `69c2cb51` 提交，未覆盖该变化；本任务写入集仍为两份文档。官方源码副本与工作区差异摘要放在 `/tmp/pawork-ui6b-g2/`，不检入仓库。独立来源核查代理在执行前因任务传输格式不兼容失败，源码与方案由主代理核查，无独立审查结论。
 
-实际读取的 [AGENTS.md §5](../../AGENTS.md#5-验证决策) 明确要求：**“golden 先于实现改动；schema/wire 演进须用户确认。”** [architecture §3.2](../architecture.md#32-冻结契约激活即采用完整形状golden-先于实现改动) 将 GUI 协议列为冻结契约。[G1 已确认方案](ui6b-accounts-plan-2026-09-08.md#4-已确认的-gui-api-115-扩展) 只确认 GUI 1.15 的账号命令/状态，并将 quota wire 留在后续检查点。本次判断是：路线图已授权启动 G2 和准备工作，但未确认本文 §5 的具体 1.16 变化，故实施前只需确认本方案一次。
+实际读取的 [AGENTS.md §5](../../AGENTS.md#5-验证决策) 明确要求：**“golden 先于实现改动；schema/wire 演进须用户确认。”** [architecture §3.2](../architecture.md#32-冻结契约激活即采用完整形状golden-先于实现改动) 将 GUI 协议列为冻结契约。[G1 已确认方案](ui6b-accounts-plan-2026-09-08.md#4-已确认的-gui-api-115-扩展) 只确认 GUI 1.15 的账号命令/状态，并将 quota wire 留在后续检查点。本次判断是：路线图已授权启动 G2 和准备工作，但未确认本文 §5 的具体 1.16 变化，故实施前只需确认本方案一次。用户现已回复「确认」，授权已生效；决议见 [ADR-060](../spec/settings.md#adr-060ui-6b-g2-逐账号额度与耗尽切换2026-09-09)。
 
 Validated: 文档相对文件链接、`git diff --check`、本批写入集检查。
 Targeted regressions: none（本批为实施前文档准备，未改可执行行为）。
 Full workspace gate: NOT RUN（当前未设置全量门禁）。
+
+
+## 8. 实施结果
+
+本方案已落地。最终实现、定向命令、审查修正、模拟切换/真实 Run 的独立证据与候选哈希统一见 [ROADMAP G2 记录](../ROADMAP.md#ui-6b-g2-本批证据2026-09-09)。§7 的仅文档写入与确认依据是实施前历史，不代表当前实现状态。

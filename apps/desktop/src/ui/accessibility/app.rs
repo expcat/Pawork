@@ -468,6 +468,9 @@ impl AppView {
             "terminal-close" => self.on_close_terminal(window, cx),
             "activity-open-changes" => self.on_activity_open_changes(window, cx),
             _ => {
+                if self.on_settings_quota_action(identifier, cx) {
+                    return true;
+                }
                 if self.on_settings_account_action(identifier, cx) {
                     return true;
                 }
@@ -4261,6 +4264,7 @@ mod tests {
                                 endpoint_label: "https://api.moonshot.cn".into(),
                                 auth_methods: vec!["api_key".into()],
                                 credentials: Vec::new(),
+                                selection_mode: Default::default(),
                                 auth: crate::projection::ProviderAuthState::None,
                                 catalog: crate::projection::ProviderCatalogState::Unavailable {
                                     error: "offline".into(),
@@ -4274,6 +4278,7 @@ mod tests {
                                 endpoint_label: "https://provider.example".into(),
                                 auth_methods: vec!["api_key".into()],
                                 credentials: Vec::new(),
+                                selection_mode: Default::default(),
                                 auth: crate::projection::ProviderAuthState::Connected {
                                     method: "api_key".into(),
                                     masked_credential: Some("masked-fragment-sentinel".into()),
@@ -4618,6 +4623,7 @@ mod tests {
             endpoint_label: String::new(),
             auth_methods: vec!["api_key".to_string()],
             credentials: Vec::new(),
+            selection_mode: Default::default(),
             auth,
             catalog: ProviderCatalogState::Unavailable {
                 error: "offline".to_string(),
@@ -5006,6 +5012,7 @@ mod tests {
             endpoint_label: String::new(),
             auth_methods: vec!["api_key".to_string()],
             credentials: Vec::new(),
+            selection_mode: Default::default(),
             auth,
             catalog: catalog_remote(),
             use_proxy: true,
@@ -5727,5 +5734,114 @@ mod tests {
                 }));
             });
         }
+
+        // G2：同一真实布局路径显示账号三窗，epoch 与离页清理拒绝迟到结果。
+        cx.simulate_resize(gpui::size(px(1440.0), px(2400.0)));
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.text_scale = crate::ui::theme::font::TextScale::Percent100;
+                view.settings_scroll.set_offset(gpui::point(px(0.0), px(0.0)));
+                view.handshake_info.as_mut().unwrap().api_version = "1.16".into();
+                let p = &mut view.projection.settings_providers.providers[0];
+                p.provider_id = "opencode-go".into();
+                p.credentials[0].kind = "api_key".into();
+                p.credentials[0].selected = true;
+                view.projection.settings_providers.expanded_providers.insert("opencode-go".into());
+                let scope = serde_json::json!({"tenant_id":"local", "account_id":"local/default", "provider_id":"opencode-go"});
+                let now = crate::ui::now_unix_ms();
+                let windows: Vec<_> = ["rolling5h", "weekly", "monthly"].into_iter().map(|window| serde_json::json!({
+                    "window":window, "read":{"status":"ok", "snapshot":{
+                        "scope":scope, "window":window, "unit":{"kind":"percent"},
+                        "values":{"used":{"kind":"exact","value":42},"limit":{"kind":"exact","value":100},"remaining":{"kind":"exact","value":58}},
+                        "reset":{"kind":"absolute","at":now+3_600_000,"uncertain":false},
+                        "confidence":"exact", "provenance":{"adapter_kind":"api_key_api","source":"Go usage","fetched_at":now-31_000}
+                    }}
+                })).collect();
+                let quota: pawork_client::QuotaOverviewView = serde_json::from_value(serde_json::json!({
+                    "scope":scope, "windows":windows, "generated_at":now
+                })).unwrap();
+                let state = &mut view.projection.settings_providers;
+                let old = state.begin_quota("opencode-go", "cred_second");
+                let latest = state.begin_quota("opencode-go", "cred_second");
+                state.apply_quota("opencode-go".into(), "cred_second".into(), old, Some(quota.clone()));
+                assert!(state.account_quotas[&("opencode-go".into(), "cred_second".into())].loading);
+                state.apply_quota("opencode-go".into(), "cred_second".into(), latest, Some(quota));
+                cx.notify();
+            });
+        });
+        cx.update(|_, cx| host.update(cx, |_, cx| cx.notify()));
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                let tree = view.accessibility_tree(window, cx);
+                for suffix in ["rolling", "weekly", "monthly"] {
+                    let id =
+                        crate::ui::settings::quota_identifier("opencode-go", "cred_second", suffix);
+                    let node = tree.find(&id).expect("quota window in actual layout");
+                    assert!(node.value.as_ref().unwrap().contains("Used 42%"));
+                    assert!(node.value.as_ref().unwrap().contains("Stale"));
+                    assert!(node.bounds.width > 0.0 && node.bounds.height > 0.0);
+                }
+                let mode = crate::ui::settings::quota_identifier("opencode-go", "", "mode");
+                assert!(tree.find(&mode).unwrap().enabled);
+                assert_eq!(tree.find(&mode).unwrap().value.as_deref(), Some("Off"));
+                let refresh = crate::ui::settings::quota_identifier("opencode-go", "cred_second", "refresh");
+                for (id, max_width) in [(&refresh, 220.0), (&mode, 50.0)] {
+                    let node = tree.find(id).unwrap();
+                    let actual = view.settings_element_layouts[id].bounds();
+                    assert!(node.bounds.width > 0.0 && node.bounds.width < max_width);
+                    assert_eq!(node.bounds.width, f32::from(actual.size.width));
+                }
+                let key = ("opencode-go".to_string(), "cred_second".to_string());
+                // A refresh preserves the previous reading and reports its failure immediately.
+                let epoch = view.projection.settings_providers.begin_quota(&key.0, &key.1);
+                assert!(view.projection.settings_providers.account_quotas[&key].view.is_some());
+                assert!(view.account_quota_labels(&key.0, &key.1)[0].1.contains("Loading"));
+                view.projection.settings_providers.apply_quota(key.0.clone(), key.1.clone(), epoch, None);
+                assert!(view.projection.settings_providers.account_quotas[&key].stale);
+                assert!(view.account_quota_labels(&key.0, &key.1)[0].1.contains("Used 42%"));
+                let previous = view.projection.settings_providers.account_quotas[&key].view.clone().unwrap();
+                let mut failed = previous.clone();
+                for window in &mut failed.windows {
+                    window.read = pawork_client::WindowReadView::Failed { failures: vec![] };
+                }
+                let epoch = view.projection.settings_providers.begin_quota(&key.0, &key.1);
+                view.projection.settings_providers.apply_quota(key.0.clone(), key.1.clone(), epoch, Some(failed.clone()));
+                assert!(view.projection.settings_providers.account_quotas[&key].stale);
+                assert_eq!(view.projection.settings_providers.account_quotas[&key].view.as_ref(), Some(&previous));
+                let first = view.projection.settings_providers.begin_quota(&key.0, "first-failure");
+                view.projection.settings_providers.apply_quota(key.0.clone(), "first-failure".into(), first, Some(failed.clone()));
+                assert!(view.account_quota_labels(&key.0, "first-failure")[0].1.contains("unavailable"));
+                // 一窗成功时采用本次 typed 结果，失败窗不冒用旧读数。
+                failed.windows[0] = previous.windows[0].clone();
+                let partial = view.projection.settings_providers.begin_quota(&key.0, &key.1);
+                view.projection.settings_providers.apply_quota(key.0.clone(), key.1.clone(), partial, Some(failed.clone()));
+                assert_eq!(view.projection.settings_providers.account_quotas[&key].view.as_ref(), Some(&failed));
+                assert!(view.account_quota_labels(&key.0, &key.1)[1].1.contains("unavailable"));
+                let entry = view.projection.settings_providers.account_quotas.get_mut(&key).unwrap();
+                entry.stale = false;
+                if let pawork_client::WindowReadView::Ok { snapshot, .. } = &mut entry.view.as_mut().unwrap().windows[0].read {
+                    snapshot.provenance.fetched_at = serde_json::from_value(serde_json::json!(crate::ui::now_unix_ms() + 60_000)).unwrap();
+                }
+                assert!(view.account_quota_labels(&key.0, &key.1)[0].1.contains("Stale"));
+                let p = &mut view.projection.settings_providers.providers[0];
+                p.selection_mode = pawork_client::ProviderAccountSelectionMode::WhenExhausted;
+                p.credentials.clear();
+                assert!(view.account_mode_enabled(&view.projection.settings_providers.providers[0]));
+                view.projection.settings_providers.account_mode_pending.insert("opencode-go".into(), epoch);
+                assert!(!view.account_mode_enabled(&view.projection.settings_providers.providers[0]));
+                view.clear_settings_buffers(cx);
+                view.projection.settings_providers.apply_quota(
+                    "opencode-go".into(),
+                    "cred_second".into(),
+                    1,
+                    None,
+                );
+                assert!(view.projection.settings_providers.account_quotas.is_empty());
+                view.handshake_info.as_mut().unwrap().api_version = "1.15".into();
+                assert!(!view.settings_quota_supported());
+            });
+        });
     }
 }

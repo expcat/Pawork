@@ -9,15 +9,16 @@ use crate::projection::{
 use crate::ui::i18n::t;
 use crate::ui::settings::{
     provider_catalog_overview_label, provider_credential_kind_label,
-    provider_credential_status_label, provider_status_lines, settings_account_action_identifier,
-    settings_api_key_input_identifier, settings_credential_row_identifier,
-    settings_default_unavailable_note, settings_manage_models_identifier,
-    settings_model_switch_identifier, settings_models_disable_all_identifier,
-    settings_models_enable_all_identifier, settings_models_menu_identifier,
-    settings_models_refresh_identifier, settings_provider_expand_identifier,
-    settings_role_candidates, settings_role_clear_identifier, settings_role_description_label,
-    settings_role_item_identifier, settings_role_trigger_identifier, settings_use_proxy_identifier,
-    SettingsAuthAction, SettingsRole,
+    provider_credential_status_label, provider_status_lines, quota_identifier,
+    settings_account_action_identifier, settings_api_key_input_identifier,
+    settings_credential_row_identifier, settings_default_unavailable_note,
+    settings_manage_models_identifier, settings_model_switch_identifier,
+    settings_models_disable_all_identifier, settings_models_enable_all_identifier,
+    settings_models_menu_identifier, settings_models_refresh_identifier,
+    settings_provider_expand_identifier, settings_role_candidates, settings_role_clear_identifier,
+    settings_role_description_label, settings_role_item_identifier,
+    settings_role_trigger_identifier, settings_use_proxy_identifier, SettingsAuthAction,
+    SettingsRole,
 };
 use crate::ui::{AppView, MenuKind};
 
@@ -283,6 +284,22 @@ impl AppView {
                             }
                         ),
                     ));
+                    if self.account_quota_supported(id, credential) {
+                        for (quota_id, label) in
+                            self.account_quota_labels(id, &credential.credential_id)
+                        {
+                            credentials = credentials.child(text(
+                                quota_id,
+                                t("settings.providers.usage_title"),
+                                label,
+                            ));
+                        }
+                        credentials = credentials.child(button(
+                            quota_identifier(id, &credential.credential_id, "refresh"),
+                            t("settings.quota.refresh"),
+                            self.account_quota_refresh_enabled(),
+                        ));
+                    }
                     if self.settings_accounts_supported() && !credential.credential_id.is_empty() {
                         for remove in [false, true] {
                             credentials = credentials.child(button(
@@ -440,6 +457,28 @@ impl AppView {
                         self.settings_auth_action_label(action),
                         self.settings_action_enabled(action, id, writes, cx),
                     ));
+                }
+                if id == "opencode-go" && self.settings_quota_supported() {
+                    credentials = credentials.child(
+                        button(
+                            quota_identifier(id, "", "mode"),
+                            t("settings.quota.auto"),
+                            self.account_mode_enabled(provider),
+                        )
+                        .selected(
+                            provider.selection_mode
+                                == pawork_client::ProviderAccountSelectionMode::WhenExhausted,
+                        )
+                        .value(t(
+                            if provider.selection_mode
+                                == pawork_client::ProviderAccountSelectionMode::WhenExhausted
+                            {
+                                "settings.providers.switch_on"
+                            } else {
+                                "settings.providers.switch_off"
+                            },
+                        )),
+                    );
                 }
                 card = card.child(credentials).child(text(
                     dynamic_identifier("settings-provider-usage", id),

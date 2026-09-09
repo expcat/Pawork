@@ -51,6 +51,8 @@ pub enum QuotaUnit {
     #[default]
     Count,
     Token,
+    /// Integer percentage points (0–100), supplied by an authoritative source.
+    Percent,
     Cost {
         currency: String,
     },
@@ -251,7 +253,7 @@ pub struct QuotaOverviewView {
     pub scope: QuotaScopeView,
     pub windows: Vec<WindowReadEntry>,
     pub generated_at: Timestamp,
-    /// 是否来自 quota-service 缓存（false = 当前无缓存，全是 NoData）。
+    /// 是否来自 quota-service 缓存；按需远端读取与无缓存视图均为 false。
     #[serde(default)]
     pub from_cache: bool,
 }
