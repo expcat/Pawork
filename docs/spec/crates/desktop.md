@@ -60,8 +60,8 @@
 | `src/ui/changes.rs` | ~990 | Changes 面：Files / Summary、只读 DiffView、latest-session mismatch fail-closed 与诚实 scope；empty / unavailable / stale 使用分层占位。`has_reviewable_files_for` 要求 active session、Ready、非 stale 且文件非空，供 Run summary render/AX 同源门控。折叠态 Header ActivityPopover 为 320px 内容宽，内容高随字号为 144/180/216px，按当前唯一 Changes 内容收缩，不为未实现的 Agent 状态留空；7 个测试 |
 | `src/ui/resources.rs` | ~290 | Resources 页：MCP server 只读表 + `ResourcesPanelState`（epoch 防过期）+ 手动刷新；empty / unavailable / error / stale 分层；SET-6c 权威回执 bump epoch；3 个测试 |
 | `src/ui/settings/mod.rs` | ~1386 | English / 中文 Settings 壳与稳定八页导航；OPT-4c 起内容列用满 Rail 外可用宽度（`SETTINGS_CONTENT_PAD` 32×2，不再保留 820px 上限），共享脚手架单列 + 滚动层，受限高度内纵向滚动、切页归零；OPT-4d 导航选中/未选中共用同一外壳几何（UI-5：中性背景 + 字重；焦点描边经 focus_ring 覆盖层，零布局参与），文字坐标零位移（F4）；共享状态 / gate、descriptor 驱动认证动作与 Connect API key 编辑入口；4 个测试（空 shell Save 映射 null；OPT-3 角色区/弹层渲染 gate；角色控件 identifier 构造/解析互逆） |
-| `src/ui/settings/provider_quota.rs` | — | Go 账号额度刷新、过期标注、选择模式控件与共享 AX 状态（ADR-060） |
-| `src/ui/settings/providers.rs` | ~1620 | 64px provider 概览（认证方式 / 连接 / 目录或模型数）+ 独立认证操作详情行；普通层不显示 masked credential、endpoint、catalog error 或 raw model id；页首「Default models」四角色区取代独立默认模型 section；Remove 保持二次确认；ADR-056 起卡片改为「64px 五列卡头 + chevron 展开区」（展开态按 provider_id 存 projection，有效展开 = 显式态 ∨ 流程态）：展开区自上而下 Proxy 行、Manage models 行、Credentials 区（每条存储凭证一行：kind + masked + Connected/Expired，空列表诚实空态，env fallback 不入列）与 Usage 行（Go 由 ADR-060 按账号展示三窗已用百分比与重置；其它来源不可用时保留 unavailable）；展开区文本列一律 flex_row + flex_1 骨架（region 根 min_w_0 会以 Definite(0) 测量毒化 auto-basis 裸 flex_col 文本，真窗口实证）；ADR-052 provider 级代理 Switch：仅 Global `proxy_url` 已配置时可见，按生效值并排 On/Off 状态词，writes 总闸关闭（断线 stale）时 disabled；mouse / Enter / Space / AX Press 共用 `on_settings_toggle_provider_use_proxy`（OPT-3c 起控件形态为 `Switch`）；ADR-055 增页首「Default models」四角色区（角色菜单候选 = 已连接且已启用，含 Clear；候选为空仍保留 Clear（鼠标/键盘/AX 同源）；vision/search 标注 save-only）与每 provider「Manage models」弹层（`MenuPanel` 内单模型 Switch 行 + Enable all/Disable all，禁用命中角色默认对时显示 cleared_roles 提示；目录为空显示诚实空态，不渲染全开假按钮） |
+| `src/ui/settings/provider_quota.rs` | — | Go 账号三窗已用 / 剩余、天 / 小时 / 分钟倒计时、来源 / 获取时间与过期标注；刷新、选择模式控件与共享 AX 状态（ADR-060 / UX-06） |
+| `src/ui/settings/providers.rs` | ~1620 | 64px provider 概览（认证方式 / 连接 / 目录或模型数）+ 独立认证操作详情行；普通层不显示 masked credential、endpoint、catalog error 或 raw model id；供应商列表后的「Default models」四角色区取代独立默认模型 section；Remove 保持二次确认；ADR-056 起卡片改为「64px 五列卡头 + chevron 展开区」（展开态按 provider_id 存 projection，有效展开 = 显式态 ∨ 流程态）：UX-06 展开区优先展示 Accounts（旧 Host 为 Credentials）区，其后是 Proxy / Manage models；账号区（每条存储凭证一行：kind + masked + Connected/Expired，空列表诚实空态，env fallback 不入列）与 Usage 行（Go 由 ADR-060 按账号展示三窗已用百分比与重置；其它来源不可用时保留 unavailable）；展开区文本列一律 flex_row + flex_1 骨架（region 根 min_w_0 会以 Definite(0) 测量毒化 auto-basis 裸 flex_col 文本，真窗口实证）；ADR-052 provider 级代理 Switch：仅 Global `proxy_url` 已配置时可见，按生效值并排 On/Off 状态词，writes 总闸关闭（断线 stale）时 disabled；mouse / Enter / Space / AX Press 共用 `on_settings_toggle_provider_use_proxy`（OPT-3c 起控件形态为 `Switch`）；ADR-055 增供应商列表后的「Default models」四角色区（角色菜单候选 = 已连接且已启用，含 Clear；候选为空仍保留 Clear（鼠标/键盘/AX 同源）；vision/search 标注 save-only）与每 provider「Manage models」弹层（`MenuPanel` 内单模型 Switch 行 + Enable all/Disable all，禁用命中角色默认对时显示 cleared_roles 提示；目录为空显示诚实空态，不渲染全开假按钮） |
 | `src/ui/settings/general.rs` | ~220 | Network / HTTP proxy（wire 保持 General 兼容名） |
 | `src/ui/settings/permissions.rs` | ~340 | 五档整行 radio + 会话信任；row click / Enter / Space / AX Press 共用 handler；`ApprovalModeWire` English 标签在 `approval_labels.rs` |
 | `src/ui/settings/tools.rs` | ~270 | MCP list/test/remove |
@@ -143,7 +143,7 @@ pawork-desktop [--socket <path>] [--instance <name>] [--probe|--probe-smoke]
   - Changes：Files / Summary 二级页签 + ↻ 手动刷新。Files = 文件清单（路径 · status · `+A/−D`，≤200px 内滚动）+ DiffView（等宽 Menlo；hunk 头 raised 底 secondary 字；addition 行 success_bg 底 / deletion 行 danger_bg 底 / context 行 panel 底；长行 `overflow_x_scroll` 横滚不折行；binary 显示「Binary file — not rendered.」）。Summary = 七字段行（Session / Files / Lines / By status / Branch / Dirty files / Work dir，缺失显 unknown）。数据会话 ≠ 查看会话时顶端 banner 如实标注。
   - Terminal：host 流式 `TerminalOutput` 滚动文本（非 VT100、无本地 PTY）+ cwd 与尺寸组（`−W +W [列×行] −H +H`：stepper 只改本地草稿并钳制在 20–500 列 / 6–200 行，可见值与 AX value 同源；尺寸按钮把草稿经 `terminal_resize` 下发，在途时禁重复提交，仅匹配当前终端与当前草稿的回执才清草稿，终端切换也复位；缺/空 cwd 事实显示 `unknown`，G3）+ 终端输入（Enter 写入，未启动时先懒创建；write/resize 瞬态失败在终端仍 running 时不锁死，仅 status_hint 报错，G2）+ Start / New / Size 单槽（未创建 Start；可操作 Size；已知 exited/killed 变 New——同 workspace/cwd 新建终端，旧终端只读保留；failed 须先 Close 清理后回到 Start；create/resize 在途时同 gate 禁用，G2）+ ADR-045 Stop/Close 同槽（running Stop，终态 Close）+ 脱钩回底控件。
   - Resources：MCP server 只读表（name + state 徽标，`failed` 红字；`transport · N tools[ · last_error]` 次行）+ ↻ 刷新。
-- **StatusBar + ActivityPopover（R6 Wave A / P1-4）**：UI-1 底部 30px StatusBar 以四组元信息居中显示 RunStatusBar `Task — tokens | Quota unavailable | — tok/s | Run {mm:ss|—|idle}`（缺权威来源一律 `—`）。OPT-4b（F6）起 Inspector 默认折叠（宽屏同样），显式动作（重开 / Activity 摘要 / Review changes）才展开。Inspector 展开态由面板内右上 `inspector-collapse`（36×36、20px 字形）折叠；折叠态 Workspace Header 右上 `inspector-toggle` Activity 触发器与最右 `inspector-expand` 重开按钮并存（各 40×37 槽、4px 间距），点击后在触发器下方以右缘对齐展开 Popover（内容宽 320px，内容高随字号为 144/180/216px）：标题 Activity、Changes 标题与权威摘要 `N file(s) · +A/−D` 或 `unavailable`；点击摘要或 Run Summary 的 Review changes 均展开 Inspector、定位 Changes 并聚焦当前选中的 Changes 顶层页签；仅有 latest 会话差异时加来源说明。Agent/Add tool 无 capability 不画，也不为其保留空白高度。
+- **StatusBar + ActivityPopover（R6 Wave A / P1-4）**：UI-1 底部 30px StatusBar 以四组元信息居中显示 RunStatusBar `Task — tokens | Task quota — | — tok/s | Run {mm:ss|—|idle}`（缺权威来源一律 `—`）。OPT-4b（F6）起 Inspector 默认折叠（宽屏同样），显式动作（重开 / Activity 摘要 / Review changes）才展开。Inspector 展开态由面板内右上 `inspector-collapse`（36×36、20px 字形）折叠；折叠态 Workspace Header 右上 `inspector-toggle` Activity 触发器与最右 `inspector-expand` 重开按钮并存（各 40×37 槽、4px 间距），点击后在触发器下方以右缘对齐展开 Popover（内容宽 320px，内容高随字号为 144/180/216px）：标题 Activity、Changes 标题与权威摘要 `N file(s) · +A/−D` 或 `unavailable`；点击摘要或 Run Summary 的 Review changes 均展开 Inspector、定位 Changes 并聚焦当前选中的 Changes 顶层页签；仅有 latest 会话差异时加来源说明。Agent/Add tool 无 capability 不画，也不为其保留空白高度。
 
 ### 3.3 键盘与焦点
 
@@ -190,6 +190,8 @@ AX 焦点口径：grouping 是直接按钮，name 表达目标动作、value 表
 
 UI-6b 命名账号（[ADR-059](../settings.md#adr-059ui-6b-命名账号与持久选择2026-09-08)）：Settings credentials 显示名称、kind、掩码、过期与后续请求选择；名称输入与 API key/OAuth 新增复用 inline 流程。行与 Use/Remove/确认按 credential ID 绑定，AX 与键盘动作同源，选中账号仍有其他记录时禁删。握手 minor ≥15 才显示新增账号能力；旧 Host 保留原操作与旧状态解码。controller 通过现有 pawork-client 通用命令发送，不新增业务依赖。
 
+UX-06（2026-09-09）：供应商列表按已连接优先稳定排序，render / AX 共用顺序，不改 Host 目录与认证语义；四默认角色移到列表后，识图 / 搜索的选择入口与说明直接标注「尚未生效」，仍允许保存偏好。展开区先展示账号 / 当前选择 / 三窗额度 / 账号操作，再显示添加账号、代理与模型管理；不同账号以间距与分隔线区分。当前选择只作用于该供应商后续请求，进行中请求保持原账号。窗口已用 / 剩余分别读 canonical 字段，剩余缺失显示未知，不按已用推算；倒计时保留分钟精度并分解为天 / 小时 / 分钟，说明向上取整与不确定时间，已到重置时要求刷新确认。各窗保留来源与获取距今秒数，旧缓存 / 超 30 秒 / 未来时间仍明确标过期。订阅三窗和多个 Key 不相加；底栏「任务额度 —」没有任务额度读数，不复制 Settings 的账号额度。无 wire / schema / 依赖变化。
+
 ### 3.4 语言（i18n）
 
 - 界面 chrome 文案集中在 `ui/i18n.rs` 目录，`t(key)` / `t2(key, a, b)` 按当前语言返回 `&'static str`；未知 key 原样返回，不 panic。
@@ -200,7 +202,7 @@ UI-6b 命名账号（[ADR-059](../settings.md#adr-059ui-6b-命名账号与持久
 
 ## 4. 核心行为与数据流
 
-UI-6b G2：新增 `ui/settings/provider_quota.rs`；Controller 通过 Client 查询指定 provider/credential 的 Percent 三窗与写选择模式。投影按稳定 ID 和请求 epoch 存读数，结合 connection generation 拒绝迟到响应；离页/断线/认证变化清理。账号区显示已用百分比、重置时间、刷新与过期标注，既有每秒时钟在 30 秒或 reset 后更新状态；仅新 Host/Go 开放自动切换开关。按钮/开关及 AX 共用实际布局，扩展既有 Provider AX 回归。
+UI-6b G2：新增 `ui/settings/provider_quota.rs`；Controller 通过 Client 查询指定 provider/credential 的 Percent 三窗与写选择模式。投影按稳定 ID 和请求 epoch 存读数，结合 connection generation 拒绝迟到响应；离页/断线/认证变化清理。账号区显示已用 / 剩余百分比、重置时间、来源、获取时间、刷新与过期标注，既有每秒时钟在 30 秒或 reset 后更新状态；仅新 Host/Go 开放自动切换开关。按钮/开关及 AX 共用实际布局，扩展既有 Provider AX 回归。
 
 ### 4.1 启动 → 连接 → snapshot → 分页 timeline → live 事件 → 断线 Reconnect
 
@@ -345,6 +347,8 @@ UX-05 复用并更新两个现有主路径回归：`model_menu_ax_culls_rows_out
 UX-03 定向回归 `project_task_guidance_preserves_context_and_wraps`：项目筛选不重绑 / 不改草稿，项目新建菜单排除「所有项目」，Esc 回焦与第二次 Enter 确认，宽窄窗 × 三档字号下元信息实际框不重叠 / 不越界；有项目后移除限制与新建入口但保留其他反馈。复用既有 Composer 布局、会话草稿与目录菜单滚动测试；真窗口证据与用户验收状态见 [路线图 UX-03](../../ROADMAP.md#ux-03-新任务与项目上下文引导)。
 
 ## 7. 测试与验证资产
+
+UX-06：复用并更新角色 / Provider AX 布局与三窗回归，覆盖连接优先排序、角色位置与未生效说明、实际滚动框、三窗来源 / 已用 / 剩余、剩余未知与过期；新增一个分钟精度倒计时主路径测试（含 6995 分钟 → 4d 20h 35m）。Desktop 224 项测试与 build 通过。真窗口已覆盖账号信息、不可用与刷新、宽窄窗三档字号、角色键盘导航；真实三窗数值 / 重置倒计时因当次查询不可用仍待补验，用户验收未完成，见 [路线图 UX-06](../../ROADMAP.md#ux-06-供应商与账号信息层级)。
 
 UX-04 新增 `recovery_keeps_errors_local_and_preserves_drafts`：覆盖离线空态、诊断 / 重试、草稿保留、模型状态、只读创建阻止、实际拒绝的局部提示、权限未知与 stale gate、终端 I/O 错误及成功恢复；复用并扩充 `terminal_io_failure_keeps_running_terminal_operable`。本批 Desktop 223 项测试通过；真实 read-only 拒绝、连接恢复及三档字号证据与验收边界见 [路线图 UX-04](../../ROADMAP.md#ux-04-错误在发生处解释并提供下一步)。
 

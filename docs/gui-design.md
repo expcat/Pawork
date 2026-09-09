@@ -89,7 +89,7 @@ UX-03 项目引导：侧栏触发器标明「筛选 · 项目名」，切换不�
 - Header 总高 80px，顶部留 24px，标题与元信息间距 12px；动作维持 40×37px 命中区，改用无边框 Ghost、6px 圆角。元信息来自原有权威投影；缺字段隐藏。
 - Inspector 宽度仍为 440px，顶层 / 二级页签条 48 / 40px；选中背景与居中 24×2px 中性下划线不推动文字位置。hover / pressed / focus 即时反馈。
 - Inspector 开合为 180ms cubic ease-out 宽度过渡，快速反向从当前宽度续接；每帧使 Timeline 测高失效，空间不足立即归零（100% 至少 1288px，150% 至少 1320px，中央始终 ≥560px），resize 不写用户偏好。默认收起、显式重开、cmd-i 和 Changes / Terminal / Resources 原入口保留。
-- 状态栏高 30px，将真实状态文案分成四组元信息居中呈现；Quota unavailable、未知 token 与吞吐继续如实展示。
+- 状态栏高 30px，将真实状态文案分成四组元信息居中呈现；任务额度 —、未知 token 与吞吐继续如实展示。
 
 本批实现、自动验证、代理真窗口检查与用户人工视觉验收分别记录在 [ROADMAP 历史记录](review/roadmap-ui-2026-09-09.md)；2026-09-07 用户确认 UI-1 视觉通过。UI-2～UI-6 的验收状态同文记录。
 
@@ -176,7 +176,7 @@ UX-05：Composer 模型菜单打开后将当前项滚入视口，按名称 / ID 
 
 - Composer 以本页 UI-4 规格为准：居中卡片至少 110px、最高 220px，模型 / 发送 36px 命中区，项目与上下文位于卡片下方。
 - `ContextMeter`：当前请求上下文估算 / model catalog context window。容量未知时显示 unavailable，不用 Session 累计 token 冒充。
-- Workspace 与 Inspector 底部共享 30 px `RunStatusBar`：Task 累计 token、Provider 剩余额度、output tokens/s 与 Run duration；缺权威来源时显示 unknown / `—`。
+- Workspace 与 Inspector 底部共享 30 px `RunStatusBar`：Task 累计 token、任务额度（当前无读数）、output tokens/s 与 Run duration；缺权威来源时显示 unknown / `—`。
 - Inspector 顶层：Changes / Terminal / Resources。OPT-4b（F6）起默认折叠（宽屏同样），折叠时宽度归零；Workspace Header 右上 `Activity` 触发器与最右 `inspector-expand` 重开按钮并存（OPT-D 签字稿 collapsed 态），`ActivityPopover` 只摘要已有的 Changes 事实；显式动作（重开入口、Activity 摘要、Review changes）展开面板，空间不足（窄窗 / 大字号）保持折叠。Surface 未接通时隐藏对应分区，不做可点击假入口。
 - 只消费 projection / Host capability，经 controller → `pawork-client`；GUI 不直连 Provider、quota、Git、PTY 或数据库。
 
@@ -212,7 +212,7 @@ Settings 沿用深色主题、8px 节奏和 1440×1024 基线，不把工作台�
 - Settings 导航 AX 随 `Panel` 的 rem padding/gap 同步缩放，并扣除侧栏分隔线；UI-5 七个非供应商页均使用 GPUI 实测框，只发布滚动视口中的可见部分。项目 Scope 菜单同样使用实测框与滚动偏移，超过 240px 时只发布可见选项；键盘高亮与打开菜单时的当前选项滚入视口。
 - 导航与页内可见文案默认 English，可在 Appearance 页切换为简体中文（即时生效，保存到用户目录 `desktop.json`，重启恢复）；顺序为 Models & providers → Network → Approvals → Tools & MCP → Terminal → Appearance → Advanced → About。没有真实读写能力的页不显示；Advanced 离线仍可进入。
 - 翻译边界：只翻译界面 chrome 文案（按钮、提示、空态、状态提示、tooltip）；session 标题、provider / model id、文件路径、工具输出与 wire 错误原因等数据内容保持原文；品牌名「Pawork」、功能符号与示例数据不翻译。render 与 AX 经同一目录同源取词，AX 节点 id 保持英文。
-- **Models & providers**：OPT-4c（F2）起内容用满 Rail 外可用宽度、两侧各 32px padding，不再保留 820px 上限（render 与 AX 几何经 `SETTINGS_CONTENT_PAD` 同源）；UI-6a provider 使用自然增高卡片，分组显示名称 / 认证方式与连接状态 / 目录模型数；认证操作放在独立详情行，避免窄窗与大字号挤压信息列。Host `provider_auth_status` 是权威数据，Desktop 不按供应商名称硬编码 OAuth/API key 分支。普通行与 AX summary 不显示 masked credential、endpoint、catalog error 或 raw model id；endpoint / 错误只在连接、等待或删除确认详情出现。API key editor 仅在 Connect / Replace 后展开，secure input 的完整值不得进 AX tree、日志或状态文本。OAuth 等待区提供「打开授权链接」「复制链接」及存在 device code 时的「复制验证码」按钮；打开交给系统默认浏览器，仅接受 HTTP(S)，断线 / stale 禁止打开。登录详情（URL、验证码、到期、端点和错误）使用可选中复制的只读字段，长网址横向滚动；支持鼠标拖选、键盘全选 / 复制，按钮支持鼠标、Enter / Space 与 AX Press，复制后显示「已复制」。无 device code 的 PKCE 流程不画复制验证码按钮；终态收起过期动作，API key secure 输入仍只发布掩码。交互参照 [OpenCode 登录界面](https://github.com/anomalyco/opencode/blob/dev/packages/app/src/components/dialog-connect-provider.tsx) 的授权链接与 readOnly / copyable 字段，不接触 token。认证成功与目录成功是两个状态。OPT-3 起页首为「Default models」四默认角色区（对话/命名/识图/搜索；候选 = 已连接且已启用的模型；无候选时仍保留 Clear，可清除失效默认项；识图/搜索在路由落地前标注「只保存」）。每 provider 行提供 Manage models 弹层：固定头部展示名称 / ID 搜索、连接与目录来源、完整目录启用计数和批量动作；520px 高度上限内由模型列表独立滚动，长名与 ID 可横向阅读，↑/↓ 和 Tab 聚焦的 Switch 滚入可见区域，Esc 返回入口。无结果保留清除搜索；Enable all / Disable all 始终操作完整供应商目录，搜索不改变其范围。禁用命中角色默认对时 Host 同批清除该键对并如实提示；目录为空显示诚实空态，不渲染全开假按钮。当 Global `proxy_url` 已配置时，行右侧追加供应商级代理 Switch（OPT-3c 起为 Switch 控件，On/Off 状态词，tooltip 说明走代理/直连）；click / Enter / Space / AX Press 同一 handler，Host `set_provider_use_proxy` 回执即写后状态，不乐观更新。未配置全局代理时不渲染该开关。
+- **Models & providers**：OPT-4c（F2）起内容用满 Rail 外可用宽度、两侧各 32px padding，不再保留 820px 上限（render 与 AX 几何经 `SETTINGS_CONTENT_PAD` 同源）；UI-6a provider 使用自然增高卡片，分组显示名称 / 认证方式与连接状态 / 目录模型数；认证操作放在独立详情行，避免窄窗与大字号挤压信息列。Host `provider_auth_status` 是权威数据，Desktop 不按供应商名称硬编码 OAuth/API key 分支。普通行与 AX summary 不显示 masked credential、endpoint、catalog error 或 raw model id；endpoint / 错误只在连接、等待或删除确认详情出现。API key editor 仅在 Connect / Replace 后展开，secure input 的完整值不得进 AX tree、日志或状态文本。OAuth 等待区提供「打开授权链接」「复制链接」及存在 device code 时的「复制验证码」按钮；打开交给系统默认浏览器，仅接受 HTTP(S)，断线 / stale 禁止打开。登录详情（URL、验证码、到期、端点和错误）使用可选中复制的只读字段，长网址横向滚动；支持鼠标拖选、键盘全选 / 复制，按钮支持鼠标、Enter / Space 与 AX Press，复制后显示「已复制」。无 device code 的 PKCE 流程不画复制验证码按钮；终态收起过期动作，API key secure 输入仍只发布掩码。交互参照 [OpenCode 登录界面](https://github.com/anomalyco/opencode/blob/dev/packages/app/src/components/dialog-connect-provider.tsx) 的授权链接与 readOnly / copyable 字段，不接触 token。认证成功与目录成功是两个状态。UX-06 起供应商按已连接优先稳定排序，「Default models」四默认角色区放在供应商列表后（对话/命名/识图/搜索；候选 = 已连接且已启用的模型；无候选时仍保留 Clear，可清除失效默认项；识图/搜索的说明及选择入口直接标注「尚未生效」，仍允许保存偏好）。每 provider 行提供 Manage models 弹层：固定头部展示名称 / ID 搜索、连接与目录来源、完整目录启用计数和批量动作；520px 高度上限内由模型列表独立滚动，长名与 ID 可横向阅读，↑/↓ 和 Tab 聚焦的 Switch 滚入可见区域，Esc 返回入口。无结果保留清除搜索；Enable all / Disable all 始终操作完整供应商目录，搜索不改变其范围。禁用命中角色默认对时 Host 同批清除该键对并如实提示；目录为空显示诚实空态，不渲染全开假按钮。当 Global `proxy_url` 已配置时，行右侧追加供应商级代理 Switch（OPT-3c 起为 Switch 控件，On/Off 状态词，tooltip 说明走代理/直连）；click / Enter / Space / AX Press 同一 handler，Host `set_provider_use_proxy` 回执即写后状态，不乐观更新。未配置全局代理时不渲染该开关。
 - **Network**：Global `proxy_url`；可在 GUI 填写，也可手动写入标准用户配置目录中的 `config.toml`。该文件位于 workspace 外，不会进入仓库；workspace `.pawork/config.toml` 中的代理值会被忽略。未设置显示 `Not set (uses system environment variables)`；新 OAuth / 验证 / 目录同会话生效，当前供应商模型流量于切换或重启后生效。代理是全局开关，供应商级绕过经 Models & providers 页的代理开关表达（`use_proxy = false` 时该 provider 出站直连）。
 - **权限与审批**：五档审批模式使用整行 radio，两行说明的行高随字号为 56/70/84px，row click、Enter、Space 与 AX Press 同一 handler；项目信任开关与 Global 默认只读行并列。审批默认与当前 canonical 根路径的信任选择保存到 Global 配置；进行中 Run 不受影响，后续 Run 按实际目标项目取信任。
 - **Tools & MCP**：复用 Host `mcp_list`，提供 Test / Remove。
@@ -240,7 +240,7 @@ GPUI view  →  projection（纯 Rust，可从 snapshot+events 重建）
 
 #### UI-6a 供应商更新（2026-09-08）
 
-沿用 UI-5 全宽内容与共享控件。供应商卡按内容自然增高，基础内边距 16px，动作高 36px；名称 / 认证方式和连接 / 目录状态分组，展开后依次显示代理、模型管理、凭证与 Usage。四默认角色以左侧名称和可换行说明、右侧选择器排列；凭证输入和操作按钮分行，适配窄窗与大字号。
+沿用 UI-5 全宽内容与共享控件。供应商卡按内容自然增高，基础内边距 16px，动作高 36px；名称 / 认证方式和连接 / 目录状态分组，UX-06 展开后优先显示账号及额度、账号操作与添加入口，再显示代理、模型管理及不可用 Usage。四默认角色以左侧名称和可换行说明、右侧选择器排列；凭证输入和操作按钮分行，适配窄窗与大字号。
 
 Manage models 弹层宽 320px、最高 400px，显示真实启用数、目录与账号权限的边界说明、批量操作和可滚动模型行。重绘保留滚动位置；默认角色菜单打开时滚入当前项，上下键移动时自动跟随高亮，分组头不计入选择索引。未知 context window 显示不可用，不把远端 0 哨兵显示成 0 容量。供应商页、角色菜单与模型弹层的 AX 读取 GPUI 实测框并裁剪视口外控件，鼠标、键盘与 AX 沿用同一写入 gate。额度无权威数据时仅显示不可用文案与空轨道，不画余额或百分比；多账户属于 UI-6b。
 
@@ -338,3 +338,9 @@ GUI 1.15 的 Credentials 区沿用 UI-6a 卡片，账号按名称与状态分行
 Go 命名账号行下显示 5 小时/每周/每月的已用百分比和距离重置的时间，各账号有刷新按钮；同一订阅的多个 key 不合并、不相加。供应商级“额度耗尽时切换”默认关闭，只有 Host 1.16 且有显式选中 Go API key 才能开启；手动选择恢复关闭。开关在途禁再次发送，回执成功后读取 Host 状态。
 
 刷新时保留旧读数并显示加载，失败立即标过期；读数超过 30 秒、重置时间已到或来源时间异常均标过期。删除、重新登录、离页、断线使旧请求失效。无来源保持 unavailable。刷新与开关复用现有 Button/Switch，AX 按实际按钮框和视口裁剪，支持键盘、三档字号和窄窗。决议见 [ADR-060](spec/settings.md#adr-060ui-6b-g2-逐账号额度与耗尽切换2026-09-09)，验证状态见 [ROADMAP](review/roadmap-ui-2026-09-09.md)。
+
+## UX-06 供应商与账号信息层级（2026-09-09）
+
+已连接供应商优先，同组保持目录顺序；四默认角色不占据首屏。识图 / 搜索在用途说明和当前选择入口都标明「尚未生效」，保存偏好仍使用原命令。账号区按名称与当前选择、认证摘要、三窗额度、刷新 / 使用 / 移除组织；添加账号有独立标题，账号之间以间距和分隔线区分。当前选择用于该供应商后续请求，正在运行的请求保持原账号。
+
+三窗分别展示已有的已用 / 剩余字段，缺失保持未知；倒计时从分钟分解为天 / 小时 / 分钟，标明向上取整到分钟、预计重置或已到重置待确认。来源与获取距今时间保留在对应窗口；超过 30 秒、缓存过期和异常未来时间继续标过期。订阅窗口、多个 Key 的共享额度不可相加；底栏「任务额度 —」表示任务维度尚无读数，不同步账号订阅数值。定向检查已通过，代理真窗口部分通过；真实数值与用户验收边界见 [路线图 UX-06](ROADMAP.md#ux-06-供应商与账号信息层级)。

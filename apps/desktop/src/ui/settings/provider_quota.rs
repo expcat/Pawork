@@ -13,6 +13,21 @@ pub(crate) fn quota_identifier(provider: &str, credential: &str, suffix: &str) -
     )
 }
 
+/// 保留分钟精度，长倒计时直接分解为天 / 小时 / 分钟。
+fn quota_duration(minutes: u64) -> String {
+    let mut parts = Vec::new();
+    for (value, key) in [
+        (minutes / 1440, "settings.quota.days"),
+        (minutes % 1440 / 60, "settings.quota.hours"),
+        (minutes % 60, "settings.quota.minutes"),
+    ] {
+        if value > 0 || (parts.is_empty() && key == "settings.quota.minutes") {
+            parts.push(t(key).replace("{}", &value.to_string()));
+        }
+    }
+    parts.join(" ")
+}
+
 impl AppView {
     pub(crate) fn settings_quota_supported(&self) -> bool {
         self.handshake_info
@@ -157,7 +172,7 @@ impl AppView {
                     if snapshot.unit == QuotaUnit::Percent =>
                 {
                     match (&snapshot.values.used, &snapshot.reset) {
-                        (QuotaMeasure::Exact(used), QuotaReset::Absolute { at, .. })
+                        (QuotaMeasure::Exact(used), QuotaReset::Absolute { at, uncertain })
                             if *used <= 100 =>
                         {
                             let stale = state.is_some_and(|s| s.stale)
@@ -169,10 +184,30 @@ impl AppView {
                                 ) > 30_000
                                 || now >= at.as_unix_millis();
                             let minutes = at.as_unix_millis().saturating_sub(now).div_ceil(60_000);
+                            let remaining = match snapshot.values.remaining {
+                                QuotaMeasure::Exact(value) if value <= 100 => {
+                                    t("settings.quota.remaining").replace("{}", &value.to_string())
+                                }
+                                _ => t("settings.quota.remaining_unknown").into(),
+                            };
+                            let reset = if now >= at.as_unix_millis() {
+                                t("settings.quota.reset_due").into()
+                            } else {
+                                t("settings.quota.reset").replace("{}", &quota_duration(minutes))
+                            };
+                            let fetched = snapshot.provenance.fetched_at.as_unix_millis();
+                            let age = if fetched > now {
+                                t("settings.quota.clock_unknown").into()
+                            } else {
+                                t("settings.quota.updated").replace(
+                                    "{}",
+                                    &now.saturating_sub(fetched).div_ceil(1000).to_string(),
+                                )
+                            };
                             format!(
-                                "{} · {}{}{}",
+                                "{} · {}{}{}\n{}{}\n{} · {}",
                                 t("settings.quota.used").replace("{}", &used.to_string()),
-                                t("settings.quota.reset").replace("{}", &minutes.to_string()),
+                                remaining,
                                 if stale {
                                     format!(" · {}", t("settings.quota.stale"))
                                 } else {
@@ -182,7 +217,22 @@ impl AppView {
                                     format!(" · {}", t("settings.quota.loading"))
                                 } else {
                                     String::new()
-                                }
+                                },
+                                reset,
+                                if *uncertain {
+                                    format!(" · {}", t("settings.quota.estimated"))
+                                } else {
+                                    String::new()
+                                },
+                                t("settings.quota.source").replace(
+                                    "{}",
+                                    if snapshot.provenance.source.is_empty() {
+                                        t("settings.quota.source_unknown")
+                                    } else {
+                                        &snapshot.provenance.source
+                                    }
+                                ),
+                                age,
                             )
                         }
                         _ => t("settings.providers.usage_unavailable").into(),
@@ -193,7 +243,7 @@ impl AppView {
             };
             (
                 quota_identifier(provider, credential, name),
-                format!("{title} · {value}"),
+                format!("{title}\n{value}"),
             )
         })
         .collect()
@@ -205,7 +255,7 @@ impl AppView {
         credential: &str,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let mut block = div().flex().flex_col().gap_2();
+        let mut block = div().flex().flex_col().gap_3();
         for (id, label) in self.account_quota_labels(provider, credential) {
             block = block.child(
                 self.settings_element(id)
@@ -344,5 +394,19 @@ impl AppView {
             }
         }
         false
+    }
+}
+
+#[test]
+fn quota_reset_duration_keeps_minute_precision() {
+    for (minutes, expected) in [
+        (0, "0m"),
+        (59, "59m"),
+        (60, "1h"),
+        (61, "1h 1m"),
+        (1440, "1d"),
+        (6995, "4d 20h 35m"),
+    ] {
+        assert_eq!(quota_duration(minutes), expected);
     }
 }

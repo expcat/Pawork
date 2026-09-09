@@ -1224,7 +1224,7 @@ fn snapshot_active_runs_restore_cancel_target_on_select() {
     );
     assert_eq!(
         projection.run_status_label(1_700_000_045_000),
-        "Task — tokens | Quota unavailable | — tok/s | Run 00:45"
+        "Task — tokens | Task quota — | — tok/s | Run 00:45"
     );
 }
 
@@ -1331,13 +1331,13 @@ fn run_status_label_uses_final_order_and_vertical_separators() {
     let mut projection = DesktopProjection::default();
     assert_eq!(
         projection.run_status_label(0),
-        "Task — tokens | Quota unavailable | — tok/s | Run idle"
+        "Task — tokens | Task quota — | — tok/s | Run idle"
     );
     // active run 缺权威起始时间：时长诚实显示 —，不编造 mm:ss。
     projection.active_run_id = Some("r-unknown-start".into());
     assert_eq!(
         projection.run_status_label(0),
-        "Task — tokens | Quota unavailable | — tok/s | Run —"
+        "Task — tokens | Task quota — | — tok/s | Run —"
     );
 }
 

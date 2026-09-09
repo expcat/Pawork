@@ -43,6 +43,13 @@ fn oauth_browser_links_reject_non_web_targets() {
 }
 
 impl AppView {
+    /// 呈现排序不改 Host 目录；同组保持原顺序，render / AX 共用。
+    pub(crate) fn settings_ordered_providers(&self) -> Vec<ProviderAuthStatusEntry> {
+        let mut providers = self.projection.settings_providers.providers.clone();
+        providers.sort_by_key(|p| !matches!(p.auth, ProviderAuthState::Connected { .. }));
+        providers
+    }
+
     pub(crate) fn settings_accounts_supported(&self) -> bool {
         self.handshake_info
             .as_ref()
@@ -50,6 +57,14 @@ impl AppView {
             .is_some_and(|(major, minor)| {
                 major == "1" && minor.parse::<u16>().is_ok_and(|minor| minor >= 15)
             })
+    }
+
+    pub(crate) fn settings_credentials_title(&self) -> &'static str {
+        t(if self.settings_accounts_supported() {
+            "settings.providers.accounts_title"
+        } else {
+            "settings.providers.credentials_title"
+        })
     }
 
     pub(crate) fn settings_credentials_subtitle(&self) -> &'static str {
@@ -253,7 +268,7 @@ impl AppView {
         let state = &self.projection.settings_providers;
         let writes = self.settings_writes_enabled();
         let status_lines = provider_status_lines(state);
-        let providers = state.providers.clone();
+        let providers = self.settings_ordered_providers();
         let oauth_waits = state.oauth_waits.clone();
         let auth_notes = state.auth_notes.clone();
         let mut content = settings_column();
@@ -302,10 +317,6 @@ impl AppView {
             content = content.child(self.settings_status(kind, line));
         }
 
-        // OPT-3b / ADR-055 D5：「Default models」四角色区（刷新行之下、
-        // Providers 列表之上）。
-        content = content.child(self.settings_default_roles_section(cx));
-
         content = content.child(
             self.settings_element("settings-providers-heading")
                 .child(settings_label(t("settings.providers.section_providers"))),
@@ -333,12 +344,11 @@ impl AppView {
             content = content.child(cards);
         }
 
-        content
+        content.child(self.settings_default_roles_section(cx))
     }
 
     /// Provider 卡：两组概览（名称 / 认证方式、连接态 / 目录）随字号自然
-    /// 增高；chevron 展开区（Proxy → Manage models → Credentials →
-    /// Usage）。默认折叠；流程态（编辑器 / OAuth 等待 / Remove 二次确认 /
+    /// 增高；chevron 展开区先账号 / 额度，再代理 / 模型管理 / Usage。默认折叠；流程态（编辑器 / OAuth 等待 / Remove 二次确认 /
     /// 瞬态反馈）保持展开区可见。
     pub(super) fn settings_provider_card(
         &mut self,
@@ -582,8 +592,7 @@ impl AppView {
         cx.notify();
     }
 
-    /// 展开区（ADR-056 D4，OPT-D 签字稿）：Proxy 行 → Manage models 行 →
-    /// Credentials 区（凭证列表 + 流程详情 + 动作按钮）→ Usage 行。
+    /// UX-06：账号与额度优先，其后保留代理、模型管理与不可用 Usage。
     fn settings_provider_expanded_region(
         &mut self,
         provider: &ProviderAuthStatusEntry,
@@ -595,13 +604,6 @@ impl AppView {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let mut region = div().flex().flex_col().min_w_0();
-        // Proxy 行：迁入展开区，Switch 写回链路与「仅全局 proxy_url 已
-        // 配置时渲染」的 gate 均不变（ADR-052 SET-6h）。
-        if self.projection.settings_general.proxy_url.is_some() {
-            region = region.child(self.settings_provider_proxy_row(provider, writes, cx));
-        }
-        // Manage models 行：迁入展开区，触发器与弹层逻辑、gate 不变。
-        region = region.child(self.settings_provider_manage_row(provider, cx));
         // Credentials 区：凭证逐条列出，动作按钮在区下方（ADR-056 D4）。
         region = region.child(self.settings_provider_credentials_block(
             provider,
@@ -612,6 +614,13 @@ impl AppView {
             writes,
             cx,
         ));
+        // Proxy 行：迁入展开区，Switch 写回链路与「仅全局 proxy_url 已
+        // 配置时渲染」的 gate 均不变（ADR-052 SET-6h）。
+        if self.projection.settings_general.proxy_url.is_some() {
+            region = region.child(self.settings_provider_proxy_row(provider, writes, cx));
+        }
+        // Manage models 行：迁入展开区，触发器与弹层逻辑、gate 不变。
+        region = region.child(self.settings_provider_manage_row(provider, cx));
         if provider.provider_id != "opencode-go"
             || !self.settings_quota_supported()
             || provider.credentials.is_empty()
@@ -868,7 +877,7 @@ impl AppView {
                 .flex()
                 .flex_col()
                 .gap_1()
-                .child(settings_label(t("settings.providers.credentials_title")))
+                .child(settings_label(self.settings_credentials_title()))
                 .child(settings_copy(self.settings_credentials_subtitle())),
             );
         if provider.credentials.is_empty() {
@@ -887,22 +896,26 @@ impl AppView {
                 .flex()
                 .flex_col()
                 .gap_2()
-                .py_2()
+                .py_4()
+                .when(ix > 0, |row| {
+                    row.border_t_1().border_color(dark().border.subtle)
+                })
                 .child(
                     div()
                         .flex()
                         .flex_row()
+                        .flex_wrap()
                         .items_center()
                         .gap_2()
                         .child(
-                            div().flex_1().min_w_0().child(
-                                div().truncate().child(
+                            div().flex_1().child(
+                                div().child(
                                     Label::new(if credential.display_name.is_empty() {
                                         provider_credential_kind_label(&credential.kind).to_string()
                                     } else {
                                         credential.display_name.clone()
                                     })
-                                    .size(font::BODY_SM)
+                                    .size(font::BODY)
                                     .color(dark().text.primary),
                                 ),
                             ),
@@ -931,6 +944,13 @@ impl AppView {
                         }),
                     ),
                 );
+            if self.account_quota_supported(&provider_id, credential) {
+                row = row.child(self.account_quota_element(
+                    &provider_id,
+                    &credential.credential_id,
+                    cx,
+                ));
+            }
             if self.settings_accounts_supported() && !credential.credential_id.is_empty() {
                 row = row.child(
                     div()
@@ -977,23 +997,27 @@ impl AppView {
                     ),
                 );
             }
-            if self.account_quota_supported(&provider_id, credential) {
-                row = row.child(self.account_quota_element(
-                    &provider_id,
-                    &credential.credential_id,
-                    cx,
-                ));
-            }
             block = block.child(row);
         }
         if provider_id == "opencode-go" && self.settings_quota_supported() {
-            block = block
-                .child(self.account_mode_element(provider, cx))
-                .child(settings_copy(t("settings.quota.scope")));
+            block = block.child(self.account_mode_element(provider, cx)).child(
+                self.settings_element(quota_identifier(&provider_id, "", "scope"))
+                    .child(settings_copy(t("settings.quota.scope"))),
+            );
         }
         if self.settings_accounts_supported()
             && !matches!(provider.auth, ProviderAuthState::Connecting)
         {
+            block = block.child(
+                self.settings_element(dynamic_identifier(
+                    "settings-account-add-title",
+                    &provider_id,
+                ))
+                .pt_4()
+                .border_t_1()
+                .border_color(dark().border.subtle)
+                .child(settings_label(t("settings.providers.add_account"))),
+            );
             if let Some(input) = self.settings_account_names.get(&provider_id).cloned() {
                 block = block.child(
                     self.settings_element(dynamic_identifier(
@@ -1282,10 +1306,16 @@ impl AppView {
     /// 角色下拉当前值文案（render 与 AX 同源）：Provider · Model 显示名
     /// （清单缺失时诚实回落原始 id），未设置为 Not set。
     pub(crate) fn settings_role_value_label(&self, role: SettingsRole) -> String {
+        let inactive = matches!(role, SettingsRole::Vision | SettingsRole::Search);
+        let prefix = if inactive {
+            format!("{} · ", t("settings.roles.inactive"))
+        } else {
+            String::new()
+        };
         let Some((provider_id, model_id)) =
             self.projection.settings_providers.role_value(role).cloned()
         else {
-            return t("settings.roles.not_set").to_string();
+            return format!("{prefix}{}", t("settings.roles.not_set"));
         };
         let provider = self
             .projection
@@ -1302,7 +1332,7 @@ impl AppView {
             .find(|model| model.provider_id == provider_id && model.id == model_id)
             .map(|model| model.display_name.clone())
             .unwrap_or_else(|| model_id.clone());
-        format!("{provider} · {model}")
+        format!("{prefix}{provider} · {model}")
     }
 
     /// 角色下拉 gate（render / 键盘 / AX 三路径同源）：写总闸之上，该

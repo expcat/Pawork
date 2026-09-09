@@ -368,8 +368,8 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "settings.providers.add_api_key" => ("Add API key", "添加 API key"),
         "settings.providers.add_oauth" => ("Add OAuth account", "添加 OAuth 账号"),
         "settings.providers.account_use" => ("Use", "使用"),
-        "settings.providers.account_selected" => ("For next requests", "用于后续请求"),
-        "settings.providers.account_subtitle" => ("Name each account. Switching applies to future requests.", "为每个账号命名。切换后用于后续请求。"),
+        "settings.providers.account_selected" => ("Selected · next requests", "当前选择 · 后续请求"),
+        "settings.providers.account_subtitle" => ("Selection applies to this provider’s next requests; running requests keep their account.", "当前选择用于该供应商的后续请求；正在运行的请求保持原账号。"),
         "settings.providers.account_remove_hint" => ("Select another account before removing this one", "请先选择其他账号，再移除此账号"),
         "settings.providers.credentials_title" => ("Credentials", "凭证"),
         "settings.providers.credentials_subtitle" => {
@@ -385,12 +385,26 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "settings.quota.weekly" => ("Weekly", "周窗口"),
         "settings.quota.monthly" => ("Monthly", "月窗口"),
         "settings.quota.used" => ("Used {}%", "已用 {}%"),
-        "settings.quota.reset" => ("Resets in {} min", "{} 分钟后重置"),
+        "settings.quota.reset" => ("Resets in {} (rounded up to a minute)", "{} 后重置（向上取整到分钟）"),
+        "settings.quota.days" => ("{}d", "{} 天"),
+        "settings.quota.hours" => ("{}h", "{} 小时"),
+        "settings.quota.minutes" => ("{}m", "{} 分钟"),
+        "settings.quota.remaining" => ("Remaining {}%", "剩余 {}%"),
+        "settings.quota.remaining_unknown" => ("Remaining unknown", "剩余未知"),
+        "settings.quota.reset_due" => ("Reset time reached · refresh to confirm", "已到重置时间 · 请刷新确认"),
+        "settings.quota.estimated" => ("Estimated reset", "预计重置时间"),
+        "settings.quota.source" => ("Source: {}", "来源：{}"),
+        "settings.quota.source_unknown" => ("unspecified", "未提供"),
+        "settings.quota.updated" => ("Fetched {}s ago", "{} 秒前获取"),
+        "settings.quota.clock_unknown" => ("Fetch time is in the future", "获取时间异常（晚于当前时间）"),
+        "settings.providers.accounts_title" => ("Accounts", "账号"),
+        "settings.providers.add_account" => ("Add account", "添加账号"),
+        "settings.roles.inactive" => ("Not active", "尚未生效"),
         "settings.quota.stale" => ("Stale · refresh required", "已过期 · 请刷新"),
         "settings.quota.loading" => ("Loading usage…", "正在获取额度…"),
         "settings.quota.refresh" => ("Refresh usage", "刷新额度"),
         "settings.quota.auto" => ("Switch accounts when quota is exhausted", "额度耗尽时切换账号"),
-        "settings.quota.scope" => ("Keys may share a subscription. These windows are not added together.", "不同 Key 可能共享订阅；各窗口额度不相加。"),
+        "settings.quota.scope" => ("Each account shows its subscription windows, not task token usage. Windows and keys may share limits; do not add them together. The footer has no task quota reading and does not mirror these values.", "这里显示各账号的订阅窗口额度，不是任务 token 用量。窗口之间、不同 Key 之间可能共享限制，不能相加。底栏尚无任务额度读数，不同步这里的账号数值。"),
         "settings.providers.usage_title" => ("Usage", "使用量"),
         "settings.providers.usage_unavailable" => {
             ("Usage unavailable", "使用量不可用")
@@ -444,8 +458,8 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         // ── Default models 四默认角色（OPT-3b / ADR-055 D5）──
         "settings.roles.title" => ("Default models", "默认模型"),
         "settings.roles.subtitle" => (
-            "Select the default model for each role. These defaults will be used for new runs.",
-            "为每个角色选择默认模型。这些默认值将用于新的运行。",
+            "Conversation and naming defaults apply to future requests. Vision and search selections are saved but not active.",
+            "对话与命名默认值用于后续请求；识图与搜索仅保存选择，尚未生效。",
         ),
         "settings.roles.conversation" => ("Conversation", "对话"),
         "settings.roles.naming" => ("Naming", "命名"),
@@ -468,12 +482,12 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             "查找相关信息并汇总结果。",
         ),
         "settings.roles.save_only_vision" => (
-            "Saved only — image routing isn't wired yet",
-            "仅保存选择——识图路由尚未接线",
+            "Not active · saves a preference only; image requests do not use this model",
+            "尚未生效 · 仅保存偏好，图片请求不会使用此模型",
         ),
         "settings.roles.save_only_search" => (
-            "Saved only — search routing isn't wired yet",
-            "仅保存选择——搜索路由尚未接线",
+            "Not active · saves a preference only; searches do not use this model",
+            "尚未生效 · 仅保存偏好，搜索不会使用此模型",
         ),
         "settings.roles.not_set" => ("Not set", "未设置"),
         "settings.roles.clear" => ("Clear", "清除"),
@@ -708,8 +722,8 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "run.failed_desc_fallback" => ("The run failed.", "运行失败。"),
         // ── Run 状态栏（缺权威来源的字段显示 —，不伪造）──
         "run.status_bar" => (
-            "Task — tokens | Quota unavailable | — tok/s | Run {}",
-            "任务 — tokens | 配额不可用 | — tok/s | 运行 {}",
+            "Task — tokens | Task quota — | — tok/s | Run {}",
+            "任务 — tokens | 任务额度 — | — tok/s | 运行 {}",
         ),
         "run.status_idle" => ("idle", "空闲"),
         // ── Provider 状态文案（render 与 AX 同源；credential 不出现）──

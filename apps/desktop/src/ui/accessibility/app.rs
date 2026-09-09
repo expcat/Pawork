@@ -5230,6 +5230,11 @@ mod tests {
             let tree = view.accessibility_tree(window, cx);
 
             tree.validate().expect("role defaults AX tree validates");
+            let ordered = view.settings_ordered_providers();
+            assert!(ordered.windows(2).all(|pair| {
+                matches!(pair[0].auth, ProviderAuthState::Connected { .. })
+                    || !matches!(pair[1].auth, ProviderAuthState::Connected { .. })
+            }));
             for role in SettingsRole::ALL {
                 let identifier = settings_role_trigger_identifier(role);
                 let trigger = tree
@@ -5237,15 +5242,18 @@ mod tests {
                     .unwrap_or_else(|| panic!("{identifier} missing from AX tree"));
                 assert_eq!(trigger.role, AxRole::Button);
                 assert_eq!(trigger.label, role.label());
-                assert_eq!(trigger.value.as_deref(), Some("Not set"));
+                assert_eq!(
+                    trigger.value.as_deref(),
+                    Some(view.settings_role_value_label(role).as_str())
+                );
                 assert!(trigger.enabled);
-                // 与 render 同源：四角色区位于 Providers 列表之上。
+                // UX-06：供应商先呈现，角色偏好置于列表之后。
                 let heading = tree
                     .find("settings-providers-heading")
                     .expect("providers heading has an AX node");
                 assert!(
-                    trigger.bounds.y < heading.bounds.y,
-                    "{identifier} must sit above the providers list"
+                    trigger.bounds.y > heading.bounds.y,
+                    "{identifier} must sit below the providers list"
                 );
                 assert!(tree.permits(&AxRequest {
                     identifier: identifier.clone(),
@@ -5260,14 +5268,14 @@ mod tests {
             assert!(vision
                 .description
                 .as_deref()
-                .is_some_and(|description| description.contains("image routing")));
+                .is_some_and(|description| description.contains("Not active")));
             let search = tree
                 .find(&settings_role_trigger_identifier(SettingsRole::Search))
                 .expect("search trigger has an AX node");
             assert!(search
                 .description
                 .as_deref()
-                .is_some_and(|description| description.contains("search routing")));
+                .is_some_and(|description| description.contains("Not active")));
 
             // 菜单展开：清除行 + 已连接 provider 候选可选。
             let clear_id = settings_role_clear_identifier(SettingsRole::Naming);
@@ -6290,7 +6298,11 @@ mod tests {
             cx.run_until_parked();
             cx.update(|_, cx| {
                 view.update(cx, |view, cx| {
-                    view.settings_scroll.scroll_to_bottom();
+                    let target = &view.settings_element_layouts[&expand_empty];
+                    let dy = target.bounds().origin.y - view.settings_scroll.bounds().origin.y;
+                    let offset = view.settings_scroll.offset();
+                    view.settings_scroll
+                        .set_offset(gpui::point(px(0.0), offset.y - dy + px(300.0)));
                     cx.notify();
                 });
             });
@@ -6373,6 +6385,9 @@ mod tests {
                         crate::ui::settings::quota_identifier("opencode-go", "cred_second", suffix);
                     let node = tree.find(&id).expect("quota window in actual layout");
                     assert!(node.value.as_ref().unwrap().contains("Used 42%"));
+                    assert!(node.value.as_ref().unwrap().contains("Remaining 58%"));
+                    assert!(node.value.as_ref().unwrap().contains("Resets in 1h"));
+                    assert!(node.value.as_ref().unwrap().contains("Source: Go usage"));
                     assert!(node.value.as_ref().unwrap().contains("Stale"));
                     assert!(node.bounds.width > 0.0 && node.bounds.height > 0.0);
                 }
@@ -6418,6 +6433,10 @@ mod tests {
                     snapshot.provenance.fetched_at = serde_json::from_value(serde_json::json!(crate::ui::now_unix_ms() + 60_000)).unwrap();
                 }
                 assert!(view.account_quota_labels(&key.0, &key.1)[0].1.contains("Stale"));
+                if let pawork_client::WindowReadView::Ok { snapshot, .. } = &mut view.projection.settings_providers.account_quotas.get_mut(&key).unwrap().view.as_mut().unwrap().windows[0].read {
+                    snapshot.values.remaining = pawork_client::QuotaMeasure::Unknown;
+                }
+                assert!(view.account_quota_labels(&key.0, &key.1)[0].1.contains("Remaining unknown"));
                 let p = &mut view.projection.settings_providers.providers[0];
                 p.selection_mode = pawork_client::ProviderAccountSelectionMode::WhenExhausted;
                 p.credentials.clear();

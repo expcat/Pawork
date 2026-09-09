@@ -140,12 +140,12 @@ impl AppView {
                 roles = roles.child(self.settings_role_menu_ax(role));
             }
         }
-        page = page.child(section.child(roles)).child(text(
+        page = page.child(text(
             "settings-providers-heading".into(),
             t("settings.providers.section_providers"),
             String::new(),
         ));
-        for provider in &state.providers {
+        for provider in &self.settings_ordered_providers() {
             let id = &provider.provider_id;
             let wait = state.oauth_waits.get(id);
             let editor = self.settings_api_key_editor_visible(provider);
@@ -208,58 +208,19 @@ impl AppView {
                 }),
             );
             if expanded {
-                if self.projection.settings_general.proxy_url.is_some() {
-                    card = card
-                        .child(text(
-                            dynamic_identifier("settings-provider-proxy-text", id),
-                            t("settings.providers.proxy_title"),
-                            t("settings.providers.proxy_subtitle").into(),
-                        ))
-                        .child(
-                            button(
-                                settings_use_proxy_identifier(id),
-                                t("settings.providers.ax_use_proxy"),
-                                writes,
-                            )
-                            .selected(provider.use_proxy)
-                            .value(if provider.use_proxy {
-                                t("settings.providers.switch_on")
-                            } else {
-                                t("settings.providers.switch_off")
-                            }),
-                        );
-                }
-                card = card
-                    .child(text(
-                        dynamic_identifier("settings-provider-manage-text", id),
-                        t("settings.providers.manage_models"),
-                        t("settings.providers.catalog_scope").into(),
-                    ))
-                    .child(
-                        button(
-                            settings_manage_models_identifier(id),
-                            t("settings.providers.manage_models"),
-                            self.settings_manage_models_enabled(provider),
-                        )
-                        .description(t("settings.providers.manage_models_tooltip")),
-                    );
-                if matches!(&self.open_menu, Some(MenuKind::SettingsProviderModels(open)) if open == id)
-                {
-                    card = card.child(self.settings_models_menu_ax(id, window));
-                }
                 let mut credentials = group(
                     dynamic_identifier("settings-provider-credentials", id),
-                    t("settings.providers.credentials_title"),
+                    self.settings_credentials_title(),
                 )
                 .child(text(
                     dynamic_identifier("settings-provider-credentials-header", id),
-                    t("settings.providers.credentials_title"),
+                    self.settings_credentials_title(),
                     self.settings_credentials_subtitle().into(),
                 ));
                 if provider.credentials.is_empty() {
                     credentials = credentials.child(text(
                         dynamic_identifier("settings-provider-credentials-empty", id),
-                        t("settings.providers.credentials_title"),
+                        self.settings_credentials_title(),
                         t("settings.providers.credentials_empty").into(),
                     ));
                 }
@@ -332,6 +293,17 @@ impl AppView {
                         ));
                     }
                 }
+                credentials = credentials
+                    .child(text(
+                        dynamic_identifier("settings-account-add-title", id),
+                        t("settings.providers.add_account"),
+                        String::new(),
+                    ))
+                    .child(text(
+                        quota_identifier(id, "", "scope"),
+                        t("settings.quota.scope"),
+                        String::new(),
+                    ));
                 if self.settings_accounts_supported()
                     && !matches!(provider.auth, ProviderAuthState::Connecting)
                 {
@@ -480,7 +452,47 @@ impl AppView {
                         )),
                     );
                 }
-                card = card.child(credentials).child(text(
+                card = card.child(credentials);
+                if self.projection.settings_general.proxy_url.is_some() {
+                    card = card
+                        .child(text(
+                            dynamic_identifier("settings-provider-proxy-text", id),
+                            t("settings.providers.proxy_title"),
+                            t("settings.providers.proxy_subtitle").into(),
+                        ))
+                        .child(
+                            button(
+                                settings_use_proxy_identifier(id),
+                                t("settings.providers.ax_use_proxy"),
+                                writes,
+                            )
+                            .selected(provider.use_proxy)
+                            .value(if provider.use_proxy {
+                                t("settings.providers.switch_on")
+                            } else {
+                                t("settings.providers.switch_off")
+                            }),
+                        );
+                }
+                card = card
+                    .child(text(
+                        dynamic_identifier("settings-provider-manage-text", id),
+                        t("settings.providers.manage_models"),
+                        t("settings.providers.catalog_scope").into(),
+                    ))
+                    .child(
+                        button(
+                            settings_manage_models_identifier(id),
+                            t("settings.providers.manage_models"),
+                            self.settings_manage_models_enabled(provider),
+                        )
+                        .description(t("settings.providers.manage_models_tooltip")),
+                    );
+                if matches!(&self.open_menu, Some(MenuKind::SettingsProviderModels(open)) if open == id)
+                {
+                    card = card.child(self.settings_models_menu_ax(id, window));
+                }
+                card = card.child(text(
                     dynamic_identifier("settings-provider-usage", id),
                     t("settings.providers.usage_title"),
                     t("settings.providers.usage_unavailable").into(),
@@ -488,7 +500,7 @@ impl AppView {
             }
             page = page.child(card);
         }
-        visible(page)
+        visible(page.child(section.child(roles)))
     }
 
     fn settings_role_menu_ax(&self, role: SettingsRole) -> AxNode {
