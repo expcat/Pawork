@@ -1,6 +1,6 @@
 # Pawork 活动路线图：GUI 用户体验收口
 
-> 2026-09-09；基线 `main / ac6578d2`。本线来自当前构建的真实窗口走查，详见 [GUI 验收报告](review/gui-ux-audit-2026-09-09.md)。**核心对话可用，整体验收不通过；以下任务均未实施。** 本次代理受托按用户视角验收，不代表用户本人已经签字。
+> 2026-09-09；基线 `main / ac6578d2`。本线来自当前构建的真实窗口走查，详见 [GUI 验收报告](review/gui-ux-audit-2026-09-09.md)。**核心对话可用，整体验收不通过；UX-01 已实现并通过定向自动检查，真窗口已覆盖主要编辑场景，系统 IME 与用户验收待补齐；UX-02～09 未实施。** 本次代理受托按用户视角验收，不代表用户本人已经签字。
 
 旧 UI-1～UI-6（含多账号 G1、额度 G2）的实现任务和长篇完成日志已从本文件移除，移存 [历史记录](review/roadmap-ui-2026-09-09.md)。历史人工验收状态原样保留；本线只修本次发现的剩余问题，不重做已完成能力。
 
@@ -17,7 +17,16 @@
 - **问题 / 证据**：长中文整段粘贴后只显示一行并在右侧裁掉，显式换行才增高；输入前无法完整审阅。报告 F01，截图 04 / 29。
 - **最小任务**：Composer 按可用宽度自然换行；让光标、选择、中文输入法、鼠标定位和滚动使用同一换行结果；保持原来的高度上限与逐任务草稿。
 - **验收**：长中文段落、长路径和显式多行在三档字号下可完整编辑；窄窗无需横向追字；Shift+Enter、撤销、任务切换恢复与 IME 组合输入不误发。
-- **范围**：Desktop `ui/text_input.rs` 与 Composer 装配；对应 Desktop Spec。状态：未开始。
+- **范围**：Desktop `ui/text_input.rs` 与 Composer 装配；对应 Desktop Spec。状态：**已实现；定向自动检查通过；代理真窗口部分通过（系统 IME 待补验）；用户验收待进行；未归档。**
+
+#### UX-01 本批证据（2026-09-09）
+
+- **实现**：Composer 在确定宽度后计算显示行，完整 grapheme 不拆分，软换行不改原文；测高、绘制、选择、鼠标与 IME 坐标共用显示行和 byte 起点。保持 220px 卡片上限；AX 使用实际输入视口高度。修正组合输入选区相对新组合文字的 UTF-16 偏移，以及放大字号 / 缩窄窗口后滚动范围未更新导致光标未跟随的问题。终端、secure 与只读 URL 保留既有策略；无 wire / schema / 依赖变化。
+- **自动检查通过**：`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`，220 passed / 0 failed；`cargo build -p pawork-desktop --offline --bin pawork-desktop --features gpui/runtime_shaders` 成功。新增一个换行主路径回归，覆盖三档字号、宽窄输入、中文 / 无空格长路径 / emoji 与组合字符 / 显式空行、原文完整性、滚动、鼠标 / IME 坐标往返、组合输入更新和单次撤销；复用 Composer 实际布局 / AX 测试及既有键位、IME、草稿、secure / 只读输入回归。
+- **代理真窗口已通过部分**：独立最终候选连接隔离只读 Host，验证长中文与长路径自然换行，100% / 125% / 150% 与拖窄窗口、字号变化后末尾及光标可见、Home / End、Shift 选择、鼠标中段插入与撤销、Shift+Enter、滚动阅读、两个任务来回切换恢复各自草稿。窗口截图见本次任务工具记录，不检入仓库。
+- **仍待补验**：系统中文 IME 候选与 composing Return 的真窗口操作。`Ctrl+Space` / `Ctrl+Alt+Space` 后仅录入普通 `ni`，未出现候选框；系统菜单入口也未能经当前 CUA 获取。自动 `EntityInputHandler` 回归已通过，但不能替代系统 IME 结论。用户验收、归档均未完成。
+- **候选与窗口外事实**：`target/pawork-desktop-runtime/Pawork-UX01-final.app`，SHA-256 `e8fbf169013efad12ad7134a9710d324ff717e652c7a3610bee0a87f8e4c10f4`，与最终 build 相同。实际 argv 指向 `/tmp/pawork-ux01/data/pawork-gui-ux01.sock`；Host 使用当次 `opencode-go / glm-5.3-flash / read-only` 参数。只读 SQLite 核对为 2 个测试 session、0 Run、0 session event；没有发送或调用 Provider。偏好恢复 `zh / 100%`。
+- **检查记录**：`/tmp/pawork-ux01-desktop-final-tests.log`、`/tmp/pawork-ux01-build.log`、`/tmp/pawork-ux01/final-evidence.json`；复用既有临时 rustc 索引 wrapper 与测试 runner，单 Cargo 进程、无 clean。Rust 格式、文档本地链接、`git diff --check` 通过。未提交、推送或发布。
 
 ### UX-02 回复可阅读、可复制、可使用
 
@@ -89,12 +98,12 @@
 | 非空 MCP | 当前无配置，仅检查空态 | 使用指定测试 server 检查连接、资源、Test / Remove 反馈 |
 | 热断线恢复、完整键盘与旁白 / IME | 已检查冷连接失败、重连失败、任务回放、Tab / Esc；其余未覆盖 | 对修复后的候选补齐对应真实操作，不以源码或 AX 树代替像素验收 |
 
-## 5. 本次验证与状态
+## 5. 初始验收基线与当前验证状态
 
-41 张本次窗口证据、两次真实 completed Run、一次 cancelled Run，已与隔离 SQLite 事件和空目录事实核对；完整记录与证据索引见 [验收报告](review/gui-ux-audit-2026-09-09.md)。本次只修改文档与引用，没有实施上述修复，没有提交、推送或发布。
+41 张本次窗口证据、两次真实 completed Run、一次 cancelled Run，已与隔离 SQLite 事件和空目录事实核对；完整记录与证据索引见 [验收报告](review/gui-ux-audit-2026-09-09.md)。初始验收只修改文档与引用；随后 UX-01 的实现与验证记录见上方本批证据。没有提交、推送或发布。
 
-Validated: 真窗口操作、候选 SHA-256、SQLite 只读核对、文档链接 / 锚点与 `git diff --check`。
+Validated: UX-01 Desktop 220 项测试、候选 build、已列明的真窗口操作、候选 SHA-256 / 实际 argv、SQLite 只读核对、Rust 格式与文档链接 / diff 检查。
 
-Targeted regressions: 未运行 Cargo；文档任务，交互检查范围见验收报告，不能当作修复后回归通过。
+Targeted regressions: UX-01 自然换行 / 原文 / 滚动 / 鼠标与 IME 坐标 / 撤销，以及既有 Composer AX、键位、草稿与输入保护回归；系统 IME 真窗口补验及用户验收仍待进行。
 
 Full workspace gate: NOT RUN（当前未设置全量门禁）。

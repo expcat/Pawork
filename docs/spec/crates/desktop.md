@@ -70,7 +70,7 @@
 | `src/ui/settings/about.rs` | ~130 | Host data directory 只读 definition list |
 | `src/ui/settings/approval_labels.rs` | ~30 | 五档 English label/description |
 | `src/ui/task_rail.rs` | ~1133 | Sessions 侧栏：顶部三行——20px `Pawork` + 36×36 ghost grouping 直接切换（OPT-4a，字形 20px）、16px 全宽 scope 菜单、12px 连接行 + 36×36 全局「+」；grouping 图标/tooltip 表达目标动作，mouse / Enter / Space 共用 `toggle_grouping`，切换关闭其它浮层并保留 active session、scope、draft 与 collapsed projects；日期/项目/44px task 行、状态点、unread/blocked、Reconnect 与 Local/Settings 语义不变；列表仍用行级 bounds，在 grouping/scope 变化后滚动 active task 到可见；rail 键盘焦点链与 scope 菜单从触发器下方 8px 展开，MenuRow 单勾，AX 同源锚点；UI-2 / ADR-054：任务行右侧改名/归档在悬停、行或动作聚焦、当前会话时露出（命中区 32×32=`RAIL_SESSION_ACTION_SIZE`，与时间戳共用 64px 槽；项目头计数进入同一悬停/焦点面；键盘/AX 可达；改名行内编辑 Enter 提交、Esc 取消、空白不提交） |
-| `src/ui/text_input.rs` | ~1640 | `TextInput`（Composer / 终端 / Settings 共用，视口高度上限至少容纳当前字号单行与内边距）：内容 / 动态 placeholder / IME marked_range / UTF-16 映射 / 视口 max_h + overflow scroll（TextElement 按完整内容高布局，视口由父容器 max_h 兑现，caret 滚进视口按 ScrollHandle 容器高计算；鼠标与 IME 坐标映射基于归一化布局原点 content_bounds——prepaint 时 origin 只减输入框自身 ScrollHandle offset，保留祖先页面滚动位移——再减 scroll offset，行高取 paint 时 last_line_height）/ 选择复制剪切 / Undo Redo / reset_text 草稿恢复；OAuth `read_only()` 模式保留选择 / Copy、长行横滚，阻止用户编辑与 IME，Enter 不冒泡发送；SET-010 secure 模式（SET-4）：渲染与 AX value 只发布 grapheme 掩码、Copy/Cut 不写剪贴板、粘贴 / AX set-value / IME 剔除 CR/LF（单行语义）、光标 / 选择 / 鼠标映射经 grapheme 偏移换算；12 个测试 |
+| `src/ui/text_input.rs` | ~1890 | `TextInput`（Composer / 终端 / Settings 共用，视口高度上限至少容纳当前字号单行与内边距）：内容 / 动态 placeholder / IME marked_range / UTF-16 映射 / 视口 max_h + overflow scroll（TextElement 按完整内容高布局，视口由父容器 max_h 兑现，caret 滚进视口按 ScrollHandle 容器高计算；鼠标与 IME 坐标映射基于归一化布局原点 content_bounds——prepaint 时 origin 只减输入框自身 ScrollHandle offset，保留祖先页面滚动位移——再减 scroll offset，行高取 paint 时 last_line_height）/ 选择复制剪切 / Undo Redo / reset_text 草稿恢复；UX-01 起 Composer（`TextInput::new`）按可用宽度软换行，GPUI 换行边界对齐完整 grapheme 并以最终显示字宽复核，测高 / 绘制 / 光标 / 选择 / 鼠标 / IME / 滚动共用同一显示行与原文 byte 起点，不改草稿原文；`with_placeholder` 的终端 / Settings 字段、secure 与只读 URL 不启用软换行；OAuth `read_only()` 模式保留选择 / Copy、长行横滚，阻止用户编辑与 IME，Enter 不冒泡发送；SET-010 secure 模式（SET-4）：渲染与 AX value 只发布 grapheme 掩码、Copy/Cut 不写剪贴板、粘贴 / AX set-value / IME 剔除 CR/LF（单行语义）、光标 / 选择 / 鼠标映射经 grapheme 偏移换算；13 个测试 |
 | `src/ui/u1_probe.rs` | ~410 | R1 Wave C U1 spike：真实 TextInput/Button/overflow 探针；R5 Wave B 增 SelectAll/Copy/Cut/Undo/Redo、IME commit 单次入栈（真实 EntityInputHandler 路径）与空输入不可发送、Wave B 键位（含 Shift-Enter）经 keystroke→keymap→action 真实链路覆盖；14 个测试 |
 | `src/ui/components/mod.rs` | ~13 | 组件族模块声明 |
 | `src/ui/components/switch.rs` | ~160 | `Switch`（OPT-3c）：36×20 轨道 + 16px 滑块，On/Off 状态词由调用方并排渲染；disabled 无 Press；mouse / Enter / Space / AX Press 同源 |
@@ -94,6 +94,8 @@
 ADR-053 新增 `src/platform/preferences.rs`：标准用户配置目录的 `desktop.json`；std + serde_json、进程内串行 read/modify/write + 同目录临时文件 rename，保存只修改用户操作的单项，另一项沿用磁盘最新值（避免多个实例依次保存时旧快照覆盖），保留未知键；缺文件默认，损坏/权限失败保旧并经 Appearance 的可见提示与 AX 同源展示。`AppView::restore_appearance` 只由正式窗口 bootstrap 在首帧前调用，恢复语言和 window rem；纯 UI 状态构造不访问用户磁盘。无新增业务依赖。`preferences_restore_and_preserve_other_keys` 覆盖两个旧窗口快照依次修改不同字段且互不覆盖；`damaged_preferences_are_not_overwritten` 覆盖损坏文件保护。
 
 > **UI-5 Settings（2026-09-08）**：`ui/settings/mod.rs` 增非供应商页共享分区样式及本页 `settings_element_layouts` 实测框；`ui/mod.rs` 在所有 Settings 页 prepaint 后同步 AX。七个 `ui/settings/{general,permissions,tools,terminal,appearance,advanced,about}.rs` 重排页内层级，对应 `ui/accessibility/settings_*.rs` 删除估算纵坐标，使用实际框并经 `settings_page_ax` 裁掉离屏项。Settings 导航 40px / 14px / r6，按钮 36px / 14px / r6，内容仍全宽、水平 32px，非供应商页垂直留白在 100% 下为 32px 并随字号缩放；详见 [GUI 设计 UI-5](../../gui-design.md#ui-5-设置更新2026-09-08)。增加一个实际布局 / 滚动 / 断线回归；无新模块、依赖、feature 或 wire。
+
+UX-01：Composer（`TextInput::new`）按可用宽度自然换行，GPUI 换行边界对齐完整 grapheme，并以最终显示字宽复核；测高、绘制、光标、选择、鼠标 / IME 定位与滚动共用显示行及原文 byte 起点，软换行不改草稿原文。`with_placeholder` 的终端 / Settings 字段保留既有换行策略，secure 与只读 URL 不开启软换行。IME 组合选区相对当次组合文字计算 UTF-16 偏移；组合更新、宽度与字号变化后光标滚入视口。Composer 仍遵守 220px 卡片上限与逐会话草稿语义；AX 布局优先使用实际输入视口高度。
 
 ## 3. 用户可见界面与交互面
 
@@ -331,6 +333,8 @@ domain id 类型未从 client re-export，命令 / 查询经冻结的 serde 形�
 
 ## 7. 测试与验证资产
 
+UX-01 新增 `wrapped_draft_keeps_text_hit_testing_and_ime_in_sync`：三档字号、两档输入宽度下覆盖长中文、无空格路径、emoji / 组合字符与显式空行，核对完整原文、字宽、滚动、鼠标与 IME 坐标往返、组合更新及单次撤销。既有 Composer 实际布局 / AX 用例改用长段落，继续核对宽窄窗控件位置、卡片预算和断线禁发；测试与真窗口完成状态见 [活动路线图 UX-01](../../ROADMAP.md#ux-01-长草稿自然换行与编辑)。
+
 焦点反馈回归 `pointer_focus_stays_functional_without_ring_and_keyboard_restores_it` 使用真实 GPUI 鼠标 / Tab 事件，覆盖点击保留功能焦点、键盘恢复提示、点击遮挡并吞事件的控件仍清除提示。
 
 UI-2 新增 `session_actions_follow_hover_and_keyboard_without_opening`：真实 GPUI 鼠标 / Tab 驱动非当前会话动作，核对悬停可见、点击改名不切会话、取消后焦点保留、断线禁写与 AX 同源；本批实际命令与结果见 [路线图](../../review/roadmap-ui-2026-09-09.md)。
@@ -358,7 +362,7 @@ UI-4 本批实跑 216 个测试，全部内嵌于 bin target（`#[cfg(test)]` �
 | `ui/resources.rs` | 3 | 默认 Idle、epoch 拒过期与断线保留旧数据但标记 stale |
 | `ui/markdown.rs` | 2 | UI-3 Markdown 子集：块结构与可见 inline 文本共用行数估算；Unicode / 流式未闭合标记保留内容 |
 | `ui/timeline_entry.rs` | 6 | R4 Wave A 纯逻辑：tool 状态词映射（仅 succeeded→Completed）/ 状态分类 / ToolRowView 构造；`display_time` epoch 串 → 相对词（now/Nm/Nh/Nd 边界）与非法串原样兜底 |
-| `ui/text_input.rs` | 11 | 多行粘贴行计数；AX set-value 清 marked range；动态 placeholder；Composer 视口预算不破面板总高；Terminal 28–220 独立预算；shift 选择经 SelectLeft/SelectRight 真实 action；IME 经真实 EntityInputHandler 路径 commit 单次入栈且中间态不可 undo；80 行真窗口 overflow scroll（max_offset>0、视口 28–163、caret 滚入视口）；滚动态点击映回可见内容行；reset_text 恢复草稿且清 undo；SET-4 增 secure 掩码只含 grapheme 数量对应掩码字符且非 secure 不发布掩码 |
+| `ui/text_input.rs` | 13 | 多行粘贴行计数；AX set-value 清 marked range；动态 placeholder；Composer 视口预算不破面板总高；Terminal 28–220 独立预算；shift 选择经 SelectLeft/SelectRight 真实 action；IME 经真实 EntityInputHandler 路径 commit 单次入栈且中间态不可 undo；80 行真窗口 overflow scroll（max_offset>0、视口 28–163、caret 滚入视口）；滚动态点击映回可见内容行；reset_text 恢复草稿且清 undo；SET-4 增 secure 掩码只含 grapheme 数量对应掩码字符且非 secure 不发布掩码 |
 | `ui/u1_probe.rs` | 14 | R1 Wave C U1 spike 矩阵 + R5 Wave B SelectAll/Copy/Cut/Undo/Redo、IME commit 单次入栈（真实 EntityInputHandler 路径）、空输入不可发送、Wave B 键位（含 Shift-Enter）keystroke→keymap→action 链路；AX 仍不在本层覆盖 |
 
 **验证命令**：

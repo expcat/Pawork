@@ -74,7 +74,7 @@ Composer 沿用 UI-1 色板与圆角，与 UI-3 的 880px 阅读列居中对齐�
 - 输入卡片两侧至少 28px，顶部 16px，底部元信息到状态栏保留 24px。卡片内边距 16px，输入与动作行相隔 12px，沿用 raised surface、1px 边框与 12px 圆角；聚焦草稿时增强边框，不改变布局。
 - 卡片内只保留草稿、模型和发送 / 取消。模型选择使用低强调按钮与下拉提示，220px 固定槽，完整 provider / id 保留在 tooltip 和菜单中；模型和发送均为 36px 高命中区。菜单继续向上打开，键盘、鼠标和 AX 共用既有选择路径。
 - 卡片下方一行分别显示只读项目 chip 与真实 ContextMeter，缺容量仍显示 unavailable；无项目的文件工具提示与瞬态反馈各占独立行，避免挤压模型和发送。元信息行以 24px 为基准随字号增长，长文字在所属槽内截断。
-- 常态卡片至少 110px，多行草稿向上增长到 220px 后内部滚动；卡片外的留白与元信息不占这份增长预算。占位缩短为「给 Pawork 发消息…」，发送 tooltip 提示 Enter / Shift+Enter。草稿按会话保存、IME composing 阻止发送、空白输入禁用发送、运行中同槽取消、断线保留草稿与全禁用模型空态均沿用既有行为。
+- 常态卡片至少 110px，草稿按可用宽度自然换行，显式换行与软换行一起决定高度；向上增长到 220px 后内部滚动。完整字符、光标、选择与 IME 共用换行结果，软换行不改原文；卡片外的留白与元信息不占这份增长预算。占位缩短为「给 Pawork 发消息…」，发送 tooltip 提示 Enter / Shift+Enter。草稿按会话保存、IME composing 阻止发送、空白输入禁用发送、运行中同槽取消、断线保留草稿与全禁用模型空态均沿用既有行为。
 
 实现、自动检查、真窗口与用户人工视觉验收分别记录在 [路线图 UI-4](review/roadmap-ui-2026-09-09.md#ui-4-本批证据2026-09-08)。
 
@@ -299,7 +299,7 @@ Snapshot 只有会话树、活动 Run、待审批与 Provider 等状态，**没�
 | `changes.rs` | Files / Summary + DiffView + ActivityPopover |
 | `resources.rs` | MCP 只读列表 |
 | `task_rail.rs` | 侧栏 + grouping 直接切换 + scope 菜单 |
-| `text_input.rs` | 单行 TextElement（IME、UTF-16 映射） |
+| `text_input.rs` | Composer 自然换行 TextElement（共享显示行、IME、UTF-16 映射） |
 | `settings/` | Settings Rail 与各页 |
 | `i18n.rs` | 界面文案目录（English / 中文）与全局语言切换 |
 | `accessibility.rs` + `accessibility/` | AX 语义模型与 macOS bridge（ADR-042；语义树来自 AppView 状态） |

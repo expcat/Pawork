@@ -49,6 +49,7 @@ pub struct TextInput {
     element_id: SharedString,
     secure: bool,
     read_only: bool,
+    soft_wrap: bool,
     min_height: f32,
     max_height: f32,
     selected_range: Range<usize>,
@@ -85,10 +86,12 @@ struct EditSnapshot {
 
 impl TextInput {
     pub fn new(cx: &mut Context<Self>) -> Self {
-        Self::with_placeholder(
+        let mut input = Self::with_placeholder(
             "Message Pawork… (Enter to send, Shift+Enter for newline)",
             cx,
-        )
+        );
+        input.soft_wrap = true;
+        input
     }
 
     pub fn with_placeholder(placeholder: impl Into<SharedString>, cx: &mut Context<Self>) -> Self {
@@ -99,6 +102,7 @@ impl TextInput {
             element_id: SharedString::from("composer-input"),
             secure: false,
             read_only: false,
+            soft_wrap: false,
             min_height: metrics::COMPOSER_INPUT_MIN_HEIGHT,
             max_height: composer_input_max_height(),
             selected_range: 0..0,
@@ -236,12 +240,35 @@ impl TextInput {
         self.last_layout = None;
         self.last_line_starts.clear();
         self.last_bounds = None;
+        self.pending_caret_scroll = true;
         cx.notify();
     }
 
-    /// 按原文换行计数（空内容视为 1 行），供 Composer 高度与验收断言使用。
+    /// 布局后使用实际显示行数；首帧尚未测量时按显式行保底。
     pub fn visual_line_count(&self) -> usize {
-        line_byte_ranges(&self.content).len().max(1)
+        self.last_layout.as_ref().map_or_else(
+            || line_byte_ranges(&self.content).len().max(1),
+            |lines| lines.len(),
+        )
+    }
+
+    pub(crate) fn viewport_height(&self) -> Option<f32> {
+        self.last_bounds
+            .map(|_| f32::from(self.scroll.bounds().size.height))
+    }
+
+    fn display_text(&self) -> SharedString {
+        if let Some(mask) = self.secure_mask() {
+            mask.into()
+        } else if self.content.is_empty() {
+            self.placeholder.clone()
+        } else {
+            self.content.clone()
+        }
+    }
+
+    fn wraps(&self) -> bool {
+        self.soft_wrap && !self.secure && !self.read_only
     }
 
     fn snapshot(&self) -> EditSnapshot {
@@ -568,9 +595,10 @@ impl TextInput {
             // 容器尚未 prepaint，等下一帧（pending 标记保留）。
             return;
         }
-        let Some((line_index, _)) =
-            line_index_for_offset(&self.last_line_starts, self.cursor_offset())
-        else {
+        let Some((line_index, _)) = line_index_for_offset(
+            &self.last_line_starts,
+            self.to_display_offset(self.cursor_offset()),
+        ) else {
             return;
         };
         let line_top = f32::from(self.last_line_height) * line_index as f32;
@@ -756,10 +784,26 @@ impl EntityInputHandler for TextInput {
         }
         self.selected_range = new_selected_range_utf16
             .as_ref()
-            .map(|range_utf16| self.range_from_utf16(range_utf16))
-            .map(|new_range| new_range.start + range.start..new_range.end + range.end)
+            .map(|selection| {
+                let byte_offset = |offset| {
+                    let mut utf16 = 0;
+                    new_text
+                        .char_indices()
+                        .find_map(|(index, ch)| {
+                            if utf16 >= offset {
+                                Some(index)
+                            } else {
+                                utf16 += ch.len_utf16();
+                                None
+                            }
+                        })
+                        .unwrap_or(new_text.len())
+                };
+                range.start + byte_offset(selection.start)..range.start + byte_offset(selection.end)
+            })
             .unwrap_or_else(|| range.start + new_text.len()..range.start + new_text.len());
 
+        self.pending_caret_scroll = true;
         cx.notify();
     }
 
@@ -767,7 +811,7 @@ impl EntityInputHandler for TextInput {
         &mut self,
         range_utf16: Range<usize>,
         bounds: gpui::Bounds<Pixels>,
-        window: &mut Window,
+        _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<gpui::Bounds<Pixels>> {
         let lines = self.last_layout.as_ref()?;
@@ -776,16 +820,17 @@ impl EntityInputHandler for TextInput {
         let range = self.to_display_offset(range.start)..self.to_display_offset(range.end);
         let (line_index, line_start) = line_index_for_offset(&self.last_line_starts, range.start)?;
         let line = lines.get(line_index)?;
-        let line_height = window.line_height();
+        let line_height = self.last_line_height;
         let local_start = range.start.saturating_sub(line_start);
         let local_end = range.end.saturating_sub(line_start).min(line.len());
-        let top = bounds.top() + line_height * line_index as f32;
+        let origin = self
+            .last_bounds
+            .map_or(bounds.origin, |bounds| bounds.origin)
+            + self.scroll.offset();
+        let top = origin.y + line_height * line_index as f32;
         Some(gpui::Bounds::from_corners(
-            point(bounds.left() + line.x_for_index(local_start), top),
-            point(
-                bounds.left() + line.x_for_index(local_end),
-                top + line_height,
-            ),
+            point(origin.x + line.x_for_index(local_start), top),
+            point(origin.x + line.x_for_index(local_end), top + line_height),
         ))
     }
 
@@ -795,32 +840,8 @@ impl EntityInputHandler for TextInput {
         window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<usize> {
-        let line_point = self.last_bounds?.localize(&point)?;
-        let lines = self.last_layout.as_ref()?;
-        if lines.is_empty() {
-            return Some(0);
-        }
-        // 与 paint 时行高一致：平台调用发生在 paint 之外，window.line_height()
-        // 拿不到元素 text_size 上下文（与 index_for_mouse_position 同一回退）。
-        let line_height = if self.last_line_height > px(metrics::ZERO) {
-            self.last_line_height
-        } else {
-            window.line_height()
-        };
-        let mut index = 0usize;
-        if line_height > px(metrics::ZERO) {
-            // 与 index_for_mouse_position 同一坐标语义：last_bounds 为归一化
-            // 布局原点，内容 y 须再减 scroll offset。
-            let content_y = f32::from(line_point.y) - f32::from(self.scroll.offset().y);
-            index = (content_y.max(0.0) / f32::from(line_height)) as usize;
-        }
-        index = index.min(lines.len() - 1);
-        let line = &lines[index];
-        let utf8_index = line
-            .index_for_x(line_point.x - self.scroll.offset().x)
-            .unwrap_or(line.len());
-        let start = *self.last_line_starts.get(index).unwrap_or(&0);
-        Some(self.offset_to_utf16(self.from_display_offset(start + utf8_index)))
+        self.last_bounds?;
+        Some(self.offset_to_utf16(self.index_for_mouse_position(point, window)))
     }
 }
 
@@ -850,6 +871,96 @@ fn line_byte_ranges(text: &str) -> Vec<(usize, usize)> {
     }
     ranges.push((start, text.len()));
     ranges
+}
+
+/// 测高与绘制共用 GPUI 换行边界。每个显示行保留原文 byte 起点，
+/// 光标、选择、鼠标、IME 与滚动继续消费同一份行布局，不改草稿内容。
+fn shape_visual_lines(
+    text: &SharedString,
+    base: &TextRun,
+    marked: Option<&Range<usize>>,
+    font_size: Pixels,
+    wrap_width: Option<Pixels>,
+    window: &Window,
+) -> (Vec<ShapedLine>, Vec<usize>) {
+    let mut lines = Vec::new();
+    let mut starts = Vec::new();
+    for (start, end) in line_byte_ranges(text) {
+        let mut boundaries = vec![start];
+        if let Some(width) = wrap_width {
+            let runs = runs_for_span(start, end, base, marked);
+            let wrapped = window
+                .text_system()
+                .shape_text(
+                    text[start..end].to_string().into(),
+                    font_size,
+                    &runs,
+                    Some((width - px(metrics::CURSOR_WIDTH)).max(px(1.))),
+                    None,
+                )
+                .expect("input text shaping");
+            for line in wrapped {
+                for boundary in line.wrap_boundaries() {
+                    let index =
+                        line.unwrapped_layout.runs[boundary.run_ix].glyphs[boundary.glyph_ix].index;
+                    // 输入操作以 grapheme 为单位，不能把组合字符拆到两行。
+                    let index = text[start..end]
+                        .grapheme_indices(true)
+                        .map(|(offset, _)| offset)
+                        .take_while(|offset| *offset <= index)
+                        .last()
+                        .unwrap_or(0);
+                    if start + index > *boundaries.last().unwrap() {
+                        boundaries.push(start + index);
+                    }
+                }
+            }
+        }
+        boundaries.push(end);
+        let mut index = 0;
+        while index + 1 < boundaries.len() {
+            let start = boundaries[index];
+            let mut end = boundaries[index + 1];
+            let shape = |end| {
+                window.text_system().shape_line(
+                    text[start..end].to_string().into(),
+                    font_size,
+                    &runs_for_span(start, end, base, marked),
+                    None,
+                )
+            };
+            let mut line = shape(end);
+            if let Some(width) = wrap_width {
+                let width = (width - px(metrics::CURSOR_WIDTH)).max(px(1.));
+                // grapheme 边界修正与行首重新 shaping 可能改变字宽；以最终
+                // 显示行复核，让剩余文字进入下一行，不能在右侧裁掉。
+                while line.width > width {
+                    let fit = line.closest_index_for_x(width);
+                    let next_end = text[start..end]
+                        .grapheme_indices(true)
+                        .map(|(offset, _)| offset)
+                        .filter(|offset| *offset > 0 && *offset <= fit)
+                        .last();
+                    let Some(next_end) = next_end else {
+                        break;
+                    };
+                    end = start + next_end;
+                    line = shape(end);
+                }
+            }
+            if end < boundaries[index + 1] {
+                if index + 2 == boundaries.len() {
+                    boundaries.insert(index + 1, end);
+                } else {
+                    boundaries[index + 1] = end;
+                }
+            }
+            lines.push(line);
+            starts.push(start);
+            index += 1;
+        }
+    }
+    (lines, starts)
 }
 
 fn line_index_for_offset(starts: &[usize], offset: usize) -> Option<(usize, usize)> {
@@ -956,6 +1067,7 @@ impl Element for TextElement {
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let mut style = Style::default();
+        style.align_self = Some(gpui::AlignSelf::FlexStart);
         style.size.width = relative(1.).into();
         // 授权 URL 常比视口长；只读字段保留原文，通过横滚查看和选择。
         let input = self.input.read(cx);
@@ -987,13 +1099,37 @@ impl Element for TextElement {
             style.min_size.width = (width + px(metrics::COMPOSER_TEXT_INSET)).into();
             style.flex_shrink = 0.;
         }
-        let line_count = self.input.read(cx).visual_line_count();
-        // 完整内容高交给父 overflow 视口；此处只保底单行，不 clamp 到 max。
-        let min_height = self.input.read(cx).min_height;
-        let desired = window.line_height() * line_count as f32 + px(metrics::COMPOSER_TEXT_INSET);
-        let min = px(min_height);
-        style.size.height = if desired < min { min } else { desired }.into();
-        (window.request_layout(style, [], cx), ())
+        let display_text = input.display_text();
+        let wrap = input.wraps();
+        let min_height = input.min_height;
+        let text_style = window.text_style();
+        let font_size = text_style.font_size.to_pixels(window.rem_size());
+        let line_height = window.line_height();
+        let base = text_style.to_run(0);
+        style.flex_shrink = 0.;
+        let layout = window.request_measured_layout(style, move |known, available, window, _cx| {
+            let width = known.width.or(match available.width {
+                gpui::AvailableSpace::Definite(width) => Some(width),
+                _ => None,
+            });
+            let (lines, _) = shape_visual_lines(
+                &display_text,
+                &base,
+                None,
+                font_size,
+                width.filter(|_| wrap),
+                window,
+            );
+            let content_width = lines
+                .iter()
+                .fold(px(0.), |width, line| width.max(line.width));
+            size(
+                width.unwrap_or(content_width + px(metrics::CURSOR_WIDTH)),
+                (line_height * lines.len() as f32 + px(metrics::COMPOSER_TEXT_INSET))
+                    .max(px(min_height)),
+            )
+        });
+        (layout, ())
     }
 
     fn prepaint(
@@ -1014,13 +1150,7 @@ impl Element for TextElement {
         let input = self.input.read(cx);
         // SET-010 secure：布局/光标/选择一律在显示文本（掩码）空间进行，
         // 偏移经 grapheme 映射换算；content 明文不进任何布局产物。
-        let display_text: SharedString = if let Some(mask) = input.secure_mask() {
-            mask.into()
-        } else if input.content.is_empty() {
-            input.placeholder.clone()
-        } else {
-            input.content.clone()
-        };
+        let display_text = input.display_text();
         let selected_range = input.to_display_offset(input.selected_range.start)
             ..input.to_display_offset(input.selected_range.end);
         let cursor = input.to_display_offset(input.cursor_offset());
@@ -1045,26 +1175,14 @@ impl Element for TextElement {
         };
         let font_size = style.font_size.to_pixels(window.rem_size());
         let line_height = window.line_height();
-        let ranges = line_byte_ranges(&display_text);
-        let mut lines = Vec::new();
-        let mut line_starts = Vec::new();
-        for (start, end) in ranges {
-            let line_text: SharedString = display_text[start..end].to_string().into();
-            let runs = runs_for_span(start, end, &base, marked.as_ref());
-            let shaped = window
-                .text_system()
-                .shape_line(line_text, font_size, &runs, None);
-            lines.push(shaped);
-            line_starts.push(start);
-        }
-        if lines.is_empty() {
-            lines.push(
-                window
-                    .text_system()
-                    .shape_line("".into(), font_size, &[], None),
-            );
-            line_starts.push(0);
-        }
+        let (lines, line_starts) = shape_visual_lines(
+            &display_text,
+            &base,
+            marked.as_ref(),
+            font_size,
+            input.wraps().then_some(bounds.size.width),
+            window,
+        );
 
         let mut selection = Vec::new();
         let cursor_quad = if selected_range.is_empty() {
@@ -1150,20 +1268,34 @@ impl Element for TextElement {
             }
         }
 
-        self.input.update(cx, |input, cx| {
+        let scroll_pending = self.input.update(cx, |input, _cx| {
+            if input.last_line_starts != prepaint.line_starts
+                || input.last_line_height != line_height
+            {
+                input.pending_caret_scroll = true;
+            }
             input.last_layout = Some(prepaint.lines.clone());
             input.last_line_starts = prepaint.line_starts.clone();
             input.last_bounds = Some(prepaint.content_bounds);
             input.last_line_height = line_height;
-            if input.pending_caret_scroll {
-                let before = input.scroll.offset();
-                input.scroll_caret_into_view();
-                if input.scroll.offset() != before {
-                    // offset 变更发生在容器本帧 paint 之后，需再排一帧生效。
-                    cx.notify();
-                }
-            }
+            input.pending_caret_scroll
         });
+        if scroll_pending {
+            let input = self.input.clone();
+            // ScrollHandle 的 max_offset 在父容器 paint 收尾才更新。
+            // 等本帧结束再滚动，避免新字号 / 窄窗的目标被旧范围钳掉。
+            cx.defer(move |cx| {
+                input.update(cx, |input, cx| {
+                    if input.pending_caret_scroll {
+                        let before = input.scroll.offset();
+                        input.scroll_caret_into_view();
+                        if input.scroll.offset() != before {
+                            cx.notify();
+                        }
+                    }
+                });
+            });
+        }
     }
 }
 
@@ -1336,6 +1468,116 @@ mod tests {
             + metrics::COMPOSER_GAP
             + metrics::COMPOSER_SEND_SIZE;
         assert!(panel <= metrics::COMPOSER_PANEL_MAX_HEIGHT + 0.5);
+    }
+
+    #[gpui::test]
+    fn wrapped_draft_keeps_text_hit_testing_and_ime_in_sync(cx: &mut TestAppContext) {
+        let (input, cx) = mount_input(cx);
+        focus_input(&input, cx);
+        for rem in [16., 20., 24.] {
+            cx.update(|window, _| window.set_rem_size(px(rem)));
+            for width in [640., 320.] {
+                cx.simulate_resize(size(px(width), px(360.)));
+                for text in [
+                    "中文长草稿需要自然换行，所有内容都可以完整编辑。".repeat(35),
+                    format!("/{}", "long_path_without_spaces/".repeat(45)),
+                    format!("{}\n\n显式末行\n", "中文👩‍💻é混合文字 ".repeat(45)),
+                ] {
+                    input.update(cx, |input, cx| input.reset_text(text.clone(), cx));
+                    cx.refresh().unwrap();
+                    cx.run_until_parked();
+                    input.read_with(cx, |input, _| {
+                        let lines = input.last_layout.as_ref().unwrap();
+                        assert!(lines.len() > super::line_byte_ranges(&text).len());
+                        assert_eq!(
+                            lines
+                                .iter()
+                                .map(|line| line.text.as_ref())
+                                .collect::<String>(),
+                            text.replace('\n', "")
+                        );
+                        assert!(
+                            lines
+                                .iter()
+                                .all(|line| line.width <= input.last_bounds.unwrap().size.width),
+                            "rem={rem} width={width} bounds={:?} oversized={:?}",
+                            input.last_bounds,
+                            lines
+                                .iter()
+                                .filter(|line| line.width > input.last_bounds.unwrap().size.width)
+                                .map(|line| (&line.text, line.width))
+                                .collect::<Vec<_>>()
+                        );
+                        assert!(input.scroll.max_offset().height > px(0.));
+                        assert!(input.scroll.offset().y < px(0.));
+                        assert_eq!(input.scroll.offset().x, px(0.));
+                    });
+                    // 在换行并滚动后的最后一行点选，平台 IME 坐标须往返同一位置。
+                    let (click, expected) = input.read_with(cx, |input, _| {
+                        let index = input.last_line_starts.len() - 1;
+                        (
+                            point(
+                                input.last_bounds.unwrap().left(),
+                                input.last_bounds.unwrap().top()
+                                    + input.scroll.offset().y
+                                    + input.last_line_height * (index as f32 + 0.5),
+                            ),
+                            input.last_line_starts[index],
+                        )
+                    });
+                    cx.simulate_click(click, Modifiers::none());
+                    cx.run_until_parked();
+                    assert_eq!(
+                        input.read_with(cx, |input, _| input.selected_range()),
+                        expected..expected
+                    );
+                    cx.update(|window, cx| {
+                        input.update(cx, |input, cx| {
+                            let utf16 = input.offset_to_utf16(expected);
+                            assert_eq!(
+                                input.character_index_for_point(click, window, cx),
+                                Some(utf16)
+                            );
+                            let bounds = input
+                                .bounds_for_range(
+                                    utf16..utf16,
+                                    input.last_bounds.unwrap(),
+                                    window,
+                                    cx,
+                                )
+                                .unwrap();
+                            assert!(
+                                (bounds.top() + input.last_line_height / 2. - click.y).abs()
+                                    < px(1.)
+                            );
+                            input.replace_and_mark_text_in_range(
+                                None,
+                                "ni",
+                                Some(2..2),
+                                window,
+                                cx,
+                            );
+                            assert_eq!(input.selected_range(), expected + 2..expected + 2);
+                            input.replace_and_mark_text_in_range(
+                                None,
+                                "nih",
+                                Some(3..3),
+                                window,
+                                cx,
+                            );
+                            assert_eq!(input.selected_range(), expected + 3..expected + 3);
+                            input.replace_text_in_range(None, "你", window, cx);
+                        })
+                    });
+                    cx.dispatch_action(super::Undo);
+                    cx.run_until_parked();
+                    assert_eq!(
+                        input.read_with(cx, |input, _| input.text().to_string()),
+                        text
+                    );
+                }
+            }
+        }
     }
 
     #[gpui::test]

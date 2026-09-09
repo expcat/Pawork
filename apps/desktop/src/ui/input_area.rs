@@ -304,8 +304,8 @@ impl AppView {
         }
         div()
             .flex()
-            .flex_row()
-            .justify_center()
+            .flex_col()
+            .items_center()
             .flex_none()
             .px(px(metrics::COMPOSER_OUTER_X))
             .pt(px(metrics::COMPOSER_OUTER_TOP))

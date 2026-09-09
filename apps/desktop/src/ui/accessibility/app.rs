@@ -1301,13 +1301,15 @@ impl AppView {
         frame: AxRect,
         inspector_open: bool,
     ) -> AxNode {
-        let input_height = (f32::from(window.line_height())
-            * self.text_input.read(cx).visual_line_count() as f32
-            + metrics::COMPOSER_TEXT_INSET)
-            .clamp(
-                metrics::COMPOSER_INPUT_MIN_HEIGHT,
-                Self::composer_input_ax_max(),
-            );
+        let input = self.text_input.read(cx);
+        let input_height = input.viewport_height().unwrap_or_else(|| {
+            (f32::from(window.line_height()) * input.visual_line_count() as f32
+                + metrics::COMPOSER_TEXT_INSET)
+                .clamp(
+                    metrics::COMPOSER_INPUT_MIN_HEIGHT,
+                    Self::composer_input_ax_max(),
+                )
+        });
         let composer_height = self
             .composer_outer_height(input_height, window)
             .min(frame.height);
@@ -3014,7 +3016,8 @@ mod tests {
                     view.text_scale = scale;
                     window.set_rem_size(px(scale.rem_pixels()));
                     view.text_input.update(cx, |input, cx| {
-                        input.reset_text(&vec!["验收草稿"; lines].join("\n"), cx);
+                        input
+                            .reset_text(&vec!["验收草稿自然换行".repeat(20); lines].join("\n"), cx);
                     });
                     cx.notify();
                 })
@@ -3044,7 +3047,7 @@ mod tests {
                     ] {
                         assert!(
                             (expected - measured).abs() < 1.0,
-                            "{id} at {scale:?}: AX {expected}, render {measured}"
+                            "{id} at {scale:?}: AX {expected}, render {measured}; card={card:?} workspace={workspace:?} input={:?}", view.read(cx).text_input.read(cx).viewport_height()
                         );
                     }
                 }
