@@ -1,6 +1,6 @@
 # Pawork 活动路线图：GUI 用户体验收口
 
-> 2026-09-09；基线 `main / ac6578d2`。本线来自当前构建的真实窗口走查，详见 [GUI 验收报告](review/gui-ux-audit-2026-09-09.md)。**核心对话可用，整体验收不通过；UX-01 已实现并通过定向自动检查，真窗口已覆盖主要编辑场景，系统 IME 与用户验收待补齐；UX-02～09 未实施。** 本次代理受托按用户视角验收，不代表用户本人已经签字。
+> 2026-09-09；基线 `main / ac6578d2`。本线来自当前构建的真实窗口走查，详见 [GUI 验收报告](review/gui-ux-audit-2026-09-09.md)。**核心对话可用，整体验收不通过；UX-01 已实现并通过定向自动检查，真窗口已覆盖主要编辑场景，系统 IME 与用户验收待补齐；UX-02 已实现并通过定向自动检查与历史回复真窗口复验，新请求流式验收因 HTTP 401 待补齐；UX-03～09 未实施。** 本次代理受托按用户视角验收，不代表用户本人已经签字。
 
 旧 UI-1～UI-6（含多账号 G1、额度 G2）的实现任务和长篇完成日志已从本文件移除，移存 [历史记录](review/roadmap-ui-2026-09-09.md)。历史人工验收状态原样保留；本线只修本次发现的剩余问题，不重做已完成能力。
 
@@ -33,7 +33,17 @@
 - **问题 / 证据**：标准 Markdown 表格显示原始竖线和分隔行；代码块无复制动作；已完成回复的菜单只有禁用的“分叉”。报告 F02，截图 06 / 18 / 19。
 - **最小任务**：补齐常用表格呈现、回复复制与代码复制；链接提供可发现的打开 / 复制动作；分叉靠近可用的闭合回合边界，并说明禁用原因。
 - **验收**：同一份含中文表格、代码块、长链接的回复在流式完成与重开任务后均可读；复制内容完整且不夹入作者 / 时间；长内容可滚动，不遮住 Composer。
-- **范围**：Desktop `ui/markdown.rs`、`ui/timeline_entry.rs` 与相应动作 / AX。状态：未开始。
+- **范围**：Desktop `ui/markdown.rs`、`ui/timeline_entry.rs` 与相应动作 / AX。状态：**已实现；定向自动检查通过；代理真窗口部分通过（新回复流式完成待补验）；用户验收待进行；未归档。**
+
+#### UX-02 本批证据（2026-09-09）
+
+- **实现**：常用管线表格支持表头、左右 / 居中对齐、中文、escaped pipe 与行内代码；未完成分隔行保留原文。正文菜单复制完整 Markdown；代码块按钮与菜单复制 fence 内原始缩进 / 换行。HTTP(S) Markdown / 裸链接提供编号的打开 / 复制动作，保留配对括号与完整查询参数；不自动打开地址。助手回复上的分叉动作解析到同一 Run 的后继闭合边界，用户消息 / 未完成回合 / 断线时给出可见原因。鼠标、菜单键盘与 AX 共用动作序列，菜单使用实际滚动布局并在首帧布局后同步 AX。无 wire / schema / 生产依赖变化。
+- **自动检查通过**：`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`，221 passed / 0 failed；同参数 `cargo build -p pawork-desktop --offline --bin pawork-desktop --features gpui/runtime_shaders` 成功。新增一个 GPUI 主路径回归，验证正文 / 代码精确复制、实际菜单 AX、同 Run 边界和断线禁用；表格、链接括号与流式解析断言并入原有两个 Markdown 测试。复用临时 rustc 索引 wrapper / test runner，单 Cargo 进程、无 clean。
+- **代理真窗口已通过部分**：真实历史数据库的隔离副本重开「视觉验收」，表格与代码正常显示；正文复制无作者 / 时间，代码保留缩进与末尾换行；菜单 AX 动作可见且可执行；从回复分叉后只读 SQLite 核对新增 branch 指向 `evt-run-gui-1788924300692-1-872`（同 Run 终态），原始消息未改。100% / 125% / 150% 与拖窄窗口可阅读、滚动，Composer 未被覆盖。另一隔离任务的持久化用户样本经同一渲染器验证多行表格对齐、长链接换行 / 完整复制；打开后在默认浏览器地址栏核对完整 URL。样本文字中的“全部通过”等是历史模型输出，不是本批验收结论。字号恢复 100%，语言仍为中文。
+- **仍待补验**：同一含表格 / 代码 / 长链接的新助手回复从流式到完成再重开的端到端链路。本批指定 `opencode-go / glm-5.3-flash / read-only` 的两次真实请求均为 `authentication / HTTP 401 / run_failed`；第二次使用既有验收凭据的隔离副本，未更换模型或改动原凭据。未用历史回复或用户样本冒充新请求成功。用户验收、归档均未完成。
+- **候选与窗口外事实**：最终二进制 SHA-256 `99251d1ddfa1bba74ea21ac6c2bde49760fc4754be14d555099a0f8adc2e9c11`；`target/pawork-desktop-runtime/Pawork-UX02-verified.app` 与 `Pawork-UX02-links.app` 均为该 build 的独立 bundle。实际 argv 分别连接 `/tmp/pawork-ux02-replay/data/pawork-gui-replay.sock` 与 `/tmp/pawork-ux02/data/pawork-gui-ux02.sock`。数据库副本来自此前真实 `ui6b-quota-live` 验收记录；原库未修改。截图见本次工具记录，不检入仓库。
+- **检查记录**：`/tmp/pawork-ux02-tests.log`、`/tmp/pawork-ux02-build.log`、`/tmp/pawork-ux02/candidate.json`、`/tmp/pawork-ux02/evidence.json`。审查发现的含括号 URL 截断与真窗口发现的菜单 AX 首帧同步已修复并复验。Rust 格式、文档本地链接、`git diff --check` 通过。未提交、推送或发布。
+
 
 ### UX-03 新任务与项目上下文引导
 
@@ -100,10 +110,10 @@
 
 ## 5. 初始验收基线与当前验证状态
 
-41 张本次窗口证据、两次真实 completed Run、一次 cancelled Run，已与隔离 SQLite 事件和空目录事实核对；完整记录与证据索引见 [验收报告](review/gui-ux-audit-2026-09-09.md)。初始验收只修改文档与引用；随后 UX-01 的实现与验证记录见上方本批证据。没有提交、推送或发布。
+41 张本次窗口证据、两次真实 completed Run、一次 cancelled Run，已与隔离 SQLite 事件和空目录事实核对；完整记录与证据索引见 [验收报告](review/gui-ux-audit-2026-09-09.md)。初始验收只修改文档与引用；随后 UX-01 / UX-02 的实现与验证记录见上方本批证据。没有提交、推送或发布。
 
-Validated: UX-01 Desktop 220 项测试、候选 build、已列明的真窗口操作、候选 SHA-256 / 实际 argv、SQLite 只读核对、Rust 格式与文档链接 / diff 检查。
+Validated: UX-01 既有 220 项记录；UX-02 Desktop 221 项测试、最终 build、已列明的真窗口与浏览器操作、候选 SHA-256 / 实际 argv、SQLite 只读核对、Rust 格式及文档链接 / diff 检查。
 
-Targeted regressions: UX-01 自然换行 / 原文 / 滚动 / 鼠标与 IME 坐标 / 撤销，以及既有 Composer AX、键位、草稿与输入保护回归；系统 IME 真窗口补验及用户验收仍待进行。
+Targeted regressions: UX-02 表格 / 流式解析 / URL 括号、正文与代码复制、菜单 AX、同 Run 分叉边界与断线禁用；UX-01 系统 IME、新助手回复流式验收及用户验收仍待进行。
 
 Full workspace gate: NOT RUN（当前未设置全量门禁）。

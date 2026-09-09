@@ -173,7 +173,7 @@ fn message_label_element(role: &str, time: &str, role_color: Rgba) -> gpui::Div 
 }
 
 /// 条目「···」fork 菜单（identifier 与行为自旧 timeline_entry_element 冻结迁移）。
-fn entry_actions_element(
+pub(super) fn entry_actions_element(
     view: &mut AppView,
     cx: &mut Context<AppView>,
     entry: &TimelineEntry,
@@ -218,27 +218,43 @@ fn entry_actions_element(
         }));
     let mut actions = Dropdown::new(actions_button);
     if menu_open {
-        let fork_id = event_id.clone();
-        actions = actions.panel(
-            MenuPanel::new(SharedString::from(format!("fork-menu-{}", entry.event_id)))
-                .dismiss_on_outside(cx.listener({
-                    let kind = MenuKind::Entry(event_id.clone());
-                    move |view, event: &gpui::MouseDownEvent, _, cx| {
-                        view.dismiss_menu_on_outside(kind.clone(), event.position, cx)
-                    }
-                }))
-                .child(
-                    MenuRow::new(SharedString::from(format!("fork-{}", entry.event_id)))
-                        .label(t("timeline.fork"))
-                        .disabled(!can_fork)
-                        .when(can_fork, |row| {
-                            row.on_click(cx.listener(move |view, _event, window, cx| {
-                                view.close_open_menu(cx);
-                                view.on_fork(&fork_id, window, cx);
-                            }))
-                        }),
-                ),
-        );
+        let mut panel = MenuPanel::new(SharedString::from(format!("fork-menu-{}", entry.event_id)))
+            .track_scroll(&view.entry_menu_scroll)
+            .dismiss_on_outside(cx.listener({
+                let kind = MenuKind::Entry(event_id.clone());
+                move |view, event: &gpui::MouseDownEvent, _, cx| {
+                    view.dismiss_menu_on_outside(kind.clone(), event.position, cx)
+                }
+            }));
+        for (ix, action) in view.entry_menu_actions(&event_id).into_iter().enumerate() {
+            let id = action.identifier(&event_id, ix);
+            let enabled = !matches!(action.kind, EntryActionKind::Fork) || can_fork;
+            panel = panel.child(
+                MenuRow::new(id)
+                    .label(action.label)
+                    .highlighted(view.menu_highlight_effective(0) == ix)
+                    .disabled(!enabled)
+                    .when(enabled, |row| {
+                        row.on_click(cx.listener({
+                            let event_id = event_id.clone();
+                            move |view, _, window, cx| {
+                                view.activate_entry_action(&event_id, ix, window, cx);
+                            }
+                        }))
+                    }),
+            );
+        }
+        if !can_fork {
+            panel = panel.child(
+                div()
+                    .px_2()
+                    .py_1()
+                    .text_size(font::BODY_SM)
+                    .text_color(dark().text.secondary)
+                    .child(view.fork_unavailable_reason(&event_id)),
+            );
+        }
+        actions = actions.panel(panel);
     }
     actions
 }
@@ -378,7 +394,122 @@ pub(super) fn tool_row_height(row: &ToolRowView, width: f32, rem: f32) -> f32 {
         })
 }
 
+pub(super) enum EntryActionKind {
+    Copy(String),
+    Open(String),
+    Fork,
+}
+
+pub(super) struct EntryAction {
+    pub label: String,
+    pub kind: EntryActionKind,
+}
+
+impl EntryAction {
+    pub(super) fn identifier(&self, event_id: &str, ix: usize) -> String {
+        match self.kind {
+            EntryActionKind::Fork => super::accessibility::dynamic_identifier("fork", event_id),
+            _ => super::accessibility::dynamic_identifier(
+                "entry-action",
+                &format!("{event_id}:{ix}"),
+            ),
+        }
+    }
+}
+
+/// 回复使用同一 Run 的闭合边界，不把 message 事件冒充合法切点。
+pub(super) fn fork_target<'a>(timeline: &'a [TimelineEntry], event_id: &str) -> Option<&'a str> {
+    let entry = timeline.iter().find(|entry| entry.event_id == event_id)?;
+    if entry.is_fork_boundary() {
+        return Some(&entry.event_id);
+    }
+    if !matches!(entry.kind, TimelineEntryKind::AssistantMessage { .. }) {
+        return None;
+    }
+    let run_id = entry.run_id.as_ref()?;
+    timeline
+        .iter()
+        .find(|candidate| {
+            candidate.run_id.as_ref() == Some(run_id)
+                && candidate.sequence >= entry.sequence
+                && candidate.is_fork_boundary()
+        })
+        .map(|entry| entry.event_id.as_str())
+}
+
 impl AppView {
+    pub(super) fn entry_menu_actions(&self, event_id: &str) -> Vec<EntryAction> {
+        let mut actions = Vec::new();
+        if let Some(entry) = self
+            .projection
+            .timeline
+            .iter()
+            .find(|e| e.event_id == event_id)
+        {
+            if let TimelineEntryKind::AssistantMessage { text }
+            | TimelineEntryKind::UserMessage { text } = &entry.kind
+            {
+                actions.push(EntryAction {
+                    label: t("timeline.copy_message").into(),
+                    kind: EntryActionKind::Copy(text.clone()),
+                });
+                actions.extend(
+                    super::markdown::message_actions(text)
+                        .into_iter()
+                        .map(|action| EntryAction {
+                            label: action.label,
+                            kind: if action.open {
+                                EntryActionKind::Open(action.content)
+                            } else {
+                                EntryActionKind::Copy(action.content)
+                            },
+                        }),
+                );
+            }
+        }
+        actions.push(EntryAction {
+            label: t("timeline.fork_turn").into(),
+            kind: EntryActionKind::Fork,
+        });
+        actions
+    }
+
+    pub(super) fn fork_unavailable_reason(&self, event_id: &str) -> String {
+        if !matches!(
+            self.projection.connection,
+            ConnectionState::Connected { .. }
+        ) {
+            t("timeline.fork_offline").into()
+        } else if fork_target(&self.projection.timeline, event_id).is_none() {
+            t("timeline.fork_boundary").into()
+        } else {
+            t("timeline.fork_no_session").into()
+        }
+    }
+
+    pub(super) fn activate_entry_action(
+        &mut self,
+        event_id: &str,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(action) = self.entry_menu_actions(event_id).into_iter().nth(ix) else {
+            return;
+        };
+        if matches!(action.kind, EntryActionKind::Fork) && !self.can_fork_entry(event_id) {
+            return;
+        }
+        self.close_menu_and_focus_trigger(MenuKind::Entry(event_id.into()), window, cx);
+        match action.kind {
+            EntryActionKind::Copy(text) => {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(text))
+            }
+            EntryActionKind::Open(url) => cx.open_url(&url),
+            EntryActionKind::Fork => self.on_fork(event_id, window, cx),
+        }
+    }
+
     /// 消息条目：低强调作者行 + Markdown 正文。
     pub(super) fn message_entry_element(
         &mut self,
@@ -392,17 +523,17 @@ impl AppView {
             TimelineEntryKind::UserMessage { text } => (
                 "You",
                 dark().text.secondary,
-                message_body_element(text, dark().text.emphasis),
+                message_body_element(&entry.event_id, text, dark().text.emphasis),
             ),
             TimelineEntryKind::Thinking { text } => (
                 t("timeline.thinking"),
                 dark().text.secondary,
-                message_body_element(text, dark().text.secondary),
+                message_body_element(&entry.event_id, text, dark().text.secondary),
             ),
             TimelineEntryKind::AssistantMessage { text } => (
                 "Pawork",
                 dark().text.secondary,
-                message_body_element(text, dark().text.emphasis),
+                message_body_element(&entry.event_id, text, dark().text.emphasis),
             ),
             // 兜底臂（Worker B 组装层不会把 tool / run 态交给消息条目）：
             // 保持旧单行语义，避免意外调用时崩溃。
@@ -436,7 +567,7 @@ impl AppView {
             TimelineEntryKind::Error(message) => (
                 "Error",
                 dark().semantic.danger_text,
-                message_body_element(message, dark().semantic.danger_text),
+                message_body_element(&entry.event_id, message, dark().semantic.danger_text),
             ),
         };
         entry_shell_element(
@@ -745,7 +876,7 @@ impl AppView {
             menu_open,
             can_fork,
             message_label_element("Error", &time, dark().semantic.danger_text),
-            message_body_element(&message, dark().semantic.danger_text),
+            message_body_element(&entry.event_id, &message, dark().semantic.danger_text),
         )
     }
 
@@ -765,21 +896,16 @@ impl AppView {
         }
         // 入口级防线：渲染层已按边界禁用 Fork，这里再按 reducer 的单点判型
         // 复核——connected + active session + run 终止边界缺一不可。
-        let forkable = self
-            .projection
-            .timeline
-            .iter()
-            .any(|entry| entry.event_id == event_id && entry.is_fork_boundary());
-        if !forkable {
+        let boundary = fork_target(&self.projection.timeline, event_id).map(str::to_owned);
+        let Some(boundary) = boundary else {
             self.status_hint = Some(
                 "Fork is only available on a finished run (completed, cancelled, or failed)."
                     .into(),
             );
             cx.notify();
             return;
-        }
-        self.controller
-            .fork_session(session_id, event_id.to_string());
+        };
+        self.controller.fork_session(session_id, boundary);
         // Fork 响应会重建 Timeline 并卸载当前条目触发器；先把焦点交回
         // Composer，避免菜单选择后留下悬空的行级 FocusHandle。
         self.focus_composer(window, cx);

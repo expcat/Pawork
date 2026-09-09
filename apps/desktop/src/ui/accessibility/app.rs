@@ -687,15 +687,14 @@ impl AppView {
                     self.toggle_menu(MenuKind::Entry(entry.event_id.clone()), None, cx);
                     return true;
                 }
-                if let Some(event_id) = self
-                    .projection
-                    .timeline
-                    .iter()
-                    .find(|entry| fork_identifier(&entry.event_id) == identifier)
-                    .map(|entry| entry.event_id.clone())
-                {
-                    self.close_open_menu(cx);
-                    self.on_fork(&event_id, window, cx);
+                if let Some((event_id, ix)) = self.projection.timeline.iter().find_map(|entry| {
+                    self.entry_menu_actions(&entry.event_id)
+                        .iter()
+                        .enumerate()
+                        .find(|(ix, action)| action.identifier(&entry.event_id, *ix) == identifier)
+                        .map(|(ix, _)| (entry.event_id.clone(), ix))
+                }) {
+                    self.activate_entry_action(&event_id, ix, window, cx);
                     return true;
                 }
                 // Run 摘要卡 Review changes（enabled 由树节点校验 + 谓词
@@ -2005,22 +2004,7 @@ impl AppView {
                 );
                 if matches!(&self.open_menu, Some(MenuKind::Entry(id)) if id == &terminal_entry.event_id)
                 {
-                    let fork_node = AxNode::new(
-                        fork_identifier(&terminal_entry.event_id),
-                        AxRole::Button,
-                        t("timeline.fork"),
-                        AxRect::new(menu_row.x - 80.0, menu_row.y + 28.0, 112.0, 30.0),
-                    )
-                    .enabled(
-                        matches!(
-                            self.projection.connection,
-                            ConnectionState::Connected { .. }
-                        ) && self.projection.active_session_id.is_some()
-                            && terminal_entry.is_fork_boundary(),
-                    )
-                    .focused(self.menu_highlight_effective(0) == 0)
-                    .action(AxAction::Press);
-                    entry_node = entry_node.child(fork_node);
+                    entry_node = self.entry_actions_ax(entry_node, &terminal_entry.event_id);
                 }
                 region.child(entry_node)
             }
@@ -2068,29 +2052,49 @@ impl AppView {
                 .action(AxAction::Press),
             );
             if matches!(&self.open_menu, Some(MenuKind::Entry(id)) if id == &entry.event_id) {
-                node = node.child(
-                    AxNode::new(
-                        fork_identifier(&entry.event_id),
-                        AxRole::Button,
-                        t("timeline.fork"),
-                        AxRect::new(
-                            row.x + row.width - inset - 112.0,
-                            row.y + inset + 24.0,
-                            112.0,
-                            30.0,
-                        ),
-                    )
-                    .enabled(
-                        matches!(
-                            self.projection.connection,
-                            ConnectionState::Connected { .. }
-                        ) && self.projection.active_session_id.is_some()
-                            && entry.is_fork_boundary(),
-                    )
-                    .focused(self.menu_highlight_effective(0) == 0)
-                    .action(AxAction::Press),
-                );
+                node = self.entry_actions_ax(node, &entry.event_id);
             }
+        }
+        node
+    }
+
+    fn entry_actions_ax(&self, mut node: AxNode, event_id: &str) -> AxNode {
+        let bounds = self.entry_menu_scroll.bounds();
+        let highlight = self.menu_highlight_effective(0);
+        for (ix, action) in self.entry_menu_actions(event_id).into_iter().enumerate() {
+            let Some(mut row) = self.entry_menu_scroll.bounds_for_item(ix) else {
+                continue;
+            };
+            row.origin += self.entry_menu_scroll.offset();
+            let row = row.intersect(&bounds);
+            if row.size.width <= gpui::px(0.0) || row.size.height <= gpui::px(0.0) {
+                continue;
+            }
+            let fork = matches!(
+                action.kind,
+                super::super::timeline_entry::EntryActionKind::Fork
+            );
+            let enabled = !fork || self.can_fork_entry(event_id);
+            let mut child = AxNode::new(
+                action.identifier(event_id, ix),
+                AxRole::Button,
+                action.label,
+                AxRect::new(
+                    row.origin.x.into(),
+                    row.origin.y.into(),
+                    row.size.width.into(),
+                    row.size.height.into(),
+                ),
+            )
+            .enabled(enabled)
+            .focused(ix == highlight);
+            if enabled {
+                child = child.action(AxAction::Press);
+            }
+            if fork && !enabled {
+                child = child.description(self.fork_unavailable_reason(event_id));
+            }
+            node = node.child(child);
         }
         node
     }
@@ -2963,10 +2967,6 @@ fn entry_menu_identifier(event_id: &str) -> String {
     dynamic_identifier("entry-menu", event_id)
 }
 
-fn fork_identifier(event_id: &str) -> String {
-    dynamic_identifier("fork", event_id)
-}
-
 fn run_review_identifier(event_id: &str) -> String {
     dynamic_identifier("run-review-changes", event_id)
 }
@@ -2990,6 +2990,119 @@ fn tail_chars(value: &str, limit: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    fn reply_actions_copy_exact_content_and_use_closed_turn_boundary(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use crate::ui::timeline_entry::{fork_target, EntryActionKind};
+        use gpui::{px, ClipboardItem};
+        let (view, cx) = cx.add_window_view(|_, cx| {
+            AppView::new(
+                std::sync::Arc::new(crate::platform::Platform::new()),
+                std::env::temp_dir().join("ux02-actions.sock"),
+                None,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        let text = "| 名称 | 数量 |\n| --- | ---: |\n| 中文 | 2 |\n\n```rust\n  let 中文 = 2;\n```\n[文档](https://example.test/docs)";
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.connection = ConnectionState::Connected {
+                    instance_id: "ux02".into(),
+                };
+                view.projection.active_session_id = Some("task".into());
+                view.projection.timeline.entries = vec![
+                    TimelineEntry {
+                        sequence: 1,
+                        event_id: "reply".into(),
+                        kind: TimelineEntryKind::AssistantMessage { text: text.into() },
+                        fork_boundary: None,
+                        timestamp: "1".into(),
+                        run_id: Some("run".into()),
+                    },
+                    TimelineEntry {
+                        sequence: 2,
+                        event_id: "other".into(),
+                        kind: TimelineEntryKind::RunState("Completed".into()),
+                        fork_boundary: Some(ForkBoundary::Completed),
+                        timestamp: "2".into(),
+                        run_id: Some("other-run".into()),
+                    },
+                ];
+                assert!(fork_target(&view.projection.timeline, "reply").is_none());
+                let mut terminal = view.projection.timeline[1].clone();
+                terminal.event_id = "terminal".into();
+                terminal.run_id = Some("run".into());
+                terminal.sequence = 3;
+                view.projection.timeline.entries.push(terminal);
+                assert_eq!(
+                    fork_target(&view.projection.timeline, "reply"),
+                    Some("terminal")
+                );
+                assert!(view.can_fork_entry("reply"));
+                view.timeline_changed();
+                view.toggle_menu(MenuKind::Entry("reply".into()), None, cx);
+            })
+        });
+        cx.simulate_resize(gpui::size(px(1440.0), px(1024.0)));
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.toggle_menu(MenuKind::Entry("reply".into()), None, cx);
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                let actions = view.entry_menu_actions("reply");
+                let tree = view.accessibility_tree(window, cx);
+                tree.validate().unwrap();
+                let copy = actions[0].identifier("reply", 0);
+                assert!(
+                    tree.find(&copy).is_some(),
+                    "copy action is visible in actual menu layout"
+                );
+                let request = AxRequest {
+                    identifier: copy,
+                    action: AxAction::Press,
+                    value: None,
+                };
+                assert!(tree.permits(&request));
+                view.handle_accessibility_request(request, window, cx);
+                assert_eq!(
+                    cx.read_from_clipboard().and_then(|item| item.text()),
+                    Some(text.into())
+                );
+                assert!(view.open_menu.is_none());
+                let code_ix = actions
+                    .iter()
+                    .position(
+                        |a| matches!(&a.kind, EntryActionKind::Copy(s) if s == "  let 中文 = 2;\n"),
+                    )
+                    .unwrap();
+                view.toggle_menu(MenuKind::Entry("reply".into()), None, cx);
+                view.activate_menu_item(MenuKind::Entry("reply".into()), code_ix, window, cx);
+                assert_eq!(
+                    cx.read_from_clipboard().and_then(|item| item.text()),
+                    Some("  let 中文 = 2;\n".into())
+                );
+                view.projection.connection = ConnectionState::Disconnected {
+                    reason: "test".into(),
+                };
+                assert!(!view.can_fork_entry("reply"));
+                cx.write_to_clipboard(ClipboardItem::new_string("unchanged".into()));
+                view.activate_entry_action("reply", actions.len() - 1, window, cx);
+                assert_eq!(
+                    cx.read_from_clipboard().and_then(|item| item.text()),
+                    Some("unchanged".into())
+                );
+            })
+        });
+    }
 
     /// UI-4：实际 GPUI 布局与 AX 操作区对齐，覆盖窄窗、大字号、长草稿。
     #[gpui::test]

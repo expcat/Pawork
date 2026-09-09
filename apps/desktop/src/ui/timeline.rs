@@ -29,7 +29,7 @@ use crate::projection::{
     TimelineEntryKind, TimelineRow,
 };
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
-use crate::ui::components::dropdown::{Dropdown, MenuPanel, MenuRow};
+use crate::ui::components::dropdown::Dropdown;
 use crate::ui::components::follow_scroll::BackToBottom;
 use crate::ui::components::label::Label;
 use crate::ui::i18n::t;
@@ -545,7 +545,7 @@ impl AppView {
             TimelineRow::Message { entry_index } | TimelineRow::Error { entry_index } => {
                 let entry = self.projection.timeline[*entry_index].clone();
                 let menu_open = self.entry_menu_open(&entry);
-                let can_fork = fork_available && entry.is_fork_boundary();
+                let can_fork = self.can_fork_entry(&entry.event_id);
                 let element = match &entry.kind {
                     TimelineEntryKind::Error(_) => {
                         self.error_entry_element(&entry, menu_open, can_fork, cx)
@@ -681,68 +681,13 @@ impl AppView {
         fork_available: bool,
         cx: &mut Context<Self>,
     ) -> Dropdown {
-        let menu_open = self.entry_menu_open(entry);
-        let event_id = entry.event_id.clone();
-        let button_id = format!("entry-menu-{}", entry.event_id);
-        let entry_focus = self.timeline_entry_focus(&event_id, cx);
-        let actions_button = Button::new(button_id.clone())
-            .variant(ButtonVariant::Ghost)
-            .text_size(font::XS)
-            .text_color(dark().text.secondary)
-            .padding(ButtonPadding::Horizontal(metrics::PADDING_XS))
-            .label("···")
-            .track_focus(&entry_focus)
-            .on_click(cx.listener({
-                let event_id = event_id.clone();
-                let button_id = button_id.clone();
-                move |view, event, _window, cx| {
-                    if view.consume_button_key_click(&button_id, event) {
-                        return;
-                    }
-                    let down = Self::click_down_position(event);
-                    view.toggle_menu(MenuKind::Entry(event_id.clone()), down, cx);
-                }
-            }))
-            .on_activate(cx.listener({
-                let event_id = event_id.clone();
-                let button_id = button_id.clone();
-                move |view, _event, _window, cx| {
-                    // 菜单已开时让位给根节点的 Entry 菜单选择；同时吞掉
-                    // 同键 keyup 合成 click，避免选 Fork 后重开浮层。
-                    if view.open_menu.is_some() {
-                        view.note_button_key_activate(&button_id);
-                        return;
-                    }
-                    view.open_entry_menu_from_keyboard(&event_id, cx);
-                    cx.stop_propagation();
-                }
-            }));
-        let mut actions = Dropdown::new(actions_button);
-        if menu_open {
-            let can_fork = fork_available && entry.is_fork_boundary();
-            let fork_id = event_id.clone();
-            actions = actions.panel(
-                MenuPanel::new(SharedString::from(format!("fork-menu-{}", entry.event_id)))
-                    .dismiss_on_outside(cx.listener({
-                        let kind = MenuKind::Entry(event_id.clone());
-                        move |view, event: &gpui::MouseDownEvent, _, cx| {
-                            view.dismiss_menu_on_outside(kind.clone(), event.position, cx)
-                        }
-                    }))
-                    .child(
-                        MenuRow::new(SharedString::from(format!("fork-{}", entry.event_id)))
-                            .label(t("timeline.fork"))
-                            .disabled(!can_fork)
-                            .when(can_fork, |row| {
-                                row.on_click(cx.listener(move |view, _event, window, cx| {
-                                    view.close_open_menu(cx);
-                                    view.on_fork(&fork_id, window, cx);
-                                }))
-                            }),
-                    ),
-            );
-        }
-        actions
+        super::timeline_entry::entry_actions_element(
+            self,
+            cx,
+            entry,
+            self.entry_menu_open(entry),
+            fork_available && self.can_fork_entry(&entry.event_id),
+        )
     }
 
     /// 回底并重挂跟随：scroll_to 越界钳制到末项底。

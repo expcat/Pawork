@@ -52,7 +52,7 @@
 | `src/ui/i18n.rs` | ~850 | 界面文案目录（English / 中文）与全局语言态：`Language`（默认 English）、`AtomicU8` 当前语言、`t(key)` / `t2(key, a, b)`（未知 key 原样返回）、`set_language`、`catalog_overview_label` 与纯函数 `localize*` 测试面；3 个定向测试 |
 | `src/ui/timeline.rs` | ~730 | Timeline 容器：gpui `list()` 变高虚拟化与显式跟随；`timeline_rows()` 同源组装五类行，按既有 run/order 把连续 tool 聚合并由 terminal summary 吸收重复相位；P1 以首个 tool event id 作为稳定折叠 key，live / replay 共用结构，折叠态进入共享行高 / 可见窗口 / AX 公式；880px 居中阅读列、短会话 Top 对齐、空态唯一 New task 与 `TIMELINE_OVERDRAW`=200px 合同不变 |
 | `src/ui/timeline_entry.rs` | ~830 | 消息、tool group、Run summary/footer 与 error 的工作单元呈现；P1 tool group header 汇总 `N tools · <state counts>`，默认折叠，mouse / Enter / Space / AX 共用折叠状态；状态与 detail 不伪造 wire 缺失耗时。Run summary 按 Completed / Failed / Cancelled 区分，只有当前 Session 存在至少一个真实、可审阅的 Changes 文件时才显示唯一主 CTA `Review changes` 并聚焦 Changes；Open in editor 无 capability 不画；6 个测试 |
-| `src/ui/markdown.rs` | ~360 | UI-3 最小 Markdown 子集；GPUI StyledText / UTF-8 TextRun，渲染与 AX 首帧行数估算共用 parsed blocks；2 个定向测试 |
+| `src/ui/markdown.rs` | ~720 | UI-3 / UX-02 Markdown 子集：管线表格、保留原换行的代码复制、HTTP(S) 链接打开 / 复制；`message_actions` 供消息菜单共享，render / 行数估算共用 parsed blocks；2 个定向测试 |
 | `src/ui/approval_card.rs` | ~160 | 审批卡：警示卡 + Allow once / Allow for run / Deny 三按钮（P4 片 3 按钮 32px 槽位，卡高 `approval_card_height` 公式与 AX 同源：p_2 + 标题/reason（+可选 detail）行数 + 按钮行）；app 级 focus handle（虚拟化卸载不丢失）；禁用原因 tooltip；R7 Wave B 的 mouse / keyboard / AX 三路径汇入同一 gate，决策后关闭旧菜单并把焦点交回 Composer |
 | `src/ui/input_area.rs` | ~760 | UI-4 Composer：880px 居中列，两侧至少 28px、顶部 16px、底部 24px；输入卡片 16px 内边距、12px 输入 / 动作间距、110–220px 高度预算。模型 Ghost 按钮与 Send/Cancel 同为 36px 命中区，模型固定 220px 槽、长名截断，菜单继续向上展开并按 provider 分组。卡片外显示只读项目 chip 与 ContextMeter，无项目文件工具提示 / status_hint 各占一行，元信息随字号增长；render / AX 共用说明与预算。per-session 草稿、IME、发送 / 取消与空模型 gate 沿用；不新增附件或队列能力。4 个定向测试；实际 GPUI 布局与 AX 操作区对照位于 accessibility/app.rs |
 | `src/ui/inspector.rs` | ~730 | Inspector 面板：顶层 Changes / Terminal / Resources 三页签；OPT-4a 起面板内 `inspector-collapse` 折叠按钮为 36×36 命中区 + 20px 字形；Terminal 页含 cwd/尺寸 stepper 组（G1：本地草稿 ±步进、apply 走冻结 `terminal_resize`；P4 片 3 五按钮冻结 28/28/72/28/28×28 槽位，头部 px_2/py_1/gap_1 以共享 rem 常量表达并与 AX `terminal_stepper_ax_rects` / `terminal_header_height` 同源）、FollowScroll 输出、输入与 Start/New/Size 单槽（G2：已知 exited/killed 终端 Start 变「新建终端」入口）、ADR-045 Stop/Close 同槽按钮（running→Stop 真实 `terminal_close` 终止，已知 exited/killed/failed→Close 清理 Host tombstone；failed 不直接 New，在途禁用防连点）；`plain_terminal_output` 在可见文本与 AX 共用路径移除 ANSI/VT 控制序列并归一换行（纯文本视图，不冒充 VT emulator）；`ensure_terminal` 懒创建与 exited/killed 重建共用 `begin_terminal_create`；3 个测试 |
@@ -277,6 +277,7 @@ domain id 类型未从 client re-export，命令 / 查询经冻结的 serde 形�
 
 ## 5. 契约与不变量
 
+- **UX-02（2026-09-09）**：常用管线表格按等宽列渲染，支持表头、对齐、中文、escaped pipe / 代码内 pipe；未完成或不匹配行保留正文。`message_body_element(entry_id, text, color)` 用事件 ID 隔离块内控件，`message_actions` 提供代码原文复制与编号 HTTP(S) 链接打开 / 复制（保留配对括号）；标题 / escaped URL 等完整 CommonMark 语法不在本子集内。正文菜单复制消息原始 Markdown，不拼作者 / 时间。`timeline_entry::fork_target` 仅将助手回复映射到相同非空 `run_id` 的后继合法闭合边界，原边界直接使用；连接 / active session gate 继续复核。鼠标、菜单键盘与 AX 共用动作序列；`entry_menu_scroll` 支持高亮滚入，AX 从实际布局裁剪可见项，布局后同步避免首帧缺节点，禁用分叉有可见说明。无 schema / wire / 依赖变化。已实现、221 项自动检查与 build 通过；历史回复真窗口、复制 / 分叉与三档字号通过，新请求流式验收因 HTTP 401 待补，用户未验收，详见 [路线图](../../ROADMAP.md)。
 - **UI-3（2026-09-08，进行中）**：Markdown 正文与工具组默认折叠已实现。`expanded_timeline_details` 以首个 event id 保存显式展开状态，render / AX / 测高同源；输出完整换行，工具行不再限定总高度。旧 RunPhase 由同 Run 后继状态吸收，完成且无 Changes 时仅留页脚，失败/取消与 Review 卡保留。用户视觉反馈后改为 880px 居中列、16px 正文、26px 行高、12px 作者间距与段距、32px 消息间距（条目 padding 参与虚拟列表测高），用户消息为 20px 内边距浅底卡片；工具摘要 36px、无底色，展开保留细边线；详见 [UI-3 规格](../../gui-design.md#ui-3-时间线更新2026-09-08进行中)。ADR-057 补齐共享思考投影与 API 1.14，持久事件与业务依赖不变。思考为独立默认折叠的 36px 摘要，展开显示 14px secondary 全文、四边 12px 内边距；使用稳定 run/message 键与工具共用展开/焦点机制，测高、render、AX 同源，收起时 AX 不含正文。既有 AX 交互测试追加思考折叠/展开与视口保留断言；实际窗口/Provider 状态以 [路线图](../../review/roadmap-ui-2026-09-09.md) 为准。
 - **UI-1（2026-09-07）**：共享中性深色 token、6/8/12px 圆角，Header 80px（顶留 24px，标题 18px，动作 40×37px），Inspector 页签 48/40px，状态栏 30px。InspectorMotion 只保存瞬时宽度，以 180ms cubic ease-out 开合，反向连续，空间不足直接收起；每次实际宽度变化（含终帧）刷新 Timeline 测高缓存；AX 使用本帧相同宽度并裁去不可见动作，不改变偏好 / 四层架构 / wire。hover、pressed、焦点即时反馈。新规格见 [GUI 设计](../../gui-design.md#ui-1-工作台视觉更新2026-09-07)，旧阶段尺寸与色值不覆盖本项；自动验证与用户人工验收分开记录，后者已于 2026-09-07 通过。
 
@@ -360,10 +361,12 @@ UI-4 本批实跑 216 个测试，全部内嵌于 bin target（`#[cfg(test)]` �
 | `ui/changes.rs` | 7 | ActivityPopover 摘要、非空可审阅文件 gate、二级页签、epoch/path/session 三重拒旧、断线 stale、latest-session mismatch 与真实横滚内容模型 |
 | `ui/inspector.rs` | 3 | 顶层页签默认 Changes；Terminal 纯文本输出过滤 bracketed-paste ANSI/VT 控制序列并归一换行；P3 增尺寸 stepper 钳制 |
 | `ui/resources.rs` | 3 | 默认 Idle、epoch 拒过期与断线保留旧数据但标记 stale |
-| `ui/markdown.rs` | 2 | UI-3 Markdown 子集：块结构与可见 inline 文本共用行数估算；Unicode / 流式未闭合标记保留内容 |
+| `ui/markdown.rs` | 2 | Markdown 块结构 / 行数估算；Unicode / 流式保留内容；UX-02 表格对齐、escaped pipe / 代码内 pipe、代码原始 CRLF 复制、HTTP(S) 与配对括号链接 |
 | `ui/timeline_entry.rs` | 6 | R4 Wave A 纯逻辑：tool 状态词映射（仅 succeeded→Completed）/ 状态分类 / ToolRowView 构造；`display_time` epoch 串 → 相对词（now/Nm/Nh/Nd 边界）与非法串原样兜底 |
 | `ui/text_input.rs` | 13 | 多行粘贴行计数；AX set-value 清 marked range；动态 placeholder；Composer 视口预算不破面板总高；Terminal 28–220 独立预算；shift 选择经 SelectLeft/SelectRight 真实 action；IME 经真实 EntityInputHandler 路径 commit 单次入栈且中间态不可 undo；80 行真窗口 overflow scroll（max_offset>0、视口 28–163、caret 滚入视口）；滚动态点击映回可见内容行；reset_text 恢复草稿且清 undo；SET-4 增 secure 掩码只含 grapheme 数量对应掩码字符且非 secure 不发布掩码 |
 | `ui/u1_probe.rs` | 14 | R1 Wave C U1 spike 矩阵 + R5 Wave B SelectAll/Copy/Cut/Undo/Redo、IME commit 单次入栈（真实 EntityInputHandler 路径）、空输入不可发送、Wave B 键位（含 Shift-Enter）keystroke→keymap→action 链路；AX 仍不在本层覆盖 |
+
+UX-02 另在 `ui/accessibility/app.rs` 新增一个 GPUI 主路径测试：正文 / 代码精确复制、实际菜单 AX、同 Run 后继闭合边界与断线禁用；本批 Desktop 总计 221 项通过。
 
 **验证命令**：
 

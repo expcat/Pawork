@@ -614,6 +614,7 @@ pub struct AppView {
     settings_scale_layout: ScrollHandle,
     settings_language_layout: ScrollHandle,
     scope_menu_scroll: ScrollHandle,
+    entry_menu_scroll: ScrollHandle,
     pending_scope_menu_scroll: bool,
     /// SET-4：按 provider 懒建的 API key secure 输入实体（明文只留在
     /// 实体内，提交 / 取消 / 离开页面即清空，含 undo 栈）。
@@ -884,6 +885,7 @@ impl AppView {
             settings_scale_layout: ScrollHandle::new(),
             settings_language_layout: ScrollHandle::new(),
             scope_menu_scroll: ScrollHandle::new(),
+            entry_menu_scroll: ScrollHandle::new(),
             pending_scope_menu_scroll: false,
             settings_account_remove_confirm: None,
             settings_account_names: HashMap::new(),
@@ -2393,6 +2395,9 @@ impl AppView {
                 return;
             }
         }
+        if matches!(&target, MenuKind::Entry(_)) && self.open_menu.as_ref() != Some(&target) {
+            self.entry_menu_scroll = ScrollHandle::new();
+        }
         self.open_menu = if self.open_menu.as_ref() == Some(&target) {
             None
         } else {
@@ -2725,7 +2730,7 @@ impl AppView {
                 );
                 entries.len() + 1
             }
-            Some(MenuKind::Entry(_)) => 1,
+            Some(MenuKind::Entry(event_id)) => self.entry_menu_actions(event_id).len(),
             Some(MenuKind::Activity) => 1,
             // 弹层行是可聚焦 Switch（Tab / Enter / Space 自理），不进
             // MenuRow 键盘分派；↑/↓ 无可移动项。
@@ -2797,6 +2802,7 @@ impl AppView {
         self.menu_highlight = Some(next);
         match self.open_menu {
             Some(MenuKind::Scope) => self.scope_menu_scroll.scroll_to_item(next),
+            Some(MenuKind::Entry(_)) => self.entry_menu_scroll.scroll_to_item(next),
             Some(MenuKind::SettingsRole(role)) => {
                 self.scroll_settings_role_menu_to_item(role, next)
             }
@@ -2845,10 +2851,7 @@ impl AppView {
             // 弹层控件自带键盘激活（Switch / 按钮），无 MenuRow 行。
             MenuKind::SettingsProviderModels(_) => {}
             MenuKind::Entry(event_id) => {
-                if ix == 0 && self.can_fork_entry(&event_id) {
-                    self.close_open_menu(cx);
-                    self.on_fork(&event_id, window, cx);
-                }
+                self.activate_entry_action(&event_id, ix, window, cx);
             }
             MenuKind::Activity => {
                 if ix == 0 {
@@ -3760,11 +3763,7 @@ impl AppView {
         live_action_enabled(
             &self.projection.connection,
             self.projection.active_session_id.is_some(),
-        ) && self
-            .projection
-            .timeline
-            .iter()
-            .any(|entry| entry.event_id == event_id && entry.is_fork_boundary())
+        ) && timeline_entry::fork_target(&self.projection.timeline, event_id).is_some()
     }
 
     /// Timeline 数据 / 可视宽度变更标记：下一次 render 时对 list 做一次
@@ -4152,7 +4151,8 @@ impl Render for AppView {
         // 这些控件的 AX 读取 GPUI 实测布局；首帧及滚动后的 prepaint 完成后
         // 再同步一次，不依赖网络事件或 Run 时钟刷新，也不产生重绘循环。
         if self.ax_bridge.is_some()
-            && (matches!(self.open_menu, Some(MenuKind::Scope)) || self.route == AppRoute::Settings)
+            && (matches!(self.open_menu, Some(MenuKind::Scope | MenuKind::Entry(_)))
+                || self.route == AppRoute::Settings)
         {
             let view = cx.entity().downgrade();
             window.on_next_frame(move |window, cx| {
