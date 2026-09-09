@@ -224,9 +224,7 @@ impl DesktopController {
                     AppResponse::Accepted { .. } | AppResponse::Data(_) => {
                         match client.snapshot().await {
                             Ok(snapshot) => {
-                                let _ = events
-                                    .send(ControllerEvent::Snapshot(snapshot))
-                                    .await;
+                                let _ = events.send(ControllerEvent::Snapshot(snapshot)).await;
                             }
                             Err(error) => {
                                 let _ = events
@@ -288,9 +286,7 @@ impl DesktopController {
                     AppResponse::Accepted { .. } | AppResponse::Data(_) => {
                         match client.snapshot().await {
                             Ok(snapshot) => {
-                                let _ = events
-                                    .send(ControllerEvent::Snapshot(snapshot))
-                                    .await;
+                                let _ = events.send(ControllerEvent::Snapshot(snapshot)).await;
                             }
                             Err(error) => {
                                 let _ = events
@@ -325,7 +321,7 @@ impl DesktopController {
 
     /// 选择一个真实目录作为当前项目；成功后重取 snapshot，让 UI 只消费
     /// Host 的 canonical workspace 结果，不在 Desktop 侧猜名称或 id。
-    pub fn open_workspace(&self, root_path: PathBuf) {
+    pub fn open_workspace(&self, root_path: PathBuf, create_task: bool) {
         let Some(client) = self.current_client() else {
             self.emit_reliable(ControllerEvent::OperationFailed {
                 action: "open project",
@@ -370,7 +366,11 @@ impl DesktopController {
                         return;
                     }
                     let _ = events
-                        .send(ControllerEvent::WorkspaceOpened { workspace_id, name })
+                        .send(ControllerEvent::WorkspaceOpened {
+                            workspace_id,
+                            name,
+                            create_task,
+                        })
                         .await;
                 }
                 Err(error) => {

@@ -299,6 +299,7 @@ impl AppView {
                 self.on_toggle_scope_menu(None, window, cx)
             }
             "scope-add-project" => self.on_open_project(window, cx),
+            "composer-project-task" => self.on_project_task_menu(None, window, cx),
             // ADR-054 D1：All-projects 态直建无归属会话（无确认浮层）；
             // AXPress 先移焦触发器，与真实点击同一路径。
             "add-task" => {
@@ -849,7 +850,7 @@ impl AppView {
         let scope = AxNode::new(
             "project-scope",
             AxRole::Button,
-            "Project scope",
+            t("rail.filter_label").replace("{}", &scope_label),
             AxRect::new(
                 inset,
                 y,
@@ -1019,7 +1020,10 @@ impl AppView {
             .action(AxAction::Press),
         );
 
-        if matches!(self.open_menu, Some(MenuKind::Scope)) {
+        if matches!(
+            self.open_menu,
+            Some(MenuKind::Scope | MenuKind::ProjectTask)
+        ) {
             let bounds = self.scope_menu_scroll.bounds();
             let rect = |bounds: gpui::Bounds<gpui::Pixels>| {
                 AxRect::new(
@@ -1032,10 +1036,14 @@ impl AppView {
             let mut menu = AxNode::new(
                 "scope-menu",
                 AxRole::Group,
-                "Project scope options",
+                if matches!(self.open_menu, Some(MenuKind::ProjectTask)) {
+                    t("composer.project_task")
+                } else {
+                    "Project filter options"
+                },
                 rect(bounds),
             );
-            let options = self.projection.project_scope_options();
+            let options = self.project_menu_options();
             let highlight = self.menu_highlight_effective(self.menu_selected_index());
             let rows = options
                 .into_iter()
@@ -2117,13 +2125,26 @@ impl AppView {
         let card_height = frame.height
             - metrics::COMPOSER_OUTER_TOP
             - metrics::COMPOSER_OUTER_BOTTOM
-            - (metrics::COMPOSER_META_GAP + meta_height) * (1 + self.composer_notes().len()) as f32;
+            - metrics::COMPOSER_META_GAP
+            - self.composer_meta_layout_height(window)
+            - (metrics::COMPOSER_META_GAP + meta_height) * self.composer_notes().len() as f32;
         let card = AxRect::new(
             column_x,
             frame.y + metrics::COMPOSER_OUTER_TOP,
             width,
             card_height,
         );
+        let actual_card = self.composer_layouts["composer-card"].bounds();
+        let card = if actual_card.size.height > gpui::px(0.0) {
+            AxRect::new(
+                actual_card.origin.x.into(),
+                actual_card.origin.y.into(),
+                actual_card.size.width.into(),
+                actual_card.size.height.into(),
+            )
+        } else {
+            card
+        };
         let pad = metrics::COMPOSER_PAD + metrics::COMPOSER_BORDER / 2.0;
         let input_y = card.y + pad;
         let footer_y = card.y + card.height - pad - metrics::COMPOSER_SEND_SIZE;
@@ -2206,6 +2227,40 @@ impl AppView {
             )
             .value(self.projection.context_meter_label()),
         );
+        if self.composer_file_tools_unavailable_visible() {
+            composer = composer.child(AxNode::new(
+                "composer-file-tools-hint",
+                AxRole::StaticText,
+                t("composer.file_tools_unavailable"),
+                frame,
+            ));
+        }
+        if self.composer_project_task_visible() {
+            let mut node = AxNode::new(
+                "composer-project-task",
+                AxRole::Button,
+                t("composer.project_task"),
+                frame,
+            )
+            .enabled(self.can_create_task())
+            .focused(self.open_menu.is_none() && self.project_task_focus.is_focused(window));
+            if self.can_create_task() {
+                node = node.action(AxAction::Press);
+            }
+            composer = composer.child(node);
+        }
+        // 元信息可以换行，AX 只使用同帧实测控件框。
+        for node in &mut composer.children {
+            if let Some(handle) = self.composer_layouts.get(node.identifier.as_str()) {
+                let bounds = handle.bounds();
+                node.bounds = AxRect::new(
+                    bounds.origin.x.into(),
+                    bounds.origin.y.into(),
+                    bounds.size.width.into(),
+                    bounds.size.height.into(),
+                );
+            }
+        }
         for (index, (id, note)) in self.composer_notes().into_iter().enumerate() {
             composer = composer.child(
                 AxNode::new(
@@ -2218,7 +2273,10 @@ impl AppView {
                     },
                     AxRect::new(
                         column_x,
-                        meta_y + (metrics::COMPOSER_META_GAP + meta_height) * (index + 1) as f32,
+                        meta_y
+                            + self.composer_meta_layout_height(window)
+                            + metrics::COMPOSER_META_GAP
+                            + (metrics::COMPOSER_META_GAP + meta_height) * index as f32,
                         width,
                         meta_height,
                     ),
@@ -3166,10 +3224,165 @@ mod tests {
                 }
                 let context = tree.find("composer-context").unwrap();
                 assert_eq!(context.value.as_deref(), Some("Context · unavailable"));
-                assert!((context.bounds.y - f32::from(meta.top())).abs() < 1.0);
+                assert!(context.bounds.y >= f32::from(meta.top()) && context.bounds.y + context.bounds.height <= f32::from(meta.bottom()) + 1.0);
                 assert!(!tree.find("send").unwrap().enabled, "offline never sends");
             });
         }
+    }
+
+    /// UX-03：项目筛选不重绑任务，项目新建入口、限制和上下文共用可换行的元信息。
+    #[gpui::test]
+    fn project_task_guidance_preserves_context_and_wraps(cx: &mut gpui::TestAppContext) {
+        use crate::projection::{SessionSummary, WorkspaceSummary};
+        use crate::ui::theme::font::TextScale;
+        use gpui::{px, size};
+        let platform = std::sync::Arc::new(crate::platform::Platform::new());
+        let (view, cx) = cx.add_window_view(|_, cx| {
+            AppView::new(
+                platform,
+                std::env::temp_dir().join("ux03-layout.sock"),
+                None,
+                cx,
+            )
+        });
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.set_connection(ConnectionState::Connected {
+                    instance_id: "test".into(),
+                });
+                view.projection.workspaces = vec![WorkspaceSummary {
+                    id: "project".into(),
+                    name: "Example".into(),
+                }];
+                view.projection.sessions = vec![SessionSummary {
+                    session_id: "old".into(),
+                    title: "Draft".into(),
+                    updated_at_ms: 1,
+                    workspace_id: None,
+                    parent_branch_id: None,
+                    forked_from_event_id: None,
+                    active: true,
+                }];
+                view.projection.active_session_id = Some("old".into());
+                view.text_input
+                    .update(cx, |input, cx| input.reset_text("保留原任务草稿", cx));
+                view.on_select_scope(Some("project".into()), window, cx);
+                assert!(view.active_task_hidden_by_filter());
+                assert!(view.composer_workspace_no_project());
+                assert_eq!(view.projection.sessions[0].workspace_id, None);
+                assert_eq!(view.text_input.read(cx).text(), "保留原任务草稿");
+                view.on_project_task_menu(None, window, cx);
+                assert_eq!(
+                    view.project_menu_options(),
+                    vec![(Some("project".into()), "Example".into())]
+                );
+                assert_eq!(view.menu_item_count(), 2);
+                view.close_menu_and_focus_trigger(MenuKind::ProjectTask, window, cx);
+                assert!(view.project_task_focus.is_focused(window));
+                view.on_select_scope(None, window, cx);
+                assert!(!view.active_task_hidden_by_filter());
+            })
+        });
+        for scale in [
+            TextScale::Percent100,
+            TextScale::Percent125,
+            TextScale::Percent150,
+        ] {
+            for width in [1440.0, 1080.0] {
+                cx.simulate_resize(size(px(width), px(900.0)));
+                cx.update(|window, cx| {
+                    view.update(cx, |view, cx| {
+                        view.text_scale = scale;
+                        window.set_rem_size(px(scale.rem_pixels()));
+                        cx.notify();
+                    })
+                });
+                cx.refresh().unwrap();
+                cx.run_until_parked();
+                cx.update(|window, cx| {
+                    let view = view.read(cx);
+                    let tree = view.accessibility_tree(window, cx);
+                    let meta = view.composer_layouts["composer-meta"].bounds();
+                    let bounds: Vec<_> = [
+                        "composer-workspace",
+                        "composer-file-tools-hint",
+                        "composer-project-task",
+                        "composer-context",
+                    ]
+                    .iter()
+                    .map(|id| {
+                        let node = tree.find(id).unwrap();
+                        assert!(node.bounds.width > 0.0 && node.bounds.height > 0.0, "{id}");
+                        assert!(
+                            node.bounds.x >= f32::from(meta.left()) - 1.0
+                                && node.bounds.x + node.bounds.width
+                                    <= f32::from(meta.right()) + 1.0,
+                            "{id}: {:?} meta={meta:?}",
+                            node.bounds
+                        );
+                        assert!(
+                            node.bounds.y >= f32::from(meta.top()) - 1.0
+                                && node.bounds.y + node.bounds.height
+                                    <= f32::from(meta.bottom()) + 1.0,
+                            "{id}"
+                        );
+                        node.bounds
+                    })
+                    .collect();
+                    for (i, a) in bounds.iter().enumerate() {
+                        for b in &bounds[i + 1..] {
+                            assert!(
+                                a.x + a.width <= b.x + 1.0
+                                    || b.x + b.width <= a.x + 1.0
+                                    || a.y + a.height <= b.y + 1.0
+                                    || b.y + b.height <= a.y + 1.0,
+                                "overlap at {width} {scale:?}"
+                            );
+                        }
+                    }
+                });
+            }
+        }
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.set_connection(ConnectionState::Connected {
+                    instance_id: "test".into(),
+                });
+                window.focus(&view.project_task_focus);
+                cx.notify();
+            })
+        });
+        cx.refresh().unwrap();
+        cx.simulate_keystrokes("enter");
+        cx.update(|_, cx| assert_eq!(view.read(cx).open_menu, Some(MenuKind::ProjectTask)));
+        cx.simulate_keystrokes("enter");
+        cx.update(|_, cx| {
+            assert!(
+                view.read(cx).open_menu.is_none(),
+                "second Enter confirms selection"
+            );
+            assert_eq!(view.read(cx).text_input.read(cx).text(), "保留原任务草稿");
+        });
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.status_hint = Some("keep status".into());
+                view.projection.sessions[0].workspace_id = Some("project".into());
+                assert!(!view.composer_file_tools_unavailable_visible());
+                assert!(!view.composer_project_task_visible());
+                assert_eq!(
+                    view.composer_notes(),
+                    vec![("composer-status-hint", "keep status".into())]
+                );
+                let tree = view.accessibility_tree(window, cx);
+                assert!(tree.find("composer-file-tools-hint").is_none());
+                assert!(tree.find("composer-project-task").is_none());
+                view.projection.active_session_id = None;
+                assert!(
+                    view.composer_project_task_visible(),
+                    "empty state offers project creation"
+                );
+            })
+        });
     }
 
     #[test]

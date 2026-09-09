@@ -203,6 +203,7 @@ fn now_unix_ms() -> u64 {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum MenuKind {
     Scope,
+    ProjectTask,
     Model,
     /// Settings「Default models」四角色下拉（OPT-3b / ADR-055 D5）。
     SettingsRole(SettingsRole),
@@ -613,6 +614,8 @@ pub struct AppView {
     settings_element_layouts: HashMap<String, ScrollHandle>,
     settings_scale_layout: ScrollHandle,
     settings_language_layout: ScrollHandle,
+    project_task_focus: FocusHandle,
+    composer_layouts: HashMap<&'static str, ScrollHandle>,
     scope_menu_scroll: ScrollHandle,
     entry_menu_scroll: ScrollHandle,
     pending_scope_menu_scroll: bool,
@@ -884,6 +887,18 @@ impl AppView {
             settings_element_layouts: HashMap::new(),
             settings_scale_layout: ScrollHandle::new(),
             settings_language_layout: ScrollHandle::new(),
+            project_task_focus: cx.focus_handle().tab_stop(true),
+            composer_layouts: [
+                "composer-card",
+                "composer-meta",
+                "composer-workspace",
+                "composer-context",
+                "composer-file-tools-hint",
+                "composer-project-task",
+            ]
+            .into_iter()
+            .map(|id| (id, ScrollHandle::new()))
+            .collect(),
             scope_menu_scroll: ScrollHandle::new(),
             entry_menu_scroll: ScrollHandle::new(),
             pending_scope_menu_scroll: false,
@@ -1469,8 +1484,15 @@ impl AppView {
             ControllerEvent::SessionCreated { session_id } => {
                 self.open_session(session_id, cx);
             }
-            ControllerEvent::WorkspaceOpened { workspace_id, name } => {
-                self.scope_workspace_id = Some(workspace_id);
+            ControllerEvent::WorkspaceOpened {
+                workspace_id,
+                name,
+                create_task,
+            } => {
+                self.scope_workspace_id = Some(workspace_id.clone());
+                if create_task {
+                    self.controller.create_session(Some(workspace_id));
+                }
                 self.reconcile_terminal_workspace(cx);
                 self.rail_scroll_to_active = true;
                 self.status_hint = Some(i18n::t("status.project_opened").replace("{}", &name));
@@ -2137,6 +2159,7 @@ impl AppView {
     }
 
     pub(super) fn on_open_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let create_task = matches!(self.open_menu, Some(MenuKind::ProjectTask));
         if !self.can_create_task() {
             self.status_hint = Some(i18n::t("status.open_project_needs_connection").into());
             cx.notify();
@@ -2155,7 +2178,10 @@ impl AppView {
                 if let Some(path) = paths.pop() {
                     this.update_in(cx, |view, _window, cx| {
                         view.status_hint = Some(i18n::t("status.opening_project").into());
-                        view.controller.open_workspace(path);
+                        view.controller.open_workspace(path, create_task);
+                        if create_task {
+                            view.focus_composer(_window, cx);
+                        }
                         cx.notify();
                     })
                     .ok();
@@ -2693,6 +2719,7 @@ impl AppView {
     ) {
         let trigger = match kind {
             MenuKind::Scope => self.scope_focus.clone(),
+            MenuKind::ProjectTask => self.project_task_focus.clone(),
             MenuKind::Model => self.model_focus.clone(),
             MenuKind::SettingsRole(role) => self
                 .settings_action_focus
@@ -2720,7 +2747,7 @@ impl AppView {
     /// 菜单高亮行数。所有可点击 MenuRow 均进入同一普通键盘分派。
     fn menu_item_count(&self) -> usize {
         match self.open_menu.as_ref() {
-            Some(MenuKind::Scope) => self.projection.project_scope_options().len() + 1,
+            Some(MenuKind::Scope | MenuKind::ProjectTask) => self.project_menu_options().len() + 1,
             Some(MenuKind::Model) => self.projection.models.len(),
             // 清除行始终可选；空候选时仍可移除已保存的默认角色。
             Some(MenuKind::SettingsRole(_)) => {
@@ -2742,9 +2769,8 @@ impl AppView {
     /// 当前选中项在菜单中的行位（键盘高亮的回落起点）。
     fn menu_selected_index(&self) -> usize {
         match self.open_menu.as_ref() {
-            Some(MenuKind::Scope) => self
-                .projection
-                .project_scope_options()
+            Some(MenuKind::Scope | MenuKind::ProjectTask) => self
+                .project_menu_options()
                 .iter()
                 .position(|(workspace_id, _)| *workspace_id == self.scope_workspace_id)
                 .unwrap_or(0),
@@ -2801,7 +2827,9 @@ impl AppView {
         };
         self.menu_highlight = Some(next);
         match self.open_menu {
-            Some(MenuKind::Scope) => self.scope_menu_scroll.scroll_to_item(next),
+            Some(MenuKind::Scope | MenuKind::ProjectTask) => {
+                self.scope_menu_scroll.scroll_to_item(next)
+            }
             Some(MenuKind::Entry(_)) => self.entry_menu_scroll.scroll_to_item(next),
             Some(MenuKind::SettingsRole(role)) => {
                 self.scroll_settings_role_menu_to_item(role, next)
@@ -2820,8 +2848,8 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         match kind {
-            MenuKind::Scope => {
-                let options = self.projection.project_scope_options();
+            MenuKind::Scope | MenuKind::ProjectTask => {
+                let options = self.project_menu_options();
                 if let Some((workspace_id, _)) = options.get(ix).cloned() {
                     self.on_select_scope(workspace_id, window, cx);
                 } else if ix == options.len() {
@@ -4137,7 +4165,10 @@ impl Render for AppView {
             }
         }
         if self.pending_scope_menu_scroll {
-            if !matches!(self.open_menu, Some(MenuKind::Scope)) {
+            if !matches!(
+                self.open_menu,
+                Some(MenuKind::Scope | MenuKind::ProjectTask)
+            ) {
                 self.pending_scope_menu_scroll = false;
             } else if self.scope_menu_scroll.bounds().size.height > px(0.0) {
                 let selected = self.menu_highlight_effective(self.menu_selected_index());
@@ -4150,10 +4181,7 @@ impl Render for AppView {
         }
         // 这些控件的 AX 读取 GPUI 实测布局；首帧及滚动后的 prepaint 完成后
         // 再同步一次，不依赖网络事件或 Run 时钟刷新，也不产生重绘循环。
-        if self.ax_bridge.is_some()
-            && (matches!(self.open_menu, Some(MenuKind::Scope | MenuKind::Entry(_)))
-                || self.route == AppRoute::Settings)
-        {
+        if self.ax_bridge.is_some() {
             let view = cx.entity().downgrade();
             window.on_next_frame(move |window, cx| {
                 let _ = view.update(cx, |view, cx| view.sync_accessibility(window, cx));
@@ -4282,9 +4310,11 @@ impl Render for AppView {
                 },
             ))
             .on_scroll_wheel(cx.listener(|view, _event, _window, cx| {
-                if matches!(view.open_menu, Some(MenuKind::Scope))
-                    || (view.route == AppRoute::Settings
-                        && view.settings_page == SettingsPage::Appearance)
+                if matches!(
+                    view.open_menu,
+                    Some(MenuKind::Scope | MenuKind::ProjectTask)
+                ) || (view.route == AppRoute::Settings
+                    && view.settings_page == SettingsPage::Appearance)
                 {
                     cx.notify();
                 }

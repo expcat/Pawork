@@ -599,9 +599,12 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "composer.workspace_scope" => ("Workspace · {}", "工作区 · {}"),
         "composer.no_project_chip" => ("No project", "无项目"),
         "composer.file_tools_unavailable" => (
-            "File tools unavailable until a project is selected.",
-            "选择项目前，文件工具不可用。",
+            "File tools unavailable",
+            "文件工具不可用",
         ),
+        "composer.project_task" => ("New task in project…", "在项目中新建任务…"),
+        "rail.filter_label" => ("Filter · {}", "筛选 · {}"),
+        "rail.task_hidden" => ("Project filter hides this task from the sidebar; its project is unchanged.", "项目筛选已在侧栏隐藏当前任务；任务归属未改变。"),
         "common.add_project" => ("Add project…", "添加项目…"),
         // ── Workspace chrome · Task rail ──
         "rail.reconnect" => ("Reconnect", "重新连接"),

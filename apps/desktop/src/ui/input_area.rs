@@ -6,7 +6,7 @@
 use gpui::{div, point, prelude::*, px, Context, Corner, Pixels, Point, SharedString, Window};
 
 use crate::projection::{group_models_by_provider, ConnectionState, ModelEntry};
-use crate::ui::components::button::{Button, ButtonVariant};
+use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
 use crate::ui::components::dropdown::{Dropdown, MenuPanel, MenuRow, ANCHOR_GAP_Y};
 use crate::ui::components::label::Label;
 use crate::ui::i18n::{t, t2};
@@ -198,6 +198,7 @@ impl AppView {
 
         let card = div()
             .id("composer-card")
+            .track_scroll(&self.composer_layouts["composer-card"])
             .debug_selector(|| "composer-card".into())
             .flex()
             .flex_col()
@@ -248,6 +249,66 @@ impl AppView {
                     ),
             );
 
+        let project_label = div()
+            .id("composer-workspace")
+            .track_scroll(&self.composer_layouts["composer-workspace"])
+            .px(px(metrics::SPACE_2))
+            .rounded(px(metrics::CONTROL_RADIUS))
+            .bg(dark().bg.panel)
+            .text_size(font::XS)
+            .text_color(dark().text.secondary)
+            .child(workspace_label);
+        let mut project = div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap(px(metrics::SPACE_2))
+            .child(project_label);
+        if self.composer_file_tools_unavailable_visible() {
+            project = project.child(
+                div()
+                    .id("composer-file-tools-hint")
+                    .track_scroll(&self.composer_layouts["composer-file-tools-hint"])
+                    .text_size(font::XS)
+                    .text_color(dark().semantic.warning_text)
+                    .child(t("composer.file_tools_unavailable")),
+            );
+        }
+        if self.composer_project_task_visible() {
+            let button = Button::new("composer-project-task")
+                .track_focus(&self.project_task_focus)
+                .variant(ButtonVariant::Ghost)
+                .padding(ButtonPadding::None)
+                .height(px(meta_height))
+                .text_size(font::XS)
+                .label(t("composer.project_task"))
+                .disabled(!self.can_create_task())
+                .on_click(cx.listener(|view, event, window, cx| {
+                    if view.consume_button_key_click("composer-project-task", event) {
+                        return;
+                    }
+                    view.on_project_task_menu(Self::click_down_position(event), window, cx);
+                }))
+                .on_activate(cx.listener(|view, _, window, cx| {
+                    view.note_button_key_activate("composer-project-task");
+                    if view.open_menu.is_some() {
+                        return;
+                    }
+                    view.on_project_task_menu(None, window, cx);
+                    cx.stop_propagation();
+                }));
+            let mut picker = Dropdown::new(button)
+                .panel_anchor(Corner::BottomLeft, point(px(0.0), px(-ANCHOR_GAP_Y)));
+            if matches!(self.open_menu, Some(MenuKind::ProjectTask)) {
+                picker = picker.panel(self.scope_menu_element(cx));
+            }
+            project = project.child(
+                div()
+                    .id("composer-project-task-layout")
+                    .track_scroll(&self.composer_layouts["composer-project-task"])
+                    .child(picker),
+            );
+        }
         let mut column = div()
             .w_full()
             .max_w(px(metrics::TIMELINE_READABLE_WIDTH))
@@ -259,34 +320,22 @@ impl AppView {
                 div()
                     .id("composer-meta")
                     .debug_selector(|| "composer-meta".into())
+                    .track_scroll(&self.composer_layouts["composer-meta"])
                     .flex()
-                    .flex_row()
+                    .flex_wrap()
                     .items_center()
+                    .justify_between()
                     .gap(px(metrics::SPACE_2))
-                    .h(px(meta_height))
+                    .min_h(px(meta_height))
                     .flex_none()
+                    .child(project)
                     .child(
-                        div().flex_1().min_w_0().flex().child(
-                            div()
-                                .truncate()
-                                .px(px(metrics::SPACE_2))
-                                .rounded(px(metrics::CONTROL_RADIUS))
-                                .bg(dark().bg.panel)
-                                .child(
-                                    Label::new(workspace_label)
-                                        .size(font::XS)
-                                        .color(dark().text.secondary),
-                                ),
-                        ),
-                    )
-                    .child(
-                        div().flex_1().min_w_0().flex().justify_end().child(
-                            div().truncate().child(
-                                Label::new(context_meter)
-                                    .size(font::XS)
-                                    .color(dark().text.tertiary),
-                            ),
-                        ),
+                        div()
+                            .id("composer-context")
+                            .track_scroll(&self.composer_layouts["composer-context"])
+                            .text_size(font::XS)
+                            .text_color(dark().text.tertiary)
+                            .child(context_meter),
                     ),
             );
         for (id, note) in self.composer_notes() {
@@ -314,17 +363,14 @@ impl AppView {
     }
 
     pub(super) fn composer_meta_height(window: &Window) -> f32 {
-        metrics::COMPOSER_META_HEIGHT * f32::from(window.rem_size()) / 16.0
+        (metrics::COMPOSER_META_HEIGHT * f32::from(window.rem_size()) / 16.0).max(28.0)
     }
 
     /// Render 与 AX 共用可见说明及顺序；失败提示不再挤压模型或发送。
     pub(super) fn composer_notes(&self) -> Vec<(&'static str, String)> {
         let mut notes = Vec::new();
-        if self.composer_file_tools_unavailable_visible() {
-            notes.push((
-                "composer-file-tools-hint",
-                t("composer.file_tools_unavailable").into(),
-            ));
+        if self.active_task_hidden_by_filter() {
+            notes.push(("composer-filter-hint", t("rail.task_hidden").into()));
         }
         if let Some(hint) = &self.status_hint {
             notes.push(("composer-status-hint", hint.clone()));
@@ -336,8 +382,33 @@ impl AppView {
         Self::composer_panel_height(input_height)
             + metrics::COMPOSER_OUTER_TOP
             + metrics::COMPOSER_OUTER_BOTTOM
+            + metrics::COMPOSER_META_GAP
+            + self.composer_meta_layout_height(window)
             + (metrics::COMPOSER_META_GAP + Self::composer_meta_height(window))
-                * (1 + self.composer_notes().len()) as f32
+                * self.composer_notes().len() as f32
+    }
+
+    pub(super) fn composer_meta_layout_height(&self, window: &Window) -> f32 {
+        f32::from(self.composer_layouts["composer-meta"].bounds().size.height)
+            .max(Self::composer_meta_height(window))
+    }
+
+    pub(super) fn composer_project_task_visible(&self) -> bool {
+        self.projection.active_session_id.is_none()
+            || self.composer_file_tools_unavailable_visible()
+    }
+
+    pub(super) fn on_project_task_menu(
+        &mut self,
+        down: Option<Point<Pixels>>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.can_create_task() {
+            return;
+        }
+        self.toggle_menu(MenuKind::ProjectTask, down, cx);
+        self.pending_scope_menu_scroll = matches!(self.open_menu, Some(MenuKind::ProjectTask));
     }
 
     fn model_label(&self) -> String {

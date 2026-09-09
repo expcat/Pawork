@@ -47,6 +47,7 @@ pub enum ControllerEvent {
     WorkspaceOpened {
         workspace_id: String,
         name: String,
+        create_task: bool,
     },
     /// 发送回执：text 随行携带，供 UI 在 wire 用户消息事件缺席时乐观回显。
     MessageSent {

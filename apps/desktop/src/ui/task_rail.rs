@@ -181,7 +181,10 @@ impl AppView {
             .radius(metrics::CONTROL_RADIUS)
             .bordered()
             .text_size(font::BODY)
-            .label(format!("{scope_label} ▾"))
+            .label(format!(
+                "{} ▾",
+                t("rail.filter_label").replace("{}", &scope_label)
+            ))
             .on_click(cx.listener(|view, event, window, cx| {
                 // 键盘激活（Slice 5 P2b）后的同键 keyup 合成 click 在此吞除。
                 if view.consume_button_key_click("project-scope", event) {
@@ -401,9 +404,20 @@ impl AppView {
             .child(content)
     }
 
-    fn scope_menu_element(&self, cx: &mut Context<Self>) -> MenuPanel {
+    pub(super) fn project_menu_options(&self) -> Vec<(Option<String>, String)> {
+        self.projection
+            .project_scope_options()
+            .into_iter()
+            .filter(|(id, _)| {
+                !matches!(self.open_menu, Some(MenuKind::ProjectTask)) || id.is_some()
+            })
+            .collect()
+    }
+
+    pub(super) fn scope_menu_element(&self, cx: &mut Context<Self>) -> MenuPanel {
+        let kind = self.open_menu.clone().unwrap_or(MenuKind::Scope);
         let current = self.scope_workspace_id.clone();
-        let options = self.projection.project_scope_options();
+        let options = self.project_menu_options();
         let add_project_ix = options.len();
         let highlight = self.menu_highlight_effective(
             options
@@ -413,9 +427,11 @@ impl AppView {
         );
         let mut panel = MenuPanel::new("scope-menu")
             .track_scroll(&self.scope_menu_scroll)
-            .dismiss_on_outside(cx.listener(|view, event: &gpui::MouseDownEvent, _, cx| {
-                view.dismiss_menu_on_outside(MenuKind::Scope, event.position, cx);
-            }))
+            .dismiss_on_outside(
+                cx.listener(move |view, event: &gpui::MouseDownEvent, _, cx| {
+                    view.dismiss_menu_on_outside(kind.clone(), event.position, cx);
+                }),
+            )
             .children(
                 options
                     .into_iter()
@@ -998,9 +1014,17 @@ impl AppView {
     pub(super) fn on_select_scope(
         &mut self,
         workspace_id: Option<String>,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if matches!(self.open_menu, Some(MenuKind::ProjectTask)) {
+            if workspace_id.is_some() && self.can_create_task() {
+                self.scope_workspace_id = workspace_id.clone();
+                self.close_open_menu(cx);
+                self.create_task(workspace_id, window, cx);
+            }
+            return;
+        }
         self.scope_workspace_id = workspace_id;
         self.open_menu = None;
         self.menu_highlight = None;
@@ -1097,6 +1121,16 @@ impl AppView {
             }
             _ => {}
         }
+    }
+
+    pub(super) fn active_task_hidden_by_filter(&self) -> bool {
+        self.scope_workspace_id.as_deref().is_some_and(|scope| {
+            self.projection
+                .active_session_id
+                .as_deref()
+                .and_then(|id| self.projection.sessions.iter().find(|s| s.session_id == id))
+                .is_some_and(|s| s.workspace_id.as_deref() != Some(scope))
+        })
     }
 
     /// scope 行可见文案（render 与 AX 同源）。
