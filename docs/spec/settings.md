@@ -2,7 +2,7 @@
 
 ## ADR-060：UI-6b G2 逐账号额度与耗尽切换（2026-09-09）
 
-状态：Accepted。用户在 [G2 实施方案](../review/ui6b-quota-plan-2026-09-09.md) 后回复「确认」，授权 GUI 1.16；实现与验证状态见 [ROADMAP](../ROADMAP.md)。
+状态：Accepted。用户在 [G2 实施方案](../review/ui6b-quota-plan-2026-09-09.md) 后回复「确认」，授权 GUI 1.16；实现与验证状态见 [ROADMAP](../review/roadmap-ui-2026-09-09.md#ui-6b-g2-本批证据2026-09-09)。
 
 - **D1 权威来源**：Go 按指定 provider/credential 的存储 API key 请求一次 `/usage`，读取 rolling/weekly/monthly 三窗。百分比采用官方整数精度，reset 严格解析官方 UTC ISO 毫秒格式；单窗畸形为 typed failure，不取本地账本补余额。同订阅多个 key 不算多份额度，不相加或猜测上游身份。
 - **D2 查询与版本**：GUI 1.16 在既有 `quota_overview` 上以明确 `provider_id + credential_id + unit=percent` 请求 `QuotaOverviewView`，限默认本地作用域、无 model；空 windows 为三窗，Overall unsupported。无凭证过滤的旧调用保留本地 `UsageOverview` 响应。旧 minor 在发网前拒绝新路径；Percent 是整数百分点，与 Token/Cost/Count 分离，本地 ledger 不支持该单位。

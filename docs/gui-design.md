@@ -316,7 +316,7 @@ Snapshot 只有会话树、活动 Run、待审批与 Provider 等状态，**没�
 
 用户视觉签字已于 2026-09-05 确认（见 [OPT 归档 §10](review/roadmap-opt-2026-09-05.md#10-状态)）。签字后 OPT-2/3/4 已将新设计替换对应生产合同：OPT-2 会话生命周期、OPT-3 模型启用与默认角色、OPT-4（2026-09-06）落地 Inspector 默认折叠与重开入口、六处主操作图标 36×36/20–22px、Settings 全宽与导航零位移选中态；真窗口对照新图验收另行记录。旧 P0–P2 图继续保留。
 
-OPT-1 行为已同步到 §3.5：审批与项目信任由 Host 保存 Global 配置，语言/字号由 Desktop 保存 `desktop.json`，见 [ADR-053](spec/settings.md#adr-053opt-1-设置持久化2026-09-05)。这种持久化改动不代表 OPT 视觉已落地或已签字。2026-09-07 起当前活动线为模块重设计 UI-1～UI-6；OPT-D 签字稿保留为历史资产，不再否决本线新视觉。
+OPT-1 行为已同步到 §3.5：审批与项目信任由 Host 保存 Global 配置，语言/字号由 Desktop 保存 `desktop.json`，见 [ADR-053](spec/settings.md#adr-053opt-1-设置持久化2026-09-05)。这种持久化改动不代表 OPT 视觉已落地或已签字。模块重设计 UI-1～UI-6 已实现，全文见 [历史记录](review/roadmap-ui-2026-09-09.md)；OPT-D 签字稿保留为历史资产，不再否决新视觉。当前活动线见 [ROADMAP.md](ROADMAP.md)。
 
 ## UI-6b 账号交互更新（2026-09-08）
 

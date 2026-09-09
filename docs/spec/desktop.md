@@ -24,7 +24,7 @@
 - **D4a 自动命名并发收口（2026-09-06 审查修复）**：读取素材只读重放，不决议 pending approval、不追加 Agent 事件；命名任务快照依赖后释放 Core 锁，装配、目录解析、补全共用 20s 超时。写回前确认命名配置仍有效，以单条条件 UPDATE 校验占位标题并写入，避免覆盖手动改名；改名/配置清除期间返回的旧结果丢弃。
 - **D5 `AppEvent::SessionMetaChanged{session_id, title, archived}`**：改名/归档/自动标题写回后由 Host 经 EventHub 广播；Desktop 收到后重取 snapshot，列表即时反映写后状态。当前会话归档时一并收口 Composer、分页、Changes 与 Terminal workspace 草稿；重复刷新保持当前 UI scope。新建会话严格使用创建回执的 session_id，不从列表顺序猜测。
 
-当前活动线 UI-3 的 Markdown、工具折叠与 Run 终态呈现更新见 [GUI 设计](../gui-design.md#ui-3-时间线更新2026-09-08进行中)；下文旧阶段数值不覆盖本次规格。独立思考投影与默认折叠已按 ADR-057 实现，UI-3 等待用户人工视觉验收；自动检查、真窗口与人工验收分别见 [路线图](../review/roadmap-ui-2026-09-09.md)。
+UI-3 的 Markdown、工具折叠与 Run 终态呈现更新见 [GUI 设计](../gui-design.md#ui-3-时间线更新2026-09-08进行中)；下文旧阶段数值不覆盖本次规格。独立思考投影与默认折叠已按 ADR-057 实现，UI-3 等待用户人工视觉验收；自动检查、真窗口与人工验收分别见 [路线图](../review/roadmap-ui-2026-09-09.md)。
 
 ## 1. 产品定位
 

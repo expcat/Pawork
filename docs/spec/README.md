@@ -17,7 +17,7 @@
 | [verification.md](verification.md) | 需求如何映射到自动化、golden、真实冒烟和人工证据？当前缺口是什么？ |
 | [operations.md](operations.md) | 如何启动、配置、诊断、备份与恢复本机实例？当前发布/运维边界是什么？ |
 | [backlog.md](backlog.md) | 已确认扩展、未排期候选、排除项和候选转正闸门是什么？ |
-| [../ROADMAP.md](../ROADMAP.md) | 当前活动线（Desktop 模块重设计 UI-1～UI-6）每个任务重做一个模块的 UI 与交互 |
+| [../ROADMAP.md](../ROADMAP.md) | 当前活动线（GUI 用户体验收口 UX-01～UX-09）；上一条 Desktop 模块重设计（UI-1～UI-6）全文见 [历史记录](../review/roadmap-ui-2026-09-09.md) |
 | [feature-template.md](feature-template.md) | 大型候选转正时，Feature Spec 最少应包含哪些内容？ |
 
 ### 1.2 包级 Spec
