@@ -7,18 +7,12 @@ use gpui::{div, point, prelude::*, px, Context, Corner, Pixels, Point, SharedStr
 
 use crate::projection::{group_models_by_provider, ConnectionState, ModelEntry};
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
-use crate::ui::components::dropdown::{Dropdown, MenuPanel, MenuRow, ANCHOR_GAP_Y};
+use crate::ui::components::dropdown::{Dropdown, MenuPanel, ANCHOR_GAP_Y};
 use crate::ui::components::label::Label;
 use crate::ui::i18n::{t, t2};
 use crate::ui::theme::{dark, font, metrics};
 
 use super::{AppView, MenuKind};
-
-/// model menu provider 分组头高度；render 与 AX 几何共用。
-pub(super) const MODEL_MENU_GROUP_HEADER_HEIGHT: f32 = 24.0;
-
-/// model menu 空态说明块高度（标题 + 指引一行）；render 与 AX 几何共用。
-pub(super) const MODEL_MENU_EMPTY_STATE_HEIGHT: f32 = 56.0;
 
 /// Composer model menu 的可点击项顺序。provider 保持目录首现顺序，组内
 /// 保持原目录顺序；鼠标、键盘与 AX 均使用这份扁平顺序。
@@ -41,7 +35,11 @@ pub(super) fn model_catalog_empty_state(
 }
 
 impl AppView {
-    pub(super) fn composer_element(&self, window: &Window, cx: &mut Context<Self>) -> gpui::Div {
+    pub(super) fn composer_element(
+        &mut self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
         let can_send = self.can_send(cx);
         let can_cancel = self.can_cancel();
         let can_switch_model = self.can_switch_model();
@@ -447,87 +445,229 @@ impl AppView {
         }
     }
 
-    /// model 菜单面板（从 composer 内联抽出，与其他组同构的浮层 + MenuRow）。
-    fn model_menu_element(&self, cx: &mut Context<Self>) -> MenuPanel {
-        let entries = grouped_model_menu_entries(&self.projection.models);
-        let selected_ix = self
-            .projection
-            .effective_model()
-            .and_then(|(provider, id)| {
-                entries
-                    .iter()
-                    .position(|entry| entry.provider_id == *provider && entry.id == *id)
-            })
-            .unwrap_or(0);
-        let highlight = self.menu_highlight_effective(selected_ix);
-        let mut panel = MenuPanel::new("model-menu").dismiss_on_outside(cx.listener(
-            |view, event: &gpui::MouseDownEvent, _, cx| {
+    pub(super) fn model_matches_search(&self, model: &ModelEntry) -> bool {
+        let query = self.model_search_query.trim().to_lowercase();
+        model.display_name.to_lowercase().contains(&query)
+            || model.id.to_lowercase().contains(&query)
+    }
+
+    pub(super) fn filtered_model_entries(&self) -> Vec<ModelEntry> {
+        grouped_model_menu_entries(&self.projection.models)
+            .into_iter()
+            .filter(|model| self.model_matches_search(model))
+            .collect()
+    }
+
+    pub(super) fn model_provider_status(&self, provider_id: &str) -> String {
+        use crate::projection::{ProviderCatalogState, ProviderStatusLabels};
+        let state = &self.projection.settings_providers;
+        if state.query.stale_reason.is_some() {
+            return t("model_search.status_unknown").into();
+        }
+        let Some(provider) = state
+            .providers
+            .iter()
+            .find(|entry| entry.provider_id == provider_id)
+        else {
+            return t("model_search.status_unknown").into();
+        };
+        let source = match &provider.catalog {
+            ProviderCatalogState::Remote { .. } => t("model_search.remote"),
+            ProviderCatalogState::FixedFallback { .. } => t("model_search.fallback"),
+            ProviderCatalogState::Unavailable { .. } => t("model_search.unavailable"),
+        };
+        format!("{} · {source}", provider.auth_label())
+    }
+
+    pub(super) fn focus_model_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.model_search_query.clear();
+        self.model_search_input
+            .update(cx, |input, cx| input.reset_text(String::new(), cx));
+        self.model_menu_scroll = gpui::ScrollHandle::new();
+        self.menu_highlight = None;
+        self.pending_model_menu_scroll = matches!(self.open_menu, Some(MenuKind::Model));
+        window.focus(&self.model_search_focus);
+        cx.notify();
+    }
+
+    pub(super) fn clear_model_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.model_search_input
+            .update(cx, |input, cx| input.reset_text(String::new(), cx));
+        window.focus(&self.model_search_focus);
+        cx.notify();
+    }
+
+    pub(super) fn model_search_element(&mut self, cx: &mut Context<Self>) -> gpui::Div {
+        self.model_search_input.update(cx, |input, cx| {
+            input.set_placeholder(t("model_search.placeholder"), cx);
+        });
+        let clear_focus = self
+            .settings_action_focus
+            .entry("model-search-clear".into())
+            .or_insert_with(|| cx.focus_handle().tab_stop(true))
+            .clone();
+        let clear = Button::new("model-search-clear")
+            .track_focus(&clear_focus)
+            .variant(ButtonVariant::Ghost)
+            .text_size(font::SM)
+            .label(t("model_search.clear"))
+            .disabled(self.model_search_query.is_empty())
+            .on_click(cx.listener(|view, _, window, cx| view.clear_model_search(window, cx)))
+            .on_activate(cx.listener(|view, _, window, cx| {
+                view.clear_model_search(window, cx);
+                cx.stop_propagation();
+            }));
+        let input = self.model_search_input.clone();
+        div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .pb_2()
+            .child(
+                self.settings_element("model-search-input")
+                    .flex_1()
+                    .min_w_0()
+                    .child(input),
+            )
+            .child(
+                self.settings_element("model-search-clear")
+                    .flex_none()
+                    .child(clear),
+            )
+    }
+
+    /// 搜索与当前高亮项的来源固定在头部，只有候选项滚动。
+    fn model_menu_element(&mut self, cx: &mut Context<Self>) -> MenuPanel {
+        let entries = self.filtered_model_entries();
+        let highlight = self.menu_highlight_effective(self.menu_selected_index());
+        let menu_scroll = self
+            .settings_element_layouts
+            .entry("model-menu".into())
+            .or_default()
+            .clone();
+        let mut panel = MenuPanel::new("model-menu")
+            .track_scroll(&menu_scroll)
+            .max_height(480.0)
+            .dismiss_on_outside(cx.listener(|view, event: &gpui::MouseDownEvent, _, cx| {
                 view.dismiss_menu_on_outside(MenuKind::Model, event.position, cx);
-            },
-        ));
-        if entries.is_empty() {
-            // 已连接且目录查询完成但为空：菜单仍从触发器上方打开，给标题
-            // + 一行指引的诚实空态；无可选项，不编造模型。
-            return panel.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(metrics::SPACE_1))
-                    .px_2()
-                    .py(px(metrics::SPACE_2))
-                    .min_w_0()
-                    .child(
-                        div()
-                            .text_size(font::SM)
-                            .text_color(dark().text.primary)
-                            .child(t("composer.model_none_available")),
-                    )
-                    .child(
-                        div()
-                            .text_size(font::XS)
-                            .text_color(dark().text.secondary)
-                            .child(t("composer.model_menu_empty")),
-                    ),
+            }));
+        let mut content = div()
+            .w(px(340.0))
+            .flex()
+            .flex_col()
+            .child(self.model_search_element(cx));
+        if let Some(model) = entries.get(highlight) {
+            let status = format!(
+                "{} · {}",
+                model.provider_id,
+                self.model_provider_status(&model.provider_id)
             );
-        }
-        let mut item_ix = 0;
-        for (provider_id, models) in group_models_by_provider(&self.projection.models) {
-            panel = panel.child(
-                div()
-                    .h(px(MODEL_MENU_GROUP_HEADER_HEIGHT))
-                    .px_2()
-                    .flex()
-                    .items_center()
-                    .min_w_0()
-                    .truncate()
-                    .text_size(font::SM)
+            content = content.child(
+                self.settings_element("model-menu-status")
+                    .pb_2()
+                    .text_size(font::XS)
                     .text_color(dark().text.secondary)
-                    .child(provider_id),
+                    .whitespace_normal()
+                    .child(status),
             );
-            for model in models {
-                let selected = self
-                    .projection
-                    .effective_model()
-                    .is_some_and(|(provider, id)| {
-                        provider == &model.provider_id && id == &model.id
-                    });
-                panel = panel.child(
-                    MenuRow::new(SharedString::from(format!(
-                        "model-{}-{}",
-                        model.provider_id, model.id
-                    )))
-                    .label(model.display_name.clone())
-                    .selected(selected)
-                    .highlighted(item_ix == highlight)
-                    .on_click(cx.listener(
-                        move |view, _event, _window, cx| {
-                            view.on_select_model(model.clone(), cx);
-                        },
-                    )),
-                );
-                item_ix += 1;
-            }
         }
+        if entries.is_empty() {
+            let (title, hint) = if self.projection.models.is_empty() {
+                (
+                    t("composer.model_none_available"),
+                    t("composer.model_menu_empty"),
+                )
+            } else {
+                (t("model_search.no_results"), t("model_search.clear"))
+            };
+            return panel.child(
+                content.child(
+                    self.settings_element("model-menu-empty")
+                        .py_2()
+                        .text_size(font::SM)
+                        .whitespace_normal()
+                        .text_color(dark().text.secondary)
+                        .child(format!("{title}\n{hint}")),
+                ),
+            );
+        }
+        let mut list = div()
+            .id("model-menu-list")
+            .max_h(px(280.0))
+            .overflow_y_scroll()
+            .track_scroll(&self.model_menu_scroll);
+        let mut last_provider = String::new();
+        for (ix, model) in entries.into_iter().enumerate() {
+            let group_header = if last_provider != model.provider_id {
+                last_provider = model.provider_id.clone();
+                Some(format!(
+                    "{} · {}",
+                    model.provider_id,
+                    self.model_provider_status(&model.provider_id)
+                ))
+            } else {
+                None
+            };
+            let selected = self
+                .projection
+                .effective_model()
+                .is_some_and(|(provider, id)| *provider == model.provider_id && *id == model.id);
+            let row_id = format!("model-{}-{}", model.provider_id, model.id);
+            let title = format!("{}{}", if selected { "✓ " } else { "" }, model.display_name);
+            let detail = format!("{} / {}", model.provider_id, model.id);
+            let row = self
+                .settings_element(row_id)
+                .w_full()
+                .py_2()
+                .px_2()
+                .rounded(px(metrics::CONTROL_RADIUS))
+                .bg(if selected || ix == highlight {
+                    dark().surface.raised
+                } else {
+                    dark().bg.menu
+                })
+                .hover(|style| style.bg(dark().surface.hover))
+                .active(|style| style.bg(dark().surface.pressed))
+                .cursor_pointer()
+                .on_hover(cx.listener(move |view, hovered: &bool, _, cx| {
+                    if *hovered && view.menu_highlight != Some(ix) {
+                        view.menu_highlight = Some(ix);
+                        cx.notify();
+                    }
+                }))
+                .child(
+                    div()
+                        .text_size(font::SM)
+                        .text_color(dark().text.primary)
+                        .whitespace_normal()
+                        .child(title),
+                )
+                .child(
+                    div()
+                        .text_size(font::XS)
+                        .text_color(dark().text.secondary)
+                        .whitespace_normal()
+                        .child(detail),
+                )
+                .on_click(cx.listener(move |view, _, window, cx| {
+                    view.on_select_model(model.clone(), cx);
+                    window.focus(&view.model_focus);
+                }));
+            let mut group = div();
+            if let Some(header) = group_header {
+                group = group.child(
+                    div()
+                        .py_2()
+                        .px_2()
+                        .text_size(font::XS)
+                        .text_color(dark().text.secondary)
+                        .whitespace_normal()
+                        .child(header),
+                );
+            }
+            list = list.child(group.child(row));
+        }
+        panel = panel.child(content.child(list));
         panel
     }
 
@@ -654,13 +794,17 @@ impl AppView {
     pub(super) fn on_toggle_model_menu(
         &mut self,
         down_position: Option<Point<Pixels>>,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if !self.can_open_model_menu() {
             return;
         }
         self.toggle_menu(MenuKind::Model, down_position, cx);
+        if matches!(self.open_menu, Some(MenuKind::Model)) {
+            self.focus_model_search(window, cx);
+            self.controller.load_provider_status();
+        }
     }
 
     pub(super) fn on_select_model(&mut self, model: ModelEntry, cx: &mut Context<Self>) {

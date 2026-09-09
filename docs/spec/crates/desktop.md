@@ -37,7 +37,7 @@
 | `src/ui/recovery.rs` | ~380 | UX-04 连接 / 终端原因与恢复入口、创建 gate、技术详情、按实际布局裁剪的 AX；恢复动作不修改 Host 权限 |
 | `src/ui/shell_layout.rs` | ~295 | R2 Wave A 壳层几何合同：`resolve`（唯一计算入口，render 与 AX 树共享）——宽窗 rail=288 / Inspector 打开时 440（OPT-4b 起 AppView 初始偏好为折叠，resolve 合同不变），窗口宽 ≤1279 时 rail=240 且 Inspector 强制折叠（Workspace ≥560）；R7 Wave C 在 150% 字号下改用 320px rail，宽度不足 1320 时保持 Inspector 折叠，1080 窗口保留 760px Workspace；固定侧栏 `flex_none`，防长文本 min-content 挤窄 Inspector；rail 顶部 36px traffic-light 安全区；4 个 GPUI 布局测试 |
 | `src/ui/accessibility.rs` | ~410 | 平台无关 `AxTree` / `AxNode` / role / action / request / rect 模型；声明 Settings AX 子模块；3 个测试 |
-| `src/ui/accessibility/app.rs` | ~4966 | 工作台三栏语义树与 Press 白名单（含 Settings identifier 派发）；P0-2 的 `task-rail-grouping` 发布目标动作 name + 当前视图 value，Press 直接切换，不再发布 expanded/menu child；P0-3 空态发布 title / description / 单一 New task action，disabled 时不发布 Press；P1 的 tool group / Review 与 Activity 几何、P2 的 credential summary 隐藏和 Settings 写 gate 与 render 同源；model 菜单超 240px 时只发布裁剪框内子节点（render 内部滚动，首帧顶部）；Settings 页树拆到 `settings_*.rs`；OPT-3 增 Manage models 弹层（触发器 / 单模型 Switch / 全开全关 / 空目录）与四默认角色触发器·菜单的 identifier 派发；ADR-056 增展开 chevron（Press、value Collapsed/Expanded）与展开区 Credentials 凭证行 / Usage 空态节点；UI-2 会话行动作与项目头计数 AX 几何跟 render 同源；20 个测试 |
+| `src/ui/accessibility/app.rs` | ~4966 | 工作台三栏语义树与 Press 白名单（含 Settings identifier 派发）；P0-2 的 `task-rail-grouping` 发布目标动作 name + 当前视图 value，Press 直接切换，不再发布 expanded/menu child；P0-3 空态发布 title / description / 单一 New task action，disabled 时不发布 Press；P1 的 tool group / Review 与 Activity 几何、P2 的 credential summary 隐藏和 Settings 写 gate 与 render 同源；UX-05 model 菜单使用实际布局 / 内部列表滚动框裁剪 AX，打开定位当前项，搜索与键盘高亮共用筛选结果；Settings 页树拆到 `settings_*.rs`；OPT-3 增 Manage models 弹层（触发器 / 单模型 Switch / 全开全关 / 空目录）与四默认角色触发器·菜单的 identifier 派发；ADR-056 增展开 chevron（Press、value Collapsed/Expanded）与展开区 Credentials 凭证行 / Usage 空态节点；UI-2 会话行动作与项目头计数 AX 几何跟 render 同源；20 个测试 |
 | `src/ui/accessibility/settings.rs` | ~366 | Settings rail / 页分发；内容列宽经 `SETTINGS_CONTENT_PAD`（32×2）与 render 全宽列同源（OPT-4c 取消 820 钳制）；OPT-4d 增导航选中/未选中两态 AX frame 逐像素一致断言（F4 零位移） |
 | `src/ui/accessibility/settings_providers.rs` | ~850 | Provider 64px 概览 AX；连接、目录、详情分层，普通 group value 不含 credential、endpoint、错误或 raw model id；列几何经 `settings_content_ax_width` 与 render 全宽内容列（`SETTINGS_CONTENT_PAD` 32×2，OPT-4c）同源（auth-methods 并入 name value 后 connection/catalog 平移至 +300/+440）；enabled 动作才发布 Press；OPT-3 增「Default models」四角色区（触发器 value 为当前对或「未设置」，候选 = 已连接 provider 的已启用模型，vision/search 标注只保存不接路由）与 Manage models 弹层 AX（Switch 状态词 On/Off、Enable all/Disable all、空目录 fail-closed 文案） |
 | `src/ui/accessibility/settings_general.rs` | ~150 | Network 页 AX（wire/identifier 保持 General 兼容名） |
@@ -131,6 +131,8 @@ pawork-desktop [--socket <path>] [--instance <name>] [--probe|--probe-smoke]
 - **Composer（中栏下，R5 Wave A / F-09）**
   - 单一 raised surface 使用 1px subtle border / r8；常态总高 88–94px（`COMPOSER_PANEL_MIN_HEIGHT=88`，不是输入框 min），增长上限 220px。两行：行 1 TextInput 单行约 28px（含 inset），多行向上增长；行 2 footer `items_center`，控件高 28px；Send/Cancel 同槽 36×36（OPT-4a）。
   - 卡片内动作行：model Dropdown 触发器（仅 `display_name`，provider / raw id 在 tooltip、菜单和 AX value；max_w≈220 truncate；run 进行中 / 目录未加载 / 断线禁用并 tooltip 给原因）与右侧发送 / 取消同槽。
+  - UX-05 模型菜单：按名称 / ID 不区分大小写筛选，打开清空搜索并将当前项滚入视口；顶部固定搜索 / 清除和当前高亮模型的连接 / 来源，列表按供应商分组标明状态。来源仅取已有 `provider_auth_status`：远程 / 备用 / 不可用，备用目录明确不代表认证成功，未知或 stale 状态明确未确认；不硬编码隐藏模型。完整名称与 ID 可读，列表独立纵向滚动；鼠标悬停和 ↑/↓ 共用高亮，Enter 选择，Esc 返回入口。未搜索 / 未移动时 Enter 保持当前项以挡住 AppKit 重复开菜单按键；键盘选择后焦点落工作台根容器，避免同键重开或发送草稿。AX 取菜单和列表实际 bounds，不再猜测首帧顶部几何。
+
   - 卡片下方元信息：只读项目状态 → 无项目任务的「文件工具不可用」→「在项目中新建任务…」入口，右侧为 ContextMeter（`Context · — / {window}` 或 `unavailable`，不画进度条）。普通宽度同排，窄窗 / 大字号必要时换行；元信息高至少 28px，仍随字号增长。卡片与各元信息控件经 ScrollHandle 测量，AX 在 prepaint 后同步实际框。status_hint 和当前任务被筛选隐藏的说明分别显示；项目限制不另占行，有项目任务不保留限制与入口的空位。
   - 动作槽单按钮：视觉 element id 统一 `composer-action`，单一 `composer_action_focus`。idle/disconnected/no-session 显示 Send（32×32 圆形 Primary，↑；可用 tooltip「Send message (Enter)」；空/纯空白、无 session、断线、running 均 disabled + tooltip 给原因）；running 显示 Cancel（同槽 32×32 Danger，✕，tooltip「Cancel run (Cmd+.)」）。Send 点击与 AX press 均先判 `is_composing()`，组合中不发送。AX 节点 id 仍为 send/cancel 随态互换。状态切换两按钮同槽互换，面板几何与锚点零位移。
   - per-session 草稿：`HashMap<session_id, String>` + 无 session 独立槽；`open_session` 切换前 stash 当前 Composer 文本、切换后 `reset_text` 恢复（无则空，清 undo）；`MessageSent` 成功清该 session 草稿（可见 Composer 仅在回执属于 active session 时清空）；断线不动草稿；终端 TextInput 不参与。发送清空走 `clear()` 入 undo 栈，发送后 Undo 可恢复上一条文本。超长文本由父容器 max_h + overflow_y_scroll 承载，caret 滚进视口，面板总高仍受 88–94 / 220 合同约束。
@@ -335,6 +337,10 @@ domain id 类型未从 client re-export，命令 / 查询经冻结的 serde 形�
 
 - **被依赖**：无。独立二进制，不进 `pawork` CLI 的依赖闭包。
 - **运行时对端**：`pawork gui serve`（host 侧 gui-server）。数据目录规则镜像 app（`PAWORK_DATA_DIR` →（Windows）`%LOCALAPPDATA%/pawork` → `~/.pawork` → 临时目录/pawork），但按分层约束**不**依赖 `pawork-app` crate。
+
+UX-05 模型管理弹层：共用 `model_search_input` / query，仅过滤显示目录，不改变模型或批量启用语义；固定头部含搜索、状态 / 来源、完整目录计数、全开 / 全关。最大高 520px，内部模型列表独立滚动，名字与 ID 不截断并可横滚；↑/↓ 移 Switch 焦点，Tab 后实际聚焦行滚入，Esc 回管理入口。render / 键盘 / AX 使用同一筛选结果和实际列表框，保留所有入口写 gate 与 Host 回执权威。
+
+UX-05 复用并更新两个现有主路径回归：`model_menu_ax_culls_rows_outside_clipped_frame` 覆盖 20 模型当前项可见、大小写 ID 搜索、Enter 选择不发送草稿、无结果恢复、键盘滚动 / AX 和 Esc 回焦；`settings_models_menu_ax_pins_gates_switches_and_empty_state` 覆盖原有写 gate / 全量动作与内部列表滚动，以及三档字号下名称 / ID 搜索、无结果恢复与实际可见 Switch。没有新增测试体系。真实窗口和候选证据见 [路线图 UX-05](../../ROADMAP.md#ux-05-模型选择与管理效率)。
 
 UX-03 定向回归 `project_task_guidance_preserves_context_and_wraps`：项目筛选不重绑 / 不改草稿，项目新建菜单排除「所有项目」，Esc 回焦与第二次 Enter 确认，宽窄窗 × 三档字号下元信息实际框不重叠 / 不越界；有项目后移除限制与新建入口但保留其他反馈。复用既有 Composer 布局、会话草稿与目录菜单滚动测试；真窗口证据与用户验收状态见 [路线图 UX-03](../../ROADMAP.md#ux-03-新任务与项目上下文引导)。
 

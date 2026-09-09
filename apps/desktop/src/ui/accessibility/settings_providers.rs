@@ -590,6 +590,8 @@ impl AppView {
             .iter()
             .filter(|model| model.provider_id == provider_id)
             .collect();
+        let filtered_models = self.settings_filtered_models(provider_id);
+        let list_id = format!("{menu_id}-list");
         let pending = self
             .projection
             .settings_providers
@@ -616,7 +618,8 @@ impl AppView {
             AxRole::Group,
             t("settings.providers.models_title"),
             bounds(&menu_id),
-        );
+        )
+        .child(self.model_search_ax(window, &menu_id));
         let heading_id = format!("settings-models-heading-{provider_id}");
         menu = menu.child(
             AxNode::new(
@@ -625,14 +628,18 @@ impl AppView {
                 t("settings.providers.models_title"),
                 bounds(&heading_id),
             )
-            .value(crate::ui::i18n::t2(
-                "settings.providers.models_count",
-                &models
-                    .iter()
-                    .filter(|model| model.enabled)
-                    .count()
-                    .to_string(),
-                &models.len().to_string(),
+            .value(format!(
+                "{} · {}",
+                self.model_provider_status(provider_id),
+                crate::ui::i18n::t2(
+                    "settings.providers.models_count",
+                    &models
+                        .iter()
+                        .filter(|model| model.enabled)
+                        .count()
+                        .to_string(),
+                    &models.len().to_string(),
+                )
             )),
         );
         let scope_id = format!("settings-models-scope-{provider_id}");
@@ -673,21 +680,27 @@ impl AppView {
                 )),
             );
         }
-        for model in models {
-            menu = menu.child(
-                button(
-                    settings_model_switch_identifier(provider_id, &model.id),
-                    &model.display_name,
-                    writes && !pending,
-                )
+        if filtered_models.is_empty() {
+            let id = format!("settings-models-no-results-{provider_id}");
+            return visible(menu.child(AxNode::new(
+                id.clone(),
+                AxRole::StaticText,
+                t("model_search.no_results"),
+                bounds(&id),
+            )));
+        }
+        for model in filtered_models {
+            let id = settings_model_switch_identifier(provider_id, &model.id);
+            let mut node = button(id.clone(), &model.display_name, writes && !pending)
                 .value(if model.enabled {
                     t("settings.providers.switch_on")
                 } else {
                     t("settings.providers.switch_off")
                 })
                 .description(format!("{}/{}", model.provider_id, model.id))
-                .selected(model.enabled),
-            );
+                .selected(model.enabled);
+            node.bounds = self.settings_menu_element_bounds(&id, &list_id);
+            menu = menu.child(node);
         }
         visible(menu)
     }

@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use gpui::{Point, SharedString, Window};
+use gpui::{Focusable, Point, SharedString, Window};
 
 use super::*;
 use crate::ui::components::dropdown::{Dropdown, MenuPanel, MenuRow};
@@ -1782,7 +1782,7 @@ impl AppView {
         &mut self,
         provider_id: String,
         down_position: Option<Point<Pixels>>,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let enabled = self
@@ -1802,6 +1802,84 @@ impl AppView {
             down_position,
             cx,
         );
+        if matches!(self.open_menu, Some(MenuKind::SettingsProviderModels(_))) {
+            self.focus_model_search(window, cx);
+        }
+    }
+
+    /// 搜索结果是 render、方向键和 AX 的同一份目录顺序。
+    pub(crate) fn settings_filtered_models(&self, provider_id: &str) -> Vec<ModelEntry> {
+        self.projection
+            .settings_providers
+            .model_catalog
+            .iter()
+            .filter(|model| model.provider_id == provider_id && self.model_matches_search(model))
+            .cloned()
+            .collect()
+    }
+
+    /// 方向键移动真实 Switch 焦点，Enter 仍由同一 Switch handler 激活。
+    /// 根键盘入口需在普通 MenuRow 分派前调用。
+    pub(crate) fn handle_settings_models_key(
+        &mut self,
+        event: &gpui::KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(MenuKind::SettingsProviderModels(provider_id)) = self.open_menu.clone() else {
+            return false;
+        };
+        let key = event.keystroke.key.as_str();
+        if event.keystroke.modifiers.modified() || !matches!(key, "up" | "down" | "enter") {
+            return false;
+        }
+        if self.model_search_input.read(cx).is_composing() {
+            return false;
+        }
+        let models = self.settings_filtered_models(&provider_id);
+        let current = models.iter().position(|model| {
+            self.settings_action_focus
+                .get(&settings_model_switch_identifier(&provider_id, &model.id))
+                .is_some_and(|focus| focus.is_focused(window))
+        });
+        if key == "enter" {
+            if current.is_none()
+                && !self
+                    .model_search_input
+                    .read(cx)
+                    .focus_handle(cx)
+                    .is_focused(window)
+            {
+                return false;
+            }
+            // 正常 Switch Enter 已在行级消费；此臂覆盖搜索输入和根动作分派。
+            if let Some(model) = current
+                .and_then(|ix| models.get(ix))
+                .or_else(|| models.first())
+            {
+                self.on_toggle_provider_model(provider_id, model.id.clone(), cx);
+            }
+        } else if !models.is_empty() {
+            let next = match (current, key) {
+                (Some(ix), "down") => (ix + 1) % models.len(),
+                (Some(ix), _) => (ix + models.len() - 1) % models.len(),
+                (None, "down") => 0,
+                (None, _) => models.len() - 1,
+            };
+            let id = settings_model_switch_identifier(&provider_id, &models[next].id);
+            if let Some(focus) = self.settings_action_focus.get(&id) {
+                window.focus(focus);
+            }
+            if let Some(scroll) = self.settings_element_layouts.get(&format!(
+                "{}-list",
+                settings_models_menu_identifier(&provider_id)
+            )) {
+                scroll.scroll_to_item(next);
+            }
+        }
+        cx.notify();
+        cx.stop_propagation();
+        true
     }
 
     /// 弹层内单模型 Switch 切换（三路径同源；入口级复核 gate 与全量目录
@@ -1914,6 +1992,7 @@ impl AppView {
             .filter(|model| model.provider_id == provider_id)
             .cloned()
             .collect();
+        let filtered_models = self.settings_filtered_models(provider_id);
         let dismiss_provider = provider_id.to_string();
         let menu_id = settings_models_menu_identifier(provider_id);
         let menu_scroll = self
@@ -1921,7 +2000,13 @@ impl AppView {
             .entry(menu_id.clone())
             .or_default()
             .clone();
-        let mut panel = MenuPanel::new(SharedString::from(menu_id))
+        let list_id = format!("{menu_id}-list");
+        let list_scroll = self
+            .settings_element_layouts
+            .entry(list_id.clone())
+            .or_default()
+            .clone();
+        let panel = MenuPanel::new(SharedString::from(menu_id))
             .track_scroll(&menu_scroll)
             .max_height(SETTINGS_MODELS_MENU_MAX_HEIGHT)
             .dismiss_on_outside(
@@ -1936,18 +2021,34 @@ impl AppView {
         // 头行：标题 + Enable all / Disable all（空目录两者禁用）。
         let all_enabled = writes && !pending && !models.is_empty();
         let mut header = div()
-            .w(px(SETTINGS_MODELS_MENU_WIDTH))
+            .flex_none()
+            .w_full()
             .flex()
             .flex_col()
-            .gap_3()
-            .px_2()
-            .py_2()
+            .gap_1()
+            .px_1()
+            .py_1()
             .child(
                 self.settings_element(format!("settings-models-heading-{provider_id}"))
                     .flex()
                     .flex_col()
                     .gap_1()
-                    .child(settings_label(t("settings.providers.models_title")))
+                    .child(
+                        div()
+                            .text_size(font::SM)
+                            .text_color(dark().text.primary)
+                            .child(format!(
+                                "{} · {}",
+                                t("settings.providers.models_title"),
+                                provider_id
+                            )),
+                    )
+                    .child(
+                        div()
+                            .text_size(font::XS)
+                            .text_color(dark().text.secondary)
+                            .child(self.model_provider_status(provider_id)),
+                    )
                     .child(settings_copy(crate::ui::i18n::t2(
                         "settings.providers.models_count",
                         &models
@@ -2010,8 +2111,17 @@ impl AppView {
             bulk_actions =
                 bulk_actions.child(self.settings_element(identifier).flex_none().child(button));
         }
-        header = header.child(bulk_actions);
-        panel = panel.child(header);
+        header = header
+            .child(self.model_search_element(cx))
+            .child(bulk_actions);
+        let mut content = div()
+            .w(px(SETTINGS_MODELS_MENU_WIDTH))
+            .max_h(px(SETTINGS_MODELS_MENU_MAX_HEIGHT
+                - 2.0 * metrics::MENU_PADDING
+                - 2.0))
+            .flex()
+            .flex_col()
+            .child(header);
         if models.is_empty() {
             // 空目录诚实空态：Enable / Disable all 已禁用，Refresh 复用
             // 页级刷新路径（provider 状态 + 两套目录口径）。
@@ -2045,34 +2155,55 @@ impl AppView {
                     cx.stop_propagation();
                 }));
             return panel.child(
-                self.settings_element(format!("settings-models-empty-{provider_id}"))
-                    .flex()
-                    .flex_col()
-                    .gap(px(metrics::SPACE_1))
-                    .px_2()
-                    .py(px(metrics::SPACE_2))
-                    .min_w_0()
-                    .child(
-                        div()
-                            .text_size(font::SM)
-                            .text_color(dark().text.primary)
-                            .child(t("settings.providers.models_empty_title")),
-                    )
-                    .child(
-                        div()
-                            .text_size(font::XS)
-                            .text_color(dark().text.secondary)
-                            .child(t("settings.providers.models_empty_hint")),
-                    )
-                    .child(
-                        self.settings_element(refresh_id)
-                            .flex_none()
-                            .pt_1()
-                            .child(refresh),
-                    ),
+                content.child(
+                    self.settings_element(format!("settings-models-empty-{provider_id}"))
+                        .flex()
+                        .flex_col()
+                        .gap(px(metrics::SPACE_1))
+                        .px_2()
+                        .py(px(metrics::SPACE_2))
+                        .min_w_0()
+                        .child(
+                            div()
+                                .text_size(font::SM)
+                                .text_color(dark().text.primary)
+                                .child(t("settings.providers.models_empty_title")),
+                        )
+                        .child(
+                            div()
+                                .text_size(font::XS)
+                                .text_color(dark().text.secondary)
+                                .child(t("settings.providers.models_empty_hint")),
+                        )
+                        .child(
+                            self.settings_element(refresh_id)
+                                .flex_none()
+                                .pt_1()
+                                .child(refresh),
+                        ),
+                ),
             );
         }
-        for model in models {
+        if filtered_models.is_empty() {
+            return panel.child(
+                content.child(
+                    self.settings_element(format!("settings-models-no-results-{provider_id}"))
+                        .px_2()
+                        .py_3()
+                        .text_size(font::SM)
+                        .text_color(dark().text.secondary)
+                        .child(t("model_search.no_results")),
+                ),
+            );
+        }
+        let mut list = div()
+            .id(SharedString::from(list_id))
+            .track_scroll(&list_scroll)
+            .min_h_0()
+            .flex_shrink()
+            .overflow_y_scroll()
+            .on_scroll_wheel(cx.listener(|_view, _event, _window, cx| cx.notify()));
+        for model in filtered_models {
             let switch_id = settings_model_switch_identifier(provider_id, &model.id);
             let focus = self
                 .settings_action_focus
@@ -2089,6 +2220,10 @@ impl AppView {
                 .track_focus(&focus)
                 .checked(model.enabled)
                 .disabled(!writes || pending)
+                .tooltip(format!(
+                    "{}\n{}/{}",
+                    model.display_name, provider_id, model.id
+                ))
                 .on_click(cx.listener(move |view, event, _window, cx| {
                     if view.consume_button_key_click(&click_id, event) {
                         return;
@@ -2104,7 +2239,7 @@ impl AppView {
                     );
                     cx.stop_propagation();
                 }));
-            panel = panel.child(
+            list = list.child(
                 div()
                     .flex()
                     .flex_row()
@@ -2118,20 +2253,18 @@ impl AppView {
                     .px_1()
                     .child(
                         div()
-                            .flex()
-                            .flex_col()
-                            .min_w_0()
+                            .id(SharedString::from(format!("model-label-{switch_id}")))
                             .flex_1()
+                            .min_w_0()
+                            .overflow_x_scroll()
                             .child(
                                 div()
-                                    .truncate()
                                     .text_size(font::SM)
                                     .text_color(dark().text.primary)
                                     .child(model.display_name.clone()),
                             )
                             .child(
                                 div()
-                                    .truncate()
                                     .text_size(font::XS)
                                     .text_color(dark().text.tertiary)
                                     .child(model.id.clone()),
@@ -2144,7 +2277,8 @@ impl AppView {
                     ),
             );
         }
-        panel
+        content = content.child(list);
+        panel.child(content)
     }
 
     /// 启动 OAuth：descriptor 复核后登记 Replace 基线并置 Connecting。
@@ -2335,6 +2469,7 @@ impl AppView {
                 // 建立、随白名单回收。
                 if matches!(&self.open_menu, Some(MenuKind::SettingsProviderModels(open)) if open == &entry.provider_id)
                 {
+                    action_ids.insert("model-search-clear".to_string());
                     action_ids.insert(settings_models_enable_all_identifier(&entry.provider_id));
                     action_ids.insert(settings_models_disable_all_identifier(&entry.provider_id));
                     action_ids.insert(settings_models_refresh_identifier(&entry.provider_id));

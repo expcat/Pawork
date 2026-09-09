@@ -49,7 +49,6 @@ use components::dropdown::Dropdown;
 use components::follow_scroll::FollowScroll;
 use components::label::Badge;
 use components::status_bar::StatusBar;
-use input_area::grouped_model_menu_entries;
 use inspector::InspectorTab;
 use resources::ResourcesPanelState;
 use theme::{dark, font, metrics};
@@ -415,6 +414,11 @@ pub struct AppView {
     projection: DesktopProjection,
     text_input: Entity<TextInput>,
     terminal_input: Entity<TextInput>,
+    model_search_input: Entity<TextInput>,
+    model_search_focus: FocusHandle,
+    model_search_query: String,
+    model_menu_scroll: ScrollHandle,
+    pending_model_menu_scroll: bool,
     /// per-session Composer 草稿（不含终端）。无 active session 时走独立槽。
     composer_drafts: HashMap<String, String>,
     no_session_draft: String,
@@ -670,6 +674,32 @@ impl AppView {
                     crate::ui::theme::metrics::COMPOSER_MAX_HEIGHT,
                 )
         });
+        let model_search_input = cx.new(|cx| {
+            TextInput::with_placeholder(i18n::t("model_search.placeholder"), cx)
+                .id("model-search-input")
+                .height_clamp(28.0, 40.0)
+        });
+        let model_search_focus = model_search_input.read(cx).focus_handle(cx).tab_stop(true);
+        cx.observe(&model_search_input, |view, input, cx| {
+            let query = input.read(cx).text().to_string();
+            if view.model_search_query != query {
+                view.model_search_query = query;
+                if let Some(MenuKind::SettingsProviderModels(provider)) = &view.open_menu {
+                    let id = format!(
+                        "{}-list",
+                        settings::settings_models_menu_identifier(provider)
+                    );
+                    if let Some(scroll) = view.settings_element_layouts.get(&id) {
+                        scroll.set_offset(point(px(0.0), px(0.0)));
+                    }
+                }
+                view.menu_highlight = None;
+                view.model_menu_scroll.set_offset(point(px(0.0), px(0.0)));
+                view.pending_model_menu_scroll = matches!(view.open_menu, Some(MenuKind::Model));
+                cx.notify();
+            }
+        })
+        .detach();
         let mut view = Self {
             _platform: platform,
             controller,
@@ -678,6 +708,11 @@ impl AppView {
             projection: DesktopProjection::default(),
             text_input,
             terminal_input,
+            model_search_input,
+            model_search_focus,
+            model_search_query: String::new(),
+            model_menu_scroll: ScrollHandle::new(),
+            pending_model_menu_scroll: false,
             composer_drafts: HashMap::new(),
             no_session_draft: String::new(),
             terminal_drafts: HashMap::new(),
@@ -2495,8 +2530,16 @@ impl AppView {
             cx.stop_propagation();
             return;
         }
+        if self.handle_settings_models_key(event, window, cx) {
+            return;
+        }
         let menu = self.open_menu.clone();
         if let Some(kind) = menu {
+            if self.model_search_focus.is_focused(window)
+                && (key == "space" || self.model_search_input.read(cx).is_composing())
+            {
+                return;
+            }
             match key {
                 "up" => {
                     self.move_menu_highlight(false);
@@ -2515,7 +2558,7 @@ impl AppView {
                     // 的 Enter 同样视为 no-op（语义：选择即当前态）。
                     let selected = self.menu_selected_index();
                     let highlight = self.menu_highlight_effective(selected);
-                    if matches!(kind, MenuKind::Scope | MenuKind::Model) && highlight == selected {
+                    if matches!(kind, MenuKind::Scope) && highlight == selected {
                         cx.stop_propagation();
                         return;
                     }
@@ -2747,7 +2790,7 @@ impl AppView {
     fn menu_item_count(&self) -> usize {
         match self.open_menu.as_ref() {
             Some(MenuKind::Scope | MenuKind::ProjectTask) => self.project_menu_options().len() + 1,
-            Some(MenuKind::Model) => self.projection.models.len(),
+            Some(MenuKind::Model) => self.filtered_model_entries().len(),
             // 清除行始终可选；空候选时仍可移除已保存的默认角色。
             Some(MenuKind::SettingsRole(_)) => {
                 let entries = settings::settings_role_menu_entries(
@@ -2777,7 +2820,7 @@ impl AppView {
                 .projection
                 .effective_model()
                 .and_then(|(provider, id)| {
-                    grouped_model_menu_entries(&self.projection.models)
+                    self.filtered_model_entries()
                         .iter()
                         .position(|model| model.provider_id == *provider && model.id == *id)
                 })
@@ -2829,6 +2872,7 @@ impl AppView {
             Some(MenuKind::Scope | MenuKind::ProjectTask) => {
                 self.scope_menu_scroll.scroll_to_item(next)
             }
+            Some(MenuKind::Model) => self.model_menu_scroll.scroll_to_item(next),
             Some(MenuKind::Entry(_)) => self.entry_menu_scroll.scroll_to_item(next),
             Some(MenuKind::SettingsRole(role)) => {
                 self.scroll_settings_role_menu_to_item(role, next)
@@ -2856,8 +2900,17 @@ impl AppView {
                 }
             }
             MenuKind::Model => {
-                if let Some(model) = grouped_model_menu_entries(&self.projection.models).get(ix) {
+                // AppKit 开菜单的 Return 可重复投递到新搜索框。未输入/移动时
+                // 保持当前项；选中后焦点落根容器，后续同键不能重开或发送草稿。
+                if self.model_search_query.is_empty()
+                    && self.menu_highlight.is_none()
+                    && ix == self.menu_selected_index()
+                {
+                    return;
+                }
+                if let Some(model) = self.filtered_model_entries().get(ix) {
                     self.on_select_model(model.clone(), cx);
+                    window.focus(&self.focus_handle);
                 }
             }
             MenuKind::SettingsRole(role) => {
@@ -3222,6 +3275,24 @@ impl AppView {
     }
 
     fn on_send_message(&mut self, _: &SendMessage, window: &mut Window, cx: &mut Context<Self>) {
+        // 搜索框的 Return 只选择模型；包括菜单卸载前的输入事件，不能发送草稿。
+        if self.model_search_focus.is_focused(window) {
+            if !self.model_search_input.read(cx).is_composing() {
+                match self.open_menu.clone() {
+                    Some(kind @ MenuKind::Model) => {
+                        let ix = self.menu_highlight_effective(self.menu_selected_index());
+                        self.activate_menu_item(kind, ix, window, cx);
+                    }
+                    Some(MenuKind::SettingsProviderModels(provider)) => {
+                        if let Some(model) = self.settings_filtered_models(&provider).first() {
+                            self.on_toggle_provider_model(provider, model.id.clone(), cx);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            return;
+        }
         // 行内改名编辑器聚焦时 Enter 属于提交改名，不是发送消息。
         if self.session_rename_input_focused(window, cx) {
             if let Some(rename) = self.session_rename.as_ref() {
@@ -4159,6 +4230,41 @@ impl Render for AppView {
                 InspectorFocusTarget::SelectedTab => {
                     window.focus(&self.inspector_tab_focus[self.inspector_tab as usize])
                 }
+            }
+        }
+        if let Some(MenuKind::SettingsProviderModels(provider)) = &self.open_menu {
+            let models = self.settings_filtered_models(provider);
+            let focused = models.iter().position(|model| {
+                self.settings_action_focus
+                    .get(&settings::settings_model_switch_identifier(
+                        provider, &model.id,
+                    ))
+                    .is_some_and(|focus| focus.is_focused(window))
+            });
+            if focused != self.menu_highlight {
+                self.menu_highlight = focused;
+                if let (Some(ix), Some(scroll)) = (
+                    focused,
+                    self.settings_element_layouts.get(&format!(
+                        "{}-list",
+                        settings::settings_models_menu_identifier(provider)
+                    )),
+                ) {
+                    scroll.scroll_to_item(ix);
+                }
+            }
+        }
+        if self.pending_model_menu_scroll {
+            if !matches!(self.open_menu, Some(MenuKind::Model))
+                || self.filtered_model_entries().is_empty()
+            {
+                self.pending_model_menu_scroll = false;
+            } else if self.model_menu_scroll.bounds().size.height > px(0.0) {
+                self.model_menu_scroll
+                    .scroll_to_item(self.menu_selected_index());
+                self.pending_model_menu_scroll = false;
+            } else {
+                cx.defer_in(window, |_view, _window, cx| cx.notify());
             }
         }
         if self.pending_scope_menu_scroll {

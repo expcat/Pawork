@@ -14,11 +14,10 @@ use crate::ui::approval_card::{
     APPROVAL_BUTTON_SLOT_WIDTHS, APPROVAL_CARD_PAD_REMS,
 };
 use crate::ui::changes::{ChangesFetch, ChangesTab};
-use crate::ui::components::dropdown::{ANCHOR_GAP_Y, MENU_MAX_HEIGHT};
+use crate::ui::components::dropdown::ANCHOR_GAP_Y;
+#[cfg(test)]
+use crate::ui::components::dropdown::MENU_MAX_HEIGHT;
 use crate::ui::i18n::t;
-use crate::ui::input_area::{
-    grouped_model_menu_entries, MODEL_MENU_EMPTY_STATE_HEIGHT, MODEL_MENU_GROUP_HEADER_HEIGHT,
-};
 use crate::ui::inspector::{
     plain_terminal_output, terminal_empty_output, terminal_header_height,
     terminal_resize_status_label, terminal_size_for_display, terminal_stepper_ax_rects,
@@ -179,6 +178,7 @@ impl AppView {
         }
         match request.action {
             AxAction::Focus => match request.identifier.as_str() {
+                "model-search-input" => window.focus(&self.model_search_focus),
                 "composer-input" => self.focus_composer(window, cx),
                 // ADR-054 D2：行内改名编辑器聚焦（与点击行内输入框同路径）。
                 "session-rename-input" => {
@@ -237,6 +237,9 @@ impl AppView {
             AxAction::SetValue => {
                 let value = request.value.unwrap_or_default();
                 match request.identifier.as_str() {
+                    "model-search-input" => self
+                        .model_search_input
+                        .update(cx, |input, cx| input.set_text(value, cx)),
                     "composer-input" => self
                         .text_input
                         .update(cx, |input, cx| input.set_text(value, cx)),
@@ -317,6 +320,7 @@ impl AppView {
             | "terminal-details" => self.on_recovery_action(identifier, window, cx),
             // SET-3：Settings 进出与可见 / 键盘路径同一 handler。
             "open-settings" => self.on_open_settings(window, cx),
+            "model-search-clear" => self.clear_model_search(window, cx),
             "settings-back" => self.on_close_settings(window, cx),
             // SET-5：页级刷新与可见按钮同一 handler（permits 按当前树核对
             // disabled）。
@@ -2126,6 +2130,50 @@ impl AppView {
             .max(metrics::COMPOSER_INPUT_MIN_HEIGHT)
     }
 
+    pub(crate) fn model_search_ax(&self, window: &Window, menu_id: &str) -> AxNode {
+        let input = self.settings_menu_element_bounds("model-search-input", menu_id);
+        let clear = self.settings_menu_element_bounds("model-search-clear", menu_id);
+        let mut clear_node = AxNode::new(
+            "model-search-clear",
+            AxRole::Button,
+            t("model_search.clear"),
+            clear,
+        )
+        .enabled(!self.model_search_query.is_empty())
+        .focused(
+            self.settings_action_focus
+                .get("model-search-clear")
+                .is_some_and(|f| f.is_focused(window)),
+        );
+        if !self.model_search_query.is_empty() {
+            clear_node = clear_node.action(AxAction::Press);
+        }
+        AxNode::new(
+            "model-search",
+            AxRole::Group,
+            t("model_search.placeholder"),
+            AxRect::new(
+                input.x,
+                input.y,
+                (clear.x + clear.width - input.x).max(0.0),
+                input.height.max(clear.height),
+            ),
+        )
+        .child(
+            AxNode::new(
+                "model-search-input",
+                AxRole::TextArea,
+                t("model_search.placeholder"),
+                input,
+            )
+            .value(&self.model_search_query)
+            .focused(self.model_search_focus.is_focused(window))
+            .action(AxAction::Focus)
+            .action(AxAction::SetValue),
+        )
+        .child(clear_node)
+    }
+
     fn composer_ax(&self, window: &Window, cx: &App, frame: AxRect) -> AxNode {
         let width = (frame.width - metrics::COMPOSER_OUTER_X * 2.0)
             .max(0.0)
@@ -2312,88 +2360,75 @@ impl AppView {
             );
         }
         if matches!(self.open_menu, Some(MenuKind::Model)) {
-            let entries = grouped_model_menu_entries(&self.projection.models);
-            let selected_ix = self
-                .projection
-                .effective_model()
-                .and_then(|(provider, id)| {
-                    entries
-                        .iter()
-                        .position(|model| model.provider_id == *provider && model.id == *id)
-                })
-                .unwrap_or(0);
-            let highlight = self.menu_highlight_effective(selected_ix);
-            let groups = crate::projection::group_models_by_provider(&self.projection.models);
-            let content_height = if entries.is_empty() {
-                metrics::MENU_PADDING * 2.0 + MODEL_MENU_EMPTY_STATE_HEIGHT
-            } else {
-                metrics::MENU_PADDING * 2.0
-                    + groups.len() as f32 * MODEL_MENU_GROUP_HEADER_HEIGHT
-                    + entries.len() as f32 * metrics::MENU_ROW_HEIGHT
-            };
-            let menu_height = content_height.min(MENU_MAX_HEIGHT);
-            let menu_x = card.x + pad;
-            let menu_y = (footer_y - ANCHOR_GAP_Y - menu_height).max(0.0);
-            let mut menu = AxNode::new(
-                "model-menu",
-                AxRole::Group,
-                "Models",
-                AxRect::new(menu_x, menu_y, 260.0, menu_height),
-            );
-            let mut y = menu_y + metrics::MENU_PADDING;
-            let mut item_ix = 0;
-            // render 面板在 MENU_MAX_HEIGHT 内自滚且初始停在顶部；AX 只发布
-            // 与首帧可见窗口相交的子节点，不把裁剪区外的行塞进树（滚动后
-            // 的 AX 窗口跟随是后续候选）。
-            let menu_bottom = menu_y + menu_height;
+            let entries = self.filtered_model_entries();
+            let highlight = self.menu_highlight_effective(self.menu_selected_index());
+            let bounds = |id: &str| self.settings_menu_element_bounds(id, "model-menu");
+            let mut menu = AxNode::new("model-menu", AxRole::Group, "Models", bounds("model-menu"))
+                .child(self.model_search_ax(window, "model-menu"));
+            if let Some(model) = entries.get(highlight) {
+                menu = menu.child(AxNode::new(
+                    "model-menu-status",
+                    AxRole::StaticText,
+                    format!(
+                        "{} · {}",
+                        model.provider_id,
+                        self.model_provider_status(&model.provider_id)
+                    ),
+                    bounds("model-menu-status"),
+                ));
+            }
             if entries.is_empty() {
-                // 全关空态：菜单只发布一行说明（StaticText，无 Press——
-                // disabled 节点不发布 Press），不编造可选模型。
+                let (title, hint) = if self.projection.models.is_empty() {
+                    (
+                        t("composer.model_none_available"),
+                        t("composer.model_menu_empty"),
+                    )
+                } else {
+                    (t("model_search.no_results"), t("model_search.clear"))
+                };
                 menu = menu.child(
                     AxNode::new(
                         "model-menu-empty",
                         AxRole::StaticText,
-                        t("composer.model_none_available"),
-                        AxRect::new(menu_x, y, 260.0, MODEL_MENU_EMPTY_STATE_HEIGHT),
+                        title,
+                        bounds("model-menu-empty"),
                     )
-                    .value(t("composer.model_menu_empty")),
+                    .value(hint),
                 );
-            } else {
-                for (provider_id, models) in groups {
-                    if y < menu_bottom {
-                        menu = menu.child(AxNode::new(
-                            dynamic_identifier("model-provider", &provider_id),
-                            AxRole::StaticText,
-                            provider_id,
-                            AxRect::new(menu_x, y, 260.0, MODEL_MENU_GROUP_HEADER_HEIGHT),
-                        ));
-                    }
-                    y += MODEL_MENU_GROUP_HEADER_HEIGHT;
-                    for model in models {
-                        let selected = self.projection.effective_model().is_some_and(|current| {
-                            current.0 == model.provider_id && current.1 == model.id
-                        });
-                        let can_switch = self.can_switch_model();
-                        if y < menu_bottom {
-                            let mut item = AxNode::new(
-                                model_identifier(&model),
-                                AxRole::Button,
-                                model.display_name.clone(),
-                                AxRect::new(menu_x, y, 260.0, metrics::MENU_ROW_HEIGHT),
-                            )
-                            .value(format!("{} / {}", model.provider_id, model.id))
-                            .enabled(can_switch)
-                            .selected(selected)
-                            .focused(item_ix == highlight);
-                            if can_switch {
-                                item = item.action(AxAction::Press);
-                            }
-                            menu = menu.child(item);
-                        }
-                        item_ix += 1;
-                        y += metrics::MENU_ROW_HEIGHT;
-                    }
+            }
+            for (ix, model) in entries.iter().enumerate() {
+                let id = format!("model-{}-{}", model.provider_id, model.id);
+                let Some(layout) = self.settings_element_layouts.get(&id) else {
+                    continue;
+                };
+                let rect = layout.bounds().intersect(&self.model_menu_scroll.bounds());
+                if rect.size.width <= gpui::px(0.0) || rect.size.height <= gpui::px(0.0) {
+                    continue;
                 }
+                let selected = self
+                    .projection
+                    .effective_model()
+                    .is_some_and(|current| current.0 == model.provider_id && current.1 == model.id);
+                let mut item = AxNode::new(
+                    model_identifier(model),
+                    AxRole::Button,
+                    &model.display_name,
+                    AxRect::new(
+                        rect.origin.x.into(),
+                        rect.origin.y.into(),
+                        rect.size.width.into(),
+                        rect.size.height.into(),
+                    ),
+                )
+                .value(format!("{} / {}", model.provider_id, model.id))
+                .description(self.model_provider_status(&model.provider_id))
+                .selected(selected)
+                .focused(ix == highlight)
+                .enabled(self.can_switch_model());
+                if self.can_switch_model() {
+                    item = item.action(AxAction::Press);
+                }
+                menu = menu.child(item);
             }
             composer = composer.child(menu);
         }
@@ -4860,77 +4895,123 @@ mod tests {
         });
     }
 
-    /// P0-4 修复：model 菜单内容超过 MENU_MAX_HEIGHT 时，render 面板内部
-    /// 滚动而 AX 只发布与裁剪后菜单框相交的子节点，树内不得出现框外 rect。
+    /// UX-05：20 项目录的当前项、搜索恢复与键盘滚动共用实际布局。
     #[gpui::test]
     fn model_menu_ax_culls_rows_outside_clipped_frame(cx: &mut gpui::TestAppContext) {
-        use gpui::AppContext;
-
-        struct AxMenuHost {
-            view: gpui::Entity<AppView>,
-        }
-        impl gpui::Render for AxMenuHost {
-            fn render(
-                &mut self,
-                _window: &mut Window,
-                _cx: &mut Context<Self>,
-            ) -> impl gpui::IntoElement {
-                gpui::div()
-            }
-        }
-
         let platform = std::sync::Arc::new(crate::platform::Platform::new());
-        let socket = std::env::temp_dir().join("p0-4-model-menu-cull.sock");
-        let (host, cx) = cx.add_window_view(|_window, cx| {
-            let view = cx.new(|cx| AppView::new(platform, socket, None, cx));
-            AxMenuHost { view }
-        });
-        let view = cx.update(|_window, cx| host.read(cx).view.clone());
-        cx.update(|_window, cx| {
-            view.update(cx, |view, _cx| {
+        let socket = std::env::temp_dir().join("ux05-model-menu.sock");
+        let (view, cx) = cx.add_window_view(|_, cx| AppView::new(platform, socket, None, cx));
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
                 view.projection.set_connection(ConnectionState::Connected {
                     instance_id: "test".into(),
                 });
-                let mut models = Vec::new();
-                for provider in ["alpha", "beta"] {
-                    for ix in 0..4 {
-                        models.push(ModelEntry {
-                            provider_id: provider.into(),
-                            id: format!("{provider}-{ix}"),
-                            display_name: format!("{provider} model {ix}"),
+                view.projection.set_models(
+                    (0..20)
+                        .map(|ix| ModelEntry {
+                            provider_id: "test-provider".into(),
+                            id: format!("model-{ix:02}"),
+                            display_name: format!("中文 Model {ix:02}"),
                             context_window_tokens: None,
                             enabled: true,
-                        });
-                    }
-                }
-                view.projection.set_models(models);
-                view.open_menu = Some(MenuKind::Model);
-            });
+                        })
+                        .collect(),
+                );
+                view.projection
+                    .set_pending_model("test-provider".into(), "model-17".into());
+                view.text_input
+                    .update(cx, |input, cx| input.reset_text("保留草稿", cx));
+                view.on_toggle_model_menu(None, window, cx);
+            })
         });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.refresh().unwrap();
+        cx.run_until_parked();
         cx.update(|window, cx| {
             let view = view.read(cx);
             let tree = view.accessibility_tree(window, cx);
-            tree.validate().expect("model menu AX tree validates");
-            let menu = tree.find("model-menu").expect("model menu has an AX node");
-            assert!(menu.bounds.height <= MENU_MAX_HEIGHT);
-            // 8 模型 + 2 组头的完整内容确实超过 240px，裁剪路径被真实走到。
-            let full_content = metrics::MENU_PADDING * 2.0
-                + 2.0 * MODEL_MENU_GROUP_HEADER_HEIGHT
-                + 8.0 * metrics::MENU_ROW_HEIGHT;
-            assert!(full_content > MENU_MAX_HEIGHT);
-            let bottom = menu.bounds.y + menu.bounds.height;
-            for child in &menu.children {
-                assert!(
-                    child.bounds.y < bottom,
-                    "{} starts at {} outside menu bottom {}",
-                    child.identifier,
-                    child.bounds.y,
-                    bottom
+            tree.validate().unwrap();
+            let current = tree
+                .find(&model_identifier(&view.projection.models[17]))
+                .expect("current model visible on open");
+            assert!(current.selected && current.bounds.height > 0.0);
+            let menu = tree.find("model-menu").unwrap();
+            assert!(menu.bounds.height <= 480.0);
+            assert!(menu.children.len() < 20);
+            assert!(tree.find("model-search-input").unwrap().bounds.height > 0.0);
+        });
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.handle_accessibility_request(
+                    AxRequest {
+                        identifier: "model-search-input".into(),
+                        action: AxAction::SetValue,
+                        value: Some("MODEL-03".into()),
+                    },
+                    window,
+                    cx,
                 );
-            }
-            // 裁剪确实发生：完整内容 2 组头 + 8 行不可能全部入树。
-            assert!(menu.children.len() < 10);
-            assert!(!menu.children.is_empty());
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                assert_eq!(view.filtered_model_entries().len(), 1);
+                view.on_send_message(&crate::ui::SendMessage, window, cx);
+                assert_eq!(view.projection.effective_model().unwrap().1, "model-03");
+                assert_eq!(view.text_input.read(cx).text(), "保留草稿");
+                view.on_toggle_model_menu(None, window, cx);
+                view.model_search_input
+                    .update(cx, |input, cx| input.set_text("不存在的模型", cx));
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                let tree = view.accessibility_tree(window, cx);
+                assert_eq!(
+                    tree.find("model-menu-empty").unwrap().label,
+                    t("model_search.no_results")
+                );
+                view.handle_accessibility_request(
+                    AxRequest {
+                        identifier: "model-search-clear".into(),
+                        action: AxAction::Press,
+                        value: None,
+                    },
+                    window,
+                    cx,
+                );
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                assert_eq!(view.filtered_model_entries().len(), 20);
+                for _ in 0..12 {
+                    view.move_menu_highlight(true);
+                }
+                cx.notify();
+                assert!(view.model_search_focus.is_focused(window));
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                let highlighted = view.menu_highlight.unwrap();
+                let tree = view.accessibility_tree(window, cx);
+                assert!(tree
+                    .find(&model_identifier(&view.projection.models[highlighted]))
+                    .is_some());
+                view.close_menu_and_focus_trigger(MenuKind::Model, window, cx);
+                assert!(view.model_focus.is_focused(window));
+            })
         });
     }
 
@@ -5022,7 +5103,7 @@ mod tests {
             assert!(empty.actions.is_empty());
             assert_eq!(empty.value.as_deref(), Some(t("composer.model_menu_empty")));
             // 菜单不发布任何可选模型行：不编造模型。
-            assert_eq!(menu.children.len(), 1);
+            assert_eq!(menu.children.len(), 2); // 搜索区和诚实空态
             assert!(menu
                 .children
                 .iter()
@@ -5443,7 +5524,7 @@ mod tests {
                 window: &mut Window,
                 cx: &mut Context<Self>,
             ) -> impl gpui::IntoElement {
-                window.set_rem_size(px(16.0));
+                window.set_rem_size(px(self.view.read(cx).text_scale.rem_pixels()));
                 gpui::div()
                     .size_full()
                     .flex()
@@ -5627,7 +5708,7 @@ mod tests {
         cx.refresh().unwrap();
         cx.run_until_parked();
         let last_id = settings_model_switch_identifier("kimi", "scroll-15");
-        let menu_id = settings_models_menu_identifier("kimi");
+        let menu_id = format!("{}-list", settings_models_menu_identifier("kimi"));
         cx.update(|window, cx| {
             view.update(cx, |view, cx| {
                 let tree = view.accessibility_tree(window, cx);
@@ -5677,6 +5758,56 @@ mod tests {
                 scrolled_offset
             )
         });
+
+        // 搜索与字号变化后保留固定头部，批量操作仍针对完整目录。
+        for scale in [
+            crate::ui::theme::font::TextScale::Percent100,
+            crate::ui::theme::font::TextScale::Percent125,
+            crate::ui::theme::font::TextScale::Percent150,
+        ] {
+            cx.update(|window, cx| {
+                view.update(cx, |view, cx| {
+                    view.text_scale = scale;
+                    view.focus_model_search(window, cx);
+                    view.model_search_input
+                        .update(cx, |input, cx| input.set_text("SCROLL-15", cx));
+                })
+            });
+            cx.run_until_parked();
+            cx.update(|_, cx| host.update(cx, |_, cx| cx.notify()));
+            cx.refresh().unwrap();
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                view.update(cx, |view, cx| {
+                    assert_eq!(view.settings_filtered_models("kimi").len(), 1);
+                    let tree = view.accessibility_tree(window, cx);
+                    tree.validate().unwrap();
+                    assert!(tree.find("model-search-input").unwrap().bounds.height > 0.0);
+                    assert!(tree.find(&last_id).unwrap().bounds.height > 0.0);
+                    assert!(
+                        tree.find(&settings_models_disable_all_identifier("kimi"))
+                            .unwrap()
+                            .enabled
+                    );
+                    view.model_search_input
+                        .update(cx, |input, cx| input.set_text("no-such-model", cx));
+                })
+            });
+            cx.run_until_parked();
+            cx.update(|_, cx| host.update(cx, |_, cx| cx.notify()));
+            cx.refresh().unwrap();
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                view.update(cx, |view, cx| {
+                    let tree = view.accessibility_tree(window, cx);
+                    assert!(tree.find("settings-models-no-results-kimi").is_some());
+                    assert!(tree.permits(&press("model-search-clear".into())));
+                    view.clear_model_search(window, cx);
+                    view.text_scale = crate::ui::theme::font::TextScale::Percent100;
+                })
+            });
+            cx.run_until_parked();
+        }
 
         // 空目录弹层（connected + catalog 可用但目录无条目）：诚实空态 +
         // Refresh 可按；Enable / Disable all 禁用不发布 Press。

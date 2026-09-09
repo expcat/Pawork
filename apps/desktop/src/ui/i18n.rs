@@ -78,6 +78,13 @@ pub fn catalog_overview_label(model_count: usize) -> String {
 /// 纯函数：给定语言取 key 文案，不读全局状态（单测无副作用、不与并行测试竞态）。
 fn localize(key: &'static str, lang: Language) -> &'static str {
     let (en, zh) = match key {
+        "model_search.placeholder" => ("Search model name or ID", "搜索模型名称或 ID"),
+        "model_search.clear" => ("Clear search", "清除搜索"),
+        "model_search.no_results" => ("No matching models", "没有匹配的模型"),
+        "model_search.status_unknown" => ("Connection and catalog source unverified", "连接状态与目录来源尚未确认"),
+        "model_search.fallback" => ("Fallback catalog · does not verify authentication", "备用目录 · 不代表认证成功"),
+        "model_search.remote" => ("Remote catalog", "远程目录"),
+        "model_search.unavailable" => ("Catalog unavailable", "目录不可用"),
         // ── Settings · Appearance 语言切换 ──
         "settings.appearance.language" => ("Language", "语言"),
         "settings.appearance.language.current" => ("Current · {}", "当前 · {}"),

@@ -57,7 +57,7 @@ pub(crate) const SETTINGS_APPROVAL_ROW_REMS: f32 = 3.5;
 /// Provider 页内容高度自然排版，AX 读取实际框；这里只固定控件宽度。
 pub(crate) const SETTINGS_ROLE_MENU_WIDTH: f32 = 260.0;
 pub(crate) const SETTINGS_MODELS_MENU_WIDTH: f32 = 320.0;
-pub(crate) const SETTINGS_MODELS_MENU_MAX_HEIGHT: f32 = 400.0;
+pub(crate) const SETTINGS_MODELS_MENU_MAX_HEIGHT: f32 = 520.0;
 /// Usage 进度条槽位几何（固定槽位，恒无填充；ADR-056 D5）。
 pub(crate) const SETTINGS_PROVIDER_USAGE_BAR_WIDTH: f32 = 120.0;
 pub(crate) const SETTINGS_PROVIDER_USAGE_BAR_HEIGHT: f32 = 4.0;
@@ -1072,7 +1072,7 @@ pub(crate) use approval_labels::{
 
 impl AppView {
     /// UI-5：记录本页元素实际布局，AX 在 prepaint 后读取并裁剪。
-    fn settings_element(&mut self, id: impl Into<String>) -> gpui::Stateful<gpui::Div> {
+    pub(super) fn settings_element(&mut self, id: impl Into<String>) -> gpui::Stateful<gpui::Div> {
         let id = id.into();
         let handle = self.settings_element_layouts.entry(id.clone()).or_default();
         div()
@@ -1312,8 +1312,11 @@ impl AppView {
             }
             _ => None,
         };
-        self.settings_element_layouts
-            .retain(|id, _| active_menu.as_ref() == Some(id));
+        self.settings_element_layouts.retain(|id, _| {
+            active_menu
+                .as_ref()
+                .is_some_and(|menu| id == menu || *id == format!("{menu}-list"))
+        });
         let content = if self.settings_page == SettingsPage::General
             && self.projection.settings_general.query.available
         {
