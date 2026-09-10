@@ -66,10 +66,10 @@ impl AppView {
             ));
         }
         // 生效边界诚实文案（ADR-049 D2 快照语义）。
-        content = content.child(
-            settings_section()
-                .child(self.settings_note("settings-mcp-effect", settings_mcp_effect_note())),
-        );
+        content = content.child(settings_section().child(self.settings_note(
+            "settings-mcp-effect",
+            settings_mcp_effect_note(&self.resources),
+        )));
 
         // OPT-4c（F2）：外层脚手架统一在 settings_page_element。
         content

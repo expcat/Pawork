@@ -129,7 +129,7 @@ impl AppView {
                 t("settings.tools.ax_effect"),
                 self.settings_element_bounds("settings-mcp-effect"),
             )
-            .value(settings_mcp_effect_note()),
+            .value(settings_mcp_effect_note(&self.resources)),
         )
     }
 }

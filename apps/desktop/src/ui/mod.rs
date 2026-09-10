@@ -415,6 +415,7 @@ pub struct AppView {
     projection: DesktopProjection,
     text_input: Entity<TextInput>,
     terminal_input: Entity<TextInput>,
+    terminal_action_layouts: HashMap<&'static str, ScrollHandle>,
     model_search_input: Entity<TextInput>,
     model_search_focus: FocusHandle,
     model_search_query: String,
@@ -459,6 +460,9 @@ pub struct AppView {
     /// 连接迟到的 terminal 回执污染新连接上的 pending 状态。
     event_task: Option<gpui::Task<()>>,
     status_hint: Option<String>,
+    /// 字号反馈独立于操作错误；替换任务即取消上一次收起计时。
+    text_scale_feedback: Option<String>,
+    text_scale_feedback_task: Option<gpui::Task<()>>,
     text_scale: font::TextScale,
     /// 正式窗口 bootstrap 开启磁盘存储；纯 UI 测试构造不访问用户配置。
     persist_appearance: bool,
@@ -717,6 +721,10 @@ impl AppView {
             pending_model_menu_scroll: false,
             composer_drafts: HashMap::new(),
             no_session_draft: String::new(),
+            terminal_action_layouts: ["terminal-input", "terminal-start", "terminal-close"]
+                .into_iter()
+                .map(|id| (id, ScrollHandle::new()))
+                .collect(),
             terminal_drafts: HashMap::new(),
             terminal_input_workspace: None,
             timeline_list: ListState::new(
@@ -740,6 +748,8 @@ impl AppView {
             terminal_pending_resize: None,
             event_task: None,
             status_hint: None,
+            text_scale_feedback: None,
+            text_scale_feedback_task: None,
             text_scale: font::TextScale::default(),
             persist_appearance: false,
             appearance_error: None,
@@ -996,7 +1006,10 @@ impl AppView {
         activity_popover_open: bool,
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
-        let title = self.projection.workspace_header_title().map(str::to_string);
+        let title = self
+            .projection
+            .workspace_header_title()
+            .map(|title| i18n::session_title(title).to_string());
         let branch = self.header_branch();
         let status = self.projection.workspace_header_status();
         let workspace_empty = self.projection.workspace_empty_hint_visible();
@@ -3622,8 +3635,16 @@ impl AppView {
         }
         self.text_scale = scale;
         window.set_rem_size(px(scale.rem_pixels()));
-        self.status_hint =
+        self.text_scale_feedback =
             Some(i18n::t("status.text_scale").replace("{}", &scale.percent().to_string()));
+        let timer = cx.background_executor().timer(Duration::from_secs(3));
+        self.text_scale_feedback_task = Some(cx.spawn(async move |this, cx| {
+            timer.await;
+            let _ = this.update(cx, |view, cx| {
+                view.text_scale_feedback = None;
+                cx.notify();
+            });
+        }));
         cx.notify();
     }
 

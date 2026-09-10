@@ -93,8 +93,22 @@ pub(crate) fn settings_mcp_remove_confirm_note() -> &'static str {
     t("settings.tools.remove_confirm_note")
 }
 /// 「工具与 MCP」页生效边界（SET-6c / ADR-049 D1/D2；render 与 AX 同源）。
-pub(crate) fn settings_mcp_effect_note() -> &'static str {
-    t("settings.tools.effect_note")
+pub(crate) fn settings_mcp_effect_note(state: &ResourcesPanelState) -> String {
+    if !state.servers.is_empty() {
+        return t("settings.tools.effect_note").into();
+    }
+    let path = if cfg!(target_os = "macos") {
+        "~/Library/Application Support/dev.pawork.pawork/config.toml"
+    } else if cfg!(target_os = "windows") {
+        "%APPDATA%\\pawork\\pawork\\config\\config.toml"
+    } else {
+        "$XDG_CONFIG_HOME/pawork/config.toml (~/.config/pawork/config.toml)"
+    };
+    format!(
+        "{}\n{}\n{path}",
+        t("settings.tools.configure"),
+        t("settings.tools.config_path")
+    )
 }
 
 /// null shell 展示（SET-6d / ADR-050 D2；render 与 AX 同源）。

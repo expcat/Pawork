@@ -20,8 +20,8 @@ use crate::ui::components::dropdown::MENU_MAX_HEIGHT;
 use crate::ui::i18n::t;
 use crate::ui::inspector::{
     plain_terminal_output, terminal_empty_output, terminal_header_height,
-    terminal_resize_status_label, terminal_size_for_display, terminal_stepper_ax_rects,
-    InspectorTab, TERMINAL_COLUMNS_STEP, TERMINAL_ROWS_STEP,
+    terminal_size_for_display, terminal_stepper_ax_rects, InspectorTab, TERMINAL_COLUMNS_STEP,
+    TERMINAL_ROWS_STEP,
 };
 use crate::ui::resources::ResourcesFetch;
 use crate::ui::settings::{
@@ -1172,7 +1172,7 @@ impl AppView {
                 AxNode::new(
                     rail_project_add_identifier(bucket, &key),
                     AxRole::Button,
-                    format!("New task in {}", project.name),
+                    t("rail.new_in_project").replace("{}", &project.name),
                     AxRect::new(
                         inset + (width - metrics::RAIL_ICON_BUTTON_SIZE).max(0.0),
                         top + (metrics::RAIL_TASK_ROW_HEIGHT - metrics::RAIL_ICON_BUTTON_SIZE)
@@ -1216,7 +1216,7 @@ impl AppView {
                 let mut row = AxNode::new(
                     session_identifier(&session.session_id),
                     AxRole::ListItem,
-                    session.title.clone(),
+                    crate::ui::i18n::session_title(&session.title).to_string(),
                     AxRect::new(inset, top + consumed, width, metrics::RAIL_TASK_ROW_HEIGHT),
                 )
                 .description(session_status_description(status, unread))
@@ -1380,7 +1380,7 @@ impl AppView {
             header = header.child(AxNode::new(
                 "header-title",
                 AxRole::StaticText,
-                title,
+                crate::ui::i18n::session_title(title),
                 AxRect::new(x, row_y, width, row_height),
             ));
             x += width + metrics::HEADER_TITLE_META_GAP;
@@ -2050,7 +2050,7 @@ impl AppView {
                     AxNode::new(
                         entry_menu_identifier(&terminal_entry.event_id),
                         AxRole::Button,
-                        "Entry actions",
+                        t("timeline.actions"),
                         menu_row,
                     )
                     .focused(
@@ -2099,7 +2099,7 @@ impl AppView {
                 AxNode::new(
                     entry_menu_identifier(&entry.event_id),
                     AxRole::Button,
-                    "Entry actions",
+                    t("timeline.actions"),
                     AxRect::new(row.x + row.width - inset - 32.0, row.y + inset, 32.0, 24.0),
                 )
                 .focused(
@@ -2260,7 +2260,7 @@ impl AppView {
                 AxNode::new(
                     "composer-input",
                     AxRole::TextArea,
-                    "Message",
+                    t("composer.message"),
                     AxRect::new(card.x + pad, input_y, input_width, input_height),
                 )
                 .value(input_value)
@@ -2272,7 +2272,7 @@ impl AppView {
                 AxNode::new(
                     "model-picker",
                     AxRole::Button,
-                    "Model",
+                    t("composer.model"),
                     AxRect::new(
                         card.x + pad,
                         footer_y,
@@ -2389,7 +2389,7 @@ impl AppView {
             );
         } else {
             composer = composer.child(
-                AxNode::new("send", AxRole::Button, "Send", action_rect)
+                AxNode::new("send", AxRole::Button, t("composer.send"), action_rect)
                     .enabled(self.can_send(cx))
                     .focused(
                         self.open_menu.is_none() && self.composer_action_focus.is_focused(window),
@@ -2532,7 +2532,7 @@ impl AppView {
                 AxNode::new(
                     "inspector-collapse",
                     AxRole::Button,
-                    "Hide inspector",
+                    t("inspector.hide"),
                     AxRect::new(
                         frame.x + frame.width - PAD - metrics::ICON_BUTTON_SIZE,
                         collapse_y,
@@ -2569,7 +2569,15 @@ impl AppView {
             |ix: usize| AxRect::new(stepper[ix].0, stepper[ix].1, stepper[ix].2, stepper[ix].3);
         let input_height = 40.0;
         let input_y = frame.y + frame.height - input_height - PAD;
-        let button_width = 72.0;
+        let action_rect = |id: &str| {
+            let b = self.terminal_action_layouts[id].bounds();
+            AxRect::new(
+                b.origin.x.into(),
+                b.origin.y.into(),
+                b.size.width.into(),
+                b.size.height.into(),
+            )
+        };
         let focus = self.terminal_input.read(cx).focus_handle(cx);
         let output = if self.projection.terminal.output.is_empty() {
             // 与可见 Terminal 页占位同源（terminal_empty_output()）。
@@ -2584,32 +2592,9 @@ impl AppView {
                 8_192,
             )
         };
-        let owner = self
-            .projection
-            .terminal
-            .workspace_id
-            .as_deref()
-            .unwrap_or("unassigned");
         let (columns, rows) =
             terminal_size_for_display(&self.projection.terminal, self.terminal_size_draft);
-        let mut terminal_description = format!(
-            "workspace {owner} · {} · {}×{} · {}",
-            self.projection.terminal.cwd,
-            columns,
-            rows,
-            self.projection.terminal.availability_label()
-        );
-        if self.projection.terminal.dropped_events > 0 {
-            terminal_description.push_str(&format!(
-                " · {} output events dropped",
-                self.projection.terminal.dropped_events
-            ));
-        }
-        if let Some(resize_status) =
-            terminal_resize_status_label(&self.projection.terminal, self.terminal_size_draft)
-        {
-            terminal_description.push_str(&format!(" · {resize_status}"));
-        }
+        let terminal_description = format!("{} · {columns}×{rows}", self.terminal_context_text());
         let terminal_operable =
             terminal_can_operate(&self.projection.connection, &self.projection.terminal);
         let terminal_start_enabled = self.terminal_start_available();
@@ -2619,135 +2604,122 @@ impl AppView {
         let terminal_close_label =
             terminal_close_label(&self.projection.connection, &self.projection.terminal).map(
                 |label| match label {
-                    "Stop" => "Stop terminal",
-                    _ => "Close terminal",
+                    "Stop" => t("inspector.stop"),
+                    _ => t("inspector.close"),
                 },
             );
-        let mut terminal = AxNode::new("terminal", AxRole::Group, "Terminal", frame)
-            // G1：头部尺寸组 = 列 stepper 对 + apply + 行 stepper 对，与可见
-            // 控件同 gate / 同 id；apply 仍是唯一下发入口。
-            .child(
-                AxNode::new(
-                    "terminal-cols-dec",
-                    AxRole::Button,
-                    "Fewer terminal columns",
-                    stepper_rect(0),
-                )
-                .focused(
-                    self.open_menu.is_none() && self.terminal_cols_dec_focus.is_focused(window),
-                )
-                .enabled(terminal_operable)
-                .action(AxAction::Press),
+        let mut terminal = AxNode::new(
+            "terminal",
+            AxRole::Group,
+            t("inspector.tab_terminal"),
+            frame,
+        )
+        // G1：头部尺寸组 = 列 stepper 对 + apply + 行 stepper 对，与可见
+        // 控件同 gate / 同 id；apply 仍是唯一下发入口。
+        .child(
+            AxNode::new(
+                "terminal-cols-dec",
+                AxRole::Button,
+                t("inspector.fewer_columns"),
+                stepper_rect(0),
             )
-            .child(
-                AxNode::new(
-                    "terminal-cols-inc",
-                    AxRole::Button,
-                    "More terminal columns",
-                    stepper_rect(1),
-                )
-                .focused(
-                    self.open_menu.is_none() && self.terminal_cols_inc_focus.is_focused(window),
-                )
-                .enabled(terminal_operable)
-                .action(AxAction::Press),
+            .focused(self.open_menu.is_none() && self.terminal_cols_dec_focus.is_focused(window))
+            .enabled(terminal_operable)
+            .action(AxAction::Press),
+        )
+        .child(
+            AxNode::new(
+                "terminal-cols-inc",
+                AxRole::Button,
+                t("inspector.more_columns"),
+                stepper_rect(1),
             )
-            .child(
-                AxNode::new(
-                    "terminal-resize",
-                    AxRole::Button,
-                    "Apply terminal size",
-                    stepper_rect(2),
-                )
-                .focused(self.open_menu.is_none() && self.terminal_resize_focus.is_focused(window))
-                .enabled(terminal_resize_enabled)
-                .value(format!("{columns}×{rows}"))
-                .action(AxAction::Press),
+            .focused(self.open_menu.is_none() && self.terminal_cols_inc_focus.is_focused(window))
+            .enabled(terminal_operable)
+            .action(AxAction::Press),
+        )
+        .child(
+            AxNode::new(
+                "terminal-resize",
+                AxRole::Button,
+                t("inspector.tooltip_apply_size"),
+                stepper_rect(2),
             )
-            .child(
-                AxNode::new(
-                    "terminal-rows-dec",
-                    AxRole::Button,
-                    "Fewer terminal rows",
-                    stepper_rect(3),
-                )
-                .focused(
-                    self.open_menu.is_none() && self.terminal_rows_dec_focus.is_focused(window),
-                )
-                .enabled(terminal_operable)
-                .action(AxAction::Press),
+            .focused(self.open_menu.is_none() && self.terminal_resize_focus.is_focused(window))
+            .enabled(terminal_resize_enabled)
+            .value(format!("{columns}×{rows}"))
+            .action(AxAction::Press),
+        )
+        .child(
+            AxNode::new(
+                "terminal-rows-dec",
+                AxRole::Button,
+                t("inspector.fewer_rows"),
+                stepper_rect(3),
             )
-            .child(
-                AxNode::new(
-                    "terminal-rows-inc",
-                    AxRole::Button,
-                    "More terminal rows",
-                    stepper_rect(4),
-                )
-                .focused(
-                    self.open_menu.is_none() && self.terminal_rows_inc_focus.is_focused(window),
-                )
-                .enabled(terminal_operable)
-                .action(AxAction::Press),
+            .focused(self.open_menu.is_none() && self.terminal_rows_dec_focus.is_focused(window))
+            .enabled(terminal_operable)
+            .action(AxAction::Press),
+        )
+        .child(
+            AxNode::new(
+                "terminal-rows-inc",
+                AxRole::Button,
+                t("inspector.more_rows"),
+                stepper_rect(4),
             )
-            .child(
-                AxNode::new(
-                    "terminal-output",
-                    AxRole::StaticText,
-                    "Terminal output",
-                    AxRect::new(
-                        frame.x + PAD,
-                        frame.y + header_height,
-                        frame.width - PAD * 2.0,
-                        frame.height - input_height - header_height - PAD * 2.0,
-                    ),
-                )
-                .value(output)
-                .description(terminal_description),
+            .focused(self.open_menu.is_none() && self.terminal_rows_inc_focus.is_focused(window))
+            .enabled(terminal_operable)
+            .action(AxAction::Press),
+        )
+        .child(
+            AxNode::new(
+                "terminal-output",
+                AxRole::StaticText,
+                t("inspector.output"),
+                AxRect::new(
+                    frame.x + PAD,
+                    frame.y + header_height,
+                    frame.width - PAD * 2.0,
+                    frame.height - input_height - header_height - PAD * 2.0,
+                ),
             )
-            .child(
-                AxNode::new(
-                    "terminal-input",
-                    AxRole::TextArea,
-                    "Terminal input",
-                    AxRect::new(
-                        frame.x + PAD,
-                        input_y,
-                        frame.width - PAD * 3.0 - button_width,
-                        input_height,
-                    ),
-                )
-                .value(self.terminal_input.read(cx).text())
-                .focused(self.open_menu.is_none() && focus.is_focused(window))
-                .action(AxAction::Focus)
-                .action(AxAction::SetValue),
+            .value(output)
+            .description(terminal_description),
+        )
+        .child(
+            AxNode::new(
+                "terminal-input",
+                AxRole::TextArea,
+                t("inspector.input"),
+                action_rect("terminal-input"),
             )
-            .child(
-                AxNode::new(
-                    "terminal-start",
-                    AxRole::Button,
-                    if self.projection.terminal.session_id.is_some() {
-                        if terminal_can_reopen(&self.projection.terminal) {
-                            "Start new terminal"
-                        } else if terminal_known_ended(&self.projection.terminal) {
-                            "Start terminal"
-                        } else {
-                            "Apply terminal size"
-                        }
+            .value(self.terminal_input.read(cx).text())
+            .focused(self.open_menu.is_none() && focus.is_focused(window))
+            .action(AxAction::Focus)
+            .action(AxAction::SetValue),
+        )
+        .child(
+            AxNode::new(
+                "terminal-start",
+                AxRole::Button,
+                if self.projection.terminal.session_id.is_some() {
+                    if terminal_can_reopen(&self.projection.terminal) {
+                        t("recovery.terminal_new")
+                    } else if terminal_known_ended(&self.projection.terminal) {
+                        t("recovery.terminal_start")
                     } else {
-                        "Start terminal"
-                    },
-                    AxRect::new(
-                        frame.x + frame.width - PAD - button_width,
-                        input_y,
-                        button_width,
-                        input_height,
-                    ),
-                )
-                .focused(self.open_menu.is_none() && self.terminal_start_focus.is_focused(window))
-                .enabled(terminal_start_enabled)
-                .action(AxAction::Press),
-            );
+                        t("inspector.tooltip_apply_size")
+                    }
+                } else {
+                    t("recovery.terminal_start")
+                },
+                action_rect("terminal-start"),
+            )
+            .focused(self.open_menu.is_none() && self.terminal_start_focus.is_focused(window))
+            .enabled(terminal_start_enabled)
+            .action(AxAction::Press),
+        );
         if self.terminal_notice_text().is_some() {
             let clip = AxRect::new(
                 frame.x,
@@ -2763,12 +2735,7 @@ impl AppView {
                     "terminal-close",
                     AxRole::Button,
                     close_label,
-                    AxRect::new(
-                        frame.x + frame.width - PAD * 2.0 - button_width * 2.0,
-                        input_y,
-                        button_width,
-                        input_height,
-                    ),
+                    action_rect("terminal-close"),
                 )
                 .focused(self.open_menu.is_none() && self.terminal_close_focus.is_focused(window))
                 .enabled(self.terminal_pending_close.is_none())
@@ -2829,7 +2796,7 @@ impl AppView {
                     AxNode::new(
                         "changes-tab-files",
                         AxRole::Tab,
-                        "Files",
+                        t("changes.files"),
                         AxRect::new(tab_x, frame.y, tab_width, strip_height),
                     )
                     .selected(self.changes.tab == ChangesTab::Files)
@@ -2842,7 +2809,7 @@ impl AppView {
                     AxNode::new(
                         "changes-tab-summary",
                         AxRole::Tab,
-                        "Summary",
+                        t("changes.summary"),
                         AxRect::new(tab_x + tab_width, frame.y, tab_width, strip_height),
                     )
                     .selected(self.changes.tab == ChangesTab::Summary)
@@ -3012,7 +2979,7 @@ impl AppView {
 
 fn timeline_accessible_text(entry: &TimelineEntry) -> (String, String) {
     match &entry.kind {
-        TimelineEntryKind::UserMessage { text } => ("You".into(), text.clone()),
+        TimelineEntryKind::UserMessage { text } => (t("timeline.you").into(), text.clone()),
         TimelineEntryKind::AssistantMessage { text } => ("Pawork".into(), text.clone()),
         TimelineEntryKind::Thinking { text } => (t("timeline.thinking").into(), text.clone()),
         TimelineEntryKind::ToolCall {
@@ -3135,6 +3102,75 @@ mod tests {
     use super::*;
 
     #[gpui::test]
+    fn text_scale_feedback_expires_without_clearing_errors(cx: &mut gpui::TestAppContext) {
+        use crate::ui::theme::font::TextScale;
+        use std::time::Duration;
+        let (view, cx) = cx.add_window_view(|_, cx| {
+            AppView::new(
+                std::sync::Arc::new(crate::platform::Platform::new()),
+                std::env::temp_dir().join("ux09-missing.sock"),
+                None,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            view.update(cx, |v, cx| {
+                v.status_hint = None;
+                v.set_text_scale(TextScale::Percent125, window, cx);
+            })
+        });
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(2));
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            view.update(cx, |v, cx| {
+                v.set_text_scale(TextScale::Percent150, window, cx);
+                assert!(v.text_scale_feedback.as_ref().unwrap().contains("150"));
+            })
+        });
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            view.update(cx, |v, cx| {
+                assert!(
+                    v.text_scale_feedback.is_some(),
+                    "old timer must not clear the latest feedback"
+                );
+                let with_feedback = v.composer_outer_height(40.0, window);
+                v.status_hint = Some("new error".into());
+                assert_eq!(v.composer_notes().len(), 2);
+                assert!(with_feedback > 0.0);
+                cx.notify();
+            })
+        });
+        cx.executor().advance_clock(Duration::from_secs(2));
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            view.update(cx, |v, _| {
+                assert!(v.text_scale_feedback.is_none());
+                assert_eq!(v.status_hint.as_deref(), Some("new error"));
+                assert_eq!(
+                    v.composer_notes(),
+                    vec![("composer-status-hint", "new error".into())]
+                );
+                assert_eq!(v.text_scale, TextScale::Percent150);
+                let with_error = v.composer_outer_height(40.0, window);
+                v.status_hint = None;
+                let without = v.composer_outer_height(40.0, window);
+                assert_eq!(
+                    with_error - without,
+                    metrics::COMPOSER_META_GAP + AppView::composer_meta_height(window)
+                );
+                let note = crate::ui::settings::settings_mcp_effect_note(&v.resources);
+                assert!(note.contains("config.toml") && note.contains("[mcp.servers."));
+                assert!(!note.contains("Remove updates"));
+            })
+        });
+    }
+
+    #[gpui::test]
     fn recovery_keeps_errors_local_and_preserves_drafts(cx: &mut gpui::TestAppContext) {
         use crate::controller::ControllerEvent;
         use gpui::px;
@@ -3212,6 +3248,19 @@ mod tests {
             let tree = v.accessibility_tree(window, cx);
             tree.validate().unwrap();
             assert!(!tree.find("terminal-start").unwrap().enabled);
+            for id in ["terminal-start", "terminal-input"] {
+                let bounds = v.terminal_action_layouts[id].bounds();
+                assert!(f32::from(bounds.size.width) > 0.0);
+                assert_eq!(
+                    tree.find(id).unwrap().bounds,
+                    AxRect::new(
+                        bounds.origin.x.into(),
+                        bounds.origin.y.into(),
+                        bounds.size.width.into(),
+                        bounds.size.height.into(),
+                    )
+                );
+            }
             assert!(tree
                 .find("terminal-notice")
                 .unwrap()

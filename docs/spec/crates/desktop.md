@@ -198,7 +198,7 @@ UX-06（2026-09-09）：供应商列表按已连接优先稳定排序，render /
 - 界面 chrome 文案集中在 `ui/i18n.rs` 目录，`t(key)` / `t2(key, a, b)` 按当前语言返回 `&'static str`；未知 key 原样返回，不 panic。
 - 语言切换入口在 Settings → Appearance（`English` / `中文` 两个同源按钮，AX identifier `settings-language-en` / `settings-language-zh`），mouse / Enter / Space / AX Press 共用 `AppView::set_language`：更新全局语言与本地镜像、刷新 terminal_input placeholder、给出 status_hint 并整界面重渲染。
 - ADR-053：保存到用户配置目录 `desktop.json`，重启恢复；缺文件默认 English。不触碰 Host / 会话 / Run 状态。
-- 翻译边界：只翻译 chrome 文案（按钮、提示、空态、状态提示、tooltip、Settings 页）；session 标题、provider / model id、文件路径、工具输出、wire 错误原因等数据内容保持原文；品牌名「Pawork」、功能符号（✕ ↑ ⚙ + ▤ ◷ ↻ ↓）与示例数据不翻译。
+- 翻译边界：只翻译 chrome 文案（按钮、提示、空态、状态提示、tooltip、Settings 页）；用户 session 标题、provider / model id、文件路径、工具输出、wire 错误原因等数据内容保持原文；品牌名「Pawork」、功能符号（✕ ↑ ⚙ + ▤ ◷ ↻ ↓）与示例数据不翻译。
 - render 与 AX 经同一 `t()` 调用同源取词；AX 节点 id 保持英文。
 
 #### UX-07 工具与运行事实（2026-09-09）
@@ -208,6 +208,15 @@ UX-06（2026-09-09）：供应商列表按已连接优先稳定排序，render /
 Run 页脚和底栏使用 `run_usage_label` 显示对应 Run 输入 / 输出 tokens。累计值仅取持久化 Completed / Failed / Cancelled 的 `usage`；零值有效，缺值未知，活动 Run 不沿用上一轮读数。取消只保留轻量页脚；失败卡保留原因，页脚不重复状态；Review changes 仅挂到当前任务最近 Run，不能把当前差异挂到早先回合。底栏移除无信息的常驻 quota / tok/s / idle 占位，运行中保留真实开始时间驱动的时长；ContextMeter 与订阅额度范围不变。
 
 复用现有投影、本地回显、工具文本与 AX 行高测试，并与 protocol 的实时/历史 golden 同批验证。无新增生产依赖、wire 类型或安全默认变化；真窗口与用户验收状态见 [路线图 UX-07](../../ROADMAP.md#ux-07-工具与运行事实可核查)。
+
+#### UX-09 文案与控件一致性（2026-09-10）
+
+- 回复作者、工具组数量 / 已知状态、变更页签与摘要、终端操作及对应 AX 使用中英文词条；未知 wire 状态和原始数据仍保留。宿主保留占位标题 `New session` 只在侧栏 / Header 显示为「新任务 / New task」，不写回、不改变自动命名；用户自定义标题保持原文。
+- 空 MCP 列表显示全局 `config.toml` 的平台路径约定、`mcp.servers.<name>` 与 transport 配置提示、重启服务并刷新的步骤；有服务器时才显示测试 / 移除的生效说明，render 与 AX 同源。
+- 字号反馈独立于 `status_hint`，最后一次成功设置后显示 3 秒；替换持有的 GPUI Task 取消旧计时器，收起时只清字号反馈并回收高度。错误、项目限制、筛选说明仍保留；外观页持续显示当前档位。
+- 终端目录 / 所属项目 / 状态移入可滚动正文，顶栏留给尺寸控件；底部输入、启动、停止 / 关闭的 AX 框取实际布局。保留原先焦点、权限与执行语义。
+
+实现、定向检查与真窗口验收分别记录在 [路线图 UX-09](../../ROADMAP.md#ux-09-视觉文案与可访问性一致性)。无新模块、业务依赖、wire 或 schema。
 
 ## 4. 核心行为与数据流
 
@@ -335,10 +344,10 @@ domain id 类型未从 client re-export，命令 / 查询经冻结的 serde 形�
 - **心跳配比**：独立 15s 心跳任务对 host 30s 超时的节拍不可静默改动；断线不取消 Run。
 - **窗口、字号与焦点**：默认 1440×1024、最小 1080×720（`WINDOW_MIN_SIZE`）；字体以 16px 根字号的 rem token 表达，100% 保持冻结视觉，125%/150% 只由应用快捷键调整窗口 `rem_size`，几何 px token 不随意缩放；消息正文 / 完成摘要行高以 24px 为 100% 基准并换算 rem，放大时避免多行正文负 leading。150% rail=320，1080 窗口仍保留 760px Workspace。macOS 透明 titlebar；启动与用户发起的任务切换、审批、Fork 后聚焦 Composer；激活当前 task 仍关闭菜单并聚焦 Composer；Review changes 展开 Inspector 后聚焦 Changes 选中页签；点击输入框显式拉回焦点。
 - **Settings 外观页**：SET-6e 将上述三档字号暴露为始终可用的本地 Settings 页面；页面按钮、Cmd+=/Cmd+-/Cmd+0 和 AX Press 共享同一 `AppView.text_scale`，立即改变当前窗口 `rem_size`。ADR-053：与语言共同保存到 `desktop.json`，快捷键同入口；写成功后才更新显示，重启恢复，缺文件默认 100%。
-- **界面语言（i18n，2026-09-05）**：默认 English，Settings → Appearance 可切换简体中文；全局 `AtomicU8` + 静态目录，切换即时重渲染（含 AX name / value / description），ADR-053 起保存到用户目录，重启恢复。render 与 AX 同源调用 `t()`；AX 节点 id、数据内容（session 标题、provider / model id、路径、工具输出、wire 错误原因）与品牌名 / 功能符号不翻译。不引入区域格式化工具链或第三语言；未知 key 原样回显。
+- **界面语言（i18n，2026-09-05）**：默认 English，Settings → Appearance 可切换简体中文；全局 `AtomicU8` + 静态目录，切换即时重渲染（含 AX name / value / description），ADR-053 起保存到用户目录，重启恢复。render 与 AX 同源调用 `t()`；AX 节点 id、数据内容（用户 session 标题、provider / model id、路径、工具输出、wire 错误原因）与品牌名 / 功能符号不翻译。不引入区域格式化工具链或第三语言；未知 key 原样回显。
 - **Settings 高级页**：SET-6f 将当前连接已有的非 Secret 握手摘要、socket endpoint、resume/ack 暴露为始终可达的本地只读页；Connecting/断线清空 runtime/API/capabilities，Failed/Disconnected 复用既有 Reconnect。runtime ID 不称作 CLI `--instance` 配置名；页面不显示 GUI token/token path、不推断 data directory、不 shell-out `doctor`，也不提供实例切换。
 - **Settings 关于页**：SET-6g 只在当前 Connected 握手提供非空 `host_data_dir` 时动态发布导航与只读页；三项值分别来自 Desktop 编译元数据、当前协商 API 和 Host 握手，render/AX 共用同一行模型。仅空白字段按缺失处理，但合法路径值原样展示；Connecting/断线清空握手并从 About 退回高级。不提供 updater/release/License 或任何写动作。
-- **Accessibility 单一语义源（ADR-042）**：`AppView` 只从 canonical UI 状态与布局 metric 构建显式 `AxTree`；壳层几何与 render 共享 `shell_layout::resolve`（100% 窄窗 rail=240、150% rail=320），`composer-status-hint` 发布字号百分比；稳定 identifier 与本地化 label 分离，macOS bridge 只做 AppKit 映射。AX press / focus / set-value 必须回到既有 handler 与 enable gate，未知请求 fail-closed；disabled 控件不得发布可执行 action。Grouping AX Press 直接 toggle；其余触发器先移 GPUI 焦点再开菜单。Timeline AX 与 render 共享 rows + approval item 序列、tool group 折叠态和 Review gate；稳定帧读取真实 list bounds，首帧用共享公式回退，视口外条目不发布。Settings 普通树不得携带 API key 明文或 masked credential 片段；secure input 只发布等长掩码，stale 时输入与所有写动作 disabled 且无 Press。IME composing 中 AX Send 与键盘 Enter 同样不生效。新增可见交互须同批补节点、bounds、状态和 action 映射；非 macOS 当前为 no-op，不宣称已有平台 AX 实现。
+- **Accessibility 单一语义源（ADR-042）**：`AppView` 只从 canonical UI 状态与布局 metric 构建显式 `AxTree`；壳层几何与 render 共享 `shell_layout::resolve`（100% 窄窗 rail=240、150% rail=320），`composer-text-scale-hint` 短暂发布字号百分比；稳定 identifier 与本地化 label 分离，macOS bridge 只做 AppKit 映射。AX press / focus / set-value 必须回到既有 handler 与 enable gate，未知请求 fail-closed；disabled 控件不得发布可执行 action。Grouping AX Press 直接 toggle；其余触发器先移 GPUI 焦点再开菜单。Timeline AX 与 render 共享 rows + approval item 序列、tool group 折叠态和 Review gate；稳定帧读取真实 list bounds，首帧用共享公式回退，视口外条目不发布。Settings 普通树不得携带 API key 明文或 masked credential 片段；secure input 只发布等长掩码，stale 时输入与所有写动作 disabled 且无 Press。IME composing 中 AX Send 与键盘 Enter 同样不生效。新增可见交互须同批补节点、bounds、状态和 action 映射；非 macOS 当前为 no-op，不宣称已有平台 AX 实现。
 - **平台显示偏好**：单一深色 palette 保持冻结 token，不读取系统显示偏好（macOS Increase Contrast 桥已于 2026-09-04 随功能移除）。当前 UI 无动画或过渡，因此 Reduce Motion 不需要分支。
 
 ## 6. 依赖关系
@@ -363,6 +372,8 @@ UX-05 复用并更新两个现有主路径回归：`model_menu_ax_culls_rows_out
 UX-03 定向回归 `project_task_guidance_preserves_context_and_wraps`：项目筛选不重绑 / 不改草稿，项目新建菜单排除「所有项目」，Esc 回焦与第二次 Enter 确认，宽窄窗 × 三档字号下元信息实际框不重叠 / 不越界；有项目后移除限制与新建入口但保留其他反馈。复用既有 Composer 布局、会话草稿与目录菜单滚动测试；真窗口证据与用户验收状态见 [路线图 UX-03](../../ROADMAP.md#ux-03-新任务与项目上下文引导)。
 
 ## 7. 测试与验证资产
+
+UX-09：新增 `text_scale_feedback_expires_without_clearing_errors`，使用可控 GPUI 时钟覆盖连续字号反馈 / 旧计时取消 / 新错误保留 / 行高回收，并检查 MCP 空态配置指引；既有 i18n 与错误恢复回归补充双语词条及终端实际布局 AX 断言。
 
 UX-06：复用并更新角色 / Provider AX 布局与三窗回归，覆盖连接优先排序、角色位置与未生效说明、实际滚动框、三窗来源 / 已用 / 剩余、剩余未知与过期；新增一个分钟精度倒计时主路径测试（含 6995 分钟 → 4d 20h 35m）。Desktop 224 项测试与 build 通过。真窗口已覆盖账号信息、不可用与刷新、宽窄窗三档字号、角色键盘导航；真实三窗数值 / 重置倒计时因当次查询不可用仍待补验，用户验收未完成，见 [路线图 UX-06](../../ROADMAP.md#ux-06-供应商与账号信息层级)。
 
@@ -396,7 +407,7 @@ UI-4 本批实跑 216 个测试，全部内嵌于 bin target（`#[cfg(test)]` �
 | `ui/inspector.rs` | 3 | 顶层页签默认 Changes；Terminal 纯文本输出过滤 bracketed-paste ANSI/VT 控制序列并归一换行；P3 增尺寸 stepper 钳制 |
 | `ui/resources.rs` | 3 | 默认 Idle、epoch 拒过期与断线保留旧数据但标记 stale |
 | `ui/markdown.rs` | 2 | Markdown 块结构 / 行数估算；Unicode / 流式保留内容；UX-02 表格对齐、escaped pipe / 代码内 pipe、代码原始 CRLF 复制、HTTP(S) 与配对括号链接 |
-| `ui/timeline_entry.rs` | 6 | R4 Wave A 纯逻辑：tool 状态词映射（仅 succeeded→Completed）/ 状态分类 / ToolRowView 构造；`display_time` epoch 串 → 相对词（now/Nm/Nh/Nd 边界）与非法串原样兜底 |
+| `ui/timeline_entry.rs` | 6 | R4 Wave A 纯逻辑：tool 已知状态本地化与未知状态原样保留/ 状态分类 / ToolRowView 构造；`display_time` epoch 串 → 相对词（now/Nm/Nh/Nd 边界）与非法串原样兜底 |
 | `ui/text_input.rs` | 13 | 多行粘贴行计数；AX set-value 清 marked range；动态 placeholder；Composer 视口预算不破面板总高；Terminal 28–220 独立预算；shift 选择经 SelectLeft/SelectRight 真实 action；IME 经真实 EntityInputHandler 路径 commit 单次入栈且中间态不可 undo；80 行真窗口 overflow scroll（max_offset>0、视口 28–163、caret 滚入视口）；滚动态点击映回可见内容行；reset_text 恢复草稿且清 undo；SET-4 增 secure 掩码只含 grapheme 数量对应掩码字符且非 secure 不发布掩码 |
 | `ui/u1_probe.rs` | 14 | R1 Wave C U1 spike 矩阵 + R5 Wave B SelectAll/Copy/Cut/Undo/Redo、IME commit 单次入栈（真实 EntityInputHandler 路径）、空输入不可发送、Wave B 键位（含 Shift-Enter）keystroke→keymap→action 链路；AX 仍不在本层覆盖 |
 

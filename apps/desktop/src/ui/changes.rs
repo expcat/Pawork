@@ -330,13 +330,13 @@ impl AppView {
             .border_color(dark().border.subtle)
             .child(secondary_tab(
                 "changes-tab-files",
-                "Files",
+                t("changes.files"),
                 tab == ChangesTab::Files,
                 ChangesTab::Files,
             ))
             .child(secondary_tab(
                 "changes-tab-summary",
-                "Summary",
+                t("changes.summary"),
                 tab == ChangesTab::Summary,
                 ChangesTab::Summary,
             ))
@@ -530,9 +530,7 @@ impl AppView {
     /// 等宽字体、长行横向滚动。
     fn diff_view_element(&self) -> impl IntoElement {
         match &self.changes.diff {
-            DiffFetch::Idle => {
-                changes_placeholder("changes.diff_select_file").into_any_element()
-            }
+            DiffFetch::Idle => changes_placeholder("changes.diff_select_file").into_any_element(),
             DiffFetch::Fetching => changes_placeholder("changes.diff_loading").into_any_element(),
             DiffFetch::Failed(reason) => {
                 changes_placeholder_colored(reason.clone(), dark().semantic.danger_text)
@@ -724,27 +722,34 @@ impl AppView {
                     .clone()
                     .unwrap_or_else(|| "no session".into());
                 let git = self.changes.git.clone().unwrap_or_default();
-                let branch = git.branch.unwrap_or_else(|| "unknown".into());
+                let branch = git
+                    .branch
+                    .unwrap_or_else(|| t("settings.permissions.unknown_mode").into());
                 let dirty_files = git
                     .dirty_files
                     .map(|count| count.to_string())
-                    .unwrap_or_else(|| "unknown".into());
-                let work_dir = git.work_dir.unwrap_or_else(|| "unknown".into());
+                    .unwrap_or_else(|| t("settings.permissions.unknown_mode").into());
+                let work_dir = git
+                    .work_dir
+                    .unwrap_or_else(|| t("settings.permissions.unknown_mode").into());
                 div()
                     .flex()
                     .flex_col()
                     .gap_2()
                     .p_2()
                     .text_size(font::SM)
-                    .child(summary_row("Session", session))
-                    .child(summary_row("Files", files.to_string()))
-                    .child(summary_row("Lines", format!("+{additions} / −{deletions}")))
+                    .child(summary_row(t("changes.session"), session))
+                    .child(summary_row(t("changes.files"), files.to_string()))
+                    .child(summary_row(
+                        t("changes.lines"),
+                        format!("+{additions} / −{deletions}"),
+                    ))
                     .when(!status_line.is_empty(), |block| {
-                        block.child(summary_row("By status", status_line))
+                        block.child(summary_row(t("changes.by_status"), status_line))
                     })
-                    .child(summary_row("Branch", branch))
-                    .child(summary_row("Dirty files", dirty_files))
-                    .child(summary_row("Work dir", work_dir))
+                    .child(summary_row(t("changes.branch"), branch))
+                    .child(summary_row(t("changes.dirty_files"), dirty_files))
+                    .child(summary_row(t("changes.work_dir"), work_dir))
             }
         };
         div().flex().flex_col().flex_1().min_h_0().child(body)
@@ -757,8 +762,8 @@ impl AppView {
     pub(super) fn activity_popover_element(&self, cx: &mut Context<Self>) -> MenuPanel {
         let summary = self.changes.activity_summary();
         let mismatch = self.changes_session_mismatch();
-        let content_height = metrics::ACTIVITY_POPOVER_HEIGHT
-            * self.text_scale.rem_pixels() / font::BASE_REM_PIXELS;
+        let content_height =
+            metrics::ACTIVITY_POPOVER_HEIGHT * self.text_scale.rem_pixels() / font::BASE_REM_PIXELS;
         // 字号同时放大 rem 间距；外框还需容纳 MenuPanel 的 padding 与 border。
         let panel_height = content_height + 2.0 * (metrics::MENU_PADDING + 1.0);
         let panel = MenuPanel::new("activity-popover")

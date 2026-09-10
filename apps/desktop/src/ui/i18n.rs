@@ -1,4 +1,4 @@
-//! 最小 i18n：English / 中文 界面语言切换（本地 presentation preference）。
+//! 最小 i18n：English / 中文界面语言切换（本地 presentation preference）。
 //!
 //! 与 `TextScale` 同口径：即时生效，保存到用户目录 desktop.json，重启恢复；不引入任何外部 i18n 框架。`render` 与 `AX` 必须经同一个
 //! `t()` 取文案（同源合同）；AX node id 保持英文稳定标识，不翻译。
@@ -65,6 +65,15 @@ pub fn t(key: &'static str) -> &'static str {
     localize(key, language())
 }
 
+/// 宿主保留占位标题仅在显示时本地化；不写回，不影响自动命名。
+pub fn session_title(title: &str) -> &str {
+    if title == "New session" {
+        t("timeline.new_title")
+    } else {
+        title
+    }
+}
+
 /// 双占位符模板：按序替换前两个 `{}`（如 Resume 重放区间）。
 pub fn t2(key: &'static str, first: &str, second: &str) -> String {
     localize_t2(key, first, second, language())
@@ -78,6 +87,44 @@ pub fn catalog_overview_label(model_count: usize) -> String {
 /// 纯函数：给定语言取 key 文案，不读全局状态（单测无副作用、不与并行测试竞态）。
 fn localize(key: &'static str, lang: Language) -> &'static str {
     let (en, zh) = match key {
+        "inspector.project" => ("Project", "项目"),
+        "inspector.input" => ("Terminal input", "终端输入"),
+        "inspector.output" => ("Terminal output", "终端输出"),
+        "inspector.hide" => ("Hide inspector", "收起检查器"),
+        "timeline.actions" => ("Entry actions", "消息操作"),
+        "composer.send" => ("Send", "发送"),
+        "composer.message" => ("Message", "消息"),
+        "composer.model" => ("Model", "模型"),
+        "rail.new_in_project" => ("New task in {}", "在 {} 中新建任务"),
+        "timeline.new_title" => ("New task", "新任务"),
+        "timeline.you" => ("You", "你"),
+        "timeline.tool" => ("Tool", "工具"),
+        "tool.group_one" => ("{} tool", "{} 个工具"),
+        "tool.group_many" => ("{} tools", "{} 个工具"),
+        "tool.group_completed" => ("completed", "已完成"),
+        "tool.group_running" => ("running", "运行中"),
+        "tool.group_pending" => ("pending", "等待中"),
+        "tool.group_failed" => ("failed", "失败"),
+        "tool.group_cancelled" => ("cancelled", "已取消"),
+        "tool.group_other" => ("other", "其他"),
+        "changes.files" => ("Files", "文件"),
+        "changes.summary" => ("Summary", "摘要"),
+        "changes.session" => ("Task", "任务"),
+        "changes.lines" => ("Lines", "行数"),
+        "changes.by_status" => ("By status", "按状态"),
+        "changes.branch" => ("Branch", "分支"),
+        "changes.dirty_files" => ("Dirty files", "未提交文件"),
+        "changes.work_dir" => ("Work dir", "工作目录"),
+        "inspector.output_dropped" => ("{} output events dropped", "已丢弃 {} 条输出事件"),
+        "inspector.stop" => ("Stop", "停止"),
+        "inspector.close" => ("Close", "关闭"),
+        "inspector.fewer_columns" => ("Fewer terminal columns", "减少终端列数"),
+        "inspector.more_columns" => ("More terminal columns", "增加终端列数"),
+        "inspector.fewer_rows" => ("Fewer terminal rows", "减少终端行数"),
+        "inspector.more_rows" => ("More terminal rows", "增加终端行数"),
+        "settings.tools.configure" => ("Add a server under [mcp.servers.<name>] in the global config.toml, with transport (stdio command or http url). Restart the Pawork service, then refresh this page.", "在全局 config.toml 的 [mcp.servers.<名称>] 中配置 transport（stdio 的 command 或 http 的 url）。重启 Pawork 服务后刷新此页。"),
+        "settings.tools.config_path" => ("Global configuration", "全局配置位置"),
+        "resources.tool_count" => ("{} tools", "{} 个工具"),
         "model_search.placeholder" => ("Search model name or ID", "搜索模型名称或 ID"),
         "model_search.clear" => ("Clear search", "清除搜索"),
         "model_search.no_results" => ("No matching models", "没有匹配的模型"),
@@ -165,7 +212,7 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         // ── Settings · Network（General 页）──
         "settings.network.title" => ("Network", "网络"),
         "settings.network.subtitle" => {
-            ("Host outbound network settings", "Host 出站网络设置")
+            ("Host outbound network settings", "Pawork 的网络代理设置")
         }
         "settings.network.refresh_tooltip" => ("Refresh network settings", "刷新网络设置"),
         "settings.network.save_tooltip" => ("Save proxy URL", "保存代理 URL"),
@@ -177,11 +224,11 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         ),
         "settings.network.proxy_effect_note" => (
             "New OAuth, verification, and catalog requests use this proxy immediately. Model traffic for the active provider updates after switching providers or restarting the Host.",
-            "新的 OAuth、验证与目录请求立即使用此代理。当前提供商的模型流量将在切换提供商或重启 Host 后更新。",
+            "新的 OAuth、验证与目录请求立即使用此代理。当前提供商的模型流量将在切换提供商或重启 Pawork 服务后更新。",
         ),
         "settings.network.proxy_storage_note" => (
             "Stored in Pawork's per-user config.toml outside all workspaces. Proxy values in workspace .pawork/config.toml files are ignored.",
-            "存储在所有 workspace 之外的 Pawork 按用户 config.toml 中。workspace .pawork/config.toml 文件中的代理值会被忽略。",
+            "存储在用户的 Pawork 全局 config.toml 中。项目 .pawork/config.toml 文件中的代理值会被忽略。",
         ),
         "settings.network.ax_status" => ("Network status", "网络状态"),
         "settings.network.ax_current_proxy" => ("Current proxy URL", "当前代理 URL"),
@@ -192,7 +239,7 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "settings.permissions.title" => ("Approvals", "审批"),
         "settings.permissions.subtitle" => (
             "Saved approval default and current workspace trust",
-            "持久化审批默认与当前 workspace 信任",
+            "默认审批方式与当前项目的信任状态",
         ),
         "settings.permissions.refresh_tooltip" => {
             ("Refresh permissions settings", "刷新权限设置")
@@ -200,30 +247,30 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "settings.permissions.unknown_mode" => ("Unknown", "未知"),
         "settings.permissions.mode_title" => ("Approval mode", "审批模式"),
         "settings.permissions.trust_remove" => ("Remove trust", "移除信任"),
-        "settings.permissions.trust_add" => ("Trust workspace", "信任 workspace"),
+        "settings.permissions.trust_add" => ("Trust workspace", "信任项目"),
         "settings.permissions.trust_toggle_tooltip" => (
             "Save trust for the current workspace",
-            "保存当前 workspace 信任",
+            "保存当前项目信任",
         ),
         "settings.permissions.trust_state_trusted" => ("Trusted", "已信任"),
         "settings.permissions.trust_state_untrusted" => ("Not trusted", "未信任"),
         "settings.permissions.session_trust_title" => ("Workspace trust", "项目信任"),
         "settings.permissions.session_trust_desc" => (
             "Remember trust for this workspace after restart",
-            "记住当前 workspace 信任，重启后恢复",
+            "记住当前项目信任，重启后恢复",
         ),
         "settings.permissions.global_readonly" => {
             ("Global default (read only) · {}", "全局默认（只读）· {}")
         }
         "settings.permissions.global_trust_all" => {
-            ("Set to trust all workspaces", "已设为信任所有 workspace")
+            ("Set to trust all workspaces", "已设为信任所有项目")
         }
         "settings.permissions.global_distrust_all" => {
-            ("Set to distrust all workspaces", "已设为不信任所有 workspace")
+            ("Set to distrust all workspaces", "已设为不信任所有项目")
         }
         "settings.permissions.trust_unset" => (
             "Not set (workspaces are untrusted by default)",
-            "未设置（workspace 默认不受信任）",
+            "未设置（项目默认不受信任）",
         ),
         "settings.permissions.effect_note" => (
             "Saved to global configuration. Approval mode is the default; trust applies to this workspace. Running tasks are unchanged. Explicit launch options override saved values for that launch.",
@@ -240,23 +287,23 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "settings.tools.title" => ("Tools & MCP", "工具与 MCP"),
         "settings.tools.subtitle" => (
             "MCP servers, status, and configuration reported by the Host",
-            "Host 报告的 MCP 服务器、状态与配置",
+            "Pawork 服务报告的 MCP 服务器、状态与配置",
         ),
         "settings.tools.refresh_tooltip" => ("Refresh MCP servers", "刷新 MCP 服务器"),
         "settings.tools.effect_note" => (
             "Test checks the server and refreshes its status. Remove updates the global configuration, clears credentials, and unregisters its tools for this session.",
-            "Test 检查服务器并刷新其状态。Remove 更新全局配置、清除凭证，并为本次会话注销其工具。",
+            "测试会检查服务器并刷新其状态。移除会更新全局配置、清除凭证，并为本次会话注销其工具。",
         ),
         "settings.tools.remove_confirm_note" => (
             "Removing this server updates the global configuration and clears its credentials. Tools already snapshotted by a running task are unchanged.",
-            "移除此服务器将更新全局配置并清除其凭证。已被运行中任务快照的工具不受影响。",
+            "移除此服务器将更新全局配置并清除其凭证。进行中任务已加载的工具不受影响。",
         ),
         "settings.tools.tooltip_test" => {
             ("Ping this server and refresh its state.", "检测此服务器并刷新其状态。")
         }
         "settings.tools.tooltip_remove" => (
             "Remove this server from the Global config and clear its credentials.",
-            "从 Global 配置中移除此服务器并清除其凭证。",
+            "从全局配置中移除此服务器并清除其凭证。",
         ),
         "settings.tools.status_error" => ("Could not load MCP servers · {}", "无法加载 MCP 服务器 · {}"),
         "settings.tools.status_empty" => ("No MCP servers configured.", "尚未配置 MCP 服务器。"),
@@ -306,13 +353,13 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "settings.advanced.reconnect" => ("Reconnect", "重新连接"),
         "settings.advanced.connected" => ("Connected", "已连接"),
         "settings.advanced.unavailable_connect" => {
-            ("Unavailable · connect to the Host", "不可用 · 请连接 Host")
+            ("Unavailable · connect to the Host", "不可用 · 请连接 Pawork 服务")
         }
         "settings.advanced.none_granted" => ("None granted", "未授予"),
         "settings.advanced.fresh_snapshot" => ("Fresh snapshot", "全新快照"),
         "settings.advanced.unavailable" => ("Unavailable", "不可用"),
         "settings.advanced.row_connection" => ("Connection", "连接"),
-        "settings.advanced.row_runtime" => ("Host runtime ID", "Host 运行时 ID"),
+        "settings.advanced.row_runtime" => ("Host runtime ID", "Pawork 服务运行时 ID"),
         "settings.advanced.row_api" => ("GUI API", "GUI API"),
         "settings.advanced.row_capabilities" => ("Granted capabilities", "已授予能力"),
         "settings.advanced.row_endpoint" => ("Endpoint", "端点"),
@@ -322,23 +369,23 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         }
         "settings.advanced.target_note" => (
             "The endpoint is selected by --instance or --socket when Desktop starts; changing it requires a restart. The Host runtime ID is not a configuration instance name. GUI tokens and token paths are never shown here.",
-            "端点在 Desktop 启动时由 --instance 或 --socket 选定；更改需要重启。Host 运行时 ID 不是配置实例名。GUI token 及其路径永远不会在此显示。",
+            "端点在桌面端启动时由 --instance 或 --socket 选定；更改需要重启。Pawork 服务运行时 ID 不是配置实例名。GUI token 及其路径永远不会在此显示。",
         ),
         "settings.advanced.doctor_note" => (
             "Use pawork --instance <name> doctor for Host data directory, PID, socket, and handshake checks. Desktop does not infer an instance name or run that command.",
-            "请使用 pawork --instance <name> doctor 检查 Host 数据目录、PID、socket 与握手。Desktop 不会推断实例名，也不会执行该命令。",
+            "请使用 pawork --instance <name> doctor 检查 Pawork 服务数据目录、PID、socket 与握手。桌面端不会推断实例名，也不会执行该命令。",
         ),
         "settings.advanced.ax_target_title" => ("Startup target boundary", "启动目标边界"),
-        "settings.advanced.ax_doctor_title" => ("Host diagnostics boundary", "Host 诊断边界"),
+        "settings.advanced.ax_doctor_title" => ("Host diagnostics boundary", "Pawork 服务诊断边界"),
         // ── Settings · About ──
         "settings.about.title" => ("About", "关于"),
         "settings.about.subtitle" => (
             "Build and current Host connection information",
-            "构建与当前 Host 连接信息",
+            "构建与当前 Pawork 服务连接信息",
         ),
-        "settings.about.row_desktop_build" => ("Desktop build", "Desktop 构建"),
+        "settings.about.row_desktop_build" => ("Desktop build", "桌面端构建"),
         "settings.about.row_api" => ("GUI API", "GUI API"),
-        "settings.about.row_data_dir" => ("Host data directory", "Host 数据目录"),
+        "settings.about.row_data_dir" => ("Host data directory", "Pawork 服务数据目录"),
         // ── Settings · Providers / Default model ──
         "settings.providers.title" => ("Models & providers", "模型与提供商"),
         "settings.providers.subtitle" => (
@@ -507,7 +554,7 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             ("Could not load provider status · {}", "无法加载提供商状态 · {}")
         }
         "settings.providers.status_empty" => {
-            ("No providers reported by the host.", "Host 未报告任何提供商。")
+            ("No providers reported by the host.", "Pawork 服务未报告任何提供商。")
         }
         "settings.providers.action_connect_api_key" => ("Connect API key", "连接 API key"),
         "settings.providers.action_connect_oauth" => ("Connect OAuth", "连接 OAuth"),
@@ -543,7 +590,7 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         ),
         "approval.mode_desc.never_ask" => (
             "Run automatically; the Host still blocks catastrophic commands",
-            "自动运行；Host 仍会拦截灾难性命令",
+            "自动运行；Pawork 服务仍会拦截灾难性命令",
         ),
         "approval.mode_desc.read_only" => (
             "Allow read-only actions and block all writes",
@@ -772,7 +819,7 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "changes.unavailable" => ("Changes unavailable.", "变更不可用。"),
         "changes.unavailable_desc" => (
             "Connect to the Host and open a task to inspect changes.",
-            "连接到 Host 并打开任务后，即可查看变更。",
+            "连接到 Pawork 服务并打开任务后，即可查看变更。",
         ),
         "changes.loading" => ("Loading changes…", "正在加载变更…"),
         "changes.loading_desc" => (
@@ -803,7 +850,7 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "changes.error_title" => ("Couldn’t load changes", "无法加载变更"),
         "changes.scope_note" => (
             "Host latest-session diff · workspace context is not a filter",
-            "宿主最新会话的差异 · 工作区上下文不是过滤条件",
+            "最近任务的变更 · 项目筛选不会改变这些结果",
         ),
         "changes.tab_activity" => ("Activity", "动态"),
         "changes.tab_changes" => ("Changes", "变更"),
@@ -812,7 +859,7 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "resources.unavailable" => ("Resources unavailable.", "资源不可用。"),
         "resources.unavailable_desc" => (
             "Connect to the Host to inspect MCP resources.",
-            "连接到 Host 后，即可查看 MCP 资源。",
+            "连接到 Pawork 服务后，即可查看 MCP 资源。",
         ),
         "resources.loading" => ("Loading resources…", "正在加载资源…"),
         "resources.loading_desc" => (
@@ -822,7 +869,7 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "resources.empty" => ("No MCP servers configured.", "尚未配置 MCP 服务器。"),
         "resources.empty_desc" => (
             "No server is available from the current Host.",
-            "当前 Host 没有可用的服务器。",
+            "当前 Pawork 服务没有可用的服务器。",
         ),
         "resources.error_title" => ("Couldn’t load resources", "无法加载资源"),
         "common.placeholder_no_details" => {
@@ -957,6 +1004,18 @@ mod tests {
             "语言"
         );
         assert_eq!(localize("no.such.key", Language::Chinese), "no.such.key");
+        for (key, zh) in [
+            ("timeline.you", "你"),
+            ("timeline.new_title", "新任务"),
+            ("changes.files", "文件"),
+            ("changes.summary", "摘要"),
+            ("tool.group_completed", "已完成"),
+            ("inspector.stop", "停止"),
+        ] {
+            assert_eq!(localize(key, Language::Chinese), zh);
+            assert_ne!(localize(key, Language::English), key);
+        }
+        assert_eq!(session_title("user title"), "user title");
     }
 
     /// AX press 派发的反查映射：两个语言 id 往返一致，未知 id fail-closed。

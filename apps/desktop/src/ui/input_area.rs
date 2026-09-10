@@ -373,6 +373,9 @@ impl AppView {
         if let Some(hint) = &self.status_hint {
             notes.push(("composer-status-hint", hint.clone()));
         }
+        if let Some(hint) = &self.text_scale_feedback {
+            notes.push(("composer-text-scale-hint", hint.clone()));
+        }
         notes
     }
 

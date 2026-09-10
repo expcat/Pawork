@@ -95,14 +95,17 @@ fn sync_list(view: &mut AppView, row_count: usize) {
     view.timeline_list_count = count;
 }
 
-/// ToolCall 状态词映射（§4.4）：succeeded → "Completed" 允许，其余 wire
-/// 原文；未知状态原样显示不伪造。render 与 AX 共用。
+/// ToolCall 已知状态本地化；未知 wire 状态原样显示不伪造。render 与 AX 共用。
 pub(super) fn tool_status_label(status: &str) -> String {
-    if status == "succeeded" {
-        t("tool.status_completed").into()
-    } else {
-        status.to_string()
+    match status {
+        "succeeded" => t("tool.status_completed"),
+        "running" => t("tool.group_running"),
+        "pending" => t("tool.group_pending"),
+        "failed" => t("tool.group_failed"),
+        "cancelled" => t("tool.group_cancelled"),
+        other => other,
     }
+    .into()
 }
 
 /// UI-3：消息间距 32px，工具组前 16px；独立终态页脚前 12px。

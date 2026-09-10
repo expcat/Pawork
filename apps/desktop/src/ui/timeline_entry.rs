@@ -65,22 +65,27 @@ pub(super) fn tool_group_summary(rows: &[ToolRowView]) -> String {
     }
     let mut states = Vec::new();
     for (count, word) in [
-        (completed, "completed"),
-        (running, "running"),
-        (pending, "pending"),
-        (failed, "failed"),
-        (cancelled, "cancelled"),
-        (other, "other"),
+        (completed, t("tool.group_completed")),
+        (running, t("tool.group_running")),
+        (pending, t("tool.group_pending")),
+        (failed, t("tool.group_failed")),
+        (cancelled, t("tool.group_cancelled")),
+        (other, t("tool.group_other")),
     ] {
         if count > 0 {
             states.push(format!("{count} {word}"));
         }
     }
-    let noun = if rows.len() == 1 { "tool" } else { "tools" };
-    if states.is_empty() {
-        format!("{} {noun}", rows.len())
+    let count = t(if rows.len() == 1 {
+        "tool.group_one"
     } else {
-        format!("{} {noun} · {}", rows.len(), states.join(" · "))
+        "tool.group_many"
+    })
+    .replace("{}", &rows.len().to_string());
+    if states.is_empty() {
+        count
+    } else {
+        format!("{count} · {}", states.join(" · "))
     }
 }
 
@@ -571,7 +576,7 @@ impl AppView {
         let time = display_time(&entry.timestamp, now_unix_ms());
         let (role, label_color, body) = match &entry.kind {
             TimelineEntryKind::UserMessage { text } => (
-                "You",
+                t("timeline.you"),
                 dark().text.secondary,
                 message_body_element(&entry.event_id, text, dark().text.emphasis),
             ),
@@ -592,7 +597,7 @@ impl AppView {
                 status,
                 detail,
                 arguments,
-            } => ("Tool", dark().text.secondary, {
+            } => (t("timeline.tool"), dark().text.secondary, {
                 let mut element = div()
                     .py_1()
                     .text_color(dark().text.secondary)

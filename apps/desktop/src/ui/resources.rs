@@ -137,7 +137,11 @@ pub(super) fn mcp_server_name_row(server: &McpServerEntry) -> gpui::Div {
 
 /// MCP server 清单行 meta 文案（transport · tools 数 · last_error）。
 pub(super) fn mcp_server_meta_text(server: &McpServerEntry) -> String {
-    let mut meta = format!("{} · {} tools", server.transport, server.tool_count);
+    let mut meta = format!(
+        "{} · {}",
+        server.transport,
+        t("resources.tool_count").replace("{}", &server.tool_count.to_string())
+    );
     if let Some(error) = &server.last_error {
         meta.push_str(&format!(" · {error}"));
     }

@@ -323,6 +323,42 @@ impl AppView {
             })
     }
 
+    /// 目录与状态进入可滚动正文，避免与尺寸控件争抢同一行。
+    pub(super) fn terminal_context_text(&self) -> String {
+        let terminal = &self.projection.terminal;
+        let owner = terminal
+            .workspace_id
+            .as_deref()
+            .and_then(|id| {
+                self.projection
+                    .workspaces
+                    .iter()
+                    .find(|w| w.id == id)
+                    .map(|w| w.name.as_str())
+            })
+            .or(terminal.workspace_id.as_deref())
+            .unwrap_or(t("taskrail.unassigned"));
+        let mut context = format!(
+            "{} · {owner}\n{} · {}",
+            t("inspector.project"),
+            t("changes.work_dir"),
+            terminal.cwd
+        );
+        if self.terminal_notice_text().is_none() {
+            context.push_str(&format!(" · {}", terminal.availability_label()));
+        }
+        if terminal.dropped_events > 0 {
+            context.push_str(&format!(
+                " · {}",
+                t("inspector.output_dropped").replace("{}", &terminal.dropped_events.to_string())
+            ));
+        }
+        if let Some(status) = terminal_resize_status_label(terminal, self.terminal_size_draft) {
+            context.push_str(&format!(" · {status}"));
+        }
+        context
+    }
+
     /// Terminal 页（波 C 的面板内容，页签头外移到顶层 strip 后保持原样）。
     fn terminal_page_element(&self, _connected: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let terminal = &self.projection.terminal;
@@ -338,26 +374,9 @@ impl AppView {
         };
         let (columns, rows) = terminal_size_for_display(terminal, self.terminal_size_draft);
         let size_label = format!("{columns}×{rows}");
-        let cwd = terminal.cwd.clone();
         let started = terminal.session_id.is_some();
         let apply_size = started && !terminal_known_ended(terminal);
-        let owner = terminal.workspace_id.as_deref().unwrap_or("unassigned");
-        let mut state_label = if notice.is_some() {
-            String::new()
-        } else {
-            terminal.availability_label()
-        };
-        if terminal.dropped_events > 0 {
-            state_label.push_str(&format!(
-                " · {} output events dropped",
-                terminal.dropped_events
-            ));
-        }
-        if let Some(resize_status) =
-            terminal_resize_status_label(terminal, self.terminal_size_draft)
-        {
-            state_label.push_str(&format!(" · {resize_status}"));
-        }
+        let context = self.terminal_context_text();
         let terminal_operable = terminal_can_operate(&self.projection.connection, terminal);
         let terminal_start_enabled = self.terminal_start_available();
         let terminal_resize_enabled = terminal_operable && self.terminal_pending_resize.is_none();
@@ -384,11 +403,7 @@ impl AppView {
                     .text_size(font::XS)
                     .text_color(dark().text.secondary)
                     .min_w_0()
-                    .child(
-                        div()
-                            .truncate()
-                            .child(format!("workspace {owner} · cwd {cwd} · {state_label}")),
-                    )
+                    .child(div().child(t("settings.terminal.size_label")))
                     .child(
                         // G1：尺寸可变参。stepper 维护本地草稿，右侧尺寸按钮
                         // 仍是唯一 apply 入口，走冻结的 terminal_resize。
@@ -402,7 +417,7 @@ impl AppView {
                             .child(terminal_stepper(
                                 "terminal-cols-dec",
                                 "−W",
-                                "Fewer columns",
+                                t("inspector.fewer_columns"),
                                 -TERMINAL_COLUMNS_STEP,
                                 0,
                                 &self.terminal_cols_dec_focus,
@@ -412,7 +427,7 @@ impl AppView {
                             .child(terminal_stepper(
                                 "terminal-cols-inc",
                                 "+W",
-                                "More columns",
+                                t("inspector.more_columns"),
                                 TERMINAL_COLUMNS_STEP,
                                 0,
                                 &self.terminal_cols_inc_focus,
@@ -440,7 +455,7 @@ impl AppView {
                             .child(terminal_stepper(
                                 "terminal-rows-dec",
                                 "−H",
-                                "Fewer rows",
+                                t("inspector.fewer_rows"),
                                 0,
                                 -TERMINAL_ROWS_STEP,
                                 &self.terminal_rows_dec_focus,
@@ -450,7 +465,7 @@ impl AppView {
                             .child(terminal_stepper(
                                 "terminal-rows-inc",
                                 "+H",
-                                "More rows",
+                                t("inspector.more_rows"),
                                 0,
                                 TERMINAL_ROWS_STEP,
                                 &self.terminal_rows_inc_focus,
@@ -484,6 +499,14 @@ impl AppView {
                                 view.terminal_scroll.on_scroll_wheel();
                                 cx.notify();
                             }))
+                            .child(
+                                div()
+                                    .py_2()
+                                    .whitespace_normal()
+                                    .text_size(font::SM)
+                                    .text_color(dark().text.secondary)
+                                    .child(context),
+                            )
                             .when(notice.is_some(), |area| {
                                 area.child(self.terminal_notice_element(cx))
                             })
@@ -515,55 +538,80 @@ impl AppView {
                     .p_2()
                     .border_t_1()
                     .border_color(dark().border.subtle)
-                    .child(div().flex_1().child(self.terminal_input.clone()))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .id("terminal-input-layout")
+                            .track_scroll(&self.terminal_action_layouts["terminal-input"])
+                            .child(self.terminal_input.clone()),
+                    )
                     .when(terminal_close_action.is_some(), |row| {
-                        let label = terminal_close_action.unwrap_or("Stop");
+                        let label = if terminal_close_action == Some("Close") {
+                            t("inspector.close")
+                        } else {
+                            t("inspector.stop")
+                        };
                         row.child(
-                            Button::new("terminal-close")
-                                .variant(ButtonVariant::Raised)
-                                .disabled(self.terminal_pending_close.is_some())
-                                .text_size(font::XS)
-                                .text_color(dark().text.primary)
-                                .disabled_text_color(dark().text.primary)
-                                .label(label)
-                                .track_focus(&self.terminal_close_focus)
-                                .on_click(cx.listener(move |view, event, window, cx| {
-                                    if view.consume_button_key_click("terminal-close", event) {
-                                        return;
-                                    }
-                                    view.on_close_terminal(window, cx);
-                                })),
+                            div()
+                                .flex_none()
+                                .id("terminal-close-layout")
+                                .track_scroll(&self.terminal_action_layouts["terminal-close"])
+                                .child(
+                                    Button::new("terminal-close")
+                                        .variant(ButtonVariant::Raised)
+                                        .disabled(self.terminal_pending_close.is_some())
+                                        .text_size(font::XS)
+                                        .text_color(dark().text.primary)
+                                        .disabled_text_color(dark().text.primary)
+                                        .label(label)
+                                        .track_focus(&self.terminal_close_focus)
+                                        .on_click(cx.listener(move |view, event, window, cx| {
+                                            if view
+                                                .consume_button_key_click("terminal-close", event)
+                                            {
+                                                return;
+                                            }
+                                            view.on_close_terminal(window, cx);
+                                        })),
+                                ),
                         )
                     })
                     .child(
                         // 迁移前 terminal-start 未设文字色（继承 text.primary），
                         // 禁用态亦保持同色，显式钉住避免 Raised 默认的 disabled 色。
-                        Button::new("terminal-start")
-                            .variant(ButtonVariant::Raised)
-                            .disabled(!terminal_start_enabled)
-                            .text_size(font::XS)
-                            .text_color(dark().text.primary)
-                            .disabled_text_color(dark().text.primary)
-                            // 已知 exited/killed：单槽变「New」——新建终端入
-                            // 口，不伪造旧终端生命周期（G2）。
-                            .label(if apply_size {
-                                t("inspector.tooltip_apply_size")
-                            } else if terminal_can_reopen(terminal) {
-                                t("recovery.terminal_new")
-                            } else {
-                                t("recovery.terminal_start")
-                            })
-                            .track_focus(&self.terminal_start_focus)
-                            .on_click(cx.listener(move |view, event, window, cx| {
-                                if view.consume_button_key_click("terminal-start", event) {
-                                    return;
-                                }
-                                if apply_size {
-                                    view.on_apply_terminal_size(window, cx);
-                                } else {
-                                    view.on_start_terminal(window, cx);
-                                }
-                            })),
+                        div()
+                            .flex_none()
+                            .id("terminal-start-layout")
+                            .track_scroll(&self.terminal_action_layouts["terminal-start"])
+                            .child(
+                                Button::new("terminal-start")
+                                    .variant(ButtonVariant::Raised)
+                                    .disabled(!terminal_start_enabled)
+                                    .text_size(font::XS)
+                                    .text_color(dark().text.primary)
+                                    .disabled_text_color(dark().text.primary)
+                                    // 已知 exited/killed：单槽变「New」——新建终端入
+                                    // 口，不伪造旧终端生命周期（G2）。
+                                    .label(if apply_size {
+                                        t("inspector.tooltip_apply_size")
+                                    } else if terminal_can_reopen(terminal) {
+                                        t("recovery.terminal_new")
+                                    } else {
+                                        t("recovery.terminal_start")
+                                    })
+                                    .track_focus(&self.terminal_start_focus)
+                                    .on_click(cx.listener(move |view, event, window, cx| {
+                                        if view.consume_button_key_click("terminal-start", event) {
+                                            return;
+                                        }
+                                        if apply_size {
+                                            view.on_apply_terminal_size(window, cx);
+                                        } else {
+                                            view.on_start_terminal(window, cx);
+                                        }
+                                    })),
+                            ),
                     ),
             )
     }

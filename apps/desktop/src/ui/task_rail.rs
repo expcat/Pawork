@@ -810,7 +810,7 @@ impl AppView {
                         } else {
                             dark().text.emphasis
                         })
-                        .child(task.title.clone()),
+                        .child(crate::ui::i18n::session_title(&task.title).to_string()),
                 };
                 let mut row = ListRow::task(SharedString::from(session_id.clone()), is_active)
                     .radius(metrics::CONTROL_RADIUS)
