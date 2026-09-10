@@ -13,6 +13,7 @@ pub(crate) mod i18n;
 mod input_area;
 mod inspector;
 mod markdown;
+mod quick_search;
 mod recovery;
 mod resources;
 mod settings;
@@ -65,6 +66,7 @@ actions!(
         CancelRun,
         NewTask,
         ToggleInspector,
+        OpenQuickSearch,
         TaskCycleUp,
         TaskCycleDown,
         NextNeedsAttention,
@@ -83,6 +85,7 @@ pub(crate) const APP_VIEW_KEYBINDINGS: &[(&str, &str)] = &[
     ("cmd-3", "Deny"),
     ("cmd-n", "NewTask"),
     ("cmd-i", "ToggleInspector"),
+    ("cmd-k", "OpenQuickSearch"),
     ("cmd-alt-up", "TaskCycleUp"),
     ("cmd-alt-down", "TaskCycleDown"),
     ("cmd-alt-n", "NextNeedsAttention"),
@@ -101,11 +104,16 @@ pub(crate) fn workspace_empty_hint() -> &'static str {
     i18n::t("timeline.empty_hint")
 }
 
-/// GUI2-01：rail Tab 前缀为全局新建 → scope → grouping；
+/// GUI2-03：rail Tab 前缀为快捷查找 → 全局新建 → scope → grouping；
 /// 项目头 / 定向新建 / task 行按当前分组渲染序接在其后，
 /// 再接 MAIN_PATH_TAB_STOP_IDS。tab_index 负档保证 rail 整体先于主路径 0 档。
-pub(crate) const RAIL_TAB_STOP_IDS: &[&str] = &["add-task", "project-scope", "task-rail-grouping"];
-/// scope 触发器在 Tab 链中的位次（rail 前缀三档 -20/-19/-18，断线 reconnect
+pub(crate) const RAIL_TAB_STOP_IDS: &[&str] = &[
+    "quick-search",
+    "add-task",
+    "project-scope",
+    "task-rail-grouping",
+];
+/// scope 触发器在 Tab 链中的位次（rail 前缀四档 -21/-20/-19/-18，断线 reconnect
 /// -17，行级 -16）。
 pub(crate) const RAIL_TAB_INDEX_SCOPE: isize = -19;
 pub(crate) const RAIL_TAB_INDEX_GROUPING: isize = -18;
@@ -259,6 +267,7 @@ pub fn install_keybindings(cx: &mut App) {
         KeyBinding::new("cmd-3", Deny, Some("AppView")),
         KeyBinding::new("cmd-n", NewTask, Some("AppView")),
         KeyBinding::new("cmd-i", ToggleInspector, Some("AppView")),
+        KeyBinding::new("cmd-k", OpenQuickSearch, Some("AppView")),
         KeyBinding::new("cmd-alt-up", TaskCycleUp, Some("AppView")),
         KeyBinding::new("cmd-alt-down", TaskCycleDown, Some("AppView")),
         KeyBinding::new("cmd-alt-n", NextNeedsAttention, Some("AppView")),
@@ -353,6 +362,13 @@ fn install_appkit_tab_monitor(window: &Window, cx: &App) {
             slot.as_mut().map(|cx| {
                 cx.update(|window, cx| {
                     components::focus_ring::set_keyboard_focus(true, window, cx);
+                    if let Some(Some(view)) = window.root::<AppView>() {
+                        let view = view.read(cx);
+                        if view.quick_search.open {
+                            window.focus(&view.quick_search.focus);
+                            return;
+                        }
+                    }
                     if forward {
                         window.focus_next();
                     } else {
@@ -416,6 +432,7 @@ pub struct AppView {
     text_input: Entity<TextInput>,
     terminal_input: Entity<TextInput>,
     terminal_action_layouts: HashMap<&'static str, ScrollHandle>,
+    quick_search: quick_search::QuickSearch,
     model_search_input: Entity<TextInput>,
     model_search_focus: FocusHandle,
     model_search_query: String,
@@ -715,6 +732,7 @@ impl AppView {
             projection: DesktopProjection::default(),
             text_input,
             terminal_input,
+            quick_search: quick_search::QuickSearch::new(cx),
             model_search_input,
             model_search_focus,
             model_search_query: String::new(),
@@ -813,6 +831,7 @@ impl AppView {
                 "connection-status",
                 "rail-scope-layout",
                 "rail-add-layout",
+                "rail-search-layout",
                 "rail-grouping-layout",
                 "rail-settings-layout",
             ]
@@ -2580,6 +2599,10 @@ impl AppView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.quick_search.open {
+            self.handle_quick_search_key(event, window, cx);
+            return;
+        }
         let key = event.keystroke.key.as_str();
         // Tab 遍历（design §3.6，Slice 4 修复）：GPUI 无默认 tab cycle
         //（Slice 3 驱动取证 tab-no-traverse），根节点把 Tab / Shift-Tab
@@ -3035,6 +3058,7 @@ impl AppView {
     /// rail 焦点链上各停靠点的句柄（固定触发器 + 行级懒建句柄）。
     fn rail_stop_focus(&self, stop: &RailStop) -> Option<FocusHandle> {
         match stop {
+            RailStop::Search => Some(self.quick_search.trigger.clone()),
             RailStop::Scope => Some(self.scope_focus.clone()),
             RailStop::Grouping => Some(self.grouping_focus.clone()),
             RailStop::AddTask => Some(self.add_task_focus.clone()),
@@ -3368,6 +3392,10 @@ impl AppView {
     }
 
     fn on_send_message(&mut self, _: &SendMessage, window: &mut Window, cx: &mut Context<Self>) {
+        if self.quick_search.open {
+            self.submit_quick_search(window, cx);
+            return;
+        }
         // 搜索框的 Return 只选择模型；包括菜单卸载前的输入事件，不能发送草稿。
         if self.model_search_focus.is_focused(window) {
             if !self.model_search_input.read(cx).is_composing() {
@@ -3991,6 +4019,7 @@ fn header_status_visual(status: SessionLiveStatus) -> (f32, Rgba) {
 /// ProjectHeader/ProjectAdd 以日期桶限定避免 Timeline 同项目多桶重复）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum RailStop {
+    Search,
     Scope,
     Grouping,
     AddTask,
@@ -4010,9 +4039,10 @@ enum RailStop {
 impl RailStop {
     fn focus_key(&self) -> String {
         match self {
-            Self::Scope => RAIL_TAB_STOP_IDS[1].into(),
-            Self::Grouping => RAIL_TAB_STOP_IDS[2].into(),
-            Self::AddTask => RAIL_TAB_STOP_IDS[0].into(),
+            Self::Search => "quick-search".into(),
+            Self::Scope => RAIL_TAB_STOP_IDS[2].into(),
+            Self::Grouping => RAIL_TAB_STOP_IDS[3].into(),
+            Self::AddTask => RAIL_TAB_STOP_IDS[1].into(),
             Self::ProjectHeader { bucket, key } => {
                 rail_project_occurrence_key("project", *bucket, key)
             }
@@ -4088,7 +4118,12 @@ fn rail_focus_stops(
     projection: &DesktopProjection,
     now_ms: u64,
 ) -> Vec<RailStop> {
-    let mut stops = vec![RailStop::AddTask, RailStop::Scope, RailStop::Grouping];
+    let mut stops = vec![
+        RailStop::Search,
+        RailStop::AddTask,
+        RailStop::Scope,
+        RailStop::Grouping,
+    ];
     let projects = match grouping {
         TaskRailGrouping::Timeline => projection
             .timeline_groups(scope, now_ms)
@@ -4491,7 +4526,10 @@ impl Render for AppView {
                 (sidebar, main)
             }
         };
+        let search_open = self.quick_search.open;
+        let search_overlay = search_open.then(|| self.quick_search_element(window, cx));
         div()
+            .relative()
             .key_context("AppView")
             .track_focus(&self.focus_handle)
             .child(components::focus_ring::track_pointer_input())
@@ -4524,18 +4562,26 @@ impl Render for AppView {
                 }
             }))
             .on_action(cx.listener(Self::on_send_message))
-            .on_action(cx.listener(Self::on_approve_once))
-            .on_action(cx.listener(Self::on_approve_for_run))
-            .on_action(cx.listener(Self::on_deny))
-            .on_action(cx.listener(Self::on_cancel_run))
-            .on_action(cx.listener(Self::on_new_task_action))
-            .on_action(cx.listener(Self::on_toggle_inspector_action))
-            .on_action(cx.listener(Self::on_task_cycle_up))
-            .on_action(cx.listener(Self::on_task_cycle_down))
-            .on_action(cx.listener(Self::on_next_needs_attention_action))
+            .on_action(cx.listener(Self::on_quick_search))
+            .when(!search_open, |root| {
+                root.on_action(cx.listener(Self::on_approve_once))
+                    .on_action(cx.listener(Self::on_approve_for_run))
+                    .on_action(cx.listener(Self::on_deny))
+                    .on_action(cx.listener(Self::on_cancel_run))
+                    .on_action(cx.listener(Self::on_new_task_action))
+                    .on_action(cx.listener(Self::on_toggle_inspector_action))
+                    .on_action(cx.listener(Self::on_task_cycle_up))
+                    .on_action(cx.listener(Self::on_task_cycle_down))
+                    .on_action(cx.listener(Self::on_next_needs_attention_action))
+            })
             .on_action(cx.listener(Self::on_increase_text_size))
             .on_action(cx.listener(Self::on_decrease_text_size))
             .on_action(cx.listener(Self::on_reset_text_size))
+            .capture_key_down(cx.listener(|view, event, window, cx| {
+                if view.quick_search.open {
+                    view.handle_quick_search_key(event, window, cx);
+                }
+            }))
             .child(
                 div()
                     .id("shell-rail")
@@ -4566,6 +4612,7 @@ impl Render for AppView {
                         )
                     }),
             )
+            .children(search_overlay.map(gpui::deferred))
     }
 }
 
@@ -4813,17 +4860,27 @@ mod tests {
         );
         let keys: Vec<String> = stops.iter().map(|stop| stop.focus_key()).collect();
         assert_eq!(
-            &keys[..3],
-            ["add-task", "project-scope", "task-rail-grouping"]
+            &keys[..4],
+            [
+                "quick-search",
+                "add-task",
+                "project-scope",
+                "task-rail-grouping"
+            ]
         );
         assert_eq!(
             RAIL_TAB_STOP_IDS,
-            ["add-task", "project-scope", "task-rail-grouping"]
+            [
+                "quick-search",
+                "add-task",
+                "project-scope",
+                "task-rail-grouping"
+            ]
         );
         // Projects 模式：Alpha 头 + 定向新建 + 两行任务；折叠的 Unassigned
         // 只剩头部（无定向新建）。
         assert_eq!(
-            keys[3..],
+            keys[4..],
             [
                 "project-ws-a",
                 "project-add-ws-a",
@@ -4842,7 +4899,7 @@ mod tests {
         );
         let timeline_keys: Vec<String> = timeline.iter().map(|stop| stop.focus_key()).collect();
         assert_eq!(
-            timeline_keys[3..],
+            timeline_keys[4..],
             [
                 // 三个 session 同桶（updated_at 相同 → Today）。
                 "project-Today:ws-a",

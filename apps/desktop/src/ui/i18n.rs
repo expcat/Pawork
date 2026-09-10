@@ -87,6 +87,22 @@ pub fn catalog_overview_label(model_count: usize) -> String {
 /// 纯函数：给定语言取 key 文案，不读全局状态（单测无副作用、不与并行测试竞态）。
 fn localize(key: &'static str, lang: Language) -> &'static str {
     let (en, zh) = match key {
+        "quick.title" => ("Quick find · ⌘K", "快捷查找 · ⌘K"),
+        "quick.placeholder" => ("Find tasks, projects or pages…", "查找任务、项目或页面…"),
+        "quick.scope" => ("Current task list · ↑↓ select · Enter open", "当前任务列表 · ↑↓ 选择 · Enter 打开"),
+        "quick.offline" => ("Offline · Local appearance and diagnostics only", "已断线 · 仅本地外观与诊断可用"),
+        "quick.tasks" => ("Tasks · Most recent first", "任务 · 最近更新优先"),
+        "quick.pages" => ("Pages", "页面"),
+        "quick.actions" => ("Navigation", "导航操作"),
+        "quick.settings" => ("Settings", "设置"),
+        "quick.panel" => ("Work panel", "工作面板"),
+        "quick.changes" => ("Open Changes", "打开变更"),
+        "quick.terminal" => ("Open Terminal", "打开终端"),
+        "quick.resources" => ("Open Resources", "打开资源"),
+        "quick.empty" => ("No results in the current list", "当前列表中没有结果"),
+        "quick.clear" => ("Clear query", "清除查询"),
+        "quick.close" => ("Close quick find", "关闭快捷查找"),
+        "quick.filter_cleared" => ("Project filter cleared to show the selected task", "已解除项目筛选，显示所选任务"),
         "inspector.project" => ("Project", "项目"),
         "inspector.input" => ("Terminal input", "终端输入"),
         "inspector.output" => ("Terminal output", "终端输出"),

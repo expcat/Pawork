@@ -269,7 +269,29 @@ impl AppView {
             }
         };
 
-        // 顶部两行；搜索入口随 GUI2-03 提供真实查找能力时接入。
+        // 顶部两行；搜索与新建共用任务标题行。
+        let search = Button::new("quick-search")
+            .track_focus(&self.quick_search.trigger)
+            .variant(ButtonVariant::Ghost)
+            .padding(ButtonPadding::None)
+            .width(px(metrics::RAIL_ICON_BUTTON_SIZE))
+            .height(px(metrics::RAIL_ICON_BUTTON_SIZE))
+            .center()
+            .text_size(font::ICON)
+            .label("⌕")
+            .tooltip(t("quick.title"))
+            .on_click(cx.listener(|view, event, window, cx| {
+                if view.consume_button_key_click("quick-search", event) {
+                    return;
+                }
+                window.focus(&view.quick_search.trigger);
+                view.open_quick_search(window, cx);
+            }))
+            .on_activate(cx.listener(|view, _, window, cx| {
+                view.note_button_key_activate("quick-search");
+                view.open_quick_search(window, cx);
+                cx.stop_propagation();
+            }));
         let mut content = div()
             .flex()
             .flex_col()
@@ -292,9 +314,15 @@ impl AppView {
                             .child(t("rail.tasks")),
                     )
                     .child(
-                        self.shell_element("rail-add-layout")
-                            .flex_none()
-                            .child(add_task),
+                        div()
+                            .flex()
+                            .items_center()
+                            .child(self.shell_element("rail-search-layout").child(search))
+                            .child(
+                                self.shell_element("rail-add-layout")
+                                    .flex_none()
+                                    .child(add_task),
+                            ),
                     ),
             )
             .child(

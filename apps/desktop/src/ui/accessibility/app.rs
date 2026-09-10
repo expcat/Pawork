@@ -156,6 +156,17 @@ impl AppView {
         if !self.accessibility_tree(window, cx).permits(&request) {
             return;
         }
+        if self.quick_search.open {
+            match request.action {
+                AxAction::Focus => window.focus(&self.quick_search.focus),
+                AxAction::SetValue => self.quick_search.input.update(cx, |input, cx| {
+                    input.set_text(request.value.unwrap_or_default(), cx)
+                }),
+                AxAction::Press => self.quick_search_press(&request.identifier, window, cx),
+            }
+            cx.notify();
+            return;
+        }
         // SET-4：settings secure 输入（Focus / SetValue 合法输入路径；发布
         // 方向只给掩码，见 settings_page_ax）。
         let settings_api_key_input =
@@ -295,6 +306,10 @@ impl AppView {
         cx: &mut Context<Self>,
     ) -> bool {
         match identifier {
+            "quick-search" => {
+                window.focus(&self.quick_search.trigger);
+                self.open_quick_search(window, cx);
+            }
             // P0-2：AX Press 与 mouse / Enter / Space 共用直接切换路径。
             "archive-undo" => {
                 if self.archive_write_enabled() {
@@ -742,6 +757,9 @@ impl AppView {
     }
 
     fn accessibility_tree(&self, window: &Window, cx: &App) -> AxTree {
+        if self.quick_search.open {
+            return self.quick_search_ax(window, cx);
+        }
         let viewport = window.viewport_size();
         let width = f32::from(viewport.width).max(1.0);
         let height = f32::from(viewport.height).max(1.0);
@@ -895,6 +913,16 @@ impl AppView {
         y += metrics::RAIL_TOP_ROW_HEIGHT;
 
         let mut sidebar = AxNode::new("task-rail", AxRole::Group, "Tasks", frame)
+            .child(
+                AxNode::new(
+                    "quick-search",
+                    AxRole::Button,
+                    t("quick.title"),
+                    self.shell_ax_rect("rail-search-layout"),
+                )
+                .focused(self.quick_search.trigger.is_focused(window))
+                .action(AxAction::Press),
+            )
             .child(add_task)
             .child(scope)
             .child(grouping)
