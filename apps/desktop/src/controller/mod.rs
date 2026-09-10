@@ -41,6 +41,11 @@ pub enum ControllerEvent {
         page: TimelinePage,
     },
     Event(AppEventEnvelope),
+    SessionArchiveFinished {
+        session_id: String,
+        archived: bool,
+        result: Result<String, String>,
+    },
     SessionCreated {
         session_id: String,
     },

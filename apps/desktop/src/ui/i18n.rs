@@ -593,6 +593,12 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "live.blocked" => ("Blocked", "受阻"),
         "taskrail.unassigned" => ("Unassigned", "未分组"),
         "taskrail.rename" => ("Rename", "重命名"),
+        "archive.done" => ("Archived · {}", "已归档 · {}"),
+        "archive.kept" => ("Content is kept. Undo is available until this window closes.", "正文仍保留；关闭此窗口前可撤销。"),
+        "archive.undo" => ("Undo archive", "撤销归档"),
+        "archive.pending" => ("Updating archive…", "正在更新归档状态…"),
+        "archive.failed" => ("Archive update could not be confirmed. Reconnect and retry.", "归档状态未能确认，请检查连接后重试。"),
+        "archive.restored" => ("Task restored", "任务已恢复"),
         "taskrail.archive" => ("Archive", "归档"),
         // ── Workspace chrome · Composer / Input area ──
         "composer.placeholder_running" => (

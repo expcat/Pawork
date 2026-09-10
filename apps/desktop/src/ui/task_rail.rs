@@ -352,6 +352,9 @@ impl AppView {
             );
         }
         content = content.child(self.task_rail_list(now_ms, can_create, window, cx));
+        if self.archive_notice_text().is_some() {
+            content = content.child(self.archive_notice_element(cx));
+        }
         // TR-12 honest-hidden：只保留「Local」本机身份行，不画头像 / 姓名 /
         // quota（无权威账户 capability）。SET-3 起右侧 gear 是真实 Settings
         // 入口（可见 / 键盘 / AX 同 gate），不是占位图标。

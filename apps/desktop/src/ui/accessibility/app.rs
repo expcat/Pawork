@@ -296,6 +296,11 @@ impl AppView {
     ) -> bool {
         match identifier {
             // P0-2：AX Press 与 mouse / Enter / Space 共用直接切换路径。
+            "archive-undo" => {
+                if self.archive_write_enabled() {
+                    self.undo_session_archive(cx)
+                }
+            }
             "task-rail-grouping" => self.toggle_grouping(window, cx),
             "project-scope" => {
                 window.focus(&self.scope_focus);
@@ -1008,6 +1013,9 @@ impl AppView {
             }
         }
         sidebar = sidebar.child(list);
+        if let Some(notice) = self.archive_notice_ax(window, frame) {
+            sidebar = sidebar.child(notice);
+        }
 
         // TR-12 页脚（SET-3）：右下角 Settings gear，与可见按钮同 gate
         //（render：content px(RAIL_INNER_PAD) + Panel p_2 → 右缘 inset 20，

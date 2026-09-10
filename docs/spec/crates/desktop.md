@@ -17,13 +17,13 @@
 
 ## 2. 模块与文件地图
 
-63 个 `.rs` 文件，全部在 `[[bin]] pawork-desktop` target 内（无 lib target、无 crate `tests/` 目录）。
+64 个 `.rs` 文件，全部在 `[[bin]] pawork-desktop` target 内（无 lib target、无 crate `tests/` 目录）。
 
 | 路径 | 行数 | 承载内容 |
 | --- | --- | --- |
 | `src/main.rs` | ~670 | 入口与手动 argv 解析（非 clap）；`PAWORK_UI_BARRIER_DIR` env 读取（空值视同未设置，None 全程零开销）；`run_app`（1440×1024 居中窗口 + `WINDOW_MIN_SIZE` 1080×720 最小尺寸——R2 Wave B 设计响应式底线，再窄击穿 Workspace ≥560 合同——+ 沉浸式 titlebar：TitlebarOptions appears_transparent，traffic lights 悬浮深色壳、内容视口贯通全窗，R2 Wave A；`install_keybindings`、聚焦 Composer、安装 macOS AX bridge）；`run_probe` / `run_probe_smoke` 无窗冒烟模式及其 `wait_for_*` 事件等待器；1 个测试 |
 | `src/controller/mod.rs` | ~2290 | `DesktopController`（connect / 事件泵 / 独立 15s 心跳任务）；`ControllerEvent`；Command·Query 构造与信封解包后 `serde_json::from_value` 到 protocol Data。`SetApprovalMode.mode` 仍为 String（`ApprovalModeWire::as_str()`）。18 个测试 |
-| `src/controller/session.rs` | ~560 | workspace_add / session create（ADR-054：`Option<workspace_id>`，None 直建无归属会话）·rename·archive·fork / run start·cancel / model_list / snapshot·timeline 分页；rename/archive 回执后重取 snapshot；open_session 失败发 `SessionOpenFailed{session_id}` |
+| `src/controller/session.rs` | ~560 | workspace_add / session create（ADR-054：`Option<workspace_id>`，None 直建无归属会话）·rename·archive·fork / run start·cancel / model_list / snapshot·timeline 分页；rename/archive 回执后重取 snapshot；UX-08 `archive_session(session_id, archived)` 复用反归档写口，`SessionArchiveFinished` 携带写后状态确认；open_session 失败发 `SessionOpenFailed{session_id}` |
 | `src/controller/settings.rs` | ~785 | Settings 查询与写（provider_auth_status、auth_*、general/permissions/terminal、mcp_test/remove、set_provider_use_proxy；ADR-055 增 set_model_enabled / set_provider_models_enabled / set_default_role_model（conversation 角色复用既有 default 键，不再经独立 set_default_model），回执 `cleared_roles` 投影为一次性提示文案）；断线不派出 |
 | `src/controller/terminal.rs` | ~210 | terminal_create / write / resize / close 与 ADR-045 回执 |
 | `src/platform.rs` | ~230 | `Platform`（tokio multi_thread Runtime，`handle()` / `block_on()`）；`default_socket_path` / `socket_path_for_instance` / `token_path_for_instance` / `token_path_for_socket` 路径发现；deny-list 断言；4 个测试 |
@@ -34,6 +34,7 @@
 | `src/projection/timeline.rs` | ~200 | Timeline 行分组与 Run footer/summary 文案 |
 | `src/projection/tests.rs` | ~3230 | 67 个投影测试（snapshot/replay、Run/Timeline/Terminal、Settings typed 解析 fail-closed） |
 | `src/ui/mod.rs` | ~4593 | `AppView` 宿主：Workspace Header、Timeline、Composer 与 Inspector 三栏装配；SET-3 增顶层路由 `AppRoute`（Settings 壳与工作台互斥渲染，工作台状态保存在字段、返回即恢复；进入拉取 provider 状态并断线 mark_stale）；SET-4 增 Settings 写操作宿主字段（secure 输入实体 / Replace 编辑器 / Remove 确认 / 动作焦点）、`AuthStarted` 消费、Succeeded 后再查 provider 状态、auth_start 失败回滚乐观态，离开 Settings 清空 secure 缓冲（含 undo 栈）；SET-5 增 `DefaultModelConfirmed` 消费（Composer 同步已确认默认）、页级 Refresh 入口（重查 provider_auth_status + model_list，失败保留旧列表并显示错误）、进入 Settings 即补拉模型目录（与 Refresh 对称、断线 no-op）与 ModelsLoaded 后「设为默认」按钮焦点回收；SET-6a 增 `SettingsPage`（Network 仅在 `general_settings` 查询成功后可选；内部 enum/wire 保留 General 兼容名）、进入/Refresh 同拉 `general_settings`、断线 `mark_stale`、`GeneralSettingsLoaded` / `ProxyUrlConfirmed` 以回执为权威生效值（迟到响应仍重标 stale）；SET-6b 增 `SettingsPage::Permissions`（查询成功后可选）、进入/Refresh/重连同拉 `permissions_settings`、断线 mark_stale、`PermissionsSettingsLoaded` / `ApprovalModeConfirmed` / `WorkspaceTrustConfirmed` 以回执为权威生效值（迟到响应仍重标 stale）；SET-6c 增 `SettingsPage::Tools`（`mcp_list` 成功后可选，可用性=resources.available）、进入/Refresh/重连同拉 `refresh_resources`、`McpServersReceipt` 以回执为权威生效值、Remove 两步确认 `settings_mcp_remove_confirm`（离开 Settings 清空）；SET-6d 增 `SettingsPage::Terminal`（`terminal_settings` 查询成功后可选）、进入/Refresh/重连同拉 `terminal_settings`（重连同批预热新建终端初始尺寸查询缓存）、断线 mark_stale、`TerminalSettingsLoaded` / `TerminalSettingsConfirmed` 以回执为权威生效值并回填输入框（迟到响应仍重标 stale）、`TerminalCreated` 回执后投影初始尺寸与当次 `terminal_resize` 改用生效 columns/rows（未查询到回落 80×24）；SET-6e 增 `SettingsPage::Appearance`（本地外观页常在，导航焦点 + 三档字号 HashMap 焦点）；SET-6f 增 `SettingsPage::Advanced`、握手摘要与导航焦点；Connecting/断线清空摘要，连接成功刷新，避免旧 Host 信息冒充当前状态；Scope 菜单的 `Add project…` 通过 GPUI 系统目录选择器调用 controller `open_workspace`，成功后切换 scope、同步 terminal 并显示项目名；其余承载 Activity、按 workspace 隔离的 terminal 草稿、尺寸草稿/键盘 stepper、终端生命周期、焦点、字号、五种浮层菜单与 barrier settle；P0-2 移除 `MenuKind::Grouping` 分派；OPT-2a 移除 `MenuKind::WorkspaceConfirm`（ADR-054）；P0-3 让 Header 以 subtle divider 收口，并在无 Task 时隐藏重复 Header 新建动作；OPT-4b（F6）：Inspector 初始默认折叠（显式动作仍可展开），折叠态 Header 最右新增 inspector-expand 重开按钮（40×37 槽、font::ICON 20px 字形，与 Activity 触发器并存）；OPT-4a：header-new-task / inspector-toggle 字形提至 20px；17 个测试 |
+| `src/ui/archive.rs` | ~271 | UX-08 窗口内归档反馈与撤销队列、在途 gate、失败保留恢复入口；读取实际布局发布 AX；1 个主路径回归 |
 | `src/ui/recovery.rs` | ~380 | UX-04 连接 / 终端原因与恢复入口、创建 gate、技术详情、按实际布局裁剪的 AX；恢复动作不修改 Host 权限 |
 | `src/ui/shell_layout.rs` | ~295 | R2 Wave A 壳层几何合同：`resolve`（唯一计算入口，render 与 AX 树共享）——宽窗 rail=288 / Inspector 打开时 440（OPT-4b 起 AppView 初始偏好为折叠，resolve 合同不变），窗口宽 ≤1279 时 rail=240 且 Inspector 强制折叠（Workspace ≥560）；R7 Wave C 在 150% 字号下改用 320px rail，宽度不足 1320 时保持 Inspector 折叠，1080 窗口保留 760px Workspace；固定侧栏 `flex_none`，防长文本 min-content 挤窄 Inspector；rail 顶部 36px traffic-light 安全区；4 个 GPUI 布局测试 |
 | `src/ui/accessibility.rs` | ~410 | 平台无关 `AxTree` / `AxNode` / role / action / request / rect 模型；声明 Settings AX 子模块；3 个测试 |
@@ -238,6 +239,13 @@ OPT-2 审查修复（2026-09-06）：`session_create` 仅从成功 Data 回执�
 2. 按钮点击、AX press 或 Cmd+1 / Cmd+2 / Cmd+3 都回到同一 `on_approve` 并再次复核 `can_approve` → `tool_approve{ run_id, tool_call_id, decision }`，decision ∈ `approve_once` / `approve_for_run` / `deny`；发出后关闭旧菜单并聚焦 Composer，避免审批卡卸载后焦点悬挂。
 3. 清卡路径分 live / history：live `ToolCompleted` 按 `run_id + tool_call_id` 精确清除，live 或历史 run 终态按 `run_id` 清除；分页重放的历史 `ToolCompleted` / `ApprovalResponded` 不改写 pending（P4 片 2F 修 D3：同 run 可串行多个工具，更早工具的历史完成/响应不能抹掉 snapshot 中更晚工具的当前审批；历史 `ApprovalResponded` 不含 `tool_call_id`，无法安全定位，恢复只认 snapshot `pending_tool_approvals`）。无任何默认放行：不操作则永远 pending，断线时按钮禁用。
 
+### 4.3.1 UX-08 归档撤销（2026-09-10）
+
+- 侧栏底部显示归档结果与「撤销归档」，明确正文保留、撤销记录仅在当前窗口存续。连续归档按最后一次优先逐项撤销；不查询历史归档、不增加永久删除入口。
+- Controller 复用 `session_archive{session_id, archived:false}`。仅 `Data` 的 session_id / archived 与请求一致才确认成功；列表刷新失败不推翻已经完成的写入。内部 `SessionArchiveFinished` 不改变 wire。未确认请求也保留恢复 ID，防止写入成功但回执丢失后无从撤销。
+- 在途与断线禁止再派发；失败就地提示并保留恢复入口。成功恢复后，在已刷新列表中打开同一个任务，清除可能隐藏它的项目筛选，恢复正文、原项目归属与窗口内独立草稿；不创建副本。按钮支持鼠标、Tab / Enter，AX 使用实际布局与同一 gate。
+- `archive_undo_keeps_identity_drafts_and_retry` 覆盖身份 / 项目 / 草稿、重复调用、失败保留及断线重试；Desktop 225 项检查与构建通过。隔离数据库副本的真窗口归档 / 连续撤销、键盘、宽窄窗三档字号通过；用户验收待进行。完整边界与证据见 [路线图 UX-08](../../ROADMAP.md#ux-08-归档的可恢复性)。
+
 ### 4.4 菜单开合与键盘激活语义
 
 - 四种浮层（`MenuKind`：Scope / Model / Entry(event_id) / Activity；WorkspaceConfirm 已随 OPT-2a 移除）共用单一 `Option<MenuKind>` 状态位：开新即关旧、至多一个打开；Grouping 不再是 MenuKind。
@@ -270,7 +278,7 @@ OPT-2 审查修复（2026-09-06）：`session_create` 仅从成功 Data 回执�
 | 添加项目 | `workspace_add` → 重取 snapshot | `Snapshot` + `WorkspaceOpened{id,name}` |
 | 打开会话 | `session_get`（分页查询） | `TimelineLoaded`（逐页） |
 | 新建任务 | `session_create`（workspace_id 可缺省）→ 重取 snapshot | `Snapshot` + `SessionCreated` |
-| 会话改名 / 归档 | `session_rename` / `session_archive` → 重取 snapshot；Host 写后另广播 `SessionMetaChanged` 再刷新 | `Snapshot` |
+| 会话改名 / 归档 / 撤销归档 | `session_rename` / `session_archive` → 重取 snapshot；Host 写后另广播 `SessionMetaChanged` 再刷新 | `Snapshot` / `SessionArchiveFinished` |
 | 发送消息 | `run_start` | `MessageSent{run_id}` |
 | 取消 run | `run_cancel` | 经事件流 `RunChanged` 收敛 |
 | 审批决策 | `tool_approve` | 经事件流收敛 |

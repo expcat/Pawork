@@ -262,65 +262,66 @@ impl DesktopController {
         });
     }
 
-    /// ADR-054 D3：归档会话。归档后 snapshot 隐藏该 session（事件与投影
-    /// 仍在 Host 侧保留，SessionOpen 仍可读）；Desktop 只暴露归档入口。
-    pub fn archive_session(&self, session_id: String) {
+    /// UX-08：复用既有归档 / 反归档写口，只有写后 Data 才确认成功。
+    pub fn archive_session(&self, session_id: String, archived: bool) {
         let Some(client) = self.current_client() else {
-            self.emit_reliable(ControllerEvent::OperationFailed {
-                action: "archive session",
-                reason: "not connected".into(),
+            self.emit_reliable(ControllerEvent::SessionArchiveFinished {
+                session_id,
+                archived,
+                result: Err("not connected".into()),
             });
             return;
         };
         let events = self.event_sender();
         self.runtime.spawn(async move {
-            let command = session_archive_command(&session_id, true);
-            match client
-                .command(command, command_source(), actor_identity())
+            let result = match client
+                .command(
+                    session_archive_command(&session_id, archived),
+                    command_source(),
+                    actor_identity(),
+                )
                 .await
             {
-                Ok(response) => match &response.response {
-                    AppResponse::Error(_) => {
-                        let _ = events
-                            .send(ControllerEvent::OperationFailed {
-                                action: "archive session",
-                                reason: "server returned an error response".into(),
-                            })
-                            .await;
+                Ok(response) => match response.response {
+                    AppResponse::Data(data)
+                        if data.get("archived").and_then(serde_json::Value::as_bool)
+                            == Some(archived)
+                            && data.get("session_id").and_then(serde_json::Value::as_str)
+                                == Some(&session_id) =>
+                    {
+                        Ok(data
+                            .get("title")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or(&session_id)
+                            .to_string())
                     }
-                    AppResponse::Accepted { .. } | AppResponse::Data(_) => {
-                        match client.snapshot().await {
-                            Ok(snapshot) => {
-                                let _ = events.send(ControllerEvent::Snapshot(snapshot)).await;
-                            }
-                            Err(error) => {
-                                let _ = events
-                                    .send(ControllerEvent::OperationFailed {
-                                        action: "archive session",
-                                        reason: error.to_string(),
-                                    })
-                                    .await;
-                            }
-                        }
-                    }
-                    other => {
-                        let _ = events
-                            .send(ControllerEvent::OperationFailed {
-                                action: "archive session",
-                                reason: format!("unexpected response: {other:?}"),
-                            })
-                            .await;
-                    }
+                    other => Err(format!("unexpected response: {other:?}")),
                 },
-                Err(error) => {
-                    let _ = events
-                        .send(ControllerEvent::OperationFailed {
-                            action: "archive session",
-                            reason: error.to_string(),
-                        })
-                        .await;
+                Err(error) => Err(error.to_string()),
+            };
+            // 刷新失败不把已完成的写入误报成失败，撤销机会仍必须保留。
+            if result.is_ok() {
+                match client.snapshot().await {
+                    Ok(snapshot) => {
+                        let _ = events.send(ControllerEvent::Snapshot(snapshot)).await;
+                    }
+                    Err(error) => {
+                        let _ = events
+                            .send(ControllerEvent::OperationFailed {
+                                action: "refresh sessions",
+                                reason: error.to_string(),
+                            })
+                            .await;
+                    }
                 }
             }
+            let _ = events
+                .send(ControllerEvent::SessionArchiveFinished {
+                    session_id,
+                    archived,
+                    result,
+                })
+                .await;
         });
     }
 

@@ -5,6 +5,7 @@
 
 mod accessibility;
 mod approval_card;
+mod archive;
 mod barriers;
 mod changes;
 mod components;
@@ -567,6 +568,7 @@ pub struct AppView {
     /// ADR-054 D2：TaskRail 行内改名编辑器（同一时刻至多一个；None =
     /// 无行处于编辑态）。输入框实体进入编辑态时懒建，退出即随状态丢弃。
     session_rename: Option<SessionRenameState>,
+    archive: archive::ArchiveState,
     /// rail 列表滚动句柄：grouping / scope 切换后滚动 active task 到可见。
     rail_scroll: ScrollHandle,
     /// 下一次 render 时把 active task 滚动到可见（design §3.6）。
@@ -876,6 +878,7 @@ impl AppView {
             rail_row_focus: BTreeMap::new(),
             rail_hovered_session: None,
             session_rename: None,
+            archive: archive::ArchiveState::default(),
             rail_scroll: ScrollHandle::new(),
             rail_scroll_to_active: false,
             pending_scope_focus: false,
@@ -1561,6 +1564,13 @@ impl AppView {
                 {
                     self.refresh_provider_status();
                 }
+            }
+            ControllerEvent::SessionArchiveFinished {
+                session_id,
+                archived,
+                result,
+            } => {
+                self.finish_session_archive(session_id, archived, result, cx);
             }
             ControllerEvent::SessionCreated { session_id } => {
                 self.open_session(session_id, cx);
@@ -2404,21 +2414,6 @@ impl AppView {
         };
         let session_id = rename.session_id.clone();
         self.end_session_rename(&session_id, window, cx);
-    }
-
-    /// ADR-054 D3：归档当前会话行。Host 写盘后经 SessionMetaChanged /
-    /// 回执重取的 snapshot 隐藏该行；归档不取消进行中的 Run、不断连。
-    fn on_session_archive(&mut self, session_id: String, cx: &mut Context<Self>) {
-        self.close_open_menu(cx);
-        if self
-            .session_rename
-            .as_ref()
-            .is_some_and(|rename| rename.session_id == session_id)
-        {
-            self.session_rename = None;
-        }
-        self.controller.archive_session(session_id);
-        cx.notify();
     }
 
     /// 提取 ClickEvent 的按下位置（键盘触发无位置，永不判为同一次物理点击）。
