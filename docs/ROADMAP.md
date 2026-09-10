@@ -1,6 +1,6 @@
 # Pawork 活动路线图：GUI 第二阶段
 
-> 更新：2026-09-10；规划基线：`main / 7a416dd6`。本阶段以 [PI-Desktop Screens](https://pi-docs.aiuo.net/guide/screenshots) 为交互与视觉参照，优化已有 GPUI 工作台。**本次完成文档重做，GUI2 实现尚未开始**；生产能力以源码为准，下一阶段规格见 [GUI 设计](gui-design.md)。
+> 更新：2026-09-10；规划基线：`main / 7a416dd6`。本阶段以 [PI-Desktop Screens](https://pi-docs.aiuo.net/guide/screenshots) 为交互与视觉参照，优化已有 GPUI 工作台。**GUI2-01 已实现并完成定向验证，等待用户验收；其余 GUI2 项尚未开始**；生产能力以源码为准，下一阶段规格见 [GUI 设计](gui-design.md)。
 
 上一条 UX-01～UX-09 已有实现，详细证据迁至 [历史记录](review/roadmap-ux-2026-09-10.md)，未完成验收继续列于 §3。迁存记录不代表验收通过或任务归档。更早 UI-1～UI-6 见 [模块重设计记录](review/roadmap-ui-2026-09-09.md)。
 
@@ -14,7 +14,7 @@
 
 | 任务 | 交付结果 | 依赖 | 实现 | 自动检查 | 代理真窗口 | 用户验收 / 归档 |
 | --- | --- | --- | --- | --- | --- | --- |
-| GUI2-01 | 精简工作台壳、首页与侧栏 | 无 | 未开始 | 未运行 | 未进行 | 待验 / 未归档 |
+| GUI2-01 | 精简工作台壳、首页与侧栏 | 无 | 已实现 | 227/227 通过 | 本项路径通过，见下方限制 | 待验 / 未归档 |
 | GUI2-02 | 对话阅读层级与 Composer 整理 | 01 | 未开始 | 未运行 | 未进行 | 待验 / 未归档 |
 | GUI2-03 | 任务与操作快捷查找 | 01 | 未开始 | 未运行 | 未进行 | 待验 / 未归档 |
 | GUI2-04 | 当前对话查找与回合定位 | 02 | 未开始 | 未运行 | 未进行 | 待验 / 未归档 |
@@ -31,6 +31,13 @@
 - **写入集**：`apps/desktop/src/ui/{mod,task_rail,timeline,shell_layout,theme,i18n}.rs` 及对应 AX；按实际改动更新 [Desktop 包级 Spec](spec/crates/desktop.md)。
 - **验收**：有任务、无任务、空项目、无项目、断线五种状态均给出真实下一步；筛选不改归属，取消目录选择不创建记录；改名 / 归档可达且能撤销。1440×1024 与 1080×720、三档字号下无控件遮挡，traffic lights 安全区保留。
 - **最小切片**：先壳层与侧栏，再首页；各切片定向验证后即可交付。
+
+**本轮进展（2026-09-10，`main / e4d0b752` 工作区候选）**：侧栏收为「任务 / 新建」与「筛选 / 分组」两行，连接状态移到底部；Header 最小 64px、内容可撑高；无任务与空任务共享首页标题，空任务直接引导底部输入，加载历史或运行时不显示欢迎态。键盘前缀调整为新建 → 筛选 → 分组；相关控件与首页的 AX 使用实际布局。搜索按钮与真实查找能力一并留在 GUI2-03。Desktop 定向测试 227/227 通过（含新增首页 / 宽窄字号布局回归），Desktop 候选构建通过。用户验收与归档未完成。
+
+- **候选与命令**：`main / e4d0b752` 加本轮工作区；`env -u CARGO_MAKEFLAGS cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`、同参数 `cargo build`。独立 `Pawork-GUI2-01.app` / `gui2-01`，二进制 SHA-256 `5e6117af5303ec4d0b905e03243ef4dc288980dd2344e1be620fb55fdbdbf2fa`。宏动态库加载异常缓慢，首次编译中止后重跑；最终命令均 exit 0。模型审查工具因路由错误未启动，主代理完成差异审查。
+- **代理真窗口**：1440×1024 初始窗口与 1080×720 最小窗口，100% / 125% / 150% 下壳层、侧栏与首页无控件遮挡；36px traffic lights 安全区保留。新建 → 空任务引导、改名、归档 → 撤销恢复相同任务及草稿、空项目筛选不改变无项目归属、取消目录选择、项目内新建均已操作。键盘确认新建 → 筛选 → 分组顺序及 Esc 回焦；停止隔离 Host 后正文 / 草稿保留，窄窗 100% / 150% 重试入口可达，重启 Host 并点击重试后历史 / 草稿恢复。
+- **源码外事实**：Host SQLite 只读核对两个会话：`ses-1789027191082-1` 改名后恢复、`archived=0` / `workspace_id=null`；`ses-1789027302509-2` 绑定 `ws-default`。目录取消后仍仅一个原有 workspace。截图、AX、会话导出及只读存储摘要位于 `/tmp/pawork-gui2-01-evidence/`；测试 / 构建 / Host 日志为 `/tmp/pawork-gui2-01-{tests,build,host}.log`，均未检入仓库。
+- **限制**：指定 `opencode-go / glm-5.3-flash` 的真实请求已发送，终态为 **HTTP 401**，界面与持久会话均显示失败。只证明非空任务与错误呈现 / 重连恢复，不作为成功 Provider 对话、工具或 usage 证据；GUI2-07 与 §3 的这些缺口保持待验。
 
 ### GUI2-02 对话阅读层级与 Composer
 
@@ -103,7 +110,7 @@ UX-09 的 [9 月 10 日补验](review/roadmap-ux-2026-09-10.md#ux-09-真窗口�
 
 ## 4. 验证与交付规则
 
-文档变更只检查相对链接、锚点、状态与 diff。本次不运行 Cargo。实现任务先跑相关已有定向检查；Desktop 为 bin-only，命令为：
+文档变更只检查相对链接、锚点、状态与 diff。实现任务先跑相关已有定向检查；Desktop 为 bin-only，命令为：
 
 ```bash
 cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders
@@ -113,8 +120,8 @@ cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders
 
 真窗口按受影响路径检查 1440×1024、1080×720 与 100% / 125% / 150%；涉及 Inspector 时加检查阈值附近开合。每项记录候选、命令、事实证据和阻塞，截图存任务证据目录，不检入仓库。实际捕捉与运行结果不能由历史日志替代。
 
-Validated: 本次参考页原图与定向源码核对、文档相对链接 / 锚点 / 状态一致性检查、git diff --check。
+Validated: GUI2-01 Desktop 定向测试 227/227、Desktop 构建、上述真窗口路径、Host 存储事实、文档相对链接 / 状态检查及 git diff --check。
 
-Targeted regressions: none（本次只重写规划与设计文档；未改生产实现）。
+Targeted regressions: 首页无任务 / 空任务 / 分页 / 运行判定，宽窄三字号与 AX，侧栏焦点顺序、Activity 锚点；既有 Desktop 回归全部通过。
 
 Full workspace gate: NOT RUN（当前未设置全量门禁）。

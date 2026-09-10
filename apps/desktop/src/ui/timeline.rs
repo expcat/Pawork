@@ -39,7 +39,7 @@ use super::timeline_entry::{
     default_text_line_height, display_time, estimated_wrapped_lines, message_block_line_counts,
     tool_row_height, RunSummaryTerminal, RunSummaryView, ToolRowView,
 };
-use super::{now_unix_ms, workspace_empty_hint, workspace_empty_title, AppView, MenuKind};
+use super::{now_unix_ms, workspace_empty_title, AppView, MenuKind};
 
 /// list() 视口外上下方向的预渲染量（px，非视觉尺寸；仅影响滚动顺滑度）。
 pub(super) const TIMELINE_OVERDRAW: f32 = 200.0;
@@ -393,7 +393,7 @@ impl AppView {
     pub(super) fn timeline_area(&mut self, cx: &mut Context<Self>) -> gpui::Div {
         let rows = self.projection.timeline_rows();
         sync_list(self, rows.len());
-        let empty_hint_visible = self.projection.workspace_empty_hint_visible();
+        let empty_hint_visible = self.welcome_visible();
         let fork_available = matches!(
             self.projection.connection,
             ConnectionState::Connected { .. }
@@ -506,14 +506,26 @@ impl AppView {
                 .flex_col()
                 .items_center()
                 .justify_center()
+                .px(px(metrics::TIMELINE_CONTENT_INSET))
                 .gap(px(metrics::SPACE_2))
-                .child(Label::new(workspace_empty_title()).size(font::TITLE))
                 .child(
-                    Label::new(workspace_empty_hint())
-                        .size(font::BODY)
-                        .color(dark().text.secondary),
+                    self.shell_element("workspace-empty-title")
+                        .child(Label::new(workspace_empty_title()).size(font::TITLE)),
                 )
-                .child(div().mt(px(metrics::SPACE_2)).child(new_task))
+                .child(
+                    self.shell_element("workspace-empty-hint").child(
+                        Label::new(self.welcome_hint())
+                            .size(font::BODY)
+                            .color(dark().text.secondary),
+                    ),
+                )
+                .when(self.projection.active_session_id.is_none(), |area| {
+                    area.child(
+                        self.shell_element("workspace-empty-action")
+                            .mt(px(metrics::SPACE_2))
+                            .child(new_task),
+                    )
+                })
                 .into_any_element()
         } else {
             div()

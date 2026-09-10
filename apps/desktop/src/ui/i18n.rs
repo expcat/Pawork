@@ -749,6 +749,8 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "timeline.fork_no_session" => ("Open a task to fork this turn.", "打开任务后可分叉此回合。"),
         "timeline.fork" => ("Fork", "分叉"),
         "timeline.review_changes" => ("Review changes", "查看变更"),
+        "rail.tasks" => ("Tasks", "任务"),
+        "timeline.empty_task_hint" => ("Write a message below to get started.", "在下方输入消息，开始这个任务。"),
         "timeline.empty_title" => ("Start a task", "开始一个任务"),
         "timeline.empty_hint" => (
             "Choose a task from the sidebar or create a new one.",

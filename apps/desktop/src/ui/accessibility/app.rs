@@ -39,7 +39,7 @@ use crate::ui::{
     activity_header_visibility, rail_project_occurrence_key, rail_session_archive_focus_key,
     rail_session_focus_key, rail_session_rename_focus_key, terminal_can_operate,
     terminal_can_reopen, terminal_close_label, terminal_known_ended, timeline,
-    workspace_empty_hint, workspace_empty_title, AppRoute, AppView, MenuKind, SettingsPage,
+    workspace_empty_title, AppRoute, AppView, MenuKind, SettingsPage,
 };
 
 pub(crate) const PAD: f32 = 8.0;
@@ -55,7 +55,7 @@ struct ActivityPopoverAxGeometry {
 
 fn header_action_ax_rect(frame: AxRect) -> AxRect {
     let content_top = frame.y + metrics::HEADER_SAFE_STRIP;
-    let content_height = (frame.height - metrics::HEADER_SAFE_STRIP).max(0.0);
+    let content_height = (frame.height - 2.0 * metrics::HEADER_SAFE_STRIP).max(0.0);
     AxRect::new(
         (frame.x + frame.width - metrics::HEADER_INSET_RIGHT - metrics::HEADER_ACTION_WIDTH)
             .max(frame.x),
@@ -835,74 +835,57 @@ impl AppView {
         tree
     }
 
+    fn shell_ax_rect(&self, id: &'static str) -> AxRect {
+        let b = self.shell_layouts[id].bounds();
+        AxRect::new(
+            f32::from(b.origin.x),
+            f32::from(b.origin.y),
+            f32::from(b.size.width),
+            f32::from(b.size.height),
+        )
+    }
+
     fn sidebar_ax(&self, window: &Window, cx: &App, frame: AxRect) -> AxNode {
         let can_create = self.can_create_task();
         // 与可见 TaskRail 对齐（R3 Wave A，几何单一来源 theme::metrics）：
         // Panel p_2(8) + 36px traffic-light 安全区 + gap_2(8) 后进入标题行，
-        // 三行节奏 32 / 20；AX 不得把首控件投影到按钮带。
+        // 两行导航；控件矩形读取实际布局，不投影到按钮带。
         let rem_px = f32::from(window.rem_size());
         let inset = 0.5 * rem_px + metrics::RAIL_INNER_PAD;
-        let mut y = rem_px + shell_layout::TRAFFIC_LIGHT_SAFE_HEIGHT;
+        let title_y = rem_px + shell_layout::TRAFFIC_LIGHT_SAFE_HEIGHT;
+        let mut y = title_y + metrics::RAIL_TITLE_ROW_HEIGHT + metrics::RAIL_TITLE_SCOPE_GAP;
         let grouping = AxNode::new(
             "task-rail-grouping",
             AxRole::Button,
             self.grouping.toggle_action_label(),
-            AxRect::new(
-                (frame.width - inset - metrics::RAIL_ICON_BUTTON_SIZE).max(inset),
-                // 标题行高 36、按钮同取 36（OPT-D）：render items_center → 顶 +0。
-                y + (metrics::RAIL_TITLE_ROW_HEIGHT - metrics::RAIL_ICON_BUTTON_SIZE) / 2.0,
-                metrics::RAIL_ICON_BUTTON_SIZE,
-                metrics::RAIL_ICON_BUTTON_SIZE,
-            ),
+            self.shell_ax_rect("rail-grouping-layout"),
         )
         .value(self.grouping.view_label())
         .focused(self.open_menu.is_none() && self.grouping_focus.is_focused(window))
         .action(AxAction::Press);
-        y += metrics::RAIL_TITLE_ROW_HEIGHT + metrics::RAIL_TITLE_SCOPE_GAP;
         let scope_label = self.scope_label();
         let scope = AxNode::new(
             "project-scope",
             AxRole::Button,
             t("rail.filter_label").replace("{}", &scope_label),
-            AxRect::new(
-                inset,
-                y,
-                (frame.width - inset * 2.0).max(0.0),
-                metrics::RAIL_TOP_ROW_HEIGHT,
-            ),
+            self.shell_ax_rect("rail-scope-layout"),
         )
         .value(scope_label)
         // R7 Wave A：scope 菜单打开时 AX 焦点移交高亮项（同 grouping）。
         .focused(self.open_menu.is_none() && self.scope_focus.is_focused(window))
         .action(AxAction::Press);
-        y += metrics::RAIL_TOP_ROW_HEIGHT + metrics::RAIL_SCOPE_CONNECTION_GAP;
         let connection = AxNode::new(
             "connection-status",
             AxRole::StaticText,
             "Connection",
-            AxRect::new(
-                inset,
-                y,
-                (frame.width
-                    - inset * 2.0
-                    - metrics::RAIL_ICON_BUTTON_SIZE
-                    - metrics::RAIL_CONNECTION_ADD_GAP)
-                    .max(0.0),
-                metrics::RAIL_TOP_ROW_HEIGHT,
-            ),
+            self.shell_ax_rect("connection-status"),
         )
-        // 与 render 同源（ADR-042）：连接行可见文案带 Local 前缀与 resume 相位。
         .value(self.connection_status_label());
         let add_task = AxNode::new(
             "add-task",
             AxRole::Button,
             t("timeline.new_task"),
-            AxRect::new(
-                (frame.width - inset - metrics::RAIL_ICON_BUTTON_SIZE).max(inset),
-                y + (metrics::RAIL_TOP_ROW_HEIGHT - metrics::RAIL_ICON_BUTTON_SIZE) / 2.0,
-                metrics::RAIL_ICON_BUTTON_SIZE,
-                metrics::RAIL_ICON_BUTTON_SIZE,
-            ),
+            self.shell_ax_rect("rail-add-layout"),
         )
         .description(self.add_task_disabled_reason())
         .enabled(can_create)
@@ -911,10 +894,10 @@ impl AppView {
         y += metrics::RAIL_TOP_ROW_HEIGHT;
 
         let mut sidebar = AxNode::new("task-rail", AxRole::Group, "Tasks", frame)
-            .child(grouping)
+            .child(add_task)
             .child(scope)
-            .child(connection)
-            .child(add_task);
+            .child(grouping)
+            .child(connection);
         // 与可见路径同源：Reconnect 仅 Disconnected / ConnectFailed 发布
         // （projection.show_reconnect()，同 task_rail.rs 视觉谓词）。
         if self.projection.show_reconnect() {
@@ -1025,12 +1008,7 @@ impl AppView {
                 "open-settings",
                 AxRole::Button,
                 t("rail.tooltip_settings"),
-                AxRect::new(
-                    (frame.width - inset - metrics::RAIL_ICON_BUTTON_SIZE).max(inset),
-                    (frame.height - PAD - metrics::RAIL_ICON_BUTTON_SIZE).max(list_top),
-                    metrics::RAIL_ICON_BUTTON_SIZE,
-                    metrics::RAIL_ICON_BUTTON_SIZE,
-                ),
+                self.shell_ax_rect("rail-settings-layout"),
             )
             .focused(self.open_menu.is_none() && self.settings_focus.is_focused(window))
             .action(AxAction::Press),
@@ -1336,7 +1314,11 @@ impl AppView {
         let composer_height = self
             .composer_outer_height(input_height, window)
             .min(frame.height);
-        let header_height = metrics::HEADER_HEIGHT.min(frame.height);
+        let header_height = self
+            .shell_ax_rect("workspace-header")
+            .height
+            .max(metrics::HEADER_HEIGHT)
+            .min(frame.height);
         let timeline_height = (frame.height - composer_height - header_height).max(0.0);
         AxNode::new("workspace", AxRole::Group, "Workspace", frame)
             .child(self.header_ax(
@@ -1370,7 +1352,7 @@ impl AppView {
     /// 诚实隐藏；几何共享 HEADER_* 常量，文本宽度为近似值）。
     fn header_ax(&self, window: &Window, frame: AxRect, inspector_open: bool) -> AxNode {
         let content_top = frame.y + metrics::HEADER_SAFE_STRIP;
-        let content_height = (frame.height - metrics::HEADER_SAFE_STRIP).max(0.0);
+        let content_height = (frame.height - 2.0 * metrics::HEADER_SAFE_STRIP).max(0.0);
         let row_height = metrics::HEADER_STATUS_DOT_SIZE + 14.0;
         let row_y = content_top + ((content_height - row_height) / 2.0).max(0.0);
         let mut header = AxNode::new("workspace-header", AxRole::Group, "Workspace header", frame);
@@ -1494,7 +1476,7 @@ impl AppView {
     fn timeline_ax(&self, window: &Window, frame: AxRect) -> AxNode {
         let rows = self.projection.timeline_rows();
         let total = rows.len();
-        let empty_hint_visible = self.projection.workspace_empty_hint_visible();
+        let empty_hint_visible = self.welcome_visible();
         // UI-3：与 timeline.rs render 同源——列在 Workspace 中居中，
         // 两侧至少留 CONTENT_INSET；行高 / 间距按内容推导（gpui list 按像素
         // 布局，此为同源公式）。滚动位置沿用已验证安全的 logical_scroll_top()
@@ -1613,21 +1595,12 @@ impl AppView {
             list = list.child(self.recovery_ax(window, frame, false));
         }
         if empty_hint_visible && !offline {
-            // P0-3：与 timeline_area 同源的 title / description / Primary
-            // action。Header 同态不发布重复 New task 节点，保证 identifier
-            // 唯一；disabled 时不发布 Press action。
-            let group_height = 112.0_f32.min(frame.height);
-            let group_y = frame.y + ((frame.height - group_height) / 2.0).max(0.0);
-            let content_x = frame.x + metrics::TIMELINE_CONTENT_INSET;
-            let content_width = (frame.width - metrics::TIMELINE_CONTENT_INSET * 2.0).max(0.0);
-            let button_width = 112.0_f32.min(content_width);
-            let button_x = content_x + ((content_width - button_width) / 2.0).max(0.0);
             let can_create = self.can_create_task();
             let mut new_task = AxNode::new(
                 "header-new-task",
                 AxRole::Button,
                 t("timeline.new_task"),
-                AxRect::new(button_x, group_y + 76.0, button_width, 36.0),
+                self.shell_ax_rect("workspace-empty-action"),
             )
             .description(self.add_task_disabled_reason())
             .enabled(can_create)
@@ -1640,15 +1613,17 @@ impl AppView {
                     "workspace-empty-title",
                     AxRole::StaticText,
                     workspace_empty_title(),
-                    AxRect::new(content_x, group_y, content_width, 28.0),
+                    self.shell_ax_rect("workspace-empty-title"),
                 ))
                 .child(AxNode::new(
                     "workspace-empty-hint",
                     AxRole::StaticText,
-                    workspace_empty_hint(),
-                    AxRect::new(content_x, group_y + 36.0, content_width, 24.0),
-                ))
-                .child(new_task);
+                    self.welcome_hint(),
+                    self.shell_ax_rect("workspace-empty-hint"),
+                ));
+            if self.projection.active_session_id.is_none() {
+                list = list.child(new_task);
+            }
         }
         for &(ix, top, height) in visible_items.iter().filter(|(ix, _, _)| *ix < total) {
             let rect = AxRect::new(column_x, top, column_width, height);
@@ -3712,17 +3687,17 @@ mod tests {
     fn activity_header_ax_geometry_matches_render_anchor_contract() {
         let header = AxRect::new(240.0, 0.0, 840.0, metrics::HEADER_HEIGHT);
         let trigger = header_action_ax_rect(header);
-        assert_eq!(trigger, AxRect::new(1016.0, 33.5, 40.0, 37.0));
+        assert_eq!(trigger, AxRect::new(1016.0, 13.5, 40.0, 37.0));
         // OPT-4b：折叠态 Activity 左移一格（40 槽 + 4 间距），重开按钮占最右。
         let toggle = header_activity_ax_rect(header);
-        assert_eq!(toggle, AxRect::new(972.0, 33.5, 40.0, 37.0));
+        assert_eq!(toggle, AxRect::new(972.0, 13.5, 40.0, 37.0));
 
         let popover = activity_popover_ax_geometry(header, trigger, 16.0);
-        assert_eq!(popover.frame, AxRect::new(718.0, 78.5, 338.0, 162.0));
-        assert_eq!(popover.heading, AxRect::new(752.0, 145.5, 270.0, 18.0));
+        assert_eq!(popover.frame, AxRect::new(718.0, 58.5, 338.0, 162.0));
+        assert_eq!(popover.heading, AxRect::new(752.0, 125.5, 270.0, 18.0));
         assert_eq!(
             popover.open_changes,
-            AxRect::new(752.0, 167.5, 270.0, metrics::MENU_ROW_HEIGHT)
+            AxRect::new(752.0, 147.5, 270.0, metrics::MENU_ROW_HEIGHT)
         );
         let large = activity_popover_ax_geometry(header, trigger, 24.0);
         assert_eq!(large.frame.height, 234.0);
@@ -4984,6 +4959,93 @@ mod tests {
                 action: AxAction::Press,
                 value: None,
             }));
+        });
+    }
+
+    /// GUI2-01：两种首页共用布局，创建仅由显式动作触发；三档字号不遮挡导航。
+    #[gpui::test]
+    fn welcome_and_rail_follow_actual_layout(cx: &mut gpui::TestAppContext) {
+        use crate::ui::theme::font::TextScale;
+        let platform = std::sync::Arc::new(crate::platform::Platform::new());
+        let socket = std::env::temp_dir().join("gui2-01-welcome.sock");
+        let (view, cx) = cx.add_window_view(|_, cx| AppView::new(platform, socket, None, cx));
+        cx.run_until_parked();
+        for (width, height) in [(1440.0, 1024.0), (1080.0, 720.0)] {
+            for scale in [
+                TextScale::Percent100,
+                TextScale::Percent125,
+                TextScale::Percent150,
+            ] {
+                for active in [false, true] {
+                    cx.simulate_resize(gpui::size(gpui::px(width), gpui::px(height)));
+                    cx.update(|window, cx| {
+                        view.update(cx, |view, cx| {
+                            view.projection.set_connection(ConnectionState::Connected {
+                                instance_id: "test".into(),
+                            });
+                            view.projection.active_session_id = active.then(|| "empty".into());
+                            view.text_scale = scale;
+                            window.set_rem_size(gpui::px(scale.rem_pixels()));
+                            cx.notify();
+                        })
+                    });
+                    cx.refresh().unwrap();
+                    cx.run_until_parked();
+                    cx.update(|window, cx| {
+                        let view = view.read(cx);
+                        let tree = view.accessibility_tree(window, cx);
+                        assert!(tree.find("workspace-empty-title").is_some());
+                        assert_eq!(
+                            tree.find("workspace-empty-hint").unwrap().label,
+                            view.welcome_hint()
+                        );
+                        assert_eq!(tree.find("header-new-task").is_some(), !active);
+                        assert!(
+                            view.projection.sessions.is_empty(),
+                            "render must not create tasks"
+                        );
+                        let add = tree.find("add-task").unwrap().bounds;
+                        let scope = tree.find("project-scope").unwrap().bounds;
+                        let grouping = tree.find("task-rail-grouping").unwrap().bounds;
+                        assert!(add.y >= shell_layout::TRAFFIC_LIGHT_SAFE_HEIGHT);
+                        assert!(add.y + add.height <= scope.y);
+                        assert!(scope.x + scope.width <= grouping.x + 1.0);
+                        assert!(tree.find("connection-status").unwrap().bounds.y > height - 70.0);
+                        let header = tree.find("workspace-header").unwrap().bounds;
+                        assert!(header.height >= metrics::HEADER_HEIGHT);
+                        for id in [
+                            "workspace-empty-title",
+                            "workspace-empty-hint",
+                            "add-task",
+                            "project-scope",
+                            "task-rail-grouping",
+                            "open-settings",
+                        ] {
+                            let b = tree.find(id).unwrap().bounds;
+                            assert!(b.width > 0.0 && b.height > 0.0, "{id}");
+                            assert!(
+                                b.x >= 0.0
+                                    && b.y >= 0.0
+                                    && b.x + b.width <= width + 1.0
+                                    && b.y + b.height <= height + 1.0,
+                                "{id}: {b:?}"
+                            );
+                        }
+                    });
+                }
+            }
+        }
+        cx.update(|_, cx| {
+            view.update(cx, |view, _| {
+                view.timeline_paging = true;
+                assert!(
+                    !view.welcome_visible(),
+                    "loading history is not an empty task"
+                );
+                view.timeline_paging = false;
+                view.projection.active_run_id = Some("running".into());
+                assert!(!view.welcome_visible(), "running is not an empty task");
+            })
         });
     }
 

@@ -277,19 +277,14 @@ pub mod metrics {
     pub const RAIL_SESSION_ACTION_SIZE: f32 = 32.0;
     /// 10：rail 状态圆点直径（量图 Ø10–11）。
     pub const RAIL_STATUS_DOT_SIZE: f32 = 10.0;
-    /// 8：连接行文案槽与全局「+」按钮的保留间隔（render 与 AX 共享）。
-    pub const RAIL_CONNECTION_ADD_GAP: f32 = 8.0;
-    /// 36：顶部 scope / 连接行高（三图 31–36 取档）。
+    /// 36：顶部筛选 / 分组行高。
     pub const RAIL_TOP_ROW_HEIGHT: f32 = 36.0;
     /// 36：标题行高（量图 grouping 钮区 y49–84 = 36）。
     pub const RAIL_TITLE_ROW_HEIGHT: f32 = 36.0;
     /// 10：标题行 → scope 行纵向间距（内容顶 52 + 36 + 10 = scope 顶 98，
     /// 与量图 scope 盒 y98 精确对齐；文字到底 33 的读数是行底→文字带口径）。
     pub const RAIL_TITLE_SCOPE_GAP: f32 = 10.0;
-    /// 12：scope 行 → 连接行纵向间距（98+36+12 = 连接行顶 146，量图 147±1）。
-    pub const RAIL_SCOPE_CONNECTION_GAP: f32 = 12.0;
-    /// 18：连接行 → 列表首行间距（146+36+18 = 桶头顶 200，量图 Today 文字
-    /// y209–221 对应行顶 200）。
+    /// 18：筛选行（断线时 Reconnect）到列表首行的间距。
     pub const RAIL_LIST_TOP_GAP: f32 = 18.0;
     /// 36：日期桶头行高。
     pub const RAIL_BUCKET_HEADER_HEIGHT: f32 = 36.0;
@@ -311,10 +306,10 @@ pub mod metrics {
     pub const STATUS_BAR_HEIGHT: f32 = 30.0;
     // ── Workspace Header / Timeline 几何（R4 Wave A，state-a §2.2/§2.3 与
     // state-b §2 量图取档；render 与 AX 树共用单一来源）──
-    /// UI-1：24px，共享几何。
-    pub const HEADER_SAFE_STRIP: f32 = 24.0;
-    /// UI-1：80px，共享几何。
-    pub const HEADER_HEIGHT: f32 = 80.0;
+    /// GUI2-01：Header 上下各 12px 内边距。
+    pub const HEADER_SAFE_STRIP: f32 = 12.0;
+    /// GUI2-01：Header 最小高度，内容可撑高。
+    pub const HEADER_HEIGHT: f32 = 64.0;
     /// 28：Workspace 内容统一左 inset（标题 x328 / 首标签 x328 / 工具面板
     /// x326，相对 workspace 左缘 300，量图 26–28 取 28）。
     pub const TIMELINE_CONTENT_INSET: f32 = 28.0;
@@ -579,11 +574,9 @@ mod tests {
         assert_eq!(metrics::RAIL_INNER_PAD, 12.0);
         assert_eq!(metrics::RAIL_ICON_BUTTON_SIZE, 36.0);
         assert_eq!(metrics::RAIL_STATUS_DOT_SIZE, 10.0);
-        assert_eq!(metrics::RAIL_CONNECTION_ADD_GAP, 8.0);
         assert_eq!(metrics::RAIL_TOP_ROW_HEIGHT, 36.0);
         assert_eq!(metrics::RAIL_TITLE_ROW_HEIGHT, 36.0);
         assert_eq!(metrics::RAIL_TITLE_SCOPE_GAP, 10.0);
-        assert_eq!(metrics::RAIL_SCOPE_CONNECTION_GAP, 12.0);
         assert_eq!(metrics::RAIL_LIST_TOP_GAP, 18.0);
         assert_eq!(metrics::RAIL_BUCKET_HEADER_HEIGHT, 36.0);
         assert_eq!(metrics::RAIL_BUCKET_TOP_GAP, 20.0);
@@ -604,8 +597,8 @@ mod tests {
             font::default_pixels(font::from_pixels(metrics::MSG_LINE_HEIGHT)),
             26.0
         );
-        assert_eq!(metrics::HEADER_SAFE_STRIP, 24.0);
-        assert_eq!(metrics::HEADER_HEIGHT, 80.0);
+        assert_eq!(metrics::HEADER_SAFE_STRIP, 12.0);
+        assert_eq!(metrics::HEADER_HEIGHT, 64.0);
         assert_eq!(metrics::TIMELINE_CONTENT_INSET, 28.0);
         assert_eq!(metrics::HEADER_INSET_RIGHT, 24.0);
         assert_eq!(metrics::HEADER_TITLE_META_GAP, 12.0);

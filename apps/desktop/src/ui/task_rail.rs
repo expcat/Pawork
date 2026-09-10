@@ -1,7 +1,6 @@
 //! Sessions 侧栏（TaskRail）：分组直接切换、范围菜单、项目块与任务列表。
 //!
-//! R3 Wave A（F-03/F-04）按 state-a/c 量图还原视觉与结构：顶部三行
-//! （标题 / scope / 连接）、日期桶 → 项目头 → 任务行的列表节奏，以及诚实
+//! GUI2-01：顶部两行（任务 / 新建、scope / 分组），连接状态位于底部 Local 区、日期桶 → 项目头 → 任务行的列表节奏，以及诚实
 //! 状态点语义（Needs input 琥珀 > Running 蓝 > 空心灰不声明语义；wire 无
 //! 每会话终态字段，不画终态绿点）。几何常量与 AX 树共享 theme::metrics。
 
@@ -136,10 +135,6 @@ impl AppView {
         let scope_menu_open = matches!(self.open_menu, Some(MenuKind::Scope));
         let now_ms = now_unix_ms();
         let connection_label = self.connection_status_label();
-        let connection_slot_width = f32::from(rail_width)
-            - metrics::RAIL_CONTENT_INSET * 2.0
-            - metrics::RAIL_ICON_BUTTON_SIZE
-            - metrics::RAIL_CONNECTION_ADD_GAP;
 
         // P0-2：二态直接切换；36×36 ghost（OPT-D 命中区 ≥36×36、字形 20px），
         // 只显示目标动作图标，不再打开菜单。
@@ -180,7 +175,17 @@ impl AppView {
             .vcenter()
             .radius(metrics::CONTROL_RADIUS)
             .bordered()
-            .text_size(font::BODY)
+            .text_size(font::BASE)
+            .width(
+                rail_width
+                    - window.rem_size() * 1.5
+                    - px(metrics::RAIL_INNER_PAD * 2.0 + metrics::RAIL_ICON_BUTTON_SIZE + 1.0),
+            )
+            .max_width(
+                rail_width
+                    - window.rem_size() * 1.5
+                    - px(metrics::RAIL_INNER_PAD * 2.0 + metrics::RAIL_ICON_BUTTON_SIZE + 1.0),
+            )
             .label(format!(
                 "{} ▾",
                 t("rail.filter_label").replace("{}", &scope_label)
@@ -264,7 +269,7 @@ impl AppView {
             }
         };
 
-        // 内容统一 inset 20（Panel p_2 帧 8 + 内层 12）；三行节奏 32 / 20。
+        // 顶部两行；搜索入口随 GUI2-03 提供真实查找能力时接入。
         let mut content = div()
             .flex()
             .flex_col()
@@ -278,51 +283,41 @@ impl AppView {
                     .items_center()
                     .justify_between()
                     .h(px(metrics::RAIL_TITLE_ROW_HEIGHT))
+                    .flex_none()
                     .child(
                         div()
                             .text_size(font::TITLE)
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(dark().text.primary)
-                            .child("Pawork"),
+                            .child(t("rail.tasks")),
                     )
-                    .child(grouping_button),
+                    .child(
+                        self.shell_element("rail-add-layout")
+                            .flex_none()
+                            .child(add_task),
+                    ),
             )
             .child(
                 div()
                     .mt(px(metrics::RAIL_TITLE_SCOPE_GAP))
                     .h(px(metrics::RAIL_TOP_ROW_HEIGHT))
-                    .child(scope),
-            )
-            .child(
-                div()
-                    .mt(px(metrics::RAIL_SCOPE_CONNECTION_GAP))
-                    .h(px(metrics::RAIL_TOP_ROW_HEIGHT))
+                    .flex_none()
                     .flex()
                     .flex_row()
                     .items_center()
-                    .justify_between()
+                    .gap_2()
                     .child(
-                        div()
-                            .w(px(connection_slot_width))
-                            .flex_none()
+                        self.shell_element("rail-scope-layout")
                             .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_2()
+                            .flex_1()
                             .min_w_0()
-                            .overflow_hidden()
-                            .child(status_dot(connection_dot_filled, connection_dot_color))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .truncate()
-                                    .text_size(font::BODY_SM)
-                                    .text_color(dark().text.secondary)
-                                    .child(connection_label),
-                            ),
+                            .child(scope),
                     )
-                    .child(add_task),
+                    .child(
+                        self.shell_element("rail-grouping-layout")
+                            .flex_none()
+                            .child(grouping_button),
+                    ),
             );
         // F-02 壳层校准：Reconnect 仅在 Disconnected / ConnectFailed 出现；
         // Connecting 属进行中，不给重复入口。
@@ -368,41 +363,55 @@ impl AppView {
                 .items_center()
                 .gap_2()
                 .child(
-                    div().flex_1().min_w_0().child(
-                        Label::new(t("rail.local"))
-                            .size(font::BODY_SM)
-                            .color(dark().text.secondary),
-                    ),
+                    self.shell_element("connection-status")
+                        .flex()
+                        .flex_row()
+                        .flex_1()
+                        .min_w_0()
+                        .items_center()
+                        .gap_2()
+                        .child(status_dot(connection_dot_filled, connection_dot_color))
+                        .child(
+                            div()
+                                .truncate()
+                                .text_size(font::BODY_SM)
+                                .text_color(dark().text.secondary)
+                                .child(connection_label),
+                        ),
                 )
                 .child(
-                    Button::new("open-settings")
-                        .track_focus(&settings_focus)
-                        .variant(ButtonVariant::Ghost)
-                        .padding(ButtonPadding::None)
-                        .width(px(metrics::RAIL_ICON_BUTTON_SIZE))
-                        .height(px(metrics::RAIL_ICON_BUTTON_SIZE))
-                        .center()
-                        .radius(metrics::CONTROL_RADIUS)
-                        .text_size(font::ICON)
-                        .label("⚙")
-                        .tooltip(t("rail.tooltip_settings"))
-                        .on_click(cx.listener(|view, event, window, cx| {
-                            if view.consume_button_key_click("open-settings", event) {
-                                return;
-                            }
-                            view.on_open_settings(window, cx);
-                        }))
-                        .on_activate(cx.listener(|view, _event, window, cx| {
-                            view.note_button_key_activate("open-settings");
-                            view.on_open_settings(window, cx);
-                            cx.stop_propagation();
-                        })),
+                    self.shell_element("rail-settings-layout")
+                        .flex_none()
+                        .child(
+                            Button::new("open-settings")
+                                .track_focus(&settings_focus)
+                                .variant(ButtonVariant::Ghost)
+                                .padding(ButtonPadding::None)
+                                .width(px(metrics::RAIL_ICON_BUTTON_SIZE))
+                                .height(px(metrics::RAIL_ICON_BUTTON_SIZE))
+                                .center()
+                                .radius(metrics::CONTROL_RADIUS)
+                                .text_size(font::ICON)
+                                .label("⚙")
+                                .tooltip(t("rail.tooltip_settings"))
+                                .on_click(cx.listener(|view, event, window, cx| {
+                                    if view.consume_button_key_click("open-settings", event) {
+                                        return;
+                                    }
+                                    view.on_open_settings(window, cx);
+                                }))
+                                .on_activate(cx.listener(|view, _event, window, cx| {
+                                    view.note_button_key_activate("open-settings");
+                                    view.on_open_settings(window, cx);
+                                    cx.stop_propagation();
+                                })),
+                        ),
                 ),
         );
 
         Panel::side_right(rail_width)
             // F-01：透明 titlebar 下 traffic lights 悬浮于 rail 左上，
-            // 顶部先留 ≥36px 无交互安全区，再进入 F-03 的三行节奏。
+            // 顶部先留 ≥36px 无交互安全区，再进入两行任务导航。
             .child(shell_layout::rail_safe_area())
             .child(content)
     }
@@ -1058,8 +1067,8 @@ impl AppView {
         self.create_task(Some(workspace_id), window, cx);
     }
 
-    /// rail 内键盘导航（design §3.6）：↑/↓ 沿焦点链（scope → grouping → 全局
-    /// 新建 → 项目头 / 定向新建 / task 行，与 Tab 序一致）移焦；项目头 ←/→
+    /// rail 内键盘导航（GUI2-01）：↑/↓ 沿焦点链（全局新建 → scope → grouping
+    /// → 项目头 / 定向新建 / task 行，与 Tab 序一致）移焦；项目头 ←/→
     /// 收起 / 展开，已处目标态 no-op；Enter / Space 由 ListRow 行级
     /// key_down 直接调激活 handler（与 click 同一路径，Slice 4 修复
     /// enter-gap）。仅当 rail 焦点链上有元素聚焦时接管，不与 composer

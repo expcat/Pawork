@@ -101,15 +101,15 @@ pub(crate) fn workspace_empty_hint() -> &'static str {
     i18n::t("timeline.empty_hint")
 }
 
-/// R3 Wave B：rail Tab 焦点顺序前缀（design §3.6：scope → grouping → 全局
-/// 新建）；行为链（项目头 / 定向新建 / task 行）按当前分组渲染序接在其后，
+/// GUI2-01：rail Tab 前缀为全局新建 → scope → grouping；
+/// 项目头 / 定向新建 / task 行按当前分组渲染序接在其后，
 /// 再接 MAIN_PATH_TAB_STOP_IDS。tab_index 负档保证 rail 整体先于主路径 0 档。
-pub(crate) const RAIL_TAB_STOP_IDS: &[&str] = &["project-scope", "task-rail-grouping", "add-task"];
+pub(crate) const RAIL_TAB_STOP_IDS: &[&str] = &["add-task", "project-scope", "task-rail-grouping"];
 /// scope 触发器在 Tab 链中的位次（rail 前缀三档 -20/-19/-18，断线 reconnect
 /// -17，行级 -16）。
-pub(crate) const RAIL_TAB_INDEX_SCOPE: isize = -20;
-pub(crate) const RAIL_TAB_INDEX_GROUPING: isize = -19;
-pub(crate) const RAIL_TAB_INDEX_ADD_TASK: isize = -18;
+pub(crate) const RAIL_TAB_INDEX_SCOPE: isize = -19;
+pub(crate) const RAIL_TAB_INDEX_GROUPING: isize = -18;
+pub(crate) const RAIL_TAB_INDEX_ADD_TASK: isize = -20;
 /// Reconnect 仅在断线态渲染，视觉位在 add-task 与行为链之间（R6B 键盘
 /// 路径补全）；不渲染时自动退出 Tab 链。
 pub(crate) const RAIL_TAB_INDEX_RECONNECT: isize = -17;
@@ -534,6 +534,7 @@ pub struct AppView {
     composer_action_focus: FocusHandle,
     add_task_focus: FocusHandle,
     header_new_task_focus: FocusHandle,
+    shell_layouts: HashMap<&'static str, ScrollHandle>,
     /// 断线态 Reconnect 按钮焦点（track_focus + 行级激活，R6B 键盘补全）。
     reconnect_focus: FocusHandle,
     connection_attempts: usize,
@@ -804,6 +805,20 @@ impl AppView {
                 .focus_handle()
                 .tab_stop(true)
                 .tab_index(RAIL_TAB_INDEX_RECONNECT),
+            shell_layouts: [
+                "workspace-header",
+                "workspace-empty-title",
+                "workspace-empty-hint",
+                "workspace-empty-action",
+                "connection-status",
+                "rail-scope-layout",
+                "rail-add-layout",
+                "rail-grouping-layout",
+                "rail-settings-layout",
+            ]
+            .into_iter()
+            .map(|id| (id, ScrollHandle::new()))
+            .collect(),
             connection_attempts: 0,
             recovery_layouts: recovery::RECOVERY_IDS
                 .into_iter()
@@ -1129,15 +1144,14 @@ impl AppView {
                 view.on_toggle_inspector(window, cx);
                 cx.stop_propagation();
             }));
-        div()
-            .id("workspace-header")
+        self.shell_element("workspace-header")
             .debug_selector(|| "workspace-header".into())
             .flex()
             .flex_row()
             .items_center()
             .flex_none()
-            .h(px(metrics::HEADER_HEIGHT))
-            .pt(px(metrics::HEADER_SAFE_STRIP))
+            .min_h(px(metrics::HEADER_HEIGHT))
+            .py(px(metrics::HEADER_SAFE_STRIP))
             .pl(px(metrics::TIMELINE_CONTENT_INSET))
             .pr(px(metrics::HEADER_INSET_RIGHT))
             .bg(dark().bg.base)
@@ -1216,6 +1230,25 @@ impl AppView {
             .when(!activity_trigger_visible && !workspace_empty, |header| {
                 header.child(new_task)
             })
+    }
+
+    fn shell_element(&self, id: &'static str) -> gpui::Stateful<gpui::Div> {
+        div().id(id).track_scroll(&self.shell_layouts[id])
+    }
+
+    fn welcome_visible(&self) -> bool {
+        self.projection.timeline.is_empty()
+            && self.projection.pending_approval.is_none()
+            && self.projection.active_run_id.is_none()
+            && !self.timeline_paging
+    }
+
+    fn welcome_hint(&self) -> &'static str {
+        if self.projection.active_session_id.is_some() {
+            i18n::t("timeline.empty_task_hint")
+        } else {
+            workspace_empty_hint()
+        }
     }
 
     /// Header branch 诚实数据源：host diff_* 固定解析 latest 会话，仅当
@@ -2981,8 +3014,8 @@ impl AppView {
         }
     }
 
-    /// 当前分组模式下按 design §3.6 顺序的 rail 焦点链（scope → grouping →
-    /// 全局新建 → 项目头 / 定向新建 → task 行）；折叠项目只保留头部。
+    /// 当前分组模式下按 GUI2-01 顺序的 rail 焦点链（全局新建 → scope →
+    /// grouping → 项目头 / 定向新建 → task 行）；折叠项目只保留头部。
     fn rail_stops(&self) -> Vec<RailStop> {
         rail_focus_stops(
             self.grouping,
@@ -3957,9 +3990,9 @@ enum RailStop {
 impl RailStop {
     fn focus_key(&self) -> String {
         match self {
-            Self::Scope => RAIL_TAB_STOP_IDS[0].into(),
-            Self::Grouping => RAIL_TAB_STOP_IDS[1].into(),
-            Self::AddTask => RAIL_TAB_STOP_IDS[2].into(),
+            Self::Scope => RAIL_TAB_STOP_IDS[1].into(),
+            Self::Grouping => RAIL_TAB_STOP_IDS[2].into(),
+            Self::AddTask => RAIL_TAB_STOP_IDS[0].into(),
             Self::ProjectHeader { bucket, key } => {
                 rail_project_occurrence_key("project", *bucket, key)
             }
@@ -4026,7 +4059,7 @@ pub(super) fn rail_project_key(workspace_id: Option<&str>) -> String {
     workspace_id.unwrap_or(UNASSIGNED_PROJECT).to_string()
 }
 
-/// 按 design §3.6 组装 rail 焦点链：scope → grouping → 全局新建 →（按当前
+/// 按 GUI2-01 组装 rail 焦点链：全局新建 → scope → grouping →（按当前
 /// 分组渲染序）项目头 / 定向新建 / task 行。折叠项目只保留头部行。
 fn rail_focus_stops(
     grouping: TaskRailGrouping,
@@ -4035,7 +4068,7 @@ fn rail_focus_stops(
     projection: &DesktopProjection,
     now_ms: u64,
 ) -> Vec<RailStop> {
-    let mut stops = vec![RailStop::Scope, RailStop::Grouping, RailStop::AddTask];
+    let mut stops = vec![RailStop::AddTask, RailStop::Scope, RailStop::Grouping];
     let projects = match grouping {
         TaskRailGrouping::Timeline => projection
             .timeline_groups(scope, now_ms)
@@ -4735,7 +4768,7 @@ mod tests {
         assert!(!workspace_empty_hint().contains("Cmd+"));
     }
 
-    /// design §3.6：scope → grouping → 全局新建 → 项目头 / 定向新建 → task 行；
+    /// GUI2-01：全局新建 → scope → grouping → 项目头 / 定向新建 → task 行；
     /// 折叠项目只保留头部；Timeline 同项目跨桶的头部键以桶限定去重。
     #[test]
     fn rail_focus_stops_follow_design_tab_order() {
@@ -4761,11 +4794,11 @@ mod tests {
         let keys: Vec<String> = stops.iter().map(|stop| stop.focus_key()).collect();
         assert_eq!(
             &keys[..3],
-            ["project-scope", "task-rail-grouping", "add-task"]
+            ["add-task", "project-scope", "task-rail-grouping"]
         );
         assert_eq!(
             RAIL_TAB_STOP_IDS,
-            ["project-scope", "task-rail-grouping", "add-task"]
+            ["add-task", "project-scope", "task-rail-grouping"]
         );
         // Projects 模式：Alpha 头 + 定向新建 + 两行任务；折叠的 Unassigned
         // 只剩头部（无定向新建）。
