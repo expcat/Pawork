@@ -17,7 +17,7 @@
 | [verification.md](verification.md) | 需求如何映射到自动化、golden、真实冒烟和人工证据？当前缺口是什么？ |
 | [operations.md](operations.md) | 如何启动、配置、诊断、备份与恢复本机实例？当前发布/运维边界是什么？ |
 | [backlog.md](backlog.md) | 已确认扩展、未排期候选、排除项和候选转正闸门是什么？ |
-| [../ROADMAP.md](../ROADMAP.md) | 当前活动线（GUI 用户体验收口 UX-01～UX-09）；上一条 Desktop 模块重设计（UI-1～UI-6）全文见 [历史记录](../review/roadmap-ui-2026-09-09.md) |
+| [../ROADMAP.md](../ROADMAP.md) | 当前活动线：GUI 第二阶段（GUI2-01～07）；UX-01～09 证据见 [历史记录](../review/roadmap-ux-2026-09-10.md)，未闭合验收继续在当前路线图跟踪 |
 | [feature-template.md](feature-template.md) | 大型候选转正时，Feature Spec 最少应包含哪些内容？ |
 
 ### 1.2 包级 Spec
@@ -92,7 +92,8 @@ Spec 中的能力状态不替代验证结论。某项“已实现”只说明生
 | Settings 线 | SET-0～SET-7 | SET-0～SET-6h 已实现，本机真窗口验收通过（2026-09-05，证据见 [desktop.md §8](desktop.md#8-gui-收尾验收记录2026-09-05)）；四家真实账号认证矩阵人工验收仍 pending，缺口见 [Settings Spec](settings.md)。 |
 | Desktop 优化线 | OPT-D、OPT-1～OPT-4 | **已关闭**（2026-09-07）。全文与验收证据见 [review/roadmap-opt-2026-09-05.md](../review/roadmap-opt-2026-09-05.md)。OPT-D 已签字；OPT-1～OPT-4 均已实现并验收。 |
 | Desktop 模块重设计线 | UI-1～UI-6 | 2026-09-07 真窗口走查立项，每个任务重设计一个模块的 UI 与交互；均已实现，全文与验收证据移存 [review/roadmap-ui-2026-09-09.md](../review/roadmap-ui-2026-09-09.md)。 |
-| GUI 用户体验收口线 | UX-01～UX-09 | 2026-09-09 用户视角真窗口验收立项，验收报告见 [review/gui-ux-audit-2026-09-09.md](../review/gui-ux-audit-2026-09-09.md)；规划见 [ROADMAP.md](../ROADMAP.md)。状态：待实施。 |
+| GUI 用户体验收口线 | UX-01～UX-09 | 已实现并有原批次定向检查记录；部分真窗口与用户验收未完成，详见 [历史记录](../review/roadmap-ux-2026-09-10.md)；剩余验收由当前路线图承接，迁存不等于任务归档。 |
+| GUI 第二阶段 | GUI2-01～GUI2-07 | 2026-09-10 参考 PI-Desktop 重做规划与 GUI 规格，见 [ROADMAP.md](../ROADMAP.md)；状态：规划完成、实现未开始、自动检查 / 真窗口 / 用户验收未进行。 |
 
 因此不会创建 P20 作为当前阶段。本目录使用领域化 Spec 名称；活动线编号以路线图为准。
 

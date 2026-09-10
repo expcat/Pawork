@@ -1,6 +1,6 @@
-# Pawork Desktop 分阶段视觉基准
+# Pawork Desktop 历史视觉资产
 
-> 本目录保留 P0–P2 三张已交付目标设计图，并新增 OPT-D 六张统一候选稿（已获用户签字）。行为事实源：[GUI 设计](../docs/gui-design.md)；P0–P2 收尾证据见 [Desktop Spec](../docs/spec/desktop.md#8-gui-收尾验收记录2026-09-05)。当前活动线是 [GUI 用户体验收口](../docs/ROADMAP.md)；Desktop 模块重设计 UI（UI-1～UI-6）已收口，全文见 [历史记录](../docs/review/roadmap-ui-2026-09-09.md)；OPT-D 旧稿**不再否决**新视觉。新图另存本目录，不覆盖下列历史资产。
+> 2026-09-10：本目录保留 P0–P2、OPT-D 与 UI 阶段的历史资产及原批次说明。当前活动线是 [GUI 第二阶段](../docs/ROADMAP.md)；现行合同与下一阶段目标统一见 [GUI 设计](../docs/gui-design.md)。下文所有尺寸、状态和签字只属于所标历史阶段，不覆盖当前源码或 GUI2 规格；例如旧 618px / 88–94px / 400px、工具默认展开和必须先选项目均不得作为现行要求。GUI2 尚未生成新视觉稿或完成视觉验收，旧签字不迁移。UX 证据迁至 [历史记录](../docs/review/roadmap-ux-2026-09-10.md)，未闭合项仍由当前路线图承接。新图另存，不覆盖历史资产。
 
 ## UI-6a 供应商规格（2026-09-08）
 

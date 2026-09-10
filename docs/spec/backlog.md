@@ -96,7 +96,7 @@
 
 ## 6. Settings 线收口后的候选纪律
 
-Settings 活动线已实现并通过本机真窗口验收（2026-09-05，证据见 [desktop.md §8](desktop.md#8-gui-收尾验收记录2026-09-05)）。OPT 活动线已关闭，全文见 [roadmap-opt-2026-09-05.md](../review/roadmap-opt-2026-09-05.md)。当前活动线是 [GUI 用户体验收口](../ROADMAP.md)；Desktop 模块重设计 UI 线（2026-09-07 真窗口走查 #01–#05）已实现，全文见 [roadmap-ui-2026-09-09.md](../review/roadmap-ui-2026-09-09.md)；未创建发布版本。UI-6 吸收 G1 同 kind 多账户的 Settings 产品面，以及 G2 在有权威 QuotaSnapshot 后的额度切换。下列候选仍不自动并入：
+Settings 活动线已实现并通过本机真窗口验收（2026-09-05，证据见 [desktop.md §8](desktop.md#8-gui-收尾验收记录2026-09-05)）。OPT 活动线已关闭，全文见 [roadmap-opt-2026-09-05.md](../review/roadmap-opt-2026-09-05.md)。当前活动线是 [GUI 第二阶段](../ROADMAP.md)；UX-01～UX-09 证据见 [历史记录](../review/roadmap-ux-2026-09-10.md)，未闭合验收由当前路线图承接。Desktop 模块重设计 UI 线（2026-09-07 真窗口走查 #01–#05）已实现，全文见 [roadmap-ui-2026-09-09.md](../review/roadmap-ui-2026-09-09.md)；未创建发布版本。UI-6 吸收 G1 同 kind 多账户的 Settings 产品面，以及 G2 在有权威 QuotaSnapshot 后的额度切换。下列候选仍不自动并入：
 
 1. **本机多账户与成本效率**：G3–G6，以及 G1/G2 超出 UI-6 的部分（account factory、`pawork accounts` CLI、完整预算 gate）；
 2. **Desktop 完整编码工作台**：Git 写入、`@` 补全、规则可见性等；
