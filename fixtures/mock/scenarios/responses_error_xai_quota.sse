@@ -1,0 +1,4 @@
+data: {"type":"response.created","response":{"id":"resp_mock_err_xai"}}
+
+data: {"type":"response.failed","response":{"id":"resp_mock_err_xai","error":{"code":"insufficient_quota","message":"This key has insufficient_quota remaining. Visit the xAI console to increase your plan quota."}}}
+

@@ -1,0 +1,28 @@
+{
+  "comment": "MOCK-4 场景库。触发方式：请求体任意文本含 MOCK:<NAME 大写>（如 MOCK:RATE_LIMIT，优先级高），或 POST /__control body {'scenario':'<name>'} 切全局场景（{'scenario':null} 或重启复位）。kind=http_error 在全部 persona 端点生效（§2.5：只发状态码 + 可选 Retry-After，错误体不参与解析）；kind=sse 仅作用于 transports 内的对话端点；kind=slow 复用通道正常流（fixture 命中优先，否则兜底），按 interval_ms 定速，query 参数 interval_ms 可覆盖（0-60000ms）。",
+  "scenarios": [
+    {"name": "http_400", "kind": "http_error", "status": 400, "error_kind": "InvalidRequest", "description": "HTTP 400 → InvalidRequest"},
+    {"name": "http_401", "kind": "http_error", "status": 401, "error_kind": "Authentication", "description": "HTTP 401 → Authentication"},
+    {"name": "http_402", "kind": "http_error", "status": 402, "error_kind": "QuotaExceeded", "description": "HTTP 402 → QuotaExceeded"},
+    {"name": "http_403", "kind": "http_error", "status": 403, "error_kind": "Authorization", "description": "HTTP 403 → Authorization"},
+    {"name": "http_404", "kind": "http_error", "status": 404, "error_kind": "ModelNotFound", "description": "HTTP 404 → ModelNotFound"},
+    {"name": "http_408", "kind": "http_error", "status": 408, "error_kind": "Timeout", "description": "HTTP 408 → Timeout"},
+    {"name": "http_413", "kind": "http_error", "status": 413, "error_kind": "ContextTooLarge", "description": "HTTP 413 → ContextTooLarge"},
+    {"name": "rate_limit", "kind": "http_error", "status": 429, "retry_after": "30", "error_kind": "RateLimited", "description": "HTTP 429 + Retry-After 整数秒形态"},
+    {"name": "rate_limit_date", "kind": "http_error", "status": 429, "retry_after": "Fri, 01 Jan 2027 00:00:00 GMT", "error_kind": "RateLimited", "description": "HTTP 429 + Retry-After IMF-fixdate 形态"},
+    {"name": "http_451", "kind": "http_error", "status": 451, "error_kind": "ContentFiltered", "description": "HTTP 451 → ContentFiltered"},
+    {"name": "http_500", "kind": "http_error", "status": 500, "error_kind": "ProviderUnavailable", "description": "HTTP 500 → ProviderUnavailable"},
+    {"name": "http_502", "kind": "http_error", "status": 502, "error_kind": "ProviderUnavailable", "description": "HTTP 502 → ProviderUnavailable"},
+    {"name": "http_503", "kind": "http_error", "status": 503, "error_kind": "ProviderUnavailable", "description": "HTTP 503 → ProviderUnavailable"},
+    {"name": "http_504", "kind": "http_error", "status": 504, "error_kind": "ProviderUnavailable", "description": "HTTP 504 → ProviderUnavailable"},
+    {"name": "responses_error_chatgpt_quota", "kind": "sse", "transports": ["responses"], "fixture": "responses_error_chatgpt_quota.sse", "needle": "usage limit", "description": "Responses 流内 error 事件，message 含 usage+limit（chatgpt needle → QuotaExceeded）"},
+    {"name": "responses_error_xai_quota", "kind": "sse", "transports": ["responses"], "fixture": "responses_error_xai_quota.sse", "needle": "insufficient_quota", "description": "Responses 流内 response.failed 事件，message 含 insufficient_quota（xai needle → QuotaExceeded）"},
+    {"name": "responses_error_go_quota", "kind": "sse", "transports": ["responses"], "fixture": "responses_error_go_quota.sse", "needle": "opencode-go responses quota", "description": "opencode-go Responses 组 response.failed，message 原文透传（无专属 needle 规则）"},
+    {"name": "slow_stream", "kind": "slow", "interval_ms": 1000, "description": "任意 transport 的正常流按 interval_ms 定速（query interval_ms 可覆盖），用于 30s 心跳与读超时重置测试"},
+    {"name": "truncated_chat", "kind": "sse", "transports": ["chat"], "fixture": "truncated_chat.sse", "description": "Chat 流既无 finish_reason 也无 [DONE] → StreamInterrupted"},
+    {"name": "truncated_messages", "kind": "sse", "transports": ["messages"], "fixture": "truncated_messages.sse", "description": "Anthropic 流缺 message_stop → StreamInterrupted"},
+    {"name": "truncated_responses", "kind": "sse", "transports": ["responses"], "fixture": "truncated_responses.sse", "description": "Responses 流无终态事件（completed/incomplete/failed/error）→ StreamInterrupted"},
+    {"name": "chat_usage_chunk", "kind": "sse", "transports": ["chat"], "fixture": "chat_usage_chunk.sse", "description": "usage 独立 chunk（choices 为空数组）+ finish_reason + [DONE]"},
+    {"name": "chat_tool_args_split", "kind": "sse", "transports": ["chat"], "fixture": "chat_tool_args_split.sse", "description": "工具 arguments 跨 chunk 分片：首片 id+name，后续片仅 index+增量"}
+  ]
+}

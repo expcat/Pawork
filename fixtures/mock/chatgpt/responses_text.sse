@@ -1,0 +1,8 @@
+data: {"type":"response.created","response":{"id":"resp_mock_1"}}
+
+data: {"type":"response.output_text.delta","delta":"Hi"}
+
+data: {"type":"response.output_text.delta","delta":"!"}
+
+data: {"type":"response.completed","response":{"id":"resp_mock_1","status":"completed","usage":{"input_tokens":9,"output_tokens":3}}}
+

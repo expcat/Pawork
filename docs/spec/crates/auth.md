@@ -23,8 +23,9 @@
 | `src/default_credential.rs` | ~670 | 参数化 OAuth 条目（账号 `.access` / `.refresh` / `.meta`，兼容旧 default）：store/load/update/delete、`DefaultOAuthMeta`（含 ChatGPT `account_id` claim 提取）、`refresh_default_oauth_credential_if_needed` / `default_oauth_needs_refresh` |
 | `src/oauth.rs` | ~1.9k | PKCE / Device / refresh / `CallbackServer` / `TokenSet`；**`http_client()`**（`redirect(Policy::none())`，F06，crate 根 re-export）；crate 内 `decode_jwt_payload` |
 | `src/base64url.rs` | ~240 | 本地 base64url（URL-safe、无填充）`encode` / `decode` 与 `Base64UrlDecodeError`；拒绝非规范输入（填充、`len%4==1`、余位非零） |
+| `src/testsupport.rs` | ~55 | 测试共享件（`#[cfg(test)]` 门控，不参与生产编译）：OAuth token 端点 wiremock 形状单一来源（`token_success_json` / `token_error_json` / `token_mock`，MOCK-7） |
 
-共 11 个 `.rs` 文件，约 4.5k 行；无独立 `tests/` 目录，回归全部内联在各文件 `#[cfg(test)]`。
+共 13 个 `.rs` 文件，约 4.5k 行；无独立 `tests/` 目录，回归全部内联在各文件 `#[cfg(test)]`。
 
 | `src/accounts.rs` | — | UI-6b 账号索引、legacy 隐式登记、命名 API key/OAuth 新增、选择与删除；索引与 secret 原子事务、revision 与失败关闭 |
 
@@ -130,7 +131,7 @@ UI-6b 起先解析账号索引：显式 API key 选择返回该账号；显式 O
 
 ## 7. 测试与验证资产
 
-无 `tests/` 目录；回归内联于各文件 `#[cfg(test)]`（dev-dependencies 仅 `wiremock` 与多线程 tokio（含 test-util）；文件后端测试使用显式临时路径，不引入 tempfile）。默认验证命令：`cargo test -p pawork-auth --offline --lib --tests`。
+无 `tests/` 目录；回归内联于各文件 `#[cfg(test)]`（dev-dependencies 仅 `wiremock` 与多线程 tokio（含 test-util）；文件后端测试使用显式临时路径，不引入 tempfile）。共享测试件位于 `src/testsupport.rs`（`#[cfg(test)]`）：OAuth token 端点 wiremock 形状单一来源，`oauth.rs` / `default_credential.rs` / `accounts.rs` 的 token 端点 mock 于 MOCK-7 起统一引用；与 pawork-app 的 testsupport 同形、两包各自内联（跨包共用需新增 dev-helper crate，按不新增包约定不做）。默认验证命令：`cargo test -p pawork-auth --offline --lib --tests`。
 
 | 位置 | 覆盖点 |
 | --- | --- |

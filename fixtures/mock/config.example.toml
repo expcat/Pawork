@@ -1,0 +1,36 @@
+# Pawork mock 环境 OAuth 端点覆盖样例（MOCK-5，规划 §3 切点 2）。
+#
+# 生效层级：[oauth.<id>] 经 config extra 键合并（crates/app/src/channels.rs
+# oauth_override 读取），loader 的 strip_untrusted_layer 不剥离它——
+# Builtin / Global / Profile / Workspace / Session / Run 各层均可生效；
+# 这与 [[providers]] 的 base_url 不同（后者仅 Builtin/Global 层生效，Workspace
+# 层写入会被剥离并记 ProviderBaseUrlIgnored，见 crates/workspace/src/config/loader.rs）。
+# 因此纯 OAuth 登录测试只需把本片段放进临时工作区 .pawork/config.toml；
+# 需要同时覆盖 base_url（对话 / refresh 后的 provider 请求）时才写 Global config
+# （macOS：~/Library/Application Support/dev.pawork.pawork/config.toml，注意备份恢复）。
+#
+# 端口对应 scripts/mock/server.py 默认 --port 8787；轮询剧本经
+# POST /__control {"oauth":{"xai":"<script>"}} 切换（默认 pending_then_success，
+# 可选 slow_down_then_success / immediate_success / expired_token / invalid_grant /
+# refresh_no_rotation），{"oauth":null} 复位。
+
+# xAI：Device Flow（请求路径对齐 crates/auth/src/oauth.rs 与 channels/registry.rs 预设）
+[oauth.xai]
+client_id = "mock-xai-client"
+token_url = "http://127.0.0.1:8787/oauth2/token"
+device_auth_url = "http://127.0.0.1:8787/oauth2/device/code"
+
+# Kimi Coding Plan：Device Flow，与 xAI 同实现、不同端点
+[oauth.kimi-code]
+client_id = "mock-kimi-client"
+token_url = "http://127.0.0.1:8787/api/oauth/token"
+device_auth_url = "http://127.0.0.1:8787/api/oauth/device_authorization"
+
+# ChatGPT：PKCE。程序只出站 token_url；auth_url 供拼授权 URL（浏览器侧打开，
+# 程序不请求该地址），回调 redirect_uri 固定本机 1455 端口。
+# 成功响应携带带 chatgpt_account_id claim 的未签名 id_token，程序本地提取不验签。
+[oauth.chatgpt]
+client_id = "app_EMoamEEZ73f0CkXaXp7hrann"
+token_url = "http://127.0.0.1:8787/oauth/token"
+auth_url = "http://127.0.0.1:8787/oauth/authorize"
+redirect_uri = "http://localhost:1455/auth/callback"

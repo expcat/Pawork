@@ -4,7 +4,8 @@
 //! cancel、timeout、rate limit、malformed stream、partial JSON、reconnect、context overflow。
 //! 全程不接触真实网络与真实 auth 文件。
 //!
-//! 断言与 `RecordingProviderSink` 就地复制自 V1 `test-support`，不依赖 V1 crate。
+//! 流断言与 SSE 样例收敛于 `tests/common`（MOCK-7）；`RecordingProviderSink`
+//! 就地复制自 V1 `test-support`，不依赖 V1 crate。
 
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
@@ -28,6 +29,10 @@ use pawork_providers::{OpenAiCompatibleConfig, OpenAiCompatibleProvider};
 use wiremock::matchers::{body_partial_json, header, method, path};
 use wiremock::{Match, Mock, MockServer, Request, ResponseTemplate};
 
+mod common;
+
+use common::contract;
+
 #[derive(Clone, Debug, Default)]
 struct RecordingProviderSink(Arc<Mutex<Vec<ProviderStreamEvent>>>);
 
@@ -42,103 +47,6 @@ impl ProviderEventSink for RecordingProviderSink {
     async fn emit(&self, event: ProviderStreamEvent) -> Result<(), ProviderError> {
         self.0.lock().expect("provider sink mutex").push(event);
         Ok(())
-    }
-}
-
-mod contract {
-    use pawork_domain::StopReason;
-    use pawork_domain::{ProviderError, ProviderErrorKind, ProviderStreamEvent};
-
-    /// 断言文本流：至少含一条 TextDelta，并以 ResponseCompleted 收尾。
-    pub fn assert_text_stream(events: &[ProviderStreamEvent]) {
-        assert!(
-            events
-                .iter()
-                .any(|e| matches!(e, ProviderStreamEvent::TextDelta(t) if !t.is_empty())),
-            "text 流应至少含一条非空 TextDelta，实际：{events:?}"
-        );
-        assert!(
-            matches!(
-                events.last(),
-                Some(ProviderStreamEvent::ResponseCompleted(_))
-            ),
-            "文本流应以 ResponseCompleted 收尾，实际末尾：{:?}",
-            events.last()
-        );
-    }
-
-    /// 断言单个 tool call 闭合：Started → ArgumentsDelta(可多条) → Completed。
-    pub fn assert_single_tool_call(events: &[ProviderStreamEvent]) {
-        let started = events
-            .iter()
-            .find(|e| matches!(e, ProviderStreamEvent::ToolCallStarted { .. }));
-        assert!(started.is_some(), "应存在 ToolCallStarted");
-        let id = match started.unwrap() {
-            ProviderStreamEvent::ToolCallStarted { id, .. } => id.clone(),
-            _ => unreachable!(),
-        };
-        assert!(
-            events.iter().any(
-                |e| matches!(e, ProviderStreamEvent::ToolCallCompleted { id: cid } if cid == &id)
-            ),
-            "tool call {id} 应被 Completed 闭合"
-        );
-    }
-
-    /// 断言两个 tool call 并行交错且各自闭合。
-    pub fn assert_parallel_tool_calls(events: &[ProviderStreamEvent]) {
-        let started_ids: Vec<_> = events
-            .iter()
-            .filter_map(|e| match e {
-                ProviderStreamEvent::ToolCallStarted { id, .. } => Some(id.clone()),
-                _ => None,
-            })
-            .collect();
-        assert!(
-            started_ids.len() >= 2,
-            "并行 tool call 应至少有两个 Started（实际 {}）",
-            started_ids.len()
-        );
-        for id in &started_ids {
-            assert!(
-                events.iter().any(
-                    |e| matches!(e, ProviderStreamEvent::ToolCallCompleted { id: cid } if cid == id)
-                ),
-                "tool call {id} 应被 Completed 闭合"
-            );
-        }
-    }
-
-    /// 断言 usage 已归一且 stop reason 符合预期。
-    pub fn assert_usage_and_stop(events: &[ProviderStreamEvent], expected_stop: StopReason) {
-        assert!(
-            events
-                .iter()
-                .any(|e| matches!(e, ProviderStreamEvent::UsageUpdated(u) if u.total_tokens() > 0)),
-            "应有非零 UsageUpdated"
-        );
-        let actual_stop = events.iter().find_map(|e| match e {
-            ProviderStreamEvent::ResponseCompleted(stop) => Some(stop.clone()),
-            _ => None,
-        });
-        assert_eq!(actual_stop, Some(expected_stop), "stop reason 不符预期");
-    }
-
-    /// 断言错误事件或 `stream()` 返回错误至少有一处归一为指定类别。
-    pub fn assert_error_kind(
-        events: &[ProviderStreamEvent],
-        stream_error: Option<&ProviderError>,
-        kind: ProviderErrorKind,
-    ) {
-        let event_matches = events.iter().any(|e| match e {
-            ProviderStreamEvent::Error(err) => err.kind == kind,
-            _ => false,
-        });
-        let return_matches = stream_error.is_some_and(|error| error.kind == kind);
-        assert!(
-            event_matches || return_matches,
-            "应存在 kind={kind:?} 的 Error 事件或 stream 返回错误，事件：{events:?}，返回错误：{stream_error:?}"
-        );
     }
 }
 
@@ -256,18 +164,6 @@ fn spawn_slow_chunked_server(
     (format!("http://{address}"), handle)
 }
 
-/// 拼装 SSE 响应体：每行 `data: {json}\n\n`，末尾 `data: [DONE]\n\n`。
-fn sse_body(chunks: &[&str]) -> String {
-    let mut body = String::new();
-    for chunk in chunks {
-        body.push_str("data: ");
-        body.push_str(chunk);
-        body.push_str("\n\n");
-    }
-    body.push_str("data: [DONE]\n\n");
-    body
-}
-
 async fn mount_chat_ok(server: &MockServer, body: String) {
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
@@ -286,56 +182,9 @@ async fn mount_chat_ok(server: &MockServer, body: String) {
 }
 
 #[tokio::test]
-async fn contract_text_stream() {
-    let server = MockServer::start().await;
-    let body = sse_body(&[
-        r#"{"choices":[{"delta":{"content":"Hello"}}]}"#,
-        r#"{"choices":[{"delta":{"content":" world"}}]}"#,
-        r#"{"choices":[{"delta":{},"finish_reason":"stop"}]}"#,
-    ]);
-    mount_chat_ok(&server, body).await;
-
-    let p = provider(&server, None);
-    let sink = RecordingProviderSink::default();
-    let summary = p
-        .stream(
-            request("gpt-4o"),
-            &sink,
-            pawork_domain::CancellationToken::new(),
-        )
-        .await
-        .expect("stream ok");
-    let events = sink.events();
-    contract::assert_text_stream(&events);
-    assert_eq!(summary.stop_reason, StopReason::Completed);
-}
-
-#[tokio::test]
-async fn contract_single_tool_call() {
-    let server = MockServer::start().await;
-    let body = sse_body(&[
-        r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"read","arguments":"{\"p\":"}}]} }]}"#,
-        r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"a\"}"}}]} }]}"#,
-        r#"{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#,
-    ]);
-    mount_chat_ok(&server, body).await;
-
-    let p = provider(&server, None);
-    let sink = RecordingProviderSink::default();
-    p.stream(
-        request("gpt-4o"),
-        &sink,
-        pawork_domain::CancellationToken::new(),
-    )
-    .await
-    .expect("stream ok");
-    contract::assert_single_tool_call(&sink.events());
-}
-
-#[tokio::test]
 async fn contract_parallel_tool_calls() {
     let server = MockServer::start().await;
-    let body = sse_body(&[
+    let body = common::sse_body(&[
         r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c_a","function":{"name":"r","arguments":"{}"}}]} }]}"#,
         r#"{"choices":[{"delta":{"tool_calls":[{"index":1,"id":"c_b","function":{"name":"w","arguments":"{}"}}]} }]}"#,
         r#"{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#,
@@ -354,32 +203,59 @@ async fn contract_parallel_tool_calls() {
     contract::assert_parallel_tool_calls(&sink.events());
 }
 
+/// MOCK-7 覆盖决策：文本流 / usage+stop / 工具调用三切面已合并至
+/// api_key_channels 的五通道表驱动用例（需显式 features），此处引用
+/// common 样例保持默认死表（无 features）的 happy-path 覆盖，不复制样例。
 #[tokio::test]
-async fn contract_usage_and_stop_reason() {
+async fn contract_chat_facets_default_coverage() {
     let server = MockServer::start().await;
-    let body = sse_body(&[
-        r#"{"choices":[{"delta":{"content":"x"}}]}"#,
-        r#"{"choices":[{"delta":{},"finish_reason":"length"}]}"#,
-        r#"{"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5}}"#,
-    ]);
-    mount_chat_ok(&server, body).await;
-
     let p = provider(&server, None);
+
+    // 文本流：非空 TextDelta + ResponseCompleted 收尾。
+    mount_chat_ok(&server, common::chat_text_stream_body()).await;
     let sink = RecordingProviderSink::default();
+    let summary = p
+        .stream(
+            request("gpt-4o"),
+            &sink,
+            pawork_domain::CancellationToken::new(),
+        )
+        .await
+    .expect("stream ok");
+    contract::assert_text_stream(&sink.events());
+    assert_eq!(summary.stop_reason, StopReason::Completed);
+
+    // usage + stop：usage chunk 在 finish 之后到达，独立断言。
+    server.reset().await;
+    mount_chat_ok(&server, common::chat_usage_stop_body()).await;
+    let usage_sink = RecordingProviderSink::default();
     p.stream(
         request("gpt-4o"),
-        &sink,
+        &usage_sink,
         pawork_domain::CancellationToken::new(),
     )
     .await
     .expect("stream ok");
-    contract::assert_usage_and_stop(&sink.events(), StopReason::MaxTokens);
+    contract::assert_usage_and_stop(&usage_sink.events(), StopReason::MaxTokens);
+
+    // 单工具调用：Started → Completed 闭合。
+    server.reset().await;
+    mount_chat_ok(&server, common::chat_tool_call_body()).await;
+    let tool_sink = RecordingProviderSink::default();
+    p.stream(
+        request("gpt-4o"),
+        &tool_sink,
+        pawork_domain::CancellationToken::new(),
+    )
+    .await
+    .expect("stream ok");
+    contract::assert_single_tool_call(&tool_sink.events());
 }
 
 #[tokio::test]
 async fn contract_cancel_mid_stream() {
     let server = MockServer::start().await;
-    let body = sse_body(&[
+    let body = common::sse_body(&[
         r#"{"choices":[{"delta":{"content":"first"}}]}"#,
         r#"{"choices":[{"delta":{"content":"must-not-complete"}}]}"#,
     ]);
@@ -410,7 +286,7 @@ async fn contract_cancel_mid_stream() {
 #[tokio::test]
 async fn contract_pre_cancel_does_not_send_request() {
     let server = MockServer::start().await;
-    mount_chat_ok(&server, sse_body(&[])).await;
+    mount_chat_ok(&server, common::sse_body(&[])).await;
 
     let p = provider(&server, None);
     let cancel = CancellationToken::new();
@@ -439,7 +315,7 @@ async fn contract_timeout_is_normalized() {
         .respond_with(
             ResponseTemplate::new(200)
                 .set_delay(Duration::from_millis(250))
-                .set_body_string(sse_body(&[])),
+                .set_body_string(common::sse_body(&[])),
         )
         .mount(&server)
         .await;
@@ -587,7 +463,7 @@ async fn contract_reconnect_after_interrupted_stream() {
     server.reset().await;
     mount_chat_ok(
         &server,
-        sse_body(&[
+        common::sse_body(&[
             r#"{"choices":[{"delta":{"content":"reconnected"}}]}"#,
             r#"{"choices":[{"delta":{},"finish_reason":"stop"}]}"#,
         ]),
@@ -606,7 +482,7 @@ async fn contract_reconnect_after_interrupted_stream() {
 #[tokio::test]
 async fn contract_done_without_finish_reason_is_completed() {
     let server = MockServer::start().await;
-    let body = sse_body(&[r#"{"choices":[{"delta":{"content":"done"}}]}"#]);
+    let body = common::sse_body(&[r#"{"choices":[{"delta":{"content":"done"}}]}"#]);
     mount_chat_ok(&server, body).await;
 
     let p = provider(&server, None);
@@ -627,7 +503,7 @@ async fn contract_done_without_finish_reason_is_completed() {
 async fn contract_partial_json_tool_arguments() {
     let server = MockServer::start().await;
     // tool arguments 被切成不完整的 JSON 片段，最后用 finish 闭合
-    let body = sse_body(&[
+    let body = common::sse_body(&[
         r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"read","arguments":"{\"path\":"}}]} }]}"#,
         r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"a.txt\"}"}}]} }]}"#,
         r#"{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#,
@@ -705,10 +581,7 @@ async fn contract_list_models() {
 #[tokio::test]
 async fn contract_no_authorization_when_credential_none() {
     let server = MockServer::start().await;
-    let body = sse_body(&[
-        r#"{"choices":[{"delta":{"content":"ok"}}]}"#,
-        r#"{"choices":[{"delta":{},"finish_reason":"stop"}]}"#,
-    ]);
+    let body = common::chat_minimal_ok_body();
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
         .and(NoAuthorizationHeader)

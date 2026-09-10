@@ -1,0 +1,12 @@
+data: {"type":"response.created","response":{"id":"resp_mock_1"}}
+
+data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_mock_1","call_id":"call_mock_1","name":"get_weather"}}
+
+data: {"type":"response.function_call_arguments.delta","item_id":"fc_mock_1","output_index":0,"delta":"{\"city\":"}
+
+data: {"type":"response.function_call_arguments.delta","item_id":"fc_mock_1","output_index":0,"delta":"\"Paris\"}"}
+
+data: {"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":"fc_mock_1","call_id":"call_mock_1","name":"get_weather","arguments":"{\"city\":\"Paris\"}"}}
+
+data: {"type":"response.completed","response":{"id":"resp_mock_1","status":"completed","usage":{"input_tokens":9,"output_tokens":3}}}
+

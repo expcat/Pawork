@@ -27,6 +27,8 @@ pub mod locator;
 mod masked;
 pub mod oauth;
 mod resolve;
+#[cfg(test)]
+mod testsupport;
 
 pub use accounts::*;
 pub use backend::{MemoryBackend, SecretBackend};

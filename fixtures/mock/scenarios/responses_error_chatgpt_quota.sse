@@ -1,0 +1,4 @@
+data: {"type":"response.created","response":{"id":"resp_mock_err_chatgpt"}}
+
+data: {"type":"error","code":"usage_limit_reached","message":"You have reached your ChatGPT usage limit. Wait for the limit to reset or upgrade your plan."}
+

@@ -1,0 +1,35 @@
+{
+  "channel": "kimi-code",
+  "base_url": "https://api.kimi.com/coding/v1",
+  "recorded_at": "2026-09-09T16:37:41Z",
+  "requests": 0,
+  "fixtures": [
+    {
+      "kind": "models",
+      "source": "synthetic",
+      "endpoint": "GET /models",
+      "transport": null,
+      "model": "kimi-k3",
+      "file": "models.json"
+    },
+    {
+      "kind": "chat_text",
+      "source": "synthetic",
+      "endpoint": "POST /chat/completions",
+      "transport": "chat_completions",
+      "model": "kimi-k3",
+      "file": "chat_text.sse"
+    },
+    {
+      "kind": "chat_tool",
+      "source": "synthetic",
+      "endpoint": "POST /chat/completions",
+      "transport": "chat_completions",
+      "model": "kimi-k3",
+      "file": "chat_tool.sse"
+    }
+  ],
+  "notes": [
+    "无可用凭证（auth.json 未登记该通道），未经真实录制"
+  ]
+}

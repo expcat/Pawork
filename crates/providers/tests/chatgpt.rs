@@ -16,6 +16,8 @@ use pawork_providers::{ChatGptConfig, ChatGptProvider};
 use wiremock::matchers::{body_partial_json, header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+mod common;
+
 #[derive(Default)]
 struct Sink(Arc<Mutex<Vec<ProviderStreamEvent>>>);
 
@@ -96,11 +98,7 @@ async fn oauth_headers_models_and_responses_path_are_wired() {
         .respond_with(
             ResponseTemplate::new(200)
                 .insert_header("content-type", "text/event-stream")
-                .set_body_string(concat!(
-                    "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\"}}\n\n",
-                    "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n",
-                    "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":3,\"output_tokens\":1}}}\n\n"
-                )),
+                .set_body_string(common::responses_text_stream_body("resp_1", &["hello"], (3, 1))),
         )
         .expect(1)
         .mount(&server)

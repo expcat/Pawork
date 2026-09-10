@@ -1,0 +1,35 @@
+{
+  "channel": "chatgpt",
+  "base_url": "https://chatgpt.com/backend-api/codex",
+  "recorded_at": "2026-09-09T16:37:18Z",
+  "requests": 0,
+  "fixtures": [
+    {
+      "kind": "models",
+      "source": "synthetic",
+      "endpoint": "GET /models?client_version=0.153.0",
+      "transport": null,
+      "model": "gpt-5.6-codex",
+      "file": "models.json"
+    },
+    {
+      "kind": "responses_text",
+      "source": "synthetic",
+      "endpoint": "POST /responses",
+      "transport": "responses",
+      "model": "gpt-5.6-codex",
+      "file": "responses_text.sse"
+    },
+    {
+      "kind": "responses_tool",
+      "source": "synthetic",
+      "endpoint": "POST /responses",
+      "transport": "responses",
+      "model": "gpt-5.6-codex",
+      "file": "responses_tool.sse"
+    }
+  ],
+  "notes": [
+    "无可用凭证（auth.json 未登记该通道），未经真实录制"
+  ]
+}

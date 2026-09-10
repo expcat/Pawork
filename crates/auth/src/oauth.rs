@@ -1472,17 +1472,16 @@ mod tests {
     #[tokio::test]
     async fn exchange_pkce_code_success() {
         let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/token"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "access_token": "AT-secret-123456",
-                "refresh_token": "RT-secret-654321",
-                "expires_in": 3600,
-                "token_type": "Bearer",
-                "scope": "read"
-            })))
-            .mount(&server)
-            .await;
+        crate::testsupport::token_mock(
+            "/token",
+            ResponseTemplate::new(200).set_body_json(crate::testsupport::token_success_json(
+                "AT-secret-123456",
+                Some("RT-secret-654321"),
+                Some("read"),
+            )),
+        )
+        .mount(&server)
+        .await;
 
         let config = PkceFlowConfig {
             client_id: "cid".into(),
@@ -1526,14 +1525,15 @@ mod tests {
     #[tokio::test]
     async fn token_endpoint_error_is_normalized() {
         let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/token"))
-            .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
-                "error": "invalid_grant",
-                "error_description": "bad code"
-            })))
-            .mount(&server)
-            .await;
+        crate::testsupport::token_mock(
+            "/token",
+            ResponseTemplate::new(400).set_body_json(crate::testsupport::token_error_json(
+                "invalid_grant",
+                Some("bad code"),
+            )),
+        )
+        .mount(&server)
+        .await;
         let config = PkceFlowConfig {
             client_id: "cid".into(),
             auth_url: "https://example.com/auth".into(),
@@ -1574,23 +1574,26 @@ mod tests {
             .mount(&server)
             .await;
         // token: 先 pending 再成功
-        Mock::given(method("POST"))
-            .and(path("/token"))
-            .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
-                "error": "authorization_pending"
-            })))
+        crate::testsupport::token_mock(
+            "/token",
+            ResponseTemplate::new(400).set_body_json(crate::testsupport::token_error_json(
+                "authorization_pending",
+                None,
+            )),
+        )
             .up_to_n_times(1)
             .mount(&server)
-            .await;
-        Mock::given(method("POST"))
-            .and(path("/token"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "access_token": "DF-access-token-secret",
-                "token_type": "Bearer",
-                "expires_in": 3600
-            })))
-            .mount(&server)
-            .await;
+        .await;
+        crate::testsupport::token_mock(
+            "/token",
+            ResponseTemplate::new(200).set_body_json(crate::testsupport::token_success_json(
+                "DF-access-token-secret",
+                None,
+                None,
+            )),
+        )
+        .mount(&server)
+        .await;
 
         let config = DeviceFlowConfig {
             client_id: "cid".into(),
@@ -1615,15 +1618,16 @@ mod tests {
     #[tokio::test]
     async fn refresh_access_token_exchanges_new_token() {
         let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/token"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "access_token": "NEW-access-secret",
-                "token_type": "Bearer",
-                "expires_in": 3600
-            })))
-            .mount(&server)
-            .await;
+        crate::testsupport::token_mock(
+            "/token",
+            ResponseTemplate::new(200).set_body_json(crate::testsupport::token_success_json(
+                "NEW-access-secret",
+                None,
+                None,
+            )),
+        )
+        .mount(&server)
+        .await;
         let http = http_client().expect("http client");
         let token = refresh_access_token(
             &format!("{}/token", server.uri()),
@@ -1643,13 +1647,8 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/token"))
             .and(body_string_contains("refresh_token=old-refresh"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "access_token": "new-access",
-                "refresh_token": "rotated-refresh",
-                "token_type": "Bearer",
-                "expires_in": 3600,
-                "scope": "read write"
-            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                crate::testsupport::token_success_json("new-access", Some("rotated-refresh"), Some("read write"))))
             .expect(1)
             .mount(&server)
             .await;
@@ -1703,13 +1702,7 @@ mod tests {
             .respond_with(
                 ResponseTemplate::new(200)
                     .set_delay(Duration::from_millis(100))
-                    .set_body_json(serde_json::json!({
-                        "access_token": "singleflight-access",
-                        "refresh_token": "singleflight-refresh",
-                        "token_type": "Bearer",
-                        "expires_in": 3600,
-                        "scope": "read write"
-                    })),
+                    .set_body_json(crate::testsupport::token_success_json("singleflight-access", Some("singleflight-refresh"), Some("read write"))),
             )
             .expect(1)
             .mount(&server)

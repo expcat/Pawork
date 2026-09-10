@@ -1,0 +1,55 @@
+{
+  "channel": "xai",
+  "base_url": "https://api.x.ai/v1",
+  "recorded_at": "2026-09-09T16:57:31Z",
+  "requests": 0,
+  "fixtures": [
+    {
+      "kind": "models",
+      "source": "synthetic",
+      "endpoint": "GET /language-models",
+      "transport": null,
+      "model": "grok-4.6",
+      "file": "models.json"
+    },
+    {
+      "kind": "responses_text",
+      "source": "synthetic",
+      "endpoint": "POST /responses",
+      "transport": "responses",
+      "model": "grok-4",
+      "note": "适用 grok-4 系（xai builtin：grok-4/grok-4-fast → Responses）",
+      "file": "responses_text.sse"
+    },
+    {
+      "kind": "responses_tool",
+      "source": "synthetic",
+      "endpoint": "POST /responses",
+      "transport": "responses",
+      "model": "grok-4",
+      "note": "适用 grok-4 系（xai builtin：grok-4/grok-4-fast → Responses）",
+      "file": "responses_tool.sse"
+    },
+    {
+      "kind": "chat_text",
+      "source": "synthetic",
+      "endpoint": "POST /chat/completions",
+      "transport": "chat_completions",
+      "model": "grok-4.6",
+      "note": "grok-4.6 未登记 xai builtin，生产按 Chat Completions 兜底路由",
+      "file": "chat_text.sse"
+    },
+    {
+      "kind": "chat_tool",
+      "source": "synthetic",
+      "endpoint": "POST /chat/completions",
+      "transport": "chat_completions",
+      "model": "grok-4.6",
+      "note": "grok-4.6 未登记 xai builtin，生产按 Chat Completions 兜底路由",
+      "file": "chat_tool.sse"
+    }
+  ],
+  "notes": [
+    "OAuth access token 已过期（expires_at_ms=1788892631300 早于当前时间），按任务约定不执行 refresh、跳过真实录制，fixture 按契约形状合成（未经真实录制）"
+  ]
+}

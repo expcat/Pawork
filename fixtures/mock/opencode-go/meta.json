@@ -1,0 +1,66 @@
+{
+  "channel": "opencode-go",
+  "base_url": "https://opencode.ai/zen/go/v1",
+  "recorded_at": "2026-09-09T16:58:33Z",
+  "requests": 1,
+  "fixtures": [
+    {
+      "kind": "models",
+      "source": "real",
+      "endpoint": "GET /models",
+      "transport": null,
+      "model": null,
+      "http_status": 200,
+      "content_type": "application/json",
+      "file": "models.json"
+    },
+    {
+      "kind": "usage",
+      "source": "synthetic",
+      "endpoint": "GET /usage",
+      "transport": null,
+      "model": null,
+      "note": "真实录制失败（HTTP 403 (upstream EntitlementError)），未经真实录制",
+      "file": "usage.json"
+    },
+    {
+      "kind": "chat_text",
+      "source": "synthetic",
+      "endpoint": "POST /chat/completions",
+      "transport": "chat_completions",
+      "model": "glm-5.3-flash",
+      "note": "真实录制失败（HTTP 401 (upstream CreditsError)），未经真实录制",
+      "file": "chat_text.sse"
+    },
+    {
+      "kind": "chat_tool",
+      "source": "synthetic",
+      "endpoint": "POST /chat/completions",
+      "transport": "chat_completions",
+      "model": "glm-5.3-flash",
+      "note": "真实录制失败（HTTP 401 (upstream CreditsError)），未经真实录制",
+      "file": "chat_tool.sse"
+    },
+    {
+      "kind": "responses_text",
+      "source": "synthetic",
+      "endpoint": "POST /responses",
+      "transport": "responses",
+      "model": "grok-4.6",
+      "note": "Go Responses 组（api_key.rs 端点表：grok-4.6/gpt-5.6-luna/muse-spark-*）; 真实录制失败（HTTP 401 (upstream CreditsError)），未经真实录制",
+      "file": "responses_text.sse"
+    },
+    {
+      "kind": "responses_tool",
+      "source": "synthetic",
+      "endpoint": "POST /responses",
+      "transport": "responses",
+      "model": "grok-4.6",
+      "note": "Go Responses 组（api_key.rs 端点表：grok-4.6/gpt-5.6-luna/muse-spark-*）; 真实录制失败（HTTP 401 (upstream CreditsError)），未经真实录制",
+      "file": "responses_tool.sse"
+    }
+  ],
+  "notes": [
+    "usage 真实录制失败（HTTP 403 (upstream EntitlementError)），回退合成 fixture（未经真实录制）"
+  ]
+}

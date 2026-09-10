@@ -16,6 +16,8 @@ use pawork_providers::{XaiConfig, XaiProvider};
 use wiremock::matchers::{body_string_contains, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+mod common;
+
 #[derive(Default)]
 struct Sink(Arc<Mutex<Vec<ProviderStreamEvent>>>);
 
@@ -75,13 +77,13 @@ async fn model_capability_selects_responses_or_chat() {
         .and(path("/responses"))
         .and(header("authorization", "Bearer oauth-xai"))
         .respond_with(ResponseTemplate::new(200).insert_header("content-type", "text/event-stream").set_body_string(
-            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"
+            common::responses_completed_body()
         )).expect(1).mount(&server).await;
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
         .and(header("authorization", "Bearer oauth-xai"))
         .respond_with(ResponseTemplate::new(200).insert_header("content-type", "text/event-stream").set_body_string(
-            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+            common::chat_finish_only_body()
         )).expect(1).mount(&server).await;
 
     let provider = provider(&server);
@@ -113,14 +115,7 @@ async fn model_capability_selects_responses_or_chat() {
 #[tokio::test]
 async fn grok4_responses_round_trip_streams_events_with_oauth_bearer() {
     let server = MockServer::start().await;
-    let sse = [
-        "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_xai_1\"}}",
-        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"grok \"}",
-        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"works\"}",
-        "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_xai_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":11,\"output_tokens\":7}}}",
-    ]
-    .join("\n\n")
-    + "\n\n";
+    let sse = common::responses_text_stream_body("resp_xai_1", &["grok ", "works"], (11, 7));
     Mock::given(method("POST"))
         .and(path("/responses"))
         .and(header("authorization", "Bearer oauth-xai"))

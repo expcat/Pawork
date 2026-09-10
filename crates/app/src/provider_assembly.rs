@@ -1406,13 +1406,7 @@ mod tests {
             .respond_with(
                 ResponseTemplate::new(200)
                     .set_delay(Duration::from_millis(100))
-                    .set_body_json(serde_json::json!({
-                        "access_token": "singleflight-access",
-                        "refresh_token": "singleflight-refresh",
-                        "token_type": "Bearer",
-                        "expires_in": 3600,
-                        "scope": "openid profile"
-                    })),
+                    .set_body_json(crate::testsupport::token_success_json("singleflight-access", Some("singleflight-refresh"), Some("openid profile"))),
             )
             .expect(1)
             .mount(&server)
@@ -1489,10 +1483,8 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/token"))
             .and(body_string_contains("refresh_token=invalid-old-refresh"))
-            .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
-                "error": "invalid_grant",
-                "error_description": endpoint_description
-            })))
+            .respond_with(ResponseTemplate::new(400).set_body_json(
+                crate::testsupport::token_error_json("invalid_grant", Some(endpoint_description))))
             .expect(1)
             .mount(&server)
             .await;

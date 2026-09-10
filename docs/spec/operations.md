@@ -57,6 +57,21 @@ Builtin < Global < Profile < Workspace < Session < Run
 4. `pawork doctor --json` 确认 data_dir、instance、DB/socket/handshake；
 5. 从 `ReadOnly` 或最小必要 approval mode 开始，再按任务提高权限。
 
+### 3.1 本地 Provider mock（开发/回归用）
+
+`scripts/mock/run-instance.sh` 提供隔离的本地 Provider 仿真环境：独立 `PAWORK_DATA_DIR` / `PAWORK_HOME` + `--instance mock`，并按方案 A 临时改写 Global config（以 0600 备份原文件，临时替换为完整 mock 配置，`stop` 时恢复原文和权限；配置旁的 `.mock-owner` 记录所属 state，命令使用文件锁串行化，拒绝第二个 state 同时注入。若用户在注入期间修改配置，恢复会报错并保留 `<state>/config.backup.json`，避免覆盖用户修改。崩溃后用相同 state 执行 `stop` 恢复）。临时配置的默认通道为 `glm-coding / glm-5.3`，只连接本地 mock；原 Global 设置在恢复后重新生效。注入期间本机所有实例共享该 Global config，勿在此时做真实 Provider 操作。状态目录默认 `/tmp/pawork-mock`；`stop` 保留日志与备份，不提供递归 `clean` 和 Host wrapper 命令。自动化环境使用常驻 `run`；`start` 的后台进程可能被 exec 会话回收。
+
+```bash
+./scripts/mock/run-instance.sh start    # 后台起 mock server + host（注入 config、seed 凭证）
+./scripts/mock/run-instance.sh run      # 同 start，host 前台运行（自动化验收推荐）
+./scripts/mock/run-instance.sh desktop  # 复制平行 bundle 并以隔离 env 启动 Desktop
+./scripts/mock/run-instance.sh env      # 打印 CLI 一次性命令所需 export 行
+./scripts/mock/run-instance.sh status   # 各组件与注入状态
+./scripts/mock/run-instance.sh stop     # 停 host/server 并恢复 Global config
+```
+
+场景用 prompt 关键字驱动（如 `MOCK:RATE_LIMIT`、`MOCK:SLOW_STREAM`）或 `POST /__control` 切全局场景；协议层额度探针为 `scripts/mock/quota_probe.py`。该环境属于本地仿真，验证结论不得写成真实 Provider 冒烟；细节与已知缺口见 [mock-simulation-plan.md](../mock-simulation-plan.md) §6–§7。
+
 ## 4. GUI Host 运维
 
 - `gui serve` 创建/读取受控 token，socket 目录权限为 `0o700`；自定义 socket 若位于数据目录外，需明确其权限与生命周期。

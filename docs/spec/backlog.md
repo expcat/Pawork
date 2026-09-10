@@ -108,4 +108,29 @@ Settings 活动线已实现并通过本机真窗口验收（2026-09-05，证据�
 
 | 系列 | 规划文档 | 状态 |
 | --- | --- | --- |
-| MOCK-1～MOCK-8 本地 Provider 模拟仿真 | [mock-simulation-plan.md](../mock-simulation-plan.md) | 用户已确认方向（2026-09-09），规划与接口盘点（MOCK-1）已完成；实施前需就文中 D1～D4 决策点拍板。 |
+| MOCK-1～MOCK-8 本地 Provider 模拟仿真 | [mock-simulation-plan.md](../mock-simulation-plan.md) | 已实施完成（2026-09-10）：MOCK-2～MOCK-8 已实现并通过 gate 与 review，端到端证据见规划 §7；MOCK-0b 保持候选未获批。 |
+
+## 8. 实施过程登记的产品缺陷
+
+以下缺陷在 mock 系列端到端验收（MOCK-6，2026-09-10）中发现并已定位根因，均未在 mock 写入集内修复，按最小方案另立任务处理。
+
+### BUG-OAUTH-01：OAuth 请求前刷新被静默跳过（FileBackend 路径）
+
+- 现象：持有已过期 access token + 有效 refresh token 的 OAuth 凭证发起对话时，`refresh_oauth_credential_with`（[oauth.rs](../../crates/auth/src/oauth.rs)）在锁内 reload 后比较整个 `StoredCredential`，`metadata_changed` 恒为真，直接 `return Ok(false)`，既不刷新也不报错；请求带过期 token 发出后被 Provider 401 拒绝。
+- 根因：`load_account` 会用账户索引里的 `display_name`（默认 "Default OAuth"）覆盖凭证 meta，而 `stored_from_meta` 侧硬编码 "default oauth"；两处大小写不一致使 `metadata_changed` 在每次 reload 后恒真，提前短路刷新分支。
+- 判别实验（已做）：把索引里的 `display_name` 改成与硬编码一致的 "default oauth" 后，refresh 立即触发并向 token 端点轮转成功——证明短路条件就在该比较。
+- 建议修法方向：刷新前的 metadata 比较排除 `display_name`（展示字段不应参与变更判定），或统一两处命名常量；修复需补一条「过期凭证 → 自动 refresh → 轮转落盘」的定向回归。
+- 修复后复验配方（mock 环境）：`scripts/mock/run-instance.sh start` 后用 `seed_auth.py` 注入 `expires_at_ms` 已过期的 OAuth 凭证，发起对话触发请求前刷新，断言 mock `/token` 端点收到 refresh 请求且 auth.json 落盘新 token；当前版本此配方会复现 401。
+
+### BUG-USAGE-01：usage ledger request-id 跨进程撞车
+
+- 现象：同一 data dir 内第二次起 Host 进程跑对话，usage ledger 记录报 `usage record id conflict: rec-run-...`（host.log warn），第二次运行的用量不落账。
+- 根因：[services/run.rs](../../crates/app/src/services/run.rs) 的 usage record id 用进程内计数器拼 `req-{n}`，而 control-plane 侧按 (tenant, account, request_id, attempt) 去重；新进程计数器从 0 重来，与上一进程同 data dir 的记录撞 id。
+- 建议修法方向：request_id 引入进程级随机前缀或持久单调序列；修复后用「同 data dir 连续两个 Host 进程各跑一次对话」回归。
+
+### BUG-GUI-01：GUI Run 事件路径静默断连
+
+- 现象（MOCK-6 真窗口验收中 6 次复现）：任意 Run 启动后约 1.5–10 秒，Desktop 连接被静默关闭（状态栏「已断开 · connection is closed」），慢流期间同样触发；断连后 Cancel 按钮因「需要活连接」被禁用，GUI 内 Reconnect 按钮多次点击无状态变化；Host 进程仍存活并接受新协议连接（quota 探针正常），Run 在 Host 侧继续执行直至自然完成；重启 Desktop 后完整重放恢复且 Run 不受影响。
+- 已排除项：客户端 stderr 无错误输出；host.log 无连接错误；mock server 未断开 HTTP 流（Run 正常完成）。
+- 影响面：GUI 取消主路径被阻断（CLI 取消已验证不受影响）；断连期间设置页刷新与额度查询同样不可达。
+- 建议修法方向：定位 Run 事件（artifact/tool/usage 流）经 GUI 连接分发时的 panic 或主动 close 路径，补「Run 流式期间连接保持 + 断连可经 Reconnect 恢复」的回归；修复后用 `MOCK:SLOW_STREAM` 场景复验取消。

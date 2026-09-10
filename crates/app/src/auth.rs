@@ -454,17 +454,17 @@ mod tests {
     #[tokio::test]
     async fn xai_api_key_and_oauth_default_entries_coexist() {
         let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/oauth2/token"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "access_token": "xai-access-secret",
-                "refresh_token": "xai-refresh-secret",
-                "expires_in": 3600,
-                "token_type": "Bearer",
-            })))
+        crate::testsupport::token_mock(
+            "/oauth2/token",
+            ResponseTemplate::new(200).set_body_json(crate::testsupport::token_success_json(
+                "xai-access-secret",
+                Some("xai-refresh-secret"),
+                None,
+            )),
+        )
             .expect(2)
-            .mount(&server)
-            .await;
+        .mount(&server)
+        .await;
         let backend = Arc::new(MemoryBackend::new());
         let http = pawork_auth::http_client().expect("http client");
         let provider = ProviderId::new("xai");
@@ -575,25 +575,24 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/oauth2/token"))
             .and(body_string_contains("device_code"))
-            .respond_with(ResponseTemplate::new(400).set_body_json(json!({
-                "error": "authorization_pending",
-            })))
+            .respond_with(ResponseTemplate::new(400).set_body_json(
+                crate::testsupport::token_error_json("authorization_pending", None)))
             .up_to_n_times(1)
             .expect(1)
             .named("authorization_pending once")
             .mount(&server)
             .await;
-        Mock::given(method("POST"))
-            .and(path("/oauth2/token"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "access_token": "xai-access-secret",
-                "refresh_token": "xai-refresh-secret",
-                "expires_in": 3600,
-                "token_type": "Bearer",
-            })))
+        crate::testsupport::token_mock(
+            "/oauth2/token",
+            ResponseTemplate::new(200).set_body_json(crate::testsupport::token_success_json(
+                "xai-access-secret",
+                Some("xai-refresh-secret"),
+                None,
+            )),
+        )
             .expect(1)
-            .mount(&server)
-            .await;
+        .mount(&server)
+        .await;
 
         let mut core = core_with_device_override(server.uri());
         core.config.proxy_url = Some("http://[invalid-proxy".into());

@@ -314,7 +314,7 @@ cargo test -p pawork-app --offline --lib --tests --features ui-fixture
 - `idempotency.rs`：容量逐出、SQLite CAS 权威、键冲突拒绝。
 - `data_dir.rs`：HOME 回退 DegradeEvent 结构、告警单点（helper 静默 / consume 恰好一次 WARN）、instance 白名单拒路径逃逸。
 - `protocol.rs`：extra 覆盖 / 样例默认表 / 未知值 fail-closed。
-- `testsupport.rs`：`RecordingCapture` 治愈并屏蔽 tracing interest 缓存投毒的回归（探针双 callsite）。
+- `testsupport.rs`：`RecordingCapture` 治愈并屏蔽 tracing interest 缓存投毒的回归（探针双 callsite）；MOCK-7 起承载 OAuth token 端点 wiremock 形状（`token_success_json` / `token_error_json` / `token_mock`），`auth.rs` / `provider_assembly.rs` 的 token 端点 mock 统一引用（与 pawork-auth 的 testsupport 同形、两包各自内联）。
 - `services/*`、`loop_ctx.rs`、`checkpoint.rs`、`control.rs`、`protected.rs`、`approval.rs`、`extensions.rs`：各自带定向单测（resume seal 语义、压缩 lineage、usage 哨兵、审批模式解析、`at_tokens` 词法等）。
 
 **tests/（integration）**——`tests/gui_server/` 下两个文件不是自动发现的，经 Cargo.toml `[[test]]` 声明为具名 test bin：

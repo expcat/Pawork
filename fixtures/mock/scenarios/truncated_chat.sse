@@ -1,0 +1,4 @@
+data: {"id":"chatcmpl-mock-trunc","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"The mock stream"}}]}
+
+data: {"id":"chatcmpl-mock-trunc","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"cuts off mid-reply"}}]}
+

@@ -1,0 +1,18 @@
+{
+  "models": [
+    {
+      "slug": "gpt-5.6-codex",
+      "display_name": "gpt-5.6-codex",
+      "context_window": 400000,
+      "visibility": "list",
+      "supports_parallel_tool_calls": true
+    },
+    {
+      "slug": "gpt-5.6",
+      "display_name": "gpt-5.6",
+      "context_window": 400000,
+      "visibility": "list",
+      "supports_parallel_tool_calls": true
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+data: {"type":"response.created","response":{"id":"resp_mock_trunc"}}
+
+data: {"type":"response.output_text.delta","delta":"the stream ends without a terminal event"}
+

@@ -1,0 +1,27 @@
+{
+  "channel": "anthropic",
+  "base_url": "https://api.anthropic.com",
+  "recorded_at": "2026-09-09T16:37:41Z",
+  "requests": 0,
+  "fixtures": [
+    {
+      "kind": "messages_text",
+      "source": "synthetic",
+      "endpoint": "POST /v1/messages",
+      "transport": "messages",
+      "model": "claude-sonnet-4-5",
+      "file": "messages_text.sse"
+    },
+    {
+      "kind": "messages_tool",
+      "source": "synthetic",
+      "endpoint": "POST /v1/messages",
+      "transport": "messages",
+      "model": "claude-sonnet-4-5",
+      "file": "messages_tool.sse"
+    }
+  ],
+  "notes": [
+    "无可用凭证（auth.json 未登记该通道），未经真实录制"
+  ]
+}

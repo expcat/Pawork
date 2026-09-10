@@ -219,11 +219,12 @@ ADR-057：`ApiKeyChannelProvider` 仅为 `opencode-go` 启用内部会话头映�
 
 ## 7. 测试与验证资产
 
-默认验证命令：`cargo test -p pawork-providers --offline --lib --tests`（注意：仅编译 `default = ["anthropic"]`，feature 门控的集成测试目标见下表 required-features，需显式 `--features` 才运行）。
+默认验证命令：`cargo test -p pawork-providers --offline --lib --tests`（注意：仅编译 `default = ["anthropic"]`，feature 门控的集成测试目标见下表 required-features，需显式 `--features` 才运行）。MOCK-7 起整合口径为单条带齐测试所需 features 的调用：`cargo test -p pawork-providers --offline --lib --tests --features anthropic,chatgpt-oauth,xai-oauth,glm-coding,opencode-go,qwen-token-plan,deepseek,kimi-platform,kimi-code`（一次编译链接跑全部测试目标；含 `kimi-code` 是因为 `src/channels/kimi.rs` 的 4 个 `#[cfg(test)]` lib 测试仅在该 feature 开启时编译，漏跑会漏掉这部分覆盖）。
 
 | 测试资产 | required-features | 覆盖点 |
 | --- | --- | --- |
 | `src/**` 内 `#[cfg(test)]` | — | 各模块单测：`module_discipline`（core 不引用 net）、注册表八行顺序与 fail-closed、kimi-code 端点预设、xAI 双认证凭证接受、xAI/Kimi 远端目录解析与失败路径（wiremock）、SSE 边界、保留键忽略、协商 clamp、pricing 定点、错误分类脱敏等 |
+| `tests/common/mod.rs` | —（随引用它的测试目标编译） | 集成测试共享件单一来源（MOCK-7 去重）：SSE 帧拼装 `sse_frames`/`sse_body`、chat 文本流 / 单工具调用 / usage+stop / 最小成功 / 仅收尾样例、Responses 完成 / 文本流样例；`contract` 流断言（text / tool / usage / error 归一）供 contract.rs 与 api_key_channels.rs 共用 |
 | `tests/contract.rs` | —（默认即跑） | OpenAI-compatible 契约全集（见下） |
 | `tests/anthropic.rs` | `anthropic` | Messages 契约（见下） |
 | `tests/chatgpt.rs` | `chatgpt-oauth` | OAuth 头 / models / Responses 路径接线；malformed Responses 事件即使后随完成事件也报错 |
@@ -233,7 +234,7 @@ ADR-057：`ApiKeyChannelProvider` 仅为 `opencode-go` 启用内部会话头映�
 
 `tests/contract.rs` 契约点（wiremock 驱动）：
 
-- 文本流、单工具调用、并行工具调用、usage + stop reason；
+- 文本流 / 单工具调用 / usage + stop 三切面合并为默认执行的 `contract_chat_facets_default_coverage`，五通道表驱动用例另外复用 `tests/common` 样例与断言；并行工具调用回归保留；
 - 流中取消与预取消（预取消不发请求）、超时归一、长流逐 chunk 重置读超时；
 - 429 归一（含 `Retry-After`）、上下文溢出（413）归一；
 - malformed 流中断与中断后重连、`[DONE]` 无 finish_reason 按完成、部分 JSON 工具参数跨 chunk 组装、`list_models`。
@@ -251,6 +252,9 @@ dev-dependencies：`wiremock`（HTTP mock）、`proptest`、多线程 tokio。�
 ADR-057：`tests/api_key_channels.rs` 在既有通道契约测试中核验 Chat / Responses 的会话头、连续请求身份隔离与其他通道不携带；非法会话头定向回归断言不发请求且错误不回显原值。
 
 UI-6a 回归扩充现有 contract / Kimi / xAI / ChatGPT 解析用例，补混合目录与 mock transport 一致性主路径（含未支持协议无网络拒绝）。Go 验证失败保旧与成功脱敏在 app 的 Settings 真实 Host 回归覆盖。
+
+MOCK-7 测试整合：已实现（`tests/common` 单一来源去重 `sse_body` 与 SSE 样例、contract.rs 与 api_key_channels.rs 等效用例合并为五通道表驱动、chatgpt.rs / xai.rs 样例改引 common；不切换录制 fixture，属后续候选）；已验证（上方带齐 features 的单条命令全绿，2026-09-10）。
+三切面（文本流 / 单工具调用 / usage+stop）的默认死表覆盖由 `contract_chat_facets_default_coverage` 保持（引用 common 样例、不复制；默认无 features 命令与带齐 features 命令均复验全绿）。
 
 ## 8. 注意事项与已知限制
 

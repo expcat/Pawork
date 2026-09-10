@@ -1,0 +1,2 @@
+# SSE frames require a terminating blank line, including the last event.
+*.sse whitespace=-blank-at-eof

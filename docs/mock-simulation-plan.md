@@ -158,3 +158,57 @@ token 端点共用形状：form-urlencoded 请求；响应 JSON 出现 `error` �
 - mock 链路的测试证据属于「本地仿真」新层级，写入证据记录时必须与 E3（真实 Provider/真窗口）区分表述；[verification.md §2.1](spec/verification.md) 的真实模型口径不变，真实冒烟缺口不因 mock 通过而关闭。
 - 触及配置语义（D2）时按三类关键回归中的「协议与解析」处理：配置六层 golden 先行。
 - 本系列不新增生产依赖、不改包布局；若实施中出现新增包/新依赖的必要性，先回到本文档登记并经用户确认。
+
+## 7. 实施状态与证据回写（2026-09-10）
+
+| 任务 | 状态 | 说明 |
+| --- | --- | --- |
+| MOCK-1 接口盘点与规划 | 已实现（文档） | 本文档。 |
+| MOCK-2 录制工具与 fixture | 已实现 | [capture.py](../scripts/mock/capture.py) + `fixtures/mock/` 九通道 fixture；无真实账号的通道（chatgpt / anthropic / kimi-platform 等）按契约形状合成并标注来源。 |
+| MOCK-3 mock server | 已实现、已验证 | [server.py](../scripts/mock/server.py)（场景与 OAuth 端点内置）+ `server_smoke.py` 全绿。 |
+| MOCK-4 场景库 | 已实现、已验证 | `fixtures/mock/scenarios/` + `server_scenarios_smoke.py` 全绿；关键字（`MOCK:RATE_LIMIT` 等）与 `POST /__control` 双触发。CLI headless 场景为抽测（RATE_LIMIT / 401 / 404 / 截断 / QUOTA）；HTTP 层全量 47/47 由 server_scenarios_smoke 覆盖。 |
+| MOCK-5 OAuth 模拟层与 seed | 已实现、已验证 | `oauth_selftest.py` 全绿；fixture 覆盖九通道，`run-instance.sh seed` 落盘八通道（API key 5 + OAuth 3，无 anthropic——它只作为 transport fixture，未接入编排的注册通道）；真机完成一次 device 登录（user_code 展示、轮询、落盘）。 |
+| MOCK-6 端到端接入与真窗口验收 | 已实现；CLI 全流程已验证，GUI 主路径已验证、取消受阻（BUG-GUI-01） | [run-instance.sh](../scripts/mock/run-instance.sh)（start/run/stop/status/seed/env/desktop）+ `quota_probe.py`；证据见下。 |
+| MOCK-7 测试整合与精简 | 已实现、已验证（review 通过） | providers 测试收敛与 OAuth mock helper 去重。 |
+| MOCK-8 mock 快速门禁 | 已实现、已验证 | [gate.sh](../scripts/mock/gate.sh) L0/L1/L2；历史阶段收口：L0 0.1s、L1 52.8s（providers 208 测试）、L2 1.4s（冒烟 45 + 47 与 usage 回放）。提交前 L2 另纳入 fixture verify、OAuth 与配置恢复回归，耗时以新运行输出为准。 |
+| MOCK-0b Global config env 重定向 | 候选，未获批 | 本系列用方案 A（备份/恢复）兜底，见 §3 缺口。 |
+
+### MOCK-6 证据记录（mock 环境/本地仿真，非 E3 真实 Provider）
+
+```text
+Implemented: scripts/mock/run-instance.sh（隔离环境编排 + Global config 方案 A 注入/恢复 +
+  host/server/desktop 生命周期）、scripts/mock/quota_probe.py（协议层三窗额度探针）
+Validated: CLI headless 全流程——seed 八通道凭证；各通道 models 命中 fixture；opencode-go
+  GET /usage 三窗（rolling5h 12% / weekly 34% / monthly 57%）；glm-coding 文本流；xai
+  Responses 流；工具流首轮成功；Ctrl-C 取消；MOCK:RATE_LIMIT/HTTP_401/HTTP_404/
+  TRUNCATED_CHAT/QUOTA 错误归一展示；OAuth device 登录（user_code E5C0-F958 轮询落盘）。
+  GUI 真窗口——连接与 16 会话持久化重放、模型目录与切换、文本流 Run 完成、MOCK:RATE_LIMIT
+  错误卡片、Settings 八提供商全部已连接且模型数与 fixture 一致、工具流 scenario 命中。
+  ./scripts/mock/gate.sh 全绿（L0 0.1s / L1 52.8s / L2 1.4s，总 54.5s，退出码 0）。
+Targeted regressions: gate.sh L0（文档链接/格式/git diff --check）+ L1（providers 全套单 cargo
+  进程）+ L2（mock server 回放冒烟）
+Real-world evidence: mock 环境/本地仿真（127.0.0.1:8787，fixture 回放）；真窗口为预构建
+  Pawork.app 平行 bundle + AX 快照/截图取证；不冒充 E3 真实 Provider 冒烟
+Known gaps: 见下「已知缺口」
+Full workspace gate: NOT RUN（当前未设置全量门禁）
+```
+
+### 已知缺口
+
+1. **GUI Run 事件路径静默断连（BUG-GUI-01）**：Run 启动约 1.5–10 秒连接被静默关闭，6 次复现；阻断真窗口取消主路径与断连期间的设置/额度刷新；CLI 取消已验证。已登记 [backlog.md §8](spec/backlog.md)。
+2. **OAuth 请求前刷新缺陷（BUG-OAUTH-01）**：FileBackend 路径 metadata 比较恒真导致 refresh 被静默跳过；判别实验与复验配方见 [backlog.md §8](spec/backlog.md)。mock 环境的 device 登录与轮转不受影响。
+3. **usage ledger request-id 跨进程撞车（BUG-USAGE-01）**：同 data dir 第二个 Host 进程跑对话报 `usage record id conflict`，第二程用量不落账；见 [backlog.md §8](spec/backlog.md)。
+4. **GUI 三窗额度显示**：协议层已由 `quota_probe.py` 验证（同 socket 同 token 三窗 200）；本机预构建 bundle 早于 API 1.16 的 per-credential 额度 UI（二进制内无 `settings.quota.*` 字符串），设置页仅显示 ADR-056 的「Usage unavailable」诚实空态。待含 V1_16 UI 的 bundle 重建后人工复验。
+5. **工具流固定 tool_call_id（mock 限制）**：mock fixture 的 tool_call_id 固定，同一 data dir 第二次工具 Run 撞事件 UNIQUE 约束（CLI 与 GUI 均复现）；首轮工具流正常。属 mock 数据限制，非产品缺陷。
+6. **fixture 合成回退**：opencode-go 余额不足、xai token 过期、kimi-code 无凭证等场景的 fixture 为契约形状合成（无真实录制），已在 meta 标注。
+7. **launchd 初连挂起**：`run-instance.sh desktop` 以 `open -na`（launchd 托管，env 经 `--env` 传递）封装；该方式启动的实例初次连接常挂起「连接中…」数分钟，直启二进制（带 env）秒连。缺口保留：自动化验收需要秒连时手工直启 `<state>/Pawork-mock.app/Contents/MacOS/Pawork --instance mock`（env 用 `run-instance.sh env`）。
+8. **MOCK-0b 未获批**：Global config 注入采用方案 A，注入期间本机所有实例共享 mock base_url；崩溃残留由 `run-instance.sh stop` 按注入记录恢复。
+9. **Global config 独占与恢复**：提交前 review 已补文件锁与跨 state 所有权记录，第二个 state 注入会拒绝；配置采用完整临时替换，支持原文已有 `[oauth.*]` 的情况。恢复失败或检测到用户编辑时保留备份与所有权记录，需核对 `<state>/config.backup.json` 后恢复。`stop` 不删除状态目录；移除递归 `clean` 和 Host wrapper 子命令。
+
+### 提交前 review 修正
+
+- 配置编排改为 stdlib Python + shell 入口：原文/权限恢复、跨 state 独占、用户编辑冲突保护、进程身份核对与启动失败清场。`review_selftest.py` 仅操作临时目录，用正常往返与关键失败路径验证；不覆盖真实 Global config。
+- 录制工具禁止 HTTP 重定向，避免转发凭证；校验报错不回显敏感匹配内容；修正 kimi-code OAuth service 与 ChatGPT 特殊头；fixture 查找拒绝模型路径穿越和符号链接越界。
+- 本节修正不补齐上方已登记的产品/旧 Desktop bundle 验收缺口，历史 GUI 证据不等于本次重新验收。
+
+Validated（提交前）：`gate.sh --packages pawork-auth,pawork-app` 的 L1 完成 providers 208、auth 79（1 ignored）、app 243 项测试，共 530 passed；期间更新脚本导致后续 shell 读取中断，固定脚本后以 `gate.sh --level 0,2` 单独复验通过（L0 0.3s / L2 5.0s）。L2 含 fixture verify 9/9、OAuth 17、review 回归 2、server 45、scenarios 47 与 usage 回放。`git diff --cached --check` 通过；SSE 必需的末尾空行由 fixture 目录 `.gitattributes` 显式保留。Full workspace gate: NOT RUN。

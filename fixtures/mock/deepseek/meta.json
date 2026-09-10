@@ -1,0 +1,43 @@
+{
+  "channel": "deepseek",
+  "base_url": "https://api.deepseek.com",
+  "recorded_at": "2026-09-09T16:40:50Z",
+  "requests": 1,
+  "fixtures": [
+    {
+      "kind": "models",
+      "source": "real",
+      "endpoint": "GET /models",
+      "transport": null,
+      "model": null,
+      "http_status": 200,
+      "content_type": "application/json",
+      "file": "models.json"
+    },
+    {
+      "kind": "chat_text",
+      "source": "real",
+      "endpoint": "POST /chat/completions",
+      "transport": "chat_completions",
+      "model": "deepseek-v4-flash",
+      "http_status": 200,
+      "content_type": "text/event-stream; charset=utf-8",
+      "prompt": "Say hi",
+      "max_tokens": 512,
+      "file": "chat_text.sse"
+    },
+    {
+      "kind": "chat_tool",
+      "source": "real",
+      "endpoint": "POST /chat/completions",
+      "transport": "chat_completions",
+      "model": "deepseek-v4-flash",
+      "http_status": 200,
+      "content_type": "text/event-stream; charset=utf-8",
+      "prompt": "What is the weather in Paris? Use the get_weather tool.",
+      "max_tokens": 1024,
+      "file": "chat_tool.sse"
+    }
+  ],
+  "notes": []
+}

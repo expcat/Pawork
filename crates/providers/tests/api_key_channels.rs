@@ -22,11 +22,19 @@ use pawork_providers::channels::registry::{
 };
 use pawork_providers::net::http::HttpClientConfig;
 use pawork_providers::{ApiKeyChannelConfig, ApiKeyChannelProvider};
-use wiremock::matchers::{header, method, path};
+use wiremock::matchers::{body_partial_json, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
+
+mod common;
 
 #[derive(Clone, Debug, Default)]
 struct RecordingProviderSink(Arc<Mutex<Vec<ProviderStreamEvent>>>);
+
+impl RecordingProviderSink {
+    fn events(&self) -> Vec<ProviderStreamEvent> {
+        self.0.lock().expect("provider sink mutex").clone()
+    }
+}
 
 #[async_trait]
 impl ProviderEventSink for RecordingProviderSink {
@@ -84,17 +92,6 @@ fn config_for(preset: &'static ChannelPreset, base_url: impl Into<String>) -> Ap
         .expect("api-key preset config")
         .with_base_url(base_url)
         .with_http(HttpClientConfig::builder().disable_system_proxy().build())
-}
-
-fn sse_body(chunks: &[&str]) -> String {
-    let mut body = String::new();
-    for chunk in chunks {
-        body.push_str("data: ");
-        body.push_str(chunk);
-        body.push_str("\n\n");
-    }
-    body.push_str("data: [DONE]\n\n");
-    body
 }
 
 #[test]
@@ -180,25 +177,70 @@ fn fixed_credential_headers_are_rejected_for_all_channels() {
     }
 }
 
+/// MOCK-7 合并用例：contract.rs 的 chat 文本流 / 单工具调用 / usage+stop
+/// 三条等效契约改为五通道表驱动（ApiKeyChannelProvider 的 Chat Completions
+/// 路径直接委派 OpenAiCompatibleProvider，样例与断言取自 tests/common，
+/// 断言强度与原 contract 用例一致）。
+#[tokio::test]
+async fn chat_contract_facets_stream_over_all_channels() {
+    for preset in api_key_presets() {
+        for (facet, body) in [
+            ("text_stream", common::chat_text_stream_body()),
+            ("tool_call", common::chat_tool_call_body()),
+            ("usage_and_stop", common::chat_usage_stop_body()),
+        ] {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/chat/completions"))
+                .and(header("authorization", "Bearer sk-channel-test"))
+                .and(header("x-trace-id", "trace-1"))
+                .and(body_partial_json(serde_json::json!({
+                    "stream_options": { "include_usage": true }
+                })))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .insert_header("content-type", "text/event-stream")
+                        .set_body_string(body),
+                )
+                .expect(1)
+                .mount(&server)
+                .await;
+            let config = config_for(preset, server.uri())
+                .with_model_transport("test-model", ModelTransport::ChatCompletions);
+            let provider =
+                ApiKeyChannelProvider::new(config, Some(api_key())).expect("construct");
+            let sink = RecordingProviderSink::default();
+            let summary = provider
+                .stream(request(), &sink, CancellationToken::new())
+                .await
+                .unwrap_or_else(|error| panic!("{facet} failed for {}: {error:?}", preset.id));
+            let events = sink.events();
+            match facet {
+                "text_stream" => {
+                    common::contract::assert_text_stream(&events);
+                    assert_eq!(summary.stop_reason, StopReason::Completed);
+                }
+                "tool_call" => common::contract::assert_single_tool_call(&events),
+                "usage_and_stop" => {
+                    common::contract::assert_usage_and_stop(&events, StopReason::MaxTokens)
+                }
+                _ => unreachable!(),
+            }
+            server.verify().await;
+        }
+    }
+}
+
 #[tokio::test]
 async fn bearer_session_headers_are_scoped_to_opencode_on_both_transports() {
     for preset in api_key_presets() {
         for transport in [ModelTransport::ChatCompletions, ModelTransport::Responses] {
             let server = MockServer::start().await;
             let (endpoint, body) = match transport {
-                ModelTransport::ChatCompletions => (
-                    "/chat/completions",
-                    sse_body(&[
-                        r#"{"choices":[{"delta":{"content":"ok"}}]}"#,
-                        r#"{"choices":[{"delta":{},"finish_reason":"stop"}]}"#,
-                    ]),
-                ),
-                ModelTransport::Responses => (
-                    "/responses",
-                    sse_body(&[
-                        r#"{"type":"response.completed","response":{"status":"completed"}}"#,
-                    ]),
-                ),
+                ModelTransport::ChatCompletions => {
+                    ("/chat/completions", common::chat_minimal_ok_body())
+                }
+                ModelTransport::Responses => ("/responses", common::responses_completed_body()),
                 ModelTransport::Messages => unreachable!(),
             };
             Mock::given(method("POST"))
@@ -322,9 +364,9 @@ async fn mixed_catalog_and_stream_share_documented_transports() {
                 ModelTransport::Messages => panic!("unsupported transport in runnable catalog"),
             };
             let body = if endpoint == "/responses" {
-                sse_body(&[r#"{"type":"response.completed","response":{"status":"completed"}}"#])
+                common::responses_completed_body()
             } else {
-                sse_body(&[r#"{"choices":[{"delta":{},"finish_reason":"stop"}]}"#])
+                common::chat_finish_only_body()
             };
             Mock::given(method("POST"))
                 .and(path(endpoint))

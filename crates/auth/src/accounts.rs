@@ -892,7 +892,7 @@ mod tests {
                         Ok(())
                     }).unwrap();
                 }
-                ResponseTemplate::new(200).set_body_json(serde_json::json!({"access_token":"late-access", "refresh_token":"late-refresh", "expires_in":3600, "token_type":"Bearer"}))
+                ResponseTemplate::new(200).set_body_json(crate::testsupport::token_success_json("late-access", Some("late-refresh"), None))
             }).expect(1).mount(&server).await;
             let mut stored = account.stored;
             let config = crate::OAuthRefreshConfig {

@@ -1,0 +1,4 @@
+data: {"type":"response.created","response":{"id":"resp_mock_err_go"}}
+
+data: {"type":"response.failed","response":{"id":"resp_mock_err_go","error":{"code":"quota_window_exhausted","message":"Your opencode-go responses quota for this billing window is exhausted."}}}
+
