@@ -399,6 +399,7 @@ impl AppView {
                 window.focus(&self.model_focus);
                 self.on_toggle_model_menu(None, window, cx)
             }
+            "model-menu-settings" => self.on_manage_composer_models(window, cx),
             "cancel" => self.on_cancel_clicked(window, cx),
             "send" => {
                 // 与键盘 Enter 路径（on_send_message）一致：IME 组合中不发送。
@@ -745,9 +746,9 @@ impl AppView {
         let width = f32::from(viewport.width).max(1.0);
         let height = f32::from(viewport.height).max(1.0);
         // P2-1：Settings 壳不渲染 RunStatusBar（与 render 同源），内容用全高；
-        // 工作台保留底部 24px StatusBar。
+        // 工作台仅运行中 / 待审批时预留 StatusBar。
         let settings_route = self.route == AppRoute::Settings;
-        let content_height = if settings_route {
+        let content_height = if !self.run_status_visible() {
             height
         } else {
             (height - metrics::STATUS_BAR_HEIGHT).max(1.0)
@@ -823,7 +824,7 @@ impl AppView {
                 }
                 tree
             };
-        if !settings_route {
+        if self.run_status_visible() {
             // StatusBar 视觉上不覆盖左栏账户区；AX frame 与 render 同源。
             tree = tree.child(self.status_ax(AxRect::new(
                 sidebar_width,
@@ -2065,17 +2066,30 @@ impl AppView {
         .value(value)
         .description(display_time(&entry.timestamp, now_ms));
         if with_menu {
-            let inset = if matches!(entry.kind, TimelineEntryKind::UserMessage { .. }) {
-                metrics::MSG_USER_INSET
+            let measured = self
+                .settings_element_layouts
+                .get(&format!("message-actions-{}", entry.event_id))
+                .map(|layout| {
+                    let b = layout.bounds();
+                    AxRect::new(
+                        b.origin.x.into(),
+                        b.origin.y.into(),
+                        b.size.width.into(),
+                        b.size.height.into(),
+                    )
+                })
+                .unwrap_or(AxRect::new(0., 0., 0., 0.));
+            let actions_rect = if measured.width > 0.0 && measured.height > 0.0 {
+                measured
             } else {
-                0.0
+                AxRect::new(row.x + row.width - 32.0, row.y, 32.0, 24.0)
             };
             node = node.child(
                 AxNode::new(
                     entry_menu_identifier(&entry.event_id),
                     AxRole::Button,
                     t("timeline.actions"),
-                    AxRect::new(row.x + row.width - inset - 32.0, row.y + inset, 32.0, 24.0),
+                    actions_rect,
                 )
                 .focused(
                     self.open_menu.is_none()
@@ -2443,6 +2457,16 @@ impl AppView {
                 }
                 menu = menu.child(item);
             }
+            menu = menu.child(
+                AxNode::new(
+                    "model-menu-settings",
+                    AxRole::Button,
+                    t("model_search.manage"),
+                    bounds("model-menu-settings"),
+                )
+                .focused(highlight == entries.len())
+                .action(AxAction::Press),
+            );
             composer = composer.child(menu);
         }
         composer
@@ -3281,6 +3305,103 @@ mod tests {
         });
     }
 
+    /// GUI2-02：真实布局区分短气泡 / 开放回复，导航不消耗草稿。
+    #[gpui::test]
+    fn conversation_bubbles_and_model_navigation_preserve_draft(cx: &mut gpui::TestAppContext) {
+        use crate::ui::theme::font::TextScale;
+        use gpui::{px, size};
+        let (view, cx) = cx.add_window_view(|_, cx| {
+            AppView::new(
+                std::sync::Arc::new(crate::platform::Platform::new()),
+                std::env::temp_dir().join("gui2-02-layout.sock"),
+                None,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.connection = ConnectionState::Connected {
+                    instance_id: "test".into(),
+                };
+                view.projection.active_session_id = Some("task".into());
+                view.projection.timeline.entries = vec![TimelineEntry {
+                    sequence: 1,
+                    event_id: "short".into(),
+                    timestamp: "1".into(),
+                    run_id: None,
+                    kind: TimelineEntryKind::UserMessage {
+                        text: "你好 Pawork".into(),
+                    },
+                    fork_boundary: None,
+                }];
+                view.text_input
+                    .update(cx, |input, cx| input.set_text("保留草稿", cx));
+                view.timeline_changed();
+                cx.notify();
+            })
+        });
+        for (width, height) in [(1440., 1024.), (1080., 720.)] {
+            for scale in [
+                TextScale::Percent100,
+                TextScale::Percent125,
+                TextScale::Percent150,
+            ] {
+                cx.simulate_resize(size(px(width), px(height)));
+                cx.update(|_, cx| {
+                    view.update(cx, |v, cx| {
+                        v.text_scale = scale;
+                        cx.notify();
+                    })
+                });
+                cx.refresh().unwrap();
+                cx.run_until_parked();
+                cx.update(|window, cx| {
+                    let v = view.read(cx);
+                    let bounds = |id: &str| {
+                        let b = v.settings_element_layouts[id].bounds();
+                        AxRect::new(
+                            b.origin.x.into(),
+                            b.origin.y.into(),
+                            b.size.width.into(),
+                            b.size.height.into(),
+                        )
+                    };
+                    let bubble = bounds("message-bubble-short");
+                    let actions = bounds("message-actions-short");
+                    assert!(
+                        bubble.width > 60. && bubble.width < 350.,
+                        "short bubble: {bubble:?}"
+                    );
+                    assert!((bubble.x + bubble.width - actions.x - actions.width).abs() < 2.);
+                    let tree = v.accessibility_tree(window, cx);
+                    assert!(tree.find("run-status").is_none());
+                    let ax = tree.find(&entry_menu_identifier("short")).unwrap();
+                    assert_eq!(ax.bounds, actions);
+                    assert!(ax.actions.contains(&AxAction::Press));
+                });
+            }
+        }
+        cx.update(|window, cx| {
+            view.update(cx, |v, cx| {
+                v.projection.set_models(Vec::new());
+                v.on_toggle_model_menu(None, window, cx);
+                assert_eq!(v.menu_item_count(), 1);
+                v.move_menu_highlight(true);
+                v.activate_menu_item(MenuKind::Model, 0, window, cx);
+                assert_eq!(v.route, AppRoute::Settings);
+                assert_eq!(v.settings_page, SettingsPage::Providers);
+                assert!(v.focus_handle.is_focused(window));
+                assert_eq!(v.text_input.read(cx).text(), "保留草稿");
+                v.on_close_settings(window, cx);
+                v.projection.active_run_id = Some("running".into());
+                assert!(v.run_status_visible());
+                v.projection.active_run_id = None;
+                assert!(!v.run_status_visible());
+            })
+        });
+    }
+
     #[gpui::test]
     fn reply_actions_copy_exact_content_and_use_closed_turn_boundary(
         cx: &mut gpui::TestAppContext,
@@ -3814,7 +3935,7 @@ mod tests {
             })
             .collect();
         // 默认仅摘要；显式展开增加两条工具行，字号影响正文高度。
-        assert_eq!(layouts[0].1, 102.0);
+        assert_eq!(layouts[0].1, 86.0);
         assert_eq!(layouts[1].1, metrics::TOOL_GROUP_HEADER_HEIGHT);
         assert_eq!(layouts[2].1, 19.0);
         let expanded = std::collections::HashSet::from(["e2".to_string()]);
@@ -3839,7 +3960,7 @@ mod tests {
                 &std::collections::HashSet::new(),
                 false
             ),
-            109.0
+            93.0
         );
         assert_eq!(timeline_following_window(&layouts, 400.0), (0, 0.0));
         let (start, offset) = timeline_following_window(&layouts, 80.0);
@@ -5257,11 +5378,12 @@ mod tests {
             assert!(empty.actions.is_empty());
             assert_eq!(empty.value.as_deref(), Some(t("composer.model_menu_empty")));
             // 菜单不发布任何可选模型行：不编造模型。
-            assert_eq!(menu.children.len(), 2); // 搜索区和诚实空态
+            assert_eq!(menu.children.len(), 3); // 搜索区、诚实空态与管理导航
             assert!(menu
                 .children
                 .iter()
-                .all(|child| child.role != AxRole::Button));
+                .all(|child| child.role != AxRole::Button
+                    || child.identifier == "model-menu-settings"));
         });
     }
 

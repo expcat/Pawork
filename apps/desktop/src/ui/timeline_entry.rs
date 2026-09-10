@@ -314,41 +314,69 @@ pub(super) fn entry_actions_element(
     actions
 }
 
-/// 作者和操作共用一行，正文使用完整列宽；用户消息用浅底卡片区分轮次。
+/// 用户气泡靠右收缩；作者与操作留在气泡外，助手正文保持开放排版。
 fn entry_shell_element(
     view: &mut AppView,
     cx: &mut Context<AppView>,
+    window: &Window,
     entry: &TimelineEntry,
     menu_open: bool,
     can_fork: bool,
     label: gpui::Div,
     body: gpui::Div,
 ) -> gpui::Div {
+    let user_text = match &entry.kind {
+        TimelineEntryKind::UserMessage { text } => Some(text.as_str()),
+        _ => None,
+    };
+    let focus = view.timeline_entry_focus(&entry.event_id, cx);
     let actions = entry_actions_element(view, cx, entry, menu_open, can_fork);
+    let action_slot = view
+        .settings_element(format!("message-actions-{}", entry.event_id))
+        .flex_none()
+        .opacity(if menu_open || focus.is_focused(window) {
+            1.0
+        } else {
+            0.0
+        })
+        .group_hover("timeline-message", |style| style.opacity(1.0))
+        .child(actions);
+    let mut header = div().flex().items_center().gap_3().min_h(px(24.0));
+    if user_text.is_some() {
+        header = header.justify_end().child(
+            div()
+                .text_size(font::BODY_SM)
+                .text_color(dark().text.tertiary)
+                .child(display_time(&entry.timestamp, now_unix_ms())),
+        );
+    } else {
+        header = header.justify_between().child(label);
+    }
+    let content = if let Some(text) = user_text {
+        let wide = super::markdown::message_needs_full_width(text);
+        div().flex().justify_end().child(
+            view.settings_element(format!("message-bubble-{}", entry.event_id))
+                .flex()
+                .flex_col()
+                .max_w(gpui::relative(if wide { 1.0 } else { 0.8 }))
+                .when(wide, |bubble| bubble.w_full())
+                .px(px(metrics::MSG_USER_INSET_X))
+                .py(px(metrics::MSG_USER_INSET_Y))
+                .bg(dark().surface.raised)
+                .rounded(px(12.0))
+                .child(body.w_auto()),
+        )
+    } else {
+        body
+    };
     div()
+        .group("timeline-message")
         .flex()
         .flex_col()
         .w_full()
         .gap(px(metrics::MSG_LABEL_BODY_GAP))
-        .when(
-            matches!(entry.kind, TimelineEntryKind::UserMessage { .. }),
-            |element| {
-                element
-                    .p(px(metrics::MSG_USER_INSET))
-                    .bg(dark().surface.raised)
-                    .rounded(px(12.0))
-            },
-        )
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .justify_between()
-                .min_h(px(24.0))
-                .child(label)
-                .child(actions),
-        )
-        .child(body)
+        .child(header.child(action_slot))
+        .child(content)
 }
 
 /// Tool 行状态槽：succeeded = ✓（Ø14，success_fg）+ 状态词；
@@ -571,6 +599,7 @@ impl AppView {
         entry: &TimelineEntry,
         menu_open: bool,
         can_fork: bool,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
         let time = display_time(&entry.timestamp, now_unix_ms());
@@ -578,17 +607,17 @@ impl AppView {
             TimelineEntryKind::UserMessage { text } => (
                 t("timeline.you"),
                 dark().text.secondary,
-                message_body_element(&entry.event_id, text, dark().text.emphasis),
+                message_body_element(&entry.event_id, text, dark().text.emphasis, window),
             ),
             TimelineEntryKind::Thinking { text } => (
                 t("timeline.thinking"),
                 dark().text.secondary,
-                message_body_element(&entry.event_id, text, dark().text.secondary),
+                message_body_element(&entry.event_id, text, dark().text.secondary, window),
             ),
             TimelineEntryKind::AssistantMessage { text } => (
                 "Pawork",
                 dark().text.secondary,
-                message_body_element(&entry.event_id, text, dark().text.emphasis),
+                message_body_element(&entry.event_id, text, dark().text.emphasis, window),
             ),
             // 兜底臂（Worker B 组装层不会把 tool / run 态交给消息条目）：
             // 保持旧单行语义，避免意外调用时崩溃。
@@ -624,12 +653,18 @@ impl AppView {
             TimelineEntryKind::Error(message) => (
                 "Error",
                 dark().semantic.danger_text,
-                message_body_element(&entry.event_id, message, dark().semantic.danger_text),
+                message_body_element(
+                    &entry.event_id,
+                    message,
+                    dark().semantic.danger_text,
+                    window,
+                ),
             ),
         };
         entry_shell_element(
             self,
             cx,
+            window,
             entry,
             menu_open,
             can_fork,
@@ -921,6 +956,7 @@ impl AppView {
         entry: &TimelineEntry,
         menu_open: bool,
         can_fork: bool,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
         let message = match &entry.kind {
@@ -931,11 +967,17 @@ impl AppView {
         entry_shell_element(
             self,
             cx,
+            window,
             entry,
             menu_open,
             can_fork,
             message_label_element("Error", &time, dark().semantic.danger_text),
-            message_body_element(&entry.event_id, &message, dark().semantic.danger_text),
+            message_body_element(
+                &entry.event_id,
+                &message,
+                dark().semantic.danger_text,
+                window,
+            ),
         )
     }
 

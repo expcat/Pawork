@@ -461,11 +461,22 @@ fn styled_line(spans: Vec<Span>, kind: BlockKind, color: Rgba) -> StyledText {
     StyledText::new(text).with_runs(runs)
 }
 
-pub(super) fn message_body_element(entry_id: &str, text: &str, color: Rgba) -> gpui::Div {
+/// Code and tables use the full reading column; prose keeps the user bubble cap.
+pub(super) fn message_needs_full_width(text: &str) -> bool {
+    parse(text)
+        .iter()
+        .any(|block| matches!(block.kind, BlockKind::Code | BlockKind::Table))
+}
+
+pub(super) fn message_body_element(
+    entry_id: &str,
+    text: &str,
+    color: Rgba,
+    window: &gpui::Window,
+) -> gpui::Div {
     let mut body = div()
         .flex()
         .flex_col()
-        .w_full()
         .gap(px(metrics::MSG_PARAGRAPH_GAP))
         .text_size(font::BODY)
         .line_height(font::from_pixels(metrics::MSG_LINE_HEIGHT))
@@ -473,7 +484,7 @@ pub(super) fn message_body_element(entry_id: &str, text: &str, color: Rgba) -> g
     let mut message_links = Vec::new();
     for (index, block) in parse(text).into_iter().enumerate() {
         let links = block_links(&block);
-        let mut element = div().flex().flex_col().w_full();
+        let mut element = div().flex().flex_col();
         if block.kind == BlockKind::Code {
             element = element
                 .px(px(12.0))
@@ -492,6 +503,11 @@ pub(super) fn message_body_element(entry_id: &str, text: &str, color: Rgba) -> g
                 .border_l_2()
                 .border_color(dark().border.subtle);
         }
+        let mut table = div()
+            .flex()
+            .flex_col()
+            .w_full()
+            .min_w(px(block.alignments.len() as f32 * 160.0));
         for (row_index, row) in block.table.into_iter().enumerate() {
             let mut row_element = div()
                 .flex()
@@ -517,16 +533,65 @@ pub(super) fn message_body_element(entry_id: &str, text: &str, color: Rgba) -> g
                         )),
                 );
             }
-            element = element.child(row_element);
+            table = table.child(row_element);
         }
-        for line in block.lines {
+        if block.kind == BlockKind::Table {
             element = element.child(
                 div()
-                    .w_full()
+                    .id(gpui::SharedString::from(format!(
+                        "{entry_id}-table-scroll-{index}"
+                    )))
+                    .overflow_x_scroll()
+                    .child(table),
+            );
+        }
+        let mut lines = div().flex().flex_col();
+        for line in block.lines {
+            // Taffy can clamp an auto-width row to the viewport even when its
+            // nowrap text overflows. Give the scroll child its shaped width.
+            let code_width = if block.kind == BlockKind::Code {
+                let text: String = line.iter().map(|span| span.text.as_str()).collect();
+                let run = TextRun {
+                    len: text.len(),
+                    font: gpui::font(font::MONO),
+                    color: color.into(),
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                };
+                window
+                    .text_system()
+                    .shape_line(
+                        text.into(),
+                        font::BODY.to_pixels(window.rem_size()),
+                        &[run],
+                        None,
+                    )
+                    .width
+            } else {
+                px(0.)
+            };
+            lines = lines.child(
+                div()
                     .min_h(font::from_pixels(metrics::MSG_LINE_HEIGHT))
+                    .when(block.kind == BlockKind::Code, |line| {
+                        line.whitespace_nowrap().min_w(code_width)
+                    })
                     .child(styled_line(line, block.kind, color)),
             );
         }
+        element = if block.kind == BlockKind::Code {
+            element.child(
+                lines
+                    .id(gpui::SharedString::from(format!(
+                        "{entry_id}-code-scroll-{index}"
+                    )))
+                    .items_start()
+                    .overflow_x_scroll(),
+            )
+        } else {
+            element.child(lines)
+        };
         for (link_index, link) in links.into_iter().enumerate() {
             let number =
                 if let Some(position) = message_links.iter().position(|target| target == &link) {
@@ -572,7 +637,7 @@ pub(super) fn message_block_line_counts(text: &str, width_px: f32, font_px: f32)
                 .table
                 .iter()
                 .map(|row| {
-                    let cell_chars = (((width_px / row.len() as f32 - 12.0).max(1.0)
+                    let cell_chars = ((((width_px / row.len() as f32).max(160.0) - 12.0)
                         / (font_px * 0.6))
                         .floor() as usize)
                         .max(1);
@@ -594,6 +659,9 @@ pub(super) fn message_block_line_counts(text: &str, width_px: f32, font_px: f32)
                     .lines
                     .iter()
                     .map(|line| {
+                        if block.kind == BlockKind::Code {
+                            return 1;
+                        }
                         line.iter()
                             .map(|span| span.text.chars().count())
                             .sum::<usize>()

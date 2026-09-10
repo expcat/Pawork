@@ -127,7 +127,13 @@ pub(super) fn row_top_gap(row: &TimelineRow) -> f32 {
 
 /// 消息测高与 entry_shell 同源：作者/动作行 + 段落；用户消息另计卡片内边距。
 fn message_entry_height(text: &str, column_width: f32, rem_px: f32, user: bool) -> f32 {
-    let inset = if user { metrics::MSG_USER_INSET } else { 0.0 };
+    let inset = if user { metrics::MSG_USER_INSET_X } else { 0.0 };
+    let vertical_inset = if user { metrics::MSG_USER_INSET_Y } else { 0.0 };
+    let column_width = if user && !super::markdown::message_needs_full_width(text) {
+        column_width * 0.8
+    } else {
+        column_width
+    };
     let label = default_text_line_height(font::BODY_SM.0 * rem_px).max(24.0);
     let body_font_px = font::BODY.0 * rem_px;
     let body_line_height = (font::from_pixels(metrics::MSG_LINE_HEIGHT).0 * rem_px).round();
@@ -138,7 +144,7 @@ fn message_entry_height(text: &str, column_width: f32, rem_px: f32, user: bool) 
         .map(|lines| *lines as f32 * body_line_height)
         .sum::<f32>()
         + metrics::MSG_PARAGRAPH_GAP * blocks.len().saturating_sub(1) as f32;
-    2.0 * inset + label + metrics::MSG_LABEL_BODY_GAP + body
+    2.0 * vertical_inset + label + metrics::MSG_LABEL_BODY_GAP + body
 }
 
 /// 思考展开区与渲染共用 12px 内边距和次级正文字号。
@@ -405,11 +411,12 @@ impl AppView {
             cx.processor(
                 move |view: &mut AppView,
                       ix: usize,
-                      _window: &mut Window,
+                      window: &mut Window,
                       cx: &mut Context<AppView>| {
                     let len = rows.len();
                     if ix < len {
-                        let element = view.timeline_row_element(&rows[ix], fork_available, cx);
+                        let element =
+                            view.timeline_row_element(&rows[ix], fork_available, window, cx);
                         let gap = row_top_gap(&rows[ix]);
                         if ix > 0 {
                             div()
@@ -580,6 +587,7 @@ impl AppView {
         &mut self,
         row: &TimelineRow,
         fork_available: bool,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         match row {
@@ -597,9 +605,9 @@ impl AppView {
                 let can_fork = self.can_fork_entry(&entry.event_id);
                 let element = match &entry.kind {
                     TimelineEntryKind::Error(_) => {
-                        self.error_entry_element(&entry, menu_open, can_fork, cx)
+                        self.error_entry_element(&entry, menu_open, can_fork, window, cx)
                     }
-                    _ => self.message_entry_element(&entry, menu_open, can_fork, cx),
+                    _ => self.message_entry_element(&entry, menu_open, can_fork, window, cx),
                 };
                 element.into_any_element()
             }

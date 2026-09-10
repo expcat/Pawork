@@ -337,7 +337,8 @@ pub mod metrics {
     /// UI-3：作者行与正文间距 12px。
     pub const MSG_LABEL_BODY_GAP: f32 = 12.0;
     /// UI-3：用户消息浅底卡片内边距。
-    pub const MSG_USER_INSET: f32 = 20.0;
+    pub const MSG_USER_INSET_X: f32 = 16.0;
+    pub const MSG_USER_INSET_Y: f32 = 12.0;
     /// UI-3：正文段落间隙 12px。
     pub const MSG_PARAGRAPH_GAP: f32 = 12.0;
     /// UI-3：32px 消息间距，计入虚拟列表条目高度。

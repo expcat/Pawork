@@ -126,6 +126,7 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "settings.tools.config_path" => ("Global configuration", "全局配置位置"),
         "resources.tool_count" => ("{} tools", "{} 个工具"),
         "model_search.placeholder" => ("Search model name or ID", "搜索模型名称或 ID"),
+        "model_search.manage" => ("Manage models & providers", "管理模型与供应商"),
         "model_search.clear" => ("Clear search", "清除搜索"),
         "model_search.no_results" => ("No matching models", "没有匹配的模型"),
         "model_search.status_unknown" => ("Connection and catalog source unverified", "连接状态与目录来源尚未确认"),

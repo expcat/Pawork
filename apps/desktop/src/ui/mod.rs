@@ -2863,7 +2863,7 @@ impl AppView {
     fn menu_item_count(&self) -> usize {
         match self.open_menu.as_ref() {
             Some(MenuKind::Scope | MenuKind::ProjectTask) => self.project_menu_options().len() + 1,
-            Some(MenuKind::Model) => self.filtered_model_entries().len(),
+            Some(MenuKind::Model) => self.filtered_model_entries().len() + 1,
             // 清除行始终可选；空候选时仍可移除已保存的默认角色。
             Some(MenuKind::SettingsRole(_)) => {
                 let entries = settings::settings_role_menu_entries(
@@ -2945,7 +2945,9 @@ impl AppView {
             Some(MenuKind::Scope | MenuKind::ProjectTask) => {
                 self.scope_menu_scroll.scroll_to_item(next)
             }
-            Some(MenuKind::Model) => self.model_menu_scroll.scroll_to_item(next),
+            Some(MenuKind::Model) if next < self.filtered_model_entries().len() => {
+                self.model_menu_scroll.scroll_to_item(next)
+            }
             Some(MenuKind::Entry(_)) => self.entry_menu_scroll.scroll_to_item(next),
             Some(MenuKind::SettingsRole(role)) => {
                 self.scroll_settings_role_menu_to_item(role, next)
@@ -2979,6 +2981,10 @@ impl AppView {
                     && self.menu_highlight.is_none()
                     && ix == self.menu_selected_index()
                 {
+                    return;
+                }
+                if ix == self.filtered_model_entries().len() {
+                    self.on_manage_composer_models(window, cx);
                     return;
                 }
                 if let Some(model) = self.filtered_model_entries().get(ix) {
@@ -3151,6 +3157,20 @@ impl AppView {
             return;
         }
         self.start_connect(cx);
+    }
+
+    fn run_status_visible(&self) -> bool {
+        self.route == AppRoute::Workspace
+            && (self.projection.active_run_id.is_some()
+                || self.projection.pending_approval.is_some())
+    }
+
+    fn on_manage_composer_models(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.settings_page = SettingsPage::Providers;
+        self.on_open_settings(window, cx);
+        // AppKit may deliver the menu Return again after the route changes.
+        // Keep it off the Back button so the same key cannot undo navigation.
+        window.focus(&self.focus_handle);
     }
 
     /// 进入 Settings（SET-3）：只切路由 + 拉取只读供应商状态与模型目录。
@@ -4534,7 +4554,7 @@ impl Render for AppView {
                     // F-12（R6 Wave A）迁至 Workspace Header。P2-1：
                     // StatusBar 只在工作台渲染，Settings 壳不显示
                     // RunStatusBar（render 与 AX 同源）。
-                    .when(matches!(self.route, AppRoute::Workspace), |column| {
+                    .when(self.run_status_visible(), |column| {
                         column.child(
                             StatusBar::new().centered(
                                 div().flex().items_center().gap_4().children(

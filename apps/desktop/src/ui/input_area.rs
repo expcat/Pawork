@@ -539,6 +539,38 @@ impl AppView {
             )
     }
 
+    fn model_settings_entry(&mut self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+        let ix = self.filtered_model_entries().len();
+        let focus = self
+            .settings_action_focus
+            .entry("model-menu-settings".into())
+            .or_insert_with(|| cx.focus_handle().tab_stop(true))
+            .clone();
+        let button = Button::new("model-menu-settings")
+            .track_focus(&focus)
+            .variant(ButtonVariant::Ghost)
+            .label(t("model_search.manage"))
+            .on_click(cx.listener(|view, _, window, cx| view.on_manage_composer_models(window, cx)))
+            .on_activate(cx.listener(|view, _, window, cx| {
+                view.on_manage_composer_models(window, cx);
+                cx.stop_propagation();
+            }));
+        self.settings_element("model-menu-settings")
+            .mt_2()
+            .border_t_1()
+            .border_color(dark().border.subtle)
+            .when(self.menu_highlight == Some(ix), |row| {
+                row.bg(dark().surface.raised)
+            })
+            .on_hover(cx.listener(move |view, hovered: &bool, _, cx| {
+                if *hovered {
+                    view.menu_highlight = Some(ix);
+                    cx.notify();
+                }
+            }))
+            .child(button)
+    }
+
     /// 搜索与当前高亮项的来源固定在头部，只有候选项滚动。
     fn model_menu_element(&mut self, cx: &mut Context<Self>) -> MenuPanel {
         let entries = self.filtered_model_entries();
@@ -584,14 +616,16 @@ impl AppView {
                 (t("model_search.no_results"), t("model_search.clear"))
             };
             return panel.child(
-                content.child(
-                    self.settings_element("model-menu-empty")
-                        .py_2()
-                        .text_size(font::SM)
-                        .whitespace_normal()
-                        .text_color(dark().text.secondary)
-                        .child(format!("{title}\n{hint}")),
-                ),
+                content
+                    .child(
+                        self.settings_element("model-menu-empty")
+                            .py_2()
+                            .text_size(font::SM)
+                            .whitespace_normal()
+                            .text_color(dark().text.secondary)
+                            .child(format!("{title}\n{hint}")),
+                    )
+                    .child(self.model_settings_entry(cx)),
             );
         }
         let mut list = div()
@@ -670,7 +704,7 @@ impl AppView {
             }
             list = list.child(group.child(row));
         }
-        panel = panel.child(content.child(list));
+        panel = panel.child(content.child(list).child(self.model_settings_entry(cx)));
         panel
     }
 

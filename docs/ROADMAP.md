@@ -1,6 +1,6 @@
 # Pawork 活动路线图：GUI 第二阶段
 
-> 更新：2026-09-10；规划基线：`main / 7a416dd6`。本阶段以 [PI-Desktop Screens](https://pi-docs.aiuo.net/guide/screenshots) 为交互与视觉参照，优化已有 GPUI 工作台。**GUI2-01 已实现并完成定向验证，等待用户验收；其余 GUI2 项尚未开始**；生产能力以源码为准，下一阶段规格见 [GUI 设计](gui-design.md)。
+> 更新：2026-09-10；规划基线：`main / 7a416dd6`。本阶段以 [PI-Desktop Screens](https://pi-docs.aiuo.net/guide/screenshots) 为交互与视觉参照，优化已有 GPUI 工作台。**GUI2-01、GUI2-02 已实现并完成定向自动检查，等待用户验收；GUI2-02 真窗口限制见下文，GUI2-03～07 尚未开始**；生产能力以源码为准，下一阶段规格见 [GUI 设计](gui-design.md)。
 
 上一条 UX-01～UX-09 已有实现，详细证据迁至 [历史记录](review/roadmap-ux-2026-09-10.md)，未完成验收继续列于 §3。迁存记录不代表验收通过或任务归档。更早 UI-1～UI-6 见 [模块重设计记录](review/roadmap-ui-2026-09-09.md)。
 
@@ -15,7 +15,7 @@
 | 任务 | 交付结果 | 依赖 | 实现 | 自动检查 | 代理真窗口 | 用户验收 / 归档 |
 | --- | --- | --- | --- | --- | --- | --- |
 | GUI2-01 | 精简工作台壳、首页与侧栏 | 无 | 已实现 | 227/227 通过 | 本项路径通过，见下方限制 | 待验 / 未归档 |
-| GUI2-02 | 对话阅读层级与 Composer 整理 | 01 | 未开始 | 未运行 | 未进行 | 待验 / 未归档 |
+| GUI2-02 | 对话阅读层级与 Composer 整理 | 01 | 已实现 | 228/228 通过 | 部分通过，见下方限制 | 待验 / 未归档 |
 | GUI2-03 | 任务与操作快捷查找 | 01 | 未开始 | 未运行 | 未进行 | 待验 / 未归档 |
 | GUI2-04 | 当前对话查找与回合定位 | 02 | 未开始 | 未运行 | 未进行 | 待验 / 未归档 |
 | GUI2-05 | 工作面板与窄窗可达性 | 01 | 未开始 | 未运行 | 未进行 | 待验 / 未归档 |
@@ -46,6 +46,13 @@
 - **写入集**：`ui/{timeline,timeline_entry,input_area,theme,i18n}.rs`、相关 `ui/mod.rs` 装配与 AX。只有实际编辑行为有缺陷时才改 `text_input.rs`，不重写输入引擎。
 - **验收**：短句、长中文、代码、表格与长链接不裁切；展开不丢阅读位置，流式期间上滚不被拉回；复制仍与原文一致。模型搜索 Enter 不发送草稿，IME composing Return 不启动 Run，三档字号下输入与动作可达。
 - **最小切片**：阅读排版、Composer 整理分别实施；视觉调整不改持久事件或 reducer。
+
+**本轮进展（2026-09-10，`main / 35ca6125` 工作区候选（最终 bundle `Pawork-GUI2-02-verified2.app`，SHA-256 `60af2ae9e0eb6e0bafc1594a8cb71d638c977f76da34170e7d8399ebfc8fc826`））**：短用户消息按内容收缩并右对齐，普通正文最多占阅读列 80%，代码 / 表格可用整列；气泡采用 12px 纵向 / 16px 横向内边距，用户时间与菜单移至气泡外。助手保持开放排版，消息动作悬停 / 聚焦时显示。模型菜单固定提供管理导航，空目录 / 无结果仍可进入 Providers；进入后焦点留在根节点，避免同一 Return 立即触发返回。空闲回收底部运行栏，历史用量继续在每轮页脚呈现。没有修改输入引擎、事件持久化或 reducer。
+
+- **自动检查**：Desktop 定向测试 228/228、候选构建通过。新增一个阅读 / 导航主路径回归覆盖宽窄三字号短气泡、动作 AX 实测框、空目录管理导航与草稿保留；既有复制、模型搜索、IME、折叠与滚动测试通过。命令为 `env -u CARGO_MAKEFLAGS cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders` 及同参数 `cargo build`；本机额外使用 `/tmp/pawork-gui2-02-rustc-wrapper.py` 搬移宏动态库、`/tmp/pawork-gui2-02-test-runner.py` 从临时目录启动测试，复用原 target 增量缓存。模型审查因工具路由错误未能启动，主代理自查差异。
+- **代理真窗口**：1440×1024 / 1080×720、100% / 125% / 150% 检查短消息、长中文、开放助手正文、代码 / 表格 / 长链接和输入动作可达性；短消息与长代码经真实复制后粘回草稿，原文保留。模型搜索 Enter 只选择模型，无结果时 Enter 可进入真实供应商页，返回保留草稿。工具 fixture 展开保持所在行的阅读位置；长代码经滚轮到达行尾（`";` 完整可见）后不再移动。布局 fixture 仅用于呈现与状态覆盖。
+- **真实请求与限制**：通过当前正式 Host，以 `opencode-go / glm-5.3-flash` 发出真实请求，会话 `ses-1789035615664-1` 的持久事件明确记录模型与 **HTTP 401 / authentication** 失败，界面终态一致。成功流式及上滚脱钩、成功工具 / 非零 usage 保持待验。系统键盘输入未形成可观测的 IME 组合态，不能据此关闭 UX-01 的系统 IME 缺口；既有自动 IME 测试通过不等于系统验收。
+- **证据**：截图、AX、候选散列、布局原文与真实请求持久事件位于 `/tmp/pawork-gui2-02-evidence/`；测试 / 构建日志 `/tmp/pawork-gui2-02-{tests,build}.log`，正式布局 Host 日志 `/tmp/pawork-gui2-02-layout-host.log`。用户验收与归档未完成。
 
 ### GUI2-03 任务与操作快捷查找
 
@@ -120,8 +127,8 @@ cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders
 
 真窗口按受影响路径检查 1440×1024、1080×720 与 100% / 125% / 150%；涉及 Inspector 时加检查阈值附近开合。每项记录候选、命令、事实证据和阻塞，截图存任务证据目录，不检入仓库。实际捕捉与运行结果不能由历史日志替代。
 
-Validated: GUI2-01 Desktop 定向测试 227/227、Desktop 构建、上述真窗口路径、Host 存储事实、文档相对链接 / 状态检查及 git diff --check。
+Validated: GUI2-02 Desktop 定向测试 228/228、Desktop 构建、上述真窗口路径、Host 持久事件、文档相对链接 / 状态检查及 git diff --check；GUI2-01 证据保留于本项记录。
 
-Targeted regressions: 首页无任务 / 空任务 / 分页 / 运行判定，宽窄三字号与 AX，侧栏焦点顺序、Activity 锚点；既有 Desktop 回归全部通过。
+Targeted regressions: 宽窄三字号短气泡、消息动作 AX 框、空闲运行栏回收、空目录模型管理导航与草稿保留；既有 Desktop 回归全部通过。
 
 Full workspace gate: NOT RUN（当前未设置全量门禁）。
