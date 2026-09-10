@@ -375,6 +375,8 @@ UX-03 定向回归 `project_task_guidance_preserves_context_and_wraps`：项目�
 
 UX-09：新增 `text_scale_feedback_expires_without_clearing_errors`，使用可控 GPUI 时钟覆盖连续字号反馈 / 旧计时取消 / 新错误保留 / 行高回收，并检查 MCP 空态配置指引；既有 i18n 与错误恢复回归补充双语词条及终端实际布局 AX 断言。
 
+2026-09-10 真窗口补验：同一最终候选覆盖宽窄窗三档字号的 MCP 空态、字号反馈收起与新普通反馈保留、长标题操作可达、最小与放大窗口的长模型搜索（100% 单行完整 ID，125% 菜单内可读，150% 换行读全）与局部键盘、只读终端布局。没有新 Run；隔离库既有 Run / 事件内容哈希不变。新错误共存、完整长模型矩阵、正常终端生命周期和系统旁白仍待验；未重跑 Cargo，窗口证据见 [路线图补验](../../ROADMAP.md#ux-09-真窗口补验2026-09-10main--14ac19d4)。
+
 UX-06：复用并更新角色 / Provider AX 布局与三窗回归，覆盖连接优先排序、角色位置与未生效说明、实际滚动框、三窗来源 / 已用 / 剩余、剩余未知与过期；新增一个分钟精度倒计时主路径测试（含 6995 分钟 → 4d 20h 35m）。Desktop 224 项测试与 build 通过。真窗口已覆盖账号信息、不可用与刷新、宽窄窗三档字号、角色键盘导航；真实三窗数值 / 重置倒计时因当次查询不可用仍待补验，用户验收未完成，见 [路线图 UX-06](../../ROADMAP.md#ux-06-供应商与账号信息层级)。
 
 UX-04 新增 `recovery_keeps_errors_local_and_preserves_drafts`：覆盖离线空态、诊断 / 重试、草稿保留、模型状态、只读创建阻止、实际拒绝的局部提示、权限未知与 stale gate、终端 I/O 错误及成功恢复；复用并扩充 `terminal_io_failure_keeps_running_terminal_operable`。本批 Desktop 223 项测试通过；真实 read-only 拒绝、连接恢复及三档字号证据与验收边界见 [路线图 UX-04](../../ROADMAP.md#ux-04-错误在发生处解释并提供下一步)。
