@@ -1,112 +1,179 @@
 #!/usr/bin/env python3
-"""Delete R1-era stale Cargo incremental dirs. Never wipe target/."""
+"""Prune dead Cargo build generations under target/. Never wipe target/.
+
+Cargo never deletes old build generations: every fingerprint change leaves
+orphaned incremental session dirs and stale deps/build artifacts behind.
+
+Rules (all deletions also require mtime older than --days, default 7;
+or older than --older-than FILE's mtime — e.g. Cargo.toml after a
+profile/toolchain change, to collect generations the change killed):
+
+- incremental/<name>-<hash>/  Session dirs are write-once per build config;
+  a dir untouched for --days is either dead or cold (worst case: one clean
+  recompile of that crate). Registry deps have no incremental dirs.
+- deps/ and examples/         Artifacts are named <base>-<hash>[.ext].
+  Within each <base> group, keep the newest hash generation (by mtime);
+  delete older generations. Sole generations are never deleted, so a
+  still-current artifact is never removed no matter how old it is.
+- build/<name>-<hash>/        Same generation rule as deps.
+
+Use --dry-run to inspect before deleting.
+"""
 from __future__ import annotations
 
 import argparse
+import os
+import re
 import shutil
 import sys
+import time
 from pathlib import Path
 
-STALE_PREFIXES = (
-    "pawork_net",
-    "pawork_mcp",
-    "pawork_session",
-    "pawork_provider_control",
-    "pawork_quota",
-    "pawork_sqlite",
-    "pawork_resources",
-    "pawork_compat",
-    "pawork_api",
-    "pawork_provider_core",
-    "pawork_blob_store",
-    "pawork_channels",
-    "pawork_config",
-    "pawork_diagnostics",
-    "pawork_sdk",
-    "pawork_review",
-    "pawork_memory",
-    "pawork_gui_server",
-)
-
-KEEP_PREFIXES = (
-    "pawork",
-    "pawork_app",
-    "pawork_auth",
-    "pawork_cli",
-    "pawork_client",
-    "pawork_control_plane",
-    "pawork_desktop",
-    "pawork_domain",
-    "pawork_engine",
-    "pawork_exec",
-    "pawork_git",
-    "pawork_orchestration",
-    "pawork_policy",
-    "pawork_protocol",
-    "pawork_protocol_typegen",
-    "pawork_providers",
-    "pawork_storage",
-    "pawork_testkit",
-    "pawork_tools",
-    "pawork_transport",
-    "pawork_workflow",
-    "pawork_workspace",
-)
+# deps/examples/build artifact names: <base>-<metadata>[.<tail>]
+# metadata is a cargo unit hash: legacy 16-hex or base36-ish (12-17 chars).
+ARTIFACT_RE = re.compile(r"^(?P<base>.+)-(?P<hash>[0-9a-z]{12,17})(?P<tail>[.].*)?$")
 
 
-def crate_prefix(name: str) -> str:
-    return name.split("-", 1)[0]
+def split_artifact(name: str) -> tuple[str, str] | None:
+    m = ARTIFACT_RE.match(name)
+    if not m:
+        return None
+    return m.group("base"), m.group("hash")
 
 
-def matches_stale(prefix: str) -> bool:
-    return prefix in STALE_PREFIXES
+def dir_size(path: Path) -> int:
+    total = 0
+    for root, _dirs, files in os.walk(path):
+        for f in files:
+            try:
+                total += (Path(root) / f).stat().st_size
+            except OSError:
+                pass
+    return total
 
 
-def is_keep(prefix: str) -> bool:
-    return prefix in KEEP_PREFIXES
+def prune_incremental(root: Path, cutoff: float, dry_run: bool) -> tuple[int, int]:
+    """Age-based pruning of incremental session dirs. Returns (count, bytes)."""
+    if not root.is_dir():
+        return 0, 0
+    victims: list[Path] = []
+    for entry in os.scandir(root):
+        if not entry.is_dir(follow_symlinks=False):
+            continue
+        try:
+            if entry.stat().st_mtime > cutoff:
+                continue
+        except OSError:
+            continue
+        victims.append(Path(entry.path))
+    return _remove(victims, dry_run)
+
+
+def prune_generations(root: Path, cutoff: float, dry_run: bool) -> tuple[int, int]:
+    """Within each base-name group keep the newest hash generation."""
+    if not root.is_dir():
+        return 0, 0
+    groups: dict[str, dict[str, list[tuple[Path, float]]]] = {}
+    for entry in os.scandir(root):
+        if entry.is_symlink():
+            continue
+        parsed = split_artifact(entry.name)
+        if not parsed:
+            continue
+        base, hash_ = parsed
+        try:
+            mtime = entry.stat().st_mtime
+        except OSError:
+            continue
+        groups.setdefault(base, {}).setdefault(hash_, []).append(
+            (Path(entry.path), mtime)
+        )
+    victims: list[Path] = []
+    for _base, hashes in groups.items():
+        if len(hashes) < 2:
+            continue  # sole generation: never touch
+        cluster_mtime = {
+            h: max(m for _, m in items) for h, items in hashes.items()
+        }
+        newest = max(cluster_mtime, key=cluster_mtime.get)
+        for h, items in hashes.items():
+            if h == newest:
+                continue
+            if cluster_mtime[h] > cutoff:
+                continue  # young sibling generation, likely still live
+            victims.extend(p for p, _ in items)
+    return _remove(victims, dry_run)
+
+
+def _remove(paths: list[Path], dry_run: bool) -> tuple[int, int]:
+    count = 0
+    bytes_ = 0
+    for p in paths:
+        if p.is_dir() and not p.is_symlink():
+            size = dir_size(p)
+            if not dry_run:
+                shutil.rmtree(p, ignore_errors=True)
+        else:
+            try:
+                size = p.stat().st_size
+            except OSError:
+                size = 0
+            if not dry_run:
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
+        count += 1
+        bytes_ += size
+    return count, bytes_
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--root",
-        default=str(Path(__file__).resolve().parents[1] / "target" / "debug" / "incremental"),
-        help="incremental directory (default: <repo>/target/debug/incremental)",
+        default=str(Path(__file__).resolve().parents[1] / "target" / "debug"),
+        help="profile dir (default: <repo>/target/debug)",
     )
+    parser.add_argument("--days", type=float, default=7.0,
+                        help="only delete entries untouched for this many days (default: 7)")
+    parser.add_argument("--older-than", metavar="FILE",
+                        help="use FILE's mtime as the cutoff instead of --days")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
-    root = Path(args.root)
+
+    root = Path(args.root).resolve()
     if not root.is_dir():
         print(f"missing {root}", file=sys.stderr)
         return 1
+    if root.name in ("debug", "release") and root.parent.name == "target":
+        pass
+    else:
+        print(f"refusing non-profile root {root}", file=sys.stderr)
+        return 1
 
-    before = sum(1 for p in root.iterdir() if p.is_dir())
-    victims = []
-    for path in root.iterdir():
-        if not path.is_dir():
-            continue
-        prefix = crate_prefix(path.name)
-        if is_keep(prefix):
-            continue
-        if matches_stale(prefix):
-            victims.append(path)
-
-    print(f"incremental_dirs_before={before}")
-    print(f"stale_dirs={len(victims)}")
-    if args.dry_run:
-        for path in sorted(victims)[:20]:
-            print(f"dry-run {path.name}")
-        if len(victims) > 20:
-            print(f"dry-run ... {len(victims) - 20} more")
-        return 0
-
-    deleted = 0
-    for path in victims:
-        shutil.rmtree(path)
-        deleted += 1
-    after = sum(1 for p in root.iterdir() if p.is_dir())
-    print(f"deleted={deleted}")
-    print(f"incremental_dirs_after={after}")
+    if args.older_than:
+        marker = Path(args.older_than)
+        if not marker.is_file():
+            print(f"missing --older-than marker {marker}", file=sys.stderr)
+            return 1
+        cutoff = marker.stat().st_mtime
+    else:
+        cutoff = time.time() - args.days * 86400
+    total_n = total_b = 0
+    for area, fn in (
+        ("incremental", prune_incremental),
+        ("deps", prune_generations),
+        ("examples", prune_generations),
+        ("build", prune_generations),
+    ):
+        n, b = fn(root / area, cutoff, args.dry_run)
+        tag = "would_free" if args.dry_run else "freed"
+        print(f"{area}: {tag}={b / 2**30:.1f}G entries={n}")
+        total_n += n
+        total_b += b
+    tag = "would_free" if args.dry_run else "freed"
+    print(f"total: {tag}={total_b / 2**30:.1f}G entries={total_n}")
     return 0
 
 

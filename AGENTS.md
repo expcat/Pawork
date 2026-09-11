@@ -52,7 +52,7 @@
 
 硬约束：
 
-- 禁止 `cargo clean`；复用默认 `target/` 增量缓存，仅清理本任务临时输出。stale incremental 用 `python3 scripts/clean-stale-incremental.py` 按前缀清理，禁止 `rm -rf target`。
+- 禁止 `cargo clean`；复用默认 `target/` 增量缓存，仅清理本任务临时输出。stale 构建代（incremental/deps/examples/build 下 >7 天未动的死代，Cargo 无内置 target GC）用 `python3 scripts/clean-stale-incremental.py` 按龄清理，先 `--dry-run` 再实删，禁止 `rm -rf target`。
 - 全会话同一时刻只允许一个 Cargo 进程；并行轨不得抢同一 `target/` 锁。审查者读 worker `/tmp` 日志，不再编译。
 - 文档或不影响构建行为的配置改动只做链接、格式与 diff 检查，不为形式完整跑编译。
 - 前一层失败先收敛原因，不盲目扩大范围。

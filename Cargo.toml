@@ -48,12 +48,15 @@ zeroize = "1"
 ignore = "0.4"
 notify = "8"
 
-# Dev/test 编译加速：增量 + unpacked debuginfo。不启用 LTO。
-# sccache 为可选本机加速，未安装则跳过，不作为仓库依赖。
+# Dev/test 编译加速：增量 + unpacked debuginfo + 仅行表 debuginfo（抑制
+# incremental/deps 死代体积膨胀，backtrace 保留文件名与行号）。不启用 LTO。
+# 官方无 target/ GC（cargo#13136），死代用 scripts/clean-stale-incremental.py 按龄剪。
 [profile.dev]
 incremental = true
 split-debuginfo = "unpacked"
+debug = "line-tables-only"
 
 [profile.test]
 incremental = true
 split-debuginfo = "unpacked"
+debug = "line-tables-only"
