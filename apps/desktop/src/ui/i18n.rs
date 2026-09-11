@@ -87,6 +87,15 @@ pub fn catalog_overview_label(model_count: usize) -> String {
 /// 纯函数：给定语言取 key 文案，不读全局状态（单测无副作用、不与并行测试竞态）。
 fn localize(key: &'static str, lang: Language) -> &'static str {
     let (en, zh) = match key {
+        "find.title" => ("Find · ⌘F", "查找 · ⌘F"),
+        "find.turn_scope" => ("Loaded user turns · Tab select · Enter locate", "已加载的用户回合 · Tab 选择 · Enter 定位"),
+        "find.turns" => ("Turns", "回合"),
+        "find.placeholder" => ("Find in this conversation…", "查找当前对话…"),
+        "find.scope" => ("Loaded user and assistant messages · Enter next · Shift+Enter previous", "已加载的用户与助手正文 · Enter 下一条 · Shift+Enter 上一条"),
+        "find.loading" => ("Loading history · Searching loaded messages only", "历史加载中 · 仅查找已加载正文"),
+        "find.previous" => ("Previous matching message", "上一条匹配消息"),
+        "find.next" => ("Next matching message", "下一条匹配消息"),
+        "find.close" => ("Close conversation navigation", "关闭对话定位"),
         "quick.title" => ("Quick find · ⌘K", "快捷查找 · ⌘K"),
         "quick.placeholder" => ("Find tasks, projects or pages…", "查找任务、项目或页面…"),
         "quick.scope" => ("Current task list · ↑↓ select · Enter open", "当前任务列表 · ↑↓ 选择 · Enter 打开"),

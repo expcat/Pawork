@@ -167,6 +167,28 @@ impl AppView {
             cx.notify();
             return;
         }
+        if request.identifier == "timeline-find-input" {
+            match request.action {
+                AxAction::Focus => window.focus(&self.timeline_navigation.focus),
+                AxAction::SetValue => self.timeline_navigation.input.update(cx, |input, cx| {
+                    input.set_text(request.value.unwrap_or_default(), cx)
+                }),
+                AxAction::Press => {}
+            }
+            cx.notify();
+            return;
+        }
+        if request.action == AxAction::Press
+            && (request.identifier.starts_with("timeline-nav-")
+                || matches!(
+                    request.identifier.as_str(),
+                    "timeline-find" | "timeline-turns"
+                ))
+        {
+            self.navigation_press(&request.identifier, window, cx);
+            cx.notify();
+            return;
+        }
         // SET-4：settings secure 输入（Focus / SetValue 合法输入路径；发布
         // 方向只给掩码，见 settings_page_ax）。
         let settings_api_key_input =
@@ -1348,8 +1370,13 @@ impl AppView {
             .height
             .max(metrics::HEADER_HEIGHT)
             .min(frame.height);
+        let navigation_height = if self.navigation_open() {
+            self.navigation_rect("timeline-navigation").height
+        } else {
+            0.0
+        };
         let timeline_height = (frame.height - composer_height - header_height).max(0.0);
-        AxNode::new("workspace", AxRole::Group, "Workspace", frame)
+        let mut workspace = AxNode::new("workspace", AxRole::Group, "Workspace", frame)
             .child(self.header_ax(
                 window,
                 AxRect::new(frame.x, frame.y, frame.width, header_height),
@@ -1359,9 +1386,9 @@ impl AppView {
                 window,
                 AxRect::new(
                     frame.x,
-                    frame.y + header_height,
+                    frame.y + header_height + navigation_height,
                     frame.width,
-                    timeline_height,
+                    (timeline_height - navigation_height).max(0.0),
                 ),
             ))
             .child(self.composer_ax(
@@ -1373,7 +1400,11 @@ impl AppView {
                     frame.width,
                     composer_height,
                 ),
-            ))
+            ));
+        if self.navigation_open() {
+            workspace = workspace.child(self.navigation_ax(window, cx));
+        }
+        workspace
     }
 
     /// F-05 Header 语义树（与 render 同源谓词 / metrics）：标题 / branch /
@@ -1385,6 +1416,9 @@ impl AppView {
         let row_height = metrics::HEADER_STATUS_DOT_SIZE + 14.0;
         let row_y = content_top + ((content_height - row_height) / 2.0).max(0.0);
         let mut header = AxNode::new("workspace-header", AxRole::Group, "Workspace header", frame);
+        for node in self.navigation_header_ax(window) {
+            header = header.child(node);
+        }
         let mut x = frame.x + metrics::TIMELINE_CONTENT_INSET;
         if let Some(title) = self.projection.workspace_header_title() {
             let width = 340.0_f32.min((frame.x + frame.width - x).max(0.0));

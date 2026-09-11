@@ -17,7 +17,7 @@
 
 ## 2. 模块与文件地图
 
-65 个 `.rs` 文件，全部在 `[[bin]] pawork-desktop` target 内（无 lib target、无 crate `tests/` 目录）。
+66 个 `.rs` 文件，全部在 `[[bin]] pawork-desktop` target 内（无 lib target、无 crate `tests/` 目录）。
 
 | 路径 | 行数 | 承载内容 |
 | --- | --- | --- |
@@ -35,6 +35,7 @@
 | `src/projection/tests.rs` | ~3230 | 67 个投影测试（snapshot/replay、Run/Timeline/Terminal、Settings typed 解析 fail-closed） |
 | `src/ui/mod.rs` | ~4593 | `AppView` 宿主：Workspace Header、Timeline、Composer 与 Inspector 三栏装配；SET-3 增顶层路由 `AppRoute`（Settings 壳与工作台互斥渲染，工作台状态保存在字段、返回即恢复；进入拉取 provider 状态并断线 mark_stale）；SET-4 增 Settings 写操作宿主字段（secure 输入实体 / Replace 编辑器 / Remove 确认 / 动作焦点）、`AuthStarted` 消费、Succeeded 后再查 provider 状态、auth_start 失败回滚乐观态，离开 Settings 清空 secure 缓冲（含 undo 栈）；SET-5 增 `DefaultModelConfirmed` 消费（Composer 同步已确认默认）、页级 Refresh 入口（重查 provider_auth_status + model_list，失败保留旧列表并显示错误）、进入 Settings 即补拉模型目录（与 Refresh 对称、断线 no-op）与 ModelsLoaded 后「设为默认」按钮焦点回收；SET-6a 增 `SettingsPage`（Network 仅在 `general_settings` 查询成功后可选；内部 enum/wire 保留 General 兼容名）、进入/Refresh 同拉 `general_settings`、断线 `mark_stale`、`GeneralSettingsLoaded` / `ProxyUrlConfirmed` 以回执为权威生效值（迟到响应仍重标 stale）；SET-6b 增 `SettingsPage::Permissions`（查询成功后可选）、进入/Refresh/重连同拉 `permissions_settings`、断线 mark_stale、`PermissionsSettingsLoaded` / `ApprovalModeConfirmed` / `WorkspaceTrustConfirmed` 以回执为权威生效值（迟到响应仍重标 stale）；SET-6c 增 `SettingsPage::Tools`（`mcp_list` 成功后可选，可用性=resources.available）、进入/Refresh/重连同拉 `refresh_resources`、`McpServersReceipt` 以回执为权威生效值、Remove 两步确认 `settings_mcp_remove_confirm`（离开 Settings 清空）；SET-6d 增 `SettingsPage::Terminal`（`terminal_settings` 查询成功后可选）、进入/Refresh/重连同拉 `terminal_settings`（重连同批预热新建终端初始尺寸查询缓存）、断线 mark_stale、`TerminalSettingsLoaded` / `TerminalSettingsConfirmed` 以回执为权威生效值并回填输入框（迟到响应仍重标 stale）、`TerminalCreated` 回执后投影初始尺寸与当次 `terminal_resize` 改用生效 columns/rows（未查询到回落 80×24）；SET-6e 增 `SettingsPage::Appearance`（本地外观页常在，导航焦点 + 三档字号 HashMap 焦点）；SET-6f 增 `SettingsPage::Advanced`、握手摘要与导航焦点；Connecting/断线清空摘要，连接成功刷新，避免旧 Host 信息冒充当前状态；Scope 菜单的 `Add project…` 通过 GPUI 系统目录选择器调用 controller `open_workspace`，成功后切换 scope、同步 terminal 并显示项目名；其余承载 Activity、按 workspace 隔离的 terminal 草稿、尺寸草稿/键盘 stepper、终端生命周期、焦点、字号、五种浮层菜单与 barrier settle；P0-2 移除 `MenuKind::Grouping` 分派；OPT-2a 移除 `MenuKind::WorkspaceConfirm`（ADR-054）；P0-3 让 Header 以 subtle divider 收口，并在无 Task 时隐藏重复 Header 新建动作；OPT-4b（F6）：Inspector 初始默认折叠（显式动作仍可展开），折叠态 Header 最右新增 inspector-expand 重开按钮（40×37 槽、font::ICON 20px 字形，与 Activity 触发器并存）；OPT-4a：header-new-task / inspector-toggle 字形提至 20px；17 个测试；GUI2-01 增首页状态与实测壳层布局 |
 | `src/ui/quick_search.rs` | ~894 | GUI2-03：当前 Snapshot 任务标题 / 项目名与已有页面 / 安全导航查找；独立输入、稳定目标选择、滚动实测 AX、模态键盘隔离与 Esc 回焦；页面标题复用 Settings；2 个主路径 / 断线回归 |
+| `src/ui/timeline_navigation.rs` | ~900 | GUI2-04：当前已加载正文查找、匹配消息切换与长对话回合目录；复用消息 / 事件身份定位、显式阅读模式、独立输入与实测 AX；1 个主路径回归 |
 | `src/ui/archive.rs` | ~271 | UX-08 窗口内归档反馈与撤销队列、在途 gate、失败保留恢复入口；读取实际布局发布 AX；1 个主路径回归 |
 | `src/ui/recovery.rs` | ~380 | UX-04 连接 / 终端原因与恢复入口、创建 gate、技术详情、按实际布局裁剪的 AX；恢复动作不修改 Host 权限 |
 | `src/ui/shell_layout.rs` | ~295 | R2 Wave A 壳层几何合同：`resolve`（唯一计算入口，render 与 AX 树共享）——宽窗 rail=288 / Inspector 打开时 440（OPT-4b 起 AppView 初始偏好为折叠，resolve 合同不变），窗口宽 ≤1279 时 rail=240 且 Inspector 强制折叠（Workspace ≥560）；R7 Wave C 在 150% 字号下改用 320px rail，宽度不足 1320 时保持 Inspector 折叠，1080 窗口保留 760px Workspace；固定侧栏 `flex_none`，防长文本 min-content 挤窄 Inspector；rail 顶部 36px traffic-light 安全区；4 个 GPUI 布局测试 |
@@ -121,6 +122,7 @@ pawork-desktop [--socket <path>] [--instance <name>] [--probe|--probe-smoke]
 
 - **GUI2-01 Header**：最小 64px，上下各 12px 内边距，内容可撑高；保留任务标题、权威 branch / live 状态和 Activity / Inspector 入口。AX 使用实测 Header 高度划分 Timeline 与 Composer。
 - **GUI2-02 阅读与 Composer**：用户消息按内容收缩、右对齐，普通正文最大为阅读列 80%，代码 / 表格可使用整列；内边距纵向 12px / 横向 16px、圆角 12px。时间与菜单在气泡外，省去重复用户标题；助手保持开放排版。菜单悬停 / 聚焦 / 已打开时显现，键盘与 AX Press 始终可达，动作框读取实际布局。代码与表格在块内横向滚动，复制仍取原始内容。模型菜单底部固定「管理模型与供应商」，空目录 / 无结果也保留；鼠标、方向键 / Enter 和 AX 共用已有 Settings 导航，直接进入 Providers，保留任务、草稿和 Run。底部 30px StatusBar 仅在当前 Run 运行中或待审批时出现，空闲时回收空间；每轮持久化用量仍位于 Timeline 终态页脚，render 与 AX 共用显示条件。
+- **GUI2-04 对话查找与回合目录**：Header「查找 · ⌘F」/ `Cmd+F` 打开工作台内联查找栏，只查当前已加载用户 / 助手正文（忽略英文大小写，计数以匹配消息为单位），↑ / ↓、Enter / Shift+Enter 循环定位，当前命中整条消息以背景标识；分页中范围文案如实标「历史加载中 · 仅查找已加载正文」，无结果不访问 Host。多个用户回合且内容超出一屏才显示「回合」入口，摘要列表可滚动、选择后定位并关闭。定位键为协议消息 ID + run_id（事件 ID 兜底），流式转提交与 echo 转持久行后身份保持，渲染前重求虚拟行号；跳转脱离跟随，手动滚动解锚但保留阅读模式，显式回底才恢复跟随。切任务清空命中，关闭恢复入口焦点；协议与共享投影不变。
 - **TaskRail（左侧栏）**
   - GUI2-01 顶部两行：第一行「任务」、36×36 快捷查找与全局新建，第二行项目筛选与 36×36 grouping。筛选按可用宽度截断，完整项目名保留在菜单与 AX。顶部 36px traffic lights 安全区不变。键盘顺序为快捷查找 → 全局新建 → 筛选 → 分组 → 项目 / 任务；grouping 保持当前视图 value 与目标动作 name。Reconnect 仍仅在 Disconnected / ConnectFailed 出现。
   - Scope 触发器显示「筛选 · 项目名」，仅过滤侧栏列表；若隐藏当前任务，Composer 下方明确说明任务归属未变。菜单末项固定 `Add project…`。系统目录选择器取消不改变项目 / 会话 / 草稿，成功后必须等 Host `workspace_add` 回执与 snapshot，再选择返回的 canonical workspace。

@@ -217,6 +217,9 @@ impl AppView {
         if self.quick_search.open {
             return;
         }
+        if self.navigation_open() {
+            self.close_timeline_navigation(window, cx);
+        }
         self.quick_search.return_focus = window.focused(cx);
         self.close_open_menu(cx);
         self.quick_search.input.update(cx, |input, cx| {

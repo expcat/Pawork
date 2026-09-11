@@ -23,6 +23,7 @@ pub mod text_input;
 mod theme;
 mod timeline;
 mod timeline_entry;
+mod timeline_navigation;
 #[cfg(test)]
 mod u1_probe;
 
@@ -67,6 +68,7 @@ actions!(
         NewTask,
         ToggleInspector,
         OpenQuickSearch,
+        FindConversation,
         TaskCycleUp,
         TaskCycleDown,
         NextNeedsAttention,
@@ -86,6 +88,7 @@ pub(crate) const APP_VIEW_KEYBINDINGS: &[(&str, &str)] = &[
     ("cmd-n", "NewTask"),
     ("cmd-i", "ToggleInspector"),
     ("cmd-k", "OpenQuickSearch"),
+    ("cmd-f", "FindConversation"),
     ("cmd-alt-up", "TaskCycleUp"),
     ("cmd-alt-down", "TaskCycleDown"),
     ("cmd-alt-n", "NextNeedsAttention"),
@@ -268,6 +271,7 @@ pub fn install_keybindings(cx: &mut App) {
         KeyBinding::new("cmd-n", NewTask, Some("AppView")),
         KeyBinding::new("cmd-i", ToggleInspector, Some("AppView")),
         KeyBinding::new("cmd-k", OpenQuickSearch, Some("AppView")),
+        KeyBinding::new("cmd-f", FindConversation, Some("AppView")),
         KeyBinding::new("cmd-alt-up", TaskCycleUp, Some("AppView")),
         KeyBinding::new("cmd-alt-down", TaskCycleDown, Some("AppView")),
         KeyBinding::new("cmd-alt-n", NextNeedsAttention, Some("AppView")),
@@ -433,6 +437,7 @@ pub struct AppView {
     terminal_input: Entity<TextInput>,
     terminal_action_layouts: HashMap<&'static str, ScrollHandle>,
     quick_search: quick_search::QuickSearch,
+    timeline_navigation: timeline_navigation::TimelineNavigation,
     model_search_input: Entity<TextInput>,
     model_search_focus: FocusHandle,
     model_search_query: String,
@@ -733,6 +738,7 @@ impl AppView {
             text_input,
             terminal_input,
             quick_search: quick_search::QuickSearch::new(cx),
+            timeline_navigation: timeline_navigation::TimelineNavigation::new(cx),
             model_search_input,
             model_search_focus,
             model_search_query: String::new(),
@@ -1163,6 +1169,7 @@ impl AppView {
                 view.on_toggle_inspector(window, cx);
                 cx.stop_propagation();
             }));
+        let navigation = self.navigation_header(cx);
         self.shell_element("workspace-header")
             .debug_selector(|| "workspace-header".into())
             .flex()
@@ -1231,6 +1238,7 @@ impl AppView {
                         )
                     }),
             )
+            .child(navigation)
             .when(activity_trigger_visible, |header| {
                 header.when_some(activity_trigger, |header, trigger| {
                     // OPT-4b：折叠态右上角 Activity + 重开入口并存；Activity
@@ -1566,6 +1574,8 @@ impl AppView {
             ControllerEvent::TimelineLoaded { session_id, page } => {
                 if self.projection.active_session_id.as_deref() == Some(&session_id) {
                     self.timeline_changed();
+                    self.sync_navigation_session();
+                    self.timeline_navigation.observe_page(&page);
                     self.projection.apply_timeline_page(&page);
                     if page.complete {
                         self.timeline_paging = false;
@@ -1573,6 +1583,11 @@ impl AppView {
                 }
             }
             ControllerEvent::Event(envelope) => {
+                self.sync_navigation_session();
+                if matches!(&envelope.stream, pawork_client::EventStream::Session(id) if Some(id.as_str()) == self.projection.active_session_id.as_deref())
+                {
+                    self.timeline_navigation.observe_event(&envelope);
+                }
                 let terminal_event = matches!(envelope.payload, AppEvent::TerminalOutput { .. });
                 // Run 终态（RunChanged 清空 active_run_id）后刷新 Changes：
                 // 会话 diff 可能已被这轮 run 改写。
@@ -2258,6 +2273,7 @@ impl AppView {
         self.session_rename = None;
         self.stash_composer_draft(cx);
         self.projection.select_session(&session_id);
+        self.sync_navigation_session();
         self.reconcile_terminal_workspace(cx);
         // session_get 分页开始：complete / open session 失败前不写 settle barrier。
         self.timeline_paging = true;
@@ -3396,6 +3412,10 @@ impl AppView {
             self.submit_quick_search(window, cx);
             return;
         }
+        if self.navigation_input_focused(window) {
+            self.step_find(true, cx);
+            return;
+        }
         // 搜索框的 Return 只选择模型；包括菜单卸载前的输入事件，不能发送草稿。
         if self.model_search_focus.is_focused(window) {
             if !self.model_search_input.read(cx).is_composing() {
@@ -4347,6 +4367,7 @@ fn terminal_resize_receipt_clears_draft(
 
 impl Render for AppView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_navigation_session();
         // 一次性安装 AppKit Tab 本地监听器：NSWindow 会吞掉裸 Tab
         //（key-view 循环为空），监听器在派发前截获并驱动 GPUI 焦点链。
         // 监听器进程级只装一次；每次 render 刷新 thread_local 窗口句柄，
@@ -4484,7 +4505,7 @@ impl Render for AppView {
                     activity_popover_open,
                     cx,
                 );
-                let timeline_area = self.timeline_area(cx);
+                let timeline_area = self.timeline_area(window, cx);
                 let composer = self.composer_element(window, cx);
                 let workspace = div()
                     .id("shell-workspace")
@@ -4563,6 +4584,7 @@ impl Render for AppView {
             }))
             .on_action(cx.listener(Self::on_send_message))
             .on_action(cx.listener(Self::on_quick_search))
+            .on_action(cx.listener(Self::on_find_conversation))
             .when(!search_open, |root| {
                 root.on_action(cx.listener(Self::on_approve_once))
                     .on_action(cx.listener(Self::on_approve_for_run))
@@ -4580,6 +4602,8 @@ impl Render for AppView {
             .capture_key_down(cx.listener(|view, event, window, cx| {
                 if view.quick_search.open {
                     view.handle_quick_search_key(event, window, cx);
+                } else {
+                    view.navigation_key(event, window, cx);
                 }
             }))
             .child(

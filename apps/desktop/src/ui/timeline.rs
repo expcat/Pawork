@@ -54,6 +54,8 @@ pub(super) fn install_scroll_follow(state: &ListState, view: &WeakEntity<AppView
             // 本回调，任何 borrow 都会 BorrowMutError panic（审查 P0）。
             let following = event.count > 0 && event.visible_range.end >= event.count;
             view.update(cx, |view, cx| {
+                view.timeline_navigation.user_scrolled();
+                let following = following && !view.timeline_navigation.reading;
                 if view.timeline_following != following {
                     view.timeline_following = following;
                     cx.notify();
@@ -69,6 +71,7 @@ pub(super) fn install_scroll_follow(state: &ListState, view: &WeakEntity<AppView
 fn sync_list(view: &mut AppView, row_count: usize) {
     let count = row_count + usize::from(view.projection.pending_approval.is_some());
     if view.timeline_list_rev == view.timeline_rev && view.timeline_list_count == count {
+        view.sync_navigation_location(false);
         return;
     }
     // 条目「···」菜单浮层锚在条目内：reset 使高度缓存失效、条目可能被虚拟化
@@ -93,6 +96,7 @@ fn sync_list(view: &mut AppView, row_count: usize) {
     }
     view.timeline_list_rev = view.timeline_rev;
     view.timeline_list_count = count;
+    view.sync_navigation_location(true);
 }
 
 /// ToolCall 已知状态本地化；未知 wire 状态原样显示不伪造。render 与 AX 共用。
@@ -396,7 +400,7 @@ pub(super) fn timeline_following_window(
 }
 
 impl AppView {
-    pub(super) fn timeline_area(&mut self, cx: &mut Context<Self>) -> gpui::Div {
+    pub(super) fn timeline_area(&mut self, window: &Window, cx: &mut Context<Self>) -> gpui::Div {
         let rows = self.projection.timeline_rows();
         sync_list(self, rows.len());
         let empty_hint_visible = self.welcome_visible();
@@ -546,6 +550,7 @@ impl AppView {
                 .into_any_element()
         };
         // 脱钩时右下浮出回底控件（§8.3）；跟随态隐藏。
+        let navigation = self.navigation_panel(window, cx);
         let following = self.timeline_following;
         let back_to_bottom_focus = self.timeline_back_to_bottom_focus.clone();
         div()
@@ -556,6 +561,7 @@ impl AppView {
             .when(offline && !empty_hint_visible, |area| {
                 area.child(self.connection_notice_element(cx))
             })
+            .when_some(navigation, |area, panel| area.child(panel))
             .child(content)
             .when(!following, |area| {
                 area.child(BackToBottom::new(
@@ -609,7 +615,11 @@ impl AppView {
                     }
                     _ => self.message_entry_element(&entry, menu_open, can_fork, window, cx),
                 };
-                element.into_any_element()
+                element
+                    .when(self.navigation_message_selected(&entry), |element| {
+                        element.bg(dark().surface.hover).rounded_md()
+                    })
+                    .into_any_element()
             }
             TimelineRow::RunPhase { entry_index } => {
                 let entry = &self.projection.timeline[*entry_index];
@@ -770,5 +780,7 @@ impl AppView {
             offset_in_item: Pixels::ZERO,
         });
         self.timeline_following = true;
+        self.timeline_navigation.reading = false;
+        self.timeline_navigation.user_scrolled();
     }
 }
