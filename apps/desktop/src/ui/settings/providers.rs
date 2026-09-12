@@ -352,7 +352,7 @@ impl AppView {
     /// 瞬态反馈）保持展开区可见。
     pub(super) fn settings_provider_card(
         &mut self,
-        ix: usize,
+        _ix: usize,
         provider: &ProviderAuthStatusEntry,
         model_count: usize,
         oauth_waits: &std::collections::HashMap<String, AuthStartData>,
@@ -398,63 +398,94 @@ impl AppView {
         } else {
             auth_methods
         };
-        // 两组信息随列宽自然收缩，名称与连接状态不再争抢五个固定槽。
         let expand = self.settings_provider_expand_button(&provider_id, expanded, cx);
-        let header = div()
-            .id(("settings-provider-overview", ix))
+        let header = self
+            .settings_element(dynamic_identifier("settings-provider-header", &provider_id))
+            .h(px(metrics::SETTINGS_PROVIDER_HEADER_HEIGHT))
+            .overflow_hidden()
             .flex()
+            .flex_row()
             .items_center()
-            .gap_4()
+            .gap_3()
             .px_4()
-            .py_4()
-            .when(expanded, |el| {
-                el.border_b_1().border_color(dark().border.subtle)
-            })
+            .child(
+                div()
+                    .w(px(metrics::SETTINGS_PROVIDER_STATUS_DOT))
+                    .h(px(metrics::SETTINGS_PROVIDER_STATUS_DOT))
+                    .flex_none()
+                    .rounded_full()
+                    .bg(connection_color),
+            )
             .child(
                 self.settings_element(dynamic_identifier("settings-provider-name", &provider_id))
                     .flex()
-                    .flex_col()
+                    .flex_row()
                     .flex_1()
                     .min_w_0()
-                    .gap_1()
                     .child(
                         div()
+                            .truncate()
                             .text_size(font::BODY)
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(dark().text.primary)
                             .child(provider.display_name.clone()),
-                    )
-                    .child(
-                        div()
-                            .text_size(font::BASE)
-                            .text_color(dark().text.secondary)
-                            .child(auth_methods),
                     ),
+            )
+            .child(
+                div().flex().flex_row().flex_none().child(
+                    div()
+                        .truncate()
+                        .text_size(font::BASE)
+                        .text_color(dark().text.secondary)
+                        .child(auth_methods),
+                ),
             )
             .child(
                 div()
                     .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_w_0()
+                    .flex_row()
+                    .items_center()
                     .gap_1()
+                    .flex_none()
+                    .h(px(24.0))
+                    .px_2()
+                    .rounded(px(metrics::CONTROL_RADIUS))
+                    .bg(dark().surface.hover)
                     .child(
                         self.settings_element(dynamic_identifier(
                             "settings-provider-connection",
                             &provider_id,
                         ))
-                        .text_size(font::BASE)
-                        .text_color(connection_color)
-                        .child(provider.auth_label()),
+                        .flex()
+                        .flex_row()
+                        .child(
+                            div()
+                                .truncate()
+                                .text_size(font::BASE)
+                                .text_color(connection_color)
+                                .child(provider.auth_label()),
+                        ),
+                    )
+                    .child(
+                        div()
+                            .text_size(font::BASE)
+                            .text_color(dark().text.secondary)
+                            .child(" · "),
                     )
                     .child(
                         self.settings_element(dynamic_identifier(
                             "settings-provider-catalog",
                             &provider_id,
                         ))
-                        .text_size(font::XS)
-                        .text_color(dark().text.secondary)
-                        .child(catalog_summary),
+                        .flex()
+                        .flex_row()
+                        .child(
+                            div()
+                                .truncate()
+                                .text_size(font::XS)
+                                .text_color(dark().text.secondary)
+                                .child(catalog_summary),
+                        ),
                     ),
             )
             .child(
@@ -537,8 +568,11 @@ impl AppView {
             .height(px(metrics::ICON_BUTTON_SIZE))
             .center()
             .radius(6.0)
-            .text_size(font::ICON)
-            .label(if expanded { "▾" } else { "▸" })
+            .child(icon(if expanded {
+                Icon::ChevronDown
+            } else {
+                Icon::ChevronRight
+            }))
             .tooltip(if expanded {
                 t("settings.providers.collapse_tooltip")
             } else {
@@ -603,7 +637,12 @@ impl AppView {
         writes: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let mut region = div().flex().flex_col().min_w_0();
+        let mut region = div()
+            .flex()
+            .flex_col()
+            .min_w_0()
+            .border_t_1()
+            .border_color(dark().border.subtle);
         // Credentials 区：凭证逐条列出，动作按钮在区下方（ADR-056 D4）。
         region = region.child(self.settings_provider_credentials_block(
             provider,
@@ -2626,5 +2665,6 @@ impl AppView {
         // Settings 清空（Host 权威状态不受影响）。
         self.projection.settings_providers.model_write_pending = None;
         self.projection.settings_providers.model_cleared_note = None;
+        self.reset_settings_search(cx);
     }
 }

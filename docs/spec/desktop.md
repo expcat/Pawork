@@ -116,7 +116,7 @@ UI-5 设置壳与七个非供应商页沿用 UI-1 token，改为 40px 导航、3
 - 长会话、长 diff 和窄窗不让主要操作不可达。
 - AX identifier 与用户可见/可本地化 label 分离；disabled 控件不发布可执行 action，未知 action fail-closed；新增可见交互须同批补语义节点。
 - 应用内字号支持 100% / 125% / 150%：`Cmd+=` / `Cmd++` 放大、`Cmd+-` 缩小、`Cmd+0` 重置；SET-6e 外观页提供同源三档按钮及当前值/AX selected。字号即时生效并保存到用户目录 `desktop.json`，重启恢复选择；150% + 1080×720 使用 320px TaskRail，Workspace 保留 760px。
-- 主题为单一深色 palette，不读取系统显示偏好（Increase Contrast 支持已于 2026-09-04 移除）；当前 UI 无动画，Reduce Motion 无渲染分支。
+- 主题为单一深色 palette，不读取系统显示偏好（Increase Contrast 支持已于 2026-09-04 移除）；GUI3-08 仅 oneshot 开合 / Switch 位移，无循环闪动，Reduce Motion 无渲染分支。
 
 当前锁定 GPUI 0.2.2 不原生导出元素级 AX tree；ADR-042 已由 Desktop 显式 `AxTree` + AppKit 虚拟元素补救。菜单方向键、grouping/scope tab stop 与全局焦点等价路径已经存在；已知缺口为 Windows/Linux 平台 AX；VoiceOver 屏幕朗读与系统显示偏好验收已于 2026-09-04 按用户要求移出范围。
 

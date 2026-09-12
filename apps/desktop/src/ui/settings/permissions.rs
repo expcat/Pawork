@@ -196,11 +196,6 @@ impl AppView {
             .entry(id.clone())
             .or_insert_with(|| cx.focus_handle().tab_stop(true))
             .clone();
-        let radio_color = if current {
-            dark().accent.primary
-        } else {
-            dark().text.secondary
-        };
         let text_color = if enabled || current {
             dark().text.primary
         } else {
@@ -210,11 +205,32 @@ impl AppView {
             .height(SETTINGS_APPROVAL_ROW_REMS * self.text_scale.rem_pixels())
             .track_focus(&focus)
             .child(
-                div().w(px(32.0)).flex_none().child(
-                    Label::new(if current { "●" } else { "○" })
-                        .size(font::BODY)
-                        .color(radio_color),
-                ),
+                div()
+                    .w(px(32.0))
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        div()
+                            .w(px(metrics::SETTINGS_RADIO_OUTER))
+                            .h(px(metrics::SETTINGS_RADIO_OUTER))
+                            .rounded_full()
+                            .border(px(1.5))
+                            .border_color(dark().text.secondary)
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .when(current, |radio| {
+                                radio.child(
+                                    div()
+                                        .w(px(metrics::SETTINGS_RADIO_INNER))
+                                        .h(px(metrics::SETTINGS_RADIO_INNER))
+                                        .rounded_full()
+                                        .bg(dark().accent.primary),
+                                )
+                            }),
+                    ),
             )
             .child(
                 div()

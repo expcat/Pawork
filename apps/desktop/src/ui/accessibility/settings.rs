@@ -34,29 +34,22 @@ fn visible_settings_page(mut page: AxNode) -> AxNode {
 }
 
 impl AppView {
-    /// Settings 左栏（SET-3）：返回按钮 + 首页导航项。几何与
-    /// settings.rs render 同源（Panel p_2 + 36px 安全区 + gap_2）；
-    /// OPT-4d（F4）后导航项两态共用同一外壳几何，选中不改变行位。
-    pub(crate) fn settings_rail_ax(&self, window: &Window, frame: AxRect) -> AxNode {
+    /// Settings 左栏：返回、查找、分组导航。几何与 render 同源
+    ///（Panel p_2 + gap_2 + 固定行高）；OPT-4d（F4）选中不改变行位。
+    pub(crate) fn settings_rail_ax(&self, window: &Window, cx: &App, frame: AxRect) -> AxNode {
         const TITLE_HEIGHT: f32 = 28.0;
         let pad = f32::from(window.rem_size()) * 0.5; // Panel p_2 / gap_2
         let title_y = pad + shell_layout::TRAFFIC_LIGHT_SAFE_HEIGHT + pad;
         let back_y = title_y + TITLE_HEIGHT + pad;
-        let nav_y = back_y + metrics::RAIL_TOP_ROW_HEIGHT + pad;
+        let search_y = back_y + metrics::RAIL_TOP_ROW_HEIGHT + pad;
         let width = (frame.width - pad * 2.0 - 1.0).max(0.0);
-        let general_available = self.projection.settings_general.query.available;
-        let permissions_available = self.projection.settings_permissions.query.available;
-        let tools_available = self.resources.available;
-        let terminal_available = self.projection.settings_terminal.query.available;
-        let about_available = self.settings_about_rows().is_some();
-        let current_page = match self.settings_page {
-            SettingsPage::General if !general_available => SettingsPage::Providers,
-            SettingsPage::Permissions if !permissions_available => SettingsPage::Providers,
-            SettingsPage::Tools if !tools_available => SettingsPage::Providers,
-            SettingsPage::Terminal if !terminal_available => SettingsPage::Providers,
-            SettingsPage::About if !about_available => SettingsPage::Advanced,
-            page => page,
-        };
+        let current_page = self.settings_effective_page();
+        let search_rect = AxRect::new(
+            frame.x + pad,
+            frame.y + search_y,
+            width,
+            metrics::SETTINGS_SEARCH_INPUT_HEIGHT,
+        );
         let mut rail = AxNode::new(
             "settings-rail",
             AxRole::Group,
@@ -83,155 +76,70 @@ impl AppView {
             )
             .focused(self.settings_back_focus.is_focused(window))
             .action(AxAction::Press),
-        )
-        .child(settings_nav_ax(
-            "settings-nav-providers",
-            t("settings.nav.providers"),
-            current_page == SettingsPage::Providers,
-            self.open_menu.is_none() && self.settings_nav_providers_focus.is_focused(window),
-            AxRect::new(
-                frame.x + pad,
-                frame.y + nav_y,
-                width,
-                crate::ui::settings::SETTINGS_NAV_HEIGHT,
-            ),
-        ));
-        if general_available {
-            let general_y = nav_y + crate::ui::settings::SETTINGS_NAV_HEIGHT + pad;
-            rail = rail.child(settings_nav_ax(
-                "settings-nav-general",
-                t("settings.nav.general"),
-                current_page == SettingsPage::General,
-                self.open_menu.is_none() && self.settings_nav_general_focus.is_focused(window),
-                AxRect::new(
-                    frame.x + pad,
-                    frame.y + general_y,
-                    width,
-                    crate::ui::settings::SETTINGS_NAV_HEIGHT,
-                ),
-            ));
+        );
+        for node in self.settings_search_rail_ax(window, cx, search_rect) {
+            rail = rail.child(node);
         }
-        if permissions_available {
-            // 几何与 render 同源：通用项之后递增一行（无通用项时紧随
-            // 供应商项）。
-            let mut permissions_y = nav_y + crate::ui::settings::SETTINGS_NAV_HEIGHT + pad;
-            if general_available {
-                permissions_y += crate::ui::settings::SETTINGS_NAV_HEIGHT + pad;
+        let mut cursor_y = search_y + metrics::SETTINGS_SEARCH_INPUT_HEIGHT + pad;
+        for slot in self.settings_nav_slots() {
+            match slot {
+                crate::ui::settings::SettingsNavSlot::Group { id, label_key } => {
+                    rail = rail.child(AxNode::new(
+                        id,
+                        AxRole::StaticText,
+                        t(label_key),
+                        AxRect::new(
+                            frame.x + pad,
+                            frame.y + cursor_y,
+                            width,
+                            metrics::SETTINGS_NAV_GROUP_HEIGHT,
+                        ),
+                    ));
+                    cursor_y += metrics::SETTINGS_NAV_GROUP_HEIGHT + pad;
+                }
+                crate::ui::settings::SettingsNavSlot::Page {
+                    page,
+                    id,
+                    label_key,
+                } => {
+                    let focused = self.open_menu.is_none()
+                        && match page {
+                            SettingsPage::Providers => {
+                                self.settings_nav_providers_focus.is_focused(window)
+                            }
+                            SettingsPage::General => {
+                                self.settings_nav_general_focus.is_focused(window)
+                            }
+                            SettingsPage::Permissions => {
+                                self.settings_nav_permissions_focus.is_focused(window)
+                            }
+                            SettingsPage::Tools => self.settings_nav_tools_focus.is_focused(window),
+                            SettingsPage::Terminal => {
+                                self.settings_nav_terminal_focus.is_focused(window)
+                            }
+                            SettingsPage::Appearance => {
+                                self.settings_nav_appearance_focus.is_focused(window)
+                            }
+                            SettingsPage::Advanced => {
+                                self.settings_nav_advanced_focus.is_focused(window)
+                            }
+                            SettingsPage::About => self.settings_nav_about_focus.is_focused(window),
+                        };
+                    rail = rail.child(settings_nav_ax(
+                        id,
+                        t(label_key),
+                        current_page == page,
+                        focused,
+                        AxRect::new(
+                            frame.x + pad,
+                            frame.y + cursor_y,
+                            width,
+                            crate::ui::settings::SETTINGS_NAV_HEIGHT,
+                        ),
+                    ));
+                    cursor_y += crate::ui::settings::SETTINGS_NAV_HEIGHT + pad;
+                }
             }
-            rail = rail.child(settings_nav_ax(
-                "settings-nav-permissions",
-                t("settings.nav.permissions"),
-                current_page == SettingsPage::Permissions,
-                self.open_menu.is_none() && self.settings_nav_permissions_focus.is_focused(window),
-                AxRect::new(
-                    frame.x + pad,
-                    frame.y + permissions_y,
-                    width,
-                    crate::ui::settings::SETTINGS_NAV_HEIGHT,
-                ),
-            ));
-        }
-        if tools_available {
-            // 几何与 render 同源：权限项之后递增一行（按可用项累计）。
-            let mut tools_y = nav_y + crate::ui::settings::SETTINGS_NAV_HEIGHT + pad;
-            if general_available {
-                tools_y += crate::ui::settings::SETTINGS_NAV_HEIGHT + pad;
-            }
-            if permissions_available {
-                tools_y += crate::ui::settings::SETTINGS_NAV_HEIGHT + pad;
-            }
-            rail = rail.child(settings_nav_ax(
-                "settings-nav-tools",
-                t("settings.nav.tools"),
-                current_page == SettingsPage::Tools,
-                self.open_menu.is_none() && self.settings_nav_tools_focus.is_focused(window),
-                AxRect::new(
-                    frame.x + pad,
-                    frame.y + tools_y,
-                    width,
-                    crate::ui::settings::SETTINGS_NAV_HEIGHT,
-                ),
-            ));
-        }
-        if terminal_available {
-            // 几何与 render 同源：工具项之后递增一行（按可用项累计）。
-            let mut terminal_y = nav_y + crate::ui::settings::SETTINGS_NAV_HEIGHT + pad;
-            if general_available {
-                terminal_y += crate::ui::settings::SETTINGS_NAV_HEIGHT + pad;
-            }
-            if permissions_available {
-                terminal_y += crate::ui::settings::SETTINGS_NAV_HEIGHT + pad;
-            }
-            if tools_available {
-                terminal_y += crate::ui::settings::SETTINGS_NAV_HEIGHT + pad;
-            }
-            rail = rail.child(settings_nav_ax(
-                "settings-nav-terminal",
-                t("settings.nav.terminal"),
-                current_page == SettingsPage::Terminal,
-                self.open_menu.is_none() && self.settings_nav_terminal_focus.is_focused(window),
-                AxRect::new(
-                    frame.x + pad,
-                    frame.y + terminal_y,
-                    width,
-                    crate::ui::settings::SETTINGS_NAV_HEIGHT,
-                ),
-            ));
-        }
-        // SET-6e 外观是 Desktop 本地能力，始终在所有 Host 可用页之后
-        // 显示；位置按实际可见项累计，与 render 同源。
-        let mut appearance_y = nav_y + crate::ui::settings::SETTINGS_NAV_HEIGHT + pad;
-        if general_available {
-            appearance_y += crate::ui::settings::SETTINGS_NAV_HEIGHT + pad;
-        }
-        if permissions_available {
-            appearance_y += crate::ui::settings::SETTINGS_NAV_HEIGHT + pad;
-        }
-        if tools_available {
-            appearance_y += crate::ui::settings::SETTINGS_NAV_HEIGHT + pad;
-        }
-        if terminal_available {
-            appearance_y += crate::ui::settings::SETTINGS_NAV_HEIGHT + pad;
-        }
-        rail = rail.child(settings_nav_ax(
-            "settings-nav-appearance",
-            t("settings.nav.appearance"),
-            current_page == SettingsPage::Appearance,
-            self.open_menu.is_none() && self.settings_nav_appearance_focus.is_focused(window),
-            AxRect::new(
-                frame.x + pad,
-                frame.y + appearance_y,
-                width,
-                crate::ui::settings::SETTINGS_NAV_HEIGHT,
-            ),
-        ));
-        let advanced_y = appearance_y + crate::ui::settings::SETTINGS_NAV_HEIGHT + pad;
-        rail = rail.child(settings_nav_ax(
-            "settings-nav-advanced",
-            t("settings.nav.advanced"),
-            current_page == SettingsPage::Advanced,
-            self.open_menu.is_none() && self.settings_nav_advanced_focus.is_focused(window),
-            AxRect::new(
-                frame.x + pad,
-                frame.y + advanced_y,
-                width,
-                crate::ui::settings::SETTINGS_NAV_HEIGHT,
-            ),
-        ));
-        if about_available {
-            let about_y = advanced_y + crate::ui::settings::SETTINGS_NAV_HEIGHT + pad;
-            rail = rail.child(settings_nav_ax(
-                "settings-nav-about",
-                t("settings.nav.about"),
-                current_page == SettingsPage::About,
-                self.open_menu.is_none() && self.settings_nav_about_focus.is_focused(window),
-                AxRect::new(
-                    frame.x + pad,
-                    frame.y + about_y,
-                    width,
-                    crate::ui::settings::SETTINGS_NAV_HEIGHT,
-                ),
-            ));
         }
         rail
     }
@@ -336,10 +244,14 @@ mod tests {
                 });
                 cx.refresh().unwrap();
                 cx.run_until_parked();
-                let rows = cx
-                    .update(|window, cx| nav_rows(&view.read(cx).settings_rail_ax(window, frame)));
+                let rows = cx.update(|window, cx| {
+                    nav_rows(&view.read(cx).settings_rail_ax(window, cx, frame))
+                });
                 for (id, _, ax) in &rows {
                     let selector = [
+                        "settings-nav-group-models",
+                        "settings-nav-group-workspace",
+                        "settings-nav-group-system",
                         "settings-nav-providers",
                         "settings-nav-general",
                         "settings-nav-permissions",
@@ -494,6 +406,12 @@ mod tests {
         });
         cx.refresh().unwrap();
         cx.run_until_parked();
+        cx.update(|window, cx| {
+            let tree =
+                view.read(cx)
+                    .settings_page_ax(window, cx, AxRect::new(0.0, 0.0, 1440.0, 1024.0));
+            assert!(tree.find("settings-approval-mode-always_ask").is_some());
+        });
         cx.update(|_, cx| {
             view.update(cx, |view, cx| {
                 view.settings_scroll.scroll_to_bottom();
@@ -517,6 +435,246 @@ mod tests {
             let viewport = view.read(cx).settings_scroll.bounds();
             assert!(trust.bounds.y >= f32::from(viewport.top()));
             assert!(trust.bounds.y + trust.bounds.height <= f32::from(viewport.bottom()));
+        });
+    }
+
+    fn flush_settings_frames(cx: &mut gpui::TestAppContext) {
+        for _ in 0..8 {
+            cx.refresh().unwrap();
+            cx.run_until_parked();
+        }
+    }
+
+    /// GUI2-06：查找命中切页滚入，不改设置值；不可用页与断线 gate；Esc 清空。
+    #[gpui::test]
+    fn settings_search_locates_rows_without_writes(cx: &mut gpui::TestAppContext) {
+        use crate::projection::{ApprovalModeWire, ConnectionState};
+        use crate::ui::install_keybindings;
+        use crate::ui::quick_search::SearchTarget;
+        use crate::ui::theme::font::TextScale;
+        use gpui::{px, size};
+
+        let (view, cx) = cx.add_window_view(|_, cx| {
+            AppView::new(
+                std::sync::Arc::new(crate::platform::Platform::new()),
+                std::env::temp_dir().join("gui2-06-settings-search.sock"),
+                None,
+                cx,
+            )
+        });
+        cx.simulate_resize(size(px(1440.0), px(1024.0)));
+        cx.update(|window, cx| {
+            install_keybindings(cx);
+            view.update(cx, |view, cx| {
+                view.text_input
+                    .update(cx, |input, cx| input.set_text("保留草稿", cx));
+                view.route = AppRoute::Settings;
+                view.text_scale = TextScale::Percent100;
+                window.set_rem_size(px(16.0));
+                view.projection
+                    .set_connection(ConnectionState::Disconnected {
+                        reason: "offline".into(),
+                    });
+                window.focus(&view.settings_search_focus);
+                cx.notify();
+            });
+        });
+        flush_settings_frames(cx);
+
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.settings_search_input
+                    .update(cx, |input, cx| input.set_text("代理", cx));
+            });
+        });
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            let view = view.read(cx);
+            assert!(
+                view.settings_search_results()
+                    .iter()
+                    .all(|entry| entry.page != SettingsPage::General),
+                "unavailable Network page must not appear"
+            );
+        });
+
+        cx.update(|_window, cx| {
+            view.update(cx, |view, cx| {
+                view.settings_search_input
+                    .update(cx, |input, cx| input.set_text("字号", cx));
+            });
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                assert!(view
+                    .settings_search_results()
+                    .iter()
+                    .any(|entry| entry.page == SettingsPage::Appearance
+                        && entry.row_id == "settings-appearance-text-size"));
+                let scale_before = view.text_scale;
+                view.submit_settings_search(window, cx);
+                assert_eq!(view.text_scale, scale_before);
+            });
+        });
+        flush_settings_frames(cx);
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            assert_eq!(view.settings_page, SettingsPage::Appearance);
+            assert_eq!(view.text_scale, TextScale::Percent100);
+            let tree = view.settings_page_ax(window, cx, AxRect::new(0.0, 0.0, 1440.0, 1024.0));
+            let row = tree
+                .find("settings-appearance-text-size")
+                .expect("located text size row");
+            let viewport = view.settings_scroll.bounds();
+            assert!(row.bounds.height > 0.0);
+            assert!(row.bounds.y + row.bounds.height > f32::from(viewport.top()));
+            assert!(row.bounds.y < f32::from(viewport.bottom()));
+            assert!(view
+                .status_hint
+                .as_deref()
+                .map(|hint| !hint.contains("Could not"))
+                .unwrap_or(true));
+        });
+
+        cx.update(|_window, cx| {
+            view.update(cx, |view, cx| {
+                view.settings_search_input
+                    .update(cx, |input, cx| input.set_text("font size", cx));
+            });
+        });
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            let view = view.read(cx);
+            assert!(view
+                .settings_search_results()
+                .iter()
+                .any(|entry| entry.row_id == "settings-appearance-text-size"));
+        });
+
+        cx.update(|_window, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.set_connection(ConnectionState::Connected {
+                    instance_id: "test".into(),
+                });
+                view.projection.settings_general.query.mark_ready();
+                view.projection.settings_permissions.query.mark_ready();
+                view.projection.settings_permissions.approval_mode =
+                    Some(ApprovalModeWire::AlwaysAsk);
+                view.settings_search_input
+                    .update(cx, |input, cx| input.set_text("proxy", cx));
+            });
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                assert!(view
+                    .settings_search_results()
+                    .iter()
+                    .any(|entry| entry.page == SettingsPage::General));
+                view.submit_settings_search(window, cx);
+            });
+        });
+        flush_settings_frames(cx);
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            assert_eq!(view.settings_page, SettingsPage::General);
+            assert!(view
+                .settings_page_ax(window, cx, AxRect::new(0.0, 0.0, 1440.0, 1024.0))
+                .find("settings-proxy-heading")
+                .is_some());
+        });
+
+        cx.update(|_window, cx| {
+            view.update(cx, |view, cx| {
+                view.settings_search_input
+                    .update(cx, |input, cx| input.set_text("审批", cx));
+            });
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                let before = view.projection.settings_permissions.approval_mode;
+                view.submit_settings_search(window, cx);
+                assert_eq!(view.projection.settings_permissions.approval_mode, before);
+            });
+        });
+        flush_settings_frames(cx);
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            assert_eq!(view.settings_page, SettingsPage::Permissions);
+            assert_eq!(
+                view.projection.settings_permissions.approval_mode,
+                Some(ApprovalModeWire::AlwaysAsk)
+            );
+            assert!(view
+                .settings_page_ax(window, cx, AxRect::new(0.0, 0.0, 1440.0, 1024.0))
+                .find("settings-approval-mode-header")
+                .is_some());
+            assert!(view
+                .status_hint
+                .as_deref()
+                .map(|hint| !hint.contains("Could not"))
+                .unwrap_or(true));
+        });
+
+        cx.update(|_window, cx| {
+            view.update(cx, |view, cx| {
+                view.settings_search_input
+                    .update(cx, |input, cx| input.set_text("模型", cx));
+            });
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                assert!(view
+                    .settings_search_results()
+                    .iter()
+                    .any(|entry| entry.page == SettingsPage::Providers));
+                view.submit_settings_search(window, cx);
+            });
+        });
+        flush_settings_frames(cx);
+        cx.update(|_, cx| {
+            assert_eq!(view.read(cx).settings_page, SettingsPage::Providers);
+        });
+
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                assert!(view.settings_search_input_focused(window));
+                view.clear_settings_search(window, cx);
+                assert!(view.settings_search_query.is_empty());
+                assert!(view.settings_search_input.read(cx).text().is_empty());
+                assert!(view.settings_search_focus.is_focused(window));
+            });
+        });
+
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.projection
+                    .set_connection(ConnectionState::Disconnected {
+                        reason: "offline".into(),
+                    });
+                view.open_quick_search(window, cx);
+            });
+        });
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            let results = view.read(cx).quick_search_results();
+            assert_eq!(results.len(), 2);
+            assert!(results.iter().all(|r| matches!(
+                r.target,
+                SearchTarget::Page(SettingsPage::Appearance | SettingsPage::Advanced)
+            )));
+        });
+
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.close_quick_search(window, cx);
+                view.on_close_settings(window, cx);
+                assert_eq!(view.route, AppRoute::Workspace);
+                assert_eq!(view.text_input.read(cx).text(), "保留草稿");
+            });
         });
     }
 }

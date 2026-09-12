@@ -52,8 +52,10 @@ use components::dropdown::Dropdown;
 use components::follow_scroll::FollowScroll;
 use components::label::Badge;
 use components::status_bar::StatusBar;
+pub(crate) use components::{icon, icon_sized, Assets, Icon};
 use inspector::InspectorTab;
 use resources::ResourcesPanelState;
+use shell_layout::InspectorPlacement;
 use theme::{dark, font, metrics};
 
 pub use text_input::{SendMessage, TextInput};
@@ -121,8 +123,8 @@ pub(crate) const RAIL_TAB_STOP_IDS: &[&str] = &[
 pub(crate) const RAIL_TAB_INDEX_SCOPE: isize = -19;
 pub(crate) const RAIL_TAB_INDEX_GROUPING: isize = -18;
 pub(crate) const RAIL_TAB_INDEX_ADD_TASK: isize = -20;
-/// Reconnect 仅在断线态渲染，视觉位在 add-task 与行为链之间（R6B 键盘
-/// 路径补全）；不渲染时自动退出 Tab 链。
+/// Reconnect 仅在断线态渲染；GUI3-07 起视觉位在底部 Local 行，Tab 档仍为
+/// -17（冻结）；不渲染时自动退出 Tab 链。
 pub(crate) const RAIL_TAB_INDEX_RECONNECT: isize = -17;
 pub(crate) const RAIL_TAB_INDEX_ROWS: isize = -16;
 /// TaskRail 页脚 Settings gear（SET-3）：位于行级 -16 之后，rail 焦点链尾。
@@ -227,6 +229,8 @@ enum MenuKind {
     /// Inspector 折叠态的 ActivityPopover（Workspace Header Activity
     /// 触发器弹出，R6 Wave A 自 StatusBar 迁入）。
     Activity,
+    /// Inspector 面板名称选择器（Changes / Terminal / Resources）。
+    InspectorPanel,
 }
 
 pub fn install_keybindings(cx: &mut App) {
@@ -500,7 +504,8 @@ pub struct AppView {
     inspector_open: bool,
     inspector_motion: shell_layout::InspectorMotion,
     inspector_render_width: f32,
-    /// Inspector 顶层页签（Changes / Terminal / Resources）。
+    inspector_last_placement: InspectorPlacement,
+    /// Inspector 当前面板（Changes / Terminal / Resources）。
     inspector_tab: InspectorTab,
     /// Changes 面状态（Files / Summary、清单与选中 diff、滚动句柄）。
     changes: ChangesPanelState,
@@ -556,6 +561,9 @@ pub struct AppView {
     composer_action_focus: FocusHandle,
     add_task_focus: FocusHandle,
     header_new_task_focus: FocusHandle,
+    /// 空任务首页 Ghost「绑定项目」：与 Header `header-new-task` 分离，
+    /// Inspector 展开时空任务欢迎态与 Header「+」可同时可见。
+    welcome_bind_project_focus: FocusHandle,
     shell_layouts: HashMap<&'static str, ScrollHandle>,
     /// 断线态 Reconnect 按钮焦点（track_focus + 行级激活，R6B 键盘补全）。
     reconnect_focus: FocusHandle,
@@ -570,11 +578,15 @@ pub struct AppView {
     timeline_entry_action_focus: BTreeMap<String, FocusHandle>,
     timeline_detail_focus: BTreeMap<String, FocusHandle>,
     timeline_review_changes_focus: BTreeMap<String, FocusHandle>,
-    inspector_tab_focus: [FocusHandle; 3],
+    /// Failed banner「打开供应商设置」按 event_id 懒建；与 Review 互斥。
+    timeline_open_providers_focus: BTreeMap<String, FocusHandle>,
+    inspector_panel_focus: FocusHandle,
     inspector_collapse_focus: FocusHandle,
     inspector_activity_focus: FocusHandle,
     /// Inspector 折叠态 Header 重开按钮焦点（OPT-4b；与 Activity 触发器并存）。
     inspector_expand_focus: FocusHandle,
+    inspector_back_focus: FocusHandle,
+    inspector_approval_focus: FocusHandle,
     changes_tab_focus: [FocusHandle; 2],
     changes_refresh_focus: FocusHandle,
     changes_file_focus: BTreeMap<String, FocusHandle>,
@@ -615,6 +627,17 @@ pub struct AppView {
     settings_focus: FocusHandle,
     /// Settings Rail「← Back to workspace」焦点（进入 Settings 后首停）。
     settings_back_focus: FocusHandle,
+    /// GUI2-06：Settings 查找输入（独立实体，不参与 Composer 草稿）。
+    settings_search_input: Entity<TextInput>,
+    settings_search_focus: FocusHandle,
+    settings_search_query: String,
+    settings_search_selected: Option<String>,
+    settings_search_scroll: ScrollHandle,
+    settings_search_layouts: HashMap<String, ScrollHandle>,
+    /// 查找定位：当前短暂标识的行 id，以及待滚入的 (page, row_id, attempts)。
+    settings_locate_row: Option<String>,
+    settings_locate_pending: Option<(SettingsPage, String, u8)>,
+    settings_locate_task: Option<gpui::Task<()>>,
     /// SET-5：Settings 页级「刷新」按钮焦点（provider 状态 + 模型目录）。
     settings_refresh_focus: FocusHandle,
     /// SET-6a：Settings 导航「Network」焦点（内部字段保留 general）。
@@ -684,6 +707,17 @@ pub struct AppView {
 enum InspectorFocusTarget {
     Activity,
     SelectedTab,
+    Composer,
+}
+
+fn inspector_focus_after_toggle(opening: bool, closing_from_center: bool) -> InspectorFocusTarget {
+    if opening {
+        InspectorFocusTarget::SelectedTab
+    } else if closing_from_center {
+        InspectorFocusTarget::Composer
+    } else {
+        InspectorFocusTarget::Activity
+    }
 }
 
 impl AppView {
@@ -725,6 +759,26 @@ impl AppView {
                 view.menu_highlight = None;
                 view.model_menu_scroll.set_offset(point(px(0.0), px(0.0)));
                 view.pending_model_menu_scroll = matches!(view.open_menu, Some(MenuKind::Model));
+                cx.notify();
+            }
+        })
+        .detach();
+        let settings_search_input = cx.new(|cx| {
+            TextInput::with_placeholder(i18n::t("settings.search.placeholder"), cx)
+                .id("settings-search-input")
+                .height_clamp(32.0, metrics::SETTINGS_SEARCH_INPUT_HEIGHT)
+        });
+        let settings_search_focus = settings_search_input
+            .read(cx)
+            .focus_handle(cx)
+            .tab_stop(true);
+        cx.observe(&settings_search_input, |view, input, cx| {
+            let query = input.read(cx).text().to_owned();
+            if view.settings_search_query != query {
+                view.settings_search_query = query;
+                view.settings_search_selected = None;
+                view.settings_search_scroll
+                    .set_offset(point(px(0.0), px(0.0)));
                 cx.notify();
             }
         })
@@ -788,6 +842,7 @@ impl AppView {
             inspector_open: false,
             inspector_motion: shell_layout::InspectorMotion::default(),
             inspector_render_width: 0.0,
+            inspector_last_placement: InspectorPlacement::Hidden,
             inspector_tab: InspectorTab::default(),
             changes: ChangesPanelState::default(),
             resources: ResourcesPanelState::default(),
@@ -825,6 +880,7 @@ impl AppView {
                 .focus_handle()
                 .tab_stop(true)
                 .tab_index(INSPECTOR_TAB_INDEX),
+            welcome_bind_project_focus: cx.focus_handle().tab_stop(true),
             reconnect_focus: cx
                 .focus_handle()
                 .tab_stop(true)
@@ -834,12 +890,19 @@ impl AppView {
                 "workspace-empty-title",
                 "workspace-empty-hint",
                 "workspace-empty-action",
+                "header-branch",
+                "header-status",
                 "connection-status",
                 "rail-scope-layout",
                 "rail-add-layout",
                 "rail-search-layout",
                 "rail-grouping-layout",
+                "rail-reconnect-layout",
                 "rail-settings-layout",
+                "inspector-panel-layout",
+                "inspector-collapse-layout",
+                "inspector-back-layout",
+                "inspector-approval-hint-layout",
             ]
             .into_iter()
             .map(|id| (id, ScrollHandle::new()))
@@ -862,11 +925,11 @@ impl AppView {
             timeline_entry_action_focus: BTreeMap::new(),
             timeline_detail_focus: BTreeMap::new(),
             timeline_review_changes_focus: BTreeMap::new(),
-            inspector_tab_focus: std::array::from_fn(|_| {
-                cx.focus_handle()
-                    .tab_stop(true)
-                    .tab_index(INSPECTOR_TAB_INDEX)
-            }),
+            timeline_open_providers_focus: BTreeMap::new(),
+            inspector_panel_focus: cx
+                .focus_handle()
+                .tab_stop(true)
+                .tab_index(INSPECTOR_TAB_INDEX),
             inspector_collapse_focus: cx
                 .focus_handle()
                 .tab_stop(true)
@@ -876,6 +939,14 @@ impl AppView {
                 .tab_stop(true)
                 .tab_index(INSPECTOR_TAB_INDEX),
             inspector_expand_focus: cx
+                .focus_handle()
+                .tab_stop(true)
+                .tab_index(INSPECTOR_TAB_INDEX),
+            inspector_back_focus: cx
+                .focus_handle()
+                .tab_stop(true)
+                .tab_index(INSPECTOR_TAB_INDEX),
+            inspector_approval_focus: cx
                 .focus_handle()
                 .tab_stop(true)
                 .tab_index(INSPECTOR_TAB_INDEX),
@@ -940,6 +1011,15 @@ impl AppView {
                 .tab_stop(true)
                 .tab_index(RAIL_TAB_INDEX_SETTINGS),
             settings_back_focus: cx.focus_handle().tab_stop(true),
+            settings_search_input,
+            settings_search_focus,
+            settings_search_query: String::new(),
+            settings_search_selected: None,
+            settings_search_scroll: ScrollHandle::new(),
+            settings_search_layouts: HashMap::new(),
+            settings_locate_row: None,
+            settings_locate_pending: None,
+            settings_locate_task: None,
             settings_refresh_focus: cx.focus_handle().tab_stop(true),
             settings_nav_general_focus: cx.focus_handle().tab_stop(true),
             settings_nav_providers_focus: cx.focus_handle().tab_stop(true),
@@ -1069,9 +1149,8 @@ impl AppView {
             .center()
             .vcenter()
             .radius(metrics::HEADER_ACTION_RADIUS)
-            .text_size(font::ICON)
             .text_color(dark().text.emphasis)
-            .label("+")
+            .child(icon(Icon::Plus))
             .tooltip(new_task_tooltip);
         if can_create {
             new_task = new_task
@@ -1103,9 +1182,8 @@ impl AppView {
                 .center()
                 .vcenter()
                 .radius(metrics::HEADER_ACTION_RADIUS)
-                .text_size(font::ICON)
                 .text_color(dark().text.emphasis)
-                .label("⋯")
+                .child(icon(Icon::More))
                 .tooltip(i18n::t("header.tooltip_activity"))
                 .track_focus(&self.inspector_activity_focus)
                 .on_click(cx.listener(|view, event, _window, cx| {
@@ -1149,9 +1227,8 @@ impl AppView {
             .center()
             .vcenter()
             .radius(metrics::HEADER_ACTION_RADIUS)
-            .text_size(font::ICON)
             .text_color(dark().text.emphasis)
-            .label("◧")
+            .child(icon(Icon::Inspector))
             .tooltip(i18n::t("header.tooltip_open_inspector"))
             .on_click(cx.listener(|view, event, window, cx| {
                 if view.consume_button_key_click("inspector-expand", event) {
@@ -1202,30 +1279,23 @@ impl AppView {
                     })
                     .when_some(branch, |row, branch| {
                         row.child(
-                            div()
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .gap_1()
+                            self.header_meta_chip("header-branch")
                                 .max_w(px(140.0))
-                                .overflow_hidden()
-                                .text_size(font::BODY_SM)
-                                .text_color(dark().text.secondary)
-                                .child("⑂")
-                                .child(div().truncate().child(branch)),
+                                .child(icon_sized(Icon::Branch, px(metrics::ICON_SM)))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_row()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .child(div().truncate().child(branch)),
+                                ),
                         )
                     })
                     .when_some(status, |row, status| {
                         let (dot, color) = header_status_visual(status);
                         row.child(
-                            div()
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .gap_2()
-                                .flex_none()
-                                .text_size(font::BODY_SM)
-                                .text_color(dark().text.secondary)
+                            self.header_meta_chip("header-status")
                                 .child(
                                     div()
                                         .w(px(dot))
@@ -1259,8 +1329,52 @@ impl AppView {
             })
     }
 
+    fn inspector_back_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        self.shell_element("inspector-back-layout")
+            .flex_none()
+            .flex()
+            .flex_row()
+            .items_center()
+            .h(px(metrics::INSPECTOR_BACK_HEIGHT))
+            .px_3()
+            .border_b_1()
+            .border_color(dark().border.subtle)
+            .child(
+                Button::new("inspector-back")
+                    .variant(ButtonVariant::Ghost)
+                    .padding(ButtonPadding::Horizontal(metrics::PADDING_SM))
+                    .text_size(font::SM)
+                    .text_color(dark().text.primary)
+                    .label(i18n::t("inspector.back_to_conversation"))
+                    .track_focus(&self.inspector_back_focus)
+                    .on_click(cx.listener(|view, event, window, cx| {
+                        if view.consume_button_key_click("inspector-back", event) {
+                            return;
+                        }
+                        view.on_inspector_back(window, cx);
+                    })),
+            )
+    }
+
     fn shell_element(&self, id: &'static str) -> gpui::Stateful<gpui::Div> {
         div().id(id).track_scroll(&self.shell_layouts[id])
+    }
+
+    /// GUI3-07：Header branch / live 状态 Raised chip；无数据时调用方
+    /// 不渲染，避免空容器占 gap。
+    fn header_meta_chip(&self, id: &'static str) -> gpui::Stateful<gpui::Div> {
+        self.shell_element(id)
+            .flex()
+            .flex_none()
+            .flex_row()
+            .items_center()
+            .gap(px(metrics::SPACE_1))
+            .px(px(metrics::HEADER_CHIP_PAD_X))
+            .py(px(metrics::HEADER_CHIP_PAD_Y))
+            .rounded(px(metrics::HEADER_CHIP_RADIUS))
+            .bg(dark().surface.raised)
+            .text_size(font::BODY_SM)
+            .text_color(dark().text.secondary)
     }
 
     fn welcome_visible(&self) -> bool {
@@ -1328,6 +1442,21 @@ impl AppView {
         cx: &mut Context<Self>,
     ) -> FocusHandle {
         self.timeline_review_changes_focus
+            .entry(event_id.to_string())
+            .or_insert_with(|| {
+                cx.focus_handle()
+                    .tab_stop(true)
+                    .tab_index(INSPECTOR_TAB_INDEX)
+            })
+            .clone()
+    }
+
+    pub(super) fn timeline_open_providers_focus(
+        &mut self,
+        event_id: &str,
+        cx: &mut Context<Self>,
+    ) -> FocusHandle {
+        self.timeline_open_providers_focus
             .entry(event_id.to_string())
             .or_insert_with(|| {
                 cx.focus_handle()
@@ -1720,12 +1849,8 @@ impl AppView {
                     .terminal_resize(terminal_session_id, columns, rows);
                 // 新终端从空输出开始，恢复跟随态。
                 self.terminal_scroll.jump_to_bottom();
-                if !self.inspector_open {
-                    // Inspector 即将展开：Timeline 宽度变化 → 条目换行高度变，
-                    // 须 reset。
-                    self.timeline_changed();
-                }
                 // 程序化展开 Inspector：关闭可能悬浮的菜单（P3-1 泄漏修复）。
+                // Side 并排宽度变化由 render 的 inspector_render_width 路径 reflow。
                 self.close_open_menu(cx);
                 self.inspector_open = true;
                 self.refresh_open_inspector_tab(cx);
@@ -2619,6 +2744,10 @@ impl AppView {
             self.handle_quick_search_key(event, window, cx);
             return;
         }
+        if self.handle_settings_search_key(event, window, cx) {
+            cx.stop_propagation();
+            return;
+        }
         let key = event.keystroke.key.as_str();
         // Tab 遍历（design §3.6，Slice 4 修复）：GPUI 无默认 tab cycle
         //（Slice 3 驱动取证 tab-no-traverse），根节点把 Tab / Shift-Tab
@@ -2696,8 +2825,9 @@ impl AppView {
     }
 
     /// Inspector 的普通键盘路径。所有判断都基于与 render/AX 共用的
-    /// FocusHandle：tabs 用 ←/→，文件行用 ↑/↓，Enter/Space 与 click 复用
-    /// 同一 action。返回 true 表示已消费。
+    /// FocusHandle：面板选择器走既有菜单 ↑/↓/Enter/Esc；Changes 二级页签
+    /// 与文件行用方向键；Enter/Space 与 click 复用同一 action。返回 true
+    /// 表示已消费。
     fn handle_inspector_key(
         &mut self,
         event: &KeyDownEvent,
@@ -2709,26 +2839,6 @@ impl AppView {
         }
         let key = event.keystroke.key.as_str();
         let activate = key == "enter" || key == "space";
-
-        if let Some(ix) = self
-            .inspector_tab_focus
-            .iter()
-            .position(|focus| focus.is_focused(window))
-        {
-            let target = inspector_tab_key_target(ix, key);
-            if let Some(target) = target {
-                let tab = [
-                    InspectorTab::Changes,
-                    InspectorTab::Terminal,
-                    InspectorTab::Resources,
-                ][target];
-                self.note_button_key_activate(tab.button_id());
-                self.select_inspector_tab(tab, cx);
-                window.focus(&self.inspector_tab_focus[target]);
-                cx.stop_propagation();
-                return true;
-            }
-        }
 
         if let Some(ix) = self
             .changes_tab_focus
@@ -2777,6 +2887,12 @@ impl AppView {
 
         let action = if self.inspector_collapse_focus.is_focused(window) && activate {
             Some("inspector-collapse")
+        } else if self.inspector_panel_focus.is_focused(window) && activate {
+            Some("inspector-panel")
+        } else if self.inspector_back_focus.is_focused(window) && activate {
+            Some("inspector-back")
+        } else if self.inspector_approval_focus.is_focused(window) && activate {
+            Some("inspector-approval-hint")
         } else if self.inspector_activity_focus.is_focused(window) && activate {
             Some("inspector-toggle")
         } else if self.inspector_expand_focus.is_focused(window) && activate {
@@ -2834,6 +2950,8 @@ impl AppView {
         self.note_button_key_activate(action);
         match action {
             "inspector-collapse" => self.on_toggle_inspector(window, cx),
+            "inspector-panel" => self.toggle_menu(MenuKind::InspectorPanel, None, cx),
+            "inspector-back" | "inspector-approval-hint" => self.on_inspector_back(window, cx),
             "inspector-toggle" => self.toggle_menu(MenuKind::Activity, None, cx),
             "inspector-expand" => self.on_toggle_inspector(window, cx),
             "changes-refresh" => self.refresh_changes(cx),
@@ -2891,6 +3009,7 @@ impl AppView {
                 .cloned()
                 .unwrap_or_else(|| self.focus_handle.clone()),
             MenuKind::Activity => self.inspector_activity_focus.clone(),
+            MenuKind::InspectorPanel => self.inspector_panel_focus.clone(),
         };
         self.open_menu = None;
         self.menu_highlight = None;
@@ -2913,6 +3032,7 @@ impl AppView {
             }
             Some(MenuKind::Entry(event_id)) => self.entry_menu_actions(event_id).len(),
             Some(MenuKind::Activity) => 1,
+            Some(MenuKind::InspectorPanel) => InspectorTab::ALL.len(),
             // 弹层行是可聚焦 Switch（Tab / Enter / Space 自理），不进
             // MenuRow 键盘分派；↑/↓ 无可移动项。
             Some(MenuKind::SettingsProviderModels(_)) => 0,
@@ -2956,7 +3076,8 @@ impl AppView {
             }
             // Switch 自带键盘激活；无 MenuRow 高亮行。
             Some(MenuKind::SettingsProviderModels(_)) => 0,
-            _ => 0,
+            Some(MenuKind::InspectorPanel) => self.inspector_tab as usize,
+            Some(MenuKind::Entry(_) | MenuKind::Activity) | None => 0,
         }
     }
 
@@ -3054,6 +3175,12 @@ impl AppView {
             MenuKind::Activity => {
                 if ix == 0 {
                     self.on_activity_open_changes(window, cx);
+                }
+            }
+            MenuKind::InspectorPanel => {
+                if let Some(&tab) = InspectorTab::ALL.get(ix) {
+                    self.select_inspector_tab(tab, cx);
+                    self.close_menu_and_focus_trigger(MenuKind::InspectorPanel, window, cx);
                 }
             }
         }
@@ -3342,41 +3469,57 @@ impl AppView {
             SettingsPage::General if !self.projection.settings_general.query.available => return,
             SettingsPage::General => {
                 self.settings_page = SettingsPage::General;
-                window.focus(&self.settings_nav_general_focus);
+                if self.settings_locate_pending.is_none() {
+                    window.focus(&self.settings_nav_general_focus);
+                }
             }
             SettingsPage::Permissions if !self.projection.settings_permissions.query.available => {
                 return;
             }
             SettingsPage::Permissions => {
                 self.settings_page = SettingsPage::Permissions;
-                window.focus(&self.settings_nav_permissions_focus);
+                if self.settings_locate_pending.is_none() {
+                    window.focus(&self.settings_nav_permissions_focus);
+                }
             }
             SettingsPage::Tools if !self.resources.available => return,
             SettingsPage::Tools => {
                 self.settings_page = SettingsPage::Tools;
-                window.focus(&self.settings_nav_tools_focus);
+                if self.settings_locate_pending.is_none() {
+                    window.focus(&self.settings_nav_tools_focus);
+                }
             }
             SettingsPage::Terminal if !self.projection.settings_terminal.query.available => return,
             SettingsPage::Terminal => {
                 self.settings_page = SettingsPage::Terminal;
-                window.focus(&self.settings_nav_terminal_focus);
+                if self.settings_locate_pending.is_none() {
+                    window.focus(&self.settings_nav_terminal_focus);
+                }
             }
             SettingsPage::Appearance => {
                 self.settings_page = SettingsPage::Appearance;
-                window.focus(&self.settings_nav_appearance_focus);
+                if self.settings_locate_pending.is_none() {
+                    window.focus(&self.settings_nav_appearance_focus);
+                }
             }
             SettingsPage::Advanced => {
                 self.settings_page = SettingsPage::Advanced;
-                window.focus(&self.settings_nav_advanced_focus);
+                if self.settings_locate_pending.is_none() {
+                    window.focus(&self.settings_nav_advanced_focus);
+                }
             }
             SettingsPage::About if self.settings_about_rows().is_none() => return,
             SettingsPage::About => {
                 self.settings_page = SettingsPage::About;
-                window.focus(&self.settings_nav_about_focus);
+                if self.settings_locate_pending.is_none() {
+                    window.focus(&self.settings_nav_about_focus);
+                }
             }
             SettingsPage::Providers => {
                 self.settings_page = SettingsPage::Providers;
-                window.focus(&self.settings_nav_providers_focus);
+                if self.settings_locate_pending.is_none() {
+                    window.focus(&self.settings_nav_providers_focus);
+                }
             }
         }
         self.projection.settings_providers.account_quotas.clear();
@@ -3410,6 +3553,10 @@ impl AppView {
     fn on_send_message(&mut self, _: &SendMessage, window: &mut Window, cx: &mut Context<Self>) {
         if self.quick_search.open {
             self.submit_quick_search(window, cx);
+            return;
+        }
+        if self.settings_search_input_focused(window) {
+            self.submit_settings_search(window, cx);
             return;
         }
         if self.navigation_input_focused(window) {
@@ -3463,19 +3610,38 @@ impl AppView {
         self.send_current_message(cx);
     }
 
-    fn on_toggle_inspector(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+    fn on_toggle_inspector(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let large_text = self.text_scale == font::TextScale::Percent150;
+        let before = shell_layout::resolve(
+            window.viewport_size().width,
+            self.inspector_open,
+            large_text,
+        );
         self.inspector_open = !self.inspector_open;
-        self.pending_inspector_focus = Some(inspector_focus_after_toggle(self.inspector_open));
-        // 宽度变化改变条目换行高度：list 高度缓存须失效（reset）。
-        self.timeline_changed();
+        let after = shell_layout::resolve(
+            window.viewport_size().width,
+            self.inspector_open,
+            large_text,
+        );
+        self.pending_inspector_focus = Some(inspector_focus_after_toggle(
+            self.inspector_open,
+            before.placement.is_center(),
+        ));
+        if before.placement.is_side() || after.placement.is_side() {
+            self.timeline_changed();
+        }
         if self.inspector_open {
-            // 展开时关闭可能悬浮的菜单（如 ActivityPopover），避免面板
-            // 叠在已展开的 Inspector 上（P3-1 泄漏修复）。
             self.close_open_menu(cx);
-            // Inspector 展开：刷新当前页签数据（拉取时机之一）。
             self.refresh_open_inspector_tab(cx);
         }
         cx.notify();
+    }
+
+    fn on_inspector_back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.inspector_open {
+            return;
+        }
+        self.on_toggle_inspector(window, cx);
     }
 
     /// 切换 Inspector 顶层页签；切入 Changes / Resources 时拉取数据
@@ -3517,11 +3683,14 @@ impl AppView {
     }
 
     /// ActivityPopover 摘要行：展开 Inspector 并定位 Changes 页。
-    fn on_activity_open_changes(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+    fn on_activity_open_changes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.close_open_menu(cx);
         if !self.inspector_open {
             self.inspector_open = true;
-            self.timeline_changed();
+            let large_text = self.text_scale == font::TextScale::Percent150;
+            if shell_layout::can_fit_side_inspector(window.viewport_size().width, large_text) {
+                self.timeline_changed();
+            }
         }
         self.inspector_tab = InspectorTab::Changes;
         self.pending_inspector_focus = Some(InspectorFocusTarget::SelectedTab);
@@ -3540,7 +3709,8 @@ impl AppView {
         let was_available = self.changes_available_for_active();
         if !self.inspector_open {
             self.inspector_open = true;
-            self.timeline_changed();
+            // Side 并排的 Timeline 换行由 render 的 inspector_render_width 路径
+            // reflow；中央呈现不得重置阅读位置。
         }
         self.inspector_tab = InspectorTab::Changes;
         self.pending_inspector_focus = Some(InspectorFocusTarget::SelectedTab);
@@ -3774,6 +3944,12 @@ impl AppView {
         // （composer placeholder 每次 render 经状态机重设，无需处理）。
         self.terminal_input.update(cx, |input, cx| {
             input.set_placeholder(i18n::t("inspector.terminal_input_placeholder"), cx)
+        });
+        self.settings_search_input.update(cx, |input, cx| {
+            input.set_placeholder(i18n::t("settings.search.placeholder"), cx)
+        });
+        self.quick_search.input.update(cx, |input, cx| {
+            input.set_placeholder(i18n::t("quick.placeholder"), cx)
         });
         self.status_hint = Some(i18n::t("status.language").replace("{}", language.display_name()));
         cx.notify();
@@ -4150,31 +4326,34 @@ fn rail_focus_stops(
             .into_iter()
             .flat_map(|group| {
                 let bucket = group.bucket;
+                let skip_header = group.skip_project_header(scope);
                 group
                     .projects
                     .into_iter()
-                    .map(move |project| (Some(bucket), project))
+                    .map(move |project| (Some(bucket), project, skip_header))
             })
             .collect::<Vec<_>>(),
         TaskRailGrouping::Projects => projection
             .project_groups(scope)
             .into_iter()
-            .map(|project| (None, project))
+            .map(|project| (None, project, false))
             .collect(),
     };
-    for (bucket, project) in projects {
+    for (bucket, project, skip_header) in projects {
         let key = rail_project_key(project.workspace_id.as_deref());
-        stops.push(RailStop::ProjectHeader {
-            bucket,
-            key: key.clone(),
-        });
-        if !project.is_unassigned() && project.workspace_id.is_some() {
-            stops.push(RailStop::ProjectAdd {
+        if !skip_header {
+            stops.push(RailStop::ProjectHeader {
                 bucket,
                 key: key.clone(),
             });
+            if !project.is_unassigned() && project.workspace_id.is_some() {
+                stops.push(RailStop::ProjectAdd {
+                    bucket,
+                    key: key.clone(),
+                });
+            }
         }
-        if !collapsed.contains(&key) {
+        if skip_header || !collapsed.contains(&key) {
             for task in &project.tasks {
                 stops.push(RailStop::Task {
                     session_id: task.session_id.clone(),
@@ -4257,28 +4436,11 @@ fn should_swallow_keyboard_click(keyboard_click: bool, marker: Option<&str>) -> 
     keyboard_click && marker.is_some()
 }
 
-fn inspector_tab_key_target(current: usize, key: &str) -> Option<usize> {
-    match key {
-        "left" => Some((current + 2) % 3),
-        "right" => Some((current + 1) % 3),
-        "enter" | "space" => Some(current),
-        _ => None,
-    }
-}
-
 fn changes_tab_key_target(current: usize, key: &str) -> Option<usize> {
     match key {
         "left" | "up" | "right" | "down" => Some((current + 1) % 2),
         "enter" | "space" => Some(current),
         _ => None,
-    }
-}
-
-fn inspector_focus_after_toggle(open: bool) -> InspectorFocusTarget {
-    if open {
-        InspectorFocusTarget::SelectedTab
-    } else {
-        InspectorFocusTarget::Activity
     }
 }
 
@@ -4384,8 +4546,9 @@ impl Render for AppView {
         if let Some(target) = self.pending_inspector_focus.take() {
             match target {
                 InspectorFocusTarget::Activity => window.focus(&self.inspector_activity_focus),
-                InspectorFocusTarget::SelectedTab => {
-                    window.focus(&self.inspector_tab_focus[self.inspector_tab as usize])
+                InspectorFocusTarget::SelectedTab => window.focus(&self.inspector_panel_focus),
+                InspectorFocusTarget::Composer => {
+                    window.focus(&self.composer_focus_handle(cx));
                 }
             }
         }
@@ -4424,6 +4587,9 @@ impl Render for AppView {
                 cx.defer_in(window, |_view, _window, cx| cx.notify());
             }
         }
+        if self.settings_locate_pending.is_some() {
+            self.finish_settings_locate(window, cx);
+        }
         if self.pending_scope_menu_scroll {
             if !matches!(
                 self.open_menu,
@@ -4459,27 +4625,39 @@ impl Render for AppView {
         }
         let now_ms = now_unix_ms();
         let run_status = self.projection.run_status_label(now_ms);
-        // R2 Wave A 响应式合同：窄窗（≤1279）rail 240 + Inspector 折叠为
-        // ActivityPopover 抽屉；150% 文本缩放时 rail 扩到 320，1080 宽仍
-        // 留 760px Workspace。偏好值保留，加宽后自动恢复（shell_layout）。
+        // GUI2-05：窄窗显式打开走中央呈现；InspectorMotion 只用于宽窗并排。
         let shell = shell_layout::resolve(
             window.viewport_size().width,
             self.inspector_open,
             self.text_scale == font::TextScale::Percent150,
         );
-        let inspector_open = shell.inspector_open;
-        let can_fit_inspector = shell_layout::resolve(
-            window.viewport_size().width,
-            true,
-            self.text_scale == font::TextScale::Percent150,
-        )
-        .inspector_open
-            && self.route == AppRoute::Workspace;
-        let (inspector_width, inspector_animating) = self.inspector_motion.width(
-            inspector_open,
-            can_fit_inspector,
-            std::time::Instant::now(),
-        );
+        let placement = if self.route == AppRoute::Workspace {
+            shell.placement
+        } else {
+            InspectorPlacement::Hidden
+        };
+        let can_fit_side = self.route == AppRoute::Workspace
+            && shell_layout::can_fit_side_inspector(
+                window.viewport_size().width,
+                self.text_scale == font::TextScale::Percent150,
+            );
+        let now = std::time::Instant::now();
+        let (inspector_width, inspector_animating) = match placement {
+            InspectorPlacement::Center => {
+                self.inspector_motion.snap(0.0);
+                (0.0, false)
+            }
+            InspectorPlacement::Side => {
+                if self.inspector_last_placement.is_center() {
+                    self.inspector_motion.snap(metrics::INSPECTOR_WIDTH);
+                    (metrics::INSPECTOR_WIDTH, false)
+                } else {
+                    self.inspector_motion.width(true, true, now)
+                }
+            }
+            InspectorPlacement::Hidden => self.inspector_motion.width(false, can_fit_side, now),
+        };
+        self.inspector_last_placement = placement;
         if inspector_width != self.inspector_render_width {
             // 包括最后一帧与窄窗归零，避免文本沿用过渡中间帧的测高。
             self.inspector_render_width = inspector_width;
@@ -4491,7 +4669,7 @@ impl Render for AppView {
         self.sync_accessibility(window, cx);
 
         let (activity_trigger_visible, activity_popover_open) = activity_header_visibility(
-            inspector_open,
+            placement.is_visible(),
             matches!(self.open_menu, Some(MenuKind::Activity)),
         );
 
@@ -4505,18 +4683,46 @@ impl Render for AppView {
                     activity_popover_open,
                     cx,
                 );
-                let timeline_area = self.timeline_area(window, cx);
-                let composer = self.composer_element(window, cx);
-                let workspace = div()
-                    .id("shell-workspace")
-                    .debug_selector(|| "shell-workspace".into())
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_w_0()
-                    .child(header)
-                    .child(timeline_area)
-                    .child(composer);
+                let workspace = if placement.is_center() {
+                    div()
+                        .id("shell-workspace")
+                        .debug_selector(|| "shell-workspace".into())
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .min_w_0()
+                        .min_h_0()
+                        .child(header)
+                        .child(self.inspector_back_bar(cx))
+                        .child(
+                            div()
+                                .id("shell-inspector")
+                                .debug_selector(|| "shell-inspector".into())
+                                .flex()
+                                .flex_1()
+                                .min_w_0()
+                                .min_h_0()
+                                .child(self.inspector_element(
+                                    connected,
+                                    InspectorPlacement::Center,
+                                    window,
+                                    cx,
+                                )),
+                        )
+                } else {
+                    let timeline_area = self.timeline_area(window, cx);
+                    let composer = self.composer_element(window, cx);
+                    div()
+                        .id("shell-workspace")
+                        .debug_selector(|| "shell-workspace".into())
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .min_w_0()
+                        .child(header)
+                        .child(timeline_area)
+                        .child(composer)
+                };
 
                 let mut main = div().flex().flex_row().flex_1().min_w_0().child(workspace);
                 if inspector_width > 0.0 {
@@ -4528,7 +4734,12 @@ impl Render for AppView {
                             .flex_none()
                             .overflow_hidden()
                             .flex()
-                            .child(self.inspector_element(connected, window, cx)),
+                            .child(self.inspector_element(
+                                connected,
+                                InspectorPlacement::Side,
+                                window,
+                                cx,
+                            )),
                     );
                 }
                 (sidebar, main)
@@ -4934,6 +5145,28 @@ mod tests {
                 "task-s-3",
             ]
         );
+
+        let mut unassigned_only = DesktopProjection::default();
+        unassigned_only.sessions = vec![session("s-3", None)];
+        let skipped = rail_focus_stops(
+            TaskRailGrouping::Timeline,
+            None,
+            &BTreeSet::new(),
+            &unassigned_only,
+            60_000,
+        );
+        let skipped_keys: Vec<String> = skipped.iter().map(|stop| stop.focus_key()).collect();
+        assert_eq!(skipped_keys[4..], ["task-s-3"]);
+
+        let scoped = rail_focus_stops(
+            TaskRailGrouping::Timeline,
+            Some("ws-a"),
+            &BTreeSet::new(),
+            &projection,
+            60_000,
+        );
+        let scoped_keys: Vec<String> = scoped.iter().map(|stop| stop.focus_key()).collect();
+        assert_eq!(scoped_keys[4..], ["task-s-1", "task-s-2"]);
     }
 
     #[test]
@@ -4972,10 +5205,6 @@ mod tests {
 
     #[test]
     fn inspector_keyboard_targets_wrap_and_preserve_activation() {
-        assert_eq!(inspector_tab_key_target(0, "left"), Some(2));
-        assert_eq!(inspector_tab_key_target(2, "right"), Some(0));
-        assert_eq!(inspector_tab_key_target(1, "enter"), Some(1));
-        assert_eq!(inspector_tab_key_target(1, "space"), Some(1));
         assert_eq!(changes_tab_key_target(0, "down"), Some(1));
         assert_eq!(changes_tab_key_target(1, "up"), Some(0));
         assert_eq!(changes_tab_key_target(0, "escape"), None);
@@ -4984,12 +5213,16 @@ mod tests {
     #[test]
     fn inspector_toggle_focus_moves_between_panel_and_activity() {
         assert_eq!(
-            inspector_focus_after_toggle(false),
+            inspector_focus_after_toggle(false, false),
             InspectorFocusTarget::Activity
         );
         assert_eq!(
-            inspector_focus_after_toggle(true),
+            inspector_focus_after_toggle(true, false),
             InspectorFocusTarget::SelectedTab
+        );
+        assert_eq!(
+            inspector_focus_after_toggle(false, true),
+            InspectorFocusTarget::Composer
         );
     }
 

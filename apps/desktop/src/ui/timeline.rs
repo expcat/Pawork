@@ -31,13 +31,16 @@ use crate::projection::{
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
 use crate::ui::components::dropdown::Dropdown;
 use crate::ui::components::follow_scroll::BackToBottom;
+use crate::ui::components::icon::{icon_sized, Icon};
 use crate::ui::components::label::Label;
 use crate::ui::i18n::t;
 use crate::ui::theme::{dark, font, metrics};
 
 use super::timeline_entry::{
-    default_text_line_height, display_time, estimated_wrapped_lines, message_block_line_counts,
-    tool_row_height, RunSummaryTerminal, RunSummaryView, ToolRowView,
+    default_text_line_height, display_time, estimated_wrapped_lines, failure_next_step,
+    message_block_line_counts, tool_row_height, FailureNextStep, RunSummaryTerminal,
+    RunSummaryView, ToolRowView, SUMMARY_BANNER_GAP_REMS, SUMMARY_BANNER_PAD_X,
+    SUMMARY_BANNER_PAD_Y_REMS, SUMMARY_NEXT_STEP_BUTTON_HEIGHT, SUMMARY_STATUS_CIRCLE,
 };
 use super::{now_unix_ms, workspace_empty_title, AppView, MenuKind};
 
@@ -103,7 +106,7 @@ fn sync_list(view: &mut AppView, row_count: usize) {
 pub(super) fn tool_status_label(status: &str) -> String {
     match status {
         "succeeded" => t("tool.status_completed"),
-        "running" => t("tool.group_running"),
+        "running" => t("tool.in_progress"),
         "pending" => t("tool.group_pending"),
         "failed" => t("tool.group_failed"),
         "cancelled" => t("tool.group_cancelled"),
@@ -147,7 +150,9 @@ fn message_entry_height(text: &str, column_width: f32, rem_px: f32, user: bool) 
         .iter()
         .map(|lines| *lines as f32 * body_line_height)
         .sum::<f32>()
-        + metrics::MSG_PARAGRAPH_GAP * blocks.len().saturating_sub(1) as f32;
+        + metrics::MSG_PARAGRAPH_GAP * blocks.len().saturating_sub(1) as f32
+        + super::markdown::message_code_block_count(text) as f32
+            * (metrics::ICON_BUTTON_SIZE - body_line_height).max(0.0);
     2.0 * vertical_inset + label + metrics::MSG_LABEL_BODY_GAP + body
 }
 
@@ -158,43 +163,96 @@ pub(super) fn thinking_body_height(text: &str, width: f32, rem: f32) -> f32 {
         * estimated_wrapped_lines(text, (width - 24.0).max(0.0), font_px).max(1) as f32
 }
 
-/// Run 摘要卡高度（run_summary_element 同源）：py_6×2 + max(左列, 40 槽)；
-/// 左列 = max(Ø40, 标题行) + gap_4 + 说明（line_clamp 2，行高 1.5rem）。
-fn run_summary_card_height(
+/// Run 摘要卡几何（run_summary_element 同源）：
+/// padding + 标题行 + 原因换行行数 × 行高 + （有 CTA 时）按钮行。
+/// Failed 原因不截断；Completed 说明仍 line_clamp 2；认证 CTA 为独立行，
+/// Review changes 仍在右侧不增高（只取 max 与按钮槽）。
+pub(super) struct RunSummaryCardLayout {
+    pub height: f32,
+    pub pad_x: f32,
+    pub pad_y: f32,
+    pub gap: f32,
+    pub title_row: f32,
+    pub reason_height: f32,
+    pub next_step: FailureNextStep,
+}
+
+impl RunSummaryCardLayout {
+    /// 认证 CTA 顶边相对卡片顶；无 CTA 为 None。
+    pub fn next_step_top(&self) -> Option<f32> {
+        (self.next_step == FailureNextStep::OpenProviderSettings)
+            .then_some(self.pad_y + self.title_row + self.gap + self.reason_height + self.gap)
+    }
+
+    pub fn next_step_x_inset(&self) -> f32 {
+        self.pad_x + SUMMARY_STATUS_CIRCLE + self.gap
+    }
+}
+
+pub(super) fn run_summary_card_layout(
     terminal: &TimelineEntry,
     column_width: f32,
     rem_px: f32,
     review_changes_visible: bool,
-) -> f32 {
+) -> RunSummaryCardLayout {
+    let failed = terminal.fork_boundary == Some(ForkBoundary::Failed);
     let description = run_summary_texts(terminal, review_changes_visible)
         .map(|(_, description)| description)
         .unwrap_or_default();
-    let desc_font_px = font::BODY_SM.0 * rem_px;
-    // 说明列宽估计：卡内容（pl 15 + pr_5）- gap_6 - 168 按钮槽 - Ø40 占位 - gap_4。
+    let next_step = if failed {
+        failure_next_step(&description)
+    } else {
+        FailureNextStep::None
+    };
+    let pad_x = SUMMARY_BANNER_PAD_X;
+    let pad_y = SUMMARY_BANNER_PAD_Y_REMS * rem_px;
+    let gap = SUMMARY_BANNER_GAP_REMS * rem_px;
+    let title_row = SUMMARY_STATUS_CIRCLE.max(default_text_line_height(font::BODY.0 * rem_px));
     let review_slot = if review_changes_visible {
         1.5 * rem_px + metrics::SUMMARY_BUTTON_WIDTH
     } else {
         0.0
     };
-    let desc_width = (column_width
-        - (metrics::TOOL_GROUP_INNER_INSET
-            + 1.25 * rem_px
-            + review_slot
-            + metrics::SUMMARY_CHECK_CIRCLE
-            + 1.0 * rem_px))
-        .max(0.0);
-    let desc_lines = estimated_wrapped_lines(&description, desc_width, desc_font_px).clamp(1, 2);
-    let body_line_height = (font::from_pixels(metrics::MSG_LINE_HEIGHT).0 * rem_px).round();
-    let left_column = metrics::SUMMARY_CHECK_CIRCLE
-        .max(default_text_line_height(font::BODY.0 * rem_px))
-        + 1.0 * rem_px
-        + desc_lines as f32 * body_line_height;
-    let content = if review_changes_visible {
-        left_column.max(metrics::SUMMARY_BUTTON_HEIGHT)
+    let desc_width =
+        (column_width - (pad_x * 2.0 + SUMMARY_STATUS_CIRCLE + gap + review_slot)).max(0.0);
+    let desc_font_px = font::BODY_SM.0 * rem_px;
+    let (desc_lines, reason_line_height) = if failed {
+        (
+            estimated_wrapped_lines(&description, desc_width, desc_font_px).max(1),
+            default_text_line_height(desc_font_px),
+        )
     } else {
-        left_column
+        (
+            estimated_wrapped_lines(&description, desc_width, desc_font_px).clamp(1, 2),
+            (font::from_pixels(metrics::MSG_LINE_HEIGHT).0 * rem_px).round(),
+        )
     };
-    3.0 * rem_px + content
+    let reason_height = desc_lines as f32 * reason_line_height;
+    let mut content = title_row + gap + reason_height;
+    if next_step == FailureNextStep::OpenProviderSettings {
+        content += gap + SUMMARY_NEXT_STEP_BUTTON_HEIGHT;
+    }
+    if review_changes_visible {
+        content = content.max(metrics::SUMMARY_BUTTON_HEIGHT);
+    }
+    RunSummaryCardLayout {
+        height: pad_y * 2.0 + content,
+        pad_x,
+        pad_y,
+        gap,
+        title_row,
+        reason_height,
+        next_step,
+    }
+}
+
+pub(super) fn run_summary_card_height(
+    terminal: &TimelineEntry,
+    column_width: f32,
+    rem_px: f32,
+    review_changes_visible: bool,
+) -> f32 {
+    run_summary_card_layout(terminal, column_width, rem_px, review_changes_visible).height
 }
 
 /// Tool group 的稳定 presentation key：首个 tool event id。历史 replay 与
@@ -218,7 +276,12 @@ fn tool_group_is_collapsed(
         .is_some_and(|key| !expanded_timeline_details.contains(key))
 }
 
-pub(super) fn tool_entry_height(entry: &TimelineEntry, width: f32, rem: f32) -> f32 {
+pub(super) fn tool_entry_height(
+    entry: &TimelineEntry,
+    width: f32,
+    rem: f32,
+    expanded_timeline_details: &HashSet<String>,
+) -> f32 {
     if let TimelineEntryKind::ToolCall {
         name,
         status,
@@ -226,8 +289,18 @@ pub(super) fn tool_entry_height(entry: &TimelineEntry, width: f32, rem: f32) -> 
         arguments,
     } = &entry.kind
     {
+        let result_expanded = expanded_timeline_details.contains(
+            &super::timeline_entry::tool_result_expand_key(&entry.event_id),
+        );
         tool_row_height(
-            &ToolRowView::from_facts(name, status, arguments.as_deref(), detail.as_deref()),
+            &ToolRowView::present(
+                name,
+                status,
+                arguments.as_deref(),
+                detail.as_deref(),
+                &entry.event_id,
+                result_expanded,
+            ),
             width,
             rem,
         )
@@ -312,7 +385,14 @@ pub(super) fn timeline_row_height(
                 } else {
                     entry_indices
                         .iter()
-                        .map(|&ix| tool_entry_height(&timeline[ix], column_width, rem_px))
+                        .map(|&ix| {
+                            tool_entry_height(
+                                &timeline[ix],
+                                column_width,
+                                rem_px,
+                                expanded_timeline_details,
+                            )
+                        })
                         .sum::<f32>()
                 }
         }
@@ -325,7 +405,14 @@ pub(super) fn timeline_row_height(
                 if !tool_group_is_collapsed(group, timeline, expanded_timeline_details) {
                     height += group
                         .iter()
-                        .map(|&ix| tool_entry_height(&timeline[ix], column_width, rem_px))
+                        .map(|&ix| {
+                            tool_entry_height(
+                                &timeline[ix],
+                                column_width,
+                                rem_px,
+                                expanded_timeline_details,
+                            )
+                        })
                         .sum::<f32>();
                 }
                 height +=
@@ -511,6 +598,28 @@ impl AppView {
                     view.on_new_session(window, cx);
                     cx.stop_propagation();
                 }));
+            let bind_project = Button::new("workspace-bind-project")
+                .variant(ButtonVariant::Ghost)
+                .track_focus(&self.welcome_bind_project_focus)
+                .height(px(36.0))
+                .padding(ButtonPadding::Horizontal(metrics::SPACE_4))
+                .center()
+                .label(t("timeline.bind_project"))
+                .on_click(cx.listener(|view, event, window, cx| {
+                    if view.consume_button_key_click("workspace-bind-project", event) {
+                        return;
+                    }
+                    view.on_project_task_menu(Self::click_down_position(event), window, cx);
+                }))
+                .on_activate(cx.listener(|view, _event, window, cx| {
+                    if view.open_menu.is_some() {
+                        view.note_button_key_activate("workspace-bind-project");
+                        return;
+                    }
+                    view.note_button_key_activate("workspace-bind-project");
+                    view.on_project_task_menu(None, window, cx);
+                    cx.stop_propagation();
+                }));
             div()
                 .flex_1()
                 .flex()
@@ -518,23 +627,35 @@ impl AppView {
                 .items_center()
                 .justify_center()
                 .px(px(metrics::TIMELINE_CONTENT_INSET))
-                .gap(px(metrics::SPACE_2))
+                .gap(px(metrics::SPACE_4))
+                .child(
+                    icon_sized(Icon::Task, px(32.0)).text_color(dark().text.tertiary),
+                )
                 .child(
                     self.shell_element("workspace-empty-title")
                         .child(Label::new(workspace_empty_title()).size(font::TITLE)),
                 )
-                .child(
-                    self.shell_element("workspace-empty-hint").child(
-                        Label::new(self.welcome_hint())
-                            .size(font::BODY)
-                            .color(dark().text.secondary),
-                    ),
-                )
+                .when(self.welcome_hint_visible(), |area| {
+                    area.child(
+                        self.shell_element("workspace-empty-hint").child(
+                            Label::new(self.welcome_hint())
+                                .size(font::BODY)
+                                .color(dark().text.secondary),
+                        ),
+                    )
+                })
                 .when(self.projection.active_session_id.is_none(), |area| {
                     area.child(
                         self.shell_element("workspace-empty-action")
                             .mt(px(metrics::SPACE_2))
                             .child(new_task),
+                    )
+                })
+                .when(self.welcome_bind_project_visible(), |area| {
+                    area.child(
+                        self.shell_element("workspace-empty-action")
+                            .mt(px(metrics::SPACE_2))
+                            .child(bind_project),
                     )
                 })
                 .into_any_element()
@@ -567,7 +688,14 @@ impl AppView {
                 area.child(BackToBottom::new(
                     Button::new("timeline-back-to-bottom")
                         .variant(ButtonVariant::Raised)
-                        .label(t("timeline.back_to_bottom"))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_1()
+                                .child(icon_sized(Icon::ArrowDown, px(metrics::ICON_SM)))
+                                .child(t("timeline.ax_back_to_bottom")),
+                        )
                         .track_focus(&back_to_bottom_focus)
                         .on_click(cx.listener(|view, event, _window, cx| {
                             if view.consume_button_key_click("timeline-back-to-bottom", event) {
@@ -584,6 +712,22 @@ impl AppView {
                         })),
                 ))
             })
+    }
+
+    /// 无任务首页才显示「从侧栏选择或新建」提示；空任务不再重复 Composer placeholder。
+    pub(super) fn welcome_hint_visible(&self) -> bool {
+        self.welcome_visible() && self.projection.active_session_id.is_none()
+    }
+
+    /// 空任务且无项目、已连接时给出 Ghost 绑定入口；断线走 Composer 元信息 gate。
+    pub(super) fn welcome_bind_project_visible(&self) -> bool {
+        self.welcome_visible()
+            && matches!(
+                self.projection.connection,
+                ConnectionState::Connected { .. }
+            )
+            && self.projection.active_session_id.is_some()
+            && self.composer_workspace_no_project()
     }
 
     /// 单个渲染行（消息 / 错误 / tool 组 / 中间相位 / Run 摘要区域）。
@@ -666,19 +810,9 @@ impl AppView {
                             .child(self.run_summary_element(&summary, &entry.event_id, cx)),
                     );
                 }
-                let footer_label = format!(
-                    "{} · {}",
-                    if show_card {
-                        ""
-                    } else {
-                        run_footer_label(&entry).unwrap_or("Run")
-                    },
-                    self.projection.run_usage_label(entry.run_id.as_deref())
-                )
-                .trim_start_matches(" · ")
-                .to_string();
+                let footer_label = run_footer_label(&entry).unwrap_or("Run");
                 let footer_time = display_time(&entry.timestamp, now_unix_ms());
-                let footer = self.run_footer_element(&footer_label, &footer_time);
+                let footer = self.run_footer_element(footer_label, &footer_time);
                 let menu = self.entry_menu_dropdown(&entry, fork_available, cx);
                 region
                     .child(
@@ -718,7 +852,16 @@ impl AppView {
                 else {
                     return ToolRowView::from_parts("tool", "", None);
                 };
-                ToolRowView::from_facts(name, status, arguments.as_deref(), detail.as_deref())
+                ToolRowView::present(
+                    name,
+                    status,
+                    arguments.as_deref(),
+                    detail.as_deref(),
+                    &entry.event_id,
+                    self.expanded_timeline_details.contains(
+                        &super::timeline_entry::tool_result_expand_key(&entry.event_id),
+                    ),
+                )
             })
             .collect()
     }
@@ -782,5 +925,51 @@ impl AppView {
         self.timeline_following = true;
         self.timeline_navigation.reading = false;
         self.timeline_navigation.user_scrolled();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::projection::TimelineEntryKind;
+
+    fn failed_entry(label: &str) -> TimelineEntry {
+        TimelineEntry {
+            sequence: 1,
+            event_id: "f1".into(),
+            kind: TimelineEntryKind::RunState(label.into()),
+            fork_boundary: Some(ForkBoundary::Failed),
+            timestamp: "1".into(),
+            run_id: Some("r1".into()),
+        }
+    }
+
+    #[test]
+    fn run_summary_card_height_uses_compact_banner_formula() {
+        let rem = 16.0;
+        let width = 618.0;
+        let auth = failed_entry("run failed · HTTP 401");
+        let timeout = failed_entry("run failed · provider timeout");
+        let auth_layout = run_summary_card_layout(&auth, width, rem, false);
+        let timeout_h = run_summary_card_height(&timeout, width, rem, false);
+        assert_eq!(auth_layout.next_step, FailureNextStep::OpenProviderSettings);
+        assert_eq!(
+            timeout_h + SUMMARY_BANNER_GAP_REMS * rem + SUMMARY_NEXT_STEP_BUTTON_HEIGHT,
+            auth_layout.height
+        );
+        assert_eq!(
+            auth_layout.title_row,
+            SUMMARY_STATUS_CIRCLE.max(default_text_line_height(font::BODY.0 * rem))
+        );
+        assert!(auth_layout.title_row < 40.0);
+        let cancelled = TimelineEntry {
+            sequence: 2,
+            event_id: "c1".into(),
+            kind: TimelineEntryKind::RunState("run cancelled".into()),
+            fork_boundary: Some(ForkBoundary::Cancelled),
+            timestamp: "1".into(),
+            run_id: Some("r1".into()),
+        };
+        assert!(!run_summary_card_visible(&cancelled, false));
     }
 }

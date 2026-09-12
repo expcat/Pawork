@@ -32,6 +32,11 @@ impl Panel {
         panel
     }
 
+    /// 占满父级的工作面板（窄窗中央 Inspector；无固定宽、无侧描边）。
+    pub fn fill() -> Self {
+        Self::new(None, false, false)
+    }
+
     fn new(width: Option<Pixels>, border_left: bool, border_right: bool) -> Self {
         Self {
             border_left,
@@ -56,6 +61,8 @@ impl RenderOnce for Panel {
             // 固定宽侧栏必须拒绝 flex shrink；否则 Workspace 内长文本的
             // min-content 宽度会把真实 Inspector 挤窄，而 AX 仍报告合同宽度。
             panel = panel.w(width).flex_none();
+        } else {
+            panel = panel.flex_1().min_w_0().min_h_0().w_full();
         }
         if self.border_left {
             panel = panel.border_l_1();

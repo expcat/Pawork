@@ -8,6 +8,7 @@ use gpui::{div, point, prelude::*, px, Context, Corner, Pixels, Point, SharedStr
 use crate::projection::{group_models_by_provider, ConnectionState, ModelEntry};
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
 use crate::ui::components::dropdown::{Dropdown, MenuPanel, ANCHOR_GAP_Y};
+use crate::ui::components::icon::{icon, icon_sized, Icon};
 use crate::ui::components::label::Label;
 use crate::ui::i18n::{t, t2};
 use crate::ui::theme::{dark, font, metrics};
@@ -47,7 +48,7 @@ impl AppView {
         let model_menu_open =
             matches!(self.open_menu, Some(MenuKind::Model)) && can_open_model_menu;
         let composer_hint = self.composer_placeholder_hint();
-        let context_meter = self.projection.context_meter_label();
+        let context_visible = self.composer_context_meter_visible();
         let workspace_label = if self.composer_workspace_no_project() {
             t("composer.no_project_chip").to_string()
         } else {
@@ -70,8 +71,8 @@ impl AppView {
         let model_focus = self.model_focus.clone();
         let mut model_button = Button::new("model-picker")
             .track_focus(&model_focus)
-            .variant(ButtonVariant::Ghost)
-            .text_color(dark().text.secondary)
+            .variant(ButtonVariant::Raised)
+            .text_color(dark().text.primary)
             .disabled(!can_open_model_menu)
             .child(
                 div()
@@ -85,7 +86,7 @@ impl AppView {
                             .min_w_0()
                             .child(div().truncate().child(self.model_label())),
                     )
-                    .child("▾"),
+                    .child(icon_sized(Icon::ChevronDown, px(metrics::ICON_SM))),
             )
             .tooltip(model_tooltip)
             .height(px(metrics::COMPOSER_FOOTER_CONTROL))
@@ -138,8 +139,7 @@ impl AppView {
                 .icon_circle(metrics::COMPOSER_SEND_SIZE)
                 .disabled(!can_cancel)
                 .track_focus(&action_focus)
-                .text_size(font::ICON)
-                .label("✕")
+                .child(icon(Icon::Cancel))
                 .tooltip(cancel_tooltip);
             if can_cancel {
                 cancel = cancel
@@ -168,8 +168,7 @@ impl AppView {
                 .icon_circle(metrics::COMPOSER_SEND_SIZE)
                 .disabled(!can_send)
                 .track_focus(&action_focus)
-                .text_size(font::ICON)
-                .label("↑")
+                .child(icon(Icon::Send))
                 .tooltip(send_tooltip);
             if can_send {
                 send = send
@@ -207,12 +206,13 @@ impl AppView {
             .max_h(px(metrics::COMPOSER_PANEL_MAX_HEIGHT))
             .border_1()
             .border_color(if input_focused {
-                dark().border.strong
+                dark().accent.primary
             } else {
                 dark().border.subtle
             })
-            .rounded(px(metrics::SURFACE_RADIUS))
+            .rounded(px(metrics::COMPOSER_RADIUS))
             .bg(dark().surface.raised)
+            .shadow_sm()
             .child(
                 div()
                     .flex()
@@ -262,25 +262,20 @@ impl AppView {
             .items_center()
             .gap(px(metrics::SPACE_2))
             .child(project_label);
-        if self.composer_file_tools_unavailable_visible() {
-            project = project.child(
-                div()
-                    .id("composer-file-tools-hint")
-                    .track_scroll(&self.composer_layouts["composer-file-tools-hint"])
-                    .text_size(font::XS)
-                    .text_color(dark().semantic.warning_text)
-                    .child(t("composer.file_tools_unavailable")),
-            );
-        }
         if self.composer_project_task_visible() {
-            let button = Button::new("composer-project-task")
+            let can_create = self.can_create_task();
+            let mut button = Button::new("composer-project-task")
                 .track_focus(&self.project_task_focus)
                 .variant(ButtonVariant::Ghost)
                 .padding(ButtonPadding::None)
                 .height(px(meta_height))
                 .text_size(font::XS)
-                .label(t("composer.project_task"))
-                .disabled(!self.can_create_task())
+                .label(self.composer_project_task_label())
+                .disabled(!can_create);
+            if !can_create {
+                button = button.tooltip(SharedString::from(self.add_task_disabled_reason()));
+            }
+            button = button
                 .on_click(cx.listener(|view, event, window, cx| {
                     if view.consume_button_key_click("composer-project-task", event) {
                         return;
@@ -307,6 +302,28 @@ impl AppView {
                     .child(picker),
             );
         }
+        let mut meta = div()
+            .id("composer-meta")
+            .debug_selector(|| "composer-meta".into())
+            .track_scroll(&self.composer_layouts["composer-meta"])
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .justify_between()
+            .gap(px(metrics::SPACE_2))
+            .min_h(px(meta_height))
+            .flex_none()
+            .child(project);
+        if context_visible {
+            meta = meta.child(
+                div()
+                    .id("composer-context")
+                    .track_scroll(&self.composer_layouts["composer-context"])
+                    .text_size(font::XS)
+                    .text_color(dark().text.tertiary)
+                    .child(self.projection.context_meter_label()),
+            );
+        }
         let mut column = div()
             .w_full()
             .max_w(px(metrics::TIMELINE_READABLE_WIDTH))
@@ -314,28 +331,7 @@ impl AppView {
             .flex_col()
             .gap(px(metrics::COMPOSER_META_GAP))
             .child(card)
-            .child(
-                div()
-                    .id("composer-meta")
-                    .debug_selector(|| "composer-meta".into())
-                    .track_scroll(&self.composer_layouts["composer-meta"])
-                    .flex()
-                    .flex_wrap()
-                    .items_center()
-                    .justify_between()
-                    .gap(px(metrics::SPACE_2))
-                    .min_h(px(meta_height))
-                    .flex_none()
-                    .child(project)
-                    .child(
-                        div()
-                            .id("composer-context")
-                            .track_scroll(&self.composer_layouts["composer-context"])
-                            .text_size(font::XS)
-                            .text_color(dark().text.tertiary)
-                            .child(context_meter),
-                    ),
-            );
+            .child(meta);
         for (id, note) in self.composer_notes() {
             column = column.child(
                 div().id(id).flex().h(px(meta_height)).items_center().child(
@@ -397,6 +393,27 @@ impl AppView {
     pub(super) fn composer_project_task_visible(&self) -> bool {
         self.projection.active_session_id.is_none()
             || self.composer_file_tools_unavailable_visible()
+    }
+
+    /// Render / AX 共用：无项目任务用正向绑定文案，无任务空态沿用新建入口。
+    pub(super) fn composer_project_task_label(&self) -> &'static str {
+        if self.composer_file_tools_unavailable_visible() {
+            t("composer.bind_project")
+        } else {
+            t("composer.project_task")
+        }
+    }
+
+    /// 目录缺 window 或 0 哨兵视为未知，不画 ContextMeter。
+    pub(super) fn composer_context_meter_visible(&self) -> bool {
+        let Some((provider, id)) = self.projection.effective_model() else {
+            return false;
+        };
+        self.projection.models.iter().any(|entry| {
+            entry.provider_id == *provider
+                && entry.id == *id
+                && entry.context_window_tokens.is_some_and(|window| window > 0)
+        })
     }
 
     pub(super) fn on_project_task_menu(
@@ -650,46 +667,63 @@ impl AppView {
                 .effective_model()
                 .is_some_and(|(provider, id)| *provider == model.provider_id && *id == model.id);
             let row_id = format!("model-{}-{}", model.provider_id, model.id);
-            let title = format!("{}{}", if selected { "✓ " } else { "" }, model.display_name);
+            let title = model.display_name.clone();
             let detail = format!("{} / {}", model.provider_id, model.id);
-            let row = self
-                .settings_element(row_id)
-                .w_full()
-                .py_2()
-                .px_2()
-                .rounded(px(metrics::CONTROL_RADIUS))
-                .bg(if selected || ix == highlight {
-                    dark().surface.raised
-                } else {
-                    dark().bg.menu
-                })
-                .hover(|style| style.bg(dark().surface.hover))
-                .active(|style| style.bg(dark().surface.pressed))
-                .cursor_pointer()
-                .on_hover(cx.listener(move |view, hovered: &bool, _, cx| {
-                    if *hovered && view.menu_highlight != Some(ix) {
-                        view.menu_highlight = Some(ix);
-                        cx.notify();
-                    }
-                }))
-                .child(
-                    div()
-                        .text_size(font::SM)
-                        .text_color(dark().text.primary)
-                        .whitespace_normal()
-                        .child(title),
-                )
-                .child(
-                    div()
-                        .text_size(font::XS)
-                        .text_color(dark().text.secondary)
-                        .whitespace_normal()
-                        .child(detail),
-                )
-                .on_click(cx.listener(move |view, _, window, cx| {
-                    view.on_select_model(model.clone(), cx);
-                    window.focus(&view.model_focus);
-                }));
+            let row =
+                self.settings_element(row_id)
+                    .w_full()
+                    .py_2()
+                    .px_2()
+                    .rounded(px(metrics::CONTROL_RADIUS))
+                    .bg(if selected || ix == highlight {
+                        dark().surface.raised
+                    } else {
+                        dark().bg.menu
+                    })
+                    .hover(|style| style.bg(dark().surface.hover))
+                    .active(|style| style.bg(dark().surface.pressed))
+                    .cursor_pointer()
+                    .on_hover(cx.listener(move |view, hovered: &bool, _, cx| {
+                        if *hovered && view.menu_highlight != Some(ix) {
+                            view.menu_highlight = Some(ix);
+                            cx.notify();
+                        }
+                    }))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(div().w(px(metrics::SPACE_4)).flex_none().when(
+                                selected,
+                                |slot| {
+                                    slot.child(
+                                        icon_sized(Icon::Check, px(metrics::ICON_SM))
+                                            .text_color(dark().accent.primary),
+                                    )
+                                },
+                            ))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .text_size(font::SM)
+                                    .text_color(dark().text.primary)
+                                    .whitespace_normal()
+                                    .child(title),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_size(font::XS)
+                            .text_color(dark().text.secondary)
+                            .whitespace_normal()
+                            .child(detail),
+                    )
+                    .on_click(cx.listener(move |view, _, window, cx| {
+                        view.on_select_model(model.clone(), cx);
+                        window.focus(&view.model_focus);
+                    }));
             let mut group = div();
             if let Some(header) = group_header {
                 group = group.child(
@@ -813,8 +847,8 @@ impl AppView {
         self.scope_workspace_id.is_none()
     }
 
-    /// 文件工具不可用提示只在无项目会话激活时出现（无 active session 时
-    /// 不提示——还没有任务上下文）。
+    /// 当前激活会话无项目：元信息行显示正向绑定入口，不再画警告色限制。
+    /// 无 active session 时不算（还没有任务上下文）。
     pub(super) fn composer_file_tools_unavailable_visible(&self) -> bool {
         self.projection
             .active_session_id

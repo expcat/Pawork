@@ -1,18 +1,29 @@
 //! Switch 开关基础组件（OPT-3c / ADR-055）。
 //!
 //! 轨道 + 圆点两态控件：开 = accent.primary 轨道、圆点靠右；关 =
-//! border.strong 轨道、圆点靠左。交互合同与 Button 同构：id 必填，
+//! border.strong 轨道、圆点靠左。状态切换时滑块 120ms ease-out，首帧瞬移。
+//! 交互合同与 Button 同构：id 必填，
 //! on_click / on_activate（Enter / Space）由调用方汇聚到同一入口并保证
 //! disabled 不发布动作；状态文案（On / Off）由调用方并排渲染，AX value
 //! 由 AX 层发布。
 
+use std::collections::HashSet;
+use std::sync::Mutex;
+
 use gpui::{
-    div, prelude::*, px, App, ClickEvent, FocusHandle, IntoElement, KeyDownEvent, RenderOnce,
-    SharedString, Window,
+    div, prelude::*, px, Animation, AnimationExt, App, ClickEvent, FocusHandle, IntoElement,
+    KeyDownEvent, RenderOnce, SharedString, Window,
 };
 
 use crate::ui::components::focus_ring::focus_ring;
-use crate::ui::theme::dark;
+use crate::ui::theme::{dark, motion};
+
+fn switch_is_first_paint(id: &str) -> bool {
+    static SEEN: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+    let mut guard = SEEN.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let seen = guard.get_or_insert_with(HashSet::new);
+    seen.insert(id.to_string())
+}
 
 /// 轨道宽（含 2px 内缩的圆点行程）。
 pub const SWITCH_TRACK_WIDTH: f32 = 36.0;
@@ -102,23 +113,44 @@ impl RenderOnce for Switch {
         } else {
             dark().text.secondary
         };
+        let travel = SWITCH_TRACK_WIDTH - 4.0 - SWITCH_DOT_SIZE;
+        let target = if self.checked { travel } else { 0.0 };
+        let first_paint = switch_is_first_paint(self.id.as_ref());
+        let thumb = div()
+            .w(px(SWITCH_DOT_SIZE))
+            .h(px(SWITCH_DOT_SIZE))
+            .rounded_full()
+            .bg(dot_color)
+            .absolute()
+            .top(px(2.0))
+            .left(px(2.0 + target));
+        let checked = self.checked;
+        let thumb = if first_paint {
+            thumb.into_any_element()
+        } else {
+            thumb
+                .with_animation(
+                    SharedString::from(format!("{}-thumb-{}", self.id, u8::from(checked))),
+                    Animation::new(motion::CONTROL_DURATION).with_easing(motion::ease_out_cubic),
+                    move |thumb, delta| {
+                        let x = if checked {
+                            travel * delta
+                        } else {
+                            travel * (1.0 - delta)
+                        };
+                        thumb.left(px(2.0 + x))
+                    },
+                )
+                .into_any_element()
+        };
         let mut switch = div()
             .id(self.id)
             .w(px(SWITCH_TRACK_WIDTH))
             .h(px(SWITCH_TRACK_HEIGHT))
-            .flex()
-            .items_center()
-            .px(px(2.0))
+            .relative()
             .rounded(px(SWITCH_TRACK_HEIGHT / 2.0))
             .bg(track_bg)
-            .when(self.checked, |track| track.justify_end())
-            .child(
-                div()
-                    .w(px(SWITCH_DOT_SIZE))
-                    .h(px(SWITCH_DOT_SIZE))
-                    .rounded_full()
-                    .bg(dot_color),
-            );
+            .child(thumb);
         if let Some(focus) = self.focus.as_ref() {
             switch = switch.tab_stop(true).track_focus(focus).relative();
         }
@@ -132,9 +164,12 @@ impl RenderOnce for Switch {
             switch = switch.child(focus_ring(px(SWITCH_TRACK_HEIGHT / 2.0)));
         }
         if enabled {
-            switch = switch
-                .cursor_pointer()
-                .hover(|style| style.bg(dark().accent.hover));
+            switch = switch.cursor_pointer();
+            if self.checked {
+                switch = switch.hover(|style| style.bg(dark().accent.hover));
+            } else {
+                switch = switch.hover(|style| style.bg(dark().surface.hover));
+            }
         }
         if let Some(tooltip) = self.tooltip {
             switch = switch.tooltip(move |_, cx| crate::ui::tooltip_text(tooltip.clone(), cx));

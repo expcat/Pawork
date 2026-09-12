@@ -655,64 +655,68 @@ const WINDOW_MIN_SIZE: gpui::Size<gpui::Pixels> = size(px(1080.), px(720.));
 
 fn run_app(socket: PathBuf, barrier_dir: Option<PathBuf>) {
     let platform = Arc::new(platform::Platform::new());
-    Application::new().run(move |cx: &mut App| {
-        ui::install_keybindings(cx);
-        let bounds = Bounds::centered(None, size(px(1440.), px(1024.)), cx);
-        let view_platform = Arc::clone(&platform);
-        let view_socket = socket.clone();
-        let view_barrier_dir = barrier_dir.clone();
-        let window = cx
-            .open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    window_min_size: Some(WINDOW_MIN_SIZE),
-                    // F-01：macOS 透明 titlebar。gpui 0.2.2 在 appears_transparent
-                    // 时启用 NSFullSizeContentView + 隐藏原生标题（platform/mac/
-                    // window.rs），内容视口贯通全窗、无白带；traffic lights 保持
-                    // 默认位置悬浮于 TaskRail 顶部，由 rail 内 ≥36px 安全区让位。
-                    titlebar: Some(TitlebarOptions {
-                        title: Some("Pawork".into()),
-                        appears_transparent: true,
-                        traffic_light_position: None,
-                    }),
-                    ..Default::default()
-                },
-                move |window, cx| {
-                    cx.new(|cx| {
-                        let mut view =
-                            ui::AppView::new(view_platform, view_socket, view_barrier_dir, cx);
-                        view.restore_appearance(window, cx);
-                        view
-                    })
-                },
-            )
-            .expect("open pawork-desktop window");
-        let accessibility_app = cx.to_async();
-        let accessibility_window = window;
-        window
-            .update(cx, move |view, window, cx| {
-                let callback_app = accessibility_app.clone();
-                if let Err(reason) = view.install_accessibility(
-                    window,
-                    move |request| {
-                        let mut app = callback_app.clone();
-                        let executor = app.foreground_executor().clone();
-                        executor
-                            .spawn(async move {
-                                let _ =
-                                    accessibility_window.update(&mut app, |view, window, cx| {
-                                        view.handle_accessibility_request(request, window, cx);
-                                    });
-                            })
-                            .detach();
+    Application::new()
+        .with_assets(ui::Assets)
+        .run(move |cx: &mut App| {
+            ui::install_keybindings(cx);
+            let bounds = Bounds::centered(None, size(px(1440.), px(1024.)), cx);
+            let view_platform = Arc::clone(&platform);
+            let view_socket = socket.clone();
+            let view_barrier_dir = barrier_dir.clone();
+            let window = cx
+                .open_window(
+                    WindowOptions {
+                        window_bounds: Some(WindowBounds::Windowed(bounds)),
+                        window_min_size: Some(WINDOW_MIN_SIZE),
+                        // F-01：macOS 透明 titlebar。gpui 0.2.2 在 appears_transparent
+                        // 时启用 NSFullSizeContentView + 隐藏原生标题（platform/mac/
+                        // window.rs），内容视口贯通全窗、无白带；traffic lights 保持
+                        // 默认位置悬浮于 TaskRail 顶部，由 rail 内 ≥36px 安全区让位。
+                        titlebar: Some(TitlebarOptions {
+                            title: Some("Pawork".into()),
+                            appears_transparent: true,
+                            traffic_light_position: None,
+                        }),
+                        ..Default::default()
                     },
-                    cx,
-                ) {
-                    eprintln!("pawork-desktop accessibility install failed: {reason}");
-                }
-                window.focus(&view.composer_focus_handle(cx));
-                cx.activate(true);
-            })
-            .expect("focus composer");
-    });
+                    move |window, cx| {
+                        cx.new(|cx| {
+                            let mut view =
+                                ui::AppView::new(view_platform, view_socket, view_barrier_dir, cx);
+                            view.restore_appearance(window, cx);
+                            view
+                        })
+                    },
+                )
+                .expect("open pawork-desktop window");
+            let accessibility_app = cx.to_async();
+            let accessibility_window = window;
+            window
+                .update(cx, move |view, window, cx| {
+                    let callback_app = accessibility_app.clone();
+                    if let Err(reason) = view.install_accessibility(
+                        window,
+                        move |request| {
+                            let mut app = callback_app.clone();
+                            let executor = app.foreground_executor().clone();
+                            executor
+                                .spawn(async move {
+                                    let _ = accessibility_window.update(
+                                        &mut app,
+                                        |view, window, cx| {
+                                            view.handle_accessibility_request(request, window, cx);
+                                        },
+                                    );
+                                })
+                                .detach();
+                        },
+                        cx,
+                    ) {
+                        eprintln!("pawork-desktop accessibility install failed: {reason}");
+                    }
+                    window.focus(&view.composer_focus_handle(cx));
+                    cx.activate(true);
+                })
+                .expect("focus composer");
+        });
 }

@@ -1,12 +1,17 @@
 //! GUI2-03：仅搜索当前 Snapshot 与已有安全导航；不查询历史、不执行写操作。
 use super::accessibility::{AxAction, AxNode, AxRect, AxRole, AxTree};
 use super::i18n::t;
+use super::settings::{settings_page_title_key, settings_search_entries, SettingsSearchKind};
 use super::*;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum SearchTarget {
+pub(crate) enum SearchTarget {
     Task(String),
     Page(SettingsPage),
+    SettingsRow {
+        page: SettingsPage,
+        row_id: &'static str,
+    },
     Panel(InspectorTab),
 }
 
@@ -23,46 +28,36 @@ impl SearchResult {
         match &self.target {
             SearchTarget::Task(id) => format!("quick-task-{id}"),
             SearchTarget::Page(page) => format!("quick-page-{page:?}"),
+            SearchTarget::SettingsRow { page, row_id } => {
+                format!("quick-settings-{page:?}-{row_id}")
+            }
             SearchTarget::Panel(tab) => format!("quick-panel-{tab:?}"),
+        }
+    }
+
+    fn type_icon(&self) -> Icon {
+        match &self.target {
+            SearchTarget::Task(_) => Icon::Task,
+            SearchTarget::Page(_) => Icon::Page,
+            SearchTarget::SettingsRow { .. } => Icon::SettingsRow,
+            SearchTarget::Panel(InspectorTab::Changes) => Icon::Changes,
+            SearchTarget::Panel(InspectorTab::Terminal) => Icon::Terminal,
+            SearchTarget::Panel(InspectorTab::Resources) => Icon::Resources,
         }
     }
 }
 
-// 页面标题直接复用 Settings 文案；别名仅帮助跨语言查找。
-pub(super) const SEARCH_PAGES: &[(SettingsPage, &str, &str)] = &[
-    (
-        SettingsPage::Providers,
-        "settings.nav.providers",
-        "providers models 供应商 模型",
-    ),
-    (
-        SettingsPage::General,
-        "settings.nav.general",
-        "network proxy 网络 代理",
-    ),
-    (
-        SettingsPage::Permissions,
-        "settings.nav.permissions",
-        "permissions approvals 权限 审批",
-    ),
-    (SettingsPage::Tools, "settings.nav.tools", "tools mcp 工具"),
-    (
-        SettingsPage::Terminal,
-        "settings.nav.terminal",
-        "terminal shell 终端",
-    ),
-    (
-        SettingsPage::Appearance,
-        "settings.nav.appearance",
-        "appearance font language 外观 字号 语言",
-    ),
-    (
-        SettingsPage::Advanced,
-        "settings.nav.advanced",
-        "advanced diagnostics 高级 诊断",
-    ),
-    (SettingsPage::About, "settings.nav.about", "about 关于"),
-];
+fn quick_search_accent_mark() -> gpui::Div {
+    div()
+        .absolute()
+        .top_0()
+        .bottom_0()
+        .left_0()
+        .w(px(metrics::SETTINGS_LOCATE_MARK_WIDTH))
+        .bg(dark().accent.primary)
+}
+
+// 页面标题与设置行均来自 settings_search_entries()；Cmd+K 断线 gate 仍只允许 Appearance / Advanced。
 
 pub(super) struct QuickSearch {
     pub open: bool,
@@ -132,35 +127,20 @@ impl QuickSearch {
 
 impl AppView {
     fn search_page_available(&self, page: SettingsPage) -> bool {
-        if matches!(page, SettingsPage::Appearance | SettingsPage::Advanced) {
-            return true;
-        }
-        if !matches!(
-            self.projection.connection,
-            ConnectionState::Connected { .. }
-        ) {
-            return false;
-        }
-        match page {
-            SettingsPage::Providers => true,
-            SettingsPage::General => self.projection.settings_general.query.available,
-            SettingsPage::Permissions => self.projection.settings_permissions.query.available,
-            SettingsPage::Tools => self.resources.available,
-            SettingsPage::Terminal => self.projection.settings_terminal.query.available,
-            SettingsPage::About => self.settings_about_rows().is_some(),
-            SettingsPage::Appearance | SettingsPage::Advanced => true,
-        }
+        self.settings_page_available(page)
     }
 
     pub(super) fn quick_search_results(&self) -> Vec<SearchResult> {
-        let query = self.quick_search.query.trim().to_lowercase();
-        let matches = |text: &str| text.to_lowercase().contains(&query);
+        let query = self.quick_search.query.trim();
         let connected = matches!(
             self.projection.connection,
             ConnectionState::Connected { .. }
         );
         let mut results = Vec::new();
         if connected {
+            let matches = |text: &str| {
+                query.is_empty() || text.to_lowercase().contains(&query.to_lowercase())
+            };
             let mut tasks = self.projection.sessions.iter().collect::<Vec<_>>();
             tasks.sort_by(|a, b| {
                 b.updated_at_ms
@@ -180,17 +160,40 @@ impl AppView {
                 }
             }
         }
-        for &(page, title, aliases) in SEARCH_PAGES {
-            if self.search_page_available(page) && matches(&format!("{} {aliases}", t(title))) {
-                results.push(SearchResult {
-                    target: SearchTarget::Page(page),
-                    title: t(title).into(),
-                    detail: t("quick.settings").into(),
-                    group: "quick.pages",
-                });
+        for entry in settings_search_entries() {
+            if !self.search_page_available(entry.page) {
+                continue;
+            }
+            match entry.kind {
+                SettingsSearchKind::Page => {
+                    if query.is_empty() || entry.matches(query) {
+                        results.push(SearchResult {
+                            target: SearchTarget::Page(entry.page),
+                            title: entry.display_title().into(),
+                            detail: t("quick.settings").into(),
+                            group: "quick.pages",
+                        });
+                    }
+                }
+                SettingsSearchKind::Row => {
+                    if !query.is_empty() && entry.matches(query) {
+                        results.push(SearchResult {
+                            target: SearchTarget::SettingsRow {
+                                page: entry.page,
+                                row_id: entry.row_id,
+                            },
+                            title: entry.display_title().into(),
+                            detail: t(settings_page_title_key(entry.page)).into(),
+                            group: "quick.pages",
+                        });
+                    }
+                }
             }
         }
         if connected {
+            let matches = |text: &str| {
+                query.is_empty() || text.to_lowercase().contains(&query.to_lowercase())
+            };
             for (tab, key, aliases) in [
                 (InspectorTab::Changes, "quick.changes", "changes diff 变更"),
                 (InspectorTab::Terminal, "quick.terminal", "terminal 终端"),
@@ -312,6 +315,12 @@ impl AppView {
                 self.on_open_settings(window, cx);
                 self.on_select_settings_page(page, window, cx);
             }
+            SearchTarget::SettingsRow { page, row_id } => {
+                self.on_open_settings(window, cx);
+                self.locate_settings_entry(page, row_id, window, cx);
+                cx.notify();
+                return;
+            }
             SearchTarget::Panel(tab) => {
                 if self.route == AppRoute::Settings {
                     self.on_close_settings(window, cx);
@@ -411,41 +420,64 @@ impl AppView {
                 );
             }
             let target = result.target.clone();
+            let type_icon = result.type_icon();
+            let highlighted = index == selected;
             list = list.child(
                 self.quick_search
                     .element(&result.id())
+                    .relative()
                     .px_3()
                     .py_2()
                     .cursor_pointer()
-                    .bg(if index == selected {
+                    .bg(if highlighted {
                         dark().surface.hover
                     } else {
                         dark().surface.raised
                     })
                     .hover(|s| s.bg(dark().surface.hover))
+                    .when(highlighted, |row| row.child(quick_search_accent_mark()))
                     .on_click(cx.listener(move |view, _, window, cx| {
                         view.activate_quick_result(target.clone(), window, cx)
                     }))
                     .child(
-                        div().flex().flex_row().child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .text_size(font::BODY)
-                                .child(result.title.clone()),
-                        ),
-                    )
-                    .child(
-                        div().flex().flex_row().child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .text_size(font::BODY_SM)
-                                .text_color(dark().text.secondary)
-                                .child(result.detail.clone()),
-                        ),
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_start()
+                            .gap(px(metrics::SPACE_2))
+                            .child(
+                                icon_sized(type_icon, px(metrics::ICON_SM))
+                                    .text_color(dark().text.secondary)
+                                    .mt(px(2.0)),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .child(
+                                        div().flex().flex_row().child(
+                                            div()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .truncate()
+                                                .text_size(font::BODY)
+                                                .child(result.title.clone()),
+                                        ),
+                                    )
+                                    .child(
+                                        div().flex().flex_row().child(
+                                            div()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .truncate()
+                                                .text_size(font::BODY_SM)
+                                                .text_color(dark().text.secondary)
+                                                .child(result.detail.clone()),
+                                        ),
+                                    ),
+                            ),
                     ),
             );
         }

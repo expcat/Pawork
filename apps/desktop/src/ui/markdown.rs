@@ -1,10 +1,21 @@
 //! Timeline 的小型 Markdown 子集；渲染与 AX 高度估算共用解析后的可见文本。
 
-use gpui::{div, prelude::*, px, FontStyle, FontWeight, Rgba, StyledText, TextRun};
+use std::ops::Range;
+
+use gpui::{
+    div, prelude::*, px, FontStyle, FontWeight, InteractiveText, Rgba, SharedString, StyledText,
+    TextRun,
+};
 
 use super::components::button::{Button, ButtonPadding, ButtonVariant};
+use super::components::icon::{icon, Icon};
 use super::i18n::t;
 use super::theme::{dark, font, metrics};
+use super::AppView;
+
+/// 代码复制走 SVG；命中区与 Header 图标按钮同为 36×36。
+const TABLE_CELL_PAD_X: f32 = 6.0;
+const LINK_LABEL_URL_CHARS: usize = 32;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum InlineStyle {
@@ -40,6 +51,8 @@ struct Block {
     code: String,
     table: Vec<Vec<Vec<Span>>>,
     alignments: Vec<gpui::TextAlign>,
+    /// Fence info string 的首个空白分隔词；空或缺失为 None。
+    language: Option<String>,
 }
 
 impl Block {
@@ -158,6 +171,15 @@ fn fence(line: &str) -> Option<(char, usize, &str)> {
     (count >= 3).then(|| (marker, count, &line[count..]))
 }
 
+fn fence_language(info: &str) -> Option<String> {
+    let token = info.trim().split_whitespace().next()?.trim();
+    if token.is_empty() {
+        None
+    } else {
+        Some(token.to_owned())
+    }
+}
+
 // 分隔行完整到达前保留原文，避免流式输入丢失内容。
 fn table_cells(line: &str) -> Option<Vec<String>> {
     let mut cells = Vec::new();
@@ -274,13 +296,15 @@ pub(super) fn message_actions(text: &str) -> Vec<MessageAction> {
                 continue;
             }
             links.push(link.clone());
+            let number = links.len();
+            let suffix = truncated_url(&link);
             actions.push(MessageAction {
-                label: format!("{} {}", t("timeline.open_link"), links.len()),
+                label: format!("{} {number} · {suffix}", t("timeline.open_link")),
                 content: link.clone(),
                 open: true,
             });
             actions.push(MessageAction {
-                label: format!("{} {}", t("timeline.copy_link"), links.len()),
+                label: format!("{} {number} · {suffix}", t("timeline.copy_link")),
                 content: link,
                 open: false,
             });
@@ -289,25 +313,169 @@ pub(super) fn message_actions(text: &str) -> Vec<MessageAction> {
     actions
 }
 
-fn action_button(id: String, label: String, content: String, open: bool, is_link: bool) -> Button {
-    let mut button = Button::new(id)
-        .variant(ButtonVariant::Ghost)
-        .label(label)
-        .padding(ButtonPadding::Horizontal(6.0));
-    // 继承正文以 rem 设置的行高；字号缩放时动作行与测高仍同为一行。
-    if is_link {
-        button = button.tooltip(content.clone());
+fn truncated_url(url: &str) -> String {
+    let display = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .unwrap_or(url);
+    let count = display.chars().count();
+    if count <= LINK_LABEL_URL_CHARS {
+        display.to_owned()
+    } else {
+        let keep = LINK_LABEL_URL_CHARS.saturating_sub(1);
+        format!("{}…", display.chars().take(keep).collect::<String>())
     }
-    button.on_click(move |_, _, cx| {
-        cx.stop_propagation();
-        if open {
-            if http_url(&content) {
-                cx.open_url(&content);
-            }
-        } else {
-            cx.write_to_clipboard(gpui::ClipboardItem::new_string(content.clone()));
-        }
-    })
+}
+
+pub(super) struct MessageCodeCopy {
+    pub identifier: String,
+    pub content: String,
+    pub focus_key: String,
+}
+
+pub(super) fn message_code_copy_id(entry_id: &str, block_index: usize) -> String {
+    format!("{entry_id}-code-{block_index}")
+}
+
+pub(super) fn message_code_copies(entry_id: &str, text: &str) -> Vec<MessageCodeCopy> {
+    parse(text)
+        .into_iter()
+        .enumerate()
+        .filter(|(_, block)| block.kind == BlockKind::Code)
+        .map(|(index, block)| MessageCodeCopy {
+            identifier: message_code_copy_id(entry_id, index),
+            content: block.code,
+            focus_key: format!("{entry_id}:code:{index}"),
+        })
+        .collect()
+}
+
+pub(super) fn message_code_block_count(text: &str) -> usize {
+    parse(text)
+        .iter()
+        .filter(|block| block.kind == BlockKind::Code)
+        .count()
+}
+
+/// 列宽 = 该列最长单元格字符宽度 × 0.6 字号 + 左右 padding；行数估算同源（按内容、不按 160）。
+fn table_column_widths(table: &[Vec<Vec<Span>>], font_px: f32) -> Vec<f32> {
+    let columns = table.iter().map(|row| row.len()).max().unwrap_or(0);
+    (0..columns)
+        .map(|col| {
+            let max_chars = table
+                .iter()
+                .map(|row| {
+                    row.get(col)
+                        .map(|cell| {
+                            cell.iter()
+                                .map(|span| span.text.chars().count())
+                                .sum::<usize>()
+                        })
+                        .unwrap_or(0)
+                })
+                .max()
+                .unwrap_or(0);
+            max_chars as f32 * font_px * 0.6 + TABLE_CELL_PAD_X * 2.0
+        })
+        .collect()
+}
+
+fn table_column_widths_shaped(
+    table: &[Vec<Vec<Span>>],
+    window: &gpui::Window,
+    color: Rgba,
+) -> Vec<f32> {
+    let font_size = font::BODY.to_pixels(window.rem_size());
+    let columns = table.iter().map(|row| row.len()).max().unwrap_or(0);
+    (0..columns)
+        .map(|col| {
+            let max_width = table
+                .iter()
+                .enumerate()
+                .map(|(row_index, row)| {
+                    let Some(cell) = row.get(col) else {
+                        return 0.0;
+                    };
+                    let kind = if row_index == 0 {
+                        BlockKind::Heading
+                    } else {
+                        BlockKind::Paragraph
+                    };
+                    cell.iter()
+                        .map(|span| {
+                            let mut face = gpui::font(if span.style == InlineStyle::Code {
+                                font::MONO
+                            } else {
+                                ".SystemUIFont"
+                            });
+                            if kind == BlockKind::Heading || span.style == InlineStyle::Bold {
+                                face.weight = FontWeight::SEMIBOLD;
+                            }
+                            if span.style == InlineStyle::Emphasis {
+                                face.style = FontStyle::Italic;
+                            }
+                            let run = TextRun {
+                                len: span.text.len(),
+                                font: face,
+                                color: color.into(),
+                                background_color: None,
+                                underline: None,
+                                strikethrough: None,
+                            };
+                            f32::from(
+                                window
+                                    .text_system()
+                                    .shape_line(span.text.clone().into(), font_size, &[run], None)
+                                    .width,
+                            )
+                        })
+                        .sum::<f32>()
+                })
+                .fold(0.0_f32, f32::max);
+            max_width + TABLE_CELL_PAD_X * 2.0
+        })
+        .collect()
+}
+
+fn copy_code_button(
+    view: &mut AppView,
+    cx: &mut gpui::Context<AppView>,
+    window: &gpui::Window,
+    identifier: String,
+    focus_key: String,
+    content: String,
+) -> gpui::Stateful<gpui::Div> {
+    let focus = view.timeline_detail_focus(&focus_key, cx);
+    let focused = focus.is_focused(window);
+    let click_content = content.clone();
+    let activate_content = content;
+    view.settings_element(identifier.clone())
+        .flex_none()
+        .opacity(if focused { 1.0 } else { 0.0 })
+        .group_hover("markdown-code", |style| style.opacity(1.0))
+        .child(
+            Button::new(SharedString::from(identifier.clone()))
+                .variant(ButtonVariant::Ghost)
+                .padding(ButtonPadding::None)
+                .width(px(metrics::ICON_BUTTON_SIZE))
+                .height(px(metrics::ICON_BUTTON_SIZE))
+                .center()
+                .vcenter()
+                .text_color(dark().text.secondary)
+                .child(icon(Icon::Copy))
+                .tooltip(t("timeline.copy_code"))
+                .track_focus(&focus)
+                .on_click(move |_, _, cx| {
+                    cx.stop_propagation();
+                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(click_content.clone()));
+                })
+                .on_activate(move |_, _, cx| {
+                    cx.stop_propagation();
+                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                        activate_content.clone(),
+                    ));
+                }),
+        )
 }
 
 fn parse(text: &str) -> Vec<Block> {
@@ -338,7 +506,7 @@ fn parse(text: &str) -> Vec<Block> {
             }
             continue;
         }
-        if let Some((marker, count, _language)) =
+        if let Some((marker, count, info)) =
             fence(line).filter(|(marker, _, tail)| *marker != '`' || !tail.contains('`'))
         {
             blocks.push(Block {
@@ -347,6 +515,7 @@ fn parse(text: &str) -> Vec<Block> {
                 code: String::new(),
                 table: Vec::new(),
                 alignments: Vec::new(),
+                language: fence_language(info),
             });
             fenced = Some((marker, count));
             continue;
@@ -376,6 +545,7 @@ fn parse(text: &str) -> Vec<Block> {
                     code: String::new(),
                     table: rows,
                     alignments,
+                    language: None,
                 });
                 separated = true;
                 continue;
@@ -416,6 +586,7 @@ fn parse(text: &str) -> Vec<Block> {
                 code: String::new(),
                 table: Vec::new(),
                 alignments: Vec::new(),
+                language: None,
             });
         }
         separated = false;
@@ -428,9 +599,15 @@ fn parse(text: &str) -> Vec<Block> {
     blocks
 }
 
-fn styled_line(spans: Vec<Span>, kind: BlockKind, color: Rgba) -> StyledText {
+fn styled_line(
+    spans: Vec<Span>,
+    kind: BlockKind,
+    color: Rgba,
+) -> (StyledText, Vec<(Range<usize>, String)>) {
     let mut text = String::new();
     let mut runs = Vec::new();
+    let mut links = Vec::new();
+    let mut start = 0usize;
     for span in spans {
         let mut face = gpui::font(if span.style == InlineStyle::Code {
             font::MONO
@@ -456,9 +633,37 @@ fn styled_line(spans: Vec<Span>, kind: BlockKind, color: Rgba) -> StyledText {
             }),
             strikethrough: None,
         });
+        let end = start + span.text.len();
+        if let Some(url) = span.target.filter(|url| http_url(url)) {
+            links.push((start..end, url));
+        }
         text.push_str(&span.text);
+        start = end;
     }
-    StyledText::new(text).with_runs(runs)
+    (StyledText::new(text).with_runs(runs), links)
+}
+
+fn line_element(
+    element_id: String,
+    spans: Vec<Span>,
+    kind: BlockKind,
+    color: Rgba,
+) -> gpui::AnyElement {
+    let (styled, links) = styled_line(spans, kind, color);
+    if links.is_empty() {
+        return styled.into_any_element();
+    }
+    let ranges: Vec<Range<usize>> = links.iter().map(|(range, _)| range.clone()).collect();
+    let urls: Vec<String> = links.into_iter().map(|(_, url)| url).collect();
+    InteractiveText::new(SharedString::from(element_id), styled)
+        .on_click(ranges, move |index, _, cx| {
+            if let Some(url) = urls.get(index) {
+                if http_url(url) {
+                    cx.open_url(url);
+                }
+            }
+        })
+        .into_any_element()
 }
 
 /// Code and tables use the full reading column; prose keeps the user bubble cap.
@@ -468,11 +673,23 @@ pub(super) fn message_needs_full_width(text: &str) -> bool {
         .any(|block| matches!(block.kind, BlockKind::Code | BlockKind::Table))
 }
 
+fn streaming_caret(color: Rgba) -> impl IntoElement {
+    div()
+        .w(px(metrics::STREAM_CARET_WIDTH))
+        .h(px(metrics::STREAM_CARET_HEIGHT))
+        .rounded(px(1.0))
+        .bg(color)
+        .flex_none()
+}
+
 pub(super) fn message_body_element(
+    view: &mut AppView,
+    cx: &mut gpui::Context<AppView>,
+    window: &gpui::Window,
     entry_id: &str,
     text: &str,
     color: Rgba,
-    window: &gpui::Window,
+    streaming: bool,
 ) -> gpui::Div {
     let mut body = div()
         .flex()
@@ -481,64 +698,96 @@ pub(super) fn message_body_element(
         .text_size(font::BODY)
         .line_height(font::from_pixels(metrics::MSG_LINE_HEIGHT))
         .text_color(color);
-    let mut message_links = Vec::new();
-    for (index, block) in parse(text).into_iter().enumerate() {
-        let links = block_links(&block);
+    let blocks = parse(text);
+    let last_block = blocks.len().saturating_sub(1);
+    for (index, block) in blocks.into_iter().enumerate() {
         let mut element = div().flex().flex_col();
         if block.kind == BlockKind::Code {
+            let language_label = block
+                .language
+                .as_deref()
+                .filter(|name| !name.is_empty())
+                .map(|name| name.to_owned())
+                .unwrap_or_else(|| t("timeline.code_block").to_string());
             element = element
+                .group("markdown-code")
                 .px(px(12.0))
                 .bg(dark().surface.raised)
                 .rounded(px(4.0))
-                .child(div().flex().justify_end().child(action_button(
-                    format!("{entry_id}-code-{index}"),
-                    t("timeline.copy_code").into(),
-                    block.code.clone(),
-                    false,
-                    false,
-                )));
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .h(px(metrics::ICON_BUTTON_SIZE))
+                        .child(
+                            div().flex().flex_row().flex_1().min_w_0().child(
+                                div()
+                                    .text_size(font::BODY_SM)
+                                    .text_color(dark().text.secondary)
+                                    .truncate()
+                                    .child(language_label),
+                            ),
+                        )
+                        .child(copy_code_button(
+                            view,
+                            cx,
+                            window,
+                            message_code_copy_id(entry_id, index),
+                            format!("{entry_id}:code:{index}"),
+                            block.code.clone(),
+                        )),
+                );
         } else if block.kind == BlockKind::Quote {
             element = element
                 .pl(px(12.0))
                 .border_l_2()
                 .border_color(dark().border.subtle);
         }
-        let mut table = div()
-            .flex()
-            .flex_col()
-            .w_full()
-            .min_w(px(block.alignments.len() as f32 * 160.0));
-        for (row_index, row) in block.table.into_iter().enumerate() {
-            let mut row_element = div()
-                .flex()
-                .w_full()
-                .border_b_1()
-                .border_color(dark().border.subtle);
-            for (cell_index, cell) in row.into_iter().enumerate() {
-                row_element = row_element.child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .px(px(6.0))
-                        .text_align(block.alignments[cell_index])
-                        .min_h(font::from_pixels(metrics::MSG_LINE_HEIGHT))
-                        .child(styled_line(
-                            cell,
-                            if row_index == 0 {
-                                BlockKind::Heading
-                            } else {
-                                BlockKind::Paragraph
-                            },
-                            color,
-                        )),
-                );
-            }
-            table = table.child(row_element);
-        }
         if block.kind == BlockKind::Table {
+            let widths = table_column_widths_shaped(&block.table, window, color);
+            let table_width: f32 = widths.iter().sum();
+            let mut table = div().flex().flex_col().w(px(table_width));
+            for (row_index, row) in block.table.into_iter().enumerate() {
+                let mut row_element = div()
+                    .flex()
+                    .flex_row()
+                    .w(px(table_width))
+                    .border_b_1()
+                    .border_color(dark().border.subtle);
+                if row_index == 0 {
+                    row_element = row_element.bg(dark().surface.hover);
+                }
+                for (cell_index, cell) in row.into_iter().enumerate() {
+                    let width = widths
+                        .get(cell_index)
+                        .copied()
+                        .unwrap_or(TABLE_CELL_PAD_X * 2.0);
+                    row_element = row_element.child(
+                        div()
+                            .w(px(width))
+                            .flex_none()
+                            .px(px(TABLE_CELL_PAD_X))
+                            .text_align(block.alignments[cell_index])
+                            .min_h(font::from_pixels(metrics::MSG_LINE_HEIGHT))
+                            .whitespace_nowrap()
+                            .child(line_element(
+                                format!("{entry_id}-cell-{index}-{row_index}-{cell_index}"),
+                                cell,
+                                if row_index == 0 {
+                                    BlockKind::Heading
+                                } else {
+                                    BlockKind::Paragraph
+                                },
+                                color,
+                            )),
+                    );
+                }
+                table = table.child(row_element);
+            }
             element = element.child(
                 div()
-                    .id(gpui::SharedString::from(format!(
+                    .id(SharedString::from(format!(
                         "{entry_id}-table-scroll-{index}"
                     )))
                     .overflow_x_scroll()
@@ -546,7 +795,12 @@ pub(super) fn message_body_element(
             );
         }
         let mut lines = div().flex().flex_col();
-        for line in block.lines {
+        let last_line = block.lines.len().saturating_sub(1);
+        let attach_caret = streaming
+            && index == last_block
+            && block.kind != BlockKind::Code
+            && block.kind != BlockKind::Table;
+        for (line_index, line) in block.lines.into_iter().enumerate() {
             // Taffy can clamp an auto-width row to the viewport even when its
             // nowrap text overflows. Give the scroll child its shaped width.
             let code_width = if block.kind == BlockKind::Code {
@@ -571,89 +825,55 @@ pub(super) fn message_body_element(
             } else {
                 px(0.)
             };
-            lines = lines.child(
-                div()
-                    .min_h(font::from_pixels(metrics::MSG_LINE_HEIGHT))
-                    .when(block.kind == BlockKind::Code, |line| {
-                        line.whitespace_nowrap().min_w(code_width)
-                    })
-                    .child(styled_line(line, block.kind, color)),
-            );
+            let mut line_row = div()
+                .min_h(font::from_pixels(metrics::MSG_LINE_HEIGHT))
+                .when(block.kind == BlockKind::Code, |line| {
+                    line.whitespace_nowrap().min_w(code_width)
+                })
+                .when(attach_caret && line_index == last_line, |row| {
+                    row.flex().flex_row().items_center().gap(px(metrics::SPACE_1))
+                })
+                .child(line_element(
+                    format!("{entry_id}-md-{index}-{line_index}"),
+                    line,
+                    block.kind,
+                    color,
+                ));
+            if attach_caret && line_index == last_line {
+                line_row = line_row.child(streaming_caret(color));
+            }
+            lines = lines.child(line_row);
         }
         element = if block.kind == BlockKind::Code {
             element.child(
                 lines
-                    .id(gpui::SharedString::from(format!(
+                    .id(SharedString::from(format!(
                         "{entry_id}-code-scroll-{index}"
                     )))
                     .items_start()
                     .overflow_x_scroll(),
             )
+        } else if block.kind == BlockKind::Table {
+            element
         } else {
             element.child(lines)
         };
-        for (link_index, link) in links.into_iter().enumerate() {
-            let number =
-                if let Some(position) = message_links.iter().position(|target| target == &link) {
-                    position + 1
-                } else {
-                    message_links.push(link.clone());
-                    message_links.len()
-                };
-            element = element.child(
-                div()
-                    .flex()
-                    .w_full()
-                    .child(action_button(
-                        format!("{entry_id}-link-{index}-{link_index}-open"),
-                        format!("{} {number}", t("timeline.open_link")),
-                        link.clone(),
-                        true,
-                        true,
-                    ))
-                    .child(action_button(
-                        format!("{entry_id}-link-{index}-{link_index}-copy"),
-                        format!("{} {number}", t("timeline.copy_link")),
-                        link,
-                        false,
-                        true,
-                    )),
-            );
-        }
         body = body.child(element);
     }
     body
 }
 
 /// 仍是平均字宽 0.6 × 字号的近似；按渲染可见文本与引用/代码缩进估算。
+/// 代码头按 ICON_BUTTON_SIZE 计入一行（timeline 测高再补像素差）；表格按内容列宽不折行。
 pub(super) fn message_block_line_counts(text: &str, width_px: f32, font_px: f32) -> Vec<usize> {
     parse(text)
         .into_iter()
         .map(|block| {
             let chars_per_line =
                 (((width_px - block.inset()).max(1.0) / (font_px * 0.6)).floor() as usize).max(1);
-            let actions = usize::from(block.kind == BlockKind::Code) + block_links(&block).len();
-            let table_lines: usize = block
-                .table
-                .iter()
-                .map(|row| {
-                    let cell_chars = ((((width_px / row.len() as f32).max(160.0) - 12.0)
-                        / (font_px * 0.6))
-                        .floor() as usize)
-                        .max(1);
-                    row.iter()
-                        .map(|cell| {
-                            cell.iter()
-                                .map(|span| span.text.chars().count())
-                                .sum::<usize>()
-                                .div_ceil(cell_chars)
-                                .max(1)
-                        })
-                        .max()
-                        .unwrap_or(1)
-                })
-                .sum();
-            actions
+            let header = usize::from(block.kind == BlockKind::Code);
+            let table_lines = block.table.len();
+            header
                 + table_lines
                 + block
                     .lines
@@ -713,9 +933,17 @@ mod tests {
             ]
         );
         assert_eq!(blocks[4].lines[0][0].text, "let x = **raw**;");
+        assert_eq!(blocks[4].language.as_deref(), Some("rust"));
         assert_eq!(
             message_block_line_counts(text, 600.0, 14.0),
-            [1, 2, 2, 1, 3]
+            [1, 1, 2, 1, 3]
+        );
+        assert_eq!(parse("```\nlet x = 1;\n```")[0].language, None);
+        assert_eq!(
+            parse("``` rust extra\nlet x = 1;\n```")[0]
+                .language
+                .as_deref(),
+            Some("rust")
         );
 
         let text = "| 名称 | 值 |\n| :--- | ---: |\n| 中文\\|字 | `a|b` |\n\n```rust\r\n  let a = 1;\r\n\r\n```\n[文档](https://example.test) https://other.test。";
@@ -727,15 +955,25 @@ mod tests {
         );
         assert_eq!(blocks[0].table[1][0][0].text, "中文|字");
         assert_eq!(blocks[0].table[1][1][0].text, "a|b");
+        let widths = table_column_widths(&blocks[0].table, 14.0);
+        assert_eq!(widths.len(), 2);
+        assert!(
+            widths.iter().all(|width| (*width - 160.0).abs() > 1.0),
+            "content-sized columns, not 160px: {widths:?}"
+        );
+        assert!(widths.iter().all(|width| *width > TABLE_CELL_PAD_X * 2.0));
         let actions = message_actions(text);
         assert_eq!(actions.len(), 5);
         assert!(actions[0].label.ends_with(" 1"));
         assert_eq!(actions[0].content, "  let a = 1;\r\n\r\n");
         assert_eq!(actions[1].content, "https://example.test");
         assert!(actions[1].open);
+        assert!(actions[1].label.contains("1"));
+        assert!(actions[1].label.contains("example.test"));
         assert_eq!(actions[4].content, "https://other.test");
         assert!(!actions[4].open);
-        assert_eq!(message_block_line_counts(text, 900.0, 14.0), [2, 3, 3]);
+        assert!(actions[4].label.contains("other.test"));
+        assert_eq!(message_block_line_counts(text, 900.0, 14.0), [2, 3, 1]);
         let url = "https://en.wikipedia.org/wiki/Function_(mathematics)";
         for source in [format!("[定义]({url})"), format!("({url}).")] {
             let actions = message_actions(&source);
@@ -786,6 +1024,7 @@ mod tests {
         let blocks = parse("```\n中文 **原样**\n🙂");
         assert_eq!(blocks[0].lines[0][0].text, "中文 **原样**");
         assert_eq!(blocks[0].lines[1][0].text, "🙂");
+        assert_eq!(blocks[0].language, None);
         let spans = inline("**中文**🙂");
         assert_eq!(spans[0].text.len(), 6);
         assert_eq!(spans[1].text, "🙂");

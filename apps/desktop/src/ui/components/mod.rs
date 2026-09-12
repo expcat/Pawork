@@ -7,8 +7,12 @@ pub mod button;
 pub mod dropdown;
 pub mod focus_ring;
 pub mod follow_scroll;
+pub mod icon;
 pub mod label;
 pub mod list_row;
 pub mod panel;
+pub mod skeleton;
 pub mod status_bar;
 pub mod switch;
+
+pub use icon::{icon, icon_sized, Assets, Icon};

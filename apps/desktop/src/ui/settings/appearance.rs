@@ -156,8 +156,8 @@ impl AppView {
                     .child(
                         self.settings_element("settings-appearance-text-size")
                             .flex()
-                            .items_center()
-                            .gap_4()
+                            .flex_col()
+                            .gap_2()
                             .child(settings_label(t("settings.appearance.text_size")))
                             .child(settings_copy(
                                 t("settings.appearance.current_scale")
@@ -191,8 +191,8 @@ impl AppView {
                     .child(
                         self.settings_element("settings-appearance-language")
                             .flex()
-                            .items_center()
-                            .gap_4()
+                            .flex_col()
+                            .gap_2()
                             .child(settings_label(t("settings.appearance.language")))
                             .child(settings_copy(
                                 t("settings.appearance.language.current")

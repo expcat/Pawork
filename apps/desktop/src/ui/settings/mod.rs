@@ -24,6 +24,7 @@ pub(super) use gpui::{div, prelude::*, px, App, Context, FontWeight, Pixels};
 
 pub(super) use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
 pub(super) use crate::ui::components::focus_ring::focus_ring;
+pub(super) use crate::ui::components::icon::{icon, icon_sized, Icon};
 pub(super) use crate::ui::components::label::Label;
 pub(super) use crate::ui::components::list_row::ListRow;
 pub(super) use crate::ui::components::panel::Panel;
@@ -877,6 +878,58 @@ fn settings_label(text: &'static str) -> gpui::Div {
         .child(text)
 }
 
+fn settings_locate_mark() -> gpui::Div {
+    div()
+        .absolute()
+        .top_0()
+        .bottom_0()
+        .left_0()
+        .w(px(metrics::SETTINGS_LOCATE_MARK_WIDTH))
+        .bg(dark().accent.primary)
+}
+
+/// 导航槽：分组头或页面项。查找激活时列表为空（结果替换导航）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SettingsNavSlot {
+    Group {
+        id: &'static str,
+        label_key: &'static str,
+    },
+    Page {
+        page: SettingsPage,
+        id: &'static str,
+        label_key: &'static str,
+    },
+}
+
+impl SettingsNavSlot {
+    fn page_meta(page: SettingsPage) -> (&'static str, &'static str) {
+        match page {
+            SettingsPage::Providers => ("settings-nav-providers", "settings.nav.providers"),
+            SettingsPage::General => ("settings-nav-general", "settings.nav.general"),
+            SettingsPage::Permissions => ("settings-nav-permissions", "settings.nav.permissions"),
+            SettingsPage::Tools => ("settings-nav-tools", "settings.nav.tools"),
+            SettingsPage::Terminal => ("settings-nav-terminal", "settings.nav.terminal"),
+            SettingsPage::Appearance => ("settings-nav-appearance", "settings.nav.appearance"),
+            SettingsPage::Advanced => ("settings-nav-advanced", "settings.nav.advanced"),
+            SettingsPage::About => ("settings-nav-about", "settings.nav.about"),
+        }
+    }
+}
+
+fn settings_page_icon(page: SettingsPage) -> Icon {
+    match page {
+        SettingsPage::Providers => Icon::Providers,
+        SettingsPage::General => Icon::Network,
+        SettingsPage::Permissions => Icon::Approvals,
+        SettingsPage::Tools => Icon::Tools,
+        SettingsPage::Terminal => Icon::Terminal,
+        SettingsPage::Appearance => Icon::Appearance,
+        SettingsPage::Advanced => Icon::Advanced,
+        SettingsPage::About => Icon::About,
+    }
+}
+
 pub(super) fn status_line(text: &str, color: gpui::Rgba) -> impl IntoElement {
     div().child(
         Label::new(text.to_string())
@@ -1076,6 +1129,8 @@ mod permissions;
 mod provider_quota;
 mod providers;
 pub(crate) use provider_quota::quota_identifier;
+mod search;
+pub(crate) use search::{settings_page_title_key, settings_search_entries, SettingsSearchKind};
 mod terminal;
 mod tools;
 
@@ -1088,11 +1143,20 @@ impl AppView {
     /// UI-5：记录本页元素实际布局，AX 在 prepaint 后读取并裁剪。
     pub(super) fn settings_element(&mut self, id: impl Into<String>) -> gpui::Stateful<gpui::Div> {
         let id = id.into();
+        let highlighted = self.settings_locate_row.as_deref() == Some(id.as_str());
         let handle = self.settings_element_layouts.entry(id.clone()).or_default();
-        div()
+        let mut element = div()
             .id(gpui::SharedString::from(format!("settings-layout-{id}")))
             .debug_selector(move || id.clone().into())
-            .track_scroll(handle)
+            .track_scroll(handle);
+        if highlighted {
+            // 背景与绝对定位左缘不参与布局，避免 OPT-4d 选中微移。
+            element = element
+                .relative()
+                .bg(dark().surface.hover)
+                .child(settings_locate_mark());
+        }
+        element
     }
 
     pub(crate) fn settings_element_bounds(&self, id: &str) -> super::accessibility::AxRect {
@@ -1205,19 +1269,7 @@ impl AppView {
                 view.on_close_settings(window, cx);
                 cx.stop_propagation();
             }));
-        let general_available = self.projection.settings_general.query.available;
-        let permissions_available = self.projection.settings_permissions.query.available;
-        let tools_available = self.resources.available;
-        let terminal_available = self.projection.settings_terminal.query.available;
-        let about_available = self.settings_about_rows().is_some();
-        let current_page = match self.settings_page {
-            SettingsPage::General if !general_available => SettingsPage::Providers,
-            SettingsPage::Permissions if !permissions_available => SettingsPage::Providers,
-            SettingsPage::Tools if !tools_available => SettingsPage::Providers,
-            SettingsPage::Terminal if !terminal_available => SettingsPage::Providers,
-            SettingsPage::About if !about_available => SettingsPage::Advanced,
-            page => page,
-        };
+        let current_page = self.settings_effective_page();
         let mut rail = Panel::side_right(rail_width)
             .child(shell_layout::rail_safe_area())
             .child(
@@ -1235,81 +1287,127 @@ impl AppView {
                     ),
             )
             .child(back)
-            .child(self.settings_nav_item(
-                "settings-nav-providers",
-                t("settings.nav.providers"),
-                current_page == SettingsPage::Providers,
-                SettingsPage::Providers,
-                window,
-                cx,
-            ));
-        if general_available {
-            rail = rail.child(self.settings_nav_item(
-                "settings-nav-general",
-                t("settings.nav.general"),
-                current_page == SettingsPage::General,
-                SettingsPage::General,
-                window,
-                cx,
-            ));
-        }
-        if permissions_available {
-            rail = rail.child(self.settings_nav_item(
-                "settings-nav-permissions",
-                t("settings.nav.permissions"),
-                current_page == SettingsPage::Permissions,
-                SettingsPage::Permissions,
-                window,
-                cx,
-            ));
-        }
-        if tools_available {
-            rail = rail.child(self.settings_nav_item(
-                "settings-nav-tools",
-                t("settings.nav.tools"),
-                current_page == SettingsPage::Tools,
-                SettingsPage::Tools,
-                window,
-                cx,
-            ));
-        }
-        if terminal_available {
-            rail = rail.child(self.settings_nav_item(
-                "settings-nav-terminal",
-                t("settings.nav.terminal"),
-                current_page == SettingsPage::Terminal,
-                SettingsPage::Terminal,
-                window,
-                cx,
-            ));
-        }
-        rail = rail.child(self.settings_nav_item(
-            "settings-nav-appearance",
-            t("settings.nav.appearance"),
-            current_page == SettingsPage::Appearance,
-            SettingsPage::Appearance,
-            window,
-            cx,
-        ));
-        rail = rail.child(self.settings_nav_item(
-            "settings-nav-advanced",
-            t("settings.nav.advanced"),
-            current_page == SettingsPage::Advanced,
-            SettingsPage::Advanced,
-            window,
-            cx,
-        ));
-        if about_available {
-            rail = rail.child(self.settings_nav_item(
-                "settings-nav-about",
-                t("settings.nav.about"),
-                current_page == SettingsPage::About,
-                SettingsPage::About,
-                window,
-                cx,
-            ));
+            .child(self.settings_search_input_element(cx));
+        if self.settings_search_query_active() {
+            rail = rail.child(self.settings_search_results_element(cx));
+        } else {
+            for slot in self.settings_nav_slots() {
+                match slot {
+                    SettingsNavSlot::Group { id, label_key } => {
+                        rail = rail.child(self.settings_nav_group_header(id, t(label_key)));
+                    }
+                    SettingsNavSlot::Page {
+                        page,
+                        id,
+                        label_key,
+                    } => {
+                        rail = rail.child(self.settings_nav_item(
+                            id,
+                            t(label_key),
+                            current_page == page,
+                            page,
+                            window,
+                            cx,
+                        ));
+                    }
+                }
+            }
         }
         rail
+    }
+
+    pub(crate) fn settings_effective_page(&self) -> SettingsPage {
+        match self.settings_page {
+            SettingsPage::General if !self.settings_nav_page_available(SettingsPage::General) => {
+                SettingsPage::Providers
+            }
+            SettingsPage::Permissions
+                if !self.settings_nav_page_available(SettingsPage::Permissions) =>
+            {
+                SettingsPage::Providers
+            }
+            SettingsPage::Tools if !self.settings_nav_page_available(SettingsPage::Tools) => {
+                SettingsPage::Providers
+            }
+            SettingsPage::Terminal if !self.settings_nav_page_available(SettingsPage::Terminal) => {
+                SettingsPage::Providers
+            }
+            SettingsPage::About if !self.settings_nav_page_available(SettingsPage::About) => {
+                SettingsPage::Advanced
+            }
+            page => page,
+        }
+    }
+
+    /// 查找未激活时的导航槽（分组头 + 可见页）。组内全隐则组头也隐。
+    pub(crate) fn settings_nav_slots(&self) -> Vec<SettingsNavSlot> {
+        if self.settings_search_query_active() {
+            return Vec::new();
+        }
+        let groups: [(&'static str, &'static str, &[SettingsPage]); 3] = [
+            (
+                "settings-nav-group-models",
+                "settings.nav.group.models",
+                &[SettingsPage::Providers],
+            ),
+            (
+                "settings-nav-group-workspace",
+                "settings.nav.group.workspace",
+                &[
+                    SettingsPage::General,
+                    SettingsPage::Permissions,
+                    SettingsPage::Tools,
+                    SettingsPage::Terminal,
+                ],
+            ),
+            (
+                "settings-nav-group-system",
+                "settings.nav.group.system",
+                &[
+                    SettingsPage::Appearance,
+                    SettingsPage::Advanced,
+                    SettingsPage::About,
+                ],
+            ),
+        ];
+        let mut slots = Vec::new();
+        for (id, label_key, pages) in groups {
+            let visible: Vec<SettingsPage> = pages
+                .iter()
+                .copied()
+                .filter(|page| self.settings_nav_page_available(*page))
+                .collect();
+            if visible.is_empty() {
+                continue;
+            }
+            slots.push(SettingsNavSlot::Group { id, label_key });
+            for page in visible {
+                let (page_id, page_key) = SettingsNavSlot::page_meta(page);
+                slots.push(SettingsNavSlot::Page {
+                    page,
+                    id: page_id,
+                    label_key: page_key,
+                });
+            }
+        }
+        slots
+    }
+
+    fn settings_nav_group_header(&self, id: &'static str, label: &'static str) -> gpui::AnyElement {
+        let _ = self;
+        div()
+            .id(id)
+            .debug_selector(move || id.into())
+            .w_full()
+            .h(px(metrics::SETTINGS_NAV_GROUP_HEIGHT))
+            .overflow_hidden()
+            .flex()
+            .items_end()
+            .px(px(metrics::RAIL_INNER_PAD))
+            .text_size(font::XS)
+            .text_color(dark().text.tertiary)
+            .child(label)
+            .into_any_element()
     }
 
     /// Settings 全宽内容区（SET-4 认证写操作）。状态行全部来自
@@ -1431,12 +1529,22 @@ impl AppView {
             .flex()
             .items_center()
             .px(px(metrics::RAIL_INNER_PAD))
+            .gap(px(metrics::SPACE_2))
             .rounded(px(6.0))
             .text_size(font::BASE)
             .when(focus.is_focused(window), |item| {
                 item.child(focus_ring(px(6.0)))
             })
-            .child(label_element);
+            .child(
+                icon_sized(settings_page_icon(page), px(metrics::ICON_SM)).text_color(
+                    if selected {
+                        dark().text.primary
+                    } else {
+                        dark().text.secondary
+                    },
+                ),
+            )
+            .child(div().flex_1().min_w_0().child(label_element));
         if selected {
             item = item.bg(dark().surface.raised);
         } else {

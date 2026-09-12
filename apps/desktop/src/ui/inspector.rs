@@ -1,20 +1,24 @@
-//! Inspector 侧面板（R6 Wave A）：顶层 Changes / Terminal / Resources 固定三页签
-//!（默认 Changes，58px 页签条 + accent 下划线）
-//! + 各页内容。终端面板滚动维持 ScrollHandle（FollowScroll）现状，不随
-//! Timeline 改 list()；各页签滚动状态独立保留（design/README.md §8.5）。
+//! Inspector 工作面板（GUI2-05）：面板头为名称选择器（Changes /
+//! Terminal / Resources）+ 关闭按钮（`inspector-collapse` 36×36）；
+//! Changes 内保留 Files / Summary 二级页签。终端面板滚动维持
+//! ScrollHandle（FollowScroll），不随 Timeline 改 list()；各页滚动状态
+//! 独立保留。宽窗 440px 侧栏；窄窗显式打开时同一实体占用中央 Workspace。
 
-use gpui::{div, prelude::*, px, Context, FocusHandle, Window};
+use gpui::{div, prelude::*, px, Context, FocusHandle, MouseDownEvent, Window};
 
 use crate::projection::{ConnectionState, TerminalState, TERMINAL_CWD_UNKNOWN};
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
-use crate::ui::components::focus_ring::focus_ring;
+use crate::ui::components::dropdown::{Dropdown, MenuPanel, MenuRow};
 use crate::ui::components::follow_scroll::BackToBottom;
+use crate::ui::components::icon::{icon, icon_sized, Icon};
 use crate::ui::components::panel::Panel;
 use crate::ui::i18n::t;
+use crate::ui::shell_layout::InspectorPlacement;
 use crate::ui::theme::{dark, font, metrics};
 
 use super::{
     terminal_can_operate, terminal_can_reopen, terminal_close_label, terminal_known_ended, AppView,
+    MenuKind,
 };
 
 /// Terminal 页无输出时的占位文案（R2 Wave B）：视觉与 AX 树共用同源。
@@ -151,7 +155,8 @@ pub(crate) fn plain_terminal_output(raw: &str) -> String {
         .join("\n")
 }
 
-/// Inspector 顶层页签（固定三页；R6 Wave A 起默认 Changes）。
+/// Inspector 顶层面板（固定三页；默认 Changes）。名称选择器列出已接通的
+/// 三项；identifier `inspector-tab-*` 现为菜单项。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(super) enum InspectorTab {
     #[default]
@@ -161,7 +166,9 @@ pub(super) enum InspectorTab {
 }
 
 impl InspectorTab {
-    fn label(self) -> &'static str {
+    pub(super) const ALL: [Self; 3] = [Self::Changes, Self::Terminal, Self::Resources];
+
+    pub(super) fn label(self) -> &'static str {
         match self {
             Self::Changes => t("inspector.tab_changes"),
             Self::Terminal => t("inspector.tab_terminal"),
@@ -214,71 +221,66 @@ impl AppView {
     pub(super) fn inspector_element(
         &self,
         connected: bool,
+        placement: InspectorPlacement,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Panel {
         let current = self.inspector_tab;
-        let mut tabs = div().flex().flex_row().items_center().gap_1();
-        for tab in [
-            InspectorTab::Changes,
-            InspectorTab::Terminal,
-            InspectorTab::Resources,
-        ] {
-            let selected = tab == current;
-            tabs = tabs.child(
-                // UI-1：固定页签槽位，选中背景与短中性下划线只改变绘制；
-                // hover / pressed 不参与布局，键盘与 AX 继续复用原入口。
+        let menu_open = matches!(self.open_menu, Some(MenuKind::InspectorPanel));
+        let highlight = self.menu_highlight_effective(self.menu_selected_index());
+        let trigger = Button::new("inspector-panel")
+            .variant(ButtonVariant::Ghost)
+            .padding(ButtonPadding::Horizontal(metrics::PADDING_SM))
+            .height(px(metrics::ICON_BUTTON_SIZE))
+            .vcenter()
+            .text_size(font::BASE)
+            .text_color(dark().text.primary)
+            .child(
                 div()
-                    .id(tab.button_id())
-                    .relative()
-                    .w(px(metrics::INSPECTOR_TAB_WIDTH))
-                    .h(px(metrics::INSPECTOR_TAB_HEIGHT))
-                    .flex_none()
                     .flex()
                     .items_center()
-                    .justify_center()
-                    .cursor_pointer()
-                    .tab_stop(true)
-                    .track_focus(&self.inspector_tab_focus[tab as usize])
-                    // 聚焦描边走覆盖层（零布局参与，见
-                    // components/focus_ring.rs）：固定尺寸页签加边框虽不改
-                    // 外壳尺寸，但会压缩内容盒、推动居中文字位移。
-                    .when(
-                        self.inspector_tab_focus[tab as usize].is_focused(window),
-                        |tab| tab.child(focus_ring(px(0.0))),
-                    )
-                    .text_size(font::BASE)
-                    .text_color(if selected {
-                        dark().text.primary
-                    } else {
-                        dark().text.secondary
-                    })
-                    .when(selected, |tab| tab.bg(dark().surface.raised))
-                    .hover(|style| {
-                        style
-                            .bg(dark().surface.hover)
-                            .text_color(dark().text.primary)
-                    })
-                    .active(|style| style.bg(dark().surface.pressed))
-                    .child(div().child(tab.label()))
-                    .when(selected, |tab| {
-                        tab.child(
-                            div()
-                                .absolute()
-                                .left(px((metrics::INSPECTOR_TAB_WIDTH - 24.0) / 2.0))
-                                .bottom_0()
-                                .w(px(24.0))
-                                .h(px(metrics::TAB_UNDERLINE_HEIGHT))
-                                .bg(dark().text.secondary),
-                        )
-                    })
-                    .on_click(cx.listener(move |view, event, _window, cx| {
-                        if view.consume_button_key_click(tab.button_id(), event) {
-                            return;
-                        }
-                        view.select_inspector_tab(tab, cx);
-                    })),
-            );
+                    .gap(px(metrics::SPACE_2))
+                    .child(current.label())
+                    .child(icon_sized(Icon::ChevronDown, px(metrics::ICON_SM))),
+            )
+            .tooltip(t("inspector.panel"))
+            .track_focus(&self.inspector_panel_focus)
+            .on_click(cx.listener(|view, event, _window, cx| {
+                if view.consume_button_key_click("inspector-panel", event) {
+                    return;
+                }
+                let down = Self::click_down_position(event);
+                view.toggle_menu(MenuKind::InspectorPanel, down, cx);
+            }))
+            .on_activate(cx.listener(|view, _event, _window, cx| {
+                if view.open_menu.is_some() {
+                    view.note_button_key_activate("inspector-panel");
+                    return;
+                }
+                view.note_button_key_activate("inspector-panel");
+                view.toggle_menu(MenuKind::InspectorPanel, None, cx);
+                cx.stop_propagation();
+            }));
+        let mut dropdown = Dropdown::new(trigger);
+        if menu_open {
+            let mut panel = MenuPanel::new("inspector-panel-menu").dismiss_on_outside(cx.listener(
+                |view, event: &MouseDownEvent, _window, cx| {
+                    view.dismiss_menu_on_outside(MenuKind::InspectorPanel, event.position, cx);
+                },
+            ));
+            for (ix, tab) in InspectorTab::ALL.into_iter().enumerate() {
+                panel = panel.child(
+                    MenuRow::new(tab.button_id())
+                        .label(tab.label())
+                        .selected(tab == current)
+                        .highlighted(ix == highlight)
+                        .on_click(cx.listener(move |view, _event, window, cx| {
+                            view.select_inspector_tab(tab, cx);
+                            view.close_menu_and_focus_trigger(MenuKind::InspectorPanel, window, cx);
+                        })),
+                );
+            }
+            dropdown = dropdown.panel(panel);
         }
         let header = div()
             .flex()
@@ -291,36 +293,73 @@ impl AppView {
             .flex_none()
             .border_b_1()
             .border_color(dark().border.subtle)
-            .child(tabs)
             .child(
-                // OPT-4a：折叠按钮 36×36 命中区、20px 字形（OPT-D 签字）。
-                Button::new("inspector-collapse")
-                    .variant(ButtonVariant::Ghost)
-                    .padding(ButtonPadding::None)
-                    .width(px(metrics::ICON_BUTTON_SIZE))
-                    .height(px(metrics::ICON_BUTTON_SIZE))
-                    .center()
-                    .radius(4.0)
-                    .text_size(font::ICON)
-                    .text_color(dark().text.secondary)
-                    .label("⟩")
-                    .track_focus(&self.inspector_collapse_focus)
-                    .on_click(cx.listener(|view, event, window, cx| {
-                        if view.consume_button_key_click("inspector-collapse", event) {
-                            return;
-                        }
-                        view.on_toggle_inspector(window, cx);
-                    })),
+                self.shell_element("inspector-panel-layout")
+                    .flex()
+                    .flex_row()
+                    .flex_1()
+                    .min_w_0()
+                    .child(dropdown),
+            )
+            .child(
+                self.shell_element("inspector-collapse-layout")
+                    .flex_none()
+                    .child(
+                        Button::new("inspector-collapse")
+                            .variant(ButtonVariant::Ghost)
+                            .padding(ButtonPadding::None)
+                            .width(px(metrics::ICON_BUTTON_SIZE))
+                            .height(px(metrics::ICON_BUTTON_SIZE))
+                            .center()
+                            .radius(4.0)
+                            .text_color(dark().text.secondary)
+                            .child(icon(Icon::Collapse))
+                            .tooltip(t("inspector.hide"))
+                            .track_focus(&self.inspector_collapse_focus)
+                            .on_click(cx.listener(|view, event, window, cx| {
+                                if view.consume_button_key_click("inspector-collapse", event) {
+                                    return;
+                                }
+                                view.on_toggle_inspector(window, cx);
+                            })),
+                    ),
             );
-        Panel::side_left(px(metrics::INSPECTOR_WIDTH))
-            .child(header)
-            .child(match current {
-                InspectorTab::Changes => self.changes_element(window, cx).into_any_element(),
-                InspectorTab::Terminal => {
-                    self.terminal_page_element(connected, cx).into_any_element()
-                }
-                InspectorTab::Resources => self.resources_element(cx).into_any_element(),
-            })
+        let approval =
+            (placement.is_center() && self.projection.pending_approval.is_some()).then(|| {
+                self.shell_element("inspector-approval-hint-layout")
+                    .flex_none()
+                    .w_full()
+                    .child(
+                        Button::new("inspector-approval-hint")
+                            .variant(ButtonVariant::Ghost)
+                            .padding(ButtonPadding::Horizontal(metrics::PADDING_SM))
+                            .text_size(font::SM)
+                            .text_color(dark().semantic.warning_text)
+                            .label(t("inspector.return_for_approval"))
+                            .track_focus(&self.inspector_approval_focus)
+                            .on_click(cx.listener(|view, event, window, cx| {
+                                if view.consume_button_key_click("inspector-approval-hint", event) {
+                                    return;
+                                }
+                                view.on_inspector_back(window, cx);
+                            })),
+                    )
+            });
+        let body = match current {
+            InspectorTab::Changes => self.changes_element(window, cx).into_any_element(),
+            InspectorTab::Terminal => self.terminal_page_element(connected, cx).into_any_element(),
+            InspectorTab::Resources => self.resources_element(cx).into_any_element(),
+        };
+        let mut panel = if placement.is_center() {
+            Panel::fill()
+        } else {
+            Panel::side_left(px(metrics::INSPECTOR_WIDTH))
+        };
+        panel = panel.child(header);
+        if let Some(approval) = approval {
+            panel = panel.child(approval);
+        }
+        panel.child(body)
     }
 
     /// 目录与状态进入可滚动正文，避免与尺寸控件争抢同一行。
@@ -359,7 +398,8 @@ impl AppView {
         context
     }
 
-    /// Terminal 页（波 C 的面板内容，页签头外移到顶层 strip 后保持原样）。
+    /// Terminal 页：面板头外的内容区；PTY 生命周期与 `terminal_*` 命令流
+    /// 不随装配位置（侧栏 / 中央）改变。
     fn terminal_page_element(&self, _connected: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let terminal = &self.projection.terminal;
         let notice = self.terminal_notice_text();
@@ -516,7 +556,14 @@ impl AppView {
                         area.child(BackToBottom::new(
                             Button::new("terminal-back-to-bottom")
                                 .variant(ButtonVariant::Raised)
-                                .label(t("timeline.back_to_bottom"))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap_1()
+                                        .child(icon_sized(Icon::ArrowDown, px(metrics::ICON_SM)))
+                                        .child(t("timeline.ax_back_to_bottom")),
+                                )
                                 .track_focus(&self.terminal_back_to_bottom_focus)
                                 .on_click(cx.listener(|view, event, _window, cx| {
                                     if view

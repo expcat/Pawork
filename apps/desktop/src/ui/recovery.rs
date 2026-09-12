@@ -3,6 +3,7 @@ use super::accessibility::{AxAction, AxNode, AxRect, AxRole};
 use super::i18n::t;
 use super::*;
 use crate::projection::{ApprovalModeWire, TerminalAvailability};
+use crate::ui::theme::dark;
 
 pub(super) const RECOVERY_IDS: [&str; 6] = [
     "connection-notice",
@@ -34,11 +35,12 @@ impl AppView {
         &self,
         id: &'static str,
         label: &'static str,
+        variant: ButtonVariant,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         self.recovery_element(id).child(
             Button::new(id)
-                .variant(ButtonVariant::Raised)
+                .variant(variant)
                 .label(label)
                 .track_focus(&self.recovery_focus[id])
                 .on_click(cx.listener(move |view, event, window, cx| {
@@ -120,6 +122,18 @@ impl AppView {
         }
     }
 
+    /// 连接失败 / 断线的原始错误（render 与 AX 同源）；空串不展示。
+    pub(super) fn connection_error_detail(&self) -> Option<&str> {
+        match &self.projection.connection {
+            ConnectionState::Disconnected { reason } | ConnectionState::Failed { reason }
+                if !reason.trim().is_empty() =>
+            {
+                Some(reason.as_str())
+            }
+            _ => None,
+        }
+    }
+
     pub(super) fn connection_notice_element(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let (title, help) = self.connection_notice_text();
         self.recovery_element("connection-notice")
@@ -145,6 +159,16 @@ impl AppView {
                     .text_size(font::BODY)
                     .child(help),
             )
+            .when_some(self.connection_error_detail(), |area, reason| {
+                area.child(
+                    div()
+                        .mt_2()
+                        .whitespace_normal()
+                        .text_size(font::SM)
+                        .text_color(dark().text.secondary)
+                        .child(reason.to_string()),
+                )
+            })
             .child(
                 div()
                     .flex()
@@ -152,11 +176,17 @@ impl AppView {
                     .gap_2()
                     .mt_3()
                     .when(self.projection.show_reconnect(), |row| {
-                        row.child(self.recovery_button("connection-retry", t("recovery.retry"), cx))
+                        row.child(self.recovery_button(
+                            "connection-retry",
+                            t("recovery.retry"),
+                            ButtonVariant::Primary,
+                            cx,
+                        ))
                     })
                     .child(self.recovery_button(
                         "connection-diagnostics",
                         t("recovery.diagnostics"),
+                        ButtonVariant::Raised,
                         cx,
                     )),
             )
@@ -272,6 +302,7 @@ impl AppView {
                             } else {
                                 "recovery.diagnostics"
                             }),
+                            ButtonVariant::Raised,
                             cx,
                         ))
                     })
@@ -283,6 +314,7 @@ impl AppView {
                             } else {
                                 "recovery.details"
                             }),
+                            ButtonVariant::Raised,
                             cx,
                         ))
                     }),
@@ -301,16 +333,33 @@ impl AppView {
             )
         } else {
             let (title, help) = self.connection_notice_text();
-            ("connection-notice", format!("{title}\n{help}"))
+            let mut text = format!("{title}\n{help}");
+            if let Some(detail) = self.connection_error_detail() {
+                text.push('\n');
+                text.push_str(detail);
+            }
+            ("connection-notice", text)
         };
         let mut node = AxNode::new(id, AxRole::Group, text, self.recovery_bounds(id, clip));
-        if !terminal
-            && self.connection_attempts > 1
-            && matches!(self.projection.connection, ConnectionState::Failed { .. })
-        {
-            node = node.value(
-                t("recovery.attempt_failed").replace("{}", &self.connection_attempts.to_string()),
-            );
+        if !terminal {
+            let mut value = String::new();
+            if self.connection_attempts > 1
+                && matches!(self.projection.connection, ConnectionState::Failed { .. })
+            {
+                value.push_str(
+                    &t("recovery.attempt_failed")
+                        .replace("{}", &self.connection_attempts.to_string()),
+                );
+            }
+            if let Some(detail) = self.connection_error_detail() {
+                if !value.is_empty() {
+                    value.push('\n');
+                }
+                value.push_str(detail);
+            }
+            if !value.is_empty() {
+                node = node.value(value);
+            }
         }
         let mut actions = Vec::new();
         if terminal {
@@ -347,11 +396,13 @@ impl AppView {
         for (id, label) in actions {
             let bounds = self.recovery_bounds(id, clip);
             if bounds.width > 0.0 && bounds.height > 0.0 {
-                node = node.child(
-                    AxNode::new(id, AxRole::Button, label, bounds)
-                        .focused(self.recovery_focus[id].is_focused(window))
-                        .action(AxAction::Press),
-                );
+                let mut button = AxNode::new(id, AxRole::Button, label, bounds)
+                    .focused(self.recovery_focus[id].is_focused(window))
+                    .action(AxAction::Press);
+                if id == "connection-retry" {
+                    button = button.description("primary");
+                }
+                node = node.child(button);
             }
         }
         node

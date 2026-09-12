@@ -88,18 +88,33 @@ pub fn catalog_overview_label(model_count: usize) -> String {
 fn localize(key: &'static str, lang: Language) -> &'static str {
     let (en, zh) = match key {
         "find.title" => ("Find · ⌘F", "查找 · ⌘F"),
-        "find.turn_scope" => ("Loaded user turns · Tab select · Enter locate", "已加载的用户回合 · Tab 选择 · Enter 定位"),
+        "find.turn_scope" => (
+            "Loaded user turns · Tab select · Enter locate",
+            "已加载的用户回合 · Tab 选择 · Enter 定位",
+        ),
         "find.turns" => ("Turns", "回合"),
         "find.placeholder" => ("Find in this conversation…", "查找当前对话…"),
-        "find.scope" => ("Loaded user and assistant messages · Enter next · Shift+Enter previous", "已加载的用户与助手正文 · Enter 下一条 · Shift+Enter 上一条"),
-        "find.loading" => ("Loading history · Searching loaded messages only", "历史加载中 · 仅查找已加载正文"),
+        "find.scope" => (
+            "Loaded user and assistant messages · Enter next · Shift+Enter previous",
+            "已加载的用户与助手正文 · Enter 下一条 · Shift+Enter 上一条",
+        ),
+        "find.loading" => (
+            "Loading history · Searching loaded messages only",
+            "历史加载中 · 仅查找已加载正文",
+        ),
         "find.previous" => ("Previous matching message", "上一条匹配消息"),
         "find.next" => ("Next matching message", "下一条匹配消息"),
         "find.close" => ("Close conversation navigation", "关闭对话定位"),
         "quick.title" => ("Quick find · ⌘K", "快捷查找 · ⌘K"),
         "quick.placeholder" => ("Find tasks, projects or pages…", "查找任务、项目或页面…"),
-        "quick.scope" => ("Current task list · ↑↓ select · Enter open", "当前任务列表 · ↑↓ 选择 · Enter 打开"),
-        "quick.offline" => ("Offline · Local appearance and diagnostics only", "已断线 · 仅本地外观与诊断可用"),
+        "quick.scope" => (
+            "Current task list · ↑↓ select · Enter open",
+            "当前任务列表 · ↑↓ 选择 · Enter 打开",
+        ),
+        "quick.offline" => (
+            "Offline · Local appearance and diagnostics only",
+            "已断线 · 仅本地外观与诊断可用",
+        ),
         "quick.tasks" => ("Tasks · Most recent first", "任务 · 最近更新优先"),
         "quick.pages" => ("Pages", "页面"),
         "quick.actions" => ("Navigation", "导航操作"),
@@ -111,7 +126,10 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "quick.empty" => ("No results in the current list", "当前列表中没有结果"),
         "quick.clear" => ("Clear query", "清除查询"),
         "quick.close" => ("Close quick find", "关闭快捷查找"),
-        "quick.filter_cleared" => ("Project filter cleared to show the selected task", "已解除项目筛选，显示所选任务"),
+        "quick.filter_cleared" => (
+            "Project filter cleared to show the selected task",
+            "已解除项目筛选，显示所选任务",
+        ),
         "inspector.project" => ("Project", "项目"),
         "inspector.input" => ("Terminal input", "终端输入"),
         "inspector.output" => ("Terminal output", "终端输出"),
@@ -147,15 +165,24 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "inspector.more_columns" => ("More terminal columns", "增加终端列数"),
         "inspector.fewer_rows" => ("Fewer terminal rows", "减少终端行数"),
         "inspector.more_rows" => ("More terminal rows", "增加终端行数"),
-        "settings.tools.configure" => ("Add a server under [mcp.servers.<name>] in the global config.toml, with transport (stdio command or http url). Restart the Pawork service, then refresh this page.", "在全局 config.toml 的 [mcp.servers.<名称>] 中配置 transport（stdio 的 command 或 http 的 url）。重启 Pawork 服务后刷新此页。"),
+        "settings.tools.configure" => (
+            "Add a server under [mcp.servers.<name>] in the global config.toml, with transport (stdio command or http url). Restart the Pawork service, then refresh this page.",
+            "在全局 config.toml 的 [mcp.servers.<名称>] 中配置 transport（stdio 的 command 或 http 的 url）。重启 Pawork 服务后刷新此页。",
+        ),
         "settings.tools.config_path" => ("Global configuration", "全局配置位置"),
         "resources.tool_count" => ("{} tools", "{} 个工具"),
         "model_search.placeholder" => ("Search model name or ID", "搜索模型名称或 ID"),
         "model_search.manage" => ("Manage models & providers", "管理模型与供应商"),
         "model_search.clear" => ("Clear search", "清除搜索"),
         "model_search.no_results" => ("No matching models", "没有匹配的模型"),
-        "model_search.status_unknown" => ("Connection and catalog source unverified", "连接状态与目录来源尚未确认"),
-        "model_search.fallback" => ("Fallback catalog · does not verify authentication", "备用目录 · 不代表认证成功"),
+        "model_search.status_unknown" => (
+            "Connection and catalog source unverified",
+            "连接状态与目录来源尚未确认",
+        ),
+        "model_search.fallback" => (
+            "Fallback catalog · does not verify authentication",
+            "备用目录 · 不代表认证成功",
+        ),
         "model_search.remote" => ("Remote catalog", "远程目录"),
         "model_search.unavailable" => ("Catalog unavailable", "目录不可用"),
         // ── Settings · Appearance 语言切换 ──
@@ -179,9 +206,7 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             ("Could not save appearance preferences", "无法保存外观设置")
         }
         "settings.appearance.title" => ("Appearance", "外观"),
-        "settings.appearance.subtitle" => {
-            ("Desktop presentation preferences", "桌面显示偏好")
-        }
+        "settings.appearance.subtitle" => ("Desktop presentation preferences", "桌面显示偏好"),
         "settings.appearance.theme" => ("Theme · Dark", "主题 · 深色"),
         "settings.appearance.theme_note" => (
             "Dark theme is currently the only theme.",
@@ -189,9 +214,7 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         ),
         "settings.appearance.text_size" => ("Text size", "字号"),
         "settings.appearance.current_scale" => ("Current · {}%", "当前 · {}%"),
-        "settings.appearance.tooltip_scale_current" => {
-            ("Current text size: {}%", "当前字号：{}%")
-        }
+        "settings.appearance.tooltip_scale_current" => ("Current text size: {}%", "当前字号：{}%"),
         "settings.appearance.tooltip_scale_set" => ("Set text size to {}%", "将字号设为 {}%"),
         "settings.appearance.effect_note" => (
             "Text size is saved and restored after restart. You can also use Cmd+=, Cmd+-, or Cmd+0.",
@@ -222,14 +245,20 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "settings.nav.appearance" => ("Appearance", "外观"),
         "settings.nav.advanced" => ("Advanced", "高级"),
         "settings.nav.about" => ("About", "关于"),
+        "settings.nav.group.models" => ("Models", "模型"),
+        "settings.nav.group.workspace" => ("Workspace", "工作台"),
+        "settings.nav.group.system" => ("System", "系统"),
+        "settings.search.placeholder" => ("Search settings", "查找设置"),
+        "settings.search.empty" => ("No matching settings", "没有匹配的设置"),
         "settings.nav.state_selected" => ("Selected", "已选中"),
         "settings.refresh" => ("Refresh", "刷新"),
         "settings.save" => ("Save", "保存"),
         "settings.clear" => ("Clear", "清除"),
         "settings.current" => ("Current · {}", "当前 · {}"),
-        "settings.status.offline_stale" => {
-            ("Offline · showing last known state ({})", "离线 · 显示最后已知状态（{}）")
-        }
+        "settings.status.offline_stale" => (
+            "Offline · showing last known state ({})",
+            "离线 · 显示最后已知状态（{}）",
+        ),
         "settings.status.loading" => ("Loading…", "加载中…"),
         "settings.default_unavailable_note" => (
             "Default model unavailable — the default provider is disconnected or the model is not in its current catalog.",
@@ -237,9 +266,7 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         ),
         // ── Settings · Network（General 页）──
         "settings.network.title" => ("Network", "网络"),
-        "settings.network.subtitle" => {
-            ("Host outbound network settings", "Pawork 的网络代理设置")
-        }
+        "settings.network.subtitle" => ("Host outbound network settings", "Pawork 的网络代理设置"),
         "settings.network.refresh_tooltip" => ("Refresh network settings", "刷新网络设置"),
         "settings.network.save_tooltip" => ("Save proxy URL", "保存代理 URL"),
         "settings.network.clear_tooltip" => ("Clear proxy URL", "清除代理 URL"),
@@ -267,17 +294,14 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             "Saved approval default and current workspace trust",
             "默认审批方式与当前项目的信任状态",
         ),
-        "settings.permissions.refresh_tooltip" => {
-            ("Refresh permissions settings", "刷新权限设置")
-        }
+        "settings.permissions.refresh_tooltip" => ("Refresh permissions settings", "刷新权限设置"),
         "settings.permissions.unknown_mode" => ("Unknown", "未知"),
         "settings.permissions.mode_title" => ("Approval mode", "审批模式"),
         "settings.permissions.trust_remove" => ("Remove trust", "移除信任"),
         "settings.permissions.trust_add" => ("Trust workspace", "信任项目"),
-        "settings.permissions.trust_toggle_tooltip" => (
-            "Save trust for the current workspace",
-            "保存当前项目信任",
-        ),
+        "settings.permissions.trust_toggle_tooltip" => {
+            ("Save trust for the current workspace", "保存当前项目信任")
+        }
         "settings.permissions.trust_state_trusted" => ("Trusted", "已信任"),
         "settings.permissions.trust_state_untrusted" => ("Not trusted", "未信任"),
         "settings.permissions.session_trust_title" => ("Workspace trust", "项目信任"),
@@ -306,9 +330,7 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "settings.permissions.ax_status" => ("Permissions status", "权限状态"),
         "settings.permissions.ax_global_title" => ("Global default", "全局默认"),
         "settings.permissions.ax_effect" => ("Effect", "生效边界"),
-        "settings.permissions.ax_current_mode_desc" => {
-            ("Current approval mode", "当前审批模式")
-        }
+        "settings.permissions.ax_current_mode_desc" => ("Current approval mode", "当前审批模式"),
         // ── Settings · Tools & MCP ──
         "settings.tools.title" => ("Tools & MCP", "工具与 MCP"),
         "settings.tools.subtitle" => (
@@ -324,14 +346,18 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             "Removing this server updates the global configuration and clears its credentials. Tools already snapshotted by a running task are unchanged.",
             "移除此服务器将更新全局配置并清除其凭证。进行中任务已加载的工具不受影响。",
         ),
-        "settings.tools.tooltip_test" => {
-            ("Ping this server and refresh its state.", "检测此服务器并刷新其状态。")
-        }
+        "settings.tools.tooltip_test" => (
+            "Ping this server and refresh its state.",
+            "检测此服务器并刷新其状态。",
+        ),
         "settings.tools.tooltip_remove" => (
             "Remove this server from the Global config and clear its credentials.",
             "从全局配置中移除此服务器并清除其凭证。",
         ),
-        "settings.tools.status_error" => ("Could not load MCP servers · {}", "无法加载 MCP 服务器 · {}"),
+        "settings.tools.status_error" => (
+            "Could not load MCP servers · {}",
+            "无法加载 MCP 服务器 · {}",
+        ),
         "settings.tools.status_empty" => ("No MCP servers configured.", "尚未配置 MCP 服务器。"),
         "settings.tools.action_test" => ("Test", "测试"),
         "settings.tools.action_remove" => ("Remove", "移除"),
@@ -378,9 +404,10 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         ),
         "settings.advanced.reconnect" => ("Reconnect", "重新连接"),
         "settings.advanced.connected" => ("Connected", "已连接"),
-        "settings.advanced.unavailable_connect" => {
-            ("Unavailable · connect to the Host", "不可用 · 请连接 Pawork 服务")
-        }
+        "settings.advanced.unavailable_connect" => (
+            "Unavailable · connect to the Host",
+            "不可用 · 请连接 Pawork 服务",
+        ),
         "settings.advanced.none_granted" => ("None granted", "未授予"),
         "settings.advanced.fresh_snapshot" => ("Fresh snapshot", "全新快照"),
         "settings.advanced.unavailable" => ("Unavailable", "不可用"),
@@ -390,9 +417,7 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "settings.advanced.row_capabilities" => ("Granted capabilities", "已授予能力"),
         "settings.advanced.row_endpoint" => ("Endpoint", "端点"),
         "settings.advanced.row_resume" => ("Resume", "恢复"),
-        "settings.advanced.row_last_ack" => {
-            ("Last acknowledged sequence", "最后确认序列号")
-        }
+        "settings.advanced.row_last_ack" => ("Last acknowledged sequence", "最后确认序列号"),
         "settings.advanced.target_note" => (
             "The endpoint is selected by --instance or --socket when Desktop starts; changing it requires a restart. The Host runtime ID is not a configuration instance name. GUI tokens and token paths are never shown here.",
             "端点在桌面端启动时由 --instance 或 --socket 选定；更改需要重启。Pawork 服务运行时 ID 不是配置实例名。GUI token 及其路径永远不会在此显示。",
@@ -418,18 +443,15 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             "Connection status and catalog source for each provider",
             "每个提供商的连接状态与目录来源",
         ),
-        "settings.providers.refresh_tooltip" => {
-            ("Refresh provider status and model catalog", "刷新提供商状态与模型目录")
-        }
+        "settings.providers.refresh_tooltip" => (
+            "Refresh provider status and model catalog",
+            "刷新提供商状态与模型目录",
+        ),
         "settings.providers.section_providers" => ("Providers", "提供商"),
         "settings.providers.no_auth_method" => ("No auth method", "无认证方式"),
         // ── Provider 卡展开区（ADR-056 D4/D5）──
-        "settings.providers.expand_tooltip" => {
-            ("Show provider settings", "显示提供商设置")
-        }
-        "settings.providers.collapse_tooltip" => {
-            ("Hide provider settings", "收起提供商设置")
-        }
+        "settings.providers.expand_tooltip" => ("Show provider settings", "显示提供商设置"),
+        "settings.providers.collapse_tooltip" => ("Hide provider settings", "收起提供商设置"),
         "settings.providers.expanded" => ("Expanded", "已展开"),
         "settings.providers.collapsed" => ("Collapsed", "已折叠"),
         "settings.providers.proxy_title" => ("Proxy", "代理"),
@@ -441,16 +463,22 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "settings.providers.add_api_key" => ("Add API key", "添加 API key"),
         "settings.providers.add_oauth" => ("Add OAuth account", "添加 OAuth 账号"),
         "settings.providers.account_use" => ("Use", "使用"),
-        "settings.providers.account_selected" => ("Selected · next requests", "当前选择 · 后续请求"),
-        "settings.providers.account_subtitle" => ("Selection applies to this provider’s next requests; running requests keep their account.", "当前选择用于该供应商的后续请求；正在运行的请求保持原账号。"),
-        "settings.providers.account_remove_hint" => ("Select another account before removing this one", "请先选择其他账号，再移除此账号"),
+        "settings.providers.account_selected" => {
+            ("Selected · next requests", "当前选择 · 后续请求")
+        }
+        "settings.providers.account_subtitle" => (
+            "Selection applies to this provider’s next requests; running requests keep their account.",
+            "当前选择用于该供应商的后续请求；正在运行的请求保持原账号。",
+        ),
+        "settings.providers.account_remove_hint" => (
+            "Select another account before removing this one",
+            "请先选择其他账号，再移除此账号",
+        ),
         "settings.providers.credentials_title" => ("Credentials", "凭证"),
         "settings.providers.credentials_subtitle" => {
             ("Manage your API credentials", "管理你的 API 凭证")
         }
-        "settings.providers.credentials_empty" => {
-            ("No stored credentials", "没有已存储的凭证")
-        }
+        "settings.providers.credentials_empty" => ("No stored credentials", "没有已存储的凭证"),
         "settings.providers.credentials_kind_api_key" => ("API key", "API key"),
         "settings.providers.credentials_kind_oauth" => ("OAuth", "OAuth"),
         "settings.providers.credentials_expired" => ("Expired", "已过期"),
@@ -458,30 +486,43 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "settings.quota.weekly" => ("Weekly", "周窗口"),
         "settings.quota.monthly" => ("Monthly", "月窗口"),
         "settings.quota.used" => ("Used {}%", "已用 {}%"),
-        "settings.quota.reset" => ("Resets in {} (rounded up to a minute)", "{} 后重置（向上取整到分钟）"),
+        "settings.quota.reset" => (
+            "Resets in {} (rounded up to a minute)",
+            "{} 后重置（向上取整到分钟）",
+        ),
         "settings.quota.days" => ("{}d", "{} 天"),
         "settings.quota.hours" => ("{}h", "{} 小时"),
         "settings.quota.minutes" => ("{}m", "{} 分钟"),
         "settings.quota.remaining" => ("Remaining {}%", "剩余 {}%"),
         "settings.quota.remaining_unknown" => ("Remaining unknown", "剩余未知"),
-        "settings.quota.reset_due" => ("Reset time reached · refresh to confirm", "已到重置时间 · 请刷新确认"),
+        "settings.quota.reset_due" => (
+            "Reset time reached · refresh to confirm",
+            "已到重置时间 · 请刷新确认",
+        ),
         "settings.quota.estimated" => ("Estimated reset", "预计重置时间"),
         "settings.quota.source" => ("Source: {}", "来源：{}"),
         "settings.quota.source_unknown" => ("unspecified", "未提供"),
         "settings.quota.updated" => ("Fetched {}s ago", "{} 秒前获取"),
-        "settings.quota.clock_unknown" => ("Fetch time is in the future", "获取时间异常（晚于当前时间）"),
+        "settings.quota.clock_unknown" => (
+            "Fetch time is in the future",
+            "获取时间异常（晚于当前时间）",
+        ),
         "settings.providers.accounts_title" => ("Accounts", "账号"),
         "settings.providers.add_account" => ("Add account", "添加账号"),
         "settings.roles.inactive" => ("Not active", "尚未生效"),
         "settings.quota.stale" => ("Stale · refresh required", "已过期 · 请刷新"),
         "settings.quota.loading" => ("Loading usage…", "正在获取额度…"),
         "settings.quota.refresh" => ("Refresh usage", "刷新额度"),
-        "settings.quota.auto" => ("Switch accounts when quota is exhausted", "额度耗尽时切换账号"),
-        "settings.quota.scope" => ("Each account shows its subscription windows, not task token usage. Windows and keys may share limits; do not add them together. The footer has no task quota reading and does not mirror these values.", "这里显示各账号的订阅窗口额度，不是任务 token 用量。窗口之间、不同 Key 之间可能共享限制，不能相加。底栏尚无任务额度读数，不同步这里的账号数值。"),
+        "settings.quota.auto" => (
+            "Switch accounts when quota is exhausted",
+            "额度耗尽时切换账号",
+        ),
+        "settings.quota.scope" => (
+            "Each account shows its subscription windows, not task token usage. Windows and keys may share limits; do not add them together. The footer has no task quota reading and does not mirror these values.",
+            "这里显示各账号的订阅窗口额度，不是任务 token 用量。窗口之间、不同 Key 之间可能共享限制，不能相加。底栏尚无任务额度读数，不同步这里的账号数值。",
+        ),
         "settings.providers.usage_title" => ("Usage", "使用量"),
-        "settings.providers.usage_unavailable" => {
-            ("Usage unavailable", "使用量不可用")
-        }
+        "settings.providers.usage_unavailable" => ("Usage unavailable", "使用量不可用"),
         "settings.providers.tooltip_remove_credential" => {
             ("Remove the stored credential.", "移除已存储的凭证。")
         }
@@ -576,12 +617,14 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "settings.providers.api_key_placeholder" => ("Paste API key", "粘贴 API key"),
         "settings.providers.catalog_unavailable" => ("Catalog unavailable", "目录不可用"),
         "settings.providers.catalog_available" => ("Catalog available", "目录可用"),
-        "settings.providers.status_error" => {
-            ("Could not load provider status · {}", "无法加载提供商状态 · {}")
-        }
-        "settings.providers.status_empty" => {
-            ("No providers reported by the host.", "Pawork 服务未报告任何提供商。")
-        }
+        "settings.providers.status_error" => (
+            "Could not load provider status · {}",
+            "无法加载提供商状态 · {}",
+        ),
+        "settings.providers.status_empty" => (
+            "No providers reported by the host.",
+            "Pawork 服务未报告任何提供商。",
+        ),
         "settings.providers.action_connect_api_key" => ("Connect API key", "连接 API key"),
         "settings.providers.action_connect_oauth" => ("Connect OAuth", "连接 OAuth"),
         "settings.providers.action_replace_oauth" => ("Replace OAuth", "替换 OAuth"),
@@ -599,17 +642,17 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         // ── 审批模式（render / AX 同源）──
         "approval.mode.always_ask" => ("Always ask", "总是询问"),
         "approval.mode.ask_for_writes" => ("Ask for writes", "写入时询问"),
-        "approval.mode.ask_for_dangerous" => {
-            ("Ask for dangerous actions", "危险操作时询问")
-        }
+        "approval.mode.ask_for_dangerous" => ("Ask for dangerous actions", "危险操作时询问"),
         "approval.mode.never_ask" => ("Never ask", "从不询问"),
         "approval.mode.read_only" => ("Read only", "只读"),
-        "approval.mode_desc.always_ask" => {
-            ("Require approval for every tool call", "每次工具调用都需要审批")
-        }
-        "approval.mode_desc.ask_for_writes" => {
-            ("Allow reads; require approval for writes", "允许读取；写入需要审批")
-        }
+        "approval.mode_desc.always_ask" => (
+            "Require approval for every tool call",
+            "每次工具调用都需要审批",
+        ),
+        "approval.mode_desc.ask_for_writes" => (
+            "Allow reads; require approval for writes",
+            "允许读取；写入需要审批",
+        ),
         "approval.mode_desc.ask_for_dangerous" => (
             "Allow routine actions; ask before dangerous actions",
             "允许常规操作；危险操作前询问",
@@ -623,30 +666,65 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             "允许只读操作并拦截所有写入",
         ),
         // ── 连接 / 恢复 / 时间分组 / 任务状态 ──
-
         "recovery.terminal_start" => ("Start", "启动"),
         "recovery.terminal_new" => ("New terminal", "新建终端"),
         "recovery.reconnecting" => ("Reconnecting…", "正在重新连接…"),
-        "recovery.wait" => ("Waiting for the local service. Your drafts are kept.", "正在等待本地服务响应，草稿会保留。"),
+        "recovery.wait" => (
+            "Waiting for the local service. Your drafts are kept.",
+            "正在等待本地服务响应，草稿会保留。",
+        ),
         "recovery.disconnected" => ("Not connected", "未连接"),
-        "recovery.disconnected_help" => ("The connection was interrupted. Reconnect to continue; saved content and drafts are kept.", "连接已中断。重新连接后可继续操作，已保存的内容和草稿会保留。"),
+        "recovery.disconnected_help" => (
+            "The connection was interrupted. Reconnect to continue; saved content and drafts are kept.",
+            "连接已中断。重新连接后可继续操作，已保存的内容和草稿会保留。",
+        ),
         "recovery.failed" => ("Connection failed", "连接失败"),
-        "recovery.service_missing" => ("The local service is not running or its address is unavailable. Check the address in Connection diagnostics, start the service, then retry.", "本地服务未启动，或连接地址不可用。在「连接诊断」核对地址，启动服务后重试。"),
-        "recovery.credentials_missing" => ("The local connection credential is missing or unreadable. Start the local service and check its address in Connection diagnostics, then retry.", "本地连接凭据缺失或无法读取。请启动本地服务，在「连接诊断」核对地址后重试。"),
-        "recovery.access_denied" => ("Access to the local service was denied. Check the address and access credentials in Connection diagnostics, then retry.", "无法访问本地服务。请通过「连接诊断」核对地址，并检查访问凭据与文件权限后重试。"),
-        "recovery.timeout" => ("The local service did not respond in time. Check that it is running, then retry.", "本地服务未在规定时间内响应。检查服务是否运行后重试。"),
-        "recovery.connect_help" => ("Could not connect to the local service. Open Connection diagnostics for the exact error and address, then retry.", "无法连接本地服务。通过「连接诊断」查看具体错误与地址，排除问题后重试。"),
+        "recovery.service_missing" => (
+            "The local service is not running or its address is unavailable. Check the address in Connection diagnostics, start the service, then retry.",
+            "本地服务未启动，或连接地址不可用。在「连接诊断」核对地址，启动服务后重试。",
+        ),
+        "recovery.credentials_missing" => (
+            "The local connection credential is missing or unreadable. Start the local service and check its address in Connection diagnostics, then retry.",
+            "本地连接凭据缺失或无法读取。请启动本地服务，在「连接诊断」核对地址后重试。",
+        ),
+        "recovery.access_denied" => (
+            "Access to the local service was denied. Check the address and access credentials in Connection diagnostics, then retry.",
+            "无法访问本地服务。请通过「连接诊断」核对地址，并检查访问凭据与文件权限后重试。",
+        ),
+        "recovery.timeout" => (
+            "The local service did not respond in time. Check that it is running, then retry.",
+            "本地服务未在规定时间内响应。检查服务是否运行后重试。",
+        ),
+        "recovery.connect_help" => (
+            "Could not connect to the local service. Open Connection diagnostics for the exact error and address, then retry.",
+            "无法连接本地服务。通过「连接诊断」查看具体错误与地址，排除问题后重试。",
+        ),
         "recovery.attempt_failed" => ("Connection attempt {} failed", "第 {} 次连接失败"),
         "recovery.retry" => ("Retry connection", "重试连接"),
         "recovery.diagnostics" => ("Connection diagnostics", "连接诊断"),
         "recovery.permissions" => ("View permissions", "查看权限与审批"),
         "recovery.details" => ("Technical details", "展开技术详情"),
         "recovery.hide_details" => ("Hide technical details", "收起技术详情"),
-        "recovery.terminal_read_only" => ("Read-only mode cannot start a terminal. You can keep reading project files. To run commands, review Permissions and approvals first.", "只读模式不能启动终端。你可以继续阅读项目文件；如需执行命令，请先查看「权限与审批」。"),
-        "recovery.terminal_read_only_unknown" => ("Read-only mode cannot start a terminal. Permissions could not be loaded. Check Connection diagnostics and reconnect before reviewing approval settings.", "只读模式不能启动终端。当前无法加载审批设置，请通过「连接诊断」检查并重新连接，再查看审批设置。"),
-        "recovery.terminal_failed" => ("The terminal operation failed. Check the technical details and terminal settings, then retry the action. Your input is kept.", "终端操作失败。请查看技术详情并检查终端设置，再重试原操作。输入内容已保留。"),
-        "recovery.terminal_offline" => ("The terminal needs a connection. Use Retry connection above the conversation; existing output is kept.", "终端需要连接本地服务。请在对话上方重试连接，已有输出会保留。"),
-        "recovery.terminal_project" => ("Select a project in the sidebar before starting a terminal.", "请先在侧栏选择项目，再启动终端。"),
+        "recovery.terminal_read_only" => (
+            "Read-only mode cannot start a terminal. You can keep reading project files. To run commands, review Permissions and approvals first.",
+            "只读模式不能启动终端。你可以继续阅读项目文件；如需执行命令，请先查看「权限与审批」。",
+        ),
+        "recovery.terminal_read_only_unknown" => (
+            "Read-only mode cannot start a terminal. Permissions could not be loaded. Check Connection diagnostics and reconnect before reviewing approval settings.",
+            "只读模式不能启动终端。当前无法加载审批设置，请通过「连接诊断」检查并重新连接，再查看审批设置。",
+        ),
+        "recovery.terminal_failed" => (
+            "The terminal operation failed. Check the technical details and terminal settings, then retry the action. Your input is kept.",
+            "终端操作失败。请查看技术详情并检查终端设置，再重试原操作。输入内容已保留。",
+        ),
+        "recovery.terminal_offline" => (
+            "The terminal needs a connection. Use Retry connection above the conversation; existing output is kept.",
+            "终端需要连接本地服务。请在对话上方重试连接，已有输出会保留。",
+        ),
+        "recovery.terminal_project" => (
+            "Select a project in the sidebar before starting a terminal.",
+            "请先在侧栏选择项目，再启动终端。",
+        ),
         "recovery.terminal_starting" => ("Starting terminal…", "正在启动终端…"),
         "recovery.model_offline" => ("Model · not connected", "模型 · 未连接"),
         "recovery.model_failed" => ("Model · connection failed", "模型 · 连接失败"),
@@ -667,10 +745,16 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "taskrail.unassigned" => ("Unassigned", "未分组"),
         "taskrail.rename" => ("Rename", "重命名"),
         "archive.done" => ("Archived · {}", "已归档 · {}"),
-        "archive.kept" => ("Content is kept. Undo is available until this window closes.", "正文仍保留；关闭此窗口前可撤销。"),
+        "archive.kept" => (
+            "Content is kept. Undo is available until this window closes.",
+            "正文仍保留；关闭此窗口前可撤销。",
+        ),
         "archive.undo" => ("Undo archive", "撤销归档"),
         "archive.pending" => ("Updating archive…", "正在更新归档状态…"),
-        "archive.failed" => ("Archive update could not be confirmed. Reconnect and retry.", "归档状态未能确认，请检查连接后重试。"),
+        "archive.failed" => (
+            "Archive update could not be confirmed. Reconnect and retry.",
+            "归档状态未能确认，请检查连接后重试。",
+        ),
         "archive.restored" => ("Task restored", "任务已恢复"),
         "taskrail.archive" => ("Archive", "归档"),
         // ── Workspace chrome · Composer / Input area ──
@@ -683,9 +767,10 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             "Send message (Enter). Shift+Enter for a new line.",
             "发送消息（Enter），Shift+Enter 换行。",
         ),
-        "composer.placeholder_open_session" => {
-            ("Open a session to send messages.", "打开会话后才能发送消息。")
-        }
+        "composer.placeholder_open_session" => (
+            "Open a session to send messages.",
+            "打开会话后才能发送消息。",
+        ),
         "composer.placeholder_waiting" => ("Waiting for connection…", "等待连接…"),
         "composer.placeholder_disconnected" => (
             "Disconnected — click Reconnect before sending.",
@@ -707,9 +792,10 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "composer.model_disabled_loading" => {
             ("Model catalog is still loading.", "模型目录仍在加载。")
         }
-        "composer.model_disabled_offline" => {
-            ("Model switch needs a live connection.", "切换模型需要有效连接。")
-        }
+        "composer.model_disabled_offline" => (
+            "Model switch needs a live connection.",
+            "切换模型需要有效连接。",
+        ),
         "composer.model_none_available" => ("No enabled models", "无已启用模型"),
         "composer.model_disabled_empty" => (
             "No enabled models on this host. Enable a model in Settings → Models & providers.",
@@ -725,16 +811,20 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         ),
         "composer.workspace_scope" => ("Workspace · {}", "工作区 · {}"),
         "composer.no_project_chip" => ("No project", "无项目"),
-        "composer.file_tools_unavailable" => (
-            "File tools unavailable",
-            "文件工具不可用",
+        "composer.file_tools_unavailable" => ("File tools unavailable", "文件工具不可用"),
+        "composer.bind_project" => (
+            "Bind a project to read and write files",
+            "绑定项目后可读写文件",
         ),
         "composer.project_task" => ("New task in project…", "在项目中新建任务…"),
         "rail.filter_label" => ("Filter · {}", "筛选 · {}"),
-        "rail.task_hidden" => ("Project filter hides this task from the sidebar; its project is unchanged.", "项目筛选已在侧栏隐藏当前任务；任务归属未改变。"),
+        "rail.task_hidden" => (
+            "Project filter hides this task from the sidebar; its project is unchanged.",
+            "项目筛选已在侧栏隐藏当前任务；任务归属未改变。",
+        ),
         "common.add_project" => ("Add project…", "添加项目…"),
         // ── Workspace chrome · Task rail ──
-        "rail.reconnect" => ("Reconnect", "重新连接"),
+        "rail.reconnect" => ("Retry", "重试"),
         "rail.local" => ("Local", "本地"),
         "rail.tooltip_settings" => ("Settings", "设置"),
         "rail.no_tasks" => ("No tasks", "暂无任务"),
@@ -743,10 +833,13 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             ("Local · Connected · {}", "本地 · 已连接 · {}")
         }
         "rail.connection_local_connected" => ("Local · Connected", "本地 · 已连接"),
+        "rail.connection_local_connecting" => ("Local · Connecting", "本地 · 连接中"),
+        "rail.connection_local_disconnected" => ("Local · Disconnected", "本地 · 已断开"),
         "rail.newtask_available" => ("Create task is available.", "可以创建任务。"),
-        "rail.newtask_needs_connection" => {
-            ("New task needs a live connection.", "新建任务需要有效连接。")
-        }
+        "rail.newtask_needs_connection" => (
+            "New task needs a live connection.",
+            "新建任务需要有效连接。",
+        ),
         "rail.newtask_disabled_disconnected" => (
             "New task disabled · disconnected · {}",
             "新建任务不可用 · 连接已断开 · {}",
@@ -766,23 +859,37 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "timeline.thinking" => ("Thinking", "思考"),
         "timeline.ax_back_to_bottom" => ("Back to bottom", "回到底部"),
         "timeline.copy_code" => ("Copy code", "复制代码"),
+        "timeline.code_block" => ("Code", "代码"),
         "timeline.open_link" => ("Open link", "打开链接"),
         "timeline.copy_link" => ("Copy link", "复制链接"),
         "timeline.copy_message" => ("Copy message", "复制正文"),
         "timeline.fork_turn" => ("Fork after this turn", "从本回合结束处分叉"),
         "timeline.fork_offline" => ("Reconnect to fork this turn.", "重新连接后可分叉此回合。"),
-        "timeline.fork_boundary" => ("Use a reply from a finished turn or its footer.", "请在已结束回合的回复或页脚处分叉。"),
-        "timeline.fork_no_session" => ("Open a task to fork this turn.", "打开任务后可分叉此回合。"),
+        "timeline.fork_boundary" => (
+            "Use a reply from a finished turn or its footer.",
+            "请在已结束回合的回复或页脚处分叉。",
+        ),
+        "timeline.fork_no_session" => {
+            ("Open a task to fork this turn.", "打开任务后可分叉此回合。")
+        }
         "timeline.fork" => ("Fork", "分叉"),
         "timeline.review_changes" => ("Review changes", "查看变更"),
         "rail.tasks" => ("Tasks", "任务"),
-        "timeline.empty_task_hint" => ("Write a message below to get started.", "在下方输入消息，开始这个任务。"),
+        "timeline.empty_task_hint" => (
+            "Write a message below to get started.",
+            "在下方输入消息，开始这个任务。",
+        ),
+        "timeline.bind_project" => ("Bind a project", "绑定项目"),
         "timeline.empty_title" => ("Start a task", "开始一个任务"),
         "timeline.empty_hint" => (
             "Choose a task from the sidebar or create a new one.",
             "从侧栏选择一个任务，或新建一个任务。",
         ),
         "tool.status_completed" => ("Completed", "已完成"),
+        "tool.in_progress" => ("In progress", "进行中"),
+        "tool.generating" => ("Generating", "正在生成"),
+        "tool.result_expand" => ("Show full result", "展开全文"),
+        "tool.result_collapse" => ("Show less", "收起"),
         // ── Workspace chrome · Composer context meter ──
         "composer.context_meter" => ("Context · — / {}", "上下文 · — / {}"),
         "composer.context_unavailable" => ("Context · unavailable", "上下文 · 不可用"),
@@ -801,14 +908,21 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         ),
         "run.footer_failed" => ("Run failed", "运行失败"),
         "run.failed_desc_fallback" => ("The run failed.", "运行失败。"),
+        "run.open_provider_settings" => ("Open provider settings", "打开供应商设置"),
         "run.usage_unknown" => ("Run usage —", "本轮用量 —"),
-        "run.usage" => ("Run tokens · input {input} · output {output}", "本轮 tokens · 输入 {input} · 输出 {output}"),
+        "run.usage" => (
+            "Run tokens · input {input} · output {output}",
+            "本轮 tokens · 输入 {input} · 输出 {output}",
+        ),
         "run.duration" => ("Duration", "时长"),
         "tool.arguments" => ("Arguments", "参数"),
         "tool.result" => ("Result", "结果"),
         "tool.arguments_missing" => ("Arguments not provided", "未提供参数"),
         "tool.result_missing" => ("Result not provided", "尚无结果数据"),
-        "tool.directory_empty" => ("Directory {} · 0 entries (empty)", "目录 {} · 0 项（空目录）"),
+        "tool.directory_empty" => (
+            "Directory {} · 0 entries (empty)",
+            "目录 {} · 0 项（空目录）",
+        ),
         "tool.result_empty" => ("Empty result", "结果为空"),
         // ── Provider 状态文案（render 与 AX 同源；credential 不出现）──
         "provider.auth_connected" => ("Connected", "已连接"),
@@ -816,12 +930,8 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "provider.auth_connecting" => ("Connecting…", "连接中…"),
         "provider.auth_connection_error" => ("Connection error", "连接错误"),
         "provider.catalog_remote" => ("Remote catalog · fetched {}", "远程目录 · 获取于 {}"),
-        "provider.catalog_fallback" => {
-            ("Built-in catalog fallback · {}", "内置目录回退 · {}")
-        }
-        "provider.catalog_unavailable_error" => {
-            ("Catalog unavailable · {}", "目录不可用 · {}")
-        }
+        "provider.catalog_fallback" => ("Built-in catalog fallback · {}", "内置目录回退 · {}"),
+        "provider.catalog_unavailable_error" => ("Catalog unavailable · {}", "目录不可用 · {}"),
         "provider.note_auth_cancelled" => ("Authorization cancelled", "授权已取消"),
         "provider.note_auth_expired" => ("Authorization expired", "授权已过期"),
         "provider.note_connection_removed" => ("Connection removed", "连接已移除"),
@@ -834,9 +944,7 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             "Allow once (Cmd+1 / Cmd+Return)",
             "允许一次（Cmd+1 / Cmd+Return）",
         ),
-        "approval.tooltip_allow_for_run" => {
-            ("Allow for run (Cmd+2)", "允许本次运行（Cmd+2）")
-        }
+        "approval.tooltip_allow_for_run" => ("Allow for run (Cmd+2)", "允许本次运行（Cmd+2）"),
         "approval.tooltip_deny" => ("Deny (Cmd+3)", "拒绝（Cmd+3）"),
         "approval.disabled_none_pending" => ("No pending approval.", "没有待处理的审批。"),
         "approval.disabled_needs_connection" => {
@@ -855,24 +963,28 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             "正在读取最新的会话差异。",
         ),
         "changes.no_active_session" => ("No active session.", "没有活动会话。"),
-        "changes.no_active_session_desc" => {
-            ("Open a task to inspect its changes.", "打开任务后即可查看其变更。")
-        }
+        "changes.no_active_session_desc" => (
+            "Open a task to inspect its changes.",
+            "打开任务后即可查看其变更。",
+        ),
         "changes.empty" => ("No changes in this session yet.", "本次会话还没有变更。"),
         "changes.empty_desc" => (
             "This session has not reported file changes.",
             "该会话尚未报告文件变更。",
         ),
-        "changes.diff_select_file" => {
-            ("Select a file to view its diff.", "选择一个文件查看其差异。")
-        }
-        "changes.diff_select_file_desc" => {
-            ("Choose a file above to inspect its diff.", "在上方选择一个文件查看其差异。")
-        }
+        "changes.diff_select_file" => (
+            "Select a file to view its diff.",
+            "选择一个文件查看其差异。",
+        ),
+        "changes.diff_select_file_desc" => (
+            "Choose a file above to inspect its diff.",
+            "在上方选择一个文件查看其差异。",
+        ),
         "changes.diff_loading" => ("Loading diff…", "正在加载差异…"),
-        "changes.diff_loading_desc" => {
-            ("Reading the selected file diff.", "正在读取所选文件的差异。")
-        }
+        "changes.diff_loading_desc" => (
+            "Reading the selected file diff.",
+            "正在读取所选文件的差异。",
+        ),
         "changes.diff_binary" => ("Binary file — not rendered.", "二进制文件——不渲染。"),
         "changes.diff_no_hunks" => ("No hunks in response.", "响应中没有差异块。"),
         "changes.error_title" => ("Couldn’t load changes", "无法加载变更"),
@@ -907,9 +1019,16 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "inspector.tab_changes" => ("Changes", "变更"),
         "inspector.tab_terminal" => ("Terminal", "终端"),
         "inspector.tab_resources" => ("Resources", "资源"),
-        "inspector.terminal_empty_output" => {
-            ("Terminal output will appear here.", "终端输出将显示在这里。")
-        }
+        "inspector.panel" => ("Work panel", "工作面板"),
+        "inspector.back_to_conversation" => ("Back to conversation", "返回对话"),
+        "inspector.return_for_approval" => (
+            "Return to the conversation to handle the approval",
+            "返回对话处理审批",
+        ),
+        "inspector.terminal_empty_output" => (
+            "Terminal output will appear here.",
+            "终端输出将显示在这里。",
+        ),
         "inspector.resize_not_applied" => ("size not applied", "尺寸尚未应用"),
         "inspector.resize_confirmed" => ("resize confirmed", "尺寸调整已确认"),
         "inspector.terminal_input_placeholder" => (
@@ -924,28 +1043,26 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             "Connect failed. Click Reconnect to retry.",
             "连接失败。点击重新连接重试。",
         ),
-        "status.connection_lost" => {
-            ("Connection lost. Click Reconnect.", "连接丢失。点击重新连接。")
-        }
+        "status.connection_lost" => (
+            "Connection lost. Click Reconnect.",
+            "连接丢失。点击重新连接。",
+        ),
         "status.project_opened" => ("Project opened · {}", "已打开项目 · {}"),
         "status.forked" => ("Forked · {}", "已分叉 · {}"),
         "status.terminal_create_failed" => ("Create terminal failed: {}", "创建终端失败：{}"),
         "status.terminal_input_sent" => ("Terminal input sent.", "终端输入已发送。"),
         "status.terminal_write_failed" => ("Terminal write failed: {}", "终端写入失败：{}"),
         "status.terminal_size" => ("Terminal size · {}×{}", "终端尺寸 · {}×{}"),
-        "status.terminal_resize_failed" => {
-            ("Terminal resize failed: {}", "终端尺寸调整失败：{}")
-        }
+        "status.terminal_resize_failed" => ("Terminal resize failed: {}", "终端尺寸调整失败：{}"),
         "status.terminal_closed" => ("Terminal closed.", "终端已关闭。"),
         "status.terminal_close_failed" => ("Terminal close failed: {}", "终端关闭失败：{}"),
         "status.action_failed" => ("{} failed: {}", "{} 失败：{}"),
         "status.open_session_failed" => ("open session failed: {}", "打开会话失败：{}"),
-        "status.mcp_remove_failed" => {
-            ("Could not remove MCP server · {}", "无法移除 MCP 服务器 · {}")
-        }
-        "status.mcp_test_failed" => {
-            ("Could not test MCP server · {}", "无法测试 MCP 服务器 · {}")
-        }
+        "status.mcp_remove_failed" => (
+            "Could not remove MCP server · {}",
+            "无法移除 MCP 服务器 · {}",
+        ),
+        "status.mcp_test_failed" => ("Could not test MCP server · {}", "无法测试 MCP 服务器 · {}"),
         "status.load_changes_failed" => ("Load changes failed: {}", "加载变更失败：{}"),
         "status.load_diff_failed" => ("Load diff failed: {}", "加载差异失败：{}"),
         "status.load_resources_failed" => ("Load resources failed: {}", "加载资源失败：{}"),
@@ -1039,6 +1156,11 @@ mod tests {
             ("changes.summary", "摘要"),
             ("tool.group_completed", "已完成"),
             ("inspector.stop", "停止"),
+            ("inspector.panel", "工作面板"),
+            ("inspector.back_to_conversation", "返回对话"),
+            ("inspector.return_for_approval", "返回对话处理审批"),
+            ("timeline.code_block", "代码"),
+            ("run.open_provider_settings", "打开供应商设置"),
         ] {
             assert_eq!(localize(key, Language::Chinese), zh);
             assert_ne!(localize(key, Language::English), key);

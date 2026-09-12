@@ -231,6 +231,17 @@ pub struct TaskRailDateGroup {
     pub projects: Vec<TaskRailProjectGroup>,
 }
 
+impl TaskRailDateGroup {
+    /// Timeline 降噪：桶内仅一个项目组，且为 Unassigned 或等于当前 scope
+    /// 筛选项目时，跳过项目头，任务直接挂桶下。Projects 分组视图不调用。
+    pub fn skip_project_header(&self, scope: Option<&str>) -> bool {
+        match self.projects.as_slice() {
+            [project] => project.is_unassigned() || project.workspace_id.as_deref() == scope,
+            _ => false,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PendingApproval {
     pub session_id: Option<String>,
@@ -683,7 +694,7 @@ impl DesktopProjection {
     /// - Running：snapshot active_runs / RunChanged 非终态。
     /// - Blocked（R3 Wave B）：最近一条 RunChanged 为 failed / interrupted
     ///   终态（live 派生；快照重建清空），优先级最低。
-    /// - None：无 live 状态，rail 画空心灰圆（不声明语义）。wire 无每会话
+    /// - None：无 live 状态，rail 不画状态点（不占位）；wire 无每会话
     ///   终态字段，终态绿点不画（伪造即红线）。
     pub fn session_live_status(&self, session_id: &str) -> Option<SessionLiveStatus> {
         let needs_input = self.snapshot_pendings.iter().any(|pending| {

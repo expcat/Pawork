@@ -3,9 +3,10 @@
 
 use gpui::{div, prelude::*, px, Context, FontWeight, Rgba, SharedString, Window};
 
-use crate::projection::{ConnectionState, TimelineEntry, TimelineEntryKind};
+use crate::projection::{ConnectionState, ForkBoundary, TimelineEntry, TimelineEntryKind};
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
 use crate::ui::components::dropdown::{Dropdown, MenuPanel, MenuRow};
+use crate::ui::components::icon::{icon_sized, Icon};
 use crate::ui::components::label::Label;
 use crate::ui::components::list_row::ListRow;
 use crate::ui::i18n::t;
@@ -25,6 +26,12 @@ pub(super) fn display_time(timestamp: &str, now_ms: u64) -> String {
     }
 }
 
+/// 工具目标单行上限；超出截断加省略号，不伪造剩余内容。
+pub(super) const HEADLINE_TARGET_MAX_CHARS: usize = 80;
+/// 展开态结果预览行数（8–12 合同取中值）；全文走 `event_id:result` 展开键。
+pub(super) const RESULT_PREVIEW_LINES: usize = 10;
+pub(super) const RESULT_EXPAND_HEIGHT: f32 = 24.0;
+
 /// Tool 行渲染态：wire status 归类 + 展示词（构造见 ToolRowView::from_parts）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum ToolRowStatus {
@@ -39,14 +46,165 @@ pub(super) enum ToolRowStatus {
 /// Tool activity 面板单行视图（timeline.rs 组装连续 ToolCall 后传入）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct ToolRowView {
+    pub event_id: String,
     pub name: String,
+    pub headline: String,
+    pub headline_has_target: bool,
     pub status_label: String,
     pub status: ToolRowStatus,
+    pub result_can_expand: bool,
+    pub result_expanded: bool,
     pub detail: Option<String>,
 }
 
-/// Tool group 标题：只汇总已有状态，不编造 wire 中不存在的耗时。
-pub(super) fn tool_group_summary(rows: &[ToolRowView]) -> String {
+pub(super) fn tool_result_expand_key(event_id: &str) -> String {
+    format!("{event_id}:result")
+}
+
+/// 内建 8 个工具按参数键抽目标；其余 / 缺键 / 畸形 / 非字符串回退为仅名称。
+pub(super) fn tool_headline(name: &str, arguments: Option<&str>) -> String {
+    match tool_headline_target(name, arguments) {
+        Some(target) => format!("{name} {target}"),
+        None => name.to_string(),
+    }
+}
+
+fn tool_argument_object(arguments: Option<&str>) -> Option<serde_json::Value> {
+    let text = arguments.filter(|text| !text.is_empty())?;
+    serde_json::from_str(text).ok()
+}
+
+fn json_string_field<'a>(value: &'a serde_json::Value, key: &str) -> Option<&'a str> {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .filter(|text| !text.is_empty())
+}
+
+fn truncate_headline_target(text: &str, max_chars: usize) -> String {
+    let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut chars = collapsed.chars();
+    let head: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{head}…")
+    } else {
+        head
+    }
+}
+
+fn tool_headline_target(name: &str, arguments: Option<&str>) -> Option<String> {
+    let value = tool_argument_object(arguments)?;
+    let key = match name {
+        "read_file" | "write_file" | "edit_file" | "apply_patch" | "list_directory" => "path",
+        "run_command" => "command",
+        "search_text" | "find_files" => "pattern",
+        _ => return None,
+    };
+    let mut target = json_string_field(&value, key)?.to_string();
+    if name == "search_text" {
+        if let Some(glob) = json_string_field(&value, "glob") {
+            target = format!("{target} {glob}");
+        }
+    }
+    Some(truncate_headline_target(&target, HEADLINE_TARGET_MAX_CHARS))
+}
+
+fn preview_result_text(text: &str, expanded: bool) -> (String, bool) {
+    let can_expand = text.lines().count() > RESULT_PREVIEW_LINES;
+    if !can_expand || expanded {
+        (text.to_string(), can_expand)
+    } else {
+        (
+            text.lines()
+                .take(RESULT_PREVIEW_LINES)
+                .collect::<Vec<_>>()
+                .join("\n"),
+            true,
+        )
+    }
+}
+
+fn arguments_secondary(arguments: Option<&str>) -> String {
+    arguments
+        .filter(|text| !text.is_empty())
+        .map(|text| {
+            serde_json::from_str::<serde_json::Value>(text)
+                .ok()
+                .and_then(|value| serde_json::to_string_pretty(&value).ok())
+                .unwrap_or_else(|| text.to_string())
+        })
+        .unwrap_or_else(|| t("tool.arguments_missing").into())
+}
+
+fn directory_empty_label(name: &str, result: Option<&str>) -> Option<String> {
+    (name == "list_directory")
+        .then(|| result.and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok()))
+        .flatten()
+        .filter(|data| {
+            data["total"].as_u64() == Some(0)
+                && data["offset"].as_u64() == Some(0)
+                && data["truncated"].as_bool() == Some(false)
+        })
+        .and_then(|data| {
+            data["path"]
+                .as_str()
+                .map(|path| t("tool.directory_empty").replace("{}", path))
+        })
+}
+
+fn result_full_text(name: &str, result: Option<&str>) -> String {
+    match directory_empty_label(name, result).as_deref().or(result) {
+        Some("") => t("tool.result_empty").into(),
+        Some(text) => text.to_string(),
+        None => t("tool.result_missing").into(),
+    }
+}
+
+/// 当前 Run 仍 active，且该助手消息是 reducer 流式未提交（最新相位
+/// `run streaming_response`）的最后一条非空助手正文。
+pub(super) fn assistant_is_streaming(
+    timeline: &[TimelineEntry],
+    entry: &TimelineEntry,
+    active_run_id: Option<&str>,
+) -> bool {
+    let Some(run_id) = active_run_id else {
+        return false;
+    };
+    if entry.run_id.as_deref() != Some(run_id) {
+        return false;
+    }
+    let TimelineEntryKind::AssistantMessage { text } = &entry.kind else {
+        return false;
+    };
+    if text.trim().is_empty() {
+        return false;
+    }
+    let last = timeline.iter().rev().find(|candidate| {
+        candidate.run_id.as_deref() == Some(run_id)
+            && matches!(
+                &candidate.kind,
+                TimelineEntryKind::AssistantMessage { text } if !text.trim().is_empty()
+            )
+    });
+    if last.map(|candidate| candidate.event_id.as_str()) != Some(entry.event_id.as_str()) {
+        return false;
+    }
+    timeline
+        .iter()
+        .rev()
+        .find_map(|candidate| {
+            if candidate.run_id.as_deref() != Some(run_id) {
+                return None;
+            }
+            match &candidate.kind {
+                TimelineEntryKind::RunState(state) => Some(state.as_str()),
+                _ => None,
+            }
+        })
+        .is_some_and(|state| state == "run streaming_response")
+}
+
+fn tool_group_status_parts(rows: &[ToolRowView]) -> Vec<String> {
     let mut completed = 0;
     let mut running = 0;
     let mut pending = 0;
@@ -76,40 +234,29 @@ pub(super) fn tool_group_summary(rows: &[ToolRowView]) -> String {
             states.push(format!("{count} {word}"));
         }
     }
-    let count = t(if rows.len() == 1 {
-        "tool.group_one"
-    } else {
-        "tool.group_many"
-    })
-    .replace("{}", &rows.len().to_string());
-    if states.is_empty() {
-        count
-    } else {
-        format!("{count} · {}", states.join(" · "))
-    }
+    states
 }
 
-/// Shared by pixels, measurement and accessibility. Empty output is not missing output.
-pub(super) fn tool_detail_text(arguments: Option<&str>, result: Option<&str>) -> String {
-    let args = arguments
-        .filter(|text| !text.is_empty())
-        .map(|text| {
-            serde_json::from_str::<serde_json::Value>(text)
-                .ok()
-                .and_then(|value| serde_json::to_string_pretty(&value).ok())
-                .unwrap_or_else(|| text.into())
-        })
-        .unwrap_or_else(|| t("tool.arguments_missing").into());
-    let result = match result {
-        Some("") => t("tool.result_empty"),
-        Some(text) => text,
-        None => t("tool.result_missing"),
-    };
-    format!(
-        "{}\n{args}\n\n{}\n{result}",
-        t("tool.arguments"),
-        t("tool.result")
-    )
+/// Tool group 折叠标题：单工具直接 headline；多工具为数量 + 前 3 条
+/// headline；状态计数与 render / AX 同源。
+pub(super) fn tool_group_summary(rows: &[ToolRowView]) -> String {
+    let statuses = tool_group_status_parts(rows);
+    if rows.len() == 1 {
+        let headline = rows[0].headline.as_str();
+        let only_succeeded = rows[0].status == ToolRowStatus::Succeeded;
+        if only_succeeded || statuses.is_empty() {
+            return headline.to_string();
+        }
+        return format!("{headline} · {}", statuses.join(" · "));
+    }
+    let count = t("tool.group_many").replace("{}", &rows.len().to_string());
+    let mut parts = vec![count];
+    parts.extend(rows.iter().take(3).map(|row| row.headline.clone()));
+    if rows.len() > 3 {
+        parts.push("…".into());
+    }
+    parts.extend(statuses);
+    parts.join(" · ")
 }
 
 impl ToolRowView {
@@ -119,33 +266,54 @@ impl ToolRowView {
         arguments: Option<&str>,
         result: Option<&str>,
     ) -> Self {
-        let mut row = Self::from_parts(name, status, None);
-        let directory_empty = (name == "list_directory")
-            .then(|| result.and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok()))
-            .flatten()
-            .filter(|data| {
-                data["total"].as_u64() == Some(0)
-                    && data["offset"].as_u64() == Some(0)
-                    && data["truncated"].as_bool() == Some(false)
-            })
-            .and_then(|data| {
-                data["path"]
-                    .as_str()
-                    .map(|path| t("tool.directory_empty").replace("{}", path))
-            });
-        row.detail = Some(tool_detail_text(
-            arguments,
-            directory_empty.as_deref().or(result),
-        ));
-        row
+        Self::present(name, status, arguments, result, "", false)
+    }
+
+    pub(super) fn present(
+        name: &str,
+        status: &str,
+        arguments: Option<&str>,
+        result: Option<&str>,
+        event_id: &str,
+        result_expanded: bool,
+    ) -> Self {
+        let headline_target = tool_headline_target(name, arguments);
+        let headline_has_target = headline_target.is_some();
+        let headline = match headline_target {
+            Some(target) => format!("{name} {target}"),
+            None => name.to_string(),
+        };
+        let result_full = result_full_text(name, result);
+        let (result_shown, result_can_expand) = preview_result_text(&result_full, result_expanded);
+        let detail = if headline_has_target {
+            result_shown
+        } else {
+            format!("{}\n\n{result_shown}", arguments_secondary(arguments))
+        };
+        Self {
+            event_id: event_id.to_string(),
+            name: name.to_string(),
+            headline,
+            headline_has_target,
+            status_label: tool_status_label(status),
+            status: tool_row_status(status),
+            result_can_expand,
+            result_expanded,
+            detail: Some(detail),
+        }
     }
 
     /// wire 原文字段 → 渲染视图。detail 空串归一为 None（旧渲染同语义）。
     pub(super) fn from_parts(name: &str, status: &str, detail: Option<&str>) -> Self {
         Self {
+            event_id: String::new(),
             name: name.to_string(),
+            headline: name.to_string(),
+            headline_has_target: false,
             status_label: tool_status_label(status),
             status: tool_row_status(status),
+            result_can_expand: false,
+            result_expanded: false,
             detail: detail
                 .map(str::to_string)
                 .filter(|detail| !detail.is_empty()),
@@ -170,6 +338,47 @@ pub(super) enum RunSummaryTerminal {
     Completed,
     Cancelled,
     Failed,
+}
+
+/// GUI3-04：失败 / 完成摘要卡状态圆（原 Ø40 收为 Ø20；几何 token 保持 px）。
+pub(super) const SUMMARY_STATUS_CIRCLE: f32 = 20.0;
+/// 状态圆内字形（合同 12–14px，取 13）。
+pub(super) const SUMMARY_STATUS_GLYPH_PX: f32 = 13.0;
+/// 摘要卡水平内边距（原 pl 15 / pr_5）。
+pub(super) const SUMMARY_BANNER_PAD_X: f32 = 12.0;
+/// py_3 = 0.75 rem（原 py_6 = 1.5 rem）。
+pub(super) const SUMMARY_BANNER_PAD_Y_REMS: f32 = 0.75;
+/// gap_2 = 0.5 rem（标题 / 原因 / CTA 竖向；圆与标题横向）。
+pub(super) const SUMMARY_BANNER_GAP_REMS: f32 = 0.5;
+/// 认证失败 Raised CTA 行高。
+pub(super) const SUMMARY_NEXT_STEP_BUTTON_HEIGHT: f32 = 28.0;
+
+/// 失败卡下一步（UI 启发式，不改协议）。命中认证类关键词才给供应商设置入口。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum FailureNextStep {
+    OpenProviderSettings,
+    None,
+}
+
+/// 原因原文（大小写不敏感）是否指向认证失败。不加假 retry。
+pub(super) fn failure_next_step(reason: &str) -> FailureNextStep {
+    let haystack = reason.to_ascii_lowercase();
+    const KEYWORDS: &[&str] = &[
+        "401",
+        "403",
+        "authentication",
+        "unauthorized",
+        "invalid api key",
+    ];
+    if KEYWORDS.iter().any(|keyword| haystack.contains(keyword)) {
+        FailureNextStep::OpenProviderSettings
+    } else {
+        FailureNextStep::None
+    }
+}
+
+pub(super) fn run_open_providers_identifier(event_id: &str) -> String {
+    format!("run-open-providers-{event_id}")
 }
 
 /// wire status 词 → 渲染态分类（未知词归 Other，原样显示不伪造）。
@@ -205,7 +414,7 @@ pub(super) use super::markdown::message_block_line_counts;
 use super::markdown::message_body_element;
 
 /// 作者和时间都是 12px 元信息，正文独占主层级。
-fn message_label_element(role: &str, time: &str, role_color: Rgba) -> gpui::Div {
+fn message_label_element(role: &str, time: &str, role_color: Rgba, generating: bool) -> gpui::Div {
     div()
         .flex()
         .flex_row()
@@ -218,6 +427,14 @@ fn message_label_element(role: &str, time: &str, role_color: Rgba) -> gpui::Div 
                 .text_color(role_color)
                 .child(role.to_string()),
         )
+        .when(generating, |row| {
+            row.child(
+                div()
+                    .text_size(font::BODY_SM)
+                    .text_color(dark().text.secondary)
+                    .child(t("tool.generating").to_string()),
+            )
+        })
         .child(
             div()
                 .text_size(font::BODY_SM)
@@ -238,13 +455,18 @@ pub(super) fn entry_actions_element(
     let event_id = entry.event_id.clone();
     let button_id = format!("entry-menu-{}", entry.event_id);
     let entry_focus = view.timeline_entry_focus(&event_id, cx);
-    let actions_button = Button::new(button_id.clone())
+    let mut actions_button = Button::new(button_id.clone())
         .variant(ButtonVariant::Ghost)
         .height(px(24.0))
         .text_size(font::XS)
         .text_color(dark().text.secondary)
         .padding(ButtonPadding::Horizontal(metrics::PADDING_XS))
-        .label("···")
+        .child(icon_sized(Icon::More, px(metrics::ICON_SM)));
+    if entry.fork_boundary.is_some() {
+        actions_button =
+            actions_button.tooltip(view.projection.run_usage_label(entry.run_id.as_deref()));
+    }
+    let actions_button = actions_button
         .track_focus(&entry_focus)
         .on_click(cx.listener({
             let event_id = event_id.clone();
@@ -283,7 +505,11 @@ pub(super) fn entry_actions_element(
             }));
         for (ix, action) in view.entry_menu_actions(&event_id).into_iter().enumerate() {
             let id = action.identifier(&event_id, ix);
-            let enabled = !matches!(action.kind, EntryActionKind::Fork) || can_fork;
+            let enabled = match action.kind {
+                EntryActionKind::Fork => can_fork,
+                EntryActionKind::Info => false,
+                _ => true,
+            };
             panel = panel.child(
                 MenuRow::new(id)
                     .label(action.label)
@@ -401,10 +627,8 @@ fn tool_status_element(row: &ToolRowView) -> gpui::Div {
             .items_center()
             .gap_2()
             .child(
-                div()
-                    .text_size(px(metrics::TOOL_CHECK_SIZE))
-                    .text_color(dark().semantic.success_fg)
-                    .child("✓"),
+                icon_sized(Icon::Check, px(metrics::TOOL_CHECK_SIZE))
+                    .text_color(dark().semantic.success_fg),
             )
             .child(word),
         ToolRowStatus::Running | ToolRowStatus::Pending => div()
@@ -427,8 +651,9 @@ fn tool_status_element(row: &ToolRowView) -> gpui::Div {
     }
 }
 
-/// 展开后工具名与状态独占一行，输出在下方换行，不与下一条工具重叠。
-fn tool_row_element(row: &ToolRowView) -> gpui::Div {
+/// 展开后 headline 独占主行；参数 JSON 仅在未能抽出目标时作为次级；
+/// 结果预览与「展开全文」共用 `expanded_timeline_details`。
+fn tool_row_element(view: &mut AppView, row: &ToolRowView, cx: &mut Context<AppView>) -> gpui::Div {
     div()
         .flex()
         .flex_col()
@@ -443,13 +668,13 @@ fn tool_row_element(row: &ToolRowView) -> gpui::Div {
                 .px_3()
                 .gap_3()
                 .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .text_size(font::BASE)
-                        .text_color(dark().text.primary)
-                        .child(row.name.clone()),
+                    div().flex().flex_row().flex_1().min_w_0().child(
+                        div()
+                            .truncate()
+                            .text_size(font::BASE)
+                            .text_color(dark().text.primary)
+                            .child(row.headline.clone()),
+                    ),
                 )
                 .child(tool_status_element(row)),
         )
@@ -465,22 +690,82 @@ fn tool_row_element(row: &ToolRowView) -> gpui::Div {
                     .child(detail),
             )
         })
+        .when(
+            row.result_can_expand && !row.event_id.is_empty(),
+            |element| {
+                element.child(
+                    div()
+                        .px_3()
+                        .child(tool_result_expand_element(view, row, cx)),
+                )
+            },
+        )
+}
+
+fn tool_result_expand_element(
+    view: &mut AppView,
+    row: &ToolRowView,
+    cx: &mut Context<AppView>,
+) -> Button {
+    let event_id = row.event_id.clone();
+    let key = tool_result_expand_key(&event_id);
+    let button_id = format!("tool-result-toggle-{event_id}");
+    let focus = view.timeline_detail_focus(&key, cx);
+    let expanded = row.result_expanded;
+    Button::new(button_id.clone())
+        .variant(ButtonVariant::Ghost)
+        .height(px(RESULT_EXPAND_HEIGHT))
+        .text_size(font::BODY_SM)
+        .text_color(dark().text.secondary)
+        .padding(ButtonPadding::Horizontal(metrics::PADDING_XS))
+        .label(if expanded {
+            t("tool.result_collapse")
+        } else {
+            t("tool.result_expand")
+        })
+        .track_focus(&focus)
+        .on_click(cx.listener({
+            let button_id = button_id.clone();
+            let key = key.clone();
+            move |view, event, _window, cx| {
+                if view.consume_button_key_click(&button_id, event) {
+                    return;
+                }
+                view.toggle_timeline_detail(&key, cx);
+            }
+        }))
+        .on_activate(cx.listener({
+            let button_id = button_id.clone();
+            let key = key.clone();
+            move |view, _event, _window, cx| {
+                view.note_button_key_activate(&button_id);
+                view.toggle_timeline_detail(&key, cx);
+                cx.stop_propagation();
+            }
+        }))
 }
 
 /// AX 首帧估算；稳定帧仍优先使用 GPUI 的实际条目 bounds。
 pub(super) fn tool_row_height(row: &ToolRowView, width: f32, rem: f32) -> f32 {
+    let expand = if row.result_can_expand && !row.event_id.is_empty() {
+        RESULT_EXPAND_HEIGHT
+    } else {
+        0.0
+    };
     metrics::TOOL_ROW_HEIGHT
         + row.detail.as_deref().map_or(0.0, |detail| {
             estimated_wrapped_lines(detail, (width - 1.5 * rem).max(1.0), font::XS.0 * rem) as f32
                 * (20.0 / 16.0 * rem).round()
                 + 0.75 * rem
         })
+        + expand
 }
 
 pub(super) enum EntryActionKind {
     Copy(String),
     Open(String),
     Fork,
+    Info,
 }
 
 pub(super) struct EntryAction {
@@ -492,6 +777,9 @@ impl EntryAction {
     pub(super) fn identifier(&self, event_id: &str, ix: usize) -> String {
         match self.kind {
             EntryActionKind::Fork => super::accessibility::dynamic_identifier("fork", event_id),
+            EntryActionKind::Info => {
+                super::accessibility::dynamic_identifier("run-usage", event_id)
+            }
             _ => super::accessibility::dynamic_identifier(
                 "entry-action",
                 &format!("{event_id}:{ix}"),
@@ -554,6 +842,19 @@ impl AppView {
             label: t("timeline.fork_turn").into(),
             kind: EntryActionKind::Fork,
         });
+        if let Some(entry) = self
+            .projection
+            .timeline
+            .iter()
+            .find(|e| e.event_id == event_id)
+        {
+            if entry.fork_boundary.is_some() {
+                actions.push(EntryAction {
+                    label: self.projection.run_usage_label(entry.run_id.as_deref()),
+                    kind: EntryActionKind::Info,
+                });
+            }
+        }
         actions
     }
 
@@ -580,6 +881,9 @@ impl AppView {
         let Some(action) = self.entry_menu_actions(event_id).into_iter().nth(ix) else {
             return;
         };
+        if matches!(action.kind, EntryActionKind::Info) {
+            return;
+        }
         if matches!(action.kind, EntryActionKind::Fork) && !self.can_fork_entry(event_id) {
             return;
         }
@@ -590,6 +894,7 @@ impl AppView {
             }
             EntryActionKind::Open(url) => cx.open_url(&url),
             EntryActionKind::Fork => self.on_fork(event_id, window, cx),
+            EntryActionKind::Info => {}
         }
     }
 
@@ -603,21 +908,50 @@ impl AppView {
         cx: &mut Context<Self>,
     ) -> gpui::Div {
         let time = display_time(&entry.timestamp, now_unix_ms());
+        let generating = assistant_is_streaming(
+            &self.projection.timeline,
+            entry,
+            self.projection.active_run_id.as_deref(),
+        );
         let (role, label_color, body) = match &entry.kind {
             TimelineEntryKind::UserMessage { text } => (
                 t("timeline.you"),
                 dark().text.secondary,
-                message_body_element(&entry.event_id, text, dark().text.emphasis, window),
+                message_body_element(
+                    self,
+                    cx,
+                    window,
+                    &entry.event_id,
+                    text,
+                    dark().text.emphasis,
+                    false,
+                ),
             ),
             TimelineEntryKind::Thinking { text } => (
                 t("timeline.thinking"),
                 dark().text.secondary,
-                message_body_element(&entry.event_id, text, dark().text.secondary, window),
+                message_body_element(
+                    self,
+                    cx,
+                    window,
+                    &entry.event_id,
+                    text,
+                    dark().text.secondary,
+                    false,
+                ),
             ),
             TimelineEntryKind::AssistantMessage { text } => (
                 "Pawork",
                 dark().text.secondary,
-                message_body_element(&entry.event_id, text, dark().text.emphasis, window),
+                message_body_element(
+                    self,
+                    cx,
+                    window,
+                    &entry.event_id,
+                    text,
+                    dark().text.emphasis,
+                    generating,
+                ),
             ),
             // 兜底臂（Worker B 组装层不会把 tool / run 态交给消息条目）：
             // 保持旧单行语义，避免意外调用时崩溃。
@@ -627,17 +961,18 @@ impl AppView {
                 detail,
                 arguments,
             } => (t("timeline.tool"), dark().text.secondary, {
+                let row =
+                    ToolRowView::from_facts(name, status, arguments.as_deref(), detail.as_deref());
                 let mut element = div()
                     .py_1()
                     .text_color(dark().text.secondary)
-                    .child(format!("{name} · {status}"));
-                let detail = tool_detail_text(arguments.as_deref(), detail.as_deref());
-                {
+                    .child(row.headline.clone());
+                if let Some(detail) = row.detail {
                     element = element.child(
                         div()
                             .text_size(font::XS)
                             .text_color(dark().text.tertiary)
-                            .child(detail.to_string()),
+                            .child(detail),
                     );
                 }
                 element
@@ -654,10 +989,13 @@ impl AppView {
                 "Error",
                 dark().semantic.danger_text,
                 message_body_element(
+                    self,
+                    cx,
+                    window,
                     &entry.event_id,
                     message,
                     dark().semantic.danger_text,
-                    window,
+                    false,
                 ),
             ),
         };
@@ -668,7 +1006,7 @@ impl AppView {
             entry,
             menu_open,
             can_fork,
-            message_label_element(role, &time, label_color),
+            message_label_element(role, &time, label_color, generating),
             body,
         )
     }
@@ -694,7 +1032,6 @@ impl AppView {
             .child(
                 div()
                     .w_full()
-                    .min_w_0()
                     .px_3()
                     .flex()
                     .flex_row()
@@ -704,19 +1041,22 @@ impl AppView {
                         div()
                             .w(px(12.0))
                             .flex_none()
-                            .text_size(font::BODY_SM)
                             .text_color(dark().text.secondary)
-                            .child(if collapsed { "›" } else { "⌄" }),
+                            .child(if collapsed {
+                                icon_sized(Icon::ChevronRight, px(12.0))
+                            } else {
+                                icon_sized(Icon::ChevronDown, px(12.0))
+                            }),
                     )
                     .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_size(font::BODY_SM)
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(dark().text.secondary)
-                            .child(label),
+                        div().flex().flex_row().flex_1().min_w_0().child(
+                            div()
+                                .truncate()
+                                .text_size(font::BODY_SM)
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(dark().text.secondary)
+                                .child(label),
+                        ),
                     ),
             )
             .on_click(cx.listener(move |view, event, _window, cx| {
@@ -795,7 +1135,7 @@ impl AppView {
             return panel;
         }
         for (index, row) in rows.iter().enumerate() {
-            let mut element = tool_row_element(row);
+            let mut element = tool_row_element(self, row, cx);
             if index > 0 {
                 element = element
                     .border_t(px(metrics::TOOL_ROW_DIVIDER))
@@ -806,11 +1146,184 @@ impl AppView {
         panel
     }
 
-    /// F-08 Run 摘要卡：Ø40 success_fg 圆 + 深色 ✓ + 标题 + 说明（两行内）+
-    /// 右侧主按钮 “Review changes”（168×40 r8，点击切 Inspector Changes）；
-    /// 仅有当前 session 的真实 Changes 时才渲染；“Open in editor” 无 Host
-    /// capability 不画。无权威数据时 description 为组装层通用说明。
+    /// GUI3-04 Run 摘要卡：Ø20 状态圆 + 单行标题 + 原因（失败不截断）。
+    /// Failed 为紧凑 banner；认证类原因给 Raised「打开供应商设置」
+    ///（复用 on_manage_composer_models，不加假 retry）。Completed 有可审阅
+    /// Changes 时仍是 Review changes（Primary 168×40 / gate / 文案不变），
+    /// 仅圆径与内边距与 banner 对齐。
     pub(super) fn run_summary_element(
+        &mut self,
+        view: &RunSummaryView,
+        event_id: &str,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        if view.terminal == RunSummaryTerminal::Failed {
+            self.failed_run_summary_banner(view, event_id, cx)
+        } else {
+            self.completed_run_summary_card(view, event_id, cx)
+        }
+    }
+
+    fn run_summary_card_shell() -> gpui::Div {
+        div()
+            .max_w(px(metrics::TIMELINE_READABLE_WIDTH))
+            .border_1()
+            .border_color(dark().border.subtle)
+            .rounded(px(metrics::TOOL_GROUP_RADIUS))
+            .px(px(SUMMARY_BANNER_PAD_X))
+            .py_3()
+    }
+
+    fn run_summary_status_circle(terminal: RunSummaryTerminal) -> gpui::Div {
+        let (circle_bg, circle_fg, status_icon) = match terminal {
+            RunSummaryTerminal::Completed => (
+                dark().semantic.success_fg,
+                dark().bg.base,
+                Some(Icon::Check),
+            ),
+            RunSummaryTerminal::Failed => (
+                dark().semantic.danger_bg,
+                dark().text.on_accent,
+                Some(Icon::Cancel),
+            ),
+            RunSummaryTerminal::Cancelled => (dark().surface.disabled, dark().text.tertiary, None),
+        };
+        let mut circle = div()
+            .w(px(SUMMARY_STATUS_CIRCLE))
+            .h(px(SUMMARY_STATUS_CIRCLE))
+            .flex()
+            .flex_none()
+            .items_center()
+            .justify_center()
+            .rounded_full()
+            .bg(circle_bg)
+            .text_color(circle_fg);
+        circle = match status_icon {
+            Some(status_icon) => circle
+                .child(icon_sized(status_icon, px(SUMMARY_STATUS_GLYPH_PX)).text_color(circle_fg)),
+            None => circle
+                .text_size(font::from_pixels(SUMMARY_STATUS_GLYPH_PX))
+                .child("—"),
+        };
+        circle
+    }
+
+    fn run_summary_title_row(&self, view: &RunSummaryView) -> gpui::Div {
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .child(Self::run_summary_status_circle(view.terminal))
+            .child(
+                div().flex().flex_row().flex_1().min_w_0().child(
+                    div()
+                        .text_size(font::BODY)
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(dark().text.primary)
+                        .child(view.title.clone()),
+                ),
+            )
+    }
+
+    fn run_summary_text_indent() -> gpui::Div {
+        div()
+            .w(px(SUMMARY_STATUS_CIRCLE))
+            .h(px(SUMMARY_STATUS_CIRCLE))
+            .flex_none()
+    }
+
+    fn failed_run_summary_banner(
+        &mut self,
+        view: &RunSummaryView,
+        event_id: &str,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let next_step = failure_next_step(&view.description);
+        let reason = div()
+            .flex()
+            .flex_row()
+            .gap_2()
+            .child(Self::run_summary_text_indent())
+            .child(
+                div().flex().flex_row().flex_1().min_w_0().child(
+                    div()
+                        .flex_1()
+                        .text_size(font::BODY_SM)
+                        .text_color(dark().text.secondary)
+                        .child(view.description.clone()),
+                ),
+            );
+        Self::run_summary_card_shell()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(self.run_summary_title_row(view))
+            .child(reason)
+            .when(next_step == FailureNextStep::OpenProviderSettings, |card| {
+                card.child(self.open_providers_cta(event_id, cx))
+            })
+    }
+
+    fn open_providers_cta(&mut self, event_id: &str, cx: &mut Context<Self>) -> gpui::Div {
+        let button_id = run_open_providers_identifier(event_id);
+        let focus = self.timeline_open_providers_focus(event_id, cx);
+        let button = Button::new(button_id.clone())
+            .variant(ButtonVariant::Raised)
+            .height(px(SUMMARY_NEXT_STEP_BUTTON_HEIGHT))
+            .vcenter()
+            .radius(metrics::CONTROL_RADIUS)
+            .text_size(font::BODY_SM)
+            .label(t("run.open_provider_settings"))
+            .track_focus(&focus)
+            .on_click(cx.listener({
+                let button_id = button_id.clone();
+                let event_id = event_id.to_string();
+                move |view, event, window, cx| {
+                    if view.consume_button_key_click(&button_id, event) {
+                        return;
+                    }
+                    let _ = &event_id;
+                    view.on_manage_composer_models(window, cx);
+                }
+            }))
+            .on_activate(cx.listener({
+                let event_id = event_id.to_string();
+                move |view, _event, window, cx| {
+                    view.activate_open_providers_from_keyboard(&event_id, window, cx);
+                    cx.stop_propagation();
+                }
+            }));
+        div()
+            .flex()
+            .flex_row()
+            .gap_2()
+            .child(Self::run_summary_text_indent())
+            .child(button)
+    }
+
+    fn activate_open_providers_from_keyboard(
+        &mut self,
+        event_id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.note_button_key_activate(&run_open_providers_identifier(event_id));
+        let allowed = self.projection.timeline.iter().any(|entry| {
+            if entry.event_id != event_id || entry.fork_boundary != Some(ForkBoundary::Failed) {
+                return false;
+            }
+            let reason = crate::projection::run_summary_texts(entry, false)
+                .map(|(_, description)| description)
+                .unwrap_or_default();
+            failure_next_step(&reason) == FailureNextStep::OpenProviderSettings
+        });
+        if allowed {
+            self.on_manage_composer_models(window, cx);
+        }
+    }
+
+    fn completed_run_summary_card(
         &mut self,
         view: &RunSummaryView,
         event_id: &str,
@@ -855,79 +1368,43 @@ impl AppView {
         } else {
             None
         };
-        let (circle_bg, circle_fg, circle_glyph) = match view.terminal {
-            RunSummaryTerminal::Completed => (dark().semantic.success_fg, dark().bg.base, "✓"),
-            RunSummaryTerminal::Failed => (dark().semantic.danger_bg, dark().text.on_accent, "✕"),
-            RunSummaryTerminal::Cancelled => (dark().surface.disabled, dark().text.tertiary, "—"),
-        };
-        let check_circle = div()
-            .w(px(metrics::SUMMARY_CHECK_CIRCLE))
-            .h(px(metrics::SUMMARY_CHECK_CIRCLE))
-            .flex()
-            .flex_none()
-            .items_center()
-            .justify_center()
-            .rounded_full()
-            .bg(circle_bg)
-            .text_size(font::BODY)
-            .text_color(circle_fg)
-            .child(circle_glyph);
-        let left_column = div()
-            .flex()
-            .flex_col()
-            .flex_1()
-            .min_w_0()
-            .gap_4()
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_4()
-                    .child(check_circle)
-                    .child(
-                        div()
-                            .text_size(font::BODY)
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(dark().text.primary)
-                            .child(view.title.clone()),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .gap_4()
-                    .child(div().w(px(metrics::SUMMARY_CHECK_CIRCLE)).flex_none())
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .text_size(font::BODY_SM)
-                            .line_height(font::from_pixels(metrics::MSG_LINE_HEIGHT))
-                            .line_clamp(2)
-                            .text_color(dark().text.secondary)
-                            .child(view.description.clone()),
-                    ),
-            );
-        div()
+        let left_column = div().flex().flex_row().flex_1().min_w_0().child(
+            div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .gap_2()
+                .child(self.run_summary_title_row(view))
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap_2()
+                        .child(Self::run_summary_text_indent())
+                        .child(
+                            div().flex().flex_row().flex_1().min_w_0().child(
+                                div()
+                                    .flex_1()
+                                    .text_size(font::BODY_SM)
+                                    .line_height(font::from_pixels(metrics::MSG_LINE_HEIGHT))
+                                    .line_clamp(2)
+                                    .text_color(dark().text.secondary)
+                                    .child(view.description.clone()),
+                            ),
+                        ),
+                ),
+        );
+        Self::run_summary_card_shell()
             .flex()
             .flex_row()
             .items_center()
             .gap_6()
-            .max_w(px(metrics::TIMELINE_READABLE_WIDTH))
-            .border_1()
-            .border_color(dark().border.subtle)
-            .rounded(px(metrics::TOOL_GROUP_RADIUS))
-            .pl(px(metrics::TOOL_GROUP_INNER_INSET))
-            .pr_5()
-            .py_6()
             .child(left_column)
             .when_some(button, |card, button| card.child(button))
     }
 
     /// F-08 Timeline 页脚：终态词（左）+ 终态时间（右），17px secondary。
-    /// 无终态时长字段，不画 “· 2m 14s”（量图耗时属演示数据）。
+    /// 用量收进「···」菜单，不占页脚。
     pub(super) fn run_footer_element(&self, label: &str, time: &str) -> gpui::Div {
         div()
             .flex()
@@ -964,6 +1441,15 @@ impl AppView {
             _ => String::new(),
         };
         let time = display_time(&entry.timestamp, now_unix_ms());
+        let body = message_body_element(
+            self,
+            cx,
+            window,
+            &entry.event_id,
+            &message,
+            dark().semantic.danger_text,
+            false,
+        );
         entry_shell_element(
             self,
             cx,
@@ -971,13 +1457,8 @@ impl AppView {
             entry,
             menu_open,
             can_fork,
-            message_label_element("Error", &time, dark().semantic.danger_text),
-            message_body_element(
-                &entry.event_id,
-                &message,
-                dark().semantic.danger_text,
-                window,
-            ),
+            message_label_element("Error", &time, dark().semantic.danger_text, false),
+            body,
         )
     }
 
@@ -1018,11 +1499,11 @@ impl AppView {
 mod tests {
     use super::*;
 
-    /// 状态词映射合同：succeeded → Completed；其余 wire 原文；未知词原样。
+    /// 状态词映射合同：succeeded → Completed；running → In progress；未知词原样。
     #[test]
     fn tool_status_label_maps_succeeded_only() {
         assert_eq!(tool_status_label("succeeded"), "Completed");
-        assert_eq!(tool_status_label("running"), "running");
+        assert_eq!(tool_status_label("running"), "In progress");
         assert_eq!(tool_status_label("failed"), "failed");
         assert_eq!(tool_status_label("approve_once"), "approve_once");
     }
@@ -1039,6 +1520,73 @@ mod tests {
         assert_eq!(tool_row_status(""), ToolRowStatus::Other);
     }
 
+    /// 内建 8 工具按参数键抽目标；MCP / 畸形 / 非字符串 / 超长回退不伪造。
+    #[test]
+    fn tool_headline_extracts_builtin_targets_and_falls_back() {
+        assert_eq!(
+            tool_headline("read_file", Some(r#"{"path":"a.rs"}"#)),
+            "read_file a.rs"
+        );
+        assert_eq!(
+            tool_headline("write_file", Some(r#"{"path":"src/new_feature.rs"}"#)),
+            "write_file src/new_feature.rs"
+        );
+        assert_eq!(
+            tool_headline(
+                "edit_file",
+                Some(r#"{"path":"b.rs","old_string":"a\nb","new_string":"a\nb\nc"}"#)
+            ),
+            "edit_file b.rs"
+        );
+        assert_eq!(
+            tool_headline("apply_patch", Some(r#"{"path":"patch.diff"}"#)),
+            "apply_patch patch.diff"
+        );
+        assert_eq!(
+            tool_headline("list_directory", Some(r#"{"path":"crates"}"#)),
+            "list_directory crates"
+        );
+        assert_eq!(
+            tool_headline("run_command", Some(r#"{"command":"cargo test"}"#)),
+            "run_command cargo test"
+        );
+        assert_eq!(
+            tool_headline("search_text", Some(r#"{"pattern":"TODO"}"#)),
+            "search_text TODO"
+        );
+        assert_eq!(
+            tool_headline("search_text", Some(r#"{"pattern":"TODO","glob":"*.rs"}"#)),
+            "search_text TODO *.rs"
+        );
+        assert_eq!(
+            tool_headline("find_files", Some(r#"{"pattern":"**/*.rs"}"#)),
+            "find_files **/*.rs"
+        );
+        assert_eq!(
+            tool_headline("mcp_search", Some(r#"{"path":"a.rs"}"#)),
+            "mcp_search"
+        );
+        assert_eq!(tool_headline("read_file", Some("{not json")), "read_file");
+        assert_eq!(
+            tool_headline("read_file", Some(r#"{"path":1}"#)),
+            "read_file"
+        );
+        assert_eq!(
+            tool_headline("read_file", Some(r#"{"file":"a.rs"}"#)),
+            "read_file"
+        );
+        assert_eq!(tool_headline("run_command", None), "run_command");
+        let command = "a".repeat(90);
+        let args = format!(r#"{{"command":"{command}"}}"#);
+        let headline = tool_headline("run_command", Some(&args));
+        assert!(headline.starts_with("run_command "));
+        assert!(headline.ends_with('…'));
+        assert_eq!(
+            headline.chars().count(),
+            "run_command ".chars().count() + HEADLINE_TARGET_MAX_CHARS + 1
+        );
+    }
+
     /// 视图构造：字段映射 + detail 空串归一 None（旧渲染同语义）。
     #[test]
     fn tool_row_view_from_parts_normalizes_detail() {
@@ -1048,21 +1596,56 @@ mod tests {
             Some(r#"{"path":"."}"#),
             Some(r#"{"path":".","total":0,"offset":0,"truncated":false}"#),
         );
+        assert_eq!(row.headline, "list_directory .");
+        assert!(row.headline_has_target);
         assert!(row
             .detail
             .unwrap()
             .contains("Directory . · 0 entries (empty)"));
-        assert!(ToolRowView::from_facts("read", "succeeded", None, Some(""))
-            .detail
-            .unwrap()
-            .contains("Empty result"));
+        let empty = ToolRowView::from_facts("read", "succeeded", None, Some(""));
+        assert!(!empty.headline_has_target);
+        assert!(empty.detail.unwrap().contains("Empty result"));
         assert!(ToolRowView::from_facts("read", "succeeded", None, None)
             .detail
             .unwrap()
             .contains("Result not provided"));
 
+        let extracted = ToolRowView::from_facts(
+            "write_file",
+            "succeeded",
+            Some(r#"{"path":"src/new_feature.rs"}"#),
+            Some("ok"),
+        );
+        assert_eq!(extracted.headline, "write_file src/new_feature.rs");
+        assert_eq!(extracted.detail.as_deref(), Some("ok"));
+        assert!(!extracted.detail.unwrap_or_default().contains("old_string"));
+
+        let long_result = (0..15)
+            .map(|ix| format!("line-{ix}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let preview = ToolRowView::from_facts("bash", "succeeded", None, Some(&long_result));
+        assert!(preview.result_can_expand);
+        let preview_detail = preview.detail.as_deref().unwrap();
+        assert!(preview_detail.contains("line-0"));
+        assert!(preview_detail.contains(&format!("line-{}", RESULT_PREVIEW_LINES - 1)));
+        assert!(!preview_detail.contains("line-14"));
+        let full = ToolRowView::present("bash", "succeeded", None, Some(&long_result), "t1", true);
+        assert!(full.detail.as_deref().unwrap().contains("line-14"));
+        let extracted_preview = ToolRowView::from_facts(
+            "write_file",
+            "succeeded",
+            Some(r#"{"path":"a.rs"}"#),
+            Some(&long_result),
+        );
+        assert_eq!(
+            extracted_preview.detail.as_deref().unwrap().lines().count(),
+            RESULT_PREVIEW_LINES
+        );
+
         let view = ToolRowView::from_parts("read_file", "succeeded", Some("src/main.rs"));
         assert_eq!(view.name, "read_file");
+        assert_eq!(view.headline, "read_file");
         assert_eq!(view.status_label, "Completed");
         assert_eq!(view.status, ToolRowStatus::Succeeded);
         assert_eq!(view.detail.as_deref(), Some("src/main.rs"));
@@ -1081,8 +1664,69 @@ mod tests {
         ];
         assert_eq!(
             tool_group_summary(&rows),
-            "3 tools · 1 completed · 1 running · 1 failed"
+            "3 tools · read_file · bash · edit_file · 1 completed · 1 running · 1 failed"
         );
+        let mut four = rows.clone();
+        four.push(ToolRowView::from_parts("find_files", "succeeded", None));
+        assert_eq!(
+            tool_group_summary(&four),
+            "4 tools · read_file · bash · edit_file · … · 2 completed · 1 running · 1 failed"
+        );
+        let single = ToolRowView::from_facts(
+            "write_file",
+            "succeeded",
+            Some(r#"{"path":"src/new_feature.rs"}"#),
+            Some("ok"),
+        );
+        assert_eq!(
+            tool_group_summary(&[single]),
+            "write_file src/new_feature.rs"
+        );
+        let running = ToolRowView::from_facts(
+            "run_command",
+            "running",
+            Some(r#"{"command":"cargo test"}"#),
+            None,
+        );
+        assert_eq!(
+            tool_group_summary(&[running]),
+            "run_command cargo test · 1 running"
+        );
+    }
+
+    #[test]
+    fn assistant_is_streaming_requires_active_run_and_streaming_phase() {
+        let streaming = TimelineEntry {
+            sequence: 2,
+            event_id: "a1".into(),
+            kind: TimelineEntryKind::AssistantMessage {
+                text: "hello".into(),
+            },
+            fork_boundary: None,
+            timestamp: "1".into(),
+            run_id: Some("run-1".into()),
+        };
+        let phase = TimelineEntry {
+            sequence: 1,
+            event_id: "r1".into(),
+            kind: TimelineEntryKind::RunState("run streaming_response".into()),
+            fork_boundary: None,
+            timestamp: "1".into(),
+            run_id: Some("run-1".into()),
+        };
+        let timeline = vec![phase.clone(), streaming.clone()];
+        assert!(assistant_is_streaming(&timeline, &streaming, Some("run-1")));
+        assert!(!assistant_is_streaming(&timeline, &streaming, None));
+        let committed_phase = TimelineEntry {
+            sequence: 3,
+            event_id: "r2".into(),
+            kind: TimelineEntryKind::RunState("run completed".into()),
+            fork_boundary: Some(crate::projection::ForkBoundary::Completed),
+            timestamp: "2".into(),
+            run_id: Some("run-1".into()),
+        };
+        let done = vec![phase, streaming.clone(), committed_phase];
+        assert!(!assistant_is_streaming(&done, &streaming, Some("run-1")));
     }
 
     /// 摘要卡视图构造：字段直存，禁用原因为独立通道。
@@ -1096,6 +1740,38 @@ mod tests {
         };
         assert_eq!(view.title, "Ready for review");
         assert!(!view.review_changes_enabled);
+    }
+
+    /// GUI3-04：认证类原因命中供应商设置；timeout / 其它不命中。UI 启发式。
+    #[test]
+    fn failure_next_step_classifies_auth_keywords() {
+        for reason in [
+            "HTTP 401",
+            "http 401 unauthorized",
+            "403",
+            "Authentication required",
+            "AUTHENTICATION failed",
+            "unauthorized",
+            "Unauthorized",
+            "Invalid API Key",
+            "invalid api key from provider",
+        ] {
+            assert_eq!(
+                failure_next_step(reason),
+                FailureNextStep::OpenProviderSettings,
+                "{reason}"
+            );
+        }
+        for reason in [
+            "provider timeout",
+            "The run failed.",
+            "rate limited",
+            "internal error",
+            "api key invalid",
+            "",
+        ] {
+            assert_eq!(failure_next_step(reason), FailureNextStep::None, "{reason}");
+        }
     }
 
     /// 相对时间词合同（与 task_rail::relative_activity 同源）：now / 1m /

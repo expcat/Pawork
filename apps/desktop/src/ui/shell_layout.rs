@@ -1,12 +1,12 @@
 //! R2 Wave A 轨 2：窗口壳布局合同（F-01/F-02 / 响应式 / U1 不变量）。
 //!
-//! 合同（design/README.md §2）：宽窗三栏 TaskRail 288 / Workspace 弹性 /
-//! Inspector 440，StatusBar 30；窗口宽 1080–1279 时 rail 收敛 240、
-//! Inspector 折叠为 ActivityPopover 抽屉、Workspace ≥560；150% 文本
-//! 缩放时 rail 扩为 320，窗口不足 1320 时保持 Inspector 折叠。resolve 是
-//! AppView::render 与本模块 #[gpui::test] 共享的唯一计算入口；探针主机
-//! 复用生产 Panel / StatusBar 组件装配同构壳层（参照 u1_probe.rs，不挂
-//! AppView / Platform / socket）。
+//! 合同（design/README.md §2 / GUI2-05）：宽窗三栏 TaskRail 288 / Workspace
+//! 弹性 / Inspector 440，StatusBar 30；窗口宽 1080–1279 时 rail 收敛 240，
+//! 显式打开的 Inspector 改为中央呈现（Workspace ≥560）；150% 文本缩放时
+//! rail 扩为 320，窗口不足 1320 时同样走中央。resolve 是 AppView::render
+//! 与本模块 #[gpui::test] 共享的唯一计算入口；探针主机复用生产 Panel /
+//! StatusBar 组件装配同构壳层（参照 u1_probe.rs，不挂 AppView / Platform /
+//! socket）。
 
 use gpui::{div, prelude::*, px, IntoElement, Pixels};
 
@@ -27,44 +27,83 @@ pub(crate) const WORKSPACE_MIN_WIDTH: f32 = 560.0;
 /// rail 左上（量图中心 ≈(25.5,23.5)），该带内不得出现交互控件。
 pub(crate) const TRAFFIC_LIGHT_SAFE_HEIGHT: f32 = 36.0;
 
+/// Inspector 相对 Workspace 的放置（render 与 AX 同源）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum InspectorPlacement {
+    /// 未打开（偏好折叠，或不在工作台路由）。
+    #[default]
+    Hidden,
+    /// 宽窗 440px 右栏并排。
+    Side,
+    /// 窄窗显式打开：占用中央 Workspace（TaskRail 保留）。
+    Center,
+}
+
+impl InspectorPlacement {
+    pub(crate) fn is_visible(self) -> bool {
+        !matches!(self, Self::Hidden)
+    }
+
+    pub(crate) fn is_side(self) -> bool {
+        matches!(self, Self::Side)
+    }
+
+    pub(crate) fn is_center(self) -> bool {
+        matches!(self, Self::Center)
+    }
+}
+
 /// 一次 render 的壳层几何决定。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct ShellLayout {
     /// TaskRail 宽度：默认宽窗 288 / 窄窗 240；150% 文本缩放 320。
     pub(crate) rail_width: f32,
-    /// Inspector 是否作为 440px 右栏参与布局。
+    /// Inspector 放置：Hidden / Side / Center。
+    pub(crate) placement: InspectorPlacement,
+    /// 是否作为 440px 右栏参与布局（`placement == Side`）。
     pub(crate) inspector_open: bool,
+}
+
+/// 宽窗并排所需最小宽度：默认字号 288+440+560=1288，且不在窄窗带；
+/// 150% 字号 320+440+560=1320。
+pub(crate) fn can_fit_side_inspector(window_width: Pixels, large_text: bool) -> bool {
+    if large_text {
+        window_width >= px(LARGE_TEXT_INSPECTOR_MIN_WIDTH)
+    } else {
+        window_width > px(NARROW_WIDTH_MAX)
+            && window_width
+                >= px(metrics::SIDEBAR_WIDTH + metrics::INSPECTOR_WIDTH + WORKSPACE_MIN_WIDTH)
+    }
 }
 
 /// 由窗口内容宽度与用户 Inspector 偏好解析壳层几何。
 ///
-/// 默认字号至少 1288px 才展开 Inspector，保证 Workspace ≥560；150% 字号需至少
-/// 320+440+560=1320 才展开。偏好值不在 resize 时改写，窗口加宽后按偏好
-/// 自动恢复。
+/// 偏好值不在 resize 时改写：变宽时已打开面板回到侧栏，变窄时仅已打开
+/// 面板进入中央；未打开保持对话。
 pub(crate) fn resolve(
     window_width: Pixels,
     inspector_preferred: bool,
     large_text: bool,
 ) -> ShellLayout {
     let narrow = window_width <= px(NARROW_WIDTH_MAX);
+    let rail_width = if large_text {
+        RAIL_LARGE_TEXT_WIDTH
+    } else if narrow {
+        RAIL_NARROW_WIDTH
+    } else {
+        metrics::SIDEBAR_WIDTH
+    };
+    let placement = if !inspector_preferred {
+        InspectorPlacement::Hidden
+    } else if can_fit_side_inspector(window_width, large_text) {
+        InspectorPlacement::Side
+    } else {
+        InspectorPlacement::Center
+    };
     ShellLayout {
-        rail_width: if large_text {
-            RAIL_LARGE_TEXT_WIDTH
-        } else if narrow {
-            RAIL_NARROW_WIDTH
-        } else {
-            metrics::SIDEBAR_WIDTH
-        },
-        inspector_open: inspector_preferred
-            && if large_text {
-                window_width >= px(LARGE_TEXT_INSPECTOR_MIN_WIDTH)
-            } else {
-                !narrow
-                    && window_width
-                        >= px(metrics::SIDEBAR_WIDTH
-                            + metrics::INSPECTOR_WIDTH
-                            + WORKSPACE_MIN_WIDTH)
-            },
+        rail_width,
+        placement,
+        inspector_open: placement.is_side(),
     }
 }
 
@@ -125,6 +164,12 @@ impl InspectorMotion {
             },
             animating,
         )
+    }
+
+    /// 跨窄窗布局切换：直接落到目标宽度，避免穿越不可用区域。
+    pub(crate) fn snap(&mut self, width: f32) {
+        self.from = width;
+        self.target = width;
     }
 }
 
@@ -248,26 +293,81 @@ mod tests {
     fn resolve_switches_rail_width_at_1280() {
         let narrow = resolve(px(1279.), true, false);
         assert_eq!(narrow.rail_width, RAIL_NARROW_WIDTH);
+        assert_eq!(narrow.placement, InspectorPlacement::Center);
         assert!(
             !narrow.inspector_open,
-            "narrow band must collapse inspector"
+            "narrow band must not use the 440px side column"
         );
 
         let wide = resolve(px(1280.), true, false);
         assert_eq!(wide.rail_width, metrics::SIDEBAR_WIDTH);
+        assert_eq!(wide.placement, InspectorPlacement::Center);
         assert!(!wide.inspector_open);
-        assert!(resolve(px(1288.), true, false).inspector_open);
+        let side = resolve(px(1288.), true, false);
+        assert!(side.inspector_open);
+        assert_eq!(side.placement, InspectorPlacement::Side);
 
-        assert!(!resolve(px(1440.), false, false).inspector_open);
+        assert_eq!(
+            resolve(px(1440.), false, false).placement,
+            InspectorPlacement::Hidden
+        );
         assert_eq!(
             resolve(px(1080.), true, false).rail_width,
             RAIL_NARROW_WIDTH
         );
         let large_text = resolve(px(1080.), true, true);
         assert_eq!(large_text.rail_width, RAIL_LARGE_TEXT_WIDTH);
+        assert_eq!(large_text.placement, InspectorPlacement::Center);
         assert!(!large_text.inspector_open);
-        assert!(!resolve(px(1319.), true, true).inspector_open);
-        assert!(resolve(px(1320.), true, true).inspector_open);
+        assert_eq!(
+            resolve(px(1319.), true, true).placement,
+            InspectorPlacement::Center
+        );
+        assert_eq!(
+            resolve(px(1320.), true, true).placement,
+            InspectorPlacement::Side
+        );
+    }
+
+    #[test]
+    fn resolve_inspector_placement_follows_width_and_preference() {
+        assert_eq!(
+            resolve(px(1440.), true, false).placement,
+            InspectorPlacement::Side
+        );
+        assert_eq!(
+            resolve(px(1080.), true, false).placement,
+            InspectorPlacement::Center
+        );
+        assert_eq!(
+            resolve(px(1280.), true, true).placement,
+            InspectorPlacement::Center
+        );
+        assert_eq!(
+            resolve(px(1440.), false, false).placement,
+            InspectorPlacement::Hidden
+        );
+        assert_eq!(
+            resolve(px(1080.), false, false).placement,
+            InspectorPlacement::Hidden
+        );
+        // 变宽：已打开中央面板回到侧栏；变窄：已打开侧栏进入中央。
+        assert_eq!(
+            resolve(px(1080.), true, false).placement,
+            InspectorPlacement::Center
+        );
+        assert_eq!(
+            resolve(px(1440.), true, false).placement,
+            InspectorPlacement::Side
+        );
+        assert_eq!(
+            resolve(px(1440.), true, false).placement,
+            InspectorPlacement::Side
+        );
+        assert_eq!(
+            resolve(px(1080.), true, false).placement,
+            InspectorPlacement::Center
+        );
     }
 
     #[gpui::test]
@@ -340,8 +440,9 @@ mod tests {
             .debug_bounds("shell-status-bar")
             .expect("status bar bounds");
 
-        // 窄窗合同：rail 240；Inspector 默认折叠（偏好 true 也不参与布局，
-        // workspace 精确 840 证明无 440 右栏）且 ≥560。
+        // 窄窗合同：rail 240；偏好 true 也不画 440 右栏（中央呈现由
+        // AppView 占用 Workspace，探针只覆盖侧栏几何），workspace 精确
+        // 840 且 ≥560。
         assert_eq!(rail.size.width, px(RAIL_NARROW_WIDTH));
         assert_eq!(workspace.origin.x, rail.size.width);
         assert_eq!(workspace.size.width, px(1080. - RAIL_NARROW_WIDTH));

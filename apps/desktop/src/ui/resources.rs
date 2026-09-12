@@ -2,11 +2,13 @@
 //! name / transport / state / tools 数 / last_error 全部来自 Host 响应；
 //! 「已加载规则」分区无 Host 出口，本波不画（design/README.md §8.5）。
 
-use gpui::{div, prelude::*, Context, ScrollHandle};
+use gpui::{div, prelude::*, px, Context, ScrollHandle};
 
 use crate::controller::McpServerEntry;
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
+use crate::ui::components::icon::{icon_sized, Icon};
 use crate::ui::components::label::Label;
+use crate::ui::components::skeleton::loading_skeleton;
 use crate::ui::i18n::t;
 use crate::ui::theme::{dark, font, metrics};
 
@@ -169,9 +171,8 @@ impl AppView {
                 Button::new("resources-refresh")
                     .variant(ButtonVariant::Ghost)
                     .padding(ButtonPadding::Horizontal(metrics::PADDING_SM))
-                    .text_size(font::XS)
                     .text_color(dark().text.secondary)
-                    .label("↻")
+                    .child(icon_sized(Icon::Refresh, px(metrics::ICON_SM)))
                     .tooltip(t("resources.tooltip_refresh"))
                     .track_focus(&self.resources_refresh_focus)
                     .on_click(cx.listener(|view, event, _window, cx| {
@@ -246,11 +247,15 @@ fn resources_placeholder(key: &'static str) -> gpui::Div {
         "resources.empty" => t("resources.empty_desc"),
         _ => t("common.placeholder_no_details"),
     };
-    resources_placeholder_content(
+    let mut placeholder = resources_placeholder_content(
         t(key).to_string(),
         description.to_string(),
         dark().text.primary,
-    )
+    );
+    if key == "resources.loading" {
+        placeholder = placeholder.child(loading_skeleton("resources.loading-skeleton"));
+    }
+    placeholder
 }
 
 /// 失败占位：标题本地化；reason 为 wire 数据，不翻译。

@@ -1,12 +1,12 @@
 //! Sessions 侧栏（TaskRail）：分组直接切换、范围菜单、项目块与任务列表。
 //!
-//! GUI2-01：顶部两行（任务 / 新建、scope / 分组），连接状态位于底部 Local 区、日期桶 → 项目头 → 任务行的列表节奏，以及诚实
-//! 状态点语义（Needs input 琥珀 > Running 蓝 > 空心灰不声明语义；wire 无
-//! 每会话终态字段，不画终态绿点）。几何常量与 AX 树共享 theme::metrics。
+//! GUI2-01：顶部两行（任务 / 新建、scope / 分组），连接状态位于底部 Local 区、日期桶 → 项目头 → 任务行的列表节奏。
+//! GUI3-06：单项目 / Unassigned 桶跳过项目头；空闲不画状态点；桶头 24px；
+//! 150% 任务行 36px；标题截断右侧渐隐。几何常量与 AX 树共享 theme::metrics。
 
 use gpui::{
-    div, point, prelude::*, px, AnyElement, ClickEvent, Context, Corner, FontWeight, KeyDownEvent,
-    Pixels, Point, Rgba, SharedString, Window,
+    div, linear_color_stop, linear_gradient, point, prelude::*, px, AnyElement, ClickEvent,
+    Context, Corner, FontWeight, KeyDownEvent, Pixels, Point, Rgba, SharedString, Window,
 };
 
 use crate::projection::{
@@ -14,6 +14,7 @@ use crate::projection::{
 };
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
 use crate::ui::components::dropdown::{Dropdown, MenuPanel, MenuRow};
+use crate::ui::components::icon::{icon, icon_sized, Icon};
 use crate::ui::components::label::Label;
 use crate::ui::components::list_row::ListRow;
 use crate::ui::components::panel::Panel;
@@ -45,8 +46,32 @@ pub(super) fn relative_activity(updated_at_ms: u64, now_ms: u64) -> String {
     }
 }
 
-/// 状态圆点（Ø10，量图 10–11）：实心 = 语义色；空心灰 = 不声明语义的
-/// 设计 ○ 槽位（描边 text.tertiary，不填充）。
+/// 会话行 live 状态点：仅 Needs input / Running / Blocked 出实心点；空闲不占位。
+fn session_status_dot_color(status: SessionLiveStatus) -> Rgba {
+    match status {
+        SessionLiveStatus::NeedsInput => dark().semantic.warning_text,
+        SessionLiveStatus::Running => dark().accent.primary,
+        SessionLiveStatus::Blocked => dark().semantic.danger_text,
+    }
+}
+
+/// 标题截断槽右侧渐隐；颜色与当前行底（panel / raised / hover）同源。
+fn title_fade(color: Rgba) -> gpui::Div {
+    div()
+        .absolute()
+        .top_0()
+        .right_0()
+        .bottom_0()
+        .w(px(metrics::RAIL_TITLE_FADE_WIDTH))
+        .bg(linear_gradient(
+            90.0,
+            linear_color_stop(color, 0.0).opacity(0.0),
+            linear_color_stop(color, 1.0),
+        ))
+}
+
+/// 状态圆点（Ø10，量图 10–11）：实心 = 语义色；空心 = 连接行断线槽
+///（描边 text.tertiary，不填充）。会话空闲不再调用。
 fn status_dot(filled: bool, color: Rgba) -> gpui::Div {
     let size = metrics::RAIL_STATUS_DOT_SIZE;
     let dot = div().w(px(size)).h(px(size)).rounded_full().flex_none();
@@ -55,45 +80,6 @@ fn status_dot(filled: bool, color: Rgba) -> gpui::Div {
     } else {
         dot.border_1().border_color(color)
     }
-}
-
-/// 16px 归档盒：盖、盒身与短把手，避免彩色 emoji 随平台变形。
-fn archive_icon(color: Rgba) -> impl IntoElement {
-    div()
-        .relative()
-        .w(px(16.0))
-        .h(px(16.0))
-        .child(
-            div()
-                .absolute()
-                .left(px(2.0))
-                .top(px(6.0))
-                .w(px(12.0))
-                .h(px(8.0))
-                .border_1()
-                .border_color(color)
-                .rounded(px(1.0)),
-        )
-        .child(
-            div()
-                .absolute()
-                .left(px(1.0))
-                .top(px(2.0))
-                .w(px(14.0))
-                .h(px(4.0))
-                .border_1()
-                .border_color(color)
-                .rounded(px(1.0)),
-        )
-        .child(
-            div()
-                .absolute()
-                .left(px(6.0))
-                .top(px(8.0))
-                .w(px(4.0))
-                .h(px(1.0))
-                .bg(color),
-        )
 }
 
 impl AppView {
@@ -127,9 +113,9 @@ impl AppView {
     ) -> Panel {
         let can_create = self.can_create_task();
         // 图标表达下一步动作，而不是重复当前模式。
-        let grouping_glyph = match self.grouping {
-            TaskRailGrouping::Timeline => "▤",
-            TaskRailGrouping::Projects => "◷",
+        let grouping_icon = match self.grouping {
+            TaskRailGrouping::Timeline => Icon::Grouping,
+            TaskRailGrouping::Projects => Icon::Clock,
         };
         let scope_label = self.scope_label();
         let scope_menu_open = matches!(self.open_menu, Some(MenuKind::Scope));
@@ -148,8 +134,7 @@ impl AppView {
             .height(px(metrics::RAIL_ICON_BUTTON_SIZE))
             .center()
             .radius(metrics::CONTROL_RADIUS)
-            .text_size(font::ICON)
-            .label(grouping_glyph)
+            .child(icon(grouping_icon))
             .tooltip(grouping_tooltip)
             .on_click(cx.listener(|view, event, window, cx| {
                 // Enter / Space 后的同键 keyup 合成 click 在此吞除，避免切两次。
@@ -186,10 +171,22 @@ impl AppView {
                     - window.rem_size() * 1.5
                     - px(metrics::RAIL_INNER_PAD * 2.0 + metrics::RAIL_ICON_BUTTON_SIZE + 1.0),
             )
-            .label(format!(
-                "{} ▾",
-                t("rail.filter_label").replace("{}", &scope_label)
-            ))
+            .child(
+                div()
+                    .flex()
+                    .w_full()
+                    .min_w_0()
+                    .items_center()
+                    .gap(px(metrics::SPACE_2))
+                    .child(
+                        div().flex_1().min_w_0().child(
+                            div()
+                                .truncate()
+                                .child(t("rail.filter_label").replace("{}", &scope_label)),
+                        ),
+                    )
+                    .child(icon_sized(Icon::ChevronDown, px(metrics::ICON_SM))),
+            )
             .on_click(cx.listener(|view, event, window, cx| {
                 // 键盘激活（Slice 5 P2b）后的同键 keyup 合成 click 在此吞除。
                 if view.consume_button_key_click("project-scope", event) {
@@ -234,8 +231,7 @@ impl AppView {
             .height(px(metrics::RAIL_ICON_BUTTON_SIZE))
             .center()
             .radius(metrics::CONTROL_RADIUS)
-            .text_size(font::ICON)
-            .label("+")
+            .child(icon(Icon::Plus))
             .tooltip(add_task_tooltip)
             .on_click(cx.listener(|view, event, window, cx| {
                 // 键盘激活（Slice 5 P2b）后的同键 keyup 合成 click 在此吞除
@@ -277,8 +273,7 @@ impl AppView {
             .width(px(metrics::RAIL_ICON_BUTTON_SIZE))
             .height(px(metrics::RAIL_ICON_BUTTON_SIZE))
             .center()
-            .text_size(font::ICON)
-            .label("⌕")
+            .child(icon(Icon::Search))
             .tooltip(t("quick.title"))
             .on_click(cx.listener(|view, event, window, cx| {
                 if view.consume_button_key_click("quick-search", event) {
@@ -347,19 +342,23 @@ impl AppView {
                             .child(grouping_button),
                     ),
             );
-        // F-02 壳层校准：Reconnect 仅在 Disconnected / ConnectFailed 出现；
-        // Connecting 属进行中，不给重复入口。
-        if self.projection.show_reconnect() {
+        // F-02：Reconnect 仅 Disconnected / ConnectFailed；Connecting 不给
+        // 重复入口。GUI3-07：全宽 Primary 已下沉到底部 Local 行 Ghost「重试」。
+        let reconnect = self.projection.show_reconnect().then(|| {
             let reconnect_focus = self.reconnect_focus.clone();
-            content = content.child(
-                div().mt_2().child(
+            self.shell_element("rail-reconnect-layout")
+                .flex_none()
+                .child(
                     Button::new("reconnect")
                         .track_focus(&reconnect_focus)
-                        .variant(ButtonVariant::Primary)
+                        .variant(ButtonVariant::Ghost)
+                        .padding(ButtonPadding::None)
                         .height(px(metrics::RAIL_TOP_ROW_HEIGHT))
-                        .center()
+                        .vcenter()
                         .text_size(font::BODY_SM)
+                        .text_color(dark().text.emphasis)
                         .label(t("rail.reconnect"))
+                        .tooltip(t("recovery.retry"))
                         .on_click(cx.listener(|view, event, window, cx| {
                             if view.consume_button_key_click("reconnect", event) {
                                 return;
@@ -371,9 +370,8 @@ impl AppView {
                             view.on_reconnect(window, cx);
                             cx.stop_propagation();
                         })),
-                ),
-            );
-        }
+                )
+        });
         content = content.child(self.task_rail_list(now_ms, can_create, window, cx));
         if self.archive_notice_text().is_some() {
             content = content.child(self.archive_notice_element(cx));
@@ -400,13 +398,16 @@ impl AppView {
                         .gap_2()
                         .child(status_dot(connection_dot_filled, connection_dot_color))
                         .child(
-                            div()
-                                .truncate()
-                                .text_size(font::BODY_SM)
-                                .text_color(dark().text.secondary)
-                                .child(connection_label),
+                            div().flex().flex_row().flex_1().min_w_0().child(
+                                div()
+                                    .text_size(font::BODY_SM)
+                                    .text_color(dark().text.secondary)
+                                    .whitespace_normal()
+                                    .child(connection_label),
+                            ),
                         ),
                 )
+                .when_some(reconnect, |row, reconnect| row.child(reconnect))
                 .child(
                     self.shell_element("rail-settings-layout")
                         .flex_none()
@@ -419,8 +420,7 @@ impl AppView {
                                 .height(px(metrics::RAIL_ICON_BUTTON_SIZE))
                                 .center()
                                 .radius(metrics::CONTROL_RADIUS)
-                                .text_size(font::ICON)
-                                .label("⚙")
+                                .child(icon(Icon::Settings))
                                 .tooltip(t("rail.tooltip_settings"))
                                 .on_click(cx.listener(|view, event, window, cx| {
                                     if view.consume_button_key_click("open-settings", event) {
@@ -563,9 +563,11 @@ impl AppView {
         let active = self.projection.active_session_id.clone();
         match rail {
             RailView::Timeline(groups) => {
-                // Timeline：日期桶头（18 medium text.secondary，桶头距上组 20）
-                // → 项目块（桶头→首项目 2，项目块间 8）。
+                // Timeline：日期桶头（12px medium text.secondary，行高 24）
+                // → 项目块（桶头→首项目 2，项目块间 8）。单项目 Unassigned
+                // 或等于当前 scope 时跳过项目头。
                 for (group_index, group) in groups.into_iter().enumerate() {
+                    let skip_header = group.skip_project_header(self.scope_workspace_id.as_deref());
                     let mut bucket_header = div()
                         .h(px(metrics::RAIL_BUCKET_HEADER_HEIGHT))
                         .flex()
@@ -594,6 +596,7 @@ impl AppView {
                             &project,
                             Some(group.bucket),
                             header_gap,
+                            skip_header,
                             &active,
                             now_ms,
                             can_create,
@@ -601,7 +604,9 @@ impl AppView {
                             cx,
                         );
                         if has_active {
-                            active_header_child = Some(child_index);
+                            if !skip_header {
+                                active_header_child = Some(child_index);
+                            }
                             if let Some(offset) = active_offset {
                                 active_child = Some(child_index + offset);
                             }
@@ -620,7 +625,7 @@ impl AppView {
                         0.0
                     };
                     let (children, active_offset, has_active) = self.project_block(
-                        &project, None, header_gap, &active, now_ms, can_create, window, cx,
+                        &project, None, header_gap, false, &active, now_ms, can_create, window, cx,
                     );
                     if has_active {
                         active_header_child = Some(child_index);
@@ -644,14 +649,15 @@ impl AppView {
         list
     }
 
-    /// 一个项目块（头部行 + 展开态任务行）的直接子元素序列：header 恒为
-    /// children[0]。返回 (children, active 任务在 children 内的偏移, 是否
-    /// 含 active 任务)——调用方据此做滚动行位记账。
+    /// 一个项目块（头部行 + 展开态任务行）的直接子元素序列。skip_header 时
+    /// 不渲染头 / 定向「+」，任务直接挂桶下，折叠态不隐藏任务。返回
+    /// (children, active 任务在 children 内的偏移, 是否含 active 任务)。
     fn project_block(
         &mut self,
         project: &TaskRailProjectGroup,
         bucket: Option<crate::projection::DateBucket>,
         header_gap: f32,
+        skip_header: bool,
         active: &Option<String>,
         now_ms: u64,
         can_create: bool,
@@ -659,136 +665,148 @@ impl AppView {
         cx: &mut Context<Self>,
     ) -> (Vec<AnyElement>, Option<usize>, bool) {
         let key = rail_project_key(project.workspace_id.as_deref());
-        let expanded = !self.collapsed_projects.contains(&key);
+        let expanded = skip_header || !self.collapsed_projects.contains(&key);
         let has_active = project
             .tasks
             .iter()
             .any(|task| active.as_deref() == Some(task.session_id.as_str()));
         let workspace_id = project.workspace_id.clone();
-        let header_id = SharedString::from(format!("project-{key}"));
-        let add_id = SharedString::from(format!("project-add-{key}"));
-        let header_focus_key = RailStop::ProjectHeader {
-            bucket,
-            key: key.clone(),
-        }
-        .focus_key();
-        let header_focus = self.rail_row_focus_handle(&header_focus_key, &*cx);
-        let toggle_key = key.clone();
-        let activate_toggle_key = key.clone();
-        let header_row_key = format!("project-{key}");
-        let header_row_key_click = header_row_key.clone();
-        // UI-2 项目头：chevron、名称与右对齐计数共用完整悬停 / 焦点面；
-        // 定向「+」（36×36、字形 20px / OPT-D；Unassigned 无 +）。折叠态只显示头。
-        let mut header = div()
-            .mt(px(header_gap))
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap_2()
-            .child(
-                ListRow::project_header(header_id)
-                    .radius(metrics::CONTROL_RADIUS)
-                    .track_focus(&header_focus)
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_1()
-                            .flex_1()
-                            .min_w_0()
-                            .text_size(font::BASE)
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(dark().text.emphasis)
-                            .child(if expanded { "▾" } else { "▸" })
-                            // 长项目头标题 truncate（flex_1 + min_w_0）。
-                            .child(div().flex_1().truncate().child(project.name.clone())),
-                    )
-                    .child(
-                        div()
-                            .w(px(metrics::RAIL_META_SLOT_WIDTH))
-                            .pr(px(8.0))
-                            .flex_none()
-                            .flex()
-                            .justify_end()
-                            .child(
-                                Label::new(project.task_count().to_string())
-                                    .size(font::BODY_SM)
-                                    .color(dark().text.secondary),
-                            ),
-                    )
-                    .on_click(cx.listener(move |view, event: &ClickEvent, window, cx| {
-                        // 行级键盘激活后的同键 keyup 合成 click 在此吞除。
-                        if view.consume_row_key_click(&header_row_key_click, event) {
-                            return;
-                        }
-                        view.on_toggle_project(toggle_key.clone(), window, cx);
-                    }))
-                    .on_activate(cx.listener(move |view, _event: &KeyDownEvent, window, cx| {
-                        // 菜单打开时让位：Enter 由根节点菜单接管（P3a），
-                        // 不激活不 stop，事件继续冒泡。
-                        if view.open_menu.is_some() {
-                            // 双路投递第二路 keyup 合成 click 吞除标记
-                            // 重新武装（防展开/收起被反向触发）。
-                            view.note_row_key_activate(&header_row_key);
-                            return;
-                        }
-                        view.note_row_key_activate(&header_row_key);
-                        view.on_toggle_project(activate_toggle_key.clone(), window, cx);
-                        cx.stop_propagation();
-                    })),
-            );
-        if !project.is_unassigned() {
-            if let Some(workspace_id) = workspace_id {
-                let add_focus = self.rail_row_focus_handle(
-                    &RailStop::ProjectAdd {
-                        bucket,
-                        key: key.clone(),
-                    }
-                    .focus_key(),
-                    &*cx,
-                );
-                let project_add_id = add_id.clone();
-                let activate_workspace_id = workspace_id.clone();
-                let activate_project_add_id = project_add_id.clone();
-                header = header.child(
-                    Button::new(add_id)
-                        .track_focus(&add_focus)
-                        .variant(ButtonVariant::Ghost)
-                        .disabled(!can_create)
-                        .padding(ButtonPadding::None)
-                        .width(px(metrics::RAIL_ICON_BUTTON_SIZE))
-                        .height(px(metrics::RAIL_ICON_BUTTON_SIZE))
-                        .center()
+        let mut children = Vec::new();
+        if !skip_header {
+            let header_id = SharedString::from(format!("project-{key}"));
+            let add_id = SharedString::from(format!("project-add-{key}"));
+            let header_focus_key = RailStop::ProjectHeader {
+                bucket,
+                key: key.clone(),
+            }
+            .focus_key();
+            let header_focus = self.rail_row_focus_handle(&header_focus_key, &*cx);
+            let toggle_key = key.clone();
+            let activate_toggle_key = key.clone();
+            let header_row_key = format!("project-{key}");
+            let header_row_key_click = header_row_key.clone();
+            // UI-2 项目头：chevron、名称与右对齐计数共用完整悬停 / 焦点面；
+            // 定向「+」（36×36、字形 20px / OPT-D；Unassigned 无 +）。折叠态只显示头。
+            let mut header = div()
+                .mt(px(header_gap))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .child(
+                    ListRow::project_header(header_id)
                         .radius(metrics::CONTROL_RADIUS)
-                        .text_size(font::ICON)
-                        .label("+")
+                        .track_focus(&header_focus)
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap_1()
+                                .flex_1()
+                                .min_w_0()
+                                .text_size(font::BASE)
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(dark().text.emphasis)
+                                .child(if expanded {
+                                    icon_sized(Icon::ChevronDown, px(metrics::ICON_SM))
+                                } else {
+                                    icon_sized(Icon::ChevronRight, px(metrics::ICON_SM))
+                                })
+                                // 长项目头标题 truncate（flex_1 + min_w_0）。
+                                .child(div().flex_1().truncate().child(project.name.clone())),
+                        )
+                        .child(
+                            div()
+                                .w(px(metrics::RAIL_META_SLOT_WIDTH))
+                                .pr(px(8.0))
+                                .flex_none()
+                                .flex()
+                                .justify_end()
+                                .child(
+                                    Label::new(project.task_count().to_string())
+                                        .size(font::BODY_SM)
+                                        .color(dark().text.secondary),
+                                ),
+                        )
                         .on_click(cx.listener(move |view, event: &ClickEvent, window, cx| {
-                            // 键盘激活后的同键 keyup 合成 click 在此吞除
-                            // （防 Enter 后 keyup 重复建稿）。
-                            if view.consume_button_key_click(&project_add_id, event) {
+                            // 行级键盘激活后的同键 keyup 合成 click 在此吞除。
+                            if view.consume_row_key_click(&header_row_key_click, event) {
                                 return;
                             }
-                            view.on_project_add_task(workspace_id.clone(), window, cx);
+                            view.on_toggle_project(toggle_key.clone(), window, cx);
                         }))
                         .on_activate(cx.listener(
                             move |view, _event: &KeyDownEvent, window, cx| {
-                                // 菜单已开时让位给根节点菜单 Enter 接管。
+                                // 菜单打开时让位：Enter 由根节点菜单接管（P3a），
+                                // 不激活不 stop，事件继续冒泡。
                                 if view.open_menu.is_some() {
-                                    // 双路投递第二路 keyup 合成 click
-                                    // 吞除标记重新武装（防重复建稿）。
-                                    view.note_button_key_activate(&activate_project_add_id);
+                                    // 双路投递第二路 keyup 合成 click 吞除标记
+                                    // 重新武装（防展开/收起被反向触发）。
+                                    view.note_row_key_activate(&header_row_key);
                                     return;
                                 }
-                                view.note_button_key_activate(&activate_project_add_id);
-                                view.on_project_add_task(activate_workspace_id.clone(), window, cx);
+                                view.note_row_key_activate(&header_row_key);
+                                view.on_toggle_project(activate_toggle_key.clone(), window, cx);
                                 cx.stop_propagation();
                             },
                         )),
                 );
+            if !project.is_unassigned() {
+                if let Some(workspace_id) = workspace_id {
+                    let add_focus = self.rail_row_focus_handle(
+                        &RailStop::ProjectAdd {
+                            bucket,
+                            key: key.clone(),
+                        }
+                        .focus_key(),
+                        &*cx,
+                    );
+                    let project_add_id = add_id.clone();
+                    let activate_workspace_id = workspace_id.clone();
+                    let activate_project_add_id = project_add_id.clone();
+                    header = header.child(
+                        Button::new(add_id)
+                            .track_focus(&add_focus)
+                            .variant(ButtonVariant::Ghost)
+                            .disabled(!can_create)
+                            .padding(ButtonPadding::None)
+                            .width(px(metrics::RAIL_ICON_BUTTON_SIZE))
+                            .height(px(metrics::RAIL_ICON_BUTTON_SIZE))
+                            .center()
+                            .radius(metrics::CONTROL_RADIUS)
+                            .child(icon(Icon::Plus))
+                            .on_click(cx.listener(move |view, event: &ClickEvent, window, cx| {
+                                // 键盘激活后的同键 keyup 合成 click 在此吞除
+                                // （防 Enter 后 keyup 重复建稿）。
+                                if view.consume_button_key_click(&project_add_id, event) {
+                                    return;
+                                }
+                                view.on_project_add_task(workspace_id.clone(), window, cx);
+                            }))
+                            .on_activate(cx.listener(
+                                move |view, _event: &KeyDownEvent, window, cx| {
+                                    // 菜单已开时让位给根节点菜单 Enter 接管。
+                                    if view.open_menu.is_some() {
+                                        // 双路投递第二路 keyup 合成 click
+                                        // 吞除标记重新武装（防重复建稿）。
+                                        view.note_button_key_activate(&activate_project_add_id);
+                                        return;
+                                    }
+                                    view.note_button_key_activate(&activate_project_add_id);
+                                    view.on_project_add_task(
+                                        activate_workspace_id.clone(),
+                                        window,
+                                        cx,
+                                    );
+                                    cx.stop_propagation();
+                                },
+                            )),
+                    );
+                }
             }
+            children.push(header.into_any_element());
         }
-        let mut children = vec![header.into_any_element()];
         let mut active_offset = None;
         if expanded {
             for (task_index, task) in project.tasks.iter().enumerate() {
@@ -812,60 +830,76 @@ impl AppView {
                     .as_ref()
                     .filter(|state| state.session_id == task.session_id)
                     .map(|state| state.input.clone());
-                // 状态点语义（诚实，只消费 wire 已有数据）：Needs input
-                // （pending approval 按 session_id 归属）琥珀优先于 Running 蓝，
-                // 再次为 Blocked 红（R3 Wave B live 派生）；其余空心灰圆
-                // 不声明语义；终态绿点不画（wire 无来源）。
-                let (dot_filled, dot_color) =
-                    match self.projection.session_live_status(&task.session_id) {
-                        Some(SessionLiveStatus::NeedsInput) => (true, dark().semantic.warning_text),
-                        Some(SessionLiveStatus::Running) => (true, dark().accent.primary),
-                        Some(SessionLiveStatus::Blocked) => (true, dark().semantic.danger_text),
-                        None => (false, dark().text.tertiary),
-                    };
-                // 项目头 → 首个任务行 2（量图行位锚点）；任务行间 0。
+                let live_status = self.projection.session_live_status(&task.session_id);
+                let row_height = metrics::rail_task_row_height(self.text_scale);
+                let reserve_trailing =
+                    show_actions || self.text_scale != font::TextScale::Percent150;
+                let hovered =
+                    self.rail_hovered_session.as_deref() == Some(task.session_id.as_str());
+                let fade_color = if is_active {
+                    if hovered {
+                        dark().surface.hover
+                    } else {
+                        dark().surface.raised
+                    }
+                } else if hovered {
+                    dark().surface.raised
+                } else {
+                    dark().bg.panel
+                };
+                // 项目头 → 首个任务行 2；跳过项目头时首行吃桶头间距。
                 let row_gap = if task_index == 0 {
-                    metrics::RAIL_PROJECT_TO_TASK_GAP
+                    if skip_header {
+                        header_gap
+                    } else {
+                        metrics::RAIL_PROJECT_TO_TASK_GAP
+                    }
                 } else {
                     0.0
                 };
                 let title_slot = match rename_input {
                     Some(input) => div().flex_1().min_w_0().child(input),
                     None => div()
+                        .relative()
                         .flex_1()
-                        .truncate()
-                        .text_size(font::BASE)
-                        .font_weight(if is_active {
-                            FontWeight::MEDIUM
-                        } else if unread {
-                            FontWeight::SEMIBOLD
-                        } else {
-                            FontWeight::NORMAL
-                        })
-                        .text_color(if is_active {
-                            dark().text.primary
-                        } else {
-                            dark().text.emphasis
-                        })
-                        .child(crate::ui::i18n::session_title(&task.title).to_string()),
+                        .child(
+                            div()
+                                .truncate()
+                                .text_size(font::BASE)
+                                .font_weight(if is_active {
+                                    FontWeight::MEDIUM
+                                } else if unread {
+                                    FontWeight::SEMIBOLD
+                                } else {
+                                    FontWeight::NORMAL
+                                })
+                                .text_color(if is_active {
+                                    dark().text.primary
+                                } else {
+                                    dark().text.emphasis
+                                })
+                                .child(crate::ui::i18n::session_title(&task.title).to_string()),
+                        )
+                        .child(title_fade(fade_color)),
                 };
+                let mut title_row = div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .min_w_0()
+                    .flex_1();
+                if let Some(status) = live_status {
+                    title_row = title_row.child(status_dot(true, session_status_dot_color(status)));
+                }
+                title_row = title_row.child(title_slot);
                 let mut row = ListRow::task(SharedString::from(session_id.clone()), is_active)
+                    .height(row_height)
                     .radius(metrics::CONTROL_RADIUS)
                     .track_focus(&task_focus)
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_2()
-                            .min_w_0()
-                            .flex_1()
-                            .child(status_dot(dot_filled, dot_color))
-                            // 长任务标题单行 truncate；相对时间右对齐保留；
-                            // Unread 只提字重（同字号同行高，不改几何）。
-                            .child(title_slot),
-                    )
-                    .child(
+                    .child(title_row);
+                if reserve_trailing {
+                    row = row.child(
                         div()
                             .ml_2()
                             .w(px(metrics::RAIL_SESSION_ACTION_SIZE * 2.0))
@@ -882,6 +916,7 @@ impl AppView {
                                 .color(dark().text.secondary),
                             ),
                     );
+                }
                 if !renaming {
                     row = row
                         .on_click(cx.listener(move |view, event: &ClickEvent, window, cx| {
@@ -906,7 +941,8 @@ impl AppView {
                             },
                         ));
                 }
-                // UI-2：固定 64px 槽在时间戳 / 两个动作间切换，标题宽度不跳动。
+                // 150% 仅在动作面露出时保留 64px 尾槽，避免挤占标题；
+                // 100% / 125% 时间戳 / 两个动作仍共用固定槽，标题宽度不跳动。
                 // 动作是行的覆盖层兄弟节点，点击不会冒泡成打开会话。
                 let hovered_id = task.session_id.clone();
                 let mut shell = div()
@@ -946,9 +982,8 @@ impl AppView {
                         .height(px(metrics::RAIL_SESSION_ACTION_SIZE))
                         .center()
                         .radius(metrics::CONTROL_RADIUS)
-                        .text_size(font::BASE)
                         .text_color(dark().text.secondary)
-                        .label("✎")
+                        .child(icon_sized(Icon::Edit, px(metrics::ICON_SM)))
                         .tooltip(t("taskrail.rename"))
                         .on_click(cx.listener(move |view, event: &ClickEvent, window, cx| {
                             if view.consume_button_key_click(&begin_rename_id, event) {
@@ -980,13 +1015,14 @@ impl AppView {
                             .height(px(metrics::RAIL_SESSION_ACTION_SIZE))
                             .center()
                             .radius(metrics::CONTROL_RADIUS)
-                            .text_size(font::BASE)
                             .text_color(dark().text.secondary)
-                            .child(archive_icon(if can_create {
-                                dark().text.secondary
-                            } else {
-                                dark().text.disabled
-                            }))
+                            .child(icon_sized(Icon::Archive, px(metrics::ICON_SM)).text_color(
+                                if can_create {
+                                    dark().text.secondary
+                                } else {
+                                    dark().text.disabled
+                                },
+                            ))
                             .tooltip(t("taskrail.archive"))
                             .on_click(cx.listener(move |view, event: &ClickEvent, _window, cx| {
                                 if view.consume_button_key_click(&archive_click_id, event) {
@@ -1010,9 +1046,7 @@ impl AppView {
                         div()
                             .absolute()
                             .right(px(8.0))
-                            .top(px((metrics::RAIL_TASK_ROW_HEIGHT
-                                - metrics::RAIL_SESSION_ACTION_SIZE)
-                                / 2.0))
+                            .top(px((row_height - metrics::RAIL_SESSION_ACTION_SIZE) / 2.0))
                             .flex()
                             .items_center()
                             .child(rename_button)
@@ -1182,13 +1216,17 @@ impl AppView {
     }
 
     /// 连接行可见文案（render 与 AX 值同源，ADR-042）。
+    /// GUI3-07：断线底行不再嵌入原始错误（错误留在主区 recovery）。
     pub(super) fn connection_status_label(&self) -> String {
         match &self.projection.connection {
             ConnectionState::Connected { .. } => match self.projection.resume.label() {
                 Some(resume) => t("rail.connection_local_connected_resume").replace("{}", &resume),
                 None => t("rail.connection_local_connected").into(),
             },
-            other => other.label(),
+            ConnectionState::Connecting => t("rail.connection_local_connecting").into(),
+            ConnectionState::Disconnected { .. } | ConnectionState::Failed { .. } => {
+                t("rail.connection_local_disconnected").into()
+            }
         }
     }
 

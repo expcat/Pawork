@@ -7,16 +7,124 @@ use std::collections::BTreeMap;
 
 use gpui::{div, prelude::*, px, Context, Div, MouseDownEvent, ScrollHandle};
 
-use crate::controller::{DiffFileDetail, DiffFileSummary, DiffLineKind, GitDiffInfo};
+use crate::controller::{
+    DiffFileDetail, DiffFileSummary, DiffLineDetail, DiffLineKind, GitDiffInfo,
+};
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
 use crate::ui::components::dropdown::{MenuPanel, MenuRow};
 use crate::ui::components::focus_ring::focus_ring;
+use crate::ui::components::icon::{icon_sized, Icon};
 use crate::ui::components::label::Label;
 use crate::ui::components::list_row::ListRow;
+use crate::ui::components::skeleton::loading_skeleton;
 use crate::ui::i18n::t;
 use crate::ui::theme::{dark, font, metrics};
 
 use super::{AppView, MenuKind};
+
+/// 从 hunk 头 `@@ -a,b +c,d @@` 解析的左右起始行号。
+pub(super) fn parse_hunk_header(header: &str) -> Option<(u32, u32)> {
+    let start = header.find("@@")?;
+    let mut rest = header[start + 2..].trim_start();
+    if !rest.starts_with('-') {
+        return None;
+    }
+    rest = &rest[1..];
+    let (old, rest) = take_hunk_u32(rest)?;
+    let rest = skip_optional_hunk_count(rest)?;
+    let rest = rest.trim_start();
+    if !rest.starts_with('+') {
+        return None;
+    }
+    let rest = &rest[1..];
+    let (new, rest) = take_hunk_u32(rest)?;
+    let rest = skip_optional_hunk_count(rest)?;
+    rest.trim_start().starts_with("@@").then_some((old, new))
+}
+
+fn take_hunk_u32(s: &str) -> Option<(u32, &str)> {
+    let len = s.bytes().take_while(u8::is_ascii_digit).count();
+    if len == 0 {
+        return None;
+    }
+    let (num, rest) = s.split_at(len);
+    Some((num.parse().ok()?, rest))
+}
+
+fn skip_optional_hunk_count(s: &str) -> Option<&str> {
+    if let Some(rest) = s.strip_prefix(',') {
+        let (_, rest) = take_hunk_u32(rest)?;
+        Some(rest)
+    } else {
+        Some(s)
+    }
+}
+
+/// 一行的左右行号；解析失败时两边都为空，不伪造。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct DiffLineNumbers {
+    pub left: Option<u32>,
+    pub right: Option<u32>,
+}
+
+/// 按 hunk 头递推：context 左右都 +1，deletion 只左，addition 只右。
+pub(super) fn diff_hunk_line_numbers(
+    header: &str,
+    lines: &[DiffLineDetail],
+) -> Vec<DiffLineNumbers> {
+    let Some((mut left, mut right)) = parse_hunk_header(header) else {
+        return vec![
+            DiffLineNumbers {
+                left: None,
+                right: None
+            };
+            lines.len()
+        ];
+    };
+    let mut out = Vec::with_capacity(lines.len());
+    for line in lines {
+        match line.kind {
+            DiffLineKind::Context => {
+                out.push(DiffLineNumbers {
+                    left: Some(left),
+                    right: Some(right),
+                });
+                left += 1;
+                right += 1;
+            }
+            DiffLineKind::Deletion => {
+                out.push(DiffLineNumbers {
+                    left: Some(left),
+                    right: None,
+                });
+                left += 1;
+            }
+            DiffLineKind::Addition => {
+                out.push(DiffLineNumbers {
+                    left: None,
+                    right: Some(right),
+                });
+                right += 1;
+            }
+        }
+    }
+    out
+}
+
+fn format_line_no(n: Option<u32>) -> String {
+    n.map(|n| n.to_string()).unwrap_or_default()
+}
+
+/// 文件状态色标：M 琥珀 / A 绿 / D 红；R / ? 等未知状态原样。
+pub(super) fn changes_status_chip(status: &str) -> (String, gpui::Rgba) {
+    let palette = dark();
+    match status {
+        "M" | "modified" | "Modified" => ("M".into(), palette.semantic.warning_text),
+        "A" | "added" | "Added" => ("A".into(), palette.semantic.success_fg),
+        "D" | "deleted" | "Deleted" | "removed" => ("D".into(), palette.semantic.danger_text),
+        other => (other.to_string(), palette.text.tertiary),
+    }
+}
 
 /// Changes 内容区二级页签：紧凑字阶、选中背景与短中性下划线。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -345,9 +453,8 @@ impl AppView {
                 Button::new("changes-refresh")
                     .variant(ButtonVariant::Ghost)
                     .padding(ButtonPadding::Horizontal(metrics::PADDING_SM))
-                    .text_size(font::XS)
                     .text_color(dark().text.secondary)
-                    .label("↻")
+                    .child(icon_sized(Icon::Refresh, px(metrics::ICON_SM)))
                     .tooltip(t("changes.tooltip_refresh"))
                     .track_focus(&self.changes_refresh_focus)
                     .on_click(cx.listener(|view, event, _window, cx| {
@@ -455,7 +562,9 @@ impl AppView {
             let selected = Some(&file.path) == self.changes.selected.as_ref();
             let path = file.path.clone();
             let focus = self.changes_file_focus.get(&path).cloned();
+            let (mark, mark_color) = changes_status_chip(&file.status);
             let mut row = ListRow::task(format!("changes-file-{}", file.path), selected)
+                .height(metrics::CHANGES_FILE_ROW_HEIGHT)
                 .child(
                     div()
                         .w(px(metrics::CHANGES_FILE_GLYPH_WIDTH))
@@ -464,29 +573,17 @@ impl AppView {
                         .items_center()
                         .justify_center()
                         .text_size(font::SM)
-                        .text_color(dark().text.secondary)
-                        .child("▧"),
+                        .text_color(mark_color)
+                        .child(mark),
                 )
                 .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .text_size(font::BASE)
-                        .text_color(dark().text.primary)
-                        .child(path.clone()),
-                )
-                .child(
-                    div()
-                        .w(px(metrics::CHANGES_FILE_STATUS_WIDTH))
-                        .flex_none()
-                        .flex()
-                        .justify_end()
-                        .child(
-                            Label::new(file.status.clone())
-                                .size(font::SM)
-                                .color(dark().text.secondary),
-                        ),
+                    div().flex().flex_row().flex_1().min_w_0().child(
+                        div()
+                            .truncate()
+                            .text_size(font::SM)
+                            .text_color(dark().text.primary)
+                            .child(path.clone()),
+                    ),
                 )
                 .child(
                     div()
@@ -622,8 +719,9 @@ impl AppView {
                         .flex_col()
                         .flex_none()
                         .min_w_full()
-                        .w(gpui::Rems((longest_line as f32 + 4.0) * font::SM.0));
+                        .w(gpui::Rems((longest_line as f32 + 12.0) * font::SM.0));
                     for hunk in &file.hunks {
+                        let numbers = diff_hunk_line_numbers(&hunk.header, &hunk.lines);
                         content = content.child(
                             div()
                                 .w_full()
@@ -631,50 +729,51 @@ impl AppView {
                                 .flex_row()
                                 .bg(dark().surface.raised)
                                 .text_color(dark().text.secondary)
-                                .child(div().w(px(metrics::DIFF_GUTTER_WIDTH)).flex_none())
+                                .child(diff_number_gutter(None, dark().surface.raised))
+                                .child(diff_number_gutter(None, dark().surface.raised))
+                                .child(
+                                    div()
+                                        .w(px(metrics::DIFF_SIGN_WIDTH))
+                                        .flex_none()
+                                        .bg(dark().surface.raised),
+                                )
                                 .child(
                                     div()
                                         .flex_1()
-                                        .min_w_0()
                                         .px_2()
                                         .py_1()
                                         .whitespace_nowrap()
                                         .child(hunk.header.clone()),
                                 ),
                         );
-                        for line in &hunk.lines {
-                            let (prefix, gutter_bg, gutter_color) = match line.kind {
-                                DiffLineKind::Addition => {
-                                    ('+', dark().semantic.success_bg, dark().text.on_accent)
-                                }
-                                DiffLineKind::Deletion => {
-                                    ('-', dark().semantic.danger_bg, dark().text.on_accent)
-                                }
-                                DiffLineKind::Context => {
-                                    (' ', dark().bg.panel, dark().text.primary)
-                                }
+                        for (line, nums) in hunk.lines.iter().zip(numbers) {
+                            let (prefix, row_bg) = match line.kind {
+                                DiffLineKind::Addition => ('+', dark().diff.addition_bg),
+                                DiffLineKind::Deletion => ('-', dark().diff.deletion_bg),
+                                DiffLineKind::Context => (' ', dark().bg.panel),
                             };
                             content = content.child(
                                 div()
                                     .w_full()
                                     .flex()
                                     .flex_row()
-                                    .bg(dark().bg.panel)
+                                    .bg(row_bg)
+                                    .child(diff_number_gutter(nums.left, row_bg))
+                                    .child(diff_number_gutter(nums.right, row_bg))
                                     .child(
                                         div()
-                                            .w(px(metrics::DIFF_GUTTER_WIDTH))
+                                            .w(px(metrics::DIFF_SIGN_WIDTH))
                                             .flex_none()
                                             .flex()
                                             .justify_center()
                                             .py_1()
-                                            .bg(gutter_bg)
-                                            .text_color(gutter_color)
+                                            .bg(row_bg)
+                                            .text_color(dark().diff.gutter_fg)
                                             .child(prefix.to_string()),
                                     )
                                     .child(
                                         div()
                                             .flex_1()
-                                            .min_w_0()
                                             .px_2()
                                             .py_1()
                                             .text_color(dark().text.primary)
@@ -844,11 +943,15 @@ fn changes_placeholder(key: &'static str) -> Div {
         "changes.diff_loading" => t("changes.diff_loading_desc"),
         _ => t("common.placeholder_no_details"),
     };
-    changes_placeholder_content(
+    let mut placeholder = changes_placeholder_content(
         t(key).to_string(),
         description.to_string(),
         dark().text.primary,
-    )
+    );
+    if key == "changes.loading" || key == "changes.diff_loading" {
+        placeholder = placeholder.child(loading_skeleton(format!("{key}-skeleton")));
+    }
+    placeholder
 }
 
 /// 失败占位：标题本地化；reason 为 wire 数据，不翻译。
@@ -885,6 +988,21 @@ fn summary_row(label: &str, value: String) -> impl IntoElement {
                 .child(label.to_string()),
         )
         .child(div().min_w_0().child(value))
+}
+
+fn diff_number_gutter(n: Option<u32>, bg: gpui::Rgba) -> impl IntoElement {
+    div()
+        .w(px(metrics::DIFF_LINE_NUMBER_WIDTH))
+        .flex_none()
+        .flex()
+        .justify_end()
+        .px_1()
+        .py_1()
+        .bg(bg)
+        .font_family(font::MONO)
+        .text_size(font::SM)
+        .text_color(dark().diff.gutter_fg)
+        .child(format_line_no(n))
 }
 
 #[cfg(test)]
@@ -1049,5 +1167,93 @@ mod tests {
         assert_eq!(state.files.len(), 1);
         assert_eq!(state.activity_summary(), "stale");
         assert!(!state.mark_failed_for_epoch(old_epoch, "late failure"));
+    }
+
+    #[test]
+    fn hunk_line_numbers_advance_from_header_and_fail_closed() {
+        let lines = vec![
+            DiffLineDetail {
+                kind: DiffLineKind::Context,
+                text: "fn a() {".into(),
+            },
+            DiffLineDetail {
+                kind: DiffLineKind::Deletion,
+                text: "    old".into(),
+            },
+            DiffLineDetail {
+                kind: DiffLineKind::Addition,
+                text: "    new".into(),
+            },
+            DiffLineDetail {
+                kind: DiffLineKind::Context,
+                text: "}".into(),
+            },
+        ];
+        assert_eq!(
+            diff_hunk_line_numbers("@@ -10,3 +12,4 @@ fn a", &lines),
+            vec![
+                DiffLineNumbers {
+                    left: Some(10),
+                    right: Some(12)
+                },
+                DiffLineNumbers {
+                    left: Some(11),
+                    right: None
+                },
+                DiffLineNumbers {
+                    left: None,
+                    right: Some(13)
+                },
+                DiffLineNumbers {
+                    left: Some(12),
+                    right: Some(14)
+                },
+            ]
+        );
+        let second = vec![DiffLineDetail {
+            kind: DiffLineKind::Context,
+            text: "keep".into(),
+        }];
+        assert_eq!(
+            diff_hunk_line_numbers("@@ -40 +41 @@", &second),
+            vec![DiffLineNumbers {
+                left: Some(40),
+                right: Some(41)
+            }]
+        );
+        let malformed = vec![DiffLineDetail {
+            kind: DiffLineKind::Addition,
+            text: "no numbers".into(),
+        }];
+        assert_eq!(
+            diff_hunk_line_numbers("@@ garbage @@", &malformed),
+            vec![DiffLineNumbers {
+                left: None,
+                right: None
+            }]
+        );
+        assert_eq!(
+            diff_hunk_line_numbers("not a hunk", &malformed),
+            vec![DiffLineNumbers {
+                left: None,
+                right: None
+            }]
+        );
+        assert_eq!(metrics::CHANGES_FILE_ROW_HEIGHT, 32.0);
+        assert_ne!(dark().diff.addition_bg, dark().semantic.success_bg);
+        assert_ne!(dark().diff.deletion_bg, dark().semantic.danger_bg);
+        assert_eq!(changes_status_chip("modified").0, "M");
+        assert_eq!(changes_status_chip("added").0, "A");
+        assert_eq!(changes_status_chip("deleted").0, "D");
+        assert_eq!(changes_status_chip("R").0, "R");
+        assert_eq!(changes_status_chip("?").0, "?");
+        assert!(ready_state(vec![DiffFileSummary {
+            path: "a.rs".into(),
+            status: "modified".into(),
+            additions: 1,
+            deletions: 0,
+            binary: false,
+        }])
+        .has_reviewable_files_for(Some("s-1")));
     }
 }

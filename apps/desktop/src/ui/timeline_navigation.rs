@@ -3,6 +3,9 @@ use super::accessibility::{AxAction, AxNode, AxRect, AxRole};
 use super::i18n::t;
 use super::*;
 use crate::projection::{TimelineEntry, TimelineEntryKind, TimelineRow};
+use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
+use crate::ui::components::icon::{icon, Icon};
+use crate::ui::theme::{dark, font, metrics};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum MessageKey {
@@ -438,16 +441,100 @@ impl AppView {
         )
     }
 
+    /// GUI3-07：Header Find / 回合入口为 36×36 图标按钮；tooltip 与 AX
+    /// name 仍走 i18n 文案，不用字形当 name。
+    fn navigation_header_icon_button(
+        &mut self,
+        id: &'static str,
+        icon_kind: Icon,
+        label_key: &'static str,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let focus = self.navigation_focus(id, cx);
+        let click_id = id.to_owned();
+        let key_id = id.to_owned();
+        self.navigation_element(id).child(
+            Button::new(SharedString::from(id))
+                .variant(ButtonVariant::Ghost)
+                .padding(ButtonPadding::None)
+                .width(px(metrics::ICON_BUTTON_SIZE))
+                .height(px(metrics::ICON_BUTTON_SIZE))
+                .center()
+                .vcenter()
+                .radius(metrics::CONTROL_RADIUS)
+                .text_color(dark().text.emphasis)
+                .child(icon(icon_kind))
+                .tooltip(t(label_key))
+                .track_focus(&focus)
+                .on_click(cx.listener(move |view, event, window, cx| {
+                    if !view.consume_button_key_click(&click_id, event) {
+                        view.navigation_press(&click_id, window, cx);
+                    }
+                }))
+                .on_activate(cx.listener(move |view, _, window, cx| {
+                    view.note_button_key_activate(&key_id);
+                    view.navigation_press(&key_id, window, cx);
+                    cx.stop_propagation();
+                })),
+        )
+    }
+
+    fn navigation_icon_button(
+        &mut self,
+        id: &'static str,
+        icon_kind: Icon,
+        enabled: bool,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let focus = self.navigation_focus(id, cx);
+        let click_id = id.to_owned();
+        let key_id = id.to_owned();
+        self.navigation_element(id).child(
+            Button::new(SharedString::from(id))
+                .variant(ButtonVariant::Ghost)
+                .padding(ButtonPadding::None)
+                .width(px(metrics::ICON_BUTTON_SIZE))
+                .height(px(metrics::ICON_BUTTON_SIZE))
+                .center()
+                .vcenter()
+                .radius(metrics::CONTROL_RADIUS)
+                .child(icon(icon_kind))
+                .track_focus(&focus)
+                .disabled(!enabled)
+                .on_click(cx.listener(move |view, event, window, cx| {
+                    if !view.consume_button_key_click(&click_id, event) {
+                        view.navigation_press(&click_id, window, cx);
+                    }
+                }))
+                .on_activate(cx.listener(move |view, _, window, cx| {
+                    view.note_button_key_activate(&key_id);
+                    view.navigation_press(&key_id, window, cx);
+                    cx.stop_propagation();
+                })),
+        )
+    }
+
     pub(super) fn navigation_header(&mut self, cx: &mut Context<Self>) -> gpui::Div {
         div()
             .flex()
             .flex_none()
             .items_center()
+            .gap(px(metrics::HEADER_ACTION_GAP))
             .when(self.projection.active_session_id.is_some(), |row| {
-                row.child(self.navigation_button("timeline-find", t("find.title"), true, cx))
+                row.child(self.navigation_header_icon_button(
+                    "timeline-find",
+                    Icon::Find,
+                    "find.title",
+                    cx,
+                ))
             })
             .when(self.turns_available(), |row| {
-                row.child(self.navigation_button("timeline-turns", t("find.turns"), true, cx))
+                row.child(self.navigation_header_icon_button(
+                    "timeline-turns",
+                    Icon::Turns,
+                    "find.turns",
+                    cx,
+                ))
             })
     }
 
@@ -483,10 +570,15 @@ impl AppView {
                         .text_size(font::BODY_SM)
                         .child(self.find_count()),
                 )
-                .child(self.navigation_button("timeline-nav-prev", "↑", has_results, cx))
-                .child(self.navigation_button(
+                .child(self.navigation_icon_button(
+                    "timeline-nav-prev",
+                    Icon::ArrowUp,
+                    has_results,
+                    cx,
+                ))
+                .child(self.navigation_icon_button(
                     "timeline-nav-next",
-                    "↓",
+                    Icon::ArrowDown,
                     has_results,
                     cx,
                 ))
@@ -494,7 +586,7 @@ impl AppView {
             .when(mode == NavigationMode::Turns, |row| {
                 row.child(div().flex_1().child(t("find.turns")))
             })
-            .child(self.navigation_button("timeline-nav-close", "×", true, cx));
+            .child(self.navigation_icon_button("timeline-nav-close", Icon::Cancel, true, cx));
         controls = controls.flex_none();
         let scope = self.navigation_scope();
         let mut panel = self

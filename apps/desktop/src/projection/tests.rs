@@ -2051,6 +2051,36 @@ fn task_rail_groups_date_then_project_and_keeps_unassigned() {
 }
 
 #[test]
+fn timeline_skips_redundant_project_header_for_unassigned_or_scoped_singleton() {
+    let now = day_ms(20);
+    let unassigned =
+        DesktopProjection::from_snapshot(&snapshot_with_sessions(vec![session_entry(
+            "s-orphan", "Orphan", now,
+        )]));
+    let today = &unassigned.timeline_groups(None, now)[0];
+    assert!(today.skip_project_header(None));
+
+    let snapshot = snapshot_with_named_workspaces(
+        vec![
+            json!({ "id": "ws-alpha", "name": "Alpha" }),
+            json!({ "id": "ws-beta", "name": "Beta" }),
+        ],
+        vec![
+            session_entry_in("s-alpha", "Alpha", now, Some("ws-alpha")),
+            session_entry_in("s-beta", "Beta", now, Some("ws-beta")),
+        ],
+    );
+    let projection = DesktopProjection::from_snapshot(&snapshot);
+    let mixed = projection.timeline_groups(None, now);
+    assert!(!mixed[0].skip_project_header(None));
+
+    let scoped = projection.timeline_groups(Some("ws-alpha"), now);
+    assert_eq!(scoped.len(), 1);
+    assert!(scoped[0].skip_project_header(Some("ws-alpha")));
+    assert!(!scoped[0].skip_project_header(None));
+}
+
+#[test]
 fn task_rail_empty_state_and_scope_options() {
     let empty = DesktopProjection::default();
     assert!(empty.timeline_groups(None, 1).is_empty());
