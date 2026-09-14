@@ -8,7 +8,7 @@
 
 **非目标**：不替代真实 Provider 冒烟与真实模型口径（[verification.md §2.1](spec/verification.md) 的 `opencode-go / glm-5.3-flash` 约定仍然约束「真实验证」语义；mock 证据不得写成真实冒烟）；不改 agent loop / engine 行为；不引入新的生产依赖；不做通用 LLM 网关；不设置全量门禁（维持仓库现状），不补历史覆盖率。
 
-**可测账号口径**（用户确认当前可用）：xAI OAuth、OpenCode Go（API key）、GLM Coding Plan（API key）、Kimi Coding Plan（`kimi-code`，OAuth）、阿里 Coding Plan（`qwen-token-plan`，API key）、DeepSeek（API key）。ChatGPT、Anthropic 与 kimi-platform 无可用账号，其 fixture 按契约测试形状合成并如实标注「未经真实录制」，优先级最低。
+**可测账号口径**（用户确认当前可用）：xAI OAuth、OpenCode Go（API key）、GLM Coding Plan（API key）、Kimi Coding Plan（`kimi-code`，OAuth 或 Coding Plan API key）、阿里 Coding Plan（`qwen-token-plan`，API key）、DeepSeek（API key）。ChatGPT、Anthropic 与 kimi-platform 无可用账号，其 fixture 按契约测试形状合成并如实标注「未经真实录制」，优先级最低。
 
 ## 2. 接口事实清单（mock 必须覆盖的全部端点）
 
@@ -33,7 +33,7 @@ token 端点共用形状：form-urlencoded 请求；响应 JSON 出现 `error` �
 | qwen-token-plan | `POST /chat/completions`（表内 10 模型；未登记模型 HTTP 前拒绝） | `GET /models` | `GET /models` | Bearer |
 | deepseek | `POST /chat/completions` | `GET /models` | `GET /models` | Bearer |
 | kimi-platform | `POST /chat/completions` | `GET /models` | `GET /models` | Bearer |
-| kimi-code | `POST /chat/completions`（固定） | `GET /models`（OpenAI `data[]`） | —（纯 OAuth，无 key 验证路径） | Bearer（仅 OAuth） |
+| kimi-code | `POST /chat/completions`（固定） | `GET /models`（OpenAI `data[]`） | `GET /models`（verify_api_key，Coding Plan API key） | Bearer（OAuth 或 API key） |
 | anthropic（transport 基线，非注册表通道） | `POST /v1/messages` | 静态目录，无 HTTP | — | `x-api-key` + `anthropic-version: 2023-06-01` |
 
 补充：所有请求带 `x-trace-id`（有 trace_id 时）与 UA `pawork`；重定向策略 none（跨域 3xx fail-closed）；`has_more: true` 的目录响应一律拒绝（不支持翻页）；空数组合法。
@@ -196,7 +196,7 @@ Full workspace gate: NOT RUN（当前未设置全量门禁）
 ### 已知缺口
 
 1. **GUI Run 事件路径静默断连（BUG-GUI-01）**：Run 启动约 1.5–10 秒连接被静默关闭，6 次复现；阻断真窗口取消主路径与断连期间的设置/额度刷新；CLI 取消已验证。已登记 [backlog.md §8](spec/backlog.md)。
-2. **OAuth 请求前刷新缺陷（BUG-OAUTH-01）**：FileBackend 路径 metadata 比较恒真导致 refresh 被静默跳过；判别实验与复验配方见 [backlog.md §8](spec/backlog.md)。mock 环境的 device 登录与轮转不受影响。
+2. **OAuth 请求前刷新缺陷（BUG-OAUTH-01）**：已修复——FileBackend 刷新比较排除账号 `display_name`；登记与回归见 [backlog.md §8](spec/backlog.md)。
 3. **usage ledger request-id 跨进程撞车（BUG-USAGE-01）**：同 data dir 第二个 Host 进程跑对话报 `usage record id conflict`，第二程用量不落账；见 [backlog.md §8](spec/backlog.md)。
 4. **GUI 三窗额度显示**：协议层已由 `quota_probe.py` 验证（同 socket 同 token 三窗 200）；本机预构建 bundle 早于 API 1.16 的 per-credential 额度 UI（二进制内无 `settings.quota.*` 字符串），设置页仅显示 ADR-056 的「Usage unavailable」诚实空态。待含 V1_16 UI 的 bundle 重建后人工复验。
 5. **工具流固定 tool_call_id（mock 限制）**：mock fixture 的 tool_call_id 固定，同一 data dir 第二次工具 Run 撞事件 UNIQUE 约束（CLI 与 GUI 均复现）；首轮工具流正常。属 mock 数据限制，非产品缺陷。

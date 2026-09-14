@@ -232,6 +232,8 @@ fn require_bearer_credential(
     Ok(credential)
 }
 
+/// 已知 id 的 transport / 能力提示，不是 GUI 选择目录。
+/// 可选模型只来自 `list_models` 的远端 `GET {base}/language-models`。
 pub fn builtin_models() -> Vec<ModelDefinition> {
     fn model(
         id: &str,

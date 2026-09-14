@@ -1,8 +1,9 @@
-//! Kimi Code OAuth adapter（SET-4 A2）：只消费 OAuth bearer，只走
-//! OpenAI-compatible Chat Completions（api.kimi.com/coding/v1）。
+//! Kimi Code / Coding Plan adapter（SET-4 A2）：只走 OpenAI-compatible
+//! Chat Completions（api.kimi.com/coding/v1）。
 //!
-//! OAuth 获取 / 刷新归 pawork-auth（Device Flow，端点在 registry 预设）；
-//! 本 adapter 不接受 API key 形态凭证。SET-5 起 `list_models` 走远端
+//! OAuth 获取 / 刷新归 pawork-auth（Device Flow，端点在 registry 预设）。
+//! Coding Plan API key 与 OAuth bearer 用法相同（`Authorization: Bearer`）；
+//! 本 adapter 同时接受两种形态。SET-5 起 `list_models` 走远端
 //! `GET {base}/models`（与官方 kimi-cli 同端点，OpenAI 风格 data[] 解析；
 //! 已知 id 沿用 builtin 元数据，未知 id 只给保守默认；形状不符即 Err）。
 
@@ -62,7 +63,7 @@ impl KimiCodeProvider {
         config: KimiCodeConfig,
         credential: Option<ResolvedCredential>,
     ) -> Result<Self, ProviderError> {
-        let credential = require_oauth(credential)?;
+        let credential = require_bearer_credential(credential)?;
         // SET-5：远端目录客户端（GET {base}/models），超时语义与 chat 对齐。
         let mut models_http_config = config.http.clone();
         if let Some(timeout) = config.request_timeout {
@@ -98,7 +99,7 @@ impl ModelProvider for KimiCodeProvider {
         &self,
         _credential: Option<&ResolvedCredential>,
     ) -> Result<Vec<ModelDefinition>, ProviderError> {
-        // 远端目录：OAuth bearer 请求官方 kimi-cli 同款 /models 端点。
+        // 远端目录：Bearer（OAuth 或 Coding Plan API key）请求官方 /models。
         let auth_header = (
             "Authorization".to_string(),
             format!("Bearer {}", self.credential.expose_secret()),
@@ -153,21 +154,23 @@ impl ModelProvider for KimiCodeProvider {
     }
 }
 
-fn require_oauth(
+fn require_bearer_credential(
     credential: Option<ResolvedCredential>,
 ) -> Result<ResolvedCredential, ProviderError> {
     let credential = credential.ok_or_else(|| {
         ProviderError::new(
             ProviderErrorKind::Authentication,
-            "Kimi Code requires an OAuth bearer credential",
+            "Kimi Code requires an OAuth bearer or API key credential",
         )
     })?;
-    if credential.kind() != CredentialKind::OAuthBearer
-        || credential.expose_secret().trim().is_empty()
-    {
+    let accepted = matches!(
+        credential.kind(),
+        CredentialKind::OAuthBearer | CredentialKind::ApiKey
+    ) && !credential.expose_secret().trim().is_empty();
+    if !accepted {
         return Err(ProviderError::new(
             ProviderErrorKind::Authentication,
-            "Kimi Code accepts only a non-empty OAuth bearer credential",
+            "Kimi Code accepts only a non-empty OAuth bearer or API key credential",
         ));
     }
     Ok(credential)
@@ -221,14 +224,14 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
-    fn oauth_is_required_and_api_key_is_rejected() {
+    fn bearer_api_key_or_oauth_is_required() {
         for credential in [
             None,
-            Some(ResolvedCredential::new(CredentialKind::ApiKey, "sk-test")),
             Some(ResolvedCredential::new(
                 CredentialKind::SessionToken,
                 "session",
             )),
+            Some(ResolvedCredential::new(CredentialKind::ApiKey, "  ")),
         ] {
             assert_eq!(
                 KimiCodeProvider::new(KimiCodeConfig::default(), credential)
@@ -237,6 +240,13 @@ mod tests {
                     .kind,
                 ProviderErrorKind::Authentication
             );
+        }
+        for credential in [
+            ResolvedCredential::new(CredentialKind::ApiKey, "sk-kimi-test"),
+            ResolvedCredential::new(CredentialKind::OAuthBearer, "oauth-token"),
+        ] {
+            KimiCodeProvider::new(KimiCodeConfig::default(), Some(credential))
+                .expect("bearer credential must construct");
         }
     }
 
@@ -294,6 +304,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn remote_models_accept_coding_plan_api_key() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/models"))
+            .and(header("authorization", "Bearer sk-kimi-plan"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [{"id": "kimi-for-coding", "display_name": "K2.8 Preview"}]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let mut config = KimiCodeConfig::new(server.uri());
+        config.http = HttpClientConfig::builder().disable_system_proxy().build();
+        let provider = KimiCodeProvider::new(
+            config,
+            Some(ResolvedCredential::new(
+                CredentialKind::ApiKey,
+                "sk-kimi-plan",
+            )),
+        )
+        .expect("construct");
+        let models = provider.list_models(None).await.expect("remote models");
+        assert_eq!(models[0].id.as_str(), "kimi-for-coding");
+        assert_eq!(models[0].display_name, "K2.8 Preview");
+        server.verify().await;
+    }
+
+    #[tokio::test]
     async fn remote_models_shape_mismatch_returns_err() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -337,5 +376,41 @@ mod tests {
             .err()
             .expect("duplicate credential header must fail");
         assert_eq!(error.kind, ProviderErrorKind::InvalidRequest);
+    }
+
+    #[tokio::test]
+    #[ignore = "live Coding Plan key; set PAWORK_TEST_KIMI_CODE_KEY"]
+    async fn live_coding_plan_api_key_lists_models() {
+        let key = std::env::var("PAWORK_TEST_KIMI_CODE_KEY")
+            .expect("PAWORK_TEST_KIMI_CODE_KEY must be set for this ignored test");
+        let mut config = KimiCodeConfig::default();
+        config.http = HttpClientConfig::builder().disable_system_proxy().build();
+        let provider = KimiCodeProvider::new(
+            config,
+            Some(ResolvedCredential::new(CredentialKind::ApiKey, key.clone())),
+        )
+        .expect("construct");
+        let models = provider
+            .list_models(None)
+            .await
+            .expect("live Coding Plan /models");
+        assert!(
+            models
+                .iter()
+                .any(|model| model.id.as_str() == "kimi-for-coding"),
+            "unexpected live catalog: {:?}",
+            models
+                .iter()
+                .map(|model| model.id.as_str())
+                .collect::<Vec<_>>()
+        );
+        let verify_config = crate::ApiKeyChannelConfig::new(
+            crate::channel_preset(PROVIDER_ID).expect("kimi-code preset"),
+        )
+        .expect("verify config")
+        .with_http(HttpClientConfig::builder().disable_system_proxy().build());
+        crate::verify_api_key(verify_config, &key)
+            .await
+            .expect("Settings verify_api_key must accept a live Coding Plan key");
     }
 }

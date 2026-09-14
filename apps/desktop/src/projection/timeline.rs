@@ -28,6 +28,8 @@ pub enum TimelineRow {
         group: Option<Vec<usize>>,
         terminal: usize,
     },
+    /// 当前 Run 尚未到达终态时的 live 用量 / 时长行。
+    LiveRunMetrics,
 }
 
 /// timeline 行组装的 run 终态判定：reducer 的 fork_boundary 是唯一定义源
@@ -196,6 +198,17 @@ impl DesktopProjection {
                     }
                     ix += 1;
                 }
+            }
+        }
+        if let Some(run_id) = self.active_run_id.as_deref() {
+            let has_terminal = rows.iter().any(|row| match row {
+                TimelineRow::RunSummary { terminal, .. } => {
+                    self.timeline[*terminal].run_id.as_deref() == Some(run_id)
+                }
+                _ => false,
+            });
+            if !has_terminal {
+                rows.push(TimelineRow::LiveRunMetrics);
             }
         }
         rows

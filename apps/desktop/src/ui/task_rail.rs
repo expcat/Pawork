@@ -685,126 +685,155 @@ impl AppView {
             let activate_toggle_key = key.clone();
             let header_row_key = format!("project-{key}");
             let header_row_key_click = header_row_key.clone();
-            // UI-2 项目头：chevron、名称与右对齐计数共用完整悬停 / 焦点面；
-            // 定向「+」（36×36、字形 20px / OPT-D；Unassigned 无 +）。折叠态只显示头。
-            let mut header = div()
-                .mt(px(header_gap))
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap_2()
+            // UI-2 项目头：chevron、名称、计数与定向「+」共用完整悬停 /
+            // 焦点面（R03：高亮必须包住「+」）。「+」仍只建任务、不折叠。
+            // Unassigned 无 +。折叠态只显示头。
+            let header_row = ListRow::project_header(header_id)
+                .radius(metrics::CONTROL_RADIUS)
+                .track_focus(&header_focus)
                 .child(
-                    ListRow::project_header(header_id)
-                        .radius(metrics::CONTROL_RADIUS)
-                        .track_focus(&header_focus)
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_1()
+                        .flex_1()
+                        .min_w_0()
+                        .text_size(font::BASE)
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(dark().text.emphasis)
+                        .child(if expanded {
+                            icon_sized(Icon::ChevronDown, px(metrics::ICON_SM))
+                        } else {
+                            icon_sized(Icon::ChevronRight, px(metrics::ICON_SM))
+                        })
+                        // 长项目头标题 truncate（flex_1 + min_w_0）。
+                        .child(div().flex_1().truncate().child(project.name.clone())),
+                )
+                .child({
+                    // 与任务行改名 / 归档共用 64px 尾槽：左格计数、右格「+」。
+                    // Unassigned 右格留空，计数仍与改名对齐。
+                    let mut trailing = div()
+                        .w(px(metrics::rail_trailing_width()))
+                        .flex_none()
+                        .flex()
+                        .flex_row()
+                        .items_center()
                         .child(
                             div()
+                                .w(px(metrics::RAIL_SESSION_ACTION_SIZE))
+                                .h(px(metrics::RAIL_SESSION_ACTION_SIZE))
                                 .flex()
-                                .flex_row()
                                 .items_center()
-                                .gap_1()
-                                .flex_1()
-                                .min_w_0()
-                                .text_size(font::BASE)
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(dark().text.emphasis)
-                                .child(if expanded {
-                                    icon_sized(Icon::ChevronDown, px(metrics::ICON_SM))
-                                } else {
-                                    icon_sized(Icon::ChevronRight, px(metrics::ICON_SM))
-                                })
-                                // 长项目头标题 truncate（flex_1 + min_w_0）。
-                                .child(div().flex_1().truncate().child(project.name.clone())),
-                        )
-                        .child(
-                            div()
-                                .w(px(metrics::RAIL_META_SLOT_WIDTH))
-                                .pr(px(8.0))
-                                .flex_none()
-                                .flex()
-                                .justify_end()
+                                .justify_center()
                                 .child(
                                     Label::new(project.task_count().to_string())
                                         .size(font::BODY_SM)
                                         .color(dark().text.secondary),
                                 ),
-                        )
-                        .on_click(cx.listener(move |view, event: &ClickEvent, window, cx| {
-                            // 行级键盘激活后的同键 keyup 合成 click 在此吞除。
-                            if view.consume_row_key_click(&header_row_key_click, event) {
-                                return;
-                            }
-                            view.on_toggle_project(toggle_key.clone(), window, cx);
-                        }))
-                        .on_activate(cx.listener(
-                            move |view, _event: &KeyDownEvent, window, cx| {
-                                // 菜单打开时让位：Enter 由根节点菜单接管（P3a），
-                                // 不激活不 stop，事件继续冒泡。
-                                if view.open_menu.is_some() {
-                                    // 双路投递第二路 keyup 合成 click 吞除标记
-                                    // 重新武装（防展开/收起被反向触发）。
-                                    view.note_row_key_activate(&header_row_key);
-                                    return;
+                        );
+                    if !project.is_unassigned() {
+                        if let Some(workspace_id) = workspace_id {
+                            let add_focus = self.rail_row_focus_handle(
+                                &RailStop::ProjectAdd {
+                                    bucket,
+                                    key: key.clone(),
                                 }
-                                view.note_row_key_activate(&header_row_key);
-                                view.on_toggle_project(activate_toggle_key.clone(), window, cx);
-                                cx.stop_propagation();
-                            },
-                        )),
-                );
-            if !project.is_unassigned() {
-                if let Some(workspace_id) = workspace_id {
-                    let add_focus = self.rail_row_focus_handle(
-                        &RailStop::ProjectAdd {
-                            bucket,
-                            key: key.clone(),
+                                .focus_key(),
+                                &*cx,
+                            );
+                            let project_add_id = add_id.clone();
+                            let activate_workspace_id = workspace_id.clone();
+                            let activate_project_add_id = project_add_id.clone();
+                            trailing = trailing.child(
+                                Button::new(add_id)
+                                    .track_focus(&add_focus)
+                                    .variant(ButtonVariant::Ghost)
+                                    .disabled(!can_create)
+                                    .padding(ButtonPadding::None)
+                                    .width(px(metrics::RAIL_SESSION_ACTION_SIZE))
+                                    .height(px(metrics::RAIL_SESSION_ACTION_SIZE))
+                                    .center()
+                                    .radius(metrics::CONTROL_RADIUS)
+                                    .child(icon(Icon::Plus))
+                                    .on_click(cx.listener(
+                                        move |view, event: &ClickEvent, window, cx| {
+                                            // 键盘激活后的同键 keyup 合成 click 在此吞除
+                                            // （防 Enter 后 keyup 重复建稿）。
+                                            if view.consume_button_key_click(&project_add_id, event)
+                                            {
+                                                return;
+                                            }
+                                            view.on_project_add_task(
+                                                workspace_id.clone(),
+                                                window,
+                                                cx,
+                                            );
+                                            cx.stop_propagation();
+                                        },
+                                    ))
+                                    .on_activate(cx.listener(
+                                        move |view, _event: &KeyDownEvent, window, cx| {
+                                            // 菜单已开时让位给根节点菜单 Enter 接管。
+                                            if view.open_menu.is_some() {
+                                                // 双路投递第二路 keyup 合成 click
+                                                // 吞除标记重新武装（防重复建稿）。
+                                                view.note_button_key_activate(
+                                                    &activate_project_add_id,
+                                                );
+                                                return;
+                                            }
+                                            view.note_button_key_activate(&activate_project_add_id);
+                                            view.on_project_add_task(
+                                                activate_workspace_id.clone(),
+                                                window,
+                                                cx,
+                                            );
+                                            cx.stop_propagation();
+                                        },
+                                    )),
+                            );
+                        } else {
+                            trailing = trailing.child(
+                                div()
+                                    .w(px(metrics::RAIL_SESSION_ACTION_SIZE))
+                                    .h(px(metrics::RAIL_SESSION_ACTION_SIZE))
+                                    .flex_none(),
+                            );
                         }
-                        .focus_key(),
-                        &*cx,
-                    );
-                    let project_add_id = add_id.clone();
-                    let activate_workspace_id = workspace_id.clone();
-                    let activate_project_add_id = project_add_id.clone();
-                    header = header.child(
-                        Button::new(add_id)
-                            .track_focus(&add_focus)
-                            .variant(ButtonVariant::Ghost)
-                            .disabled(!can_create)
-                            .padding(ButtonPadding::None)
-                            .width(px(metrics::RAIL_ICON_BUTTON_SIZE))
-                            .height(px(metrics::RAIL_ICON_BUTTON_SIZE))
-                            .center()
-                            .radius(metrics::CONTROL_RADIUS)
-                            .child(icon(Icon::Plus))
-                            .on_click(cx.listener(move |view, event: &ClickEvent, window, cx| {
-                                // 键盘激活后的同键 keyup 合成 click 在此吞除
-                                // （防 Enter 后 keyup 重复建稿）。
-                                if view.consume_button_key_click(&project_add_id, event) {
-                                    return;
-                                }
-                                view.on_project_add_task(workspace_id.clone(), window, cx);
-                            }))
-                            .on_activate(cx.listener(
-                                move |view, _event: &KeyDownEvent, window, cx| {
-                                    // 菜单已开时让位给根节点菜单 Enter 接管。
-                                    if view.open_menu.is_some() {
-                                        // 双路投递第二路 keyup 合成 click
-                                        // 吞除标记重新武装（防重复建稿）。
-                                        view.note_button_key_activate(&activate_project_add_id);
-                                        return;
-                                    }
-                                    view.note_button_key_activate(&activate_project_add_id);
-                                    view.on_project_add_task(
-                                        activate_workspace_id.clone(),
-                                        window,
-                                        cx,
-                                    );
-                                    cx.stop_propagation();
-                                },
-                            )),
-                    );
-                }
-            }
+                    } else {
+                        trailing = trailing.child(
+                            div()
+                                .w(px(metrics::RAIL_SESSION_ACTION_SIZE))
+                                .h(px(metrics::RAIL_SESSION_ACTION_SIZE))
+                                .flex_none(),
+                        );
+                    }
+                    trailing
+                });
+            let header = div().mt(px(header_gap)).w_full().child(
+                header_row
+                    .on_click(cx.listener(move |view, event: &ClickEvent, window, cx| {
+                        // 行级键盘激活后的同键 keyup 合成 click 在此吞除。
+                        if view.consume_row_key_click(&header_row_key_click, event) {
+                            return;
+                        }
+                        view.on_toggle_project(toggle_key.clone(), window, cx);
+                    }))
+                    .on_activate(cx.listener(move |view, _event: &KeyDownEvent, window, cx| {
+                        // 菜单打开时让位：Enter 由根节点菜单接管（P3a），
+                        // 不激活不 stop，事件继续冒泡。
+                        if view.open_menu.is_some() {
+                            // 双路投递第二路 keyup 合成 click 吞除标记
+                            // 重新武装（防展开/收起被反向触发）。
+                            view.note_row_key_activate(&header_row_key);
+                            return;
+                        }
+                        view.note_row_key_activate(&header_row_key);
+                        view.on_toggle_project(activate_toggle_key.clone(), window, cx);
+                        cx.stop_propagation();
+                    })),
+            );
             children.push(header.into_any_element());
         }
         let mut active_offset = None;
@@ -951,6 +980,7 @@ impl AppView {
                         task.session_id
                     )))
                     .mt(px(row_gap))
+                    .w_full()
                     .relative()
                     .on_hover(cx.listener(move |view, hovered: &bool, _window, cx| {
                         if *hovered {
@@ -1045,7 +1075,7 @@ impl AppView {
                     shell = shell.child(
                         div()
                             .absolute()
-                            .right(px(8.0))
+                            .right(px(metrics::RAIL_TRAILING_INSET))
                             .top(px((row_height - metrics::RAIL_SESSION_ACTION_SIZE) / 2.0))
                             .flex()
                             .items_center()

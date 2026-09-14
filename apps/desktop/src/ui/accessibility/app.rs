@@ -19,9 +19,9 @@ use crate::ui::components::dropdown::ANCHOR_GAP_Y;
 use crate::ui::components::dropdown::MENU_MAX_HEIGHT;
 use crate::ui::i18n::t;
 use crate::ui::inspector::{
-    plain_terminal_output, terminal_empty_output, terminal_header_height,
-    terminal_size_for_display, terminal_stepper_ax_rects, InspectorTab, TERMINAL_COLUMNS_STEP,
-    TERMINAL_ROWS_STEP,
+    plain_terminal_output, terminal_chrome_top, terminal_empty_output, terminal_size_for_display,
+    terminal_stepper_ax_rects, InspectorTab, TERMINAL_COLUMNS_STEP, TERMINAL_ROWS_STEP,
+    TERMINAL_TAB_BAR_HEIGHT,
 };
 use crate::ui::resources::ResourcesFetch;
 use crate::ui::settings::{
@@ -199,19 +199,22 @@ impl AppView {
                 SettingsControl::ApiKeyInput(escaped) => Some(escaped),
                 _ => None,
             });
-        if let Some(input) = self.settings_account_names.iter().find_map(|(id, input)| {
-            (dynamic_identifier("settings-account-name", id) == request.identifier)
-                .then_some(input.clone())
-        }) {
-            match request.action {
-                AxAction::Focus => window.focus(&input.read(cx).focus_handle(cx)),
-                AxAction::SetValue => input.update(cx, |input, cx| {
-                    input.set_text(request.value.unwrap_or_default(), cx)
-                }),
-                AxAction::Press => return,
+        if let Some(rename) = self.settings_account_rename.as_ref() {
+            let input_id = crate::ui::settings::settings_account_rename_input_identifier(
+                &rename.provider_id,
+                &rename.credential_id,
+            );
+            if input_id == request.identifier {
+                match request.action {
+                    AxAction::Focus => window.focus(&rename.input.read(cx).focus_handle(cx)),
+                    AxAction::SetValue => rename.input.update(cx, |input, cx| {
+                        input.set_text(request.value.unwrap_or_default(), cx)
+                    }),
+                    AxAction::Press => return,
+                }
+                cx.notify();
+                return;
             }
-            cx.notify();
-            return;
         }
         match request.action {
             AxAction::Focus => match request.identifier.as_str() {
@@ -545,6 +548,12 @@ impl AppView {
             "terminal-cols-inc" => self.adjust_terminal_size(TERMINAL_COLUMNS_STEP, 0, cx),
             "terminal-rows-dec" => self.adjust_terminal_size(0, -TERMINAL_ROWS_STEP, cx),
             "terminal-rows-inc" => self.adjust_terminal_size(0, TERMINAL_ROWS_STEP, cx),
+            "terminal-new-tab" => self.on_new_terminal_tab(cx),
+            other if other.starts_with("terminal-tab-") => {
+                if let Some(id) = other.strip_prefix("terminal-tab-") {
+                    self.on_select_terminal_tab(id, cx);
+                }
+            }
             "terminal-start" => {
                 // 与可见按钮同一语义：可操作单槽是 Size；已知 exited 终端与
                 // 未创建一样走 Start（新建终端）。
@@ -561,7 +570,7 @@ impl AppView {
                 if self.on_settings_quota_action(identifier, cx) {
                     return true;
                 }
-                if self.on_settings_account_action(identifier, cx) {
+                if self.on_settings_account_action(identifier, window, cx) {
                     return true;
                 }
                 // SET-4/5：settings 写动作与「设为默认」均与可见按钮同源
@@ -846,7 +855,7 @@ impl AppView {
         let width = f32::from(viewport.width).max(1.0);
         let height = f32::from(viewport.height).max(1.0);
         // P2-1：Settings 壳不渲染 RunStatusBar（与 render 同源），内容用全高；
-        // 工作台仅运行中 / 待审批时预留 StatusBar。
+        // 工作台常驻 StatusBar。
         let settings_route = self.route == AppRoute::Settings;
         let content_height = if !self.run_status_visible() {
             height
@@ -1244,7 +1253,10 @@ impl AppView {
                         inset,
                         top,
                         if !project.is_unassigned() && project.workspace_id.is_some() {
-                            (width - metrics::RAIL_ICON_BUTTON_SIZE - 8.0).max(0.0)
+                            (width
+                                - metrics::RAIL_TRAILING_INSET
+                                - metrics::RAIL_SESSION_ACTION_SIZE)
+                                .max(0.0)
                         } else {
                             width
                         },
@@ -1262,6 +1274,19 @@ impl AppView {
                 )
                 .action(AxAction::Press),
             );
+            let count_y =
+                top + (metrics::RAIL_TASK_ROW_HEIGHT - metrics::RAIL_SESSION_ACTION_SIZE) / 2.0;
+            nodes.push(AxNode::new(
+                rail_project_count_identifier(bucket, &key),
+                AxRole::StaticText,
+                project.task_count().to_string(),
+                AxRect::new(
+                    inset + metrics::rail_trailing_origin_x(width),
+                    count_y,
+                    metrics::RAIL_SESSION_ACTION_SIZE,
+                    metrics::RAIL_SESSION_ACTION_SIZE,
+                ),
+            ));
             if !project.is_unassigned() && project.workspace_id.is_some() {
                 let add_focus_key = rail_project_occurrence_key("project-add", bucket, &key);
                 nodes.push(
@@ -1270,11 +1295,10 @@ impl AppView {
                         AxRole::Button,
                         t("rail.new_in_project").replace("{}", &project.name),
                         AxRect::new(
-                            inset + (width - metrics::RAIL_ICON_BUTTON_SIZE).max(0.0),
-                            top + (metrics::RAIL_TASK_ROW_HEIGHT - metrics::RAIL_ICON_BUTTON_SIZE)
-                                / 2.0,
-                            metrics::RAIL_ICON_BUTTON_SIZE,
-                            metrics::RAIL_ICON_BUTTON_SIZE,
+                            inset + metrics::rail_trailing_plus_x(width),
+                            count_y,
+                            metrics::RAIL_SESSION_ACTION_SIZE,
+                            metrics::RAIL_SESSION_ACTION_SIZE,
                         ),
                     )
                     .enabled(can_create)
@@ -1379,10 +1403,7 @@ impl AppView {
                                     AxRole::Button,
                                     t("taskrail.rename"),
                                     AxRect::new(
-                                        (inset + width
-                                            - 8.0
-                                            - metrics::RAIL_SESSION_ACTION_SIZE * 2.0)
-                                            .max(inset),
+                                        (inset + metrics::rail_trailing_origin_x(width)).max(inset),
                                         action_y,
                                         metrics::RAIL_SESSION_ACTION_SIZE,
                                         metrics::RAIL_SESSION_ACTION_SIZE,
@@ -1404,8 +1425,7 @@ impl AppView {
                                     AxRole::Button,
                                     t("taskrail.archive"),
                                     AxRect::new(
-                                        (inset + width - 8.0 - metrics::RAIL_SESSION_ACTION_SIZE)
-                                            .max(inset),
+                                        (inset + metrics::rail_trailing_plus_x(width)).max(inset),
                                         action_y,
                                         metrics::RAIL_SESSION_ACTION_SIZE,
                                         metrics::RAIL_SESSION_ACTION_SIZE,
@@ -1675,6 +1695,7 @@ impl AppView {
                         rem_px,
                         &self.expanded_timeline_details,
                         self.changes_available_for_active(),
+                        self.projection.active_run_id.as_deref(),
                     ),
                 )
             })
@@ -1873,7 +1894,7 @@ impl AppView {
             }
             list = list.child(approval_node);
         }
-        if !self.timeline_following {
+        if !self.timeline_following && self.timeline_content_overflows(window) {
             list = list.child(
                 AxNode::new(
                     "timeline-back-to-bottom",
@@ -1965,12 +1986,7 @@ impl AppView {
                         dynamic_identifier("thinking-toggle", key),
                         AxRole::Button,
                         t("timeline.thinking"),
-                        AxRect::new(
-                            rect.x,
-                            rect.y,
-                            rect.width,
-                            metrics::TOOL_GROUP_HEADER_HEIGHT,
-                        ),
+                        AxRect::new(rect.x, rect.y, rect.width, metrics::THINKING_HEADER_HEIGHT),
                     )
                     .description(if expanded { "Expanded" } else { "Collapsed" })
                     .focused(
@@ -1991,10 +2007,9 @@ impl AppView {
                                 t("timeline.thinking"),
                                 AxRect::new(
                                     rect.x + 12.0,
-                                    rect.y + metrics::TOOL_GROUP_HEADER_HEIGHT + 12.0,
+                                    rect.y + metrics::THINKING_HEADER_HEIGHT + 12.0,
                                     (rect.width - 24.0).max(0.0),
-                                    (rect.height - metrics::TOOL_GROUP_HEADER_HEIGHT - 24.0)
-                                        .max(0.0),
+                                    (rect.height - metrics::THINKING_HEADER_HEIGHT - 24.0).max(0.0),
                                 ),
                             )
                             .value(text.clone()),
@@ -2223,12 +2238,17 @@ impl AppView {
                     y += layout.height + metrics::TIMELINE_FOOTER_GAP;
                 }
                 if let Some(label) = run_footer_label(terminal_entry) {
+                    let footer_label = self.projection.run_footer_display_label(
+                        terminal_entry.run_id.as_deref(),
+                        label,
+                        now_ms,
+                    );
                     region = region.child(AxNode::new(
                         dynamic_identifier("run-footer", &terminal_entry.event_id),
                         AxRole::StaticText,
                         format!(
                             "{} · {}",
-                            label,
+                            footer_label,
                             display_time(&terminal_entry.timestamp, now_ms)
                         ),
                         AxRect::new(rect.x, y, rect.width, ROW_HEIGHT),
@@ -2270,6 +2290,20 @@ impl AppView {
                     entry_node = self.entry_actions_ax(entry_node, &terminal_entry.event_id);
                 }
                 region.child(entry_node)
+            }
+            TimelineRow::LiveRunMetrics => {
+                let now_ms = crate::ui::now_unix_ms();
+                AxNode::new(
+                    "run-live-metrics",
+                    AxRole::StaticText,
+                    t("run.duration"),
+                    rect,
+                )
+                .value(
+                    self.projection
+                        .run_usage_display(self.projection.active_run_id.as_deref(), now_ms)
+                        .status_label(),
+                )
             }
         }
     }
@@ -2457,10 +2491,15 @@ impl AppView {
         if !self.model_search_query.is_empty() {
             clear_node = clear_node.action(AxAction::Press);
         }
+        let placeholder = if matches!(self.open_menu, Some(MenuKind::Model)) {
+            t("model_search.placeholder_providers")
+        } else {
+            t("model_search.placeholder")
+        };
         AxNode::new(
             "model-search",
             AxRole::Group,
-            t("model_search.placeholder"),
+            placeholder,
             AxRect::new(
                 input.x,
                 input.y,
@@ -2469,16 +2508,11 @@ impl AppView {
             ),
         )
         .child(
-            AxNode::new(
-                "model-search-input",
-                AxRole::TextArea,
-                t("model_search.placeholder"),
-                input,
-            )
-            .value(&self.model_search_query)
-            .focused(self.model_search_focus.is_focused(window))
-            .action(AxAction::Focus)
-            .action(AxAction::SetValue),
+            AxNode::new("model-search-input", AxRole::TextArea, placeholder, input)
+                .value(&self.model_search_query)
+                .focused(self.model_search_focus.is_focused(window))
+                .action(AxAction::Focus)
+                .action(AxAction::SetValue),
         )
         .child(clear_node)
     }
@@ -2660,29 +2694,18 @@ impl AppView {
             );
         }
         if matches!(self.open_menu, Some(MenuKind::Model)) {
-            let entries = self.filtered_model_entries();
             let highlight = self.menu_highlight_effective(self.menu_selected_index());
             let bounds = |id: &str| self.settings_menu_element_bounds(id, "model-menu");
             let mut menu = AxNode::new("model-menu", AxRole::Group, "Models", bounds("model-menu"))
                 .child(self.model_search_ax(window, "model-menu"));
-            if let Some(model) = entries.get(highlight) {
-                menu = menu.child(AxNode::new(
-                    "model-menu-status",
-                    AxRole::StaticText,
-                    format!(
-                        "{} · {}",
-                        model.provider_id,
-                        self.model_provider_status(&model.provider_id)
-                    ),
-                    bounds("model-menu-status"),
-                ));
-            }
-            if entries.is_empty() {
+            if self.model_menu_row_count() == 0 {
                 let (title, hint) = if self.projection.models.is_empty() {
                     (
                         t("composer.model_none_available"),
                         t("composer.model_menu_empty"),
                     )
+                } else if self.model_search_query.trim().is_empty() {
+                    (t("model_search.no_providers"), t("model_search.manage"))
                 } else {
                     (t("model_search.no_results"), t("model_search.clear"))
                 };
@@ -2695,40 +2718,62 @@ impl AppView {
                     )
                     .value(hint),
                 );
-            }
-            for (ix, model) in entries.iter().enumerate() {
-                let id = format!("model-{}-{}", model.provider_id, model.id);
-                let Some(layout) = self.settings_element_layouts.get(&id) else {
-                    continue;
-                };
-                let rect = layout.bounds().intersect(&self.model_menu_scroll.bounds());
-                if rect.size.width <= gpui::px(0.0) || rect.size.height <= gpui::px(0.0) {
-                    continue;
+            } else {
+                let mut ix = 0;
+                for (provider_id, models) in self.composer_model_groups() {
+                    let group_id = format!("model-menu-group-{provider_id}");
+                    if let Some(layout) = self.settings_element_layouts.get(&group_id) {
+                        let rect = layout.bounds().intersect(&self.model_menu_scroll.bounds());
+                        if rect.size.width > gpui::px(0.0) && rect.size.height > gpui::px(0.0) {
+                            menu = menu.child(AxNode::new(
+                                group_id,
+                                AxRole::StaticText,
+                                self.provider_display_name(&provider_id),
+                                AxRect::new(
+                                    rect.origin.x.into(),
+                                    rect.origin.y.into(),
+                                    rect.size.width.into(),
+                                    rect.size.height.into(),
+                                ),
+                            ));
+                        }
+                    }
+                    for model in models {
+                        let id = format!("model-{}-{}", model.provider_id, model.id);
+                        if let Some(layout) = self.settings_element_layouts.get(&id) {
+                            let rect = layout.bounds().intersect(&self.model_menu_scroll.bounds());
+                            if rect.size.width > gpui::px(0.0) && rect.size.height > gpui::px(0.0) {
+                                let selected =
+                                    self.projection.effective_model().is_some_and(|current| {
+                                        current.0 == model.provider_id && current.1 == model.id
+                                    });
+                                let title = self.composer_model_row_title(&model);
+                                let mut item = AxNode::new(
+                                    model_identifier(&model),
+                                    AxRole::Button,
+                                    title,
+                                    AxRect::new(
+                                        rect.origin.x.into(),
+                                        rect.origin.y.into(),
+                                        rect.size.width.into(),
+                                        rect.size.height.into(),
+                                    ),
+                                )
+                                .selected(selected)
+                                .focused(ix == highlight)
+                                .enabled(self.can_switch_model());
+                                if title != model.id {
+                                    item = item.value(&model.id);
+                                }
+                                if self.can_switch_model() {
+                                    item = item.action(AxAction::Press);
+                                }
+                                menu = menu.child(item);
+                            }
+                        }
+                        ix += 1;
+                    }
                 }
-                let selected = self
-                    .projection
-                    .effective_model()
-                    .is_some_and(|current| current.0 == model.provider_id && current.1 == model.id);
-                let mut item = AxNode::new(
-                    model_identifier(model),
-                    AxRole::Button,
-                    &model.display_name,
-                    AxRect::new(
-                        rect.origin.x.into(),
-                        rect.origin.y.into(),
-                        rect.size.width.into(),
-                        rect.size.height.into(),
-                    ),
-                )
-                .value(format!("{} / {}", model.provider_id, model.id))
-                .description(self.model_provider_status(&model.provider_id))
-                .selected(selected)
-                .focused(ix == highlight)
-                .enabled(self.can_switch_model());
-                if self.can_switch_model() {
-                    item = item.action(AxAction::Press);
-                }
-                menu = menu.child(item);
             }
             menu = menu.child(
                 AxNode::new(
@@ -2737,7 +2782,7 @@ impl AppView {
                     t("model_search.manage"),
                     bounds("model-menu-settings"),
                 )
-                .focused(highlight == entries.len())
+                .focused(highlight == self.model_menu_row_count())
                 .action(AxAction::Press),
             );
             composer = composer.child(menu);
@@ -2874,10 +2919,15 @@ impl AppView {
 
     fn terminal_ax(&self, window: &Window, cx: &App, frame: AxRect) -> AxNode {
         let rem_px = f32::from(window.rem_size());
-        let header_height = terminal_header_height(rem_px);
+        let header_height = terminal_chrome_top(rem_px);
         // P4 片 3：五按钮 rect 与 inspector.rs 可见 stepper 行同源
         //（terminal_stepper_ax_rects：px_2 / py_1 / gap_1 + 冻结槽位）。
-        let stepper = terminal_stepper_ax_rects(frame.x, frame.x + frame.width, frame.y, rem_px);
+        let stepper = terminal_stepper_ax_rects(
+            frame.x,
+            frame.x + frame.width,
+            frame.y + TERMINAL_TAB_BAR_HEIGHT,
+            rem_px,
+        );
         let stepper_rect =
             |ix: usize| AxRect::new(stepper[ix].0, stepper[ix].1, stepper[ix].2, stepper[ix].3);
         let input_height = 40.0;
@@ -2921,118 +2971,172 @@ impl AppView {
                     _ => t("inspector.close"),
                 },
             );
+        let workspace = self.inspector_workspace_id();
+        let tab_ids: Vec<String> = self
+            .projection
+            .workspace_terminals(workspace.as_deref())
+            .into_iter()
+            .filter_map(|terminal| terminal.session_id.clone())
+            .collect();
+        let tab_create_enabled = matches!(
+            self.projection.connection,
+            ConnectionState::Connected { .. }
+        ) && !self.terminal_create_blocked()
+            && self.terminal_pending_create_workspace.is_none();
         let mut terminal = AxNode::new(
             "terminal",
             AxRole::Group,
             t("inspector.tab_terminal"),
             frame,
-        )
-        // G1：头部尺寸组 = 列 stepper 对 + apply + 行 stepper 对，与可见
-        // 控件同 gate / 同 id；apply 仍是唯一下发入口。
-        .child(
+        );
+        let tab_width = 72.0;
+        let tab_gap = 4.0;
+        let mut tab_x = frame.x + PAD;
+        for (index, id) in tab_ids.iter().enumerate() {
+            let identifier = format!("terminal-tab-{id}");
+            let focused = self
+                .terminal_tab_focus
+                .get(id)
+                .is_some_and(|focus| self.open_menu.is_none() && focus.is_focused(window));
+            terminal = terminal.child(
+                AxNode::new(
+                    identifier,
+                    AxRole::Button,
+                    format!("{} {}", t("inspector.tab_terminal"), index + 1),
+                    AxRect::new(tab_x, frame.y, tab_width, TERMINAL_TAB_BAR_HEIGHT),
+                )
+                .selected(self.projection.terminal.session_id.as_deref() == Some(id.as_str()))
+                .focused(focused)
+                .action(AxAction::Press),
+            );
+            tab_x += tab_width + tab_gap;
+        }
+        terminal = terminal.child(
             AxNode::new(
-                "terminal-cols-dec",
+                "terminal-new-tab",
                 AxRole::Button,
-                t("inspector.fewer_columns"),
-                stepper_rect(0),
+                t("inspector.terminal_new_tab"),
+                AxRect::new(tab_x, frame.y, 32.0, TERMINAL_TAB_BAR_HEIGHT),
             )
-            .focused(self.open_menu.is_none() && self.terminal_cols_dec_focus.is_focused(window))
-            .enabled(terminal_operable)
-            .action(AxAction::Press),
-        )
-        .child(
-            AxNode::new(
-                "terminal-cols-inc",
-                AxRole::Button,
-                t("inspector.more_columns"),
-                stepper_rect(1),
-            )
-            .focused(self.open_menu.is_none() && self.terminal_cols_inc_focus.is_focused(window))
-            .enabled(terminal_operable)
-            .action(AxAction::Press),
-        )
-        .child(
-            AxNode::new(
-                "terminal-resize",
-                AxRole::Button,
-                t("inspector.tooltip_apply_size"),
-                stepper_rect(2),
-            )
-            .focused(self.open_menu.is_none() && self.terminal_resize_focus.is_focused(window))
-            .enabled(terminal_resize_enabled)
-            .value(format!("{columns}×{rows}"))
-            .action(AxAction::Press),
-        )
-        .child(
-            AxNode::new(
-                "terminal-rows-dec",
-                AxRole::Button,
-                t("inspector.fewer_rows"),
-                stepper_rect(3),
-            )
-            .focused(self.open_menu.is_none() && self.terminal_rows_dec_focus.is_focused(window))
-            .enabled(terminal_operable)
-            .action(AxAction::Press),
-        )
-        .child(
-            AxNode::new(
-                "terminal-rows-inc",
-                AxRole::Button,
-                t("inspector.more_rows"),
-                stepper_rect(4),
-            )
-            .focused(self.open_menu.is_none() && self.terminal_rows_inc_focus.is_focused(window))
-            .enabled(terminal_operable)
-            .action(AxAction::Press),
-        )
-        .child(
-            AxNode::new(
-                "terminal-output",
-                AxRole::StaticText,
-                t("inspector.output"),
-                AxRect::new(
-                    frame.x + PAD,
-                    frame.y + header_height,
-                    frame.width - PAD * 2.0,
-                    frame.height - input_height - header_height - PAD * 2.0,
-                ),
-            )
-            .value(output)
-            .description(terminal_description),
-        )
-        .child(
-            AxNode::new(
-                "terminal-input",
-                AxRole::TextArea,
-                t("inspector.input"),
-                action_rect("terminal-input"),
-            )
-            .value(self.terminal_input.read(cx).text())
-            .focused(self.open_menu.is_none() && focus.is_focused(window))
-            .action(AxAction::Focus)
-            .action(AxAction::SetValue),
-        )
-        .child(
-            AxNode::new(
-                "terminal-start",
-                AxRole::Button,
-                if self.projection.terminal.session_id.is_some() {
-                    if terminal_can_reopen(&self.projection.terminal) {
-                        t("recovery.terminal_new")
-                    } else if terminal_known_ended(&self.projection.terminal) {
-                        t("recovery.terminal_start")
-                    } else {
-                        t("inspector.tooltip_apply_size")
-                    }
-                } else {
-                    t("recovery.terminal_start")
-                },
-                action_rect("terminal-start"),
-            )
-            .focused(self.open_menu.is_none() && self.terminal_start_focus.is_focused(window))
-            .enabled(terminal_start_enabled)
+            .focused(self.open_menu.is_none() && self.terminal_new_tab_focus.is_focused(window))
+            .enabled(tab_create_enabled)
             .action(AxAction::Press),
         );
+        // G1：头部尺寸组 = 列 stepper 对 + apply + 行 stepper 对，与可见
+        // 控件同 gate / 同 id；apply 仍是唯一下发入口。
+        terminal = terminal
+            .child(
+                AxNode::new(
+                    "terminal-cols-dec",
+                    AxRole::Button,
+                    t("inspector.fewer_columns"),
+                    stepper_rect(0),
+                )
+                .focused(
+                    self.open_menu.is_none() && self.terminal_cols_dec_focus.is_focused(window),
+                )
+                .enabled(terminal_operable)
+                .action(AxAction::Press),
+            )
+            .child(
+                AxNode::new(
+                    "terminal-cols-inc",
+                    AxRole::Button,
+                    t("inspector.more_columns"),
+                    stepper_rect(1),
+                )
+                .focused(
+                    self.open_menu.is_none() && self.terminal_cols_inc_focus.is_focused(window),
+                )
+                .enabled(terminal_operable)
+                .action(AxAction::Press),
+            )
+            .child(
+                AxNode::new(
+                    "terminal-resize",
+                    AxRole::Button,
+                    t("inspector.tooltip_apply_size"),
+                    stepper_rect(2),
+                )
+                .focused(self.open_menu.is_none() && self.terminal_resize_focus.is_focused(window))
+                .enabled(terminal_resize_enabled)
+                .value(format!("{columns}×{rows}"))
+                .action(AxAction::Press),
+            )
+            .child(
+                AxNode::new(
+                    "terminal-rows-dec",
+                    AxRole::Button,
+                    t("inspector.fewer_rows"),
+                    stepper_rect(3),
+                )
+                .focused(
+                    self.open_menu.is_none() && self.terminal_rows_dec_focus.is_focused(window),
+                )
+                .enabled(terminal_operable)
+                .action(AxAction::Press),
+            )
+            .child(
+                AxNode::new(
+                    "terminal-rows-inc",
+                    AxRole::Button,
+                    t("inspector.more_rows"),
+                    stepper_rect(4),
+                )
+                .focused(
+                    self.open_menu.is_none() && self.terminal_rows_inc_focus.is_focused(window),
+                )
+                .enabled(terminal_operable)
+                .action(AxAction::Press),
+            )
+            .child(
+                AxNode::new(
+                    "terminal-output",
+                    AxRole::StaticText,
+                    t("inspector.output"),
+                    AxRect::new(
+                        frame.x + PAD,
+                        frame.y + header_height,
+                        frame.width - PAD * 2.0,
+                        frame.height - input_height - header_height - PAD * 2.0,
+                    ),
+                )
+                .value(output)
+                .description(terminal_description),
+            )
+            .child(
+                AxNode::new(
+                    "terminal-input",
+                    AxRole::TextArea,
+                    t("inspector.input"),
+                    action_rect("terminal-input"),
+                )
+                .value(self.terminal_input.read(cx).text())
+                .focused(self.open_menu.is_none() && focus.is_focused(window))
+                .action(AxAction::Focus)
+                .action(AxAction::SetValue),
+            )
+            .child(
+                AxNode::new(
+                    "terminal-start",
+                    AxRole::Button,
+                    if self.projection.terminal.session_id.is_some() {
+                        if terminal_can_reopen(&self.projection.terminal) {
+                            t("recovery.terminal_new")
+                        } else if terminal_known_ended(&self.projection.terminal) {
+                            t("recovery.terminal_start")
+                        } else {
+                            t("inspector.tooltip_apply_size")
+                        }
+                    } else {
+                        t("recovery.terminal_start")
+                    },
+                    action_rect("terminal-start"),
+                )
+                .focused(self.open_menu.is_none() && self.terminal_start_focus.is_focused(window))
+                .enabled(terminal_start_enabled)
+                .action(AxAction::Press),
+            );
         if self.terminal_notice_text().is_some() {
             let clip = AxRect::new(
                 frame.x,
@@ -3403,6 +3507,13 @@ fn rail_project_add_identifier(bucket: Option<DateBucket>, key: &str) -> String 
     match bucket {
         Some(bucket) => dynamic_identifier("project-add", &format!("{}:{}", bucket.label(), key)),
         None => dynamic_identifier("project-add", key),
+    }
+}
+
+fn rail_project_count_identifier(bucket: Option<DateBucket>, key: &str) -> String {
+    match bucket {
+        Some(bucket) => dynamic_identifier("project-count", &format!("{}:{}", bucket.label(), key)),
+        None => dynamic_identifier("project-count", key),
     }
 }
 
@@ -3961,7 +4072,7 @@ mod tests {
                     );
                     assert!((bubble.x + bubble.width - actions.x - actions.width).abs() < 2.);
                     let tree = v.accessibility_tree(window, cx);
-                    assert!(tree.find("run-status").is_none());
+                    assert!(tree.find("run-status").is_some());
                     let ax = tree.find(&entry_menu_identifier("short")).unwrap();
                     assert_eq!(ax.bounds, actions);
                     assert!(ax.actions.contains(&AxAction::Press));
@@ -3980,10 +4091,11 @@ mod tests {
                 assert!(v.focus_handle.is_focused(window));
                 assert_eq!(v.text_input.read(cx).text(), "保留草稿");
                 v.on_close_settings(window, cx);
-                v.projection.active_run_id = Some("running".into());
                 assert!(v.run_status_visible());
-                v.projection.active_run_id = None;
+                v.route = AppRoute::Settings;
                 assert!(!v.run_status_visible());
+                v.route = AppRoute::Workspace;
+                assert!(v.run_status_visible());
             })
         });
     }
@@ -4208,6 +4320,11 @@ mod tests {
                     picker.bounds
                 );
                 assert!(f32::from(model.size.height) >= 36.0);
+                assert!(
+                    f32::from(model.size.width) <= metrics::COMPOSER_MODEL_WIDTH + 0.5,
+                    "model chip must not exceed max width at {scale:?}: {:?}",
+                    model.size.width
+                );
                 assert!(tree.find("composer-file-tools-hint").is_none());
                 assert!(
                     tree.find("composer-context").is_none(),
@@ -4221,8 +4338,13 @@ mod tests {
                 assert!(!tree.find("send").unwrap().enabled, "offline never sends");
             });
         }
-        cx.update(|_, cx| {
+        cx.update(|window, cx| {
             view.update(cx, |view, cx| {
+                view.text_scale = TextScale::Percent100;
+                window.set_rem_size(px(TextScale::Percent100.rem_pixels()));
+                view.projection.set_connection(ConnectionState::Connected {
+                    instance_id: "test".into(),
+                });
                 view.projection.set_models(vec![ModelEntry {
                     provider_id: "glm-coding".into(),
                     id: "glm-5.2".into(),
@@ -4237,8 +4359,21 @@ mod tests {
         });
         cx.refresh().unwrap();
         cx.run_until_parked();
+        let hugged = cx.debug_bounds("composer-model-slot").unwrap();
+        assert!(
+            f32::from(hugged.size.width) < metrics::COMPOSER_MODEL_WIDTH,
+            "short model names must hug the selected label, got {:?}",
+            hugged.size.width
+        );
         cx.update(|window, cx| {
             let tree = view.read(cx).accessibility_tree(window, cx);
+            let picker = tree.find("model-picker").unwrap();
+            assert!(
+                (picker.bounds.width - f32::from(hugged.size.width)).abs() < 1.0,
+                "AX model-picker must follow hugged slot: AX {} render {:?}",
+                picker.bounds.width,
+                hugged.size.width
+            );
             let context = tree.find("composer-context").unwrap();
             assert_eq!(context.value.as_deref(), Some("Context · — / 128000"));
             let meta = view.read(cx).composer_layouts["composer-meta"].bounds();
@@ -4296,6 +4431,7 @@ mod tests {
                     parent_branch_id: None,
                     forked_from_event_id: None,
                     active: true,
+                    unstarted: false,
                 }];
                 view.projection.active_session_id = Some("old".into());
                 view.projection.set_models(vec![ModelEntry {
@@ -4484,6 +4620,10 @@ mod tests {
         // Projects 模式 identifier 与既有 U2 定位口径保持 project-{key}。
         assert_eq!(projects_mode, "project-ws");
         assert_eq!(rail_project_add_identifier(None, "ws"), "project-add-ws");
+        assert_eq!(
+            rail_project_count_identifier(None, "ws"),
+            "project-count-ws"
+        );
     }
 
     /// R3 Wave A：会话行 AX description 携带可见状态点的状态词；无 live
@@ -4589,7 +4729,8 @@ mod tests {
     fn timeline_row_layouts_stack_with_content_heights_and_gaps() {
         use crate::projection::{TimelineEntry, TimelineEntryKind, TimelineRow};
         use crate::ui::timeline::{
-            row_top_gap, timeline_following_window, timeline_row_height, timeline_visible_item_tops,
+            row_top_gap, timeline_following_window, timeline_row_height, timeline_stack_height,
+            timeline_visible_item_tops,
         };
 
         fn entry(seq: u64, kind: TimelineEntryKind) -> TimelineEntry {
@@ -4648,12 +4789,42 @@ mod tests {
                         16.0,
                         &std::collections::HashSet::new(),
                         false,
+                        None,
                     ),
                 )
             })
             .collect();
         // 默认仅摘要；显式展开增加两条工具行，字号影响正文高度。
         assert_eq!(layouts[0].1, 86.0);
+        let idle_assistant = vec![entry(
+            9,
+            TimelineEntryKind::AssistantMessage { text: "Hi".into() },
+        )];
+        assert_eq!(
+            timeline_row_height(
+                &TimelineRow::Message { entry_index: 0 },
+                &idle_assistant,
+                618.0,
+                16.0,
+                &std::collections::HashSet::new(),
+                false,
+                None,
+            ),
+            26.0,
+            "idle assistant must not reserve the author row"
+        );
+        assert!(
+            timeline_stack_height(
+                &[TimelineRow::Message { entry_index: 0 }],
+                &idle_assistant,
+                618.0,
+                16.0,
+                &std::collections::HashSet::new(),
+                false,
+                None,
+                None,
+            ) < 200.0
+        );
         assert_eq!(layouts[1].1, metrics::TOOL_GROUP_HEADER_HEIGHT);
         assert_eq!(layouts[2].1, 19.0);
         let summary_rows = vec![
@@ -4666,7 +4837,7 @@ mod tests {
         );
         let expanded = std::collections::HashSet::from(["e2".to_string()]);
         assert_eq!(
-            timeline_row_height(&rows[1], &timeline, 618.0, 16.0, &expanded, false),
+            timeline_row_height(&rows[1], &timeline, 618.0, 16.0, &expanded, false, None),
             metrics::TOOL_GROUP_HEADER_HEIGHT
                 + crate::ui::timeline_entry::tool_row_height(&summary_rows[0], 618.0, 16.0)
                 + crate::ui::timeline_entry::tool_row_height(&summary_rows[1], 618.0, 16.0)
@@ -4685,7 +4856,8 @@ mod tests {
                 618.0,
                 20.0,
                 &std::collections::HashSet::new(),
-                false
+                false,
+                None,
             ),
             93.0
         );
@@ -4808,6 +4980,7 @@ mod tests {
                         parent_branch_id: None,
                         forked_from_event_id: None,
                         active: id == "current",
+                        unstarted: false,
                     })
                     .into();
                 view.projection.active_session_id = Some("current".into());
@@ -4936,6 +5109,7 @@ mod tests {
             parent_branch_id: None,
             forked_from_event_id: None,
             active: false,
+            unstarted: false,
         }
     }
 
@@ -5147,6 +5321,70 @@ mod tests {
                     .height,
                 44.0
             );
+        });
+    }
+
+    /// 项目头计数 / 「+」与任务行改名 / 归档共用尾槽原点（render / AX 同源）。
+    #[gpui::test]
+    fn task_rail_trailing_slots_align_project_header_and_task_actions(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let platform = std::sync::Arc::new(crate::platform::Platform::new());
+        let socket = std::env::temp_dir().join("rail-trailing-align.sock");
+        let (view, cx) = cx.add_window_view(|_, cx| AppView::new(platform, socket, None, cx));
+        let now = crate::ui::now_unix_ms();
+        cx.simulate_resize(gpui::size(gpui::px(1440.0), gpui::px(1024.0)));
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.set_connection(ConnectionState::Connected {
+                    instance_id: "test".into(),
+                });
+                view.projection.workspaces = vec![crate::projection::WorkspaceSummary {
+                    id: "ws-a".into(),
+                    name: "Alpha".into(),
+                }];
+                view.projection.sessions = vec![rail_session_summary(
+                    "task-a",
+                    "Alpha task",
+                    Some("ws-a"),
+                    now,
+                )];
+                view.projection.active_session_id = Some("task-a".into());
+                view.grouping = TaskRailGrouping::Projects;
+                window.set_rem_size(gpui::px(
+                    crate::ui::theme::font::TextScale::Percent100.rem_pixels(),
+                ));
+                cx.notify();
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let tree = view.read(cx).accessibility_tree(window, cx);
+            let count = tree
+                .find(&rail_project_count_identifier(None, "ws-a"))
+                .expect("project count slot");
+            let plus = tree
+                .find(&rail_project_add_identifier(None, "ws-a"))
+                .expect("project plus");
+            let rename = tree
+                .find(&session_rename_identifier("task-a"))
+                .expect("rename");
+            let archive = tree
+                .find(&session_archive_identifier("task-a"))
+                .expect("archive");
+            assert_eq!(
+                count.bounds.x, rename.bounds.x,
+                "count {:?} rename {:?}",
+                count.bounds, rename.bounds
+            );
+            assert_eq!(
+                plus.bounds.x, archive.bounds.x,
+                "plus {:?} archive {:?}",
+                plus.bounds, archive.bounds
+            );
+            assert_eq!(count.bounds.width, metrics::RAIL_SESSION_ACTION_SIZE);
+            assert_eq!(plus.bounds.width, metrics::RAIL_SESSION_ACTION_SIZE);
         });
     }
 
@@ -5385,7 +5623,7 @@ mod tests {
                 }];
                 let row = view.projection.timeline_rows().remove(0);
                 assert!(matches!(row, TimelineRow::Thinking { .. }));
-                let rect = AxRect::new(300.0, 100.0, 560.0, metrics::TOOL_GROUP_HEADER_HEIGHT);
+                let rect = AxRect::new(300.0, 100.0, 560.0, metrics::THINKING_HEADER_HEIGHT);
                 let collapsed = view.timeline_row_ax(window, &row, rect);
                 assert_eq!(
                     collapsed.children.len(),
@@ -5399,7 +5637,8 @@ mod tests {
                         rect.width,
                         16.0,
                         &view.expanded_timeline_details,
-                        false
+                        false,
+                        None,
                     ),
                     rect.height
                 );
@@ -5416,6 +5655,7 @@ mod tests {
                     16.0,
                     &view.expanded_timeline_details,
                     false,
+                    None,
                 );
                 assert!(height > rect.height);
                 let expanded = view.timeline_row_ax(window, &row, AxRect { height, ..rect });
@@ -6177,6 +6417,24 @@ mod tests {
                         })
                         .collect(),
                 );
+                view.projection.settings_providers.providers =
+                    vec![crate::projection::ProviderAuthStatusEntry {
+                        provider_id: "test-provider".into(),
+                        display_name: "Test Provider".into(),
+                        endpoint_label: String::new(),
+                        auth_methods: vec!["api_key".into()],
+                        credentials: Vec::new(),
+                        selection_mode: Default::default(),
+                        auth: crate::projection::ProviderAuthState::Connected {
+                            method: "api_key".into(),
+                            masked_credential: None,
+                        },
+                        catalog: crate::projection::ProviderCatalogState::FixedFallback {
+                            snapshot_label: "test".into(),
+                            fetched_at: None,
+                        },
+                        use_proxy: true,
+                    }];
                 view.projection
                     .set_pending_model("test-provider".into(), "model-17".into());
                 view.text_input
@@ -6767,8 +7025,8 @@ mod tests {
 
     /// OPT-3a / ADR-055 D2-D3：Manage models 弹层与代理 Switch 的 AX 形
     /// 状——Manage 入口 gate（未连接禁用不发布 Press）、弹层 Group + 每模
-    /// 型 Switch（checked 进 value/selected）、Enable/Disable all 与空目
-    /// 录 Refresh 的可操作性、代理 Switch value 与 Press；stale 关闸。
+    /// 型 Switch（checked 进 value/selected）、Enable/Disable all 与常驻
+    /// Refresh 的可操作性、代理 Switch value 与 Press；stale 关闸。
     #[gpui::test]
     fn settings_models_menu_ax_pins_gates_switches_and_empty_state(cx: &mut gpui::TestAppContext) {
         use gpui::{prelude::*, px, AppContext};
@@ -6943,6 +7201,11 @@ mod tests {
                 assert!(button.enabled);
                 assert!(tree.permits(&press(identifier)));
             }
+            let refresh = tree
+                .find(&settings_models_refresh_identifier("kimi"))
+                .expect("non-empty catalog still publishes Refresh");
+            assert!(refresh.enabled);
+            assert!(tree.permits(&press(settings_models_refresh_identifier("kimi"))));
 
             // 代理 Switch（OPT-3c）：全局 proxy_url 已配置时出现，value
             // On / selected=true / 可按。
@@ -7481,11 +7744,7 @@ mod tests {
                 assert!(!tree.find(&use_first).unwrap().enabled);
                 assert!(!tree.find(&remove_first).unwrap().enabled);
                 assert!(tree.find(&use_second).unwrap().enabled);
-                assert!(tree
-                    .find("settings-account-name-dual")
-                    .unwrap()
-                    .actions
-                    .contains(&AxAction::SetValue));
+                assert!(tree.find("settings-account-name-dual").is_none());
                 view.handle_accessibility_request(
                     AxRequest {
                         identifier: remove_second.clone(),
@@ -7606,7 +7865,7 @@ mod tests {
             view.update(cx, |view, cx| {
                 view.text_scale = crate::ui::theme::font::TextScale::Percent100;
                 view.settings_scroll.set_offset(gpui::point(px(0.0), px(0.0)));
-                view.handshake_info.as_mut().unwrap().api_version = "1.16".into();
+                view.handshake_info.as_mut().unwrap().api_version = "1.17".into();
                 let p = &mut view.projection.settings_providers.providers[0];
                 p.provider_id = "opencode-go".into();
                 p.credentials[0].kind = "api_key".into();
@@ -7656,6 +7915,11 @@ mod tests {
                 assert_eq!(tree.find(&mode).unwrap().value.as_deref(), Some("Off"));
                 let refresh =
                     crate::ui::settings::quota_identifier("opencode-go", "cred_second", "refresh");
+                let rename = crate::ui::settings::settings_account_rename_identifier(
+                    "opencode-go",
+                    "cred_second",
+                );
+                assert!(tree.find(&rename).unwrap().enabled);
                 for (id, max_width) in [(&refresh, 220.0), (&mode, 50.0)] {
                     let node = tree.find(id).unwrap();
                     let actual = view.settings_element_layouts[id].bounds();

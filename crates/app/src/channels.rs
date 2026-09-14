@@ -60,7 +60,8 @@ pub fn is_first_party(id: &str) -> bool {
 }
 
 /// 该 id 对应的 API-key 通道 preset（仅注册表内声明 api_key 认证方法的行；
-/// feature 门由装配层用 is_enabled fail-closed 判定；xAI 双认证通道同样命中）。
+/// feature 门由装配层用 is_enabled fail-closed 判定；xAI / Kimi Code 双认证
+/// 通道同样命中）。
 pub fn api_key_channel(id: &str) -> Option<&'static ChannelPreset> {
     let preset = channel_preset(id)?;
     preset.auth_methods.contains(&"api_key").then_some(preset)

@@ -5,7 +5,7 @@ use std::borrow::Cow;
 
 use gpui::{prelude::*, px, svg, AssetSource, Pixels, SharedString, Svg};
 
-use crate::ui::theme::metrics;
+use crate::ui::theme::{dark, metrics};
 
 /// 登记的动作 / 类型图标。路径与 `apps/desktop/assets/icons/*.svg` 一一对应。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -148,7 +148,9 @@ impl Icon {
     }
 }
 
-/// 默认 20px 图标（主操作）。颜色由调用方或父级 `text_color` 染色。
+/// 默认 20px 图标（主操作）。gpui 把 SVG 渲成 alpha mask，必须在 Svg
+/// 上设 `text_color`；默认 `text.primary`，调用方可再链式覆盖（如
+/// Primary/Danger 上的 `on_accent`）。不要指望 Button 外壳的文字色会传到 mask。
 pub fn icon(icon: Icon) -> Svg {
     icon_sized(icon, px(metrics::ICON_SIZE))
 }
@@ -156,7 +158,11 @@ pub fn icon(icon: Icon) -> Svg {
 /// 指定边长（chip / 行内 16px，工具勾 14px 等）。
 pub fn icon_sized(icon: Icon, size: impl Into<Pixels>) -> Svg {
     let size = size.into();
-    svg().path(icon.path()).size(size).flex_none()
+    svg()
+        .path(icon.path())
+        .size(size)
+        .flex_none()
+        .text_color(dark().text.primary)
 }
 
 /// `include_bytes!` 静态表；不引入 rust-embed。

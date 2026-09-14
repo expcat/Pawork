@@ -3,22 +3,95 @@
 //! Send 与 Cancel 同槽互换（element id `composer-action`）；placeholder 只走状态机，
 //! Forked / 发送失败等瞬态反馈落 footer Label。
 
-use gpui::{div, point, prelude::*, px, Context, Corner, Pixels, Point, SharedString, Window};
+use gpui::{
+    div, point, prelude::*, px, Context, Corner, Pixels, Point, SharedString, TextRun, Window,
+};
 
-use crate::projection::{group_models_by_provider, ConnectionState, ModelEntry};
+use crate::projection::{ConnectionState, ModelEntry, ProviderAuthStatusEntry};
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
 use crate::ui::components::dropdown::{Dropdown, MenuPanel, ANCHOR_GAP_Y};
 use crate::ui::components::icon::{icon, icon_sized, Icon};
 use crate::ui::components::label::Label;
 use crate::ui::i18n::{t, t2};
+use crate::ui::settings::settings_role_candidates;
 use crate::ui::theme::{dark, font, metrics};
 
 use super::{AppView, MenuKind};
 
-/// Composer model menu 的可点击项顺序。provider 保持目录首现顺序，组内
-/// 保持原目录顺序；鼠标、键盘与 AX 均使用这份扁平顺序。
-pub(super) fn grouped_model_menu_entries(models: &[ModelEntry]) -> Vec<ModelEntry> {
-    group_models_by_provider(models)
+/// Composer 伪二级目录：已连接且至少有一个已启用模型的供应商，组头 + 组内
+/// 模型同一列表展开。未连接或 0 启用整组不出现。
+pub(super) fn composer_model_menu_groups(
+    models: &[ModelEntry],
+    providers: &[ProviderAuthStatusEntry],
+    query: &str,
+) -> Vec<(String, Vec<ModelEntry>)> {
+    let query = query.trim().to_lowercase();
+    settings_role_candidates(models, providers)
+        .into_iter()
+        .filter_map(|(provider, models)| {
+            let models: Vec<_> = models
+                .into_iter()
+                .filter(|model| {
+                    query.is_empty()
+                        || provider.to_lowercase().contains(&query)
+                        || model.display_name.to_lowercase().contains(&query)
+                        || model.id.to_lowercase().contains(&query)
+                })
+                .collect();
+            (!models.is_empty()).then_some((provider, models))
+        })
+        .collect()
+}
+
+/// 模型触发器宽 = 名称 + 箭头 + 内边距，钳在命中区与 220 上限之间。
+/// Taffy 会把仅有 max_width 的 auto 行撑满上限，必须给明确内容宽。
+fn composer_model_chip_width(window: &Window, label: &str) -> f32 {
+    let style = window.text_style();
+    let text = if label.is_empty() { " " } else { label };
+    let run = TextRun {
+        len: text.len(),
+        font: style.font(),
+        color: style.color,
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    let text_w = f32::from(
+        window
+            .text_system()
+            .shape_line(
+                SharedString::from(text.to_string()),
+                font::BASE.to_pixels(window.rem_size()),
+                &[run],
+                None,
+            )
+            .width,
+    );
+    let pad_x = f32::from(window.rem_size()) * 0.5 * 2.0;
+    (text_w + pad_x + metrics::SPACE_2 + metrics::ICON_SM)
+        .ceil()
+        .clamp(
+            metrics::COMPOSER_FOOTER_CONTROL,
+            metrics::COMPOSER_MODEL_WIDTH,
+        )
+}
+
+/// Composer 模型行只画一行：`display_name`，空则回落 id。raw id 不另占行。
+pub(super) fn model_menu_row_title<'a>(display_name: &'a str, id: &'a str) -> &'a str {
+    if display_name.is_empty() {
+        id
+    } else {
+        display_name
+    }
+}
+
+/// 可点击模型的扁平顺序（组头不计入）；鼠标、键盘与 AX 同源。
+pub(super) fn grouped_model_menu_entries(
+    models: &[ModelEntry],
+    providers: &[ProviderAuthStatusEntry],
+    query: &str,
+) -> Vec<ModelEntry> {
+    composer_model_menu_groups(models, providers, query)
         .into_iter()
         .flat_map(|(_, models)| models)
         .collect()
@@ -69,6 +142,8 @@ impl AppView {
             SharedString::from(self.model_disabled_reason())
         };
         let model_focus = self.model_focus.clone();
+        let model_label = self.model_label();
+        let model_chip_width = composer_model_chip_width(window, &model_label);
         let mut model_button = Button::new("model-picker")
             .track_focus(&model_focus)
             .variant(ButtonVariant::Raised)
@@ -78,19 +153,19 @@ impl AppView {
                 div()
                     .flex()
                     .w_full()
+                    .min_w_0()
                     .items_center()
                     .gap(px(metrics::SPACE_2))
+                    .child(div().min_w_0().truncate().child(model_label))
                     .child(
                         div()
-                            .flex_1()
-                            .min_w_0()
-                            .child(div().truncate().child(self.model_label())),
-                    )
-                    .child(icon_sized(Icon::ChevronDown, px(metrics::ICON_SM))),
+                            .flex_none()
+                            .child(icon_sized(Icon::ChevronDown, px(metrics::ICON_SM))),
+                    ),
             )
             .tooltip(model_tooltip)
             .height(px(metrics::COMPOSER_FOOTER_CONTROL))
-            .width(px(metrics::COMPOSER_MODEL_WIDTH))
+            .width(px(model_chip_width))
             .max_width(px(metrics::COMPOSER_MODEL_WIDTH))
             .vcenter();
         // 全关空态下按钮保持可点：菜单从触发器上方打开给诚实说明行，
@@ -139,7 +214,7 @@ impl AppView {
                 .icon_circle(metrics::COMPOSER_SEND_SIZE)
                 .disabled(!can_cancel)
                 .track_focus(&action_focus)
-                .child(icon(Icon::Cancel))
+                .child(icon(Icon::Cancel).text_color(dark().text.on_accent))
                 .tooltip(cancel_tooltip);
             if can_cancel {
                 cancel = cancel
@@ -168,7 +243,7 @@ impl AppView {
                 .icon_circle(metrics::COMPOSER_SEND_SIZE)
                 .disabled(!can_send)
                 .track_focus(&action_focus)
-                .child(icon(Icon::Send))
+                .child(icon(Icon::Send).text_color(dark().text.on_accent))
                 .tooltip(send_tooltip);
             if can_send {
                 send = send
@@ -231,7 +306,10 @@ impl AppView {
                     .child(
                         div()
                             .id("composer-model-slot")
+                            .track_scroll(&self.composer_layouts["model-picker"])
                             .debug_selector(|| "composer-model-slot".into())
+                            .w(px(model_chip_width))
+                            .h(px(metrics::COMPOSER_FOOTER_CONTROL))
                             .flex_none()
                             .child(model_picker),
                     )
@@ -471,11 +549,54 @@ impl AppView {
             || model.id.to_lowercase().contains(&query)
     }
 
+    pub(super) fn composer_model_row_title<'a>(&self, model: &'a ModelEntry) -> &'a str {
+        model_menu_row_title(&model.display_name, &model.id)
+    }
+
+    pub(super) fn composer_model_groups(&self) -> Vec<(String, Vec<ModelEntry>)> {
+        composer_model_menu_groups(
+            &self.projection.models,
+            &self.projection.settings_providers.providers,
+            &self.model_search_query,
+        )
+    }
+
     pub(super) fn filtered_model_entries(&self) -> Vec<ModelEntry> {
-        grouped_model_menu_entries(&self.projection.models)
-            .into_iter()
-            .filter(|model| self.model_matches_search(model))
-            .collect()
+        grouped_model_menu_entries(
+            &self.projection.models,
+            &self.projection.settings_providers.providers,
+            &self.model_search_query,
+        )
+    }
+
+    pub(super) fn model_menu_row_count(&self) -> usize {
+        self.filtered_model_entries().len()
+    }
+
+    /// 可点击模型行在滚动列表中的子下标（组头占一位，管理入口不在列表内）。
+    pub(super) fn model_menu_scroll_child_index(&self, item: usize) -> Option<usize> {
+        let mut logical = 0;
+        let mut child = 0;
+        for (_, models) in self.composer_model_groups() {
+            child += 1;
+            if item < logical + models.len() {
+                return Some(child + (item - logical));
+            }
+            logical += models.len();
+            child += models.len();
+        }
+        None
+    }
+
+    pub(super) fn provider_display_name(&self, provider_id: &str) -> String {
+        self.projection
+            .settings_providers
+            .providers
+            .iter()
+            .find(|entry| entry.provider_id == provider_id)
+            .map(|entry| entry.display_name.clone())
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| provider_id.to_string())
     }
 
     pub(super) fn model_provider_status(&self, provider_id: &str) -> String {
@@ -518,8 +639,13 @@ impl AppView {
     }
 
     pub(super) fn model_search_element(&mut self, cx: &mut Context<Self>) -> gpui::Div {
+        let placeholder = if matches!(self.open_menu, Some(MenuKind::Model)) {
+            t("model_search.placeholder_providers")
+        } else {
+            t("model_search.placeholder")
+        };
         self.model_search_input.update(cx, |input, cx| {
-            input.set_placeholder(t("model_search.placeholder"), cx);
+            input.set_placeholder(placeholder, cx);
         });
         let clear_focus = self
             .settings_action_focus
@@ -557,7 +683,7 @@ impl AppView {
     }
 
     fn model_settings_entry(&mut self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
-        let ix = self.filtered_model_entries().len();
+        let ix = self.model_menu_row_count();
         let focus = self
             .settings_action_focus
             .entry("model-menu-settings".into())
@@ -588,9 +714,8 @@ impl AppView {
             .child(button)
     }
 
-    /// 搜索与当前高亮项的来源固定在头部，只有候选项滚动。
+    /// 伪二级：组头与模型同一列表展开；未连接或 0 启用整组不出现。
     fn model_menu_element(&mut self, cx: &mut Context<Self>) -> MenuPanel {
-        let entries = self.filtered_model_entries();
         let highlight = self.menu_highlight_effective(self.menu_selected_index());
         let menu_scroll = self
             .settings_element_layouts
@@ -603,32 +728,19 @@ impl AppView {
             .dismiss_on_outside(cx.listener(|view, event: &gpui::MouseDownEvent, _, cx| {
                 view.dismiss_menu_on_outside(MenuKind::Model, event.position, cx);
             }));
-        let mut content = div()
+        let content = div()
             .w(px(340.0))
             .flex()
             .flex_col()
             .child(self.model_search_element(cx));
-        if let Some(model) = entries.get(highlight) {
-            let status = format!(
-                "{} · {}",
-                model.provider_id,
-                self.model_provider_status(&model.provider_id)
-            );
-            content = content.child(
-                self.settings_element("model-menu-status")
-                    .pb_2()
-                    .text_size(font::XS)
-                    .text_color(dark().text.secondary)
-                    .whitespace_normal()
-                    .child(status),
-            );
-        }
-        if entries.is_empty() {
+        if self.model_menu_row_count() == 0 {
             let (title, hint) = if self.projection.models.is_empty() {
                 (
                     t("composer.model_none_available"),
                     t("composer.model_menu_empty"),
                 )
+            } else if self.model_search_query.trim().is_empty() {
+                (t("model_search.no_providers"), t("model_search.manage"))
             } else {
                 (t("model_search.no_results"), t("model_search.clear"))
             };
@@ -650,96 +762,95 @@ impl AppView {
             .max_h(px(280.0))
             .overflow_y_scroll()
             .track_scroll(&self.model_menu_scroll);
-        let mut last_provider = String::new();
-        for (ix, model) in entries.into_iter().enumerate() {
-            let group_header = if last_provider != model.provider_id {
-                last_provider = model.provider_id.clone();
-                Some(format!(
-                    "{} · {}",
-                    model.provider_id,
-                    self.model_provider_status(&model.provider_id)
-                ))
-            } else {
-                None
-            };
-            let selected = self
-                .projection
-                .effective_model()
-                .is_some_and(|(provider, id)| *provider == model.provider_id && *id == model.id);
-            let row_id = format!("model-{}-{}", model.provider_id, model.id);
-            let title = model.display_name.clone();
-            let detail = format!("{} / {}", model.provider_id, model.id);
-            let row =
-                self.settings_element(row_id)
-                    .w_full()
-                    .py_2()
-                    .px_2()
-                    .rounded(px(metrics::CONTROL_RADIUS))
-                    .bg(if selected || ix == highlight {
-                        dark().surface.raised
-                    } else {
-                        dark().bg.menu
-                    })
-                    .hover(|style| style.bg(dark().surface.hover))
-                    .active(|style| style.bg(dark().surface.pressed))
-                    .cursor_pointer()
-                    .on_hover(cx.listener(move |view, hovered: &bool, _, cx| {
-                        if *hovered && view.menu_highlight != Some(ix) {
-                            view.menu_highlight = Some(ix);
-                            cx.notify();
-                        }
-                    }))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(div().w(px(metrics::SPACE_4)).flex_none().when(
-                                selected,
-                                |slot| {
-                                    slot.child(
-                                        icon_sized(Icon::Check, px(metrics::ICON_SM))
-                                            .text_color(dark().accent.primary),
-                                    )
-                                },
-                            ))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .text_size(font::SM)
-                                    .text_color(dark().text.primary)
-                                    .whitespace_normal()
-                                    .child(title),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .text_size(font::XS)
-                            .text_color(dark().text.secondary)
-                            .whitespace_normal()
-                            .child(detail),
-                    )
-                    .on_click(cx.listener(move |view, _, window, cx| {
-                        view.on_select_model(model.clone(), cx);
-                        window.focus(&view.model_focus);
-                    }));
-            let mut group = div();
-            if let Some(header) = group_header {
-                group = group.child(
-                    div()
-                        .py_2()
-                        .px_2()
-                        .text_size(font::XS)
-                        .text_color(dark().text.secondary)
-                        .whitespace_normal()
-                        .child(header),
-                );
+        let mut ix = 0;
+        for (provider_id, models) in self.composer_model_groups() {
+            list = list.child(self.model_menu_group_header(&provider_id));
+            for model in models {
+                list = list.child(self.model_menu_model_row(ix, highlight, model, cx));
+                ix += 1;
             }
-            list = list.child(group.child(row));
         }
         panel = panel.child(content.child(list).child(self.model_settings_entry(cx)));
         panel
+    }
+
+    fn model_menu_group_header(&mut self, provider_id: &str) -> gpui::Stateful<gpui::Div> {
+        let title = self.provider_display_name(provider_id);
+        self.settings_element(format!("model-menu-group-{provider_id}"))
+            .min_h(gpui::rems(1.5))
+            .px_2()
+            .pt_2()
+            .flex()
+            .items_center()
+            .min_w_0()
+            .truncate()
+            .text_size(font::SM)
+            .text_color(dark().text.secondary)
+            .child(title)
+    }
+
+    fn model_menu_model_row(
+        &mut self,
+        ix: usize,
+        highlight: usize,
+        model: ModelEntry,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let selected = self
+            .projection
+            .effective_model()
+            .is_some_and(|(provider, id)| *provider == model.provider_id && *id == model.id);
+        let row_id = format!("model-{}-{}", model.provider_id, model.id);
+        let title = model_menu_row_title(&model.display_name, &model.id);
+        self.settings_element(row_id)
+            .w_full()
+            .py_2()
+            .px_2()
+            .rounded(px(metrics::CONTROL_RADIUS))
+            .bg(if selected || ix == highlight {
+                dark().surface.raised
+            } else {
+                dark().bg.menu
+            })
+            .hover(|style| style.bg(dark().surface.hover))
+            .active(|style| style.bg(dark().surface.pressed))
+            .cursor_pointer()
+            .on_hover(cx.listener(move |view, hovered: &bool, _, cx| {
+                if *hovered && view.menu_highlight != Some(ix) {
+                    view.menu_highlight = Some(ix);
+                    cx.notify();
+                }
+            }))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .w(px(metrics::SPACE_4))
+                            .flex_none()
+                            .when(selected, |slot| {
+                                slot.child(
+                                    icon_sized(Icon::Check, px(metrics::ICON_SM))
+                                        .text_color(dark().accent.primary),
+                                )
+                            }),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_size(font::SM)
+                            .text_color(dark().text.primary)
+                            .whitespace_normal()
+                            .child(title.to_string()),
+                    ),
+            )
+            .on_click(cx.listener(move |view, _, window, cx| {
+                view.on_select_model(model.clone(), cx);
+                window.focus(&view.model_focus);
+            }))
     }
 
     /// Composer 空输入 placeholder：只走连接/session/run 状态机，不被
@@ -747,7 +858,6 @@ impl AppView {
     pub(super) fn composer_placeholder_hint(&self) -> String {
         composer_placeholder_hint(
             &self.projection.connection,
-            self.projection.active_session_id.is_some(),
             self.projection.active_run_id.is_some(),
         )
     }
@@ -766,14 +876,14 @@ impl AppView {
     }
 
     fn send_disabled_reason(&self) -> String {
-        if self.projection.active_run_id.is_some() {
+        if self.pending_home_send.is_some() {
+            t("composer.send_disabled_starting").into()
+        } else if self.projection.active_run_id.is_some() {
             t("composer.placeholder_running").into()
         } else {
             match &self.projection.connection {
                 ConnectionState::Connected { .. } => {
-                    if self.projection.active_session_id.is_none() {
-                        t("composer.placeholder_open_session").into()
-                    } else if self.model_catalog_empty() {
+                    if self.model_catalog_empty() {
                         t("composer.send_disabled_no_models").into()
                     } else {
                         t("composer.send_disabled_empty").into()
@@ -898,22 +1008,22 @@ impl AppView {
     }
 }
 
-fn composer_placeholder_hint(
-    connection: &ConnectionState,
-    has_session: bool,
+pub(super) fn composer_send_allowed(
+    connected: bool,
     running: bool,
-) -> String {
+    catalog_empty: bool,
+    has_text: bool,
+    home_send_pending: bool,
+) -> bool {
+    connected && !running && !catalog_empty && has_text && !home_send_pending
+}
+
+fn composer_placeholder_hint(connection: &ConnectionState, running: bool) -> String {
     if running {
         return t("composer.placeholder_running").into();
     }
     match connection {
-        ConnectionState::Connected { .. } => {
-            if has_session {
-                t("composer.placeholder_message").into()
-            } else {
-                t("composer.placeholder_open_session").into()
-            }
-        }
+        ConnectionState::Connected { .. } => t("composer.placeholder_message").into(),
         ConnectionState::Connecting => t("composer.placeholder_waiting").into(),
         ConnectionState::Disconnected { .. } => t("composer.placeholder_disconnected").into(),
         ConnectionState::Failed { .. } => t("composer.placeholder_connect_failed").into(),
@@ -923,10 +1033,51 @@ fn composer_placeholder_hint(
 #[cfg(test)]
 mod tests {
     use super::{
-        composer_placeholder_hint, grouped_model_menu_entries, model_catalog_empty_state, AppView,
+        composer_model_menu_groups, composer_placeholder_hint, composer_send_allowed,
+        grouped_model_menu_entries, model_catalog_empty_state, model_menu_row_title, AppView,
     };
-    use crate::projection::{ConnectionState, ModelEntry};
+    use crate::projection::{
+        ConnectionState, ModelEntry, ProviderAuthState, ProviderAuthStatusEntry,
+        ProviderCatalogState,
+    };
     use crate::ui::theme::metrics;
+
+    fn model_entry(provider_id: &str, id: &str, display_name: &str) -> ModelEntry {
+        ModelEntry {
+            provider_id: provider_id.into(),
+            id: id.into(),
+            display_name: display_name.into(),
+            context_window_tokens: None,
+            enabled: true,
+        }
+    }
+
+    fn provider_entry(provider_id: &str, auth: ProviderAuthState) -> ProviderAuthStatusEntry {
+        ProviderAuthStatusEntry {
+            provider_id: provider_id.into(),
+            display_name: provider_id.into(),
+            endpoint_label: String::new(),
+            auth_methods: vec!["api_key".into()],
+            credentials: Vec::new(),
+            selection_mode: Default::default(),
+            auth,
+            catalog: ProviderCatalogState::Unavailable {
+                error: "offline".into(),
+                fetched_at: None,
+            },
+            use_proxy: true,
+        }
+    }
+
+    fn connected(provider_id: &str) -> ProviderAuthStatusEntry {
+        provider_entry(
+            provider_id,
+            ProviderAuthState::Connected {
+                method: "api_key".into(),
+                masked_credential: None,
+            },
+        )
+    }
 
     #[test]
     fn composer_placeholder_hint_follows_connection_and_run_state() {
@@ -934,19 +1085,15 @@ mod tests {
             instance_id: "dev".into(),
         };
         assert_eq!(
-            composer_placeholder_hint(&connected, true, false),
+            composer_placeholder_hint(&connected, false),
             "Message Pawork…"
         );
         assert_eq!(
-            composer_placeholder_hint(&connected, false, false),
-            "Open a session to send messages."
-        );
-        assert_eq!(
-            composer_placeholder_hint(&connected, true, true),
+            composer_placeholder_hint(&connected, true),
             "Run in progress — sending is disabled. Cancel remains available."
         );
         assert_eq!(
-            composer_placeholder_hint(&ConnectionState::Connecting, true, false),
+            composer_placeholder_hint(&ConnectionState::Connecting, false),
             "Waiting for connection…"
         );
         assert_eq!(
@@ -954,7 +1101,6 @@ mod tests {
                 &ConnectionState::Disconnected {
                     reason: "lost".into(),
                 },
-                true,
                 false,
             ),
             "Disconnected — click Reconnect before sending."
@@ -964,16 +1110,16 @@ mod tests {
                 &ConnectionState::Failed {
                     reason: "boom".into(),
                 },
-                true,
                 false,
             ),
             "Connect failed — click Reconnect."
         );
         // 瞬态 status_hint 不再覆盖 placeholder 状态机。
-        assert_ne!(
-            composer_placeholder_hint(&connected, true, false),
-            "Forked · s-1"
-        );
+        assert_ne!(composer_placeholder_hint(&connected, false), "Forked · s-1");
+        assert!(composer_send_allowed(true, false, false, true, false));
+        assert!(!composer_send_allowed(true, false, false, true, true));
+        assert!(!composer_send_allowed(true, false, false, false, false));
+        assert!(!composer_send_allowed(true, true, false, true, false));
     }
 
     #[test]
@@ -1003,29 +1149,12 @@ mod tests {
     #[test]
     fn model_menu_selected_follows_effective_model() {
         let models = [
-            ModelEntry {
-                provider_id: "openai".into(),
-                id: "gpt-4.1".into(),
-                display_name: "GPT-4.1".into(),
-                context_window_tokens: Some(128_000),
-                enabled: true,
-            },
-            ModelEntry {
-                provider_id: "anthropic".into(),
-                id: "opus".into(),
-                display_name: "Opus".into(),
-                context_window_tokens: Some(200_000),
-                enabled: true,
-            },
-            ModelEntry {
-                provider_id: "openai".into(),
-                id: "gpt-4.1-mini".into(),
-                display_name: "GPT-4.1 mini".into(),
-                context_window_tokens: Some(128_000),
-                enabled: true,
-            },
+            model_entry("openai", "gpt-4.1", "GPT-4.1"),
+            model_entry("anthropic", "opus", "Opus"),
+            model_entry("openai", "gpt-4.1-mini", "GPT-4.1 mini"),
         ];
-        let entries = grouped_model_menu_entries(&models);
+        let providers = [connected("openai"), connected("anthropic")];
+        let entries = grouped_model_menu_entries(&models, &providers, "");
         assert_eq!(
             entries
                 .iter()
@@ -1053,5 +1182,57 @@ mod tests {
             })
             .unwrap_or(0);
         assert_eq!(none_ix, 0);
+        let groups = composer_model_menu_groups(&models, &providers, "");
+        assert_eq!(
+            groups
+                .iter()
+                .map(|(provider, _)| provider.as_str())
+                .collect::<Vec<_>>(),
+            ["openai", "anthropic"]
+        );
+        assert_eq!(
+            composer_model_menu_groups(&models, &providers, "gpt-4.1-mini")
+                .iter()
+                .map(|(provider, models)| (provider.as_str(), models.len()))
+                .collect::<Vec<_>>(),
+            [("openai", 1)]
+        );
+        assert!(composer_model_menu_groups(&models, &providers, "claude").is_empty());
+    }
+
+    #[test]
+    fn composer_model_menu_hides_disconnected_and_empty_providers() {
+        let models = [
+            model_entry("openai", "gpt-4.1", "GPT-4.1"),
+            model_entry("anthropic", "opus", "Opus"),
+            model_entry("ghost", "ghost-x", "Ghost"),
+        ];
+        let providers = [
+            connected("openai"),
+            provider_entry("anthropic", ProviderAuthState::None),
+        ];
+        let groups = composer_model_menu_groups(&models, &providers, "");
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].0, "openai");
+        assert_eq!(groups[0].1[0].id, "gpt-4.1");
+        assert!(composer_model_menu_groups(&models, &providers, "opus").is_empty());
+        assert_eq!(
+            grouped_model_menu_entries(&models, &providers, "openai").len(),
+            1
+        );
+    }
+
+    #[test]
+    fn model_menu_row_title_is_single_line_for_any_name() {
+        assert_eq!(
+            model_menu_row_title("deepseek-flash", "deepseek-flash"),
+            "deepseek-flash"
+        );
+        assert_eq!(model_menu_row_title("", "glm-5.3"), "glm-5.3");
+        assert_eq!(
+            model_menu_row_title("Qwen 3.8 Max", "qwen3.8-max"),
+            "Qwen 3.8 Max"
+        );
+        assert_eq!(model_menu_row_title("GPT-4.1", "gpt-4.1"), "GPT-4.1");
     }
 }

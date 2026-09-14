@@ -198,10 +198,10 @@ identifier 一律 ASCII、不翻译，供 AX Press 反查。未知 id fail-close
 | --- | --- | --- |
 | `settings_providers_page_element` | 页 | 装配 |
 | `settings_provider_card` / `settings_provider_card_expanded` / `on_toggle_settings_provider_expanded` | 卡 | 64px 概览头默认折叠；流程态（编辑器/OAuth/Remove 确认/瞬态反馈）保持展开 |
-| `settings_provider_expanded_region` | 区 | 顺序：Proxy → Manage models → Credentials → Usage |
+| `settings_provider_expanded_region` | 区 | 顺序：Accounts / Credentials → Usage → Proxy → Manage models |
 | `settings_provider_proxy_row` / `on_settings_toggle_provider_use_proxy` | 写 | **仅当全局 proxy 已配置才渲染 Switch**；回执 `ProviderUseProxyConfirmed` 才改投影 |
-| `settings_provider_manage_row` / `on_toggle_settings_models_menu` / `on_toggle_provider_model` / `on_toggle_provider_models_all` / `settings_models_menu_element` | 写 | 弹层 `MenuKind::SettingsProviderModels`；enable/disable 等回执再 `refresh_models_authority`；`cleared_roles` 诚实提示 |
-| `settings_provider_credentials_block` / `settings_action_button` / `on_settings_action` | 写 | Connect OAuth / API key Verify / Replace / Remove 二次确认 |
+| `settings_provider_manage_row` / `on_toggle_settings_models_menu` / `on_toggle_provider_model` / `on_toggle_provider_models_all` / `settings_models_menu_element` | 写 | 弹层 `MenuKind::SettingsProviderModels`；enable/disable 回执本地收敛弹层与 Composer，不重探全目录；`cleared_roles` 诚实提示 |
+| `settings_provider_credentials_block` / `settings_account_*` / `settings_action_button` / `on_settings_action` | 写 | ADR-061 紧凑账号卡（状态点 / 默认名 / kind / Selected / Use·Rename·Remove）；添加不要求名称；Rename 仅 minor ≥17 行内编辑；Go 三窗进度条；旧 Host 仍为 Connect OAuth / API key Verify / Replace / Remove 二次确认 |
 | `on_settings_connect_oauth` | 写 | 只显示 URL/device code，完整 secret 不进 UI |
 | `on_settings_verify_api_key` / `on_settings_cancel_api_key_input` / `ensure_settings_api_key_inputs` | 写 | `TextInput::secure()`；提交/取消/离页 `clear_settings_buffers`（含 undo） |
 | `settings_api_key_editor_visible` / `settings_action_enabled` | gate | 断线/stale 三路径同禁 |
@@ -350,7 +350,7 @@ Workbench: task-rail | workspace[header+timeline+composer] | [inspector] | statu
 | `project_ax_nodes` | `project-*` / `session-*` | 项目头 Press 折叠；`project-add` 直建会话。会话行 description=`session_status_description`（live 词 + Unread；无 live 不伪造终态）。改名/归档按钮与可见路径同 gate；改名编辑器是 `session-rename-input` TextArea |
 | `workspace_ax` | `workspace` | header + timeline + composer。composer 高度按 visual_line_count 钳 `COMPOSER_INPUT_MIN`…`composer_input_ax_max` |
 | `header_ax` | `workspace-header` | 标题 / branch / live 终态按可见条件诚实隐藏。折叠 Inspector：`inspector-toggle`（Activity）左一格、`inspector-expand` 最右槽；Activity popover 发 `activity-open-changes`。展开态最右槽变 `header-new-task`（空工作台不发，避免与 empty hint 重复 id） |
-| `timeline_ax` | `timeline` | **虚拟化**：只发布当前可见/overdraw 项。优先读 `ListState::bounds_for_item`；无实测时跟随窗用 `timeline_following_window`，否则从 0。approval 是 list 末项，滚离底部不发审批按钮。未跟随发 `timeline-back-to-bottom`。空工作台发 title/hint + `header-new-task` |
+| `timeline_ax` | `timeline` | **虚拟化**：只发布当前可见/overdraw 项。优先读 `ListState::bounds_for_item`；无实测时跟随窗用 `timeline_following_window`，否则从 0。approval 是 list 末项，滚离底部不发审批按钮。未跟随且内容溢出才发 `timeline-back-to-bottom`。空工作台发 title/hint + `header-new-task` |
 | `timeline_row_ax` | 按行 | Message/Error：`timeline-entry-{event}` + `entry-menu` + 可选 `fork`。RunPhase 无菜单。ToolGroup：`tool-group-toggle`，展开才发 `tool-row`。RunSummary：组 + 卡 + 完成且 changes 可用才发 `run-review-changes` |
 | `composer_ax` | `composer` | `composer-input` AXValue **恒为纯文本**（空=空串，placeholder 不进 value）。`model-picker` / workspace chip / 可选 file-tools hint / status hint。运行中动作槽是 `cancel`，否则 `send`（共用焦点句柄）。Model 菜单只发与首帧裁剪窗相交的行；全关空态一行 StaticText、无 Press |
 | `inspector_ax` | inspector 组 | TabGroup：`inspector-tab-changes/terminal/resources`；`inspector-collapse`。body 按当前 tab 分发 |

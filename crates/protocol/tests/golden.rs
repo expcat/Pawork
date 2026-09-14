@@ -1160,8 +1160,16 @@ fn golden_provider_accounts() {
         (
             "auth_account_remove",
             AppCommand::AuthAccountRemove {
+                provider_id: provider_id.clone(),
+                credential_id: "credential-1".into(),
+            },
+        ),
+        (
+            "auth_account_rename",
+            AppCommand::AuthAccountRename {
                 provider_id,
                 credential_id: "credential-1".into(),
+                display_name: "Work".into(),
             },
         ),
     ];

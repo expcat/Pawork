@@ -297,7 +297,8 @@ impl DesktopProjection {
     }
 
     /// terminal_close 清理已退出终端的回执：Host 已注销（该路径无 live
-    /// 事件），本地同步移除；当前终端被移除时回到 not started 占位。
+    /// 事件），本地同步移除；当前标签被关时回落到同项目兄弟，没有兄弟
+    /// 才回到 not started 占位。
     pub fn remove_terminal(&mut self, terminal_session_id: &str) -> bool {
         let existed = self
             .terminals
@@ -306,10 +307,16 @@ impl DesktopProjection {
         if !existed {
             return false;
         }
+        let workspace_id = self
+            .terminals
+            .iter()
+            .find(|terminal| terminal.session_id.as_deref() == Some(terminal_session_id))
+            .and_then(|terminal| terminal.workspace_id.clone());
+        let was_current = self.terminal.session_id.as_deref() == Some(terminal_session_id);
         self.terminals
             .retain(|terminal| terminal.session_id.as_deref() != Some(terminal_session_id));
-        if self.terminal.session_id.as_deref() == Some(terminal_session_id) {
-            self.terminal = TerminalState::default();
+        if was_current {
+            self.select_terminal_for_workspace(workspace_id.as_deref());
         }
         true
     }
@@ -387,8 +394,12 @@ impl DesktopProjection {
         } else {
             self.terminals.push(failed.clone());
         }
-        if self.active_workspace_id() == Some(workspace_id)
-            || self.terminal.workspace_id.as_deref() == Some(workspace_id)
+        let has_session = self.terminals.iter().any(|terminal| {
+            terminal.workspace_id.as_deref() == Some(workspace_id) && terminal.session_id.is_some()
+        });
+        if !has_session
+            && (self.active_workspace_id() == Some(workspace_id)
+                || self.terminal.workspace_id.as_deref() == Some(workspace_id))
         {
             self.terminal = failed;
         }
@@ -434,6 +445,34 @@ impl DesktopProjection {
         found
     }
 
+    pub fn workspace_terminals(&self, workspace_id: Option<&str>) -> Vec<&TerminalState> {
+        let mut terminals: Vec<&TerminalState> = self
+            .terminals
+            .iter()
+            .filter(|terminal| {
+                terminal.session_id.is_some() && terminal.workspace_id.as_deref() == workspace_id
+            })
+            .collect();
+        terminals.sort_by_key(|terminal| terminal.session_id.as_deref().unwrap_or_default());
+        terminals
+    }
+
+    pub fn select_terminal(&mut self, terminal_session_id: &str) -> bool {
+        let Some(selected) = self
+            .terminals
+            .iter()
+            .find(|terminal| terminal.session_id.as_deref() == Some(terminal_session_id))
+            .cloned()
+        else {
+            return false;
+        };
+        if self.terminal == selected {
+            return false;
+        }
+        self.terminal = selected;
+        true
+    }
+
     pub fn select_terminal_for_workspace(&mut self, workspace_id: Option<&str>) -> bool {
         let current = self.terminal.session_id.as_deref();
         let selected = current
@@ -450,6 +489,7 @@ impl DesktopProjection {
                     .filter(|terminal| terminal.workspace_id.as_deref() == workspace_id)
                     .min_by_key(|terminal| {
                         (
+                            usize::from(terminal.session_id.is_none()),
                             usize::from(terminal.runtime_state.as_deref() != Some("running")),
                             terminal.session_id.clone().unwrap_or_default(),
                         )

@@ -372,7 +372,7 @@ pub mod metrics {
             left += RAIL_STATUS_DOT_SIZE + SPACE_2;
         }
         let right = if reserve_trailing {
-            RAIL_TASK_PAD_X + SPACE_2 + RAIL_SESSION_ACTION_SIZE * 2.0
+            RAIL_TRAILING_INSET + rail_trailing_width()
         } else {
             RAIL_TASK_PAD_X
         };
@@ -380,9 +380,22 @@ pub mod metrics {
     }
     /// 8：项目块间距（量图 任务→下个项目头 52–54 − 行高 44）。
     pub const RAIL_PROJECT_BLOCK_GAP: f32 = 8.0;
-    /// 56：项目计数 / 相对时间共用的右对齐元信息槽；100%/150% 均保留
-    /// `now` / `244d` 与三位计数的稳定列，不让长标题挤占。
-    pub const RAIL_META_SLOT_WIDTH: f32 = 56.0;
+    /// 项目头计数 / 「+」与任务行改名 / 归档共用的右缘 inset（与 ListRow `px_2` 同源）。
+    pub const RAIL_TRAILING_INSET: f32 = RAIL_TASK_PAD_X;
+    /// 两格尾槽总宽：计数+新建，或改名+归档。
+    pub const fn rail_trailing_width() -> f32 {
+        RAIL_SESSION_ACTION_SIZE * 2.0
+    }
+    /// 尾槽左缘（计数 / 改名）相对行左。
+    pub fn rail_trailing_origin_x(row_width: f32) -> f32 {
+        (row_width - RAIL_TRAILING_INSET - rail_trailing_width()).max(0.0)
+    }
+    /// 尾槽右格（新建 / 归档）相对行左。
+    pub fn rail_trailing_plus_x(row_width: f32) -> f32 {
+        rail_trailing_origin_x(row_width) + RAIL_SESSION_ACTION_SIZE
+    }
+    /// 兼容旧名：计数格宽等于单格动作。
+    pub const RAIL_META_SLOT_WIDTH: f32 = RAIL_SESSION_ACTION_SIZE;
     /// UI-1：30px，共享几何。
     pub const STATUS_BAR_HEIGHT: f32 = 30.0;
     // ── Workspace Header / Timeline 几何（R4 Wave A，state-a §2.2/§2.3 与
@@ -428,12 +441,14 @@ pub mod metrics {
     pub const MSG_USER_INSET_Y: f32 = 12.0;
     /// UI-3：正文段落间隙 12px。
     pub const MSG_PARAGRAPH_GAP: f32 = 12.0;
-    /// UI-3：32px 消息间距，计入虚拟列表条目高度。
-    pub const MSG_ENTRY_GAP: f32 = 32.0;
+    /// 16：回合间距（助手空闲不再占作者行后，24 仍偏疏）。
+    pub const MSG_ENTRY_GAP: f32 = 16.0;
     /// 8：Tool activity / Run summary 与 Composer 使用同一主要 surface 圆角。
     pub const TOOL_GROUP_RADIUS: f32 = 8.0;
     /// UI-3：轻量工具摘要命中行。
     pub const TOOL_GROUP_HEADER_HEIGHT: f32 = 36.0;
+    /// 思考折叠头：单行 chevron + 文案，不走工具组 36px 宽条。
+    pub const THINKING_HEADER_HEIGHT: f32 = 24.0;
     /// 15：Tool activity 面板内左 inset（量图图标 x341，面板 x326）。
     pub const TOOL_GROUP_INNER_INSET: f32 = 15.0;
     /// 52：Tool 行高（量图行距 ≈54 − 分隔线 2）。
@@ -442,8 +457,8 @@ pub mod metrics {
     pub const TOOL_ROW_DIVIDER: f32 = 1.0;
     /// 14：Tool 行状态 ✓ 直径（量图 Ø14）。
     pub const TOOL_CHECK_SIZE: f32 = 14.0;
-    /// UI-3：上文到工具摘要的间距 16px。
-    pub const TOOL_GROUP_TOP_GAP: f32 = 16.0;
+    /// 12：上文到工具 / 思考摘要。
+    pub const TOOL_GROUP_TOP_GAP: f32 = 12.0;
     /// 12：Tool 面板 → Run 摘要卡间距（量图 13 取 12）。
     pub const SUMMARY_CARD_GAP: f32 = 12.0;
     /// 40：Run 摘要卡 ✓ 状态圆直径（量图 Ø40）。
@@ -456,8 +471,8 @@ pub mod metrics {
     pub const SUMMARY_BUTTON_RADIUS: f32 = 8.0;
     /// 20：摘要卡两动作按钮间距（量图 19 取 20）。
     pub const SUMMARY_BUTTON_GAP: f32 = 20.0;
-    /// UI-3：摘要卡底到 Timeline 页脚 12px。
-    pub const TIMELINE_FOOTER_GAP: f32 = 12.0;
+    /// 8：正文到 Timeline 页脚。
+    pub const TIMELINE_FOOTER_GAP: f32 = 8.0;
     /// 288：TaskRail 侧栏宽度。
     pub const SIDEBAR_WIDTH: f32 = 288.0;
     /// 440：Inspector 面板宽度。
@@ -480,6 +495,7 @@ pub mod metrics {
     pub const COMPOSER_META_GAP: f32 = 8.0;
     /// 以 100% 字号为基准；元信息随字号增长。
     pub const COMPOSER_META_HEIGHT: f32 = 24.0;
+    /// 模型触发器最大宽：随选中名称收缩，长名截断。
     pub const COMPOSER_MODEL_WIDTH: f32 = 220.0;
     /// 28：Composer 输入区单行最小高（行高 20 + py_1 上下 4+4）。
     pub const COMPOSER_INPUT_MIN_HEIGHT: f32 = 28.0;
@@ -621,7 +637,10 @@ mod tests {
         assert_eq!(theme.surface.raised, rgb(0x222226));
         assert_eq!(theme.surface.hover, rgb(0x2c2c31));
         assert_eq!(theme.border.subtle, rgb(0x2a2a30));
-        assert_eq!(motion::PANEL_DURATION, std::time::Duration::from_millis(180));
+        assert_eq!(
+            motion::PANEL_DURATION,
+            std::time::Duration::from_millis(180)
+        );
         assert_eq!(
             motion::CONTROL_DURATION,
             std::time::Duration::from_millis(120)
@@ -728,11 +747,14 @@ mod tests {
         assert_eq!(metrics::RAIL_TITLE_FADE_WIDTH, 16.0);
         assert_eq!(
             metrics::rail_session_title_layout(248.0, false, true),
-            (8.0, 160.0)
+            (8.0, 168.0)
         );
+        assert_eq!(metrics::rail_trailing_origin_x(248.0), 176.0);
+        assert_eq!(metrics::rail_trailing_plus_x(248.0), 208.0);
         assert_eq!(metrics::RAIL_SESSION_ACTION_SIZE, 32.0);
         assert_eq!(metrics::RAIL_PROJECT_BLOCK_GAP, 8.0);
-        assert_eq!(metrics::RAIL_META_SLOT_WIDTH, 56.0);
+        assert_eq!(metrics::RAIL_META_SLOT_WIDTH, 32.0);
+        assert_eq!(metrics::rail_trailing_width(), 64.0);
     }
 
     /// R4 Wave A Workspace Header / Timeline 几何合同（state-a §2.2/§2.3 与
@@ -762,21 +784,22 @@ mod tests {
         assert_eq!(metrics::MSG_LINE_HEIGHT, 26.0);
         assert_eq!(metrics::MSG_LABEL_BODY_GAP, 12.0);
         assert_eq!(metrics::MSG_PARAGRAPH_GAP, 12.0);
-        assert_eq!(metrics::MSG_ENTRY_GAP, 32.0);
+        assert_eq!(metrics::MSG_ENTRY_GAP, 16.0);
         assert_eq!(metrics::TOOL_GROUP_RADIUS, 8.0);
         assert_eq!(metrics::TOOL_GROUP_HEADER_HEIGHT, 36.0);
+        assert_eq!(metrics::THINKING_HEADER_HEIGHT, 24.0);
         assert_eq!(metrics::TOOL_GROUP_INNER_INSET, 15.0);
         assert_eq!(metrics::TOOL_ROW_HEIGHT, 52.0);
         assert_eq!(metrics::TOOL_ROW_DIVIDER, 1.0);
         assert_eq!(metrics::TOOL_CHECK_SIZE, 14.0);
-        assert_eq!(metrics::TOOL_GROUP_TOP_GAP, 16.0);
+        assert_eq!(metrics::TOOL_GROUP_TOP_GAP, 12.0);
         assert_eq!(metrics::SUMMARY_CARD_GAP, 12.0);
         assert_eq!(metrics::SUMMARY_CHECK_CIRCLE, 40.0);
         assert_eq!(metrics::SUMMARY_BUTTON_WIDTH, 168.0);
         assert_eq!(metrics::SUMMARY_BUTTON_HEIGHT, 40.0);
         assert_eq!(metrics::SUMMARY_BUTTON_RADIUS, 8.0);
         assert_eq!(metrics::SUMMARY_BUTTON_GAP, 20.0);
-        assert_eq!(metrics::TIMELINE_FOOTER_GAP, 12.0);
+        assert_eq!(metrics::TIMELINE_FOOTER_GAP, 8.0);
     }
 
     /// GUI2-05：面板头 48、中央返回条 36、Changes 紧凑行 32、Diff 行号列。

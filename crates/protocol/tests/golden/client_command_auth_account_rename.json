@@ -5,12 +5,14 @@
       "minor": 17
     },
     "command": {
-      "method": "terminal_create",
+      "method": "auth_account_rename",
       "params": {
-        "workspace_id": "workspace-1"
+        "credential_id": "credential-1",
+        "display_name": "Work",
+        "provider_id": "glm-coding"
       }
     },
-    "command_id": "command-terminal-1",
+    "command_id": "command-auth-1",
     "identity": {
       "actor_id": "actor-1",
       "type": "local_user"

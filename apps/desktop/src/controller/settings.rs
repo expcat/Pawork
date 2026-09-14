@@ -77,9 +77,9 @@ impl DesktopController {
     }
 
     /// 单模型启用 / 禁用（set_model_enabled，OPT-3a / ADR-055 D2/D3；
-    /// 非重放命令）。Data 回执即写后状态 + cleared_roles：UI 先按回执
-    /// 收敛弹层再重查权威全态；Error / 传输失败经 OperationFailed 呈现，
-    /// 不动现有状态。
+    /// 非重放命令）。Data 回执即写后状态 + cleared_roles：UI 按回执收敛
+    /// 弹层与 Composer，不重查全目录；Error / 传输失败经 OperationFailed
+    /// 呈现，不动现有状态。
     pub fn set_model_enabled(&self, provider_id: String, model_id: String, enabled: bool) {
         let Some(client) = self.current_client() else {
             self.emit_reliable(ControllerEvent::OperationFailed {
@@ -866,6 +866,55 @@ impl DesktopController {
                     try_emit(&events, ControllerEvent::OperationFailed { action: "change provider account mode", reason: "account mode update failed".into() });
                 }
                 try_emit(&events, ControllerEvent::AccountModeFinished { provider_id, epoch, data });
+            }
+        });
+    }
+
+    pub fn auth_account_rename(
+        &self,
+        provider_id: String,
+        credential_id: String,
+        display_name: String,
+    ) {
+        let Some(client) = self
+            .current_client()
+            .filter(|client| client.api_version().minor >= 17)
+        else {
+            return;
+        };
+        let events = self.event_sender();
+        self.runtime.spawn(async move {
+            if let Err(error) = client
+                .command(
+                    AppCommand::AuthAccountRename {
+                        provider_id: provider_id.clone().into(),
+                        credential_id,
+                        display_name,
+                    },
+                    command_source(),
+                    actor_identity(),
+                )
+                .await
+            {
+                try_emit(
+                    &events,
+                    ControllerEvent::OperationFailed {
+                        action: "rename provider account",
+                        reason: error.to_string(),
+                    },
+                );
+            }
+            if let Ok(response) = client
+                .query(
+                    provider_auth_status_query(),
+                    command_source(),
+                    actor_identity(),
+                )
+                .await
+            {
+                if let Ok(data) = parse_provider_status_response(&response) {
+                    try_emit(&events, ControllerEvent::ProviderStatusLoaded(data));
+                }
             }
         });
     }

@@ -424,11 +424,13 @@ pub enum AppCommand {
     },
     AuthAccountAddApiKey {
         provider_id: ProviderId,
+        #[serde(default)]
         display_name: String,
         api_key: ApiKeySecret,
     },
     AuthAccountStart {
         provider_id: ProviderId,
+        #[serde(default)]
         display_name: String,
         flow: String,
     },
@@ -443,6 +445,11 @@ pub enum AppCommand {
     AuthAccountRemove {
         provider_id: ProviderId,
         credential_id: String,
+    },
+    AuthAccountRename {
+        provider_id: ProviderId,
+        credential_id: String,
+        display_name: String,
     },
     AuthCancel {
         provider_id: ProviderId,
@@ -647,6 +654,38 @@ mod tests {
         CommandSource::RemoteGui {
             client_id: GuiClientId::from("gui-1"),
             connection_id: ConnectionId::from("connection-1"),
+        }
+    }
+
+    #[test]
+    fn account_add_commands_default_empty_display_name() {
+        let key: AppCommand = serde_json::from_value(serde_json::json!({
+            "method": "auth_account_add_api_key",
+            "params": {
+                "provider_id": "glm-coding",
+                "api_key": "sk-test"
+            }
+        }))
+        .expect("omit display_name");
+        match key {
+            AppCommand::AuthAccountAddApiKey { display_name, .. } => {
+                assert!(display_name.is_empty());
+            }
+            other => panic!("{other:?}"),
+        }
+        let oauth: AppCommand = serde_json::from_value(serde_json::json!({
+            "method": "auth_account_start",
+            "params": {
+                "provider_id": "xai",
+                "flow": "oauth"
+            }
+        }))
+        .expect("omit oauth display_name");
+        match oauth {
+            AppCommand::AuthAccountStart { display_name, .. } => {
+                assert!(display_name.is_empty());
+            }
+            other => panic!("{other:?}"),
         }
     }
 

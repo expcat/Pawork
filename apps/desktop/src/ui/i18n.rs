@@ -172,9 +172,12 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "settings.tools.config_path" => ("Global configuration", "全局配置位置"),
         "resources.tool_count" => ("{} tools", "{} 个工具"),
         "model_search.placeholder" => ("Search model name or ID", "搜索模型名称或 ID"),
+        "model_search.placeholder_providers" => ("Search provider or model", "搜索供应商或模型"),
         "model_search.manage" => ("Manage models & providers", "管理模型与供应商"),
         "model_search.clear" => ("Clear search", "清除搜索"),
         "model_search.no_results" => ("No matching models", "没有匹配的模型"),
+        "model_search.no_providers" => ("No matching providers", "没有匹配的供应商"),
+        "model_search.model_count" => ("{} models", "{} 个模型"),
         "model_search.status_unknown" => (
             "Connection and catalog source unverified",
             "连接状态与目录来源尚未确认",
@@ -460,6 +463,9 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             "通过代理服务器路由请求",
         ),
         "settings.providers.account_name" => ("Account name", "账号名称"),
+        "settings.providers.account_alias" => ("Account alias", "账号别名"),
+        "settings.providers.account_rename" => ("Rename", "重命名"),
+        "settings.providers.account_selected_badge" => ("Selected", "当前"),
         "settings.providers.add_api_key" => ("Add API key", "添加 API key"),
         "settings.providers.add_oauth" => ("Add OAuth account", "添加 OAuth 账号"),
         "settings.providers.account_use" => ("Use", "使用"),
@@ -768,8 +774,12 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             "发送消息（Enter），Shift+Enter 换行。",
         ),
         "composer.placeholder_open_session" => (
-            "Open a session to send messages.",
-            "打开会话后才能发送消息。",
+            "Message Pawork…",
+            "给 Pawork 发消息…",
+        ),
+        "composer.send_disabled_starting" => (
+            "Starting conversation…",
+            "正在开始对话…",
         ),
         "composer.placeholder_waiting" => ("Waiting for connection…", "等待连接…"),
         "composer.placeholder_disconnected" => (
@@ -880,10 +890,10 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             "在下方输入消息，开始这个任务。",
         ),
         "timeline.bind_project" => ("Bind a project", "绑定项目"),
-        "timeline.empty_title" => ("Start a task", "开始一个任务"),
+        "timeline.empty_title" => ("Start a conversation", "开始对话"),
         "timeline.empty_hint" => (
-            "Choose a task from the sidebar or create a new one.",
-            "从侧栏选择一个任务，或新建一个任务。",
+            "Type below to start an unassigned conversation, or create a task from the sidebar.",
+            "在下方输入即可开始无任务对话，也可从侧栏新建任务。",
         ),
         "tool.status_completed" => ("Completed", "已完成"),
         "tool.in_progress" => ("In progress", "进行中"),
@@ -909,11 +919,9 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "run.footer_failed" => ("Run failed", "运行失败"),
         "run.failed_desc_fallback" => ("The run failed.", "运行失败。"),
         "run.open_provider_settings" => ("Open provider settings", "打开供应商设置"),
-        "run.usage_unknown" => ("Run usage —", "本轮用量 —"),
-        "run.usage" => (
-            "Run tokens · input {input} · output {output}",
-            "本轮 tokens · 输入 {input} · 输出 {output}",
-        ),
+        "run.usage_unknown" => ("↑ — · ↓ —", "↑ — · ↓ —"),
+        "run.usage" => ("↑ {input} · ↓ {output}", "↑ {input} · ↓ {output}"),
+        "run.tok_s" => ("{} tok/s", "{} tok/s"),
         "run.duration" => ("Duration", "时长"),
         "tool.arguments" => ("Arguments", "参数"),
         "tool.result" => ("Result", "结果"),
@@ -1032,9 +1040,10 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "inspector.resize_not_applied" => ("size not applied", "尺寸尚未应用"),
         "inspector.resize_confirmed" => ("resize confirmed", "尺寸调整已确认"),
         "inspector.terminal_input_placeholder" => (
-            "Terminal input… (Enter to write)",
-            "终端输入…（Enter 写入）",
+            "Type in the terminal… (Enter to write)",
+            "在终端里输入…（Enter 写入）",
         ),
+        "inspector.terminal_new_tab" => ("New terminal tab", "新建终端标签页"),
         "header.tooltip_activity" => ("Activity", "动态"),
         // OPT-4b：折叠态 Header 最右的重开入口（tooltip 与 AX name 同源）。
         "header.tooltip_open_inspector" => ("Open inspector", "打开检查器"),
@@ -1161,6 +1170,8 @@ mod tests {
             ("inspector.return_for_approval", "返回对话处理审批"),
             ("timeline.code_block", "代码"),
             ("run.open_provider_settings", "打开供应商设置"),
+            ("run.duration", "时长"),
+            ("run.usage", "↑ {input} · ↓ {output}"),
         ] {
             assert_eq!(localize(key, Language::Chinese), zh);
             assert_ne!(localize(key, Language::English), key);

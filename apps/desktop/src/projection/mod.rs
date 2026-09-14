@@ -27,8 +27,9 @@ pub use pawork_client::projection::{ForkBoundary, TimelineEntry, TimelineEntryKi
 pub use session::group_models_by_provider;
 pub use session::{
     sessions_in_snapshot, ActiveRun, ConnectionState, DateBucket, ModelEntry, PendingApproval,
-    ResumeApply, ResumeState, SessionLiveStatus, SessionSummary, TaskRailDateGroup,
-    TaskRailGrouping, TaskRailProjectGroup, WorkspaceSummary, UNASSIGNED_PROJECT,
+    ResumeApply, ResumeState, RunUsageDisplay, SessionLiveStatus, SessionSummary,
+    TaskRailDateGroup, TaskRailGrouping, TaskRailProjectGroup, WorkspaceSummary,
+    UNASSIGNED_PROJECT,
 };
 pub use settings::{
     parse_auth_change, ApprovalModeWire, AuthChange, AuthStartData, DefaultModelPair,
@@ -379,10 +380,23 @@ impl DesktopProjection {
         // 回执（ControllerEvent），只属于 active session，不经 wire 抵达
         // 此处，故无对应 arm。
         if let EventStream::Session(session_id) = &envelope.stream {
-            if self.active_session_id.as_deref() != Some(session_id.as_str())
-                && is_session_activity_event(&envelope.payload)
-            {
-                membership_changed |= self.unread_sessions.insert(session_id.as_str().to_string());
+            let is_active = self.active_session_id.as_deref() == Some(session_id.as_str());
+            if !is_active {
+                if is_session_activity_event(&envelope.payload)
+                    || matches!(
+                        envelope.payload,
+                        AppEvent::RunChanged { .. } | AppEvent::ToolApprovalRequired { .. }
+                    )
+                {
+                    membership_changed |= self.touch_session_activity(
+                        session_id.as_str(),
+                        envelope.timestamp.as_unix_millis(),
+                    );
+                }
+                if is_session_activity_event(&envelope.payload) {
+                    membership_changed |=
+                        self.unread_sessions.insert(session_id.as_str().to_string());
+                }
             }
         }
         let Some(active) = self.active_session_id.as_deref() else {
@@ -394,6 +408,21 @@ impl DesktopProjection {
         }
         // 时间线语义（去重 / 条目 / 锚点）委托 protocol reducer。
         let timeline_changed = self.timeline.apply_event(envelope);
+        // 当前会话：只在事件真正落地（或 Run/审批成员变化）时推进侧栏
+        // 时间；被 tombstone / seen 吞掉的迟到增量不得清未开始钉顶。
+        if timeline_changed
+            || matches!(
+                envelope.payload,
+                AppEvent::RunChanged { .. } | AppEvent::ToolApprovalRequired { .. }
+            )
+        {
+            if let EventStream::Session(session_id) = &envelope.stream {
+                membership_changed |= self.touch_session_activity(
+                    session_id.as_str(),
+                    envelope.timestamp.as_unix_millis(),
+                );
+            }
+        }
         // UI 态：run 跟踪、审批卡、模型切换（与时间线条目无交集）。
         match &envelope.payload {
             AppEvent::RunChanged { run_id, state } => {

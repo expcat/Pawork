@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::OnceLock;
 
 use crate::channels::{AcpCommandHost, AcpHostError};
 use async_trait::async_trait;
@@ -16,6 +17,22 @@ use pawork_protocol::{
 use tokio::sync::RwLock;
 
 static NEXT_COMMAND: AtomicU64 = AtomicU64::new(1);
+
+static COMMAND_NAMESPACE: OnceLock<String> = OnceLock::new();
+
+/// 跨进程唯一的命令命名空间。command_ledger 以 (tenant, scope, command_id)
+/// 持久幂等：裸计数器（cli-<name>-1…）会让不同进程的不同逻辑命令撞键，
+/// 命中旧记录重放出旧 session / 已完成 run 的响应（hang 实证见
+/// docs/ROADMAP.md §2.2）。与 client 的 new_request_namespace 同形态。
+fn command_namespace() -> &'static str {
+    COMMAND_NAMESPACE.get_or_init(|| {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        format!("{:x}-{nanos:x}", std::process::id())
+    })
+}
 
 pub fn adapter_from_locked(core: AppCore, approvals: Arc<GuiApprovalHost>) -> GuiHostAdapter {
     GuiHostAdapter::from_locked(Arc::new(RwLock::new(core)), approvals)
@@ -51,7 +68,7 @@ pub fn command_envelope(command: AppCommand, name: &str) -> AppCommandEnvelope {
     stamp_automation(
         AppCommandEnvelope {
             api_version: API_VERSION,
-            command_id: CommandId::from(format!("cli-{name}-{n}")),
+            command_id: CommandId::from(format!("cli-{name}-{}-{n}", command_namespace())),
             source: CommandSource::Automation,
             identity: ActorIdentity::Automation { name: name.into() },
             expected_revision: None,
@@ -110,5 +127,37 @@ impl AcpCommandHost for CliAcpCommandHost {
 
     fn subscribe(&self) -> tokio::sync::broadcast::Receiver<AppEventEnvelope> {
         self.adapter.subscribe_events()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// command_ledger 跨进程持久幂等：command_id 必须含进程级命名空间，
+    /// 否则不同进程的不同逻辑命令会撞键并重放旧响应（pawork run 挂死）。
+    #[test]
+    fn command_ids_carry_process_namespace_and_stay_unique() {
+        let first = command_envelope(
+            AppCommand::SessionCreate {
+                workspace_id: None,
+                title: None,
+            },
+            "cli-json",
+        );
+        let second = command_envelope(
+            AppCommand::SessionCreate {
+                workspace_id: None,
+                title: None,
+            },
+            "cli-json",
+        );
+        let first_id = first.command_id.as_str();
+        let second_id = second.command_id.as_str();
+        let namespace = command_namespace();
+        assert!(!namespace.is_empty());
+        assert!(first_id.starts_with(&format!("cli-cli-json-{namespace}-")));
+        assert!(second_id.starts_with(&format!("cli-cli-json-{namespace}-")));
+        assert_ne!(first_id, second_id);
     }
 }

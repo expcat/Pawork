@@ -43,7 +43,7 @@ pub use error::AuthError;
 pub use file_backend::FileBackend;
 pub use masked::MaskedCredential;
 pub use oauth::{
-    exchange_pkce_code, http_client, needs_refresh, poll_device_token, random_state,
+    exchange_pkce_code, http_client, needs_refresh, oauth_login_email, poll_device_token, random_state,
     read_refresh_token, refresh_access_token, refresh_oauth_credential_if_needed,
     request_device_authorization, resolve_oauth_credential, resolve_oauth_credential_for_request,
     start_pkce_flow, start_pkce_flow_with_callback, store_oauth_token, update_oauth_token,

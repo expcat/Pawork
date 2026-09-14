@@ -8,6 +8,8 @@ OPT-2 / [ADR-054](desktop.md#adr-054opt-2-会话生命周期与自动标题2026-
 
 UI-6b G2（[ADR-060](settings.md#adr-060ui-6b-g2-逐账号额度与耗尽切换2026-09-09)）使用 GUI API 1.16：追加 Percent 单位、逐账号 quota 查询语义、GUI-only `auth_account_set_selection_mode` 与 provider 状态 `selection_mode`。旧无凭证查询保留本地账本响应；新查询限本地 tenant/account、指定 provider/credential、无 model，旧 minor 在发网前拒绝。旧 minor 的账号状态剥离模式字段。未变更持久事件/schema；自动选择用既有 Diagnostic 记录，golden/typegen 同步。
 
+ADR-061 使用 GUI API 1.17：空 `display_name` 在 add/start 时由 Host 生成默认名；新增 GUI-only `auth_account_rename`。旧 Host 仍拒空名。golden/typegen 同步。
+
 ## 1. 契约原则
 
 1. 磁盘、wire、JSON、公开安全枚举和可重放事件不得静默破坏。
@@ -27,8 +29,8 @@ UI-6b G2（[ADR-060](settings.md#adr-060ui-6b-g2-逐账号额度与耗尽切换2
 | CON-BLOB-01 | Artifact/Protected Blob | `PWB1_MAGIC`，`PWB1_VERSION = 1`；protected 使用 AEAD | checkpoint/reasoning → artifact/protected stores | [blob](../../crates/storage/src/blob)；[PWB1 golden](../../crates/storage/tests/golden) |
 | CON-POLICY-01 | Policy 决策 | `PolicyDecision` 四变体；`ApprovalMode` 五档，默认 `ReadOnly` | tools/app → CLI/Desktop/exec | [policy](../../crates/policy/src)；[security.md](security.md) |
 | CON-CONFIG-01 | 配置 schema/层级 | `Builtin < Global < Profile < Workspace < Session < Run`；`ProviderConfig` 无 `api_key` | workspace loader → app/providers | [workspace config](../../crates/workspace/src/config) |
-| CON-GUI-01 | GUI Connection Protocol | API `1.16`；支持 `1.0`–`1.16`；Accepted 握手可选 `host_data_dir`；`ClientFrame`/`ServerFrame`；上限 1 MiB | app GUI host ↔ client/Desktop | [protocol](../../crates/protocol/src)；[schemas/gui-protocol](../../schemas/gui-protocol)；protocol fixtures/golden |
-| CON-REGISTRY-01 | Command/Capability Registry | 39 `AppCommand`、15 `AppQuery`；GUI/headless/ACP 可用性同源 | protocol registry → app/cli/client | [registry](../../crates/protocol/src/app/registry.rs) |
+| CON-GUI-01 | GUI Connection Protocol | API `1.17`；支持 `1.0`–`1.17`；Accepted 握手可选 `host_data_dir`；`ClientFrame`/`ServerFrame`；上限 1 MiB | app GUI host ↔ client/Desktop | [protocol](../../crates/protocol/src)；[schemas/gui-protocol](../../schemas/gui-protocol)；protocol fixtures/golden |
+| CON-REGISTRY-01 | Command/Capability Registry | 40 `AppCommand`、15 `AppQuery`；GUI/headless/ACP 可用性同源 | protocol registry → app/cli/client | [registry](../../crates/protocol/src/app/registry.rs) |
 | CON-HEADLESS-01 | Headless JSON | 与 GUI 帧正交的 request/response JSONL；stdout-only | CLI stdio ↔ SDK/automation | [headless protocol](../../crates/protocol/src/headless)；[schemas/headless-json](../../schemas/headless-json) |
 | CON-ACP-01 | ACP 映射 | ACP adapter 只接 registry 允许的能力，未登记拒绝 | IDE/ACP client ↔ CLI/AppCore | [CLI ACP](../../crates/cli/src/channels/acp)；ACP fixtures |
 | CON-USAGE-01 | Usage 与审计 | usage `dedup_key`；audit 为 JSONL | app/control-plane → usage ledger/audit | [control-plane](../../crates/control-plane/src)；对应 golden |
@@ -69,6 +71,8 @@ UI-6b G2（[ADR-060](settings.md#adr-060ui-6b-g2-逐账号额度与耗尽切换2
 - `ArtifactStreaming` 枚举可保留，但生产宿主当前不得宣告。
 - `WorkspaceRelativePath` 拒绝绝对路径与 `..`；客户端不因 UI 便利绕过 host Policy。
 
+- API 1.17（[ADR-061](settings.md#adr-061账号默认名称与重命名2026-09-13)）：add/start 的 `display_name` 可缺省或空，由 Host 生成默认名；新增 GUI-only `auth_account_rename`。旧 Host 仍拒空名。
+- API 1.16（[ADR-060](settings.md#adr-060ui-6b-g2-逐账号额度与耗尽切换2026-09-09)）：Percent 单位、逐账号 quota 查询、`auth_account_set_selection_mode` 与 `selection_mode`；旧 minor 发网前拒绝新查询并剥离模式字段。
 - API 1.15（[ADR-059](settings.md#adr-059ui-6b-命名账号与持久选择2026-09-08)）：四个 GUI account 命令和 credential ID/名称/selected；旧 minor 响应过滤新字段，新客户端默认解码旧状态。账号索引与 secret 同事务，选择在后续请求边界生效。
 - API 1.14（[ADR-057](desktop.md#adr-057ui-3-思考投影与会话身份2026-09-08)）：历史新增 `thinking_delta` 与可选 `message_id` / `thinking_text`；同一事件保持一条 wire 条目，只投影可见思考。旧 minor 响应过滤新 kind/字段但保留分页游标。Provider 请求新增可选 `session_id`，旧 JSON 缺省 None；Engine 与命名入口传真实会话，只有 OpenCode Go 映射 HTTP 会话头。
 

@@ -79,7 +79,7 @@ static SEQUENCE: AtomicU64 = AtomicU64::new(0);
 fn write(path: &Path, update: impl FnOnce(&mut DesktopPreferences)) -> io::Result<()> {
     let _guard = WRITE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let (mut prefs, mut table) = read(path)?; // 损坏文件不覆盖；保留未知键。
-    // 仅修改用户操作的字段，其余偏好沿用磁盘值，避免旧窗口快照覆盖新设置。
+                                              // 仅修改用户操作的字段，其余偏好沿用磁盘值，避免旧窗口快照覆盖新设置。
     update(&mut prefs);
     if !matches!(prefs.language.as_str(), "en" | "zh")
         || !matches!(prefs.text_scale, 100 | 125 | 150)

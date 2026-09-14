@@ -10,7 +10,8 @@ use crate::ui::i18n::t;
 use crate::ui::settings::{
     provider_catalog_overview_label, provider_credential_kind_label,
     provider_credential_status_label, provider_status_lines, quota_identifier,
-    settings_account_action_identifier, settings_api_key_input_identifier,
+    settings_account_action_identifier, settings_account_rename_identifier,
+    settings_account_rename_input_identifier, settings_api_key_input_identifier,
     settings_credential_row_identifier, settings_default_unavailable_note,
     settings_manage_models_identifier, settings_model_switch_identifier,
     settings_models_disable_all_identifier, settings_models_enable_all_identifier,
@@ -280,6 +281,42 @@ impl AppView {
                                 self.settings_account_action_enabled(provider, credential, remove),
                             ));
                         }
+                        if self.settings_account_rename_supported() {
+                            credentials = credentials.child(button(
+                                settings_account_rename_identifier(id, &credential.credential_id),
+                                t("settings.providers.account_rename"),
+                                writes
+                                    && !matches!(provider.auth, ProviderAuthState::Connecting)
+                                    && !credential.credential_id.is_empty(),
+                            ));
+                            if self.settings_account_rename.as_ref().is_some_and(|rename| {
+                                rename.provider_id == *id
+                                    && rename.credential_id == credential.credential_id
+                            }) {
+                                if let Some(rename) = &self.settings_account_rename {
+                                    let input_id = settings_account_rename_input_identifier(
+                                        id,
+                                        &credential.credential_id,
+                                    );
+                                    let mut node = AxNode::new(
+                                        input_id.clone(),
+                                        AxRole::TextArea,
+                                        t("settings.providers.account_alias"),
+                                        self.settings_element_bounds(&input_id),
+                                    )
+                                    .value(rename.input.read(cx).text())
+                                    .enabled(writes)
+                                    .focused(
+                                        rename.input.read(cx).focus_handle(cx).is_focused(window),
+                                    );
+                                    if writes {
+                                        node =
+                                            node.action(AxAction::Focus).action(AxAction::SetValue);
+                                    }
+                                    credentials = credentials.child(node);
+                                }
+                            }
+                        }
                     }
                 }
                 if let Some(remove_id) = &self.settings_account_remove_confirm {
@@ -293,36 +330,12 @@ impl AppView {
                         ));
                     }
                 }
-                credentials = credentials
-                    .child(text(
-                        dynamic_identifier("settings-account-add-title", id),
-                        t("settings.providers.add_account"),
-                        String::new(),
-                    ))
-                    .child(text(
+                if id == "opencode-go" && self.settings_quota_supported() {
+                    credentials = credentials.child(text(
                         quota_identifier(id, "", "scope"),
                         t("settings.quota.scope"),
                         String::new(),
                     ));
-                if self.settings_accounts_supported()
-                    && !matches!(provider.auth, ProviderAuthState::Connecting)
-                {
-                    if let Some(input) = self.settings_account_names.get(id) {
-                        let input_id = dynamic_identifier("settings-account-name", id);
-                        let mut node = AxNode::new(
-                            input_id.clone(),
-                            AxRole::TextArea,
-                            t("settings.providers.account_name"),
-                            self.settings_element_bounds(&input_id),
-                        )
-                        .value(input.read(cx).text())
-                        .enabled(writes)
-                        .focused(input.read(cx).focus_handle(cx).is_focused(window));
-                        if writes {
-                            node = node.action(AxAction::Focus).action(AxAction::SetValue);
-                        }
-                        credentials = credentials.child(node);
-                    }
                 }
                 let mut details = Vec::new();
                 if let (ProviderAuthState::Connecting, Some(wait)) = (&provider.auth, wait) {
@@ -673,6 +686,11 @@ impl AppView {
         ] {
             menu = menu.child(button(id, label, writes && !pending && !models.is_empty()));
         }
+        menu = menu.child(button(
+            settings_models_refresh_identifier(provider_id),
+            t("settings.providers.models_refresh"),
+            writes,
+        ));
         if models.is_empty() {
             let id = format!("settings-models-empty-{provider_id}");
             return visible(
@@ -684,12 +702,7 @@ impl AppView {
                         bounds(&id),
                     )
                     .value(t("settings.providers.models_empty_hint")),
-                )
-                .child(button(
-                    settings_models_refresh_identifier(provider_id),
-                    t("settings.providers.models_refresh"),
-                    writes,
-                )),
+                ),
             );
         }
         if filtered_models.is_empty() {

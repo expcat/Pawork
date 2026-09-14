@@ -1,12 +1,13 @@
 //! Session / workspace / TaskRail 投影类型与 snapshot 解析。
 
+use std::cmp::Ordering;
 use std::collections::BTreeSet;
 
 use crate::ui::i18n::{t, t2};
 use pawork_client::{ResumeDisposition, Snapshot};
 use serde_json::Value;
 
-use super::DesktopProjection;
+use super::{DesktopProjection, TimelineEntryKind};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ConnectionState {
@@ -44,6 +45,9 @@ pub struct SessionSummary {
     pub parent_branch_id: Option<String>,
     pub forked_from_event_id: Option<String>,
     pub active: bool,
+    /// 尚无事件：Host `session_tree.branches[].head_sequence` 全为 0。
+    /// 扁平快照缺 `branches` 时视为已开始（兼容测试夹具，不误钉顶）。
+    pub unstarted: bool,
 }
 
 /// 重连三态（gui-design §4.1 / §5）：必须在 UI 上可区分。
@@ -362,10 +366,39 @@ pub(super) fn parse_sessions(data: &Value) -> Vec<SessionSummary> {
                 .and_then(Value::as_str)
                 .map(str::to_string),
             active: entry.get("active").and_then(Value::as_bool).unwrap_or(true),
+            unstarted: session_is_unstarted(entry),
         });
     }
-    sessions.sort_by(|a, b| b.updated_at_ms.cmp(&a.updated_at_ms));
+    sessions.sort_by(cmp_rail_sessions);
     sessions
+}
+
+/// Host `session_tree` 为每个会话附带 `branches[].head_sequence`。任一
+/// 分支 > 0 即已开始。缺 `branches` 的扁平夹具视为已开始，避免把旧测试
+/// 数据全部钉顶。
+fn session_is_unstarted(entry: &Value) -> bool {
+    let Some(branches) = entry.get("branches").and_then(Value::as_array) else {
+        return false;
+    };
+    !branches.iter().any(|branch| {
+        branch
+            .get("head_sequence")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            > 0
+    })
+}
+
+/// 未开始任务钉在项目组顶；其余按 `updated_at_ms` 降序。
+fn cmp_rail_sessions(a: &SessionSummary, b: &SessionSummary) -> Ordering {
+    match (a.unstarted, b.unstarted) {
+        (true, false) => Ordering::Less,
+        (false, true) => Ordering::Greater,
+        _ => b
+            .updated_at_ms
+            .cmp(&a.updated_at_ms)
+            .then_with(|| a.session_id.cmp(&b.session_id)),
+    }
 }
 pub(super) fn parse_workspaces(data: &Value) -> Vec<WorkspaceSummary> {
     let Some(entries) = data.as_array() else {
@@ -404,11 +437,12 @@ fn group_sessions_by_project(
     projection: &DesktopProjection,
     mut sessions: Vec<SessionSummary>,
 ) -> Vec<TaskRailProjectGroup> {
-    sessions.sort_by(|a, b| b.updated_at_ms.cmp(&a.updated_at_ms));
+    sessions.sort_by(cmp_rail_sessions);
     let mut groups: Vec<TaskRailProjectGroup> = Vec::new();
     for session in sessions {
         let key = session.workspace_id.clone();
         if let Some(group) = groups.iter_mut().find(|group| group.workspace_id == key) {
+            group.latest_activity_ms = group.latest_activity_ms.max(session.updated_at_ms);
             group.tasks.push(session);
         } else {
             let name = projection.workspace_name(key.as_deref());
@@ -487,11 +521,158 @@ pub(super) fn parse_active_runs(data: &Value) -> Vec<ActiveRun> {
         .collect()
 }
 
-fn format_run_duration(started_at_ms: u64, now_ms: u64) -> String {
-    let elapsed_s = now_ms.saturating_sub(started_at_ms) / 1000;
-    let minutes = elapsed_s / 60;
-    let seconds = elapsed_s % 60;
-    format!("{minutes:02}:{seconds:02}")
+fn format_elapsed_clock(duration_ms: u64) -> String {
+    let elapsed_s = duration_ms / 1000;
+    format!("{:02}:{:02}", elapsed_s / 60, elapsed_s % 60)
+}
+
+/// 有权威时长且 output > 0 才给 tok/s；字符预览不报速率。
+fn format_tok_s(output_tokens: u64, duration_ms: u64) -> Option<String> {
+    if duration_ms < 200 || output_tokens == 0 {
+        return None;
+    }
+    let rate = output_tokens as f64 * 1000.0 / duration_ms as f64;
+    let text = if rate >= 10.0 {
+        format!("{:.0}", rate.round())
+    } else {
+        format!("{:.1}", (rate * 10.0).round() / 10.0)
+    };
+    Some(t("run.tok_s").replace("{}", &text))
+}
+
+/// 流式预览：CJK / 全角约 1 token，其余约 4 字符 1 token。终态有持久化
+/// usage 时回落权威读数，不把预览写进 reducer。
+pub(super) fn estimate_visible_tokens(text: &str) -> u64 {
+    let mut tokens = 0u64;
+    let mut latin = 0u64;
+    for ch in text.chars() {
+        if is_wide_token_char(ch) {
+            tokens += 1 + (latin + 3) / 4;
+            latin = 0;
+        } else if ch.is_whitespace() {
+            tokens += (latin + 3) / 4;
+            latin = 0;
+        } else {
+            latin += 1;
+        }
+    }
+    tokens + (latin + 3) / 4
+}
+
+fn is_wide_token_char(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{3400}'..='\u{4DBF}'
+            | '\u{4E00}'..='\u{9FFF}'
+            | '\u{F900}'..='\u{FAFF}'
+            | '\u{3040}'..='\u{30FF}'
+            | '\u{AC00}'..='\u{D7AF}'
+            | '\u{FF00}'..='\u{FFEF}'
+    )
+}
+
+fn token_text(value: Option<u64>) -> String {
+    value
+        .map(|count| count.to_string())
+        .unwrap_or_else(|| "—".into())
+}
+
+/// 底栏 / 页脚 / AX 同源的一轮用量与时长。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunUsageDisplay {
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+    pub duration_ms: Option<u64>,
+    pub tok_s: Option<String>,
+    pub live: bool,
+    pub estimated: bool,
+}
+
+impl RunUsageDisplay {
+    fn empty() -> Self {
+        Self {
+            input_tokens: None,
+            output_tokens: None,
+            duration_ms: None,
+            tok_s: None,
+            live: false,
+            estimated: false,
+        }
+    }
+
+    pub fn input_text(&self) -> String {
+        token_text(self.input_tokens)
+    }
+
+    pub fn output_text(&self) -> String {
+        token_text(self.output_tokens)
+    }
+
+    pub fn duration_text(&self) -> String {
+        self.duration_ms
+            .map(format_elapsed_clock)
+            .unwrap_or_else(|| "—".into())
+    }
+
+    pub fn usage_label(&self) -> String {
+        t("run.usage")
+            .replace("{input}", &self.input_text())
+            .replace("{output}", &self.output_text())
+    }
+
+    pub fn status_label(&self) -> String {
+        let mut parts = vec![
+            self.usage_label(),
+            format!("{} {}", t("run.duration"), self.duration_text()),
+        ];
+        if let Some(rate) = &self.tok_s {
+            parts.push(rate.clone());
+        }
+        parts.join(" · ")
+    }
+}
+
+fn run_span_ms<'a, I>(entries: I, run_id: &str) -> Option<u64>
+where
+    I: IntoIterator<Item = &'a crate::projection::TimelineEntry>,
+{
+    let mut min_ts = None;
+    let mut max_ts = None;
+    for entry in entries {
+        if entry.run_id.as_deref() != Some(run_id) {
+            continue;
+        }
+        let Ok(ts) = entry.timestamp.parse::<u64>() else {
+            continue;
+        };
+        min_ts = Some(min_ts.map_or(ts, |m: u64| m.min(ts)));
+        max_ts = Some(max_ts.map_or(ts, |m: u64| m.max(ts)));
+    }
+    match (min_ts, max_ts) {
+        (Some(min), Some(max)) if max > min => Some(max - min),
+        _ => None,
+    }
+}
+
+fn visible_run_text<'a, I>(entries: I, run_id: &str) -> (String, String)
+where
+    I: IntoIterator<Item = &'a crate::projection::TimelineEntry>,
+{
+    let mut input = String::new();
+    let mut output = String::new();
+    for entry in entries {
+        if entry.run_id.as_deref() != Some(run_id) {
+            continue;
+        }
+        match &entry.kind {
+            TimelineEntryKind::UserMessage { text } => input.push_str(text),
+            TimelineEntryKind::AssistantMessage { text } | TimelineEntryKind::Thinking { text } => {
+                output.push_str(text)
+            }
+            _ => {}
+        }
+    }
+    (input, output)
 }
 /// 供 controller / probe 复用的 snapshot 解析。
 pub fn sessions_in_snapshot(snapshot: &Snapshot) -> Vec<SessionSummary> {
@@ -576,6 +757,36 @@ impl DesktopProjection {
         }
     }
 
+    /// 同项目（含 Unassigned=`None`）未开始任务；多条时取最近更新的一条。
+    pub fn unstarted_session_id(&self, workspace_id: Option<&str>) -> Option<&str> {
+        self.sessions
+            .iter()
+            .filter(|session| session.workspace_id.as_deref() == workspace_id && session.unstarted)
+            .max_by_key(|session| session.updated_at_ms)
+            .map(|session| session.session_id.as_str())
+    }
+
+    /// live 活动推进侧栏时间并清除未开始钉顶，不等下一份 snapshot。
+    pub fn touch_session_activity(&mut self, session_id: &str, at_ms: u64) -> bool {
+        let Some(session) = self
+            .sessions
+            .iter_mut()
+            .find(|session| session.session_id == session_id)
+        else {
+            return false;
+        };
+        let mut changed = false;
+        if session.unstarted {
+            session.unstarted = false;
+            changed = true;
+        }
+        if at_ms > session.updated_at_ms {
+            session.updated_at_ms = at_ms;
+            changed = true;
+        }
+        changed
+    }
+
     pub fn scoped_sessions(&self, scope: Option<&str>) -> Vec<&SessionSummary> {
         self.sessions
             .iter()
@@ -649,33 +860,80 @@ impl DesktopProjection {
         }
     }
 
-    /// Latest Run only; terminal usage comes from persisted cumulative usage, never stream snapshots.
-    pub fn run_usage_label(&self, run: Option<&str>) -> String {
-        let Some(usage) = run.and_then(|run| self.timeline.run_usage(run)) else {
-            return t("run.usage_unknown").into();
-        };
-        t("run.usage")
-            .replace("{input}", &usage.input_tokens.to_string())
-            .replace("{output}", &usage.output_tokens.to_string())
-    }
-
-    pub fn run_status_label(&self, now_ms: u64) -> String {
-        let run = self.active_run_id.as_deref().or_else(|| {
+    /// 底栏与 live 页脚默认看当前 Run，空闲回落到时间线最近一轮。
+    pub fn status_run_id(&self) -> Option<&str> {
+        self.active_run_id.as_deref().or_else(|| {
             self.timeline
                 .iter()
                 .rev()
                 .find_map(|entry| entry.run_id.as_deref())
-        });
-        let usage = self.run_usage_label(run);
-        match (self.active_run_id.as_ref(), self.active_run_started_at_ms) {
-            (Some(_), Some(start)) => format!(
-                "{usage} | {} {}",
-                t("run.duration"),
-                format_run_duration(start, now_ms)
-            ),
-            (Some(_), None) => format!("{usage} | {} —", t("run.duration")),
-            _ => usage,
+        })
+    }
+
+    pub fn run_usage_display(&self, run: Option<&str>, now_ms: u64) -> RunUsageDisplay {
+        let Some(run_id) = run else {
+            return RunUsageDisplay::empty();
+        };
+        let live = self.active_run_id.as_deref() == Some(run_id);
+        let duration_ms = self.run_duration_ms(run_id, now_ms);
+        if let Some(usage) = self.timeline.run_usage(run_id) {
+            return RunUsageDisplay {
+                input_tokens: Some(usage.input_tokens),
+                output_tokens: Some(usage.output_tokens),
+                duration_ms,
+                tok_s: duration_ms.and_then(|ms| format_tok_s(usage.output_tokens, ms)),
+                live,
+                estimated: false,
+            };
         }
+        let (input_text, output_text) = visible_run_text(self.timeline.iter(), run_id);
+        // 字符预览只服务 live；终态无持久化 usage 按「缺失为未知」显示 —，
+        // 不拿估算值冒充权威读数（gui-design §用量口径）。
+        let preview = live;
+        RunUsageDisplay {
+            input_tokens: (preview && !input_text.is_empty())
+                .then(|| estimate_visible_tokens(&input_text)),
+            output_tokens: (preview && !output_text.is_empty())
+                .then(|| estimate_visible_tokens(&output_text)),
+            duration_ms,
+            tok_s: None,
+            live,
+            estimated: preview && (!input_text.is_empty() || !output_text.is_empty()),
+        }
+    }
+
+    /// Latest Run；有持久化终态 usage 用权威读数，否则按已上屏正文预览。
+    pub fn run_usage_label(&self, run: Option<&str>) -> String {
+        self.run_usage_display(run, 0).usage_label()
+    }
+
+    pub fn run_footer_display_label(
+        &self,
+        run_id: Option<&str>,
+        terminal_label: &str,
+        now_ms: u64,
+    ) -> String {
+        let display = self.run_usage_display(run_id, now_ms);
+        let detail = display.status_label();
+        if terminal_label.is_empty() {
+            detail
+        } else {
+            format!("{terminal_label} · {detail}")
+        }
+    }
+
+    fn run_duration_ms(&self, run_id: &str, now_ms: u64) -> Option<u64> {
+        if self.active_run_id.as_deref() == Some(run_id) {
+            return self
+                .active_run_started_at_ms
+                .map(|start| now_ms.saturating_sub(start));
+        }
+        run_span_ms(self.timeline.iter(), run_id)
+    }
+
+    pub fn run_status_label(&self, now_ms: u64) -> String {
+        self.run_usage_display(self.status_run_id(), now_ms)
+            .status_label()
     }
 
     /// Reconnect 相位（F-02 壳层校准）：仅 Disconnected / ConnectFailed 提供
@@ -760,6 +1018,7 @@ impl DesktopProjection {
                 self.active_run_started_at_ms = Some(started_at_ms);
             }
         }
+        self.touch_session_activity(session_id, started_at_ms);
         if self.active_runs.iter().any(|run| run.run_id == run_id) {
             return;
         }

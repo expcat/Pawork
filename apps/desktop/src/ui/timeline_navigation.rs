@@ -208,6 +208,7 @@ impl AppView {
                     self.text_scale.rem_pixels(),
                     &self.expanded_timeline_details,
                     self.changes_available_for_active(),
+                    self.projection.active_run_id.as_deref(),
                 ) + if i > 0 {
                     timeline::row_top_gap(row)
                 } else {

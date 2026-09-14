@@ -9,8 +9,8 @@
 
 use gpui::{
     anchored, deferred, div, point, prelude::*, px, AnchoredPositionMode, AnyElement, App,
-    ClickEvent, Corner, IntoElement, MouseDownEvent, Pixels, Point, RenderOnce, SharedString,
-    ScrollHandle, Styled, Window,
+    ClickEvent, Corner, IntoElement, MouseDownEvent, Pixels, Point, RenderOnce, ScrollHandle,
+    SharedString, Styled, Window,
 };
 
 use crate::ui::theme::{dark, font, metrics};
@@ -244,6 +244,7 @@ impl RenderOnce for Dropdown {
         div()
             .flex()
             .flex_col()
+            .items_start()
             .child(self.trigger)
             .when_some(self.panel, |dropdown, panel| {
                 let mut anchor = anchored()

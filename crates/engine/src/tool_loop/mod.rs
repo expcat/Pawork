@@ -147,7 +147,6 @@ pub async fn run_session(
         turn.session_id.clone(),
         turn.run_id.clone(),
         &next_sequence,
-        turn.timestamp,
         events,
     );
     let loop_events = LoopEventEmitter::new(emitter.clone());

@@ -23,6 +23,33 @@ fn oauth_url_can_open(url: &str) -> bool {
         })
 }
 
+fn fallback_api_key_account_name(secret: &str) -> String {
+    let chars: Vec<char> = secret.trim().chars().collect();
+    match chars.len() {
+        0..=4 => "••••".into(),
+        5..=12 => {
+            let head: String = chars[..2].iter().collect();
+            let tail: String = chars[chars.len() - 2..].iter().collect();
+            format!("{head}***{tail}")
+        }
+        _ => {
+            let head: String = chars[..4].iter().collect();
+            let tail: String = chars[chars.len() - 4..].iter().collect();
+            format!("{head}***{tail}")
+        }
+    }
+}
+
+#[test]
+fn fallback_api_key_account_name_masks_head_and_tail() {
+    assert_eq!(fallback_api_key_account_name("abcd"), "••••");
+    assert_eq!(fallback_api_key_account_name("sk-abcdef"), "sk***ef");
+    assert_eq!(
+        fallback_api_key_account_name("sk-abcdEFGHwxyz"),
+        "sk-a***wxyz"
+    );
+}
+
 #[test]
 fn oauth_browser_links_reject_non_web_targets() {
     assert!(oauth_url_can_open(
@@ -50,13 +77,20 @@ impl AppView {
         providers
     }
 
-    pub(crate) fn settings_accounts_supported(&self) -> bool {
+    pub(crate) fn settings_api_minor(&self) -> u16 {
         self.handshake_info
             .as_ref()
             .and_then(|info| info.api_version.split_once('.'))
-            .is_some_and(|(major, minor)| {
-                major == "1" && minor.parse::<u16>().is_ok_and(|minor| minor >= 15)
-            })
+            .and_then(|(major, minor)| (major == "1").then(|| minor.parse::<u16>().ok()).flatten())
+            .unwrap_or(0)
+    }
+
+    pub(crate) fn settings_accounts_supported(&self) -> bool {
+        self.settings_api_minor() >= 15
+    }
+
+    pub(crate) fn settings_account_rename_supported(&self) -> bool {
+        self.settings_api_minor() >= 17
     }
 
     pub(crate) fn settings_credentials_title(&self) -> &'static str {
@@ -111,14 +145,17 @@ impl AppView {
         action.label()
     }
 
-    fn settings_account_name(&mut self, provider: &str, cx: &mut Context<Self>) -> Option<String> {
+    fn settings_new_account_display_name(&self, api_key: Option<&str>) -> Option<String> {
         if !self.settings_accounts_supported() {
             return None;
         }
-        let input = self.settings_account_names.get(provider)?;
-        let name = input.read(cx).text().trim().to_string();
-        input.update(cx, |input, cx| input.reset_text("", cx));
-        Some(name)
+        if self.settings_account_rename_supported() {
+            return Some(String::new());
+        }
+        Some(match api_key {
+            Some(secret) => fallback_api_key_account_name(secret),
+            None => "OAuth".into(),
+        })
     }
 
     pub(crate) fn settings_account_action_enabled(
@@ -189,22 +226,169 @@ impl AppView {
                     ""
                 },
             )
-            .on_click(cx.listener(move |view, event, _window, cx| {
+            .on_click(cx.listener(move |view, event, window, cx| {
                 if !view.consume_button_key_click(&click_id, event) {
-                    view.on_settings_account_action(&click_id, cx);
+                    view.on_settings_account_action(&click_id, window, cx);
                 }
             }))
-            .on_activate(cx.listener(move |view, _, _window, cx| {
+            .on_activate(cx.listener(move |view, _, window, cx| {
                 view.note_button_key_activate(&activate_id);
-                view.on_settings_account_action(&activate_id, cx);
+                view.on_settings_account_action(&activate_id, window, cx);
                 cx.stop_propagation();
             }));
         self.settings_element(id).flex_none().child(button)
     }
 
+    fn settings_account_rename_button(
+        &mut self,
+        provider: &ProviderAuthStatusEntry,
+        credential: &pawork_client::ProviderCredentialStatus,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let id =
+            settings_account_rename_identifier(&provider.provider_id, &credential.credential_id);
+        let enabled = self.settings_account_rename_supported()
+            && self.settings_writes_enabled()
+            && !matches!(provider.auth, ProviderAuthState::Connecting)
+            && !credential.credential_id.is_empty();
+        let focus = self
+            .settings_action_focus
+            .entry(id.clone())
+            .or_insert_with(|| cx.focus_handle().tab_stop(true))
+            .clone();
+        let click_id = id.clone();
+        let activate_id = id.clone();
+        let button = Button::new(id.clone())
+            .track_focus(&focus)
+            .variant(ButtonVariant::Raised)
+            .height(px(SETTINGS_CONTROL_HEIGHT))
+            .vcenter()
+            .radius(6.0)
+            .bordered()
+            .text_size(font::BODY_SM)
+            .label(t("settings.providers.account_rename"))
+            .disabled(!enabled)
+            .on_click(cx.listener(move |view, event, window, cx| {
+                if !view.consume_button_key_click(&click_id, event) {
+                    view.on_settings_account_action(&click_id, window, cx);
+                }
+            }))
+            .on_activate(cx.listener(move |view, _, window, cx| {
+                view.note_button_key_activate(&activate_id);
+                view.on_settings_account_action(&activate_id, window, cx);
+                cx.stop_propagation();
+            }));
+        self.settings_element(id).flex_none().child(button)
+    }
+
+    pub(crate) fn account_rename_input_focused(&self, window: &Window, cx: &App) -> bool {
+        self.settings_account_rename
+            .as_ref()
+            .is_some_and(|rename| rename.input.read(cx).focus_handle(cx).is_focused(window))
+    }
+
+    fn begin_account_rename(
+        &mut self,
+        provider_id: &str,
+        credential_id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.close_open_menu(cx);
+        let title = self
+            .projection
+            .settings_providers
+            .providers
+            .iter()
+            .find(|provider| provider.provider_id == provider_id)
+            .and_then(|provider| {
+                provider
+                    .credentials
+                    .iter()
+                    .find(|credential| credential.credential_id == credential_id)
+            })
+            .map(|credential| {
+                if credential.display_name.is_empty() {
+                    provider_credential_kind_label(&credential.kind)
+                } else {
+                    credential.display_name.clone()
+                }
+            })
+            .unwrap_or_default();
+        let input = cx.new(|cx| {
+            TextInput::with_placeholder(t("settings.providers.account_alias"), cx)
+                .id(settings_account_rename_input_identifier(
+                    provider_id,
+                    credential_id,
+                ))
+                .height_clamp(
+                    metrics::COMPOSER_INPUT_MIN_HEIGHT,
+                    metrics::COMPOSER_INPUT_MIN_HEIGHT,
+                )
+        });
+        input.update(cx, |editor, cx| editor.set_text(title, cx));
+        let focus = input.read(cx).focus_handle(cx);
+        self.settings_account_rename = Some(AccountRenameState {
+            provider_id: provider_id.to_string(),
+            credential_id: credential_id.to_string(),
+            input,
+        });
+        window.focus(&focus);
+        cx.notify();
+    }
+
+    fn end_account_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(rename) = self.settings_account_rename.take() else {
+            return;
+        };
+        let focus_key =
+            settings_account_rename_identifier(&rename.provider_id, &rename.credential_id);
+        if let Some(handle) = self.settings_action_focus.get(&focus_key) {
+            window.focus(handle);
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn commit_account_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(rename) = self.settings_account_rename.as_ref() else {
+            return;
+        };
+        let provider_id = rename.provider_id.clone();
+        let credential_id = rename.credential_id.clone();
+        let draft = rename.input.read(cx).text().to_string();
+        let current = self
+            .projection
+            .settings_providers
+            .providers
+            .iter()
+            .find(|provider| provider.provider_id == provider_id)
+            .and_then(|provider| {
+                provider
+                    .credentials
+                    .iter()
+                    .find(|credential| credential.credential_id == credential_id)
+                    .map(|credential| credential.display_name.clone())
+            })
+            .unwrap_or_default();
+        match crate::ui::session_rename_decision(&current, &draft) {
+            crate::ui::SessionRenameDecision::KeepEditing => cx.notify(),
+            crate::ui::SessionRenameDecision::Close => self.end_account_rename(window, cx),
+            crate::ui::SessionRenameDecision::Submit(name) => {
+                self.end_account_rename(window, cx);
+                self.controller
+                    .auth_account_rename(provider_id, credential_id, name);
+            }
+        }
+    }
+
+    pub(crate) fn cancel_account_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.end_account_rename(window, cx);
+    }
+
     pub(crate) fn on_settings_account_action(
         &mut self,
         identifier: &str,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
         if self
@@ -218,6 +402,25 @@ impl AppView {
         }
         for provider in self.projection.settings_providers.providers.clone() {
             for credential in &provider.credentials {
+                if settings_account_rename_identifier(
+                    &provider.provider_id,
+                    &credential.credential_id,
+                ) == identifier
+                {
+                    if self.settings_account_rename_supported()
+                        && self.settings_writes_enabled()
+                        && !matches!(provider.auth, ProviderAuthState::Connecting)
+                        && !credential.credential_id.is_empty()
+                    {
+                        self.begin_account_rename(
+                            &provider.provider_id,
+                            &credential.credential_id,
+                            window,
+                            cx,
+                        );
+                    }
+                    return true;
+                }
                 for remove in [false, true] {
                     if settings_account_action_identifier(
                         &provider.provider_id,
@@ -233,6 +436,7 @@ impl AppView {
                                 self.settings_account_remove_confirm = Some(identifier.to_string());
                             } else {
                                 self.settings_account_remove_confirm = None;
+                                self.settings_account_rename = None;
                                 self.projection
                                     .settings_providers
                                     .account_quotas
@@ -926,6 +1130,89 @@ impl AppView {
             ));
         }
         for (ix, credential) in provider.credentials.iter().enumerate() {
+            let name = if credential.display_name.is_empty() {
+                provider_credential_kind_label(&credential.kind)
+            } else {
+                credential.display_name.clone()
+            };
+            let renaming = self.settings_account_rename.as_ref().is_some_and(|rename| {
+                rename.provider_id == provider_id
+                    && rename.credential_id == credential.credential_id
+            });
+            let mut header = div().flex().flex_row().items_center().gap_2().child(
+                div()
+                    .flex_none()
+                    .size(px(8.0))
+                    .rounded_full()
+                    .bg(if credential.expired {
+                        dark().semantic.danger_text
+                    } else if credential.selected {
+                        dark().semantic.success_fg
+                    } else {
+                        dark().text.tertiary
+                    }),
+            );
+            if renaming {
+                if let Some(input) = self
+                    .settings_account_rename
+                    .as_ref()
+                    .map(|rename| rename.input.clone())
+                {
+                    header = header.child(
+                        self.settings_element(settings_account_rename_input_identifier(
+                            &provider_id,
+                            &credential.credential_id,
+                        ))
+                        .flex()
+                        .flex_row()
+                        .flex_1()
+                        .min_w_0()
+                        .child(input),
+                    );
+                }
+            } else {
+                header = header.child(
+                    div().flex().flex_row().flex_1().min_w_0().child(
+                        div()
+                            .truncate()
+                            .text_size(font::BODY)
+                            .text_color(dark().text.primary)
+                            .child(name),
+                    ),
+                );
+            }
+            header = header
+                .child(
+                    div()
+                        .flex_none()
+                        .px_2()
+                        .rounded(px(4.0))
+                        .border_1()
+                        .border_color(dark().border.subtle)
+                        .child(
+                            Label::new(provider_credential_kind_label(&credential.kind))
+                                .size(font::BODY_SM)
+                                .color(dark().text.tertiary),
+                        ),
+                )
+                .when(credential.selected, |row| {
+                    row.child(
+                        Label::new(t("settings.providers.account_selected_badge"))
+                            .size(font::BODY_SM)
+                            .color(dark().semantic.success_fg),
+                    )
+                });
+            if self.settings_accounts_supported() && !credential.credential_id.is_empty() {
+                let use_account = self.settings_account_button(provider, credential, false, cx);
+                let remove_account = self.settings_account_button(provider, credential, true, cx);
+                header = header.child(use_account);
+                if self.settings_account_rename_supported() {
+                    let rename_account =
+                        self.settings_account_rename_button(provider, credential, cx);
+                    header = header.child(rename_account);
+                }
+                header = header.child(remove_account);
+            }
             let mut row = self
                 .settings_element(settings_credential_row_identifier(
                     &provider_id,
@@ -935,52 +1222,26 @@ impl AppView {
                 .flex()
                 .flex_col()
                 .gap_2()
-                .py_4()
+                .py_3()
                 .when(ix > 0, |row| {
                     row.border_t_1().border_color(dark().border.subtle)
                 })
+                .child(header)
                 .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .flex_wrap()
-                        .items_center()
-                        .gap_2()
-                        .child(
-                            div().flex_1().child(
-                                div().child(
-                                    Label::new(if credential.display_name.is_empty() {
-                                        provider_credential_kind_label(&credential.kind).to_string()
-                                    } else {
-                                        credential.display_name.clone()
-                                    })
-                                    .size(font::BODY)
-                                    .color(dark().text.primary),
-                                ),
-                            ),
-                        )
-                        .when(credential.selected, |row| {
-                            row.child(
-                                Label::new(t("settings.providers.account_selected"))
-                                    .size(font::BODY_SM)
-                                    .color(dark().semantic.success_fg),
-                            )
-                        }),
-                )
-                .child(
-                    div().flex().flex_wrap().items_center().gap_3().child(
-                        Label::new(format!(
-                            "{} · {} · {}",
-                            provider_credential_kind_label(&credential.kind),
-                            credential.masked_credential,
-                            provider_credential_status_label(credential.expired)
-                        ))
-                        .size(font::BODY_SM)
-                        .color(if credential.expired {
-                            dark().semantic.danger_text
-                        } else {
-                            dark().text.tertiary
-                        }),
+                    div().flex().flex_row().flex_1().min_w_0().child(
+                        div().overflow_hidden().child(
+                            Label::new(format!(
+                                "{} · {}",
+                                credential.masked_credential,
+                                provider_credential_status_label(credential.expired)
+                            ))
+                            .size(font::BODY_SM)
+                            .color(if credential.expired {
+                                dark().semantic.danger_text
+                            } else {
+                                dark().text.tertiary
+                            }),
+                        ),
                     ),
                 );
             if self.account_quota_supported(&provider_id, credential) {
@@ -989,16 +1250,6 @@ impl AppView {
                     &credential.credential_id,
                     cx,
                 ));
-            }
-            if self.settings_accounts_supported() && !credential.credential_id.is_empty() {
-                row = row.child(
-                    div()
-                        .flex()
-                        .flex_wrap()
-                        .gap_2()
-                        .child(self.settings_account_button(provider, credential, false, cx))
-                        .child(self.settings_account_button(provider, credential, true, cx)),
-                );
             }
             let remove_id =
                 settings_account_action_identifier(&provider_id, &credential.credential_id, true);
@@ -1022,14 +1273,14 @@ impl AppView {
                                 .radius(6.0)
                                 .bordered()
                                 .text_size(font::BODY_SM)
-                                .on_click(cx.listener(move |view, event, _, cx| {
+                                .on_click(cx.listener(move |view, event, window, cx| {
                                     if !view.consume_button_key_click(&click_id, event) {
-                                        view.on_settings_account_action(&click_id, cx);
+                                        view.on_settings_account_action(&click_id, window, cx);
                                     }
                                 }))
-                                .on_activate(cx.listener(move |view, _, _, cx| {
+                                .on_activate(cx.listener(move |view, _, window, cx| {
                                     view.note_button_key_activate(&activate_id);
-                                    view.on_settings_account_action(&activate_id, cx);
+                                    view.on_settings_account_action(&activate_id, window, cx);
                                     cx.stop_propagation();
                                 })),
                         ),
@@ -1044,30 +1295,6 @@ impl AppView {
                     .child(settings_copy(t("settings.quota.scope"))),
             );
         }
-        if self.settings_accounts_supported()
-            && !matches!(provider.auth, ProviderAuthState::Connecting)
-        {
-            block = block.child(
-                self.settings_element(dynamic_identifier(
-                    "settings-account-add-title",
-                    &provider_id,
-                ))
-                .pt_4()
-                .border_t_1()
-                .border_color(dark().border.subtle)
-                .child(settings_label(t("settings.providers.add_account"))),
-            );
-            if let Some(input) = self.settings_account_names.get(&provider_id).cloned() {
-                block = block.child(
-                    self.settings_element(dynamic_identifier(
-                        "settings-account-name",
-                        &provider_id,
-                    ))
-                    .child(input),
-                );
-            }
-        }
-
         // 登录详情保持原文，长 URL 可横滚、所有可见信息可选中复制。
         let mut details = Vec::new();
         if let (ProviderAuthState::Connecting, Some(wait)) =
@@ -1633,20 +1860,6 @@ impl AppView {
         if !writes {
             return false;
         }
-        if self.settings_accounts_supported()
-            && matches!(
-                action,
-                SettingsAuthAction::VerifyApiKey
-                    | SettingsAuthAction::ConnectOauth
-                    | SettingsAuthAction::ReplaceOauth
-            )
-            && self
-                .settings_account_names
-                .get(provider_id)
-                .is_none_or(|input| input.read(cx).text().trim().is_empty())
-        {
-            return false;
-        }
         if action != SettingsAuthAction::VerifyApiKey {
             return true;
         }
@@ -1953,7 +2166,7 @@ impl AppView {
 
     /// 弹层内单模型 Switch 切换（三路径同源；入口级复核 gate 与全量目录
     /// 条目，未知 pair fail-closed）。不乐观改状态：Switch 以 Host 回执
-    /// 为准翻转，随后的权威重查对齐角色默认与 Composer。
+    /// 为准翻转，并本地对齐 Composer，不再重探全通道目录。
     pub(crate) fn on_toggle_provider_model(
         &mut self,
         provider_id: String,
@@ -2180,6 +2393,37 @@ impl AppView {
             bulk_actions =
                 bulk_actions.child(self.settings_element(identifier).flex_none().child(button));
         }
+        let refresh_id = settings_models_refresh_identifier(provider_id);
+        let refresh_focus = self
+            .settings_action_focus
+            .entry(refresh_id.clone())
+            .or_insert_with(|| cx.focus_handle().tab_stop(true))
+            .clone();
+        let refresh_click_id = refresh_id.clone();
+        let refresh_activate_id = refresh_id.clone();
+        let refresh = Button::new(refresh_id.clone())
+            .track_focus(&refresh_focus)
+            .variant(ButtonVariant::Raised)
+            .height(px(SETTINGS_CONTROL_HEIGHT))
+            .vcenter()
+            .radius(6.0)
+            .bordered()
+            .text_size(font::SM)
+            .label(t("settings.providers.models_refresh"))
+            .disabled(!writes)
+            .on_click(cx.listener(move |view, event, _window, cx| {
+                if view.consume_button_key_click(&refresh_click_id, event) {
+                    return;
+                }
+                view.on_refresh_settings(cx);
+            }))
+            .on_activate(cx.listener(move |view, _event, _window, cx| {
+                view.note_button_key_activate(&refresh_activate_id);
+                view.on_refresh_settings(cx);
+                cx.stop_propagation();
+            }));
+        bulk_actions =
+            bulk_actions.child(self.settings_element(refresh_id).flex_none().child(refresh));
         header = header
             .child(self.model_search_element(cx))
             .child(bulk_actions);
@@ -2192,37 +2436,8 @@ impl AppView {
             .flex_col()
             .child(header);
         if models.is_empty() {
-            // 空目录诚实空态：Enable / Disable all 已禁用，Refresh 复用
-            // 页级刷新路径（provider 状态 + 两套目录口径）。
-            let refresh_id = settings_models_refresh_identifier(provider_id);
-            let refresh_focus = self
-                .settings_action_focus
-                .entry(refresh_id.clone())
-                .or_insert_with(|| cx.focus_handle().tab_stop(true))
-                .clone();
-            let refresh_click_id = refresh_id.clone();
-            let refresh_activate_id = refresh_id.clone();
-            let refresh = Button::new(refresh_id.clone())
-                .track_focus(&refresh_focus)
-                .variant(ButtonVariant::Raised)
-                .height(px(SETTINGS_CONTROL_HEIGHT))
-                .vcenter()
-                .radius(6.0)
-                .bordered()
-                .text_size(font::SM)
-                .label(t("settings.providers.models_refresh"))
-                .disabled(!writes)
-                .on_click(cx.listener(move |view, event, _window, cx| {
-                    if view.consume_button_key_click(&refresh_click_id, event) {
-                        return;
-                    }
-                    view.on_refresh_settings(cx);
-                }))
-                .on_activate(cx.listener(move |view, _event, _window, cx| {
-                    view.note_button_key_activate(&refresh_activate_id);
-                    view.on_refresh_settings(cx);
-                    cx.stop_propagation();
-                }));
+            // 空目录诚实空态：Enable / Disable all 已禁用；Refresh 在头行
+            // 常驻（R07），空态不再重复画一枚。
             return panel.child(
                 content.child(
                     self.settings_element(format!("settings-models-empty-{provider_id}"))
@@ -2243,12 +2458,6 @@ impl AppView {
                                 .text_size(font::XS)
                                 .text_color(dark().text.secondary)
                                 .child(t("settings.providers.models_empty_hint")),
-                        )
-                        .child(
-                            self.settings_element(refresh_id)
-                                .flex_none()
-                                .pt_1()
-                                .child(refresh),
                         ),
                 ),
             );
@@ -2380,7 +2589,7 @@ impl AppView {
         {
             entry.auth = ProviderAuthState::Connecting;
         }
-        let name = self.settings_account_name(&provider_id, cx);
+        let name = self.settings_new_account_display_name(None);
         self.controller.auth_start(provider_id, name);
         cx.notify();
     }
@@ -2420,7 +2629,7 @@ impl AppView {
         {
             entry.auth = ProviderAuthState::Connecting;
         }
-        let name = self.settings_account_name(&provider_id, cx);
+        let name = self.settings_new_account_display_name(Some(&key));
         self.controller.auth_set_api_key(provider_id, key, name);
         cx.notify();
     }
@@ -2435,29 +2644,22 @@ impl AppView {
     /// 按当前 provider 清单懒建 / 回收 secure 输入实体与焦点句柄（含
     /// 「设为默认」按钮随模型目录的回收）。
     pub(crate) fn ensure_settings_api_key_inputs(&mut self, cx: &mut Context<Self>) {
-        self.settings_account_names.retain(|id, _| {
-            self.projection
+        if let Some(rename) = &self.settings_account_rename {
+            let alive = self
+                .projection
                 .settings_providers
                 .providers
                 .iter()
-                .any(|p| &p.provider_id == id)
-        });
-        for provider in &self.projection.settings_providers.providers {
-            self.settings_account_names
-                .entry(provider.provider_id.clone())
-                .or_insert_with(|| {
-                    cx.new(|cx| {
-                        TextInput::with_placeholder(t("settings.providers.account_name"), cx)
-                            .id(dynamic_identifier(
-                                "settings-account-name",
-                                &provider.provider_id,
-                            ))
-                            .height_clamp(
-                                metrics::COMPOSER_INPUT_MIN_HEIGHT,
-                                metrics::COMPOSER_INPUT_MIN_HEIGHT,
-                            )
-                    })
+                .any(|provider| {
+                    provider.provider_id == rename.provider_id
+                        && provider
+                            .credentials
+                            .iter()
+                            .any(|credential| credential.credential_id == rename.credential_id)
                 });
+            if !alive {
+                self.settings_account_rename = None;
+            }
         }
         self.settings_auth_details.retain(|id, _| {
             self.projection
@@ -2657,7 +2859,7 @@ impl AppView {
         self.settings_terminal_rows_input
             .update(cx, |input, cx| input.reset_text("", cx));
         self.settings_api_key_editors.clear();
-        self.settings_account_names.clear();
+        self.settings_account_rename = None;
         self.settings_account_remove_confirm = None;
         self.settings_remove_confirm = None;
         self.settings_mcp_remove_confirm = None;

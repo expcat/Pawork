@@ -8,9 +8,9 @@ use std::time::Duration;
 
 use pawork_auth::locator::api_key_env_name;
 use pawork_auth::{
+    ApiKeyCredential, AuthError, CredentialSource, OAuthRefreshConfig, SecretBackend,
     refresh_default_oauth_credential_if_needed, resolve_oauth_credential,
-    resolve_provider_credential, ApiKeyCredential, AuthError, CredentialSource, OAuthRefreshConfig,
-    SecretBackend,
+    resolve_provider_credential,
 };
 use pawork_domain::{
     AgentEvent, CancellationToken, CanonicalModelRequest, ContentPart, Message, MessageId,
@@ -28,7 +28,7 @@ use pawork_workspace::config::{PaworkConfig, ProviderConfig};
 use async_trait::async_trait;
 
 use crate::channels::{self, ChannelKind};
-use crate::protocol::{resolve_adapter_protocol, AdapterProtocol};
+use crate::protocol::{AdapterProtocol, resolve_adapter_protocol};
 use crate::{AppCore, AppError};
 
 /// 自动命名一次性补全的兜底超时（ADR-054 D4：超时保留占位名）。
@@ -398,7 +398,8 @@ impl AppCore {
     }
 
     /// pawork models 聚合目录：成功探测替换该通道 ID 集合，失败保留经过
-    /// adapter 协议过滤的静态 / config 回退。未登记协议或无凭证的通道跳过探测。
+    /// adapter 协议过滤的静态 / config 回退。xAI / ChatGPT 无静态选择目录，
+    /// 探测失败则该通道不出现在列表。未登记协议或无凭证的通道跳过探测。
     pub async fn models_overview(&self) -> Vec<CatalogEntry> {
         let mut provider_ids: Vec<ProviderId> = channels::FIRST_PARTY_CHANNELS
             .iter()
@@ -499,7 +500,22 @@ impl AppCore {
             }
         }
         catalog.sort_by(|a, b| a.id.cmp(&b.id).then(a.provider.cmp(&b.provider)));
+        self.remember_runnable_catalog(catalog.clone());
         catalog
+    }
+
+    pub(crate) fn remember_runnable_catalog(&self, catalog: Vec<CatalogEntry>) {
+        *self
+            .runnable_catalog
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(catalog);
+    }
+
+    pub(crate) fn last_runnable_catalog(&self) -> Option<Vec<CatalogEntry>> {
+        self.runnable_catalog
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 }
 
@@ -672,6 +688,7 @@ pub(crate) fn channel_protocol(
 }
 
 /// 目录装配（无凭证依赖）：builtin + 协议静态目录 + config 覆盖 + transport。
+/// xAI 不并入 `xai_builtin_models`：选择列表只认远端探测。
 pub(crate) fn assemble_registry(
     config: &PaworkConfig,
     provider_id: &ProviderId,
@@ -682,9 +699,8 @@ pub(crate) fn assemble_registry(
     if protocol == AdapterProtocol::Messages {
         registry.merge_provider_models(provider_id, &pawork_providers::builtin_models());
     }
-    if channel.is_some_and(|channel| channel.kind == ChannelKind::XaiOAuth) {
-        registry.merge_provider_models(provider_id, &pawork_providers::xai_builtin_models());
-    }
+    // xAI 与 ChatGPT 相同：选择目录只认登录后的远端探测，不预填静态 grok。
+    // `xai_builtin_models` 只给 adapter 已知 id 的 transport / 能力提示。
     if channel.is_some_and(|channel| channel.kind == ChannelKind::KimiOAuth) {
         registry.merge_provider_models(provider_id, &pawork_providers::kimi_code_builtin_models());
     }
@@ -802,7 +818,16 @@ pub(crate) async fn assemble_provider(
             )
         }
         Some(ChannelKind::KimiOAuth) => {
-            let (credential, _) = oauth_credential(config, id, backend, refresh_oauth).await?;
+            // Coding Plan API key 与 OAuth 双认证：先 api key（文件或 env），
+            // 无则走 OAuth（含请求前刷新）；都不在才 fail-closed。
+            let credential = match try_api_key_credential(backend, id)? {
+                Some((credential, _)) => credential,
+                None => {
+                    oauth_credential(config, id, backend, refresh_oauth)
+                        .await?
+                        .0
+                }
+            };
             let base_url =
                 config_base.unwrap_or_else(|| channel.expect("channel").default_base_url.into());
             let mut kimi_config = pawork_providers::KimiCodeConfig::new(base_url);
@@ -869,7 +894,7 @@ pub(crate) async fn assemble_provider(
                     return Err(AppError::Protocol(crate::ProtocolError::Unknown {
                         provider: id.to_string(),
                         value: "responses".to_string(),
-                    }))
+                    }));
                 }
             };
             (adapter, Some(credential), protocol)
@@ -949,7 +974,7 @@ async fn oauth_credential(
             Err(AuthError::TokenEndpoint { error, .. }) if error == "invalid_grant" => {
                 return Err(AppError::OAuthLogin(format!(
                     "provider {id} 的 OAuth refresh token 已失效；请运行 pawork auth login {id} 重新登录"
-                )))
+                )));
             }
             Err(error) => return Err(AppError::Auth(error)),
         }
@@ -1057,8 +1082,8 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use pawork_auth::locator::api_key_env_name;
     use pawork_auth::SecretBackend;
+    use pawork_auth::locator::api_key_env_name;
     use pawork_domain::{
         AgentEvent, ModelId, ModelResponseSummary, ProviderId, StopReason, TokenUsage,
     };
@@ -1069,7 +1094,7 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use crate::testsupport::{
-        core_with_registry, mock_core, remove_env, sample_config, set_env, ScriptedProvider,
+        ScriptedProvider, core_with_registry, mock_core, remove_env, sample_config, set_env,
     };
     use crate::{AdapterProtocol, AppCore, AppError};
     use pawork_providers::ReasoningProtector;
@@ -1154,22 +1179,22 @@ mod tests {
             .iter()
             .map(|entry| entry.provider.as_str().to_string())
             .collect();
-        // chatgpt 无静态目录（Codex backend 模型只能登录后运行期探测）。
-        for expected in [
-            "xai",
-            "glm-coding",
-            "opencode-go",
-            "qwen-token-plan",
-            "deepseek",
-        ] {
+        // chatgpt / xai 无静态选择目录（只能登录后运行期探测）。
+        for expected in ["glm-coding", "opencode-go", "qwen-token-plan", "deepseek"] {
             assert!(
                 providers.contains(expected),
                 "missing provider {expected} in overview: {providers:?}"
             );
         }
         assert!(
-            overview.iter().any(|entry| entry.id.as_str() == "grok-4"),
-            "xai static models missing"
+            !providers.contains("xai"),
+            "xai must not appear from static catalog: {providers:?}"
+        );
+        assert!(
+            overview
+                .iter()
+                .all(|entry| entry.provider.as_str() != "xai"),
+            "xai selectable models must come from the remote catalog"
         );
         for provider in ["glm-coding", "mock"] {
             assert!(
@@ -1238,18 +1263,23 @@ mod tests {
         assert_eq!(selected.context_window_tokens, 4096);
         assert_eq!(selected.max_output_tokens, 2048);
         let catalog = core.model_catalog().await;
-        assert!(catalog
-            .iter()
-            .any(|entry| entry.id.as_str() == "runtime-only-model"));
-        assert!(!catalog
-            .iter()
-            .any(|entry| entry.id.as_str() == "retired-model"));
-        assert!(core
-            .models_overview()
-            .await
-            .iter()
-            .filter(|entry| entry.provider == provider_id)
-            .all(|entry| entry.id.as_str() == "runtime-only-model"));
+        assert!(
+            catalog
+                .iter()
+                .any(|entry| entry.id.as_str() == "runtime-only-model")
+        );
+        assert!(
+            !catalog
+                .iter()
+                .any(|entry| entry.id.as_str() == "retired-model")
+        );
+        assert!(
+            core.models_overview()
+                .await
+                .iter()
+                .filter(|entry| entry.provider == provider_id)
+                .all(|entry| entry.id.as_str() == "runtime-only-model")
+        );
         assert!(matches!(
             core.switch_provider(None, provider_id.as_str(), Some("retired-model"))
                 .await,
@@ -1281,7 +1311,7 @@ mod tests {
         ));
         server.verify().await;
 
-        // 失败回退同样遵守 adapter 的协议表，配置不能让不可运行模型进入选择器。
+        // 失败回退：Messages-only 仍不可选；未登记 ID 按 Chat Completions 可运行。
         server.reset().await;
         Mock::given(method("GET"))
             .and(path("/v1/models"))
@@ -1305,12 +1335,14 @@ mod tests {
                     ..Default::default()
                 });
         }
-        for id in ["minimax-m3", "unlisted-model"] {
-            assert!(matches!(
-                core.switch_provider(None, go.as_str(), Some(id)).await,
-                Err(AppError::UnknownModel { .. })
-            ));
-        }
+        assert!(matches!(
+            core.switch_provider(None, go.as_str(), Some("minimax-m3"))
+                .await,
+            Err(AppError::UnknownModel { .. })
+        ));
+        core.switch_provider(None, go.as_str(), Some("unlisted-model"))
+            .await
+            .expect("undeclared Chat fallback remains selectable");
         core.switch_provider(None, go.as_str(), Some("grok-4.6"))
             .await
             .expect("documented Responses model remains selectable");
@@ -1323,8 +1355,16 @@ mod tests {
             pawork_domain::ModelTransport::Responses
         );
         let overview = core.models_overview().await;
-        assert!(!overview.iter().any(|entry| entry.provider == go
-            && matches!(entry.id.as_str(), "minimax-m3" | "unlisted-model")));
+        assert!(
+            !overview
+                .iter()
+                .any(|entry| entry.provider == go && entry.id.as_str() == "minimax-m3")
+        );
+        assert!(
+            overview
+                .iter()
+                .any(|entry| entry.provider == go && entry.id.as_str() == "unlisted-model")
+        );
     }
 
     #[tokio::test]
@@ -1406,7 +1446,11 @@ mod tests {
             .respond_with(
                 ResponseTemplate::new(200)
                     .set_delay(Duration::from_millis(100))
-                    .set_body_json(crate::testsupport::token_success_json("singleflight-access", Some("singleflight-refresh"), Some("openid profile"))),
+                    .set_body_json(crate::testsupport::token_success_json(
+                        "singleflight-access",
+                        Some("singleflight-refresh"),
+                        Some("openid profile"),
+                    )),
             )
             .expect(1)
             .mount(&server)
@@ -1484,7 +1528,8 @@ mod tests {
             .and(path("/token"))
             .and(body_string_contains("refresh_token=invalid-old-refresh"))
             .respond_with(ResponseTemplate::new(400).set_body_json(
-                crate::testsupport::token_error_json("invalid_grant", Some(endpoint_description))))
+                crate::testsupport::token_error_json("invalid_grant", Some(endpoint_description)),
+            ))
             .expect(1)
             .mount(&server)
             .await;

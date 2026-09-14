@@ -71,11 +71,7 @@ pub fn responses_completed_body() -> String {
 }
 
 /// Responses 文本流样例：created + N 段文本 delta + completed（含 usage）。
-pub fn responses_text_stream_body(
-    response_id: &str,
-    deltas: &[&str],
-    usage: (u64, u64),
-) -> String {
+pub fn responses_text_stream_body(response_id: &str, deltas: &[&str], usage: (u64, u64)) -> String {
     let mut events = vec![format!(
         r#"{{"type":"response.created","response":{{"id":"{response_id}"}}}}"#
     )];

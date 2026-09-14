@@ -7,7 +7,7 @@ use pawork_protocol::{
     ProviderCredentialStatus, ProviderUseProxyData, RoleDefaultsData, SetDefaultRoleModelData,
     SetModelEnabledData, SetProviderModelsEnabledData,
 };
-use pawork_providers::ReasoningProtector;
+use pawork_providers::{CatalogEntry, ReasoningProtector};
 
 use crate::app_core::RoleModelKind;
 use crate::gui_host::GuiHostAdapter;
@@ -39,6 +39,64 @@ fn known_provider(core: &AppCore, id: &str) -> bool {
             .providers
             .iter()
             .any(|provider| provider.id == id)
+}
+
+fn catalog_has_model(catalog: &[CatalogEntry], id: &str, model: &str) -> bool {
+    catalog
+        .iter()
+        .any(|entry| entry.provider.as_str() == id && entry.id.as_str() == model)
+}
+
+fn static_catalog_has_model(core: &AppCore, id: &str, model: &str) -> bool {
+    let channel = channels::first_party_channel(id);
+    let Ok(protocol) = channel_protocol(channel, core.config(), id) else {
+        return false;
+    };
+    assemble_registry(core.config(), &ProviderId::new(id), protocol, channel)
+        .list()
+        .iter()
+        .any(|entry| entry.provider.as_str() == id && entry.id.as_str() == model)
+}
+
+fn denylist_has_model(core: &AppCore, id: &str, model: &str) -> bool {
+    core.config()
+        .providers
+        .iter()
+        .find(|provider| provider.id == id)
+        .is_some_and(|provider| provider.disabled_models.iter().any(|entry| entry == model))
+}
+
+/// 启停校验：快照 / 静态回退 / 已在 denylist 的 ID 命中即过，未命中才探测。
+/// 避免每次 Switch 再跑全通道 `models_overview`。
+async fn require_known_runnable_model(
+    core: &AppCore,
+    id: &str,
+    model: &str,
+) -> Result<(), GuiHostError> {
+    if core
+        .last_runnable_catalog()
+        .is_some_and(|catalog| catalog_has_model(&catalog, id, model))
+        || static_catalog_has_model(core, id, model)
+        || denylist_has_model(core, id, model)
+    {
+        return Ok(());
+    }
+    let overview = core.models_overview().await;
+    if catalog_has_model(&overview, id, model) {
+        Ok(())
+    } else {
+        Err(GuiHostAdapter::host_error(
+            "unknown_model",
+            format!("model {model} is not in the runnable catalog of provider {id}"),
+        ))
+    }
+}
+
+async fn current_runnable_catalog(core: &AppCore) -> Vec<CatalogEntry> {
+    match core.last_runnable_catalog() {
+        Some(cached) => cached,
+        None => core.models_overview().await,
+    }
 }
 
 /// provider/model 校验（`set_default_model` 的 models_overview 口径）+
@@ -438,17 +496,7 @@ pub(crate) async fn set_model_enabled(
                 format!("provider {id} is unknown"),
             ));
         }
-        // 校验口径同 set_default_model：模型必须在该 provider 当前可运行目录。
-        let overview = core.models_overview().await;
-        if !overview
-            .iter()
-            .any(|entry| entry.provider.as_str() == id && entry.id.as_str() == model)
-        {
-            return Err(GuiHostAdapter::host_error(
-                "unknown_model",
-                format!("model {model} is not in the runnable catalog of provider {id}"),
-            ));
-        }
+        require_known_runnable_model(&core, id, model).await?;
     }
     let path = global_config_file()?;
     // 写盘与内存同步共用写锁；单项修改基于最新磁盘，保留其他实例的选择。
@@ -530,8 +578,7 @@ pub(crate) async fn set_provider_models_enabled(
         if *enabled {
             Vec::new()
         } else {
-            let mut models: Vec<String> = core
-                .models_overview()
+            let mut models: Vec<String> = current_runnable_catalog(&core)
                 .await
                 .iter()
                 .filter(|entry| entry.provider.as_str() == id)

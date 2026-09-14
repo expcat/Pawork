@@ -278,6 +278,85 @@ pub fn validate_account_name(name: &str) -> Result<&str, AuthError> {
     Ok(name)
 }
 
+/// 账号默认展示名：邮箱尽量原文；过长或 API key 只留头尾，中间用 `*`。
+pub fn default_account_label(source: &str) -> String {
+    const MAX_PLAIN: usize = 32;
+    let source = source.trim();
+    if source.is_empty() {
+        return "••••".into();
+    }
+    if is_email_shape(source) {
+        if source.chars().count() <= MAX_PLAIN {
+            return source.to_string();
+        }
+        let (local, domain) = source.split_once('@').expect("email shape");
+        return mask_email_local(local, domain);
+    }
+    mask_secret_label(source)
+}
+
+fn is_email_shape(value: &str) -> bool {
+    let Some((local, domain)) = value.split_once('@') else {
+        return false;
+    };
+    !local.is_empty()
+        && !domain.is_empty()
+        && !local.contains('@')
+        && !domain.contains('@')
+        && domain.contains('.')
+        && !value.chars().any(|c| c.is_whitespace() || c.is_control())
+}
+
+fn mask_email_local(local: &str, domain: &str) -> String {
+    let chars: Vec<char> = local.chars().collect();
+    let masked = match chars.len() {
+        0 => "***".to_string(),
+        1 => format!("{}***", chars[0]),
+        _ => format!("{}***{}", chars[0], chars[chars.len() - 1]),
+    };
+    format!("{masked}@{domain}")
+}
+
+fn mask_secret_label(secret: &str) -> String {
+    let chars: Vec<char> = secret.chars().collect();
+    match chars.len() {
+        0..=4 => "••••".into(),
+        5..=12 => {
+            let head: String = chars[..2].iter().collect();
+            let tail: String = chars[chars.len() - 2..].iter().collect();
+            format!("{head}***{tail}")
+        }
+        _ => {
+            let head: String = chars[..4].iter().collect();
+            let tail: String = chars[chars.len() - 4..].iter().collect();
+            format!("{head}***{tail}")
+        }
+    }
+}
+
+pub fn default_api_key_account_name(secret: &str) -> String {
+    mask_secret_label(secret.trim())
+}
+
+pub fn default_oauth_account_name(tokens: &TokenSet) -> String {
+    if let Some(email) = crate::oauth::oauth_login_email(tokens) {
+        return default_account_label(&email);
+    }
+    mask_secret_label(tokens.access_token.trim())
+}
+
+fn resolve_new_account_name(
+    name: &str,
+    fallback: impl FnOnce() -> String,
+) -> Result<String, AuthError> {
+    let name = name.trim();
+    if name.is_empty() {
+        validate_account_name(&fallback()).map(str::to_string)
+    } else {
+        validate_account_name(name).map(str::to_string)
+    }
+}
+
 fn new_entry(name: &str, kind: ProviderAccountKind) -> Result<AccountEntry, AuthError> {
     Ok(AccountEntry {
         credential_id: crate::credential::generate_credential_id().as_str().into(),
@@ -297,7 +376,8 @@ pub fn add_api_key_account(
     if secret.is_empty() {
         return Err(AuthError::InvalidSecret("secret is empty".into()));
     }
-    let entry = new_entry(name, ProviderAccountKind::ApiKey)?;
+    let name = resolve_new_account_name(name, || default_api_key_account_name(secret))?;
+    let entry = new_entry(&name, ProviderAccountKind::ApiKey)?;
     edit(backend, provider, |transaction, index| {
         transaction.store(&secret_service_for(provider), slot(&entry), secret)?;
         if index.accounts.is_empty() && activate_if_empty {
@@ -315,7 +395,8 @@ pub fn add_oauth_account(
     tokens: &TokenSet,
     activate_if_empty: bool,
 ) -> Result<ProviderAccount, AuthError> {
-    let entry = new_entry(name, ProviderAccountKind::OAuth)?;
+    let name = resolve_new_account_name(name, || default_oauth_account_name(tokens))?;
+    let entry = new_entry(&name, ProviderAccountKind::OAuth)?;
     edit(backend, provider, |transaction, index| {
         store_oauth_at(transaction, provider.clone(), slot(&entry), tokens)?;
         if index.accounts.is_empty() && activate_if_empty {
@@ -323,6 +404,25 @@ pub fn add_oauth_account(
         }
         index.accounts.push(entry.clone());
         load_account(transaction, provider, &entry)
+    })
+}
+
+pub fn rename_provider_account(
+    backend: &dyn SecretBackend,
+    provider: &ProviderId,
+    id: &str,
+    name: &str,
+) -> Result<ProviderAccount, AuthError> {
+    let name = validate_account_name(name)?.to_string();
+    edit(backend, provider, |transaction, index| {
+        let entry = index
+            .accounts
+            .iter_mut()
+            .find(|entry| entry.credential_id == id)
+            .ok_or(AuthError::NotFound)?;
+        entry.display_name = name.clone();
+        let stored = entry.clone();
+        load_account(transaction, provider, &stored)
     })
 }
 
@@ -921,5 +1021,54 @@ mod tests {
                 "other-access"
             );
         }
+    }
+
+    fn id_token_with_email(email: &str) -> String {
+        let payload = serde_json::json!({"email": email});
+        format!(
+            "eyJhbGciOiJub25lIn0.{}.sig",
+            crate::base64url::encode(payload.to_string().as_bytes())
+        )
+    }
+
+    #[test]
+    fn default_account_labels_mask_secrets_and_keep_short_email() {
+        assert_eq!(default_api_key_account_name("abcd"), "••••");
+        assert_eq!(default_api_key_account_name("sk-abcdef"), "sk***ef");
+        assert_eq!(
+            default_api_key_account_name("sk-abcdEFGHwxyz"),
+            "sk-a***wxyz"
+        );
+        assert_eq!(default_account_label("user@example.com"), "user@example.com");
+        assert_eq!(
+            default_account_label("verylonglocalpart@privaterelay.appleid.com"),
+            "v***t@privaterelay.appleid.com"
+        );
+        let mut oauth = tokens("access-token-value");
+        oauth.id_token = Some(id_token_with_email("work@example.com"));
+        assert_eq!(default_oauth_account_name(&oauth), "work@example.com");
+        oauth.id_token = None;
+        assert_eq!(default_oauth_account_name(&oauth), "acce***alue");
+    }
+
+    #[test]
+    fn empty_add_name_and_rename_use_generated_then_alias() {
+        let backend = MemoryBackend::new();
+        let provider = ProviderId::new("xai");
+        let added =
+            add_api_key_account(&backend, &provider, "  ", "sk-abcdEFGHwxyz", true).unwrap();
+        assert_eq!(added.display_name, "sk-a***wxyz");
+        let renamed =
+            rename_provider_account(&backend, &provider, &added.credential_id, " Work ").unwrap();
+        assert_eq!(renamed.display_name, "Work");
+        assert_eq!(
+            list_provider_accounts(&backend, &provider)
+                .unwrap()
+                .accounts[0]
+                .display_name,
+            "Work"
+        );
+        assert!(rename_provider_account(&backend, &provider, &added.credential_id, "   ").is_err());
+        assert!(rename_provider_account(&backend, &provider, "cred_missing", "Name").is_err());
     }
 }

@@ -831,7 +831,10 @@ pub(super) fn message_body_element(
                     line.whitespace_nowrap().min_w(code_width)
                 })
                 .when(attach_caret && line_index == last_line, |row| {
-                    row.flex().flex_row().items_center().gap(px(metrics::SPACE_1))
+                    row.flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(metrics::SPACE_1))
                 })
                 .child(line_element(
                     format!("{entry_id}-md-{index}-{line_index}"),

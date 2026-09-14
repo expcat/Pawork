@@ -1631,6 +1631,26 @@ impl AppView {
     }
 }
 
+pub(crate) struct AccountRenameState {
+    pub provider_id: String,
+    pub credential_id: String,
+    pub input: gpui::Entity<TextInput>,
+}
+
+pub(crate) fn settings_account_rename_identifier(provider: &str, credential: &str) -> String {
+    dynamic_identifier(
+        &dynamic_identifier("settings-account-rename", provider),
+        credential,
+    )
+}
+
+pub(crate) fn settings_account_rename_input_identifier(provider: &str, credential: &str) -> String {
+    dynamic_identifier(
+        &dynamic_identifier("settings-account-rename-input", provider),
+        credential,
+    )
+}
+
 pub(crate) fn settings_account_action_identifier(
     provider: &str,
     credential: &str,

@@ -732,6 +732,7 @@ mod tests {
                 parent_branch_id: None,
                 forked_from_event_id: None,
                 active: false,
+                unstarted: false,
             })
             .collect();
         view.projection.active_session_id = Some("s-00".into());

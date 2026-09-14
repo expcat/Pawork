@@ -114,13 +114,12 @@ Settings 活动线已实现并通过本机真窗口验收（2026-09-05，证据�
 
 以下缺陷在 mock 系列端到端验收（MOCK-6，2026-09-10）中发现并已定位根因，均未在 mock 写入集内修复，按最小方案另立任务处理。
 
-### BUG-OAUTH-01：OAuth 请求前刷新被静默跳过（FileBackend 路径）
+### BUG-OAUTH-01：OAuth 请求前刷新被静默跳过（FileBackend 路径）— 已修复
 
 - 现象：持有已过期 access token + 有效 refresh token 的 OAuth 凭证发起对话时，`refresh_oauth_credential_with`（[oauth.rs](../../crates/auth/src/oauth.rs)）在锁内 reload 后比较整个 `StoredCredential`，`metadata_changed` 恒为真，直接 `return Ok(false)`，既不刷新也不报错；请求带过期 token 发出后被 Provider 401 拒绝。
-- 根因：`load_account` 会用账户索引里的 `display_name`（默认 "Default OAuth"）覆盖凭证 meta，而 `stored_from_meta` 侧硬编码 "default oauth"；两处大小写不一致使 `metadata_changed` 在每次 reload 后恒真，提前短路刷新分支。
-- 判别实验（已做）：把索引里的 `display_name` 改成与硬编码一致的 "default oauth" 后，refresh 立即触发并向 token 端点轮转成功——证明短路条件就在该比较。
-- 建议修法方向：刷新前的 metadata 比较排除 `display_name`（展示字段不应参与变更判定），或统一两处命名常量；修复需补一条「过期凭证 → 自动 refresh → 轮转落盘」的定向回归。
-- 修复后复验配方（mock 环境）：`scripts/mock/run-instance.sh start` 后用 `seed_auth.py` 注入 `expires_at_ms` 已过期的 OAuth 凭证，发起对话触发请求前刷新，断言 mock `/token` 端点收到 refresh 请求且 auth.json 落盘新 token；当前版本此配方会复现 401。
+- 根因：`load_account` 会用账户索引里的 `display_name`（默认 "Default OAuth"，ADR-061 后常为邮箱或脱敏串）覆盖凭证 meta，而 `stored_from_meta` 侧硬编码 "default oauth"；两处不一致使 `metadata_changed` 在每次 reload 后恒真，提前短路刷新分支。
+- 修法：锁内 reload 比较排除 `display_name`，并保留账号索引别名。Settings / 目录探测仍只陈述 access 到期时间，不在查询路径消费 refresh token。
+- 定向回归：`file_backend_refresh_ignores_account_display_name`（过期 FileBackend 凭证 + 索引名与 meta 占位名不一致 → 命中 token 端点并轮转落盘）。
 
 ### BUG-USAGE-01：usage ledger request-id 跨进程撞车
 

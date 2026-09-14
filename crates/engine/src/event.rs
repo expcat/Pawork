@@ -7,13 +7,15 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use pawork_domain::{
-    AgentEvent, AgentEventEnvelope, EventId, EventSequence, MessageId, RunId, SessionId, Timestamp,
-    ToolCallId, ToolOutputStream,
+    AgentEvent, AgentEventEnvelope, EventId, EventSequence, MessageId, RunId, SessionId, ToolCallId,
+    ToolOutputStream,
 };
 use pawork_domain::{
     ProviderError, ProviderEventSink, ProviderStreamEvent, ToolOutputChannel, ToolStreamEvent,
 };
 use thiserror::Error;
+
+use crate::session_turn::now_timestamp;
 
 #[derive(Debug, Error)]
 pub enum EngineError {
@@ -49,7 +51,6 @@ pub(crate) struct EventEmitter<'a> {
     session_id: SessionId,
     run_id: RunId,
     next_sequence: &'a AtomicU64,
-    timestamp: Timestamp,
     sink: &'a dyn AgentEventSink,
 }
 
@@ -58,18 +59,18 @@ impl<'a> EventEmitter<'a> {
         session_id: SessionId,
         run_id: RunId,
         next_sequence: &'a AtomicU64,
-        timestamp: Timestamp,
         sink: &'a dyn AgentEventSink,
     ) -> Self {
         Self {
             session_id,
             run_id,
             next_sequence,
-            timestamp,
             sink,
         }
     }
 
+    /// 每个事件按发射时刻取墙钟：同轮共享时间戳会让终态 run 的时长
+    /// 跨度（首末事件差）恒为 0，持久化后也查不到真实耗时。
     pub(crate) async fn emit(&self, payload: AgentEvent) -> Result<EventSequence, EngineError> {
         let sequence = EventSequence::new(self.next_sequence.fetch_add(1, Ordering::SeqCst));
         let envelope = AgentEventEnvelope::new(
@@ -77,7 +78,7 @@ impl<'a> EventEmitter<'a> {
             self.session_id.clone(),
             self.run_id.clone(),
             sequence,
-            self.timestamp,
+            now_timestamp(),
             payload,
         );
         self.sink.emit(envelope).await?;

@@ -3,7 +3,9 @@
 
 use gpui::{div, prelude::*, px, Context, FontWeight, Rgba, SharedString, Window};
 
-use crate::projection::{ConnectionState, ForkBoundary, TimelineEntry, TimelineEntryKind};
+use crate::projection::{
+    ConnectionState, ForkBoundary, RunUsageDisplay, TimelineEntry, TimelineEntryKind,
+};
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
 use crate::ui::components::dropdown::{Dropdown, MenuPanel, MenuRow};
 use crate::ui::components::icon::{icon_sized, Icon};
@@ -31,6 +33,40 @@ pub(super) const HEADLINE_TARGET_MAX_CHARS: usize = 80;
 /// 展开态结果预览行数（8–12 合同取中值）；全文走 `event_id:result` 展开键。
 pub(super) const RESULT_PREVIEW_LINES: usize = 10;
 pub(super) const RESULT_EXPAND_HEIGHT: f32 = 24.0;
+/// 页脚 / 底栏用量图标边长，压进 BODY_SM 行高。
+const RUN_METRIC_ICON: f32 = 12.0;
+
+pub(super) fn run_metrics_element(display: &RunUsageDisplay) -> gpui::Div {
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_3()
+        .child(run_metric_chip(Icon::ArrowUp, &display.input_text()))
+        .child(run_metric_chip(Icon::ArrowDown, &display.output_text()))
+        .child(run_metric_chip(Icon::Clock, &display.duration_text()))
+        .when_some(display.tok_s.clone(), |row, rate| {
+            row.child(
+                Label::new(rate)
+                    .size(font::BODY_SM)
+                    .color(dark().text.secondary),
+            )
+        })
+}
+
+fn run_metric_chip(icon: Icon, value: &str) -> gpui::Div {
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_1()
+        .child(icon_sized(icon, px(RUN_METRIC_ICON)).text_color(dark().text.tertiary))
+        .child(
+            Label::new(value.to_string())
+                .size(font::BODY_SM)
+                .color(dark().text.secondary),
+        )
+}
 
 /// Tool 行渲染态：wire status 归类 + 展示词（构造见 ToolRowView::from_parts）。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -420,14 +456,16 @@ fn message_label_element(role: &str, time: &str, role_color: Rgba, generating: b
         .flex_row()
         .items_baseline()
         .gap_3()
-        .child(
-            div()
-                .text_size(font::BODY_SM)
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(role_color)
-                .child(role.to_string()),
-        )
-        .when(generating, |row| {
+        .when(!role.is_empty(), |row| {
+            row.child(
+                div()
+                    .text_size(font::BODY_SM)
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(role_color)
+                    .child(role.to_string()),
+            )
+        })
+        .when(generating && role.is_empty(), |row| {
             row.child(
                 div()
                     .text_size(font::BODY_SM)
@@ -435,13 +473,15 @@ fn message_label_element(role: &str, time: &str, role_color: Rgba, generating: b
                     .child(t("tool.generating").to_string()),
             )
         })
-        .child(
-            div()
-                .text_size(font::BODY_SM)
-                .text_color(dark().text.secondary)
-                .truncate()
-                .child(time.to_string()),
-        )
+        .when(!role.is_empty() || generating, |row| {
+            row.child(
+                div()
+                    .text_size(font::BODY_SM)
+                    .text_color(dark().text.secondary)
+                    .truncate()
+                    .child(time.to_string()),
+            )
+        })
 }
 
 /// 条目「···」fork 菜单（identifier 与行为自旧 timeline_entry_element 冻结迁移）。
@@ -540,7 +580,7 @@ pub(super) fn entry_actions_element(
     actions
 }
 
-/// 用户气泡靠右收缩；作者与操作留在气泡外，助手正文保持开放排版。
+/// 用户气泡靠右收缩；作者与操作留在气泡外，助手空闲不占作者行。
 fn entry_shell_element(
     view: &mut AppView,
     cx: &mut Context<AppView>,
@@ -550,6 +590,7 @@ fn entry_shell_element(
     can_fork: bool,
     label: gpui::Div,
     body: gpui::Div,
+    show_header: bool,
 ) -> gpui::Div {
     let user_text = match &entry.kind {
         TimelineEntryKind::UserMessage { text } => Some(text.as_str()),
@@ -567,6 +608,33 @@ fn entry_shell_element(
         })
         .group_hover("timeline-message", |style| style.opacity(1.0))
         .child(actions);
+    let content = if let Some(text) = user_text {
+        let wide = super::markdown::message_needs_full_width(text);
+        div().flex().justify_end().child(
+            view.settings_element(format!("message-bubble-{}", entry.event_id))
+                .flex()
+                .flex_col()
+                .max_w(gpui::relative(if wide { 1.0 } else { 0.8 }))
+                .when(wide, |bubble| bubble.w_full())
+                .px(px(metrics::MSG_USER_INSET_X))
+                .py(px(metrics::MSG_USER_INSET_Y))
+                .bg(dark().surface.hover)
+                .rounded(px(12.0))
+                .child(body.w_auto()),
+        )
+    } else {
+        body
+    };
+    if !show_header {
+        return div()
+            .group("timeline-message")
+            .relative()
+            .flex()
+            .flex_col()
+            .w_full()
+            .child(content)
+            .child(div().absolute().top_0().right_0().child(action_slot));
+    }
     let mut header = div().flex().items_center().gap_3().min_h(px(24.0));
     if user_text.is_some() {
         header = header.justify_end().child(
@@ -578,23 +646,6 @@ fn entry_shell_element(
     } else {
         header = header.justify_between().child(label);
     }
-    let content = if let Some(text) = user_text {
-        let wide = super::markdown::message_needs_full_width(text);
-        div().flex().justify_end().child(
-            view.settings_element(format!("message-bubble-{}", entry.event_id))
-                .flex()
-                .flex_col()
-                .max_w(gpui::relative(if wide { 1.0 } else { 0.8 }))
-                .when(wide, |bubble| bubble.w_full())
-                .px(px(metrics::MSG_USER_INSET_X))
-                .py(px(metrics::MSG_USER_INSET_Y))
-                .bg(dark().surface.raised)
-                .rounded(px(12.0))
-                .child(body.w_auto()),
-        )
-    } else {
-        body
-    };
     div()
         .group("timeline-message")
         .flex()
@@ -941,7 +992,7 @@ impl AppView {
                 ),
             ),
             TimelineEntryKind::AssistantMessage { text } => (
-                "Pawork",
+                if generating { t("tool.generating") } else { "" },
                 dark().text.secondary,
                 message_body_element(
                     self,
@@ -999,6 +1050,8 @@ impl AppView {
                 ),
             ),
         };
+        let show_header =
+            generating || !matches!(entry.kind, TimelineEntryKind::AssistantMessage { .. });
         entry_shell_element(
             self,
             cx,
@@ -1008,6 +1061,7 @@ impl AppView {
             can_fork,
             message_label_element(role, &time, label_color, generating),
             body,
+            show_header,
         )
     }
 
@@ -1017,6 +1071,7 @@ impl AppView {
         group_key: &str,
         prefix: &str,
         label: String,
+        compact: bool,
         cx: &mut Context<Self>,
     ) -> ListRow {
         let collapsed = !self.expanded_timeline_details.contains(group_key);
@@ -1026,13 +1081,17 @@ impl AppView {
         let activate_id = row_id.clone();
         let activate_key = group_key.to_string();
         let focus = self.timeline_detail_focus(group_key, cx);
+        let height = if compact {
+            metrics::THINKING_HEADER_HEIGHT
+        } else {
+            metrics::TOOL_GROUP_HEADER_HEIGHT
+        };
         ListRow::project_header(row_id)
-            .height(metrics::TOOL_GROUP_HEADER_HEIGHT)
+            .height(height)
             .track_focus(&focus)
             .child(
                 div()
-                    .w_full()
-                    .px_3()
+                    .when(!compact, |row| row.w_full().px_3())
                     .flex()
                     .flex_row()
                     .items_center()
@@ -1079,8 +1138,13 @@ impl AppView {
         cx: &mut Context<Self>,
     ) -> gpui::Div {
         let expanded = self.expanded_timeline_details.contains(key);
-        let header =
-            self.timeline_detail_header(key, "thinking-toggle", t("timeline.thinking").into(), cx);
+        let header = self.timeline_detail_header(
+            key,
+            "thinking-toggle",
+            t("timeline.thinking").into(),
+            true,
+            cx,
+        );
         div()
             .flex()
             .flex_col()
@@ -1109,12 +1173,14 @@ impl AppView {
             group_key,
             "tool-group-toggle",
             tool_group_summary(rows),
+            false,
             cx,
         );
         let mut panel = div()
             .flex()
             .flex_col()
             .max_w(px(metrics::TIMELINE_READABLE_WIDTH))
+            .bg(dark().surface.raised)
             .when(!collapsed, |panel| {
                 panel.border_l_1().border_color(dark().border.subtle)
             })
@@ -1403,27 +1469,42 @@ impl AppView {
             .when_some(button, |card, button| card.child(button))
     }
 
-    /// F-08 Timeline 页脚：终态词（左）+ 终态时间（右），17px secondary。
-    /// 用量收进「···」菜单，不占页脚。
-    pub(super) fn run_footer_element(&self, label: &str, time: &str) -> gpui::Div {
+    /// 终态 / live 页脚：状态词、上下箭头用量、时长、相对时间、「···」。
+    pub(super) fn run_footer_element(
+        &self,
+        terminal_label: Option<&str>,
+        metrics: &RunUsageDisplay,
+        time: Option<&str>,
+        menu: Option<super::components::dropdown::Dropdown>,
+    ) -> gpui::Div {
         div()
             .flex()
             .flex_row()
             .items_center()
-            .flex_wrap()
+            .w_full()
+            .min_w_0()
             .gap_2()
-            .justify_between()
             .max_w(px(metrics::TIMELINE_READABLE_WIDTH))
-            .child(
-                Label::new(label.to_string())
-                    .size(font::BODY_SM)
-                    .color(dark().text.secondary),
-            )
-            .child(
-                Label::new(time.to_string())
-                    .size(font::BODY_SM)
-                    .color(dark().text.secondary),
-            )
+            .when_some(terminal_label, |row, label| {
+                row.child(
+                    div().flex_none().child(
+                        Label::new(label.to_string())
+                            .size(font::BODY_SM)
+                            .color(dark().text.secondary),
+                    ),
+                )
+            })
+            .child(div().flex_1().min_w_0().child(run_metrics_element(metrics)))
+            .when_some(time, |row, time| {
+                row.child(
+                    div().flex_none().child(
+                        Label::new(time.to_string())
+                            .size(font::BODY_SM)
+                            .color(dark().text.secondary),
+                    ),
+                )
+            })
+            .when_some(menu, |row, menu| row.child(div().flex_none().child(menu)))
     }
 
     /// F-07/F-08 错误条目：danger_text 新条目层级（标签行 + 正文），
@@ -1459,6 +1540,7 @@ impl AppView {
             can_fork,
             message_label_element("Error", &time, dark().semantic.danger_text, false),
             body,
+            true,
         )
     }
 

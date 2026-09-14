@@ -69,7 +69,8 @@ pub use channels::{xai_builtin_models, XaiConfig, XaiProvider};
     feature = "opencode-go",
     feature = "qwen-token-plan",
     feature = "deepseek",
-    feature = "kimi-platform"
+    feature = "kimi-platform",
+    feature = "kimi-code"
 ))]
 pub use channels::{
     fetch_go_usage, verify_api_key, ApiKeyChannelConfig, ApiKeyChannelProvider, GoUsage,
@@ -94,7 +95,8 @@ pub use channels::anthropic;
     feature = "opencode-go",
     feature = "qwen-token-plan",
     feature = "deepseek",
-    feature = "kimi-platform"
+    feature = "kimi-platform",
+    feature = "kimi-code"
 ))]
 pub use channels::api_key;
 #[cfg(feature = "chatgpt-oauth")]

@@ -839,8 +839,9 @@ pub fn caps(
 /// - `qwen3.8-max`（Qwen Token Plan 当前目录）与 `deepseek-chat` /
 ///   `deepseek-reasoner`（DeepSeek API key 通道）：窗口/输出取公开文档
 ///   保守值；费率未核对到 micros 前不编造（pricing = None）。
-/// - ChatGPT / xAI 为 OAuth 通道：ChatGPT 目录登录后经 /models 探测，不
-///   维护静态条目；xai 静态目录由 adapter 的 builtin_models 在装配期合并。
+/// - ChatGPT / xAI 为 OAuth 通道：选择目录登录后经远端探测，不维护静态
+///   可选条目。xAI adapter 的 `builtin_models` 只给已知 id 的 transport
+///   / 能力提示，不在装配期并入选择目录。
 ///
 /// 能力声明取保守基线（text + tool_calls）；其余维度由 Provider 探测与
 /// 配置覆盖收窄。本地兼容服务的模型在连接后经 `extend_with` 动态补充。

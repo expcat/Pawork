@@ -182,18 +182,18 @@ async fn model_list_uses_aggregated_overview() {
                 .map(str::to_string)
         })
         .collect();
-    for expected in [
-        "xai",
-        "glm-coding",
-        "opencode-go",
-        "qwen-token-plan",
-        "deepseek",
-    ] {
+    // xAI / ChatGPT 无静态选择目录：探测失败时通道不出现在列表，
+    // 可选模型只来自登录后的远端目录（见 provider_assembly 同源测试）。
+    for expected in ["glm-coding", "opencode-go", "qwen-token-plan", "deepseek"] {
         assert!(
             providers.contains(expected),
             "ModelList must include {expected}: {providers:?}"
         );
     }
+    assert!(
+        !providers.contains("xai"),
+        "xai selectable models must come from the remote catalog: {providers:?}"
+    );
 }
 
 #[tokio::test]

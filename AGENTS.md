@@ -124,6 +124,9 @@ deny-default + 枚举 `/usr` `/System` `/bin` 仍会 SIGABRT：firmlink/cryptex 
 **Seatbelt symlink 根**
 规则按 canonical 路径匹配；只写 `/var` 会落空，必须 raw + canonical 双形态进 profile。
 
+**CLI command_id 裸计数器撞 command_ledger**
+`crates/cli/src/adapter.rs` 旧版 command_id 为 `cli-<name>-<n>`（进程内 AtomicU64 从 1 起）；command_ledger 以 (tenant, automation, command_id) 持久幂等，跨进程撞键会把旧响应原样重放——`pawork run` 二次执行拿回旧 session 与已完成 run_id 后永久等待（表象与 InFlight / 事件泵挂死同族）。幂等键必须含进程级命名空间（pid + 纳秒；毫秒不够，同毫秒双进程仍撞），GUI client 的 `new_request_namespace` 已是对的形态。同类第二例：`services/run.rs` 的 request_id 裸 `req-{n}` 撞 usage 账本 (tenant, account, request_id, attempt) 去重键，Host 重启后新 run 的用量被当重放拒收、静默漏记（2026-09-14）。
+
 **InFlight 同键不同 command_id**
 幂等等待方按自身 command_id 注册 Notify，占位行持有者是另一 id，叠加丢唤醒会挂死；record 失败若不释放 inflight，同进程重试继续挂。修法：有界等待后回 loop 重查 SQLite CAS；DB 类错误先幂等重试再 release。
 

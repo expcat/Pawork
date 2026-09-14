@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU64;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 
@@ -20,7 +20,7 @@ use pawork_engine::{
     AgentEventSink, ContextBudget, ContextLimits, EngineError, HeuristicEstimator,
     TokenEstimator as EngineTokenEstimator, TurnContext,
 };
-use pawork_providers::ModelRegistry;
+use pawork_providers::{CatalogEntry, ModelRegistry};
 use pawork_storage::session::{SessionRecord, SessionStore, SessionStoreError, WorkspaceRecord};
 use pawork_tools::{ToolRegistry, ToolRegistryError, ToolScheduler, ToolSchedulerConfig};
 use pawork_workspace::config::{ConfigError, Loader, PaworkConfig, TerminalConfig};
@@ -353,6 +353,9 @@ pub struct AppCore {
     pub(crate) http: reqwest::Client,
     /// 模型目录（builtin + provider 静态目录 + config 覆盖 + 运行期探测）。
     pub(crate) registry: Arc<ModelRegistry>,
+    /// 最近一次 `models_overview` 聚合快照。启停写命令复用，避免每次
+    /// Switch 再探测全部通道；`ModelList` / 显式 Refresh 仍走探测并刷新。
+    pub(crate) runnable_catalog: Mutex<Option<Vec<CatalogEntry>>>,
     /// engine 侧启发式 token 估算器（预算 / 截断 / 压缩判定共用）。
     pub(crate) heuristic: Arc<HeuristicEstimator>,
     /// session 侧窄口 TokenEstimator（压缩快照统计），由 heuristic 桥接。
@@ -713,6 +716,7 @@ impl AppCore {
             backend: Arc::new(MemoryBackend::new()),
             http: pawork_auth::http_client().expect("F06 HTTP client"),
             registry: Arc::new(registry),
+            runnable_catalog: Mutex::new(None),
             heuristic,
             session_estimator,
             adapter_protocol,

@@ -36,8 +36,10 @@ pub(crate) async fn auth_set_api_key(
             api_key,
             display_name,
         } => {
-            pawork_auth::validate_account_name(display_name)
-                .map_err(|e| GuiHostAdapter::app_error(e.into()))?;
+            if !display_name.trim().is_empty() {
+                pawork_auth::validate_account_name(display_name)
+                    .map_err(|e| GuiHostAdapter::app_error(e.into()))?;
+            }
             (provider_id, api_key, Some(display_name.as_str()))
         }
         _ => unreachable!("API key handler"),
@@ -165,9 +167,14 @@ pub(crate) async fn auth_start(
             flow,
             display_name,
         } => {
-            let name = pawork_auth::validate_account_name(display_name)
-                .map_err(|e| GuiHostAdapter::app_error(e.into()))?;
-            (provider_id, flow, Some(name.to_string()))
+            let name = if display_name.trim().is_empty() {
+                String::new()
+            } else {
+                pawork_auth::validate_account_name(display_name)
+                    .map_err(|e| GuiHostAdapter::app_error(e.into()))?
+                    .to_string()
+            };
+            (provider_id, flow, Some(name))
         }
         _ => unreachable!("OAuth start handler"),
     };
@@ -323,19 +330,30 @@ pub(crate) async fn auth_remove(
     _envelope: &AppCommandEnvelope,
     command: &AppCommand,
 ) -> Result<AppResponse, GuiHostError> {
-    let (provider_id, remove_id, select_id, selection_mode) = match command {
-        AppCommand::AuthRemove { provider_id } => (provider_id, None, None, None),
+    let (provider_id, remove_id, select_id, selection_mode, rename) = match command {
+        AppCommand::AuthRemove { provider_id } => (provider_id, None, None, None, None),
         AppCommand::AuthAccountRemove {
             provider_id,
             credential_id,
-        } => (provider_id, Some(credential_id.as_str()), None, None),
+        } => (provider_id, Some(credential_id.as_str()), None, None, None),
         AppCommand::AuthAccountSelect {
             provider_id,
             credential_id,
-        } => (provider_id, None, Some(credential_id.as_str()), None),
+        } => (provider_id, None, Some(credential_id.as_str()), None, None),
         AppCommand::AuthAccountSetSelectionMode { provider_id, mode } => {
-            (provider_id, None, None, Some(*mode))
+            (provider_id, None, None, Some(*mode), None)
         }
+        AppCommand::AuthAccountRename {
+            provider_id,
+            credential_id,
+            display_name,
+        } => (
+            provider_id,
+            None,
+            None,
+            None,
+            Some((credential_id.as_str(), display_name.as_str())),
+        ),
         _ => unreachable!("account mutation handler"),
     };
     let backend = adapter.core.read().await.auth_backend().clone();
@@ -344,6 +362,28 @@ pub(crate) async fn auth_remove(
     let outcome = (|| {
         let inventory = pawork_auth::list_provider_accounts(backend.as_ref(), provider_id)
             .map_err(|e| GuiHostAdapter::app_error(e.into()))?;
+        if let Some((credential_id, display_name)) = rename {
+            let account = pawork_auth::rename_provider_account(
+                backend.as_ref(),
+                provider_id,
+                credential_id,
+                display_name,
+            )
+            .map_err(|e| GuiHostAdapter::app_error(e.into()))?;
+            adapter.bus.publish_provider_auth(
+                adapter.instance.clone(),
+                provider_id,
+                AuthChangeState::Succeeded {
+                    method: account.kind.as_str().into(),
+                    masked_credential: account.stored.masked.as_str().into(),
+                },
+            );
+            return Ok(AppResponse::Data(json!({
+                "provider_id": id,
+                "credential_id": account.credential_id,
+                "display_name": account.display_name,
+            })));
+        }
         if let Some(mode) = selection_mode {
             let stored_mode = match mode {
                 pawork_protocol::ProviderAccountSelectionMode::Manual => {

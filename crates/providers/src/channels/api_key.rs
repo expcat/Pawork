@@ -1,7 +1,8 @@
 //! 首发 API-key 渠道：preset 驱动的配置 / Provider，薄封装 OpenAI-compatible 传输。
 //!
 //! API-key 渠道共用 Bearer 认证与 OpenAI-compatible transport；默认走 Chat
-//! Completions；混合渠道仅接受官方逐模型声明或显式配置的 transport。构造期 fail-closed：必须提供且
+//! Completions。混合渠道用官方 endpoint 表与家族回退决定 **如何路由**，远端
+//! `/models` 决定 ID 集合：未登记的新 ID 不得丢弃。构造期 fail-closed：必须提供且
 //! 仅接受 CredentialKind::ApiKey；preset 必须声明 api_key 认证方法且对应
 //! feature 已启用（SET-4 起按 auth_methods 数据字段判定，xAI 双认证通道复用）。
 
@@ -9,9 +10,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::channels::registry::{is_enabled, ChannelPreset};
-use crate::net::http::HttpClientConfig;
 use crate::ReasoningProtector;
+use crate::channels::registry::{ChannelPreset, is_enabled};
+use crate::net::http::HttpClientConfig;
 use async_trait::async_trait;
 use pawork_domain::{CancellationToken, ModelId, ProviderId, Timestamp};
 use pawork_domain::{
@@ -30,7 +31,8 @@ pub struct ApiKeyChannelConfig {
     pub base_url: String,
     pub http: HttpClientConfig,
     pub request_timeout: Option<Duration>,
-    /// 逐模型 transport 声明；混合协议渠道由官方端点表初始化，未登记模型拒绝运行。
+    /// 逐模型 transport 声明；混合协议渠道由官方端点表初始化。
+    /// 未登记 ID 走家族回退或 Chat Completions，不再因此拒绝。
     pub model_transports: BTreeMap<ModelId, ModelTransport>,
 }
 
@@ -88,7 +90,8 @@ impl ApiKeyChannelConfig {
         self
     }
 
-    /// 与目录筛选和实际请求共用的协议解析；未声明的混合渠道模型返回 None。
+    /// 与目录筛选和实际请求共用的协议解析。
+    /// `None` 仅表示本 adapter 不能运行（Messages-only / Qwen 非文本）。
     pub fn transport_for(&self, model: &ModelId) -> Option<ModelTransport> {
         resolve_model_transport(self.preset.id, &self.model_transports, model)
     }
@@ -154,15 +157,60 @@ fn resolve_model_transport(
     transports: &BTreeMap<ModelId, ModelTransport>,
     model: &ModelId,
 ) -> Option<ModelTransport> {
-    transports.get(model).copied().or_else(|| {
-        // 混合目录中的 ID 本身不能证明可用 transport。
-        (!matches!(channel, "opencode-go" | "qwen-token-plan"))
-            .then_some(ModelTransport::ChatCompletions)
-    })
+    transports
+        .get(model)
+        .copied()
+        .or_else(|| inferred_transport(channel, model.as_str()))
 }
 
-/// 官方逐模型端点快照（2026-09-08），不是按 ID 前缀猜测的路由规则。
-/// Go: https://opencode.ai/docs/go/#endpoints
+/// 官方表未覆盖的新 ID：按同一官方 endpoint 表的家族路由，缺省 Chat Completions。
+/// `/models` 只有 id，没有协议字段；家族回退避免再把「表里没有」当成丢弃。
+fn inferred_transport(channel: &str, model: &str) -> Option<ModelTransport> {
+    match channel {
+        "opencode-go" => {
+            if non_text_model(model) {
+                None
+            } else {
+                Some(if go_responses_family(model) {
+                    ModelTransport::Responses
+                } else if go_messages_family(model) {
+                    ModelTransport::Messages
+                } else {
+                    ModelTransport::ChatCompletions
+                })
+            }
+        }
+        "qwen-token-plan" => {
+            if non_text_model(model) {
+                None
+            } else {
+                Some(ModelTransport::ChatCompletions)
+            }
+        }
+        _ => Some(ModelTransport::ChatCompletions),
+    }
+}
+
+fn go_responses_family(id: &str) -> bool {
+    id.starts_with("grok-") || id.starts_with("gpt-") || id.starts_with("muse-spark-")
+}
+
+fn go_messages_family(id: &str) -> bool {
+    id.starts_with("qwen") || id.starts_with("minimax-")
+}
+
+/// 图片 / 音频等非文本 ID：当前 Chat adapter 不能跑，不是「未知聊天模型」。
+/// Go 与 Token Plan 目录共用；误伤方向是少显示，不会报运行时错误。
+fn non_text_model(id: &str) -> bool {
+    id.starts_with("wan")
+        || id.contains("-image")
+        || id.contains("audio")
+        || id.contains("-tts")
+        || id.contains("-realtime")
+}
+
+/// 官方逐模型端点表（2026-09-13 对照 https://opencode.ai/docs/go/#endpoints）。
+/// 只补已知 ID 的精确路由；新 ID 由 [`inferred_transport`] 承接，不在此当白名单。
 /// Qwen: https://help.aliyun.com/en/model-studio/qwen-code
 ///       https://help.aliyun.com/en/model-studio/token-plan-personal-overview
 fn documented_model_transports(channel: &str) -> BTreeMap<ModelId, ModelTransport> {
@@ -190,6 +238,7 @@ fn documented_model_transports(channel: &str) -> BTreeMap<ModelId, ModelTranspor
                     "longcat-2.0",
                     "deepseek-v4-pro",
                     "deepseek-v4-flash",
+                    "deepseek-v4.1-flash",
                     "deepseek-v4-flash-vision-exp",
                     "mimo-v2.5",
                     "mimo-v2.5-pro",
@@ -502,4 +551,53 @@ fn parse_go_reset(value: &str) -> Option<Timestamp> {
     Some(Timestamp::from_unix_millis(
         ((days * 24 + hour) * 60 + minute) * 60_000 + second * 1000 + millis,
     ))
+}
+
+#[cfg(test)]
+mod transport_resolution_tests {
+    use super::*;
+
+    fn resolve(channel: &str, id: &str) -> Option<ModelTransport> {
+        resolve_model_transport(
+            channel,
+            &documented_model_transports(channel),
+            &ModelId::new(id),
+        )
+    }
+
+    #[test]
+    fn go_keeps_undeclared_ids_and_routes_by_family() {
+        assert_eq!(
+            resolve("opencode-go", "deepseek-flash"),
+            Some(ModelTransport::ChatCompletions)
+        );
+        assert_eq!(
+            resolve("opencode-go", "deepseek-v4.1-flash"),
+            Some(ModelTransport::ChatCompletions)
+        );
+        assert_eq!(
+            resolve("opencode-go", "grok-4.5"),
+            Some(ModelTransport::Responses)
+        );
+        assert_eq!(
+            resolve("opencode-go", "qwen3.5-plus"),
+            Some(ModelTransport::Messages)
+        );
+        assert_eq!(
+            resolve("opencode-go", "glm-5.3-flash"),
+            Some(ModelTransport::ChatCompletions)
+        );
+        // 非文本 ID（如 gpt-image-*）不属于「新聊天 ID 不丢弃」的保护范围。
+        assert_eq!(resolve("opencode-go", "gpt-image-1"), None);
+    }
+
+    #[test]
+    fn qwen_keeps_undeclared_chat_and_drops_non_text() {
+        assert_eq!(
+            resolve("qwen-token-plan", "qwen3.9-max"),
+            Some(ModelTransport::ChatCompletions)
+        );
+        assert_eq!(resolve("qwen-token-plan", "wan2.7-image"), None);
+        assert_eq!(resolve("qwen-token-plan", "qwen-audio-3.0-tts-plus"), None);
+    }
 }

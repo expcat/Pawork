@@ -36,10 +36,11 @@ use crate::ui::components::label::Label;
 use crate::ui::i18n::t;
 use crate::ui::theme::{dark, font, metrics};
 
+use super::approval_card::approval_card_height;
 use super::timeline_entry::{
-    default_text_line_height, display_time, estimated_wrapped_lines, failure_next_step,
-    message_block_line_counts, tool_row_height, FailureNextStep, RunSummaryTerminal,
-    RunSummaryView, ToolRowView, SUMMARY_BANNER_GAP_REMS, SUMMARY_BANNER_PAD_X,
+    assistant_is_streaming, default_text_line_height, display_time, estimated_wrapped_lines,
+    failure_next_step, message_block_line_counts, tool_row_height, FailureNextStep,
+    RunSummaryTerminal, RunSummaryView, ToolRowView, SUMMARY_BANNER_GAP_REMS, SUMMARY_BANNER_PAD_X,
     SUMMARY_BANNER_PAD_Y_REMS, SUMMARY_NEXT_STEP_BUTTON_HEIGHT, SUMMARY_STATUS_CIRCLE,
 };
 use super::{now_unix_ms, workspace_empty_title, AppView, MenuKind};
@@ -115,7 +116,7 @@ pub(super) fn tool_status_label(status: &str) -> String {
     .into()
 }
 
-/// UI-3：消息间距 32px，工具组前 16px；独立终态页脚前 12px。
+/// UI-3：消息间距 24px，工具组前 16px；独立终态页脚前 12px。
 pub(super) fn row_top_gap(row: &TimelineRow) -> f32 {
     match row {
         TimelineRow::Message { .. } | TimelineRow::Error { .. } | TimelineRow::RunPhase { .. } => {
@@ -129,11 +130,18 @@ pub(super) fn row_top_gap(row: &TimelineRow) -> f32 {
                 metrics::TIMELINE_FOOTER_GAP
             }
         }
+        TimelineRow::LiveRunMetrics => metrics::TIMELINE_FOOTER_GAP,
     }
 }
 
-/// 消息测高与 entry_shell 同源：作者/动作行 + 段落；用户消息另计卡片内边距。
-fn message_entry_height(text: &str, column_width: f32, rem_px: f32, user: bool) -> f32 {
+/// 消息测高与 entry_shell 同源：有作者/动作行才计入标签槽；用户消息另计卡片内边距。
+fn message_entry_height(
+    text: &str,
+    column_width: f32,
+    rem_px: f32,
+    user: bool,
+    show_header: bool,
+) -> f32 {
     let inset = if user { metrics::MSG_USER_INSET_X } else { 0.0 };
     let vertical_inset = if user { metrics::MSG_USER_INSET_Y } else { 0.0 };
     let column_width = if user && !super::markdown::message_needs_full_width(text) {
@@ -141,7 +149,11 @@ fn message_entry_height(text: &str, column_width: f32, rem_px: f32, user: bool) 
     } else {
         column_width
     };
-    let label = default_text_line_height(font::BODY_SM.0 * rem_px).max(24.0);
+    let header = if show_header {
+        default_text_line_height(font::BODY_SM.0 * rem_px).max(24.0) + metrics::MSG_LABEL_BODY_GAP
+    } else {
+        0.0
+    };
     let body_font_px = font::BODY.0 * rem_px;
     let body_line_height = (font::from_pixels(metrics::MSG_LINE_HEIGHT).0 * rem_px).round();
     let body_width = (column_width - 2.0 * inset).max(0.0);
@@ -153,7 +165,7 @@ fn message_entry_height(text: &str, column_width: f32, rem_px: f32, user: bool) 
         + metrics::MSG_PARAGRAPH_GAP * blocks.len().saturating_sub(1) as f32
         + super::markdown::message_code_block_count(text) as f32
             * (metrics::ICON_BUTTON_SIZE - body_line_height).max(0.0);
-    2.0 * vertical_inset + label + metrics::MSG_LABEL_BODY_GAP + body
+    2.0 * vertical_inset + header + body
 }
 
 /// 思考展开区与渲染共用 12px 内边距和次级正文字号。
@@ -338,6 +350,7 @@ pub(super) fn timeline_row_height(
     rem_px: f32,
     expanded_timeline_details: &HashSet<String>,
     review_changes_available: bool,
+    active_run_id: Option<&str>,
 ) -> f32 {
     match row {
         TimelineRow::Thinking { entry_index } => {
@@ -345,7 +358,7 @@ pub(super) fn timeline_row_height(
             let TimelineEntryKind::Thinking { text } = &entry.kind else {
                 return 0.0;
             };
-            metrics::TOOL_GROUP_HEADER_HEIGHT
+            metrics::THINKING_HEADER_HEIGHT
                 + if expanded_timeline_details.contains(&entry.event_id) {
                     thinking_body_height(text, column_width, rem_px)
                 } else {
@@ -353,20 +366,25 @@ pub(super) fn timeline_row_height(
                 }
         }
         TimelineRow::Message { entry_index } | TimelineRow::Error { entry_index } => {
-            let text = match &timeline[*entry_index].kind {
+            let entry = &timeline[*entry_index];
+            let text = match &entry.kind {
                 TimelineEntryKind::UserMessage { text }
                 | TimelineEntryKind::AssistantMessage { text }
                 | TimelineEntryKind::Error(text) => text,
                 _ => "",
             };
+            let show_header = match &entry.kind {
+                TimelineEntryKind::AssistantMessage { .. } => {
+                    assistant_is_streaming(timeline, entry, active_run_id)
+                }
+                _ => true,
+            };
             message_entry_height(
                 text,
                 column_width,
                 rem_px,
-                matches!(
-                    timeline[*entry_index].kind,
-                    TimelineEntryKind::UserMessage { .. }
-                ),
+                matches!(entry.kind, TimelineEntryKind::UserMessage { .. }),
+                show_header,
             )
         }
         TimelineRow::RunPhase { entry_index } => {
@@ -437,6 +455,7 @@ pub(super) fn timeline_row_height(
             height += default_text_line_height(font::BODY_SM.0 * rem_px);
             height
         }
+        TimelineRow::LiveRunMetrics => default_text_line_height(font::BODY_SM.0 * rem_px),
     }
 }
 
@@ -486,7 +505,74 @@ pub(super) fn timeline_following_window(
     (0, 0.0)
 }
 
+/// 阅读列内容总高（含 list 顶/底 padding 与可选审批卡），与 render 的 pt/pb 同源。
+pub(super) fn timeline_stack_height(
+    rows: &[TimelineRow],
+    timeline: &[TimelineEntry],
+    column_width: f32,
+    rem_px: f32,
+    expanded_timeline_details: &HashSet<String>,
+    review_changes_available: bool,
+    active_run_id: Option<&str>,
+    approval_height: Option<f32>,
+) -> f32 {
+    let mut height = metrics::TIMELINE_TOP_GAP + metrics::MSG_ENTRY_GAP;
+    for (index, row) in rows.iter().enumerate() {
+        if index > 0 {
+            height += row_top_gap(row);
+        }
+        height += timeline_row_height(
+            row,
+            timeline,
+            column_width,
+            rem_px,
+            expanded_timeline_details,
+            review_changes_available,
+            active_run_id,
+        );
+    }
+    if let Some(approval) = approval_height {
+        if !rows.is_empty() {
+            height += metrics::MSG_ENTRY_GAP;
+        }
+        height += approval;
+    }
+    height
+}
+
 impl AppView {
+    /// 内容高于视口才有滚动条。未测到视口时不显示回底，避免短对话误报。
+    pub(super) fn timeline_content_overflows(&self, window: &Window) -> bool {
+        let viewport = self.timeline_list.viewport_bounds();
+        let viewport_height = f32::from(viewport.size.height);
+        if viewport_height <= 0.0 {
+            return false;
+        }
+        let column_width = f32::from(viewport.size.width)
+            .min(metrics::TIMELINE_READABLE_WIDTH)
+            .max(0.0);
+        let rem_px = f32::from(window.rem_size());
+        let rows = self.projection.timeline_rows();
+        let approval = self.projection.pending_approval.as_ref().map(|pending| {
+            approval_card_height(
+                &pending.reason,
+                pending.detail.as_deref(),
+                column_width,
+                rem_px,
+            )
+        });
+        timeline_stack_height(
+            &rows,
+            &self.projection.timeline,
+            column_width,
+            rem_px,
+            &self.expanded_timeline_details,
+            self.changes_available_for_active(),
+            self.projection.active_run_id.as_deref(),
+            approval,
+        ) > viewport_height + metrics::SCROLL_EPSILON
+    }
+
     pub(super) fn timeline_area(&mut self, window: &Window, cx: &mut Context<Self>) -> gpui::Div {
         let rows = self.projection.timeline_rows();
         sync_list(self, rows.len());
@@ -552,8 +638,8 @@ impl AppView {
         .max_w(px(metrics::TIMELINE_READABLE_WIDTH))
         .pt(px(metrics::TIMELINE_TOP_GAP))
         .pb(px(metrics::MSG_ENTRY_GAP));
-        // P0-3 空态：无 active session 且条目数为 0 时只给出一个清楚的
-        // Primary New task 路径；Disconnected 保留旧条目时不进入本分支。
+        // P0-3 空态：无条目时居中说明；无任务可直接在 Composer 开无归属对话，
+        // Ghost「New task」仍可达。Disconnected 保留旧条目时不进入本分支。
         let offline = !matches!(
             self.projection.connection,
             ConnectionState::Connected { .. }
@@ -575,7 +661,7 @@ impl AppView {
                 self.add_task_disabled_reason()
             });
             let new_task = Button::new("header-new-task")
-                .variant(ButtonVariant::Primary)
+                .variant(ButtonVariant::Ghost)
                 .track_focus(&self.header_new_task_focus)
                 .height(px(36.0))
                 .padding(ButtonPadding::Horizontal(metrics::SPACE_4))
@@ -628,9 +714,7 @@ impl AppView {
                 .justify_center()
                 .px(px(metrics::TIMELINE_CONTENT_INSET))
                 .gap(px(metrics::SPACE_4))
-                .child(
-                    icon_sized(Icon::Task, px(32.0)).text_color(dark().text.tertiary),
-                )
+                .child(icon_sized(Icon::Task, px(32.0)).text_color(dark().text.tertiary))
                 .child(
                     self.shell_element("workspace-empty-title")
                         .child(Label::new(workspace_empty_title()).size(font::TITLE)),
@@ -670,9 +754,10 @@ impl AppView {
                 .child(entries)
                 .into_any_element()
         };
-        // 脱钩时右下浮出回底控件（§8.3）；跟随态隐藏。
+        // 脱钩且内容溢出时才浮出回底；无滚动条不画。
         let navigation = self.navigation_panel(window, cx);
         let following = self.timeline_following;
+        let show_back_to_bottom = !following && self.timeline_content_overflows(window);
         let back_to_bottom_focus = self.timeline_back_to_bottom_focus.clone();
         div()
             .relative()
@@ -684,7 +769,7 @@ impl AppView {
             })
             .when_some(navigation, |area, panel| area.child(panel))
             .child(content)
-            .when(!following, |area| {
+            .when(show_back_to_bottom, |area| {
                 area.child(BackToBottom::new(
                     Button::new("timeline-back-to-bottom")
                         .variant(ButtonVariant::Raised)
@@ -811,22 +896,34 @@ impl AppView {
                     );
                 }
                 let footer_label = run_footer_label(&entry).unwrap_or("Run");
-                let footer_time = display_time(&entry.timestamp, now_unix_ms());
-                let footer = self.run_footer_element(footer_label, &footer_time);
+                let footer_now = now_unix_ms();
+                let footer_time = display_time(&entry.timestamp, footer_now);
                 let menu = self.entry_menu_dropdown(&entry, fork_available, cx);
+                let metrics = self
+                    .projection
+                    .run_usage_display(entry.run_id.as_deref(), footer_now);
+                let footer = self.run_footer_element(
+                    Some(footer_label),
+                    &metrics,
+                    Some(&footer_time),
+                    Some(menu),
+                );
                 region
                     .child(
                         div()
                             .when(show_card || group.is_some(), |footer| {
                                 footer.mt(px(metrics::TIMELINE_FOOTER_GAP))
                             })
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_2()
-                            .child(div().flex_1().min_w_0().child(footer))
-                            .child(menu),
+                            .child(footer),
                     )
+                    .into_any_element()
+            }
+            TimelineRow::LiveRunMetrics => {
+                let now = now_unix_ms();
+                let metrics = self
+                    .projection
+                    .run_usage_display(self.projection.active_run_id.as_deref(), now);
+                self.run_footer_element(None, &metrics, None, None)
                     .into_any_element()
             }
         }

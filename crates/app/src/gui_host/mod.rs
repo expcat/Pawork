@@ -1055,6 +1055,7 @@ static COMMAND_HANDLERS: &[(&str, CommandHandler)] = &[
     ("auth_account_select", command_auth_remove),
     ("auth_account_remove", command_auth_remove),
     ("auth_account_set_selection_mode", command_auth_remove),
+    ("auth_account_rename", command_auth_remove),
     ("auth_cancel", command_auth_cancel),
     ("set_default_model", command_set_default_model),
     ("set_proxy_url", command_set_proxy_url),

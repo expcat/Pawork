@@ -14,7 +14,7 @@ pub enum ChannelKind {
     ChatGptOAuth,
     /// xAI Grok OAuth（按模型 capability 选 Chat/Responses）。
     XaiOAuth,
-    /// Kimi Code OAuth（固定 Chat Completions）。
+    /// Kimi Code（固定 Chat Completions；OAuth 或 Coding Plan API key）。
     KimiOAuth,
 }
 
@@ -228,7 +228,9 @@ pub static CHANNEL_REGISTRY: &[ChannelPreset] = &[
         default_base_url: "https://api.kimi.com/coding/v1",
         display_name: "Kimi Code",
         feature: "kimi-code",
-        auth_methods: &["oauth"],
+        // Coding Plan API key 与 Device Flow OAuth 都打 api.kimi.com/coding/v1，
+        // Bearer 用法相同；宿主按存储形态解析（api key 优先）。
+        auth_methods: &["oauth", "api_key"],
         // Kimi Code 公开 Device Flow 端点（MoonshotAI/kimi-cli auth/oauth.py
         // 与 moonshotai.github.io/kimi-code 文档一致，SET-4 web 核对）。
         oauth: Some(OAuthPresetData {
@@ -349,7 +351,7 @@ mod tests {
         let preset = channel_preset("kimi-code").expect("kimi-code row");
         assert_eq!(preset.kind, ChannelKind::KimiOAuth);
         assert_eq!(preset.default_base_url, "https://api.kimi.com/coding/v1");
-        assert_eq!(preset.auth_methods, &["oauth"]);
+        assert_eq!(preset.auth_methods, &["oauth", "api_key"]);
         let oauth = preset.oauth_preset().expect("kimi-code oauth preset");
         assert_eq!(oauth.client_id, "17e5f671-d194-4dfb-9706-5516cb48c098");
         assert_eq!(oauth.token_url, "https://auth.kimi.com/api/oauth/token");

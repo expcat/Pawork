@@ -1,5 +1,14 @@
 # Settings：模型与供应商
 
+## ADR-061：账号默认名称与重命名（2026-09-13）
+
+状态：Accepted。用户要求账号池不再强制手填名称，默认用登录邮箱或 API key 脱敏串，并可用进度条表示额度消耗；授权 GUI 1.17。实现与验证状态见当次任务报告，用户视觉验收未做。
+
+- **D1 默认名**：`auth_account_add_api_key` / `auth_account_start` 的 `display_name` 可缺省或为空，由 Host 在凭证落盘时生成。API key 用头尾加 `*` 的脱敏串（≤4 为 `••••`，5–12 为前 2 + `***` + 后 2，更长为前 4 + `***` + 后 4）。OAuth 优先读 id_token 的 `email` claim（不验签，形态不合理则忽略）；短邮箱原文，过长只掩本地部分。无邮箱则脱敏 access token。旧 1.15/1.16 Host 仍拒空名；Desktop 仅在协商 minor ≥17 时发送空串，否则本地生成同样规则的 API key 名或 `"OAuth"`。
+- **D2 重命名**：新增 GUI-only `auth_account_rename { provider_id, credential_id, display_name }`，since 1.17，幂等。名称经既有 `validate_account_name`（trim 后非空），写入账号索引并推进 revision。回执 Data 含 provider_id / credential_id / display_name；成功发 `AuthChanged::Succeeded`。空名或未知 ID fail-closed。
+- **D3 界面**：Settings 账号卡不再要求添加时填名。卡头为状态点、名称、kind 徽标、当前选择、Use / Rename / Remove；副标题为掩码 · 状态。Go 三窗额度用进度条与右侧已用百分比，重置倒计时与过期/加载标在条下；AX 仍用完整已用/剩余/来源文本。Rename 仅 minor ≥17，行内编辑 Enter 提交 / Esc 取消，与会话改名同规。不引入暂停、恢复、选择顺序或复制账户 ID。
+- **D4 边界**：名称只存 `accounts.meta`，不进 `desktop.json`。Secret 不入默认名之外的任何展示。旧 minor 状态仍剥离账号字段；无新增包或生产依赖。
+
 ## ADR-060：UI-6b G2 逐账号额度与耗尽切换（2026-09-09）
 
 状态：Accepted。用户在 [G2 实施方案](../review/ui6b-quota-plan-2026-09-09.md) 后回复「确认」，授权 GUI 1.16；实现与验证状态见 [ROADMAP](../review/roadmap-ui-2026-09-09.md#ui-6b-g2-本批证据2026-09-09)。
@@ -27,7 +36,7 @@
 状态：已实现，定向检查与代理真窗口检查通过，等待用户人工视觉验收，见 [ROADMAP UI-6a](../review/roadmap-ui-2026-09-09.md#8-ui-6--providers供应商目录多账号)。GUI wire、配置 schema、认证存储和 domain 形状不变；自动检查与视觉验收分别记录在路线图。
 
 - **D1 ID 集合**：成功的远端目录替换该 provider 静态 ID 集合，包括合法空数组；不保留远端已消失的静态或 `[[models]]` 条目。静态仅为仍存在的相同 ID 补已有证据、定价与别名；用户 `[[models]]` 的窗口/输出覆盖仅作用于仍存在的 ID。目录失败保留回退；选择模型（含静态命中）也重新核对远端，禁止静默选用已下线 ID。聚合仍以 `(provider, model)` 保留跨供应商同名项。
-- **D2 可运行过滤**：Go / Qwen 的混合目录使用随实现固定的官方逐模型协议声明，目录过滤和请求路由同源；未声明协议或仅支持 Messages 的模型暂不进入这两条 API-key 通道的可运行目录，直接请求也在网络前拒绝。显式 transport 配置仍优先。没有按 ID 黑名单隐藏旧模型。未知窗口/输出为 0（unknown），未知工具能力不宣称支持；Kimi/xAI/ChatGPT 消费有证据的远端字段。
+- **D2 可运行过滤（2026-09-13 修订）**：成功远端决定 ID 集合。Go / Qwen 的官方逐模型协议表与家族回退只决定 **如何路由**，不再当 ID 白名单。未在表中的新 ID 进入可运行目录：缺省 Chat Completions；Go 上与官方 endpoint 表同一家族的 `grok-*` / `gpt-*` / `muse-spark-*` 走 Responses，`qwen*` / `minimax-*` 走 Messages。仅 Messages-only（本 adapter 尚不能组 Messages 请求）与 Qwen 已知非文本 ID 不进入可运行目录，直接请求仍网络前拒绝。显式 transport 配置仍优先。禁止再把「表里没有」当成丢弃理由。未知窗口/输出为 0（unknown），未知工具能力不宣称支持；Kimi/xAI/ChatGPT 消费有证据的远端字段。
 - **D3 解析失败**：缺失/非数组目录、缺失/无效模型 ID 都是错误；合法空数组是远端成功。通用目录出现 `has_more=true` 时显式报尚不支持分页，避免把第一页当完整 ID 集合。ChatGPT 使用 `client_version=0.153.0`；空/null/none-only reasoning levels 不再宣称思考能力。
 - **D4 验证与发现分离**：Go 保存候选 key 前调用 `GET {base_url}/usage`，沿用代理、超时与 Bearer 安全边界；仅合法 rolling/weekly/monthly 用量响应算验证成功，rate-limited 仍是有效认证。401、403、超时或畸形响应均失败并保留旧 key。目录仍使用公开 `/models`，不作为 key 或账号权限证明。其余已认证目录渠道沿用严格的 `/models` 验证；不发验证用推理请求，不引入“未验证保存”。依据：[Go 官方实现固定快照](https://github.com/anomalyco/opencode/blob/d4704347465c1ee63d0c213ed00e648e7f0231c5/packages/console/app/src/routes/zen/go/v1/usage.ts)。
 - **D5 边界**：UI-6a 收口时 UI-6b 同 kind 多账号与切换尚未实施（后续见 ADR-059）；本次 /usage 仅用于认证，不产生 GUI QuotaSnapshot 或自动切换。Anthropic 静态目录、分页与 Kimi 视频输入属于现有适配缺口，不因此新增协议能力。
@@ -36,7 +45,7 @@
 
 状态：Accepted（实现与门禁证据见 OPT 归档对应批次记录）。落地 [ROADMAP §6](../review/roadmap-opt-2026-09-05.md#6-opt-3--供应商模型启用与默认角色) OPT-3d/3e：同一 provider 的 API key 与 OAuth 两类凭证可**共存**并在 Settings 展开卡内逐条列出状态；额度槽（Usage）在无权威 QuotaSnapshot 来源前只呈现诚实空态，不渲染数字。GUI API 1.12 → 1.13（minor 只增，additive）。对照 OPT-D 签字稿 `design/opt-settings-providers-expanded-v1.png`。
 
-- **D1 共存语义（修订 SET-4 A3 替换语义）**：`auth_set_key` 写入 API key 不再删除该 provider 的 OAuth default 条目；`oauth_finish` 写入 OAuth 不再删除 API key default 条目。替换语义缩窄为**同 kind 覆盖**：Replace API key 覆盖 api key default 条目，Replace OAuth 原子覆盖 oauth default 三账户，新登录未返回 refresh_token 时同批删除旧账号 refresh；只有刷新响应缺 refresh_token 时保留当前账号 refresh。Remove（`auth_logout`）维持 provider 级语义：删除该 provider 全部存储凭证（幂等）。运行期解析链不变：装配仍按通道固定顺序（api_key 通道只查 api key；xAI api-key 优先、OAuth 兜底；ChatGPT/Kimi Code 只走 OAuth），即「生效凭证」由通道形态决定，本切片不引入账户选择/亲和路由（G1–G6 仍在 backlog）。同 kind 多账户（两个 API key）不在本切片：存储层 `SecretBackend` 结构天然容纳，但选择语义与命名 UX 属 G1 账户池，签字稿未呈现。
+- **D1 共存语义（修订 SET-4 A3 替换语义）**：`auth_set_key` 写入 API key 不再删除该 provider 的 OAuth default 条目；`oauth_finish` 写入 OAuth 不再删除 API key default 条目。替换语义缩窄为**同 kind 覆盖**：Replace API key 覆盖 api key default 条目，Replace OAuth 原子覆盖 oauth default 三账户，新登录未返回 refresh_token 时同批删除旧账号 refresh；只有刷新响应缺 refresh_token 时保留当前账号 refresh。Remove（`auth_logout`）维持 provider 级语义：删除该 provider 全部存储凭证（幂等）。运行期解析链不变：装配仍按通道固定顺序（api_key 通道只查 api key；xAI / Kimi Code api-key 优先、OAuth 兜底；ChatGPT 只走 OAuth），即「生效凭证」由通道形态决定，本切片不引入账户选择/亲和路由（G1–G6 仍在 backlog）。同 kind 多账户（两个 API key）不在本切片：存储层 `SecretBackend` 结构天然容纳，但选择语义与命名 UX 属 G1 账户池，签字稿未呈现。
 - **D1a 生效与互斥**：认证或供应商代理设置变化后，当前 adapter 标记失效；下一次 Run（即使 provider/model 未改变）重新装配。`AuthRemove` 与同 provider 的认证写入共用单飞闸，验证/授权尚未结束时返回 `busy`。API key 验证、OAuth device start/token exchange/refresh 与模型请求统一遵循该 provider 的 `use_proxy` 设置。
 - **D2 wire（API 1.13）**：`provider_auth_status` 的 `ProviderAuthStatusEntry` additive 增 `credentials: Vec<ProviderCredentialStatus>`：
   - `ProviderCredentialStatus { kind, masked_credential, expired, expires_at }`：`kind` 为 `"api_key"` / `"oauth"`；`masked_credential` 为脱敏串（存储凭证恒可脱敏，非可选）；`expired: bool` 由 OAuth meta `expires_at_ms` 与当前时刻比较得出，无 `expires_at` 视为未过期（同 `needs_refresh` 口径）；`expires_at` 仅 OAuth 有值（ISO-8601），api key 为 null 但键必须保留（required-nullable 口径同既有 fixture）。
@@ -57,7 +66,8 @@
 - **D2 协议词汇（API 1.12）**：
   - `SetModelEnabled { provider_id, model_id, enabled }`：provider 未知 fail-closed（`unknown_provider`）；模型不在该 provider 当前可运行目录 fail-closed（`unknown_model`，同 set_default_model 校验口径）。幂等：重复同态写为最终覆盖语义。回执 `SetModelEnabledData { provider_id, model_id, enabled, cleared_roles }`。
   - `SetProviderModelsEnabled { provider_id, enabled }`：全开 = 清空该 provider denylist；全关 = Host 按当前聚合目录展开该 provider 全部模型，并保留盘上已有的禁用项（包括暂时离开目录的模型）。单项启停也基于最新盘上 denylist 修改，避免旧 Host 快照覆盖其他实例已保存的选择。全关时目录为空 fail-closed（`catalog_unavailable`）不写盘——空展开写空 denylist 会退化为全开，语义颠倒。回执 `SetProviderModelsEnabledData { provider_id, enabled, cleared_roles }`。
-  - 写盘沿用 `rmw_global_config`，禁用集与角色清除由 `write_provider_model_preferences` 一次原子提交；Host 持写锁跨写盘与内存更新，角色设置在写锁内复核模型启用状态；写盘成功即同步内存生效配置（同 `set_provider_use_proxy` 先例），GUI 随后重查 `model_list` / `provider_auth_status` 获得权威全态。
+  - 写盘沿用 `rmw_global_config`，禁用集与角色清除由 `write_provider_model_preferences` 一次原子提交；Host 持写锁跨写盘与内存更新，角色设置在写锁内复核模型启用状态；写盘成功即同步内存生效配置（同 `set_provider_use_proxy` 先例）。
+  - **D2a 启停不重探全目录（2026-09-13 修订）**：`unknown_model` 仍要求 ID 属于该 provider 可运行目录，但校验优先用最近一次 `models_overview` 快照、该通道静态回退或已在 `disabled_models` 的 ID；未命中才探测。全关展开同样优先快照。GUI 按回执收敛弹层 Switch、Composer 过滤目录与被清除的角色默认，不再为单次启停重查 `model_list` / `provider_auth_status`（打开弹层、页级 Refresh、认证成功/移除仍重查）。选择默认模型（`set_default_model` / `SetDefaultRoleModel`）仍按 ADR-058 重新核对远端。
 - **D3 禁用即显式失效**：`enabled = false`（含全关展开）命中任一角色默认对（conversation = `default_provider/default_model`、naming、vision、search）时，Host 同一次写盘移除该角色键对，回执 `cleared_roles` 按 wire 名列出被清除角色；禁止静默换绑到其他 provider/模型（ROADMAP OPT-3a 验收）。半配对（provider/model 任一缺失）本就当 null 处理，清除时移除存在的键。模型目录按 `(provider_id, model_id)` 保留跨供应商同名项。进行中的 Run 不受影响，只影响之后启动的 Run（同 ADR-053 D3 口径）。
   - **D3a 清除判定以盘上持久化配置为准（2026-09-06 修订）**：命中判定读 Global 文件（Builtin + Global 层，不含 Session/Run 覆盖）。启动期 CLI `--provider/--model` 覆盖只进内存生效配置、不落盘；若按内存判定会把覆盖值当成用户默认对，误删盘上真实键对（GUI 批次验收中实际发生一次，当场回滚配置并修复）。内存同步随之收窄：仅当内存对与**被清除的持久化对**一致时才同步置 null；CLI 覆盖的生效值保留（哪怕已指向禁用模型，由 Composer/下拉按过滤规则如实标不可用），不写回盘。
 - **D4 过滤权威在 Host**：
@@ -162,7 +172,7 @@ flowchart LR
 | --- | --- | --- | --- | --- |
 | Z.AI / GLM Coding Plan | API key | 先用现有 `https://api.z.ai/api/coding/paas/v4`；未确认稳定公开 list-model API 时使用有版本标记的固定目录 | 已有 `glm-coding` API-key adapter；缺 GUI 设置面 | [Z.AI API 介绍](https://docs.z.ai/api-reference/introduction) · [模型概览](https://docs.z.ai/guides/overview/overview) |
 | Kimi Platform | API key | `https://api.moonshot.ai/v1`；已认证请求 `GET /v1/models` | 需新增 Kimi 通道/descriptor | [Kimi API 概览](https://platform.kimi.ai/docs/api/overview) · [List Models](https://platform.kimi.ai/docs/api/list-models) |
-| Kimi Code | OAuth Device Code | managed endpoint `https://api.kimi.com/coding/v1`；若无稳定公开目录 contract，使用固定目录并标明来源 | 需新增 OAuth adapter、refresh 与 GUI 流程 | [Kimi Code 入门](https://moonshotai.github.io/kimi-code/en/guides/getting-started.html) · [环境变量/端点](https://moonshotai.github.io/kimi-code/en/configuration/env-vars.html) |
+| Kimi Code | OAuth Device Code 或 Coding Plan API key | managed endpoint `https://api.kimi.com/coding/v1`；已认证 `GET /models` 验证 API key；OAuth 与 API key 共存时运行期 api key 优先 | 已实现（双认证） | [Kimi Code 入门](https://moonshotai.github.io/kimi-code/en/guides/getting-started.html) · [环境变量/端点](https://moonshotai.github.io/kimi-code/en/configuration/env-vars.html) |
 | DeepSeek | API key | `https://api.deepseek.com`；已认证请求 `GET /models` | 已有 API-key adapter；缺 GUI 设置面 | [DeepSeek API](https://api-docs.deepseek.com/) · [List Models](https://api-docs.deepseek.com/api/list-models/) |
 | xAI / Grok | OAuth Device Flow、API key | API key 使用 `https://api.x.ai/v1/models`；OAuth 目录按 adapter 能力远端获取或固定回退 | OAuth 已有；当前 xAI adapter 明确 OAuth-only 且模型固定，需补 API-key adapter | [xAI Models API](https://docs.x.ai/developers/rest-api-reference/inference/models) · [xAI CLI 登录](https://docs.x.ai/build/cli/reference) |
 
@@ -173,7 +183,7 @@ flowchart LR
 1. **远端优先**：凭证可用且供应商有稳定目录接口时，由 Host 发起已认证查询。只有按账号授权过滤的目录才能代表该账号可见模型；公开目录仅代表供应商公布的 ID，不能证明凭证有效或该账号有调用权限。Go 按 ADR-058 独立用 `/usage` 验证，`/models` 仅发现目录。
 2. **固定回退**：目录接口缺失、超时或拒绝时，使用随代码版本固定的供应商目录；页面显示来源、快照日期和失败原因，不把回退写成“实时可用”。
 3. **目录替换与元数据**：成功远端决定 ID 集合，固定元数据只补仍存在的相同 ID；合法空目录不回添静态项。未知能力、上下文窗或工具支持为 unknown；不得凭品牌推断为支持。能力冲突取交集/fail-closed。
-4. **可运行过滤**：只向 Composer 暴露当前 Pawork adapter 能构造请求和解析响应的模型；xAI 图像/视频等非聊天模型即使远端返回也不展示为可选。
+4. **可运行过滤**：只向 Composer 暴露当前 Pawork adapter 能构造请求和解析响应的模型；xAI 图像/视频、Qwen 非文本、Go 上 Messages-only 即使远端返回也不展示为可选。远端新出现的可路由聊天 ID 不得因本地协议表过期被丢弃。
 5. **显式刷新**：用户动作触发刷新；首期不新增持久模型缓存或后台轮询。刷新失败保留当前列表并标 stale/fallback。
 6. **选择有效性**：default model 必须属于所选连接当前可运行目录；目录变化导致失效时显示“默认模型不可用”，不静默换到另一供应商。
 

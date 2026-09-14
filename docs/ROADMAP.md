@@ -1,6 +1,6 @@
 # Pawork 活动路线图：GUI 第二阶段
 
-> 更新：2026-09-12；规划基线：`main / 7a416dd6`，当前主干 `f181bae3`。本阶段以 [PI-Desktop Screens](https://pi-docs.aiuo.net/guide/screenshots) 为交互与视觉参照，优化已有 GPUI 工作台。**GUI2-01～06 已实现并完成定向自动检查，等待用户验收；GUI2-02 真窗口限制见下文，GUI2-05 / 06 代理真窗口未进行，GUI2-07 仅完成构建 / probe / probe-smoke，真窗口取证被阻断**；生产能力以源码为准，下一阶段规格见 [GUI 设计](gui-design.md)。2026-09-12 完成一轮显示效果 Review，结论与新增的 GUI3 视觉任务见 [§4](#4-显示效果-review2026-09-12与-gui3-视觉任务)；同日 GUI3-01～07 已由子代理实现并通过 Desktop 定向测试（主代理逐 hunk 审查），用户验收未进行；GUI3-08 已按 PI 暗色截图确认有限动效（不循环）并落地，定向测试见本轮报告。
+> 更新：2026-09-14；规划基线：`main / 7a416dd6`，当前主干 `8952a743`。2026-09-13 [ADR-061](spec/settings.md#adr-061账号默认名称与重命名2026-09-13) 将 Settings 账号改为默认名（邮箱 / API key 脱敏串）+ 可重命名，Go 三窗用进度条表示已用百分比；GUI API 1.17。2026-09-14 代理完成 §2.2 全部真窗口验收（V-01～V-12 与 ADR-061，证据 /tmp/pawork-vfix-evidence/）；同日下午补齐非空 MCP（GUI 内成功执行）与 GUI3-04 401 CTA（§2.2 末尾补录，含一次凭证操作事故登记，需用户重录 DeepSeek key），用户视觉验收仍未做。本阶段以 [PI-Desktop Screens](https://pi-docs.aiuo.net/guide/screenshots) 为交互与视觉参照，优化已有 GPUI 工作台。**GUI2-01～06 已实现并完成定向自动检查，等待用户验收；GUI2-02 真窗口限制见下文；GUI2-05 / 06 代理真窗口随 GUI2-07 批次完成；GUI2-07 于 2026-09-14 完成真窗口验收并同批复验 §4 GUI3 呈现（证据 /tmp/pawork-gui2-07-evidence/）**；生产能力以源码为准，下一阶段规格见 [GUI 设计](gui-design.md)。2026-09-12 完成一轮显示效果 Review，结论与新增的 GUI3 视觉任务见 [§4](#4-显示效果-review2026-09-12与-gui3-视觉任务)；同日 GUI3-01～07 已由子代理实现并通过 Desktop 定向测试（主代理逐 hunk 审查），代理真窗口 2026-09-14 随 GUI2-07 批次复验（01～03、05～07 通过，04 的 401 CTA 当日下午补齐、08 动效留人工），用户验收未进行；GUI3-08 已按 PI 暗色截图确认有限动效（不循环）并落地，定向测试见本轮报告。2026-09-13 用户在本机 `desktop` 真窗口走查当前工作区候选，疑似问题记 [§2.1](#21-用户视觉走查发现2026-09-13)。
 
 上一条 UX-01～UX-09 已有实现，详细证据迁至 [历史记录](review/roadmap-ux-2026-09-10.md)，未完成验收继续列于 §3。迁存记录不代表验收通过或任务归档。更早 UI-1～UI-6 见 [模块重设计记录](review/roadmap-ui-2026-09-09.md)。
 
@@ -18,9 +18,9 @@
 | GUI2-02 | 对话阅读层级与 Composer 整理 | 01 | 已实现 | 228/228 通过 | 部分通过，见下方限制 | 待验 / 未归档 |
 | GUI2-03 | 任务与操作快捷查找 | 01 | 已实现 | 230/230 通过 | 本项路径通过 | 待验 / 未归档 |
 | GUI2-04 | 当前对话查找与回合定位 | 02 | 已实现 | 231/231 通过 | 本项路径通过 | 待验 / 未归档 |
-| GUI2-05 | 工作面板与窄窗可达性 | 01 | 已实现 | 243/243 通过 | 未进行 | 待验 / 未归档 |
-| GUI2-06 | 设置查找与行式信息组织 | 03 | 已实现 | 246/246 通过 | 未进行 | 待验 / 未归档 |
-| GUI2-07 | 受影响主路径验收与旧缺口收口 | 01～06 | 部分进行（构建 / probe / probe-smoke 通过） | 未运行（无新测试） | 未进行（截图与外部 AX 取证被阻断，见下文） | 待验 / 未归档 |
+| GUI2-05 | 工作面板与窄窗可达性 | 01 | 已实现 | 243/243 通过 | 通过（2026-09-14，随 GUI2-07） | 待验 / 未归档 |
+| GUI2-06 | 设置查找与行式信息组织 | 03 | 已实现 | 246/246 通过 | 通过（2026-09-14，随 GUI2-07） | 待验 / 未归档 |
+| GUI2-07 | 受影响主路径验收与旧缺口收口 | 01～06 | 完成 | 未运行（无新测试） | 通过（2026-09-14，见下文） | 待验 / 未归档 |
 
 ## 2. 可独立交付的任务
 
@@ -95,7 +95,7 @@
 
 **本轮进展（2026-09-12，`main / f181bae3` 工作区候选）**：`shell_layout.rs` 新增 `InspectorPlacement { Hidden, Side, Center }` 与 `can_fit_side_inspector`——偏好关 → Hidden；默认字号宽 > 1279 且 ≥ 1288（150% 需 ≥ 1320）→ Side（440px 右栏，`InspectorMotion` 180ms 仍只用于并排）；否则偏好开 → Center；`InspectorMotion::snap` 跨窄窗切换直接落位不动画；`inspector_open` 现表示 Side。`inspector.rs` 面板头统一为 48px「面板名称选择器（Dropdown 触发器 `inspector-panel`，当前名 + `▾`，菜单 `inspector-panel-menu` 列 Changes / Terminal / Resources，`MenuKind::InspectorPanel`，↑/↓/Enter/Esc 走既有菜单键盘语义）+ 36×36 `inspector-collapse` 关闭」，取代 UI-1 三页签头（`inspector-tabs` TabGroup 移除，`inspector-tab-*` 改为菜单项、仅菜单打开时发布）；Changes 内 Files / Summary 二级页签保留；Terminal 只改装配。中央模式：TaskRail 保留，同一 `inspector_element` 以 `Panel::fill()` 占中央 Workspace，顶部 36px「返回对话 / Back to conversation」`inspector-back`；不渲染 Timeline / Composer 且 AX 不发布，但保留实体、草稿、`timeline_following` / ListState 偏移与连接状态；返回 / 关闭回 Composer 焦点；`pending_approval` 时面板顶部显示「返回对话处理审批」`inspector-approval-hint`（点击即返回，不默认批准）。Activity / Review changes 打开面板时仅 Side 才 `timeline_changed()`。`changes.rs`（R-04）：`parse_hunk_header` / `diff_hunk_line_numbers` 从 `@@ -a,b +c,d @@` 本地递推双列行号（context 左右 +1、deletion 只左、addition 只右、畸形头空行号不伪造，不改 wire），diff 整行浅底 token `diff.addition_bg=#1b2a22` / `diff.deletion_bg=#2a1c1e` / `diff.gutter_fg=#9b9ba4`（不再复用 Allow / Deny 按钮色），行号 gutter 32px × 2；文件清单改 32px 紧凑行：`M` 琥珀 / `A` 绿 / `D` 红色标（其余状态原样）+ 路径 + 右对齐 `+A/−D`，`changes-file-*` identifier 与选中 / hover / 焦点语义不变；只读、latest-session mismatch banner、断线 stale、空面板不自动打开不变。`theme.rs` 新增 `INSPECTOR_BACK_HEIGHT=36` / `CHANGES_FILE_ROW_HEIGHT=32` / `DIFF_LINE_NUMBER_WIDTH=32`；`components/panel.rs` 增 `Panel::fill()`。
 - **自动检查**：Desktop 定向测试 243/243（新增 `resolve_inspector_placement_follows_width_and_preference`（1440 Side / 1080 Center / 150%×1280 Center / 未打开 Hidden / 变宽变窄）、`hunk_line_numbers_advance_from_header_and_fail_closed`、`work_panel_center_mode_reaches_all_tabs_and_restores_conversation`（1080×720 三面板中央可达、`inspector-back` 返回后草稿与 Timeline 偏移保留、中央模式无 Timeline / Composer 节点、无 terminal / cancel 派发）、`inspector_panel_selector_keyboard_and_approval_hint`；更新 `resolve_switches_rail_width_at_1280`、Inspector 键盘 / 焦点、theme 常量、i18n、AX 裁剪测试）。日志 `/tmp/pawork-gui2-05-tests.log`。
-- **限制**：未做真窗口像素复验（三面板最小窗口 / 150% 可达、开合不重建终端为 AX + 命令派发断言）；`inspector-tab-*` 未改名。代理真窗口与用户验收未进行。
+- **限制**：未做真窗口像素复验（三面板最小窗口 / 150% 可达、开合不重建终端为 AX + 命令派发断言）；`inspector-tab-*` 未改名。代理真窗口 2026-09-14 随 GUI2-07 批次通过（变更面板与双列行号 diff、1080 最窄窗中央面板与「返回对话」恢复、终端 PTY echo 真实往返、资源面板空态、面板 150% 窄窗，证据 06～10 / 13～15 / 22）；用户验收未进行。
 
 ### GUI2-06 设置查找与信息组织
 
@@ -108,7 +108,7 @@
 
 **本轮进展（2026-09-12，`main / f181bae3` 工作区候选）**：新增 `ui/settings/search.rs`——静态目录 `settings_search_entries()`（每条 `page` / `row_id` / 中英标题 / 说明 / 别名，覆盖字号、语言、模型 / 默认模型 / 管理模型、供应商 / API key / OAuth、代理、审批模式 / 会话信任、MCP、终端 shell / 尺寸、连接诊断、数据目录）与 `filter_settings_search_entries`（忽略英文大小写，按页面 gate 过滤：Providers 常在、Host 页看 `query.available`、About 需连接 + `host_data_dir`、Appearance / Advanced 离线可用）。Settings 左栏返回按钮下增独立 `TextInput`「查找设置 / Search settings」（`settings-search-input`，不进 Composer 草稿、不读 secure 缓冲，离开 Settings `reset_settings_search` 清空）；查询非空时导航被结果列表替换（`settings-search-result-{Page}-{row_id}` ListItem 可 Press，空结果 `settings-search-empty`），↑/↓ 高亮、Enter 选择、Esc 清空回焦。选择命中 `locate_settings_entry`：先切页（滚动归零），下一帧 `finish_settings_locate` 用 `settings_element_layouts` + 页面 ScrollHandle 滚入目标行，约 2s 以 `surface.hover` + 2px accent 左缘（绝对定位，不进盒模型）标识并把焦点落到对应控件 / 只读行；只导航，不派发任何写命令。`quick_search.rs` 删除 `SEARCH_PAGES`，「页面」分组改从 `settings_search_entries()` 派生（空查询只出八页标题，非空查询加入设置行 `SearchTarget::SettingsRow`），断线 gate 仍只允许 Appearance / Advanced。R-08：`providers.rs` 供应商卡头收为固定 52px 单行五列（中性状态色点绿 / 灰 / 红 · 名称 · 认证方式 · 「已连接 · N 个模型」chip · chevron；`settings-provider-header-{id}` 布局 id 钉 48–56px，既有 name / connection / catalog / expand identifier 不漂）；八页导航按「模型（Models & providers）/ 工作台（Network、Approvals、Tools & MCP、Terminal）/ 系统（Appearance、Advanced、About）」分组加 12px 组头（`settings-nav-group-{models,workspace,system}`，组内全隐则组头隐；F4 零位移仍成立）；`permissions.rs` 五档 `●` / `○` 改真实圆环 radio（Ø16 外环 1.5px `text.secondary`，选中 Ø8 accent 实心，`settings-approval-mode-{wire}` 与 Press gate 不变）；`components/switch.rs` 关态 hover 改 `surface.hover`，滑块仍业务态驱动无动效；`appearance.rs` 字号 / 语言改标签 + 当前值纵排。未改认证 / quota / 配置后端与 Host 命令语义。
 - **自动检查**：Desktop 定向测试 246/246（新增 `settings_search_entries_cover_required_topics_aliases_and_case`、`settings_search_entries_filter_by_page_gate`、`settings_search_locates_rows_without_writes`（中英搜索「字号 / 模型 / 代理 / 审批」进入正确页、目标行滚入且 AX 存在、无写命令派发、不可用页无结果、断线只剩本地页、Esc 清空回焦、返回工作台草稿保留）；更新 `settings_nav_ax_frames_stay_put_across_selection_change`（含分组头）、`settings_controls_follow_layout_and_scroll`、`settings_ax_masks_api_key_and_gates_writes_when_stale`（卡头高度）；`quick_find_*` 两条继续通过）。日志 `/tmp/pawork-gui2-06-tests.log`。
-- **限制 / 偏离**：Network 的输入 | Save | Clear 横排与 Terminal 等页未做全面四层重排（只整理 Appearance 与供应商卡头）；查询激活时导航整体被结果替换；状态色点为装饰不进 AX；导航图标待 GUI3-05、Switch 动效待 GUI3-08。代理真窗口与用户验收未进行。
+- **限制 / 偏离**：Network 的输入 | Save | Clear 横排与 Terminal 等页未做全面四层重排（只整理 Appearance 与供应商卡头）；查询激活时导航整体被结果替换；状态色点为装饰不进 AX；导航图标待 GUI3-05、Switch 动效待 GUI3-08。代理真窗口 2026-09-14 随 GUI2-07 批次通过（设置审批页定位与「信任项目」、外观 150% 即切、Cmd+K 命中「审批模式」设置行，证据 04 / 20 / 24）；用户验收未进行。
 
 ### GUI2-07 主路径验收与记录收口
 
@@ -122,6 +122,105 @@
 - `pawork-desktop --probe-smoke`：exit 0，`first=glm-4.7 first_turn=pong second=deepseek-v4-flash second_turn=pong assistant_turns=2 cancelled=1 persisted=14 disconnect_survive=running`。注意 probe-smoke 的模型对是 `main.rs` 里**既有硬编码**的 `glm-coding/glm-4.7` → `deepseek/deepseek-v4-flash`（真实 Provider 回合成功），并非本次指定的 `opencode-go / glm-5.3-flash`；写文件回合 `approval=not_requested`，仓库无残留文件。日志 `/tmp/pawork-gui2-07-{build,host,probe-smoke}.log`。
 - 真窗口：平行 bundle `/tmp/Pawork-gui2-07.app` 三次启动（`open -na` × 2、直接执行 × 1）均出窗（CGWindowList `onscreen alpha=1.0`，1440×1024），`lsof` 证实 Desktop 进程持有到 `pawork-gui-gui2-07.sock` 的已接受连接，stderr 无 AX 安装失败。**但取证被阻断**：`screencapture -l/-R` 返回 `could not create image`（本代理 shell 无屏幕录制权限）；`scripts/ui-ax-dump.swift` 对 Pawork 进程持续得到 AXApplication 自递归、`kAXWindowsAttribute` 为空、0 个业务 identifier（同工具对 Finder 正常，`ui/accessibility/macos.rs` 相对 HEAD 无 diff；符合脚本注释登记的 macOS 26 间歇签名，但本轮三次均复现，需人工开窗核实是否与本工作区改动相关）；`ui-focus-switch.sh activate` 未收敛。因此 §GUI2-07 场景（真项目新任务 → 流式 / 工具 → 审批 → Changes → 窄窗面板 → 返回；快捷查找 / 长对话定位 / 设置查找 / 断线恢复）与 GUI3 各项的真实 Provider 回合呈现**均未取得像素或 AX 证据**，登记为未进行；未修改任何代码。副产物：`~/.pawork/gui2-07/`（隔离实例数据）保留待用户处置。
 
+**本轮进展（2026-09-14，实例 vfix，取证恢复）**：2026-09-12 的取证阻断今日未复现——computer-use AX 树读取与 `screencapture -l` 均正常。载体：Host `pawork --instance vfix --provider opencode-go --model glm-5.3-flash gui serve`（10:4x 起 `--approval-mode ask-for-writes`，11:06 重启后为 `ask-for-dangerous`）+ 平行 bundle `target/pawork-desktop-runtime/Pawork-vfix.app`（当前工作区增量构建，含 V 批修复与 D1 逐事件时间戳）。真窗口 1087×727（1080 为最窄支持宽）。证据 `/tmp/pawork-gui2-07-evidence/`（01～25，编号 17 跳过），未检入仓库。
+
+- **首页 → 真实项目新任务（01）**：新建绑定 `pawork-gui2-07-ws` 的任务（session.db：`ses-1789353974010-1` / `ws-1789353973957-1`），空任务「开始对话」引导、工作区 chip、`glm-5.3-flash` 模型触发器渲染正常。
+- **流式与工具（02 / 03）**：首轮 `read_file` 成功、`write_file` / `apply_patch` 被「untrusted workspace」策略诚实拒绝，工具组 headline 折叠（`2 个工具 · read_file README.md · write_file NOTES.md · 1 已完成 · 1 失败`）与展开失败原因原文均正确；助手终态如实说明未写入。
+- **审批（04 / 05）**：经设置 → 审批页「信任项目」（04）后第二轮写入触发审批卡（`write_file · NOTES.md`，允许一次 / 允许本次运行 / 拒绝），放行后写入成功。session.db 核对：`tool_approval_requested` / `tool_approval_responded` 事件对与 `checkpoint_created` 齐全。
+- **Changes（06 / 07）**：变更面板列出 `A NOTES.md +4 -0`，diff 双列行号与整行浅底正常；磁盘 `/tmp/pawork-gui2-07-ws/NOTES.md` 内容与 diff 逐行一致；「待审阅」卡与「查看变更」入口在。
+- **窄窗面板与返回（08 / 09 / 10）**：1080 最窄窗下面板中央呈现、顶部「返回对话」返回后对话与 Composer 恢复（08 与 09 同帧：窗口已处最窄，resize 未产生新几何）。
+- **长对话定位（11）**：回合定位至首轮，内容溢出时「回到底部」按钮出现。
+- **断线恢复（12 → 13 / 14）**：Host 重启窗口期主区「未连接」+「重试连接 / 连接诊断」、Composer 禁发、草稿与历史保留、侧栏底部「本地 · 已断开 · 重试」；重连后终端面板 PTY 真实往返（`echo gui2-07-pty-ok` 回显）。
+- **快捷查找 × 设置查找（24）**：`Cmd+K` 浮层查询「审批」命中设置页与「审批模式」设置行（GUI2-06 条目共享），类型图标与 accent 高亮条渲染。
+- **取消（18 / 19）**：300 行长输出 run 完成后新起 run，1 秒后取消——页脚「运行已取消 · ↑ — · ↓ — · 时长 00:01」（终态无持久化 usage 按未知显示），DB 状态 `cancelled`。
+- **150% 字号（20 / 21 / 22）**：外观设置切 150% 立即生效；最窄窗 + 150% 下工作台与面板无控件遮挡（底栏状态簇偏挤但可读）。
+- **失败卡（23）**：`run-gui-1789353068886-7` 因 Host 中途终止落 `run_failed`（"host process ended before the run reached a terminal state"），紧凑 banner（Ø20 状态圆 + 单行标题 + 原因原文），非认证失败正确无 CTA；页脚时长 11:52 为真实跨度。
+- **真实回合表格（25）**：表格表头 `surface.hover` 底色、列宽按内容实测无 160px 空洞；该 run 终态 `↑ 2996 · ↓ 58 · 时长 00:02 · 27 tok/s` 与 DB `run_completed` payload 逐值一致。
+
+**D1 实证**：今日四轮 run 的事件 distinct timestamp_ms 分别为 101/105、31/37、130/133、12/13（事件总数为分母），终态时长（00:07 / 00:45 / 00:17）与 tok/s（35 / 98 / 27）在持久化数据与 UI 两侧同时成立；usage 对账 `run_json` ↔ 页脚逐值一致（3169/87、2996/58）。
+
+**其他观察（登记，不在本批修复）**：
+
+- Host 日志出现 `usage record id conflict: rec-{run_id}` warn：同一 run 的用量账本被二次写入并被幂等冲突守卫拒绝。账本首写成功且数值与 UI 一致（`usage-ledger.sqlite3` 六行逐值核对），无错账；但二次写入的来源未定——`record_completed_usage` 唯一调用点在 run 收尾路径，而 `occurred_at_ms` 取记录时刻墙钟使任意重入必冲突。`run.rs` / `usage.rs` 不在本批写入集，属既有行为；建议另立任务仪表化定位重入点（疑似与 Host 重启后对历史 run 的某种重放 / 重扫相关，冲突行在 10:4x 与 11:06 两次 Host 启动后均出现）。
+- ADR-061 Go 三窗 >0% 填充仍无像素证据（2026-09-14 下午再核：多次真实 run 后上游读数仍为 0%，属环境不可得）；GUI3-04 的 401 CTA 已于 2026-09-14 下午补齐（见 §2.2 末尾补录）。GUI2-01 / 02 轮的 401 属旧失败卡设计，不作本项证据。
+- GUI3-08 动效（Switch 位移、骨架屏）静态截图无法取证，留用户验收。
+- 底栏常驻「需要快照 · 从 0 开始」（`resume.snapshot_required`）为既有 resume 功能文案，非本轮回归。
+
+**收口状态**：GUI2-07 代理真窗口通过；GUI2-05 / 06 与 GUI3-01～03 / 05～07 的代理真窗口随本批完成；用户验收仍未做，未归档。
+
+### 2.1 用户视觉走查发现（2026-09-13）
+
+本机 `desktop` 实例 + 平行 bundle `Pawork-visual.app`（当前工作区增量构建）。下列为用户指出后交叉核过的疑似问题。后续观感项按编号续记。
+
+| 编号 | 现象 | 核对 | 判断 | 状态 |
+| --- | --- | --- | --- | --- |
+| V-01 | Settings / 模型菜单的 OpenCode Go 看不到 `deepseek-flash` | 见下 | 远端已返回该 ID；旧实现按 transport 表当白名单丢弃未登记项 | 已修（2026-09-13）：表与家族只路由，新聊天 ID 不再丢弃 |
+| V-02 | Settings 启用或禁用单个模型时界面卡一下 | 见下 | 每次 Switch 都在 Host 重跑全通道 `models_overview`，回执后再拉两套 `model_list` + `provider_auth_status` | 已修（2026-09-13）：启停用目录快照校验，回执本地收敛，不再重探 |
+| V-03 | Composer 模型菜单每个模型都带一段供应商介绍 | 截图 | 扁平分组把连接/目录来源重复铺在组头、状态行和每行 `provider / id` | 已改（2026-09-13）：同表伪二级（组头 + 模型），隐藏未连接 / 0 启用 |
+| V-04 | 任务行悬停改名 / 归档与项目头计数 / 「+」纵向错位 | 走查 | 项目头 56+36 尾槽、任务动作 32+32 且 `right(8)` | 已修：共用 64px / 8px inset 尾槽 |
+| V-05 | 未选任务不能直接开对话 | 走查 | `can_send` 要求 `active_session_id` | 已修：无任务发送走 Unassigned |
+| V-06 | 发送后 Cancel 变红但无 icon | 走查 | `cancel.svg` 为 stroke-only，gpui mask 看不见 | 已修：实心停止方块 |
+| V-07 | 对话中看不到 token 数 / tok/s | 走查 | 用量只在「···」菜单；live `RunChanged` 无 usage | 已修：状态栏与页脚展示权威用量；有时长才给 tok/s |
+| V-08 | 对话排列仍明显疏于 Codex | 走查 | 32px 回合距、助手常驻「Pawork」、用户气泡偏淡 | 已改：16px 间距、去常驻作者行与空闲作者槽、气泡 / 工具组层次 |
+| V-09 | 思考与正文、正文与页脚留白过大 | 截图 | 助手空闲仍占 24+12 作者行；思考头 36px；回合距 24 | 已修：空闲助手不占作者行；思考头 24px；距 16/12/8 |
+| V-10 | 页脚同一行不对齐；模型选择器箭头离名称太远 | 截图 | 页脚 `flex_wrap` + 时间与菜单分行；触发器固定 220px 且 `flex_1` | 已修：用量 / 时间 / 菜单单行；触发器随名称收缩 |
+| V-11 | 无滚动条仍显示「回到底部」 | 走查 | 展开思考等会 `timeline_following=false`，短对话也画按钮 | 已修：仅内容溢出时绘制 |
+
+**V-01 细节**：不是「没查到最新模型」。
+
+- 公开 `GET https://opencode.ai/zen/go/v1/models`（2026-09-12 23:11+08，HTTP 200）返回 **37** 个 ID，其中含 `deepseek-flash` 与 `deepseek-v4.1-flash`。官方 [Go 文档](https://opencode.ai/docs/go/) 已把 **DeepSeek V4.1 Flash** 登记为 `deepseek-v4.1-flash`，协议 `POST …/chat/completions`；`deepseek-flash` 出现在公开 `/models`，文档 endpoint 表未单列该短 ID。
+- 修复前同机 `pawork --instance desktop --json models`：`opencode-go` **20** 项，没有 `deepseek-flash` / `deepseek-v4.1-flash`。stderr 只有 xAI 探测失败，Go 远端替换已成功。
+- 旧机制：`list_models` 对未登记 ID 返回 `None` 并 `retain` 丢掉。2026-09-13 起官方表不再当白名单：未登记 ID 按家族回退或 Chat Completions 进入可运行目录；仅 Messages-only（`qwen*` / `minimax-*`）与 Qwen 非文本仍排除。ADR-058 D2 已同批修订。
+- 对照：直连 `deepseek` 通道当次目录已有 `deepseek-flash`，与 Go 通道不是同一条；未把该 ID 的真实 completion 记为已验收。
+
+**V-02 细节**：不是 Switch 动画或 AX 树本身卡死。
+
+- 修复前每次单模型启停：Host `set_model_enabled` 先跑全通道 `models_overview`（各通道 4s 探测上限），写盘后再由 Desktop `refresh_models_authority` 拉 `provider_auth_status` + 两套 `model_list`，等于同一动作最多四轮全网探测。
+- 2026-09-13 起：启停校验优先最近一次 overview 快照 / 静态回退 / 已在 denylist 的 ID；回执本地收敛弹层、Composer 过滤目录与 `cleared_roles`。打开 Manage models、页级 Refresh、认证成功/移除仍重查。未把真窗口手感记为已验收。
+
+**V-03 细节**：不是再点一层供应商。Composer 菜单与 Settings 角色菜单同一形态：已连接且有启用模型的供应商作不可点组头，模型（名称 + ID）列在下面；未连接、清单缺失或 0 启用整组不出现。未把真窗口手感记为已验收。
+
+### 2.2 代理真窗口验收（2026-09-14，实例 vfix）
+
+载体：Host `pawork --instance vfix --provider opencode-go --model glm-5.3-flash --approval-mode ask-for-writes gui serve` + 平行 bundle `target/pawork-desktop-runtime/Pawork-vfix.app`（工作区增量构建，含本节末尾 V-12 修复）。取证经 macOS 无障碍树 + 真窗口截图（computer-use 驱动）。定向门禁：`cargo test -p pawork-providers -p pawork-auth -p pawork-protocol -p pawork-app -p pawork-desktop --offline --lib --tests` 全绿（desktop 单跑用 `--tests`，260 通过 0 失败）；独立审查代理逐 hunk 复核全量 diff 无 P0/P1（P2 见文末）。
+
+| 项 | 结果 | 证据 |
+| --- | --- | --- |
+| V-01 | 通过 | Manage models 弹层：`已连接 · 远程目录 · 已启用 3 / 28`，含 deepseek-flash（开）、deepseek-v4.1-flash（关）等未登记 ID；命名角色默认已绑 `OpenCode Go · deepseek-flash` |
+| V-02 | 通过 | 开关 deepseek-v4-flash：回执本地收敛 `已启用 3/28 → 4/28`、供应商行 `3 个模型 → 4 个模型`，全程约 1.5s（含 AX 抓取），Host 日志零新增探测行（启动期 xai / opencode-go 探测超时 warn 对照仍在原处） |
+| ADR-061 重命名 | 通过 | 行内 Enter 提交 `swkee86 → vfix-go-main`，回执 + AuthChanged 后投影更新（重开编辑器预填新名），空名 / 同名不提交走既有 decision 分支 |
+| ADR-061 默认名与脱敏 | 通过 | 卡头无手填名要求；副标题 `sk-…xpZn · 已连接`；源码核实 `default_api_key_account_name` 只产出脱敏档（`••••` / `xx***yy` / `xxxx***yyyy`），不可能输出原文片段 |
+| ADR-061 Go 三窗额度 | 部分通过 | 三窗各行 `已用 0% · 剩余 100%` + 重置倒计时 + 来源/获取时刻真实（`opencode-go/usage`）；快照 TTL 过期后标 `已过期 · 请刷新`，刷新额度后恢复；进度条轨道可见但 0% 填充，>0% 填充未取到像素 |
+| V-03 | 通过（08:2x 补验） | 菜单伪二级像素确认：OpenCode Go / GLM Coding / Kimi Code 不可点组头 + 缩进模型行（选中行 ✓ 高亮）；未连接的直连供应商整组不出现；Kimi Code 启用 1 个（`k3`，搜索 kimi 可见组内行）；证据 `/tmp/pawork-vfix-evidence/vfix-modelmenu-crop.png`、`vfix-mm3-crop.png` |
+| V-04 | 通过 | 绑定 Pawork 项目后项目视图：项目头计数 `1` + 「+」与任务行 ✎/🗑 共用 64px / 8px 尾槽，4 倍放大右缘逐像素对齐（`vfix-rail-zoom4x.png`） |
+| V-05 | 通过 | 未选任务直接发送即建 Unassigned 会话（`ses-1789344458955-1`）并开 Run；侧栏出现「未分组」组 |
+| V-06 | 通过 | 运行中 Composer 右下红色圆形 Cancel + 实心白色停止方块（`vfix-cancel-zoom.png` 原像素）；输入区提示「任务运行中——发送已禁用，仍可取消」 |
+| V-07 | 通过（一处观察见「其他观察」） | 四轮真实 Run（opencode-go / glm-5.3-flash）全部成功流式；页脚 / 底栏同源 `↑ 5536 · ↓ 6879` 与 session.db `run_completed` 持久化 usage 逐值一致；live 行 `↑ 84 · ↓ 1497 · 00:07` 随流式跳动（`vfix-r4-3.png`） |
+| V-08 | 通过 | 无常驻作者行 / 空闲作者槽；气泡 → 思考 → 正文层次紧凑，回合距观感与 Codex 相当（`vfix-turn-gap2x.png`） |
+| V-09 | 通过 | 思考头收敛态约 24px；展开后思考内容 → 正文标题间距紧凑（`vfix-think.png`）；glm-5.3-flash 本轮产出真实 thinking 段 |
+| V-10 | 通过 | 页脚「运行已完成 · ↑ · ↓ · 时长 · 相对时间 · ···」单行不换行；Composer 模型触发器随名称收缩、箭头紧邻 `glm-5.3-flash` |
+| V-11 | 通过 | 空 / 短对话无按钮；长对话贴底跟随中无按钮；上滚越过末行后出现「↓ 回到底部」，点击回底且按钮消失（`vfix-btb.png`） |
+| V-12 | 复验通过 | 卡头 `vfix-go-main`（重命名经 Host / Desktop 重启后仍在，持久化确认）与三窗标签 `5 小时窗口 / 周窗口 / 月窗口` 均像素渲染（`vfix-v12.png`） |
+
+**V-12（本轮新发现，已修复并复验通过）**：Settings 账号卡头名称与 Go 额度行窗口标签（`5 小时窗口` 等）在真窗口不渲染——截图中卡头仅有状态点与右侧操作簇、额度行仅有右侧百分比，而 AX 摘要（手写树）含名称，属「AX 正常、像素缺失」。定位：两处新增文本用 `flex_row > flex_1+min_w_0 包裹 > overflow_hidden > 可换行 Label`，同一构造在 flex_col 父级下（掩码副标题行）正常，在 flex_row 行内（有固有宽度兄弟）被内容测量趟归零；修复改为 timeline_entry 已验证的 `truncate()` 单行构造（同层 flex_row + flex_1 + min_w_0，去掉 overflow_hidden 包裹与换行 Label）。定向测试 260 绿；2026-09-14 08:3x 像素复验通过（`vfix-v12.png`：卡头 `vfix-go-main` 与三窗标签齐全）。
+
+**阻断（已解除）**：2026-09-14 01:20～08:0x 本机锁屏，computer-use 无法读写 UI（自动解锁失败）。08:0x 用户解锁后重启 Host 与 `Pawork-vfix.app`（修复构建原样保留），V-03～V-11 像素、V-12 复验与四轮真实 Run 全部补验完成，结果见上表；证据截图归档 `/tmp/pawork-vfix-evidence/`（不写仓库）。
+
+**其他观察**：
+
+- 冷启动首次加载提供商状态 / 目录超过 GUI 客户端 10s 接收上限（xai、opencode-go 冷探测超时叠加），横幅报 `operation receive frame timed out after 10s` 并保留 stale 列表；数据后续到位，页级刷新后即正常。既有行为口径（打开弹层 / 刷新仍重探），非本批回归。
+- 合成事件下改名 Enter 提交后编辑器复开（第二路 Enter 落到回焦的「重命名」按钮再进入编辑，预填已是新名，即提交本身成功）；与代码内登记的 AppKit Return 双路投递同一形态，真人路径是否复现留人工验收确认。
+- 审查 P2 处置（2026-09-14 收口，逐项经独立决策评审）：① Go 通道非文本误纳——已修：`inferred_transport` 的 opencode-go 分支先过共用 `non_text_model` 谓词再走家族回退（与 qwen 通道同规则），`go_keeps_undeclared_ids_and_routes_by_family` 补 `gpt-image-1 → None` 断言；当前远端 37 个 ID 全为文本模型，属防御而非现行 bug。② 终态无持久化 usage 的无标记估算——已修：`run_usage_display` 回落分支按 live 分叉，终态无 usage 显示 `↑ — · ↓ —`（gui-design「缺失为未知」），字符估算只服务 live 预览；新增 `run_status_label_terminal_without_persisted_usage_shows_unknown` 回归。③ `pending_home_send`——不修：create 四条路径均经进程内 channel 发 SessionCreated / OperationFailed 回执（各 10s 超时），「永久锁死」前提不成立；断线期间清 pending 反而会丢用户消息。④ 共享 Button 去 `min_w_0`——代码不动，已补真窗口目检：turn 标题由投影层预截 72 字符，在最窄支持窗宽 1080px（`WINDOW_MIN_SIZE`，640px 不可达）下长标题在面板内单行截断、无溢出 / 换行 / 重叠（`/tmp/pawork-d5-turns.png`）；task_rail 定宽调用点无可观测差异。
+- 终态 run 的「时长」恒 `—`——已修（2026-09-14，待用户确认口径）：engine `EventEmitter.emit` 改为逐事件取当前墙钟（删构造期钉入的 `timestamp` 字段，三处调用点去参；`SessionTurn.timestamp` 保留）。此前同 run 全部事件共享同一毫秒（session.db 实测 distinct=1），`run_span_ms` 恒 None，终态时长与 tok/s 在持久化数据层面不可能成立。持久化按 sequence 排序落库、重放按 sequence 游标，均不依赖同戳语义。定向门禁 `cargo test -p pawork-providers -p pawork-engine -p pawork-desktop --offline --lib --tests` 全绿（261 / 66 / 156）。若用户否决该语义改动，回退 `crates/engine/src/event.rs` 与三处调用点即可。
+
+**非空 MCP 补验（2026-09-14 下午，实例 vfix，已完成）**：fixture 为本地 stdio echo 服务器（/tmp/pawork-mcp-ws/mcp_echo.py，单工具 `echo`，已补 readOnlyHint）+ 工作区级 `/tmp/pawork-mcp-ws/.pawork/config.toml` 的 `[mcp.servers.echo]`（fixture 资产，保留在 /tmp）。已取证：① 真窗口 Settings → 工具与 MCP 行 `echo — connected · stdio · 1 个工具`（像素 /tmp/pawork-mcp-evidence/01-mcp-tools-page.png，AX `settings-mcp-server-echo` 同源）；② CLI `mcp list` → `echo stdio connected echo.echo`；③ headless 真实 run（opencode-go / glm-5.3-flash）中模型真实调用 `echo.echo`：session.db 有 tool_approval_requested/responded 与 run_completed 全链（usage input 10460），首轮因工具无 readOnlyHint 在 never-ask 下被自动拒绝（`tool call denied by user`），补 readOnlyHint 后④ **GUI 内成功执行**：绑定 pawork-mcp-ws 的会话发送调用请求，ask-for-dangerous 下只读工具免审批直接执行，时间线为工具组 `echo.echo` + 助手终文 `pawork-mcp-gui-ok` + 页脚 `运行已完成 · ↑ 2474 · ↓ 29 · 时长 00:03 · 7.7 tok/s`（像素 /tmp/pawork-mcp-evidence/02-mcp-gui-success.png）；session.db 核对 seq 8→12 `tool_call_arguments_delta → tool_execution_started → tool_execution_completed`（`tool_name=echo.echo`、`is_error=false`、返回 `echo: pawork-mcp-gui-ok`）→ `run_completed`，usage 2474/29 与页脚逐值一致，事件 timestamp_ms 两两不同（D1 又一实证）。
+
+**GUI3-04 401 CTA 补取（2026-09-14 下午，同批）**：给 deepseek 临时写入无效 key（CLI `auth set-key`，GUI 验证流程会拦截无效 key 故走 CLI），Composer 切 DeepSeek Chat 发送 → 失败卡 Ø20 红圆 +「运行失败」+ 原文 `HTTP 401` + CTA「打开供应商设置」（像素 /tmp/pawork-mcp-evidence/04-gui3-04-401-cta.png）；点 CTA 导航到设置 → 模型与提供商（05-gui3-04-401-cta-target.png）。取证后已删除无效 key 并重启 Host 恢复现场。**操作事故登记**：set-key 前误信凭证按实例隔离，备份了实例 protected 库；实际 Provider 凭证在全局 `~/.pawork/auth.json`（`pawork.<provider>` 条目），备份不含它——deepseek 真实 key 被无效值覆盖且本机无快照可恢复，已删除无效条目（fail-closed，现状为未配置），**需要用户在设置 → DeepSeek 重新录入真实 API key**。kimi-platform 的临时无效 key 也已删除（原状态即未配置）。教训已转化为本次操作流程：改全局凭证前先备份 `~/.pawork/auth.json` 本体。
+
+**ADR-061 三窗 >0% 填充（2026-09-14 下午再核）**：opencode-go 账号 5 小时 / 周 / 月窗口经多次真实 run 后仍 `已用 0% · 剩余 100%`（设置页「刷新额度」实时拉取，3 秒前获取），>0% 填充属上游读数环境不可得，非代码缺陷，继续留待账号产生真实用量后补取。2026-09-14 18:2x 第三次复核（直连 `GET /zen/go/v1/usage`，UA `pawork`，HTTP 200）：rolling / weekly / monthly `percent` 仍为 0（resetsAt 13:14Z / 09-21 / 10-10），环境不可得结论不变。
+
+**其他登记**：① `usage record id conflict`（已修复，2026-09-14 晚）：warn 在 16:24 Host 重启后再现（`rec-run-gui-1789344458971-1`）。根因：`services/run.rs` 的 request_id 为 `req-{n}`（AppCore 进程内计数器从 1 起），Host 重启归零后与历史 run 撞键；账本按 (tenant, account, request_id, upstream_attempt) 去重（冻结契约），把新 run 的合法记录当成同一请求的重放拒收——不只是 warn，16:14 echo run（2474/29）与之后多轮用量实际未入帐，账本自 11:06 重启起持续漏记。修复：request_id 改 `req-<pid_hex>-<nanos_hex>-<n>`（与 client `new_request_namespace` 同形态；毫秒粒度不够，测试实证同毫秒双 AppCore 仍撞），回归 `run_request_id_survives_counter_reset_across_host_restarts`。验证：`cargo test -p pawork-app --offline --lib --tests` 全绿（223+6+16+2）；修复后新 run 的 `req-d775-…-1` 记录成功入帐。既有漏记行不回填（账本 append-only，值以 session.db 为准）。② **新发现缺陷（已修复，2026-09-14 傍晚）**：`pawork run` 在实例已存在 open session 时复用该 session 并返回首个 run 的 run_id，随后不产生任何事件、无超时挂起（三次复现）。根因不是 InFlight / 事件泵：CLI 的 command_id 为 `cli-cli-json-<n>`（进程内 AtomicU64 从 1 起），command_ledger 以 (tenant, automation, command_id) 持久幂等，跨进程必撞键——第二次 `pawork run` 的 SessionCreate / RunStart 直接重放首次响应（旧 session、已完成 run），随后等待永不到达的新事件。修复：`crates/cli/src/adapter.rs` 的 command id 加进程级命名空间（pid + 纳秒 OnceLock，与 client `new_request_namespace` 同形态），回归 `command_ids_carry_process_namespace_and_stay_unique`；同 id 重试的进程内幂等不受影响。验证：`cargo test -p pawork-cli --offline --lib --tests` 全绿；同实例复跑 `pawork run --json` 新建会话与新 run，41 行事件流至 `run_changed completed` 自行退出。
+
 ## 3. 前阶段验收承接
 
 下表来自迁存的原批次记录，不是本次重新执行的结果。UX-01～09 均已实现并记录定向检查通过，用户验收与任务归档均未完成。旧问题不重新开发；复现回归才在对应 GUI2 任务内修复。
@@ -129,12 +228,12 @@
 | 原任务与证据入口 | 原批次代理真窗口状态 | 仍需补齐 / 承接 |
 | --- | --- | --- |
 | <a id="ux-01-长草稿自然换行与编辑"></a>[UX-01 输入](review/roadmap-ux-2026-09-10.md#ux-01-长草稿自然换行与编辑) | 部分通过 | 换行实现后的系统 IME；随 GUI2-02 |
-| <a id="ux-02-回复可阅读可复制可使用"></a>[UX-02 阅读](review/roadmap-ux-2026-09-10.md#ux-02-回复可阅读可复制可使用) | 部分通过 | 新回复流式至完成再重开，原请求 HTTP 401；随 GUI2-02 / 07 |
-| <a id="ux-03-新任务与项目上下文引导"></a>[UX-03 项目引导](review/roadmap-ux-2026-09-10.md#ux-03-新任务与项目上下文引导) | 通过 | 用户验收；壳层改动后定向复验 |
-| <a id="ux-04-错误在发生处解释并提供下一步"></a>[UX-04 恢复](review/roadmap-ux-2026-09-10.md#ux-04-错误在发生处解释并提供下一步) | 通过 | 用户验收；连接入口与面板改动后定向复验 |
+| <a id="ux-02-回复可阅读可复制可使用"></a>[UX-02 阅读](review/roadmap-ux-2026-09-10.md#ux-02-回复可阅读可复制可使用) | 部分通过 | 用户验收（2026-09-14 GUI2-07 批次已成功流式至多轮完成、重开与重连恢复一致；原 401 缺口闭合） |
+| <a id="ux-03-新任务与项目上下文引导"></a>[UX-03 项目引导](review/roadmap-ux-2026-09-10.md#ux-03-新任务与项目上下文引导) | 通过 | 用户验收（壳层改动后复验已由 2026-09-14 GUI2-07 批次覆盖） |
+| <a id="ux-04-错误在发生处解释并提供下一步"></a>[UX-04 恢复](review/roadmap-ux-2026-09-10.md#ux-04-错误在发生处解释并提供下一步) | 通过 | 用户验收（连接 / 面板改动后复验已由 2026-09-14 GUI2-07 批次覆盖：断线 / 重试 / 重连恢复 + 三面板） |
 | <a id="ux-05-模型选择与管理效率"></a>[UX-05 模型查找](review/roadmap-ux-2026-09-10.md#ux-05-模型选择与管理效率) | 部分通过 | 备用目录鼠标状态、管理搜索 / Switch 键盘及完整宽窄字号矩阵；随 GUI2-02 / 06 |
 | <a id="ux-06-供应商与账号信息层级"></a>[UX-06 账号与额度](review/roadmap-ux-2026-09-10.md#ux-06-供应商与账号信息层级) | 部分通过 | 真实数值 / 倒计时 / 过期读数、双账号切换；随 GUI2-06，等待可用账号 |
-| <a id="ux-07-工具与运行事实可核查"></a>[UX-07 执行事实](review/roadmap-ux-2026-09-10.md#ux-07-工具与运行事实可核查) | 部分通过 | 成功工具、非零 usage、取消与重开一致；原请求 HTTP 401，随 GUI2-02 / 07 |
+| <a id="ux-07-工具与运行事实可核查"></a>[UX-07 执行事实](review/roadmap-ux-2026-09-10.md#ux-07-工具与运行事实可核查) | 部分通过 | 用户验收（2026-09-14 GUI2-07 批次已覆盖成功工具、非零 usage 对账、取消与后续新 run 一致） |
 | <a id="ux-08-归档的可恢复性"></a>[UX-08 撤销归档](review/roadmap-ux-2026-09-10.md#ux-08-归档的可恢复性) | 通过 | 用户验收；侧栏改动后定向复验 |
 | <a id="ux-09-视觉文案与可访问性一致性"></a>[UX-09 一致性](review/roadmap-ux-2026-09-10.md#ux-09-视觉文案与可访问性一致性) | 部分通过 | 新错误与字号反馈共存、正常终端、完整键盘和成功工具内容；随对应模块 |
 
@@ -142,7 +241,7 @@
 
 UX-09 的 [9 月 10 日补验](review/roadmap-ux-2026-09-10.md#ux-09-真窗口补验2026-09-10main--14ac19d4) 已覆盖 MCP 空态、字号反馈收起与新普通反馈保留、长标题、长模型搜索及局部键盘；不能继续把这些场景全部列为未验，也不能扩张为错误共存、正常终端或全局键盘通过。
 
-跨项仍缺：写入审批 / 非空 Changes、正常 PTY、真实 OAuth / 双账号额度切换、非空 MCP。它们是历史覆盖缺口，不等于已确认缺陷。保留旧记录的旁白待验事实，但遵循现有验收范围，不新增系统 VoiceOver 或完整无障碍合规门禁；键盘、AX 名称 / 状态 / 实际命中框继续验证。
+跨项仍缺（2026-09-14 更新）：真实 OAuth / 双账号额度切换。非空 MCP 已补齐（见 §2.2 末尾 2026-09-14 下午补录：服务器连接、工具发现、headless 与 GUI 内成功执行全链取证）。写入审批、非空 Changes、正常 PTY 已由 GUI2-07 批次补齐（审批卡三档、NOTES.md diff 与磁盘一致、PTY echo 往返）。它们是历史覆盖缺口，不等于已确认缺陷。保留旧记录的旁白待验事实，但遵循现有验收范围，不新增系统 VoiceOver 或完整无障碍合规门禁；键盘、AX 名称 / 状态 / 实际命中框继续验证。
 
 ## 4. 显示效果 Review（2026-09-12）与 GUI3 视觉任务
 
@@ -177,14 +276,14 @@ UX-09 的 [9 月 10 日补验](review/roadmap-ux-2026-09-10.md#ux-09-真窗口�
 
 | 任务 | 交付结果 | 依赖 / 顺序 | 实现 | 自动检查 | 代理真窗口 | 用户验收 / 归档 |
 | --- | --- | --- | --- | --- | --- | --- |
-| GUI3-01 | 工具调用可扫读 | 无；可与 GUI2-05 并行 | 已实现 | 233/233 通过 | 未进行 | 待验 / 未归档 |
-| GUI3-02 | Composer 元信息、模型 chip 与首页文案 | 无；可与 GUI2-05 并行 | 已实现 | 233/233 通过 | 未进行 | 待验 / 未归档 |
-| GUI3-03 | 代码块头、链接与表格 | 无 | 已实现 | 236/236 通过 | 未进行 | 待验 / 未归档 |
-| GUI3-04 | 失败卡收窄与下一步 | 01 | 已实现 | 239/239 通过 | 未进行 | 待验 / 未归档 |
-| GUI3-05 | SVG 图标体系 | 在 GUI2-05 / 06 之后（触达 inspector / settings） | 已实现 | 247/247 通过 | 未进行 | 待验 / 未归档 |
-| GUI3-06 | 侧栏降噪与 150% 密度 | 无 | 已实现 | 235/235 通过 | 未进行 | 待验 / 未归档 |
-| GUI3-07 | Header 动作与断线层级 | 06 | 已实现 | 236/236 通过 | 未进行 | 待验 / 未归档 |
-| GUI3-08 | 层次 token 与微动效 | 05；本轮已确认有限动效（不循环） | 已实现 | 248/248 通过 | 未进行 | 待验 / 未归档 |
+| GUI3-01 | 工具调用可扫读 | 无；可与 GUI2-05 并行 | 已实现 | 233/233 通过 | 通过（2026-09-14，随 GUI2-07） | 待验 / 未归档 |
+| GUI3-02 | Composer 元信息、模型 chip 与首页文案 | 无；可与 GUI2-05 并行 | 已实现 | 233/233 通过 | 通过（2026-09-14，随 GUI2-07） | 待验 / 未归档 |
+| GUI3-03 | 代码块头、链接与表格 | 无 | 已实现 | 236/236 通过 | 通过（2026-09-14，随 GUI2-07） | 待验 / 未归档 |
+| GUI3-04 | 失败卡收窄与下一步 | 01 | 已实现 | 239/239 通过 | 通过（2026-09-14 非认证 banner + 401 CTA 与导航，见 §2.2 补录） | 待验 / 未归档 |
+| GUI3-05 | SVG 图标体系 | 在 GUI2-05 / 06 之后（触达 inspector / settings） | 已实现 | 247/247 通过 | 通过（2026-09-14，随 GUI2-07） | 待验 / 未归档 |
+| GUI3-06 | 侧栏降噪与 150% 密度 | 无 | 已实现 | 235/235 通过 | 通过（2026-09-14，随 GUI2-07） | 待验 / 未归档 |
+| GUI3-07 | Header 动作与断线层级 | 06 | 已实现 | 236/236 通过 | 通过（2026-09-14，随 GUI2-07） | 待验 / 未归档 |
+| GUI3-08 | 层次 token 与微动效 | 05；本轮已确认有限动效（不循环） | 已实现 | 248/248 通过 | 部分（2026-09-14 层次像素；动效留人工） | 待验 / 未归档 |
 
 **推荐顺序**：GUI3-01 → GUI3-02 → GUI3-06 → GUI3-07 → GUI3-03 → GUI3-04 →（GUI2-05 / 06 完成后）GUI3-05 → GUI3-08。前四项改动面小、无新依赖、截图中最碍眼，先做；GUI3-05 触达面最广，等 Inspector / Settings 壳定型后一次替换，避免与 GUI2-05 / 06 抢同一文件。
 
@@ -197,7 +296,7 @@ UX-09 的 [9 月 10 日补验](review/roadmap-ux-2026-09-10.md#ux-09-真窗口�
 
 **本轮进展（2026-09-12，`main / f181bae3` 工作区候选）**：`timeline_entry.rs` 新增 `tool_headline` / `tool_headline_target`（内建 8 工具按 `path` / `command` / `pattern`（`search_text` 附 `glob`）抽目标，目标折叠空白并按 80 字符截断加 `…`；MCP / 缺键 / 畸形 JSON / 非字符串一律回退仅名称，`edit_file` 不读 `old_string` / `new_string`）。折叠标题 `tool_group_summary` 改为：单工具直接 headline（非全成功时追加状态计数，如 `run_command cargo test · 1 running`）；多工具为 `N 个工具 · 前 3 条 headline（超出加 …）· 状态计数`；AX `tool-group-toggle-*` value 与之同源。展开态每行以 headline 作主行，参数 JSON 仅在抽不出目标时作次级显示；结果保留首 10 行预览，超出时显示「展开全文 / 收起」按钮（展开键 `{event_id}:result` 复用 `expanded_timeline_details`，render / 测高 / AX 同源，AX identifier `tool-result-toggle-*`）；「尚无结果数据 / 结果为空 / 空目录」文案不变。运行中工具行状态词改为「进行中 / In progress」+ Ø14 accent 静态点；当前 active Run 最后一条非空助手消息、且该 Run 最新相位为 `run streaming_response` 时，作者行旁显示静态「正在生成 / Generating」（AX name `Pawork · Generating`）。终态页脚只留终态词 + 相对时间，用量 `run_usage_label` 移入该条目「···」菜单 Info 行（禁用、不可 Press）与按钮 tooltip；失败原因卡、取消轻量页脚不变。未改 `projection/timeline.rs`、协议、共享 reducer 与依赖。
 - **自动检查**：Desktop 定向测试 233/233（基线 231 + 新增 `tool_headline_extracts_builtin_targets_and_falls_back`、`assistant_is_streaming_requires_active_run_and_streaming_phase`；更新 `tool_status_label_maps_succeeded_only`、`tool_row_view_from_parts_normalizes_detail`、`timeline_row_layouts_stack_with_content_heights_and_gaps`）。命令 `env -u CARGO_MAKEFLAGS cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders`，日志 `/tmp/pawork-gui3-01-tests.log`。子代理实现，主代理按源码逐 hunk 审查。
-- **限制**：GPUI 0.2.2 `Div` 无 tooltip，用量未做页脚 hover，改走菜单 + 按钮 tooltip；「正在生成」依据公开事实（active_run_id + 最新 RunState 相位），未读 reducer 私有 committed 标记。代理真窗口与用户验收未进行，随 GUI2-07 / 本轮收口统一复验。
+- **限制**：GPUI 0.2.2 `Div` 无 tooltip，用量未做页脚 hover，改走菜单 + 按钮 tooltip；「正在生成」依据公开事实（active_run_id + 最新 RunState 相位），未读 reducer 私有 committed 标记。代理真窗口 2026-09-14 随 GUI2-07 通过（工具 headline 折叠 / 展开、运行中状态词，证据 02 / 03 / 05）；用户验收未进行。
 
 #### GUI3-02 Composer 元信息、模型 chip 与首页文案
 
@@ -208,7 +307,7 @@ UX-09 的 [9 月 10 日补验](review/roadmap-ux-2026-09-10.md#ux-09-真窗口�
 
 **本轮进展（2026-09-12，`main / f181bae3` 工作区候选）**：`input_area.rs` 元信息行去掉 warning 色 `composer-file-tools-hint`；无项目任务保留只读「无项目 / No project」chip + Ghost 正向入口「绑定项目后可读写文件 / Bind a project to read and write files」（`composer_project_task_label` render / AX 同源，Press 走既有 `on_project_task_menu`；断线按 `can_create_task` 禁用并给既有新建禁用 tooltip）；有项目任务显示 `Workspace · {name}` chip，不留入口空位。`composer_context_meter_visible`：当前生效模型目录缺 `context_window_tokens` 或为 0 哨兵时不渲染 `composer-context`，有 window 才显示 `Context · — / {window}`（`composer.context_unavailable` 词条保留但不再常驻）。模型触发器改 `ButtonVariant::Raised` + `text.primary`，保留 220px 槽 / 36px 高 / 长名截断 / `▾` / 搜索菜单 / 禁用 tooltip / AX `model-picker`。`timeline.rs` 空任务首页只留标题「开始一个任务」，去掉与 placeholder 重复的提示（`welcome_hint_visible` 仅无 active session 时显示「从侧栏选择或新建」）；空任务且无项目、已连接时显示 Ghost「绑定项目 / Bind a project」（`workspace-bind-project`，独立 `welcome_bind_project_focus` 句柄，复用 `on_project_task_menu`）。无任务首页 Primary `New task` 不变。未画 `@` / 附件 / slash / reasoning；草稿、IME、发送 gate、模型菜单不变。
 - **自动检查**：Desktop 定向测试 233/233（更新 `composer_layout_keeps_controls_in_card_and_ax_aligned`、`project_task_guidance_preserves_context_and_wraps`、`welcome_and_rail_follow_actual_layout`：无项目无 warning 节点且有正向入口、无 window 无 `composer-context`、chip 命中框、首页无重复提示）。日志 `/tmp/pawork-gui3-02-tests.log`。主代理审查发现欢迎态按钮复用 `header_new_task_focus`（Inspector 展开 + 空任务时与 Header「+」双焦点），已改独立句柄后复测通过。
-- **限制**：`composer_layouts["composer-file-tools-hint"]` 槽仍登记但不再 track（清理需改 `mod.rs` 布局表，留待收口）。代理真窗口与用户验收未进行。
+- **限制**：无；`composer_layouts["composer-file-tools-hint"]` 死槽已于 2026-09-14 收口删除（`mod.rs` 布局表单行移除，Desktop 定向测试 261/261，收口 cargo check -p pawork --offline 通过）。代理真窗口 2026-09-14 随 GUI2-07 通过（首页标题去重、工作区 chip、模型 Raised chip 随名收缩，证据 01 / 02 / 05）；用户验收未进行。
 
 #### GUI3-03 代码块头、链接与表格
 
@@ -219,7 +318,7 @@ UX-09 的 [9 月 10 日补验](review/roadmap-ux-2026-09-10.md#ux-09-真窗口�
 
 **本轮进展（2026-09-12，`main / f181bae3` 工作区候选）**：`markdown.rs` `Block` 增 `language: Option<String>`（`fence_language` 取 info string 首个空白词）。代码块顶部 36px 代码头：左侧 12px `text.secondary` 语言标签（无 info string 显示「代码 / Code」），右侧 36×36 Ghost 图标复制按钮（字形 `⧉`，tooltip「复制代码 / Copy code」，默认透明、悬停代码块 `group("markdown-code")` 或按钮聚焦时显现，Tab / AX 始终可达，AX identifier `{event_id}-code-{index}` 可 Press），复制仍取原始 `block.code` 含换行。行内 HTTP(S) 链接以 `InteractiveText` 包 `StyledText` 直接可点（保留 underline，`cx.open_url`，未知协议不可点）；块下「打开链接 N / 复制链接 N」文字按钮移除，动作留在消息「···」菜单，菜单行文案改为 `Open link N · {去 scheme 截断 32 字 URL}`。表格表头加 `surface.hover` 底色，去掉每列 160px `min_w`，列宽 = 该列最长单元格 `shape_line` 实测宽 + 12px，超出阅读列仍 `overflow_x_scroll`。`message_block_line_counts` 代码头计 1 行、移除链接动作行、表格按行计不按 160 折行；`timeline.rs` `message_entry_height` 每个代码块补 `max(0, 36 − 行高)` 与代码头同源。未做语法高亮、未加 crate。
 - **自动检查**：Desktop 定向测试 236/236（更新 `markdown_blocks_and_visible_inline_text_share_line_counts`（language 有 / 无 / 带空格 info string、列宽非 160、行数）、`streaming_unicode_and_unclosed_markers_preserve_content`、`reply_actions_copy_exact_content_and_use_closed_turn_boundary`（代码复制 AX Press、链接动作在菜单不在正文）、`localize_covers_both_languages_and_unknown_key`）。日志 `/tmp/pawork-gui3-03-tests.log`。
-- **限制 / 偏离**：行内链接为鼠标命中，未给每条链接单独 AX 节点（键盘 / AX 走菜单）；渲染列宽用 `text_system` 实测而 golden 以字符 × 0.6 估算断言「非 160」；无语言时显示「代码」而非留空。代理真窗口与用户验收未进行。
+- **限制 / 偏离**：行内链接为鼠标命中，未给每条链接单独 AX 节点（键盘 / AX 走菜单）；渲染列宽用 `text_system` 实测而 golden 以字符 × 0.6 估算断言「非 160」；无语言时显示「代码」而非留空。代理真窗口 2026-09-14 随 GUI2-07 通过（rust 代码头语言标签 / 复制图标、真实回合表格表头底色与内容列宽，证据 02 / 25）；用户验收未进行。
 
 #### GUI3-04 失败卡收窄与下一步
 
@@ -230,7 +329,7 @@ UX-09 的 [9 月 10 日补验](review/roadmap-ux-2026-09-10.md#ux-09-真窗口�
 
 **本轮进展（2026-09-12，`main / f181bae3` 工作区候选）**：`timeline_entry.rs` 失败 Run 摘要卡收为紧凑 banner——状态圆 `SUMMARY_STATUS_CIRCLE` Ø20（字形 13px），水平 12px / 纵向 `py_3` 内边距，单行标题「运行失败 / Run failed」+ `BODY_SM` 原因原文自然换行不截断；新增纯函数 `failure_next_step(reason)`（大小写不敏感子串匹配 `401` / `403` / `authentication` / `unauthorized` / `invalid api key` → `OpenProviderSettings`，其余 `None`），命中时 banner 内提供 Raised「打开供应商设置 / Open provider settings」（identifier `run-open-providers-<event_id>`，mouse / Enter / Space / AX Press 复用 `on_manage_composer_models` 进入 Settings → Providers，返回保留任务 / 草稿 / Run；断线与模型菜单进入 Settings 同 gate，Host 数据 stale）；不加假 retry，非认证失败无新按钮。Completed 有可审阅 Changes 的卡同步 Ø20 + 紧凑 padding，`Review changes` Primary 168×40 与 gate / identifier 不变；Cancelled 仍只留页脚。`timeline.rs` 新增 `RunSummaryCardLayout` / `run_summary_card_layout` / `run_summary_card_height`（render / 测高 / AX 同源：`2 × 0.75rem + max(20, 标题行高) + 0.5rem + 原因行数 × 行高 +（CTA 时）0.5rem + 28`；100% 下 `HTTP 401` + CTA = 113px）。`ui/mod.rs` 增 `timeline_open_providers_focus` 懒建句柄。`accessibility/app.rs` 失败卡高度走同一 layout，CTA 节点可 Press。`projection/timeline.rs` 未改。
 - **自动检查**：Desktop 定向测试 239/239（新增 `failure_next_step_classifies_auth_keywords`、`run_summary_card_height_uses_compact_banner_formula`、`failed_run_banner_geometry_and_provider_cta_preserves_draft`：失败卡高度、CTA Press → Providers → 返回草稿保留、timeout 无 CTA、成功 Review 仍在、取消只有页脚）。日志 `/tmp/pawork-gui3-04-tests.log`。
-- **限制**：分类纯函数位于 `timeline_entry.rs` 而非 `projection/`；`theme.rs` 旧 `SUMMARY_CHECK_CIRCLE=40` 常量保留未删（不在写入集，摘要卡已改用新常量）。真实 `opencode-go / glm-5.3-flash` 401 终态真窗口与用户验收未进行，随 GUI2-07 复验。
+- **限制**：分类纯函数位于 `timeline_entry.rs` 而非 `projection/`；`theme.rs` 旧 `SUMMARY_CHECK_CIRCLE=40` 常量保留未删（不在写入集，摘要卡已改用新常量）。真实失败紧凑 banner 2026-09-14 随 GUI2-07 取到（Host 中途终止的 `run_failed`，非认证原因正确无 CTA，证据 23）；401 终态 CTA 当日下午补齐（§2.2 补录，含 CTA 导航取证）；用户验收未进行。
 
 #### GUI3-05 SVG 图标体系
 
@@ -241,7 +340,7 @@ UX-09 的 [9 月 10 日补验](review/roadmap-ux-2026-09-10.md#ux-09-真窗口�
 
 **本轮进展（2026-09-12，`main / f181bae3` 工作区候选）**：新增 `apps/desktop/assets/icons/` 41 个手写单色 SVG（viewBox 0 0 20 20、stroke 1.5 / fill、无 `<style>` / 外部引用、非第三方图标集拷贝）与 `ui/components/icon.rs`：`Icon` 枚举 41 项（Send / Cancel / Search / Find / Plus / Grouping / Clock / Settings / ChevronDown·Right·Left / More / Copy / ArrowDown·Up / Refresh / Collapse / File / Check / RadioDot / RadioRing / Link / Edit / Archive / Inspector / Terminal / Changes / Resources / Turns / Branch / Task / Page / SettingsRow / Providers / Network / Approvals / Tools / Appearance / Advanced / About / Project）、`Icon::path()` → `icons/<kebab>.svg`、`icon()`（20px `flex_none`）/ `icon_sized()`（16px chip / 行内），颜色由调用方 `text_color` 染色；`Assets` 以 `include_bytes!` 静态表实现 gpui `AssetSource`（`load` / `list("icons")`），`main.rs` 改 `Application::new().with_assets(ui::Assets)`，不引入 rust-embed。`theme.rs` 仅新增 `ICON_SIZE=20` / `ICON_SM=16`，命中区常量不变。字形替换：Header（`+` / `⋯` / `◧` / `⑂`→Plus / More / Inspector / Branch）、Composer（Send / Cancel、chip `▾`、菜单勾）、TaskRail（Grouping / Clock / Search / Plus / Settings / Chevron / Edit / Archive）、Timeline（More / 工具 Check / Chevron / 摘要 Check·Cancel / 回底 ArrowDown）、Find（Find / Turns / ArrowUp·Down / Cancel）、Markdown 代码头 Copy、Inspector（ChevronDown / Collapse / 终端回底）、Changes / Resources `↻`→Refresh 16px、Settings 八页导航 16px 图标（Providers / Network / Approvals / Tools / Terminal / Appearance / Advanced / About）、供应商卡头 chevron。`Cmd+K` 结果行左侧 16px 类型图标（Task / Page / SettingsRow；面板行 Changes / Terminal / Resources），选中态改 `surface.hover` + 绝对定位 2px accent 左条（行高与 AX 不变）。AX identifier / name、`APP_VIEW_KEYBINDINGS` / `install_keybindings` / `MAIN_PATH_TAB_STOP_IDS` 与所有焦点句柄未动；`TestAppContext` asset source 为 `()`，svg 在测试中只占位不渲染（gpui 对 `load → None` 静默跳过）。
 - **自动检查**：Desktop 定向测试 247/247（新增 `assets_load_every_registered_icon`：遍历 `Icon::all()` 均 `load → Some` 且以 `<svg` 开头、`list("icons")` 数量一致、路径无重复；既有 AX / 布局回归全绿）。日志 `/tmp/pawork-gui3-05-tests.log`。子代理顺手 rustfmt 了 `platform/preferences.rs` / `approval_card.rs` / `components/dropdown.rs` 三处纯格式改动，主代理已还原。
-- **限制 / 偏离**：Approvals radio 保留 GUI2-06 的几何圆环未换 svg；`dropdown.rs` MenuRow `✓`、Settings 各页「刷新」文字按钮、`timeline.back_to_bottom` 文案中的 `↓`、取消态摘要圆的 `—` 未改；`File` / `Link` / `RadioDot` / `RadioRing` / `Project` 已登记未上屏；`font::ICON` rem 常量保留但渲染侧不再引用。1440×1024 / 1080×720 × 100% / 125% / 150% 真窗口清晰度与 `--probe` 冒烟随 GUI2-07 复验；用户验收未进行。
+- **限制 / 偏离**：Approvals radio 保留 GUI2-06 的几何圆环未换 svg；`dropdown.rs` MenuRow `✓`、Settings 各页「刷新」文字按钮、`timeline.back_to_bottom` 文案中的 `↓`、取消态摘要圆的 `—` 未改；`File` / `Link` / `RadioDot` / `RadioRing` / `Project` 已登记未上屏；`font::ICON` rem 常量保留但渲染侧不再引用。真窗口图标渲染 2026-09-14 随 GUI2-07 通过（100% 全批与 150% 20～22 清晰可辨、Cmd+K 类型图标 24）；`--probe` 冒烟 2026-09-12 已跑；用户验收未进行。
 
 #### GUI3-06 侧栏降噪与 150% 密度
 
@@ -252,7 +351,7 @@ UX-09 的 [9 月 10 日补验](review/roadmap-ux-2026-09-10.md#ux-09-真窗口�
 
 **本轮进展（2026-09-12，`main / f181bae3` 工作区候选）**：`projection/session.rs` 新增 `TaskRailDateGroup::skip_project_header(scope)`——仅 Timeline 分组、桶内恰一个项目组且为 Unassigned 或等于当前 scope 时跳过项目头（含定向「+」），任务直接挂桶下且不受折叠影响；Projects 视图与多项目桶保持头 / 计数 / 折叠 / 「+」。`task_rail.rs`：`SessionLiveStatus` 为空不画状态点也不占位，仅 Needs input（琥珀）/ Running（accent）/ Blocked（danger）出实心点，unread 仍只用 SEMIBOLD；标题截断槽右侧叠 16px `linear_gradient(90°)` 渐隐，颜色与行底（panel / raised / hover）同源。`theme.rs`：`RAIL_BUCKET_HEADER_HEIGHT` 36 → 24；新增 `RAIL_TASK_ROW_HEIGHT_COMPACT`=36、`rail_task_row_height(TextScale)`（仅 150% 为 36，100% / 125% 仍 44；项目头仍 44）、`rail_session_title_layout`（render / AX 共用标题槽起点与宽度）。150% 空闲行不保留 64px 尾槽、宽度还给标题；悬停 / 行或动作聚焦 / 当前会话时露出改名 / 归档且不遮标题。`ui/mod.rs` `rail_focus_stops` 与跳过头同源（跳过时不进 ProjectHeader / ProjectAdd 档）。`accessibility/app.rs` `project_ax_nodes(.., skip_header)`：头 / 行高 / 状态点 / 标题框同源，新增 `session-title-*` 节点，空闲行不发布 `status-dot-*`。
 - **自动检查**：Desktop 定向测试 235/235（新增 `timeline_skips_redundant_project_header_for_unassigned_or_scoped_singleton`（投影）、`task_rail_skips_redundant_headers_and_compacts_150`（AX 几何：单项目 / Unassigned 桶 0 个 `project-*` 头、多项目桶有头、空闲无 status-dot 而 Running 有、桶头 24、100% 44 / 150% 36、150% 标题 > 80px 且不与动作重叠）；更新 `task_rail_geometry_and_font_constants_match_frozen_tiers`、`rail_focus_stops_follow_design_tab_order`）。日志 `/tmp/pawork-gui3-06-tests.log`。子代理顺手 rustfmt 了 `approval_card.rs` / `dropdown.rs` / `settings/providers.rs` 三处纯格式改动，主代理已还原以守最小写入集。
-- **限制**：150% 下相对时间与动作共用 `session_actions_visible` 谓词且动作优先，因此 150% 实际不显示 `now / Nm` 字串（空闲行把宽度还给标题）；若要求「悬停先显时间」需改谓词。代理真窗口与用户验收未进行。
+- **限制**：150% 下相对时间与动作共用 `session_actions_visible` 谓词且动作优先，因此 150% 实际不显示 `now / Nm` 字串（空闲行把宽度还给标题）；若要求「悬停先显时间」需改谓词。代理真窗口 2026-09-14 随 GUI2-07 通过（分组头 / 状态点语义、150% 窄窗密度，证据 12～16 / 21）；用户验收未进行。
 
 #### GUI3-07 Header 动作与断线层级
 
@@ -263,7 +362,7 @@ UX-09 的 [9 月 10 日补验](review/roadmap-ux-2026-09-10.md#ux-09-真窗口�
 
 **本轮进展（2026-09-12，`main / f181bae3` 工作区候选）**：`timeline_navigation.rs` 新增 `navigation_header_icon_button`——Header 查找 / 回合入口改为 36×36 Ghost 图标按钮（`⌕` / `≡`，`font::ICON` 20px，`text.emphasis`），tooltip 与 AX name 走 i18n「查找 · ⌘F」/「回合」，identifier `timeline-find` / `timeline-turns` 与键盘 / 回焦不变；查找栏内文字按钮不变。`ui/mod.rs` Header branch / live 状态改 `header_meta_chip`（Raised 底、12px、r6、pad 6/4；无 branch 且无 live 状态不渲染、不留 gap），`inspector-expand` 保留待 GUI2-05。断线层级：`task_rail.rs` 去掉列表上方全宽 Primary「重新连接」，`reconnect` 下沉为底部 Local 行 Ghost「重试 / Retry」（tooltip「重试连接 / Retry connection」，identifier / -17 Tab 档 / handler / gate 不变）；`recovery.rs` `connection-retry` 改唯一 Primary「重试连接 / Retry connection」，其余恢复按钮仍 Raised；新增 `connection_error_detail`，原始连接错误在主区 recovery 内换行完整显示并进入 `connection-notice` AX value。底部 Local 行 `connection_status_label` 不再嵌入原始错误：`Local · Disconnected / 本地 · 已断开`、`Local · Connecting / 本地 · 连接中`，已连接沿用既有文案。`theme.rs` 新增 `HEADER_CHIP_RADIUS` / `HEADER_CHIP_PAD_X` / `HEADER_CHIP_PAD_Y`。AX：chip 与 reconnect 几何读实测 layout（`header-branch` / `header-status` / `rail-reconnect-layout`），`reconnect` description `ghost`、`connection-retry` description `primary`。
 - **自动检查**：Desktop 定向测试 236/236（新增 `header_actions_and_disconnect_hierarchy`：1440×1024 与 1080×720@150% 下 `timeline-find` 宽 ≥ 36px 且不与 `inspector-expand` 重叠、无 Git 无 live 状态无 `header-branch` / `header-status` 节点、断线时 `reconnect` Ghost 与 `connection-retry` Primary 并存、底行等于 `Local · Disconnected` 且框在 rail 内；更新 `recovery_keeps_errors_local_and_preserves_drafts`）。日志 `/tmp/pawork-gui3-07-tests.log`。
-- **限制 / 偏离**：连接原文在 recovery 中始终可见换行，未另加「展开技术详情」折叠；回合字形用 `≡`（`▤` 已被侧栏 grouping 占用），待 GUI3-05 换 SVG；Settings Advanced 的「重新连接」文案不在写入集未统一。代理真窗口与用户验收未进行。
+- **限制 / 偏离**：连接原文在 recovery 中始终可见换行，未另加「展开技术详情」折叠；回合字形用 `≡`（`▤` 已被侧栏 grouping 占用），待 GUI3-05 换 SVG；Settings Advanced 的「重新连接」文案不在写入集未统一。代理真窗口 2026-09-14 随 GUI2-07 通过（Header 图标动作、断线层级与底行「本地 · 已断开」，证据 05 / 12）；用户验收未进行。
 
 #### GUI3-08 层次 token 与微动效
 

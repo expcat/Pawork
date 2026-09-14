@@ -13,6 +13,26 @@ pub(crate) fn quota_identifier(provider: &str, credential: &str, suffix: &str) -
     )
 }
 
+pub(crate) struct AccountQuotaRow {
+    pub id: String,
+    pub title: String,
+    pub used: Option<u8>,
+    pub reset: Option<String>,
+    pub stale: bool,
+    pub loading: bool,
+    pub ax_label: String,
+}
+
+fn quota_bar_color(used: u8) -> gpui::Rgba {
+    if used >= 90 {
+        dark().semantic.danger_text
+    } else if used >= 70 {
+        dark().semantic.warning_text
+    } else {
+        dark().accent.primary
+    }
+}
+
 /// 保留分钟精度，长倒计时直接分解为天 / 小时 / 分钟。
 fn quota_duration(minutes: u64) -> String {
     let mut parts = Vec::new();
@@ -30,12 +50,7 @@ fn quota_duration(minutes: u64) -> String {
 
 impl AppView {
     pub(crate) fn settings_quota_supported(&self) -> bool {
-        self.handshake_info
-            .as_ref()
-            .and_then(|i| i.api_version.split_once('.'))
-            .is_some_and(|(major, minor)| {
-                major == "1" && minor.parse::<u16>().is_ok_and(|n| n >= 16)
-            })
+        self.settings_api_minor() >= 16
     }
 
     pub(crate) fn settings_quota_clock_needed(&self) -> bool {
@@ -141,11 +156,11 @@ impl AppView {
         cx.notify();
     }
 
-    pub(crate) fn account_quota_labels(
+    pub(crate) fn account_quota_rows(
         &self,
         provider: &str,
         credential: &str,
-    ) -> Vec<(String, String)> {
+    ) -> Vec<AccountQuotaRow> {
         let state = self
             .projection
             .settings_providers
@@ -167,15 +182,21 @@ impl AppView {
             let entry = state
                 .and_then(|s| s.view.as_ref())
                 .and_then(|v| v.windows.iter().find(|e| e.window == window));
+            let mut used = None;
+            let mut reset = None;
+            let mut stale = false;
+            let loading = state.is_some_and(|s| s.loading);
             let value = match entry.map(|e| &e.read) {
                 Some(WindowReadView::Ok { snapshot, .. })
                     if snapshot.unit == QuotaUnit::Percent =>
                 {
                     match (&snapshot.values.used, &snapshot.reset) {
-                        (QuotaMeasure::Exact(used), QuotaReset::Absolute { at, uncertain })
-                            if *used <= 100 =>
-                        {
-                            let stale = state.is_some_and(|s| s.stale)
+                        (
+                            QuotaMeasure::Exact(used_value),
+                            QuotaReset::Absolute { at, uncertain },
+                        ) if *used_value <= 100 => {
+                            used = Some(*used_value as u8);
+                            stale = state.is_some_and(|s| s.stale)
                                 || snapshot.provenance.fetched_at.as_unix_millis() > now
                                 || snapshot.served_stale
                                 || snapshot.provenance.stale
@@ -190,11 +211,12 @@ impl AppView {
                                 }
                                 _ => t("settings.quota.remaining_unknown").into(),
                             };
-                            let reset = if now >= at.as_unix_millis() {
+                            let reset_text = if now >= at.as_unix_millis() {
                                 t("settings.quota.reset_due").into()
                             } else {
                                 t("settings.quota.reset").replace("{}", &quota_duration(minutes))
                             };
+                            reset = Some(reset_text.clone());
                             let fetched = snapshot.provenance.fetched_at.as_unix_millis();
                             let age = if fetched > now {
                                 t("settings.quota.clock_unknown").into()
@@ -206,19 +228,19 @@ impl AppView {
                             };
                             format!(
                                 "{} · {}{}{}\n{}{}\n{} · {}",
-                                t("settings.quota.used").replace("{}", &used.to_string()),
+                                t("settings.quota.used").replace("{}", &used_value.to_string()),
                                 remaining,
                                 if stale {
                                     format!(" · {}", t("settings.quota.stale"))
                                 } else {
                                     String::new()
                                 },
-                                if state.is_some_and(|s| s.loading) {
+                                if loading {
                                     format!(" · {}", t("settings.quota.loading"))
                                 } else {
                                     String::new()
                                 },
-                                reset,
+                                reset_text,
                                 if *uncertain {
                                     format!(" · {}", t("settings.quota.estimated"))
                                 } else {
@@ -238,15 +260,31 @@ impl AppView {
                         _ => t("settings.providers.usage_unavailable").into(),
                     }
                 }
-                _ if state.is_some_and(|s| s.loading) => t("settings.quota.loading").into(),
+                _ if loading => t("settings.quota.loading").into(),
                 _ => t("settings.providers.usage_unavailable").into(),
             };
-            (
-                quota_identifier(provider, credential, name),
-                format!("{title}\n{value}"),
-            )
+            AccountQuotaRow {
+                id: quota_identifier(provider, credential, name),
+                title: title.to_string(),
+                used,
+                reset,
+                stale,
+                loading,
+                ax_label: format!("{title}\n{value}"),
+            }
         })
         .collect()
+    }
+
+    pub(crate) fn account_quota_labels(
+        &self,
+        provider: &str,
+        credential: &str,
+    ) -> Vec<(String, String)> {
+        self.account_quota_rows(provider, credential)
+            .into_iter()
+            .map(|row| (row.id, row.ax_label))
+            .collect()
     }
 
     pub(crate) fn account_quota_element(
@@ -255,13 +293,78 @@ impl AppView {
         credential: &str,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let mut block = div().flex().flex_col().gap_3();
-        for (id, label) in self.account_quota_labels(provider, credential) {
+        let rows = self.account_quota_rows(provider, credential);
+        let mut block = div().flex().flex_col().gap_2();
+        for row in rows {
+            let percent = row
+                .used
+                .map(|used| format!("{used}%"))
+                .unwrap_or_else(|| t("settings.providers.usage_unavailable").into());
+            let fill = row.used.unwrap_or(0);
+            let mut track = div()
+                .w_full()
+                .h(px(SETTINGS_PROVIDER_USAGE_BAR_HEIGHT))
+                .rounded_full()
+                .bg(dark().surface.raised)
+                .overflow_hidden();
+            if row.used.is_some() && fill > 0 {
+                track = track.child(
+                    div()
+                        .h_full()
+                        .w(gpui::relative(fill as f32 / 100.0))
+                        .rounded_full()
+                        .bg(quota_bar_color(fill)),
+                );
+            }
+            let mut caption = row.reset.unwrap_or_default();
+            if row.stale {
+                if !caption.is_empty() {
+                    caption.push_str(" · ");
+                }
+                caption.push_str(t("settings.quota.stale"));
+            }
+            if row.loading {
+                if !caption.is_empty() {
+                    caption.push_str(" · ");
+                }
+                caption.push_str(t("settings.quota.loading"));
+            }
             block = block.child(
-                self.settings_element(id)
-                    .text_size(font::BODY_SM)
-                    .text_color(dark().text.secondary)
-                    .child(label),
+                self.settings_element(row.id)
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div().flex().flex_row().flex_1().min_w_0().child(
+                                    div()
+                                        .truncate()
+                                        .text_size(font::BODY_SM)
+                                        .text_color(dark().text.secondary)
+                                        .child(row.title),
+                                ),
+                            )
+                            .child(
+                                Label::new(percent).size(font::BODY_SM).color(
+                                    row.used
+                                        .map(quota_bar_color)
+                                        .unwrap_or(dark().text.tertiary),
+                                ),
+                            ),
+                    )
+                    .child(track)
+                    .when(!caption.is_empty(), |block| {
+                        block.child(
+                            Label::new(caption)
+                                .size(font::BODY_SM)
+                                .color(dark().text.tertiary),
+                        )
+                    }),
             );
         }
         let id = quota_identifier(provider, credential, "refresh");

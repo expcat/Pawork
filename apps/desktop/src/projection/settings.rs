@@ -411,7 +411,7 @@ impl SettingsProvidersState {
     }
 
     /// SetModelEnabled Data 回执（ADR-055 D2；回执即写后状态）：目录内
-    /// 同条目收敛；条目缺失（目录暂态滞后）交随后的权威重查。
+    /// 同条目收敛；条目缺失忽略（打开弹层 / 显式 Refresh 才重查）。
     pub fn confirm_model_enabled(&mut self, provider_id: &str, model_id: &str, enabled: bool) {
         if let Some(entry) = self
             .model_catalog
@@ -773,6 +773,35 @@ impl DesktopProjection {
             }
         }
         self.settings_providers.confirm_role_default(role, tuple);
+    }
+
+    /// 启停回执：弹层目录 + Composer 过滤目录一次收敛，不重拉 Host。
+    pub fn apply_model_enabled(&mut self, provider_id: &str, model_id: &str, enabled: bool) {
+        self.settings_providers
+            .confirm_model_enabled(provider_id, model_id, enabled);
+        self.sync_enabled_models_from_catalog();
+    }
+
+    /// 全开 / 全关回执：该 provider 的弹层与 Composer 目录一起收敛。
+    pub fn apply_provider_models_enabled(&mut self, provider_id: &str, enabled: bool) {
+        self.settings_providers
+            .confirm_provider_models_enabled(provider_id, enabled);
+        self.sync_enabled_models_from_catalog();
+    }
+
+    /// 全量目录非空时，Composer / 卡头计数跟 enabled 子集对齐。
+    fn sync_enabled_models_from_catalog(&mut self) {
+        if self.settings_providers.model_catalog.is_empty() {
+            return;
+        }
+        self.models = self
+            .settings_providers
+            .model_catalog
+            .iter()
+            .filter(|model| model.enabled)
+            .cloned()
+            .collect();
+        self.models_loaded = true;
     }
 
     /// Settings「模型与默认项」失效判定：默认 provider 未连接，或默认

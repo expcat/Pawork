@@ -969,6 +969,22 @@ fn session_entry_in(id: &str, title: &str, updated: u64, workspace_id: Option<&s
     entry
 }
 
+fn session_entry_with_head(
+    id: &str,
+    title: &str,
+    updated: u64,
+    head_sequence: u64,
+    workspace_id: Option<&str>,
+) -> Value {
+    let mut entry = session_entry_in(id, title, updated, workspace_id);
+    entry["branches"] = json!([{
+        "branch_id": "main",
+        "head_sequence": head_sequence,
+        "active": true
+    }]);
+    entry
+}
+
 fn event(sequence: u64, payload: Value) -> AppEventEnvelope {
     serde_json::from_value(json!({
         "api_version": { "major": 1, "minor": 1 },
@@ -1225,7 +1241,7 @@ fn snapshot_active_runs_restore_cancel_target_on_select() {
     );
     assert_eq!(
         projection.run_status_label(1_700_000_045_000),
-        "Run usage — | Duration 00:45"
+        "↑ — · ↓ — · Duration 00:45"
     );
 }
 
@@ -1330,7 +1346,7 @@ fn session_live_status_running_needs_input_priority_and_plain() {
 #[test]
 fn run_status_label_uses_final_order_and_vertical_separators() {
     let mut projection = DesktopProjection::default();
-    assert_eq!(projection.run_status_label(0), "Run usage —");
+    assert_eq!(projection.run_status_label(0), "↑ — · ↓ — · Duration —");
     projection.select_session("s-1");
     let usage_page = page(
         vec![history_item(
@@ -1344,15 +1360,125 @@ fn run_status_label_uses_final_order_and_vertical_separators() {
     );
     projection.apply_timeline_page(&usage_page);
     projection.apply_timeline_page(&usage_page);
-    assert_eq!(
-        projection.run_status_label(0),
-        "Run tokens · input 12 · output 7"
-    );
+    assert_eq!(projection.run_status_label(0), "↑ 12 · ↓ 7 · Duration —");
     projection.select_session("s-2");
-    assert_eq!(projection.run_status_label(0), "Run usage —");
+    assert_eq!(projection.run_status_label(0), "↑ — · ↓ — · Duration —");
     // active run 缺权威起始时间：时长诚实显示 —，不编造 mm:ss。
     projection.active_run_id = Some("r-unknown-start".into());
-    assert_eq!(projection.run_status_label(0), "Run usage — | Duration —");
+    assert_eq!(projection.run_status_label(0), "↑ — · ↓ — · Duration —");
+}
+
+#[test]
+fn run_status_label_adds_tokens_per_second_when_span_is_known() {
+    let mut projection = DesktopProjection::default();
+    projection.select_session("s-1");
+    let usage_page = page(
+        vec![
+            history_item(
+                1,
+                "user_message",
+                json!({ "text": "hi", "timestamp": "1000" }),
+            ),
+            history_item(
+                2,
+                "run_completed",
+                json!({
+                    "text": r#"{"input_tokens":12,"output_tokens":7}"#,
+                    "timestamp": "1400"
+                }),
+            ),
+        ],
+        true,
+    );
+    projection.apply_timeline_page(&usage_page);
+    assert_eq!(
+        projection.run_status_label(0),
+        "↑ 12 · ↓ 7 · Duration 00:00 · 18 tok/s"
+    );
+}
+
+#[test]
+fn run_status_label_previews_visible_text_then_snaps_to_terminal_usage() {
+    let mut projection = DesktopProjection::default();
+    projection.select_session("s-1");
+    projection.note_session_run("s-1", "r-1", 1_000);
+    assert!(projection.note_user_echo("s-1", "r-1", "hello world", 1_000));
+    assert!(projection.apply_event(&assistant_delta(2, "m-1", "你好")));
+    let live = projection.run_usage_display(Some("r-1"), 3_500);
+    assert!(live.estimated);
+    assert_eq!(live.input_tokens, Some(4));
+    assert_eq!(live.output_tokens, Some(2));
+    assert_eq!(live.duration_text(), "00:02");
+    assert_eq!(
+        projection.run_status_label(3_500),
+        "↑ 4 · ↓ 2 · Duration 00:02"
+    );
+
+    assert!(projection.apply_event(&assistant_delta(3, "m-1", "世界")));
+    let grown = projection.run_usage_display(Some("r-1"), 4_000);
+    assert!(grown.output_tokens.unwrap() > live.output_tokens.unwrap());
+
+    projection.apply_timeline_page(&page(
+        vec![history_item(
+            4,
+            "run_completed",
+            json!({
+                "text": r#"{"input_tokens":12,"output_tokens":7}"#,
+                "timestamp": "4000"
+            }),
+        )],
+        true,
+    ));
+    projection.active_run_id = None;
+    projection.active_run_started_at_ms = None;
+    let frozen = projection.run_usage_display(Some("r-1"), 9_000);
+    assert!(!frozen.estimated);
+    assert_eq!(frozen.input_tokens, Some(12));
+    assert_eq!(frozen.output_tokens, Some(7));
+    assert_eq!(frozen.duration_text(), "00:03");
+}
+
+#[test]
+fn run_status_label_terminal_without_persisted_usage_shows_unknown() {
+    let mut projection = DesktopProjection::default();
+    projection.select_session("s-1");
+    assert!(projection.note_user_echo("s-1", "r-1", "hello world", 1_000));
+    assert!(projection.apply_event(&assistant_delta(2, "m-1", "你好")));
+    // 终态（无 active run）且无持久化 usage：字符估算只服务 live，
+    // 终态按「缺失为未知」显示 —，不拿估算冒充权威读数。
+    let terminal = projection.run_usage_display(Some("r-1"), 9_000);
+    assert!(!terminal.live);
+    assert!(!terminal.estimated);
+    assert_eq!(terminal.input_tokens, None);
+    assert_eq!(terminal.output_tokens, None);
+    assert_eq!(terminal.tok_s, None);
+    assert_eq!(
+        projection.run_status_label(9_000),
+        "↑ — · ↓ — · Duration 00:00"
+    );
+}
+
+#[test]
+fn timeline_rows_append_live_metrics_until_terminal() {
+    let mut projection = DesktopProjection::default();
+    projection.timeline.entries = vec![raw_entry(
+        1,
+        TimelineEntryKind::UserMessage { text: "go".into() },
+        Some("r-1"),
+    )];
+    projection.active_run_id = Some("r-1".into());
+    assert_eq!(
+        projection.timeline_rows(),
+        vec![
+            TimelineRow::Message { entry_index: 0 },
+            TimelineRow::LiveRunMetrics,
+        ]
+    );
+    projection.active_run_id = None;
+    assert_eq!(
+        projection.timeline_rows(),
+        vec![TimelineRow::Message { entry_index: 0 }]
+    );
 }
 
 /// R3 Wave A 审查修复（P1）：live RunChanged 非终态登记 run 成员（含
@@ -2188,6 +2314,71 @@ fn session_tree_accepts_flat_sessions_and_branch_nodes() {
     assert_eq!(projection.sessions[0].title, "Wrapped");
 }
 
+#[test]
+fn unstarted_sessions_pin_and_reuse_by_workspace() {
+    let snapshot = snapshot_with_sessions(vec![
+        session_entry_with_head("s-old", "Old", 100, 5, Some("ws-a")),
+        session_entry_with_head("s-empty", "New session", 10, 0, Some("ws-a")),
+        session_entry_with_head("s-other", "New session", 20, 0, Some("ws-b")),
+        session_entry("s-flat", "Flat", 50),
+    ]);
+    let projection = DesktopProjection::from_snapshot(&snapshot);
+    let empty = projection
+        .sessions
+        .iter()
+        .find(|session| session.session_id == "s-empty")
+        .expect("empty session");
+    assert!(empty.unstarted);
+    assert!(
+        !projection
+            .sessions
+            .iter()
+            .find(|session| session.session_id == "s-old")
+            .expect("old session")
+            .unstarted
+    );
+    assert!(
+        !projection
+            .sessions
+            .iter()
+            .find(|session| session.session_id == "s-flat")
+            .expect("flat session")
+            .unstarted,
+        "flat snapshots without branches stay started"
+    );
+    let groups = projection.project_groups(Some("ws-a"));
+    assert_eq!(groups[0].tasks[0].session_id, "s-empty");
+    assert_eq!(groups[0].tasks[1].session_id, "s-old");
+    assert_eq!(
+        projection.unstarted_session_id(Some("ws-a")),
+        Some("s-empty")
+    );
+    assert_eq!(
+        projection.unstarted_session_id(Some("ws-b")),
+        Some("s-other")
+    );
+    assert_eq!(projection.unstarted_session_id(None), None);
+}
+
+#[test]
+fn session_activity_clears_unstarted_and_bumps_updated_at() {
+    let mut projection = DesktopProjection::from_snapshot(&snapshot_with_sessions(vec![
+        session_entry_with_head("s-1", "New session", 10, 0, Some("ws-a")),
+        session_entry_with_head("s-old", "Old", 20, 4, Some("ws-a")),
+    ]));
+    assert_eq!(projection.sessions[0].session_id, "s-1");
+    assert!(projection.sessions[0].unstarted);
+    projection.select_session("s-1");
+    assert!(projection.apply_event(&run_changed(1, "created")));
+    let session = projection
+        .sessions
+        .iter()
+        .find(|session| session.session_id == "s-1")
+        .expect("active session");
+    assert!(!session.unstarted);
+    assert!(session.updated_at_ms >= 1_001);
+}
+
 /// ADR-054 D2/D3：SessionMetaChanged 后 controller 重取 snapshot，投影按
 /// 快照反映改名与归档（归档会话不再出现在 session_tree → rail 隐藏）。
 #[test]
@@ -2419,7 +2610,7 @@ fn terminal_exited_event_marks_terminal_stale_and_blocks_resurrection() {
     ));
 }
 
-/// ADR-045：Close 清理回执后本地移除条目；当前终端回到 not started。
+/// ADR-045：关唯一标签后本地移除条目，当前终端回到 not started。
 #[test]
 fn remove_terminal_clears_current_terminal_after_close() {
     let mut projection = DesktopProjection::default();
@@ -2435,6 +2626,32 @@ fn remove_terminal_clears_current_terminal_after_close() {
         projection.terminal.availability,
         TerminalAvailability::Stale { .. }
     ));
+}
+
+#[test]
+fn remove_terminal_selects_sibling_in_workspace() {
+    let mut projection = DesktopProjection::default();
+    projection.workspace_id = Some("ws-a".into());
+    projection.apply_terminal_created("ws-a".into(), "term-a".into());
+    projection.apply_terminal_created("ws-a".into(), "term-b".into());
+    assert_eq!(projection.terminal.session_id.as_deref(), Some("term-b"));
+    assert_eq!(projection.workspace_terminals(Some("ws-a")).len(), 2);
+    assert!(projection.select_terminal("term-a"));
+    assert_eq!(projection.terminal.session_id.as_deref(), Some("term-a"));
+    assert!(projection.remove_terminal("term-a"));
+    assert_eq!(projection.terminal.session_id.as_deref(), Some("term-b"));
+    assert_eq!(projection.workspace_terminals(Some("ws-a")).len(), 1);
+}
+
+#[test]
+fn terminal_create_failed_keeps_existing_tab() {
+    let mut projection = DesktopProjection::default();
+    projection.workspace_id = Some("ws-a".into());
+    projection.apply_terminal_created("ws-a".into(), "term-a".into());
+    projection.mark_terminal_create_failed("ws-a", "denied");
+    assert_eq!(projection.terminal.session_id.as_deref(), Some("term-a"));
+    projection.select_terminal_for_workspace(Some("ws-a"));
+    assert_eq!(projection.terminal.session_id.as_deref(), Some("term-a"));
 }
 
 #[test]
@@ -3323,9 +3540,7 @@ fn model_catalog_and_enablement_receipts_converge_provider_scoped_state() {
     ]);
 
     // SetModelEnabled 回执：仅命中 provider×model 收敛，其余不动。
-    projection
-        .settings_providers
-        .confirm_model_enabled("kimi", "kimi-k2-thinking", false);
+    projection.apply_model_enabled("kimi", "kimi-k2-thinking", false);
     let catalog = &projection.settings_providers.model_catalog;
     assert_eq!(
         (catalog[0].id.as_str(), catalog[0].enabled),
@@ -3339,17 +3554,21 @@ fn model_catalog_and_enablement_receipts_converge_provider_scoped_state() {
         (catalog[2].id.as_str(), catalog[2].enabled),
         ("glm-4.7", true)
     );
-    // 目录暂态滞后的未知 pair 忽略（权威重查兜底）。
-    projection
-        .settings_providers
-        .confirm_model_enabled("kimi", "ghost-x", false);
+    assert_eq!(
+        projection
+            .models
+            .iter()
+            .map(|entry| entry.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["kimi-k2", "glm-4.7"]
+    );
+    // 目录暂态滞后的未知 pair 忽略（打开弹层 / Refresh 才重查）。
+    projection.apply_model_enabled("kimi", "ghost-x", false);
     assert!(projection.settings_providers.model_catalog[0].enabled);
 
     // SetProviderModelsEnabled 回执：该 provider 全部条目收敛，其他
     // provider 不动。
-    projection
-        .settings_providers
-        .confirm_provider_models_enabled("kimi", false);
+    projection.apply_provider_models_enabled("kimi", false);
     let catalog = &projection.settings_providers.model_catalog;
     assert!(!catalog[0].enabled);
     assert!(!catalog[1].enabled);

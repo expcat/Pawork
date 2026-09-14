@@ -122,7 +122,17 @@ pub(super) fn changes_status_chip(status: &str) -> (String, gpui::Rgba) {
         "M" | "modified" | "Modified" => ("M".into(), palette.semantic.warning_text),
         "A" | "added" | "Added" => ("A".into(), palette.semantic.success_fg),
         "D" | "deleted" | "Deleted" | "removed" => ("D".into(), palette.semantic.danger_text),
-        other => (other.to_string(), palette.text.tertiary),
+    // 单字符状态码（R / ? 等）原样；长词（untracked / renamed）收首字母大写，
+    // 否则会溢出 M/A/D 单列色标槽。
+    other if other.chars().count() == 1 => (other.to_string(), palette.text.tertiary),
+    other => (
+        other
+            .chars()
+            .next()
+            .map(|c| c.to_uppercase().collect())
+            .unwrap_or_else(|| "?".to_string()),
+        palette.text.tertiary,
+    ),
     }
 }
 
@@ -1247,6 +1257,7 @@ mod tests {
         assert_eq!(changes_status_chip("deleted").0, "D");
         assert_eq!(changes_status_chip("R").0, "R");
         assert_eq!(changes_status_chip("?").0, "?");
+        assert_eq!(changes_status_chip("untracked").0, "U");
         assert!(ready_state(vec![DiffFileSummary {
             path: "a.rs".into(),
             status: "modified".into(),

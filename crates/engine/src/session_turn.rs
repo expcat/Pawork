@@ -77,7 +77,6 @@ pub async fn run_session_turn(
         turn.session_id.clone(),
         turn.run_id.clone(),
         &next_sequence,
-        turn.timestamp,
         events,
     );
     let trigger_id = turn.trigger_message.id.clone();

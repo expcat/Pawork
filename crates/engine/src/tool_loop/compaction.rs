@@ -467,7 +467,6 @@ pub async fn run_manual_compaction(
         turn.session_id.clone(),
         turn.run_id.clone(),
         &next_sequence,
-        turn.timestamp,
         events,
     );
     compact_messages(

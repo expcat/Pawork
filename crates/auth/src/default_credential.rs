@@ -581,6 +581,93 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn file_backend_refresh_ignores_account_display_name() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .and(body_string_contains("refresh_token=old-refresh-display"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                crate::testsupport::token_success_json(
+                    "new-access-display",
+                    Some("new-refresh-display"),
+                    Some("openid profile"),
+                ),
+            ))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let file_path = std::env::temp_dir().join(format!(
+            "pawork-oauth-display-name-refresh-{}.json",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&file_path);
+        let backend = FileBackend::with_path(&file_path);
+        let provider = ProviderId::new("xai-display-refresh");
+        store_default_oauth_token(
+            &backend,
+            provider.clone(),
+            &TokenSet {
+                access_token: "old-access-display".into(),
+                refresh_token: Some("old-refresh-display".into()),
+                id_token: None,
+                expires_in: Some(0),
+                token_type: "Bearer".into(),
+                scope: Some("openid".into()),
+            },
+        )
+        .expect("store");
+        crate::rename_provider_account(&backend, &provider, crate::LEGACY_OAUTH_ID, "user@x.ai")
+            .expect("rename away from meta placeholder");
+
+        let mut stored = crate::list_provider_accounts(&backend, &provider)
+            .expect("list")
+            .accounts
+            .into_iter()
+            .find(|account| account.kind == crate::ProviderAccountKind::OAuth)
+            .expect("oauth account")
+            .stored;
+        assert_eq!(stored.display_name, "user@x.ai");
+        assert_eq!(
+            load_default_oauth_credential(&backend, &provider)
+                .expect("meta load")
+                .expect("present")
+                .display_name,
+            "default oauth"
+        );
+
+        let refreshed = refresh_default_oauth_credential_if_needed(
+            &mut stored,
+            &backend,
+            &OAuthRefreshConfig {
+                token_url: format!("{}/token", server.uri()),
+                client_id: "client-id".into(),
+                refresh_skew: Duration::from_secs(30),
+            },
+            &crate::http_client().expect("http client"),
+        )
+        .await
+        .expect("refresh");
+        assert!(
+            refreshed,
+            "expired FileBackend credential must refresh despite display_name mismatch"
+        );
+        assert_eq!(
+            backend
+                .get(&stored.secret_service, &stored.secret_account)
+                .expect("rotated access"),
+            "new-access-display"
+        );
+        assert_eq!(
+            crate::read_refresh_token(&stored, &backend).expect("rotated refresh"),
+            "new-refresh-display"
+        );
+        assert_eq!(stored.display_name, "user@x.ai");
+        server.verify().await;
+        let _ = std::fs::remove_file(&file_path);
+    }
+
+    #[tokio::test]
     async fn delayed_stale_snapshot_reuses_published_refresh() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))

@@ -192,7 +192,7 @@ OPT-1 / ADR-053：`gui::run_gui` 经 `AppCore::set_approval_host` 只接线 GUI 
 - **GUI 数据目录单源**：Core 加载、socket/pid/token 路径和 API 1.9 Accepted `host_data_dir` 必须消费 `run_inner` 的同一个解析结果；不得在 `run_gui` 二次读取环境或按 endpoint 反推。`host_data_dir` 只作当前认证客户端的只读展示元数据，不进日志、事件、ledger 或文件操作输入。
 - **ACP 命令准入**：registry `acp` 列即 ACP 可达命令全集（当前 `session_create` / `run_start` / `run_cancel` / `tool_approve`，测试钉死）；adapter decode 产物与宿主自构命令都过 `admit_acp_command`，列外命令 `ProtocolUnsupported`。禁止在本包另维护一份命令名字表——三通道可用性一律查 protocol registry（headless 列 / acp 列 / `gui_supported_capabilities()`）。
 - **审批 fail-closed**：`--json` 或 stdin 非 TTY 时任何审批请求都被拒绝（`DenyAllApprovals`）；ACP 权限选项固定 `allow-once` / `reject-once`，未知 option id 拒绝；客户端错误响应视为 Deny，`-32800` 视为 Cancel。
-- **通道身份戳**：三条程序化通道进 Core 的命令 / 查询一律 `CommandSource::Automation` + `ActorIdentity::Automation`（名称分别 `cli-json` / `headless` / `acp:pawork-acp`），command id 前缀 `cli-<name>-<n>` / `acp-<request_id>`——事件与审计侧可区分来源。
+- **通道身份戳**：三条程序化通道进 Core 的命令 / 查询一律 `CommandSource::Automation` + `ActorIdentity::Automation`（名称分别 `cli-json` / `headless` / `acp:pawork-acp`），command id 前缀 `cli-<name>-<进程命名空间>-<n>`（命名空间 = pid + 纳秒，进程级 OnceLock，防 command_ledger 跨进程撞键重放旧响应）/ `acp-<request_id>`——事件与审计侧可区分来源。
 - **ACP 错误映射为显式表**：`AdapterError` → JSON-RPC 码、`AdapterErrorFrame.code` 字符串 → 码、canonical `ErrorContext.category` → 码三张映射都在 `map.rs` 落表（NotFound → -32002、Authentication/Authorization → -32000、InvalidRequest → -32602、Cancelled → -32800、其余 → -32603）；`Artifact` 响应在 ACP 通道不支持（-32603）。
 - **凭证红线**：明文 key 只经 stdin 进 auth 文件；`auth list` 只显示掩码与来源；`format_provider_error` 对认证错误不透传上游消息原文。
 - **单实例与文件权限**：`gui serve` bind 前探测防双实例；socket 父目录（位于数据目录内时）强制 0o700；token 文件缺失 / 空内容显式失败，不回退为无认证。

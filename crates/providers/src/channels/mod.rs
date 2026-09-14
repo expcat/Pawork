@@ -21,7 +21,8 @@ pub mod xai;
     feature = "opencode-go",
     feature = "qwen-token-plan",
     feature = "deepseek",
-    feature = "kimi-platform"
+    feature = "kimi-platform",
+    feature = "kimi-code"
 ))]
 pub mod api_key;
 
@@ -46,7 +47,8 @@ pub use xai::{builtin_models as xai_builtin_models, XaiConfig, XaiProvider};
     feature = "opencode-go",
     feature = "qwen-token-plan",
     feature = "deepseek",
-    feature = "kimi-platform"
+    feature = "kimi-platform",
+    feature = "kimi-code"
 ))]
 pub use api_key::{
     fetch_go_usage, verify_api_key, ApiKeyChannelConfig, ApiKeyChannelProvider, GoUsage,

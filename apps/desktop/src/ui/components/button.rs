@@ -357,7 +357,9 @@ impl RenderOnce for Button {
             button = button.h(height);
         }
         if let Some(max_width) = self.max_width {
-            button = button.max_w(max_width).min_w_0().overflow_hidden();
+            // 只钳上限，不设 min_w_0：否则内容测宽为 0，可用空间会把触发器
+            // 撑满 max_width（Composer 模型名变短后箭头仍贴右）。
+            button = button.max_w(max_width).overflow_hidden();
         }
         if enabled {
             // hover / active 只改背景，不通过缩放制造按压感。

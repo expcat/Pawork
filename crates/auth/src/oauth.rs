@@ -724,6 +724,19 @@ fn backend_token_snapshot(
     })
 }
 
+/// 跨进程 refresh 锁内用来判断「别的进程是否已改过这条凭证」。
+/// `display_name` 来自账号索引别名，不在 OAuth meta 里，不得参与判定。
+fn refresh_metadata_matches(left: &StoredCredential, right: &StoredCredential) -> bool {
+    left.id == right.id
+        && left.provider == right.provider
+        && left.masked == right.masked
+        && left.secret_service == right.secret_service
+        && left.secret_account == right.secret_account
+        && left.created_at == right.created_at
+        && left.expires_at == right.expires_at
+        && left.scopes == right.scopes
+}
+
 async fn acquire_backend_refresh_lock(path: &std::path::Path) -> Result<FileLockGuard, AuthError> {
     let started = Instant::now();
     loop {
@@ -783,8 +796,10 @@ pub(crate) async fn refresh_oauth_credential_with(
     if let Some(observed_tokens) = observed_tokens {
         let metadata_changed = if let Some(reload) = reload {
             let latest = reload(backend, stored)?.ok_or(AuthError::NotFound)?;
-            let changed = latest != *stored;
+            let changed = !refresh_metadata_matches(&latest, stored);
+            let display_name = stored.display_name.clone();
             *stored = latest;
+            stored.display_name = display_name;
             changed
         } else {
             false
@@ -1087,6 +1102,31 @@ fn hex_val(b: u8) -> Option<u8> {
         b'A'..=b'F' => Some(b - b'A' + 10),
         _ => None,
     }
+}
+
+/// 从 id_token 提取 OIDC `email` claim（不验签）。只接受形态合理的邮箱，
+/// 缺 token / 畸形 / 非邮箱一律 None，由调用方回退到脱敏 access token。
+pub fn oauth_login_email(tokens: &TokenSet) -> Option<String> {
+    let id_token = tokens.id_token.as_deref()?;
+    let payload_b64 = id_token.split('.').nth(1)?;
+    let decoded = decode_jwt_payload(payload_b64).ok()?;
+    let email = decoded.get("email")?.as_str()?.trim();
+    is_plausible_email(email).then(|| email.to_string())
+}
+
+fn is_plausible_email(value: &str) -> bool {
+    let Some((local, domain)) = value.split_once('@') else {
+        return false;
+    };
+    !local.is_empty()
+        && !domain.is_empty()
+        && !local.contains('@')
+        && !domain.contains('@')
+        && domain.contains('.')
+        && !domain.starts_with('.')
+        && !domain.ends_with('.')
+        && value.len() <= 254
+        && !value.chars().any(|c| c.is_whitespace() || c.is_control())
 }
 
 /// 解码 JWT payload 段（base64url，不验签）；仅供提取非机密 claim（如

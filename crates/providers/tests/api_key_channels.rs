@@ -18,7 +18,7 @@ use pawork_domain::{
     ResolvedCredential, ResponseFormat, ToolChoice,
 };
 use pawork_providers::channels::registry::{
-    channel_preset, is_enabled, ChannelKind, ChannelPreset, CHANNEL_REGISTRY,
+    CHANNEL_REGISTRY, ChannelKind, ChannelPreset, channel_preset, is_enabled,
 };
 use pawork_providers::net::http::HttpClientConfig;
 use pawork_providers::{ApiKeyChannelConfig, ApiKeyChannelProvider};
@@ -207,8 +207,7 @@ async fn chat_contract_facets_stream_over_all_channels() {
                 .await;
             let config = config_for(preset, server.uri())
                 .with_model_transport("test-model", ModelTransport::ChatCompletions);
-            let provider =
-                ApiKeyChannelProvider::new(config, Some(api_key())).expect("construct");
+            let provider = ApiKeyChannelProvider::new(config, Some(api_key())).expect("construct");
             let sink = RecordingProviderSink::default();
             let summary = provider
                 .stream(request(), &sink, CancellationToken::new())
@@ -328,7 +327,7 @@ async fn invalid_opencode_session_header_fails_without_network_or_value_disclosu
 }
 
 #[tokio::test]
-async fn mixed_catalog_and_stream_share_documented_transports() {
+async fn mixed_catalog_keeps_undeclared_chat_and_shares_routes() {
     for (channel, chat_id, responses_id, excluded) in [
         (
             "opencode-go",
@@ -339,8 +338,11 @@ async fn mixed_catalog_and_stream_share_documented_transports() {
         ("qwen-token-plan", "qwen3.8-max", None, "wan2.7-image"),
     ] {
         let server = MockServer::start().await;
-        let mut ids = vec![chat_id, excluded, "unknown-model"];
+        let mut ids = vec![chat_id, excluded, "unknown-model", "deepseek-flash"];
         ids.extend(responses_id);
+        if channel == "opencode-go" {
+            ids.push("grok-4.5");
+        }
         Mock::given(method("GET"))
             .and(path("/models"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
@@ -355,29 +357,55 @@ async fn mixed_catalog_and_stream_share_documented_transports() {
         )
         .unwrap();
         let models = provider.list_models(None).await.unwrap();
-        assert_eq!(models.len(), 1 + usize::from(responses_id.is_some()));
-        assert_eq!(models[0].id.as_str(), chat_id);
-        for model in models {
-            let endpoint = match model.capabilities.transport {
-                ModelTransport::ChatCompletions => "/chat/completions",
-                ModelTransport::Responses => "/responses",
+        let listed: Vec<_> = models.iter().map(|model| model.id.as_str()).collect();
+        assert!(listed.contains(&chat_id), "{listed:?}");
+        assert!(listed.contains(&"unknown-model"), "{listed:?}");
+        assert!(listed.contains(&"deepseek-flash"), "{listed:?}");
+        assert!(!listed.contains(&excluded), "{listed:?}");
+        if channel == "opencode-go" {
+            assert!(listed.contains(&"grok-4.5"), "{listed:?}");
+            assert_eq!(
+                models
+                    .iter()
+                    .find(|model| model.id.as_str() == "grok-4.5")
+                    .map(|model| model.capabilities.transport),
+                Some(ModelTransport::Responses)
+            );
+        }
+        let mut chat = 0;
+        let mut responses = 0;
+        for model in &models {
+            match model.capabilities.transport {
+                ModelTransport::ChatCompletions => chat += 1,
+                ModelTransport::Responses => responses += 1,
                 ModelTransport::Messages => panic!("unsupported transport in runnable catalog"),
-            };
-            let body = if endpoint == "/responses" {
-                common::responses_completed_body()
-            } else {
-                common::chat_finish_only_body()
-            };
+            }
+        }
+        if chat > 0 {
             Mock::given(method("POST"))
-                .and(path(endpoint))
+                .and(path("/chat/completions"))
                 .respond_with(
                     ResponseTemplate::new(200)
                         .insert_header("content-type", "text/event-stream")
-                        .set_body_string(body),
+                        .set_body_string(common::chat_finish_only_body()),
                 )
-                .expect(1)
+                .expect(chat)
                 .mount(&server)
                 .await;
+        }
+        if responses > 0 {
+            Mock::given(method("POST"))
+                .and(path("/responses"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .insert_header("content-type", "text/event-stream")
+                        .set_body_string(common::responses_completed_body()),
+                )
+                .expect(responses)
+                .mount(&server)
+                .await;
+        }
+        for model in models {
             let mut req = request();
             req.model = model.id;
             provider
@@ -387,25 +415,23 @@ async fn mixed_catalog_and_stream_share_documented_transports() {
                     CancellationToken::new(),
                 )
                 .await
-                .expect("documented route");
+                .expect("runnable route");
         }
         let before = server.received_requests().await.unwrap().len();
-        for id in [excluded, "unknown-model"] {
-            let mut req = request();
-            req.model = ModelId::new(id);
-            assert_eq!(
-                provider
-                    .stream(
-                        req,
-                        &RecordingProviderSink::default(),
-                        CancellationToken::new()
-                    )
-                    .await
-                    .unwrap_err()
-                    .kind,
-                ProviderErrorKind::InvalidRequest
-            );
-        }
+        let mut req = request();
+        req.model = ModelId::new(excluded);
+        assert_eq!(
+            provider
+                .stream(
+                    req,
+                    &RecordingProviderSink::default(),
+                    CancellationToken::new()
+                )
+                .await
+                .unwrap_err()
+                .kind,
+            ProviderErrorKind::InvalidRequest
+        );
         assert_eq!(server.received_requests().await.unwrap().len(), before);
         server.verify().await;
     }

@@ -50,7 +50,6 @@ use changes::ChangesPanelState;
 use components::button::{Button, ButtonPadding, ButtonVariant};
 use components::dropdown::Dropdown;
 use components::follow_scroll::FollowScroll;
-use components::label::Badge;
 use components::status_bar::StatusBar;
 pub(crate) use components::{icon, icon_sized, Assets, Icon};
 use inspector::InspectorTab;
@@ -428,6 +427,32 @@ fn install_appkit_tab_monitor(window: &Window, cx: &App) {
     TAB_WINDOW.with_borrow_mut(|slot| *slot = Some(window.to_async(cx)));
 }
 
+#[derive(Clone, Debug)]
+struct PendingHomeSend {
+    text: String,
+    model: Option<(String, String)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum HomeSendPlan {
+    ActiveSession(String),
+    ReuseUnstarted(String),
+    CreateUnassigned,
+}
+
+fn home_send_plan(
+    active_session_id: Option<&str>,
+    unstarted_unassigned: Option<&str>,
+) -> HomeSendPlan {
+    if let Some(session) = active_session_id {
+        return HomeSendPlan::ActiveSession(session.to_string());
+    }
+    if let Some(session) = unstarted_unassigned {
+        return HomeSendPlan::ReuseUnstarted(session.to_string());
+    }
+    HomeSendPlan::CreateUnassigned
+}
+
 pub struct AppView {
     /// 持有 tokio Runtime（GUI Connection Protocol 宿主），防止提前 shutdown。
     _platform: Arc<Platform>,
@@ -450,10 +475,11 @@ pub struct AppView {
     /// per-session Composer 草稿（不含终端）。无 active session 时走独立槽。
     composer_drafts: HashMap<String, String>,
     no_session_draft: String,
-    /// Terminal 输入按 Inspector 所属 workspace 隔离；任务切换时保存/恢复，
-    /// 避免未发送命令泄漏到另一 workspace。
+    /// 首页无任务发送：`session_create(None)` 在途时记下正文，回执后再发。
+    pending_home_send: Option<PendingHomeSend>,
+    /// Terminal 输入按当前 PTY（`term:{id}`）或未启动槽（`ws:{id}`）隔离。
     terminal_drafts: HashMap<String, String>,
-    terminal_input_workspace: Option<String>,
+    terminal_input_key: Option<String>,
     /// Timeline 虚拟化状态（Bottom 对齐钉底；跟随语义见 ui/timeline.rs）。
     timeline_list: ListState,
     timeline_following: bool,
@@ -599,6 +625,8 @@ pub struct AppView {
     terminal_back_to_bottom_focus: FocusHandle,
     terminal_start_focus: FocusHandle,
     terminal_close_focus: FocusHandle,
+    terminal_new_tab_focus: FocusHandle,
+    terminal_tab_focus: HashMap<String, FocusHandle>,
     /// rail 行级焦点句柄（按 RailStop::focus_key 懒建，会话删除后遗留条目
     /// 无副作用，随窗口生命周期回收）。
     rail_row_focus: BTreeMap<String, FocusHandle>,
@@ -683,7 +711,7 @@ pub struct AppView {
     /// SET-4：按 provider 懒建的 API key secure 输入实体（明文只留在
     /// 实体内，提交 / 取消 / 离开页面即清空，含 undo 栈）。
     settings_account_remove_confirm: Option<String>,
-    settings_account_names: HashMap<String, Entity<crate::ui::text_input::TextInput>>,
+    settings_account_rename: Option<settings::AccountRenameState>,
     settings_api_key_inputs: HashMap<String, Entity<crate::ui::text_input::TextInput>>,
     /// 非 Secret 登录详情，支持选中复制；不作为认证状态来源。
     settings_auth_details: HashMap<String, Entity<crate::ui::text_input::TextInput>>,
@@ -800,12 +828,13 @@ impl AppView {
             pending_model_menu_scroll: false,
             composer_drafts: HashMap::new(),
             no_session_draft: String::new(),
+            pending_home_send: None,
             terminal_action_layouts: ["terminal-input", "terminal-start", "terminal-close"]
                 .into_iter()
                 .map(|id| (id, ScrollHandle::new()))
                 .collect(),
             terminal_drafts: HashMap::new(),
-            terminal_input_workspace: None,
+            terminal_input_key: None,
             timeline_list: ListState::new(
                 0,
                 // F-06：Top 对齐让短会话从 Header 下开始；跟随 / 脱钩语义
@@ -996,6 +1025,11 @@ impl AppView {
                 .focus_handle()
                 .tab_stop(true)
                 .tab_index(INSPECTOR_TAB_INDEX),
+            terminal_new_tab_focus: cx
+                .focus_handle()
+                .tab_stop(true)
+                .tab_index(INSPECTOR_TAB_INDEX),
+            terminal_tab_focus: HashMap::new(),
             rail_row_focus: BTreeMap::new(),
             rail_hovered_session: None,
             session_rename: None,
@@ -1076,8 +1110,8 @@ impl AppView {
                 "composer-meta",
                 "composer-workspace",
                 "composer-context",
-                "composer-file-tools-hint",
                 "composer-project-task",
+                "model-picker",
             ]
             .into_iter()
             .map(|id| (id, ScrollHandle::new()))
@@ -1086,7 +1120,7 @@ impl AppView {
             entry_menu_scroll: ScrollHandle::new(),
             pending_scope_menu_scroll: false,
             settings_account_remove_confirm: None,
-            settings_account_names: HashMap::new(),
+            settings_account_rename: None,
             settings_api_key_inputs: HashMap::new(),
             settings_auth_details: HashMap::new(),
             settings_copied_auth: None,
@@ -1764,14 +1798,14 @@ impl AppView {
                             .refresh_timeline(session.as_str().to_string(), after);
                     }
                 }
-                // SET-4：Succeeded / Removed 落地后重查一次
-                // provider_auth_status（目录与 env 残留交权威裁决）。
+                // SET-4 / R07：Succeeded / Removed 落地后重查权威状态
+                // 与两套 model_list（加 key 后目录不能停在进页时的静态回退）。
                 if self
                     .projection
                     .settings_providers
                     .take_pending_status_refresh()
                 {
-                    self.refresh_provider_status();
+                    self.refresh_models_authority();
                 }
             }
             ControllerEvent::SessionArchiveFinished {
@@ -1782,7 +1816,16 @@ impl AppView {
                 self.finish_session_archive(session_id, archived, result, cx);
             }
             ControllerEvent::SessionCreated { session_id } => {
-                self.open_session(session_id, cx);
+                if let Some(pending) = self.pending_home_send.take() {
+                    self.composer_drafts
+                        .insert(session_id.clone(), pending.text.clone());
+                    self.no_session_draft.clear();
+                    self.open_session(session_id.clone(), cx);
+                    self.controller
+                        .send_message(session_id, pending.text, pending.model);
+                } else {
+                    self.open_session(session_id, cx);
+                }
             }
             ControllerEvent::WorkspaceOpened {
                 workspace_id,
@@ -1791,7 +1834,15 @@ impl AppView {
             } => {
                 self.scope_workspace_id = Some(workspace_id.clone());
                 if create_task {
-                    self.controller.create_session(Some(workspace_id));
+                    if let Some(existing) = self
+                        .projection
+                        .unstarted_session_id(Some(workspace_id.as_str()))
+                        .map(str::to_string)
+                    {
+                        self.open_session(existing, cx);
+                    } else {
+                        self.controller.create_session(Some(workspace_id));
+                    }
                 }
                 self.reconcile_terminal_workspace(cx);
                 self.rail_scroll_to_active = true;
@@ -2091,17 +2142,12 @@ impl AppView {
                 enabled,
                 cleared_roles,
             } => {
-                // Host Data 确认（回执即写后状态，ADR-055 D2/D3）：弹层先
-                // 按回执收敛，再重查权威全态（角色默认 / Composer / 两套
-                // 目录口径一致）；cleared_roles 诚实说明，不静默换绑。
+                // Host Data 确认（回执即写后状态，ADR-055 D2a）：按回执
+                // 收敛弹层与 Composer，不重探全通道目录。
                 self.projection.settings_providers.model_write_pending = None;
-                self.projection.settings_providers.confirm_model_enabled(
-                    &provider_id,
-                    &model_id,
-                    enabled,
-                );
-                self.apply_model_cleared_note(&cleared_roles);
-                self.refresh_models_authority();
+                self.projection
+                    .apply_model_enabled(&provider_id, &model_id, enabled);
+                self.apply_model_cleared_roles(&cleared_roles);
             }
             ControllerEvent::ProviderModelsEnabledConfirmed {
                 provider_id,
@@ -2110,10 +2156,8 @@ impl AppView {
             } => {
                 self.projection.settings_providers.model_write_pending = None;
                 self.projection
-                    .settings_providers
-                    .confirm_provider_models_enabled(&provider_id, enabled);
-                self.apply_model_cleared_note(&cleared_roles);
-                self.refresh_models_authority();
+                    .apply_provider_models_enabled(&provider_id, enabled);
+                self.apply_model_cleared_roles(&cleared_roles);
             }
             ControllerEvent::PermissionsSettingsLoaded(data) => {
                 self.projection.settings_permissions.apply_loaded(data);
@@ -2230,6 +2274,9 @@ impl AppView {
                         // 写盘可能已成功、仅清密失败：重查清单与 Host 对齐。
                         self.refresh_resources(cx);
                     }
+                }
+                if action == "create session" {
+                    self.pending_home_send = None;
                 }
                 self.status_hint = Some(i18n::t2("status.action_failed", &action, &reason));
             }
@@ -2515,6 +2562,18 @@ impl AppView {
             cx.notify();
             return;
         }
+        if let Some(existing) = self
+            .projection
+            .unstarted_session_id(workspace_id.as_deref())
+            .map(str::to_string)
+        {
+            if self.projection.active_session_id.as_deref() != Some(existing.as_str()) {
+                self.open_session(existing, cx);
+            }
+            self.focus_composer(window, cx);
+            cx.notify();
+            return;
+        }
         self.controller.create_session(workspace_id);
         self.focus_composer(window, cx);
         cx.notify();
@@ -2771,6 +2830,11 @@ impl AppView {
             cx.stop_propagation();
             return;
         }
+        if key == "escape" && self.account_rename_input_focused(window, cx) {
+            self.cancel_account_rename(window, cx);
+            cx.stop_propagation();
+            return;
+        }
         if self.handle_settings_models_key(event, window, cx) {
             return;
         }
@@ -3021,7 +3085,7 @@ impl AppView {
     fn menu_item_count(&self) -> usize {
         match self.open_menu.as_ref() {
             Some(MenuKind::Scope | MenuKind::ProjectTask) => self.project_menu_options().len() + 1,
-            Some(MenuKind::Model) => self.filtered_model_entries().len() + 1,
+            Some(MenuKind::Model) => self.model_menu_row_count() + 1,
             // 清除行始终可选；空候选时仍可移除已保存的默认角色。
             Some(MenuKind::SettingsRole(_)) => {
                 let entries = settings::settings_role_menu_entries(
@@ -3105,8 +3169,10 @@ impl AppView {
             Some(MenuKind::Scope | MenuKind::ProjectTask) => {
                 self.scope_menu_scroll.scroll_to_item(next)
             }
-            Some(MenuKind::Model) if next < self.filtered_model_entries().len() => {
-                self.model_menu_scroll.scroll_to_item(next)
+            Some(MenuKind::Model) => {
+                if let Some(child) = self.model_menu_scroll_child_index(next) {
+                    self.model_menu_scroll.scroll_to_item(child);
+                }
             }
             Some(MenuKind::Entry(_)) => self.entry_menu_scroll.scroll_to_item(next),
             Some(MenuKind::SettingsRole(role)) => {
@@ -3143,7 +3209,7 @@ impl AppView {
                 {
                     return;
                 }
-                if ix == self.filtered_model_entries().len() {
+                if ix == self.model_menu_row_count() {
                     self.on_manage_composer_models(window, cx);
                     return;
                 }
@@ -3328,8 +3394,6 @@ impl AppView {
 
     fn run_status_visible(&self) -> bool {
         self.route == AppRoute::Workspace
-            && (self.projection.active_run_id.is_some()
-                || self.projection.pending_approval.is_some())
     }
 
     fn on_manage_composer_models(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -3377,13 +3441,22 @@ impl AppView {
         self.refresh_resources(cx);
     }
 
-    /// 模型启用写回执后的权威重查（ADR-055 D2）：provider_auth_status
-    /// （角色默认）+ 两套 model_list 口径（过滤 / 全量），让弹层 Switch、
-    /// 四角色区与 Composer 一致。断线时保留 stale 只读结果。
+    /// 认证成功 / 移除与页级 Refresh 的权威重查：provider_auth_status
+    /// + 两套 model_list。单次启停回执不再走这里（ADR-055 D2a）。
     fn refresh_models_authority(&mut self) {
         self.refresh_provider_status();
         self.controller.load_models();
         self.controller.load_model_catalog();
+    }
+
+    /// 启停回执的角色清除：提示文案 + 本地清空对应角色键，不静默换绑。
+    fn apply_model_cleared_roles(&mut self, cleared_roles: &[String]) {
+        self.apply_model_cleared_note(cleared_roles);
+        for role_name in cleared_roles {
+            if let Some(role) = SettingsRole::from_wire_name(role_name) {
+                self.projection.confirm_role_default_pair(role, None);
+            }
+        }
     }
 
     /// cleared_roles 诚实说明（ADR-055 D3）：Host 清除的角色默认对按
@@ -3591,6 +3664,15 @@ impl AppView {
             self.commit_session_rename(window, cx);
             return;
         }
+        if self.account_rename_input_focused(window, cx) {
+            if let Some(rename) = self.settings_account_rename.as_ref() {
+                if rename.input.read(cx).is_composing() {
+                    return;
+                }
+            }
+            self.commit_account_rename(window, cx);
+            return;
+        }
         if self
             .terminal_input
             .read(cx)
@@ -3769,34 +3851,46 @@ impl AppView {
             .or_else(|| self.projection.workspace_id.clone())
     }
 
+    fn terminal_draft_key(&self) -> Option<String> {
+        terminal_draft_key(
+            self.projection.terminal.workspace_id.as_deref(),
+            self.projection.terminal.session_id.as_deref(),
+        )
+    }
+
     pub(super) fn reconcile_terminal_workspace(&mut self, cx: &mut Context<Self>) {
         let workspace_id = self.inspector_workspace_id();
-        if self.terminal_input_workspace != workspace_id {
-            let visible_text = self.terminal_input.read(cx).text().to_string();
-            if let Some(previous) = self.terminal_input_workspace.as_ref() {
-                self.terminal_drafts
-                    .insert(previous.clone(), visible_text.clone());
-            }
-
-            let draft = workspace_id
-                .as_ref()
-                .and_then(|workspace| self.terminal_drafts.get(workspace))
-                .cloned()
-                .unwrap_or_default();
-            if self.terminal_input_workspace.is_some() || visible_text.is_empty() {
-                self.terminal_input
-                    .update(cx, |input, cx| input.reset_text(draft, cx));
-            } else if let Some(workspace) = workspace_id.as_ref() {
-                // 初次建立 workspace 归属时保留用户已输入但尚未归属的文本。
-                self.terminal_drafts.insert(workspace.clone(), visible_text);
-            }
-            self.terminal_input_workspace = workspace_id.clone();
-        }
         self.projection
             .select_terminal_for_workspace(workspace_id.as_deref());
+        self.reconcile_terminal_draft(cx);
         // 终端选择变化后，尺寸草稿跟随新终端的 Host 权威值，避免把为旧
         // 终端准备的尺寸应用到新终端。
         self.terminal_size_draft = None;
+    }
+
+    fn reconcile_terminal_draft(&mut self, cx: &mut Context<Self>) {
+        let key = self.terminal_draft_key();
+        if self.terminal_input_key == key {
+            return;
+        }
+        let visible_text = self.terminal_input.read(cx).text().to_string();
+        if let Some(previous) = self.terminal_input_key.as_ref() {
+            self.terminal_drafts
+                .insert(previous.clone(), visible_text.clone());
+        }
+        let draft = key
+            .as_ref()
+            .and_then(|key| self.terminal_drafts.get(key))
+            .cloned()
+            .unwrap_or_default();
+        if self.terminal_input_key.is_some() || visible_text.is_empty() {
+            self.terminal_input
+                .update(cx, |input, cx| input.reset_text(draft, cx));
+        } else if let Some(key) = key.as_ref() {
+            // 初次建立归属时保留用户已输入但尚未归属的文本。
+            self.terminal_drafts.insert(key.clone(), visible_text);
+        }
+        self.terminal_input_key = key;
     }
 
     /// 拉取 MCP server 清单（mcp_list）。
@@ -4048,11 +4142,6 @@ impl AppView {
     }
 
     fn send_current_message(&mut self, cx: &mut Context<Self>) {
-        let Some(session_id) = self.projection.active_session_id.clone() else {
-            self.status_hint = Some(i18n::t("status.open_session_first").into());
-            cx.notify();
-            return;
-        };
         if !self.can_send(cx) {
             return;
         }
@@ -4061,7 +4150,30 @@ impl AppView {
             return;
         }
         let model = self.projection.effective_model().cloned();
-        self.controller.send_message(session_id, text, model);
+        let unstarted = self
+            .projection
+            .unstarted_session_id(None)
+            .map(str::to_string);
+        match home_send_plan(
+            self.projection.active_session_id.as_deref(),
+            unstarted.as_deref(),
+        ) {
+            HomeSendPlan::ActiveSession(session_id) => {
+                self.controller.send_message(session_id, text, model);
+            }
+            HomeSendPlan::ReuseUnstarted(session_id) => {
+                self.composer_drafts
+                    .insert(session_id.clone(), text.clone());
+                self.no_session_draft.clear();
+                self.open_session(session_id.clone(), cx);
+                self.controller.send_message(session_id, text, model);
+            }
+            HomeSendPlan::CreateUnassigned => {
+                self.pending_home_send = Some(PendingHomeSend { text, model });
+                self.controller.create_session(None);
+                cx.notify();
+            }
+        }
     }
 
     fn on_cancel_clicked(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
@@ -4116,14 +4228,16 @@ impl AppView {
     }
 
     fn can_send(&self, cx: &App) -> bool {
-        matches!(
-            self.projection.connection,
-            ConnectionState::Connected { .. }
-        ) && self.projection.active_session_id.is_some()
-            && self.projection.active_run_id.is_none()
-            // 全关空态 fail-closed：无已启用模型不发送、不编造模型。
-            && !self.model_catalog_empty()
-            && self.composer_has_sendable_text(cx)
+        input_area::composer_send_allowed(
+            matches!(
+                self.projection.connection,
+                ConnectionState::Connected { .. }
+            ),
+            self.projection.active_run_id.is_some(),
+            self.model_catalog_empty(),
+            self.composer_has_sendable_text(cx),
+            self.pending_home_send.is_some(),
+        )
     }
 
     fn stash_composer_draft(&mut self, cx: &App) {
@@ -4273,13 +4387,13 @@ struct SessionRenameState {
 /// 行内改名的提交裁决：trim 后为空 → 保留编辑器不提交（与 Host 的空
 /// title 结构化拒绝同语义）；与当前标题一致 → 仅退出编辑；否则提交。
 #[derive(Debug)]
-enum SessionRenameDecision {
+pub(crate) enum SessionRenameDecision {
     KeepEditing,
     Close,
     Submit(String),
 }
 
-fn session_rename_decision(current: &str, draft: &str) -> SessionRenameDecision {
+pub(crate) fn session_rename_decision(current: &str, draft: &str) -> SessionRenameDecision {
     let trimmed = draft.trim();
     if trimmed.is_empty() {
         SessionRenameDecision::KeepEditing
@@ -4465,6 +4579,17 @@ pub(crate) fn terminal_known_ended(terminal: &TerminalState) -> bool {
     )
 }
 
+fn terminal_draft_key(
+    workspace_id: Option<&str>,
+    terminal_session_id: Option<&str>,
+) -> Option<String> {
+    if let Some(id) = terminal_session_id {
+        Some(format!("term:{id}"))
+    } else {
+        workspace_id.map(|workspace| format!("ws:{workspace}"))
+    }
+}
+
 /// 只有 Host 已证明进程退出或被终止的终端可直接 New。`failed` 表示
 /// forwarder 断流，进程可能仍在运行，必须先 Close 清理后再 Start。
 pub(crate) fn terminal_can_reopen(terminal: &TerminalState) -> bool {
@@ -4575,13 +4700,14 @@ impl Render for AppView {
             }
         }
         if self.pending_model_menu_scroll {
-            if !matches!(self.open_menu, Some(MenuKind::Model))
-                || self.filtered_model_entries().is_empty()
+            if !matches!(self.open_menu, Some(MenuKind::Model)) || self.model_menu_row_count() == 0
             {
                 self.pending_model_menu_scroll = false;
             } else if self.model_menu_scroll.bounds().size.height > px(0.0) {
-                self.model_menu_scroll
-                    .scroll_to_item(self.menu_selected_index());
+                if let Some(child) = self.model_menu_scroll_child_index(self.menu_selected_index())
+                {
+                    self.model_menu_scroll.scroll_to_item(child);
+                }
                 self.pending_model_menu_scroll = false;
             } else {
                 cx.defer_in(window, |_view, _window, cx| cx.notify());
@@ -4624,7 +4750,9 @@ impl Render for AppView {
             self.open_menu = None;
         }
         let now_ms = now_unix_ms();
-        let run_status = self.projection.run_status_label(now_ms);
+        let run_metrics = self
+            .projection
+            .run_usage_display(self.projection.status_run_id(), now_ms);
         // GUI2-05：窄窗显式打开走中央呈现；InspectorMotion 只用于宽窗并排。
         let shell = shell_layout::resolve(
             window.viewport_size().width,
@@ -4833,17 +4961,12 @@ impl Render for AppView {
                     .child(main)
                     // F-13：信息串居中；Inspector/Activity 触发器已随
                     // F-12（R6 Wave A）迁至 Workspace Header。P2-1：
-                    // StatusBar 只在工作台渲染，Settings 壳不显示
+                    // StatusBar 只在工作台渲染（常驻），Settings 壳不显示
                     // RunStatusBar（render 与 AX 同源）。
                     .when(self.run_status_visible(), |column| {
                         column.child(
-                            StatusBar::new().centered(
-                                div().flex().items_center().gap_4().children(
-                                    run_status
-                                        .split(" | ")
-                                        .map(|metric| Badge::new(metric.to_string())),
-                                ),
-                            ),
+                            StatusBar::new()
+                                .centered(timeline_entry::run_metrics_element(&run_metrics)),
                         )
                     }),
             )
@@ -4865,6 +4988,7 @@ mod tests {
             parent_branch_id: None,
             forked_from_event_id: None,
             active: false,
+            unstarted: false,
         }
     }
 
@@ -4956,7 +5080,7 @@ mod tests {
             view.terminal_input
                 .update(cx, |input, cx| input.set_text("command for A", cx));
             view.terminal_drafts
-                .insert("ws-b".into(), "command for B".into());
+                .insert("term:term-b".into(), "command for B".into());
             view.text_input
                 .update(cx, |input, cx| input.set_text("draft for A", cx));
             view.no_session_draft = "no session draft".into();
@@ -4977,10 +5101,10 @@ mod tests {
                 );
                 assert_eq!(view.text_input.read(cx).text(), "no session draft");
                 assert_eq!(
-                    view.terminal_drafts.get("ws-a").map(String::as_str),
+                    view.terminal_drafts.get("term:term-a").map(String::as_str),
                     Some("command for A")
                 );
-                assert_eq!(view.terminal_input_workspace.as_deref(), Some("ws-b"));
+                assert_eq!(view.terminal_input_key.as_deref(), Some("term:term-b"));
                 assert_eq!(
                     view.projection.terminal.session_id.as_deref(),
                     Some("term-b")
@@ -5062,12 +5186,25 @@ mod tests {
 
     #[test]
     fn workspace_empty_state_has_one_clear_primary_path() {
-        assert_eq!(workspace_empty_title(), "Start a task");
+        assert_eq!(workspace_empty_title(), "Start a conversation");
         assert_eq!(
             workspace_empty_hint(),
-            "Choose a task from the sidebar or create a new one."
+            "Type below to start an unassigned conversation, or create a task from the sidebar."
         );
         assert!(!workspace_empty_hint().contains("Cmd+"));
+    }
+
+    #[test]
+    fn home_send_plan_prefers_active_then_unassigned_unstarted() {
+        assert_eq!(
+            home_send_plan(Some("s-1"), Some("s-open")),
+            HomeSendPlan::ActiveSession("s-1".into())
+        );
+        assert_eq!(
+            home_send_plan(None, Some("s-open")),
+            HomeSendPlan::ReuseUnstarted("s-open".into())
+        );
+        assert_eq!(home_send_plan(None, None), HomeSendPlan::CreateUnassigned);
     }
 
     /// GUI2-01：全局新建 → scope → grouping → 项目头 / 定向新建 → task 行；

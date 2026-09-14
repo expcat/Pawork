@@ -34,7 +34,7 @@
 ### 3.1 Secret 后端
 
 - `SecretBackend`（`Send + Sync`）：以 `(service, account)` 定位。`store` / `get`（缺失报 `NotFound`）/ `delete`；`store_batch` 默认逐条写，正式后端（FileBackend）覆写为单次原子提交；`replace_batch(entries, deletions)` 原子写入并删除旧条目（FileBackend/MemoryBackend 实现；其他后端默认拒绝，不部分提交）；`refresh_lock_path()`（`#[doc(hidden)]` 扩展点）返回跨进程 refresh 锁路径，默认 `None`。
-- `FileBackend::new()`：默认路径 `$PAWORK_HOME/auth.json`，未设时 `~/.pawork/auth.json`；`with_path`（测试）；`path()` 诊断（不含 secret）。
+- `FileBackend::new()`：默认路径 `$PAWORK_HOME/auth.json`，未设时 `~/.pawork/auth.json`；`with_path`（测试）；`path()` 诊断（不含 secret）。`AppCore` 始终用默认路径——凭证为全局共享，**不随 `--instance` 隔离**（2026-09-14 事故：测试实例里 `auth set-key` 覆盖了生产 deepseek key，操作前须先备份该文件）。
 - 文件格式：`{ version: 1, entries: { service: { account: secret } } }`；只接受 `FORMAT_VERSION = 1`，版本不符 fail-closed。
 - 锁文件（与 auth 文件同目录、非机密）：写锁 `auth.write.lock`（10ms 重试、30s 超时）；OAuth refresh 锁 `auth.refresh.lock`（经 `refresh_lock_path` 暴露给 refresh 编排）。
 - `MemoryBackend::new()` / `len` / `is_empty`：进程内 HashMap，仅单元测试用；故意不派生 Debug 防明文入断言输出。
@@ -42,7 +42,7 @@
 
 `SecretBackend::transaction` 在写锁内提供隔离快照，回调失败不提交；FileBackend load-modify-save 一次，MemoryBackend 复制并提交，未实现事务的 backend 显式拒绝。回调不能持原 backend 或跨网络等待。
 
-账号面导出 `ProviderAccountKind / ProviderAccount / ProviderAccounts`、`list_provider_accounts`、`provider_accounts_revision`、`validate_account_name`、`add_api_key_account` / `add_oauth_account`、`select_provider_account`、`remove_provider_account` / `remove_all_provider_accounts`。`load_account_oauth_meta` 读取指定 OAuth 记录；旧 default helper 是统一存储的入口。细节见 [ADR-059](../settings.md#adr-059ui-6b-命名账号与持久选择2026-09-08)。
+账号面导出 `ProviderAccountKind / ProviderAccount / ProviderAccounts`、`list_provider_accounts`、`provider_accounts_revision`、`validate_account_name`、`default_account_label` / `default_api_key_account_name` / `default_oauth_account_name`、`add_api_key_account` / `add_oauth_account`、`rename_provider_account`、`select_provider_account`、`remove_provider_account` / `remove_all_provider_accounts`。空 `display_name` 在新增时先经 `resolve_new_account_name` 生成默认名（API key 脱敏串；OAuth 优先 `oauth::oauth_login_email`，否则脱敏 access token），再走既有非空校验。`load_account_oauth_meta` 读取指定 OAuth 记录；旧 default helper 是统一存储的入口。细节见 [ADR-059](../settings.md#adr-059ui-6b-命名账号与持久选择2026-09-08) / [ADR-061](../settings.md#adr-061账号默认名称与重命名2026-09-13)。
 
 ### 3.2 命名与定位（locator 单一事实源）
 
@@ -63,7 +63,7 @@
 ### 3.4 OAuth 流程
 
 - 类型：`PkceFlowConfig`（client_id / auth_url / token_url / redirect_uri / scopes / provider / extra_auth_params）与 `PkceSession`；`Pkce`（S256；verifier = 48 随机字节的 base64url，恰 64 字符，满足 RFC 7636 43–128 且无取模偏差）；`DeviceFlowConfig` / `DeviceUserPrompt`（user_code / verification_uri(_complete) / device_code / expires_in / interval）；`OAuthRefreshConfig { token_url, client_id, refresh_skew }`；`TokenSet { access_token, refresh_token?, id_token?, expires_in?, token_type, scope? }`（明文只短暂在内存，Debug 全脱敏，绝不落盘）。
-- 入口：`http_client()`（唯一 OAuth/MCP 默认构造：`redirect(Policy::none())`，失败映射 `AuthError::Http`）；`start_pkce_flow` / `start_pkce_flow_with_callback`（绑定一次性 `CallbackServer` 并回填实际端口）/ `exchange_pkce_code`（state 不符即 CSRF 拒绝）；`request_device_authorization` / `poll_device_token`（`authorization_pending` 续轮询、`slow_down` interval +5s、`expired_token` 或超出 max_duration → `ExpiredToken`）；`refresh_access_token`；`store_oauth_token` / `update_oauth_token`（多凭证形态，service=`pawork.<provider>.oauth`，account=`<cred_id>.access/.refresh`；空 access/refresh 先拒绝且不产生部分写入；轮换场景整批 `store_batch` 提交，兼容后端至少先写 refresh 再写 access）；`resolve_oauth_credential(_for_request)`（后者先 auto-refresh 再返回 `CredentialKind::OAuthBearer`）；`read_refresh_token`（缺失归一 `NotFound`）；`needs_refresh(stored, skew)`（无 `expires_at` 视为不需刷新）；`random_state`（32 随机字节 base64url）。
+- 入口：`http_client()`（唯一 OAuth/MCP 默认构造：`redirect(Policy::none())`，失败映射 `AuthError::Http`）；`start_pkce_flow` / `start_pkce_flow_with_callback`（绑定一次性 `CallbackServer` 并回填实际端口）/ `exchange_pkce_code`（state 不符即 CSRF 拒绝）；`request_device_authorization` / `poll_device_token`（`authorization_pending` 续轮询、`slow_down` interval +5s、`expired_token` 或超出 max_duration → `ExpiredToken`）；`refresh_access_token`；`store_oauth_token` / `update_oauth_token`（多凭证形态，service=`pawork.<provider>.oauth`，account=`<cred_id>.access/.refresh`；空 access/refresh 先拒绝且不产生部分写入；轮换场景整批 `store_batch` 提交，兼容后端至少先写 refresh 再写 access）；`resolve_oauth_credential(_for_request)`（后者先 auto-refresh 再返回 `CredentialKind::OAuthBearer`）；`oauth_login_email`（不验签读 `id_token` 的 `email` claim，形态不合理则忽略）；`read_refresh_token`（缺失归一 `NotFound`）；`needs_refresh(stored, skew)`（无 `expires_at` 视为不需刷新）；`random_state`（32 随机字节 base64url）。
 - `CallbackServer::start(port)`（监听 127.0.0.1）/ `local_addr` / `bind_redirect_uri`（强制 http + loopback host、端口回填校验）/ `wait_for_code(timeout)`；单连接、5 分钟 accept 上限、请求头 64 KiB 上限、响应固定纯文本（不回显 query 输入）。
 - 错误：token endpoint 标准错误归一为 `TokenEndpoint { error, description }`；其余流程错误 `OAuth(String)` / `Callback(String)`，都不含 token。
 
@@ -75,6 +75,8 @@
 ## 4. 核心行为与数据流
 
 UI-6b G2（[ADR-060](../settings.md#adr-060ui-6b-g2-逐账号额度与耗尽切换2026-09-09)）：`ProviderAccountSelectionMode`、`ProviderAccounts.selection_mode/revision` 随索引同事务读取；`set_provider_account_selection_mode` 校验 Go 显式选中 API key；`select_provider_account_if_revision` 在事务内验证 revision/模式/原选中/目标，冲突不写 revision。手动选择恢复 Manual，删除最后/清空重置；既有外层 version 1、secret 隔离与刷新语义不变。
+
+ADR-061：空新增名生成默认展示名（短邮箱原文，过长掩本地部分；API key / 无邮箱 OAuth 用头尾加 `*`）；`rename_provider_account` 经 `validate_account_name` 写索引并推进 revision。默认名与重命名不改 secret 槽。
 
 ### 4.1 Provider 凭证解析链（装配期统一入口）
 
@@ -99,7 +101,7 @@ UI-6b 起先解析账号索引：显式 API key 选择返回该账号；显式 O
 
 1. `resolve_oauth_credential_for_request` → `refresh_oauth_credential_if_needed`：`needs_refresh`（`expires_at ≤ now + skew`；无过期时间不刷）不满足直接返回。
 2. 进程内 gate：同 `(service, account)` 的并发请求共用一个 `RefreshGate`（async 锁 + 最新元数据发布）；等待者醒来后若后端 access 指纹（SHA-256）仍是已发布版本，直接复用元数据，**不再次消费一次性 refresh token**。
-3. 跨进程锁：后端提供 `refresh_lock_path`（FileBackend 为 `auth.refresh.lock`）时，锁外先快照 access/refresh，取锁（10ms 重试、120s 超时）后重读；若别的 Pawork 进程已完成轮换则直接采用其结果并返回。
+3. 跨进程锁：后端提供 `refresh_lock_path`（FileBackend 为 `auth.refresh.lock`）时，锁外先快照 access/refresh，取锁（10ms 重试、120s 超时）后重读；若别的 Pawork 进程已完成轮换（token 或除 `display_name` 外的 meta 已变）则直接采用其结果并返回。账号索引里的 `display_name` 是展示别名，不在 OAuth meta 中，reload 后不得当作「凭证已变」而跳过刷新。
 4. 仍需刷新才 `refresh_access_token`；成功后按注入的持久化策略（多凭证 `update_oauth_token` / default 条目 `update_default_oauth_token`）把轮换后 token 与过期元数据整批写回（先 refresh 后 access 的原子批），最后向 gate 发布新 access 的 SHA-256 指纹与脱敏元数据。刷新响应缺 `expires_in` 时保留旧到期时间（下次仍尝试刷新，而不是误判永不过期），缺 refresh_token 时保留后端旧值；响应携带 `scope` 时按空白拆分覆盖 scopes。
 5. 两种条目形态共用同一 singleflight 核心 `refresh_oauth_credential_with`（crate 内），只注入到期判断、持久化与 reload 策略，gate 与发布顺序保持唯一实现——default 条目额外在锁内 reload meta 以吸收其他进程写入。
 
@@ -138,7 +140,7 @@ UI-6b 起先解析账号索引：显式 API key 选择返回该账号；显式 O
 | `backend.rs` / `file_backend.rs` | store/get/delete 往返、`store_batch` 原子性、0600 权限、原子替换、损坏文件与版本不符 fail-closed、write 锁竞争（测试用 `std::env::temp_dir()` 唯一路径） |
 | `locator.rs` / `resolve.rs` | env 名推导（大写、`-`→`_`）、解析链三分支、仅 `NotFound` 降级、损坏上抛、env 值不入日志字段 |
 | `masked.rs` / `base64url.rs` | 三档脱敏边界、Unicode 安全、非规范 base64url 拒绝 |
-| `credential.rs` / `default_credential.rs` | 元数据序列化无明文、default 三账户读写、Memory/File 两后端 OAuth 替换缺 refresh 不继承旧账号且 API key 共存不变、非法替换保旧、刷新缺 refresh 保留当前值、meta 损坏报 `MalformedMetadata`、ChatGPT account_id claim 提取 |
+| `credential.rs` / `default_credential.rs` | 元数据序列化无明文、default 三账户读写、Memory/File 两后端 OAuth 替换缺 refresh 不继承旧账号且 API key 共存不变、非法替换保旧、刷新缺 refresh 保留当前值、meta 损坏报 `MalformedMetadata`、ChatGPT account_id claim 提取、FileBackend 过期凭证在账号 `display_name` 与 meta 占位名不一致时仍自动 refresh 并轮转落盘 |
 | `oauth.rs` | PKCE 与 Device 全流程、refresh 语义、回调服务器行为（见下） |
 
 `oauth.rs` 内联回归要点：
@@ -148,9 +150,10 @@ UI-6b 起先解析账号索引：显式 API key 选择返回该账号；显式 O
 - `update_oauth_token` 轮换落盘、刷新缺 `expires_in` 保留旧到期时间、`needs_refresh` skew 边界；
 - wiremock 驱动：PKCE 交换成功 / state 不符拒绝 / token endpoint 标准错误归一、Device pending→成功轮询、refresh 换新 token、请求前置解析自动刷新并持久化轮换；
 - `concurrent_refreshes_share_one_singleflight_exchange`：并发刷新只发生一次 token exchange（`.expect(1)`）；
+- FileBackend 锁内 reload 比较排除账号 `display_name`（`file_backend_refresh_ignores_account_display_name`）；
 - 回调服务器：code/state 解析、错误回调不反射 query 输入、分片请求头（8 KiB cookie）读取、PKCE 回调流使用实际监听端口。
 
-UI-6b 定向回归覆盖 legacy 无写读取、同 kind 多账号、选择/重开、选中删除保护、并发 writer 保留全部账号、事务失败不落部分写入，以及 refresh 期间删除/重新登录不被迟到结果覆盖。
+UI-6b 定向回归覆盖 legacy 无写读取、同 kind 多账号、选择/重开、选中删除保护、并发 writer 保留全部账号、事务失败不落部分写入，以及 refresh 期间删除/重新登录不被迟到结果覆盖。ADR-061 覆盖默认名脱敏分档、短邮箱原文、空名新增后重命名与空重命名拒绝。
 
 ## 8. 注意事项与已知限制
 

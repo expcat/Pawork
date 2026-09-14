@@ -17,6 +17,20 @@ use crate::loop_ctx::SessionLoopCtx;
 use crate::persist::PersistThenRender;
 use crate::{AppCore, AppError};
 
+/// 账本幂等键含 request_id（control-plane 按 (tenant, account, request_id,
+/// upstream_attempt) 去重）：裸 `req-{n}` 在 Host 重启、计数器归零后撞键，
+/// 新 run 的用量会被账本当成同一请求的重放拒收（实证见 docs/ROADMAP.md
+/// §2.2，2026-09-14）。与 client `new_request_namespace` 同形态：pid +
+/// 纳秒 + 进程内计数器——毫秒粒度不够（测试实证同毫秒双 AppCore 仍撞）。
+fn run_request_id(core: &AppCore) -> RequestId {
+    let n = core.next_request.fetch_add(1, Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    RequestId::from(format!("req-{:x}-{nanos:x}-{n}", std::process::id()))
+}
+
 pub(crate) struct RunService;
 
 impl RunService {
@@ -83,7 +97,7 @@ impl RunService {
         render: &dyn AgentEventSink,
         cancel: CancellationToken,
     ) -> Result<ModelResponseSummary, AppError> {
-        let n = core.next_request.fetch_add(1, Ordering::Relaxed);
+        let request_id = run_request_id(core);
         let trigger = messages.last_mut().ok_or(AppError::EmptyTurn)?;
         if trigger.role != MessageRole::User {
             return Err(AppError::EmptyTurn);
@@ -134,7 +148,6 @@ impl RunService {
                 },
             );
         }
-        let request_id = RequestId::from(format!("req-{n}"));
         let request = assemble_request_with_tools(
             request_id.clone(),
             core.model.clone(),
@@ -348,6 +361,34 @@ mod tests {
 
     use crate::testsupport::{mock_core, user_hello, RecordingEvents};
     use crate::AppCore;
+
+    /// 账本幂等键含 request_id：Host 重启计数器归零后，不同 run 的 id
+    /// 不得相同，否则新用量被 (tenant, account, request_id, attempt)
+    /// 去重拒收（2026-09-14 vfix 实证：echo run 2474/29 未入帐）。
+    #[tokio::test]
+    async fn run_request_id_survives_counter_reset_across_host_restarts() {
+        let (core_a, _dir_a) = mock_core(vec![ProviderStreamEvent::ResponseCompleted(
+            StopReason::Completed,
+        )])
+        .await;
+        let (core_b, _dir_b) = mock_core(vec![ProviderStreamEvent::ResponseCompleted(
+            StopReason::Completed,
+        )])
+        .await;
+        let id_a = super::run_request_id(&core_a);
+        let id_b = super::run_request_id(&core_b);
+        // 修复前两者都是 req-1（计数器各从 1 起）必然撞键；仅毫秒也不够，
+        // 本测试两个 AppCore 即在同毫秒内构造完成。
+        assert_ne!(id_a.as_str(), id_b.as_str());
+        for id in [id_a.as_str(), id_b.as_str()] {
+            let body = id.strip_prefix("req-").expect("req- prefix");
+            let parts: Vec<&str> = body.split('-').collect();
+            assert_eq!(parts.len(), 3, "req-<pid>-<nanos>-<n>: {id}");
+            assert!(u64::from_str_radix(parts[0], 16).is_ok());
+            assert!(u128::from_str_radix(parts[1], 16).is_ok());
+            assert!(parts[2].parse::<u64>().is_ok());
+        }
+    }
 
     #[tokio::test]
     async fn chat_turn_persists_and_projects_for_resume() {

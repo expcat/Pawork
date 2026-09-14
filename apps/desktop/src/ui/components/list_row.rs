@@ -125,6 +125,7 @@ impl RenderOnce for ListRow {
                 row = row
                     .flex()
                     .flex_row()
+                    .w_full()
                     .items_center()
                     .min_w_0()
                     .h(px(self.height))
@@ -139,15 +140,17 @@ impl RenderOnce for ListRow {
                 }
             }
             ListRowKind::ProjectHeader => {
-                // R3 Wave A：项目头行高对齐任务行（44），chevron + 名称垂直居中。
+                // 与 Task 同行 `px_2`：计数 / 「+」与改名 / 归档共用右缘 inset。
                 row = row
                     .flex()
                     .flex_row()
+                    .w_full()
                     .flex_1()
                     .min_w_0()
                     .items_center()
                     .gap_1()
                     .h(px(self.height))
+                    .px_2()
                     .rounded(ring_radius);
                 dark().surface.raised
             }

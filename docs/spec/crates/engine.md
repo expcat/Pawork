@@ -63,7 +63,7 @@
 
 ### 3.5 事件与错误
 
-- `AgentEventSink::emit(AgentEventEnvelope) -> Result<(), EngineError>`：唯一事件出口，调用方 persist-first 再渲染。sequence 由 engine 内部 `EventEmitter` 从 `start_sequence` 起原子递增分配，信封 `event_id` 格式 `evt-{run_id}-{sequence}`。
+- `AgentEventSink::emit(AgentEventEnvelope) -> Result<(), EngineError>`：唯一事件出口，调用方 persist-first 再渲染。sequence 由 engine 内部 `EventEmitter` 从 `start_sequence` 起原子递增分配，信封 `event_id` 格式 `evt-{run_id}-{sequence}`；信封 `timestamp` 为各事件 emit 时刻的墙钟（逐事件取值，不整轮共享 turn 构造时刻），排序与重放仍以 sequence 为准。
 - `EngineError` 三变体：
   - `Provider(ProviderError)`：provider 侧错误透传（`is_cancelled()` 判定其中的 Cancelled）；
   - `Sink(String)`：事件出口 / 前置校验失败（persist 失败、start_sequence 非法、nothing to compact 等）；

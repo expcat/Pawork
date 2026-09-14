@@ -1128,6 +1128,68 @@ async fn auth_set_api_key_verifies_replaces_and_masks_end_to_end() {
 }
 
 #[tokio::test]
+async fn auth_account_empty_name_generates_label_and_rename() {
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let secret = "sk-abcdEFGHwxyz-empty-name";
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/models"))
+        .and(header("authorization", &format!("Bearer {secret}")))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({ "data": [{ "id": "glm-5.2" }] })),
+        )
+        .expect(1..)
+        .mount(&server)
+        .await;
+
+    let backend = Arc::new(pawork_auth::MemoryBackend::new());
+    let (adapter, _dir) = settings_adapter(server.uri(), backend.clone()).await;
+    {
+        let mut core = adapter.core.write().await;
+        core.set_provider_use_proxy("glm-coding", false);
+    }
+    let added = adapter
+        .command(&command_envelope(AppCommand::AuthAccountAddApiKey {
+            provider_id: "glm-coding".into(),
+            display_name: String::new(),
+            api_key: pawork_protocol::ApiKeySecret::new(secret),
+        }))
+        .await
+        .expect("empty name add");
+    let AppResponse::Data(data) = added else {
+        panic!("add must return Data: {added:?}")
+    };
+    assert_eq!(data["display_name"], "sk-a***name");
+    let credential_id = data["credential_id"].as_str().expect("credential_id");
+    let renamed = adapter
+        .command(&command_envelope(AppCommand::AuthAccountRename {
+            provider_id: "glm-coding".into(),
+            credential_id: credential_id.into(),
+            display_name: " Work ".into(),
+        }))
+        .await
+        .expect("rename");
+    let AppResponse::Data(renamed) = renamed else {
+        panic!("rename must return Data: {renamed:?}")
+    };
+    assert_eq!(renamed["display_name"], "Work");
+    assert!(adapter
+        .command(&command_envelope(AppCommand::AuthAccountRename {
+            provider_id: "glm-coding".into(),
+            credential_id: credential_id.into(),
+            display_name: "   ".into(),
+        }))
+        .await
+        .is_err());
+    let inventory =
+        pawork_auth::list_provider_accounts(backend.as_ref(), &"glm-coding".into()).unwrap();
+    assert_eq!(inventory.accounts[0].display_name, "Work");
+}
+
+#[tokio::test]
 async fn go_key_verification_uses_authenticated_usage_and_preserves_old_key_on_failure() {
     use pawork_auth::SecretBackend as _;
     use wiremock::matchers::{header, method, path};
@@ -1966,6 +2028,65 @@ async fn xai_auth_set_api_key_main_path_connects_via_api_key() {
 }
 
 #[tokio::test]
+async fn kimi_code_auth_set_api_key_connects_via_coding_plan_key() {
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let secret = "sk-kimi-coding-plan-fixture-0001";
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/models"))
+        .and(header("authorization", &format!("Bearer {secret}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "object": "list",
+            "has_more": false,
+            "data": [{
+                "id": "kimi-for-coding",
+                "display_name": "K2.8 Preview"
+            }]
+        })))
+        .expect(1..)
+        .mount(&server)
+        .await;
+
+    let backend = Arc::new(pawork_auth::MemoryBackend::new());
+    let (adapter, _dir) =
+        settings_adapter_for_channel("kimi-code", "kimi-for-coding", server.uri(), backend).await;
+
+    let response = adapter
+        .command(&command_envelope(AppCommand::AuthSetApiKey {
+            provider_id: pawork_domain::ProviderId::from("kimi-code"),
+            api_key: pawork_protocol::ApiKeySecret::new(secret),
+        }))
+        .await
+        .expect("kimi-code api key verify-then-replace succeeds");
+    let AppResponse::Data(data) = response else {
+        panic!("AuthSetApiKey must return Data: {response:?}")
+    };
+    assert_eq!(data["provider_id"], "kimi-code");
+    assert_eq!(data["method"], "api_key");
+    server.verify().await;
+
+    let status = adapter
+        .query(&query_envelope(AppQuery::ProviderAuthStatus {
+            provider_id: Some(pawork_domain::ProviderId::from("kimi-code")),
+        }))
+        .await
+        .expect("provider auth status");
+    let AppResponse::Data(status) = status else {
+        panic!("ProviderAuthStatus must return Data: {status:?}")
+    };
+    let entry = &status["providers"][0];
+    assert_eq!(entry["provider_id"], "kimi-code");
+    assert_eq!(
+        entry["auth_methods"],
+        serde_json::json!(["oauth", "api_key"])
+    );
+    assert_eq!(entry["auth"]["type"], "connected");
+    assert_eq!(entry["auth"]["method"], "api_key");
+}
+
+#[tokio::test]
 async fn xai_auth_set_api_key_keeps_stored_oauth_credential() {
     use pawork_auth::SecretBackend as _;
     use wiremock::matchers::{method, path};
@@ -2390,6 +2511,46 @@ async fn set_model_enabled_roundtrip_and_model_list_states() {
             .any(|entry| entry["id"] == "glm-5.2" && entry["enabled"] == true),
         "re-enabled model must be back: {list}"
     );
+}
+
+/// 快照里的远端新 ID 不必再跑全通道探测；静态表没有也不能丢。
+#[tokio::test]
+async fn set_model_enabled_accepts_cached_remote_id() {
+    let _home_env = HOME_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let home = tempfile::tempdir().expect("home tempdir");
+    let _restore_home = RestoreHome(std::env::var_os("HOME"));
+    crate::testsupport::set_env("HOME", home.path().to_str().expect("utf-8 home"));
+    let backend = Arc::new(pawork_auth::MemoryBackend::new());
+    let (adapter, _dir) = settings_adapter("http://127.0.0.1:1".into(), backend).await;
+    {
+        let core = adapter.core.write().await;
+        core.remember_runnable_catalog(vec![pawork_providers::CatalogEntry {
+            id: pawork_domain::ModelId::from("glm-flash-unlisted"),
+            provider: pawork_domain::ProviderId::from("glm-coding"),
+            display_name: "unlisted".into(),
+            context_window_tokens: 0,
+            max_output_tokens: 0,
+            capabilities: pawork_domain::ModelCapabilities::default(),
+            pricing: None,
+            aliases: Vec::new(),
+        }]);
+    }
+
+    let response = adapter
+        .command(&command_envelope(AppCommand::SetModelEnabled {
+            provider_id: pawork_domain::ProviderId::from("glm-coding"),
+            model_id: "glm-flash-unlisted".into(),
+            enabled: false,
+        }))
+        .await
+        .expect("cached remote id must be accepted without a fresh overview");
+    let AppResponse::Data(data) = response else {
+        panic!("SetModelEnabled must return Data: {response:?}")
+    };
+    assert_eq!(data["model_id"], "glm-flash-unlisted");
+    assert_eq!(data["enabled"], false);
 }
 
 /// D3：禁用命中 conversation/naming 角色默认对 → 同批清除并如实回报。

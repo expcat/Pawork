@@ -95,7 +95,12 @@ impl AppView {
                 "approve_for_run",
                 ButtonVariant::Success,
             ),
-            ("approve-deny", t("approval.deny"), "deny", ButtonVariant::Danger),
+            (
+                "approve-deny",
+                t("approval.deny"),
+                "deny",
+                ButtonVariant::Danger,
+            ),
         ];
         let approve_once_focus = self.approve_once_focus.clone();
         let approve_for_run_focus = self.approve_for_run_focus.clone();
