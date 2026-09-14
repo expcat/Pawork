@@ -793,6 +793,73 @@ mod unix_tests {
     }
 
     #[tokio::test]
+    async fn event_stream_with_heartbeat_only_inbound_survives_watchdog() {
+        // BUG-GUI-01 回归：Run 流式期间 GUI 只发心跳、不发命令帧，
+        // 看门狗不得在流式途中静默断连；心跳真正停发后看门狗必须生效。
+        let connections = Arc::new(ConnectionManager::with_config(ConnectionManagerConfig {
+            heartbeat_timeout: Duration::from_millis(300),
+            queue_capacity: 1024,
+        }));
+        let harness = open_harness_with_connections("stream-keepalive", Some(connections)).await;
+        let _ = handshake_and_snapshot(&harness.client).await;
+
+        // 持续发布 Run 事件，跨越多个看门狗窗口（300ms 超时 / 150ms tick）。
+        let host = Arc::clone(&harness.host);
+        let publisher = tokio::spawn(async move {
+            for seq in 1..=24 {
+                host.publish(event(seq));
+                tokio::time::sleep(Duration::from_millis(40)).await;
+            }
+        });
+
+        // 客户端只发心跳（约 80ms 一次），期间必须持续收到事件帧。
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(1000);
+        let mut received = 0u64;
+        let mut last_heartbeat = tokio::time::Instant::now();
+        while tokio::time::Instant::now() < deadline {
+            if last_heartbeat.elapsed() >= Duration::from_millis(80) {
+                harness
+                    .client
+                    .send(&ClientFrame::Heartbeat { nonce: 7 })
+                    .await;
+                last_heartbeat = tokio::time::Instant::now();
+            }
+            match tokio::time::timeout(Duration::from_millis(120), harness.client.recv()).await {
+                Ok(ServerFrame::Event(_)) => received += 1,
+                Ok(ServerFrame::Pong { .. }) => {}
+                Ok(other) => panic!("unexpected frame during streaming: {other:?}"),
+                Err(_) => {}
+            }
+        }
+        publisher.await.expect("publisher");
+        assert!(received >= 20, "events must keep flowing, got {received}");
+
+        // 流式结束后连接仍活着：心跳 / Pong 往返正常。
+        harness
+            .client
+            .send(&ClientFrame::Heartbeat { nonce: 99 })
+            .await;
+        loop {
+            match harness.client.recv().await {
+                ServerFrame::Pong { nonce: 99 } => break,
+                ServerFrame::Event(_) | ServerFrame::Pong { .. } => continue,
+                other => panic!("connection lost during streaming: {other:?}"),
+            }
+        }
+
+        // 对照：心跳停发后看门狗必须在超时窗口内断开（证明保活断言非空转）。
+        let closed = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if harness.client.conn.receive().await.is_err() {
+                    break;
+                }
+            }
+        })
+        .await;
+        assert!(closed.is_ok(), "watchdog must drop the connection once heartbeats stop");
+    }
+
+    #[tokio::test]
     async fn lagged_queue_sends_replay_unavailable() {
         let connections = Arc::new(ConnectionManager::with_config(ConnectionManagerConfig {
             heartbeat_timeout: Duration::from_secs(30),

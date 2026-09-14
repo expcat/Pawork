@@ -70,7 +70,31 @@ class ReviewRegression(unittest.TestCase):
             self.assertEqual(self.config.read_bytes(), self.original)
             self.assertEqual(self.config.stat().st_mode & 0o777, 0o640)
             self.assertIsNone(self.instance.owner())
-        self.assertEqual(capture.CHANNELS['kimi-code']['cred_service'], 'pawork.kimi-code.oauth')
+        # ADR-061：kimi-code 同时接受 Coding Plan API key 与 OAuth，capture 按序解析。
+        self.assertEqual(capture.CHANNELS['kimi-code']['cred_service'], 'pawork.kimi-code')
+        self.assertEqual(
+            capture.CHANNELS['kimi-code'].get('alt_cred_services'), ('pawork.kimi-code.oauth',)
+        )
+        # ADR-061 账号索引选中项优先于 legacy default（api key 与 OAuth access 均覆盖）。
+        entries = {
+            'pawork.kimi-code': {
+                'accounts.meta': json.dumps({'selected_credential_id': 'cred_abc_0'}),
+                'cred_abc_0': 'selected-key',
+                'default': 'legacy-key',
+            },
+            'pawork.xai.oauth': {
+                'accounts.meta': json.dumps({'selected_credential_id': 'cred_xyz_0'}),
+                'cred_xyz_0.access': 'selected-access',
+                'cred_xyz_0.meta': json.dumps({'expires_at_ms': 9999999999999}),
+                'default.access': 'legacy-access',
+                'default.meta': json.dumps({'expires_at_ms': 9999999999999}),
+            },
+        }
+        with patch.object(capture, 'load_auth_entries', return_value=entries):
+            secret, note = capture.load_channel_credential('kimi-code', capture.CHANNELS['kimi-code'])
+            self.assertEqual((secret, note), ('selected-key', None))
+            secret, note = capture.load_channel_credential('xai', capture.CHANNELS['xai'])
+            self.assertEqual((secret, note), ('selected-access', None))
         meta = {'pawork.chatgpt.oauth': {'default.meta': json.dumps({'account_id': 'acct-test'})}}
         with patch.object(capture, 'load_auth_entries', return_value=meta):
             headers = capture.channel_headers('chatgpt', capture.CHANNELS['chatgpt'], 'test-secret')

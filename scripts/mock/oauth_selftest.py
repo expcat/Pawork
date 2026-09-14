@@ -244,6 +244,28 @@ def main() -> int:
 
     def chatgpt_pkce():
         post_json(base + "/__control", {"oauth": None})
+        # PKCE 授权端点：302 回 redirect_uri，附 mock code 与原始 state。
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                return None
+
+        opener = urllib.request.build_opener(NoRedirect)
+        authorize_url = (
+            base
+            + "/oauth/authorize?client_id=app_EMoamEEZ73f0CkXaXp7hrann"
+            + "&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback"
+            + "&state=test-state-123&code_challenge=abc"
+        )
+        try:
+            opener.open(authorize_url, timeout=5)
+            raise AssertionError("authorize must redirect (302), not 200")
+        except urllib.error.HTTPError as error:
+            assert error.code == 302, error.code
+            location = error.headers["Location"]
+            assert location.startswith(
+                "http://localhost:1455/auth/callback?code=mock-auth-code-"
+            ), location
+            assert "state=test-state-123" in location, location
         _, body = post_form(
             base + "/oauth/token",
             {
@@ -258,6 +280,9 @@ def main() -> int:
         claims = jwt_payload(body["id_token"])
         account = claims["https://api.openai.com/auth"]["chatgpt_account_id"]
         assert account.startswith("acct-mock-"), claims
+        # ADR-061：账号默认名取自 id_token 的 OIDC email claim（不验签）。
+        email = claims.get("email", "")
+        assert email.startswith("mock-user-") and email.endswith("@example.com"), claims
         _, refreshed = post_form(
             base + "/oauth/token",
             {"grant_type": "refresh_token", "refresh_token": "old", "client_id": "c"},

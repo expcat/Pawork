@@ -1,35 +1,43 @@
 {
   "channel": "kimi-code",
   "base_url": "https://api.kimi.com/coding/v1",
-  "recorded_at": "2026-09-09T16:37:41Z",
-  "requests": 0,
+  "recorded_at": "2026-09-14T13:47:42Z",
+  "requests": 1,
   "fixtures": [
     {
       "kind": "models",
-      "source": "synthetic",
+      "source": "real",
       "endpoint": "GET /models",
       "transport": null,
-      "model": "kimi-k3",
+      "model": null,
+      "http_status": 200,
+      "content_type": "application/json; charset=utf-8",
       "file": "models.json"
     },
     {
       "kind": "chat_text",
-      "source": "synthetic",
+      "source": "real",
       "endpoint": "POST /chat/completions",
       "transport": "chat_completions",
-      "model": "kimi-k3",
+      "model": "kimi-for-coding",
+      "http_status": 200,
+      "content_type": "text/event-stream;charset=utf-8",
+      "prompt": "Say hi",
+      "max_tokens": 512,
       "file": "chat_text.sse"
     },
     {
       "kind": "chat_tool",
-      "source": "synthetic",
+      "source": "real",
       "endpoint": "POST /chat/completions",
       "transport": "chat_completions",
-      "model": "kimi-k3",
+      "model": "kimi-for-coding",
+      "http_status": 200,
+      "content_type": "text/event-stream;charset=utf-8",
+      "prompt": "What is the weather in Paris? Use the get_weather tool.",
+      "max_tokens": 1024,
       "file": "chat_tool.sse"
     }
   ],
-  "notes": [
-    "无可用凭证（auth.json 未登记该通道），未经真实录制"
-  ]
+  "notes": []
 }

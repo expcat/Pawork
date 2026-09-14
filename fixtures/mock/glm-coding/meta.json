@@ -37,7 +37,17 @@
       "prompt": "What is the weather in Paris? Use the get_weather tool.",
       "max_tokens": 1024,
       "file": "chat_tool.sse"
+    },
+    {
+      "kind": "chat_tool",
+      "source": "synthetic",
+      "endpoint": "POST /chat/completions",
+      "transport": "chat_completions",
+      "model": null,
+      "file": "chat_toolfile.sse"
     }
   ],
-  "notes": []
+  "notes": [
+    "chat_toolfile/responses_toolfile：MOCK:TOOLFILE 成功路径（read_file 内建只读工具），契约形状合成"
+  ]
 }

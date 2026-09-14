@@ -121,15 +121,19 @@ Settings 活动线已实现并通过本机真窗口验收（2026-09-05，证据�
 - 修法：锁内 reload 比较排除 `display_name`，并保留账号索引别名。Settings / 目录探测仍只陈述 access 到期时间，不在查询路径消费 refresh token。
 - 定向回归：`file_backend_refresh_ignores_account_display_name`（过期 FileBackend 凭证 + 索引名与 meta 占位名不一致 → 命中 token 端点并轮转落盘）。
 
-### BUG-USAGE-01：usage ledger request-id 跨进程撞车
+### BUG-USAGE-01：usage ledger request-id 跨进程撞车 — 已修复
 
 - 现象：同一 data dir 内第二次起 Host 进程跑对话，usage ledger 记录报 `usage record id conflict: rec-run-...`（host.log warn），第二次运行的用量不落账。
 - 根因：[services/run.rs](../../crates/app/src/services/run.rs) 的 usage record id 用进程内计数器拼 `req-{n}`，而 control-plane 侧按 (tenant, account, request_id, attempt) 去重；新进程计数器从 0 重来，与上一进程同 data dir 的记录撞 id。
-- 建议修法方向：request_id 引入进程级随机前缀或持久单调序列；修复后用「同 data dir 连续两个 Host 进程各跑一次对话」回归。
+- 修法（2026-09-14，824ba259）：request_id 改 `req-<pid_hex>-<nanos_hex>-<n>` 进程级命名空间（与 client `new_request_namespace` 同形态；毫秒粒度不够，同毫秒双进程仍撞）。
+- 定向回归：`run_request_id_survives_counter_reset_across_host_restarts`（[services/run.rs](../../crates/app/src/services/run.rs)）；修复后新 run 记录成功入帐，既有漏记行不回填（账本 append-only）。
 
-### BUG-GUI-01：GUI Run 事件路径静默断连
+### BUG-GUI-01：GUI Run 事件路径静默断连 — 已关闭（主干不再复现，复验通过）
 
 - 现象（MOCK-6 真窗口验收中 6 次复现）：任意 Run 启动后约 1.5–10 秒，Desktop 连接被静默关闭（状态栏「已断开 · connection is closed」），慢流期间同样触发；断连后 Cancel 按钮因「需要活连接」被禁用，GUI 内 Reconnect 按钮多次点击无状态变化；Host 进程仍存活并接受新协议连接（quota 探针正常），Run 在 Host 侧继续执行直至自然完成；重启 Desktop 后完整重放恢复且 Run 不受影响。
 - 已排除项：客户端 stderr 无错误输出；host.log 无连接错误；mock server 未断开 HTTP 流（Run 正常完成）。
 - 影响面：GUI 取消主路径被阻断（CLI 取消已验证不受影响）；断连期间设置页刷新与额度查询同样不可达。
-- 建议修法方向：定位 Run 事件（artifact/tool/usage 流）经 GUI 连接分发时的 panic 或主动 close 路径，补「Run 流式期间连接保持 + 断连可经 Reconnect 恢复」的回归；修复后用 `MOCK:SLOW_STREAM` 场景复验取消。
+- 复验（2026-09-14，主干 bundle 含 API 1.17 UI）：`MOCK:SLOW_STREAM` 真窗口 4 次全程慢流（约 15s，覆盖原 1.5–10s 故障窗口）连接保持「已连接」；流中取消两次（约 2s / 7s 处）均正常落 `cancelled` 终态、连接保持；同窗口另完成文本流、工具流与 5s 处取消。缺陷不再复现。
+- 归因说明：f775febd..HEAD 连接路径（`crates/app/src/gui_server`、`crates/client`、`crates/transport`、Desktop controller 连接段）零改动，无法定点到修复提交；原 6 次复现环境（2026-09-10 旧 bundle + 旧 host 二进制）已不存在。按当前事实登记为「主干不再复现」，而非已定位修复。
+- 定向回归：`event_stream_with_heartbeat_only_inbound_survives_watchdog`（[gui_server/session.rs](../../crates/app/tests/gui_server/session.rs)）——事件流期间客户端只发心跳跨多个看门狗窗口连接保持；心跳停发后看门狗按超时断开（对照臂）。
+- 复发处理：若同类静默断连再现，先取 Host 侧 `RUST_LOG=pawork_app::gui_server=debug` 日志定位 close 发起方，再重开本条。

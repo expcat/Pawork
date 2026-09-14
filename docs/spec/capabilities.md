@@ -76,7 +76,7 @@ UI-6b G2 已接线：Go 存储账号可读取官方三窗已用百分比与重�
 
 此外存在 feature 门控的 Anthropic Messages adapter 和可配置 OpenAI-compatible 入口。它们不应被误写成第七条 `CHANNEL_REGISTRY` 产品通道；实际启用能力以宿主 feature、配置和 `pawork models` 返回为准。
 
-本地 Provider 模拟（mock 环境，非真实 Provider 能力）：仓库随附九通道 fixture 与场景库，可用 `scripts/mock/run-instance.sh` 一键拉起隔离实例（独立 data dir / auth / `--instance mock`）并把 Global config 的 base_url、OAuth 端点临时指向本地 mock server（方案 A：备份注入、`stop` 时恢复）。已验证的回归面：CLI 层对话流、工具流、取消、错误归一、OAuth device 登录与额度三窗（协议层）；GUI 层取消受 BUG-GUI-01 阻断、三窗 UI 待含 API 1.16 额度界面的 bundle，均待修复/重建后人工复验，现状以 [mock-simulation-plan.md](../mock-simulation-plan.md) §7 缺口清单为准。全部证据属于「本地仿真」层级，不能替代或冒充真实 Provider 冒烟（E3）。用法与运维边界见 [operations.md](operations.md) §3.1。
+本地 Provider 模拟（mock 环境，非真实 Provider 能力）：仓库随附九通道 fixture 与场景库，可用 `scripts/mock/run-instance.sh` 一键拉起隔离实例（独立 data dir / auth / `--instance mock`）并把 Global config 的 base_url、OAuth 端点临时指向本地 mock server（方案 A：备份注入、`stop` 时恢复）。已验证的回归面：CLI 层对话流、工具流、取消、错误归一、OAuth device 登录与额度三窗（协议层）；GUI 层流式、工具流与取消主路径已随主干 bundle（API 1.17 UI）真窗口复验通过（BUG-GUI-01 不再复现，回归 `event_stream_with_heartbeat_only_inbound_survives_watchdog`），三窗额度 UI 0% / 过期 / 刷新路径已验、>0% 读数待真实用量产生。全部证据属于「本地仿真」层级，不能替代或冒充真实 Provider 冒烟（E3）。用法与运维边界见 [operations.md](operations.md) §3.1。
 
 ## 4. Desktop 可见面
 

@@ -2,11 +2,19 @@
   "data": [
     {
       "id": "kimi-k3",
-      "object": "model"
+      "object": "model",
+      "display_name": "Kimi K3",
+      "context_length": 262144,
+      "supports_reasoning": true,
+      "supports_image_in": true
     },
     {
-      "id": "kimi-k2.7-code",
-      "object": "model"
+      "id": "kimi-k2.6",
+      "object": "model",
+      "display_name": "Kimi K2.6",
+      "context_length": 262144,
+      "supports_reasoning": true,
+      "supports_image_in": true
     }
   ]
 }

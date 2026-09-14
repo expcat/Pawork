@@ -21,6 +21,31 @@
       "output_modalities": [
         "text"
       ]
+    },
+    {
+      "id": "grok-4-fast",
+      "context_length": 2000000,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "grok-4-current",
+      "aliases": [
+        "grok-4"
+      ],
+      "context_length": 262144,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ]
     }
   ]
 }

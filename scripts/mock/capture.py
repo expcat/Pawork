@@ -115,7 +115,11 @@ CHANNELS = {
     "kimi-code": dict(
         base="https://api.kimi.com/coding/v1", kind="oauth",
         models_path="/models", models_shape="openai", stream_transport=CHAT,
-        cred_service="pawork.kimi-code.oauth", preferred=["kimi-k3"],
+        # ADR-061：kimi-code 同时接受 Coding Plan API key（pawork.kimi-code）
+        # 与 OAuth（pawork.kimi-code.oauth），按序解析（kimi.rs require_bearer_credential）。
+        cred_service="pawork.kimi-code", alt_cred_services=("pawork.kimi-code.oauth",),
+        preferred=["kimi-for-coding", "k3", "kimi-k3"],
+        tool_choice_forced=False,  # thinking-only 模型拒绝 object tool_choice；auto 对齐 Pawork wire
     ),
     # Transport baseline only (not a registry channel): static catalog, no HTTP models.
     "anthropic": dict(
@@ -132,8 +136,8 @@ SYNTH_MODELS = {
     "opencode-go": ["glm-5.3-flash", "grok-4.6"],
     "qwen-token-plan": ["qwen3.8-flash", "qwen3.8-max"],
     "deepseek": ["deepseek-chat", "deepseek-reasoner"],
-    "kimi-platform": ["kimi-k3", "kimi-k2.7-code"],
-    "kimi-code": ["kimi-k3", "kimi-k2.7-code"],
+    "kimi-platform": ["kimi-k3", "kimi-k2.6"],
+    "kimi-code": ["kimi-for-coding", "k3"],
 }
 
 # ---------------------------------------------------------------- sanitizing
@@ -251,37 +255,88 @@ def collect_secrets():
     return sorted({s for s in secrets if len(s) >= 8})
 
 
+def _selected_account(accounts):
+    """ADR-061 账号索引：entries.<service>["accounts.meta"] 的 selected_credential_id。"""
+    raw = accounts.get("accounts.meta")
+    if not isinstance(raw, str):
+        return None
+    try:
+        meta = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    selected = meta.get("selected_credential_id") if isinstance(meta, dict) else None
+    if isinstance(selected, str) and selected.strip():
+        return selected.strip()
+    return None
+
+
+def _api_key_from(accounts):
+    """账号索引选中项优先，legacy default 兜底（对照 auth/accounts.rs ADR-061 链）。"""
+    selected = _selected_account(accounts)
+    for account in (selected, "default"):
+        if not account:
+            continue
+        value = accounts.get(account)
+        if isinstance(value, str) and value.strip():
+            return value
+    return None
+
+
+def _oauth_from(accounts):
+    """选中 OAuth 账号的 access token（含 expires_at_ms 过期检查），或 None + 原因。"""
+    selected = _selected_account(accounts)
+    for account in (selected, "default"):
+        if not account:
+            continue
+        access = accounts.get(account + ".access")
+        if not (isinstance(access, str) and access.strip()):
+            continue
+        meta = {}
+        raw_meta = accounts.get(account + ".meta")
+        if isinstance(raw_meta, str):
+            try:
+                meta = json.loads(raw_meta)
+            except (json.JSONDecodeError, ValueError):
+                meta = {}
+        expires = meta.get("expires_at_ms") if isinstance(meta, dict) else None
+        if isinstance(expires, (int, float)) and expires <= _now_ms():
+            return None, (
+                "OAuth access token 已过期（expires_at_ms=%d 早于当前时间），按任务约定不执行 "
+                "refresh、跳过真实录制，fixture 按契约形状合成（未经真实录制）" % int(expires)
+            )
+        return access, None
+    return None, "无可用凭证（无选中/default.access OAuth token），未经真实录制"
+
+
 def load_channel_credential(name, spec):
-    """Return (secret_or_None, note_or_None). Never logs the secret."""
+    """Return (secret_or_None, note_or_None). Never logs the secret.
+
+    ADR-061 解析链：env → auth.json 账号索引选中项 → legacy default；
+    cred_services 按序尝试（kimi-code 同时接受 API key 与 OAuth，见
+    crates/providers/src/channels/kimi.rs require_bearer_credential）。
+    """
     env_name = "PAWORK_API_KEY_" + name.upper().replace("-", "_")
     env_value = os.environ.get(env_name, "").strip()
     if env_value:
         return env_value, None
-    accounts = load_auth_entries().get(spec["cred_service"])
-    if not isinstance(accounts, dict):
+    entries = load_auth_entries()
+    services = [spec["cred_service"], *spec.get("alt_cred_services", ())]
+    registered = [service for service in services if isinstance(entries.get(service), dict)]
+    if not registered:
         return None, "无可用凭证（auth.json 未登记该通道），未经真实录制"
-    if spec["kind"] == "api_key":
-        value = accounts.get("default")
-        if isinstance(value, str) and value.strip():
+    oauth_note = None
+    for service in registered:
+        accounts = entries[service]
+        if service.endswith(".oauth"):
+            access, note = _oauth_from(accounts)
+            if access:
+                return access, None
+            oauth_note = note
+            continue
+        value = _api_key_from(accounts)
+        if value:
             return value, None
-        return None, "无可用凭证（auth.json 无 default API key），未经真实录制"
-    access = accounts.get("default.access")
-    if not (isinstance(access, str) and access.strip()):
-        return None, "无可用凭证（无 default.access OAuth token），未经真实录制"
-    meta = {}
-    raw_meta = accounts.get("default.meta")
-    if isinstance(raw_meta, str):
-        try:
-            meta = json.loads(raw_meta)
-        except (json.JSONDecodeError, ValueError):
-            meta = {}
-    expires = meta.get("expires_at_ms") if isinstance(meta, dict) else None
-    if isinstance(expires, (int, float)) and expires <= _now_ms():
-        return None, (
-            "OAuth access token 已过期（expires_at_ms=%d 早于当前时间），按任务约定不执行 "
-            "refresh、跳过真实录制，fixture 按契约形状合成（未经真实录制）" % int(expires)
-        )
-    return access, None
+    return None, oauth_note or "无可用凭证（auth.json 无选中/default API key），未经真实录制"
 
 
 def _now_ms() -> int:

@@ -29,8 +29,8 @@ token 端点共用形状：form-urlencoded 请求；响应 JSON 出现 `error` �
 | chatgpt | `POST /responses` | `GET /models?client_version=0.153.0`（`models[].slug`，`visibility != "list"` 剔除） | — | Bearer + `ChatGPT-Account-Id` + `originator: codex_cli_rs` + UA `codex_cli_rs/0.153.0` |
 | xai | 按模型路由 `POST /responses`（grok-4 系）或 `POST /chat/completions` | `GET /language-models`（`models[]`，`output_modalities` 须含 `"text"`） | — | Bearer（OAuth 与 API key 同形态） |
 | glm-coding | `POST /chat/completions` | `GET /models`（OpenAI `data[]`） | `GET /models`（verify_api_key） | Bearer |
-| opencode-go | 逐模型表：grok-4.6 等 → `POST /responses`；glm-\*/kimi-k\*/deepseek-v4-\* 等 → `POST /chat/completions` | `GET /models`（须回表内 Chat/Responses 组 id，Messages-only 与未登记 id 被过滤） | `GET /usage`（三窗，严格校验） | Bearer + `x-opencode-session`（仅此通道） |
-| qwen-token-plan | `POST /chat/completions`（表内 10 模型；未登记模型 HTTP 前拒绝） | `GET /models` | `GET /models` | Bearer |
+| opencode-go | 逐模型表 + 家族回退（ADR-061，对照 api_key.rs inferred_transport）：grok-\*/gpt-\*/muse-spark-\* → `POST /responses`；其余文本 id → `POST /chat/completions`；Messages-only 与非文本 id 不承接 | `GET /models`（Messages-only 与非文本 id 过滤；表外文本 id 保留并按家族路由） | `GET /usage`（三窗，严格校验） | Bearer + `x-opencode-session`（仅此通道） |
+| qwen-token-plan | `POST /chat/completions`（表内 10 模型精确路由；ADR-061 后表外文本 id 同样承接，仅非文本 id 拒绝） | `GET /models` | `GET /models` | Bearer |
 | deepseek | `POST /chat/completions` | `GET /models` | `GET /models` | Bearer |
 | kimi-platform | `POST /chat/completions` | `GET /models` | `GET /models` | Bearer |
 | kimi-code | `POST /chat/completions`（固定） | `GET /models`（OpenAI `data[]`） | `GET /models`（verify_api_key，Coding Plan API key） | Bearer（OAuth 或 API key） |
@@ -168,7 +168,7 @@ token 端点共用形状：form-urlencoded 请求；响应 JSON 出现 `error` �
 | MOCK-3 mock server | 已实现、已验证 | [server.py](../scripts/mock/server.py)（场景与 OAuth 端点内置）+ `server_smoke.py` 全绿。 |
 | MOCK-4 场景库 | 已实现、已验证 | `fixtures/mock/scenarios/` + `server_scenarios_smoke.py` 全绿；关键字（`MOCK:RATE_LIMIT` 等）与 `POST /__control` 双触发。CLI headless 场景为抽测（RATE_LIMIT / 401 / 404 / 截断 / QUOTA）；HTTP 层全量 47/47 由 server_scenarios_smoke 覆盖。 |
 | MOCK-5 OAuth 模拟层与 seed | 已实现、已验证 | `oauth_selftest.py` 全绿；fixture 覆盖九通道，`run-instance.sh seed` 落盘八通道（API key 5 + OAuth 3，无 anthropic——它只作为 transport fixture，未接入编排的注册通道）；真机完成一次 device 登录（user_code 展示、轮询、落盘）。 |
-| MOCK-6 端到端接入与真窗口验收 | 已实现；CLI 全流程已验证，GUI 主路径已验证、取消受阻（BUG-GUI-01） | [run-instance.sh](../scripts/mock/run-instance.sh)（start/run/stop/status/seed/env/desktop）+ `quota_probe.py`；证据见下。 |
+| MOCK-6 端到端接入与真窗口验收 | 已实现；CLI 全流程已验证，GUI 主路径与取消均已真窗口复验通过（BUG-GUI-01 主干不再复现，2026-09-14） | [run-instance.sh](../scripts/mock/run-instance.sh)（start/run/stop/status/seed/env/desktop）+ `quota_probe.py`；证据见下。 |
 | MOCK-7 测试整合与精简 | 已实现、已验证（review 通过） | providers 测试收敛与 OAuth mock helper 去重。 |
 | MOCK-8 mock 快速门禁 | 已实现、已验证 | [gate.sh](../scripts/mock/gate.sh) L0/L1/L2；历史阶段收口：L0 0.1s、L1 52.8s（providers 208 测试）、L2 1.4s（冒烟 45 + 47 与 usage 回放）。提交前 L2 另纳入 fixture verify、OAuth 与配置恢复回归，耗时以新运行输出为准。 |
 | MOCK-0b Global config env 重定向 | 候选，未获批 | 本系列用方案 A（备份/恢复）兜底，见 §3 缺口。 |
@@ -195,11 +195,11 @@ Full workspace gate: NOT RUN（当前未设置全量门禁）
 
 ### 已知缺口
 
-1. **GUI Run 事件路径静默断连（BUG-GUI-01）**：Run 启动约 1.5–10 秒连接被静默关闭，6 次复现；阻断真窗口取消主路径与断连期间的设置/额度刷新；CLI 取消已验证。已登记 [backlog.md §8](spec/backlog.md)。
+1. **GUI Run 事件路径静默断连（BUG-GUI-01）**：已关闭（2026-09-14）——主干 bundle 下 `MOCK:SLOW_STREAM` 真窗口 4 次全程慢流 + 2 次流中取消（2s/7s 处）连接保持、终态正确；未定位代码级根因（连接路径零改动，旧复现环境已不存在），登记与回归见 [backlog.md §8](spec/backlog.md)。
 2. **OAuth 请求前刷新缺陷（BUG-OAUTH-01）**：已修复——FileBackend 刷新比较排除账号 `display_name`；登记与回归见 [backlog.md §8](spec/backlog.md)。
-3. **usage ledger request-id 跨进程撞车（BUG-USAGE-01）**：同 data dir 第二个 Host 进程跑对话报 `usage record id conflict`，第二程用量不落账；见 [backlog.md §8](spec/backlog.md)。
-4. **GUI 三窗额度显示**：协议层已由 `quota_probe.py` 验证（同 socket 同 token 三窗 200）；本机预构建 bundle 早于 API 1.16 的 per-credential 额度 UI（二进制内无 `settings.quota.*` 字符串），设置页仅显示 ADR-056 的「Usage unavailable」诚实空态。待含 V1_16 UI 的 bundle 重建后人工复验。
-5. **工具流固定 tool_call_id（mock 限制）**：mock fixture 的 tool_call_id 固定，同一 data dir 第二次工具 Run 撞事件 UNIQUE 约束（CLI 与 GUI 均复现）；首轮工具流正常。属 mock 数据限制，非产品缺陷。
+3. **usage ledger request-id 跨进程撞车（BUG-USAGE-01）**：已修复（2026-09-14，824ba259）——request_id 改 `req-<pid_hex>-<nanos_hex>-<n>` 进程级命名空间；登记与回归见 [backlog.md §8](spec/backlog.md)。
+4. **GUI 三窗额度显示**：协议层已由 `quota_probe.py` 验证（同 socket 同 token 三窗 200）；原登记的预构建 bundle 缺口已随主干 bundle（含 API 1.17 UI）消除，真窗口 0% / 过期 / 刷新路径已验（ROADMAP 2026-09-14 vfix 批次）；>0% 填充属上游读数环境不可得（真实账号 percent 恒 0），mock 侧可用 `/usage` fixture（12%/34%/57%）验渲染，不冒充真实读数。
+5. **工具流固定 tool_call_id（mock 限制）**：已关闭（2026-09-14）——回放前流内 chunk/response/message 主 id 与工具调用 id 逐响应追加唯一后缀，同 data dir 重复工具 Run 不再撞事件 UNIQUE；variant 未显式给出时按请求体推断（MOCK:TOOL → 工具调用流，已携工具结果 → 终答文本），agent 工具循环在 mock 下闭环。回归见 server_smoke.py phase_tool_loop。
 6. **fixture 合成回退**：opencode-go 余额不足、xai token 过期、kimi-code 无凭证等场景的 fixture 为契约形状合成（无真实录制），已在 meta 标注。
 7. **launchd 初连挂起**：`run-instance.sh desktop` 以 `open -na`（launchd 托管，env 经 `--env` 传递）封装；该方式启动的实例初次连接常挂起「连接中…」数分钟，直启二进制（带 env）秒连。缺口保留：自动化验收需要秒连时手工直启 `<state>/Pawork-mock.app/Contents/MacOS/Pawork --instance mock`（env 用 `run-instance.sh env`）。
 8. **MOCK-0b 未获批**：Global config 注入采用方案 A，注入期间本机所有实例共享 mock base_url；崩溃残留由 `run-instance.sh stop` 按注入记录恢复。

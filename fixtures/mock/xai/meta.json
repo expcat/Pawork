@@ -50,6 +50,7 @@
     }
   ],
   "notes": [
-    "OAuth access token 已过期（expires_at_ms=1788892631300 早于当前时间），按任务约定不执行 refresh、跳过真实录制，fixture 按契约形状合成（未经真实录制）"
+    "OAuth access token 已过期（expires_at_ms=1788892631300 早于当前时间），按任务约定不执行 refresh、跳过真实录制，fixture 按契约形状合成（未经真实录制）",
+    "2026-09-14 models.json 补 grok-4-fast（builtin Responses 路由）与 grok-4-current（aliases=[grok-4]，对照 xai.rs 别名合并 builtin 能力路径）"
   ]
 }

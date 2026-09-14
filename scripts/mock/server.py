@@ -12,7 +12,8 @@ docs/mock-simulation-plan.md §2.2 端点矩阵：
     GET  /usage                     opencode-go 三窗额度（§2.3 红线形状）
     POST /chat/completions          Chat Completions SSE
     POST /responses                 Responses SSE（chatgpt / xai grok-4、grok-4-fast /
-                                    Go Responses 组；未登记/错组模型按生产语义 400/404）
+                                    Go Responses 家族；错家族/不可运行模型按生产语义
+                                    400/404，家族路由对照 api_key.rs inferred_transport）
     POST /v1/messages               Anthropic Messages SSE
 
 fixture 查找（<fixtures-root>/<channel>/，显式 ?fixture=<basename> 优先）：
@@ -24,6 +25,15 @@ fixture 查找（<fixtures-root>/<channel>/，显式 ?fixture=<basename> 优先�
     messages  → messages_<variant>.sse / messages[.<model>].sse
     命中即按原始字节定速回放（--chunk-bytes / --chunk-interval-ms）；
     未命中按通道 transport 回最小合法兜底响应（形状对照 providers 契约测试）。
+
+工具循环闭环（2026-09-14）：variant 未显式给出时按请求体推断——请求已携带
+工具结果（Chat role=tool / Responses function_call_output / Messages
+tool_result block）回 text 终答；请求文本含 MOCK:TOOL / MOCK:TOOLFILE 且
+尚无工具结果回对应工具调用流（tool=通道通用 get_weather，走未知工具错误
+路径；toolfile=read_file 内建只读工具成功路径）；其余回 text。回放前流内
+chunk/response/message 主 id 与工具调用 id（id/call_id/item_id 键）逐条
+追加唯一后缀，同一 data dir 重复工具 Run 不再撞事件 UNIQUE 约束
+（MOCK-6 已知缺口 5 关闭）。
 
 环境变量：MOCK_HOST / MOCK_PORT / MOCK_FIXTURES_ROOT / MOCK_CHUNK_INTERVAL_MS /
 MOCK_CHUNK_BYTES（命令行参数优先）。
@@ -81,7 +91,7 @@ import traceback
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 
 # --- 通道 persona 与逐模型 transport 表（对照 channels/api_key.rs 快照） -------
@@ -130,19 +140,27 @@ OPENCODE_MESSAGES_MODELS = frozenset(
         "qwen3.6-plus",
     }
 )
-QWEN_TOKEN_PLAN_MODELS = (
-    "qwen3.8-max",
-    "qwen3.8-max-preview",
-    "qwen3.8-flash",
-    "qwen3.7-max",
-    "qwen3.7-plus",
-    "qwen3.6-flash",
-    "glm-5.2",
-    "deepseek-v4-pro",
-    "deepseek-v4-pro-0813",
-    "deepseek-v4-flash-0731",
-)
-QWEN_TOKEN_PLAN_MODELS_SET = frozenset(QWEN_TOKEN_PLAN_MODELS)
+
+
+# 家族路由对照 crates/providers/src/channels/api_key.rs（ADR-061）：官方逐模型
+# 端点表只补已知 id 的精确路由，表外新 id 由 inferred_transport 按家族承接，
+# 不再当白名单丢弃；非文本 id（图片/音频/tts/realtime）生产在 HTTP 前本地拒绝。
+def go_non_text_model(model: str) -> bool:
+    return (
+        model.startswith("wan")
+        or "-image" in model
+        or "audio" in model
+        or "-tts" in model
+        or "-realtime" in model
+    )
+
+
+def go_messages_family(model: str) -> bool:
+    return model.startswith("qwen") or model.startswith("minimax-")
+
+
+def go_responses_family(model: str) -> bool:
+    return model.startswith(("grok-", "gpt-", "muse-spark-"))
 
 # xAI builtin 白名单：仅 grok-4 / grok-4-fast 走 Responses；grok-4.6 等其余
 # id（含未知 id）生产默认 Chat Completions（channels/xai.rs transport_for）。
@@ -286,6 +304,9 @@ def build_mock_id_token(sequence: int) -> str:
         "iss": "https://auth.openai.com/",
         "sub": f"mock-user-{sequence}",
         "aud": "app_EMoamEEZ73f0CkXaXp7hrann",
+        # ADR-061：账号默认名取自 OIDC email claim（oauth.rs oauth_login_email，
+        # 不验签）；缺 email 会回退到脱敏 access token。
+        "email": f"mock-user-{sequence}@example.com",
         "https://api.openai.com/auth": {"chatgpt_account_id": f"acct-mock-{sequence}"},
     }
     return (
@@ -305,10 +326,22 @@ CATALOG_DATA = {
         *sorted(OPENCODE_CHAT_MODELS),
         *sorted(OPENCODE_MESSAGES_MODELS),
     ],
-    "qwen-token-plan": list(QWEN_TOKEN_PLAN_MODELS),
+    "qwen-token-plan": [
+        "qwen3.8-max",
+        "qwen3.8-max-preview",
+        "qwen3.8-flash",
+        "qwen3.7-max",
+        "qwen3.7-plus",
+        "qwen3.6-flash",
+        "glm-5.2",
+        "deepseek-v4-pro",
+        "deepseek-v4-pro-0813",
+        "deepseek-v4-flash-0731",
+    ],
     "deepseek": ["deepseek-v4-pro", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp"],
     "kimi-platform": ["kimi-k3", "kimi-k2.6"],
-    "kimi-code": ["kimi-k3", "kimi-k2.7-code", "kimi-k2.6"],
+    # kimi-code builtin 目录（kimi.rs builtin_models，2026-09-14 真实录制确认 id 集合）
+    "kimi-code": ["kimi-for-coding", "kimi-for-coding-highspeed", "k3", "k3-256k"],
 }
 
 CHATGPT_CATALOG = [
@@ -333,7 +366,9 @@ XAI_CATALOG = [
         "input_modalities": ["text", "image"],
         "context_length": 256000,
     },
-    {"id": "grok-4", "output_modalities": ["text"], "context_length": 256000},
+    # aliases 仅辅助 builtin 静态证据合并（xai.rs remote_language_models），
+    # 录制 fixture 命中时本兜底不生效。
+    {"id": "grok-4", "output_modalities": ["text"], "context_length": 256000, "aliases": ["grok-4-latest"]},
     {"id": "grok-3", "output_modalities": ["text"], "context_length": 131072},
 ]
 
@@ -492,6 +527,92 @@ def find_fixture(root: Path, channel: str, kind: str, model: str, explicit, vari
     return None
 
 
+# --- 工具闭环与流内 id 唯一化 -------------------------------------------------
+
+
+def _tool_results_present(kind: str, body: dict) -> bool:
+    """请求体已携带工具结果 → 本轮应回终答文本而非再次工具调用。
+
+    对照三种 transport 的工具结果 wire 形态：
+    Chat messages[].role=="tool"；Responses input[] type=="function_call_output"；
+    Messages content blocks type=="tool_result"。
+    """
+    if not isinstance(body, dict):
+        return False
+    if kind == "chat":
+        messages = body.get("messages")
+        return isinstance(messages, list) and any(
+            isinstance(item, dict) and item.get("role") == "tool" for item in messages
+        )
+    if kind == "responses":
+        items = body.get("input")
+        return isinstance(items, list) and any(
+            isinstance(item, dict) and item.get("type") == "function_call_output"
+            for item in items
+        )
+    if kind == "messages":
+        messages = body.get("messages")
+        if not isinstance(messages, list):
+            return False
+        for item in messages:
+            content = item.get("content") if isinstance(item, dict) else None
+            if isinstance(content, list) and any(
+                isinstance(block, dict) and block.get("type") == "tool_result"
+                for block in content
+            ):
+                return True
+    return False
+
+
+# SSE 事件里需要随响应唯一化的 id 字段：chunk/response/message 主 id 与工具
+# 调用 id（call_id/item_id 与 function_call item 的 id 同源）。固定 fixture 的
+# 固定 id 会让同一 data dir 的第二次工具 Run 撞事件 UNIQUE 约束（MOCK-6 缺口 5）。
+STREAM_ID_KEYS = frozenset({"id", "call_id", "item_id"})
+STREAM_ID_VALUE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{3,}$")
+
+
+def _uniquify_stream_ids(payload: bytes, salt: str) -> bytes:
+    """同一条流内同一原 id 映射到同一新 id（追加 -m<salt>），跨响应/跨重启唯一。"""
+    mapping = {}
+
+    def walk(value):
+        if isinstance(value, dict):
+            out = {}
+            for key, item in value.items():
+                if (
+                    key in STREAM_ID_KEYS
+                    and isinstance(item, str)
+                    and STREAM_ID_VALUE.match(item)
+                ):
+                    out[key] = mapping.setdefault(item, f"{item}-m{salt}")
+                else:
+                    out[key] = walk(item)
+            return out
+        if isinstance(value, list):
+            return [walk(item) for item in value]
+        return value
+
+    lines = []
+    changed = False
+    for line in payload.decode("utf-8").split("\n"):
+        if line.startswith("data: "):
+            data = line[6:].strip()
+            if data and data != "[DONE]":
+                try:
+                    event = json.loads(data)
+                except ValueError:
+                    pass
+                else:
+                    line = "data: " + json.dumps(
+                        walk(event), ensure_ascii=False, separators=(",", ":")
+                    )
+                    changed = True
+        lines.append(line)
+    if not changed:
+        return payload
+    return "\n".join(lines).encode("utf-8")
+
+
 # --- HTTP handler -------------------------------------------------------------
 
 
@@ -526,6 +647,7 @@ OAUTH_ROUTES = {
     ("POST", "/api/oauth/device_authorization"): ("device", "kimi-code"),
     ("POST", "/api/oauth/token"): ("token", "kimi-code"),
     ("POST", "/oauth/token"): ("token", "chatgpt"),
+    ("GET", "/oauth/authorize"): ("authorize", "chatgpt"),
     ("GET", "/device"): ("device_page", ""),
 }
 
@@ -558,6 +680,8 @@ class MockProviderHandler(BaseHTTPRequestHandler):
                 kind, channel = oauth_route
                 if kind == "device_page":
                     self.handle_oauth_device_page(query)
+                elif kind == "authorize":
+                    self.handle_oauth_authorize(query)
                 elif kind == "device":
                     self.handle_oauth_device(channel)
                 else:
@@ -677,6 +801,7 @@ class MockProviderHandler(BaseHTTPRequestHandler):
         fallback()
 
     def _send_stream(self, payload: bytes, interval_ms=None) -> None:
+        payload = _uniquify_stream_ids(payload, self.server.next_stream_salt())
         config = self.server.mock_config
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
@@ -692,7 +817,7 @@ class MockProviderHandler(BaseHTTPRequestHandler):
             if delay and offset + step < len(payload):
                 time.sleep(delay)
 
-    def _stream_fixture_or(self, channel: str, kind: str, model: str, query: dict, fallback) -> None:
+    def _stream_fixture_or(self, channel: str, kind: str, model: str, query: dict, fallback, body=None) -> None:
         scenario = getattr(self, "_scenario", None)
         if scenario is not None and scenario.kind == "sse" and kind in scenario.transports:
             name = scenario.fixture
@@ -712,7 +837,16 @@ class MockProviderHandler(BaseHTTPRequestHandler):
                 except ValueError:
                     pass
         explicit = query.get("fixture")
-        variant = self._clean_variant(query.get("variant"))
+        if query.get("variant") is not None:
+            variant = self._clean_variant(query.get("variant"))
+        elif body and _tool_results_present(kind, body):
+            # 工具结果已回传 → 终轮文本回答（agent 工具循环在 mock 下闭环）。
+            variant = "text"
+        elif body and scenario_keyword(body) in ("tool", "toolfile"):
+            # MOCK:TOOL / MOCK:TOOLFILE 关键字 + 尚无工具结果 → 首轮工具调用流。
+            variant = scenario_keyword(body)
+        else:
+            variant = "text"
         fixture = find_fixture(
             self.server.mock_config.fixtures_root, channel, kind, model, explicit, variant
         )
@@ -885,29 +1019,32 @@ class MockProviderHandler(BaseHTTPRequestHandler):
             )
             return
         if channel == "opencode-go":
-            if model in OPENCODE_MESSAGES_MODELS:
+            if go_non_text_model(model):
+                self._send_json(
+                    400,
+                    {"error": {"message": f"{model or '<empty>'} is not a text model on opencode-go"}},
+                )
+                return
+            if go_messages_family(model):
                 self._send_json(
                     400, {"error": {"message": f"{model} is Messages-only on opencode-go"}}
                 )
                 return
-            if model in OPENCODE_RESPONSES_MODELS:
+            if go_responses_family(model):
                 self._send_json(
                     404, {"error": {"message": f"{model} uses /responses on opencode-go"}}
                 )
                 return
-            if model not in OPENCODE_CHAT_MODELS:
-                self._send_json(
-                    400,
-                    {"error": {"message": f"{model or '<empty>'} is not registered on opencode-go"}},
-                )
-                return
+            # 其余文本 id（含表外新 id）按家族路由均由 Chat Completions 承接。
         if channel == "qwen-token-plan":
-            if model not in QWEN_TOKEN_PLAN_MODELS_SET:
+            # ADR-061：表外文本 id 进目录并走 Chat Completions；仅非文本 id 被拒
+            # （生产在 HTTP 前本地 InvalidRequest，mock 以 400 防御性对齐）。
+            if go_non_text_model(model):
                 self._send_json(
                     400,
                     {
                         "error": {
-                            "message": f"{model or '<empty>'} is not registered on qwen-token-plan"
+                            "message": f"{model or '<empty>'} is not a text model on qwen-token-plan"
                         }
                     },
                 )
@@ -916,7 +1053,7 @@ class MockProviderHandler(BaseHTTPRequestHandler):
         def fallback() -> bytes:
             return build_chat_sse(channel, model)
 
-        self._stream_fixture_or(channel, "chat", model, query, fallback)
+        self._stream_fixture_or(channel, "chat", model, query, fallback, body)
 
     def handle_responses(self, channel: str, query: dict, body: dict) -> None:
         model = str(body.get("model") or "")
@@ -928,12 +1065,12 @@ class MockProviderHandler(BaseHTTPRequestHandler):
                 )
                 return
         elif channel == "opencode-go":
-            if model in OPENCODE_MESSAGES_MODELS:
+            if go_non_text_model(model) or go_messages_family(model):
                 self._send_json(
                     400, {"error": {"message": f"{model} is Messages-only on opencode-go"}}
                 )
                 return
-            if model not in OPENCODE_RESPONSES_MODELS:
+            if not go_responses_family(model):
                 self._send_json(
                     404,
                     {
@@ -952,7 +1089,7 @@ class MockProviderHandler(BaseHTTPRequestHandler):
         def fallback() -> bytes:
             return build_responses_sse(channel, model)
 
-        self._stream_fixture_or(channel, "responses", model, query, fallback)
+        self._stream_fixture_or(channel, "responses", model, query, fallback, body)
 
     def handle_messages(self, channel: str, query: dict, body: dict) -> None:
         if channel != "anthropic":
@@ -965,7 +1102,7 @@ class MockProviderHandler(BaseHTTPRequestHandler):
         def fallback() -> bytes:
             return build_messages_sse(channel, model)
 
-        self._stream_fixture_or(channel, "messages", model, query, fallback)
+        self._stream_fixture_or(channel, "messages", model, query, fallback, body)
 
     # -- OAuth 端点（MOCK-5，§2.1；persona 之前路由，无 Bearer） ---------------
 
@@ -981,6 +1118,29 @@ class MockProviderHandler(BaseHTTPRequestHandler):
             "</body></html>"
         )
         self._send_bytes(200, page.encode("utf-8"), "text/html; charset=utf-8")
+
+    def handle_oauth_authorize(self, query: dict) -> None:
+        """PKCE 授权端点（chatgpt）：302 回 redirect_uri，附 mock code 与原始 state。
+
+        真端点在浏览器里完成登录态后重定向；mock 直接签发 code，让 CLI 的
+        localhost 回调与 /oauth/token authorization_code 交换可以端到端跑通。
+        """
+        redirect_uri = str(query.get("redirect_uri") or "")
+        state = str(query.get("state") or "")
+        if not redirect_uri.startswith("http") or not state:
+            self._send_json(
+                400, {"error": {"message": "missing or invalid redirect_uri/state"}}
+            )
+            return
+        separator = "&" if "?" in redirect_uri else "?"
+        location = (
+            f"{redirect_uri}{separator}code=mock-auth-code-"
+            f"{self.server.oauth_next_sequence()}&state={quote(state, safe='')}"
+        )
+        self.send_response(302)
+        self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def handle_oauth_device(self, channel: str) -> None:
         """Device Flow 设备码端点（xai / kimi-code）。"""
@@ -1118,6 +1278,8 @@ class MockProviderServer(ThreadingHTTPServer):
         self.mock_config = config
         self._scenario_lock = threading.Lock()
         self._scenario_name = None
+        self._stream_lock = threading.Lock()
+        self._stream_counter = 0
         self._oauth_lock = threading.Lock()
         self._oauth_scripts = {}
         self._oauth_devices = {}
@@ -1130,6 +1292,12 @@ class MockProviderServer(ThreadingHTTPServer):
     def set_scenario(self, name):
         with self._scenario_lock:
             self._scenario_name = name
+
+    def next_stream_salt(self) -> str:
+        """每条流一个 salt：墙钟 + 进程内计数 + 随机，跨响应与跨重启均唯一。"""
+        with self._stream_lock:
+            self._stream_counter += 1
+            return f"{int(time.time() * 1000):x}{self._stream_counter:x}{secrets.token_hex(2)}"
 
     # -- MOCK-5 OAuth 剧本状态（线程安全） -----------------------------------
 

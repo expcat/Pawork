@@ -39,5 +39,7 @@
       "file": "chat_tool.sse"
     }
   ],
-  "notes": []
+  "notes": [
+    "2026-09-14 补录 qwen3.8-max-preview / deepseek-v4-pro-0813 两条 models 条目：官方 endpoint 表内（api_key.rs qwen-token-plan 表），录制时远端未返回，按录制形状合成补充"
+  ]
 }

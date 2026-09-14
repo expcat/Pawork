@@ -178,7 +178,10 @@ def phase_fixture_precedence():
         paced = elapsed >= 0.035  # 5 chunks × 64B，4 次间隔 ≥ 40ms
         check(
             "fixture precedence: glm-coding chat stream replays tool-call SSE bytes",
-            status == 200 and body == expected_sse and events[-1] == "[DONE]" and tool_started,
+            status == 200
+            and normalize_stream_ids(body) == normalize_stream_ids(expected_sse)
+            and events[-1] == "[DONE]"
+            and tool_started,
             f"status={status} events={events}",
         )
         check(
@@ -244,7 +247,7 @@ def phase_fallback_shapes():
                 "qwen-token-plan": "qwen3.8-max",
                 "deepseek": "deepseek-v4-pro",
                 "kimi-platform": "kimi-k3",
-                "kimi-code": "kimi-k3",
+                "kimi-code": "kimi-for-coding",
             }
             for channel, model_id in data_channels.items():
                 status, _, body, _ = http("GET", base, "/models", token=f"mock-{channel}")
@@ -315,7 +318,7 @@ def phase_fallback_shapes():
                 ("qwen-token-plan", "qwen3.8-max"),
                 ("deepseek", "deepseek-v4-pro"),
                 ("kimi-platform", "kimi-k3"),
-                ("kimi-code", "kimi-k3"),
+                ("kimi-code", "kimi-for-coding"),
                 ("xai", "grok-3"),
                 ("xai", "grok-4.6"),
             ]
@@ -390,12 +393,22 @@ def phase_fallback_shapes():
                  "/chat/completions", "mock-opencode-go", {"model": "grok-4.6"}, 404),
                 ("opencode-go chat-model on /responses is 404", "POST",
                  "/responses", "mock-opencode-go", {"model": "glm-5.3"}, 404),
+                ("opencode-go unregistered text model streams on /chat/completions", "POST",
+                 "/chat/completions", "mock-opencode-go", {"model": "brandnew-text-1"}, 200),
+                ("opencode-go unregistered grok-family model streams on /responses", "POST",
+                 "/responses", "mock-opencode-go", {"model": "grok-4.5"}, 200),
+                ("opencode-go messages-family qwen on /chat/completions is 400", "POST",
+                 "/chat/completions", "mock-opencode-go", {"model": "qwen3.5-plus"}, 400),
+                ("opencode-go non-text model on /chat/completions is 400", "POST",
+                 "/chat/completions", "mock-opencode-go", {"model": "gpt-image-1"}, 400),
                 ("xai chat-model on /responses is 404", "POST",
                  "/responses", "mock-xai", {"model": "grok-3"}, 404),
                 ("xai responses-whitelisted grok-4 on /chat/completions is 404", "POST",
                  "/chat/completions", "mock-xai", {"model": "grok-4"}, 404),
-                ("qwen-token-plan unregistered model on /chat/completions is 400", "POST",
-                 "/chat/completions", "mock-qwen-token-plan", {"model": "gpt-4o"}, 400),
+                ("qwen-token-plan unregistered text model streams on /chat/completions", "POST",
+                 "/chat/completions", "mock-qwen-token-plan", {"model": "gpt-4o"}, 200),
+                ("qwen-token-plan non-text model on /chat/completions is 400", "POST",
+                 "/chat/completions", "mock-qwen-token-plan", {"model": "wan2.7-image"}, 400),
                 ("chatgpt persona on /chat/completions is 404", "POST",
                  "/chat/completions", "mock-chatgpt", {"model": "gpt-5.6-terra"}, 404),
             ]
@@ -417,7 +430,7 @@ def phase_recorded_tree():
     try:
         cases = [
             (
-                "recorded tree: glm-coding default chat replays chat_text.sse bytes",
+                "recorded tree: glm-coding default chat replays chat_text.sse (ids uniquified)",
                 "POST",
                 "/chat/completions",
                 "mock-glm-coding",
@@ -426,7 +439,7 @@ def phase_recorded_tree():
                 recorded / "glm-coding" / "chat_text.sse",
             ),
             (
-                "recorded tree: glm-coding ?variant=tool replays chat_tool.sse bytes",
+                "recorded tree: glm-coding ?variant=tool replays chat_tool.sse (ids uniquified)",
                 "POST",
                 "/chat/completions?variant=tool",
                 "mock-glm-coding",
@@ -447,10 +460,155 @@ def phase_recorded_tree():
         for name, method, path, token, payload, _, fixture in cases:
             status, _, body, _ = http(method, base, path, token=token, payload=payload)
             expected = fixture.read_bytes()
-            check(name, status == 200 and body == expected,
+            if name.endswith("usage.json bytes"):
+                same = body == expected
+            else:
+                # 流式回放 id 逐响应唯一化（-m<salt> 后缀），归一后应与录制字节一致。
+                same = normalize_stream_ids(body) == normalize_stream_ids(expected)
+            check(name, status == 200 and same,
                   f"status={status} body[:80]={body[:80]!r} expected[:80]={expected[:80]!r}")
+
+        phase_tool_loop(base)
     finally:
         stop_server(proc)
+
+
+ID_SUFFIX_RE = re.compile(r"-m[0-9a-f]{12,}")
+
+
+def normalize_stream_ids(body):
+    """SSE 事件逐条 canonical JSON（排序键）并剥离 -m<salt> 唯一化后缀；
+    与录制字节的空格/键序差异无关，只比事件内容。"""
+    if isinstance(body, bytes):
+        text = body.decode("utf-8")
+    else:
+        text = body
+    events = []
+    for block in text.split("\n\n"):
+        for line in block.splitlines():
+            if not line.startswith("data:"):
+                continue
+            raw = line[len("data:"):].lstrip()
+            if raw == "[DONE]":
+                events.append(raw)
+                continue
+            canonical = json.dumps(
+                json.loads(raw), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            )
+            events.append(ID_SUFFIX_RE.sub("", canonical))
+    return events
+
+
+def chat_tool_call_id(body):
+    for event in sse_data_events(body):
+        if event == "[DONE]":
+            continue
+        for choice in json.loads(event).get("choices") or []:
+            for call in (choice.get("delta") or {}).get("tool_calls") or []:
+                if call.get("id"):
+                    return call["id"]
+    return None
+
+
+def phase_tool_loop(base):
+    """工具循环闭环：MOCK:TOOL 首轮工具调用 → 回传工具结果 → 终答文本；
+    重复工具 Run 的工具 id 不再撞事件 UNIQUE（id 逐响应唯一化）。"""
+    user = {"role": "user", "content": "MOCK:TOOL check the weather"}
+    status, _, body, _ = http(
+        "POST", base, "/chat/completions", token="mock-glm-coding",
+        payload={"model": "glm-5.2", "messages": [user]},
+    )
+    first_call = chat_tool_call_id(body)
+    check("tool loop: MOCK:TOOL keyword drives chat tool-call stream",
+          status == 200 and first_call is not None,
+          f"status={status} call_id={first_call!r}")
+
+    followup = {
+        "model": "glm-5.2",
+        "messages": [
+            user,
+            {"role": "assistant", "tool_calls": [{
+                "id": first_call or "call_x", "type": "function",
+                "function": {"name": "get_weather", "arguments": "{\"city\":\"Paris\"}"},
+            }]},
+            {"role": "tool", "tool_call_id": first_call or "call_x", "content": "sunny"},
+        ],
+    }
+    status, _, body2, _ = http(
+        "POST", base, "/chat/completions", token="mock-glm-coding", payload=followup,
+    )
+    events, parsed = parse_sse_json(body2)
+    has_tool = any(
+        (choice.get("delta") or {}).get("tool_calls")
+        for event in parsed
+        for choice in event.get("choices") or []
+    )
+    check("tool loop: tool result in request yields final text, not another tool call",
+          status == 200 and events and events[-1] == "[DONE]" and not has_tool,
+          f"status={status} has_tool={has_tool} tail={events[-1:]!r}")
+
+    status, _, body3, _ = http(
+        "POST", base, "/chat/completions", token="mock-glm-coding",
+        payload={"model": "glm-5.2", "messages": [user]},
+    )
+    second_call = chat_tool_call_id(body3)
+    check("tool loop: repeated tool run gets a fresh tool_call_id",
+          status == 200 and second_call is not None and second_call != first_call,
+          f"first={first_call!r} second={second_call!r}")
+
+    # Responses transport：MOCK:TOOL → function_call；function_call_output → 终答文本。
+    responses_user = {"model": "gpt-5.6-codex", "input": [{"type": "message", "role": "user",
+                      "content": [{"type": "input_text", "text": "MOCK:TOOL weather"}]}]}
+    status, _, body, _ = http(
+        "POST", base, "/responses", token="mock-chatgpt", payload=responses_user,
+    )
+    check("tool loop: MOCK:TOOL drives responses function_call stream",
+          status == 200 and b"function_call" in body, f"status={status}")
+    responses_user["input"] = responses_user["input"] + [
+        {"type": "function_call", "call_id": "call_prev", "name": "get_weather",
+         "arguments": "{\"city\":\"Paris\"}"},
+        {"type": "function_call_output", "call_id": "call_prev", "output": "sunny"},
+    ]
+    status, _, body, _ = http(
+        "POST", base, "/responses", token="mock-chatgpt", payload=responses_user,
+    )
+    check("tool loop: responses function_call_output yields final text",
+          status == 200 and b"output_text" in body and b"function_call_arguments" not in body,
+          f"status={status}")
+
+    # Messages transport：tool_result block → 终答文本。
+    messages_followup = {"model": "claude-sonnet-4-5", "messages": [
+        {"role": "user", "content": "MOCK:TOOL weather"},
+        {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "toolu_prev", "name": "get_weather",
+             "input": {"city": "Paris"}}]},
+        {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "toolu_prev", "content": "sunny"}]},
+    ]}
+    status, _, body, _ = http(
+        "POST", base, "/v1/messages", api_key="mock-anthropic", payload=messages_followup,
+    )
+    check("tool loop: messages tool_result yields final text",
+          status == 200 and b"text_delta" in body and b"tool_use" not in body,
+          f"status={status}")
+
+    # 成功路径：MOCK:TOOLFILE → read_file（Pawork 内建只读工具）工具调用流。
+    status, _, body, _ = http(
+        "POST", base, "/chat/completions", token="mock-glm-coding",
+        payload={"model": "glm-5.2", "messages": [
+            {"role": "user", "content": "MOCK:TOOLFILE read the readme"}]},
+    )
+    check("tool loop: MOCK:TOOLFILE drives chat read_file tool-call stream",
+          status == 200 and b"read_file" in body and b"README.md" in body,
+          f"status={status}")
+    status, _, body, _ = http(
+        "POST", base, "/responses", token="mock-chatgpt",
+        payload={"model": "gpt-5.6-codex", "input": [{"type": "message", "role": "user",
+                 "content": [{"type": "input_text", "text": "MOCK:TOOLFILE readme"}]}]},
+    )
+    check("tool loop: MOCK:TOOLFILE drives responses read_file function_call stream",
+          status == 200 and b"read_file" in body and b"README.md" in body,
+          f"status={status}")
 
 
 def main() -> int:
