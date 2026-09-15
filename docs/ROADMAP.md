@@ -1,6 +1,6 @@
 # Pawork 活动路线图：GUI 第二阶段
 
-> 更新：2026-09-15；规划基线：`main / 7a416dd6`，当前主干 `8952a743`。2026-09-13 [ADR-061](spec/settings.md#adr-061账号默认名称与重命名2026-09-13) 将 Settings 账号改为默认名（邮箱 / API key 脱敏串）+ 可重命名，Go 三窗用进度条表示已用百分比；GUI API 1.17。2026-09-14 代理完成 §2.2 全部真窗口验收（V-01～V-12 与 ADR-061，证据 /tmp/pawork-vfix-evidence/）；同日下午补齐非空 MCP（GUI 内成功执行）与 GUI3-04 401 CTA（§2.2 末尾补录，含一次凭证操作事故登记，需用户重录 DeepSeek key），用户视觉验收仍未做。本阶段以 [PI-Desktop Screens](https://pi-docs.aiuo.net/guide/screenshots) 为交互与视觉参照，优化已有 GPUI 工作台。**GUI2-01～06 已实现并完成定向自动检查，等待用户验收；GUI2-02 真窗口限制见下文；GUI2-05 / 06 代理真窗口随 GUI2-07 批次完成；GUI2-07 于 2026-09-14 完成真窗口验收并同批复验 §4 GUI3 呈现（证据 /tmp/pawork-gui2-07-evidence/）**；生产能力以源码为准，下一阶段规格见 [GUI 设计](gui-design.md)。2026-09-12 完成一轮显示效果 Review，结论与新增的 GUI3 视觉任务见 [§4](#4-显示效果-review2026-09-12与-gui3-视觉任务)；同日 GUI3-01～07 已由子代理实现并通过 Desktop 定向测试（主代理逐 hunk 审查），代理真窗口 2026-09-14 随 GUI2-07 批次复验（01～03、05～07 通过，04 的 401 CTA 当日下午补齐、08 动效留人工），用户验收未进行；GUI3-08 已按 PI 暗色截图确认有限动效（不循环）并落地，定向测试见本轮报告。2026-09-13 用户在本机 `desktop` 真窗口走查当前工作区候选，疑似问题记 [§2.1](#21-用户视觉走查发现2026-09-13)。2026-09-15 工作区落地 GUI4 壳层收口：StatusBar 三栏（项目 / 分支 · 用量 · 反馈或连接）与共享 `EmptyState`（首页 / Changes / Resources），字号与操作提示改落右栏，Composer 不再承载瞬态 hint。
+> 更新：2026-09-15；规划基线：`main / 7a416dd6`，当前主干 `e754f4c5`。2026-09-13 [ADR-061](spec/settings.md#adr-061账号默认名称与重命名2026-09-13) 将 Settings 账号改为默认名（邮箱 / API key 脱敏串）+ 可重命名，Go 三窗用进度条表示已用百分比；GUI API 1.17。2026-09-14 代理完成 §2.2 全部真窗口验收（V-01～V-12 与 ADR-061，证据 /tmp/pawork-vfix-evidence/）；同日下午补齐非空 MCP（GUI 内成功执行）与 GUI3-04 401 CTA（§2.2 末尾补录，含一次凭证操作事故登记，需用户重录 DeepSeek key），用户视觉验收仍未做。本阶段以 [PI-Desktop Screens](https://pi-docs.aiuo.net/guide/screenshots) 为交互与视觉参照，优化已有 GPUI 工作台。**GUI2-01～06 已实现并完成定向自动检查，等待用户验收；GUI2-02 真窗口限制见下文；GUI2-05 / 06 代理真窗口随 GUI2-07 批次完成；GUI2-07 于 2026-09-14 完成真窗口验收并同批复验 §4 GUI3 呈现（证据 /tmp/pawork-gui2-07-evidence/）**；生产能力以源码为准，下一阶段规格见 [GUI 设计](gui-design.md)。2026-09-12 完成一轮显示效果 Review，结论与新增的 GUI3 视觉任务见 [§4](#4-显示效果-review2026-09-12与-gui3-视觉任务)；同日 GUI3-01～07 已由子代理实现并通过 Desktop 定向测试（主代理逐 hunk 审查），代理真窗口 2026-09-14 随 GUI2-07 批次复验（01～03、05～07 通过，04 的 401 CTA 当日下午补齐、08 动效留人工），用户验收未进行；GUI3-08 已按 PI 暗色截图确认有限动效（不循环）并落地，定向测试见本轮报告。2026-09-13 用户在本机 `desktop` 真窗口走查当前工作区候选，疑似问题记 [§2.1](#21-用户视觉走查发现2026-09-13)。2026-09-15 工作区落地 GUI4 壳层收口：StatusBar 三栏（项目 / 分支 · 用量 · 反馈或连接）与共享 `EmptyState`（首页 / Changes / Resources），字号与操作提示改落右栏，Composer 不再承载瞬态 hint。
 
 上一条 UX-01～UX-09 已有实现，详细证据迁至 [历史记录](review/roadmap-ux-2026-09-10.md)，未完成验收继续列于 §3。迁存记录不代表验收通过或任务归档。更早 UI-1～UI-6 见 [模块重设计记录](review/roadmap-ui-2026-09-09.md)。
 
@@ -376,12 +376,20 @@ UX-09 的 [9 月 10 日补验](review/roadmap-ux-2026-09-10.md#ux-09-真窗口�
 - **写入集**：`apps/desktop/src/ui/{mod,input_area,timeline,changes,resources,theme,accessibility/app}.rs`、`ui/components/{empty_state,status_bar,mod}.rs`；回写 [GUI 设计](gui-design.md) 与 [Desktop Spec](spec/crates/desktop.md)。
 - **限制 / 偏离**：左右栏视觉不进 AX；字号反馈 3 秒收起不清除同时到达的 `status_hint`；Settings 壳仍不显示 StatusBar。真窗口与用户验收未进行。
 
-#### GUI4 终端显示层（行覆盖、SGR、按键直通与自动 resize）
+#### GUI4 终端显示层（直接输入与行内光标）
 
-- **改动**：Inspector Terminal 从剥 CSI 后把 CR 当成换行的纯文本，改为行缓冲显示层：CR 覆盖同一行、退格回退光标、EL 擦行、SGR 16 色进 `StyledText`。Ctrl-C / Tab / ↑↓←→ 在输入框聚焦时直通 `terminal_write`；可打印字符仍走行式 Enter，空行也发换行。未启动时带正文的 Enter 会在 create 回执后补发。输出面视口像素自动 `terminal_resize`（扣内边距、随字号缩放，20–500×6–200），stepper 草稿优先；切标签后把当前面板尺寸套到新会话。CUP / CUU / CUD 丢弃，不声称网格 / alt-screen / vim。不改 wire、不直连 PTY、不新增 crate。
-- **写入集**：`apps/desktop/src/ui/{terminal_view,inspector,mod}.rs`、`apps/desktop/src/projection/terminal.rs`；回写 [GUI 设计](gui-design.md)、[Desktop Spec](spec/desktop.md)、[desktop crate Spec](spec/crates/desktop.md)、[AGENTS.md](../AGENTS.md)。
-- **限制 / 偏离**：输入仍在输出面底部 TextInput，不是网格内字符级编辑；无选中复制、无完整 VT 仿真。真窗口与用户验收未进行。
-- **后续（2026-09-15，用户确认新增包）**：终端显示核心抽为 `pawork-terminal`（crates/terminal，零依赖纯库）：行缓冲解析、SGR 属性分段、按键→PTY 字节、面板像素→列×行估算与对应测试迁入；`ui/terminal_view.rs` 收缩为 gpui 胶水层（主题色 runs、Keystroke 转换、resize 防抖）。Desktop 生产依赖白名单改为 {pawork-client, pawork-terminal}；不改 wire / Host / 面板行为。
+- **已实现（2026-09-15，按用户修订）**：终端只有紧凑标签栏与直接输入的窗口，删除独立 TextInput、发送 / Start / Size 控件和手动尺寸草稿。首次打开自动创建；普通文字、IME 提交、Enter / Tab / Ctrl-C / 方向键进入 PTY，每个终端独立串行写入。光标跟随 shell 输出，支持 SGR、清屏、折行及 CJK 列宽；自动适配视口，关闭标签经 Host 成功回执后移除并聚焦兄弟标签。
+- **已实现的审查修复**：修正 macOS Enter / Tab 分发、空行着色长度导致窗口退出、中文粘贴回移覆盖提示符、跨 PTY 写入互相阻塞；Host 为 GUI 终端固定 `TERM=xterm`，修正继承 `dumb` 导致清屏无效和提示符重复。旧尺寸操作与输入栏同时从可见 UI、键盘路由和 AX 移除。
+- **自动检查已通过**：`cargo test -p pawork-terminal --offline --lib --tests`（Terminal 9）与 `cargo test -p pawork-desktop --offline`（Desktop 261，bin 单测）；`cargo test -p pawork-app --offline --lib terminal`（16 项）；正式 Desktop runtime_shaders 与 Host 构建。测试覆盖按键排队隔离、空行 / IME 文本 runs、光标移动 / CJK / 清屏 / 折行、AX 无旧控件。修改文件的 rustfmt 检查通过；包级 fmt 检查报告已有未修改文件的格式差异，未扩大写入集。未运行全 workspace 门禁。
+- **代理真窗口验收**：隔离 `terminal-inline-0915` 完成自动启动、直接打字和 Enter、粘贴落盘、← 行内插入、Tab 补全、↑ 历史、Ctrl-C 中断、Ctrl-L 清屏、中文粘贴输出、同项目新建 / 关闭与兄弟标签回落和直接输入焦点；最终 Host 新建 shell 的 `echo $TERM` 返回 `xterm`，`stty size` 返回 `56 58`。落盘证据 `/tmp/pawork-inline-final-result.txt` 为 `FINAL_INLINE_OK`，与窗口读取一致。
+- **边界**：用户验收未进行；系统输入法候选 composing 尚未做真实验收。仍不是完整 VT emulator，无备用屏幕与鼠标选择复制，复杂 emoji 字素簇未完整仿真；不把这些计为已完成。不改 wire，不直连 PTY，不新增依赖；核心继续使用 `pawork-terminal` 零依赖纯库。未提交、未发布、未归档。
+
+#### 终端 / 图片 / 搜索审查（2026-09-15）
+
+- **已实现**：终端改为直接输入及行内光标（本节上方为最新状态），BS / ESC / 私有 CSI 与稀疏寻址边界修复；图片附件按索引根定位、路径复核、普通文件检查与有界读取；目录显式纯文本 / false 撤销静态视觉能力，未接线搜索不因远端字段而宣称可用；搜索开关仅 Global 生效，xAI 移除旧 Chat 搜索声明，Anthropic / Responses 保留真实终态，CLI / GUI live 与历史均保留来源。
+- **自动检查已通过**：workspace / app / cli / protocol / terminal / desktop 定向测试、providers 全 feature 定向测试（既有网络 opt-in 项 ignored）与正式 Host/Desktop 构建。无全 workspace 门禁。
+- **真实验收**：隔离 `review-0915` 窗口完成终端命令、草稿清空、历史键、逐键输入与 CR 输出核对；最终构建另核对红色 SGR、BS 覆盖 `aXc` 与 `ESC ( B` 不泄漏字符（原始输出 `/tmp/pawork-terminal-final.raw`），结果文件 `/tmp/pawork-terminal-review-result.txt` 与窗口一致。指定 `opencode-go / glm-5.3-flash` 图片请求和纯文本基线均返回 HTTP 400（`/tmp/pawork-review-{vision,text}-live.log`），故图片与原生搜索仅记录实现 / 自动检查通过，未宣称真实模型通过。
+- **状态**：等待用户验收；未提交、未发布、未归档。视觉 / 搜索角色偏好尚不触发独立模型调度；Kimi / GLM / Qwen 未接线的原生搜索仍明确拒绝，不能把偏好保存视为执行已实现。
 
 ### 4.4 需用户确认的候选（不随 GUI3 自动立项）
 

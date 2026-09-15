@@ -45,6 +45,9 @@ pub(in crate::gui_host) fn broadcast_event(envelope: &AgentEventEnvelope) -> Opt
             tool_call_id: result.tool_call_id.clone(),
             success: !result.is_error,
         },
+        AgentEvent::ServerTool(event) => {
+            return pawork_protocol::projection::project_server_tool_event(&run, event);
+        }
         AgentEvent::RunCompleted { .. } => AppEvent::RunChanged {
             run_id: run,
             state: RunState::Completed,
@@ -142,6 +145,71 @@ mod tests {
                 delta: "先核对输入".into(),
             })
         );
+    }
+
+    #[test]
+    fn hosted_search_live_and_replay_keep_sources_and_terminal_status() {
+        use pawork_domain::{Citation, ServerToolEvent};
+        use pawork_protocol::projection::{project_event, TimelineEntryKind, TimelineProjection};
+        for failed in [false, true] {
+            let call = pawork_domain::ToolCallId::from("ws-1");
+            let events = [
+                ServerToolEvent::Started {
+                    tool_call_id: call.clone(),
+                    name: "web_search".into(),
+                    arguments: None,
+                },
+                // Responses 引用通常在 search item 完成之后才到达。
+                if failed {
+                    ServerToolEvent::Failed {
+                        tool_call_id: call.clone(),
+                        message: Some("failed".into()),
+                        code: None,
+                    }
+                } else {
+                    ServerToolEvent::Completed {
+                        tool_call_id: call.clone(),
+                        summary: None,
+                        artifacts: vec![],
+                    }
+                },
+                ServerToolEvent::CitationAdded {
+                    tool_call_id: call,
+                    citation: Citation {
+                        title: Some("Reference".into()),
+                        url: Some("https://example.test/source".into()),
+                        ..Citation::empty()
+                    },
+                },
+            ];
+            let mut live = TimelineProjection::default();
+            let mut replay = TimelineProjection::default();
+            for (i, event) in events.into_iter().enumerate() {
+                let mut persisted = envelope(AgentEvent::ServerTool(event));
+                persisted.sequence = EventSequence::new(i as u64 + 1);
+                persisted.event_id = EventId::from(format!("search-{i}"));
+                let payload = broadcast_event(&persisted).expect("search display event");
+                let frame = serde_json::from_value(json!({
+                    "api_version": {"major": 1, "minor": 17}, "instance_id": "test",
+                    "event_id": persisted.event_id, "global_sequence": i + 1,
+                    "stream": {"type": "session", "id": "sess-1"}, "stream_sequence": i + 1,
+                    "timestamp": 1, "source": {"type": "core"}, "payload": payload,
+                }))
+                .unwrap();
+                live.apply_event(&frame);
+                let item = project_event(&persisted).expect("history item");
+                replay.apply_item(&item);
+                replay.apply_item(&item);
+            }
+            assert_eq!(live.entries.len(), 1);
+            assert_eq!(replay.entries.len(), 1);
+            assert_eq!(live.entries[0].kind, replay.entries[0].kind);
+            assert!(
+                matches!(&live.entries[0].kind, TimelineEntryKind::ToolCall { name, status, detail: Some(detail), .. }
+                if name == "web_search" && status == if failed { "failed" } else { "succeeded" }
+                && detail.contains("Reference\nhttps://example.test/source"))
+            );
+        }
     }
 
     #[test]

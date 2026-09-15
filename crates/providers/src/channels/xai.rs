@@ -72,8 +72,6 @@ impl XaiProvider {
                 provider_id: ProviderId::new(PROVIDER_ID),
                 http: config.http.clone(),
                 request_timeout: config.request_timeout,
-                // SEARCH-1：xAI Live Search（search_parameters）。
-                chat_search: Some(crate::provider::ChatSearchWire::XaiSearchParameters),
             },
             Some(credential.clone()),
         )?;
@@ -168,6 +166,9 @@ impl ModelProvider for XaiProvider {
             definition.id = ModelId::new(id);
             // canonical ID 与 stream 使用相同路由；别名只补能力，不改变实际请求路径。
             definition.capabilities.transport = Self::transport_for(&definition.id);
+            if definition.capabilities.transport != ModelTransport::Responses {
+                definition.capabilities.hosted_tool_tags.clear();
+            }
             if let Some(modalities) = entry.get("input_modalities").and_then(Value::as_array) {
                 definition.capabilities.image_input = modalities
                     .iter()
@@ -193,25 +194,11 @@ impl ModelProvider for XaiProvider {
                 .stream(request, sink, cancel)
                 .await
                 .map_err(|error| normalize_vendor_error(PROVIDER_ID, error)),
-            ModelTransport::ChatCompletions => {
-                // SEARCH-1：WebSearch 由 chat transport 的 search_parameters 承接；
-                // 其余 hosted/extension 仍在发 HTTP 前拒绝。
-                if request
-                    .hosted_tools
-                    .iter()
-                    .any(|tool| tool.kind != pawork_domain::ToolCapabilityTag::WebSearch)
-                    || !request.extensions.is_empty()
-                {
-                    return Err(ProviderError::new(
-                        ProviderErrorKind::InvalidRequest,
-                        "xAI Chat Completions models do not declare the requested provider-hosted tools",
-                    ));
-                }
-                self.chat
-                    .stream(request, sink, cancel)
-                    .await
-                    .map_err(|error| normalize_vendor_error(PROVIDER_ID, error))
-            }
+            ModelTransport::ChatCompletions => self
+                .chat
+                .stream(request, sink, cancel)
+                .await
+                .map_err(|error| normalize_vendor_error(PROVIDER_ID, error)),
             ModelTransport::Messages => Err(ProviderError::new(
                 ProviderErrorKind::InvalidRequest,
                 "xAI adapter cannot route a Messages-only model",
@@ -264,9 +251,9 @@ pub fn builtin_models() -> Vec<ModelDefinition> {
                 tool_calls: true,
                 parallel_tool_calls: true,
                 thinking,
-                // SEARCH-1：xAI Live Search 对全部文本模型可用（docs.x.ai live-search），
-                // 未知远端 id 不继承该声明（conservative 默认走 Default 空集）。
-                hosted_tool_tags: [pawork_domain::ToolCapabilityTag::WebSearch]
+                // 当前 hosted search 仅由 Responses API 承接。
+                hosted_tool_tags: (transport == ModelTransport::Responses)
+                    .then_some(pawork_domain::ToolCapabilityTag::WebSearch)
                     .into_iter()
                     .collect(),
                 structured_output: true,

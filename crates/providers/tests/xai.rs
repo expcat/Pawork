@@ -76,23 +76,37 @@ async fn model_capability_selects_responses_or_chat() {
     Mock::given(method("POST"))
         .and(path("/responses"))
         .and(header("authorization", "Bearer oauth-xai"))
-        .respond_with(ResponseTemplate::new(200).insert_header("content-type", "text/event-stream").set_body_string(
-            common::responses_completed_body()
-        )).expect(1).mount(&server).await;
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(common::responses_completed_body()),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
         .and(header("authorization", "Bearer oauth-xai"))
-        .respond_with(ResponseTemplate::new(200).insert_header("content-type", "text/event-stream").set_body_string(
-            common::chat_finish_only_body()
-        )).expect(1).mount(&server).await;
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(common::chat_finish_only_body()),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
 
     let provider = provider(&server);
+    let mut search = request("grok-4");
+    search.hosted_tools.push(pawork_domain::HostedToolRequest {
+        kind: pawork_domain::ToolCapabilityTag::WebSearch,
+        name: "web_search".into(),
+        description: String::new(),
+        capabilities: Vec::new(),
+        config: None,
+    });
     provider
-        .stream(
-            request("grok-4"),
-            &Sink::default(),
-            CancellationToken::new(),
-        )
+        .stream(search.clone(), &Sink::default(), CancellationToken::new())
         .await
         .unwrap();
     provider
@@ -109,6 +123,23 @@ async fn model_capability_selects_responses_or_chat() {
         .unwrap()
         .iter()
         .all(|request| !request.headers.contains_key("x-opencode-session")));
+    search.model = ModelId::new("grok-3");
+    let error = provider
+        .stream(search, &Sink::default(), CancellationToken::new())
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind, pawork_domain::ProviderErrorKind::InvalidRequest);
+    let sent = server.received_requests().await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&sent[0].body).unwrap();
+    assert_eq!(body["tools"][0]["type"], "web_search");
+    assert!(body.get("search_parameters").is_none());
+    assert!(pawork_providers::xai_builtin_models()
+        .iter()
+        .all(|model| model
+            .capabilities
+            .hosted_tool_tags
+            .contains(&pawork_domain::ToolCapabilityTag::WebSearch)
+            == (model.capabilities.transport == pawork_domain::ModelTransport::Responses)));
     server.verify().await;
 }
 

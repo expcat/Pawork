@@ -77,7 +77,6 @@ impl KimiCodeProvider {
                 provider_id: ProviderId::new(PROVIDER_ID),
                 http: config.http,
                 request_timeout: config.request_timeout,
-                chat_search: None,
             },
             Some(credential.clone()),
         )?;

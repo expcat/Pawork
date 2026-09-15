@@ -192,6 +192,8 @@ UI-6b / API 1.15（[ADR-059](../settings.md#adr-059ui-6b-命名账号与持久�
 - `ForkBoundary` 3 变体（Completed / Cancelled / Failed）：R6（ADR-040 D5）规定 fork 只许切在闭合 turn 边界，reducer 单点判型——仅历史 `RunCompleted/RunCancelled/RunFailed` 与 live `RunState` 三终态打此标记；`TimelineEntry::is_fork_boundary()` 是 Desktop 唯一判界入口，禁止对 `kind` 文案做字符串匹配。
 - 入口汇总：`TimelineProjection::{apply_item, apply_event, entries, reset_baseline}` + `apply_resume_disposition`——`UpToDate` 保持、`Replay` 保留基线等待补帧、`SnapshotRequired` 触发 `reset_baseline`（丢弃 live 增量、以快照重建）。
 
+`project_server_tool_event(run_id, event) -> Option<AppEvent>` 将 hosted 工具的 Started / CitationAdded / Completed / Failed 映射到既有 ToolStarted / ToolOutput / ToolCompleted，供 Host live 与 `project_event` 历史臂共用；保留调用 ID、来源标题 / URL / 摘录与成功 / 失败，不进入本地工具执行链、不改 wire。reducer 记录完成序号，拒绝完成前的迟到增量，同时允许完成后产生的引用继续追加。两臂对拍与去重回归位于 `pawork-app` 的 `gui_host/events.rs`。
+
 ### 3.6 typegen（feature `typegen`）
 
 `cargo run -p pawork-protocol --features typegen --bin pawork-protocol-typegen` 重新生成 `schemas/{core-api,gui-protocol,headless-json}/`；`--check`（及 `tests/typegen.rs`）做逐文件 diff——缺文件、多余文件、内容漂移均失败。三组导出的类型闭包：

@@ -44,7 +44,7 @@ Workspace 为 **22 成员（20 库 + 2 应用）**：20 个库平铺 `crates/<�
 | `pawork-app` | `crates/app` | 领域宿主依赖 + transport | 装配宿主 + `gui_server/`（GuiServer/ConnectionManager/GuiHost trait）+ `gui_host/`（分发表） |
 | `pawork-cli` | `crates/cli` | 原 cli 依赖（GuiHost 经 app） | 21 子命令 + `channels/acp/`（AcpHost 四件套） |
 | `pawork-client` | `crates/client` | → domain、protocol、transport | framed 连接面 + `headless/`；probe 场景为本包 tests/，live 模式 `examples/probe.rs` |
-| `pawork-terminal` | `crates/terminal` | 无内部依赖 | 终端显示核心：行缓冲解析（CR/退格/EL/SGR 16 色）、按键→PTY 字节映射、面板像素→列×行估算；不是完整 VT emulator |
+| `pawork-terminal` | `crates/terminal` | 无内部依赖 | 终端显示核心：行缓冲解析（CR/退格/擦除/光标/折行/SGR 16 色）、按键→PTY 字节映射、面板像素→列×行估算；不是完整 VT emulator |
 | `pawork`（bin） | `apps/pawork` | → cli | composition root + `redact.rs`（Redactor/RedactingFmtLayer） |
 | `pawork-desktop`（bin） | `apps/desktop` | → client、terminal、gpui；macOS platform-only → cocoa、objc、raw-window-handle | 四层 ui/projection/controller/platform；业务依赖 = pawork-client + pawork-terminal（deny-list 断言）；AX 走应用侧原生 bridge，不扩张业务依赖 |
 

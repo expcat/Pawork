@@ -250,6 +250,8 @@ pub(crate) async fn terminal_create(
         cwd,
         shell,
         size,
+        // GUI 提供自己的终端显示，不能继承无 TTY Host 的 TERM=dumb。
+        env: vec![("TERM".into(), "xterm".into())],
         ..PtyCreateSpec::default()
     };
     let gate = decide_terminal_create(

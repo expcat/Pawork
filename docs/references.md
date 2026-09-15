@@ -689,7 +689,7 @@ F5-C（网关式响应缓存/语义缓存）不属于本域——那是输出缓
 
 ## 附录 D 八家供应商 vision / web search / 套餐额度调研（2026-09-15）
 
-> 调研日期 2026-09-15。GLM / Kimi / DeepSeek / Qwen / OpenCode Go / OpenAI 结论来自官方文档原文；xAI / Anthropic 官网调研时在本网络不可达，以 Pawork providers 源码 wire 实现（注释引用官方文档）与 Qwen 百炼 Anthropic 兼容模式文档交叉印证为准。落地为 VISION-1 / VISION-2 / SEARCH-1（见 providers / app / workspace / testkit / cli 各包 Spec）。
+> 调研日期 2026-09-15。GLM / Kimi / DeepSeek / Qwen / OpenCode Go / OpenAI 结论来自官方文档原文；xAI / Anthropic 首轮官网不可达的结论已于同日审查时重新核对官方原文；修正 xAI 搜索协议及 Anthropic 搜索完成 / 失败语义（来源见下文）。落地为 VISION-1 / VISION-2 / SEARCH-1（见 providers / app / workspace / testkit / cli 各包 Spec）。
 
 ### D §1 模型能力对照（按型号而非按 provider）
 
@@ -704,15 +704,15 @@ F5-C（网关式响应缓存/语义缓存）不属于本域——那是输出缓
 | | deepseek-v4-pro | ❌ | ❌ | thinking only |
 | Qwen Token Plan（百炼） | qwen3.8-max / 3.8-flash / 3.7-plus / 3.6-flash | ✅ | ✅（四种形态） | qwen3.7-max 无视觉；qwen3.8-max-preview 已路由到 3.8-max |
 | OpenCode Go | 按官方目录逐模型 | 目录内唯一视觉模型为 deepseek-v4-flash-vision-exp（由 V4.1-Flash 承接） | Go 侧实现 | 目录元数据 `https://opencode.ai/zen/go/v1/models` |
-| xAI | 远端 `/language-models` 目录为准 | 按远端输入模态字段 | ✅ Live Search 对全部文本模型 | 未知 ID 保守 text + Chat Completions |
+| xAI | 远端 `/language-models` 目录为准 | 按远端输入模态字段 | Responses 原生 Web Search；Chat 不声明 | 未知 ID 保守 text + Chat Completions |
 | OpenAI（ChatGPT Codex） | codex 后端全模型 | ✅ `input_image` | ✅ Responses 内置 `web_search` | store=false + include_encrypted_reasoning |
-| Anthropic | 远端目录为准 | ✅ image block | ✅ server tool `web_search_20250305` | 官网不可达，以源码 wire 为准 |
+| Anthropic | 远端目录为准 | ✅ image block | ✅ server tool `web_search_20250305` | 结果块可返回错误，不把参数块结束当作成功 |
 
 ### D §2 web search wire 形状（每家不同，canonical 须按 provider 适配）
 
 1. **OpenAI Responses**：`tools=[{"type":"web_search"}]` hosted 工具；SSE `web_search_call` item + `url_citation` annotation（旧 `web_search_preview` 仅留兼容）。
-2. **Anthropic Messages**：server tool `{"type":"web_search_20250305","name":"web_search"}`；流式 `server_tool_use` → `web_search_tool_result` 内容块，次数记 `usage.server_tool_use.web_search_requests`。
-3. **xAI Chat Completions**：请求体顶层 `search_parameters`（如 `{"mode":"auto"}`），有独立 Live Search 配额维度。
+2. **Anthropic Messages**：server tool `{"type":"web_search_20250305","name":"web_search"}`；流式 `server_tool_use` → `web_search_tool_result` 内容块，次数记 `usage.server_tool_use.web_search_requests`；参数块结束不代表完成，结果中的 `web_search_tool_result_error` 必须显示失败。[官方文档](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool)。
+3. **xAI Responses**：`tools=[{"type":"web_search"}]`。当前官方推荐 Responses，Chat Completions 的工具支持限于 function calling；删除旧 `search_parameters` 路线，不能向所有文本模型宣称 hosted search。[协议对照](https://docs.x.ai/developers/model-capabilities/text/comparison) · [Web Search](https://docs.x.ai/developers/tools/web-search)。
 4. **Kimi**：内置工具 `{"type":"builtin_function","function":{"name":"$web_search"}}`；模型返回 `tool_calls` 后把 arguments **原样**回传为 `role:"tool"` 消息，搜索由 Moonshot 侧执行；每次触发 $0.005。k3 推荐 Formula API（`GET /formulas/.../tools` + `POST /formulas/{uri}/fibers`）。
 5. **Qwen 百炼**四形态：Responses `tools=[{"type":"web_search"}]`；Chat 顶层 `enable_search:true`（SDK 需 extra_body）；DashScope `enable_search=True`；Anthropic 兼容端点 `web_search_20250305`（需 system 传 `x-anthropic-billing-header`）。
 6. **GLM**：`tools=[{"type":"web_search","web_search":{"enable":"True","search_engine":"search-prime",...}}]`，响应顶层 `web_search` 数组回原始结果；或 MCP Server（web_search / web_reader / zread，SSE 接入）。
@@ -734,4 +734,4 @@ Chat Completions 家族统一为 content 数组 `image_url`（data URL / 外部 
 
 ### D §5 来源
 
-docs.z.ai/devpack（overview / latest-model / web-search / chat-completion）；platform.kimi.ai/docs（models / use-kimi-vision-model / use-web-search / use-official-tools / pricing）；api-docs.deepseek.com（pricing / vision / responses_api）；alibabacloud.com/help/zh/model-studio（token-plan-personal-overview / web-search / qwen-api-via-dashscope）；opencode.ai/docs/go；developers.openai.com（web-search / images-vision）与 learn.chatgpt.com/docs/pricing；xAI / Anthropic 为 Pawork providers 源码 wire（注释引用 docs.x.ai / docs.claude.com）。
+docs.z.ai/devpack（overview / latest-model / web-search / chat-completion）；platform.kimi.ai/docs（models / use-kimi-vision-model / use-web-search / use-official-tools / pricing）；api-docs.deepseek.com（pricing / vision / responses_api）；alibabacloud.com/help/zh/model-studio（token-plan-personal-overview / web-search / qwen-api-via-dashscope）；opencode.ai/docs/go；developers.openai.com（web-search / images-vision）与 learn.chatgpt.com/docs/pricing；xAI / Anthropic 为上文链接的 docs.x.ai / platform.claude.com 官方原文（2026-09-15 复核）。

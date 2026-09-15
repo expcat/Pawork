@@ -51,7 +51,8 @@ pub struct PaworkConfig {
     pub search_model: Option<String>,
 
     /// SEARCH-1：为 Run 开启 Provider 服务端 web search（hosted tool 直连）。
-    /// 缺省 false；模型未声明 WebSearch 能力时请求在发 HTTP 前 fail-closed。
+    /// 仅 Builtin/Global 层可设置，缺省 false；模型未声明 WebSearch 能力时
+    /// 请求在发 HTTP 前 fail-closed。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub web_search: Option<bool>,
 

@@ -31,7 +31,7 @@
 | `src/import.rs` | ~80 | `import <tool>`：compat 配置导入向导（预览 / 确认 / 应用） |
 | `src/approval.rs` | ~125 | `InteractiveApprovals`：stderr 打印审批摘要 + 从 stdin 读 `y`/`a`/`n`；取消 token 优先（biased select） |
 | `src/adapter.rs` | ~120 | `AppCore` → `GuiHostAdapter` 装配助手；`command_envelope` / `wrap_response` / `stamp_automation`（Automation 身份戳）；`CliAcpCommandHost`（实现 `AcpCommandHost` 窄 port） |
-| `src/render.rs` | ~630 | `TextSink`（`AgentEventSink` 实现）：文本流 → stdout，thinking / 工具活动 / 审批往返 / 沙箱回退 notice / 截断提示 → stderr；SEARCH-1 起 ServerTool 活动行（Started 登记、Completed `⚙ name · N citations`、Failed `✗`，中间帧不刷屏） |
+| `src/render.rs` | ~630 | `TextSink`（`AgentEventSink` 实现）：文本流 → stdout，thinking / 工具活动 / 审批往返 / 沙箱回退 notice / 截断提示 → stderr；SEARCH-1 起 ServerTool 活动行（Started 登记、Completed `⚙ name · N citations`、Failed `✗`，引用逐条显示标题与 URL，晚于 Completed 的引用仍显示；中间进度帧不刷屏） |
 | `src/error.rs` | ~80 | `format_provider_error`：`ProviderErrorKind` → 中文可读错误（不重试、不打印 Secret） |
 | `src/channels/mod.rs` | ~15 | 外部通道命名空间；本波仅激活 `acp`，re-export 通道 API |
 | `src/channels/acp/mod.rs` | ~35 | ACP 子系统 re-export 与 `now_timestamp` |

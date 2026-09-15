@@ -10,9 +10,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::ReasoningProtector;
-use crate::channels::registry::{ChannelPreset, is_enabled};
+use crate::channels::registry::{is_enabled, ChannelPreset};
 use crate::net::http::HttpClientConfig;
+use crate::ReasoningProtector;
 use async_trait::async_trait;
 use pawork_domain::{CancellationToken, ModelId, ProviderId, Timestamp};
 use pawork_domain::{
@@ -119,7 +119,6 @@ impl ApiKeyChannelProvider {
                 provider_id: provider_id.clone(),
                 http: config.http.clone(),
                 request_timeout: config.request_timeout,
-                chat_search: None,
             },
             Some(credential.clone()),
         )?;

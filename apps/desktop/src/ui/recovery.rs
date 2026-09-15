@@ -213,17 +213,6 @@ impl AppView {
         self.terminal_read_only() || self.inspector_workspace_id().is_none()
     }
 
-    pub(super) fn terminal_start_available(&self) -> bool {
-        let terminal = &self.projection.terminal;
-        terminal_start_enabled(
-            &self.projection.connection,
-            terminal,
-            self.terminal_pending_create_workspace.as_ref(),
-            self.terminal_pending_resize.is_some(),
-        ) && ((terminal.session_id.is_some() && !terminal_can_reopen(terminal))
-            || !self.terminal_create_blocked())
-    }
-
     fn terminal_error_key(&self) -> Option<(Option<String>, String)> {
         let terminal = &self.projection.terminal;
         if let Some(reason) = &terminal.last_error {

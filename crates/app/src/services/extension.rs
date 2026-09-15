@@ -1,5 +1,6 @@
 //! Extension 领域服务：workspace 附件（@file）、file-index、资源注入与 MCP 状态面。
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use pawork_domain::{ContentPart, ImageContent, ImageSource, TextContent, WorkspaceId};
@@ -196,6 +197,20 @@ impl ExtensionService {
         query: &str,
         limit: usize,
     ) -> Result<Vec<String>, AppError> {
+        Ok(self
+            .search_at(workspace, query, limit)
+            .await?
+            .into_iter()
+            .map(|file| file.key.relative_path)
+            .collect())
+    }
+
+    async fn search_at(
+        &self,
+        workspace: &Workspace,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<pawork_workspace::IndexedFile>, AppError> {
         let files = self
             .file_index
             .search(&workspace.id, query, limit)
@@ -211,10 +226,7 @@ impl ExtensionService {
                 self.file_index.search(&workspace.id, query, limit)?
             }
         };
-        Ok(files
-            .into_iter()
-            .map(|file| file.key.relative_path)
-            .collect())
+        Ok(files)
     }
 
     async fn resolve_at_query(
@@ -222,35 +234,54 @@ impl ExtensionService {
         workspace: &Workspace,
         query: &str,
     ) -> Result<Option<crate::extensions::AtAttachment>, AppError> {
-        let matches = self.complete_at(workspace, query, 5).await?;
-        let Some(relative_path) = matches.first().cloned() else {
+        let matches = self.search_at(workspace, query, 1).await?;
+        let Some(file) = matches.into_iter().next() else {
             return Ok(None);
         };
+        let relative_path = file.key.relative_path;
         let root = workspace
             .roots
-            .first()
+            .get(file.key.root_index)
             .ok_or_else(|| AppError::Import("workspace is not attached".into()))?;
-        if Path::new(&relative_path).is_absolute()
-            || Path::new(&relative_path)
-                .components()
-                .any(|component| matches!(component, std::path::Component::ParentDir))
-        {
+        // 索引不是读取授权：文件在扫描后可能被换成 symlink，且命中可能
+        // 来自第二个 root。读取前复用文件工具的路径闸，并使用 canonical 路径。
+        let path =
+            pawork_policy::resolve_workspace_path(std::slice::from_ref(root), &relative_path)
+                .map_err(|error| AppError::Import(format!("@file {relative_path}: {error}")))?;
+        // 先拒绝 FIFO / 设备等，避免 open 本身阻塞；打开后再核对 fd。
+        if !std::fs::metadata(&path.absolute)?.is_file() {
             return Err(AppError::Import(format!(
-                "@file path escaped workspace: {relative_path}"
+                "@file is not a regular file: {relative_path}"
             )));
         }
-        let path = root.join(&relative_path);
+        let file = std::fs::File::open(path.absolute)?;
+        let metadata = file.metadata()?;
+        if !metadata.is_file() {
+            return Err(AppError::Import(format!(
+                "@file is not a regular file: {relative_path}"
+            )));
+        }
         // VISION-2：图片扩展名走 base64 Image part，不经过 UTF-8 有损文本展开。
         if let Some(media_type) = image_media_type(&relative_path) {
-            let bytes = std::fs::read(&path)?;
-            let byte_len = bytes.len();
-            let body = if byte_len > AT_IMAGE_MAX_BYTES {
-                AtAttachmentBody::ImageOmitted { byte_len }
+            let body = if metadata.len() > AT_IMAGE_MAX_BYTES as u64 {
+                AtAttachmentBody::ImageOmitted {
+                    byte_len: metadata.len().min(usize::MAX as u64) as usize,
+                }
             } else {
-                AtAttachmentBody::Image {
-                    media_type,
-                    data_base64: base64_encode(&bytes),
-                    byte_len,
+                // 即使 metadata 后文件增长，也最多读上限 + 1 字节。
+                let mut bytes = Vec::new();
+                file.take((AT_IMAGE_MAX_BYTES + 1) as u64)
+                    .read_to_end(&mut bytes)?;
+                if bytes.len() > AT_IMAGE_MAX_BYTES {
+                    AtAttachmentBody::ImageOmitted {
+                        byte_len: bytes.len(),
+                    }
+                } else {
+                    AtAttachmentBody::Image {
+                        media_type,
+                        data_base64: base64_encode(&bytes),
+                        byte_len: bytes.len(),
+                    }
                 }
             };
             return Ok(Some(crate::extensions::AtAttachment {
@@ -259,7 +290,9 @@ impl ExtensionService {
                 body,
             }));
         }
-        let bytes = std::fs::read(&path)?;
+        let mut bytes = Vec::new();
+        file.take((AT_FILE_MAX_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)?;
         let truncated = bytes.len() > AT_FILE_MAX_BYTES;
         let slice = if truncated {
             &bytes[..AT_FILE_MAX_BYTES]
@@ -515,11 +548,11 @@ mod tests {
     #[tokio::test]
     async fn expand_at_refs_omits_oversize_image_with_marker() {
         let workspace = tempfile::tempdir().expect("workspace");
-        std::fs::write(
-            workspace.path().join("big.jpg"),
-            vec![0u8; crate::extensions::AT_IMAGE_MAX_BYTES + 1],
-        )
-        .expect("jpg");
+        // 稀疏大文件必须在读取正文前省略，避免把全文件载入内存。
+        std::fs::File::create(workspace.path().join("big.jpg"))
+            .expect("jpg")
+            .set_len(1024 * 1024 * 1024)
+            .expect("sparse size");
         let (mut core, _store) = crate::testsupport::mock_core(Vec::new()).await;
         core.attach_workspace(workspace.path()).expect("attach");
         core.prime_extensions().await.expect("prime");
@@ -530,12 +563,68 @@ mod tests {
         assert_eq!(parts.len(), 2, "{parts:?}");
         match &parts[1] {
             pawork_domain::ContentPart::Text(text) => assert!(
-                text.text
-                    .starts_with("[attached image omitted: big.jpg ("),
+                text.text.starts_with("[attached image omitted: big.jpg ("),
                 "{text:?}"
             ),
             other => panic!("expected omission marker, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn at_attachment_reads_the_indexed_root() {
+        let first = tempfile::tempdir().unwrap();
+        let second = tempfile::tempdir().unwrap();
+        std::fs::write(second.path().join("cat.png"), b"abc").unwrap();
+        let service = super::ExtensionService::new();
+        let workspace = service
+            .workspaces
+            .add(
+                "multi-root".into(),
+                "multi-root",
+                [first.path(), second.path()],
+            )
+            .unwrap();
+        let parts = service
+            .expand_at_refs(&workspace, "@cat.png")
+            .await
+            .unwrap();
+        assert!(matches!(&parts[2], pawork_domain::ContentPart::Image(image)
+            if image.source == pawork_domain::ImageSource::Base64("YWJj".into())));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn at_attachment_rejects_symlink_replaced_after_indexing() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let path = root.path().join("cat.png");
+        std::fs::write(&path, b"abc").unwrap();
+        std::fs::write(outside.path().join("secret.png"), b"private").unwrap();
+        let service = super::ExtensionService::new();
+        let workspace = service
+            .workspaces
+            .add("symlink".into(), "symlink", [root.path()])
+            .unwrap();
+        service.file_index.scan_workspace(&workspace).await.unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::os::unix::fs::symlink(outside.path().join("secret.png"), &path).unwrap();
+        let error = service
+            .expand_at_refs(&workspace, "@cat.png")
+            .await
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("escapes workspace root via symlink"),
+            "{error}"
+        );
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        let error = service
+            .expand_at_refs(&workspace, "@cat.png")
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("not a regular file"), "{error}");
     }
 
     #[test]

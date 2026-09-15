@@ -18,11 +18,7 @@ use crate::ui::components::dropdown::ANCHOR_GAP_Y;
 #[cfg(test)]
 use crate::ui::components::dropdown::MENU_MAX_HEIGHT;
 use crate::ui::i18n::t;
-use crate::ui::inspector::{
-    plain_terminal_output, terminal_chrome_top, terminal_empty_output, terminal_size_for_display,
-    terminal_stepper_ax_rects, InspectorTab, TERMINAL_COLUMNS_STEP, TERMINAL_ROWS_STEP,
-    TERMINAL_TAB_BAR_HEIGHT,
-};
+use crate::ui::inspector::{InspectorTab, TERMINAL_TAB_BAR_HEIGHT};
 use crate::ui::resources::ResourcesFetch;
 use crate::ui::settings::{
     parse_settings_control, parse_settings_mcp_control, parse_settings_models_control,
@@ -40,9 +36,9 @@ use crate::ui::timeline_entry::{
 };
 use crate::ui::{
     activity_header_visibility, rail_project_occurrence_key, rail_session_archive_focus_key,
-    rail_session_focus_key, rail_session_rename_focus_key, terminal_can_operate,
-    terminal_can_reopen, terminal_close_label, terminal_known_ended, timeline,
-    workspace_empty_title, AppRoute, AppView, MenuKind, SettingsPage,
+    rail_session_focus_key, rail_session_rename_focus_key, terminal_can_close,
+    terminal_can_operate, timeline, workspace_empty_title, AppRoute, AppView, MenuKind,
+    SettingsPage,
 };
 
 pub(crate) const PAD: f32 = 8.0;
@@ -228,7 +224,7 @@ impl AppView {
                         window.focus(&focus);
                     }
                 }
-                "terminal-input" => {
+                "terminal-output" => {
                     let focus = self.terminal_input.read(cx).focus_handle(cx);
                     window.focus(&focus);
                 }
@@ -292,9 +288,6 @@ impl AppView {
                                 .update(cx, |input, cx| input.set_text(value, cx));
                         }
                     }
-                    "terminal-input" => self
-                        .terminal_input
-                        .update(cx, |input, cx| input.set_text(value, cx)),
                     "settings-proxy-input" => self
                         .settings_proxy_input
                         .update(cx, |input, cx| input.set_text(value, cx)),
@@ -543,24 +536,10 @@ impl AppView {
             "changes-tab-summary" => self.on_select_changes_tab(ChangesTab::Summary, cx),
             "changes-refresh" => self.refresh_changes(cx),
             "resources-refresh" => self.refresh_resources(cx),
-            "terminal-resize" => self.on_apply_terminal_size(window, cx),
-            "terminal-cols-dec" => self.adjust_terminal_size(-TERMINAL_COLUMNS_STEP, 0, cx),
-            "terminal-cols-inc" => self.adjust_terminal_size(TERMINAL_COLUMNS_STEP, 0, cx),
-            "terminal-rows-dec" => self.adjust_terminal_size(0, -TERMINAL_ROWS_STEP, cx),
-            "terminal-rows-inc" => self.adjust_terminal_size(0, TERMINAL_ROWS_STEP, cx),
             "terminal-new-tab" => self.on_new_terminal_tab(cx),
             other if other.starts_with("terminal-tab-") => {
                 if let Some(id) = other.strip_prefix("terminal-tab-") {
                     self.on_select_terminal_tab(id, cx);
-                }
-            }
-            "terminal-start" => {
-                // 与可见按钮同一语义：可操作单槽是 Size；已知 exited 终端与
-                // 未创建一样走 Start（新建终端）。
-                if terminal_can_operate(&self.projection.connection, &self.projection.terminal) {
-                    self.on_apply_terminal_size(window, cx);
-                } else {
-                    self.on_start_terminal(window, cx);
                 }
             }
             "terminal-back-to-bottom" => self.terminal_scroll.jump_to_bottom(),
@@ -2918,20 +2897,6 @@ impl AppView {
     }
 
     fn terminal_ax(&self, window: &Window, cx: &App, frame: AxRect) -> AxNode {
-        let rem_px = f32::from(window.rem_size());
-        let header_height = terminal_chrome_top(rem_px);
-        // P4 片 3：五按钮 rect 与 inspector.rs 可见 stepper 行同源
-        //（terminal_stepper_ax_rects：px_2 / py_1 / gap_1 + 冻结槽位）。
-        let stepper = terminal_stepper_ax_rects(
-            frame.x,
-            frame.x + frame.width,
-            frame.y + TERMINAL_TAB_BAR_HEIGHT,
-            rem_px,
-        );
-        let stepper_rect =
-            |ix: usize| AxRect::new(stepper[ix].0, stepper[ix].1, stepper[ix].2, stepper[ix].3);
-        let input_height = 40.0;
-        let input_y = frame.y + frame.height - input_height - PAD;
         let action_rect = |id: &str| {
             let b = self.terminal_action_layouts[id].bounds();
             AxRect::new(
@@ -2942,35 +2907,22 @@ impl AppView {
             )
         };
         let focus = self.terminal_input.read(cx).focus_handle(cx);
-        let output = if self.projection.terminal.output.is_empty() {
-            // 与可见 Terminal 页占位同源（terminal_empty_output()）。
-            if self.terminal_notice_text().is_some() {
-                String::new()
-            } else {
-                terminal_empty_output().to_string()
-            }
-        } else {
-            tail_chars(
-                &plain_terminal_output(&self.projection.terminal.output),
-                8_192,
-            )
-        };
-        let (columns, rows) =
-            terminal_size_for_display(&self.projection.terminal, self.terminal_size_draft);
-        let terminal_description = format!("{} · {columns}×{rows}", self.terminal_context_text());
-        let terminal_operable =
-            terminal_can_operate(&self.projection.connection, &self.projection.terminal);
-        let terminal_start_enabled = self.terminal_start_available();
-        let terminal_resize_enabled = terminal_operable && self.terminal_pending_resize.is_none();
-        // 与可见按钮（inspector.rs）同 gate：running → Stop，已知
-        // exited/killed/failed → Close，其余状态不发布节点。
-        let terminal_close_label =
-            terminal_close_label(&self.projection.connection, &self.projection.terminal).map(
-                |label| match label {
-                    "Stop" => t("inspector.stop"),
-                    _ => t("inspector.close"),
-                },
-            );
+        let screen = crate::ui::terminal_view::terminal_screen(
+            &self.projection.terminal.output,
+            self.projection.terminal.columns,
+            self.projection.terminal.rows,
+            window,
+        );
+        let output = tail_chars(
+            &screen
+                .display_lines()
+                .into_iter()
+                .map(|line| line.text)
+                .collect::<Vec<_>>()
+                .join("\n"),
+            8_192,
+        );
+        let terminal_description = self.terminal_context_text();
         let workspace = self.inspector_workspace_id();
         let tab_ids: Vec<String> = self
             .projection
@@ -3022,136 +2974,28 @@ impl AppView {
             .enabled(tab_create_enabled)
             .action(AxAction::Press),
         );
-        // G1：头部尺寸组 = 列 stepper 对 + apply + 行 stepper 对，与可见
-        // 控件同 gate / 同 id；apply 仍是唯一下发入口。
-        terminal = terminal
-            .child(
-                AxNode::new(
-                    "terminal-cols-dec",
-                    AxRole::Button,
-                    t("inspector.fewer_columns"),
-                    stepper_rect(0),
-                )
-                .focused(
-                    self.open_menu.is_none() && self.terminal_cols_dec_focus.is_focused(window),
-                )
-                .enabled(terminal_operable)
-                .action(AxAction::Press),
+        let output_rect = action_rect("terminal-output");
+        terminal = terminal.child(
+            AxNode::new(
+                "terminal-output",
+                AxRole::TextArea,
+                t("inspector.output"),
+                output_rect,
             )
-            .child(
-                AxNode::new(
-                    "terminal-cols-inc",
-                    AxRole::Button,
-                    t("inspector.more_columns"),
-                    stepper_rect(1),
-                )
-                .focused(
-                    self.open_menu.is_none() && self.terminal_cols_inc_focus.is_focused(window),
-                )
-                .enabled(terminal_operable)
-                .action(AxAction::Press),
-            )
-            .child(
-                AxNode::new(
-                    "terminal-resize",
-                    AxRole::Button,
-                    t("inspector.tooltip_apply_size"),
-                    stepper_rect(2),
-                )
-                .focused(self.open_menu.is_none() && self.terminal_resize_focus.is_focused(window))
-                .enabled(terminal_resize_enabled)
-                .value(format!("{columns}×{rows}"))
-                .action(AxAction::Press),
-            )
-            .child(
-                AxNode::new(
-                    "terminal-rows-dec",
-                    AxRole::Button,
-                    t("inspector.fewer_rows"),
-                    stepper_rect(3),
-                )
-                .focused(
-                    self.open_menu.is_none() && self.terminal_rows_dec_focus.is_focused(window),
-                )
-                .enabled(terminal_operable)
-                .action(AxAction::Press),
-            )
-            .child(
-                AxNode::new(
-                    "terminal-rows-inc",
-                    AxRole::Button,
-                    t("inspector.more_rows"),
-                    stepper_rect(4),
-                )
-                .focused(
-                    self.open_menu.is_none() && self.terminal_rows_inc_focus.is_focused(window),
-                )
-                .enabled(terminal_operable)
-                .action(AxAction::Press),
-            )
-            .child(
-                AxNode::new(
-                    "terminal-output",
-                    AxRole::StaticText,
-                    t("inspector.output"),
-                    AxRect::new(
-                        frame.x + PAD,
-                        frame.y + header_height,
-                        frame.width - PAD * 2.0,
-                        frame.height - input_height - header_height - PAD * 2.0,
-                    ),
-                )
-                .value(output)
-                .description(terminal_description),
-            )
-            .child(
-                AxNode::new(
-                    "terminal-input",
-                    AxRole::TextArea,
-                    t("inspector.input"),
-                    action_rect("terminal-input"),
-                )
-                .value(self.terminal_input.read(cx).text())
-                .focused(self.open_menu.is_none() && focus.is_focused(window))
-                .action(AxAction::Focus)
-                .action(AxAction::SetValue),
-            )
-            .child(
-                AxNode::new(
-                    "terminal-start",
-                    AxRole::Button,
-                    if self.projection.terminal.session_id.is_some() {
-                        if terminal_can_reopen(&self.projection.terminal) {
-                            t("recovery.terminal_new")
-                        } else if terminal_known_ended(&self.projection.terminal) {
-                            t("recovery.terminal_start")
-                        } else {
-                            t("inspector.tooltip_apply_size")
-                        }
-                    } else {
-                        t("recovery.terminal_start")
-                    },
-                    action_rect("terminal-start"),
-                )
-                .focused(self.open_menu.is_none() && self.terminal_start_focus.is_focused(window))
-                .enabled(terminal_start_enabled)
-                .action(AxAction::Press),
-            );
+            .value(output)
+            .description(terminal_description)
+            .focused(self.open_menu.is_none() && focus.is_focused(window))
+            .action(AxAction::Focus),
+        );
         if self.terminal_notice_text().is_some() {
-            let clip = AxRect::new(
-                frame.x,
-                frame.y + header_height,
-                frame.width,
-                (input_y - frame.y - header_height).max(0.0),
-            );
-            terminal = terminal.child(self.recovery_ax(window, clip, true));
+            terminal = terminal.child(self.recovery_ax(window, output_rect, true));
         }
-        if let Some(close_label) = terminal_close_label {
+        if terminal_can_close(&self.projection.connection, &self.projection.terminal) {
             terminal = terminal.child(
                 AxNode::new(
                     "terminal-close",
                     AxRole::Button,
-                    close_label,
+                    t("inspector.close"),
                     action_rect("terminal-close"),
                 )
                 .focused(self.open_menu.is_none() && self.terminal_close_focus.is_focused(window))
@@ -3168,7 +3012,7 @@ impl AppView {
                     t("timeline.ax_back_to_bottom"),
                     AxRect::new(
                         frame.x + frame.width - 140.0,
-                        (input_y - 40.0).max(frame.y + header_height),
+                        (output_rect.y + output_rect.height - 40.0).max(output_rect.y),
                         132.0,
                         32.0,
                     ),
@@ -3712,9 +3556,9 @@ mod tests {
             v.inspector_open = true;
             v.inspector_motion.width(true, true, std::time::Instant::now() - std::time::Duration::from_secs(1));
             v.inspector_tab = InspectorTab::Terminal;
-            v.on_start_terminal(window, cx);
+            v.ensure_terminal(cx);
             assert!(v.terminal_pending_create_workspace.is_none());
-            assert!(!v.terminal_start_available());
+            assert!(!!v.terminal_create_blocked());
             assert_eq!(v.terminal_notice_text().as_deref(), Some(t("recovery.terminal_read_only")));
             v.status_hint = Some("unrelated feedback".into());
             v.handle_controller_event(ControllerEvent::TerminalCreateFailed {
@@ -3724,7 +3568,7 @@ mod tests {
             assert_eq!(v.status_hint.as_deref(), Some("unrelated feedback"));
             assert_eq!(v.text_input.read(cx).text(), "keep this draft");
             v.projection.settings_permissions.available = false;
-            assert!(!v.terminal_start_available(), "explicit Host read-only rejection also blocks repeated creation");
+            assert!(!!v.terminal_create_blocked(), "explicit Host read-only rejection also blocks repeated creation");
             assert_eq!(v.terminal_notice_text().as_deref(), Some(t("recovery.terminal_read_only_unknown")));
             cx.notify();
         }));
@@ -3734,20 +3578,29 @@ mod tests {
             let v = view.read(cx);
             let tree = v.accessibility_tree(window, cx);
             tree.validate().unwrap();
-            assert!(!tree.find("terminal-start").unwrap().enabled);
-            for id in ["terminal-start", "terminal-input"] {
-                let bounds = v.terminal_action_layouts[id].bounds();
-                assert!(f32::from(bounds.size.width) > 0.0);
-                assert_eq!(
-                    tree.find(id).unwrap().bounds,
-                    AxRect::new(
-                        bounds.origin.x.into(),
-                        bounds.origin.y.into(),
-                        bounds.size.width.into(),
-                        bounds.size.height.into(),
-                    )
-                );
+            for id in [
+                "terminal-start",
+                "terminal-input",
+                "terminal-resize",
+                "terminal-cols-dec",
+                "terminal-rows-inc",
+            ] {
+                assert!(tree.find(id).is_none(), "obsolete terminal control {id}");
             }
+            let bounds = v.terminal_action_layouts["terminal-output"].bounds();
+            let node = tree.find("terminal-output").unwrap();
+            assert_eq!(
+                node.bounds,
+                AxRect::new(
+                    bounds.origin.x.into(),
+                    bounds.origin.y.into(),
+                    bounds.size.width.into(),
+                    bounds.size.height.into()
+                )
+            );
+            assert!(f32::from(bounds.size.height) > 40.0);
+            assert!(node.actions.contains(&AxAction::Focus));
+            assert!(!node.actions.contains(&AxAction::SetValue));
             assert!(tree
                 .find("terminal-notice")
                 .unwrap()
@@ -4678,29 +4531,6 @@ mod tests {
         assert!(
             large.open_changes.y + large.open_changes.height < large.frame.y + large.frame.height
         );
-    }
-
-    /// P4 片 3：Terminal stepper 五按钮几何与 render 同源公式一致——右缘
-    /// px_2 对齐、gap_1 间距、冻结 28/28/72/28/28 槽位且互不重叠，间距与
-    /// 内边距随字号档（rem）缩放而槽位 px 不变。
-    #[test]
-    fn terminal_stepper_ax_geometry_matches_shared_formula() {
-        let rects = crate::ui::inspector::terminal_stepper_ax_rects(100.0, 540.0, 200.0, 16.0);
-        // 100%：px_2=8 / py_1=4 / gap_1=4。
-        assert_eq!(rects[4], (540.0 - 8.0 - 28.0, 204.0, 28.0, 28.0));
-        assert_eq!(rects[3].0, rects[4].0 - 4.0 - 28.0);
-        assert_eq!(rects[2].2, 72.0);
-        assert_eq!(rects[2].0, rects[3].0 - 4.0 - 72.0);
-        assert_eq!(rects[1].0, rects[2].0 - 4.0 - 28.0);
-        assert_eq!(rects[0].0, rects[1].0 - 4.0 - 28.0);
-        for pair in rects.windows(2) {
-            assert!(pair[0].0 + pair[0].2 <= pair[1].0);
-        }
-        // 125%：gap / 内边距随 rem 缩放（5 / 10），槽位 px 不变。
-        let scaled = crate::ui::inspector::terminal_stepper_ax_rects(100.0, 540.0, 200.0, 20.0);
-        assert_eq!(scaled[4].0, 540.0 - 10.0 - 28.0);
-        assert_eq!(scaled[3].0, scaled[4].0 - 5.0 - 28.0);
-        assert_eq!(scaled[4].1, 205.0);
     }
 
     /// P4 片 3：审批卡高度随 reason / detail 行数变化（公式与

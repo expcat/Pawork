@@ -684,7 +684,11 @@ impl ResponsesStreamAssembler {
             Some("function_call") => self.start_function(item),
             // SEARCH-1：Provider 服务端开始执行 web_search。
             Some("web_search_call") => {
-                let id = item.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+                let id = item
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
                 self.last_web_search_call = Some(id.clone());
                 vec![ResponsesAssemblyEvent::Canonical(
                     ProviderStreamEvent::ServerTool(pawork_domain::ServerToolEvent::Started {
@@ -752,15 +756,34 @@ impl ResponsesStreamAssembler {
                 }
                 events
             }
-            // SEARCH-1：web_search 服务端调用完成。
+            // done 也可能携带 failed / incomplete，不能把结束一律当成成功。
             "web_search_call" => {
-                let id = item.get("id").and_then(Value::as_str).unwrap_or("").to_string();
-                vec![ResponsesAssemblyEvent::Canonical(
-                    ProviderStreamEvent::ServerTool(pawork_domain::ServerToolEvent::Completed {
+                let Some(id) = item
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .filter(|id| !id.is_empty())
+                else {
+                    return Vec::new();
+                };
+                if !self.completed_calls.insert(id.to_string()) {
+                    return Vec::new();
+                }
+                let status = item.get("status").and_then(Value::as_str);
+                let event = if status == Some("completed") {
+                    pawork_domain::ServerToolEvent::Completed {
                         tool_call_id: ToolCallId::new(id),
                         summary: None,
                         artifacts: Vec::new(),
-                    }),
+                    }
+                } else {
+                    pawork_domain::ServerToolEvent::Failed {
+                        tool_call_id: ToolCallId::new(id),
+                        message: Some("web search did not complete successfully".into()),
+                        code: status.map(str::to_owned),
+                    }
+                };
+                vec![ResponsesAssemblyEvent::Canonical(
+                    ProviderStreamEvent::ServerTool(event),
                 )]
             }
             _ => Vec::new(),
@@ -779,10 +802,18 @@ impl ResponsesStreamAssembler {
         let tool_call_id = self
             .last_web_search_call
             .clone()
-            .or_else(|| value.get("item_id").and_then(Value::as_str).map(str::to_owned))
+            .or_else(|| {
+                value
+                    .get("item_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
             .unwrap_or_default();
         let citation = pawork_domain::Citation {
-            url: annotation.get("url").and_then(Value::as_str).map(str::to_owned),
+            url: annotation
+                .get("url")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
             title: annotation
                 .get("title")
                 .and_then(Value::as_str)
@@ -1021,7 +1052,10 @@ mod tests {
         );
         let citation = cited.iter().find_map(|event| match event {
             ResponsesAssemblyEvent::Canonical(ProviderStreamEvent::ServerTool(
-                pawork_domain::ServerToolEvent::CitationAdded { tool_call_id, citation },
+                pawork_domain::ServerToolEvent::CitationAdded {
+                    tool_call_id,
+                    citation,
+                },
             )) => Some((tool_call_id.clone(), citation.clone())),
             _ => None,
         });
@@ -1029,7 +1063,10 @@ mod tests {
         assert_eq!(tool_call_id.as_str(), "ws_1");
         assert_eq!(citation.url.as_deref(), Some("https://example.com"));
         assert_eq!(citation.title.as_deref(), Some("Example"));
-        assert_eq!(citation.source_kind, pawork_domain::CitationSourceKind::WebSearch);
+        assert_eq!(
+            citation.source_kind,
+            pawork_domain::CitationSourceKind::WebSearch
+        );
 
         // 非 url_citation annotation 忽略（forward-compat）。
         assert!(assembler
@@ -1039,7 +1076,7 @@ mod tests {
             .is_empty());
 
         let done = assembler.feed(
-            r#"{"type":"response.output_item.done","item":{"type":"web_search_call","id":"ws_1"}}"#,
+            r#"{"type":"response.output_item.done","item":{"type":"web_search_call","id":"ws_1","status":"completed"}}"#,
         );
         assert!(done.iter().any(|event| matches!(
             event,
@@ -1047,6 +1084,16 @@ mod tests {
                 pawork_domain::ServerToolEvent::Completed { tool_call_id, .. }
             )) if tool_call_id.as_str() == "ws_1"
         )));
+        for status in ["failed", "incomplete"] {
+            let event = serde_json::json!({"type":"response.output_item.done",
+                "item":{"type":"web_search_call","id":status,"status":status}})
+            .to_string();
+            let failed = assembler.feed(&event);
+            assert!(matches!(&failed[..], [ResponsesAssemblyEvent::Canonical(
+                ProviderStreamEvent::ServerTool(pawork_domain::ServerToolEvent::Failed {code, ..}))]
+                if code.as_deref() == Some(status)));
+            assert!(assembler.feed(&event).is_empty());
+        }
     }
 
     #[test]

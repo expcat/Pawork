@@ -164,7 +164,26 @@ pub fn parse_event(data: &str, state: &mut AnthropicStreamState) -> Vec<StreamOu
                             .map(String::from)
                             .unwrap_or_else(|| format!("srv-{index}"));
                         state.server_tool_ids.insert(index, id.clone());
-                        state.last_server_tool_id = Some(id);
+                        state.last_server_tool_id = Some(id.clone());
+                        state.server_tool_results.insert(index);
+                        let content = block.get("content");
+                        let is_error = block.get("is_error").and_then(Value::as_bool) == Some(true)
+                            || content
+                                .and_then(|value| value.get("type"))
+                                .and_then(Value::as_str)
+                                .is_some_and(|kind| kind.ends_with("_error"));
+                        if is_error && state.completed_server_tools.insert(id.clone()) {
+                            outputs.push(StreamOutput::Event(ProviderStreamEvent::ServerTool(
+                                ServerToolEvent::Failed {
+                                    tool_call_id: ToolCallId::new(id),
+                                    message: Some("provider-hosted tool failed".into()),
+                                    code: content
+                                        .and_then(|value| value.get("error_code"))
+                                        .and_then(Value::as_str)
+                                        .map(str::to_owned),
+                                },
+                            )));
+                        }
                     }
                     _ => {}
                 }
@@ -252,7 +271,9 @@ pub fn parse_event(data: &str, state: &mut AnthropicStreamState) -> Vec<StreamOu
                 ));
             }
             if let Some(id) = state.server_tool_ids.get(&index).cloned() {
-                if state.completed_server_tools.insert(id.clone()) {
+                if state.server_tool_results.remove(&index)
+                    && state.completed_server_tools.insert(id.clone())
+                {
                     outputs.push(StreamOutput::Event(ProviderStreamEvent::ServerTool(
                         ServerToolEvent::Completed {
                             tool_call_id: ToolCallId::new(id),
@@ -411,6 +432,7 @@ pub struct AnthropicStreamState {
     pub server_tool_ids: HashMap<usize, String>,
     thinking: HashMap<usize, ThinkingBlockState>,
     completed_server_tools: HashSet<String>,
+    server_tool_results: HashSet<usize>,
     last_server_tool_id: Option<String>,
     pub stop_reason: Option<String>,
     pub input_tokens: u64,
@@ -580,12 +602,9 @@ mod tests {
             &started[0],
             ProviderStreamEvent::ServerTool(ServerToolEvent::Started { name, .. }) if name == "web_search"
         ));
-        let completed = event_to_events(r#"{"type":"content_block_stop","index":1}"#, &mut state);
-        assert!(matches!(
-            &completed[0],
-            ProviderStreamEvent::ServerTool(ServerToolEvent::Completed { tool_call_id, .. })
-                if tool_call_id.as_str() == "srv"
-        ));
+        let arguments_stopped =
+            event_to_events(r#"{"type":"content_block_stop","index":1}"#, &mut state);
+        assert!(arguments_stopped.is_empty());
         let cited = event_to_events(
             r#"{"type":"content_block_delta","index":1,"delta":{"type":"citations_delta","citation":{"url":"https://example.com"}}}"#,
             &mut state,
@@ -649,47 +668,55 @@ mod tests {
 
     #[test]
     fn server_tool_use_and_result_emit_completed_once() {
-        let mut state = AnthropicStreamState::default();
-        let started = event_to_events(
-            r#"{"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srv","name":"web_search"}}"#,
-            &mut state,
-        );
-        assert!(matches!(
-            &started[0],
-            ProviderStreamEvent::ServerTool(ServerToolEvent::Started { name, .. }) if name == "web_search"
-        ));
-        let first_stop = event_to_events(r#"{"type":"content_block_stop","index":0}"#, &mut state);
-        assert_eq!(
-            first_stop
-                .iter()
-                .filter(|event| matches!(
-                    event,
+        for failed in [false, true] {
+            let mut state = AnthropicStreamState::default();
+            let started = event_to_events(
+                r#"{"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srv","name":"web_search"}}"#,
+                &mut state,
+            );
+            assert!(matches!(&started[0],
+                ProviderStreamEvent::ServerTool(ServerToolEvent::Started { name, .. }) if name == "web_search"));
+            assert!(
+                event_to_events(r#"{"type":"content_block_stop","index":0}"#, &mut state)
+                    .is_empty()
+            );
+            let content = if failed {
+                serde_json::json!({"type":"web_search_tool_result_error", "error_code":"max_uses_exceeded"})
+            } else {
+                serde_json::json!([])
+            };
+            let result = serde_json::json!({"type":"content_block_start", "index":1,
+                "content_block":{"type":"web_search_tool_result", "tool_use_id":"srv", "content":content}});
+            let mut terminal = event_to_events(&result.to_string(), &mut state);
+            terminal.extend(event_to_events(
+                r#"{"type":"content_block_stop","index":1}"#,
+                &mut state,
+            ));
+            assert_eq!(terminal.len(), 1);
+            if failed {
+                assert!(
+                    matches!(&terminal[0], ProviderStreamEvent::ServerTool(ServerToolEvent::Failed {code, ..})
+                    if code.as_deref() == Some("max_uses_exceeded"))
+                );
+            } else {
+                assert!(matches!(
+                    &terminal[0],
                     ProviderStreamEvent::ServerTool(ServerToolEvent::Completed { .. })
-                ))
-                .count(),
-            1
-        );
-        let _ = event_to_events(
-            r#"{"type":"content_block_start","index":1,"content_block":{"type":"web_search_tool_result","tool_use_id":"srv"}}"#,
-            &mut state,
-        );
-        let second_stop = event_to_events(r#"{"type":"content_block_stop","index":1}"#, &mut state);
-        assert!(second_stop.iter().all(|event| {
-            !matches!(
-                event,
-                ProviderStreamEvent::ServerTool(ServerToolEvent::Completed { .. })
-            )
-        }));
-        let cited = event_to_events(
-            r#"{"type":"content_block_delta","index":2,"delta":{"type":"citations_delta","citation":{"url":"https://example.com"}}}"#,
-            &mut state,
-        );
-        assert!(matches!(
-            &cited[0],
-            ProviderStreamEvent::ServerTool(ServerToolEvent::CitationAdded { tool_call_id, citation })
-                if tool_call_id.as_str() == "srv"
-                    && citation.url.as_deref() == Some("https://example.com")
-        ));
+                ));
+            }
+            assert!(
+                event_to_events(r#"{"type":"content_block_stop","index":1}"#, &mut state)
+                    .is_empty()
+            );
+            let cited = event_to_events(
+                r#"{"type":"content_block_delta","index":2,"delta":{"type":"citations_delta","citation":{"url":"https://example.com"}}}"#,
+                &mut state,
+            );
+            assert!(
+                matches!(&cited[0], ProviderStreamEvent::ServerTool(ServerToolEvent::CitationAdded {tool_call_id, citation})
+                if tool_call_id.as_str() == "srv" && citation.url.as_deref() == Some("https://example.com"))
+            );
+        }
     }
 
     #[test]

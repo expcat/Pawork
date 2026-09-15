@@ -2,7 +2,7 @@
 //!
 //! 不是完整 VT emulator。原始字节仍由 Host 保存；本包只把可见文本整理成
 //! 行覆盖语义（CR / 退格 / EL / SGR），并把控制键映射成 PTY 字节。
-//! CUP / CUU / CUD 等网格寻址序列会改写滚动历史，直接丢弃，不假装网格仿真。
+//! 支持 shell 编辑所需的光标移动、清屏与自动折行；不实现备用屏幕等完整 VT 功能。
 //! 纯库：不依赖 gpui、tokio、OS API 与任何 pawork-* 包，颜色与字体由调用方解析。
 
 /// 等宽终端行高（12px 字号 + 4px 行距）。
@@ -26,7 +26,7 @@ pub struct Attrs {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Cell {
-    ch: char,
+    text: String,
     attrs: Attrs,
 }
 
@@ -41,20 +41,53 @@ impl Line {
     }
 
     fn is_empty(&self) -> bool {
-        self.cells.iter().all(|cell| cell.ch == ' ')
+        self.cells.iter().all(|cell| cell.text.trim().is_empty())
     }
 
     fn put(&mut self, col: usize, ch: char, attrs: Attrs) {
-        if col >= self.cells.len() {
-            self.cells.resize(
-                col + 1,
-                Cell {
-                    ch: ' ',
-                    attrs: Attrs::default(),
-                },
-            );
+        self.put_width(col, ch, 1, attrs);
+    }
+
+    fn put_width(&mut self, col: usize, ch: char, width: usize, attrs: Attrs) {
+        let blank = || Cell {
+            text: " ".into(),
+            attrs: Attrs::default(),
+        };
+        if width == 0 {
+            let end = col.min(self.cells.len());
+            if let Some(cell) = self.cells[..end]
+                .iter_mut()
+                .rev()
+                .find(|cell| !cell.text.is_empty())
+            {
+                cell.text.push(ch);
+            }
+            return;
         }
-        self.cells[col] = Cell { ch, attrs };
+        if col + width > self.cells.len() {
+            self.cells.resize_with(col + width, blank);
+        }
+        // 写到宽字符后半格或覆盖其首格时，清理旧宽字符留下的半格。
+        if self.cells[col].text.is_empty() && col > 0 {
+            self.cells[col - 1] = blank();
+        }
+        if self
+            .cells
+            .get(col + 1)
+            .is_some_and(|cell| cell.text.is_empty())
+        {
+            self.cells[col + 1] = blank();
+        }
+        self.cells[col] = Cell {
+            text: ch.to_string(),
+            attrs,
+        };
+        if width == 2 {
+            self.cells[col + 1] = Cell {
+                text: String::new(),
+                attrs,
+            };
+        }
     }
 
     fn clear_from(&mut self, col: usize) {
@@ -66,7 +99,7 @@ impl Line {
     fn text(&self) -> String {
         self.cells
             .iter()
-            .map(|cell| cell.ch)
+            .map(|cell| cell.text.as_str())
             .collect::<String>()
             .trim_end()
             .to_string()
@@ -80,6 +113,11 @@ pub struct Screen {
     row: usize,
     col: usize,
     attrs: Attrs,
+    columns: usize,
+    rows: usize,
+    top: usize,
+    pub cursor_visible: bool,
+    pub bracketed_paste: bool,
 }
 
 impl Default for Screen {
@@ -95,7 +133,38 @@ impl Screen {
             row: 0,
             col: 0,
             attrs: Attrs::default(),
+            columns: usize::MAX,
+            rows: 24,
+            top: 0,
+            cursor_visible: true,
+            bracketed_paste: false,
         }
+    }
+
+    /// 使用 PTY 当前尺寸重建可见屏幕及滚动历史。
+    pub fn with_size(columns: u16, rows: u16) -> Self {
+        Self {
+            columns: usize::from(columns.max(1)),
+            rows: usize::from(rows.max(1)),
+            ..Self::new()
+        }
+    }
+
+    pub fn cursor(&self) -> (usize, usize) {
+        (self.row, self.col.min(self.columns.saturating_sub(1)))
+    }
+
+    /// 光标前的 UTF-8 字节数，供显示层在宽字符之后插入光标/IME。
+    pub fn cursor_byte_offset(&self) -> usize {
+        let (row, col) = self.cursor();
+        self.lines.get(row).map_or(0, |line| {
+            line.cells
+                .iter()
+                .take(col)
+                .map(|cell| cell.text.len())
+                .sum::<usize>()
+                + col.saturating_sub(line.cells.len())
+        })
     }
 
     fn current_line(&mut self) -> &mut Line {
@@ -111,6 +180,7 @@ impl Screen {
 
     fn line_feed(&mut self) {
         self.row += 1;
+        self.top = self.top.max(self.row.saturating_sub(self.rows - 1));
         if self.row >= self.lines.len() {
             self.lines.push(Line::new());
         }
@@ -120,16 +190,14 @@ impl Screen {
     fn backspace(&mut self) {
         if self.col > 0 {
             self.col -= 1;
-            let col = self.col;
-            self.current_line().put(col, ' ', Attrs::default());
         }
     }
 
-    fn put_char(&mut self, ch: char) {
+    fn put_char(&mut self, ch: char, width: usize) {
         match ch {
             '\r' => self.carriage_return(),
             '\n' => self.line_feed(),
-            '\u{8}' | '\u{7f}' => {
+            '\u{8}' => {
                 self.backspace();
             }
             '\t' => {
@@ -144,10 +212,13 @@ impl Screen {
             '\u{7}' => {}
             ch if ch.is_control() => {}
             ch => {
+                if width > 0 && self.col.saturating_add(width) > self.columns {
+                    self.line_feed();
+                }
                 let col = self.col;
                 let attrs = self.attrs;
-                self.current_line().put(col, ch, attrs);
-                self.col += 1;
+                self.current_line().put_width(col, ch, width, attrs);
+                self.col += width;
             }
         }
     }
@@ -212,10 +283,15 @@ impl Screen {
 
     /// 追加一段原始输出（已按 UTF-8 解码）。
     pub fn feed(&mut self, raw: &str) {
+        self.feed_with_width(raw, |_| 1);
+    }
+
+    /// 字符 cell 宽由渲染方提供（0/1/2），本库不依赖字体或 OS。
+    pub fn feed_with_width(&mut self, raw: &str, mut width: impl FnMut(char) -> usize) {
         let mut chars = raw.chars().peekable();
         while let Some(ch) = chars.next() {
             if ch != '\u{1b}' {
-                self.put_char(ch);
+                self.put_char(ch, width(ch).min(2));
                 continue;
             }
             match chars.next() {
@@ -229,21 +305,75 @@ impl Screen {
                         }
                         body.push(sequence_char);
                     }
-                    let params = parse_params(&body);
+                    if let Some(mode) = body.strip_prefix('?').and_then(|s| s.parse::<u16>().ok()) {
+                        if matches!(final_byte, Some('h' | 'l')) {
+                            let enabled = final_byte == Some('h');
+                            match mode {
+                                25 => self.cursor_visible = enabled,
+                                2004 => self.bracketed_paste = enabled,
+                                _ => {}
+                            }
+                        }
+                        continue;
+                    }
+                    let Some(params) = parse_params(&body) else {
+                        continue;
+                    };
                     match final_byte {
                         Some('m') => self.apply_sgr(&params),
                         Some('K') => self.erase_in_line(params.first().copied().unwrap_or(0)),
+                        Some('H' | 'f') => {
+                            self.row = self.top
+                                + usize::from(params.first().copied().unwrap_or(1).max(1) - 1)
+                                    .min(self.rows - 1);
+                            self.col = usize::from(params.get(1).copied().unwrap_or(1).max(1) - 1)
+                                .min(self.columns.saturating_sub(1).min(499));
+                            self.current_line();
+                        }
+                        Some('A') => {
+                            self.row = self
+                                .row
+                                .saturating_sub(usize::from(
+                                    params.first().copied().unwrap_or(1).max(1),
+                                ))
+                                .max(self.top)
+                        }
+                        Some('B') => {
+                            self.row = (self.row
+                                + usize::from(params.first().copied().unwrap_or(1).max(1)))
+                            .min(self.top + self.rows - 1);
+                            self.current_line();
+                        }
+                        Some('J') => match params.first().copied().unwrap_or(0) {
+                            2 | 3 => {
+                                for line in &mut self.lines[self.top..] {
+                                    *line = Line::new();
+                                }
+                            }
+                            0 => {
+                                self.erase_in_line(0);
+                                self.lines.truncate(self.row + 1);
+                            }
+                            _ => {}
+                        },
                         Some('G') => {
                             let col = params.first().copied().unwrap_or(1).max(1) as usize;
-                            self.col = col.saturating_sub(1);
+                            self.col = col
+                                .saturating_sub(1)
+                                .min(self.current_line().cells.len().max(499))
+                                .min(self.columns.saturating_sub(1));
                         }
                         Some('C') => {
-                            self.col += params.first().copied().unwrap_or(1).max(1) as usize;
+                            // 稀疏寻址最多填到面板支持的 500 列；已有长行可正常回移。
+                            self.col = (self.col
+                                + params.first().copied().unwrap_or(1).max(1) as usize)
+                                .min(self.current_line().cells.len().max(499))
+                                .min(self.columns.saturating_sub(1));
                         }
                         Some('D') => {
-                            self.col = self
-                                .col
-                                .saturating_sub(params.first().copied().unwrap_or(1).max(1) as usize);
+                            self.col = self.col.saturating_sub(
+                                params.first().copied().unwrap_or(1).max(1) as usize,
+                            );
                         }
                         _ => {}
                     }
@@ -257,6 +387,14 @@ impl Screen {
                         saw_escape = sequence_char == '\u{1b}';
                     }
                 }
+                Some(intermediate) if (' '..='/').contains(&intermediate) => {
+                    // ESC ( B 等字符集指定：中间字节与终止字节一起跳过。
+                    for sequence_char in chars.by_ref() {
+                        if !(' '..='/').contains(&sequence_char) {
+                            break;
+                        }
+                    }
+                }
                 Some(_) | None => {}
             }
         }
@@ -264,15 +402,39 @@ impl Screen {
 
     /// 可见行：裁掉尾部空行，每行给出裁过尾随空格的文本与按字节长度的属性分段。
     /// 空行以单空格占位，保持行高与纯文本行数。
+    pub fn display_lines(&self) -> Vec<StyledLine> {
+        self.styled_lines_with_cursor(true)
+    }
+
     fn styled_lines(&self) -> Vec<StyledLine> {
+        self.styled_lines_with_cursor(false)
+    }
+
+    fn styled_lines_with_cursor(&self, keep_cursor: bool) -> Vec<StyledLine> {
         let mut lines = self.lines.clone();
-        while lines.last().is_some_and(Line::is_empty) && lines.len() > 1 {
+        if keep_cursor {
+            let (row, col) = self.cursor();
+            if lines.len() <= row {
+                lines.resize(row + 1, Line::new());
+            }
+            if lines[row].cells.len() <= col {
+                lines[row].put(col, ' ', Attrs::default());
+            }
+        }
+        while lines.last().is_some_and(Line::is_empty)
+            && lines.len() > if keep_cursor { self.row + 1 } else { 1 }
+        {
             lines.pop();
         }
         lines
             .into_iter()
-            .map(|line| {
-                let text = line.text();
+            .enumerate()
+            .map(|(row, line)| {
+                let text = if keep_cursor && row == self.row {
+                    line.cells.iter().map(|c| c.text.as_str()).collect()
+                } else {
+                    line.text()
+                };
                 if text.is_empty() {
                     return StyledLine {
                         text: " ".to_string(),
@@ -283,12 +445,14 @@ impl Screen {
                 let mut start = 0usize;
                 let mut current = line.cells.first().map(|cell| cell.attrs);
                 let mut byte_len = 0usize;
-                let visible = text.chars().count();
-                for (index, cell) in line.cells.iter().enumerate() {
-                    if index >= visible {
+                for cell in &line.cells {
+                    if byte_len >= text.len() {
                         break;
                     }
-                    let ch_len = cell.ch.len_utf8();
+                    let ch_len = cell.text.len();
+                    if ch_len == 0 {
+                        continue;
+                    }
                     if current != Some(cell.attrs) {
                         if let Some(attrs) = current {
                             spans.push(Span {
@@ -313,12 +477,18 @@ impl Screen {
     }
 }
 
-fn parse_params(body: &str) -> Vec<u16> {
+fn parse_params(body: &str) -> Option<Vec<u16>> {
     if body.is_empty() {
-        return Vec::new();
+        return Some(Vec::new());
     }
     body.split(';')
-        .map(|part| part.parse().unwrap_or(0))
+        .map(|part| {
+            if part.is_empty() {
+                Some(0)
+            } else {
+                part.parse().ok()
+            }
+        })
         .collect()
 }
 
@@ -336,7 +506,7 @@ pub struct StyledLine {
     pub spans: Vec<Span>,
 }
 
-/// 可见行缓冲：CR 覆盖同一行，退格删格，SGR 进入属性分段。
+/// 可见行缓冲：CR 覆盖同一行，退格回移光标，SGR 进入属性分段。
 pub fn render_lines(raw: &str) -> Vec<StyledLine> {
     let mut screen = Screen::new();
     screen.feed(raw);
@@ -352,7 +522,7 @@ pub fn plain_output(raw: &str) -> String {
         .join("\n")
 }
 
-/// 按面板像素估算列 × 行，并钳制在 stepper 边界内。
+/// 按面板像素估算列 × 行，并钳制在 PTY 边界内。
 pub fn size_from_bounds(width: f32, height: f32) -> Option<(u16, u16)> {
     size_from_bounds_scaled(width, height, 1.0)
 }
@@ -400,30 +570,7 @@ impl KeyEvent {
     }
 }
 
-/// 输入框已有正文或选区时，把可打印字符 / 方向键留给输入框；
-/// 中断类控制键（Ctrl-C/D/Z）始终直通，选中文本时的 Ctrl-C 除外（复制）。
-pub fn should_passthrough_terminal_key(
-    key: &str,
-    control: bool,
-    has_text: bool,
-    has_selection: bool,
-) -> bool {
-    if key == "c" && control && has_selection {
-        return false;
-    }
-    if control && matches!(key, "c" | "d" | "z") {
-        return true;
-    }
-    if has_text || has_selection {
-        return false;
-    }
-    true
-}
-
-/// 把按键映射成 PTY 字节。
-///
-/// 输入框空且无选区时，可打印字符与 Backspace/Delete 也直通；有草稿时
-/// 这些键仍走输入框，由 Enter 整行提交（草稿让路由 should_passthrough_terminal_key 决定）。
+/// 把终端按键映射为 PTY 字节；可打印字符与 IME 提交由调用方统一路由。
 pub fn key_to_pty_bytes(key: &KeyEvent) -> Option<String> {
     let key_name = key.key.as_str();
     let modifiers = &key.modifiers;
@@ -431,22 +578,15 @@ pub fn key_to_pty_bytes(key: &KeyEvent) -> Option<String> {
         return None;
     }
     if modifiers.control && !modifiers.alt {
-        let ctrl = match key_name {
-            "c" => "\u{3}",
-            "d" => "\u{4}",
-            "z" => "\u{1a}",
-            "l" => "\u{c}",
-            "u" => "\u{15}",
-            "w" => "\u{17}",
-            "r" => "\u{12}",
-            _ => return None,
-        };
-        return Some(ctrl.to_string());
+        let ch = key_name.as_bytes();
+        return (ch.len() == 1 && (b'@'..=b'_').contains(&ch[0].to_ascii_uppercase()))
+            .then(|| ((ch[0].to_ascii_uppercase() & 0x1f) as char).to_string());
     }
     if modifiers.alt {
         return None;
     }
     match key_name {
+        "enter" => Some("\r".to_string()),
         "tab" if !modifiers.shift => Some("\t".to_string()),
         "tab" if modifiers.shift => Some("\u{1b}[Z".to_string()),
         "up" => Some("\u{1b}[A".to_string()),
@@ -489,11 +629,15 @@ mod tests {
     #[test]
     fn backspace_moves_the_cursor_back() {
         assert_eq!(plain_output("ab\u{8}c"), "ac");
-        assert_eq!(plain_output("abc\u{8}"), "ab");
+        assert_eq!(plain_output("abc\u{8}"), "abc");
+        assert_eq!(plain_output("abc\u{8}\u{8}X"), "aXc");
+        assert_eq!(plain_output("abc\u{8} \u{8}"), "ab");
+        assert_eq!(plain_output("abc\u{7f}"), "abc");
     }
 
     #[test]
     fn vt_control_sequences_are_stripped() {
+        assert_eq!(plain_output("\u{1b}(Bhello\r\u{1b}[?1K"), "hello");
         assert_eq!(
             plain_output("\u{1b}[?2004hpwd\u{1b}[?2004l\r\n/workspace\r\n"),
             "pwd\n/workspace"
@@ -536,15 +680,38 @@ mod tests {
     }
 
     #[test]
-    fn cursor_position_sequences_do_not_rewrite_history() {
+    fn cursor_tracks_shell_redraw_and_wrap() {
+        let mut screen = Screen::with_size(20, 6);
+        screen.feed("$ echo hi\u{1b}[2D");
+        assert_eq!(screen.cursor(), (0, 7));
+        assert_eq!(screen.display_lines()[0].text, "$ echo hi");
+        screen.feed("\r\n$ ");
+        assert_eq!(screen.cursor(), (1, 2));
+        assert_eq!(screen.display_lines()[1].text, "$  ");
+        screen.feed("12345678901234567890");
+        assert_eq!(screen.cursor(), (2, 2));
+        screen.feed("\u{1b}[H\u{1b}[2J$ ");
+        assert_eq!(screen.cursor(), (0, 2));
+        assert_eq!(screen.display_lines().len(), 1);
+        let mut sparse_cursor = Screen::with_size(20, 6);
+        sparse_cursor.feed("\x1b[10G");
+        assert_eq!(sparse_cursor.cursor_byte_offset(), 9);
+        assert_eq!(sparse_cursor.display_lines()[0].text.len(), 10);
+        let mut wide = Screen::with_size(20, 6);
+        wide.feed_with_width("$ 中文\x1b[2D新", |ch| if ch.is_ascii() { 1 } else { 2 });
+        assert_eq!(wide.cursor(), (0, 6));
+        assert_eq!(wide.cursor_byte_offset(), "$ 中新".len());
+        assert_eq!(wide.display_lines()[0].text, "$ 中新 ");
+        screen.feed("\u{1b}[?2004h");
+        assert!(screen.bracketed_paste);
+        let sparse = plain_output(&format!("{}X", "\u{1b}[65535C".repeat(100)));
+        assert_eq!(sparse.len(), 500);
+        assert!(sparse.ends_with('X'));
         assert_eq!(
             plain_output("first\nsecond\u{1b}[Hrewritten"),
-            "first\nsecondrewritten"
+            "rewritten\nsecond"
         );
-        assert_eq!(
-            plain_output("alpha\nbeta\u{1b}[1Azzz"),
-            "alpha\nbetazzz"
-        );
+        assert_eq!(plain_output("alpha\nbeta\u{1b}[1Azzz"), "alphzzz\nbeta");
     }
 
     #[test]
@@ -554,19 +721,6 @@ mod tests {
         let (columns, rows) = size_from_bounds(10_000.0, 10_000.0).unwrap();
         assert_eq!((columns, rows), (500, 200));
         assert_eq!(size_from_bounds_scaled(576.0, 384.0, 1.5), Some((51, 15)));
-    }
-
-    #[test]
-    fn passthrough_respects_draft_and_selection() {
-        assert!(should_passthrough_terminal_key("up", false, false, false));
-        assert!(!should_passthrough_terminal_key("up", false, true, false));
-        assert!(!should_passthrough_terminal_key("tab", false, true, false));
-        assert!(should_passthrough_terminal_key("c", true, true, false));
-        assert!(!should_passthrough_terminal_key("c", true, true, true));
-        assert!(should_passthrough_terminal_key("a", false, false, false));
-        assert!(!should_passthrough_terminal_key("a", false, true, false));
-        assert!(should_passthrough_terminal_key("backspace", false, false, false));
-        assert!(!should_passthrough_terminal_key("backspace", false, true, false));
     }
 
     #[test]

@@ -25,7 +25,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Deref;
 
 use pawork_domain::{
-    AgentEvent, AgentEventEnvelope, ApprovalDecision, ContentPart, MessageRole, TokenUsage,
+    AgentEvent, AgentEventEnvelope, ApprovalDecision, ContentPart, MessageRole, ServerToolEvent,
+    TokenUsage,
 };
 
 use crate::app::{AppEvent, AppEventEnvelope, RunState, TimelineItem, TimelineItemKind};
@@ -121,6 +122,33 @@ pub fn project_event(envelope: &AgentEventEnvelope) -> Option<TimelineItem> {
                     display_detail.as_deref(),
                 )),
             )
+        }
+        AgentEvent::ServerTool(event) => {
+            let context = Some(tool_timeline_context(event.tool_call_id().as_str(), None));
+            match project_server_tool_event(&envelope.run_id, event)? {
+                AppEvent::ToolStarted { name, .. } => (
+                    TimelineItemKind::ToolStarted,
+                    None,
+                    Some(name),
+                    Some("running".into()),
+                    context,
+                ),
+                AppEvent::ToolOutput { delta, .. } => (
+                    TimelineItemKind::ToolOutput,
+                    Some(delta),
+                    None,
+                    None,
+                    context,
+                ),
+                AppEvent::ToolCompleted { success, .. } => (
+                    TimelineItemKind::ToolCompleted,
+                    None,
+                    None,
+                    Some(if success { "succeeded" } else { "failed" }.into()),
+                    context,
+                ),
+                _ => unreachable!("server tool projection only emits tool display events"),
+            }
         }
         AgentEvent::ToolApprovalRequested { reason, .. } => (
             TimelineItemKind::ApprovalRequested,
@@ -221,6 +249,53 @@ pub fn project_event(envelope: &AgentEventEnvelope) -> Option<TimelineItem> {
         status,
         detail,
         timestamp: envelope.timestamp.as_unix_millis().to_string(),
+    })
+}
+
+/// Provider 服务端工具复用既有展示事件；不进入本地工具执行或审批链。
+/// Host 实时广播与持久化历史共用这一映射，保留调用身份与引用来源。
+pub fn project_server_tool_event(
+    run_id: &pawork_domain::RunId,
+    event: &ServerToolEvent,
+) -> Option<AppEvent> {
+    let run_id = run_id.clone();
+    let tool_call_id = event.tool_call_id().clone();
+    Some(match event {
+        ServerToolEvent::Started { name, .. } => AppEvent::ToolStarted {
+            run_id,
+            tool_call_id,
+            name: name.clone(),
+        },
+        ServerToolEvent::CitationAdded { citation, .. } => {
+            let text = [
+                citation.title.as_deref(),
+                citation.url.as_deref(),
+                citation.text.as_deref(),
+            ]
+            .into_iter()
+            .flatten()
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
+            if text.is_empty() {
+                return None;
+            }
+            AppEvent::ToolOutput {
+                run_id,
+                tool_call_id,
+                delta: format!("{text}\n"),
+                truncated: false,
+                artifact_id: None,
+            }
+        }
+        ServerToolEvent::Completed { .. } | ServerToolEvent::Failed { .. } => {
+            AppEvent::ToolCompleted {
+                run_id,
+                tool_call_id,
+                success: matches!(event, ServerToolEvent::Completed { .. }),
+            }
+        }
+        _ => return None,
     })
 }
 
@@ -408,6 +483,7 @@ struct ToolAnchor {
     name: Option<String>,
     event_id: String,
     sequence: u64,
+    completed_sequence: Option<u64>,
 }
 
 struct TimelineIdentity {
@@ -555,6 +631,7 @@ impl TimelineProjection {
                         name: Some(name),
                         event_id: identity.event_id,
                         sequence: identity.sequence,
+                        completed_sequence: None,
                     });
                 }
                 self.refresh_tool_arguments();
@@ -563,6 +640,7 @@ impl TimelineProjection {
                 if self.seen.insert(item.sequence) {
                     let (tool_call_id, _) = parse_tool_timeline_context(item.detail.as_deref());
                     self.update_tool_entry(
+                        item.sequence,
                         item.run_id.as_deref(),
                         tool_call_id.as_deref(),
                         item.tool_name.as_deref(),
@@ -577,6 +655,7 @@ impl TimelineProjection {
                 let (tool_call_id, display_detail) =
                     parse_tool_timeline_context(item.detail.as_deref());
                 if let Some(index) = self.update_tool_entry(
+                    item.sequence,
                     item.run_id.as_deref(),
                     tool_call_id.as_deref(),
                     item.tool_name.as_deref(),
@@ -609,6 +688,7 @@ impl TimelineProjection {
                         name: Some(name),
                         event_id: item.event_id.clone(),
                         sequence: item.sequence,
+                        completed_sequence: Some(item.sequence),
                     });
                     self.refresh_tool_arguments();
                 }
@@ -823,6 +903,7 @@ impl TimelineProjection {
                         name: Some(name.clone()),
                         event_id: anchor.event_id,
                         sequence: anchor.sequence,
+                        completed_sequence: None,
                     });
                 }
                 return true;
@@ -838,6 +919,7 @@ impl TimelineProjection {
                 }
                 if self
                     .update_tool_entry(
+                        sequence,
                         Some(run_id.as_str()),
                         Some(tool_call_id.as_str()),
                         None,
@@ -860,6 +942,7 @@ impl TimelineProjection {
                 let status = if *success { "succeeded" } else { "failed" };
                 if self
                     .update_tool_entry(
+                        sequence,
                         Some(run_id.as_str()),
                         Some(tool_call_id.as_str()),
                         None,
@@ -889,6 +972,7 @@ impl TimelineProjection {
                     name: None,
                     event_id,
                     sequence,
+                    completed_sequence: Some(sequence),
                 });
                 return true;
             }
@@ -1229,6 +1313,7 @@ impl TimelineProjection {
     /// 绝不把无身份 output 随意写进同 run 最近的并发工具。
     fn update_tool_entry(
         &mut self,
+        sequence: u64,
         run_id: Option<&str>,
         tool_call_id: Option<&str>,
         name: Option<&str>,
@@ -1253,10 +1338,17 @@ impl TimelineProjection {
             [only] => *only,
             _ => return None,
         };
-        let anchor = &self.tool_anchors[anchor_index];
+        let anchor = &mut self.tool_anchors[anchor_index];
+        if new_status.is_some_and(|status| matches!(status, "succeeded" | "failed" | "cancelled")) {
+            anchor.completed_sequence = Some(anchor.completed_sequence.unwrap_or(0).max(sequence));
+        }
+        // 已完成工具的旧增量不得污染权威结果；完成之后产生的新引用仍可追加。
+        let newer_than_completion = anchor
+            .completed_sequence
+            .is_none_or(|completed| sequence > completed);
         let event_id = anchor.event_id.clone();
-        let sequence = anchor.sequence;
-        let Some(index) = self.entry_index_by_identity(&event_id, sequence) else {
+        let anchor_sequence = anchor.sequence;
+        let Some(index) = self.entry_index_by_identity(&event_id, anchor_sequence) else {
             return None;
         };
         if let Some(TimelineEntryKind::ToolCall { status, detail, .. }) =
@@ -1266,10 +1358,9 @@ impl TimelineProjection {
                 status.clear();
                 status.push_str(next);
             }
-            if let Some(delta) = detail_delta.filter(|_| {
-                new_status.is_some()
-                    || !matches!(status.as_str(), "succeeded" | "failed" | "cancelled")
-            }) {
+            if let Some(delta) =
+                detail_delta.filter(|_| new_status.is_some() || newer_than_completion)
+            {
                 if !delta.is_empty() {
                     let text = detail.take().unwrap_or_default();
                     let separator = if new_status.is_some() && !text.is_empty() {

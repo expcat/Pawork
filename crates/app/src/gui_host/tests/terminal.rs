@@ -112,10 +112,15 @@ async fn terminal_natural_exit_broadcasts_exited_with_code() {
     let (adapter, _dir) = terminal_adapter().await;
     let mut events = adapter.subscribe_events();
     let terminal_id = create_terminal(&adapter).await;
+    // 断言真正启动的 shell 收到 GUI 终端类型，避免继承 Host 的 dumb。
+    #[cfg(unix)]
+    let exit_command = "if [ \"$TERM\" = xterm ]; then exit 0; else exit 17; fi\n";
+    #[cfg(not(unix))]
+    let exit_command = "exit 0\n";
     adapter
         .command(&command_envelope(AppCommand::TerminalWrite {
             terminal_session_id: terminal_id.clone(),
-            data: "exit 0\n".into(),
+            data: exit_command.into(),
         }))
         .await
         .expect("terminal_write");

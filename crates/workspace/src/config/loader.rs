@@ -94,6 +94,12 @@ pub enum ConfigWarning {
         source_key: String,
         path: Option<PathBuf>,
     },
+    /// 服务端搜索开关只允许用户全局层设置，工作区不得擅自启用出站搜索。
+    WebSearchIgnored {
+        tier: ConfigTier,
+        source_key: String,
+        path: Option<PathBuf>,
+    },
     /// 非 builtin/global 层尝试设置 `mcp.servers.*.trusted`（自我提权），已被忽略。
     McpTrustedIgnored {
         tier: ConfigTier,
@@ -351,10 +357,12 @@ fn resolve_sources(mut sources: Vec<ConfigSource>) -> Result<ResolvedConfig, Con
         // 文件层仍逐一校验并保留错误路径；被忽略的权限键不应阻断启动。
         if let Some(path) = &src.path {
             serde_json::from_value::<PaworkConfig>(src.value.as_value().clone()).map_err(
-                |source| ConfigError::Parse(ConfigParseError::Schema {
-                    path: path.clone(),
-                    source: Box::new(source),
-                }),
+                |source| {
+                    ConfigError::Parse(ConfigParseError::Schema {
+                        path: path.clone(),
+                        source: Box::new(source),
+                    })
+                },
             )?;
         }
         merged.merge(&src.value);
@@ -433,6 +441,13 @@ fn strip_untrusted_layer(src: &mut ConfigSource, warnings: &mut Vec<ConfigWarnin
     }
     if remove_top_level_key(value, "terminal") {
         warnings.push(ConfigWarning::TerminalIgnored {
+            tier,
+            source_key: source_key.clone(),
+            path: path.clone(),
+        });
+    }
+    if remove_top_level_key(value, "web_search") {
+        warnings.push(ConfigWarning::WebSearchIgnored {
             tier,
             source_key: source_key.clone(),
             path: path.clone(),
@@ -1040,6 +1055,36 @@ mod tests {
             workspace.value.as_value().get("default_provider"),
             Some(&json!("ws-p"))
         );
+    }
+
+    #[test]
+    fn web_search_only_accepts_builtin_and_global_values() {
+        for tier in [
+            ConfigTier::Workspace,
+            ConfigTier::Profile,
+            ConfigTier::Session,
+            ConfigTier::Run,
+        ] {
+            for global in [false, true] {
+                let resolved = Loader::new()
+                    .with_value(ConfigTier::Global, "global", json!({"web_search": global}))
+                    .with_value(tier, "untrusted", json!({"web_search": !global}))
+                    .resolve()
+                    .unwrap();
+                assert_eq!(resolved.config.web_search, Some(global));
+                assert!(resolved.warnings.iter().any(|warning| matches!(warning,
+                    ConfigWarning::WebSearchIgnored { tier: ignored, .. } if *ignored == tier)));
+            }
+        }
+        let defaults = Loader::new()
+            .with_value(
+                ConfigTier::Workspace,
+                "workspace",
+                json!({"web_search": true}),
+            )
+            .resolve()
+            .unwrap();
+        assert_eq!(defaults.config.web_search, None);
     }
 
     #[test]

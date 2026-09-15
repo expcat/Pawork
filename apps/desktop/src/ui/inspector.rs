@@ -4,9 +4,9 @@
 //! ScrollHandle（FollowScroll），不随 Timeline 改 list()；各页滚动状态
 //! 独立保留。宽窗 440px 侧栏；窄窗显式打开时同一实体占用中央 Workspace。
 
-use gpui::{canvas, div, prelude::*, px, Context, FocusHandle, MouseDownEvent, Window};
+use gpui::{canvas, div, prelude::*, px, Context, Focusable, MouseDownEvent, Window};
 
-use crate::projection::{ConnectionState, TerminalState, TERMINAL_CWD_UNKNOWN};
+use crate::projection::{ConnectionState, TERMINAL_CWD_UNKNOWN};
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
 use crate::ui::components::dropdown::{Dropdown, MenuPanel, MenuRow};
 use crate::ui::components::follow_scroll::BackToBottom;
@@ -16,113 +16,12 @@ use crate::ui::i18n::t;
 use crate::ui::shell_layout::InspectorPlacement;
 use crate::ui::theme::{dark, font, metrics};
 
-use super::{
-    terminal_can_operate, terminal_can_reopen, terminal_close_label, terminal_known_ended, AppView,
-    MenuKind,
-};
+use super::{terminal_can_close, terminal_can_operate, AppView, MenuKind};
 
-pub(crate) use super::terminal_view::{
-    plain_terminal_output, render_terminal_lines, terminal_text_size,
-};
+pub(crate) use super::terminal_view::{render_terminal_lines, terminal_text_size};
 
-/// Terminal 页无输出时的占位文案（R2 Wave B）：视觉与 AX 树共用同源。
-pub(super) fn terminal_empty_output() -> &'static str {
-    t("inspector.terminal_empty_output")
-}
-
-/// 尺寸 stepper 的步长与安全边界（列 / 行）：步长取常用适配的可感增量，
-/// 边界防止把 PTY 缩到不可用或放大到离谱值。
-pub(crate) const TERMINAL_COLUMNS_STEP: i32 = 8;
-pub(crate) const TERMINAL_ROWS_STEP: i32 = 4;
-const TERMINAL_COLUMNS_MIN: u16 = 20;
-const TERMINAL_COLUMNS_MAX: u16 = 500;
-const TERMINAL_ROWS_MIN: u16 = 6;
-const TERMINAL_ROWS_MAX: u16 = 200;
-
-/// Terminal 头部尺寸 stepper 行几何（render 与 AX 同源，P4 片 3）：内边距
-/// 与间距以 rem 表达（px_2 / py_1 / gap_1，随字号档缩放），按钮槽位为
-/// 冻结 px（与 rail 28×28 控件槽同族）。
-pub(crate) const TERMINAL_STEPPER_STEP_WIDTH: f32 = 28.0;
-pub(crate) const TERMINAL_STEPPER_APPLY_WIDTH: f32 = 72.0;
-pub(crate) const TERMINAL_STEPPER_BUTTON_HEIGHT: f32 = 28.0;
 pub(crate) const TERMINAL_TAB_BAR_HEIGHT: f32 = 28.0;
-const TERMINAL_STEPPER_GAP_REMS: f32 = 0.25;
 const TERMINAL_HEADER_PAD_X_REMS: f32 = 0.5;
-const TERMINAL_HEADER_PAD_Y_REMS: f32 = 0.25;
-
-/// 纯函数：按增量调整终端尺寸并钳制在安全边界内（G1，可测）。
-pub(crate) fn step_terminal_size(columns: u16, rows: u16, dcolumns: i32, drows: i32) -> (u16, u16) {
-    let columns = (i32::from(columns) + dcolumns).clamp(
-        i32::from(TERMINAL_COLUMNS_MIN),
-        i32::from(TERMINAL_COLUMNS_MAX),
-    ) as u16;
-    let rows = (i32::from(rows) + drows)
-        .clamp(i32::from(TERMINAL_ROWS_MIN), i32::from(TERMINAL_ROWS_MAX)) as u16;
-    (columns, rows)
-}
-
-/// 可见尺寸与 AX 共用同一来源：有本地 stepper 草稿时展示草稿，否则展示
-/// Host 已确认尺寸；草稿只影响展示，Apply 后才下发 Host。
-pub(crate) fn terminal_size_for_display(
-    terminal: &TerminalState,
-    draft: Option<(u16, u16)>,
-) -> (u16, u16) {
-    draft.unwrap_or((terminal.columns, terminal.rows))
-}
-
-/// 尺寸状态只描述当前展示值：草稿与 Host 权威尺寸不同时不得沿用旧回执
-/// 宣称 confirmed；一致时才可展示最近一次 resize 确认。
-pub(crate) fn terminal_resize_status_label(
-    terminal: &TerminalState,
-    draft: Option<(u16, u16)>,
-) -> Option<&'static str> {
-    if draft.is_some_and(|size| size != (terminal.columns, terminal.rows)) {
-        Some(t("inspector.resize_not_applied"))
-    } else if terminal.resize_confirmed {
-        Some(t("inspector.resize_confirmed"))
-    } else {
-        None
-    }
-}
-
-/// Terminal 页头部行高（render py_1×2 + 按钮槽高；AX output rect 同源）。
-pub(crate) fn terminal_header_height(rem_px: f32) -> f32 {
-    TERMINAL_STEPPER_BUTTON_HEIGHT + 2.0 * TERMINAL_HEADER_PAD_Y_REMS * rem_px
-}
-
-/// 标签栏 + 尺寸步进器的顶部 chrome（AX output / stepper 同源）。
-pub(crate) fn terminal_chrome_top(rem_px: f32) -> f32 {
-    TERMINAL_TAB_BAR_HEIGHT + terminal_header_height(rem_px)
-}
-
-/// stepper 五按钮 AX rect（渲染顺序 cols-dec / cols-inc / apply / rows-dec /
-/// rows-inc）：自右缘 px_2 内边距向左按 gap_1 排布，槽宽与 render 固定
-/// 尺寸同源；窄面板钳制到左缘。
-pub(crate) fn terminal_stepper_ax_rects(
-    body_x: f32,
-    body_right: f32,
-    body_y: f32,
-    rem_px: f32,
-) -> [(f32, f32, f32, f32); 5] {
-    let widths = [
-        TERMINAL_STEPPER_STEP_WIDTH,
-        TERMINAL_STEPPER_STEP_WIDTH,
-        TERMINAL_STEPPER_APPLY_WIDTH,
-        TERMINAL_STEPPER_STEP_WIDTH,
-        TERMINAL_STEPPER_STEP_WIDTH,
-    ];
-    let gap = TERMINAL_STEPPER_GAP_REMS * rem_px;
-    let right = body_right - TERMINAL_HEADER_PAD_X_REMS * rem_px;
-    let y = body_y + TERMINAL_HEADER_PAD_Y_REMS * rem_px;
-    let total: f32 = widths.iter().sum::<f32>() + gap * (widths.len() - 1) as f32;
-    let mut x = body_x.max(right - total);
-    let mut rects = [(0.0, 0.0, 0.0, 0.0); 5];
-    for (rect, width) in rects.iter_mut().zip(widths) {
-        *rect = (x, y, width, TERMINAL_STEPPER_BUTTON_HEIGHT);
-        x += width + gap;
-    }
-    rects
-}
 
 /// Inspector 顶层面板（固定三页；默认 Changes）。名称选择器列出已接通的
 /// 三项；identifier `inspector-tab-*` 现为菜单项。
@@ -154,42 +53,10 @@ impl InspectorTab {
     }
 }
 
-/// 尺寸 stepper 按钮（G1）：Ghost、无 padding、键盘路径与可见路径同 gate
-///（disabled 由调用方传入；adjust_terminal_size 内仍复核最终 gate）。
-fn terminal_stepper(
-    id: &'static str,
-    label: &'static str,
-    tooltip: &'static str,
-    dcolumns: i32,
-    drows: i32,
-    focus: &FocusHandle,
-    enabled: bool,
-    cx: &mut Context<AppView>,
-) -> Button {
-    Button::new(id)
-        .variant(ButtonVariant::Ghost)
-        .disabled(!enabled)
-        .padding(ButtonPadding::None)
-        // P4 片 3：槽位与 AX rect 同源（terminal_stepper_ax_rects）。
-        .width(px(TERMINAL_STEPPER_STEP_WIDTH))
-        .height(px(TERMINAL_STEPPER_BUTTON_HEIGHT))
-        .center()
-        .text_size(font::XS)
-        .label(label)
-        .tooltip(tooltip)
-        .track_focus(focus)
-        .on_click(cx.listener(move |view, event, _window, cx| {
-            if view.consume_button_key_click(id, event) {
-                return;
-            }
-            view.adjust_terminal_size(dcolumns, drows, cx);
-        }))
-}
-
 impl AppView {
     pub(super) fn inspector_element(
         &mut self,
-        connected: bool,
+        _connected: bool,
         placement: InspectorPlacement,
         window: &Window,
         cx: &mut Context<Self>,
@@ -316,7 +183,7 @@ impl AppView {
             });
         let body = match current {
             InspectorTab::Changes => self.changes_element(window, cx).into_any_element(),
-            InspectorTab::Terminal => self.terminal_page_element(connected, cx).into_any_element(),
+            InspectorTab::Terminal => self.terminal_page_element(window, cx).into_any_element(),
             InspectorTab::Resources => self.resources_element(cx).into_any_element(),
         };
         let mut panel = if placement.is_center() {
@@ -331,7 +198,7 @@ impl AppView {
         panel.child(body)
     }
 
-    /// 目录与状态进入可滚动正文，避免与尺寸控件争抢同一行。
+    /// 目录与状态供辅助功能描述使用，不占用终端正文。
     pub(super) fn terminal_context_text(&self) -> String {
         let terminal = &self.projection.terminal;
         let owner = terminal
@@ -361,9 +228,6 @@ impl AppView {
                 t("inspector.output_dropped").replace("{}", &terminal.dropped_events.to_string())
             ));
         }
-        if let Some(status) = terminal_resize_status_label(terminal, self.terminal_size_draft) {
-            context.push_str(&format!(" · {status}"));
-        }
         context
     }
 
@@ -371,30 +235,26 @@ impl AppView {
     /// 不随装配位置（侧栏 / 中央）改变。
     fn terminal_page_element(
         &mut self,
-        _connected: bool,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let terminal = self.projection.terminal.clone();
         let notice = self.terminal_notice_text();
-        let empty_output = terminal.output.is_empty();
-        let output_lines = if empty_output {
-            Vec::new()
-        } else {
-            render_terminal_lines(&terminal.output)
-        };
-        let (columns, rows) = terminal_size_for_display(&terminal, self.terminal_size_draft);
-        let size_label = format!("{columns}×{rows}");
-        let started = terminal.session_id.is_some();
-        let apply_size = started && !terminal_known_ended(&terminal);
-        let context = self.terminal_context_text();
-        let terminal_operable = terminal_can_operate(&self.projection.connection, &terminal);
-        let terminal_start_enabled = self.terminal_start_available();
-        let terminal_resize_enabled = terminal_operable && self.terminal_pending_resize.is_none();
-        // ADR-045：running 显示 Stop（真实 terminal_close 终止）；已知
-        // exited/killed/failed 显示 Close（清理 Host tombstone 与本地条目）；
-        // 其余
-        // 状态不占位。在途 close 期间禁用，防连点重复提交。
-        let terminal_close_action = terminal_close_label(&self.projection.connection, &terminal);
+        let screen = super::terminal_view::terminal_screen(
+            &terminal.output,
+            terminal.columns,
+            terminal.rows,
+            window,
+        );
+        let input = self.terminal_input.clone();
+        let focus = input.read(cx).focus_handle(cx);
+        let preedit = input.read(cx).preedit().to_owned();
+        let caret =
+            terminal_can_operate(&self.projection.connection, &terminal) && screen.cursor_visible;
+        let lines = render_terminal_lines(&screen, &preedit, caret);
+        let (cursor_row, cursor_col) = screen.cursor();
+        let scale = f32::from(window.rem_size()) / font::BASE_REM_PIXELS;
+        let scroll = self.terminal_scroll.handle().clone();
         let tabs = self.terminal_tabs_element(cx);
         div()
             .flex()
@@ -404,116 +264,68 @@ impl AppView {
             .child(tabs)
             .child(
                 div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    // 几何与 AX 同源（P4 片 3）：px_2 / py_1 以共享 rem
-                    // 常量表达，值不变。
-                    .px(gpui::rems(TERMINAL_HEADER_PAD_X_REMS))
-                    .py(gpui::rems(TERMINAL_HEADER_PAD_Y_REMS))
-                    .text_size(font::XS)
-                    .text_color(dark().text.secondary)
-                    .min_w_0()
-                    .child(div().child(t("settings.terminal.size_label")))
-                    .child(
-                        // G1：尺寸可变参。stepper 维护本地草稿，右侧尺寸按钮
-                        // 仍是唯一 apply 入口，走冻结的 terminal_resize。
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            // gap_1 以共享 rem 常量表达（值不变）。
-                            .gap(gpui::rems(TERMINAL_STEPPER_GAP_REMS))
-                            .flex_none()
-                            .child(terminal_stepper(
-                                "terminal-cols-dec",
-                                "−W",
-                                t("inspector.fewer_columns"),
-                                -TERMINAL_COLUMNS_STEP,
-                                0,
-                                &self.terminal_cols_dec_focus,
-                                terminal_operable,
-                                cx,
-                            ))
-                            .child(terminal_stepper(
-                                "terminal-cols-inc",
-                                "+W",
-                                t("inspector.more_columns"),
-                                TERMINAL_COLUMNS_STEP,
-                                0,
-                                &self.terminal_cols_inc_focus,
-                                terminal_operable,
-                                cx,
-                            ))
-                            .child(
-                                Button::new("terminal-resize")
-                                    .variant(ButtonVariant::Ghost)
-                                    .disabled(!terminal_resize_enabled)
-                                    .padding(ButtonPadding::None)
-                                    .width(px(TERMINAL_STEPPER_APPLY_WIDTH))
-                                    .height(px(TERMINAL_STEPPER_BUTTON_HEIGHT))
-                                    .center()
-                                    .label(size_label)
-                                    .tooltip(t("inspector.tooltip_apply_size"))
-                                    .track_focus(&self.terminal_resize_focus)
-                                    .on_click(cx.listener(|view, event, window, cx| {
-                                        if view.consume_button_key_click("terminal-resize", event) {
-                                            return;
-                                        }
-                                        view.on_apply_terminal_size(window, cx);
-                                    })),
-                            )
-                            .child(terminal_stepper(
-                                "terminal-rows-dec",
-                                "−H",
-                                t("inspector.fewer_rows"),
-                                0,
-                                -TERMINAL_ROWS_STEP,
-                                &self.terminal_rows_dec_focus,
-                                terminal_operable,
-                                cx,
-                            ))
-                            .child(terminal_stepper(
-                                "terminal-rows-inc",
-                                "+H",
-                                t("inspector.more_rows"),
-                                0,
-                                TERMINAL_ROWS_STEP,
-                                &self.terminal_rows_inc_focus,
-                                terminal_operable,
-                                cx,
-                            )),
-                    ),
-            )
-            .child(
-                div()
                     .id("terminal-output-area")
                     .relative()
                     .flex()
                     .flex_col()
                     .flex_1()
                     .min_h_0()
+                    .track_scroll(&self.terminal_action_layouts["terminal-output"])
+                    .track_focus(&focus)
+                    .key_context("Terminal")
+                    .cursor_text()
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(|view, _, window, cx| {
+                            window.focus(&view.terminal_input.read(cx).focus_handle(cx));
+                            cx.stop_propagation();
+                            cx.notify();
+                        }),
+                    )
                     .child({
-                        // 量视口，不量滚动内容：canvas 挂在 overflow 容器外，
-                        // 否则长输出会把列×行撑到 500×200。
                         let view = cx.entity().downgrade();
                         canvas(
                             move |bounds, _, app| {
                                 let width = f32::from(bounds.size.width);
                                 let height = f32::from(bounds.size.height);
-                                let changed = view.upgrade().is_some_and(|entity| {
+                                if view.upgrade().is_some_and(|entity| {
                                     entity.read(app).terminal_output_size_changed(width, height)
-                                });
-                                if changed {
+                                }) {
                                     app.defer(move |app| {
                                         let _ = view.update(app, |view, cx| {
-                                            view.observe_terminal_output_size(width, height, cx);
+                                            view.observe_terminal_output_size(width, height, cx)
                                         });
                                     });
                                 }
                             },
-                            |_, _, _, _| {},
+                            move |bounds, _, window, app| {
+                                let cursor_bounds = gpui::Bounds::new(
+                                    bounds.origin
+                                        + scroll.offset()
+                                        + gpui::point(
+                                            px((8.0
+                                                + (cursor_col + preedit.chars().count()) as f32
+                                                    * pawork_terminal::TERMINAL_CELL_WIDTH)
+                                                * scale),
+                                            px((4.0
+                                                + cursor_row as f32
+                                                    * super::terminal_view::TERMINAL_LINE_HEIGHT)
+                                                * scale),
+                                        ),
+                                    gpui::size(
+                                        px(pawork_terminal::TERMINAL_CELL_WIDTH * scale),
+                                        px(super::terminal_view::TERMINAL_LINE_HEIGHT * scale),
+                                    ),
+                                );
+                                input.update(app, |input, _| {
+                                    input.cursor_bounds = Some(cursor_bounds)
+                                });
+                                window.handle_input(
+                                    &focus,
+                                    gpui::ElementInputHandler::new(bounds, input.clone()),
+                                    app,
+                                );
+                            },
                         )
                         .absolute()
                         .size_full()
@@ -534,38 +346,23 @@ impl AppView {
                             .font_family(font::MONO)
                             .text_size(terminal_text_size())
                             .line_height(gpui::rems(
-                                super::terminal_view::TERMINAL_LINE_HEIGHT
-                                    / crate::ui::theme::font::BASE_REM_PIXELS,
+                                super::terminal_view::TERMINAL_LINE_HEIGHT / font::BASE_REM_PIXELS,
                             ))
                             .text_color(dark().text.emphasis)
-                            .on_scroll_wheel(cx.listener(|view, _event, _window, cx| {
+                            .on_scroll_wheel(cx.listener(|view, _, _, cx| {
                                 view.terminal_scroll.on_scroll_wheel();
                                 cx.notify();
                             }))
-                            .child(
-                                div()
-                                    .py_2()
-                                    .whitespace_normal()
-                                    .text_size(font::SM)
-                                    .text_color(dark().text.secondary)
-                                    .child(context),
-                            )
                             .when(notice.is_some(), |area| {
                                 area.child(self.terminal_notice_element(cx))
                             })
-                            .when(empty_output && notice.is_none(), |area| {
-                                area.child(
-                                    div()
-                                        .whitespace_normal()
-                                        .text_color(dark().text.secondary)
-                                        .child(terminal_empty_output()),
-                                )
-                            })
-                            .children(output_lines.into_iter().map(|(_, styled)| {
+                            .children(lines.into_iter().map(|(_, styled)| {
                                 div()
                                     .flex()
                                     .flex_row()
                                     .w_full()
+                                    .flex_none()
+                                    .h(px(super::terminal_view::TERMINAL_LINE_HEIGHT * scale))
                                     .whitespace_nowrap()
                                     .child(styled)
                             })),
@@ -583,7 +380,7 @@ impl AppView {
                                         .child(t("timeline.ax_back_to_bottom")),
                                 )
                                 .track_focus(&self.terminal_back_to_bottom_focus)
-                                .on_click(cx.listener(|view, event, _window, cx| {
+                                .on_click(cx.listener(|view, event, _, cx| {
                                     if view
                                         .consume_button_key_click("terminal-back-to-bottom", event)
                                     {
@@ -593,101 +390,7 @@ impl AppView {
                                     cx.notify();
                                 })),
                         ))
-                    })
-                    .child(
-                        div()
-                            .flex()
-                            .flex_none()
-                            .flex_row()
-                            .gap_1()
-                            .px_2()
-                            .pb_2()
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .id("terminal-input-layout")
-                                    .track_scroll(&self.terminal_action_layouts["terminal-input"])
-                                    .child(self.terminal_input.clone()),
-                            )
-                            .when(terminal_close_action.is_some(), |row| {
-                                let label = if terminal_close_action == Some("Close") {
-                                    t("inspector.close")
-                                } else {
-                                    t("inspector.stop")
-                                };
-                                row.child(
-                                    div()
-                                        .flex_none()
-                                        .id("terminal-close-layout")
-                                        .track_scroll(
-                                            &self.terminal_action_layouts["terminal-close"],
-                                        )
-                                        .child(
-                                            Button::new("terminal-close")
-                                                .variant(ButtonVariant::Raised)
-                                                .disabled(self.terminal_pending_close.is_some())
-                                                .text_size(font::XS)
-                                                .text_color(dark().text.primary)
-                                                .disabled_text_color(dark().text.primary)
-                                                .label(label)
-                                                .track_focus(&self.terminal_close_focus)
-                                                .on_click(cx.listener(
-                                                    move |view, event, window, cx| {
-                                                        if view.consume_button_key_click(
-                                                            "terminal-close",
-                                                            event,
-                                                        ) {
-                                                            return;
-                                                        }
-                                                        view.on_close_terminal(window, cx);
-                                                    },
-                                                )),
-                                        ),
-                                )
-                            })
-                            .child(
-                                // 迁移前 terminal-start 未设文字色（继承 text.primary），
-                                // 禁用态亦保持同色，显式钉住避免 Raised 默认的 disabled 色。
-                                div()
-                                    .flex_none()
-                                    .id("terminal-start-layout")
-                                    .track_scroll(&self.terminal_action_layouts["terminal-start"])
-                                    .child(
-                                        Button::new("terminal-start")
-                                            .variant(ButtonVariant::Raised)
-                                            .disabled(!terminal_start_enabled)
-                                            .text_size(font::XS)
-                                            .text_color(dark().text.primary)
-                                            .disabled_text_color(dark().text.primary)
-                                            // 已知 exited/killed：单槽变「New」——新建终端入
-                                            // 口，不伪造旧终端生命周期（G2）。
-                                            .label(if apply_size {
-                                                t("inspector.tooltip_apply_size")
-                                            } else if terminal_can_reopen(&terminal) {
-                                                t("recovery.terminal_new")
-                                            } else {
-                                                t("recovery.terminal_start")
-                                            })
-                                            .track_focus(&self.terminal_start_focus)
-                                            .on_click(cx.listener(
-                                                move |view, event, window, cx| {
-                                                    if view.consume_button_key_click(
-                                                        "terminal-start",
-                                                        event,
-                                                    ) {
-                                                        return;
-                                                    }
-                                                    if apply_size {
-                                                        view.on_apply_terminal_size(window, cx);
-                                                    } else {
-                                                        view.on_start_terminal(window, cx);
-                                                    }
-                                                },
-                                            )),
-                                    ),
-                            ),
-                    ),
+                    }),
             )
     }
 
@@ -750,7 +453,7 @@ impl AppView {
                     })),
             );
         }
-        row.child(
+        row = row.child(
             Button::new("terminal-new-tab")
                 .track_focus(&self.terminal_new_tab_focus)
                 .variant(ButtonVariant::Ghost)
@@ -772,7 +475,33 @@ impl AppView {
                     view.on_new_terminal_tab(cx);
                     cx.stop_propagation();
                 })),
-        )
+        );
+        if terminal_can_close(&self.projection.connection, &self.projection.terminal) {
+            row = row.child(
+                div()
+                    .id("terminal-close-layout")
+                    .track_scroll(&self.terminal_action_layouts["terminal-close"])
+                    .child(
+                        Button::new("terminal-close")
+                            .variant(ButtonVariant::Ghost)
+                            .padding(ButtonPadding::None)
+                            .width(px(metrics::RAIL_ICON_BUTTON_SIZE))
+                            .height(px(TERMINAL_TAB_BAR_HEIGHT - 4.0))
+                            .center()
+                            .label("×")
+                            .tooltip(t("inspector.close"))
+                            .disabled(self.terminal_pending_close.is_some())
+                            .track_focus(&self.terminal_close_focus)
+                            .on_click(cx.listener(|view, event, window, cx| {
+                                if view.consume_button_key_click("terminal-close", event) {
+                                    return;
+                                }
+                                view.on_close_terminal(window, cx);
+                            })),
+                    ),
+            );
+        }
+        row
     }
 
     pub(super) fn on_select_terminal_tab(&mut self, id: &str, cx: &mut Context<Self>) {
@@ -782,8 +511,8 @@ impl AppView {
         if !self.projection.select_terminal(id) {
             return;
         }
-        self.reconcile_terminal_draft(cx);
-        self.terminal_size_draft = None;
+        self.reconcile_terminal_input(cx);
+        self.pending_inspector_focus = Some(super::InspectorFocusTarget::SelectedTab);
         self.maybe_apply_fitted_terminal_size(cx);
         self.terminal_scroll.jump_to_bottom();
         cx.notify();
@@ -801,14 +530,7 @@ impl AppView {
         cx.notify();
     }
 
-    pub(super) fn on_start_terminal(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        self.ensure_terminal(cx);
-        cx.notify();
-    }
-
-    /// ADR-045：Stop（running → terminal_close 终止）与 Close（已知
-    /// exited/killed/failed → terminal_close 清理 Host tombstone）共用一个入口；
-    /// Host 侧 cleanup 幂等承载终止/清理，UI 记录请求发出时的动作语义。
+    /// 关闭当前标签：Host 确认终止/清理后才移除本地条目。
     pub(super) fn on_close_terminal(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if self.terminal_pending_close.is_some() {
             return;
@@ -823,90 +545,26 @@ impl AppView {
         let Some(id) = self.projection.terminal.session_id.clone() else {
             return;
         };
-        let Some(action) =
-            terminal_close_label(&self.projection.connection, &self.projection.terminal)
-        else {
+        if !terminal_can_close(&self.projection.connection, &self.projection.terminal) {
             return;
-        };
-        let remove_on_success = action == "Close";
-        self.terminal_pending_close = Some((id.clone(), remove_on_success));
+        }
+        self.terminal_pending_close = Some(id.clone());
         self.controller.terminal_close(id);
         cx.notify();
     }
 
-    pub(super) fn on_apply_terminal_size(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        if !terminal_can_operate(&self.projection.connection, &self.projection.terminal) {
-            self.status_hint =
-                Some("Terminal is not ready; resize was not sent to the host.".into());
-            cx.notify();
-            return;
-        }
-        if self.terminal_pending_resize.is_some() {
-            self.status_hint = Some("Waiting for the current terminal resize.".into());
-            cx.notify();
-            return;
-        }
-        if let Some(id) = self.projection.terminal.session_id.clone() {
-            let (columns, rows) = self.terminal_size_draft.unwrap_or((
-                self.projection.terminal.columns,
-                self.projection.terminal.rows,
-            ));
-            self.terminal_pending_resize = Some((id.clone(), columns, rows));
-            self.controller.terminal_resize(id, columns, rows);
-            self.status_hint = Some("Resizing terminal…".into());
-        }
-        cx.notify();
-    }
-
-    /// stepper 调整本地尺寸草稿（G1）：Host 权威 columns/rows 不动，apply
-    /// 时才经 terminal_resize 下发；草稿在回执或终端切换后复位。
-    pub(super) fn adjust_terminal_size(
-        &mut self,
-        dcolumns: i32,
-        drows: i32,
-        cx: &mut Context<Self>,
-    ) {
-        if !terminal_can_operate(&self.projection.connection, &self.projection.terminal) {
-            return;
-        }
-        let current = (
-            self.projection.terminal.columns,
-            self.projection.terminal.rows,
-        );
-        let (columns, rows) = self.terminal_size_draft.unwrap_or(current);
-        self.terminal_size_draft = Some(step_terminal_size(columns, rows, dcolumns, drows));
-        cx.notify();
-    }
-
-    /// 终端会话懒创建（键盘输入路径 ui/mod.rs 亦调用）。
+    /// 首次打开自动创建；已有终端（包括终态）保留，显式 + 才新建。
     pub(super) fn ensure_terminal(&mut self, _cx: &mut Context<Self>) {
-        let terminal = self.projection.terminal.clone();
-        if terminal.session_id.is_some() {
-            if !terminal_can_reopen(&terminal) {
-                return;
-            }
-            // G2：已知 exited/killed 的终端，Start 恢复为「新建终端」入口——
-            // 旧终端只读保留（wire 无 stop/close 与 live exit 事件，不伪造
-            // 生命周期），新终端沿用同一 workspace 与 cwd。
-            let workspace = terminal
-                .workspace_id
-                .clone()
-                .or_else(|| self.inspector_workspace_id());
-            let cwd = (terminal.cwd != TERMINAL_CWD_UNKNOWN)
-                .then(|| terminal.cwd.clone())
-                .filter(|cwd| cwd.as_str() != ".");
-            self.begin_terminal_create(workspace, cwd);
-            return;
+        if self.projection.terminal.session_id.is_none() {
+            self.begin_terminal_create(
+                self.inspector_workspace_id(),
+                Some(self.projection.terminal.cwd.clone()),
+            );
         }
-        self.begin_terminal_create(
-            self.inspector_workspace_id(),
-            Some(self.projection.terminal.cwd.clone()),
-        );
     }
 
     /// terminal_create 的公共发起入口：create-pending 去重、连接与
-    /// workspace 守卫、请求 cwd 记账集中在一处（首次 Start 与 exited 终端
-    /// 的新建入口共用）。
+    /// workspace 守卫、请求 cwd 记账集中在一处（自动启动与 + 共用）。
     fn begin_terminal_create(&mut self, workspace: Option<String>, cwd: Option<String>) {
         if self.terminal_create_blocked() {
             return;
@@ -946,47 +604,8 @@ mod tests {
     #[test]
     fn terminal_output_hides_vt_control_sequences() {
         assert_eq!(
-            plain_terminal_output("\u{1b}[?2004hpwd\u{1b}[?2004l\r\n/workspace\r\n"),
+            pawork_terminal::plain_output("\u{1b}[?2004hpwd\u{1b}[?2004l\r\n/workspace\r\n"),
             "pwd\n/workspace"
-        );
-    }
-
-    /// G1：尺寸 stepper 只在安全边界内变参（钳制，不产生 0 列 / 离谱值）。
-    #[test]
-    fn terminal_size_step_clamps_to_sane_bounds() {
-        assert_eq!(
-            step_terminal_size(80, 24, TERMINAL_COLUMNS_STEP, TERMINAL_ROWS_STEP),
-            (88, 28)
-        );
-        assert_eq!(
-            step_terminal_size(24, 10, -1000, -1000),
-            (TERMINAL_COLUMNS_MIN, TERMINAL_ROWS_MIN)
-        );
-        assert_eq!(
-            step_terminal_size(496, 198, 1000, 1000),
-            (TERMINAL_COLUMNS_MAX, TERMINAL_ROWS_MAX)
-        );
-        let terminal = crate::projection::TerminalState {
-            columns: 80,
-            rows: 24,
-            ..crate::projection::TerminalState::default()
-        };
-        assert_eq!(terminal_size_for_display(&terminal, None), (80, 24));
-        assert_eq!(
-            terminal_size_for_display(&terminal, Some((88, 28))),
-            (88, 28)
-        );
-        assert_eq!(
-            terminal_resize_status_label(&terminal, Some((88, 28))),
-            Some("size not applied")
-        );
-        let confirmed = crate::projection::TerminalState {
-            resize_confirmed: true,
-            ..terminal
-        };
-        assert_eq!(
-            terminal_resize_status_label(&confirmed, None),
-            Some("resize confirmed")
         );
     }
 }

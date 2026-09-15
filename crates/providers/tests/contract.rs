@@ -221,7 +221,7 @@ async fn contract_chat_facets_default_coverage() {
             pawork_domain::CancellationToken::new(),
         )
         .await
-    .expect("stream ok");
+        .expect("stream ok");
     contract::assert_text_stream(&sink.events());
     assert_eq!(summary.stop_reason, StopReason::Completed);
 
@@ -576,6 +576,37 @@ async fn contract_list_models() {
         }
         server.verify().await;
     }
+    // 远端纯文本 / 显式 false 必须收窄静态视觉能力；未接线搜索不能被目录授予。
+    server.reset().await;
+    Mock::given(method("GET"))
+        .and(path("/models"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({"data":[
+                {"id":"qwen3.8-max", "input_modalities":["text"], "supports_web_search":true},
+                {"id":"remote-vision", "input_modalities":["text","image"]},
+                {"id":"remote-disabled", "supports_image_in":false, "input_modalities":["image"]}
+            ]})),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let mut config = OpenAiCompatibleConfig::new(server.uri()).with_provider_id("qwen-token-plan");
+    config.http = pawork_providers::net::http::HttpClientConfig::builder()
+        .disable_system_proxy()
+        .build();
+    let provider = OpenAiCompatibleProvider::new(config, None).unwrap();
+    let models = provider.list_models(None).await.unwrap();
+    assert_eq!(
+        models
+            .iter()
+            .map(|model| model.capabilities.image_input)
+            .collect::<Vec<_>>(),
+        [false, true, false]
+    );
+    assert!(models
+        .iter()
+        .all(|model| model.capabilities.hosted_tool_tags.is_empty()));
+    server.verify().await;
 }
 
 #[tokio::test]

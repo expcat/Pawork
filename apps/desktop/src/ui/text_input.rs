@@ -315,7 +315,6 @@ impl TextInput {
         self.undo_stack.len()
     }
 
-    #[cfg(test)]
     pub(crate) fn selected_range(&self) -> Range<usize> {
         self.selected_range.clone()
     }

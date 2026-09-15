@@ -227,9 +227,7 @@ impl AgentEventSink for TextSink {
             // ArgumentsDelta / Progress 等中间帧不逐条刷屏。
             AgentEvent::ServerTool(event) => match event {
                 ServerToolEvent::Started {
-                    tool_call_id,
-                    name,
-                    ..
+                    tool_call_id, name, ..
                 } => {
                     self.tools.lock().expect("sink tools mutex").insert(
                         tool_call_id,
@@ -239,7 +237,10 @@ impl AgentEventSink for TextSink {
                         },
                     );
                 }
-                ServerToolEvent::CitationAdded { tool_call_id, .. } => {
+                ServerToolEvent::CitationAdded {
+                    tool_call_id,
+                    citation,
+                } => {
                     if let Some(activity) = self
                         .tools
                         .lock()
@@ -247,6 +248,24 @@ impl AgentEventSink for TextSink {
                         .get_mut(&tool_call_id)
                     {
                         activity.citations = activity.citations.saturating_add(1);
+                    }
+                    // 引用可能晚于 search Completed；无论活动是否已移除，
+                    // 都显示真实来源，不能只计数或静默丢弃。
+                    let event = ServerToolEvent::CitationAdded {
+                        tool_call_id,
+                        citation,
+                    };
+                    if let Some(pawork_protocol::AppEvent::ToolOutput { delta, .. }) =
+                        pawork_protocol::projection::project_server_tool_event(
+                            &envelope.run_id,
+                            &event,
+                        )
+                    {
+                        close_thinking(self)?;
+                        eprint!("{delta}");
+                        io::stderr()
+                            .flush()
+                            .map_err(|error| EngineError::sink(error.to_string()))?;
                     }
                 }
                 ServerToolEvent::Completed { tool_call_id, .. } => {
@@ -283,10 +302,7 @@ impl AgentEventSink for TextSink {
                         .remove(&tool_call_id)
                         .map(|item| item.name)
                         .unwrap_or_else(|| tool_call_id.as_str().to_string());
-                    eprintln!(
-                        "✗ {name} ({})",
-                        message.as_deref().unwrap_or("failed")
-                    );
+                    eprintln!("✗ {name} ({})", message.as_deref().unwrap_or("failed"));
                     io::stderr()
                         .flush()
                         .map_err(|error| EngineError::sink(error.to_string()))?;
