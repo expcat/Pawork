@@ -111,6 +111,21 @@ pub fn to_messages_body_with_plan(
         );
     }
 
+    // SEARCH-1：canonical hosted WebSearch → Anthropic 服务端工具
+    // `web_search_20250305`（能力声明与拒绝在 prepare_request 完成）。
+    if request
+        .hosted_tools
+        .iter()
+        .any(|tool| tool.kind == pawork_domain::ToolCapabilityTag::WebSearch)
+    {
+        let tools = body
+            .entry("tools")
+            .or_insert_with(|| Value::Array(Vec::new()));
+        if let Value::Array(entries) = tools {
+            entries.push(json!({"type": "web_search_20250305", "name": "web_search"}));
+        }
+    }
+
     if let Some(temp) = request.temperature {
         body.insert("temperature".into(), json!(temp));
     }

@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use pawork_domain::{ContentPart, TextContent, WorkspaceId};
+use pawork_domain::{ContentPart, ImageContent, ImageSource, TextContent, WorkspaceId};
 use pawork_engine::InjectedLayer;
 use pawork_workspace::resources::{
     CurrentPathKind, ResourceLoader, ResourceRequest, ResourceSelection, WorkspaceRelativePath,
@@ -11,8 +11,8 @@ use pawork_workspace::Workspace;
 use pawork_workspace::{FileIndex, FileIndexError, IndexOptions, WorkspaceService};
 
 use crate::extensions::{
-    at_tokens, discover_skill_ids, instruction_kind_name, mcp_config_from_pawork, McpServerSlot,
-    McpServerStatus, AT_FILE_MAX_BYTES,
+    at_tokens, discover_skill_ids, instruction_kind_name, mcp_config_from_pawork, AtAttachmentBody,
+    McpServerSlot, McpServerStatus, AT_FILE_MAX_BYTES, AT_IMAGE_MAX_BYTES,
 };
 use crate::{AppCore, AppError};
 
@@ -151,18 +151,40 @@ impl ExtensionService {
         })];
         for query in at_tokens(text) {
             if let Some(attachment) = self.resolve_at_query(workspace, &query).await? {
-                let marker = if attachment.truncated {
-                    "truncated"
-                } else {
-                    "complete"
-                };
-                parts.push(ContentPart::Text(TextContent {
-                    text: format!(
-                        "[attached file: {path} ({marker})]\n{body}",
-                        path = attachment.relative_path,
-                        body = attachment.content
-                    ),
-                }));
+                let path = attachment.relative_path;
+                match attachment.body {
+                    AtAttachmentBody::Text { content, truncated } => {
+                        let marker = if truncated { "truncated" } else { "complete" };
+                        parts.push(ContentPart::Text(TextContent {
+                            text: format!("[attached file: {path} ({marker})]\n{content}"),
+                        }));
+                    }
+                    // VISION-2：图片附件 = 头标记 Text part + Image part；
+                    // 模型未声明 image_input 时由 capability_gate 在发 HTTP 前拒绝。
+                    AtAttachmentBody::Image {
+                        media_type,
+                        data_base64,
+                        byte_len,
+                    } => {
+                        parts.push(ContentPart::Text(TextContent {
+                            text: format!(
+                                "[attached image: {path} ({media_type}, {byte_len} bytes)]"
+                            ),
+                        }));
+                        parts.push(ContentPart::Image(ImageContent {
+                            source: ImageSource::Base64(data_base64),
+                            media_type: media_type.to_string(),
+                            alt_text: Some(path),
+                        }));
+                    }
+                    AtAttachmentBody::ImageOmitted { byte_len } => {
+                        parts.push(ContentPart::Text(TextContent {
+                            text: format!(
+                                "[attached image omitted: {path} ({byte_len} bytes exceed {AT_IMAGE_MAX_BYTES} byte limit)]"
+                            ),
+                        }));
+                    }
+                }
             }
         }
         Ok(parts)
@@ -218,6 +240,25 @@ impl ExtensionService {
             )));
         }
         let path = root.join(&relative_path);
+        // VISION-2：图片扩展名走 base64 Image part，不经过 UTF-8 有损文本展开。
+        if let Some(media_type) = image_media_type(&relative_path) {
+            let bytes = std::fs::read(&path)?;
+            let byte_len = bytes.len();
+            let body = if byte_len > AT_IMAGE_MAX_BYTES {
+                AtAttachmentBody::ImageOmitted { byte_len }
+            } else {
+                AtAttachmentBody::Image {
+                    media_type,
+                    data_base64: base64_encode(&bytes),
+                    byte_len,
+                }
+            };
+            return Ok(Some(crate::extensions::AtAttachment {
+                query: query.to_string(),
+                relative_path,
+                body,
+            }));
+        }
         let bytes = std::fs::read(&path)?;
         let truncated = bytes.len() > AT_FILE_MAX_BYTES;
         let slice = if truncated {
@@ -229,8 +270,7 @@ impl ExtensionService {
         Ok(Some(crate::extensions::AtAttachment {
             query: query.to_string(),
             relative_path,
-            content,
-            truncated,
+            body: AtAttachmentBody::Text { content, truncated },
         }))
     }
 
@@ -247,6 +287,45 @@ impl ExtensionService {
             }
         }
     }
+}
+
+/// VISION-2：图片扩展名 → MIME（大小写不敏感）。取 2026-09-15 调研各供应商
+/// 图片格式的交集（png / jpeg / gif / webp）；非图片返回 None，走既有文本路径。
+fn image_media_type(relative_path: &str) -> Option<&'static str> {
+    let extension = relative_path.rsplit('.').next()?.to_ascii_lowercase();
+    match extension.as_str() {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        _ => None,
+    }
+}
+
+/// VISION-2：标准 base64（RFC 4648 带 padding）。与 pawork-auth 手写
+/// base64url 同理，不为单一编码需求新增生产依赖边。
+fn base64_encode(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = u32::from(chunk[0]);
+        let b1 = u32::from(*chunk.get(1).unwrap_or(&0));
+        let b2 = u32::from(*chunk.get(2).unwrap_or(&0));
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        out.push(ALPHABET[((n >> 18) & 63) as usize] as char);
+        out.push(ALPHABET[((n >> 12) & 63) as usize] as char);
+        out.push(if chunk.len() > 1 {
+            ALPHABET[((n >> 6) & 63) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            ALPHABET[(n & 63) as usize] as char
+        } else {
+            '='
+        });
+    }
+    out
 }
 
 #[cfg(test)]
@@ -399,6 +478,91 @@ mod tests {
                 assert_eq!(body.trim_end(), "phase S9 wiring", "{text:?}");
             }
             other => panic!("expected attachment, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn expand_at_refs_embeds_image_part_for_image_extension() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        std::fs::write(workspace.path().join("cat.png"), b"abc").expect("png");
+        let (mut core, _store) = crate::testsupport::mock_core(Vec::new()).await;
+        core.attach_workspace(workspace.path()).expect("attach");
+        core.prime_extensions().await.expect("prime");
+        let parts = core
+            .expand_at_refs(None, "看图 @cat.png")
+            .await
+            .expect("expand");
+        assert_eq!(parts.len(), 3, "{parts:?}");
+        match &parts[1] {
+            pawork_domain::ContentPart::Text(text) => {
+                assert_eq!(text.text, "[attached image: cat.png (image/png, 3 bytes)]")
+            }
+            other => panic!("expected image header marker, got {other:?}"),
+        }
+        match &parts[2] {
+            pawork_domain::ContentPart::Image(image) => {
+                assert_eq!(image.media_type, "image/png");
+                assert_eq!(image.alt_text.as_deref(), Some("cat.png"));
+                assert_eq!(
+                    image.source,
+                    pawork_domain::ImageSource::Base64("YWJj".into()),
+                );
+            }
+            other => panic!("expected image part, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn expand_at_refs_omits_oversize_image_with_marker() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        std::fs::write(
+            workspace.path().join("big.jpg"),
+            vec![0u8; crate::extensions::AT_IMAGE_MAX_BYTES + 1],
+        )
+        .expect("jpg");
+        let (mut core, _store) = crate::testsupport::mock_core(Vec::new()).await;
+        core.attach_workspace(workspace.path()).expect("attach");
+        core.prime_extensions().await.expect("prime");
+        let parts = core
+            .expand_at_refs(None, "看图 @big.jpg")
+            .await
+            .expect("expand");
+        assert_eq!(parts.len(), 2, "{parts:?}");
+        match &parts[1] {
+            pawork_domain::ContentPart::Text(text) => assert!(
+                text.text
+                    .starts_with("[attached image omitted: big.jpg ("),
+                "{text:?}"
+            ),
+            other => panic!("expected omission marker, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn image_media_type_matches_researched_format_intersection() {
+        for (path, expected) in [
+            ("a.png", Some("image/png")),
+            ("b.JPG", Some("image/jpeg")),
+            ("c.jpeg", Some("image/jpeg")),
+            ("d.gif", Some("image/gif")),
+            ("e.webp", Some("image/webp")),
+            ("f.txt", None),
+            ("Makefile", None),
+        ] {
+            assert_eq!(super::image_media_type(path), expected, "{path}");
+        }
+    }
+
+    #[test]
+    fn base64_encode_rfc4648_padded() {
+        for (input, expected) in [
+            (&b""[..], ""),
+            (&b"a"[..], "YQ=="),
+            (&b"ab"[..], "YWI="),
+            (&b"abc"[..], "YWJj"),
+            (&b"abcd"[..], "YWJjZA=="),
+        ] {
+            assert_eq!(super::base64_encode(input), expected, "{input:?}");
         }
     }
 }

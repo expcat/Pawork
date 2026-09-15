@@ -119,6 +119,7 @@ impl ApiKeyChannelProvider {
                 provider_id: provider_id.clone(),
                 http: config.http.clone(),
                 request_timeout: config.request_timeout,
+                chat_search: None,
             },
             Some(credential.clone()),
         )?;
@@ -128,6 +129,8 @@ impl ApiKeyChannelProvider {
         responses.wire = ResponsesWireOptions {
             store: None,
             include_encrypted_reasoning: true,
+            // SEARCH-1：API-key 通道 Responses 模型未证实透传 web_search，保持拒绝。
+            hosted_web_search: false,
         };
         let mut responses = ResponsesTransport::new(responses, credential)?;
         if config.preset.id == "opencode-go" {

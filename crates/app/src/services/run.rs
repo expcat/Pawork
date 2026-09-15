@@ -1,6 +1,6 @@
 //! Run 领域服务：事件化单轮执行（persist-first 双写）与追补事件入口。
 
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use pawork_domain::{
     AgentEvent, AgentEventEnvelope, CancellationToken, ContentPart, DegradeEvent, EventId,
@@ -21,9 +21,14 @@ use crate::{AppCore, AppError};
 /// upstream_attempt) 去重）：裸 `req-{n}` 在 Host 重启、计数器归零后撞键，
 /// 新 run 的用量会被账本当成同一请求的重放拒收（实证见 docs/ROADMAP.md
 /// §2.2，2026-09-14）。与 client `new_request_namespace` 同形态：pid +
-/// 纳秒 + 进程内计数器——毫秒粒度不够（测试实证同毫秒双 AppCore 仍撞）。
-fn run_request_id(core: &AppCore) -> RequestId {
-    let n = core.next_request.fetch_add(1, Ordering::Relaxed);
+/// 纳秒 + 进程级计数器——毫秒粒度不够，纳秒也不够（同进程双 AppCore
+/// 各自计数器同从 1 起，同一时钟嘀嗒取到相同纳秒仍撞，定向测试实证），
+/// 故计数器为进程级 static，同进程内不再依赖时钟分辨率为唯一性兜底。
+fn run_request_id(_core: &AppCore) -> RequestId {
+    // 计数器须为进程级：AppCore 实例各自的 next_request 同从 1 起，
+    // 同进程双实例在同一时钟嘀嗒内取到相同纳秒仍会撞键（定向测试实证）。
+    static PROCESS_NEXT: AtomicU64 = AtomicU64::new(1);
+    let n = PROCESS_NEXT.fetch_add(1, Ordering::Relaxed);
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
@@ -154,6 +159,33 @@ impl RunService {
             request_messages,
             core.tool_defs.clone(),
         );
+        // SEARCH-1：Global `web_search = true` 时为本轮追加 Provider 服务端搜索。
+        let mut request = request;
+        if core.config.web_search == Some(true) {
+            request.hosted_tools.push(pawork_domain::HostedToolRequest {
+                name: "web_search".into(),
+                kind: pawork_domain::ToolCapabilityTag::WebSearch,
+                description: "Provider-hosted web search".into(),
+                capabilities: Vec::new(),
+                config: None,
+            });
+        }
+        // VISION-1 / SEARCH-1 前置闸门：图片输入与 hosted 工具按当前模型证据
+        // fail-closed（发 HTTP 前拒绝，不静默丢弃、不伪造支持）。
+        // 无任何证据（未知模型）时按空证据处理：纯文本请求照常放行，
+        // 带图片 / hosted 工具的请求 fail-closed。
+        let evidence = core
+            .registry
+            .capability_evidence(core.model.as_str())
+            .unwrap_or_else(|| pawork_providers::registry::CapabilityEvidence {
+                model: core.model.clone(),
+                provider: None,
+                static_declared: None,
+                probe_declared: None,
+                override_declared: None,
+            });
+        pawork_providers::negotiate::capability_gate(&evidence, &request)
+            .map_err(AppError::Provider)?;
         let start_sequence = core.next_sequence(session_id).await?;
         let turn = SessionTurn::new(
             session_id.clone(),
@@ -388,6 +420,119 @@ mod tests {
             assert!(u128::from_str_radix(parts[1], 16).is_ok());
             assert!(parts[2].parse::<u64>().is_ok());
         }
+    }
+
+    /// SEARCH-1：web_search = true 且模型声明 WebSearch 时，请求注入
+    /// hosted 工具并送达 Provider（MockProvider 调用记录断言）。
+    #[tokio::test]
+    async fn web_search_config_injects_hosted_tool_when_model_declares_it() {
+        use pawork_domain::{ModelCapabilities, ModelId, ProviderId, ToolCapabilityTag};
+        use pawork_providers::{CatalogEntry, ModelRegistry};
+        use pawork_storage::session::SessionStore;
+
+        let mut registry = ModelRegistry::builtin();
+        registry
+            .register(CatalogEntry {
+                id: ModelId::from("mock-search"),
+                provider: ProviderId::from("mock"),
+                display_name: "mock-search".into(),
+                context_window_tokens: 0,
+                max_output_tokens: 0,
+                capabilities: ModelCapabilities {
+                    text: true,
+                    tool_calls: true,
+                    hosted_tool_tags: [ToolCapabilityTag::WebSearch].into_iter().collect(),
+                    ..ModelCapabilities::default()
+                },
+                pricing: None,
+                aliases: Vec::new(),
+            })
+            .expect("register mock-search");
+        let provider = MockProvider::new(MockScript::new().text("ok").complete())
+            .with_id(ProviderId::from("mock"));
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (store, _) = SessionStore::open(&dir.path().join("session.db"))
+            .await
+            .expect("store");
+        let mut core = AppCore::from_parts_with_protocol(
+            Arc::new(provider.clone()),
+            None,
+            ModelId::from("mock-search"),
+            ProviderId::from("mock"),
+            crate::protocol::AdapterProtocol::ChatCompletions,
+            Some(store),
+            registry,
+        );
+        core.config.web_search = Some(true);
+
+        let session = core.create_session("search").await.expect("create");
+        let sink = RecordingEvents::default();
+        core.chat_turn(
+            &session,
+            vec![user_hello()],
+            &sink,
+            CancellationToken::new(),
+        )
+        .await
+        .expect("turn");
+        let calls = provider.calls();
+        assert_eq!(calls.len(), 1);
+        assert!(
+            calls[0].hosted_tools.contains(&ToolCapabilityTag::WebSearch),
+            "web_search = true 须注入 hosted WebSearch：{:?}",
+            calls[0].hosted_tools
+        );
+        assert!(!calls[0].has_image);
+    }
+
+    /// VISION-1 / SEARCH-1：模型未声明能力时 gate 在发 HTTP 前拒绝——
+    /// hosted WebSearch 注入被拒、图片消息被拒，Provider 零调用。
+    #[tokio::test]
+    async fn capability_gate_rejects_undeclared_web_search_and_image() {
+        use pawork_domain::{ImageContent, ImageSource, Message, MessageId};
+
+        // glm-5.2 静态条目为 text_tools（无 image_input / WebSearch 声明）。
+        let (mut core, _dir) = mock_core(vec![ProviderStreamEvent::ResponseCompleted(
+            StopReason::Completed,
+        )])
+        .await;
+        core.config.web_search = Some(true);
+        let session = core.create_session("gate").await.expect("create");
+        let sink = RecordingEvents::default();
+        let error = core
+            .chat_turn(
+                &session,
+                vec![user_hello()],
+                &sink,
+                CancellationToken::new(),
+            )
+            .await
+            .err()
+            .expect("undeclared web search must fail closed");
+        assert!(matches!(error, crate::AppError::Provider(_)));
+
+        core.config.web_search = None;
+        let image_message = Message {
+            id: MessageId::from("message-img"),
+            role: MessageRole::User,
+            content: vec![ContentPart::Image(ImageContent {
+                source: ImageSource::Url("https://example.test/a.png".into()),
+                media_type: "image/png".into(),
+                alt_text: None,
+            })],
+            metadata: Default::default(),
+        };
+        let error = core
+            .chat_turn(
+                &session,
+                vec![image_message],
+                &sink,
+                CancellationToken::new(),
+            )
+            .await
+            .err()
+            .expect("image without declaration must fail closed");
+        assert!(matches!(error, crate::AppError::Provider(_)));
     }
 
     #[tokio::test]

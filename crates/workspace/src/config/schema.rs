@@ -50,6 +50,11 @@ pub struct PaworkConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub search_model: Option<String>,
 
+    /// SEARCH-1：为 Run 开启 Provider 服务端 web search（hosted tool 直连）。
+    /// 缺省 false；模型未声明 WebSearch 能力时请求在发 HTTP 前 fail-closed。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub web_search: Option<bool>,
+
     /// provider 列表配置。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub providers: Vec<ProviderConfig>,
@@ -243,6 +248,9 @@ impl PaworkConfig {
         }
         if other.search_model.is_some() {
             self.search_model = other.search_model.clone();
+        }
+        if other.web_search.is_some() {
+            self.web_search = other.web_search;
         }
         if other.trust_workspaces.is_some() {
             self.trust_workspaces = other.trust_workspaces;

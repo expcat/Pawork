@@ -77,6 +77,22 @@ impl CapabilityNegotiator {
             }
         }
 
+        // image_input（VISION-1）：请求含图片内容时置位。
+        if requirements.image_input {
+            resolved.requested.insert("image_input".into());
+            if supported_caps.image_input {
+                resolved.supported.insert("image_input".into());
+            } else {
+                resolved.unsupported.insert("image_input".into());
+                resolved.fallback.insert(
+                    "image_input".into(),
+                    CapabilityFallback::Reject(
+                        "model does not declare image input capability".into(),
+                    ),
+                );
+            }
+        }
+
         // reasoning：显式 ReasoningConfig 优先。
         if let Some(reasoning) = &requirements.reasoning {
             Self::negotiate_reasoning(reasoning, &supported_caps, &mut resolved);
@@ -205,6 +221,51 @@ pub fn clamp_reasoning_to_thinking(
     })
 }
 
+/// VISION-1 / SEARCH-1 前置闸门：发 HTTP 前按证据校验请求的图片与
+/// hosted/extension 工具要求；任一 Reject 即返回 `InvalidRequest`，不触网。
+///
+/// Anthropic adapter 经 `prepare_request` 走完整 negotiate 收口；其余通道由
+/// 装配 / Run 服务在派发前统一调用本函数（按证据判定，不按厂商分支）。
+pub fn capability_gate(
+    evidence: &CapabilityEvidence,
+    request: &pawork_domain::CanonicalModelRequest,
+) -> Result<(), pawork_domain::ProviderError> {
+    use pawork_domain::{ContentPart, ProviderError, ProviderErrorKind, ToolCapabilityTag};
+
+    let mut required_tools = std::collections::BTreeSet::new();
+    for hosted in &request.hosted_tools {
+        required_tools.insert(hosted.kind);
+        required_tools.extend(hosted.capabilities.iter().copied());
+    }
+    for extension in &request.extensions {
+        required_tools.extend(extension.capabilities.iter().copied());
+        if extension.capabilities.is_empty() {
+            required_tools.insert(ToolCapabilityTag::ServerSideMcp);
+        }
+    }
+    let image_input = request
+        .messages
+        .iter()
+        .flat_map(|message| message.content.iter())
+        .any(|part| matches!(part, ContentPart::Image(_)));
+    let requirements = CapabilityRequirements {
+        required_tools,
+        image_input,
+        ..CapabilityRequirements::default()
+    };
+    let resolved = CapabilityNegotiator::negotiate(evidence, &requirements);
+    resolved
+        .fallback
+        .values()
+        .find_map(|item| match item {
+            CapabilityFallback::Reject(reason) => Some(reason.clone()),
+            _ => None,
+        })
+        .map_or(Ok(()), |reason| {
+            Err(ProviderError::new(ProviderErrorKind::InvalidRequest, reason))
+})
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -253,6 +314,92 @@ mod tests {
         }
     }
 
+    fn gate_request(with_image: bool, with_web_search: bool) -> pawork_domain::CanonicalModelRequest {
+        use pawork_domain::{
+            CanonicalModelRequest, ContentPart, HostedToolRequest, ImageContent, ImageSource,
+            Message, MessageId, MessageRole, PromptCachePreference, RequestBudget, RequestId,
+            ResponseFormat, TextContent, ToolChoice,
+        };
+        let content = if with_image {
+            vec![ContentPart::Image(ImageContent {
+                source: ImageSource::Url("https://example.test/a.png".into()),
+                media_type: "image/png".into(),
+                alt_text: None,
+            })]
+        } else {
+            vec![ContentPart::Text(TextContent { text: "hi".into() })]
+        };
+        let mut request = CanonicalModelRequest {
+            request_id: RequestId::from("r1"),
+            session_id: None,
+            model: ModelId::from("test-model"),
+            messages: vec![Message {
+                id: MessageId::from("m1"),
+                role: MessageRole::User,
+                content,
+                metadata: Default::default(),
+            }],
+            tools: Vec::new(),
+            hosted_tools: Vec::new(),
+            extensions: Vec::new(),
+            tool_choice: ToolChoice::Auto,
+            thinking: None,
+            reasoning: None,
+            temperature: None,
+            max_output_tokens: None,
+            stop_sequences: Vec::new(),
+            response_format: ResponseFormat::Text,
+            prompt_cache: PromptCachePreference::Automatic,
+            budget: RequestBudget::default(),
+            provider_options: Default::default(),
+            trace_id: None,
+        };
+        if with_web_search {
+            request.hosted_tools.push(HostedToolRequest {
+                name: "web_search".into(),
+                kind: ToolCapabilityTag::WebSearch,
+                description: String::new(),
+                capabilities: Vec::new(),
+                config: None,
+            });
+        }
+        request
+    }
+
+    #[test]
+    fn capability_gate_fail_closed_on_undeclared_image_and_web_search() {
+        // VISION-1 / SEARCH-1：发 HTTP 前闸门。声明则放行，未声明则
+        // InvalidRequest；空证据（未知模型）只放行纯文本。
+        let mut caps = full_caps();
+        caps.image_input = false;
+        caps.hosted_tool_tags.clear();
+        let no_decl = evidence_from(caps);
+
+        let error = capability_gate(&no_decl, &gate_request(true, false))
+            .err()
+            .expect("image without declaration must reject");
+        assert_eq!(error.kind, pawork_domain::ProviderErrorKind::InvalidRequest);
+        let error = capability_gate(&no_decl, &gate_request(false, true))
+            .err()
+            .expect("web search without declaration must reject");
+        assert_eq!(error.kind, pawork_domain::ProviderErrorKind::InvalidRequest);
+        assert!(capability_gate(&no_decl, &gate_request(false, false)).is_ok());
+
+        let declared = evidence_from(full_caps());
+        assert!(capability_gate(&declared, &gate_request(true, true)).is_ok());
+
+        let unknown = CapabilityEvidence {
+            model: ModelId::new("unknown-model"),
+            provider: None,
+            static_declared: None,
+            probe_declared: None,
+            override_declared: None,
+        };
+        assert!(capability_gate(&unknown, &gate_request(false, false)).is_ok());
+        assert!(capability_gate(&unknown, &gate_request(true, false)).is_err());
+        assert!(capability_gate(&unknown, &gate_request(false, true)).is_err());
+    }
+
     #[test]
     fn supported_intersection_matches_evidence() {
         let evidence = evidence_from(full_caps());
@@ -261,6 +408,7 @@ mod tests {
             citations: true,
             reasoning: Some(ReasoningConfig::new(ReasoningEffort::High)),
             transport_pref: vec![ModelTransport::Responses],
+            ..Default::default()
         };
         let resolved = CapabilityNegotiator::negotiate(&evidence, &requirements);
         assert_eq!(resolved.chosen_transport, ModelTransport::Responses);
@@ -283,6 +431,7 @@ mod tests {
             citations: true,
             reasoning: Some(ReasoningConfig::new(ReasoningEffort::Medium)),
             transport_pref: vec![],
+            ..Default::default()
         };
         let resolved = CapabilityNegotiator::negotiate(&evidence, &requirements);
         // requested == supported ∪ unsupported

@@ -12,7 +12,7 @@
 
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
-| `src/lib.rs` | ~750（约后半为 `#[cfg(test)]` 自测） | `MockScript`（Provider 事件脚本 builder）、`MockProvider`（实现 `ModelProvider`；Replay/Sequence 两种脚本源 + 调用记录）、`MockProviderCallRecord`、`MockTool`（实现 `AgentTool`）、`MockToolCallRecord`、`RecordingProviderSink` / `RecordingToolSink`（记录型 sink）、`assert_provider_request_order`；re-export `contract` 断言到 crate 根 |
+| `src/lib.rs` | ~800（约后半为 `#[cfg(test)]` 自测） | `MockScript`（Provider 事件脚本 builder）、`MockProvider`（实现 `ModelProvider`；Replay/Sequence 两种脚本源 + 调用记录）、`MockProviderCallRecord`、`MockTool`（实现 `AgentTool`）、`MockToolCallRecord`、`RecordingProviderSink` / `RecordingToolSink`（记录型 sink）、`assert_provider_request_order`；re-export `contract` 断言到 crate 根 |
 | `src/contract.rs` | ~140 | Provider 流最小断言（不绑定具体 Provider，不按 Provider 名分支）：`assert_text_stream`、`assert_single_tool_call`、`assert_parallel_tool_calls`、`count_variant` |
 
 无 `tests/` 目录；自测全部内嵌于两个源文件。
@@ -27,6 +27,7 @@
 | `text(t)` / `thinking(t)` | 追加 `TextDelta` / `ThinkingDelta` |
 | `tool_call(name, args)` | 自动编号 `mock-tool-call-N`，参数一次成串（Started → 单条 ArgumentsDelta → Completed） |
 | `tool_call_chunks(id, name, chunks)` | 显式 `ToolCallId` + 多片 JSON 分片，保序发出 |
+| `server_tool_started(id, name)` / `server_tool_citation(id, citation)` / `server_tool_completed(id)` | SEARCH-1：server tool 生命周期事件（`ServerTool` Started / CitationAdded / Completed，Provider 服务端工具，非本地 ToolCall） |
 | `usage(TokenUsage)` | 追加 `UsageUpdated`（同时进 summary） |
 | `provider_metadata(Value)` | 追加 `ProviderMetadata`（同时进 summary） |
 | `complete()` / `complete_with(stop_reason)` | 追加 `ResponseCompleted`（默认 `StopReason::Completed`） |
@@ -35,7 +36,7 @@
 
 ### 3.2 MockProvider / MockTool
 
-- **`MockProvider`**：`new(script)` 同一脚本可重复 replay；`sequence(vec![脚本])` 逐请求原子消耗，耗尽后返回 `ProviderErrorKind::StreamInterrupted`（message 含 "mock script sequence exhausted"）；`with_id(ProviderId)`（默认 `"mock"`）、`with_models(Vec<ModelDefinition>)`（供 `list_models` 返回，默认空）；`calls()` 返回 `MockProviderCallRecord{request_id, model, event_count, cancelled, completed}` 快照。
+- **`MockProvider`**：`new(script)` 同一脚本可重复 replay；`sequence(vec![脚本])` 逐请求原子消耗，耗尽后返回 `ProviderErrorKind::StreamInterrupted`（message 含 "mock script sequence exhausted"）；`with_id(ProviderId)`（默认 `"mock"`）、`with_models(Vec<ModelDefinition>)`（供 `list_models` 返回，默认空）；`calls()` 返回 `MockProviderCallRecord{request_id, model, hosted_tools, has_image, event_count, cancelled, completed}` 快照（SEARCH-1 / VISION-1 起记录请求的 hosted 工具类别与图片内容位，供注入 / 闸门断言）。
 - **`MockTool`**：`new(name, ToolResult)` 生成默认 descriptor——`ToolCapability::ReadOnly`、`ToolKind::ClientFunction`、`ToolHosting::Local`、`requires_approval: false`、`read_only: true`、`supports_concurrency: true`、`default_timeout_ms: Some(1000)`、`max_output_bytes: 64 KiB`、`allowed_in_untrusted_workspace: true`、`input_schema: {"type":"object"}`；`failing(name, ToolError)` 固定失败；`with_descriptor` 整体替换；`calls()` 返回 `MockToolCallRecord{tool_call_id, input, workspace_id, run_id, cancelled}`；`assert_called_with(&[input])` 断言输入序列。
 - **Sink**：`RecordingProviderSink::events()` / `RecordingToolSink::events()` 返回捕获的事件向量（内部 `Arc<Mutex<Vec<_>>>`，克隆共享同一存储）。
 

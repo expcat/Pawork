@@ -488,10 +488,23 @@ async fn contract_prompt_cache_and_thinking_are_written() {
     assert_eq!(sent["system"]["cache_control"]["type"], "ephemeral");
 }
 
+/// SEARCH-1：Anthropic 声明服务端 `web_search_20250305`——hosted WebSearch
+/// 写入 wire 并放行；未声明的 hosted 工具仍在发 HTTP 前 fail-closed。
 #[tokio::test]
-async fn hosted_tools_are_rejected_before_http() {
+async fn hosted_web_search_written_and_undeclared_tools_rejected_before_http() {
     let server = MockServer::start().await;
-    mount_ok(&server, sse(&[])).await;
+    mount_ok(
+        &server,
+        sse(&[
+            r#"{"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":1,"output_tokens":1}}}"#,
+            r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}"#,
+            r#"{"type":"content_block_stop","index":0}"#,
+            r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}"#,
+            r#"{"type":"message_stop"}"#,
+        ]),
+    )
+    .await;
     let p = provider(&server);
     let sink = RecordingProviderSink::default();
     let mut req = request("claude-3-5-sonnet");
@@ -500,6 +513,37 @@ async fn hosted_tools_are_rejected_before_http() {
         kind: pawork_domain::ToolCapabilityTag::WebSearch,
         description: "search".into(),
         capabilities: vec![pawork_domain::ToolCapabilityTag::WebSearch],
+        config: None,
+    });
+    p.stream(req, &sink, CancellationToken::new())
+        .await
+        .expect("declared web search must stream");
+    let received = server
+        .received_requests()
+        .await
+        .expect("request recording enabled");
+    assert_eq!(received.len(), 1);
+    let sent: serde_json::Value = received[0].body_json().expect("json body");
+    assert!(
+        sent["tools"]
+            .as_array()
+            .expect("tools array")
+            .iter()
+            .any(|tool| tool["type"] == "web_search_20250305" && tool["name"] == "web_search"),
+        "hosted WebSearch 须写成 web_search_20250305：{sent:?}"
+    );
+
+    // 未声明的 hosted 工具：发 HTTP 前拒绝。
+    let server = MockServer::start().await;
+    mount_ok(&server, sse(&[])).await;
+    let p = provider(&server);
+    let sink = RecordingProviderSink::default();
+    let mut req = request("claude-3-5-sonnet");
+    req.hosted_tools.push(pawork_domain::HostedToolRequest {
+        name: "code_execution".into(),
+        kind: pawork_domain::ToolCapabilityTag::CodeExecution,
+        description: "code".into(),
+        capabilities: vec![pawork_domain::ToolCapabilityTag::CodeExecution],
         config: None,
     });
     let err = p

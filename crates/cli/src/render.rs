@@ -10,8 +10,8 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use pawork_domain::{
-    AgentEvent, AgentEventEnvelope, ApprovalDecision, ContentPart, ToolCallId, ToolOutputStream,
-    ToolResultContent,
+    AgentEvent, AgentEventEnvelope, ApprovalDecision, ContentPart, ServerToolEvent, ToolCallId,
+    ToolOutputStream, ToolResultContent,
 };
 use pawork_engine::{AgentEventSink, EngineError};
 use serde_json::Value;
@@ -27,6 +27,7 @@ struct ToolActivity {
     name: String,
     args: String,
     bytes: u64,
+    citations: u64,
     started: bool,
     stderr_opened: bool,
 }
@@ -222,6 +223,76 @@ impl AgentEventSink for TextSink {
                     .flush()
                     .map_err(|error| EngineError::sink(error.to_string()))?;
             }
+            // SEARCH-1：Provider 服务端工具（web_search 等）活动行，与本地工具同风格；
+            // ArgumentsDelta / Progress 等中间帧不逐条刷屏。
+            AgentEvent::ServerTool(event) => match event {
+                ServerToolEvent::Started {
+                    tool_call_id,
+                    name,
+                    ..
+                } => {
+                    self.tools.lock().expect("sink tools mutex").insert(
+                        tool_call_id,
+                        ToolActivity {
+                            name,
+                            ..Default::default()
+                        },
+                    );
+                }
+                ServerToolEvent::CitationAdded { tool_call_id, .. } => {
+                    if let Some(activity) = self
+                        .tools
+                        .lock()
+                        .expect("sink tools mutex")
+                        .get_mut(&tool_call_id)
+                    {
+                        activity.citations = activity.citations.saturating_add(1);
+                    }
+                }
+                ServerToolEvent::Completed { tool_call_id, .. } => {
+                    close_thinking(self)?;
+                    let activity = self
+                        .tools
+                        .lock()
+                        .expect("sink tools mutex")
+                        .remove(&tool_call_id);
+                    let name = activity
+                        .as_ref()
+                        .map(|item| item.name.clone())
+                        .unwrap_or_else(|| tool_call_id.as_str().to_string());
+                    let citations = activity.as_ref().map(|item| item.citations).unwrap_or(0);
+                    if citations > 0 {
+                        eprintln!("⚙ {name} · {citations} citations");
+                    } else {
+                        eprintln!("⚙ {name}");
+                    }
+                    io::stderr()
+                        .flush()
+                        .map_err(|error| EngineError::sink(error.to_string()))?;
+                }
+                ServerToolEvent::Failed {
+                    tool_call_id,
+                    message,
+                    ..
+                } => {
+                    close_thinking(self)?;
+                    let name = self
+                        .tools
+                        .lock()
+                        .expect("sink tools mutex")
+                        .remove(&tool_call_id)
+                        .map(|item| item.name)
+                        .unwrap_or_else(|| tool_call_id.as_str().to_string());
+                    eprintln!(
+                        "✗ {name} ({})",
+                        message.as_deref().unwrap_or("failed")
+                    );
+                    io::stderr()
+                        .flush()
+                        .map_err(|error| EngineError::sink(error.to_string()))?;
+                }
+                _ => {}
+            },
             _ => {}
         }
         Ok(())

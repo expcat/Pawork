@@ -19,6 +19,7 @@ use pawork_domain::{
     CancellationToken, ModelId, ProviderId, RequestId, RunId, StopReason, TokenUsage, ToolCallId,
     ToolCapability, ToolDescriptor, ToolHosting, ToolKind, WorkspaceId,
 };
+use pawork_domain::{Citation, ContentPart, ServerToolEvent, ToolCapabilityTag};
 use serde_json::Value;
 
 #[derive(Clone, Debug, Default)]
@@ -89,6 +90,41 @@ impl MockScript {
         }));
         self.steps.push(MockProviderStep::Event(
             ProviderStreamEvent::ToolCallCompleted { id },
+        ));
+        self
+    }
+
+    /// SEARCH-1：server tool 开始执行（Provider 服务端，非本地 ToolCall）。
+    pub fn server_tool_started(mut self, id: ToolCallId, name: impl Into<String>) -> Self {
+        self.steps.push(MockProviderStep::Event(
+            ProviderStreamEvent::ServerTool(ServerToolEvent::Started {
+                tool_call_id: id,
+                name: name.into(),
+                arguments: None,
+            }),
+        ));
+        self
+    }
+
+    /// SEARCH-1：server tool 新增一条引用。
+    pub fn server_tool_citation(mut self, id: ToolCallId, citation: Citation) -> Self {
+        self.steps.push(MockProviderStep::Event(
+            ProviderStreamEvent::ServerTool(ServerToolEvent::CitationAdded {
+                tool_call_id: id,
+                citation,
+            }),
+        ));
+        self
+    }
+
+    /// SEARCH-1：server tool 执行完成。
+    pub fn server_tool_completed(mut self, id: ToolCallId) -> Self {
+        self.steps.push(MockProviderStep::Event(
+            ProviderStreamEvent::ServerTool(ServerToolEvent::Completed {
+                tool_call_id: id,
+                summary: None,
+                artifacts: Vec::new(),
+            }),
         ));
         self
     }
@@ -213,6 +249,12 @@ impl MockProvider {
         calls.push(MockProviderCallRecord {
             request_id: request.request_id.clone(),
             model: request.model.clone(),
+            hosted_tools: request.hosted_tools.iter().map(|tool| tool.kind).collect(),
+            has_image: request
+                .messages
+                .iter()
+                .flat_map(|message| message.content.iter())
+                .any(|part| matches!(part, ContentPart::Image(_))),
             event_count: 0,
             cancelled: false,
             completed: false,
@@ -230,6 +272,10 @@ impl MockProvider {
 pub struct MockProviderCallRecord {
     pub request_id: RequestId,
     pub model: ModelId,
+    /// SEARCH-1：请求携带的 hosted 工具类别（注入断言用）。
+    pub hosted_tools: Vec<ToolCapabilityTag>,
+    /// VISION-1：请求消息是否携带图片内容。
+    pub has_image: bool,
     pub event_count: usize,
     pub cancelled: bool,
     pub completed: bool,

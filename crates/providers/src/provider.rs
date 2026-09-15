@@ -28,6 +28,17 @@ pub struct OpenAiCompatibleConfig {
     pub http: HttpClientConfig,
     /// 建连及流式读取无数据超时（覆盖 `http.timeout` 时的便捷字段）。
     pub request_timeout: Option<Duration>,
+    /// SEARCH-1：hosted WebSearch 的 Chat wire 写法；None 时该通道不声明
+    /// 服务端搜索，携带 hosted tools 的请求在发 HTTP 前拒绝。
+    pub chat_search: Option<ChatSearchWire>,
+}
+
+/// SEARCH-1：Chat Completions 协议下 hosted WebSearch 的厂商 wire 形态。
+/// 数据驱动（config 字段），不按 Provider 名分支。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChatSearchWire {
+    /// xAI Live Search：请求体写 `search_parameters`（mode 默认 auto）。
+    XaiSearchParameters,
 }
 
 impl OpenAiCompatibleConfig {
@@ -38,6 +49,7 @@ impl OpenAiCompatibleConfig {
             provider_id: ProviderId::new("openai-compatible"),
             http: HttpClientConfig::default(),
             request_timeout: None,
+            chat_search: None,
         }
     }
 
@@ -120,6 +132,10 @@ impl OpenAiCompatibleProvider {
     ) -> Result<ModelResponseSummary, ProviderError> {
         // 构造请求体（canonical → OpenAI）
         let body = crate::request::to_chat_completions_body(request);
+
+        // SEARCH-1：hosted 工具门控——仅放行 config 声明可承接的 WebSearch，
+        // 其余 hosted/extension 在发 HTTP 前拒绝（不静默丢弃）。
+        let body = apply_hosted_tool_wire(body, self.config.chat_search, request)?;
 
         // 认证头（明文 secret 只在此短暂存在，不持久化、不记录）
         let mut per_request_headers: Vec<_> = self.auth_header().into_iter().collect();
@@ -289,6 +305,27 @@ impl ModelProvider for OpenAiCompatibleProvider {
                 if let Some(image) = model.get("supports_image_in").and_then(Value::as_bool) {
                     definition.capabilities.image_input = image;
                 }
+                // VISION-1：xAI 风格 `input_modalities` 含 "image" 同样证明图片输入。
+                if model
+                    .get("input_modalities")
+                    .and_then(Value::as_array)
+                    .is_some_and(|modalities| {
+                        modalities.iter().any(|m| m.as_str() == Some("image"))
+                    })
+                {
+                    definition.capabilities.image_input = true;
+                }
+                // SEARCH-1：远端显式声明时才授予 WebSearch；缺字段保持 false。
+                if model
+                    .get("supports_web_search")
+                    .and_then(Value::as_bool)
+                    == Some(true)
+                {
+                    definition
+                        .capabilities
+                        .hosted_tool_tags
+                        .insert(pawork_domain::ToolCapabilityTag::WebSearch);
+                }
                 if let Some(thinking) = model.get("supports_reasoning").and_then(Value::as_bool) {
                     definition.capabilities.thinking = thinking;
                 }
@@ -329,6 +366,109 @@ mod tests {
         assert_eq!(p.id().as_str(), "test");
     }
 
+    fn bare_request() -> CanonicalModelRequest {
+        use pawork_domain::{
+            Message, MessageId, MessageRole, PromptCachePreference, RequestBudget, RequestId,
+            ResponseFormat, ToolChoice,
+        };
+        CanonicalModelRequest {
+            request_id: RequestId::from("r1"),
+            session_id: None,
+            model: ModelId::from("test-model"),
+            messages: vec![Message {
+                id: MessageId::from("m1"),
+                role: MessageRole::User,
+                content: vec![pawork_domain::ContentPart::Text(pawork_domain::TextContent {
+                    text: "hi".into(),
+                })],
+                metadata: Default::default(),
+            }],
+            tools: Vec::new(),
+            hosted_tools: Vec::new(),
+            extensions: Vec::new(),
+            tool_choice: ToolChoice::Auto,
+            thinking: None,
+            reasoning: None,
+            temperature: None,
+            max_output_tokens: None,
+            stop_sequences: Vec::new(),
+            response_format: ResponseFormat::Text,
+            prompt_cache: PromptCachePreference::Automatic,
+            budget: RequestBudget::default(),
+            provider_options: Default::default(),
+            trace_id: None,
+        }
+    }
+
+    fn hosted_web_search() -> pawork_domain::HostedToolRequest {
+        pawork_domain::HostedToolRequest {
+            name: "web_search".into(),
+            kind: pawork_domain::ToolCapabilityTag::WebSearch,
+            description: String::new(),
+            capabilities: Vec::new(),
+            config: None,
+        }
+    }
+
+    #[test]
+    fn chat_search_wire_writes_xai_search_parameters() {
+        // SEARCH-1：xAI Live Search——声明了 wire 的通道把 hosted WebSearch
+        // 写成 `search_parameters`（mode 默认 auto）。
+        let mut request = bare_request();
+        request.hosted_tools.push(hosted_web_search());
+        let body = apply_hosted_tool_wire(
+            serde_json::json!({"model": "test-model"}),
+            Some(ChatSearchWire::XaiSearchParameters),
+            &request,
+        )
+        .expect("declared wire accepts web search");
+        assert_eq!(body["search_parameters"], serde_json::json!({"mode": "auto"}));
+    }
+
+    #[test]
+    fn hosted_tools_rejected_without_declared_wire() {
+        // 未声明 wire 的通道：hosted WebSearch 发 HTTP 前拒绝。
+        let mut request = bare_request();
+        request.hosted_tools.push(hosted_web_search());
+        let error = apply_hosted_tool_wire(serde_json::json!({}), None, &request)
+            .err()
+            .expect("undeclared channel must reject");
+        assert_eq!(error.kind, ProviderErrorKind::InvalidRequest);
+
+        // 非 WebSearch 的 hosted 工具即使声明了 wire 也拒绝。
+        let mut request = bare_request();
+        request.hosted_tools.push(pawork_domain::HostedToolRequest {
+            kind: pawork_domain::ToolCapabilityTag::CodeExecution,
+            ..hosted_web_search()
+        });
+        let error = apply_hosted_tool_wire(
+            serde_json::json!({}),
+            Some(ChatSearchWire::XaiSearchParameters),
+            &request,
+        )
+        .err()
+        .expect("non-web-search hosted tool must reject");
+        assert_eq!(error.kind, ProviderErrorKind::InvalidRequest);
+
+        // extension 工具一律拒绝。
+        let mut request = bare_request();
+        request.extensions.push(pawork_domain::ExtensionToolRequest {
+            name: "mcp".into(),
+            reference: "mcp://example".into(),
+            description: String::new(),
+            capabilities: Vec::new(),
+            requires_approval: false,
+        });
+        let error = apply_hosted_tool_wire(
+            serde_json::json!({}),
+            Some(ChatSearchWire::XaiSearchParameters),
+            &request,
+        )
+        .err()
+        .expect("extension tool must reject");
+        assert_eq!(error.kind, ProviderErrorKind::InvalidRequest);
+    }
+
     #[test]
     fn authenticated_provider_rejects_fixed_credential_headers() {
         let mut config = OpenAiCompatibleConfig::new("https://api.example.com/v1");
@@ -343,6 +483,43 @@ mod tests {
             .expect("duplicate credential header must fail");
         assert_eq!(error.kind, ProviderErrorKind::InvalidRequest);
     }
+}
+
+/// SEARCH-1：Chat Completions 通道的 hosted 工具门控与 wire 写入。
+/// 仅放行 `chat_search` 声明可承接的 WebSearch；其余 hosted / extension 工具
+/// 在发 HTTP 前拒绝（不静默丢弃、不伪造支持）。纯函数，便于定向测试。
+fn apply_hosted_tool_wire(
+    mut body: Value,
+    chat_search: Option<ChatSearchWire>,
+    request: &CanonicalModelRequest,
+) -> Result<Value, ProviderError> {
+    let web_search_requested = request
+        .hosted_tools
+        .iter()
+        .any(|tool| tool.kind == pawork_domain::ToolCapabilityTag::WebSearch);
+    let unsupported_hosted = request
+        .hosted_tools
+        .iter()
+        .any(|tool| tool.kind != pawork_domain::ToolCapabilityTag::WebSearch);
+    if web_search_requested && !unsupported_hosted && request.extensions.is_empty() {
+        match chat_search {
+            Some(ChatSearchWire::XaiSearchParameters) => {
+                body["search_parameters"] = serde_json::json!({"mode": "auto"});
+            }
+            None => {
+                return Err(ProviderError::new(
+                    ProviderErrorKind::InvalidRequest,
+                    "Chat Completions channel does not declare hosted web search",
+                ));
+            }
+        }
+    } else if !request.hosted_tools.is_empty() || !request.extensions.is_empty() {
+        return Err(ProviderError::new(
+            ProviderErrorKind::InvalidRequest,
+            "Chat Completions channel does not declare the requested provider-hosted tools",
+        ));
+    }
+    Ok(body)
 }
 
 /// OpenCode Go 的会话请求头只取 canonical 身份，非法值不进入网络或错误文案。

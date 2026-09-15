@@ -832,13 +832,19 @@ pub fn caps(
 
 /// 内置目录（S5 起为两条开发通道；S6 波 C 增补 qwen/deepseek 聚合条目）：
 ///
-/// - `glm-5.2`（GLM Coding Plan）：订阅制通道，无公开 per-token 费率——
+/// - `glm-5.2` / `glm-5.3` / `glm-5.3-flash`（GLM Coding Plan）：订阅制通道，无公开 per-token 费率——
 ///   不伪造定价（pricing = None，费用显示为「无定价」）。
+///   VISION-1（2026-09-15 docs.z.ai 调研）：GLM-5.3 为 text-only，
+///   GLM-5.3-Flash 为多模态（官方明确「GLM-5.3 is a text-only model …
+///   GLM-5.3-FLASH is a multimodal model」）；两者 1M 上下文、最大输出 128K。
 /// - `deepseek-v4-pro`（OpenCode Go）：公开费率 input $0.435/M、
 ///   output $0.87/M、cache read $0.003625/M；cache write 未单列，按 0 计。
-/// - `qwen3.8-max`（Qwen Token Plan 当前目录）与 `deepseek-chat` /
-///   `deepseek-reasoner`（DeepSeek API key 通道）：窗口/输出取公开文档
-///   保守值；费率未核对到 micros 前不编造（pricing = None）。
+/// - `qwen3.8-max`（Qwen Token Plan 当前目录）与 `deepseek-flash` /
+///   `deepseek-chat` / `deepseek-reasoner`（DeepSeek API key 通道）：窗口/输出
+///   取公开文档保守值；费率未核对到 micros 前不编造（pricing = None）。
+///   VISION-1（2026-09-15 官方调研）：qwen3.8-max 与 deepseek-flash
+///   （DeepSeek-V4.1-Flash）官方标称视觉理解；deepseek-flash 另支持
+///   thinking 双模式；deepseek-v4-pro 不支持视觉。
 /// - ChatGPT / xAI 为 OAuth 通道：选择目录登录后经远端探测，不维护静态
 ///   可选条目。xAI adapter 的 `builtin_models` 只给已知 id 的 transport
 ///   / 能力提示，不在装配期并入选择目录。
@@ -847,6 +853,8 @@ pub fn caps(
 /// 配置覆盖收窄。本地兼容服务的模型在连接后经 `extend_with` 动态补充。
 fn builtin_entries() -> Vec<CatalogEntry> {
     let text_tools = caps(true, false, true, false, false, false, false);
+    // VISION-1：声明图片输入的条目（能力逐型号而非逐 provider）。
+    let text_image_tools = caps(true, true, true, false, false, false, false);
 
     vec![
         CatalogEntry {
@@ -858,6 +866,26 @@ fn builtin_entries() -> Vec<CatalogEntry> {
             capabilities: text_tools.clone(),
             pricing: None,
             aliases: vec!["glm".into()],
+        },
+        CatalogEntry {
+            id: ModelId::new("glm-5.3"),
+            provider: ProviderId::new("glm-coding"),
+            display_name: "GLM 5.3".into(),
+            context_window_tokens: 1_000_000,
+            max_output_tokens: 131_072,
+            capabilities: text_tools.clone(),
+            pricing: None,
+            aliases: Vec::new(),
+        },
+        CatalogEntry {
+            id: ModelId::new("glm-5.3-flash"),
+            provider: ProviderId::new("glm-coding"),
+            display_name: "GLM 5.3 Flash".into(),
+            context_window_tokens: 1_000_000,
+            max_output_tokens: 131_072,
+            capabilities: text_image_tools.clone(),
+            pricing: None,
+            aliases: Vec::new(),
         },
         CatalogEntry {
             id: ModelId::new("deepseek-v4-pro"),
@@ -881,7 +909,17 @@ fn builtin_entries() -> Vec<CatalogEntry> {
             display_name: "Qwen3.8 Max".into(),
             context_window_tokens: 0,
             max_output_tokens: 0,
-            capabilities: text_tools.clone(),
+            capabilities: text_image_tools.clone(),
+            pricing: None,
+            aliases: Vec::new(),
+        },
+        CatalogEntry {
+            id: ModelId::new("deepseek-flash"),
+            provider: ProviderId::new("deepseek"),
+            display_name: "DeepSeek Flash".into(),
+            context_window_tokens: 1_000_000,
+            max_output_tokens: 393_216,
+            capabilities: caps(true, true, true, false, true, false, false),
             pricing: None,
             aliases: Vec::new(),
         },
@@ -1031,9 +1069,41 @@ mod tests {
         assert!(registry.resolve("nonexistent").is_none());
         assert_eq!(
             registry.list().len(),
-            5,
-            "S6 内置目录覆盖五条 API-key 通道静态条目"
+            8,
+            "内置目录静态条目（VISION-1 增 glm-5.3 / glm-5.3-flash / deepseek-flash）"
         );
+    }
+
+    #[test]
+    fn builtin_catalog_declares_vision_per_model() {
+        // VISION-1（2026-09-15 官方调研）：图片输入按型号声明——
+        // GLM-5.3 text-only / GLM-5.3-Flash 多模态；deepseek-flash 视觉 +
+        // thinking；deepseek-v4-pro 无视觉；qwen3.8-max 官方标称视觉理解。
+        let registry = ModelRegistry::builtin();
+        let image_of = |id: &str| {
+            registry
+                .resolve(id)
+                .unwrap_or_else(|| panic!("{id} in builtin"))
+                .capabilities
+                .image_input
+        };
+        assert!(!image_of("glm-5.2"));
+        assert!(!image_of("glm-5.3"));
+        assert!(image_of("glm-5.3-flash"));
+        assert!(image_of("qwen3.8-max"));
+        assert!(image_of("deepseek-flash"));
+        assert!(!image_of("deepseek-v4-pro"));
+        assert!(!image_of("deepseek-chat"));
+        let flash = registry
+            .resolve("deepseek-flash")
+            .expect("deepseek-flash in builtin");
+        assert!(flash.capabilities.thinking);
+        assert_eq!(flash.context_window_tokens, 1_000_000);
+        assert_eq!(flash.max_output_tokens, 393_216);
+        assert!(flash.pricing.is_none(), "峰谷价未核对到 micros，不伪造定价");
+        let glm53 = registry.resolve("glm-5.3").expect("glm-5.3 in builtin");
+        assert_eq!(glm53.context_window_tokens, 1_000_000);
+        assert_eq!(glm53.max_output_tokens, 131_072);
     }
 
     #[test]

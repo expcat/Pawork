@@ -49,6 +49,7 @@ fn responses_body_preserves_canonical_tools_and_blocks_reserved_overrides() {
         ResponsesWireOptions {
             store: Some(false),
             include_encrypted_reasoning: true,
+            hosted_web_search: false,
         },
     );
     assert_eq!(body["model"], "test-model");

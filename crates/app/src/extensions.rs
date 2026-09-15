@@ -29,6 +29,11 @@ use crate::{AppCore, AppError};
 
 pub(crate) const AT_FILE_MAX_BYTES: usize = 64 * 1024;
 
+/// VISION-2：`@token` 图片附件原始字节上限。base64 编码后约 10.7 MiB，
+/// 低于 2026-09-15 调研各供应商的图片限制（DeepSeek 48 MiB 请求体 /
+/// 32 MiB URL、Kimi / Qwen 接受 base64 data URL）。
+pub(crate) const AT_IMAGE_MAX_BYTES: usize = 8 * 1024 * 1024;
+
 /// `pawork mcp list` 的一行。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct McpServerStatus {
@@ -44,8 +49,20 @@ pub struct McpServerStatus {
 pub struct AtAttachment {
     pub query: String,
     pub relative_path: String,
-    pub content: String,
-    pub truncated: bool,
+    pub body: AtAttachmentBody,
+}
+
+/// VISION-2：附件正文按文件形态区分——文本沿用既有头标记展开；
+/// 图片转 canonical Image part（base64）；超限图片不静默丢弃，改给诚实省略标记。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AtAttachmentBody {
+    Text { content: String, truncated: bool },
+    Image {
+        media_type: &'static str,
+        data_base64: String,
+        byte_len: usize,
+    },
+    ImageOmitted { byte_len: usize },
 }
 
 pub(crate) struct McpServerSlot {

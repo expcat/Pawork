@@ -159,6 +159,7 @@
 | [附录 A](#附录-a-多账户配额缓存机制调研原-researchmulti-account-quota-referencemd) | 外部实现逻辑调研：项目机制详查（A §2–§4）、厂商缓存机制对照（A §5）、模式归纳（A §6）、与 V1 资产对照（A §7）、参照项目对照总表与收录标准（A §8） |
 | [附录 B](#附录-b-分功能方案-f1f6原-researchmulti-account-quota-proposalsmd) | F1–F6 实施方案与推荐（**已确认**）：多账户凭证、额度感知、切换路由、子 Agent 绑定、输入缓存、网关模式 |
 | [附录 C](#附录-c-决策记录-d1d8-与并入约定原-researchmulti-account-quota-plan-mergemd) | 决策记录 D1–D8 与并入约定（决策唯一入口）：执行期凭证 fail-closed、少测试无门禁、缓存命中率 95/97/99 目标 |
+| [附录 D](#附录-d-八家供应商-vision--web-search--套餐额度调研2026-09-15) | 八家供应商模型能力 / vision / web search / 套餐额度调研（2026-09-15）：按型号能力对照、六家 search wire 形状、vision wire 共性、订阅额度范式；落地为 VISION-1/2 与 SEARCH-1 |
 
 F1–F6 与 [design.md](design.md) §3（G1–G7）对应：G1↔F1、G2↔F2、G3↔F3、G4↔F4、G5↔F5、G6↔F1 附属、G7↔F6。后续专题调研以附录并入，并在 §1 总览、对应章节与 §6 登记。
 
@@ -683,3 +684,54 @@ F5-C（网关式响应缓存/语义缓存）不属于本域——那是输出缓
 1. **协议形态不兼容**（Anthropic Messages / OpenAI Chat Completions / OpenAI Responses / Gemini 四形态）：每形态一个 adapter 做 canonical ↔ 厂商翻译；新增 OpenAI 兼容形态供应商 = 填配置（base_url + 模型表），全新协议形态才需新写 adapter，核心不动。
 2. **能力不兼容**（不支持工具 / 图片 / 缓存 / thinking / 结构化输出）：model registry 能力表声明 + Engine 查表降级（thinking → 标签文本、图片 → 占位、缓存注解 → 忽略、工具 → 禁用并提示）；红线禁止按厂商名写特例分支。Pi 的 compat 矩阵为成熟先例（附录 A §2.2）。
 3. **完全接不进**（无 API、OAuth 被厂商封锁如 Claude plan）：不硬接、不做身份伪装（UA 伪装 / identity-confuse 均排除）；用户自愿时把外部网关（opencodex、Codex Router 等）当一个 openai-compatible 上游接入，风险外置。**注意**：外部网关与 Pawork 双层账户池并存时，同一 provider 的轮换只在一层启用，否则双层轮换互相毁缓存。
+
+---
+
+## 附录 D 八家供应商 vision / web search / 套餐额度调研（2026-09-15）
+
+> 调研日期 2026-09-15。GLM / Kimi / DeepSeek / Qwen / OpenCode Go / OpenAI 结论来自官方文档原文；xAI / Anthropic 官网调研时在本网络不可达，以 Pawork providers 源码 wire 实现（注释引用官方文档）与 Qwen 百炼 Anthropic 兼容模式文档交叉印证为准。落地为 VISION-1 / VISION-2 / SEARCH-1（见 providers / app / workspace / testkit / cli 各包 Spec）。
+
+### D §1 模型能力对照（按型号而非按 provider）
+
+| Provider | 模型 | vision | hosted web search | 备注 |
+| --- | --- | --- | --- | --- |
+| GLM Coding（z.ai） | glm-5.3 | ❌ text-only | 工具对象 / MCP | 官方 vision 接口 model enum 不含 5.3 旗舰 |
+| | glm-5.3-flash | ✅ | 同上 | 多模态；另有 glm-4.6v 系列 |
+| Kimi（api.moonshot.ai） | kimi-k3 | ✅（1M ctx） | ✅（Formula API `moonshot/web-search:latest` 或 `$web_search`） | `reasoning_effort`: low/high/max，默认 max |
+| | kimi-k2.7-code(-highspeed) | ✅（图/视频，256K） | 未明确 | 不支持 non-thinking |
+| | kimi-k2.6 | ✅ | ✅（`$web_search`，需 thinking） | v1 / k2 / k2.5 / kimi-latest 已下线（404） |
+| DeepSeek | deepseek-flash（V4.1-Flash） | ✅ | ❌ 官方 API 无联网能力 | 1M ctx / 384K 输出；旧名 v4-flash 等由 V4.1-Flash 承接 |
+| | deepseek-v4-pro | ❌ | ❌ | thinking only |
+| Qwen Token Plan（百炼） | qwen3.8-max / 3.8-flash / 3.7-plus / 3.6-flash | ✅ | ✅（四种形态） | qwen3.7-max 无视觉；qwen3.8-max-preview 已路由到 3.8-max |
+| OpenCode Go | 按官方目录逐模型 | 目录内唯一视觉模型为 deepseek-v4-flash-vision-exp（由 V4.1-Flash 承接） | Go 侧实现 | 目录元数据 `https://opencode.ai/zen/go/v1/models` |
+| xAI | 远端 `/language-models` 目录为准 | 按远端输入模态字段 | ✅ Live Search 对全部文本模型 | 未知 ID 保守 text + Chat Completions |
+| OpenAI（ChatGPT Codex） | codex 后端全模型 | ✅ `input_image` | ✅ Responses 内置 `web_search` | store=false + include_encrypted_reasoning |
+| Anthropic | 远端目录为准 | ✅ image block | ✅ server tool `web_search_20250305` | 官网不可达，以源码 wire 为准 |
+
+### D §2 web search wire 形状（每家不同，canonical 须按 provider 适配）
+
+1. **OpenAI Responses**：`tools=[{"type":"web_search"}]` hosted 工具；SSE `web_search_call` item + `url_citation` annotation（旧 `web_search_preview` 仅留兼容）。
+2. **Anthropic Messages**：server tool `{"type":"web_search_20250305","name":"web_search"}`；流式 `server_tool_use` → `web_search_tool_result` 内容块，次数记 `usage.server_tool_use.web_search_requests`。
+3. **xAI Chat Completions**：请求体顶层 `search_parameters`（如 `{"mode":"auto"}`），有独立 Live Search 配额维度。
+4. **Kimi**：内置工具 `{"type":"builtin_function","function":{"name":"$web_search"}}`；模型返回 `tool_calls` 后把 arguments **原样**回传为 `role:"tool"` 消息，搜索由 Moonshot 侧执行；每次触发 $0.005。k3 推荐 Formula API（`GET /formulas/.../tools` + `POST /formulas/{uri}/fibers`）。
+5. **Qwen 百炼**四形态：Responses `tools=[{"type":"web_search"}]`；Chat 顶层 `enable_search:true`（SDK 需 extra_body）；DashScope `enable_search=True`；Anthropic 兼容端点 `web_search_20250305`（需 system 传 `x-anthropic-billing-header`）。
+6. **GLM**：`tools=[{"type":"web_search","web_search":{"enable":"True","search_engine":"search-prime",...}}]`，响应顶层 `web_search` 数组回原始结果；或 MCP Server（web_search / web_reader / zread，SSE 接入）。
+7. **DeepSeek**：官方 API 无任何联网搜索能力（联网仅官方 chatbot）。
+
+### D §3 vision wire 共性
+
+Chat Completions 家族统一为 content 数组 `image_url`（data URL / 外部 URL；Kimi 另支持 `video_url` 与 files-upload，DeepSeek 另支持 Files API `file_id` 与 `detail: low/high/original/auto`）；Responses 用 `input_image` content part；Anthropic 用 `{"type":"image","source":{...}}`（base64 / URL）。Kimi 要求 content 为真 JSON 数组（序列化成字符串会失败）。Qwen 另有 `min_pixels / max_pixels / total_pixels` 视觉参数。
+
+### D §4 套餐与额度逻辑
+
+两种范式：**信用点制**（GLM credits、Qwen credits、OpenCode Go 美元额度）与**消息条数估算制**（OpenAI Codex 5 小时窗口区间表）。共同结构：5 小时短窗 + 7 天/周长窗。
+
+- **GLM Coding Plan**（docs.z.ai/devpack）：Lite $18/月 = 5h 2,000 + 周 10,000 credits；Pro 12,000/60,000；Max 28,000/140,000。credit = (输入×倍率 + 缓存×倍率 + 输出×倍率)/10,000，MCP 工具按次×1.2。GLM-5.3 倍率 6.9/1.7/24，5.3-Flash 2.3/0.56/8。峰时（周一至周五 14:00–18:00 SGT）全价、谷时半 credit。endpoint 按客户端形态分：Anthropic 兼容 `/api/anthropic`、Codex `/api/v1`、OpenAI 兼容 `/api/coding/paas/v4`（Pawork registry 默认一致）。
+- **Qwen Token Plan 个人版**（仅新加坡地域；cn-beijing 为中国站形态需另行确认）：Lite $8/月 = 7 天 2,500 credits；Standard $25 = 10,000；Pro $80 = 40,000；7 天滚动窗触顶暂停，可购 $15 = 20,000 credits 用量包（最多 5 个）。夜间 22:00–08:00 五折。限交互式编程工具，禁止自动化后端。
+- **OpenCode Go**：$10/月，每模型独立月度美元额度，三窗限速（5h = 月额 20%、周 50%、月 100%）。协议分族与 Pawork `documented_model_transports` 一致：`/responses`（grok / gpt / muse-spark）、`/chat/completions`（glm / kimi / deepseek 等）、`/messages`（minimax / qwen）。客户端要求自带 UA 与稳定 `x-opencode-session` 头。
+- **OpenAI Codex**（learn.chatgpt.com/docs/pricing）：Free / Go $8 / Plus $20 / Pro $100（5x）与 $200（20x）/ Business $20（年付）/ Enterprise；本地消息按 5 小时窗口估算（区间表非固定条数），Work 与 Codex 共享额度池。
+- **DeepSeek 峰谷价**：峰时 UTC 周一至周五 01:00–04:00、06:00–10:00 全价，谷时半价；deepseek-flash 峰 0.30/1.20、谷 0.15/0.60（$/1M 输入未命中/输出）。
+
+### D §5 来源
+
+docs.z.ai/devpack（overview / latest-model / web-search / chat-completion）；platform.kimi.ai/docs（models / use-kimi-vision-model / use-web-search / use-official-tools / pricing）；api-docs.deepseek.com（pricing / vision / responses_api）；alibabacloud.com/help/zh/model-studio（token-plan-personal-overview / web-search / qwen-api-via-dashscope）；opencode.ai/docs/go；developers.openai.com（web-search / images-vision）与 learn.chatgpt.com/docs/pricing；xAI / Anthropic 为 Pawork providers 源码 wire（注释引用 docs.x.ai / docs.claude.com）。

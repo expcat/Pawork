@@ -72,6 +72,8 @@ impl XaiProvider {
                 provider_id: ProviderId::new(PROVIDER_ID),
                 http: config.http.clone(),
                 request_timeout: config.request_timeout,
+                // SEARCH-1：xAI Live Search（search_parameters）。
+                chat_search: Some(crate::provider::ChatSearchWire::XaiSearchParameters),
             },
             Some(credential.clone()),
         )?;
@@ -88,6 +90,7 @@ impl XaiProvider {
         responses.wire = ResponsesWireOptions {
             store: None,
             include_encrypted_reasoning: true,
+            hosted_web_search: true,
         };
         Ok(Self {
             chat,
@@ -191,10 +194,17 @@ impl ModelProvider for XaiProvider {
                 .await
                 .map_err(|error| normalize_vendor_error(PROVIDER_ID, error)),
             ModelTransport::ChatCompletions => {
-                if !request.hosted_tools.is_empty() || !request.extensions.is_empty() {
+                // SEARCH-1：WebSearch 由 chat transport 的 search_parameters 承接；
+                // 其余 hosted/extension 仍在发 HTTP 前拒绝。
+                if request
+                    .hosted_tools
+                    .iter()
+                    .any(|tool| tool.kind != pawork_domain::ToolCapabilityTag::WebSearch)
+                    || !request.extensions.is_empty()
+                {
                     return Err(ProviderError::new(
                         ProviderErrorKind::InvalidRequest,
-                        "xAI Chat Completions models do not declare provider-hosted tools",
+                        "xAI Chat Completions models do not declare the requested provider-hosted tools",
                     ));
                 }
                 self.chat
@@ -254,6 +264,11 @@ pub fn builtin_models() -> Vec<ModelDefinition> {
                 tool_calls: true,
                 parallel_tool_calls: true,
                 thinking,
+                // SEARCH-1：xAI Live Search 对全部文本模型可用（docs.x.ai live-search），
+                // 未知远端 id 不继承该声明（conservative 默认走 Default 空集）。
+                hosted_tool_tags: [pawork_domain::ToolCapabilityTag::WebSearch]
+                    .into_iter()
+                    .collect(),
                 structured_output: true,
                 transport,
                 ..ModelCapabilities::default()

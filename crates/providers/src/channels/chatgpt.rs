@@ -114,6 +114,7 @@ impl ChatGptProvider {
         transport.wire = ResponsesWireOptions {
             store: Some(false),
             include_encrypted_reasoning: true,
+            hosted_web_search: true,
         };
         Ok(Self {
             transport: ResponsesTransport::new(transport, credential)?,
@@ -205,12 +206,9 @@ fn chatgpt_models(value: &Value) -> Result<Vec<ModelDefinition>, ProviderError> 
                 .unwrap_or(0),
             capabilities: ModelCapabilities {
                 text: true,
-                image_input: model
-                    .get("input_modalities")
-                    .and_then(Value::as_array)
-                    .is_some_and(|modalities| {
-                        modalities.iter().any(|m| m.as_str() == Some("image"))
-                    }),
+                // VISION-1：codex 后端模型均接受 Responses `input_image`
+                // （platform.openai.com images-vision 指南），直接声明。
+                image_input: true,
                 // 并行工具声明能证明工具能力；未知模型不再无条件获授工具。
                 tool_calls: parallel_tool_calls,
                 parallel_tool_calls,
@@ -225,6 +223,12 @@ fn chatgpt_models(value: &Value) -> Result<Vec<ModelDefinition>, ProviderError> 
                                 .is_some_and(|effort| !effort.is_empty() && effort != "none")
                         })
                     }),
+                // SEARCH-1：Responses API 的 web_search 内置工具对全部模型可用
+                // （platform.openai.com/docs/guides/tools-web-search），
+                // codex 后端模型同享该能力。
+                hosted_tool_tags: [pawork_domain::ToolCapabilityTag::WebSearch]
+                    .into_iter()
+                    .collect(),
                 transport: ModelTransport::Responses,
                 ..ModelCapabilities::default()
             },

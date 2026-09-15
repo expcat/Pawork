@@ -382,6 +382,7 @@ impl ReasoningConfig {
 /// `transport_pref` 表示请求方偏好的传输集合（按优先级），未声明则由协商
 /// 根据 evidence 选最大支持。`required_tools` 是请求要求的服务端工具标签；
 /// `reasoning` 是运行时 reasoning 请求（None = 不要求 reasoning）。
+/// `image_input` 在请求消息携带图片内容时置位（VISION-1）。
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CapabilityRequirements {
     /// 偏好的传输路径，按顺序优先；空表示「不约束，由 evidence 决定」。
@@ -396,6 +397,9 @@ pub struct CapabilityRequirements {
     /// 是否要求 citation / source 归一。
     #[serde(default)]
     pub citations: bool,
+    /// 请求消息含图片内容，要求模型声明图片输入（VISION-1）。
+    #[serde(default)]
+    pub image_input: bool,
 }
 
 /// 协商降级动作（P15-8）。

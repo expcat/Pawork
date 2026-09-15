@@ -35,6 +35,9 @@ pub struct ResponsesWireOptions {
     pub store: Option<bool>,
     /// 请求返回 encrypted reasoning continuation，明文随后立即进入 protector。
     pub include_encrypted_reasoning: bool,
+    /// SEARCH-1：允许把 canonical hosted `WebSearch` 写成 Responses `web_search`
+    /// 内置工具。false 时 hosted tools 仍在发 HTTP 前拒绝（现状不变）。
+    pub hosted_web_search: bool,
 }
 
 /// 共享 Responses transport 配置。
@@ -151,10 +154,19 @@ impl ResponsesTransport {
         sink: &dyn ProviderEventSink,
         cancel: CancellationToken,
     ) -> Result<ModelResponseSummary, ProviderError> {
-        if !request.hosted_tools.is_empty() || !request.extensions.is_empty() {
+        // SEARCH-1：仅当 wire 声明 hosted_web_search 且全部 hosted 工具为 WebSearch
+        // 时放行（写 wire 见 to_responses_body）；其余 hosted/extension 仍拒绝。
+        let unsupported_hosted = request
+            .hosted_tools
+            .iter()
+            .any(|tool| tool.kind != pawork_domain::ToolCapabilityTag::WebSearch);
+        if !request.extensions.is_empty()
+            || unsupported_hosted
+            || (!request.hosted_tools.is_empty() && !self.config.wire.hosted_web_search)
+        {
             return Err(ProviderError::new(
                 ProviderErrorKind::InvalidRequest,
-                "this initial Responses adapter does not declare provider-hosted tools",
+                "Responses channel does not declare the requested provider-hosted tools",
             ));
         }
 
@@ -325,6 +337,21 @@ pub fn to_responses_body(
         );
         body.insert("tool_choice".into(), tool_choice(&request.tool_choice));
         body.insert("parallel_tool_calls".into(), Value::Bool(true));
+    }
+
+    // SEARCH-1：canonical hosted WebSearch → Responses `web_search` 内置工具。
+    if wire.hosted_web_search
+        && request
+            .hosted_tools
+            .iter()
+            .any(|tool| tool.kind == pawork_domain::ToolCapabilityTag::WebSearch)
+    {
+        let tools = body
+            .entry("tools")
+            .or_insert_with(|| Value::Array(Vec::new()));
+        if let Value::Array(entries) = tools {
+            entries.push(json!({"type": "web_search"}));
+        }
     }
 
     let clamped =
@@ -585,6 +612,8 @@ pub struct ResponsesStreamAssembler {
     started: BTreeSet<String>,
     arguments_seen: BTreeSet<String>,
     completed_calls: BTreeSet<String>,
+    /// SEARCH-1：最近一次 web_search_call item id，annotation 归到该调用。
+    last_web_search_call: Option<String>,
     response_id: Option<String>,
     usage: TokenUsage,
     stop_reason: Option<StopReason>,
@@ -617,6 +646,8 @@ impl ResponsesStreamAssembler {
             "response.output_item.added" => self.item_added(value.get("item")),
             "response.function_call_arguments.delta" => self.arguments_delta(&value),
             "response.output_item.done" => self.item_done(value.get("item")),
+            // SEARCH-1：web_search 结果引用（url_citation annotation）。
+            "response.output_text.annotation.added" => self.annotation_added(&value),
             "response.completed" => self.response_completed(&value),
             "response.incomplete" => self.response_incomplete(&value),
             "response.failed" | "error" => self.response_failed(&value),
@@ -649,10 +680,22 @@ impl ResponsesStreamAssembler {
 
     fn item_added(&mut self, item: Option<&Value>) -> Vec<ResponsesAssemblyEvent> {
         let Some(item) = item else { return Vec::new() };
-        if item.get("type").and_then(Value::as_str) != Some("function_call") {
-            return Vec::new();
+        match item.get("type").and_then(Value::as_str) {
+            Some("function_call") => self.start_function(item),
+            // SEARCH-1：Provider 服务端开始执行 web_search。
+            Some("web_search_call") => {
+                let id = item.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+                self.last_web_search_call = Some(id.clone());
+                vec![ResponsesAssemblyEvent::Canonical(
+                    ProviderStreamEvent::ServerTool(pawork_domain::ServerToolEvent::Started {
+                        tool_call_id: ToolCallId::new(id),
+                        name: "web_search".into(),
+                        arguments: None,
+                    }),
+                )]
+            }
+            _ => Vec::new(),
         }
-        self.start_function(item)
     }
 
     fn arguments_delta(&mut self, value: &Value) -> Vec<ResponsesAssemblyEvent> {
@@ -709,8 +752,50 @@ impl ResponsesStreamAssembler {
                 }
                 events
             }
+            // SEARCH-1：web_search 服务端调用完成。
+            "web_search_call" => {
+                let id = item.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+                vec![ResponsesAssemblyEvent::Canonical(
+                    ProviderStreamEvent::ServerTool(pawork_domain::ServerToolEvent::Completed {
+                        tool_call_id: ToolCallId::new(id),
+                        summary: None,
+                        artifacts: Vec::new(),
+                    }),
+                )]
+            }
             _ => Vec::new(),
         }
+    }
+
+    /// SEARCH-1：`response.output_text.annotation.added` → CitationAdded。
+    /// 只映射 `url_citation`；其余 annotation 类型忽略（forward-compat）。
+    fn annotation_added(&mut self, value: &Value) -> Vec<ResponsesAssemblyEvent> {
+        let Some(annotation) = value.get("annotation") else {
+            return Vec::new();
+        };
+        if annotation.get("type").and_then(Value::as_str) != Some("url_citation") {
+            return Vec::new();
+        }
+        let tool_call_id = self
+            .last_web_search_call
+            .clone()
+            .or_else(|| value.get("item_id").and_then(Value::as_str).map(str::to_owned))
+            .unwrap_or_default();
+        let citation = pawork_domain::Citation {
+            url: annotation.get("url").and_then(Value::as_str).map(str::to_owned),
+            title: annotation
+                .get("title")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            source_kind: pawork_domain::CitationSourceKind::WebSearch,
+            ..pawork_domain::Citation::empty()
+        };
+        vec![ResponsesAssemblyEvent::Canonical(
+            ProviderStreamEvent::ServerTool(pawork_domain::ServerToolEvent::CitationAdded {
+                tool_call_id: ToolCallId::new(tool_call_id),
+                citation,
+            }),
+        )]
     }
 
     fn start_function(&mut self, item: &Value) -> Vec<ResponsesAssemblyEvent> {
@@ -858,6 +943,109 @@ mod tests {
             ResponsesAssemblyEvent::Canonical(ProviderStreamEvent::ResponseCompleted(
                 StopReason::ToolUse
             ))
+        )));
+    }
+
+    fn bare_request() -> CanonicalModelRequest {
+        use pawork_domain::{
+            ContentPart, Message, MessageId, MessageRole, PromptCachePreference, RequestBudget,
+            RequestId, ResponseFormat, TextContent, ToolChoice,
+        };
+        CanonicalModelRequest {
+            request_id: RequestId::from("r1"),
+            session_id: None,
+            model: pawork_domain::ModelId::from("gpt-test"),
+            messages: vec![Message {
+                id: MessageId::from("m1"),
+                role: MessageRole::User,
+                content: vec![ContentPart::Text(TextContent { text: "hi".into() })],
+                metadata: Default::default(),
+            }],
+            tools: Vec::new(),
+            hosted_tools: Vec::new(),
+            extensions: Vec::new(),
+            tool_choice: ToolChoice::Auto,
+            thinking: None,
+            reasoning: None,
+            temperature: None,
+            max_output_tokens: None,
+            stop_sequences: Vec::new(),
+            response_format: ResponseFormat::Text,
+            prompt_cache: PromptCachePreference::Automatic,
+            budget: RequestBudget::default(),
+            provider_options: Default::default(),
+            trace_id: None,
+        }
+    }
+
+    #[test]
+    fn responses_body_writes_web_search_tool_only_when_wire_allows() {
+        // SEARCH-1：wire 声明 hosted_web_search 时写内置工具；未声明时不写
+        // （流入口已在发 HTTP 前拒绝，此处只钉 wire 形状）。
+        let mut request = bare_request();
+        request.hosted_tools.push(pawork_domain::HostedToolRequest {
+            name: "web_search".into(),
+            kind: pawork_domain::ToolCapabilityTag::WebSearch,
+            description: String::new(),
+            capabilities: Vec::new(),
+            config: None,
+        });
+        let wire = |hosted_web_search| ResponsesWireOptions {
+            store: None,
+            include_encrypted_reasoning: true,
+            hosted_web_search,
+        };
+        let body = to_responses_body(&request, Vec::new(), wire(true));
+        assert_eq!(body["tools"], json!([{"type": "web_search"}]));
+        let body = to_responses_body(&request, Vec::new(), wire(false));
+        assert!(body.get("tools").is_none(), "未声明 wire 不得写 tools");
+    }
+
+    #[test]
+    fn assembler_maps_web_search_call_and_url_citation() {
+        // SEARCH-1：web_search_call item → ServerTool Started/Completed；
+        // url_citation annotation → CitationAdded（归到最近的 search 调用）。
+        let mut assembler = ResponsesStreamAssembler::new();
+        let started = assembler.feed(
+            r#"{"type":"response.output_item.added","item":{"type":"web_search_call","id":"ws_1"}}"#,
+        );
+        assert!(started.iter().any(|event| matches!(
+            event,
+            ResponsesAssemblyEvent::Canonical(ProviderStreamEvent::ServerTool(
+                pawork_domain::ServerToolEvent::Started { tool_call_id, name, .. }
+            )) if tool_call_id.as_str() == "ws_1" && name == "web_search"
+        )));
+
+        let cited = assembler.feed(
+            r#"{"type":"response.output_text.annotation.added","item_id":"msg_1","annotation":{"type":"url_citation","url":"https://example.com","title":"Example"}}"#,
+        );
+        let citation = cited.iter().find_map(|event| match event {
+            ResponsesAssemblyEvent::Canonical(ProviderStreamEvent::ServerTool(
+                pawork_domain::ServerToolEvent::CitationAdded { tool_call_id, citation },
+            )) => Some((tool_call_id.clone(), citation.clone())),
+            _ => None,
+        });
+        let (tool_call_id, citation) = citation.expect("url_citation mapped");
+        assert_eq!(tool_call_id.as_str(), "ws_1");
+        assert_eq!(citation.url.as_deref(), Some("https://example.com"));
+        assert_eq!(citation.title.as_deref(), Some("Example"));
+        assert_eq!(citation.source_kind, pawork_domain::CitationSourceKind::WebSearch);
+
+        // 非 url_citation annotation 忽略（forward-compat）。
+        assert!(assembler
+            .feed(
+                r#"{"type":"response.output_text.annotation.added","item_id":"msg_1","annotation":{"type":"file_citation","file_id":"f1"}}"#,
+            )
+            .is_empty());
+
+        let done = assembler.feed(
+            r#"{"type":"response.output_item.done","item":{"type":"web_search_call","id":"ws_1"}}"#,
+        );
+        assert!(done.iter().any(|event| matches!(
+            event,
+            ResponsesAssemblyEvent::Canonical(ProviderStreamEvent::ServerTool(
+                pawork_domain::ServerToolEvent::Completed { tool_call_id, .. }
+            )) if tool_call_id.as_str() == "ws_1"
         )));
     }
 

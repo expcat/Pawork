@@ -53,10 +53,10 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 | `src/persist.rs` | ~20 | `PersistThenRender`：先 `append_event`（用 session 当前 active branch）成功再交渲染 sink |
 | `src/services/mod.rs` | ~10 | 七服务模块声明（全 `pub(crate)`） |
 | `src/services/session.rs` | ~730 | `SessionService`：会话生命周期、workspace 绑定（ADR-043：初始绑定与 session/main 分支同事务落盘，启动时读取全部绑定并以 `replace_workspace_cache` 原子替换；`bind_session_workspace` 保持仅内存供 devfixture）、事件序号 `next_sequence`、`resolve_session`（前缀/序号）、`resume_messages`（CLI：`seal_orphaned_approvals` 落 Denied）与 `resume_messages_keep_pending`（GUI：保留待审批）；`resolve_waiting_tool_call` 返回落库 envelope 序列供宿主补广播；ADR-054：`create_session_unbound`（落盘 NULL 归属）、`rename_session` / `archive_session` 透传 storage 写口 |
-| `src/services/run.rs` | ~600 | `RunService`：`chat_turn`/`chat_turn_with_run_id`（Plan gate → quota 预检 → TurnContext 装配含 `git_status_note` → engine `run_session` → usage 落账）、`compact_session` 手动压缩、`append_payload` 事件追加（返回 envelope 供补广播） |
+| `src/services/run.rs` | ~815 | `RunService`：`chat_turn`/`chat_turn_with_run_id`（Plan gate → quota 预检 → TurnContext 装配含 `git_status_note` → SEARCH-1：`web_search = true` 时向请求注入 hosted WebSearch → VISION-1/SEARCH-1 前置闸门 `capability_gate`（图片 / hosted 工具按模型证据 fail-closed，发 HTTP 前拒绝）→ engine `run_session` → usage 落账）、`compact_session` 手动压缩、`append_payload` 事件追加（返回 envelope 供补广播） |
 | `src/services/approval.rs` | ~500 | `ApprovalService`：审批模式与宿主装配（启动 `configure`、运行时 `set_mode`）；ADR-053 由 Host 先落盘再更新审批快照，逐项目信任由 AppCore 配置解析、`ApprovalPromptHost` 委派、模式变更时重建 `ToolScheduler` 配置 |
 | `src/services/usage.rs` | ~400 | `UsageService`：持有 `ControlPlaneRuntime`；`projected_run_usage` 预算预检、`record_completed_usage` 落 `usage-ledger.sqlite3`、`usage_overview`/`session_usage`/`last_run_usage`/`estimate_cost_for` |
-| `src/services/extension.rs` | ~330 | `ExtensionService`：workspace roots/file-index、`expand_at_refs`（命中 file-index 的 `@` 附件展开为独立 Text part，64 KiB 截断标记）、`complete_at`、注入层加载（instructions/skills/profiles）、MCP slot 持有与关停 |
+| `src/services/extension.rs` | ~570 | `ExtensionService`：workspace roots/file-index、`expand_at_refs`（命中 file-index 的 `@` 附件展开为独立 part：文本 64 KiB 截断标记；VISION-2 起 png/jpeg/gif/webp 图片展开为头标记 Text part + base64 Image part，8 MiB 上限、超限给诚实省略标记；模型未声明 `image_input` 时由 `capability_gate` 发 HTTP 前拒绝）、`complete_at`、注入层加载（instructions/skills/profiles）、MCP slot 持有与关停 |
 | `src/services/import.rs` | ~310 | `ImportService`：本机会话扫描、compat 预览/应用（指纹校验 `sources_unchanged`）、`export_session_doc`/`import_session_file`（export/compat/pi 三格式） |
 | `src/services/tasks.rs` | ~260 | `TaskService`：`TaskManager` 状态机 + `tasks.json` 持久化；注册/查询/取消/收尾；persist 失败发 degrade 不吞错 |
 | `src/gui_server/mod.rs` | ~180 | `GuiHost` trait（snapshot/timeline/query/command）、`GuiHostError`、`GuiServer`/`GuiServerConfig`（bind endpoint、accept 循环、按连接 spawn 会话任务）；re-export 连接层常量 |
@@ -146,7 +146,7 @@ UI-6b（[ADR-059](../settings.md#adr-059ui-6b-命名账号与持久选择2026-09
 
 ### 3.5 扩展、MCP、导入、tasks/plan/编排
 
-- `expand_at_refs(session_id, text) -> Vec<ContentPart>`（async，ADR-044 起按 session 归属 workspace 的 file-index 路由）：`@token` 命中时正文作为**独立** Text part 追加（不拼进 user text），单文件 64 KiB 截断并标记；无 `@` 时返回单 Text part。`complete_at(query, limit)` 补全候选（未索引 workspace 自动先扫描）。`workspace_root()`。
+- `expand_at_refs(session_id, text) -> Vec<ContentPart>`（async，ADR-044 起按 session 归属 workspace 的 file-index 路由）：`@token` 命中时正文作为**独立** part 追加（不拼进 user text），单文件 64 KiB 截断并标记；VISION-2 起图片扩展名（png/jpg/jpeg/gif/webp，大小写不敏感）展开为头标记 Text part + `ImageSource::Base64` Image part（alt_text 记相对路径，原始字节 ≤8 MiB，超限行省略标记不静默丢弃）；无 `@` 时返回单 Text part。`complete_at(query, limit)` 补全候选（未索引 workspace 自动先扫描，二进制文件同样入索引可命中）。`workspace_root()`。
 - `mcp_list() -> Vec<McpServerStatus>`（name/transport/state/tools/last_error）；`mcp_test(name?)`：真实建连 + ping + list_tools 并刷新 slot 状态；SET-6c 增 `remove_mcp_server(name)`（同会话生效：写盘后同步 extra、shutdown slot、删 slot、按既有 descriptors 重建 registry）与 `mcp_server_secrets_for_removal`（纯函数：收集本 server 的 `pawork.mcp.*` SecretRef，非该命名空间 Err，其它 server 跳过）。
 - `scan_local_sessions(source, home_root?)`：只读发现本机会话文件。
 - `preview_compat_import(tool, global_root?)` / `apply_compat_import(...)`：compat 配置导入两段式；apply 前用文件指纹快照校验 `sources_unchanged`，落盘 instructions / skills / MCP merge / profiles。`CompatTool::parse` 接受 claude/codex/grok/cursor/pi。
@@ -197,6 +197,8 @@ UI-6b G2：新增私有 `provider_quota.rs`，`account_quota` 消费指定存储
 2. Plan gate：`ensure_plan_allows_execution`——会话存在未批准 Plan 版本则拒（`AppError::PlanNotApproved`，audit 记 Deny）；无 Plan 或已批准放行。事件重放失败（含 StoreNotOpen）原样上抛，不得吞成 Ok 后继续执行。
 3. quota 预检：`projected_run_usage` 估算本轮输入预算并询问 `QuotaService`，超限直接拒绝，不发请求。
 4. 装配 `TurnContext`：system prompt、注入层（instructions / skills / profiles / AGENTS 文件，经 `load_injected_layers`）、工具定义、`git_status_note` 短状态行（任何 git 失败静默省略，不阻断）。
+   - SEARCH-1：全局配置 `web_search = true` 时为请求追加 hosted WebSearch 工具声明；
+   - VISION-1 / SEARCH-1 前置闸门：请求组装后按当前模型的三源能力证据跑 `pawork_providers::negotiate::capability_gate`——图片内容要求模型声明 `image_input`，hosted / extension 工具要求对应标签，任一未声明即 `AppError::Provider`（`InvalidRequest`），不发 HTTP；未知模型按空证据处理（纯文本放行）。
 5. 进入 `pawork_engine::run_session`。`SessionLoopCtx` 作为 `LoopContext` 提供：
    - 审批：转 `ApprovalPromptHost`（CLI 为终端 ask，GUI 为 `GuiApprovalHost`）；
    - 工具执行：经 `ToolScheduler`（并发上限 8，Policy/审批模式约束），写工具执行前先落 checkpoint 快照；
@@ -315,7 +317,8 @@ cargo test -p pawork-app --offline --lib --tests --features ui-fixture
 - `data_dir.rs`：HOME 回退 DegradeEvent 结构、告警单点（helper 静默 / consume 恰好一次 WARN）、instance 白名单拒路径逃逸。
 - `protocol.rs`：extra 覆盖 / 样例默认表 / 未知值 fail-closed。
 - `testsupport.rs`：`RecordingCapture` 治愈并屏蔽 tracing interest 缓存投毒的回归（探针双 callsite）；MOCK-7 起承载 OAuth token 端点 wiremock 形状（`token_success_json` / `token_error_json` / `token_mock`），`auth.rs` / `provider_assembly.rs` 的 token 端点 mock 统一引用（与 pawork-auth 的 testsupport 同形、两包各自内联）。
-- `services/*`、`loop_ctx.rs`、`checkpoint.rs`、`control.rs`、`protected.rs`、`approval.rs`、`extensions.rs`：各自带定向单测（resume seal 语义、压缩 lineage、usage 哨兵、审批模式解析、`at_tokens` 词法等）。
+- `services/*`、`loop_ctx.rs`、`checkpoint.rs`、`control.rs`、`protected.rs`、`approval.rs`、`extensions.rs`：各自带定向单测（resume seal 语义、压缩 lineage、usage 哨兵、审批模式解析、`at_tokens` 词法、VISION-2 `@` 图片附件展开与超限省略、base64 与图片 MIME 表等）。
+  - SEARCH-1 / VISION-1（`services/run.rs`）：`web_search = true` 且模型声明 WebSearch 时注入 hosted 工具并送达 Provider（MockProvider 调用记录断言 `hosted_tools` / `has_image`）；模型未声明时 web search 注入与图片消息均被 `capability_gate` 拒绝（`AppError::Provider`，Provider 零调用）。
 
 **tests/（integration）**——`tests/gui_server/` 下两个文件不是自动发现的，经 Cargo.toml `[[test]]` 声明为具名 test bin：
 

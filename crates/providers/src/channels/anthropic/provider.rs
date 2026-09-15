@@ -441,8 +441,12 @@ fn messages_capabilities() -> ModelCapabilities {
         prompt_cache: true,
         thinking: true,
         transport: ModelTransport::Messages,
-        hosted_tool_tags: BTreeSet::new(),
-        citations: false,
+        // SEARCH-1：Anthropic 服务端 web_search_20250305 工具（docs.claude.com
+        // web-search）；citation 归一经 stream 的 web_search_tool_result 解析。
+        hosted_tool_tags: [pawork_domain::ToolCapabilityTag::WebSearch]
+            .into_iter()
+            .collect(),
+        citations: true,
         reasoning: ReasoningStateCapability {
             state: ReasoningStateDescriptor {
                 requires_signature: true,
@@ -527,6 +531,11 @@ fn requirements_from_request(request: &CanonicalModelRequest) -> CapabilityRequi
         required_tools,
         reasoning,
         citations: !request.hosted_tools.is_empty(),
+        image_input: request
+            .messages
+            .iter()
+            .flat_map(|message| message.content.iter())
+            .any(|part| matches!(part, pawork_domain::ContentPart::Image(_))),
     }
 }
 
@@ -755,10 +764,16 @@ mod tests {
         assert!(models
             .iter()
             .all(|model| model.capabilities.reasoning.state.requires_signature));
-        assert!(models.iter().all(|model| !model.capabilities.citations));
+        // SEARCH-1：服务端 web_search_20250305 + web_search_tool_result citation 归一。
         assert!(models
             .iter()
-            .all(|model| model.capabilities.hosted_tool_tags.is_empty()));
+            .all(|model| model.capabilities.citations));
+        assert!(models.iter().all(|model| {
+            model
+                .capabilities
+                .hosted_tool_tags
+                .contains(&pawork_domain::ToolCapabilityTag::WebSearch)
+        }));
     }
 
     #[test]

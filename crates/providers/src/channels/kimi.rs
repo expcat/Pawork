@@ -77,6 +77,7 @@ impl KimiCodeProvider {
                 provider_id: ProviderId::new(PROVIDER_ID),
                 http: config.http,
                 request_timeout: config.request_timeout,
+                chat_search: None,
             },
             Some(credential.clone()),
         )?;
@@ -179,6 +180,10 @@ fn require_bearer_credential(
 /// 版本固定 builtin 目录（id 取自官方 kimi-cli / Models.dev；能力未知，
 /// 不推断——context/max_output 为 0 表示未知，运行期探测与 config 覆盖可收紧）。
 pub fn builtin_models() -> Vec<ModelDefinition> {
+    /// VISION-1：K2.7 Code / K3 均声明原生图片输入
+    ///（platform.kimi.ai/docs/models.md 与 kimi-k2-7-code quickstart，2026-09-15 调研）。
+    /// web search（$web_search）需客户端回显 arguments 的两段流程，本通道未接线，
+    /// 不声明 WebSearch（fail-closed）。
     fn model(id: &str, display_name: &str) -> ModelDefinition {
         ModelDefinition {
             id: ModelId::new(id),
@@ -187,6 +192,7 @@ pub fn builtin_models() -> Vec<ModelDefinition> {
             max_output_tokens: 0,
             capabilities: ModelCapabilities {
                 text: true,
+                image_input: true,
                 transport: ModelTransport::ChatCompletions,
                 ..ModelCapabilities::default()
             },

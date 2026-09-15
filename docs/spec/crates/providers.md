@@ -52,9 +52,9 @@ trait 面为 `id()` / `list_models(credential)` / `stream(request, sink, cancel)
 
 - `OpenAiCompatibleProvider::new(config, credential)`：`OpenAiCompatibleConfig::new(base_url)` 默认 `provider_id = "openai-compatible"`，可 `with_provider_id`。构造期若 config 自定义头含凭证头则拒绝（凭证只能经 `ResolvedCredential` 注入为 `Authorization: Bearer`）。
 - `AnthropicProvider`（feature `anthropic`，默认开启）：认证头 `x-api-key` + `anthropic-version`；可 `with_registry(Arc<ModelRegistry>)` 注入能力证据、`with_reasoning_protector` 注入续传保护。
-- `ChatGptProvider`（feature `chatgpt-oauth`）：内部复用 `ResponsesTransport`；OAuth Bearer + `chatgpt-account-id`（构造入参或从 id_token JWT claim 提取）+ `originator: codex_cli_rs` 头；`client_version` 字符集校验，`/models?client_version=` 过滤目录。
-- `XaiProvider`（feature `xai-oauth`）：OAuth Bearer 或 API key（SET-4 A3 双认证，Bearer 用法相同）；按模型 capability 的 `transport` 声明路由 Responses / Chat Completions。SET-5 起 `list_models` 请求 `GET {base}/language-models`（官方端点，见 <https://docs.x.ai/developers/rest-api-reference/inference/models>）：仅保留 `output_modalities` 含 `"text"` 的模型；已知 id 沿用 builtin 元数据（display_name / 窗口 / transport），未知 id 只给保守默认（text 声明 + Chat Completions 基线 + 窗口 0）；无凭证（构造即失败）、请求失败或响应缺 `models` 数组一律 `Err`。Host 选择目录不预填静态 grok：探测成功才列出远端结果，失败为 unavailable，不落 fixed_fallback。
-- `KimiCodeProvider`（feature `kimi-code`）：OAuth Bearer 或 Coding Plan API key（Bearer 用法相同）；固定 Chat Completions。SET-5 起 `list_models` 请求 `GET {base}/models`（与官方 kimi-cli 同端点，证据见 MoonshotAI/kimi-cli 源码与 repo issue 中的真实请求实例）：OpenAI 风格 `data[].id` 解析，已知 id 沿用 builtin 元数据，未知 id 只给保守默认；形状不符（缺 `data` 数组）、请求失败或无凭证一律 `Err`，禁止猜测兼容。
+- `ChatGptProvider`（feature `chatgpt-oauth`）：内部复用 `ResponsesTransport`；OAuth Bearer + `chatgpt-account-id`（构造入参或从 id_token JWT claim 提取）+ `originator: codex_cli_rs` 头；`client_version` 字符集校验，`/models?client_version=` 过滤目录。SEARCH-1 / VISION-1：codex 后端模型统一声明 hosted `WebSearch`（Responses `web_search` 内置工具对全部模型可用，wire 选项 `hosted_web_search = true`）与 `image_input`（Responses `input_image` content part）。
+- `XaiProvider`（feature `xai-oauth`）：OAuth Bearer 或 API key（SET-4 A3 双认证，Bearer 用法相同）；按模型 capability 的 `transport` 声明路由 Responses / Chat Completions。SET-5 起 `list_models` 请求 `GET {base}/language-models`（官方端点，见 <https://docs.x.ai/developers/rest-api-reference/inference/models>）：仅保留 `output_modalities` 含 `"text"` 的模型；已知 id 沿用 builtin 元数据（display_name / 窗口 / transport），未知 id 只给保守默认（text 声明 + Chat Completions 基线 + 窗口 0）；无凭证（构造即失败）、请求失败或响应缺 `models` 数组一律 `Err`。Host 选择目录不预填静态 grok：探测成功才列出远端结果，失败为 unavailable，不落 fixed_fallback。SEARCH-1（2026-09-15 调研）：已知 id 的 builtin 提示声明 hosted `WebSearch`（xAI Live Search 对全部文本模型可用）；Chat 模型经 `chat_search = ChatSearchWire::XaiSearchParameters` 把 WebSearch 写成请求体 `search_parameters`（`{"mode":"auto"}`），Responses 模型经 `hosted_web_search = true` 写 `web_search` 内置工具；其余 hosted / extension 工具仍发 HTTP 前拒绝。
+- `KimiCodeProvider`（feature `kimi-code`）：OAuth Bearer 或 Coding Plan API key（Bearer 用法相同）；固定 Chat Completions。SET-5 起 `list_models` 请求 `GET {base}/models`（与官方 kimi-cli 同端点，证据见 MoonshotAI/kimi-cli 源码与 repo issue 中的真实请求实例）：OpenAI 风格 `data[].id` 解析，已知 id 沿用 builtin 元数据，未知 id 只给保守默认；形状不符（缺 `data` 数组）、请求失败或无凭证一律 `Err`，禁止猜测兼容。VISION-1：builtin 条目声明 `image_input`（platform.kimi.ai 官方 models 文档，2026-09-15）；Kimi `$web_search` 需客户端回显 arguments 的两段流程，本通道未接线，**不声明** WebSearch（fail-closed）。
 - `ApiKeyChannelProvider`（任一 API-key feature）：以 `&'static ChannelPreset` 构造，构造期 fail-closed——preset 必须声明 api_key 认证方法（`auth_methods` 数据字段）且 `is_enabled`，凭证必须存在且为 API key 形态，config 固定头不得含凭证头。
 - `verify_api_key(config, candidate_key)`（async，任一 API-key feature）：SET-2 写前验证入口——用候选 key 构造一次性 adapter 校验凭证边界；Go 请求 `/usage` 验证 key/订阅，其余请求严格 `/models`，只返回 `Ok(())` / `ProviderError`；key 只在内存短暂停留、不落任何后端，供宿主 `auth_set_api_key` 在 `store_default_api_key` 之前校验。
 
@@ -97,18 +97,21 @@ trait 面为 `id()` / `list_models(credential)` / `stream(request, sink, cancel)
 
 UI-6a / ADR-058：`ApiKeyChannelConfig::transport_for` 与 adapter 共用协议解析，Host 静态 / 配置回退同样过滤不可运行模型并同步 transport，显式覆盖仍优先。通用、ChatGPT、Kimi、xAI 目录使用严格形状与非空 ID 校验，合法空数组仍成功。通用未知窗口/输出为 0、未知工具能力 false；已知 ID 仅从同 provider 静态条目补证据，远端实际字段优先。Kimi 消费 display_name/context_length/supports_reasoning/supports_image_in；xAI 消费输入模态和窗口，aliases 仅辅助找静态证据；ChatGPT 空/null/none-only reasoning levels 不算思考。通用 `has_more=true` 显式拒绝，尚未实现翻页。
 
+VISION-1 / SEARCH-1（2026-09-15 八家官方调研）：通用远端目录另消费 `input_modalities` 含 `"image"`（授予 `image_input`）与 `supports_web_search == true`（授予 hosted `WebSearch`），缺字段保持 false（fail-closed）；builtin 静态目录增至 8 条——新增 `glm-5.3`（text-only）/ `glm-5.3-flash`（多模态）@glm-coding、`deepseek-flash`（视觉 + thinking，1M / 384K）@deepseek，`qwen3.8-max` 标 `image_input`；能力按型号而非按 provider 声明（GLM-5.3 text / 5.3-Flash 多模态；deepseek-flash 视觉 / v4-pro 无视觉）。
+
 `ApiKeyChannelConfig` 初始化 Go/Qwen 官方逐模型 transport 表；显式 `with_model_transport` 覆盖单项。混合通道的目录过滤与 `stream` 共用 `transport_for`：官方表命中用表内协议；未命中先过共用 `non_text_model` 谓词（图片 / 音频 / TTS / realtime 等非文本 ID 为 `None`，Go 与 Qwen Token Plan 同规则），再按官方 endpoint 家族回退（Go：`grok-*`/`gpt-*`/`muse-spark-*` → Responses，`qwen*`/`minimax-*` → Messages，其余 Chat Completions）。只保留 ChatCompletions/Responses 进入可运行目录；Messages-only 与非文本 ID 的直接请求也在 HTTP 前拒绝。远端成功返回的新聊天 ID 不得因缺表被丢弃。其它 Chat 通道仍采用兼容文本基线。来源与协议/认证边界见 [ADR-058](../settings.md#adr-058ui-6a-目录权威与凭证验证2026-09-08)。
 
 ### 3.4 能力协商（negotiate）
 
 `CapabilityNegotiator::negotiate(&CapabilityEvidence, &CapabilityRequirements) -> ResolvedCapabilities`：无状态纯函数，不触网、不读 Provider 名、不读 wall-clock。
 
-- 输入：证据快照（三源）× 请求要求（`transport_pref` / `required_tools` / `reasoning` / `citations`）。
+- 输入：证据快照（三源）× 请求要求（`transport_pref` / `required_tools` / `reasoning` / `citations` / `image_input`——VISION-1 起，请求消息含图片内容时置位，模型未声明图片输入则 `Reject`）。
 - 输出 `ResolvedCapabilities` 字段：`chosen_transport`、`requested` / `supported` / `unsupported` 三集合（保证 `requested == supported ∪ unsupported`）、`fallback` map（键 → `CapabilityFallback`）。
 - `CapabilityFallback` 变体语义：`Reject(原因)`（adapter 必须在发 HTTP 前拒绝）、`LegacyTransport`（请求现代 transport 但模型只有 Chat Completions 基线，降级记录）、`ClampedEffort`（reasoning `XHigh`/`Max` 在模型不支持细粒度 effort 时 clamp 为 `High`）。
 - transport 选择顺序：请求偏好 ∈ 模型声明 → 采用偏好；否则用模型声明的 transport；模型只有基线时退 ChatCompletions（必要时记 `LegacyTransport`）。
 - reasoning：显式 `ReasoningConfig` 优先于旧 `ThinkingConfig.level`；请求 reasoning 但模型 `thinking == false` 时整项进 `unsupported` + `Reject`。
 - `clamp_reasoning_to_thinking(reasoning, thinking)` 供 adapter 复用（Anthropic 把 effort 翻成 thinking budget），避免形成第二套 clamp 双轨。
+- `capability_gate(&CapabilityEvidence, &CanonicalModelRequest)`（VISION-1 / SEARCH-1）：发 HTTP 前的统一前置闸门——从请求派生 `required_tools`（hosted + extension）与 `image_input`，走同一 `negotiate`，任一 `Reject` 即 `InvalidRequest`，不触网。Anthropic 经 `prepare_request` 完整 negotiate 收口；其余通道由装配 / Run 服务在派发前统一调用（按证据判定，不按厂商分支）。无任何证据（未知模型）按空证据处理：纯文本放行，带图片 / hosted 工具 fail-closed。
 
 ### 3.5 计价与用量
 
@@ -155,15 +158,17 @@ UI-6b G2：`fetch_go_usage(config, &ResolvedCredential, cancel)` 单次认证 GE
 7. 每收到一个 chunk 重置读超时（长流不误杀）；流中断（未见完成信号）报 `StreamInterrupted`；取消点贯穿字节循环与事件循环。
 8. `ApiKeyChannelProvider` 额外一步：若模型 capability 显式声明 Responses transport，则路由到共享 `ResponsesTransport`——按能力数据路由，不按通道名分支。
 
+SEARCH-1 hosted 工具门控（`apply_hosted_tool_wire`，纯函数）：仅当 config 声明 `chat_search` wire 且请求的全部 hosted 工具都是 WebSearch 时放行并写 wire（当前唯一变体 `XaiSearchParameters` → `search_parameters`）；未声明 wire、含非 WebSearch hosted 或任何 extension 工具的请求在发 HTTP 前 `InvalidRequest`，不静默丢弃。API-key 通道（含 GLM / Qwen / Kimi Platform）与 Kimi Code 的 chat search 证据不足，`chat_search = None` 保持 fail-closed。
+
 ADR-057：`ApiKeyChannelProvider` 仅为 `opencode-go` 启用内部会话头映射，Chat 与下述 Responses 共用 `opencode_session_header` 校验；每次从 `CanonicalModelRequest.session_id` 取 `x-opencode-session`，None 不发送、其他通道不发送。非法 header 值在发网前返回固定脱敏 `InvalidRequest`；不写入 body、trace_id 或持久配置。
 
 ### 4.2 Responses transport（ChatGPT / xAI Responses 模型）
 
 1. `requirements_from_request` → `CapabilityNegotiator::negotiate`；被拒能力（`Reject`）在发 HTTP 前变成 `InvalidRequest` 错误。
 2. 请求中的历史 `ReasoningItem` 经 `ReasoningProtector::recover` 还原成 reasoning input（`encrypted_content`），交给 `to_responses_body(request, reasoning_inputs, wire)`。
-3. `ResponsesWireOptions` 控制 wire 细节：`store`（ChatGPT OAuth 默认 `Some(false)`，xAI 与 API-key 通道不设）与 `include_encrypted_reasoning`（请求返回加密 reasoning continuation）；保留键防覆盖同样生效。
+3. `ResponsesWireOptions` 控制 wire 细节：`store`（ChatGPT OAuth 默认 `Some(false)`，xAI 与 API-key 通道不设）、`include_encrypted_reasoning`（请求返回加密 reasoning continuation）与 SEARCH-1 的 `hosted_web_search`（`true` 时 canonical hosted `WebSearch` 写成 `tools: [{"type":"web_search"}]` 内置工具；`false` 时 hosted tools 在流入口发 HTTP 前拒绝——API-key 通道 Responses 未证实透传，保持 `false`）；保留键防覆盖同样生效。
 4. 认证头：ChatGPT 为 Bearer + `chatgpt-account-id`（构造入参或 id_token JWT claim 提取）+ `originator: codex_cli_rs`；xAI 仅 Bearer。
-5. SSE → `ResponsesStreamAssembler::feed`：文本增量、工具调用、reasoning item（`encrypted_content` 经 `protect` 换 `protected_blob_ref` 后发 `ReasoningItem` 事件）、usage 与完成信号。
+5. SSE → `ResponsesStreamAssembler::feed`：文本增量、工具调用、reasoning item（`encrypted_content` 经 `protect` 换 `protected_blob_ref` 后发 `ReasoningItem` 事件）、usage 与完成信号。SEARCH-1：`web_search_call` item 的 added / done 映射为 `ServerTool` Started / Completed；`response.output_text.annotation.added` 的 `url_citation` 归一为 `CitationAdded`（`source_kind = WebSearch`，归到最近一次 web_search 调用，缺省时退回事件 `item_id`），其余 annotation 类型忽略（forward-compat）。
 6. malformed 事件立即报错——即便其后跟着完成事件也不救回（防止半损坏流被误判成功）；`finish()` 输出 `ResponsesFinalState` 收尾校验。
 
 ### 4.3 Anthropic Messages 能力收口（`prepare_request`，写 wire 或发 HTTP 前拒绝）
@@ -223,7 +228,7 @@ ADR-057：`ApiKeyChannelProvider` 仅为 `opencode-go` 启用内部会话头映�
 
 | 测试资产 | required-features | 覆盖点 |
 | --- | --- | --- |
-| `src/**` 内 `#[cfg(test)]` | — | 各模块单测：`module_discipline`（core 不引用 net）、注册表八行顺序与 fail-closed、kimi-code 端点预设与双认证、xAI 双认证凭证接受、xAI/Kimi 远端目录解析与失败路径（wiremock）、SSE 边界、保留键忽略、协商 clamp、pricing 定点、错误分类脱敏等 |
+| `src/**` 内 `#[cfg(test)]` | — | 各模块单测：`module_discipline`（core 不引用 net）、注册表八行顺序与 fail-closed、kimi-code 端点预设与双认证、xAI 双认证凭证接受、xAI/Kimi 远端目录解析与失败路径（wiremock）、SSE 边界、保留键忽略、协商 clamp、pricing 定点、错误分类脱敏等；VISION-1 / SEARCH-1 增补：builtin 目录逐型号视觉断言（`builtin_catalog_declares_vision_per_model`）、`capability_gate` 图片 / web search 拒放矩阵（`capability_gate_fail_closed_on_undeclared_image_and_web_search`）、Chat `search_parameters` wire 写入与未声明拒绝（`chat_search_wire_writes_xai_search_parameters` / `hosted_tools_rejected_without_declared_wire`）、Responses `web_search` 工具写入与 `web_search_call` / `url_citation` SSE 归一（`responses_body_writes_web_search_tool_only_when_wire_allows` / `assembler_maps_web_search_call_and_url_citation`） |
 | `tests/common/mod.rs` | —（随引用它的测试目标编译） | 集成测试共享件单一来源（MOCK-7 去重）：SSE 帧拼装 `sse_frames`/`sse_body`、chat 文本流 / 单工具调用 / usage+stop / 最小成功 / 仅收尾样例、Responses 完成 / 文本流样例；`contract` 流断言（text / tool / usage / error 归一）供 contract.rs 与 api_key_channels.rs 共用 |
 | `tests/contract.rs` | —（默认即跑） | OpenAI-compatible 契约全集（见下） |
 | `tests/anthropic.rs` | `anthropic` | Messages 契约（见下） |
@@ -244,7 +249,7 @@ ADR-057：`ApiKeyChannelProvider` 仅为 `opencode-go` 启用内部会话头映�
 - 文本/单工具/并行工具流、流中取消与预取消、429 归一、缺 `message_stop` 判 `StreamInterrupted`；
 - `list_models` 静态目录不触网；
 - prompt cache 与 thinking 按 plan 写 wire（`contract_prompt_cache_and_thinking_are_written`）；
-- hosted tools 未声明时 HTTP 前拒绝（`hosted_tools_are_rejected_before_http`）；
+- hosted WebSearch 写成 `web_search_20250305` 并放行、未声明的 hosted 工具 HTTP 前拒绝（`hosted_web_search_written_and_undeclared_tools_rejected_before_http`，SEARCH-1 起替换原全拒口径）；
 - thinking signature 走 protect、不以明文出现在事件流（`contract_thinking_signature_is_protected_not_emitted`）。
 
 dev-dependencies：`wiremock`（HTTP mock）、`proptest`、多线程 tokio。产品级验证边界见 [../verification.md](../verification.md)。
