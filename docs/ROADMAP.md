@@ -1,6 +1,6 @@
 # Pawork 活动路线图：GUI 第二阶段
 
-> 更新：2026-09-14；规划基线：`main / 7a416dd6`，当前主干 `8952a743`。2026-09-13 [ADR-061](spec/settings.md#adr-061账号默认名称与重命名2026-09-13) 将 Settings 账号改为默认名（邮箱 / API key 脱敏串）+ 可重命名，Go 三窗用进度条表示已用百分比；GUI API 1.17。2026-09-14 代理完成 §2.2 全部真窗口验收（V-01～V-12 与 ADR-061，证据 /tmp/pawork-vfix-evidence/）；同日下午补齐非空 MCP（GUI 内成功执行）与 GUI3-04 401 CTA（§2.2 末尾补录，含一次凭证操作事故登记，需用户重录 DeepSeek key），用户视觉验收仍未做。本阶段以 [PI-Desktop Screens](https://pi-docs.aiuo.net/guide/screenshots) 为交互与视觉参照，优化已有 GPUI 工作台。**GUI2-01～06 已实现并完成定向自动检查，等待用户验收；GUI2-02 真窗口限制见下文；GUI2-05 / 06 代理真窗口随 GUI2-07 批次完成；GUI2-07 于 2026-09-14 完成真窗口验收并同批复验 §4 GUI3 呈现（证据 /tmp/pawork-gui2-07-evidence/）**；生产能力以源码为准，下一阶段规格见 [GUI 设计](gui-design.md)。2026-09-12 完成一轮显示效果 Review，结论与新增的 GUI3 视觉任务见 [§4](#4-显示效果-review2026-09-12与-gui3-视觉任务)；同日 GUI3-01～07 已由子代理实现并通过 Desktop 定向测试（主代理逐 hunk 审查），代理真窗口 2026-09-14 随 GUI2-07 批次复验（01～03、05～07 通过，04 的 401 CTA 当日下午补齐、08 动效留人工），用户验收未进行；GUI3-08 已按 PI 暗色截图确认有限动效（不循环）并落地，定向测试见本轮报告。2026-09-13 用户在本机 `desktop` 真窗口走查当前工作区候选，疑似问题记 [§2.1](#21-用户视觉走查发现2026-09-13)。
+> 更新：2026-09-15；规划基线：`main / 7a416dd6`，当前主干 `8952a743`。2026-09-13 [ADR-061](spec/settings.md#adr-061账号默认名称与重命名2026-09-13) 将 Settings 账号改为默认名（邮箱 / API key 脱敏串）+ 可重命名，Go 三窗用进度条表示已用百分比；GUI API 1.17。2026-09-14 代理完成 §2.2 全部真窗口验收（V-01～V-12 与 ADR-061，证据 /tmp/pawork-vfix-evidence/）；同日下午补齐非空 MCP（GUI 内成功执行）与 GUI3-04 401 CTA（§2.2 末尾补录，含一次凭证操作事故登记，需用户重录 DeepSeek key），用户视觉验收仍未做。本阶段以 [PI-Desktop Screens](https://pi-docs.aiuo.net/guide/screenshots) 为交互与视觉参照，优化已有 GPUI 工作台。**GUI2-01～06 已实现并完成定向自动检查，等待用户验收；GUI2-02 真窗口限制见下文；GUI2-05 / 06 代理真窗口随 GUI2-07 批次完成；GUI2-07 于 2026-09-14 完成真窗口验收并同批复验 §4 GUI3 呈现（证据 /tmp/pawork-gui2-07-evidence/）**；生产能力以源码为准，下一阶段规格见 [GUI 设计](gui-design.md)。2026-09-12 完成一轮显示效果 Review，结论与新增的 GUI3 视觉任务见 [§4](#4-显示效果-review2026-09-12与-gui3-视觉任务)；同日 GUI3-01～07 已由子代理实现并通过 Desktop 定向测试（主代理逐 hunk 审查），代理真窗口 2026-09-14 随 GUI2-07 批次复验（01～03、05～07 通过，04 的 401 CTA 当日下午补齐、08 动效留人工），用户验收未进行；GUI3-08 已按 PI 暗色截图确认有限动效（不循环）并落地，定向测试见本轮报告。2026-09-13 用户在本机 `desktop` 真窗口走查当前工作区候选，疑似问题记 [§2.1](#21-用户视觉走查发现2026-09-13)。2026-09-15 工作区落地 GUI4 壳层收口：StatusBar 三栏（项目 / 分支 · 用量 · 反馈或连接）与共享 `EmptyState`（首页 / Changes / Resources），字号与操作提示改落右栏，Composer 不再承载瞬态 hint。
 
 上一条 UX-01～UX-09 已有实现，详细证据迁至 [历史记录](review/roadmap-ux-2026-09-10.md)，未完成验收继续列于 §3。迁存记录不代表验收通过或任务归档。更早 UI-1～UI-6 见 [模块重设计记录](review/roadmap-ui-2026-09-09.md)。
 
@@ -369,6 +369,19 @@ UX-09 的 [9 月 10 日补验](review/roadmap-ux-2026-09-10.md#ux-09-真窗口�
 - **改动**：对照 PI Desktop 暗色截图（近黑画布、胶囊 Composer、安静空态）与 Zed / gpui `with_animation` API，拉开 canvas / panel 层次并同步 AA 测试；Composer 16px 圆角 + 轻阴影 + 聚焦 accent 描边；首页空态加装饰 Task 图标；流式助手最后一行末尾加静态 2×14 caret（不循环，避免 Reduce Motion 分支）；Switch 滑块仅在状态切换时 120ms ease-out，首帧瞬移；Changes / Resources 加载保留标题并加静态骨架行。hover / pressed / focus 仍即时。不做菜单淡入（测试首帧透明风险）、不做浅色主题、不复制 PI 角色插画。
 - **写入集**：`apps/desktop/src/ui/{theme,timeline,timeline_entry,markdown,input_area,changes,resources}.rs`、`ui/components/{switch,skeleton,mod}.rs`；回写 gui-design §3.2 与 Desktop Spec 平台显示偏好一节。
 - **限制**：caret 循环与 Reduce Motion 读取仍不立项；菜单 / 骨架不做循环闪动。
+
+#### GUI4 壳层收口（StatusBar 三栏与共享空状态）
+
+- **改动**：底部 30px StatusBar 分成三栏：左项目 / 权威 branch（无数据不占空洞）、中用量（仍绝对居中，AX 只发 `run-status`）、右优先 `status_hint` 否则字号反馈否则连接文案。字号与普通操作提示不再挂 Composer，筛选说明仍挂 Composer。新增共享 `EmptyState`，首页 / Changes / Resources 空态与加载骨架走同一居中容器；identifier 仍由调用方 shell 节点承担。
+- **写入集**：`apps/desktop/src/ui/{mod,input_area,timeline,changes,resources,theme,accessibility/app}.rs`、`ui/components/{empty_state,status_bar,mod}.rs`；回写 [GUI 设计](gui-design.md) 与 [Desktop Spec](spec/crates/desktop.md)。
+- **限制 / 偏离**：左右栏视觉不进 AX；字号反馈 3 秒收起不清除同时到达的 `status_hint`；Settings 壳仍不显示 StatusBar。真窗口与用户验收未进行。
+
+#### GUI4 终端显示层（行覆盖、SGR、按键直通与自动 resize）
+
+- **改动**：Inspector Terminal 从剥 CSI 后把 CR 当成换行的纯文本，改为行缓冲显示层：CR 覆盖同一行、退格回退光标、EL 擦行、SGR 16 色进 `StyledText`。Ctrl-C / Tab / ↑↓←→ 在输入框聚焦时直通 `terminal_write`；可打印字符仍走行式 Enter，空行也发换行。未启动时带正文的 Enter 会在 create 回执后补发。输出面视口像素自动 `terminal_resize`（扣内边距、随字号缩放，20–500×6–200），stepper 草稿优先；切标签后把当前面板尺寸套到新会话。CUP / CUU / CUD 丢弃，不声称网格 / alt-screen / vim。不改 wire、不直连 PTY、不新增 crate。
+- **写入集**：`apps/desktop/src/ui/{terminal_view,inspector,mod}.rs`、`apps/desktop/src/projection/terminal.rs`；回写 [GUI 设计](gui-design.md)、[Desktop Spec](spec/desktop.md)、[desktop crate Spec](spec/crates/desktop.md)、[AGENTS.md](../AGENTS.md)。
+- **限制 / 偏离**：输入仍在输出面底部 TextInput，不是网格内字符级编辑；无选中复制、无完整 VT 仿真。真窗口与用户验收未进行。
+- **后续（2026-09-15，用户确认新增包）**：终端显示核心抽为 `pawork-terminal`（crates/terminal，零依赖纯库）：行缓冲解析、SGR 属性分段、按键→PTY 字节、面板像素→列×行估算与对应测试迁入；`ui/terminal_view.rs` 收缩为 gpui 胶水层（主题色 runs、Keystroke 转换、resize 防抖）。Desktop 生产依赖白名单改为 {pawork-client, pawork-terminal}；不改 wire / Host / 面板行为。
 
 ### 4.4 需用户确认的候选（不随 GUI3 自动立项）
 

@@ -19,9 +19,9 @@
 
 ---
 
-## 2. 包布局与依赖方向（21 包）
+## 2. 包布局与依赖方向（22 包）
 
-Workspace 为 **21 成员（19 库 + 2 应用）**：19 个库平铺 `crates/<短名>`（目录 = 包名去 `pawork-` 前缀，包名保持 `pawork-` 前缀），2 个应用 `apps/{pawork,desktop}`。不新增包；新能力只往既有包加模块。包布局变更须向用户确认。
+Workspace 为 **22 成员（20 库 + 2 应用）**：20 个库平铺 `crates/<短名>`（目录 = 包名去 `pawork-` 前缀，包名保持 `pawork-` 前缀），2 个应用 `apps/{pawork,desktop}`。不新增包；新能力只往既有包加模块。包布局变更须向用户确认。
 
 | 包 | 目录 | 依赖方向 | 备注 |
 | --- | --- | --- | --- |
@@ -44,8 +44,9 @@ Workspace 为 **21 成员（19 库 + 2 应用）**：19 个库平铺 `crates/<�
 | `pawork-app` | `crates/app` | 领域宿主依赖 + transport | 装配宿主 + `gui_server/`（GuiServer/ConnectionManager/GuiHost trait）+ `gui_host/`（分发表） |
 | `pawork-cli` | `crates/cli` | 原 cli 依赖（GuiHost 经 app） | 21 子命令 + `channels/acp/`（AcpHost 四件套） |
 | `pawork-client` | `crates/client` | → domain、protocol、transport | framed 连接面 + `headless/`；probe 场景为本包 tests/，live 模式 `examples/probe.rs` |
+| `pawork-terminal` | `crates/terminal` | 无内部依赖 | 终端显示核心：行缓冲解析（CR/退格/EL/SGR 16 色）、按键→PTY 字节映射、面板像素→列×行估算；不是完整 VT emulator |
 | `pawork`（bin） | `apps/pawork` | → cli | composition root + `redact.rs`（Redactor/RedactingFmtLayer） |
-| `pawork-desktop`（bin） | `apps/desktop` | → client、gpui；macOS platform-only → cocoa、objc、raw-window-handle | 四层 ui/projection/controller/platform；业务依赖仅 pawork-client（deny-list 断言）；AX 走应用侧原生 bridge，不扩张业务依赖 |
+| `pawork-desktop`（bin） | `apps/desktop` | → client、terminal、gpui；macOS platform-only → cocoa、objc、raw-window-handle | 四层 ui/projection/controller/platform；业务依赖 = pawork-client + pawork-terminal（deny-list 断言）；AX 走应用侧原生 bridge，不扩张业务依赖 |
 
 **不合并清单**（保持独立包）：`policy`、`exec`、`auth`、`git`、`engine`、`protocol`、`testkit`、`transport`、`orchestration`、`workflow`。
 
@@ -59,7 +60,7 @@ Workspace 为 **21 成员（19 库 + 2 应用）**：19 个库平铺 `crates/<�
 
 ### 3.1 终局包布局先行
 
-- 现行终局布局为 §2 的 21 成员；新能力 = 已有包内新模块（不新增包）；**禁止**「先写在 bin 里、以后再抽包」。
+- 现行终局布局为 §2 的 22 成员；新能力 = 已有包内新模块（不新增包）；**禁止**「先写在 bin 里、以后再抽包」。
 - 包间依赖方向遵守 §2 表与不合并清单；canonical 纯净红线不变。
 
 ### 3.2 冻结契约（激活即采用完整形状；golden 先于实现改动）

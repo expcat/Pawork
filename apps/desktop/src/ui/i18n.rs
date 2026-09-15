@@ -1040,8 +1040,8 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "inspector.resize_not_applied" => ("size not applied", "尺寸尚未应用"),
         "inspector.resize_confirmed" => ("resize confirmed", "尺寸调整已确认"),
         "inspector.terminal_input_placeholder" => (
-            "Type in the terminal… (Enter to write)",
-            "在终端里输入…（Enter 写入）",
+            "Type a command, or use Ctrl-C / Tab / ↑ in the terminal",
+            "输入命令，或用 Ctrl-C / Tab / ↑ 直通终端",
         ),
         "inspector.terminal_new_tab" => ("New terminal tab", "新建终端标签页"),
         "header.tooltip_activity" => ("Activity", "动态"),

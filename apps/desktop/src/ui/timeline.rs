@@ -30,6 +30,7 @@ use crate::projection::{
 };
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
 use crate::ui::components::dropdown::Dropdown;
+use crate::ui::components::empty_state::EmptyState;
 use crate::ui::components::follow_scroll::BackToBottom;
 use crate::ui::components::icon::{icon_sized, Icon};
 use crate::ui::components::label::Label;
@@ -706,15 +707,10 @@ impl AppView {
                     view.on_project_task_menu(None, window, cx);
                     cx.stop_propagation();
                 }));
-            div()
-                .flex_1()
-                .flex()
-                .flex_col()
-                .items_center()
-                .justify_center()
-                .px(px(metrics::TIMELINE_CONTENT_INSET))
-                .gap(px(metrics::SPACE_4))
-                .child(icon_sized(Icon::Task, px(32.0)).text_color(dark().text.tertiary))
+            EmptyState::new()
+                .icon(Icon::Task)
+                .gap(metrics::SPACE_4)
+                .px(metrics::TIMELINE_CONTENT_INSET)
                 .child(
                     self.shell_element("workspace-empty-title")
                         .child(Label::new(workspace_empty_title()).size(font::TITLE)),

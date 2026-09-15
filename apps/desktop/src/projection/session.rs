@@ -117,10 +117,6 @@ impl ResumeState {
         }
     }
 
-    /// SnapshotRequired 才换基线并重分页；Replay / UpToDate 不闪全量重载。
-    pub fn replaces_baseline(&self) -> bool {
-        matches!(self, Self::SnapshotRequired { .. })
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

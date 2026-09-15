@@ -19,6 +19,7 @@ mod resources;
 mod settings;
 mod shell_layout;
 mod task_rail;
+mod terminal_view;
 pub mod text_input;
 mod theme;
 mod timeline;
@@ -35,7 +36,8 @@ use std::time::Duration;
 use gpui::{
     actions, div, point, prelude::*, px, AnyView, App, AsyncWindowContext, ClickEvent, Context,
     Corner, Entity, FocusHandle, Focusable, FontWeight, KeyBinding, KeyDownEvent, ListAlignment,
-    ListState, PathPromptOptions, Pixels, Point, Render, Rgba, ScrollHandle, SharedString, Window,
+    ListState, PathPromptOptions, Pixels, Point, Render, Rgba, ScrollHandle, SharedString,
+    Subscription, Window,
 };
 use pawork_client::AppEvent;
 
@@ -488,9 +490,11 @@ pub struct AppView {
     timeline_list_rev: u64,
     timeline_list_count: usize,
     terminal_scroll: FollowScroll,
-    /// 单一 Terminal write 回执槽。输入仅在同一 terminal 的成功回执到达且
+    /// 在途 Terminal write 回执槽。输入仅在同一 terminal 的成功回执到达且
     /// 用户未继续编辑时清空；失败/断线保留文本，避免静默丢命令。
+    /// 同终端后续按键并入 queued 缓冲，回执后再发，避免打字被 RTT 卡住。
     terminal_pending_write: Option<(String, Option<String>, String)>,
+    terminal_queued_write: Option<(String, String)>,
     /// 单一 Terminal create pending（按 Inspector 所属 workspace 去重）。
     /// Host 只回 terminal id，因此双击/快速键盘连打不得发出第二个 create。
     terminal_pending_create_workspace: Option<String>,
@@ -508,6 +512,14 @@ pub struct AppView {
     /// 三路径同 gate 禁用；回执只清与其一致的当前草稿，防跨 workspace
     /// 或用户继续调节后的迟到回执抹掉新草稿。
     terminal_pending_resize: Option<(String, u16, u16)>,
+    /// 输出面最近一次实测尺寸；面板变宽变窄后自动走 terminal_resize。
+    terminal_fitted_size: Option<(u16, u16)>,
+    /// 自动 fit resize 的去抖任务；拖拽窗口时只发最后一次尺寸。
+    terminal_fit_resize_task: Option<gpui::Task<()>>,
+    /// 首次 Enter 在终端尚未创建时记下待发送正文，create 回执后补发。
+    terminal_pending_create_input: bool,
+    /// 在 keymap 之前拦截终端控制键，避免 TextInput 的 Copy/方向键抢走 Ctrl-C / ↑。
+    _terminal_key_intercept: Option<Subscription>,
     /// 当前连接的事件消费任务。重连前必须替换并丢弃旧 receiver，防止旧
     /// 连接迟到的 terminal 回执污染新连接上的 pending 状态。
     event_task: Option<gpui::Task<()>>,
@@ -849,11 +861,16 @@ impl AppView {
             timeline_list_count: 0,
             terminal_scroll: FollowScroll::new(),
             terminal_pending_write: None,
+            terminal_queued_write: None,
             terminal_pending_create_workspace: None,
             terminal_pending_create_cwd: None,
             terminal_pending_close: None,
             terminal_size_draft: None,
             terminal_pending_resize: None,
+            terminal_fitted_size: None,
+            terminal_fit_resize_task: None,
+            terminal_pending_create_input: false,
+            _terminal_key_intercept: None,
             event_task: None,
             status_hint: None,
             text_scale_feedback: None,
@@ -1144,6 +1161,16 @@ impl AppView {
             .focus_handle(cx)
             .tab_stop(true)
             .tab_index(INSPECTOR_TAB_INDEX);
+        // Ctrl-C / Tab / 方向键必须赶在 TextInput keymap 之前拦截，否则
+        // 空输入框的 Copy 与 Left/Right 会把 PTY 直通吃掉。
+        let intercept_view = cx.weak_entity();
+        view._terminal_key_intercept = Some(cx.intercept_keystrokes(move |event, window, cx| {
+            let _ = intercept_view.update(cx, |view, cx| {
+                if view.intercept_terminal_keystroke(&event.keystroke, window, cx) {
+                    cx.stop_propagation();
+                }
+            });
+        }));
         view.start_connect(cx);
         view
     }
@@ -1692,10 +1719,14 @@ impl AppView {
                 self.resources.mark_stale(&stale_reason);
                 self.projection.mark_settings_stale(&stale_reason);
                 self.terminal_pending_write = None;
+                self.terminal_queued_write = None;
                 self.terminal_pending_create_workspace = None;
                 self.terminal_pending_create_cwd = None;
                 self.terminal_pending_close = None;
                 self.terminal_pending_resize = None;
+                self.terminal_fitted_size = None;
+                self.terminal_fit_resize_task = None;
+                self.terminal_pending_create_input = false;
                 // 断连终止一切进行中分页，避免 settle barrier 永久停发。
                 self.timeline_paging = false;
             }
@@ -1873,31 +1904,19 @@ impl AppView {
                     self.projection
                         .apply_terminal_cwd(&terminal_session_id, &cwd);
                 }
-                // SET-6d（ADR-050 D4）：新终端投影初始尺寸取
-                // terminal_settings 生效值（查询缓存；未查询到回落
-                // 80×24 现状）。随后那次 terminal_resize 同尺寸下发。
-                let (settings_columns, settings_rows) =
-                    self.projection.settings_terminal.effective_size();
-                self.projection.apply_terminal_initial_size(
-                    &terminal_session_id,
-                    settings_columns,
-                    settings_rows,
-                );
-                // 先取新终端自己的尺寸，再切回当前 workspace；否则用户在
-                // create 回执前切项目时，会把另一终端的尺寸误发给新终端。
+                // SET-6d（ADR-050 D4）：面板已测到尺寸时用实测列×行，
+                // 否则回落 terminal_settings（未查询到仍是 80×24）。
+                // 投影与随后那次 terminal_resize 必须同尺寸，Host spawn
+                // 尺寸与面板可能不一致，即使本地已相等也要下发。
                 let (columns, rows) = self
-                    .projection
-                    .terminals
-                    .iter()
-                    .find(|terminal| {
-                        terminal.session_id.as_deref() == Some(terminal_session_id.as_str())
-                    })
-                    .map(|terminal| (terminal.columns, terminal.rows))
-                    .unwrap_or((80, 24));
-                self.reconcile_terminal_workspace(cx);
+                    .terminal_fitted_size
+                    .unwrap_or_else(|| self.projection.settings_terminal.effective_size());
+                self.projection
+                    .apply_terminal_initial_size(&terminal_session_id, columns, rows);
                 self.terminal_pending_resize = Some((terminal_session_id.clone(), columns, rows));
                 self.controller
-                    .terminal_resize(terminal_session_id, columns, rows);
+                    .terminal_resize(terminal_session_id.clone(), columns, rows);
+                self.reconcile_terminal_workspace(cx);
                 // 新终端从空输出开始，恢复跟随态。
                 self.terminal_scroll.jump_to_bottom();
                 // 程序化展开 Inspector：关闭可能悬浮的菜单（P3-1 泄漏修复）。
@@ -1905,6 +1924,10 @@ impl AppView {
                 self.close_open_menu(cx);
                 self.inspector_open = true;
                 self.refresh_open_inspector_tab(cx);
+                if pending_create_match && self.terminal_pending_create_input {
+                    self.terminal_pending_create_input = false;
+                    self.send_terminal_input(cx);
+                }
             }
             ControllerEvent::TerminalCreateFailed {
                 workspace_id,
@@ -1914,6 +1937,7 @@ impl AppView {
                 {
                     self.terminal_pending_create_workspace = None;
                     self.terminal_pending_create_cwd = None;
+                    self.terminal_pending_create_input = false;
                 }
                 self.projection
                     .mark_terminal_create_failed(&workspace_id, reason.clone());
@@ -1936,18 +1960,26 @@ impl AppView {
                     if pending_id == terminal_session_id
                         && self.projection.terminal.session_id.as_deref()
                             == Some(terminal_session_id.as_str())
+                        && !pending_text.is_empty()
                         && self.terminal_input.read(cx).text() == pending_text
                     {
                         self.terminal_input.update(cx, |input, cx| input.clear(cx));
                     }
                 }
-                self.status_hint = Some(i18n::t("status.terminal_input_sent").into());
+                self.flush_queued_terminal_write(&terminal_session_id, cx);
             }
             ControllerEvent::TerminalWriteFailed {
                 terminal_session_id,
                 reason,
             } => {
                 self.terminal_pending_write = None;
+                if self
+                    .terminal_queued_write
+                    .as_ref()
+                    .is_some_and(|(id, _)| id == &terminal_session_id)
+                {
+                    self.terminal_queued_write = None;
+                }
                 self.projection
                     .note_terminal_io_failed(&terminal_session_id, reason.clone());
             }
@@ -1958,6 +1990,7 @@ impl AppView {
             } => {
                 self.projection
                     .apply_terminal_resize(&terminal_session_id, columns, rows);
+                let explicit_resize = self.terminal_size_draft.is_some();
                 if self.terminal_pending_resize.as_ref().is_some_and(
                     |(pending_id, pending_columns, pending_rows)| {
                         pending_id == &terminal_session_id
@@ -1966,6 +1999,7 @@ impl AppView {
                     },
                 ) {
                     self.terminal_pending_resize = None;
+                    self.maybe_apply_fitted_terminal_size(cx);
                 }
                 if terminal_resize_receipt_clears_draft(
                     self.projection.terminal.session_id.as_deref(),
@@ -1975,8 +2009,9 @@ impl AppView {
                 ) {
                     self.terminal_size_draft = None;
                 }
-                if self.projection.terminal.session_id.as_deref()
-                    == Some(terminal_session_id.as_str())
+                if explicit_resize
+                    && self.projection.terminal.session_id.as_deref()
+                        == Some(terminal_session_id.as_str())
                 {
                     self.status_hint = Some(i18n::t2(
                         "status.terminal_size",
@@ -3396,6 +3431,31 @@ impl AppView {
         self.route == AppRoute::Workspace
     }
 
+    /// GUI4：状态栏左栏项目 / 分支。无数据不占空洞。
+    pub(super) fn status_bar_leading_text(&self) -> Option<String> {
+        let project = self
+            .projection
+            .active_session_id
+            .as_deref()
+            .and_then(|id| self.projection.sessions.iter().find(|s| s.session_id == id))
+            .and_then(|session| session.workspace_id.as_deref())
+            .map(|workspace_id| self.projection.workspace_name(Some(workspace_id)));
+        match (project, self.header_branch()) {
+            (Some(project), Some(branch)) => Some(format!("{project} · {branch}")),
+            (Some(project), None) => Some(project),
+            (None, Some(branch)) => Some(branch),
+            (None, None) => None,
+        }
+    }
+
+    /// GUI4：状态栏右栏优先 status_hint，其次字号反馈，否则连接文案。
+    pub(super) fn status_bar_trailing_text(&self) -> String {
+        self.status_hint
+            .clone()
+            .or_else(|| self.text_scale_feedback.clone())
+            .unwrap_or_else(|| self.connection_status_label())
+    }
+
     fn on_manage_composer_models(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.settings_page = SettingsPage::Providers;
         self.on_open_settings(window, cx);
@@ -3866,6 +3926,7 @@ impl AppView {
         // 终端选择变化后，尺寸草稿跟随新终端的 Host 权威值，避免把为旧
         // 终端准备的尺寸应用到新终端。
         self.terminal_size_draft = None;
+        self.maybe_apply_fitted_terminal_size(cx);
     }
 
     fn reconcile_terminal_draft(&mut self, cx: &mut Context<Self>) {
@@ -4103,11 +4164,6 @@ impl AppView {
             cx.notify();
             return;
         }
-        if self.terminal_pending_write.is_some() {
-            self.status_hint = Some(i18n::t("status.terminal_waiting_write").into());
-            cx.notify();
-            return;
-        }
         if self.projection.terminal.session_id.is_some()
             && !terminal_can_operate(&self.projection.connection, &self.projection.terminal)
         {
@@ -4116,6 +4172,8 @@ impl AppView {
             return;
         }
         if self.projection.terminal.session_id.is_none() {
+            let text = self.terminal_input.read(cx).text().to_string();
+            self.terminal_pending_create_input = !text.is_empty();
             self.ensure_terminal(cx);
             cx.notify();
             return;
@@ -4124,20 +4182,174 @@ impl AppView {
             return;
         };
         let text = self.terminal_input.read(cx).text().to_string();
-        if text.trim().is_empty() {
-            return;
-        }
-        let data = if text.ends_with('\n') {
-            text.clone()
+        let pending_text = text.clone();
+        let data = if text.is_empty() {
+            "\n".to_string()
+        } else if text.ends_with('\n') {
+            text
         } else {
             format!("{text}\n")
         };
-        self.terminal_pending_write = Some((
-            id.clone(),
-            self.projection.terminal.workspace_id.clone(),
-            text,
-        ));
+        self.write_terminal_bytes(id, data, Some(pending_text), cx);
+    }
+
+    fn write_terminal_bytes(
+        &mut self,
+        id: String,
+        data: String,
+        pending_text: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some((pending_id, _, _)) = self.terminal_pending_write.as_ref() {
+            if pending_id == &id {
+                match &mut self.terminal_queued_write {
+                    Some((queued_id, queued)) if queued_id == &id => queued.push_str(&data),
+                    _ => self.terminal_queued_write = Some((id, data)),
+                }
+                return;
+            }
+            self.status_hint = Some(i18n::t("status.terminal_waiting_write").into());
+            cx.notify();
+            return;
+        }
+        if let Some(text) = pending_text {
+            self.terminal_pending_write = Some((
+                id.clone(),
+                self.projection.terminal.workspace_id.clone(),
+                text,
+            ));
+        } else {
+            self.terminal_pending_write = Some((
+                id.clone(),
+                self.projection.terminal.workspace_id.clone(),
+                String::new(),
+            ));
+        }
         self.controller.terminal_write(id, data);
+        cx.notify();
+    }
+
+    fn flush_queued_terminal_write(&mut self, terminal_session_id: &str, cx: &mut Context<Self>) {
+        let Some((queued_id, data)) = self.terminal_queued_write.take() else {
+            return;
+        };
+        if queued_id != terminal_session_id || data.is_empty() {
+            if queued_id != terminal_session_id {
+                self.terminal_queued_write = Some((queued_id, data));
+            }
+            return;
+        }
+        self.write_terminal_bytes(queued_id, data, None, cx);
+    }
+
+    fn intercept_terminal_keystroke(
+        &mut self,
+        keystroke: &gpui::Keystroke,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.open_menu.is_some() || self.quick_search.open {
+            return false;
+        }
+        if !self
+            .terminal_input
+            .read(cx)
+            .focus_handle(cx)
+            .is_focused(window)
+        {
+            return false;
+        }
+        if self.terminal_input.read(cx).is_composing() {
+            return false;
+        }
+        let Some(data) = terminal_view::keystroke_to_pty_bytes(keystroke) else {
+            return false;
+        };
+        let key = keystroke.key.as_str();
+        let has_text = !self.terminal_input.read(cx).text().is_empty();
+        let has_selection = !self.terminal_input.read(cx).selected_range().is_empty();
+        if !terminal_view::should_passthrough_terminal_key(
+            key,
+            keystroke.modifiers.control,
+            has_text,
+            has_selection,
+        ) {
+            return false;
+        }
+        if self.projection.terminal.session_id.is_none() {
+            return false;
+        }
+        if !terminal_can_operate(&self.projection.connection, &self.projection.terminal) {
+            return false;
+        }
+        let Some(id) = self.projection.terminal.session_id.clone() else {
+            return false;
+        };
+        self.write_terminal_bytes(id, data, None, cx);
+        true
+    }
+    fn terminal_fitted_size_from_bounds(&self, width: f32, height: f32) -> Option<(u16, u16)> {
+        terminal_view::size_from_bounds_scaled(
+            width,
+            height,
+            self.text_scale.rem_pixels() / crate::ui::theme::font::BASE_REM_PIXELS,
+        )
+    }
+
+    pub(super) fn terminal_output_size_changed(&self, width: f32, height: f32) -> bool {
+        self.terminal_fitted_size_from_bounds(width, height)
+            .is_some_and(|size| self.terminal_fitted_size != Some(size))
+    }
+
+    pub(super) fn observe_terminal_output_size(
+        &mut self,
+        width: f32,
+        height: f32,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((columns, rows)) = self.terminal_fitted_size_from_bounds(width, height) else {
+            return;
+        };
+        if self.terminal_fitted_size == Some((columns, rows)) {
+            return;
+        }
+        self.terminal_fitted_size = Some((columns, rows));
+        let timer = cx
+            .background_executor()
+            .timer(terminal_view::TERMINAL_RESIZE_DEBOUNCE);
+        self.terminal_fit_resize_task = Some(cx.spawn(async move |this, cx| {
+            timer.await;
+            let _ = this.update(cx, |view, cx| {
+                view.maybe_apply_fitted_terminal_size(cx);
+            });
+        }));
+    }
+
+    pub(super) fn maybe_apply_fitted_terminal_size(&mut self, cx: &mut Context<Self>) {
+        if self.terminal_size_draft.is_some() {
+            return;
+        }
+        let Some((columns, rows)) = self.terminal_fitted_size else {
+            return;
+        };
+        if !terminal_can_operate(&self.projection.connection, &self.projection.terminal) {
+            return;
+        }
+        if self.terminal_pending_resize.is_some() {
+            return;
+        }
+        let Some(id) = self.projection.terminal.session_id.clone() else {
+            return;
+        };
+        if (
+            self.projection.terminal.columns,
+            self.projection.terminal.rows,
+        ) == (columns, rows)
+        {
+            return;
+        }
+        self.terminal_pending_resize = Some((id.clone(), columns, rows));
+        self.controller.terminal_resize(id, columns, rows);
         cx.notify();
     }
 
@@ -4964,10 +5176,30 @@ impl Render for AppView {
                     // StatusBar 只在工作台渲染（常驻），Settings 壳不显示
                     // RunStatusBar（render 与 AX 同源）。
                     .when(self.run_status_visible(), |column| {
-                        column.child(
-                            StatusBar::new()
-                                .centered(timeline_entry::run_metrics_element(&run_metrics)),
-                        )
+                        let mut bar = StatusBar::new()
+                            .centered(timeline_entry::run_metrics_element(&run_metrics))
+                            .trailing(
+                                div()
+                                    .id("status-bar-trailing")
+                                    .flex()
+                                    .flex_row()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .justify_end()
+                                    .child(div().truncate().child(self.status_bar_trailing_text())),
+                            );
+                        if let Some(text) = self.status_bar_leading_text() {
+                            bar = bar.leading(
+                                div()
+                                    .id("status-bar-leading")
+                                    .flex()
+                                    .flex_row()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .child(div().truncate().child(text)),
+                            );
+                        }
+                        column.child(bar)
                     }),
             )
             .children(search_overlay.map(gpui::deferred))

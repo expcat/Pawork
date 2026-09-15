@@ -4461,6 +4461,7 @@ dependencies = [
  "gpui",
  "objc",
  "pawork-client",
+ "pawork-terminal",
  "raw-window-handle",
  "serde_json",
  "smol",
@@ -4613,6 +4614,10 @@ dependencies = [
  "tracing",
  "zeroize",
 ]
+
+[[package]]
+name = "pawork-terminal"
+version = "0.1.0"
 
 [[package]]
 name = "pawork-testkit"

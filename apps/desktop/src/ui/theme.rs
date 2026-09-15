@@ -247,8 +247,6 @@ pub mod font {
     pub const BODY: Rems = from_pixels(16.0);
     /// 20px：页面与应用标题。
     pub const TITLE: Rems = from_pixels(20.0);
-    /// 20px：主操作图标字形（OPT-D 签字：可见图标 20–22px）。
-    pub const ICON: Rems = from_pixels(20.0);
     /// 11px：提示 / 标签 / 次级行。
     pub const XS: Rems = from_pixels(11.0);
     /// 12px：meta 与紧凑辅助文字。
@@ -398,6 +396,8 @@ pub mod metrics {
     pub const RAIL_META_SLOT_WIDTH: f32 = RAIL_SESSION_ACTION_SIZE;
     /// UI-1：30px，共享几何。
     pub const STATUS_BAR_HEIGHT: f32 = 30.0;
+    /// GUI4：居中用量槽左右留白，避免与左右栏重叠。
+    pub const STATUS_BAR_CENTER_INSET: f32 = 120.0;
     // ── Workspace Header / Timeline 几何（R4 Wave A，state-a §2.2/§2.3 与
     // state-b §2 量图取档；render 与 AX 树共用单一来源）──
     /// GUI2-01：Header 上下各 12px 内边距。

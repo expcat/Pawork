@@ -77,7 +77,7 @@ impl RenderOnce for FocusRing {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{AppContext, Context, FocusHandle, Modifiers, Render};
+    use gpui::{Context, FocusHandle, Modifiers, Render};
 
     #[gpui::test]
     fn pointer_focus_stays_functional_without_ring_and_keyboard_restores_it(

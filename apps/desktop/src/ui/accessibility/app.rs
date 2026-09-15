@@ -3375,10 +3375,10 @@ impl AppView {
     }
 
     /// R6 Wave A：Activity 触发器迁至 Workspace Header（header_ax），
-    /// StatusBar 只保留居中的 run-status 信息串。
+    /// StatusBar 只发布居中的 run-status；左右栏视觉不进 AX。
     fn status_ax(&self, frame: AxRect) -> AxNode {
         let now = crate::ui::now_unix_ms();
-        // UI-1：四组元信息居中，共享状态栏可用区域。
+        // 用量串仍占整行框，避免与左右栏重复发布同源文案。
         let run_status_width = frame.width;
         let run_status_x = frame.x;
         let status = AxNode::new("status-bar", AxRole::Group, "Status", frame).child(
@@ -3615,7 +3615,8 @@ mod tests {
                 );
                 let with_feedback = v.composer_outer_height(40.0, window);
                 v.status_hint = Some("new error".into());
-                assert_eq!(v.composer_notes().len(), 2);
+                assert_eq!(v.composer_notes().len(), 0);
+                assert_eq!(v.status_bar_trailing_text(), "new error");
                 assert!(with_feedback > 0.0);
                 cx.notify();
             })
@@ -3626,18 +3627,13 @@ mod tests {
             view.update(cx, |v, _| {
                 assert!(v.text_scale_feedback.is_none());
                 assert_eq!(v.status_hint.as_deref(), Some("new error"));
-                assert_eq!(
-                    v.composer_notes(),
-                    vec![("composer-status-hint", "new error".into())]
-                );
+                assert_eq!(v.composer_notes(), Vec::<(&str, String)>::new());
+                assert_eq!(v.status_bar_trailing_text(), "new error");
                 assert_eq!(v.text_scale, TextScale::Percent150);
                 let with_error = v.composer_outer_height(40.0, window);
                 v.status_hint = None;
                 let without = v.composer_outer_height(40.0, window);
-                assert_eq!(
-                    with_error - without,
-                    metrics::COMPOSER_META_GAP + AppView::composer_meta_height(window)
-                );
+                assert_eq!(with_error, without);
                 let note = crate::ui::settings::settings_mcp_effect_note(&v.resources);
                 assert!(note.contains("config.toml") && note.contains("[mcp.servers."));
                 assert!(!note.contains("Remove updates"));
@@ -4569,13 +4565,12 @@ mod tests {
                 view.projection.sessions[0].workspace_id = Some("project".into());
                 assert!(!view.composer_file_tools_unavailable_visible());
                 assert!(!view.composer_project_task_visible());
-                assert_eq!(
-                    view.composer_notes(),
-                    vec![("composer-status-hint", "keep status".into())]
-                );
+                assert_eq!(view.composer_notes(), Vec::<(&str, String)>::new());
+                assert_eq!(view.status_bar_trailing_text(), "keep status");
                 let tree = view.accessibility_tree(window, cx);
                 assert!(tree.find("composer-file-tools-hint").is_none());
                 assert!(tree.find("composer-project-task").is_none());
+                assert!(tree.find("composer-status-hint").is_none());
                 assert_eq!(
                     tree.find("composer-context").unwrap().value.as_deref(),
                     Some("Context · — / 128000")

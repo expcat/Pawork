@@ -4,24 +4,40 @@ use gpui::{div, prelude::*, px, AnyElement, App, IntoElement, RenderOnce, Styled
 
 use crate::ui::theme::{dark, font, metrics};
 
-/// 底部 30px 状态行：bg.panel + 顶描边 + SM 次要文字。
+/// 底部 30px 状态行：bg.panel + 顶描边 + SM 次要文字（GUI4 三栏）。
 ///
-/// F-13 布局：信息串（RunStatusBar）在行内绝对居中。R6 Wave A 已把
-/// Inspector 折叠态 Activity 触发器迁至 Workspace Header，StatusBar
-/// 不再承载动作。UI-1 高度调整为 30px，四组元信息独立排布。
+/// 左：项目 / 分支；中：Run 用量（AX 仍只发这一串）；右：连接 / 瞬态反馈。
+/// 左右栏不发布 AX，避免与 TaskRail / Composer 同源节点重复。R6 Wave A
+/// 起不再承载 Inspector/Activity 动作。
 #[derive(IntoElement)]
 pub struct StatusBar {
+    leading: Option<AnyElement>,
     centered: Option<AnyElement>,
+    trailing: Option<AnyElement>,
 }
 
 impl StatusBar {
     pub fn new() -> Self {
-        Self { centered: None }
+        Self {
+            leading: None,
+            centered: None,
+            trailing: None,
+        }
     }
 
-    /// 行内绝对居中的信息串（忽略右侧触发器宽度，保持真居中）。
+    pub fn leading(mut self, child: impl IntoElement) -> Self {
+        self.leading = Some(child.into_any_element());
+        self
+    }
+
+    /// 行内绝对居中的信息串（忽略左右栏宽度，保持真居中）。
     pub fn centered(mut self, child: impl IntoElement) -> Self {
         self.centered = Some(child.into_any_element());
+        self
+    }
+
+    pub fn trailing(mut self, child: impl IntoElement) -> Self {
+        self.trailing = Some(child.into_any_element());
         self
     }
 }
@@ -42,14 +58,15 @@ impl RenderOnce for StatusBar {
             .relative()
             .flex()
             .items_center()
-            .justify_end()
+            .justify_between()
             .border_t_1()
             .border_color(dark().border.subtle)
             .bg(dark().bg.panel)
             .text_size(font::SM)
             .text_color(dark().text.secondary)
-            .map(|bar| match self.centered {
-                Some(centered) => bar.child(
+            .child(status_slot(self.leading, true))
+            .when_some(self.centered, |bar, centered| {
+                bar.child(
                     div()
                         .absolute()
                         .left_0()
@@ -61,10 +78,24 @@ impl RenderOnce for StatusBar {
                         .items_center()
                         .justify_center()
                         .overflow_hidden()
-                        .px_3()
+                        .px(px(metrics::STATUS_BAR_CENTER_INSET))
                         .child(centered),
-                ),
-                None => bar,
+                )
             })
+            .child(status_slot(self.trailing, false))
     }
+}
+
+fn status_slot(child: Option<AnyElement>, leading: bool) -> gpui::Div {
+    div()
+        .relative()
+        .occlude()
+        .flex()
+        .min_w_0()
+        .flex_1()
+        .items_center()
+        .overflow_hidden()
+        .when(leading, |slot| slot.justify_start())
+        .when(!leading, |slot| slot.justify_end())
+        .children(child)
 }

@@ -745,7 +745,7 @@ impl AppView {
 
     /// 展开 / 折叠 chevron：换形指示状态（▸ 折叠 / ▾ 展开）。本地视图
     /// 动作，不受写总闸限制；render / 键盘 / AX 三路径同 identifier、
-    /// 同入口。OPT-4a 可见字形合同：36×36 命中区 + font::ICON（20px），
+    /// 同入口。OPT-4a 可见字形合同：36×36 命中区 + metrics::ICON_SIZE（20px），
     /// 与 rail 图标按钮同款几何（12px 文本字号在真窗口 fallback 字体下
     /// 缩成 2-3px 圆点，不可见）。
     fn settings_provider_expand_button(

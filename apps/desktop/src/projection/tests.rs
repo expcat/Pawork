@@ -2979,19 +2979,6 @@ fn tool_output(sequence: u64, tool_call_id: &str, delta: &str) -> AppEventEnvelo
     )
 }
 
-fn tool_completed(sequence: u64, tool_call_id: &str, success: bool) -> AppEventEnvelope {
-    event(
-        sequence,
-        json!({
-            "type": "tool_completed",
-            "data": {
-                "run_id": "r-1",
-                "tool_call_id": tool_call_id,
-                "success": success
-            }
-        }),
-    )
-}
 
 #[test]
 fn live_tool_output_fills_running_entry() {

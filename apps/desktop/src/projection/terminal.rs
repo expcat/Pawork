@@ -1,11 +1,11 @@
-//! Inspector Terminal 投影：滚动文本，不是 VT100 / 本地 PTY。
+//! Inspector Terminal 投影：滚动文本缓冲，不是 VT100 / 本地 PTY。
 
 use pawork_client::TerminalExitReason;
 use serde_json::Value;
 
 use super::DesktopProjection;
 
-/// Inspector Terminal 面：滚动文本，不是 VT100 / 本地 PTY。
+/// Inspector Terminal 面：滚动文本缓冲，不是 VT100 / 本地 PTY。显示层解析 CR / SGR，本投影只累积原始 output。
 ///
 /// cwd 只承载 Host 可证事实：快照缺 cwd 键（旧 Host / 记账缺失）时用
 /// [TERMINAL_CWD_UNKNOWN] 诚实占位，不臆造工作区根 "."。
@@ -37,7 +37,7 @@ pub struct TerminalState {
 pub(crate) const TERMINAL_CWD_UNKNOWN: &str = "unknown";
 
 /// 终端滚动视图的本地缓冲上限：超限从最旧处裁剪，保留最新输出。
-/// 纯文本视图（非 VT emulator）只承诺可回读的尾部滚动内容。
+/// 显示层不是完整 VT emulator，只承诺可回读的尾部滚动内容。
 const TERMINAL_OUTPUT_MAX_BYTES: usize = 256 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]

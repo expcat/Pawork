@@ -1,0 +1,10 @@
+[package]
+name = "pawork-terminal"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
+description = "Pawork 终端显示核心：行缓冲解析（CR / 退格 / EL / SGR 16 色）、按键到 PTY 字节映射、面板像素到列行估算"
+
+[dependencies]

@@ -1,7 +1,7 @@
 //! UI-4：居中输入卡片（草稿 + 模型 / 发送），外围保留留白。
 //! 项目、ContextMeter 与瞬态提示在卡片下方，避免争抢动作行。
 //! Send 与 Cancel 同槽互换（element id `composer-action`）；placeholder 只走状态机，
-//! Forked / 发送失败等瞬态反馈落 footer Label。
+//! Forked / 发送失败等瞬态反馈落 StatusBar 右栏。
 
 use gpui::{
     div, point, prelude::*, px, Context, Corner, Pixels, Point, SharedString, TextRun, Window,
@@ -444,12 +444,6 @@ impl AppView {
         if self.active_task_hidden_by_filter() {
             notes.push(("composer-filter-hint", t("rail.task_hidden").into()));
         }
-        if let Some(hint) = &self.status_hint {
-            notes.push(("composer-status-hint", hint.clone()));
-        }
-        if let Some(hint) = &self.text_scale_feedback {
-            notes.push(("composer-text-scale-hint", hint.clone()));
-        }
         notes
     }
 
@@ -854,7 +848,7 @@ impl AppView {
     }
 
     /// Composer 空输入 placeholder：只走连接/session/run 状态机，不被
-    /// status_hint 覆盖（瞬态反馈改落 footer Label）。
+    /// status_hint 覆盖（瞬态反馈改落 StatusBar 右栏）。
     pub(super) fn composer_placeholder_hint(&self) -> String {
         composer_placeholder_hint(
             &self.projection.connection,
@@ -1114,7 +1108,7 @@ mod tests {
             ),
             "Connect failed — click Reconnect."
         );
-        // 瞬态 status_hint 不再覆盖 placeholder 状态机。
+        // 瞬态 status_hint 不再覆盖 placeholder 状态机（改落 StatusBar）。
         assert_ne!(composer_placeholder_hint(&connected, false), "Forked · s-1");
         assert!(composer_send_allowed(true, false, false, true, false));
         assert!(!composer_send_allowed(true, false, false, true, true));

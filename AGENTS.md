@@ -6,7 +6,7 @@
 
 - **事实源优先**：以当前分支、工作区差异、源码、生成物、运行日志与真实远程状态为准；历史结论只作检索线索，使用前重新验证。
 - **Spec vs 源码**：[docs/spec/crates/](docs/spec/README.md) 各包 Spec 是理解包内功能的**首选读物**（目标：读文档即可了解该包全部功能，尽量少读代码），但**不是**事实源——公开 API 与行为以源码 / rustdoc / golden 为准；架构布局与冻结契约以 [docs/architecture.md](docs/architecture.md) 为准。冲突以源码为准并**同批回写 Spec**，禁止按过期 Spec 改代码。
-- **按写入集加载 Spec**：进某包前读 [docs/spec/crates/](docs/spec/README.md) 该包一篇；不要一次读完 21 份。跨包链路（Agent loop / GUI 连接 / 事件持久化与重放 / 凭证与脱敏）读 [docs/spec/flows.md](docs/spec/flows.md) 对应一条。
+- **按写入集加载 Spec**：进某包前读 [docs/spec/crates/](docs/spec/README.md) 该包一篇；不要一次读完 22 份。跨包链路（Agent loop / GUI 连接 / 事件持久化与重放 / 凭证与脱敏）读 [docs/spec/flows.md](docs/spec/flows.md) 对应一条。
 - **最小写入集**：保留用户已有未提交改动；新增改动只触碰任务必需的文件。
 - **先确认已落地的内容，再补缺口**：避免重复规划或重做已完成的工作。
 - **范围明确的实现 / 修复任务，定位后直接执行**：不把简单任务过度规划。
@@ -28,7 +28,7 @@
 - 项目名：`Pawork`；CLI 二进制名：`pawork`。
 - `pawork`（apps/pawork）是 Core 的唯一正式宿主；不存在独立的 daemon / rpc 入口。
 - 仓库根即 Cargo workspace 根。
-- 当前布局为 21 成员（19 库 + 2 应用）：19 库平铺 `crates/<短名>`（目录 = 包名去 `pawork-` 前缀），2 应用 `apps/{pawork,desktop}`；包清单与依赖方向见 [docs/architecture.md](docs/architecture.md) §2。
+- 当前布局为 22 成员（20 库 + 2 应用）：20 库平铺 `crates/<短名>`（目录 = 包名去 `pawork-` 前缀），2 应用 `apps/{pawork,desktop}`；包清单与依赖方向见 [docs/architecture.md](docs/architecture.md) §2。
 - crate 统一 `pawork-` 前缀。**当前不新增包**，只往既有包加模块；包布局变更须向用户确认。
 - 归档资产以 git tag `v2-final` 兜底，复活条件登记在 [docs/spec/backlog.md](docs/spec/backlog.md)；不得把归档代码复制回仓库其它位置。
 
@@ -155,9 +155,9 @@ Lagged 后不得伪造起点直发；改经 hub 真序列取信封，并回 `Rep
 
 - 关闭窗口不取消已进入 Core 的 Run。
 - 功能结论必须同时有真实窗口状态与源码外事实（文件、Git、Host 或 PTY 输出）；截图不写入仓库。
-- Terminal 是过滤 ANSI/VT 的纯文本视图，不是完整 VT emulator。
+- Terminal 是行缓冲滚动文本：解析 CR 覆盖、退格与 SGR 着色，并把 Ctrl-C / Tab / ↑ 直通 PTY；不是完整 VT emulator。
 - 菜单开着时 Timeline 条目被虚拟化卸载，浮层随条目回收，属可接受行为。
-- `apps/desktop` 直接业务依赖只允许 `pawork-client`。
+- `apps/desktop` 直接业务依赖只允许 `pawork-client` 与 `pawork-terminal`（终端显示核心纯库）。
 - 功能测试用模型固定为 `opencode-go / glm-5.3-flash`（当次 Host 参数，不写持久默认）。
 
 **运行中 bundle 覆盖即 SIGKILL**

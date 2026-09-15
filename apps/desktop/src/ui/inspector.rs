@@ -4,7 +4,7 @@
 //! ScrollHandle（FollowScroll），不随 Timeline 改 list()；各页滚动状态
 //! 独立保留。宽窗 440px 侧栏；窄窗显式打开时同一实体占用中央 Workspace。
 
-use gpui::{div, prelude::*, px, Context, FocusHandle, MouseDownEvent, Window};
+use gpui::{canvas, div, prelude::*, px, Context, FocusHandle, MouseDownEvent, Window};
 
 use crate::projection::{ConnectionState, TerminalState, TERMINAL_CWD_UNKNOWN};
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
@@ -19,6 +19,10 @@ use crate::ui::theme::{dark, font, metrics};
 use super::{
     terminal_can_operate, terminal_can_reopen, terminal_close_label, terminal_known_ended, AppView,
     MenuKind,
+};
+
+pub(crate) use super::terminal_view::{
+    plain_terminal_output, render_terminal_lines, terminal_text_size,
 };
 
 /// Terminal 页无输出时的占位文案（R2 Wave B）：视觉与 AX 树共用同源。
@@ -118,47 +122,6 @@ pub(crate) fn terminal_stepper_ax_rects(
         x += width + gap;
     }
     rects
-}
-
-/// Terminal 面板当前是纯文本视图，不是 VT emulator。显示前移除 ANSI/VT
-/// 控制序列，避免把 bracketed-paste 等终端状态字节直接暴露给用户。
-pub(crate) fn plain_terminal_output(raw: &str) -> String {
-    let mut plain = String::with_capacity(raw.len());
-    let mut chars = raw.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch != '\u{1b}' {
-            plain.push(ch);
-            continue;
-        }
-
-        match chars.next() {
-            Some('[') => {
-                for sequence_char in chars.by_ref() {
-                    if ('@'..='~').contains(&sequence_char) {
-                        break;
-                    }
-                }
-            }
-            Some(']') | Some('P') | Some('X') | Some('^') | Some('_') => {
-                let mut saw_escape = false;
-                for sequence_char in chars.by_ref() {
-                    if sequence_char == '\u{7}' || (saw_escape && sequence_char == '\\') {
-                        break;
-                    }
-                    saw_escape = sequence_char == '\u{1b}';
-                }
-            }
-            Some(_) | None => {}
-        }
-    }
-
-    plain
-        .replace("\r\n", "\n")
-        .replace('\r', "\n")
-        .lines()
-        .map(str::trim_end)
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 /// Inspector 顶层面板（固定三页；默认 Changes）。名称选择器列出已接通的
@@ -413,14 +376,11 @@ impl AppView {
     ) -> impl IntoElement {
         let terminal = self.projection.terminal.clone();
         let notice = self.terminal_notice_text();
-        let output = if terminal.output.is_empty() {
-            if notice.is_some() {
-                String::new()
-            } else {
-                terminal_empty_output().to_string()
-            }
+        let empty_output = terminal.output.is_empty();
+        let output_lines = if empty_output {
+            Vec::new()
         } else {
-            plain_terminal_output(&terminal.output)
+            render_terminal_lines(&terminal.output)
         };
         let (columns, rows) = terminal_size_for_display(&terminal, self.terminal_size_draft);
         let size_label = format!("{columns}×{rows}");
@@ -534,18 +494,49 @@ impl AppView {
                     .flex_col()
                     .flex_1()
                     .min_h_0()
+                    .child({
+                        // 量视口，不量滚动内容：canvas 挂在 overflow 容器外，
+                        // 否则长输出会把列×行撑到 500×200。
+                        let view = cx.entity().downgrade();
+                        canvas(
+                            move |bounds, _, app| {
+                                let width = f32::from(bounds.size.width);
+                                let height = f32::from(bounds.size.height);
+                                let changed = view.upgrade().is_some_and(|entity| {
+                                    entity.read(app).terminal_output_size_changed(width, height)
+                                });
+                                if changed {
+                                    app.defer(move |app| {
+                                        let _ = view.update(app, |view, cx| {
+                                            view.observe_terminal_output_size(width, height, cx);
+                                        });
+                                    });
+                                }
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .absolute()
+                        .size_full()
+                    })
                     .child(
                         div()
                             .id("terminal-output")
+                            .relative()
                             .flex()
                             .flex_col()
                             .flex_1()
                             .min_h_0()
                             .track_scroll(self.terminal_scroll.handle())
                             .overflow_y_scroll()
+                            .overflow_x_scroll()
                             .px_2()
                             .py_1()
-                            .text_size(font::SM)
+                            .font_family(font::MONO)
+                            .text_size(terminal_text_size())
+                            .line_height(gpui::rems(
+                                super::terminal_view::TERMINAL_LINE_HEIGHT
+                                    / crate::ui::theme::font::BASE_REM_PIXELS,
+                            ))
                             .text_color(dark().text.emphasis)
                             .on_scroll_wheel(cx.listener(|view, _event, _window, cx| {
                                 view.terminal_scroll.on_scroll_wheel();
@@ -562,7 +553,22 @@ impl AppView {
                             .when(notice.is_some(), |area| {
                                 area.child(self.terminal_notice_element(cx))
                             })
-                            .child(output),
+                            .when(empty_output && notice.is_none(), |area| {
+                                area.child(
+                                    div()
+                                        .whitespace_normal()
+                                        .text_color(dark().text.secondary)
+                                        .child(terminal_empty_output()),
+                                )
+                            })
+                            .children(output_lines.into_iter().map(|(_, styled)| {
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .w_full()
+                                    .whitespace_nowrap()
+                                    .child(styled)
+                            })),
                     )
                     .when(!self.terminal_scroll.is_following(), |area| {
                         area.child(BackToBottom::new(
@@ -778,6 +784,7 @@ impl AppView {
         }
         self.reconcile_terminal_draft(cx);
         self.terminal_size_draft = None;
+        self.maybe_apply_fitted_terminal_size(cx);
         self.terminal_scroll.jump_to_bottom();
         cx.notify();
     }

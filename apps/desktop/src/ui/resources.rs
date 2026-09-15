@@ -6,6 +6,7 @@ use gpui::{div, prelude::*, px, Context, ScrollHandle};
 
 use crate::controller::McpServerEntry;
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
+use crate::ui::components::empty_state::EmptyState;
 use crate::ui::components::icon::{icon_sized, Icon};
 use crate::ui::components::label::Label;
 use crate::ui::components::skeleton::loading_skeleton;
@@ -32,7 +33,7 @@ pub(super) struct ResourcesPanelState {
     /// 语义与 settings_general / settings_permissions 的 available 一致）。
     pub available: bool,
     /// SET-6c：mcp_test / mcp_server_remove 失败文案（Settings 页可见；
-    /// 工作台 Composer footer 仍走 status_hint）。成功回执才清除。
+    /// 工作台 StatusBar 右栏仍走 status_hint）。成功回执才清除。
     pub action_error: Option<String>,
     pub scroll: ScrollHandle,
 }
@@ -240,7 +241,7 @@ impl AppView {
 }
 
 /// 占位文案按 i18n key 取主文案与说明（同源；不能按翻译后的串匹配）。
-fn resources_placeholder(key: &'static str) -> gpui::Div {
+fn resources_placeholder(key: &'static str) -> EmptyState {
     let description = match key {
         "resources.unavailable" => t("resources.unavailable_desc"),
         "resources.loading" => t("resources.loading_desc"),
@@ -259,7 +260,7 @@ fn resources_placeholder(key: &'static str) -> gpui::Div {
 }
 
 /// 失败占位：标题本地化；reason 为 wire 数据，不翻译。
-fn resources_placeholder_colored(text: impl Into<String>, color: gpui::Rgba) -> gpui::Div {
+fn resources_placeholder_colored(text: impl Into<String>, color: gpui::Rgba) -> EmptyState {
     resources_placeholder_content(t("resources.error_title").into(), text.into(), color)
 }
 
@@ -267,15 +268,10 @@ fn resources_placeholder_content(
     title: String,
     description: String,
     color: gpui::Rgba,
-) -> gpui::Div {
-    div()
-        .flex()
-        .flex_col()
-        .flex_1()
-        .items_center()
-        .justify_center()
-        .gap_2()
-        .p_6()
+) -> EmptyState {
+    EmptyState::new()
+        .icon(Icon::Resources)
+        .icon_size(px(metrics::ICON_SIZE))
         .child(Label::new(title).size(font::BASE).color(color))
         .child(
             Label::new(description)

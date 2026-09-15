@@ -821,12 +821,12 @@ async fn teardown_stale_connection(
     let _ = events.send(ControllerEvent::Disconnected { reason }).await;
 }
 
-pub(super) fn record_shared_last_acked(state: &SharedState, sequence: u64) {
+fn record_shared_last_acked(state: &SharedState, sequence: u64) {
     let mut slot = state.last_acked.lock().unwrap_or_else(|p| p.into_inner());
     *slot = Some(advance_last_acked(*slot, sequence));
 }
 
-pub(super) fn advance_last_acked(current: Option<u64>, incoming: u64) -> u64 {
+fn advance_last_acked(current: Option<u64>, incoming: u64) -> u64 {
     current.map_or(incoming, |prev| prev.max(incoming))
 }
 

@@ -1,13 +1,11 @@
-//! Label / Badge 文本基础组件（R8 波 B 轨 1）。
+//! Label 文本基础组件（R8 波 B 轨 1）。
 //!
 //! 统一 mod.rs 中散置的单行文本 span：色阶走 text.* token，视觉与迁移前一致。
-//! Badge 是状态语义别名（连接 / 运行状态），默认 12px meta + text.secondary。
 
 use gpui::{
     div, prelude::*, App, IntoElement, Rems, RenderOnce, Rgba, SharedString, Styled, Window,
 };
 
-use crate::ui::theme::{dark, font};
 
 /// 单行静态文本；字号 / 颜色由调用方经 theme token 指定。
 #[derive(IntoElement)]
@@ -47,25 +45,5 @@ impl RenderOnce for Label {
             label = label.text_color(color);
         }
         label.child(self.text)
-    }
-}
-
-/// 状态徽标文本（连接状态 / 运行状态）；默认 12px meta + text.secondary。
-#[derive(IntoElement)]
-pub struct Badge {
-    text: SharedString,
-}
-
-impl Badge {
-    pub fn new(text: impl Into<SharedString>) -> Self {
-        Self { text: text.into() }
-    }
-}
-
-impl RenderOnce for Badge {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        Label::new(self.text)
-            .size(font::SM)
-            .color(dark().text.secondary)
     }
 }

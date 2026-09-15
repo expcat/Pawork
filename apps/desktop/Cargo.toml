@@ -14,6 +14,8 @@ path = "src/main.rs"
 [dependencies]
 # 业务依赖唯一入口：pawork-client（re-export 协议/传输类型）。
 pawork-client = { path = "../../crates/client" }
+# 终端显示核心（行缓冲解析 / 按键映射 / 尺寸估算）；纯库，不含连接与协议。
+pawork-terminal = { path = "../../crates/terminal" }
 # UI / 运行时基建（ADR-035：gpui 精确锁定 0.2.2）。
 gpui = "=0.2.2"
 smol = "2"

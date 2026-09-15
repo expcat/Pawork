@@ -5,13 +5,14 @@
 
 use std::collections::BTreeMap;
 
-use gpui::{div, prelude::*, px, Context, Div, MouseDownEvent, ScrollHandle};
+use gpui::{div, prelude::*, px, Context, MouseDownEvent, ScrollHandle};
 
 use crate::controller::{
     DiffFileDetail, DiffFileSummary, DiffLineDetail, DiffLineKind, GitDiffInfo,
 };
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
 use crate::ui::components::dropdown::{MenuPanel, MenuRow};
+use crate::ui::components::empty_state::EmptyState;
 use crate::ui::components::focus_ring::focus_ring;
 use crate::ui::components::icon::{icon_sized, Icon};
 use crate::ui::components::label::Label;
@@ -122,17 +123,17 @@ pub(super) fn changes_status_chip(status: &str) -> (String, gpui::Rgba) {
         "M" | "modified" | "Modified" => ("M".into(), palette.semantic.warning_text),
         "A" | "added" | "Added" => ("A".into(), palette.semantic.success_fg),
         "D" | "deleted" | "Deleted" | "removed" => ("D".into(), palette.semantic.danger_text),
-    // 单字符状态码（R / ? 等）原样；长词（untracked / renamed）收首字母大写，
-    // 否则会溢出 M/A/D 单列色标槽。
-    other if other.chars().count() == 1 => (other.to_string(), palette.text.tertiary),
-    other => (
-        other
-            .chars()
-            .next()
-            .map(|c| c.to_uppercase().collect())
-            .unwrap_or_else(|| "?".to_string()),
-        palette.text.tertiary,
-    ),
+        // 单字符状态码（R / ? 等）原样；长词（untracked / renamed）收首字母大写，
+        // 否则会溢出 M/A/D 单列色标槽。
+        other if other.chars().count() == 1 => (other.to_string(), palette.text.tertiary),
+        other => (
+            other
+                .chars()
+                .next()
+                .map(|c| c.to_uppercase().collect())
+                .unwrap_or_else(|| "?".to_string()),
+            palette.text.tertiary,
+        ),
     }
 }
 
@@ -809,12 +810,13 @@ impl AppView {
 
     fn changes_summary_element(&self) -> impl IntoElement {
         let body = match &self.changes.fetch {
-            ChangesFetch::Idle => changes_placeholder("changes.unavailable"),
+            ChangesFetch::Idle => changes_placeholder("changes.unavailable").into_any_element(),
             ChangesFetch::Fetching if self.changes.files.is_empty() => {
-                changes_placeholder("changes.loading")
+                changes_placeholder("changes.loading").into_any_element()
             }
             ChangesFetch::Failed(reason) => {
                 changes_placeholder_colored(reason.clone(), dark().semantic.danger_text)
+                    .into_any_element()
             }
             ChangesFetch::Fetching | ChangesFetch::Ready => {
                 let (files, additions, deletions) = self.changes.totals();
@@ -859,6 +861,7 @@ impl AppView {
                     .child(summary_row(t("changes.branch"), branch))
                     .child(summary_row(t("changes.dirty_files"), dirty_files))
                     .child(summary_row(t("changes.work_dir"), work_dir))
+                    .into_any_element()
             }
         };
         div().flex().flex_col().flex_1().min_h_0().child(body)
@@ -943,7 +946,7 @@ fn session_mismatch<'a>(data: Option<&'a str>, active: Option<&str>) -> Option<&
 }
 
 /// 占位文案按 i18n key 取主文案与说明（同源；不能按翻译后的串匹配）。
-fn changes_placeholder(key: &'static str) -> Div {
+fn changes_placeholder(key: &'static str) -> EmptyState {
     let description = match key {
         "changes.unavailable" => t("changes.unavailable_desc"),
         "changes.loading" => t("changes.loading_desc"),
@@ -965,19 +968,18 @@ fn changes_placeholder(key: &'static str) -> Div {
 }
 
 /// 失败占位：标题本地化；reason 为 wire 数据，不翻译。
-fn changes_placeholder_colored(text: impl Into<String>, color: gpui::Rgba) -> Div {
+fn changes_placeholder_colored(text: impl Into<String>, color: gpui::Rgba) -> EmptyState {
     changes_placeholder_content(t("changes.error_title").into(), text.into(), color)
 }
 
-fn changes_placeholder_content(title: String, description: String, color: gpui::Rgba) -> Div {
-    div()
-        .flex()
-        .flex_col()
-        .flex_1()
-        .items_center()
-        .justify_center()
-        .gap_2()
-        .p_6()
+fn changes_placeholder_content(
+    title: String,
+    description: String,
+    color: gpui::Rgba,
+) -> EmptyState {
+    EmptyState::new()
+        .icon(Icon::Changes)
+        .icon_size(px(metrics::ICON_SIZE))
         .child(Label::new(title).size(font::BASE).color(color))
         .child(
             Label::new(description)
