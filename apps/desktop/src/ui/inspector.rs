@@ -1,10 +1,10 @@
-//! Inspector 工作面板：统一工具 / PTY 标签栏、打开工具菜单与收起动作；
+//! Inspector 工作面板：统一工具 / 文件 / PTY 标签栏、打开工具菜单与收起动作；
 //! 无标签时显示工具入口。关闭 PTY 标签仍等待 Host 确认；
 //! Changes 内保留 Files / Summary 二级页签。终端面板滚动维持
 //! ScrollHandle（FollowScroll），不随 Timeline 改 list()；各页滚动状态
 //! 独立保留。宽窗 440px 侧栏；窄窗显式打开时同一实体占用中央 Workspace。
 
-use gpui::{Context, Focusable, MouseDownEvent, Window, canvas, div, prelude::*, px};
+use gpui::{App, Context, Focusable, MouseDownEvent, Window, canvas, div, prelude::*, px};
 
 use crate::projection::{ConnectionState, TERMINAL_CWD_UNKNOWN};
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
@@ -31,16 +31,18 @@ pub(super) enum InspectorTab {
     Terminal,
     Resources,
     Browser,
+    Files,
     #[default]
     Home,
 }
 
 impl InspectorTab {
-    pub(super) const ALL: [Self; 4] = [
+    pub(super) const ALL: [Self; 5] = [
         Self::Changes,
         Self::Terminal,
         Self::Resources,
         Self::Browser,
+        Self::Files,
     ];
 
     pub(super) fn label(self) -> &'static str {
@@ -50,6 +52,7 @@ impl InspectorTab {
             Self::Terminal => t("inspector.tab_terminal"),
             Self::Resources => t("inspector.tab_resources"),
             Self::Browser => t("inspector.tab_browser"),
+            Self::Files => t("inspector.tab_files"),
         }
     }
 
@@ -60,6 +63,7 @@ impl InspectorTab {
             Self::Terminal => "inspector-tab-terminal",
             Self::Resources => "inspector-tab-resources",
             Self::Browser => "inspector-tab-browser",
+            Self::Files => "inspector-tab-files",
         }
     }
 
@@ -70,17 +74,25 @@ impl InspectorTab {
             Self::Terminal => "inspector-menu-terminal",
             Self::Resources => "inspector-menu-resources",
             Self::Browser => "inspector-menu-browser",
+            Self::Files => "inspector-menu-files",
         }
     }
 }
 
-/// 同一标签栏里的工具页或真实 PTY；渲染与 AX 共用这份列表。
+#[derive(Clone)]
+pub(super) struct FileTab {
+    pub workspace_id: String,
+    pub path: String,
+}
+
+/// 工具页、文件与真实 PTY 共用的标签；渲染、键盘与 AX 使用同一份列表。
 #[derive(Clone)]
 pub(super) struct PanelTab {
     pub id: String,
     pub label: String,
     pub tool: InspectorTab,
     pub terminal_id: Option<String>,
+    pub file: Option<FileTab>,
     pub selected: bool,
     pub close_enabled: bool,
 }
@@ -102,6 +114,7 @@ impl InspectorTab {
             Self::Terminal => Icon::Terminal,
             Self::Resources => Icon::Resources,
             Self::Browser => Icon::Network,
+            Self::Files => Icon::File,
             Self::Home => Icon::Inspector,
         }
     }
@@ -112,6 +125,7 @@ impl InspectorTab {
             Self::Terminal => "inspector.terminal_hint",
             Self::Resources => "inspector.resources_hint",
             Self::Browser => "inspector.browser_hint",
+            Self::Files => "inspector.files_hint",
             Self::Home => "inspector.home_hint",
         })
     }
@@ -180,7 +194,7 @@ impl AppView {
             }
             dropdown = dropdown.panel(panel);
         }
-        let tabs = self.panel_tabs();
+        let tabs = self.panel_tabs(cx);
         if std::mem::take(&mut self.inspector_reveal_selected) {
             if let Some(index) = tabs.iter().position(|tab| tab.selected) {
                 self.inspector_tabs_scroll.scroll_to_item(index);
@@ -272,6 +286,7 @@ impl AppView {
             InspectorTab::Terminal => self.terminal_page_element(window, cx).into_any_element(),
             InspectorTab::Resources => self.resources_element(cx).into_any_element(),
             InspectorTab::Browser => self.browser_element(cx).into_any_element(),
+            InspectorTab::Files => self.files_element(window, cx).into_any_element(),
         };
         let mut panel = if placement.is_center() {
             Panel::fill()
@@ -291,7 +306,7 @@ impl AppView {
         }
     }
 
-    pub(super) fn panel_tabs(&self) -> Vec<PanelTab> {
+    pub(super) fn panel_tabs(&self, cx: &App) -> Vec<PanelTab> {
         let workspace = self.inspector_workspace_id();
         let mut tools = self.inspector_open_tabs.clone();
         if self.inspector_tab != InspectorTab::Home && !tools.contains(&self.inspector_tab) {
@@ -307,6 +322,13 @@ impl AppView {
         }
         let mut tabs = Vec::new();
         for tool in tools {
+            if tool == InspectorTab::Files {
+                let files = self.files_panel_tabs(cx);
+                if !files.is_empty() {
+                    tabs.extend(files);
+                    continue;
+                }
+            }
             if tool == InspectorTab::Terminal {
                 let terminals = self.projection.workspace_terminals(workspace.as_deref());
                 if !terminals.is_empty() {
@@ -319,6 +341,7 @@ impl AppView {
                             label: format!("{} {}", tool.label(), index + 1),
                             tool,
                             terminal_id: Some(id.clone()),
+                            file: None,
                             selected: self.inspector_tab == tool
                                 && self.projection.terminal.session_id.as_ref() == Some(id),
                             close_enabled: self.terminal_pending_close.is_none()
@@ -339,6 +362,7 @@ impl AppView {
                 },
                 tool,
                 terminal_id: None,
+                file: None,
                 selected: tool == self.inspector_tab,
                 close_enabled: tool != InspectorTab::Terminal
                     || self.terminal_pending_create_workspace.is_none(),
@@ -395,13 +419,20 @@ impl AppView {
         cx.notify();
     }
 
-    pub(super) fn close_panel_tab(&mut self, tab: &PanelTab, cx: &mut Context<Self>) {
+    pub(super) fn close_panel_tab(
+        &mut self,
+        tab: &PanelTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if !tab.close_enabled {
             return;
         }
         if let Some(id) = &tab.terminal_id {
             self.terminal_pending_close = Some(id.clone());
             self.controller.terminal_close(id.clone());
+        } else if let Some(file) = &tab.file {
+            self.close_file_tab(file, window, cx);
         } else {
             self.close_inspector_tool(tab.tool, cx);
         }
@@ -525,18 +556,18 @@ impl AppView {
                             ))
                             .track_focus(&close_focus)
                             .disabled(!tab.close_enabled)
-                            .on_click(cx.listener(move |view, event, _, cx| {
+                            .on_click(cx.listener(move |view, event, window, cx| {
                                 if view.consume_button_key_click(&click_close_id, event) {
                                     return;
                                 }
-                                view.close_panel_tab(&click_close_tab, cx);
+                                view.close_panel_tab(&click_close_tab, window, cx);
                             }))
-                            .on_activate(cx.listener(move |view, _, _, cx| {
+                            .on_activate(cx.listener(move |view, _, window, cx| {
                                 if view.open_menu.is_some() {
                                     return;
                                 }
                                 view.note_button_key_activate(&key_close_id);
-                                view.close_panel_tab(&tab, cx);
+                                view.close_panel_tab(&tab, window, cx);
                                 cx.stop_propagation();
                             })),
                     ),
@@ -546,6 +577,8 @@ impl AppView {
     pub(super) fn activate_panel_tab(&mut self, tab: &PanelTab, cx: &mut Context<Self>) {
         if let Some(id) = &tab.terminal_id {
             self.on_select_terminal_tab(id, cx);
+        } else if let Some(file) = &tab.file {
+            self.activate_file_tab(file, cx);
         } else {
             self.select_inspector_tab(tab.tool, cx);
         }

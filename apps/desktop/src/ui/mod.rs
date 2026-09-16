@@ -10,6 +10,7 @@ mod barriers;
 mod browser;
 mod changes;
 mod components;
+mod files;
 pub(crate) mod i18n;
 mod input_area;
 mod inspector;
@@ -79,6 +80,7 @@ actions!(
         IncreaseTextSize,
         DecreaseTextSize,
         ResetTextSize,
+        SaveFile,
     ]
 );
 
@@ -91,6 +93,7 @@ pub(crate) const APP_VIEW_KEYBINDINGS: &[(&str, &str)] = &[
     ("cmd-3", "Deny"),
     ("cmd-n", "NewTask"),
     ("cmd-i", "ToggleInspector"),
+    ("cmd-s", "SaveFile"),
     ("cmd-k", "OpenQuickSearch"),
     ("cmd-f", "FindConversation"),
     ("cmd-alt-up", "TaskCycleUp"),
@@ -276,6 +279,7 @@ pub fn install_keybindings(cx: &mut App) {
         KeyBinding::new("cmd-3", Deny, Some("AppView")),
         KeyBinding::new("cmd-n", NewTask, Some("AppView")),
         KeyBinding::new("cmd-i", ToggleInspector, Some("AppView")),
+        KeyBinding::new("cmd-s", SaveFile, Some("AppView")),
         KeyBinding::new("cmd-k", OpenQuickSearch, Some("AppView")),
         KeyBinding::new("cmd-f", FindConversation, Some("AppView")),
         KeyBinding::new("cmd-alt-up", TaskCycleUp, Some("AppView")),
@@ -286,6 +290,7 @@ pub fn install_keybindings(cx: &mut App) {
         KeyBinding::new("cmd--", DecreaseTextSize, Some("AppView")),
         KeyBinding::new("cmd-0", ResetTextSize, Some("AppView")),
     ]);
+    text_input::install_code_editor_keybindings(cx);
 }
 
 /// Workspace Header 的 Activity 触发器 / 浮层可见性（R6 Wave A · F-12）：
@@ -423,6 +428,10 @@ fn install_appkit_tab_monitor(window: &Window, cx: &App) {
                             return true;
                         }
                         let view = view.read(cx);
+                        if forward && view.files_editor_focused(window) {
+                            window.dispatch_action(Box::new(text_input::EditorIndent), cx);
+                            return true;
+                        }
                         if view.quick_search.open {
                             window.focus(&view.quick_search.focus);
                             return true;
@@ -514,6 +523,7 @@ pub struct AppView {
     text_input: Entity<TextInput>,
     terminal_input: Entity<terminal_view::TerminalInput>,
     browser: browser::BrowserPanel,
+    files: files::FilesPanel,
     browser_request: Option<(String, String, String, serde_json::Value)>,
     browser_sessions: HashMap<Option<String>, browser::BrowserPanel>,
     browser_session: Option<String>,
@@ -868,6 +878,7 @@ impl AppView {
             text_input,
             terminal_input,
             browser: browser::BrowserPanel::new(cx),
+            files: files::FilesPanel::default(),
             browser_request: None,
             browser_sessions: HashMap::new(),
             browser_session: None,
@@ -1715,6 +1726,15 @@ impl AppView {
         self.barriers.remove_timeline_stable();
         self.barriers.remove_approval_visible();
         match event {
+            ControllerEvent::WorkspaceFileResult {
+                workspace_id,
+                path,
+                epoch,
+                operation,
+                result,
+            } => {
+                self.files_result(workspace_id, path, epoch, operation, result, cx);
+            }
             ControllerEvent::BrowserRequest {
                 session_id,
                 run_id,
@@ -2967,7 +2987,7 @@ impl AppView {
         let key = event.keystroke.key.as_str();
         let activate = key == "enter" || key == "space";
 
-        let tabs = self.panel_tabs();
+        let tabs = self.panel_tabs(cx);
         if let Some(index) = tabs.iter().position(|tab| {
             self.inspector_item_focus
                 .get(&tab.id)
@@ -3694,6 +3714,9 @@ impl AppView {
     }
 
     fn on_send_message(&mut self, _: &SendMessage, window: &mut Window, cx: &mut Context<Self>) {
+        if self.files_editor_focused(window) || self.files_filter_focused(window, cx) {
+            return;
+        }
         if self.browser.focus.is_focused(window) {
             if !self.browser.input.read(cx).is_composing() {
                 self.browser_action("browser-go", window, cx);
@@ -3815,6 +3838,7 @@ impl AppView {
         self.remember_inspector_tab(self.inspector_tab);
         match self.inspector_tab {
             InspectorTab::Home | InspectorTab::Browser => {}
+            InspectorTab::Files => self.ensure_files(cx),
             InspectorTab::Changes => self.refresh_changes(cx),
             InspectorTab::Resources => self.refresh_resources(cx),
             InspectorTab::Terminal => {
@@ -4772,7 +4796,8 @@ impl Render for AppView {
                         && self.projection.terminal.session_id.is_some()
                     {
                         window.focus(&self.terminal_input.read(cx).focus_handle(cx));
-                    } else if let Some(tab) = self.panel_tabs().into_iter().find(|tab| tab.selected)
+                    } else if let Some(tab) =
+                        self.panel_tabs(cx).into_iter().find(|tab| tab.selected)
                     {
                         let focus = self
                             .inspector_item_focus
@@ -5035,6 +5060,7 @@ impl Render for AppView {
                 }
             }))
             .on_action(cx.listener(Self::on_send_message))
+            .on_action(cx.listener(Self::on_save_file))
             .on_action(cx.listener(Self::on_quick_search))
             .on_action(cx.listener(Self::on_find_conversation))
             .when(!search_open, |root| {

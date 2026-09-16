@@ -343,6 +343,12 @@ impl ActorIdentity {
 #[serde(tag = "method", content = "params", rename_all = "snake_case")]
 pub enum AppCommand {
     CoreInitialize,
+    WorkspaceFileWrite {
+        workspace_id: WorkspaceId,
+        path: WorkspaceRelativePath,
+        content: String,
+        expected_revision: String,
+    },
     WorkspaceAdd {
         root_path: String,
     },

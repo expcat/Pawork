@@ -1085,7 +1085,22 @@ fn command_browser_respond<'a>(
     })
 }
 
+fn query_workspace_files<'a>(
+    adapter: &'a GuiHostAdapter,
+    query: &'a AppQueryEnvelope,
+) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
+    Box::pin(handlers::files::query(adapter, query))
+}
+fn command_workspace_file_write<'a>(
+    adapter: &'a GuiHostAdapter,
+    envelope: &'a AppCommandEnvelope,
+    command: &'a AppCommand,
+) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
+    Box::pin(handlers::files::write(adapter, envelope, command))
+}
 static QUERY_HANDLERS: &[(&str, QueryHandler)] = &[
+    ("workspace_files", query_workspace_files),
+    ("workspace_file_read", query_workspace_files),
     ("workspace_list", query_workspace_list),
     ("session_get", query_session_get),
     ("run_status", query_run_status),
@@ -1102,6 +1117,7 @@ static QUERY_HANDLERS: &[(&str, QueryHandler)] = &[
 ];
 
 static COMMAND_HANDLERS: &[(&str, CommandHandler)] = &[
+    ("workspace_file_write", command_workspace_file_write),
     ("workspace_add", command_workspace_add),
     ("workspace_trust", command_workspace_trust),
     ("session_create", command_session_create),

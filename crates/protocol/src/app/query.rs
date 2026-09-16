@@ -35,6 +35,14 @@ pub struct AppQueryEnvelope {
 #[serde(tag = "method", content = "params", rename_all = "snake_case")]
 pub enum AppQuery {
     WorkspaceList,
+    WorkspaceFiles {
+        workspace_id: WorkspaceId,
+        path: WorkspaceRelativePath,
+    },
+    WorkspaceFileRead {
+        workspace_id: WorkspaceId,
+        path: WorkspaceRelativePath,
+    },
     SessionGet {
         session_id: SessionId,
         #[serde(default, skip_serializing_if = "Option::is_none")]

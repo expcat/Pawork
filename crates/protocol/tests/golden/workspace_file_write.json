@@ -1,0 +1,1 @@
+{"method":"workspace_file_write","params":{"workspace_id":"ws-1","path":"notes.txt","content":"hello\n","expected_revision":"r1"}}

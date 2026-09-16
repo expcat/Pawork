@@ -694,6 +694,7 @@ fn run_app(socket: PathBuf, barrier_dir: Option<PathBuf>) {
             window
                 .update(cx, move |view, window, cx| {
                     let callback_app = accessibility_app.clone();
+                    view.install_files_close_guard(window, cx);
                     if let Err(reason) = view.install_accessibility(
                         window,
                         move |request| {

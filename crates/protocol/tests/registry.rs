@@ -37,6 +37,12 @@ const V1_12: ApiVersion = ApiVersion {
 /// (wire 名, 最小 params 样本；None = unit 变体无 params)。
 fn command_samples() -> Vec<(&'static str, Option<Value>)> {
     vec![
+        (
+            "workspace_file_write",
+            Some(
+                json!({"workspace_id":"ws-1","path":"notes.txt","content":"hello", "expected_revision":"r1"}),
+            ),
+        ),
         ("core_initialize", None),
         ("workspace_add", Some(json!({"root_path": "/tmp/demo"}))),
         (
@@ -175,6 +181,14 @@ fn command_samples() -> Vec<(&'static str, Option<Value>)> {
 
 fn query_samples() -> Vec<(&'static str, Option<Value>)> {
     vec![
+        (
+            "workspace_files",
+            Some(json!({"workspace_id":"ws-1","path":"."})),
+        ),
+        (
+            "workspace_file_read",
+            Some(json!({"workspace_id":"ws-1","path":"notes.txt"})),
+        ),
         ("workspace_list", None),
         ("session_get", Some(json!({"session_id": "session-1"}))),
         ("run_status", Some(json!({"run_id": "run-1"}))),
@@ -267,8 +281,8 @@ fn wire_names_are_bijective_with_serde_tags() {
 fn registry_tables_are_complete_and_unique() {
     let commands = command_entries();
     let queries = query_entries();
-    assert_eq!(commands.len(), 41);
-    assert_eq!(queries.len(), 16);
+    assert_eq!(commands.len(), 42);
+    assert_eq!(queries.len(), 18);
     for wire_name in commands.iter().map(|entry| entry.wire_name) {
         assert_eq!(
             commands
@@ -379,6 +393,16 @@ fn command_registry_covers_every_variant_without_wildcard() {
     for command in sample_commands() {
         // 无通配符穷尽 match：新增变体必须在此补登记断言。
         match &command {
+            AppCommand::WorkspaceFileWrite { .. } => assert_command_entry(
+                &command,
+                "workspace_file_write",
+                true,
+                None,
+                None,
+                false,
+                true,
+                pawork_protocol::V1_19,
+            ),
             AppCommand::CoreInitialize => assert_command_entry(
                 &command,
                 "core_initialize",
@@ -762,6 +786,26 @@ fn query_registry_covers_every_variant_without_wildcard() {
     for query in sample_queries() {
         // 无通配符穷尽 match：新增变体必须在此补登记断言。
         match &query {
+            AppQuery::WorkspaceFiles { .. } => assert_query_entry(
+                &query,
+                "workspace_files",
+                true,
+                None,
+                None,
+                false,
+                true,
+                pawork_protocol::V1_19,
+            ),
+            AppQuery::WorkspaceFileRead { .. } => assert_query_entry(
+                &query,
+                "workspace_file_read",
+                true,
+                None,
+                None,
+                false,
+                true,
+                pawork_protocol::V1_19,
+            ),
             AppQuery::WorkspaceList => assert_query_entry(
                 &query,
                 "workspace_list",

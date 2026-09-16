@@ -283,7 +283,7 @@ impl AxTree {
             .find_map(|child| child.hit_test(x, y))
     }
 
-    fn find(&self, identifier: &str) -> Option<&AxNode> {
+    pub(super) fn find(&self, identifier: &str) -> Option<&AxNode> {
         self.children
             .iter()
             .find_map(|child| child.find(identifier))

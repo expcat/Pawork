@@ -12,7 +12,7 @@ use super::command::AppCommand;
 use super::query::AppQuery;
 use super::version::{
     ApiVersion, V1_0, V1_1, V1_2, V1_3, V1_4, V1_5, V1_6, V1_7, V1_8, V1_10, V1_11, V1_12, V1_15,
-    V1_16, V1_17, V1_18,
+    V1_16, V1_17, V1_18, V1_19,
 };
 
 /// GUI 通道访问规格：是否可用 + 命令级所需能力。
@@ -51,7 +51,18 @@ pub const GUI_INTRINSIC_CAPABILITIES: &[GuiCapability] =
     &[GuiCapability::Events, GuiCapability::Snapshots];
 
 static COMMANDS: &[RegistryEntry] = &[
-    // --- AppCommand（41）---
+    RegistryEntry {
+        wire_name: "workspace_file_write",
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
+        headless: None,
+        acp: false,
+        idempotent: true,
+        since: V1_19,
+    },
+    // --- AppCommand（42）---
     RegistryEntry {
         wire_name: "core_initialize",
         gui: GuiChannelAccess {
@@ -528,7 +539,29 @@ static COMMANDS: &[RegistryEntry] = &[
 ];
 
 static QUERIES: &[RegistryEntry] = &[
-    // --- AppQuery（16）---
+    RegistryEntry {
+        wire_name: "workspace_files",
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
+        headless: None,
+        acp: false,
+        idempotent: true,
+        since: V1_19,
+    },
+    RegistryEntry {
+        wire_name: "workspace_file_read",
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
+        headless: None,
+        acp: false,
+        idempotent: true,
+        since: V1_19,
+    },
+    // --- AppQuery（18）---
     RegistryEntry {
         wire_name: "workspace_list",
         gui: GuiChannelAccess {
@@ -716,6 +749,7 @@ static QUERIES: &[RegistryEntry] = &[
 /// 变体 → wire 名的唯一映射（从 gui_host 平移收编；禁止在通道侧再建镜像）。
 pub fn command_wire_name(command: &AppCommand) -> &'static str {
     match command {
+        AppCommand::WorkspaceFileWrite { .. } => "workspace_file_write",
         AppCommand::CoreInitialize => "core_initialize",
         AppCommand::WorkspaceAdd { .. } => "workspace_add",
         AppCommand::WorkspaceTrust { .. } => "workspace_trust",
@@ -763,6 +797,8 @@ pub fn command_wire_name(command: &AppCommand) -> &'static str {
 /// 变体 → wire 名的唯一映射（AppQuery 侧）。
 pub fn query_wire_name(query: &AppQuery) -> &'static str {
     match query {
+        AppQuery::WorkspaceFiles { .. } => "workspace_files",
+        AppQuery::WorkspaceFileRead { .. } => "workspace_file_read",
         AppQuery::WorkspaceList => "workspace_list",
         AppQuery::SessionGet { .. } => "session_get",
         AppQuery::RunStatus { .. } => "run_status",

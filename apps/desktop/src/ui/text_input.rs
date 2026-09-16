@@ -39,6 +39,11 @@ actions!(
         Undo,
         Redo,
         SendMessage,
+        EditorIndent,
+        EditorUp,
+        EditorDown,
+        EditorSelectUp,
+        EditorSelectDown,
     ]
 );
 
@@ -50,6 +55,7 @@ pub struct TextInput {
     secure: bool,
     read_only: bool,
     soft_wrap: bool,
+    code_editor: bool,
     min_height: f32,
     max_height: f32,
     selected_range: Range<usize>,
@@ -103,6 +109,7 @@ impl TextInput {
             secure: false,
             read_only: false,
             soft_wrap: false,
+            code_editor: false,
             min_height: metrics::COMPOSER_INPUT_MIN_HEIGHT,
             max_height: composer_input_max_height(),
             selected_range: 0..0,
@@ -120,6 +127,43 @@ impl TextInput {
         }
     }
 
+    pub fn code_editor(mut self) -> Self {
+        self.code_editor = true;
+        self.min_height = 24.;
+        self
+    }
+
+    fn editor_indent(&mut self, _: &EditorIndent, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.is_composing() {
+            self.replace_text_in_range(None, "    ", window, cx);
+        }
+        cx.stop_propagation();
+    }
+    fn editor_move(&mut self, down: bool, select: bool, cx: &mut Context<Self>) {
+        let pos = self.cursor_offset();
+        let ranges = line_byte_ranges(&self.content);
+        let row = ranges
+            .iter()
+            .rposition(|(start, _)| *start <= pos)
+            .unwrap_or(0);
+        let next = if down {
+            (row + 1).min(ranges.len() - 1)
+        } else {
+            row.saturating_sub(1)
+        };
+        let column = self.content[ranges[row].0..pos].graphemes(true).count();
+        let (start, end) = ranges[next];
+        let offset = self.content[start..end]
+            .grapheme_indices(true)
+            .nth(column)
+            .map_or(end, |(i, _)| start + i);
+        if select {
+            self.select_to(offset, cx);
+        } else {
+            self.move_to(offset, cx);
+        }
+        cx.stop_propagation();
+    }
     pub fn text(&self) -> &str {
         &self.content
     }
@@ -321,7 +365,11 @@ impl TextInput {
 
     pub(crate) fn reset_text(&mut self, text: impl Into<SharedString>, cx: &mut Context<Self>) {
         self.content = text.into();
-        let end = self.content.len();
+        let end = if self.code_editor {
+            0
+        } else {
+            self.content.len()
+        };
         self.selected_range = end..end;
         self.selection_reversed = false;
         self.marked_range = None;
@@ -468,10 +516,11 @@ impl TextInput {
     }
 
     fn new_line(&mut self, _: &NewLine, window: &mut Window, cx: &mut Context<Self>) {
-        if self.secure {
+        if self.secure || (self.code_editor && self.is_composing()) {
             return;
         }
         self.replace_text_in_range(None, "\n", window, cx);
+        cx.stop_propagation();
     }
 
     /// 点击 Composer 必须把焦点拉回输入框。`track_focus` 会注册自动聚焦，
@@ -610,7 +659,7 @@ impl TextInput {
             next = viewport - line_bottom;
         }
         let mut offset = self.scroll.offset();
-        if self.read_only {
+        if self.read_only || self.code_editor {
             if let Some(line) = self
                 .last_layout
                 .as_ref()
@@ -1068,9 +1117,9 @@ impl Element for TextElement {
         let mut style = Style::default();
         style.align_self = Some(gpui::AlignSelf::FlexStart);
         style.size.width = relative(1.).into();
-        // 授权 URL 常比视口长；只读字段保留原文，通过横滚查看和选择。
+        // 只读字段和文件编辑器保留长行，通过横滚查看和选择。
         let input = self.input.read(cx);
-        if input.read_only && !input.secure {
+        if (input.read_only || input.code_editor) && !input.secure {
             let text_style = window.text_style();
             let font_size = text_style.font_size.to_pixels(window.rem_size());
             let width = input
@@ -1304,8 +1353,17 @@ impl Render for TextInput {
         let line_min_height = (font::BASE.0 * 1.5 + 0.5) * f32::from(window.rem_size());
         div()
             .flex()
-            .key_context("TextInput")
-            .max_h(px(self.max_height.max(line_min_height)))
+            .key_context(if self.code_editor {
+                "TextInput CodeEditor"
+            } else {
+                "TextInput"
+            })
+            .when(self.code_editor, |el| {
+                el.h_full().min_h_0().font_family("Menlo")
+            })
+            .when(!self.code_editor, |el| {
+                el.max_h(px(self.max_height.max(line_min_height)))
+            })
             .track_focus(&self.focus_handle(cx))
             .cursor(CursorStyle::IBeam)
             .on_action(cx.listener(Self::backspace))
@@ -1316,6 +1374,19 @@ impl Render for TextInput {
             .on_action(cx.listener(Self::end))
             .on_action(cx.listener(Self::paste))
             .on_action(cx.listener(Self::new_line))
+            .on_action(cx.listener(Self::editor_indent))
+            .on_action(
+                cx.listener(|input, _: &EditorUp, _, cx| input.editor_move(false, false, cx)),
+            )
+            .on_action(
+                cx.listener(|input, _: &EditorDown, _, cx| input.editor_move(true, false, cx)),
+            )
+            .on_action(
+                cx.listener(|input, _: &EditorSelectUp, _, cx| input.editor_move(false, true, cx)),
+            )
+            .on_action(
+                cx.listener(|input, _: &EditorSelectDown, _, cx| input.editor_move(true, true, cx)),
+            )
             .on_action(cx.listener(Self::select_left))
             .on_action(cx.listener(Self::select_right))
             .on_action(cx.listener(Self::select_to_line_start))
@@ -1344,7 +1415,9 @@ impl Render for TextInput {
             .bg(dark().surface.raised)
             .text_size(font::BASE)
             .overflow_y_scroll()
-            .when(self.read_only, |element| element.overflow_x_scroll())
+            .when(self.read_only || self.code_editor, |element| {
+                element.overflow_x_scroll()
+            })
             .track_scroll(&self.scroll)
             .child(TextElement { input: cx.entity() })
     }
@@ -1881,4 +1954,45 @@ mod tests {
             assert_eq!(input.text(), "");
         });
     }
+
+    #[gpui::test]
+    fn file_editor_keys_insert_and_navigate_without_sending(cx: &mut TestAppContext) {
+        cx.update(|cx| crate::ui::install_keybindings(cx));
+        let (input, cx) =
+            cx.add_window_view(|_, cx| TextInput::with_placeholder("", cx).code_editor());
+        cx.simulate_resize(PROBE_WINDOW);
+        input.update(cx, |input, cx| input.reset_text("ab\n中d", cx));
+        focus_input(&input, cx);
+        cx.simulate_keystrokes("right down");
+        assert_eq!(input.read_with(cx, |i, _| i.selected_range()), 6..6);
+        cx.simulate_keystrokes("enter tab");
+        assert_eq!(
+            input.read_with(cx, |i, _| i.text().to_string()),
+            "ab\n中\n    d"
+        );
+        cx.simulate_keystrokes("cmd-z");
+        assert_eq!(
+            input.read_with(cx, |i, _| i.text().to_string()),
+            "ab\n中\nd"
+        );
+        input.update(cx, |input, cx| {
+            input.reset_text("long line ".repeat(100), cx)
+        });
+        cx.simulate_keystrokes("end");
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        assert!(input.read_with(cx, |i, _| i.scroll.offset().x) < px(0.));
+    }
+}
+
+pub fn install_code_editor_keybindings(cx: &mut App) {
+    use gpui::KeyBinding;
+    cx.bind_keys([
+        KeyBinding::new("enter", NewLine, Some("CodeEditor")),
+        KeyBinding::new("tab", EditorIndent, Some("CodeEditor")),
+        KeyBinding::new("up", EditorUp, Some("CodeEditor")),
+        KeyBinding::new("down", EditorDown, Some("CodeEditor")),
+        KeyBinding::new("shift-up", EditorSelectUp, Some("CodeEditor")),
+        KeyBinding::new("shift-down", EditorSelectDown, Some("CodeEditor")),
+    ]);
 }

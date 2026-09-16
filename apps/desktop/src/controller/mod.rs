@@ -32,6 +32,13 @@ pub(super) const MAX_PAGES: usize = 200;
 /// UI 消费的控制器事件（经 smol channel 跨线程投递）。
 #[derive(Clone, Debug)]
 pub enum ControllerEvent {
+    WorkspaceFileResult {
+        workspace_id: String,
+        path: String,
+        epoch: u64,
+        operation: FileOperation,
+        result: Result<serde_json::Value, String>,
+    },
     BrowserRequest {
         session_id: String,
         run_id: String,
@@ -325,6 +332,8 @@ pub struct DesktopController {
 }
 
 mod browser;
+mod files;
+pub use files::FileOperation;
 mod session;
 mod settings;
 mod terminal;

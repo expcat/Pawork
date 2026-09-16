@@ -196,6 +196,11 @@ impl AppView {
                 (InspectorTab::Changes, "quick.changes", "changes diff 变更"),
                 (InspectorTab::Terminal, "quick.terminal", "terminal 终端"),
                 (
+                    InspectorTab::Files,
+                    "inspector.tab_files",
+                    "files editor 文件 编辑",
+                ),
+                (
                     InspectorTab::Resources,
                     "quick.resources",
                     "resources mcp 资源",

@@ -27,6 +27,7 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
+| `src/gui_host/handlers/files.rs` | — | GUI 手动文件目录 / 文本读取与带内容版本校验的保存；文件正文不进入幂等账本 |
 | `src/lib.rs` | ~80 | 模块声明与 crate 根 re-export 单点（CLI 消费面不变） |
 | `src/app_core.rs` | ~1790 | `AppLoadOptions`、`AppError`（30+ 变体错误汇聚）、`CatalogOnlyProvider`（缺凭证 fail-closed 占位 provider）、`AppCore` 结构体与装配（`load*`/`from_config`/`from_parts*`）、会话/运行/usage/diff/checkpoint 门面方法、`SessionTokenEstimatorBridge`、`session_title_from_text`；`from_parts_with_protocol` 的 HTTP 客户端为 `pawork_auth::http_client()`（F06 `redirect(Policy::none())`），带 proxy 的路径仍走 `http_from_config` |
 | `src/provider_quota.rs` | — | Go 指定账号三窗 Percent 查询、30s/reset 新鲜度与 Run 前 revision CAS 选择（ADR-060） |
@@ -178,6 +179,8 @@ GUI `run_start` 在既有 ToolScheduler 注册 `terminal` / `browser`，保留�
 
 ## 4. 核心行为与数据流
 
+GUI 1.19 文件面板：本机 GUI 用户经 `workspace_files` / `workspace_file_read` / `workspace_file_write` 操作已登记项目的相对路径。目录逐层返回、目录优先、最多 1,000 项；只读写已有 UTF-8 普通文件（≤128 KiB、无 NUL），拒绝路径越界、符号链接及受保护路径。读取返回内容版本；保存必须匹配 `expected_revision`，冲突保留磁盘文件。写后返回路径与新版本，正文不进入日志或命令账本。手动保存不构造 Agent Run，也不授予模型额外权限；模型工具仍走既有 Policy / 审批。
+
 UI-6b G2：新增私有 `provider_quota.rs`，`account_quota` 消费指定存储账号、配置代理与三窗官方读数，转换为 Percent `QuotaOverviewView`；复核 auth revision 拒绝迟到快照。旧无凭证 quota 查询仍返回本地 usage。GUI session 单独异步处理账号 quota，保持收帧/心跳/命令可用，断线丢弃未完成查询。`RunService::chat_turn_with_run_id` 调用 `select_account_for_run`，通过新鲜三窗与原子 CAS 选账号，再取得整轮 provider 快照；选择写持久 Diagnostic，GuiBroadcastSink 发 AuthChanged。Settings 接新模式命令与状态、旧版本 gate；当前 Run/工具续轮、独立命名/压缩保持 G1 身份边界。已有 Settings 回归增加查询归属、实际 Bearer 命中、失败保旧与持久化脱敏检查；`gui_server_session::slow_account_quota_allows_heartbeat_and_drops_on_disconnect` 验证慢查询时心跳、原 request_id 回复和断线取消。
 
 ### 4.1 GUI RunStart 全流程
@@ -306,6 +309,8 @@ cargo test -p pawork-app --offline --lib --tests --features ui-fixture
 ```
 
 **内嵌 `#[cfg(test)]`（跑在 `--lib`）**，重点覆盖：
+
+- `gui_host/handlers/files.rs`：浏览、编辑、版本冲突，以及旧 minor / 非本地 GUI、路径越界、受保护文件、符号链接、只读文件、二进制与大小上限拒绝。
 
 - `gui_host/tests/`（约 60 条，本包最大测试集）：
   - 分发表与 registry `gui.available` 双射 pin（`dispatch_tables_match_gui_available_registry_entries`）；

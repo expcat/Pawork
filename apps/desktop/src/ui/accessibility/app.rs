@@ -155,6 +155,20 @@ impl AppView {
         if !self.accessibility_tree(window, cx).permits(&request) {
             return;
         }
+        if request.identifier.starts_with("files-") {
+            if matches!(request.identifier.as_str(), "files-editor" | "files-filter") {
+                self.files_ax_edit(
+                    &request.identifier,
+                    request.action,
+                    request.value,
+                    window,
+                    cx,
+                );
+            } else if request.action == AxAction::Press {
+                self.files_action(&request.identifier, window, cx);
+            }
+            return;
+        }
         if request.identifier.starts_with("browser-") {
             match request.action {
                 AxAction::Focus if request.identifier == "browser-address" => {
@@ -565,22 +579,27 @@ impl AppView {
                 self.launch_inspector_tool(InspectorTab::Resources, cx);
                 self.close_open_menu(cx);
             }
+            "inspector-tab-files" => self.open_inspector_tool(InspectorTab::Files, cx),
+            "inspector-menu-files" => {
+                self.launch_inspector_tool(InspectorTab::Files, cx);
+                self.close_open_menu(cx);
+            }
             "inspector-menu-browser" => {
                 self.launch_inspector_tool(InspectorTab::Browser, cx);
                 self.close_open_menu(cx);
             }
-            other if other.starts_with("inspector-open-") => {
-                if let Some(tab) = self.panel_tabs().into_iter().find(|tab| tab.id == other) {
+            other if other.starts_with("inspector-open-") || other.starts_with("file-tab-") => {
+                if let Some(tab) = self.panel_tabs(cx).into_iter().find(|tab| tab.id == other) {
                     self.activate_panel_tab(&tab, cx);
                 }
             }
             other if other.starts_with("panel-close-") => {
                 if let Some(tab) = self
-                    .panel_tabs()
+                    .panel_tabs(cx)
                     .into_iter()
                     .find(|tab| tab.close_id() == other)
                 {
-                    self.close_panel_tab(&tab, cx);
+                    self.close_panel_tab(&tab, window, cx);
                 }
             }
             "changes-tab-files" => self.on_select_changes_tab(ChangesTab::Files, cx),
@@ -877,7 +896,7 @@ impl AppView {
         true
     }
 
-    fn accessibility_tree(&self, window: &Window, cx: &App) -> AxTree {
+    pub(in crate::ui) fn accessibility_tree(&self, window: &Window, cx: &App) -> AxTree {
         if self.quick_search.open {
             return self.quick_search_ax(window, cx);
         }
@@ -2919,7 +2938,7 @@ impl AppView {
             .action(AxAction::Press),
         );
         let scroll_bounds = self.inspector_tabs_scroll.bounds();
-        for tab in self.panel_tabs() {
+        for tab in self.panel_tabs(cx) {
             for (id, label, selected, enabled) in [
                 (tab.id.clone(), tab.label.clone(), tab.selected, true),
                 (
@@ -3027,6 +3046,7 @@ impl AppView {
             InspectorTab::Changes => inspector.child(self.changes_ax(window, body)),
             InspectorTab::Resources => inspector.child(self.resources_ax(window, body)),
             InspectorTab::Browser => inspector.child(self.browser_ax(window, cx, body)),
+            InspectorTab::Files => inspector.child(self.files_ax(window, cx, body)),
         };
         inspector
     }
@@ -8582,13 +8602,15 @@ mod tests {
                 view.on_select_terminal_tab("pty-5", cx);
                 assert_eq!(view.inspector_tab, InspectorTab::Terminal);
                 let background = view
-                    .panel_tabs()
+                    .panel_tabs(cx)
                     .into_iter()
                     .find(|tab| tab.terminal_id.as_deref() == Some("pty-0"))
                     .unwrap();
-                view.close_panel_tab(&background, cx);
+                view.close_panel_tab(&background, window, cx);
                 assert!(
-                    view.panel_tabs().iter().any(|tab| tab.id == background.id),
+                    view.panel_tabs(cx)
+                        .iter()
+                        .any(|tab| tab.id == background.id),
                     "wait for Host close acknowledgement"
                 );
                 view.handle_controller_event(
@@ -8608,7 +8630,7 @@ mod tests {
         });
         cx.refresh().unwrap();
         cx.simulate_keystrokes("left");
-        cx.update(|_, cx| {
+        cx.update(|window, cx| {
             view.update(cx, |view, cx| {
                 assert_eq!(
                     view.projection.terminal.session_id.as_deref(),
@@ -8617,11 +8639,11 @@ mod tests {
                 // 真实关闭路径：关后台 PTY 不抢当前页、不动标签滚动。
                 let scroll_before = view.inspector_tabs_scroll.offset();
                 let background = view
-                    .panel_tabs()
+                    .panel_tabs(cx)
                     .into_iter()
                     .find(|tab| tab.terminal_id.as_deref() == Some("pty-5"))
                     .unwrap();
-                view.close_panel_tab(&background, cx);
+                view.close_panel_tab(&background, window, cx);
                 view.handle_controller_event(
                     ControllerEvent::TerminalCloseSucceeded {
                         terminal_session_id: "pty-5".into(),
@@ -8637,11 +8659,11 @@ mod tests {
                 // 还有 PTY 时关 Changes 工具页，回落到最近留下的其它工具而不是 Terminal。
                 view.select_inspector_tab(InspectorTab::Changes, cx);
                 let changes_tab = view
-                    .panel_tabs()
+                    .panel_tabs(cx)
                     .into_iter()
                     .find(|tab| tab.id == "inspector-open-changes")
                     .unwrap();
-                view.close_panel_tab(&changes_tab, cx);
+                view.close_panel_tab(&changes_tab, window, cx);
                 assert_eq!(view.inspector_tab, InspectorTab::Resources);
                 view.on_select_terminal_tab("pty-4", cx);
                 // 关当前 PTY 一路回落同项目兄弟；最后一枚关掉后退出 Terminal
@@ -8652,11 +8674,11 @@ mod tests {
                         .workspace_terminals(view.inspector_workspace_id().as_deref())
                         .len();
                     let tab = view
-                        .panel_tabs()
+                        .panel_tabs(cx)
                         .into_iter()
                         .find(|tab| tab.terminal_id.as_deref() == Some(current_id.as_str()))
                         .unwrap();
-                    view.close_panel_tab(&tab, cx);
+                    view.close_panel_tab(&tab, window, cx);
                     view.handle_controller_event(
                         ControllerEvent::TerminalCloseSucceeded {
                             terminal_session_id: current_id,
@@ -8673,7 +8695,7 @@ mod tests {
                     );
                 }
                 assert!(
-                    view.panel_tabs()
+                    view.panel_tabs(cx)
                         .iter()
                         .all(|tab| tab.terminal_id.is_none())
                 );
@@ -8681,7 +8703,7 @@ mod tests {
                 // 面的有 PTY 回落用例中关闭）。
                 view.close_inspector_tool(InspectorTab::Resources, cx);
                 assert_eq!(view.inspector_tab, InspectorTab::Home);
-                assert!(view.panel_tabs().is_empty());
+                assert!(view.panel_tabs(cx).is_empty());
             })
         });
     }

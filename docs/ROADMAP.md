@@ -8,7 +8,7 @@
 
 让用户进入窗口就能开始任务，长对话中容易找到内容，需要时直接查看变更或终端，设置项可查找且生效范围清楚。延续已有项目、会话、输入、Markdown、模型与账号能力；不把已经实现的 UX 修复再列成待开发功能。
 
-参考页的价值落在清楚的空间分工：侧栏负责找到任务，主区负责阅读与输入，工作面板按需出现，设置是独立目的地。Pawork 本阶段保留 Rust / GPUI、深色主题与既有能力边界；PR、定时任务、插件市场、浏览器预览、文件浏览器、浅色主题不随参考截图进入实施范围。具体取舍和原图见 [参照映射](gui-design.md#2-参照与取舍)。
+参考页的价值落在清楚的空间分工：侧栏负责找到任务，主区负责阅读与输入，工作面板按需出现，设置是独立目的地。Pawork 本阶段保留 Rust / GPUI、深色主题与既有能力边界；PR、定时任务、插件市场、浅色主题不随参考截图进入实施范围；浏览器与文件浏览器已由 2026-09-16 用户追加指令单独启动。具体取舍和原图见 [参照映射](gui-design.md#2-参照与取舍)。
 
 **实施顺序**：GUI2-01 → GUI2-02 → GUI2-03 → GUI2-04 → GUI2-05 → GUI2-06 → GUI2-07。每项以单一界面或紧相关模块收口；遇到需演进协议的需求，先拆出契约设计，不扩大该界面任务。
 
@@ -447,3 +447,28 @@ Validated: 2026-09-12 本次仅文档变更——§4 显示效果 Review 与 GUI
 Targeted regressions: 本次 none（文档）。GUI2-04：当前对话查找 / 身份定位 / 回合目录一条新增主路径回归；既有 230 项 Desktop 回归全部通过。
 
 Full workspace gate: NOT RUN（当前未设置全量门禁）。
+
+#### 右侧文件浏览与编辑（2026-09-16）
+
+- **已实现**：Files 接入工具栏与快捷查找；正文与可收起的右侧目录并列，当前目录文件名筛选、文件标签、Markdown 预览 / 源码、等宽编辑与 ⌘S / 按钮保存；草稿按项目隔离，保存中继续编辑不会丢失后续输入。断线禁保存，外部冲突保留草稿，重新载入与关闭未保存窗口先确认。
+- **边界**：GUI 1.19 新增三个 Host 方法；只支持已有 UTF-8 普通文件（≤128 KiB、无 NUL），目录最多 1,000 项。无新生产依赖 / crate，Desktop 不直接访问项目文件。
+- **自动门禁通过**：`cargo test -p pawork-protocol -p pawork-app --offline --lib --tests` 中 App 265 项通过；Protocol 调整 registry 数量断言后，以 `cargo test -p pawork-protocol --offline --features typegen --lib --tests` 复跑 176 项全部通过，并运行 typegen 同步 schema。Host 最终文件边界回归 2 项通过。`cargo test -p pawork-desktop --offline --bin pawork-desktop --features gpui/runtime_shaders` 最终 267 项通过；CLI / Desktop 开发构建及 `git diff --check` 通过。命令均使用 `DEVELOPER_DIR=/Library/Developer/CommandLineTools`；未跑全 workspace 门禁。
+- **真窗口验证通过**：隔离 `files-0916` Host / Desktop 实例与临时项目核对目录导航、多文件草稿、中文输入、Enter / Tab、按钮 / ⌘S 保存、外部冲突、保留 / 放弃重新载入及关闭窗口提醒；追加参考图布局后复验目录筛选与 Enter 隔离、Markdown 预览 / 源码、未保存预览、目录收起及保存 / 冲突 / 重载。磁盘内容与成功保存一致，冲突时保留外部版本；隔离数据库 sessions 始终为 0，回执账本不含文件正文。1440 / 1080 布局由 GPUI 实测回归覆盖。用户人工验收未完成，未归档 / 未发布。
+
+#### 右侧共享标签收口（2026-09-16）
+
+- **已实现**：每份文件接入现有 `PanelTab`，与终端、浏览器、变更和资源页共用一层标签栏及横向滚动 / 键盘 / AX / 关闭动作；移除文件内部标签栏。脏文件关闭先确认，保存 / 重载中禁关闭；后台关闭保留当前页，最后一份文件关闭后回到其余工具或入口。
+- **自动检查通过**：`DEVELOPER_DIR=/Library/Developer/CommandLineTools cargo test -p pawork-desktop --offline --bin pawork-desktop --features gpui/runtime_shaders` 267 项全部通过（含统一标签滚动 / 切换 / 关闭回退与文件草稿用例）；同参数 `cargo build -p pawork-desktop` 与 `git diff --check` 通过。本批仅 Desktop 与文档变化，不变更 Host / 协议，未跑全 workspace 门禁。
+- **真窗口验证通过**：隔离 `shared-tabs-0916` Host / Desktop 实例（验收 bundle 与当前构建 SHA-256 一致），在临时项目核对：文件与终端在同一层标签条并列（`file-tab-ws-default/*` 与 `terminal-tab-*`），无第二层文件标签；文件 ↔ 终端切换保留运行中 PTY；编辑使标签显示 `●` 与「有未保存的修改」；关闭脏标签弹原生确认，「继续编辑」保留草稿与标签，「放弃并关闭」移除标签并回落到相邻文件，磁盘确认未写入被丢弃的草稿；关闭最后一份文件回落到终端标签，再关终端回到工具入口。用户人工验收未完成，未归档 / 未发布。
+#### 右侧文件树式目录（2026-09-16）
+
+- **已实现**：右侧目录改为懒加载树。各层目录优先排序，首次展开按需经 Host 读取该层；折叠保留缓存与子树展开状态；刷新重读根与全部已展开目录，已删除的子树随刷新修剪；文件名筛选覆盖已展开目录（忽略大小写），命中项的祖先目录强制显示；展开失败的目录行内显示原因，重新展开即重试。移除「上一级」入口。协议与 Host 不变（仍复用单层 `workspace_files`），无 git 状态标，目录仍 ≤1,000 项。
+- **自动检查通过**：`DEVELOPER_DIR=/Library/Developer/CommandLineTools cargo test -p pawork-desktop --offline --bin pawork-desktop --features gpui/runtime_shaders` 268 项全部通过（新增 `file_tree_expands_lazily_and_prunes_stale_dirs`：懒加载派发、嵌套缩进、筛选祖先、折叠缓存、错误重试、刷新重列与子树修剪）；同参数 `cargo build -p pawork-desktop` 与 `git diff --check` 通过。本批仅 Desktop 与文档变化，未跑全 workspace 门禁。
+- **真窗口验证通过**：复用隔离 `shared-tabs-0916` Host / Desktop 实例与临时项目（验收 bundle 与当前构建 SHA-256 一致）：根目录只读第一层；`src` / `ui` / `components` 就地展开、目录在前、缩进与 chevron 正确；打开嵌套 `button.rs` 进入共享标签（`file-tab-ws-default/src/ui/components/button.rs`）并显示内容与「已保存」；筛选 `button` 只留祖先链与命中文件，清空后展开状态恢复；刷新拾取外部新增的 `docs/guide/new-from-outside.md`，移除已删除的 `src/ui/components` 子树且其余展开保留；折叠再展开 `src` 后 `ui` 子树仍在。用户人工验收未完成，未归档 / 未发布。
+
+#### 文件面板提交前复核（2026-09-17）
+
+- **自动验证通过**：App / Protocol 定向测试 440 项、Desktop 268 项通过；typegen `--check` 确认检入 schema 与源码一致，CLI / Desktop 开发构建通过。`cargo tree -p pawork --offline --edges normal` 成功，CLI 闭包无 Desktop / GPUI / WebView，Cargo manifest 与 lockfile 未变化；新增文档相对链接与 `git diff --check` 通过。
+- **代理真窗口复核通过**：隔离 `review-0916` 实例验证懒加载目录、文本打开、中文内容保存、外部冲突保留草稿与磁盘版本、确认后重新载入；磁盘字节与成功回执一致，隔离数据库 sessions 为 0，命令账本无文件正文。用户人工验收未进行，未归档 / 未发布。
+- **审查修复**：读取其它文件时允许保存当前草稿；当前文件自身重新载入期间仍禁保存。扩展现有草稿回归覆盖两种读写交错，Files 两项定向回归通过，不增加测试框架或模块。
+- **验证边界**：未运行全 workspace 门禁；整包 `cargo fmt --check` 含既有格式差异，本轮仅整理新增文件格式，按现有 style edition 核对变更文件，保留 `main.rs` 既有 import 顺序。
