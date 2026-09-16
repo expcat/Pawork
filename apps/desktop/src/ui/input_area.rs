@@ -4,13 +4,13 @@
 //! Forked / 发送失败等瞬态反馈落 StatusBar 右栏。
 
 use gpui::{
-    div, point, prelude::*, px, Context, Corner, Pixels, Point, SharedString, TextRun, Window,
+    Context, Corner, Pixels, Point, SharedString, TextRun, Window, div, point, prelude::*, px,
 };
 
 use crate::projection::{ConnectionState, ModelEntry, ProviderAuthStatusEntry};
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
-use crate::ui::components::dropdown::{Dropdown, MenuPanel, ANCHOR_GAP_Y};
-use crate::ui::components::icon::{icon, icon_sized, Icon};
+use crate::ui::components::dropdown::{ANCHOR_GAP_Y, Dropdown, MenuPanel};
+use crate::ui::components::icon::{Icon, icon, icon_sized};
 use crate::ui::components::label::Label;
 use crate::ui::i18n::{t, t2};
 use crate::ui::settings::settings_role_candidates;
@@ -1027,8 +1027,8 @@ fn composer_placeholder_hint(connection: &ConnectionState, running: bool) -> Str
 #[cfg(test)]
 mod tests {
     use super::{
-        composer_model_menu_groups, composer_placeholder_hint, composer_send_allowed,
-        grouped_model_menu_entries, model_catalog_empty_state, model_menu_row_title, AppView,
+        AppView, composer_model_menu_groups, composer_placeholder_hint, composer_send_allowed,
+        grouped_model_menu_entries, model_catalog_empty_state, model_menu_row_title,
     };
     use crate::projection::{
         ConnectionState, ModelEntry, ProviderAuthState, ProviderAuthStatusEntry,

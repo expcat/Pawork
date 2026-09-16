@@ -239,9 +239,9 @@ mod tests {
         .await
         .expect("register mcp");
 
-        assert_eq!(descriptors[0].name, "github.search");
+        assert_eq!(descriptors[0].name, "github_search");
         assert!(registry.get("builtin_echo").is_some());
-        assert!(registry.get("github.search").is_some());
+        assert!(registry.get("github_search").is_some());
         let _ = McpToolAdapter::namespaced_name;
     }
 }

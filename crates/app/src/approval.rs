@@ -282,6 +282,7 @@ pub(crate) fn preview_for_tool(
         "write_file" => preview_write_file(input, roots)?,
         "edit_file" => preview_edit_file(input)?,
         "apply_patch" => preview_apply_patch(input)?,
+        "terminal" | "browser" => serde_json::to_string_pretty(input).ok()?,
         _ => preview_generic_content(input)?,
     };
     Some(cap_preview(&raw, PREVIEW_LINE_CAP))

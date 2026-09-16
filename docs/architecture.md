@@ -19,9 +19,9 @@
 
 ---
 
-## 2. 包布局与依赖方向（22 包）
+## 2. 包布局与依赖方向（23 包）
 
-Workspace 为 **22 成员（20 库 + 2 应用）**：20 个库平铺 `crates/<短名>`（目录 = 包名去 `pawork-` 前缀，包名保持 `pawork-` 前缀），2 个应用 `apps/{pawork,desktop}`。不新增包；新能力只往既有包加模块。包布局变更须向用户确认。
+Workspace 为 **23 成员（21 库 + 2 应用）**：21 个库平铺 `crates/<短名>`（目录 = 包名去 `pawork-` 前缀，包名保持 `pawork-` 前缀），2 个应用 `apps/{pawork,desktop}`。2026-09-16 按用户明确要求新增独立浏览器包；其它新能力仍往既有包加模块，包布局变更须向用户确认。
 
 | 包 | 目录 | 依赖方向 | 备注 |
 | --- | --- | --- | --- |
@@ -45,8 +45,9 @@ Workspace 为 **22 成员（20 库 + 2 应用）**：20 个库平铺 `crates/<�
 | `pawork-cli` | `crates/cli` | 原 cli 依赖（GuiHost 经 app） | 21 子命令 + `channels/acp/`（AcpHost 四件套） |
 | `pawork-client` | `crates/client` | → domain、protocol、transport | framed 连接面 + `headless/`；probe 场景为本包 tests/，live 模式 `examples/probe.rs` |
 | `pawork-terminal` | `crates/terminal` | 无内部依赖 | 终端显示核心：行缓冲解析（CR/退格/擦除/光标/折行/SGR 16 色）、按键→PTY 字节映射、面板像素→列×行估算；不是完整 VT emulator |
+| `pawork-browser` | `crates/browser` | 无内部依赖 | 系统 WebView、HTTP(S) 导航、页面状态、显示与释放；macOS 使用 WebKit，不依赖 GPUI、Core 或协议 |
 | `pawork`（bin） | `apps/pawork` | → cli | composition root + `redact.rs`（Redactor/RedactingFmtLayer） |
-| `pawork-desktop`（bin） | `apps/desktop` | → client、terminal、gpui；macOS platform-only → cocoa、objc、raw-window-handle | 四层 ui/projection/controller/platform；业务依赖 = pawork-client + pawork-terminal（deny-list 断言）；AX 走应用侧原生 bridge，不扩张业务依赖 |
+| `pawork-desktop`（bin） | `apps/desktop` | → client、terminal、browser、gpui、raw-window-handle；macOS platform-only → cocoa、objc | 四层 ui/projection/controller/platform；pawork-* 依赖 = client + terminal + browser（deny-list 断言）；浏览器手动导航与经 client 的 Host 授权自动操作，不直接访问 Core / Provider |
 
 **不合并清单**（保持独立包）：`policy`、`exec`、`auth`、`git`、`engine`、`protocol`、`testkit`、`transport`、`orchestration`、`workflow`。
 
@@ -58,9 +59,11 @@ Workspace 为 **22 成员（20 库 + 2 应用）**：20 个库平铺 `crates/<�
 
 ## 3. 冻结契约与「追加不重写」
 
+**右侧浏览器（2026-09-16，用户授权）**：`desktop → browser → 系统 WebKit` 承载网页视图及受限 DOM 操作；网页脚本运行于系统内容进程，不把 JS Runtime 嵌入 Agent / Core 或构建链。每任务一个内存页面，非持久网站数据互相隔离；不导入系统浏览器资料，不提供网页到 Rust 的工具桥。地址栏、链接与重定向限定 HTTP(S)，支持本地预览。聊天经 Host 的 `browser` 工具、Policy 与显式审批，通过 GUI 1.18 `browser_next` / `browser_respond` 操作当前任务页面，结果作为工具事件持久化；历史重放不派发操作。关闭释放，隐藏和切任务保留；尚无截图、多标签、下载与跨启动恢复。数据库 schema 不变。
+
 ### 3.1 终局包布局先行
 
-- 现行终局布局为 §2 的 22 成员；新能力 = 已有包内新模块（不新增包）；**禁止**「先写在 bin 里、以后再抽包」。
+- 现行布局为 §2 的 23 成员；browser 从首版即按用户要求独立。其它新能力 = 已有包内新模块；**禁止**「先写在 bin 里、以后再抽包」。
 - 包间依赖方向遵守 §2 表与不合并清单；canonical 纯净红线不变。
 
 ### 3.2 冻结契约（激活即采用完整形状；golden 先于实现改动）
@@ -77,7 +80,7 @@ Workspace 为 **22 成员（20 库 + 2 应用）**：20 个库平铺 `crates/<�
 | 引擎语义 | 审批经 `ApprovalResolver` await（`ToolApprovalRequested/Responded` 事件对；Requested 在等待前落盘）、`CancelHandle`+`CancelReason`、`LoopContext` 工具执行注入点 | `crates/engine` 定向回归 |
 | 配置 schema | TOML、`ConfigTier`（Builtin<Global<Profile<Workspace<Session<Run）、`PaworkConfig`/`ProviderConfig{id, base_url}`（**无 api_key 字段**）；ADR-053 追加 Global-only `approval_mode` / `workspace_trust`，非 Global 高层剥离；ADR-054 追加 `naming_provider`/`naming_model` 自动命名对（分层同 `default_provider`/`default_model`） | `crates/workspace::config` 六层矩阵测试 |
 | blob 格式 | `PWB1` + protected AEAD 边界；artifact/protected/checkpoint 三区 | `crates/storage::blob` golden |
-| GUI 协议 | 帧格式带版本协商；`SUPPORTED_API_VERSIONS` 1.0–1.17（1.3 Terminal 生命周期 `terminal_close` + `TerminalExited`，按协商 minor 门控推送；1.4 Settings 认证；1.5 通用页；1.6 权限与审批；1.7 工具与 MCP；1.8 终端设置；1.9 Accepted 握手可选 `host_data_dir`；1.10 供应商级代理开关 `set_provider_use_proxy`；1.11 会话生命周期 `session_rename`/`session_archive`/`SessionMetaChanged`、`session_create.workspace_id` 可选化（ADR-054）；1.12 模型启用集 set_model_enabled/set_provider_models_enabled/set_default_role_model 与 role_defaults（ADR-055）；1.13 provider_auth_status 增 credentials 逐条凭证状态（ADR-056）；1.14 历史思考投影与可选 message_id/thinking_text，旧 minor 过滤新内容但保留分页游标（[ADR-057](spec/desktop.md#adr-057ui-3-思考投影与会话身份2026-09-08)）；1.15 命名账号新增/选择/删除及凭证 ID/名称/selected，旧 minor 剥离新字段（[ADR-059](spec/settings.md#adr-059ui-6b-命名账号与持久选择2026-09-08)）；1.16 逐账号 Percent 额度与耗尽切换模式，旧 minor 在发网前拒绝新查询并剥离模式字段（[ADR-060](spec/settings.md#adr-060ui-6b-g2-逐账号额度与耗尽切换2026-09-09)）；1.17 空 `display_name` 由 Host 生成默认账号名，并新增 GUI-only `auth_account_rename`（[ADR-061](spec/settings.md#adr-061账号默认名称与重命名2026-09-13)））；typegen 检入 [`schemas/`](../schemas/)（core-api/gui-protocol/headless-json）；三通道可用性单源 `protocol::app::registry`，未登记 fail-closed | 帧 golden + typegen 断言（`crates/protocol`） |
+| GUI 协议 | 帧格式带版本协商；`SUPPORTED_API_VERSIONS` 1.0–1.18（1.3 Terminal 生命周期 `terminal_close` + `TerminalExited`，按协商 minor 门控推送；1.4 Settings 认证；1.5 通用页；1.6 权限与审批；1.7 工具与 MCP；1.8 终端设置；1.9 Accepted 握手可选 `host_data_dir`；1.10 供应商级代理开关 `set_provider_use_proxy`；1.11 会话生命周期 `session_rename`/`session_archive`/`SessionMetaChanged`、`session_create.workspace_id` 可选化（ADR-054）；1.12 模型启用集 set_model_enabled/set_provider_models_enabled/set_default_role_model 与 role_defaults（ADR-055）；1.13 provider_auth_status 增 credentials 逐条凭证状态（ADR-056）；1.14 历史思考投影与可选 message_id/thinking_text，旧 minor 过滤新内容但保留分页游标（[ADR-057](spec/desktop.md#adr-057ui-3-思考投影与会话身份2026-09-08)）；1.15 命名账号新增/选择/删除及凭证 ID/名称/selected，旧 minor 剥离新字段（[ADR-059](spec/settings.md#adr-059ui-6b-命名账号与持久选择2026-09-08)）；1.16 逐账号 Percent 额度与耗尽切换模式，旧 minor 在发网前拒绝新查询并剥离模式字段（[ADR-060](spec/settings.md#adr-060ui-6b-g2-逐账号额度与耗尽切换2026-09-09)）；1.17 空 `display_name` 由 Host 生成默认账号名，并新增 GUI-only `auth_account_rename`（[ADR-061](spec/settings.md#adr-061账号默认名称与重命名2026-09-13)）；1.18 增加 GUI-only Browser 请求领取 / 回执与 BrowserControl capability）；typegen 检入 [`schemas/`](../schemas/)（core-api/gui-protocol/headless-json）；三通道可用性单源 `protocol::app::registry`，未登记 fail-closed | 帧 golden + typegen 断言（`crates/protocol`） |
 | headless JSON | `HeadlessResponse`（`type=event|response`）；`run`/`chat --prompt --json` 已对齐；stdout 仅 JSONL；`--json` → 正式 headless 映射见 [spec/contracts.md](spec/contracts.md) | `crates/protocol` headless golden |
 | 控制面 | usage `dedup_key`；audit JSONL | `fixtures/audit/event-v1.jsonl` + `crates/control-plane` golden |
 | 缓存注解（附加式） | `CanonicalModelRequest` 缓存策略枚举（`Off/Auto/Explicit{retention}`）+ 前缀分段标注；`ModelResponseSummary`/usage 增 `cache_read`/`cache_write`；serde 向后兼容 | golden 先行；方案见 [references.md](references.md) 附录 B（F5-B） |
@@ -113,6 +116,7 @@ Workspace 为 **22 成员（20 库 + 2 应用）**：20 个库平铺 `crates/<�
 - **会话分支**：append-only 单表全局 sequence；fork 只许切在闭合 turn 边界（`RunCompleted` / `RunCancelled` / `RunFailed`）；压缩按分支水位；父支晚写不得污染旧 fork。
 - **Session→Workspace**：`sessions.workspace_id` 可空弱引用，写穿 + 启动预载；不回填历史；无 FK。
 - **持久项目注册表**：`workspaces` 表按 canonical root 幂等登记，`root_path` UNIQUE；同 id 不同 root fail-closed。会话归属分两态（ADR-054 D1 修订 ADR-044 D3）：显式无项目会话（sessions.workspace_id 为 NULL）是合法产品状态，以空授权面（ws-unbound、无 roots）运行问答，文件类工具由 Policy 对空 roots fail-closed；绑定悬空（指向不可用 workspace）仍 fail-closed，仅测试与尚未登记任何 root 的进程允许 legacy ws-unbound 落空授权面。
+- **聊天控制 Terminal / Browser（2026-09-16 用户要求）**：GUI Run 在 Host 注册工具并经过 Policy / 显式审批。Terminal 共用既有 PTY（非沙箱）；Browser 通过 GUI 1.18 browser_next / browser_respond 操作系统 WebView，请求绑定发起 Run 的 GUI 和 session、一次领取。工具结果持久化，历史不执行动作，没有新增 Core→GUI 依赖或 JS Runtime。
 - **Terminal 生命周期**：`terminal_close` 注销注册表；`TerminalExited` live 事件按协商 minor 门控；重复 close 报 `not_found`（对客户端是「清理目标已达成」）。
 - **Settings wire**：API key 明文只走非重放单帧 `ApiKeySecret`（Debug 恒 `[REDACTED]`，无 Display）；`SetApprovalMode` 保存 Global `approval_mode` 默认，`WorkspaceTrust` 保存 Global `workspace_trust` canonical 根路径布尔项（[ADR-053](spec/settings.md#adr-053opt-1-设置持久化2026-09-05)）；先落盘后更新后续 Run，进行中 Run 不变；`SetProxyUrl` 写 workspace 外标准用户配置目录的 Global `config.toml`，`SetTerminalSettings` / MCP remove 同写 Global 层；About 只在握手提供非空 `host_data_dir` 时显示，不从 endpoint 反推。
 - **Desktop AX**：GPUI 锁定 `=0.2.2`；显式语义树 + AppKit 虚拟 AX 元素；AX action 回到既有 AppView handler 与 enable gate。

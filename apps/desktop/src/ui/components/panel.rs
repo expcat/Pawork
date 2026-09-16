@@ -3,7 +3,7 @@
 //! 侧栏 / Inspector 的壳：bg.panel + 侧描边 + 固定宽，背景 / 描边 / 圆角取
 //! 现状值，抽壳不改视觉。
 
-use gpui::{div, prelude::*, AnyElement, App, IntoElement, Pixels, RenderOnce, Styled, Window};
+use gpui::{AnyElement, App, IntoElement, Pixels, RenderOnce, Styled, Window, div, prelude::*};
 
 use crate::ui::theme::dark;
 

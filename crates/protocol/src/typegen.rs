@@ -15,8 +15,8 @@ use ts_rs::TS;
 
 use crate::headless::{HeadlessRequest, HeadlessResponse};
 use crate::{
-    AppCommandEnvelope, AppEventEnvelope, AppQueryEnvelope, AppResponseEnvelope, ClientFrame,
-    ServerFrame, API_VERSION, SUPPORTED_API_VERSIONS,
+    API_VERSION, AppCommandEnvelope, AppEventEnvelope, AppQueryEnvelope, AppResponseEnvelope,
+    ClientFrame, SUPPORTED_API_VERSIONS, ServerFrame,
 };
 
 type Result<T> = std::result::Result<T, TypegenError>;

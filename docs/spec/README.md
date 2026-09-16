@@ -1,6 +1,6 @@
 # Pawork Spec 文档集
 
-> 基线日期：2026-09-01。状态：**现行（Living）**。本目录描述 Pawork 当前产品范围、需求、可见能力、稳定契约、安全边界、Desktop、验证与运维约束，并承载 **22 个包的逐包 Spec** 与跨包链路速览；它是跨事实源的产品化索引与包内功能的文档化镜像，**不是源码、协议形状或阶段状态的新事实源**。
+> 基线日期：2026-09-01。状态：**现行（Living）**。本目录描述 Pawork 当前产品范围、需求、可见能力、稳定契约、安全边界、Desktop、验证与运维约束，并承载 **23 个包的逐包 Spec** 与跨包链路速览；它是跨事实源的产品化索引与包内功能的文档化镜像，**不是源码、协议形状或阶段状态的新事实源**。
 
 ## 1. 文档范围
 
@@ -22,7 +22,7 @@
 
 ### 1.2 包级 Spec
 
-每包一篇，位于 [crates/](crates/)，目标是**读文档即可了解该包全部功能与行为、尽量不读代码**。按写入集读取：进某包前读该包一篇，不要一次读完 22 份。
+每包一篇，位于 [crates/](crates/)，目标是**读文档即可了解该包全部功能与行为、尽量不读代码**。按写入集读取：进某包前读该包一篇，不要一次读完全部 Spec。
 
 | Spec | 包 | 一句话职责 |
 | --- | --- | --- |
@@ -46,8 +46,9 @@
 | [crates/cli.md](crates/cli.md) | `pawork-cli` | 21 子命令 + REPL + headless + ACP host |
 | [crates/client.md](crates/client.md) | `pawork-client` | GuiClient framed 连接面 + headless SDK + probe |
 | [crates/terminal.md](crates/terminal.md) | `pawork-terminal` | 终端显示核心：行缓冲解析 / SGR 属性分段 / 按键→PTY 字节 / 面板尺寸估算（零依赖纯库） |
+| [crates/browser.md](crates/browser.md) | `pawork-browser` | 系统网页视图、HTTP(S) 导航、状态和生命周期；无内部依赖 |
 | [crates/pawork.md](crates/pawork.md) | `pawork`（bin） | composition root + tracing 全链脱敏 |
-| [crates/desktop.md](crates/desktop.md) | `pawork-desktop`（bin） | GPUI 四层桌面客户端（业务依赖仅 pawork-client + pawork-terminal） |
+| [crates/desktop.md](crates/desktop.md) | `pawork-desktop`（bin） | GPUI 四层桌面客户端（业务连接经 client，显示依赖 terminal + browser） |
 
 ### 1.3 跨包链路
 

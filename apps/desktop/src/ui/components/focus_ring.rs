@@ -6,8 +6,8 @@
 //! 业务选中态与焦点独立，禁止用动态 border / padding 改变控件几何。
 
 use gpui::{
-    div, prelude::*, px, AbsoluteLength, App, Global, IntoElement, KeyDownEvent, MouseDownEvent,
-    RenderOnce, Window,
+    AbsoluteLength, App, Global, IntoElement, KeyDownEvent, MouseDownEvent, RenderOnce, Window,
+    div, prelude::*, px,
 };
 
 use crate::ui::theme::{dark, metrics};

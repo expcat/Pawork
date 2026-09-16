@@ -1,14 +1,14 @@
 //! UI-3 Timeline 条目：Markdown 正文、默认收起的工具摘要与诚实 Run 终态。
 //! 渲染和 AX 共用 presentation state 与高度模型；折叠不删除 reducer 事件。
 
-use gpui::{div, prelude::*, px, Context, FontWeight, Rgba, SharedString, Window};
+use gpui::{Context, FontWeight, Rgba, SharedString, Window, div, prelude::*, px};
 
 use crate::projection::{
     ConnectionState, ForkBoundary, RunUsageDisplay, TimelineEntry, TimelineEntryKind,
 };
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
 use crate::ui::components::dropdown::{Dropdown, MenuPanel, MenuRow};
-use crate::ui::components::icon::{icon_sized, Icon};
+use crate::ui::components::icon::{Icon, icon_sized};
 use crate::ui::components::label::Label;
 use crate::ui::components::list_row::ListRow;
 use crate::ui::i18n::t;
@@ -16,7 +16,7 @@ use crate::ui::theme::{dark, font, metrics};
 
 use super::task_rail::relative_activity;
 use super::timeline::tool_status_label;
-use super::{now_unix_ms, AppView, MenuKind};
+use super::{AppView, MenuKind, now_unix_ms};
 
 /// 显示时间（R4 Wave A P3）：epoch 毫秒串经 task_rail::relative_activity 转
 /// 相对时间词（now / Nm / Nh / Nd）；解析失败（如 fixture 任意串）原样返回，
@@ -386,8 +386,12 @@ pub(super) const SUMMARY_BANNER_PAD_X: f32 = 12.0;
 pub(super) const SUMMARY_BANNER_PAD_Y_REMS: f32 = 0.75;
 /// gap_2 = 0.5 rem（标题 / 原因 / CTA 竖向；圆与标题横向）。
 pub(super) const SUMMARY_BANNER_GAP_REMS: f32 = 0.5;
-/// 认证失败 Raised CTA 行高。
-pub(super) const SUMMARY_NEXT_STEP_BUTTON_HEIGHT: f32 = 28.0;
+/// 认证失败 Raised CTA 行高（紧凑 pill 配套收为 24）。
+pub(super) const SUMMARY_NEXT_STEP_BUTTON_HEIGHT: f32 = 24.0;
+/// 失败 pill 的警示图标边长（行内 16px，与文字基线同槽）。
+pub(super) const SUMMARY_FAIL_ICON: f32 = 16.0;
+/// 失败 pill 圆角（Codex 式横条视觉，12px）。
+pub(super) const SUMMARY_FAIL_PILL_RADIUS: f32 = 12.0;
 
 /// 失败卡下一步（UI 启发式，不改协议）。命中认证类关键词才给供应商设置入口。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1212,11 +1216,11 @@ impl AppView {
         panel
     }
 
-    /// GUI3-04 Run 摘要卡：Ø20 状态圆 + 单行标题 + 原因（失败不截断）。
-    /// Failed 为紧凑 banner；认证类原因给 Raised「打开供应商设置」
-    ///（复用 on_manage_composer_models，不加假 retry）。Completed 有可审阅
-    /// Changes 时仍是 Review changes（Primary 168×40 / gate / 文案不变），
-    /// 仅圆径与内边距与 banner 对齐。
+    /// GUI3-04 Run 摘要卡：Failed 为 Codex 式紧凑 pill（警示图标 + 单行
+    /// 截断原因，红色警示）；认证类原因追加一行 Raised「打开供应商设置」
+    ///（复用 on_manage_composer_models，不加假 retry）。Completed 为 Ø20
+    /// 状态圆 + 标题 + 说明（line_clamp 2），有可审阅 Changes 时仍是
+    /// Review changes（Primary 168×40 / gate / 文案不变）。
     pub(super) fn run_summary_element(
         &mut self,
         view: &RunSummaryView,
@@ -1306,26 +1310,39 @@ impl AppView {
         cx: &mut Context<Self>,
     ) -> gpui::Div {
         let next_step = failure_next_step(&view.description);
-        let reason = div()
-            .flex()
-            .flex_row()
-            .gap_2()
-            .child(Self::run_summary_text_indent())
-            .child(
-                div().flex().flex_row().flex_1().min_w_0().child(
-                    div()
-                        .flex_1()
-                        .text_size(font::BODY_SM)
-                        .text_color(dark().text.secondary)
-                        .child(view.description.clone()),
-                ),
-            );
-        Self::run_summary_card_shell()
+        // Codex 式紧凑横条：警示图标 + 单行截断原因（红色警示），
+        // 不再渲染标题行与多行原因；完整原因仍由 AX description 暴露。
+        div()
+            .max_w(px(metrics::TIMELINE_READABLE_WIDTH))
+            .border_1()
+            .border_color(dark().border.subtle)
+            .rounded(px(SUMMARY_FAIL_PILL_RADIUS))
+            .bg(dark().surface.raised)
+            .px(px(SUMMARY_BANNER_PAD_X))
+            .py_3()
             .flex()
             .flex_col()
             .gap_2()
-            .child(self.run_summary_title_row(view))
-            .child(reason)
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        icon_sized(Icon::Warning, px(SUMMARY_FAIL_ICON))
+                            .text_color(dark().semantic.danger_text),
+                    )
+                    .child(
+                        div().flex().flex_row().flex_1().min_w_0().child(
+                            div()
+                                .truncate()
+                                .text_size(font::BODY_SM)
+                                .text_color(dark().semantic.danger_text)
+                                .child(view.description.clone()),
+                        ),
+                    ),
+            )
             .when(next_step == FailureNextStep::OpenProviderSettings, |card| {
                 card.child(self.open_providers_cta(event_id, cx))
             })
@@ -1364,7 +1381,7 @@ impl AppView {
             .flex()
             .flex_row()
             .gap_2()
-            .child(Self::run_summary_text_indent())
+            .child(div().w(px(SUMMARY_FAIL_ICON)).flex_none())
             .child(button)
     }
 
@@ -1680,17 +1697,20 @@ mod tests {
         );
         assert_eq!(row.headline, "list_directory .");
         assert!(row.headline_has_target);
-        assert!(row
-            .detail
-            .unwrap()
-            .contains("Directory . · 0 entries (empty)"));
+        assert!(
+            row.detail
+                .unwrap()
+                .contains("Directory . · 0 entries (empty)")
+        );
         let empty = ToolRowView::from_facts("read", "succeeded", None, Some(""));
         assert!(!empty.headline_has_target);
         assert!(empty.detail.unwrap().contains("Empty result"));
-        assert!(ToolRowView::from_facts("read", "succeeded", None, None)
-            .detail
-            .unwrap()
-            .contains("Result not provided"));
+        assert!(
+            ToolRowView::from_facts("read", "succeeded", None, None)
+                .detail
+                .unwrap()
+                .contains("Result not provided")
+        );
 
         let extracted = ToolRowView::from_facts(
             "write_file",

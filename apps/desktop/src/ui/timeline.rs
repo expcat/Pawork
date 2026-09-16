@@ -20,31 +20,32 @@
 use std::collections::HashSet;
 
 use gpui::{
-    div, list, prelude::*, px, AnyElement, Context, ListOffset, ListState, Pixels, SharedString,
-    WeakEntity, Window,
+    AnyElement, Context, ListOffset, ListState, Pixels, SharedString, WeakEntity, Window, div,
+    list, prelude::*, px,
 };
 
 use crate::projection::{
-    run_footer_label, run_summary_texts, ConnectionState, ForkBoundary, TimelineEntry,
-    TimelineEntryKind, TimelineRow,
+    ConnectionState, ForkBoundary, TimelineEntry, TimelineEntryKind, TimelineRow, run_footer_label,
+    run_summary_texts,
 };
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
 use crate::ui::components::dropdown::Dropdown;
 use crate::ui::components::empty_state::EmptyState;
 use crate::ui::components::follow_scroll::BackToBottom;
-use crate::ui::components::icon::{icon_sized, Icon};
+use crate::ui::components::icon::{Icon, icon_sized};
 use crate::ui::components::label::Label;
 use crate::ui::i18n::t;
 use crate::ui::theme::{dark, font, metrics};
 
 use super::approval_card::approval_card_height;
 use super::timeline_entry::{
-    assistant_is_streaming, default_text_line_height, display_time, estimated_wrapped_lines,
-    failure_next_step, message_block_line_counts, tool_row_height, FailureNextStep,
-    RunSummaryTerminal, RunSummaryView, ToolRowView, SUMMARY_BANNER_GAP_REMS, SUMMARY_BANNER_PAD_X,
-    SUMMARY_BANNER_PAD_Y_REMS, SUMMARY_NEXT_STEP_BUTTON_HEIGHT, SUMMARY_STATUS_CIRCLE,
+    FailureNextStep, RunSummaryTerminal, RunSummaryView, SUMMARY_BANNER_GAP_REMS,
+    SUMMARY_BANNER_PAD_X, SUMMARY_BANNER_PAD_Y_REMS, SUMMARY_FAIL_ICON,
+    SUMMARY_NEXT_STEP_BUTTON_HEIGHT, SUMMARY_STATUS_CIRCLE, ToolRowView, assistant_is_streaming,
+    default_text_line_height, display_time, estimated_wrapped_lines, failure_next_step,
+    message_block_line_counts, tool_row_height,
 };
-use super::{now_unix_ms, workspace_empty_title, AppView, MenuKind};
+use super::{AppView, MenuKind, now_unix_ms, workspace_empty_title};
 
 /// list() 视口外上下方向的预渲染量（px，非视觉尺寸；仅影响滚动顺滑度）。
 pub(super) const TIMELINE_OVERDRAW: f32 = 200.0;
@@ -177,9 +178,9 @@ pub(super) fn thinking_body_height(text: &str, width: f32, rem: f32) -> f32 {
 }
 
 /// Run 摘要卡几何（run_summary_element 同源）：
-/// padding + 标题行 + 原因换行行数 × 行高 + （有 CTA 时）按钮行。
-/// Failed 原因不截断；Completed 说明仍 line_clamp 2；认证 CTA 为独立行，
-/// Review changes 仍在右侧不增高（只取 max 与按钮槽）。
+/// padding + 内容行 + （有 CTA 时）按钮行。Failed 为单行 pill（警示图标 +
+/// 单行截断原因），无换行估算；Completed 为标题行 + line_clamp 2 说明；
+/// 认证 CTA 为独立行，Review changes 仍在右侧不增高（只取 max 与按钮槽）。
 pub(super) struct RunSummaryCardLayout {
     pub height: f32,
     pub pad_x: f32,
@@ -193,12 +194,18 @@ pub(super) struct RunSummaryCardLayout {
 impl RunSummaryCardLayout {
     /// 认证 CTA 顶边相对卡片顶；无 CTA 为 None。
     pub fn next_step_top(&self) -> Option<f32> {
-        (self.next_step == FailureNextStep::OpenProviderSettings)
-            .then_some(self.pad_y + self.title_row + self.gap + self.reason_height + self.gap)
+        if self.next_step != FailureNextStep::OpenProviderSettings {
+            return None;
+        }
+        let mut top = self.pad_y + self.title_row;
+        if self.reason_height > 0.0 {
+            top += self.gap + self.reason_height;
+        }
+        Some(top + self.gap)
     }
 
     pub fn next_step_x_inset(&self) -> f32 {
-        self.pad_x + SUMMARY_STATUS_CIRCLE + self.gap
+        self.pad_x + SUMMARY_FAIL_ICON + self.gap
     }
 }
 
@@ -220,28 +227,30 @@ pub(super) fn run_summary_card_layout(
     let pad_x = SUMMARY_BANNER_PAD_X;
     let pad_y = SUMMARY_BANNER_PAD_Y_REMS * rem_px;
     let gap = SUMMARY_BANNER_GAP_REMS * rem_px;
-    let title_row = SUMMARY_STATUS_CIRCLE.max(default_text_line_height(font::BODY.0 * rem_px));
-    let review_slot = if review_changes_visible {
-        1.5 * rem_px + metrics::SUMMARY_BUTTON_WIDTH
-    } else {
-        0.0
-    };
-    let desc_width =
-        (column_width - (pad_x * 2.0 + SUMMARY_STATUS_CIRCLE + gap + review_slot)).max(0.0);
-    let desc_font_px = font::BODY_SM.0 * rem_px;
-    let (desc_lines, reason_line_height) = if failed {
+    let (title_row, reason_height) = if failed {
         (
-            estimated_wrapped_lines(&description, desc_width, desc_font_px).max(1),
-            default_text_line_height(desc_font_px),
+            SUMMARY_FAIL_ICON.max(default_text_line_height(font::BODY_SM.0 * rem_px)),
+            0.0,
         )
     } else {
-        (
-            estimated_wrapped_lines(&description, desc_width, desc_font_px).clamp(1, 2),
-            (font::from_pixels(metrics::MSG_LINE_HEIGHT).0 * rem_px).round(),
-        )
+        let title_row = SUMMARY_STATUS_CIRCLE.max(default_text_line_height(font::BODY.0 * rem_px));
+        let review_slot = if review_changes_visible {
+            1.5 * rem_px + metrics::SUMMARY_BUTTON_WIDTH
+        } else {
+            0.0
+        };
+        let desc_width =
+            (column_width - (pad_x * 2.0 + SUMMARY_STATUS_CIRCLE + gap + review_slot)).max(0.0);
+        let desc_font_px = font::BODY_SM.0 * rem_px;
+        let desc_lines =
+            estimated_wrapped_lines(&description, desc_width, desc_font_px).clamp(1, 2);
+        let reason_line_height = (font::from_pixels(metrics::MSG_LINE_HEIGHT).0 * rem_px).round();
+        (title_row, desc_lines as f32 * reason_line_height)
     };
-    let reason_height = desc_lines as f32 * reason_line_height;
-    let mut content = title_row + gap + reason_height;
+    let mut content = title_row;
+    if reason_height > 0.0 {
+        content += gap + reason_height;
+    }
     if next_step == FailureNextStep::OpenProviderSettings {
         content += gap + SUMMARY_NEXT_STEP_BUTTON_HEIGHT;
     }
@@ -1052,8 +1061,9 @@ mod tests {
         );
         assert_eq!(
             auth_layout.title_row,
-            SUMMARY_STATUS_CIRCLE.max(default_text_line_height(font::BODY.0 * rem))
+            SUMMARY_FAIL_ICON.max(default_text_line_height(font::BODY_SM.0 * rem))
         );
+        assert_eq!(auth_layout.reason_height, 0.0);
         assert!(auth_layout.title_row < 40.0);
         let cancelled = TimelineEntry {
             sequence: 2,

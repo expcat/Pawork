@@ -1,7 +1,6 @@
 [workspace]
 resolver = "2"
-# R1 波 E 定稿(ADR-039 D1):19 库平铺 crates/<短名>(目录去 pawork- 前缀,
-# 包名不变)+ 2 应用 apps/{pawork,desktop};members 21。
+# 21 库平铺 crates/<短名> + 2 应用 apps/{pawork,desktop}；members 23。
 members = [
     "crates/*",
     "apps/*",

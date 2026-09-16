@@ -3,9 +3,8 @@
 //! 统一 mod.rs 中散置的单行文本 span：色阶走 text.* token，视觉与迁移前一致。
 
 use gpui::{
-    div, prelude::*, App, IntoElement, Rems, RenderOnce, Rgba, SharedString, Styled, Window,
+    App, IntoElement, Rems, RenderOnce, Rgba, SharedString, Styled, Window, div, prelude::*,
 };
-
 
 /// 单行静态文本；字号 / 颜色由调用方经 theme token 指定。
 #[derive(IntoElement)]

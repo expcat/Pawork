@@ -21,12 +21,12 @@ use thiserror::Error;
 use tokio::sync::Mutex;
 
 pub use identity::{
-    bind_tenant, ExternalAgentIdentity, IdentityError, TenantBinding, TrustedTenantContext,
+    ExternalAgentIdentity, IdentityError, TenantBinding, TrustedTenantContext, bind_tenant,
 };
 pub use pawork_domain::{
-    CapabilitySnapshot, ClientCapability, ClientProtocol, ClientSessionId, ClientSessionRecord,
-    ClientSessionState, RegistryWriteOutcome, SessionRegistryError, SessionRegistryStore,
-    CLIENT_ADAPTER_SCHEMA_VERSION,
+    CLIENT_ADAPTER_SCHEMA_VERSION, CapabilitySnapshot, ClientCapability, ClientProtocol,
+    ClientSessionId, ClientSessionRecord, ClientSessionState, RegistryWriteOutcome,
+    SessionRegistryError, SessionRegistryStore,
 };
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -848,8 +848,8 @@ mod tests {
     #[tokio::test]
     async fn mock_adapter_encodes_all_canonical_frames() {
         use crate::{
-            AppEvent, AppEventEnvelope, AppResponse, AppResponseEnvelope, EventSource, EventStream,
-            GlobalSequence, API_VERSION,
+            API_VERSION, AppEvent, AppEventEnvelope, AppResponse, AppResponseEnvelope, EventSource,
+            EventStream, GlobalSequence,
         };
         use pawork_domain::{CoreInstanceId, QueryId};
 

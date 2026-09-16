@@ -1,0 +1,15 @@
+{
+  "data": {
+    "api_version": {
+      "major": 1,
+      "minor": 18
+    },
+    "request_id": "query-browser-next",
+    "responded_at": 3,
+    "response": {
+      "data": null,
+      "type": "data"
+    }
+  },
+  "type": "response"
+}

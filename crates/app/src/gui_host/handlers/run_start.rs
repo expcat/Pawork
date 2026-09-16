@@ -1,11 +1,11 @@
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use pawork_domain::{
     AgentEvent, CancellationToken, ErrorCategory, ErrorContext, Message, MessageId, MessageRole,
     RunId, SessionId,
 };
-use pawork_engine::{now_timestamp, AgentEventSink};
+use pawork_engine::{AgentEventSink, now_timestamp};
 use pawork_protocol::{AppCommand, AppCommandEnvelope, AppEvent, AppResponse, RunState};
 use serde_json::json;
 
@@ -267,6 +267,43 @@ pub(crate) async fn run_start(
     // 上面的显式模型选择，保留旧客户端仅传 model 的解析顺序。
     {
         let mut core = adapter.core.write().await;
+        let terminal = core.config().terminal.clone().unwrap_or_default();
+        let tools: Vec<Arc<dyn pawork_domain::AgentTool>> = vec![
+            Arc::new(super::super::terminal_tool::TerminalTool {
+                pty: adapter.pty.clone(),
+                terminals: adapter.terminals.clone(),
+                runs: adapter.runs.clone(),
+                bus: adapter.bus.clone(),
+                instance: adapter.instance.clone(),
+                shell: terminal.shell,
+                size: pawork_exec::PtyWindowSize {
+                    cols: terminal.columns.unwrap_or(80),
+                    rows: terminal.rows.unwrap_or(24),
+                    pixel_width: 0,
+                    pixel_height: 0,
+                },
+            }),
+            Arc::new(super::super::browser_tool::BrowserTool {
+                broker: adapter.browser.clone(),
+                runs: adapter.runs.clone(),
+            }),
+        ];
+        core.scheduler = Arc::new(
+            core.scheduler
+                .with_tools(tools.clone())
+                .map_err(|error| GuiHostAdapter::host_error("internal", error.to_string()))?,
+        );
+        for tool in tools {
+            let descriptor = tool.descriptor();
+            core.descriptors.retain(|item| item.name != descriptor.name);
+            core.tool_defs.retain(|item| item.name != descriptor.name);
+            core.tool_defs.push(pawork_domain::ToolDefinition {
+                name: descriptor.name.clone(),
+                description: descriptor.description.clone(),
+                input_schema: descriptor.input_schema.clone(),
+            });
+            core.descriptors.push(descriptor);
+        }
         if core.provider_needs_rebuild() {
             let provider = core.provider_id().as_str().to_string();
             let model = core.model().as_str().to_string();
@@ -304,6 +341,7 @@ pub(crate) async fn run_start(
     };
     let n = adapter.next_gui_run.fetch_add(1, Ordering::Relaxed);
     let run_id = RunId::from(format!("run-gui-{}-{n}", now_timestamp().as_unix_millis()));
+    adapter.browser.bind(&run_id, &envelope.source);
     let token = CancellationToken::new();
     adapter.runs.register(
         ActiveGuiRun {
@@ -319,6 +357,7 @@ pub(crate) async fn run_start(
     let bus = Arc::clone(&adapter.bus);
     let runs = Arc::clone(&adapter.runs);
     let approvals = Arc::clone(&adapter.approvals);
+    let browser = Arc::clone(&adapter.browser);
     let instance = adapter.instance.clone();
     let session = session_id.clone();
     let run = run_id.clone();
@@ -343,16 +382,16 @@ pub(crate) async fn run_start(
         }
         approvals.clear_run(&run);
         runs.remove(&run);
+        browser.unbind(&run);
         bus.clear_terminal_reported(run.as_str());
         // ADR-054 D4：成功终态后异步自动命名，不阻塞终态事件；独立任务
         // 复用 bus 广播 SessionMetaChanged，失败/超时静默保留占位名。
         if succeeded {
-            tokio::spawn(crate::gui_host::auto_title::auto_title_after_successful_run(
-                core,
-                bus,
-                instance,
-                session,
-            ));
+            tokio::spawn(
+                crate::gui_host::auto_title::auto_title_after_successful_run(
+                    core, bus, instance, session,
+                ),
+            );
         }
     });
     Ok(AppResponse::Accepted {

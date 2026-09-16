@@ -14,7 +14,7 @@
 **不做什么**
 
 - 不定义 wire 契约：GUI 帧形状、`AppCommand`/`AppQuery`/`AppEvent`、timeline 投影规则全部在 [pawork-protocol](protocol.md)；本包只消费。
-- 不实现 Provider 协议、工具、持久化、Policy 判定本体（分别在 [providers](providers.md) / [tools](tools.md) / [storage](storage.md) / [policy](policy.md)）。
+- 不实现 Provider 协议、通用工具、持久化、Policy 判定本体（分别在 [providers](providers.md) / [tools](tools.md) / [storage](storage.md) / [policy](policy.md)）。
 - 不做终端/GUI 渲染（cli 与 desktop 的职责）。Desktop 进程**禁止**依赖本包，只经 protocol + transport 连 CLI（架构红线，见 [../../design.md](../../design.md) §2）。
 
 R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handlers/` 静态分发表；`services/` 与 `CatalogOnlyProvider` 均非公开 API。
@@ -64,6 +64,7 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 | `src/gui_server/session.rs` | ~1000 | 单连接握手与帧循环：协议版本检查、command 盖 client 戳、capability 门（未授予在宿主前拒绝）、Resume 三态调度（replay / SnapshotRequired / up-to-date）、Heartbeat→Pong、订阅确认、lagged→ReplayUnavailable 帧；ADR-045 `deliverable_to_negotiated` 按协商 minor 门控推送——`TerminalExited`（since 1.3）不推给协商 <1.3 的连接（老客户端 serde 遇未知变体会 decode 失败断流），该连接仍可从快照 `terminal_sessions` 的 `state` 获知终态；`host_error_to_protocol` 把宿主 `not_found` 映射为既有 `RequestNotFound` 码（其余维持 Internal），ADR-045 的幂等边界在 wire 上可观察 |
 | `src/gui_host/mod.rs` | ~950 | `GuiHostAdapter`：实现 `GuiHost`；`QUERY_HANDLERS`/`COMMAND_HANDLERS` 静态分发表（与 protocol registry `gui.available` 双射，SET-2 起六个 Settings 入口，SET-6a 再增 `general_settings` / `set_proxy_url`，SET-6b 再增 `permissions_settings` / `set_approval_mode` / `workspace_trust`、SET-6c 再增 `mcp_test` / `mcp_server_remove`、SET-6 终端页再增 `terminal_settings` / `set_terminal_settings`（ADR-050）、ADR-052 再增 `set_provider_use_proxy`、ADR-054 再增 `session_rename` / `session_archive`、ADR-055 再增 `set_model_enabled` / `set_provider_models_enabled` / `set_default_role_model`）、幂等 wrap（scope 隔离 + begin/record）、snapshot 组装（含重启后 pending approvals 重建，Workspaces 段输出 v14 注册表全集合）、timeline 分页（limit 默认 200、clamp 1..=500，游标跨未投影事件推进）；SET-2 `auth_flights` 按 provider_id 单飞守卫（auth_start / auth_set_api_key / auth_cancel 共用，Arc 身份防误删他人 flight） |
 | `src/gui_host/bus.rs` | ~315 | `GuiEventBus`（内部 `EventHub` 赋全局序 + replay；engine 终态上流时登记 run_id，供宿主合成终态兜底去重；`publish_raw` 合成事件序号从 `SYNTHETIC_SEQUENCE_BASE`=2^60 递增自取，不占真实持久化号段且排在既有时间线内容之后）、`GuiBroadcastSink`（AgentEvent→AppEvent 映射后广播）、`publish_provider_auth`（SET-2：Global 流广播 `AuthChanged`，`EventSource::Provider`，hub 重写全局序）、`GuiRunRegistry`（活跃 GUI run 与 `CancellationToken` 登记） |
+| `src/gui_host/{terminal_tool,browser_tool}.rs` | — | GUI Run 注册的聊天工具；PTY 共用注册表和广播，Browser 请求绑定发起客户端与 run、一次领取、超时回收 |
 | `src/gui_host/auto_title.rs` | ~150 | ADR-054 D4 自动标题编排：GUI RunStart 成功终态后独立 spawn（不阻塞终态事件）；标题仍为占位名 `New session` 且已配置 `naming_provider`/`naming_model` 才经 `AppCore::generate_session_title` 做无工具一次性补全；ADR-055 D4 起命名模型被禁用时跳过命名、保留占位名；素材走 `resume_messages_keep_pending` 只读重放；网络阶段释放 Core 锁，返回后复核命名配置仍有效，经 storage `rename_session_if_title` 原子校验占位名并改名，再广播 `SessionMetaChanged`；未配置/失败/超时静默保留占位名 |
 | `src/gui_host/events.rs` | ~190 | `AgentEventEnvelope`→`AppEvent` 投影助手、诊断事件映射、幂等 client scope 推导 |
 | `src/gui_host/handlers/mod.rs` | ~10 | handler 子模块声明 |
@@ -169,6 +170,12 @@ UI-6b（[ADR-059](../settings.md#adr-059ui-6b-命名账号与持久选择2026-09
 - data_dir 家族：`default_data_dir(_outcome)`、`consume_data_dir_outcome`、`normalize_instance`、`instance_dir`、`session_db_path(_for)`、`artifact_store_path(_for)`、`protected_store_path_for`、`usage_ledger_path_for`、`audit_log_path_for`、`tasks_snapshot_path_for`、`DEFAULT_INSTANCE`（`"default"`）。
 - 便捷 re-export：`AdapterProtocol`/`ProtocolError`；`ApprovalMode`/`RiskLevel`（policy）；`SessionRecord`/`SessionExport`/`EXPORT_SCHEMA_VERSION`（storage）；`PlanSnapshot`/`TaskSnapshot`（workflow）；`DiffFile`/`DiffPage`（git）；`CompatExternalSource`/`LocalSessionFile`/`LocalSessionSource`（workspace）。
 
+### 聊天控制 Terminal / Browser（2026-09-16）
+
+GUI `run_start` 在既有 ToolScheduler 注册 `terminal` / `browser`，保留内置与 MCP 工具。两者要求可信工作区并经过显式审批；调用与结果沿用持久化 Agent 事件。`terminal_tool.rs` 共用 GUI 的 PtyService 与注册表，校验工作区归属和相对 cwd，提供 list/create/read/write/interrupt/close。PTY 没有命令沙箱；write 返回当时输出，不把 shell 仍运行当命令成功。
+
+`browser_tool.rs` 将请求绑定发起 Run 的 run_id 与本地 GUI 客户端。`browser_next` 按 run 一次领取（Host 先校验 run 活跃且属于所报 session），`browser_respond` 核对领取者；取消或 25s 超时移除请求，run 终态解除绑定。Desktop 在系统 WebKit 执行 navigate/read/click/type/back/forward/reload/close 并回报真实结果。历史重放不执行动作。
+
 ## 4. 核心行为与数据流
 
 UI-6b G2：新增私有 `provider_quota.rs`，`account_quota` 消费指定存储账号、配置代理与三窗官方读数，转换为 Percent `QuotaOverviewView`；复核 auth revision 拒绝迟到快照。旧无凭证 quota 查询仍返回本地 usage。GUI session 单独异步处理账号 quota，保持收帧/心跳/命令可用，断线丢弃未完成查询。`RunService::chat_turn_with_run_id` 调用 `select_account_for_run`，通过新鲜三窗与原子 CAS 选账号，再取得整轮 provider 快照；选择写持久 Diagnostic，GuiBroadcastSink 发 AuthChanged。Settings 接新模式命令与状态、旧版本 gate；当前 Run/工具续轮、独立命名/压缩保持 G1 身份边界。已有 Settings 回归增加查询归属、实际 Bearer 命中、失败保旧与持久化脱敏检查；`gui_server_session::slow_account_quota_allows_heartbeat_and_drops_on_disconnect` 验证慢查询时心跳、原 request_id 回复和断线取消。
@@ -201,7 +208,7 @@ UI-6b G2：新增私有 `provider_quota.rs`，`account_quota` 消费指定存储
    - VISION-1 / SEARCH-1 前置闸门：请求组装后按当前模型的三源能力证据跑 `pawork_providers::negotiate::capability_gate`——图片内容要求模型声明 `image_input`，hosted / extension 工具要求对应标签，任一未声明即 `AppError::Provider`（`InvalidRequest`），不发 HTTP；未知模型按空证据处理（纯文本放行）。
 5. 进入 `pawork_engine::run_session`。`SessionLoopCtx` 作为 `LoopContext` 提供：
    - 审批：转 `ApprovalPromptHost`（CLI 为终端 ask，GUI 为 `GuiApprovalHost`）；
-   - 工具执行：经 `ToolScheduler`（并发上限 8，Policy/审批模式约束），写工具执行前先落 checkpoint 快照；
+   - 工具执行：经 `ToolScheduler`（并发上限 8，Policy/审批模式约束），写工具执行前先落 checkpoint 快照；同轮多个调用中 `supports_concurrency == false` 的工具（terminal / browser）从并发批中拆出、按输入顺序单独串行执行，结果仍按输入序对齐；
    - 压缩：超阈值时 fork recovery branch 并产快照；
    - id 发号与事件 emit。
 6. 全部 agent 事件先 `append_event`（active branch）成功再进调用方渲染 sink（persist-first）。

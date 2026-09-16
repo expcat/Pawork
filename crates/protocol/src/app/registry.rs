@@ -5,14 +5,14 @@
 //! 逐命令授权均从 registry 派生；未登记 wire 名 fail-closed。headless 与
 //! ACP 消费侧切换在波 B 完成（本波只登记数据，不触碰两通道实现）。
 
-use crate::headless::wire::SdkCapability;
 use crate::GuiCapability;
+use crate::headless::wire::SdkCapability;
 
 use super::command::AppCommand;
 use super::query::AppQuery;
 use super::version::{
-    ApiVersion, V1_0, V1_1, V1_10, V1_11, V1_12, V1_15, V1_16, V1_17, V1_2, V1_3, V1_4, V1_5, V1_6,
-    V1_7, V1_8,
+    ApiVersion, V1_0, V1_1, V1_2, V1_3, V1_4, V1_5, V1_6, V1_7, V1_8, V1_10, V1_11, V1_12, V1_15,
+    V1_16, V1_17, V1_18,
 };
 
 /// GUI 通道访问规格：是否可用 + 命令级所需能力。
@@ -51,7 +51,7 @@ pub const GUI_INTRINSIC_CAPABILITIES: &[GuiCapability] =
     &[GuiCapability::Events, GuiCapability::Snapshots];
 
 static COMMANDS: &[RegistryEntry] = &[
-    // --- AppCommand（38）---
+    // --- AppCommand（41）---
     RegistryEntry {
         wire_name: "core_initialize",
         gui: GuiChannelAccess {
@@ -514,10 +514,21 @@ static COMMANDS: &[RegistryEntry] = &[
         idempotent: false,
         since: V1_7,
     },
+    RegistryEntry {
+        wire_name: "browser_respond",
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: Some(GuiCapability::BrowserControl),
+        },
+        headless: None,
+        acp: false,
+        idempotent: false,
+        since: V1_18,
+    },
 ];
 
 static QUERIES: &[RegistryEntry] = &[
-    // --- AppQuery（15）---
+    // --- AppQuery（16）---
     RegistryEntry {
         wire_name: "workspace_list",
         gui: GuiChannelAccess {
@@ -689,6 +700,17 @@ static QUERIES: &[RegistryEntry] = &[
         idempotent: true,
         since: V1_8,
     },
+    RegistryEntry {
+        wire_name: "browser_next",
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: Some(GuiCapability::BrowserControl),
+        },
+        headless: None,
+        acp: false,
+        idempotent: true,
+        since: V1_18,
+    },
 ];
 
 /// 变体 → wire 名的唯一映射（从 gui_host 平移收编；禁止在通道侧再建镜像）。
@@ -734,6 +756,7 @@ pub fn command_wire_name(command: &AppCommand) -> &'static str {
         AppCommand::TerminalClose { .. } => "terminal_close",
         AppCommand::McpTest { .. } => "mcp_test",
         AppCommand::McpServerRemove { .. } => "mcp_server_remove",
+        AppCommand::BrowserRespond { .. } => "browser_respond",
     }
 }
 
@@ -755,6 +778,7 @@ pub fn query_wire_name(query: &AppQuery) -> &'static str {
         AppQuery::GeneralSettings => "general_settings",
         AppQuery::PermissionsSettings => "permissions_settings",
         AppQuery::TerminalSettings => "terminal_settings",
+        AppQuery::BrowserNext { .. } => "browser_next",
     }
 }
 
@@ -803,6 +827,7 @@ fn capability_rank(capability: &GuiCapability) -> u8 {
         GuiCapability::ArtifactStreaming => 2,
         GuiCapability::TerminalStreaming => 3,
         GuiCapability::Approvals => 4,
+        GuiCapability::BrowserControl => 5,
     }
 }
 
@@ -810,7 +835,7 @@ fn capability_rank(capability: &GuiCapability) -> u8 {
 /// （Events / Snapshots）。按 GuiCapability 声明序输出，保证向量稳定。
 ///
 /// 波 A 基线：派生结果必须等于 V2 快照
-/// {Events, Snapshots, TerminalStreaming, Approvals}（golden 测试钉死）。
+/// {Events, Snapshots, TerminalStreaming, Approvals, BrowserControl}（golden 测试钉死）。
 pub fn gui_supported_capabilities() -> Vec<GuiCapability> {
     let mut capabilities = GUI_INTRINSIC_CAPABILITIES.to_vec();
     for entry in COMMANDS.iter().chain(QUERIES.iter()) {

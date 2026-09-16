@@ -1,7 +1,7 @@
 //! Settings appearance 页。
 
 use super::*;
-use crate::ui::i18n::{t, Language, LANGUAGES};
+use crate::ui::i18n::{LANGUAGES, Language, t};
 
 impl AppView {
     /// 「外观」页（SET-6e）：不经 Host，直接复用 Desktop 已有的

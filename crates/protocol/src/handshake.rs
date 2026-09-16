@@ -4,7 +4,7 @@
 use crate::app::{ApiHandle, ApiVersion, GlobalSequence};
 use pawork_domain::{ConnectionId, CoreInstanceId, GuiClientId};
 
-use crate::resume::{compute_resume_disposition, ResumeContext};
+use crate::resume::{ResumeContext, compute_resume_disposition};
 use crate::{
     ClientAuthentication, ClientFrame, GuiCapability, HandshakeRequest, HandshakeResponse,
     ProtocolError, ResumeDisposition, ServerFrame,

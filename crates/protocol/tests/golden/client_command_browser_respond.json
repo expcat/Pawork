@@ -1,0 +1,32 @@
+{
+  "data": {
+    "api_version": {
+      "major": 1,
+      "minor": 18
+    },
+    "command": {
+      "method": "browser_respond",
+      "params": {
+        "request_id": "browser-1",
+        "result": {
+          "ok": true,
+          "data": {
+            "url": "https://example.com"
+          }
+        }
+      }
+    },
+    "command_id": "command-terminal-1",
+    "identity": {
+      "actor_id": "actor-1",
+      "type": "local_user"
+    },
+    "issued_at": 2,
+    "source": {
+      "client_id": "gui-1",
+      "connection_id": "connection-1",
+      "type": "remote_gui"
+    }
+  },
+  "type": "command"
+}

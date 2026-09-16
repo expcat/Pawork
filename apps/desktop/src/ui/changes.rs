@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 
-use gpui::{div, prelude::*, px, Context, MouseDownEvent, ScrollHandle};
+use gpui::{Context, MouseDownEvent, ScrollHandle, div, prelude::*, px};
 
 use crate::controller::{
     DiffFileDetail, DiffFileSummary, DiffLineDetail, DiffLineKind, GitDiffInfo,
@@ -14,7 +14,7 @@ use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
 use crate::ui::components::dropdown::{MenuPanel, MenuRow};
 use crate::ui::components::empty_state::EmptyState;
 use crate::ui::components::focus_ring::focus_ring;
-use crate::ui::components::icon::{icon_sized, Icon};
+use crate::ui::components::icon::{Icon, icon_sized};
 use crate::ui::components::label::Label;
 use crate::ui::components::list_row::ListRow;
 use crate::ui::components::skeleton::loading_skeleton;
@@ -1260,13 +1260,15 @@ mod tests {
         assert_eq!(changes_status_chip("R").0, "R");
         assert_eq!(changes_status_chip("?").0, "?");
         assert_eq!(changes_status_chip("untracked").0, "U");
-        assert!(ready_state(vec![DiffFileSummary {
-            path: "a.rs".into(),
-            status: "modified".into(),
-            additions: 1,
-            deletions: 0,
-            binary: false,
-        }])
-        .has_reviewable_files_for(Some("s-1")));
+        assert!(
+            ready_state(vec![DiffFileSummary {
+                path: "a.rs".into(),
+                status: "modified".into(),
+                additions: 1,
+                deletions: 0,
+                binary: false,
+            }])
+            .has_reviewable_files_for(Some("s-1"))
+        );
     }
 }

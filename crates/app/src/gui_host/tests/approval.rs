@@ -26,9 +26,9 @@ async fn tool_approve_resolves_pending_snapshot() {
         .await
         .expect("store");
     let core = AppCore::from_parts(
-        Arc::new(MockProvider::sequence(vec![MockScript::new()
-            .text("idle")
-            .complete()])),
+        Arc::new(MockProvider::sequence(vec![
+            MockScript::new().text("idle").complete(),
+        ])),
         None,
         pawork_domain::ModelId::from("model-1"),
         pawork_domain::ProviderId::from("mock"),
@@ -74,9 +74,9 @@ async fn snapshot_rebuilds_pending_approvals_after_restart() {
         .await
         .expect("store");
     let core = AppCore::from_parts(
-        Arc::new(MockProvider::sequence(vec![MockScript::new()
-            .text("idle")
-            .complete()])),
+        Arc::new(MockProvider::sequence(vec![
+            MockScript::new().text("idle").complete(),
+        ])),
         None,
         pawork_domain::ModelId::from("model-1"),
         pawork_domain::ProviderId::from("mock"),
@@ -92,9 +92,9 @@ async fn snapshot_rebuilds_pending_approvals_after_restart() {
         .await
         .expect("reopen");
     let core = AppCore::from_parts(
-        Arc::new(MockProvider::sequence(vec![MockScript::new()
-            .text("idle")
-            .complete()])),
+        Arc::new(MockProvider::sequence(vec![
+            MockScript::new().text("idle").complete(),
+        ])),
         None,
         pawork_domain::ModelId::from("model-1"),
         pawork_domain::ProviderId::from("mock"),
@@ -187,9 +187,9 @@ pub(super) async fn append_waiting_write(
 
 pub(super) fn idle_core(store: pawork_storage::session::SessionStore) -> AppCore {
     AppCore::from_parts(
-        Arc::new(MockProvider::sequence(vec![MockScript::new()
-            .text("idle")
-            .complete()])),
+        Arc::new(MockProvider::sequence(vec![
+            MockScript::new().text("idle").complete(),
+        ])),
         None,
         pawork_domain::ModelId::from("model-1"),
         pawork_domain::ProviderId::from("mock"),
@@ -460,4 +460,3 @@ async fn tool_approve_non_live_without_waiting_projection_stays_queued() {
     assert!(!types.contains(&"ToolExecutionCompleted"));
     assert_eq!(adapter.approvals().pending().len(), 0);
 }
-

@@ -1,6 +1,6 @@
 //! Snapshot 结构校验：`SnapshotSection.data` / `artifact_id` 互斥且 data 有界。
 
-use crate::{ProtocolCodecError, Snapshot, SnapshotSection, MAX_SNAPSHOT_SECTION_DATA_BYTES};
+use crate::{MAX_SNAPSHOT_SECTION_DATA_BYTES, ProtocolCodecError, Snapshot, SnapshotSection};
 
 impl Snapshot {
     /// 校验全部 section；任一 section 非法则整个 Snapshot 拒绝。

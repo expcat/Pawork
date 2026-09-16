@@ -5,15 +5,15 @@
 //! 测量字符列宽、渲染行内光标，并用原生 EntityInputHandler 接入输入法。
 
 use gpui::{
-    font, App, Bounds, Context, EntityInputHandler, EventEmitter, FocusHandle, Focusable,
-    FontWeight, Keystroke, Pixels, Point, Rgba, SharedString, StyledText, TextRun, UTF16Selection,
-    Window,
+    App, Bounds, Context, EntityInputHandler, EventEmitter, FocusHandle, Focusable, FontWeight,
+    Keystroke, Pixels, Point, Rgba, SharedString, StyledText, TextRun, UTF16Selection, Window,
+    font,
 };
 use std::ops::Range;
 
 use super::theme::{dark, font as theme_font};
 
-pub(crate) use pawork_terminal::{size_from_bounds_scaled, TERMINAL_LINE_HEIGHT};
+pub(crate) use pawork_terminal::{TERMINAL_LINE_HEIGHT, size_from_bounds_scaled};
 
 /// 面板像素变化后延迟下发 terminal_resize，避免拖拽窗口时连发。
 pub(crate) const TERMINAL_RESIZE_DEBOUNCE: std::time::Duration =

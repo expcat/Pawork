@@ -79,6 +79,10 @@ flowchart LR
 
 ## 4. 交互需求
 
+### 右侧浏览器（2026-09-16）
+
+用户通过面板「+」/ 空态 / Cmd+K 打开手动浏览器；地址栏、前进后退、刷新 / 停止与真实错误已接线。每任务一页、隐藏保留、关闭释放；站点数据使用隔离的非持久 WebKit profile。首版 macOS 系统 WebKit，HTTP(S)（含 localhost）导航；新窗口链接同页打开。模型操作、DOM / 截图、下载、多网页标签和跨启动恢复未实现。浏览器实现由独立 [pawork-browser](crates/browser.md) 提供，Desktop 只负责布局、输入和任务归属；不改 GUI Protocol / Core。验收状态见 [路线图](../ROADMAP.md#右侧浏览器首版2026-09-16)。
+
 | ID | 要求 | 状态 |
 | --- | --- | --- |
 | DESK-01 | 用户能添加/选择真实项目并新建/切换会话，选中态与标题在长列表中可辨认。 | 项目选择、新建和切换生产入口已实现；多项目集合与 Session 归属已持久化并通过重启复验。 |
@@ -171,3 +175,7 @@ Full workspace gate: NOT RUN（当前未设置全量门禁）。
 代理真窗口复验：隔离实例 `oauth-gui-review`（Host 当次 `--provider opencode-go --model glm-5.3-flash`），xAI 授权按钮在系统浏览器打开实际设备授权页；链接、验证码与全选详情经本地文本编辑器粘贴核对；窗口随后显示已连接，CLI `auth list` 确认 OAuth 凭证存在。最终构建另用 ChatGPT PKCE 等待态确认无验证码按钮，滚动后拖选第二行并核对粘贴原文，取消后授权动作收起。复验发现的祖先滚动导致误选首行问题已修复。已完成代理窗口检查，等待用户人工验收；未发布。
 
 Full workspace gate: NOT RUN（当前未设置全量门禁）。
+
+### 聊天控制 Terminal / Browser（2026-09-16）
+
+聊天工具已接入 Host 权限和审批，Terminal 与手动面板共用 PTY，Browser 通过 GUI 1.18 请求/回执操作当前任务系统网页。调用与返回值沿用工具事件持久化，重放不触发动作。接口见 [app](crates/app.md)、[browser](crates/browser.md) 与 [Desktop](crates/desktop.md) Spec；本批验证见 [路线图](../ROADMAP.md)。

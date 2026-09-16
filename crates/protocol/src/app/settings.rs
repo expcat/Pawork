@@ -361,16 +361,18 @@ mod tests {
         assert!(
             serde_json::from_value::<ProviderAuthStatusData>(json!({ "providers": [] })).is_err()
         );
-        assert!(serde_json::from_value::<TerminalSettingsData>(
-            json!({ "columns": 80, "rows": 24 })
-        )
-        .is_err());
-        assert!(serde_json::from_value::<PermissionsSettingsData>(json!({
-            "approval_mode": "always_ask",
-            "workspace_trusted": false,
-            "workspace_id": "ws-1",
-        }))
-        .is_err());
+        assert!(
+            serde_json::from_value::<TerminalSettingsData>(json!({ "columns": 80, "rows": 24 }))
+                .is_err()
+        );
+        assert!(
+            serde_json::from_value::<PermissionsSettingsData>(json!({
+                "approval_mode": "always_ask",
+                "workspace_trusted": false,
+                "workspace_id": "ws-1",
+            }))
+            .is_err()
+        );
     }
 
     #[test]
@@ -506,23 +508,27 @@ mod tests {
         );
 
         // expires_at required-nullable：缺键 fail-closed（同 role_defaults 口径）。
-        assert!(serde_json::from_value::<ProviderCredentialStatus>(json!({
-            "kind": "api_key",
-            "masked_credential": "sk-…wxyz",
-            "expired": false
-        }))
-        .is_err());
+        assert!(
+            serde_json::from_value::<ProviderCredentialStatus>(json!({
+                "kind": "api_key",
+                "masked_credential": "sk-…wxyz",
+                "expired": false
+            }))
+            .is_err()
+        );
         // credentials 必填：缺键 fail-closed。
-        assert!(serde_json::from_value::<ProviderAuthStatusEntry>(json!({
-            "provider_id": "glm-coding",
-            "display_name": "GLM Coding",
-            "endpoint_label": "https://api.z.ai/api/coding/paas/v4",
-            "auth_methods": ["api_key"],
-            "auth": {"type": "none"},
-            "catalog": {"type": "remote", "fetched_at": "2026-09-04T00:00:00Z"},
-            "use_proxy": true
-        }))
-        .is_err());
+        assert!(
+            serde_json::from_value::<ProviderAuthStatusEntry>(json!({
+                "provider_id": "glm-coding",
+                "display_name": "GLM Coding",
+                "endpoint_label": "https://api.z.ai/api/coding/paas/v4",
+                "auth_methods": ["api_key"],
+                "auth": {"type": "none"},
+                "catalog": {"type": "remote", "fetched_at": "2026-09-04T00:00:00Z"},
+                "use_proxy": true
+            }))
+            .is_err()
+        );
     }
 
     #[test]
@@ -655,20 +661,26 @@ mod tests {
 
     #[test]
     fn opt3_required_nullable_role_fields_fail_closed() {
-        assert!(serde_json::from_value::<SetDefaultRoleModelData>(json!({
-            "role": "naming"
-        }))
-        .is_err());
-        assert!(serde_json::from_value::<RoleDefaultsData>(json!({
-            "naming": null,
-            "vision": null
-        }))
-        .is_err());
-        assert!(serde_json::from_value::<ProviderAuthStatusData>(json!({
-            "providers": [],
-            "default": null
-        }))
-        .is_err());
+        assert!(
+            serde_json::from_value::<SetDefaultRoleModelData>(json!({
+                "role": "naming"
+            }))
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<RoleDefaultsData>(json!({
+                "naming": null,
+                "vision": null
+            }))
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<ProviderAuthStatusData>(json!({
+                "providers": [],
+                "default": null
+            }))
+            .is_err()
+        );
     }
 }
 

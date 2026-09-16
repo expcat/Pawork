@@ -27,10 +27,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use pawork_domain::{CommandId, ConnectionId, GuiClientId, QueryId, Timestamp};
+use pawork_protocol::app::registry::{command_entry, query_entry};
 use pawork_protocol::{
-    decode_server_frame, decode_server_frame_checked, encode_client_frame, ApiHandle, ClientFrame,
-    HandshakeRequest, HandshakeResponse, ProtocolCodecError, ProtocolError, ResumeRequest,
-    ResumeResponse, ServerFrame, SubscribeRequest, SUPPORTED_API_VERSIONS,
+    ApiHandle, ClientFrame, HandshakeRequest, HandshakeResponse, ProtocolCodecError, ProtocolError,
+    ResumeRequest, ResumeResponse, SUPPORTED_API_VERSIONS, ServerFrame, SubscribeRequest,
+    decode_server_frame, decode_server_frame_checked, encode_client_frame,
 };
 use pawork_transport::{
     ConnectionInfo, GuiConnection, TransportError, TransportErrorKind, TransportFrame,
@@ -244,6 +245,20 @@ pub struct GuiClient {
     next_nonce: Arc<AtomicU64>,
     last_acked: Arc<AtomicU64>,
     closed: Arc<AtomicBool>,
+}
+
+fn reject_if_newer_than_negotiated(
+    since: pawork_protocol::ApiVersion,
+    negotiated: pawork_protocol::ApiVersion,
+    kind: &str,
+    wire_name: &str,
+) -> Result<(), ClientError> {
+    if since.major == negotiated.major && since.minor <= negotiated.minor {
+        return Ok(());
+    }
+    Err(ClientError::Version(ProtocolError::incompatible_version(
+        format!("{kind} {wire_name} requires api_version {since:?}, negotiated {negotiated:?}"),
+    )))
 }
 
 impl GuiClient {
@@ -490,6 +505,13 @@ impl GuiClient {
         &self,
         envelope: AppCommandEnvelope,
     ) -> Result<AppResponseEnvelope, ClientError> {
+        let entry = command_entry(&envelope.command);
+        reject_if_newer_than_negotiated(
+            entry.since,
+            self.api_version(),
+            "command",
+            entry.wire_name,
+        )?;
         let command_id = envelope.command_id.as_str().to_string();
         self.send_frame(&ClientFrame::Command(envelope)).await?;
         self.await_response(&command_id).await
@@ -523,6 +545,8 @@ impl GuiClient {
         &self,
         envelope: AppQueryEnvelope,
     ) -> Result<AppResponseEnvelope, ClientError> {
+        let entry = query_entry(&envelope.query);
+        reject_if_newer_than_negotiated(entry.since, self.api_version(), "query", entry.wire_name)?;
         let request_id = envelope.request_id.as_str().to_string();
         self.send_frame(&ClientFrame::Query(envelope)).await?;
         self.await_response(&request_id).await
@@ -1053,7 +1077,7 @@ mod tests {
     use super::*;
     use pawork_domain::{CommandId, QueryId};
     use pawork_protocol::GuiCapability;
-    use pawork_protocol::{encode_server_frame, AppResponse, AppResponseEnvelope, API_VERSION};
+    use pawork_protocol::{API_VERSION, AppResponse, AppResponseEnvelope, encode_server_frame};
     use pawork_transport::{ConnectionLocality, TransportErrorKind};
     use std::future::Future;
     use std::pin::Pin;
@@ -1219,9 +1243,18 @@ mod tests {
         // Desktop 握手自行声明 TerminalStreaming；默认配置不强制，避免影响既有契约装配。
         let mut config = ClientConfig::default();
         config.capabilities.push(GuiCapability::TerminalStreaming);
-        assert!(config
-            .capabilities
-            .contains(&GuiCapability::TerminalStreaming));
+        assert!(
+            config
+                .capabilities
+                .contains(&GuiCapability::TerminalStreaming)
+        );
+    }
+
+    #[test]
+    fn client_config_can_request_browser_control() {
+        let mut config = ClientConfig::default();
+        config.capabilities.push(GuiCapability::BrowserControl);
+        assert!(config.capabilities.contains(&GuiCapability::BrowserControl));
     }
 
     #[tokio::test]
@@ -1456,6 +1489,96 @@ mod tests {
             .await
             .expect_err("idle timeout must keep the connection usable");
         assert!(matches!(error, ClientError::Timeout { .. }));
+    }
+
+    fn mock_gui_client(api_version: ApiVersion) -> GuiClient {
+        GuiClient {
+            conn: Arc::new(mock(vec![])),
+            config: ClientConfig::default(),
+            info: Arc::new(SessionInfo {
+                handle: ApiHandle {
+                    instance_id: pawork_domain::CoreInstanceId::from("instance-1"),
+                    api_version,
+                },
+                client_id: GuiClientId::from("client-1"),
+                connection_id: ConnectionId::from("conn-1"),
+                capabilities: vec![],
+                host_data_dir: None,
+                resume: ResumeDisposition::UpToDate {
+                    current_sequence: GlobalSequence(0),
+                },
+            }),
+            initial_snapshot: Arc::new(Mutex::new(None)),
+            inbox: Arc::new(AsyncMutex::new(VecDeque::new())),
+            io: Arc::new(AsyncMutex::new(())),
+            request_namespace: Arc::from("ns"),
+            next_request: Arc::new(AtomicU64::new(0)),
+            next_nonce: Arc::new(AtomicU64::new(0)),
+            last_acked: Arc::new(AtomicU64::new(0)),
+            closed: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    fn browser_command_envelope(api_version: ApiVersion) -> AppCommandEnvelope {
+        AppCommandEnvelope {
+            api_version,
+            command_id: CommandId::from("cmd-browser-1"),
+            source: CommandSource::LocalGui {
+                client_id: GuiClientId::from("client-1"),
+            },
+            identity: ActorIdentity::LocalUser {
+                actor_id: pawork_domain::ActorId::from("actor-1"),
+                display_name: None,
+            },
+            expected_revision: None,
+            idempotency_key: None,
+            issued_at: now_timestamp(),
+            command: AppCommand::BrowserRespond {
+                request_id: "browser-1".into(),
+                result: serde_json::json!({"ok": true, "data": {}}),
+            },
+        }
+    }
+
+    fn browser_query_envelope(api_version: ApiVersion) -> AppQueryEnvelope {
+        AppQueryEnvelope {
+            api_version,
+            request_id: QueryId::from("query-browser-1"),
+            source: CommandSource::LocalGui {
+                client_id: GuiClientId::from("client-1"),
+            },
+            identity: ActorIdentity::LocalUser {
+                actor_id: pawork_domain::ActorId::from("actor-1"),
+                display_name: None,
+            },
+            issued_at: now_timestamp(),
+            query: AppQuery::BrowserNext {
+                session_id: pawork_domain::SessionId::from("session-1"),
+                run_id: pawork_domain::RunId::from("run-1"),
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn command_envelope_rejects_browser_control_on_old_minor() {
+        let client = mock_gui_client(ApiVersion::new(1, 17));
+        let error = client
+            .command_envelope(browser_command_envelope(ApiVersion::new(1, 17)))
+            .await
+            .expect_err("browser_respond must not be sent on minor 17");
+        assert!(matches!(error, ClientError::Version(_)));
+        assert!(error.is_incompatible_version());
+    }
+
+    #[tokio::test]
+    async fn query_envelope_rejects_browser_control_on_old_minor() {
+        let client = mock_gui_client(ApiVersion::new(1, 17));
+        let error = client
+            .query_envelope(browser_query_envelope(ApiVersion::new(1, 17)))
+            .await
+            .expect_err("browser_next must not be sent on minor 17");
+        assert!(matches!(error, ClientError::Version(_)));
+        assert!(error.is_incompatible_version());
     }
 
     #[tokio::test]

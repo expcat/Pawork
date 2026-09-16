@@ -1,7 +1,8 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use pawork_domain::{ToolCapability, WorkspaceId};
+use pawork_domain::{CoreInstanceId, ToolCapability, WorkspaceId};
 use pawork_exec::{
     OwnerSessionId, PtyCreateSpec, PtyEvent, PtySessionState, PtyWindowSize, TerminalId,
 };
@@ -11,11 +12,11 @@ use pawork_protocol::{
     WorkspaceRelativePath,
 };
 use pawork_workspace::resolve_relative_path;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::gui_server::GuiHostError;
 
-use super::super::GuiHostAdapter;
+use super::super::{GuiEventBus, GuiHostAdapter};
 
 impl GuiHostAdapter {
     fn terminal_owner(&self, terminal_session_id: &str) -> Result<OwnerSessionId, GuiHostError> {
@@ -35,86 +36,22 @@ impl GuiHostAdapter {
     }
 
     fn remember_terminal(&self, terminal_id: &TerminalId, owner: &OwnerSessionId, cwd: &str) {
-        self.terminals
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert(
-                terminal_id.as_str().to_string(),
-                encode_terminal_registration(owner, cwd),
-            );
+        register_terminal(&self.terminals, terminal_id, owner, cwd);
     }
 
     /// ADR-045 D1：close 后从注册表注销，快照 terminal_sessions 节不再出现该条目。
     fn forget_terminal(&self, terminal_session_id: &str) {
-        self.terminals
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .remove(terminal_session_id);
+        unregister_terminal(&self.terminals, terminal_session_id);
     }
 
     fn spawn_terminal_forwarder(&self, terminal_id: TerminalId, owner: OwnerSessionId) {
-        let Ok(mut receiver) = self.pty.subscribe(&terminal_id, &owner) else {
-            return;
-        };
-        let bus = Arc::clone(&self.bus);
-        let instance = self.instance.clone();
-        let terminal_session_id = terminal_id.as_str().to_string();
-        tokio::spawn(async move {
-            loop {
-                match receiver.recv().await {
-                    Ok(PtyEvent::Output { data, .. }) => {
-                        bus.publish_terminal(
-                            instance.clone(),
-                            &terminal_session_id,
-                            AppEvent::TerminalOutput {
-                                terminal_session_id: terminal_session_id.clone(),
-                                delta: String::from_utf8_lossy(&data).into_owned(),
-                            },
-                        );
-                    }
-                    // ADR-045 D2：终态事件上 wire，同一终端只发一条（forwarder
-                    // 是唯一广播点）。PtyEvent 携 waiter 已写入的权威终态，
-                    // 即使 terminal_close 同时 cleanup 移除 service map 条目，
-                    // 仍无竞态地区分 kill 与自然退出。
-                    Ok(PtyEvent::Exit {
-                        code,
-                        signal,
-                        state,
-                    }) => {
-                        let reason = if state == PtySessionState::Killed {
-                            TerminalExitReason::Killed
-                        } else {
-                            TerminalExitReason::Exited
-                        };
-                        bus.publish_terminal(
-                            instance.clone(),
-                            &terminal_session_id,
-                            AppEvent::TerminalExited {
-                                terminal_session_id: terminal_session_id.clone(),
-                                exit_code: code,
-                                signal,
-                                reason,
-                            },
-                        );
-                        break;
-                    }
-                    // 转发链路异常断流（lagged / 广播关闭）：诚实 Failed，不臆造退出码。
-                    Err(_) => {
-                        bus.publish_terminal(
-                            instance.clone(),
-                            &terminal_session_id,
-                            AppEvent::TerminalExited {
-                                terminal_session_id: terminal_session_id.clone(),
-                                exit_code: None,
-                                signal: None,
-                                reason: TerminalExitReason::Failed,
-                            },
-                        );
-                        break;
-                    }
-                }
-            }
-        });
+        spawn_terminal_output_forwarder(
+            &self.pty,
+            Arc::clone(&self.bus),
+            self.instance.clone(),
+            terminal_id,
+            owner,
+        );
     }
 
     fn resolve_terminal_cwd(
@@ -195,6 +132,105 @@ fn decode_terminal_registration(registration: &str) -> (&str, Option<&str>) {
         Some((owner, cwd)) => (owner, Some(cwd)),
         None => (registration, None),
     }
+}
+
+/// Agent 与 GUI 共用同一 terminals 注册表：owner\0cwd 编码不变。
+pub(crate) fn register_terminal(
+    terminals: &Mutex<HashMap<String, String>>,
+    terminal_id: &TerminalId,
+    owner: &OwnerSessionId,
+    cwd: &str,
+) {
+    terminals
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(
+            terminal_id.as_str().to_string(),
+            encode_terminal_registration(owner, cwd),
+        );
+}
+
+pub(crate) fn unregister_terminal(
+    terminals: &Mutex<HashMap<String, String>>,
+    terminal_session_id: &str,
+) {
+    terminals
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .remove(terminal_session_id);
+}
+
+/// 用户与 Agent 共用同一 PTY 广播：forwarder 是终态事件唯一广播点。
+pub(crate) fn spawn_terminal_output_forwarder(
+    pty: &pawork_exec::PtyService,
+    bus: Arc<GuiEventBus>,
+    instance: CoreInstanceId,
+    terminal_id: TerminalId,
+    owner: OwnerSessionId,
+) {
+    let Ok(mut receiver) = pty.subscribe(&terminal_id, &owner) else {
+        return;
+    };
+    let terminal_session_id = terminal_id.as_str().to_string();
+    tokio::spawn(async move {
+        loop {
+            match receiver.recv().await {
+                Ok(PtyEvent::Output { data, .. }) => {
+                    bus.publish_terminal(
+                        instance.clone(),
+                        &terminal_session_id,
+                        AppEvent::TerminalOutput {
+                            terminal_session_id: terminal_session_id.clone(),
+                            delta: String::from_utf8_lossy(&data).into_owned(),
+                        },
+                    );
+                }
+                Ok(PtyEvent::Exit {
+                    code,
+                    signal,
+                    state,
+                }) => {
+                    let reason = if state == PtySessionState::Killed {
+                        TerminalExitReason::Killed
+                    } else {
+                        TerminalExitReason::Exited
+                    };
+                    bus.publish_terminal(
+                        instance.clone(),
+                        &terminal_session_id,
+                        AppEvent::TerminalExited {
+                            terminal_session_id: terminal_session_id.clone(),
+                            exit_code: code,
+                            signal,
+                            reason,
+                        },
+                    );
+                    break;
+                }
+                Err(_) => {
+                    bus.publish_terminal(
+                        instance.clone(),
+                        &terminal_session_id,
+                        AppEvent::TerminalExited {
+                            terminal_session_id: terminal_session_id.clone(),
+                            exit_code: None,
+                            signal: None,
+                            reason: TerminalExitReason::Failed,
+                        },
+                    );
+                    break;
+                }
+            }
+        }
+    });
+}
+
+pub(crate) fn decode_registered_terminal(registration: &str) -> (&str, Option<&str>) {
+    decode_terminal_registration(registration)
+}
+
+pub(crate) fn cwd_label_for_terminal(relative: String) -> String {
+    terminal_cwd_label(relative)
 }
 
 /// 记账/快照的 cwd 标签口径：策略层把根目录归一为空串（`resolve "."` 的

@@ -1,5 +1,5 @@
-use crate::gui_server::GuiHostError;
 use crate::ApprovalResolve;
+use crate::gui_server::GuiHostError;
 use pawork_engine::AgentEventSink;
 use pawork_protocol::{AppCommand, AppCommandEnvelope, AppResponse};
 

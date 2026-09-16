@@ -16,8 +16,8 @@ use pawork_engine::now_timestamp;
 use pawork_exec::PtyService;
 use pawork_protocol::{
     AppCommand, AppCommandEnvelope, AppEvent, AppEventEnvelope, AppQueryEnvelope, AppResponse,
-    AppResponseEnvelope, GlobalSequence, Snapshot, SnapshotSection, SnapshotSectionKind,
-    TimelinePage, DEFAULT_CONTROL_PLANE_TENANT,
+    AppResponseEnvelope, DEFAULT_CONTROL_PLANE_TENANT, GlobalSequence, Snapshot, SnapshotSection,
+    SnapshotSectionKind, TimelinePage,
 };
 use pawork_storage::session::{SessionRecord, SessionTree};
 
@@ -25,20 +25,22 @@ use pawork_storage::session::{SessionRecord, SessionTree};
 use pawork_domain::{AgentEvent, AgentEventEnvelope};
 #[cfg(test)]
 use pawork_engine::{AgentEventSink, EngineError};
-use pawork_protocol::app::registry::{command_wire_name, query_wire_name};
 #[cfg(test)]
 use pawork_protocol::API_VERSION;
-use serde_json::{json, Value};
+use pawork_protocol::app::registry::{command_wire_name, query_wire_name};
+use serde_json::{Value, json};
 
 use crate::{
-    should_cache, AppCore, GuiApprovalHost, HubError, IdempotencyCheck, IdempotencyStore,
-    PendingToolApproval, DEFAULT_HUB_CAPACITY, DEFAULT_IDEMPOTENCY_CAPACITY,
+    AppCore, DEFAULT_HUB_CAPACITY, DEFAULT_IDEMPOTENCY_CAPACITY, GuiApprovalHost, HubError,
+    IdempotencyCheck, IdempotencyStore, PendingToolApproval, should_cache,
 };
 
 mod auto_title;
+mod browser_tool;
 mod bus;
 mod events;
 mod handlers;
+mod terminal_tool;
 #[cfg(test)]
 mod tests;
 
@@ -95,7 +97,8 @@ pub struct GuiHostAdapter {
     next_gui_run: AtomicU64,
     next_fork: AtomicU64,
     pty: Arc<PtyService>,
-    terminals: Mutex<HashMap<String, String>>,
+    terminals: Arc<Mutex<HashMap<String, String>>>,
+    browser: Arc<browser_tool::BrowserBroker>,
     /// SET-2：按 provider_id 的认证单飞守卫（auth_start / auth_set_api_key /
     /// auth_cancel 共用；条目存在即 busy，Arc 身份用于安全移除自己的 flight）。
     /// SET-4：flight 值携带种类标记（api_key 验证 / OAuth 等待），auth_cancel
@@ -158,7 +161,8 @@ impl GuiHostAdapter {
             next_gui_run: AtomicU64::new(1),
             next_fork: AtomicU64::new(1),
             pty: Arc::new(PtyService::new()),
-            terminals: Mutex::new(HashMap::new()),
+            terminals: Arc::new(Mutex::new(HashMap::new())),
+            browser: Arc::new(browser_tool::BrowserBroker::default()),
             auth_flights: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -531,7 +535,7 @@ impl GuiHost for GuiHostAdapter {
                 ),
             ));
         };
-        let mut response = handler(self, &envelope.query).await?;
+        let mut response = handler(self, envelope).await?;
         // SessionGet 的历史形状按请求版本降级；GUI 入站版本不得高于协商值。
         // 保留原始分页游标，即使这一页只有旧客户端不能识别的思考增量。
         if matches!(envelope.query, pawork_protocol::AppQuery::SessionGet { .. })
@@ -671,7 +675,7 @@ impl GuiHost for GuiHostAdapter {
 
 type QueryHandler = for<'a> fn(
     &'a GuiHostAdapter,
-    &'a pawork_protocol::AppQuery,
+    &'a AppQueryEnvelope,
 ) -> BoxFuture<'a, Result<AppResponse, GuiHostError>>;
 
 type CommandHandler = for<'a> fn(
@@ -682,86 +686,92 @@ type CommandHandler = for<'a> fn(
 
 fn query_workspace_list<'a>(
     adapter: &'a GuiHostAdapter,
-    query: &'a pawork_protocol::AppQuery,
+    query: &'a AppQueryEnvelope,
 ) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::query::workspace_list(adapter, query))
+    Box::pin(handlers::query::workspace_list(adapter, &query.query))
 }
 
 fn query_session_get<'a>(
     adapter: &'a GuiHostAdapter,
-    query: &'a pawork_protocol::AppQuery,
+    query: &'a AppQueryEnvelope,
 ) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::query::session_get(adapter, query))
+    Box::pin(handlers::query::session_get(adapter, &query.query))
 }
 
 fn query_run_status<'a>(
     adapter: &'a GuiHostAdapter,
-    query: &'a pawork_protocol::AppQuery,
+    query: &'a AppQueryEnvelope,
 ) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::query::run_status(adapter, query))
+    Box::pin(handlers::query::run_status(adapter, &query.query))
 }
 
 fn query_model_list<'a>(
     adapter: &'a GuiHostAdapter,
-    query: &'a pawork_protocol::AppQuery,
+    query: &'a AppQueryEnvelope,
 ) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::query::model_list(adapter, query))
+    Box::pin(handlers::query::model_list(adapter, &query.query))
 }
 
 fn query_diff_list_files<'a>(
     adapter: &'a GuiHostAdapter,
-    query: &'a pawork_protocol::AppQuery,
+    query: &'a AppQueryEnvelope,
 ) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::query::diff_list_files(adapter, query))
+    Box::pin(handlers::query::diff_list_files(adapter, &query.query))
 }
 
 fn query_diff_get<'a>(
     adapter: &'a GuiHostAdapter,
-    query: &'a pawork_protocol::AppQuery,
+    query: &'a AppQueryEnvelope,
 ) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::query::diff_get(adapter, query))
+    Box::pin(handlers::query::diff_get(adapter, &query.query))
 }
 
 fn query_quota_overview<'a>(
     adapter: &'a GuiHostAdapter,
-    query: &'a pawork_protocol::AppQuery,
+    query: &'a AppQueryEnvelope,
 ) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::query::quota_overview(adapter, query))
+    Box::pin(handlers::query::quota_overview(adapter, &query.query))
 }
 
 fn query_mcp_list<'a>(
     adapter: &'a GuiHostAdapter,
-    query: &'a pawork_protocol::AppQuery,
+    query: &'a AppQueryEnvelope,
 ) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::query::mcp_list(adapter, query))
+    Box::pin(handlers::query::mcp_list(adapter, &query.query))
 }
 
 fn query_provider_auth_status<'a>(
     adapter: &'a GuiHostAdapter,
-    query: &'a pawork_protocol::AppQuery,
+    query: &'a AppQueryEnvelope,
 ) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::settings::provider_auth_status(adapter, query))
+    Box::pin(handlers::settings::provider_auth_status(
+        adapter,
+        &query.query,
+    ))
 }
 
 fn query_general_settings<'a>(
     adapter: &'a GuiHostAdapter,
-    query: &'a pawork_protocol::AppQuery,
+    query: &'a AppQueryEnvelope,
 ) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::settings::general_settings(adapter, query))
+    Box::pin(handlers::settings::general_settings(adapter, &query.query))
 }
 
 fn query_permissions_settings<'a>(
     adapter: &'a GuiHostAdapter,
-    query: &'a pawork_protocol::AppQuery,
+    query: &'a AppQueryEnvelope,
 ) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::settings::permissions_settings(adapter, query))
+    Box::pin(handlers::settings::permissions_settings(
+        adapter,
+        &query.query,
+    ))
 }
 
 fn query_terminal_settings<'a>(
     adapter: &'a GuiHostAdapter,
-    query: &'a pawork_protocol::AppQuery,
+    query: &'a AppQueryEnvelope,
 ) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::settings::terminal_settings(adapter, query))
+    Box::pin(handlers::settings::terminal_settings(adapter, &query.query))
 }
 
 fn command_workspace_add<'a>(
@@ -1022,6 +1032,59 @@ fn command_mcp_server_remove<'a>(
     Box::pin(handlers::mcp::mcp_server_remove(adapter, envelope, command))
 }
 
+fn query_browser_next<'a>(
+    adapter: &'a GuiHostAdapter,
+    envelope: &'a AppQueryEnvelope,
+) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
+    Box::pin(async move {
+        let pawork_protocol::AppQuery::BrowserNext { session_id, run_id } = &envelope.query else {
+            unreachable!()
+        };
+        if envelope.api_version.minor < 18 {
+            return Err(GuiHostAdapter::host_error(
+                "unsupported",
+                "browser control requires API 1.18",
+            ));
+        }
+        let run_active = adapter
+            .runs
+            .active()
+            .into_iter()
+            .any(|run| run.run_id == *run_id && run.session_id == *session_id);
+        if !run_active {
+            return Ok(AppResponse::Data(Value::Null));
+        }
+        Ok(AppResponse::Data(
+            adapter.browser.claim(run_id, &envelope.source),
+        ))
+    })
+}
+
+fn command_browser_respond<'a>(
+    adapter: &'a GuiHostAdapter,
+    envelope: &'a AppCommandEnvelope,
+    command: &'a AppCommand,
+) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
+    Box::pin(async move {
+        let AppCommand::BrowserRespond { request_id, result } = command else {
+            unreachable!()
+        };
+        if envelope.api_version.minor < 18 {
+            return Err(GuiHostAdapter::host_error(
+                "unsupported",
+                "browser control requires API 1.18",
+            ));
+        }
+        adapter
+            .browser
+            .respond(request_id, &envelope.source, result.clone())?;
+        Ok(AppResponse::Accepted {
+            command_id: envelope.command_id.clone(),
+            run_id: None,
+        })
+    })
+}
+
 static QUERY_HANDLERS: &[(&str, QueryHandler)] = &[
     ("workspace_list", query_workspace_list),
     ("session_get", query_session_get),
@@ -1035,6 +1098,7 @@ static QUERY_HANDLERS: &[(&str, QueryHandler)] = &[
     ("general_settings", query_general_settings),
     ("permissions_settings", query_permissions_settings),
     ("terminal_settings", query_terminal_settings),
+    ("browser_next", query_browser_next),
 ];
 
 static COMMAND_HANDLERS: &[(&str, CommandHandler)] = &[
@@ -1075,6 +1139,7 @@ static COMMAND_HANDLERS: &[(&str, CommandHandler)] = &[
     ("terminal_close", command_terminal_close),
     ("mcp_test", command_mcp_test),
     ("mcp_server_remove", command_mcp_server_remove),
+    ("browser_respond", command_browser_respond),
 ];
 
 impl GuiHostAdapter {

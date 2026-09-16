@@ -2,12 +2,12 @@
 //! name / transport / state / tools 数 / last_error 全部来自 Host 响应；
 //! 「已加载规则」分区无 Host 出口，本波不画（design/README.md §8.5）。
 
-use gpui::{div, prelude::*, px, Context, ScrollHandle};
+use gpui::{Context, ScrollHandle, div, prelude::*, px};
 
 use crate::controller::McpServerEntry;
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
 use crate::ui::components::empty_state::EmptyState;
-use crate::ui::components::icon::{icon_sized, Icon};
+use crate::ui::components::icon::{Icon, icon_sized};
 use crate::ui::components::label::Label;
 use crate::ui::components::skeleton::loading_skeleton;
 use crate::ui::i18n::t;

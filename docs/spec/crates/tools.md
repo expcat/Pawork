@@ -6,7 +6,7 @@
 
 - **内置工具**：八个 `pawork_domain::AgentTool` 实现；一切路径输入 = `workspace_id + relative_path`，统一经 [`pawork-policy`](policy.md) `resolve_workspace_path` 解析——模型无法用绝对路径直达文件系统。
 - **调度**：`ToolRegistry` 是唯一注册表（内置与 MCP 工具同表）；`ToolScheduler::execute_named` 串起「查表 → Policy 裁决 → 审批解析 → 并发信号量 → 超时 → 执行」。
-- **MCP**：配置解析与校验、受管客户端（惰性连接/退避重连/超时/取消）、能力发现与 `{server}.{tool}` 命名空间注册、stdio 服务器强制经 Sandbox Runtime 托管、Secret 只存 locator（`SecretRef`）、PKCE OAuth。
+- **MCP**：配置解析与校验、受管客户端（惰性连接/退避重连/超时/取消）、能力发现与 `{server}_{tool}` 命名空间注册、stdio 服务器强制经 Sandbox Runtime 托管、Secret 只存 locator（`SecretRef`）、PKCE OAuth。
 - **不做**：不做风险分类与裁决（policy）；不实现进程/沙箱原语（exec）；不持久化事件（engine/store 侧）。
 
 ## 2. 模块与文件地图
@@ -109,7 +109,7 @@
 - **边界类型**：`McpServerCapabilities { tools, resources, prompts: bool }`（服务器 initialize 广播；未广播 tools 的服务器跳过工具注册）；`McpToolInfo { name, description, input_schema, read_only }`；`McpToolCall { name, arguments }`；`McpPeer` trait（`server_capabilities` / `list_tools` / `call_tool`）是 manager 与 capabilities 之间的抽象缝，测试用 in-process peer 替换。
 - **受管客户端**：`ManagedMcpClient` 实现 `McpPeer`；另有 `ping()`、`health() -> HealthSnapshot{state: ConnectionState, transport, last_error, last_connected_at, restart_attempts, max_restart_attempts}`、`shutdown()`（5s 优雅关闭）。
 - **能力桥**：`register_server_tools(registry, server, peer, permissions, trusted, host_trusted)` → `McpCapabilities::discover`（握手能力 + list_tools）+ 白名单过滤 + 注册，返回 descriptors；`register_discovered_tools` 供已有发现结果复用。`McpToolAdapter` descriptor 规则：
-  - 注册名 = `namespaced_name(server, tool)` = `{server}.{tool}`（服务器名禁 `.` 保证无歧义）。
+  - 注册名 = `namespaced_name(server, tool)`：`{server}.{tool}` 拼接后把 `[A-Za-z0-9_-]` 之外的字符全部折叠为 `_`（上游 Provider 拒绝带 `.` 等字符的工具名，HTTP 400，2026-09-16 `echo.echo` 实证）。
   - `read_only_hint=true` → `ToolCapability::ReadOnly` + `requires_approval=false`。
   - 否则 → `ExternalPlugin` + `requires_approval=true`（descriptor 叠加闸生效，policy 放行后仍需 resolver 确认）。
   - `allowed_in_untrusted_workspace = read_only || trusted`，且注册期 `trusted &&= host_trusted`（MCP 配置的 trusted 不得越过宿主信任地板）。
@@ -118,6 +118,8 @@
 - **stdio 托管**：`StdioSpawner` trait + `SandboxedStdioSpawner` + `SpawnedStdio`（`pub use` 于 `mcp`）；`apply_mcp_stdio_env_hygiene(&mut SandboxPolicy)`。
 - `McpError` 变体：`Config / Transport / Protocol / Disconnected / Timeout(Duration) / Cancelled / PermissionDenied / Secret / OAuth / Registry(ToolRegistryError)`。
 - 内部但值得知道：`codec.rs` 私有；`StdioTransportConfig`/`HttpTransportConfig` 在私有 `mod transport`——以其为参数的公开函数实际只能由 crate 内装配。
+
+`ToolScheduler::with_tools` 克隆既有 registry 与策略配置并追加 Host 工具，保留内置与 MCP 工具以及旧 Run 快照。
 
 ## 4. 核心行为与数据流
 
@@ -153,7 +155,7 @@
 
 1. `McpConfig::from_resolved` 解析校验；每个 server `build_client`：stdio 必须携 `StdioSandboxRuntime{backend, policy, workspace_roots}`（缺失 fail-closed），构造 `SecretResolvingConnector`。
 2. 首次请求触发惰性 connect：`SecretRef` 逐项 `resolve`（仅 `pawork.mcp.*`）→ 组装 transport → stdio 经 `SandboxedStdioSpawner.spawn`（`apply_mcp_stdio_env_hygiene`：env_clear + untrusted allowlist + 追加 deny `PAWORK_API_KEY_*`；`spawn_interactive` 进沙箱；stdout 预算 8 MiB 超限断连）→ codec initialize 握手。
-3. `register_server_tools` 发现工具 → 白名单过滤 → `McpToolAdapter` 以 `{server}.{tool}` 注册进同一 `ToolRegistry`（与内置工具同表同闸门）。
+3. `register_server_tools` 发现工具 → 白名单过滤 → `McpToolAdapter` 以清洗后的 `{server}_{tool}` 注册进同一 `ToolRegistry`（与内置工具同表同闸门）。
 4. 调用：scheduler 闸门（ExternalPlugin 走 descriptor 叠加审批）→ adapter 校验 workspace/tool 白名单（违规 → Authorization 失败结果而非异常）→ 非对象输入拒绝 → `ManagedMcpClient::call_tool`（超时/取消/`should_retry` 单次强制重连重试）→ codec 转换 → `apply_tool_result_budget` 按 `max_output_bytes` UTF-8 安全截断（structured_content 超预算整体丢弃并标记 truncated）。
 5. 断连恢复：指数退避（base×2^n 封顶 max_delay）至 `max_attempts` 耗尽 → `Disconnected`；冷却 4×max_delay 后允许再试；crash 重启复用同一 spawner（沙箱保证不降级）。
 

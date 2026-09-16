@@ -62,6 +62,8 @@
 - protocol：`ActorIdentity`、`ApiVersion`、`AppCommand/Query/Event/Response` 及信封、`ClientAuthentication`、`TOKEN_SCHEME`、`CommandSource`、`EventStream`、`GlobalSequence`、`GuiCapability`、`ProtocolErrorCode`、`RunState`、`Snapshot`、`TerminalExitReason`、`TimelineItem/Page`、`ResumeDisposition`、`projection` 模块。
 - transport：`ConnectOptions`、`GuiTransportClient`、`LocalTransport`、`TransportEndpoint`。
 
+GUI 1.18 `browser_next` / `browser_respond` 使用既有 query/command 方法；旧 minor 在发网前拒绝，客户端本身不执行网页操作。
+
 ## 4. 核心行为与数据流
 
 UI-6b G2：crate 根增加 `ProviderAccountSelectionMode`、`QuotaOverviewQuery/QuotaOverviewView`、`QuotaUnit/QuotaWindow/QuotaMeasure/QuotaReset/WindowReadView` re-export，Desktop 继续只经本包发送通用 query/command；连接、路由与请求超时机制不变。

@@ -291,7 +291,7 @@ mod tests {
     fn settings_controls_follow_layout_and_scroll(cx: &mut gpui::TestAppContext) {
         use crate::projection::ConnectionState;
         use crate::ui::theme::font::TextScale;
-        use gpui::{point, px, size, Focusable, Modifiers};
+        use gpui::{Focusable, Modifiers, point, px, size};
         let platform = std::sync::Arc::new(crate::platform::Platform::new());
         let (view, cx) = cx.add_window_view(|_, cx| {
             AppView::new(
@@ -357,12 +357,13 @@ mod tests {
             let input = cx.debug_bounds("settings-terminal-columns-input").unwrap();
             cx.simulate_click(input.center(), Modifiers::none());
             cx.update(|window, cx| {
-                assert!(view
-                    .read(cx)
-                    .settings_terminal_columns_input
-                    .read(cx)
-                    .focus_handle(cx)
-                    .is_focused(window));
+                assert!(
+                    view.read(cx)
+                        .settings_terminal_columns_input
+                        .read(cx)
+                        .focus_handle(cx)
+                        .is_focused(window)
+                );
             });
         }
         cx.update(|_, cx| {
@@ -507,11 +508,12 @@ mod tests {
         cx.run_until_parked();
         cx.update(|window, cx| {
             view.update(cx, |view, cx| {
-                assert!(view
-                    .settings_search_results()
-                    .iter()
-                    .any(|entry| entry.page == SettingsPage::Appearance
-                        && entry.row_id == "settings-appearance-text-size"));
+                assert!(
+                    view.settings_search_results()
+                        .iter()
+                        .any(|entry| entry.page == SettingsPage::Appearance
+                            && entry.row_id == "settings-appearance-text-size")
+                );
                 let scale_before = view.text_scale;
                 view.submit_settings_search(window, cx);
                 assert_eq!(view.text_scale, scale_before);
@@ -530,11 +532,12 @@ mod tests {
             assert!(row.bounds.height > 0.0);
             assert!(row.bounds.y + row.bounds.height > f32::from(viewport.top()));
             assert!(row.bounds.y < f32::from(viewport.bottom()));
-            assert!(view
-                .status_hint
-                .as_deref()
-                .map(|hint| !hint.contains("Could not"))
-                .unwrap_or(true));
+            assert!(
+                view.status_hint
+                    .as_deref()
+                    .map(|hint| !hint.contains("Could not"))
+                    .unwrap_or(true)
+            );
         });
 
         cx.update(|_window, cx| {
@@ -546,10 +549,11 @@ mod tests {
         cx.run_until_parked();
         cx.update(|_, cx| {
             let view = view.read(cx);
-            assert!(view
-                .settings_search_results()
-                .iter()
-                .any(|entry| entry.row_id == "settings-appearance-text-size"));
+            assert!(
+                view.settings_search_results()
+                    .iter()
+                    .any(|entry| entry.row_id == "settings-appearance-text-size")
+            );
         });
 
         cx.update(|_window, cx| {
@@ -568,10 +572,11 @@ mod tests {
         cx.run_until_parked();
         cx.update(|window, cx| {
             view.update(cx, |view, cx| {
-                assert!(view
-                    .settings_search_results()
-                    .iter()
-                    .any(|entry| entry.page == SettingsPage::General));
+                assert!(
+                    view.settings_search_results()
+                        .iter()
+                        .any(|entry| entry.page == SettingsPage::General)
+                );
                 view.submit_settings_search(window, cx);
             });
         });
@@ -579,10 +584,11 @@ mod tests {
         cx.update(|window, cx| {
             let view = view.read(cx);
             assert_eq!(view.settings_page, SettingsPage::General);
-            assert!(view
-                .settings_page_ax(window, cx, AxRect::new(0.0, 0.0, 1440.0, 1024.0))
-                .find("settings-proxy-heading")
-                .is_some());
+            assert!(
+                view.settings_page_ax(window, cx, AxRect::new(0.0, 0.0, 1440.0, 1024.0))
+                    .find("settings-proxy-heading")
+                    .is_some()
+            );
         });
 
         cx.update(|_window, cx| {
@@ -607,15 +613,17 @@ mod tests {
                 view.projection.settings_permissions.approval_mode,
                 Some(ApprovalModeWire::AlwaysAsk)
             );
-            assert!(view
-                .settings_page_ax(window, cx, AxRect::new(0.0, 0.0, 1440.0, 1024.0))
-                .find("settings-approval-mode-header")
-                .is_some());
-            assert!(view
-                .status_hint
-                .as_deref()
-                .map(|hint| !hint.contains("Could not"))
-                .unwrap_or(true));
+            assert!(
+                view.settings_page_ax(window, cx, AxRect::new(0.0, 0.0, 1440.0, 1024.0))
+                    .find("settings-approval-mode-header")
+                    .is_some()
+            );
+            assert!(
+                view.status_hint
+                    .as_deref()
+                    .map(|hint| !hint.contains("Could not"))
+                    .unwrap_or(true)
+            );
         });
 
         cx.update(|_window, cx| {
@@ -627,10 +635,11 @@ mod tests {
         cx.run_until_parked();
         cx.update(|window, cx| {
             view.update(cx, |view, cx| {
-                assert!(view
-                    .settings_search_results()
-                    .iter()
-                    .any(|entry| entry.page == SettingsPage::Providers));
+                assert!(
+                    view.settings_search_results()
+                        .iter()
+                        .any(|entry| entry.page == SettingsPage::Providers)
+                );
                 view.submit_settings_search(window, cx);
             });
         });
@@ -661,10 +670,11 @@ mod tests {
         cx.run_until_parked();
         cx.update(|_, cx| {
             let results = view.read(cx).quick_search_results();
-            assert_eq!(results.len(), 2);
+            assert_eq!(results.len(), 3);
             assert!(results.iter().all(|r| matches!(
                 r.target,
                 SearchTarget::Page(SettingsPage::Appearance | SettingsPage::Advanced)
+                    | SearchTarget::Panel(crate::ui::InspectorTab::Browser)
             )));
         });
 

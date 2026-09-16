@@ -8,9 +8,9 @@
 //! Escape API。选项行 hover 取值按 §8.1。
 
 use gpui::{
-    anchored, deferred, div, point, prelude::*, px, AnchoredPositionMode, AnyElement, App,
-    ClickEvent, Corner, IntoElement, MouseDownEvent, Pixels, Point, RenderOnce, ScrollHandle,
-    SharedString, Styled, Window,
+    AnchoredPositionMode, AnyElement, App, ClickEvent, Corner, IntoElement, MouseDownEvent, Pixels,
+    Point, RenderOnce, ScrollHandle, SharedString, Styled, Window, anchored, deferred, div, point,
+    prelude::*, px,
 };
 
 use crate::ui::theme::{dark, font, metrics};

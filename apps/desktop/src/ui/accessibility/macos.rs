@@ -10,7 +10,7 @@ use cocoa::base::{id, nil};
 use cocoa::foundation::{NSArray, NSAutoreleasePool, NSPoint, NSRect, NSSize, NSString};
 use gpui::Window;
 use objc::declare::ClassDecl;
-use objc::runtime::{self, Class, Object, Sel, BOOL, NO, YES};
+use objc::runtime::{self, BOOL, Class, NO, Object, Sel, YES};
 use objc::{class, msg_send, sel, sel_impl};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
@@ -260,7 +260,59 @@ extern "C" fn view_is_accessibility_element(_this: &Object, _cmd: Sel) -> BOOL {
     YES
 }
 
+// 保留系统 WebKit 的原生可访问性子树；它不由 GPUI 的 AxTree 合成。
+unsafe fn visible_webviews(this: &Object) -> Vec<id> {
+    let Some(webview_class) = Class::get("WKWebView") else {
+        return Vec::new();
+    };
+    let children: id = msg_send![this, subviews];
+    let count: usize = msg_send![children, count];
+    (0..count)
+        .filter_map(|index| {
+            let child: id = msg_send![children, objectAtIndex: index];
+            let is_webview: BOOL = msg_send![child, isKindOfClass: webview_class];
+            let hidden: BOOL = msg_send![child, isHidden];
+            (is_webview == YES && hidden == NO).then_some(child)
+        })
+        .collect()
+}
+
+extern "C" fn view_children(this: &Object, _cmd: Sel) -> id {
+    unsafe {
+        let superclass = this.class().superclass().expect("GPUI superclass");
+        let existing: id = msg_send![super(this, superclass), accessibilityChildren];
+        let count: usize = if existing == nil {
+            0
+        } else {
+            msg_send![existing, count]
+        };
+        let mut children: Vec<id> = (0..count)
+            .map(|index| msg_send![existing, objectAtIndex: index])
+            .collect();
+        children.extend(visible_webviews(this));
+        NSArray::arrayWithObjects(nil, &children)
+    }
+}
+
 extern "C" fn view_hit_test(this: &Object, _cmd: Sel, point: NSPoint) -> id {
+    unsafe {
+        for child in visible_webviews(this) {
+            let window: id = msg_send![child, window];
+            let bounds: NSRect = msg_send![child, bounds];
+            let frame: NSRect = msg_send![child, convertRect: bounds toView: nil];
+            let frame: NSRect = msg_send![window, convertRectToScreen: frame];
+            if (ScreenRect {
+                x: frame.origin.x,
+                y: frame.origin.y,
+                width: frame.size.width,
+                height: frame.size.height,
+            })
+            .contains(point)
+            {
+                return msg_send![child, accessibilityHitTest: point];
+            }
+        }
+    }
     let Ok(states) = view_states().lock() else {
         return this as *const Object as id;
     };
@@ -277,7 +329,64 @@ extern "C" fn view_hit_test(this: &Object, _cmd: Sel, point: NSPoint) -> id {
         .unwrap_or(this as *const Object as id)
 }
 
+unsafe fn focused_webview(this: &Object) -> Option<id> {
+    let window: id = msg_send![this, window];
+    let responder: id = msg_send![window, firstResponder];
+    if responder != nil {
+        let is_view: BOOL = msg_send![responder, isKindOfClass: class!(NSView)];
+        if is_view == YES {
+            for child in visible_webviews(this) {
+                let descendant: BOOL = msg_send![responder, isDescendantOf: child];
+                if descendant == YES {
+                    return Some(child);
+                }
+            }
+        }
+    }
+    None
+}
+
+extern "C" fn view_key_equivalent(this: &Object, _cmd: Sel, event: id) -> BOOL {
+    unsafe {
+        if let Some(child) = focused_webview(this) {
+            // GPUIView 会在原生 firstResponder 之前处理快捷键，导致网页里的
+            // Cmd+V / Cmd+A 落到旧 GPUI 输入框。此壳没有 AppKit Edit 菜单，
+            // 因此编辑命令也须显式经原生 responder chain 分发。
+            let flags: u64 = msg_send![event, modifierFlags];
+            if flags & ((1 << 18) | (1 << 19) | (1 << 20)) == 1 << 20 {
+                let characters: id = msg_send![event, charactersIgnoringModifiers];
+                let bytes = NSString::UTF8String(characters);
+                if !bytes.is_null() {
+                    let key = std::ffi::CStr::from_ptr(bytes).to_string_lossy();
+                    let action = match key.as_ref() {
+                        "a" => Some(sel!(selectAll:)),
+                        "c" => Some(sel!(copy:)),
+                        "x" => Some(sel!(cut:)),
+                        "v" => Some(sel!(paste:)),
+                        "z" => Some(sel!(undo:)),
+                        "Z" => Some(sel!(redo:)),
+                        _ => None,
+                    };
+                    if let Some(action) = action {
+                        let window: id = msg_send![this, window];
+                        let responder: id = msg_send![window, firstResponder];
+                        return msg_send![responder, tryToPerform: action with: this];
+                    }
+                }
+            }
+            return msg_send![child, performKeyEquivalent: event];
+        }
+        let superclass = this.class().superclass().expect("GPUI superclass");
+        msg_send![super(this, superclass), performKeyEquivalent: event]
+    }
+}
+
 extern "C" fn view_focused_element(this: &Object, _cmd: Sel) -> id {
+    unsafe {
+        if let Some(child) = focused_webview(this) {
+            return msg_send![child, accessibilityFocusedUIElement];
+        }
+    }
     view_states()
         .lock()
         .ok()
@@ -307,8 +416,16 @@ fn accessible_view_class(superclass: &Class) -> &'static Class {
             view_hit_test as extern "C" fn(&Object, Sel, NSPoint) -> id,
         );
         decl.add_method(
+            sel!(accessibilityChildren),
+            view_children as extern "C" fn(&Object, Sel) -> id,
+        );
+        decl.add_method(
             sel!(accessibilityFocusedUIElement),
             view_focused_element as extern "C" fn(&Object, Sel) -> id,
+        );
+        decl.add_method(
+            sel!(performKeyEquivalent:),
+            view_key_equivalent as extern "C" fn(&Object, Sel, id) -> BOOL,
         );
         decl.register()
     })

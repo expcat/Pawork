@@ -1014,13 +1014,15 @@ async fn auth_set_api_key_verifies_replaces_and_masks_end_to_end() {
     .expect("select must not wait for running Run")
     .unwrap();
     assert!(guard.provider_needs_rebuild());
-    assert!(adapter
-        .command(&command_envelope(AppCommand::AuthAccountRemove {
-            provider_id: "glm-coding".into(),
-            credential_id: account_id
-        }))
-        .await
-        .is_err());
+    assert!(
+        adapter
+            .command(&command_envelope(AppCommand::AuthAccountRemove {
+                provider_id: "glm-coding".into(),
+                credential_id: account_id
+            }))
+            .await
+            .is_err()
+    );
     drop(guard);
     let mut removed_events = adapter.subscribe_events();
     adapter
@@ -1043,9 +1045,11 @@ async fn auth_set_api_key_verifies_replaces_and_masks_end_to_end() {
     let AppResponse::Data(old_status) = adapter.query(&old_query).await.unwrap() else {
         panic!("status");
     };
-    assert!(old_status["providers"][0]["credentials"][0]
-        .get("credential_id")
-        .is_none());
+    assert!(
+        old_status["providers"][0]["credentials"][0]
+            .get("credential_id")
+            .is_none()
+    );
 
     // 同 provider/model 连接成功后下一轮必须重装配，不能继续使用旧 Mock adapter。
     Mock::given(method("POST"))
@@ -1176,14 +1180,16 @@ async fn auth_account_empty_name_generates_label_and_rename() {
         panic!("rename must return Data: {renamed:?}")
     };
     assert_eq!(renamed["display_name"], "Work");
-    assert!(adapter
-        .command(&command_envelope(AppCommand::AuthAccountRename {
-            provider_id: "glm-coding".into(),
-            credential_id: credential_id.into(),
-            display_name: "   ".into(),
-        }))
-        .await
-        .is_err());
+    assert!(
+        adapter
+            .command(&command_envelope(AppCommand::AuthAccountRename {
+                provider_id: "glm-coding".into(),
+                credential_id: credential_id.into(),
+                display_name: "   ".into(),
+            }))
+            .await
+            .is_err()
+    );
     let inventory =
         pawork_auth::list_provider_accounts(backend.as_ref(), &"glm-coding".into()).unwrap();
     assert_eq!(inventory.accounts[0].display_name, "Work");
@@ -1264,9 +1270,11 @@ async fn go_key_verification_uses_authenticated_usage_and_preserves_old_key_on_f
         }))
         .await
         .expect("rate-limited is still an authenticated subscription");
-    assert!(!serde_json::to_string(&response)
-        .unwrap()
-        .contains(candidate));
+    assert!(
+        !serde_json::to_string(&response)
+            .unwrap()
+            .contains(candidate)
+    );
     assert_eq!(
         backend.get("pawork.opencode-go", "default").unwrap(),
         candidate
@@ -1276,7 +1284,7 @@ async fn go_key_verification_uses_authenticated_usage_and_preserves_old_key_on_f
 
 #[tokio::test]
 async fn go_account_quota_routes_next_run_and_preserves_manual_selection() {
-    use pawork_auth::{add_api_key_account, list_provider_accounts, ProviderAccountSelectionMode};
+    use pawork_auth::{ProviderAccountSelectionMode, add_api_key_account, list_provider_accounts};
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -1357,10 +1365,12 @@ async fn go_account_quota_routes_next_run_and_preserves_manual_selection() {
     );
     let mut wrong = query.clone();
     wrong.account_id = "another-account".into();
-    assert!(adapter
-        .query(&query_envelope(AppQuery::QuotaOverview { query: wrong }))
-        .await
-        .is_err());
+    assert!(
+        adapter
+            .query(&query_envelope(AppQuery::QuotaOverview { query: wrong }))
+            .await
+            .is_err()
+    );
     let AppResponse::Data(legacy) = adapter
         .query(&query_envelope(AppQuery::QuotaOverview {
             query: pawork_protocol::QuotaOverviewQuery {
@@ -1430,9 +1440,11 @@ async fn go_account_quota_routes_next_run_and_preserves_manual_selection() {
         .projection_snapshot(&session)
         .await
         .unwrap();
-    assert!(serde_json::to_string(&snapshot.messages)
-        .unwrap()
-        .contains("G2_QUOTA_OK"));
+    assert!(
+        serde_json::to_string(&snapshot.messages)
+            .unwrap()
+            .contains("G2_QUOTA_OK")
+    );
     adapter
         .command(&command_envelope(AppCommand::AuthAccountSelect {
             provider_id: provider.clone(),
@@ -1446,14 +1458,16 @@ async fn go_account_quota_routes_next_run_and_preserves_manual_selection() {
         ProviderAccountSelectionMode::Manual
     );
     let requests_before = server.received_requests().await.unwrap().len();
-    assert!(adapter
-        .core
-        .read()
-        .await
-        .select_account_for_run(&CancellationToken::new())
-        .await
-        .unwrap()
-        .is_none());
+    assert!(
+        adapter
+            .core
+            .read()
+            .await
+            .select_account_for_run(&CancellationToken::new())
+            .await
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(
         server.received_requests().await.unwrap().len(),
         requests_before
@@ -1484,14 +1498,16 @@ async fn go_account_quota_routes_next_run_and_preserves_manual_selection() {
             ProviderAccountSelectionMode::WhenExhausted,
         )
         .unwrap();
-        assert!(adapter
-            .core
-            .read()
-            .await
-            .select_account_for_run(&CancellationToken::new())
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            adapter
+                .core
+                .read()
+                .await
+                .select_account_for_run(&CancellationToken::new())
+                .await
+                .unwrap()
+                .is_none()
+        );
         assert_eq!(
             list_provider_accounts(backend.as_ref(), &provider)
                 .unwrap()
@@ -1506,14 +1522,16 @@ async fn go_account_quota_routes_next_run_and_preserves_manual_selection() {
         .respond_with(ResponseTemplate::new(401).set_body_string(first_key))
         .mount(&server)
         .await;
-    assert!(adapter
-        .core
-        .read()
-        .await
-        .select_account_for_run(&CancellationToken::new())
-        .await
-        .unwrap()
-        .is_none());
+    assert!(
+        adapter
+            .core
+            .read()
+            .await
+            .select_account_for_run(&CancellationToken::new())
+            .await
+            .unwrap()
+            .is_none()
+    );
     for entry in std::fs::read_dir(dir.path()).unwrap() {
         let path = entry.unwrap().path();
         if path.is_file() {

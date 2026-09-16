@@ -1,8 +1,8 @@
 //! `PaworkClient`：连接 pawork Host 的 typed client。
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use pawork_domain::{
@@ -19,7 +19,7 @@ use pawork_protocol::{
 };
 use serde::Deserialize;
 use serde_json::Value;
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 use crate::headless::error::SdkError;

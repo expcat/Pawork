@@ -1,8 +1,8 @@
 use pawork_protocol::{AppCommand, AppCommandEnvelope, AppQuery, AppResponse, GeneralSettingsData};
 
+use crate::AppCore;
 use crate::gui_host::GuiHostAdapter;
 use crate::gui_server::GuiHostError;
-use crate::AppCore;
 
 use super::settings_data;
 

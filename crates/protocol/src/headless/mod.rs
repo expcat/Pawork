@@ -43,6 +43,6 @@ pub mod wire;
 
 pub use wire::{
     CompatHistoryEntry, CompatImportOptions, CompatImportReport, CompatImportRequest, CompatSource,
-    HeadlessError, HeadlessRequest, HeadlessResponse, HelloRequest, ProtocolErrorKind,
-    SdkCapability, TranslatedRequest, MAX_FRAME_BYTES,
+    HeadlessError, HeadlessRequest, HeadlessResponse, HelloRequest, MAX_FRAME_BYTES,
+    ProtocolErrorKind, SdkCapability, TranslatedRequest,
 };

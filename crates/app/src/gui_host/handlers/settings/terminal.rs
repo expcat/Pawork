@@ -1,5 +1,7 @@
 use pawork_exec::PtyWindowSize;
-use pawork_protocol::{AppCommand, AppCommandEnvelope, AppQuery, AppResponse, TerminalSettingsData};
+use pawork_protocol::{
+    AppCommand, AppCommandEnvelope, AppQuery, AppResponse, TerminalSettingsData,
+};
 
 use crate::gui_host::GuiHostAdapter;
 use crate::gui_server::GuiHostError;

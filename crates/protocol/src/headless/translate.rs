@@ -6,7 +6,7 @@
 
 use super::wire::{
     CompatHistoryQuery, CompatImportRequest, HeadlessError, HeadlessRequest, HeadlessResponse,
-    ProtocolErrorKind, TranslatedRequest, MAX_FRAME_BYTES,
+    MAX_FRAME_BYTES, ProtocolErrorKind, TranslatedRequest,
 };
 use crate::{AppEventEnvelope, AppResponseEnvelope};
 use serde::Serialize;

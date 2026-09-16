@@ -45,24 +45,25 @@ pub mod typegen;
 
 pub use app::*;
 pub use app::{
-    ActorIdentity, ApiHandle, ApiKeySecret, ApiVersion, AppCommand, AppCommandEnvelope, AppEvent,
-    AppEventEnvelope, AppQuery, AppQueryEnvelope, AppResponse, AppResponseEnvelope,
-    AuthChangeState, CommandSource, EventSource, EventStream, GlobalSequence, TimelineItem,
-    TimelineItemKind, TimelinePage, API_VERSION, SUPPORTED_API_VERSIONS,
+    API_VERSION, ActorIdentity, ApiHandle, ApiKeySecret, ApiVersion, AppCommand,
+    AppCommandEnvelope, AppEvent, AppEventEnvelope, AppQuery, AppQueryEnvelope, AppResponse,
+    AppResponseEnvelope, AuthChangeState, CommandSource, EventSource, EventStream, GlobalSequence,
+    SUPPORTED_API_VERSIONS, TimelineItem, TimelineItemKind, TimelinePage,
 };
 
 pub use codec::{
-    decode_client_frame, decode_length_prefixed, decode_server_frame, encode_client_frame,
-    encode_length_prefixed, encode_server_frame, read_client_frame, read_frame, read_frame_async,
-    read_server_frame, write_client_frame, write_frame, write_frame_async, write_server_frame,
-    ProtocolCodecError, FRAME_LENGTH_PREFIX_BYTES,
+    FRAME_LENGTH_PREFIX_BYTES, ProtocolCodecError, decode_client_frame, decode_length_prefixed,
+    decode_server_frame, encode_client_frame, encode_length_prefixed, encode_server_frame,
+    read_client_frame, read_frame, read_frame_async, read_server_frame, write_client_frame,
+    write_frame, write_frame_async, write_server_frame,
 };
 pub use handshake::{
-    decode_client_frame_checked, decode_server_frame_checked, ensure_compatible_api_version,
-    negotiate_api_version, negotiate_api_version_with, validate_client_frame_api_version,
-    validate_server_frame_api_version, ClientAuthenticator, HandshakeService, HandshakeSession,
+    ClientAuthenticator, HandshakeService, HandshakeSession, decode_client_frame_checked,
+    decode_server_frame_checked, ensure_compatible_api_version, negotiate_api_version,
+    negotiate_api_version_with, validate_client_frame_api_version,
+    validate_server_frame_api_version,
 };
-pub use resume::{compute_resume_disposition, ResumeContext};
+pub use resume::{ResumeContext, compute_resume_disposition};
 
 /// 单帧线上 JSON 上限（含长度前缀）。
 pub const MAX_PROTOCOL_FRAME_BYTES: usize = 1024 * 1024;
@@ -170,6 +171,7 @@ pub enum GuiCapability {
     ArtifactStreaming,
     TerminalStreaming,
     Approvals,
+    BrowserControl,
 }
 
 /// 握手凭证只携带 opaque proof；协议日志必须单独执行 redaction。

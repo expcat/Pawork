@@ -150,7 +150,7 @@ mod tests {
     #[test]
     fn hosted_search_live_and_replay_keep_sources_and_terminal_status() {
         use pawork_domain::{Citation, ServerToolEvent};
-        use pawork_protocol::projection::{project_event, TimelineEntryKind, TimelineProjection};
+        use pawork_protocol::projection::{TimelineEntryKind, TimelineProjection, project_event};
         for failed in [false, true] {
             let call = pawork_domain::ToolCallId::from("ws-1");
             let events = [

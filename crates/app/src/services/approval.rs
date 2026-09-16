@@ -56,9 +56,9 @@ impl ApprovalService {
 #[cfg(test)]
 mod tests {
     use std::path::Path;
-    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     use async_trait::async_trait;
     use pawork_domain::{ApprovalDecision, CancellationToken, MessageRole};
@@ -66,7 +66,7 @@ mod tests {
     use pawork_testkit::{MockProvider, MockScript};
 
     use crate::gui_server::GuiHost;
-    use crate::testsupport::{user_hello, RecordingEvents};
+    use crate::testsupport::{RecordingEvents, user_hello};
     use crate::{AppCore, ApprovalAsk, ApprovalMode, ApprovalPromptHost, DenyAllApprovals};
 
     struct ScriptedHost {
@@ -180,6 +180,68 @@ mod tests {
             .expect("created");
         assert!(responded < created);
         assert!(created < started);
+        core.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn same_round_serial_tools_run_in_input_order() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let host = ScriptedHost::new(vec![ApprovalDecision::ApprovedForRun]);
+        let dir = tempfile::tempdir().expect("store");
+        let (store, _) = SessionStore::open(dir.path().join("session.db"))
+            .await
+            .expect("store");
+        let provider = MockProvider::sequence(vec![
+            MockScript::new()
+                .tool_call(
+                    "write_file",
+                    serde_json::json!({"path": "first.txt", "content": "first"}),
+                )
+                .tool_call(
+                    "write_file",
+                    serde_json::json!({"path": "second.txt", "content": "second"}),
+                )
+                .complete_with(pawork_domain::StopReason::ToolUse),
+            MockScript::new().text("done").complete(),
+        ]);
+        let mut core = AppCore::from_parts(
+            Arc::new(provider),
+            None,
+            pawork_domain::ModelId::from("model-1"),
+            pawork_domain::ProviderId::from("mock"),
+            Some(store.clone()),
+        );
+        core.configure_approval(ApprovalMode::AskForWrites, true, host);
+        core.attach_workspace(workspace.path()).expect("attach");
+        let session = core.create_session("serial").await.expect("create");
+        core.chat_turn(
+            &session,
+            vec![user_hello()],
+            &RecordingEvents::default(),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("turn");
+        assert_eq!(
+            std::fs::read_to_string(workspace.path().join("first.txt")).unwrap(),
+            "first"
+        );
+        assert_eq!(
+            std::fs::read_to_string(workspace.path().join("second.txt")).unwrap(),
+            "second"
+        );
+        let persisted = store.replay_events(&session, 1, 100).await.unwrap();
+        let completed = persisted
+            .iter()
+            .filter_map(|event| match &event.payload {
+                pawork_domain::AgentEvent::ToolExecutionCompleted { tool_call_id, .. } => {
+                    Some(tool_call_id.as_str().to_string())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(completed.len(), 2);
+        assert_ne!(completed[0], completed[1]);
         core.shutdown().await.expect("shutdown");
     }
 
@@ -390,9 +452,9 @@ mod tests {
 
         let (store, _) = SessionStore::open(&db).await.expect("reopen after crash");
         let mut core = AppCore::from_parts(
-            Arc::new(MockProvider::sequence(vec![MockScript::new()
-                .text("idle")
-                .complete()])),
+            Arc::new(MockProvider::sequence(vec![
+                MockScript::new().text("idle").complete(),
+            ])),
             None,
             pawork_domain::ModelId::from("model-1"),
             pawork_domain::ProviderId::from("mock"),
@@ -404,9 +466,11 @@ mod tests {
             .resume_messages_keep_pending(&session)
             .await
             .expect("keep pending");
-        assert!(messages
-            .iter()
-            .all(|message| message.role != MessageRole::Tool));
+        assert!(
+            messages
+                .iter()
+                .all(|message| message.role != MessageRole::Tool)
+        );
         let snap = core
             .store()
             .expect("store")
@@ -496,9 +560,9 @@ mod tests {
         assert_eq!(sequences, (1..=after.len() as u64).collect::<Vec<_>>());
         let store = adapter.session_store().await.expect("store clone");
         let core = AppCore::from_parts(
-            std::sync::Arc::new(MockProvider::sequence(vec![MockScript::new()
-                .text("idle")
-                .complete()])),
+            std::sync::Arc::new(MockProvider::sequence(vec![
+                MockScript::new().text("idle").complete(),
+            ])),
             None,
             pawork_domain::ModelId::from("model-1"),
             pawork_domain::ProviderId::from("mock"),
@@ -596,11 +660,13 @@ mod tests {
             details.get("path").and_then(serde_json::Value::as_str),
             Some("../escape.txt")
         );
-        assert!(details
-            .get("error")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .contains("parent traversal"));
+        assert!(
+            details
+                .get("error")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .contains("parent traversal")
+        );
         assert!(replayed.iter().any(|envelope| matches!(
             &envelope.payload,
             pawork_domain::AgentEvent::RunCompleted { .. }

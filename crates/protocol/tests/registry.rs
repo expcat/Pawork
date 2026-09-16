@@ -10,7 +10,7 @@ use pawork_protocol::app::registry::{
 };
 use pawork_protocol::headless::wire::SdkCapability;
 use pawork_protocol::{ApiVersion, AppCommand, AppQuery, GuiCapability};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const V1_0: ApiVersion = ApiVersion { major: 1, minor: 0 };
 const V1_1: ApiVersion = ApiVersion { major: 1, minor: 1 };
@@ -103,7 +103,9 @@ fn command_samples() -> Vec<(&'static str, Option<Value>)> {
         ),
         (
             "auth_account_rename",
-            Some(json!({"provider_id":"glm-coding", "credential_id":"credential-1", "display_name":"Work"})),
+            Some(
+                json!({"provider_id":"glm-coding", "credential_id":"credential-1", "display_name":"Work"}),
+            ),
         ),
         ("auth_cancel", Some(json!({"provider_id": "glm-coding"}))),
         (
@@ -164,6 +166,10 @@ fn command_samples() -> Vec<(&'static str, Option<Value>)> {
         ),
         ("mcp_test", Some(json!({"name": "context7"}))),
         ("mcp_server_remove", Some(json!({"name": "context7"}))),
+        (
+            "browser_respond",
+            Some(json!({"request_id": "browser-1", "result": {"ok": true, "data": {}}})),
+        ),
     ]
 }
 
@@ -196,6 +202,10 @@ fn query_samples() -> Vec<(&'static str, Option<Value>)> {
         ("general_settings", None),
         ("permissions_settings", None),
         ("terminal_settings", None),
+        (
+            "browser_next",
+            Some(json!({"session_id": "session-1", "run_id": "run-1"})),
+        ),
     ]
 }
 
@@ -257,8 +267,8 @@ fn wire_names_are_bijective_with_serde_tags() {
 fn registry_tables_are_complete_and_unique() {
     let commands = command_entries();
     let queries = query_entries();
-    assert_eq!(commands.len(), 40);
-    assert_eq!(queries.len(), 15);
+    assert_eq!(commands.len(), 41);
+    assert_eq!(queries.len(), 16);
     for wire_name in commands.iter().map(|entry| entry.wire_name) {
         assert_eq!(
             commands
@@ -325,6 +335,7 @@ fn gui_announcement_vector_matches_v2_snapshot() {
             GuiCapability::Snapshots,
             GuiCapability::TerminalStreaming,
             GuiCapability::Approvals,
+            GuiCapability::BrowserControl,
         ]
     );
 }
@@ -332,10 +343,12 @@ fn gui_announcement_vector_matches_v2_snapshot() {
 /// K-08 / R0 D13：无任何条目 require ArtifactStreaming，派生宣告不含它。
 #[test]
 fn no_entry_requires_artifact_streaming() {
-    assert!(!command_entries()
-        .iter()
-        .chain(query_entries().iter())
-        .any(|entry| entry.gui.required_capability == Some(GuiCapability::ArtifactStreaming)));
+    assert!(
+        !command_entries()
+            .iter()
+            .chain(query_entries().iter())
+            .any(|entry| entry.gui.required_capability == Some(GuiCapability::ArtifactStreaming))
+    );
 }
 
 fn assert_command_entry(
@@ -707,6 +720,16 @@ fn command_registry_covers_every_variant_without_wildcard() {
                 false,
                 V1_7,
             ),
+            AppCommand::BrowserRespond { .. } => assert_command_entry(
+                &command,
+                "browser_respond",
+                true,
+                Some(GuiCapability::BrowserControl),
+                None,
+                false,
+                false,
+                pawork_protocol::V1_18,
+            ),
         }
     }
 }
@@ -860,6 +883,16 @@ fn query_registry_covers_every_variant_without_wildcard() {
                 false,
                 true,
                 V1_8,
+            ),
+            AppQuery::BrowserNext { .. } => assert_query_entry(
+                &query,
+                "browser_next",
+                true,
+                Some(GuiCapability::BrowserControl),
+                None,
+                false,
+                true,
+                pawork_protocol::V1_18,
             ),
         }
     }

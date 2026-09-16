@@ -248,6 +248,16 @@ impl ToolScheduler {
         )
     }
 
+    /// 在同一审批配置下追加宿主工具，保留已有内置与 MCP 工具。
+    pub fn with_tools(
+        &self,
+        tools: impl IntoIterator<Item = Arc<dyn AgentTool>>,
+    ) -> Result<Self, ToolRegistryError> {
+        let mut registry = self.registry.clone();
+        registry.extend(tools)?;
+        Ok(Self::new(registry, self.config.clone()))
+    }
+
     /// 按显式工具名调度并执行。
     ///
     /// `approval` 为 `None` 与 [`AutoApproveResolver`] 同等：策略 Allow 时放行，

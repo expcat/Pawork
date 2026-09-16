@@ -3,15 +3,15 @@
 use std::ops::Range;
 
 use gpui::{
-    div, prelude::*, px, FontStyle, FontWeight, InteractiveText, Rgba, SharedString, StyledText,
-    TextRun,
+    FontStyle, FontWeight, InteractiveText, Rgba, SharedString, StyledText, TextRun, div,
+    prelude::*, px,
 };
 
+use super::AppView;
 use super::components::button::{Button, ButtonPadding, ButtonVariant};
-use super::components::icon::{icon, Icon};
+use super::components::icon::{Icon, icon};
 use super::i18n::t;
 use super::theme::{dark, font, metrics};
-use super::AppView;
 
 /// 代码复制走 SVG；命中区与 Header 图标按钮同为 36×36。
 const TABLE_CELL_PAD_X: f32 = 6.0;
@@ -1007,10 +1007,10 @@ mod tests {
                 text
             );
         }
-        assert!(message_actions(
-            "[bad](javascript:alert) [file](file:///tmp/a) `https://code.test`"
-        )
-        .is_empty());
+        assert!(
+            message_actions("[bad](javascript:alert) [file](file:///tmp/a) `https://code.test`")
+                .is_empty()
+        );
         assert_eq!(
             parse("| 中文 | 值 |\n| --- | --")[0].kind,
             BlockKind::Paragraph
@@ -1021,9 +1021,11 @@ mod tests {
         );
         let single_line = parse("```hello```\nnormal");
         assert_eq!(single_line[0].kind, BlockKind::Paragraph);
-        assert!(single_line[0].lines[0]
-            .iter()
-            .any(|span| span.text.contains("hello")));
+        assert!(
+            single_line[0].lines[0]
+                .iter()
+                .any(|span| span.text.contains("hello"))
+        );
         let blocks = parse("```\n中文 **原样**\n🙂");
         assert_eq!(blocks[0].lines[0][0].text, "中文 **原样**");
         assert_eq!(blocks[0].lines[1][0].text, "🙂");

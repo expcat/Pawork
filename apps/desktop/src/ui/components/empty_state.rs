@@ -1,10 +1,10 @@
 //! GUI4：空状态视觉容器。不发布 AX；调用方保留原 identifier 与文案。
 
 use gpui::{
-    div, prelude::*, px, AnyElement, App, IntoElement, Pixels, RenderOnce, Rgba, Styled, Window,
+    AnyElement, App, IntoElement, Pixels, RenderOnce, Rgba, Styled, Window, div, prelude::*, px,
 };
 
-use crate::ui::components::icon::{icon_sized, Icon};
+use crate::ui::components::icon::{Icon, icon_sized};
 use crate::ui::theme::{dark, metrics};
 
 /// 居中空状态：可选图标 + 调用方子节点（标题 / 说明 / 动作 / 骨架）。
@@ -51,7 +51,6 @@ impl EmptyState {
         self.pad_x = px(pad);
         self
     }
-
 
     pub fn child(mut self, child: impl IntoElement) -> Self {
         self.children.push(child.into_any_element());

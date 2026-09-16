@@ -8,10 +8,10 @@
 
 use std::io::{Read, Write};
 
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use thiserror::Error;
 
-use crate::{ClientFrame, ServerFrame, MAX_PROTOCOL_FRAME_BYTES};
+use crate::{ClientFrame, MAX_PROTOCOL_FRAME_BYTES, ServerFrame};
 
 /// 长度前缀字节数（u32 little-endian）。
 pub const FRAME_LENGTH_PREFIX_BYTES: usize = 4;

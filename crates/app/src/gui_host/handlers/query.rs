@@ -1,8 +1,8 @@
 use crate::gui_server::{GuiHost, GuiHostError};
 use pawork_protocol::{AppQuery, AppResponse};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use super::super::{session_tree_entry, GuiHostAdapter};
+use super::super::{GuiHostAdapter, session_tree_entry};
 
 pub(crate) async fn workspace_list(
     adapter: &GuiHostAdapter,

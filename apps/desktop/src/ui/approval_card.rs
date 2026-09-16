@@ -1,7 +1,7 @@
 //! 审批卡（ApprovalCard）：pending approval 的警示卡与 Allow once /
 //! Allow for run / Deny 操作（R8 波 C 自 ui/mod.rs 逐样式迁移）。
 
-use gpui::{div, prelude::*, px, Context, SharedString};
+use gpui::{Context, SharedString, div, prelude::*, px};
 
 use crate::ui::components::button::{Button, ButtonVariant};
 use crate::ui::i18n::t;

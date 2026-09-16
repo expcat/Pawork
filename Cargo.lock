@@ -4396,6 +4396,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "pawork-browser"
+version = "0.1.0"
+dependencies = [
+ "block",
+ "cocoa 0.26.0",
+ "objc",
+ "raw-window-handle",
+ "serde_json",
+ "url",
+]
+
+[[package]]
 name = "pawork-cli"
 version = "0.1.0"
 dependencies = [
@@ -4460,6 +4472,7 @@ dependencies = [
  "cocoa 0.26.0",
  "gpui",
  "objc",
+ "pawork-browser",
  "pawork-client",
  "pawork-terminal",
  "raw-window-handle",

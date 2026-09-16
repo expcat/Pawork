@@ -82,7 +82,7 @@ pub mod experimental {
 /// 便捷重导出：常用协议类型（与 `pawork-protocol` 同构，免去额外依赖）。
 pub mod reexport {
     pub use pawork_protocol::{
-        ApiHandle, ApiVersion, AppCommand, AppEvent, AppEventEnvelope, AppQuery, AppResponse,
-        AppResponseEnvelope, CommandSource, EventStream, RunState, API_VERSION,
+        API_VERSION, ApiHandle, ApiVersion, AppCommand, AppEvent, AppEventEnvelope, AppQuery,
+        AppResponse, AppResponseEnvelope, CommandSource, EventStream, RunState,
     };
 }

@@ -4,12 +4,12 @@ use gpui::{App, Focusable, Window};
 
 use super::{AxAction, AxNode, AxRect, AxRole};
 use crate::projection::ConnectionState;
+use crate::ui::AppView;
 use crate::ui::i18n::t;
 use crate::ui::settings::{
     general_status_lines, settings_proxy_effect_note, settings_proxy_storage_note,
     settings_proxy_unset,
 };
-use crate::ui::AppView;
 
 impl AppView {
     /// 「Network」页 AX（SET-6a）：当前值 / 输入 / Save / Clear / 生效边界；

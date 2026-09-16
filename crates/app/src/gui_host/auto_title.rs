@@ -12,8 +12,8 @@ use pawork_engine::now_timestamp;
 use pawork_protocol::AppEvent;
 
 use super::bus::GuiEventBus;
-use crate::app_core::PLACEHOLDER_SESSION_TITLE;
 use crate::AppCore;
+use crate::app_core::PLACEHOLDER_SESSION_TITLE;
 
 pub(crate) async fn auto_title_after_successful_run(
     core: Arc<tokio::sync::RwLock<AppCore>>,

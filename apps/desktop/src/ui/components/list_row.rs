@@ -5,8 +5,8 @@
 //! raised 行 → surface.hover），pressed 使用更沉的 surface.pressed。
 
 use gpui::{
-    div, prelude::*, px, rems, AbsoluteLength, AnyElement, App, ClickEvent, FocusHandle,
-    IntoElement, KeyDownEvent, RenderOnce, SharedString, Window,
+    AbsoluteLength, AnyElement, App, ClickEvent, FocusHandle, IntoElement, KeyDownEvent,
+    RenderOnce, SharedString, Window, div, prelude::*, px, rems,
 };
 
 use crate::ui::components::focus_ring::focus_ring;

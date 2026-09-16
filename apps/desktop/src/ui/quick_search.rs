@@ -1,7 +1,7 @@
 //! GUI2-03：仅搜索当前 Snapshot 与已有安全导航；不查询历史、不执行写操作。
 use super::accessibility::{AxAction, AxNode, AxRect, AxRole, AxTree};
 use super::i18n::t;
-use super::settings::{settings_page_title_key, settings_search_entries, SettingsSearchKind};
+use super::settings::{SettingsSearchKind, settings_page_title_key, settings_search_entries};
 use super::*;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -40,9 +40,7 @@ impl SearchResult {
             SearchTarget::Task(_) => Icon::Task,
             SearchTarget::Page(_) => Icon::Page,
             SearchTarget::SettingsRow { .. } => Icon::SettingsRow,
-            SearchTarget::Panel(InspectorTab::Changes) => Icon::Changes,
-            SearchTarget::Panel(InspectorTab::Terminal) => Icon::Terminal,
-            SearchTarget::Panel(InspectorTab::Resources) => Icon::Resources,
+            SearchTarget::Panel(tab) => tab.icon(),
         }
     }
 }
@@ -212,6 +210,21 @@ impl AppView {
                     });
                 }
             }
+        }
+        if query.is_empty()
+            || format!(
+                "{} browser web localhost 网页 浏览器",
+                t("inspector.tab_browser")
+            )
+            .to_lowercase()
+            .contains(&query.to_lowercase())
+        {
+            results.push(SearchResult {
+                target: SearchTarget::Panel(InspectorTab::Browser),
+                title: t("inspector.tab_browser").into(),
+                detail: t("quick.panel").into(),
+                group: "quick.actions",
+            });
         }
         results
     }
@@ -786,10 +799,12 @@ mod tests {
                     let results = v.quick_search_results();
                     assert_eq!(results[0].target, SearchTarget::Task("s-00".into()));
                     assert_ne!(results[0].detail, results[1].detail);
-                    assert!(tree.children[0]
-                        .children
-                        .iter()
-                        .all(|node| node.identifier != "quick-task-s-39"));
+                    assert!(
+                        tree.children[0]
+                            .children
+                            .iter()
+                            .all(|node| node.identifier != "quick-task-s-39")
+                    );
                 });
             }
         }
@@ -800,10 +815,12 @@ mod tests {
         cx.run_until_parked();
         cx.update(|window, cx| {
             let v = view.read(cx);
-            assert!(v.quick_search_ax(window, cx).children[0]
-                .children
-                .iter()
-                .any(|node| node.identifier == "quick-task-s-30"));
+            assert!(
+                v.quick_search_ax(window, cx).children[0]
+                    .children
+                    .iter()
+                    .any(|node| node.identifier == "quick-task-s-30")
+            );
             assert_eq!(v.projection.active_session_id.as_deref(), Some("s-00"));
         });
         cx.simulate_keystrokes("escape");
@@ -856,10 +873,11 @@ mod tests {
             assert_eq!(v.projection.active_session_id.as_deref(), Some("s-01"));
             assert!(v.scope_workspace_id.is_none());
             assert_eq!(v.composer_drafts["s-00"], "保留草稿");
-            assert!(v
-                .status_hint
-                .as_ref()
-                .is_some_and(|s| s == t("quick.filter_cleared")));
+            assert!(
+                v.status_hint
+                    .as_ref()
+                    .is_some_and(|s| s == t("quick.filter_cleared"))
+            );
         });
     }
 
@@ -902,10 +920,11 @@ mod tests {
         cx.update(|window, cx| {
             view.update(cx, |v, cx| {
                 assert!(v.quick_search.open);
-                assert_eq!(v.quick_search_results().len(), 2);
+                assert_eq!(v.quick_search_results().len(), 3);
                 assert!(v.quick_search_results().iter().all(|r| matches!(
                     r.target,
                     SearchTarget::Page(SettingsPage::Appearance | SettingsPage::Advanced)
+                        | SearchTarget::Panel(InspectorTab::Browser)
                 )));
                 v.activate_quick_result(SearchTarget::Task("s-01".into()), window, cx);
                 v.handle_accessibility_request(

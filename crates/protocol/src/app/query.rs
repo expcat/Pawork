@@ -86,6 +86,12 @@ pub enum AppQuery {
     /// `{ shell, columns, rows }`——shell 为 Global 持久值（null = 跟随
     /// 平台默认），columns/rows 为生效值（未设置 = 80/24）。
     TerminalSettings,
+    /// GUI-only atomic claim of the next pending browser action (since 1.18).
+    /// Host returns `AppResponse::Data({request_id, action})` or JSON null.
+    BrowserNext {
+        session_id: SessionId,
+        run_id: RunId,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -13,9 +13,9 @@ use crate::app_core::RoleModelKind;
 use crate::gui_host::GuiHostAdapter;
 use crate::gui_server::GuiHostError;
 use crate::provider_assembly::{assemble_provider, assemble_registry, channel_protocol};
-use crate::{channels, AppCore};
+use crate::{AppCore, channels};
 
-use super::{flight_active, iso8601_utc, now_millis, settings_data, AuthFlights};
+use super::{AuthFlights, flight_active, iso8601_utc, now_millis, settings_data};
 
 /// 单通道目录探测上限（与 models_overview 的探测窗口一致）。
 const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(4);

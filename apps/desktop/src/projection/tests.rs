@@ -2,7 +2,7 @@
 
 use super::*;
 use pawork_client::{AppEventEnvelope, ResumeDisposition, ResumeOutcome, Snapshot, TimelinePage};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 fn snapshot_with_sessions(entries: Vec<Value>) -> Snapshot {
     serde_json::from_value(json!({
@@ -178,16 +178,18 @@ fn provider_status_default_fails_closed_on_malformed_payload() {
     let payload = |default: Value| json!({ "providers": [], "default": default, "role_defaults": { "naming": null, "vision": null, "search": null } });
     // 缺顶层 default / 缺 role_defaults：整体 fail-closed，不静默当 null。
     assert!(serde_json::from_value::<ProviderAuthStatusData>(json!({ "providers": [] })).is_err());
-    assert!(serde_json::from_value::<ProviderAuthStatusData>(
-        json!({ "providers": [], "default": null })
-    )
-    .is_err());
+    assert!(
+        serde_json::from_value::<ProviderAuthStatusData>(
+            json!({ "providers": [], "default": null })
+        )
+        .is_err()
+    );
     // 非对象非 null / 缺 model_id / 字段非字符串：同样 fail-closed。
     assert!(serde_json::from_value::<ProviderAuthStatusData>(payload(json!("kimi"))).is_err());
-    assert!(serde_json::from_value::<ProviderAuthStatusData>(payload(
-        json!({ "provider_id": "kimi" })
-    ))
-    .is_err());
+    assert!(
+        serde_json::from_value::<ProviderAuthStatusData>(payload(json!({ "provider_id": "kimi" })))
+            .is_err()
+    );
     assert!(
         serde_json::from_value::<ProviderAuthStatusData>(payload(json!({
             "provider_id": "kimi",
@@ -569,45 +571,55 @@ fn permissions_settings_parses_host_triple() {
 #[test]
 fn permissions_settings_fails_closed_on_malformed_payload() {
     assert!(serde_json::from_value::<PermissionsSettingsData>(json!({})).is_err());
-    assert!(serde_json::from_value::<PermissionsSettingsData>(
-        json!({ "approval_mode": "always_ask" })
-    )
-    .is_err());
-    assert!(serde_json::from_value::<PermissionsSettingsData>(json!({
-        "approval_mode": "yolo",
-        "workspace_trusted": false,
-        "trust_workspaces_global": null,
-        "workspace_id": "workspace-1"
-    }))
-    .is_err());
-    assert!(serde_json::from_value::<PermissionsSettingsData>(json!({
-        "approval_mode": 7,
-        "workspace_trusted": false,
-        "trust_workspaces_global": null,
-        "workspace_id": "workspace-1"
-    }))
-    .is_err());
-    assert!(serde_json::from_value::<PermissionsSettingsData>(json!({
-        "approval_mode": "read_only",
-        "workspace_trusted": "yes",
-        "trust_workspaces_global": null,
-        "workspace_id": "workspace-1"
-    }))
-    .is_err());
-    assert!(serde_json::from_value::<PermissionsSettingsData>(json!({
-        "approval_mode": "read_only",
-        "workspace_trusted": false,
-        "trust_workspaces_global": "true",
-        "workspace_id": "workspace-1"
-    }))
-    .is_err());
+    assert!(
+        serde_json::from_value::<PermissionsSettingsData>(json!({ "approval_mode": "always_ask" }))
+            .is_err()
+    );
+    assert!(
+        serde_json::from_value::<PermissionsSettingsData>(json!({
+            "approval_mode": "yolo",
+            "workspace_trusted": false,
+            "trust_workspaces_global": null,
+            "workspace_id": "workspace-1"
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<PermissionsSettingsData>(json!({
+            "approval_mode": 7,
+            "workspace_trusted": false,
+            "trust_workspaces_global": null,
+            "workspace_id": "workspace-1"
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<PermissionsSettingsData>(json!({
+            "approval_mode": "read_only",
+            "workspace_trusted": "yes",
+            "trust_workspaces_global": null,
+            "workspace_id": "workspace-1"
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<PermissionsSettingsData>(json!({
+            "approval_mode": "read_only",
+            "workspace_trusted": false,
+            "trust_workspaces_global": "true",
+            "workspace_id": "workspace-1"
+        }))
+        .is_err()
+    );
     // 缺 workspace_id 同样 fail-closed（ADR-048 D1 实现期修订字段）。
-    assert!(serde_json::from_value::<PermissionsSettingsData>(json!({
-        "approval_mode": "read_only",
-        "workspace_trusted": false,
-        "trust_workspaces_global": null
-    }))
-    .is_err());
+    assert!(
+        serde_json::from_value::<PermissionsSettingsData>(json!({
+            "approval_mode": "read_only",
+            "workspace_trusted": false,
+            "trust_workspaces_global": null
+        }))
+        .is_err()
+    );
     let mut state = SettingsPermissionsState::default();
     state.apply_failed("malformed payload");
     assert!(!state.query.available);
@@ -689,22 +701,30 @@ fn terminal_settings_fails_closed_on_malformed_payload() {
         serde_json::from_value::<TerminalSettingsData>(json!({ "columns": 80, "rows": 24 }))
             .is_err()
     );
-    assert!(serde_json::from_value::<TerminalSettingsData>(json!({
-        "shell": null, "rows": 24
-    }))
-    .is_err());
-    assert!(serde_json::from_value::<TerminalSettingsData>(json!({
-        "shell": 7, "columns": 80, "rows": 24
-    }))
-    .is_err());
-    assert!(serde_json::from_value::<TerminalSettingsData>(json!({
-        "shell": null, "columns": "80", "rows": 24
-    }))
-    .is_err());
-    assert!(serde_json::from_value::<TerminalSettingsData>(json!({
-        "shell": null, "columns": 80, "rows": 70000
-    }))
-    .is_err());
+    assert!(
+        serde_json::from_value::<TerminalSettingsData>(json!({
+            "shell": null, "rows": 24
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<TerminalSettingsData>(json!({
+            "shell": 7, "columns": 80, "rows": 24
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<TerminalSettingsData>(json!({
+            "shell": null, "columns": "80", "rows": 24
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<TerminalSettingsData>(json!({
+            "shell": null, "columns": 80, "rows": 70000
+        }))
+        .is_err()
+    );
     let mut state = SettingsTerminalState::default();
     state.apply_failed("malformed payload");
     assert!(!state.query.available);
@@ -873,11 +893,13 @@ fn malformed_auth_change_fails_closed_without_state_landing() {
         assert!(!state.apply_auth_changed_value("kimi", &payload));
         assert_eq!(*provider_auth(&state), ProviderAuthState::None);
     }
-    assert!(state
-        .error
-        .as_deref()
-        .unwrap_or_default()
-        .contains("malformed auth change"));
+    assert!(
+        state
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("malformed auth change")
+    );
     assert!(state.oauth_waits.is_empty());
     assert!(state.auth_notes.is_empty());
     assert!(!state.pending_status_refresh);
@@ -1143,6 +1165,79 @@ fn approval_card_clears_on_terminal_run() {
     );
     assert!(projection.apply_event(&run_changed(2, "cancelled")));
     assert_eq!(projection.pending_approval, None);
+}
+
+#[test]
+fn snapshot_pending_approval_keeps_tool_preview() {
+    let snapshot = snapshot_with_runs_and_approvals(
+        vec![],
+        vec![json!({
+            "run_id": "r-live",
+            "session_id": "s-1",
+            "tool_call_id": "call-terminal",
+            "tool_name": "terminal",
+            "message": "tool `terminal` requires explicit approval",
+            "relative_path": null,
+            "preview": "{\n  \"action\": \"write\",\n  \"command\": \"printf 'TERM-0916-OK\\n'\"\n}"
+        })],
+    );
+    let mut projection = DesktopProjection::from_snapshot(&snapshot);
+    projection.select_session("s-1");
+    let pending = projection
+        .pending_approval
+        .as_ref()
+        .expect("pending approval");
+    assert_eq!(pending.tool_name, "terminal");
+    assert_eq!(
+        pending.reason,
+        "terminal · tool `terminal` requires explicit approval"
+    );
+    assert_eq!(
+        pending.detail.as_deref(),
+        Some("{\n  \"action\": \"write\",\n  \"command\": \"printf 'TERM-0916-OK\\n'\"\n}")
+    );
+}
+
+#[test]
+fn live_approval_event_preserves_snapshot_preview() {
+    let snapshot = snapshot_with_runs_and_approvals(
+        vec![],
+        vec![json!({
+            "run_id": "r-live",
+            "session_id": "s-1",
+            "tool_call_id": "call-terminal",
+            "tool_name": "terminal",
+            "message": "tool `terminal` requires explicit approval",
+            "relative_path": null,
+            "preview": "{\n  \"action\": \"write\"\n}"
+        })],
+    );
+    let mut projection = DesktopProjection::from_snapshot(&snapshot);
+    projection.select_session("s-1");
+    assert!(projection.apply_event(&event(
+        1,
+        json!({
+            "type": "tool_approval_required",
+            "data": {
+                "run_id": "r-live",
+                "tool_call_id": "call-terminal",
+                "reason": "tool `terminal` requires approval"
+            }
+        }),
+    )));
+    let pending = projection
+        .pending_approval
+        .as_ref()
+        .expect("pending approval");
+    assert_eq!(pending.tool_name, "terminal");
+    assert_eq!(
+        pending.reason,
+        "terminal · tool `terminal` requires explicit approval"
+    );
+    assert_eq!(
+        pending.detail.as_deref(),
+        Some("{\n  \"action\": \"write\"\n}")
+    );
 }
 
 #[test]
@@ -1624,10 +1719,12 @@ fn note_user_echo_appends_active_then_wire_events_land_after() {
     projection.apply_timeline_page(&persisted);
     projection.apply_timeline_page(&persisted);
     assert_eq!(projection.timeline.len(), 3);
-    assert!(!projection
-        .timeline
-        .iter()
-        .any(|entry| entry.event_id == "local-echo-r-2"));
+    assert!(
+        !projection
+            .timeline
+            .iter()
+            .any(|entry| entry.event_id == "local-echo-r-2")
+    );
     assert!(!projection.note_user_echo("s-1", "r-2", "hello", 6_000));
 }
 
@@ -2245,11 +2342,13 @@ fn grouping_switch_does_not_change_active_session() {
     let _timeline = projection.timeline_groups(None, 20);
     let _projects = projection.project_groups(None);
     assert_eq!(projection.active_session_id, before);
-    assert!(projection
-        .project_groups(None)
-        .iter()
-        .flat_map(|project| &project.tasks)
-        .any(|task| task.session_id == "s-2"));
+    assert!(
+        projection
+            .project_groups(None)
+            .iter()
+            .flat_map(|project| &project.tasks)
+            .any(|task| task.session_id == "s-2")
+    );
 }
 
 fn resume_outcome(
@@ -2408,10 +2507,12 @@ fn snapshot_refresh_reflects_rename_and_archive() {
     projection.merge_snapshot(&snapshot_with_sessions(vec![session_entry(
         "s-2", "Keep", 10,
     )]));
-    assert!(projection
-        .sessions
-        .iter()
-        .all(|session| session.session_id != "s-1"));
+    assert!(
+        projection
+            .sessions
+            .iter()
+            .all(|session| session.session_id != "s-1")
+    );
     assert!(!projection.unread_sessions.contains("s-1"));
     assert!(projection.active_session_id.is_none());
     assert!(projection.timeline.entries.is_empty());
@@ -2978,7 +3079,6 @@ fn tool_output(sequence: u64, tool_call_id: &str, delta: &str) -> AppEventEnvelo
         }),
     )
 }
-
 
 #[test]
 fn live_tool_output_fills_running_entry() {
@@ -3562,22 +3662,30 @@ fn model_catalog_and_enablement_receipts_converge_provider_scoped_state() {
     assert!(catalog[2].enabled);
 
     // 在途按 provider 判定：弹层整体禁用防重复提交。
-    assert!(ProviderModelWrite::Model {
-        provider_id: "kimi".into(),
-        model_id: "kimi-k2".into(),
-    }
-    .targets("kimi"));
-    assert!(!ProviderModelWrite::Model {
-        provider_id: "kimi".into(),
-        model_id: "kimi-k2".into(),
-    }
-    .targets("glm"));
-    assert!(ProviderModelWrite::All {
-        provider_id: "glm".into()
-    }
-    .targets("glm"));
-    assert!(!ProviderModelWrite::All {
-        provider_id: "glm".into()
-    }
-    .targets("kimi"));
+    assert!(
+        ProviderModelWrite::Model {
+            provider_id: "kimi".into(),
+            model_id: "kimi-k2".into(),
+        }
+        .targets("kimi")
+    );
+    assert!(
+        !ProviderModelWrite::Model {
+            provider_id: "kimi".into(),
+            model_id: "kimi-k2".into(),
+        }
+        .targets("glm")
+    );
+    assert!(
+        ProviderModelWrite::All {
+            provider_id: "glm".into()
+        }
+        .targets("glm")
+    );
+    assert!(
+        !ProviderModelWrite::All {
+            provider_id: "glm".into()
+        }
+        .targets("kimi")
+    );
 }

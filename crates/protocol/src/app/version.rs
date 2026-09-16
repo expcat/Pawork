@@ -93,7 +93,13 @@ pub const V1_17: ApiVersion = ApiVersion {
     minor: 17,
 };
 
-pub const API_VERSION: ApiVersion = V1_17;
+/// GUI browser claim/reply (browser_next / browser_respond).
+pub const V1_18: ApiVersion = ApiVersion {
+    major: 1,
+    minor: 18,
+};
+
+pub const API_VERSION: ApiVersion = V1_18;
 
 /// 宿主支持的完整 API 版本表（P13-10 schema 版本化）。
 ///
@@ -101,7 +107,7 @@ pub const API_VERSION: ApiVersion = V1_17;
 /// [ADR-036](../../../../../Pawork_v1/docs/adr/ADR-036-gui-protocol-versioning.md) 定义的废弃与删除流程。
 pub const SUPPORTED_API_VERSIONS: &[ApiVersion] = &[
     V1_0, V1_1, V1_2, V1_3, V1_4, V1_5, V1_6, V1_7, V1_8, V1_9, V1_10, V1_11, V1_12, V1_13, V1_14,
-    V1_15, V1_16, V1_17,
+    V1_15, V1_16, V1_17, V1_18,
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -197,22 +203,34 @@ pub const PROTOCOL_CRATE_COMPATIBILITY: &[ProtocolCrateCompatibility] = &[
         note: "ADR-051 SET-6g Accepted 握手 Host 数据目录元数据",
     },
     ProtocolCrateCompatibility {
-        api: ApiVersion { major: 1, minor: 10 },
+        api: ApiVersion {
+            major: 1,
+            minor: 10,
+        },
         crate_version: "0.1.0",
         note: "ADR-052 SET-6h 供应商级代理开关（set_provider_use_proxy / provider_auth_status.use_proxy）",
     },
     ProtocolCrateCompatibility {
-        api: ApiVersion { major: 1, minor: 11 },
+        api: ApiVersion {
+            major: 1,
+            minor: 11,
+        },
         crate_version: "0.1.0",
         note: "ADR-054 OPT-2 会话生命周期（session_rename / session_archive / SessionMetaChanged）",
     },
     ProtocolCrateCompatibility {
-        api: ApiVersion { major: 1, minor: 12 },
+        api: ApiVersion {
+            major: 1,
+            minor: 12,
+        },
         crate_version: "0.1.0",
         note: "ADR-055 OPT-3 模型启用集与默认角色（set_model_enabled / set_provider_models_enabled / set_default_role_model）",
     },
     ProtocolCrateCompatibility {
-        api: ApiVersion { major: 1, minor: 13 },
+        api: ApiVersion {
+            major: 1,
+            minor: 13,
+        },
         crate_version: "0.1.0",
         note: "ADR-056 OPT-3d 同供应商多凭证状态（provider_auth_status.credentials）",
     },
@@ -235,6 +253,11 @@ pub const PROTOCOL_CRATE_COMPATIBILITY: &[ProtocolCrateCompatibility] = &[
         api: V1_17,
         crate_version: "0.1.0",
         note: "ADR-061 账号默认名称与重命名",
+    },
+    ProtocolCrateCompatibility {
+        api: V1_18,
+        crate_version: "0.1.0",
+        note: "GUI browser claim/reply (browser_next / browser_respond)",
     },
 ];
 
@@ -300,7 +323,7 @@ mod tests {
 
     #[test]
     fn version_helpers_and_supported_table_are_consistent() {
-        assert_eq!(ApiVersion::new(1, 17), API_VERSION);
+        assert_eq!(ApiVersion::new(1, 18), API_VERSION);
         assert_eq!(V1_1, ApiVersion::new(1, 1));
         assert_eq!(V1_3, ApiVersion::new(1, 3));
         assert_eq!(V1_4, ApiVersion::new(1, 4));
@@ -325,12 +348,14 @@ mod tests {
             SUPPORTED_API_VERSIONS,
             &[
                 V1_0, V1_1, V1_2, V1_3, V1_4, V1_5, V1_6, V1_7, V1_8, V1_9, V1_10, V1_11, V1_12,
-                V1_13, V1_14, V1_15, V1_16, V1_17
+                V1_13, V1_14, V1_15, V1_16, V1_17, V1_18
             ]
         );
-        assert!(SUPPORTED_API_VERSIONS
-            .iter()
-            .all(|version| version.major == API_VERSION.major));
+        assert!(
+            SUPPORTED_API_VERSIONS
+                .iter()
+                .all(|version| version.major == API_VERSION.major)
+        );
         for version in SUPPORTED_API_VERSIONS {
             assert!(
                 PROTOCOL_CRATE_COMPATIBILITY
@@ -351,7 +376,7 @@ mod tests {
         assert!(json.get("crate_version").is_none());
         assert!(!json.to_string().contains("crate_version"));
         let version = serde_json::to_value(API_VERSION).expect("serialize version");
-        assert_eq!(version, serde_json::json!({"major": 1, "minor": 17}));
+        assert_eq!(version, serde_json::json!({"major": 1, "minor": 18}));
     }
 
     #[test]

@@ -8,8 +8,8 @@
 
 use std::path::PathBuf;
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
     Arc, Mutex,
+    atomic::{AtomicU64, Ordering},
 };
 use std::time::Duration;
 
@@ -19,12 +19,12 @@ use pawork_client::{
     ClientError, CommandSource, ConnectOptions, DefaultModelPair, GeneralSettingsData,
     GlobalSequence, GuiCapability, GuiClient, GuiTransportClient, LocalTransport,
     PermissionsSettingsData, ProtocolErrorCode, ProviderAuthStatusData, ProviderUseProxyData,
-    ResumeDisposition, ResumeOutcome, Snapshot, TerminalSettingsData, TimelinePage,
-    TransportEndpoint, TOKEN_SCHEME,
+    ResumeDisposition, ResumeOutcome, Snapshot, TOKEN_SCHEME, TerminalSettingsData, TimelinePage,
+    TransportEndpoint,
 };
 use serde_json::json;
 
-use crate::projection::{sessions_in_snapshot, ModelEntry, SettingsRole};
+use crate::projection::{ModelEntry, SettingsRole, sessions_in_snapshot};
 
 pub(super) const PAGE_LIMIT: u32 = 500;
 pub(super) const MAX_PAGES: usize = 200;
@@ -32,6 +32,12 @@ pub(super) const MAX_PAGES: usize = 200;
 /// UI 消费的控制器事件（经 smol channel 跨线程投递）。
 #[derive(Clone, Debug)]
 pub enum ControllerEvent {
+    BrowserRequest {
+        session_id: String,
+        run_id: String,
+        request_id: String,
+        action: serde_json::Value,
+    },
     Disconnected {
         reason: String,
     },
@@ -310,6 +316,7 @@ struct SharedState {
     /// 连接代次：每次成功连接递增。旧泵 / 旧心跳的迟到失败不得拆掉
     /// 新连接（清 client 槽或投递 Disconnected）。
     generation: AtomicU64,
+    browser_polling: std::sync::atomic::AtomicBool,
 }
 
 pub struct DesktopController {
@@ -317,6 +324,7 @@ pub struct DesktopController {
     state: Arc<SharedState>,
 }
 
+mod browser;
 mod session;
 mod settings;
 mod terminal;
@@ -330,6 +338,7 @@ impl DesktopController {
                 events: Mutex::new(None),
                 last_acked: Mutex::new(None),
                 generation: AtomicU64::new(0),
+                browser_polling: std::sync::atomic::AtomicBool::new(false),
             }),
         }
     }
@@ -843,6 +852,7 @@ pub(super) fn desktop_capabilities() -> Vec<GuiCapability> {
         GuiCapability::Snapshots,
         GuiCapability::Approvals,
         GuiCapability::TerminalStreaming,
+        GuiCapability::BrowserControl,
     ]
 }
 
@@ -860,6 +870,7 @@ pub(super) fn desktop_handshake_info(client: &GuiClient) -> DesktopHandshakeInfo
                 GuiCapability::ArtifactStreaming => "artifact_streaming",
                 GuiCapability::TerminalStreaming => "terminal_streaming",
                 GuiCapability::Approvals => "approvals",
+                GuiCapability::BrowserControl => "browser_control",
             })
             .map(str::to_string)
             .collect(),
@@ -1995,11 +2006,10 @@ mod tests {
         assert_eq!(role, SettingsRole::Naming);
         assert_eq!(value, None);
 
-        assert!(parse_default_role_model_confirmation(&receipt(
-            "summarizer",
-            serde_json::Value::Null
-        ))
-        .is_err());
+        assert!(
+            parse_default_role_model_confirmation(&receipt("summarizer", serde_json::Value::Null))
+                .is_err()
+        );
         assert!(
             parse_default_role_model_confirmation(&envelope(serde_json::json!({
                 "role": "vision"
@@ -2096,14 +2106,18 @@ mod tests {
             })))
             .is_err()
         );
-        assert!(parse_provider_models_enabled_confirmation(&envelope(
-            serde_json::json!({ "provider_id": "kimi", "enabled": true })
-        ))
-        .is_ok());
-        assert!(parse_provider_models_enabled_confirmation(&envelope(
-            serde_json::json!({ "provider_id": "kimi" })
-        ))
-        .is_err());
+        assert!(
+            parse_provider_models_enabled_confirmation(&envelope(
+                serde_json::json!({ "provider_id": "kimi", "enabled": true })
+            ))
+            .is_ok()
+        );
+        assert!(
+            parse_provider_models_enabled_confirmation(&envelope(
+                serde_json::json!({ "provider_id": "kimi" })
+            ))
+            .is_err()
+        );
         let error = serde_json::from_value(serde_json::json!({
             "api_version": { "major": 1, "minor": 12 },
             "request_id": "q-test",

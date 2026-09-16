@@ -1,6 +1,6 @@
 use super::*;
 use pawork_testkit::{MockProvider, MockScript};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 #[tokio::test]
 async fn workspace_list_includes_registered_roots() {

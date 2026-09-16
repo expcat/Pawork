@@ -6,8 +6,8 @@
 //! 面板统一走 Dropdown（轨 2）。
 
 use gpui::{
-    div, prelude::*, px, AnyElement, App, ClickEvent, FocusHandle, IntoElement, KeyDownEvent,
-    Pixels, Rems, RenderOnce, Rgba, SharedString, Window,
+    AnyElement, App, ClickEvent, FocusHandle, IntoElement, KeyDownEvent, Pixels, Rems, RenderOnce,
+    Rgba, SharedString, Window, div, prelude::*, px,
 };
 
 use crate::ui::components::focus_ring::focus_ring;

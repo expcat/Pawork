@@ -197,9 +197,9 @@ async fn command_idempotency_survives_restart() {
         .await
         .expect("store");
     let core = AppCore::from_parts(
-        Arc::new(MockProvider::sequence(vec![MockScript::new()
-            .text("ok")
-            .complete()])),
+        Arc::new(MockProvider::sequence(vec![
+            MockScript::new().text("ok").complete(),
+        ])),
         None,
         pawork_domain::ModelId::from("model-1"),
         pawork_domain::ProviderId::from("mock"),
@@ -221,9 +221,9 @@ async fn command_idempotency_survives_restart() {
         .await
         .expect("reopen store");
     let core = AppCore::from_parts(
-        Arc::new(MockProvider::sequence(vec![MockScript::new()
-            .text("ok")
-            .complete()])),
+        Arc::new(MockProvider::sequence(vec![
+            MockScript::new().text("ok").complete(),
+        ])),
         None,
         pawork_domain::ModelId::from("model-1"),
         pawork_domain::ProviderId::from("mock"),
@@ -248,9 +248,9 @@ async fn command_record_failure_is_counted_not_swallowed() {
         .await
         .expect("store");
     let core = AppCore::from_parts(
-        Arc::new(MockProvider::sequence(vec![MockScript::new()
-            .text("idle")
-            .complete()])),
+        Arc::new(MockProvider::sequence(vec![
+            MockScript::new().text("idle").complete(),
+        ])),
         None,
         pawork_domain::ModelId::from("model-1"),
         pawork_domain::ProviderId::from("mock"),
@@ -354,9 +354,9 @@ async fn inflight_shared_key_different_command_id_does_not_hang() {
         .await
         .expect("store");
     let core = AppCore::from_parts(
-        Arc::new(MockProvider::sequence(vec![MockScript::new()
-            .text("ok")
-            .complete()])),
+        Arc::new(MockProvider::sequence(vec![
+            MockScript::new().text("ok").complete(),
+        ])),
         None,
         pawork_domain::ModelId::from("model-1"),
         pawork_domain::ProviderId::from("mock"),
@@ -434,9 +434,9 @@ async fn inflight_dropped_wakeup_still_converges_via_bounded_poll() {
         .await
         .expect("store");
     let core = AppCore::from_parts(
-        Arc::new(MockProvider::sequence(vec![MockScript::new()
-            .text("ok")
-            .complete()])),
+        Arc::new(MockProvider::sequence(vec![
+            MockScript::new().text("ok").complete(),
+        ])),
         None,
         pawork_domain::ModelId::from("model-1"),
         pawork_domain::ProviderId::from("mock"),
@@ -512,9 +512,9 @@ async fn record_failure_releases_inflight_so_same_command_id_can_reenter() {
         .await
         .expect("store");
     let core = AppCore::from_parts(
-        Arc::new(MockProvider::sequence(vec![MockScript::new()
-            .text("idle")
-            .complete()])),
+        Arc::new(MockProvider::sequence(vec![
+            MockScript::new().text("idle").complete(),
+        ])),
         None,
         pawork_domain::ModelId::from("model-1"),
         pawork_domain::ProviderId::from("mock"),
@@ -590,4 +590,3 @@ async fn record_failure_releases_inflight_so_same_command_id_can_reenter() {
         crate::IdempotencyCheck::New | crate::IdempotencyCheck::Replay(_) => {}
     }
 }
-

@@ -154,10 +154,10 @@ mod tests {
         let deps = production_pawork_dependencies(manifest);
         assert_eq!(
             deps,
-            ["pawork-client".to_string(), "pawork-terminal".to_string()]
+            ["pawork-browser".to_string(), "pawork-client".to_string(), "pawork-terminal".to_string()]
                 .into_iter()
                 .collect(),
-            "desktop production dependency boundary is client + terminal display core"
+            "desktop production dependency boundary is client + terminal display + browser view"
         );
     }
 

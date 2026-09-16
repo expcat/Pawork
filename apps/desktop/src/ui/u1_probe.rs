@@ -5,16 +5,16 @@
 //! 不挂 AppView / Platform / socket；IME composing 与 AX 不在本层覆盖。
 
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc,
+    atomic::{AtomicBool, Ordering},
 };
 use std::time::Duration;
 
 use gpui::{
-    div, point, prelude::*, px, size, ClipboardItem, Context, Entity, EntityInputHandler,
-    FocusHandle, Focusable, InteractiveElement, Modifiers, ParentElement, Render, ScrollDelta,
-    ScrollHandle, ScrollWheelEvent, StatefulInteractiveElement, Styled, TestAppContext,
-    VisualTestContext, Window,
+    ClipboardItem, Context, Entity, EntityInputHandler, FocusHandle, Focusable, InteractiveElement,
+    Modifiers, ParentElement, Render, ScrollDelta, ScrollHandle, ScrollWheelEvent,
+    StatefulInteractiveElement, Styled, TestAppContext, VisualTestContext, Window, div, point,
+    prelude::*, px, size,
 };
 
 use super::components::button::{Button, ButtonVariant};

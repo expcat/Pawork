@@ -3,42 +3,42 @@
 use gpui::{App, Context, Focusable, Window};
 
 use crate::projection::{
-    run_footer_label, run_summary_texts, ActiveRun, ApprovalModeWire, ConnectionState, DateBucket,
-    ForkBoundary, ModelEntry, SessionLiveStatus, TaskRailGrouping, TaskRailProjectGroup,
-    TimelineEntry, TimelineEntryKind, TimelineRow, UNASSIGNED_PROJECT,
+    ActiveRun, ApprovalModeWire, ConnectionState, DateBucket, ForkBoundary, ModelEntry,
+    SessionLiveStatus, TaskRailGrouping, TaskRailProjectGroup, TimelineEntry, TimelineEntryKind,
+    TimelineRow, UNASSIGNED_PROJECT, run_footer_label, run_summary_texts,
 };
 
 use super::{AxAction, AxBridge, AxNode, AxRect, AxRequest, AxRole, AxTree};
 use crate::ui::approval_card::{
-    approval_card_height, APPROVAL_BUTTON_HEIGHT, APPROVAL_BUTTON_ROW_GAP_REMS,
-    APPROVAL_BUTTON_SLOT_WIDTHS, APPROVAL_CARD_PAD_REMS,
+    APPROVAL_BUTTON_HEIGHT, APPROVAL_BUTTON_ROW_GAP_REMS, APPROVAL_BUTTON_SLOT_WIDTHS,
+    APPROVAL_CARD_PAD_REMS, approval_card_height,
 };
 use crate::ui::changes::{ChangesFetch, ChangesTab};
 use crate::ui::components::dropdown::ANCHOR_GAP_Y;
 #[cfg(test)]
 use crate::ui::components::dropdown::MENU_MAX_HEIGHT;
 use crate::ui::i18n::t;
-use crate::ui::inspector::{InspectorTab, TERMINAL_TAB_BAR_HEIGHT};
+use crate::ui::inspector::InspectorTab;
 use crate::ui::resources::ResourcesFetch;
 use crate::ui::settings::{
-    parse_settings_control, parse_settings_mcp_control, parse_settings_models_control,
-    parse_settings_role_control, settings_text_scale_from_identifier, SettingsControl,
-    SettingsModelsControl, SettingsRoleControl, SETTINGS_APPEARANCE_CONTROL_GAP,
-    SETTINGS_APPEARANCE_CONTROL_HEIGHT, SETTINGS_APPEARANCE_CONTROL_WIDTH, SETTINGS_CONTROL_PREFIX,
-    SETTINGS_MCP_CONTROL_PREFIX, SETTINGS_MODELS_CONTROL_PREFIX, SETTINGS_ROLE_CONTROL_PREFIX,
+    SETTINGS_APPEARANCE_CONTROL_GAP, SETTINGS_APPEARANCE_CONTROL_HEIGHT,
+    SETTINGS_APPEARANCE_CONTROL_WIDTH, SETTINGS_CONTROL_PREFIX, SETTINGS_MCP_CONTROL_PREFIX,
+    SETTINGS_MODELS_CONTROL_PREFIX, SETTINGS_ROLE_CONTROL_PREFIX, SettingsControl,
+    SettingsModelsControl, SettingsRoleControl, parse_settings_control, parse_settings_mcp_control,
+    parse_settings_models_control, parse_settings_role_control,
+    settings_text_scale_from_identifier,
 };
 use crate::ui::shell_layout::{self, InspectorPlacement};
 use crate::ui::theme::{font, metrics};
 use crate::ui::timeline_entry::{
-    assistant_is_streaming, display_time, failure_next_step, run_open_providers_identifier,
-    tool_group_summary, tool_result_expand_key, FailureNextStep, ToolRowView,
-    SUMMARY_NEXT_STEP_BUTTON_HEIGHT,
+    FailureNextStep, SUMMARY_NEXT_STEP_BUTTON_HEIGHT, ToolRowView, assistant_is_streaming,
+    display_time, failure_next_step, run_open_providers_identifier, tool_group_summary,
+    tool_result_expand_key,
 };
 use crate::ui::{
-    activity_header_visibility, rail_project_occurrence_key, rail_session_archive_focus_key,
-    rail_session_focus_key, rail_session_rename_focus_key, terminal_can_close,
-    terminal_can_operate, timeline, workspace_empty_title, AppRoute, AppView, MenuKind,
-    SettingsPage,
+    AppRoute, AppView, MenuKind, SettingsPage, activity_header_visibility,
+    rail_project_occurrence_key, rail_session_archive_focus_key, rail_session_focus_key,
+    rail_session_rename_focus_key, terminal_can_operate, timeline, workspace_empty_title,
 };
 
 pub(crate) const PAD: f32 = 8.0;
@@ -153,6 +153,21 @@ impl AppView {
         // AX clients may retain an element from an earlier tree. Revalidate against the
         // current canonical UI state so stale enabled/action snapshots cannot bypass a gate.
         if !self.accessibility_tree(window, cx).permits(&request) {
+            return;
+        }
+        if request.identifier.starts_with("browser-") {
+            match request.action {
+                AxAction::Focus if request.identifier == "browser-address" => {
+                    self.focus_browser_address(window, cx)
+                }
+                AxAction::SetValue if request.identifier == "browser-address" => {
+                    self.browser.input.update(cx, |input, cx| {
+                        input.set_text(request.value.unwrap_or_default(), cx)
+                    })
+                }
+                AxAction::Press => self.browser_action(&request.identifier, window, cx),
+                _ => {}
+            }
             return;
         }
         if self.quick_search.open {
@@ -520,17 +535,53 @@ impl AppView {
                 self.toggle_menu(MenuKind::InspectorPanel, None, cx)
             }
             "inspector-back" | "inspector-approval-hint" => self.on_inspector_back(window, cx),
+            // Home 入口是 open 语义（激活已有页），「+」菜单行是 launch 语义
+            //（终端动作新建 PTY）；两套 identifier 在菜单开启时不同时发布。
             "inspector-tab-changes" => {
-                self.select_inspector_tab(InspectorTab::Changes, cx);
+                self.open_inspector_tool(InspectorTab::Changes, cx);
                 self.close_open_menu(cx);
             }
             "inspector-tab-terminal" => {
-                self.select_inspector_tab(InspectorTab::Terminal, cx);
+                self.open_inspector_tool(InspectorTab::Terminal, cx);
                 self.close_open_menu(cx);
             }
             "inspector-tab-resources" => {
-                self.select_inspector_tab(InspectorTab::Resources, cx);
+                self.open_inspector_tool(InspectorTab::Resources, cx);
                 self.close_open_menu(cx);
+            }
+            "inspector-tab-browser" => {
+                self.open_inspector_tool(InspectorTab::Browser, cx);
+                self.close_open_menu(cx);
+            }
+            "inspector-menu-changes" => {
+                self.launch_inspector_tool(InspectorTab::Changes, cx);
+                self.close_open_menu(cx);
+            }
+            "inspector-menu-terminal" => {
+                self.launch_inspector_tool(InspectorTab::Terminal, cx);
+                self.close_open_menu(cx);
+            }
+            "inspector-menu-resources" => {
+                self.launch_inspector_tool(InspectorTab::Resources, cx);
+                self.close_open_menu(cx);
+            }
+            "inspector-menu-browser" => {
+                self.launch_inspector_tool(InspectorTab::Browser, cx);
+                self.close_open_menu(cx);
+            }
+            other if other.starts_with("inspector-open-") => {
+                if let Some(tab) = self.panel_tabs().into_iter().find(|tab| tab.id == other) {
+                    self.activate_panel_tab(&tab, cx);
+                }
+            }
+            other if other.starts_with("panel-close-") => {
+                if let Some(tab) = self
+                    .panel_tabs()
+                    .into_iter()
+                    .find(|tab| tab.close_id() == other)
+                {
+                    self.close_panel_tab(&tab, cx);
+                }
             }
             "changes-tab-files" => self.on_select_changes_tab(ChangesTab::Files, cx),
             "changes-tab-summary" => self.on_select_changes_tab(ChangesTab::Summary, cx),
@@ -2777,9 +2828,9 @@ impl AppView {
             measured_panel
         } else {
             AxRect::new(
-                frame.x + 12.0,
+                frame.x + frame.width - PAD - 2.0 * metrics::ICON_BUTTON_SIZE - 4.0,
                 frame.y,
-                (frame.width - 12.0 - PAD - metrics::ICON_BUTTON_SIZE).max(0.0),
+                metrics::ICON_BUTTON_SIZE,
                 strip_height,
             )
         };
@@ -2809,7 +2860,7 @@ impl AppView {
             AxNode::new(
                 "inspector-panel",
                 AxRole::Button,
-                t("inspector.panel"),
+                t("inspector.add_tool"),
                 panel_rect,
             )
             .value(self.inspector_tab.label())
@@ -2818,32 +2869,39 @@ impl AppView {
         );
         if matches!(self.open_menu, Some(MenuKind::InspectorPanel)) {
             let highlight = self.menu_highlight_effective(self.menu_selected_index());
-            let row_width = panel_rect.width.max(160.0);
+            let bounds = self.shell_layouts["inspector-menu-layout"].bounds();
+            let menu_frame = AxRect::new(
+                bounds.origin.x.into(),
+                bounds.origin.y.into(),
+                bounds.size.width.into(),
+                bounds.size.height.into(),
+            );
             let mut menu = AxNode::new(
                 "inspector-panel-menu",
                 AxRole::Group,
-                t("inspector.panel"),
-                AxRect::new(
-                    panel_rect.x,
-                    panel_rect.y + panel_rect.height,
-                    row_width,
-                    metrics::MENU_ROW_HEIGHT * InspectorTab::ALL.len() as f32,
-                ),
+                t("inspector.add_tool"),
+                menu_frame,
             );
             for (ix, tab) in InspectorTab::ALL.into_iter().enumerate() {
                 menu = menu.child(
                     AxNode::new(
-                        tab.button_id(),
+                        tab.menu_id(),
                         AxRole::Button,
-                        tab.label(),
+                        if tab == InspectorTab::Terminal {
+                            t("inspector.terminal_new_tab")
+                        } else {
+                            tab.label()
+                        },
                         AxRect::new(
-                            panel_rect.x,
-                            panel_rect.y + panel_rect.height + ix as f32 * metrics::MENU_ROW_HEIGHT,
-                            row_width,
+                            menu_frame.x + metrics::MENU_PADDING,
+                            menu_frame.y
+                                + metrics::MENU_PADDING
+                                + ix as f32 * metrics::MENU_ROW_HEIGHT,
+                            (menu_frame.width - 2.0 * metrics::MENU_PADDING).max(0.0),
                             metrics::MENU_ROW_HEIGHT,
                         ),
                     )
-                    .selected(tab == self.inspector_tab)
+                    .selected(tab == self.inspector_tab && tab != InspectorTab::Terminal)
                     .focused(highlight == ix)
                     .action(AxAction::Press),
                 );
@@ -2860,6 +2918,50 @@ impl AppView {
             .focused(self.open_menu.is_none() && self.inspector_collapse_focus.is_focused(window))
             .action(AxAction::Press),
         );
+        let scroll_bounds = self.inspector_tabs_scroll.bounds();
+        for tab in self.panel_tabs() {
+            for (id, label, selected, enabled) in [
+                (tab.id.clone(), tab.label.clone(), tab.selected, true),
+                (
+                    tab.close_id(),
+                    format!("{} · {}", t("inspector.close_tab"), tab.label),
+                    false,
+                    tab.close_enabled,
+                ),
+            ] {
+                let Some(layout) = self.inspector_item_layouts.get(&id) else {
+                    continue;
+                };
+                let rect = layout.bounds().intersect(&scroll_bounds);
+                if rect.size.width <= gpui::px(0.0) || rect.size.height <= gpui::px(0.0) {
+                    continue;
+                }
+                let focused = if id == "terminal-close" {
+                    self.terminal_close_focus.is_focused(window)
+                } else {
+                    self.inspector_item_focus
+                        .get(&id)
+                        .is_some_and(|focus| focus.is_focused(window))
+                };
+                inspector = inspector.child(
+                    AxNode::new(
+                        id,
+                        AxRole::Button,
+                        label,
+                        AxRect::new(
+                            rect.origin.x.into(),
+                            rect.origin.y.into(),
+                            rect.size.width.into(),
+                            rect.size.height.into(),
+                        ),
+                    )
+                    .selected(selected)
+                    .enabled(enabled)
+                    .focused(self.open_menu.is_none() && focused)
+                    .action(AxAction::Press),
+                );
+            }
+        }
         let mut body_y = frame.y + strip_height;
         if placement.is_center() && self.projection.pending_approval.is_some() {
             let measured_hint = self.shell_ax_rect("inspector-approval-hint-layout");
@@ -2889,9 +2991,42 @@ impl AppView {
             (frame.height - (body_y - frame.y)).max(0.0),
         );
         inspector = match self.inspector_tab {
+            InspectorTab::Home => {
+                if self.open_menu != Some(MenuKind::InspectorPanel) {
+                    for tool in InspectorTab::ALL {
+                        let id = tool.button_id();
+                        let Some(layout) = self.inspector_item_layouts.get(id) else {
+                            continue;
+                        };
+                        let rect = layout.bounds();
+                        inspector = inspector.child(
+                            AxNode::new(
+                                id,
+                                AxRole::Button,
+                                tool.label(),
+                                AxRect::new(
+                                    rect.origin.x.into(),
+                                    rect.origin.y.into(),
+                                    rect.size.width.into(),
+                                    rect.size.height.into(),
+                                ),
+                            )
+                            .description(tool.hint())
+                            .focused(
+                                self.inspector_item_focus
+                                    .get(id)
+                                    .is_some_and(|focus| focus.is_focused(window)),
+                            )
+                            .action(AxAction::Press),
+                        );
+                    }
+                }
+                inspector
+            }
             InspectorTab::Terminal => inspector.child(self.terminal_ax(window, cx, body)),
             InspectorTab::Changes => inspector.child(self.changes_ax(window, body)),
             InspectorTab::Resources => inspector.child(self.resources_ax(window, body)),
+            InspectorTab::Browser => inspector.child(self.browser_ax(window, cx, body)),
         };
         inspector
     }
@@ -2923,56 +3058,11 @@ impl AppView {
             8_192,
         );
         let terminal_description = self.terminal_context_text();
-        let workspace = self.inspector_workspace_id();
-        let tab_ids: Vec<String> = self
-            .projection
-            .workspace_terminals(workspace.as_deref())
-            .into_iter()
-            .filter_map(|terminal| terminal.session_id.clone())
-            .collect();
-        let tab_create_enabled = matches!(
-            self.projection.connection,
-            ConnectionState::Connected { .. }
-        ) && !self.terminal_create_blocked()
-            && self.terminal_pending_create_workspace.is_none();
         let mut terminal = AxNode::new(
             "terminal",
             AxRole::Group,
             t("inspector.tab_terminal"),
             frame,
-        );
-        let tab_width = 72.0;
-        let tab_gap = 4.0;
-        let mut tab_x = frame.x + PAD;
-        for (index, id) in tab_ids.iter().enumerate() {
-            let identifier = format!("terminal-tab-{id}");
-            let focused = self
-                .terminal_tab_focus
-                .get(id)
-                .is_some_and(|focus| self.open_menu.is_none() && focus.is_focused(window));
-            terminal = terminal.child(
-                AxNode::new(
-                    identifier,
-                    AxRole::Button,
-                    format!("{} {}", t("inspector.tab_terminal"), index + 1),
-                    AxRect::new(tab_x, frame.y, tab_width, TERMINAL_TAB_BAR_HEIGHT),
-                )
-                .selected(self.projection.terminal.session_id.as_deref() == Some(id.as_str()))
-                .focused(focused)
-                .action(AxAction::Press),
-            );
-            tab_x += tab_width + tab_gap;
-        }
-        terminal = terminal.child(
-            AxNode::new(
-                "terminal-new-tab",
-                AxRole::Button,
-                t("inspector.terminal_new_tab"),
-                AxRect::new(tab_x, frame.y, 32.0, TERMINAL_TAB_BAR_HEIGHT),
-            )
-            .focused(self.open_menu.is_none() && self.terminal_new_tab_focus.is_focused(window))
-            .enabled(tab_create_enabled)
-            .action(AxAction::Press),
         );
         let output_rect = action_rect("terminal-output");
         terminal = terminal.child(
@@ -2989,19 +3079,6 @@ impl AppView {
         );
         if self.terminal_notice_text().is_some() {
             terminal = terminal.child(self.recovery_ax(window, output_rect, true));
-        }
-        if terminal_can_close(&self.projection.connection, &self.projection.terminal) {
-            terminal = terminal.child(
-                AxNode::new(
-                    "terminal-close",
-                    AxRole::Button,
-                    t("inspector.close"),
-                    action_rect("terminal-close"),
-                )
-                .focused(self.open_menu.is_none() && self.terminal_close_focus.is_focused(window))
-                .enabled(self.terminal_pending_close.is_none())
-                .action(AxAction::Press),
-            );
         }
         // 与可见回到底部按钮（inspector.rs）一致：仅在滚动脱钩时发布。
         if !self.terminal_scroll.is_following() {
@@ -3530,11 +3607,12 @@ mod tests {
                     .and_then(|n| n.value.as_deref()),
                 Some(t("rail.connection_local_disconnected"))
             );
-            assert!(tree
-                .find("connection-notice")
-                .unwrap()
-                .label
-                .contains("connection refused"));
+            assert!(
+                tree.find("connection-notice")
+                    .unwrap()
+                    .label
+                    .contains("connection refused")
+            );
             assert_eq!(v.model_label(), t("recovery.model_failed"));
             assert!(v.connection_notice_text().1.contains("address"));
         });
@@ -3601,11 +3679,12 @@ mod tests {
             assert!(f32::from(bounds.size.height) > 40.0);
             assert!(node.actions.contains(&AxAction::Focus));
             assert!(!node.actions.contains(&AxAction::SetValue));
-            assert!(tree
-                .find("terminal-notice")
-                .unwrap()
-                .label
-                .contains("Read-only"));
+            assert!(
+                tree.find("terminal-notice")
+                    .unwrap()
+                    .label
+                    .contains("Read-only")
+            );
             assert!(tree.find("terminal-details").is_some());
         });
         cx.update(|window, cx| {
@@ -3780,11 +3859,12 @@ mod tests {
                 rail_retry.bounds,
                 rail.bounds
             );
-            assert!(tree
-                .find("connection-notice")
-                .unwrap()
-                .label
-                .contains("connection is closed by peer"));
+            assert!(
+                tree.find("connection-notice")
+                    .unwrap()
+                    .label
+                    .contains("connection is closed by peer")
+            );
             assert_eq!(view.text_input.read(cx).text(), "keep draft");
         });
 
@@ -3953,8 +4033,8 @@ mod tests {
     fn reply_actions_copy_exact_content_and_use_closed_turn_boundary(
         cx: &mut gpui::TestAppContext,
     ) {
-        use crate::ui::timeline_entry::{fork_target, EntryActionKind};
-        use gpui::{px, ClipboardItem};
+        use crate::ui::timeline_entry::{EntryActionKind, fork_target};
+        use gpui::{ClipboardItem, px};
         let (view, cx) = cx.add_window_view(|_, cx| {
             AppView::new(
                 std::sync::Arc::new(crate::platform::Platform::new()),
@@ -4060,9 +4140,10 @@ mod tests {
                 );
                 assert!(view.open_menu.is_none());
                 let tree = view.accessibility_tree(window, cx);
-                assert!(tree
-                    .find(&code_id)
-                    .is_some_and(|node| node.actions.contains(&AxAction::Press)));
+                assert!(
+                    tree.find(&code_id)
+                        .is_some_and(|node| node.actions.contains(&AxAction::Press))
+                );
                 view.handle_accessibility_request(
                     AxRequest {
                         identifier: code_id,
@@ -4762,7 +4843,7 @@ mod tests {
     /// UI-2：真实 hover / Tab / click 驱动非当前会话动作，不先打开会话。
     #[gpui::test]
     fn session_actions_follow_hover_and_keyboard_without_opening(cx: &mut gpui::TestAppContext) {
-        use gpui::{prelude::*, px, AppContext, Modifiers};
+        use gpui::{AppContext, Modifiers, prelude::*, px};
         struct RailHost(gpui::Entity<AppView>);
         impl gpui::Render for RailHost {
             fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -4863,10 +4944,11 @@ mod tests {
                     view.projection.active_session_id.as_deref(),
                     Some("current")
                 );
-                assert!(view
-                    .accessibility_tree(window, cx)
-                    .find(&session_archive_identifier("other"))
-                    .is_none());
+                assert!(
+                    view.accessibility_tree(window, cx)
+                        .find(&session_archive_identifier("other"))
+                        .is_none()
+                );
                 view.cancel_session_rename(window, cx);
             })
         });
@@ -4901,10 +4983,11 @@ mod tests {
                         .enabled
                 );
                 window.focus(&view.scope_focus);
-                assert!(view
-                    .accessibility_tree(window, cx)
-                    .find(&session_rename_identifier("other"))
-                    .is_none());
+                assert!(
+                    view.accessibility_tree(window, cx)
+                        .find(&session_rename_identifier("other"))
+                        .is_none()
+                );
             })
         });
     }
@@ -4999,9 +5082,10 @@ mod tests {
             assert!(tree.find(&session_status_dot_identifier("idle")).is_none());
             let running = tree.find(&session_identifier("running")).unwrap();
             assert_eq!(running.bounds.height, 44.0);
-            assert!(tree
-                .find(&session_status_dot_identifier("running"))
-                .is_some());
+            assert!(
+                tree.find(&session_status_dot_identifier("running"))
+                    .is_some()
+            );
             let title = tree.find(&session_title_identifier("idle")).unwrap();
             assert!(title.bounds.width > 80.0, "idle title {:?}", title.bounds);
         });
@@ -5030,9 +5114,10 @@ mod tests {
                     .any(|id| id == &rail_project_identifier(Some(DateBucket::Today), "ws-a")),
                 "multi-project bucket keeps headers: {ids:?}"
             );
-            assert!(ids
-                .iter()
-                .any(|id| id == &rail_project_identifier(Some(DateBucket::Today), "ws-b")));
+            assert!(
+                ids.iter()
+                    .any(|id| id == &rail_project_identifier(Some(DateBucket::Today), "ws-b"))
+            );
         });
 
         cx.update(|_window, cx| {
@@ -5257,14 +5342,12 @@ mod tests {
                 let tree = view.accessibility_tree(window, cx);
                 let inspector = tree.find("inspector").unwrap();
                 let workspace = tree.find("workspace").unwrap();
-                let panel = tree.find("inspector-panel").unwrap();
+                assert!(tree.find("inspector-panel").is_none());
                 assert_eq!(inspector.bounds.width, 160.0);
                 assert_eq!(
                     workspace.bounds.x + workspace.bounds.width,
                     inspector.bounds.x
                 );
-                assert_eq!(panel.bounds.x + panel.bounds.width, tree.viewport.width);
-                assert!(panel.bounds.width < metrics::INSPECTOR_WIDTH);
                 assert!(tree.find("inspector-tab-resources").is_none());
                 assert!(tree.find("inspector-tabs").is_none());
                 assert!(!tree.permits(&AxRequest {
@@ -5274,10 +5357,11 @@ mod tests {
                 }));
                 assert!(tree.find("inspector-expand").is_some());
                 view.inspector_render_width = 0.0;
-                assert!(view
-                    .accessibility_tree(window, cx)
-                    .find("inspector")
-                    .is_none());
+                assert!(
+                    view.accessibility_tree(window, cx)
+                        .find("inspector")
+                        .is_none()
+                );
             });
         });
 
@@ -5916,7 +6000,7 @@ mod tests {
     /// permits 拒绝（可见 / 键盘 / AX 三路径同 gate）。
     #[gpui::test]
     fn settings_ax_masks_api_key_and_gates_writes_when_stale(cx: &mut gpui::TestAppContext) {
-        use gpui::{prelude::*, px, AppContext};
+        use gpui::{AppContext, prelude::*, px};
 
         struct AxSettingsHost {
             view: gpui::Entity<AppView>,
@@ -6348,9 +6432,10 @@ mod tests {
             view.update(cx, |view, cx| {
                 let highlighted = view.menu_highlight.unwrap();
                 let tree = view.accessibility_tree(window, cx);
-                assert!(tree
-                    .find(&model_identifier(&view.projection.models[highlighted]))
-                    .is_some());
+                assert!(
+                    tree.find(&model_identifier(&view.projection.models[highlighted]))
+                        .is_some()
+                );
                 view.close_menu_and_focus_trigger(MenuKind::Model, window, cx);
                 assert!(view.model_focus.is_focused(window));
             })
@@ -6446,11 +6531,12 @@ mod tests {
             assert_eq!(empty.value.as_deref(), Some(t("composer.model_menu_empty")));
             // 菜单不发布任何可选模型行：不编造模型。
             assert_eq!(menu.children.len(), 3); // 搜索区、诚实空态与管理导航
-            assert!(menu
-                .children
-                .iter()
-                .all(|child| child.role != AxRole::Button
-                    || child.identifier == "model-menu-settings"));
+            assert!(
+                menu.children
+                    .iter()
+                    .all(|child| child.role != AxRole::Button
+                        || child.identifier == "model-menu-settings")
+            );
         });
     }
 
@@ -6462,7 +6548,7 @@ mod tests {
     fn settings_role_defaults_ax_shape_pins_triggers_menu_and_filter(
         cx: &mut gpui::TestAppContext,
     ) {
-        use gpui::{prelude::*, px, AppContext};
+        use gpui::{AppContext, prelude::*, px};
 
         use crate::projection::{
             ProviderAuthState, ProviderAuthStatusEntry, ProviderCatalogState, SettingsRole,
@@ -6608,17 +6694,21 @@ mod tests {
             let vision = tree
                 .find(&settings_role_trigger_identifier(SettingsRole::Vision))
                 .expect("vision trigger has an AX node");
-            assert!(vision
-                .description
-                .as_deref()
-                .is_some_and(|description| description.contains("Not active")));
+            assert!(
+                vision
+                    .description
+                    .as_deref()
+                    .is_some_and(|description| description.contains("Not active"))
+            );
             let search = tree
                 .find(&settings_role_trigger_identifier(SettingsRole::Search))
                 .expect("search trigger has an AX node");
-            assert!(search
-                .description
-                .as_deref()
-                .is_some_and(|description| description.contains("Not active")));
+            assert!(
+                search
+                    .description
+                    .as_deref()
+                    .is_some_and(|description| description.contains("Not active"))
+            );
 
             // 菜单展开：清除行 + 已连接 provider 候选可选。
             let clear_id = settings_role_clear_identifier(SettingsRole::Naming);
@@ -6638,20 +6728,22 @@ mod tests {
                 value: None,
             }));
             // 未连接 provider（glm）与清单缺失 provider（ghost）不出现。
-            assert!(tree
-                .find(&settings_role_item_identifier(
+            assert!(
+                tree.find(&settings_role_item_identifier(
                     SettingsRole::Naming,
                     "glm",
                     "glm-4.7"
                 ))
-                .is_none());
-            assert!(tree
-                .find(&settings_role_item_identifier(
+                .is_none()
+            );
+            assert!(
+                tree.find(&settings_role_item_identifier(
                     SettingsRole::Naming,
                     "ghost",
                     "ghost-x"
                 ))
-                .is_none());
+                .is_none()
+            );
         });
         // 两个供应商分组的长菜单：打开时当前末项可见，上下键跨越
         // Clear / 分组边界时新高亮项始终可见，AX 框仍来自真实菜单视口。
@@ -6854,7 +6946,7 @@ mod tests {
     /// Refresh 的可操作性、代理 Switch value 与 Press；stale 关闸。
     #[gpui::test]
     fn settings_models_menu_ax_pins_gates_switches_and_empty_state(cx: &mut gpui::TestAppContext) {
-        use gpui::{prelude::*, px, AppContext};
+        use gpui::{AppContext, prelude::*, px};
 
         use crate::projection::{
             ModelEntry, ProviderAuthState, ProviderAuthStatusEntry, ProviderCatalogState,
@@ -7082,9 +7174,10 @@ mod tests {
         let scrolled_offset = cx.update(|window, cx| {
             let view = view.read(cx);
             let tree = view.accessibility_tree(window, cx);
-            assert!(tree
-                .find(&settings_model_switch_identifier("kimi", "kimi-k2"))
-                .is_none());
+            assert!(
+                tree.find(&settings_model_switch_identifier("kimi", "kimi-k2"))
+                    .is_none()
+            );
             let last = tree.find(&last_id).expect("last model scrolls into view");
             let viewport = view.settings_element_layouts[&menu_id].bounds();
             let actual = view.settings_element_layouts[&last_id]
@@ -7238,7 +7331,7 @@ mod tests {
     fn settings_provider_expanded_card_ax_pins_credentials_and_usage(
         cx: &mut gpui::TestAppContext,
     ) {
-        use gpui::{prelude::*, px, AppContext};
+        use gpui::{AppContext, prelude::*, px};
 
         use crate::projection::ProviderAuthStatusEntry;
         use crate::ui::settings::{
@@ -7345,12 +7438,14 @@ mod tests {
                 action: AxAction::Press,
                 value: None,
             }));
-            assert!(tree
-                .find(&dynamic_identifier("settings-provider-credentials", "dual"))
-                .is_none());
-            assert!(tree
-                .find(&dynamic_identifier("settings-provider-usage", "dual"))
-                .is_none());
+            assert!(
+                tree.find(&dynamic_identifier("settings-provider-credentials", "dual"))
+                    .is_none()
+            );
+            assert!(
+                tree.find(&dynamic_identifier("settings-provider-usage", "dual"))
+                    .is_none()
+            );
             assert!(tree.find(&settings_use_proxy_identifier("dual")).is_none());
         });
 
@@ -7443,17 +7538,19 @@ mod tests {
                 Some(t("settings.providers.catalog_scope"))
             );
             // proxy_url 未配置：代理 Switch 不发布（gate 与 render 同源）。
-            assert!(tree
-                .find(&dynamic_identifier("settings-provider-proxy-text", "dual"))
-                .is_none());
+            assert!(
+                tree.find(&dynamic_identifier("settings-provider-proxy-text", "dual"))
+                    .is_none()
+            );
             assert!(tree.find(&settings_use_proxy_identifier("dual")).is_none());
             // 未展开的 empty 卡仍只有 chevron。
-            assert!(tree
-                .find(&dynamic_identifier(
+            assert!(
+                tree.find(&dynamic_identifier(
                     "settings-provider-credentials-empty",
                     "empty"
                 ))
-                .is_none());
+                .is_none()
+            );
         });
 
         // empty 卡展开：空凭证列表发布诚实空态，不渲染假行。
@@ -7488,12 +7585,13 @@ mod tests {
                 ))
                 .expect("empty credentials state pinned");
             assert_eq!(empty.value.as_deref(), Some("No stored credentials"));
-            assert!(tree
-                .find(&dynamic_identifier(
+            assert!(
+                tree.find(&dynamic_identifier(
                     "settings-provider-credential-0",
                     "empty"
                 ))
-                .is_none());
+                .is_none()
+            );
         });
 
         // 配置全局 proxy_url 后：Proxy 行文本（标题 + 副标题）与 Switch
@@ -7601,13 +7699,14 @@ mod tests {
                 );
                 let keep = tree.find(&format!("{remove_second}-keep")).unwrap();
                 assert!(keep.bounds.width > 0.0 && keep.bounds.width < 150.0);
-                assert!(tree
-                    .find(&crate::ui::settings::settings_credential_row_identifier(
+                assert!(
+                    tree.find(&crate::ui::settings::settings_credential_row_identifier(
                         "dual",
                         &view.projection.settings_providers.providers[0].credentials[0],
                         0
                     ))
-                    .is_some());
+                    .is_some()
+                );
                 view.handle_accessibility_request(
                     AxRequest {
                         identifier: format!("{remove_second}-keep"),
@@ -8026,9 +8125,10 @@ mod tests {
             let view = view.read(cx);
             let tree = view.accessibility_tree(window, cx);
             assert!(tree.find("run-summary-card-failed-timeout").is_some());
-            assert!(tree
-                .find(&run_open_providers_identifier("failed-timeout"))
-                .is_none());
+            assert!(
+                tree.find(&run_open_providers_identifier("failed-timeout"))
+                    .is_none()
+            );
             assert!(tree.find("run-footer-failed-timeout").is_some());
         });
 
@@ -8079,9 +8179,10 @@ mod tests {
                 .expect("review changes CTA");
             assert_eq!(review.label, t("timeline.review_changes"));
             assert!(review.actions.contains(&AxAction::Press));
-            assert!(tree
-                .find(&run_open_providers_identifier("completed"))
-                .is_none());
+            assert!(
+                tree.find(&run_open_providers_identifier("completed"))
+                    .is_none()
+            );
             assert!(tree.find("run-footer-completed").is_some());
         });
 
@@ -8104,9 +8205,10 @@ mod tests {
             let tree = view.accessibility_tree(window, cx);
             tree.validate().unwrap();
             assert!(tree.find("run-summary-card-cancelled").is_none());
-            assert!(tree
-                .find(&run_open_providers_identifier("cancelled"))
-                .is_none());
+            assert!(
+                tree.find(&run_open_providers_identifier("cancelled"))
+                    .is_none()
+            );
             assert!(tree.find(&run_review_identifier("cancelled")).is_none());
             let footer = tree.find("run-footer-cancelled").expect("cancelled footer");
             assert!(footer.label.contains(t("run.footer_cancelled")));
@@ -8131,7 +8233,7 @@ mod tests {
         cx: &mut gpui::TestAppContext,
     ) {
         use crate::ui::theme::font::TextScale;
-        use gpui::{px, size, ListOffset};
+        use gpui::{ListOffset, px, size};
         let platform = std::sync::Arc::new(crate::platform::Platform::new());
         let socket = std::env::temp_dir().join("gui2-05-center.sock");
         let (view, cx) = cx.add_window_view(|_, cx| AppView::new(platform, socket, None, cx));
@@ -8296,6 +8398,294 @@ mod tests {
         }
     }
 
+    #[gpui::test]
+    fn browser_panel_offline_navigation_boundary_and_lifecycle(cx: &mut gpui::TestAppContext) {
+        use gpui::{px, size};
+        let platform = std::sync::Arc::new(crate::platform::Platform::new());
+        let (view, cx) = cx.add_window_view(|_, cx| {
+            AppView::new(
+                platform,
+                std::env::temp_dir().join("browser-panel.sock"),
+                None,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.inspector_open = true;
+                view.inspector_motion.snap(metrics::INSPECTOR_WIDTH);
+                view.text_input
+                    .update(cx, |input, cx| input.set_text("keep draft", cx));
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.handle_accessibility_request(
+                    AxRequest {
+                        identifier: "inspector-tab-browser".into(),
+                        action: AxAction::Press,
+                        value: None,
+                    },
+                    window,
+                    cx,
+                );
+                assert!(view.browser_visible());
+                assert!(
+                    view.browser.native.is_none(),
+                    "opening an empty tab must not load a website"
+                );
+            })
+        });
+        for width in [1440.0, 1080.0] {
+            cx.simulate_resize(size(px(width), px(900.0)));
+            cx.refresh().unwrap();
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                view.update(cx, |view, cx| {
+                    let tree = view.accessibility_tree(window, cx);
+                    for id in [
+                        "browser-address",
+                        "browser-go",
+                        "browser-back",
+                        "browser-forward",
+                        "browser-reload",
+                    ] {
+                        let control = tree.find(id).expect(id);
+                        assert!(
+                            control.bounds.width > 0.0
+                                && control.bounds.x + control.bounds.width <= width
+                        );
+                    }
+                    assert!(!tree.find("browser-back").unwrap().enabled);
+                    view.browser
+                        .input
+                        .update(cx, |input, cx| input.set_text("javascript:alert(1)", cx));
+                    window.focus(&view.browser.focus);
+                    view.on_send_message(&crate::ui::SendMessage, window, cx);
+                    assert!(
+                        view.browser.native.is_none(),
+                        "invalid address rejected before native creation"
+                    );
+                    assert_eq!(view.text_input.read(cx).text(), "keep draft");
+                })
+            });
+        }
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.browser.state.title = "Page to keep".into();
+                view.select_inspector_tab(InspectorTab::Resources, cx);
+                assert!(!view.browser_visible());
+                view.select_inspector_tab(InspectorTab::Browser, cx);
+                assert_eq!(view.browser.state.title, "Page to keep");
+                view.quick_search.open = true;
+                assert!(!view.browser_visible());
+                view.quick_search.open = false;
+                view.projection.active_session_id = Some("browser-other-task".into());
+                view.sync_browser_session(cx);
+                assert!(!view.browser.open);
+                assert!(view.browser.state.title.is_empty());
+                view.select_inspector_tab(InspectorTab::Browser, cx);
+                view.browser.state.title = "Other page".into();
+                view.projection.active_session_id = None;
+                view.sync_browser_session(cx);
+                assert_eq!(view.browser.state.title, "Page to keep");
+                assert!(view.browser.open);
+                view.close_inspector_tool(InspectorTab::Browser, cx);
+                assert_eq!(view.inspector_tab, InspectorTab::Resources);
+                assert!(view.browser.state.title.is_empty());
+                assert!(view.browser.input.read(cx).text().is_empty());
+                assert_eq!(view.text_input.read(cx).text(), "keep draft");
+            })
+        });
+    }
+
+    #[gpui::test]
+    fn work_panel_unified_tabs_scroll_switch_and_close(cx: &mut gpui::TestAppContext) {
+        use crate::controller::ControllerEvent;
+        use crate::ui::theme::font::TextScale;
+        use gpui::{px, size};
+        let platform = std::sync::Arc::new(crate::platform::Platform::new());
+        let (view, cx) = cx.add_window_view(|_, cx| {
+            AppView::new(
+                platform,
+                std::env::temp_dir().join("panel-tabs.sock"),
+                None,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        cx.simulate_resize(size(px(1440.0), px(900.0)));
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.connection = ConnectionState::Connected {
+                    instance_id: "panel-tabs".into(),
+                };
+                view.projection.workspace_id = Some("ws-tabs".into());
+                view.inspector_open = true;
+                view.inspector_motion.snap(metrics::INSPECTOR_WIDTH);
+                cx.notify();
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                let tree = view.accessibility_tree(window, cx);
+                tree.validate().unwrap();
+                for tool in InspectorTab::ALL {
+                    assert!(tree.find(tool.button_id()).is_some());
+                }
+                view.select_inspector_tab(InspectorTab::Changes, cx);
+                view.select_inspector_tab(InspectorTab::Resources, cx);
+                for index in 0..6 {
+                    view.projection
+                        .apply_terminal_created("ws-tabs".into(), format!("pty-{index}"));
+                }
+                view.on_select_terminal_tab("pty-5", cx);
+            })
+        });
+        for scale in [TextScale::Percent100, TextScale::Percent150] {
+            cx.update(|window, cx| {
+                view.update(cx, |view, cx| {
+                    view.text_scale = scale;
+                    window.set_rem_size(px(scale.rem_pixels()));
+                    view.inspector_reveal_selected = true;
+                    cx.notify();
+                })
+            });
+            cx.refresh().unwrap();
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                let view = view.read(cx);
+                let tree = view.accessibility_tree(window, cx);
+                tree.validate().unwrap();
+                assert!(tree.find("terminal-tab-pty-5").unwrap().selected);
+                assert!(
+                    tree.find("inspector-open-changes").is_none(),
+                    "offscreen tab is clipped"
+                );
+                let close = tree.find("terminal-close").unwrap();
+                let add = tree.find("inspector-panel").unwrap();
+                assert!(close.bounds.x + close.bounds.width <= add.bounds.x);
+                let output = tree.find("terminal-output").unwrap();
+                assert!(output.bounds.y <= add.bounds.y + metrics::INSPECTOR_TAB_HEIGHT);
+                assert!(view.inspector_tabs_scroll.offset().x < px(0.0));
+            });
+        }
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.select_inspector_tab(InspectorTab::Resources, cx);
+                // Switching back to the already-selected PTY must restore its tool page.
+                view.on_select_terminal_tab("pty-5", cx);
+                assert_eq!(view.inspector_tab, InspectorTab::Terminal);
+                let background = view
+                    .panel_tabs()
+                    .into_iter()
+                    .find(|tab| tab.terminal_id.as_deref() == Some("pty-0"))
+                    .unwrap();
+                view.close_panel_tab(&background, cx);
+                assert!(
+                    view.panel_tabs().iter().any(|tab| tab.id == background.id),
+                    "wait for Host close acknowledgement"
+                );
+                view.handle_controller_event(
+                    ControllerEvent::TerminalCloseSucceeded {
+                        terminal_session_id: "pty-0".into(),
+                    },
+                    cx,
+                );
+                assert_eq!(
+                    view.projection.terminal.session_id.as_deref(),
+                    Some("pty-5")
+                );
+                window.focus(&view.inspector_item_focus["terminal-tab-pty-5"]);
+                view.pending_inspector_focus = None;
+                cx.notify();
+            })
+        });
+        cx.refresh().unwrap();
+        cx.simulate_keystrokes("left");
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                assert_eq!(
+                    view.projection.terminal.session_id.as_deref(),
+                    Some("pty-4")
+                );
+                // 真实关闭路径：关后台 PTY 不抢当前页、不动标签滚动。
+                let scroll_before = view.inspector_tabs_scroll.offset();
+                let background = view
+                    .panel_tabs()
+                    .into_iter()
+                    .find(|tab| tab.terminal_id.as_deref() == Some("pty-5"))
+                    .unwrap();
+                view.close_panel_tab(&background, cx);
+                view.handle_controller_event(
+                    ControllerEvent::TerminalCloseSucceeded {
+                        terminal_session_id: "pty-5".into(),
+                    },
+                    cx,
+                );
+                assert_eq!(
+                    view.projection.terminal.session_id.as_deref(),
+                    Some("pty-4")
+                );
+                assert_eq!(view.inspector_tab, InspectorTab::Terminal);
+                assert_eq!(view.inspector_tabs_scroll.offset(), scroll_before);
+                // 还有 PTY 时关 Changes 工具页，回落到最近留下的其它工具而不是 Terminal。
+                view.select_inspector_tab(InspectorTab::Changes, cx);
+                let changes_tab = view
+                    .panel_tabs()
+                    .into_iter()
+                    .find(|tab| tab.id == "inspector-open-changes")
+                    .unwrap();
+                view.close_panel_tab(&changes_tab, cx);
+                assert_eq!(view.inspector_tab, InspectorTab::Resources);
+                view.on_select_terminal_tab("pty-4", cx);
+                // 关当前 PTY 一路回落同项目兄弟；最后一枚关掉后退出 Terminal
+                // 工具页，回落到最近打开的其它工具。
+                while let Some(current_id) = view.projection.terminal.session_id.clone() {
+                    let remaining = view
+                        .projection
+                        .workspace_terminals(view.inspector_workspace_id().as_deref())
+                        .len();
+                    let tab = view
+                        .panel_tabs()
+                        .into_iter()
+                        .find(|tab| tab.terminal_id.as_deref() == Some(current_id.as_str()))
+                        .unwrap();
+                    view.close_panel_tab(&tab, cx);
+                    view.handle_controller_event(
+                        ControllerEvent::TerminalCloseSucceeded {
+                            terminal_session_id: current_id,
+                        },
+                        cx,
+                    );
+                    assert_eq!(
+                        view.inspector_tab,
+                        if remaining > 1 {
+                            InspectorTab::Terminal
+                        } else {
+                            InspectorTab::Resources
+                        }
+                    );
+                }
+                assert!(
+                    view.panel_tabs()
+                        .iter()
+                        .all(|tab| tab.terminal_id.is_none())
+                );
+                // 工具标签就地关闭：最后一个工具页关掉回 Home（Changes 已在上
+                // 面的有 PTY 回落用例中关闭）。
+                view.close_inspector_tool(InspectorTab::Resources, cx);
+                assert_eq!(view.inspector_tab, InspectorTab::Home);
+                assert!(view.panel_tabs().is_empty());
+            })
+        });
+    }
+
     /// GUI2-05：面板选择器键盘切换；中央模式 pending approval 提示返回，
     /// 不默认批准。
     #[gpui::test]
@@ -8355,10 +8745,10 @@ mod tests {
             assert_eq!(view.open_menu, Some(MenuKind::InspectorPanel));
             let tree = view.accessibility_tree(window, cx);
             tree.validate().unwrap();
-            let changes = tree.find("inspector-tab-changes").expect("menu item");
+            let changes = tree.find("inspector-menu-changes").expect("menu item");
             assert!(changes.selected);
-            assert!(tree.find("inspector-tab-terminal").is_some());
-            assert!(tree.find("inspector-tab-resources").is_some());
+            assert!(tree.find("inspector-menu-terminal").is_some());
+            assert!(tree.find("inspector-menu-resources").is_some());
         });
         cx.simulate_keystrokes("down");
         cx.simulate_keystrokes("enter");

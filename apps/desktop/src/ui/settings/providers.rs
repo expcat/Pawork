@@ -5,9 +5,9 @@ use std::collections::HashSet;
 use gpui::{Focusable, Point, SharedString, Window};
 
 use super::*;
+use crate::ui::MenuKind;
 use crate::ui::components::dropdown::{Dropdown, MenuPanel, MenuRow};
 use crate::ui::components::switch::Switch;
-use crate::ui::MenuKind;
 
 /// 授权按钮只交给浏览器 HTTP(S) 链接，不启动任意系统协议。
 fn oauth_url_can_open(url: &str) -> bool {
@@ -134,10 +134,10 @@ impl AppView {
         if self.settings_accounts_supported() {
             match action {
                 SettingsAuthAction::ConnectApiKey | SettingsAuthAction::ReplaceApiKey => {
-                    return t("settings.providers.add_api_key")
+                    return t("settings.providers.add_api_key");
                 }
                 SettingsAuthAction::ConnectOauth | SettingsAuthAction::ReplaceOauth => {
-                    return t("settings.providers.add_oauth")
+                    return t("settings.providers.add_oauth");
                 }
                 _ => {}
             }

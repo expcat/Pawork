@@ -384,6 +384,33 @@ UX-09 的 [9 月 10 日补验](review/roadmap-ux-2026-09-10.md#ux-09-真窗口�
 - **代理真窗口验收**：隔离 `terminal-inline-0915` 完成自动启动、直接打字和 Enter、粘贴落盘、← 行内插入、Tab 补全、↑ 历史、Ctrl-C 中断、Ctrl-L 清屏、中文粘贴输出、同项目新建 / 关闭与兄弟标签回落和直接输入焦点；最终 Host 新建 shell 的 `echo $TERM` 返回 `xterm`，`stty size` 返回 `56 58`。落盘证据 `/tmp/pawork-inline-final-result.txt` 为 `FINAL_INLINE_OK`，与窗口读取一致。
 - **边界**：用户验收未进行；系统输入法候选 composing 尚未做真实验收。仍不是完整 VT emulator，无备用屏幕与鼠标选择复制，复杂 emoji 字素簇未完整仿真；不把这些计为已完成。不改 wire，不直连 PTY，不新增依赖；核心继续使用 `pawork-terminal` 零依赖纯库。未提交、未发布、未归档。
 
+#### 右侧浏览器首版（2026-09-16）
+
+- **范围**：按用户当前指令启动右侧浏览器，覆盖先前 GUI2 范围中的浏览器暂缓项。独立 `pawork-browser` 从首版提供系统 WebKit 视图；Desktop 接入现有标签栏、空态、添加菜单与 Cmd+K。首版每任务一页，地址栏、前进后退、刷新 / 停止、真实状态 / 错误；隐藏保留、关闭释放，任务之间隔离。
+- **参考**：只读检查本机 ChatGPT.app 中 Codex 的 `app.asar`（`tab-content`、`webview`、`main` 的 browser-sidebar 控制流），采纳任务归属与隐藏 / 关闭生命周期；不复制压缩源码。Codex 使用 Chromium，Pawork 按现有纯 Rust 构建链使用系统 WebKit。新窗口链接首版同页导航，多网页标签和跨启动恢复留待后续。
+- **实现**：已接线；无 Host / wire / schema 变化。地址栏与页面导航限制 HTTP(S)，不开放 JS IPC / Rust 工具桥、不读用户已有浏览器 profile。后续模型操作浏览器须经 Host / Policy / 事件设计。
+- **自动检查通过**：`cargo test -p pawork-browser -p pawork-desktop --offline --lib --tests`（Browser 2 / Desktop 263）与 `cargo build -p pawork-desktop --offline --features gpui/runtime_shaders`；日志 `/tmp/pawork-browser-0916/{tests,build}.log`。`git diff --check`、新增 Rust 文件格式、文档本地链接、Info.plist 校验通过；`cargo tree -p pawork --offline` 确认 CLI 闭包不含 browser / gpui。
+- **真窗口修复与复验**：修正浏览器 Home / 添加菜单的 AX 激活遗漏、GPUI 截走网页 Cmd+V / Cmd+A、网页 Tab 控件遍历；网页聚焦时保留 Cmd+L / Cmd+K / Cmd+I。修复后整包定向测试 Browser 2 / Desktop 263 通过（`final-tests.log`），末次键盘调整后浏览器相关回归 2 项与 runtime_shaders 构建通过（`verified-tests.log` / `verified-build.log`）。日志均位于 `/tmp/pawork-browser-0916/`。
+- **代理真窗口已验**：最终 bundle `/tmp/Pawork-browser-0916-verified.app`；隔离 Host `browser-0916`。HTTP fixture 与 `http.log` 联合确认真实请求、重定向及刷新；窗口验证公开 HTTPS `example.com`、地址规范化、前进 / 后退、停止、真实连接错误、脚本地址拒绝、新窗口链接同页导航、中文粘贴 / 全选、Tab / 空格网页控件、Cmd+L / Cmd+K / Cmd+I、网页到对话输入区焦点切换、地址栏 Enter 保留草稿、原生 AX 子树、折叠 / 切工具保留输入与脚本状态、浮层暂隐以及关闭后重开清空。首页切入新任务为空页，任务往返恢复由定向测试覆盖；窄窗布局仅自动测试验证。
+- **状态**：已实现、定向自动检查与代理真窗口验收通过；用户验收未进行，已提交 main，未发布、未归档。全 workspace gate 未运行。
+
+#### 聊天控制 Terminal / Browser（2026-09-16）
+
+- **范围**：按用户当前指令让聊天对话能控制 terminal 与 browser。GUI Run 在 ToolScheduler 注册 `terminal`（list/create/read/write/interrupt/close，与终端面板共用 PTY 注册表）与 `browser`（navigate/read/click/type/back/forward/reload/close，经 GUI 1.18 `browser_next`/`browser_respond` 派发到有该任务打开的 Desktop WebView）。两者要求可信工作区并逐次审批，审批卡展示工具参数预览。
+- **实现**：已接线。协议升 1.18（`BrowserControl` capability、`BrowserNext{session_id, run_id}`、`BrowserRespond`，golden 先行）；Host 端校验 URL 仅 HTTP(S) 且无凭证、browser 请求按 run 绑定发起客户端、一次领取、25s 超时回收、run 终态解绑；同轮 `supports_concurrency == false` 的工具按输入顺序串行执行；Desktop 在主线程派发 DOM 操作，上一条未回执不领取下一条；live 审批事件不再覆盖 snapshot 带来的参数预览。历史重放不执行动作。
+- **自动检查通过**：`cargo test -p pawork-app --offline --lib --tests`（263）、`pawork-protocol`（含 golden / registry 全绿）、`pawork-client`（46）、`pawork-desktop`（265）；`cargo tree -p pawork --offline` 确认 CLI 闭包不含 browser / gpui / desktop。
+- **真窗口验收**：隔离实例 `chat-control-0916`（Host 指定 `opencode-go / glm-5.3-flash`、`--trust-workspaces --approval-mode ask-for-dangerous`）。旧构建已完成一轮终端写文件（`terminal-proof.txt` = TERM-0916-OK）与浏览器 navigate/type/click/read（Applied: CHAT-0916-OK，DB 核对一致）。评审修复后最终构建（平行 bundle `/private/tmp/Pawork-chat-control-0916b.app`，桌面二进制 SHA-256 f2e887d6…）复验通过：terminal create/write/read/close 四步一轮审批（允许本次运行）后顺序执行，`terminal-proof.txt` = TERM-0916-FINAL 落盘核对一致；browser navigate/type #message/click #apply/read 四步完成，WebView 原生 AX 树与 fixture 访问日志（`GET /applied?value=CHAT-0916-FINAL`）独立确认页面状态 Applied: CHAT-0916-FINAL，两条 run 在 DB 均 run_completed。
+- **状态**：已实现、定向自动检查与最终构建真窗口复验通过；用户验收未进行，已提交 main，未发布、未归档。全 workspace gate 未运行。
+
+#### GUI 对话 HTTP 400 修复与错误提示紧凑化（2026-09-16）
+
+- **起因**：用户报告运行窗口中对话提示 HTTP 400。relay 抓包定位根因：全局配置启用 MCP echo fixture（`auto_start=true`），GUI Run 注册工具名 `echo.echo`，opencode-go 上游拒绝带 `.` 的工具名（`invalid tool ... name must contain only alphanumeric characters, underscores, and hyphens`），整个对话请求 HTTP 400；CLI 路径不含 MCP 工具故不受影响。
+- **修复**：`pawork-tools` `namespaced_name` 把 `{server}.{tool}` 拼接后 `[A-Za-z0-9_-]` 之外字符全部折叠为 `_`（`echo.echo` → `echo_echo`）；relay 端到端复验请求带 `echo_echo` 上游返回 200，DB 记录 `run_completed`。
+- **错误提示紧凑化**：Failed Run 摘要卡由 Ø20 状态圆卡片（标题行 + 原因多行换行）改为 Codex 式紧凑 pill——raised 底 + subtle 描边 + 12px 圆角，新增 `warning.svg` 图标（Icon::Warning 三处登记），图标与单行截断原因同取 `danger_text` 红色警示；认证类 CTA 收为 24px 单行按钮（`SUMMARY_NEXT_STEP_BUTTON_HEIGHT` 28 → 24），缩进对齐 16px 图标。`run_summary_card_layout` Failed 分支单行无换行估算，render / 测高 / AX 同源公式不变；完整原因仍由 AX description 暴露。
+- **自动检查通过**：`pawork-tools` 定向（含 `namespaced_name_collapses_provider_unsafe_characters` 回归）、`pawork-desktop` 265/265（含 `run_summary_card_height_uses_compact_banner_formula` 更新与 AX 钉板）。
+- **真窗口视觉复验**：最终 bundle 打开历史失败会话，`HTTP 400` 与长文本 `http connect error from http://127.0.0.1:18798` 均渲染为单行紧凑 pill（raised 底 + 12px 圆角 + subtle 描边，红色警示三角图标 + 红色单行截断文本）；AX 节点 label=运行失败、description 保留完整原因（放大截图 `/tmp/pawork-pill-zoom.png`，未检入）。认证 CTA 路径由 AX 钉板测试覆盖（本机无 401 会话可目验）。
+- **状态**：已实现、定向自动检查、relay 端到端复验与真窗口视觉复验通过；用户验收未进行，已提交 main，未发布、未归档。全 workspace gate 未运行。
+
 #### 终端 / 图片 / 搜索审查（2026-09-15）
 
 - **已实现**：终端改为直接输入及行内光标（本节上方为最新状态），BS / ESC / 私有 CSI 与稀疏寻址边界修复；图片附件按索引根定位、路径复核、普通文件检查与有界读取；目录显式纯文本 / false 撤销静态视觉能力，未接线搜索不因远端字段而宣称可用；搜索开关仅 Global 生效，xAI 移除旧 Chat 搜索声明，Anthropic / Responses 保留真实终态，CLI / GUI live 与历史均保留来源。

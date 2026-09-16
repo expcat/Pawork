@@ -3,7 +3,7 @@
 //! 色板、字阶、圆角、间距与有限动效由这里统一提供。普通面板无阴影，
 //! 仅浮层与 Composer 保留 elevation；运行时仍为单一 dark 主题。
 
-use gpui::{rgb, rgba, Global, Rgba};
+use gpui::{Global, Rgba, rgb, rgba};
 
 /// 七组颜色 token 宿主。
 #[derive(Debug, Clone, Copy)]

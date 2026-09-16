@@ -1,6 +1,6 @@
 //! StatusBar 底部状态行容器（R8 波 B 轨 1）。
 
-use gpui::{div, prelude::*, px, AnyElement, App, IntoElement, RenderOnce, Styled, Window};
+use gpui::{AnyElement, App, IntoElement, RenderOnce, Styled, Window, div, prelude::*, px};
 
 use crate::ui::theme::{dark, font, metrics};
 

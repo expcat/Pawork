@@ -116,7 +116,6 @@ impl ResumeState {
             }
         }
     }
-
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

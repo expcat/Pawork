@@ -773,14 +773,8 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             "Send message (Enter). Shift+Enter for a new line.",
             "发送消息（Enter），Shift+Enter 换行。",
         ),
-        "composer.placeholder_open_session" => (
-            "Message Pawork…",
-            "给 Pawork 发消息…",
-        ),
-        "composer.send_disabled_starting" => (
-            "Starting conversation…",
-            "正在开始对话…",
-        ),
+        "composer.placeholder_open_session" => ("Message Pawork…", "给 Pawork 发消息…"),
+        "composer.send_disabled_starting" => ("Starting conversation…", "正在开始对话…"),
         "composer.placeholder_waiting" => ("Waiting for connection…", "等待连接…"),
         "composer.placeholder_disconnected" => (
             "Disconnected — click Reconnect before sending.",
@@ -1027,6 +1021,26 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "inspector.tab_changes" => ("Changes", "变更"),
         "inspector.tab_terminal" => ("Terminal", "终端"),
         "inspector.tab_resources" => ("Resources", "资源"),
+        "inspector.tab_browser" => ("Browser", "浏览器"),
+        "inspector.browser_hint" => ("Open a website or local preview", "打开网页或本地预览"),
+        "browser.address" => ("Website address", "网页地址"),
+        "browser.placeholder" => ("Enter a URL or localhost:port", "输入网址或 localhost:端口"),
+        "browser.empty" => (
+            "Open a page alongside your conversation",
+            "在对话旁打开网页",
+        ),
+        "browser.back" => ("Back", "后退"),
+        "browser.forward" => ("Forward", "前进"),
+        "browser.reload" => ("Reload", "刷新"),
+        "browser.stop" => ("Stop loading", "停止加载"),
+        "browser.go" => ("Open address", "打开地址"),
+        "browser.loading" => ("Loading…", "正在加载…"),
+        "inspector.add_tool" => ("Open a tool", "打开工具"),
+        "inspector.home_hint" => ("Keep tools beside your conversation", "在对话旁打开工具"),
+        "inspector.changes_hint" => ("Inspect file changes and diffs", "查看文件变更与差异"),
+        "inspector.terminal_hint" => ("Open a terminal in this project", "在当前项目中新建终端"),
+        "inspector.resources_hint" => ("Browse connected MCP resources", "查看已连接的 MCP 资源"),
+        "inspector.close_tab" => ("Close tab", "关闭标签页"),
         "inspector.panel" => ("Work panel", "工作面板"),
         "inspector.back_to_conversation" => ("Back to conversation", "返回对话"),
         "inspector.return_for_approval" => (
@@ -1043,7 +1057,7 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             "Type a command, or use Ctrl-C / Tab / ↑ in the terminal",
             "输入命令，或用 Ctrl-C / Tab / ↑ 直通终端",
         ),
-        "inspector.terminal_new_tab" => ("New terminal tab", "新建终端标签页"),
+        "inspector.terminal_new_tab" => ("Terminal", "终端"),
         "header.tooltip_activity" => ("Activity", "动态"),
         // OPT-4b：折叠态 Header 最右的重开入口（tooltip 与 AX name 同源）。
         "header.tooltip_open_inspector" => ("Open inspector", "打开检查器"),
@@ -1105,11 +1119,7 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "status.language" => ("Language · {}", "语言 · {}"),
         _ => (key, key),
     };
-    if lang == Language::Chinese {
-        zh
-    } else {
-        en
-    }
+    if lang == Language::Chinese { zh } else { en }
 }
 
 /// 纯函数：双占位符模板按序替换，不读全局状态。

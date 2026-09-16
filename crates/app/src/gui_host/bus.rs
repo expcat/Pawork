@@ -4,10 +4,10 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use pawork_domain::{AgentEventEnvelope, CancellationToken, EventId, RunId, SessionId};
-use pawork_engine::{now_timestamp, AgentEventSink, EngineError};
+use pawork_engine::{AgentEventSink, EngineError, now_timestamp};
 use pawork_protocol::{
-    AppEvent, AppEventEnvelope, AuthChangeState, DiagnosticLevel, EventSource, EventStream,
-    GlobalSequence, RunState, API_VERSION,
+    API_VERSION, AppEvent, AppEventEnvelope, AuthChangeState, DiagnosticLevel, EventSource,
+    EventStream, GlobalSequence, RunState,
 };
 use serde_json::Value;
 

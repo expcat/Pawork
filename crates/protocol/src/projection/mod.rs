@@ -29,8 +29,8 @@ use pawork_domain::{
     TokenUsage,
 };
 
-use crate::app::{AppEvent, AppEventEnvelope, RunState, TimelineItem, TimelineItemKind};
 use crate::ResumeDisposition;
+use crate::app::{AppEvent, AppEventEnvelope, RunState, TimelineItem, TimelineItemKind};
 
 const TOOL_CONTEXT_ID_KEY: &str = "_pawork_tool_call_id";
 const TOOL_CONTEXT_DETAIL_KEY: &str = "detail";

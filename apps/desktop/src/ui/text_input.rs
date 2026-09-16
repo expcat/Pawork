@@ -10,11 +10,11 @@ use std::ops::Range;
 
 use super::theme::{dark, font, metrics};
 use gpui::{
-    actions, div, fill, point, prelude::*, px, relative, size, App, ClipboardItem, Context,
-    CursorStyle, ElementId, ElementInputHandler, Entity, EntityInputHandler, FocusHandle,
-    Focusable, GlobalElementId, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, PaintQuad, Pixels, Point, ScrollHandle, ShapedLine, SharedString, Style, TextRun,
-    UTF16Selection, UnderlineStyle, Window,
+    App, ClipboardItem, Context, CursorStyle, ElementId, ElementInputHandler, Entity,
+    EntityInputHandler, FocusHandle, Focusable, GlobalElementId, LayoutId, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, ScrollHandle,
+    ShapedLine, SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window, actions, div,
+    fill, point, prelude::*, px, relative, size,
 };
 use unicode_segmentation::*;
 
@@ -1359,11 +1359,11 @@ impl Focusable for TextInput {
 #[cfg(test)]
 mod tests {
     use gpui::{
-        point, px, size, AppContext, EntityInputHandler, Focusable, Modifiers, TestAppContext,
-        VisualTestContext,
+        AppContext, EntityInputHandler, Focusable, Modifiers, TestAppContext, VisualTestContext,
+        point, px, size,
     };
 
-    use super::{line_byte_ranges, TextInput};
+    use super::{TextInput, line_byte_ranges};
 
     const PROBE_WINDOW: gpui::Size<gpui::Pixels> = size(px(640.), px(360.));
 
@@ -1620,7 +1620,7 @@ mod tests {
 
     #[gpui::test]
     fn readonly_login_text_selects_copies_and_rejects_edits(cx: &mut TestAppContext) {
-        use gpui::{div, prelude::*, Context, Entity, ScrollHandle, Window};
+        use gpui::{Context, Entity, ScrollHandle, Window, div, prelude::*};
         struct LoginPage {
             input: Entity<TextInput>,
             scroll: ScrollHandle,

@@ -1,6 +1,6 @@
 //! GUI3-08：Changes / Resources 加载骨架。静态条，不循环闪动。
 
-use gpui::{div, prelude::*, px, IntoElement, SharedString};
+use gpui::{IntoElement, SharedString, div, prelude::*, px};
 
 use crate::ui::theme::{dark, metrics};
 

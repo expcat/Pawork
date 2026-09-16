@@ -9,11 +9,11 @@ use pawork_protocol::{
     ActorIdentity, AppEvent, AppQuery, CommandSource, EventStream, RunState, TimelineItemKind,
 };
 use pawork_testkit::{MockProvider, MockScript};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-
 mod approval;
+mod chat_controls;
 mod idempotency;
 mod run;
 mod session;

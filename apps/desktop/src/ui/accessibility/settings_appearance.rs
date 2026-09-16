@@ -3,9 +3,9 @@
 use gpui::Window;
 
 use super::{AxAction, AxNode, AxRect, AxRole};
-use crate::ui::i18n::{t, LANGUAGES};
-use crate::ui::settings::{settings_text_scale_identifier, SETTINGS_TEXT_SCALES};
 use crate::ui::AppView;
+use crate::ui::i18n::{LANGUAGES, t};
+use crate::ui::settings::{SETTINGS_TEXT_SCALES, settings_text_scale_identifier};
 
 impl AppView {
     /// 「外观」页 AX（SET-6e）：三档字号按钮与 render 共用冻结

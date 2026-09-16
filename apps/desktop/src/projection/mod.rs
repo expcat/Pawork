@@ -26,21 +26,20 @@ pub use pawork_client::projection::{ForkBoundary, TimelineEntry, TimelineEntryKi
 
 pub use session::group_models_by_provider;
 pub use session::{
-    sessions_in_snapshot, ActiveRun, ConnectionState, DateBucket, ModelEntry, PendingApproval,
-    ResumeApply, ResumeState, RunUsageDisplay, SessionLiveStatus, SessionSummary,
-    TaskRailDateGroup, TaskRailGrouping, TaskRailProjectGroup, WorkspaceSummary,
-    UNASSIGNED_PROJECT,
+    ActiveRun, ConnectionState, DateBucket, ModelEntry, PendingApproval, ResumeApply, ResumeState,
+    RunUsageDisplay, SessionLiveStatus, SessionSummary, TaskRailDateGroup, TaskRailGrouping,
+    TaskRailProjectGroup, UNASSIGNED_PROJECT, WorkspaceSummary, sessions_in_snapshot,
 };
 pub use settings::{
-    parse_auth_change, ApprovalModeWire, AuthChange, AuthStartData, DefaultModelPair,
-    GeneralSettingsData, PermissionsSettingsData, ProviderAuthState, ProviderAuthStatusData,
-    ProviderAuthStatusEntry, ProviderCatalogState, ProviderModelWrite, ProviderStatusLabels,
-    RoleDefaultsData, SettingsGeneralState, SettingsPermissionsState, SettingsProvidersState,
-    SettingsRole, SettingsTerminalState, TerminalSettingsData,
+    ApprovalModeWire, AuthChange, AuthStartData, DefaultModelPair, GeneralSettingsData,
+    PermissionsSettingsData, ProviderAuthState, ProviderAuthStatusData, ProviderAuthStatusEntry,
+    ProviderCatalogState, ProviderModelWrite, ProviderStatusLabels, RoleDefaultsData,
+    SettingsGeneralState, SettingsPermissionsState, SettingsProvidersState, SettingsRole,
+    SettingsTerminalState, TerminalSettingsData, parse_auth_change,
 };
 pub(crate) use terminal::TERMINAL_CWD_UNKNOWN;
 pub use terminal::{TerminalAvailability, TerminalState};
-pub use timeline::{run_footer_label, run_summary_texts, TimelineRow};
+pub use timeline::{TimelineRow, run_footer_label, run_summary_texts};
 
 use session::{
     parse_active_runs, parse_pending_approvals, parse_provider_status, parse_sessions,
@@ -345,13 +344,31 @@ impl DesktopProjection {
         } = &envelope.payload
         {
             if let EventStream::Session(session_id) = &envelope.stream {
+                let existing = self
+                    .snapshot_pendings
+                    .iter()
+                    .find(|item| {
+                        item.run_id == run_id.as_str() && item.tool_call_id == tool_call_id.as_str()
+                    })
+                    .cloned();
                 let pending = PendingApproval {
-                    session_id: Some(session_id.as_str().to_string()),
+                    session_id: existing
+                        .as_ref()
+                        .and_then(|item| item.session_id.clone())
+                        .or_else(|| Some(session_id.as_str().to_string())),
                     run_id: run_id.as_str().to_string(),
                     tool_call_id: tool_call_id.as_str().to_string(),
-                    tool_name: extract_tool_name(reason),
-                    reason: reason.clone(),
-                    detail: None,
+                    tool_name: existing
+                        .as_ref()
+                        .map(|item| item.tool_name.clone())
+                        .filter(|name| !name.is_empty())
+                        .unwrap_or_else(|| extract_tool_name(reason)),
+                    reason: existing
+                        .as_ref()
+                        .map(|item| item.reason.clone())
+                        .filter(|item_reason| !item_reason.is_empty())
+                        .unwrap_or_else(|| reason.clone()),
+                    detail: existing.and_then(|item| item.detail),
                 };
                 self.snapshot_pendings
                     .retain(|item| item.tool_call_id != pending.tool_call_id);

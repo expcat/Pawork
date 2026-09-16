@@ -95,9 +95,9 @@ async fn run_success_auto_titles_placeholder_session_and_broadcasts() {
 #[tokio::test]
 async fn auto_title_preserves_pending_approval_and_event_ledger() {
     let (mut core, _dir) = crate::testsupport::mock_core(Vec::new()).await;
-    core.provider = Arc::new(naming_mock_provider(vec![MockScript::new()
-        .text("保留审批的标题")
-        .complete()]));
+    core.provider = Arc::new(naming_mock_provider(vec![
+        MockScript::new().text("保留审批的标题").complete(),
+    ]));
     core.config.naming_provider = Some("mock".into());
     core.config.naming_model = Some("model-1".into());
     let session = core.create_session("New session").await.expect("session");
@@ -1161,9 +1161,9 @@ async fn run_start_with_provider_does_not_silently_keep_same_model_id() {
         .await
         .expect("store");
     let core = AppCore::from_parts(
-        Arc::new(MockProvider::sequence(vec![MockScript::new()
-            .text("ok")
-            .complete()])),
+        Arc::new(MockProvider::sequence(vec![
+            MockScript::new().text("ok").complete(),
+        ])),
         None,
         pawork_domain::ModelId::from("deepseek-v4-flash"),
         pawork_domain::ProviderId::from("deepseek"),

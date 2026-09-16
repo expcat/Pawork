@@ -20,11 +20,11 @@
 //! 当前认证握手声明非空 Host 数据目录时显示「关于」，且断线时立即隐藏。
 //! 可见 / 键盘 / AX 三路径同 gate。
 
-pub(super) use gpui::{div, prelude::*, px, App, Context, FontWeight, Pixels};
+pub(super) use gpui::{App, Context, FontWeight, Pixels, div, prelude::*, px};
 
 pub(super) use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
 pub(super) use crate::ui::components::focus_ring::focus_ring;
-pub(super) use crate::ui::components::icon::{icon, icon_sized, Icon};
+pub(super) use crate::ui::components::icon::{Icon, icon, icon_sized};
 pub(super) use crate::ui::components::label::Label;
 pub(super) use crate::ui::components::list_row::ListRow;
 pub(super) use crate::ui::components::panel::Panel;
@@ -32,15 +32,15 @@ pub(super) use crate::ui::theme::{dark, font, metrics};
 
 pub(super) use crate::controller::McpServerEntry;
 pub(super) use crate::projection::{
-    group_models_by_provider, ApprovalModeWire, AuthStartData, ConnectionState, ModelEntry,
-    ProviderAuthState, ProviderAuthStatusEntry, ProviderStatusLabels, SettingsPermissionsState,
-    SettingsRole, SettingsTerminalState,
+    ApprovalModeWire, AuthStartData, ConnectionState, ModelEntry, ProviderAuthState,
+    ProviderAuthStatusEntry, ProviderStatusLabels, SettingsPermissionsState, SettingsRole,
+    SettingsTerminalState, group_models_by_provider,
 };
 pub(super) use crate::ui::text_input::TextInput;
 
 pub(super) use super::accessibility::dynamic_identifier;
 pub(super) use super::resources::{
-    mcp_server_meta_text, mcp_server_name_row, ResourcesFetch, ResourcesPanelState,
+    ResourcesFetch, ResourcesPanelState, mcp_server_meta_text, mcp_server_name_row,
 };
 pub(super) use super::shell_layout;
 pub(super) use super::{AppRoute, AppView, SettingsPage};
@@ -941,14 +941,13 @@ pub(super) fn status_line(text: &str, color: gpui::Rgba) -> impl IntoElement {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_settings_control, parse_settings_models_control, parse_settings_role_control,
-        parse_terminal_dimension, parse_terminal_shell, settings_manage_models_identifier,
-        settings_model_switch_identifier, settings_models_disable_all_identifier,
-        settings_models_enable_all_identifier, settings_models_refresh_identifier,
-        settings_provider_expand_identifier, settings_role_candidates,
-        settings_role_clear_identifier, settings_role_item_identifier, settings_role_menu_entries,
-        settings_role_trigger_identifier, terminal_save_enabled, SettingsControl,
-        SettingsModelsControl, SettingsRoleControl,
+        SettingsControl, SettingsModelsControl, SettingsRoleControl, parse_settings_control,
+        parse_settings_models_control, parse_settings_role_control, parse_terminal_dimension,
+        parse_terminal_shell, settings_manage_models_identifier, settings_model_switch_identifier,
+        settings_models_disable_all_identifier, settings_models_enable_all_identifier,
+        settings_models_refresh_identifier, settings_provider_expand_identifier,
+        settings_role_candidates, settings_role_clear_identifier, settings_role_item_identifier,
+        settings_role_menu_entries, settings_role_trigger_identifier, terminal_save_enabled,
     };
     use crate::projection::{
         ModelEntry, ProviderAuthState, ProviderAuthStatusEntry, ProviderCatalogState, SettingsRole,
@@ -1130,13 +1129,13 @@ mod provider_quota;
 mod providers;
 pub(crate) use provider_quota::quota_identifier;
 mod search;
-pub(crate) use search::{settings_page_title_key, settings_search_entries, SettingsSearchKind};
+pub(crate) use search::{SettingsSearchKind, settings_page_title_key, settings_search_entries};
 mod terminal;
 mod tools;
 
 pub(crate) use approval_labels::{
-    description as approval_mode_description, label as approval_mode_label,
-    ALL as APPROVAL_MODE_ALL,
+    ALL as APPROVAL_MODE_ALL, description as approval_mode_description,
+    label as approval_mode_label,
 };
 
 impl AppView {

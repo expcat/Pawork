@@ -7,6 +7,7 @@ mod accessibility;
 mod approval_card;
 mod archive;
 mod barriers;
+mod browser;
 mod changes;
 mod components;
 pub(crate) mod i18n;
@@ -34,10 +35,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{
-    actions, div, point, prelude::*, px, AnyView, App, AsyncWindowContext, ClickEvent, Context,
-    Corner, Entity, FocusHandle, Focusable, FontWeight, KeyBinding, KeyDownEvent, ListAlignment,
-    ListState, PathPromptOptions, Pixels, Point, Render, Rgba, ScrollHandle, SharedString,
-    Subscription, Window,
+    AnyView, App, AsyncWindowContext, ClickEvent, Context, Corner, Entity, FocusHandle, Focusable,
+    FontWeight, KeyBinding, KeyDownEvent, ListAlignment, ListState, PathPromptOptions, Pixels,
+    Point, Render, Rgba, ScrollHandle, SharedString, Subscription, Window, actions, div, point,
+    prelude::*, px,
 };
 use pawork_client::AppEvent;
 
@@ -53,7 +54,7 @@ use components::button::{Button, ButtonPadding, ButtonVariant};
 use components::dropdown::Dropdown;
 use components::follow_scroll::FollowScroll;
 use components::status_bar::StatusBar;
-pub(crate) use components::{icon, icon_sized, Assets, Icon};
+pub(crate) use components::{Assets, Icon, icon, icon_sized};
 use inspector::InspectorTab;
 use resources::ResourcesPanelState;
 use shell_layout::InspectorPlacement;
@@ -304,7 +305,8 @@ pub(super) fn activity_header_visibility(
 ///（NSInvalidArgumentException 实证），因此用 NSEvent 本地监听器在
 /// NSWindow 派发前截获裸 Tab，直接驱动 GPUI 焦点链 focus_next /
 /// focus_prev（design §3.6 焦点链唯一属主是 GPUI）。带 cmd / ctrl /
-/// alt 的组合键原样放行，Enter / Space 不在截获范围。
+/// alt 的组合键原样放行，Enter / Space 不在截获范围。原生网页聚焦时
+/// Tab 留给 WebKit；浏览器可见时 Cmd+L / K / I 仍交给宿主导航控件。
 #[cfg(target_os = "macos")]
 fn install_appkit_tab_monitor(window: &Window, cx: &App) {
     use cocoa::base::{id, nil};
@@ -314,7 +316,7 @@ fn install_appkit_tab_monitor(window: &Window, cx: &App) {
     /// NSEvent.type == keyDown；本地监听器 mask 只订阅 keyDown。
     const NSEVENT_TYPE_KEY_DOWN: i64 = 10;
     const NSEVENT_MASK_KEY_DOWN: u64 = 1 << 10;
-    /// kVK_Tab；Tab 之外一律原样放行。
+    /// kVK_Tab；另保留浏览器的 Cmd+L / K / I。
     const KEY_CODE_TAB: u16 = 48;
     /// AppKit modifierFlags 位（NSShift / NSControl / NSAlternate / NSCommand）。
     const FLAG_SHIFT: u64 = 1 << 17;
@@ -359,10 +361,40 @@ fn install_appkit_tab_monitor(window: &Window, cx: &App) {
             return event;
         }
         let key_code: u16 = msg_send![event, keyCode];
+        let flags: u64 = msg_send![event, modifierFlags];
+        if matches!(key_code, 37 | 40 | 34)
+            && flags & FLAG_COMMAND != 0
+            && flags & (FLAG_CONTROL | FLAG_ALT | FLAG_SHIFT) == 0
+        {
+            let handled = TAB_WINDOW.with_borrow_mut(|slot| {
+                slot.as_mut().is_some_and(|cx| {
+                    cx.update(|window, cx| {
+                        if let Some(Some(view)) = window.root::<AppView>() {
+                            return view.update(cx, |view, cx| {
+                                if view.browser_visible() {
+                                    match key_code {
+                                        37 => view.focus_browser_address(window, cx),
+                                        40 => view.open_quick_search(window, cx),
+                                        34 => view.on_toggle_inspector(window, cx),
+                                        _ => unreachable!(),
+                                    }
+                                    return true;
+                                }
+                                false
+                            });
+                        }
+                        false
+                    })
+                    .unwrap_or(false)
+                })
+            });
+            if handled {
+                return nil;
+            }
+        }
         if key_code != KEY_CODE_TAB {
             return event;
         }
-        let flags: u64 = msg_send![event, modifierFlags];
         if flags & (FLAG_CONTROL | FLAG_ALT | FLAG_COMMAND) != 0 {
             return event;
         }
@@ -370,6 +402,17 @@ fn install_appkit_tab_monitor(window: &Window, cx: &App) {
         let handled = TAB_WINDOW.with_borrow_mut(|slot| {
             slot.as_mut().map(|cx| {
                 cx.update(|window, cx| {
+                    if let Some(Some(view)) = window.root::<AppView>() {
+                        if view
+                            .read(cx)
+                            .browser
+                            .native
+                            .as_ref()
+                            .is_some_and(|native| native.is_focused())
+                        {
+                            return false;
+                        }
+                    }
                     components::focus_ring::set_keyboard_focus(true, window, cx);
                     if let Some(Some(view)) = window.root::<AppView>() {
                         let key = gpui::Keystroke::parse(if forward { "tab" } else { "shift-tab" })
@@ -377,12 +420,12 @@ fn install_appkit_tab_monitor(window: &Window, cx: &App) {
                         if view.update(cx, |view, cx| {
                             view.intercept_terminal_keystroke(&key, window, cx)
                         }) {
-                            return;
+                            return true;
                         }
                         let view = view.read(cx);
                         if view.quick_search.open {
                             window.focus(&view.quick_search.focus);
-                            return;
+                            return true;
                         }
                     }
                     if forward {
@@ -390,15 +433,12 @@ fn install_appkit_tab_monitor(window: &Window, cx: &App) {
                     } else {
                         window.focus_prev();
                     }
+                    true
                 })
-                .is_ok()
+                .unwrap_or(false)
             }) == Some(true)
         });
-        if handled {
-            nil
-        } else {
-            event
-        }
+        if handled { nil } else { event }
     }
 
     /// 本地监听器在 AppKit C 调用栈上执行，禁止 unwind 穿越：兜底捕获
@@ -473,6 +513,10 @@ pub struct AppView {
     projection: DesktopProjection,
     text_input: Entity<TextInput>,
     terminal_input: Entity<terminal_view::TerminalInput>,
+    browser: browser::BrowserPanel,
+    browser_request: Option<(String, String, String, serde_json::Value)>,
+    browser_sessions: HashMap<Option<String>, browser::BrowserPanel>,
+    browser_session: Option<String>,
     terminal_action_layouts: HashMap<&'static str, ScrollHandle>,
     quick_search: quick_search::QuickSearch,
     timeline_navigation: timeline_navigation::TimelineNavigation,
@@ -540,6 +584,11 @@ pub struct AppView {
     inspector_last_placement: InspectorPlacement,
     /// Inspector 当前面板（Changes / Terminal / Resources）。
     inspector_tab: InspectorTab,
+    inspector_open_tabs: Vec<InspectorTab>,
+    inspector_tabs_scroll: ScrollHandle,
+    inspector_reveal_selected: bool,
+    inspector_item_layouts: HashMap<String, ScrollHandle>,
+    inspector_item_focus: HashMap<String, FocusHandle>,
     /// Changes 面状态（Files / Summary、清单与选中 diff、滚动句柄）。
     changes: ChangesPanelState,
     /// Resources 面状态（MCP server 清单、滚动句柄）。
@@ -626,8 +675,6 @@ pub struct AppView {
     resources_refresh_focus: FocusHandle,
     terminal_back_to_bottom_focus: FocusHandle,
     terminal_close_focus: FocusHandle,
-    terminal_new_tab_focus: FocusHandle,
-    terminal_tab_focus: HashMap<String, FocusHandle>,
     /// rail 行级焦点句柄（按 RailStop::focus_key 懒建，会话删除后遗留条目
     /// 无副作用，随窗口生命周期回收）。
     rail_row_focus: BTreeMap<String, FocusHandle>,
@@ -820,6 +867,10 @@ impl AppView {
             projection: DesktopProjection::default(),
             text_input,
             terminal_input,
+            browser: browser::BrowserPanel::new(cx),
+            browser_request: None,
+            browser_sessions: HashMap::new(),
+            browser_session: None,
             quick_search: quick_search::QuickSearch::new(cx),
             timeline_navigation: timeline_navigation::TimelineNavigation::new(cx),
             model_search_input,
@@ -830,7 +881,7 @@ impl AppView {
             composer_drafts: HashMap::new(),
             no_session_draft: String::new(),
             pending_home_send: None,
-            terminal_action_layouts: ["terminal-output", "terminal-close"]
+            terminal_action_layouts: ["terminal-output"]
                 .into_iter()
                 .map(|id| (id, ScrollHandle::new()))
                 .collect(),
@@ -876,6 +927,11 @@ impl AppView {
             inspector_render_width: 0.0,
             inspector_last_placement: InspectorPlacement::Hidden,
             inspector_tab: InspectorTab::default(),
+            inspector_open_tabs: Vec::new(),
+            inspector_tabs_scroll: ScrollHandle::new(),
+            inspector_reveal_selected: false,
+            inspector_item_layouts: HashMap::new(),
+            inspector_item_focus: HashMap::new(),
             changes: ChangesPanelState::default(),
             resources: ResourcesPanelState::default(),
             open_menu: None,
@@ -932,6 +988,7 @@ impl AppView {
                 "rail-reconnect-layout",
                 "rail-settings-layout",
                 "inspector-panel-layout",
+                "inspector-menu-layout",
                 "inspector-collapse-layout",
                 "inspector-back-layout",
                 "inspector-approval-hint-layout",
@@ -1004,11 +1061,6 @@ impl AppView {
                 .focus_handle()
                 .tab_stop(true)
                 .tab_index(INSPECTOR_TAB_INDEX),
-            terminal_new_tab_focus: cx
-                .focus_handle()
-                .tab_stop(true)
-                .tab_index(INSPECTOR_TAB_INDEX),
-            terminal_tab_focus: HashMap::new(),
             rail_row_focus: BTreeMap::new(),
             rail_hovered_session: None,
             session_rename: None,
@@ -1663,6 +1715,22 @@ impl AppView {
         self.barriers.remove_timeline_stable();
         self.barriers.remove_approval_visible();
         match event {
+            ControllerEvent::BrowserRequest {
+                session_id,
+                run_id,
+                request_id,
+                action,
+            } => {
+                if self.browser_request.is_some()
+                    || self.projection.active_session_id.as_deref() != Some(&session_id)
+                    || self.projection.active_run_id.as_deref() != Some(&run_id)
+                    || self.projection.active_run_id.is_none()
+                {
+                    self.controller.browser_respond(request_id, serde_json::json!({"ok":false,"error":"Task is no longer visible or browser is busy"}));
+                } else {
+                    self.browser_request = Some((session_id, run_id, request_id, action));
+                }
+            }
             ControllerEvent::Disconnected { reason } => {
                 self.projection.settings_providers.account_quotas.clear();
                 self.projection
@@ -1737,6 +1805,36 @@ impl AppView {
                 }
             }
             ControllerEvent::Event(envelope) => {
+                if let AppEvent::Diagnostic { code, message, .. } = &envelope.payload {
+                    if let Ok(data) = serde_json::from_str::<serde_json::Value>(message) {
+                        if code == "terminal.agent_created" {
+                            if let (Some(id), Some(workspace)) = (
+                                data["terminal_session_id"].as_str(),
+                                data["workspace_id"].as_str(),
+                            ) {
+                                self.projection
+                                    .apply_terminal_created(workspace.into(), id.into());
+                                if let Some(cwd) = data["cwd"].as_str() {
+                                    self.projection.apply_terminal_cwd(id, cwd);
+                                }
+                                self.reconcile_terminal_workspace(cx);
+                                self.inspector_tab = InspectorTab::Terminal;
+                                self.remember_inspector_tab(InspectorTab::Terminal);
+                                self.inspector_open = true;
+                            }
+                        }
+                        if code == "terminal.agent_closed" {
+                            if let Some(id) = data["terminal_session_id"].as_str() {
+                                self.handle_controller_event(
+                                    ControllerEvent::TerminalCloseSucceeded {
+                                        terminal_session_id: id.into(),
+                                    },
+                                    cx,
+                                );
+                            }
+                        }
+                    }
+                }
                 self.sync_navigation_session();
                 if matches!(&envelope.stream, pawork_client::EventStream::Session(id) if Some(id.as_str()) == self.projection.active_session_id.as_deref())
                 {
@@ -1954,11 +2052,23 @@ impl AppView {
                     self.terminal_pending_close = None;
                     self.terminal_pending_write.remove(&terminal_session_id);
                     self.terminal_queued_write.remove(&terminal_session_id);
+                    let was_current = self.projection.terminal.session_id.as_deref()
+                        == Some(terminal_session_id.as_str());
                     self.projection.remove_terminal(&terminal_session_id);
-                    self.reconcile_terminal_input(cx);
-                    self.maybe_apply_fitted_terminal_size(cx);
-                    self.terminal_scroll.jump_to_bottom();
-                    self.pending_inspector_focus = Some(InspectorFocusTarget::SelectedTab);
+                    // §8：关闭当前 PTY 有同项目兄弟时 remove_terminal 已选中
+                    // 兄弟；session 为空说明最后一枚已关，退出 Terminal 工具
+                    // 页回落到最近打开的其它工具或入口（不做无谓重建）。
+                    if self.projection.terminal.session_id.is_none() {
+                        self.close_inspector_tool(InspectorTab::Terminal, cx);
+                    }
+                    if was_current {
+                        self.reconcile_terminal_input(cx);
+                        self.maybe_apply_fitted_terminal_size(cx);
+                        if self.inspector_tab == InspectorTab::Terminal {
+                            self.terminal_scroll.jump_to_bottom();
+                            self.pending_inspector_focus = Some(InspectorFocusTarget::SelectedTab);
+                        }
+                    }
                     self.status_hint = Some(i18n::t("status.terminal_closed").into());
                 }
             }
@@ -2320,6 +2430,14 @@ impl AppView {
                 let keep = this
                     .update(cx, |view, cx| {
                         view.emit_settle_barriers();
+                        if view.browser_request.is_none() {
+                            if let (Some(session), Some(run_id)) = (
+                                view.projection.active_session_id.clone(),
+                                view.projection.active_run_id.clone(),
+                            ) {
+                                view.controller.poll_browser(session, run_id);
+                            }
+                        }
                         if view.projection.active_run_id.is_some()
                             || view.settings_quota_clock_needed()
                         {
@@ -2849,6 +2967,32 @@ impl AppView {
         let key = event.keystroke.key.as_str();
         let activate = key == "enter" || key == "space";
 
+        let tabs = self.panel_tabs();
+        if let Some(index) = tabs.iter().position(|tab| {
+            self.inspector_item_focus
+                .get(&tab.id)
+                .is_some_and(|focus| focus.is_focused(window))
+        }) {
+            let target = match key {
+                "left" => Some((index + tabs.len() - 1) % tabs.len()),
+                "right" => Some((index + 1) % tabs.len()),
+                "home" => Some(0),
+                "end" => Some(tabs.len() - 1),
+                _ => None,
+            };
+            if let Some(target) = target {
+                self.activate_panel_tab(&tabs[target], cx);
+                self.pending_inspector_focus = None;
+                self.inspector_reveal_selected = true;
+                if let Some(focus) = self.inspector_item_focus.get(&tabs[target].id) {
+                    window.focus(focus);
+                }
+                cx.stop_propagation();
+                cx.notify();
+                return true;
+            }
+        }
+
         if let Some(ix) = self
             .changes_tab_focus
             .iter()
@@ -3038,7 +3182,10 @@ impl AppView {
             }
             // Switch 自带键盘激活；无 MenuRow 高亮行。
             Some(MenuKind::SettingsProviderModels(_)) => 0,
-            Some(MenuKind::InspectorPanel) => self.inspector_tab as usize,
+            Some(MenuKind::InspectorPanel) => InspectorTab::ALL
+                .iter()
+                .position(|tab| *tab == self.inspector_tab)
+                .unwrap_or(0),
             Some(MenuKind::Entry(_) | MenuKind::Activity) | None => 0,
         }
     }
@@ -3143,7 +3290,7 @@ impl AppView {
             }
             MenuKind::InspectorPanel => {
                 if let Some(&tab) = InspectorTab::ALL.get(ix) {
-                    self.select_inspector_tab(tab, cx);
+                    self.launch_inspector_tool(tab, cx);
                     self.close_menu_and_focus_trigger(MenuKind::InspectorPanel, window, cx);
                 }
             }
@@ -3547,6 +3694,12 @@ impl AppView {
     }
 
     fn on_send_message(&mut self, _: &SendMessage, window: &mut Window, cx: &mut Context<Self>) {
+        if self.browser.focus.is_focused(window) {
+            if !self.browser.input.read(cx).is_composing() {
+                self.browser_action("browser-go", window, cx);
+            }
+            return;
+        }
         if self.quick_search.open {
             self.submit_quick_search(window, cx);
             return;
@@ -3640,10 +3793,15 @@ impl AppView {
     /// 切换 Inspector 顶层页签；切入 Changes / Resources 时拉取数据
     /// （拉取时机之一）。切页签不改 active session；各页签滚动状态独立保留。
     fn select_inspector_tab(&mut self, tab: InspectorTab, cx: &mut Context<Self>) {
+        self.sync_browser_session(cx);
+        if tab == InspectorTab::Browser {
+            self.browser.open = true;
+        }
         if self.inspector_tab == tab {
             return;
         }
         self.inspector_tab = tab;
+        self.remember_inspector_tab(tab);
         self.pending_inspector_focus = Some(InspectorFocusTarget::SelectedTab);
         self.refresh_open_inspector_tab(cx);
         cx.notify();
@@ -3654,7 +3812,9 @@ impl AppView {
         if !self.inspector_open {
             return;
         }
+        self.remember_inspector_tab(self.inspector_tab);
         match self.inspector_tab {
+            InspectorTab::Home | InspectorTab::Browser => {}
             InspectorTab::Changes => self.refresh_changes(cx),
             InspectorTab::Resources => self.refresh_resources(cx),
             InspectorTab::Terminal => {
@@ -3693,6 +3853,7 @@ impl AppView {
             }
         }
         self.inspector_tab = InspectorTab::Changes;
+        self.remember_inspector_tab(InspectorTab::Changes);
         self.pending_inspector_focus = Some(InspectorFocusTarget::SelectedTab);
         self.refresh_changes(cx);
         cx.notify();
@@ -3713,6 +3874,7 @@ impl AppView {
             // reflow；中央呈现不得重置阅读位置。
         }
         self.inspector_tab = InspectorTab::Changes;
+        self.remember_inspector_tab(InspectorTab::Changes);
         self.pending_inspector_focus = Some(InspectorFocusTarget::SelectedTab);
         self.refresh_changes(cx);
         let fetching = matches!(self.changes.fetch, changes::ChangesFetch::Fetching);
@@ -4580,6 +4742,14 @@ pub(crate) fn terminal_can_close(connection: &ConnectionState, terminal: &Termin
 impl Render for AppView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_navigation_session();
+        self.sync_browser_session(cx);
+        self.ensure_browser_poll(window, cx);
+        self.dispatch_browser_request(window, cx);
+        if !self.browser_visible() {
+            if let Some(native) = &self.browser.native {
+                native.set_visible(false);
+            }
+        }
         // 一次性安装 AppKit Tab 本地监听器：NSWindow 会吞掉裸 Tab
         //（key-view 循环为空），监听器在派发前截获并驱动 GPUI 焦点链。
         // 监听器进程级只装一次；每次 render 刷新 thread_local 窗口句柄，
@@ -4594,11 +4764,22 @@ impl Render for AppView {
             window.focus(&self.scope_focus);
         }
         if let Some(target) = self.pending_inspector_focus.take() {
+            self.inspector_reveal_selected = true;
             match target {
                 InspectorFocusTarget::Activity => window.focus(&self.inspector_activity_focus),
                 InspectorFocusTarget::SelectedTab => {
-                    if self.inspector_tab == InspectorTab::Terminal {
+                    if self.inspector_tab == InspectorTab::Terminal
+                        && self.projection.terminal.session_id.is_some()
+                    {
                         window.focus(&self.terminal_input.read(cx).focus_handle(cx));
+                    } else if let Some(tab) = self.panel_tabs().into_iter().find(|tab| tab.selected)
+                    {
+                        let focus = self
+                            .inspector_item_focus
+                            .entry(tab.id)
+                            .or_insert_with(|| cx.focus_handle().tab_stop(true))
+                            .clone();
+                        window.focus(&focus);
                     } else {
                         window.focus(&self.inspector_panel_focus);
                     }
@@ -4824,6 +5005,7 @@ impl Render for AppView {
             .key_context("AppView")
             .track_focus(&self.focus_handle)
             .child(components::focus_ring::track_pointer_input())
+            .child(self.browser_pointer_focus())
             .capture_key_down(components::focus_ring::key_down)
             .flex()
             .size_full()
@@ -4953,12 +5135,16 @@ mod tests {
         assert!(actions.contains(&"ApproveForRun"));
         assert!(actions.contains(&"Deny"));
         assert!(actions.contains(&"CancelRun"));
-        assert!(APP_VIEW_KEYBINDINGS
-            .iter()
-            .any(|(key, action)| *key == "cmd-." && *action == "CancelRun"));
-        assert!(APP_VIEW_KEYBINDINGS
-            .iter()
-            .any(|(key, action)| *key == "cmd-enter" && *action == "ApproveOnce"));
+        assert!(
+            APP_VIEW_KEYBINDINGS
+                .iter()
+                .any(|(key, action)| *key == "cmd-." && *action == "CancelRun")
+        );
+        assert!(
+            APP_VIEW_KEYBINDINGS
+                .iter()
+                .any(|(key, action)| *key == "cmd-enter" && *action == "ApproveOnce")
+        );
         for (key, action) in [
             ("cmd-=", "IncreaseTextSize"),
             ("cmd-+", "IncreaseTextSize"),

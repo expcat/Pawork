@@ -1,0 +1,18 @@
+[package]
+name = "pawork-browser"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
+description = "System WebView and manual browser navigation"
+
+[dependencies]
+url.workspace = true
+raw-window-handle = "0.6"
+serde_json.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+cocoa = "=0.26.0"
+objc = "0.2"
+block = "0.1"

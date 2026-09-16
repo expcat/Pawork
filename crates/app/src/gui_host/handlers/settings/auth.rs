@@ -9,7 +9,7 @@ use serde_json::json;
 
 use crate::gui_host::GuiHostAdapter;
 use crate::gui_server::GuiHostError;
-use crate::{channels, AppError, OAuthLogin};
+use crate::{AppError, OAuthLogin, channels};
 
 use super::{
     cancel_oauth_flight_if_present, flight_begin, flight_end, iso8601_utc, now_millis,
@@ -466,7 +466,10 @@ pub(crate) async fn auth_remove(
                         format!("provider {id} has no stored credential"),
                     )
                 } else {
-                    GuiHostAdapter::host_error("unsupported", "credential comes from PAWORK_API_KEY_* env; unset the variable to disconnect")
+                    GuiHostAdapter::host_error(
+                        "unsupported",
+                        "credential comes from PAWORK_API_KEY_* env; unset the variable to disconnect",
+                    )
                 });
             }
             pawork_auth::remove_all_provider_accounts(backend.as_ref(), provider_id)

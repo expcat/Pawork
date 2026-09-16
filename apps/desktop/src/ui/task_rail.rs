@@ -5,8 +5,8 @@
 //! 150% 任务行 36px；标题截断右侧渐隐。几何常量与 AX 树共享 theme::metrics。
 
 use gpui::{
-    div, linear_color_stop, linear_gradient, point, prelude::*, px, AnyElement, ClickEvent,
-    Context, Corner, FontWeight, KeyDownEvent, Pixels, Point, Rgba, SharedString, Window,
+    AnyElement, ClickEvent, Context, Corner, FontWeight, KeyDownEvent, Pixels, Point, Rgba,
+    SharedString, Window, div, linear_color_stop, linear_gradient, point, prelude::*, px,
 };
 
 use crate::projection::{
@@ -14,7 +14,7 @@ use crate::projection::{
 };
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
 use crate::ui::components::dropdown::{Dropdown, MenuPanel, MenuRow};
-use crate::ui::components::icon::{icon, icon_sized, Icon};
+use crate::ui::components::icon::{Icon, icon, icon_sized};
 use crate::ui::components::label::Label;
 use crate::ui::components::list_row::ListRow;
 use crate::ui::components::panel::Panel;
@@ -22,8 +22,8 @@ use crate::ui::i18n::t;
 use crate::ui::theme::{dark, font, metrics};
 
 use super::{
-    now_unix_ms, rail_project_key, rail_session_archive_focus_key, rail_session_focus_key,
-    rail_session_rename_focus_key, shell_layout, AppView, MenuKind, RailStop,
+    AppView, MenuKind, RailStop, now_unix_ms, rail_project_key, rail_session_archive_focus_key,
+    rail_session_focus_key, rail_session_rename_focus_key, shell_layout,
 };
 
 enum RailView {

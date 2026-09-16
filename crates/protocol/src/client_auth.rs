@@ -321,9 +321,11 @@ mod tests {
         let store = TokenStore::new(temp.path().join("gui.token"));
         let token = store.generate().expect("generate");
         let authenticator = TokenAuthenticator::new(store);
-        assert!(authenticator
-            .authenticate(&authentication(TOKEN_SCHEME, token.as_str()))
-            .is_ok());
+        assert!(
+            authenticator
+                .authenticate(&authentication(TOKEN_SCHEME, token.as_str()))
+                .is_ok()
+        );
     }
 
     #[test]

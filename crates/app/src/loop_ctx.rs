@@ -4,8 +4,8 @@
 //! 给 scheduler，避免 S2「Allow 后再 resolve」钩子把只读工具也弹出来。
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use async_trait::async_trait;
 use pawork_domain::{
@@ -16,8 +16,8 @@ use pawork_domain::{
     ToolError, ToolEventSink, ToolExecutionContext, ToolRequest, ToolResult, ToolStreamEvent,
 };
 use pawork_engine::{
-    now_timestamp, ApprovalGate, AutoCompactionReason, CompactionOutcome, LoopContext,
-    LoopEventEmitter, PendingToolInvocation, ToolCallResult, WriteCheckpoint,
+    ApprovalGate, AutoCompactionReason, CompactionOutcome, LoopContext, LoopEventEmitter,
+    PendingToolInvocation, ToolCallResult, WriteCheckpoint, now_timestamp,
 };
 use pawork_policy::{
     ApprovalMode, ApprovalPrompt, PolicyDecision, PolicyEngine, PolicyInput, RiskLevel,
@@ -30,8 +30,8 @@ use pawork_storage::session::{
 use pawork_tools::ToolScheduler;
 
 use crate::approval::{
-    preview_for_tool, relative_path_from_input, ApprovalAsk, ApprovalPromptHost,
-    PreApprovedResolver,
+    ApprovalAsk, ApprovalPromptHost, PreApprovedResolver, preview_for_tool,
+    relative_path_from_input,
 };
 use crate::checkpoint;
 
@@ -82,33 +82,31 @@ impl LoopContext for SessionLoopCtx<'_> {
         events: LoopEventEmitter<'_>,
         cancel: CancellationToken,
     ) -> Vec<ToolCallResult> {
-        let jobs = calls.into_iter().map(|call| {
-            let scheduler = self.scheduler.clone();
-            let workspace_id = self.workspace_id.clone();
-            let run_id = self.run_id.clone();
-            let events = events.clone();
-            let cancel = cancel.clone();
-            let policy = self.policy.clone();
-            let approval_mode = self.approval_mode;
-            let workspace_trusted = self.workspace_trusted;
-            let descriptors = self.descriptors.clone();
-            async move {
-                execute_one(
-                    &scheduler,
-                    workspace_id,
-                    run_id,
-                    call,
-                    events,
-                    cancel,
-                    &policy,
-                    approval_mode,
-                    workspace_trusted,
-                    &descriptors,
-                )
-                .await
+        let mut results = Vec::with_capacity(calls.len());
+        let mut calls = calls.into_iter();
+        let Some(first) = calls.next() else {
+            return results;
+        };
+        let mut batch = vec![first];
+        for call in calls {
+            if self.is_serial(&call) {
+                results.extend(
+                    self.execute_batch(std::mem::take(&mut batch), events.clone(), cancel.clone())
+                        .await,
+                );
+                batch.push(call);
+                results.extend(
+                    self.execute_batch(std::mem::take(&mut batch), events.clone(), cancel.clone())
+                        .await,
+                );
+            } else {
+                batch.push(call);
             }
-        });
-        futures::future::join_all(jobs).await
+        }
+        if !batch.is_empty() {
+            results.extend(self.execute_batch(batch, events, cancel.clone()).await);
+        }
+        results
     }
 
     async fn request_approval(
@@ -328,6 +326,50 @@ impl LoopContext for SessionLoopCtx<'_> {
             cancel,
         )
         .await
+    }
+}
+
+impl SessionLoopCtx<'_> {
+    fn is_serial(&self, call: &PendingToolInvocation) -> bool {
+        self.descriptors
+            .iter()
+            .find(|item| item.name == call.name)
+            .is_some_and(|descriptor| !descriptor.supports_concurrency)
+    }
+
+    async fn execute_batch(
+        &self,
+        calls: Vec<PendingToolInvocation>,
+        events: LoopEventEmitter<'_>,
+        cancel: CancellationToken,
+    ) -> Vec<ToolCallResult> {
+        let jobs = calls.into_iter().map(|call| {
+            let scheduler = self.scheduler.clone();
+            let workspace_id = self.workspace_id.clone();
+            let run_id = self.run_id.clone();
+            let events = events.clone();
+            let cancel = cancel.clone();
+            let policy = self.policy.clone();
+            let approval_mode = self.approval_mode;
+            let workspace_trusted = self.workspace_trusted;
+            let descriptors = self.descriptors.clone();
+            async move {
+                execute_one(
+                    &scheduler,
+                    workspace_id,
+                    run_id,
+                    call,
+                    events,
+                    cancel,
+                    &policy,
+                    approval_mode,
+                    workspace_trusted,
+                    &descriptors,
+                )
+                .await
+            }
+        });
+        futures::future::join_all(jobs).await
     }
 }
 

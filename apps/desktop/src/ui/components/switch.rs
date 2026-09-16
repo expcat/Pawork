@@ -11,8 +11,8 @@ use std::collections::HashSet;
 use std::sync::Mutex;
 
 use gpui::{
-    div, prelude::*, px, Animation, AnimationExt, App, ClickEvent, FocusHandle, IntoElement,
-    KeyDownEvent, RenderOnce, SharedString, Window,
+    Animation, AnimationExt, App, ClickEvent, FocusHandle, IntoElement, KeyDownEvent, RenderOnce,
+    SharedString, Window, div, prelude::*, px,
 };
 
 use crate::ui::components::focus_ring::focus_ring;

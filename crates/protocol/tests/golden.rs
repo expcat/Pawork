@@ -10,17 +10,17 @@ use pawork_domain::{
 };
 use pawork_protocol::DefaultModelPair;
 use pawork_protocol::{
-    encode_client_frame, encode_server_frame, AppQuery, AppQueryEnvelope, AppResponse,
-    AppResponseEnvelope, ArtifactChunk, ArtifactReadRequest, ClientAuthentication, ClientFrame,
-    GuiCapability, HandshakeRequest, HandshakeResponse, ProtocolError, ProtocolErrorCode,
-    ProtocolErrorEnvelope, ResumeDisposition, ResumeRequest, ResumeResponse, ServerFrame, Snapshot,
-    SnapshotSection, SnapshotSectionKind, SubscribeRequest, TimelineItem, TimelineItemKind,
-    TimelinePage, WorkspaceRelativePath,
-};
-use pawork_protocol::{
     ActorIdentity, ApiHandle, ApiKeySecret, AppCommand, AppCommandEnvelope, AppEvent,
     AppEventEnvelope, AuthChangeState, CommandSource, EventSource, EventStream, GlobalSequence,
-    RunState, API_VERSION,
+    RunState, V1_17, V1_18,
+};
+use pawork_protocol::{
+    AppQuery, AppQueryEnvelope, AppResponse, AppResponseEnvelope, ArtifactChunk,
+    ArtifactReadRequest, ClientAuthentication, ClientFrame, GuiCapability, HandshakeRequest,
+    HandshakeResponse, ProtocolError, ProtocolErrorCode, ProtocolErrorEnvelope, ResumeDisposition,
+    ResumeRequest, ResumeResponse, ServerFrame, Snapshot, SnapshotSection, SnapshotSectionKind,
+    SubscribeRequest, TimelineItem, TimelineItemKind, TimelinePage, WorkspaceRelativePath,
+    encode_client_frame, encode_server_frame,
 };
 use serde_json::Value;
 
@@ -75,7 +75,7 @@ fn client_handshake_frame() -> ClientFrame {
 
 fn client_command_frame() -> ClientFrame {
     ClientFrame::Command(AppCommandEnvelope {
-        api_version: API_VERSION,
+        api_version: V1_17,
         command_id: CommandId::from("command-1"),
         source: CommandSource::RemoteGui {
             client_id: GuiClientId::from("gui-1"),
@@ -98,10 +98,10 @@ fn client_command_frame() -> ClientFrame {
 fn server_handshake_accepted_frame() -> ServerFrame {
     ServerFrame::Handshake(HandshakeResponse::Accepted {
         request_id: "request-1".into(),
-        selected_api_version: API_VERSION,
+        selected_api_version: V1_17,
         handle: ApiHandle {
             instance_id: CoreInstanceId::from("instance-1"),
-            api_version: API_VERSION,
+            api_version: V1_17,
         },
         client_id: GuiClientId::from("gui-1"),
         connection_id: ConnectionId::from("connection-1"),
@@ -127,7 +127,7 @@ fn server_handshake_rejected_frame() -> ServerFrame {
 
 fn server_event_frame() -> ServerFrame {
     ServerFrame::Event(AppEventEnvelope {
-        api_version: API_VERSION,
+        api_version: V1_17,
         instance_id: CoreInstanceId::from("instance-1"),
         event_id: EventId::from("event-1"),
         global_sequence: GlobalSequence(1),
@@ -176,8 +176,15 @@ fn server_error_frame() -> ServerFrame {
 }
 
 fn client_terminal_command_frame(command: AppCommand) -> ClientFrame {
+    client_terminal_command_frame_at(command, V1_17)
+}
+
+fn client_terminal_command_frame_at(
+    command: AppCommand,
+    api_version: pawork_protocol::ApiVersion,
+) -> ClientFrame {
     ClientFrame::Command(AppCommandEnvelope {
-        api_version: API_VERSION,
+        api_version,
         command_id: CommandId::from("command-terminal-1"),
         source: CommandSource::RemoteGui {
             client_id: GuiClientId::from("gui-1"),
@@ -196,7 +203,7 @@ fn client_terminal_command_frame(command: AppCommand) -> ClientFrame {
 
 fn client_auth_command_frame(command: AppCommand) -> ClientFrame {
     ClientFrame::Command(AppCommandEnvelope {
-        api_version: API_VERSION,
+        api_version: V1_17,
         command_id: CommandId::from("command-auth-1"),
         source: CommandSource::RemoteGui {
             client_id: GuiClientId::from("gui-1"),
@@ -287,7 +294,7 @@ fn golden_opt2_session_lifecycle_frames() {
     assert_golden(
         "server_event_session_meta_changed.json",
         encode_server(&ServerFrame::Event(AppEventEnvelope {
-            api_version: API_VERSION,
+            api_version: V1_17,
             instance_id: CoreInstanceId::from("instance-1"),
             event_id: EventId::from("event-meta-1"),
             global_sequence: GlobalSequence(21),
@@ -306,7 +313,7 @@ fn golden_opt2_session_lifecycle_frames() {
 
 fn session_get_timeline_frame() -> ClientFrame {
     ClientFrame::Query(AppQueryEnvelope {
-        api_version: API_VERSION,
+        api_version: V1_17,
         request_id: pawork_domain::QueryId::from("query-timeline"),
         source: CommandSource::LocalGui {
             client_id: GuiClientId::from("gui-1"),
@@ -499,7 +506,7 @@ fn golden_additional_server_frames() {
     assert_golden(
         "server_response.json",
         encode_server(&ServerFrame::Response(AppResponseEnvelope {
-            api_version: API_VERSION,
+            api_version: V1_17,
             request_id: pawork_domain::QueryId::from("query-1"),
             responded_at: Timestamp::from_unix_millis(3),
             response: AppResponse::Data(serde_json::json!({"workspaces": []})),
@@ -508,7 +515,7 @@ fn golden_additional_server_frames() {
     assert_golden(
         "server_response_terminal_create.json",
         encode_server(&ServerFrame::Response(AppResponseEnvelope {
-            api_version: API_VERSION,
+            api_version: V1_17,
             request_id: pawork_domain::QueryId::from("query-1"),
             responded_at: Timestamp::from_unix_millis(3),
             response: AppResponse::Data(serde_json::json!({
@@ -523,7 +530,7 @@ fn golden_additional_server_frames() {
     assert_golden(
         "server_event_terminal_output.json",
         encode_server(&ServerFrame::Event(AppEventEnvelope {
-            api_version: API_VERSION,
+            api_version: V1_17,
             instance_id: CoreInstanceId::from("instance-1"),
             event_id: EventId::from("event-1"),
             global_sequence: GlobalSequence(1),
@@ -540,7 +547,7 @@ fn golden_additional_server_frames() {
     assert_golden(
         "server_event_terminal_exited.json",
         encode_server(&ServerFrame::Event(AppEventEnvelope {
-            api_version: API_VERSION,
+            api_version: V1_17,
             instance_id: CoreInstanceId::from("instance-1"),
             event_id: EventId::from("event-2"),
             global_sequence: GlobalSequence(2),
@@ -606,10 +613,10 @@ fn golden_additional_server_frames() {
         "server_handshake_accepted_up_to_date.json",
         encode_server(&ServerFrame::Handshake(HandshakeResponse::Accepted {
             request_id: "request-1".into(),
-            selected_api_version: API_VERSION,
+            selected_api_version: V1_17,
             handle: ApiHandle {
                 instance_id: CoreInstanceId::from("instance-1"),
-                api_version: API_VERSION,
+                api_version: V1_17,
             },
             client_id: GuiClientId::from("gui-1"),
             connection_id: ConnectionId::from("connection-1"),
@@ -662,7 +669,7 @@ fn golden_auth_provider_slices() {
     assert_golden(
         "provider_auth_status.json",
         encode_client(&ClientFrame::Query(AppQueryEnvelope {
-            api_version: API_VERSION,
+            api_version: V1_17,
             request_id: pawork_domain::QueryId::from("query-auth-status"),
             source: CommandSource::LocalGui {
                 client_id: GuiClientId::from("gui-1"),
@@ -680,7 +687,7 @@ fn golden_auth_provider_slices() {
     assert_golden(
         "server_event_auth_changed.json",
         encode_server(&ServerFrame::Event(AppEventEnvelope {
-            api_version: API_VERSION,
+            api_version: V1_17,
             instance_id: CoreInstanceId::from("instance-1"),
             event_id: EventId::from("event-auth-1"),
             global_sequence: GlobalSequence(1),
@@ -702,7 +709,7 @@ fn golden_auth_provider_slices() {
     assert_golden(
         "server_response_provider_auth_status.json",
         encode_server(&ServerFrame::Response(AppResponseEnvelope {
-            api_version: API_VERSION,
+            api_version: V1_17,
             request_id: pawork_domain::QueryId::from("query-auth-status"),
             responded_at: Timestamp::from_unix_millis(3),
             response: AppResponse::Data(serde_json::json!({
@@ -743,7 +750,7 @@ fn golden_auth_provider_slices() {
     assert_golden(
         "server_response_auth_set_api_key.json",
         encode_server(&ServerFrame::Response(AppResponseEnvelope {
-            api_version: API_VERSION,
+            api_version: V1_17,
             request_id: pawork_domain::QueryId::from("query-auth-status"),
             responded_at: Timestamp::from_unix_millis(3),
             response: AppResponse::Data(serde_json::json!({
@@ -763,7 +770,7 @@ fn golden_general_settings_slices() {
     assert_golden(
         "general_settings.json",
         encode_client(&ClientFrame::Query(AppQueryEnvelope {
-            api_version: API_VERSION,
+            api_version: V1_17,
             request_id: pawork_domain::QueryId::from("query-general-settings"),
             source: CommandSource::LocalGui {
                 client_id: GuiClientId::from("gui-1"),
@@ -800,7 +807,7 @@ fn golden_general_settings_slices() {
     assert_golden(
         "server_response_general_settings.json",
         encode_server(&ServerFrame::Response(AppResponseEnvelope {
-            api_version: API_VERSION,
+            api_version: V1_17,
             request_id: pawork_domain::QueryId::from("query-general-settings"),
             responded_at: Timestamp::from_unix_millis(3),
             response: AppResponse::Data(serde_json::json!({
@@ -811,7 +818,7 @@ fn golden_general_settings_slices() {
     assert_golden(
         "server_response_set_proxy_url.json",
         encode_server(&ServerFrame::Response(AppResponseEnvelope {
-            api_version: API_VERSION,
+            api_version: V1_17,
             request_id: pawork_domain::QueryId::from("query-set-proxy-url"),
             responded_at: Timestamp::from_unix_millis(3),
             response: AppResponse::Data(serde_json::json!({
@@ -822,7 +829,7 @@ fn golden_general_settings_slices() {
     assert_golden(
         "server_response_set_provider_use_proxy.json",
         encode_server(&ServerFrame::Response(AppResponseEnvelope {
-            api_version: API_VERSION,
+            api_version: V1_17,
             request_id: pawork_domain::QueryId::from("query-set-provider-use-proxy"),
             responded_at: Timestamp::from_unix_millis(3),
             response: AppResponse::Data(serde_json::json!({
@@ -839,7 +846,7 @@ fn golden_permissions_settings_slices() {
     assert_golden(
         "permissions_settings.json",
         encode_client(&ClientFrame::Query(AppQueryEnvelope {
-            api_version: API_VERSION,
+            api_version: V1_17,
             request_id: pawork_domain::QueryId::from("query-permissions-settings"),
             source: CommandSource::LocalGui {
                 client_id: GuiClientId::from("gui-1"),
@@ -868,7 +875,7 @@ fn golden_permissions_settings_slices() {
     assert_golden(
         "server_response_permissions_settings.json",
         encode_server(&ServerFrame::Response(AppResponseEnvelope {
-            api_version: API_VERSION,
+            api_version: V1_17,
             request_id: pawork_domain::QueryId::from("query-permissions-settings"),
             responded_at: Timestamp::from_unix_millis(3),
             response: AppResponse::Data(serde_json::json!({
@@ -882,7 +889,7 @@ fn golden_permissions_settings_slices() {
     assert_golden(
         "server_response_permissions_settings_trust_global.json",
         encode_server(&ServerFrame::Response(AppResponseEnvelope {
-            api_version: API_VERSION,
+            api_version: V1_17,
             request_id: pawork_domain::QueryId::from("query-permissions-settings"),
             responded_at: Timestamp::from_unix_millis(3),
             response: AppResponse::Data(serde_json::json!({
@@ -896,7 +903,7 @@ fn golden_permissions_settings_slices() {
     assert_golden(
         "server_response_set_approval_mode.json",
         encode_server(&ServerFrame::Response(AppResponseEnvelope {
-            api_version: API_VERSION,
+            api_version: V1_17,
             request_id: pawork_domain::QueryId::from("query-set-approval-mode"),
             responded_at: Timestamp::from_unix_millis(3),
             response: AppResponse::Data(serde_json::json!({
@@ -907,7 +914,7 @@ fn golden_permissions_settings_slices() {
     assert_golden(
         "server_response_workspace_trust.json",
         encode_server(&ServerFrame::Response(AppResponseEnvelope {
-            api_version: API_VERSION,
+            api_version: V1_17,
             request_id: pawork_domain::QueryId::from("query-workspace-trust"),
             responded_at: Timestamp::from_unix_millis(3),
             response: AppResponse::Data(serde_json::json!({
@@ -939,7 +946,7 @@ fn golden_mcp_settings_slices() {
     assert_golden(
         "server_response_mcp_test.json",
         encode_server(&ServerFrame::Response(AppResponseEnvelope {
-            api_version: API_VERSION,
+            api_version: V1_17,
             request_id: pawork_domain::QueryId::from("query-mcp-test"),
             responded_at: Timestamp::from_unix_millis(3),
             response: AppResponse::Data(serde_json::json!({
@@ -956,7 +963,7 @@ fn golden_mcp_settings_slices() {
     assert_golden(
         "server_response_mcp_server_remove.json",
         encode_server(&ServerFrame::Response(AppResponseEnvelope {
-            api_version: API_VERSION,
+            api_version: V1_17,
             request_id: pawork_domain::QueryId::from("query-mcp-server-remove"),
             responded_at: Timestamp::from_unix_millis(3),
             response: AppResponse::Data(serde_json::json!({
@@ -977,7 +984,7 @@ fn golden_terminal_settings_slices() {
     assert_golden(
         "terminal_settings.json",
         encode_client(&ClientFrame::Query(AppQueryEnvelope {
-            api_version: API_VERSION,
+            api_version: V1_17,
             request_id: pawork_domain::QueryId::from("query-terminal-settings"),
             source: CommandSource::LocalGui {
                 client_id: GuiClientId::from("gui-1"),
@@ -1013,7 +1020,7 @@ fn golden_terminal_settings_slices() {
     assert_golden(
         "server_response_terminal_settings.json",
         encode_server(&ServerFrame::Response(AppResponseEnvelope {
-            api_version: API_VERSION,
+            api_version: V1_17,
             request_id: pawork_domain::QueryId::from("query-terminal-settings"),
             responded_at: Timestamp::from_unix_millis(3),
             response: AppResponse::Data(serde_json::json!({
@@ -1026,7 +1033,7 @@ fn golden_terminal_settings_slices() {
     assert_golden(
         "server_response_set_terminal_settings.json",
         encode_server(&ServerFrame::Response(AppResponseEnvelope {
-            api_version: API_VERSION,
+            api_version: V1_17,
             request_id: pawork_domain::QueryId::from("query-set-terminal-settings"),
             responded_at: Timestamp::from_unix_millis(3),
             response: AppResponse::Data(serde_json::json!({
@@ -1086,7 +1093,7 @@ fn golden_opt3_model_enablement_slices() {
     assert_golden(
         "model_list.json",
         encode_client(&ClientFrame::Query(AppQueryEnvelope {
-            api_version: API_VERSION,
+            api_version: V1_17,
             request_id: pawork_domain::QueryId::from("query-model-list"),
             source: CommandSource::LocalGui {
                 client_id: GuiClientId::from("gui-1"),
@@ -1105,7 +1112,7 @@ fn golden_opt3_model_enablement_slices() {
     assert_golden(
         "model_list_include_disabled.json",
         encode_client(&ClientFrame::Query(AppQueryEnvelope {
-            api_version: API_VERSION,
+            api_version: V1_17,
             request_id: pawork_domain::QueryId::from("query-model-list-include-disabled"),
             source: CommandSource::LocalGui {
                 client_id: GuiClientId::from("gui-1"),
@@ -1272,5 +1279,59 @@ fn golden_percent_quota_payloads() {
             },
         })
         .unwrap(),
+    );
+}
+
+#[test]
+fn golden_browser_control_frames() {
+    assert_golden(
+        "client_query_browser_next.json",
+        encode_client(&ClientFrame::Query(AppQueryEnvelope {
+            api_version: V1_18,
+            request_id: pawork_domain::QueryId::from("query-browser-next"),
+            source: CommandSource::LocalGui {
+                client_id: GuiClientId::from("gui-1"),
+            },
+            identity: ActorIdentity::LocalUser {
+                actor_id: pawork_domain::ActorId::from("actor-1"),
+                display_name: None,
+            },
+            issued_at: Timestamp::from_unix_millis(1),
+            query: AppQuery::BrowserNext {
+                session_id: pawork_domain::SessionId::from("session-1"),
+                run_id: pawork_domain::RunId::from("run-1"),
+            },
+        })),
+    );
+    assert_golden(
+        "client_command_browser_respond.json",
+        encode_client(&client_terminal_command_frame_at(
+            AppCommand::BrowserRespond {
+                request_id: "browser-1".into(),
+                result: serde_json::json!({"ok": true, "data": {"url": "https://example.com"}}),
+            },
+            V1_18,
+        )),
+    );
+    assert_golden(
+        "server_response_browser_next.json",
+        encode_server(&ServerFrame::Response(AppResponseEnvelope {
+            api_version: V1_18,
+            request_id: pawork_domain::QueryId::from("query-browser-next"),
+            responded_at: Timestamp::from_unix_millis(3),
+            response: AppResponse::Data(serde_json::json!({
+                "request_id": "browser-1",
+                "action": {"action": "read"}
+            })),
+        })),
+    );
+    assert_golden(
+        "server_response_browser_next_empty.json",
+        encode_server(&ServerFrame::Response(AppResponseEnvelope {
+            api_version: V1_18,
+            request_id: pawork_domain::QueryId::from("query-browser-next"),
+            responded_at: Timestamp::from_unix_millis(3),
+            response: AppResponse::Data(serde_json::Value::Null),
+        })),
     );
 }

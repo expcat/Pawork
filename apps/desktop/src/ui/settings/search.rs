@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use gpui::{point, px, Context, Focusable, KeyDownEvent, SharedString, Window};
+use gpui::{Context, Focusable, KeyDownEvent, SharedString, Window, point, px};
 
 use super::*;
 use crate::projection::ConnectionState;
@@ -746,16 +746,18 @@ impl AppView {
         cx: &gpui::App,
         search_rect: AxRect,
     ) -> Vec<AxNode> {
-        let mut nodes = vec![AxNode::new(
-            "settings-search-input",
-            AxRole::TextArea,
-            t("settings.search.placeholder"),
-            search_rect,
-        )
-        .value(self.settings_search_input.read(cx).text())
-        .focused(self.settings_search_focus.is_focused(window))
-        .action(AxAction::Focus)
-        .action(AxAction::SetValue)];
+        let mut nodes = vec![
+            AxNode::new(
+                "settings-search-input",
+                AxRole::TextArea,
+                t("settings.search.placeholder"),
+                search_rect,
+            )
+            .value(self.settings_search_input.read(cx).text())
+            .focused(self.settings_search_focus.is_focused(window))
+            .action(AxAction::Focus)
+            .action(AxAction::SetValue),
+        ];
         if !self.settings_search_query_active() {
             return nodes;
         }
@@ -799,33 +801,51 @@ mod tests {
     #[test]
     fn settings_search_entries_cover_required_topics_aliases_and_case() {
         let entries = settings_search_entries();
-        assert!(entries
-            .iter()
-            .any(|e| e.page == SettingsPage::Appearance && e.matches("字号")));
-        assert!(entries
-            .iter()
-            .any(|e| e.page == SettingsPage::Appearance && e.matches("FONT SIZE")));
-        assert!(entries
-            .iter()
-            .any(|e| e.page == SettingsPage::Providers && e.matches("模型")));
-        assert!(entries
-            .iter()
-            .any(|e| e.page == SettingsPage::Providers && e.matches("model")));
-        assert!(entries
-            .iter()
-            .any(|e| e.page == SettingsPage::General && e.matches("代理")));
-        assert!(entries
-            .iter()
-            .any(|e| e.page == SettingsPage::General && e.matches("Proxy")));
-        assert!(entries
-            .iter()
-            .any(|e| e.page == SettingsPage::Permissions && e.matches("审批")));
-        assert!(entries
-            .iter()
-            .any(|e| e.page == SettingsPage::Permissions && e.matches("approval")));
-        assert!(entries
-            .iter()
-            .any(|e| e.kind == SettingsSearchKind::Page && e.page == SettingsPage::Providers));
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.page == SettingsPage::Appearance && e.matches("字号"))
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.page == SettingsPage::Appearance && e.matches("FONT SIZE"))
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.page == SettingsPage::Providers && e.matches("模型"))
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.page == SettingsPage::Providers && e.matches("model"))
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.page == SettingsPage::General && e.matches("代理"))
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.page == SettingsPage::General && e.matches("Proxy"))
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.page == SettingsPage::Permissions && e.matches("审批"))
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.page == SettingsPage::Permissions && e.matches("approval"))
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.kind == SettingsSearchKind::Page && e.page == SettingsPage::Providers)
+        );
         assert_eq!(
             entries
                 .iter()

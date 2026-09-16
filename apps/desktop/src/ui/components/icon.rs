@@ -3,7 +3,7 @@
 
 use std::borrow::Cow;
 
-use gpui::{prelude::*, px, svg, AssetSource, Pixels, SharedString, Svg};
+use gpui::{AssetSource, Pixels, SharedString, Svg, prelude::*, px, svg};
 
 use crate::ui::theme::{dark, metrics};
 
@@ -12,6 +12,7 @@ use crate::ui::theme::{dark, metrics};
 pub enum Icon {
     Send,
     Cancel,
+    Warning,
     Search,
     Find,
     Plus,
@@ -59,6 +60,7 @@ impl Icon {
         match self {
             Self::Send => "icons/send.svg",
             Self::Cancel => "icons/cancel.svg",
+            Self::Warning => "icons/warning.svg",
             Self::Search => "icons/search.svg",
             Self::Find => "icons/find.svg",
             Self::Plus => "icons/plus.svg",
@@ -105,6 +107,7 @@ impl Icon {
         &[
             Self::Send,
             Self::Cancel,
+            Self::Warning,
             Self::Search,
             Self::Find,
             Self::Plus,
@@ -172,6 +175,7 @@ fn icon_bytes(path: &str) -> Option<&'static [u8]> {
     Some(match path {
         "icons/send.svg" => include_bytes!("../../../assets/icons/send.svg").as_slice(),
         "icons/cancel.svg" => include_bytes!("../../../assets/icons/cancel.svg").as_slice(),
+        "icons/warning.svg" => include_bytes!("../../../assets/icons/warning.svg").as_slice(),
         "icons/search.svg" => include_bytes!("../../../assets/icons/search.svg").as_slice(),
         "icons/find.svg" => include_bytes!("../../../assets/icons/find.svg").as_slice(),
         "icons/plus.svg" => include_bytes!("../../../assets/icons/plus.svg").as_slice(),

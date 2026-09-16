@@ -1,10 +1,10 @@
 //! MCP capability bridge.
 //!
 //! Discovers tools from a connected [`McpPeer`], adapts each MCP tool into a
-//! canonical [`AgentTool`] registered under a server namespace (`{server}.{tool}`),
-//! and gates invocation with workspace/tool allowlists, non-object input
-//! rejection, and output / structuredContent budgets. Runtime approval is left
-//! to ToolScheduler.
+//! canonical [`AgentTool`] registered under a server namespace (`{server}_{tool}`,
+//! provider-safe charset), and gates invocation with workspace/tool allowlists,
+//! non-object input rejection, and output / structuredContent budgets. Runtime
+//! approval is left to ToolScheduler.
 
 use std::sync::Arc;
 
@@ -24,9 +24,22 @@ use crate::mcp::codec::apply_tool_result_budget;
 use crate::mcp::config::McpPermissions;
 use crate::mcp::{McpError, McpPeer, McpToolCall, McpToolInfo};
 
-/// Build a namespaced tool name: `{server}.{tool}`.
+/// Build a namespaced tool name from `{server}.{tool}`.
+///
+/// Provider APIs (OpenAI / Anthropic / opencode-go upstreams) reject tool names
+/// outside `[A-Za-z0-9_-]` with HTTP 400, so the separator and every unsafe
+/// character collapse to `_` (2026-09-16: `echo.echo` rejected upstream).
 pub fn namespaced_name(server: &str, tool: &str) -> String {
     format!("{server}.{tool}")
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 /// Snapshot of tools advertised by a peer.
@@ -387,6 +400,13 @@ mod tests {
             .expect("adapter execute")
     }
 
+    #[test]
+    fn namespaced_name_collapses_provider_unsafe_characters() {
+        assert_eq!(namespaced_name("echo", "echo"), "echo_echo");
+        assert_eq!(namespaced_name("my srv", "a.b/c d"), "my_srv_a_b_c_d");
+        assert_eq!(namespaced_name("ok-srv_1", "tool-2_x"), "ok-srv_1_tool-2_x");
+    }
+
     #[tokio::test]
     async fn discovery_and_registration_namespace_tools() {
         let peer = Arc::new(make_peer(true, "ok"));
@@ -403,8 +423,8 @@ mod tests {
         .expect("register");
 
         assert_eq!(descriptors.len(), 1);
-        assert_eq!(descriptors[0].name, "github.search");
-        assert_eq!(registry.descriptors()[0].name, "github.search");
+        assert_eq!(descriptors[0].name, "github_search");
+        assert_eq!(registry.descriptors()[0].name, "github_search");
         assert_eq!(registry.len(), 1);
     }
 

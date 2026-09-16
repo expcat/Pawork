@@ -1,8 +1,8 @@
 //! 事件订阅：有界通道 + 背压策略。
 
 use pawork_protocol::AppEventEnvelope;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tokio::sync::mpsc;
 
 use crate::headless::error::{SdkError, SdkErrorKind};

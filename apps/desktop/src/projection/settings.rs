@@ -8,8 +8,8 @@ use serde_json::Value;
 
 use crate::ui::i18n::t;
 
-use super::session::ModelEntry;
 use super::DesktopProjection;
+use super::session::ModelEntry;
 
 pub use pawork_client::{
     ApprovalModeWire, AuthStartData, DefaultModelPair, GeneralSettingsData,
