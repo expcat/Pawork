@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-# 21 库平铺 crates/<短名> + 2 应用 apps/{pawork,desktop}；members 23。
+# 22 库平铺 crates/<短名> + 2 应用 apps/{pawork,desktop}；members 24。
 members = [
     "crates/*",
     "apps/*",

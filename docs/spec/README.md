@@ -46,6 +46,7 @@
 | [crates/cli.md](crates/cli.md) | `pawork-cli` | 21 子命令 + REPL + headless + ACP host |
 | [crates/client.md](crates/client.md) | `pawork-client` | GuiClient framed 连接面 + headless SDK + probe |
 | [crates/terminal.md](crates/terminal.md) | `pawork-terminal` | 终端显示核心：行缓冲解析 / SGR 属性分段 / 按键→PTY 字节 / 面板尺寸估算（零依赖纯库） |
+| [crates/computer-use.md](crates/computer-use.md) | `pawork-computer-use` | 独立虚拟桌面观察与输入、坐标转换、一次性观察与取消；无内部依赖 |
 | [crates/browser.md](crates/browser.md) | `pawork-browser` | 系统网页视图、HTTP(S) 导航、状态和生命周期；无内部依赖 |
 | [crates/pawork.md](crates/pawork.md) | `pawork`（bin） | composition root + tracing 全链脱敏 |
 | [crates/desktop.md](crates/desktop.md) | `pawork-desktop`（bin） | GPUI 四层桌面客户端（业务连接经 client，显示依赖 terminal + browser） |

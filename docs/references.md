@@ -735,3 +735,21 @@ Chat Completions 家族统一为 content 数组 `image_url`（data URL / 外部 
 ### D §5 来源
 
 docs.z.ai/devpack（overview / latest-model / web-search / chat-completion）；platform.kimi.ai/docs（models / use-kimi-vision-model / use-web-search / use-official-tools / pricing）；api-docs.deepseek.com（pricing / vision / responses_api）；alibabacloud.com/help/zh/model-studio（token-plan-personal-overview / web-search / qwen-api-via-dashscope）；opencode.ai/docs/go；developers.openai.com（web-search / images-vision）与 learn.chatgpt.com/docs/pricing；xAI / Anthropic 为上文链接的 docs.x.ai / platform.claude.com 官方原文（2026-09-15 复核）。
+
+## Computer use 实现调研（2026-09-17）
+
+**当前方案更新**：用户要求“不影响其它鼠标/键盘操作”后，已移除 macOS 全局 HID 原型，改用容器内 Xvnc 虚拟显示器。下表记录首次源码调研和当时原型取舍，当前实现以 [computer-use Spec](spec/crates/computer-use.md) 为准。
+
+本次实际阅读源码，采用机制重写 Rust 实现，不复制参照项目代码。Anthropic 原仓已跳转为 `anthropics/claude-quickstarts`（本次 main `8826387a`），Peekaboo 已迁到 `openclaw/Peekaboo`（`4d3c92ea`）。
+
+| 参照源码 | 已核实机制 | Pawork 取舍 |
+| --- | --- | --- |
+| Anthropic [computer.py](https://github.com/anthropics/claude-quickstarts/blob/main/computer-use-demo/computer_use_demo/tools/computer.py)、[loop.py](https://github.com/anthropics/claude-quickstarts/blob/main/computer-use-demo/computer_use_demo/loop.py) | Linux 容器 + xdotool；截图缩放后把输入映回原坐标，顺序执行，失败后不继续同组动作；完整 tool result 续接 | 采用截图坐标约定、串行和真实错误；使用 canonical function tool，不引入容器 UI / Python / 厂商专有 toolset |
+| Anthropic [macOS computer](https://github.com/anthropics/claude-quickstarts/blob/main/computer-use-best-practices/computer_use/tools/computer.py)、[image](https://github.com/anthropics/claude-quickstarts/blob/main/computer-use-best-practices/computer_use/image.py)、[preflight](https://github.com/anthropics/claude-quickstarts/blob/main/computer-use-best-practices/computer_use/preflight.py) | Quartz Unicode、Retina logical/physical 转换、返回图尺寸参与映射；预查 Screen Recording / AX | 原生 Rust；不用 pyautogui、剪贴板输入、Playwright 或全局关闭 failsafe |
+| Peekaboo [CaptureGate](https://github.com/openclaw/Peekaboo/blob/4d3c92eaf6e08ad3f17657daa2754b851bc754f4/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/Capture/ScreenCaptureKitCaptureGate.swift)、[CoordinateMapper](https://github.com/openclaw/Peekaboo/blob/4d3c92eaf6e08ad3f17657daa2754b851bc754f4/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/Core/CaptureCoordinateMapper.swift)、[MutationLease](https://github.com/openclaw/Peekaboo/blob/4d3c92eaf6e08ad3f17657daa2754b851bc754f4/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/Support/InMemorySnapshotManager+MutationLease.swift) | ScreenCaptureKit、CGEvent、image_pixels → global_display_points；一次观察只允许一次 mutation；SCK 跨进程 flock | 采用一次性观察；Pawork 首版仅主屏前台操作，进程内串行，无 AX 树/后台窗口点击/跨进程锁 |
+
+Pawork 使用 [SCScreenshotManager](https://developer.apple.com/documentation/screencapturekit/scscreenshotmanager) 的 `captureImageInRect:completionHandler:`（SDK 标记 macOS 15.2+）简化主屏截取；Peekaboo 当前实际调用的是 filter/configuration 版本，两者不能混称同一实现。公开 [openai/codex@da18000c](https://github.com/openai/codex/tree/da18000cae9884ab45f83b2d07fbd5a220a1de39/codex-rs) 本次未定位到桌面 computer-use backend，不把产品介绍当作开源实现。
+
+后续核对 [TigerVNC Xvnc 文档](https://tigervnc.org/doc/Xvnc.html)：Xvnc 自建虚拟 screen，区别于物理桌面共享；`NeverShared` 与 `DisconnectClients=0` 阻止另一 viewer 抢占。采用所附容器部署，应用仅在容器中运行，固定 loopback 端口，禁宿主卷/设备/剪贴板接入。客户端按 [RFC 6143](https://www.rfc-editor.org/info/rfc6143/) 实现受限 RFB 3.8、raw framebuffer、KeyEvent 和 PointerEvent，不实现桌面发现或任意 VNC 连接。名称检查用于防误配，不是安全认证。
+
+[Apple AXUIElementPerformAction](https://developer.apple.com/documentation/applicationservices/1462091-axuielementperformaction) 仅请求对象支持的语义动作，可能不支持或进入应用模态处理；后台 AX 不能保证任意应用/键鼠动作的全面隔离。因此通用 computer use 选择独立显示会话，保留已有 browser 包的产品边界，不靠向前台/指定 pid 投递来承诺无干扰。

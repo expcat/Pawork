@@ -1,10 +1,10 @@
 # pawork-tools
 
-> 工具层：八个内置 Agent 工具（读/列/找/搜/写/改/补丁/命令）、最小调度器（ToolRegistry + ToolScheduler：注册、Policy 闸门、审批解析、并发上限、超时）、MCP 客户端子系统（`mcp/`，rmcp SDK 隔离在 `codec.rs` 单文件）。依赖 domain / policy / exec / workspace / auth，被 `pawork-engine` 与 app 宿主消费。
+> 工具层：九个内置 Agent 工具（读/列/找/搜/写/改/补丁/命令/桌面）、最小调度器（ToolRegistry + ToolScheduler：注册、Policy 闸门、审批解析、并发上限、超时）、MCP 客户端子系统（`mcp/`，rmcp SDK 隔离在 `codec.rs` 单文件）。依赖 domain / policy / exec / workspace / auth / computer-use，被 `pawork-engine` 与 app 宿主消费。
 
 ## 1. 职责与边界
 
-- **内置工具**：八个 `pawork_domain::AgentTool` 实现；一切路径输入 = `workspace_id + relative_path`，统一经 [`pawork-policy`](policy.md) `resolve_workspace_path` 解析——模型无法用绝对路径直达文件系统。
+- **内置工具**：九个 `pawork_domain::AgentTool` 实现；文件工具的路径输入 = `workspace_id + relative_path`，统一经 [`pawork-policy`](policy.md) `resolve_workspace_path` 解析——模型无法用绝对路径直达文件系统。
 - **调度**：`ToolRegistry` 是唯一注册表（内置与 MCP 工具同表）；`ToolScheduler::execute_named` 串起「查表 → Policy 裁决 → 审批解析 → 并发信号量 → 超时 → 执行」。
 - **MCP**：配置解析与校验、受管客户端（惰性连接/退避重连/超时/取消）、能力发现与 `{server}_{tool}` 命名空间注册、stdio 服务器强制经 Sandbox Runtime 托管、Secret 只存 locator（`SecretRef`）、PKCE OAuth。
 - **不做**：不做风险分类与裁决（policy）；不实现进程/沙箱原语（exec）；不持久化事件（engine/store 侧）。
@@ -13,7 +13,8 @@
 
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
-| `src/lib.rs` | ~30 | 门面：11 个模块声明 + re-export（八工具、`NoopToolEventSink`、registry/scheduler 全家、`pub mod mcp`）。 |
+| `src/lib.rs` | ~30 | 门面：12 个模块声明 + re-export（九工具、`NoopToolEventSink`、registry/scheduler 全家、`pub mod mcp`）。 |
+| `src/computer.rs` | — | `ComputerTool`：进程共享隔离桌面会话、按动作必填的 JSON 参数、跨 run 观察隔离、阻塞工作取消、JPEG → canonical Image；复用 Policy / 审批。 |
 | `src/common.rs` | ~230 | 公共层：`BuiltinToolError` 与 → `ToolError` 集中映射；取参 `require_str`/`opt_str`/`opt_u64`/`opt_bool`；`workspace_roots`；`resolve_write_rel`（包 `resolve_workspace_path`）；`atomic_write`（同目录临时文件 + rename，覆盖保留既有 Unix mode）。 |
 | `src/read_file.rs` | ~500（逻辑 ~260 + 测试） | `ReadFileTool`：行号视图、offset/limit、编码探测（chardetng + encoding_rs）、二进制检测（NUL + 控制字节占比）、4 MiB 读上限 / 256 KiB 输出上限。 |
 | `src/list_directory.rs` | ~440（逻辑 ~300 + 测试） | `ListDirectoryTool`：目录优先字典序、BinaryHeap 单扫描取 offset+limit 窗口（内存 O(offset+limit)）、entry kind/size/mtime/symlink 目标（目标相对化，越 root 省略）。 |
@@ -38,9 +39,9 @@
 
 ## 3. 对外 API 面
 
-### 3.1 八个内置工具
+### 3.1 八个文件与命令工具
 
-统一形状：实现 `AgentTool`（`descriptor()` + `execute(request, context, sink, cancel)`）；输入 JSON object；路径参数一律 workspace 相对（绝对/穿越/`.git`/symlink 逃逸由 policy 内核拒绝）；构造函数均 `new(Arc<WorkspaceService>)`。**全部 descriptor `requires_approval=false`**——是否询问完全由 scheduler 按 `ApprovalMode` + `ToolCapability` 裁决（§4.1），descriptor 该字段只是给 MCP 等外部工具用的叠加闸。
+统一形状：实现 `AgentTool`（`descriptor()` + `execute(request, context, sink, cancel)`）；输入 JSON object；路径参数一律 workspace 相对（绝对/穿越/`.git`/symlink 逃逸由 policy 内核拒绝）；构造函数均 `new(Arc<WorkspaceService>)`。**全部 descriptor `requires_approval=false`**——是否询问完全由 scheduler 按 `ApprovalMode` + `ToolCapability` 裁决（§4.1），descriptor 该字段用于 computer / MCP 的显式审批叠加闸。
 
 | 工具 | capability | untrusted 可用 | default_timeout / max_output | 输入 |
 | --- | --- | --- | --- | --- |
@@ -71,7 +72,11 @@
 
 四个只读工具 `allowed_in_untrusted_workspace=true`；四个副作用工具为 false（untrusted workspace 里被 policy 信任门直接 Deny）。
 
-### 3.2 公共层（common）
+### 3.2 Computer use
+
+`ComputerTool::default()` 使用进程共享 `Computer::isolated()`；`new(Arc<Computer>)` 用于注入 backend。工具名 `computer`，`ExternalPlugin` / `ClientFunction` / `Local`，能力标签 `ComputerUse`，禁止 untrusted 与 ReadOnly，`requires_approval=true`（包括截图与权限查询），禁并发。Host 明确批准本轮时仍沿用既有本轮授权。参数与错误见 [computer-use](computer-use.md)，JSON 严格拒绝未知字段，输入上限 16 KiB。工具 schema 按 action 声明必填字段：所有输入必须有新截图的 observation_id，click 还必须带 x / y / button / clicks；解析失败返回参数要求，便于模型纠正，且不触达 backend。调用 `spawn_blocking`；future 取消/超时通过局部 token 停止工作，锁直到底层释放输入才归还。成功截图返回 Text 元数据及 `ImageSource::Base64` JPEG，整个输出预算 768 KiB；不写模型指定路径。每次输入返回投递事实，效果需新截图复验。
+
+### 3.3 公共层（common）
 
 - `BuiltinToolError` 变体：`MissingField(&'static str)` / `InvalidField{field, detail}` / `Path(WorkspacePathError)` / `PolicyPath(PathSafetyError)` / `Io(std::io::Error)` / `Workspace(WorkspaceError)` / `Process(String)` / `Other(String)`。
 - 映射规则（`From<BuiltinToolError> for ToolError`）：
@@ -83,7 +88,7 @@
 - `resolve_write_rel(roots, rel)`：全部八工具（含只读）解析路径的统一入口。
 - `atomic_write(path, bytes)`：同目录临时文件 + rename；目标已存在时保留其 permissions。
 
-### 3.3 调度层
+### 3.4 调度层
 
 - `ToolRegistry`：`new` / `register(Arc<dyn AgentTool>)` / `extend` / `get` / `descriptor` / `descriptors` / `len` / `is_empty`。仅接受 `ToolKind::ClientFunction` 且 descriptor 合法（`ToolRegistryError::InvalidDescriptor` / `UnsupportedKind`）；同名注册为覆盖语义（MCP 重连刷新用）。
 - `ToolSchedulerConfig { max_concurrent: 8, approval_mode: ApprovalMode::ReadOnly, workspace_trusted: false }`——**默认即最保守档**。
@@ -94,7 +99,7 @@
 - `NoopToolEventSink`：丢事件 sink，测试与最小宿主用。
 - 装配约定：宿主构造 `Arc<WorkspaceService>` → 八工具 `new` → `ToolRegistry::register` → `ToolScheduler::new`；MCP 工具经 `register_server_tools` 进同一 registry，两类工具走同一 `execute_named` 闸门，无旁路。
 
-### 3.4 MCP 子系统
+### 3.5 MCP 子系统
 
 - **配置入口**：`McpConfig::from_resolved(&ResolvedConfig)` / `from_value(&Value)`（读已按 global→workspace→session→run 合并后的 `extra["mcp"]`）；`servers: BTreeMap<name, McpServerConfig>`；服务器名非空且禁 `.`（进入工具命名空间）。
 - `McpServerConfig::build_client(name, Arc<dyn SecretBackend>, Option<StdioSandboxRuntime>) -> Result<ManagedMcpClient, McpError>`：
@@ -181,11 +186,13 @@
 
 ## 6. 依赖关系
 
-- **workspace 内**：`pawork-domain`（AgentTool/ToolResult/CancellationToken 等 canonical 类型）、`pawork-policy`（路径内核 + PolicyEngine）、`pawork-exec`（Process/Sandbox Runtime）、`pawork-workspace`（WorkspaceService、ResolvedConfig）、`pawork-auth`（SecretBackend、OAuth 原语、`http_client()`）。
-- **外部**：`tokio`、`async-trait`、`serde/serde_json`、`thiserror`、`tracing`、`ignore`、`globset`、`regex`、`chardetng`、`encoding_rs`、`rmcp`（仅 codec）、`reqwest`（OAuth）、`url`。dev：`tempfile`、`proptest`、`wiremock`。无 cargo feature。
+- **workspace 内**：`pawork-domain`（AgentTool/ToolResult/CancellationToken 等 canonical 类型）、`pawork-policy`（路径内核 + PolicyEngine）、`pawork-exec`（Process/Sandbox Runtime）、`pawork-workspace`（WorkspaceService、ResolvedConfig）、`pawork-auth`（SecretBackend、OAuth 原语、`http_client()`）、`pawork-computer-use`（原生桌面操作）。
+- **外部**：`tokio`、`async-trait`、`serde/serde_json`、`thiserror`、`tracing`、`ignore`、`globset`、`regex`、`chardetng`、`encoding_rs`、`rmcp`（仅 codec）、`reqwest`（OAuth）、`url`、`base64`（截图编码）。dev：`tempfile`、`proptest`、`wiremock`。无 cargo feature。
 - **被依赖**：`pawork-engine`（Agent loop 工具执行）、app 宿主（注册与调度装配）。
 
 ## 7. 测试与验证资产
+
+`computer.rs` 两条回归验证显式批准后的截图结果与序列化，以及未信任/只读/自动批准均不触碰原生后端。原生输入与观察安全由 [computer-use](computer-use.md) 负责。
 
 默认验证命令：`cargo test -p pawork-tools --offline --lib --tests`（无 `tests/` 目录，用例全部在 `--lib`）。
 

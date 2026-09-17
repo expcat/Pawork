@@ -364,7 +364,7 @@ fn base64_encode(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     #[tokio::test]
-    async fn attach_workspace_registers_eight_tools() {
+    async fn attach_workspace_registers_builtin_tools() {
         let dir = tempfile::tempdir().expect("tempdir");
         let (mut core, _store_dir) = crate::testsupport::mock_core(Vec::new()).await;
         core.attach_workspace(dir.path()).expect("attach");
@@ -374,6 +374,7 @@ mod tests {
             names,
             vec![
                 "apply_patch",
+                "computer",
                 "edit_file",
                 "find_files",
                 "list_directory",

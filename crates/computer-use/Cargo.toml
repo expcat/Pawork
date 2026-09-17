@@ -1,0 +1,15 @@
+[package]
+name = "pawork-computer-use"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+publish = false
+description = "Isolated virtual-desktop observation and input, independent of the Pawork host"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+image = { version = "=0.25.10", default-features = false, features = ["jpeg"] }
+
+[dev-dependencies]
+serde_json = "1"

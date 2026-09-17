@@ -448,15 +448,7 @@ fn message_to_input(message: &Message) -> Vec<Value> {
                 }));
             }
             ContentPart::ToolResult(result) => {
-                let output = result
-                    .content
-                    .iter()
-                    .filter_map(|part| match part {
-                        ContentPart::Text(text) => Some(text.text.as_str()),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
+                let output = function_call_output_content(result);
                 items.push(json!({
                     "type": "function_call_output",
                     "call_id": result.tool_call_id.as_str(),
@@ -497,6 +489,36 @@ fn input_image(image: &ImageContent) -> Option<Value> {
         ImageSource::Base64(_) | ImageSource::Artifact(_) => return None,
     };
     (!url.is_empty()).then(|| json!({"type": "input_image", "image_url": url}))
+}
+
+fn function_call_output_content(result: &pawork_domain::ToolResultContent) -> Value {
+    let mut parts = Vec::new();
+    let mut has_image = false;
+    for part in &result.content {
+        match part {
+            ContentPart::Text(text) => {
+                parts.push(json!({"type": "input_text", "text": text.text}));
+            }
+            ContentPart::Image(image) => {
+                if let Some(image) = input_image(image) {
+                    has_image = true;
+                    parts.push(image);
+                }
+            }
+            _ => {}
+        }
+    }
+    if has_image {
+        Value::Array(parts)
+    } else {
+        Value::String(
+            parts
+                .iter()
+                .filter_map(|part| part.get("text").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+    }
 }
 
 fn function_tool(tool: &ToolDefinition) -> Value {
@@ -634,7 +656,7 @@ impl ResponsesStreamAssembler {
                         ProviderErrorKind::MalformedResponse,
                         "invalid Responses SSE JSON",
                     )),
-                )]
+                )];
             }
         };
         match value.get("type").and_then(Value::as_str).unwrap_or("") {

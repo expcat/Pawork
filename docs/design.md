@@ -153,3 +153,22 @@
 | npm 生态传输 | OpenCode / Pi / DeepSeek Harness | 同上 |
 
 未排期的其它候选（自定义命令、webfetch、IDE 扩展等）只登记在 [产品候选](spec/backlog.md)，落地时须遵守冻结契约先行。
+
+## Computer use 首版
+
+用户 2026-09-17 授权独立包，并进一步要求不影响用户其它键鼠操作。方案选择独立 Linux 虚拟桌面：默认 `Computer::isolated()` 经固定 loopback RFB 端口连接容器内 Xvnc。旧 macOS ScreenCaptureKit / CGEvent 原型已移除；单靠进程锁、CGEvent Private 或切回焦点无法保证本机输入互不干扰。后台 AX 只适合部分语义动作，也不能替代任意键鼠操作的隔离。
+
+```mermaid
+flowchart LR
+  U[用户键鼠] --> M[本机桌面]
+  A[Agent loop] --> B[Host Policy 与审批]
+  B --> C[pawork-computer-use]
+  C --> D[固定本地 RFB 连接]
+  D --> E[容器内 Xvnc 与应用]
+  E --> F[JPEG / 工具结果 / 持久事件]
+  F --> A
+```
+
+应用必须运行于虚拟桌面，本机已打开应用不可直接接管。默认不挂载宿主目录/设备/剪贴板；容器不自动启动，环境未就绪即明确失败。专用服务器拒绝第二个控制客户端，防止另一 Host 抢断会话。桌面名用于防误接，真正的输入隔离来自容器内虚拟显示器，不是 VNC 协议名称校验。
+
+先截图，再用像素坐标和一次性观察 id 输入。观察绑定 run、连接身份和虚拟尺寸，60 秒失效；断线后重新截图，失败不重试副作用。每次输入后截图核验。Host 审批、取消、持久化与 Provider 图片编码继续复用首版链路，不改 GUI wire。截图 JPEG ≤512 KiB，三协议保留图片。详见 [包 Spec](spec/crates/computer-use.md)、[部署说明](../crates/computer-use/README.md) 与 [参照证据](references.md#computer-use实现调研2026-09-17)。

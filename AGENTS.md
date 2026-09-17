@@ -28,9 +28,10 @@
 - 项目名：`Pawork`；CLI 二进制名：`pawork`。
 - `pawork`（apps/pawork）是 Core 的唯一正式宿主；不存在独立的 daemon / rpc 入口。
 - 仓库根即 Cargo workspace 根。
-- 当前布局为 23 成员（21 库 + 2 应用）：21 库平铺 `crates/<短名>`（目录 = 包名去 `pawork-` 前缀），2 应用 `apps/{pawork,desktop}`；包清单与依赖方向见 [docs/architecture.md](docs/architecture.md) §2。
+- 当前布局为 24 成员（22 库 + 2 应用）：22 库平铺 `crates/<短名>`（目录 = 包名去 `pawork-` 前缀），2 应用 `apps/{pawork,desktop}`；包清单与依赖方向见 [docs/architecture.md](docs/architecture.md) §2。
 - crate 统一 `pawork-` 前缀。**当前不新增包**，只往既有包加模块；包布局变更须向用户确认。
 - 2026-09-16 用户明确要求浏览器独立包，新增 `pawork-browser`：系统 WebView 与手动导航，不引入自有 JS Runtime；后续自动操作另行接入 Host / Policy。
+- 2026-09-17 用户明确允许 computer use 独立包，新增 `pawork-computer-use`：纯 Rust 经 RFB 控制专用容器内虚拟桌面，经 Host 调度与审批；用户要求不干扰本机键鼠，不允许回退全局桌面输入。
 - 归档资产以 git tag `v2-final` 兜底，复活条件登记在 [docs/spec/backlog.md](docs/spec/backlog.md)；不得把归档代码复制回仓库其它位置。
 
 ## 4. 任务粒度

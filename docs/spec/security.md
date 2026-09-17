@@ -43,6 +43,8 @@ Policy 输出固定为 `Allow`、`Deny`、`AskUser`、`AllowWithConstraints`。�
 
 ### 3.2 工具与终端
 
+`computer` 仅控制专用容器内 Xvnc 虚拟桌面，本机屏幕、HID、焦点和剪贴板无访问路径，缺失隔离环境直接失败。复用 `ExternalPlugin`、untrusted / ReadOnly 拒绝和显式审批（含截图；本轮授权沿用既有语义），审批前不连接。固定 `127.0.0.1:5905`，部署不挂宿主目录/设备/桌面，不开放公网；单客户端服务器防止第二个 Host 抢占。RFB 名称校验仅防误配，None 认证不是安全隔离，必须使用所附虚拟桌面部署而非物理桌面共享服务。输入绑定 run / 连接身份 / 尺寸，60 秒且一次消费；断线不重试，重连需新截图。图片仍作为未信任工具事件持久化并发送模型，无通用视觉脱敏。容器内文件和应用与宿主分离，但仍消耗宿主 CPU / 内存。
+
 - `ToolDescriptor` 必须准确声明 `requires_approval`、`read_only`、`allowed_in_untrusted_workspace`。
 - 文件工具使用同一 policy 路径内核；执行前与 canonicalize 后均需防越界/TOCTOU。
 - GUI 工具审批以 `run_id + tool_call_id` 关联并持久化；等待前先落事件，resume 不得重跑副作用。

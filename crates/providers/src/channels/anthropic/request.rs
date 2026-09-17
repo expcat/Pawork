@@ -6,7 +6,9 @@
 //! 且同一条 user 里 `tool_result` 块排在最前。
 
 use pawork_domain::{CanonicalModelRequest, ResponseFormat, ToolChoice};
-use pawork_domain::{ContentPart, ImageSource, Message, MessageRole};
+use pawork_domain::{
+    ContentPart, ImageContent, ImageSource, Message, MessageRole, ToolResultContent,
+};
 use serde_json::{json, Map, Value};
 
 const DEFAULT_MAX_TOKENS: u64 = 4096;
@@ -261,15 +263,7 @@ fn content_blocks<'a>(
                 }));
             }
             ContentPart::ToolResult(result) => {
-                let content: String = result
-                    .content
-                    .iter()
-                    .filter_map(|part| match part {
-                        ContentPart::Text(text) => Some(text.text.clone()),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
+                let content = tool_result_content_blocks(result);
                 tool_results.push(json!({
                     "type":"tool_result",
                     "tool_use_id": result.tool_call_id,
@@ -278,18 +272,7 @@ fn content_blocks<'a>(
                 }));
             }
             ContentPart::Image(image) => {
-                let block = match &image.source {
-                    ImageSource::Base64(data) if !data.is_empty() => Some(json!({
-                        "type":"image",
-                        "source":{"type":"base64","media_type": image.media_type,"data": data},
-                    })),
-                    ImageSource::Url(url) if !url.is_empty() => Some(json!({
-                        "type":"image",
-                        "source":{"type":"url","url": url},
-                    })),
-                    _ => None,
-                };
-                if let Some(block) = block {
+                if let Some(block) = anthropic_image_block(image) {
                     others.push(block);
                 }
             }
@@ -298,6 +281,50 @@ fn content_blocks<'a>(
 
     tool_results.extend(others);
     tool_results
+}
+
+fn tool_result_content_blocks(result: &ToolResultContent) -> Value {
+    let mut blocks = Vec::new();
+    let mut has_image = false;
+    for part in &result.content {
+        match part {
+            ContentPart::Text(text) => {
+                blocks.push(json!({"type":"text","text": text.text}));
+            }
+            ContentPart::Image(image) => {
+                if let Some(block) = anthropic_image_block(image) {
+                    has_image = true;
+                    blocks.push(block);
+                }
+            }
+            _ => {}
+        }
+    }
+    if has_image {
+        Value::Array(blocks)
+    } else {
+        Value::String(
+            blocks
+                .iter()
+                .filter_map(|block| block.get("text").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+    }
+}
+
+fn anthropic_image_block(image: &ImageContent) -> Option<Value> {
+    match &image.source {
+        ImageSource::Base64(data) if !data.is_empty() => Some(json!({
+            "type":"image",
+            "source":{"type":"base64","media_type": image.media_type,"data": data},
+        })),
+        ImageSource::Url(url) if !url.is_empty() => Some(json!({
+            "type":"image",
+            "source":{"type":"url","url": url},
+        })),
+        _ => None,
+    }
 }
 
 fn flush_pending_tool_user(pending: &mut Vec<Value>, out: &mut Vec<Value>) {

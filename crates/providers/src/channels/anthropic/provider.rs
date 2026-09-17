@@ -535,7 +535,15 @@ fn requirements_from_request(request: &CanonicalModelRequest) -> CapabilityRequi
             .messages
             .iter()
             .flat_map(|message| message.content.iter())
-            .any(|part| matches!(part, pawork_domain::ContentPart::Image(_))),
+            .any(content_part_has_image),
+    }
+}
+
+fn content_part_has_image(part: &ContentPart) -> bool {
+    match part {
+        ContentPart::Image(_) => true,
+        ContentPart::ToolResult(result) => result.content.iter().any(content_part_has_image),
+        _ => false,
     }
 }
 
@@ -765,9 +773,7 @@ mod tests {
             .iter()
             .all(|model| model.capabilities.reasoning.state.requires_signature));
         // SEARCH-1：服务端 web_search_20250305 + web_search_tool_result citation 归一。
-        assert!(models
-            .iter()
-            .all(|model| model.capabilities.citations));
+        assert!(models.iter().all(|model| model.capabilities.citations));
         assert!(models.iter().all(|model| {
             model
                 .capabilities

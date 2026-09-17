@@ -4448,6 +4448,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pawork-computer-use"
+version = "0.1.0"
+dependencies = [
+ "image",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "pawork-control-plane"
 version = "0.1.0"
 dependencies = [
@@ -4647,11 +4657,13 @@ name = "pawork-tools"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "chardetng",
  "encoding_rs",
  "globset",
  "ignore",
  "pawork-auth",
+ "pawork-computer-use",
  "pawork-domain",
  "pawork-exec",
  "pawork-policy",

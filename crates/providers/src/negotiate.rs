@@ -230,7 +230,7 @@ pub fn capability_gate(
     evidence: &CapabilityEvidence,
     request: &pawork_domain::CanonicalModelRequest,
 ) -> Result<(), pawork_domain::ProviderError> {
-    use pawork_domain::{ContentPart, ProviderError, ProviderErrorKind, ToolCapabilityTag};
+    use pawork_domain::{ProviderError, ProviderErrorKind, ToolCapabilityTag};
 
     let mut required_tools = std::collections::BTreeSet::new();
     for hosted in &request.hosted_tools {
@@ -247,7 +247,7 @@ pub fn capability_gate(
         .messages
         .iter()
         .flat_map(|message| message.content.iter())
-        .any(|part| matches!(part, ContentPart::Image(_)));
+        .any(content_part_has_image);
     let requirements = CapabilityRequirements {
         required_tools,
         image_input,
@@ -262,8 +262,21 @@ pub fn capability_gate(
             _ => None,
         })
         .map_or(Ok(()), |reason| {
-            Err(ProviderError::new(ProviderErrorKind::InvalidRequest, reason))
-})
+            Err(ProviderError::new(
+                ProviderErrorKind::InvalidRequest,
+                reason,
+            ))
+        })
+}
+
+fn content_part_has_image(part: &pawork_domain::ContentPart) -> bool {
+    match part {
+        pawork_domain::ContentPart::Image(_) => true,
+        pawork_domain::ContentPart::ToolResult(result) => {
+            result.content.iter().any(content_part_has_image)
+        }
+        _ => false,
+    }
 }
 
 #[cfg(test)]
@@ -314,7 +327,10 @@ mod tests {
         }
     }
 
-    fn gate_request(with_image: bool, with_web_search: bool) -> pawork_domain::CanonicalModelRequest {
+    fn gate_request(
+        with_image: bool,
+        with_web_search: bool,
+    ) -> pawork_domain::CanonicalModelRequest {
         use pawork_domain::{
             CanonicalModelRequest, ContentPart, HostedToolRequest, ImageContent, ImageSource,
             Message, MessageId, MessageRole, PromptCachePreference, RequestBudget, RequestId,
@@ -398,6 +414,65 @@ mod tests {
         assert!(capability_gate(&unknown, &gate_request(false, false)).is_ok());
         assert!(capability_gate(&unknown, &gate_request(true, false)).is_err());
         assert!(capability_gate(&unknown, &gate_request(false, true)).is_err());
+    }
+
+    #[test]
+    fn capability_gate_rejects_nested_tool_result_image_without_declaration() {
+        use pawork_domain::{
+            CanonicalModelRequest, ContentPart, ImageContent, ImageSource, Message, MessageId,
+            MessageRole, PromptCachePreference, RequestBudget, RequestId, ResponseFormat,
+            TextContent, ToolCallId, ToolChoice, ToolResultContent,
+        };
+
+        let mut caps = full_caps();
+        caps.image_input = false;
+        let no_decl = evidence_from(caps);
+        let request = CanonicalModelRequest {
+            request_id: RequestId::from("r1"),
+            session_id: None,
+            model: ModelId::from("test-model"),
+            messages: vec![Message {
+                id: MessageId::from("t1"),
+                role: MessageRole::Tool,
+                content: vec![ContentPart::ToolResult(ToolResultContent {
+                    tool_call_id: ToolCallId::from("call-1"),
+                    tool_name: Some("computer".into()),
+                    content: vec![
+                        ContentPart::Text(TextContent {
+                            text: "shot".into(),
+                        }),
+                        ContentPart::Image(ImageContent {
+                            source: ImageSource::Base64("aaa".into()),
+                            media_type: "image/jpeg".into(),
+                            alt_text: None,
+                        }),
+                    ],
+                    is_error: false,
+                    metadata: serde_json::json!(null),
+                    artifacts: Vec::new(),
+                })],
+                metadata: Default::default(),
+            }],
+            tools: Vec::new(),
+            hosted_tools: Vec::new(),
+            extensions: Vec::new(),
+            tool_choice: ToolChoice::Auto,
+            thinking: None,
+            reasoning: None,
+            temperature: None,
+            max_output_tokens: None,
+            stop_sequences: Vec::new(),
+            response_format: ResponseFormat::Text,
+            prompt_cache: PromptCachePreference::Automatic,
+            budget: RequestBudget::default(),
+            provider_options: Default::default(),
+            trace_id: None,
+        };
+        let error = capability_gate(&no_decl, &request)
+            .err()
+            .expect("nested tool result image without declaration must reject");
+        assert_eq!(error.kind, pawork_domain::ProviderErrorKind::InvalidRequest);
+        assert!(capability_gate(&evidence_from(full_caps()), &request).is_ok());
     }
 
     #[test]

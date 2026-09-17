@@ -6,7 +6,7 @@
 
 **做什么**
 
-- 装配 `AppCore`：配置发现（Builtin → Global → Workspace → CLI 覆盖）、凭证链（auth 文件 → env）、协议中立 provider、内建读写工具 + `run_command`、session store、checkpoint/artifact/protected 存储、usage/quota/audit 控制面。
+- 装配 `AppCore`：配置发现（Builtin → Global → Workspace → CLI 覆盖）、凭证链（auth 文件 → env）、协议中立 provider、内建读写工具 + `run_command` + `computer`、session store、checkpoint/artifact/protected 存储、usage/quota/audit 控制面。
 - 承载一次 run 的宿主编排：`chat_turn` → `pawork_engine::run_session`，事件 persist-first 落库再渲染；审批、压缩、检查点由 `SessionLoopCtx` 桥接进 engine loop。
 - 实现 GUI 宿主侧：`gui_server`（连接/心跳/订阅/resume 帧循环）+ `gui_host`（`GuiHost` trait 适配 `AppCore`，query/command 静态分发、幂等、timeline 投影分页、事件总线）。
 - 提供 CLI 命令背后的领域门面：auth/OAuth、模型目录与切换、diff/checkpoint/rollback、MCP、compat import、tasks、plan gate、usage 报表、多 Agent demo。
@@ -34,9 +34,9 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 | `src/provider_assembly.rs` | ~1250 | provider 装配单点：`assemble_provider`/`assemble_registry`、通道→协议解析（KimiOAuth→ChatCompletions 装配 `KimiCodeProvider`；xAI / Kimi Code 双认证按存储形态解析凭证——api key 优先、无则 OAuth 含刷新）、OAuth 刷新装配、`switch_model`/`switch_provider`（含 ModelSwitched 诊断事件；重装配成功清除 provider_pending / provider_stale；ADR-055 D4 起目标模型在 `disabled_models` denylist 时 `AppError::ModelDisabled` fail-closed）、`model_catalog`/`models_overview`/`provider_models` 目录聚合（以 provider+model 去重，保留跨供应商同名模型；成功远端替换该 provider ID 集合，失败回退；xAI / ChatGPT 无静态选择目录，探测失败不预填 grok；config 仅覆盖仍存在 ID 的窗口，kimi-code 静态目录作回退）、`is_credential_pending`、ADR-054/057 `generate_session_title(session_id, first_user_text)`（传递真实会话身份；命名 provider 与当前已装配相同且凭证就绪时复用 adapter，否则全量装配；无工具一次性补全，64 output tokens、同步快照依赖后返回不借用 Core 的任务；装配、目录解析与补全共用 20s 超时，输出取首个非空行限长 72）、ADR-052 `provider_proxy` 按 provider 解析生效代理（Global `proxy_url` 统一生效，仅当该 provider 显式 `use_proxy = false` 时绕过；模型装配与 API key 验证、OAuth device start/token exchange/refresh 统一接入，不按 provider 名称特判） |
 | `src/idempotency.rs` | ~660 | `IdempotencyStore`：以 storage `CommandLedger`（SQLite）为权威 CAS 持久态，内存 `Notify` 做 InFlight 有界等待；`IdempotencyCheck`{New/Replay/InFlight}、`should_cache`、容量逐出、`IdempotencyStats` |
 | `src/protected.rs` | ~620 | Reasoning 保护：`SwappableReasoningProtector`（内存 ↔ 持久动态绑定）、`ProtectedBlobStore` + `FileKeyResolver`（`master.key`）注入；instance 级 `BlobScope` `instance-reasoning` |
-| `src/approval.rs` | ~520 | `ApprovalAsk`/`ApprovalResolve`、`ApprovalPromptHost` trait、`GuiApprovalHost`（pending/queued 单锁决议池 + `ToolApprovalRequired` 事件发布）、`DenyAllApprovals`、`PreApprovedResolver`、`parse_approval_mode`、写工具预览（`relative_path_from_input`/`preview_for_tool`） |
+| `src/approval.rs` | ~520 | `ApprovalAsk`/`ApprovalResolve`、`ApprovalPromptHost` trait、`GuiApprovalHost`（pending/queued 单锁决议池 + `ToolApprovalRequired` 事件发布）、`DenyAllApprovals`、`PreApprovedResolver`、`parse_approval_mode`、写工具预览（`relative_path_from_input`/`preview_for_tool`；computer 展示结构化动作参数） |
 | `src/loop_ctx.rs` | ~430 | `SessionLoopCtx` 实现 `pawork_engine::LoopContext`：审批请求转宿主、工具执行经 `ToolScheduler`、写前 checkpoint、压缩（fork recovery branch + snapshot）、message/request id 发号、事件 emit |
-| `src/extensions.rs` | ~420 | 内建工具注册表、MCP 装配（auto_start/untrusted 拒绝/stdio 沙箱 + env 卫生）、`mcp_list`/`mcp_test`、`@token` 词法 `at_tokens`、`AT_FILE_MAX_BYTES`（64 KiB）、skill 目录发现 |
+| `src/extensions.rs` | ~420 | 内建工具注册表（含进程共享的 `computer` 桌面工具）、MCP 装配（auto_start/untrusted 拒绝/stdio 沙箱 + env 卫生）、`mcp_list`/`mcp_test`、`@token` 词法 `at_tokens`、`AT_FILE_MAX_BYTES`（64 KiB）、skill 目录发现 |
 | `src/auth.rs` | ~440 | `auth_status`（只报来源 file/env/none，不回显 secret；SET-4 起按 auth_methods 数据判定；ADR-056 起双形态通道 api key 命中后继续输出 oauth 行，两类已存凭证各占一行）、`auth_set_key`/`auth_logout`（ADR-056 D1 共存语义：写 api key 不再删 OAuth 条目；logout 仍双类幂等清理）、`oauth_begin`/`oauth_complete`（PKCE 与 Device Flow 编排）、`oauth_finish`（pub(crate)：不持 AppCore 锁的 OAuth 收尾，供 GUI Device Flow 后台轮询任务复用；ADR-056 起 store 后不再移除 api key 条目）、`AuthChannelStatus`/`AuthSource`/`OAuthLogin` |
 | `src/hub.rs` | ~410 | `EventHub`：全局序 + ring buffer（默认 4096）+ `tokio::broadcast` 有界订阅；`global_sequence` 连续重写、`replay_from`、越界→`HubError::ReplayUnavailable`、慢订阅者 `Lagged` |
 | `src/testsupport.rs` | ~390 | 仅 `cfg(test)`：`RecordingEvents`/`ScriptedProvider`/`mock_core*`、`RecordingSubscriber`、`RecordingCapture`（双注册 Dispatch 钉住 tracing-core interest 缓存，防投毒）及其回归测试 |
@@ -294,6 +294,8 @@ ADR-057：`gui_host/events` 将持久 `AssistantThinkingDelta` 原样映射到 l
 依赖方向与全局分层见 [../../architecture.md](../../architecture.md) 与 [../../design.md](../../design.md) §2。本包处在 `pawork` 二进制依赖闭包的最大层：合并/归档波以 `cargo tree -p pawork` 断言无环且闭包不膨胀，给本包新增上游依赖须先过对应任务书。
 
 ## 7. 测试与验证资产
+
+`gui_host/tests/chat_controls.rs::computer_approval_image_persistence_and_resume_do_not_repeat_input` 验证 computer 工具在批准前零调用、动作预览、canonical 图片持久化和恢复历史不重执行。隔离桌面连接和输入由 tools / computer-use 定向测试及真实 probe 另验。
 
 默认验证命令：
 

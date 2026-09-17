@@ -19,9 +19,9 @@
 
 ---
 
-## 2. 包布局与依赖方向（23 包）
+## 2. 包布局与依赖方向（24 包）
 
-Workspace 为 **23 成员（21 库 + 2 应用）**：21 个库平铺 `crates/<短名>`（目录 = 包名去 `pawork-` 前缀，包名保持 `pawork-` 前缀），2 个应用 `apps/{pawork,desktop}`。2026-09-16 按用户明确要求新增独立浏览器包；其它新能力仍往既有包加模块，包布局变更须向用户确认。
+Workspace 为 **24 成员（22 库 + 2 应用）**：22 个库平铺 `crates/<短名>`（目录 = 包名去 `pawork-` 前缀，包名保持 `pawork-` 前缀），2 个应用 `apps/{pawork,desktop}`。2026-09-16 按用户明确要求新增独立浏览器包；2026-09-17 按用户明确授权新增独立 computer use 包；其它新能力仍往既有包加模块，包布局变更须向用户确认。
 
 | 包 | 目录 | 依赖方向 | 备注 |
 | --- | --- | --- | --- |
@@ -30,7 +30,7 @@ Workspace 为 **23 成员（21 库 + 2 应用）**：21 个库平铺 `crates/<�
 | `pawork-testkit` | `crates/testkit` | → domain | dev-only：MockProvider/MockTool/契约断言 |
 | `pawork-policy` | `crates/policy` | → domain | 安全内核；`PolicyDecision`/`ApprovalMode` 冻结契约与红线回归锚；shell 风险分类；`path` 内核 |
 | `pawork-exec` | `crates/exec` | → policy（仅路径 helper） | process/sandbox/pty；不直接依赖 domain；CancellationToken 仍为本包类型 |
-| `pawork-tools` | `crates/tools` | → domain、exec、policy、workspace、auth | 八工具 + scheduler + `mcp/`（rmcp 隔离断言为模块级测试） |
+| `pawork-tools` | `crates/tools` | → domain、exec、policy、workspace、auth、computer-use | 八个文件/命令工具 + computer + scheduler + `mcp/`（rmcp 隔离断言为模块级测试） |
 | `pawork-workspace` | `crates/workspace` | → domain、policy | `service/`+`path/`+`file_index/`、`resources/`、`config/`（六层矩阵）、`import/`（五来源导入 + session_scan） |
 | `pawork-storage` | `crates/storage` | → domain | `sqlite/`（Actor+migration 框架）、`session/`（DDL/迁移/export）、`blob/`（artifact + 共用 `atomic_write_bytes` + PWB1/checkpoint/protected）；`default = ["session","blob"]`，compaction/checkpoint/protected opt-in |
 | `pawork-providers` | `crates/providers` | → domain | `net/`（http/sse/retry）+ `registry/`/`pricing/`/`usage/`/`negotiate/`/`reasoning/` + `channels/`（六通道，feature 门控；通道登记单点 `channels/registry.rs` `CHANNEL_REGISTRY`，app 侧为 facade）；core 不依赖 net 为模块纪律 + 源扫描测试 |
@@ -45,6 +45,7 @@ Workspace 为 **23 成员（21 库 + 2 应用）**：21 个库平铺 `crates/<�
 | `pawork-cli` | `crates/cli` | 原 cli 依赖（GuiHost 经 app） | 21 子命令 + `channels/acp/`（AcpHost 四件套） |
 | `pawork-client` | `crates/client` | → domain、protocol、transport | framed 连接面 + `headless/`；probe 场景为本包 tests/，live 模式 `examples/probe.rs` |
 | `pawork-terminal` | `crates/terminal` | 无内部依赖 | 终端显示核心：行缓冲解析（CR/退格/擦除/光标/折行/SGR 16 色）、按键→PTY 字节映射、面板像素→列×行估算；不是完整 VT emulator |
+| `pawork-computer-use` | `crates/computer-use` | 无内部依赖 | 独立虚拟桌面截图和输入（本地 RFB / 容器内 Xvnc），不使用本机 HID；不依赖 GUI / Core / Provider，tools 适配后由 Host 执行 |
 | `pawork-browser` | `crates/browser` | 无内部依赖 | 系统 WebView、HTTP(S) 导航、页面状态、显示与释放；macOS 使用 WebKit，不依赖 GPUI、Core 或协议 |
 | `pawork`（bin） | `apps/pawork` | → cli | composition root + `redact.rs`（Redactor/RedactingFmtLayer） |
 | `pawork-desktop`（bin） | `apps/desktop` | → client、terminal、browser、gpui、raw-window-handle；macOS platform-only → cocoa、objc | 四层 ui/projection/controller/platform；pawork-* 依赖 = client + terminal + browser（deny-list 断言）；浏览器手动导航与经 client 的 Host 授权自动操作，不直接访问 Core / Provider |

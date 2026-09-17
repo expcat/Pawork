@@ -472,3 +472,36 @@ Full workspace gate: NOT RUN（当前未设置全量门禁）。
 - **代理真窗口复核通过**：隔离 `review-0916` 实例验证懒加载目录、文本打开、中文内容保存、外部冲突保留草稿与磁盘版本、确认后重新载入；磁盘字节与成功回执一致，隔离数据库 sessions 为 0，命令账本无文件正文。用户人工验收未进行，未归档 / 未发布。
 - **审查修复**：读取其它文件时允许保存当前草稿；当前文件自身重新载入期间仍禁保存。扩展现有草稿回归覆盖两种读写交错，Files 两项定向回归通过，不增加测试框架或模块。
 - **验证边界**：未运行全 workspace 门禁；整包 `cargo fmt --check` 含既有格式差异，本轮仅整理新增文件格式，按现有 style edition 核对变更文件，保留 `main.rs` 既有 import 顺序。
+
+## Computer use 首版（2026-09-17）
+
+用户要求阅读参照实现、规划并实施，可作为独立包，完成后设计测试验证；随后明确要求不影响用户其它键鼠操作，当前已改为独立虚拟桌面。参照 Anthropic Linux/macOS 示例与 Peekaboo 原生机制，结论见 [调研](references.md#computer-use实现调研2026-09-17)，方案见 [设计](design.md#computer-use首版)。
+
+| 工作项 | 交付状态 | 验证状态 |
+| --- | --- | --- |
+| 独立 `pawork-computer-use`，隔离虚拟桌面截图与输入、观察身份和坐标 | 已实现隔离后端，移除本机 HID | RFB 定向回归、真实容器输入和模型闭环通过；宿主输入状态前后一致 |
+| `computer` Host 注册、Policy/审批、取消与图片结果 | 已实现，补齐按动作必填的参数 schema 与纠错提示 | 当前 tools 139 项、app 审批/持久化/resume 回归通过；真实 CLI 本轮授权通过 |
+| 三协议工具图片续接与能力拒绝 | 已实现 | Providers 188 项通过；真实 Go 模型从工具截图读取识别码并继续操作 |
+| 独立打包 | 已完成本地打包校验 | `cargo package` 含解包编译通过；无 Pawork 内部依赖；License 待定、`publish=false`，未发布 |
+| 验收与审查状态 | 自动门禁和代理真机验收已通过 | 未进行用户人工验收；本次独立审查经收口请求仍未返回，已停止、未计为通过；主代理源码复核完成；未归档 |
+
+验收设计：底层成功坐标/单次消费；安全失败覆盖权限、取消、未知字段、越界、跨 run、过期和连接变化；tools 确认审批拒绝时不接触 backend；app 走真实事件持久化并确认 resume 不执行；Providers 确认三协议输出不丢图片。隔离桌面用受控应用核验截图像素、鼠标及文字/键盘后的可观测效果，同时读取容器文件与宿主输入状态，不用 mock 代替。只运行受影响包定向测试，无 workspace 全量门禁。构建复用 `target/`，本机默认 Xcode 未接受许可证，本次命令使用已安装的 Command Line Tools (`DEVELOPER_DIR=/Library/Developer/CommandLineTools`)。
+
+
+**历史原型验证（本机 HID 已移除，不代表当前后端通过）**：受影响包共 594 项测试通过：`cargo test -p pawork-computer-use -p pawork-tools -p pawork-app -p pawork-providers --offline --lib --tests` 首次在新包未知字段回归失败后收敛修复，app 241 + 三个默认集成目标 25 已通过；修复后 `cargo test -p pawork-computer-use -p pawork-tools -p pawork-providers --offline --lib --tests` 为 2 + 138 + 188 全绿。前台查询原生修复后单跑新包 2 项、Provider 图片用例再跑 1 项均通过；关闭默认 feature 后工具结果相关 2 项通过。CLI 与 `native_probe` 构建、`cargo package -p pawork-computer-use --offline --allow-dirty`（8 文件，含解包编译）、diff 空白和新增本地链接检查通过。参照文档的 3 个历史 Pawork_v1 链接仍缺失，不属于新增链接。无 workspace 全量门禁。
+
+**历史 macOS 原型证据**：原生 helper 已验证 3440×1440 → 1280×536 截图、图片坐标点击、拖动选中 30 字符、650 点向下滚动、Command+A 全选、中文和 emoji 输入。实测揭示 NSWorkspace 前台 pid 被 CLI 无 AppKit 主循环缓存，已改用即时 Process Manager 查询；切换到另一个应用后旧观察返回 Stale。无参数动作已使用空 struct 变体，未知字段不再被 Serde 忽略。临时 Swift 窗口仅为原生验收夹具，不进入产品或构建链；CUA 操作过的 TextEdit 窗口在桌面截图中未显示，因此截图、鼠标与模型验收改用可见的专用夹具，未以 AX 文本冒充截图。
+
+**历史原型真实 Provider 闭环**：当次 CLI 参数固定 `--instance computer-use-check --provider opencode-go --model glm-5.3-flash --trust-workspaces --approval-mode ask-for-dangerous`，未修改默认 Provider/模型。会话 `ses-1789603075719-1` 一次审批截图后正确读到 `ORCHID-4826`（小 emoji 辨认有误）；会话 `ses-1789603162211-1` 本轮授权后依次 screenshot → Command+A → screenshot → type_text → screenshot，独立窗口状态和末次 JPEG 均为 `PAWORK-LIVE-7319 中文`。SQLite 副本核对 132 事件、5 次工具完成、3 张 JPEG 各在工具结果/消息中持久化、1 次 RunCompleted。恢复不重执行由 app 定向回归验证。真实服务仅验证 Go，Responses/Anthropic 为编码与契约测试，未声称真实服务联调通过。
+
+证据位于 `/tmp/pawork-computer-acceptance.json`、`/tmp/pawork-computer-native.jpg` 和 `/tmp/pawork-computer-*.log`，截图未检入仓库。独立包为 `target/package/pawork-computer-use-0.1.0.crate`；当前隔离桌面验收入口与使用说明见 [独立包 README](../crates/computer-use/README.md)。
+
+### 不干扰用户输入的改造
+
+- **已实现**：删除本机 ScreenCaptureKit / CGEvent 模块；改用纯 Rust RFB 3.8 raw 客户端，固定 loopback 端口，只连接专用容器内 Xvnc；不访问本机鼠标/键盘/屏幕/焦点/剪贴板。环境未启动时失败，不自动回退。
+- **保持链路**：Host 审批、一次性观察、run 作用域、取消、图片续接与事件持久化沿用已验机制；连接身份替代本机前台 pid，Linux 快捷键用 Control。
+- **部署边界**：应用运行在隔离桌面中，本机现有应用不可直接接管；无 host volume/设备/桌面会话共享，单控制客户端。资源限制减少竞争，但不声称零资源影响。启动/停止方式见独立包 README。
+- **自动验证通过**：本次续接执行 `cargo test -p pawork-computer-use -p pawork-tools --offline --lib --tests`（4 + 139 项）、`cargo test -p pawork-providers --offline --lib --tests`（188 项）、`cargo test -p pawork-app --offline --lib computer_approval_image_persistence_and_resume_do_not_repeat_input`（1 项），合计 332 项；`cargo build -p pawork --offline` 通过。新增回归复现模型漏传 observation_id / clicks，确认错误提示可纠正且解析失败不触达 backend。当前独立包已通过本地 `cargo package` 及解包编译。相关日志 `/tmp/pawork-computer-resume-{tests,providers,app,build}.log` 与 `/tmp/pawork-computer-isolated-package.log`。
+- **真实隔离桌面验证通过**：容器运行状态核对仅发布 `127.0.0.1:5905`，无宿主 mounts。probe 实测截图、点击、移动、拖选、中文/emoji 输入和组合键；第二个控制客户端被拒绝，原连接仍可用。报告 `/tmp/pawork-computer-isolated-input.json` 记录操作前后宿主光标、前台进程、修饰键及剪贴板计数一致。emoji 已输入文件，但镜像字体在画面上显示缺字方框，不宣称完整 emoji 渲染支持。
+- **真实模型闭环通过**：`opencode-go / glm-5.3-flash`，独立实例 `computer-use-resume-check`，会话 `ses-1789612101909-1`；本轮批准后 status → screenshot → click → screenshot → Control+A → screenshot → type_text → screenshot → Control+S → screenshot。模型从截图读出 `ISOLATED-9284`，最终画面与 `docker exec … cat /home/desktop/computer-proof.txt` 均为 `ISOLATED-9284 中文隔离成功`。持久数据库核对 322 条事件、10 次工具完成、0 次工具错误、5 张图片、1 次 RunCompleted；所有输入均使用前一截图的一次性观察 id。宿主光标、前台进程、修饰键与剪贴板计数在整轮前后完全一致。证据 `/tmp/pawork-computer-resume-acceptance.json`、`/tmp/pawork-computer-resume-final.jpg` 与数据库副本 `/tmp/pawork-computer-resume-session.db`，不检入截图。真实服务仅验证 Go，另外两协议仍是编码/契约回归。
+- **状态边界**：实现、自动定向验证与代理实际桌面验收完成；用户人工验收未进行，未发布、未归档。历史 594 项与 macOS 真窗口记录仅作历史证据，无全 workspace 门禁。

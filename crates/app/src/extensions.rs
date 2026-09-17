@@ -435,6 +435,7 @@ fn builtin_registry(workspaces: &WorkspaceService) -> Result<ToolRegistry, AppEr
         Arc::new(EditFileTool::new(workspaces.clone())) as Arc<dyn pawork_domain::AgentTool>,
         Arc::new(ApplyPatchTool::new(workspaces.clone())) as Arc<dyn pawork_domain::AgentTool>,
         Arc::new(RunCommandTool::new(workspaces.clone())) as Arc<dyn pawork_domain::AgentTool>,
+        Arc::new(pawork_tools::ComputerTool::default()) as Arc<dyn pawork_domain::AgentTool>,
     ])?;
     Ok(registry)
 }

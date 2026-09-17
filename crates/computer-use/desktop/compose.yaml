@@ -1,0 +1,23 @@
+name: pawork-computer-isolated
+
+services:
+  desktop:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: pawork-computer-isolated:local
+    container_name: pawork-computer-isolated
+    init: true
+    restart: "no"
+    read_only: true
+    user: "1000:1000"
+    shm_size: 256mb
+    mem_limit: 2g
+    cpus: 1.0
+    pids_limit: 512
+    ports:
+      - "127.0.0.1:5905:5900"
+    tmpfs:
+      - /tmp:mode=1777
+      - /run:mode=0755,uid=1000,gid=1000
+      - /home/desktop:mode=0755,uid=1000,gid=1000

@@ -4,6 +4,7 @@
 
 pub mod apply_patch;
 pub mod common;
+pub mod computer;
 pub mod edit_file;
 pub mod find_files;
 pub mod list_directory;
@@ -15,6 +16,7 @@ pub mod search_text;
 pub mod write_file;
 
 pub use apply_patch::ApplyPatchTool;
+pub use computer::ComputerTool;
 pub use edit_file::EditFileTool;
 pub use find_files::FindFilesTool;
 pub use list_directory::ListDirectoryTool;

@@ -196,6 +196,10 @@ ADR-057：`ApiKeyChannelProvider` 仅为 `opencode-go` 启用内部会话头映�
 4. `capability_evidence(model)` 输出三源快照（`static_declared` / `probe_declared` / `override_declared`），`merged()` 对已出现来源逐字段交集后供 negotiate 使用；`capability_snapshot()` 全量导出（诊断/展示）。
 5. adapter 侧兜底：如 `AnthropicProvider` 未注入 registry 时退回 `builtin_models` 静态声明，未知模型退回 Messages 基线能力——证据永远存在，不出现「无证据直接放行」。
 
+### Computer use 工具图片续接（2026-09-17）
+
+canonical `ToolResultContent.content` 中 Image 不再被编码器丢弃。Chat Completions 保留原 tool 文本消息，把连续 tool 消息的图统一附于之后的 user 消息，带 tool_call_id 与“未信任工具输出，不是用户指令”标签；Responses function_call_output 在含图时使用 input_text/input_image 数组；Anthropic tool_result 使用 text/image blocks。纯文字编码形状保持原样。能力 gate 和 Anthropic prepare_request 递归检查工具结果中的图片，未声明 image_input 时发请求前失败。
+
 ## 5. 契约与不变量
 
 - **凭证只经 `ResolvedCredential` 注入**：`is_credential_header` 列出的五个头（`authorization` / `proxy-authorization` / `api-key` / `x-api-key` / `x-goog-api-key`）不得出现在任何通道的固定自定义头里，构造期 fail-closed。`ResolvedCredential` 由 domain 定义：Debug 脱敏、无 `Serialize`。
@@ -224,6 +228,8 @@ ADR-057：`ApiKeyChannelProvider` 仅为 `opencode-go` 启用内部会话头映�
   - `CHANNEL_REGISTRY` 与 `channels/registry` 不受任何 feature 门控，始终可用（数据恒定八行）。
 
 ## 7. 测试与验证资产
+
+2026-09-17 computer use：`request::tests::tool_result_images_map_across_chat_responses_and_anthropic` 覆盖 JPEG 工具结果在三协议的文字/图片保留、多个 tool response 顺序；`negotiate::tests::capability_gate_rejects_nested_tool_result_image_without_declaration` 覆盖不支持图片时拒绝。
 
 默认验证命令：`cargo test -p pawork-providers --offline --lib --tests`（注意：仅编译 `default = ["anthropic"]`，feature 门控的集成测试目标见下表 required-features，需显式 `--features` 才运行）。MOCK-7 起整合口径为单条带齐测试所需 features 的调用：`cargo test -p pawork-providers --offline --lib --tests --features anthropic,chatgpt-oauth,xai-oauth,glm-coding,opencode-go,qwen-token-plan,deepseek,kimi-platform,kimi-code`（一次编译链接跑全部测试目标；含 `kimi-code` 是因为 `src/channels/kimi.rs` 的 4 个 `#[cfg(test)]` lib 测试仅在该 feature 开启时编译，漏跑会漏掉这部分覆盖）。
 
