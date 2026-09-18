@@ -27,6 +27,7 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
+| `src/gui_host/handlers/subagents.rs` | — | GUI 1.20 子代理设置读取 / 全态写（先原子落盘再更新内存）与列表 / 取消；设置校验并发 1..=16、规则 ≤512、provider/model ≤256、组合去重、权限白名单；列表 / 取消校验会话归属 |
 | `src/gui_host/handlers/files.rs` | — | GUI 手动文件目录 / 文本读取与带内容版本校验的保存；文件正文不进入幂等账本 |
 | `src/lib.rs` | ~80 | 模块声明与 crate 根 re-export 单点（CLI 消费面不变） |
 | `src/app_core.rs` | ~2080 | `AppLoadOptions`、`AppError`（46 变体错误汇聚）、`CatalogOnlyProvider`（缺凭证 fail-closed 占位 provider）、`AppCore` 结构体与装配（`load*`/`from_config`/`from_parts*`）、会话/运行/usage/diff/checkpoint 门面方法、`SessionTokenEstimatorBridge`、`session_title_from_text`；`from_parts_with_protocol` 的 HTTP 客户端为 `pawork_auth::http_client()`（F06 `redirect(Policy::none())`），带 proxy 的路径仍走 `http_from_config` |
@@ -37,6 +38,7 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 | `src/approval.rs` | ~520 | `ApprovalAsk`/`ApprovalResolve`、`ApprovalPromptHost` trait、`GuiApprovalHost`（pending/queued 单锁决议池 + `ToolApprovalRequired` 事件发布）、`DenyAllApprovals`、`PreApprovedResolver`、`parse_approval_mode`、写工具预览（`relative_path_from_input`/`preview_for_tool`；computer 展示结构化动作参数） |
 | `src/loop_ctx.rs` | ~430 | `SessionLoopCtx` 实现 `pawork_engine::LoopContext`：审批请求转宿主、工具执行经 `ToolScheduler`、写前 checkpoint、压缩（fork recovery branch + snapshot）、message/request id 发号、事件 emit |
 | `src/extensions.rs` | ~420 | 内建工具注册表（含进程共享的 `computer` 桌面工具）、MCP 装配（auto_start/untrusted 拒绝/stdio 沙箱 + env 卫生）、`mcp_list`/`mcp_test`、`@token` 词法 `at_tokens`、`AT_FILE_MAX_BYTES`（64 KiB）、skill 目录发现 |
+| `src/subagents.rs` | ~460 | 子代理运行时：内建工具 `spawn_agent`/`wait_agent`/`close_agent`（全局启用 + 当前模型 `allow_spawn` 且非 child 会话才暴露；子代理不可再派生）；父子工具权限取规则交集；`SubagentRun` 生命周期（父终态等待收子、失败 / 取消级联）；`subagent.spawned` Diagnostic + child projection 还原列表真实状态；取消按 run 归属校验 |
 | `src/auth.rs` | ~660 | `auth_status`（只报来源 file/env/none，不回显 secret；SET-4 起按 auth_methods 数据判定；ADR-056 起双形态通道 api key 命中后继续输出 oauth 行，两类已存凭证各占一行）、`auth_set_key`/`auth_logout`（ADR-056 D1 共存语义：写 api key 不再删 OAuth 条目；logout 仍双类幂等清理）、`oauth_begin`/`oauth_complete`（PKCE 与 Device Flow 编排）、`oauth_finish`（pub(crate)：不持 AppCore 锁的 OAuth 收尾，供 GUI Device Flow 后台轮询任务复用；ADR-056 起 store 后不再移除 api key 条目）、`AuthChannelStatus`/`AuthSource`/`OAuthLogin` |
 | `src/hub.rs` | ~410 | `EventHub`：全局序 + ring buffer（默认 4096）+ `tokio::broadcast` 有界订阅；`global_sequence` 连续重写、`replay_from`、越界→`HubError::ReplayUnavailable`、慢订阅者 `Lagged` |
 | `src/testsupport.rs` | ~390 | 仅 `cfg(test)`：`RecordingEvents`/`ScriptedProvider`/`mock_core*`、`RecordingSubscriber`、`RecordingCapture`（双注册 Dispatch 钉住 tracing-core interest 缓存，防投毒）及其回归测试 |
@@ -63,7 +65,7 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 | `src/gui_server/mod.rs` | ~180 | `GuiHost` trait（snapshot/timeline/query/command）、`GuiHostError`、`GuiServer`/`GuiServerConfig`（bind endpoint、accept 循环、按连接 spawn 会话任务）；re-export 连接层常量 |
 | `src/gui_server/connection.rs` | ~550 | `ConnectionManager`：客户端注册/心跳（`DEFAULT_HEARTBEAT_TIMEOUT` 30s idle 清理）/事件订阅；每连接有界 mpsc 队列（`DEFAULT_QUEUE_CAPACITY` 1024），慢客户端标记 `lagged` 丢新事件不阻塞发布者；断连**不**取消 run |
 | `src/gui_server/session.rs` | ~1000 | 单连接握手与帧循环：协议版本检查、command 盖 client 戳、capability 门（未授予在宿主前拒绝）、Resume 三态调度（replay / SnapshotRequired / up-to-date）、Heartbeat→Pong、订阅确认、lagged→ReplayUnavailable 帧；ADR-045 `deliverable_to_negotiated` 按协商 minor 门控推送——`TerminalExited`（since 1.3）不推给协商 <1.3 的连接（老客户端 serde 遇未知变体会 decode 失败断流），该连接仍可从快照 `terminal_sessions` 的 `state` 获知终态；`host_error_to_protocol` 把宿主 `not_found` 映射为既有 `RequestNotFound` 码（其余维持 Internal），ADR-045 的幂等边界在 wire 上可观察 |
-| `src/gui_host/mod.rs` | ~1180 | `GuiHostAdapter`：实现 `GuiHost`；`QUERY_HANDLERS`/`COMMAND_HANDLERS` 静态分发表（与 protocol registry `gui.available` 双射，SET-2 起六个 Settings 入口，SET-6a 再增 `general_settings` / `set_proxy_url`，SET-6b 再增 `permissions_settings` / `set_approval_mode` / `workspace_trust`、SET-6c 再增 `mcp_test` / `mcp_server_remove`、SET-6 终端页再增 `terminal_settings` / `set_terminal_settings`（ADR-050）、ADR-052 再增 `set_provider_use_proxy`、ADR-054 再增 `session_rename` / `session_archive`、ADR-055 再增 `set_model_enabled` / `set_provider_models_enabled` / `set_default_role_model`）、幂等 wrap（scope 隔离 + begin/record）、snapshot 组装（含重启后 pending approvals 重建，Workspaces 段输出 v14 注册表全集合）、timeline 分页（limit 默认 200、clamp 1..=500，游标跨未投影事件推进）；SET-2 `auth_flights` 按 provider_id 单飞守卫（auth_start / auth_set_api_key / auth_cancel 共用，Arc 身份防误删他人 flight） |
+| `src/gui_host/mod.rs` | ~1180 | `GuiHostAdapter`：实现 `GuiHost`；`QUERY_HANDLERS`/`COMMAND_HANDLERS` 静态分发表（与 protocol registry `gui.available` 双射，SET-2 起六个 Settings 入口，SET-6a 再增 `general_settings` / `set_proxy_url`，SET-6b 再增 `permissions_settings` / `set_approval_mode` / `workspace_trust`、SET-6c 再增 `mcp_test` / `mcp_server_remove`、SET-6 终端页再增 `terminal_settings` / `set_terminal_settings`（ADR-050）、ADR-052 再增 `set_provider_use_proxy`、ADR-054 再增 `session_rename` / `session_archive`、ADR-055 再增 `set_model_enabled` / `set_provider_models_enabled` / `set_default_role_model`、GUI 1.20 再增 `subagent_settings` / `subagent_list` / `set_subagent_settings` / `subagent_cancel`）、幂等 wrap（scope 隔离 + begin/record）、snapshot 组装（含重启后 pending approvals 重建，Workspaces 段输出 v14 注册表全集合）、timeline 分页（limit 默认 200、clamp 1..=500，游标跨未投影事件推进）；SET-2 `auth_flights` 按 provider_id 单飞守卫（auth_start / auth_set_api_key / auth_cancel 共用，Arc 身份防误删他人 flight） |
 | `src/gui_host/bus.rs` | ~315 | `GuiEventBus`（内部 `EventHub` 赋全局序 + replay；engine 终态上流时登记 run_id，供宿主合成终态兜底去重；`publish_raw` 合成事件序号从 `SYNTHETIC_SEQUENCE_BASE`=2^60 递增自取，不占真实持久化号段且排在既有时间线内容之后）、`GuiBroadcastSink`（AgentEvent→AppEvent 映射后广播）、`publish_provider_auth`（SET-2：Global 流广播 `AuthChanged`，`EventSource::Provider`，hub 重写全局序）、`GuiRunRegistry`（活跃 GUI run 与 `CancellationToken` 登记） |
 | `src/gui_host/{terminal_tool,browser_tool}.rs` | — | GUI Run 注册的聊天工具；PTY 共用注册表和广播，Browser 请求绑定发起客户端与 run、一次领取、超时回收 |
 | `src/gui_host/auto_title.rs` | ~150 | ADR-054 D4 自动标题编排：GUI RunStart 成功终态后独立 spawn（不阻塞终态事件）；标题仍为占位名 `New session` 且已配置 `naming_provider`/`naming_model` 才经 `AppCore::generate_session_title` 做无工具一次性补全；ADR-055 D4 起命名模型被禁用时跳过命名、保留占位名；素材走 `resume_messages_keep_pending` 只读重放；网络阶段释放 Core 锁，返回后复核命名配置仍有效，经 storage `rename_session_if_title` 原子校验占位名并改名，再广播 `SessionMetaChanged`；未配置/失败/超时静默保留占位名 |
@@ -178,6 +180,8 @@ GUI `run_start` 在既有 ToolScheduler 注册 `terminal` / `browser`，保留�
 `browser_tool.rs` 将请求绑定发起 Run 的 run_id 与本地 GUI 客户端。`browser_next` 按 run 一次领取（Host 先校验 run 活跃且属于所报 session），`browser_respond` 核对领取者；取消或 25s 超时移除请求，run 终态解除绑定。Desktop 在系统 WebKit 执行 navigate/read/click/type/back/forward/reload/close 并回报真实结果。历史重放不执行动作。
 
 ## 4. 核心行为与数据流
+
+子代理模型不设厂商或模型家族白名单。`spawn_agent` 可显式指定任意已接入供应商与目录内模型，省略时继承主模型；目标必须已启用且允许充当子代理，工具权限取父子规则交集。跨供应商复用正式适配器装配，推理签名等受保护内容绑定该供应商的持久存储；普通会话列表不包含 `child-` 子会话，子代理状态由父会话列表查询返回。
 
 GUI 1.19 文件面板：本机 GUI 用户经 `workspace_files` / `workspace_file_read` / `workspace_file_write` 操作已登记项目的相对路径。目录逐层返回、目录优先、最多 1,000 项；只读写已有 UTF-8 普通文件（≤128 KiB、无 NUL），拒绝路径越界、符号链接及受保护路径。读取返回内容版本；保存必须匹配 `expected_revision`，冲突保留磁盘文件。写后返回路径与新版本，正文不进入日志或命令账本。手动保存不构造 Agent Run，也不授予模型额外权限；模型工具仍走既有 Policy / 审批。
 
@@ -296,6 +300,8 @@ WorkspaceList 与 snapshot Workspaces 段均按每个目标 workspace roots 调�
 依赖方向与全局分层见 [../../architecture.md](../../architecture.md) 与 [../../design.md](../../design.md) §2。本包处在 `pawork` 二进制依赖闭包的最大层：合并/归档波以 `cargo tree -p pawork` 断言无环且闭包不膨胀，给本包新增上游依赖须先过对应任务书。
 
 ## 7. 测试与验证资产
+
+`subagents::tests` 覆盖结果重放、普通任务列表排除子会话、禁止嵌套派发与工具越权、父取消和并发上限。`cross_provider_subagents_select_models_and_persist_reasoning` 通过本地模拟 HTTP 接口验证非 GLM 模型的 Chat Completions / Messages 跨供应商派发、实际请求 model、结果回传和推理签名持久化；不等同于真实供应商联网验收。
 
 `gui_host/tests/chat_controls.rs::computer_approval_image_persistence_and_resume_do_not_repeat_input` 验证 computer 工具在批准前零调用、动作预览、canonical 图片持久化和恢复历史不重执行。隔离桌面连接和输入由 tools / computer-use 定向测试及真实 probe 另验。
 

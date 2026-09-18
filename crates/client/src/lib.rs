@@ -29,9 +29,9 @@ use std::time::Duration;
 use pawork_domain::{CommandId, ConnectionId, GuiClientId, QueryId, Timestamp};
 use pawork_protocol::app::registry::{command_entry, query_entry};
 use pawork_protocol::{
-    ApiHandle, ClientFrame, HandshakeRequest, HandshakeResponse, ProtocolCodecError, ProtocolError,
-    ResumeRequest, ResumeResponse, SUPPORTED_API_VERSIONS, ServerFrame, SubscribeRequest,
-    decode_server_frame, decode_server_frame_checked, encode_client_frame,
+    decode_server_frame, decode_server_frame_checked, encode_client_frame, ApiHandle, ClientFrame,
+    HandshakeRequest, HandshakeResponse, ProtocolCodecError, ProtocolError, ResumeRequest,
+    ResumeResponse, ServerFrame, SubscribeRequest, SUPPORTED_API_VERSIONS,
 };
 use pawork_transport::{
     ConnectionInfo, GuiConnection, TransportError, TransportErrorKind, TransportFrame,
@@ -53,8 +53,9 @@ pub use pawork_protocol::{
     ProviderAccountSelectionMode, ProviderAuthState, ProviderAuthStatusData,
     ProviderAuthStatusEntry, ProviderCatalogState, ProviderCredentialStatus, ProviderUseProxyData,
     QuotaMeasure, QuotaOverviewQuery, QuotaOverviewView, QuotaReset, QuotaUnit, QuotaWindow,
-    RoleDefaultsData, RunState, Snapshot, TerminalExitReason, TerminalSettingsData, TimelineItem,
-    TimelineItemKind, TimelinePage, WindowReadView,
+    RoleDefaultsData, RunState, Snapshot, SubagentInfo, SubagentListData, SubagentModelRule,
+    SubagentSettingsData, TerminalExitReason, TerminalSettingsData, TimelineItem, TimelineItemKind,
+    TimelinePage, WindowReadView,
 };
 pub use pawork_transport::{ConnectOptions, GuiTransportClient, LocalTransport, TransportEndpoint};
 
@@ -1094,7 +1095,7 @@ mod tests {
     use pawork_domain::{CommandId, QueryId};
     use pawork_protocol::GuiCapability;
     use pawork_protocol::{
-        API_VERSION, AppResponse, AppResponseEnvelope, decode_client_frame, encode_server_frame,
+        decode_client_frame, encode_server_frame, AppResponse, AppResponseEnvelope, API_VERSION,
     };
     use pawork_transport::{ConnectionLocality, TransportErrorKind};
     use std::future::Future;
@@ -1346,11 +1347,9 @@ mod tests {
         // Desktop 握手自行声明 TerminalStreaming；默认配置不强制，避免影响既有契约装配。
         let mut config = ClientConfig::default();
         config.capabilities.push(GuiCapability::TerminalStreaming);
-        assert!(
-            config
-                .capabilities
-                .contains(&GuiCapability::TerminalStreaming)
-        );
+        assert!(config
+            .capabilities
+            .contains(&GuiCapability::TerminalStreaming));
     }
 
     #[test]
@@ -1582,8 +1581,7 @@ mod tests {
         };
         server_tx
             .send(TransportFrame::new(
-                encode_server_frame(&ServerFrame::Snapshot(snapshot))
-                    .expect("encode snapshot"),
+                encode_server_frame(&ServerFrame::Snapshot(snapshot)).expect("encode snapshot"),
             ))
             .expect("snapshot frame delivered");
         let (result_a, result_b) = tokio::join!(round_trip_a, round_trip_b);

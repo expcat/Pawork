@@ -30,6 +30,7 @@ mod protocol;
 mod provider_assembly;
 mod provider_quota;
 mod services;
+mod subagents;
 mod tasks_host;
 #[cfg(test)]
 mod testsupport;

@@ -15,6 +15,7 @@ mod loader;
 mod merge;
 mod paths;
 mod schema;
+mod subagents;
 mod writer;
 
 use serde::{Deserialize, Serialize};
@@ -32,10 +33,16 @@ pub use schema::{
     ModelConfig, PaworkConfig, ProfileConfig, ProfileOverrides, ProviderConfig, RunOverrides,
     SessionOverrides, TerminalConfig,
 };
+pub use subagents::{
+    default_subagent_permissions, SubagentConfig, SubagentModelConfig,
+    DEFAULT_SUBAGENT_MAX_CONCURRENT, DEFAULT_SUBAGENT_PERMISSIONS, SUBAGENT_MAX_CONCURRENT_MAX,
+    SUBAGENT_MAX_CONCURRENT_MIN,
+};
 pub use writer::{
     write_approval_mode, write_default_model_pair, write_mcp_server_remove, write_model_pair,
     write_naming_model_pair, write_provider_disabled_models, write_provider_model_preferences,
-    write_provider_use_proxy, write_proxy_url, write_terminal_settings, write_workspace_trust,
+    write_provider_use_proxy, write_proxy_url, write_subagent_settings, write_terminal_settings,
+    write_workspace_trust,
 };
 
 /// 配置层级。

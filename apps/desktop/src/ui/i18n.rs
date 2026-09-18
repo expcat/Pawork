@@ -297,6 +297,7 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "settings.nav.permissions" => ("Approvals", "审批"),
         "settings.nav.tools" => ("Tools & MCP", "工具与 MCP"),
         "settings.nav.terminal" => ("Terminal", "终端"),
+        "settings.nav.subagents" => ("Subagents", "子代理"),
         "settings.nav.appearance" => ("Appearance", "外观"),
         "settings.nav.advanced" => ("Advanced", "高级"),
         "settings.nav.about" => ("About", "关于"),
@@ -451,6 +452,90 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "settings.terminal.ax_columns" => ("Columns", "列数"),
         "settings.terminal.ax_rows" => ("Rows", "行数"),
         "settings.terminal.ax_effect" => ("Effect", "生效边界"),
+        // ── Settings · Subagents ──
+        "settings.subagents.title" => ("Subagents", "子代理"),
+        "settings.subagents.subtitle" => (
+            "Which models can spawn or serve as subagents, and what they may do",
+            "配置哪些模型可发起或充当子代理，以及它们可使用的功能",
+        ),
+        "settings.subagents.refresh_tooltip" => (
+            "Refresh subagent settings",
+            "刷新子代理设置",
+        ),
+        "settings.subagents.save_tooltip" => (
+            "Save the concurrency limit",
+            "保存并发上限",
+        ),
+        "settings.subagents.general_label" => ("General", "通用"),
+        "settings.subagents.enabled_label" => ("Enable subagents", "启用子代理"),
+        "settings.subagents.enabled_note" => (
+            "Turn subagents on or off for the whole workspace.",
+            "为整个工作区开启或关闭子代理。",
+        ),
+        "settings.subagents.enabled_tooltip" => (
+            "Toggle subagents globally",
+            "全局开关子代理",
+        ),
+        "settings.subagents.switch_on" => ("On", "开"),
+        "settings.subagents.switch_off" => ("Off", "关"),
+        "settings.subagents.concurrency_current" => (
+            "Current limit · {}",
+            "当前上限 · {}",
+        ),
+        "settings.subagents.concurrency_label" => ("Max concurrent", "并发上限"),
+        "settings.subagents.effect_note" => (
+            "Subagent settings apply to new runs; running subagents are unchanged.",
+            "子代理设置仅对新发起的运行生效；进行中的子代理不受影响。",
+        ),
+        "settings.subagents.models_section" => ("Models", "模型"),
+        "settings.subagents.models_note" => (
+            "Defaults allow spawning and delegating with all permissions. Adjust per model as needed.",
+            "默认允许发起与充当子代理并授予全部功能权限；可按模型调整。",
+        ),
+        "settings.subagents.models_empty" => (
+            "No model catalog available. Connect a provider first.",
+            "暂无模型目录。请先连接一个提供商。",
+        ),
+        "settings.subagents.default_badge" => ("Default", "默认"),
+        "settings.subagents.custom_badge" => ("Custom", "自定义"),
+        "settings.subagents.allow_spawn" => ("Can spawn", "可发起"),
+        "settings.subagents.allow_spawn_tooltip" => (
+            "Whether this model may spawn subagents",
+            "该模型是否可发起子代理",
+        ),
+        "settings.subagents.allow_delegate" => ("Can delegate", "可充当"),
+        "settings.subagents.allow_delegate_tooltip" => (
+            "Whether this model may serve as a subagent",
+            "该模型是否可作为子代理",
+        ),
+        "settings.subagents.permission.read" => ("Read", "读取"),
+        "settings.subagents.permission.write" => ("Write", "写入"),
+        "settings.subagents.permission.terminal" => ("Terminal", "终端"),
+        "settings.subagents.permission.network" => ("Network", "网络"),
+        "settings.subagents.permission.mcp" => ("MCP", "MCP"),
+        "settings.subagents.permission.browser" => ("Browser", "浏览器"),
+        "settings.subagents.permission.computer" => ("Computer", "计算机"),
+        "settings.subagents.reset" => ("Reset to default", "重置为默认"),
+        "settings.subagents.reset_tooltip" => (
+            "Remove the custom rule for this model",
+            "移除该模型的自定义规则",
+        ),
+        "settings.subagents.ax_status" => ("Subagents status", "子代理状态"),
+        "settings.subagents.ax_enabled" => ("Subagents enabled", "子代理开关"),
+        "settings.subagents.ax_concurrency" => ("Max concurrent subagents", "子代理并发上限"),
+        "settings.subagents.ax_effect" => ("Effect", "生效边界"),
+        "settings.subagents.ax_models" => ("Model rules", "模型规则"),
+        // ── Activity · Subagents ──
+        "subagents.title" => ("Subagents", "子智能体"),
+        "subagents.summary" => ("{} running · {} done", "{} 运行中 · {} 完成"),
+        "subagents.empty" => ("No subagents", "暂无子代理"),
+        "subagents.no_session" => ("No active session", "无活动会话"),
+        "subagents.loading" => ("Loading…", "加载中…"),
+        "subagents.status.running" => ("Running", "运行中"),
+        "subagents.status.waiting" => ("Waiting", "等待中"),
+        "subagents.status.completed" => ("Done", "完成"),
+        "subagents.status.failed" => ("Failed", "失败"),
+        "subagents.status.cancelled" => ("Cancelled", "已取消"),
         // ── Settings · Advanced ──
         "settings.advanced.title" => ("Advanced", "高级"),
         "settings.advanced.subtitle" => (
@@ -1171,7 +1256,11 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "status.language" => ("Language · {}", "语言 · {}"),
         _ => (key, key),
     };
-    if lang == Language::Chinese { zh } else { en }
+    if lang == Language::Chinese {
+        zh
+    } else {
+        en
+    }
 }
 
 /// 纯函数：双占位符模板按序替换，不读全局状态。

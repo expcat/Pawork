@@ -26,20 +26,22 @@ pub use pawork_client::projection::{ForkBoundary, TimelineEntry, TimelineEntryKi
 
 pub use session::group_models_by_provider;
 pub use session::{
-    ActiveRun, ConnectionState, DateBucket, ModelEntry, PendingApproval, ResumeApply, ResumeState,
-    RunUsageDisplay, SessionLiveStatus, SessionSummary, TaskRailDateGroup, TaskRailGrouping,
-    TaskRailProjectGroup, UNASSIGNED_PROJECT, WorkspaceSummary, sessions_in_snapshot,
+    sessions_in_snapshot, ActiveRun, ConnectionState, DateBucket, ModelEntry, PendingApproval,
+    ResumeApply, ResumeState, RunUsageDisplay, SessionLiveStatus, SessionSummary,
+    TaskRailDateGroup, TaskRailGrouping, TaskRailProjectGroup, WorkspaceSummary,
+    UNASSIGNED_PROJECT,
 };
 pub use settings::{
-    ApprovalModeWire, AuthChange, AuthStartData, DefaultModelPair, GeneralSettingsData,
-    PermissionsSettingsData, ProviderAuthState, ProviderAuthStatusData, ProviderAuthStatusEntry,
-    ProviderCatalogState, ProviderModelWrite, ProviderStatusLabels, RoleDefaultsData,
-    SettingsGeneralState, SettingsPermissionsState, SettingsProvidersState, SettingsRole,
-    SettingsTerminalState, TerminalSettingsData, parse_auth_change,
+    parse_auth_change, ApprovalModeWire, AuthChange, AuthStartData, DefaultModelPair,
+    GeneralSettingsData, PermissionsSettingsData, ProviderAuthState, ProviderAuthStatusData,
+    ProviderAuthStatusEntry, ProviderCatalogState, ProviderModelWrite, ProviderStatusLabels,
+    RoleDefaultsData, SettingsGeneralState, SettingsPermissionsState, SettingsProvidersState,
+    SettingsRole, SettingsSubagentsState, SettingsTerminalState, SubagentActivityState,
+    SubagentModelRule, SubagentSettingsData, TerminalSettingsData,
 };
 pub(crate) use terminal::TERMINAL_CWD_UNKNOWN;
 pub use terminal::{TerminalAvailability, TerminalState};
-pub use timeline::{TimelineRow, run_footer_label, run_summary_texts};
+pub use timeline::{run_footer_label, run_summary_texts, TimelineRow};
 
 use session::{
     parse_active_runs, parse_pending_approvals, parse_provider_status, parse_sessions,
@@ -74,6 +76,10 @@ pub struct DesktopProjection {
     /// SET-6d Settings 终端页（Host `terminal_settings`；其生效尺寸
     /// 同时作为新建终端初始尺寸来源，ADR-050 D4）。
     pub settings_terminal: SettingsTerminalState,
+    /// Settings 子代理页（Host `subagent_settings`；Global-only 配置）。
+    pub settings_subagents: SettingsSubagentsState,
+    /// Activity 浮层「子智能体」卡（Host `subagent_list`；按 session 绑定）。
+    pub subagent_activity: SubagentActivityState,
     pub active_runs: Vec<ActiveRun>,
     pub active_run_started_at_ms: Option<u64>,
     pub resume: ResumeState,

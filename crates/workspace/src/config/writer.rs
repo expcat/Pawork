@@ -382,6 +382,74 @@ pub fn write_terminal_settings(
     })
 }
 
+/// Atomically write Global `[subagents]`, preserving unknown fields.
+///
+/// Full-state replace of the known keys; a non-table `subagents` value is
+/// rebuilt as an empty table. Model rows keep unknown fields when the same
+/// `provider_id` + `model_id` pair already exists.
+pub fn write_subagent_settings(
+    path: &Path,
+    settings: &crate::config::SubagentConfig,
+) -> Result<(), ConfigError> {
+    rmw_global_config(path, |table| {
+        let mut subagents = match table.remove("subagents") {
+            Some(toml::Value::Table(existing)) => existing,
+            Some(_) | None => toml::Table::new(),
+        };
+        subagents.insert("enabled".into(), toml::Value::Boolean(settings.enabled));
+        subagents.insert(
+            "max_concurrent".into(),
+            toml::Value::Integer(i64::from(settings.max_concurrent)),
+        );
+        let models = match subagents.remove("models") {
+            Some(toml::Value::Array(existing)) => existing,
+            Some(_) | None => Vec::new(),
+        };
+        let mut rewritten = Vec::with_capacity(settings.models.len());
+        for model in &settings.models {
+            let mut entry = models
+                .iter()
+                .find(|item| {
+                    item.as_table().is_some_and(|table| {
+                        table.get("provider_id").and_then(toml::Value::as_str)
+                            == Some(model.provider_id.as_str())
+                            && table.get("model_id").and_then(toml::Value::as_str)
+                                == Some(model.model_id.as_str())
+                    })
+                })
+                .and_then(|item| item.as_table().cloned())
+                .unwrap_or_default();
+            entry.insert(
+                "provider_id".into(),
+                toml::Value::String(model.provider_id.clone()),
+            );
+            entry.insert(
+                "model_id".into(),
+                toml::Value::String(model.model_id.clone()),
+            );
+            entry.insert(
+                "allow_spawn".into(),
+                toml::Value::Boolean(model.allow_spawn),
+            );
+            entry.insert(
+                "allow_as_subagent".into(),
+                toml::Value::Boolean(model.allow_as_subagent),
+            );
+            let permissions = model
+                .permissions
+                .iter()
+                .cloned()
+                .map(toml::Value::String)
+                .collect();
+            entry.insert("permissions".into(), toml::Value::Array(permissions));
+            rewritten.push(toml::Value::Table(entry));
+        }
+        subagents.insert("models".into(), toml::Value::Array(rewritten));
+        table.insert("subagents".into(), toml::Value::Table(subagents));
+        Ok((true, ()))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -787,6 +855,46 @@ mod tests {
         )
         .is_err());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), invalid);
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn write_subagent_settings_preserves_unknown_fields() {
+        let path = temp_path("subagents");
+        std::fs::write(
+            &path,
+            "trust_workspaces = true\n[extra_section]\nkey = \"v\"\n[subagents]\nenabled = false\nkeep = 1\n",
+        )
+        .expect("seed config");
+        let settings = crate::config::SubagentConfig {
+            enabled: true,
+            max_concurrent: 2,
+            models: vec![crate::config::SubagentModelConfig {
+                provider_id: "glm-coding".into(),
+                model_id: "glm-5.3-flash".into(),
+                allow_spawn: true,
+                allow_as_subagent: false,
+                permissions: vec!["read".into()],
+            }],
+        };
+        write_subagent_settings(&path, &settings).expect("write");
+        let content = std::fs::read_to_string(&path).expect("read back");
+        assert!(content.contains("trust_workspaces = true"));
+        assert!(content.contains("[extra_section]"));
+        let table: toml::Table = toml::from_str(&content).expect("parse");
+        let subagents = table
+            .get("subagents")
+            .and_then(|v| v.as_table())
+            .expect("subagents");
+        assert_eq!(
+            subagents.get("enabled").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            subagents.get("max_concurrent").and_then(|v| v.as_integer()),
+            Some(2)
+        );
+        assert_eq!(subagents.get("keep").and_then(|v| v.as_integer()), Some(1));
         std::fs::remove_file(&path).ok();
     }
 }

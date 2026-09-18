@@ -8,13 +8,14 @@ use serde_json::Value;
 
 use crate::ui::i18n::t;
 
-use super::DesktopProjection;
 use super::session::ModelEntry;
+use super::DesktopProjection;
 
 pub use pawork_client::{
     ApprovalModeWire, AuthStartData, DefaultModelPair, GeneralSettingsData,
     PermissionsSettingsData, ProviderAuthState, ProviderAuthStatusData, ProviderAuthStatusEntry,
-    ProviderCatalogState, RoleDefaultsData, TerminalSettingsData,
+    ProviderCatalogState, RoleDefaultsData, SubagentInfo, SubagentListData, SubagentModelRule,
+    SubagentSettingsData, TerminalSettingsData,
 };
 
 /// Settings 四默认角色（OPT-3b / ADR-055 D5）。wire 名是 Host 权威词汇
@@ -706,6 +707,111 @@ impl SettingsTerminalState {
     }
 }
 
+/// Settings「子代理」页状态：Host `subagent_settings` 权威 Global 配置。
+/// 查询失败 / 未知则 `available=false`，导航不显示该页且不渲染写入口；
+/// 断线 `mark_stale` 保留最后只读结果；写回执即写后完整状态（全态写，
+/// 不乐观更新）。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SettingsSubagentsState {
+    pub query: SettingsQueryGate,
+    /// Host 权威生效配置（查询 / 写回执同形状）。
+    pub settings: SubagentSettingsData,
+    /// 写在途（set_subagent_settings 已派出、回执 / 失败未到）：控件禁用
+    /// 防重复提交（同 OPT-3a model_write_pending 口径）。
+    pub write_pending: bool,
+}
+
+impl Deref for SettingsSubagentsState {
+    type Target = SettingsQueryGate;
+    fn deref(&self) -> &Self::Target {
+        &self.query
+    }
+}
+
+impl DerefMut for SettingsSubagentsState {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.query
+    }
+}
+
+impl SettingsSubagentsState {
+    /// 查询到达 / 写回执（同形状）：整体替换并清在途标记。
+    pub fn apply_loaded(&mut self, data: SubagentSettingsData) {
+        self.query.mark_ready();
+        self.write_pending = false;
+        self.settings = data;
+    }
+
+    /// 写失败保旧：清在途标记并沿错误行呈现原因。
+    pub fn apply_write_failed(&mut self, reason: &str) {
+        self.write_pending = false;
+        self.query.apply_failed(reason);
+    }
+
+    /// 某模型的生效规则：无显式规则时回落默认（允许发起 / 可作为子代理 /
+    /// 全量功能权限），与 Host `rule()` 口径一致。
+    pub fn effective_rule(&self, provider_id: &str, model_id: &str) -> SubagentModelRule {
+        self.settings
+            .models
+            .iter()
+            .find(|rule| rule.provider_id == provider_id && rule.model_id == model_id)
+            .cloned()
+            .unwrap_or_else(|| SubagentModelRule {
+                provider_id: provider_id.to_string(),
+                model_id: model_id.to_string(),
+                ..SubagentModelRule::default()
+            })
+    }
+
+    /// 模型是否有显式规则（「重置为默认」入口按此显示）。
+    pub fn has_rule(&self, provider_id: &str, model_id: &str) -> bool {
+        self.settings
+            .models
+            .iter()
+            .any(|rule| rule.provider_id == provider_id && rule.model_id == model_id)
+    }
+}
+
+/// Activity 浮层「子智能体」卡状态（Host `subagent_list` 权威）。数据
+/// 绑定查询时的 session；切换活动会话 / 断线即清空，不跨会话展示。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SubagentActivityState {
+    pub session_id: Option<String>,
+    pub loading: bool,
+    pub agents: Vec<SubagentInfo>,
+}
+
+impl SubagentActivityState {
+    pub fn begin_loading(&mut self, session_id: &str) {
+        if self.session_id.as_deref() != Some(session_id) {
+            self.agents.clear();
+        }
+        self.session_id = Some(session_id.to_string());
+        self.loading = true;
+    }
+
+    pub fn apply_loaded(&mut self, session_id: &str, data: SubagentListData) {
+        if self.session_id.as_deref() == Some(session_id) {
+            self.loading = false;
+            self.agents = data.agents;
+        }
+    }
+
+    pub fn apply_failed(&mut self) {
+        self.loading = false;
+    }
+
+    /// 运行中 / 等待中与已完成计数（浮层摘要行；render 与 AX 同源）。
+    pub fn counts(&self) -> (usize, usize) {
+        let running = self
+            .agents
+            .iter()
+            .filter(|agent| matches!(agent.status.as_str(), "running" | "waiting"))
+            .count();
+        (running, self.agents.len() - running)
+    }
+}
+
 /// 解析 AuthChangeState 的 wire 形态（tag=type / content=data）。
 /// AuthChanged 事件不是 CLN-4 Data 载荷，仍走手写解析。
 pub fn parse_auth_change(state: &Value) -> Result<AuthChange, String> {
@@ -754,6 +860,7 @@ impl DesktopProjection {
         self.settings_general.mark_stale(reason);
         self.settings_permissions.mark_stale(reason);
         self.settings_terminal.mark_stale(reason);
+        self.settings_subagents.mark_stale(reason);
     }
 
     /// `SetDefaultRoleModel` 获 Host Data 确认（OPT-3b / ADR-055 D5；回执

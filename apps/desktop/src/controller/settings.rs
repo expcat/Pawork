@@ -649,6 +649,137 @@ impl DesktopController {
         });
     }
 
+    /// 拉取 Settings「子代理」页（subagent_settings）。返回是否已派出
+    ///（断线时由 UI 保留 stale 只读结果，不进入 loading）。
+    pub fn load_subagent_settings(&self) -> bool {
+        let Some(client) = self.current_client() else {
+            return false;
+        };
+        let events = self.event_sender();
+        self.runtime.spawn(async move {
+            match client
+                .query(
+                    subagent_settings_query(),
+                    command_source(),
+                    actor_identity(),
+                )
+                .await
+            {
+                Ok(response) => match parse_subagent_settings_response(&response) {
+                    Ok(data) => {
+                        let _ = events
+                            .send(ControllerEvent::SubagentSettingsLoaded(data))
+                            .await;
+                    }
+                    Err(reason) => try_emit(
+                        &events,
+                        ControllerEvent::OperationFailed {
+                            action: "load subagent settings",
+                            reason,
+                        },
+                    ),
+                },
+                Err(error) => try_emit(
+                    &events,
+                    ControllerEvent::OperationFailed {
+                        action: "load subagent settings",
+                        reason: error.to_string(),
+                    },
+                ),
+            }
+        });
+        true
+    }
+
+    /// 子代理设置全态写（set_subagent_settings）。Data 回执即写后完整
+    /// 状态，经 `SubagentSettingsConfirmed` 投递；Error / 传输失败经
+    /// OperationFailed 呈现，不动 UI 现有生效值。
+    pub fn set_subagent_settings(&self, settings: SubagentSettingsData) {
+        let Some(client) = self.current_client() else {
+            self.emit_reliable(ControllerEvent::OperationFailed {
+                action: "set subagent settings",
+                reason: "not connected".into(),
+            });
+            return;
+        };
+        let events = self.event_sender();
+        self.runtime.spawn(async move {
+            let command = set_subagent_settings_command(&settings);
+            let response = match client
+                .command(command, command_source(), actor_identity())
+                .await
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    try_emit(
+                        &events,
+                        ControllerEvent::OperationFailed {
+                            action: "set subagent settings",
+                            reason: error.to_string(),
+                        },
+                    );
+                    return;
+                }
+            };
+            match parse_subagent_settings_response(&response) {
+                Ok(data) => {
+                    let _ = events
+                        .send(ControllerEvent::SubagentSettingsConfirmed(data))
+                        .await;
+                }
+                Err(reason) => try_emit(
+                    &events,
+                    ControllerEvent::OperationFailed {
+                        action: "set subagent settings",
+                        reason,
+                    },
+                ),
+            }
+        });
+    }
+
+    /// 拉取某会话的子代理列表（subagent_list；Activity 浮层「子智能体」
+    /// 卡）。返回是否已派出（断线时 UI 保留旧数据并停 loading）。
+    pub fn load_subagent_list(&self, session_id: String) -> bool {
+        let Some(client) = self.current_client() else {
+            return false;
+        };
+        let events = self.event_sender();
+        self.runtime.spawn(async move {
+            match client
+                .query(
+                    subagent_list_query(&session_id),
+                    command_source(),
+                    actor_identity(),
+                )
+                .await
+            {
+                Ok(response) => match parse_subagent_list_response(&response) {
+                    Ok(data) => {
+                        let _ = events
+                            .send(ControllerEvent::SubagentListLoaded { session_id, data })
+                            .await;
+                    }
+                    Err(reason) => try_emit(
+                        &events,
+                        ControllerEvent::OperationFailed {
+                            action: "load subagent list",
+                            reason,
+                        },
+                    ),
+                },
+                Err(error) => try_emit(
+                    &events,
+                    ControllerEvent::OperationFailed {
+                        action: "load subagent list",
+                        reason: error.to_string(),
+                    },
+                ),
+            }
+        });
+        true
+    }
+
     /// 发起 OAuth 授权（auth_start）。响应只携带 verification_url /
     /// user_code / expires_at，进度经 AuthChanged 事件收敛。
     pub fn auth_start(&self, provider_id: String, display_name: Option<String>) {

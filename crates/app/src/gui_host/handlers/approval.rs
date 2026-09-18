@@ -1,5 +1,5 @@
-use crate::ApprovalResolve;
 use crate::gui_server::GuiHostError;
+use crate::ApprovalResolve;
 use pawork_engine::AgentEventSink;
 use pawork_protocol::{AppCommand, AppCommandEnvelope, AppResponse};
 
@@ -42,7 +42,17 @@ pub(crate) async fn tool_approve(
         ApprovalResolve::Live => {}
         ApprovalResolve::Queued => {
             // live run: keep queued race semantics, never durable-seal a waiting live call.
-            if !adapter.runs().contains(run_id) {
+            if !adapter.runs().contains(run_id)
+                && !adapter
+                    .core
+                    .read()
+                    .await
+                    .subagents
+                    .lock()
+                    .unwrap()
+                    .values()
+                    .any(|child| child.child_run == *run_id)
+            {
                 let core = adapter.core.read().await;
                 let store = core.store().map_err(GuiHostAdapter::app_error)?;
                 if let Some(waiting) = store

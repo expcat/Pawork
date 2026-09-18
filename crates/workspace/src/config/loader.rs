@@ -446,6 +446,14 @@ fn strip_untrusted_layer(src: &mut ConfigSource, warnings: &mut Vec<ConfigWarnin
             path: path.clone(),
         });
     }
+    if remove_top_level_key(value, "subagents") {
+        warnings.push(ConfigWarning::PermissionsIgnored {
+            key: "subagents".into(),
+            tier,
+            source_key: source_key.clone(),
+            path: path.clone(),
+        });
+    }
     if remove_top_level_key(value, "web_search") {
         warnings.push(ConfigWarning::WebSearchIgnored {
             tier,
@@ -693,6 +701,44 @@ mod tests {
             .with_file(ConfigTier::Global, "global", &path)
             .resolve()
             .expect_err("invalid Global permissions must still fail");
+        assert_eq!(error.path(), Some(path.as_path()));
+    }
+
+    #[test]
+    fn file_subagents_are_stripped_before_schema_validation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "subagents = 'invalid'
+default_model = 'kept'
+",
+        )
+        .unwrap();
+        for tier in [
+            ConfigTier::Profile,
+            ConfigTier::Workspace,
+            ConfigTier::Session,
+            ConfigTier::Run,
+        ] {
+            let resolved = Loader::new()
+                .with_builtin()
+                .with_file(tier, "file", &path)
+                .resolve()
+                .expect("non-Global subagents must be ignored");
+            assert!(resolved.config.subagents.is_none());
+            assert_eq!(resolved.config.default_model.as_deref(), Some("kept"));
+            assert_eq!(resolved.warnings.len(), 1);
+            assert!(
+                matches!(resolved.warnings[0], ConfigWarning::PermissionsIgnored {
+                key: ref key, tier: source_tier, path: Some(ref source_path), ..
+            } if key == "subagents" && source_tier == tier && source_path == &path)
+            );
+        }
+        let error = Loader::new()
+            .with_file(ConfigTier::Global, "global", &path)
+            .resolve()
+            .expect_err("invalid Global subagents must still fail");
         assert_eq!(error.path(), Some(path.as_path()));
     }
 

@@ -100,6 +100,12 @@ pub enum AppQuery {
         session_id: SessionId,
         run_id: RunId,
     },
+    /// GUI-only Global subagent settings (since 1.20).
+    SubagentSettings,
+    /// GUI-only live/completed subagent list for a session (since 1.20).
+    SubagentList {
+        session_id: SessionId,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

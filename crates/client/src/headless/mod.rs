@@ -33,7 +33,7 @@
 //! ## 版本与稳定面（语义化策略）
 //!
 //! - SDK 自身的 crate 版本按 semver 演进；`SDK_API_VERSION` 声明 SDK 期望的
-//!   协议版本（跟随 `pawork_protocol::API_VERSION`，当前 1.19），握手时与 Host
+//!   协议版本（跟随 `pawork_protocol::API_VERSION`，当前 1.20），握手时与 Host
 //!   协商，major 不兼容即显式失败。
 //! - 稳定面：`PaworkClient`、`PaworkOptions`、`EventSubscription`、
 //!   [`error::SdkError`]、`transport::Transport`、`mock::MockTransport`。
@@ -83,7 +83,7 @@ pub mod experimental {
 /// 便捷重导出：常用协议类型（与 `pawork-protocol` 同构，免去额外依赖）。
 pub mod reexport {
     pub use pawork_protocol::{
-        API_VERSION, ApiHandle, ApiVersion, AppCommand, AppEvent, AppEventEnvelope, AppQuery,
-        AppResponse, AppResponseEnvelope, CommandSource, EventStream, RunState,
+        ApiHandle, ApiVersion, AppCommand, AppEvent, AppEventEnvelope, AppQuery, AppResponse,
+        AppResponseEnvelope, CommandSource, EventStream, RunState, API_VERSION,
     };
 }

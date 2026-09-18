@@ -111,10 +111,7 @@ impl RunService {
         // 若误用 next_request，两个计数器同从 1 起且同毫秒时会产生相同
         // message_id（messages.message_id 全局主键 → UNIQUE 冲突）。
         let message_n = core.next_message.fetch_add(1, Ordering::Relaxed);
-        trigger.id = MessageId::from(format!(
-            "msg-{}-{message_n}",
-            pawork_engine::now_timestamp().as_unix_millis()
-        ));
+        trigger.id = MessageId::from(format!("msg-{}-{message_n}", run_id.as_str()));
         let trigger = trigger.clone();
         core.ensure_plan_allows_execution(session_id).await?;
         let run_workspace = core.workspace_for_session_or_unbound(session_id)?;
@@ -153,15 +150,39 @@ impl RunService {
                 },
             );
         }
+        let subagents =
+            crate::subagents::SubagentRun::new(core, session_id, &run_id, cancel.clone());
+        let config = core.config.subagents.clone().unwrap_or_default();
+        let model_rule =
+            crate::subagents::rule(&config, core.provider_id.as_str(), core.model.as_str());
+        let mut descriptors: Vec<_> = core
+            .descriptors
+            .iter()
+            .filter(|d| crate::subagents::allows_tool(&model_rule, d))
+            .cloned()
+            .collect();
+        if subagents.enabled() {
+            descriptors.extend(crate::subagents::definitions());
+        }
+        let tool_defs = descriptors
+            .iter()
+            .map(|d| pawork_domain::ToolDefinition {
+                name: d.name.clone(),
+                description: d.description.clone(),
+                input_schema: d.input_schema.clone(),
+            })
+            .collect();
         let request = assemble_request_with_tools(
             request_id.clone(),
             core.model.clone(),
             request_messages,
-            core.tool_defs.clone(),
+            tool_defs,
         );
         // SEARCH-1：Global `web_search = true` 时为本轮追加 Provider 服务端搜索。
         let mut request = request;
-        if core.config.web_search == Some(true) {
+        if core.config.web_search == Some(true)
+            && model_rule.permissions.iter().any(|p| p == "network")
+        {
             request.hosted_tools.push(pawork_domain::HostedToolRequest {
                 name: "web_search".into(),
                 kind: pawork_domain::ToolCapabilityTag::WebSearch,
@@ -195,15 +216,21 @@ impl RunService {
             start_sequence,
             trigger,
         );
-        let sink = PersistThenRender {
+        let persisted = PersistThenRender {
             store: core.store()?,
             render,
             branch_id: core.session_active_branch(session_id).await?,
+        };
+        let sink = crate::subagents::ParentSink {
+            inner: &persisted,
+            subagents: &subagents,
         };
         let mut turn_context = core.turn_context();
         turn_context.injected_layers = core.load_injected_layers_for_session(session_id).await;
         let workspace_trusted = core.workspace_trusted_for_roots(&run_workspace.roots);
         let loop_ctx = SessionLoopCtx {
+            subagents: Some(&subagents),
+            parent_tool_run: core.parent_tool_run.clone(),
             scheduler: std::sync::Arc::new(
                 core.scheduler
                     .with_approval_snapshot(core.approval.mode(), workspace_trusted),
@@ -215,7 +242,7 @@ impl RunService {
             policy: PolicyEngine::new(core.approval.mode()),
             approval_mode: core.approval.mode(),
             workspace_trusted,
-            descriptors: core.descriptors.clone(),
+            descriptors,
             approval_host: core.approval.host(),
             store: Some(core.store()?),
             session_id: Some(session_id.clone()),
@@ -241,6 +268,10 @@ impl RunService {
             turn_context,
         )
         .await;
+        if result.is_err() {
+            subagents.cancel_children();
+        }
+        subagents.finish().await;
         let usage = match &result {
             Ok(summary) => Some(summary.usage.clone()),
             Err(_) => core.projected_run_usage(session_id, &run_id).await,
@@ -322,6 +353,8 @@ impl RunService {
         };
         let workspace_trusted = core.workspace_trusted_for_roots(&run_workspace.roots);
         let loop_ctx = SessionLoopCtx {
+            subagents: None,
+            parent_tool_run: core.parent_tool_run.clone(),
             scheduler: std::sync::Arc::new(
                 core.scheduler
                     .with_approval_snapshot(core.approval.mode(), workspace_trusted),
@@ -478,7 +511,9 @@ mod tests {
         let calls = provider.calls();
         assert_eq!(calls.len(), 1);
         assert!(
-            calls[0].hosted_tools.contains(&ToolCapabilityTag::WebSearch),
+            calls[0]
+                .hosted_tools
+                .contains(&ToolCapabilityTag::WebSearch),
             "web_search = true 须注入 hosted WebSearch：{:?}",
             calls[0].hosted_tools
         );

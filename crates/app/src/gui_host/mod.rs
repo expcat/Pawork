@@ -16,8 +16,8 @@ use pawork_engine::now_timestamp;
 use pawork_exec::PtyService;
 use pawork_protocol::{
     AppCommand, AppCommandEnvelope, AppEvent, AppEventEnvelope, AppQueryEnvelope, AppResponse,
-    AppResponseEnvelope, DEFAULT_CONTROL_PLANE_TENANT, GlobalSequence, Snapshot, SnapshotSection,
-    SnapshotSectionKind, TimelinePage,
+    AppResponseEnvelope, GlobalSequence, Snapshot, SnapshotSection, SnapshotSectionKind,
+    TimelinePage, DEFAULT_CONTROL_PLANE_TENANT,
 };
 use pawork_storage::session::{SessionRecord, SessionTree};
 
@@ -25,14 +25,14 @@ use pawork_storage::session::{SessionRecord, SessionTree};
 use pawork_domain::{AgentEvent, AgentEventEnvelope};
 #[cfg(test)]
 use pawork_engine::{AgentEventSink, EngineError};
+use pawork_protocol::app::registry::{command_wire_name, query_wire_name};
 #[cfg(test)]
 use pawork_protocol::API_VERSION;
-use pawork_protocol::app::registry::{command_wire_name, query_wire_name};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::{
-    AppCore, DEFAULT_HUB_CAPACITY, DEFAULT_IDEMPOTENCY_CAPACITY, GuiApprovalHost, HubError,
-    IdempotencyCheck, IdempotencyStore, PendingToolApproval, should_cache,
+    should_cache, AppCore, GuiApprovalHost, HubError, IdempotencyCheck, IdempotencyStore,
+    PendingToolApproval, DEFAULT_HUB_CAPACITY, DEFAULT_IDEMPOTENCY_CAPACITY,
 };
 
 mod auto_title;
@@ -816,6 +816,8 @@ gui_query_dispatch! {
     "general_settings" => query_general_settings = handlers::settings::general_settings, inner;
     "permissions_settings" => query_permissions_settings = handlers::settings::permissions_settings, inner;
     "terminal_settings" => query_terminal_settings = handlers::settings::terminal_settings, inner;
+    "subagent_settings" => query_subagent_settings = handlers::subagents::settings, inner;
+    "subagent_list" => query_subagent_list = handlers::subagents::list, inner;
 }
 
 gui_command_dispatch! {
@@ -858,6 +860,8 @@ gui_command_dispatch! {
     "terminal_close" => command_terminal_close = handlers::terminal::terminal_close;
     "mcp_test" => command_mcp_test = handlers::mcp::mcp_test;
     "mcp_server_remove" => command_mcp_server_remove = handlers::mcp::mcp_server_remove;
+    "set_subagent_settings" => command_set_subagent_settings = handlers::subagents::set_settings;
+    "subagent_cancel" => command_subagent_cancel = handlers::subagents::cancel;
 }
 
 impl GuiHostAdapter {

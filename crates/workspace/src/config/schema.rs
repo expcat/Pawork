@@ -91,6 +91,10 @@ pub struct PaworkConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub terminal: Option<TerminalConfig>,
 
+    /// 子代理设置（仅 Builtin/Global 层可写入，其余层整段剥离）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subagents: Option<super::subagents::SubagentConfig>,
+
     /// 任意扩展字段，按 key 递归合并。为未在 schema 显式声明的配置保留向后兼容入口。
     ///
     /// 顶层 `api_key` 不得经 extra 绕过「配置不含凭证」红线，反序列化时剥离。
@@ -271,6 +275,9 @@ impl PaworkConfig {
         }
         if other.terminal.is_some() {
             self.terminal = other.terminal.clone();
+        }
+        if other.subagents.is_some() {
+            self.subagents = other.subagents.clone();
         }
         if !other.providers.is_empty() {
             self.providers = other.providers.clone();
@@ -537,5 +544,35 @@ other_extension = 1
         assert!(cfg.is_model_enabled("glm-coding", "glm-5.3-flash"));
         // denylist 命中 = 禁用。
         assert!(!cfg.is_model_enabled("glm-coding", "glm-5.2"));
+    }
+
+    #[test]
+    fn subagent_config_defaults_and_empty_permissions() {
+        let parsed: PaworkConfig = toml::from_str(
+            r#"
+[subagents]
+[[subagents.models]]
+provider_id = "glm-coding"
+model_id = "glm-5.3-flash"
+"#,
+        )
+        .expect("parse subagents");
+        let sub = parsed.subagents.expect("subagents present");
+        assert!(sub.enabled);
+        assert_eq!(sub.max_concurrent, 4);
+        assert_eq!(sub.models.len(), 1);
+        assert!(sub.models[0].allow_spawn);
+        assert!(sub.models[0].allow_as_subagent);
+        assert_eq!(sub.models[0].permissions.len(), 7);
+
+        let empty: super::super::subagents::SubagentModelConfig = toml::from_str(
+            r#"
+provider_id = "glm-coding"
+model_id = "glm-5.3-flash"
+permissions = []
+"#,
+        )
+        .expect("parse empty permissions");
+        assert!(empty.permissions.is_empty());
     }
 }

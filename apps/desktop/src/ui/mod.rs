@@ -36,10 +36,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{
-    AnyView, App, AsyncWindowContext, ClickEvent, Context, Corner, Entity, FocusHandle, Focusable,
-    FontWeight, KeyBinding, KeyDownEvent, ListAlignment, ListState, PathPromptOptions, Pixels,
-    Point, Render, Rgba, ScrollHandle, SharedString, Subscription, Window, actions, div, point,
-    prelude::*, px,
+    actions, div, point, prelude::*, px, AnyView, App, AsyncWindowContext, ClickEvent, Context,
+    Corner, Entity, FocusHandle, Focusable, FontWeight, KeyBinding, KeyDownEvent, ListAlignment,
+    ListState, PathPromptOptions, Pixels, Point, Render, Rgba, ScrollHandle, SharedString,
+    Subscription, Window,
 };
 use pawork_client::AppEvent;
 
@@ -55,7 +55,7 @@ use components::button::{Button, ButtonPadding, ButtonVariant};
 use components::dropdown::Dropdown;
 use components::follow_scroll::FollowScroll;
 use components::status_bar::StatusBar;
-pub(crate) use components::{Assets, Icon, icon, icon_sized};
+pub(crate) use components::{icon, icon_sized, Assets, Icon};
 use inspector::InspectorTab;
 use resources::ResourcesPanelState;
 use shell_layout::InspectorPlacement;
@@ -158,6 +158,7 @@ pub(crate) enum AppRoute {
 pub(crate) enum SettingsPage {
     #[default]
     Providers,
+    Subagents,
     General,
     Permissions,
     Tools,
@@ -447,7 +448,11 @@ fn install_appkit_tab_monitor(window: &Window, cx: &App) {
                 .unwrap_or(false)
             }) == Some(true)
         });
-        if handled { nil } else { event }
+        if handled {
+            nil
+        } else {
+            event
+        }
     }
 
     /// 本地监听器在 AppKit C 调用栈上执行，禁止 unwind 穿越：兜底捕获
@@ -730,6 +735,8 @@ pub struct AppView {
     settings_nav_general_focus: FocusHandle,
     /// SET-6a：Settings 导航「Models & providers」焦点（Network 选中时）。
     settings_nav_providers_focus: FocusHandle,
+    /// Settings 导航「子代理」焦点。
+    settings_nav_subagents_focus: FocusHandle,
     /// SET-6b：Settings 导航「权限与审批」焦点。
     settings_nav_permissions_focus: FocusHandle,
     /// SET-6c：Settings 导航「工具与 MCP」焦点。
@@ -756,6 +763,9 @@ pub struct AppView {
     /// SET-6d：终端页 Save / Clear 焦点。
     settings_terminal_save_focus: FocusHandle,
     settings_terminal_clear_focus: FocusHandle,
+    /// 子代理页并发数输入（明文；1–16）与 Save 焦点。
+    settings_subagents_concurrency_input: Entity<crate::ui::text_input::TextInput>,
+    settings_subagents_save_focus: FocusHandle,
     /// Settings 内容滚动句柄（供应商列表可能超出视口）。
     settings_scroll: ScrollHandle,
     settings_element_layouts: HashMap<String, ScrollHandle>,
@@ -1099,6 +1109,7 @@ impl AppView {
             settings_refresh_focus: cx.focus_handle().tab_stop(true),
             settings_nav_general_focus: cx.focus_handle().tab_stop(true),
             settings_nav_providers_focus: cx.focus_handle().tab_stop(true),
+            settings_nav_subagents_focus: cx.focus_handle().tab_stop(true),
             settings_nav_permissions_focus: cx.focus_handle().tab_stop(true),
             settings_nav_tools_focus: cx.focus_handle().tab_stop(true),
             settings_nav_terminal_focus: cx.focus_handle().tab_stop(true),
@@ -1142,6 +1153,15 @@ impl AppView {
             }),
             settings_terminal_save_focus: cx.focus_handle().tab_stop(true),
             settings_terminal_clear_focus: cx.focus_handle().tab_stop(true),
+            settings_subagents_concurrency_input: cx.new(|cx| {
+                TextInput::with_placeholder("4", cx)
+                    .id("settings-subagents-concurrency-input")
+                    .height_clamp(
+                        metrics::COMPOSER_INPUT_MIN_HEIGHT,
+                        metrics::COMPOSER_INPUT_MIN_HEIGHT,
+                    )
+            }),
+            settings_subagents_save_focus: cx.focus_handle().tab_stop(true),
             settings_scroll: ScrollHandle::new(),
             settings_element_layouts: HashMap::new(),
             settings_scale_layout: ScrollHandle::new(),
@@ -1757,6 +1777,7 @@ impl AppView {
                     .settings_providers
                     .account_mode_pending
                     .clear();
+                self.projection.subagent_activity = Default::default();
                 let stale_reason = format!("connection lost · {reason}");
                 self.handshake_info = None;
                 if self.settings_page == SettingsPage::About {
@@ -1874,6 +1895,30 @@ impl AppView {
                 }
                 if had_active_run && self.projection.active_run_id.is_none() {
                     self.refresh_changes(cx);
+                }
+                // Activity 浮层打开时：父会话 subagent.spawned 或 child 会话
+                // Run 终态到达即刷新「子智能体」卡（其余事件不触发查询）。
+                if matches!(self.open_menu, Some(MenuKind::Activity)) {
+                    let spawned = matches!(
+                        &envelope.payload,
+                        AppEvent::Diagnostic { code, .. } if code == "subagent.spawned"
+                    );
+                    let child_terminal = matches!(
+                        &envelope.stream,
+                        pawork_client::EventStream::Session(id) if id.as_str().starts_with("child-")
+                    ) && matches!(
+                        envelope.payload,
+                        AppEvent::RunChanged { ref state, .. }
+                            if matches!(
+                                state,
+                                pawork_client::RunState::Completed
+                                    | pawork_client::RunState::Failed
+                                    | pawork_client::RunState::Cancelled
+                            )
+                    );
+                    if spawned || child_terminal {
+                        self.load_activity_subagents();
+                    }
                 }
                 // Live notifications omit persisted arguments, final output and usage.
                 // Merge history after completion; the reducer enriches already-seen rows.
@@ -2268,6 +2313,23 @@ impl AppView {
                     .update(cx, |input, cx| input.reset_text(rows, cx));
                 self.remark_settings_stale_if_disconnected();
             }
+            ControllerEvent::SubagentSettingsLoaded(data)
+            | ControllerEvent::SubagentSettingsConfirmed(data) => {
+                // 查询与写回执同形状（回执即写后完整状态）；并发数输入框
+                // 回填 Host 权威生效值。
+                self.projection
+                    .settings_subagents
+                    .apply_loaded(data.clone());
+                let max = data.max_concurrent.to_string();
+                self.settings_subagents_concurrency_input
+                    .update(cx, |input, cx| input.reset_text(max, cx));
+                self.remark_settings_stale_if_disconnected();
+            }
+            ControllerEvent::SubagentListLoaded { session_id, data } => {
+                self.projection
+                    .subagent_activity
+                    .apply_loaded(&session_id, data);
+            }
             ControllerEvent::AuthStarted { provider_id, data } => {
                 self.settings_copied_auth = None;
                 // SET-4：登记 OAuth 等待信息并置 Connecting；进度由
@@ -2330,6 +2392,23 @@ impl AppView {
                         format!("Could not load terminal settings · {reason}")
                     };
                     self.projection.settings_terminal.apply_failed(&message);
+                }
+                if action == "load subagent settings" || action == "set subagent settings" {
+                    let message = if action == "set subagent settings" {
+                        format!("Could not save subagent settings · {reason}")
+                    } else {
+                        format!("Could not load subagent settings · {reason}")
+                    };
+                    if action == "set subagent settings" {
+                        self.projection
+                            .settings_subagents
+                            .apply_write_failed(&message);
+                    } else {
+                        self.projection.settings_subagents.apply_failed(&message);
+                    }
+                }
+                if action == "load subagent list" || action == "cancel subagent" {
+                    self.projection.subagent_activity.apply_failed();
                 }
                 if action == "start provider auth" || action == "verify api key" {
                     // auth_start / auth_set_api_key 的 socket 级失败无对应
@@ -2844,6 +2923,9 @@ impl AppView {
             Some(target)
         };
         self.menu_highlight = None;
+        if matches!(self.open_menu, Some(MenuKind::Activity)) {
+            self.load_activity_subagents();
+        }
         cx.notify();
     }
 
@@ -3528,6 +3610,7 @@ impl AppView {
         self.refresh_general_settings();
         self.refresh_permissions_settings();
         self.refresh_terminal_settings();
+        self.refresh_subagent_settings();
         self.refresh_resources(cx);
     }
 
@@ -3621,6 +3704,36 @@ impl AppView {
         }
     }
 
+    /// 拉取子代理页（subagent_settings）。断线不进入 loading；查询失败 /
+    /// 未知则保持 unavailable，导航不显示该页。
+    fn refresh_subagent_settings(&mut self) {
+        if self.controller.load_subagent_settings() {
+            self.projection.settings_subagents.begin_loading();
+        } else {
+            self.projection
+                .settings_subagents
+                .mark_stale("not connected");
+        }
+    }
+
+    /// Activity 浮层「子智能体」卡数据源（subagent_list）：只查当前活动
+    /// 会话；无活动会话 / 断线时清空或保持旧数据，不伪造空列表。
+    pub(crate) fn load_activity_subagents(&mut self) {
+        let Some(session_id) = self.projection.active_session_id.clone() else {
+            self.projection.subagent_activity = Default::default();
+            return;
+        };
+        if !matches!(
+            self.projection.connection,
+            ConnectionState::Connected { .. }
+        ) {
+            return;
+        }
+        if self.controller.load_subagent_list(session_id.clone()) {
+            self.projection.subagent_activity.begin_loading(&session_id);
+        }
+    }
+
     /// Settings 导航切页（SET-6a）。Network 未接通时 fail-closed 留在供应商页。
     pub(crate) fn on_select_settings_page(
         &mut self,
@@ -3634,6 +3747,15 @@ impl AppView {
                 self.settings_page = SettingsPage::General;
                 if self.settings_locate_pending.is_none() {
                     window.focus(&self.settings_nav_general_focus);
+                }
+            }
+            SettingsPage::Subagents if !self.projection.settings_subagents.query.available => {
+                return;
+            }
+            SettingsPage::Subagents => {
+                self.settings_page = SettingsPage::Subagents;
+                if self.settings_locate_pending.is_none() {
+                    window.focus(&self.settings_nav_subagents_focus);
                 }
             }
             SettingsPage::Permissions if !self.projection.settings_permissions.query.available => {
@@ -5161,16 +5283,12 @@ mod tests {
         assert!(actions.contains(&"ApproveForRun"));
         assert!(actions.contains(&"Deny"));
         assert!(actions.contains(&"CancelRun"));
-        assert!(
-            APP_VIEW_KEYBINDINGS
-                .iter()
-                .any(|(key, action)| *key == "cmd-." && *action == "CancelRun")
-        );
-        assert!(
-            APP_VIEW_KEYBINDINGS
-                .iter()
-                .any(|(key, action)| *key == "cmd-enter" && *action == "ApproveOnce")
-        );
+        assert!(APP_VIEW_KEYBINDINGS
+            .iter()
+            .any(|(key, action)| *key == "cmd-." && *action == "CancelRun"));
+        assert!(APP_VIEW_KEYBINDINGS
+            .iter()
+            .any(|(key, action)| *key == "cmd-enter" && *action == "ApproveOnce"));
         for (key, action) in [
             ("cmd-=", "IncreaseTextSize"),
             ("cmd-+", "IncreaseTextSize"),

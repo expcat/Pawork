@@ -5,14 +5,14 @@
 //! 逐命令授权均从 registry 派生；未登记 wire 名 fail-closed。headless 与
 //! ACP 消费侧切换在波 B 完成（本波只登记数据，不触碰两通道实现）。
 
-use crate::GuiCapability;
 use crate::headless::wire::SdkCapability;
+use crate::GuiCapability;
 
 use super::command::AppCommand;
 use super::query::AppQuery;
 use super::version::{
-    ApiVersion, V1_0, V1_1, V1_2, V1_3, V1_4, V1_5, V1_6, V1_7, V1_8, V1_10, V1_11, V1_12, V1_15,
-    V1_16, V1_17, V1_18, V1_19,
+    ApiVersion, V1_0, V1_1, V1_10, V1_11, V1_12, V1_15, V1_16, V1_17, V1_18, V1_19, V1_2, V1_20,
+    V1_3, V1_4, V1_5, V1_6, V1_7, V1_8,
 };
 
 /// GUI 通道访问规格：是否可用 + 命令级所需能力。
@@ -62,7 +62,7 @@ static COMMANDS: &[RegistryEntry] = &[
         idempotent: true,
         since: V1_19,
     },
-    // --- AppCommand（42）---
+    // --- AppCommand（44）---
     RegistryEntry {
         wire_name: "core_initialize",
         gui: GuiChannelAccess {
@@ -526,6 +526,28 @@ static COMMANDS: &[RegistryEntry] = &[
         since: V1_7,
     },
     RegistryEntry {
+        wire_name: "set_subagent_settings",
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
+        headless: None,
+        acp: false,
+        idempotent: true,
+        since: V1_20,
+    },
+    RegistryEntry {
+        wire_name: "subagent_cancel",
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
+        headless: None,
+        acp: false,
+        idempotent: true,
+        since: V1_20,
+    },
+    RegistryEntry {
         wire_name: "browser_respond",
         gui: GuiChannelAccess {
             available: true,
@@ -561,7 +583,7 @@ static QUERIES: &[RegistryEntry] = &[
         idempotent: true,
         since: V1_19,
     },
-    // --- AppQuery（18）---
+    // --- AppQuery（20）---
     RegistryEntry {
         wire_name: "workspace_list",
         gui: GuiChannelAccess {
@@ -734,6 +756,28 @@ static QUERIES: &[RegistryEntry] = &[
         since: V1_8,
     },
     RegistryEntry {
+        wire_name: "subagent_settings",
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
+        headless: None,
+        acp: false,
+        idempotent: true,
+        since: V1_20,
+    },
+    RegistryEntry {
+        wire_name: "subagent_list",
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
+        headless: None,
+        acp: false,
+        idempotent: true,
+        since: V1_20,
+    },
+    RegistryEntry {
         wire_name: "browser_next",
         gui: GuiChannelAccess {
             available: true,
@@ -791,6 +835,8 @@ pub fn command_wire_name(command: &AppCommand) -> &'static str {
         AppCommand::McpTest { .. } => "mcp_test",
         AppCommand::McpServerRemove { .. } => "mcp_server_remove",
         AppCommand::BrowserRespond { .. } => "browser_respond",
+        AppCommand::SetSubagentSettings { .. } => "set_subagent_settings",
+        AppCommand::SubagentCancel { .. } => "subagent_cancel",
     }
 }
 
@@ -815,6 +861,8 @@ pub fn query_wire_name(query: &AppQuery) -> &'static str {
         AppQuery::PermissionsSettings => "permissions_settings",
         AppQuery::TerminalSettings => "terminal_settings",
         AppQuery::BrowserNext { .. } => "browser_next",
+        AppQuery::SubagentSettings => "subagent_settings",
+        AppQuery::SubagentList { .. } => "subagent_list",
     }
 }
 

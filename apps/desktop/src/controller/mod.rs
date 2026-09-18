@@ -8,8 +8,8 @@
 
 use std::path::PathBuf;
 use std::sync::{
-    Arc, Mutex,
     atomic::{AtomicU64, Ordering},
+    Arc, Mutex,
 };
 use std::time::Duration;
 
@@ -19,12 +19,12 @@ use pawork_client::{
     ClientError, CommandSource, ConnectOptions, DefaultModelPair, GeneralSettingsData,
     GlobalSequence, GuiCapability, GuiClient, GuiTransportClient, LocalTransport,
     PermissionsSettingsData, ProtocolErrorCode, ProviderAuthStatusData, ProviderUseProxyData,
-    ResumeDisposition, ResumeOutcome, Snapshot, TOKEN_SCHEME, TerminalSettingsData, TimelinePage,
-    TransportEndpoint,
+    ResumeDisposition, ResumeOutcome, Snapshot, SubagentListData, SubagentSettingsData,
+    TerminalSettingsData, TimelinePage, TransportEndpoint, TOKEN_SCHEME,
 };
 use serde_json::json;
 
-use crate::projection::{ModelEntry, SettingsRole, sessions_in_snapshot};
+use crate::projection::{sessions_in_snapshot, ModelEntry, SettingsRole};
 
 pub(super) const PAGE_LIMIT: u32 = 500;
 pub(super) const MAX_PAGES: usize = 200;
@@ -141,6 +141,15 @@ pub enum ControllerEvent {
     /// set_terminal_settings 获 Host Data 确认（SET-6d / ADR-050 D3；回执
     /// 即写后完整状态）。
     TerminalSettingsConfirmed(TerminalSettingsData),
+    /// subagent_settings 查询成功（Settings 子代理页；Host 权威 Global 配置）。
+    SubagentSettingsLoaded(SubagentSettingsData),
+    /// set_subagent_settings 获 Host Data 确认（回执即写后完整状态）。
+    SubagentSettingsConfirmed(SubagentSettingsData),
+    /// subagent_list 查询成功（Activity 浮层「子智能体」卡；按 session 落地）。
+    SubagentListLoaded {
+        session_id: String,
+        data: SubagentListData,
+    },
     /// auth_start 响应（SET-4）：OAuth 授权等待信息；进度经 AuthChanged
     /// 事件流下发，token 不经过 Desktop。
     AuthStarted {
@@ -1222,6 +1231,29 @@ pub(super) fn terminal_settings_query() -> AppQuery {
     .expect("terminal_settings query shape is frozen")
 }
 
+pub(super) fn subagent_settings_query() -> AppQuery {
+    serde_json::from_value(json!({
+        "method": "subagent_settings"
+    }))
+    .expect("subagent_settings query shape is frozen")
+}
+
+pub(super) fn subagent_list_query(session_id: &str) -> AppQuery {
+    serde_json::from_value(json!({
+        "method": "subagent_list",
+        "params": { "session_id": session_id }
+    }))
+    .expect("subagent_list query shape is frozen")
+}
+
+pub(super) fn set_subagent_settings_command(settings: &SubagentSettingsData) -> AppCommand {
+    serde_json::from_value(json!({
+        "method": "set_subagent_settings",
+        "params": { "settings": settings }
+    }))
+    .expect("set_subagent_settings command shape is frozen")
+}
+
 pub(super) fn set_proxy_url_command(proxy_url: Option<&str>) -> AppCommand {
     serde_json::from_value(json!({
         "method": "set_proxy_url",
@@ -1524,6 +1556,34 @@ pub(super) fn parse_permissions_settings_response(
 pub(super) fn parse_terminal_settings_response(
     response: &AppResponseEnvelope,
 ) -> Result<TerminalSettingsData, String> {
+    match &response.response {
+        AppResponse::Data(data) => {
+            serde_json::from_value(data.clone()).map_err(|error| error.to_string())
+        }
+        AppResponse::Error(error) => Err(error.message.clone()),
+        other => Err(format!("unexpected response: {other:?}")),
+    }
+}
+
+/// 解包 subagent_settings / set_subagent_settings 信封：Data 为协议
+/// `SubagentSettingsData`（查询与写回执同形状）；Error 取 Host 脱敏
+/// message 原文。
+pub(super) fn parse_subagent_settings_response(
+    response: &AppResponseEnvelope,
+) -> Result<SubagentSettingsData, String> {
+    match &response.response {
+        AppResponse::Data(data) => {
+            serde_json::from_value(data.clone()).map_err(|error| error.to_string())
+        }
+        AppResponse::Error(error) => Err(error.message.clone()),
+        other => Err(format!("unexpected response: {other:?}")),
+    }
+}
+
+/// 解包 subagent_list 信封：Data 为协议 `SubagentListData`。
+pub(super) fn parse_subagent_list_response(
+    response: &AppResponseEnvelope,
+) -> Result<SubagentListData, String> {
     match &response.response {
         AppResponse::Data(data) => {
             serde_json::from_value(data.clone()).map_err(|error| error.to_string())
@@ -2024,10 +2084,11 @@ mod tests {
         assert_eq!(role, SettingsRole::Naming);
         assert_eq!(value, None);
 
-        assert!(
-            parse_default_role_model_confirmation(&receipt("summarizer", serde_json::Value::Null))
-                .is_err()
-        );
+        assert!(parse_default_role_model_confirmation(&receipt(
+            "summarizer",
+            serde_json::Value::Null
+        ))
+        .is_err());
         assert!(
             parse_default_role_model_confirmation(&envelope(serde_json::json!({
                 "role": "vision"
@@ -2124,18 +2185,14 @@ mod tests {
             })))
             .is_err()
         );
-        assert!(
-            parse_provider_models_enabled_confirmation(&envelope(
-                serde_json::json!({ "provider_id": "kimi", "enabled": true })
-            ))
-            .is_ok()
-        );
-        assert!(
-            parse_provider_models_enabled_confirmation(&envelope(
-                serde_json::json!({ "provider_id": "kimi" })
-            ))
-            .is_err()
-        );
+        assert!(parse_provider_models_enabled_confirmation(&envelope(
+            serde_json::json!({ "provider_id": "kimi", "enabled": true })
+        ))
+        .is_ok());
+        assert!(parse_provider_models_enabled_confirmation(&envelope(
+            serde_json::json!({ "provider_id": "kimi" })
+        ))
+        .is_err());
         let error = serde_json::from_value(serde_json::json!({
             "api_version": { "major": 1, "minor": 12 },
             "request_id": "q-test",

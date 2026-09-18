@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use gpui::{Context, Focusable, KeyDownEvent, SharedString, Window, point, px};
+use gpui::{point, px, Context, Focusable, KeyDownEvent, SharedString, Window};
 
 use super::*;
 use crate::projection::ConnectionState;
@@ -137,6 +137,13 @@ pub(crate) fn settings_search_entries() -> &'static [SettingsSearchEntry] {
             "Terminal",
             "终端",
             "terminal 终端",
+        ),
+        page_entry(
+            SettingsPage::Subagents,
+            "settings.nav.subagents",
+            "Subagents",
+            "子代理",
+            "subagent delegate spawn 子代理 委托 并发",
         ),
         page_entry(
             SettingsPage::Appearance,
@@ -290,6 +297,7 @@ pub(crate) fn settings_page_title_key(page: SettingsPage) -> &'static str {
         SettingsPage::Permissions => "settings.nav.permissions",
         SettingsPage::Tools => "settings.nav.tools",
         SettingsPage::Terminal => "settings.nav.terminal",
+        SettingsPage::Subagents => "settings.nav.subagents",
         SettingsPage::Appearance => "settings.nav.appearance",
         SettingsPage::Advanced => "settings.nav.advanced",
         SettingsPage::About => "settings.nav.about",
@@ -324,6 +332,7 @@ impl AppView {
             SettingsPage::Permissions => self.projection.settings_permissions.query.available,
             SettingsPage::Tools => self.resources.available,
             SettingsPage::Terminal => self.projection.settings_terminal.query.available,
+            SettingsPage::Subagents => self.projection.settings_subagents.query.available,
             SettingsPage::About => self.settings_about_rows().is_some(),
             SettingsPage::Appearance | SettingsPage::Advanced => true,
         }
@@ -337,6 +346,7 @@ impl AppView {
             SettingsPage::Permissions => self.projection.settings_permissions.query.available,
             SettingsPage::Tools => self.resources.available,
             SettingsPage::Terminal => self.projection.settings_terminal.query.available,
+            SettingsPage::Subagents => self.projection.settings_subagents.query.available,
             SettingsPage::About => self.settings_about_rows().is_some(),
         }
     }
@@ -746,18 +756,16 @@ impl AppView {
         cx: &gpui::App,
         search_rect: AxRect,
     ) -> Vec<AxNode> {
-        let mut nodes = vec![
-            AxNode::new(
-                "settings-search-input",
-                AxRole::TextArea,
-                t("settings.search.placeholder"),
-                search_rect,
-            )
-            .value(self.settings_search_input.read(cx).text())
-            .focused(self.settings_search_focus.is_focused(window))
-            .action(AxAction::Focus)
-            .action(AxAction::SetValue),
-        ];
+        let mut nodes = vec![AxNode::new(
+            "settings-search-input",
+            AxRole::TextArea,
+            t("settings.search.placeholder"),
+            search_rect,
+        )
+        .value(self.settings_search_input.read(cx).text())
+        .focused(self.settings_search_focus.is_focused(window))
+        .action(AxAction::Focus)
+        .action(AxAction::SetValue)];
         if !self.settings_search_query_active() {
             return nodes;
         }
@@ -801,57 +809,39 @@ mod tests {
     #[test]
     fn settings_search_entries_cover_required_topics_aliases_and_case() {
         let entries = settings_search_entries();
-        assert!(
-            entries
-                .iter()
-                .any(|e| e.page == SettingsPage::Appearance && e.matches("字号"))
-        );
-        assert!(
-            entries
-                .iter()
-                .any(|e| e.page == SettingsPage::Appearance && e.matches("FONT SIZE"))
-        );
-        assert!(
-            entries
-                .iter()
-                .any(|e| e.page == SettingsPage::Providers && e.matches("模型"))
-        );
-        assert!(
-            entries
-                .iter()
-                .any(|e| e.page == SettingsPage::Providers && e.matches("model"))
-        );
-        assert!(
-            entries
-                .iter()
-                .any(|e| e.page == SettingsPage::General && e.matches("代理"))
-        );
-        assert!(
-            entries
-                .iter()
-                .any(|e| e.page == SettingsPage::General && e.matches("Proxy"))
-        );
-        assert!(
-            entries
-                .iter()
-                .any(|e| e.page == SettingsPage::Permissions && e.matches("审批"))
-        );
-        assert!(
-            entries
-                .iter()
-                .any(|e| e.page == SettingsPage::Permissions && e.matches("approval"))
-        );
-        assert!(
-            entries
-                .iter()
-                .any(|e| e.kind == SettingsSearchKind::Page && e.page == SettingsPage::Providers)
-        );
+        assert!(entries
+            .iter()
+            .any(|e| e.page == SettingsPage::Appearance && e.matches("字号")));
+        assert!(entries
+            .iter()
+            .any(|e| e.page == SettingsPage::Appearance && e.matches("FONT SIZE")));
+        assert!(entries
+            .iter()
+            .any(|e| e.page == SettingsPage::Providers && e.matches("模型")));
+        assert!(entries
+            .iter()
+            .any(|e| e.page == SettingsPage::Providers && e.matches("model")));
+        assert!(entries
+            .iter()
+            .any(|e| e.page == SettingsPage::General && e.matches("代理")));
+        assert!(entries
+            .iter()
+            .any(|e| e.page == SettingsPage::General && e.matches("Proxy")));
+        assert!(entries
+            .iter()
+            .any(|e| e.page == SettingsPage::Permissions && e.matches("审批")));
+        assert!(entries
+            .iter()
+            .any(|e| e.page == SettingsPage::Permissions && e.matches("approval")));
+        assert!(entries
+            .iter()
+            .any(|e| e.kind == SettingsSearchKind::Page && e.page == SettingsPage::Providers));
         assert_eq!(
             entries
                 .iter()
                 .filter(|e| e.kind == SettingsSearchKind::Page)
                 .count(),
-            8
+            9
         );
     }
 

@@ -365,6 +365,9 @@ pub struct AppCore {
     pub(crate) scheduler: Arc<ToolScheduler>,
     pub(crate) tool_defs: Vec<ToolDefinition>,
     pub(crate) descriptors: Vec<ToolDescriptor>,
+    pub(crate) subagents: crate::subagents::ActiveSubagents,
+    pub(crate) subagent_render: Mutex<Option<Arc<dyn AgentEventSink>>>,
+    pub(crate) parent_tool_run: Option<RunId>,
     pub(crate) approval: services::approval::ApprovalService,
     // 显式可信宿主覆盖，仅当前进程；配置项目信任不改变此值。
     trust_override: Option<bool>,
@@ -727,6 +730,9 @@ impl AppCore {
             )),
             tool_defs: Vec::new(),
             descriptors: Vec::new(),
+            subagents: Default::default(),
+            subagent_render: Mutex::new(None),
+            parent_tool_run: None,
             approval: services::approval::ApprovalService::new(),
             trust_override: None,
             session: services::session::SessionService::new(),
@@ -1478,17 +1484,20 @@ impl AppCore {
 
     /// 以调用方提供的 run_id 执行一轮（GUI 需要在启动前登记取消令牌并
     /// 向客户端回报 run_id，因此 run id 的分配权上移到宿主）。
-    pub async fn chat_turn_with_run_id(
-        &self,
+    pub fn chat_turn_with_run_id<'a>(
+        &'a self,
         run_id: RunId,
-        session_id: &SessionId,
+        session_id: &'a SessionId,
         messages: Vec<Message>,
-        render: &dyn AgentEventSink,
+        render: &'a dyn AgentEventSink,
         cancel: CancellationToken,
-    ) -> Result<ModelResponseSummary, AppError> {
-        self.run
-            .chat_turn_with_run_id(self, run_id, session_id, messages, render, cancel)
-            .await
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<ModelResponseSummary, AppError>> + Send + 'a>,
+    > {
+        Box::pin(
+            self.run
+                .chat_turn_with_run_id(self, run_id, session_id, messages, render, cancel),
+        )
     }
 
     pub(crate) async fn projected_run_usage(

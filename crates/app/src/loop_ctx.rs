@@ -4,8 +4,8 @@
 //! 给 scheduler，避免 S2「Allow 后再 resolve」钩子把只读工具也弹出来。
 
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use pawork_domain::{
@@ -17,7 +17,7 @@ use pawork_domain::{
 };
 use pawork_engine::{
     ApprovalGate, AutoCompactionReason, CompactionOutcome, LoopContext, LoopEventEmitter,
-    PendingToolInvocation, ToolCallResult, WriteCheckpoint, now_timestamp,
+    PendingToolInvocation, ToolCallResult, WriteCheckpoint,
 };
 use pawork_policy::{
     ApprovalMode, ApprovalPrompt, PolicyDecision, PolicyEngine, PolicyInput, RiskLevel,
@@ -30,12 +30,14 @@ use pawork_storage::session::{
 use pawork_tools::ToolScheduler;
 
 use crate::approval::{
-    ApprovalAsk, ApprovalPromptHost, PreApprovedResolver, preview_for_tool,
-    relative_path_from_input,
+    preview_for_tool, relative_path_from_input, ApprovalAsk, ApprovalPromptHost,
+    PreApprovedResolver,
 };
 use crate::checkpoint;
 
 pub(crate) struct SessionLoopCtx<'a> {
+    pub subagents: Option<&'a crate::subagents::SubagentRun<'a>>,
+    pub parent_tool_run: Option<RunId>,
     pub scheduler: Arc<ToolScheduler>,
     pub workspace_id: WorkspaceId,
     pub run_id: RunId,
@@ -177,12 +179,12 @@ impl LoopContext for SessionLoopCtx<'_> {
 
     fn next_message_id(&self) -> MessageId {
         let n = self.next_message.fetch_add(1, Ordering::Relaxed);
-        MessageId::from(format!("msg-{}-{n}", now_timestamp().as_unix_millis()))
+        MessageId::from(format!("msg-{}-{n}", self.run_id.as_str()))
     }
 
     fn next_request_id(&self) -> RequestId {
         let n = self.next_request.fetch_add(1, Ordering::Relaxed);
-        RequestId::from(format!("req-{n}"))
+        RequestId::from(format!("req-{}-{n}", self.run_id.as_str()))
     }
 
     /// 压缩回调：session 侧 fork recovery branch + 产出压缩快照，回传元数据。
@@ -346,7 +348,13 @@ impl SessionLoopCtx<'_> {
         let jobs = calls.into_iter().map(|call| {
             let scheduler = self.scheduler.clone();
             let workspace_id = self.workspace_id.clone();
-            let run_id = self.run_id.clone();
+            let run_id = if matches!(call.name.as_str(), "browser" | "terminal") {
+                self.parent_tool_run
+                    .clone()
+                    .unwrap_or_else(|| self.run_id.clone())
+            } else {
+                self.run_id.clone()
+            };
             let events = events.clone();
             let cancel = cancel.clone();
             let policy = self.policy.clone();
@@ -354,6 +362,11 @@ impl SessionLoopCtx<'_> {
             let workspace_trusted = self.workspace_trusted;
             let descriptors = self.descriptors.clone();
             async move {
+                if let Some(subagents) = self.subagents {
+                    if crate::subagents::is_agent_tool(&call.name) {
+                        return subagents.execute(call, events, cancel).await;
+                    }
+                }
                 execute_one(
                     &scheduler,
                     workspace_id,
@@ -410,6 +423,14 @@ async fn execute_one(
     workspace_trusted: bool,
     descriptors: &[ToolDescriptor],
 ) -> ToolCallResult {
+    // A model may invent a tool call even when its definition was withheld.
+    // Check the per-run allowlist before invoking the shared scheduler.
+    if !descriptors
+        .iter()
+        .any(|descriptor| descriptor.name == call.name)
+    {
+        return crate::subagents::denied_call(call, "this model cannot use this tool");
+    }
     let request = ToolRequest {
         tool_call_id: call.tool_call_id.clone(),
         input: call.arguments.clone(),

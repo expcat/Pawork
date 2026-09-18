@@ -144,7 +144,10 @@ impl SessionService {
     }
 
     pub async fn list_sessions(&self, core: &AppCore) -> Result<Vec<SessionRecord>, AppError> {
-        Ok(core.store()?.list_sessions().await?)
+        let mut sessions = core.store()?.list_sessions().await?;
+        // Child runs are exposed through their parent's subagent list.
+        sessions.retain(|session| !session.session_id.starts_with("child-"));
+        Ok(sessions)
     }
 
     pub async fn get_session(

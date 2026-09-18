@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 
-use gpui::{Context, MouseDownEvent, ScrollHandle, div, prelude::*, px};
+use gpui::{div, prelude::*, px, Context, MouseDownEvent, ScrollHandle};
 
 use crate::controller::{
     DiffFileDetail, DiffFileSummary, DiffLineDetail, DiffLineKind, GitDiffInfo,
@@ -14,7 +14,7 @@ use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
 use crate::ui::components::dropdown::{MenuPanel, MenuRow};
 use crate::ui::components::empty_state::EmptyState;
 use crate::ui::components::focus_ring::focus_ring;
-use crate::ui::components::icon::{Icon, icon_sized};
+use crate::ui::components::icon::{icon_sized, Icon};
 use crate::ui::components::label::Label;
 use crate::ui::components::list_row::ListRow;
 use crate::ui::components::skeleton::loading_skeleton;
@@ -874,10 +874,20 @@ impl AppView {
     pub(super) fn activity_popover_element(&self, cx: &mut Context<Self>) -> MenuPanel {
         let summary = self.changes.activity_summary();
         let mismatch = self.changes_session_mismatch();
+        let subagents = &self.projection.subagent_activity;
+        let subagent_bound = subagents.session_id.is_some()
+            && self.projection.active_session_id == subagents.session_id;
+        let subagent_rows = if subagent_bound {
+            subagents.agents.len().min(4)
+        } else {
+            0
+        };
+        let subagent_extra = (72.0 + subagent_rows as f32 * 32.0) * self.text_scale.rem_pixels()
+            / font::BASE_REM_PIXELS;
         let content_height =
             metrics::ACTIVITY_POPOVER_HEIGHT * self.text_scale.rem_pixels() / font::BASE_REM_PIXELS;
         // 字号同时放大 rem 间距；外框还需容纳 MenuPanel 的 padding 与 border。
-        let panel_height = content_height + 2.0 * (metrics::MENU_PADDING + 1.0);
+        let panel_height = content_height + subagent_extra + 2.0 * (metrics::MENU_PADDING + 1.0);
         let panel = MenuPanel::new("activity-popover")
             .max_height(panel_height + if mismatch.is_some() { 40.0 } else { 0.0 })
             .dismiss_on_outside(cx.listener(|view, event: &MouseDownEvent, _window, cx| {
@@ -886,7 +896,7 @@ impl AppView {
             .child(
                 div()
                     .w(px(metrics::ACTIVITY_POPOVER_WIDTH))
-                    .h(px(content_height))
+                    .h(px(content_height + subagent_extra))
                     .flex()
                     .flex_col()
                     .gap_2()
@@ -898,6 +908,7 @@ impl AppView {
                                 .color(dark().text.primary),
                         ),
                     )
+                    .child(self.activity_subagent_card(subagent_bound))
                     .child(
                         div()
                             .flex()
@@ -935,6 +946,107 @@ impl AppView {
             ),
             None => panel,
         }
+    }
+
+    /// Activity 浮层「子智能体」卡（展示型，参考 Codex 信息卡）：标题 +
+    /// 运行/完成汇总 + 每代理标题与状态。数据只在列表绑定当前活动会话
+    /// 时呈现；无活动会话 / 加载中 / 空态如实展示，不伪造数据。
+    fn activity_subagent_card(&self, bound: bool) -> gpui::AnyElement {
+        let activity = &self.projection.subagent_activity;
+        let mut card = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .p_2()
+            .border_1()
+            .border_color(dark().border.subtle)
+            .rounded(px(4.0))
+            .bg(dark().surface.raised)
+            .child(
+                Label::new(t("subagents.title"))
+                    .size(font::BODY_SM)
+                    .color(dark().text.secondary),
+            );
+        if !bound {
+            let note = if self.projection.active_session_id.is_none() {
+                t("subagents.no_session")
+            } else if activity.loading {
+                t("subagents.loading")
+            } else {
+                t("subagents.empty")
+            };
+            return card
+                .child(
+                    div()
+                        .text_size(font::XS)
+                        .text_color(dark().text.tertiary)
+                        .child(note),
+                )
+                .into_any_element();
+        }
+        let (running, done) = activity.counts();
+        let summary = t("subagents.summary")
+            .replacen("{}", &running.to_string(), 1)
+            .replacen("{}", &done.to_string(), 1);
+        card = card.child(
+            div()
+                .text_size(font::XS)
+                .text_color(dark().text.secondary)
+                .child(summary),
+        );
+        if activity.agents.is_empty() {
+            return card
+                .child(
+                    div()
+                        .text_size(font::XS)
+                        .text_color(dark().text.tertiary)
+                        .child(t("subagents.empty")),
+                )
+                .into_any_element();
+        }
+        for agent in activity.agents.iter().take(4) {
+            let status = subagent_status_label(&agent.status);
+            card = card
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            div().flex_1().child(
+                                Label::new(agent.title.clone())
+                                    .size(font::XS)
+                                    .color(dark().text.primary),
+                            ),
+                        )
+                        .child(
+                            Label::new(status)
+                                .size(font::XS)
+                                .color(dark().text.secondary),
+                        ),
+                )
+                .child(
+                    div().flex_row().child(
+                        Label::new(format!("{} · {}", agent.provider_id, agent.model_id))
+                            .size(font::XS)
+                            .color(dark().text.tertiary),
+                    ),
+                );
+        }
+        card.into_any_element()
+    }
+}
+
+/// 子代理状态 → 本地显示名（未知 wire 状态保守显示为破折号）。
+fn subagent_status_label(status: &str) -> &'static str {
+    match status {
+        "running" => t("subagents.status.running"),
+        "waiting" => t("subagents.status.waiting"),
+        "completed" => t("subagents.status.completed"),
+        "failed" => t("subagents.status.failed"),
+        "cancelled" => t("subagents.status.cancelled"),
+        _ => "—",
     }
 }
 
@@ -1260,15 +1372,13 @@ mod tests {
         assert_eq!(changes_status_chip("R").0, "R");
         assert_eq!(changes_status_chip("?").0, "?");
         assert_eq!(changes_status_chip("untracked").0, "U");
-        assert!(
-            ready_state(vec![DiffFileSummary {
-                path: "a.rs".into(),
-                status: "modified".into(),
-                additions: 1,
-                deletions: 0,
-                binary: false,
-            }])
-            .has_reviewable_files_for(Some("s-1"))
-        );
+        assert!(ready_state(vec![DiffFileSummary {
+            path: "a.rs".into(),
+            status: "modified".into(),
+            additions: 1,
+            deletions: 0,
+            binary: false,
+        }])
+        .has_reviewable_files_for(Some("s-1")));
     }
 }

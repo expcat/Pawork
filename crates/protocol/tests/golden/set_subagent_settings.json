@@ -1,0 +1,1 @@
+{"method":"set_subagent_settings","params":{"settings":{"enabled":true,"max_concurrent":4,"models":[{"provider_id":"glm-coding","model_id":"glm-5.3-flash","allow_spawn":true,"allow_as_subagent":true,"permissions":["read","write","terminal","network","mcp","browser","computer"]}]}}}

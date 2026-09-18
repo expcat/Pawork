@@ -20,6 +20,7 @@ mod settings_appearance;
 mod settings_general;
 mod settings_permissions;
 mod settings_providers;
+mod settings_subagents;
 mod settings_terminal;
 mod settings_tools;
 pub(crate) use app::dynamic_identifier;

@@ -3,7 +3,7 @@
 
 use std::borrow::Cow;
 
-use gpui::{AssetSource, Pixels, SharedString, Svg, prelude::*, px, svg};
+use gpui::{prelude::*, px, svg, AssetSource, Pixels, SharedString, Svg};
 
 use crate::ui::theme::{dark, metrics};
 
@@ -45,6 +45,7 @@ pub enum Icon {
     Page,
     SettingsRow,
     Providers,
+    Subagents,
     Network,
     Approvals,
     Tools,
@@ -93,6 +94,7 @@ impl Icon {
             Self::Page => "icons/page.svg",
             Self::SettingsRow => "icons/settings-row.svg",
             Self::Providers => "icons/providers.svg",
+            Self::Subagents => "icons/subagents.svg",
             Self::Network => "icons/network.svg",
             Self::Approvals => "icons/approvals.svg",
             Self::Tools => "icons/tools.svg",
@@ -140,6 +142,7 @@ impl Icon {
             Self::Page,
             Self::SettingsRow,
             Self::Providers,
+            Self::Subagents,
             Self::Network,
             Self::Approvals,
             Self::Tools,
@@ -216,6 +219,7 @@ fn icon_bytes(path: &str) -> Option<&'static [u8]> {
             include_bytes!("../../../assets/icons/settings-row.svg").as_slice()
         }
         "icons/providers.svg" => include_bytes!("../../../assets/icons/providers.svg").as_slice(),
+        "icons/subagents.svg" => include_bytes!("../../../assets/icons/subagents.svg").as_slice(),
         "icons/network.svg" => include_bytes!("../../../assets/icons/network.svg").as_slice(),
         "icons/approvals.svg" => include_bytes!("../../../assets/icons/approvals.svg").as_slice(),
         "icons/tools.svg" => include_bytes!("../../../assets/icons/tools.svg").as_slice(),

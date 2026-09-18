@@ -10,7 +10,7 @@ use pawork_protocol::app::registry::{
 };
 use pawork_protocol::headless::wire::SdkCapability;
 use pawork_protocol::{ApiVersion, AppCommand, AppQuery, GuiCapability};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 const V1_0: ApiVersion = ApiVersion { major: 1, minor: 0 };
 const V1_1: ApiVersion = ApiVersion { major: 1, minor: 1 };
@@ -176,6 +176,26 @@ fn command_samples() -> Vec<(&'static str, Option<Value>)> {
             "browser_respond",
             Some(json!({"request_id": "browser-1", "result": {"ok": true, "data": {}}})),
         ),
+        (
+            "set_subagent_settings",
+            Some(json!({
+                "settings": {
+                    "enabled": true,
+                    "max_concurrent": 4,
+                    "models": [{
+                        "provider_id": "glm-coding",
+                        "model_id": "glm-5.3-flash",
+                        "allow_spawn": true,
+                        "allow_as_subagent": true,
+                        "permissions": ["read", "write", "terminal", "network", "mcp", "browser", "computer"]
+                    }]
+                }
+            })),
+        ),
+        (
+            "subagent_cancel",
+            Some(json!({"session_id": "session-1", "agent_id": "agent-1"})),
+        ),
     ]
 }
 
@@ -220,6 +240,8 @@ fn query_samples() -> Vec<(&'static str, Option<Value>)> {
             "browser_next",
             Some(json!({"session_id": "session-1", "run_id": "run-1"})),
         ),
+        ("subagent_settings", None),
+        ("subagent_list", Some(json!({"session_id": "session-1"}))),
     ]
 }
 
@@ -281,8 +303,8 @@ fn wire_names_are_bijective_with_serde_tags() {
 fn registry_tables_are_complete_and_unique() {
     let commands = command_entries();
     let queries = query_entries();
-    assert_eq!(commands.len(), 42);
-    assert_eq!(queries.len(), 18);
+    assert_eq!(commands.len(), 44);
+    assert_eq!(queries.len(), 20);
     for wire_name in commands.iter().map(|entry| entry.wire_name) {
         assert_eq!(
             commands
@@ -357,12 +379,10 @@ fn gui_announcement_vector_matches_v2_snapshot() {
 /// K-08 / R0 D13：无任何条目 require ArtifactStreaming，派生宣告不含它。
 #[test]
 fn no_entry_requires_artifact_streaming() {
-    assert!(
-        !command_entries()
-            .iter()
-            .chain(query_entries().iter())
-            .any(|entry| entry.gui.required_capability == Some(GuiCapability::ArtifactStreaming))
-    );
+    assert!(!command_entries()
+        .iter()
+        .chain(query_entries().iter())
+        .any(|entry| entry.gui.required_capability == Some(GuiCapability::ArtifactStreaming)));
 }
 
 fn assert_command_entry(
@@ -754,6 +774,26 @@ fn command_registry_covers_every_variant_without_wildcard() {
                 false,
                 pawork_protocol::V1_18,
             ),
+            AppCommand::SetSubagentSettings { .. } => assert_command_entry(
+                &command,
+                "set_subagent_settings",
+                true,
+                None,
+                None,
+                false,
+                true,
+                pawork_protocol::V1_20,
+            ),
+            AppCommand::SubagentCancel { .. } => assert_command_entry(
+                &command,
+                "subagent_cancel",
+                true,
+                None,
+                None,
+                false,
+                true,
+                pawork_protocol::V1_20,
+            ),
         }
     }
 }
@@ -937,6 +977,26 @@ fn query_registry_covers_every_variant_without_wildcard() {
                 false,
                 true,
                 pawork_protocol::V1_18,
+            ),
+            AppQuery::SubagentSettings => assert_query_entry(
+                &query,
+                "subagent_settings",
+                true,
+                None,
+                None,
+                false,
+                true,
+                pawork_protocol::V1_20,
+            ),
+            AppQuery::SubagentList { .. } => assert_query_entry(
+                &query,
+                "subagent_list",
+                true,
+                None,
+                None,
+                false,
+                true,
+                pawork_protocol::V1_20,
             ),
         }
     }

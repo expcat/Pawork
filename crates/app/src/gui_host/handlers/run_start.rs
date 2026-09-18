@@ -1,11 +1,11 @@
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 use pawork_domain::{
     AgentEvent, CancellationToken, ErrorCategory, ErrorContext, Message, MessageId, MessageRole,
     RunId, SessionId,
 };
-use pawork_engine::{AgentEventSink, now_timestamp};
+use pawork_engine::{now_timestamp, AgentEventSink};
 use pawork_protocol::{AppCommand, AppCommandEnvelope, AppEvent, AppResponse, RunState};
 use serde_json::json;
 
@@ -267,6 +267,10 @@ pub(crate) async fn run_start(
     // 上面的显式模型选择，保留旧客户端仅传 model 的解析顺序。
     {
         let mut core = adapter.core.write().await;
+        *core.subagent_render.lock().unwrap() = Some(Arc::new(GuiBroadcastSink::new(
+            adapter.bus.clone(),
+            adapter.instance.clone(),
+        )));
         let terminal = core.config().terminal.clone().unwrap_or_default();
         let tools: Vec<Arc<dyn pawork_domain::AgentTool>> = vec![
             Arc::new(super::super::terminal_tool::TerminalTool {

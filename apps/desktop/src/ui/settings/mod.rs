@@ -20,11 +20,11 @@
 //! 当前认证握手声明非空 Host 数据目录时显示「关于」，且断线时立即隐藏。
 //! 可见 / 键盘 / AX 三路径同 gate。
 
-pub(super) use gpui::{App, Context, FontWeight, Pixels, div, prelude::*, px};
+pub(super) use gpui::{div, prelude::*, px, App, Context, FontWeight, Pixels};
 
 pub(super) use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
 pub(super) use crate::ui::components::focus_ring::focus_ring;
-pub(super) use crate::ui::components::icon::{Icon, icon, icon_sized};
+pub(super) use crate::ui::components::icon::{icon, icon_sized, Icon};
 pub(super) use crate::ui::components::label::Label;
 pub(super) use crate::ui::components::list_row::ListRow;
 pub(super) use crate::ui::components::panel::Panel;
@@ -32,15 +32,15 @@ pub(super) use crate::ui::theme::{dark, font, metrics};
 
 pub(super) use crate::controller::McpServerEntry;
 pub(super) use crate::projection::{
-    ApprovalModeWire, AuthStartData, ConnectionState, ModelEntry, ProviderAuthState,
-    ProviderAuthStatusEntry, ProviderStatusLabels, SettingsPermissionsState, SettingsRole,
-    SettingsTerminalState, group_models_by_provider,
+    group_models_by_provider, ApprovalModeWire, AuthStartData, ConnectionState, ModelEntry,
+    ProviderAuthState, ProviderAuthStatusEntry, ProviderStatusLabels, SettingsPermissionsState,
+    SettingsRole, SettingsSubagentsState, SettingsTerminalState,
 };
 pub(super) use crate::ui::text_input::TextInput;
 
 pub(super) use super::accessibility::dynamic_identifier;
 pub(super) use super::resources::{
-    ResourcesFetch, ResourcesPanelState, mcp_server_meta_text, mcp_server_name_row,
+    mcp_server_meta_text, mcp_server_name_row, ResourcesFetch, ResourcesPanelState,
 };
 pub(super) use super::shell_layout;
 pub(super) use super::{AppRoute, AppView, SettingsPage};
@@ -222,6 +222,101 @@ pub(crate) fn terminal_save_enabled(writes: bool, columns: Option<u16>, rows: Op
     writes && columns.is_some() && rows.is_some()
 }
 
+/// 子代理功能权限全集（render / AX / 写载荷同源；与 Host PERMISSIONS
+/// 白名单一致，未知权限在 Host 侧 fail-closed）。
+pub(crate) const SUBAGENT_PERMISSIONS: [&str; 7] = [
+    "read", "write", "terminal", "network", "mcp", "browser", "computer",
+];
+
+/// 权限显示名（render 与 AX 同源）。
+pub(crate) fn subagent_permission_label(permission: &str) -> &'static str {
+    match permission {
+        "read" => t("settings.subagents.permission.read"),
+        "write" => t("settings.subagents.permission.write"),
+        "terminal" => t("settings.subagents.permission.terminal"),
+        "network" => t("settings.subagents.permission.network"),
+        "mcp" => t("settings.subagents.permission.mcp"),
+        "browser" => t("settings.subagents.permission.browser"),
+        "computer" => t("settings.subagents.permission.computer"),
+        _ => "?",
+    }
+}
+
+/// 子代理页并发数解析：u16 且 ∈ 1..=16（与 Host 校验一致）；畸形 /
+/// 越界返回 None（Save 禁用，fail-closed）。render 与 AX 同源。
+pub(crate) fn parse_subagent_max_concurrent(text: &str) -> Option<u16> {
+    let value: u16 = text.trim().parse().ok()?;
+    (1..=16).contains(&value).then_some(value)
+}
+
+/// 「子代理」页模型规则控件前缀（action 段在转义目标之前，前缀锚定
+/// 解析无歧义）。
+pub(crate) const SETTINGS_SUBAGENT_CONTROL_PREFIX: &str = "settings-subagent-";
+
+/// 模型规则控件 identifier（render 控件 id / AX 节点 id / 派发键三用；
+/// provider 与 model 以 ':' 拼接后整体转义）。
+pub(crate) fn settings_subagent_identifier(
+    action: &str,
+    provider_id: &str,
+    model_id: &str,
+) -> String {
+    format!(
+        "{SETTINGS_SUBAGENT_CONTROL_PREFIX}{}",
+        dynamic_identifier(action, &format!("{provider_id}:{model_id}"))
+    )
+}
+
+/// 「子代理」页模型规则控件（render / 键盘 / AX 三路径派发用）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SettingsSubagentControl {
+    /// 切换「可发起子代理」（携带转义后的 "<provider>:<model>"）。
+    ToggleSpawn(String),
+    /// 切换「可作为子代理」。
+    ToggleDelegate(String),
+    /// 切换某项功能权限（wire 权限名 + 转义目标）。
+    TogglePermission(&'static str, String),
+    /// 移除显式规则，回落默认。
+    Reset(String),
+}
+
+/// 前缀锚定解析模型规则控件 identifier；未知 action / 形状 fail-closed。
+pub(crate) fn parse_settings_subagent_control(identifier: &str) -> Option<SettingsSubagentControl> {
+    let rest = identifier.strip_prefix(SETTINGS_SUBAGENT_CONTROL_PREFIX)?;
+    if let Some(escaped) = rest.strip_prefix("spawn-") {
+        return Some(SettingsSubagentControl::ToggleSpawn(escaped.to_string()));
+    }
+    if let Some(escaped) = rest.strip_prefix("delegate-") {
+        return Some(SettingsSubagentControl::ToggleDelegate(escaped.to_string()));
+    }
+    if let Some(escaped) = rest.strip_prefix("reset-") {
+        return Some(SettingsSubagentControl::Reset(escaped.to_string()));
+    }
+    for permission in SUBAGENT_PERMISSIONS {
+        if let Some(escaped) = rest.strip_prefix(&format!("perm-{permission}-")) {
+            return Some(SettingsSubagentControl::TogglePermission(
+                permission,
+                escaped.to_string(),
+            ));
+        }
+    }
+    None
+}
+
+/// 按转义目标还原 (provider, model)：对照全量目录重编码比对（未知
+/// fail-closed），不自行反转义。
+pub(crate) fn settings_subagent_target_for_escaped(
+    models: &[ModelEntry],
+    escaped: &str,
+) -> Option<(String, String)> {
+    models.iter().find_map(|model| {
+        let pair = format!("{}:{}", model.provider_id, model.id);
+        let encoded = dynamic_identifier("", &pair);
+        // dynamic_identifier 以 '-' 连接空前缀；还原口径剥掉该分隔符。
+        (encoded.strip_prefix('-') == Some(escaped))
+            .then(|| (model.provider_id.clone(), model.id.clone()))
+    })
+}
+
 /// Settings 供应商页状态行（render 与 AX 同源）。stale / loading / error /
 /// 空态独立判定：stale 与 error 可同时出现，空态仅在完全无状态且列表为
 /// 空时给出（SET-3 审查修复 2/3）。
@@ -301,6 +396,25 @@ pub(crate) fn permissions_status_lines(
 /// Settings 终端页状态行（SET-6d；render 与 AX 同源）。error 文案由事件
 /// 消费侧按动作区分（load / set），此处原样展示。
 pub(crate) fn terminal_status_lines(state: &SettingsTerminalState) -> Vec<(&'static str, String)> {
+    let mut lines = Vec::new();
+    if let Some(reason) = &state.query.stale_reason {
+        lines.push((
+            "stale",
+            t("settings.status.offline_stale").replace("{}", reason),
+        ));
+    } else if state.query.loading {
+        lines.push(("loading", t("settings.status.loading").to_string()));
+    }
+    if let Some(error) = &state.query.error {
+        lines.push(("error", error.clone()));
+    }
+    lines
+}
+
+/// Settings「子代理」页状态行（render 与 AX 同源）：stale / loading / error。
+pub(crate) fn subagents_status_lines(
+    state: &SettingsSubagentsState,
+) -> Vec<(&'static str, String)> {
     let mut lines = Vec::new();
     if let Some(reason) = &state.query.stale_reason {
         lines.push((
@@ -906,6 +1020,7 @@ impl SettingsNavSlot {
     fn page_meta(page: SettingsPage) -> (&'static str, &'static str) {
         match page {
             SettingsPage::Providers => ("settings-nav-providers", "settings.nav.providers"),
+            SettingsPage::Subagents => ("settings-nav-subagents", "settings.nav.subagents"),
             SettingsPage::General => ("settings-nav-general", "settings.nav.general"),
             SettingsPage::Permissions => ("settings-nav-permissions", "settings.nav.permissions"),
             SettingsPage::Tools => ("settings-nav-tools", "settings.nav.tools"),
@@ -920,6 +1035,7 @@ impl SettingsNavSlot {
 fn settings_page_icon(page: SettingsPage) -> Icon {
     match page {
         SettingsPage::Providers => Icon::Providers,
+        SettingsPage::Subagents => Icon::Subagents,
         SettingsPage::General => Icon::Network,
         SettingsPage::Permissions => Icon::Approvals,
         SettingsPage::Tools => Icon::Tools,
@@ -941,13 +1057,14 @@ pub(super) fn status_line(text: &str, color: gpui::Rgba) -> impl IntoElement {
 #[cfg(test)]
 mod tests {
     use super::{
-        SettingsControl, SettingsModelsControl, SettingsRoleControl, parse_settings_control,
-        parse_settings_models_control, parse_settings_role_control, parse_terminal_dimension,
-        parse_terminal_shell, settings_manage_models_identifier, settings_model_switch_identifier,
-        settings_models_disable_all_identifier, settings_models_enable_all_identifier,
-        settings_models_refresh_identifier, settings_provider_expand_identifier,
-        settings_role_candidates, settings_role_clear_identifier, settings_role_item_identifier,
-        settings_role_menu_entries, settings_role_trigger_identifier, terminal_save_enabled,
+        parse_settings_control, parse_settings_models_control, parse_settings_role_control,
+        parse_terminal_dimension, parse_terminal_shell, settings_manage_models_identifier,
+        settings_model_switch_identifier, settings_models_disable_all_identifier,
+        settings_models_enable_all_identifier, settings_models_refresh_identifier,
+        settings_provider_expand_identifier, settings_role_candidates,
+        settings_role_clear_identifier, settings_role_item_identifier, settings_role_menu_entries,
+        settings_role_trigger_identifier, terminal_save_enabled, SettingsControl,
+        SettingsModelsControl, SettingsRoleControl,
     };
     use crate::projection::{
         ModelEntry, ProviderAuthState, ProviderAuthStatusEntry, ProviderCatalogState, SettingsRole,
@@ -1129,13 +1246,14 @@ mod provider_quota;
 mod providers;
 pub(crate) use provider_quota::quota_identifier;
 mod search;
-pub(crate) use search::{SettingsSearchKind, settings_page_title_key, settings_search_entries};
+pub(crate) use search::{settings_page_title_key, settings_search_entries, SettingsSearchKind};
+mod subagents;
 mod terminal;
 mod tools;
 
 pub(crate) use approval_labels::{
-    ALL as APPROVAL_MODE_ALL, description as approval_mode_description,
-    label as approval_mode_label,
+    description as approval_mode_description, label as approval_mode_label,
+    ALL as APPROVAL_MODE_ALL,
 };
 
 impl AppView {
@@ -1347,7 +1465,7 @@ impl AppView {
             (
                 "settings-nav-group-models",
                 "settings.nav.group.models",
-                &[SettingsPage::Providers],
+                &[SettingsPage::Providers, SettingsPage::Subagents],
             ),
             (
                 "settings-nav-group-workspace",
@@ -1443,6 +1561,10 @@ impl AppView {
             && self.projection.settings_terminal.query.available
         {
             self.settings_terminal_page_element(cx).into_any_element()
+        } else if self.settings_page == SettingsPage::Subagents
+            && self.projection.settings_subagents.query.available
+        {
+            self.settings_subagents_page_element(cx).into_any_element()
         } else if self.settings_page == SettingsPage::Appearance {
             self.settings_appearance_page_element(cx).into_any_element()
         } else if self.settings_page == SettingsPage::Advanced {
@@ -1500,6 +1622,7 @@ impl AppView {
             SettingsPage::Permissions => self.settings_nav_permissions_focus.clone(),
             SettingsPage::Tools => self.settings_nav_tools_focus.clone(),
             SettingsPage::Terminal => self.settings_nav_terminal_focus.clone(),
+            SettingsPage::Subagents => self.settings_nav_subagents_focus.clone(),
             SettingsPage::Appearance => self.settings_nav_appearance_focus.clone(),
             SettingsPage::Advanced => self.settings_nav_advanced_focus.clone(),
             SettingsPage::About => self.settings_nav_about_focus.clone(),
@@ -1617,6 +1740,17 @@ impl AppView {
             ConnectionState::Connected { .. }
         );
         self.projection.settings_terminal.writes_enabled(connected)
+    }
+
+    /// 「子代理」页写操作 gate：连接 + 非 stale + subagent_settings 已成功
+    /// + 无在途写（防重复提交）。
+    pub(crate) fn settings_subagents_writes_enabled(&self) -> bool {
+        let connected = matches!(
+            self.projection.connection,
+            ConnectionState::Connected { .. }
+        );
+        self.projection.settings_subagents.writes_enabled(connected)
+            && !self.projection.settings_subagents.write_pending
     }
 
     /// 「工具与 MCP」页写操作 gate（SET-6c）：连接 + 非 stale + mcp_list

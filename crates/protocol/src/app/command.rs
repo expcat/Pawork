@@ -6,7 +6,7 @@ use pawork_domain::{
     ActorId, CommandId, ConnectionId, EventId, GuiClientId, ModelId, PluginId, ProviderId, RunId,
     SessionId, Timestamp, ToolCallId, WorkspaceId,
 };
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use thiserror::Error;
 #[cfg(feature = "typegen")]
@@ -564,6 +564,15 @@ pub enum AppCommand {
         request_id: String,
         result: Value,
     },
+    /// GUI-only Global subagent settings write (since 1.20).
+    SetSubagentSettings {
+        settings: super::subagents::SubagentSettingsData,
+    },
+    /// GUI-only cancel of one live subagent (since 1.20).
+    SubagentCancel {
+        session_id: SessionId,
+        agent_id: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -801,12 +810,10 @@ mod tests {
 
         let mut snapshot = client_snapshot(1);
         snapshot.diagnostics[0].message = "x".repeat(MAX_CLIENT_CONTEXT_MESSAGE_BYTES + 1);
-        assert!(
-            snapshot
-                .validate()
-                .unwrap_err()
-                .contains("diagnostic message")
-        );
+        assert!(snapshot
+            .validate()
+            .unwrap_err()
+            .contains("diagnostic message"));
     }
 
     #[test]
@@ -814,21 +821,17 @@ mod tests {
         // P17-9：低信任 URI 必须携带安全 scheme；可执行脚本 scheme 与无 scheme 一律拒绝。
         let mut snapshot = client_snapshot(1);
         snapshot.diagnostics[0].document_uri = "javascript:alert(1)".into();
-        assert!(
-            snapshot
-                .validate()
-                .unwrap_err()
-                .contains("scheme is not allowed")
-        );
+        assert!(snapshot
+            .validate()
+            .unwrap_err()
+            .contains("scheme is not allowed"));
 
         let mut snapshot = client_snapshot(1);
         snapshot.diagnostics[0].document_uri = "data:text/html,<script>".into();
-        assert!(
-            snapshot
-                .validate()
-                .unwrap_err()
-                .contains("scheme is not allowed")
-        );
+        assert!(snapshot
+            .validate()
+            .unwrap_err()
+            .contains("scheme is not allowed"));
 
         let mut snapshot = client_snapshot(1);
         snapshot.open_documents[0].uri = "1noscheme".into();
@@ -934,12 +937,10 @@ mod tests {
 
         let encoded = serde_json::to_value(&clear).expect("encode clear");
         assert_eq!(encoded["params"]["proxy_url"], serde_json::Value::Null);
-        assert!(
-            encoded["params"]
-                .as_object()
-                .expect("params object")
-                .contains_key("proxy_url")
-        );
+        assert!(encoded["params"]
+            .as_object()
+            .expect("params object")
+            .contains_key("proxy_url"));
 
         assert!(
             serde_json::from_value::<AppCommand>(serde_json::json!({
@@ -983,12 +984,10 @@ mod tests {
 
         let encoded = serde_json::to_value(&clear).expect("encode clear");
         assert_eq!(encoded["params"]["shell"], serde_json::Value::Null);
-        assert!(
-            encoded["params"]
-                .as_object()
-                .expect("params object")
-                .contains_key("shell")
-        );
+        assert!(encoded["params"]
+            .as_object()
+            .expect("params object")
+            .contains_key("shell"));
 
         for params in [
             serde_json::json!({ "columns": 120, "rows": 40 }),

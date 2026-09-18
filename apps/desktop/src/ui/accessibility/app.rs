@@ -3,15 +3,15 @@
 use gpui::{App, Context, Focusable, Window};
 
 use crate::projection::{
-    ActiveRun, ApprovalModeWire, ConnectionState, DateBucket, ForkBoundary, ModelEntry,
-    SessionLiveStatus, TaskRailGrouping, TaskRailProjectGroup, TimelineEntry, TimelineEntryKind,
-    TimelineRow, UNASSIGNED_PROJECT, run_footer_label, run_summary_texts,
+    run_footer_label, run_summary_texts, ActiveRun, ApprovalModeWire, ConnectionState, DateBucket,
+    ForkBoundary, ModelEntry, SessionLiveStatus, TaskRailGrouping, TaskRailProjectGroup,
+    TimelineEntry, TimelineEntryKind, TimelineRow, UNASSIGNED_PROJECT,
 };
 
 use super::{AxAction, AxBridge, AxNode, AxRect, AxRequest, AxRole, AxTree};
 use crate::ui::approval_card::{
-    APPROVAL_BUTTON_HEIGHT, APPROVAL_BUTTON_ROW_GAP_REMS, APPROVAL_BUTTON_SLOT_WIDTHS,
-    APPROVAL_CARD_PAD_REMS, approval_card_height,
+    approval_card_height, APPROVAL_BUTTON_HEIGHT, APPROVAL_BUTTON_ROW_GAP_REMS,
+    APPROVAL_BUTTON_SLOT_WIDTHS, APPROVAL_CARD_PAD_REMS,
 };
 use crate::ui::changes::{ChangesFetch, ChangesTab};
 use crate::ui::components::dropdown::ANCHOR_GAP_Y;
@@ -21,24 +21,23 @@ use crate::ui::i18n::t;
 use crate::ui::inspector::InspectorTab;
 use crate::ui::resources::ResourcesFetch;
 use crate::ui::settings::{
-    SETTINGS_APPEARANCE_CONTROL_GAP, SETTINGS_APPEARANCE_CONTROL_HEIGHT,
-    SETTINGS_APPEARANCE_CONTROL_WIDTH, SETTINGS_CONTROL_PREFIX, SETTINGS_MCP_CONTROL_PREFIX,
-    SETTINGS_MODELS_CONTROL_PREFIX, SETTINGS_ROLE_CONTROL_PREFIX, SettingsControl,
-    SettingsModelsControl, SettingsRoleControl, parse_settings_control, parse_settings_mcp_control,
-    parse_settings_models_control, parse_settings_role_control,
-    settings_text_scale_from_identifier,
+    parse_settings_control, parse_settings_mcp_control, parse_settings_models_control,
+    parse_settings_role_control, settings_text_scale_from_identifier, SettingsControl,
+    SettingsModelsControl, SettingsRoleControl, SETTINGS_APPEARANCE_CONTROL_GAP,
+    SETTINGS_APPEARANCE_CONTROL_HEIGHT, SETTINGS_APPEARANCE_CONTROL_WIDTH, SETTINGS_CONTROL_PREFIX,
+    SETTINGS_MCP_CONTROL_PREFIX, SETTINGS_MODELS_CONTROL_PREFIX, SETTINGS_ROLE_CONTROL_PREFIX,
 };
 use crate::ui::shell_layout::{self, InspectorPlacement};
 use crate::ui::theme::{font, metrics};
 use crate::ui::timeline_entry::{
-    FailureNextStep, SUMMARY_NEXT_STEP_BUTTON_HEIGHT, ToolRowView, assistant_is_streaming,
-    display_time, failure_next_step, run_open_providers_identifier, tool_group_summary,
-    tool_result_expand_key,
+    assistant_is_streaming, display_time, failure_next_step, run_open_providers_identifier,
+    tool_group_summary, tool_result_expand_key, FailureNextStep, ToolRowView,
+    SUMMARY_NEXT_STEP_BUTTON_HEIGHT,
 };
 use crate::ui::{
-    AppRoute, AppView, MenuKind, SettingsPage, activity_header_visibility,
-    rail_project_occurrence_key, rail_session_archive_focus_key, rail_session_focus_key,
-    rail_session_rename_focus_key, terminal_can_operate, timeline, workspace_empty_title,
+    activity_header_visibility, rail_project_occurrence_key, rail_session_archive_focus_key,
+    rail_session_focus_key, rail_session_rename_focus_key, terminal_can_operate, timeline,
+    workspace_empty_title, AppRoute, AppView, MenuKind, SettingsPage,
 };
 
 pub(crate) const PAD: f32 = 8.0;
@@ -49,6 +48,7 @@ pub(crate) const ROW_HEIGHT: f32 = 32.0;
 struct ActivityPopoverAxGeometry {
     frame: AxRect,
     heading: AxRect,
+    subagents: AxRect,
     open_changes: AxRect,
 }
 
@@ -89,7 +89,7 @@ fn activity_popover_ax_geometry(
         (trigger.x + trigger.width - width).max(header_frame.x),
         trigger.y + trigger.height + ANCHOR_GAP_Y,
         width,
-        metrics::ACTIVITY_POPOVER_HEIGHT * scale + 2.0 * menu_inset,
+        metrics::ACTIVITY_POPOVER_HEIGHT * scale + 96.0 * scale + 2.0 * menu_inset,
     );
     let heading = AxRect::new(
         frame.x + inset_x,
@@ -98,15 +98,22 @@ fn activity_popover_ax_geometry(
         (frame.width - 2.0 * inset_x).max(0.0),
         1.5 * font::BODY_SM.0 * rem_px,
     );
-    let open_changes = AxRect::new(
+    let subagents = AxRect::new(
         heading.x,
         heading.y + heading.height + 0.25 * rem_px,
+        heading.width,
+        3.0 * font::XS.0 * rem_px,
+    );
+    let open_changes = AxRect::new(
+        heading.x,
+        subagents.y + subagents.height + 0.25 * rem_px,
         heading.width,
         metrics::MENU_ROW_HEIGHT,
     );
     ActivityPopoverAxGeometry {
         frame,
         heading,
+        subagents,
         open_changes,
     }
 }
@@ -277,6 +284,13 @@ impl AppView {
                     let focus = self.settings_terminal_rows_input.read(cx).focus_handle(cx);
                     window.focus(&focus);
                 }
+                "settings-subagents-concurrency-input" => {
+                    let focus = self
+                        .settings_subagents_concurrency_input
+                        .read(cx)
+                        .focus_handle(cx);
+                    window.focus(&focus);
+                }
                 // SET-4：settings secure 输入聚焦（与点击输入框同一路径；
                 // permits 已按当前树核对 enabled）。
                 _ if settings_api_key_input.is_some() => {
@@ -331,6 +345,9 @@ impl AppView {
                         .update(cx, |input, cx| input.set_text(value, cx)),
                     "settings-terminal-rows-input" => self
                         .settings_terminal_rows_input
+                        .update(cx, |input, cx| input.set_text(value, cx)),
+                    "settings-subagents-concurrency-input" => self
+                        .settings_subagents_concurrency_input
                         .update(cx, |input, cx| input.set_text(value, cx)),
                     // SET-4：AX set-value 是合法输入路径（等同键入）；
                     // 发布方向永远只给掩码（settings_page_ax）。
@@ -425,6 +442,10 @@ impl AppView {
                 window.focus(&self.settings_nav_terminal_focus);
                 self.on_select_settings_page(SettingsPage::Terminal, window, cx);
             }
+            "settings-nav-subagents" => {
+                window.focus(&self.settings_nav_subagents_focus);
+                self.on_select_settings_page(SettingsPage::Subagents, window, cx);
+            }
             "settings-nav-appearance" => {
                 window.focus(&self.settings_nav_appearance_focus);
                 self.on_select_settings_page(SettingsPage::Appearance, window, cx);
@@ -444,6 +465,11 @@ impl AppView {
             "settings-proxy-clear" => self.on_settings_proxy_clear(cx),
             "settings-terminal-save" => self.on_settings_terminal_save(cx),
             "settings-terminal-clear" => self.on_settings_terminal_clear(cx),
+            "settings-subagents-enabled" => self.on_settings_subagents_toggle_enabled(cx),
+            "settings-subagents-save" => self.on_settings_subagents_save_concurrency(cx),
+            other if other.starts_with(crate::ui::settings::SETTINGS_SUBAGENT_CONTROL_PREFIX) => {
+                self.dispatch_settings_subagent_control(other, cx);
+            }
             other if other.starts_with("settings-text-scale-") => {
                 let Some(scale) = settings_text_scale_from_identifier(other) else {
                     return false;
@@ -1679,6 +1705,15 @@ impl AppView {
                     ))
                     .child(
                         AxNode::new(
+                            "activity-subagents",
+                            AxRole::StaticText,
+                            t("subagents.title"),
+                            geometry.subagents,
+                        )
+                        .value(self.activity_subagent_ax_value()),
+                    )
+                    .child(
+                        AxNode::new(
                             "activity-open-changes",
                             AxRole::Button,
                             "Open changes",
@@ -1717,6 +1752,30 @@ impl AppView {
                 .action(AxAction::Press),
             )
         }
+    }
+
+    /// Activity 浮层「子智能体」卡的 AX 摘要值（与 render 卡同口径：
+    /// 绑定会话给计数 / 空态，未绑定给无会话 / 加载 / 空态）。
+    fn activity_subagent_ax_value(&self) -> String {
+        let activity = &self.projection.subagent_activity;
+        let bound = activity.session_id.is_some()
+            && self.projection.active_session_id == activity.session_id;
+        if !bound {
+            return if self.projection.active_session_id.is_none() {
+                t("subagents.no_session").to_string()
+            } else if activity.loading {
+                t("subagents.loading").to_string()
+            } else {
+                t("subagents.empty").to_string()
+            };
+        }
+        if activity.agents.is_empty() {
+            return t("subagents.empty").to_string();
+        }
+        let (running, done) = activity.counts();
+        t("subagents.summary")
+            .replacen("{}", &running.to_string(), 1)
+            .replacen("{}", &done.to_string(), 1)
     }
 
     fn timeline_ax(&self, window: &Window, frame: AxRect) -> AxNode {
@@ -3627,12 +3686,11 @@ mod tests {
                     .and_then(|n| n.value.as_deref()),
                 Some(t("rail.connection_local_disconnected"))
             );
-            assert!(
-                tree.find("connection-notice")
-                    .unwrap()
-                    .label
-                    .contains("connection refused")
-            );
+            assert!(tree
+                .find("connection-notice")
+                .unwrap()
+                .label
+                .contains("connection refused"));
             assert_eq!(v.model_label(), t("recovery.model_failed"));
             assert!(v.connection_notice_text().1.contains("address"));
         });
@@ -3699,12 +3757,11 @@ mod tests {
             assert!(f32::from(bounds.size.height) > 40.0);
             assert!(node.actions.contains(&AxAction::Focus));
             assert!(!node.actions.contains(&AxAction::SetValue));
-            assert!(
-                tree.find("terminal-notice")
-                    .unwrap()
-                    .label
-                    .contains("Read-only")
-            );
+            assert!(tree
+                .find("terminal-notice")
+                .unwrap()
+                .label
+                .contains("Read-only"));
             assert!(tree.find("terminal-details").is_some());
         });
         cx.update(|window, cx| {
@@ -3879,12 +3936,11 @@ mod tests {
                 rail_retry.bounds,
                 rail.bounds
             );
-            assert!(
-                tree.find("connection-notice")
-                    .unwrap()
-                    .label
-                    .contains("connection is closed by peer")
-            );
+            assert!(tree
+                .find("connection-notice")
+                .unwrap()
+                .label
+                .contains("connection is closed by peer"));
             assert_eq!(view.text_input.read(cx).text(), "keep draft");
         });
 
@@ -4053,8 +4109,8 @@ mod tests {
     fn reply_actions_copy_exact_content_and_use_closed_turn_boundary(
         cx: &mut gpui::TestAppContext,
     ) {
-        use crate::ui::timeline_entry::{EntryActionKind, fork_target};
-        use gpui::{ClipboardItem, px};
+        use crate::ui::timeline_entry::{fork_target, EntryActionKind};
+        use gpui::{px, ClipboardItem};
         let (view, cx) = cx.add_window_view(|_, cx| {
             AppView::new(
                 std::sync::Arc::new(crate::platform::Platform::new()),
@@ -4160,10 +4216,9 @@ mod tests {
                 );
                 assert!(view.open_menu.is_none());
                 let tree = view.accessibility_tree(window, cx);
-                assert!(
-                    tree.find(&code_id)
-                        .is_some_and(|node| node.actions.contains(&AxAction::Press))
-                );
+                assert!(tree
+                    .find(&code_id)
+                    .is_some_and(|node| node.actions.contains(&AxAction::Press)));
                 view.handle_accessibility_request(
                     AxRequest {
                         identifier: code_id,
@@ -4609,8 +4664,9 @@ mod tests {
     }
 
     /// R6 Wave A：折叠态 Header Activity 的 AX 触发器与 Popover 锚点公式
-    /// 必须钉住生产 render 所用的 40×37 槽、右侧 25px inset、8px gap 与
-    /// 320×144 基准内容、面板内边距，以及大字号下的摘要命中范围。
+    /// 必须钉住生产 render 所用的 40×37 槽、右侧 25px inset、8px gap、
+    /// 320×144 基准内容 + 96px 子代理卡、面板内边距，以及大字号下的
+    /// 摘要命中范围。
     #[test]
     fn activity_header_ax_geometry_matches_render_anchor_contract() {
         let header = AxRect::new(240.0, 0.0, 840.0, metrics::HEADER_HEIGHT);
@@ -4621,14 +4677,15 @@ mod tests {
         assert_eq!(toggle, AxRect::new(972.0, 13.5, 40.0, 37.0));
 
         let popover = activity_popover_ax_geometry(header, trigger, 16.0);
-        assert_eq!(popover.frame, AxRect::new(718.0, 58.5, 338.0, 162.0));
+        assert_eq!(popover.frame, AxRect::new(718.0, 58.5, 338.0, 258.0));
         assert_eq!(popover.heading, AxRect::new(752.0, 125.5, 270.0, 18.0));
+        assert_eq!(popover.subagents, AxRect::new(752.0, 147.5, 270.0, 33.0));
         assert_eq!(
             popover.open_changes,
-            AxRect::new(752.0, 147.5, 270.0, metrics::MENU_ROW_HEIGHT)
+            AxRect::new(752.0, 184.5, 270.0, metrics::MENU_ROW_HEIGHT)
         );
         let large = activity_popover_ax_geometry(header, trigger, 24.0);
-        assert_eq!(large.frame.height, 234.0);
+        assert_eq!(large.frame.height, 378.0);
         assert!(
             large.open_changes.y + large.open_changes.height < large.frame.y + large.frame.height
         );
@@ -4863,7 +4920,7 @@ mod tests {
     /// UI-2：真实 hover / Tab / click 驱动非当前会话动作，不先打开会话。
     #[gpui::test]
     fn session_actions_follow_hover_and_keyboard_without_opening(cx: &mut gpui::TestAppContext) {
-        use gpui::{AppContext, Modifiers, prelude::*, px};
+        use gpui::{prelude::*, px, AppContext, Modifiers};
         struct RailHost(gpui::Entity<AppView>);
         impl gpui::Render for RailHost {
             fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -4964,11 +5021,10 @@ mod tests {
                     view.projection.active_session_id.as_deref(),
                     Some("current")
                 );
-                assert!(
-                    view.accessibility_tree(window, cx)
-                        .find(&session_archive_identifier("other"))
-                        .is_none()
-                );
+                assert!(view
+                    .accessibility_tree(window, cx)
+                    .find(&session_archive_identifier("other"))
+                    .is_none());
                 view.cancel_session_rename(window, cx);
             })
         });
@@ -5003,11 +5059,10 @@ mod tests {
                         .enabled
                 );
                 window.focus(&view.scope_focus);
-                assert!(
-                    view.accessibility_tree(window, cx)
-                        .find(&session_rename_identifier("other"))
-                        .is_none()
-                );
+                assert!(view
+                    .accessibility_tree(window, cx)
+                    .find(&session_rename_identifier("other"))
+                    .is_none());
             })
         });
     }
@@ -5102,10 +5157,9 @@ mod tests {
             assert!(tree.find(&session_status_dot_identifier("idle")).is_none());
             let running = tree.find(&session_identifier("running")).unwrap();
             assert_eq!(running.bounds.height, 44.0);
-            assert!(
-                tree.find(&session_status_dot_identifier("running"))
-                    .is_some()
-            );
+            assert!(tree
+                .find(&session_status_dot_identifier("running"))
+                .is_some());
             let title = tree.find(&session_title_identifier("idle")).unwrap();
             assert!(title.bounds.width > 80.0, "idle title {:?}", title.bounds);
         });
@@ -5134,10 +5188,9 @@ mod tests {
                     .any(|id| id == &rail_project_identifier(Some(DateBucket::Today), "ws-a")),
                 "multi-project bucket keeps headers: {ids:?}"
             );
-            assert!(
-                ids.iter()
-                    .any(|id| id == &rail_project_identifier(Some(DateBucket::Today), "ws-b"))
-            );
+            assert!(ids
+                .iter()
+                .any(|id| id == &rail_project_identifier(Some(DateBucket::Today), "ws-b")));
         });
 
         cx.update(|_window, cx| {
@@ -5377,11 +5430,10 @@ mod tests {
                 }));
                 assert!(tree.find("inspector-expand").is_some());
                 view.inspector_render_width = 0.0;
-                assert!(
-                    view.accessibility_tree(window, cx)
-                        .find("inspector")
-                        .is_none()
-                );
+                assert!(view
+                    .accessibility_tree(window, cx)
+                    .find("inspector")
+                    .is_none());
             });
         });
 
@@ -6020,7 +6072,7 @@ mod tests {
     /// permits 拒绝（可见 / 键盘 / AX 三路径同 gate）。
     #[gpui::test]
     fn settings_ax_masks_api_key_and_gates_writes_when_stale(cx: &mut gpui::TestAppContext) {
-        use gpui::{AppContext, prelude::*, px};
+        use gpui::{prelude::*, px, AppContext};
 
         struct AxSettingsHost {
             view: gpui::Entity<AppView>,
@@ -6452,10 +6504,9 @@ mod tests {
             view.update(cx, |view, cx| {
                 let highlighted = view.menu_highlight.unwrap();
                 let tree = view.accessibility_tree(window, cx);
-                assert!(
-                    tree.find(&model_identifier(&view.projection.models[highlighted]))
-                        .is_some()
-                );
+                assert!(tree
+                    .find(&model_identifier(&view.projection.models[highlighted]))
+                    .is_some());
                 view.close_menu_and_focus_trigger(MenuKind::Model, window, cx);
                 assert!(view.model_focus.is_focused(window));
             })
@@ -6551,12 +6602,11 @@ mod tests {
             assert_eq!(empty.value.as_deref(), Some(t("composer.model_menu_empty")));
             // 菜单不发布任何可选模型行：不编造模型。
             assert_eq!(menu.children.len(), 3); // 搜索区、诚实空态与管理导航
-            assert!(
-                menu.children
-                    .iter()
-                    .all(|child| child.role != AxRole::Button
-                        || child.identifier == "model-menu-settings")
-            );
+            assert!(menu
+                .children
+                .iter()
+                .all(|child| child.role != AxRole::Button
+                    || child.identifier == "model-menu-settings"));
         });
     }
 
@@ -6568,7 +6618,7 @@ mod tests {
     fn settings_role_defaults_ax_shape_pins_triggers_menu_and_filter(
         cx: &mut gpui::TestAppContext,
     ) {
-        use gpui::{AppContext, prelude::*, px};
+        use gpui::{prelude::*, px, AppContext};
 
         use crate::projection::{
             ProviderAuthState, ProviderAuthStatusEntry, ProviderCatalogState, SettingsRole,
@@ -6714,21 +6764,17 @@ mod tests {
             let vision = tree
                 .find(&settings_role_trigger_identifier(SettingsRole::Vision))
                 .expect("vision trigger has an AX node");
-            assert!(
-                vision
-                    .description
-                    .as_deref()
-                    .is_some_and(|description| description.contains("Not active"))
-            );
+            assert!(vision
+                .description
+                .as_deref()
+                .is_some_and(|description| description.contains("Not active")));
             let search = tree
                 .find(&settings_role_trigger_identifier(SettingsRole::Search))
                 .expect("search trigger has an AX node");
-            assert!(
-                search
-                    .description
-                    .as_deref()
-                    .is_some_and(|description| description.contains("Not active"))
-            );
+            assert!(search
+                .description
+                .as_deref()
+                .is_some_and(|description| description.contains("Not active")));
 
             // 菜单展开：清除行 + 已连接 provider 候选可选。
             let clear_id = settings_role_clear_identifier(SettingsRole::Naming);
@@ -6748,22 +6794,20 @@ mod tests {
                 value: None,
             }));
             // 未连接 provider（glm）与清单缺失 provider（ghost）不出现。
-            assert!(
-                tree.find(&settings_role_item_identifier(
+            assert!(tree
+                .find(&settings_role_item_identifier(
                     SettingsRole::Naming,
                     "glm",
                     "glm-4.7"
                 ))
-                .is_none()
-            );
-            assert!(
-                tree.find(&settings_role_item_identifier(
+                .is_none());
+            assert!(tree
+                .find(&settings_role_item_identifier(
                     SettingsRole::Naming,
                     "ghost",
                     "ghost-x"
                 ))
-                .is_none()
-            );
+                .is_none());
         });
         // 两个供应商分组的长菜单：打开时当前末项可见，上下键跨越
         // Clear / 分组边界时新高亮项始终可见，AX 框仍来自真实菜单视口。
@@ -6966,7 +7010,7 @@ mod tests {
     /// Refresh 的可操作性、代理 Switch value 与 Press；stale 关闸。
     #[gpui::test]
     fn settings_models_menu_ax_pins_gates_switches_and_empty_state(cx: &mut gpui::TestAppContext) {
-        use gpui::{AppContext, prelude::*, px};
+        use gpui::{prelude::*, px, AppContext};
 
         use crate::projection::{
             ModelEntry, ProviderAuthState, ProviderAuthStatusEntry, ProviderCatalogState,
@@ -7194,10 +7238,9 @@ mod tests {
         let scrolled_offset = cx.update(|window, cx| {
             let view = view.read(cx);
             let tree = view.accessibility_tree(window, cx);
-            assert!(
-                tree.find(&settings_model_switch_identifier("kimi", "kimi-k2"))
-                    .is_none()
-            );
+            assert!(tree
+                .find(&settings_model_switch_identifier("kimi", "kimi-k2"))
+                .is_none());
             let last = tree.find(&last_id).expect("last model scrolls into view");
             let viewport = view.settings_element_layouts[&menu_id].bounds();
             let actual = view.settings_element_layouts[&last_id]
@@ -7351,7 +7394,7 @@ mod tests {
     fn settings_provider_expanded_card_ax_pins_credentials_and_usage(
         cx: &mut gpui::TestAppContext,
     ) {
-        use gpui::{AppContext, prelude::*, px};
+        use gpui::{prelude::*, px, AppContext};
 
         use crate::projection::ProviderAuthStatusEntry;
         use crate::ui::settings::{
@@ -7458,14 +7501,12 @@ mod tests {
                 action: AxAction::Press,
                 value: None,
             }));
-            assert!(
-                tree.find(&dynamic_identifier("settings-provider-credentials", "dual"))
-                    .is_none()
-            );
-            assert!(
-                tree.find(&dynamic_identifier("settings-provider-usage", "dual"))
-                    .is_none()
-            );
+            assert!(tree
+                .find(&dynamic_identifier("settings-provider-credentials", "dual"))
+                .is_none());
+            assert!(tree
+                .find(&dynamic_identifier("settings-provider-usage", "dual"))
+                .is_none());
             assert!(tree.find(&settings_use_proxy_identifier("dual")).is_none());
         });
 
@@ -7558,19 +7599,17 @@ mod tests {
                 Some(t("settings.providers.catalog_scope"))
             );
             // proxy_url 未配置：代理 Switch 不发布（gate 与 render 同源）。
-            assert!(
-                tree.find(&dynamic_identifier("settings-provider-proxy-text", "dual"))
-                    .is_none()
-            );
+            assert!(tree
+                .find(&dynamic_identifier("settings-provider-proxy-text", "dual"))
+                .is_none());
             assert!(tree.find(&settings_use_proxy_identifier("dual")).is_none());
             // 未展开的 empty 卡仍只有 chevron。
-            assert!(
-                tree.find(&dynamic_identifier(
+            assert!(tree
+                .find(&dynamic_identifier(
                     "settings-provider-credentials-empty",
                     "empty"
                 ))
-                .is_none()
-            );
+                .is_none());
         });
 
         // empty 卡展开：空凭证列表发布诚实空态，不渲染假行。
@@ -7605,13 +7644,12 @@ mod tests {
                 ))
                 .expect("empty credentials state pinned");
             assert_eq!(empty.value.as_deref(), Some("No stored credentials"));
-            assert!(
-                tree.find(&dynamic_identifier(
+            assert!(tree
+                .find(&dynamic_identifier(
                     "settings-provider-credential-0",
                     "empty"
                 ))
-                .is_none()
-            );
+                .is_none());
         });
 
         // 配置全局 proxy_url 后：Proxy 行文本（标题 + 副标题）与 Switch
@@ -7719,14 +7757,13 @@ mod tests {
                 );
                 let keep = tree.find(&format!("{remove_second}-keep")).unwrap();
                 assert!(keep.bounds.width > 0.0 && keep.bounds.width < 150.0);
-                assert!(
-                    tree.find(&crate::ui::settings::settings_credential_row_identifier(
+                assert!(tree
+                    .find(&crate::ui::settings::settings_credential_row_identifier(
                         "dual",
                         &view.projection.settings_providers.providers[0].credentials[0],
                         0
                     ))
-                    .is_some()
-                );
+                    .is_some());
                 view.handle_accessibility_request(
                     AxRequest {
                         identifier: format!("{remove_second}-keep"),
@@ -8145,10 +8182,9 @@ mod tests {
             let view = view.read(cx);
             let tree = view.accessibility_tree(window, cx);
             assert!(tree.find("run-summary-card-failed-timeout").is_some());
-            assert!(
-                tree.find(&run_open_providers_identifier("failed-timeout"))
-                    .is_none()
-            );
+            assert!(tree
+                .find(&run_open_providers_identifier("failed-timeout"))
+                .is_none());
             assert!(tree.find("run-footer-failed-timeout").is_some());
         });
 
@@ -8199,10 +8235,9 @@ mod tests {
                 .expect("review changes CTA");
             assert_eq!(review.label, t("timeline.review_changes"));
             assert!(review.actions.contains(&AxAction::Press));
-            assert!(
-                tree.find(&run_open_providers_identifier("completed"))
-                    .is_none()
-            );
+            assert!(tree
+                .find(&run_open_providers_identifier("completed"))
+                .is_none());
             assert!(tree.find("run-footer-completed").is_some());
         });
 
@@ -8225,10 +8260,9 @@ mod tests {
             let tree = view.accessibility_tree(window, cx);
             tree.validate().unwrap();
             assert!(tree.find("run-summary-card-cancelled").is_none());
-            assert!(
-                tree.find(&run_open_providers_identifier("cancelled"))
-                    .is_none()
-            );
+            assert!(tree
+                .find(&run_open_providers_identifier("cancelled"))
+                .is_none());
             assert!(tree.find(&run_review_identifier("cancelled")).is_none());
             let footer = tree.find("run-footer-cancelled").expect("cancelled footer");
             assert!(footer.label.contains(t("run.footer_cancelled")));
@@ -8253,7 +8287,7 @@ mod tests {
         cx: &mut gpui::TestAppContext,
     ) {
         use crate::ui::theme::font::TextScale;
-        use gpui::{ListOffset, px, size};
+        use gpui::{px, size, ListOffset};
         let platform = std::sync::Arc::new(crate::platform::Platform::new());
         let socket = std::env::temp_dir().join("gui2-05-center.sock");
         let (view, cx) = cx.add_window_view(|_, cx| AppView::new(platform, socket, None, cx));
@@ -8694,11 +8728,10 @@ mod tests {
                         }
                     );
                 }
-                assert!(
-                    view.panel_tabs(cx)
-                        .iter()
-                        .all(|tab| tab.terminal_id.is_none())
-                );
+                assert!(view
+                    .panel_tabs(cx)
+                    .iter()
+                    .all(|tab| tab.terminal_id.is_none()));
                 // 工具标签就地关闭：最后一个工具页关掉回 Home（Changes 已在上
                 // 面的有 PTY 回落用例中关闭）。
                 view.close_inspector_tool(InspectorTab::Resources, cx);
