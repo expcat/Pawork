@@ -359,6 +359,7 @@ impl AcpClientAdapter {
                 model: None,
                 provider: None,
                 profile: None,
+                effort: None,
             },
         )))
     }
@@ -631,6 +632,7 @@ mod tests {
                 model: None,
                 provider: None,
                 profile: None,
+                effort: None,
             },
         ];
         for command in commands {

@@ -559,6 +559,7 @@ impl Client {
                 model: None,
                 provider: None,
                 profile: None,
+                effort: None,
             },
         )))
         .await

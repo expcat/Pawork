@@ -29,6 +29,32 @@ impl ReasoningEffort {
     pub fn requires_reasoning_support(self) -> bool {
         !matches!(self, Self::None)
     }
+
+    /// Canonical wire 名（与 serde snake_case 词汇一致；ADR-063 起 GUI
+    /// 设置与 RunStart 共用同一词汇，不经 serde JSON 中转）。
+    pub fn as_wire_name(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::XHigh => "x_high",
+            Self::Max => "max",
+        }
+    }
+
+    /// 解析 canonical wire 名；非法名返回 None（调用方 fail-closed）。
+    pub fn from_wire_name(name: &str) -> Option<Self> {
+        match name {
+            "none" => Some(Self::None),
+            "low" => Some(Self::Low),
+            "medium" => Some(Self::Medium),
+            "high" => Some(Self::High),
+            "x_high" => Some(Self::XHigh),
+            "max" => Some(Self::Max),
+            _ => None,
+        }
+    }
 }
 
 /// Provider-neutral reasoning continuation state.
@@ -86,5 +112,22 @@ mod tests {
         assert_eq!(ReasoningEffort::default(), ReasoningEffort::Medium);
         assert!(!ReasoningEffort::None.requires_reasoning_support());
         assert!(ReasoningEffort::Max.requires_reasoning_support());
+    }
+
+    #[test]
+    fn reasoning_effort_wire_names_round_trip() {
+        for (name, effort) in [
+            ("none", ReasoningEffort::None),
+            ("low", ReasoningEffort::Low),
+            ("medium", ReasoningEffort::Medium),
+            ("high", ReasoningEffort::High),
+            ("x_high", ReasoningEffort::XHigh),
+            ("max", ReasoningEffort::Max),
+        ] {
+            assert_eq!(ReasoningEffort::from_wire_name(name), Some(effort));
+            assert_eq!(effort.as_wire_name(), name);
+        }
+        assert_eq!(ReasoningEffort::from_wire_name("xhigh"), None);
+        assert_eq!(ReasoningEffort::from_wire_name(""), None);
     }
 }

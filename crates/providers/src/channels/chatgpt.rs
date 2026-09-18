@@ -16,6 +16,7 @@ use pawork_domain::{
     ModelResponseSummary, ModelTransport, ProviderError, ProviderErrorKind, ProviderEventSink,
     ResolvedCredential,
 };
+use pawork_domain::ReasoningEffort;
 use serde_json::Value;
 
 use crate::responses::{ResponsesTransport, ResponsesTransportConfig, ResponsesWireOptions};
@@ -172,6 +173,37 @@ fn require_oauth(
     Ok(credential)
 }
 
+/// codex 目录 `supported_reasoning_levels` → canonical effort 集（ADR-063）。
+///
+/// 条目为字符串或 `{ "effort": .. }`；不可识别名跳过。键缺失，或列表非空
+/// 但全部不可识别，返回 None（未知，不约束）；可识别结果排序去重。
+fn catalog_supported_efforts(model: &Value) -> Option<Vec<ReasoningEffort>> {
+    let levels = model.get("supported_reasoning_levels")?.as_array()?;
+    let mut efforts: Vec<ReasoningEffort> = levels
+        .iter()
+        .filter_map(|level| {
+            let name = level
+                .as_str()
+                .or_else(|| level.get("effort").and_then(Value::as_str))?;
+            match name {
+                "none" => Some(ReasoningEffort::None),
+                "minimal" | "low" => Some(ReasoningEffort::Low),
+                "medium" => Some(ReasoningEffort::Medium),
+                "high" => Some(ReasoningEffort::High),
+                "xhigh" | "x_high" => Some(ReasoningEffort::XHigh),
+                "max" => Some(ReasoningEffort::Max),
+                _ => None,
+            }
+        })
+        .collect();
+    if efforts.is_empty() && !levels.is_empty() {
+        return None;
+    }
+    efforts.sort();
+    efforts.dedup();
+    Some(efforts)
+}
+
 fn chatgpt_models(value: &Value) -> Result<Vec<ModelDefinition>, ProviderError> {
     let mut definitions = Vec::new();
     for model in crate::provider::catalog_entries(value, "models")? {
@@ -223,6 +255,9 @@ fn chatgpt_models(value: &Value) -> Result<Vec<ModelDefinition>, ProviderError> 
                                 .is_some_and(|effort| !effort.is_empty() && effort != "none")
                         })
                     }),
+                // ADR-063：目录声明的 reasoning levels 归一为 canonical
+                // effort 集；键缺失或全部不可识别 = None（未知，不约束）。
+                supported_efforts: catalog_supported_efforts(model),
                 // SEARCH-1：Responses API 的 web_search 内置工具对全部模型可用
                 // （platform.openai.com/docs/guides/tools-web-search），
                 // codex 后端模型同享该能力。

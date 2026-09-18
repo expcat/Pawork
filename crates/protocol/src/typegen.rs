@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 
 use ts_rs::TS;
 
+use crate::app::SubagentListData;
 use crate::headless::{HeadlessRequest, HeadlessResponse};
 use crate::{
     API_VERSION, AppCommandEnvelope, AppEventEnvelope, AppQueryEnvelope, AppResponseEnvelope,
@@ -128,6 +129,9 @@ fn generate_core_api(output: &Path) -> Result<(&'static str, BTreeMap<String, St
     AppQueryEnvelope::export_all(&config)?;
     AppResponseEnvelope::export_all(&config)?;
     AppEventEnvelope::export_all(&config)?;
+    // `subagent_list` 的 Data 载荷走 `AppResponse::Data(Value)`，不在 envelope
+    // 依赖图内；作为 GUI 契约面（API 1.20+）显式导出。
+    SubagentListData::export_all(&config)?;
     write_core_api_versions(output)?;
     Ok(("core-api", collect_declarations(output)?))
 }
@@ -157,6 +161,7 @@ fn generate_gui_protocol(output: &Path) -> Result<(&'static str, BTreeMap<String
     let config = ts_rs::Config::new().with_out_dir(output);
     ClientFrame::export_all(&config)?;
     ServerFrame::export_all(&config)?;
+    SubagentListData::export_all(&config)?;
     Ok(("gui-protocol", collect_declarations(output)?))
 }
 

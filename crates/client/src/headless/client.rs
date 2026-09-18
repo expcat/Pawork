@@ -406,6 +406,7 @@ impl PaworkClient {
                 model,
                 provider: None,
                 profile: None,
+                effort: None,
             })
             .await?;
         parse_data(&envelope)

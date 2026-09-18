@@ -97,12 +97,35 @@ pub(crate) async fn model_list(
             let enabled = core
                 .config()
                 .is_model_enabled(entry.provider.as_str(), entry.id.as_str());
+            // ADR-063（API 1.21）：additive 增能力位与推理强度词汇——
+            // image_input / web_search 供设置页能力徽标；catalog_efforts
+            // 为目录声明（null = 未知）；default_effort / manual_efforts
+            // 为 Global `[reasoning]` 用户偏好（null = 未配置）。
+            let prefs = core
+                .config()
+                .reasoning
+                .as_ref()
+                .and_then(|reasoning| reasoning.model(entry.provider.as_str(), entry.id.as_str()));
+            let catalog_efforts = entry.capabilities.supported_efforts.as_ref().map(|efforts| {
+                efforts
+                    .iter()
+                    .map(|effort| effort.as_wire_name())
+                    .collect::<Vec<_>>()
+            });
             json!({
                 "provider_id": entry.provider.as_str(),
                 "id": entry.id.as_str(),
                 "display_name": entry.display_name,
                 "context_window_tokens": entry.context_window_tokens,
                 "enabled": enabled,
+                "image_input": entry.capabilities.image_input,
+                "web_search": entry
+                    .capabilities
+                    .hosted_tool_tags
+                    .contains(&pawork_domain::ToolCapabilityTag::WebSearch),
+                "catalog_efforts": catalog_efforts,
+                "default_effort": prefs.and_then(|prefs| prefs.default_effort.clone()),
+                "manual_efforts": prefs.and_then(|prefs| prefs.supported_efforts.clone()),
             })
         })
         .collect();

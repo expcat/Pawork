@@ -7,7 +7,9 @@ use gpui::{
     Context, Corner, Pixels, Point, SharedString, TextRun, Window, div, point, prelude::*, px,
 };
 
-use crate::projection::{ConnectionState, ModelEntry, ProviderAuthStatusEntry};
+use crate::projection::{
+    ConnectionState, ModelEntry, ProviderAuthStatusEntry, find_model_entry,
+};
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
 use crate::ui::components::dropdown::{ANCHOR_GAP_Y, Dropdown, MenuPanel};
 use crate::ui::components::icon::{Icon, icon, icon_sized};
@@ -201,6 +203,71 @@ impl AppView {
             model_picker = model_picker.panel(self.model_menu_element(cx));
         }
 
+        // ADR-063（API 1.21）：推理强度 chip——展示本轮生效强度（自动 =
+        // 模型默认），菜单选择只影响下一轮 RunStart。gate 与模型切换同源
+        //（已连接、空闲、已有生效模型）。
+        let can_open_effort_menu = self.can_open_effort_menu();
+        let effort_menu_open =
+            matches!(self.open_menu, Some(MenuKind::Effort)) && can_open_effort_menu;
+        let effort_label = self.effort_chip_label();
+        let effort_tooltip = if can_open_effort_menu {
+            SharedString::from(t("composer.effort_tooltip").to_string())
+        } else {
+            SharedString::from(self.model_disabled_reason())
+        };
+        let effort_focus = self.effort_focus.clone();
+        let effort_chip_width = composer_model_chip_width(window, &effort_label);
+        let mut effort_button = Button::new("effort-picker")
+            .track_focus(&effort_focus)
+            .variant(ButtonVariant::Raised)
+            .text_color(dark().text.primary)
+            .disabled(!can_open_effort_menu)
+            .child(
+                div()
+                    .flex()
+                    .w_full()
+                    .min_w_0()
+                    .items_center()
+                    .gap(px(metrics::SPACE_2))
+                    .child(div().truncate().child(effort_label.clone()))
+                    .child(
+                        div()
+                            .flex_none()
+                            .child(icon_sized(Icon::ChevronDown, px(metrics::ICON_SM))),
+                    ),
+            )
+            .tooltip(effort_tooltip)
+            .height(px(metrics::COMPOSER_FOOTER_CONTROL))
+            .width(px(effort_chip_width))
+            .max_width(px(metrics::COMPOSER_MODEL_WIDTH))
+            .vcenter();
+        if can_open_effort_menu {
+            effort_button = effort_button
+                .on_click(cx.listener(|view, event, window, cx| {
+                    if view.consume_button_key_click("effort-picker", event) {
+                        return;
+                    }
+                    let down = Self::click_down_position(event);
+                    view.on_toggle_effort_menu(down, window, cx);
+                }))
+                .on_activate(cx.listener(|view, _event, window, cx| {
+                    if view.open_menu.is_some() {
+                        view.note_button_key_activate("effort-picker");
+                        return;
+                    }
+                    view.note_button_key_activate("effort-picker");
+                    view.on_toggle_effort_menu(None, window, cx);
+                    cx.stop_propagation();
+                }));
+        }
+        let mut effort_picker = Dropdown::new(effort_button).panel_anchor(
+            Corner::BottomLeft,
+            point(px(metrics::ZERO), px(-ANCHOR_GAP_Y)),
+        );
+        if effort_menu_open {
+            effort_picker = effort_picker.panel(self.effort_menu_element(cx));
+        }
+
         let running = self.projection.active_run_id.is_some();
         let action_slot = if running {
             let action_focus = self.composer_action_focus.clone();
@@ -312,6 +379,16 @@ impl AppView {
                             .h(px(metrics::COMPOSER_FOOTER_CONTROL))
                             .flex_none()
                             .child(model_picker),
+                    )
+                    .child(
+                        div()
+                            .id("composer-effort-slot")
+                            .track_scroll(&self.composer_layouts["effort-picker"])
+                            .debug_selector(|| "composer-effort-slot".into())
+                            .w(px(effort_chip_width))
+                            .h(px(metrics::COMPOSER_FOOTER_CONTROL))
+                            .flex_none()
+                            .child(effort_picker),
                     )
                     .child(div().flex_1())
                     .child(
@@ -847,6 +924,142 @@ impl AppView {
             }))
     }
 
+    /// 推理强度菜单选项（render / 键盘 / AX 同源）：行 0 = 自动（None，
+    /// Host 回落模型默认），其后为当前生效模型的可选范围；范围未知时给
+    /// 全量 canonical 词汇（ADR-063）。
+    pub(super) fn effort_menu_options(&self) -> Vec<Option<String>> {
+        let model = self
+            .projection
+            .effective_model()
+            .and_then(|(provider, id)| find_model_entry(&self.projection.models, provider, id));
+        let mut options = vec![None];
+        match model {
+            Some(model) => {
+                for level in model.effort_options() {
+                    options.push(Some(level));
+                }
+            }
+            None => {
+                for level in crate::projection::EFFORT_LEVELS {
+                    options.push(Some(level.to_string()));
+                }
+            }
+        }
+        options
+    }
+
+    /// 强度 chip 文案：显式强度名或「自动」。
+    pub(super) fn effort_chip_label(&self) -> String {
+        self.projection
+            .effective_effort()
+            .map(str::to_string)
+            .unwrap_or_else(|| t("composer.effort_auto").to_string())
+    }
+
+    /// 强度菜单开关（gate 复核与 render 同源）。
+    pub(super) fn on_toggle_effort_menu(
+        &mut self,
+        down_position: Option<Point<Pixels>>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.can_open_effort_menu() {
+            return;
+        }
+        self.toggle_menu(MenuKind::Effort, down_position, cx);
+    }
+
+    /// 选择强度（None = 自动）；即时生效到 Composer 状态，随下一轮
+    /// RunStart 发出。
+    pub(super) fn on_select_effort(&mut self, effort: Option<String>, cx: &mut Context<Self>) {
+        if !self.can_open_effort_menu() {
+            return;
+        }
+        self.projection.pending_effort = effort;
+        self.open_menu = None;
+        self.menu_highlight = None;
+        cx.notify();
+    }
+
+    /// 强度菜单面板：自动 + 当前模型可选范围，行少无需滚动。
+    fn effort_menu_element(&mut self, cx: &mut Context<Self>) -> MenuPanel {
+        let highlight = self.menu_highlight_effective(self.menu_selected_index());
+        let current = self.projection.effective_effort().map(str::to_string);
+        let options = self.effort_menu_options();
+        let menu_scroll = self
+            .settings_element_layouts
+            .entry("effort-menu".into())
+            .or_default()
+            .clone();
+        let panel = MenuPanel::new("effort-menu")
+            .track_scroll(&menu_scroll)
+            .max_height(320.0)
+            .dismiss_on_outside(cx.listener(|view, event: &gpui::MouseDownEvent, _, cx| {
+                view.dismiss_menu_on_outside(MenuKind::Effort, event.position, cx);
+            }));
+        let mut list = div().w(px(200.0)).flex().flex_col();
+        for (ix, option) in options.iter().enumerate() {
+            let selected = *option == current;
+            let label = match option {
+                Some(level) => level.clone(),
+                None => t("composer.effort_auto").to_string(),
+            };
+            let row_id = format!("effort-{}", option.as_deref().unwrap_or("auto"));
+            let option_click = option.clone();
+            list = list.child(
+                self.settings_element(row_id)
+                    .w_full()
+                    .py_2()
+                    .px_2()
+                    .rounded(px(metrics::CONTROL_RADIUS))
+                    .bg(if selected || ix == highlight {
+                        dark().surface.raised
+                    } else {
+                        dark().bg.menu
+                    })
+                    .hover(|style| style.bg(dark().surface.hover))
+                    .active(|style| style.bg(dark().surface.pressed))
+                    .cursor_pointer()
+                    .on_hover(cx.listener(move |view, hovered: &bool, _, cx| {
+                        if *hovered && view.menu_highlight != Some(ix) {
+                            view.menu_highlight = Some(ix);
+                            cx.notify();
+                        }
+                    }))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .w(px(metrics::SPACE_4))
+                                    .flex_none()
+                                    .when(selected, |slot| {
+                                        slot.child(
+                                            icon_sized(Icon::Check, px(metrics::ICON_SM))
+                                                .text_color(dark().accent.primary),
+                                        )
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .text_size(font::SM)
+                                    .text_color(dark().text.primary)
+                                    .child(label),
+                            ),
+                    )
+                    .on_click(cx.listener(move |view, _, window, cx| {
+                        view.on_select_effort(option_click.clone(), cx);
+                        window.focus(&view.effort_focus);
+                    })),
+            );
+        }
+        panel.child(list)
+    }
+
     /// Composer 空输入 placeholder：只走连接/session/run 状态机，不被
     /// status_hint 覆盖（瞬态反馈改落 StatusBar 右栏）。
     pub(super) fn composer_placeholder_hint(&self) -> String {
@@ -1041,8 +1254,7 @@ mod tests {
             provider_id: provider_id.into(),
             id: id.into(),
             display_name: display_name.into(),
-            context_window_tokens: None,
-            enabled: true,
+            ..ModelEntry::default()
         }
     }
 

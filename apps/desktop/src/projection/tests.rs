@@ -351,8 +351,7 @@ fn default_model_unavailable_flag_tracks_connection_and_catalog() {
         provider_id: "kimi".into(),
         id: "kimi-k2-0905-preview".into(),
         display_name: "Kimi K2".into(),
-        context_window_tokens: None,
-        enabled: true,
+        ..ModelEntry::default()
     }]);
     // 无默认：不误报失效。
     projection.settings_providers.default_model = None;
@@ -2142,7 +2141,7 @@ fn context_meter_uses_catalog_window_and_stays_honest() {
         id: "glm-4.7".into(),
         display_name: "GLM 4.7".into(),
         context_window_tokens: Some(200_000),
-        enabled: true,
+        ..ModelEntry::default()
     }]);
     projection.set_pending_model("glm-coding".into(), "glm-4.7".into());
     assert_eq!(projection.context_meter_label(), "Context · — / 200000");
@@ -3616,8 +3615,8 @@ fn model_catalog_and_enablement_receipts_converge_provider_scoped_state() {
         provider_id: provider_id.to_string(),
         id: id.to_string(),
         display_name: format!("{provider_id}/{id}"),
-        context_window_tokens: None,
         enabled,
+        ..ModelEntry::default()
     };
     let mut projection = DesktopProjection::default();
     projection.settings_providers.apply_model_catalog(vec![
@@ -3687,5 +3686,34 @@ fn model_catalog_and_enablement_receipts_converge_provider_scoped_state() {
             provider_id: "glm".into()
         }
         .targets("kimi")
+    );
+}
+
+#[test]
+fn model_reasoning_receipt_updates_composer_catalog() {
+    let model = |id: &str| ModelEntry {
+        provider_id: "kimi".into(),
+        id: id.into(),
+        display_name: id.into(),
+        ..ModelEntry::default()
+    };
+    let mut projection = DesktopProjection::default();
+    projection.settings_providers.apply_model_catalog(vec![model("kimi-k2")]);
+    projection.set_models(vec![model("kimi-k2")]);
+
+    projection.apply_model_reasoning(
+        "kimi",
+        "kimi-k2",
+        Some("high".into()),
+        Some(vec!["low".into(), "high".into()]),
+    );
+
+    assert_eq!(
+        projection.models[0].default_effort.as_deref(),
+        Some("high")
+    );
+    assert_eq!(
+        projection.models[0].effort_options(),
+        vec!["low".to_string(), "high".to_string()]
     );
 }

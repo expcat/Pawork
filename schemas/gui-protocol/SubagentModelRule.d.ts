@@ -3,4 +3,13 @@
 /**
  * Per-model spawn / subagent eligibility and permission names.
  */
-export type SubagentModelRule = { provider_id: string, model_id: string, allow_spawn: boolean, allow_as_subagent: boolean, permissions: Array<string>, };
+export type SubagentModelRule = { provider_id: string, model_id: string, allow_spawn: boolean, allow_as_subagent: boolean, permissions: Array<string>,
+/**
+ * 子代理默认推理强度（canonical effort 名；ADR-063，API 1.21）。
+ * None = 回落模型级默认，再回落 Provider 默认。
+ */
+default_effort?: string | null,
+/**
+ * 子代理可选推理强度范围（空 = 不限；API 1.21）。
+ */
+allowed_efforts?: Array<string>, };

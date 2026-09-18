@@ -148,7 +148,12 @@ impl AppView {
                                     .size(font::BODY_SM)
                                     .color(dark().text.secondary),
                             )
-                            .child(enabled_switch),
+                            // AX bounds 同源：开关须包 settings_element。
+                            .child(
+                                self.settings_element("settings-subagents-enabled")
+                                    .flex_none()
+                                    .child(enabled_switch),
+                            ),
                     ),
             )
             .child(self.settings_note(
@@ -196,7 +201,11 @@ impl AppView {
                 "settings-subagents-models-note",
                 t("settings.subagents.models_note"),
             ));
-        let catalog = self.projection.settings_providers.model_catalog.clone();
+        // ADR-063：只列「模型与供应商」中已启用的模型（未启用不出现在
+        // 子代理配置中；派发 / AX 同源用 subagent_rule_models）。
+        let catalog = crate::projection::subagent_rule_models(
+            &self.projection.settings_providers.model_catalog,
+        );
         let models_section = if catalog.is_empty() {
             models_section.child(self.settings_note(
                 "settings-subagents-models-empty",
@@ -302,6 +311,38 @@ impl AppView {
             },
         );
 
+        let mut name_row = div().flex().items_center().gap_2().child(
+            self.settings_element(dynamic_identifier(
+                "settings-subagent-model-name",
+                &format!("{provider_id}:{model_id}"),
+            ))
+            .flex_1()
+            .min_w_0()
+            .child(
+                Label::new(model.display_name.clone())
+                    .size(font::BODY)
+                    .color(dark().text.primary),
+            ),
+        );
+        // ADR-063：目录能力徽标（图像识别 / 搜索），只展示真实能力位。
+        for (capable, label) in [
+            (model.image_input, t("settings.subagents.capability_image")),
+            (model.web_search, t("settings.subagents.capability_search")),
+        ] {
+            if capable {
+                name_row = name_row.child(
+                    div()
+                        .flex_none()
+                        .px_1()
+                        .border_1()
+                        .border_color(dark().border.subtle)
+                        .rounded(px(4.0))
+                        .child(Label::new(label).size(font::XS).color(dark().text.tertiary)),
+                );
+            }
+        }
+        name_row = name_row
+            .child(Label::new(badge).size(font::XS).color(dark().text.tertiary));
         let mut card = self
             .settings_element(row_id)
             .flex()
@@ -313,26 +354,7 @@ impl AppView {
             .border_color(dark().border.subtle)
             .rounded(px(6.0))
             .bg(dark().surface.raised)
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        self.settings_element(dynamic_identifier(
-                            "settings-subagent-model-name",
-                            &format!("{provider_id}:{model_id}"),
-                        ))
-                        .flex_1()
-                        .min_w_0()
-                        .child(
-                            Label::new(model.display_name.clone())
-                                .size(font::BODY)
-                                .color(dark().text.primary),
-                        ),
-                    )
-                    .child(Label::new(badge).size(font::XS).color(dark().text.tertiary)),
-            )
+            .child(name_row)
             .child(
                 div()
                     .flex()
@@ -388,6 +410,62 @@ impl AppView {
                         }
                         row
                     }),
+            )
+            // ADR-063：子代理推理强度行——默认强度 cycle（自动 → 候选依次）
+            // + 可选范围 chips（空 = 不限）。
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_none()
+                            .items_center()
+                            .gap_1()
+                            .child(
+                                Label::new(t("settings.subagents.effort_default"))
+                                    .size(font::BODY_SM)
+                                    .color(dark().text.secondary),
+                            )
+                            .child(self.subagent_effort_default_button(
+                                &rule,
+                                &provider_id,
+                                &model_id,
+                                writes,
+                                cx,
+                            )),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_none()
+                            .items_center()
+                            .gap_1()
+                            .child(
+                                Label::new(t("settings.subagents.effort_allowed"))
+                                    .size(font::BODY_SM)
+                                    .color(dark().text.secondary),
+                            )
+                            .map(|chips| {
+                                let mut row = chips;
+                                for level in model.effort_options() {
+                                    let selected = rule.allowed_efforts.iter().any(|l| l == &level);
+                                    let chip = self.subagent_effort_chip(
+                                        &level,
+                                        selected,
+                                        &provider_id,
+                                        &model_id,
+                                        writes,
+                                        cx,
+                                    );
+                                    row = row.child(chip);
+                                }
+                                row
+                            }),
+                    ),
             );
 
         if has_rule {
@@ -472,6 +550,97 @@ impl AppView {
             }))
     }
 
+    /// 子代理默认强度 cycle 按钮（ADR-063）：label 为当前默认（自动 /
+    /// canonical 名），click 与键盘 activate 走同一 dispatch。
+    fn subagent_effort_default_button(
+        &mut self,
+        rule: &SubagentModelRule,
+        provider_id: &str,
+        model_id: &str,
+        writes: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let id = settings_subagent_identifier("effort-default", provider_id, model_id);
+        let focus = self
+            .settings_action_focus
+            .entry(id.clone())
+            .or_insert_with(|| cx.focus_handle().tab_stop(true))
+            .clone();
+        let label = rule
+            .default_effort
+            .clone()
+            .unwrap_or_else(|| t("settings.subagents.effort_auto").to_string());
+        let click_id = id.clone();
+        let activate_id = id.clone();
+        Button::new(id.clone())
+            .track_focus(&focus)
+            .variant(ButtonVariant::Raised)
+            .height(px(SUBAGENT_CHIP_HEIGHT))
+            .radius(6.0)
+            .text_size(font::BODY_SM)
+            .label(label)
+            .tooltip(t("settings.subagents.effort_default_tooltip"))
+            .disabled(!writes)
+            .on_click(cx.listener(move |view, event, _window, cx| {
+                if view.consume_button_key_click(&click_id, event) {
+                    return;
+                }
+                view.dispatch_settings_subagent_control(&click_id, cx);
+            }))
+            .on_activate(cx.listener(move |view, _event, _window, cx| {
+                view.note_button_key_activate(&activate_id);
+                view.dispatch_settings_subagent_control(&activate_id, cx);
+                cx.stop_propagation();
+            }))
+    }
+
+    /// 可选强度范围 chip（ADR-063）：选中用 Primary、未选中用 Raised；
+    /// 全不选 = 不限。
+    fn subagent_effort_chip(
+        &mut self,
+        level: &str,
+        selected: bool,
+        provider_id: &str,
+        model_id: &str,
+        writes: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let id = settings_subagent_identifier(&format!("effort-{level}"), provider_id, model_id);
+        let focus = self
+            .settings_action_focus
+            .entry(id.clone())
+            .or_insert_with(|| cx.focus_handle().tab_stop(true))
+            .clone();
+        let variant = if selected {
+            ButtonVariant::Primary
+        } else {
+            ButtonVariant::Raised
+        };
+        let level = level.to_string();
+        let click_id = id.clone();
+        let activate_id = id.clone();
+        Button::new(id.clone())
+            .track_focus(&focus)
+            .variant(variant)
+            .height(px(SUBAGENT_CHIP_HEIGHT))
+            .radius(6.0)
+            .text_size(font::BODY_SM)
+            .label(level.clone())
+            .tooltip(t("settings.subagents.effort_allowed_tooltip"))
+            .disabled(!writes)
+            .on_click(cx.listener(move |view, event, _window, cx| {
+                if view.consume_button_key_click(&click_id, event) {
+                    return;
+                }
+                view.dispatch_settings_subagent_control(&click_id, cx);
+            }))
+            .on_activate(cx.listener(move |view, _event, _window, cx| {
+                view.note_button_key_activate(&activate_id);
+                view.dispatch_settings_subagent_control(&activate_id, cx);
+                cx.stop_propagation();
+            }))
+    }
+
     /// 可见控件 → 单一派发入口（click / 键盘 / AX 三路径同源）：identifier
     /// 解析出动作与目标模型；对照全量目录还原，未知 fail-closed。
     pub(crate) fn dispatch_settings_subagent_control(
@@ -486,10 +655,15 @@ impl AppView {
             SettingsSubagentControl::ToggleSpawn(escaped)
             | SettingsSubagentControl::ToggleDelegate(escaped)
             | SettingsSubagentControl::TogglePermission(_, escaped)
+            | SettingsSubagentControl::CycleEffort(escaped)
+            | SettingsSubagentControl::ToggleEffort(_, escaped)
             | SettingsSubagentControl::Reset(escaped) => escaped,
         };
-        let catalog = &self.projection.settings_providers.model_catalog;
-        let Some((provider_id, model_id)) = settings_subagent_target_for_escaped(catalog, escaped)
+        // 与 render 同源：只在已启用模型上解析目标（ADR-063）。
+        let catalog = crate::projection::subagent_rule_models(
+            &self.projection.settings_providers.model_catalog,
+        );
+        let Some((provider_id, model_id)) = settings_subagent_target_for_escaped(&catalog, escaped)
         else {
             return;
         };
@@ -502,6 +676,12 @@ impl AppView {
             }
             SettingsSubagentControl::TogglePermission(permission, _) => {
                 self.on_settings_subagents_toggle_permission(provider_id, model_id, permission, cx)
+            }
+            SettingsSubagentControl::CycleEffort(_) => {
+                self.on_settings_subagents_cycle_effort(provider_id, model_id, cx)
+            }
+            SettingsSubagentControl::ToggleEffort(level, _) => {
+                self.on_settings_subagents_toggle_effort(provider_id, model_id, level, cx)
             }
             SettingsSubagentControl::Reset(_) => {
                 self.on_settings_subagents_reset(provider_id, model_id, cx)
@@ -589,6 +769,78 @@ impl AppView {
                     rule.permissions.remove(index);
                 } else {
                     rule.permissions.push(permission.to_string());
+                }
+            },
+            cx,
+        );
+    }
+
+    /// 默认强度 cycle（ADR-063）：候选 = 规则 allowed_efforts（非空）否则
+    /// 模型生效范围；None（自动）→ 首个候选 → 依次 → None。模型不在已
+    /// 启用目录时 fail-closed 不写。
+    pub(crate) fn on_settings_subagents_cycle_effort(
+        &mut self,
+        provider_id: String,
+        model_id: String,
+        cx: &mut Context<Self>,
+    ) {
+        let catalog = crate::projection::subagent_rule_models(
+            &self.projection.settings_providers.model_catalog,
+        );
+        let Some(model) = catalog
+            .iter()
+            .find(|model| model.provider_id == provider_id && model.id == model_id)
+        else {
+            return;
+        };
+        let rule = self
+            .projection
+            .settings_subagents
+            .effective_rule(&provider_id, &model_id);
+        let candidates: Vec<String> = if rule.allowed_efforts.is_empty() {
+            model.effort_options()
+        } else {
+            rule.allowed_efforts.clone()
+        };
+        if candidates.is_empty() {
+            return;
+        }
+        let next = match &rule.default_effort {
+            None => Some(candidates[0].clone()),
+            Some(current) => match candidates.iter().position(|level| level == current) {
+                Some(ix) if ix + 1 < candidates.len() => Some(candidates[ix + 1].clone()),
+                // 不在候选内（或已是末位）→ 回 None（自动）。
+                _ => None,
+            },
+        };
+        self.commit_subagent_settings(
+            move |settings| {
+                let rule = upsert_subagent_rule(settings, &provider_id, &model_id);
+                rule.default_effort = next;
+            },
+            cx,
+        );
+    }
+
+    /// 可选范围 chip 切换（ADR-063）：移除当前默认强度所选项时一并清
+    /// 默认（Host 校验 default ∈ allowed，UI 先行保持一致）。
+    pub(crate) fn on_settings_subagents_toggle_effort(
+        &mut self,
+        provider_id: String,
+        model_id: String,
+        level: &'static str,
+        cx: &mut Context<Self>,
+    ) {
+        self.commit_subagent_settings(
+            move |settings| {
+                let rule = upsert_subagent_rule(settings, &provider_id, &model_id);
+                if let Some(index) = rule.allowed_efforts.iter().position(|l| l == level) {
+                    rule.allowed_efforts.remove(index);
+                    if rule.default_effort.as_deref() == Some(level) {
+                        rule.default_effort = None;
+                    }
+                } else {
+                    rule.allowed_efforts.push(level.to_string());
                 }
             },
             cx,

@@ -454,6 +454,14 @@ fn strip_untrusted_layer(src: &mut ConfigSource, warnings: &mut Vec<ConfigWarnin
             path: path.clone(),
         });
     }
+    if remove_top_level_key(value, "reasoning") {
+        warnings.push(ConfigWarning::PermissionsIgnored {
+            key: "reasoning".into(),
+            tier,
+            source_key: source_key.clone(),
+            path: path.clone(),
+        });
+    }
     if remove_top_level_key(value, "web_search") {
         warnings.push(ConfigWarning::WebSearchIgnored {
             tier,

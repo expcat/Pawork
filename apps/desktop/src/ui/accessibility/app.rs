@@ -502,6 +502,27 @@ impl AppView {
                 window.focus(&self.model_focus);
                 self.on_toggle_model_menu(None, window, cx)
             }
+            "effort-picker" => {
+                window.focus(&self.effort_focus);
+                self.on_toggle_effort_menu(None, window, cx)
+            }
+            // 强度菜单行（「自动」+ 可选级别）：与可见行同源，仅菜单
+            // 打开时可派发；未知行 fail-closed。
+            other if other.starts_with("effort-")
+                && matches!(self.open_menu, Some(MenuKind::Effort)) =>
+            {
+                let Some(option) = self
+                    .effort_menu_options()
+                    .into_iter()
+                    .find(|option| {
+                        format!("effort-{}", option.as_deref().unwrap_or("auto")) == other
+                    })
+                else {
+                    return false;
+                };
+                self.on_select_effort(option, cx);
+                window.focus(&self.effort_focus);
+            }
             "model-menu-settings" => self.on_manage_composer_models(window, cx),
             "cancel" => self.on_cancel_clicked(window, cx),
             "send" => {
@@ -712,6 +733,11 @@ impl AppView {
                     // OPT-3a：「Manage models」弹层（触发器 / 单模型
                     // Switch / Enable-Disable all / Refresh）与可见控件同
                     // 入口派发；入口复核 gate，未知 pair fail-closed。
+                    // ADR-063：推理强度控件（默认 cycle / 范围 chip / 重置）
+                    // 走 render / 键盘同源 dispatch。
+                    if self.dispatch_settings_models_control(identifier, cx) {
+                        return true;
+                    }
                     match parse_settings_models_control(identifier) {
                         Some(SettingsModelsControl::Manage(escaped)) => {
                             if let Some(provider_id) =
@@ -749,7 +775,8 @@ impl AppView {
                             self.on_refresh_settings(cx);
                             return true;
                         }
-                        None => {}
+                        // 强度三变体已由上方 dispatch_settings_models_control 收口。
+                        _ => {}
                     }
                     return false;
                 }
@@ -2699,6 +2726,25 @@ impl AppView {
                 .focused(self.open_menu.is_none() && self.model_focus.is_focused(window))
                 .action(AxAction::Press),
             )
+            // ADR-063：推理强度 chip；初始几何随后被实测布局循环校正
+            // （composer_layouts["effort-picker"]）。
+            .child(
+                AxNode::new(
+                    "effort-picker",
+                    AxRole::Button,
+                    t("composer.effort"),
+                    AxRect::new(
+                        card.x + pad + metrics::COMPOSER_MODEL_WIDTH + metrics::SPACE_2,
+                        footer_y,
+                        metrics::COMPOSER_MODEL_WIDTH,
+                        metrics::COMPOSER_FOOTER_CONTROL,
+                    ),
+                )
+                .value(self.effort_chip_label())
+                .enabled(self.can_open_effort_menu())
+                .focused(self.open_menu.is_none() && self.effort_focus.is_focused(window))
+                .action(AxAction::Press),
+            )
             // OPT-D：项目上下文槽（无项目 chip / Workspace · 名称）与可选
             // ContextMeter；无项目正向入口与 render 同源，不画警告色限制。
             .child(
@@ -2893,6 +2939,40 @@ impl AppView {
                 .focused(highlight == self.model_menu_row_count())
                 .action(AxAction::Press),
             );
+            composer = composer.child(menu);
+        }
+        // ADR-063：强度菜单 AX 与 render 同源（effort_menu_options），
+        // 几何取 MenuPanel 实测布局（settings_element_layouts）。
+        if matches!(self.open_menu, Some(MenuKind::Effort)) {
+            let highlight = self.menu_highlight_effective(self.menu_selected_index());
+            let bounds = |id: &str| self.settings_menu_element_bounds(id, "effort-menu");
+            let mut menu = AxNode::new(
+                "effort-menu",
+                AxRole::Group,
+                t("composer.effort"),
+                bounds("effort-menu"),
+            );
+            let current = self.projection.effective_effort().map(str::to_string);
+            let enabled = self.can_open_effort_menu();
+            for (ix, option) in self.effort_menu_options().iter().enumerate() {
+                let row_id = format!("effort-{}", option.as_deref().unwrap_or("auto"));
+                let rect = bounds(&row_id);
+                if rect.width <= 0.0 || rect.height <= 0.0 {
+                    continue;
+                }
+                let label = match option {
+                    Some(level) => level.clone(),
+                    None => t("composer.effort_auto").to_string(),
+                };
+                let mut item = AxNode::new(row_id, AxRole::Button, label, rect)
+                    .selected(*option == current)
+                    .focused(ix == highlight)
+                    .enabled(enabled);
+                if enabled {
+                    item = item.action(AxAction::Press);
+                }
+                menu = menu.child(item);
+            }
             composer = composer.child(menu);
         }
         composer
@@ -4355,7 +4435,7 @@ mod tests {
                     id: "glm-5.2".into(),
                     display_name: "GLM 5.2".into(),
                     context_window_tokens: Some(128_000),
-                    enabled: true,
+                    ..ModelEntry::default()
                 }]);
                 view.projection
                     .set_pending_model("glm-coding".into(), "glm-5.2".into());
@@ -4444,7 +4524,7 @@ mod tests {
                     id: "glm-5.2".into(),
                     display_name: "GLM 5.2".into(),
                     context_window_tokens: Some(128_000),
-                    enabled: true,
+                    ..ModelEntry::default()
                 }]);
                 view.projection
                     .set_pending_model("glm-coding".into(), "glm-5.2".into());
@@ -6393,8 +6473,7 @@ mod tests {
                             provider_id: "test-provider".into(),
                             id: format!("model-{ix:02}"),
                             display_name: format!("中文 Model {ix:02}"),
-                            context_window_tokens: None,
-                            enabled: true,
+                            ..ModelEntry::default()
                         })
                         .collect(),
                 );
@@ -6700,22 +6779,19 @@ mod tests {
                         provider_id: "kimi".into(),
                         id: "kimi-k2".into(),
                         display_name: "Kimi K2".into(),
-                        context_window_tokens: None,
-                        enabled: true,
+                        ..ModelEntry::default()
                     },
                     ModelEntry {
                         provider_id: "glm".into(),
                         id: "glm-4.7".into(),
                         display_name: "GLM 4.7".into(),
-                        context_window_tokens: None,
-                        enabled: true,
+                        ..ModelEntry::default()
                     },
                     ModelEntry {
                         provider_id: "ghost".into(),
                         id: "ghost-x".into(),
                         display_name: "Ghost X".into(),
-                        context_window_tokens: None,
-                        enabled: true,
+                        ..ModelEntry::default()
                     },
                 ]);
                 view.open_menu = Some(MenuKind::SettingsRole(SettingsRole::Naming));
@@ -6826,8 +6902,7 @@ mod tests {
                             provider_id: provider.into(),
                             id: format!("long-{ix}"),
                             display_name: format!("Model {ix}"),
-                            context_window_tokens: None,
-                            enabled: true,
+                            ..ModelEntry::default()
                         })
                     })
                     .collect();
@@ -7101,15 +7176,14 @@ mod tests {
                         provider_id: "kimi".into(),
                         id: "kimi-k2".into(),
                         display_name: "Kimi K2".into(),
-                        context_window_tokens: None,
-                        enabled: true,
+                        ..ModelEntry::default()
                     },
                     ModelEntry {
                         provider_id: "kimi".into(),
                         id: "kimi-k2-thinking".into(),
                         display_name: "Kimi K2 Thinking".into(),
-                        context_window_tokens: None,
                         enabled: false,
+                        ..ModelEntry::default()
                     },
                 ]);
                 view.projection.settings_general.proxy_url = Some("http://127.0.0.1:7890".into());
@@ -7207,8 +7281,7 @@ mod tests {
                     provider_id: "kimi".into(),
                     id: format!("scroll-{ix}"),
                     display_name: format!("Scroll model {ix}"),
-                    context_window_tokens: None,
-                    enabled: true,
+                    ..ModelEntry::default()
                 }));
                 view.projection
                     .settings_providers

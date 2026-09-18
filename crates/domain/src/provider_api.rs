@@ -285,6 +285,13 @@ pub struct ModelCapabilities {
     /// reasoning continuation 维度能力（encrypted / signature / interleaved）。
     #[serde(default)]
     pub reasoning: ReasoningStateCapability,
+    /// 模型声明支持的 canonical reasoning effort 集（ADR-063）。
+    ///
+    /// `None` = 目录/探测未声明（未知，不约束）；`Some([])` = 显式声明
+    /// 没有任何推理档位。序列化跳过 `None`，使能力合并沿用「缺键不约束，
+    /// present 来源取交集」语义。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supported_efforts: Option<Vec<crate::ReasoningEffort>>,
 }
 
 /// Canonical 传输路径（P15-8）。transport 选择只能由逐模型声明驱动，

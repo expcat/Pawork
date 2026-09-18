@@ -13,7 +13,9 @@ use crate::ui::settings::{
     quota_identifier, settings_account_action_identifier, settings_account_rename_identifier,
     settings_account_rename_input_identifier, settings_api_key_input_identifier,
     settings_credential_row_identifier, settings_default_unavailable_note,
-    settings_manage_models_identifier, settings_model_switch_identifier,
+    settings_manage_models_identifier, settings_model_effort_chip_identifier,
+    settings_model_effort_default_identifier, settings_model_effort_reset_identifier,
+    settings_model_switch_identifier,
     settings_models_disable_all_identifier, settings_models_enable_all_identifier,
     settings_models_menu_identifier, settings_models_refresh_identifier,
     settings_provider_expand_identifier, settings_role_candidates, settings_role_clear_identifier,
@@ -725,6 +727,77 @@ impl AppView {
                 .selected(model.enabled);
             node.bounds = self.settings_menu_element_bounds(&id, &list_id);
             menu = menu.child(node);
+            // ADR-063：推理强度行（默认 cycle + 范围 chips + 手动范围时
+            // 重置），identifier 与 render 同源，几何取滚动列表实测布局。
+            let effort_enabled = writes && !pending;
+            let default_id = settings_model_effort_default_identifier(provider_id, &model.id);
+            let default_focused = self
+                .settings_action_focus
+                .get(&default_id)
+                .is_some_and(|focus| focus.is_focused(window));
+            let mut default_node = AxNode::new(
+                default_id.clone(),
+                AxRole::Button,
+                t("settings.providers.effort_default"),
+                self.settings_menu_element_bounds(&default_id, &list_id),
+            )
+            .enabled(effort_enabled)
+            .focused(default_focused)
+            .value(
+                model
+                    .default_effort
+                    .clone()
+                    .unwrap_or_else(|| t("settings.providers.effort_default_auto").to_string()),
+            );
+            if effort_enabled {
+                default_node = default_node.action(AxAction::Press);
+            }
+            menu = menu.child(default_node);
+            let selected: Vec<String> = model
+                .effective_efforts()
+                .map(|efforts| efforts.to_vec())
+                .unwrap_or_default();
+            for level in model.effort_options() {
+                let chip_id =
+                    settings_model_effort_chip_identifier(&level, provider_id, &model.id);
+                let chip_focused = self
+                    .settings_action_focus
+                    .get(&chip_id)
+                    .is_some_and(|focus| focus.is_focused(window));
+                let mut chip = AxNode::new(
+                    chip_id.clone(),
+                    AxRole::Button,
+                    t("settings.providers.effort_allowed"),
+                    self.settings_menu_element_bounds(&chip_id, &list_id),
+                )
+                .enabled(effort_enabled)
+                .focused(chip_focused)
+                .selected(selected.iter().any(|l| l == &level))
+                .value(level.clone());
+                if effort_enabled {
+                    chip = chip.action(AxAction::Press);
+                }
+                menu = menu.child(chip);
+            }
+            if model.manual_efforts.is_some() {
+                let reset_id = settings_model_effort_reset_identifier(provider_id, &model.id);
+                let reset_focused = self
+                    .settings_action_focus
+                    .get(&reset_id)
+                    .is_some_and(|focus| focus.is_focused(window));
+                let mut reset = AxNode::new(
+                    reset_id.clone(),
+                    AxRole::Button,
+                    t("settings.subagents.reset"),
+                    self.settings_menu_element_bounds(&reset_id, &list_id),
+                )
+                .enabled(effort_enabled)
+                .focused(reset_focused);
+                if effort_enabled {
+                    reset = reset.action(AxAction::Press);
+                }
+                menu = menu.child(reset);
+            }
         }
         visible(menu)
     }

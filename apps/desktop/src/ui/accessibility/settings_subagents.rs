@@ -167,7 +167,9 @@ impl AppView {
                 .value(t("settings.subagents.effect_note")),
             );
 
-        let catalog = &self.projection.settings_providers.model_catalog;
+        // 与 render 同源：只发布已启用模型的规则卡（ADR-063）。
+        let catalog =
+            crate::projection::subagent_rule_models(&self.projection.settings_providers.model_catalog);
         if catalog.is_empty() {
             return page.child(
                 AxNode::new(
@@ -179,7 +181,7 @@ impl AppView {
                 .value(t("settings.subagents.models_empty")),
             );
         }
-        for (_provider_id, models) in group_models_by_provider(catalog) {
+        for (_provider_id, models) in group_models_by_provider(&catalog) {
             for model in &models {
                 let provider_id = &model.provider_id;
                 let model_id = &model.id;
@@ -207,7 +209,23 @@ impl AppView {
                         &model.display_name,
                         self.settings_element_bounds(&name_id_bounds),
                     )
-                    .description(format!("{provider_id}/{model_id}"))
+                    // 能力徽标与 render 同源（图像 / 搜索）。
+                    .description({
+                        let mut detail = format!("{provider_id}/{model_id}");
+                        if model.image_input {
+                            detail.push_str(&format!(
+                                " · {}",
+                                t("settings.subagents.capability_image")
+                            ));
+                        }
+                        if model.web_search {
+                            detail.push_str(&format!(
+                                " · {}",
+                                t("settings.subagents.capability_search")
+                            ));
+                        }
+                        detail
+                    })
                     .value(if has_rule {
                         t("settings.subagents.custom_badge")
                     } else {
@@ -254,6 +272,55 @@ impl AppView {
                         .enabled(writes)
                         .focused(chip_focused)
                         .selected(granted)
+                        .action(AxAction::Press),
+                    );
+                }
+                // ADR-063：默认强度 cycle 按钮 + 可选范围 chips（与 render
+                // 同源 identifier，Button + selected 表达选中态）。
+                let default_id =
+                    settings_subagent_identifier("effort-default", provider_id, model_id);
+                let default_focused = self
+                    .settings_action_focus
+                    .get(&default_id)
+                    .is_some_and(|focus| self.open_menu.is_none() && focus.is_focused(window));
+                card = card.child(
+                    AxNode::new(
+                        default_id.clone(),
+                        AxRole::Button,
+                        t("settings.subagents.effort_default"),
+                        self.settings_element_bounds(&default_id),
+                    )
+                    .enabled(writes)
+                    .focused(default_focused)
+                    .value(
+                        rule.default_effort
+                            .clone()
+                            .unwrap_or_else(|| t("settings.subagents.effort_auto").to_string()),
+                    )
+                    .action(AxAction::Press),
+                );
+                for level in model.effort_options() {
+                    let selected = rule.allowed_efforts.iter().any(|l| l == &level);
+                    let chip_id = settings_subagent_identifier(
+                        &format!("effort-{level}"),
+                        provider_id,
+                        model_id,
+                    );
+                    let chip_focused = self
+                        .settings_action_focus
+                        .get(&chip_id)
+                        .is_some_and(|focus| self.open_menu.is_none() && focus.is_focused(window));
+                    card = card.child(
+                        AxNode::new(
+                            chip_id.clone(),
+                            AxRole::Button,
+                            t("settings.subagents.effort_allowed"),
+                            self.settings_element_bounds(&chip_id),
+                        )
+                        .enabled(writes)
+                        .focused(chip_focused)
+                        .selected(selected)
+                        .value(level.clone())
                         .action(AxAction::Press),
                     );
                 }

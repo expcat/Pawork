@@ -110,6 +110,7 @@ pub async fn run_json(
             model: None,
             provider: None,
             profile: None,
+            effort: None,
         },
     )
     .await?;

@@ -3,4 +3,9 @@
 /**
  * One live or completed subagent row.
  */
-export type SubagentInfo = { agent_id: string, session_id: string, parent_run_id: string, title: string, provider_id: string, model_id: string, status: string, result?: string, };
+export type SubagentInfo = { agent_id: string, session_id: string, parent_run_id: string, title: string, provider_id: string, model_id: string, status: string, result?: string | null,
+/**
+ * spawn 时解析的生效推理强度（canonical effort 名；ADR-063，API 1.21）。
+ * None = 未显式配置（Provider 默认）。
+ */
+effort?: string | null, };

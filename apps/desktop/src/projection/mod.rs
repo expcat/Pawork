@@ -24,12 +24,12 @@ use serde_json::Value;
 
 pub use pawork_client::projection::{ForkBoundary, TimelineEntry, TimelineEntryKind};
 
-pub use session::group_models_by_provider;
+pub use session::{group_models_by_provider, subagent_rule_models};
 pub use session::{
-    sessions_in_snapshot, ActiveRun, ConnectionState, DateBucket, ModelEntry, PendingApproval,
-    ResumeApply, ResumeState, RunUsageDisplay, SessionLiveStatus, SessionSummary,
-    TaskRailDateGroup, TaskRailGrouping, TaskRailProjectGroup, WorkspaceSummary,
-    UNASSIGNED_PROJECT,
+    find_model_entry, sessions_in_snapshot, ActiveRun, ConnectionState, DateBucket, ModelEntry,
+    PendingApproval, ResumeApply, ResumeState, RunUsageDisplay, SessionLiveStatus,
+    SessionSummary, TaskRailDateGroup, TaskRailGrouping, TaskRailProjectGroup, WorkspaceSummary,
+    EFFORT_LEVELS, UNASSIGNED_PROJECT,
 };
 pub use settings::{
     parse_auth_change, ApprovalModeWire, AuthChange, AuthStartData, DefaultModelPair,
@@ -67,6 +67,10 @@ pub struct DesktopProjection {
     pub models_loaded: bool,
     pub selected_model: Option<(String, String)>,
     pub pending_model: Option<(String, String)>,
+    /// Composer 选定的推理强度（canonical 名；ADR-063 / API 1.21）。
+    /// None = 自动（RunStart 不带 effort，Host 回落模型默认 → Provider
+    /// 默认）。选模型时由 set_pending_model 自动带入该模型配置的默认。
+    pub pending_effort: Option<String>,
     /// SET-3 Settings 供应商页只读状态（加载 / stale / Host 权威列表）。
     pub settings_providers: SettingsProvidersState,
     /// SET-6a Settings Network 页（Host `general_settings` / `proxy_url`）。
@@ -126,6 +130,7 @@ impl DesktopProjection {
                     if let Some((provider, model)) = parse_provider_status(&data) {
                         self.selected_model = Some((provider, model));
                         self.pending_model = None;
+                        self.pending_effort = None;
                     }
                 }
                 "pending_tool_approvals" => {
@@ -468,6 +473,7 @@ impl DesktopProjection {
                     if let Some(confirmed) = parse_model_switch_message(message) {
                         self.selected_model = Some(confirmed);
                         self.pending_model = None;
+                        self.pending_effort = None;
                         return true;
                     }
                 }

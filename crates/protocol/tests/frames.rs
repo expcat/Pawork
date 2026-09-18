@@ -38,6 +38,7 @@ fn command_envelope() -> AppCommandEnvelope {
             model: None,
             provider: None,
             profile: None,
+            effort: None,
         },
     }
 }

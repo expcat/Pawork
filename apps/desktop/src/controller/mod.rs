@@ -123,6 +123,14 @@ pub enum ControllerEvent {
         enabled: bool,
         cleared_roles: Vec<String>,
     },
+    /// set_model_reasoning 获 Host Data 确认（ADR-063 / API 1.21；回执
+    /// 即写后状态）：目录条目按回执收敛默认强度与手动范围。
+    ModelReasoningConfirmed {
+        provider_id: String,
+        model_id: String,
+        default_effort: Option<String>,
+        manual_efforts: Option<Vec<String>>,
+    },
     /// permissions_settings 查询成功（SET-6b 权限与审批页；Host 权威
     /// 三元组：当前 mode / 会话 trusted / Global 持久默认）。
     PermissionsSettingsLoaded(PermissionsSettingsData),
@@ -1150,6 +1158,7 @@ pub(super) fn run_start_command(
     session_id: &str,
     text: &str,
     model: Option<&(String, String)>,
+    effort: Option<&str>,
 ) -> AppCommand {
     let mut params = json!({
         "session_id": session_id,
@@ -1158,6 +1167,11 @@ pub(super) fn run_start_command(
     if let Some((provider, id)) = model {
         params["provider"] = json!(provider);
         params["model"] = json!(id);
+    }
+    // ADR-063（API 1.21）：显式 effort 优先于 Host 侧模型默认；None
+    // 省略参数，Host 回落 [reasoning] 模型默认 → Provider 默认。
+    if let Some(effort) = effort {
+        params["effort"] = json!(effort);
     }
     serde_json::from_value(json!({
         "method": "run_start",
@@ -1282,6 +1296,27 @@ pub(super) fn set_model_enabled_command(
     .expect("set_model_enabled command shape is frozen")
 }
 
+/// set_model_reasoning（ADR-063 / API 1.21）：全态写单模型的推理强度
+/// 偏好——default_effort 为默认强度，supported_efforts 为手动范围声明；
+/// 两者皆 None = 删除该模型条目（回落目录 / Provider 默认）。
+pub(super) fn set_model_reasoning_command(
+    provider_id: &str,
+    model_id: &str,
+    default_effort: Option<&str>,
+    supported_efforts: Option<&[String]>,
+) -> AppCommand {
+    serde_json::from_value(json!({
+        "method": "set_model_reasoning",
+        "params": {
+            "provider_id": provider_id,
+            "model_id": model_id,
+            "default_effort": default_effort,
+            "supported_efforts": supported_efforts,
+        }
+    }))
+    .expect("set_model_reasoning command shape is frozen")
+}
+
 pub(super) fn set_provider_models_enabled_command(provider_id: &str, enabled: bool) -> AppCommand {
     serde_json::from_value(json!({
         "method": "set_provider_models_enabled",
@@ -1381,6 +1416,18 @@ pub(super) fn parse_models(response: &AppResponseEnvelope) -> Result<Vec<ModelEn
                         .get("enabled")
                         .and_then(|value| value.as_bool())
                         .unwrap_or(true);
+                    // ADR-063（API 1.21）：additive 能力位与推理强度词汇；
+                    // 旧 Host 缺字段 = 无能力徽标 / 范围未知 / 未配置默认。
+                    let string_list = |key: &str| {
+                        entry.get(key).and_then(|value| {
+                            value.as_array().map(|items| {
+                                items
+                                    .iter()
+                                    .filter_map(|item| item.as_str().map(str::to_string))
+                                    .collect::<Vec<_>>()
+                            })
+                        })
+                    };
                     Some(ModelEntry {
                         provider_id: provider_id.to_string(),
                         id: id.to_string(),
@@ -1389,6 +1436,20 @@ pub(super) fn parse_models(response: &AppResponseEnvelope) -> Result<Vec<ModelEn
                             .get("context_window_tokens")
                             .and_then(serde_json::Value::as_u64),
                         enabled,
+                        image_input: entry
+                            .get("image_input")
+                            .and_then(|value| value.as_bool())
+                            .unwrap_or(false),
+                        web_search: entry
+                            .get("web_search")
+                            .and_then(|value| value.as_bool())
+                            .unwrap_or(false),
+                        catalog_efforts: string_list("catalog_efforts"),
+                        default_effort: entry
+                            .get("default_effort")
+                            .and_then(|value| value.as_str())
+                            .map(str::to_string),
+                        manual_efforts: string_list("manual_efforts"),
                     })
                 })
                 .collect())
@@ -1415,6 +1476,50 @@ pub(super) struct ProviderModelsEnabledReceipt {
     pub provider_id: String,
     pub enabled: bool,
     pub cleared_roles: Vec<String>,
+}
+
+/// set_model_reasoning 回执的 Desktop 侧形状（ADR-063 / API 1.21）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct ModelReasoningReceipt {
+    pub provider_id: String,
+    pub model_id: String,
+    pub default_effort: Option<String>,
+    pub manual_efforts: Option<Vec<String>>,
+}
+
+/// 解包 set_model_reasoning 信封：Data 为 `{ provider_id, model_id,
+/// default_effort, supported_efforts }`（回执即写后状态）。
+pub(super) fn parse_model_reasoning_confirmation(
+    response: &AppResponseEnvelope,
+) -> Result<ModelReasoningReceipt, String> {
+    let data = match &response.response {
+        AppResponse::Data(data) => data,
+        AppResponse::Error(error) => return Err(error.message.clone()),
+        other => return Err(format!("unexpected response: {other:?}")),
+    };
+    let object = data
+        .as_object()
+        .ok_or_else(|| "model reasoning receipt is not an object".to_string())?;
+    let field = |key: &str| {
+        object
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+    };
+    let manual_efforts = object.get("supported_efforts").and_then(|value| {
+        value.as_array().map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_string))
+                .collect::<Vec<_>>()
+        })
+    });
+    Ok(ModelReasoningReceipt {
+        provider_id: field("provider_id").ok_or("missing provider_id")?,
+        model_id: field("model_id").ok_or("missing model_id")?,
+        default_effort: field("default_effort"),
+        manual_efforts,
+    })
 }
 
 /// 解包 set_model_enabled 信封：Data 为 `{ provider_id, model_id,
@@ -1886,11 +1991,17 @@ mod tests {
             "s-1",
             "hi",
             Some(&("deepseek".into(), "deepseek-v4-flash".into())),
+            Some("high"),
         );
         let value = serde_json::to_value(&command).expect("serialize run_start");
         assert_eq!(value["method"], "run_start");
         assert_eq!(value["params"]["provider"], "deepseek");
         assert_eq!(value["params"]["model"], "deepseek-v4-flash");
+        assert_eq!(value["params"]["effort"], "high");
+        // 未显式选择（自动）时省略 effort 参数（ADR-063 回落语义）。
+        let command = run_start_command("s-1", "hi", None, None);
+        let value = serde_json::to_value(&command).expect("serialize run_start");
+        assert!(value["params"].get("effort").is_none());
     }
 
     #[test]

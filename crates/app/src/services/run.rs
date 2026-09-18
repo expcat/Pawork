@@ -180,6 +180,22 @@ impl RunService {
         );
         // SEARCH-1：Global `web_search = true` 时为本轮追加 Provider 服务端搜索。
         let mut request = request;
+        // ADR-063：reasoning effort = RunStart 显式值 > Global `[reasoning]`
+        // 模型默认；都无则不写 reasoning 字段（Provider 默认，行为同旧版）。
+        let effort = core.effort().or_else(|| {
+            core.config
+                .reasoning
+                .as_ref()
+                .and_then(|reasoning| {
+                    reasoning
+                        .model(core.provider_id.as_str(), core.model.as_str())
+                        .and_then(|entry| entry.default_effort.as_deref())
+                        .and_then(pawork_domain::ReasoningEffort::from_wire_name)
+                })
+        });
+        if let Some(effort) = effort {
+            request.reasoning = Some(pawork_domain::ReasoningConfig::new(effort));
+        }
         if core.config.web_search == Some(true)
             && model_rule.permissions.iter().any(|p| p == "network")
         {

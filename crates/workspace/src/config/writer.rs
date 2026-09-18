@@ -442,12 +442,141 @@ pub fn write_subagent_settings(
                 .map(toml::Value::String)
                 .collect();
             entry.insert("permissions".into(), toml::Value::Array(permissions));
+            // ADR-063：None / 空数组清除既有键，保持盘上配置最小。
+            match &model.default_effort {
+                Some(effort) => {
+                    entry.insert(
+                        "default_effort".into(),
+                        toml::Value::String(effort.clone()),
+                    );
+                }
+                None => {
+                    entry.remove("default_effort");
+                }
+            }
+            if model.allowed_efforts.is_empty() {
+                entry.remove("allowed_efforts");
+            } else {
+                let efforts = model
+                    .allowed_efforts
+                    .iter()
+                    .cloned()
+                    .map(toml::Value::String)
+                    .collect();
+                entry.insert("allowed_efforts".into(), toml::Value::Array(efforts));
+            }
             rewritten.push(toml::Value::Table(entry));
         }
         subagents.insert("models".into(), toml::Value::Array(rewritten));
         table.insert("subagents".into(), toml::Value::Table(subagents));
         Ok((true, ()))
     })
+}
+
+/// ADR-063：写单模型的推理强度偏好（`[reasoning]` 的 `[[reasoning.models]]`
+/// 条目，Global-only）。
+///
+/// 全态语义：`default_effort` / `supported_efforts` 为 None 即清除该键；
+/// 两者皆 None 时移除整条目。条目内未知键保留（与 `write_subagent_settings`
+/// 同先例）。
+pub fn write_model_reasoning(
+    path: &Path,
+    provider_id: &str,
+    model_id: &str,
+    default_effort: Option<&str>,
+    supported_efforts: Option<&[String]>,
+) -> Result<(), ConfigError> {
+    rmw_global_config(path, |table| {
+        let mut reasoning = match table.remove("reasoning") {
+            Some(toml::Value::Table(existing)) => existing,
+            Some(_) | None => toml::Table::new(),
+        };
+        let models = match reasoning.remove("models") {
+            Some(toml::Value::Array(existing)) => existing,
+            Some(_) | None => Vec::new(),
+        };
+        let mut rewritten = Vec::with_capacity(models.len() + 1);
+        let mut found = false;
+        for item in models {
+            let is_target = item.as_table().is_some_and(|entry| {
+                entry.get("provider_id").and_then(toml::Value::as_str) == Some(provider_id)
+                    && entry.get("model_id").and_then(toml::Value::as_str) == Some(model_id)
+            });
+            if !is_target {
+                rewritten.push(item);
+                continue;
+            }
+            found = true;
+            if let Some(entry) =
+                reasoning_entry(item.as_table().cloned().unwrap_or_default(), provider_id, model_id, default_effort, supported_efforts)
+            {
+                rewritten.push(toml::Value::Table(entry));
+            }
+        }
+        if !found {
+            if let Some(entry) = reasoning_entry(
+                toml::Table::new(),
+                provider_id,
+                model_id,
+                default_effort,
+                supported_efforts,
+            ) {
+                rewritten.push(toml::Value::Table(entry));
+            }
+        }
+        reasoning.insert("models".into(), toml::Value::Array(rewritten));
+        table.insert("reasoning".into(), toml::Value::Table(reasoning));
+        Ok((true, ()))
+    })
+}
+
+/// 构造单条 reasoning 条目；两键皆 None 时返回 None（调用方移除该条目）。
+fn reasoning_entry(
+    mut entry: toml::Table,
+    provider_id: &str,
+    model_id: &str,
+    default_effort: Option<&str>,
+    supported_efforts: Option<&[String]>,
+) -> Option<toml::Table> {
+    if default_effort.is_none() && supported_efforts.is_none() {
+        return None;
+    }
+    entry.insert(
+        "provider_id".into(),
+        toml::Value::String(provider_id.to_string()),
+    );
+    entry.insert(
+        "model_id".into(),
+        toml::Value::String(model_id.to_string()),
+    );
+    match default_effort {
+        Some(effort) => {
+            entry.insert(
+                "default_effort".into(),
+                toml::Value::String(effort.to_string()),
+            );
+        }
+        None => {
+            entry.remove("default_effort");
+        }
+    }
+    match supported_efforts {
+        Some(efforts) => {
+            entry.insert(
+                "supported_efforts".into(),
+                toml::Value::Array(
+                    efforts
+                        .iter()
+                        .map(|effort| toml::Value::String(effort.clone()))
+                        .collect(),
+                ),
+            );
+        }
+        None => {
+            entry.remove("supported_efforts");
+        }
+    }
+    Some(entry)
 }
 
 #[cfg(test)]
@@ -810,6 +939,47 @@ mod tests {
     }
 
     #[test]
+    fn write_model_reasoning_upserts_and_removes_entry() {
+        let path = temp_path("model-reasoning");
+        std::fs::write(&path, "trust_workspaces = true\n").expect("seed config");
+        write_model_reasoning(
+            &path,
+            "glm-coding",
+            "glm-5.3-flash",
+            Some("high"),
+            Some(&["low".to_string(), "medium".to_string(), "high".to_string()]),
+        )
+        .expect("write reasoning");
+        let table: toml::Table =
+            toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let entry = &table["reasoning"]["models"][0];
+        assert_eq!(entry["provider_id"].as_str(), Some("glm-coding"));
+        assert_eq!(entry["default_effort"].as_str(), Some("high"));
+        assert_eq!(
+            entry["supported_efforts"]
+                .as_array()
+                .map(|efforts| efforts.len()),
+            Some(3)
+        );
+        assert!(std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("trust_workspaces = true"));
+
+        // 全态清除：两键皆 None 移除整条目，保留其他模型条目。
+        write_model_reasoning(&path, "deepseek", "deepseek-chat", Some("low"), None)
+            .expect("write second entry");
+        write_model_reasoning(&path, "glm-coding", "glm-5.3-flash", None, None)
+            .expect("clear first entry");
+        let table: toml::Table =
+            toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let models = table["reasoning"]["models"].as_array().expect("models");
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0]["provider_id"].as_str(), Some("deepseek"));
+        assert!(models[0].get("supported_efforts").is_none());
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
     fn write_provider_disabled_models_fails_closed_on_non_array_providers() {
         let path = temp_path("provider-disabled-non-array");
         std::fs::write(&path, "providers = 1\n").expect("seed config");
@@ -875,6 +1045,8 @@ mod tests {
                 allow_spawn: true,
                 allow_as_subagent: false,
                 permissions: vec!["read".into()],
+                default_effort: None,
+                allowed_efforts: vec![],
             }],
         };
         write_subagent_settings(&path, &settings).expect("write");

@@ -169,6 +169,7 @@ impl Harness {
                     model: None,
                     provider: None,
                     profile: None,
+                    effort: None,
                 },
             ))
             .await

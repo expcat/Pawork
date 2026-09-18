@@ -20,6 +20,8 @@ fn settings_data_of(config: &SubagentConfig) -> SubagentSettingsData {
                 allow_spawn: rule.allow_spawn,
                 allow_as_subagent: rule.allow_as_subagent,
                 permissions: rule.permissions.clone(),
+                default_effort: rule.default_effort.clone(),
+                allowed_efforts: rule.allowed_efforts.clone(),
             })
             .collect(),
     }
@@ -39,6 +41,8 @@ fn to_config(settings: &SubagentSettingsData) -> SubagentConfig {
                 allow_spawn: rule.allow_spawn,
                 allow_as_subagent: rule.allow_as_subagent,
                 permissions: rule.permissions.clone(),
+                default_effort: rule.default_effort.clone(),
+                allowed_efforts: rule.allowed_efforts.clone(),
             })
             .collect(),
     }
@@ -98,6 +102,25 @@ fn validate(settings: &SubagentSettingsData) -> Result<(), GuiHostError> {
                 .permissions
                 .iter()
                 .any(|p| !crate::subagents::PERMISSIONS.contains(&p.as_str()))
+        {
+            return Err(invalid());
+        }
+        // ADR-063：effort 名须为 canonical 词汇；allowed_efforts 非空时
+        // default_effort 须落在其中。
+        if let Some(name) = &rule.default_effort {
+            if pawork_domain::ReasoningEffort::from_wire_name(name).is_none() {
+                return Err(invalid());
+            }
+            if !rule.allowed_efforts.is_empty()
+                && !rule.allowed_efforts.iter().any(|n| n == name)
+            {
+                return Err(invalid());
+            }
+        }
+        if rule
+            .allowed_efforts
+            .iter()
+            .any(|name| pawork_domain::ReasoningEffort::from_wire_name(name).is_none())
         {
             return Err(invalid());
         }

@@ -701,3 +701,154 @@ pub(crate) async fn set_default_role_model(
         }),
     }))
 }
+
+/// ADR-063：单模型推理强度偏好写（Global `[reasoning]`）。
+///
+/// 全态语义：default_effort / supported_efforts 为 None 即清除该键，两者皆
+/// None 移除条目。effort 名必须属 canonical 词汇（invalid_effort
+/// fail-closed）；default 须落在已知的可选范围内——本次写入的手动范围、
+/// 盘上既有手动范围、目录声明范围（按此序取首个已知），全未知时不约束。
+/// 写盘成功即同步内存生效配置（同 set_model_enabled）。
+pub(crate) async fn set_model_reasoning(
+    adapter: &GuiHostAdapter,
+    _envelope: &AppCommandEnvelope,
+    command: &AppCommand,
+) -> Result<AppResponse, GuiHostError> {
+    let AppCommand::SetModelReasoning {
+        provider_id,
+        model_id,
+        default_effort,
+        supported_efforts,
+    } = command
+    else {
+        unreachable!("set_model_reasoning handler receives SetModelReasoning")
+    };
+    let invalid_effort = || {
+        GuiHostAdapter::host_error(
+            "invalid_effort",
+            "effort names must be canonical (none/low/medium/high/x_high/max) and the default must be inside the supported range",
+        )
+    };
+    let default = match default_effort {
+        Some(name) => Some(pawork_domain::ReasoningEffort::from_wire_name(name).ok_or_else(|| invalid_effort())?),
+        None => None,
+    };
+    let manual = match supported_efforts {
+        Some(names) => {
+            let mut parsed = Vec::with_capacity(names.len());
+            for name in names {
+                parsed.push(
+                    pawork_domain::ReasoningEffort::from_wire_name(name)
+                        .ok_or_else(|| invalid_effort())?,
+                );
+            }
+            Some(parsed)
+        }
+        None => None,
+    };
+    let id = provider_id.as_str();
+    let model = model_id.as_str();
+    {
+        let core = adapter.core.read().await;
+        if !known_provider(&core, id) {
+            return Err(GuiHostAdapter::host_error(
+                "unknown_provider",
+                format!("provider {id} is unknown"),
+            ));
+        }
+        let catalog = current_runnable_catalog(&core).await;
+        if !catalog_has_model(&catalog, id, model) {
+            // 静态目录 / denylist 回退判定（与启停写同口径）。
+            require_known_runnable_model(&core, id, model).await?;
+        }
+        if let Some(default) = default {
+            let known_range: Option<Vec<pawork_domain::ReasoningEffort>> = manual
+                .clone()
+                .or_else(|| {
+                    persisted_manual_efforts(&core, id, model)
+                })
+                .or_else(|| {
+                    catalog
+                        .iter()
+                        .find(|entry| entry.provider.as_str() == id && entry.id.as_str() == model)
+                        .and_then(|entry| entry.capabilities.supported_efforts.clone())
+                });
+            if let Some(range) = known_range {
+                if !range.contains(&default) {
+                    return Err(invalid_effort());
+                }
+            }
+        }
+    }
+    let path = global_config_file()?;
+    let mut core = adapter.core.write().await;
+    let default_wire = default.map(|effort| effort.as_wire_name().to_string());
+    let manual_wire = manual.map(|efforts| {
+        efforts
+            .iter()
+            .map(|effort| effort.as_wire_name().to_string())
+            .collect::<Vec<_>>()
+    });
+    pawork_workspace::config::write_model_reasoning(
+        &path,
+        id,
+        model,
+        default_wire.as_deref(),
+        manual_wire.as_deref(),
+    )
+    .map_err(config_write_error)?;
+    let reasoning = core.config.reasoning.get_or_insert_with(Default::default);
+    if default_wire.is_none() && manual_wire.is_none() {
+        reasoning
+            .models
+            .retain(|entry| !(entry.provider_id == id && entry.model_id == model));
+    } else if let Some(entry) = reasoning
+        .models
+        .iter_mut()
+        .find(|entry| entry.provider_id == id && entry.model_id == model)
+    {
+        entry.default_effort = default_wire.clone();
+        entry.supported_efforts = manual_wire.clone();
+    } else {
+        reasoning.models.push(pawork_workspace::config::ModelReasoningConfig {
+            provider_id: id.to_string(),
+            model_id: model.to_string(),
+            default_effort: default_wire.clone(),
+            supported_efforts: manual_wire.clone(),
+        });
+    }
+    Ok(settings_data(ModelReasoningData {
+        provider_id: id.to_string(),
+        model_id: model.to_string(),
+        default_effort: default_wire,
+        supported_efforts: manual_wire,
+    }))
+}
+
+/// 盘上生效配置里该模型的既有手动范围（内存生效配置；ADR-063 校验用）。
+fn persisted_manual_efforts(
+    core: &AppCore,
+    id: &str,
+    model: &str,
+) -> Option<Vec<pawork_domain::ReasoningEffort>> {
+    core.config()
+        .reasoning
+        .as_ref()
+        .and_then(|reasoning| reasoning.model(id, model))
+        .and_then(|entry| entry.supported_efforts.clone())
+        .map(|names| {
+            names
+                .iter()
+                .filter_map(|name| pawork_domain::ReasoningEffort::from_wire_name(name))
+                .collect()
+        })
+}
+
+/// `set_model_reasoning` 回执（ADR-063；键恒在，null = 已清除）。
+#[derive(serde::Serialize)]
+struct ModelReasoningData {
+    provider_id: String,
+    model_id: String,
+    default_effort: Option<String>,
+    supported_efforts: Option<Vec<String>>,
+}

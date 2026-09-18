@@ -368,6 +368,9 @@ pub struct AppCore {
     pub(crate) subagents: crate::subagents::ActiveSubagents,
     pub(crate) subagent_render: Mutex<Option<Arc<dyn AgentEventSink>>>,
     pub(crate) parent_tool_run: Option<RunId>,
+    /// ADR-063：RunStart 显式给定的 reasoning effort（None = 按模型默认
+    /// 配置或 Provider 默认解析；见 services/run 装配）。
+    pub(crate) effort: Option<pawork_domain::ReasoningEffort>,
     pub(crate) approval: services::approval::ApprovalService,
     // 显式可信宿主覆盖，仅当前进程；配置项目信任不改变此值。
     trust_override: Option<bool>,
@@ -733,6 +736,7 @@ impl AppCore {
             subagents: Default::default(),
             subagent_render: Mutex::new(None),
             parent_tool_run: None,
+            effort: None,
             approval: services::approval::ApprovalService::new(),
             trust_override: None,
             session: services::session::SessionService::new(),
@@ -1043,6 +1047,16 @@ impl AppCore {
 
     pub fn model(&self) -> &ModelId {
         &self.model
+    }
+
+    /// ADR-063：RunStart 显式给定的 reasoning effort（None = 未显式指定）。
+    pub fn effort(&self) -> Option<pawork_domain::ReasoningEffort> {
+        self.effort
+    }
+
+    /// RunStart 设置本轮显式 effort；None 清除（回落模型默认 / Provider 默认）。
+    pub fn set_effort(&mut self, effort: Option<pawork_domain::ReasoningEffort>) {
+        self.effort = effort;
     }
 
     pub fn adapter_protocol(&self) -> AdapterProtocol {

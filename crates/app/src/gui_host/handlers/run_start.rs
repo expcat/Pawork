@@ -132,9 +132,19 @@ pub(crate) async fn run_start(
         model,
         provider,
         profile: _,
+        effort,
     } = command
     else {
         unreachable!("run_start handler receives RunStart")
+    };
+    // ADR-063：effort 名 fail-closed 先解析，非法名不启动 Run。
+    let parsed_effort = match effort {
+        Some(name) => Some(
+            pawork_domain::ReasoningEffort::from_wire_name(name).ok_or_else(|| {
+                GuiHostAdapter::host_error("invalid_effort", format!("unknown effort {name}"))
+            })?,
+        ),
+        None => None,
     };
     let (history, workspace_id, workspace_roots) = {
         let core = adapter.core.read().await;
@@ -266,6 +276,9 @@ pub(crate) async fn run_start(
     // 凭证或供应商代理变化后，同 provider/model 也必须重装配；先完成
     // 上面的显式模型选择，保留旧客户端仅传 model 的解析顺序。
     {
+        // ADR-063：显式 effort 随 RunStart 落地；缺省清除陈旧显式值，
+        // 由装配层回落模型级默认 / Provider 默认。
+        adapter.core.write().await.set_effort(parsed_effort);
         let mut core = adapter.core.write().await;
         *core.subagent_render.lock().unwrap() = Some(Arc::new(GuiBroadcastSink::new(
             adapter.bus.clone(),

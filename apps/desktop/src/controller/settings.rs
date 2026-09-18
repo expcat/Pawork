@@ -131,6 +131,69 @@ impl DesktopController {
         });
     }
 
+    /// 单模型推理强度偏好全态写（set_model_reasoning，ADR-063 /
+    /// API 1.21）。Data 回执即写后状态，经 `ModelReasoningConfirmed`
+    /// 投递；Error / 传输失败经 OperationFailed 呈现，不动现有状态。
+    pub fn set_model_reasoning(
+        &self,
+        provider_id: String,
+        model_id: String,
+        default_effort: Option<String>,
+        supported_efforts: Option<Vec<String>>,
+    ) {
+        let Some(client) = self.current_client() else {
+            self.emit_reliable(ControllerEvent::OperationFailed {
+                action: "set model reasoning".into(),
+                reason: "not connected".into(),
+            });
+            return;
+        };
+        let events = self.event_sender();
+        self.runtime.spawn(async move {
+            let command = set_model_reasoning_command(
+                &provider_id,
+                &model_id,
+                default_effort.as_deref(),
+                supported_efforts.as_deref(),
+            );
+            let response = match client
+                .command(command, command_source(), actor_identity())
+                .await
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    try_emit(
+                        &events,
+                        ControllerEvent::OperationFailed {
+                            action: "set model reasoning",
+                            reason: error.to_string(),
+                        },
+                    );
+                    return;
+                }
+            };
+            match parse_model_reasoning_confirmation(&response) {
+                Ok(receipt) => {
+                    let _ = events
+                        .send(ControllerEvent::ModelReasoningConfirmed {
+                            provider_id: receipt.provider_id,
+                            model_id: receipt.model_id,
+                            default_effort: receipt.default_effort,
+                            manual_efforts: receipt.manual_efforts,
+                        })
+                        .await;
+                }
+                Err(reason) => try_emit(
+                    &events,
+                    ControllerEvent::OperationFailed {
+                        action: "set model reasoning",
+                        reason,
+                    },
+                ),
+            }
+        });
+    }
+
     /// provider 全量模型启用 / 禁用（set_provider_models_enabled，OPT-3a；
     /// 全关由 Host 按当前目录展开，空目录 fail-closed）。回执语义同
     /// set_model_enabled。

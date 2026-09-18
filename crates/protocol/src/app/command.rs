@@ -405,6 +405,11 @@ pub enum AppCommand {
         /// 跨 workspace / 引用不可用为结构化 fail-closed RunStart 错误。
         #[serde(default, skip_serializing_if = "Option::is_none")]
         profile: Option<String>,
+        /// ADR-063：可选 canonical reasoning effort 名（none/low/medium/
+        /// high/x_high/max）。缺省 = Host 按模型默认配置或 Provider 默认解析；
+        /// 非法名为结构化 fail-closed RunStart 错误。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        effort: Option<String>,
     },
     RunCancel {
         run_id: RunId,
@@ -572,6 +577,17 @@ pub enum AppCommand {
     SubagentCancel {
         session_id: SessionId,
         agent_id: String,
+    },
+    /// GUI-only per-model reasoning prefs write (since 1.21, ADR-063)。
+    /// 全态语义：default_effort / supported_efforts 为 None 即清除该键；
+    /// 两者皆 None 移除该 (provider, model) 条目。
+    SetModelReasoning {
+        provider_id: ProviderId,
+        model_id: ModelId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        default_effort: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        supported_efforts: Option<Vec<String>>,
     },
 }
 

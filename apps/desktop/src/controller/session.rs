@@ -391,8 +391,15 @@ impl DesktopController {
         });
     }
 
-    /// 发送用户消息：RunStart。可选 `(provider, model)` 只影响下一轮。
-    pub fn send_message(&self, session_id: String, text: String, model: Option<(String, String)>) {
+    /// 发送用户消息：RunStart。可选 `(provider, model)` 与 effort
+    ///（ADR-063）只影响下一轮。
+    pub fn send_message(
+        &self,
+        session_id: String,
+        text: String,
+        model: Option<(String, String)>,
+        effort: Option<String>,
+    ) {
         let Some(client) = self.current_client() else {
             // 断线不是静默成功：可靠回执让 Composer 立刻可见失败原因。
             self.emit_reliable(ControllerEvent::OperationFailed {
@@ -403,7 +410,7 @@ impl DesktopController {
         };
         let events = self.event_sender();
         self.runtime.spawn(async move {
-            let command = run_start_command(&session_id, &text, model.as_ref());
+            let command = run_start_command(&session_id, &text, model.as_ref(), effort.as_deref());
             match client
                 .command(command, command_source(), actor_identity())
                 .await

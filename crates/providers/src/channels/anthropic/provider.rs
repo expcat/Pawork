@@ -455,6 +455,8 @@ fn messages_capabilities() -> ModelCapabilities {
             },
             supports_granular_effort: false,
         },
+        // Anthropic 目录无逐模型档位词汇（ADR-063）：未知不约束。
+        supported_efforts: None,
     }
 }
 

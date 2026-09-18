@@ -69,6 +69,13 @@ pub struct SubagentModelRule {
     pub allow_as_subagent: bool,
     #[serde(default = "default_subagent_permissions")]
     pub permissions: Vec<String>,
+    /// 子代理默认推理强度（canonical effort 名；ADR-063，API 1.21）。
+    /// None = 回落模型级默认，再回落 Provider 默认。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_effort: Option<String>,
+    /// 子代理可选推理强度范围（空 = 不限；API 1.21）。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_efforts: Vec<String>,
 }
 
 impl Default for SubagentModelRule {
@@ -79,6 +86,8 @@ impl Default for SubagentModelRule {
             allow_spawn: true,
             allow_as_subagent: true,
             permissions: default_subagent_permissions(),
+            default_effort: None,
+            allowed_efforts: Vec::new(),
         }
     }
 }
@@ -103,4 +112,8 @@ pub struct SubagentInfo {
     pub status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result: Option<String>,
+    /// spawn 时解析的生效推理强度（canonical effort 名；ADR-063，API 1.21）。
+    /// None = 未显式配置（Provider 默认）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
 }

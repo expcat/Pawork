@@ -43,6 +43,36 @@ pub(crate) fn rule(config: &SubagentConfig, provider: &str, model: &str) -> Suba
         })
 }
 
+/// ADR-063：子代理生效 effort 解析。
+///
+/// 顺序：子代理规则 `default_effort`（`allowed_efforts` 非空时须落在
+/// 其中，越界 / 非法名视为未配置）> 模型级 `[reasoning]` 默认 > None
+/// （Provider 默认，与未配置时行为一致）。
+fn resolve_effort(
+    config: &SubagentConfig,
+    global: &pawork_workspace::config::PaworkConfig,
+    provider: &str,
+    model: &str,
+) -> Option<pawork_domain::ReasoningEffort> {
+    let rule = rule(config, provider, model);
+    if let Some(name) = rule.default_effort.as_deref() {
+        let parsed = pawork_domain::ReasoningEffort::from_wire_name(name);
+        if let Some(effort) = parsed {
+            if rule.allowed_efforts.is_empty()
+                || rule.allowed_efforts.iter().any(|item| item == name)
+            {
+                return Some(effort);
+            }
+        }
+    }
+    global
+        .reasoning
+        .as_ref()
+        .and_then(|reasoning| reasoning.model(provider, model))
+        .and_then(|entry| entry.default_effort.as_deref())
+        .and_then(pawork_domain::ReasoningEffort::from_wire_name)
+}
+
 pub(crate) fn allows_tool(rule: &SubagentModelConfig, tool: &ToolDescriptor) -> bool {
     let permission = match tool.name.as_str() {
         "browser" => "browser",
@@ -240,6 +270,11 @@ impl<'a> SubagentRun<'a> {
             return Err(invalid("this model is not allowed as a subagent"));
         }
         let mut child = self.core.child_core(&self.session, provider, model).await?;
+        // ADR-063：子代理 effort = 子代理规则默认（须在规则 allowed_efforts
+        // 内，越界视为未配置）> 模型级 `[reasoning]` 默认 > None（Provider
+        // 默认）。配置名非法按未配置处理（写路径已 fail-closed 校验）。
+        let child_effort = resolve_effort(&self.config, &self.core.config, provider, model);
+        child.effort = child_effort;
         child.parent_tool_run = Some(self.run.clone());
         // A child cannot obtain tools the parent model was not allowed to use.
         let parent_rule = rule(
@@ -291,6 +326,8 @@ impl<'a> SubagentRun<'a> {
             model_id: model.into(),
             status: "running".into(),
             result: None,
+            effort: child_effort
+                .map(|effort| effort.as_wire_name().to_string()),
         };
         let prepare = async {
             let ws = self.core.workspace_for_session_or_unbound(&self.session)?;

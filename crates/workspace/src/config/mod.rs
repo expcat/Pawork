@@ -15,6 +15,7 @@ mod loader;
 mod merge;
 mod paths;
 mod schema;
+mod reasoning;
 mod subagents;
 mod writer;
 
@@ -33,6 +34,7 @@ pub use schema::{
     ModelConfig, PaworkConfig, ProfileConfig, ProfileOverrides, ProviderConfig, RunOverrides,
     SessionOverrides, TerminalConfig,
 };
+pub use reasoning::{ModelReasoningConfig, ReasoningSettings};
 pub use subagents::{
     default_subagent_permissions, SubagentConfig, SubagentModelConfig,
     DEFAULT_SUBAGENT_MAX_CONCURRENT, DEFAULT_SUBAGENT_PERMISSIONS, SUBAGENT_MAX_CONCURRENT_MAX,
@@ -44,6 +46,7 @@ pub use writer::{
     write_provider_use_proxy, write_proxy_url, write_subagent_settings, write_terminal_settings,
     write_workspace_trust,
 };
+pub use writer::write_model_reasoning;
 
 /// 配置层级。
 ///

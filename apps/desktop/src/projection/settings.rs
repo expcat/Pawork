@@ -237,6 +237,11 @@ pub enum ProviderModelWrite {
     },
     /// SetProviderModelsEnabled 在途（provider 全开 / 全关）。
     All { provider_id: String },
+    /// SetModelReasoning 在途（ADR-063；provider × model 推理强度偏好）。
+    Reasoning {
+        provider_id: String,
+        model_id: String,
+    },
 }
 
 impl ProviderModelWrite {
@@ -246,7 +251,10 @@ impl ProviderModelWrite {
             Self::Model {
                 provider_id: id, ..
             }
-            | Self::All { provider_id: id } => id == provider_id,
+            | Self::All { provider_id: id }
+            | Self::Reasoning {
+                provider_id: id, ..
+            } => id == provider_id,
         }
     }
 }
@@ -420,6 +428,25 @@ impl SettingsProvidersState {
             .find(|entry| entry.provider_id == provider_id && entry.id == model_id)
         {
             entry.enabled = enabled;
+        }
+    }
+
+    /// SetModelReasoning Data 回执（ADR-063；回执即写后状态）：目录内
+    /// 同条目收敛默认强度与手动范围；条目缺失忽略。
+    pub fn confirm_model_reasoning(
+        &mut self,
+        provider_id: &str,
+        model_id: &str,
+        default_effort: Option<String>,
+        manual_efforts: Option<Vec<String>>,
+    ) {
+        if let Some(entry) = self
+            .model_catalog
+            .iter_mut()
+            .find(|entry| entry.provider_id == provider_id && entry.id == model_id)
+        {
+            entry.default_effort = default_effort;
+            entry.manual_efforts = manual_efforts;
         }
     }
 
@@ -802,13 +829,28 @@ impl SubagentActivityState {
     }
 
     /// 运行中 / 等待中与已完成计数（浮层摘要行；render 与 AX 同源）。
+    /// done 只计 completed / failed——cancelled 不算完成（诚实口径）。
     pub fn counts(&self) -> (usize, usize) {
         let running = self
             .agents
             .iter()
             .filter(|agent| matches!(agent.status.as_str(), "running" | "waiting"))
             .count();
-        (running, self.agents.len() - running)
+        let done = self
+            .agents
+            .iter()
+            .filter(|agent| matches!(agent.status.as_str(), "completed" | "failed"))
+            .count();
+        (running, done)
+    }
+
+    /// 浮层列表顺序：运行中 / 等待中置顶，其余保持到达顺序（稳定排序）。
+    pub fn display_agents(&self) -> Vec<&SubagentInfo> {
+        let mut agents: Vec<&SubagentInfo> = self.agents.iter().collect();
+        agents.sort_by_key(|agent| {
+            !matches!(agent.status.as_str(), "running" | "waiting")
+        });
+        agents
     }
 }
 
@@ -877,6 +919,7 @@ impl DesktopProjection {
             if let Some((provider_id, model_id)) = tuple.clone() {
                 self.selected_model = Some((provider_id, model_id));
                 self.pending_model = None;
+                self.pending_effort = None;
             }
         }
         self.settings_providers.confirm_role_default(role, tuple);
@@ -894,6 +937,31 @@ impl DesktopProjection {
         self.settings_providers
             .confirm_provider_models_enabled(provider_id, enabled);
         self.sync_enabled_models_from_catalog();
+    }
+
+    /// 推理强度回执：设置页全量目录与 Composer 启用模型目录同源收敛，
+    /// 保证同一连接内后续选模型能带入新默认强度。
+    pub fn apply_model_reasoning(
+        &mut self,
+        provider_id: &str,
+        model_id: &str,
+        default_effort: Option<String>,
+        manual_efforts: Option<Vec<String>>,
+    ) {
+        self.settings_providers.confirm_model_reasoning(
+            provider_id,
+            model_id,
+            default_effort.clone(),
+            manual_efforts.clone(),
+        );
+        if let Some(entry) = self
+            .models
+            .iter_mut()
+            .find(|entry| entry.provider_id == provider_id && entry.id == model_id)
+        {
+            entry.default_effort = default_effort;
+            entry.manual_efforts = manual_efforts;
+        }
     }
 
     /// 全量目录非空时，Composer / 卡头计数跟 enabled 子集对齐。

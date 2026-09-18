@@ -73,6 +73,8 @@ export type { RunId } from "./RunId";
 export type { RunState } from "./RunState";
 export type { SdkCapability } from "./SdkCapability";
 export type { SessionId } from "./SessionId";
+export type { SubagentModelRule } from "./SubagentModelRule";
+export type { SubagentSettingsData } from "./SubagentSettingsData";
 export type { TeamBoardTask } from "./TeamBoardTask";
 export type { TeamEvent } from "./TeamEvent";
 export type { TeamMemberRole } from "./TeamMemberRole";

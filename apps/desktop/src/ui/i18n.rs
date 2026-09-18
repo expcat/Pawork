@@ -138,6 +138,12 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "composer.send" => ("Send", "发送"),
         "composer.message" => ("Message", "消息"),
         "composer.model" => ("Model", "模型"),
+        "composer.effort" => ("Effort", "推理强度"),
+        "composer.effort_auto" => ("Auto", "自动"),
+        "composer.effort_tooltip" => (
+            "Reasoning effort for the next run · Auto follows the model default",
+            "下一轮运行的推理强度 · 自动跟随模型默认",
+        ),
         "rail.new_in_project" => ("New task in {}", "在 {} 中新建任务"),
         "timeline.new_title" => ("New task", "新任务"),
         "timeline.you" => ("You", "你"),
@@ -520,6 +526,19 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             "Remove the custom rule for this model",
             "移除该模型的自定义规则",
         ),
+        "settings.subagents.capability_image" => ("Image", "图像"),
+        "settings.subagents.capability_search" => ("Search", "搜索"),
+        "settings.subagents.effort_default" => ("Default effort", "默认强度"),
+        "settings.subagents.effort_default_tooltip" => (
+            "Default reasoning effort when running as subagent · Auto follows the model default",
+            "作为子代理运行时的默认推理强度 · 自动跟随模型默认",
+        ),
+        "settings.subagents.effort_allowed" => ("Allowed efforts", "可选强度"),
+        "settings.subagents.effort_allowed_tooltip" => (
+            "Efforts this subagent may use · none selected = unrestricted",
+            "该子代理可用的推理强度 · 全不选 = 不限",
+        ),
+        "settings.subagents.effort_auto" => ("Auto", "自动"),
         "settings.subagents.ax_status" => ("Subagents status", "子代理状态"),
         "settings.subagents.ax_enabled" => ("Subagents enabled", "子代理开关"),
         "settings.subagents.ax_concurrency" => ("Max concurrent subagents", "子代理并发上限"),
@@ -693,6 +712,25 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         ),
         "settings.providers.models_enable_all" => ("Enable all", "全部启用"),
         "settings.providers.models_disable_all" => ("Disable all", "全部禁用"),
+        // ── Manage models 弹层推理强度行（ADR-063）──
+        "settings.providers.effort_label" => ("Reasoning", "推理强度"),
+        "settings.providers.effort_default" => ("Default effort", "默认强度"),
+        "settings.providers.effort_allowed" => ("Allowed effort", "可选强度"),
+        "settings.providers.effort_default_auto" => ("Auto", "自动"),
+        "settings.providers.effort_source_catalog" => ("Catalog range", "目录范围"),
+        "settings.providers.effort_source_manual" => ("Manual range", "手动范围"),
+        "settings.providers.effort_source_unknown" => (
+            "Range unknown · set manually",
+            "范围未知 · 可手动设置",
+        ),
+        "settings.providers.effort_default_tooltip" => (
+            "Default reasoning effort · auto-applied when this model is selected",
+            "默认推理强度 · 选择该模型时自动带入",
+        ),
+        "settings.providers.effort_range_tooltip" => (
+            "Allowed reasoning efforts · none selected = unrestricted",
+            "可选推理强度 · 全不选 = 不限",
+        ),
         "settings.providers.models_empty_title" => ("No models returned", "未返回模型"),
         "settings.providers.models_empty_hint" => {
             ("This provider's catalog is empty.", "该提供商的目录为空。")

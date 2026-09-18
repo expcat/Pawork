@@ -260,6 +260,85 @@ pub struct ModelEntry {
     /// ADR-055 D4：Host 目录条目的启用态（响应 additive 增字段；缺省
     /// true——旧 Host 只回启用模型，缺失即视为启用）。
     pub enabled: bool,
+    /// ADR-063（API 1.21）：目录能力位，供设置页「图像 / 搜索」徽标。
+    /// 旧 Host 缺字段视为 false（不展示徽标）。
+    pub image_input: bool,
+    pub web_search: bool,
+    /// 目录声明的可选推理强度（None = 未知，不约束可选范围）。
+    pub catalog_efforts: Option<Vec<String>>,
+    /// Global `[reasoning]` 用户默认（None = 未配置，Host 回落 Provider
+    /// 默认）。
+    pub default_effort: Option<String>,
+    /// Global `[reasoning]` 手动范围声明（None = 未配置；优先于目录声明）。
+    pub manual_efforts: Option<Vec<String>>,
+}
+
+/// canonical 推理强度词汇（与 pawork-domain ReasoningEffort wire 名一致；
+/// Desktop 不依赖 domain，本地保一份常量用于菜单与配置 UI）。
+pub const EFFORT_LEVELS: [&str; 6] = ["none", "low", "medium", "high", "x_high", "max"];
+
+impl Default for ModelEntry {
+    /// 测试与占位构造用默认值；生产路径一律走 parse_models 显式填充。
+    /// enabled 缺省 true 与「旧 Host 缺字段即启用」口径一致。
+    fn default() -> Self {
+        Self {
+            provider_id: String::new(),
+            id: String::new(),
+            display_name: String::new(),
+            context_window_tokens: None,
+            enabled: true,
+            image_input: false,
+            web_search: false,
+            catalog_efforts: None,
+            default_effort: None,
+            manual_efforts: None,
+        }
+    }
+}
+
+impl ModelEntry {
+    /// 生效可选范围：手动声明 > 目录声明；皆无 = 未知（不约束，菜单给全量
+    /// 词汇）。
+    pub fn effective_efforts(&self) -> Option<&[String]> {
+        self.manual_efforts
+            .as_deref()
+            .or(self.catalog_efforts.as_deref())
+    }
+
+    /// 菜单 / 配置 UI 的候选强度（owned）：已知范围按声明（过滤非法名，
+    /// 保声明顺序），未知回落全量 canonical 词汇。
+    pub fn effort_options(&self) -> Vec<String> {
+        match self.effective_efforts() {
+            Some(declared) => declared
+                .iter()
+                .filter(|name| EFFORT_LEVELS.contains(&name.as_str()))
+                .cloned()
+                .collect(),
+            None => EFFORT_LEVELS.iter().map(|name| (*name).to_string()).collect(),
+        }
+    }
+}
+
+/// 子代理页模型目录：只含「模型与供应商」中已启用的模型（render / 派发
+/// / AX 三路径同源；ADR-063——未启用模型不在子代理配置中出现）。
+pub fn subagent_rule_models(catalog: &[ModelEntry]) -> Vec<ModelEntry> {
+    catalog
+        .iter()
+        .filter(|model| model.enabled)
+        .cloned()
+        .collect()
+}
+
+/// 在目录中按 (provider, model) 查条目（Composer 选模型自动带入默认强度
+/// 等同源读取）。
+pub fn find_model_entry<'a>(
+    models: &'a [ModelEntry],
+    provider_id: &str,
+    model_id: &str,
+) -> Option<&'a ModelEntry> {
+    models
+        .iter()
+        .find(|entry| entry.provider_id == provider_id && entry.id == model_id)
 }
 
 /// Settings「模型与默认项」区分组：按 provider 聚合可运行模型（保持目录
@@ -840,7 +919,18 @@ impl DesktopProjection {
     }
 
     pub fn set_pending_model(&mut self, provider_id: String, id: String) {
+        // ADR-063：选模型自动带入该模型在 Global [reasoning] 配置的默认
+        // 推理强度；未配置回落 None（自动 = Host 侧模型默认 / Provider
+        // 默认）。用户随后可在 Composer 强度菜单覆盖。
+        self.pending_effort = find_model_entry(&self.models, &provider_id, &id)
+            .and_then(|entry| entry.default_effort.clone());
         self.pending_model = Some((provider_id, id));
+    }
+
+    /// 当前生效强度（Composer chip 与 RunStart 同源）：显式选择即
+    /// Some；None = 自动。
+    pub fn effective_effort(&self) -> Option<&str> {
+        self.pending_effort.as_deref()
     }
 
     pub fn effective_model(&self) -> Option<&(String, String)> {

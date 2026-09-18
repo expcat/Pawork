@@ -225,6 +225,8 @@ enum MenuKind {
     Scope,
     ProjectTask,
     Model,
+    /// Composer 推理强度菜单（ADR-063 / API 1.21）。
+    Effort,
     /// Settings「Default models」四角色下拉（OPT-3b / ADR-055 D5）。
     SettingsRole(SettingsRole),
     /// Settings 供应商「Manage models」启用弹层（OPT-3a / ADR-055 D2；
@@ -494,6 +496,7 @@ fn install_appkit_tab_monitor(window: &Window, cx: &App) {
 struct PendingHomeSend {
     text: String,
     model: Option<(String, String)>,
+    effort: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -540,6 +543,9 @@ pub struct AppView {
     model_search_query: String,
     model_menu_scroll: ScrollHandle,
     pending_model_menu_scroll: bool,
+    /// Activity 浮层「子智能体」卡列表滚动（限高 + 溢出滚动，ADR-063 浮层
+    /// 改进）。
+    activity_subagent_scroll: ScrollHandle,
     /// per-session Composer 草稿（不含终端）。无 active session 时走独立槽。
     composer_drafts: HashMap<String, String>,
     no_session_draft: String,
@@ -669,6 +675,8 @@ pub struct AppView {
     recovery_focus: HashMap<&'static str, FocusHandle>,
     terminal_details_open: Option<(Option<String>, String)>,
     model_focus: FocusHandle,
+    /// Composer 推理强度 chip 触发器焦点（ADR-063）。
+    effort_focus: FocusHandle,
     timeline_back_to_bottom_focus: FocusHandle,
     /// Timeline 虚拟化 action 按 event_id 懒建稳定焦点句柄；条目卸载/重挂
     /// 不丢普通键盘焦点语义，删除后的遗留项随窗口生命周期回收。
@@ -899,6 +907,7 @@ impl AppView {
             model_search_query: String::new(),
             model_menu_scroll: ScrollHandle::new(),
             pending_model_menu_scroll: false,
+            activity_subagent_scroll: ScrollHandle::new(),
             composer_drafts: HashMap::new(),
             no_session_draft: String::new(),
             pending_home_send: None,
@@ -1028,6 +1037,7 @@ impl AppView {
                 .collect(),
             terminal_details_open: None,
             model_focus: cx.focus_handle().tab_stop(true),
+            effort_focus: cx.focus_handle().tab_stop(true),
             timeline_back_to_bottom_focus: cx
                 .focus_handle()
                 .tab_stop(true)
@@ -1174,6 +1184,7 @@ impl AppView {
                 "composer-context",
                 "composer-project-task",
                 "model-picker",
+                "effort-picker",
             ]
             .into_iter()
             .map(|id| (id, ScrollHandle::new()))
@@ -1976,7 +1987,7 @@ impl AppView {
                     self.no_session_draft.clear();
                     self.open_session(session_id.clone(), cx);
                     self.controller
-                        .send_message(session_id, pending.text, pending.model);
+                        .send_message(session_id, pending.text, pending.model, pending.effort);
                 } else {
                     self.open_session(session_id, cx);
                 }
@@ -2279,6 +2290,22 @@ impl AppView {
                     .apply_provider_models_enabled(&provider_id, enabled);
                 self.apply_model_cleared_roles(&cleared_roles);
             }
+            ControllerEvent::ModelReasoningConfirmed {
+                provider_id,
+                model_id,
+                default_effort,
+                manual_efforts,
+            } => {
+                // ADR-063：回执即写后状态——收敛目录条目的默认强度与手动
+                // 范围；不清 Composer 已选强度（用户选择优先）。
+                self.projection.settings_providers.model_write_pending = None;
+                self.projection.apply_model_reasoning(
+                    &provider_id,
+                    &model_id,
+                    default_effort,
+                    manual_efforts,
+                );
+            }
             ControllerEvent::PermissionsSettingsLoaded(data) => {
                 self.projection.settings_permissions.apply_loaded(data);
                 self.remark_settings_stale_if_disconnected();
@@ -2353,6 +2380,12 @@ impl AppView {
                     // settings 错误行呈现原因。
                     self.projection.settings_providers.model_write_pending = None;
                     let message = format!("Could not change model enablement · {reason}");
+                    self.projection.settings_providers.apply_failed(&message);
+                }
+                if action == "set model reasoning" {
+                    // 写失败保旧（ADR-063 同口径）。
+                    self.projection.settings_providers.model_write_pending = None;
+                    let message = format!("Could not change reasoning effort · {reason}");
                     self.projection.settings_providers.apply_failed(&message);
                 }
                 if action == "set default role model" {
@@ -3201,6 +3234,7 @@ impl AppView {
             MenuKind::Scope => self.scope_focus.clone(),
             MenuKind::ProjectTask => self.project_task_focus.clone(),
             MenuKind::Model => self.model_focus.clone(),
+            MenuKind::Effort => self.effort_focus.clone(),
             MenuKind::SettingsRole(role) => self
                 .settings_action_focus
                 .get(&settings::settings_role_trigger_identifier(role))
@@ -3230,6 +3264,7 @@ impl AppView {
         match self.open_menu.as_ref() {
             Some(MenuKind::Scope | MenuKind::ProjectTask) => self.project_menu_options().len() + 1,
             Some(MenuKind::Model) => self.model_menu_row_count() + 1,
+            Some(MenuKind::Effort) => self.effort_menu_options().len(),
             // 清除行始终可选；空候选时仍可移除已保存的默认角色。
             Some(MenuKind::SettingsRole(_)) => {
                 let entries = settings::settings_role_menu_entries(
@@ -3263,6 +3298,16 @@ impl AppView {
                     self.filtered_model_entries()
                         .iter()
                         .position(|model| model.provider_id == *provider && model.id == *id)
+                })
+                .unwrap_or(0),
+            // 行 0 = 自动（None）；显式值落在候选行时为其位 +1。
+            Some(MenuKind::Effort) => self
+                .projection
+                .effective_effort()
+                .and_then(|current| {
+                    self.effort_menu_options()
+                        .iter()
+                        .position(|option| option.as_deref() == Some(current))
                 })
                 .unwrap_or(0),
             // 行 0 = 清除；当前值落在候选行时为其位 +1，未设置回落清除行。
@@ -3378,6 +3423,13 @@ impl AppView {
                         Some((model.provider_id.clone(), model.id.clone())),
                         cx,
                     );
+                }
+            }
+            MenuKind::Effort => {
+                let options = self.effort_menu_options();
+                if let Some(option) = options.get(ix) {
+                    self.on_select_effort(option.clone(), cx);
+                    window.focus(&self.focus_handle);
                 }
             }
             // 弹层控件自带键盘激活（Switch / 按钮），无 MenuRow 行。
@@ -4441,6 +4493,9 @@ impl AppView {
             return;
         }
         let model = self.projection.effective_model().cloned();
+        // ADR-063：显式选择的推理强度随本轮 RunStart 发出；None（自动）
+        // 省略，Host 回落模型默认。
+        let effort = self.projection.effective_effort().map(str::to_string);
         let unstarted = self
             .projection
             .unstarted_session_id(None)
@@ -4450,17 +4505,21 @@ impl AppView {
             unstarted.as_deref(),
         ) {
             HomeSendPlan::ActiveSession(session_id) => {
-                self.controller.send_message(session_id, text, model);
+                self.controller.send_message(session_id, text, model, effort);
             }
             HomeSendPlan::ReuseUnstarted(session_id) => {
                 self.composer_drafts
                     .insert(session_id.clone(), text.clone());
                 self.no_session_draft.clear();
                 self.open_session(session_id.clone(), cx);
-                self.controller.send_message(session_id, text, model);
+                self.controller.send_message(session_id, text, model, effort);
             }
             HomeSendPlan::CreateUnassigned => {
-                self.pending_home_send = Some(PendingHomeSend { text, model });
+                self.pending_home_send = Some(PendingHomeSend {
+                    text,
+                    model,
+                    effort,
+                });
                 self.controller.create_session(None);
                 cx.notify();
             }
@@ -4512,6 +4571,12 @@ impl AppView {
             ConnectionState::Connected { .. }
         ) && self.projection.active_run_id.is_none()
             && (!self.projection.models.is_empty() || self.projection.models_loaded)
+    }
+
+    /// 强度菜单能否打开（ADR-063）：与模型切换同 gate，且已有生效模型
+    ///（无模型时强度无意义）。
+    fn can_open_effort_menu(&self) -> bool {
+        self.can_switch_model() && self.projection.effective_model().is_some()
     }
 
     fn composer_has_sendable_text(&self, cx: &App) -> bool {
@@ -5006,6 +5071,10 @@ impl Render for AppView {
         // can_open_model_menu 翻假期间归一化：打开中的 model 菜单随之关闭，
         // 避免条件恢复后面板无需点击自行重现。全关空态仍保持可开（说明行）。
         if matches!(self.open_menu, Some(MenuKind::Model)) && !can_open_model_menu {
+            self.open_menu = None;
+        }
+        // 强度菜单同口径（ADR-063）：运行中 / 断线 / 无模型时关闭。
+        if matches!(self.open_menu, Some(MenuKind::Effort)) && !self.can_open_effort_menu() {
             self.open_menu = None;
         }
         let now_ms = now_unix_ms();

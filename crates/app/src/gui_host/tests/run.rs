@@ -60,6 +60,7 @@ async fn run_success_auto_titles_placeholder_session_and_broadcasts() {
             model: None,
             provider: None,
             profile: None,
+            effort: None,
         }))
         .await
         .expect("run accepted");
@@ -278,6 +279,7 @@ async fn auto_title_without_naming_config_skips_provider_call() {
             model: None,
             provider: None,
             profile: None,
+            effort: None,
         }))
         .await
         .expect("run accepted");
@@ -332,6 +334,7 @@ async fn auto_title_failure_keeps_placeholder_title() {
             model: None,
             provider: None,
             profile: None,
+            effort: None,
         }))
         .await
         .expect("run accepted");
@@ -396,6 +399,7 @@ async fn run_start_expands_at_refs_into_separate_parts() {
             model: None,
             provider: None,
             profile: None,
+            effort: None,
         }))
         .await
         .expect("run accepted");
@@ -472,6 +476,7 @@ async fn run_start_expand_at_refs_failure_does_not_leave_active_run() {
             model: None,
             provider: None,
             profile: None,
+            effort: None,
         }))
         .await
         .expect_err("stale @file must fail closed");
@@ -507,6 +512,7 @@ async fn run_start_without_at_token_passes_single_text_part() {
             model: None,
             provider: None,
             profile: None,
+            effort: None,
         }))
         .await
         .expect("run accepted");
@@ -563,6 +569,7 @@ async fn run_start_reports_run_and_registry_drains_after_completion() {
             model: None,
             provider: None,
             profile: None,
+            effort: None,
         }))
         .await
         .expect("run accepted");
@@ -628,6 +635,7 @@ async fn run_start_provider_failure_broadcasts_single_terminal_without_synthetic
             model: None,
             provider: None,
             profile: None,
+            effort: None,
         }))
         .await
         .expect("run accepted");
@@ -679,6 +687,7 @@ async fn run_start_cancel_broadcasts_cancelled_without_synthetic_failed() {
             model: None,
             provider: None,
             profile: None,
+            effort: None,
         }))
         .await
         .expect("run accepted");
@@ -759,6 +768,7 @@ async fn run_start_early_death_without_terminal_still_synthesizes_failed() {
             model: None,
             provider: None,
             profile: None,
+            effort: None,
         }))
         .await
         .expect("run accepted");
@@ -960,6 +970,7 @@ async fn run_start_switches_same_registry_model_and_unknown_fails_closed() {
             model: Some(pawork_domain::ModelId::from("model-2")),
             provider: None,
             profile: None,
+            effort: None,
         }))
         .await
         .expect("same-registry model switch");
@@ -972,6 +983,7 @@ async fn run_start_switches_same_registry_model_and_unknown_fails_closed() {
             model: Some(pawork_domain::ModelId::from("missing-model")),
             provider: None,
             profile: None,
+            effort: None,
         }))
         .await
         .expect_err("unknown model must fail closed");
@@ -1051,6 +1063,7 @@ async fn run_start_second_turn_includes_session_history() {
             model: None,
             provider: None,
             profile: None,
+            effort: None,
         }))
         .await
         .expect("first run");
@@ -1070,6 +1083,7 @@ async fn run_start_second_turn_includes_session_history() {
             model: None,
             provider: None,
             profile: None,
+            effort: None,
         }))
         .await
         .expect("second run");
@@ -1178,6 +1192,7 @@ async fn run_start_with_provider_does_not_silently_keep_same_model_id() {
             model: Some(pawork_domain::ModelId::from("deepseek-v4-flash")),
             provider: Some(pawork_domain::ProviderId::from("opencode-go")),
             profile: None,
+            effort: None,
         }))
         .await
         .expect_err("same model id on another channel must not silently accept");
@@ -1229,6 +1244,7 @@ async fn run_start_fails_closed_when_model_disabled() {
             model: None,
             provider: None,
             profile: None,
+            effort: None,
         }))
         .await
         .expect_err("disabled effective model must fail closed");
@@ -1246,6 +1262,7 @@ async fn run_start_fails_closed_when_model_disabled() {
             model: Some(pawork_domain::ModelId::from("model-2")),
             provider: None,
             profile: None,
+            effort: None,
         }))
         .await
         .expect_err("disabled requested model must fail closed");

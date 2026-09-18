@@ -232,6 +232,7 @@ async fn run_start_without_provider_returns_error_response() {
             model: None,
             provider: None,
             profile: None,
+            effort: None,
         })
         .await
         .expect("run start responds");
@@ -317,6 +318,7 @@ async fn real_host_enforces_granted_capabilities() {
             model: None,
             provider: None,
             profile: None,
+            effort: None,
         })
         .await
         .expect_err("run start must be rejected without Runs grant");

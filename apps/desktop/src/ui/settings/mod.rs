@@ -59,6 +59,8 @@ pub(crate) const SETTINGS_APPROVAL_ROW_REMS: f32 = 3.5;
 pub(crate) const SETTINGS_ROLE_MENU_WIDTH: f32 = 260.0;
 pub(crate) const SETTINGS_MODELS_MENU_WIDTH: f32 = 320.0;
 pub(crate) const SETTINGS_MODELS_MENU_MAX_HEIGHT: f32 = 520.0;
+/// Manage models 弹层推理强度 chip 高（ADR-063；独立于页面主控件）。
+pub(crate) const SETTINGS_MODEL_EFFORT_CHIP_HEIGHT: f32 = 24.0;
 /// Usage 进度条槽位几何（固定槽位，恒无填充；ADR-056 D5）。
 pub(crate) const SETTINGS_PROVIDER_USAGE_BAR_WIDTH: f32 = 120.0;
 pub(crate) const SETTINGS_PROVIDER_USAGE_BAR_HEIGHT: f32 = 4.0;
@@ -275,6 +277,10 @@ pub(crate) enum SettingsSubagentControl {
     ToggleDelegate(String),
     /// 切换某项功能权限（wire 权限名 + 转义目标）。
     TogglePermission(&'static str, String),
+    /// 循环子代理默认推理强度（ADR-063；None → 候选依次 → None）。
+    CycleEffort(String),
+    /// 切换子代理可选推理强度范围中的某一项（canonical 名 + 转义目标）。
+    ToggleEffort(&'static str, String),
     /// 移除显式规则，回落默认。
     Reset(String),
 }
@@ -290,6 +296,19 @@ pub(crate) fn parse_settings_subagent_control(identifier: &str) -> Option<Settin
     }
     if let Some(escaped) = rest.strip_prefix("reset-") {
         return Some(SettingsSubagentControl::Reset(escaped.to_string()));
+    }
+    // 「effort-default-」必须先于按级别前缀匹配（级别名均非 default，
+    // 但锚定顺序让意图显式）。
+    if let Some(escaped) = rest.strip_prefix("effort-default-") {
+        return Some(SettingsSubagentControl::CycleEffort(escaped.to_string()));
+    }
+    for level in crate::projection::EFFORT_LEVELS {
+        if let Some(escaped) = rest.strip_prefix(&format!("effort-{level}-")) {
+            return Some(SettingsSubagentControl::ToggleEffort(
+                level,
+                escaped.to_string(),
+            ));
+        }
     }
     for permission in SUBAGENT_PERMISSIONS {
         if let Some(escaped) = rest.strip_prefix(&format!("perm-{permission}-")) {
@@ -673,6 +692,37 @@ pub(crate) fn settings_model_switch_identifier(provider_id: &str, model_id: &str
     )
 }
 
+/// 弹层单模型「默认推理强度」cycle 按钮 identifier（ADR-063）。
+pub(crate) fn settings_model_effort_default_identifier(
+    provider_id: &str,
+    model_id: &str,
+) -> String {
+    format!(
+        "{SETTINGS_MODELS_CONTROL_PREFIX}{}",
+        dynamic_identifier("effort-default", &format!("{provider_id}:{model_id}"))
+    )
+}
+
+/// 弹层单模型「可选范围」chip identifier（ADR-063）。
+pub(crate) fn settings_model_effort_chip_identifier(
+    level: &str,
+    provider_id: &str,
+    model_id: &str,
+) -> String {
+    format!(
+        "{SETTINGS_MODELS_CONTROL_PREFIX}{}",
+        dynamic_identifier(&format!("effort-{level}"), &format!("{provider_id}:{model_id}"))
+    )
+}
+
+/// 弹层单模型「清除手动范围」identifier（ADR-063）。
+pub(crate) fn settings_model_effort_reset_identifier(provider_id: &str, model_id: &str) -> String {
+    format!(
+        "{SETTINGS_MODELS_CONTROL_PREFIX}{}",
+        dynamic_identifier("effort-reset", &format!("{provider_id}:{model_id}"))
+    )
+}
+
 /// 弹层控件（AX 派发用）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SettingsModelsControl {
@@ -684,6 +734,12 @@ pub(crate) enum SettingsModelsControl {
     DisableAll(String),
     /// 空目录态 Refresh catalog（复用页级刷新路径）。
     RefreshCatalog(String),
+    /// 单模型默认推理强度 cycle（ADR-063；携带转义 "<provider>:<model>"）。
+    EffortDefault(String),
+    /// 单模型手动范围 chip 切换（canonical 名 + 转义目标）。
+    EffortToggle(&'static str, String),
+    /// 清除单模型手动范围声明（回落目录 / 不限）。
+    EffortReset(String),
 }
 
 /// 前缀锚定解析弹层控件 identifier；未知形状 fail-closed。
@@ -703,6 +759,22 @@ pub(crate) fn parse_settings_models_control(identifier: &str) -> Option<Settings
     }
     if let Some(escaped) = rest.strip_prefix("refresh-") {
         return Some(SettingsModelsControl::RefreshCatalog(escaped.to_string()));
+    }
+    // ADR-063：「effort-default-」「effort-reset-」先于按级别前缀匹配
+    //（级别名均不含 default / reset，锚定顺序使意图显式）。
+    if let Some(escaped) = rest.strip_prefix("effort-default-") {
+        return Some(SettingsModelsControl::EffortDefault(escaped.to_string()));
+    }
+    if let Some(escaped) = rest.strip_prefix("effort-reset-") {
+        return Some(SettingsModelsControl::EffortReset(escaped.to_string()));
+    }
+    for level in crate::projection::EFFORT_LEVELS {
+        if let Some(escaped) = rest.strip_prefix(&format!("effort-{level}-")) {
+            return Some(SettingsModelsControl::EffortToggle(
+                level,
+                escaped.to_string(),
+            ));
+        }
     }
     None
 }
@@ -1090,8 +1162,7 @@ mod tests {
             provider_id: provider_id.to_string(),
             id: id.to_string(),
             display_name: format!("{provider_id}/{id}"),
-            context_window_tokens: None,
-            enabled: true,
+            ..ModelEntry::default()
         };
         let provider = |provider_id: &str, auth: ProviderAuthState| ProviderAuthStatusEntry {
             provider_id: provider_id.to_string(),

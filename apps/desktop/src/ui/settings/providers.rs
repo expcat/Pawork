@@ -2164,6 +2164,193 @@ impl AppView {
         true
     }
 
+    /// 推理强度控件统一派发（click / 键盘 / AX 三路径同源；ADR-063）：
+    /// identifier 解析出动作与目标模型；对照全量目录还原，未知
+    /// fail-closed。非强度控件返回 false，由调用方走既有路径。
+    pub(crate) fn dispatch_settings_models_control(
+        &mut self,
+        identifier: &str,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        match parse_settings_models_control(identifier) {
+            Some(SettingsModelsControl::EffortDefault(escaped)) => {
+                if let Some((provider_id, model_id)) =
+                    self.settings_model_target_for_escaped(&escaped)
+                {
+                    self.on_settings_model_effort_default(provider_id, model_id, cx);
+                }
+                true
+            }
+            Some(SettingsModelsControl::EffortToggle(level, escaped)) => {
+                if let Some((provider_id, model_id)) =
+                    self.settings_model_target_for_escaped(&escaped)
+                {
+                    self.on_settings_model_effort_toggle(provider_id, model_id, level, cx);
+                }
+                true
+            }
+            Some(SettingsModelsControl::EffortReset(escaped)) => {
+                if let Some((provider_id, model_id)) =
+                    self.settings_model_target_for_escaped(&escaped)
+                {
+                    self.on_settings_model_effort_reset(provider_id, model_id, cx);
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// set_model_reasoning 写 gate（render / 键盘 / AX 同源）：设置可写、
+    /// 弹层开在该 provider、无在途写、目标在全量目录内。
+    fn settings_model_reasoning_enabled(&self, provider_id: &str, model_id: &str) -> bool {
+        self.settings_writes_enabled()
+            && matches!(&self.open_menu, Some(MenuKind::SettingsProviderModels(open)) if open == provider_id)
+            && !self
+                .projection
+                .settings_providers
+                .model_write_pending
+                .as_ref()
+                .is_some_and(|pending| pending.targets(provider_id))
+            && self
+                .projection
+                .settings_providers
+                .model_catalog
+                .iter()
+                .any(|model| model.provider_id == provider_id && model.id == model_id)
+    }
+
+    /// set_model_reasoning 全态写公共路径：置在途 → 派出；回执 /
+    /// 失败收敛，不乐观更新。
+    fn commit_model_reasoning(
+        &mut self,
+        provider_id: String,
+        model_id: String,
+        default_effort: Option<String>,
+        manual_efforts: Option<Vec<String>>,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.settings_model_reasoning_enabled(&provider_id, &model_id) {
+            return;
+        }
+        self.projection.settings_providers.model_write_pending =
+            Some(crate::projection::ProviderModelWrite::Reasoning {
+                provider_id: provider_id.clone(),
+                model_id: model_id.clone(),
+            });
+        self.controller
+            .set_model_reasoning(provider_id, model_id, default_effort, manual_efforts);
+        cx.notify();
+    }
+
+    /// 默认强度 cycle（ADR-063）：候选 = 生效范围（手动 > 目录），未知 =
+    /// 全量词汇；None（自动）→ 首个候选 → 依次 → None。
+    pub(crate) fn on_settings_model_effort_default(
+        &mut self,
+        provider_id: String,
+        model_id: String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(model) = self
+            .projection
+            .settings_providers
+            .model_catalog
+            .iter()
+            .find(|model| model.provider_id == provider_id && model.id == model_id)
+            .cloned()
+        else {
+            return;
+        };
+        let candidates = model.effort_options();
+        if candidates.is_empty() {
+            return;
+        }
+        let next_default = match &model.default_effort {
+            None => Some(candidates[0].clone()),
+            Some(current) => match candidates.iter().position(|level| level == current) {
+                Some(ix) if ix + 1 < candidates.len() => Some(candidates[ix + 1].clone()),
+                _ => None,
+            },
+        };
+        self.commit_model_reasoning(
+            provider_id,
+            model_id,
+            next_default,
+            model.manual_efforts.clone(),
+            cx,
+        );
+    }
+
+    /// 手动范围 chip 切换（ADR-063）：在生效范围（手动 > 目录，皆无 =
+    /// 空集）上翻转该项并写为手动声明；翻转后默认强度不再落在范围内时
+    /// 一并清默认（Host 校验 default ∈ 范围，UI 先行保持一致）。
+    pub(crate) fn on_settings_model_effort_toggle(
+        &mut self,
+        provider_id: String,
+        model_id: String,
+        level: &'static str,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(model) = self
+            .projection
+            .settings_providers
+            .model_catalog
+            .iter()
+            .find(|model| model.provider_id == provider_id && model.id == model_id)
+            .cloned()
+        else {
+            return;
+        };
+        let mut manual = model
+            .effective_efforts()
+            .map(|efforts| efforts.to_vec())
+            .unwrap_or_default();
+        if let Some(index) = manual.iter().position(|l| l == level) {
+            manual.remove(index);
+        } else {
+            manual.push(level.to_string());
+        }
+        // 以 canonical 词汇序稳定写回（与目录声明顺序无关）。
+        manual.sort_by_key(|l| {
+            crate::projection::EFFORT_LEVELS
+                .iter()
+                .position(|known| known == l)
+                .unwrap_or(usize::MAX)
+        });
+        let default = model
+            .default_effort
+            .clone()
+            .filter(|current| manual.iter().any(|l| l == current));
+        self.commit_model_reasoning(provider_id, model_id, default, Some(manual), cx);
+    }
+
+    /// 清除手动范围（ADR-063）：supported_efforts 回落 None；默认强度仍
+    /// 落在目录声明内才保留，否则一并清除（Host 按目录校验）。
+    pub(crate) fn on_settings_model_effort_reset(
+        &mut self,
+        provider_id: String,
+        model_id: String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(model) = self
+            .projection
+            .settings_providers
+            .model_catalog
+            .iter()
+            .find(|model| model.provider_id == provider_id && model.id == model_id)
+            .cloned()
+        else {
+            return;
+        };
+        let default = model.default_effort.clone().filter(|current| {
+            model
+                .catalog_efforts
+                .as_ref()
+                .is_none_or(|catalog| catalog.iter().any(|l| l == current))
+        });
+        self.commit_model_reasoning(provider_id, model_id, default, None, cx);
+    }
+
     /// 弹层内单模型 Switch 切换（三路径同源；入口级复核 gate 与全量目录
     /// 条目，未知 pair fail-closed）。不乐观改状态：Switch 以 Host 回执
     /// 为准翻转，并本地对齐 Composer，不再重探全通道目录。
@@ -2206,6 +2393,159 @@ impl AppView {
         self.controller
             .set_model_enabled(provider_id, model_id, target);
         cx.notify();
+    }
+
+    /// 弹层单模型推理强度行（ADR-063）：来源徽标（目录 / 手动 / 未知）
+    /// + 默认强度 cycle 按钮 + 范围 chips；有手动声明时附「重置范围」。
+    /// render 与 AX 同源：controls 的 identifier 即 AX 节点 id。
+    fn settings_model_effort_row(
+        &mut self,
+        provider_id: &str,
+        model: &ModelEntry,
+        enabled: bool,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let model_id = model.id.clone();
+        let source = if model.manual_efforts.is_some() {
+            t("settings.providers.effort_source_manual")
+        } else if model.catalog_efforts.is_some() {
+            t("settings.providers.effort_source_catalog")
+        } else {
+            t("settings.providers.effort_source_unknown")
+        };
+        // chips 选中态 = 生效范围（手动 > 目录）；皆无 = 全不选（不限）。
+        let selected: Vec<String> = model
+            .effective_efforts()
+            .map(|efforts| efforts.to_vec())
+            .unwrap_or_default();
+        let mut row = div()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .items_center()
+            .gap_1()
+            .child(
+                Label::new(t("settings.providers.effort_label"))
+                    .size(font::XS)
+                    .color(dark().text.secondary),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .px_1()
+                    .rounded(px(4.0))
+                    .bg(dark().surface.raised)
+                    .child(Label::new(source).size(font::XS).color(dark().text.tertiary)),
+            );
+        // 默认强度 cycle 按钮。
+        let default_id = settings_model_effort_default_identifier(provider_id, &model_id);
+        let default_focus = self
+            .settings_action_focus
+            .entry(default_id.clone())
+            .or_insert_with(|| cx.focus_handle().tab_stop(true))
+            .clone();
+        let default_label = model
+            .default_effort
+            .clone()
+            .unwrap_or_else(|| t("settings.providers.effort_default_auto").to_string());
+        let default_click_id = default_id.clone();
+        let default_activate_id = default_id.clone();
+        let default_button = Button::new(default_id.clone())
+            .track_focus(&default_focus)
+            .variant(ButtonVariant::Raised)
+            .height(px(SETTINGS_MODEL_EFFORT_CHIP_HEIGHT))
+            .radius(6.0)
+            .text_size(font::XS)
+            .label(default_label)
+            .tooltip(t("settings.providers.effort_default_tooltip"))
+            .disabled(!enabled)
+            .on_click(cx.listener(move |view, event, _window, cx| {
+                if view.consume_button_key_click(&default_click_id, event) {
+                    return;
+                }
+                view.dispatch_settings_models_control(&default_click_id, cx);
+            }))
+            .on_activate(cx.listener(move |view, _event, _window, cx| {
+                view.note_button_key_activate(&default_activate_id);
+                view.dispatch_settings_models_control(&default_activate_id, cx);
+                cx.stop_propagation();
+            }));
+        row = row.child(
+            self.settings_element(default_id)
+                .flex_none()
+                .child(default_button),
+        );
+        // 范围 chips。
+        for level in model.effort_options() {
+            let selected_chip = selected.iter().any(|l| l == &level);
+            let chip_id = settings_model_effort_chip_identifier(&level, provider_id, &model_id);
+            let focus = self
+                .settings_action_focus
+                .entry(chip_id.clone())
+                .or_insert_with(|| cx.focus_handle().tab_stop(true))
+                .clone();
+            let variant = if selected_chip {
+                ButtonVariant::Primary
+            } else {
+                ButtonVariant::Raised
+            };
+            let click_id = chip_id.clone();
+            let activate_id = chip_id.clone();
+            let chip = Button::new(chip_id.clone())
+                .track_focus(&focus)
+                .variant(variant)
+                .height(px(SETTINGS_MODEL_EFFORT_CHIP_HEIGHT))
+                .radius(6.0)
+                .text_size(font::XS)
+                .label(level.clone())
+                .tooltip(t("settings.providers.effort_range_tooltip"))
+                .disabled(!enabled)
+                .on_click(cx.listener(move |view, event, _window, cx| {
+                    if view.consume_button_key_click(&click_id, event) {
+                        return;
+                    }
+                    view.dispatch_settings_models_control(&click_id, cx);
+                }))
+                .on_activate(cx.listener(move |view, _event, _window, cx| {
+                    view.note_button_key_activate(&activate_id);
+                    view.dispatch_settings_models_control(&activate_id, cx);
+                    cx.stop_propagation();
+                }));
+            row = row.child(self.settings_element(chip_id).flex_none().child(chip));
+        }
+        // 手动范围存在时提供「重置范围」（清手动声明，回落目录 / 不限）。
+        if model.manual_efforts.is_some() {
+            let reset_id = settings_model_effort_reset_identifier(provider_id, &model_id);
+            let reset_focus = self
+                .settings_action_focus
+                .entry(reset_id.clone())
+                .or_insert_with(|| cx.focus_handle().tab_stop(true))
+                .clone();
+            let reset_click_id = reset_id.clone();
+            let reset_activate_id = reset_id.clone();
+            let reset = Button::new(reset_id.clone())
+                .track_focus(&reset_focus)
+                .variant(ButtonVariant::Ghost)
+                .height(px(SETTINGS_MODEL_EFFORT_CHIP_HEIGHT))
+                .radius(6.0)
+                .text_size(font::XS)
+                .label(t("settings.subagents.reset"))
+                .tooltip(t("settings.providers.effort_range_tooltip"))
+                .disabled(!enabled)
+                .on_click(cx.listener(move |view, event, _window, cx| {
+                    if view.consume_button_key_click(&reset_click_id, event) {
+                        return;
+                    }
+                    view.dispatch_settings_models_control(&reset_click_id, cx);
+                }))
+                .on_activate(cx.listener(move |view, _event, _window, cx| {
+                    view.note_button_key_activate(&reset_activate_id);
+                    view.dispatch_settings_models_control(&reset_activate_id, cx);
+                    cx.stop_propagation();
+                }));
+            row = row.child(self.settings_element(reset_id).flex_none().child(reset));
+        }
+        row.into_any_element()
     }
 
     /// 弹层 Enable all / Disable all（三路径同源；空目录禁用——Host 全关
@@ -2517,42 +2857,53 @@ impl AppView {
                     );
                     cx.stop_propagation();
                 }));
+            // ADR-063：启用行 + 推理强度行（默认 cycle + 范围 chips +
+            // 来源徽标）。写在途 / 只读时禁用。
+            let effort_row = self.settings_model_effort_row(provider_id, &model, writes && !pending, cx);
             list = list.child(
                 div()
                     .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_2()
+                    .flex_col()
+                    .gap_1()
                     .min_w_0()
-                    .min_h(gpui::rems(3.5))
                     .py_2()
                     .border_t_1()
                     .border_color(dark().border.subtle)
                     .px_1()
                     .child(
                         div()
-                            .id(SharedString::from(format!("model-label-{switch_id}")))
-                            .flex_1()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
                             .min_w_0()
-                            .overflow_x_scroll()
+                            .min_h(gpui::rems(2.0))
                             .child(
                                 div()
-                                    .text_size(font::SM)
-                                    .text_color(dark().text.primary)
-                                    .child(model.display_name.clone()),
+                                    .id(SharedString::from(format!("model-label-{switch_id}")))
+                                    .flex_1()
+                                    .min_w_0()
+                                    .overflow_x_scroll()
+                                    .child(
+                                        div()
+                                            .text_size(font::SM)
+                                            .text_color(dark().text.primary)
+                                            .child(model.display_name.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(font::XS)
+                                            .text_color(dark().text.tertiary)
+                                            .child(model.id.clone()),
+                                    ),
                             )
                             .child(
-                                div()
-                                    .text_size(font::XS)
-                                    .text_color(dark().text.tertiary)
-                                    .child(model.id.clone()),
+                                self.settings_element(switch_id)
+                                    .flex_none()
+                                    .child(row_switch),
                             ),
                     )
-                    .child(
-                        self.settings_element(switch_id)
-                            .flex_none()
-                            .child(row_switch),
-                    ),
+                    .child(effort_row),
             );
         }
         content = content.child(list);

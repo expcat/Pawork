@@ -95,6 +95,10 @@ pub struct PaworkConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subagents: Option<super::subagents::SubagentConfig>,
 
+    /// 模型级推理强度偏好（ADR-063；仅 Builtin/Global 层，其余层整段剥离）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<super::reasoning::ReasoningSettings>,
+
     /// 任意扩展字段，按 key 递归合并。为未在 schema 显式声明的配置保留向后兼容入口。
     ///
     /// 顶层 `api_key` 不得经 extra 绕过「配置不含凭证」红线，反序列化时剥离。
@@ -278,6 +282,9 @@ impl PaworkConfig {
         }
         if other.subagents.is_some() {
             self.subagents = other.subagents.clone();
+        }
+        if other.reasoning.is_some() {
+            self.reasoning = other.reasoning.clone();
         }
         if !other.providers.is_empty() {
             self.providers = other.providers.clone();

@@ -862,6 +862,7 @@ gui_command_dispatch! {
     "mcp_server_remove" => command_mcp_server_remove = handlers::mcp::mcp_server_remove;
     "set_subagent_settings" => command_set_subagent_settings = handlers::subagents::set_settings;
     "subagent_cancel" => command_subagent_cancel = handlers::subagents::cancel;
+    "set_model_reasoning" => command_set_model_reasoning = handlers::settings::set_model_reasoning;
 }
 
 impl GuiHostAdapter {

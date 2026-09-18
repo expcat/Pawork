@@ -877,13 +877,17 @@ impl AppView {
         let subagents = &self.projection.subagent_activity;
         let subagent_bound = subagents.session_id.is_some()
             && self.projection.active_session_id == subagents.session_id;
+        // 单行代理（标题 + 强度 + 状态）；列表限高 5 行溢出滚动，面板高度
+        // 按可见行数计算（ADR-063 浮层改进）。
         let subagent_rows = if subagent_bound {
-            subagents.agents.len().min(4)
+            subagents.agents.len().clamp(1, ACTIVITY_SUBAGENT_VISIBLE_ROWS)
         } else {
-            0
+            1
         };
-        let subagent_extra = (72.0 + subagent_rows as f32 * 32.0) * self.text_scale.rem_pixels()
-            / font::BASE_REM_PIXELS;
+        let subagent_extra =
+            (60.0 + subagent_rows as f32 * ACTIVITY_SUBAGENT_ROW_HEIGHT)
+                * self.text_scale.rem_pixels()
+                / font::BASE_REM_PIXELS;
         let content_height =
             metrics::ACTIVITY_POPOVER_HEIGHT * self.text_scale.rem_pixels() / font::BASE_REM_PIXELS;
         // 字号同时放大 rem 间距；外框还需容纳 MenuPanel 的 padding 与 border。
@@ -1004,39 +1008,59 @@ impl AppView {
                 )
                 .into_any_element();
         }
-        for agent in activity.agents.iter().take(4) {
+        // 运行中 / 等待中置顶（projection 稳定排序）；每代理单行：标题 +
+        // 推理强度（ADR-063，仅 spawn 解析出显式值时显示）+ 状态。
+        let mut list = div()
+            .id("activity-subagent-list")
+            .max_h(px(
+                ACTIVITY_SUBAGENT_VISIBLE_ROWS as f32 * ACTIVITY_SUBAGENT_ROW_HEIGHT,
+            ))
+            .overflow_y_scroll()
+            .track_scroll(&self.activity_subagent_scroll)
+            .flex()
+            .flex_col();
+        for agent in activity.display_agents() {
             let status = subagent_status_label(&agent.status);
-            card = card
+            let mut row = div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .h(px(ACTIVITY_SUBAGENT_ROW_HEIGHT))
                 .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap_2()
-                        .child(
-                            div().flex_1().child(
-                                Label::new(agent.title.clone())
-                                    .size(font::XS)
-                                    .color(dark().text.primary),
-                            ),
-                        )
-                        .child(
-                            Label::new(status)
+                    // flex_row + flex_1 + min_w_0 同层（确定 flex-basis
+                    // 躲过 MinContent 测量趟），truncate div 自身不加
+                    // min_w_0——见 AGENTS.md「flex_col 链路 min_w_0 截断
+                    // 投毒」。
+                    div().flex_row().flex_1().min_w_0().child(
+                        div().truncate().child(
+                            Label::new(agent.title.clone())
                                 .size(font::XS)
-                                .color(dark().text.secondary),
+                                .color(dark().text.primary),
                         ),
-                )
-                .child(
-                    div().flex_row().child(
-                        Label::new(format!("{} · {}", agent.provider_id, agent.model_id))
-                            .size(font::XS)
-                            .color(dark().text.tertiary),
                     ),
                 );
+            if let Some(effort) = &agent.effort {
+                row = row.child(
+                    Label::new(effort.clone())
+                        .size(font::XS)
+                        .color(dark().text.tertiary),
+                );
+            }
+            row = row.child(
+                Label::new(status)
+                    .size(font::XS)
+                    .color(dark().text.secondary),
+            );
+            list = list.child(row);
         }
-        card.into_any_element()
+        card.child(list).into_any_element()
     }
 }
+
+/// 子代理卡：单行高与浮层同时可见行数（超出滚动）。
+const ACTIVITY_SUBAGENT_ROW_HEIGHT: f32 = 20.0;
+const ACTIVITY_SUBAGENT_VISIBLE_ROWS: usize = 5;
 
 /// 子代理状态 → 本地显示名（未知 wire 状态保守显示为破折号）。
 fn subagent_status_label(status: &str) -> &'static str {

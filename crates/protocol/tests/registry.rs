@@ -196,6 +196,15 @@ fn command_samples() -> Vec<(&'static str, Option<Value>)> {
             "subagent_cancel",
             Some(json!({"session_id": "session-1", "agent_id": "agent-1"})),
         ),
+        (
+            "set_model_reasoning",
+            Some(json!({
+                "provider_id": "glm-coding",
+                "model_id": "glm-5.3-flash",
+                "default_effort": "high",
+                "supported_efforts": ["low", "medium", "high"]
+            })),
+        ),
     ]
 }
 
@@ -793,6 +802,16 @@ fn command_registry_covers_every_variant_without_wildcard() {
                 false,
                 true,
                 pawork_protocol::V1_20,
+            ),
+            AppCommand::SetModelReasoning { .. } => assert_command_entry(
+                &command,
+                "set_model_reasoning",
+                true,
+                None,
+                None,
+                false,
+                true,
+                pawork_protocol::V1_21,
             ),
         }
     }

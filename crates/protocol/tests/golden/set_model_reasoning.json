@@ -1,0 +1,1 @@
+{"method":"set_model_reasoning","params":{"provider_id":"glm-coding","model_id":"glm-5.3-flash","default_effort":"high","supported_efforts":["low","medium","high"]}}

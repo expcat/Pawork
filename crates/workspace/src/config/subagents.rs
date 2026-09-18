@@ -56,6 +56,13 @@ pub struct SubagentModelConfig {
     pub allow_as_subagent: bool,
     #[serde(default = "default_subagent_permissions")]
     pub permissions: Vec<String>,
+    /// 子代理运行的默认推理强度（canonical effort 名；ADR-063）。
+    /// None = 回落模型级 `[reasoning]` 默认，再回落 Provider 默认。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_effort: Option<String>,
+    /// 子代理可选推理强度范围（空 = 不限；default_effort 须落在其中）。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_efforts: Vec<String>,
 }
 
 impl Default for SubagentModelConfig {
@@ -66,6 +73,8 @@ impl Default for SubagentModelConfig {
             allow_spawn: true,
             allow_as_subagent: true,
             permissions: default_subagent_permissions(),
+            default_effort: None,
+            allowed_efforts: Vec::new(),
         }
     }
 }

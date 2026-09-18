@@ -1,5 +1,14 @@
 # Settings：模型与供应商
 
+## ADR-063：模型推理强度偏好（2026-09-18）
+
+状态：Accepted。用户要求供应商配置可获取模型支持的推理强度（无法获取则手动设置）、可配置默认强度并在选模型时自动带入；对话补齐强度选项；子代理页只显示启用模型并显示图像识别 / 搜索能力与强度配置；Activity 浮层子代理卡单行化、运行中置顶、限高滚动。授权 GUI 1.21。
+
+- **D1 生效顺序**：RunStart 显式 `effort` > 子代理规则 `default_effort`（须在 `allowed_efforts` 内，空表 = 不限）> Global `[reasoning]` 模型级 `default_effort` > None（Provider 默认）。effort 用 canonical 词汇 none/low/medium/high/x_high/max，wire 与 UI 同名。
+- **D2 配置**：Global-only `[reasoning]` 表 `[[reasoning.models]]` {provider_id, model_id, default_effort?, supported_efforts?}；`[subagents]` 模型规则增 `default_effort?` / `allowed_efforts[]`（空 = 不限）。目录能力来源为 `ModelCapabilities.supported_efforts`（ChatGPT 通道从 `supported_reasoning_levels` 解析归一）。口径：手动声明 > 目录声明；皆无 = 未知不约束，UI 给全量 canonical 六档。
+- **D3 协议**：API 1.21 additive——`ModelList` 条目增 image_input / web_search / catalog_efforts / default_effort / manual_efforts；新增 GUI-only `set_model_reasoning` 全态写（双 None = 删条目，未知 pair 与非法 effort 名 fail-closed）；`RunStart.effort`；`SubagentInfo.effort`；`SubagentModelRule` 增两字段。旧 Host 缺省回落（enabled 缺 true、能力位缺 false、effort 缺 None）。
+- **D4 UI**：子代理配置页只列启用模型，能力徽标（图像 / 搜索）+ 默认强度 cycle + 可选范围 chips；Manage models 弹层每模型附强度行（来源徽标、默认、范围、手动范围时重置）；Composer 页脚强度 chip + 菜单（自动 + 可选级别），选模型自动带入其默认强度；子代理运行取子代理配置，无则取模型默认。Activity 浮层子代理单行（名称 + 强度 + 状态），运行中 / 等待中稳定置顶，列表限高 5 行内滚动。render / 键盘 / AX 三路径 identifier 同源。
+
 ## ADR-061：账号默认名称与重命名（2026-09-13）
 
 状态：Accepted。用户要求账号池不再强制手填名称，默认用登录邮箱或 API key 脱敏串，并可用进度条表示额度消耗；授权 GUI 1.17。实现与验证状态见当次任务报告，用户视觉验收未做。
