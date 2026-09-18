@@ -106,12 +106,12 @@ async fn model_capability_selects_responses_or_chat() {
         config: None,
     });
     provider
-        .stream(search.clone(), &Sink::default(), CancellationToken::new())
+        .stream(&search, &Sink::default(), CancellationToken::new())
         .await
         .unwrap();
     provider
         .stream(
-            request("grok-3"),
+            &request("grok-3"),
             &Sink::default(),
             CancellationToken::new(),
         )
@@ -125,7 +125,7 @@ async fn model_capability_selects_responses_or_chat() {
         .all(|request| !request.headers.contains_key("x-opencode-session")));
     search.model = ModelId::new("grok-3");
     let error = provider
-        .stream(search, &Sink::default(), CancellationToken::new())
+        .stream(&search, &Sink::default(), CancellationToken::new())
         .await
         .unwrap_err();
     assert_eq!(error.kind, pawork_domain::ProviderErrorKind::InvalidRequest);
@@ -163,7 +163,7 @@ async fn grok4_responses_round_trip_streams_events_with_oauth_bearer() {
     let provider = provider(&server);
     let sink = Sink::default();
     let summary = provider
-        .stream(request("grok-4"), &sink, CancellationToken::new())
+        .stream(&request("grok-4"), &sink, CancellationToken::new())
         .await
         .unwrap();
 

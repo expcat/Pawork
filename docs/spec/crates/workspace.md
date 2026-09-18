@@ -21,19 +21,19 @@
 | --- | --- | --- |
 | `src/lib.rs` | ~200 | `Workspace{id,name,roots}` / `WorkspaceService::add/get`（roots `fs::canonicalize` + `dunce::simplified` + 平台感知去重，Windows 大小写不敏感）；`canonicalize_root` 公开同一规范化规则（ADR-044 持久登记前的去重键）；`WorkspaceError` 七个 variant；子模块声明与 re-export |
 | `src/path.rs` | ~250 | `resolve_relative_path(roots, relative) -> ResolvedPath{absolute, root, relative}`；本层拦截空路径 / 绝对路径 / Windows 盘符 / UNC（`\\`、`//`）/ 保留设备名（CON、PRN、AUX、NUL、COM1-9、LPT1-9，含尾随 `.`/空格变体），其余委托 `pawork_policy::resolve_workspace_path`；`WorkspacePathError` 与 `PathSafetyError` 的一一映射 |
-| `src/file_index.rs` | ~1040 | `FileIndex`：`scan_workspace`（`spawn_blocking` 全量扫描 + generation CAS 替换：扫描前采样代次，写回时已变则丢弃，`generation` 递增）、`snapshot` / `search`（子序列模糊匹配）、`apply_changes` 增量、`start_debounced_updates`（有界通道去抖）、`watch_workspace`（`notify` watcher）；`IndexOptions` / `FileKey` / `IndexedFile` / `IndexSnapshot` / `PathChange` / `ChangeKind` / `DebouncedUpdateHandle` / `WorkspaceWatcher` / `FileIndexError` |
+| `src/file_index.rs` | ~1110 | `FileIndex`：`scan_workspace`（`spawn_blocking` 全量扫描 + generation CAS 替换：扫描前采样代次，写回时已变则丢弃，`generation` 递增）、`snapshot` / `search`（子序列模糊匹配）、`apply_changes` 增量、`start_debounced_updates`（有界通道去抖）、`watch_workspace`（`notify` watcher）；`IndexOptions` / `FileKey` / `IndexedFile` / `IndexSnapshot` / `PathChange` / `ChangeKind` / `DebouncedUpdateHandle` / `WorkspaceWatcher` / `FileIndexError` |
 
 **config/（7 文件）**
 
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
 | `src/config/mod.rs` | ~90 | `ConfigTier` 六层枚举与 `priority()`（0..5）、`source_key()`、`as_str()`；模块 re-export（注意 `merge_json` 不在公开面，仅 `merge_ordered` / `ConfigValue` / `Merge`） |
-| `src/config/schema.rs` | ~400 | `PaworkConfig`（`default_provider` / `default_model` / `naming_provider` / `naming_model`（ADR-054 D4 自动命名对，Option、skip_none，分层同 default 对）/ `vision_provider` / `vision_model` / `search_provider` / `search_model`（ADR-055 D5 识图/搜索角色默认对，Option、skip_none，Global 层独占，落地期只保存选择不接路由）/ `web_search`（SEARCH-1：为 Run 开启 Provider 服务端搜索的开关，Option、skip_none，缺省 false；模型未声明 WebSearch 能力时请求 fail-closed）/ `profile` / `trust_workspaces` / `approval_mode` / `workspace_trust` / `proxy_url` / `terminal` / `providers` / `profiles` / `extra`；`is_model_enabled(provider_id, model_id)` 查 denylist，无条目或键缺失即启用）；`TerminalConfig`（ADR-050 D1：`shell`/`columns`/`rows` 均 Option、skip_none，仅 Global 层可写入）；`ProviderConfig`（id / base_url / default / `use_proxy`：供应商级代理开关，Option、skip_none / `disabled_models: Vec<String>`：ADR-055 D1 模型禁用 denylist，serde default + 空 Vec skip，缺省全启用，Global 层独占）/ `ModelConfig` / `ProfileConfig` / `ProfileOverrides` / `SessionOverrides` / `RunOverrides`；**schema 无 `api_key` 字段**，未知键落入 `extra`；`proxy_url` 的回环直连语义由 `pawork-providers` 运行时实现 |
+| `src/config/schema.rs` | ~520 | `PaworkConfig`（`default_provider` / `default_model` / `naming_provider` / `naming_model`（ADR-054 D4 自动命名对，Option、skip_none，分层同 default 对）/ `vision_provider` / `vision_model` / `search_provider` / `search_model`（ADR-055 D5 识图/搜索角色默认对，Option、skip_none，Global 层独占，落地期只保存选择不接路由）/ `web_search`（SEARCH-1：为 Run 开启 Provider 服务端搜索的开关，Option、skip_none，缺省 false；模型未声明 WebSearch 能力时请求 fail-closed）/ `profile` / `trust_workspaces` / `approval_mode` / `workspace_trust` / `proxy_url` / `terminal` / `providers` / `profiles` / `extra`；`is_model_enabled(provider_id, model_id)` 查 denylist，无条目或键缺失即启用）；`TerminalConfig`（ADR-050 D1：`shell`/`columns`/`rows` 均 Option、skip_none，仅 Global 层可写入）；`ProviderConfig`（id / base_url / default / `use_proxy`：供应商级代理开关，Option、skip_none / `disabled_models: Vec<String>`：ADR-055 D1 模型禁用 denylist，serde default + 空 Vec skip，缺省全启用，Global 层独占）/ `ModelConfig` / `ProfileConfig` / `ProfileOverrides` / `SessionOverrides` / `RunOverrides`；**schema 无 `api_key` 字段**，未知键落入 `extra`；`proxy_url` 的回环直连语义由 `pawork-providers` 运行时实现 |
 | `src/config/paths.rs` | ~140 | 平台定位常量与函数：`APP_QUALIFIER/ORGANIZATION/APPLICATION = dev/pawork/pawork`、`config_dir_for_app`（`directories`）、`global_config_path`（workspace 外的标准用户配置）、`workspace_config_path`（`<root>/.pawork/config.toml`）、`locate_workspace_config`（自起点向上找最近）、`default_search_roots` |
 | `src/config/merge.rs` | ~160 | `ConfigValue` 包装与 `Merge` trait；`merge_json`（对象按键递归、标量与数组整体替换）；`merge_ordered`（低→高依序合并） |
 | `src/config/error.rs` | ~70 | `ConfigParseError` / `ConfigError`：TOML 语法、schema 不匹配、IO 错误、写回序列化（`Write`）全部携带文件路径，`path()` 访问器 |
-| `src/config/loader.rs` | ~1150 | `Loader` 构建器与 `resolve()` 全流程：来源装配、`strip_untrusted_layer` 安全剥离（十种 `ConfigWarning`：ADR-053 增 `PermissionsIgnored`（`approval_mode` / `workspace_trust`）；ADR-055 起增 `ProviderDisabledModelsIgnored`（`providers[].disabled_models`）与 `GlobalRoleModelIgnored`（顶层 vision/search 四键，逐键告警），ADR-050 起非 Global 层 `web_search` 剥离 + `WebSearchIgnored` 告警；非 Global 层顶层 `terminal` 整段剥离 + `TerminalIgnored` 告警，防仓库投毒默认 shell）、profile 层派生、`api_key` 双点剥除（单文件解析后 + 终值合并后）、确定性排序；`ConfigSource` / `LoadedSource` / `LoadedSourceSpan`；`ResolvedConfig{config, active_profile, sources, warnings}` |
-| `src/config/writer.rs` | ~560 | 十一个公开入口（`write_approval_mode` / `write_workspace_trust`（ADR-053）/ `write_default_model_pair` / `write_naming_model_pair`（ADR-054，两者自 ADR-055 起为 `write_model_pair` 薄包装）/ `write_model_pair`（ADR-055 D5：通用角色键对写/清）/ `write_provider_disabled_models` / `write_provider_model_preferences`（ADR-055 D1/D3，禁用集与角色清除一次原子提交）/ `write_proxy_url` / `write_provider_use_proxy` / `write_mcp_server_remove` / `write_terminal_settings`）只表达键语义；共用 `rmw_global_config`（锁 + `read_table` + 可选 `atomic_write_table`）。`write_mcp_server_remove` 键缺失时不写盘返回 `Ok(false)`。未知字段保留；不触碰六层合并。 |
+| `src/config/loader.rs` | ~1510 | `Loader` 构建器与 `resolve()` 全流程：来源装配、`strip_untrusted_layer` 安全剥离（十种 `ConfigWarning`：ADR-053 增 `PermissionsIgnored`（`approval_mode` / `workspace_trust`）；ADR-055 起增 `ProviderDisabledModelsIgnored`（`providers[].disabled_models`）与 `GlobalRoleModelIgnored`（顶层 vision/search 四键，逐键告警），ADR-050 起非 Global 层 `web_search` 剥离 + `WebSearchIgnored` 告警；非 Global 层顶层 `terminal` 整段剥离 + `TerminalIgnored` 告警，防仓库投毒默认 shell）、profile 层派生、`api_key` 双点剥除（单文件解析后 + 终值合并后）、确定性排序；`ConfigSource` / `LoadedSource` / `LoadedSourceSpan`；`ResolvedConfig{config, active_profile, sources, warnings}` |
+| `src/config/writer.rs` | ~790 | 十一个公开入口（`write_approval_mode` / `write_workspace_trust`（ADR-053）/ `write_default_model_pair` / `write_naming_model_pair`（ADR-054，两者自 ADR-055 起为 `write_model_pair` 薄包装）/ `write_model_pair`（ADR-055 D5：通用角色键对写/清）/ `write_provider_disabled_models` / `write_provider_model_preferences`（ADR-055 D1/D3，禁用集与角色清除一次原子提交）/ `write_proxy_url` / `write_provider_use_proxy` / `write_mcp_server_remove` / `write_terminal_settings`）只表达键语义；共用 `rmw_global_config`（锁 + `read_table` + 可选 `atomic_write_table`）。`write_mcp_server_remove` 键缺失时不写盘返回 `Ok(false)`。未知字段保留；不触碰六层合并。 |
 
 **resources/（9 文件）**
 
@@ -197,6 +197,8 @@ ADR-053（OPT-1）：schema 新增 `approval_mode: Option<pawork_policy::Approva
    | `PiSettings` | `.pi/settings.json` | Instructions + McpServer | `instructions` 字符串 + `mcpServers`/`mcp` 两键；hooks 记 `hooks_not_imported` |
 8. **file_index 扫描与看护**：全量扫描在 `spawn_blocking` 中用 `ignore::WalkBuilder`（全局 ignore 文件 → workspace ignore 文件 → 内置排除目录）遍历各 root，前 8KB 探测二进制、记录 size / mtime / 语言标签；写回前做 generation CAS——扫描期间代次已变则丢弃本次结果，否则整体替换并 `generation+1`（失败保留旧代）。`notify` 事件经有界 mpsc 通道进入去抖循环，窗口收口后批量 `apply_changes`；watcher 错误与通道丢弃事件计入观测面（`errors` / `errors_truncated` / `dropped_events`）。
 
+强类型 `PaworkConfig::merge_with` 与配置优先级保持一致：高层非空 `naming_provider` / `naming_model` 分别覆盖低层值，缺省字段保留低层值。
+
 ## 5. 契约与不变量
 
 - **config schema 无 `api_key`**：`PaworkConfig` / `ProviderConfig` 无该字段；loader 在单文件解析后与终值合并后两次剥除（含 `providers[].api_key`），`Debug` 输出不含任何 api_key 文本（定向回归断言）。凭据定位归 `pawork-auth`，存取归 OS Keychain（`pawork-secrets`），均不在本包。
@@ -222,13 +224,13 @@ ADR-053（OPT-1）：schema 新增 `approval_mode: Option<pawork_policy::Approva
 
 ## 7. 测试与验证资产
 
-- `tests/loader_file.rs`（约 15 用例，真实文件系统）：
+- `tests/loader_file.rs`（13 用例，真实文件系统）：
   - 六层合并：tier 覆盖顺序、providers 数组整体替换、`discover_from` 三层装配顺序断言。
   - profile 派生：`profile:work` 来源插在 Global 与 Workspace 之间，`active_profile` 记录。
   - Session / Run 一等 API：`with_session` / `with_run` 逐层覆盖 Profile。
   - **安全红线**：`api_key` 剥离且 `Debug` 全文无泄漏；workspace 层 `proxy_url` / `providers[].base_url` / `providers[].use_proxy` / `providers[].disabled_models` / vision/search 角色四键 / `mcp trusted+auto_start` / `trust_workspaces` 全部剥离并告警、provenance 中该层值已净化。
   - 错误与定位：解析 / schema 错误带路径、`locate_workspace_config` 就近查找、缺失文件不致命、加入顺序无关的确定性、macOS 配置目录快照（`dev/pawork/pawork`）。
-- `tests/smoke.rs`（约 14 用例，基于 `fixtures/` 五源夹具）：
+- `tests/smoke.rs`（15 用例，基于 `fixtures/` 五源夹具）：
   - 五来源六类别全部产出 Imported 条目；导入 hook `enabled=false` + `requires_review` 断言。
   - **明文 Secret 零泄漏**：计划序列化全文断言不含夹具中的假 token；`${VAR}`→`SecretRef`、字面量→`PendingCredential` 占位。
   - 冲突裁决：同 tier 按 source rank（Codex 胜 Claude）、跨 tier 按 priority（workspace 胜 global），败者带 `conflict_loser`；胜者仍 `requires_review`。

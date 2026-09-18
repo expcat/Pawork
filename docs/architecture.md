@@ -33,12 +33,12 @@ Workspace 为 **24 成员（22 库 + 2 应用）**：22 个库平铺 `crates/<�
 | `pawork-tools` | `crates/tools` | → domain、exec、policy、workspace、auth、computer-use | 八个文件/命令工具 + computer + scheduler + `mcp/`（rmcp 隔离断言为模块级测试） |
 | `pawork-workspace` | `crates/workspace` | → domain、policy | `service/`+`path/`+`file_index/`、`resources/`、`config/`（六层矩阵）、`import/`（五来源导入 + session_scan） |
 | `pawork-storage` | `crates/storage` | → domain | `sqlite/`（Actor+migration 框架）、`session/`（DDL/迁移/export）、`blob/`（artifact + 共用 `atomic_write_bytes` + PWB1/checkpoint/protected）；`default = ["session","blob"]`，compaction/checkpoint/protected opt-in |
-| `pawork-providers` | `crates/providers` | → domain | `net/`（http/sse/retry）+ `registry/`/`pricing/`/`usage/`/`negotiate/`/`reasoning/` + `channels/`（六通道，feature 门控；通道登记单点 `channels/registry.rs` `CHANNEL_REGISTRY`，app 侧为 facade）；core 不依赖 net 为模块纪律 + 源扫描测试 |
+| `pawork-providers` | `crates/providers` | → domain | `net/`（http/sse/retry）+ `registry/`/`pricing/`/`usage/`/`negotiate/`/`reasoning/` + `channels/`（八通道，feature 门控；通道登记单点 `channels/registry.rs` `CHANNEL_REGISTRY`，app 侧为 facade）；core 不依赖 net 为模块纪律 + 源扫描测试 |
 | `pawork-auth` | `crates/auth` | → domain | Secret 后端/OAuth/脱敏/解析链 + `locator` 单一事实源（Secret 审计边界） |
 | `pawork-git` | `crates/git` | → domain、exec | Diff/Status/GitService/GitRunner/HunkStage/worktree；单一 `FileStatus` |
 | `pawork-engine` | `crates/engine` | → domain（唯一 pawork-* 生产依赖，`tests/domain_only.rs` 断言护航） | tool_loop/session_turn/context/cancel/appender |
 | `pawork-workflow` | `crates/workflow` | → domain | plan/task 纯 reducer |
-| `pawork-orchestration` | `crates/orchestration` | → domain、control-plane（default-features = false）、git(opt) | supervisor/budget/lifecycle/merge/task_graph/worktree/identity；不依赖 workflow（装配在 app） |
+| `pawork-orchestration` | `crates/orchestration` | → domain、policy（路径内核）、control-plane（default-features = false）、git(opt) | supervisor/budget/lifecycle/merge/task_graph/worktree/identity；不依赖 workflow（装配在 app） |
 | `pawork-control-plane` | `crates/control-plane` | → domain（rusqlite optional，自开连接） | 控制面 core + `quota/` + `credential/`（lease/pool）；租户裁决 `TenantPolicyDecision`（与 policy 的 `PolicyDecision` 不同名）；usage `dedup_key`/audit JSONL golden |
 | `pawork-transport` | `crates/transport` | 无内部依赖（帧长度常量与 protocol 对齐，但不依赖该 crate） | local（UDS/named pipe）+ memory |
 | `pawork-app` | `crates/app` | 领域宿主依赖 + transport | 装配宿主 + `gui_server/`（GuiServer/ConnectionManager/GuiHost trait）+ `gui_host/`（分发表） |
@@ -64,7 +64,7 @@ Workspace 为 **24 成员（22 库 + 2 应用）**：22 个库平铺 `crates/<�
 
 ### 3.1 终局包布局先行
 
-- 现行布局为 §2 的 23 成员；browser 从首版即按用户要求独立。其它新能力 = 已有包内新模块；**禁止**「先写在 bin 里、以后再抽包」。
+- 现行布局为 §2 的 24 成员；browser 从首版即按用户要求独立。其它新能力 = 已有包内新模块；**禁止**「先写在 bin 里、以后再抽包」。
 - 包间依赖方向遵守 §2 表与不合并清单；canonical 纯净红线不变。
 
 ### 3.2 冻结契约（激活即采用完整形状；golden 先于实现改动）

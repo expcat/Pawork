@@ -100,7 +100,7 @@ impl UsageAccumulator {
 pub struct BudgetReport {
     /// 达到软阈值（≥ `soft_ratio × limit`）的维度。
     pub soft_warnings: BTreeSet<String>,
-    /// 超过硬上限（> limit）的维度。
+    /// 超过硬上限（>= limit）的维度。
     pub hard_exceeded: BTreeSet<String>,
 }
 
@@ -230,7 +230,7 @@ impl WorkerBudgetController {
         &self.limits
     }
 
-    /// 对照上限出报告：软告警（`used >= ratio × limit`）与硬超限（`used > limit`）。
+    /// 对照上限出报告：软告警（`used >= ratio × limit`）与硬超限（`used >= limit`）。
     pub fn check(&self) -> BudgetReport {
         let mut report = BudgetReport::default();
         let input = self.usage.input_tokens();
@@ -409,7 +409,8 @@ pub struct LedgerContext {
     pub model_id: ModelId,
 }
 
-fn now_ms() -> u64 {
+/// 当前 Unix 毫秒时间戳（事件时间用；包内 supervisor 侧复用同一实现）。
+pub(crate) fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis() as u64)

@@ -1,6 +1,6 @@
 # pawork-domain Review
 
-> 依赖图根部的 canonical 纯净领域包：定义全部实体 ID、Agent 事件信封（32 变体）、消息/内容模型、Provider 与 Tool 契约面、Agent Profile、降级事件、协作取消、client session 注册表词汇与 Phase 16 workflow 事件。18 个 .rs 文件（src 16 + tests 2），共 5 249 行（src 4 644 / tests 605），16 个模块自 lib.rs 扁平 re-export。
+> 依赖图根部的 canonical 纯净领域包：定义全部实体 ID、Agent 事件信封（32 变体）、消息/内容模型、Provider 与 Tool 契约面、Agent Profile、降级事件、协作取消、client session 注册表词汇与 Phase 16 workflow 事件。18 个 .rs 文件（src 16 + tests 2），共 5 264 行（src 4 652 / tests 612），16 个模块自 lib.rs 扁平 re-export。
 
 ## 1. 职责与边界
 
@@ -36,7 +36,7 @@ feature：`typegen`（引入 ts-rs）、`plugin = []`（空 feature，F41 归档
 | src/cancel.rs | 164 | `CancellationToken` / `CancellationFuture` 协作式取消 |
 | src/message.rs | 305 | 消息与内容模型：Message/ContentPart/TokenUsage/Cost/StopReason 等 |
 | src/events.rs | 508 | 持久化事件信封 `AgentEventEnvelope` 与 `AgentEvent` 32 变体 |
-| src/provider_api.rs | 938 | Provider 契约面：CanonicalModelRequest、ProviderStreamEvent 13 变体、ModelProvider trait、能力解析 |
+| src/provider_api.rs | 946 | Provider 契约面：CanonicalModelRequest（含 ADR-057 可选 session_id）、ProviderStreamEvent 13 变体、ModelProvider trait、能力解析 |
 | src/provider_hints.rs | 174 | `provider_hints.*` 保留键规则与 legacy 键映射 |
 | src/reasoning.rs | 90 | `ReasoningEffort` 6 档与 `ReasoningItem`（ProtectedBlobRef + 元数据地图） |
 | src/server_tool.rs | 399 | 服务端工具词汇：ServerToolEvent 11 变体、Citation/Source/Transcript |
@@ -46,7 +46,7 @@ feature：`typegen`（引入 ts-rs）、`plugin = []`（空 feature，F41 归档
 | src/degrade.rs | 262 | DegradeEvent 与 `degrade.<suffix>` 冻结编码、默认投递路由 |
 | src/client_session.rs | 155 | client adapter session 注册表词汇：状态机、CAS 写入结果、Store trait |
 | src/workflow.rs | 535 | Phase 16 workflow 事件：Plan/Goal/Task/Automation/Monitor/Memory/Review |
-| tests/contract_golden.rs | 250 | Provider 契约 wire golden（请求/流事件/错误/工具结果） |
+| tests/contract_golden.rs | 257 | Provider 契约 wire golden（请求/流事件/错误/工具结果） |
 | tests/events_golden.rs | 355 | AgentEventEnvelope 32 变体与 parent 链 golden |
 | tests/fixtures/*.json(l) | — | 6 个 golden fixture（见 §6） |
 
@@ -117,7 +117,7 @@ feature：`typegen`（引入 ts-rs）、`plugin = []`（空 feature，F41 归档
 
 | 名称 | 种类 | 字段/功能 |
 |---|---|---|
-| `CanonicalModelRequest` | struct | `request_id, model, messages, tools: Vec<ToolDefinition>, hosted_tools: Vec<HostedToolRequest>, extensions: Vec<ExtensionToolRequest>, tool_choice, thinking: Option<ThinkingConfig>, reasoning: Option<ReasoningConfig>, temperature, max_output_tokens, stop_sequences, response_format, prompt_cache, budget: RequestBudget, provider_options: BTreeMap<String,Value>, trace_id`。三类工具分列是刻意设计：client 本地 / provider hosted / provider extension 各走各的通道；`provider_options` 是开放 map，adapters 合并非保留键，但 canonical/认证键及会破坏 wire 不变量的字段必须忽略 |
+| `CanonicalModelRequest` | struct | `request_id, session_id: Option<SessionId>, model, messages, tools: Vec<ToolDefinition>, hosted_tools: Vec<HostedToolRequest>, extensions: Vec<ExtensionToolRequest>, tool_choice, thinking: Option<ThinkingConfig>, reasoning: Option<ReasoningConfig>, temperature, max_output_tokens, stop_sequences, response_format, prompt_cache, budget: RequestBudget, provider_options: BTreeMap<String,Value>, trace_id`。三类工具分列是刻意设计：client 本地 / provider hosted / provider extension 各走各的通道；`provider_options` 是开放 map，adapters 合并非保留键，但 canonical/认证键及会破坏 wire 不变量的字段必须忽略。ADR-057：`session_id` 为当前真实会话的稳定身份（serde 缺省 None、None 不上 JSON），与 request_id / trace_id 分离，由真实会话入口填充，contract_golden 同时覆盖完整请求与旧 JSON 缺省解码 |
 | `ToolDefinition` | struct | client 本地工具的 canonical 描述（名称/schema 等），由 ToolDescriptor 投影而来 |
 | `HostedToolRequest` | struct | provider 侧 hosted 工具（如 web_search）请求形态 |
 | `ExtensionToolRequest` | struct | provider extension 工具请求形态 |
@@ -305,7 +305,7 @@ feature：`typegen`（引入 ts-rs）、`plugin = []`（空 feature，F41 归档
 
 | 文件 | 验证点 |
 |---|---|
-| tests/contract_golden.rs（250 行） | Provider 契约 wire golden：CanonicalModelRequest 全字段序列化、ProviderStreamEvent 13 变体逐一编码、ProviderError 全量形态、ToolResult 配对形状 |
+| tests/contract_golden.rs（257 行） | Provider 契约 wire golden：CanonicalModelRequest 全字段序列化（含 session_id 与旧 JSON 缺省解码）、ProviderStreamEvent 13 变体逐一编码、ProviderError 全量形态、ToolResult 配对形状 |
 | tests/events_golden.rs（355 行） | AgentEventEnvelope 32 变体逐一 golden、parent_event_id 链、schema_version=1、validate_after 严格 +1 拒绝 |
 | fixtures/canonical_model_request_full.json | 请求全字段快照 |
 | fixtures/provider_stream_event_13.jsonl | 13 个流事件逐行 |

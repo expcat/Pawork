@@ -1,12 +1,12 @@
 # pawork-workflow Review
 
-> Plan Mode 与后台任务的纯 reducer 层：`plan` 模块提供单 Plan 聚合的步骤状态机、版本修订链、评审/审批 gate 与事件溯源折叠；`task` 模块提供 process/agent/monitor/automation 四类后台任务的注册、状态机、取消传播与 broadcast。两者都只消费 `pawork-domain` 的 canonical 事件，自身零 IO、零持久化。12 个 .rs 文件、共 2 618 行（src 10 文件 1 493 行 + tests 2 文件 1 125 行）；生产依赖仅 `pawork-domain`。
+> Plan Mode 与后台任务的纯 reducer 层：`plan` 模块提供单 Plan 聚合的步骤状态机、版本修订链、评审/审批 gate 与事件溯源折叠；`task` 模块提供 process/agent/monitor/automation 四类后台任务的注册、状态机、取消传播与 broadcast。两者都只消费 `pawork-domain` 的 canonical 事件，自身零 IO、零持久化（rg 核实 plan/ 与 task/state.rs 无 std::fs/std::process/tokio::spawn/async fn/reqwest）。12 个 .rs 文件、共 2,618 行（src 10 文件 1,493 行 + tests 2 文件 1,125 行，28 个测试）；生产依赖仅 `pawork-domain`。
 
 ## 1. 职责与边界
 
 - **plan（P16-1/P16-2 Plan Mode）**：进程内内存的单 Plan 聚合——有序步骤状态机（`Pending → InProgress → Completed | Blocked`，`Blocked → InProgress`）、版本整体替换与修订链、评审状态机（`Draft → InReview → ChangesRequested → Approved | Rejected`）、行锚点评审意见、审批 checkpoint 与执行 gate（`is_approved_for_execution`）。
 - **task（P16-4 Background Task Manager）**：四类长生命周期任务统一抽象（共用 `BackgroundTaskId`、状态机与事件流句柄）；状态机 `Queued → Running → Suspended → Completed | Failed | Canceled`，全部转移发 canonical `TaskEvent`；按 `parent_task_id` 链取消传播（无孤儿）；任务表 + 事件日志常驻进程内，`snapshot()`/`replay()`/`events_since` 支撑断连续存。
-- **不做什么**：canonical 事件（`PlanEvent`/`TaskEvent`）定义在 `pawork-domain`，本包只消费不重定义；不做持久化——命令方法返回事件，由宿主封装为 `AgentEvent::Plan/Task` 写 session-store；`PlanService` 无 spawn/exec/write/文件/网络 API（有源码扫描守护测试）；`TaskManager` 是纯状态机，不拉 `pawork-exec`，取消令牌与实际执行体的绑定由宿主完成，OS 级挂起与进程树清理由 adapter 落地。
+- **不做什么**：canonical 事件（`PlanEvent`/`TaskEvent`）定义在 `pawork-domain`，本包只消费不重定义；不做持久化——命令方法返回事件，由宿主封装为 `AgentEvent::Plan/Task` 写 session-store；`PlanService` 无 spawn/exec/write/文件/网络 API（有源码扫描守护测试）；`TaskManager` 是纯状态机，不拉 `pawork-exec`，取消令牌与实际执行体的绑定由宿主完成，OS 级挂起与进程树清理由 adapter 落地。`TaskManager` 全部方法为同步 fn（broadcast::Sender::send 本身同步），无任何 async 泄漏。
 - **聚合粒度**：一个 `PlanService` 实例只承载一个 Plan（二次 `create_plan` 报 `AlreadyExists`），多 Plan 场景开多实例；`TaskManager` 经 `Arc` 共享内部状态，`Clone` 即分发同一实例的句柄。
 
 ## 2. 依赖关系
@@ -17,16 +17,16 @@
 | --- | --- |
 | `pawork-domain` | `PlanEvent`/`PlanStepSnapshot`/`PlanStepStatus`/`PlanReviewStatus`/`PlanCommentAnchor`/`PlanId`/`PlanStepId`/`PlanVersionId`/`CheckpointId`；`TaskEvent`/`TaskKind`/`TaskStatus`/`BackgroundTaskId`/`CancellationToken`；`AgentEvent`（事件广播封装） |
 
-**被哪些包依赖**：仅 `pawork-app`（宿主：调用命令面并把返回事件封装落盘）；`pawork-orchestration` 与本包无依赖边（其 Spec 明确禁止依赖 workflow）。
+**被哪些包依赖**：仅 `pawork-app`（宿主：调用命令面并把返回事件封装落盘）；`pawork-orchestration` 与本包无依赖边（其 Cargo.toml 无 workflow，Spec 明确禁止依赖）。
 
-**关键外部 crate**：`serde`（`PlanComment`/`PlanSnapshot`/`PlanVersionInfo`/`TaskSnapshot`/`TaskManagerSnapshot` 序列化）、`thiserror`（两类错误）、`tokio`（`sync::broadcast`；features 声明 `rt`+`sync`，生产代码实际只用 broadcast）。dev：`async-trait`、`serde_json`、`tokio`(macros/rt-multi-thread/time)。
+**关键外部 crate**：`serde`（`PlanComment`/`PlanSnapshot`/`PlanVersionInfo`/`TaskSnapshot`/`TaskManagerSnapshot` 序列化）、`thiserror`（两类错误）、`tokio`（`sync::broadcast`；features 声明 `rt`+`sync`，生产代码实际只用 broadcast 的同步 send）。dev：`async-trait`、`serde_json`、`tokio`(macros/rt-multi-thread/time)。
 
 **features**：`default = []`，无具名 feature 门。
 
 ## 3. 文件清单
 
 | 路径 | 行数 | 职责 |
-| --- | --- | --- |
+| --- | --- |
 | src/lib.rs | 9 | 声明 `plan`/`task` 两模块；说明 canonical 事件在 domain |
 | src/plan/mod.rs | 34 | Plan 模块文档（只读红线、event-sourcing 设计）与具名 re-export |
 | src/plan/error.rs | 58 | `PlanError` 14 变体 |
@@ -65,7 +65,7 @@ lib.rs 仅 `pub mod plan; pub mod task;`，无 glob re-export。两个 mod.rs �
 | `EmptyReason` | reject 理由为空白 |
 | `EmptyComment` | 评论正文为空白 |
 
-Spec 差异：[docs/spec/crates/workflow.md](../../spec/crates/workflow.md) 称「13 变体」，源码实为 14，以源码为准。
+Spec 差异：[docs/spec/crates/workflow.md](../../spec/crates/workflow.md) §2 写「13 变体」，源码实为 14，以源码为准。
 
 ### 4.3 plan::state.rs — 聚合与纯折叠
 
@@ -143,7 +143,7 @@ Spec 差异：[docs/spec/crates/workflow.md](../../spec/crates/workflow.md) 称�
 | `insert_queued` | pub(crate) fn | 注册 Queued（父任务必须存在），**不发事件**——持久化前瞬态 |
 | `remove_queued` | pub(crate) fn | 仅 Queued 可移除（spawn 失败清理 / 取消 queued） |
 | `status` / `cancel_token` | pub(crate) fn | 命令辅助读取 |
-| `subtree(root)` | pub(crate) fn | 按 parent_task_id 建邻接表后 BFS 收集 root 及全部后代（含 root） |
+| `subtree(root)` | pub(crate) fn | 按 parent_task_id 建邻接表后**栈式遍历**（Vec::pop + extend，深度优先序）收集 root 及全部后代（含 root）；每次调用重建邻接表。Spec §4.2 写 BFS，与实现不符（集合等价，仅顺序不同） |
 | `allocate_task_id` | 私有 fn | `task_N` 循环避让已占用 id |
 | `note_allocated_id` | 私有 fn | 从事件 id 尾号推进 allocator（重放后新 id 不回退、不碰撞） |
 
@@ -166,7 +166,7 @@ Spec 差异：[docs/spec/crates/workflow.md](../../spec/crates/workflow.md) 称�
 | `task/tasks/snapshot/event_log/events_since` | 查询面透传 state |
 | `replay(events)` | 逐事件 apply 重建状态与日志，**不重复广播**；返回折叠计数 |
 
-`cancel` 语义（改动时注意顺序）：锁内 `subtree` 收集 → 逐个处理（Queued 静默移除不发事件；Running|Suspended 逐个 `apply(Finished{Canceled})`，root detail 为 "canceled by user"、后代为 "canceled via parent task"，同时收集取消令牌；终态跳过）→ 释放锁 → 先触发全部令牌 → 再逐个 broadcast。先落状态、后触发令牌、最后广播，保证订阅者看到的事件与状态一致且无孤儿。
+`cancel` 语义（改动时注意顺序）：锁内 `subtree` 收集 → 逐个处理（Queued 静默移除不发事件；Running|Suspended 逐个 `apply(Finished{Canceled})`，root detail 为 "canceled by user"、后代为 "canceled via parent task"，同时收集取消令牌；终态跳过）→ 释放锁 → 先触发全部令牌 → 再逐个 broadcast。先落状态、后触发令牌、最后广播，保证订阅者看到的事件与状态一致且无孤儿。注意：锁内逐任务 `apply` 失败（`?`）会中途返回，已处理任务的令牌不再触发——实际前置状态检查保证此路径不可达（subtree 内状态刚读过）。
 
 私有实现：`transition`（apply 成功后锁外 broadcast 单事件）、`broadcast`（`let _ = live.send(event)`——无订阅者/溢出均忽略，best-effort）、`lock`（毒锁 `into_inner`）。
 
@@ -175,13 +175,14 @@ Spec 差异：[docs/spec/crates/workflow.md](../../spec/crates/workflow.md) 称�
 - **三条冻结状态机**（改任何一条都会破坏已持久化事件的可重放性）：步骤 `Pending→InProgress→Completed|Blocked`、`Blocked→InProgress`；评审 `Draft→InReview→ChangesRequested`（revise 回 Draft 循环）→ `Approved|Rejected`；任务 `Queued→Running→Suspended⇄Running→Completed|Failed|Canceled`。
 - **两种 apply 容错策略**：`plan::apply` 不可失败（事件即事实，未知 step 防御性忽略）；`task::apply` 可失败（校验前置态并返回 `TaskManagerError`）。重放中混入非法 TaskEvent 会让整段重放报错——持久化侧必须只写入命令面产出的事件。
 - **Queued 瞬态契约**：注册不发事件、取消 Queued 静默移除；重放以 `Started` 为任务创建点，未 start 过的任务重放后不存在。
-- **只读红线（plan）**：三个守护测试钉住——`source_has_no_io_or_spawn_api` 用 `include_str!` 扫 plan/ 五个源文件，断言不含 `std::process`/`std::fs`/`tokio::spawn`/`reqwest` 等 13 个禁用 token（只扫 plan/，不扫 task/）；`plan_with_write_action_descriptions_is_inert` 钉住危险步骤文本原样保留不执行；`review_surface_adds_no_write_or_exec_api` 钉住 service 方法面无 write/exec/spawn/run/apply 等前缀 API。
+- **只读红线（plan）**：三个守护测试钉住——`source_has_no_io_or_spawn_api` 用 `include_str!` 扫 plan/ 源文件，断言不含 `std::process`/`std::fs`/`tokio::spawn`/`reqwest` 等禁用 token（只扫 plan/，不扫 task/）；`plan_with_write_action_descriptions_is_inert` 钉住危险步骤文本原样保留不执行；`review_surface_adds_no_write_or_exec_api` 钉住 service 方法面无 write/exec/spawn/run/apply 等前缀 API。
 - **ID 分配与重放防碰撞**：`plan_N`/`planver_N`/`step_N`/`task_N`；Plan 侧 from_events 后计数器 = 历史 max+1；Task 侧每次 apply 都 `note_allocated_id` 推进 allocator。手工构造、不带 `task_` 前缀尾号的事件不推进 allocator，可能碰撞——id 应以命令面产出为准。
-- **取消传播无孤儿**：cancel 沿 parent 链 BFS 全后代；Queued 移除、活动态发 Canceled、终态跳过；顺序为先状态、后令牌、再广播。
+- **取消传播无孤儿**：cancel 沿 parent 链收集全后代（栈式遍历，深度优先序；Spec 写 BFS，集合等价仅顺序不同）；Queued 移除、活动态发 Canceled、终态跳过；顺序为先状态、后令牌、再广播。
 - **广播 best-effort，事实源是事件日志**：`send` 失败（无接收者 / 慢消费者 Lagged）静默忽略；客户端恢复路径固定为 snapshot + events_since。
 - **版本链不变量**：revise 要求 parent == 当前版本、新版本 ≠ parent、不与 history 重复；`Created`/`Replaced` 后 review 复位 Draft、comments 与 checkpoint 清空；`Revised` 只复位 review 与 checkpoint，**不清空 comments**。
 - **审批 gate 只读判定**：`is_approved_for_execution` 要求 plan_id + version 双匹配且 Approved；approve 可关联 CheckpointId 作回滚点，但不授予任何写/执行能力。
 - **锁策略**：两处 Mutex 均毒锁 `into_inner`（panic 后继续用内部数据）；`TaskManager` 的锁只在状态转移期间持有，广播与令牌触发都在锁外，慢订阅者不阻塞命令面。
+- **纯度结论（本次核查）**：plan/ 与 task/ 生产代码无 IO、无进程、无网络、无 async fn；`TaskManager` 的 tokio 依赖仅 `broadcast::Sender`（同步 send）；Cargo.toml 的 `rt` feature 实际未用（可收窄为 `sync`，属可选清理）。
 - **已知局限/差异**：`TaskSnapshot.output_seq`/`output_bytes` 恒 0，且 doc 注释提到的 `output_since` 续读 API 当前不存在；Cargo.toml description 仍写「plan/goal/task/automation/monitor 五合一 reducer」，实际仅 plan/task 两模块（Goal/Automation/Monitor 已随 V2 归档，tag v2-final）；Spec 称 `PlanError` 13 变体，源码为 14。
 
 ## 6. 测试资产
@@ -220,6 +221,8 @@ Spec 差异：[docs/spec/crates/workflow.md](../../spec/crates/workflow.md) 称�
 | `events_since_returns_increment` | 增量续读 |
 | `replay_advances_id_allocator` | 重放推进 id 分配器（新 id 不碰撞） |
 
+默认验证命令：`cargo test -p pawork-workflow --offline --lib --tests`。
+
 ## 7. 协作关系
 
 ```mermaid
@@ -231,5 +234,4 @@ graph LR
     wf -. 取消令牌由宿主绑定执行体 .-> exec[pawork-exec / adapter]
 ```
 
-`pawork-orchestration` 与本包无依赖边（其边界明确禁止依赖 workflow）；GUI 侧也不直接触碰本包，Plan/Task 视图经宿主投影。
-
+`pawork-orchestration` 与本包无依赖边（其边界明确禁止依赖 workflow，Cargo.toml 核实）；GUI 侧也不直接触碰本包，Plan/Task 视图经宿主投影。

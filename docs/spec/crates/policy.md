@@ -18,7 +18,7 @@
 | `src/mode.rs` | ~63（含测试） | `ApprovalMode` 枚举与 serde 形状（snake_case；`NeverAsk` 带 `alias="on_failure"` 只进不出）；默认 `ReadOnly`。 |
 | `src/engine.rs` | ~550（逻辑 ~215 + 测试） | `PolicyEngine` / `PolicyInput` 与 `decide` 决策树；命令提取 `extract_command`（argv 优先）；进程默认约束常量（timeout 60_000ms、输出 1 MiB）。 |
 | `src/path.rs` | ~510（逻辑 ~260 + 测试） | `resolve_workspace_path` / `ResolvedPath` / `PathSafetyError`；辅助 `canonicalize_platform`（dunce）、`path_within_root`、`relative_to_root`（Windows 大小写不敏感逐组件比较）；`canonicalize_deepest_existing` 支持尚不存在的嵌套新路径。 |
-| `src/shell.rs` | ~1265（逻辑 ~840 + 测试） | 手写 Lexer（`Word`/`Tok`/`Cmd`）、`parse_commands`（语句→管道→命令）、升档分类 `classify_snippet`、灾难地板 `script_floor`、固定词表、`extract_shell_script`（`sh -c` / `cmd /c` / `powershell -Command` / POSIX 含 `c` 短选项簇）。 |
+| `src/shell.rs` | ~1.3k（逻辑 ~840 + 测试） | 手写 Lexer（`Word`/`Tok`/`Cmd`）、`parse_commands`（语句→管道→命令）、升档分类 `classify_snippet`、灾难地板 `script_floor`、固定词表、`extract_shell_script`（`sh -c` / `cmd /c` / `powershell -Command` / POSIX 含 `c` 短选项簇）。 |
 
 无 `tests/` 目录与 fixtures；全部回归内联在各文件 `#[cfg(test)]`。
 
@@ -127,7 +127,7 @@
 
 ## 6. 依赖关系
 
-- **依赖**：`pawork-domain`（仅 `ToolCapability`）；外部 `serde` / `serde_json` / `thiserror` / `dunce` / `regex`（regex 在 Cargo.toml 声明但当前源码未直接使用）。无 cargo feature，无平台差异依赖。dev 依赖 `tempfile`。
+- **依赖**：`pawork-domain`（仅 `ToolCapability`）；外部 `serde` / `serde_json` / `thiserror` / `dunce`。无 cargo feature，无平台差异依赖。dev 依赖 `tempfile`。
 - **被依赖**：`pawork-tools`（common 路径解析 + scheduler 闸门）、`pawork-workspace`、`pawork-app`、`pawork-exec`（ADR-052：sandbox / bwrap 复用 `canonicalize_platform` / `path_within_root`）。
 
 ## 7. 测试与验证资产

@@ -85,7 +85,18 @@ impl AgentTool for EditFileTool {
         _sink: &dyn ToolEventSink,
         _cancel: CancellationToken,
     ) -> Result<ToolResult, ToolError> {
-        match edit(&self.workspaces, &context.workspace_id, &request.input) {
+        let service = self.workspaces.clone();
+        let workspace_id = context.workspace_id;
+        let input = request.input;
+        let result = tokio::task::spawn_blocking(move || edit(&service, &workspace_id, &input))
+            .await
+            .map_err(|error| ToolError {
+                kind: pawork_domain::ToolErrorKind::Internal,
+                message: format!("edit_file worker failed: {error}"),
+                retryable: false,
+                retry_after_ms: None,
+            })?;
+        match result {
             Ok(result) => Ok(result),
             Err(error) => Err(BuiltinToolError::from(error).into()),
         }
@@ -135,7 +146,7 @@ fn edit(
     input: &Value,
 ) -> Result<ToolResult, EditFileError> {
     let path = require_str(input, "path")?;
-    let allow_fuzzy = opt_bool(input, "allow_fuzzy").unwrap_or(false);
+    let allow_fuzzy = opt_bool(input, "allow_fuzzy")?.unwrap_or(false);
 
     let mut segments: Vec<(String, String)> = Vec::new();
     if let Some(arr) = input.get("edits").and_then(|v| v.as_array()) {

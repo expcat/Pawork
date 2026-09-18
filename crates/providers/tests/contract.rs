@@ -194,7 +194,7 @@ async fn contract_parallel_tool_calls() {
     let p = provider(&server, None);
     let sink = RecordingProviderSink::default();
     p.stream(
-        request("gpt-4o"),
+        &request("gpt-4o"),
         &sink,
         pawork_domain::CancellationToken::new(),
     )
@@ -216,7 +216,7 @@ async fn contract_chat_facets_default_coverage() {
     let sink = RecordingProviderSink::default();
     let summary = p
         .stream(
-            request("gpt-4o"),
+            &request("gpt-4o"),
             &sink,
             pawork_domain::CancellationToken::new(),
         )
@@ -230,7 +230,7 @@ async fn contract_chat_facets_default_coverage() {
     mount_chat_ok(&server, common::chat_usage_stop_body()).await;
     let usage_sink = RecordingProviderSink::default();
     p.stream(
-        request("gpt-4o"),
+        &request("gpt-4o"),
         &usage_sink,
         pawork_domain::CancellationToken::new(),
     )
@@ -243,7 +243,7 @@ async fn contract_chat_facets_default_coverage() {
     mount_chat_ok(&server, common::chat_tool_call_body()).await;
     let tool_sink = RecordingProviderSink::default();
     p.stream(
-        request("gpt-4o"),
+        &request("gpt-4o"),
         &tool_sink,
         pawork_domain::CancellationToken::new(),
     )
@@ -269,7 +269,7 @@ async fn contract_cancel_mid_stream() {
         cancel: cancel.clone(),
     };
     let err = p
-        .stream(request("gpt-4o"), &sink, cancel)
+        .stream(&request("gpt-4o"), &sink, cancel)
         .await
         .expect_err("收到首个 delta 后取消应失败");
     contract::assert_error_kind(
@@ -293,7 +293,7 @@ async fn contract_pre_cancel_does_not_send_request() {
     cancel.cancel();
     let sink = RecordingProviderSink::default();
     let err = p
-        .stream(request("gpt-4o"), &sink, cancel)
+        .stream(&request("gpt-4o"), &sink, cancel)
         .await
         .expect_err("预取消应在发送前失败");
     contract::assert_error_kind(&sink.events(), Some(&err), ProviderErrorKind::Cancelled);
@@ -323,7 +323,7 @@ async fn contract_timeout_is_normalized() {
     let p = provider(&server, Some(Duration::from_millis(50)));
     let sink = RecordingProviderSink::default();
     let err = p
-        .stream(request("gpt-4o"), &sink, CancellationToken::new())
+        .stream(&request("gpt-4o"), &sink, CancellationToken::new())
         .await
         .expect_err("连续无响应应超时");
     contract::assert_error_kind(&sink.events(), Some(&err), ProviderErrorKind::Timeout);
@@ -337,7 +337,7 @@ async fn contract_long_stream_resets_read_timeout_after_each_chunk() {
     let sink = RecordingProviderSink::default();
 
     let summary = p
-        .stream(request("gpt-4o"), &sink, CancellationToken::new())
+        .stream(&request("gpt-4o"), &sink, CancellationToken::new())
         .await
         .expect("总时长超过 read timeout、但每个 chunk 都及时到达时应成功");
     server
@@ -366,7 +366,7 @@ async fn contract_rate_limit_is_normalized() {
     let sink = RecordingProviderSink::default();
     let err = p
         .stream(
-            request("gpt-4o"),
+            &request("gpt-4o"),
             &sink,
             pawork_domain::CancellationToken::new(),
         )
@@ -390,7 +390,7 @@ async fn contract_context_overflow_is_normalized() {
     let sink = RecordingProviderSink::default();
     let err = p
         .stream(
-            request("gpt-4o"),
+            &request("gpt-4o"),
             &sink,
             pawork_domain::CancellationToken::new(),
         )
@@ -422,7 +422,7 @@ async fn contract_malformed_stream_is_interrupted() {
     let sink = RecordingProviderSink::default();
     let err = p
         .stream(
-            request("gpt-4o"),
+            &request("gpt-4o"),
             &sink,
             pawork_domain::CancellationToken::new(),
         )
@@ -451,7 +451,7 @@ async fn contract_reconnect_after_interrupted_stream() {
     let p = provider(&server, None);
     let first_sink = RecordingProviderSink::default();
     let first_error = p
-        .stream(request("gpt-4o"), &first_sink, CancellationToken::new())
+        .stream(&request("gpt-4o"), &first_sink, CancellationToken::new())
         .await
         .expect_err("首次断流应失败");
     contract::assert_error_kind(
@@ -471,7 +471,7 @@ async fn contract_reconnect_after_interrupted_stream() {
     .await;
     let second_sink = RecordingProviderSink::default();
     let summary = p
-        .stream(request("gpt-4o"), &second_sink, CancellationToken::new())
+        .stream(&request("gpt-4o"), &second_sink, CancellationToken::new())
         .await
         .expect("断流后的下一次连接应成功");
 
@@ -489,7 +489,7 @@ async fn contract_done_without_finish_reason_is_completed() {
     let sink = RecordingProviderSink::default();
     let summary = p
         .stream(
-            request("gpt-4o"),
+            &request("gpt-4o"),
             &sink,
             pawork_domain::CancellationToken::new(),
         )
@@ -513,7 +513,7 @@ async fn contract_partial_json_tool_arguments() {
     let p = provider(&server, None);
     let sink = RecordingProviderSink::default();
     p.stream(
-        request("gpt-4o"),
+        &request("gpt-4o"),
         &sink,
         pawork_domain::CancellationToken::new(),
     )
@@ -635,7 +635,7 @@ async fn contract_no_authorization_when_credential_none() {
     let p = OpenAiCompatibleProvider::new(config, None).expect("构造 adapter");
     let sink = RecordingProviderSink::default();
     p.stream(
-        request("gpt-4o"),
+        &request("gpt-4o"),
         &sink,
         pawork_domain::CancellationToken::new(),
     )

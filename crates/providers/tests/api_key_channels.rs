@@ -210,7 +210,7 @@ async fn chat_contract_facets_stream_over_all_channels() {
             let provider = ApiKeyChannelProvider::new(config, Some(api_key())).expect("construct");
             let sink = RecordingProviderSink::default();
             let summary = provider
-                .stream(request(), &sink, CancellationToken::new())
+                .stream(&request(), &sink, CancellationToken::new())
                 .await
                 .unwrap_or_else(|error| panic!("{facet} failed for {}: {error:?}", preset.id));
             let events = sink.events();
@@ -262,7 +262,7 @@ async fn bearer_session_headers_are_scoped_to_opencode_on_both_transports() {
                 request.session_id = session.map(pawork_domain::SessionId::from);
                 let summary = provider
                     .stream(
-                        request,
+                        &request,
                         &RecordingProviderSink::default(),
                         CancellationToken::new(),
                     )
@@ -312,7 +312,7 @@ async fn invalid_opencode_session_header_fails_without_network_or_value_disclosu
         ));
         let error = provider
             .stream(
-                request,
+                &request,
                 &RecordingProviderSink::default(),
                 CancellationToken::new(),
             )
@@ -410,7 +410,7 @@ async fn mixed_catalog_keeps_undeclared_chat_and_shares_routes() {
             req.model = model.id;
             provider
                 .stream(
-                    req,
+                    &req,
                     &RecordingProviderSink::default(),
                     CancellationToken::new(),
                 )
@@ -423,7 +423,7 @@ async fn mixed_catalog_keeps_undeclared_chat_and_shares_routes() {
         assert_eq!(
             provider
                 .stream(
-                    req,
+                    &req,
                     &RecordingProviderSink::default(),
                     CancellationToken::new()
                 )

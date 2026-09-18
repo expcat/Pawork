@@ -142,27 +142,6 @@ pub fn transition(from: WorkerState, t: WorkerTransition) -> Result<WorkerState,
     Ok(to)
 }
 
-/// 一次成功转换对应的事件提示，供调用方发出可重放事件。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EventHint {
-    /// 无对应事件。
-    None,
-    /// WorkerAdmitted。
-    WorkerAdmitted,
-    /// WorkerStarted。
-    WorkerStarted,
-    /// WorkerRunning。
-    WorkerRunning,
-    /// WorkerWaiting。
-    WorkerWaiting,
-    /// WorkerCompleted。
-    WorkerCompleted,
-    /// WorkerCancelled。
-    WorkerCancelled,
-    /// WorkerFailed。
-    WorkerFailed,
-}
-
 /// Worker 状态机封装：持有当前状态，逐次应用转换。
 #[derive(Clone, Debug)]
 pub struct WorkerStateMachine {
@@ -180,24 +159,11 @@ impl WorkerStateMachine {
         self.state
     }
 
-    /// 应用一次转换；成功时返回（新状态，事件提示）并更新内部状态。
-    pub fn apply(
-        &mut self,
-        t: WorkerTransition,
-    ) -> Result<(WorkerState, EventHint), LifecycleError> {
+    /// 应用一次转换；成功时返回新状态并更新内部状态。
+    pub fn apply(&mut self, t: WorkerTransition) -> Result<WorkerState, LifecycleError> {
         let next = transition(self.state, t)?;
-        let hint = match t {
-            WorkerTransition::Admit => EventHint::WorkerAdmitted,
-            WorkerTransition::Start => EventHint::WorkerStarted,
-            WorkerTransition::BeginRunning => EventHint::WorkerRunning,
-            WorkerTransition::BeginWaiting => EventHint::WorkerWaiting,
-            WorkerTransition::Complete => EventHint::WorkerCompleted,
-            WorkerTransition::Cancel => EventHint::WorkerCancelled,
-            WorkerTransition::Fail => EventHint::WorkerFailed,
-            WorkerTransition::BeginCancel | WorkerTransition::Resume => EventHint::None,
-        };
         self.state = next;
-        Ok((next, hint))
+        Ok(next)
     }
 }
 
@@ -545,14 +511,12 @@ mod tests {
     }
 
     #[test]
-    fn machine_apply_reports_hints() {
+    fn machine_apply_advances_state() {
         let mut machine = WorkerStateMachine::from_state(WorkerState::Created);
-        let (state, hint) = machine.apply(WorkerTransition::Admit).unwrap();
+        let state = machine.apply(WorkerTransition::Admit).unwrap();
         assert_eq!(state, WorkerState::Admitted);
-        assert_eq!(hint, EventHint::WorkerAdmitted);
-        let (state, hint) = machine.apply(WorkerTransition::Start).unwrap();
+        let state = machine.apply(WorkerTransition::Start).unwrap();
         assert_eq!(state, WorkerState::Starting);
-        assert_eq!(hint, EventHint::WorkerStarted);
         assert_eq!(machine.state(), WorkerState::Starting);
         let err = machine.apply(WorkerTransition::Admit).unwrap_err();
         assert!(matches!(err, LifecycleError::IllegalTransition { .. }));

@@ -144,7 +144,7 @@ impl ModelProvider for ChatGptProvider {
 
     async fn stream(
         &self,
-        request: CanonicalModelRequest,
+        request: &CanonicalModelRequest,
         sink: &dyn ProviderEventSink,
         cancel: CancellationToken,
     ) -> Result<ModelResponseSummary, ProviderError> {

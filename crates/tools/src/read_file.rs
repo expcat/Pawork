@@ -98,8 +98,8 @@ async fn read(
     cancel: CancellationToken,
 ) -> Result<ToolResult, ReadFileError> {
     let path = require_str(input, "path")?;
-    let offset = opt_u64(input, "offset").unwrap_or(1).max(1) as usize;
-    let limit = opt_u64(input, "limit").unwrap_or(DEFAULT_LIMIT).max(1) as usize;
+    let offset = opt_u64(input, "offset")?.unwrap_or(1).max(1) as usize;
+    let limit = opt_u64(input, "limit")?.unwrap_or(DEFAULT_LIMIT).max(1) as usize;
 
     let roots = workspace_roots(service, workspace_id)?;
     let absolute = resolve_write_rel(&roots, &path)?;

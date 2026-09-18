@@ -353,6 +353,7 @@ impl Connection {
                 }
                 Input::Key { key, modifiers } => {
                     for modifier in modifiers {
+                        check()?;
                         let code = match modifier.as_str() {
                             "shift" => 0xffe1,
                             "control" => 0xffe3,
@@ -363,6 +364,7 @@ impl Connection {
                         held.push(code);
                         self.key(code, true)?;
                     }
+                    check()?;
                     let code = keysym(&key).ok_or(Error::Invalid("unsupported key"))?;
                     held.push(code);
                     self.key(code, true)?;
@@ -453,7 +455,14 @@ mod tests {
             }
             assert_eq!(read::<6>(&mut s)[1], 1);
             assert_eq!(read::<6>(&mut s)[1], 1);
-            assert_eq!(read::<6>(&mut s)[1], 0); // cancellation still releases
+            // Cancellation still releases the drag button.
+            assert_eq!(read::<6>(&mut s)[1], 0);
+            // Cancellation after Control down must release it without sending S or Shift.
+            for down in [true, false, true, false] {
+                let event = read::<8>(&mut s);
+                assert_eq!(event[..4], [4, down as u8, 0, 0]);
+                assert_eq!(event[4..], 0xffe3_u32.to_be_bytes());
+            }
         });
         let mut c = Connection::open(stream).unwrap();
         let capture = c.capture().unwrap();
@@ -489,6 +498,22 @@ mod tests {
             ),
             Err(Error::Cancelled)
         ));
+        for modifiers in [
+            vec!["control".into()],
+            vec!["control".into(), "shift".into()],
+        ] {
+            let calls = AtomicU64::new(0);
+            assert!(matches!(
+                c.input(
+                    Input::Key {
+                        key: "s".into(),
+                        modifiers
+                    },
+                    &|| calls.fetch_add(1, Ordering::Relaxed) >= 2
+                ),
+                Err(Error::Cancelled)
+            ));
+        }
         thread.join().unwrap();
     }
 

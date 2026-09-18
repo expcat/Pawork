@@ -183,12 +183,12 @@ impl ModelProvider for FixtureDispatchProvider {
 
     async fn stream(
         &self,
-        request: CanonicalModelRequest,
+        request: &CanonicalModelRequest,
         sink: &dyn ProviderEventSink,
         cancel: CancellationToken,
     ) -> Result<ModelResponseSummary, ProviderError> {
         eprintln!("[ui_fixture] provider stream called");
-        let script = script_for_request(&request);
+        let script = script_for_request(request);
         let outcome = MockProvider::new(script)
             .stream(request, sink, cancel)
             .await;

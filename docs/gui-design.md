@@ -25,7 +25,7 @@ Pawork 是本机 Coding Agent 工作台：用户围绕一个任务阅读、输�
 
 页面文字与截图存在版本差异：文字称 minimap 在右侧、模型芯片在 Composer；本次查看的 minimap 图标记在阅读区左侧，模型菜单从 Header 打开。因此只借鉴明确可见的层级与操作目的，不把其位置描述当成冻结合同。下文尺寸均为 Pawork 当前值或本次目标值，不冒充从 PI 像素测得。
 
-Codex Desktop、OpenCode、Zed 等前阶段参照保留在 [功能设计](design.md) 与 [参照文档](references.md)。[历史设计资产](../design/README.md) 用于追溯，不覆盖本文目标和当前源码事实。
+Codex Desktop、OpenCode、Zed、ZCode 等前阶段参照保留在 [功能设计](design.md) 与 [参照文档](references.md)。ZCode 只对照任务壳（审批 / Goal / 子代理可视化），不吸收完整 ADE。[历史设计资产](../design/README.md) 用于追溯，不覆盖本文目标和当前源码事实。
 
 ## 3. 当前基线与下一阶段变化
 

@@ -238,6 +238,12 @@ impl PaworkConfig {
         if other.default_model.is_some() {
             self.default_model = other.default_model.clone();
         }
+        if other.naming_provider.is_some() {
+            self.naming_provider = other.naming_provider.clone();
+        }
+        if other.naming_model.is_some() {
+            self.naming_model = other.naming_model.clone();
+        }
         if other.vision_provider.is_some() {
             self.vision_provider = other.vision_provider.clone();
         }
@@ -338,15 +344,26 @@ mod tests {
         let mut base = PaworkConfig {
             default_provider: Some("a".into()),
             default_model: Some("m1".into()),
+            naming_provider: Some("a".into()),
+            naming_model: Some("name-1".into()),
             ..PaworkConfig::default()
         };
         let higher = PaworkConfig {
             default_model: Some("m2".into()),
+            naming_model: Some("name-2".into()),
             ..PaworkConfig::default()
         };
         base.merge_with(&higher);
         assert_eq!(base.default_provider.as_deref(), Some("a"));
         assert_eq!(base.default_model.as_deref(), Some("m2"));
+        assert_eq!(base.naming_provider.as_deref(), Some("a"));
+        assert_eq!(base.naming_model.as_deref(), Some("name-2"));
+        base.merge_with(&PaworkConfig {
+            naming_provider: Some("b".into()),
+            ..PaworkConfig::default()
+        });
+        assert_eq!(base.naming_provider.as_deref(), Some("b"));
+        assert_eq!(base.naming_model.as_deref(), Some("name-2"));
     }
 
     #[test]

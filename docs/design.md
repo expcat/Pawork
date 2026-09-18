@@ -45,7 +45,7 @@
 | OpenAI tools / Anthropic tool_use 双协议 | 官方 API；Pi `anthropic-messages` |
 | workspace roots + `workspace_id + relative_path` 输入红线 | tool-api 类型化路径；OpenCode permission 边界 |
 | write_file/edit_file/apply_patch | OpenCode edit/write/patch；Codex apply_patch |
-| 终端审批（一次/本运行/拒绝）+ `--approval-mode` 五档（默认 ReadOnly；旧 `on-failure` 仅兼容读入并映射 NeverAsk） | Codex approval modes；OpenCode `permission`；DeepSeek Harness 把 sandbox 与 approval 做成独立 knob |
+| 终端审批（一次/本运行/拒绝）+ `--approval-mode` 五档（默认 ReadOnly；旧 `on-failure` 仅兼容读入并映射 NeverAsk） | Codex approval modes；OpenCode `permission`；DeepSeek Harness 把 sandbox 与 approval 做成独立 knob；ZCode 四档执行模式（Ask before changes 默认 / Edit automatically / Plan / Full access） |
 | 未信任 workspace 强制询问 | Pi Project Trust |
 | 路径越界/symlink/TOCTOU + 提示注入回归 | policy 整包红线 |
 
@@ -62,7 +62,7 @@
 
 | 能力 | 参照 |
 | --- | --- |
-| 软限压缩 / 硬限截断 + `/compact` | OpenCode 自动 compaction；compaction=重写前缀=缓存全失效 |
+| 软限压缩 / 硬限截断 + `/compact` | OpenCode 自动 compaction；ZCode `/compact` + 窗口将满前自动压缩；compaction=重写前缀=缓存全失效 |
 | token 与费用统计（micros 定价、无定价不编造） | OpenCode 消息级 cost/tokens；Pi footer 命中率；LiteLLM 缓存差价 |
 | 模型 registry（context window / 定价 / 别名） | models.dev；Pi `models-store.json` |
 
@@ -70,7 +70,7 @@
 
 | 能力 | 参照 |
 | --- | --- |
-| 六条首发通道：ChatGPT OAuth、xAI Grok OAuth、Z.AI GLM Coding Plan、OpenCode Go、Qwen Token Plan、DeepSeek | 各厂商官方 API；端点/凭证形态对照 Codex Router |
+| 六条首发通道：ChatGPT OAuth、xAI Grok OAuth、Z.AI GLM Coding Plan、OpenCode Go、Qwen Token Plan、DeepSeek | 各厂商官方 API；端点/凭证形态对照 Codex Router；GLM Coding Plan 的账号绑定与编码/通用端点分轨对照 ZCode |
 | ChatGPT/xAI 共用 Responses transport；按模型 capability 选 Chat/Responses | canonical 保持 provider-neutral |
 | `auth.json` 文件凭证 + `pawork auth` | 形态对齐 Codex CLI；额外锁定 0600、跨进程写锁、原子写、损坏 fail-closed、掩码展示与全链日志脱敏。env 仅作 headless/CI fallback |
 | ChatGPT/xAI OAuth（PKCE/Device/refresh/callback） | Codex Sign in with ChatGPT；OAuth client secret 不进入 adapter/仓库 |
@@ -79,7 +79,7 @@
 
 ### Desktop GUI
 
-见 [gui-design.md](gui-design.md)。吸收 Codex/OpenCode/Zed 的主对话壳，不复制完整 IDE；独立进程 + GUI Connection Protocol；GUI 只消费对话与工作台所需要子集。
+见 [gui-design.md](gui-design.md)。吸收 Codex/OpenCode/Zed/ZCode 的主对话壳，不复制完整 IDE 或 ADE（Wiki / Memory / Bot / 闲时队列）；独立进程 + GUI Connection Protocol；GUI 只消费对话与工作台所需要子集。
 
 ### Git、Diff 与 Checkpoint
 
@@ -95,9 +95,9 @@
 | 能力 | 参照 |
 | --- | --- |
 | MCP client（rmcp）+ 与内置工具共存注册 | [MCP 官方](https://modelcontextprotocol.io)；「Pawork 作为 MCP server」为候选反向形态 |
-| AGENTS.md / Skills / profiles 加载注入 | [AGENTS.md 约定](https://agents.md)；OpenCode rules、Codex AGENTS.md；DeepSeek Harness `tool-skill` |
+| AGENTS.md / Skills / profiles 加载注入 | [AGENTS.md 约定](https://agents.md)；OpenCode rules、Codex AGENTS.md；DeepSeek Harness `tool-skill`；ZCode 只读用户全局 + 当前 workspace `AGENTS.md`（不递归、运行时不读 CLAUDE.md） |
 | `@file` 引用 + file-index 模糊补全 | 各家 `@` 语义 |
-| 一键导入本机 Claude/Codex/Grok/Cursor/Pi 配置（只读） | 各工具本机配置布局；账户/端点导入源见附录（cc-switch、CLIProxyAPI、opencodex、Codex Router） |
+| 一键导入本机 Claude/Codex/Grok/Cursor/Pi 配置（只读） | 各工具本机配置布局；账户/端点导入源见附录（cc-switch、CLIProxyAPI、opencodex、Codex Router）；ZCode 目前只从 Claude Code / 旧版 ZCode Agent 迁移，不作 Pawork 导入源 |
 | config 完整六层 + Profile | 层级合并引擎 |
 
 ### 服务化与客户端
@@ -115,11 +115,11 @@
 
 | 能力 | 参照 |
 | --- | --- |
-| Plan 审批 gate（未批准整版拦截 turn；无 plan 放行） | 相邻：OpenCode question/todowrite、DeepSeek Harness planning |
-| 多 Agent 编排（spawn/registry/cancel-tree/recovery/budget-gate） | OpenCode `task` 子代理 + 权限派生；Pi「核心不内置子代理」；DeepSeek Harness `tool-subagent`。CCR in-band 标签为**明确不采纳**的反例 |
-| 子 Agent 声明式 provider/model/账户绑定 + 预算分配 | opencode `agent.model`；方案见 [references.md](references.md) 附录 B（F4-A+B） |
+| Plan 审批 gate（未批准整版拦截 turn；无 plan 放行） | 相邻：OpenCode question/todowrite、DeepSeek Harness planning、ZCode Plan 模式（先方案再确认后改文件） |
+| 多 Agent 编排（spawn/registry/cancel-tree/recovery/budget-gate） | OpenCode `task` 子代理 + 权限派生；Pi「核心不内置子代理」；DeepSeek Harness `tool-subagent`；ZCode 内置 general-purpose / Explore + 用户级声明式子代理（禁止再派生）。CCR in-band 标签为**明确不采纳**的反例 |
+| 子 Agent 声明式 provider/model/账户绑定 + 预算分配 | opencode `agent.model`；ZCode `~/.zcode/agents/<name>.md`（model / thoughtLevel / tools）；方案见 [references.md](references.md) 附录 B（F4-A+B） |
 | 多账户池 / 租约 / 路由 / 会话-账户亲和 | opencodex 账户池；CLIProxyAPI RR/加权/fill-first；claude-relay-service sticky；Codex Router 仅额度耗尽换**模型** |
-| 额度感知与预算 gate + `pawork usage` | opencodex 主动配额窗口；LiteLLM 层级预算 |
+| 额度感知与预算 gate + `pawork usage` | opencodex 主动配额窗口；LiteLLM 层级预算；ZCode 应用内 Coding Plan 5h / 周 / MCP 池与重置卡（产品对照，不是 Pawork 探测实现） |
 | audit / tenant 控制面 | LiteLLM org/team/user/key；`dedup_key`/audit JSONL 冻结契约 |
 
 ---
@@ -151,6 +151,7 @@
 | 交互式全屏 TUI | OpenCode / Pi | 以 CLI 交互模式 + GPUI Desktop 为用户界面 |
 | JS/TS 插件运行时（Bun/Node、hot-reload、JS hooks） | OpenCode / Pi / DeepSeek Harness Cordis | 纯 Rust 红线；若未来做代码插件，只评估 WASM + in-process hooks |
 | npm 生态传输 | OpenCode / Pi / DeepSeek Harness | 同上 |
+| Electron ADE / 插件市场 / JS Hooks | ZCode | 纯 Rust + GPUI 独立进程红线；只对照任务壳，不吸收完整 ADE |
 
 未排期的其它候选（自定义命令、webfetch、IDE 扩展等）只登记在 [产品候选](spec/backlog.md)，落地时须遵守冻结契约先行。
 

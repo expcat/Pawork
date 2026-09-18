@@ -450,7 +450,6 @@ pub(super) fn estimated_wrapped_lines(text: &str, width_px: f32, font_px: f32) -
         .sum()
 }
 
-pub(super) use super::markdown::message_block_line_counts;
 use super::markdown::message_body_element;
 
 /// 作者和时间都是 12px 元信息，正文独占主层级。

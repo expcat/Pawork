@@ -530,7 +530,7 @@ impl GuiHost for GuiHostAdapter {
             return Err(Self::host_error(
                 "unsupported",
                 format!(
-                    "query {} is not part of the S7 wave A slice",
+                    "query {} is not supported",
                     query_wire_name(&envelope.query)
                 ),
             ));
@@ -684,354 +684,7 @@ type CommandHandler = for<'a> fn(
     &'a AppCommand,
 ) -> BoxFuture<'a, Result<AppResponse, GuiHostError>>;
 
-fn query_workspace_list<'a>(
-    adapter: &'a GuiHostAdapter,
-    query: &'a AppQueryEnvelope,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::query::workspace_list(adapter, &query.query))
-}
-
-fn query_session_get<'a>(
-    adapter: &'a GuiHostAdapter,
-    query: &'a AppQueryEnvelope,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::query::session_get(adapter, &query.query))
-}
-
-fn query_run_status<'a>(
-    adapter: &'a GuiHostAdapter,
-    query: &'a AppQueryEnvelope,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::query::run_status(adapter, &query.query))
-}
-
-fn query_model_list<'a>(
-    adapter: &'a GuiHostAdapter,
-    query: &'a AppQueryEnvelope,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::query::model_list(adapter, &query.query))
-}
-
-fn query_diff_list_files<'a>(
-    adapter: &'a GuiHostAdapter,
-    query: &'a AppQueryEnvelope,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::query::diff_list_files(adapter, &query.query))
-}
-
-fn query_diff_get<'a>(
-    adapter: &'a GuiHostAdapter,
-    query: &'a AppQueryEnvelope,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::query::diff_get(adapter, &query.query))
-}
-
-fn query_quota_overview<'a>(
-    adapter: &'a GuiHostAdapter,
-    query: &'a AppQueryEnvelope,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::query::quota_overview(adapter, &query.query))
-}
-
-fn query_mcp_list<'a>(
-    adapter: &'a GuiHostAdapter,
-    query: &'a AppQueryEnvelope,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::query::mcp_list(adapter, &query.query))
-}
-
-fn query_provider_auth_status<'a>(
-    adapter: &'a GuiHostAdapter,
-    query: &'a AppQueryEnvelope,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::settings::provider_auth_status(
-        adapter,
-        &query.query,
-    ))
-}
-
-fn query_general_settings<'a>(
-    adapter: &'a GuiHostAdapter,
-    query: &'a AppQueryEnvelope,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::settings::general_settings(adapter, &query.query))
-}
-
-fn query_permissions_settings<'a>(
-    adapter: &'a GuiHostAdapter,
-    query: &'a AppQueryEnvelope,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::settings::permissions_settings(
-        adapter,
-        &query.query,
-    ))
-}
-
-fn query_terminal_settings<'a>(
-    adapter: &'a GuiHostAdapter,
-    query: &'a AppQueryEnvelope,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::settings::terminal_settings(adapter, &query.query))
-}
-
-fn command_workspace_add<'a>(
-    adapter: &'a GuiHostAdapter,
-    envelope: &'a AppCommandEnvelope,
-    command: &'a AppCommand,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::command::workspace_add(adapter, envelope, command))
-}
-
-fn command_workspace_trust<'a>(
-    adapter: &'a GuiHostAdapter,
-    envelope: &'a AppCommandEnvelope,
-    command: &'a AppCommand,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::settings::workspace_trust(
-        adapter, envelope, command,
-    ))
-}
-
-fn command_session_create<'a>(
-    adapter: &'a GuiHostAdapter,
-    envelope: &'a AppCommandEnvelope,
-    command: &'a AppCommand,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::session::session_create(
-        adapter, envelope, command,
-    ))
-}
-
-fn command_session_open<'a>(
-    adapter: &'a GuiHostAdapter,
-    envelope: &'a AppCommandEnvelope,
-    command: &'a AppCommand,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::session::session_open(adapter, envelope, command))
-}
-
-fn command_session_fork<'a>(
-    adapter: &'a GuiHostAdapter,
-    envelope: &'a AppCommandEnvelope,
-    command: &'a AppCommand,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::session::session_fork(adapter, envelope, command))
-}
-
-fn command_session_rename<'a>(
-    adapter: &'a GuiHostAdapter,
-    envelope: &'a AppCommandEnvelope,
-    command: &'a AppCommand,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::session::session_rename(
-        adapter, envelope, command,
-    ))
-}
-
-fn command_session_archive<'a>(
-    adapter: &'a GuiHostAdapter,
-    envelope: &'a AppCommandEnvelope,
-    command: &'a AppCommand,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::session::session_archive(
-        adapter, envelope, command,
-    ))
-}
-
-fn command_run_start<'a>(
-    adapter: &'a GuiHostAdapter,
-    envelope: &'a AppCommandEnvelope,
-    command: &'a AppCommand,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::run_start::run_start(adapter, envelope, command))
-}
-
-fn command_run_cancel<'a>(
-    adapter: &'a GuiHostAdapter,
-    envelope: &'a AppCommandEnvelope,
-    command: &'a AppCommand,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::command::run_cancel(adapter, envelope, command))
-}
-
-fn command_auth_start<'a>(
-    adapter: &'a GuiHostAdapter,
-    envelope: &'a AppCommandEnvelope,
-    command: &'a AppCommand,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::settings::auth_start(adapter, envelope, command))
-}
-
-fn command_auth_remove<'a>(
-    adapter: &'a GuiHostAdapter,
-    envelope: &'a AppCommandEnvelope,
-    command: &'a AppCommand,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::settings::auth_remove(adapter, envelope, command))
-}
-
-fn command_auth_set_api_key<'a>(
-    adapter: &'a GuiHostAdapter,
-    envelope: &'a AppCommandEnvelope,
-    command: &'a AppCommand,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::settings::auth_set_api_key(
-        adapter, envelope, command,
-    ))
-}
-
-fn command_auth_cancel<'a>(
-    adapter: &'a GuiHostAdapter,
-    envelope: &'a AppCommandEnvelope,
-    command: &'a AppCommand,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::settings::auth_cancel(adapter, envelope, command))
-}
-
-fn command_set_default_model<'a>(
-    adapter: &'a GuiHostAdapter,
-    envelope: &'a AppCommandEnvelope,
-    command: &'a AppCommand,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::settings::set_default_model(
-        adapter, envelope, command,
-    ))
-}
-
-fn command_set_proxy_url<'a>(
-    adapter: &'a GuiHostAdapter,
-    envelope: &'a AppCommandEnvelope,
-    command: &'a AppCommand,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::settings::set_proxy_url(
-        adapter, envelope, command,
-    ))
-}
-
-fn command_set_provider_use_proxy<'a>(
-    adapter: &'a GuiHostAdapter,
-    envelope: &'a AppCommandEnvelope,
-    command: &'a AppCommand,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::settings::set_provider_use_proxy(
-        adapter, envelope, command,
-    ))
-}
-
-fn command_set_model_enabled<'a>(
-    adapter: &'a GuiHostAdapter,
-    envelope: &'a AppCommandEnvelope,
-    command: &'a AppCommand,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::settings::set_model_enabled(
-        adapter, envelope, command,
-    ))
-}
-
-fn command_set_provider_models_enabled<'a>(
-    adapter: &'a GuiHostAdapter,
-    envelope: &'a AppCommandEnvelope,
-    command: &'a AppCommand,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::settings::set_provider_models_enabled(
-        adapter, envelope, command,
-    ))
-}
-
-fn command_set_default_role_model<'a>(
-    adapter: &'a GuiHostAdapter,
-    envelope: &'a AppCommandEnvelope,
-    command: &'a AppCommand,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::settings::set_default_role_model(
-        adapter, envelope, command,
-    ))
-}
-
-fn command_set_approval_mode<'a>(
-    adapter: &'a GuiHostAdapter,
-    envelope: &'a AppCommandEnvelope,
-    command: &'a AppCommand,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::settings::set_approval_mode(
-        adapter, envelope, command,
-    ))
-}
-
-fn command_set_terminal_settings<'a>(
-    adapter: &'a GuiHostAdapter,
-    envelope: &'a AppCommandEnvelope,
-    command: &'a AppCommand,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::settings::set_terminal_settings(
-        adapter, envelope, command,
-    ))
-}
-
-fn command_tool_approve<'a>(
-    adapter: &'a GuiHostAdapter,
-    envelope: &'a AppCommandEnvelope,
-    command: &'a AppCommand,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::approval::tool_approve(adapter, envelope, command))
-}
-
-fn command_terminal_create<'a>(
-    adapter: &'a GuiHostAdapter,
-    envelope: &'a AppCommandEnvelope,
-    command: &'a AppCommand,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::terminal::terminal_create(
-        adapter, envelope, command,
-    ))
-}
-
-fn command_terminal_write<'a>(
-    adapter: &'a GuiHostAdapter,
-    envelope: &'a AppCommandEnvelope,
-    command: &'a AppCommand,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::terminal::terminal_write(
-        adapter, envelope, command,
-    ))
-}
-
-fn command_terminal_resize<'a>(
-    adapter: &'a GuiHostAdapter,
-    envelope: &'a AppCommandEnvelope,
-    command: &'a AppCommand,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::terminal::terminal_resize(
-        adapter, envelope, command,
-    ))
-}
-
-fn command_terminal_close<'a>(
-    adapter: &'a GuiHostAdapter,
-    envelope: &'a AppCommandEnvelope,
-    command: &'a AppCommand,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::terminal::terminal_close(
-        adapter, envelope, command,
-    ))
-}
-
-fn command_mcp_test<'a>(
-    adapter: &'a GuiHostAdapter,
-    envelope: &'a AppCommandEnvelope,
-    command: &'a AppCommand,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::mcp::mcp_test(adapter, envelope, command))
-}
-
-fn command_mcp_server_remove<'a>(
-    adapter: &'a GuiHostAdapter,
-    envelope: &'a AppCommandEnvelope,
-    command: &'a AppCommand,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::mcp::mcp_server_remove(adapter, envelope, command))
-}
-
+// 手写 handler：带内联逻辑与版本闸门的入口直接实现包装签名，经下方 direct 行入表。
 fn query_browser_next<'a>(
     adapter: &'a GuiHostAdapter,
     envelope: &'a AppQueryEnvelope,
@@ -1085,78 +738,127 @@ fn command_browser_respond<'a>(
     })
 }
 
-fn query_workspace_files<'a>(
-    adapter: &'a GuiHostAdapter,
-    query: &'a AppQueryEnvelope,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::files::query(adapter, query))
+/// query 包装的转发实参：`inner` 只透传 `&query.query`；`envelope` 转发整个
+/// envelope（handler 需要 source / api_version 做 local-GUI 与版本闸门）。
+macro_rules! query_forward {
+    ($query:ident, inner) => {
+        &$query.query
+    };
+    ($query:ident, envelope) => {
+        $query
+    };
 }
-fn command_workspace_file_write<'a>(
-    adapter: &'a GuiHostAdapter,
-    envelope: &'a AppCommandEnvelope,
-    command: &'a AppCommand,
-) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::files::write(adapter, envelope, command))
-}
-static QUERY_HANDLERS: &[(&str, QueryHandler)] = &[
-    ("workspace_files", query_workspace_files),
-    ("workspace_file_read", query_workspace_files),
-    ("workspace_list", query_workspace_list),
-    ("session_get", query_session_get),
-    ("run_status", query_run_status),
-    ("model_list", query_model_list),
-    ("diff_list_files", query_diff_list_files),
-    ("diff_get", query_diff_get),
-    ("quota_overview", query_quota_overview),
-    ("mcp_list", query_mcp_list),
-    ("provider_auth_status", query_provider_auth_status),
-    ("general_settings", query_general_settings),
-    ("permissions_settings", query_permissions_settings),
-    ("terminal_settings", query_terminal_settings),
-    ("browser_next", query_browser_next),
-];
 
-static COMMAND_HANDLERS: &[(&str, CommandHandler)] = &[
-    ("workspace_file_write", command_workspace_file_write),
-    ("workspace_add", command_workspace_add),
-    ("workspace_trust", command_workspace_trust),
-    ("session_create", command_session_create),
-    ("session_open", command_session_open),
-    ("session_fork", command_session_fork),
-    ("session_rename", command_session_rename),
-    ("session_archive", command_session_archive),
-    ("run_start", command_run_start),
-    ("run_cancel", command_run_cancel),
-    ("auth_start", command_auth_start),
-    ("auth_remove", command_auth_remove),
-    ("auth_set_api_key", command_auth_set_api_key),
-    ("auth_account_add_api_key", command_auth_set_api_key),
-    ("auth_account_start", command_auth_start),
-    ("auth_account_select", command_auth_remove),
-    ("auth_account_remove", command_auth_remove),
-    ("auth_account_set_selection_mode", command_auth_remove),
-    ("auth_account_rename", command_auth_remove),
-    ("auth_cancel", command_auth_cancel),
-    ("set_default_model", command_set_default_model),
-    ("set_proxy_url", command_set_proxy_url),
-    ("set_provider_use_proxy", command_set_provider_use_proxy),
-    ("set_model_enabled", command_set_model_enabled),
+/// GUI query 静态分发表：一行 = 一个 wire 入口，宏同时产出 `Box::pin` 包装函数
+/// 与表项。行序与 protocol registry `gui.available` 条目一致（测试钉死）。
+/// 新增一个 GUI query 入口只需：实现一个 handler + 这里加一行。
+macro_rules! gui_query_dispatch {
     (
-        "set_provider_models_enabled",
-        command_set_provider_models_enabled,
-    ),
-    ("set_default_role_model", command_set_default_role_model),
-    ("set_approval_mode", command_set_approval_mode),
-    ("set_terminal_settings", command_set_terminal_settings),
-    ("tool_approve", command_tool_approve),
-    ("terminal_create", command_terminal_create),
-    ("terminal_write", command_terminal_write),
-    ("terminal_resize", command_terminal_resize),
-    ("terminal_close", command_terminal_close),
-    ("mcp_test", command_mcp_test),
-    ("mcp_server_remove", command_mcp_server_remove),
-    ("browser_respond", command_browser_respond),
-];
+        $table:ident;
+        direct { $( $direct_wire:literal => $direct_fn:ident; )* }
+        $( $wire:literal => $wrapper:ident = $handler:path , $mode:tt ; )*
+    ) => {
+        $(
+            fn $wrapper<'a>(
+                adapter: &'a GuiHostAdapter,
+                query: &'a AppQueryEnvelope,
+            ) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
+                Box::pin($handler(adapter, query_forward!(query, $mode)))
+            }
+        )*
+        static $table: &[(&str, QueryHandler)] = &[
+            $( ($wire, $wrapper), )*
+            $( ($direct_wire, $direct_fn), )*
+        ];
+    };
+}
+
+/// GUI command 静态分发表：语义同 `gui_query_dispatch`，转发形态固定为
+/// adapter / envelope / command 三参。
+macro_rules! gui_command_dispatch {
+    (
+        $table:ident;
+        direct { $( $direct_wire:literal => $direct_fn:ident; )* }
+        $( $wire:literal => $wrapper:ident = $handler:path ; )*
+    ) => {
+        $(
+            fn $wrapper<'a>(
+                adapter: &'a GuiHostAdapter,
+                envelope: &'a AppCommandEnvelope,
+                command: &'a AppCommand,
+            ) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
+                Box::pin($handler(adapter, envelope, command))
+            }
+        )*
+        static $table: &[(&str, CommandHandler)] = &[
+            $( ($wire, $wrapper), )*
+            $( ($direct_wire, $direct_fn), )*
+        ];
+    };
+}
+
+gui_query_dispatch! {
+    QUERY_HANDLERS;
+    direct {
+        "browser_next" => query_browser_next;
+    }
+    "workspace_files" => query_workspace_files = handlers::files::query, envelope;
+    "workspace_file_read" => query_workspace_file_read = handlers::files::query, envelope;
+    "workspace_list" => query_workspace_list = handlers::query::workspace_list, inner;
+    "session_get" => query_session_get = handlers::query::session_get, inner;
+    "run_status" => query_run_status = handlers::query::run_status, inner;
+    "model_list" => query_model_list = handlers::query::model_list, inner;
+    "diff_list_files" => query_diff_list_files = handlers::query::diff_list_files, inner;
+    "diff_get" => query_diff_get = handlers::query::diff_get, inner;
+    "quota_overview" => query_quota_overview = handlers::query::quota_overview, inner;
+    "mcp_list" => query_mcp_list = handlers::query::mcp_list, inner;
+    "provider_auth_status" => query_provider_auth_status = handlers::settings::provider_auth_status, inner;
+    "general_settings" => query_general_settings = handlers::settings::general_settings, inner;
+    "permissions_settings" => query_permissions_settings = handlers::settings::permissions_settings, inner;
+    "terminal_settings" => query_terminal_settings = handlers::settings::terminal_settings, inner;
+}
+
+gui_command_dispatch! {
+    COMMAND_HANDLERS;
+    direct {
+        "browser_respond" => command_browser_respond;
+    }
+    "workspace_file_write" => command_workspace_file_write = handlers::files::write;
+    "workspace_add" => command_workspace_add = handlers::command::workspace_add;
+    "workspace_trust" => command_workspace_trust = handlers::settings::workspace_trust;
+    "session_create" => command_session_create = handlers::session::session_create;
+    "session_open" => command_session_open = handlers::session::session_open;
+    "session_fork" => command_session_fork = handlers::session::session_fork;
+    "session_rename" => command_session_rename = handlers::session::session_rename;
+    "session_archive" => command_session_archive = handlers::session::session_archive;
+    "run_start" => command_run_start = handlers::run_start::run_start;
+    "run_cancel" => command_run_cancel = handlers::command::run_cancel;
+    "auth_start" => command_auth_start = handlers::settings::auth_start;
+    "auth_remove" => command_auth_remove = handlers::settings::auth_remove;
+    "auth_set_api_key" => command_auth_set_api_key = handlers::settings::auth_set_api_key;
+    "auth_account_add_api_key" => command_auth_account_add_api_key = handlers::settings::auth_set_api_key;
+    "auth_account_start" => command_auth_account_start = handlers::settings::auth_start;
+    "auth_account_select" => command_auth_account_select = handlers::settings::auth_remove;
+    "auth_account_remove" => command_auth_account_remove = handlers::settings::auth_remove;
+    "auth_account_set_selection_mode" => command_auth_account_set_selection_mode = handlers::settings::auth_remove;
+    "auth_account_rename" => command_auth_account_rename = handlers::settings::auth_remove;
+    "auth_cancel" => command_auth_cancel = handlers::settings::auth_cancel;
+    "set_default_model" => command_set_default_model = handlers::settings::set_default_model;
+    "set_proxy_url" => command_set_proxy_url = handlers::settings::set_proxy_url;
+    "set_provider_use_proxy" => command_set_provider_use_proxy = handlers::settings::set_provider_use_proxy;
+    "set_model_enabled" => command_set_model_enabled = handlers::settings::set_model_enabled;
+    "set_provider_models_enabled" => command_set_provider_models_enabled = handlers::settings::set_provider_models_enabled;
+    "set_default_role_model" => command_set_default_role_model = handlers::settings::set_default_role_model;
+    "set_approval_mode" => command_set_approval_mode = handlers::settings::set_approval_mode;
+    "set_terminal_settings" => command_set_terminal_settings = handlers::settings::set_terminal_settings;
+    "tool_approve" => command_tool_approve = handlers::approval::tool_approve;
+    "terminal_create" => command_terminal_create = handlers::terminal::terminal_create;
+    "terminal_write" => command_terminal_write = handlers::terminal::terminal_write;
+    "terminal_resize" => command_terminal_resize = handlers::terminal::terminal_resize;
+    "terminal_close" => command_terminal_close = handlers::terminal::terminal_close;
+    "mcp_test" => command_mcp_test = handlers::mcp::mcp_test;
+    "mcp_server_remove" => command_mcp_server_remove = handlers::mcp::mcp_server_remove;
+}
 
 impl GuiHostAdapter {
     async fn dispatch_command(

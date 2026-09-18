@@ -1,6 +1,6 @@
 # pawork-tools
 
-> 工具层：九个内置 Agent 工具（读/列/找/搜/写/改/补丁/命令/桌面）、最小调度器（ToolRegistry + ToolScheduler：注册、Policy 闸门、审批解析、并发上限、超时）、MCP 客户端子系统（`mcp/`，rmcp SDK 隔离在 `codec.rs` 单文件）。依赖 domain / policy / exec / workspace / auth / computer-use，被 `pawork-engine` 与 app 宿主消费。
+> 工具层：九个内置 Agent 工具（读/列/找/搜/写/改/补丁/命令/桌面）、最小调度器（ToolRegistry + ToolScheduler：注册、Policy 闸门、审批解析、并发上限、超时）、MCP 客户端子系统（`mcp/`，rmcp SDK 隔离在 `codec.rs` 单文件）。依赖 domain / policy / exec / workspace / auth / computer-use；被依赖方仅 `pawork-app`（engine 不依赖本包，工具由宿主装配进 LoopContext）。
 
 ## 1. 职责与边界
 
@@ -15,16 +15,16 @@
 | --- | --- | --- |
 | `src/lib.rs` | ~30 | 门面：12 个模块声明 + re-export（九工具、`NoopToolEventSink`、registry/scheduler 全家、`pub mod mcp`）。 |
 | `src/computer.rs` | — | `ComputerTool`：进程共享隔离桌面会话、按动作必填的 JSON 参数、跨 run 观察隔离、阻塞工作取消、JPEG → canonical Image；复用 Policy / 审批。 |
-| `src/common.rs` | ~230 | 公共层：`BuiltinToolError` 与 → `ToolError` 集中映射；取参 `require_str`/`opt_str`/`opt_u64`/`opt_bool`；`workspace_roots`；`resolve_write_rel`（包 `resolve_workspace_path`）；`atomic_write`（同目录临时文件 + rename，覆盖保留既有 Unix mode）。 |
+| `src/common.rs` | ~230 | 公共层：`BuiltinToolError` 与 → `ToolError` 集中映射；取参 `require_str`/`opt_str`/`opt_u64`/`opt_bool`（opt_* 缺省或 `null` → None，类型不符报 InvalidField）；`workspace_roots`；`resolve_write_rel`（包 `resolve_workspace_path`）；`atomic_write`（同目录临时文件 + rename，覆盖保留既有 Unix mode）。 |
 | `src/read_file.rs` | ~500（逻辑 ~260 + 测试） | `ReadFileTool`：行号视图、offset/limit、编码探测（chardetng + encoding_rs）、二进制检测（NUL + 控制字节占比）、4 MiB 读上限 / 256 KiB 输出上限。 |
-| `src/list_directory.rs` | ~440（逻辑 ~300 + 测试） | `ListDirectoryTool`：目录优先字典序、BinaryHeap 单扫描取 offset+limit 窗口（内存 O(offset+limit)）、entry kind/size/mtime/symlink 目标（目标相对化，越 root 省略）。 |
+| `src/list_directory.rs` | ~440（逻辑 ~300 + 测试） | `ListDirectoryTool`：路径解析与目录扫描均在 `spawn_blocking` 内；目录优先字典序、BinaryHeap 单扫描取 offset+limit 窗口（内存 O(offset+limit)）、entry kind/size/mtime/symlink 目标（目标相对化，越 root 省略）。 |
 | `src/find_files.rs` | ~380（逻辑 ~280 + 测试） | `FindFilesTool`：逗号分隔 glob（globset）、`ignore` walker（尊重 .gitignore、隐藏文件默认跳过、不 follow symlink）、file_type/max_depth/max_results、每项 `resolve_write_rel` 复核（逃逸与 `.git` 静默跳过）、`spawn_blocking` 执行。 |
 | `src/search_text.rs` | ~500（逻辑 ~390 + 测试） | `SearchTextTool`：固定串/regex（regex crate）、context_lines、case_sensitive、glob 过滤、`hidden(false)`（搜隐藏文件但仍尊重 .gitignore）、`spawn_blocking`、每 64 个候选查取消、输出预算 256 KiB。 |
-| `src/write_file.rs` | ~330（逻辑 ~160 + 测试） | `WriteFileTool`：整文件原子写、自动建父目录、覆盖保留 mode。 |
-| `src/edit_file.rs` | ~530（逻辑 ~345 + 测试） | `EditFileTool`：单段（`old_string`/`new_string`）或多段 `edits[]`；全部替换先内存预演再一次原子写；可选 `allow_fuzzy`（行对齐 whitespace 归一化匹配）。 |
-| `src/apply_patch.rs` | ~520（逻辑 ~365 + 测试） | `ApplyPatchTool`：多文件 `ops[]`（create/update/delete/rename）、`dry_run` 预演、执行前逐文件字节备份、失败自动恢复备份（含删除新建文件）；`ApplyPatchError::Partial` 报出 failed_op 与 applied 清单。 |
+| `src/write_file.rs` | ~330（逻辑 ~160 + 测试） | `WriteFileTool`：整文件原子写、自动建父目录、覆盖保留 mode；`spawn_blocking` 承载阻塞 IO。 |
+| `src/edit_file.rs` | ~530（逻辑 ~345 + 测试） | `EditFileTool`：单段（`old_string`/`new_string`）或多段 `edits[]`；全部替换先内存预演再一次原子写；可选 `allow_fuzzy`（行对齐 whitespace 归一化匹配）；`spawn_blocking` 承载阻塞 IO。 |
+| `src/apply_patch.rs` | ~520（逻辑 ~365 + 测试） | `ApplyPatchTool`：多文件 `ops[]`（create/update/delete/rename）、`dry_run` 预演、执行前逐文件字节备份、失败自动恢复备份（含删除新建文件）；`ApplyPatchError::Partial` 报出 failed_op 与 applied 清单；`spawn_blocking` 承载阻塞 IO。 |
 | `src/run_command.rs` | ~830（逻辑 ~430 + 测试） | `RunCommandTool`：argv 优先 / `command` 经平台 shell；cwd 相对解析；timeout/输出/资源 clamp；手工构造 `SandboxPolicy` + `SandboxSelector::pick`；domain↔exec 取消桥；`metadata.sandbox` 上报后端选择。 |
-| `src/scheduler.rs` | ~1080（逻辑 ~400 + 测试） | `ToolRegistry` / `ToolRegistryError`、`ToolScheduler` / `ToolSchedulerConfig` / `SchedulerError`、审批接口 `ApprovalResolver` / `ApprovalOutcome` / `AutoApproveResolver`、闸门 `check_gate` 与约束注入、`NoopToolEventSink`。 |
+| `src/scheduler.rs` | ~1080（逻辑 ~400 + 测试） | `ToolRegistry` / `ToolRegistryError`、`ToolScheduler` / `ToolSchedulerConfig`、审批接口 `ApprovalResolver` / `ApprovalOutcome` / `AutoApproveResolver`、闸门 `check_gate` 与约束注入、`NoopToolEventSink`。 |
 | `src/mcp/mod.rs` | ~250（含测试） | MCP 边界类型：`McpError`（10 变体）、`McpServerCapabilities`、`McpToolInfo`、`McpToolCall`、`McpPeer` trait；re-export sandbox 三件套；「公开源码不得出现 rmcp」守卫测试。 |
 | `src/mcp/capabilities.rs` | ~740（逻辑 ~300 + 测试） | 能力桥：`McpCapabilities::discover`、`McpToolAdapter`（MCP 工具 → `AgentTool`）、`register_server_tools` / `register_discovered_tools`、`namespaced_name`；workspace/工具白名单、非对象输入拒绝、输出预算、信任钳制。 |
 | `src/mcp/codec.rs` | ~700（逻辑 ~430 + 测试） | **rmcp SDK 唯一隔离点**（crate 私有 mod）：`RunningClient`/`ClientPeer` 包装、initialize 握手、`Tool → McpToolInfo`（read_only_hint）、`CallToolResult → ToolResult`（structured_content 进 metadata、is_error 转 error context）、`apply_tool_result_budget`（UTF-8 安全截断）、`timed`/`should_retry`、streamable-http 构建、`test_support::InProcessConnector`。 |
@@ -46,13 +46,13 @@
 | 工具 | capability | untrusted 可用 | default_timeout / max_output | 输入 |
 | --- | --- | --- | --- | --- |
 | `read_file` | ReadOnly | 是 | 10s / 256 KiB | `path`；`offset`（1 起行号）、`limit`（默认 2000 行） |
-| `list_directory` | ReadOnly | 是 | 10s / 256 KiB | `path`（`"."` = root，空串报错）；`limit`（默认 500）、`offset`（默认 0） |
-| `find_files` | ReadOnly | 是 | 30s / 256 KiB | `pattern`（逗号分隔 glob）；`file_type`（file 默认/dir/any）、`max_depth`、`max_results`（默认 200） |
-| `search_text` | ReadOnly | 是 | 30s / 256 KiB | `pattern`；`is_regex`（默认 false）、`glob`、`context_lines`（默认 2）、`max_results`（默认 100）、`case_sensitive`（默认 true） |
+| `list_directory` | ReadOnly | 是 | 10s / 128 KiB | `path`（`"."` = root，空串报错）；`limit`（默认 500）、`offset`（默认 0） |
+| `find_files` | ReadOnly | 是 | 10s / 256 KiB | `pattern`（逗号分隔 glob）；`file_type`（file 默认/dir/any）、`max_depth`、`max_results`（默认 200） |
+| `search_text` | ReadOnly | 是 | 15s / 256 KiB | `pattern`；`is_regex`（默认 false）、`glob`、`context_lines`（默认 2）、`max_results`（默认 100）、`case_sensitive`（默认 true） |
 | `write_file` | WorkspaceWrite | 否 | 10s / 16 KiB | `path`、`content` |
 | `edit_file` | WorkspaceWrite | 否 | 10s / 32 KiB | `path` + （`old_string`/`new_string`）或 `edits[]`；`allow_fuzzy`（默认 false） |
 | `apply_patch` | WorkspaceWrite | 否 | 15s / 64 KiB | `ops[]`（`op`=create/update/delete/rename + `path`/`content`/`to`）、`dry_run` |
-| `run_command` | Process | 否 | descriptor 不设（超时自带） | 见下方专列 |
+| `run_command` | Process | 否 | descriptor 30s（scheduler 层；与 exec 层 timeout_ms 语义不同，见 §4.2） | 见下方专列 |
 
 各工具输出与行为要点：
 
@@ -85,6 +85,7 @@
   - **其余一切路径安全违规（绝对/穿越/`.git`/symlink 逃逸/NonRegular）→ `PermissionDenied`**。
   - Io 的 NotFound → `NotFound`，其余 Io → `ExecutionFailed`（retryable）；Workspace(NotFound) → `NotFound`。
 - `workspace_roots(&WorkspaceService, &WorkspaceId)`：未知 workspace → `WorkspaceError::NotFound`。
+- 取参语义：`require_str` 缺失或类型不符按 `MissingField` 报错；`opt_str`/`opt_u64`/`opt_bool` 可选字段缺省或显式 `null` 视为未提供，字段存在但类型不符（如字符串传给整数位）→ `InvalidField`（映射 `InvalidInput`），模型得到纠错信号而非静默默认值。
 - `resolve_write_rel(roots, rel)`：全部八工具（含只读）解析路径的统一入口。
 - `atomic_write(path, bytes)`：同目录临时文件 + rename；目标已存在时保留其 permissions。
 
@@ -93,9 +94,9 @@
 - `ToolRegistry`：`new` / `register(Arc<dyn AgentTool>)` / `extend` / `get` / `descriptor` / `descriptors` / `len` / `is_empty`。仅接受 `ToolKind::ClientFunction` 且 descriptor 合法（`ToolRegistryError::InvalidDescriptor` / `UnsupportedKind`）；同名注册为覆盖语义（MCP 重连刷新用）。
 - `ToolSchedulerConfig { max_concurrent: 8, approval_mode: ApprovalMode::ReadOnly, workspace_trusted: false }`——**默认即最保守档**。
 - `ToolScheduler::new(registry, config)` / `tool_count()` / `approval_mode()` / `workspace_trusted()` / `with_approval_snapshot(mode, trusted)`（克隆工具表到新 scheduler，旧实例不变，供宿主 Arc-swap） / `execute_named(name, request, context, cancel, approval: Option<&dyn ApprovalResolver>, sink) -> Result<ToolResult, ToolError>`。
-- `ApprovalResolver`（async trait）：`resolve(&[ToolRequest]) -> Vec<ApprovalOutcome{approved: bool, reason: Option<String>}>`；`can_resolve_policy_prompt() -> bool`（默认 true；`AutoApproveResolver` 覆写为 **false**——自动批准器只能过 descriptor 叠加闸，不能替用户回答 policy `AskUser`）。
+- `ApprovalResolver`（async trait）：`resolve(&[ToolRequest]) -> Vec<ApprovalOutcome>`（`ApprovalOutcome` 为无字段枚举 `Approved` / `Denied`，拒绝文案由闸门统一生成）；`can_resolve_policy_prompt() -> bool`（默认 true；`AutoApproveResolver` 覆写为 **false**——它无法批准任何 `requires_approval` 工具或 policy `AskUser`，只能放行 S2 钩子的例行确认）。
 - 错误面：未知工具 → `ToolError{kind: NotFound}`；policy `Deny` 与审批拒绝**不是 Err**，而是 `Ok(ToolResult{success: false, error: Authorization})`（对模型可见的失败结果，Agent loop 可继续）；超时 → `kind: Timeout`。
-- 内部 `SchedulerError` 只是 `check_gate` 的中间形态，公开面统一为 `ToolResult` / `ToolError`。
+- 内部 `GateOutcome`（私有）只是 `check_gate` 的中间形态，公开面统一为 `ToolResult` / `ToolError`。
 - `NoopToolEventSink`：丢事件 sink，测试与最小宿主用。
 - 装配约定：宿主构造 `Arc<WorkspaceService>` → 八工具 `new` → `ToolRegistry::register` → `ToolScheduler::new`；MCP 工具经 `register_server_tools` 进同一 registry，两类工具走同一 `execute_named` 闸门，无旁路。
 
@@ -137,7 +138,7 @@
    - `AskUser{prompt}` → 仅当有 resolver 且 `can_resolve_policy_prompt()==true` 才转交（approved 放行 / 拒绝 → 失败结果）；否则 fail-closed 拒绝。
    - `AllowWithConstraints` → 把 `timeout_ms`/`max_output_bytes` 注入 `request.input`（与已有值取更严者）后放行。
    - `Allow` → 继续。
-4. 叠加闸：policy 放行但 `descriptor.requires_approval=true`（MCP 写工具）时仍需 resolver 确认一次（无 resolver → 拒绝；`AutoApproveResolver` 在此闸有效）。
+4. 叠加闸：`descriptor.requires_approval=true`（computer、MCP 写工具）且 policy 非 Deny 时升级为 `AskUser`，必须由 `can_resolve_policy_prompt()==true` 的 resolver 放行（`AutoApproveResolver` 在此闸无效、一律拒绝；无 resolver 同样拒绝）。policy 直接放行（Allow / AllowWithConstraints）的工具，只要调用方传入 resolver，S2 钩子会再确认一次（AutoApprove 恒过、DenyAll 全拒；check_gate 已问过用户则跳过）。
 5. 获全局 `Semaphore` 许可（`max_concurrent`）→ descriptor 有 `default_timeout_ms` 则 `tokio::time::timeout` 包裹 → `tool.execute(...)`；超时 → `Timeout`；取消由各工具协作检查。
 
 ### 4.2 `run_command` 全流程
@@ -152,6 +153,8 @@
 
 ### 4.3 文件写路径（write / edit / apply_patch 共通）
 
+三个写工具的 `execute` 均以 `tokio::task::spawn_blocking` 承载全部同步文件 IO（与 list_directory / find / search 同形；`JoinError` → `Internal`）。路径与落盘步骤：
+
 1. `workspace_roots` 取 roots → `resolve_write_rel(roots, path)`（拒绝绝对/穿越/`.git`/逃逸/非常规文件，错误映射见 §3.2）。
 2. 内存预演全部变更（edit 的段替换、patch 的 op 计划）；任何一段失败整体失败，不触盘。
 3. 落盘：`atomic_write`（写类）；apply_patch 执行前对受影响文件做字节备份，op 失败即恢复备份（改写还原、新建删除），并以 `Partial` 报出 failed_op 与 applied 清单（proptest 断言恢复字节精确）。
@@ -163,6 +166,8 @@
 3. `register_server_tools` 发现工具 → 白名单过滤 → `McpToolAdapter` 以清洗后的 `{server}_{tool}` 注册进同一 `ToolRegistry`（与内置工具同表同闸门）。
 4. 调用：scheduler 闸门（ExternalPlugin 走 descriptor 叠加审批）→ adapter 校验 workspace/tool 白名单（违规 → Authorization 失败结果而非异常）→ 非对象输入拒绝 → `ManagedMcpClient::call_tool`（超时/取消/`should_retry` 单次强制重连重试）→ codec 转换 → `apply_tool_result_budget` 按 `max_output_bytes` UTF-8 安全截断（structured_content 超预算整体丢弃并标记 truncated）。
 5. 断连恢复：指数退避（base×2^n 封顶 max_delay）至 `max_attempts` 耗尽 → `Disconnected`；冷却 4×max_delay 后允许再试；crash 重启复用同一 spawner（沙箱保证不降级）。
+
+Policy 闸门在同步 `decide` 前暂取 input，返回后立即归还，不再复制整份 JSON；审批与工具执行仍使用同一份输入。
 
 ### 4.5 取消与超时的传播路径
 
@@ -188,7 +193,7 @@
 
 - **workspace 内**：`pawork-domain`（AgentTool/ToolResult/CancellationToken 等 canonical 类型）、`pawork-policy`（路径内核 + PolicyEngine）、`pawork-exec`（Process/Sandbox Runtime）、`pawork-workspace`（WorkspaceService、ResolvedConfig）、`pawork-auth`（SecretBackend、OAuth 原语、`http_client()`）、`pawork-computer-use`（原生桌面操作）。
 - **外部**：`tokio`、`async-trait`、`serde/serde_json`、`thiserror`、`tracing`、`ignore`、`globset`、`regex`、`chardetng`、`encoding_rs`、`rmcp`（仅 codec）、`reqwest`（OAuth）、`url`、`base64`（截图编码）。dev：`tempfile`、`proptest`、`wiremock`。无 cargo feature。
-- **被依赖**：`pawork-engine`（Agent loop 工具执行）、app 宿主（注册与调度装配）。
+- **被依赖**：仅 `pawork-app`（注册与调度装配；engine 经 LoopContext 回调消费，不依赖本包）。
 
 ## 7. 测试与验证资产
 
@@ -198,7 +203,7 @@
 
 | 文件 | 覆盖点 |
 | --- | --- |
-| `common.rs` | 错误映射分流、取参辅助、atomic_write 保留 mode。 |
+| `common.rs` | `opt_*` 取参语义（合法值 / 缺省与显式 `null` → `None`、类型误传 → `InvalidField`→`InvalidInput`）；错误映射分流与 `atomic_write` 行为由各工具用例承载。 |
 | `read_file.rs` | 行号/offset/limit、二进制拒吐、绝对与穿越路径拒绝、missing → NotFound、大文件读上限、symlink 逃逸与 `.git` 拒绝。 |
 | `list_directory.rs` | 类型/symlink 列举、分页与 total、dangling symlink 容忍、逃逸 symlink 目标省略（不回显宿主路径）、非目录报错。 |
 | `find_files.rs` | glob 匹配与字典序、max_results 截断、dir 过滤、遍历中取消、跳过逃逸 symlink 与 `.git`。 |
@@ -207,7 +212,7 @@
 | `edit_file.rs` | 精确单段、不唯一 Conflict、多段原子、预演失败不落盘、fuzzy 归一化与终止换行保留、fuzzy 唯一性计数、proptest（fuzzy 与精确替换一致性）。 |
 | `apply_patch.rs` | 多文件 create、dry_run 不落盘、delete+rename、部分失败恢复（create/update/delete 各形态）、proptest 字节精确回滚、op 路径穿越拒绝。 |
 | `run_command.rs` | 输出与 exit_code、非零失败、超时、流式先于退出、`platform_environment_allowlist_contains_runtime_basics`、descriptor 无网络旁路参数、clamp 上限、**`metadata_sandbox_shape_and_limits_golden`**、Seatbelt isolation 上报（macOS）、显式 Secret env 被剥除。 |
-| `scheduler.rs` | 只读并发、全局并发上限、未知工具、上下文透传、取消（执行前/执行中）、超时映射、审批拒绝不执行、`auto_approve_cannot_resolve_policy_prompt`、registry kind/描述符校验、untrusted 写拒绝（NeverAsk 也拒）、AskForWrites 不可被 AutoApprove 绕过、ReadOnly 档拒写、`process_never_ask_trusted_injects_execution_constraints`、约束与显式输入取更严、灾难地板命令 Deny。 |
+| `scheduler.rs` | 只读并发、全局并发上限、未知工具、上下文透传、取消（执行前/执行中）、超时映射、审批拒绝不执行、`auto_approve_cannot_resolve_policy_prompt`、registry kind/描述符校验、untrusted 写拒绝（NeverAsk 也拒）、AskForWrites 不可被 AutoApprove 绕过、ReadOnly 档拒写、`process_never_ask_trusted_injects_execution_constraints`、约束与显式输入取更严。 |
 | `mcp/mod.rs` | rmcp 隔离守卫扫描、内置与 MCP 工具同表注册。 |
 | `mcp/capabilities.rs` | 发现与命名空间注册、read_only 放行、写工具审批与 untrusted 地板、host_trusted 钳制、取消先于远程调用、输出预算截断、非对象输入拒绝、structured_content 保留、workspace/tool 白名单、is_error 转换、未广播 tools 能力跳过。 |
 | `mcp/codec.rs` | http 配置校验、auth/header 注入、read_only_hint 往返、UTF-8 截断标记、input_required 状态 fail-closed。 |

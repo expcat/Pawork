@@ -68,7 +68,18 @@ impl AgentTool for WriteFileTool {
         _sink: &dyn ToolEventSink,
         _cancel: CancellationToken,
     ) -> Result<ToolResult, ToolError> {
-        match write(&self.workspaces, &context.workspace_id, &request.input) {
+        let service = self.workspaces.clone();
+        let workspace_id = context.workspace_id;
+        let input = request.input;
+        let result = tokio::task::spawn_blocking(move || write(&service, &workspace_id, &input))
+            .await
+            .map_err(|error| ToolError {
+                kind: pawork_domain::ToolErrorKind::Internal,
+                message: format!("write_file worker failed: {error}"),
+                retryable: false,
+                retry_after_ms: None,
+            })?;
+        match result {
             Ok(result) => Ok(result),
             Err(error) => Err(BuiltinToolError::from(error).into()),
         }

@@ -296,11 +296,11 @@ impl ModelProvider for MockProvider {
 
     async fn stream(
         &self,
-        request: CanonicalModelRequest,
+        request: &CanonicalModelRequest,
         sink: &dyn ProviderEventSink,
         cancel: CancellationToken,
     ) -> Result<ModelResponseSummary, ProviderError> {
-        let call_index = self.record(&request);
+        let call_index = self.record(request);
         let script = self.take_script()?;
         let mut summary = ModelResponseSummary {
             stop_reason: StopReason::Error,
@@ -555,7 +555,7 @@ mod tests {
     ) {
         let sink = RecordingProviderSink::default();
         let result = provider
-            .stream(request(request_id), &sink, CancellationToken::new())
+            .stream(&request(request_id), &sink, CancellationToken::new())
             .await;
         (result, sink.events())
     }
@@ -772,7 +772,7 @@ mod tests {
         cancel.cancel();
         let error = provider
             .stream(
-                request("cancel-provider"),
+                &request("cancel-provider"),
                 &RecordingProviderSink::default(),
                 cancel,
             )

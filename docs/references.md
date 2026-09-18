@@ -1,6 +1,8 @@
 # 参照项目手册
 
 > 目录/索引层。机制调研见附录 A–C；功能 → 参照映射见 [design.md](design.md) §2；反向分类见本文 §6。star 数与项目事实为 **2026-08-18** 快照，实现前应复核最新实态。
+>
+> **2026-09-17** 按 [ZCode 公开文档](https://zcode.z.ai/en/docs/welcome) 补录官方 ADE（闭源桌面，无公开 star）；不改附录 A–C 历史快照。
 
 ---
 
@@ -14,6 +16,7 @@
 | Pi（93k） | A / TUI 编码 Agent（TS/Bun monorepo） | provider 无关 Context 与 Pi Packages 能力包生态 | [earendil-works/pi](https://github.com/earendil-works/pi) |
 | Codex（111k） | A / CLI + Desktop + Cloud（Rust） | OpenAI 官方编码 Agent；开源实现 [openai/codex](https://github.com/openai/codex)（Apache-2.0，`codex-rs` workspace），SDK / MCP server 等集成面最广 | [openai/codex](https://github.com/openai/codex) |
 | DeepSeek Harness（157k） | A / Web + headless 编码 Agent（TS/Node） | DeepSeek 官方开源 harness：一切皆插件；append-only 会话事件为 SSOT（只读发布仓，不收 issue/PR） | [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) |
+| ZCode（闭源） | A / ADE 桌面（Electron） | Z.AI 官方 Agentic Development Environment：自研 ZCode Agent，围绕 GLM-5.3 做长任务桌面工作流 | [zcode.z.ai](https://zcode.z.ai/en/docs/welcome) |
 | opencodex（11k） | B / 本地代理 + dashboard（Bun） | Codex 协议翻译（40+ provider）+ ChatGPT 账户池三窗口配额路由 | [lidge-jun/opencodex](https://github.com/lidge-jun/opencodex) |
 | Codex Router（2.5k） | B / 本地路由器 + 托盘（JS / LiteLLM） | 一安装多客户端：把外部模型并入 Codex / DeepSeek Harness / Gemini CLI 目录，凭证隔离转发 | [duolahypercho/codex-router](https://github.com/duolahypercho/codex-router) |
 | cc-switch（128k） | B / Tauri 桌面应用 | 多工具供应商**配置级**切换（SSOT SQLite 原子写回） | [farion1231/cc-switch](https://github.com/farion1231/cc-switch) |
@@ -40,7 +43,7 @@
 
 ## 2. 主要对标项目
 
-对照基于四家公开功能面（转正规则见 [产品候选](spec/backlog.md)）。通用红线：纯 Rust 不引入 JS 运行时；无 TUI（CLI 交互模式 + GPUI Desktop，设计见 [gui-design.md](gui-design.md)）。
+对照基于五家公开功能面（转正规则见 [产品候选](spec/backlog.md)）。通用红线：纯 Rust 不引入 JS 运行时；无 TUI（CLI 交互模式 + GPUI Desktop，设计见 [gui-design.md](gui-design.md)）。ZCode 为闭源产品对照，只采公开文档，不抄实现。
 
 ### 2.1 OpenCode
 
@@ -58,7 +61,7 @@
 
 ### 2.3 Codex（openai/codex）
 
-- **定位与目标**：OpenAI 官方编码 Agent。开源实现在 [openai/codex](https://github.com/openai/codex)（Apache-2.0，Rust workspace `codex-rs`）；产品线覆盖 CLI + Desktop app + Cloud + IDE 扩展，是四家 A 类对标里集成面最广、也最接近 Pawork「纯 Rust CLI 宿主」形态的一项。与社区项目 [opencodex](https://github.com/lidge-jun/opencodex)、[Codex Router](https://github.com/duolahypercho/codex-router) 均无隶属，勿混用。
+- **定位与目标**：OpenAI 官方编码 Agent。开源实现在 [openai/codex](https://github.com/openai/codex)（Apache-2.0，Rust workspace `codex-rs`）；产品线覆盖 CLI + Desktop app + Cloud + IDE 扩展，是五家 A 类对标里集成面最广、也最接近 Pawork「纯 Rust CLI 宿主」形态的一项。与社区项目 [opencodex](https://github.com/lidge-jun/opencodex)、[Codex Router](https://github.com/duolahypercho/codex-router) 均无隶属，勿混用。
 - **核心功能**：图片输入 / web search / image generation / voice；Computer Use、Browser、Chrome 扩展；`/review` + GitHub PR 自动审查；GitHub Action；Slack / Linear 集成；Codex as MCP server；TS/Python SDK；本地 memories；scheduled tasks 产品；插件目录（连接器）；Bedrock 模型源。仓库侧对照点：`codex-rs` 扁平 workspace、[app-server-protocol](https://github.com/openai/codex/tree/main/codex-rs/app-server-protocol) 宏 registry、[sandbox.md](https://github.com/openai/codex/blob/main/docs/sandbox.md) Seatbelt/Landlock 结构。
 - **与 Pawork 的关系**：参照——approval/sandbox 体系（对照 Pawork 的 policy / sandbox）、SDK 与 MCP server 对外集成形态、`prompt_cache_key = conversation_id` 会话亲和（F5-B 隐式族亲和键实践；其子会话 fork 缓存命中率 62%→9.6% 是子代理缓存取舍的直接反例）。V3 另对照其 workspace 布局纪律（R1）、协议 registry 同源（R3）、sandbox/egress（R7）；**反面教材**是 134 成员微 crate 增殖——只抄纪律不抄粒度。
 - **关键链接**：[openai/codex](https://github.com/openai/codex) · [codex-rs](https://github.com/openai/codex/tree/main/codex-rs) · [developers.openai.com/codex](https://developers.openai.com/codex)（产品文档） · [client.rs（亲和键实现）](https://github.com/openai/codex/blob/d807d44a/codex-rs/core/src/client.rs) · [issue #21796](https://github.com/openai/codex/issues/21796)。机制详见 [附录 A](#附录-a-多账户配额缓存机制调研原-researchmulti-account-quota-referencemd) §5.2、§5.5。
@@ -69,6 +72,13 @@
 - **核心功能**：四套 preset——Standard（文件编辑 / Shell / 文件与网页检索 / Skills / 计划 / goals / 子代理 / 工作流）、PTC/Code Mode（经 Code Mode SDK 用一段 TypeScript 组合多步工具）、Minimal（持久 `bash` + `str_replace_editor`，用于基准）、Creator（在 Standard 上加运行时检查与 preset 创作）。仅追加 `SessionEvent` 日志是模型可见上下文的 SSOT（fork / resume / Trajectory 回放同源）；沙箱模式与审批策略是两个独立 knob，经 `workspace-write` / `danger-full-access` 等 permission preset 捆绑。工具面含 `tool-ask-user`、`tool-todo`、`tool-web`、`tool-skill`、`tool-subagent`、`tool-terminal`、MCP；LLM 适配覆盖 DeepSeek 与 Anthropic / OpenAI / Bedrock / Azure / Vertex。
 - **与 Pawork 的关系**：参照——仅追加会话事件作为模型可见输入的重建源（对照 Pawork `AgentEventEnvelope` + append-only，是目前最接近的外部同形）；沙箱与审批分 knob（对照 S3/S4）；`ctx.sessions.fork`、headless、Python SDK（对照 S10）；Skills / plan / 子代理 / 工作流（对照 S9/S11）。红线排除——Cordis/JS「一切皆插件」、以 Web UI 为默认壳、Code Mode 生成并执行 TypeScript（JS 运行时）。Developer preview，官方声明会有破坏性变更；实现前复核实态，不把其插件 API 当冻结契约。
 - **关键链接**：[deepseek.com/harness](https://deepseek.com/harness) · [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) · [架构](https://deepseek-harness.github.io/deepseek-harness/en/reference/) · [权限预设](https://deepseek-harness.github.io/deepseek-harness/en/reference/subsystems/permission-presets) · [Python SDK](https://deepseek-harness.github.io/deepseek-harness/en/guide/python-sdk)。本仓暂无独立调研专章（2026-08-17 按公开功能面登记）。
+
+### 2.5 ZCode（Z.AI）
+
+- **定位与目标**：Z.AI 官方 Agentic Development Environment（ADE）。产品形态是跨平台 Electron 桌面（当前公开安装包 v3.12.3：macOS / Windows / Linux），不是开源 CLI。口号是把 GLM-5.3 的长上下文、长程任务和 agentic coding 变成稳定桌面工作流：规划、编码、审查与迭代保持在同一任务里。文档自称围绕自研 **ZCode Agent** 做 GLM-5.3 深度联调；模型、工具和执行工作流比「任意模型塞进通用壳」更紧。与 [zai-org/zcode-plugins](https://github.com/zai-org/zcode-plugins) 官方插件市场、社区 zcode2api / 账号切换器均无隶属，勿把第三方网关写成官方能力。
+- **核心功能**（2026-09-17 按 [zcode.z.ai 文档](https://zcode.z.ai/en/docs/welcome)）：① 连接面以 Z.ai / BigModel **GLM Coding Plan** 账号绑定为首选，另支持 API Key、Anthropic / OpenAI / OpenRouter / Moonshot / MiniMax / Xiaomi MiMo 与自定义兼容端点；Coding Plan 走 `/api/coding/paas/v4`，预付费走 `/api/paas/v4`，二者不可互换。② 任务 UI：`@` 文件、`/` 命令、`$` 技能、`#` 历史会话、Goal Mode、四档执行模式（Ask before changes 默认 / Edit automatically / Plan / Full access）、thought level（GLM-5.3 默认 Max）。③ 内置 general-purpose 与只读 Explore 子代理；用户级自定义子代理（`~/.zcode/agents/<name>.md`）可声明 model / thoughtLevel / tools / mcpServers，子代理不能再派生子代理。④ 内置浏览器自动化、MCP（stdio / HTTP / SSE + OAuth）、Skills（`SKILL.md`）、插件（可打包 skill / command / subagent / MCP / hook）、Hooks 子进程协议、AGENTS.md（只读用户全局 + 当前 workspace，不递归、不读运行时 CLAUDE.md）。⑤ 用量分 App Usage（本机会话）与 Coding Plan（5h / 周 / 月 MCP 池，可点重置卡）；订阅闲时任务不消耗套餐额度。⑥ 远程开发（SSH / WSL / Docker）、手机 Remote Control、飞书 / 微信 Bot、定时自动化、项目 Memory、仓库 Wiki、编辑历史 + Reset chat+files。数据迁移目前只从 Claude Code 与旧版 ZCode Agent 导入。
+- **与 Pawork 的关系**：参照——GLM Coding Plan 的账号绑定 / 额度三窗 / 编码端点与通用端点分轨（对照 S6 与附录 D §4）；任务级审批四档与 Plan gate（对照 S3 / S11）；声明式子代理（独立 model + 工具权限，对照 F4-A）；Skills / MCP / AGENTS.md；`/compact` 与自动 compaction；Desktop 任务壳、浏览器面板、远程跟进。红线排除——Electron / 插件市场 / JS hook 子进程、完整 ADE（Wiki / Memory / Bot / 闲时队列 / 远程开发）默认壳、闭源运行时。Pawork 继续走纯 Rust CLI 宿主 + GPUI 独立进程；ZCode 证明「厂商 ADE + Coding Plan」这条产品路，不是 Pawork 的实现模板。本仓无独立机制专章（2026-09-17 按公开文档登记，实现前复核实态）。
+- **关键链接**：[文档（EN）](https://zcode.z.ai/en/docs/welcome) · [文档（中文）](https://zcode.z.ai/cn/docs/welcome) · [安装](https://zcode.z.ai/en/docs/install) · [连接模型](https://zcode.z.ai/en/docs/configuration) · [ZCode Agent](https://zcode.z.ai/en/docs/agents) · [子代理](https://zcode.z.ai/en/docs/subagents) · [安全确认](https://zcode.z.ai/en/docs/safety-confirm) · [用量](https://zcode.z.ai/en/docs/usage-stats) · [插件市场仓](https://github.com/zai-org/zcode-plugins)。
 
 ---
 
@@ -176,19 +186,19 @@ F1–F6 与 [design.md](design.md) §3（G1–G7）对应：G1↔F1、G2↔F2、
 | **S0** 对话 CLI / 模型目录 / openai-compatible `base_url` | OpenCode、Codex、models.dev | Pi；opencodex / Codex Router / CLIProxyAPI（自建网关上游） | OpenCode/Pi TUI |
 | **S1** 事件流落盘 / resume / headless JSONL | DeepSeek Harness、Codex | Pi session tree、OpenCode SQLite | — |
 | **S2** 只读工具 / 工具循环 / 双协议 | OpenCode、Codex | Pi Anthropic tools；本文 §4 缓存协议 | — |
-| **S3** 写入工具 / 审批档 | Codex approval、OpenCode permission | DeepSeek Harness 沙箱与审批分 knob、Pi Project Trust | — |
+| **S3** 写入工具 / 审批档 | Codex approval、OpenCode permission | DeepSeek Harness 沙箱与审批分 knob、Pi Project Trust；ZCode 四档执行模式（Ask / Edit auto / Plan / Full access） | — |
 | **S4** 命令执行 / 沙箱 | Codex sandbox、V1 exec | DeepSeek Harness `ctx.sandbox`、OpenCode `permission.bash` | — |
-| **S5** 上下文预算 / 用量 / registry | OpenCode compaction、models.dev、Pi | LiteLLM 缓存差价；Codex Router 旧工具结果老化与外部 compaction 摘要 | 把 compaction 当免费缓存续命 |
-| **S6** 六通道 / 文件凭证 / OAuth / `/model` | Codex auth 形态、各厂商官方 API | OpenCode/Pi 切换与 handoff；Codex Router 的 GLM / OpenCode Go / Qwen / DeepSeek / xAI 端点与凭证形态 | Pi Anthropic OAuth 伪装；CLIProxyAPI `identity-confuse` |
-| **S7** 最小 Agent GUI | Codex Desktop、OpenCode Desktop/Web | DeepSeek Harness Trajectory（默认壳不吸收） | 把 Web UI 当默认壳 |
+| **S5** 上下文预算 / 用量 / registry | OpenCode compaction、models.dev、Pi | LiteLLM 缓存差价；Codex Router 旧工具结果老化与外部 compaction 摘要；ZCode `/compact` + 窗口将满前自动压缩 | 把 compaction 当免费缓存续命 |
+| **S6** 六通道 / 文件凭证 / OAuth / `/model` | Codex auth 形态、各厂商官方 API | OpenCode/Pi 切换与 handoff；Codex Router 的 GLM / OpenCode Go / Qwen / DeepSeek / xAI 端点与凭证形态；ZCode 的 GLM Coding Plan 账号绑定与编码/通用端点分轨 | Pi Anthropic OAuth 伪装；CLIProxyAPI `identity-confuse` |
+| **S7** 最小 Agent GUI | Codex Desktop、OpenCode Desktop/Web | DeepSeek Harness Trajectory（默认壳不吸收）；ZCode ADE 任务壳（审批 / Goal / 子代理可视化） | 把 Web UI 或完整 ADE（Wiki / Memory / Bot / 闲时队列）当默认壳 |
 | **S8** Git / checkpoint | V1 checkpoint；OpenCode `/undo` `/redo`（粒度对照） | — | 把 turn 级 undo 当成 Run 级 rollback |
-| **S9** MCP / Skills / 兼容导入 | MCP 官方、OpenCode/Codex/DeepSeek Harness | G6 导入源：cc-switch、CLIProxyAPI auth-dir、opencodex config、Codex Router 托管 `config.toml` + 状态目录 | 覆盖用户自有 skills |
+| **S9** MCP / Skills / 兼容导入 | MCP 官方、OpenCode/Codex/DeepSeek Harness | G6 导入源：cc-switch、CLIProxyAPI auth-dir、opencodex config、Codex Router 托管 `config.toml` + 状态目录；ZCode 只从 Claude Code / 旧版 ZCode 迁移 | 覆盖用户自有 skills |
 | **S10** headless / SDK / fork / 服务化 | Codex SDK、OpenCode serve、Pi `createAgentSession`、DeepSeek Harness headless | Codex Router 的「一安装多客户端」是 F6 对照，不是 Pawork 对外网关 | — |
-| **S11** 多 Agent / 账户池 / 额度 / 路由 | OpenCode `task` 子代理；opencodex / CLIProxyAPI / CRS（F1–F3）；LiteLLM 预算 | Codex Router 窄错误 failover 与「仅注册表验证模型可作子代理」；Pi「核心不内置子代理」 | CCR in-band 子代理标签（F4-C）；请求级默认轮换（F3-C） |
+| **S11** 多 Agent / 账户池 / 额度 / 路由 | OpenCode `task` 子代理；opencodex / CLIProxyAPI / CRS（F1–F3）；LiteLLM 预算 | Codex Router 窄错误 failover 与「仅注册表验证模型可作子代理」；Pi「核心不内置子代理」；ZCode 声明式子代理（独立 model / 工具权限，禁止再派生） | CCR in-band 子代理标签（F4-C）；请求级默认轮换（F3-C） |
 | **G1 / F1** 同 Provider 多账户与 plan 凭证 | opencodex 账户池、CLIProxyAPI auth-dir | Codex / Pi 订阅 OAuth；Codex Router 复用 Kimi/Grok CLI 会话（单凭证隔离，不是池） | 身份伪装换号 |
-| **G2 / F2** 额度感知与预算 | opencodex 三窗口探测、LiteLLM 层级预算 | CLIProxyAPI-Plus 阈值停用；Codex Router 托盘用量 + 仅信提供商复位窗口 | 主动刷配额接口（F2-C/D 冻结） |
+| **G2 / F2** 额度感知与预算 | opencodex 三窗口探测、LiteLLM 层级预算 | CLIProxyAPI-Plus 阈值停用；Codex Router 托盘用量 + 仅信提供商复位窗口；ZCode 应用内 5h / 周 / MCP 池与重置卡 | 主动刷配额接口（F2-C/D 冻结） |
 | **G3 / F3** 缓存感知亲和路由 | CRS sticky、CLIProxyAPI session-affinity、opencodex thread affinity | OmniRoute cacheAffinity、LiteLLM `session_affinity`；Codex Router 只做额度耗尽换**模型**，不做会话-账户钉扎 | cc-switch 配置级切换（缓存作废）；请求级轮换 |
-| **G4 / F4** 子 Agent 声明式绑定 | OpenCode `agent.model` + 权限派生 | DeepSeek Harness `tool-subagent`；Codex Router 仅 registry-proven 模型可作 v2 spawn | CCR `<CCR-SUBAGENT-MODEL>` 标签 |
+| **G4 / F4** 子 Agent 声明式绑定 | OpenCode `agent.model` + 权限派生 | DeepSeek Harness `tool-subagent`；Codex Router 仅 registry-proven 模型可作 v2 spawn；ZCode `~/.zcode/agents/<name>.md` | CCR `<CCR-SUBAGENT-MODEL>` 标签 |
 | **G5 / F5** canonical 输入缓存 | Anthropic / OpenAI 官方；Pi / OpenCode 断点实践 | Envoy AI Gateway 跨厂商 `cache_control` 翻译；Cline/Kilo 断点 | CCR `cleancache` 作为默认；响应缓存（F5-C） |
 | **G6** 账户/端点只读导入 | cc-switch SQLite、CLIProxyAPI auth-dir、opencodex config、官方 Codex/Claude 布局 | Codex Router 托管 config 块与 `~/.codex/codex-router` 状态目录 | 导入 secret 落仓库或中间文件 |
 | **G7 / F6** 对外账户池网关 | —（已确认不内建） | opencodex / CLIProxyAPI / Codex Router 均可当 openai-compatible **上游** | 独立网关 app（F6-C）；订阅转售（sub2api） |
@@ -201,6 +211,7 @@ F1–F6 与 [design.md](design.md) §3（G1–G7）对应：G1↔F1、G2↔F2、
 | Pi | A | S0 `auth.json`；S1 树形 session；S3 Project Trust；S5 精细断点/长 TTL（G5）；S6 跨厂商 handoff 与订阅 OAuth；S9/S10 profiles 与 fork；S11「核心不内置子代理」对照；候选 C1、D3、D8 |
 | Codex（[openai/codex](https://github.com/openai/codex)） | A | S0/S1 CLI 与 resume；S3/S4 approval + sandbox；S6 ChatGPT OAuth 与文件凭证形态；S7 Desktop 壳；S9 AGENTS.md / MCP；S10 SDK / app-server；G5 `prompt_cache_key` 亲和；R1 workspace 布局纪律、R3 app-server-protocol registry、R7 sandbox；候选 B1/B5–B7、C2/C3、D1/D2/D6/D7 |
 | DeepSeek Harness | A | S1 append-only `SessionEvent` SSOT；S3/S4 沙箱与审批分轨；S7 Trajectory（不吸收默认壳）；S9 skills；S10 headless/fork；S11 子代理与工作流；候选 B2/B3/B8/B9、D4 |
+| ZCode | A | S3 四档执行模式与 Plan gate；S6 GLM Coding Plan 账号绑定与编码/通用端点分轨；S7 ADE 任务壳（对照，不吸收 Wiki/Memory/Bot）；S9 Skills/MCP/AGENTS.md 与有限 Claude Code 迁移；S11/G4 声明式子代理；G2 应用内 Coding Plan 三窗。闭源 Electron，无独立机制专章 |
 | opencodex | B | S0/F6-A 上游网关；G1 账户池；G2 三窗口配额；G3 thread affinity；G6 导入源；S11 主体 |
 | **Codex Router** | B | S0/S6 六通道端点与凭证形态、openai-compatible 上游；S5 工具结果老化 / 外部 compaction；S9 G6 导入源（托管 `config.toml` + 状态目录）；S11 F2/F3 **窄**额度 failover（换模型不换账户池）；S11 F4 仅验证过的模型可作子代理；G7/F6-A 上游。**不**作 G1 ChatGPT 账户池或 G3 sticky 主参照 |
 | cc-switch | B | G6 导入源主参照；G3 反面对照（配置级切换毁缓存） |
@@ -726,7 +737,7 @@ Chat Completions 家族统一为 content 数组 `image_url`（data URL / 外部 
 
 两种范式：**信用点制**（GLM credits、Qwen credits、OpenCode Go 美元额度）与**消息条数估算制**（OpenAI Codex 5 小时窗口区间表）。共同结构：5 小时短窗 + 7 天/周长窗。
 
-- **GLM Coding Plan**（docs.z.ai/devpack）：Lite $18/月 = 5h 2,000 + 周 10,000 credits；Pro 12,000/60,000；Max 28,000/140,000。credit = (输入×倍率 + 缓存×倍率 + 输出×倍率)/10,000，MCP 工具按次×1.2。GLM-5.3 倍率 6.9/1.7/24，5.3-Flash 2.3/0.56/8。峰时（周一至周五 14:00–18:00 SGT）全价、谷时半 credit。endpoint 按客户端形态分：Anthropic 兼容 `/api/anthropic`、Codex `/api/v1`、OpenAI 兼容 `/api/coding/paas/v4`（Pawork registry 默认一致）。
+- **GLM Coding Plan**（docs.z.ai/devpack）：Lite $18/月 = 5h 2,000 + 周 10,000 credits；Pro 12,000/60,000；Max 28,000/140,000。credit = (输入×倍率 + 缓存×倍率 + 输出×倍率)/10,000，MCP 工具按次×1.2。GLM-5.3 倍率 6.9/1.7/24，5.3-Flash 2.3/0.56/8。峰时（周一至周五 14:00–18:00 SGT）全价、谷时半 credit。endpoint 按客户端形态分：Anthropic 兼容 `/api/anthropic`、Codex `/api/v1`、OpenAI 兼容 `/api/coding/paas/v4`（Pawork registry 默认一致）。官方 ADE 客户端是 [ZCode](#25-zcodezai)（账号绑定走编码端点；预付费走 `/api/paas/v4`，二者不可互换）。
 - **Qwen Token Plan 个人版**（仅新加坡地域；cn-beijing 为中国站形态需另行确认）：Lite $8/月 = 7 天 2,500 credits；Standard $25 = 10,000；Pro $80 = 40,000；7 天滚动窗触顶暂停，可购 $15 = 20,000 credits 用量包（最多 5 个）。夜间 22:00–08:00 五折。限交互式编程工具，禁止自动化后端。
 - **OpenCode Go**：$10/月，每模型独立月度美元额度，三窗限速（5h = 月额 20%、周 50%、月 100%）。协议分族与 Pawork `documented_model_transports` 一致：`/responses`（grok / gpt / muse-spark）、`/chat/completions`（glm / kimi / deepseek 等）、`/messages`（minimax / qwen）。客户端要求自带 UA 与稳定 `x-opencode-session` 头。
 - **OpenAI Codex**（learn.chatgpt.com/docs/pricing）：Free / Go $8 / Plus $20 / Pro $100（5x）与 $200（20x）/ Business $20（年付）/ Enterprise；本地消息按 5 小时窗口估算（区间表非固定条数），Work 与 Codex 共享额度池。

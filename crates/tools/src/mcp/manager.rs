@@ -73,19 +73,6 @@ impl ManagedMcpClient {
         }
     }
 
-    pub(crate) fn with_defaults(
-        connector: Arc<dyn McpConnector>,
-        name: impl Into<Arc<str>>,
-    ) -> Self {
-        Self::new(
-            connector,
-            ManagedMcpClientOptions {
-                name: name.into(),
-                request_timeout: Duration::from_secs(30),
-                restart: RestartPolicy::default(),
-            },
-        )
-    }
 
     pub fn options(&self) -> &ManagedMcpClientOptions {
         &self.options

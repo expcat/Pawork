@@ -13,9 +13,8 @@ use crate::net::http::{HttpClient, HttpClientConfig};
 use async_trait::async_trait;
 use pawork_domain::{CancellationToken, ModelId, ProviderId};
 use pawork_domain::{
-    CanonicalModelRequest, CredentialKind, ModelCapabilities, ModelDefinition, ModelProvider,
-    ModelResponseSummary, ModelTransport, ProviderError, ProviderErrorKind, ProviderEventSink,
-    ResolvedCredential,
+    CanonicalModelRequest, ModelCapabilities, ModelDefinition, ModelProvider,
+    ModelResponseSummary, ModelTransport, ProviderError, ProviderEventSink, ResolvedCredential,
 };
 
 use crate::normalize_vendor_error;
@@ -63,7 +62,7 @@ impl KimiCodeProvider {
         config: KimiCodeConfig,
         credential: Option<ResolvedCredential>,
     ) -> Result<Self, ProviderError> {
-        let credential = require_bearer_credential(credential)?;
+        let credential = super::require_bearer_credential("Kimi Code", credential)?;
         // SET-5：远端目录客户端（GET {base}/models），超时语义与 chat 对齐。
         let mut models_http_config = config.http.clone();
         if let Some(timeout) = config.request_timeout {
@@ -115,12 +114,14 @@ impl ModelProvider for KimiCodeProvider {
             .await?;
         // OpenAI 风格 data[]；形状不符按 Err 处理，由 app 层落 fixed_fallback。
         let entries = crate::provider::catalog_entries(&value, "data")?;
+        let builtin = builtin_models();
         let mut definitions = Vec::new();
         for entry in entries {
             let id = crate::provider::catalog_model_id(entry, "id")?;
-            let mut definition = builtin_models()
-                .into_iter()
+            let mut definition = builtin
+                .iter()
                 .find(|definition| definition.id.as_str() == id)
+                .cloned()
                 .unwrap_or_else(|| unknown_model(id));
             // 官方 kimi-cli auth/platforms.py ModelInfo（2026-09-08）。
             if let Some(name) = entry.get("display_name").and_then(Value::as_str) {
@@ -143,7 +144,7 @@ impl ModelProvider for KimiCodeProvider {
 
     async fn stream(
         &self,
-        request: CanonicalModelRequest,
+        request: &CanonicalModelRequest,
         sink: &dyn ProviderEventSink,
         cancel: CancellationToken,
     ) -> Result<ModelResponseSummary, ProviderError> {
@@ -152,28 +153,6 @@ impl ModelProvider for KimiCodeProvider {
             .await
             .map_err(|error| normalize_vendor_error(PROVIDER_ID, error))
     }
-}
-
-fn require_bearer_credential(
-    credential: Option<ResolvedCredential>,
-) -> Result<ResolvedCredential, ProviderError> {
-    let credential = credential.ok_or_else(|| {
-        ProviderError::new(
-            ProviderErrorKind::Authentication,
-            "Kimi Code requires an OAuth bearer or API key credential",
-        )
-    })?;
-    let accepted = matches!(
-        credential.kind(),
-        CredentialKind::OAuthBearer | CredentialKind::ApiKey
-    ) && !credential.expose_secret().trim().is_empty();
-    if !accepted {
-        return Err(ProviderError::new(
-            ProviderErrorKind::Authentication,
-            "Kimi Code accepts only a non-empty OAuth bearer or API key credential",
-        ));
-    }
-    Ok(credential)
 }
 
 /// 版本固定 builtin 目录（id 取自官方 kimi-cli / Models.dev；能力未知，
@@ -225,6 +204,7 @@ fn unknown_model(id: &str) -> ModelDefinition {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pawork_domain::{CredentialKind, ProviderErrorKind};
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 

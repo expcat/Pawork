@@ -18,7 +18,7 @@ use pawork_domain::{CanonicalModelRequest, ModelProvider, ModelResponseSummary, 
 use crate::appender::ToolCallResult;
 use crate::context::{AutoCompactionReason, TurnContext};
 use crate::event::{AgentEventSink, EngineError, EventEmitter, LoopEventEmitter};
-use crate::session_turn::SessionTurn;
+use crate::session_turn::{optional_usage, SessionTurn};
 
 use approval::{wait_and_apply, ApprovalWait};
 pub use compaction::run_manual_compaction;
@@ -218,7 +218,7 @@ pub async fn run_session(
         let assistant_id = loop_ctx.next_message_id();
         match collect_stream_round(
             provider,
-            current.clone(),
+            &current,
             &emitter,
             assistant_id,
             cancel.clone(),
@@ -345,12 +345,4 @@ async fn emit_cancelled(
         })
         .await?;
     Err(ProviderError::cancelled(reason).into())
-}
-
-fn optional_usage(usage: &TokenUsage) -> Option<TokenUsage> {
-    if usage.is_zero() {
-        None
-    } else {
-        Some(usage.clone())
-    }
 }

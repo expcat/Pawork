@@ -124,9 +124,8 @@ pub struct TransportError {
 //
 // 远程连接（内网穿透 / NAT / 中继 / 加密）由可替换 Adapter 实现：CLI 侧经
 // RemoteGuiTransportProvider 发布 / 撤销远程端点，GUI 侧经
-// RemoteGuiConnector 连接已发布端点。契约集中在本 crate，生产实现
-//（feature `remote`）与 Mock / 测试支持（feature `memory`）共用同一
-// trait / DTO，避免生产路径依赖 mock。
+// RemoteGuiConnector 连接已发布端点。契约集中在本 crate；生产远程实现已
+// 归档（无 `remote` feature），当前仅保留契约与 `memory` 测试支持。
 
 /// Provider 的描述信息（CLI 输出与日志用）。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

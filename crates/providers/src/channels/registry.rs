@@ -1,14 +1,14 @@
 //! 首发通道静态注册表（R5 波 A 轨 b）：通道 preset 数据化单点登记。
 //!
 //! 注册表是纯数据：一行 = 一条首发通道（id / 凭证形态 / 默认 endpoint /
-//! feature 门 / OAuth 预设）。行本身不带 cfg——pawork models 的六行语义
+//! feature 门 / OAuth 预设）。行本身不带 cfg——pawork models 的八行语义
 //! 由数据承载；feature 是否启用由 is_enabled 在唯一的 cfg 求值点判定
 //! （fail-closed）。app 层的通道 facade 由本注册表派生；新增通道 = 加一行。
 
 /// 首发通道凭证与 adapter 形态。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ChannelKind {
-    /// 四条 API-key 通道（复用 OpenAI-compatible transport，可逐模型切 Responses）。
+    /// 五条 API-key 通道（复用 OpenAI-compatible transport，可逐模型切 Responses）。
     ApiKey,
     /// ChatGPT OAuth（Responses transport）。
     ChatGptOAuth,
@@ -251,7 +251,7 @@ pub fn channel_preset(id: &str) -> Option<&'static ChannelPreset> {
 
 /// 唯一的 feature cfg 求值点。
 ///
-/// 注册表行不带 cfg（保 pawork models 六行数据语义）；某行 feature 未启用
+/// 注册表行不带 cfg（保 pawork models 八行数据语义）；某行 feature 未启用
 /// 时装配必须 fail-closed。未知 feature 名一律返回 false。
 pub fn is_enabled(preset: &ChannelPreset) -> bool {
     match preset.feature {

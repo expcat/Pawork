@@ -311,11 +311,11 @@ impl ModelProvider for OpenAiCompatibleProvider {
 
     async fn stream(
         &self,
-        request: CanonicalModelRequest,
+        request: &CanonicalModelRequest,
         sink: &dyn ProviderEventSink,
         cancel: CancellationToken,
     ) -> Result<ModelResponseSummary, ProviderError> {
-        self.drive_stream(&request, sink, cancel).await
+        self.drive_stream(request, sink, cancel).await
     }
 }
 

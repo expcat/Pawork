@@ -483,7 +483,7 @@ Full workspace gate: NOT RUN（当前未设置全量门禁）。
 | `computer` Host 注册、Policy/审批、取消与图片结果 | 已实现，补齐按动作必填的参数 schema 与纠错提示 | 当前 tools 139 项、app 审批/持久化/resume 回归通过；真实 CLI 本轮授权通过 |
 | 三协议工具图片续接与能力拒绝 | 已实现 | Providers 188 项通过；真实 Go 模型从工具截图读取识别码并继续操作 |
 | 独立打包 | 已完成本地打包校验 | `cargo package` 含解包编译通过；无 Pawork 内部依赖；License 待定、`publish=false`，未发布 |
-| 验收与审查状态 | 自动门禁和代理真机验收已通过 | 未进行用户人工验收；本次独立审查经收口请求仍未返回，已停止、未计为通过；主代理源码复核完成；未归档 |
+| 验收与审查状态 | 自动门禁、代理真机验收与自动验收计划（代替人工验收）均已通过 | 用户指定以自动验收代替人工验收（2026-09-17 通过，见下文）；独立集成审查无阻塞发现；主代理底层复核完成；未发布 |
 
 验收设计：底层成功坐标/单次消费；安全失败覆盖权限、取消、未知字段、越界、跨 run、过期和连接变化；tools 确认审批拒绝时不接触 backend；app 走真实事件持久化并确认 resume 不执行；Providers 确认三协议输出不丢图片。隔离桌面用受控应用核验截图像素、鼠标及文字/键盘后的可观测效果，同时读取容器文件与宿主输入状态，不用 mock 代替。只运行受影响包定向测试，无 workspace 全量门禁。构建复用 `target/`，本机默认 Xcode 未接受许可证，本次命令使用已安装的 Command Line Tools (`DEVELOPER_DIR=/Library/Developer/CommandLineTools`)。
 
@@ -505,3 +505,73 @@ Full workspace gate: NOT RUN（当前未设置全量门禁）。
 - **真实隔离桌面验证通过**：容器运行状态核对仅发布 `127.0.0.1:5905`，无宿主 mounts。probe 实测截图、点击、移动、拖选、中文/emoji 输入和组合键；第二个控制客户端被拒绝，原连接仍可用。报告 `/tmp/pawork-computer-isolated-input.json` 记录操作前后宿主光标、前台进程、修饰键及剪贴板计数一致。emoji 已输入文件，但镜像字体在画面上显示缺字方框，不宣称完整 emoji 渲染支持。
 - **真实模型闭环通过**：`opencode-go / glm-5.3-flash`，独立实例 `computer-use-resume-check`，会话 `ses-1789612101909-1`；本轮批准后 status → screenshot → click → screenshot → Control+A → screenshot → type_text → screenshot → Control+S → screenshot。模型从截图读出 `ISOLATED-9284`，最终画面与 `docker exec … cat /home/desktop/computer-proof.txt` 均为 `ISOLATED-9284 中文隔离成功`。持久数据库核对 322 条事件、10 次工具完成、0 次工具错误、5 张图片、1 次 RunCompleted；所有输入均使用前一截图的一次性观察 id。宿主光标、前台进程、修饰键与剪贴板计数在整轮前后完全一致。证据 `/tmp/pawork-computer-resume-acceptance.json`、`/tmp/pawork-computer-resume-final.jpg` 与数据库副本 `/tmp/pawork-computer-resume-session.db`，不检入截图。真实服务仅验证 Go，另外两协议仍是编码/契约回归。
 - **状态边界**：实现、自动定向验证与代理实际桌面验收完成；用户人工验收未进行，未发布、未归档。历史 594 项与 macOS 真窗口记录仅作历史证据，无全 workspace 门禁。
+
+### 首版后续复核（2026-09-17）
+
+- **已修复**：RFB 组合键原先仅在动作开始检查取消，Control 按下后取消仍可能发送主键或后续修饰键。现逐键检查取消，并沿用已有释放路径；取消后不会继续发送 S / Shift，仍释放已按下的 Control。
+- **自动定向验证通过**：扩展既有 RFB wire 回归，旧实现复现失败，修复后 Ctrl+S / Ctrl+Shift+S 的取消路径通过。`DEVELOPER_DIR=/Library/Developer/CommandLineTools cargo test -p pawork-computer-use -p pawork-tools --offline --lib --tests` 为 4 + 139 项全部通过；变更 Rust 文件格式与 `git diff --check` 通过。日志 `/tmp/pawork-computer-followup-{red,tests}.log`。
+- **真实隔离桌面验证通过**：临时 helper 链接本次构建的库，在现有 Xvnc 中按下 Control 后取消 Ctrl+Shift+S，返回 `Cancelled`；复用旧观察返回 `Stale`，随后重新连接截图成功。前后 JPEG 字节完全相同，无“另存为”窗口；容器文件仍为 `ISOLATED-9284 中文隔离成功`。证据 `/tmp/pawork-computer-cancel-live.{rs,log}` 与 `/tmp/pawork-computer-cancel-{before,after}.jpg`，不检入仓库。
+- **独立集成审查完成**：只读复核 tools / app 的审批、串行调度、结果持久化与 resume 回归，以及三协议图片续传和能力检查，未发现必须修的可复现阻塞问题。底层取消修复由主代理复现、修复与验证；独立审查未复审底层，也未额外运行测试。
+- **验收边界**：本批为取消路径修复，不变更 GUI / Host 协议与 Provider；未重复真实模型闭环。用户人工验收未进行，未发布、未归档，未运行全 workspace 门禁。
+
+### 自动验收（2026-09-17，用户指定代替人工验收）
+
+用户要求设定验收计划并实施，以代替人工验收。计划五项，全部通过；证据目录 `/tmp/pawork-computer-autoaccept/`，未检入仓库。
+
+- **A 隔离环境核查通过**：`docker inspect` 确认容器仅发布 `127.0.0.1:5905`、无挂载、只读根文件系统、`1000:1000` 非 root、`restart=no`、非特权。第二控制客户端在探针持有连接时被拒绝（`isolated desktop connection refused`），原连接随后仍可用。
+- **B 定向回归门禁通过**：`cargo test -p pawork-computer-use -p pawork-tools -p pawork-providers --offline --lib --tests` 为 4 + 139 + 188 项全绿；`cargo test -p pawork-app --offline --lib computer_approval_image_persistence_and_resume_do_not_repeat_input` 1 项通过；`cargo build -p pawork --offline` 与 `cargo package -p pawork-computer-use --offline --allow-dirty`（含解包编译）通过。全程单 Cargo 进程顺序执行，日志 `tests.log` / `app-test.log` / `cli-build.log` / `package.log`。
+- **C 探针脚本化输入验收通过**：截图 → 点击文本区 → Control+A → 输入 `AUTO-ACCEPT-3317 探针中文验收` → Control+S → 截图复核；`docker exec` 读回文件与输入一致，末次截图可见该文本。复用已消费 observation_id 的 move 被拒（`Stale`），单消费语义在真实链路上成立。
+- **D 真实模型闭环通过**：固定 `opencode-go / glm-5.3-flash`（当次 CLI 参数，未写持久默认），实例 `computer-use-autoaccept2`，会话 `ses-1789628532874-1`。一次「本 run 批准」后模型逐步执行 status → screenshot → click → Control+A → type_text → Control+S → screenshot，从截图正确读出探针写入的 `AUTO-ACCEPT-3317 探针中文验收` 并报告，最终画面与容器文件均为 `AUTOACCEPT-5842 自动验收成功`。SQLite 副本核对：256 条 session_events、10 次 computer 工具完成、0 错误、10 次审批请求/响应、5 张 JPEG 持久化、1 次 RunCompleted（`session.db`）。
+- **宿主输入状态**：长窗口（覆盖 C/D 全程约 13 分钟）前后剪贴板计数、前台进程、修饰键完全一致，光标 y 漂移 7.4px（窗口期内的环境漂移；后端仅有 loopback TCP 数据面，无宿主输入代码路径）。另在秒级紧窗口内做截图操作前后快照，五项字段字节级一致（`host-tight-{before,after}.json`，diff 为空）。
+- **红线的意外实证**：首轮模型运行（实例 `computer-use-autoaccept`）恰逢探针持有唯一控制连接，Host 侧 computer 工具如实失败为 connection refused，未回退本机桌面；模型的沙箱化补救（docker compose / start.sh）被沙箱拒绝且未触及宿主输入。该失败会话保留在各自实例目录，不作为成功证据。
+- **验收结论**：A～D 全部通过，computer use 验收状态改为「自动验收通过（代替人工验收）」。未发布、未运行全 workspace 门禁。
+
+## 全仓库 Review 后续项（2026-09-17）
+
+2026-09-17 全仓库 Review（报告：[full-review-2026-09-17.md](review/full-review-2026-09-17.md)）的 P0 已全部修复、P1 spec 漂移已全部回写；登记的 P2 优化候选 R-01～R-08 与可顺带处理的 P3 建议项已于 2026-09-18 全部收口，明细见本节末尾「后续项收口（2026-09-18）」。以下仅保留条件触发与明确不修的登记。
+
+### 条件触发（暂不处理）
+
+- app：裸实例计数器（`loop_ctx.rs:183`、`services/run.rs:301`；单库单宿主拓扑下安全，改拓扑前必须处理）。
+- transport：`unpublish` / `revoke` 语义重叠（`api.rs:166-176`），复活远程实现时合并或明确分工。
+- protocol/client：`ServerFrame::Snapshot` 载荷无 request_id，无身份帧的固有限制（超时后的迟到快照可能被下一代请求消费）；2026-09-18 client 已加 `snapshot_inflight` 串行锁防互取，根治需 wire 演进为快照帧补 request_id（golden 先行），随下次协议演进处理。
+
+### 不修 / 保持观察（登记防重复提出）
+
+- storage artifact / protected 平行脚手架（已知取舍，演进时防第三套）。
+- workspace 两套原子写（错误类型与目标不同，可接受重复）。
+- providers QuotaClock / LeaseClock 平行时钟（spec 声明有意独立）。
+- desktop i18n 反向 import（projection → ui::i18n；若 i18n 引入 gpui 依赖将击穿投影纯度，保持观察）。
+- transport local / memory 双份约 12 行帮手、domain 事件变体穷举 match 样板（契约钉死的刻意设计）。
+- app `provider_quota.rs` 的 `!= "opencode-go"` 特判（2026-09-18 评估：providers 无通道级能力机制可承载该判定——ChannelPreset 为纯数据行、ModelCapabilities 是模型级能力，app 侧加间接层只是搬移特判而非消除；providers 自身 fetch_go_usage / verify_api_key 同样按 id 分支）。
+- desktop `quick_search.rs` 与 `timeline_navigation.rs` 模态骨架提炼（2026-09-18 评估：真实同构仅约 30–40 行，挂接点语义分叉大，提炼件配置面接近其体积且会拆散两套 AX 钉板行为，不做）。
+- cli `plan.rs:66-67` 的 `resolve_or_create` 内联解析（`None → latest 失败则 create` 是有意语义，不并入 `resolve_session`）。
+
+### 后续项收口（2026-09-18）
+
+实现由 glm 子代理按包分工（写入集互不重叠），验证由主代理以串行 cargo token 门禁收口；全程单 Cargo 进程、`DEVELOPER_DIR` 指向 CommandLineTools。
+
+**P2 优化候选（8/8 完成）**：
+
+- **R-01 app 分发表宏化**：`query_forward!` / `gui_query_dispatch!` / `gui_command_dispatch!` 三宏产出 49 个包装函数与两张静态表（净删约 300 行），新增 GUI 入口从改 3 处收敛为 2 处；新旧表 wire 集合与顺序逐一比对一致（QUERY 15 / COMMAND 36），两个非转发入口经 `direct` 行原样入表。
+- **R-02 tools 异步内同步 IO**：edit_file / write_file / apply_patch 的阻塞 std::fs 统一走 `spawn_blocking`（与 list_directory、app files.rs 同形态；JoinError 映射 Internal，业务错误链不变）。
+- **R-03 desktop Markdown 跨帧缓存**：`parse_cached` thread_local 缓存，键 = 文本（parse 只读文本，宽度/字号不影响块结构故不入键），容量 4096 超限整表清空；render / 测高 / 消息菜单 / AX 复制共用同一份 Arc，长会话第二帧起零 parse。
+- **R-04 cli 会话解析收敛**：chat.rs 4 处 + usage.rs 1 处收敛到 `sessions::resolve_session`；各点 `None` fallback（新建 / REPL 懒建 / 全账本）属有意语义，原地保留。
+- **R-05 control-plane dead_code 收敛**：quota/util.rs 模块级宽抑制移除、20 项按项 allow 附原因（均系候审远端适配器预留，核实无真死代码）；quota/error.rs 4 处 allow 补原因并修正属性位置。
+- **R-06 orchestration**：complete / fail 收敛 `finish_terminal` + `TerminalOutcome`（净删约 100 行，事件顺序不变）；EventHint 死轨删除（核实仅自测引用，生产路径手工 emit 单轨）；`now_ms` 合一保留 budget.rs。
+- **R-07 engine 每轮深拷贝根治**：`ModelProvider::stream` 改收 `&CanonicalModelRequest`（domain 公开 trait；providers 8 个 impl、engine 链路、testkit / app 全部 mock 同步），`run_session` 每轮全历史深拷贝消除；wire 字节、事件序列与 golden 不变。下游自实现该 trait 需同步签名。
+- **R-08 storage 真流式导入**：JSONL 家族经 BufReader 逐行（增量指纹与整串逐字节一致、Secret 逐行扫描不跨行、嗅探读完整首行），内存峰值与文件大小解耦；`events_on_lineage` 改 SQL 游标逐行推进不再全量物化；proptest dev-dep 移除。
+
+**P3 完成项**：desktop 能力面测试钉五项全集（Events / Snapshots / Approvals / TerminalStreaming / BrowserControl）；desktop button.rs `disabled_text_color`、tools mcp/transport.rs 与随批发现的 manager.rs `with_defaults` 死代码删除；tools `opt_str` / `opt_u64` / `opt_bool` 类型误传改报 InvalidField（缺省与显式 null 仍视为未提供）；providers `require_bearer_credential` 提炼 channels 共享 helper（cfg 门控）、xai 与 kimi 的 `builtin_models()` 循环外提；desktop approval_card 每帧小分配收敛；client `snapshot()` / `resume()` 串行锁防并发快照互取。
+
+**P3 评估后保持现状**：app query 不支持文案（HEAD 已是统一口径，无残留波段名）；provider_quota 特判、quick_search 骨架、plan.rs 内联解析（理由见「不修」节）。
+
+**验证明细**：pawork-tools 141、pawork-desktop 268（收口复跑同数）、pawork-storage 164 + golden 4 + read_range 5（compaction,checkpoint,protected features）、pawork-orchestration 87、pawork-app lib 241 + gui_server 集成套件、pawork-cli 46 + fixtures 16 + acp_floor 27、pawork-control-plane 205、pawork-providers 全 feature 178 + 集成 40（含 kimi 外提后的收口复跑）、pawork-domain 54 + pawork-engine 全绿、pawork-testkit 9、pawork-client 47；`cargo build -p pawork-app --example ui_fixture --features ui-fixture` 与 `cargo build -p pawork -p pawork-desktop --offline --bins --features gpui/runtime_shaders` 通过。镜像页（app / engine / client / orchestration / providers / tools / views）与 control-plane spec 漂移同批回写；桌面二进制仅剩第三方 block v0.1.6 既有 future-incompat 提示。
+
+2026-09-18 提交前复核（主代理 + glm 子代理并行审查后收口）：默认死表九包 975（app 266 · cli 89 · client 47 · control-plane 205 · domain 61 · engine 70 · orchestration 87 · testkit 9 · tools 141）、storage 特性档 173、providers 全 feature 218、desktop 268（spec §7 记载形态：`--bins --features gpui/runtime_shaders`，CLT 无 metal 时的既定路径）、`cargo check -p pawork --offline` 全部通过；`input_area.rs` min_w_0 移除的真窗口像素复验同日上午补做通过——1440pt 窗宽、100%/125%/150% 三档字号、工作面板开/关两种布局下 Composer 模型 chip（glm-5.3-flash）均完整渲染、无异常截断，「条件触发」节对应登记已移除。
+
+```text
+Validated: 上述各包定向测试与构建（单 Cargo 进程串行）
+Targeted regressions: tools opt_* 类型误传 2 条、storage 流式等价 / Secret / lineage 3 条、client 快照串行 1 条、desktop 能力面全集断言收紧；P0 越界与失败注册回归不受影响
+Full workspace gate: NOT RUN（当前未设置全量门禁）
+```

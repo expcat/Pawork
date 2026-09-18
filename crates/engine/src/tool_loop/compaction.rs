@@ -203,8 +203,8 @@ pub(super) async fn apply_context_limits(
             current,
             limits.budget.max_input_tokens,
             context.retained_messages,
+            estimate,
         );
-        *estimate = estimate_input_at(estimator, current);
         emitter
             .emit(AgentEvent::Diagnostic {
                 code: "context_hard_truncated".into(),
@@ -280,7 +280,7 @@ async fn summarize_history(
 
     let sink = SummaryTextSink(Mutex::new(String::new()));
     // 注意：摘要请求的 usage 不计入 run_usage，也不进 AgentEventSink。
-    if run_turn(provider, request, &sink, cancel).await.is_ok() {
+    if run_turn(provider, &request, &sink, cancel).await.is_ok() {
         let text = sink.0.lock().expect("summary sink mutex").clone();
         if !text.trim().is_empty() {
             return text;
@@ -408,33 +408,47 @@ fn truncate_for_budget(
     request: &mut CanonicalModelRequest,
     max_input_tokens: u64,
     retained_messages: usize,
+    estimate: &mut InputEstimate,
 ) -> (u64, u64) {
     let schema_tokens = estimator.count_tool_schemas(&tool_schemas(request));
-    let estimate = |messages: &[Message]| -> u64 {
-        schema_tokens
-            + messages
-                .iter()
-                .map(|message| estimator.count_message(message))
-                .sum::<u64>()
-            + reply_primer_tokens()
-    };
     let floor = retained_messages.min(request.messages.len());
+    let protect_from = request.messages.len() - floor;
+    let messages = std::mem::take(&mut request.messages);
+    let counted: Vec<(Message, u64)> = messages
+        .into_iter()
+        .map(|message| {
+            let tokens = estimator.count_message(&message);
+            (message, tokens)
+        })
+        .collect();
+    let mut remaining = schema_tokens
+        + counted.iter().map(|(_, tokens)| *tokens).sum::<u64>()
+        + reply_primer_tokens();
+    let mut kept = Vec::with_capacity(counted.len());
     let mut dropped: u64 = 0;
-    while estimate(&request.messages) > max_input_tokens && request.messages.len() > floor {
-        let Some(idx) = request
-            .messages
-            .iter()
-            .position(|message| message.role != MessageRole::System)
-        else {
-            break;
-        };
-        if request.messages.len().saturating_sub(idx) <= floor {
-            break;
+    let mut system_prompt_tokens = 0;
+    let mut history_tokens = 0;
+    for (index, (message, tokens)) in counted.into_iter().enumerate() {
+        let droppable = index < protect_from && message.role != MessageRole::System;
+        if droppable && remaining > max_input_tokens {
+            remaining = remaining.saturating_sub(tokens);
+            dropped += 1;
+            continue;
         }
-        request.messages.remove(idx);
-        dropped += 1;
+        if message.role == MessageRole::System {
+            system_prompt_tokens += tokens;
+        } else {
+            history_tokens += tokens;
+        }
+        kept.push(message);
     }
-    (dropped, estimate(&request.messages))
+    request.messages = kept;
+    estimate.system_prompt_tokens = system_prompt_tokens;
+    estimate.tool_schema_tokens = schema_tokens;
+    estimate.history_tokens = history_tokens;
+    estimate.estimated_input_tokens =
+        system_prompt_tokens + schema_tokens + history_tokens + reply_primer_tokens();
+    (dropped, estimate.estimated_input_tokens)
 }
 
 /// 手动压缩入口（REPL /compact 等）：不是 run，不发 RunStarted / RunCancelled；

@@ -1,9 +1,9 @@
 //! Pawork 首发模型渠道适配器。
 //!
 //! OpenAI-compatible Chat Completions 始终编译；S2 已有的 `anthropic` 基线继续
-//! 默认开启。S6 首发范围只增加 ChatGPT OAuth、xAI Grok OAuth，以及 GLM
-//! Coding Plan / OpenCode Go / Qwen Token Plan / DeepSeek 四条 API-key 通道。
-//! 其它厂商留到后续需求，不预留伪实现 feature。
+//! 默认开启。通道登记当前包含 ChatGPT OAuth、xAI Grok OAuth、Kimi Code，
+//! 以及 GLM Coding Plan / OpenCode Go / Qwen Token Plan / DeepSeek / Kimi Platform
+//! 五条 API-key 通道。
 
 pub(crate) fn is_credential_header(name: &str) -> bool {
     matches!(

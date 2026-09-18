@@ -46,11 +46,12 @@ pawork-desktop  ──framed bytes──►  pawork gui serve
 - 编解码：`pawork-protocol` 的 `ClientFrame` / `ServerFrame`。
 - 鉴权：`gui serve` 写 `gui.token`（`TokenStore`）；desktop `platform.rs` 读同名文件，缺 token fail-closed。
 - 握手元数据：GUI Host 在认证成功的 API 1.9 `Accepted` 响应中可选发布与 Core 装配共用的 `host_data_dir`；`pawork-client::SessionInfo` 原样保留，Desktop About 只在当前连接字段非空时展示，缺失/断线不从 endpoint 推断。
+- 工作区信任：WorkspaceList 与 snapshot 均按目标 workspace roots 求值，不复制当前 attached 项目的信任。
 - 命令/查询：三通道可用性来自 `protocol::app::registry`，host 分发表与 `gui.available` 双射。未登记 fail-closed。
 
-Desktop 四层：`ui` → `controller`（只调 `GuiClient`）→ `projection`（无 gpui/tokio）→ `platform`（socket/token）。生产 `pawork-*` 依赖必须恰好 `{pawork-client, pawork-terminal}`；后者只承载终端显示与按键映射，不访问 Core。
+Desktop 四层：`ui` → `controller`（只调 `GuiClient`）→ `projection`（无 gpui/tokio）→ `platform`（socket/token）。生产 `pawork-*` 依赖必须恰好 `{pawork-client, pawork-terminal, pawork-browser}`；后两者分别承载终端显示 / 按键映射与系统 WebView，不访问 Core。
 
-断线：`ConnectionManager` 心跳清理连接（host idle 30s；desktop 泵循环约 15s 空闲发 heartbeat），**不**取消进行中的 Run。Resume：`Replay` / `SnapshotRequired` / `UpToDate`（`ResumeDisposition`）。Timeline 投影 reducer 在 `protocol::projection`，host 与 desktop 同源。
+断线：`ConnectionManager` 心跳清理连接（host idle 30s；desktop 独立任务每 15s 发 heartbeat），**不**取消进行中的 Run。Resume：`Replay` / `SnapshotRequired` / `UpToDate`（`ResumeDisposition`）。Timeline 投影 reducer 在 `protocol::projection`，host 与 desktop 同源。
 
 Headless / ACP：
 

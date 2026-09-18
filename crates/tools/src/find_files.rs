@@ -113,15 +113,15 @@ fn find(
         return Err(FindFilesError::Cancelled);
     }
     let pattern = require_str(input, "pattern")?;
-    let file_type = crate::common::opt_str(input, "file_type")
+    let file_type = crate::common::opt_str(input, "file_type")?
         .map(|s| match s.as_str() {
             "dir" => FileTypeFilter::Dir,
             "any" => FileTypeFilter::Any,
             _ => FileTypeFilter::File,
         })
         .unwrap_or_default();
-    let max_depth = opt_u64(input, "max_depth").map(|d| d as usize);
-    let max_results = opt_u64(input, "max_results").unwrap_or(DEFAULT_MAX_RESULTS) as usize;
+    let max_depth = opt_u64(input, "max_depth")?.map(|d| d as usize);
+    let max_results = opt_u64(input, "max_results")?.unwrap_or(DEFAULT_MAX_RESULTS) as usize;
 
     let roots = workspace_roots(service, workspace_id)?;
     let glob_set = build_glob_set(&pattern)?;

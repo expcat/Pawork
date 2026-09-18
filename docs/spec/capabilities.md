@@ -16,11 +16,11 @@ UI-6b G2 已接线：Go 存储账号可读取官方三窗已用百分比与重�
 | CAP-SESSION-01 | 会话列表、查看、恢复、导出/导入、分支 | `sessions`、`--resume` | 已实现 | envelope v1、DB v14、export v3；损坏/Secret 导入 fail-closed。 |
 | CAP-SESSION-02 | Desktop 会话生命周期：无项目直建（Unassigned）、行右侧改名/归档、命名模型自动标题 | Desktop TaskRail / New task | 已实现（ADR-054，API 1.11）；真窗口验收待 OPT-2 收尾 | 归档仅隐藏不删除，wire 保留反归档写口；自动标题须配置 Global `naming_provider`/`naming_model`，未配置不命名、不用启发式；无项目会话文件类工具 fail-closed。 |
 | CAP-AGENT-01 | 多轮 Agent loop 与工具调用 | `chat`、`run`、GUI/headless/ACP | 已实现 | 轮数有界；Provider 特例只在 adapter，不进 Engine。 |
-| CAP-TOOL-01 | read/list/search/find/write/edit/apply_patch/run_command 八工具 | Agent tool call | 已实现 | 文件输入为 workspace-relative；写/进程能力受 Policy。 |
+| CAP-TOOL-01 | read/list/search/find/write/edit/apply_patch/run_command/computer 九工具 | Agent tool call | 已实现 | 文件输入为 workspace-relative；写/进程能力受 Policy。 |
 | CAP-COMPUTER-01 | 隔离虚拟桌面截图、鼠标和键盘 | `computer` Agent tool（CLI / GUI 共用 Host） | 已实现，验证状态见 [路线图](../ROADMAP.md#computer-use首版2026-09-17) | 专用容器内 Xvnc；显式审批；不影响宿主键鼠/焦点；连接身份与一次性观察；[独立包](crates/computer-use.md)。 |
 | CAP-APPROVAL-01 | 工具审批、Run 内授权、拒绝、取消 | CLI approval、Desktop 审批卡 | 已实现 | 非 TTY/JSON deny-all；CLI resume seal Denied，GUI resume 保留 pending。 |
 | CAP-EXEC-01 | 子进程、进程树回收、Sandbox、PTY | `run_command`、Desktop Terminal | 已实现 | Sandbox 可观测回退；PTY 创建的 AskUser 当前 fail-closed 为 Deny。 |
-| CAP-PROVIDER-01 | 六条第一方通道、Anthropic 协议适配、OpenAI-compatible 端点 | `models`、全局 provider/model、配置 | 已实现 | 六通道：chatgpt/xai/glm-coding/opencode-go/qwen-token-plan/deepseek；未启用 feature/未知能力显式拒绝。 |
+| CAP-PROVIDER-01 | 八条第一方通道、Anthropic 协议适配、OpenAI-compatible 端点 | `models`、全局 provider/model、配置 | 已实现 | 八通道：chatgpt/xai/glm-coding/opencode-go/qwen-token-plan/deepseek/kimi-platform/kimi-code；未启用 feature/未知能力显式拒绝。 |
 | CAP-AUTH-01 | API key、OAuth 登录/刷新、脱敏状态 | `auth list/set-key/login/logout` | 已实现；部分待人工验收 | ChatGPT/xAI 自然临期 refresh 仍需真实账号窗口；OS Keychain 不在当前实现。 |
 | CAP-CONTEXT-01 | 上下文预算、compaction、用量/定价 | Run、`usage` | 已实现 | usage 幂等冲突与哨兵口径仍需专项复核。 |
 | CAP-GIT-01 | diff、checkpoint、rollback、fork/worktree 支撑 | `diff`、`rollback`、Desktop Changes | 部分实现 | Core/CLI 已实现；Desktop Changes 只读，stage/unstage/hunk 是 ADR 候选。 |

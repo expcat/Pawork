@@ -1,6 +1,9 @@
 //! Timeline 的小型 Markdown 子集；渲染与 AX 高度估算共用解析后的可见文本。
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::ops::Range;
+use std::sync::Arc;
 
 use gpui::{
     FontStyle, FontWeight, InteractiveText, Rgba, SharedString, StyledText, TextRun, div,
@@ -282,7 +285,7 @@ pub(super) fn message_actions(text: &str) -> Vec<MessageAction> {
     let mut actions = Vec::new();
     let mut codes = 0;
     let mut links = Vec::new();
-    for block in parse(text) {
+    for block in parse_cached(text).iter() {
         if block.kind == BlockKind::Code {
             codes += 1;
             actions.push(MessageAction {
@@ -338,23 +341,99 @@ pub(super) fn message_code_copy_id(entry_id: &str, block_index: usize) -> String
 }
 
 pub(super) fn message_code_copies(entry_id: &str, text: &str) -> Vec<MessageCodeCopy> {
-    parse(text)
-        .into_iter()
+    parse_cached(text)
+        .iter()
         .enumerate()
         .filter(|(_, block)| block.kind == BlockKind::Code)
         .map(|(index, block)| MessageCodeCopy {
             identifier: message_code_copy_id(entry_id, index),
-            content: block.code,
+            content: block.code.clone(),
             focus_key: format!("{entry_id}:code:{index}"),
         })
         .collect()
 }
 
-pub(super) fn message_code_block_count(text: &str) -> usize {
-    parse(text)
-        .iter()
-        .filter(|block| block.kind == BlockKind::Code)
-        .count()
+/// 测高结果；同一正文可同时取列宽、代码块数和行数（parse 经跨帧缓存）。
+pub(super) struct MessageMeasure {
+    blocks: Arc<Vec<Block>>,
+}
+
+impl MessageMeasure {
+    pub(super) fn new(text: &str) -> Self {
+        Self {
+            blocks: parse_cached(text),
+        }
+    }
+
+    pub(super) fn needs_full_width(&self) -> bool {
+        self.blocks
+            .iter()
+            .any(|block| matches!(block.kind, BlockKind::Code | BlockKind::Table))
+    }
+
+    pub(super) fn code_block_count(&self) -> usize {
+        self.blocks
+            .iter()
+            .filter(|block| block.kind == BlockKind::Code)
+            .count()
+    }
+
+    /// 仍是平均字宽 0.6 × 字号的近似；按渲染可见文本与引用/代码缩进估算。
+    /// 代码头按 ICON_BUTTON_SIZE 计入一行（timeline 测高再补像素差）；表格按内容列宽不折行。
+    pub(super) fn block_line_counts(&self, width_px: f32, font_px: f32) -> Vec<usize> {
+        self.blocks
+            .iter()
+            .map(|block| {
+                let chars_per_line = (((width_px - block.inset()).max(1.0) / (font_px * 0.6))
+                    .floor() as usize)
+                    .max(1);
+                let header = usize::from(block.kind == BlockKind::Code);
+                let table_lines = block.table.len();
+                header
+                    + table_lines
+                    + block
+                        .lines
+                        .iter()
+                        .map(|line| {
+                            if block.kind == BlockKind::Code {
+                                return 1;
+                            }
+                            line.iter()
+                                .map(|span| span.text.chars().count())
+                                .sum::<usize>()
+                                .div_ceil(chars_per_line)
+                                .max(1)
+                        })
+                        .sum::<usize>()
+            })
+            .collect()
+    }
+}
+
+/// 跨帧 parse 缓存容量；超出后整表清空，超长会话退化为偶发重解析。
+const PARSE_CACHE_CAPACITY: usize = 4096;
+
+/// parse 结果按正文文本跨帧缓存：render、测高（MessageMeasure）、消息
+/// 菜单与 AX 代码复制共用，消掉长会话非跟随态每帧 O(全部行) 的重复
+/// parse。缓存键即文本本身——parse 只读取正文（宽度 / 字号只影响测高
+/// 与 shaping，不改变块结构），已完整覆盖影响 parse 结果的全部输入。
+fn parse_cached(text: &str) -> Arc<Vec<Block>> {
+    thread_local! {
+        static CACHE: RefCell<HashMap<Box<str>, Arc<Vec<Block>>>> =
+            RefCell::new(HashMap::new());
+    }
+    CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if let Some(blocks) = cache.get(text) {
+            return blocks.clone();
+        }
+        let blocks = Arc::new(parse(text));
+        if cache.len() >= PARSE_CACHE_CAPACITY {
+            cache.clear();
+        }
+        cache.insert(Box::from(text), blocks.clone());
+        blocks
+    })
 }
 
 /// 列宽 = 该列最长单元格字符宽度 × 0.6 字号 + 左右 padding；行数估算同源（按内容、不按 160）。
@@ -600,7 +679,7 @@ fn parse(text: &str) -> Vec<Block> {
 }
 
 fn styled_line(
-    spans: Vec<Span>,
+    spans: &[Span],
     kind: BlockKind,
     color: Rgba,
 ) -> (StyledText, Vec<(Range<usize>, String)>) {
@@ -634,8 +713,8 @@ fn styled_line(
             strikethrough: None,
         });
         let end = start + span.text.len();
-        if let Some(url) = span.target.filter(|url| http_url(url)) {
-            links.push((start..end, url));
+        if let Some(url) = span.target.as_deref().filter(|url| http_url(url)) {
+            links.push((start..end, url.to_owned()));
         }
         text.push_str(&span.text);
         start = end;
@@ -645,7 +724,7 @@ fn styled_line(
 
 fn line_element(
     element_id: String,
-    spans: Vec<Span>,
+    spans: &[Span],
     kind: BlockKind,
     color: Rgba,
 ) -> gpui::AnyElement {
@@ -668,9 +747,7 @@ fn line_element(
 
 /// Code and tables use the full reading column; prose keeps the user bubble cap.
 pub(super) fn message_needs_full_width(text: &str) -> bool {
-    parse(text)
-        .iter()
-        .any(|block| matches!(block.kind, BlockKind::Code | BlockKind::Table))
+    MessageMeasure::new(text).needs_full_width()
 }
 
 fn streaming_caret(color: Rgba) -> impl IntoElement {
@@ -698,9 +775,9 @@ pub(super) fn message_body_element(
         .text_size(font::BODY)
         .line_height(font::from_pixels(metrics::MSG_LINE_HEIGHT))
         .text_color(color);
-    let blocks = parse(text);
+    let blocks = parse_cached(text);
     let last_block = blocks.len().saturating_sub(1);
-    for (index, block) in blocks.into_iter().enumerate() {
+    for (index, block) in blocks.iter().enumerate() {
         let mut element = div().flex().flex_col();
         if block.kind == BlockKind::Code {
             let language_label = block
@@ -748,7 +825,7 @@ pub(super) fn message_body_element(
             let widths = table_column_widths_shaped(&block.table, window, color);
             let table_width: f32 = widths.iter().sum();
             let mut table = div().flex().flex_col().w(px(table_width));
-            for (row_index, row) in block.table.into_iter().enumerate() {
+            for (row_index, row) in block.table.iter().enumerate() {
                 let mut row_element = div()
                     .flex()
                     .flex_row()
@@ -758,7 +835,7 @@ pub(super) fn message_body_element(
                 if row_index == 0 {
                     row_element = row_element.bg(dark().surface.hover);
                 }
-                for (cell_index, cell) in row.into_iter().enumerate() {
+                for (cell_index, cell) in row.iter().enumerate() {
                     let width = widths
                         .get(cell_index)
                         .copied()
@@ -800,7 +877,7 @@ pub(super) fn message_body_element(
             && index == last_block
             && block.kind != BlockKind::Code
             && block.kind != BlockKind::Table;
-        for (line_index, line) in block.lines.into_iter().enumerate() {
+        for (line_index, line) in block.lines.iter().enumerate() {
             // Taffy can clamp an auto-width row to the viewport even when its
             // nowrap text overflows. Give the scroll child its shaped width.
             let code_width = if block.kind == BlockKind::Code {
@@ -866,36 +943,6 @@ pub(super) fn message_body_element(
     body
 }
 
-/// 仍是平均字宽 0.6 × 字号的近似；按渲染可见文本与引用/代码缩进估算。
-/// 代码头按 ICON_BUTTON_SIZE 计入一行（timeline 测高再补像素差）；表格按内容列宽不折行。
-pub(super) fn message_block_line_counts(text: &str, width_px: f32, font_px: f32) -> Vec<usize> {
-    parse(text)
-        .into_iter()
-        .map(|block| {
-            let chars_per_line =
-                (((width_px - block.inset()).max(1.0) / (font_px * 0.6)).floor() as usize).max(1);
-            let header = usize::from(block.kind == BlockKind::Code);
-            let table_lines = block.table.len();
-            header
-                + table_lines
-                + block
-                    .lines
-                    .iter()
-                    .map(|line| {
-                        if block.kind == BlockKind::Code {
-                            return 1;
-                        }
-                        line.iter()
-                            .map(|span| span.text.chars().count())
-                            .sum::<usize>()
-                            .div_ceil(chars_per_line)
-                            .max(1)
-                    })
-                    .sum::<usize>()
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -938,7 +985,7 @@ mod tests {
         assert_eq!(blocks[4].lines[0][0].text, "let x = **raw**;");
         assert_eq!(blocks[4].language.as_deref(), Some("rust"));
         assert_eq!(
-            message_block_line_counts(text, 600.0, 14.0),
+            MessageMeasure::new(text).block_line_counts(600.0, 14.0),
             [1, 1, 2, 1, 3]
         );
         assert_eq!(parse("```\nlet x = 1;\n```")[0].language, None);
@@ -976,7 +1023,7 @@ mod tests {
         assert_eq!(actions[4].content, "https://other.test");
         assert!(!actions[4].open);
         assert!(actions[4].label.contains("other.test"));
-        assert_eq!(message_block_line_counts(text, 900.0, 14.0), [2, 3, 1]);
+        assert_eq!(MessageMeasure::new(text).block_line_counts(900.0, 14.0), [2, 3, 1]);
         let url = "https://en.wikipedia.org/wiki/Function_(mathematics)";
         for source in [format!("[定义]({url})"), format!("({url}).")] {
             let actions = message_actions(&source);

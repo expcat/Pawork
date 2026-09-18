@@ -1,10 +1,11 @@
 use super::*;
 use pawork_testkit::{MockProvider, MockScript};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 #[tokio::test]
 async fn workspace_list_includes_registered_roots() {
     let dir = tempfile::tempdir().expect("tempdir");
+    let other = tempfile::tempdir().expect("second workspace");
     let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
         .await
         .expect("store");
@@ -17,6 +18,15 @@ async fn workspace_list_includes_registered_roots() {
         Some(store),
     );
     core.attach_workspace(dir.path()).expect("attach workspace");
+    let first_id = core.workspace_id().clone();
+    let first_root = core
+        .workspace_by_id(&first_id)
+        .expect("first workspace")
+        .roots;
+    core.attach_workspace(other.path())
+        .expect("attach second workspace");
+    let second_id = core.workspace_id().clone();
+    core.set_workspace_trusted(first_root[0].to_str().expect("first root").to_owned(), true);
     let adapter = GuiHostAdapter::new(Arc::new(core));
     let response = adapter
         .query(&query_envelope(AppQuery::WorkspaceList))
@@ -25,10 +35,47 @@ async fn workspace_list_includes_registered_roots() {
     let AppResponse::Data(value) = response else {
         panic!("WorkspaceList must return Data, got {response:?}");
     };
-    let roots = value
-        .as_array()
-        .and_then(|entries| entries.first())
-        .and_then(|entry| entry.get("roots"))
+    let entries = value.as_array().expect("WorkspaceList array");
+    assert_eq!(entries.len(), 2, "two registered workspaces: {entries:?}");
+    let entry = |id: &str| {
+        entries
+            .iter()
+            .find(|entry| entry.get("id").and_then(Value::as_str) == Some(id))
+            .unwrap_or_else(|| panic!("missing workspace {id}: {entries:?}"))
+    };
+    assert_eq!(
+        entry(first_id.as_str())
+            .get("trusted")
+            .and_then(Value::as_bool),
+        Some(true),
+        "WorkspaceList must use per-root trust, not attached-workspace trust"
+    );
+    assert_eq!(
+        entry(second_id.as_str())
+            .get("trusted")
+            .and_then(Value::as_bool),
+        Some(false),
+        "untrusted workspace must stay untrusted when another is trusted"
+    );
+    let snapshot = adapter.snapshot().await.expect("snapshot");
+    let snap_entries = snapshot
+        .sections
+        .iter()
+        .find(|section| section.kind == SnapshotSectionKind::Workspaces)
+        .and_then(|section| section.data.as_ref())
+        .and_then(Value::as_array)
+        .expect("snapshot Workspaces");
+    let snap_trusted = |id: &str| {
+        snap_entries
+            .iter()
+            .find(|entry| entry.get("id").and_then(Value::as_str) == Some(id))
+            .and_then(|entry| entry.get("trusted"))
+            .and_then(Value::as_bool)
+    };
+    assert_eq!(snap_trusted(first_id.as_str()), Some(true));
+    assert_eq!(snap_trusted(second_id.as_str()), Some(false));
+    let roots = entry(first_id.as_str())
+        .get("roots")
         .and_then(Value::as_array)
         .expect("WorkspaceList roots array");
     assert_eq!(roots.len(), 1, "one attached root: {roots:?}");

@@ -24,7 +24,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use pawork_control_plane::credential::{CredentialPool, LeaseOutcome};
 use pawork_control_plane::{TenantPolicyEngine, UsageLedger};
@@ -35,12 +34,12 @@ use pawork_control_plane::UsageQuery;
 #[cfg(test)]
 use pawork_control_plane::{InMemoryUsageLedger, UsageLedgerError, UsageRecord, UsageTotals};
 
-use crate::budget::{LedgerContext, WorkerBudgetController, WorkerBudgetLimits};
+use crate::budget::{now_ms, LedgerContext, WorkerBudgetController, WorkerBudgetLimits};
 #[cfg(test)]
 use crate::identity::WorkerRole;
-#[cfg(test)]
-use crate::lifecycle::{replay_workers, WorkerState};
 use crate::lifecycle::{OrchestrationEvent, WorkerTransition};
+#[cfg(test)]
+use crate::lifecycle::{WorkerState, replay_workers};
 use crate::merge::{
     ConflictReport, MergeDecision, MergeOutcome, PatchMerger, PatchProposal, WorkerPatch,
 };
@@ -147,6 +146,15 @@ pub struct AgentSupervisor {
     pub(crate) flush_in_flight: Arc<Mutex<BTreeSet<AgentId>>>,
 }
 
+/// complete / fail 的终态差异，作为共用终态收口
+/// [`AgentSupervisor::finish_terminal`] 的参数。
+enum TerminalOutcome {
+    /// 正常完成：lease 以 `LeaseOutcome::Completed` 释放。
+    Complete,
+    /// 失败：携带原因，lease 以 `LeaseOutcome::Failed` 释放（计入连续失败）。
+    Fail(String),
+}
+
 impl AgentSupervisor {
     pub fn new(
         pool: Arc<dyn CredentialPool>,
@@ -207,6 +215,37 @@ impl AgentSupervisor {
     /// lease（account / provider）与 spawn 请求（model）取真实值，不再
     /// 硬编码 `"unknown"`；worktree 显式释放；TaskGraph 推进为 Completed。
     pub async fn complete(&self, agent_id: &AgentId) -> Result<(), SupervisorError> {
+        self.finish_terminal(agent_id, TerminalOutcome::Complete)
+            .await
+    }
+
+    /// 失败：释放 lease（`LeaseOutcome::Failed`，计入连续失败）→ Fail →
+    /// `WorkerFailed` → 从父的活跃 children 中移除。worktree 显式释放；
+    /// TaskGraph 推进为 Failed 并发出 TaskFailed。终态前把累计用量 flush 到
+    /// ledger（与 complete 一致）；flush 失败保留 controller 与归属，可经
+    /// [`AgentSupervisor::flush_usage`] 重试。
+    pub async fn fail(&self, agent_id: &AgentId, reason: String) -> Result<(), SupervisorError> {
+        self.finish_terminal(agent_id, TerminalOutcome::Fail(reason))
+            .await
+    }
+
+    /// complete / fail 的共用终态收口：应用终态转换并取走守卫 → 释放
+    /// worktree（best-effort）→ TaskGraph 推进并发 Task 事件 → 按真实归属
+    /// 标记 lease outcome 后释放 → flush 终态用量 → 发终态事件并从父的
+    /// 活跃 children 中移除。两条路径仅事件形状与 lease outcome 不同。
+    async fn finish_terminal(
+        &self,
+        agent_id: &AgentId,
+        outcome: TerminalOutcome,
+    ) -> Result<(), SupervisorError> {
+        let (transition, lease_outcome, stage) = match &outcome {
+            TerminalOutcome::Complete => (
+                WorkerTransition::Complete,
+                LeaseOutcome::Completed,
+                "complete",
+            ),
+            TerminalOutcome::Fail(_) => (WorkerTransition::Fail, LeaseOutcome::Failed, "fail"),
+        };
         let TerminalTake {
             mut lease,
             parent,
@@ -215,21 +254,32 @@ impl AgentSupervisor {
             worktree,
             model,
             ticket,
-        } = self.apply_terminal_and_take(agent_id, WorkerTransition::Complete)?;
+        } = self.apply_terminal_and_take(agent_id, transition)?;
         // 显式释放 worktree（best-effort）。
         if let Some(guard) = worktree {
             if let Err(error) = guard.release().await {
-                tracing::warn!(%agent_id, %error, "failed to release worker worktree on complete");
+                tracing::warn!(%agent_id, %error, "failed to release worker worktree on {stage}");
             }
         }
-        // TaskGraph：推进任务为 Completed 并发出 TaskCompleted。
+        // TaskGraph：推进任务终态并发出对应 Task 事件。
         if let Some(graph) = &self.task_graph {
             let task_id = TaskId::new(agent_id.as_str());
-            let _ = graph.complete(&task_id);
-            self.emit(OrchestrationEvent::TaskCompleted { task_id });
+            match &outcome {
+                TerminalOutcome::Complete => {
+                    let _ = graph.complete(&task_id);
+                    self.emit(OrchestrationEvent::TaskCompleted { task_id });
+                }
+                TerminalOutcome::Fail(reason) => {
+                    let _ = graph.fail(&task_id);
+                    self.emit(OrchestrationEvent::TaskFailed {
+                        task_id,
+                        reason: reason.clone(),
+                    });
+                }
+            }
         }
-        // 真实归属：account / provider 取自 lease，model 取自 spawn 请求；
-        // 无 lease / 无 model 时回退默认值（保持旧行为）。
+        // 真实归属：account / provider 取自 lease（释放前读取），model 取自
+        // spawn 请求；无 lease / 无 model 时回退默认值（保持旧行为）。
         let (account_id, provider_id) = lease
             .as_ref()
             .and_then(|guard| guard.lease())
@@ -237,10 +287,10 @@ impl AgentSupervisor {
             .unwrap_or_else(|| ("local/default".to_string(), ProviderId::new("local")));
         let model_id = model.unwrap_or_else(|| ModelId::new("unknown"));
         // 读完归属后释放 lease。LeaseGuard 默认 outcome 为 Failed（fail-safe：
-        // 未显式标记不得计作成功），因此正常完成必须显式标记 Completed 后再
-        // Drop（Drop 触发同步幂等释放）。
+        // 未显式标记不得计作成功），因此必须显式标记真实 outcome 后再 Drop
+        // （Drop 触发同步幂等释放）。
         if let Some(guard) = lease.as_mut() {
-            *guard.outcome_mut() = LeaseOutcome::Completed;
+            *guard.outcome_mut() = lease_outcome;
         }
         drop(lease);
         let flush_outcome = self
@@ -254,69 +304,17 @@ impl AgentSupervisor {
             )
             .await;
         drop(ticket);
-        self.emit(OrchestrationEvent::WorkerCompleted {
-            agent_id: agent_id.clone(),
-            at_ms: now_ms(),
-        });
-        self.remove_child(parent.as_ref(), agent_id);
-        flush_outcome
-    }
-
-    /// 失败：释放 lease（`LeaseOutcome::Failed`，计入连续失败）→ Fail →
-    /// `WorkerFailed` → 从父的活跃 children 中移除。worktree 显式释放；
-    /// TaskGraph 推进为 Failed 并发出 TaskFailed。终态前把累计用量 flush 到
-    /// ledger（与 complete 一致）；flush 失败保留 controller 与归属，可经
-    /// [`AgentSupervisor::flush_usage`] 重试。
-    pub async fn fail(&self, agent_id: &AgentId, reason: String) -> Result<(), SupervisorError> {
-        let TerminalTake {
-            lease,
-            parent,
-            instance,
-            controller,
-            worktree,
-            model,
-            ticket,
-        } = self.apply_terminal_and_take(agent_id, WorkerTransition::Fail)?;
-        if let Some(guard) = worktree {
-            if let Err(error) = guard.release().await {
-                tracing::warn!(%agent_id, %error, "failed to release worker worktree on fail");
-            }
+        match outcome {
+            TerminalOutcome::Complete => self.emit(OrchestrationEvent::WorkerCompleted {
+                agent_id: agent_id.clone(),
+                at_ms: now_ms(),
+            }),
+            TerminalOutcome::Fail(reason) => self.emit(OrchestrationEvent::WorkerFailed {
+                agent_id: agent_id.clone(),
+                at_ms: now_ms(),
+                reason,
+            }),
         }
-        if let Some(graph) = &self.task_graph {
-            let task_id = TaskId::new(agent_id.as_str());
-            let _ = graph.fail(&task_id);
-            self.emit(OrchestrationEvent::TaskFailed {
-                task_id,
-                reason: reason.clone(),
-            });
-        }
-        // 真实归属：account / provider 取自 lease（释放前读取），model 取自 spawn 请求。
-        let (account_id, provider_id) = lease
-            .as_ref()
-            .and_then(|guard| guard.lease())
-            .map(|l| (l.account_id.as_str().to_string(), l.provider_id.clone()))
-            .unwrap_or_else(|| ("local/default".to_string(), ProviderId::new("local")));
-        let model_id = model.unwrap_or_else(|| ModelId::new("unknown"));
-        if let Some(mut guard) = lease {
-            *guard.outcome_mut() = LeaseOutcome::Failed;
-            drop(guard);
-        }
-        let flush_outcome = self
-            .flush_terminal_usage(
-                agent_id,
-                &instance,
-                account_id,
-                provider_id,
-                model_id,
-                controller,
-            )
-            .await;
-        drop(ticket);
-        self.emit(OrchestrationEvent::WorkerFailed {
-            agent_id: agent_id.clone(),
-            at_ms: now_ms(),
-            reason,
-        });
         self.remove_child(parent.as_ref(), agent_id);
         flush_outcome
     }
@@ -428,13 +426,6 @@ impl AgentSupervisor {
         }
         Ok(outcome)
     }
-}
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -917,21 +908,25 @@ mod tests {
             report.recovered_states[&AgentId::new("d")],
             WorkerState::Failed
         );
-        assert!(report
-            .recovered_states
-            .values()
-            .all(|state| state.is_terminal()));
+        assert!(
+            report
+                .recovered_states
+                .values()
+                .all(|state| state.is_terminal())
+        );
         // report-only：Supervisor 自身不被重建，不能据此 cancel / assign / flush。
         assert!(supervisor.state(&AgentId::new("a")).is_none());
         assert!(supervisor.state(&AgentId::new("b")).is_none());
         assert!(supervisor.state(&AgentId::new("c")).is_none());
         assert!(supervisor.cancel_token(&AgentId::new("a")).is_none());
         assert!(supervisor.events().is_empty());
-        assert!(supervisor
-            .children
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .is_empty());
+        assert!(
+            supervisor
+                .children
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .is_empty()
+        );
         assert_eq!(supervisor.active_worker_count(None), 0);
     }
 
@@ -951,16 +946,20 @@ mod tests {
         assert!(supervisor.state(&AgentId::new("no-such-parent")).is_none());
         assert_eq!(supervisor.active_worker_count(None), 0);
         assert!(supervisor.events().is_empty());
-        assert!(supervisor
-            .children
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .is_empty());
-        assert!(supervisor
-            .workers
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .is_empty());
+        assert!(
+            supervisor
+                .children
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .is_empty()
+        );
+        assert!(
+            supervisor
+                .workers
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .is_empty()
+        );
     }
 
     #[tokio::test]
@@ -996,12 +995,14 @@ mod tests {
 
         assert_eq!(supervisor.state(&parent), Some(WorkerState::Starting));
         assert_eq!(supervisor.active_worker_count(None), 1);
-        assert!(supervisor
-            .children
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .get(&parent)
-            .is_none());
+        assert!(
+            supervisor
+                .children
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .get(&parent)
+                .is_none()
+        );
         assert_eq!(
             supervisor
                 .workers
@@ -1035,12 +1036,14 @@ mod tests {
             matches!(err, SupervisorError::PolicyDenied(ref reason) if reason.contains("cannot spawn")),
             "{err:?}"
         );
-        assert!(supervisor
-            .children
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .get(&parent)
-            .is_none());
+        assert!(
+            supervisor
+                .children
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .get(&parent)
+                .is_none()
+        );
         assert_eq!(supervisor.active_worker_count(None), 0);
     }
 
@@ -1222,6 +1225,82 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn task_graph_rejection_releases_resources_and_records_failed_worker() {
+        let graph = Arc::new(TaskGraph::new());
+        let pool = Arc::new(InMemoryCredentialPool::new(4));
+        let allocator = Arc::new(FakeWt::new());
+        let supervisor = harness_with_config(
+            pool.clone(),
+            Arc::new(InMemoryTenantPolicyEngine::default()),
+            SupervisorConfig {
+                max_agent_concurrency: 2,
+                ..SupervisorConfig::default()
+            },
+        )
+        .with_task_graph(graph.clone())
+        .with_parent_workspace(PathBuf::from("/parent"))
+        .with_worktree_allocator(allocator.clone());
+        let parent = supervisor.spawn(spawn_request(None)).await.unwrap();
+        let foreign = TaskId::new("foreign");
+        graph
+            .add_task(crate::AgentTask {
+                task_id: foreign.clone(),
+                tenant_id: TenantId::new("tenant-b"),
+                owner: AgentId::new("foreign-worker"),
+                description: String::new(),
+                depends_on: vec![],
+                retry_count: 0,
+                max_retries: 0,
+                state: TaskState::Created,
+            })
+            .unwrap();
+        let mut req = spawn_request(Some(acquire_request(&parent)));
+        req.parent_id = Some(parent.clone());
+        req.task_deps = vec![foreign.clone()];
+        assert!(matches!(
+            supervisor.spawn(req).await,
+            Err(SupervisorError::PolicyDenied(_))
+        ));
+        let events = supervisor.events();
+        let failed = events
+            .iter()
+            .find_map(|event| match event {
+                OrchestrationEvent::WorkerFailed { agent_id, .. } => Some(agent_id.clone()),
+                _ => None,
+            })
+            .expect("failed worker recorded");
+        assert_eq!(supervisor.state(&failed), Some(WorkerState::Failed));
+        assert_eq!(
+            crate::replay_workers(&events).get(&failed),
+            Some(&WorkerState::Failed)
+        );
+        assert!(supervisor.cancel_token(&failed).is_none());
+        assert!(
+            !supervisor
+                .children
+                .lock()
+                .unwrap()
+                .get(&parent)
+                .unwrap()
+                .contains(&failed)
+        );
+        assert!(supervisor.reservations.lock().unwrap().is_empty());
+        assert_eq!(supervisor.active_worker_count(None), 1);
+        assert_eq!(graph.state_of(&TaskId::new(failed.as_str())), None);
+        assert_eq!(graph.state_of(&foreign), Some(TaskState::Ready));
+        assert_eq!(allocator.released().len(), 1);
+        let account = AccountId::new("local/default");
+        assert_eq!(pool.active_count(&account), 0);
+        assert_eq!(pool.account_health(&account).consecutive_failures, 0);
+        // 失败释放预约；满额边界下仍可启动新的 child。
+        let mut retry = spawn_request(None);
+        retry.parent_id = Some(parent.clone());
+        let child = supervisor.spawn(retry).await.unwrap();
+        supervisor.cancel_tree(&parent).await.unwrap();
+        assert_eq!(supervisor.state(&child), Some(WorkerState::Cancelled));
+    }
+
+    #[tokio::test]
     async fn spawn_with_unmet_task_deps_stays_blocked_and_consistent() {
         // 前向依赖（TaskGraph 明确支持）：task 依赖尚未插入的 "dep"。
         // spawn 必须成功、任务保持 Blocked、不 emit TaskReady/TaskAssigned，
@@ -1395,7 +1474,7 @@ mod tests {
         let patch = WorkerPatch {
             agent_id: agent.clone(),
             session_id: SessionId::new("session-1"),
-            worktree_path: PathBuf::from("/wt"),
+            worktree_path: parent_dir.path().to_path_buf(),
             changed_files: vec!["a.txt".to_string()],
         };
         let report = supervisor.propose_patch(&agent, patch).await.unwrap();
@@ -1421,7 +1500,7 @@ mod tests {
         let patch = WorkerPatch {
             agent_id: agent.clone(),
             session_id: SessionId::new("session-1"),
-            worktree_path: PathBuf::from("/wt2"),
+            worktree_path: parent_dir.path().to_path_buf(),
             changed_files: vec!["a.txt".to_string()],
         };
         let report = supervisor.propose_patch(&agent, patch).await.unwrap();
@@ -1665,14 +1744,18 @@ mod tests {
         supervisor.complete(&agent).await.unwrap();
 
         let decisions = engine.decisions(&TenantId::new("tenant-a"));
-        assert!(decisions
-            .iter()
-            .any(|event| event.gate == PolicyGate::LeaseAcquire
-                && event.decision == PolicyDecisionKind::Deny));
-        assert!(decisions
-            .iter()
-            .any(|event| event.gate == PolicyGate::AgentSpawn
-                && event.decision == PolicyDecisionKind::Allow));
+        assert!(
+            decisions
+                .iter()
+                .any(|event| event.gate == PolicyGate::LeaseAcquire
+                    && event.decision == PolicyDecisionKind::Deny)
+        );
+        assert!(
+            decisions
+                .iter()
+                .any(|event| event.gate == PolicyGate::AgentSpawn
+                    && event.decision == PolicyDecisionKind::Allow)
+        );
     }
 
     #[tokio::test]
@@ -2600,11 +2683,13 @@ mod terminal_flush_tests {
             "{err:?}"
         );
         // controller 必须被保留（不吞 pending、不丢账）。
-        assert!(supervisor
-            .budget
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .contains_key(&agent));
+        assert!(
+            supervisor
+                .budget
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .contains_key(&agent)
+        );
 
         // 恢复 ctx 后重试成功。
         supervisor

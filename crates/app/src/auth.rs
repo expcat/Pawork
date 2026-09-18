@@ -383,7 +383,7 @@ mod tests {
 
         async fn stream(
             &self,
-            _request: CanonicalModelRequest,
+            _request: &CanonicalModelRequest,
             _sink: &dyn ProviderEventSink,
             _cancel: CancellationToken,
         ) -> Result<ModelResponseSummary, ProviderError> {

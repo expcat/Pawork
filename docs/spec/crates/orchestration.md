@@ -1,6 +1,6 @@
 # pawork-orchestration
 
-> 多 Agent 编排：在控制面（租约 / 用量 / 租户策略）之上运行 `AgentSupervisor`——spawn worker、预算闸门、取消整棵子树、任务依赖图、可选 git worktree 隔离与 patch merge。依赖 `pawork-domain` + `pawork-control-plane`（关 default features），不依赖 `pawork-workflow`。
+> 多 Agent 编排：在控制面（租约 / 用量 / 租户策略）之上运行 `AgentSupervisor`——spawn worker、预算闸门、取消整棵子树、任务依赖图、可选 git worktree 隔离与 patch merge。依赖 `pawork-domain` + `pawork-policy`（共用路径内核）+ `pawork-control-plane`（关 default features），不依赖 `pawork-workflow`。
 
 ## 1. 职责与边界
 
@@ -13,17 +13,17 @@
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
 | `src/lib.rs` | ~20 | 7 个私有模块全部 glob re-export 到 crate 根（无 `pub mod` 子命名空间） |
-| `src/supervisor/mod.rs` | ~2750（非测试 ~440） | `AgentSupervisor` 结构（workers / cancel_tokens / children / reservations / budget / event_log / pending_patches / flush_ctx / flush_in_flight）；`SupervisorConfig`（并发 16、池并发建议 4、默认预算、`max_worker_depth`）；`SupervisorError`（10 变体）；builder 注入；`complete` / `fail` / `retry_task` / `propose_patch` / `approve_patch`；约 2300 行内联测试 |
-| `src/supervisor/spawn.rs` | ~720 | `SpawnRequest`；`spawn` 全流程（parent 准入 → 原子并发预约 → 策略闸门 → worktree → lease → 注册）；`ConcurrencyReservation`（RAII 槽位）；lease 作用域校验 `validate_lease_scope`；策略决策审计记录 |
-| `src/supervisor/cancel_tree.rs` | ~175 | `cancel_tree`（BFS 取消整棵子树）；`CancelTreeReceipt` |
+| `src/supervisor/mod.rs` | ~2820（非测试 ~440） | `AgentSupervisor` 结构（workers / cancel_tokens / children / reservations / budget / event_log / pending_patches / flush_ctx / flush_in_flight）；`SupervisorConfig`（并发 16、池并发建议 4、默认预算、`max_worker_depth`）；`SupervisorError`（11 变体）；builder 注入；`complete` / `fail` / `retry_task` / `propose_patch` / `approve_patch`；约 2380 行内联测试 |
+| `src/supervisor/spawn.rs` | ~730 | `SpawnRequest`；`spawn` 全流程（parent 准入 → 原子并发预约 → 策略闸门 → worktree → lease → 注册）；`abort_spawn_as_failed` 统一失败收口（标记 Failed、发 `WorkerFailed`、移除 children / cancel token、释放 worktree 并以 `LeaseOutcome::Released` 释放 lease）；`ConcurrencyReservation`（RAII 槽位）；lease 作用域校验 `validate_lease_scope`；策略决策审计记录 |
+| `src/supervisor/cancel_tree.rs` | ~175 | `cancel_tree`（栈式深度优先遍历取消整棵子树，覆盖全部后代）；`CancelTreeReceipt` |
 | `src/supervisor/budget_gate.rs` | ~260 | `record_usage`（预算检查 + `BudgetExceeded` 去重发射）；`flush_usage`（终态 flush 显式重试）；`flush_terminal_usage`（pub(crate) 终态路径）；`FlushTicket`（在途标记 RAII） |
 | `src/supervisor/recovery.rs` | ~50 | `recover_report`（report-only 崩溃诊断）；`RecoveryReport` |
 | `src/supervisor/registry.rs` | ~180 | `WorkerEntry`（instance + 状态机 + lease / worktree 守卫 + model）；`start_worker`；`cancel_token` / `state` / `events` 查询；`emit` / `remove_child`；`apply_terminal_and_take`（终态锁内取守卫） |
 | `src/budget.rs` | ~900（非测试 ~415） | `WorkerBudgetLimits`（None = 不限）；`UsageAccumulator`（原子累加）；`BudgetReport`；维度常量 `DIM_INPUT_TOKENS` / `DIM_OUTPUT_TOKENS` / `DIM_COST_MICROS`；`DEFAULT_SOFT_RATIO = 0.8`（ppm 整数比较避免 f64 误差）；`WorkerBudgetController`（check / diff_hard_exceeded / flush_to_ledger 幂等提交游标）；`LedgerContext` |
-| `src/lifecycle.rs` | ~630（非测试 ~435） | `WorkerState` 九态；`WorkerTransition` / `transition` 纯函数 / `WorkerStateMachine`（apply 返回 `EventHint`）；`LifecycleError`；`OrchestrationEvent`（21 变体，serde tag/content snake_case）；`replay_workers` 容错重放 |
+| `src/lifecycle.rs` | ~630（非测试 ~435） | `WorkerState` 九态；`WorkerTransition` / `transition` 纯函数 / `WorkerStateMachine`（apply 返回新状态）；`LifecycleError`；`OrchestrationEvent`（21 变体，serde tag/content snake_case）；`replay_workers` 容错重放 |
 | `src/task_graph.rs` | ~540（非测试 ~370） | `TaskGraph` 线程安全 DAG（`Arc<Mutex<BTreeMap>>`，锁不跨 await）；`TaskId` / `TaskState` 八态 / `AgentTask`；add_task（拒环、拒跨租户依赖、允许前向引用）；ready / assign / start / complete（幂等）/ fail / cancel / retry / ready_tasks / detect_cycle |
 | `src/worktree.rs` | ~360（非测试 ~185） | `WorktreeAllocator` trait；`WorkerWorktree`；`WorktreeGuard`（显式 `release` 消费；Drop 只告警不释放）；`GitWorktreeAllocator`（仅 feature `git`，委托 pawork-git `WorktreeService`，释放绝不删用户数据） |
-| `src/merge.rs` | ~620（非测试 ~355） | `DiffProvider` trait（changed_files / file_content / base_content）；`GitDiffProvider`（仅 feature `git`）；`WorkerPatch` / `PatchProposal` / `ConflictReport` / `MergeOutcome` / `MergeDecision`；`PatchMerger`（collect / detect_conflicts / merge）；`resolve_relative` 路径越界防护；`atomic_write`（tmp + rename） |
+| `src/merge.rs` | ~680（非测试 ~375） | `DiffProvider` trait（changed_files / file_content / base_content）；`GitDiffProvider`（仅 feature `git`）；`WorkerPatch` / `PatchProposal` / `ConflictReport` / `MergeOutcome` / `MergeDecision`；`PatchMerger`（collect / detect_conflicts / merge）；`resolve_relative` 路径越界防护（委托 `pawork_policy::resolve_workspace_path`）；`atomic_write`（tmp + rename） |
 | `src/identity.rs` | ~155 | `WorkerRole::{Parent, Worker}`（serde snake_case）；`AgentInstance` 不可变身份（tenant / principal / parent / session / worktree_path / created_at_ms）与 `new_parent` / `new_worker` 构造 |
 
 无独立 `tests/` 目录：全部测试内联于各模块 `#[cfg(test)]`。
@@ -56,7 +56,7 @@
 ### 3.3 生命周期与事件（`lifecycle`）
 
 - `WorkerState`：`Created → Admitted → Starting → Running ↔ Waiting`，活动态可 `→ Cancelling → Cancelled` 或 `→ Failed`，`Starting|Running|Waiting → Completed`；`is_terminal` / `is_active`。终态拒绝一切转换（`LifecycleError::FromTerminal`）。
-- `transition(from, t)` 纯函数；`WorkerStateMachine::apply` 返回 `(新状态, EventHint)` 供调用方发事件。
+- `transition(from, t)` 纯函数；`WorkerStateMachine::apply` 返回新状态。终态/生命周期事件由 supervisor 手工构造（携带 agent_id / at_ms / reason 等完整负载），不经事件提示双轨。
 - `OrchestrationEvent`（serde `tag = "type", content = "data"`）：Worker 九件套（Created/Admitted/Started/Running/Waiting/Completed/Cancelling/Cancelled/Failed）+ Task 七件套（Created/Ready/Assigned/Completed/Failed/Retried/Cancelled）+ `BudgetExceeded` + `ConcurrencyDenied` + Patch 三件套（Proposed/Merged/Conflict）。
 - `replay_workers(&[OrchestrationEvent]) -> BTreeMap<AgentId, WorkerState>`：事件溯源重建；终态事件（Complete/Cancel/Fail）直接落终态、不要求中间事件完整（日志可能因崩溃截断），非终态事件走严格状态机、非法静默跳过，终态后迟到事件忽略。
 
@@ -85,7 +85,7 @@
 
 ### 4.2 cancel-tree
 
-1. 根不存在 → `UnknownAgent`。BFS 沿 children 图收集整棵子树。
+1. 根不存在 → `UnknownAgent`。自根向下栈式遍历 children 图收集整棵子树。
 2. 逐节点：先触发取消令牌；锁内——终态节点跳过，活动节点 `BeginCancel → Cancel` 双转换、移除预算 controller（登记 flush 在途票据）、take lease / worktree 守卫。
 3. 发 `WorkerCancelling` → `WorkerCancelled`；worktree best-effort 释放；TaskGraph 推进 Cancelled 并发 `TaskCancelled`。
 4. lease 以 `LeaseOutcome::Cancelled` 幂等释放——只累加取消计数，**不惩罚账号健康**（不计连续失败）。
@@ -116,7 +116,7 @@
 - **事件流一致**：spawn 中途失败也把 worker 标记 Failed 并注册（`WorkerFailed` 落日志），恢复重放不留悬挂 worker。
 - **recover_report 是 report-only**：不重建可操作状态、不 emit 事件。
 - **worktree 释放安全**：只经 allocator（git 侧校验受管 worktree），绝不递归删除用户数据；Guard Drop 不隐式释放（避免无 runtime panic），须显式 `release`。
-- **merge 路径安全**：相对路径拒绝绝对分量与 `..` 穿越；写入原子（tmp + rename）。
+- **merge 路径安全**：collect / detect_conflicts / merge 均拒绝绝对分量、任何 `..`、`.git` 与 symlink 逃逸，写入前重新通过 policy 路径内核；写入原子（tmp + rename）。
 - 状态机冻结：`WorkerState` 转换表、`TaskState` 转换表与 `OrchestrationEvent` serde 形状（`type`/`data` snake_case）是重放兼容面。
 
 ## 6. 依赖关系
@@ -131,11 +131,11 @@
 
 | 位置 | 覆盖点 |
 | --- | --- |
-| `supervisor/mod.rs`（~40 个用例） | spawn 生命周期事件序（created→admitted→started）；lease 持有到 complete / fail 的 outcome 与账号健康；cancel_tree 递归取消、幂等、lease Cancelled 释放、flush pending 上抛；并发闸门（全局 / 租户 / 深度，`ConcurrencyDenied`）；策略闸门（角色 / 模型 / provider / account 白名单、日预算 fail-closed、AcquireRequest 错配、恶意 pool lease 作用域校验）；`record_usage` 终态拒绝与 `BudgetExceeded` 去重；`flush_usage` 重试矩阵（not-terminal / context-missing / in-flight / 幂等重放）；worktree 分配失败路径与显式释放；TaskGraph 联动（Ready 直启 / Blocked 等待 / retry）；patch propose→approve 全流程；`recover_report` 孤儿推演 |
+| `supervisor/mod.rs`（~40 个用例） | spawn 生命周期事件序（created→admitted→started）；lease 持有到 complete / fail 的 outcome 与账号健康；cancel_tree 递归取消、幂等、lease Cancelled 释放、flush pending 上抛；并发闸门（全局 / 租户 / 深度，`ConcurrencyDenied`）；策略闸门（角色 / 模型 / provider / account 白名单、日预算 fail-closed、AcquireRequest 错配、恶意 pool lease 作用域校验）；`record_usage` 终态拒绝与 `BudgetExceeded` 去重；`flush_usage` 重试矩阵（not-terminal / context-missing / in-flight / 幂等重放）；worktree 分配失败路径与显式释放；TaskGraph 联动（Ready 直启 / Blocked 等待 / retry；注册拒绝收口为 Failed + WorkerFailed 且释放 lease / worktree / 并发槽位）；patch propose→approve 全流程；`recover_report` 孤儿推演 |
 | `lifecycle.rs` | 状态机合法 / 非法转换矩阵；终态拒绝；`replay_workers` 容错重放（截断日志、迟到事件）；事件 serde round-trip |
 | `budget.rs` | 软 / 硬阈值判定与 ppm 精度；`diff_hard_exceeded` 去重与恢复再告警；flush 幂等游标（失败重放同 record、cost-only 增量、并发 clone 句柄共享游标） |
 | `task_graph.rs` | 拒环 / 跨租户依赖 / 重复 id；前向引用与 ready_tasks；转换矩阵；retry 上限 |
-| `worktree.rs` / `merge.rs` / `identity.rs` | Guard 显式释放与 Drop 告警语义；冲突检测（基准 vs 父侧）、Merge 拒绝未解决冲突、原子写、路径穿越拒绝；身份构造与 serde |
+| `worktree.rs` / `merge.rs` / `identity.rs` | Guard 显式释放与 Drop 告警语义；冲突检测（基准 vs 父侧）、Merge 拒绝未解决冲突、原子写、collect / detect_conflicts / merge 主路径路径穿越拒绝；身份构造与 serde |
 
 默认验证命令：`cargo test -p pawork-orchestration --offline --lib --tests`。
 

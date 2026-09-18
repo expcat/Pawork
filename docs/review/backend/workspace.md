@@ -1,5 +1,5 @@
 # pawork-workspace Review
-> Workspace 根登记、相对路径安全解析、文件索引、六层配置、确定性资源加载与五来源兼容导入：位于 `pawork-domain` / `pawork-policy` 之上的工作区事实层。35 个 `.rs` 文件 / 15299 行；主模块 `lib`+`path`+`file_index`、`config/`、`resources/`、`import/`。
+> Workspace 根登记、相对路径安全解析、文件索引、六层配置、确定性资源加载与五来源兼容导入：位于 `pawork-domain` / `pawork-policy` 之上的工作区事实层。35 个 `.rs` 文件 / 15353 行（src 14348 + tests 1005）；主模块 `lib`+`path`+`file_index`、`config/`、`resources/`、`import/`。
 
 ## 1. 职责与边界
 
@@ -42,11 +42,11 @@
 | `src/path.rs` | 246 | `resolve_relative_path`：本层拦截绝对路径/设备名，其余委托 policy |
 | `src/file_index.rs` | 1113 | 全量扫描、增量、模糊搜索、去抖看护、`notify` watcher |
 | `src/config/mod.rs` | 92 | `ConfigTier` 与 config 公开 re-export |
-| `src/config/schema.rs` | 515 | `PaworkConfig` 及 Provider/Profile/Terminal/Overrides schema |
+| `src/config/schema.rs` | 524 | `PaworkConfig` 及 Provider/Profile/Terminal/Overrides schema |
 | `src/config/paths.rs` | 143 | 平台配置目录与 workspace `.pawork/config.toml` 定位 |
 | `src/config/merge.rs` | 159 | `ConfigValue` / `Merge` / `merge_json` / `merge_ordered` |
 | `src/config/error.rs` | 68 | `ConfigParseError` / `ConfigError`（均带路径） |
-| `src/config/loader.rs` | 1462 | 六层装配、剥离、合并、provenance |
+| `src/config/loader.rs` | 1507 | 六层装配、剥离、合并、provenance |
 | `src/config/writer.rs` | 792 | Global 层 RMW 写盘十一入口 |
 | `src/resources/mod.rs` | 30 | resources 公开面与安全文档 |
 | `src/resources/request.rs` | 180 | `WorkspaceRelativePath` / `ResourceRequest` / limits / options |
@@ -142,9 +142,9 @@
 
 | 名称 | 种类 | 功能 / 语义 |
 | --- | --- | --- |
-| `PaworkConfig` | pub struct | 全字段 Option/空集合可叠加。顶层：`profile`、`default_provider`/`default_model`、`naming_provider`/`naming_model`（ADR-054）、`vision_provider`/`vision_model`、`search_provider`/`search_model`（ADR-055，Global 独占）、`providers`、`models`、`profiles`、`trust_workspaces`、`approval_mode: Option<ApprovalMode>`、`workspace_trust: BTreeMap<String, bool>`、`proxy_url`、`terminal`、`extra`（flatten；反序列化剥 `api_key`）。**无 `api_key` 字段**。 |
+| `PaworkConfig` | pub struct | 全字段 Option/空集合可叠加。顶层：`profile`、`default_provider`/`default_model`、`naming_provider`/`naming_model`（ADR-054）、`vision_provider`/`vision_model`、`search_provider`/`search_model`（ADR-055，Global 独占）、`web_search: Option<bool>`（SEARCH-1：Provider 服务端搜索开关，仅 Builtin/Global 可设，缺省 None=false；消费方为 `pawork-app` RunService）、`providers`、`models`、`profiles`、`trust_workspaces`、`approval_mode: Option<ApprovalMode>`、`workspace_trust: BTreeMap<String, bool>`、`proxy_url`、`terminal`、`extra`（flatten；反序列化剥 `api_key`）。**无 `api_key` 字段**。 |
 | `PaworkConfig::builtin` | pub fn | 仅 `trust_workspaces = Some(false)`。 |
-| `PaworkConfig::merge_with` | pub fn | 强类型 Option 取 higher 非空；`workspace_trust` 是 `extend`（按键叠加而非整表替换）；providers/models/profiles 非空则整表替换。**Spec 差异**：该函数不合并 `naming_provider` / `naming_model`。Loader 走 JSON `merge_json`，这两键仍会按对象键合并；只有调用 `merge_with` 的路径会丢 naming 对。 |
+| `PaworkConfig::merge_with` | pub fn | 强类型 Option 取 higher 非空；`workspace_trust` 是 `extend`（按键叠加而非整表替换）；providers/models/profiles 非空则整表替换；vision/search 四键、`web_search` 与 `naming_provider` / `naming_model` 均参与合并。 |
 | `PaworkConfig::is_model_enabled` | pub fn | denylist：无该 provider 或键缺失 → 启用。 |
 | `TerminalConfig` | pub struct | `shell` / `columns` / `rows` 均 Option。仅 Global 可写入。 |
 | `ProviderConfig` | pub struct | `id` / `base_url` / `default` / `use_proxy` / `disabled_models`。未知键（含 `api_key`）被 serde 丢弃。 |
@@ -189,14 +189,14 @@
 | `ConfigSource` | pub struct | `tier` / `source_key` / `path` / `value`。 |
 | `LoadedSourceSpan` | pub struct | 精简 provenance。 |
 | `LoadedSource` | pub struct | span + 剥离后的 value 快照。 |
-| `ConfigWarning` | pub enum | 九变体：`PermissionsIgnored { key, tier, source_key, path }` / `TrustWorkspacesIgnored` / `ProxyUrlIgnored` / `ProviderBaseUrlIgnored`（含 `use_proxy`） / `ProviderDisabledModelsIgnored` / `GlobalRoleModelIgnored { key, ... }` / `McpTrustedIgnored` / `McpAutoStartIgnored` / `TerminalIgnored`。 |
+| `ConfigWarning` | pub enum | 十变体：`PermissionsIgnored { key, tier, source_key, path }` / `TrustWorkspacesIgnored` / `ProxyUrlIgnored` / `ProviderBaseUrlIgnored`（含 `use_proxy`） / `ProviderDisabledModelsIgnored` / `GlobalRoleModelIgnored { key, ... }` / `WebSearchIgnored` / `McpTrustedIgnored` / `McpAutoStartIgnored` / `TerminalIgnored`。 |
 | `ResolvedConfig` | pub struct | `config` / `sources`（优先级升序） / `active_profile` / `warnings`。 |
 | `Loader` | pub struct | 构建器；`pending_error` 把文件解析失败延迟到 `resolve`。 |
 | `with_builtin` / `with_value` / `with_file` / `with_session` / `with_run` | pub fn | Session/Run 永不由 `discover*` 自动加入。 |
 | `discover` / `discover_from` | pub fn | Builtin + 存在的 Global 文件 + 存在的 Workspace 文件；缺失静默跳过。 |
 | `resolve` | pub fn | 见 §5 六层流程。 |
 
-私有：`strip_untrusted_layer` 对非 Builtin/Global **只剥字段不删段**：顶层 `approval_mode` / `workspace_trust` / `trust_workspaces` / `proxy_url` / `terminal`、vision/search 四键、`providers[].base_url|use_proxy|disabled_models`、`mcp.servers.*.trusted|auto_start`。`sanitize_secrets` 剥根级与 `providers[].api_key`（`parse_file` 后 + `resolve` 开头各一次）。文件层 schema 校验发生在剥离之后，因此非 Global 的非法 `approval_mode = 'yolo'` 可启动；Global 非法值仍带原路径报错。Profile 派生：从已合并 raw 取 `profile` 名，`profiles` 数组从后往前找同名，去掉 `name` 后插入 Global 与 Workspace 之间，source_key=`profile:{name}`。显式 `ConfigTier::Profile` 来源也会参与第二遍排序，不会被丢弃。
+私有：`strip_untrusted_layer` 对非 Builtin/Global **只剥字段不删段**：顶层 `approval_mode` / `workspace_trust` / `trust_workspaces` / `proxy_url` / `terminal`、vision/search 四键、`web_search`（SEARCH-1，产出 `WebSearchIgnored`）、`providers[].base_url|use_proxy|disabled_models`、`mcp.servers.*.trusted|auto_start`。`sanitize_secrets` 剥根级与 `providers[].api_key`（`parse_file` 后 + `resolve` 开头各一次）。文件层 schema 校验发生在剥离之后，因此非 Global 的非法 `approval_mode = 'yolo'` 可启动；Global 非法值仍带原路径报错。Profile 派生：从已合并 raw 取 `profile` 名，`profiles` 数组从后往前找同名，去掉 `name` 后插入 Global 与 Workspace 之间，source_key=`profile:{name}`。显式 `ConfigTier::Profile` 来源也会参与第二遍排序，不会被丢弃。
 
 #### `config/writer.rs`
 
@@ -414,7 +414,7 @@ Unix：`openat` + `O_NOFOLLOW` 句柄链，中间 `O_DIRECTORY`，末级 `O_NONB
 
 ## 5. 关键行为与契约
 
-**六层配置。** Builtin(0) < Global(1) < Profile(2) < Workspace(3) < Session(4) < Run(5)。`discover*` 只装配前三文件层（Builtin+存在的 Global/Workspace）；Session/Run 永不自动加入。resolve：sanitize_secrets → strip_untrusted_layer（非 Builtin/Global 只剥字段）→ schema（剥离之后，故非 Global 非法 `approval_mode='yolo'` 可启动）→ 按 profile 名从 `profiles` 数组**从后往前**派生一层插在 Global 与 Workspace 之间 → JSON `merge_json`（对象按键递归，数组整表替换）。Global 独占：`approval_mode` / `workspace_trust` / `trust_workspaces` / `proxy_url` / `terminal` / vision+search 四键 / `providers[].base_url|use_proxy|disabled_models` / `mcp.servers.*.trusted|auto_start`。`PaworkConfig::merge_with` **不合并** `naming_provider`/`naming_model`；Loader 不走该函数。
+**六层配置。** Builtin(0) < Global(1) < Profile(2) < Workspace(3) < Session(4) < Run(5)。`discover*` 只装配前三文件层（Builtin+存在的 Global/Workspace）；Session/Run 永不自动加入。resolve：sanitize_secrets → strip_untrusted_layer（非 Builtin/Global 只剥字段）→ schema（剥离之后，故非 Global 非法 `approval_mode='yolo'` 可启动）→ 按 profile 名从 `profiles` 数组**从后往前**派生一层插在 Global 与 Workspace 之间 → JSON `merge_json`（对象按键递归，数组整表替换）。Global 独占：`approval_mode` / `workspace_trust` / `trust_workspaces` / `proxy_url` / `terminal` / vision+search 四键 / `web_search` / `providers[].base_url|use_proxy|disabled_models` / `mcp.servers.*.trusted|auto_start`。`PaworkConfig::merge_with` 亦合并 `naming_provider`/`naming_model`；Loader 不走该函数。
 
 **路径委托 policy。** 本层只拦空串、绝对路径、UNC（`\\` / `//`）、盘符、保留设备名；symlink / `.git` / TOCTOU / 非常规文件由 `pawork_policy::resolve_workspace_path`。多 root 按登记顺序第一命中。resources IO 用 `canonicalize_platform` + `path_within_root`；import IO 自管 no-follow，两套上限与错误类型不要合并或复制。
 
@@ -432,12 +432,12 @@ Unix：`openat` + `O_NOFOLLOW` 句柄链，中间 `O_DIRECTORY`，末级 `O_NONB
 
 | 文件 | 验证点 |
 | --- | --- |
-| `tests/loader_file.rs` | 真实 FS：六层合并、profile 插层、Session/Run、`api_key` 剥离且 Debug 无泄漏、路径带错、locate 就近、加入顺序无关、workspace 不能设 proxy/base_url/MCP 特权、macOS `dev.pawork.pawork`。 |
-| `tests/smoke.rs` | fixtures 五源六类；明文 token 不进计划；同 tier rank / 跨 tier priority；export 幂等且不改源；select 独立指纹；symlink 不跟随；per-kind/total 硬截断；`on-failure`/`acceptEdits`→Ask；危险内容隔离。 |
+| `tests/loader_file.rs`（13 用例） | 真实 FS：六层合并、profile 插层、Session/Run、`api_key` 剥离且 Debug 无泄漏、路径带错、locate 就近、加入顺序无关、workspace 不能设 proxy/base_url/MCP 特权、macOS `dev.pawork.pawork`。 |
+| `tests/smoke.rs`（15 用例） | fixtures 五源六类；明文 token 不进计划；同 tier rank / 跨 tier priority；export 幂等且不改源；select 独立指纹；symlink 不跟随；per-kind/total 硬截断；`on-failure`/`acceptEdits`→Ask；危险内容隔离。 |
 | `src/lib.rs` | roots canonicalize 去重；Windows 大小写去重。 |
 | `src/path.rs` | 空/绝对/逃逸/设备名/`.git`/symlink/第一 root。 |
 | `src/file_index.rs` | gitignore 排除、增量去抖、通道满不阻塞、stale 全量 CAS、Rescan 每 root、错误缓冲 1024。 |
-| `src/config/*` | merge 递归/数组替换；loader 九类剥离 golden；writer 原子写、未知字段、proxy/use_proxy/mcp remove/denylist/角色对。 |
+| `src/config/*` | merge 递归/数组替换；loader 十类剥离 golden（含 vision/search 四键与 `web_search` 仅 Builtin/Global 生效回归）；writer 原子写、未知字段、proxy/use_proxy/mcp remove/denylist/角色对。 |
 | `src/resources/*` | 相对路径不变量；AGENTS 层级与越界隔离；skill 依赖/冲突/disabled 优先；profile v1 迁 v2、明文 Secret、memory unavailable、skill ref fail-closed；loader 损坏隔离、注入序、symlink 逃逸。 |
 | `src/import/*` | frontmatter 标量；session_scan 排除 sidecar / 不跟随 symlink / 超深 LimitExceeded。 |
 

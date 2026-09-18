@@ -86,7 +86,7 @@ impl ModelProvider for RecordingProvider {
 
     async fn stream(
         &self,
-        request: CanonicalModelRequest,
+        request: &CanonicalModelRequest,
         sink: &dyn ProviderEventSink,
         cancel: CancellationToken,
     ) -> Result<ModelResponseSummary, ProviderError> {
@@ -418,7 +418,7 @@ impl ModelProvider for GrowingProvider {
 
     async fn stream(
         &self,
-        request: CanonicalModelRequest,
+        request: &CanonicalModelRequest,
         sink: &dyn ProviderEventSink,
         _cancel: CancellationToken,
     ) -> Result<ModelResponseSummary, ProviderError> {
@@ -1825,9 +1825,13 @@ async fn soft_limit_compaction_summarizes_and_rebuilds_history() {
 
 #[tokio::test]
 async fn hard_limit_truncates_oldest_with_diagnostic_and_refreshed_estimate() {
-    let messages: Vec<Message> = (0..10)
-        .map(|n| user_text(&format!("msg-history-{n}"), &"x".repeat(400)))
-        .collect();
+    let mut messages = vec![Message {
+        id: MessageId::from("msg-system"),
+        role: MessageRole::System,
+        content: vec![ContentPart::Text(TextContent { text: "s".into() })],
+        metadata: Default::default(),
+    }];
+    messages.extend((0..10).map(|n| user_text(&format!("msg-history-{n}"), &"x".repeat(400))));
     let provider = RecordingProvider::new(MockProvider::sequence(vec![MockScript::new()
         .text("ok")
         .complete()]));
@@ -1850,10 +1854,14 @@ async fn hard_limit_truncates_oldest_with_diagnostic_and_refreshed_estimate() {
     let requests = provider.requests();
     assert_eq!(requests.len(), 1);
     let request = &requests[0];
-    // 永不丢最后 retained_messages 条：仅保留 msg-8 / msg-9。
+    // 永不丢 System 与最后 retained_messages 条：保留 system + msg-8 / msg-9。
     assert_eq!(
         request.messages,
-        vec![messages[8].clone(), messages[9].clone()]
+        vec![
+            messages[0].clone(),
+            messages[9].clone(),
+            messages[10].clone()
+        ]
     );
     assert!(estimate_request_tokens(request) <= 250);
 
@@ -1867,14 +1875,14 @@ async fn hard_limit_truncates_oldest_with_diagnostic_and_refreshed_estimate() {
         .expect("Diagnostic");
     assert_eq!(diagnostic.0, "context_hard_truncated");
     assert_eq!(diagnostic.1["dropped_messages"], serde_json::json!(8));
-    // 2 * (framing 4 + role 1 + 100) + primer 3 = 213
+    // system (framing 4 + role 2 + 1) + 2 * (framing 4 + role 1 + 100) + primer 3 = 220
     assert_eq!(
         diagnostic.1["estimated_input_tokens"],
-        serde_json::json!(213)
+        serde_json::json!(220)
     );
 
     // ContextPrepared 重发反映截断后值；首条反映截断前。
-    assert_eq!(context_prepared_events(&sink), vec![(10, 1053), (2, 213)]);
+    assert_eq!(context_prepared_events(&sink), vec![(11, 1060), (3, 220)]);
     assert!(!sink.types().contains(&"CompactionStarted"));
 }
 

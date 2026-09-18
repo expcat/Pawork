@@ -1,5 +1,5 @@
 # pawork-storage Review
-> 存储层：串行 SQLite Actor、Session Event Store（append-only 账本 + 分支 + 投影 + 幂等账本 + 导入导出 + compaction）与内容寻址 Blob 三区。31 个 `.rs` 文件 / 约 20,005 行（src 19,605 + tests 400）；主模块 `sqlite/`、`session/`、`blob/`。根层无 re-export，调用方必须写全路径（如 `pawork_storage::session::SessionStore`）。
+> 存储层：串行 SQLite Actor、Session Event Store（append-only 账本 + 分支 + 投影 + 幂等账本 + 导入导出 + compaction）与内容寻址 Blob 三区。31 个 `.rs` 文件 / 约 20,490 行（src 20,090 + tests 400）；主模块 `sqlite/`、`session/`、`blob/`。根层无 re-export，调用方必须写全路径（如 `pawork_storage::session::SessionStore`）。
 
 ## 1. 职责与边界
 
@@ -17,11 +17,15 @@
 
 ### Spec 与源码差异（以源码为准）
 
-- Spec 写 Actor 用 `sync_channel(128)`；源码是 `tokio::sync::mpsc::channel`，背压靠 `send().await`，不是 `std::sync::mpsc::sync_channel`。
-- Spec 的 `ProjectionSnapshot` 列出 `program_outputs` / `screenshots` / `compacted_through` 顶层字段；源码结构体只有 `messages` / `runs` / `tool_calls` / `server_tool_events` / `transcript_envelopes`。program output 与 screenshot 嵌在 `ProjectedServerToolEvent`；compaction 水位只在读路径内部用于过滤 messages，不暴露给调用方。
-- `get_session_identity` Spec 写成必得 `(tenant, principal)`；源码返回 `Option<(TenantId, PrincipalId)>`。
+- Spec §2/§3.1 写 Actor 用 `sync_channel(128)`；源码是 `tokio::sync::mpsc::channel`（`sqlite/mod.rs:25,106`），背压靠 `send().await`，不是 `std::sync::mpsc::sync_channel`。
+- Spec §3.5 的 `ProjectionSnapshot` 列出 `program_outputs` / `screenshots` / `compacted_through` 顶层字段；源码结构体只有 `messages` / `runs` / `tool_calls` / `server_tool_events` / `transcript_envelopes`（`projection.rs:66-72`）。program output 与 screenshot 嵌在 `ProjectedServerToolEvent`；compaction 水位只在读路径内部用于过滤 messages，不暴露给调用方。
+- `get_session_identity` Spec §3.7 写成必得 `(tenant, principal)`；源码返回 `Option<(TenantId, PrincipalId)>`（`persist_export.rs:45-48`）。
+- Spec §3.8 写 compat 历史游标为 `"{imported_at_ms}:{session_id}"`；源码排序键与游标都是 `sessions.updated_at_ms`（`persist_compat.rs:100-126`），条目里的 `imported_at_unix_ms` 只是展示名。
+- Spec §3.2 的 `SessionStoreError` 变体清单缺 `InvalidSchemaVersion` / `MigrationFailed` / `Serialization` / `Io` / `WorkspaceRegistryInvariant` / `InvalidHistorySource` 六个（`session/mod.rs:103-213`）。
+- Spec §2/§7 写内嵌测试「21 处」；源码实际 27 处 `#[cfg(test)]`。Spec 若干行数偏旧（见下条）。
 - `SessionStoreError` 仍有 `LeaseHeld` / `LeaseNotHeld` / `SessionHasEvents`，v3 也建了 `session_leases` 表；源码没有 acquire/release/delete session 的公开方法，这三变体是休眠 API。
 - Spec 若干行数偏旧（如 `catalog.rs` ~290 vs 实为 544；`projection.rs` ~1590 vs 1643；`persist_pi.rs` ~450 vs 534）。
+- Spec §4.5 写 `find_secret` 含「PEM 私钥块」模式；源码 `SECRET_SIGNATURES`（`compat.rs:115-129`）只有 13 个 token 前缀 + Bearer，无 PEM 扫描。
 
 ## 2. 依赖关系
 
@@ -60,7 +64,7 @@ feature 门：`default = ["session", "blob"]`；`compaction` 依赖 session；`c
 | src/session/migration.rs | 1,322 | CURRENT_SCHEMA_VERSION=14 与 v1–v14 DDL；升级 golden |
 | src/session/event_store.rs | 2,251 | 建会话/分支、append、replay/tail/events_by_branch、写前脱敏 |
 | src/session/projection.rs | 1,643 | apply_projection、ProjectionSnapshot、rebuild、lineage 折叠 |
-| src/session/session_tree.rs | 564 | fork_from_event、session_tree、events_on_lineage、祖先链 |
+| src/session/session_tree.rs | 581 | fork_from_event、session_tree、events_on_lineage、祖先链 |
 | src/session/catalog.rs | 544 | SessionRecord / WorkspaceRecord 与目录、改名、归档、注册表 |
 | src/session/command_ledger.rs | 764 | CommandLedger check/record/release/reclaim；waiting_tool_call |
 | src/session/client_adapter.rs | 532 | SqliteClientSessionRegistryStore 实现 domain SessionRegistryStore |
@@ -73,9 +77,9 @@ feature 门：`default = ["session", "blob"]`；`compaction` 依赖 session；`c
 | src/session/import/formats/mod.rs | 14 | formats 门面：compat / export / pi |
 | src/session/import/formats/export.rs | 293 | SessionExport v3 JSON 形状与 validate |
 | src/session/import/formats/pi.rs | 268 | parse_pi_line 纯函数 |
-| src/session/import/formats/compat.rs | 1,967 | Claude/Codex/Grok/Cursor 解析、Secret 扫描、指纹、结构校验 |
+| src/session/import/formats/compat.rs | 2,177 | Claude/Codex/Grok/Cursor 解析、Secret 扫描、指纹、结构校验 |
 | src/session/import/persist_export.rs | 921 | export_session / import_session / add_tags / get_session_identity |
-| src/session/import/persist_compat.rs | 900 | import_compat（含 from_file / dry_run）与历史分页 |
+| src/session/import/persist_compat.rs | 1,158 | import_compat（含 from_file / dry_run）与历史分页 |
 | src/session/import/persist_pi.rs | 534 | import_pi_jsonl（含 lines）；Branch marker 折叠为 Diagnostic |
 | src/blob/mod.rs | 32 | artifact 常开 re-export；protected / checkpoint 随 feature |
 | src/blob/atomic.rs | 47 | crate 私有 atomic_write_bytes（.tmp-pid-counter） |
@@ -85,7 +89,7 @@ feature 门：`default = ["session", "blob"]`；`compaction` 依赖 session；`c
 | tests/pwb1_golden.rs | 166 | PWB1 已知向量（required-features protected） |
 | tests/read_range.rs | 234 | read_range 边界（required-features blob） |
 
-非 `.rs`：`src/session/fixtures/v12_*.jsonl` 7 份；`tests/golden/pwb1_valid.hex`。约 171 个 `#[test]` / `#[tokio::test]`。
+非 `.rs`：`src/session/fixtures/v12_*.jsonl` 7 份；`tests/golden/pwb1_valid.hex`。174 个 `#[test]` / `#[tokio::test]`。
 
 ## 4. 类型与方法功能列表
 
@@ -212,7 +216,7 @@ sequence 是 **session 全局** 单调。切回旧分支 append 合法，分支�
 | `session_tree(session)` | async fn | JOIN branches+sessions，按 `branch_id` 排序；空 → `SessionNotFound` |
 | `events_on_lineage(session, branch, from, limit)` | async fn | **resume / Timeline / compact 唯一正确入口**；`limit==0` 空集 |
 
-`load_ancestor_lineage`：本支 `max_sequence = i64::MAX`（`LINEAGE_UNBOUNDED`）；祖先含 fork 点 sequence。环 → `ProjectionInvariant("branch lineage cycle at ...")`。`visible_on_lineage` 判断事件是否落在某 bound 内。SQL 先按 session 全量取出再内存过滤。
+`load_ancestor_lineage`：本支 `max_sequence = i64::MAX`（`LINEAGE_UNBOUNDED`）；祖先含 fork 点 sequence。环 → `ProjectionInvariant("branch lineage cycle at ...")`。`visible_on_lineage` 判断事件是否落在某 bound 内。SQL 游标按 sequence 升序逐行推进，Rust 侧经 lineage 过滤，只物化可见事件的 `payload_json`，页满即停——大 session 多分支不再全量拷贝。
 
 ### 4.8 catalog.rs
 
@@ -366,7 +370,7 @@ serde 形状冻结：`replaced_range` 是 `[1, 6]` 数组，`version` 是裸数�
 | 名称 | 种类 | 功能 / 语义 |
 |---|---|---|
 | `import_compat(source, content)` | async fn | Secret 预扫 → 解析 → Immediate 事务：identity 查重、建 session、写事件、登记 fingerprint |
-| `import_compat_from_file(source, path)` | async fn | **不改原文件**。注释写「JSONL 流式」，实现仍是 `read_to_string` 一次性入内存 |
+| `import_compat_from_file(source, path)` | async fn | **不改原文件**。JSONL 家族（Claude Code 本地 / Codex flat / envelope）经 `BufReader` 逐行流式（增量指纹 + 逐行 Secret 扫描 + 行级解析，与整串导入等价，内存只受最长单行约束）；整文档 JSON（Grok / Cursor / claude.ai 导出）全文读入 |
 | `import_compat_dry_run(...)` | async fn | 同样扫描/解析/校验，零持久化，`deduplicated=false` |
 | `compat_import_history(limit, cursor)` | async fn | 默认 50、上限 500；游标 `"{updated_at_ms}:{session_id}"`；未知 source label → `InvalidHistorySource` |
 
@@ -487,7 +491,7 @@ serde 形状冻结：`replaced_range` 是 `[1, 6]` 数组，`version` 是裸数�
 
 ## 6. 测试资产
 
-测试内嵌于各源文件 `#[cfg(test)]`（27 处）+ 2 个集成测试，合计 172 个用例。
+测试内嵌于各源文件 `#[cfg(test)]`（27 处）+ 2 个集成测试，合计 174 个用例。
 
 | 资产 | 验证点 |
 |---|---|

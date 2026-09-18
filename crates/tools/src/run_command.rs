@@ -192,18 +192,18 @@ async fn run(
 ) -> Result<ToolResult, RunCommandError> {
     let (program, args) = parse_command(input)?;
     let roots = workspace_roots(service, workspace_id)?;
-    let cwd = match opt_str(input, "cwd") {
+    let cwd = match opt_str(input, "cwd")? {
         Some(rel) => Some(resolve_write_rel(&roots, &rel)?),
         None => roots.first().cloned(),
     };
-    let timeout_ms = opt_u64(input, "timeout_ms")
+    let timeout_ms = opt_u64(input, "timeout_ms")?
         .unwrap_or(DEFAULT_TIMEOUT_MS)
         .clamp(100, MAX_TIMEOUT_MS);
     let env_map = input.get("env").and_then(|v| v.as_object());
 
     let mut spec = CommandSpec::new(program).args(args);
     spec.cwd = cwd;
-    spec.max_output_bytes = opt_u64(input, "max_output_bytes")
+    spec.max_output_bytes = opt_u64(input, "max_output_bytes")?
         .unwrap_or(MAX_OUTPUT_BYTES)
         .clamp(1, MAX_OUTPUT_BYTES);
     let max_output_bytes = spec.max_output_bytes;
@@ -239,16 +239,16 @@ async fn run(
     env_allowlist.sort_unstable();
     env_allowlist.dedup();
 
-    let cpu_seconds = opt_u64(input, "cpu_seconds")
+    let cpu_seconds = opt_u64(input, "cpu_seconds")?
         .unwrap_or(DEFAULT_CPU_SECONDS)
         .clamp(1, MAX_CPU_SECONDS);
-    let memory_mb = opt_u64(input, "memory_mb")
+    let memory_mb = opt_u64(input, "memory_mb")?
         .unwrap_or(DEFAULT_MEMORY_MB)
         .clamp(1, MAX_MEMORY_MB);
-    let open_fds = opt_u64(input, "open_fds")
+    let open_fds = opt_u64(input, "open_fds")?
         .unwrap_or(DEFAULT_OPEN_FDS)
         .clamp(3, MAX_OPEN_FDS);
-    let max_procs = opt_u64(input, "max_procs")
+    let max_procs = opt_u64(input, "max_procs")?
         .unwrap_or(u64::from(DEFAULT_MAX_PROCS))
         .clamp(1, u64::from(MAX_MAX_PROCS)) as u32;
     let policy = SandboxPolicy {

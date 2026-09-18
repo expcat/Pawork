@@ -113,7 +113,18 @@ impl AgentTool for ListDirectoryTool {
         _sink: &dyn ToolEventSink,
         _cancel: CancellationToken,
     ) -> Result<ToolResult, ToolError> {
-        match list_dir(&self.workspaces, &context.workspace_id, &request.input) {
+        let service = self.workspaces.clone();
+        let workspace_id = context.workspace_id;
+        let input = request.input;
+        let result = tokio::task::spawn_blocking(move || list_dir(&service, &workspace_id, &input))
+            .await
+            .map_err(|error| ToolError {
+                kind: pawork_domain::ToolErrorKind::Internal,
+                message: format!("list_directory worker failed: {error}"),
+                retryable: false,
+                retry_after_ms: None,
+            })?;
+        match result {
             Ok(result) => Ok(result),
             Err(error) => Err(BuiltinToolError::from(error).into()),
         }
@@ -126,8 +137,8 @@ fn list_dir(
     input: &Value,
 ) -> Result<ToolResult, ListDirError> {
     let path = require_str(input, "path")?;
-    let limit = opt_u64(input, "limit").unwrap_or(DEFAULT_LIMIT).max(1) as usize;
-    let offset = opt_u64(input, "offset").unwrap_or(0) as usize;
+    let limit = opt_u64(input, "limit")?.unwrap_or(DEFAULT_LIMIT).max(1) as usize;
+    let offset = opt_u64(input, "offset")?.unwrap_or(0) as usize;
 
     let roots = workspace_roots(service, workspace_id)?;
     let absolute = resolve_write_rel(&roots, &path)?;

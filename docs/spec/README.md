@@ -1,6 +1,6 @@
 # Pawork Spec 文档集
 
-> 基线日期：2026-09-01。状态：**现行（Living）**。本目录描述 Pawork 当前产品范围、需求、可见能力、稳定契约、安全边界、Desktop、验证与运维约束，并承载 **23 个包的逐包 Spec** 与跨包链路速览；它是跨事实源的产品化索引与包内功能的文档化镜像，**不是源码、协议形状或阶段状态的新事实源**。
+> 基线日期：2026-09-01。状态：**现行（Living）**。本目录描述 Pawork 当前产品范围、需求、可见能力、稳定契约、安全边界、Desktop、验证与运维约束，并承载 **24 个包的逐包 Spec** 与跨包链路速览；它是跨事实源的产品化索引与包内功能的文档化镜像，**不是源码、协议形状或阶段状态的新事实源**。
 
 ## 1. 文档范围
 
@@ -34,7 +34,7 @@
 | [crates/tools.md](crates/tools.md) | `pawork-tools` | 八个内置工具 + ToolScheduler + MCP client |
 | [crates/workspace.md](crates/workspace.md) | `pawork-workspace` | workspace 服务、file_index、resources、六层配置、五来源导入 |
 | [crates/storage.md](crates/storage.md) | `pawork-storage` | SQLite Actor + session 事件存储（schema v14）+ PWB1 blob |
-| [crates/providers.md](crates/providers.md) | `pawork-providers` | HTTP/SSE 传输 + registry/pricing/usage/negotiate/reasoning + 六通道 adapter |
+| [crates/providers.md](crates/providers.md) | `pawork-providers` | HTTP/SSE 传输 + registry/pricing/usage/negotiate/reasoning + 八通道 adapter |
 | [crates/auth.md](crates/auth.md) | `pawork-auth` | Secret 后端、OAuth（PKCE/Device）、credential locator、脱敏 |
 | [crates/git.md](crates/git.md) | `pawork-git` | Diff/Status/GitService/HunkStage/worktree/merge |
 | [crates/engine.md](crates/engine.md) | `pawork-engine` | Agent tool loop、审批等待、取消、压缩注入点（生产依赖仅 domain） |

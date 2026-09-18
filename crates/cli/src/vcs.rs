@@ -3,7 +3,6 @@
 use std::io::{self, IsTerminal, Write};
 
 use pawork_app::{render_session_diff, AppCore, CheckpointSummary};
-use pawork_domain::SessionId;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::CliError;
@@ -14,7 +13,7 @@ pub async fn run_diff(
     page: Option<usize>,
     json: bool,
 ) -> Result<(), CliError> {
-    let session = resolve_session(core, session.as_deref()).await?;
+    let session = crate::sessions::resolve_session(core, session.as_deref()).await?;
     let mut diff = core.session_diff(&session).await?;
     if let Some(page) = page {
         let paged = pawork_app::paginate_diff(std::mem::take(&mut diff.files), page, 10);
@@ -80,7 +79,7 @@ pub async fn run_rollback(
     yes: bool,
     json: bool,
 ) -> Result<(), CliError> {
-    let session = resolve_session(core, session.as_deref()).await?;
+    let session = crate::sessions::resolve_session(core, session.as_deref()).await?;
     let listed = core.list_checkpoints(&session).await?;
     let spec = match checkpoint {
         Some(id) => id,
@@ -127,10 +126,6 @@ pub async fn run_rollback(
         println!("  restored {path}");
     }
     Ok(())
-}
-
-async fn resolve_session(core: &AppCore, spec: Option<&str>) -> Result<SessionId, CliError> {
-    Ok(core.resolve_session(spec.unwrap_or("latest")).await?)
 }
 
 fn latest_run_id(listed: &[CheckpointSummary]) -> Option<&str> {

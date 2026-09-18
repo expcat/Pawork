@@ -16,16 +16,16 @@
 | `src/lib.rs` | ~120 | crate 门面：模块声明与 feature 门控 re-export；`is_credential_header`（五个凭证头小写匹配）；`module_discipline` 测试 |
 | `src/error.rs` | ~20 | `RegistryError`（`NotFound` / `DuplicateAlias` / `DuplicateModelId`） |
 | `src/error_table.rs` | ~160 | `VENDOR_ERROR_RULES` 数据表 + `normalize_vendor_error`：按厂商子串把错误改判为更精确的 `ProviderErrorKind`（如 ChatGPT usage limit、xAI live_search quota） |
-| `src/provider.rs` | ~330 | `OpenAiCompatibleConfig` / `OpenAiCompatibleProvider`：Chat Completions transport 的 `ModelProvider` 实现；构造期拒绝 config 头携带凭证头 |
-| `src/request.rs` | ~470 | `to_chat_completions_body`：canonical → Chat Completions 请求体；`provider_options` 保留键忽略并 `tracing` 警告 |
+| `src/provider.rs` | ~500 | `OpenAiCompatibleConfig` / `OpenAiCompatibleProvider`：Chat Completions transport 的 `ModelProvider` 实现；构造期拒绝 config 头携带凭证头 |
+| `src/request.rs` | ~670 | `to_chat_completions_body`：canonical → Chat Completions 请求体；`provider_options` 保留键忽略并 `tracing` 警告 |
 | `src/stream.rs` | ~230 | `chunk_to_events` / `is_done` / `ChunkState`：Chat Completions SSE chunk → `ProviderStreamEvent`（文本/工具调用增量、usage、finish_reason） |
 | `src/usage.rs` | ~300 | `normalize_usage`（多厂商字段名归一为 `TokenUsage`）、`map_stop_reason`、`UsageAccumulator`（会话级累计） |
 | `src/pricing.rs` | ~200 | `ModelPricing` / `estimate_cost`（micro-unit 定点算费，`MILLION` 基数）、`BUILTIN_RATE_CARD`（`"builtin"`）与 `BUILTIN_RATE_VERSION`（`"2026-08-15"`） |
 | `src/registry.rs` | ~1.9k | `ModelRegistry`（目录 + 别名 + 三源能力证据 + 动态发现合并）、`CatalogEntry`、`CapabilityEvidence` / `CapabilitySource`、`merge_capabilities`、`ProviderProbe` / `ProbeError` / `ProviderCapabilitySource`、`caps` 构造 helper |
-| `src/negotiate.rs` | ~500 | `CapabilityNegotiator::negotiate`（纯函数协商）与 `clamp_reasoning_to_thinking` |
+| `src/negotiate.rs` | ~730 | `CapabilityNegotiator::negotiate`（纯函数协商）与 `clamp_reasoning_to_thinking` |
 | `src/reasoning.rs` | ~100 | `ReasoningProtector` trait（protect/recover 不透明 payload）与 `ReasoningProtectError`（`Unavailable` / `Corrupted` 判别） |
 | `src/memory_protector.rs` | ~110 | `InMemoryReasoningProtector`：HashMap 存不透明字节，测试/内存场景用 |
-| `src/responses.rs` | ~860 | Responses transport 共享件：`ResponsesTransport(Config)` / `ResponsesWireOptions` / `to_responses_body` / `ResponsesStreamAssembler` / `ResponsesAssemblyEvent` / `ResponsesFinalState`；保留键防覆盖；凭证头拒绝 |
+| `src/responses.rs` | ~1140 | Responses transport 共享件：`ResponsesTransport(Config)` / `ResponsesWireOptions` / `to_responses_body` / `ResponsesStreamAssembler` / `ResponsesAssemblyEvent` / `ResponsesFinalState`；保留键防覆盖；凭证头拒绝 |
 | `src/responses_reasoning.rs` | ~250 | crate 私有：Responses reasoning item → canonical `ReasoningItem`（提取 `encrypted_content` 交 protector；容忍历史 hint 键拼写） |
 | `src/net/mod.rs` | ~10 | re-export `http` / `sse` / `retry` |
 | `src/net/http.rs` | ~400 | `HttpClient` / `HttpClientConfig`（builder：timeout/proxy/user_agent/自定义头/禁系统代理）、`is_local_target` / `loopback_aware_proxy`（本地目标绕过代理）；Debug 输出对凭证头脱敏 |
@@ -33,22 +33,22 @@
 | `src/net/retry.rs` | ~220 | `classify_status` / `classify_request_error`（HTTP 状态与 reqwest 错误 → `ProviderError`，解析 `Retry-After`，消息脱敏）、`parse_retry_after` |
 | `src/channels/mod.rs` | ~60 | 八通道 feature 门控的模块声明与 re-export |
 | `src/channels/registry.rs` | ~360 | `CHANNEL_REGISTRY`（八行静态 preset）、`ChannelPreset`（含 `display_name` 与 `auth_methods` 数据字段，SET-4 起不再按 kind 派生）/ `ChannelKind`、`OAuthPreset(Data)` / `OAuthFlow(Data)`、`channel_preset`、`is_enabled`（唯一 cfg 求值点） |
-| `src/channels/api_key.rs` | ~550 | `ApiKeyChannelConfig` / `ApiKeyChannelProvider`：API-key 通道共用适配器（五行，含 kimi-platform；xAI / Kimi Code 双认证亦复用 `verify_api_key`）；默认 Chat Completions，官方表 / 家族回退决定 Responses 或 Messages；未登记聊天 ID 不丢弃；`verify_api_key` 用候选 key 发已认证 GET 做写前验证（Go `/usage`，其余 `/models`，不持久化） |
+| `src/channels/api_key.rs` | ~610 | `ApiKeyChannelConfig` / `ApiKeyChannelProvider`：API-key 通道共用适配器（五行，含 kimi-platform；xAI / Kimi Code 双认证亦复用 `verify_api_key`）；默认 Chat Completions，官方表 / 家族回退决定 Responses 或 Messages；未登记聊天 ID 不丢弃；`verify_api_key` 用候选 key 发已认证 GET 做写前验证（Go `/usage`，其余 `/models`，不持久化） |
 | `src/channels/chatgpt.rs` | ~280 | `ChatGptConfig` / `ChatGptProvider`：ChatGPT OAuth 通道（Responses transport、`chatgpt-account-id` / `originator` 头、`client_version` 校验、`DEFAULT_BASE_URL`） |
 | `src/channels/xai.rs` | ~470 | `XaiConfig` / `XaiProvider`：xAI Grok OAuth 通道，按模型 capability 声明选 Responses 或 Chat Completions；选择目录只认远端 `GET {base}/language-models`（output_modalities 含 "text" 才入目录），不预填静态 grok；`xai_builtin_models` 仅给已知 id（`grok-4` / `grok-4-fast` / `grok-3` / `grok-2`）补 transport / 能力，未知 id 保守默认（text + Chat Completions + 窗口 0，远端字段可覆盖窗口与图像）；`DEFAULT_BASE_URL` |
-| `src/channels/kimi.rs` | ~260 | `KimiCodeConfig` / `KimiCodeProvider`：Kimi Code 通道（SET-4 A2），接受 OAuth bearer 或 Coding Plan API key、只走 Chat Completions（`https://api.kimi.com/coding/v1`）；SET-5 起 `list_models` 走远端 `GET {base}/models`（OpenAI 风格 `data[]`，已知 id 沿用 `builtin_models` 元数据，未知 id 给保守默认；`builtin_models` 仅作元数据来源与静态兜底） |
+| `src/channels/kimi.rs` | ~420 | `KimiCodeConfig` / `KimiCodeProvider`：Kimi Code 通道（SET-4 A2），接受 OAuth bearer 或 Coding Plan API key、只走 Chat Completions（`https://api.kimi.com/coding/v1`）；SET-5 起 `list_models` 走远端 `GET {base}/models`（OpenAI 风格 `data[]`，已知 id 沿用 `builtin_models` 元数据，未知 id 给保守默认；`builtin_models` 仅作元数据来源与静态兜底） |
 | `src/channels/anthropic/mod.rs` | ~20 | re-export 与 `ANTHROPIC_VERSION`（`anthropic-version` 头值） |
 | `src/channels/anthropic/provider.rs` | ~1.1k | `AnthropicProvider(Config)`：Messages transport；`prepare_request` 能力收口（§4.3）；`builtin_models` 静态目录（claude-3-5-sonnet / haiku） |
 | `src/channels/anthropic/request.rs` | ~790 | `to_messages_body(_with_plan)` / `MessagesWirePlan`：system 提升、`tool_use` 块、`thinking` 与 `cache_control` 按 plan 写 wire |
 | `src/channels/anthropic/stream.rs` | ~690 | `parse_event` / `event_to_events` / `AnthropicStreamState` / `StreamOutput`：Anthropic SSE 事件 → canonical 事件；thinking signature 以 `PendingSignature` 输出待 protect |
 
-共 27 个 `.rs` 文件，约 10.4k 行。
+共 28 个 `.rs` 文件，约 12.7k 行。
 
 ## 3. 对外 API 面
 
 ### 3.1 Provider adapters（`pawork_domain::ModelProvider` 实现）
 
-trait 面为 `id()` / `list_models(credential)` / `stream(request, sink, cancel)`；所有实现把事件逐个 `sink.emit(ProviderStreamEvent)`，`stream` 返回 `ModelResponseSummary`（`stop_reason` / `usage` / `response_id` / `provider_metadata`），错误统一 `ProviderError`。`CancellationToken` 在发请求前与流式循环内多点检查：预取消不发 HTTP，流中取消报 `Cancelled`。
+trait 面为 `id()` / `list_models(credential)` / `stream(&request, sink, cancel)`（请求按引用借用，R-07：engine 工具循环每轮免全历史深拷贝）；所有实现把事件逐个 `sink.emit(ProviderStreamEvent)`，`stream` 返回 `ModelResponseSummary`（`stop_reason` / `usage` / `response_id` / `provider_metadata`），错误统一 `ProviderError`。`CancellationToken` 在发请求前与流式循环内多点检查：预取消不发 HTTP，流中取消报 `Cancelled`。
 
 - `OpenAiCompatibleProvider::new(config, credential)`：`OpenAiCompatibleConfig::new(base_url)` 默认 `provider_id = "openai-compatible"`，可 `with_provider_id`。构造期若 config 自定义头含凭证头则拒绝（凭证只能经 `ResolvedCredential` 注入为 `Authorization: Bearer`）。
 - `AnthropicProvider`（feature `anthropic`，默认开启）：认证头 `x-api-key` + `anthropic-version`；可 `with_registry(Arc<ModelRegistry>)` 注入能力证据、`with_reasoning_protector` 注入续传保护。
@@ -150,7 +150,7 @@ UI-6b G2：`fetch_go_usage(config, &ResolvedCredential, cancel)` 单次认证 GE
 ### 4.1 一次 Chat Completions stream 请求（OpenAiCompatible / ApiKeyChannel）
 
 1. 调用方（`pawork-app` 装配层）把 `ResolvedCredential` 注入 Provider 构造；构造期校验固定头无凭证头（含凭证头直接构造失败）。
-2. `stream(request, sink, cancel)`：先查 `cancel`——预取消不发任何 HTTP 请求。
+2. `stream(&request, sink, cancel)`：先查 `cancel`——预取消不发任何 HTTP 请求。
 3. `to_chat_completions_body` 生成请求体：messages / tools / response_format 按 canonical 语义翻译，`provider_options` 白名单透传（保留键忽略并 `tracing` 告警）。
 4. `HttpClient` POST `{base_url}/chat/completions`，凭证经 `Authorization: Bearer` 头注入；请求阶段错误走 `classify_request_error`，非 2xx 走 `classify_status`，再经 `normalize_vendor_error` 按渠道细化。
 5. 响应字节流喂 `SseParser::feed`；每个 SSE event 的 data 经 `chunk_to_events`（`ChunkState` 跨 chunk 组装工具调用 id/name/参数增量）映射为 `ProviderStreamEvent`，逐个 `sink.emit`。

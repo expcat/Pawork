@@ -81,9 +81,9 @@
 
 ### 3.3 Provider 契约
 
-- trait `ModelProvider`：`id()`、`list_models(credential?)`、`stream(request, sink, cancel) -> ModelResponseSummary`；trait `ProviderEventSink::emit(event)`。`ModelResponseSummary` 含 `stop_reason` / `usage` / `response_id?` / `provider_metadata`。
+- trait `ModelProvider`：`id()`、`list_models(credential?)`、`stream(&request, sink, cancel) -> ModelResponseSummary`（请求按引用借用：adapter 只翻译不消费所有权，engine 多轮循环每轮不再深拷贝全历史）；trait `ProviderEventSink::emit(event)`。`ModelResponseSummary` 含 `stop_reason` / `usage` / `response_id?` / `provider_metadata`。
 - `CanonicalModelRequest` 关键字段：
-  - `request_id` / `model` / `messages`；
+  - `request_id` / `session_id: Option<SessionId>`（ADR-057：当前真实会话的稳定身份，serde 缺省 None、None 不上 JSON，与 request_id / trace_id 分离）/ `model` / `messages`；
   - 三类工具声明分列——`tools`（`ToolDefinition`，ClientFunction）、`hosted_tools`（`HostedToolRequest`：canonical 名 + `ToolCapabilityTag`，不携带 Provider 名）、`extensions`（`ExtensionToolRequest`：外部引用 + `requires_approval`）；
   - `tool_choice: ToolChoice`（None / Auto / Required / Named）；
   - `thinking: Option<ThinkingConfig>`（`ThinkingLevel` Off/Low/Medium/High，旧 P6 兼容）与 `reasoning: Option<ReasoningConfig>`（P15-8 权威，显式 effort 优先）；

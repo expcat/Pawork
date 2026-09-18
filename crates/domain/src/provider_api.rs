@@ -456,7 +456,7 @@ pub trait ModelProvider: Send + Sync {
 
     async fn stream(
         &self,
-        request: CanonicalModelRequest,
+        request: &CanonicalModelRequest,
         sink: &dyn ProviderEventSink,
         cancel: CancellationToken,
     ) -> Result<ModelResponseSummary, ProviderError>;
@@ -672,7 +672,7 @@ mod tests {
 
         async fn stream(
             &self,
-            _request: CanonicalModelRequest,
+            _request: &CanonicalModelRequest,
             sink: &dyn ProviderEventSink,
             cancel: CancellationToken,
         ) -> Result<ModelResponseSummary, ProviderError> {
@@ -723,7 +723,7 @@ mod tests {
         let sink = RecordingSink::default();
 
         let error = CancelAwareProvider
-            .stream(request(), &sink, token)
+            .stream(&request(), &sink, token)
             .await
             .expect_err("cancelled request must fail");
 

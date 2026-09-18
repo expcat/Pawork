@@ -7,8 +7,8 @@ pub async fn run_usage(
     session: Option<String>,
     json: bool,
 ) -> Result<(), CliError> {
-    let session_id = if let Some(spec) = session {
-        Some(core.resolve_session(&spec).await?)
+    let session_id = if let Some(spec) = session.as_deref() {
+        Some(crate::sessions::resolve_session(core, Some(spec)).await?)
     } else {
         None
     };

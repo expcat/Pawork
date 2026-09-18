@@ -113,18 +113,37 @@ pub fn require_str(input: &Value, key: &'static str) -> Result<String, BuiltinTo
 }
 
 /// 取可选字符串字段。
-pub fn opt_str(input: &Value, key: &str) -> Option<String> {
-    input.get(key).and_then(|v| v.as_str()).map(str::to_owned)
+pub fn opt_str(input: &Value, key: &'static str) -> Result<Option<String>, BuiltinToolError> {
+    opt_typed(input, key, "string", |v| v.as_str().map(str::to_owned))
 }
 
 /// 取可选 u64 字段。
-pub fn opt_u64(input: &Value, key: &str) -> Option<u64> {
-    input.get(key).and_then(|v| v.as_u64())
+pub fn opt_u64(input: &Value, key: &'static str) -> Result<Option<u64>, BuiltinToolError> {
+    opt_typed(input, key, "integer", Value::as_u64)
 }
 
 /// 取可选 bool 字段。
-pub fn opt_bool(input: &Value, key: &str) -> Option<bool> {
-    input.get(key).and_then(|v| v.as_bool())
+pub fn opt_bool(input: &Value, key: &'static str) -> Result<Option<bool>, BuiltinToolError> {
+    opt_typed(input, key, "boolean", Value::as_bool)
+}
+
+/// 可选字段统一取值：缺省或显式 `null` 视为未提供；存在但类型不符报
+/// [`InvalidField`](BuiltinToolError::InvalidField)，给模型纠错信号。
+fn opt_typed<T>(
+    input: &Value,
+    key: &'static str,
+    expected: &'static str,
+    cast: impl FnOnce(&Value) -> Option<T>,
+) -> Result<Option<T>, BuiltinToolError> {
+    match input.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => {
+            cast(value).map(Some).ok_or_else(|| BuiltinToolError::InvalidField {
+                field: key,
+                detail: format!("expected {expected}, got {value}"),
+            })
+        }
+    }
 }
 
 /// 解析 workspace_id 对应的工作区根路径列表。
@@ -180,4 +199,35 @@ pub fn atomic_write(path: &Path, content: &[u8]) -> std::io::Result<()> {
         let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn optional_fields_parse_or_default_to_none() {
+        let input = json!({"name": "a", "count": 3, "flag": true});
+        assert_eq!(opt_str(&input, "name").unwrap().as_deref(), Some("a"));
+        assert_eq!(opt_u64(&input, "count").unwrap(), Some(3));
+        assert_eq!(opt_bool(&input, "flag").unwrap(), Some(true));
+        assert_eq!(opt_str(&input, "missing").unwrap(), None);
+        assert_eq!(opt_u64(&input, "missing").unwrap(), None);
+        // 显式 null 视为未提供。
+        let nulled = json!({"count": null});
+        assert_eq!(opt_u64(&nulled, "count").unwrap(), None);
+    }
+
+    #[test]
+    fn optional_fields_reject_type_mismatch() {
+        let input = json!({"count": "3"});
+        let error = opt_u64(&input, "count").unwrap_err();
+        assert!(matches!(
+            error,
+            BuiltinToolError::InvalidField { field: "count", .. }
+        ));
+        let mapped: ToolError = error.into();
+        assert_eq!(mapped.kind, ToolErrorKind::InvalidInput);
+    }
 }

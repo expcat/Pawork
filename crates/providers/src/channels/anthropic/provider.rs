@@ -676,11 +676,11 @@ impl ModelProvider for AnthropicProvider {
 
     async fn stream(
         &self,
-        request: CanonicalModelRequest,
+        request: &CanonicalModelRequest,
         sink: &dyn ProviderEventSink,
         cancel: CancellationToken,
     ) -> Result<ModelResponseSummary, ProviderError> {
-        self.drive_legacy_stream(&request, sink, cancel).await
+        self.drive_legacy_stream(request, sink, cancel).await
     }
 }
 

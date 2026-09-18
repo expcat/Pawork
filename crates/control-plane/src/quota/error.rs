@@ -151,9 +151,6 @@ impl QuotaError {
 
 /// 双端点同时失败时的合并分类（单一事实源，P14 review §3.4）。
 ///
-/// 远端适配器冻结候审，本函数暂无生产调用方；分类表与单测仍保留。
-#[allow(dead_code)]
-///
 /// 优先级（高 → 低）：`Cancelled` > `Unauthorized` > `ReauthorizationRequired` >
 /// `Forbidden` > `RateLimited` > `Timeout` > `Transient` > `Parse` >
 /// `Unsupported` > `Other`，不统一降级为 `Other`：
@@ -170,6 +167,8 @@ impl QuotaError {
 /// - 组合消息只含固定类别标签，绝不拼接子错误的 detail（可能携带远端正文），
 ///   胜者的 detail 一律覆盖为组合消息：参数顺序唯一可观察的影响是平局时
 ///   `status` 取首参数的值。
+// 远端适配器冻结候审，本函数暂无生产调用方；分类表与单测仍保留。
+#[allow(dead_code)]
 pub(crate) fn merge_dual_failures(
     limit: QuotaError,
     used: QuotaError,
@@ -215,6 +214,7 @@ pub(crate) fn merge_dual_failures(
 /// 相等时保留首参数 `limit`（非 retryable 变体的 `retry_after_ms()` 恒为
 /// `None`，即恒为平局）。平局时 `Timeout` / `Transient` 的 `status` 随之取
 /// limit 的值。
+// 仅由 merge_dual_failures（候审保留项）调用；解冻时随其一并移除。
 #[allow(dead_code)]
 fn pick_winner(limit: QuotaError, used: QuotaError) -> QuotaError {
     let limit_rank = failure_rank(&limit);
@@ -230,6 +230,7 @@ fn pick_winner(limit: QuotaError, used: QuotaError) -> QuotaError {
 }
 
 /// 合并优先级数值（越大越优先）。
+// 仅由 pick_winner（候审保留链）调用；解冻时随其一并移除。
 #[allow(dead_code)]
 fn failure_rank(error: &QuotaError) -> u8 {
     match error {
@@ -247,6 +248,7 @@ fn failure_rank(error: &QuotaError) -> u8 {
 }
 
 /// 错误的固定类别标签（仅用于组合消息，不含任何远端文本）。
+// 仅由 merge_dual_failures（候审保留项）调用；解冻时随其一并移除。
 #[allow(dead_code)]
 fn failure_label(error: &QuotaError) -> &'static str {
     match error {

@@ -1841,8 +1841,17 @@ mod tests {
     }
 
     #[test]
-    fn handshake_capabilities_include_terminal_streaming() {
-        assert!(desktop_capabilities().contains(&GuiCapability::TerminalStreaming));
+    fn handshake_capabilities_pin_desktop_surface() {
+        assert_eq!(
+            desktop_capabilities(),
+            vec![
+                GuiCapability::Events,
+                GuiCapability::Snapshots,
+                GuiCapability::Approvals,
+                GuiCapability::TerminalStreaming,
+                GuiCapability::BrowserControl,
+            ],
+        );
     }
 
     #[test]

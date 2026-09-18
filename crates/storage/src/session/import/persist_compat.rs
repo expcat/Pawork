@@ -4,13 +4,16 @@ use std::path::Path;
 
 use pawork_domain::RunId;
 use rusqlite::{params, OptionalExtension, TransactionBehavior};
-use tokio::io::{AsyncReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 
 use crate::session::event_store::persist_event_in_transaction;
 use crate::session::import::formats::compat::{
-    content_fingerprint, count_records, derive_compat_session_id, effective_identity, find_secret,
-    map_to_events, parse_external, validate_structure, CompatImportHistoryEntry,
-    CompatImportHistoryPage, CompatImportReport, ExternalSource,
+    content_fingerprint, count_records, derive_compat_session_id, derive_compat_session_id_from_effective,
+    effective_identity_with_fingerprint, find_secret, map_to_events, parse_external,
+    validate_structure, ClaudeLocalJsonlParser, CodexEnvelopeParser, CodexFlatParser,
+    CompatImportHistoryEntry, CompatImportHistoryPage, CompatImportReport, CompatLineParser,
+    ExternalSource, ParsedExternalSession, StreamingSecretScan, is_codex_envelope_line,
+    is_standalone_json_line,
 };
 use crate::session::{SessionStore, SessionStoreError, DEFAULT_BRANCH_ID};
 
@@ -31,23 +34,35 @@ impl SessionStore {
     }
 
     /// 从外部会话文件导入。**只读取源文件，不修改原文件**（ADR-005）。
+    ///
+    /// JSONL 家族（Claude Code 本地 / Codex flat / rollout envelope）经 BufReader
+    /// 逐行流式：内容指纹增量计算、Secret 逐行扫描、行级解析，内存峰值只受
+    /// 最长单行约束，与文件大小解耦；Grok / Cursor / claude.ai 导出等整文档
+    /// JSON 保持全文语义。两类路径与整串导入的行为完全等价。
     pub async fn import_compat_from_file(
         &self,
         source: ExternalSource,
         path: &Path,
     ) -> Result<CompatImportReport, SessionStoreError> {
-        let content =
-            if path.to_string_lossy().ends_with(".jsonl") || source == ExternalSource::Codex {
-                // JSONL：流式读取，避免大文件整体入内存。
-                let file = tokio::fs::File::open(path).await?;
-                let mut reader = BufReader::new(file);
-                let mut buf = String::new();
-                reader.read_to_string(&mut buf).await?;
-                buf
-            } else {
-                tokio::fs::read_to_string(path).await?
-            };
-        import_compat_inner(self, source, &content).await
+        match stream_compat_file(source, path).await? {
+            StreamedCompat::WholeDocument { content } => {
+                import_compat_inner(self, source, &content).await
+            }
+            StreamedCompat::Lines {
+                parsed,
+                fingerprint,
+                secret,
+            } => {
+                // 与整串路径同序：Secret 拒绝先于解析结果。
+                if let Some(pattern) = secret {
+                    return Err(SessionStoreError::CompatSecretDetected {
+                        pattern: pattern.into(),
+                    });
+                }
+                let parsed = parsed?;
+                import_compat_from_parsed(self, source, parsed, fingerprint).await
+            }
+        }
     }
 
     /// 只校验与解析，**不落库**（dry run）：与 [`Self::import_compat`] 相同的
@@ -211,12 +226,24 @@ async fn import_compat_inner(
     }
     // 2. 解析。
     let parsed = parse_external(source, content)?;
+    import_compat_from_parsed(store, source, parsed, content_fingerprint(content)).await
+}
+
+/// 解析完成后的共享导入尾部：identity / session id 推导与单事务持久化。
+/// `fingerprint` 必须与 `content_fingerprint(原文)` 一致（文件流式路径由增量
+/// BLAKE3 给出，各行字节拼接与 read_to_string 全文一致）。
+async fn import_compat_from_parsed(
+    store: &SessionStore,
+    source: ExternalSource,
+    parsed: ParsedExternalSession,
+    fingerprint: String,
+) -> Result<CompatImportReport, SessionStoreError> {
     // 3. identity / content fingerprint（与事件同事务持久化，作为去重/冲突唯一权威）。
     //    identity 不随内容漂移：同 (source, original_id) 始终映射同一 SessionId；
     //    无 original_id 时退化为 content fingerprint，使「相同无 id 内容」仍可幂等。
-    let fingerprint = content_fingerprint(content);
-    let identity = effective_identity(parsed.original_id.as_deref(), content);
-    let session_id = derive_compat_session_id(source, parsed.original_id.as_deref(), content);
+    let identity =
+        effective_identity_with_fingerprint(parsed.original_id.as_deref(), &fingerprint);
+    let session_id = derive_compat_session_id_from_effective(source, &identity);
     let counts = count_records(&parsed.records);
     let imported_at_ms = now_unix_ms();
     // 4. 映射为 canonical event 序列（run / message / tool id 全部 session-scoped）。
@@ -338,6 +365,143 @@ async fn import_compat_inner(
             unknown_fields: unknown_for_report,
         },
     })
+}
+
+/// 文件流式读取的产物：JSONL 家族的逐行解析结果（含增量指纹与 Secret 扫描），
+/// 或整文档 JSON 的全文（保持既有整串语义）。
+enum StreamedCompat {
+    WholeDocument { content: String },
+    Lines {
+        // 解析结果延后解包：Secret 拒绝优先级高于解析错误（与整串路径同序）。
+        parsed: Result<ParsedExternalSession, SessionStoreError>,
+        fingerprint: String,
+        secret: Option<&'static str>,
+    },
+}
+
+/// 读取一行（含行尾符）并即时喂入增量指纹与 Secret 扫描；返回读取字节数，
+/// 0 即 EOF。read_line 按 `\n` 切分并保留 `\r`，各行字节拼接与文件完全
+/// 一致，因此增量哈希与 read_to_string 的全文指纹等价。
+async fn read_hashed_line(
+    reader: &mut BufReader<tokio::fs::File>,
+    hasher: &mut blake3::Hasher,
+    secret_scan: &mut StreamingSecretScan,
+    line: &mut String,
+) -> std::io::Result<usize> {
+    line.clear();
+    let read = reader.read_line(line).await?;
+    if read > 0 {
+        hasher.update(line.as_bytes());
+        secret_scan.feed_line(line);
+    }
+    Ok(read)
+}
+
+/// 以 BufReader 逐行流式读取外部会话文件并完成嗅探、解析、指纹与 Secret 扫描。
+///
+/// 分派规则（与整串解析行为等价）：
+/// - Codex：恒为 JSONL——首非空行含 `timestamp`+`type`+`payload` 走信封模式，
+///   否则平铺模式；
+/// - Claude：首非空行是完整 JSON 值且后续还有非空行时，整文件必然不是单一
+///   JSON 文档（完整值后跟非空白即 trailing characters），走 Claude Code 本地
+///   JSONL 流式；否则（pretty-print 导出 / 单值文档 / 首行损坏）积累全文走
+///   整串路径；
+/// - Grok / Cursor：整文档 JSON，积累全文走整串路径。
+///
+/// 嗅探读完整首行，不按字节数截断（真实 session_meta 首行可超过 8KiB）。
+async fn stream_compat_file(
+    source: ExternalSource,
+    path: &Path,
+) -> Result<StreamedCompat, SessionStoreError> {
+    let file = tokio::fs::File::open(path).await?;
+    let mut reader = BufReader::new(file);
+    let mut hasher = blake3::Hasher::new();
+    let mut secret_scan = StreamingSecretScan::new();
+    let mut pending: Vec<String> = Vec::new();
+    let mut line = String::new();
+
+    // 找首个非空行（完整读入整行）。
+    let mut first_nonempty: Option<usize> = None;
+    loop {
+        if read_hashed_line(&mut reader, &mut hasher, &mut secret_scan, &mut line).await? == 0 {
+            break;
+        }
+        let blank = line.trim().is_empty();
+        if !blank && first_nonempty.is_none() {
+            first_nonempty = Some(pending.len());
+        }
+        pending.push(std::mem::take(&mut line));
+        if first_nonempty.is_some() {
+            break;
+        }
+    }
+
+    // Claude 双形态分派需要知道首非空行之后是否还有非空行。
+    let mut claude_stream = false;
+    if source == ExternalSource::Claude
+        && first_nonempty.is_some_and(|idx| is_standalone_json_line(&pending[idx]))
+    {
+        loop {
+            if read_hashed_line(&mut reader, &mut hasher, &mut secret_scan, &mut line).await? == 0
+            {
+                break;
+            }
+            let blank = line.trim().is_empty();
+            pending.push(std::mem::take(&mut line));
+            if !blank {
+                claude_stream = true;
+                break;
+            }
+        }
+    }
+
+    let parser = match source {
+        ExternalSource::Claude => claude_stream.then(|| {
+            CompatLineParser::ClaudeLocal(ClaudeLocalJsonlParser::new())
+        }),
+        ExternalSource::Codex => {
+            let envelope =
+                first_nonempty.is_some_and(|idx| is_codex_envelope_line(&pending[idx]));
+            Some(if envelope {
+                CompatLineParser::CodexEnvelope(CodexEnvelopeParser::new())
+            } else {
+                CompatLineParser::CodexFlat(CodexFlatParser::new())
+            })
+        }
+        ExternalSource::Grok | ExternalSource::Cursor => None,
+    };
+
+    match parser {
+        None => {
+            // 整文档 JSON：积累全文（已读行 + 余量）后走整串路径，字节与
+            // read_to_string 完全一致。
+            let mut content = pending.concat();
+            reader.read_to_string(&mut content).await?;
+            Ok(StreamedCompat::WholeDocument { content })
+        }
+        Some(mut parser) => {
+            for (idx, raw) in pending.iter().enumerate() {
+                parser.feed_line(idx, raw);
+            }
+            let mut idx = pending.len();
+            loop {
+                if read_hashed_line(&mut reader, &mut hasher, &mut secret_scan, &mut line).await?
+                    == 0
+                {
+                    break;
+                }
+                parser.feed_line(idx, &line);
+                idx += 1;
+            }
+            let parsed = parser.finish();
+            let fingerprint = hasher.finalize().to_hex().to_string();
+            Ok(StreamedCompat::Lines {
+                parsed,
+                fingerprint,
+                secret: secret_scan.finish(),
+            })
+        }
+    }
 }
 
 #[cfg(test)]
@@ -535,6 +699,100 @@ mod tests {
             .expect("import file");
         let after = fs::read_to_string(&path).unwrap();
         assert_eq!(before, after, "original file must be unchanged");
+    }
+
+    #[tokio::test]
+    async fn file_import_streams_jsonl_equivalent_to_in_memory() {
+        // session_meta 首行 >8KiB：流式嗅探必须读完整首行，不得按字节截断。
+        let padding = "p".repeat(9 * 1024);
+        let first_line = format!(
+            r#"{{"timestamp":"2026-09-17T00:00:00.000Z","type":"session_meta","payload":{{"id":"big-rollout","padding":"{}"}}}}"#,
+            padding
+        );
+        let rest = concat!(
+            r#"{"timestamp":"2026-09-17T00:00:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"run the gate"}]}}"#,
+            "\n",
+            r#"{"timestamp":"2026-09-17T00:00:02.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"on it"}]}}"#,
+            "\n",
+            r#"{"timestamp":"2026-09-17T00:00:03.000Z","type":"event_msg","payload":{"type":"token_count","input_tokens":11,"output_tokens":7}}"#,
+            "\n",
+        );
+        let codex_jsonl = format!("{first_line}\n{rest}");
+        let unique = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
+        let codex_path = std::env::temp_dir().join(format!("pawork-compat-stream-{unique}.jsonl"));
+        fs::write(&codex_path, &codex_jsonl).expect("write codex src");
+
+        let file_store = open_store().await;
+        let mem_store = open_store().await;
+        let file_report = file_store
+            .import_compat_from_file(ExternalSource::Codex, &codex_path)
+            .await
+            .expect("streamed file import");
+        let mem_report = mem_store
+            .import_compat(ExternalSource::Codex, &codex_jsonl)
+            .await
+            .expect("in-memory import");
+        assert_eq!(file_report, mem_report, "streamed and in-memory must match");
+        assert_eq!(file_report.original_id.as_deref(), Some("big-rollout"));
+        assert!(file_report.imported_events > 0);
+
+        // 增量指纹与整串指纹一致：同文件二次导入命中 identity 幂等去重。
+        let again = file_store
+            .import_compat_from_file(ExternalSource::Codex, &codex_path)
+            .await
+            .expect("re-import");
+        assert!(again.deduplicated);
+        assert_eq!(again.session_id, file_report.session_id);
+
+        // Claude Code 本地 JSONL 多行文件同样走流式路径，且与整串导入等价。
+        let claude_jsonl = concat!(
+            r#"{"type":"user","sessionId":"big-claude","message":{"role":"user","content":"hi stream"}}"#,
+            "\n",
+            r#"{"type":"assistant","sessionId":"big-claude","message":{"role":"assistant","content":"hello back"}}"#,
+            "\n",
+        );
+        let claude_path = codex_path.with_extension("claude.jsonl");
+        fs::write(&claude_path, claude_jsonl).expect("write claude src");
+        let claude_file = file_store
+            .import_compat_from_file(ExternalSource::Claude, &claude_path)
+            .await
+            .expect("claude streamed import");
+        let claude_mem = mem_store
+            .import_compat(ExternalSource::Claude, claude_jsonl)
+            .await
+            .expect("claude in-memory import");
+        assert_eq!(claude_file, claude_mem);
+        assert_eq!(claude_file.original_id.as_deref(), Some("big-claude"));
+        assert_eq!(claude_file.imported_messages, 2);
+    }
+
+    #[tokio::test]
+    async fn file_import_rejects_secret_in_later_streamed_line() {
+        let store = open_store().await;
+        let content = concat!(
+            r#"{"timestamp":"2026-09-17T00:00:00.000Z","type":"session_meta","payload":{"id":"leaky-rollout"}}"#,
+            "\n",
+            r#"{"timestamp":"2026-09-17T00:00:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"my key sk-ant-AAAAAAAAAAAAAAAAAAAAAAAAAAAA"}]}}"#,
+            "\n",
+        );
+        let unique = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!("pawork-compat-leak-{unique}.jsonl"));
+        fs::write(&path, content).expect("write src");
+        let error = store
+            .import_compat_from_file(ExternalSource::Codex, &path)
+            .await
+            .expect_err("secret in a later streamed line must be rejected");
+        assert!(matches!(
+            error,
+            SessionStoreError::CompatSecretDetected { ref pattern, .. } if pattern == "sk-ant-"
+        ));
+        // 零残留：无事件、无 identity 行。
+        let sid = derive_compat_session_id(ExternalSource::Codex, Some("leaky-rollout"), content);
+        let events = store.replay_events(&sid, 1, 100).await.expect("replay");
+        assert!(events.is_empty());
+        assert!(identity_row(&store, "codex", "leaky-rollout")
+            .await
+            .is_none());
     }
 
     #[tokio::test]

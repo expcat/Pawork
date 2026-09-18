@@ -160,6 +160,53 @@ pub fn find_secret(text: &str) -> Option<&'static str> {
     None
 }
 
+/// find_secret 的流式聚合：按行喂入原文（含行尾符），跨行合并出与全文扫描
+/// 完全一致的结果。
+///
+/// 等价性依据：所有签名前缀与合格尾串都只含 [A-Za-z0-9_-.]，不含换行，
+/// 因此一次命中不可能跨越行边界；find_secret 按签名声明顺序取首个命中，
+/// 行间同样按该优先级取最小者（Bearer 模式在全文扫描中最后判定，视为最低优先级）。
+pub(crate) struct StreamingSecretScan {
+    best: Option<(&'static str, usize)>,
+}
+
+impl Default for StreamingSecretScan {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl StreamingSecretScan {
+    pub(crate) fn new() -> Self {
+        Self { best: None }
+    }
+
+    /// 喂入一行原文（含行尾符；行尾符不属于任何模式与尾串字符集）。
+    pub(crate) fn feed_line(&mut self, line: &str) {
+        if self.best.is_some_and(|(_, rank)| rank == 0) {
+            return;
+        }
+        let Some(label) = find_secret(line) else {
+            return;
+        };
+        let rank = secret_signature_rank(label);
+        if self.best.is_none_or(|(_, current)| rank < current) {
+            self.best = Some((label, rank));
+        }
+    }
+
+    pub(crate) fn finish(self) -> Option<&'static str> {
+        self.best.map(|(label, _)| label)
+    }
+}
+
+fn secret_signature_rank(label: &str) -> usize {
+    SECRET_SIGNATURES
+        .iter()
+        .position(|(prefix, _)| *prefix == label)
+        .unwrap_or(SECRET_SIGNATURES.len())
+}
+
 // =========================================================================
 // 解析器
 // =========================================================================
@@ -271,26 +318,61 @@ fn parse_claude_export(
 /// 噪声统一以 `skipped_*` 键写入 unknown_fields(与 codex 侧口径一致);其余未知
 /// type 进 Raw(无损哲学不变)。
 fn parse_claude_local_jsonl(content: &str) -> Result<ParsedExternalSession, SessionStoreError> {
-    let mut parsed = ParsedExternalSession {
-        source: Some(ExternalSource::Claude),
-        ..Default::default()
-    };
-    let mut skipped: BTreeMap<String, u64> = BTreeMap::new();
-    let mut raw_type_counts: BTreeMap<String, u64> = BTreeMap::new();
-    let mut unparseable_lines = 0u64;
+    let mut parser = ClaudeLocalJsonlParser::new();
     for (idx, raw) in content.lines().enumerate() {
+        parser.feed_line(idx, raw);
+    }
+    parser.finish()
+}
+
+/// Claude Code 本地 JSONL 的行级解析状态：整串入口与文件流式入口共用同一
+/// 行语义（行号以 0 起与 str::lines().enumerate() 同基准，行文先 trim）。
+pub(crate) struct ClaudeLocalJsonlParser {
+    parsed: ParsedExternalSession,
+    skipped: BTreeMap<String, u64>,
+    raw_type_counts: BTreeMap<String, u64>,
+    unparseable_lines: u64,
+}
+
+impl Default for ClaudeLocalJsonlParser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ClaudeLocalJsonlParser {
+    pub(crate) fn new() -> Self {
+        Self {
+            parsed: ParsedExternalSession {
+                source: Some(ExternalSource::Claude),
+                ..Default::default()
+            },
+            skipped: BTreeMap::new(),
+            raw_type_counts: BTreeMap::new(),
+            unparseable_lines: 0,
+        }
+    }
+
+    /// 处理一行（含行尾符）。行内语义与整串循环逐行完全一致。
+    pub(crate) fn feed_line(&mut self, idx: usize, raw: &str) {
+        let Self {
+            parsed,
+            skipped,
+            raw_type_counts,
+            unparseable_lines,
+        } = self;
         let trimmed = raw.trim();
         if trimmed.is_empty() {
-            continue;
+            return;
         }
         let value: Value = match serde_json::from_str(trimmed) {
             Ok(value) => value,
             Err(e) => {
-                unparseable_lines += 1;
+                *unparseable_lines += 1;
                 parsed
                     .unknown_fields
                     .insert(format!("line:{}", idx + 1), format!("unparseable: {e}"));
-                continue;
+                return;
             }
         };
         let Some(obj) = value.as_object() else {
@@ -298,7 +380,7 @@ fn parse_claude_local_jsonl(content: &str) -> Result<ParsedExternalSession, Sess
                 kind: format!("claude.line:{}", idx + 1),
                 payload: value.clone(),
             });
-            continue;
+            return;
         };
         if parsed.original_id.is_none() {
             parsed.original_id = obj
@@ -315,14 +397,14 @@ fn parse_claude_local_jsonl(content: &str) -> Result<ParsedExternalSession, Sess
                     .unwrap_or(false)
                 {
                     *skipped.entry("skipped_sidechain".into()).or_default() += 1;
-                    continue;
+                    return;
                 }
                 claude_local_message_records(
                     obj,
                     line_type,
                     idx,
                     &mut parsed.records,
-                    &mut skipped,
+                    skipped,
                 );
             }
             "ai-title" | "custom-title" => {
@@ -356,25 +438,35 @@ fn parse_claude_local_jsonl(content: &str) -> Result<ParsedExternalSession, Sess
             }
         }
     }
-    for (key, count) in skipped {
-        if count > 0 {
-            parsed.unknown_fields.insert(key, count.to_string());
+
+    pub(crate) fn finish(mut self) -> Result<ParsedExternalSession, SessionStoreError> {
+        for (key, count) in self.skipped {
+            if count > 0 {
+                self.parsed.unknown_fields.insert(key, count.to_string());
+            }
         }
+        for (kind, count) in self.raw_type_counts {
+            self.parsed
+                .unknown_fields
+                .insert(format!("raw_type:{kind}"), count.to_string());
+        }
+        // 零记录且存在解析失败行:大概率是损坏/错误来源文件,fail-closed 拒绝导入;
+        // 全为合法噪声/跳过行(sidechain/title/queue-operation 等)时维持 Ok 空导入。
+        if self.parsed.records.is_empty() && self.unparseable_lines > 0 {
+            return Err(unparseable_msg(
+                "claude",
+                &format!("no records parsed; {} unparseable line(s)", self.unparseable_lines),
+            ));
+        }
+        Ok(self.parsed)
     }
-    for (kind, count) in raw_type_counts {
-        parsed
-            .unknown_fields
-            .insert(format!("raw_type:{kind}"), count.to_string());
-    }
-    // 零记录且存在解析失败行:大概率是损坏/错误来源文件,fail-closed 拒绝导入;
-    // 全为合法噪声/跳过行(sidechain/title/queue-operation 等)时维持 Ok 空导入。
-    if parsed.records.is_empty() && unparseable_lines > 0 {
-        return Err(unparseable_msg(
-            "claude",
-            &format!("no records parsed; {unparseable_lines} unparseable line(s)"),
-        ));
-    }
-    Ok(parsed)
+}
+
+/// 行是否为可独立解析的完整 JSON 值（Claude 文件导入的流式/整串分派依据：
+/// pretty-print 整文档的首行不满足此判定，JSONL 首行满足）。嗅探方必须完整
+/// 读取整行，禁止按字节数截断（真实 session_meta 首行可超过 8KiB）。
+pub(crate) fn is_standalone_json_line(raw_line: &str) -> bool {
+    serde_json::from_str::<Value>(raw_line.trim()).is_ok()
 }
 
 /// 把 Claude Code 本地行的 `message.content` 映射为记录序列。
@@ -583,7 +675,13 @@ fn is_codex_envelope(content: &str) -> bool {
         .lines()
         .map(str::trim)
         .find(|line| !line.is_empty())
-        .and_then(|line| serde_json::from_str::<Value>(line).ok())
+        .is_some_and(is_codex_envelope_line)
+}
+
+/// 单行判定（整串与文件流式共用）：完整 JSON 对象且同时含 timestamp+type+payload。
+pub(crate) fn is_codex_envelope_line(raw_line: &str) -> bool {
+    serde_json::from_str::<Value>(raw_line.trim())
+        .ok()
         .and_then(|value| {
             value.as_object().map(|obj| {
                 obj.contains_key("timestamp")
@@ -596,15 +694,42 @@ fn is_codex_envelope(content: &str) -> bool {
 
 /// 旧平铺 typed entry JSONL(行为不变)。
 fn parse_codex_flat(content: &str) -> Result<ParsedExternalSession, SessionStoreError> {
-    let mut parsed = ParsedExternalSession {
-        source: Some(ExternalSource::Codex),
-        ..Default::default()
-    };
-    let mut original_id: Option<String> = None;
+    let mut parser = CodexFlatParser::new();
     for (idx, raw) in content.lines().enumerate() {
+        parser.feed_line(idx, raw);
+    }
+    parser.finish()
+}
+
+/// Codex 平铺 typed entry JSONL 的行级解析状态（整串与文件流式共用同一行语义）。
+pub(crate) struct CodexFlatParser {
+    parsed: ParsedExternalSession,
+    original_id: Option<String>,
+}
+
+impl Default for CodexFlatParser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl CodexFlatParser {
+    pub(crate) fn new() -> Self {
+        Self {
+            parsed: ParsedExternalSession {
+                source: Some(ExternalSource::Codex),
+                ..Default::default()
+            },
+            original_id: None,
+        }
+    }
+
+    /// 处理一行（含行尾符）。行内语义与整串循环逐行完全一致。
+    pub(crate) fn feed_line(&mut self, idx: usize, raw: &str) {
+        let Self { parsed, original_id } = self;
         let trimmed = raw.trim();
         if trimmed.is_empty() {
-            continue;
+            return;
         }
         let value: Value = match serde_json::from_str(trimmed) {
             Ok(v) => v,
@@ -612,7 +737,7 @@ fn parse_codex_flat(content: &str) -> Result<ParsedExternalSession, SessionStore
                 parsed
                     .unknown_fields
                     .insert(format!("line:{}", idx + 1), format!("unparseable: {e}"));
-                continue;
+                return;
             }
         };
         let Some(obj) = value.as_object() else {
@@ -620,11 +745,11 @@ fn parse_codex_flat(content: &str) -> Result<ParsedExternalSession, SessionStore
                 kind: format!("codex.line:{}", idx + 1),
                 payload: value.clone(),
             });
-            continue;
+            return;
         };
         // rollout 元信息（session/rollout id）
         if original_id.is_none() {
-            original_id = obj
+            *original_id = obj
                 .get("session_id")
                 .and_then(Value::as_str)
                 .or_else(|| obj.get("rollout_id").and_then(Value::as_str))
@@ -690,8 +815,11 @@ fn parse_codex_flat(content: &str) -> Result<ParsedExternalSession, SessionStore
             }
         }
     }
-    parsed.original_id = original_id;
-    Ok(parsed)
+
+    pub(crate) fn finish(mut self) -> Result<ParsedExternalSession, SessionStoreError> {
+        self.parsed.original_id = self.original_id;
+        Ok(self.parsed)
+    }
 }
 
 /// Codex rollout 信封模式(`{timestamp,type,payload}` 逐行)。
@@ -705,25 +833,57 @@ fn parse_codex_flat(content: &str) -> Result<ParsedExternalSession, SessionStore
 /// response_item 镜像的条目静默跳过防重复;turn_context/world_state/
 /// inter_agent_communication_metadata 跳过;跳过项在 unknown_fields 记 `skipped_*` 计数。
 fn parse_codex_envelope(content: &str) -> Result<ParsedExternalSession, SessionStoreError> {
-    let mut parsed = ParsedExternalSession {
-        source: Some(ExternalSource::Codex),
-        ..Default::default()
-    };
-    let mut skipped: BTreeMap<String, u64> = BTreeMap::new();
-    let mut unparseable_lines = 0u64;
+    let mut parser = CodexEnvelopeParser::new();
     for (idx, raw) in content.lines().enumerate() {
+        parser.feed_line(idx, raw);
+    }
+    parser.finish()
+}
+
+/// Codex rollout 信封模式的行级解析状态（整串与文件流式共用同一行语义）。
+pub(crate) struct CodexEnvelopeParser {
+    parsed: ParsedExternalSession,
+    skipped: BTreeMap<String, u64>,
+    unparseable_lines: u64,
+}
+
+impl Default for CodexEnvelopeParser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl CodexEnvelopeParser {
+    pub(crate) fn new() -> Self {
+        Self {
+            parsed: ParsedExternalSession {
+                source: Some(ExternalSource::Codex),
+                ..Default::default()
+            },
+            skipped: BTreeMap::new(),
+            unparseable_lines: 0,
+        }
+    }
+
+    /// 处理一行（含行尾符）。行内语义与整串循环逐行完全一致。
+    pub(crate) fn feed_line(&mut self, idx: usize, raw: &str) {
+        let Self {
+            parsed,
+            skipped,
+            unparseable_lines,
+        } = self;
         let trimmed = raw.trim();
         if trimmed.is_empty() {
-            continue;
+            return;
         }
         let value: Value = match serde_json::from_str(trimmed) {
             Ok(value) => value,
             Err(e) => {
-                unparseable_lines += 1;
+                *unparseable_lines += 1;
                 parsed
                     .unknown_fields
                     .insert(format!("line:{}", idx + 1), format!("unparseable: {e}"));
-                continue;
+                return;
             }
         };
         let Some(obj) = value.as_object() else {
@@ -731,7 +891,7 @@ fn parse_codex_envelope(content: &str) -> Result<ParsedExternalSession, SessionS
                 kind: format!("codex.line:{}", idx + 1),
                 payload: value.clone(),
             });
-            continue;
+            return;
         };
         let envelope_type = obj.get("type").and_then(Value::as_str).unwrap_or("");
         let payload = obj.get("payload").cloned().unwrap_or(Value::Null);
@@ -743,7 +903,7 @@ fn parse_codex_envelope(content: &str) -> Result<ParsedExternalSession, SessionS
                 }
             }
             "response_item" => {
-                codex_response_item_records(&payload, idx, &mut parsed.records, &mut skipped);
+                codex_response_item_records(&payload, idx, &mut parsed.records, skipped);
             }
             "event_msg" => {
                 let payload_type = payload.get("type").and_then(Value::as_str).unwrap_or("");
@@ -772,18 +932,51 @@ fn parse_codex_envelope(content: &str) -> Result<ParsedExternalSession, SessionS
             }
         }
     }
-    for (key, count) in skipped {
-        parsed.unknown_fields.insert(key, count.to_string());
+
+    pub(crate) fn finish(mut self) -> Result<ParsedExternalSession, SessionStoreError> {
+        for (key, count) in self.skipped {
+            self.parsed.unknown_fields.insert(key, count.to_string());
+        }
+        // 与 Claude 本地路径同一裁决:零记录 + 解析失败行 → fail-closed;
+        // 全为合法跳过行(session_meta/reasoning/event_msg 镜像等)时维持 Ok 空导入。
+        if self.parsed.records.is_empty() && self.unparseable_lines > 0 {
+            return Err(unparseable_msg(
+                "codex",
+                &format!(
+                    "no records parsed; {} unparseable line(s)",
+                    self.unparseable_lines
+                ),
+            ));
+        }
+        Ok(self.parsed)
     }
-    // 与 Claude 本地路径同一裁决:零记录 + 解析失败行 → fail-closed;
-    // 全为合法跳过行(session_meta/reasoning/event_msg 镜像等)时维持 Ok 空导入。
-    if parsed.records.is_empty() && unparseable_lines > 0 {
-        return Err(unparseable_msg(
-            "codex",
-            &format!("no records parsed; {unparseable_lines} unparseable line(s)"),
-        ));
+}
+
+/// JSONL 家族行解析器的统一入口：文件流式导入按首非空行选定具体形态，
+/// 行语义与整串解析完全一致。
+pub(crate) enum CompatLineParser {
+    ClaudeLocal(ClaudeLocalJsonlParser),
+    CodexFlat(CodexFlatParser),
+    CodexEnvelope(CodexEnvelopeParser),
+}
+
+impl CompatLineParser {
+    /// 处理第 idx 行（0 起，与 str::lines().enumerate() 同基准）；raw 含行尾符。
+    pub(crate) fn feed_line(&mut self, idx: usize, raw: &str) {
+        match self {
+            Self::ClaudeLocal(parser) => parser.feed_line(idx, raw),
+            Self::CodexFlat(parser) => parser.feed_line(idx, raw),
+            Self::CodexEnvelope(parser) => parser.feed_line(idx, raw),
+        }
     }
-    Ok(parsed)
+
+    pub(crate) fn finish(self) -> Result<ParsedExternalSession, SessionStoreError> {
+        match self {
+            Self::ClaudeLocal(parser) => parser.finish(),
+            Self::CodexFlat(parser) => parser.finish(),
+            Self::CodexEnvelope(parser) => parser.finish(),
+        }
+    }
 }
 
 fn codex_response_item_records(
@@ -1173,7 +1366,15 @@ pub fn derive_compat_session_id(
     original_id: Option<&str>,
     content: &str,
 ) -> SessionId {
-    let effective = effective_identity(original_id, content);
+    derive_compat_session_id_from_effective(source, &effective_identity(original_id, content))
+}
+
+/// 以 effective identity 推导 session id：文件流式路径复用（指纹增量算得后
+/// 无需再持有全文），哈希构造与整串入口完全一致。
+pub(crate) fn derive_compat_session_id_from_effective(
+    source: ExternalSource,
+    effective: &str,
+) -> SessionId {
     let mut hasher = blake3::Hasher::new();
     hasher.update(source.as_str().as_bytes());
     hasher.update(&[0]);
@@ -1188,9 +1389,18 @@ pub fn derive_compat_session_id(
 
 /// 导入 identity 的 effective key：有 `original_id` 用之，否则用 content fingerprint。
 pub fn effective_identity(original_id: Option<&str>, content: &str) -> String {
+    effective_identity_with_fingerprint(original_id, &content_fingerprint(content))
+}
+
+/// effective identity 的流式形态：无 `original_id` 时直接使用调用方增量计算的
+/// 内容指纹（read_line 各行字节拼接与全文一致，指纹值等同）。
+pub(crate) fn effective_identity_with_fingerprint(
+    original_id: Option<&str>,
+    fingerprint: &str,
+) -> String {
     match original_id {
         Some(id) => id.to_string(),
-        None => content_fingerprint(content),
+        None => fingerprint.to_string(),
     }
 }
 

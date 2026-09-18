@@ -8,7 +8,7 @@
 //! 调用方（编排宿主）依据本模块结果发出；本模块本身无事件日志。
 
 use std::collections::BTreeMap;
-#[cfg(any(test, feature = "git"))]
+use std::io::Write;
 use std::path::Component;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -214,6 +214,7 @@ impl PatchMerger {
         let files = self.diff.changed_files(&patch.worktree_path).await?;
         let mut contents = BTreeMap::new();
         for file in &files {
+            resolve_relative(&patch.worktree_path, file)?;
             let content = self.diff.file_content(&patch.worktree_path, file).await?;
             contents.insert(file.clone(), content);
         }
@@ -236,7 +237,7 @@ impl PatchMerger {
         let mut conflicting = Vec::new();
         let mut clean = Vec::new();
         for file in &proposal.files {
-            let parent_file = parent_path.join(file);
+            let parent_file = resolve_relative(parent_path, file)?;
             let parent_content = match std::fs::read(&parent_file) {
                 Ok(bytes) => bytes,
                 Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
@@ -298,7 +299,8 @@ impl PatchMerger {
                     let content = proposal.contents.get(file).ok_or_else(|| {
                         MergeError::Diff(format!("missing proposed content for {file}"))
                     })?;
-                    atomic_write(&parent_path.join(file), content)?;
+                    // 冲突检测包含 await；写入前重新经过同一路径安全内核。
+                    atomic_write(&resolve_relative(parent_path, file)?, content)?;
                     merged.push(file.clone());
                 }
                 Ok(MergeOutcome {
@@ -311,8 +313,8 @@ impl PatchMerger {
     }
 }
 
-/// 在 `root` 内解析相对路径：拒绝绝对路径与 `..` 穿越。
-#[cfg(any(test, feature = "git"))]
+/// 在 `root` 内解析相对路径；保留禁止任何 `..` 的契约，
+/// canonical / symlink / `.git` 检查统一委托 policy 内核。
 fn resolve_relative(root: &Path, rel: &str) -> Result<PathBuf, MergeError> {
     if rel.is_empty() {
         return Err(MergeError::Diff("empty relative path".to_string()));
@@ -328,7 +330,9 @@ fn resolve_relative(root: &Path, rel: &str) -> Result<PathBuf, MergeError> {
             Component::CurDir | Component::Normal(_) => {}
         }
     }
-    Ok(root.join(rel))
+    pawork_policy::resolve_workspace_path(&[root.to_path_buf()], rel)
+        .map(|resolved| resolved.absolute)
+        .map_err(|error| MergeError::Diff(error.to_string()))
 }
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -345,7 +349,18 @@ fn atomic_write(path: &Path, content: &[u8]) -> Result<(), MergeError> {
         std::process::id(),
         TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
     ));
-    let result = std::fs::write(&temp, content).and_then(|_| std::fs::rename(&temp, path));
+    let mut output = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp)
+        .map_err(|source| MergeError::Io {
+            context: format!(" while creating {}", temp.display()),
+            source,
+        })?;
+    let result = output.write_all(content).and_then(|_| {
+        drop(output);
+        std::fs::rename(&temp, path)
+    });
     if result.is_err() {
         let _ = std::fs::remove_file(&temp);
     }
@@ -427,7 +442,7 @@ mod tests {
         WorkerPatch {
             agent_id: AgentId::new(agent),
             session_id: SessionId::new("session-1"),
-            worktree_path: PathBuf::from("/wt"),
+            worktree_path: std::env::temp_dir(),
             changed_files: Vec::new(),
         }
     }
@@ -614,7 +629,66 @@ mod tests {
         assert!(matches!(err, MergeError::Diff(_)));
         let err = resolve_relative(Path::new("/repo"), "/abs.txt").unwrap_err();
         assert!(matches!(err, MergeError::Diff(_)));
-        let ok = resolve_relative(Path::new("/repo"), "sub/dir/file.txt").unwrap();
-        assert_eq!(ok, Path::new("/repo/sub/dir/file.txt"));
+        let root = tempfile::tempdir().unwrap();
+        let ok = resolve_relative(root.path(), "sub/dir/file.txt").unwrap();
+        assert_eq!(
+            ok,
+            root.path().canonicalize().unwrap().join("sub/dir/file.txt")
+        );
+    }
+
+    #[tokio::test]
+    async fn public_merge_paths_reject_unsafe_files_before_writing() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let outside_file = outside.path().join("outside.txt");
+        std::fs::write(&outside_file, b"outside").unwrap();
+        std::fs::write(root.path().join("safe.txt"), b"base").unwrap();
+        let mut unsafe_files = vec![
+            outside_file.to_string_lossy().into_owned(),
+            "../escape.txt".into(),
+            ".git/config".into(),
+        ];
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(outside.path(), root.path().join("escape")).unwrap();
+            unsafe_files.push("escape/outside.txt".into());
+            unsafe_files.push("escape/new/nested.txt".into());
+        }
+        for unsafe_file in unsafe_files {
+            let contents = BTreeMap::from([
+                ("safe.txt".into(), b"updated".to_vec()),
+                (unsafe_file.clone(), b"unsafe".to_vec()),
+            ]);
+            let merger = PatchMerger::new(Arc::new(
+                FakeDiffProvider::new(contents.clone()).with_base(BTreeMap::from([
+                    ("safe.txt".into(), b"base".to_vec()),
+                    (unsafe_file.clone(), b"outside".to_vec()),
+                ])),
+            ));
+            let mut patch = patch("agent-1");
+            patch.worktree_path = root.path().into();
+            assert!(merger.collect(&patch).await.is_err(), "{unsafe_file}");
+            // 公开提案允许绕过 collect 构造；两个消费入口都必须检查。
+            let proposal = PatchProposal {
+                agent_id: patch.agent_id,
+                files: vec!["safe.txt".into(), unsafe_file.clone()],
+                contents,
+            };
+            assert!(merger
+                .detect_conflicts(&proposal, root.path())
+                .await
+                .is_err());
+            assert!(merger
+                .merge(&proposal, root.path(), &MergeDecision::Merge)
+                .await
+                .is_err());
+            assert_eq!(
+                std::fs::read(root.path().join("safe.txt")).unwrap(),
+                b"base"
+            );
+            assert_eq!(std::fs::read(&outside_file).unwrap(), b"outside");
+            assert!(!outside.path().join("new").exists());
+        }
     }
 }

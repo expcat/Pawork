@@ -5,7 +5,7 @@
 //! 原样保留；新增 [`resolve_provider_credential`] 凭证解析链（auth 文件 →
 //! env fallback → 无凭证）。
 //!
-//! 正式接线（`pawork auth`、config 凭证引用、六通道装配与 `auth list` 来源
+//! 正式接线（`pawork auth`、config 凭证引用、八通道装配与 `auth list` 来源
 //! 标注）由 `pawork-workspace::config` / `pawork-app` / `pawork-cli` 承载。
 //!
 //! ## 核心红线

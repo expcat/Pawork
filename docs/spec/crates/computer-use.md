@@ -28,7 +28,7 @@ Pawork 集成通过 [tools](tools.md) 复用 ExternalPlugin / requires_approval 
 
 ## 7. 测试与 golden 资产
 
-lib 回归验证坐标映射、单次消费、权限、取消、scope/连接变化、过期、非法坐标/未知字段/控制字符。RFB 定向测试覆盖握手→raw 截图→输入与关键拒绝路径。tools 证明审批拒绝前零后端访问、图片返回及序列化；app 证明审批/持久化/resume 不重执行；Providers 保留三协议图片。实际隔离桌面验收结果见路线图，历史 macOS HID 验收不算当前后端通过证据。
+lib 回归验证坐标映射、单次消费、权限、取消、scope/连接变化、过期、非法坐标/未知字段/控制字符。RFB 定向测试覆盖握手→raw 截图→输入与关键拒绝路径；组合键在每个修饰键和主键发送前检查取消，既有 wire 回归确认 Control 按下后取消不会继续发送 S / Shift，且仍释放 Control。tools 证明审批拒绝前零后端访问、图片返回及序列化；app 证明审批/持久化/resume 不重执行；Providers 保留三协议图片。实际隔离桌面验收结果见路线图，历史 macOS HID 验收不算当前后端通过证据。
 
 ## 8. 相关文档
 

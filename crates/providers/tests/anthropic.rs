@@ -222,7 +222,7 @@ async fn contract_text_stream() {
     let sink = RecordingProviderSink::default();
     let summary = p
         .stream(
-            request("claude-3-5-sonnet"),
+            &request("claude-3-5-sonnet"),
             &sink,
             CancellationToken::new(),
         )
@@ -268,7 +268,7 @@ async fn contract_single_tool_call() {
     let p = provider(&server);
     let sink = RecordingProviderSink::default();
     p.stream(
-        request("claude-3-5-sonnet"),
+        &request("claude-3-5-sonnet"),
         &sink,
         CancellationToken::new(),
     )
@@ -299,7 +299,7 @@ async fn contract_parallel_tool_calls() {
     let p = provider(&server);
     let sink = RecordingProviderSink::default();
     p.stream(
-        request("claude-3-5-sonnet"),
+        &request("claude-3-5-sonnet"),
         &sink,
         CancellationToken::new(),
     )
@@ -327,7 +327,7 @@ async fn contract_cancel_mid_stream() {
         cancel: cancel.clone(),
     };
     let err = p
-        .stream(request("claude-3-5-sonnet"), &sink, cancel)
+        .stream(&request("claude-3-5-sonnet"), &sink, cancel)
         .await
         .expect_err("收到首个 delta 后取消应失败");
     contract::assert_error_kind(
@@ -351,7 +351,7 @@ async fn contract_pre_cancel_does_not_send_request() {
     cancel.cancel();
     let sink = RecordingProviderSink::default();
     let err = p
-        .stream(request("claude-3-5-sonnet"), &sink, cancel)
+        .stream(&request("claude-3-5-sonnet"), &sink, cancel)
         .await
         .expect_err("预取消应在发送前失败");
     contract::assert_error_kind(&sink.events(), Some(&err), ProviderErrorKind::Cancelled);
@@ -382,7 +382,7 @@ async fn contract_rate_limit_is_normalized() {
     let sink = RecordingProviderSink::default();
     let err = p
         .stream(
-            request("claude-3-5-sonnet"),
+            &request("claude-3-5-sonnet"),
             &sink,
             CancellationToken::new(),
         )
@@ -406,7 +406,7 @@ async fn contract_missing_message_stop_is_interrupted() {
     let sink = RecordingProviderSink::default();
     let err = p
         .stream(
-            request("claude-3-5-sonnet"),
+            &request("claude-3-5-sonnet"),
             &sink,
             CancellationToken::new(),
         )
@@ -468,7 +468,7 @@ async fn contract_prompt_cache_and_thinking_are_written() {
             metadata: MessageMetadata::default(),
         },
     );
-    p.stream(req, &sink, CancellationToken::new())
+    p.stream(&req, &sink, CancellationToken::new())
         .await
         .expect("stream ok");
     assert!(sink
@@ -515,7 +515,7 @@ async fn hosted_web_search_written_and_undeclared_tools_rejected_before_http() {
         capabilities: vec![pawork_domain::ToolCapabilityTag::WebSearch],
         config: None,
     });
-    p.stream(req, &sink, CancellationToken::new())
+    p.stream(&req, &sink, CancellationToken::new())
         .await
         .expect("declared web search must stream");
     let received = server
@@ -547,7 +547,7 @@ async fn hosted_web_search_written_and_undeclared_tools_rejected_before_http() {
         config: None,
     });
     let err = p
-        .stream(req, &sink, CancellationToken::new())
+        .stream(&req, &sink, CancellationToken::new())
         .await
         .expect_err("undeclared hosted tools must fail closed");
     assert_eq!(err.kind, ProviderErrorKind::InvalidRequest);
@@ -585,7 +585,7 @@ async fn contract_thinking_signature_is_protected_not_emitted() {
         level: pawork_domain::ThinkingLevel::Low,
         budget_tokens: Some(1024),
     });
-    p.stream(req, &sink, CancellationToken::new())
+    p.stream(&req, &sink, CancellationToken::new())
         .await
         .expect("stream ok");
     let events = sink.events();

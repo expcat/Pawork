@@ -1,13 +1,15 @@
 //! 跨 Provider / 适配器共享的纯函数：时间与脱敏（单一事实源）。
 //!
-//! 日历换算与脱敏辅助在远端适配器冻结候审期间无生产调用方，仍保留为单一实现。
-#![allow(dead_code)]
-//!
 //! 依据 P14 review §3.3 / §3.5：时间算法（Hinnant 日历换算、自然月 reset
 //! 边界、Unix 毫秒时钟）与脱敏规则（endpoint 清洗、secret 掩码、来源标签
 //! 脱敏、canonical 端点）只允许在这里存在一份实现，Provider / adapter /
 //! domain 一律调用本模块，禁止复制。时钟相关的纯函数显式接收 `now`（不读
 //! 墙钟），测试可固定边界时间。
+//!
+//! dead_code 口径（R-05）：`now_millis` 与 `canonical_endpoint` 已有生产
+//! 调用方（service / domain），不抑制；其余各项在远端适配器冻结候审期间
+//! 无生产调用方，仅由本模块单测钉住行为，按项 `#[allow(dead_code)]` 保留，
+//! 候审解冻接入远端适配器时移除标注。
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -24,6 +26,8 @@ pub fn now_millis() -> Timestamp {
 }
 
 /// Unix 天数 → UTC 民用日期（Howard Hinnant 算法）。
+// 候审远端适配器预留：无生产调用方，单测钉住行为；解冻时移除本标注。
+#[allow(dead_code)]
 pub fn epoch_to_utc_from_days(days: i64) -> (i32, u32, u32, u32, u32, u32) {
     let z = days + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
@@ -39,6 +43,8 @@ pub fn epoch_to_utc_from_days(days: i64) -> (i32, u32, u32, u32, u32, u32) {
 }
 
 /// 民用日期 → Unix 天数（UTC）。
+// 候审远端适配器预留：无生产调用方，单测钉住行为；解冻时移除本标注。
+#[allow(dead_code)]
 pub fn civil_to_days(y: i32, m: u32, d: u32) -> i64 {
     let y = if m <= 2 { (y - 1) as i64 } else { y as i64 };
     let era = if y >= 0 { y } else { y - 399 } / 400;
@@ -50,6 +56,8 @@ pub fn civil_to_days(y: i32, m: u32, d: u32) -> i64 {
 }
 
 /// Unix 秒 → UTC 民用时间（含时分秒；日期部分复用 [`epoch_to_utc_from_days`]）。
+// 候审远端适配器预留：无生产调用方，单测钉住行为；解冻时移除本标注。
+#[allow(dead_code)]
 pub fn epoch_to_utc(secs: u64) -> (i32, u32, u32, u32, u32, u32) {
     let days = (secs / 86_400) as i64;
     let rem = secs % 86_400;
@@ -61,6 +69,8 @@ pub fn epoch_to_utc(secs: u64) -> (i32, u32, u32, u32, u32, u32) {
 }
 
 /// 下月 1 号 00:00 UTC 的 Timestamp（自然月 reset 时刻）。显式接收 `now`。
+// 候审远端适配器预留：无生产调用方，单测钉住行为；解冻时移除本标注。
+#[allow(dead_code)]
 pub fn next_month_start_timestamp(now: Timestamp) -> Timestamp {
     let secs = now.as_unix_millis() / 1_000;
     let days = (secs / 86_400) as i64;
@@ -72,6 +82,8 @@ pub fn next_month_start_timestamp(now: Timestamp) -> Timestamp {
 }
 
 /// 当月 UTC 起点的 Unix 秒（half-open 区间 [month_start, now)）。显式接收 `now`。
+// 候审远端适配器预留：无生产调用方，单测钉住行为；解冻时移除本标注。
+#[allow(dead_code)]
 pub fn month_start_unix_seconds(now: Timestamp) -> u64 {
     let secs = now.as_unix_millis() / 1_000;
     let days = (secs / 86_400) as i64;
@@ -83,6 +95,8 @@ pub fn month_start_unix_seconds(now: Timestamp) -> u64 {
 /// 把端点 URL 中的 query 与 fragment 抹掉，仅保留 scheme://host/path。
 ///
 /// provenance 中的 endpoint 不得包含 query string（可能携带凭证或会话标识）。
+// 候审远端适配器预留：无生产调用方，单测钉住行为；解冻时移除本标注。
+#[allow(dead_code)]
 pub fn redact_endpoint(raw: &str) -> String {
     match Url::parse(raw) {
         Ok(url) => {
@@ -108,6 +122,8 @@ pub fn redact_endpoint(raw: &str) -> String {
 /// 抹去疑似 secret 的子串，并截断到安全长度。仅用于错误 / 审计文本。
 ///
 /// 该函数是“尽力而为”的最后一道防线：真正的防线是 secret 永不进入这些文本。
+// 候审远端适配器预留：无生产调用方，单测钉住行为；解冻时移除本标注。
+#[allow(dead_code)]
 pub fn redact_secrets(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for chunk in value.split_whitespace() {
@@ -118,6 +134,8 @@ pub fn redact_secrets(value: &str) -> String {
     truncate_chars(&out, 512)
 }
 
+// 仅由候审保留项调用；解冻时随调用方一并移除。
+#[allow(dead_code)]
 const REDACT_SECRET_LABELS: [&str; 7] = [
     "token",
     "secret",
@@ -128,12 +146,16 @@ const REDACT_SECRET_LABELS: [&str; 7] = [
     "session",
 ];
 
+// 仅由候审保留项调用；解冻时随调用方一并移除。
+#[allow(dead_code)]
 fn has_redact_secret_label(value: &str) -> bool {
     REDACT_SECRET_LABELS
         .iter()
         .any(|label| value.contains(label))
 }
 
+// 仅由候审保留项调用；解冻时随调用方一并移除。
+#[allow(dead_code)]
 fn mask_token_like(chunk: &str) -> String {
     // Error strings should carry categories, not credential-shaped values.
     // Be deliberately conservative here: false-positive redaction is safer
@@ -156,6 +178,8 @@ fn mask_token_like(chunk: &str) -> String {
     }
 }
 
+// 仅由候审保留项调用；解冻时随调用方一并移除。
+#[allow(dead_code)]
 fn truncate_chars(value: &str, max_chars: usize) -> String {
     if value.chars().count() <= max_chars {
         return value.to_string();
@@ -170,6 +194,8 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
 
 /// 来源标签安全截断上限（字符）。与 refresh 的 `REDACTED_SOURCE_MAX_LEN`
 /// 同一量级：异常超长的 provider 来源不得撑爆告警 / 审计条目。
+// 仅由候审保留项调用；解冻时随调用方一并移除。
+#[allow(dead_code)]
 const REDACT_SOURCE_MAX_CHARS: usize = 128;
 
 /// 将来源标签清洗为可安全写入告警 / 审计的形态：
@@ -184,6 +210,8 @@ const REDACT_SOURCE_MAX_CHARS: usize = 128;
 ///
 /// 与 [`redact_secrets`] 相同，这是“尽力而为”的最后一道防线：真正的防线是
 /// secret 永不进入来源标签。
+// 候审远端适配器预留：无生产调用方，单测钉住行为；解冻时移除本标注。
+#[allow(dead_code)]
 pub(crate) fn redact_source(raw: &str) -> String {
     let trimmed = raw.trim();
     let cut = trimmed
@@ -216,11 +244,15 @@ pub(crate) fn redact_source(raw: &str) -> String {
     truncate_chars(out.trim_end(), REDACT_SOURCE_MAX_CHARS)
 }
 
+// 仅由候审保留项调用；解冻时随调用方一并移除。
+#[allow(dead_code)]
 fn is_bearer_label(chunk: &str) -> bool {
     let lower = chunk.to_ascii_lowercase();
     lower == "bearer" || lower.ends_with(":bearer") || lower.ends_with("=bearer")
 }
 
+// 仅由候审保留项调用；解冻时随调用方一并移除。
+#[allow(dead_code)]
 fn mask_source_chunk(chunk: &str) -> String {
     let lower = chunk.to_ascii_lowercase();
     // `sk-` / `sk_` 前缀 token 形态：从标记起整段掩掉（如
@@ -250,6 +282,8 @@ fn mask_source_chunk(chunk: &str) -> String {
     }
 }
 
+// 仅由候审保留项调用；解冻时随调用方一并移除。
+#[allow(dead_code)]
 fn mask_sensitive_pairs(value: &str) -> String {
     let bytes = value.as_bytes();
     let mut out = String::with_capacity(value.len());
@@ -312,6 +346,8 @@ fn mask_sensitive_pairs(value: &str) -> String {
     out
 }
 
+// 仅由候审保留项调用；解冻时随调用方一并移除。
+#[allow(dead_code)]
 fn source_key_before(value: &str, separator: usize) -> Option<&str> {
     let bytes = value.as_bytes();
     let mut end = separator;
@@ -341,11 +377,15 @@ fn source_key_before(value: &str, separator: usize) -> Option<&str> {
     (start < end).then_some(&value[start..end])
 }
 
+// 仅由候审保留项调用；解冻时随调用方一并移除。
+#[allow(dead_code)]
 fn is_sensitive_source_key(key: &str) -> bool {
     let lower = key.to_ascii_lowercase();
     has_redact_secret_label(&lower) || lower.contains("sig") || lower.contains("key")
 }
 
+// 仅由候审保留项调用；解冻时随调用方一并移除。
+#[allow(dead_code)]
 fn find_closing_quote(bytes: &[u8], start: usize, quote: u8) -> usize {
     let mut escaped = false;
     for (index, byte) in bytes.iter().copied().enumerate().skip(start) {
@@ -360,6 +400,8 @@ fn find_closing_quote(bytes: &[u8], start: usize, quote: u8) -> usize {
     bytes.len()
 }
 
+// 仅由候审保留项调用；解冻时随调用方一并移除。
+#[allow(dead_code)]
 fn find_unquoted_value_end(bytes: &[u8], start: usize) -> usize {
     bytes[start..]
         .iter()

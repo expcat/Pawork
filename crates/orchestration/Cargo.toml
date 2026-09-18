@@ -13,6 +13,7 @@ git = ["dep:pawork-git"]
 
 [dependencies]
 pawork-domain = { path = "../domain" }
+pawork-policy = { path = "../policy" }
 pawork-control-plane = { path = "../control-plane", default-features = false }
 pawork-git = { path = "../git", optional = true }
 async-trait.workspace = true

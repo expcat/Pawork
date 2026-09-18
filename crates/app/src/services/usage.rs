@@ -259,7 +259,7 @@ mod tests {
 
             async fn stream(
                 &self,
-                _request: CanonicalModelRequest,
+                _request: &CanonicalModelRequest,
                 sink: &dyn pawork_domain::ProviderEventSink,
                 _cancel: CancellationToken,
             ) -> Result<ModelResponseSummary, ProviderError> {

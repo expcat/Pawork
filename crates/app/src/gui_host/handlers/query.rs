@@ -1,8 +1,8 @@
 use crate::gui_server::{GuiHost, GuiHostError};
 use pawork_protocol::{AppQuery, AppResponse};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
-use super::super::{GuiHostAdapter, session_tree_entry};
+use super::super::{session_tree_entry, GuiHostAdapter};
 
 pub(crate) async fn workspace_list(
     adapter: &GuiHostAdapter,
@@ -19,7 +19,7 @@ pub(crate) async fn workspace_list(
             json!({
                 "id": record.workspace_id.as_str(),
                 "name": record.name,
-                "trusted": core.workspace_trusted(),
+                "trusted": core.workspace_trusted_for_roots(std::slice::from_ref(&record.root_path)),
                 "roots": [{ "path": record.root_path.display().to_string() }],
             })
         })

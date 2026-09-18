@@ -1,5 +1,5 @@
 //! 应用门面：读配置 → 凭证链（auth 文件 → env）→ provider → 读写工具 +
-//! run_command → 事件化 `run_session`（S6 波 C 起六通道正式装配）。
+//! run_command → 事件化 `run_session`（当前八通道正式装配）。
 //!
 //! 不按 Provider 名称分支；协议来自 `extra.provider_protocols` 与默认表。
 //! 落库 persist-first，再推渲染 sink。

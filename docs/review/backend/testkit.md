@@ -1,6 +1,6 @@
 # pawork-testkit Review
 
-> 测试专用 crate：可编程 Mock Provider（脚本回放/序列/取消）、Mock Tool（成功/失败/取消）、Recording Sink 与 Provider 流事件最小断言库。2 个 .rs 文件，共 895 行（lib 757 / contract 138），后半部分均为内联自测；仅依赖 pawork-domain，只作 dev-dependency 进各包测试闭包。
+> 测试专用 crate：可编程 Mock Provider（脚本回放/序列/取消）、Mock Tool（成功/失败/取消）、Recording Sink 与 Provider 流事件最小断言库。2 个 .rs 文件，共 942 行（lib 804 / contract 138），后半部分均为内联自测；仅依赖 pawork-domain，只作 dev-dependency 进各包测试闭包。
 
 ## 1. 职责与边界
 
@@ -25,7 +25,7 @@ pawork-testkit 为 engine / tools / app / client 等包的功能测试提供确�
 
 | 相对路径 | 行数 | 职责 |
 |---|---:|---|
-| src/lib.rs | 757 | MockScript builder、MockProvider（回放/序列）、MockTool、Recording Sink、请求序断言；后半为内联自测 |
+| src/lib.rs | 804 | MockScript builder、MockProvider（回放/序列）、MockTool、Recording Sink、请求序断言；后半为内联自测 |
 | src/contract.rs | 138 | Provider 流事件最小断言：text 流形状、单/并行 tool call 闭合、变体计数；内联自测 |
 
 ## 4. 类型与方法功能列表
@@ -34,11 +34,11 @@ pawork-testkit 为 engine / tools / app / client 等包的功能测试提供确�
 
 | 名称 | 种类 | 签名/功能 |
 |---|---|---|
-| `MockScript` | struct | 脚本 builder（Clone/Debug/Default）。`new()`；`response_started(response_id)`；`text(t)`；`thinking(t)`；`tool_call(name, arguments)`——自动生成 `mock-tool-call-N` id 并展开为 Started→ArgumentsDelta(单块 JSON)→Completed；`tool_call_chunks(id, name, chunks)`——显式 id 与多块 JSON delta（测部分参数流）；`usage(TokenUsage)`；`provider_metadata(Value)`；`complete_with(stop_reason)` / `complete()`（默认 Completed）；`fail(ProviderError)`——走到该步立即返回错误；`wait_for_cancellation()`——挂起等取消（测取消路径） |
+| `MockScript` | struct | 脚本 builder（Clone/Debug/Default）。`new()`；`response_started(response_id)`；`text(t)`；`thinking(t)`；`tool_call(name, arguments)`——自动生成 `mock-tool-call-N` id 并展开为 Started→ArgumentsDelta(单块 JSON)→Completed；`tool_call_chunks(id, name, chunks)`——显式 id 与多块 JSON delta（测部分参数流）；`server_tool_started(id, name)` / `server_tool_citation(id, citation)` / `server_tool_completed(id)`（SEARCH-1：ServerTool 生命周期事件，Provider 服务端工具非本地 ToolCall）；`usage(TokenUsage)`；`provider_metadata(Value)`；`complete_with(stop_reason)` / `complete()`（默认 Completed）；`fail(ProviderError)`——走到该步立即返回错误；`wait_for_cancellation()`——挂起等取消（测取消路径） |
 | `MockProviderStep` | enum（私有） | Event(ProviderStreamEvent) / Fail(ProviderError) / WaitForCancellation |
 | `MockProviderSource` | enum（私有） | Replay(MockScript)——同一脚本每次调用重放；Sequence { scripts, next }——逐次取脚本，取尽报 StreamInterrupted |
 | `MockProvider` | struct | `new(script)`；`sequence(scripts)`；`with_id(ProviderId)`（默认 `"mock"`）；`with_models(Vec<ModelDefinition>)`（list_models 目录）；`calls() -> Vec<MockProviderCallRecord>`。实现 `ModelProvider`：`stream()` 每步先查取消（已取消则记 cancelled 并返回 ProviderError::cancelled），Event 逐步 emit 并累计 event_count、更新 summary（response_id/usage/stop_reason/provider_metadata），Fail 立即返回，WaitForCancellation await 后按取消返回；脚本走完但无 ResponseCompleted → StreamInterrupted（"mock script ended without ResponseCompleted"） |
-| `MockProviderCallRecord` | struct | `request_id, model, event_count, cancelled, completed`——单次 stream 调用的事后断言数据 |
+| `MockProviderCallRecord` | struct | `request_id, model, hosted_tools: Vec<ToolCapabilityTag>, has_image: bool, event_count, cancelled, completed`——单次 stream 调用的事后断言数据；SEARCH-1 / VISION-1 起记录请求携带的 hosted 工具类别与图片内容位，供注入 / 闸门断言 |
 | `MockTool` | struct | `new(name, result)`；`failing(name, ToolError)`；`with_descriptor(ToolDescriptor)`（覆盖默认描述）；`calls()`；`assert_called_with(&[Value])` 断言入参序列。默认 descriptor：ReadOnly / ClientFunction / Local / 免审批 / 可并发 / default_timeout 1s / max_output 64KiB / 允许 untrusted workspace。实现 `AgentTool::execute`：先记录调用（tool_call_id/input/workspace_id/run_id/是否已取消），已取消返回 ToolError::cancelled，否则回放 outcome |
 | `MockToolCallRecord` | struct | `tool_call_id, input, workspace_id, run_id, cancelled` |
 | `RecordingProviderSink` | struct | `events() -> Vec<ProviderStreamEvent>`；实现 `ProviderEventSink::emit`（收集不失败） |

@@ -113,11 +113,11 @@ fn search(
         return Err(SearchTextError::Cancelled);
     }
     let pattern = require_str(input, "pattern")?;
-    let is_regex = opt_bool(input, "is_regex").unwrap_or(false);
-    let glob = crate::common::opt_str(input, "glob");
-    let max_results = opt_u64(input, "max_results").unwrap_or(DEFAULT_MAX_RESULTS) as usize;
-    let context_lines = opt_u64(input, "context_lines").unwrap_or(DEFAULT_CONTEXT_LINES) as usize;
-    let case_sensitive = opt_bool(input, "case_sensitive").unwrap_or(true);
+    let is_regex = opt_bool(input, "is_regex")?.unwrap_or(false);
+    let glob = crate::common::opt_str(input, "glob")?;
+    let max_results = opt_u64(input, "max_results")?.unwrap_or(DEFAULT_MAX_RESULTS) as usize;
+    let context_lines = opt_u64(input, "context_lines")?.unwrap_or(DEFAULT_CONTEXT_LINES) as usize;
+    let case_sensitive = opt_bool(input, "case_sensitive")?.unwrap_or(true);
 
     let roots = workspace_roots(service, workspace_id)?;
     if roots.is_empty() {

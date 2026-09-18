@@ -12,12 +12,12 @@
 
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
-| `src/lib.rs` | ~410（非测试 ~95） | crate 门面与 re-export；`assemble_request(_with_tools)` 冻结默认值装配；`pub(crate) run_turn` 单轮原语（预取消检查 + `provider.stream`，13 变体原样透传） |
+| `src/lib.rs` | ~410（非测试 ~95） | crate 门面与 re-export；`assemble_request(_with_tools)` 冻结默认值装配；`pub(crate) run_turn` 单轮原语（取 `&CanonicalModelRequest`，预取消检查 + `provider.stream`，13 变体原样透传） |
 | `src/tool_loop/mod.rs` | ~360 | `run_session` 编排；`LoopContext` trait；`ApprovalGate` / `PendingToolInvocation` / `WriteCheckpoint` / `CompactionOutcome`；`DEFAULT_MAX_TOOL_ROUNDS` |
-| `src/tool_loop/round.rs` | ~110 | 单轮 `run_turn` 收集（`collect_stream_round`）、助手消息装配、usage 饱和加法 |
+| `src/tool_loop/round.rs` | ~110 | 单轮 `run_turn` 收集（`collect_stream_round`，请求按引用透传：工具循环每轮直接 `&current`，不 clone 全历史）、助手消息装配、usage 饱和加法 |
 | `src/tool_loop/approval.rs` | ~110 | `wait_and_apply`：`request_approval` await 后补发 `ToolApprovalResponded`；gate 数不匹配 fail-closed Denied；ApprovedForRun 跨轮记忆 |
 | `src/tool_loop/exec.rs` | ~210 | 待执行调用解析、写快照、`execute_tools`、结果对齐与 `MessageCommitted` |
-| `src/tool_loop/compaction.rs` | ~470 | 注入层、输入估算、软限压缩 / 硬限截断、`run_manual_compaction` |
+| `src/tool_loop/compaction.rs` | ~500 | 注入层、输入估算、软限压缩 / 硬限截断、`run_manual_compaction` |
 | `src/tool_loop/tests.rs` | ~2180 | 原 `tool_loop.rs` 内联测试整文件迁入（`#[cfg(test)]`） |
 | `src/session_turn.rs` | ~640（非测试 ~195） | `SessionTurn`（会话轮次标识 + start_sequence）；`run_session_turn` 单轮事件化（无工具循环）；`now_timestamp` |
 | `src/appender.rs` | ~330 | `AssembledTurn`：把 `ProviderStreamEvent` 流折叠成一条助手 `Message`（text / thinking / reasoning / tool_calls / summary）；`PendingToolCall`；`ToolCallResult`；`tool_results_message` |

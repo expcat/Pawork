@@ -110,6 +110,7 @@ send 路径：先查 closed、再校验 payload ≤ max_frame_bytes、u32 try_fr
 - **端点类型 fail-closed**：LocalTransport 只收 Local 端点、MemoryTransport 只收 Memory 端点，错配返回 InvalidEndpoint。
 - **close 语义**：连接 close 幂等（swap 已关则 Ok）；UDS listener close 删除 socket 文件（重启不留 stale）；Windows listener close 只置标志（实例随 accept 生命周期）。
 - **远程 Adapter 单一契约源**：RemoteGuiTransportProvider/RemoteGuiConnector 的 trait/DTO 在本 crate，publish 的端点交给普通 GUI Server 绑定；revoke 必须使后续 connect 失败。未来恢复远程实现时不得复制第二套契约。
+- **远程契约现状（2026-09-17 审查）**：`RemoteGuiTransportProvider` / `RemoteGuiConnector` 在全仓库零实现零调用（契约保留是刻意设计）；`unpublish` 与 `revoke` 两个方法的文档语义高度重叠（api.rs:166-176，revoke 额外声明关监听 / 销毁凭证 / 断连接），复活远程实现时建议合并为一个方法或明确分工。另 api.rs:127-128 注释仍写「生产实现（feature `remote`）」，该 feature 已不存在（实现归档），阅读时以 Cargo.toml 与 spec「无 remote feature」为准。
 - **feature 门**：`local` 默认开启；`memory` 仅测试闭包；两端 feature 不影响 api.rs 的抽象层编译。
 
 ## 6. 测试资产

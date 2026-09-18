@@ -29,8 +29,8 @@ ADR-061 使用 GUI API 1.17：空 `display_name` 在 add/start 时由 Host 生�
 | CON-BLOB-01 | Artifact/Protected Blob | `PWB1_MAGIC`，`PWB1_VERSION = 1`；protected 使用 AEAD | checkpoint/reasoning → artifact/protected stores | [blob](../../crates/storage/src/blob)；[PWB1 golden](../../crates/storage/tests/golden) |
 | CON-POLICY-01 | Policy 决策 | `PolicyDecision` 四变体；`ApprovalMode` 五档，默认 `ReadOnly` | tools/app → CLI/Desktop/exec | [policy](../../crates/policy/src)；[security.md](security.md) |
 | CON-CONFIG-01 | 配置 schema/层级 | `Builtin < Global < Profile < Workspace < Session < Run`；`ProviderConfig` 无 `api_key` | workspace loader → app/providers | [workspace config](../../crates/workspace/src/config) |
-| CON-GUI-01 | GUI Connection Protocol | API `1.17`；支持 `1.0`–`1.17`；Accepted 握手可选 `host_data_dir`；`ClientFrame`/`ServerFrame`；上限 1 MiB | app GUI host ↔ client/Desktop | [protocol](../../crates/protocol/src)；[schemas/gui-protocol](../../schemas/gui-protocol)；protocol fixtures/golden |
-| CON-REGISTRY-01 | Command/Capability Registry | 40 `AppCommand`、15 `AppQuery`；GUI/headless/ACP 可用性同源 | protocol registry → app/cli/client | [registry](../../crates/protocol/src/app/registry.rs) |
+| CON-GUI-01 | GUI Connection Protocol | API `1.19`；支持 `1.0`–`1.19`；Accepted 握手可选 `host_data_dir`；`ClientFrame`/`ServerFrame`；上限 1 MiB | app GUI host ↔ client/Desktop | [protocol](../../crates/protocol/src)；[schemas/gui-protocol](../../schemas/gui-protocol)；protocol fixtures/golden |
+| CON-REGISTRY-01 | Command/Capability Registry | 42 `AppCommand`、18 `AppQuery`；GUI/headless/ACP 可用性同源 | protocol registry → app/cli/client | [registry](../../crates/protocol/src/app/registry.rs) |
 | CON-HEADLESS-01 | Headless JSON | 与 GUI 帧正交的 request/response JSONL；stdout-only | CLI stdio ↔ SDK/automation | [headless protocol](../../crates/protocol/src/headless)；[schemas/headless-json](../../schemas/headless-json) |
 | CON-ACP-01 | ACP 映射 | ACP adapter 只接 registry 允许的能力，未登记拒绝 | IDE/ACP client ↔ CLI/AppCore | [CLI ACP](../../crates/cli/src/channels/acp)；ACP fixtures |
 | CON-USAGE-01 | Usage 与审计 | usage `dedup_key`；audit 为 JSONL | app/control-plane → usage ledger/audit | [control-plane](../../crates/control-plane/src)；对应 golden |
@@ -71,6 +71,8 @@ ADR-061 使用 GUI API 1.17：空 `display_name` 在 add/start 时由 Host 生�
 - `ArtifactStreaming` 枚举可保留，但生产宿主当前不得宣告。
 - `WorkspaceRelativePath` 拒绝绝对路径与 `..`；客户端不因 UI 便利绕过 host Policy。
 
+- API 1.19（2026-09-16 工作区文件浏览/编辑）：新增 GUI-only `WorkspaceFiles` / `WorkspaceFileRead` 查询与 `WorkspaceFileWrite` 命令；路径均为 `WorkspaceRelativePath`、根目录用 `.`；写带 `expected_revision` 乐观锁；minor <19 请求前拒绝；文件正文不进入日志/账本持久化；仅接受本地 GUI 来源。
+- API 1.18（2026-09-16 右侧浏览器）：新增 `browser_next` / `browser_respond` 与 `GuiCapability::BrowserControl`；聊天经 Host `browser` 工具、Policy 与显式审批操作当前任务页面；历史重放不派发操作。
 - API 1.17（[ADR-061](settings.md#adr-061账号默认名称与重命名2026-09-13)）：add/start 的 `display_name` 可缺省或空，由 Host 生成默认名；新增 GUI-only `auth_account_rename`。旧 Host 仍拒空名。
 - API 1.16（[ADR-060](settings.md#adr-060ui-6b-g2-逐账号额度与耗尽切换2026-09-09)）：Percent 单位、逐账号 quota 查询、`auth_account_set_selection_mode` 与 `selection_mode`；旧 minor 发网前拒绝新查询并剥离模式字段。
 - API 1.15（[ADR-059](settings.md#adr-059ui-6b-命名账号与持久选择2026-09-08)）：四个 GUI account 命令和 credential ID/名称/selected；旧 minor 响应过滤新字段，新客户端默认解码旧状态。账号索引与 secret 同事务，选择在后续请求边界生效。

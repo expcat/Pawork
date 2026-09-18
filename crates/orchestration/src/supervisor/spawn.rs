@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
-use pawork_control_plane::credential::LeaseOutcome;
+use pawork_control_plane::credential::{LeaseGuard, LeaseOutcome};
 use pawork_control_plane::UsageQuery;
 use pawork_control_plane::{
     IdentityContext, Permission, PolicyDecisionEvent, PolicyDecisionKind, PolicyGate,
@@ -79,8 +79,9 @@ impl AgentSupervisor {
     /// 失败同 lease 失败处理）→ `WorkerCreated` / `WorkerAdmitted` → 申请
     /// lease（可选）→ Start → `WorkerStarted` → 注册 child 与取消令牌 →
     /// TaskGraph 注册（W2，发出 Task* 事件）→ 注册 worker 条目与预算控制器。
-    /// lease / worktree 分配失败时把该 worker 标记 `Failed` 后返回错误，
-    /// 保证事件流一致、恢复时不留悬挂 worker。
+    /// lease / worktree / TaskGraph 注册失败时释放已持有资源、把该 worker
+    /// 标记 `Failed` 并注册后返回错误，保证事件流一致、恢复时不留悬挂
+    /// worker / children / cancel token。lease 以 `Released` 归还，不惩罚账号健康。
     pub async fn spawn(&self, req: SpawnRequest) -> Result<AgentId, SupervisorError> {
         // 0. parent 准入：存在、同 tenant、同 session、状态可派生。失败不写
         //    children / workers，也不占用并发预约。
@@ -268,24 +269,15 @@ impl AgentSupervisor {
                         worktree_guard = Some(WorktreeGuard::new(worktree, allocator.clone()));
                     }
                     Err(error) => {
-                        // 保持事件流一致：标记 Failed 并注册，再返回错误。
-                        let _ = machine.apply(WorkerTransition::Fail);
-                        self.emit(OrchestrationEvent::WorkerFailed {
-                            agent_id: agent_id.clone(),
-                            at_ms: now_ms(),
-                            reason: error.to_string(),
-                        });
-                        let entry = WorkerEntry {
+                        self.abort_spawn_as_failed(
                             instance,
-                            state: machine,
-                            lease: None,
-                            worktree: None,
-                            model: req.model.clone(),
-                        };
-                        self.workers
-                            .lock()
-                            .unwrap_or_else(|poison| poison.into_inner())
-                            .insert(agent_id.clone(), entry);
+                            machine,
+                            req.model.clone(),
+                            None,
+                            None,
+                            error.to_string(),
+                        )
+                        .await;
                         return Err(SupervisorError::PoolAcquire(error.to_string()));
                     }
                 }
@@ -351,33 +343,15 @@ impl AgentSupervisor {
                                     "failed to release lease after scope validation failure"
                                 );
                             }
-                            if let Some(wt_guard) = worktree_guard.take() {
-                                if let Err(release_error) = wt_guard.release().await {
-                                    tracing::warn!(
-                                        %agent_id,
-                                        %release_error,
-                                        "failed to release worktree after lease scope failure"
-                                    );
-                                }
-                            }
-                            // 保持事件流一致：标记 Failed 并注册，再返回错误。
-                            let _ = machine.apply(WorkerTransition::Fail);
-                            self.emit(OrchestrationEvent::WorkerFailed {
-                                agent_id: agent_id.clone(),
-                                at_ms: now_ms(),
-                                reason: reason.to_string(),
-                            });
-                            let entry = WorkerEntry {
+                            self.abort_spawn_as_failed(
                                 instance,
-                                state: machine,
-                                lease: None,
-                                worktree: None,
-                                model: req.model.clone(),
-                            };
-                            self.workers
-                                .lock()
-                                .unwrap_or_else(|poison| poison.into_inner())
-                                .insert(agent_id.clone(), entry);
+                                machine,
+                                req.model.clone(),
+                                None,
+                                worktree_guard.take(),
+                                reason.to_string(),
+                            )
+                            .await;
                             let reason_msg = format!("lease scope validation failed: {reason}");
                             self.record_policy_denial(&req, PolicyGate::LeaseAcquire, &reason_msg);
                             return Err(SupervisorError::PolicyDenied(reason_msg));
@@ -385,34 +359,15 @@ impl AgentSupervisor {
                         Some(guard)
                     }
                     Err(error) => {
-                        // 已分配的 worktree 显式释放，避免泄漏。
-                        if let Some(guard) = worktree_guard.take() {
-                            if let Err(release_error) = guard.release().await {
-                                tracing::warn!(
-                                    %agent_id,
-                                    %release_error,
-                                    "failed to release worktree after lease acquire failure"
-                                );
-                            }
-                        }
-                        // 保持事件流一致：标记 Failed 并注册，再返回错误。
-                        let _ = machine.apply(WorkerTransition::Fail);
-                        self.emit(OrchestrationEvent::WorkerFailed {
-                            agent_id: agent_id.clone(),
-                            at_ms: now_ms(),
-                            reason: error.to_string(),
-                        });
-                        let entry = WorkerEntry {
+                        self.abort_spawn_as_failed(
                             instance,
-                            state: machine,
-                            lease: None,
-                            worktree: None,
-                            model: req.model.clone(),
-                        };
-                        self.workers
-                            .lock()
-                            .unwrap_or_else(|poison| poison.into_inner())
-                            .insert(agent_id.clone(), entry);
+                            machine,
+                            req.model.clone(),
+                            None,
+                            worktree_guard.take(),
+                            error.to_string(),
+                        )
+                        .await;
                         return Err(SupervisorError::PoolAcquire(error.to_string()));
                     }
                 }
@@ -456,34 +411,44 @@ impl AgentSupervisor {
                 max_retries: req.task_max_retries.unwrap_or(0),
                 state: TaskState::Created,
             };
-            graph
-                .add_task(task)
-                .map_err(|error| SupervisorError::PolicyDenied(error.to_string()))?;
-            self.emit(OrchestrationEvent::TaskCreated {
-                task_id: task_id.clone(),
-                agent_id: agent_id.clone(),
-                tenant_id: req.tenant_id.clone(),
-            });
-            // add_task 已按依赖完成度把状态置为 Ready / Blocked；无依赖（或
-            // 依赖已全部完成）的任务直接 Ready，发出 TaskReady。
-            if graph.state_of(&task_id) == Some(TaskState::Ready) {
-                self.emit(OrchestrationEvent::TaskReady {
-                    task_id: task_id.clone(),
-                });
-                // Ready 任务立刻指派并启动；Blocked 任务（依赖未完成）保持
-                // Blocked，等待依赖 complete 后由 ready_tasks + mark_ready +
-                // 外部 assign/start 推进——不在 spawn 中强制 assign，避免对
-                // 合法前向依赖报 IllegalState 而破坏事件流一致性。
-                graph
-                    .assign(&task_id)
-                    .map_err(|error| SupervisorError::PolicyDenied(error.to_string()))?;
-                self.emit(OrchestrationEvent::TaskAssigned {
+            let mut added = false;
+            let registration = (|| {
+                graph.add_task(task)?;
+                added = true;
+                self.emit(OrchestrationEvent::TaskCreated {
                     task_id: task_id.clone(),
                     agent_id: agent_id.clone(),
+                    tenant_id: req.tenant_id.clone(),
                 });
-                graph
-                    .start(&task_id)
-                    .map_err(|error| SupervisorError::PolicyDenied(error.to_string()))?;
+                // 前向依赖保持 Blocked；仅 Ready 任务立即指派、启动。
+                if graph.state_of(&task_id) == Some(TaskState::Ready) {
+                    self.emit(OrchestrationEvent::TaskReady {
+                        task_id: task_id.clone(),
+                    });
+                    graph.assign(&task_id)?;
+                    self.emit(OrchestrationEvent::TaskAssigned {
+                        task_id: task_id.clone(),
+                        agent_id: agent_id.clone(),
+                    });
+                    graph.start(&task_id)?;
+                }
+                Ok::<(), crate::task_graph::TaskGraphError>(())
+            })();
+            if let Err(error) = registration {
+                // 重复 id 的失败不能取消原有任务，只收尾本次成功加入的任务。
+                if added && graph.cancel(&task_id).is_ok() {
+                    self.emit(OrchestrationEvent::TaskCancelled { task_id });
+                }
+                self.abort_spawn_as_failed(
+                    instance,
+                    machine,
+                    req.model.clone(),
+                    lease,
+                    worktree_guard.take(),
+                    error.to_string(),
+                )
+                .await;
+                return Err(SupervisorError::PolicyDenied(error.to_string()));
             }
         }
 
@@ -520,6 +485,59 @@ impl AgentSupervisor {
             .insert(agent_id.clone(), WorkerBudgetController::new(limits));
 
         Ok(agent_id)
+    }
+
+    /// 已准入的 spawn 失败统一收口；不把编排失败归因于凭证账号。
+    async fn abort_spawn_as_failed(
+        &self,
+        instance: AgentInstance,
+        mut machine: WorkerStateMachine,
+        model: Option<ModelId>,
+        lease: Option<LeaseGuard>,
+        worktree: Option<WorktreeGuard>,
+        reason: String,
+    ) {
+        let agent_id = instance.agent_id.clone();
+        machine
+            .apply(WorkerTransition::Fail)
+            .expect("spawn state is nonterminal");
+        self.remove_child(instance.parent_id.as_ref(), &agent_id);
+        self.cancel_tokens
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .remove(&agent_id);
+        self.workers
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .insert(
+                agent_id.clone(),
+                WorkerEntry {
+                    instance,
+                    state: machine,
+                    lease: None,
+                    worktree: None,
+                    model,
+                },
+            );
+        self.emit(OrchestrationEvent::WorkerFailed {
+            agent_id: agent_id.clone(),
+            at_ms: now_ms(),
+            reason,
+        });
+        if let Some(lease) = lease.and_then(LeaseGuard::into_lease) {
+            if let Err(error) = self
+                .pool
+                .release(lease.lease_id, LeaseOutcome::Released)
+                .await
+            {
+                tracing::warn!(%agent_id, %error, "failed to release lease after spawn failure");
+            }
+        }
+        if let Some(guard) = worktree {
+            if let Err(error) = guard.release().await {
+                tracing::warn!(%agent_id, %error, "failed to release worktree after spawn failure");
+            }
+        }
     }
 
     /// 记录一次策略拒绝决策（versioned，reason 统一脱敏）。

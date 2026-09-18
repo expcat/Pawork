@@ -18,7 +18,7 @@
 | `src/sessions.rs` | ~700 | `sessions list/show/export/import/fork` 实现；`.jsonl` 首行签名嗅探（Codex 信封 / Claude 本地行 / Pi 默认）；`format_millis`（无时区库的 UTC 格式化） |
 | `src/auth.rs` | ~120 | `auth list/set-key/login/logout`；OAuth 登录等待 5 分钟（`LOGIN_TIMEOUT`）；只显示掩码 |
 | `src/gui.rs` | ~150 | `gui serve`：消费 `run_inner` 已解析的 Host data directory，派生单实例 socket/pid/token，向认证握手注入同一路径；单实例探测、`TokenStore`、socket 目录 0o700、pid 文件、`GuiServer` accept 循环；握手能力由 `pawork_protocol::app::registry::gui_supported_capabilities()` **派生**（无手写清单） |
-| `src/headless.rs` | ~430 | `headless --json-stdio`：`HeadlessHandler`（hello 协商、capability gate、compat import/history、事件轮询）；`HOST_CAPABILITIES` 常量 |
+| `src/headless.rs` | ~510 | `headless --json-stdio`：`HeadlessHandler`（hello 协商、capability gate、compat import/history、事件轮询）；`HOST_CAPABILITIES` 常量 |
 | `src/acp.rs` | ~280 | `acp serve` 进程循环：stdin 逐行 JSON-RPC 解析、`session/prompt` 并发 inflight、事件泵任务、outbox 冲刷、EOF 后 30s drain 收尾 |
 | `src/ops.rs` | ~360 | `status` / `watch` / `shutdown` / `doctor`；`gui_socket_path` / `gui_token_path` / `gui_pid_path` 命名；token 文件读取组装握手 proof；`InstanceReport` |
 | `src/service.rs` | ~390 | `service install/start/stop`：三平台（launchd plist / systemd user unit / Windows SCM）定义生成；默认 dry-run；`--apply` 执行；stop 回收步骤（`TeardownStep`） |
@@ -30,12 +30,12 @@
 | `src/agents.rs` | ~35 | `agents demo`：多 Agent 编排演示报告输出 |
 | `src/import.rs` | ~80 | `import <tool>`：compat 配置导入向导（预览 / 确认 / 应用） |
 | `src/approval.rs` | ~125 | `InteractiveApprovals`：stderr 打印审批摘要 + 从 stdin 读 `y`/`a`/`n`；取消 token 优先（biased select） |
-| `src/adapter.rs` | ~120 | `AppCore` → `GuiHostAdapter` 装配助手；`command_envelope` / `wrap_response` / `stamp_automation`（Automation 身份戳）；`CliAcpCommandHost`（实现 `AcpCommandHost` 窄 port） |
+| `src/adapter.rs` | ~260 | `AppCore` → `GuiHostAdapter` 装配助手；`command_envelope` / `wrap_response` / `stamp_automation`（Automation 身份戳）；`CliAcpCommandHost`（实现 `AcpCommandHost` 窄 port；`stamp_acp_command` / `stamp_acp_query` 保留合法 `acp:<client>` 身份） |
 | `src/render.rs` | ~630 | `TextSink`（`AgentEventSink` 实现）：文本流 → stdout，thinking / 工具活动 / 审批往返 / 沙箱回退 notice / 截断提示 → stderr；SEARCH-1 起 ServerTool 活动行（Started 登记、Completed `⚙ name · N citations`、Failed `✗`，引用逐条显示标题与 URL，晚于 Completed 的引用仍显示；中间进度帧不刷屏） |
 | `src/error.rs` | ~80 | `format_provider_error`：`ProviderErrorKind` → 中文可读错误（不重试、不打印 Secret） |
 | `src/channels/mod.rs` | ~15 | 外部通道命名空间；本波仅激活 `acp`，re-export 通道 API |
 | `src/channels/acp/mod.rs` | ~35 | ACP 子系统 re-export 与 `now_timestamp` |
-| `src/channels/acp/host.rs` | ~2120 | `AcpHost` + `AcpActor`：单 actor 循环独占全部状态（occupancy / run_sessions / pending prompts / permissions / outbox / held_events）；普通信箱 + 紧急信箱；`OutboxItem`（Frame / FlushBarrier）；attach / reattach / disconnect 的 ownership 校验 |
+| `src/channels/acp/host.rs` | ~2200 | `AcpHost` + `AcpActor`：单 actor 循环独占全部状态（occupancy / run_sessions / pending prompts / permissions / outbox / held_events）；普通信箱 + 紧急信箱；`OutboxItem`（Frame / FlushBarrier）；attach / reattach / disconnect 的 ownership 校验 |
 | `src/channels/acp/adapter.rs` | ~660 | `AcpClientAdapter`（`ClientAdapter` 实现，纯翻译无状态）与 `AcpClientAdapterFactory`（能力协商：白名单外显式降级）；`CwdResolver` / `SessionResolver` port；registry `acp` 列准入门 `admit_acp_command` |
 | `src/channels/acp/command_host.rs` | ~25 | `AcpCommandHost` trait（dispatch / query / subscribe）与 `AcpHostError`——ACP 触达 Core 的唯一执行面 |
 | `src/channels/acp/map.rs` | ~285 | ACP ↔ canonical 显式映射表：错误码映射、`extract_user_message`（text / resource_link）、`translate_session_update`、权限选项（allow-once / reject-once） |
@@ -192,7 +192,7 @@ OPT-1 / ADR-053：`gui::run_gui` 经 `AppCore::set_approval_host` 只接线 GUI 
 - **GUI 数据目录单源**：Core 加载、socket/pid/token 路径和 API 1.9 Accepted `host_data_dir` 必须消费 `run_inner` 的同一个解析结果；不得在 `run_gui` 二次读取环境或按 endpoint 反推。`host_data_dir` 只作当前认证客户端的只读展示元数据，不进日志、事件、ledger 或文件操作输入。
 - **ACP 命令准入**：registry `acp` 列即 ACP 可达命令全集（当前 `session_create` / `run_start` / `run_cancel` / `tool_approve`，测试钉死）；adapter decode 产物与宿主自构命令都过 `admit_acp_command`，列外命令 `ProtocolUnsupported`。禁止在本包另维护一份命令名字表——三通道可用性一律查 protocol registry（headless 列 / acp 列 / `gui_supported_capabilities()`）。
 - **审批 fail-closed**：`--json` 或 stdin 非 TTY 时任何审批请求都被拒绝（`DenyAllApprovals`）；ACP 权限选项固定 `allow-once` / `reject-once`，未知 option id 拒绝；客户端错误响应视为 Deny，`-32800` 视为 Cancel。
-- **通道身份戳**：三条程序化通道进 Core 的命令 / 查询一律 `CommandSource::Automation` + `ActorIdentity::Automation`（名称分别 `cli-json` / `headless` / `acp:pawork-acp`），command id 前缀 `cli-<name>-<进程命名空间>-<n>`（命名空间 = pid + 纳秒，进程级 OnceLock，防 command_ledger 跨进程撞键重放旧响应）/ `acp-<request_id>`——事件与审计侧可区分来源。
+- **通道身份戳**：三条程序化通道进 Core 的命令 / 查询一律 `CommandSource::Automation` + `ActorIdentity::Automation`（名称分别 `cli-json` / `headless` / ACP 侧）；ACP 通道由 `CliAcpCommandHost` 强制 `source=Automation` 并拒绝伪装 User——adapter/host 构造的合法 `acp:<client>` Automation 身份（含 `acp:pawork-acp`）原样保留，其余身份回退为 `acp`；`command_id` / `idempotency_key` 不改写，ledger scope 仍按 `CommandSource` 取 `automation`。command id 前缀 `cli-<name>-<进程命名空间>-<n>`（命名空间 = pid + 纳秒，进程级 OnceLock，防 command_ledger 跨进程撞键重放旧响应）/ `acp-<request_id>`——事件与审计侧可区分来源。
 - **ACP 错误映射为显式表**：`AdapterError` → JSON-RPC 码、`AdapterErrorFrame.code` 字符串 → 码、canonical `ErrorContext.category` → 码三张映射都在 `map.rs` 落表（NotFound → -32002、Authentication/Authorization → -32000、InvalidRequest → -32602、Cancelled → -32800、其余 → -32603）；`Artifact` 响应在 ACP 通道不支持（-32603）。
 - **凭证红线**：明文 key 只经 stdin 进 auth 文件；`auth list` 只显示掩码与来源；`format_provider_error` 对认证错误不透传上游消息原文。
 - **单实例与文件权限**：`gui serve` bind 前探测防双实例；socket 父目录（位于数据目录内时）强制 0o700；token 文件缺失 / 空内容显式失败，不回退为无认证。
@@ -233,6 +233,7 @@ OPT-1 / ADR-053：`gui::run_gui` 经 `AppCore::set_approval_host` 只接线 GUI 
 | `src/headless.rs` tests | `WorkspaceAdd` 未映射 fail-closed；已授予 capability 放行；registry headless 列 ⊆ `HOST_CAPABILITIES`；`HOST_CAPABILITIES` 快照钉死 |
 | `src/error.rs` tests | 认证 / 限流 / 超时 / 网络四类错误文案（认证错误不透传上游消息） |
 | `src/channels/acp/adapter.rs` tests | registry `acp` 列 = 四命令钉死；准入门放行 / 拒绝 |
+| `src/adapter.rs` tests | ACP 身份戳：合法 `acp:<client>` Automation 原样保留、伪装 User / 非 ACP 身份回退 `acp`、`command_id` / `idempotency_key` 不改写 |
 | `tests/fixtures.rs`（target `acp_fixtures`） | versioned golden：v1 initialize 握手响应逐字节比对、session/new / prompt / cancel fixture 解析、session/update text 与 tool_call 回译 golden、permission selected / cancelled、未知方法与 `session/set_model` 错误 golden、v2 握手拒绝、未知 params 字段拒绝、`mcpServers` 必填 vs 空数组放行、resume 缺省字段、JSON-RPC 非对象 / 坏版本拒绝 |
 | `tests/floor.rs`（target `acp_floor`） | 全链路（mock host）：握手协商与降级记录、未初始化拒绝、cwd 越界拒绝与规范化别名匹配、prompt 流式回译与终态、权限请求往返、`session/cancel` / `$/cancel_request`、close → resume 重挂、跨连接 resume 走 authoritative registry claim、同 session 二 prompt 拒绝、注册窗口 early cancel 重放、fail-closed 释放 inflight、事件滞后 fail-closed、部分写出后屏障必须释放、Diagnostic 不发射 update、双客户端交错保持会话内串行且 cancel 不被阻塞 |
 | `tests/common/mod.rs` | `TestHarness` / `MockScript`（脚本化 `AcpCommandHost`）与 outbox 收集工具 |
@@ -241,7 +242,7 @@ OPT-1 / ADR-053：`gui::run_gui` 经 `AppCore::set_approval_host` 只接线 GUI 
 
 Cargo `[[test]]` 把 target 命名为 `acp_fixtures` / `acp_floor`（文件为 `tests/fixtures.rs` / `tests/floor.rs`）。交互式 REPL、gui serve 网络路径与真实 Provider 不在本包测试范围（验证策略见 [../verification.md](../verification.md)）。
 
-2026-09-03 SET-6g 与 client 合并运行默认门禁，CLI 84/84、client 41/41 通过；`cargo check -p pawork --offline` 通过。GUI data directory 的同源装配由类型/调用链编译覆盖，握手字段的 wire 与透传由 protocol/client 定向回归锁定。
+2026-09-03 SET-6g 与 client 合并运行默认门禁，CLI 89/89、client 46/46 通过；`cargo check -p pawork --offline` 通过。GUI data directory 的同源装配由类型/调用链编译覆盖，握手字段的 wire 与透传由 protocol/client 定向回归锁定。
 
 ## 8. 注意事项与已知限制
 

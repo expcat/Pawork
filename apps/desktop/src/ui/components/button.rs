@@ -56,7 +56,6 @@ pub struct Button {
     focus: Option<FocusHandle>,
     text_size: Option<Rems>,
     text_color: Option<Rgba>,
-    disabled_text_color: Option<Rgba>,
     padding: ButtonPadding,
     width: Option<Pixels>,
     height: Option<Pixels>,
@@ -82,7 +81,6 @@ impl Button {
             focus: None,
             text_size: None,
             text_color: None,
-            disabled_text_color: None,
             padding: ButtonPadding::Normal,
             width: None,
             height: None,
@@ -139,12 +137,6 @@ impl Button {
     /// 覆盖 enabled 文字色（默认按 variant 映射；Ghost 默认继承）。
     pub fn text_color(mut self, color: Rgba) -> Self {
         self.text_color = Some(color);
-        self
-    }
-
-    /// 覆盖 disabled 文字色（如 terminal-start 保持继承色）。
-    pub fn disabled_text_color(mut self, color: Rgba) -> Self {
-        self.disabled_text_color = Some(color);
         self
     }
 
@@ -304,8 +296,7 @@ impl RenderOnce for Button {
         let text_color = if enabled {
             self.text_color.or_else(|| self.variant.text_color())
         } else {
-            self.disabled_text_color
-                .or_else(|| self.variant.disabled_text_color())
+            self.variant.disabled_text_color()
         };
 
         let mut button = div().id(self.id);

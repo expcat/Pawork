@@ -550,7 +550,7 @@ async fn run_models(core: &AppCore, json: bool) -> Result<(), CliError> {
             })
         );
     } else {
-        // 六通道按通道表顺序展示（无静态条目的通道标注说明），config 自定义
+        // 八通道按通道表顺序展示（无静态条目的通道标注说明），config 自定义
         // provider 追加在后面，保证聚合视图覆盖全部首发通道。
         let mut ordered: Vec<String> = pawork_app::FIRST_PARTY_CHANNELS
             .iter()

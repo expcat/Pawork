@@ -237,23 +237,17 @@ impl SessionStore {
                         "SELECT payload_json, branch_id, sequence FROM session_events \
                      WHERE session_id=?1 AND sequence>=?2 ORDER BY sequence ASC",
                     )?;
-                    let rows = statement
-                        .query_map(params![session_id, from_sequence], |row| {
-                            Ok((
-                                row.get::<_, String>(0)?,
-                                row.get::<_, String>(1)?,
-                                row.get::<_, i64>(2)?,
-                            ))
-                        })?
-                        .collect::<rusqlite::Result<Vec<_>>>()?;
-                    Ok(rows
-                        .into_iter()
-                        .filter(|(_, event_branch, sequence)| {
-                            visible_on_lineage(&lineage, event_branch, *sequence)
-                        })
-                        .take(usize::try_from(limit).unwrap_or(usize::MAX))
-                        .map(|(json, _, _)| json)
-                        .collect())
+                    let mut rows = statement.query(params![session_id, from_sequence])?;
+                    let mut visible = Vec::new();
+                    let limit = usize::try_from(limit).unwrap_or(usize::MAX);
+                    while visible.len() < limit {
+                        let Some(row) = rows.next()? else { break };
+                        // 先过滤分支元数据，只复制本页可见事件的 JSON；页满即停。
+                        if visible_on_lineage(&lineage, &row.get::<_, String>(1)?, row.get(2)?) {
+                            visible.push(row.get(0)?);
+                        }
+                    }
+                    Ok(visible)
                 },
             )
             .await??;
@@ -548,6 +542,29 @@ mod tests {
             vec![1, 2, 3, 4]
         );
 
+        // 分页跨过不可见父分支事件，仍应补足可见子分支事件。
+        store
+            .append_event("experiment", event(&session, 5, committed("m-5")))
+            .await
+            .expect("append child");
+        for (from, limit, expected) in [
+            (1, 1, vec![1]),
+            (2, 2, vec![2, 5]),
+            (3, 1, vec![5]),
+            (6, 1, vec![]),
+            (1, 0, vec![]),
+        ] {
+            assert_eq!(
+                sequences(
+                    store
+                        .events_on_lineage(&session, "experiment", from, limit)
+                        .await
+                        .unwrap()
+                ),
+                expected
+            );
+        }
+
         let snapshot = store
             .projection_snapshot(&session)
             .await
@@ -557,7 +574,7 @@ mod tests {
             .iter()
             .map(|message| message.id.as_str())
             .collect();
-        assert_eq!(ids, vec!["m-1"]);
+        assert_eq!(ids, vec!["m-1", "m-5"]);
 
         store.shutdown().await.expect("shutdown");
     }

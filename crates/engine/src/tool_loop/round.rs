@@ -3,13 +3,13 @@
 
 use pawork_domain::{
     CancellationToken, CanonicalModelRequest, Message, MessageId, MessageMetadata, ModelId,
-    ModelProvider, ModelResponseSummary, ProviderError, ProviderErrorKind, ProviderId,
-    ProviderStreamEvent, TokenUsage,
+    ModelProvider, ModelResponseSummary, ProviderError, ProviderErrorKind, ProviderId, TokenUsage,
 };
 
 use crate::appender::AssembledTurn;
 use crate::event::{EngineError, EventEmitter, LoopSink};
 use crate::run_turn;
+use crate::session_turn::last_stream_usage;
 
 pub(super) enum StreamRound {
     Succeeded {
@@ -30,7 +30,7 @@ pub(super) enum StreamRound {
 /// persist 失败优先返回，不再继续折叠或发射终态。
 pub(super) async fn collect_stream_round(
     provider: &dyn ModelProvider,
-    request: CanonicalModelRequest,
+    request: &CanonicalModelRequest,
     emitter: &EventEmitter<'_>,
     assistant_id: MessageId,
     cancel: CancellationToken,
@@ -80,17 +80,6 @@ pub(super) fn assistant_message(
         model: Some(model.clone()),
         ..MessageMetadata::default()
     })
-}
-
-fn last_stream_usage(events: &[ProviderStreamEvent]) -> TokenUsage {
-    events
-        .iter()
-        .rev()
-        .find_map(|event| match event {
-            ProviderStreamEvent::UsageUpdated(usage) => Some(usage.clone()),
-            _ => None,
-        })
-        .unwrap_or_default()
 }
 
 pub(super) fn saturating_add_usage(acc: &TokenUsage, round: &TokenUsage) -> TokenUsage {

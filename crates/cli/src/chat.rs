@@ -62,7 +62,7 @@ pub async fn run_json(
     switch_branch_if_requested(&core, resume.as_deref(), branch.as_deref()).await?;
     let workspace_id = core.workspace_id().clone();
     let resume_id = if let Some(spec) = resume.as_deref() {
-        Some(core.resolve_session(spec).await?)
+        Some(crate::sessions::resolve_session(&core, Some(spec)).await?)
     } else {
         None
     };
@@ -189,7 +189,7 @@ async fn switch_branch_if_requested(
         return Ok(());
     };
     let spec = resume.ok_or_else(|| CliError::Usage("--branch 需要 --resume".into()))?;
-    let session = core.resolve_session(spec).await?;
+    let session = crate::sessions::resolve_session(core, Some(spec)).await?;
     core.store()?
         .switch_branch(&session, branch)
         .await
@@ -268,8 +268,8 @@ async fn run_prompt(
 }
 
 async fn run_repl(core: &mut AppCore, resume: Option<String>) -> Result<(), CliError> {
-    let mut session = if let Some(spec) = resume {
-        Some(core.resolve_session(&spec).await?)
+    let mut session = if let Some(spec) = resume.as_deref() {
+        Some(crate::sessions::resolve_session(core, Some(spec)).await?)
     } else {
         None
     };
@@ -371,7 +371,7 @@ async fn open_or_create(
     first_prompt: &str,
 ) -> Result<(SessionId, Vec<Message>, u64), CliError> {
     if let Some(spec) = resume {
-        let session = core.resolve_session(spec).await?;
+        let session = crate::sessions::resolve_session(core, Some(spec)).await?;
         let history = core.resume_messages(&session).await?;
         let next_msg = next_message_counter(&history);
         Ok((session, history, next_msg))

@@ -1,7 +1,7 @@
 //! 首发渠道错误细化表。
 //!
 //! HTTP 状态已由 `crate::net` provider-neutral 地归一；这里只处理远端正文中
-//! 无法从状态码判断的稳定错误标记。表内只登记本期六个渠道，不预埋后续厂商。
+//! 无法从状态码判断的稳定错误标记。表内只登记本期八个渠道，不预埋后续厂商。
 
 use pawork_domain::{ProviderError, ProviderErrorKind};
 

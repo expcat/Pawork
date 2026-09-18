@@ -156,7 +156,7 @@ impl AppView {
                     .min_w_0()
                     .items_center()
                     .gap(px(metrics::SPACE_2))
-                    .child(div().min_w_0().truncate().child(model_label))
+                    .child(div().truncate().child(model_label))
                     .child(
                         div()
                             .flex_none()

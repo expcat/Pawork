@@ -121,7 +121,7 @@ pub async fn run_session_turn(
 
     let sink = LoopSink::new(emitter.clone(), assistant_id.clone());
 
-    let result = run_turn(provider, request, &sink, cancel).await;
+    let result = run_turn(provider, &request, &sink, cancel).await;
     if let Some(error) = sink.take_persist_error() {
         return Err(error);
     }
@@ -175,7 +175,7 @@ pub async fn run_session_turn(
     }
 }
 
-fn optional_usage(usage: &TokenUsage) -> Option<TokenUsage> {
+pub(crate) fn optional_usage(usage: &TokenUsage) -> Option<TokenUsage> {
     if usage.is_zero() {
         None
     } else {
@@ -183,7 +183,7 @@ fn optional_usage(usage: &TokenUsage) -> Option<TokenUsage> {
     }
 }
 
-fn last_stream_usage(events: &[ProviderStreamEvent]) -> TokenUsage {
+pub(crate) fn last_stream_usage(events: &[ProviderStreamEvent]) -> TokenUsage {
     events
         .iter()
         .rev()
@@ -272,7 +272,7 @@ mod tests {
 
         async fn stream(
             &self,
-            request: CanonicalModelRequest,
+            request: &CanonicalModelRequest,
             sink: &dyn ProviderEventSink,
             _cancel: CancellationToken,
         ) -> Result<ModelResponseSummary, ProviderError> {
@@ -301,7 +301,7 @@ mod tests {
 
         async fn stream(
             &self,
-            _request: CanonicalModelRequest,
+            _request: &CanonicalModelRequest,
             sink: &dyn ProviderEventSink,
             cancel: CancellationToken,
         ) -> Result<ModelResponseSummary, ProviderError> {
@@ -329,7 +329,7 @@ mod tests {
 
         async fn stream(
             &self,
-            _request: CanonicalModelRequest,
+            _request: &CanonicalModelRequest,
             _sink: &dyn ProviderEventSink,
             _cancel: CancellationToken,
         ) -> Result<ModelResponseSummary, ProviderError> {

@@ -150,7 +150,7 @@ impl ResponsesTransport {
 
     pub async fn stream(
         &self,
-        request: CanonicalModelRequest,
+        request: &CanonicalModelRequest,
         sink: &dyn ProviderEventSink,
         cancel: CancellationToken,
     ) -> Result<ModelResponseSummary, ProviderError> {
@@ -172,11 +172,11 @@ impl ResponsesTransport {
 
         let mut headers = self.request_headers();
         if self.opencode_session {
-            headers.extend(crate::provider::opencode_session_header(&request)?);
+            headers.extend(crate::provider::opencode_session_header(request)?);
         }
         let reasoning_inputs =
-            resolve_reasoning_inputs(&request, self.reasoning_protector.as_ref()).await;
-        let body = to_responses_body(&request, reasoning_inputs, self.config.wire);
+            resolve_reasoning_inputs(request, self.reasoning_protector.as_ref()).await;
+        let body = to_responses_body(request, reasoning_inputs, self.config.wire);
         let mut bytes = self
             .client
             .post_stream_with_headers(

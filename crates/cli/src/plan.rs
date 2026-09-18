@@ -8,7 +8,7 @@ use super::PlanCommand;
 pub async fn run_plan(core: &AppCore, command: PlanCommand, json: bool) -> Result<(), CliError> {
     match command {
         PlanCommand::Show { session } => {
-            let session_id = resolve_or_latest(core, session).await?;
+            let session_id = crate::sessions::resolve_session(core, session.as_deref()).await?;
             match core.plan_snapshot(&session_id).await? {
                 Some(snapshot) => print_plan(&snapshot, json)?,
                 None => {
@@ -35,32 +35,26 @@ pub async fn run_plan(core: &AppCore, command: PlanCommand, json: bool) -> Resul
             title,
             step,
         } => {
-            let session_id = resolve_or_latest(core, session).await?;
+            let session_id = crate::sessions::resolve_session(core, session.as_deref()).await?;
             let snapshot = core.plan_replace(&session_id, &title, step).await?;
             print_plan(&snapshot, json)
         }
         PlanCommand::Submit { session } => {
-            let session_id = resolve_or_latest(core, session).await?;
+            let session_id = crate::sessions::resolve_session(core, session.as_deref()).await?;
             let snapshot = core.plan_submit(&session_id).await?;
             print_plan(&snapshot, json)
         }
         PlanCommand::Approve { session } => {
-            let session_id = resolve_or_latest(core, session).await?;
+            let session_id = crate::sessions::resolve_session(core, session.as_deref()).await?;
             let snapshot = core.plan_approve(&session_id).await?;
             print_plan(&snapshot, json)
         }
         PlanCommand::Reject { session, reason } => {
-            let session_id = resolve_or_latest(core, session).await?;
+            let session_id = crate::sessions::resolve_session(core, session.as_deref()).await?;
             let snapshot = core.plan_reject(&session_id, &reason).await?;
             print_plan(&snapshot, json)
         }
     }
-}
-
-async fn resolve_or_latest(core: &AppCore, session: Option<String>) -> Result<SessionId, CliError> {
-    core.resolve_session(session.as_deref().unwrap_or("latest"))
-        .await
-        .map_err(CliError::from)
 }
 
 async fn resolve_or_create(

@@ -18,7 +18,7 @@ pub struct CancelTreeReceipt {
 }
 
 impl AgentSupervisor {
-    /// 取消树：取消 `agent_id` 及其全部后代（BFS 遍历 children 图）。
+    /// 取消树：取消 `agent_id` 及其全部后代（栈式深度优先遍历 children 图）。
     ///
     /// 每个节点：取消令牌 → `Cancelling`（`WorkerCancelling`）→ `Cancelled`
     /// （`WorkerCancelled`）→ 以 [`LeaseOutcome::Cancelled`] 幂等释放 lease。

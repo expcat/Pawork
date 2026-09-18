@@ -5,7 +5,7 @@
 ## 1. 职责与边界
 
 - **职责**：`SecretBackend` 抽象与两个实现（生产 `FileBackend`、测试 `MemoryBackend`）；API key 与 OAuth 凭证的存取/元数据（`StoredCredential` / `ApiKeyCredential` / default OAuth 条目）；凭证解析链 `resolve_provider_credential`（auth 文件 → env fallback → 无凭证）；OAuth 三流程（PKCE 授权码、Device Flow、refresh）与一次性本地回调服务器；脱敏（`MaskedCredential`）；命名单一事实源（`locator`）；本地 `base64url` 编解码。
-- **不做**：`pawork auth` CLI 接线、config 凭证引用、六通道装配与 `auth list` 展示（`pawork-app` / workspace config 承载）；OAuth 端点预设数据（`pawork-providers` 的 `CHANNEL_REGISTRY`，见 [providers.md](providers.md)）；reasoning blob 加密的 master key（`pawork-app` protected 模块）。
+- **不做**：`pawork auth` CLI 接线、config 凭证引用、八通道装配与 `auth list` 展示（`pawork-app` / workspace config 承载）；OAuth 端点预设数据（`pawork-providers` 的 `CHANNEL_REGISTRY`，见 [providers.md](providers.md)）；reasoning blob 加密的 master key（`pawork-app` protected 模块）。
 - **核心红线**：明文 token 绝不进入 `StoredCredential` / `ApiKeyCredential` 的可序列化字段，只存于 `SecretBackend`；一切错误、日志、`Debug` 输出不携带明文。
 
 ## 2. 模块与文件地图
@@ -13,21 +13,20 @@
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
 | `src/lib.rs` | ~50 | crate 门面：红线说明；`locator` / `oauth` 为 pub 模块，其余私有模块 + 选择性 re-export |
-| `src/error.rs` | ~60 | `AuthError`：`Storage` / `NotFound` / `InvalidSecret` / `MalformedMetadata` / `OAuth` / `TokenEndpoint{error,description}` / `ExpiredToken` / `Callback` / `Http` / `Io` / `Url`；任何变体 Display 不含明文。`Http` 只保留错误类别与 scheme/host/port，剥掉 userinfo/path/query |
-| `src/backend.rs` | ~200 | `SecretBackend` trait（`store` / `store_batch` / `replace_batch` / `get` / `delete` / 隐藏扩展点 `refresh_lock_path`）；`MemoryBackend`（测试用，故意不派生 Debug） |
-| `src/file_backend.rs` | ~580 | `FileBackend`：单 JSON 文件（`version` + `service→account→secret`）、0600、独立临时文件 + rename 原子写、跨进程 write/refresh 锁、损坏 fail-closed；`try_acquire_file_lock` / `FileLockGuard`（crate 内共用） |
+| `src/error.rs` | ~120 | `AuthError`：`Storage` / `NotFound` / `InvalidSecret` / `MalformedMetadata` / `OAuth` / `TokenEndpoint{error,description}` / `ExpiredToken` / `Callback` / `Http` / `Io` / `Url`；任何变体 Display 不含明文。`Http` 只保留错误类别与 scheme/host/port，剥掉 userinfo/path/query |
+| `src/backend.rs` | ~270 | `SecretBackend` trait（`store` / `store_batch` / `replace_batch` / `get` / `delete` / `transaction`（原子读改写，未实现后端默认拒绝）/ 隐藏扩展点 `refresh_lock_path`）；`MemoryBackend`（测试用，故意不派生 Debug） |
+| `src/file_backend.rs` | ~620 | `FileBackend`：单 JSON 文件（`version` + `service→account→secret`）、0600、独立临时文件 + rename 原子写、跨进程 write/refresh 锁、损坏 fail-closed；`try_acquire_file_lock` / `FileLockGuard`（crate 内共用） |
 | `src/locator.rs` | ~70 | 命名单一事实源：`PROVIDER_SERVICE_PREFIX`（`pawork`）、`MCP_SERVICE_PREFIX`（`pawork.mcp.`）、`MCP_AUTH_FILE_NAME`（`mcp-auth.json`）、`secret_service_for` / `oauth_secret_service` / `is_mcp_secret_service` / `api_key_env_name` / `read_api_key_from_env` |
 | `src/masked.rs` | ~110 | `MaskedCredential`：`mask`（按字符数分档脱敏）/ `from_masked` / `as_str`；`Display`/`Debug`/`Serialize` 永不含明文 |
 | `src/credential.rs` | ~390 | `StoredCredential`（纯元数据 + 定位，可序列化）、`ApiKeyCredential`（store / store_with_scopes / from_stored / resolve / delete）、`CredentialId`、crate 内 `generate_credential_id` |
 | `src/resolve.rs` | ~240 | `resolve_provider_credential` 解析链、`CredentialSource`（AuthFile / EnvFallback / None）、`store_default_api_key` / `delete_default_api_key`、`PROVIDER_DEFAULT_ACCOUNT` |
-| `src/default_credential.rs` | ~670 | 参数化 OAuth 条目（账号 `.access` / `.refresh` / `.meta`，兼容旧 default）：store/load/update/delete、`DefaultOAuthMeta`（含 ChatGPT `account_id` claim 提取）、`refresh_default_oauth_credential_if_needed` / `default_oauth_needs_refresh` |
+| `src/accounts.rs` | ~1.1k | UI-6b 账号索引、legacy 隐式登记、命名 API key/OAuth 新增、选择与删除；索引与 secret 原子事务、revision 与失败关闭 |
+| `src/default_credential.rs` | ~870 | 参数化 OAuth 条目（账号 `.access` / `.refresh` / `.meta`，兼容旧 default）：store/load/update/delete、`DefaultOAuthMeta`（含 ChatGPT `account_id` claim 提取）、`refresh_default_oauth_credential_if_needed` / `default_oauth_needs_refresh` |
 | `src/oauth.rs` | ~1.9k | PKCE / Device / refresh / `CallbackServer` / `TokenSet`；**`http_client()`**（`redirect(Policy::none())`，F06，crate 根 re-export）；crate 内 `decode_jwt_payload` |
 | `src/base64url.rs` | ~240 | 本地 base64url（URL-safe、无填充）`encode` / `decode` 与 `Base64UrlDecodeError`；拒绝非规范输入（填充、`len%4==1`、余位非零） |
-| `src/testsupport.rs` | ~55 | 测试共享件（`#[cfg(test)]` 门控，不参与生产编译）：OAuth token 端点 wiremock 形状单一来源（`token_success_json` / `token_error_json` / `token_mock`，MOCK-7） |
+| `src/testsupport.rs` | ~45 | 测试共享件（`#[cfg(test)]` 门控，不参与生产编译）：OAuth token 端点 wiremock 形状单一来源（`token_success_json` / `token_error_json` / `token_mock`，MOCK-7） |
 
-共 13 个 `.rs` 文件，约 4.5k 行；无独立 `tests/` 目录，回归全部内联在各文件 `#[cfg(test)]`。
-
-| `src/accounts.rs` | — | UI-6b 账号索引、legacy 隐式登记、命名 API key/OAuth 新增、选择与删除；索引与 secret 原子事务、revision 与失败关闭 |
+共 13 个 `.rs` 文件，约 6.0k 行；无独立 `tests/` 目录，回归全部内联在各文件 `#[cfg(test)]`。
 
 ## 3. 对外 API 面
 
@@ -42,7 +41,7 @@
 
 `SecretBackend::transaction` 在写锁内提供隔离快照，回调失败不提交；FileBackend load-modify-save 一次，MemoryBackend 复制并提交，未实现事务的 backend 显式拒绝。回调不能持原 backend 或跨网络等待。
 
-账号面导出 `ProviderAccountKind / ProviderAccount / ProviderAccounts`、`list_provider_accounts`、`provider_accounts_revision`、`validate_account_name`、`default_account_label` / `default_api_key_account_name` / `default_oauth_account_name`、`add_api_key_account` / `add_oauth_account`、`rename_provider_account`、`select_provider_account`、`remove_provider_account` / `remove_all_provider_accounts`。空 `display_name` 在新增时先经 `resolve_new_account_name` 生成默认名（API key 脱敏串；OAuth 优先 `oauth::oauth_login_email`，否则脱敏 access token），再走既有非空校验。`load_account_oauth_meta` 读取指定 OAuth 记录；旧 default helper 是统一存储的入口。细节见 [ADR-059](../settings.md#adr-059ui-6b-命名账号与持久选择2026-09-08) / [ADR-061](../settings.md#adr-061账号默认名称与重命名2026-09-13)。
+账号面导出 `ProviderAccountKind / ProviderAccount / ProviderAccounts`、`list_provider_accounts`、`provider_accounts_revision`、`validate_account_name`、`default_account_label` / `default_api_key_account_name` / `default_oauth_account_name`、`add_api_key_account` / `add_oauth_account`、`rename_provider_account`、`select_provider_account`、`remove_provider_account` / `remove_all_provider_accounts`、`ProviderAccountSelectionMode` / `set_provider_account_selection_mode` / `select_provider_account_if_revision`（ADR-060，见 §4 UI-6b G2）；`LEGACY_API_KEY_ID = "default-api-key"` / `LEGACY_OAUTH_ID = "default-oauth"` 是公开冻结常量，app 用其识别 legacy 条目。空 `display_name` 在新增时先经 `resolve_new_account_name` 生成默认名（API key 脱敏串；OAuth 优先 `oauth::oauth_login_email`，否则脱敏 access token），再走既有非空校验。`load_account_oauth_meta` 读取指定 OAuth 记录；旧 default helper 是统一存储的入口。细节见 [ADR-059](../settings.md#adr-059ui-6b-命名账号与持久选择2026-09-08) / [ADR-061](../settings.md#adr-061账号默认名称与重命名2026-09-13)。
 
 ### 3.2 命名与定位（locator 单一事实源）
 
@@ -117,7 +116,7 @@ UI-6b 起先解析账号索引：显式 API key 选择返回该账号；显式 O
 - **刷新状态无明文**：singleflight gate 只保存脱敏元数据 + access 的 SHA-256 指纹（对应结构不实现 Debug），不持有 token 明文。
 - **`ResolvedCredential`（domain 定义）Debug 脱敏、无 `Serialize`**：仅供 adapter 构造认证请求时短暂使用。
 - **错误不携带 Secret**：`AuthError` 全部变体的 Display 只含归因描述；token endpoint 错误只保留标准 `error/error_description`。
-- **命名唯一事实源**：service 前缀（`pawork` / `pawork.<p>.oauth` / `pawork.mcp.`）、env 名推导、`mcp-auth.json` 文件名只在 `locator` 定义，消费方不得自拼。
+- **命名唯一事实源**：service 前缀（`pawork` / `pawork.<p>.oauth` / `pawork.mcp.`）、env 名推导、`mcp-auth.json` 文件名只在 `locator` 定义，消费方不得自拼。例外：`pawork-workspace` import 层因依赖方向（不反向依赖 auth crate）保留带注释的 `MCP_SECRET_SERVICE_PREFIX = "pawork.mcp."` 冻结副本（`import/mcp.rs`），与 locator 同值绑定，改动须同批。
 - **auth 文件**：0600 权限、原子写、损坏与版本不符 fail-closed；格式版本当前固定 1。
 - **refresh 安全**：一次性 refresh token 绝不被并发重复消费（进程内 singleflight gate + 跨进程文件锁 + 指纹校验三层防线）；轮换 refresh token 已落盘后才返回 bearer。
 - **回调安全**：redirect_uri 强制 http + loopback（host 原样保留、只回填端口）；回调响应固定文本不回显 query（防反射）；请求头 64 KiB 上限。
@@ -127,8 +126,8 @@ UI-6b 起先解析账号索引：显式 API key 选择返回该账号；显式 O
 
 ## 6. 依赖关系
 
-- **上游**：仅 `pawork-domain`（`ProviderId` / `CredentialId` / `Timestamp` / `ResolvedCredential` / `CredentialKind`）。三方：`reqwest`（token endpoint）、`tokio`（回调/轮询）、`serde(_json)`、`sha2`（PKCE S256 与指纹）、`getrandom`（熵源）、`url`、`directories`（home 定位）、`thiserror`、`async-trait`。
-- **下游**：`pawork-app`（六通道装配、`pawork auth`）与 `pawork-tools`（MCP OAuth）。依赖方向见 [../../design.md](../../design.md) §2，产品侧安全边界见 [../security.md](../security.md)。
+- **上游**：仅 `pawork-domain`（`ProviderId` / `CredentialId` / `Timestamp` / `ResolvedCredential` / `CredentialKind`）。三方：`reqwest`（token endpoint）、`tokio`（回调/轮询）、`serde(_json)`、`sha2`（PKCE S256 与指纹）、`getrandom`（熵源）、`url`、`directories`（home 定位）、`thiserror`。
+- **下游**：`pawork-app`（八通道装配、`pawork auth`）与 `pawork-tools`（MCP OAuth）。依赖方向见 [../../design.md](../../design.md) §2，产品侧安全边界见 [../security.md](../security.md)。
 - 模块可见性：`locator` / `oauth` 为 pub 模块（可全路径引用），其余模块私有、仅经 crate 根 re-export 暴露（`generate_credential_id` 等保持 crate 内可见）。
 
 ## 7. 测试与验证资产

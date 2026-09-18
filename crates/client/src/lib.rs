@@ -224,7 +224,7 @@ impl ClientError {
 /// GUI Connection Protocol typed 客户端。
 ///
 /// 连接建立后即可往返 Command / Query、订阅事件、请求 Snapshot / Resume、
-/// 分片读取 Artifact、发送 Ack / Heartbeat。所有等待操作受
+/// 发送 Ack / Heartbeat。所有等待操作受
 /// [`ClientConfig::timeout`] 约束。
 #[derive(Clone)]
 pub struct GuiClient {
@@ -237,6 +237,12 @@ pub struct GuiClient {
     /// 单连接只允许一个任务读传输层。事件泵与 command/snapshot 并发
     /// `receive` 会把对端响应拆丢；锁内先按调用方类型查 inbox。
     io: Arc<AsyncMutex<()>>,
+    /// 串行化快照帧往返（`snapshot` / `resume` 共用）。协议的
+    /// `ServerFrame::Snapshot` 不携带 request_id，回复无法与请求在线上
+    /// 关联；同一时刻只允许一个等待者，FrameWant::Snapshot 的「任意快照帧」
+    /// 匹配才不会取走别人的回复（resume 的 SnapshotRequired 附带快照同样
+    /// 无身份，因此两个入口必须共用此锁）。
+    snapshot_inflight: Arc<AsyncMutex<()>>,
     /// 每个 SDK 连接实例的请求命名空间。Host 进程重启后 server-assigned
     /// client_id 会从 client-0 重新计数；若这里只用 client_id + 本地序号，
     /// 持久化幂等账本会把新进程请求误判为旧命令重放。
@@ -416,6 +422,7 @@ impl GuiClient {
             initial_snapshot: Arc::new(Mutex::new(snapshot)),
             inbox: Arc::new(AsyncMutex::new(VecDeque::new())),
             io: Arc::new(AsyncMutex::new(())),
+            snapshot_inflight: Arc::new(AsyncMutex::new(())),
             request_namespace: Arc::from(new_request_namespace()),
             next_request: Arc::new(AtomicU64::new(0)),
             next_nonce: Arc::new(AtomicU64::new(0)),
@@ -667,6 +674,9 @@ impl GuiClient {
 
     /// 请求完整 Snapshot。
     pub async fn snapshot(&self) -> Result<Snapshot, ClientError> {
+        // 快照回复帧不带 request_id（见 snapshot_inflight 注释）；先取串行锁，
+        // 等待期间到达的快照帧才只可能属于本次请求。
+        let _inflight = self.snapshot_inflight.lock().await;
         let id = self.next_request.fetch_add(1, Ordering::Relaxed);
         let request_id = format!("snapshot-{id}");
         self.send_frame(&ClientFrame::SnapshotRequest {
@@ -691,6 +701,9 @@ impl GuiClient {
         &self,
         last_global_sequence: GlobalSequence,
     ) -> Result<ResumeOutcome, ClientError> {
+        // Resume 的 SnapshotRequired 附带快照同样无身份；与 snapshot 共用
+        // 串行锁，避免两条路径互取对方的快照帧。
+        let _inflight = self.snapshot_inflight.lock().await;
         let id = self.next_request.fetch_add(1, Ordering::Relaxed);
         let request_id = format!("resume-{id}");
         self.send_frame(&ClientFrame::Resume(ResumeRequest {
@@ -950,6 +963,9 @@ impl FrameWant<'_> {
                 _ => false,
             },
             Self::Snapshot(request_id) => match frame {
+                // 快照帧无 request_id，无法按身份区分；snapshot_inflight
+                // 串行化防并发互取（残留窗口：上次超时后迟到的快照帧
+                // 仍可能被本次消费，根治需 wire 演进补 request_id）。
                 ServerFrame::Snapshot(_) => true,
                 ServerFrame::Error(envelope) => envelope.request_id.as_deref() == Some(request_id),
                 _ => false,
@@ -1077,7 +1093,9 @@ mod tests {
     use super::*;
     use pawork_domain::{CommandId, QueryId};
     use pawork_protocol::GuiCapability;
-    use pawork_protocol::{API_VERSION, AppResponse, AppResponseEnvelope, encode_server_frame};
+    use pawork_protocol::{
+        API_VERSION, AppResponse, AppResponseEnvelope, decode_client_frame, encode_server_frame,
+    };
     use pawork_transport::{ConnectionLocality, TransportErrorKind};
     use std::future::Future;
     use std::pin::Pin;
@@ -1164,6 +1182,91 @@ mod tests {
     fn mock(frames: Vec<TransportFrame>) -> MockConnection {
         MockConnection {
             frames: Mutex::new(VecDeque::from(frames)),
+        }
+    }
+
+    /// send 记录发出的 ClientFrame，receive 从通道读服务端帧：测试可按已
+    /// 发出的请求投递回复，验证请求-回复配对与串行化。
+    struct ChannelConnection {
+        sent: Mutex<Vec<ClientFrame>>,
+        server_rx: AsyncMutex<tokio::sync::mpsc::UnboundedReceiver<TransportFrame>>,
+    }
+
+    impl ChannelConnection {
+        fn sent_frames(&self) -> Vec<ClientFrame> {
+            self.sent.lock().unwrap().clone()
+        }
+    }
+
+    impl GuiConnection for ChannelConnection {
+        fn send<'life0, 'async_trait>(
+            &'life0 self,
+            frame: TransportFrame,
+        ) -> Pin<Box<dyn Future<Output = Result<(), TransportError>> + Send + 'async_trait>>
+        where
+            'life0: 'async_trait,
+            Self: 'async_trait,
+        {
+            Box::pin(async move {
+                let decoded =
+                    decode_client_frame(frame.as_bytes()).expect("client frames are well-formed");
+                self.sent.lock().unwrap().push(decoded);
+                Ok(())
+            })
+        }
+
+        fn receive<'life0, 'async_trait>(
+            &'life0 self,
+        ) -> Pin<
+            Box<dyn Future<Output = Result<TransportFrame, TransportError>> + Send + 'async_trait>,
+        >
+        where
+            'life0: 'async_trait,
+            Self: 'async_trait,
+        {
+            Box::pin(async move {
+                self.server_rx
+                    .lock()
+                    .await
+                    .recv()
+                    .await
+                    .ok_or_else(|| TransportError {
+                        kind: TransportErrorKind::ConnectionClosed,
+                        message: "no more frames".into(),
+                        retryable: false,
+                    })
+            })
+        }
+
+        fn close<'life0, 'async_trait>(
+            &'life0 self,
+        ) -> Pin<Box<dyn Future<Output = Result<(), TransportError>> + Send + 'async_trait>>
+        where
+            'life0: 'async_trait,
+            Self: 'async_trait,
+        {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn info(&self) -> ConnectionInfo {
+            ConnectionInfo {
+                connection_id: "channel".into(),
+                locality: ConnectionLocality::InProcess,
+                peer_label: None,
+                encrypted: false,
+                max_frame_bytes: 1024 * 1024,
+            }
+        }
+    }
+
+    async fn wait_for(mut condition: impl FnMut() -> bool) {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        while !condition() {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "condition not met within deadline"
+            );
+            tokio::time::sleep(Duration::from_millis(5)).await;
         }
     }
 
@@ -1335,6 +1438,7 @@ mod tests {
             initial_snapshot: Arc::new(Mutex::new(None)),
             inbox: Arc::new(AsyncMutex::new(VecDeque::new())),
             io: Arc::new(AsyncMutex::new(())),
+            snapshot_inflight: Arc::new(AsyncMutex::new(())),
             request_namespace: Arc::from("test-request"),
             next_request: Arc::new(AtomicU64::new(0)),
             next_nonce: Arc::new(AtomicU64::new(0)),
@@ -1392,6 +1496,112 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn concurrent_snapshot_round_trips_are_serialized() {
+        use pawork_domain::CoreInstanceId;
+        use pawork_protocol::{ProtocolError, ProtocolErrorEnvelope};
+
+        let (server_tx, server_rx) = tokio::sync::mpsc::unbounded_channel::<TransportFrame>();
+        let conn = Arc::new(ChannelConnection {
+            sent: Mutex::new(Vec::new()),
+            server_rx: AsyncMutex::new(server_rx),
+        });
+        let mut config = ClientConfig::default();
+        config.timeout = Duration::from_secs(2);
+        let client = GuiClient {
+            conn: conn.clone(),
+            config,
+            info: Arc::new(SessionInfo {
+                handle: ApiHandle {
+                    instance_id: CoreInstanceId::from("instance-1"),
+                    api_version: API_VERSION,
+                },
+                client_id: GuiClientId::from("client-1"),
+                connection_id: ConnectionId::from("conn-1"),
+                capabilities: Vec::new(),
+                host_data_dir: None,
+                resume: ResumeDisposition::UpToDate {
+                    current_sequence: GlobalSequence(0),
+                },
+            }),
+            initial_snapshot: Arc::new(Mutex::new(None)),
+            inbox: Arc::new(AsyncMutex::new(VecDeque::new())),
+            io: Arc::new(AsyncMutex::new(())),
+            snapshot_inflight: Arc::new(AsyncMutex::new(())),
+            request_namespace: Arc::from("test-request"),
+            next_request: Arc::new(AtomicU64::new(0)),
+            next_nonce: Arc::new(AtomicU64::new(0)),
+            last_acked: Arc::new(AtomicU64::new(0)),
+            closed: Arc::new(AtomicBool::new(false)),
+        };
+
+        let waiter_a = client.clone();
+        let waiter_b = client.clone();
+        let round_trip_a = tokio::spawn(async move { waiter_a.snapshot().await });
+        let round_trip_b = tokio::spawn(async move { waiter_b.snapshot().await });
+
+        // 第一个往返 in-flight 期间，第二个 snapshot 不得发出请求：快照回复
+        // 无 request_id，并发等待会互取对方的帧。
+        wait_for(|| !conn.sent_frames().is_empty()).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(
+            conn.sent_frames().len(),
+            1,
+            "second snapshot must wait for the in-flight round trip"
+        );
+        let first_request_id = match &conn.sent_frames()[0] {
+            ClientFrame::SnapshotRequest { request_id } => request_id.clone(),
+            other => panic!("expected SnapshotRequest, got {other:?}"),
+        };
+
+        server_tx
+            .send(TransportFrame::new(
+                encode_server_frame(&ServerFrame::Error(ProtocolErrorEnvelope {
+                    request_id: Some(first_request_id.clone()),
+                    error: ProtocolError {
+                        code: ProtocolErrorCode::RequestNotFound,
+                        message: "snapshot failed".into(),
+                        retryable: false,
+                    },
+                }))
+                .expect("encode error"),
+            ))
+            .expect("error frame delivered");
+
+        // 第一个往返结束（锁释放）后，第二个请求才发出；回复各自的调用方。
+        wait_for(|| conn.sent_frames().len() >= 2).await;
+        let second_request_id = match &conn.sent_frames()[1] {
+            ClientFrame::SnapshotRequest { request_id } => request_id.clone(),
+            other => panic!("expected SnapshotRequest, got {other:?}"),
+        };
+        assert_ne!(first_request_id, second_request_id);
+        let snapshot = Snapshot {
+            instance_id: CoreInstanceId::from("instance-1"),
+            snapshot_sequence: GlobalSequence(7),
+            generated_at: Timestamp::from_unix_millis(1),
+            sections: Vec::new(),
+        };
+        server_tx
+            .send(TransportFrame::new(
+                encode_server_frame(&ServerFrame::Snapshot(snapshot))
+                    .expect("encode snapshot"),
+            ))
+            .expect("snapshot frame delivered");
+        let (result_a, result_b) = tokio::join!(round_trip_a, round_trip_b);
+        let results = [result_a.expect("task a"), result_b.expect("task b")];
+        assert_eq!(
+            results.iter().filter(|result| result.is_err()).count(),
+            1,
+            "exactly one round trip fails with its request-scoped error"
+        );
+        for result in results {
+            match result {
+                Err(error) => assert!(error.is_request_not_found()),
+                Ok(snapshot) => assert_eq!(snapshot.snapshot_sequence, GlobalSequence(7)),
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn next_event_surfaces_replay_unavailable() {
         use pawork_protocol::{ProtocolError, ProtocolErrorEnvelope};
 
@@ -1424,6 +1634,7 @@ mod tests {
             initial_snapshot: Arc::new(Mutex::new(None)),
             inbox: Arc::new(AsyncMutex::new(VecDeque::new())),
             io: Arc::new(AsyncMutex::new(())),
+            snapshot_inflight: Arc::new(AsyncMutex::new(())),
             request_namespace: Arc::from("test-request"),
             next_request: Arc::new(AtomicU64::new(0)),
             next_nonce: Arc::new(AtomicU64::new(0)),
@@ -1472,6 +1683,7 @@ mod tests {
             initial_snapshot: Arc::new(Mutex::new(None)),
             inbox: Arc::new(AsyncMutex::new(VecDeque::new())),
             io: Arc::new(AsyncMutex::new(())),
+            snapshot_inflight: Arc::new(AsyncMutex::new(())),
             request_namespace: Arc::from("test-request"),
             next_request: Arc::new(AtomicU64::new(0)),
             next_nonce: Arc::new(AtomicU64::new(0)),
@@ -1511,6 +1723,7 @@ mod tests {
             initial_snapshot: Arc::new(Mutex::new(None)),
             inbox: Arc::new(AsyncMutex::new(VecDeque::new())),
             io: Arc::new(AsyncMutex::new(())),
+            snapshot_inflight: Arc::new(AsyncMutex::new(())),
             request_namespace: Arc::from("ns"),
             next_request: Arc::new(AtomicU64::new(0)),
             next_nonce: Arc::new(AtomicU64::new(0)),

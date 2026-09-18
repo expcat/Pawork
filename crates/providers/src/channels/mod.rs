@@ -1,9 +1,12 @@
-//! 首发六通道适配器内聚入口。
+//! 首发八通道适配器内聚入口。
 //!
 //! feature 名与门控保持原 adapters `lib.rs` 形状，根 crate 继续 re-export
 //! `ApiKeyChannelConfig` / `ChatGptProvider` 等既有对外路径。
 //! 通道 preset 自 R5 波 A 起单点登记在 registry（纯数据，行不带 cfg；
 //! ApiKeyChannel 枚举已删除，由注册表行驱动）。
+
+#[cfg(any(feature = "xai-oauth", feature = "kimi-code"))]
+use pawork_domain::{CredentialKind, ProviderError, ProviderErrorKind, ResolvedCredential};
 
 pub mod registry;
 
@@ -62,3 +65,29 @@ pub use registry::{
     channel_preset, is_enabled, ChannelKind, ChannelPreset, OAuthFlow, OAuthPreset,
     CHANNEL_REGISTRY,
 };
+
+/// 双认证通道（OAuth bearer 或 API key，Bearer 用法相同）共用的构造期凭证校验。
+/// `channel_label` 只参与错误消息中的通道显示名。
+#[cfg(any(feature = "xai-oauth", feature = "kimi-code"))]
+fn require_bearer_credential(
+    channel_label: &str,
+    credential: Option<ResolvedCredential>,
+) -> Result<ResolvedCredential, ProviderError> {
+    let credential = credential.ok_or_else(|| {
+        ProviderError::new(
+            ProviderErrorKind::Authentication,
+            format!("{channel_label} requires an OAuth bearer or API key credential"),
+        )
+    })?;
+    let accepted = matches!(
+        credential.kind(),
+        CredentialKind::OAuthBearer | CredentialKind::ApiKey
+    ) && !credential.expose_secret().trim().is_empty();
+    if !accepted {
+        return Err(ProviderError::new(
+            ProviderErrorKind::Authentication,
+            format!("{channel_label} accepts only a non-empty OAuth bearer or API key credential"),
+        ));
+    }
+    Ok(credential)
+}

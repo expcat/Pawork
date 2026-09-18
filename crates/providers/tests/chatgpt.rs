@@ -109,7 +109,7 @@ async fn oauth_headers_models_and_responses_path_are_wired() {
     assert_eq!(models[0].id.as_str(), "codex-test");
     let sink = Sink::default();
     let summary = provider
-        .stream(request(), &sink, CancellationToken::new())
+        .stream(&request(), &sink, CancellationToken::new())
         .await
         .unwrap();
     assert_eq!(summary.stop_reason, StopReason::Completed);
@@ -141,7 +141,7 @@ async fn malformed_responses_event_fails_even_if_completion_follows() {
         .await;
 
     let error = provider(&server)
-        .stream(request(), &Sink::default(), CancellationToken::new())
+        .stream(&request(), &Sink::default(), CancellationToken::new())
         .await
         .expect_err("malformed event must terminate the stream");
     assert_eq!(error.kind, ProviderErrorKind::MalformedResponse);

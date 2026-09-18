@@ -335,7 +335,7 @@ impl AppCore {
                 let request = naming_request(entry.id.clone(), session_id, &first_user_text);
                 let sink = TitleTextSink::default();
                 adapter
-                    .stream(request, &sink, CancellationToken::new())
+                    .stream(&request, &sink, CancellationToken::new())
                     .await?;
                 Ok(sink.single_line_title())
             })
@@ -1168,7 +1168,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn models_overview_aggregates_six_channels() {
+    async fn models_overview_aggregates_eight_channels() {
         let (mut core, _dir) = mock_core(Vec::new()).await;
         core.config.providers.push(ProviderConfig {
             id: "mock".into(),

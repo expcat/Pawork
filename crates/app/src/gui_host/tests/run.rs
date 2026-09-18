@@ -167,7 +167,7 @@ async fn auto_title_releases_core_and_respects_manual_rename_or_role_clear() {
         }
         async fn stream(
             &self,
-            request: CanonicalModelRequest,
+            request: &CanonicalModelRequest,
             sink: &dyn ProviderEventSink,
             cancel: CancellationToken,
         ) -> Result<ModelResponseSummary, ProviderError> {

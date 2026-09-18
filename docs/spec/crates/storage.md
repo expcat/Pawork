@@ -19,12 +19,12 @@
 
 ## 2. 模块与文件地图
 
-共 29 个 `.rs` 源文件（约 1.92 万行）+ 2 个集成测试 + 8 个 fixture/golden 数据文件。单元测试内嵌于各源文件尾部 `#[cfg(test)] mod tests`（21 处），没有独立单元测试树。
+共 29 个 `.rs` 源文件（约 2.01 万行）+ 2 个集成测试 + 8 个 fixture/golden 数据文件。单元测试内嵌于各源文件尾部 `#[cfg(test)] mod tests`（27 处），没有独立单元测试树。
 
 | 路径 | 行数 | 承载内容 |
 | --- | --- | --- |
 | `src/lib.rs` | ~10 | crate 根：声明 `sqlite` 常开、`session`/`blob` 按 feature；**根层无 re-export**，调用方必须写全路径（如 `pawork_storage::session::SessionStore`） |
-| `src/sqlite/mod.rs` | ~400 | `DatabaseActor`（专用线程 + `sync_channel(128)` 命令队列）、`DatabaseOptions`、`DatabaseError`、`backup_to`/`restore_from`、只读打开 |
+| `src/sqlite/mod.rs` | ~400 | `DatabaseActor`（专用线程 + 有界 `tokio::sync::mpsc` 命令队列，默认容量 128）、`DatabaseOptions`、`DatabaseError`、`backup_to`/`restore_from`、只读打开 |
 | `src/sqlite/migration.rs` | ~650 | 通用 migration 框架：`Migration`/`migrate`/`schema_version`/`MigrationReport`/`MigrationError`；账本表按命名空间隔离（不用 `PRAGMA user_version`），升级前 `.pre-migration-v<from>.bak` 备份，单事务整批应用 |
 | `src/session/mod.rs` | ~230 | `SessionStore`（open/open_read_only/schema_version/shutdown）、`SessionStoreError` 全量错误枚举、子模块 re-export（`compaction` 随 feature） |
 | `src/session/migration.rs` | ~1280 | `CURRENT_SCHEMA_VERSION = 14` 与 v1–v14 迁移清单；内嵌 v12–v14 迁移测试、升级 golden 断言与孤儿 fail-closed 回归 |
@@ -42,10 +42,10 @@
 | `src/session/import/mod.rs` | ~15 | 导入门面：re-export formats 解析层，声明 persist_* 持久化层 |
 | `src/session/import/formats/mod.rs` | ~15 | formats 门面 re-export |
 | `src/session/import/formats/pi.rs` | ~270 | Pi JSONL 纯函数解析 `parse_pi_line`（Header/Message/ToolCall/ModelSwitch/Compaction/Branch/Custom/Unknown）与 `PiImportReport` |
-| `src/session/import/formats/compat.rs` | ~1930 | 外部会话解析：`ExternalSource`（Claude/Codex/Grok/Cursor）各自解析器与 Claude/Codex 双形态嗅探、`find_secret` Secret 扫描、`derive_compat_session_id`/`content_fingerprint`/`effective_identity`、事件映射与 `validate_structure` |
+| `src/session/import/formats/compat.rs` | ~2180 | 外部会话解析：`ExternalSource`（Claude/Codex/Grok/Cursor）各自解析器与 Claude/Codex 双形态嗅探、`find_secret` Secret 扫描、`derive_compat_session_id`/`content_fingerprint`/`effective_identity`、事件映射与 `validate_structure`；JSONL 家族行级解析器与流式 Secret 聚合供文件导入复用 |
 | `src/session/import/formats/export.rs` | ~290 | `SessionExport` v3 JSON 形状（v1/v2 兼容读、身份回填）与 `validate` |
 | `src/session/import/persist_pi.rs` | ~450 | `import_pi_jsonl(_lines)`：Secret 预扫 → header 必需 → 单 `Immediate` 事务落 main 分支（Branch marker 折叠为 Diagnostic） |
-| `src/session/import/persist_compat.rs` | ~900 | `import_compat(_from_file/_dry_run)` 与 `compat_import_history`：指纹幂等、`compat_import_identity` 冲突检测、键集分页 |
+| `src/session/import/persist_compat.rs` | ~1160 | `import_compat(_from_file/_dry_run)` 与 `compat_import_history`：指纹幂等、`compat_import_identity` 冲突检测、键集分页；文件导入 JSONL 家族 BufReader 逐行流式 |
 | `src/session/import/persist_export.rs` | ~920 | `export_session`/`import_session`/`add_tags`/`get_session_identity`：v3 全量往返，导入侧身份匹配 + 顺序/parent 预检 |
 | `src/blob/mod.rs` | ~30 | blob 门面：`atomic` 私有；artifact 常开 re-export；`protected`/`checkpoint` 随 feature |
 | `src/blob/atomic.rs` | ~50 | crate 私有 `atomic_write_bytes`：同目录 `.tmp-{pid}-{counter}`、`create_new`、`write_all`+`sync_all`+`rename`，失败删临时文件；artifact / protected / checkpoint 共用 |
@@ -62,15 +62,15 @@
 ### 3.1 sqlite：DatabaseActor 与 migration 框架
 
 - `DatabaseActor::open(path)` / `open_with_options(path, DatabaseOptions)` / `open_read_only(path)`：写模式会建父目录、设 `journal_mode=WAL` + `synchronous=NORMAL`；只读模式以 `SQLITE_OPEN_READ_ONLY` 打开、不建目录、不改 journal。两种模式都固定 `foreign_keys=ON`、`busy_timeout=5s`。`DatabaseOptions.queue_capacity` 默认 128，传 0 得 `DatabaseError::InvalidQueueCapacity`。
-- `actor.call(|conn| ...) -> Result<T, DatabaseError>`：唯一执行入口，闭包在 Actor 线程串行运行；命令经有界 `sync_channel` 排队（队列满时发送端阻塞形成背压）；闭包 panic 被 `catch_unwind` 捕获转 `OperationPanicked`（Actor 存活）。另有 `path()`、`is_read_only()`、`backup_to(path)`（拒绝目标 = 源，`BackupTargetsSource`）、`restore_from(path)`（只读模式报 `ReadOnly`）、`shutdown()`（幂等，等待线程退出）。
+- `actor.call(|conn| ...) -> Result<T, DatabaseError>`：唯一执行入口，闭包在 Actor 线程串行运行；命令经有界 `mpsc` 通道排队（队列满时 `send().await` 挂起形成背压）；闭包 panic 被 `catch_unwind` 捕获转 `OperationPanicked`（Actor 存活）。另有 `path()`、`is_read_only()`、`backup_to(path)`（拒绝目标 = 源，`BackupTargetsSource`）、`restore_from(path)`（只读模式报 `ReadOnly`）、`shutdown()`（幂等，等待线程退出）。
 - `DatabaseError` 全集：`Sqlite`/`ActorClosed`（线程已退出）/`OperationPanicked`/`ResponseTypeMismatch`/`InvalidQueueCapacity`/`BackupTargetsSource`/`ReadOnly`/`Io`。
-- migration 框架（`sqlite::migration`）：`Migration { version, name, sql }`（静态 SQL 批）数组 + `migrate(actor, table_name, migrations)` / `schema_version(actor, table_name)`。每套 schema 用独立账本表（如 `session_schema_migrations`，表名先经 `validate_table_name` 白名单校验），因此**信封版本、session schema、blob schema 互不相干**。行为：校验计划（版本从 1 连续、无重复）→ 读当前版本（账本表不存在视为 0）；库版本 > 计划最大版本时报降级拒绝 → 已存在且非空的库先物理备份为 `<db>.pre-migration-v<from>.bak` → 单事务应用全部待做迁移，任一步失败整批回滚 → 返回 `MigrationReport`（含 from/to 版本与 `backup_path`；全新建库无备份）。
+- migration 框架（`sqlite::migration`）：`Migration { version, name, sql }`（静态 SQL 批）数组 + `migrate(actor, table_name, migrations)` / `schema_version(actor, table_name)`。每套 schema 用独立账本表（如 `schema_migrations`，表名先经 `validate_table_name` 白名单校验），因此**信封版本、session schema、blob schema 互不相干**。行为：校验计划（版本从 1 连续、无重复）→ 读当前版本（账本表不存在视为 0）；库版本 > 计划最大版本时报降级拒绝 → 已存在且非空的库先物理备份为 `<db>.pre-migration-v<from>.bak` → 单事务应用全部待做迁移，任一步失败整批回滚 → 返回 `MigrationReport`（含 from/to 版本与 `backup_path`；全新建库无备份）。
 
 ### 3.2 session：SessionStore 生命周期
 
 - `SessionStore::open(path) -> (SessionStore, MigrationReport)`：打开写模式 Actor（路径不存在则建父目录新建库）→ 跑 session migration 到 v14（旧库自动升级并留备份）→ **回收 CommandLedger 全部 `inflight` 残留**（崩溃恢复，见 §4.4）。`MigrationReport` 供调用方记录升级轨迹。
 - `SessionStore::open_read_only(path)`：只读打开并要求库版本**严格等于** `CURRENT_SCHEMA_VERSION`——只读模式无法就地迁移，低版本库同样报 `UnsupportedSchema`；适合诊断/取证场景与并行只读副本。
-- 其余：`schema_version()`、`database()`（借出 Actor 给同库子系统，如 client_adapter）、`path()`、`shutdown()`。错误统一 `SessionStoreError`：`Database`/`Sqlite`/`Ledger(LedgerError)`/`UnsupportedSchema`/`SessionNotFound`/`BranchNotFound`/`BranchAlreadyExists`/`BranchNotActive`/`ForkPointNotTurnBoundary`/`NonContiguousSequence`/`SequenceOverflow`/`ParentEventNotFound`/`ProjectionInvariant`/导入类（`CompatUnparseable`/`CompatSecretDetected`/`CompatValidationFailed`/`CompatImportConflict`/`InvalidHistoryCursor`）/导出身份与版本类（`ExportSchemaVersion`/`ExportIdentityMissing`/`ExportIdentityMismatch`/`EventSessionMismatch`），另有休眠变体 `LeaseHeld`/`LeaseNotHeld`/`SessionHasEvents`（见 §8）。
+- 其余：`schema_version()`、`database()`（借出 Actor 给同库子系统，如 client_adapter）、`path()`、`shutdown()`。错误统一 `SessionStoreError`：`Database`/`Sqlite`/`Ledger(LedgerError)`/`UnsupportedSchema`/`InvalidSchemaVersion`/`MigrationFailed`/`Serialization`/`Io`/`SessionNotFound`/`WorkspaceRegistryInvariant`/`BranchNotFound`/`BranchAlreadyExists`/`BranchNotActive`/`ForkPointNotTurnBoundary`/`NonContiguousSequence`/`SequenceOverflow`/`ParentEventNotFound`/`ProjectionInvariant`/导入类（`CompatUnparseable`/`CompatSecretDetected`/`CompatValidationFailed`/`CompatImportConflict`/`InvalidHistoryCursor`/`InvalidHistorySource`）/导出身份与版本类（`ExportSchemaVersion`/`ExportIdentityMissing`/`ExportIdentityMismatch`/`EventSessionMismatch`），另有休眠变体 `LeaseHeld`/`LeaseNotHeld`/`SessionHasEvents`（见 §8）。
 
 ### 3.3 事件追加与读取
 
@@ -96,7 +96,7 @@
 
 ### 3.5 投影（ProjectionSnapshot）
 
-- `projection_snapshot(session)`（active 分支）/ `projection_snapshot_on_branch(session, branch)`：返回 `ProjectionSnapshot { messages, runs, tool_calls, server_tool_events, program_outputs, screenshots, transcript_envelopes, compacted_through }`。messages 按 lineage 可见性 + compaction 水位从事件账本即时重建（event-ledger 语义，不读物化 messages 表的折叠盲区）；runs/tool_calls/server_tool_events/transcript_envelopes 为全 session 物化行。
+- `projection_snapshot(session)`（active 分支）/ `projection_snapshot_on_branch(session, branch)`：返回 `ProjectionSnapshot { messages, runs, tool_calls, server_tool_events, transcript_envelopes }`（program output/screenshot 嵌在 `ProjectedServerToolEvent` 内；compaction 水位只在读路径内部使用，不进快照结构）。messages 按 lineage 可见性 + compaction 水位从事件账本即时重建（event-ledger 语义，不读物化 messages 表的折叠盲区）；runs/tool_calls/server_tool_events/transcript_envelopes 为全 session 物化行。
 - 物化表形状（随事件在同事务内由 `apply_projection` 维护）：`messages`（message_id、branch_id、sequence、role、message_json）、`runs`（run_id、state、started/completed_at_ms、run_json）、`tool_calls`（tool_call_id、run_id、name、state、arguments_json、result_json）、`server_tool_events`（v5 起：citations/sources/screenshots/outputs 等 JSON 列）、`transcript_envelopes`（PRIMARY KEY (session_id, sequence) 的信封 JSON）。
 - `rebuild_projection(session)`：单事务清空五张投影表后按事件账本全量重放 `apply_projection`，返回重建后的快照——投影损坏时的自愈入口。
 
@@ -115,7 +115,7 @@
 - `list_sessions()`（固定过滤 `archived=0`、按 `updated_at_ms` 降序，无参数）/ `get_session(&SessionId)`（缺失报 `SessionNotFound`）：`SessionRecord { session_id, title, created_at_ms, updated_at_ms, archived, active_branch }`。`rename_session(&SessionId, title, now_ms)` / `archive_session(&SessionId, archived, now_ms)`（ADR-054）：UPDATE 单行走 `updated_at_ms` 刷新，缺失报 `SessionNotFound`；归档不删事件与投影，`get_session` 仍可读。
 - `rename_session_if_title(&SessionId, expected_title, title, now_ms) -> bool`：单条条件 UPDATE 原子校验旧标题并更新；不匹配返回 false，标题与时间戳保持不变；缺失报 `SessionNotFound`。自动命名使用此口，多个命名结果仅首个匹配者写回，已改名会话不被旧结果覆盖；不改 schema。
 - `add_tags(session, &[&str])`：幂等插入 `session_tags`。
-- `get_session_identity(session) -> (tenant_id, principal_id)`。
+- `get_session_identity(session) -> Option<(TenantId, PrincipalId)>`（不存在返回 `None`）。
 
 ### 3.8 导出 / 导入
 
@@ -123,7 +123,7 @@
 - `import_session(&SessionExport, tenant_id, principal_id)`：`validate()`（版本 1..=3、v3 必须带身份）→ export 身份必须与调用方传入身份一致（`ExportIdentityMismatch`）→ 事件 session_id 一致预检 → 单 `Immediate` 事务重建 session/分支/事件/标签。v1/v2 输入在反序列化时回填 legacy 身份（tenant `local/default`、principal `local/user`）、v1 事件全部归 `main`。**不做 Secret 扫描**（事件在首次入库边界已脱敏）。
 - `import_pi_jsonl(path)` / `import_pi_jsonl_lines(lines)`：Pi JSONL → 单分支导入（原文件只读不改）。逐行 `parse_pi_line` 得 `PiPayload::{Header, Message, ToolCall, ModelSwitch, Compaction, Branch, Raw}`：Message → `MessageCommitted`、ToolCall → `ToolCallStarted`、ModelSwitch → `pi.model_switched` Diagnostic、Compaction → 摘要 `MessageCommitted` + `CompactionCompleted`（`compacted_through` 为已落盘事件水位）、Branch marker → `pi.branch_collapsed` Diagnostic（R6 起收编单分支语义，不再建零事件分支行）；`PiEntryKind::{Custom, Unknown}` 行载荷为 Raw，原文进 `unknown_entries`。返回 `PiImportReport`（`header_found`、imported_messages/tool_calls/model_switches/compactions/branches 计数、`unknown_entries: BTreeMap<行号, 原文>`）；无 header fail-closed 拒绝导入。
 - `import_compat(source, content)` / `import_compat_from_file(source, path)` / `import_compat_dry_run(source, content)`：外部导入（§4.5），来源由调用方指定（`ExternalSource::{Claude, Codex, Grok, Cursor}`）。返回 `CompatImportReport { source, session_id, original_id, imported_events/messages/tool_calls/tool_results/usages/reviews, raw_records, deduplicated, unknown_fields }`——`deduplicated = true` 表示命中既有导入（幂等去重，`imported_events == 0`）。
-- `compat_import_history(limit, cursor) -> CompatImportHistoryPage { entries, cursor }`：键集分页（limit 夹到 1..=500，默认 50，cursor 为不透明令牌 `"{imported_at_ms}:{session_id}"`，坏令牌报 `InvalidHistoryCursor`）；每条 `(source, original_id)` identity 只留一条历史，重复导入不新增。
+- `compat_import_history(limit, cursor) -> CompatImportHistoryPage { entries, cursor }`：键集分页（limit 夹到 1..=500，默认 50，cursor 为不透明令牌 `"{updated_at_ms}:{session_id}"`，坏令牌报 `InvalidHistoryCursor`）；每条 `(source, original_id)` identity 只留一条历史，重复导入不新增。
 - 纯解析层（不落库，可独立调用）：`parse_pi_line`；`parse_external`（按来源分派 `parse_claude`/`parse_codex`/`parse_grok`/`parse_cursor`）；`find_secret`；`derive_compat_session_id`/`content_fingerprint`/`effective_identity`；`validate_structure`。
 
 ### 3.9 compaction（feature `compaction`）
@@ -156,7 +156,7 @@
 ### 4.2 会话恢复重放
 
 1. `load_ancestor_lineage(session, branch)`：从目标分支沿 `parent_branch_id` 回溯到 `main`，每段祖先带上界 = fork 事件的 sequence（含），tip 分支无上界；环路防御 `ProjectionInvariant`。
-2. `events_on_lineage` 按 lineage 段过滤 `session_events`（`visible_on_lineage`：事件属于链上分支且 sequence 不超过该段上界），升序返回 `from_sequence` 起至多 `limit` 条。
+2. `events_on_lineage` 按 lineage 段过滤 `session_events`（`visible_on_lineage`：事件属于链上分支且 sequence 不超过该段上界），升序返回 `from_sequence` 起至多 `limit` 条。SQLite 游标先筛选分支与序号，只复制可见事件的 JSON，页满即停止；不再把整个 session 的 payload 物化后分页。
 3. 上界语义的推论：fork 之后父分支继续追加的事件（sequence > fork 点）对子分支 lineage **不可见**——分叉即时间冻结，父子各自演化互不串扰。
 4. 引擎恢复时把这些信封反序列化重放即可重建内存态；投影快照（§3.5）则额外叠加 compaction 水位：`compacted_through` = lineage 可见的最大 `CompactionCompleted.compacted_through`，messages 只取水位之后的事件。
 
@@ -177,12 +177,13 @@
 
 ### 4.5 compat 导入嗅探与解析
 
-1. `find_secret(content)` 全文扫描（`sk-`/`ghp_`/`AKIA`/`xoxb-`/`Bearer`/`AIza`/PEM 私钥块等模式），命中即 `CompatSecretDetected` fail-closed，**任何内容不落库**。
+1. `find_secret(content)` 全文扫描（13 种密钥前缀加 `Bearer` 模式：`sk-`/`ghp_`/`AKIA`/`xoxb-`/`AIza` 等），命中即 `CompatSecretDetected` fail-closed，**任何内容不落库**。
 2. 来源由调用方指定（`ExternalSource`），`parse_external` 分派各来源解析器；**双形态在解析器内自动嗅探**：Claude = claude.ai 导出 JSON 数组 **或** Claude Code 本地 JSONL（按 `type:"user"/"assistant"` + `message` 包裹识别）；Codex = flat JSONL **或** rollout envelope JSONL（`{timestamp, type, payload}` 包裹）。无法解析报 `CompatUnparseable`。
 3. 逐条解析为 `ExternalRecord`（消息/工具调用/噪音跳过计数入 `CompatImportReport`）；结构损坏（JSONL 行非对象、必需字段缺失等）fail-closed 报错而非静默跳过。
 4. `derive_compat_session_id`（来源前缀 + 身份/内容指纹）与 `content_fingerprint`（BLAKE3）：同内容重复导入幂等返回原 session；同身份不同内容报 `CompatImportConflict`；`compat_import_identity` 表（`(source, original_id)` 主键 + fingerprint + session_id）在同一 `Immediate` 事务内写入，history 的 `imported_at` 取自 session 行时间。
 5. 映射层归一化为 canonical `AgentEventEnvelope` 序列（合成 `RunStarted`/`RunCompleted` 边界、工具调用配对、原始记录附 `Diagnostic`），公开的 `validate_structure` 校验序列结构（空批、id 重复、引用悬空等报 `CompatValidationFailed`）后经 `persist_event_in_transaction` 落 `main` 分支。
 6. 持久化整体包在单个 `Immediate` 事务里（先占写锁）：identity 查重、建 session、写事件、登记 `compat_import_identity` 原子完成，与并发导入互斥；`dry_run` 走完全部扫描/解析/校验但不开写事务。
+7. `import_compat_from_file` 按首非空行分派读取形态（嗅探读完整首行，禁止按字节截断——真实 session_meta 首行可超 8KiB）：Codex 恒为 JSONL（首非空行含 `timestamp`+`type`+`payload` 走信封模式，否则平铺）；Claude 首非空行为完整 JSON 值且后续还有非空行时必然不是单一 JSON 文档（trailing characters），走 Claude Code 本地 JSONL 流式，否则积累全文保持整串语义；Grok / Cursor 整文档 JSON 同样积累全文。流式路径经 `BufReader` 逐行处理：内容指纹为增量 BLAKE3（各行字节拼接与 `read_to_string` 全文一致）、Secret 逐行扫描（模式与尾串不含换行，命中不可能跨行，行间按签名优先级合并）、行级解析与 `str::lines()` 同基准——行为与整串导入完全等价，内存峰值只受最长单行约束，与文件大小解耦。
 
 ### 4.6 export → import 全量往返
 
@@ -236,7 +237,7 @@ feature 依赖有传递关系：`compaction ⇒ session`，`checkpoint ⇒ blob`
 | `checkpoint` | `blob` + `serde_json`、`tracing`、`tokio` `rt` 等 |
 | `protected` | `blob` + `chacha20poly1305`、`getrandom`、`zeroize`、`pawork-domain` |
 
-工作区内唯一生产上游是 [pawork-domain](domain.md)（信封/ID/`provider_hints`/`SessionRegistryStore` 等类型）；不依赖 engine/protocol/provider。dev-dependencies：`pawork-protocol`（`adapter` feature，client_adapter 测试消费）、`tempfile`、`tokio`（rt-multi-thread）、`blake3`、`chacha20poly1305`、`proptest`（当前无用点）、`serde_json`。
+工作区内唯一生产上游是 [pawork-domain](domain.md)（信封/ID/`provider_hints`/`SessionRegistryStore` 等类型）；不依赖 engine/protocol/provider。dev-dependencies：`pawork-protocol`（`adapter` feature，client_adapter 测试消费）、`tempfile`、`tokio`（rt-multi-thread）、`blake3`、`chacha20poly1305`（当前无用点）、`serde_json`。
 
 下游消费方：
 
@@ -249,7 +250,7 @@ feature 依赖有传递关系：`compaction ⇒ session`，`checkpoint ⇒ blob`
 
 ## 7. 测试与验证资产
 
-所有源码文件均带内嵌 `#[cfg(test)] mod tests`（21 处），另有 2 个集成测试。覆盖要点：
+所有源码文件均带内嵌 `#[cfg(test)] mod tests`（27 处），另有 2 个集成测试。覆盖要点：
 
 | 资产 | 覆盖 |
 | --- | --- |
@@ -264,7 +265,7 @@ feature 依赖有传递关系：`compaction ⇒ session`，`checkpoint ⇒ blob`
 | `command_ledger.rs` tests | New/Replay/InFlight 分类、key 冲突、重启 reclaim、容量 4096 全局淘汰（跨 tenant/scope） |
 | `compaction/*` tests | retention 各策略保留集、engine 产出 recovery 分支与快照（含同 head 重试复用）、snapshot v1 serde golden |
 | `import/formats/*` tests | 各来源解析与 Claude/Codex 双形态嗅探、Secret 模式命中、损坏 fail-closed、export v1/v2/v3 兼容读 |
-| `import/persist_*` tests | Pi 原文件只读不改、compat 幂等/冲突/历史分页、export↔import 全量往返 |
+| `import/persist_*` tests | Pi 原文件只读不改、compat 幂等/冲突/历史分页、export↔import 全量往返、文件流式导入与整串等价（>8KiB session_meta 首行嗅探不截断）与流式路径后续行 Secret 拒绝 |
 | `blob/artifact.rs` tests | put 去重与引用计数、预算拒绝、读时哈希校验、gc/孤儿回收、`integrity_check` |
 | `blob/protected.rs` tests | 三态与崩溃 reconcile、scope 隔离 fail-closed、密钥缺失/损坏分类、延迟回收 gc |
 | `blob/checkpoint.rs` tests | 快照去重、回滚（含新增文件删除）、`conflict_check`、路径穿越拒绝、状态持久化往返 |
@@ -298,9 +299,8 @@ cargo test -p pawork-storage --offline --lib --tests --features compaction,check
 - checkpoint 只靠 Blob 还原、绝不 `git reset --hard`；`checkpoint-state-v1.json` 版本不符直接 fail-closed，不做静默降级。
 - `DatabaseActor` 单连接串行：长事务（大导入、rebuild、迁移）会队头阻塞同一 store 上的所有调用（含读）；诊断类只读负载可另开 `open_read_only` 副本绕开写队列。
 - `switch_branch` 改的是 `sessions.active_branch` 行字段，属**全局写指针**：同一 store 的多个消费方共享 active 分支，切换是全局副作用。
-- `import_compat_from_file` 的 JSONL 分支注释写"流式读取"，实现仍是 `read_to_string` 一次性入内存——与整篇 JSON 分支等价，超大文件没有真流式路径。
+- `import_compat_from_file` 的 JSONL 家族（Claude Code 本地 / Codex flat / envelope）走 `BufReader` 逐行流式（增量指纹 + 逐行 Secret 扫描 + 行级解析，行为与整串导入等价；内存与文件大小解耦，峰值受最长单行约束）；Grok / Cursor / claude.ai 导出等整文档 JSON 仍全文读入（单文档语义）。
 - **单宿主进程假设**：CommandLedger 的 `reclaim_inflight`（源码注释"单宿主进程模型"）与 protected 的 open-time reconcile（"one owning host per root"）都假定同一库/根只有一个宿主进程；不要跨进程共享同一 session 库或 blob root。
 - sequence 经 SQLite `i64` 存储，越界防御为 `SequenceOverflow`；`archived`/`head_sequence` 等均带 `CHECK` 约束兜底。
 - fixtures 是检入的 JSONL 文本，golden 断言在 `cfg(test)` 中 `include_str!` 引用；改动必须走 §7 的重生成流程并人工 diff，禁止手改。
-- dev-dependencies 中 `proptest` 当前无用点（历史遗留声明）。
 - 阶段状态与后续演进（R7 沙箱对 blob 路径的收紧等）以 [AGENTS.md](../../../AGENTS.md) 为准；产品可见能力口径见 [../README.md](../README.md)。

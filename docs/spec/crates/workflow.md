@@ -17,7 +17,7 @@
 | `src/plan/state.rs` | ~235 | `PlanState` 聚合（title / steps / 当前与父版本 / 修订链 history / 评审状态 / comments / 审批 checkpoint）；`apply` 纯折叠（事件视为已校验事实，防御性忽略未知步骤）；`replay`；`is_legal_step_transition`；`PlanComment` |
 | `src/plan/service.rs` | ~485 | `PlanService` 命令面 + 查询面（`Mutex<Inner>`，毒锁 into_inner 继续）；id 生成（`plan_N` / `planver_N` / `step_N`）；`from_events` 重放重建并 seed 计数器防 id 碰撞 |
 | `src/plan/snapshot.rs` | ~30 | 查询面 DTO：`PlanSnapshot`、`PlanVersionInfo`（serde 可序列化，供 CLI/GUI 经 GUI Connection Protocol 消费） |
-| `src/plan/error.rs` | ~60 | `PlanError`（非法步骤 / 评审转移、版本与 plan_id 不匹配、空 plan / 空步骤文本 / 空理由 / 空评论、重复版本等 13 变体） |
+| `src/plan/error.rs` | ~60 | `PlanError`（非法步骤 / 评审转移、版本与 plan_id 不匹配、空 plan / 空步骤文本 / 空理由 / 空评论、重复版本等 14 变体） |
 | `src/task/mod.rs` | ~40 | task 门面与 re-export；模块级文档（统一抽象、断连续存、取消传播、执行所有权边界） |
 | `src/task/state.rs` | ~315 | `TaskManagerState` 纯聚合（任务表 `BTreeMap` + 只追加事件日志）；`apply` 唯一折叠入口（`Started` 幂等，`Finished` 校验前置状态与终态合法性）；`TaskSnapshot` / `TaskManagerSnapshot`；`is_active_status` / `is_terminal_status`；`subtree` 后代收集；id 分配与重放推进 |
 | `src/task/manager.rs` | ~265 | `TaskManager` 命令面 / 查询面 / `broadcast` 实时事件（容量默认 256，Lagged 后走 snapshot + events_since 恢复） |
@@ -77,7 +77,7 @@
 1. `register` 建 Queued 记录（**持久化前瞬态**：不发事件，重放不可见；取消 Queued 任务静默移除）。
 2. `start` 发 `Started`（携带 kind 与 parent），任务自此进入可重放事件流；`apply` 对 `Started` 幂等（已存在则刷新为 Running）。
 3. Running ↔ Suspended（`Suspended` / `Resumed` 事件）；`finish` 收敛到 Completed / Failed。
-4. `cancel(root)`：`subtree` 沿 parent 链 BFS 收集全部后代 → 逐个按状态处理（见 §3.2）→ 先在锁外触发全部取消令牌、再广播事件，无孤儿。
+4. `cancel(root)`：`subtree` 沿 parent 链自根向下栈式遍历（深度优先序）收集全部后代 → 逐个按状态处理（见 §3.2）→ 先在锁外触发全部取消令牌、再广播事件，无孤儿。
 5. 断连恢复：调用方持久化事件后可用 `snapshot()`（视图 + 日志）或 `replay(events)` 重建，`events_since(seq)` 续读增量；重放同时推进 id 分配器（`task_N` 后缀取 max+1），避免恢复后新 id 碰撞。
 
 ## 5. 契约与不变量
@@ -92,7 +92,7 @@
 
 ## 6. 依赖关系
 
-- **生产依赖**：`pawork-domain`；`serde` / `thiserror` / `tokio`（rt, sync；实际仅用 `broadcast`）。
+- **生产依赖**：`pawork-domain`；`serde` / `thiserror` / `tokio`（仅 sync feature；实际仅用 `broadcast`）。
 - **features**：`default = []`，无任何具名 feature（早期 `process-exec` feature 已随执行路径归档，现行不存在）。
 - **被依赖**：仅 `pawork-app`（plan host 与 tasks host / services）。`pawork-orchestration` 不依赖本包。
 

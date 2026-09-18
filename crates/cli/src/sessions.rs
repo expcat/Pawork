@@ -3,9 +3,16 @@
 use pawork_app::{
     parse_session_source, AppCore, LocalSessionSource, SessionImportFormat, SessionImportOutcome,
 };
-use pawork_domain::{ContentPart, Message, MessageRole};
+use pawork_domain::{ContentPart, Message, MessageRole, SessionId};
 
 use crate::{CliError, SessionsCommand};
+
+pub(crate) async fn resolve_session(
+    core: &AppCore,
+    spec: Option<&str>,
+) -> Result<SessionId, CliError> {
+    Ok(core.resolve_session(spec.unwrap_or("latest")).await?)
+}
 
 pub async fn run_sessions(
     core: &AppCore,
@@ -37,8 +44,7 @@ async fn fork(
     switch: bool,
     json: bool,
 ) -> Result<(), CliError> {
-    let spec = session.as_deref().unwrap_or("latest");
-    let session_id = core.resolve_session(spec).await?;
+    let session_id = resolve_session(core, session.as_deref()).await?;
     let millis = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_millis())

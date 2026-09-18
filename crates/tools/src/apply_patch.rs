@@ -117,7 +117,18 @@ impl AgentTool for ApplyPatchTool {
         _sink: &dyn ToolEventSink,
         _cancel: CancellationToken,
     ) -> Result<ToolResult, ToolError> {
-        match apply(&self.workspaces, &context.workspace_id, &request.input) {
+        let service = self.workspaces.clone();
+        let workspace_id = context.workspace_id;
+        let input = request.input;
+        let result = tokio::task::spawn_blocking(move || apply(&service, &workspace_id, &input))
+            .await
+            .map_err(|error| ToolError {
+                kind: pawork_domain::ToolErrorKind::Internal,
+                message: format!("apply_patch worker failed: {error}"),
+                retryable: false,
+                retry_after_ms: None,
+            })?;
+        match result {
             Ok(result) => Ok(result),
             Err(error) => Err(BuiltinToolError::from(error).into()),
         }
@@ -129,7 +140,7 @@ fn apply(
     workspace_id: &WorkspaceId,
     input: &Value,
 ) -> Result<ToolResult, ApplyPatchError> {
-    let dry_run = opt_bool(input, "dry_run").unwrap_or(false);
+    let dry_run = opt_bool(input, "dry_run")?.unwrap_or(false);
     let ops = parse_ops(input)?;
     if ops.is_empty() {
         return Err(ApplyPatchError::Common(BuiltinToolError::Other(

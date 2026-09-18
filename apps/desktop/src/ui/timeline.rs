@@ -43,7 +43,7 @@ use super::timeline_entry::{
     SUMMARY_BANNER_PAD_X, SUMMARY_BANNER_PAD_Y_REMS, SUMMARY_FAIL_ICON,
     SUMMARY_NEXT_STEP_BUTTON_HEIGHT, SUMMARY_STATUS_CIRCLE, ToolRowView, assistant_is_streaming,
     default_text_line_height, display_time, estimated_wrapped_lines, failure_next_step,
-    message_block_line_counts, tool_row_height,
+    tool_row_height,
 };
 use super::{AppView, MenuKind, now_unix_ms, workspace_empty_title};
 
@@ -146,7 +146,8 @@ fn message_entry_height(
 ) -> f32 {
     let inset = if user { metrics::MSG_USER_INSET_X } else { 0.0 };
     let vertical_inset = if user { metrics::MSG_USER_INSET_Y } else { 0.0 };
-    let column_width = if user && !super::markdown::message_needs_full_width(text) {
+    let measure = super::markdown::MessageMeasure::new(text);
+    let column_width = if user && !measure.needs_full_width() {
         column_width * 0.8
     } else {
         column_width
@@ -159,13 +160,13 @@ fn message_entry_height(
     let body_font_px = font::BODY.0 * rem_px;
     let body_line_height = (font::from_pixels(metrics::MSG_LINE_HEIGHT).0 * rem_px).round();
     let body_width = (column_width - 2.0 * inset).max(0.0);
-    let blocks = message_block_line_counts(text, body_width, body_font_px);
+    let blocks = measure.block_line_counts(body_width, body_font_px);
     let body = blocks
         .iter()
         .map(|lines| *lines as f32 * body_line_height)
         .sum::<f32>()
         + metrics::MSG_PARAGRAPH_GAP * blocks.len().saturating_sub(1) as f32
-        + super::markdown::message_code_block_count(text) as f32
+        + measure.code_block_count() as f32
             * (metrics::ICON_BUTTON_SIZE - body_line_height).max(0.0);
     2.0 * vertical_inset + header + body
 }
@@ -550,9 +551,27 @@ pub(super) fn timeline_stack_height(
     height
 }
 
+fn timeline_item_wrapper(gap: f32, child: impl IntoElement) -> AnyElement {
+    div()
+        .when(gap > 0.0, |item| item.pt(px(gap)))
+        .w_full()
+        .max_w(px(metrics::TIMELINE_READABLE_WIDTH))
+        .min_w_0()
+        .child(child)
+        .into_any_element()
+}
+
 impl AppView {
     /// 内容高于视口才有滚动条。未测到视口时不显示回底，避免短对话误报。
     pub(super) fn timeline_content_overflows(&self, window: &Window) -> bool {
+        self.timeline_content_overflows_with_rows(&self.projection.timeline_rows(), window)
+    }
+
+    fn timeline_content_overflows_with_rows(
+        &self,
+        rows: &[crate::projection::TimelineRow],
+        window: &Window,
+    ) -> bool {
         let viewport = self.timeline_list.viewport_bounds();
         let viewport_height = f32::from(viewport.size.height);
         if viewport_height <= 0.0 {
@@ -562,7 +581,6 @@ impl AppView {
             .min(metrics::TIMELINE_READABLE_WIDTH)
             .max(0.0);
         let rem_px = f32::from(window.rem_size());
-        let rows = self.projection.timeline_rows();
         let approval = self.projection.pending_approval.as_ref().map(|pending| {
             approval_card_height(
                 &pending.reason,
@@ -572,7 +590,7 @@ impl AppView {
             )
         });
         timeline_stack_height(
-            &rows,
+            rows,
             &self.projection.timeline,
             column_width,
             rem_px,
@@ -586,6 +604,10 @@ impl AppView {
     pub(super) fn timeline_area(&mut self, window: &Window, cx: &mut Context<Self>) -> gpui::Div {
         let rows = self.projection.timeline_rows();
         sync_list(self, rows.len());
+        // 溢出判定须在 list() 闭包拿走 rows 所有权之前完成。
+        let following = self.timeline_following;
+        let show_back_to_bottom =
+            !following && self.timeline_content_overflows_with_rows(&rows, window);
         let empty_hint_visible = self.welcome_visible();
         let fork_available = matches!(
             self.projection.connection,
@@ -604,41 +626,11 @@ impl AppView {
                     if ix < len {
                         let element =
                             view.timeline_row_element(&rows[ix], fork_available, window, cx);
-                        let gap = row_top_gap(&rows[ix]);
-                        if ix > 0 {
-                            div()
-                                .pt(px(gap))
-                                .w_full()
-                                .max_w(px(metrics::TIMELINE_READABLE_WIDTH))
-                                .min_w_0()
-                                .child(element)
-                                .into_any_element()
-                        } else {
-                            div()
-                                .w_full()
-                                .max_w(px(metrics::TIMELINE_READABLE_WIDTH))
-                                .min_w_0()
-                                .child(element)
-                                .into_any_element()
-                        }
+                        let gap = if ix > 0 { row_top_gap(&rows[ix]) } else { 0.0 };
+                        timeline_item_wrapper(gap, element)
                     } else {
-                        let card = view.approval_card_element(cx);
-                        if len > 0 {
-                            div()
-                                .pt(px(metrics::MSG_ENTRY_GAP))
-                                .w_full()
-                                .max_w(px(metrics::TIMELINE_READABLE_WIDTH))
-                                .min_w_0()
-                                .child(card)
-                                .into_any_element()
-                        } else {
-                            div()
-                                .w_full()
-                                .max_w(px(metrics::TIMELINE_READABLE_WIDTH))
-                                .min_w_0()
-                                .child(card)
-                                .into_any_element()
-                        }
+                        let gap = if len > 0 { metrics::MSG_ENTRY_GAP } else { 0.0 };
+                        timeline_item_wrapper(gap, view.approval_card_element(cx))
                     }
                 },
             ),
@@ -761,8 +753,6 @@ impl AppView {
         };
         // 脱钩且内容溢出时才浮出回底；无滚动条不画。
         let navigation = self.navigation_panel(window, cx);
-        let following = self.timeline_following;
-        let show_back_to_bottom = !following && self.timeline_content_overflows(window);
         let back_to_bottom_focus = self.timeline_back_to_bottom_focus.clone();
         div()
             .relative()

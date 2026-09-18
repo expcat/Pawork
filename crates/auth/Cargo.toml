@@ -9,7 +9,6 @@ description = "Pawork 认证方式与 Secret 后端（API Key / auth file / OAut
 
 [dependencies]
 pawork-domain = { path = "../domain" }
-async-trait.workspace = true
 getrandom.workspace = true
 serde.workspace = true
 serde_json.workspace = true

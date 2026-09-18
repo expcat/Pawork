@@ -1,13 +1,13 @@
 # pawork (bin) Review
 
-> Core 的唯一正式宿主二进制：先装全局脱敏日志，再把进程交给 `pawork-cli::run`。2 个 `.rs` 文件、326 行（`main.rs` 31 + `redact.rs` 295）。无 pub API、无独立测试目录（2 个内联测试在 `redact.rs`）。
+> Core 的唯一正式宿主二进制：先装全局脱敏日志，再把进程交给 `pawork-cli::run`。2 个 `.rs` 文件、326 行（`main.rs` 31 + `redact.rs` 295）。无 pub API、无独立测试目录（2 个内联测试在 `redact.rs`）。Cargo 依赖仅 `pawork-cli` + tracing/tracing-subscriber/regex/tokio。
 
 ## 1. 职责与边界
 
 做什么：composition root。装配顺序固定：
 
-1. `#[tokio::main]` 多线程 runtime。
-2. `install_logging()`：`EnvFilter`（`RUST_LOG`，默认 `warn`）+ `RedactingFmtLayer` → **stderr**。
+1. `#[tokio::main]` 多线程 runtime（main.rs:26）。
+2. `install_logging()`（main.rs:15-25）：`EnvFilter`（`RUST_LOG`，默认 `warn`）+ `RedactingFmtLayer` → **stderr**。
 3. `pawork_cli::run().await`，退出码原样返回。
 
 不做什么：不实现命令、不加载 `AppCore`、不碰 Provider/DB。CLI 才是命令面；本包只保证「日志先于任何业务、Secret 不进 stdout/stderr 日志」。stdout 留给协议/JSON。
@@ -22,12 +22,12 @@
 | 被依赖 | 无（workspace 二进制） | `pawork` 是 CLI 与 Core 的同进程宿主 |
 
 | 外部 crate | 用途 |
-| --- | --- | --- |
+| --- | --- |
 | tokio（macros, rt-multi-thread） | 进程 runtime |
 | tracing / tracing-subscriber | 全局 subscriber + Layer |
 | regex | `Redactor` 字段名/值模式 |
 
-不直接依赖 domain/app/protocol。Desktop 是另一二进制，经 GUI 协议连本进程的 `gui serve`。
+不直接依赖 domain/app/protocol。Desktop 是另一二进制，经 GUI 协议连本进程的 `gui serve`；client headless spawn 与 desktop `--probe*` 都消费 PATH / `PAWORK_BIN` 上的本二进制。
 
 ## 3. 文件清单
 
@@ -57,23 +57,21 @@
 | `Redactor::default` | impl | `new([])`，内建模式 `expect`（编译期应合法） |
 | `Redactor::new(custom_patterns)` | fn | `Result<Self, regex::Error>`：先编译字段名正则，再编译值替换表，最后追加自定义 |
 | `redact_field(name, value)` | method | **字段名通道优先**：name 命中敏感键 → 整值 `[REDACTED]`；否则走 `redact(value)` |
-| `redact(value)` | method | 值通道：按 replacements 依次 `replace_all` |
+| `redact(value)` | method | 值通道：按 replacements 依次 `replace_all`；Bearer 保留前缀、URL query 保留分隔符与键名 |
 
 字段名正则（大小写不敏感、整键锚定）：
 
-```text
-^(authorization|proxy[_-]?authorization|cookie|set[_-]?cookie|api[_-]?key|(?:[a-z0-9]+[_-])*(?:token|secret|password)|oauth(?:[_-]?code)?)$
-```
+`^(authorization|proxy[_-]?authorization|cookie|set[_-]?cookie|api[_-]?key|(?:[a-z0-9]+[_-])*(?:token|secret|password)|oauth(?:[_-]?code)?)$`
 
 因此 `api_key` / `authorization` 整值抹掉，但 `context_tokens` **不**命中（测试钉死），指标仍可观测。
 
-值通道内建模式：
+值通道内建模式（redact.rs:42-66）：
 
 1. `Authorization` / `proxy-authorization` 头整行。
 2. `Cookie` / `set-cookie` 头整行。
 3. `Bearer <token>` → 保留 `Bearer ` 前缀，只抹 token。
 4. JWT `eyJ…` 三段。
-5. `(?:sk|rk|pk|api)[-_]` 后 ≥12 字符（连字符或下划线都算前缀分隔）——**不要单词边界**（`_` 是 word char，`load_failed_sk-...` 会绕过 `\b`）。
+5. `(?:sk|rk|pk|api)[-_]` 后 ≥12 字符——**不要单词边界**（`_` 是 word char，`load_failed_sk-...` 会绕过 `\b`）。
 6. URL query：保留 `?`/`&` 与 key，只抹 value。
 7. `key=value` / `key:value`，含转义 JSON（`\"token\"`）与 `X-Custom-Token` 头。
 
@@ -101,10 +99,10 @@
 
 | 文件 | 数量 | 验证点 |
 | --- | ---: | --- |
-| src/redact.rs `redacts_headers_tokens_cookies_oauth_jwt_and_custom_patterns` | 1 | Authorization/Cookie/oauth/JWT/`sk-` 嵌套、`load_failed_sk-`、URL query、转义 JSON、自定义 pattern、`api_key` 整字段抹掉、`context_tokens` 保留 |
-| src/redact.rs `redacting_fmt_layer_masks_secrets_and_keeps_plain_fields` | 1 | 真 subscriber：authorization/api_key/message 内 token/`sk-` 不出现在捕获的 stderr 行；`component`/`retries` 仍可见 |
+| src/redact.rs `redacts_headers_tokens_cookies_oauth_jwt_and_custom_patterns` | 1 | 14 组样例：Authorization/Cookie/oauth/JWT/`sk-` 嵌套、`load_failed_sk-`、URL query 双键、转义 JSON、自定义 pattern、`X-Custom-Token`；`api_key` 整字段抹掉、`context_tokens` 保留 |
+| src/redact.rs `redacting_fmt_layer_masks_secrets_and_keeps_plain_fields` | 1 | 真 subscriber：authorization/api_key/message 内 token/`sk-` 不出现在捕获行；`component`/`retries` 仍可见 |
 
-`main.rs` 无测试。默认验证：`cargo test -p pawork --offline --lib --tests`（本任务未跑；bin 测试随该包）。
+`main.rs` 无测试。默认验证：`cargo test -p pawork --offline --lib --tests`（本任务未跑；文档刷新任务不编译）。
 
 ## 7. 协作关系
 

@@ -85,7 +85,7 @@ pub fn assemble_request_with_tools(
 /// 公开面已收口；crate 内 `session_turn` / `tool_loop` 继续走此入口。
 pub(crate) async fn run_turn(
     provider: &dyn ModelProvider,
-    request: CanonicalModelRequest,
+    request: &CanonicalModelRequest,
     sink: &dyn ProviderEventSink,
     cancel: CancellationToken,
 ) -> Result<ModelResponseSummary, ProviderError> {
@@ -147,7 +147,7 @@ mod tests {
 
         async fn stream(
             &self,
-            _request: CanonicalModelRequest,
+            _request: &CanonicalModelRequest,
             sink: &dyn ProviderEventSink,
             _cancel: CancellationToken,
         ) -> Result<ModelResponseSummary, ProviderError> {
@@ -175,7 +175,7 @@ mod tests {
 
         async fn stream(
             &self,
-            _request: CanonicalModelRequest,
+            _request: &CanonicalModelRequest,
             _sink: &dyn ProviderEventSink,
             _cancel: CancellationToken,
         ) -> Result<ModelResponseSummary, ProviderError> {
@@ -200,7 +200,7 @@ mod tests {
 
         async fn stream(
             &self,
-            _request: CanonicalModelRequest,
+            _request: &CanonicalModelRequest,
             sink: &dyn ProviderEventSink,
             cancel: CancellationToken,
         ) -> Result<ModelResponseSummary, ProviderError> {
@@ -326,7 +326,7 @@ mod tests {
         };
         let sink = RecordingSink::default();
 
-        let result = run_turn(&provider, sample_request(), &sink, CancellationToken::new())
+        let result = run_turn(&provider, &sample_request(), &sink, CancellationToken::new())
             .await
             .expect("happy-path turn");
 
@@ -352,7 +352,7 @@ mod tests {
         };
         let sink = RecordingSink::default();
 
-        run_turn(&provider, sample_request(), &sink, CancellationToken::new())
+        run_turn(&provider, &sample_request(), &sink, CancellationToken::new())
             .await
             .expect("turn with extra variants");
 
@@ -371,7 +371,7 @@ mod tests {
         token.cancel();
         let sink = RecordingSink::default();
 
-        let error = run_turn(&PanicIfCalledProvider, sample_request(), &sink, token)
+        let error = run_turn(&PanicIfCalledProvider, &sample_request(), &sink, token)
             .await
             .expect_err("pre-cancelled turn must fail");
 
@@ -383,9 +383,10 @@ mod tests {
     async fn mid_stream_cancel_returns_cancelled() {
         let token = CancellationToken::new();
         let sink = RecordingSink::default();
+        let request = sample_request();
         let run = run_turn(
             &CancelAfterDeltaProvider,
-            sample_request(),
+            &request,
             &sink,
             token.clone(),
         );

@@ -72,15 +72,13 @@ impl AppView {
                     .text_color(dark().text.primary)
                     .child(pending.reason.clone()),
             );
-        if let Some(detail) = pending.detail.clone() {
-            if !detail.is_empty() {
-                card = card.child(
-                    div()
-                        .text_size(font::XS)
-                        .text_color(dark().text.detail)
-                        .child(detail),
-                );
-            }
+        if let Some(detail) = pending.detail.as_deref().filter(|detail| !detail.is_empty()) {
+            card = card.child(
+                div()
+                    .text_size(font::XS)
+                    .text_color(dark().text.detail)
+                    .child(detail.to_string()),
+            );
         }
         let buttons = [
             (
@@ -111,7 +109,6 @@ impl AppView {
             .flex_row()
             .gap_2()
             .children(buttons.into_iter().map(|(id, label, decision, variant)| {
-                let decision = decision.to_string();
                 let focus = match id {
                     "approve-once" => approve_once_focus.clone(),
                     "approve-for-run" => approve_for_run_focus.clone(),
@@ -126,8 +123,6 @@ impl AppView {
                 } else {
                     approve_disabled.clone()
                 };
-                let click_decision = decision.clone();
-                let activate_decision = decision;
                 let mut button = Button::new(id)
                     .variant(variant)
                     .disabled(!can_approve)
@@ -143,11 +138,11 @@ impl AppView {
                             if view.consume_button_key_click(id, event) {
                                 return;
                             }
-                            view.on_approve(&click_decision, window, cx);
+                            view.on_approve(decision, window, cx);
                         }))
                         .on_activate(cx.listener(move |view, _event, window, cx| {
                             view.note_button_key_activate(id);
-                            view.on_approve(&activate_decision, window, cx);
+                            view.on_approve(decision, window, cx);
                             cx.stop_propagation();
                         }));
                 }

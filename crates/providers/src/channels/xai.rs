@@ -13,7 +13,7 @@ use crate::ReasoningProtector;
 use async_trait::async_trait;
 use pawork_domain::{CancellationToken, ModelId, ProviderId};
 use pawork_domain::{
-    CanonicalModelRequest, CredentialKind, ModelCapabilities, ModelDefinition, ModelProvider,
+    CanonicalModelRequest, ModelCapabilities, ModelDefinition, ModelProvider,
     ModelResponseSummary, ModelTransport, ProviderError, ProviderErrorKind, ProviderEventSink,
     ResolvedCredential,
 };
@@ -65,7 +65,7 @@ impl XaiProvider {
         config: XaiConfig,
         credential: Option<ResolvedCredential>,
     ) -> Result<Self, ProviderError> {
-        let credential = require_bearer_credential(credential)?;
+        let credential = super::require_bearer_credential("xAI Grok", credential)?;
         let chat = OpenAiCompatibleProvider::new(
             OpenAiCompatibleConfig {
                 base_url: config.base_url.clone(),
@@ -138,6 +138,7 @@ impl ModelProvider for XaiProvider {
             )
             .await?;
         let entries = crate::provider::catalog_entries(&value, "models")?;
+        let builtin = builtin_models();
         let mut definitions = Vec::new();
         for entry in entries {
             let id = crate::provider::catalog_model_id(entry, "id")?;
@@ -149,8 +150,8 @@ impl ModelProvider for XaiProvider {
             if !text_output {
                 continue;
             }
-            let mut definition = builtin_models()
-                .into_iter()
+            let mut definition = builtin
+                .iter()
                 .find(|definition| {
                     definition.id.as_str() == id
                         || entry
@@ -162,6 +163,7 @@ impl ModelProvider for XaiProvider {
                                     .any(|alias| alias.as_str() == Some(definition.id.as_str()))
                             })
                 })
+                .cloned()
                 .unwrap_or_else(|| unknown_text_model(id));
             definition.id = ModelId::new(id);
             // canonical ID 与 stream 使用相同路由；别名只补能力，不改变实际请求路径。
@@ -184,7 +186,7 @@ impl ModelProvider for XaiProvider {
 
     async fn stream(
         &self,
-        request: CanonicalModelRequest,
+        request: &CanonicalModelRequest,
         sink: &dyn ProviderEventSink,
         cancel: CancellationToken,
     ) -> Result<ModelResponseSummary, ProviderError> {
@@ -205,28 +207,6 @@ impl ModelProvider for XaiProvider {
             )),
         }
     }
-}
-
-fn require_bearer_credential(
-    credential: Option<ResolvedCredential>,
-) -> Result<ResolvedCredential, ProviderError> {
-    let credential = credential.ok_or_else(|| {
-        ProviderError::new(
-            ProviderErrorKind::Authentication,
-            "xAI Grok requires an OAuth bearer or API key credential",
-        )
-    })?;
-    let accepted = matches!(
-        credential.kind(),
-        CredentialKind::OAuthBearer | CredentialKind::ApiKey
-    ) && !credential.expose_secret().trim().is_empty();
-    if !accepted {
-        return Err(ProviderError::new(
-            ProviderErrorKind::Authentication,
-            "xAI Grok accepts only a non-empty OAuth bearer or API key credential",
-        ));
-    }
-    Ok(credential)
 }
 
 /// 已知 id 的 transport / 能力提示，不是 GUI 选择目录。
@@ -318,6 +298,7 @@ fn unknown_text_model(id: &str) -> ModelDefinition {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pawork_domain::CredentialKind;
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 

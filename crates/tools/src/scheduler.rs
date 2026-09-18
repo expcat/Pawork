@@ -389,13 +389,20 @@ impl ToolScheduler {
         request: &mut ToolRequest,
         approval: Option<&dyn ApprovalResolver>,
     ) -> GateOutcome {
-        let mut decision = self.policy.decide(&PolicyInput {
-            capability: descriptor.capability.clone(),
-            input: request.input.clone(),
-            trusted: self.config.workspace_trusted,
-            allowed_in_untrusted_workspace: descriptor.allowed_in_untrusted_workspace,
-            approval_mode: self.config.approval_mode,
-        });
+        // `decide` is synchronous; take the input for the policy view and put it
+        // back before any await so AskUser / constraint injection still see it.
+        let mut decision = {
+            let policy_input = PolicyInput {
+                capability: descriptor.capability.clone(),
+                input: std::mem::take(&mut request.input),
+                trusted: self.config.workspace_trusted,
+                allowed_in_untrusted_workspace: descriptor.allowed_in_untrusted_workspace,
+                approval_mode: self.config.approval_mode,
+            };
+            let decision = self.policy.decide(&policy_input);
+            request.input = policy_input.input;
+            decision
+        };
         if descriptor.requires_approval && !matches!(decision, PolicyDecision::Deny { .. }) {
             decision = PolicyDecision::AskUser {
                 prompt: ApprovalPrompt {

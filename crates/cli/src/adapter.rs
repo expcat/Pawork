@@ -54,6 +54,39 @@ pub fn stamp_query(mut envelope: AppQueryEnvelope, name: &str) -> AppQueryEnvelo
     envelope
 }
 
+const ACP_CHANNEL_FALLBACK: &str = "acp";
+
+/// ACP 通道进 Core 前强制 `source=Automation`，并拒绝伪装 User 身份。
+/// 已由 adapter/host 构造的有效 `acp:<name>` Automation 身份原样保留；
+/// command_id / idempotency_key 不改写，ledger scope 仍按 CommandSource
+/// 取 `automation`，不因身份名变化而拆 scope。
+fn stamp_acp_command(mut envelope: AppCommandEnvelope) -> AppCommandEnvelope {
+    envelope.source = CommandSource::Automation;
+    envelope.identity = retain_acp_automation_identity(envelope.identity);
+    envelope
+}
+
+fn stamp_acp_query(mut envelope: AppQueryEnvelope) -> AppQueryEnvelope {
+    envelope.source = CommandSource::Automation;
+    envelope.identity = retain_acp_automation_identity(envelope.identity);
+    envelope
+}
+
+fn retain_acp_automation_identity(identity: ActorIdentity) -> ActorIdentity {
+    match identity {
+        ActorIdentity::Automation { name }
+            if name
+                .strip_prefix("acp:")
+                .is_some_and(|client| !client.trim().is_empty()) =>
+        {
+            ActorIdentity::Automation { name }
+        }
+        _ => ActorIdentity::Automation {
+            name: ACP_CHANNEL_FALLBACK.into(),
+        },
+    }
+}
+
 pub fn wrap_response(request_id: &str, response: AppResponse) -> AppResponseEnvelope {
     AppResponseEnvelope {
         api_version: API_VERSION,
@@ -106,7 +139,7 @@ impl AcpCommandHost for CliAcpCommandHost {
         &self,
         command: AppCommandEnvelope,
     ) -> Result<AppResponseEnvelope, AcpHostError> {
-        let command = stamp_automation(command, "acp");
+        let command = stamp_acp_command(command);
         let response = self
             .adapter
             .command(&command)
@@ -116,7 +149,7 @@ impl AcpCommandHost for CliAcpCommandHost {
     }
 
     async fn query(&self, query: AppQueryEnvelope) -> Result<AppResponseEnvelope, AcpHostError> {
-        let query = stamp_query(query, "acp");
+        let query = stamp_acp_query(query);
         let response = self
             .adapter
             .query(&query)
@@ -133,6 +166,8 @@ impl AcpCommandHost for CliAcpCommandHost {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pawork_domain::ActorId;
+    use pawork_protocol::AppQuery;
 
     /// command_ledger 跨进程持久幂等：command_id 必须含进程级命名空间，
     /// 否则不同进程的不同逻辑命令会撞键并重放旧响应（pawork run 挂死）。
@@ -159,5 +194,69 @@ mod tests {
         assert!(first_id.starts_with(&format!("cli-cli-json-{namespace}-")));
         assert!(second_id.starts_with(&format!("cli-cli-json-{namespace}-")));
         assert_ne!(first_id, second_id);
+    }
+
+    #[test]
+    fn acp_stamp_keeps_valid_automation_identity_and_rejects_spoofed_user() {
+        let issued_at = Timestamp::from_unix_millis(1);
+        let cases = [
+            (
+                ActorIdentity::Automation {
+                    name: "acp:zed".into(),
+                },
+                "acp:zed",
+            ),
+            (
+                ActorIdentity::LocalUser {
+                    actor_id: ActorId::from("user-1"),
+                    display_name: Some("spoofed".into()),
+                },
+                "acp",
+            ),
+        ];
+        for (identity, expected_name) in cases {
+            let command = stamp_acp_command(AppCommandEnvelope {
+                api_version: API_VERSION,
+                command_id: CommandId::from("acp-req"),
+                source: CommandSource::LocalCli {
+                    terminal_session_id: None,
+                },
+                identity: identity.clone(),
+                expected_revision: None,
+                idempotency_key: Some("stable-key".into()),
+                issued_at,
+                command: AppCommand::SessionCreate {
+                    workspace_id: None,
+                    title: None,
+                },
+            });
+            assert_eq!(command.source, CommandSource::Automation);
+            assert_eq!(command.command_id.as_str(), "acp-req");
+            assert_eq!(command.idempotency_key.as_deref(), Some("stable-key"));
+            assert_eq!(
+                command.identity,
+                ActorIdentity::Automation {
+                    name: expected_name.into(),
+                }
+            );
+
+            let query = stamp_acp_query(AppQueryEnvelope {
+                api_version: API_VERSION,
+                request_id: QueryId::from("acp-query"),
+                source: CommandSource::LocalCli {
+                    terminal_session_id: None,
+                },
+                identity,
+                issued_at,
+                query: AppQuery::WorkspaceList,
+            });
+            assert_eq!(query.source, CommandSource::Automation);
+            assert_eq!(
+                query.identity,
+                ActorIdentity::Automation {
+                    name: expected_name.into(),
+                }
+            );
+        }
     }
 }

@@ -194,12 +194,6 @@ impl DefaultConnector {
         }
     }
 
-    pub fn config(&self) -> TransportConfig {
-        match &self.transport {
-            ConnectorTransport::Stdio { config, .. } => TransportConfig::Stdio(config.clone()),
-            ConnectorTransport::Http(config) => TransportConfig::Http(config.clone()),
-        }
-    }
 }
 
 #[async_trait]

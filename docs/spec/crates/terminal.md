@@ -12,7 +12,7 @@
 
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
-| `src/lib.rs` | ~620 | 全部实现与单元测试：`Screen` 行缓冲状态机、`Attrs` / `Cell` / `Line`、`render_lines` / `plain_output`、`KeyEvent` / `Modifiers` 与 `key_to_pty_bytes`、`size_from_bounds(_scaled)` 与几何常量 |
+| `src/lib.rs` | ~770 | 全部实现与单元测试：`Screen` 行缓冲状态机、`Attrs` / `Cell` / `Line`、`render_lines` / `plain_output`、`KeyEvent`（含 `KeyEvent::new` 构造器与 Home/End/Esc/Backspace/Shift+Tab（ESC[Z）具体映射）/ `Modifiers` 与 `key_to_pty_bytes`、`size_from_bounds(_scaled)` 与几何常量 |
 
 ## 3. 对外 API 面
 

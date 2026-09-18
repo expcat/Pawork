@@ -30,7 +30,7 @@
 ## 3. 对外 API 面
 
 **命令执行（process）**
-- `GitRunner::new()`：`git` 路径 + 30s 默认超时 + 新建 `ProcessRuntime`；`with_runtime(runtime, git_path, timeout)` 供测试与定制注入；`Clone` 廉价共享。
+- `GitRunner::new()`：`git` 路径 + 30s 默认超时 + 新建 `ProcessRuntime`；`with_runtime(runtime, git_path, timeout)` 供测试与定制注入；`Clone` 廉价共享；`with_call_count`（测试钩子，供 `repo_info` 固定两次 spawn 断言）。
 - `run(cwd, args, cancel) -> Result<String, GitError>` / `run_with_stderr -> (stdout, stderr)`：输出 lossy UTF-8；非零退出→`GitFailed{code, stderr}`、超时→`Timeout`、取消→`Cancelled`。**不清空环境**（保留用户 git config 与 credential helper）。
 - `validate_position_arg(name, value)`：值以 `-` 开头即 `InvalidPositionArgument{name, value}`。适用于 revision / range / branch 等会被 git 当位置参数解析的值；路径参数不走此校验，改用 `--` 分隔。
 
