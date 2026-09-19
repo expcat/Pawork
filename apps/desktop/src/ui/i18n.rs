@@ -555,6 +555,21 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "subagents.status.completed" => ("Done", "完成"),
         "subagents.status.failed" => ("Failed", "失败"),
         "subagents.status.cancelled" => ("Cancelled", "已取消"),
+        "subagents.refresh_tooltip" => ("Refresh subagent conversations", "刷新子代理对话"),
+        "subagents.panel_empty" => ("No subagent selected", "未选择子代理"),
+        "subagents.open_conversation" => ("Open subagent conversation", "打开子代理对话"),
+        "subagents.panel_empty_desc" => (
+            "Click a subagent in the Activity popover to follow its conversation.",
+            "点击 Activity 浮层中的子代理行，即可查看其对话过程。",
+        ),
+        "subagents.task_from_main" => ("Main agent → subagent", "主代理 → 子代理"),
+        "subagents.result_to_main" => ("Subagent → main agent", "子代理 → 主代理"),
+        "subagents.assistant_label" => ("Subagent", "子代理"),
+        "subagents.thinking_label" => ("Thinking", "思考"),
+        "subagents.load_failed" => (
+            "Could not load subagent conversation",
+            "子代理对话加载失败",
+        ),
         // ── Settings · Advanced ──
         "settings.advanced.title" => ("Advanced", "高级"),
         "settings.advanced.subtitle" => (
@@ -1197,6 +1212,7 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "inspector.tab_terminal" => ("Terminal", "终端"),
         "inspector.tab_resources" => ("Resources", "资源"),
         "inspector.tab_browser" => ("Browser", "浏览器"),
+        "inspector.tab_subagent" => ("Subagents", "子代理"),
         "inspector.browser_hint" => ("Open a website or local preview", "打开网页或本地预览"),
         "browser.address" => ("Website address", "网页地址"),
         "browser.placeholder" => ("Enter a URL or localhost:port", "输入网址或 localhost:端口"),
@@ -1215,6 +1231,10 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "inspector.changes_hint" => ("Inspect file changes and diffs", "查看文件变更与差异"),
         "inspector.terminal_hint" => ("Open a terminal in this project", "在当前项目中新建终端"),
         "inspector.resources_hint" => ("Browse connected MCP resources", "查看已连接的 MCP 资源"),
+        "inspector.subagent_hint" => (
+            "Follow subagent conversations",
+            "查看子代理对话过程",
+        ),
         "inspector.close_tab" => ("Close tab", "关闭标签页"),
         "inspector.panel" => ("Work panel", "工作面板"),
         "inspector.back_to_conversation" => ("Back to conversation", "返回对话"),

@@ -158,6 +158,17 @@ pub enum ControllerEvent {
         session_id: String,
         data: SubagentListData,
     },
+    /// 子代理会话时间线一页（Inspector「子代理」对话栏；session_id 为
+    /// 子会话 id，与主 TimelineLoaded 分流，互不污染）。
+    SubagentTimelineLoaded {
+        session_id: String,
+        page: TimelinePage,
+    },
+    /// 子代理会话时间线分页失败（按子会话 id 归属，避免清错代理）。
+    SubagentTimelineFailed {
+        session_id: String,
+        reason: String,
+    },
     /// auth_start 响应（SET-4）：OAuth 授权等待信息；进度经 AuthChanged
     /// 事件流下发，token 不经过 Desktop。
     AuthStarted {

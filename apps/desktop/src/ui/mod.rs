@@ -20,6 +20,7 @@ mod recovery;
 mod resources;
 mod settings;
 mod shell_layout;
+mod subagent_panel;
 mod task_rail;
 mod terminal_view;
 pub mod text_input;
@@ -546,6 +547,12 @@ pub struct AppView {
     /// Activity 浮层「子智能体」卡列表滚动（限高 + 溢出滚动，ADR-063 浮层
     /// 改进）。
     activity_subagent_scroll: ScrollHandle,
+    /// Activity 浮层内容与子代理行的实测布局；AX 树按真实滚动视口裁剪。
+    activity_popover_layout: ScrollHandle,
+    activity_open_changes_layout: ScrollHandle,
+    /// Inspector「子代理」对话栏滚动（跟随语义与终端一致：脱钩读史、
+    /// 贴底自动重挂）。
+    subagent_conversation_scroll: FollowScroll,
     /// per-session Composer 草稿（不含终端）。无 active session 时走独立槽。
     composer_drafts: HashMap<String, String>,
     no_session_draft: String,
@@ -696,6 +703,12 @@ pub struct AppView {
     changes_refresh_focus: FocusHandle,
     changes_file_focus: BTreeMap<String, FocusHandle>,
     resources_refresh_focus: FocusHandle,
+    subagent_chips_scroll: ScrollHandle,
+    /// 对话栏代理切换 chip 焦点（按 agent_id 懒建；代理随会话失效后遗留
+    /// 条目无副作用，随窗口生命周期回收）。
+    subagent_agent_focus: HashMap<String, FocusHandle>,
+    subagent_refresh_focus: FocusHandle,
+    subagent_back_to_bottom_focus: FocusHandle,
     terminal_back_to_bottom_focus: FocusHandle,
     terminal_close_focus: FocusHandle,
     /// rail 行级焦点句柄（按 RailStop::focus_key 懒建，会话删除后遗留条目
@@ -929,6 +942,9 @@ impl AppView {
             timeline_list_rev: 0,
             timeline_list_count: 0,
             terminal_scroll: FollowScroll::new(),
+            subagent_conversation_scroll: FollowScroll::new(),
+            activity_popover_layout: ScrollHandle::new(),
+            activity_open_changes_layout: ScrollHandle::new(),
             terminal_pending_write: HashSet::new(),
             terminal_queued_write: HashMap::new(),
             terminal_pending_create_workspace: None,
@@ -1081,6 +1097,16 @@ impl AppView {
                 .tab_index(INSPECTOR_TAB_INDEX),
             changes_file_focus: BTreeMap::new(),
             resources_refresh_focus: cx
+                .focus_handle()
+                .tab_stop(true)
+                .tab_index(INSPECTOR_TAB_INDEX),
+            subagent_chips_scroll: ScrollHandle::new(),
+            subagent_agent_focus: HashMap::new(),
+            subagent_refresh_focus: cx
+                .focus_handle()
+                .tab_stop(true)
+                .tab_index(INSPECTOR_TAB_INDEX),
+            subagent_back_to_bottom_focus: cx
                 .focus_handle()
                 .tab_stop(true)
                 .tab_index(INSPECTOR_TAB_INDEX),
@@ -1789,6 +1815,7 @@ impl AppView {
                     .account_mode_pending
                     .clear();
                 self.projection.subagent_activity = Default::default();
+                self.projection.subagent_conversation = Default::default();
                 let stale_reason = format!("connection lost · {reason}");
                 self.handshake_info = None;
                 if self.settings_page == SettingsPage::About {
@@ -1907,29 +1934,56 @@ impl AppView {
                 if had_active_run && self.projection.active_run_id.is_none() {
                     self.refresh_changes(cx);
                 }
-                // Activity 浮层打开时：父会话 subagent.spawned 或 child 会话
-                // Run 终态到达即刷新「子智能体」卡（其余事件不触发查询）。
-                if matches!(self.open_menu, Some(MenuKind::Activity)) {
-                    let spawned = matches!(
-                        &envelope.payload,
-                        AppEvent::Diagnostic { code, .. } if code == "subagent.spawned"
-                    );
-                    let child_terminal = matches!(
+                // 子代理观测：父会话 subagent.spawned / child 会话 Run 终态
+                // 到达即刷新「子智能体」卡（浮层或对话栏打开期间）；对话栏
+                // 始终喂被选子代理的 live 事件，被选子会话终态另触发一次
+                // 权威重查（水合 live 通知缺省的参数 / 用量 / 终态）。
+                let subagent_panel_open =
+                    self.inspector_open && self.inspector_tab == InspectorTab::Subagent;
+                let spawned = matches!(
+                    &envelope.payload,
+                    AppEvent::Diagnostic { code, .. } if code == "subagent.spawned"
+                );
+                let child_terminal = matches!(
+                    &envelope.stream,
+                    pawork_client::EventStream::Session(id) if id.as_str().starts_with("child-")
+                ) && matches!(
+                    envelope.payload,
+                    AppEvent::RunChanged { ref state, .. }
+                        if matches!(
+                            state,
+                            pawork_client::RunState::Completed
+                                | pawork_client::RunState::Failed
+                                | pawork_client::RunState::Cancelled
+                        )
+                );
+                if subagent_panel_open {
+                    self.subagent_conversation_scroll.content_arriving();
+                }
+                let selected_agent_live = self
+                    .projection
+                    .subagent_conversation
+                    .apply_live_event(&envelope);
+                if selected_agent_live && subagent_panel_open {
+                    self.subagent_conversation_scroll.follow_new_content();
+                }
+                let selected_child_terminal = child_terminal
+                    && matches!(
                         &envelope.stream,
-                        pawork_client::EventStream::Session(id) if id.as_str().starts_with("child-")
-                    ) && matches!(
-                        envelope.payload,
-                        AppEvent::RunChanged { ref state, .. }
-                            if matches!(
-                                state,
-                                pawork_client::RunState::Completed
-                                    | pawork_client::RunState::Failed
-                                    | pawork_client::RunState::Cancelled
-                            )
+                        pawork_client::EventStream::Session(id)
+                            if Some(id.as_str())
+                                == self.projection.subagent_conversation.agent_id.as_deref()
                     );
-                    if spawned || child_terminal {
-                        self.load_activity_subagents();
+                if selected_child_terminal {
+                    if let Some(agent_id) = self.projection.subagent_conversation.agent_id.clone() {
+                        self.projection.subagent_conversation.begin_loading();
+                        self.controller.load_subagent_timeline(agent_id);
                     }
+                }
+                if (spawned || child_terminal)
+                    && (subagent_panel_open || matches!(self.open_menu, Some(MenuKind::Activity)))
+                {
+                    self.load_activity_subagents();
                 }
                 // Live notifications omit persisted arguments, final output and usage.
                 // Merge history after completion; the reducer enriches already-seen rows.
@@ -2357,6 +2411,19 @@ impl AppView {
                     .subagent_activity
                     .apply_loaded(&session_id, data);
             }
+            ControllerEvent::SubagentTimelineLoaded { session_id, page } => {
+                self.projection
+                    .subagent_conversation
+                    .apply_page(&session_id, &page);
+                if self.inspector_open && self.inspector_tab == InspectorTab::Subagent {
+                    self.subagent_conversation_scroll.follow_new_content();
+                }
+            }
+            ControllerEvent::SubagentTimelineFailed { session_id, reason } => {
+                self.projection
+                    .subagent_conversation
+                    .apply_failed(&session_id, &reason);
+            }
             ControllerEvent::AuthStarted { provider_id, data } => {
                 self.settings_copied_auth = None;
                 // SET-4：登记 OAuth 等待信息并置 Connecting；进度由
@@ -2655,10 +2722,17 @@ impl AppView {
         self.timeline_following = true;
         // 会话切换：清空旧会话 diff 状态并重新拉取（拉取时机之一）。
         self.changes.reset_for_session();
+        // 子代理观测（浮层卡 + 对话栏）按会话绑定：切走即清空，不跨会话
+        // 展示旧会话的子代理。
+        self.projection.subagent_activity = Default::default();
+        self.projection.subagent_conversation = Default::default();
         self.controller.open_session(session_id);
         self.refresh_changes(cx);
         if self.inspector_open && self.inspector_tab == InspectorTab::Resources {
             self.refresh_resources(cx);
+        }
+        if self.inspector_open && self.inspector_tab == InspectorTab::Subagent {
+            self.refresh_subagent_conversation();
         }
         self.restore_composer_draft(cx);
         cx.notify();
@@ -4015,6 +4089,7 @@ impl AppView {
             InspectorTab::Files => self.ensure_files(cx),
             InspectorTab::Changes => self.refresh_changes(cx),
             InspectorTab::Resources => self.refresh_resources(cx),
+            InspectorTab::Subagent => self.refresh_subagent_conversation(),
             InspectorTab::Terminal => {
                 if self.projection.terminal.session_id.is_none()
                     && self.terminal_notice_text().is_none()
@@ -4055,6 +4130,52 @@ impl AppView {
         self.pending_inspector_focus = Some(InspectorFocusTarget::SelectedTab);
         self.refresh_changes(cx);
         cx.notify();
+    }
+
+    /// Activity 浮层子代理行点击 / AX Press：关闭浮层，展开 Inspector 并
+    /// 切到「子代理」对话栏，选中该代理并拉取其会话时间线。
+    pub(crate) fn on_activity_open_subagent(
+        &mut self,
+        agent_id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.close_open_menu(cx);
+        if !self.inspector_open {
+            self.inspector_open = true;
+            let large_text = self.text_scale == font::TextScale::Percent150;
+            if shell_layout::can_fit_side_inspector(window.viewport_size().width, large_text) {
+                self.timeline_changed();
+            }
+        }
+        self.inspector_tab = InspectorTab::Subagent;
+        self.remember_inspector_tab(InspectorTab::Subagent);
+        self.pending_inspector_focus = Some(InspectorFocusTarget::SelectedTab);
+        self.select_subagent_agent(agent_id, cx);
+        cx.notify();
+    }
+
+    /// 选中子代理并拉取其对话（浮层行点击与对话栏切换器共用入口）。id
+    /// 变化即整体复位旧代理时间线；同 id 重选也重查（终态水合同路径）。
+    pub(crate) fn select_subagent_agent(&mut self, agent_id: &str, cx: &mut Context<Self>) {
+        self.projection.subagent_conversation.select_agent(agent_id);
+        self.refresh_subagent_conversation();
+        cx.notify();
+    }
+
+    /// 子代理对话栏数据刷新：被选代理的会话时间线分页 + Activity 列表
+    ///（状态 / 结果权威口径同源）。断线时不派出，保留只读旧内容。
+    pub(crate) fn refresh_subagent_conversation(&mut self) {
+        self.load_activity_subagents();
+        if let Some(agent_id) = self.projection.subagent_conversation.agent_id.clone() {
+            if matches!(
+                self.projection.connection,
+                ConnectionState::Connected { .. }
+            ) {
+                self.projection.subagent_conversation.begin_loading();
+                self.controller.load_subagent_timeline(agent_id);
+            }
+        }
     }
 
     /// Run 摘要卡「Review changes」：展开 Inspector 并切到 Changes 页

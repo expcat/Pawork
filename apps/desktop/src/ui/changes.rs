@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 
-use gpui::{div, prelude::*, px, Context, MouseDownEvent, ScrollHandle};
+use gpui::{div, prelude::*, px, Context, MouseDownEvent, ScrollHandle, SharedString};
 
 use crate::controller::{
     DiffFileDetail, DiffFileSummary, DiffLineDetail, DiffLineKind, GitDiffInfo,
@@ -892,6 +892,8 @@ impl AppView {
             metrics::ACTIVITY_POPOVER_HEIGHT * self.text_scale.rem_pixels() / font::BASE_REM_PIXELS;
         // 字号同时放大 rem 间距；外框还需容纳 MenuPanel 的 padding 与 border。
         let panel_height = content_height + subagent_extra + 2.0 * (metrics::MENU_PADDING + 1.0);
+        let popover_layout = self.activity_popover_layout.clone();
+        let open_changes_layout = self.activity_open_changes_layout.clone();
         let panel = MenuPanel::new("activity-popover")
             .max_height(panel_height + if mismatch.is_some() { 40.0 } else { 0.0 })
             .dismiss_on_outside(cx.listener(|view, event: &MouseDownEvent, _window, cx| {
@@ -899,8 +901,10 @@ impl AppView {
             }))
             .child(
                 div()
+                    .id("activity-popover-content")
                     .w(px(metrics::ACTIVITY_POPOVER_WIDTH))
                     .h(px(content_height + subagent_extra))
+                    .track_scroll(&popover_layout)
                     .flex()
                     .flex_col()
                     .gap_2()
@@ -912,7 +916,7 @@ impl AppView {
                                 .color(dark().text.primary),
                         ),
                     )
-                    .child(self.activity_subagent_card(subagent_bound))
+                    .child(self.activity_subagent_card(subagent_bound, cx))
                     .child(
                         div()
                             .flex()
@@ -929,12 +933,17 @@ impl AppView {
                                     .color(dark().text.secondary),
                             )
                             .child(
-                                MenuRow::new("activity-open-changes")
-                                    .label(summary)
-                                    .highlighted(self.menu_highlight_effective(0) == 0)
-                                    .on_click(cx.listener(|view, _event, window, cx| {
-                                        view.on_activity_open_changes(window, cx);
-                                    })),
+                                div()
+                                    .id("activity-open-changes-layout")
+                                    .track_scroll(&open_changes_layout)
+                                    .child(
+                                        MenuRow::new("activity-open-changes")
+                                            .label(summary)
+                                            .highlighted(self.menu_highlight_effective(0) == 0)
+                                            .on_click(cx.listener(|view, _event, window, cx| {
+                                                view.on_activity_open_changes(window, cx);
+                                            })),
+                                    ),
                             ),
                     ),
             );
@@ -955,7 +964,11 @@ impl AppView {
     /// Activity 浮层「子智能体」卡（展示型，参考 Codex 信息卡）：标题 +
     /// 运行/完成汇总 + 每代理标题与状态。数据只在列表绑定当前活动会话
     /// 时呈现；无活动会话 / 加载中 / 空态如实展示，不伪造数据。
-    fn activity_subagent_card(&self, bound: bool) -> gpui::AnyElement {
+    fn activity_subagent_card(
+        &self,
+        bound: bool,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
         let activity = &self.projection.subagent_activity;
         let mut card = div()
             .flex()
@@ -1008,8 +1021,9 @@ impl AppView {
                 )
                 .into_any_element();
         }
-        // 运行中 / 等待中置顶（projection 稳定排序）；每代理单行：标题 +
-        // 推理强度（ADR-063，仅 spawn 解析出显式值时显示）+ 状态。
+        // 运行中 / 等待中置顶（projection 稳定排序）；每代理单行可点击
+        // （进入右侧「子代理」对话栏）：标题 + 生效模型 + 推理强度
+        //（ADR-063，仅 spawn 解析出显式值时显示）+ 状态。
         let mut list = div()
             .id("activity-subagent-list")
             .max_h(px(
@@ -1021,7 +1035,19 @@ impl AppView {
             .flex_col();
         for agent in activity.display_agents() {
             let status = subagent_status_label(&agent.status);
+            let agent_id = agent.agent_id.clone();
             let mut row = div()
+                .id(SharedString::from(format!(
+                    "activity-subagent-{}",
+                    agent.agent_id
+                )))
+                .flex_none()
+                .cursor_pointer()
+                .rounded(px(4.0))
+                .hover(|style| style.bg(dark().surface.hover))
+                .on_click(cx.listener(move |view, _event, window, cx| {
+                    view.on_activity_open_subagent(&agent_id, window, cx);
+                }))
                 .flex()
                 .flex_row()
                 .items_center()
@@ -1040,6 +1066,13 @@ impl AppView {
                         ),
                     ),
                 );
+            // 名称后跟生效模型：一眼可辨该代理用哪个模型（不截断、XS 三级色，
+            // 与强度 / 状态同族元信息）。
+            row = row.child(
+                Label::new(agent.model_id.clone())
+                    .size(font::XS)
+                    .color(dark().text.tertiary),
+            );
             if let Some(effort) = &agent.effort {
                 row = row.child(
                     Label::new(effort.clone())
@@ -1059,11 +1092,11 @@ impl AppView {
 }
 
 /// 子代理卡：单行高与浮层同时可见行数（超出滚动）。
-const ACTIVITY_SUBAGENT_ROW_HEIGHT: f32 = 20.0;
+pub(super) const ACTIVITY_SUBAGENT_ROW_HEIGHT: f32 = 20.0;
 const ACTIVITY_SUBAGENT_VISIBLE_ROWS: usize = 5;
 
 /// 子代理状态 → 本地显示名（未知 wire 状态保守显示为破折号）。
-fn subagent_status_label(status: &str) -> &'static str {
+pub(super) fn subagent_status_label(status: &str) -> &'static str {
     match status {
         "running" => t("subagents.status.running"),
         "waiting" => t("subagents.status.waiting"),

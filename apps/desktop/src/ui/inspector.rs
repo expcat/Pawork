@@ -32,17 +32,19 @@ pub(super) enum InspectorTab {
     Resources,
     Browser,
     Files,
+    Subagent,
     #[default]
     Home,
 }
 
 impl InspectorTab {
-    pub(super) const ALL: [Self; 5] = [
+    pub(super) const ALL: [Self; 6] = [
         Self::Changes,
         Self::Terminal,
         Self::Resources,
         Self::Browser,
         Self::Files,
+        Self::Subagent,
     ];
 
     pub(super) fn label(self) -> &'static str {
@@ -53,6 +55,7 @@ impl InspectorTab {
             Self::Resources => t("inspector.tab_resources"),
             Self::Browser => t("inspector.tab_browser"),
             Self::Files => t("inspector.tab_files"),
+            Self::Subagent => t("inspector.tab_subagent"),
         }
     }
 
@@ -64,6 +67,7 @@ impl InspectorTab {
             Self::Resources => "inspector-tab-resources",
             Self::Browser => "inspector-tab-browser",
             Self::Files => "inspector-tab-files",
+            Self::Subagent => "inspector-tab-subagent",
         }
     }
 
@@ -75,6 +79,7 @@ impl InspectorTab {
             Self::Resources => "inspector-menu-resources",
             Self::Browser => "inspector-menu-browser",
             Self::Files => "inspector-menu-files",
+            Self::Subagent => "inspector-menu-subagent",
         }
     }
 }
@@ -115,6 +120,7 @@ impl InspectorTab {
             Self::Resources => Icon::Resources,
             Self::Browser => Icon::Network,
             Self::Files => Icon::File,
+            Self::Subagent => Icon::Subagents,
             Self::Home => Icon::Inspector,
         }
     }
@@ -126,6 +132,7 @@ impl InspectorTab {
             Self::Resources => "inspector.resources_hint",
             Self::Browser => "inspector.browser_hint",
             Self::Files => "inspector.files_hint",
+            Self::Subagent => "inspector.subagent_hint",
             Self::Home => "inspector.home_hint",
         })
     }
@@ -287,6 +294,9 @@ impl AppView {
             InspectorTab::Resources => self.resources_element(cx).into_any_element(),
             InspectorTab::Browser => self.browser_element(cx).into_any_element(),
             InspectorTab::Files => self.files_element(window, cx).into_any_element(),
+            InspectorTab::Subagent => {
+                self.subagent_conversation_element(window, cx).into_any_element()
+            }
         };
         let mut panel = if placement.is_center() {
             Panel::fill()

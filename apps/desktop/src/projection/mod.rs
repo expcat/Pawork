@@ -37,7 +37,8 @@ pub use settings::{
     ProviderAuthStatusEntry, ProviderCatalogState, ProviderModelWrite, ProviderStatusLabels,
     RoleDefaultsData, SettingsGeneralState, SettingsPermissionsState, SettingsProvidersState,
     SettingsRole, SettingsSubagentsState, SettingsTerminalState, SubagentActivityState,
-    SubagentModelRule, SubagentSettingsData, TerminalSettingsData,
+    SubagentConversationState, SubagentInfo, SubagentModelRule, SubagentSettingsData,
+    TerminalSettingsData,
 };
 pub(crate) use terminal::TERMINAL_CWD_UNKNOWN;
 pub use terminal::{TerminalAvailability, TerminalState};
@@ -84,6 +85,8 @@ pub struct DesktopProjection {
     pub settings_subagents: SettingsSubagentsState,
     /// Activity 浮层「子智能体」卡（Host `subagent_list`；按 session 绑定）。
     pub subagent_activity: SubagentActivityState,
+    /// Inspector「子代理」对话栏（被选子代理的独立时间线 reducer）。
+    pub subagent_conversation: SubagentConversationState,
     pub active_runs: Vec<ActiveRun>,
     pub active_run_started_at_ms: Option<u64>,
     pub resume: ResumeState,

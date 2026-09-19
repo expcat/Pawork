@@ -1098,6 +1098,64 @@ fn terminal_entry(sequence: u64, boundary: ForkBoundary) -> TimelineEntry {
 }
 
 #[test]
+fn subagent_conversation_selects_pages_and_filters_live_events() {
+    let mut conversation = SubagentConversationState::default();
+    assert!(conversation.select_agent("child-1"));
+    conversation.begin_loading();
+    let child_event = |sequence: u64, payload: Value| {
+        serde_json::from_value(json!({
+            "api_version": { "major": 1, "minor": 1 },
+            "instance_id": "instance-1",
+            "event_id": format!("app-{sequence}"),
+            "global_sequence": sequence,
+            "stream": { "type": "session", "id": "child-1" },
+            "stream_sequence": sequence,
+            "timestamp": 1_000 + sequence,
+            "source": { "type": "core" },
+            "payload": payload
+        }))
+        .expect("decode child AppEventEnvelope")
+    };
+    let history = page(
+        vec![
+            history_item(1, "user_message", json!({ "text": "Fix the failing test" })),
+            history_item(
+                2,
+                "assistant_message",
+                json!({ "text": "Working on it", "message_id": "m-child-1" })
+            ),
+        ],
+        true,
+    );
+    conversation.apply_page("child-1", &history);
+    assert!(!conversation.loading);
+    assert_eq!(conversation.timeline.entries.len(), 2);
+    // 同页重放（终态后的权威重查）：去重，不双份。
+    conversation.apply_page("child-1", &history);
+    assert_eq!(conversation.timeline.entries.len(), 2);
+    // 其他会话的事件与非被选代理的页面 fail-closed 忽略。
+    assert!(!conversation.apply_live_event(&assistant_delta(9, "m-x", "noise")));
+    conversation.apply_page("child-2", &history);
+    assert_eq!(conversation.timeline.entries.len(), 2);
+    // 子会话 live 事件按 stream 过滤后喂独立 reducer。
+    let delta = child_event(
+        5,
+        json!({
+            "type": "assistant_delta",
+            "data": { "run_id": "r-child", "message_id": "m-child-2", "delta": "done" }
+        }),
+    );
+    assert!(conversation.apply_live_event(&delta));
+    assert_eq!(conversation.timeline.entries.len(), 3);
+    conversation.apply_failed("child-1", "connection lost");
+    assert_eq!(conversation.error.as_deref(), Some("connection lost"));
+    // 换代理即整体复位。
+    assert!(conversation.select_agent("child-2"));
+    assert!(conversation.timeline.entries.is_empty());
+    assert_eq!(conversation.error, None);
+}
+
+#[test]
 fn snapshot_rebuilds_sessions_and_events_rebuild_timeline() {
     let snapshot = snapshot_with_sessions(vec![
         session_entry("s-old", "Old", 10),

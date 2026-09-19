@@ -133,6 +133,83 @@ impl DesktopController {
         });
     }
 
+    /// 分页加载子代理会话时间线（Inspector「子代理」对话栏）。复用
+    /// SessionGet 分页链，但回执走 SubagentTimeline* 事件流：主 Timeline
+    /// 只认活动会话，子会话页由对话栏状态按 agent_id 归属，互不污染。
+    pub fn load_subagent_timeline(&self, session_id: String) {
+        let Some(client) = self.current_client() else {
+            self.emit_reliable(ControllerEvent::SubagentTimelineFailed {
+                session_id,
+                reason: "not connected".into(),
+            });
+            return;
+        };
+        let events = self.event_sender();
+        self.runtime.spawn(async move {
+            let mut after: Option<u64> = None;
+            for _ in 0..MAX_PAGES {
+                let query = session_get_query(&session_id, after);
+                let response = match client
+                    .query(query, command_source(), actor_identity())
+                    .await
+                {
+                    Ok(response) => response,
+                    Err(error) => {
+                        let _ = events
+                            .send(ControllerEvent::SubagentTimelineFailed {
+                                session_id,
+                                reason: error.to_string(),
+                            })
+                            .await;
+                        return;
+                    }
+                };
+                let page = match timeline_page(&response) {
+                    Ok(Some(page)) => page,
+                    Ok(None) => {
+                        let _ = events
+                            .send(ControllerEvent::SubagentTimelineFailed {
+                                session_id,
+                                reason: "session_get response carried no timeline page".into(),
+                            })
+                            .await;
+                        return;
+                    }
+                    Err(reason) => {
+                        let _ = events
+                            .send(ControllerEvent::SubagentTimelineFailed {
+                                session_id,
+                                reason,
+                            })
+                            .await;
+                        return;
+                    }
+                };
+                let complete = page.complete;
+                after = page.next_sequence;
+                if events
+                    .send(ControllerEvent::SubagentTimelineLoaded {
+                        session_id: session_id.clone(),
+                        page,
+                    })
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+                if complete {
+                    return;
+                }
+            }
+            let _ = events
+                .send(ControllerEvent::SubagentTimelineFailed {
+                    session_id,
+                    reason: format!("timeline exceeded {MAX_PAGES} pages"),
+                })
+                .await;
+        });
+    }
+
     /// 新建 session：使用 SessionCreate 的 session_view 回执定位新会话，
     /// snapshot 只负责刷新列表，不按更新时间猜测创建结果。
     /// ADR-054 D1：workspace_id = None 直建无归属会话（All projects 下的

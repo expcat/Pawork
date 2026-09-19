@@ -46,10 +46,8 @@ pub(crate) const ROW_HEIGHT: f32 = 32.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct ActivityPopoverAxGeometry {
-    frame: AxRect,
     heading: AxRect,
     subagents: AxRect,
-    open_changes: AxRect,
 }
 
 fn header_action_ax_rect(frame: AxRect) -> AxRect {
@@ -104,17 +102,9 @@ fn activity_popover_ax_geometry(
         heading.width,
         3.0 * font::XS.0 * rem_px,
     );
-    let open_changes = AxRect::new(
-        heading.x,
-        subagents.y + subagents.height + 0.25 * rem_px,
-        heading.width,
-        metrics::MENU_ROW_HEIGHT,
-    );
     ActivityPopoverAxGeometry {
-        frame,
         heading,
         subagents,
-        open_changes,
     }
 }
 
@@ -614,6 +604,10 @@ impl AppView {
                 self.open_inspector_tool(InspectorTab::Browser, cx);
                 self.close_open_menu(cx);
             }
+            "inspector-tab-subagent" => {
+                self.open_inspector_tool(InspectorTab::Subagent, cx);
+                self.close_open_menu(cx);
+            }
             "inspector-menu-changes" => {
                 self.launch_inspector_tool(InspectorTab::Changes, cx);
                 self.close_open_menu(cx);
@@ -633,6 +627,10 @@ impl AppView {
             }
             "inspector-menu-browser" => {
                 self.launch_inspector_tool(InspectorTab::Browser, cx);
+                self.close_open_menu(cx);
+            }
+            "inspector-menu-subagent" => {
+                self.launch_inspector_tool(InspectorTab::Subagent, cx);
                 self.close_open_menu(cx);
             }
             other if other.starts_with("inspector-open-") || other.starts_with("file-tab-") => {
@@ -662,6 +660,20 @@ impl AppView {
             "terminal-back-to-bottom" => self.terminal_scroll.jump_to_bottom(),
             "terminal-close" => self.on_close_terminal(window, cx),
             "activity-open-changes" => self.on_activity_open_changes(window, cx),
+            // 浮层子代理行（identifier 含 agent_id；与 render 行同源）。
+            other if other.starts_with("activity-subagent-") => {
+                let id = other.strip_prefix("activity-subagent-").unwrap_or("");
+                let agent = self
+                    .projection
+                    .subagent_activity
+                    .agents
+                    .iter()
+                    .find(|agent| agent.agent_id == id)
+                    .cloned();
+                if let Some(agent) = agent {
+                    self.on_activity_open_subagent(&agent.agent_id, window, cx);
+                }
+            }
             _ => {
                 if self.on_settings_quota_action(identifier, cx) {
                     return true;
@@ -1715,40 +1727,99 @@ impl AppView {
                 .action(AxAction::Press),
             );
             if popover_visible {
-                let geometry =
-                    activity_popover_ax_geometry(frame, trigger_rect, f32::from(window.rem_size()));
-                header = header.child(
+                let rem_px = f32::from(window.rem_size());
+                let geometry = activity_popover_ax_geometry(frame, trigger_rect, rem_px);
+                let popover_bounds = self.activity_popover_layout.bounds();
+                let menu_inset = metrics::MENU_PADDING + 1.0;
+                let popover_frame = AxRect::new(
+                    f32::from(popover_bounds.origin.x) - menu_inset,
+                    f32::from(popover_bounds.origin.y) - menu_inset,
+                    f32::from(popover_bounds.size.width) + 2.0 * menu_inset,
+                    f32::from(popover_bounds.size.height) + 2.0 * menu_inset,
+                );
+                let mut popover = AxNode::new(
+                    "activity-popover",
+                    AxRole::Group,
+                    t("changes.tab_activity"),
+                    popover_frame,
+                )
+                .child(AxNode::new(
+                    "activity-changes-heading",
+                    AxRole::StaticText,
+                    t("changes.tab_changes"),
+                    geometry.heading,
+                ))
+                .child(
                     AxNode::new(
-                        "activity-popover",
-                        AxRole::Group,
-                        t("changes.tab_activity"),
-                        geometry.frame,
-                    )
-                    .child(AxNode::new(
-                        "activity-changes-heading",
+                        "activity-subagents",
                         AxRole::StaticText,
-                        t("changes.tab_changes"),
-                        geometry.heading,
-                    ))
-                    .child(
-                        AxNode::new(
-                            "activity-subagents",
-                            AxRole::StaticText,
-                            t("subagents.title"),
-                            geometry.subagents,
-                        )
-                        .value(self.activity_subagent_ax_value()),
+                        t("subagents.title"),
+                        geometry.subagents,
                     )
-                    .child(
+                    .value(self.activity_subagent_ax_value()),
+                );
+                // 子代理行按钮发布真实布局，并按列表滚动视口裁剪；
+                // Press 进入「子代理」对话栏。
+                let scroll_bounds = self.activity_subagent_scroll.bounds();
+                let scroll_offset = self.activity_subagent_scroll.offset();
+                for (ix, agent) in self
+                    .projection
+                    .subagent_activity
+                    .display_agents()
+                    .into_iter()
+                    .enumerate()
+                {
+                    let Some(mut row) = self.activity_subagent_scroll.bounds_for_item(ix) else {
+                        continue;
+                    };
+                    row.origin += scroll_offset;
+                    let row = row.intersect(&scroll_bounds);
+                    if row.size.width <= gpui::px(0.0) || row.size.height <= gpui::px(0.0) {
+                        continue;
+                    }
+                    let rect = AxRect::new(
+                        row.origin.x.into(),
+                        row.origin.y.into(),
+                        row.size.width.into(),
+                        row.size.height.into(),
+                    );
+                    let mut value = format!("{} · {}", agent.title, agent.model_id);
+                    if let Some(effort) = &agent.effort {
+                        value.push_str(" · ");
+                        value.push_str(effort);
+                    }
+                    value.push_str(" · ");
+                    value.push_str(crate::ui::changes::subagent_status_label(&agent.status));
+                    popover = popover.child(
                         AxNode::new(
-                            "activity-open-changes",
+                            format!("activity-subagent-{}", agent.agent_id),
                             AxRole::Button,
-                            "Open changes",
-                            geometry.open_changes,
+                            t("subagents.open_conversation"),
+                            rect,
                         )
-                        .value(self.changes.activity_summary())
-                        .focused(self.menu_highlight_effective(0) == 0)
+                        .value(value)
                         .action(AxAction::Press),
+                    );
+                }
+                header = header.child(
+                    popover.child(
+                        {
+                            let bounds = self.activity_open_changes_layout.bounds();
+                            AxNode::new(
+                                "activity-open-changes",
+                                AxRole::Button,
+                                "Open changes",
+                                AxRect::new(
+                                    bounds.origin.x.into(),
+                                    bounds.origin.y.into(),
+                                    bounds.size.width.into(),
+                                    bounds.size.height.into(),
+                                ),
+                            )
+                            .value(self.changes.activity_summary())
+                            .focused(self.menu_highlight_effective(0) == 0)
+                            .action(AxAction::Press)
+                        },
                     ),
                 );
             }
@@ -1800,9 +1871,23 @@ impl AppView {
             return t("subagents.empty").to_string();
         }
         let (running, done) = activity.counts();
-        t("subagents.summary")
+        let mut value = t("subagents.summary")
             .replacen("{}", &running.to_string(), 1)
-            .replacen("{}", &done.to_string(), 1)
+            .replacen("{}", &done.to_string(), 1);
+        // 每代理一行摘要（与 render 行同序同字段：名称 + 模型 + 强度 + 状态）。
+        for agent in activity.display_agents() {
+            value.push('\n');
+            value.push_str(&agent.title);
+            value.push_str(" · ");
+            value.push_str(&agent.model_id);
+            if let Some(effort) = &agent.effort {
+                value.push_str(" · ");
+                value.push_str(effort);
+            }
+            value.push_str(" · ");
+            value.push_str(crate::ui::changes::subagent_status_label(&agent.status));
+        }
+        value
     }
 
     fn timeline_ax(&self, window: &Window, frame: AxRect) -> AxNode {
@@ -3186,6 +3271,9 @@ impl AppView {
             InspectorTab::Resources => inspector.child(self.resources_ax(window, body)),
             InspectorTab::Browser => inspector.child(self.browser_ax(window, cx, body)),
             InspectorTab::Files => inspector.child(self.files_ax(window, cx, body)),
+            InspectorTab::Subagent => {
+                inspector.child(crate::ui::subagent_panel::subagent_ax(self, body))
+            }
         };
         inspector
     }
@@ -4743,10 +4831,9 @@ mod tests {
         assert_eq!(crate::ui::theme::metrics::COMPOSER_SEND_SIZE, 36.0);
     }
 
-    /// R6 Wave A：折叠态 Header Activity 的 AX 触发器与 Popover 锚点公式
-    /// 必须钉住生产 render 所用的 40×37 槽、右侧 25px inset、8px gap、
-    /// 320×144 基准内容 + 96px 子代理卡、面板内边距，以及大字号下的
-    /// 摘要命中范围。
+    /// R6 Wave A：折叠态 Header Activity 的 AX 触发器与 Popover 标题 /
+    /// 摘要锚点公式钉住生产 render 所用的 40×37 槽、右侧 25px inset、
+    /// 8px gap 与面板内边距；浮层和行动作本身发布实测布局。
     #[test]
     fn activity_header_ax_geometry_matches_render_anchor_contract() {
         let header = AxRect::new(240.0, 0.0, 840.0, metrics::HEADER_HEIGHT);
@@ -4757,18 +4844,80 @@ mod tests {
         assert_eq!(toggle, AxRect::new(972.0, 13.5, 40.0, 37.0));
 
         let popover = activity_popover_ax_geometry(header, trigger, 16.0);
-        assert_eq!(popover.frame, AxRect::new(718.0, 58.5, 338.0, 258.0));
         assert_eq!(popover.heading, AxRect::new(752.0, 125.5, 270.0, 18.0));
         assert_eq!(popover.subagents, AxRect::new(752.0, 147.5, 270.0, 33.0));
-        assert_eq!(
-            popover.open_changes,
-            AxRect::new(752.0, 184.5, 270.0, metrics::MENU_ROW_HEIGHT)
-        );
         let large = activity_popover_ax_geometry(header, trigger, 24.0);
-        assert_eq!(large.frame.height, 378.0);
-        assert!(
-            large.open_changes.y + large.open_changes.height < large.frame.y + large.frame.height
-        );
+        assert_eq!(large.subagents.height, 49.5);
+    }
+
+    /// GUI 1.20：Activity 子代理行使用真实列表布局，滚动裁剪与 Open
+    /// changes 命中区互不重叠。
+    #[gpui::test]
+    fn activity_subagent_ax_uses_list_bounds_and_clips_scrolling(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let platform = std::sync::Arc::new(crate::platform::Platform::new());
+        let socket = std::env::temp_dir().join("gui120-activity-subagents.sock");
+        let (view, cx) = cx.add_window_view(|_, cx| AppView::new(platform, socket, None, cx));
+        cx.simulate_resize(gpui::size(gpui::px(1440.0), gpui::px(1024.0)));
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.active_session_id = Some("parent".into());
+                view.projection.subagent_activity.session_id = Some("parent".into());
+                view.projection.subagent_activity.agents = (0..7)
+                    .map(|ix| crate::projection::SubagentInfo {
+                        agent_id: format!("child-{ix}"),
+                        session_id: format!("child-{ix}"),
+                        parent_run_id: "parent-run".into(),
+                        title: format!("Agent {ix}"),
+                        provider_id: "test-provider".into(),
+                        model_id: "test-model".into(),
+                        status: "running".into(),
+                        result: None,
+                        effort: None,
+                    })
+                    .collect();
+                view.toggle_menu(MenuKind::Activity, None, cx);
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+
+        let open_changes = cx.update(|window, cx| {
+            let view = view.read(cx);
+            let tree = view.accessibility_tree(window, cx);
+            tree.validate().unwrap();
+            let rows: Vec<_> = tree
+                .find("activity-popover")
+                .unwrap()
+                .children
+                .iter()
+                .filter(|node| node.identifier.starts_with("activity-subagent-"))
+                .collect();
+            assert_eq!(rows.len(), 5);
+            let open_changes = tree.find("activity-open-changes").unwrap();
+            for row in rows {
+                assert!(!ax_rects_overlap(row.bounds, open_changes.bounds));
+            }
+            open_changes.bounds
+        });
+        assert!(open_changes.width > 0.0 && open_changes.height > 0.0);
+
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.activity_subagent_scroll
+                    .set_offset(gpui::point(gpui::px(0.0), gpui::px(-20.0)));
+                cx.notify();
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let tree = view.read(cx).accessibility_tree(window, cx);
+            assert!(tree.find("activity-subagent-child-0").is_none());
+            assert!(tree.find("activity-subagent-child-4").is_some());
+            assert!(tree.find("activity-subagent-child-5").is_some());
+        });
     }
 
     /// P4 片 3：审批卡高度随 reason / detail 行数变化（公式与

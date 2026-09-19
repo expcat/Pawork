@@ -6,6 +6,9 @@ use std::ops::{Deref, DerefMut};
 
 use serde_json::Value;
 
+use pawork_client::projection::TimelineProjection;
+use pawork_client::{AppEventEnvelope, TimelinePage};
+
 use crate::ui::i18n::t;
 
 use super::session::ModelEntry;
@@ -851,6 +854,72 @@ impl SubagentActivityState {
             !matches!(agent.status.as_str(), "running" | "waiting")
         });
         agents
+    }
+}
+
+/// Inspector「子代理」对话栏状态。绑定被选中的子代理（agent_id 即
+/// 子会话 id，见 subagent_list 权威行）；时间线语义（去重 / 有序插入 /
+/// 合并锚点）与主 Timeline 一样委托 protocol reducer 的独立实例，live
+/// 事件按子会话 stream 过滤后喂入。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SubagentConversationState {
+    /// 当前展示的子代理（== 子会话 id）；None = 未选择。
+    pub agent_id: Option<String>,
+    /// session_get 分页进行中（首屏骨架与防重复拉取）。
+    pub loading: bool,
+    /// 分页 / 断连失败的如实原因；成功页到达即清除。
+    pub error: Option<String>,
+    /// 子代理自身会话的时间线（独立 reducer 实例，不与主 Timeline 共享）。
+    pub timeline: TimelineProjection,
+}
+
+impl SubagentConversationState {
+    /// 选中子代理：id 变化即整体复位（旧代理时间线不跨代理保留）。
+    pub fn select_agent(&mut self, agent_id: &str) -> bool {
+        if self.agent_id.as_deref() == Some(agent_id) {
+            return false;
+        }
+        *self = Self {
+            agent_id: Some(agent_id.to_string()),
+            ..Default::default()
+        };
+        true
+    }
+
+    pub fn begin_loading(&mut self) {
+        self.loading = true;
+        self.error = None;
+    }
+
+    /// 落地一页子代理会话时间线（session_id 必须仍是被选代理）。
+    pub fn apply_page(&mut self, agent_id: &str, page: &TimelinePage) {
+        if self.agent_id.as_deref() != Some(agent_id) {
+            return;
+        }
+        self.loading = false;
+        self.error = None;
+        for item in &page.items {
+            self.timeline.apply_item(item);
+        }
+    }
+
+    pub fn apply_failed(&mut self, agent_id: &str, reason: &str) {
+        if self.agent_id.as_deref() != Some(agent_id) {
+            return;
+        }
+        self.loading = false;
+        self.error = Some(reason.to_string());
+    }
+
+    /// live 子代理事件落地；返回时间线是否变化（render 同源判定）。
+    /// 终态 / 历史水合由调用方按主 Timeline 同口径触发重查。
+    pub fn apply_live_event(&mut self, envelope: &AppEventEnvelope) -> bool {
+        if let pawork_client::EventStream::Session(session) = &envelope.stream {
+            if self.agent_id.as_deref() == Some(session.as_str()) {
+                return self.timeline.apply_event(envelope);
+            }
+        }
+        false
     }
 }
 
