@@ -630,24 +630,6 @@ mod tests {
     }
 
     #[test]
-    fn platform_environment_allowlist_contains_runtime_basics() {
-        // 单一来源：白名单取自 pawork-exec 导出的权威清单。
-        let allowlist = default_env_allowlist();
-        assert!(allowlist.iter().any(|name| name == "PATH"));
-        #[cfg(windows)]
-        for name in [
-            "SYSTEMROOT",
-            "TEMP",
-            "TMP",
-            "USERPROFILE",
-            "COMSPEC",
-            "PATHEXT",
-        ] {
-            assert!(allowlist.iter().any(|item| item == name), "missing {name}");
-        }
-    }
-
-    #[test]
     fn descriptor_does_not_offer_model_controlled_network_bypass() {
         let (service, _, _, _) = make_service();
         let descriptor = RunCommandTool::new(service).descriptor();
@@ -766,7 +748,7 @@ mod tests {
     }
 
     /// macOS 真机：sandbox-exec 可用时 isolation 必须如实报告
-    /// hard_writes_and_network 且 fallback=false；探测失败自动跳过。
+    /// hard_writes_and_network 且 fallback=false；探测失败即失败。
     #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn metadata_reports_seatbelt_isolation_when_available() {
@@ -783,9 +765,11 @@ mod tests {
         .await
         .expect("run");
         let sandbox = &res.metadata["sandbox"];
-        if sandbox["backend"] != "sandbox_exec" {
-            return;
-        }
+        assert_eq!(
+            sandbox["backend"],
+            "sandbox_exec",
+            "macOS run_command must report Seatbelt; sandbox={sandbox}"
+        );
         assert_eq!(sandbox["isolation"], "hard_writes_and_network");
         assert_eq!(sandbox["fallback"], false);
     }

@@ -1248,11 +1248,6 @@ mod tests {
     }
 
     #[test]
-    fn secondary_tab_defaults_to_files() {
-        assert_eq!(ChangesPanelState::default().tab, ChangesTab::Files);
-    }
-
-    #[test]
     fn apply_files_rejects_stale_epoch_and_drops_missing_selection() {
         let mut state = ChangesPanelState::default();
         let first = state.begin_refresh();

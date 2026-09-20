@@ -159,14 +159,18 @@ pub enum ControllerEvent {
         data: SubagentListData,
     },
     /// 子代理会话时间线一页（Inspector「子代理」对话栏；session_id 为
-    /// 子会话 id，与主 TimelineLoaded 分流，互不污染）。
+    /// 子会话 id，与主 TimelineLoaded 分流，互不污染）。generation 为
+    /// 发起加载时的对话栏代际，过期回执被状态侧丢弃。
     SubagentTimelineLoaded {
         session_id: String,
+        generation: u32,
         page: TimelinePage,
     },
-    /// 子代理会话时间线分页失败（按子会话 id 归属，避免清错代理）。
+    /// 子代理会话时间线分页失败（按子会话 id + 代际归属，避免清错代理
+    /// 或旧链迟到失败污染新链）。
     SubagentTimelineFailed {
         session_id: String,
+        generation: u32,
         reason: String,
     },
     /// auth_start 响应（SET-4）：OAuth 授权等待信息；进度经 AuthChanged
@@ -1985,6 +1989,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn handshake_capabilities_pin_desktop_surface() {
+        assert_eq!(
+            desktop_capabilities(),
+            vec![
+                GuiCapability::Events,
+                GuiCapability::Snapshots,
+                GuiCapability::Approvals,
+                GuiCapability::TerminalStreaming,
+                GuiCapability::BrowserControl,
+            ],
+        );
+    }
+
+    #[test]
     fn missing_token_file_fails_closed() {
         let err = load_desktop_authentication(std::path::Path::new(
             "/nonexistent/pawork-desktop-missing.token",
@@ -2013,27 +2031,6 @@ mod tests {
         let command = run_start_command("s-1", "hi", None, None);
         let value = serde_json::to_value(&command).expect("serialize run_start");
         assert!(value["params"].get("effort").is_none());
-    }
-
-    #[test]
-    fn last_acked_advances_from_events_and_acks() {
-        assert_eq!(advance_last_acked(None, 4), 4);
-        assert_eq!(advance_last_acked(Some(4), 2), 4);
-        assert_eq!(advance_last_acked(Some(4), 9), 9);
-    }
-
-    #[test]
-    fn handshake_capabilities_pin_desktop_surface() {
-        assert_eq!(
-            desktop_capabilities(),
-            vec![
-                GuiCapability::Events,
-                GuiCapability::Snapshots,
-                GuiCapability::Approvals,
-                GuiCapability::TerminalStreaming,
-                GuiCapability::BrowserControl,
-            ],
-        );
     }
 
     #[test]
@@ -2090,26 +2087,6 @@ mod tests {
         let close = serde_json::to_value(terminal_close_command("term-1")).unwrap();
         assert_eq!(close["method"], "terminal_close");
         assert_eq!(close["params"]["terminal_session_id"], "term-1");
-    }
-
-    #[test]
-    fn lifecycle_events_carry_workspace_terminal_and_epoch_identity() {
-        let created = ControllerEvent::TerminalCreated {
-            workspace_id: "ws-1".into(),
-            terminal_session_id: "term-1".into(),
-        };
-        assert!(
-            matches!(created, ControllerEvent::TerminalCreated { workspace_id, terminal_session_id }
-            if workspace_id == "ws-1" && terminal_session_id == "term-1")
-        );
-        let failed = ControllerEvent::DiffFilesFailed {
-            epoch: 7,
-            reason: "stale".into(),
-        };
-        assert!(matches!(
-            failed,
-            ControllerEvent::DiffFilesFailed { epoch: 7, .. }
-        ));
     }
 
     #[test]

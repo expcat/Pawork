@@ -132,6 +132,8 @@
 
 ## 7. 测试与验证资产
 
+2026-09-20 测试重构：删除只检查构造器 getter 的用例；风险默认断言并入审批载荷回归。实际 decide 的模式、信任、命令与路径拒绝矩阵保持。 执行状态见 [测试重构计划](../../testing-refactor-plan.md)。
+
 默认验证命令：`cargo test -p pawork-policy --offline --lib --tests`（无 `tests/` 目录，`--tests` 为空集，全部用例在 `--lib`）。
 
 | 文件 | 覆盖点 |

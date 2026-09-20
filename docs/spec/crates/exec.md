@@ -158,15 +158,17 @@
 
 ## 7. 测试与验证资产
 
+2026-09-20 精简：环缓冲转发自测由 pty/buffer.rs 的容量、丢弃与游标回归承接；Secret 清单重复 contains 检查由固定向量与受控环境 golden 承接，环境基础项并入过滤回归。真实进程的密钥剥离、读写拒绝和杀树效果保留。
+
 默认验证命令：`cargo test -p pawork-exec --offline --lib --tests`（无 `tests/` 目录，用例全部在 `--lib`；平台 cfg 用例仅在对应 OS 编译执行）。
 
 | 文件 | 覆盖点 |
 | --- | --- |
 | `cancel.rs` | 取消传播、克隆共享、waiter 唤醒、幂等。 |
-| `process.rs` | stdout/stderr 捕获与 exit_code、超时（`timed_out+killed`）、取消 kill、输出截断（`Exit.truncated`）、交互式 stdin 写入/close、进程树整树回收（孙进程）、rlimit 应用（Unix）、句柄 Drop 回收。 |
-| `sandbox.rs` | `untrusted_default` 形状（只读 + no spawn + Enforce + env_clear）、`isolation_level_vocabulary_golden`、`secret_paths_for_exact_vector_golden` / `default_secret_paths_controlled_env_golden`、env 清洗（denylist 优先、通配大小写）、cwd 越界与 deny 洞拒绝、spawn 未授权 `Denied`、资源映射、selector 回退与 `attempted` 记录、NativeRestricted spawn / spawn_interactive 冒烟。 |
+| `process.rs` | stdout/stderr 捕获与 exit_code、超时（`timed_out+killed`）、取消 kill、输出截断（`Exit.truncated`）、交互式 stdin 写入/close、进程树整树回收（孙进程）、rlimit 应用（Unix）、句柄 Drop 回收；`kill_reaps_descendant_that_escaped_with_setsid` 在 Linux/macOS 走真实 setsid 逃逸，缺 `setsid` 或 `perl POSIX::setsid` 时按平台前提失败，不 skip。 |
+| `sandbox.rs` | `untrusted_default` 形状（只读 + no spawn + Enforce + env_clear）、`isolation_level_vocabulary_golden`、`secret_paths_for_exact_vector_golden` / `default_secret_paths_controlled_env_golden`、env 清洗（denylist 优先、通配大小写）、cwd 越界与 deny 洞拒绝、spawn 未授权 `Denied`、资源映射、selector 回退与 `attempted` 记录、NativeRestricted spawn / spawn_interactive 冒烟；`macos_sandbox_exec_reports_hard_writes_and_network` 仅 `cfg(target_os = "macos")`，非 macOS 不编译、不 `return` 假绿。 |
 | `tree.rs` | attach_external 组长前置校验、terminate 幂等。 |
-| `os/linux.rs` | bwrap argv 生成（bind 顺序 / unshare / die-with-parent / deny tmpfs 覆盖）、Landlock 策略编译（读写集合、deny 重叠拒绝、executable 单文件授权）、探测降级 reason、进程树冻结-快照-倒序杀、setsid 逃逸捕获、start_time 防复用。 |
+| `os/linux.rs` | bwrap argv 生成（bind 顺序 / unshare / die-with-parent / deny tmpfs 覆盖）、Landlock 策略编译（读写集合、deny 重叠拒绝、executable 单文件授权）、探测降级 reason、进程树冻结-快照-倒序杀、setsid 逃逸捕获、start_time 防复用；Linux 上 `bwrap_allows_workspace_and_hides_unmounted_sibling` / `landlock_allows_workspace_and_denies_sibling_file` 走真实 spawn，缺 bwrap/userns 或 Landlock ABI 时按平台前提失败，不 skip。 |
 | `os/macos.rs` | **`profile_full_output_golden`** 及结构断言（`profile_denies_network_when_enforce` / `profile_allows_network_when_hint` / `profile_emits_deny_for_secret_paths` / `profile_emits_deny_for_default_secret_paths` / `profile_emits_canonical_deny_for_existing_path` / `profile_emits_write_roots_as_file_write` / `profile_notes_max_procs_unenforced` / `profile_includes_version_header`）、字符串转义、进程树冻结与逃逸回收。 |
 | `os/windows.rs` | AppContainer 能力→SID 映射、`probe_appcontainer_job` 冻结输出、Job 限额映射与后代收养。 |
 | `pty/mod.rs` | 输出捕获、owner 强制、快照重连（游标续读 / Stale 语义）、broadcast 覆写丢弃计数、kill 整树（后代收割）、多会话 cleanup_owner / shutdown、resize、退出状态与 signal 传播。 |

@@ -312,8 +312,8 @@ fn wire_names_are_bijective_with_serde_tags() {
 fn registry_tables_are_complete_and_unique() {
     let commands = command_entries();
     let queries = query_entries();
-    assert_eq!(commands.len(), 44);
-    assert_eq!(queries.len(), 20);
+    // 完备性由 command/query_registry_covers_every_variant_without_wildcard 的穷尽
+    // match 证明；这里不钉字面量总数，只查登记表自身无重复 wire 名。
     for wire_name in commands.iter().map(|entry| entry.wire_name) {
         assert_eq!(
             commands

@@ -178,11 +178,11 @@ UI-6b G2：`QuotaUnit::Percent` 表示整数百分点，与协议镜像同形；
 
 无独立 `tests/` 目录，共 205 个内联测试分布如下（`#[test]` + `#[tokio::test]` 计数）：
 
-- `usage.rs`（36）：幂等重放 / 冲突、存储层去重（`sqlite_dedup_unique_index_is_registered` 断言 `idx_usage_dedup` 已登记、`sqlite_dedup_by_request_and_attempt_conflicts` 断言不同 record_id 的同 (request, attempt) 冲突、`in_memory_dedup_matches_sqlite_semantics` 保证双实现语义一致）、`sqlite_v2_to_v3_migration_preserves_history`（迁移保历史）、跨币种聚合拒绝、查询过滤与半开区间、`Send + Sync` 断言。
+- `usage.rs`（35）：幂等重放 / 冲突、存储层去重（`sqlite_dedup_unique_index_is_registered` 断言 `idx_usage_dedup` 已登记、`sqlite_dedup_by_request_and_attempt_conflicts` 断言不同 record_id 的同 (request, attempt) 冲突、`in_memory_dedup_matches_sqlite_semantics` 保证双实现语义一致）、`sqlite_v2_to_v3_migration_preserves_history`（迁移保历史）、跨币种聚合拒绝、查询过滤与半开区间、类型由 `SqliteUsageLedger` 的 `Mutex<Connection>` 承担并发。
 - `credential/mod.rs`（27）+ `credential/lease.rs`（8）：并发额度（账号 / 租户 cap / 按 (tenant, account) 覆盖）、幂等释放、`LeaseGuard` Drop 释放（含 detached 驱动）、TTL 过期与 `reclaim_expired`、投影事务失败回滚计数、`recover_records` 崩溃恢复、状态机合法 / 非法迁移、property 测试（proptest）。
 - `quota/service.rs`（34）：缓存 TTL / invalidate、singleflight 并发去重（`singleflight_dedups_concurrent_reads`）与 leader 中止后 follower 晋升、stale 兜底 + `served_stale` 标记、部分失败聚合（`QuotaFailure` 附带）、confidence 择优。
 - `quota/ledger.rs`（29）：Ledger 派生窗口读数（月窗 / 滚动窗）、`BudgetCap` limit 语义、`reconcile` 对账、耗尽预测。
-- `quota/domain.rs`（8）/ `quota/error.rs`（11）/ `quota/adapter.rs`（2）/ `quota/util.rs`（17）：领域类型不变量（measure / confidence 优先级 / endpoint 清洗）、错误可重试分类与 retry_after 透传、secret 脱敏、UTC 日历换算（闰月 / 月界）。
+- `quota/domain.rs`（7）/ `quota/error.rs`（8）/ `quota/adapter.rs`（2）/ `quota/util.rs`（16）：领域类型不变量（measure / confidence 优先级 / endpoint 清洗）、错误可重试分类与 retry_after 透传、secret 脱敏、UTC 日历换算（闰月 / 月界）。
 - `audit.rs`（5）：**`audit_event_v1_jsonl_matches_frozen_fixture`——与 `fixtures/audit/event-v1.jsonl` 逐字节比对**，并断言 fixture 单行、`\n` 结尾、不含 `prompt` / `secret` / `tool_output`；validate 拒绝路径。
 - `decision.rs`（6）：`sanitize_reason` 脱敏与截断、gate / kind 标签稳定。`rbac.rs`（6）：deny-first 合并、角色权限表。`tenant.rs`（11）：各 `decide_*` 决策分支。`identity.rs`（5）：默认哨兵身份与 fail-closed。
 

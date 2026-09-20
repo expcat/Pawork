@@ -11,7 +11,7 @@ description = "Pawork 应用门面（配置装配 + session store + run_session 
 default = []
 # R1 UI fixture 仅供 example / 定向集成测试显式启用，不进入默认生产闭包。
 ui-fixture = []
-# 真实 API 冒烟默认不进死表编译；R10 复跑时显式启用（仍需 env 与 --ignored）。
+# 真实 API 冒烟默认不进死表编译；R10 复跑时显式启用（仍需 env，选择后缺环境即失败）。
 live-smoke = []
 
 [dependencies]

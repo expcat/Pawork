@@ -759,6 +759,10 @@ impl AppView {
             .flex()
             .flex_col()
             .flex_1()
+            // 高度链（P0 同族）：列内视口高度是约束，空态欢迎页 / 列表
+            // 的最小内容高不得把 Composer 挤出视口（150% 字号 + 长草稿
+            // 实测会溢出 workspace 底边）。
+            .min_h_0()
             .when(offline && !empty_hint_visible, |area| {
                 area.child(self.connection_notice_element(cx))
             })

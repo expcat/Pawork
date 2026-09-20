@@ -130,29 +130,9 @@ mod tests {
     }
 
     #[test]
-    fn value_limit_is_pinned_at_64_kib() {
-        assert_eq!(MAX_HINT_VALUE_BYTES, 64 * 1024);
-    }
-
-    #[test]
     fn legacy_map_is_frozen() {
-        assert_eq!(
-            LEGACY_HINT_KEY_MAP,
-            &[
-                (
-                    "responses.summary_entries",
-                    "provider_hints.openai.responses.summary_entries"
-                ),
-                (
-                    "openai.responses.summary_entries",
-                    "provider_hints.openai.responses.summary_entries"
-                ),
-                (
-                    "anthropic_block_kind",
-                    "provider_hints.anthropic.block_kind"
-                ),
-            ]
-        );
+        // 行为锚点：legacy 键解析到 canonical 常量；数组内容的第二份副本已由
+        // 下方逐键映射断言替代（抄表不能证明映射正确）。
         assert_eq!(
             canonical_hint_key("responses.summary_entries"),
             Some(OPENAI_RESPONSES_SUMMARY_ENTRIES_HINT)

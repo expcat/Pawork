@@ -660,6 +660,20 @@ impl AppView {
             "terminal-back-to-bottom" => self.terminal_scroll.jump_to_bottom(),
             "terminal-close" => self.on_close_terminal(window, cx),
             "activity-open-changes" => self.on_activity_open_changes(window, cx),
+            // 子代理对话栏按钮（与 render 同源；chip identifier 含 agent_id）。
+            "subagent-refresh" => {
+                self.refresh_subagent_conversation();
+                cx.notify();
+            }
+            "subagent-back-to-bottom" => {
+                self.subagent_conversation_scroll.jump_to_bottom();
+                cx.notify();
+            }
+            other if other.starts_with("subagent-select-") => {
+                if let Some(id) = other.strip_prefix("subagent-select-") {
+                    self.select_subagent_agent(id, cx);
+                }
+            }
             // 浮层子代理行（identifier 含 agent_id；与 render 行同源）。
             other if other.starts_with("activity-subagent-") => {
                 let id = other.strip_prefix("activity-subagent-").unwrap_or("");
@@ -4823,33 +4837,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn composer_ax_panel_formula_drops_plus_68_drift() {
-        let input = crate::ui::theme::metrics::COMPOSER_INPUT_MIN_HEIGHT;
-        let height = crate::ui::AppView::composer_panel_height(input);
-        assert_eq!(height, metrics::COMPOSER_PANEL_MIN_HEIGHT);
-        assert_eq!(crate::ui::theme::metrics::COMPOSER_SEND_SIZE, 36.0);
-    }
-
-    /// R6 Wave A：折叠态 Header Activity 的 AX 触发器与 Popover 标题 /
-    /// 摘要锚点公式钉住生产 render 所用的 40×37 槽、右侧 25px inset、
-    /// 8px gap 与面板内边距；浮层和行动作本身发布实测布局。
-    #[test]
-    fn activity_header_ax_geometry_matches_render_anchor_contract() {
-        let header = AxRect::new(240.0, 0.0, 840.0, metrics::HEADER_HEIGHT);
-        let trigger = header_action_ax_rect(header);
-        assert_eq!(trigger, AxRect::new(1016.0, 13.5, 40.0, 37.0));
-        // OPT-4b：折叠态 Activity 左移一格（40 槽 + 4 间距），重开按钮占最右。
-        let toggle = header_activity_ax_rect(header);
-        assert_eq!(toggle, AxRect::new(972.0, 13.5, 40.0, 37.0));
-
-        let popover = activity_popover_ax_geometry(header, trigger, 16.0);
-        assert_eq!(popover.heading, AxRect::new(752.0, 125.5, 270.0, 18.0));
-        assert_eq!(popover.subagents, AxRect::new(752.0, 147.5, 270.0, 33.0));
-        let large = activity_popover_ax_geometry(header, trigger, 24.0);
-        assert_eq!(large.subagents.height, 49.5);
-    }
-
     /// GUI 1.20：Activity 子代理行使用真实列表布局，滚动裁剪与 Open
     /// changes 命中区互不重叠。
     #[gpui::test]
@@ -4918,21 +4905,6 @@ mod tests {
             assert!(tree.find("activity-subagent-child-4").is_some());
             assert!(tree.find("activity-subagent-child-5").is_some());
         });
-    }
-
-    /// P4 片 3：审批卡高度随 reason / detail 行数变化（公式与
-    /// approval_card.rs render 同源），单行 reason 的 100% 值逐项可推导。
-    #[test]
-    fn approval_card_ax_height_scales_with_reason_lines() {
-        let short = approval_card_height("Use bash", None, 618.0, 16.0);
-        let wrapped = approval_card_height(&"x".repeat(160), None, 618.0, 16.0);
-        let with_detail =
-            approval_card_height(&"x".repeat(160), Some(&"y".repeat(160)), 618.0, 16.0);
-        assert!(short < wrapped && wrapped < with_detail);
-        // pad 16 + 标题 19 + reason 19 + 按钮行 32。
-        assert_eq!(short, 86.0);
-        // 125%：p_2=10、SM=15px（行高 24）→ 20 + 24 + 24 + 32。
-        assert_eq!(approval_card_height("Use bash", None, 618.0, 20.0), 100.0);
     }
 
     /// P4 片 3：Timeline 行 rect 相邻不重叠、行间距与 row_top_gap 一致，

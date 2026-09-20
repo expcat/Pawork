@@ -433,16 +433,6 @@ trusted = true
 }
 
 #[test]
-fn global_config_dir_resolves_to_some_path() {
-    // CI 与本机都应能解析出全局目录（依赖 XDG / AppData 等环境变量存在）。
-    let dir = config_dir_for_app();
-    assert!(
-        dir.is_some(),
-        "expected a resolvable global config directory"
-    );
-}
-
-#[test]
 #[cfg(target_os = "macos")]
 fn global_config_dir_macos_snapshot_is_dev_pawork_pawork() {
     // 快照 golden：directories 主版本升级不得改变 macOS 目录语义。

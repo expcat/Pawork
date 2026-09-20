@@ -81,7 +81,7 @@
 
 全部为源文件内联 `#[cfg(test)]`：
 
-- `api.rs`（2）：`TransportEndpoint` serde 往返不需要 protocol 类型；`TransportFrame` 只持有字节。
+- `api.rs`（1）：`TransportEndpoint` serde 往返不需要 protocol 类型。帧只持有字节由 `local.rs` 超限拒绝与 round-trip 证明。
 - `local.rs`（2）：默认帧上限 = 1 MiB（与 protocol 对齐的钉子测试）；非 `Local` 端点被拒。
 - `local_unix.rs`（5）：bind 后 socket 权限 `0o600`；双向帧往返；超限 send 在写前被拒；伪造超限长度头在分配前被拒；对端关闭 → `ConnectionClosed`、关闭后的 listener 拒绝 accept。
 - `local_windows.rs`（3）：Windows 侧对应回归（round trip / 权限 / 关闭）。

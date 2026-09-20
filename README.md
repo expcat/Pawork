@@ -63,6 +63,7 @@ Pawork/                  # 仓库根 = Cargo workspace 根
 | [docs/spec/README.md](docs/spec/README.md) | 产品与包级 Spec 总索引 |
 | [docs/spec/crates/](docs/spec/README.md#12-包级-spec) | 每包一篇 Spec（agent 辅助阅读主入口） |
 | [docs/spec/flows.md](docs/spec/flows.md) | 跨包核心链路 |
+| [docs/testing-refactor-plan.md](docs/testing-refactor-plan.md) | 测试与门禁：全范围分批核查、真实用途与边界判据、处置和验证记录 |
 | [docs/spec/settings.md](docs/spec/settings.md) | Settings Feature Spec |
 | [docs/gui-design.md](docs/gui-design.md) | Desktop GUI 设计（配套 [design/README.md](design/README.md)） |
 | [docs/references.md](docs/references.md) | 参照项目手册与调研附录 |

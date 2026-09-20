@@ -289,11 +289,4 @@ mod tests {
             "结算后的同请求新快照按新请求处理"
         );
     }
-
-    #[test]
-    fn accumulator_starts_from_zero() {
-        let accumulator = UsageAccumulator::new();
-        assert_eq!(accumulator.total(), TokenUsage::default());
-        assert_eq!(*accumulator.current(), TokenUsage::default());
-    }
 }

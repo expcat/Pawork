@@ -384,6 +384,7 @@ async fn command_idempotency() -> Result<(), String> {
 
 async fn terminal_gate() -> Result<(), String> {
     let mut allow_harness = Harness::new("terminal-gate-allow", streaming_script()).await;
+    let allow_workspace = allow_harness.prepare_workspace().await?;
     let allow_client = allow_harness
         .connect_gui("terminal-gate-allow", "terminal-gate-allow")
         .await?;
@@ -396,7 +397,7 @@ async fn terminal_gate() -> Result<(), String> {
         idempotency_key: None,
         issued_at: Timestamp::from_unix_millis(7),
         command: AppCommand::TerminalCreate {
-            workspace_id: pawork_domain::WorkspaceId::from("ws-unbound"),
+            workspace_id: allow_workspace,
             working_directory: None,
         },
     };
@@ -436,6 +437,19 @@ async fn terminal_gate() -> Result<(), String> {
     if !note.contains("policy 闸") {
         return Err(format!("放行路径 note 应含 policy 闸，got {value:?}"));
     }
+    let closed = allow_client
+        .command(
+            AppCommand::TerminalClose {
+                terminal_session_id: terminal_session_id.into(),
+            },
+            harness::gui_source(&allow_client),
+            harness::local_user(),
+        )
+        .await
+        .map_err(|error| format!("关闭放行的终端: {error}"))?;
+    if !matches!(closed.response, AppResponse::Accepted { .. }) {
+        return Err(format!("TerminalClose 应返回 Accepted，got {closed:?}"));
+    }
 
     let mut deny_harness = Harness::new_with_approval(
         "terminal-gate-deny",
@@ -444,6 +458,7 @@ async fn terminal_gate() -> Result<(), String> {
         true,
     )
     .await;
+    let deny_workspace = deny_harness.prepare_workspace().await?;
     let deny_client = deny_harness
         .connect_gui("terminal-gate-deny", "terminal-gate-deny")
         .await?;
@@ -456,7 +471,7 @@ async fn terminal_gate() -> Result<(), String> {
         idempotency_key: None,
         issued_at: Timestamp::from_unix_millis(7),
         command: AppCommand::TerminalCreate {
-            workspace_id: pawork_domain::WorkspaceId::from("ws-unbound"),
+            workspace_id: deny_workspace,
             working_directory: None,
         },
     };
@@ -472,6 +487,19 @@ async fn terminal_gate() -> Result<(), String> {
                 "拒绝路径应为 ClientError，got {:?}",
                 envelope.response
             ));
+        }
+    }
+    for client in [&allow_client, &deny_client] {
+        let snapshot = client.snapshot().await.map_err(|error| error.to_string())?;
+        let terminals = snapshot
+            .sections
+            .iter()
+            .find(|section| section.kind == SnapshotSectionKind::TerminalSessions)
+            .and_then(|section| section.data.as_ref())
+            .and_then(Value::as_array)
+            .ok_or("缺少 TerminalSessions 数组")?;
+        if !terminals.is_empty() {
+            return Err(format!("关闭或拒绝后不得残留终端: {terminals:?}"));
         }
     }
     Ok(())

@@ -461,7 +461,7 @@ def phase_recorded_tree():
             status, _, body, _ = http(method, base, path, token=token, payload=payload)
             expected = fixture.read_bytes()
             if name.endswith("usage.json bytes"):
-                same = body == expected
+                same = body == expected and valid_go_usage(json.loads(body))
             else:
                 # 流式回放 id 逐响应唯一化（-m<salt> 后缀），归一后应与录制字节一致。
                 same = normalize_stream_ids(body) == normalize_stream_ids(expected)

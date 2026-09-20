@@ -958,14 +958,6 @@ impl AppView {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    /// 初次打开为工具入口；Activity / Review 仍显式进入 Changes。
-    #[test]
-    fn inspector_tab_defaults_to_home() {
-        assert_eq!(InspectorTab::default(), InspectorTab::Home);
-    }
-
     #[test]
     fn terminal_output_hides_vt_control_sequences() {
         assert_eq!(

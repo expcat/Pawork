@@ -269,55 +269,8 @@ mod tests {
         assert!(Confidence::Derived.priority() > Confidence::Scraped.priority());
     }
 
-    #[test]
-    fn confidence_default_is_lowest_trust_scraped() {
-        assert_eq!(Confidence::default(), Confidence::Scraped);
-    }
-
-    #[test]
-    fn canonical_endpoint_strips_query_and_fragment() {
-        assert_eq!(
-            QuotaProvenance::canonical_endpoint(
-                "https://api.example.com/v1/usage?api_key=sk-secret&page=2#frag"
-            )
-            .as_deref(),
-            Some("https://api.example.com/v1/usage")
-        );
-        assert_eq!(
-            QuotaProvenance::canonical_endpoint("https://console.example.com/quota#overview")
-                .as_deref(),
-            Some("https://console.example.com/quota")
-        );
-    }
-
-    #[test]
-    fn canonical_endpoint_truncates_at_first_marker() {
-        assert_eq!(
-            QuotaProvenance::canonical_endpoint("https://x/y?token=abc?more").as_deref(),
-            Some("https://x/y")
-        );
-        assert_eq!(
-            QuotaProvenance::canonical_endpoint("https://x/y#frag?token=secret").as_deref(),
-            Some("https://x/y")
-        );
-        assert_eq!(
-            QuotaProvenance::canonical_endpoint("https://x/?a=b").as_deref(),
-            Some("https://x/")
-        );
-    }
-
-    #[test]
-    fn canonical_endpoint_rejects_abnormal_input_without_leak() {
-        assert_eq!(QuotaProvenance::canonical_endpoint(""), None);
-        assert_eq!(QuotaProvenance::canonical_endpoint("   "), None);
-        assert_eq!(QuotaProvenance::canonical_endpoint("#fragment-only"), None);
-        assert_eq!(QuotaProvenance::canonical_endpoint("?token=secret"), None);
-        assert_eq!(
-            QuotaProvenance::canonical_endpoint("  https://x/y?token=secret  ").as_deref(),
-            Some("https://x/y")
-        );
-    }
-
+    // canonical_endpoint 的剥离规则由 quota/util.rs 同名函数测试；
+    // 包装后的无泄漏由下方 provenance serde 测试钉住。
     #[test]
     fn provenance_with_endpoint_never_serializes_query_or_fragment() {
         let ts = Timestamp::from_unix_millis(1_700_000_000_000);

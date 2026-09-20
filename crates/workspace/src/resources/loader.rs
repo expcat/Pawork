@@ -480,40 +480,6 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["path agents 1", "path agents 2"]
         );
-    }
-
-    #[test]
-    fn instruction_byte_len_sums_content_lengths() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        fs::create_dir_all(temp.path().join("0/deep")).expect("target dirs");
-        fs::write(temp.path().join("AGENTS.md"), "root agents").expect("root agents");
-        fs::write(temp.path().join("0/AGENTS.md"), "path agents 1").expect("path agents 1");
-        fs::write(temp.path().join("0/deep/AGENTS.md"), "path agents 2").expect("path agents 2");
-        fs::create_dir_all(temp.path().join(".pawork")).expect("pawork");
-        fs::write(
-            temp.path().join(".pawork/instructions.md"),
-            "workspace instructions",
-        )
-        .expect("instructions");
-        let skill = temp.path().join(".pawork/skills/review");
-        fs::create_dir_all(&skill).expect("skill dir");
-        fs::write(
-            skill.join("manifest.toml"),
-            "id='review'\nversion='1.0.0'\ndescription='review'",
-        )
-        .expect("manifest");
-        fs::write(skill.join("SKILL.md"), "skill instructions").expect("skill body");
-        let mut request = ResourceRequest::new(
-            WorkspaceId::from("w"),
-            0,
-            WorkspaceRelativePath::new("0/deep/lib.rs").expect("path"),
-        );
-        request.selection = ResourceSelection {
-            active_skills: BTreeSet::from(["review".into()]),
-            run_instructions: Some("run".into()),
-            ..ResourceSelection::default()
-        };
-        let bundle = loader_for(temp.path()).load(&request).expect("bundle");
         let summed: usize = bundle
             .instructions
             .iter()

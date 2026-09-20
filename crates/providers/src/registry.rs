@@ -1351,14 +1351,6 @@ mod tests {
         assert!(registry.estimate_cost("glm-5.2", &usage).is_none());
     }
 
-    // ---------- 三源能力证据 ----------
-
-    #[test]
-    fn capability_source_priority_is_static_then_probe_then_override() {
-        assert!(CapabilitySource::Static < CapabilitySource::Probe);
-        assert!(CapabilitySource::Probe < CapabilitySource::Override);
-    }
-
     #[test]
     fn caps_satisfied_v2_citations_and_transport_and_tools() {
         let full = ModelCapabilities {

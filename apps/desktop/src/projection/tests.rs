@@ -1101,7 +1101,7 @@ fn terminal_entry(sequence: u64, boundary: ForkBoundary) -> TimelineEntry {
 fn subagent_conversation_selects_pages_and_filters_live_events() {
     let mut conversation = SubagentConversationState::default();
     assert!(conversation.select_agent("child-1"));
-    conversation.begin_loading();
+    let generation = conversation.begin_loading();
     let child_event = |sequence: u64, payload: Value| {
         serde_json::from_value(json!({
             "api_version": { "major": 1, "minor": 1 },
@@ -1127,15 +1127,15 @@ fn subagent_conversation_selects_pages_and_filters_live_events() {
         ],
         true,
     );
-    conversation.apply_page("child-1", &history);
+    conversation.apply_page("child-1", generation, &history);
     assert!(!conversation.loading);
     assert_eq!(conversation.timeline.entries.len(), 2);
     // 同页重放（终态后的权威重查）：去重，不双份。
-    conversation.apply_page("child-1", &history);
+    conversation.apply_page("child-1", generation, &history);
     assert_eq!(conversation.timeline.entries.len(), 2);
     // 其他会话的事件与非被选代理的页面 fail-closed 忽略。
     assert!(!conversation.apply_live_event(&assistant_delta(9, "m-x", "noise")));
-    conversation.apply_page("child-2", &history);
+    conversation.apply_page("child-2", generation, &history);
     assert_eq!(conversation.timeline.entries.len(), 2);
     // 子会话 live 事件按 stream 过滤后喂独立 reducer。
     let delta = child_event(
@@ -1147,7 +1147,15 @@ fn subagent_conversation_selects_pages_and_filters_live_events() {
     );
     assert!(conversation.apply_live_event(&delta));
     assert_eq!(conversation.timeline.entries.len(), 3);
-    conversation.apply_failed("child-1", "connection lost");
+    // 过代际回执丢弃：Refresh / 终态重查并发时旧链的迟到失败不得污染
+    // 新链（新链成功后 error 已清，旧链失败按旧代际到达应被忽略）。
+    let refreshed = conversation.begin_loading();
+    assert_ne!(refreshed, generation);
+    conversation.apply_page("child-1", refreshed, &history);
+    assert_eq!(conversation.error, None);
+    conversation.apply_failed("child-1", generation, "stale chain failure");
+    assert_eq!(conversation.error, None);
+    conversation.apply_failed("child-1", refreshed, "connection lost");
     assert_eq!(conversation.error.as_deref(), Some("connection lost"));
     // 换代理即整体复位。
     assert!(conversation.select_agent("child-2"));

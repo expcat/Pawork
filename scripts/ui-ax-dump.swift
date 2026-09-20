@@ -13,7 +13,7 @@
 //              [--press <identifier> | --focus <identifier>
 //               | --set-value <identifier> <value>] [--action-only]
 //
-// 退出码：0 写出 AX 树（含权限不足时的 WARN）；2 参数错误；3 指定 PID 无 CG 窗口。
+// 退出码：0 写出 AX 树；2 参数错误；3 无 CG 窗口；4 action 失败；5 AX 权限/树不可用。
 
 import ApplicationServices
 import CoreGraphics
@@ -466,7 +466,9 @@ func main() {
     }
 
     if !trusted {
-        lines.append("# WARN: 当前进程未被授予 Accessibility 权限；AX 树可能为空或只有系统 chrome")
+        lines.append("# ERROR: 当前进程未被授予 Accessibility 权限，不能验证 AX 树")
+        emit(lines, to: opts.outPath)
+        exit(5)
     }
     let application = AXUIElementCreateApplication(opts.pid)
     let probe = probeChildrenWalk(
@@ -517,6 +519,9 @@ func main() {
     emit(lines, to: opts.outPath)
     if actionError != .success {
         exit(4)
+    }
+    if stats.identifiers.isEmpty {
+        exit(5)
     }
 }
 

@@ -229,9 +229,13 @@ canonical `ToolResultContent.content` 中 Image 不再被编码器丢弃。Chat 
 
 ## 7. 测试与验证资产
 
+2026-09-20 测试重构：Chat 文本/并行工具/usage 的重复解析切面由 HTTP/SSE contract 承接，保留 thinking、终态优先级与损坏流边界；Anthropic 静态目录的能力断言并入 `list_models_is_static_and_does_not_hit_network`，同时验证真实入口不发网。定向入口 `bash scripts/test.sh providers` 显式启用九个通道 feature。 本批执行状态见 [测试重构计划](../../testing-refactor-plan.md)。
+
+同批：删除 `capability_source_priority_is_static_then_probe_then_override`（derive Ord 自证）和 `accumulator_starts_from_zero`（空 Default 自证）。三源收窄仍由 `capability_evidence` 合并测试覆盖；会话累计仍由同请求覆盖、跨请求累加和 `finish_request` 结算三项验证。
+
 2026-09-17 computer use：`request::tests::tool_result_images_map_across_chat_responses_and_anthropic` 覆盖 JPEG 工具结果在三协议的文字/图片保留、多个 tool response 顺序；`negotiate::tests::capability_gate_rejects_nested_tool_result_image_without_declaration` 覆盖不支持图片时拒绝。
 
-默认验证命令：`cargo test -p pawork-providers --offline --lib --tests`（注意：仅编译 `default = ["anthropic"]`，feature 门控的集成测试目标见下表 required-features，需显式 `--features` 才运行）。MOCK-7 起整合口径为单条带齐测试所需 features 的调用：`cargo test -p pawork-providers --offline --lib --tests --features anthropic,chatgpt-oauth,xai-oauth,glm-coding,opencode-go,qwen-token-plan,deepseek,kimi-platform,kimi-code`（一次编译链接跑全部测试目标；含 `kimi-code` 是因为 `src/channels/kimi.rs` 的 4 个 `#[cfg(test)]` lib 测试仅在该 feature 开启时编译，漏跑会漏掉这部分覆盖）。
+默认验证入口：`bash scripts/test.sh providers`，一次 Cargo 调用显式启用九个通道 feature。直接运行不带 feature 的 `cargo test -p pawork-providers` 只选择默认 Anthropic，不能证明其余通道通过；需要更窄的回归时按下表明确选择 feature/target。Kimi 真实联网专项仍为显式 ignore，不计入本地通道回归通过。
 
 | 测试资产 | required-features | 覆盖点 |
 | --- | --- | --- |

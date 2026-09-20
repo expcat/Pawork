@@ -69,6 +69,8 @@ mod tests {
 
     #[test]
     fn ask_user_carries_risk() {
+        assert_eq!(RiskLevel::default(), RiskLevel::Safe);
+        assert_eq!(CommandRisk::default(), CommandRisk::Safe);
         let dec = PolicyDecision::AskUser {
             prompt: ApprovalPrompt {
                 message: "ok?".into(),
@@ -96,11 +98,5 @@ mod tests {
     fn allow_has_no_payload() {
         let json = serde_json::to_string(&PolicyDecision::Allow).expect("serialize");
         assert_eq!(json, "{\"kind\":\"allow\"}");
-    }
-
-    #[test]
-    fn risk_defaults_are_safe() {
-        assert_eq!(RiskLevel::default(), RiskLevel::Safe);
-        assert_eq!(CommandRisk::default(), CommandRisk::Safe);
     }
 }

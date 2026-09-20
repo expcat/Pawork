@@ -189,7 +189,7 @@ ADR-057：`CanonicalModelRequest` 增加可选 `session_id: Option<SessionId>`�
 | `src/provider_api.rs` tests | `ResolvedCredential` 脱敏 Debug、错误映射、no-provider-branch 扫描、能力协商不变量 |
 | `src/tool.rs` tests | `capability_key` 穷举、hosting 一致性 |
 | `src/profile.rs` tests | deny 优先、memory fail-closed |
-| `src/provider_hints.rs` tests | 键语法、长度界、冻结映射 |
+| `src/provider_hints.rs` tests | 键语法、键长 128B 边界、冻结映射；值 64KiB 上限由 storage `provider_hints_namespace_enforces_secret_size_and_shape_limits` 用同一常量拒绝超大 hint |
 | `src/degrade.rs` tests | `degrade.*` code 逐字 pin、sink 分流表、`to_agent_event` details 合并 |
 | 其余内嵌 tests（`reasoning` / `server_tool` / `tool_api` / `workflow`） | effort serde 名与降档、`ServerToolEvent` 往返与 `type_name` 稳定、`ToolError` 分类映射、Phase 16 载荷 serde 往返 |
 

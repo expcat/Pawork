@@ -317,25 +317,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn run_turn_forwards_text_usage_and_completed_summary() {
-        let events = happy_path_events();
-        let summary = completed_summary();
-        let provider = ScriptedProvider {
-            events: events.clone(),
-            summary: summary.clone(),
-        };
-        let sink = RecordingSink::default();
-
-        let result = run_turn(&provider, &sample_request(), &sink, CancellationToken::new())
-            .await
-            .expect("happy-path turn");
-
-        assert_eq!(result, summary);
-        assert_eq!(result.stop_reason, StopReason::Completed);
-        assert_eq!(sink.snapshot(), events);
-    }
-
-    #[tokio::test]
     async fn run_turn_forwards_unconsumed_stream_variants() {
         let mut events = happy_path_events();
         events.insert(1, ProviderStreamEvent::ThinkingDelta("think".into()));
@@ -352,10 +333,11 @@ mod tests {
         };
         let sink = RecordingSink::default();
 
-        run_turn(&provider, &sample_request(), &sink, CancellationToken::new())
+        let result = run_turn(&provider, &sample_request(), &sink, CancellationToken::new())
             .await
             .expect("turn with extra variants");
 
+        assert_eq!(result, completed_summary());
         let received = sink.snapshot();
         assert!(received.contains(&ProviderStreamEvent::ThinkingDelta("think".into())));
         assert!(received.contains(&ProviderStreamEvent::ToolCallStarted {

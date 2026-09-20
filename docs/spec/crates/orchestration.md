@@ -127,6 +127,8 @@
 
 ## 7. 测试与验证资产
 
+2026-09-20 测试重构：删除 FakeWorktreeAllocator 自建目录/写副本的自证测试，以 `git_allocator_isolates_worker_writes_from_parent` 驱动真实 GitWorktreeAllocator，核对父工作区不变与显式释放。Guard 生命周期仍用边界替身；`bash scripts/test.sh orchestration` 开启 git feature，默认不带 feature 的绿不能证明 Git 隔离。 本批执行状态见 [测试重构计划](../../testing-refactor-plan.md)。
+
 无 `tests/` 目录，全部内联 `#[cfg(test)]`：
 
 | 位置 | 覆盖点 |
@@ -137,7 +139,7 @@
 | `task_graph.rs` | 拒环 / 跨租户依赖 / 重复 id；前向引用与 ready_tasks；转换矩阵；retry 上限 |
 | `worktree.rs` / `merge.rs` / `identity.rs` | Guard 显式释放与 Drop 告警语义；冲突检测（基准 vs 父侧）、Merge 拒绝未解决冲突、原子写、collect / detect_conflicts / merge 主路径路径穿越拒绝；身份构造与 serde |
 
-默认验证命令：`cargo test -p pawork-orchestration --offline --lib --tests`。
+默认验证入口：`bash scripts/test.sh orchestration`，显式开启 `git`，验证真实 Git worktree 分配、文件隔离和释放；默认 feature 下未编译的 Git 测试不能计作通过。
 
 ## 8. 注意事项与已知限制
 

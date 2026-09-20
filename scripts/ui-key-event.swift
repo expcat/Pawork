@@ -40,6 +40,7 @@
 // 5 输入源枚举/切换失败。
 
 import Carbon
+import AppKit
 import CoreGraphics
 import Foundation
 
@@ -317,6 +318,17 @@ func postEvent(
 }
 
 let opts = parseArgs(Array(CommandLine.arguments.dropFirst()))
+// 所有模式（含输入源切换）先做存活 / 前台 / 投递权限校验：输入源切换是
+// 会话级副作用，不得绕过 --pid 指向的前台应用约束。
+guard kill(opts.pid, 0) == 0 else {
+    die("目标 PID 不在运行：\(opts.pid)", code: 4)
+}
+guard NSWorkspace.shared.frontmostApplication?.processIdentifier == opts.pid else {
+    die("目标 PID 不是前台应用，拒绝向其它应用投递输入：\(opts.pid)", code: 4)
+}
+guard CGPreflightPostEventAccess() else {
+    die("没有事件投递权限，无法验证键鼠操作", code: 3)
+}
 if opts.pinAsciiInputSource {
     pinAsciiInputSource()
     exit(0)
@@ -324,9 +336,6 @@ if opts.pinAsciiInputSource {
 if !opts.restoreInputSource.isEmpty {
     restoreInputSource(id: opts.restoreInputSource)
     exit(0)
-}
-guard kill(opts.pid, 0) == 0 else {
-    die("目标 PID 不在运行：\(opts.pid)", code: 4)
 }
 func parsePoint(_ raw: String, flag: String) -> CGPoint {
     let parts = raw.split(separator: ",").map { Double($0) }

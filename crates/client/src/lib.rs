@@ -1093,7 +1093,6 @@ fn new_request_namespace() -> String {
 mod tests {
     use super::*;
     use pawork_domain::{CommandId, QueryId};
-    use pawork_protocol::GuiCapability;
     use pawork_protocol::{
         decode_client_frame, encode_server_frame, AppResponse, AppResponseEnvelope, API_VERSION,
     };
@@ -1340,23 +1339,6 @@ mod tests {
                 max_frame_bytes: 1024 * 1024,
             }
         }
-    }
-
-    #[test]
-    fn client_config_can_request_terminal_streaming() {
-        // Desktop 握手自行声明 TerminalStreaming；默认配置不强制，避免影响既有契约装配。
-        let mut config = ClientConfig::default();
-        config.capabilities.push(GuiCapability::TerminalStreaming);
-        assert!(config
-            .capabilities
-            .contains(&GuiCapability::TerminalStreaming));
-    }
-
-    #[test]
-    fn client_config_can_request_browser_control() {
-        let mut config = ClientConfig::default();
-        config.capabilities.push(GuiCapability::BrowserControl);
-        assert!(config.capabilities.contains(&GuiCapability::BrowserControl));
     }
 
     #[tokio::test]

@@ -70,7 +70,7 @@ Builtin < Global < Profile < Workspace < Session < Run
 ./scripts/mock/run-instance.sh stop     # 停 host/server 并恢复 Global config
 ```
 
-场景用 prompt 关键字驱动（如 `MOCK:RATE_LIMIT`、`MOCK:SLOW_STREAM`）或 `POST /__control` 切全局场景；协议层额度探针为 `scripts/mock/quota_probe.py`。该环境属于本地仿真，验证结论不得写成真实 Provider 冒烟；细节与已知缺口见 [mock-simulation-plan.md](../mock-simulation-plan.md) §6–§7。
+场景用 prompt 关键字驱动（如 `MOCK:RATE_LIMIT`、`MOCK:SLOW_STREAM`）或 `POST /__control` 切全局场景；协议层额度探针为 `scripts/mock/quota_probe.py`，只接受对应请求的响应；OpenCode Go 必须返回 rolling5h / weekly / monthly 三窗的有效 percent 读数，空窗、失败或过期缓存返回非零，不能作为验收通过。该环境属于本地仿真，验证结论不得写成真实 Provider 冒烟；细节与已知缺口见 [mock-simulation-plan.md](../mock-simulation-plan.md) §6–§7。
 
 ## 4. GUI Host 运维
 

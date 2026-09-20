@@ -253,44 +253,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn allocate_creates_isolated_worktree() {
-        let parent = tempfile::tempdir().unwrap();
-        std::fs::write(parent.path().join("notes.txt"), "parent content\n").unwrap();
-        let allocator = Arc::new(FakeWorktreeAllocator::new());
-
-        let worktree = allocator
-            .allocate(parent.path(), "feature-x", None)
-            .await
-            .unwrap();
-        assert!(worktree.managed);
-        assert_eq!(worktree.branch, "feature-x");
-        assert!(worktree.path.join("README.md").exists());
-    }
-
-    #[tokio::test]
-    async fn worker_write_does_not_change_parent_file() {
-        let parent = tempfile::tempdir().unwrap();
-        std::fs::write(parent.path().join("notes.txt"), "parent content\n").unwrap();
-        let allocator = Arc::new(FakeWorktreeAllocator::new());
-
-        let worktree = allocator
-            .allocate(parent.path(), "feature-x", None)
-            .await
-            .unwrap();
-        // worker 写入自己的 worktree 副本。
-        std::fs::write(worktree.path.join("notes.txt"), "worker content\n").unwrap();
-        assert_eq!(
-            std::fs::read_to_string(parent.path().join("notes.txt")).unwrap(),
-            "parent content\n",
-            "worker 写入不得改变 parent 路径下的文件"
-        );
-        assert_eq!(
-            std::fs::read_to_string(worktree.path.join("notes.txt")).unwrap(),
-            "worker content\n"
-        );
-    }
-
-    #[tokio::test]
     async fn guard_release_releases_worktree() {
         let allocator = Arc::new(FakeWorktreeAllocator::new());
         let worktree = allocator
@@ -358,5 +320,106 @@ mod tests {
         allocator.release(&worktree.path).await.unwrap();
         assert!(worktree.path.exists(), "fake 释放后目录必须保留");
         assert!(worktree.path.join("README.md").exists());
+    }
+
+    #[cfg(feature = "git")]
+    fn git_env(repo: &Path) -> Vec<(String, String)> {
+        let isolated_global = repo.join(".git/pawork-no-global-config");
+        vec![
+            ("GIT_AUTHOR_NAME".into(), "Test".into()),
+            ("GIT_AUTHOR_EMAIL".into(), "test@example.com".into()),
+            ("GIT_COMMITTER_NAME".into(), "Test".into()),
+            ("GIT_COMMITTER_EMAIL".into(), "test@example.com".into()),
+            ("GIT_TERMINAL_PROMPT".into(), "0".into()),
+            ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
+            (
+                "GIT_CONFIG_GLOBAL".into(),
+                isolated_global.to_string_lossy().into_owned(),
+            ),
+        ]
+    }
+
+    #[cfg(feature = "git")]
+    fn run_git(cwd: &Path, args: &[&str]) {
+        let mut cmd = std::process::Command::new("git");
+        cmd.current_dir(cwd).args(args);
+        cmd.env_remove("GIT_DIR");
+        cmd.env_remove("GIT_WORK_TREE");
+        cmd.env_remove("GIT_COMMON_DIR");
+        cmd.env_remove("GIT_INDEX_FILE");
+        cmd.env_remove("GIT_OBJECT_DIRECTORY");
+        cmd.env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES");
+        cmd.env_remove("GIT_NAMESPACE");
+        cmd.env_remove("GIT_TEMPLATE_DIR");
+        cmd.env_remove("GIT_EXEC_PATH");
+        cmd.env_remove("GIT_CONFIG_COUNT");
+        cmd.env_remove("GIT_CONFIG_PARAMETERS");
+        for (key, value) in git_env(cwd) {
+            cmd.env(key, value);
+        }
+        let out = cmd.output().expect("git exec");
+        assert!(
+            out.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    #[cfg(feature = "git")]
+    fn make_repo() -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().expect("tmpdir");
+        let repo = dir.path().to_path_buf();
+        run_git(&repo, &["init", "-q"]);
+        let hooks = repo.join(".git/pawork-empty-hooks");
+        std::fs::create_dir_all(&hooks).expect("empty hooks");
+        run_git(
+            &repo,
+            &[
+                "config",
+                "core.hooksPath",
+                hooks.to_str().expect("hooks path utf-8"),
+            ],
+        );
+        run_git(&repo, &["config", "commit.gpgsign", "false"]);
+        std::fs::write(repo.join("README.md"), "parent content\n").expect("write");
+        run_git(&repo, &["add", "README.md"]);
+        run_git(&repo, &["commit", "-q", "-m", "init"]);
+        (dir, repo)
+    }
+
+    #[cfg(feature = "git")]
+    #[tokio::test]
+    async fn git_allocator_isolates_worker_writes_from_parent() {
+        let (_dir, repo) = make_repo();
+        let allocator = GitWorktreeAllocator::new(std::sync::Arc::new(
+            pawork_git::GitRunner::new(),
+        ));
+        let worktree = allocator
+            .allocate(&repo, "feature-x", None)
+            .await
+            .expect("allocate git worktree");
+        assert!(worktree.managed);
+        assert_eq!(worktree.branch, "feature-x");
+        assert_eq!(
+            std::fs::read_to_string(worktree.path.join("README.md")).unwrap(),
+            "parent content\n"
+        );
+        std::fs::write(worktree.path.join("README.md"), "worker content\n").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(repo.join("README.md")).unwrap(),
+            "parent content\n",
+            "worker write must not change parent worktree"
+        );
+        assert_eq!(
+            std::fs::read_to_string(worktree.path.join("README.md")).unwrap(),
+            "worker content\n"
+        );
+        std::fs::write(worktree.path.join("README.md"), "parent content\n").unwrap();
+        allocator.release(&worktree.path).await.expect("release");
+        assert!(!worktree.path.exists());
+        assert_eq!(
+            std::fs::read_to_string(repo.join("README.md")).unwrap(),
+            "parent content\n"
+        );
     }
 }

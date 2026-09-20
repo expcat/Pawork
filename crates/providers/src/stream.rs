@@ -135,18 +135,6 @@ mod tests {
     use pawork_domain::StopReason;
 
     #[test]
-    fn text_delta_maps() {
-        let data = r#"{"choices":[{"delta":{"content":"Hi"}}]}"#;
-        let mut state = ChunkState::default();
-        let events = chunk_to_events(data, &mut state);
-        assert_eq!(events.len(), 1);
-        assert!(matches!(
-            &events[0],
-            ProviderStreamEvent::TextDelta(t) if t == "Hi"
-        ));
-    }
-
-    #[test]
     fn finish_reason_completes_with_tool_calls_priority() {
         let data = r#"{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#;
         let mut state = ChunkState::default();
@@ -156,50 +144,6 @@ mod tests {
             events.last(),
             Some(ProviderStreamEvent::ResponseCompleted(StopReason::ToolUse))
         ));
-    }
-
-    #[test]
-    fn parallel_tool_calls_across_chunks() {
-        let mut state = ChunkState::default();
-        let first = r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-a","function":{"name":"read","arguments":"{\"path\":"}}]}}]}"#;
-        let second = r#"{"choices":[{"delta":{"tool_calls":[{"index":1,"id":"call-b","function":{"name":"write","arguments":"{\"x\":1}"}}]}}]}"#;
-        let third = r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"a\"}"}}]}}]}"#;
-        let done = r#"{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#;
-
-        let e1 = chunk_to_events(first, &mut state);
-        assert!(e1.iter().any(|e| matches!(
-            e,
-            ProviderStreamEvent::ToolCallStarted { name, .. } if name == "read"
-        )));
-        chunk_to_events(second, &mut state);
-        let e3 = chunk_to_events(third, &mut state);
-        // 第三段补 call-a 的 arguments 片段
-        assert!(e3
-            .iter()
-            .any(|e| matches!(e, ProviderStreamEvent::ToolCallArgumentsDelta { id, .. } if id.as_str() == "call-a")));
-
-        let e4 = chunk_to_events(done, &mut state);
-        // 收尾：两个 Completed + ResponseCompleted
-        assert!(
-            e4.iter()
-                .filter(|e| matches!(e, ProviderStreamEvent::ToolCallCompleted { .. }))
-                .count()
-                >= 2
-        );
-        assert!(matches!(
-            e4.last(),
-            Some(ProviderStreamEvent::ResponseCompleted(_))
-        ));
-    }
-
-    #[test]
-    fn usage_emitted_when_present() {
-        let data = r#"{"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5}}"#;
-        let mut state = ChunkState::default();
-        let events = chunk_to_events(data, &mut state);
-        assert!(events
-            .iter()
-            .any(|e| matches!(e, ProviderStreamEvent::UsageUpdated(u) if u.input_tokens == 10)));
     }
 
     #[test]

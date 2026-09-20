@@ -22,12 +22,12 @@
 | `src/headless/stream.rs` | ~110 | `EventSubscription`（有界 `mpsc` 事件通道，可取消）与 `BackpressurePolicy`（Drop 计数丢弃 / Error 显式溢出） |
 | `src/headless/error.rs` | ~150 | `SdkError` / `SdkErrorKind`（spawn、I/O、malformed frame、`UnknownResponseType`、`UnsupportedCapability`、`IncompatibleApiVersion`、`RequestFailed`、`Backpressure`、`Cancelled`、`Timeout`、`Protocol(ProtocolErrorKind)`；`as_str` 稳定标签） |
 | `src/headless/mock.rs` | ~150 | `MockTransport`：脚本化响应队列 + 已发送行记录（`Clone` 共享），供下游无进程测试 |
-| `src/headless/version.rs` | ~40 | `SDK_VERSION`（crate 版本）与 `SDK_API_VERSION`（跟随 `pawork_protocol::API_VERSION` 当前版本，现为 1.20）；2 个内联测试 |
+| `src/headless/version.rs` | ~20 | `SDK_VERSION`（crate 版本）与 `SDK_API_VERSION`（直接引用 `pawork_protocol::API_VERSION`，现为 1.21）；无内联测试，兼容性由握手测试验证 |
 | `examples/probe.rs` | ~580 | live 模式测试客户端：`--connect`（外部握手 + WorkspaceList）、`--live-two-gui`、`--live-pty`、`--token`（缺省读 `{data_dir}/gui.token`） |
 | `tests/contract.rs` | ~770 | GUI Connection Protocol 契约测试（LocalTransport UDS × 进程内 `GuiServer` + `GuiHostAdapter` + `MockProvider`），9 测试 |
 | `tests/probe.rs` + `tests/probe/harness.rs` + `tests/probe/scenarios.rs` | ~1 110 | `--self-test` 13 场景（MemoryTransport 进程内装配）；harness 提供 AppCore / GuiServer / 握手 / CLI 侧命令辅助；默认不编译，`probe-self-test` feature 显式启用 |
 | `tests/client_tests.rs` | ~590 | headless SDK 契约测试（MockTransport + `tests/fixtures/` 5 个 JSON/JSONL fixture），22 测试 |
-| `tests/spawn_e2e.rs` | ~350 | 真实进程 e2e：spawn 工作区 `pawork` 二进制（无 `headless` 子命令时 SKIP，不作门禁），3 测试；默认不编译，`spawn-e2e` feature 显式启用 |
+| `tests/spawn_e2e.rs` | ~350 | 真实进程 e2e：spawn 工作区 `pawork` 二进制（缺二进制/无 `headless` 子命令时失败），3 测试；默认不编译，`spawn-e2e` feature 显式启用 |
 
 ## 3. 对外 API 面
 
@@ -88,7 +88,7 @@ UI-6b G2：crate 根增加 `ProviderAccountSelectionMode`、`QuotaOverviewQuery/
 
 ## 5. 契约与不变量
 
-- **版本协商**：`ClientConfig::supported_api_versions` 默认跟随 `pawork-protocol::SUPPORTED_API_VERSIONS`（1.0–1.20），服务端取 major 相同的最高共同 minor；不兼容必须显式拒绝（`IncompatibleVersion`），后续 ServerFrame 信封版本漂移由 `ClientError::Version` 捕获（ADR-036）。headless 侧 `SDK_API_VERSION` 跟随 `pawork_protocol::API_VERSION`（当前 1.20）同理；`command_envelope` / `query_envelope` 发送前按 registry `since` 做版本门，旧 minor 拒发新命令。
+- **版本协商**：`ClientConfig::supported_api_versions` 默认跟随 `pawork-protocol::SUPPORTED_API_VERSIONS`（1.0–1.21），服务端取 major 相同的最高共同 minor；不兼容必须显式拒绝（`IncompatibleVersion`），后续 ServerFrame 信封版本漂移由 `ClientError::Version` 捕获（ADR-036）。headless 侧 `SDK_API_VERSION` 跟随 `pawork_protocol::API_VERSION`（当前 1.21）同理；`command_envelope` / `query_envelope` 发送前按 registry `since` 做版本门，旧 minor 拒发新命令。
 - **帧上限**：经 `ConnectOptions::max_frame_bytes` 与 transport 对齐 1 MiB（见 [transport.md](transport.md)）；本 crate 不改帧格式。
 - **FrameWant 路由不变量**：Response / Resume 只按 `request_id` 匹配；Snapshot 载荷帧无 `request_id`（协议帧无身份，补身份需演进 wire 格式），`snapshot` / `resume` 共用 `snapshot_inflight` 串行锁，保证任意快照帧匹配不会互取对方回复；Event 消费路径独占 `request_id = None` 的错误帧；不匹配帧只 stash 不丢弃——并发调用互不吞帧。
 - **幂等重放**：同 `command_id` 的 `command_envelope` 重放由宿主 IdempotencyStore 返回相同响应（probe `command-idempotency` 钉住）。
@@ -105,6 +105,8 @@ UI-6b G2：crate 根增加 `ProviderAccountSelectionMode`、`QuotaOverviewQuery/
 
 ## 7. 测试与验证资产
 
+2026-09-20 测试重构：删除向 Vec push capability 再 contains 的自证、版本文案 contains 检查，以及 `SDK_API_VERSION == pawork_protocol::API_VERSION` 的别名自证；握手/授权/版本拒绝由真实连接与协议测试承接。`spawn-e2e` 显式选择后缺二进制/缺 headless 必须失败，去掉三处提前返回；未映射 WorkspaceAdd 的重复检查只保留在主路径。`bash scripts/test.sh client` 包含 probe-self-test；`bash scripts/test.sh --host` 先构建当前 Host 再验证真实子进程。 本批执行状态见 [测试重构计划](../../testing-refactor-plan.md)。
+
 **`tests/probe.rs`（`--self-test` 13 场景，MemoryTransport 进程内装配；`probe-self-test` feature 显式启用）**
 
 - `session-events`：握手消费首帧 Snapshot → GUI 建会话 → RunStart → 收 `AssistantDelta` 流式增量与 `Completed`。
@@ -112,7 +114,7 @@ UI-6b G2：crate 根增加 `ProviderAccountSelectionMode`、`QuotaOverviewQuery/
 - `resume-snapshot-fallback`：resume 序列领先服务端 → 必须降级 `SnapshotRequired`。
 - `three-gui-sync`：三 GUI 并发订阅，CLI 与 GUI A 发起的 Run 完成事件对所有客户端与 CLI 观察者可见。
 - `command-idempotency`：同 `command_id` 信封重放返回逐字段相同的响应。
-- `terminal-gate`：`TerminalCreate` 在 `AskForDangerous` + trusted 放行（携带 sandboxed / approval_mode / policy 元数据）；`ReadOnly` 档 fail-closed 拒绝。
+- `terminal-gate`：先用 `WorkspaceAdd` 注册真实临时目录，`TerminalCreate` 在 `AskForDangerous` + trusted 放行（携带 sandboxed / approval_mode / policy 元数据），随后关闭；`ReadOnly` 档 fail-closed 拒绝。两路快照均确认无残留终端，避免未注册 workspace 提前报错掩盖审批结果。
 - `artifact-chunks`：缺失 artifact fail-closed；`ArtifactChunk` 帧编解码往返一致。
 - `version-reject`：只声明 2.0 的客户端握手被拒，错误码 `IncompatibleVersion`。
 - `disconnect-keeps-run`：GUI close 后 Run 仍活跃，CLI 取消才消失。
@@ -136,26 +138,25 @@ UI-6b G2：crate 根增加 `ProviderAccountSelectionMode`、`QuotaOverviewQuery/
 
 **`tests/client_tests.rs`（headless SDK × MockTransport，22 测试）**：握手三态（版本 / instance / capabilities 暴露、不兼容版本显式失败、未知响应类型显式失败）；`create_session` / `query` / `cancel` 往返 framing；宿主业务错误映射 `RequestFailed`、error 帧携带显式 kind、**无 id error 帧不误路由到唯一 pending**；订阅只路由匹配 stream、背压 Drop 计数 / Error 溢出、退订移除槽位；fork + resume 生命周期；compat 导入与历史往返；close 取消 in-flight 与后续请求；`tests/fixtures/` 5 个固定协议样例（`hello_ack.json` / `session_response.json` / `error_frames.json` / `run_events.jsonl` / `compat_import_response.json`）端到端解码；raw query 信封直返 `AppResponse`；mock 按序记录发送行；`SdkErrorKind::as_str` 标签稳定。
 
-**`tests/spawn_e2e.rs`（真实进程，3 测试；`PAWORK_BIN` 或 `target/debug/pawork`，无 `headless` 子命令时 SKIP 不作门禁；`spawn-e2e` feature 显式启用）**：spawn + 握手 + 已映射 Command/Query 往返 + 未映射命令 fail-closed + compat 经真实 SessionStore 持久化 + 关闭回收；无 provider 时 RunStart 返回错误响应；真实宿主强制执行已授予 capabilities。
+**`tests/spawn_e2e.rs`（真实进程，3 测试；`PAWORK_BIN` 或 `target/debug/pawork`，缺二进制/无 `headless` 子命令时失败；`spawn-e2e` feature 显式启用）**：spawn + 握手 + 已映射 Command/Query 往返 + 未映射命令 fail-closed + compat 经真实 SessionStore 持久化 + 关闭回收；无凭证时 RunStart 接受后收到 Failed，SessionGet 历史仅有一条对应 Run 的失败终态及缺凭证原因；真实宿主强制执行已授予 capabilities。
 
 **`examples/probe.rs`（live 模式，需真实 `pawork gui serve`）**：`--connect`（握手 + WorkspaceList）、`--live-two-gui`（双客户端、kill 一个后 Resume Replay）、`--live-pty`（开 PTY、写入、断线重连续接）；token 缺省读 `{data_dir}/gui.token`。
 
-**`src/lib.rs` 内联（14）**：FrameWant 匹配矩阵（request-scoped vs 连接级 Error）、事件等待者与响应等待者互不饿死、并发 snapshot 往返串行化（第二个请求等第一个完成，request-scoped Error 与 Snapshot 各回各的调用方）、`next_event` 显式暴露 `ReplayUnavailable`、连接实例 request namespace 不重复等。
+**`src/lib.rs` 内联（12）**：FrameWant 匹配矩阵（request-scoped vs 连接级 Error）、事件等待者与响应等待者互不饿死、并发 snapshot 往返串行化（第二个请求等第一个完成，request-scoped Error 与 Snapshot 各回各的调用方）、`next_event` 显式暴露 `ReplayUnavailable`、连接实例 request namespace 不重复等。
 
-默认验证命令：`cargo test -p pawork-client --offline --lib --tests`。
+默认验证入口：`bash scripts/test.sh client`（补齐 `probe-self-test`）；真实子进程入口为 `bash scripts/test.sh --host`。
 
-2026-09-17 全项目 Review 实测该默认命令覆盖 46 测试（lib 13、version 2、client_tests 22、contract 9）；contract 主路径同时锁定 `host_data_dir` 原样透传。Host 重启后的真实 policy fail-closed 另由 Desktop U2 矩阵覆盖。
+2026-09-17 起 lib 内联含 FrameWant 路由与并发 snapshot 等待；client_tests 22、contract 9 仍覆盖握手/授权/版本拒绝。version.rs 的 SDK 文案自证已删除，协议兼容由握手测试承接。contract 主路径同时锁定 `host_data_dir` 原样透传。Host 重启后的真实 policy fail-closed 另由 Desktop U2 矩阵覆盖。
 
-client 批次（Snapshot 帧路由收窄）后默认命令覆盖 47 测试（lib 14）。
-
-opt-in 复跑：`cargo test -p pawork-client --offline --features probe-self-test --test probe`；spawn_e2e 用 `--features spawn-e2e --test spawn_e2e`（2026-08-30 起默认死表不再编译这两箱）。
+opt-in 复跑：`bash scripts/test.sh client`（含 probe-self-test）；真实子进程用 `bash scripts/test.sh --host`。
 
 本批沿用 headless `hello_ack.json` 的 1.9 fixture，握手回归断言协商结果 1.9，避免将旧 Host 响应误断言为当前 API_VERSION。
 
 ## 8. 注意事项与已知限制
 
 - `snapshot-reconnect` 场景有既有偶发超时记录，见 history；改 probe 相关代码先复跑该场景。
-- `spawn_e2e` 依赖已构建的 `pawork` 二进制，属可跳过 e2e，不纳入默认死表（`spawn-e2e` feature 门控编译）。
+- `spawn_e2e` 依赖已构建的 `pawork` 二进制，不纳入默认死表（`spawn-e2e` feature 门控编译）；显式启用后缺二进制或无 `headless` 子命令必须失败，不得 skip 记绿。
+- 三条 `spawn_e2e` 均清空继承环境，以临时工作目录、`HOME`、`XDG_CONFIG_HOME`、`PAWORK_HOME` 和 `PAWORK_DATA_DIR` 运行，避免目录库回退读取本机配置；无凭证场景先订阅再启动合法无项目会话的 Run，在有界等待内校验异步 Failed 与持久化失败原因，不把 Accepted 当作成功。主路径精确校验创建会话的 id/title/workspace，关闭后重启同一数据根的 Host，核对完整 SessionGet 结果与 compat history，防止只验证同进程内存回显。
 - `GuiClient` 无后台读任务：事件与响应都在调用方 await 中拉取；长时间不调 `next_event` 时事件会积压在服务端 / inbox。`GuiClient` 是 `Clone`（内部 Arc 共享），可以一个克隆跑事件泵、另一个发 command。
 - headless SDK 相反有 `reader_loop` 后台任务；两个连接面的线程模型不同，集成时勿混淆。
 - headless `experimental` 模块 API 可能不发 major 调整；生产集成应只用稳定面。

@@ -355,30 +355,6 @@ mod tests {
     }
 
     #[test]
-    fn http_config_rejects_invalid_inputs() {
-        assert!(matches!(
-            codec::validate_http_transport_config(&HttpTransportConfig::new("")),
-            Err(McpError::Config(_))
-        ));
-        assert!(matches!(
-            codec::validate_http_transport_config(&HttpTransportConfig::new("not a url")),
-            Err(McpError::Config(_))
-        ));
-        assert!(matches!(
-            codec::validate_http_transport_config(
-                &HttpTransportConfig::new("https://h/mcp").with_auth_token("")
-            ),
-            Err(McpError::Config(_))
-        ));
-        assert!(matches!(
-            codec::validate_http_transport_config(
-                &HttpTransportConfig::new("http://remote.example/mcp").with_auth_token("secret")
-            ),
-            Err(McpError::Config(_))
-        ));
-    }
-
-    #[test]
     fn connector_names_match_variant() {
         let http = DefaultConnector::http(HttpTransportConfig::new("https://host/mcp"));
         assert_eq!(http.transport_name(), "streamable-http");

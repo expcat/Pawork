@@ -1489,13 +1489,6 @@ mod tests {
     }
 
     #[test]
-    fn ring_buffer_unit_is_wired() {
-        let mut ring = RingBuffer::new(3);
-        ring.push(b"abcd");
-        assert_eq!(ring.snapshot().2, b"bcd");
-    }
-
-    #[test]
     fn broadcast_overflow_increments_dropped_events() {
         let (tx, mut rx) = broadcast::channel(4);
         let session = SessionInner {

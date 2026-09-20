@@ -4,8 +4,8 @@
 //! SessionStore 持久化）以及关闭回收。
 
 //! 二进制定位：`PAWORK_BIN` 环境变量优先，否则回退到工作区默认构建产物
-//! `target/debug/pawork`；二进制不存在或尚无 `headless` 子命令时跳过
-//! （本波不实现 CLI，不把 e2e 当门禁）。
+//! `target/debug/pawork`。`spawn-e2e` 是显式 feature：缺二进制或没有
+//! `headless` 子命令时必须失败，不得 skip 记绿。
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -13,29 +13,25 @@ use std::time::Duration;
 use pawork_client::headless::{BackpressurePolicy, PaworkClient, PaworkOptions, SdkErrorKind};
 use pawork_domain::{SessionId, WorkspaceId};
 use pawork_protocol::headless::{CompatSource, ProtocolErrorKind, SdkCapability};
-use pawork_protocol::{AppCommand, AppQuery, AppResponse, EventStream};
+use pawork_protocol::{AppCommand, AppEvent, AppQuery, AppResponse, EventStream, RunState};
 use serde_json::Value;
 
-fn pawork_binary() -> Option<PathBuf> {
-    let binary = if let Ok(binary) = std::env::var("PAWORK_BIN") {
-        PathBuf::from(binary)
-    } else {
-        let fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/pawork");
-        if !fallback.exists() {
-            return None;
-        }
-        fallback
+fn pawork_binary() -> PathBuf {
+    let binary = match std::env::var("PAWORK_BIN") {
+        Ok(binary) => PathBuf::from(binary),
+        Err(_) => PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/pawork"),
     };
-    // 本波不实现 `pawork headless`；工作区里已有的 V2 二进制若无该子命令则 skip，
-    // 不把 spawn_e2e 当 CLI 门禁。
-    if !supports_headless(&binary) {
-        eprintln!(
-            "SKIP: {} has no `headless` subcommand yet; CLI 收口后再跑本 e2e",
-            binary.display()
-        );
-        return None;
-    }
-    Some(binary)
+    assert!(
+        binary.is_file(),
+        "spawn-e2e requires a pawork binary; set PAWORK_BIN or build target/debug/pawork first (missing {})",
+        binary.display()
+    );
+    assert!(
+        supports_headless(&binary),
+        "spawn-e2e requires `{}` to expose the `headless` subcommand; rebuild pawork or set PAWORK_BIN",
+        binary.display()
+    );
+    binary
 }
 
 fn supports_headless(binary: &std::path::Path) -> bool {
@@ -53,23 +49,24 @@ fn supports_headless(binary: &std::path::Path) -> bool {
 /// 握手 + Command/Query 往返 + compat 持久化 + 关闭（真实进程）。
 #[tokio::test]
 async fn spawns_real_pawork_and_round_trips() {
-    let Some(binary) = pawork_binary() else {
-        eprintln!("SKIP: no usable pawork headless binary");
-        return;
-    };
+    let binary = pawork_binary();
     let data_dir = tempfile::tempdir().expect("tempdir for data");
     let root_path = data_dir.path().display().to_string();
     let options = PaworkOptions {
         binary,
         timeout: Duration::from_secs(30),
-        env: vec![(
-            "PAWORK_DATA_DIR".into(),
-            data_dir.path().display().to_string(),
-        )],
+        working_dir: Some(data_dir.path().to_path_buf()),
+        isolated: true,
+        env: vec![
+            ("HOME".into(), root_path.clone()),
+            ("XDG_CONFIG_HOME".into(), root_path.clone()),
+            ("PAWORK_DATA_DIR".into(), root_path.clone()),
+            ("PAWORK_HOME".into(), root_path.clone()),
+        ],
         ..PaworkOptions::default()
     };
 
-    let client = PaworkClient::spawn(options)
+    let client = PaworkClient::spawn(options.clone())
         .await
         .expect("spawn + handshake");
 
@@ -140,7 +137,12 @@ async fn spawns_real_pawork_and_round_trips() {
         })
         .await
         .expect("mapped query round trip");
-    assert!(matches!(response.response, AppResponse::Data(_)));
+    let AppResponse::Data(session_data) = response.response else {
+        panic!("session query must return persisted data");
+    };
+    assert_eq!(session_data["session_id"], session_id.as_str());
+    assert_eq!(session_data["title"], "sdk e2e");
+    assert_eq!(session_data["workspace_id"], "ws-sdk-e2e");
 
     // 订阅不报错（真实进程的事件流槽位）。
     let _subscription = client
@@ -169,15 +171,30 @@ async fn spawns_real_pawork_and_round_trips() {
     assert_eq!(page.entries[0].source, CompatSource::Claude);
 
     client.close().await.expect("close");
+    // Reopen the same data root in a new Host: an in-memory echo cannot satisfy
+    // this persistence check.
+    let restarted = PaworkClient::spawn(options).await.expect("restart host");
+    let restored_session = restarted
+        .query(AppQuery::SessionGet {
+            session_id,
+            timeline_after_sequence: None,
+            timeline_limit: None,
+        })
+        .await
+        .expect("session survives host restart");
+    assert_eq!(restored_session.response, AppResponse::Data(session_data));
+    let restored = restarted
+        .compat_history(Some(10), None)
+        .await
+        .expect("restored history");
+    assert_eq!(restored.entries, page.entries);
+    restarted.close().await.expect("close restarted host");
 }
 
-/// 无 provider 时 RunStart 返回显式业务错误（错误信封直通，不崩溃）。
+/// 无凭证的运行必须收到失败终态，并能从持久历史读回原因。
 #[tokio::test]
-async fn run_start_without_provider_returns_error_response() {
-    let Some(binary) = pawork_binary() else {
-        eprintln!("SKIP: no usable pawork headless binary");
-        return;
-    };
+async fn run_without_credentials_reports_and_persists_failure() {
+    let binary = pawork_binary();
     let data_dir = tempfile::tempdir().expect("tempdir for data");
     let options = PaworkOptions {
         binary,
@@ -185,6 +202,11 @@ async fn run_start_without_provider_returns_error_response() {
         working_dir: Some(data_dir.path().to_path_buf()),
         isolated: true,
         env: vec![
+            ("HOME".into(), data_dir.path().display().to_string()),
+            (
+                "XDG_CONFIG_HOME".into(),
+                data_dir.path().display().to_string(),
+            ),
             (
                 "PAWORK_DATA_DIR".into(),
                 data_dir.path().display().to_string(),
@@ -195,23 +217,9 @@ async fn run_start_without_provider_returns_error_response() {
     };
 
     let client = PaworkClient::spawn(options).await.expect("spawn");
-    // 未映射 command fail-closed：WorkspaceAdd 在能力门被拒。
-    let error = client
-        .command(AppCommand::WorkspaceAdd {
-            root_path: data_dir.path().display().to_string(),
-        })
-        .await
-        .expect_err("unmapped command must fail closed");
-    assert_eq!(
-        error.kind(),
-        SdkErrorKind::Protocol(ProtocolErrorKind::UnsupportedCapability),
-        "{error}"
-    );
-
-    let workspace_id = WorkspaceId::from("ws-sdk-e2e");
     let created = client
         .command(AppCommand::SessionCreate {
-            workspace_id: Some(workspace_id),
+            workspace_id: None,
             title: Some("sdk e2e".into()),
         })
         .await
@@ -225,9 +233,13 @@ async fn run_start_without_provider_returns_error_response() {
         ),
         other => panic!("unexpected session create response: {other:?}"),
     };
+    let mut events = client
+        .subscribe(EventStream::Global, BackpressurePolicy::Error, 64)
+        .await
+        .expect("subscribe before run");
     let response = client
         .command(AppCommand::RunStart {
-            session_id,
+            session_id: session_id.clone(),
             user_message: "hello".into(),
             model: None,
             provider: None,
@@ -236,10 +248,68 @@ async fn run_start_without_provider_returns_error_response() {
         })
         .await
         .expect("run start responds");
-    assert!(
-        matches!(response.response, AppResponse::Error(_)),
-        "no provider → explicit error, got: {response:?}"
+    let AppResponse::Accepted {
+        run_id: Some(run_id),
+        ..
+    } = response.response
+    else {
+        panic!("run should be accepted for asynchronous execution: {response:?}");
+    };
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if let AppEvent::RunChanged {
+                run_id: event_run,
+                state,
+            } = events.next_event().await.expect("run event").payload
+            {
+                if event_run == run_id
+                    && matches!(
+                        state,
+                        RunState::Failed | RunState::Completed | RunState::Cancelled
+                    )
+                {
+                    assert_eq!(state, RunState::Failed);
+                    break;
+                }
+            }
+        }
+    })
+    .await
+    .expect("missing credentials must terminate promptly");
+    let response = client
+        .query(AppQuery::SessionGet {
+            session_id,
+            timeline_after_sequence: None,
+            timeline_limit: Some(100),
+        })
+        .await
+        .expect("persisted failure history");
+    let AppResponse::Data(data) = response.response else {
+        panic!("expected session history");
+    };
+    let items = data["timeline_page"]["items"]
+        .as_array()
+        .expect("timeline items");
+    let terminal: Vec<_> = items
+        .iter()
+        .filter(|item| {
+            matches!(
+                item["kind"].as_str(),
+                Some("run_failed" | "run_completed" | "run_cancelled")
+            )
+        })
+        .collect();
+    assert_eq!(
+        terminal.len(),
+        1,
+        "exactly one durable terminal event: {items:?}"
     );
+    assert_eq!(terminal[0]["kind"], "run_failed");
+    assert_eq!(terminal[0]["run_id"], run_id.as_str());
+    assert!(terminal[0]["detail"]
+        .as_str()
+        .expect("failure reason")
+        .contains("未装配凭证"));
     client.close().await.expect("close");
 }
 
@@ -247,18 +317,25 @@ async fn run_start_without_provider_returns_error_response() {
 /// 被显式拒绝（UnsupportedCapability），通用 query 仍可用。
 #[tokio::test]
 async fn real_host_enforces_granted_capabilities() {
-    let Some(binary) = pawork_binary() else {
-        eprintln!("SKIP: no usable pawork headless binary");
-        return;
-    };
+    let binary = pawork_binary();
     let data_dir = tempfile::tempdir().expect("tempdir for data");
     let options = PaworkOptions {
         binary,
         timeout: Duration::from_secs(30),
-        env: vec![(
-            "PAWORK_DATA_DIR".into(),
-            data_dir.path().display().to_string(),
-        )],
+        working_dir: Some(data_dir.path().to_path_buf()),
+        isolated: true,
+        env: vec![
+            ("HOME".into(), data_dir.path().display().to_string()),
+            (
+                "XDG_CONFIG_HOME".into(),
+                data_dir.path().display().to_string(),
+            ),
+            (
+                "PAWORK_DATA_DIR".into(),
+                data_dir.path().display().to_string(),
+            ),
+            ("PAWORK_HOME".into(), data_dir.path().display().to_string()),
+        ],
         capabilities: vec![SdkCapability::Sessions],
         ..PaworkOptions::default()
     };

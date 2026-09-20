@@ -2822,11 +2822,4 @@ mod tests {
             .collect();
         assert_eq!(names, vec!["idx_usage_dedup"], "存储层必须登记去重唯一索引");
     }
-
-    #[cfg(feature = "sqlite")]
-    #[test]
-    fn sqlite_connection_is_not_send_but_ledger_is_send_sync() {
-        fn assert_send_sync<T: Send + Sync>() {}
-        assert_send_sync::<SqliteUsageLedger>();
-    }
 }

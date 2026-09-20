@@ -541,6 +541,14 @@ async fn mock_provider_completes_multi_turn_tool_loop() {
         "second-round request must include a Tool-role message"
     );
     assert_eq!(requests[1].tools, vec![echo_tool_def()]);
+    assert_eq!(
+        context_prepared_events(&sink),
+        vec![(1, 0), (3, 0)],
+        "default TurnContext keeps zero estimates and one ContextPrepared per round",
+    );
+    assert!(!types.contains(&"CompactionStarted"));
+    assert!(!types.contains(&"CompactionCompleted"));
+    assert!(!types.contains(&"Diagnostic"));
 }
 
 #[tokio::test]
@@ -1615,47 +1623,6 @@ async fn cancel_while_waiting_for_approval_emits_requested_without_responded() {
     assert!(!types.contains(&"ToolApprovalResponded"));
     assert!(!types.contains(&"ToolExecutionStarted"));
     assert_eq!(types.last().copied(), Some("RunCancelled"));
-}
-
-#[tokio::test]
-async fn default_turn_context_keeps_pre_s5_behavior() {
-    let provider = RecordingProvider::new(MockProvider::sequence(vec![
-        MockScript::new()
-            .tool_call("echo", serde_json::json!({"text": "hi"}))
-            .complete_with(StopReason::ToolUse),
-        MockScript::new().text("done").complete(),
-    ]));
-    let echo = MockTool::new(
-        "echo",
-        ToolResult::success(vec![ContentPart::Text(TextContent { text: "hi".into() })]),
-    );
-    let ctx = TestContext::new(vec![echo]);
-    let sink = RecordingEvents::default();
-
-    run_session(
-        &provider,
-        sample_request(vec![echo_tool_def()]),
-        sample_turn(),
-        &sink,
-        CancellationToken::new(),
-        &ctx,
-        DEFAULT_MAX_TOOL_ROUNDS,
-        TurnContext::default(),
-    )
-    .await
-    .expect("default context run");
-
-    // 估算为 0（现状）、不压缩、不截断；ContextPrepared 每轮一次。
-    assert_eq!(
-        context_prepared_events(&sink),
-        vec![(1, 0), (3, 0)],
-        "per-round ContextPrepared with zero estimate"
-    );
-    let types = sink.types();
-    assert!(!types.contains(&"CompactionStarted"));
-    assert!(!types.contains(&"CompactionCompleted"));
-    assert!(!types.contains(&"Diagnostic"));
-    assert_eq!(provider.requests().len(), 2);
 }
 
 #[tokio::test]

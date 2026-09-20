@@ -153,6 +153,27 @@ impl Harness {
         }
     }
 
+    pub async fn prepare_workspace(&self) -> Result<pawork_domain::WorkspaceId, String> {
+        let response = self
+            .adapter
+            .command(&command(
+                cli_source(),
+                cli_identity(),
+                AppCommand::WorkspaceAdd {
+                    root_path: self._temp.path().to_string_lossy().into_owned(),
+                },
+            ))
+            .await
+            .map_err(|error| error.to_string())?;
+        match response {
+            AppResponse::Data(value) => value["id"]
+                .as_str()
+                .map(pawork_domain::WorkspaceId::from)
+                .ok_or_else(|| "WorkspaceAdd 缺少 id".into()),
+            other => Err(format!("WorkspaceAdd 应返回 Data，got {other:?}")),
+        }
+    }
+
     pub async fn start_run_cli(
         &self,
         session_id: &SessionId,

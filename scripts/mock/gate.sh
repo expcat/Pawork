@@ -10,11 +10,10 @@
 #   L1 单条 cargo 命令带齐 features 跑 pawork-providers 全部测试目标
 #      （口径见 docs/spec/crates/providers.md §7，另加 kimi-code 覆盖其
 #      feature 门控的 lib 测试，如 KimiCodeProvider）；--packages a,b 可
-#      追加写入集定向包，逐条串行执行，遵守单 Cargo 进程纪律。
+#      追加写入集定向包，同一条 Cargo 命令执行。
 #   L2（不触外网）fixture 脱敏、OAuth、配置恢复/凭证边界回归；复用 server_smoke.py / server_scenarios_smoke.py
-#      （只调用不改，内部各自以随机空闲端口启动 mock server）；另起一个
-#      127.0.0.1 随机空闲端口 mock server 回放 fixtures/mock，断言 /usage
-#      回放字节一致且满足 §2.3 三窗形状（能捕获录制 fixture 被改坏）。
+#      （内部各自以随机空闲端口启动 mock server）；/usage 录制字节及形状
+#      在 server_smoke.py 的录制回放阶段一次验证，不重复启动 server。
 #   L3 真实 Provider 冒烟不入门禁：保持手动触发并单独记录，口径为
 #      docs/spec/verification.md §2.1（opencode-go / glm-5.3-flash）。
 #
@@ -28,8 +27,6 @@ set -u -o pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$REPO_ROOT"
 
-PROVIDERS_FEATURES="anthropic,chatgpt-oauth,xai-oauth,glm-coding,opencode-go,qwen-token-plan,deepseek,kimi-platform,kimi-code"
-
 usage() {
   cat <<'USAGE'
 MOCK-8 mock 快速门禁（快速定向门禁，非全量门禁）
@@ -40,13 +37,13 @@ MOCK-8 mock 快速门禁（快速定向门禁，非全量门禁）
 级别：
   L0  文档抽查：docs/mock-simulation-plan.md 与当前改动过的 docs/**/*.md 的
       markdown 相对链接存在性 + git diff --check（秒级）
-  L1  cargo test -p pawork-providers --offline --lib --tests --features <全套
+  L1  cargo test -p pawork-providers --offline --tests --features <全套
       含 kimi-code（覆盖其 feature 门控 lib 测试）>
-      （单条命令、单 Cargo 进程）；--packages 追加的定向包逐条串行执行
-      cargo test -p <pkg> --offline --lib --tests
+      （单条命令、单 Cargo 进程）；--packages 追加 -p <pkg>，去重后一次执行
+      --tests 包含 lib / bin 的单测及集成目标；Desktop 走其 Spec 专用命令
   L2  mock 回归（不触外网）：capture verify + oauth_selftest + review_selftest
       + server_smoke.py + server_scenarios_smoke.py
-      + 录制树 /usage 回放字节与 §2.3 形状断言（随机空闲端口，trap 清理）
+      （server_smoke 已含录制树 /usage 字节与形状验证）
   L3  真实 Provider 冒烟不入门禁：保持手动，按 docs/spec/verification.md §2.1
       （opencode-go / glm-5.3-flash）口径执行并单独记录
 
@@ -245,32 +242,20 @@ PYLINK
 }
 
 level1() {
-  echo "=== L1 providers 全套测试（单条命令、单 Cargo 进程） ==="
-  echo "$ cargo test -p pawork-providers --offline --lib --tests --features $PROVIDERS_FEATURES"
-  cargo test -p pawork-providers --offline --lib --tests --features "$PROVIDERS_FEATURES"
-  if [ $? -ne 0 ]; then
-    echo "L1 FAIL pawork-providers"
-    return 1
-  fi
-
-  if [ -n "$extra_csv" ]; then
-    pkg_list="$(mktemp)"
-    printf '%s' "$extra_csv" | tr ',' '\n' | tr -d ' \t' | grep -v '^$' \
-      | awk '!seen[$0]++ && $0 != "pawork-providers"' > "$pkg_list"
-    while IFS= read -r pkg; do
-      [ -n "$pkg" ] || continue
-      echo ""
-      echo "=== L1 追加定向包：""$pkg""（串行，单 Cargo 进程） ==="
-      echo "$ cargo test -p $pkg --offline --lib --tests"
-      cargo test -p "$pkg" --offline --lib --tests
-      if [ $? -ne 0 ]; then
-        echo "L1 FAIL $pkg"
-        rm -f "$pkg_list"
-        return 1
-      fi
-    done < "$pkg_list"
-    rm -f "$pkg_list"
-  fi
+  local packages
+  local selected=(pawork-providers)
+  local pkg
+  # shared entry owns package validation, deduplication and feature selection.
+  IFS=',' read -r -a packages <<< "pawork-providers,$extra_csv"
+  for pkg in "${packages[@]}"; do
+    pkg="${pkg//[[:space:]]/}"
+    [ -n "$pkg" ] || continue
+    case "$pkg" in
+      -*|*[!a-z0-9-]*) echo "gate: 非法包名：$pkg" >&2; return 1 ;;
+    esac
+    selected+=("$pkg")
+  done
+  bash scripts/test.sh "${selected[@]}"
 }
 
 level2() {
@@ -293,79 +278,6 @@ level2() {
     return 1
   fi
 
-  echo ""
-  echo "=== L2 录制树 /usage 回放：字节一致 + §2.3 三窗形状（随机端口） ==="
-  server_log="$(mktemp)"
-  server_pid=""
-  cleanup_server() {
-    if [ -n "$server_pid" ] && kill -0 "$server_pid" 2>/dev/null; then
-      kill "$server_pid" 2>/dev/null || true
-      wait "$server_pid" 2>/dev/null || true
-    fi
-    rm -f "$server_log"
-  }
-  trap cleanup_server EXIT
-  python3 scripts/mock/server.py --host 127.0.0.1 --port 0 --fixtures-root fixtures/mock > "$server_log" 2>&1 &
-  server_pid=$!
-  base_url=""
-  for _i in $(seq 1 100); do
-    base_url="$(grep -m1 -o 'http://[0-9.]*:[0-9]*' "$server_log" || true)"
-    [ -n "$base_url" ] && break
-    kill -0 "$server_pid" 2>/dev/null || break
-    sleep 0.05
-  done
-  if [ -z "$base_url" ]; then
-    echo "L2 FAIL mock server 未在随机端口上报 listening；日志："
-    cat "$server_log" >&2
-    cleanup_server
-    server_pid=""
-    trap - EXIT
-    return 1
-  fi
-  python3 - "$base_url" <<'PYUSAGE'
-import json
-import sys
-from pathlib import Path
-from urllib import request as urlrequest
-
-sys.path.insert(0, "scripts/mock")
-import server_smoke as smoke  # 复用 §2.3 红线校验，单一来源
-
-req = urlrequest.Request(
-    sys.argv[1] + "/usage",
-    headers={"Authorization": "Bearer mock-opencode-go"},
-    method="GET",
-)
-try:
-    with urlrequest.urlopen(req, timeout=10) as resp:
-        status, body = resp.status, resp.read()
-except Exception as error:  # noqa: BLE001
-    print("L2 FAIL /usage 请求失败：" + repr(error))
-    sys.exit(1)
-try:
-    payload = json.loads(body)
-except Exception:  # noqa: BLE001
-    payload = None
-expected = Path("fixtures/mock/opencode-go/usage.json").read_bytes()
-problems = []
-if status != 200:
-    problems.append("status=" + str(status))
-if body != expected:
-    problems.append("回放字节与 fixtures/mock/opencode-go/usage.json 不一致")
-if not (isinstance(payload, dict) and smoke.valid_go_usage(payload)):
-    problems.append("usage 形状违反 §2.3 红线（三窗独立 / percent 整数区间 / resetsAt 严格日历）")
-if problems:
-    print("L2 FAIL 录制树 /usage：" + "；".join(problems))
-    sys.exit(1)
-print("L2 录制树 /usage 回放 OK（字节一致 + §2.3 形状合法）")
-PYUSAGE
-  rc=$?
-  cleanup_server
-  server_pid=""
-  trap - EXIT
-  if [ "$rc" -ne 0 ]; then
-    return 1
-  fi
 }
 
 gate_start="$(now_ms)"

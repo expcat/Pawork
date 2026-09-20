@@ -106,6 +106,8 @@
 
 ## 7. 测试与验证资产
 
+2026-09-20 测试重构：基础 hunk、无末尾换行及 context 两侧标记只保留 tests/parser_contract.rs 的 golden 契约，删除完全重复的内联版本。十万行 diff 仍检查解析完整性，移除依赖机器负载的 500ms 断言。 执行状态见 [测试重构计划](../../testing-refactor-plan.md)。
+
 - 内嵌单元测试（各模块 `#[cfg(test)]`，多为真实临时仓库集成测试）：
   - `process.rs`：option 形位置参数拒绝、相对 cwd 不变、Windows verbatim 简化。
   - `repo.rs`：open / HEAD 三态（Branch / Detached / Unborn）、repo_info 两次 spawn 断言（`call_count` 测试钩子）。

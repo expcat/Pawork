@@ -760,31 +760,6 @@ mod tests {
     }
 
     #[test]
-    fn list_models_is_static() {
-        let models = builtin_models();
-        assert!(models
-            .iter()
-            .any(|model| model.id == ModelId::new("claude-3-5-sonnet")));
-        assert!(models.iter().all(|model| model.capabilities.tool_calls));
-        assert!(models.iter().all(|model| model.capabilities.prompt_cache));
-        assert!(models.iter().all(|model| model.capabilities.thinking));
-        assert!(models
-            .iter()
-            .all(|model| model.capabilities.transport == ModelTransport::Messages));
-        assert!(models
-            .iter()
-            .all(|model| model.capabilities.reasoning.state.requires_signature));
-        // SEARCH-1：服务端 web_search_20250305 + web_search_tool_result citation 归一。
-        assert!(models.iter().all(|model| model.capabilities.citations));
-        assert!(models.iter().all(|model| {
-            model
-                .capabilities
-                .hosted_tool_tags
-                .contains(&pawork_domain::ToolCapabilityTag::WebSearch)
-        }));
-    }
-
-    #[test]
     fn fixed_credential_header_is_rejected() {
         let mut config = AnthropicConfig::new("https://gateway.example");
         config

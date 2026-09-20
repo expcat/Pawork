@@ -887,7 +887,10 @@ mod landlock_backend {
         async fn landlock_allows_workspace_and_denies_sibling_file() {
             let backend = LandlockBackend::with_runtime(ProcessRuntime::new());
             if !backend.available() {
-                return;
+                let reason = crate::os::linux::probe_landlock_support().reason;
+                panic!(
+                    "platform prerequisite missing for Landlock isolation (kernel Landlock ABI / LSM): {reason}"
+                );
             }
 
             let temp = tempfile::tempdir().expect("tempdir");
@@ -1068,7 +1071,10 @@ mod tests {
 
         let backend = BwrapBackend::with_runtime(ProcessRuntime::new());
         if !backend.available() {
-            return;
+            let reason = bwrap_probe_reason();
+            panic!(
+                "platform prerequisite missing for bwrap isolation (bwrap binary / user namespaces): {reason}"
+            );
         }
 
         let temp = tempfile::tempdir().expect("tempdir");

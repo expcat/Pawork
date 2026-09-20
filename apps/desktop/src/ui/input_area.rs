@@ -1337,7 +1337,6 @@ mod tests {
         assert!(mid < metrics::COMPOSER_PANEL_MAX_HEIGHT);
         let capped = AppView::composer_panel_height(400.0);
         assert_eq!(capped, metrics::COMPOSER_PANEL_MAX_HEIGHT);
-        assert_eq!(metrics::COMPOSER_SEND_SIZE, 36.0);
     }
 
     #[test]
@@ -1358,15 +1357,28 @@ mod tests {
             model_entry("openai", "gpt-4.1", "GPT-4.1"),
             model_entry("anthropic", "opus", "Opus"),
             model_entry("openai", "gpt-4.1-mini", "GPT-4.1 mini"),
+            model_entry("glm-coding", "glm-5.3", ""),
         ];
-        let providers = [connected("openai"), connected("anthropic")];
+        let providers = [
+            connected("openai"),
+            connected("anthropic"),
+            connected("glm-coding"),
+        ];
         let entries = grouped_model_menu_entries(&models, &providers, "");
         assert_eq!(
             entries
                 .iter()
                 .map(|model| model.id.as_str())
                 .collect::<Vec<_>>(),
-            ["gpt-4.1", "gpt-4.1-mini", "opus"]
+            ["gpt-4.1", "gpt-4.1-mini", "opus", "glm-5.3"]
+        );
+        let untitled = entries
+            .iter()
+            .find(|entry| entry.id == "glm-5.3")
+            .expect("empty display_name still appears in the grouped menu");
+        assert_eq!(
+            model_menu_row_title(&untitled.display_name, &untitled.id),
+            "glm-5.3"
         );
         let selected = Some(("anthropic".to_string(), "opus".to_string()));
         let selected_ix = selected
@@ -1394,7 +1406,7 @@ mod tests {
                 .iter()
                 .map(|(provider, _)| provider.as_str())
                 .collect::<Vec<_>>(),
-            ["openai", "anthropic"]
+            ["openai", "anthropic", "glm-coding"]
         );
         assert_eq!(
             composer_model_menu_groups(&models, &providers, "gpt-4.1-mini")
@@ -1402,6 +1414,13 @@ mod tests {
                 .map(|(provider, models)| (provider.as_str(), models.len()))
                 .collect::<Vec<_>>(),
             [("openai", 1)]
+        );
+        assert_eq!(
+            grouped_model_menu_entries(&models, &providers, "glm-5.3")
+                .iter()
+                .map(|model| model.id.as_str())
+                .collect::<Vec<_>>(),
+            ["glm-5.3"]
         );
         assert!(composer_model_menu_groups(&models, &providers, "claude").is_empty());
     }
@@ -1428,17 +1447,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn model_menu_row_title_is_single_line_for_any_name() {
-        assert_eq!(
-            model_menu_row_title("deepseek-flash", "deepseek-flash"),
-            "deepseek-flash"
-        );
-        assert_eq!(model_menu_row_title("", "glm-5.3"), "glm-5.3");
-        assert_eq!(
-            model_menu_row_title("Qwen 3.8 Max", "qwen3.8-max"),
-            "Qwen 3.8 Max"
-        );
-        assert_eq!(model_menu_row_title("GPT-4.1", "gpt-4.1"), "GPT-4.1");
-    }
 }

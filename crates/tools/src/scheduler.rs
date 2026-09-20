@@ -916,11 +916,6 @@ mod tests {
     }
 
     #[test]
-    fn auto_approve_cannot_resolve_policy_prompt() {
-        assert!(!AutoApproveResolver.can_resolve_policy_prompt());
-    }
-
-    #[test]
     fn registry_validates_kind_hosting_and_rejects_non_client_function() {
         let mut registry = ToolRegistry::new();
         let mut mismatched = client_descriptor("bad");
@@ -1058,6 +1053,7 @@ mod tests {
 
     #[tokio::test]
     async fn ask_for_writes_cannot_bypass_with_auto_approve() {
+        assert!(!AutoApproveResolver.can_resolve_policy_prompt());
         let (tool, calls) = write_probe("ask_write", false);
         let scheduler = make_scheduler(vec![tool], policy_config(ApprovalMode::AskForWrites, true));
         let result = scheduler

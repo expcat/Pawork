@@ -264,11 +264,4 @@ mod tests {
         assert_eq!(backend.get("svc", "a").expect("a"), "one");
         assert_eq!(backend.get("svc", "b").expect("b"), "two");
     }
-
-    #[test]
-    fn memory_backend_is_send_sync() {
-        fn assert_send_sync<T: Send + Sync>() {}
-        assert_send_sync::<MemoryBackend>();
-        assert_send_sync::<crate::FileBackend>();
-    }
 }

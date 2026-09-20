@@ -118,16 +118,11 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn default_socket_path_lives_under_data_dir() {
-        let path = default_socket_path();
-        assert!(
-            path.ends_with("pawork-gui.sock"),
-            "unexpected socket path: {path:?}"
-        );
-    }
-
-    #[test]
     fn default_token_path_aligns_with_a5_gui_token() {
+        assert!(
+            default_socket_path().ends_with("pawork-gui.sock"),
+            "unexpected default socket filename"
+        );
         let path = default_token_path();
         assert!(
             path.ends_with("gui.token"),

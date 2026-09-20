@@ -223,14 +223,6 @@ mod tests {
     }
 
     #[test]
-    fn framing_constants_match_industry_conventions() {
-        assert_eq!(MESSAGE_FRAMING_TOKENS, 4);
-        assert_eq!(reply_primer_tokens(), 3);
-        assert_eq!(TOOL_FRAMING_TOKENS, 8);
-        assert_eq!(IMAGE_PLACEHOLDER_TOKENS, 85);
-    }
-
-    #[test]
     fn count_message_includes_framing_and_content() {
         let est = HeuristicEstimator::new(4);
         let msg = Message {
@@ -243,6 +235,14 @@ mod tests {
         };
         // framing(4) + role "user"(1) + content(2)
         assert_eq!(est.count_message(&msg), 4 + 1 + 2);
+        assert_eq!(
+            est.count_content_part(&ContentPart::Image(pawork_domain::ImageContent {
+                source: pawork_domain::ImageSource::Url("https://example.test/a.png".into()),
+                media_type: "image/png".into(),
+                alt_text: None,
+            })),
+            IMAGE_PLACEHOLDER_TOKENS
+        );
     }
 
     #[test]

@@ -213,16 +213,53 @@ seeded_root_dirs() {
   mkdir -p "$ROOT/logs" "$ROOT/barriers"
 }
 
+# 用 cargo 的 artifact 消息定位本次构建出的可执行文件：cargo config 的
+# target-dir / build.target（交叉编译 triple 目录）都不会让 fixture 误测
+# 路径上的旧产物。
+cargo_build_artifact() { # $1=目标名；$2...=cargo build 其余参数
+  local name="$1" build_log exe
+  shift
+  build_log=$(mktemp)
+  if ! (cd "$REPO_ROOT" && cargo build --offline --message-format=json "$@") \
+      > "$build_log"; then
+    cat "$build_log" >&2 || true
+    rm -f "$build_log"
+    die "cargo build $name 失败"
+  fi
+  exe=$(python3 - "$build_log" "$name" <<'PY'
+import json
+import sys
+
+exe = ""
+for line in open(sys.argv[1], encoding="utf-8"):
+    try:
+        msg = json.loads(line)
+    except ValueError:
+        continue
+    target = msg.get("target", {})
+    if (
+        msg.get("reason") == "compiler-artifact"
+        and target.get("name") == sys.argv[2]
+        and msg.get("executable")
+    ):
+        exe = msg["executable"]
+print(exe)
+PY
+)
+  rm -f "$build_log"
+  [[ -n "$exe" && -x "$exe" ]] || die "未能定位本次构建的 $name 可执行文件"
+  printf '%s\n' "$exe"
+}
+
 build_ui_fixture() {
-  (cd "$REPO_ROOT" && cargo build -p pawork-app --offline --features ui-fixture \
-    --example ui_fixture)
-  [[ -x "$UI_FIXTURE_BIN" ]] || die "找不到已构建的 ui_fixture：$UI_FIXTURE_BIN"
+  UI_FIXTURE_BIN=$(cargo_build_artifact ui_fixture \
+    -p pawork-app --features ui-fixture --example ui_fixture)
 }
 
 build_desktop() {
   if [[ -z "${PAWORK_UI_DESKTOP_BIN:-}" ]]; then
-    (cd "$REPO_ROOT" && cargo build -p pawork-desktop --offline \
-      --features gpui/runtime_shaders --bin pawork-desktop)
+    DESKTOP_BIN=$(cargo_build_artifact pawork-desktop \
+      -p pawork-desktop --features gpui/runtime_shaders --bin pawork-desktop)
   fi
   [[ -x "$DESKTOP_BIN" ]] || die "找不到已构建的 pawork-desktop：$DESKTOP_BIN"
 }
@@ -307,10 +344,12 @@ cmd_serve() {
     fi
     printf '%s' "$!" > "$ROOT/host.pid"
   )
-  local pid ticks=$(( SERVE_TIMEOUT_SECS * 10 )) n=0
+  local pid ticks=$(( SERVE_TIMEOUT_SECS * 10 )) n=0 start_ms
   pid=$(cat "$ROOT/host.pid")
+  start_ms=$(now_ms)
   while [[ ! -e "$ROOT/barriers/host_ready" ]]; do
-    if ! kill -0 "$pid" 2>/dev/null; then
+    # kill -0 只证明 PID 活着；command-line 归属校验同时排除 PID 复用。
+    if ! pid_matches_kind "$pid" host; then
       tail_log "$ROOT/logs/serve.log"
       die "host 进程提前退出（pid ${pid}）"
     fi
@@ -320,7 +359,31 @@ cmd_serve() {
     fi
     sleep "$POLL_INTERVAL"; n=$((n + 1))
   done
-  info "host ready（pid ${pid}；socket $ROOT/data/pawork-gui.sock；token 文件 $ROOT/data/gui.token）"
+  # 文件存在不算就绪：必须是本进程启动后写入的有效 JSON
+  #（at_ms 不早于启动时刻），空文件 / 旧实例残留一律失败。
+  if ! python3 - "$ROOT/barriers/host_ready" "$start_ms" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        data = json.load(fh)
+except (OSError, ValueError):
+    sys.exit(1)
+if not isinstance(data, dict) or not isinstance(data.get("at_ms"), int):
+    sys.exit(1)
+if data["at_ms"] < int(sys.argv[2]):
+    sys.exit(1)
+if not isinstance(data.get("detail"), dict) or "socket" not in data["detail"]:
+    sys.exit(1)
+PY
+  then
+    tail_log "$ROOT/logs/serve.log"
+    die "host_ready 内容无效（非本实例本轮就绪信号）"
+  fi
+  pid_matches_kind "$pid" host \
+    || die "host 写就绪标记后退出（pid ${pid}）"
+  info "host ready（pid ${pid}；socket $ROOT/data/pawork-gui.sock；token 文件 $ROOT/data/gui.token；host_ready 已校验）"
 }
 
 cmd_desktop() {
@@ -330,6 +393,8 @@ cmd_desktop() {
   build_desktop
   seeded_root_dirs
   [[ -S "$socket" ]] || die "socket 不存在：${socket}（先 serve --root '$ROOT'）"
+  # 旧实例的 barrier 不能证明新进程已经连上 Host。
+  rm -f "$ROOT/barriers/timeline_stable"
   info "启动 desktop（日志：$ROOT/logs/desktop.log）"
   printf '%s\n' "$DESKTOP_BIN" > "$ROOT/desktop.launch-path"
   (
@@ -338,7 +403,46 @@ cmd_desktop() {
       </dev/null >>"$ROOT/logs/desktop.log" 2>&1 &
     printf '%s' "$!" > "$ROOT/desktop.pid"
   )
-  info "desktop 已启动（pid $(cat "$ROOT/desktop.pid")；连接 ${socket}）"
+  local pid ticks=$(( BARRIER_TIMEOUT_SECS * 10 )) n=0 start_ms
+  pid=$(cat "$ROOT/desktop.pid")
+  start_ms=$(now_ms)
+  while [[ ! -e "$ROOT/barriers/timeline_stable" ]]; do
+    # kill -0 只证明 PID 活着；command-line 归属校验同时排除 PID 复用。
+    if ! pid_matches_kind "$pid" desktop; then
+      tail_log "$ROOT/logs/desktop.log"
+      die "desktop 在就绪前退出（pid ${pid}）"
+    fi
+    if (( n >= ticks )); then
+      tail_log "$ROOT/logs/desktop.log"
+      die "等待 Desktop timeline_stable 超时（${BARRIER_TIMEOUT_SECS}s）"
+    fi
+    sleep "$POLL_INTERVAL"; n=$((n + 1))
+  done
+  # 文件存在不算就绪：必须是本进程启动后写入的有效 JSON
+  #（settle_seq>=1、at_ms 不早于启动时刻），空文件 / 旧实例残留一律失败。
+  if ! python3 - "$ROOT/barriers/timeline_stable" "$start_ms" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        data = json.load(fh)
+except (OSError, ValueError):
+    sys.exit(1)
+if not isinstance(data, dict) or not isinstance(data.get("settle_seq"), int):
+    sys.exit(1)
+if data["settle_seq"] < 1:
+    sys.exit(1)
+if not isinstance(data.get("at_ms"), int) or data["at_ms"] < int(sys.argv[2]):
+    sys.exit(1)
+PY
+  then
+    tail_log "$ROOT/logs/desktop.log"
+    die "timeline_stable 内容无效（非本实例本轮就绪信号）"
+  fi
+  pid_matches_kind "$pid" desktop \
+    || die "desktop 写就绪标记后退出（pid ${pid}）"
+  info "desktop 已就绪（pid ${pid}；连接 ${socket}；timeline_stable 已校验）"
 }
 
 cmd_desktop_restart() {

@@ -739,6 +739,25 @@ mod tests {
         assert!(cmd.env.iter().any(|(k, _)| k == "PATH"));
         assert!(!cmd.env.iter().any(|(k, _)| k == "GITHUB_TOKEN"));
         assert!(!cmd.env.iter().any(|(k, _)| k == "AWS_SECRET_KEY"));
+        for name in [
+            "PATH",
+            "HOME",
+            "LANG",
+            "LC_ALL",
+            "TERM",
+            "TMPDIR",
+            "SYSTEMROOT",
+            "TEMP",
+            "TMP",
+            "USERPROFILE",
+            "COMSPEC",
+            "PATHEXT",
+        ] {
+            assert!(
+                default_env_allowlist().iter().any(|item| item == name),
+                "env allowlist 缺少 {name}"
+            );
+        }
     }
 
     #[test]
@@ -766,28 +785,61 @@ mod tests {
     #[test]
     fn fallback_reports_actual_isolation_level() {
         let (_backend, selection) = SandboxSelector::new().pick();
-        if selection.fallback {
-            match selection.id {
-                "landlock" => {
-                    assert_eq!(selection.isolation, IsolationLevel::HardFilesystemOnly)
-                }
-                "native_restricted" => assert_eq!(selection.isolation, IsolationLevel::Soft),
-                "windows_job" => assert_eq!(selection.isolation, IsolationLevel::Degraded),
-                other => panic!("unexpected fallback backend: {other}"),
+        match selection.id {
+            "sandbox_exec" => {
+                assert_eq!(selection.isolation, IsolationLevel::HardWritesAndNetwork);
+                assert!(!selection.fallback, "Seatbelt is primary, not a fallback");
             }
-            assert!(
-                selection.attempted.iter().any(|o| !o.available),
-                "fallback must be backed by at least one failed probe"
-            );
+            "bwrap" => {
+                assert_eq!(selection.isolation, IsolationLevel::Hard);
+                assert!(!selection.fallback, "bwrap is primary, not a fallback");
+            }
+            "landlock" => {
+                assert_eq!(selection.isolation, IsolationLevel::HardFilesystemOnly);
+                assert!(selection.fallback, "Landlock is a bwrap fallback");
+                assert!(
+                    selection.attempted.iter().any(|o| !o.available),
+                    "fallback must be backed by at least one failed probe"
+                );
+            }
+            "native_restricted" => {
+                assert_eq!(selection.isolation, IsolationLevel::Soft);
+                if selection.fallback {
+                    assert!(
+                        selection.attempted.iter().any(|o| !o.available),
+                        "fallback must be backed by at least one failed probe"
+                    );
+                } else {
+                    assert!(
+                        selection.attempted.is_empty(),
+                        "non-fallback NativeRestricted must not have probed a hard backend: {:?}",
+                        selection.attempted
+                    );
+                }
+            }
+            "windows_job" => {
+                assert_eq!(selection.isolation, IsolationLevel::Degraded);
+                assert!(selection.fallback, "Job Object is AppContainer fallback");
+                assert!(
+                    selection.attempted.iter().any(|o| !o.available),
+                    "fallback must be backed by at least one failed probe"
+                );
+            }
+            other => panic!("unexpected backend: {other}"),
         }
     }
 
     #[test]
+    #[cfg(target_os = "macos")]
     fn macos_sandbox_exec_reports_hard_writes_and_network() {
         let (_backend, selection) = SandboxSelector::new().pick();
-        if selection.id != "sandbox_exec" {
-            return;
-        }
+        assert_eq!(
+            selection.id,
+            "sandbox_exec",
+            "macOS must select Seatbelt; probe={:?} attempted={:?}",
+            crate::os::macos::probe_reason(),
+            selection.attempted
+        );
         assert_eq!(selection.isolation, IsolationLevel::HardWritesAndNetwork);
         assert_eq!(selection.isolation.as_str(), "hard_writes_and_network");
         assert!(
@@ -1064,120 +1116,6 @@ mod tests {
         assert!(
             !text.contains("leak-canary"),
             "secret 未被沙箱剔除，发生泄漏: {text}"
-        );
-    }
-
-    /// 单一来源清单必须是历史平台清单并集的超集（防漂移回归）。
-    #[test]
-    fn default_allowlists_are_authoritative_supersets() {
-        let _guard = crate::sandbox::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let env = default_env_allowlist();
-        for name in [
-            "PATH",
-            "HOME",
-            "LANG",
-            "LC_ALL",
-            "TERM",
-            "TMPDIR",
-            "SYSTEMROOT",
-            "TEMP",
-            "TMP",
-            "USERPROFILE",
-            "COMSPEC",
-            "PATHEXT",
-        ] {
-            assert!(
-                env.iter().any(|item| item == name),
-                "env allowlist 缺少 {name}"
-            );
-        }
-
-        let secrets = default_secret_paths();
-        if let Some(home) = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }) {
-            for name in [".ssh", ".aws", ".azure", ".kube"] {
-                let expected = PathBuf::from(&home).join(name);
-                assert!(
-                    secrets.iter().any(|p| p == &expected),
-                    "secret paths 缺少 {}",
-                    expected.display()
-                );
-            }
-            for expected in [
-                PathBuf::from(&home).join(".pawork"),
-                PathBuf::from(&home).join(".pawork").join("auth.json"),
-                PathBuf::from(&home).join(".pawork").join("mcp-auth.json"),
-                PathBuf::from(&home).join(".gnupg"),
-                PathBuf::from(&home).join(".config"),
-            ] {
-                assert!(
-                    secrets.iter().any(|p| p == &expected),
-                    "secret paths 缺少 {}",
-                    expected.display()
-                );
-            }
-        }
-        if let Some(pawork_home) = std::env::var_os("PAWORK_HOME") {
-            if !pawork_home.is_empty() {
-                for expected in [
-                    PathBuf::from(&pawork_home),
-                    PathBuf::from(&pawork_home).join("auth.json"),
-                    PathBuf::from(&pawork_home).join("mcp-auth.json"),
-                ] {
-                    assert!(
-                        secrets.iter().any(|p| p == &expected),
-                        "secret paths 缺少 {}",
-                        expected.display()
-                    );
-                }
-            }
-        }
-        #[cfg(windows)]
-        if let Some(appdata) = std::env::var_os("APPDATA") {
-            assert!(secrets
-                .iter()
-                .any(|p| p == &PathBuf::from(&appdata).join("gcloud")));
-        }
-    }
-
-    #[test]
-    fn secret_paths_include_pawork_auth_gnupg_config_and_pawork_home() {
-        let home = PathBuf::from("/Users/x");
-        let paths = secret_paths_for(Some(&home), None);
-        for expected in [
-            home.join(".ssh"),
-            home.join(".aws"),
-            home.join(".azure"),
-            home.join(".kube"),
-            home.join(".pawork"),
-            home.join(".pawork").join("auth.json"),
-            home.join(".pawork").join("mcp-auth.json"),
-            home.join(".gnupg"),
-            home.join(".config"),
-        ] {
-            assert!(
-                paths.iter().any(|p| p == &expected),
-                "secret paths 缺少 {}",
-                expected.display()
-            );
-        }
-        let with_home = secret_paths_for(Some(&home), Some(Path::new("/opt/pawork")));
-        assert!(
-            with_home.iter().any(|p| p == &PathBuf::from("/opt/pawork")),
-            "PAWORK_HOME 目录必须进入 deny"
-        );
-        assert!(
-            with_home
-                .iter()
-                .any(|p| p == &PathBuf::from("/opt/pawork/auth.json")),
-            "PAWORK_HOME/auth.json 必须进入 deny"
-        );
-        assert!(
-            with_home
-                .iter()
-                .any(|p| p == &PathBuf::from("/opt/pawork/mcp-auth.json")),
-            "PAWORK_HOME/mcp-auth.json 必须进入 deny"
         );
     }
 

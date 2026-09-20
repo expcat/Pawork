@@ -553,6 +553,8 @@ pub struct AppView {
     /// Inspector「子代理」对话栏滚动（跟随语义与终端一致：脱钩读史、
     /// 贴底自动重挂）。
     subagent_conversation_scroll: FollowScroll,
+    /// 对话栏 Refresh 按钮实测布局（AX Press 同源矩形）。
+    subagent_refresh_layout: ScrollHandle,
     /// per-session Composer 草稿（不含终端）。无 active session 时走独立槽。
     composer_drafts: HashMap<String, String>,
     no_session_draft: String,
@@ -704,9 +706,14 @@ pub struct AppView {
     changes_file_focus: BTreeMap<String, FocusHandle>,
     resources_refresh_focus: FocusHandle,
     subagent_chips_scroll: ScrollHandle,
-    /// 对话栏代理切换 chip 焦点（按 agent_id 懒建；代理随会话失效后遗留
-    /// 条目无副作用，随窗口生命周期回收）。
+    /// 对话栏代理切换 chip 焦点（按 agent_id 懒建；渲染期随可见代理
+    /// retain，不跨会话累积）。
     subagent_agent_focus: HashMap<String, FocusHandle>,
+    /// 切换代理后把选中 chip 滚入横滑视口（渲染期消费，Inspector 页签
+    /// reveal 同口径）。
+    subagent_reveal_selected: bool,
+    /// chip 实测布局（AX 按滚动视口裁剪发布，与 Activity 行同口径）。
+    subagent_agent_layouts: HashMap<String, ScrollHandle>,
     subagent_refresh_focus: FocusHandle,
     subagent_back_to_bottom_focus: FocusHandle,
     terminal_back_to_bottom_focus: FocusHandle,
@@ -943,6 +950,7 @@ impl AppView {
             timeline_list_count: 0,
             terminal_scroll: FollowScroll::new(),
             subagent_conversation_scroll: FollowScroll::new(),
+            subagent_refresh_layout: ScrollHandle::new(),
             activity_popover_layout: ScrollHandle::new(),
             activity_open_changes_layout: ScrollHandle::new(),
             terminal_pending_write: HashSet::new(),
@@ -1102,6 +1110,8 @@ impl AppView {
                 .tab_index(INSPECTOR_TAB_INDEX),
             subagent_chips_scroll: ScrollHandle::new(),
             subagent_agent_focus: HashMap::new(),
+            subagent_reveal_selected: false,
+            subagent_agent_layouts: HashMap::new(),
             subagent_refresh_focus: cx
                 .focus_handle()
                 .tab_stop(true)
@@ -1816,6 +1826,7 @@ impl AppView {
                     .clear();
                 self.projection.subagent_activity = Default::default();
                 self.projection.subagent_conversation = Default::default();
+                self.subagent_conversation_scroll.jump_to_bottom();
                 let stale_reason = format!("connection lost · {reason}");
                 self.handshake_info = None;
                 if self.settings_page == SettingsPage::About {
@@ -1957,7 +1968,16 @@ impl AppView {
                                 | pawork_client::RunState::Cancelled
                         )
                 );
-                if subagent_panel_open {
+                // 只有被选子会话的事件才算「新内容到达」：主会话流式 /
+                // 工具事件不得触发 content_arriving，否则未贴底时会把
+                // 对话栏永久脱钩（FollowScroll 贴底判定 + 回底浮出）。
+                let selected_stream = matches!(
+                    &envelope.stream,
+                    pawork_client::EventStream::Session(id)
+                        if Some(id.as_str())
+                            == self.projection.subagent_conversation.agent_id.as_deref()
+                );
+                if selected_stream && subagent_panel_open {
                     self.subagent_conversation_scroll.content_arriving();
                 }
                 let selected_agent_live = self
@@ -1976,8 +1996,10 @@ impl AppView {
                     );
                 if selected_child_terminal {
                     if let Some(agent_id) = self.projection.subagent_conversation.agent_id.clone() {
-                        self.projection.subagent_conversation.begin_loading();
-                        self.controller.load_subagent_timeline(agent_id);
+                        let generation =
+                            self.projection.subagent_conversation.begin_loading();
+                        self.controller
+                            .load_subagent_timeline(agent_id, generation);
                     }
                 }
                 if (spawned || child_terminal)
@@ -2411,18 +2433,26 @@ impl AppView {
                     .subagent_activity
                     .apply_loaded(&session_id, data);
             }
-            ControllerEvent::SubagentTimelineLoaded { session_id, page } => {
+            ControllerEvent::SubagentTimelineLoaded {
+                session_id,
+                generation,
+                page,
+            } => {
                 self.projection
                     .subagent_conversation
-                    .apply_page(&session_id, &page);
+                    .apply_page(&session_id, generation, &page);
                 if self.inspector_open && self.inspector_tab == InspectorTab::Subagent {
                     self.subagent_conversation_scroll.follow_new_content();
                 }
             }
-            ControllerEvent::SubagentTimelineFailed { session_id, reason } => {
+            ControllerEvent::SubagentTimelineFailed {
+                session_id,
+                generation,
+                reason,
+            } => {
                 self.projection
                     .subagent_conversation
-                    .apply_failed(&session_id, &reason);
+                    .apply_failed(&session_id, generation, &reason);
             }
             ControllerEvent::AuthStarted { provider_id, data } => {
                 self.settings_copied_auth = None;
@@ -2726,6 +2756,8 @@ impl AppView {
         // 展示旧会话的子代理。
         self.projection.subagent_activity = Default::default();
         self.projection.subagent_conversation = Default::default();
+        // 子代理对话栏同步归零：旧偏移 / 脱钩态不泄漏进新会话。
+        self.subagent_conversation_scroll.jump_to_bottom();
         self.controller.open_session(session_id);
         self.refresh_changes(cx);
         if self.inspector_open && self.inspector_tab == InspectorTab::Resources {
@@ -4158,7 +4190,13 @@ impl AppView {
     /// 选中子代理并拉取其对话（浮层行点击与对话栏切换器共用入口）。id
     /// 变化即整体复位旧代理时间线；同 id 重选也重查（终态水合同路径）。
     pub(crate) fn select_subagent_agent(&mut self, agent_id: &str, cx: &mut Context<Self>) {
-        self.projection.subagent_conversation.select_agent(agent_id);
+        if self.projection.subagent_conversation.select_agent(agent_id) {
+            // 换代理即换时间线：滚动偏移与跟随态不跨代理保留，先贴底，
+            // 新内容到达后按跟随语义继续。
+            self.subagent_conversation_scroll.jump_to_bottom();
+            // chip 行同步 reveal：新选中项可能在横滑视口外。
+            self.subagent_reveal_selected = true;
+        }
         self.refresh_subagent_conversation();
         cx.notify();
     }
@@ -4172,8 +4210,8 @@ impl AppView {
                 self.projection.connection,
                 ConnectionState::Connected { .. }
             ) {
-                self.projection.subagent_conversation.begin_loading();
-                self.controller.load_subagent_timeline(agent_id);
+                let generation = self.projection.subagent_conversation.begin_loading();
+                self.controller.load_subagent_timeline(agent_id, generation);
             }
         }
     }
@@ -5296,12 +5334,25 @@ impl Render for AppView {
                         .flex_col()
                         .flex_1()
                         .min_w_0()
+                        // 并排路径高度链（P0 滚动修复）：Workspace / 并排
+                        // Inspector 的滚动容器都以「列内视口高度」为约束；
+                        // 缺 min_h_0 时 min-height:auto 会随内容（尤其子
+                        // 代理对话栏的非虚拟化长 transcript）把整行撑高，
+                        // list / overflow 滚动区视口等于内容高 → 左右两栏
+                        // 滚轮都失效。与中央路径（上方 min_h_0）同口径。
+                        .min_h_0()
                         .child(header)
                         .child(timeline_area)
                         .child(composer)
                 };
 
-                let mut main = div().flex().flex_row().flex_1().min_w_0().child(workspace);
+                let mut main = div()
+                    .flex()
+                    .flex_row()
+                    .flex_1()
+                    .min_w_0()
+                    .min_h_0()
+                    .child(workspace);
                 if inspector_width > 0.0 {
                     main = main.child(
                         div()
@@ -5311,6 +5362,8 @@ impl Render for AppView {
                             .flex_none()
                             .overflow_hidden()
                             .flex()
+                            .h_full()
+                            .min_h_0()
                             .child(self.inspector_element(
                                 connected,
                                 InspectorPlacement::Side,
@@ -5409,6 +5462,8 @@ impl Render for AppView {
                     .flex_col()
                     .flex_1()
                     .min_w_0()
+                    // main 高度收敛到列视口（同 P0 高度链）。
+                    .min_h_0()
                     .child(main)
                     // F-13：信息串居中；Inspector/Activity 触发器已随
                     // F-12（R6 Wave A）迁至 Workspace Header。P2-1：
@@ -5484,24 +5539,42 @@ mod tests {
             ("cmd-+", "IncreaseTextSize"),
             ("cmd--", "DecreaseTextSize"),
             ("cmd-0", "ResetTextSize"),
+            ("cmd-alt-up", "TaskCycleUp"),
+            ("cmd-alt-down", "TaskCycleDown"),
+            ("cmd-alt-n", "NextNeedsAttention"),
         ] {
             assert!(
                 APP_VIEW_KEYBINDINGS
                     .iter()
                     .any(|(bound, bound_action)| *bound == key && *bound_action == action),
-                "missing text scale binding {key} -> {action}"
+                "missing binding {key} -> {action}"
             );
         }
+        assert!(workspace_action_active(AppRoute::Workspace));
+        assert!(!workspace_action_active(AppRoute::Settings));
     }
 
-    /// R6 Wave A（F-12）：折叠态 Activity 触发器随 Workspace Header；浮层
-    /// 仅在折叠且菜单打开时出现；展开态无触发器（折叠走 inspector-collapse）。
     #[test]
-    fn activity_header_visibility_follows_inspector_state() {
-        assert_eq!(activity_header_visibility(true, false), (false, false));
-        assert_eq!(activity_header_visibility(true, true), (false, false));
-        assert_eq!(activity_header_visibility(false, false), (true, false));
-        assert_eq!(activity_header_visibility(false, true), (true, true));
+    fn main_path_buttons_are_marked_tab_stops() {
+        for id in [
+            "approve-once",
+            "approve-for-run",
+            "approve-deny",
+            "composer-action",
+            "add-task",
+            "header-new-task",
+            "reconnect",
+            "model-picker",
+            "timeline-back-to-bottom",
+        ] {
+            assert!(
+                MAIN_PATH_TAB_STOP_IDS.contains(&id),
+                "missing tab_stop marker for {id}"
+            );
+        }
+        assert!(!MAIN_PATH_TAB_STOP_IDS.contains(&"send"));
+        assert!(!MAIN_PATH_TAB_STOP_IDS.contains(&"cancel"));
+        assert!(COMPOSER_TAB_INDEX == 1);
     }
 
     #[test]
@@ -5621,38 +5694,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn main_path_buttons_are_marked_tab_stops() {
-        for id in [
-            "approve-once",
-            "approve-for-run",
-            "approve-deny",
-            "composer-action",
-            "add-task",
-            "header-new-task",
-            "reconnect",
-            "model-picker",
-            "timeline-back-to-bottom",
-        ] {
-            assert!(
-                MAIN_PATH_TAB_STOP_IDS.contains(&id),
-                "missing tab_stop marker for {id}"
-            );
-        }
-        assert!(!MAIN_PATH_TAB_STOP_IDS.contains(&"send"));
-        assert!(!MAIN_PATH_TAB_STOP_IDS.contains(&"cancel"));
-        assert!(COMPOSER_TAB_INDEX == 1);
-    }
-
-    #[test]
-    fn composer_action_slot_is_single_tab_stop() {
-        assert!(MAIN_PATH_TAB_STOP_IDS.contains(&"composer-action"));
-        assert_eq!(crate::ui::theme::metrics::COMPOSER_SEND_SIZE, 36.0);
-        let height =
-            AppView::composer_panel_height(crate::ui::theme::metrics::COMPOSER_INPUT_MIN_HEIGHT);
-        assert_eq!(height, metrics::COMPOSER_PANEL_MIN_HEIGHT);
-    }
-
     /// ADR-054 D2：行内改名提交裁决——空标题（含纯空白）不提交，保持
     /// 编辑器；未变化仅退出；变化才发 SessionRename。
     #[test]
@@ -5673,32 +5714,6 @@ mod tests {
             SessionRenameDecision::Submit(title) => assert_eq!(title, "New title"),
             other => panic!("expected submit, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn keybinding_table_includes_task_cycling_and_attention() {
-        for (key, action) in [
-            ("cmd-alt-up", "TaskCycleUp"),
-            ("cmd-alt-down", "TaskCycleDown"),
-            ("cmd-alt-n", "NextNeedsAttention"),
-        ] {
-            assert!(
-                APP_VIEW_KEYBINDINGS
-                    .iter()
-                    .any(|(binding, name)| *binding == key && *name == action),
-                "missing {key} -> {action}"
-            );
-        }
-    }
-
-    #[test]
-    fn workspace_empty_state_has_one_clear_primary_path() {
-        assert_eq!(workspace_empty_title(), "Start a conversation");
-        assert_eq!(
-            workspace_empty_hint(),
-            "Type below to start an unassigned conversation, or create a task from the sidebar."
-        );
-        assert!(!workspace_empty_hint().contains("Cmd+"));
     }
 
     #[test]
@@ -5835,16 +5850,6 @@ mod tests {
         assert!(!should_swallow_keyboard_click(false, Some("row-a")));
         assert!(!should_swallow_keyboard_click(false, Some("row-b")));
         assert!(!should_swallow_keyboard_click(false, None));
-    }
-
-    /// SET-3 审查修复 1：Settings 路由下工作台快捷键（审批 cmd-enter /
-    /// cmd-1..3、取消 cmd-.、新建 cmd-n、Inspector cmd-i、任务导航
-    /// cmd-alt-↑↓ / cmd-alt-n）全部旁路——九个 action handler 均先经
-    /// workspace_action_active 守卫，键绑定不得穿透路由。
-    #[test]
-    fn settings_route_blocks_workspace_shortcut_actions() {
-        assert!(workspace_action_active(AppRoute::Workspace));
-        assert!(!workspace_action_active(AppRoute::Settings));
     }
 
     #[test]

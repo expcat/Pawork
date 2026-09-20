@@ -99,16 +99,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn snapshot_round_trips_through_serde() {
-        let snapshot = sample();
-        let json = serde_json::to_string(&snapshot).expect("serialize");
-        let back: CompactionSnapshot = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(back, snapshot);
-        assert_eq!(back.version, SnapshotVersion::current());
-        back.validate().expect("current version validates");
-    }
-
     /// 冻结契约 golden：serde 字段名 / transparent 表示与 V1 完全一致。
     #[test]
     fn snapshot_serde_shape_matches_v1_frozen_contract() {
@@ -127,6 +117,7 @@ mod tests {
         );
         let decoded: CompactionSnapshot = serde_json::from_value(value).expect("deserialize");
         assert_eq!(decoded, sample());
+        decoded.validate().expect("current version validates");
     }
 
     #[test]

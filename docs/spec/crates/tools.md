@@ -191,13 +191,15 @@ Policy 闸门在同步 `decide` 前暂取 input，返回后立即归还，不再
 
 ## 6. 依赖关系
 
-- **workspace 内**：`pawork-domain`（AgentTool/ToolResult/CancellationToken 等 canonical 类型）、`pawork-policy`（路径内核 + PolicyEngine）、`pawork-exec`（Process/Sandbox Runtime）、`pawork-workspace`（WorkspaceService、ResolvedConfig）、`pawork-auth`（SecretBackend、OAuth 原语、`http_client()`）、`pawork-computer-use`（原生桌面操作）。
+- **workspace 内**：`pawork-domain`（AgentTool/ToolResult/CancellationToken 等 canonical 类型）、`pawork-policy`（路径内核 + PolicyEngine）、`pawork-exec`（Process/Sandbox Runtime）、`pawork-workspace`（WorkspaceService、ResolvedConfig）、`pawork-auth`（SecretBackend、OAuth 原语、`http_client()`）、`pawork-computer-use`（隔离虚拟桌面操作）。
 - **外部**：`tokio`、`async-trait`、`serde/serde_json`、`thiserror`、`tracing`、`ignore`、`globset`、`regex`、`chardetng`、`encoding_rs`、`rmcp`（仅 codec）、`reqwest`（OAuth）、`url`、`base64`（截图编码）。dev：`tempfile`、`proptest`、`wiremock`。无 cargo feature。
 - **被依赖**：仅 `pawork-app`（注册与调度装配；engine 经 LoopContext 回调消费，不依赖本包）。
 
 ## 7. 测试与验证资产
 
-`computer.rs` 两条回归验证显式批准后的截图结果与序列化，以及未信任/只读/自动批准均不触碰原生后端。原生输入与观察安全由 [computer-use](computer-use.md) 负责。
+2026-09-20 精简：HTTP 配置拒绝只保留 codec 的完整输入矩阵；auto-approve 标志并入实际写工具被拒绝且零调用的回归；环境白名单副本由 exec 权威测试和 run_command 的真实子进程环境检查承接。MCP 源码依赖边界检查成本小且保护封装，保留。
+
+`computer.rs` 三项回归：显式批准后的截图结果与序列化、缺 click 字段在触达 backend 前返回可纠正参数错误、未信任/只读/自动批准均不触碰虚拟桌面后端。输入与观察安全由 [computer-use](computer-use.md) 负责。
 
 默认验证命令：`cargo test -p pawork-tools --offline --lib --tests`（无 `tests/` 目录，用例全部在 `--lib`）。
 
@@ -211,8 +213,8 @@ Policy 闸门在同步 `decide` 前暂取 input，返回后立即归还，不再
 | `write_file.rs` | 原子写/建父目录/覆盖保留 mode、路径拒绝。 |
 | `edit_file.rs` | 精确单段、不唯一 Conflict、多段原子、预演失败不落盘、fuzzy 归一化与终止换行保留、fuzzy 唯一性计数、proptest（fuzzy 与精确替换一致性）。 |
 | `apply_patch.rs` | 多文件 create、dry_run 不落盘、delete+rename、部分失败恢复（create/update/delete 各形态）、proptest 字节精确回滚、op 路径穿越拒绝。 |
-| `run_command.rs` | 输出与 exit_code、非零失败、超时、流式先于退出、`platform_environment_allowlist_contains_runtime_basics`、descriptor 无网络旁路参数、clamp 上限、**`metadata_sandbox_shape_and_limits_golden`**、Seatbelt isolation 上报（macOS）、显式 Secret env 被剥除。 |
-| `scheduler.rs` | 只读并发、全局并发上限、未知工具、上下文透传、取消（执行前/执行中）、超时映射、审批拒绝不执行、`auto_approve_cannot_resolve_policy_prompt`、registry kind/描述符校验、untrusted 写拒绝（NeverAsk 也拒）、AskForWrites 不可被 AutoApprove 绕过、ReadOnly 档拒写、`process_never_ask_trusted_injects_execution_constraints`、约束与显式输入取更严。 |
+| `run_command.rs` | 输出与 exit_code、非零失败、超时、流式先于退出、descriptor 无网络旁路参数、clamp 上限、**`metadata_sandbox_shape_and_limits_golden`**、macOS Seatbelt 必须上报 `sandbox_exec` / `hard_writes_and_network` / `fallback=false`（探测失败即失败）、显式 Secret env 被剥除。环境白名单由 exec 的权威清单与剥除断言承接。 |
+| `scheduler.rs` | 只读并发、全局并发上限、未知工具、上下文透传、取消（执行前/执行中）、超时映射、审批拒绝不执行、auto-approve 不能绕过 AskForWrites（并入写工具零调用回归）、registry kind/描述符校验、untrusted 写拒绝（NeverAsk 也拒）、AskForWrites 不可被 AutoApprove 绕过、ReadOnly 档拒写、`process_never_ask_trusted_injects_execution_constraints`、约束与显式输入取更严。 |
 | `mcp/mod.rs` | rmcp 隔离守卫扫描、内置与 MCP 工具同表注册。 |
 | `mcp/capabilities.rs` | 发现与命名空间注册、read_only 放行、写工具审批与 untrusted 地板、host_trusted 钳制、取消先于远程调用、输出预算截断、非对象输入拒绝、structured_content 保留、workspace/tool 白名单、is_error 转换、未广播 tools 能力跳过。 |
 | `mcp/codec.rs` | http 配置校验、auth/header 注入、read_only_hint 往返、UTF-8 截断标记、input_required 状态 fail-closed。 |

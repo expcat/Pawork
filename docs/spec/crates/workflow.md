@@ -85,7 +85,7 @@
 - **步骤状态机（冻结）**：合法转移仅 `Pending→InProgress`、`InProgress→Completed|Blocked`、`Blocked→InProgress`。
 - **评审状态机（冻结）**：`Draft → InReview → ChangesRequested → (Revised 回 Draft)`；`InReview | ChangesRequested → Approved | Rejected`；其余转移一律 `IllegalReviewTransition`。
 - **任务状态机（冻结）**：`Queued → Running ↔ Suspended → Completed | Failed | Canceled`；终态不可再转移；`Finished` 事件只接受终态 status。
-- **Plan/Review 不授予写权限**：步骤文本是惰性数据，绝不作为命令通道；审批 gate 只做只读判定（`plan_with_write_action_descriptions_is_inert`、`source_has_no_io_or_spawn_api` 测试守护）。
+- **Plan/Review 不授予写权限**：步骤文本是惰性数据，绝不作为命令通道；审批 gate 只做只读判定（`plan_with_write_action_descriptions_is_inert` 守护运行期不执行）。本包不暴露 spawn / exec / 写文件 / 网络 API；依赖方向见 [../../architecture.md](../../architecture.md)，不靠源码文本扫描证明。
 - **replay 是纯折叠**：Plan 的 `apply` 不做再校验（非法输入由命令面拒绝）；Task 的 `apply` 保留状态机校验（重放坏事件显式报错而非静默损坏）。
 - **事件所有权**：本包只产出事件；封装为 `AgentEvent::Plan` / `AgentEvent::Task` 并落盘由 session-store 侧负责（round-trip 由测试守护）。
 - **无平台 / Provider 名分支**；不依赖 exec / orchestration（依赖方向红线，装配职责在 app）。
@@ -100,7 +100,7 @@
 
 | 资产 | 覆盖点 |
 | --- | --- |
-| `tests/plan_service.rs` | 步骤合法 / 非法转移；`replay_matches_live_service_and_manual_apply`（重放与实况一致）；版本修订链成链；命令错误矩阵；**红线**：`plan_with_write_action_descriptions_is_inert`（写动作描述文本不产生任何执行）、`source_has_no_io_or_spawn_api`（扫源码断言无 IO/spawn API）、`review_surface_adds_no_write_or_exec_api`；`PlanEvent` 经 `AgentEvent` round-trip；评审全流程（review→comment→changes→revise→approve 带 checkpoint）；`approval_gate_closed_until_approved`（gate 未批准恒关）；非法评审转移矩阵；直接 approve/reject；行锚点评论；revise 版本链校验与重复版本拒绝；评审流重放一致性 |
+| `tests/plan_service.rs` | 步骤合法 / 非法转移；`replay_matches_live_service_and_manual_apply`（重放与实况一致）；版本修订链成链；命令错误矩阵；**红线**：`plan_with_write_action_descriptions_is_inert`（写动作描述文本不产生任何执行）；`PlanEvent` 经 `AgentEvent` round-trip；评审全流程（review→comment→changes→revise→approve 带 checkpoint）；`approval_gate_closed_until_approved`（gate 未批准恒关）；非法评审转移矩阵；直接 approve/reject；行锚点评论；revise 版本链校验与重复版本拒绝；评审流重放一致性。2026-09-20 重构删除了两条 `include_str!` 源码文本扫描（文本扫描不能证明运行期行为）；「纯 reducer 无 IO/spawn」的约束以 [../../architecture.md](../../architecture.md) 的依赖方向与评审为准 |
 | `tests/state_and_replay.rs` | 四类 kind 注册查询；合法生命周期事件序；非法转移矩阵；`snapshot_and_replay_rebuild_view`；`pure_state_apply_folds_events`；`cancel_propagates_to_descendants_without_orphans`（取消树无孤儿）；取消跳过终态并移除 Queued；`events_since` 增量；`replay_advances_id_allocator` |
 
 默认验证命令：`cargo test -p pawork-workflow --offline --lib --tests`。

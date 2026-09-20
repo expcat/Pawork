@@ -136,10 +136,11 @@ impl DesktopController {
     /// 分页加载子代理会话时间线（Inspector「子代理」对话栏）。复用
     /// SessionGet 分页链，但回执走 SubagentTimeline* 事件流：主 Timeline
     /// 只认活动会话，子会话页由对话栏状态按 agent_id 归属，互不污染。
-    pub fn load_subagent_timeline(&self, session_id: String) {
+    pub fn load_subagent_timeline(&self, session_id: String, generation: u32) {
         let Some(client) = self.current_client() else {
             self.emit_reliable(ControllerEvent::SubagentTimelineFailed {
                 session_id,
+                generation,
                 reason: "not connected".into(),
             });
             return;
@@ -158,6 +159,7 @@ impl DesktopController {
                         let _ = events
                             .send(ControllerEvent::SubagentTimelineFailed {
                                 session_id,
+                                generation,
                                 reason: error.to_string(),
                             })
                             .await;
@@ -170,6 +172,7 @@ impl DesktopController {
                         let _ = events
                             .send(ControllerEvent::SubagentTimelineFailed {
                                 session_id,
+                                generation,
                                 reason: "session_get response carried no timeline page".into(),
                             })
                             .await;
@@ -179,6 +182,7 @@ impl DesktopController {
                         let _ = events
                             .send(ControllerEvent::SubagentTimelineFailed {
                                 session_id,
+                                generation,
                                 reason,
                             })
                             .await;
@@ -190,6 +194,7 @@ impl DesktopController {
                 if events
                     .send(ControllerEvent::SubagentTimelineLoaded {
                         session_id: session_id.clone(),
+                        generation,
                         page,
                     })
                     .await
@@ -204,6 +209,7 @@ impl DesktopController {
             let _ = events
                 .send(ControllerEvent::SubagentTimelineFailed {
                     session_id,
+                    generation,
                     reason: format!("timeline exceeded {MAX_PAGES} pages"),
                 })
                 .await;

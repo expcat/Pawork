@@ -309,6 +309,7 @@ mod tests {
             structured_output: true,
             prompt_cache: true,
             transport: ModelTransport::Responses,
+            supported_efforts: None,
             hosted_tool_tags: [
                 ToolCapabilityTag::WebSearch,
                 ToolCapabilityTag::CodeExecution,

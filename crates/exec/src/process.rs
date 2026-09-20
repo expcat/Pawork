@@ -952,10 +952,9 @@ mod tests {
         let script = match escaped_setsid_script() {
             Some(script) => script,
             None => {
-                #[cfg(target_os = "macos")]
-                panic!("macOS must reap setsid descendants; perl POSIX::setsid was unavailable");
-                #[cfg(not(target_os = "macos"))]
-                return;
+                panic!(
+                    "platform prerequisite missing to spawn a setsid descendant (setsid binary or perl POSIX::setsid)"
+                );
             }
         };
 

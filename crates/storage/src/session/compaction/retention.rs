@@ -523,15 +523,6 @@ mod tests {
     }
 
     #[test]
-    fn default_policy_enables_reasoning_retention() {
-        let policy = RetentionPolicy::default();
-        assert_eq!(
-            policy.retained_reasoning_items,
-            DEFAULT_RETAINED_REASONING_ITEMS
-        );
-    }
-
-    #[test]
     fn legacy_policy_json_without_reasoning_field_defaults_to_default() {
         // 本次新增前的旧 JSON：含全部既有字段，唯独缺 retained_reasoning_items。
         let legacy = serde_json::json!({
@@ -551,20 +542,16 @@ mod tests {
         // 既有字段保持 JSON 提供的值。
         assert_eq!(policy.retained_turns, 4);
         assert!(policy.keep_unresolved_tasks);
-    }
 
-    #[test]
-    fn empty_policy_json_uses_full_defaults() {
-        // 空 JSON 应整体回退到 Default impl。
-        let policy: RetentionPolicy =
+        // 空 JSON 整体回退到 Default impl（同样不得变成 0）。
+        let empty: RetentionPolicy =
             serde_json::from_value(serde_json::json!({})).expect("empty policy deserializes");
-        assert_eq!(policy, RetentionPolicy::default());
-        assert_eq!(policy.retained_turns, DEFAULT_RETAINED_TURNS);
+        assert_eq!(empty, RetentionPolicy::default());
+        assert_eq!(empty.retained_turns, DEFAULT_RETAINED_TURNS);
         assert_eq!(
-            policy.retained_reasoning_items,
+            empty.retained_reasoning_items,
             DEFAULT_RETAINED_REASONING_ITEMS
         );
-        assert!(policy.keep_unresolved_tasks);
     }
 
     #[test]

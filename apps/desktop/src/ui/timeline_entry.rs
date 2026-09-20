@@ -1597,27 +1597,6 @@ impl AppView {
 mod tests {
     use super::*;
 
-    /// 状态词映射合同：succeeded → Completed；running → In progress；未知词原样。
-    #[test]
-    fn tool_status_label_maps_succeeded_only() {
-        assert_eq!(tool_status_label("succeeded"), "Completed");
-        assert_eq!(tool_status_label("running"), "In progress");
-        assert_eq!(tool_status_label("failed"), "failed");
-        assert_eq!(tool_status_label("approve_once"), "approve_once");
-    }
-
-    /// wire status 词分类：五类已知词精确归类，未知词（含审批决策词）归 Other。
-    #[test]
-    fn tool_row_status_classifies_wire_words() {
-        assert_eq!(tool_row_status("succeeded"), ToolRowStatus::Succeeded);
-        assert_eq!(tool_row_status("failed"), ToolRowStatus::Failed);
-        assert_eq!(tool_row_status("cancelled"), ToolRowStatus::Cancelled);
-        assert_eq!(tool_row_status("running"), ToolRowStatus::Running);
-        assert_eq!(tool_row_status("pending"), ToolRowStatus::Pending);
-        assert_eq!(tool_row_status("approve_once"), ToolRowStatus::Other);
-        assert_eq!(tool_row_status(""), ToolRowStatus::Other);
-    }
-
     /// 内建 8 工具按参数键抽目标；MCP / 畸形 / 非字符串 / 超长回退不伪造。
     #[test]
     fn tool_headline_extracts_builtin_targets_and_falls_back() {
@@ -1757,6 +1736,19 @@ mod tests {
 
         let view = ToolRowView::from_parts("bash", "running", None);
         assert_eq!(view.detail, None);
+        assert_eq!(view.status_label, "In progress");
+
+        let failed = ToolRowView::from_parts("edit_file", "failed", None);
+        assert_eq!(failed.status, ToolRowStatus::Failed);
+        assert_eq!(failed.status_label, "failed");
+        let cancelled = ToolRowView::from_parts("bash", "cancelled", None);
+        assert_eq!(cancelled.status, ToolRowStatus::Cancelled);
+        let pending = ToolRowView::from_parts("bash", "pending", None);
+        assert_eq!(pending.status, ToolRowStatus::Pending);
+        let other = ToolRowView::from_parts("bash", "approve_once", None);
+        assert_eq!(other.status, ToolRowStatus::Other);
+        assert_eq!(other.status_label, "approve_once");
+        assert_eq!(ToolRowView::from_parts("bash", "", None).status, ToolRowStatus::Other);
 
         let rows = vec![
             ToolRowView::from_parts("read_file", "succeeded", None),
@@ -1828,19 +1820,6 @@ mod tests {
         };
         let done = vec![phase, streaming.clone(), committed_phase];
         assert!(!assistant_is_streaming(&done, &streaming, Some("run-1")));
-    }
-
-    /// 摘要卡视图构造：字段直存，禁用原因为独立通道。
-    #[test]
-    fn run_summary_view_construction() {
-        let view = RunSummaryView {
-            title: "Ready for review".into(),
-            description: "Run finished.".into(),
-            terminal: RunSummaryTerminal::Completed,
-            review_changes_enabled: false,
-        };
-        assert_eq!(view.title, "Ready for review");
-        assert!(!view.review_changes_enabled);
     }
 
     /// GUI3-04：认证类原因命中供应商设置；timeout / 其它不命中。UI 启发式。

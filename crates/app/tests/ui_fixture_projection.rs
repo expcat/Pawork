@@ -117,6 +117,16 @@ async fn ui_fixture_seed_to_host_snapshot_and_timeline() {
         Some(store),
     );
     devfixture::attach_fixture_workspaces(&mut core, &workspaces).expect("attach workspaces");
+    for workspace in &workspaces {
+        let registered = core
+            .workspace_by_id(&pawork_domain::WorkspaceId::from(workspace.id.as_str()))
+            .expect("fixture workspace registered");
+        assert_eq!(registered.roots.len(), 1);
+        assert_eq!(
+            registered.roots[0].canonicalize().expect("registered root"),
+            workspace.path.canonicalize().expect("workspace root")
+        );
+    }
     core.open_checkpoints(root.path().join("data/checkpoints"))
         .await
         .expect("open checkpoints");
@@ -166,17 +176,24 @@ async fn ui_fixture_seed_to_host_snapshot_and_timeline() {
     let workspace_entries = section_data(&snapshot, SnapshotSectionKind::Workspaces, "workspaces");
     assert_eq!(
         workspace_entries.len(),
-        1,
-        "wire workspaces 段当前只携带主 workspace"
+        spec.workspaces.len(),
+        "snapshot 必须携带全部已登记 workspace"
     );
-    assert_eq!(
-        workspace_entries[0]["id"].as_str(),
-        Some(spec.workspaces[0].id.as_str())
-    );
-    assert_eq!(
-        workspace_entries[0]["name"].as_str(),
-        Some(spec.workspaces[0].name.as_str())
-    );
+    let actual_workspaces: BTreeMap<_, _> = workspace_entries
+        .iter()
+        .map(|entry| {
+            (
+                entry["id"].as_str().expect("workspace id"),
+                entry["name"].as_str().expect("workspace name"),
+            )
+        })
+        .collect();
+    let expected_workspaces: BTreeMap<_, _> = spec
+        .workspaces
+        .iter()
+        .map(|entry| (entry.id.as_str(), entry.name.as_str()))
+        .collect();
+    assert_eq!(actual_workspaces, expected_workspaces);
 
     let tree = section_data(&snapshot, SnapshotSectionKind::SessionTree, "session_tree");
     let by_id: BTreeMap<&str, &Value> = tree

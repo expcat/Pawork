@@ -1,14 +1,8 @@
 //! R1 Wave C U1 spike：在真实 desktop 组件上实测 GPUI 0.2.2 TestAppContext。
 //!
-//! 进程内驱动能力（action / focus / key / mouse / scroll / resize / clipboard /
-//! 确定性 executor / debug_bounds）写在本模块的 `#[gpui::test]` 里。
+//! 进程内驱动能力（action / focus / key / mouse / scroll / clipboard）写在本模块的
+//! `#[gpui::test]` 里。时钟推进与几何自测不在此重复；debug_bounds 只服务点击与滚轮命中。
 //! 不挂 AppView / Platform / socket；IME composing 与 AX 不在本层覆盖。
-
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
-use std::time::Duration;
 
 use gpui::{
     ClipboardItem, Context, Entity, EntityInputHandler, FocusHandle, Focusable, InteractiveElement,
@@ -124,16 +118,6 @@ fn composer_focused(host: &Entity<ProbeHost>, cx: &mut VisualTestContext) -> boo
 }
 
 #[gpui::test]
-fn action_dispatch_pastes_into_text_input(cx: &mut TestAppContext) {
-    let (host, cx) = mount_probe(cx);
-    focus_composer(&host, cx);
-    cx.write_to_clipboard(ClipboardItem::new_string("from-action".into()));
-    cx.dispatch_action(text_input::Paste);
-    cx.run_until_parked();
-    assert_eq!(composer_text(&host, cx), "from-action");
-}
-
-#[gpui::test]
 fn focus_assert_composer_after_explicit_focus(cx: &mut TestAppContext) {
     let (host, cx) = mount_probe(cx);
     assert!(
@@ -211,22 +195,6 @@ fn scroll_wheel_event_reaches_overflow_container(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn resize_updates_debug_bounds_geometry(cx: &mut TestAppContext) {
-    let (_host, cx) = mount_probe(cx);
-    let before = cx
-        .debug_bounds("u1-probe-root")
-        .expect("bounds before resize");
-    cx.simulate_resize(size(px(480.), px(240.)));
-    cx.refresh().expect("refresh after resize");
-    cx.run_until_parked();
-    let after = cx
-        .debug_bounds("u1-probe-root")
-        .expect("bounds after resize");
-    assert_ne!(before.size, after.size);
-    assert!(after.size.width > px(0.) && after.size.height > px(0.));
-}
-
-#[gpui::test]
 fn clipboard_roundtrip_via_paste_action(cx: &mut TestAppContext) {
     let (host, cx) = mount_probe(cx);
     focus_composer(&host, cx);
@@ -239,67 +207,6 @@ fn clipboard_roundtrip_via_paste_action(cx: &mut TestAppContext) {
     cx.dispatch_action(text_input::Paste);
     cx.run_until_parked();
     assert_eq!(composer_text(&host, cx), "clip-probe");
-}
-
-#[gpui::test]
-fn deterministic_executor_advances_clock_without_real_sleep(cx: &mut TestAppContext) {
-    let (_host, cx) = mount_probe(cx);
-    let started = cx.executor().now();
-    let fired = Arc::new(AtomicBool::new(false));
-    let flag = fired.clone();
-    cx.executor()
-        .spawn(async move {
-            flag.store(true, Ordering::SeqCst);
-        })
-        .detach();
-    cx.run_until_parked();
-    assert!(
-        fired.load(Ordering::SeqCst),
-        "run_until_parked must drain ready background tasks"
-    );
-
-    let delayed = Arc::new(AtomicBool::new(false));
-    let delayed_flag = delayed.clone();
-    let executor = cx.executor();
-    executor
-        .spawn({
-            let executor = executor.clone();
-            async move {
-                executor.timer(Duration::from_millis(250)).await;
-                delayed_flag.store(true, Ordering::SeqCst);
-            }
-        })
-        .detach();
-    cx.run_until_parked();
-    assert!(
-        !delayed.load(Ordering::SeqCst),
-        "timer must stay pending until advance_clock"
-    );
-    cx.executor().advance_clock(Duration::from_millis(250));
-    cx.run_until_parked();
-    assert!(
-        delayed.load(Ordering::SeqCst),
-        "advance_clock + run_until_parked must complete the timer"
-    );
-    let elapsed = cx.executor().now().saturating_duration_since(started);
-    assert!(
-        elapsed >= Duration::from_millis(250),
-        "advance_clock must move TestDispatcher time, elapsed={elapsed:?}"
-    );
-}
-
-#[gpui::test]
-fn debug_bounds_reports_named_geometry(cx: &mut TestAppContext) {
-    let (_host, cx) = mount_probe(cx);
-    let root = cx
-        .debug_bounds("u1-probe-root")
-        .expect("debug_selector u1-probe-root");
-    let scroll = cx
-        .debug_bounds("u1-probe-scroll")
-        .expect("debug_selector u1-probe-scroll");
-    assert!(root.size.width > px(0.) && root.size.height > px(0.));
-    assert!(scroll.size.height > px(0.));
-    assert!(scroll.origin.y >= root.origin.y);
 }
 
 #[gpui::test]

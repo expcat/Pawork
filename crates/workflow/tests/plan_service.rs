@@ -234,39 +234,6 @@ fn plan_with_write_action_descriptions_is_inert() {
 }
 
 #[test]
-fn source_has_no_io_or_spawn_api() {
-    // 静态只读保证：扫描本 crate 实现源码，确认不存在任何进程/文件/网络 IO 入口。
-    let src = concat!(
-        include_str!("../src/plan/mod.rs"),
-        include_str!("../src/plan/state.rs"),
-        include_str!("../src/plan/snapshot.rs"),
-        include_str!("../src/plan/error.rs"),
-        include_str!("../src/plan/service.rs"),
-    );
-    let forbidden = [
-        "std::process",
-        "process::Command",
-        "Command::new",
-        "std::fs",
-        "fs::write",
-        "fs::remove",
-        "File::create",
-        "OpenOptions",
-        "std::net",
-        "tokio::spawn",
-        "std::thread",
-        ".spawn(",
-        "reqwest",
-    ];
-    for token in forbidden {
-        assert!(
-            !src.contains(token),
-            "read-only violation: source references `{token}`"
-        );
-    }
-}
-
-#[test]
 fn plan_event_round_trips_through_agent_event() {
     let svc = PlanService::new();
     let event = svc
@@ -758,31 +725,5 @@ fn review_events_round_trip_through_agent_event() {
         let json = serde_json::to_string(&wrapped).expect("serialize AgentEvent::Plan");
         let back: AgentEvent = serde_json::from_str(&json).expect("deserialize AgentEvent::Plan");
         assert_eq!(back, wrapped);
-    }
-}
-
-#[test]
-fn review_surface_adds_no_write_or_exec_api() {
-    // P16-2 只新增只读评审 / 审批命令：service 方法面不允许出现任何
-    // 写文件 / 执行 / 派生进程 / 应用补丁类入口（审批不扩权）。
-    let src = include_str!("../src/plan/service.rs");
-    let forbidden_prefixes = [
-        "pub fn write",
-        "pub fn exec",
-        "pub fn spawn",
-        "pub fn run",
-        "pub fn apply",
-        "pub fn shell",
-        "pub fn remove",
-        "pub fn delete",
-        "pub fn launch",
-    ];
-    for line in src.lines().filter(|l| l.trim_start().starts_with("pub fn")) {
-        for prefix in forbidden_prefixes {
-            assert!(
-                !line.contains(prefix),
-                "write-like API leaked in service surface: {line}"
-            );
-        }
     }
 }

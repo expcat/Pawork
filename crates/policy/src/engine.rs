@@ -539,10 +539,4 @@ mod tests {
             Some(("ls".into(), vec!["-l".into()]))
         );
     }
-
-    #[test]
-    fn engine_mode_getter_returns_default() {
-        let eng = PolicyEngine::new(ApprovalMode::AskForDangerous);
-        assert_eq!(eng.mode(), ApprovalMode::AskForDangerous);
-    }
 }

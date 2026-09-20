@@ -270,16 +270,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn unsupported_constructs_and_displays() {
-        let err = QuotaError::unsupported("model-level not supported");
-        assert!(matches!(err, QuotaError::Unsupported { .. }));
-        assert_eq!(
-            err.to_string(),
-            "quota query unsupported: model-level not supported"
-        );
-    }
-
-    #[test]
     fn rate_limited_carries_retry_hint() {
         let err = QuotaError::rate_limited("slow down", Some(5_000));
         assert!(matches!(
@@ -289,20 +279,6 @@ mod tests {
                 ..
             }
         ));
-    }
-
-    #[test]
-    fn error_variants_are_distinct() {
-        assert_ne!(QuotaError::unsupported("x"), QuotaError::forbidden("x"));
-    }
-
-    #[test]
-    fn timeout_constructs_and_displays_safely() {
-        let err = QuotaError::timeout("connect timed out");
-        assert!(matches!(err, QuotaError::Timeout { .. }));
-        assert_eq!(err.to_string(), "quota query timed out: connect timed out");
-        assert!(err.retryable());
-        assert_eq!(err.retry_after_ms(), None);
     }
 
     #[test]
@@ -333,6 +309,15 @@ mod tests {
 
     #[test]
     fn retryable_classification_is_explicit_per_variant() {
+        // 用户可见文案随分类一起冻结。
+        assert_eq!(
+            QuotaError::unsupported("model-level not supported").to_string(),
+            "quota query unsupported: model-level not supported"
+        );
+        assert_eq!(
+            QuotaError::timeout("connect timed out").to_string(),
+            "quota query timed out: connect timed out"
+        );
         let cases = [
             (QuotaError::unsupported("x"), false),
             (QuotaError::unauthorized("x"), false),

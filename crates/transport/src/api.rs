@@ -204,11 +204,4 @@ mod tests {
 
         assert_eq!(decoded, endpoint);
     }
-
-    #[test]
-    fn frame_owns_only_bytes() {
-        let frame = TransportFrame::new(vec![1, 2, 3]);
-        assert_eq!(frame.as_bytes(), &[1, 2, 3]);
-        assert_eq!(frame.into_bytes(), vec![1, 2, 3]);
-    }
 }

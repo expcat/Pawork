@@ -86,7 +86,7 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 | `src/gui_host/handlers/settings/permissions.rs` | ~90 | `permissions_settings` 输出 `PermissionsSettingsData`。`set_approval_mode`：`ApprovalModeWire::from_str`（不收 kebab/`on_failure`），未知值 `invalid_approval_mode` 保旧；ADR-053 先原子写 Global 配置再更新内存。`workspace_trust`：id 必须匹配 attached workspace，同一把写锁内校验 attached id、解析 canonical 根路径、写 Global `workspace_trust`、更新内存 |
 | `src/gui_host/handlers/settings/terminal.rs` | ~100 | `terminal_settings` / `set_terminal_settings`：`TerminalSettingsData`。shell trim 非空且可解析、columns/rows ∈ 2..=1000，非法 `invalid_terminal_settings` 保旧；`shell: null` 清回平台默认；未设尺寸回落 `PtyWindowSize::default()` = 80×24 |
 | `src/gui_host/tests/` | ~6290 | `cfg(test)` 原 `tests.rs` 按域拆为 `mod.rs` + `run` / `session` / `approval` / `idempotency` / `terminal` / `settings`（约 60 条）：双射 pin、timeline 分页、`@` 展开三态、幂等、审批三态与重启后广播收口、合成终态闸门、fork、provider 切换、bus lagged、ADR-045 `terminal_close`、SET-2/4/5/6 settings（含脱敏、xAI / Kimi Code 双认证、proxy/approval/terminal fail-closed） |
-| `tests/smoke.rs` | ~110 | env 门控真实 API 冒烟（`--ignored`），不进默认测试路径（`live-smoke` feature 显式启用） |
+| `tests/smoke.rs` | ~110 | env 门控真实 API 冒烟，不进默认测试路径（`live-smoke` feature 显式启用） |
 | `tests/timeline_projection_host.rs` | ~160 | host `timeline()` 与 protocol 投影 golden 对拍 |
 | `tests/gui_server/session.rs` | ~1000 | 具名 test bin `gui_server_session`：握手/版本/capability/resume/心跳/慢消费 |
 | `tests/gui_server/multi_gui_runtime.rs` | ~830 | 具名 test bin `gui_server_multi_gui_runtime`：多 GUI 一致性/重连 replay/慢客户端隔离 |
@@ -301,6 +301,10 @@ WorkspaceList 与 snapshot Workspaces 段均按每个目标 workspace roots 调�
 
 ## 7. 测试与验证资产
 
+2026-09-20 测试重构：live-smoke 只以 feature 显式选择，不再叠加 ignore，缺环境直接失败；验证非空流式文本、唯一成功终态与 `resume_messages` 可恢复的助手内容。普通 `bash scripts/test.sh app` 开启 ui-fixture、不开 live-smoke，不请求真实 Provider。真实模型仍按产品验证规格执行；本次执行状态见 [测试重构计划](../../testing-refactor-plan.md)。
+
+新入口实际发现 `ui_fixture_projection` 仍断言只返回主 workspace，与当前注册表全集合行为不符。该测试改为核对全部已登记 workspace 的根目录、快照 id/name 集合及每个 session 的归属；不依赖工作区返回顺序，也不重新录制 golden。
+
 `subagents::tests` 覆盖结果重放、普通任务列表排除子会话、禁止嵌套派发与工具越权、父取消和并发上限。`cross_provider_subagents_select_models_and_persist_reasoning` 通过本地模拟 HTTP 接口验证非 GLM 模型的 Chat Completions / Messages 跨供应商派发、实际请求 model、结果回传和推理签名持久化；不等同于真实供应商联网验收。
 
 `gui_host/tests/chat_controls.rs::computer_approval_image_persistence_and_resume_do_not_repeat_input` 验证 computer 工具在批准前零调用、动作预览、canonical 图片持久化和恢复历史不重执行。隔离桌面连接和输入由 tools / computer-use 定向测试及真实 probe 另验。
@@ -308,7 +312,7 @@ WorkspaceList 与 snapshot Workspaces 段均按每个目标 workspace roots 调�
 默认验证命令：
 
 ```bash
-cargo test -p pawork-app --offline --lib --tests
+bash scripts/test.sh app
 ```
 
 UI fixture 属显式 opt-in 验证资产；其集成测试与 example 均声明
@@ -351,7 +355,7 @@ cargo test -p pawork-app --offline --lib --tests --features ui-fixture
 | `tests/ui_fixture_projection.rs` | `--features ui-fixture` | R1 Wave B Phase C：devfixture 把 `fixtures/ui/seed.json` 种到隔离 tempdir 后，经真实装配的 `GuiHostAdapter` `snapshot()`/`timeline()` 断言 3 workspaces、7 sessions、四日期桶分布、pending approval 重建、completed 会话条目构成（user/assistant/tool/approval/run 全量对拍 seed turns）、alpha diff 4 文件含 ≥200 字符长行；断言值取自 seed.json |
 | `tests/gui_server/session.rs` | 具名 `[[test]]` `gui_server_session` | 握手往返、非握手首帧拒绝、command 盖戳与版本校验、SessionGet 字段透传、resume 三态与 ack、Heartbeat→Pong、断连不取消 run、lagged→ReplayUnavailable、慢消费不阻塞宿主、client_context 替换拒绝、capability 先于宿主拒绝、terminal-streaming capability 全路径、ADR-045 `TerminalExited` 按协商 minor 门控（1.2 连接跳过且不断流、1.3 连接送达） |
 | `tests/gui_server/multi_gui_runtime.rs` | 具名 `[[test]]` `gui_server_multi_gui_runtime` | 三 GUI 收到相同事件序、重连 replay 缺失事件、replay 不可用回退 snapshot、慢客户端不拖累其它 GUI、断连/心跳超时均不触发 RunCancel |
-| `tests/smoke.rs` | `live-smoke` feature + env 门控，默认忽略 | 真实 API 流式冒烟（AssistantTextDelta + RunCompleted）；`cargo test -p pawork-app --features live-smoke --test smoke -- --ignored --nocapture`，需 `PAWORK_SMOKE_BASE_URL/API_KEY/MODEL[/PROTOCOL]`，禁止打印 key |
+| `tests/smoke.rs` | `live-smoke` feature + env 门控，默认不编译 | 真实 API 流式冒烟（AssistantTextDelta + RunCompleted）；`cargo test -p pawork-app --features live-smoke --test smoke -- --nocapture`，需 `PAWORK_SMOKE_BASE_URL/API_KEY/MODEL[/PROTOCOL]`，禁止打印 key |
 | `examples/ui_fixture.rs` | `--features ui-fixture` dev-only example（非 test bin） | R1 Wave B UI fixture 工具（CLI 冻结）：`seed`（写隔离 root + manifest/ready marker）、`serve`（真实 GuiServer + 按首行前缀分派的 MockProvider；`drop_socket` 可重复触发）、`self-check`（握手+snapshot 校验+RunStart+Resume Replay，每轮先失效旧 `replay_complete`）、`snapshot-dump`（volatile 归一化 + seed 会话过滤）。数据集 `fixtures/ui/seed.json` 与确定性 PTY；验证链路：`seed → serve → self-check → snapshot-dump` |
 
 验证约定总览见 [../verification.md](../verification.md)；degrade tracing 断言一律使用 `testsupport::RecordingCapture`，禁止裸 `tracing::subscriber::set_default`。

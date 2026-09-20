@@ -39,11 +39,12 @@ kill -0 "$PID" 2>/dev/null || { echo "ui-focus-switch: pid not running: $PID" >&
 frontmost_pid() {
   osascript \
     -e 'tell application "System Events" to get unix id of first application process whose frontmost is true' \
-    2>/dev/null || true
+    2>/dev/null
 }
 
 if [[ "$MODE" == "state" ]]; then
-  front="$(frontmost_pid)"
+  front="$(frontmost_pid)" || { echo 'ui-focus-switch: 无法读取前台应用' >&2; exit 3; }
+  [[ "$front" =~ ^[1-9][0-9]*$ ]] || { echo 'ui-focus-switch: 前台应用 PID 无效' >&2; exit 3; }
   if [[ "$front" == "$PID" ]]; then
     echo "# focus state pid=$PID frontmost=true"
     exit 0
@@ -64,7 +65,8 @@ deadline=$(( SECONDS + FOCUS_TIMEOUT_SECS ))
 attempts=0
 while :; do
   attempts=$(( attempts + 1 ))
-  front="$(frontmost_pid)"
+  front="$(frontmost_pid)" || { echo 'ui-focus-switch: 无法读取前台应用' >&2; exit 3; }
+  [[ "$front" =~ ^[1-9][0-9]*$ ]] || { echo 'ui-focus-switch: 前台应用 PID 无效' >&2; exit 3; }
   if [[ "$MODE" == "activate" && "$front" == "$PID" ]]; then
     echo "# focus $MODE pid=$PID frontmost=true attempts=$attempts"
     exit 0

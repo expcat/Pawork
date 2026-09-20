@@ -822,6 +822,20 @@ mod tests {
             window: QuotaWindow::Rolling5h,
             unit: QuotaUnit::Token,
         };
+        // 窗口长度常量随这条真实查询一起冻结。
+        assert_eq!(window_length_ms(QuotaWindow::Overall), None);
+        assert_eq!(
+            window_length_ms(QuotaWindow::Rolling5h),
+            Some(5 * 60 * 60 * 1000)
+        );
+        assert_eq!(
+            window_length_ms(QuotaWindow::Weekly),
+            Some(7 * 24 * 60 * 60 * 1000)
+        );
+        assert_eq!(
+            window_length_ms(QuotaWindow::Monthly),
+            Some(30 * 24 * 60 * 60 * 1000)
+        );
         let snap = adapter
             .fetch(&request, None, &CancellationToken::new())
             .await
@@ -877,37 +891,16 @@ mod tests {
     }
 
     #[test]
-    fn predict_exhaustion_basic() {
-        // used=25, limit=100, rate=1/s → 75s.
+    fn predict_exhaustion_returns_none_for_infinite_or_zero_rate() {
+        // used=25, limit=100, rate=1/s → 75s。
         let p =
             predict_exhaustion(QuotaMeasure::exact(25), QuotaMeasure::exact(100), 1).expect("some");
         assert_eq!(p.seconds_until_exhausted, 75);
-    }
-
-    #[test]
-    fn predict_exhaustion_returns_none_for_infinite_or_zero_rate() {
         assert!(predict_exhaustion(QuotaMeasure::exact(25), QuotaMeasure::Infinite, 1).is_none());
         assert!(predict_exhaustion(QuotaMeasure::exact(25), QuotaMeasure::exact(100), 0).is_none());
         // Already at or over limit.
         assert!(
             predict_exhaustion(QuotaMeasure::exact(150), QuotaMeasure::exact(100), 1).is_none()
-        );
-    }
-
-    #[test]
-    fn window_length_matches_canonical_windows() {
-        assert!(window_length_ms(crate::quota::QuotaWindow::Overall).is_none());
-        assert_eq!(
-            window_length_ms(crate::quota::QuotaWindow::Rolling5h),
-            Some(5 * 60 * 60 * 1000)
-        );
-        assert_eq!(
-            window_length_ms(crate::quota::QuotaWindow::Weekly),
-            Some(7 * 24 * 60 * 60 * 1000)
-        );
-        assert_eq!(
-            window_length_ms(crate::quota::QuotaWindow::Monthly),
-            Some(30 * 24 * 60 * 60 * 1000)
         );
     }
 

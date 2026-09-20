@@ -867,6 +867,9 @@ pub struct SubagentConversationState {
     pub agent_id: Option<String>,
     /// session_get 分页进行中（首屏骨架与防重复拉取）。
     pub loading: bool,
+    /// 分页代际：每次 begin_loading 自增；回执携带发起时的代际，不匹配
+    /// 即为过期链（Refresh / 终态重查并发时旧链的迟到失败不得污染新链）。
+    pub load_generation: u32,
     /// 分页 / 断连失败的如实原因；成功页到达即清除。
     pub error: Option<String>,
     /// 子代理自身会话的时间线（独立 reducer 实例，不与主 Timeline 共享）。
@@ -886,14 +889,21 @@ impl SubagentConversationState {
         true
     }
 
-    pub fn begin_loading(&mut self) {
+    /// 返回本次加载的代际，供回执链携带校验。
+    pub fn begin_loading(&mut self) -> u32 {
         self.loading = true;
         self.error = None;
+        self.load_generation = self.load_generation.saturating_add(1);
+        self.load_generation
     }
 
-    /// 落地一页子代理会话时间线（session_id 必须仍是被选代理）。
-    pub fn apply_page(&mut self, agent_id: &str, page: &TimelinePage) {
+    /// 落地一页子代理会话时间线（session_id 必须仍是被选代理，且回执
+    /// 代际与当前加载一致；同一次加载的多页共享同一代际）。
+    pub fn apply_page(&mut self, agent_id: &str, generation: u32, page: &TimelinePage) {
         if self.agent_id.as_deref() != Some(agent_id) {
+            return;
+        }
+        if self.load_generation != generation {
             return;
         }
         self.loading = false;
@@ -903,8 +913,11 @@ impl SubagentConversationState {
         }
     }
 
-    pub fn apply_failed(&mut self, agent_id: &str, reason: &str) {
+    pub fn apply_failed(&mut self, agent_id: &str, generation: u32, reason: &str) {
         if self.agent_id.as_deref() != Some(agent_id) {
+            return;
+        }
+        if self.load_generation != generation {
             return;
         }
         self.loading = false;

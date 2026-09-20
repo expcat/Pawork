@@ -610,10 +610,14 @@ mod tests {
 
     #[test]
     fn profile_emits_deny_for_default_secret_paths() {
+        let _guard = crate::sandbox::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let secrets = crate::sandbox::default_secret_paths();
-        if secrets.is_empty() {
-            return;
-        }
+        assert!(
+            !secrets.is_empty(),
+            "default_secret_paths must include HOME/.ssh and related secret locations on this host"
+        );
         let policy = SandboxPolicy {
             filesystem: FilesystemPolicy {
                 deny: secrets.clone(),
@@ -644,8 +648,7 @@ mod tests {
                 Ok(output) => format!("sandbox-exec probe exit={}", output.status),
                 Err(error) => format!("sandbox-exec probe failed: {error}"),
             };
-            eprintln!("SKIPPED seatbelt_denies_cat_of_secret_paths: {reason}");
-            return;
+            panic!("macOS Seatbelt isolation test requires sandbox-exec: {reason}");
         }
 
         let tmp = std::env::temp_dir().join(format!(
@@ -734,7 +737,7 @@ mod tests {
             .find(|p| p.is_file())
     }
 
-    /// macOS 真机行为种子（ADR-041 D1 正式模型；sandbox-exec 探测失败自动跳过）：
+    /// macOS 真机行为种子（ADR-041 D1 正式模型；sandbox-exec 探测失败即失败）：
     /// 写 workspace OK、写 $HOME 拒、写 workspace/.git 拒、读 secret 拒、
     /// 写 $TMPDIR OK。任何一条语义回退都会在此先红。
     #[cfg(target_os = "macos")]
@@ -754,8 +757,7 @@ mod tests {
                 Ok(output) => format!("sandbox-exec probe exit={}", output.status),
                 Err(error) => format!("sandbox-exec probe failed: {error}"),
             };
-            eprintln!("SKIPPED seatbelt_enforces_formal_write_whitelist_and_holes: {reason}");
-            return;
+            panic!("macOS Seatbelt isolation test requires sandbox-exec: {reason}");
         }
 
         let nanos = std::time::SystemTime::now()

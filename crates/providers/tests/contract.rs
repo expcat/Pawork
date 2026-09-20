@@ -185,8 +185,9 @@ async fn mount_chat_ok(server: &MockServer, body: String) {
 async fn contract_parallel_tool_calls() {
     let server = MockServer::start().await;
     let body = common::sse_body(&[
-        r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c_a","function":{"name":"r","arguments":"{}"}}]} }]}"#,
-        r#"{"choices":[{"delta":{"tool_calls":[{"index":1,"id":"c_b","function":{"name":"w","arguments":"{}"}}]} }]}"#,
+        r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-a","function":{"name":"read","arguments":"{\"path\":"}}]}}]}"#,
+        r#"{"choices":[{"delta":{"tool_calls":[{"index":1,"id":"call-b","function":{"name":"write","arguments":"{\"x\":1}"}}]}}]}"#,
+        r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"a\"}"}}]}}]}"#,
         r#"{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#,
     ]);
     mount_chat_ok(&server, body).await;
@@ -200,7 +201,68 @@ async fn contract_parallel_tool_calls() {
     )
     .await
     .expect("stream ok");
-    contract::assert_parallel_tool_calls(&sink.events());
+    let events = sink.events();
+    let concat_args = |id: &str| {
+        events
+            .iter()
+            .filter_map(|event| match event {
+                ProviderStreamEvent::ToolCallArgumentsDelta { id: call, json }
+                    if call.as_str() == id =>
+                {
+                    Some(json.as_str())
+                }
+                _ => None,
+            })
+            .collect::<String>()
+    };
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(
+                event,
+                ProviderStreamEvent::ToolCallStarted { id, name }
+                    if id.as_str() == "call-a" && name == "read"
+            ))
+            .count(),
+        1
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(
+                event,
+                ProviderStreamEvent::ToolCallStarted { id, name }
+                    if id.as_str() == "call-b" && name == "write"
+            ))
+            .count(),
+        1
+    );
+    assert_eq!(concat_args("call-a"), r#"{"path":"a"}"#);
+    assert_eq!(concat_args("call-b"), r#"{"x":1}"#);
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(
+                event,
+                ProviderStreamEvent::ToolCallCompleted { id } if id.as_str() == "call-a"
+            ))
+            .count(),
+        1
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(
+                event,
+                ProviderStreamEvent::ToolCallCompleted { id } if id.as_str() == "call-b"
+            ))
+            .count(),
+        1
+    );
+    assert!(matches!(
+        events.last(),
+        Some(ProviderStreamEvent::ResponseCompleted(_))
+    ));
 }
 
 /// MOCK-7 覆盖决策：文本流 / usage+stop / 工具调用三切面已合并至

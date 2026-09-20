@@ -4,10 +4,10 @@
 //! 来自子会话 session_get 分页 + live 事件（独立 protocol reducer），
 //! 不与主 Timeline 共享状态。
 
-use gpui::{Context, SharedString, Window, div, prelude::*, px};
+use gpui::{Context, Rgba, SharedString, Window, div, prelude::*, px};
 
 use crate::projection::{SubagentConversationState, SubagentInfo, TimelineEntryKind};
-use crate::ui::accessibility::{AxNode, AxRect, AxRole};
+use crate::ui::accessibility::{AxAction, AxNode, AxRect, AxRole};
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
 use crate::ui::components::empty_state::EmptyState;
 use crate::ui::components::follow_scroll::BackToBottom;
@@ -20,13 +20,11 @@ use super::AppView;
 
 /// 代理切换 chip 高度（与设置页 chip 同族，保持紧凑）。
 const SUBAGENT_CHIP_HEIGHT: f32 = 24.0;
-/// 思考文本盒限高：超出内部滚动，不撑爆对话栏。
-const THINKING_BOX_MAX_HEIGHT: f32 = 160.0;
-
 /// 对话栏渲染项（从子会话时间线条目预收集，避免渲染中混用可变借用）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum PanelItem {
     UserMessage { event_id: String, text: String },
+    UserFollowUp { event_id: String, text: String },
     Assistant { event_id: String, text: String },
     Thinking { event_id: String, text: String },
     Tool { name: String, status: String },
@@ -35,14 +33,26 @@ enum PanelItem {
 }
 
 fn panel_items(conversation: &SubagentConversationState) -> Vec<PanelItem> {
+    let mut first_user_seen = false;
     conversation
         .timeline
         .iter()
-        .map(|entry| match entry.kind.clone() {
-            TimelineEntryKind::UserMessage { text } => PanelItem::UserMessage {
-                event_id: entry.event_id.clone(),
-                text,
-            },
+    .map(|entry| match entry.kind.clone() {
+        TimelineEntryKind::UserMessage { text } => {
+            let item = if first_user_seen {
+                PanelItem::UserFollowUp {
+                    event_id: entry.event_id.clone(),
+                    text,
+                }
+            } else {
+                first_user_seen = true;
+                PanelItem::UserMessage {
+                    event_id: entry.event_id.clone(),
+                    text,
+                }
+            };
+            item
+        }
             TimelineEntryKind::AssistantMessage { text } => PanelItem::Assistant {
                 event_id: entry.event_id.clone(),
                 text,
@@ -61,6 +71,18 @@ fn panel_items(conversation: &SubagentConversationState) -> Vec<PanelItem> {
 /// 代理标题截断（chip 与列表行共用口径）。
 pub(super) fn short_title(title: &str) -> String {
     title.chars().take(24).collect()
+}
+
+/// 子代理状态 → chip 语义点颜色（与 Header 状态点 / TaskRail 同族映射：
+/// 运行蓝、等待琥珀、完成绿、失败红、其余弱化）。
+fn subagent_status_color(status: &str) -> Rgba {
+    match status {
+        "running" => dark().accent.primary,
+        "waiting" => dark().semantic.warning_text,
+        "completed" => dark().semantic.success_fg,
+        "failed" => dark().semantic.danger_text,
+        _ => dark().text.tertiary,
+    }
 }
 
 impl AppView {
@@ -85,6 +107,15 @@ impl AppView {
             .and_then(|id| agents.iter().cloned().find(|agent| agent.agent_id == id));
         let conversation = self.projection.subagent_conversation.clone();
         let items = panel_items(&conversation);
+        // 焦点句柄 / 实测布局随可见代理收敛，不跨会话累积。
+        let visible_ids: std::collections::HashSet<&String> = agents
+            .iter()
+            .map(|agent| &agent.agent_id)
+            .collect();
+        self.subagent_agent_focus
+            .retain(|id, _| visible_ids.contains(id));
+        self.subagent_agent_layouts
+            .retain(|id, _| visible_ids.contains(id));
 
         // 顶栏：代理切换 chip（滚动）+ Refresh（同主 Timeline 的权威重查）。
         let mut chips = div()
@@ -118,37 +149,82 @@ impl AppView {
                 .entry(agent.agent_id.clone())
                 .or_insert_with(|| cx.focus_handle().tab_stop(true))
                 .clone();
-            let tooltip = format!("{} · {}", agent.title, agent.model_id);
+            let layout = self
+                .subagent_agent_layouts
+                .entry(agent.agent_id.clone())
+                .or_insert_with(gpui::ScrollHandle::new)
+                .clone();
+            let status_label = super::changes::subagent_status_label(&agent.status);
+            let tooltip = format!(
+                "{} · {} · {}",
+                agent.title, agent.model_id, status_label
+            );
             let click_id = agent.agent_id.clone();
             let activate_id = agent.agent_id.clone();
+            let dot_color = subagent_status_color(&agent.status);
             chips = chips.child(
-                Button::new(format!("subagent-select-{}", agent.agent_id))
-                    .track_focus(&focus)
-                    .variant(if is_selected {
-                        ButtonVariant::Primary
-                    } else {
-                        ButtonVariant::Raised
-                    })
-                    .height(px(SUBAGENT_CHIP_HEIGHT))
-                    .radius(6.0)
-                    .text_size(font::BODY_SM)
-                    .label(short_title(&agent.title))
-                    .tooltip(tooltip)
-                    .on_click(cx.listener(move |view, event, _window, cx| {
-                        let id = format!("subagent-select-{click_id}");
-                        if view.consume_button_key_click(&id, event) {
-                            return;
-                        }
-                        view.select_subagent_agent(&click_id, cx);
-                    }))
-                    .on_activate(cx.listener(move |view, _event, _window, cx| {
-                        view.note_button_key_activate(&format!(
-                            "subagent-select-{activate_id}",
-                        ));
-                        view.select_subagent_agent(&activate_id, cx);
-                        cx.stop_propagation();
-                    })),
+                div()
+                    .id(SharedString::from(format!(
+                        "subagent-chip-layout-{}",
+                        agent.agent_id
+                    )))
+                    .track_scroll(&layout)
+                    .child(
+                        Button::new(format!("subagent-select-{}", agent.agent_id))
+                            .track_focus(&focus)
+                            .variant(if is_selected {
+                                ButtonVariant::Primary
+                            } else {
+                                ButtonVariant::Raised
+                            })
+                            .height(px(SUBAGENT_CHIP_HEIGHT))
+                            .radius(6.0)
+                            .text_size(font::BODY_SM)
+                            // 竞品共识（Claude Code Agent map / Cursor
+                            // Agents Window）：并发列表每项带状态点；
+                            // chip 名称前缀 Ø6 语义点，颜色同 Header 映射。
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .w(px(6.0))
+                                            .h(px(6.0))
+                                            .rounded_full()
+                                            .flex_none()
+                                            .bg(dot_color),
+                                    )
+                                    .child(short_title(&agent.title)),
+                            )
+                            .tooltip(tooltip)
+                            .on_click(cx.listener(move |view, event, _window, cx| {
+                                let id = format!("subagent-select-{click_id}");
+                                if view.consume_button_key_click(&id, event) {
+                                    return;
+                                }
+                                view.select_subagent_agent(&click_id, cx);
+                            }))
+                            .on_activate(cx.listener(move |view, _event, _window, cx| {
+                                view.note_button_key_activate(&format!(
+                                    "subagent-select-{activate_id}",
+                                ));
+                                view.select_subagent_agent(&activate_id, cx);
+                                cx.stop_propagation();
+                            })),
+                    ),
             );
+        }
+        // 选中 chip 滚入视口（与 Inspector 页签 reveal 同口径）：代理多时
+        // 选中项可能在横滑视口外，切换后按需 reveal，不逐帧抢滚动位置。
+        if std::mem::take(&mut self.subagent_reveal_selected) {
+            if let Some(index) = agents
+                .iter()
+                .position(|agent| Some(agent.agent_id.as_str()) == selected_id.as_deref())
+            {
+                self.subagent_chips_scroll.scroll_to_item(index);
+            }
         }
         let header = div()
             .flex()
@@ -161,26 +237,31 @@ impl AppView {
             .border_color(dark().border.subtle)
             .child(chips)
             .child(
-                Button::new("subagent-refresh")
-                    .variant(ButtonVariant::Ghost)
-                    .padding(ButtonPadding::Horizontal(metrics::PADDING_SM))
-                    .text_color(dark().text.secondary)
-                    .child(icon_sized(Icon::Refresh, px(metrics::ICON_SM)))
-                    .tooltip(t("subagents.refresh_tooltip"))
-                    .track_focus(&self.subagent_refresh_focus)
-                    .on_click(cx.listener(|view, event, _window, cx| {
-                        if view.consume_button_key_click("subagent-refresh", event) {
-                            return;
-                        }
-                        view.refresh_subagent_conversation();
-                        cx.notify();
-                    }))
-                    .on_activate(cx.listener(|view, _event, _window, cx| {
-                        view.note_button_key_activate("subagent-refresh");
-                        view.refresh_subagent_conversation();
-                        cx.notify();
-                        cx.stop_propagation();
-                    })),
+                div()
+                    .id("subagent-refresh-layout")
+                    .track_scroll(&self.subagent_refresh_layout)
+                    .child(
+                        Button::new("subagent-refresh")
+                            .variant(ButtonVariant::Ghost)
+                            .padding(ButtonPadding::Horizontal(metrics::PADDING_SM))
+                            .text_color(dark().text.secondary)
+                            .child(icon_sized(Icon::Refresh, px(metrics::ICON_SM)))
+                            .tooltip(t("subagents.refresh_tooltip"))
+                            .track_focus(&self.subagent_refresh_focus)
+                            .on_click(cx.listener(|view, event, _window, cx| {
+                                if view.consume_button_key_click("subagent-refresh", event) {
+                                    return;
+                                }
+                                view.refresh_subagent_conversation();
+                                cx.notify();
+                            }))
+                            .on_activate(cx.listener(|view, _event, _window, cx| {
+                                view.note_button_key_activate("subagent-refresh");
+                                view.refresh_subagent_conversation();
+                                cx.notify();
+                                cx.stop_propagation();
+                            })),
+                    ),
             );
 
         let body = self.subagent_transcript_element(selected.as_ref(), &conversation, items, window, cx);
@@ -204,6 +285,19 @@ impl AppView {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let Some(agent) = selected else {
+                // 已选代理但列表尚未返回该行（加载中 / 旧快照）：显示
+                // loading，不误报「未选择代理」。
+                if self
+                    .projection
+                    .subagent_conversation
+                    .agent_id
+                    .is_some()
+                {
+                    return subagent_placeholder(
+                        t("subagents.loading"),
+                        t("subagents.panel_empty_desc").to_string(),
+                    );
+                }
                 return subagent_placeholder(
                     t("subagents.panel_empty"),
                     t("subagents.panel_empty_desc").to_string(),
@@ -295,17 +389,26 @@ impl AppView {
                     )
                     .child(
                         div()
-                            .id("subagent-result-text")
                             .text_size(font::SM)
                             .text_color(dark().text.primary)
-                            .max_h(px(320.0))
-                            .overflow_y_scroll()
+                            // 结果全文随外层 transcript 滚动：内嵌滚动区会
+                            // 吃滚轮，指针停在上面时外层脱钩/跟滚失效。
                             .child(result.clone()),
                     ),
             );
         }
         transcript
-            .when(!self.subagent_conversation_scroll.is_following(), |area| {
+            // 回底浮出条件与主 Timeline 同口径：脱钩且内容真溢出（短对话
+            // 脱钩时不盖正文；max_offset 未测得时保守不显示）。
+            .when(
+                !self.subagent_conversation_scroll.is_following()
+                    && f32::from(
+                        self.subagent_conversation_scroll
+                            .handle()
+                            .max_offset()
+                            .height,
+                    ) > metrics::SCROLL_EPSILON,
+                |area| {
                 area.child(BackToBottom::new(
                     Button::new("subagent-back-to-bottom")
                         .variant(ButtonVariant::Raised)
@@ -365,6 +468,24 @@ impl AppView {
                         .child(text),
                 )
                 .into_any_element(),
+            // 后续 user 回合不是 spawn 任务：普通用户消息样式，不冒充
+            // 「主代理 → 子代理」任务盒。
+            PanelItem::UserFollowUp { event_id: _, text } => div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    Label::new(t("timeline.you"))
+                        .size(font::XS)
+                        .color(dark().text.tertiary),
+                )
+                .child(
+                    div()
+                        .text_size(font::SM)
+                        .text_color(dark().text.primary)
+                        .child(text),
+                )
+                .into_any_element(),
             // 子代理回复：复用主 Timeline 的 Markdown 渲染（代码块 / 列表 /
             // 表格同源，含复制入口）。
             PanelItem::Assistant { event_id, text } => div()
@@ -388,7 +509,7 @@ impl AppView {
                     ),
                 )
                 .into_any_element(),
-            PanelItem::Thinking { event_id, text } => div()
+            PanelItem::Thinking { event_id: _, text } => div()
                 .flex()
                 .flex_col()
                 .gap_1()
@@ -402,11 +523,10 @@ impl AppView {
                 )
                 .child(
                     div()
-                        .id(SharedString::from(format!("subagent-thinking-{event_id}")))
                         .text_size(font::SM)
                         .text_color(dark().text.tertiary)
-                        .max_h(px(THINKING_BOX_MAX_HEIGHT))
-                        .overflow_y_scroll()
+                        // 思考全文随外层 transcript 滚动（同主 Timeline 展开
+                        // 思考盒）：不做内嵌滚动，避免滚轮被内层吃掉。
                         .child(text),
                 )
                 .into_any_element(),
@@ -459,8 +579,9 @@ fn subagent_placeholder(title: &'static str, description: String) -> gpui::AnyEl
 }
 
 /// 「子代理」对话栏 AX：Group 节点携带当前面板状态摘要（被选代理 /
-/// 加载 / 失败 / 空态）。面板内容为滚动文本，行级交互走键盘焦点链
-///（chip / Refresh 均为 tab stop），不发布无真实布局的行级节点。
+/// 加载 / 失败 / 空态），并按实测布局发布 chip / Refresh / 回底按钮
+///（VoiceOver 可 Press；几何与 Inspector 页签同口径：tracked div 实测
+/// bounds 按滚动视口裁剪，不发布无真实布局的行级节点）。
 pub(super) fn subagent_ax(view: &AppView, frame: AxRect) -> AxNode {
     let activity = &view.projection.subagent_activity;
     let conversation = &view.projection.subagent_conversation;
@@ -497,11 +618,85 @@ pub(super) fn subagent_ax(view: &AppView, frame: AxRect) -> AxNode {
         value.push_str(" · ");
         value.push_str(reason);
     }
-    AxNode::new(
+    let mut node = AxNode::new(
         "inspector-subagent",
         AxRole::Group,
         t("inspector.tab_subagent"),
         frame,
     )
-    .value(value)
+    .value(value);
+    if bound {
+        let chips_bounds = view.subagent_chips_scroll.bounds();
+        for agent in activity.display_agents() {
+            let Some(layout) = view.subagent_agent_layouts.get(&agent.agent_id) else {
+                continue;
+            };
+            let rect = layout.bounds().intersect(&chips_bounds);
+            if rect.size.width <= gpui::px(0.0) || rect.size.height <= gpui::px(0.0) {
+                continue;
+            }
+            node = node.child(
+                AxNode::new(
+                    format!("subagent-select-{}", agent.agent_id),
+                    AxRole::Button,
+                    t("subagents.open_conversation"),
+                    AxRect::new(
+                        rect.origin.x.into(),
+                        rect.origin.y.into(),
+                        rect.size.width.into(),
+                        rect.size.height.into(),
+                    ),
+                )
+                .value(format!(
+                    "{} · {} · {}",
+                    agent.title,
+                    agent.model_id,
+                    crate::ui::changes::subagent_status_label(&agent.status)
+                ))
+                .action(AxAction::Press),
+            );
+        }
+        let refresh = view.subagent_refresh_layout.bounds();
+        if refresh.size.width > gpui::px(0.0) && refresh.size.height > gpui::px(0.0) {
+            node = node.child(
+                AxNode::new(
+                    "subagent-refresh",
+                    AxRole::Button,
+                    t("subagents.refresh_tooltip"),
+                    AxRect::new(
+                        refresh.origin.x.into(),
+                        refresh.origin.y.into(),
+                        refresh.size.width.into(),
+                        refresh.size.height.into(),
+                    ),
+                )
+                .action(AxAction::Press),
+            );
+        }
+    }
+    // 回底与终端面板同口径：脱钩且真溢出才发布，矩形取面板右下角
+    //（绝对定位 BackToBottom 的固定几何）。
+    let transcript_overflows = f32::from(
+        view.subagent_conversation_scroll
+            .handle()
+            .max_offset()
+            .height,
+    ) > metrics::SCROLL_EPSILON;
+    if !view.subagent_conversation_scroll.is_following() && transcript_overflows {
+        node = node.child(
+            AxNode::new(
+                "subagent-back-to-bottom",
+                AxRole::Button,
+                t("timeline.ax_back_to_bottom"),
+                AxRect::new(
+                    frame.x + frame.width - 140.0,
+                    frame.y + frame.height - 40.0,
+                    132.0,
+                    32.0,
+                ),
+            )
+            .action(AxAction::Press),
+        );
+    }
+    node
 }

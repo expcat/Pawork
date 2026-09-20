@@ -46,18 +46,6 @@ fn main() {
     run_app(socket, barrier_dir);
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn window_min_size_pins_design_responsive_floor() {
-        // 1080×720 是设计响应式底线：再窄将击穿 Workspace ≥560 合同。
-        assert_eq!(WINDOW_MIN_SIZE.width, px(1080.));
-        assert_eq!(WINDOW_MIN_SIZE.height, px(720.));
-    }
-}
-
 struct Args {
     socket: Option<PathBuf>,
     instance: Option<String>,

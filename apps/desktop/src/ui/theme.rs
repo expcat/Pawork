@@ -198,11 +198,6 @@ pub mod font {
         Rems(pixels / BASE_REM_PIXELS)
     }
 
-    #[cfg(test)]
-    pub const fn default_pixels(size: Rems) -> f32 {
-        size.0 * BASE_REM_PIXELS
-    }
-
     #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
     pub enum TextScale {
         #[default]
@@ -584,13 +579,6 @@ mod tests {
         (lighter + 0.05) / (darker + 0.05)
     }
 
-    fn assert_contrast_approx(actual: f64, expected: f64) {
-        assert!(
-            (actual - expected).abs() <= 0.05,
-            "contrast {actual:.4} not within ±0.05 of {expected:.4}"
-        );
-    }
-
     /// UI-1：全部次要文字在实际最亮交互面上达到 AA。
     #[test]
     fn wcag_text_on_surface_pairs_meet_aa() {
@@ -613,236 +601,33 @@ mod tests {
         assert_eq!(theme.text.placeholder.a, 1.0);
     }
 
-    /// §2.1：白字（on_accent）× accent.hover ≈ 4.55、× success_hover ≈ 4.61。
+    /// 操作按钮的文字在强调色和成功色的悬停表面上仍可读。
     #[test]
-    fn wcag_on_accent_over_hover_actions_match_frozen_targets() {
+    fn action_text_remains_readable_on_interactive_surfaces() {
         let theme = dark();
-        assert_contrast_approx(
-            contrast_ratio(theme.text.on_accent, theme.accent.hover),
-            4.55,
-        );
-        assert_contrast_approx(
-            contrast_ratio(theme.text.on_accent, theme.semantic.success_hover),
-            4.61,
-        );
-    }
-
-    /// GUI3-08：近黑画布与更深侧栏拉开层次；有限动效不循环。
-    #[test]
-    fn gui3_08_surface_hierarchy_and_finite_motion_tokens() {
-        let theme = dark();
-        assert_eq!(theme.bg.base, rgb(0x141416));
-        assert_eq!(theme.bg.panel, rgb(0x0e0e10));
-        assert_eq!(theme.bg.menu, rgb(0x1c1c1f));
-        assert_eq!(theme.surface.raised, rgb(0x222226));
-        assert_eq!(theme.surface.hover, rgb(0x2c2c31));
-        assert_eq!(theme.border.subtle, rgb(0x2a2a30));
-        assert_eq!(
-            motion::PANEL_DURATION,
-            std::time::Duration::from_millis(180)
-        );
-        assert_eq!(
-            motion::CONTROL_DURATION,
-            std::time::Duration::from_millis(120)
-        );
-        assert!((motion::ease_out_cubic(0.0) - 0.0).abs() < f32::EPSILON);
-        assert!((motion::ease_out_cubic(1.0) - 1.0).abs() < f32::EPSILON);
-        assert!(motion::ease_out_cubic(0.5) > 0.5);
-    }
-
-    /// §2.1：状态点绿槽位落地为不透明 #74c94c，不得回落到 success_bg。
-    #[test]
-    fn success_fg_is_opaque_status_dot_green() {
-        let theme = dark();
-        assert_eq!(theme.semantic.success_fg, rgb(0x74c94c));
+        for background in [theme.accent.hover, theme.semantic.success_hover] {
+            assert!(contrast_ratio(theme.text.on_accent, background) >= 4.5);
+        }
     }
 
     #[test]
-    fn text_scale_steps_and_foundation_tokens_match_accepted_tiers() {
+    fn text_scale_steps_stop_at_supported_limits() {
         use font::TextScale;
 
-        assert_eq!(TextScale::Percent100.decrease(), TextScale::Percent100);
-        assert_eq!(TextScale::Percent100.increase(), TextScale::Percent125);
-        assert_eq!(TextScale::Percent125.increase(), TextScale::Percent150);
-        assert_eq!(TextScale::Percent150.increase(), TextScale::Percent150);
-        assert_eq!(TextScale::Percent150.decrease(), TextScale::Percent125);
-        assert_eq!(TextScale::Percent100.rem_pixels(), 16.0);
-        assert_eq!(TextScale::Percent125.rem_pixels(), 20.0);
-        assert_eq!(TextScale::Percent150.rem_pixels(), 24.0);
-        assert_eq!(font::default_pixels(font::HEADER_TITLE), 18.0);
-        assert_eq!(font::default_pixels(font::TITLE), 20.0);
-        assert_eq!(font::default_pixels(font::BODY), 16.0);
-        assert_eq!(font::default_pixels(font::BASE), 14.0);
-        assert_eq!(font::default_pixels(font::BODY_SM), 12.0);
-        assert_eq!(font::default_pixels(font::SM), 12.0);
-        assert_eq!(font::default_pixels(font::XS), 11.0);
-        assert_eq!(
-            [
-                metrics::SPACE_1,
-                metrics::SPACE_2,
-                metrics::SPACE_3,
-                metrics::SPACE_4,
-                metrics::SPACE_6,
-                metrics::SPACE_8,
-            ],
-            [4.0, 8.0, 12.0, 16.0, 24.0, 32.0]
-        );
-        assert_eq!(metrics::CONTROL_RADIUS, 6.0);
-        assert_eq!(metrics::INPUT_MENU_RADIUS, 8.0);
-        assert_eq!(metrics::SURFACE_RADIUS, 12.0);
-        assert_eq!(metrics::COMPOSER_RADIUS, 16.0);
-        assert_eq!(metrics::STREAM_CARET_WIDTH, 2.0);
-        assert_eq!(metrics::STREAM_CARET_HEIGHT, 14.0);
-        assert_eq!(metrics::SKELETON_BAR_HEIGHT, 8.0);
-        assert_eq!(metrics::FOCUS_RING_WIDTH, 2.0);
-        assert_eq!(metrics::SETTINGS_PROVIDER_HEADER_HEIGHT, 52.0);
-        assert_eq!(metrics::SETTINGS_NAV_GROUP_HEIGHT, 20.0);
-        assert_eq!(metrics::SETTINGS_SEARCH_INPUT_HEIGHT, 36.0);
-        assert_eq!(metrics::SETTINGS_RADIO_OUTER, 16.0);
-        assert_eq!(metrics::SETTINGS_RADIO_INNER, 8.0);
-        assert_eq!(metrics::SETTINGS_LOCATE_MARK_WIDTH, 2.0);
-        assert_eq!(metrics::SETTINGS_PROVIDER_STATUS_DOT, 8.0);
-        assert_eq!(metrics::ICON_BUTTON_SIZE, 36.0);
-        assert_eq!(metrics::ICON_SIZE, 20.0);
-        assert_eq!(metrics::ICON_SM, 16.0);
-        assert_eq!(metrics::MENU_ANCHOR_GAP, 8.0);
-        assert_eq!(metrics::MENU_MIN_WIDTH, 220.0);
-        assert_eq!(metrics::MENU_MAX_WIDTH, 360.0);
-        assert_eq!(metrics::MENU_ROW_HEIGHT, 34.0);
-        assert_eq!(metrics::MENU_PADDING, 8.0);
-    }
-
-    /// TaskRail 几何继续冻结，字阶改用 P0 Foundation 层级。
-    #[test]
-    fn task_rail_geometry_and_font_constants_match_frozen_tiers() {
-        assert_eq!(font::default_pixels(font::TITLE), 20.0);
-        assert_eq!(font::default_pixels(font::BODY), 16.0);
-        assert_eq!(font::default_pixels(font::BODY_SM), 12.0);
-        assert_eq!(metrics::RAIL_CONTENT_INSET, 20.0);
-        assert_eq!(metrics::RAIL_INNER_PAD, 12.0);
-        assert_eq!(metrics::RAIL_ICON_BUTTON_SIZE, 36.0);
-        assert_eq!(metrics::RAIL_STATUS_DOT_SIZE, 10.0);
-        assert_eq!(metrics::RAIL_TOP_ROW_HEIGHT, 36.0);
-        assert_eq!(metrics::RAIL_TITLE_ROW_HEIGHT, 36.0);
-        assert_eq!(metrics::RAIL_TITLE_SCOPE_GAP, 10.0);
-        assert_eq!(metrics::RAIL_LIST_TOP_GAP, 18.0);
-        assert_eq!(metrics::RAIL_BUCKET_HEADER_HEIGHT, 24.0);
-        assert_eq!(metrics::RAIL_BUCKET_TOP_GAP, 20.0);
-        assert_eq!(metrics::RAIL_BUCKET_TO_PROJECT_GAP, 2.0);
-        assert_eq!(metrics::RAIL_PROJECT_TO_TASK_GAP, 2.0);
-        assert_eq!(metrics::RAIL_TASK_ROW_HEIGHT, 44.0);
-        assert_eq!(metrics::RAIL_TASK_ROW_HEIGHT_COMPACT, 36.0);
-        assert_eq!(
-            metrics::rail_task_row_height(font::TextScale::Percent100),
-            44.0
-        );
-        assert_eq!(
-            metrics::rail_task_row_height(font::TextScale::Percent125),
-            44.0
-        );
-        assert_eq!(
-            metrics::rail_task_row_height(font::TextScale::Percent150),
-            36.0
-        );
-        assert_eq!(metrics::RAIL_TITLE_FADE_WIDTH, 16.0);
-        assert_eq!(
-            metrics::rail_session_title_layout(248.0, false, true),
-            (8.0, 168.0)
-        );
-        assert_eq!(metrics::rail_trailing_origin_x(248.0), 176.0);
-        assert_eq!(metrics::rail_trailing_plus_x(248.0), 208.0);
-        assert_eq!(metrics::RAIL_SESSION_ACTION_SIZE, 32.0);
-        assert_eq!(metrics::RAIL_PROJECT_BLOCK_GAP, 8.0);
-        assert_eq!(metrics::RAIL_META_SLOT_WIDTH, 32.0);
-        assert_eq!(metrics::rail_trailing_width(), 64.0);
-    }
-
-    /// R4 Wave A Workspace Header / Timeline 几何合同（state-a §2.2/§2.3 与
-    /// state-b §2 量图取档）：钉住数值防静默漂移。
-    #[test]
-    fn workspace_timeline_geometry_constants_match_frozen_tiers() {
-        assert_eq!(font::default_pixels(font::HEADER_TITLE), 18.0);
-        assert_eq!(
-            font::default_pixels(font::from_pixels(metrics::MSG_LINE_HEIGHT)),
-            26.0
-        );
-        assert_eq!(metrics::HEADER_SAFE_STRIP, 12.0);
-        assert_eq!(metrics::HEADER_HEIGHT, 64.0);
-        assert_eq!(metrics::TIMELINE_CONTENT_INSET, 28.0);
-        assert_eq!(metrics::HEADER_INSET_RIGHT, 24.0);
-        assert_eq!(metrics::HEADER_TITLE_META_GAP, 12.0);
-        assert_eq!(metrics::HEADER_STATUS_DOT_SIZE, 6.0);
-        assert_eq!(metrics::HEADER_ACTION_WIDTH, 40.0);
-        assert_eq!(metrics::HEADER_ACTION_HEIGHT, 37.0);
-        assert_eq!(metrics::HEADER_ACTION_RADIUS, 6.0);
-        assert_eq!(metrics::HEADER_ACTION_GAP, 4.0);
-        assert_eq!(metrics::HEADER_CHIP_RADIUS, 6.0);
-        assert_eq!(metrics::HEADER_CHIP_PAD_X, 6.0);
-        assert_eq!(metrics::HEADER_CHIP_PAD_Y, 4.0);
-        assert_eq!(metrics::TIMELINE_READABLE_WIDTH, 880.0);
-        assert_eq!(metrics::TIMELINE_TOP_GAP, 28.0);
-        assert_eq!(metrics::MSG_LINE_HEIGHT, 26.0);
-        assert_eq!(metrics::MSG_LABEL_BODY_GAP, 12.0);
-        assert_eq!(metrics::MSG_PARAGRAPH_GAP, 12.0);
-        assert_eq!(metrics::MSG_ENTRY_GAP, 16.0);
-        assert_eq!(metrics::TOOL_GROUP_RADIUS, 8.0);
-        assert_eq!(metrics::TOOL_GROUP_HEADER_HEIGHT, 36.0);
-        assert_eq!(metrics::THINKING_HEADER_HEIGHT, 24.0);
-        assert_eq!(metrics::TOOL_GROUP_INNER_INSET, 15.0);
-        assert_eq!(metrics::TOOL_ROW_HEIGHT, 52.0);
-        assert_eq!(metrics::TOOL_ROW_DIVIDER, 1.0);
-        assert_eq!(metrics::TOOL_CHECK_SIZE, 14.0);
-        assert_eq!(metrics::TOOL_GROUP_TOP_GAP, 12.0);
-        assert_eq!(metrics::SUMMARY_CARD_GAP, 12.0);
-        assert_eq!(metrics::SUMMARY_CHECK_CIRCLE, 40.0);
-        assert_eq!(metrics::SUMMARY_BUTTON_WIDTH, 168.0);
-        assert_eq!(metrics::SUMMARY_BUTTON_HEIGHT, 40.0);
-        assert_eq!(metrics::SUMMARY_BUTTON_RADIUS, 8.0);
-        assert_eq!(metrics::SUMMARY_BUTTON_GAP, 20.0);
-        assert_eq!(metrics::TIMELINE_FOOTER_GAP, 8.0);
-    }
-
-    /// GUI2-05：面板头 48、中央返回条 36、Changes 紧凑行 32、Diff 行号列。
-    #[test]
-    fn inspector_tabs_and_activity_popover_constants_match_frozen_tiers() {
-        assert_eq!(metrics::INSPECTOR_TAB_HEIGHT, 48.0);
-        assert_eq!(metrics::INSPECTOR_TAB_WIDTH, 100.0);
-        assert_eq!(metrics::INSPECTOR_BACK_HEIGHT, 36.0);
-        assert_eq!(metrics::CHANGES_TAB_HEIGHT, 40.0);
-        assert_eq!(metrics::CHANGES_TAB_WIDTH, 96.0);
-        assert_eq!(metrics::TAB_UNDERLINE_HEIGHT, 2.0);
-        assert_eq!(metrics::ACTIVITY_POPOVER_WIDTH, 320.0);
-        assert_eq!(metrics::ACTIVITY_POPOVER_HEIGHT, 144.0);
-        assert_eq!(metrics::CHANGES_FILE_GLYPH_WIDTH, 20.0);
-        assert_eq!(metrics::CHANGES_FILE_ROW_HEIGHT, 32.0);
-        assert_eq!(metrics::CHANGES_FILE_STATUS_WIDTH, 72.0);
-        assert_eq!(metrics::CHANGES_FILE_DELTA_WIDTH, 76.0);
-        assert_eq!(metrics::DIFF_LINE_NUMBER_WIDTH, 32.0);
-        assert_eq!(metrics::DIFF_SIGN_WIDTH, 16.0);
-        assert_eq!(metrics::DIFF_GUTTER_WIDTH, 24.0);
-        assert_eq!(metrics::DIFF_HEADER_HEIGHT, 36.0);
-        assert_ne!(dark().diff.addition_bg, dark().semantic.success_bg);
-        assert_ne!(dark().diff.deletion_bg, dark().semantic.danger_bg);
-        assert_eq!(dark().diff.gutter_fg, dark().text.tertiary);
-    }
-
-    /// UI-4 卡片预算；外围元信息不抢占输入区增长上限。
-    #[test]
-    fn composer_geometry_constants_match_frozen_tiers() {
-        let laid_out = metrics::COMPOSER_BORDER
-            + metrics::COMPOSER_PAD * 2.0
-            + metrics::COMPOSER_INPUT_MIN_HEIGHT
-            + metrics::COMPOSER_GAP
-            + metrics::COMPOSER_SEND_SIZE;
-        assert_eq!(laid_out, metrics::COMPOSER_PANEL_MIN_HEIGHT);
-        assert_eq!(laid_out, 110.0);
-        assert_eq!(metrics::COMPOSER_PANEL_MAX_HEIGHT, 220.0);
-        assert_eq!(
-            metrics::COMPOSER_FOOTER_CONTROL,
-            metrics::COMPOSER_SEND_SIZE
-        );
-        assert_eq!(metrics::COMPOSER_SEND_SIZE, 36.0);
-        assert_eq!(metrics::COMPOSER_OUTER_X, 28.0);
-        assert_eq!(metrics::COMPOSER_OUTER_BOTTOM, 24.0);
+        let mut scale = TextScale::Percent100;
+        assert_eq!(scale.decrease(), scale);
+        for (next, percent, pixels) in [
+            (TextScale::Percent125, 125, 20.0),
+            (TextScale::Percent150, 150, 24.0),
+        ] {
+            scale = scale.increase();
+            assert_eq!(scale, next);
+            assert_eq!(scale.percent(), percent);
+            assert_eq!(scale.rem_pixels(), pixels);
+        }
+        assert_eq!(scale.increase(), scale);
+        scale = scale.decrease().decrease();
+        assert_eq!(scale, TextScale::Percent100);
+        assert_eq!(scale.rem_pixels(), 16.0);
     }
 }

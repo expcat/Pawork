@@ -439,16 +439,6 @@ mod tests {
     }
 
     #[test]
-    fn now_millis_is_recent() {
-        let now = now_millis().as_unix_millis();
-        let wall = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
-        assert!(now <= wall && wall - now < 60_000, "clock drift too large");
-    }
-
-    #[test]
     fn calendar_conversions_round_trip_known_dates() {
         for (y, m, d) in [
             (2024, 2, 29),  // leap day

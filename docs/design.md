@@ -159,14 +159,30 @@
 
 用户 2026-09-17 授权独立包，并进一步要求不影响用户其它键鼠操作。方案选择独立 Linux 虚拟桌面：默认 `Computer::isolated()` 经固定 loopback RFB 端口连接容器内 Xvnc。旧 macOS ScreenCaptureKit / CGEvent 原型已移除；单靠进程锁、CGEvent Private 或切回焦点无法保证本机输入互不干扰。后台 AX 只适合部分语义动作，也不能替代任意键鼠操作的隔离。
 
+产品层把三方关系拆开：用户继续用键鼠操作自己的电脑；用户用指令驱动 Agent；Agent 只操作另一台电脑。两台电脑互不共享键鼠、焦点或剪贴板。
+
 ```mermaid
 flowchart LR
-  U[用户键鼠] --> M[本机桌面]
-  A[Agent loop] --> B[Host Policy 与审批]
-  B --> C[pawork-computer-use]
-  C --> D[固定本地 RFB 连接]
-  D --> E[容器内 Xvnc 与应用]
-  E --> F[JPEG / 工具结果 / 持久事件]
+  U[用户]
+  UC[用户的电脑]
+  A[Agent]
+  C[电脑]
+  U -->|键鼠| UC
+  U -->|指令| A
+  A -->|操作| C
+```
+
+实现层把「Agent 操作电脑」落到现有宿主：Pawork CLI 进程内的 Host 做 Policy 与审批，经 tools 调用 `pawork-computer-use`，再经固定 loopback RFB 进入容器内 Xvnc。截图与工具结果回到 Agent loop；不改 GUI wire。
+
+```mermaid
+flowchart LR
+  A[Agent loop] --> H[Pawork CLI / Host]
+  H --> P[Policy 与审批]
+  P --> T[tools]
+  T --> C[pawork-computer-use]
+  C --> R[固定本地 RFB]
+  R --> X[容器内 Xvnc]
+  X --> F[JPEG / 工具结果 / 持久事件]
   F --> A
 ```
 

@@ -54,13 +54,31 @@ E3/E4 证据必须包含日期、环境/版本、输入范围、实际结果和�
 
 ## 4. 三类不可推迟的回归
 
+2026-09-20 启动 [测试与门禁重构](../testing-refactor-plan.md)：每个测试须对应真实操作的结果、失败边界或恢复完整性；测试数量和内部常量副本不作为完成证据。按包分批检查，删除须有无效性依据或明确替代锚点。mock 服务自测只证明测试工具自身可用，不证明 Pawork 的 Provider / Host 路径通过。
+
+
 | 类别 | 最低覆盖 |
 | --- | --- |
 | 安全红线 | 路径越界、symlink、`.git` 写、审批 deny、灾难地板、Sandbox 探测/fallback、Secret 脱敏与外部输入 Secret 拒绝 |
 | 持久化与重放 | envelope、SQLite 迁移、append-only、branch lineage、PWB1、checkpoint、export/import、projection、CommandLedger 崩溃/重试 |
 | 协议与解析 | GUI frame、版本协商、registry fail-closed、headless JSON、ACP、MCP、配置六层、usage dedup、外部格式解析 |
 
-普通任务只跑写入集的定向命令；触及上述面时，对应关键回归必须同批更新，不能推迟到全量门禁。当前默认命令和单 Cargo 进程纪律见 [AGENTS.md](../../AGENTS.md) §6–§7。
+普通任务只跑写入集的定向命令；触及上述面时，对应关键回归必须同批更新，不能推迟到全量门禁。当前默认命令和单 Cargo 进程纪律见 [AGENTS.md](../../AGENTS.md) §5、§10。
+
+### 4.1 按用途选择入口
+
+| 改动范围 | 命令 | 证据边界 |
+| --- | --- | --- |
+| 文档/格式 | `bash scripts/mock/gate.sh --level 0` | 链接存在性与 diff；不证明产品行为 |
+| 包内或紧相关操作 | `bash scripts/test.sh <包名>...` | 生产代码驱动的单测/集成；自动补必要 feature，实际选择用 `--print` 查看 |
+| CLI/SDK 子进程链 | `bash scripts/test.sh --host` | 先构建当前 pawork 并经 artifact 消息定位本次产物（config 的 target-dir/build.target 不会导致误测旧二进制），再运行真实 headless 子进程；缺二进制不能跳过成成功 |
+| Desktop 状态/操作/布局 | `bash scripts/test.sh desktop` | GPUI 模拟操作与实际布局；不能证明系统 IME、WebKit 页面效果或真窗口像素 |
+| mock/fixture 工具变化 | `bash scripts/mock/gate.sh --level 0,2` | 测试工具的 HTTP 回放、凭证/配置恢复与脱敏；quota 探针对空窗、失败、过期缓存与缺失 provenance fail-closed；不算真实 Provider 验收 |
+| 真实 Provider/OS/窗口/隔离桌面 | 对应包 Spec 的专项步骤 | 必须记录外部效果和前置条件；未执行不算通过 |
+
+不使用测试数或覆盖率配额驱动删减。便宜且有独立边界意义的单测可以保留；golden 检查外部格式兼容，不属于应删除的实现副本。重构分批记录见 [计划](../testing-refactor-plan.md)。
+
+UI 取证工具须提供真实失败信号：`ui-fixture.sh desktop` 清除旧 `timeline_stable` 后等待新实例就绪——barrier 必须是本进程启动后写入的有效 JSON（`settle_seq>=1`、`at_ms` 不早于启动时刻），进程提前退出、PID 归属变化或超时均失败；fixture 与 desktop 构建产物同样经 artifact 消息定位。`ui-ax-dump.swift` 无窗口、AX 权限不足、没有应用 identifier 或动作失败均非零；`ui-key-event.swift` 投递前确认目标 PID 在前台且具备事件投递权限。操作效果仍须由窗口状态与外部事实核对。
 
 ## 5. 当前验收缺口
 

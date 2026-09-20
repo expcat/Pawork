@@ -427,6 +427,22 @@ async fn list_models_is_static_and_does_not_hit_network() {
     assert!(models
         .iter()
         .any(|model| model.id == ModelId::new("claude-3-5-sonnet")));
+    assert!(models.iter().all(|model| model.capabilities.tool_calls));
+    assert!(models.iter().all(|model| model.capabilities.prompt_cache));
+    assert!(models.iter().all(|model| model.capabilities.thinking));
+    assert!(models
+        .iter()
+        .all(|model| model.capabilities.transport == pawork_domain::ModelTransport::Messages));
+    assert!(models
+        .iter()
+        .all(|model| model.capabilities.reasoning.state.requires_signature));
+    assert!(models.iter().all(|model| model.capabilities.citations));
+    assert!(models.iter().all(|model| {
+        model
+            .capabilities
+            .hosted_tool_tags
+            .contains(&pawork_domain::ToolCapabilityTag::WebSearch)
+    }));
     assert!(
         server
             .received_requests()

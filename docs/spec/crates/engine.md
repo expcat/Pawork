@@ -165,6 +165,10 @@
 
 ## 7. 测试与验证资产
 
+2026-09-20 测试重构：默认上下文的事件数量/无压缩断言并入 `mock_provider_completes_multi_turn_tool_loop`；删除重复单轮 happy-path 回放，保留未消费流变体透传、预取消/中途取消及 session_turn 完整事件序。生产行为不变。 本批执行状态见 [测试重构计划](../../testing-refactor-plan.md)。
+
+同批：删除 `framing_constants_match_industry_conventions` 常量副本；图片占位 token 由 `count_message_includes_framing_and_content` 对真实 Image content part 计数验证。
+
 | 资产 | 覆盖点 |
 | --- | --- |
 | `tests/domain_only.rs` | **红线**：生产依赖 domain-only 断言（含 alias / target 表解析的自测试） |

@@ -560,7 +560,6 @@ mod tests {
             artifacts: Vec::new(),
         };
         assert!(result_truncated(&result));
-        assert_eq!(TRUNCATED_LINE, "已截断");
     }
 
     #[test]

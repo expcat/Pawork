@@ -99,9 +99,13 @@ def main(argv=None) -> int:
         send_frame(sock, query)
         while True:
             frame = recv_frame(sock)
+            if frame.get("type") == "error":
+                raise SystemExit("quota probe received a protocol error")
             if frame.get("type") != "response":
                 continue
             data = frame.get("data", {})
+            if data.get("request_id") != "probe-quota":
+                continue
             response = data.get("response", {})
             if isinstance(response, dict) and response.get("type") == "error":
                 print(json.dumps(response, ensure_ascii=False))
@@ -112,22 +116,45 @@ def main(argv=None) -> int:
                 return 1
             windows = payload.get("windows", [])
             provider = payload.get("scope", {}).get("provider_id", "-")
+            # 这是验收探针：空窗口、错误、过期缓存不能算成功。
+            valid = provider == args.provider and bool(windows)
+            if args.provider == "opencode-go":
+                valid = valid and sorted(entry.get("window", "") for entry in windows) == [
+                    "monthly", "rolling5h", "weekly"
+                ]
             for entry in windows:
                 read = entry.get("read", {})
                 snapshot = read.get("snapshot", {})
                 values = snapshot.get("values", {})
                 reset = snapshot.get("reset", {})
+                provenance = snapshot.get("provenance")
                 reset_at = reset.get("at", "-") if reset.get("kind") == "absolute" else "-"
                 used = values.get("used")
                 if isinstance(used, dict):
-                    used = used.get("value")
+                    used = used.get("value") if used.get("kind") == "exact" else None
+                # 与生产 headroom 同一验收口径：Absolute reset、非 stale、
+                # 字段缺失按失败处理（不得默认当成新鲜）。
+                valid = valid and (
+                    read.get("status") == "ok"
+                    and snapshot.get("unit") == {"kind": "percent"}
+                    and snapshot.get("window") == entry.get("window")
+                    and snapshot.get("scope", {}).get("provider_id") == args.provider
+                    and snapshot.get("served_stale") is False
+                    and isinstance(provenance, dict)
+                    and provenance.get("stale") is False
+                    and reset.get("kind") == "absolute"
+                    and type(reset.get("at")) is int
+                    and type(used) is int and 0 <= used <= 100
+                )
                 print(
                     f"{provider} {entry.get('window')}: "
                     f"{read.get('status', 'ok')} used={used}% "
                     f"resets={reset_at}"
                 )
             print(f"windows={len(windows)} unit=percent")
-            return 0
+            if not valid:
+                print("quota probe failed: expected fresh, complete percentage windows", file=sys.stderr)
+            return 0 if valid else 1
 
 
 if __name__ == "__main__":

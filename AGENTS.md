@@ -43,7 +43,9 @@
 
 ## 5. 验证决策
 
-少测试、无全量门禁：只做能证明本任务核心行为的关键定向测试。默认死表为 `cargo test -p <crate> --offline --lib --tests`（多包可一次多个 `-p`，但仍是一个 Cargo 进程，不因包多改用 `--workspace`）。`cargo check -p <crate>` 仅在该包无测试或只需类型检查时使用。三类关键测试不推迟：安全红线定向回归、持久化与重放契约 golden、协议与解析 golden/种子；邻包 golden/probe/e2e/desktop/`cargo check -p pawork` 默认不跑，仅主代理收口且对应文件确有改动时加跑一次。
+测试以真实用途、结果完整性和边界拒绝为准，不以数量或实现细节副本为目标。先选受影响的操作与包，再运行 `bash scripts/test.sh <包名>...`：同一次 Cargo 调用补齐所选包的必要 feature，避免默认 feature 漏跑。Desktop 单独用 `bash scripts/test.sh desktop`；真实 Host 子进程用 `bash scripts/test.sh --host`。命令与证据边界见 [验证规格](docs/spec/verification.md) 和 [重构计划](docs/testing-refactor-plan.md)。
+
+安全红线、持久化/重放、协议/解析回归不能因精简被丢弃；删除前必须有无效性依据或保留的替代锚点。Mock 只代替外部边界，fixture 工具自测不等于产品集成通过。显式选择的测试缺少环境时必须失败或如实记待验，禁止 `return` 假通过。普通任务不跑无关包、全 workspace 或真实 Provider；已有定向回归足够时不扩测。
 
 补充约定：
 
@@ -99,10 +101,13 @@ Full workspace gate: NOT RUN（当前未设置全量门禁）
 ## 10. 验证命令模板
 
 ```bash
-cargo test -p <crate> --offline --lib --tests
+bash scripts/test.sh <包名>...
+bash scripts/test.sh --print <包名>...  # 只预览实际 Cargo 命令
+bash scripts/test.sh desktop           # bin-only / 图形构建单独执行
+bash scripts/test.sh --host            # 当前 pawork 构建 + spawn_e2e
 ```
 
-仅在该包无测试或只需类型检查时改用 `cargo check -p <crate> --offline`。protocol golden、probe、spawn_e2e、desktop、`cargo check -p pawork` 默认不跑（probe/spawn_e2e/app smoke 已按 required-features 门控，默认死表不再编译，复跑命令见包级 Spec）。合并 / 归档波追加 `cargo tree` 断言（无环、`cargo tree -p pawork` 闭包对比）。
+入口不请求真实 Provider。Providers、storage、protocol、orchestration、transport、app 和 client 的必要 feature 由脚本显式选择；feature 组合只改变测试构建，不改变生产默认。需要更窄的回归时直接用包级 Spec 的 `cargo test -p … --test/--lib/--bin … <filter>`，报告实际目标与 feature，不能把未编译目标记为通过。无测试或仅需类型检查时用 `cargo check -p <crate> --offline`。合并/归档波才追加 `cargo tree` 断言；全量发布门禁仍单独定义。
 
 ## 11. 工程经验
 
