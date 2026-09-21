@@ -49,10 +49,12 @@ struct MockHost {
     queries: Mutex<Vec<RecordedQuery>>,
     timelines: Mutex<Vec<(SessionId, Option<u64>, Option<u32>)>>,
     snapshot_seq: AtomicU64,
-    hold_quota: AtomicBool,
-    quota_started: Notify,
-    quota_release: Notify,
-    quota_dropped: Notify,
+    hold_upstream: AtomicBool,
+    core_lock: tokio::sync::RwLock<()>,
+    write_started: Notify,
+    upstream_started: Notify,
+    upstream_release: Notify,
+    upstream_dropped: Notify,
 }
 
 impl MockHost {
@@ -71,10 +73,12 @@ impl MockHost {
             queries: Mutex::new(Vec::new()),
             timelines: Mutex::new(Vec::new()),
             snapshot_seq: AtomicU64::new(1),
-            hold_quota: AtomicBool::new(false),
-            quota_started: Notify::new(),
-            quota_release: Notify::new(),
-            quota_dropped: Notify::new(),
+            hold_upstream: AtomicBool::new(false),
+            core_lock: tokio::sync::RwLock::new(()),
+            write_started: Notify::new(),
+            upstream_started: Notify::new(),
+            upstream_release: Notify::new(),
+            upstream_dropped: Notify::new(),
         })
     }
 
@@ -166,8 +170,10 @@ impl GuiHost for MockHost {
     }
 
     async fn query(&self, envelope: &AppQueryEnvelope) -> Result<AppResponse, GuiHostError> {
-        if matches!(envelope.query, AppQuery::QuotaOverview { .. })
-            && self.hold_quota.load(Ordering::Acquire)
+        if matches!(
+            envelope.query,
+            AppQuery::QuotaOverview { .. } | AppQuery::ModelList { .. }
+        ) && self.hold_upstream.load(Ordering::Acquire)
         {
             struct QuotaDrop<'a>(&'a Notify);
             impl Drop for QuotaDrop<'_> {
@@ -175,9 +181,10 @@ impl GuiHost for MockHost {
                     self.0.notify_one();
                 }
             }
-            let _guard = QuotaDrop(&self.quota_dropped);
-            self.quota_started.notify_one();
-            self.quota_release.notified().await;
+            let _guard = QuotaDrop(&self.upstream_dropped);
+            let _core = self.core_lock.read().await;
+            self.upstream_started.notify_one();
+            self.upstream_release.notified().await;
         }
         self.queries.lock().expect("queries").push(RecordedQuery {
             query: envelope.query.clone(),
@@ -204,6 +211,8 @@ impl GuiHost for MockHost {
     }
 
     async fn command(&self, envelope: &AppCommandEnvelope) -> Result<AppResponse, GuiHostError> {
+        self.write_started.notify_one();
+        let _core = self.core_lock.write().await;
         self.commands
             .lock()
             .expect("commands")
@@ -490,72 +499,112 @@ mod unix_tests {
     use super::*;
 
     #[tokio::test]
-    async fn slow_account_quota_allows_heartbeat_and_drops_on_disconnect() {
-        let harness = open_harness("quota-responsive").await;
-        handshake_and_snapshot(&harness.client).await;
-        harness.host.hold_quota.store(true, Ordering::Release);
-        let query = |id: &str| {
-            ClientFrame::Query(AppQueryEnvelope {
-                api_version: API_VERSION,
-                request_id: QueryId::from(id),
-                source: CommandSource::Automation,
-                identity: ActorIdentity::System,
-                issued_at: Timestamp::from_unix_millis(1),
-                query: AppQuery::QuotaOverview {
-                    query: pawork_protocol::QuotaOverviewQuery {
-                        provider_id: Some("opencode-go".into()),
-                        credential_id: Some("cred-quota".into()),
-                        unit: Some(pawork_protocol::QuotaUnit::Percent),
-                        ..pawork_protocol::QuotaOverviewQuery::default_local()
+    async fn slow_upstream_queries_allow_writes_heartbeat_and_drop_on_disconnect() {
+        for model_list in [false, true] {
+            let harness = open_harness("quota-responsive").await;
+            handshake_and_snapshot(&harness.client).await;
+            harness.host.hold_upstream.store(true, Ordering::Release);
+            let query = |id: &str| {
+                ClientFrame::Query(AppQueryEnvelope {
+                    api_version: API_VERSION,
+                    request_id: QueryId::from(id),
+                    source: CommandSource::Automation,
+                    identity: ActorIdentity::System,
+                    issued_at: Timestamp::from_unix_millis(1),
+                    query: if model_list {
+                        AppQuery::ModelList {
+                            provider_id: None,
+                            include_disabled: false,
+                        }
+                    } else {
+                        AppQuery::QuotaOverview {
+                            query: pawork_protocol::QuotaOverviewQuery {
+                                provider_id: Some("opencode-go".into()),
+                                credential_id: Some("cred-quota".into()),
+                                unit: Some(pawork_protocol::QuotaUnit::Percent),
+                                ..pawork_protocol::QuotaOverviewQuery::default_local()
+                            },
+                        }
                     },
-                },
-            })
-        };
-        harness.client.send(&query("quota-completes")).await;
-        tokio::time::timeout(
-            Duration::from_secs(2),
-            harness.host.quota_started.notified(),
-        )
-        .await
-        .expect("quota entered host");
-        harness
-            .client
-            .send(&ClientFrame::Heartbeat { nonce: 42 })
-            .await;
-        assert!(matches!(
-            tokio::time::timeout(Duration::from_secs(2), harness.client.recv()).await,
-            Ok(ServerFrame::Pong { nonce: 42 })
-        ));
-        harness.host.quota_release.notify_one();
-        let ServerFrame::Response(response) =
-            tokio::time::timeout(Duration::from_secs(2), harness.client.recv())
-                .await
-                .expect("quota completes after release")
-        else {
-            panic!("expected quota response");
-        };
-        assert_eq!(response.request_id.as_str(), "quota-completes");
-        harness.host.quota_dropped.notified().await;
-
-        harness.client.send(&query("quota-disconnects")).await;
-        tokio::time::timeout(
-            Duration::from_secs(2),
-            harness.host.quota_started.notified(),
-        )
-        .await
-        .expect("second quota entered host");
-        harness
-            .client
-            .conn
-            .close()
+                })
+            };
+            harness.client.send(&query("quota-completes")).await;
+            tokio::time::timeout(
+                Duration::from_secs(2),
+                harness.host.upstream_started.notified(),
+            )
             .await
-            .expect("client disconnect");
-        tokio::time::timeout(
-            Duration::from_secs(2),
-            harness.host.quota_dropped.notified(),
-        )
-        .await
-        .expect("disconnect drops pending quota without releasing it");
+            .expect("quota entered host");
+            harness
+                .client
+                .send(&ClientFrame::Heartbeat { nonce: 42 })
+                .await;
+            assert!(matches!(
+                tokio::time::timeout(Duration::from_secs(2), harness.client.recv()).await,
+                Ok(ServerFrame::Pong { nonce: 42 })
+            ));
+            // ModelList holds a Core read lock across upstream I/O. A later serial
+            // write must not stop polling the query that owns that lock.
+            harness
+                .client
+                .send(&ClientFrame::Command(AppCommandEnvelope {
+                    api_version: API_VERSION,
+                    command_id: CommandId::from("write-after-query"),
+                    source: CommandSource::Automation,
+                    identity: ActorIdentity::System,
+                    expected_revision: None,
+                    idempotency_key: None,
+                    issued_at: Timestamp::from_unix_millis(1),
+                    command: AppCommand::SessionOpen {
+                        session_id: SessionId::from("session-1"),
+                    },
+                }))
+                .await;
+            tokio::time::timeout(
+                Duration::from_secs(2),
+                harness.host.write_started.notified(),
+            )
+            .await
+            .expect("serial writer entered host");
+            harness.host.upstream_release.notify_one();
+            let ServerFrame::Response(response) =
+                tokio::time::timeout(Duration::from_secs(2), harness.client.recv())
+                    .await
+                    .expect("writer progresses after query releases lock")
+            else {
+                panic!("expected command response");
+            };
+            assert_eq!(response.request_id.as_str(), "write-after-query");
+            let ServerFrame::Response(response) =
+                tokio::time::timeout(Duration::from_secs(2), harness.client.recv())
+                    .await
+                    .expect("quota completes after release")
+            else {
+                panic!("expected quota response");
+            };
+            assert_eq!(response.request_id.as_str(), "quota-completes");
+            harness.host.upstream_dropped.notified().await;
+
+            harness.client.send(&query("quota-disconnects")).await;
+            tokio::time::timeout(
+                Duration::from_secs(2),
+                harness.host.upstream_started.notified(),
+            )
+            .await
+            .expect("second quota entered host");
+            harness
+                .client
+                .conn
+                .close()
+                .await
+                .expect("client disconnect");
+            tokio::time::timeout(
+                Duration::from_secs(2),
+                harness.host.upstream_dropped.notified(),
+            )
+            .await
+            .expect("disconnect drops pending quota without releasing it");
+        }
     }
 
     #[tokio::test]
@@ -856,7 +905,10 @@ mod unix_tests {
             }
         })
         .await;
-        assert!(closed.is_ok(), "watchdog must drop the connection once heartbeats stop");
+        assert!(
+            closed.is_ok(),
+            "watchdog must drop the connection once heartbeats stop"
+        );
     }
 
     #[tokio::test]

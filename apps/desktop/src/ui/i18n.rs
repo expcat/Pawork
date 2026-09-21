@@ -147,6 +147,8 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "rail.new_in_project" => ("New task in {}", "在 {} 中新建任务"),
         "timeline.new_title" => ("New task", "新任务"),
         "timeline.you" => ("You", "你"),
+        "timeline.attachment_file" => ("Text file attachment", "文本附件"),
+        "timeline.attachment_image" => ("Image attachment", "图片附件"),
         "timeline.tool" => ("Tool", "工具"),
         "tool.group_one" => ("{} tool", "{} 个工具"),
         "tool.group_many" => ("{} tools", "{} 个工具"),
@@ -475,12 +477,12 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "settings.subagents.general_label" => ("General", "通用"),
         "settings.subagents.enabled_label" => ("Enable subagents", "启用子代理"),
         "settings.subagents.enabled_note" => (
-            "Turn subagents on or off for the whole workspace.",
-            "为整个工作区开启或关闭子代理。",
+            "Turn subagents on or off for all projects. Applies to new runs; running subagents are unchanged.",
+            "为所有项目开启或关闭子代理。仅对新发起的运行生效；进行中的子代理不受影响。",
         ),
         "settings.subagents.enabled_tooltip" => (
-            "Toggle subagents globally",
-            "全局开关子代理",
+            "Toggle subagents for all projects (applies to new runs)",
+            "对所有项目开关子代理（仅对新发起的运行生效）",
         ),
         "settings.subagents.switch_on" => ("On", "开"),
         "settings.subagents.switch_off" => ("Off", "关"),
@@ -489,6 +491,14 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             "当前上限 · {}",
         ),
         "settings.subagents.concurrency_label" => ("Max concurrent", "并发上限"),
+        "settings.subagents.concurrency_hint" => (
+            "Allowed range · 1–16",
+            "允许范围 · 1–16",
+        ),
+        "settings.subagents.concurrency_error" => (
+            "Enter a whole number from 1 to 16.",
+            "请输入 1–16 之间的整数。",
+        ),
         "settings.subagents.effect_note" => (
             "Subagent settings apply to new runs; running subagents are unchanged.",
             "子代理设置仅对新发起的运行生效；进行中的子代理不受影响。",
@@ -542,6 +552,14 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "settings.subagents.ax_status" => ("Subagents status", "子代理状态"),
         "settings.subagents.ax_enabled" => ("Subagents enabled", "子代理开关"),
         "settings.subagents.ax_concurrency" => ("Max concurrent subagents", "子代理并发上限"),
+        "settings.subagents.ax_concurrency_hint" => (
+            "Concurrency allowed range",
+            "并发允许范围",
+        ),
+        "settings.subagents.ax_concurrency_error" => (
+            "Concurrency input error",
+            "并发输入错误",
+        ),
         "settings.subagents.ax_effect" => ("Effect", "生效边界"),
         "settings.subagents.ax_models" => ("Model rules", "模型规则"),
         // ── Activity · Subagents ──
@@ -575,6 +593,10 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "subagents.load_failed" => (
             "Could not load subagent conversation",
             "子代理对话加载失败",
+        ),
+        "subagents.stale_banner" => (
+            "Disconnected · content may be outdated",
+            "已断线，内容可能过期",
         ),
         // ── Settings · Advanced ──
         "settings.advanced.title" => ("Advanced", "高级"),
@@ -814,12 +836,59 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "composer.add_files" => ("Attach files", "附加文件"),
         "composer.add_search" => ("Web search", "网络搜索"),
         "composer.project_files" => ("Reference project file", "引用项目文件"),
-        "composer.local_files" => ("Choose local images or text files; no project required", "选择本机图片或文本文件，无需选择项目"),
+        "composer.local_files" => (
+            "Choose up to 4 local files: PNG/JPEG/GIF/WebP images (≤8 MiB each) or UTF-8 text (≤64 KiB); no project required",
+            "选择本机文件，每次最多 4 个：PNG/JPEG/GIF/WebP 图片（每张 ≤8 MiB）或 UTF-8 文本（≤64 KiB），无需选择项目",
+        ),
+        "composer.local_images" => (
+            "Choose PNG/JPEG/GIF/WebP images, ≤8 MiB each, up to 4 per message; no project required",
+            "选择 PNG/JPEG/GIF/WebP 图片，每张 ≤8 MiB，每次最多 4 张，无需选择项目",
+        ),
         "composer.search_hint" => ("Toggle web search for this message", "切换本轮网络搜索"),
         "composer.search_on" => ("Web search · On", "网络搜索 · 开启"),
         "composer.search_off" => ("Web search · Off", "网络搜索 · 关闭"),
-        "composer.attachment_limit" => ("Attach at most 4 files per message", "每条消息最多附加 4 个文件"),
         "composer.remove_attachment" => ("Remove attachment", "移除附件"),
+        "composer.preview_attachment" => ("Preview attachment", "预览附件"),
+        "composer.preview_close" => ("Close preview", "关闭预览"),
+        "composer.attachment_image" => ("Image", "图片"),
+        "composer.attachment_text" => ("Text", "文本"),
+        "composer.preview_truncated" => ("Preview shows the first 4 KiB", "预览仅显示前 4 KiB"),
+        "composer.attach_too_many" => (
+            "Attach at most 4 files per message; {} selected",
+            "每条消息最多附加 4 个文件，本次共 {} 个",
+        ),
+        "composer.attach_error_missing_name" => (
+            "Selected path has no file name; choose a regular file",
+            "所选路径没有文件名，请选择常规文件",
+        ),
+        "composer.attach_error_not_file" => (
+            "{}: choose a regular file, not a folder",
+            "{}：请选择常规文件，不要选择文件夹",
+        ),
+        "composer.attach_error_empty" => (
+            "{}: file is empty; choose a file with content",
+            "{}：文件为空，请选择有内容的文件",
+        ),
+        "composer.attach_error_too_large_image" => (
+            "{}: image exceeds 8 MiB; choose a smaller PNG/JPEG/GIF/WebP image",
+            "{}：图片超过 8 MiB，请选择更小的 PNG/JPEG/GIF/WebP 图片",
+        ),
+        "composer.attach_error_too_large_text" => (
+            "{}: text file exceeds 64 KiB; choose a smaller UTF-8 text file",
+            "{}：文本文件超过 64 KiB，请选择更小的 UTF-8 文本文件",
+        ),
+        "composer.attach_error_unsupported_image" => (
+            "{}: not a supported image; choose PNG, JPEG, GIF or WebP",
+            "{}：不是受支持的图片，请选择 PNG、JPEG、GIF 或 WebP 图片",
+        ),
+        "composer.attach_error_unsupported" => (
+            "{}: unsupported type; choose PNG/JPEG/GIF/WebP images or UTF-8 text",
+            "{}：类型不受支持，请选择 PNG/JPEG/GIF/WebP 图片或 UTF-8 文本",
+        ),
+        "composer.attach_error_io" => (
+            "{}: could not be read; check the file and try again",
+            "{}：无法读取，请检查文件后重试",
+        ),
         "composer.image_model_required" => ("Choose an image-capable model to send these attachments", "请选择支持图像的模型后发送附件"),
         "composer.search_model_required" => ("Choose a search-capable model or turn off web search", "请选择支持搜索的模型，或关闭网络搜索"),
         "files.attach_image" => ("Attach image", "附加图片"),

@@ -509,6 +509,15 @@ impl AppView {
             }
             "model-menu-settings" => self.on_manage_composer_models(window, cx),
             "composer-search-toggle" => self.toggle_composer_search(cx),
+            // RV-01：预览关闭与预览开关是独立 AX 动作；精确 id 先于前缀
+            // arm 匹配（附件 id 均为 desktop-* 形态，不会撞名）。
+            "composer-preview-close" => self.close_composer_attachment_preview(cx),
+            other if other.starts_with("composer-preview-") => {
+                self.toggle_composer_attachment_preview(
+                    other.trim_start_matches("composer-preview-"),
+                    cx,
+                );
+            }
             other if other.starts_with("composer-remove-") => {
                 self.remove_composer_attachment(other.trim_start_matches("composer-remove-"), cx);
             }
@@ -544,6 +553,23 @@ impl AppView {
                     };
                     let key = &self.projection.timeline[*entry_index].event_id;
                     (dynamic_identifier("thinking-toggle", key) == other).then(|| key.clone())
+                }) else {
+                    return false;
+                };
+                self.toggle_timeline_detail(&key, cx);
+            }
+            // RV-02：附件折叠头（键 = 事件 id + -attachment-N，均 AX 安全字符，
+            // 渲染 id 与 dynamic_identifier 逐字节一致）。
+            other if other.starts_with("attachment-toggle-") => {
+                let Some(key) = self.projection.timeline.iter().find_map(|entry| {
+                    let TimelineEntryKind::UserMessage { text } = &entry.kind else {
+                        return None;
+                    };
+                    let segments = crate::ui::attachment_blocks::split_user_message(text)?;
+                    (0..crate::ui::attachment_blocks::attachment_count(&segments)).find_map(|ix| {
+                        let key = crate::ui::attachment_blocks::attachment_key(&entry.event_id, ix);
+                        (dynamic_identifier("attachment-toggle", &key) == other).then_some(key)
+                    })
                 }) else {
                     return false;
                 };
@@ -684,6 +710,18 @@ impl AppView {
             other if other.starts_with("subagent-select-") => {
                 if let Some(id) = other.strip_prefix("subagent-select-") {
                     self.select_subagent_agent(id, cx);
+                }
+            }
+            // 子代理对话栏工具行 / 长回执展开（与 render 同源 key，独立于
+            // 主 Timeline 折叠集合）。
+            other if other.starts_with("subagent-tool-toggle-") => {
+                if let Some(id) = other.strip_prefix("subagent-tool-toggle-") {
+                    self.toggle_subagent_detail(&format!("{id}:tool"), cx);
+                }
+            }
+            other if other.starts_with("subagent-result-toggle-") => {
+                if let Some(id) = other.strip_prefix("subagent-result-toggle-") {
+                    self.toggle_subagent_detail(&format!("{id}:result"), cx);
                 }
             }
             // 浮层子代理行（identifier 含 agent_id；与 render 行同源）。
@@ -2578,6 +2616,57 @@ impl AppView {
         )
         .value(value)
         .description(display_time(&entry.timestamp, now_ms));
+        // RV-02：附件折叠头按分段布局累加器发布（与渲染 / 测高同源公式，
+        // 气泡强制整宽后附件块 x = 列宽内缩气泡 padding + border）。
+        if let TimelineEntryKind::UserMessage { text } = &entry.kind {
+            if let Some(segments) = crate::ui::attachment_blocks::split_user_message(text) {
+                let rem_px = f32::from(window.rem_size());
+                let (_, layouts) = crate::ui::timeline::user_segment_layouts(
+                    &entry.event_id,
+                    &segments,
+                    row.width,
+                    rem_px,
+                    &self.expanded_timeline_details,
+                );
+                for (segment, layout) in segments.iter().zip(layouts.iter()) {
+                    let Some(key) = &layout.attachment_key else {
+                        continue;
+                    };
+                    let name = match segment {
+                        crate::ui::attachment_blocks::AttachmentSegment::File { name, .. } => {
+                            name.clone()
+                        }
+                        _ => continue,
+                    };
+                    let expanded = self.expanded_timeline_details.contains(key);
+                    node = node.child(
+                        AxNode::new(
+                            dynamic_identifier("attachment-toggle", key),
+                            AxRole::Button,
+                            format!(
+                                "{name} · {}",
+                                crate::ui::attachment_blocks::attachment_meta(segment)
+                            ),
+                            AxRect::new(
+                                row.x + metrics::MSG_USER_INSET_X + 1.0,
+                                row.y + layout.top + 1.0,
+                                (row.width - 2.0 * metrics::MSG_USER_INSET_X - 2.0).max(0.0),
+                                metrics::THINKING_HEADER_HEIGHT,
+                            ),
+                        )
+                        .description(if expanded { "Expanded" } else { "Collapsed" })
+                        .focused(
+                            self.open_menu.is_none()
+                                && self
+                                    .timeline_detail_focus
+                                    .get(key)
+                                    .is_some_and(|focus| focus.is_focused(window)),
+                        )
+                        .action(AxAction::Press),
+                    );
+                }
+            }
+        }
         if with_menu {
             let measured = self
                 .settings_element_layouts
@@ -2897,6 +2986,18 @@ impl AppView {
         let options = self.current_composer_options();
         for attachment in options.attachments {
             let id = format!("composer-remove-{}", attachment.id);
+            // RV-01：预览开/关按钮与移除按钮为独立可 Press 节点。
+            let preview_id = format!("composer-preview-{}", attachment.id);
+            composer = composer.child(
+                AxNode::new(
+                    preview_id.clone(),
+                    AxRole::Button,
+                    t("composer.preview_attachment"),
+                    self.settings_menu_element_bounds(&preview_id, "composer-options"),
+                )
+                .value(attachment.name.clone())
+                .action(AxAction::Press),
+            );
             composer = composer.child(
                 AxNode::new(
                     id.clone(),
@@ -2906,6 +3007,48 @@ impl AppView {
                 )
                 .enabled(!self.composer_sending)
                 .action(AxAction::Press),
+            );
+        }
+        // RV-03：附件错误文案进 AX（与可见错误行同源）。
+        if let Some(error) = options.attachment_error.as_ref() {
+            composer = composer.child(
+                AxNode::new(
+                    "composer-attach-error",
+                    AxRole::StaticText,
+                    "Attachment error",
+                    self.settings_menu_element_bounds("composer-options", "composer-options"),
+                )
+                .value(self.composer_attachment_error_text(error)),
+            );
+        }
+        if let Some(attachment) = self.composer_attachment_preview_target() {
+            composer = composer.child(
+                AxNode::new(
+                    "composer-preview-close",
+                    AxRole::Button,
+                    t("composer.preview_close"),
+                    self.settings_menu_element_bounds(
+                        "composer-preview-close",
+                        "composer-attachment-preview",
+                    ),
+                )
+                .action(AxAction::Press),
+            );
+            composer = composer.child(
+                AxNode::new(
+                    "composer-attachment-preview",
+                    AxRole::StaticText,
+                    "Attachment preview",
+                    self.settings_menu_element_bounds(
+                        "composer-attachment-preview",
+                        "composer-options",
+                    ),
+                )
+                .value(format!(
+                    "{} · {}",
+                    attachment.name,
+                    self.composer_attachment_meta_label(&attachment)
+                )),
             );
         }
         if options.web_search.is_some() {
@@ -3702,7 +3845,12 @@ fn timeline_entry_markdown(entry: &TimelineEntry) -> Option<&str> {
 
 fn timeline_accessible_text(entry: &TimelineEntry, generating: bool) -> (String, String) {
     match &entry.kind {
-        TimelineEntryKind::UserMessage { text } => (t("timeline.you").into(), text.clone()),
+        // RV-02：附件消息朗读清洗后的文本（附件头本地化、控制说明不朗读，
+        // 内容保留）；无附件消息原样。
+        TimelineEntryKind::UserMessage { text } => (
+            t("timeline.you").into(),
+            crate::ui::attachment_blocks::accessible_text(text),
+        ),
         TimelineEntryKind::AssistantMessage { text } => (
             if generating {
                 format!("Pawork · {}", t("tool.generating"))

@@ -23,9 +23,15 @@ impl AppView {
         let writes = self.settings_subagents_writes_enabled();
         let state = self.projection.settings_subagents.clone();
         let status_lines = subagents_status_lines(&state);
-        let concurrency_value = parse_subagent_max_concurrent(
-            self.settings_subagents_concurrency_input.read(cx).text(),
-        );
+        let concurrency_text = self
+            .settings_subagents_concurrency_input
+            .read(cx)
+            .text()
+            .to_string();
+        let concurrency_value = parse_subagent_max_concurrent(&concurrency_text);
+        // RV-08：错误原因逐帧从输入文本推导（render 与 AX 同源）；
+        // 空输入按「待输入」处理，只显示范围提示。
+        let concurrency_error = Self::subagent_concurrency_error(&concurrency_text);
         let save_enabled = writes && concurrency_value.is_some();
         let concurrency_current = state.settings.max_concurrent.to_string();
         let concurrency_input = self.settings_subagents_concurrency_input.clone();
@@ -113,6 +119,38 @@ impl AppView {
             content = content.child(self.settings_status(kind, line));
         }
 
+        // RV-08：并发输入旁常显允许范围提示；非法非空输入追加 danger
+        // 色原因，恢复合法值后逐帧清除（不截断、不自动保存）。
+        let mut concurrency_column = div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(settings_copy(t("settings.subagents.concurrency_label")))
+            .child(
+                self.settings_element("settings-subagents-concurrency-input")
+                    .flex()
+                    .w(px(112.0))
+                    .when(!writes, |el| el.opacity(0.55))
+                    .child(concurrency_input),
+            )
+            .child(
+                self.settings_element("settings-subagents-concurrency-hint")
+                    .child(
+                        Label::new(t("settings.subagents.concurrency_hint"))
+                            .size(font::BODY_SM)
+                            .color(dark().text.tertiary),
+                    ),
+            );
+        if let Some(error) = concurrency_error {
+            concurrency_column = concurrency_column.child(
+                self.settings_element("settings-subagents-concurrency-error")
+                    .child(
+                        Label::new(error)
+                            .size(font::BODY_SM)
+                            .color(dark().semantic.danger_text),
+                    ),
+            );
+        }
         // 通用区：全局开关 + 并发上限。
         let general = settings_section()
             .child(settings_label(t("settings.subagents.general_label")))
@@ -165,20 +203,7 @@ impl AppView {
                     .flex()
                     .items_end()
                     .gap_3()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_2()
-                            .child(settings_copy(t("settings.subagents.concurrency_label")))
-                            .child(
-                                self.settings_element("settings-subagents-concurrency-input")
-                                    .flex()
-                                    .w(px(112.0))
-                                    .when(!writes, |el| el.opacity(0.55))
-                                    .child(concurrency_input),
-                            ),
-                    )
+                    .child(concurrency_column)
                     .child(
                         self.settings_element("settings-subagents-save")
                             .flex_none()
@@ -341,8 +366,7 @@ impl AppView {
                 );
             }
         }
-        name_row = name_row
-            .child(Label::new(badge).size(font::XS).color(dark().text.tertiary));
+        name_row = name_row.child(Label::new(badge).size(font::XS).color(dark().text.tertiary));
         let mut card = self
             .settings_element(row_id)
             .flex()
@@ -722,6 +746,17 @@ impl AppView {
         self.commit_subagent_settings(move |settings| settings.max_concurrent = value, cx);
     }
 
+    /// RV-08：并发输入错误文案（render 与 AX 同源）：非空且解析失败
+    /// （畸形 / 越界）返回本地化原因；空输入按「待输入」处理，只显示
+    /// 范围提示。逐帧从输入文本推导，无持久错误状态。
+    pub(crate) fn subagent_concurrency_error(text: &str) -> Option<&'static str> {
+        if text.trim().is_empty() || parse_subagent_max_concurrent(text).is_some() {
+            None
+        } else {
+            Some(t("settings.subagents.concurrency_error"))
+        }
+    }
+
     /// 「可发起子代理」开关（无显式规则时回落默认值再翻转）。
     pub(crate) fn on_settings_subagents_toggle_spawn(
         &mut self,
@@ -886,4 +921,24 @@ fn upsert_subagent_rule<'a>(
     });
     let last = settings.models.len() - 1;
     &mut settings.models[last]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// RV-08 主路径：错误推导合同——空输入按「待输入」不算错误，合法
+    /// 值（含边界与两端空白）无错误，畸形 / 越界给出原因；文案内容属
+    /// i18n 层，这里只断言语义。
+    #[test]
+    fn subagent_concurrency_error_requires_non_empty_invalid_input() {
+        assert_eq!(AppView::subagent_concurrency_error(""), None);
+        assert_eq!(AppView::subagent_concurrency_error("   "), None);
+        assert_eq!(AppView::subagent_concurrency_error(" 1 "), None);
+        assert_eq!(AppView::subagent_concurrency_error("16"), None);
+        assert!(AppView::subagent_concurrency_error("0").is_some());
+        assert!(AppView::subagent_concurrency_error("17").is_some());
+        assert!(AppView::subagent_concurrency_error("4.5").is_some());
+        assert!(AppView::subagent_concurrency_error("abc").is_some());
+    }
 }

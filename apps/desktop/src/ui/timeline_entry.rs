@@ -1,14 +1,14 @@
 //! UI-3 Timeline 条目：Markdown 正文、默认收起的工具摘要与诚实 Run 终态。
 //! 渲染和 AX 共用 presentation state 与高度模型；折叠不删除 reducer 事件。
 
-use gpui::{Context, FontWeight, Rgba, SharedString, Window, div, prelude::*, px};
+use gpui::{div, prelude::*, px, Context, FontWeight, Rgba, SharedString, Window};
 
 use crate::projection::{
     ConnectionState, ForkBoundary, RunUsageDisplay, TimelineEntry, TimelineEntryKind,
 };
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
 use crate::ui::components::dropdown::{Dropdown, MenuPanel, MenuRow};
-use crate::ui::components::icon::{Icon, icon_sized};
+use crate::ui::components::icon::{icon_sized, Icon};
 use crate::ui::components::label::Label;
 use crate::ui::components::list_row::ListRow;
 use crate::ui::i18n::t;
@@ -16,7 +16,7 @@ use crate::ui::theme::{dark, font, metrics};
 
 use super::task_rail::relative_activity;
 use super::timeline::tool_status_label;
-use super::{AppView, MenuKind, now_unix_ms};
+use super::{now_unix_ms, AppView, MenuKind};
 
 /// 显示时间（R4 Wave A P3）：epoch 毫秒串经 task_rail::relative_activity 转
 /// 相对时间词（now / Nm / Nh / Nd）；解析失败（如 fixture 任意串）原样返回，
@@ -612,7 +612,10 @@ fn entry_shell_element(
         .group_hover("timeline-message", |style| style.opacity(1.0))
         .child(actions);
     let content = if let Some(text) = user_text {
-        let wide = super::markdown::message_needs_full_width(text);
+        // 含附件的用户消息强制整宽：附件块（名称 + 折叠内容）在 0.8 气泡里
+        // 过窄；测高分支用同一判定（timeline.rs user 分段测高）。
+        let wide = super::markdown::message_needs_full_width(text)
+            || super::attachment_blocks::split_user_message(text).is_some();
         div().flex().justify_end().child(
             view.settings_element(format!("message-bubble-{}", entry.event_id))
                 .flex()
@@ -971,15 +974,7 @@ impl AppView {
             TimelineEntryKind::UserMessage { text } => (
                 t("timeline.you"),
                 dark().text.secondary,
-                message_body_element(
-                    self,
-                    cx,
-                    window,
-                    &entry.event_id,
-                    text,
-                    dark().text.emphasis,
-                    false,
-                ),
+                self.user_message_body_element(&entry.event_id, text, window, cx),
             ),
             TimelineEntryKind::Thinking { text } => (
                 t("timeline.thinking"),
@@ -1132,6 +1127,135 @@ impl AppView {
                 view.toggle_timeline_detail(&activate_key, cx);
                 cx.stop_propagation();
             }))
+    }
+
+    /// 用户消息正文（RV-02）：无附件标记走原 Markdown 渲染；含本机附件时
+    /// 分段渲染——正文段仍是 Markdown，附件段渲染为默认折叠的附件块
+    /// （头部 = 名称 + 本地化类型/大小，展开后看完整内容），给模型看的
+    /// 英文控制说明不上屏。测高见 timeline.rs 的 user 分支，与本函数同源。
+    fn user_message_body_element(
+        &mut self,
+        event_id: &str,
+        text: &str,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let Some(segments) = super::attachment_blocks::split_user_message(text) else {
+            return message_body_element(
+                self,
+                cx,
+                window,
+                event_id,
+                text,
+                dark().text.emphasis,
+                false,
+            );
+        };
+        let mut body = div().flex().flex_col().gap(px(metrics::MSG_PARAGRAPH_GAP));
+        let mut attachment_index = 0usize;
+        for (segment_index, segment) in segments.iter().enumerate() {
+            match segment {
+                super::attachment_blocks::AttachmentSegment::Text(segment_text) => {
+                    // 段 id 派生自事件 id：段内代码块复制按钮仅鼠标可用，
+                    // AX 代码复制按原始全文枚举，不覆盖附件消息（spec 已记）。
+                    body = body.child(message_body_element(
+                        self,
+                        cx,
+                        window,
+                        &format!("{event_id}#seg{segment_index}"),
+                        segment_text,
+                        dark().text.emphasis,
+                        false,
+                    ));
+                }
+                super::attachment_blocks::AttachmentSegment::File { name, content } => {
+                    let element = self.attachment_block_element(
+                        event_id,
+                        attachment_index,
+                        name,
+                        super::attachment_blocks::attachment_meta(segment),
+                        Some(content),
+                        cx,
+                    );
+                    attachment_index += 1;
+                    body = body.child(element);
+                }
+                super::attachment_blocks::AttachmentSegment::Image { name } => {
+                    let element = self.attachment_block_element(
+                        event_id,
+                        attachment_index,
+                        name,
+                        super::attachment_blocks::attachment_meta(segment),
+                        None,
+                        cx,
+                    );
+                    attachment_index += 1;
+                    body = body.child(element);
+                }
+            }
+        }
+        body
+    }
+
+    /// 附件块：border 容器 + 折叠头（复用 thinking 的 compact 头部与
+    /// expanded_timeline_details 折叠集合）+ 展开后的内容体。图片附件在
+    /// 正文中没有字节（图片走独立 ContentPart），头部静态展示不折叠。
+    /// 几何常量与 timeline.rs 的测高公式一一对应，改动须同步。
+    fn attachment_block_element(
+        &mut self,
+        event_id: &str,
+        attachment_index: usize,
+        name: &str,
+        meta: String,
+        content: Option<&String>,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let key = super::attachment_blocks::attachment_key(event_id, attachment_index);
+        let header_label = format!("{name} · {meta}");
+        let mut block = div()
+            .flex()
+            .flex_col()
+            .w_full()
+            .border_1()
+            .border_color(dark().border.subtle)
+            .rounded(px(6.0))
+            .overflow_hidden();
+        if let Some(content) = content {
+            let header =
+                self.timeline_detail_header(&key, "attachment-toggle", header_label, true, cx);
+            let expanded = self.expanded_timeline_details.contains(&key);
+            block = block.child(header);
+            if expanded {
+                block = block.child(
+                    div()
+                        .p(px(12.0))
+                        .text_size(font::BASE)
+                        .text_color(dark().text.secondary)
+                        .child(content.clone()),
+                );
+            }
+        } else {
+            block = block.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .h(px(metrics::THINKING_HEADER_HEIGHT))
+                    .px_2()
+                    .text_size(font::BODY_SM)
+                    .text_color(dark().text.secondary)
+                    .child(icon_sized(Icon::File, px(12.0)))
+                    .child(
+                        div()
+                            .flex_row()
+                            .flex_1()
+                            .min_w_0()
+                            .child(div().truncate().child(header_label)),
+                    ),
+            );
+        }
+        block
     }
 
     pub(super) fn thinking_entry_element(
@@ -1675,20 +1799,17 @@ mod tests {
         );
         assert_eq!(row.headline, "list_directory .");
         assert!(row.headline_has_target);
-        assert!(
-            row.detail
-                .unwrap()
-                .contains("Directory . · 0 entries (empty)")
-        );
+        assert!(row
+            .detail
+            .unwrap()
+            .contains("Directory . · 0 entries (empty)"));
         let empty = ToolRowView::from_facts("read", "succeeded", None, Some(""));
         assert!(!empty.headline_has_target);
         assert!(empty.detail.unwrap().contains("Empty result"));
-        assert!(
-            ToolRowView::from_facts("read", "succeeded", None, None)
-                .detail
-                .unwrap()
-                .contains("Result not provided")
-        );
+        assert!(ToolRowView::from_facts("read", "succeeded", None, None)
+            .detail
+            .unwrap()
+            .contains("Result not provided"));
 
         let extracted = ToolRowView::from_facts(
             "write_file",
@@ -1748,7 +1869,10 @@ mod tests {
         let other = ToolRowView::from_parts("bash", "approve_once", None);
         assert_eq!(other.status, ToolRowStatus::Other);
         assert_eq!(other.status_label, "approve_once");
-        assert_eq!(ToolRowView::from_parts("bash", "", None).status, ToolRowStatus::Other);
+        assert_eq!(
+            ToolRowView::from_parts("bash", "", None).status,
+            ToolRowStatus::Other
+        );
 
         let rows = vec![
             ToolRowView::from_parts("read_file", "succeeded", None),

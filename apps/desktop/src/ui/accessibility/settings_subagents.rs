@@ -31,6 +31,10 @@ impl AppView {
             self.settings_subagents_concurrency_input.read(cx).text(),
         );
         let save_enabled = writes && concurrency_value.is_some();
+        // RV-08：错误原因与 render 同源推导（AppView 关联函数）。
+        let concurrency_error = Self::subagent_concurrency_error(
+            self.settings_subagents_concurrency_input.read(cx).text(),
+        );
         let refresh_focused =
             self.open_menu.is_none() && self.settings_refresh_focus.is_focused(window);
         let save_focused =
@@ -148,6 +152,28 @@ impl AppView {
             )
             .child(
                 AxNode::new(
+                    "settings-subagents-concurrency-hint",
+                    AxRole::StaticText,
+                    t("settings.subagents.ax_concurrency_hint"),
+                    self.settings_element_bounds("settings-subagents-concurrency-hint"),
+                )
+                .value(t("settings.subagents.concurrency_hint")),
+            );
+        // RV-08：错误原因只在出现时发布（几何取实际布局，不伪造）。
+        if let Some(error) = concurrency_error {
+            page = page.child(
+                AxNode::new(
+                    "settings-subagents-concurrency-error",
+                    AxRole::StaticText,
+                    t("settings.subagents.ax_concurrency_error"),
+                    self.settings_element_bounds("settings-subagents-concurrency-error"),
+                )
+                .value(error),
+            );
+        }
+        page = page
+            .child(
+                AxNode::new(
                     "settings-subagents-save",
                     AxRole::Button,
                     t("settings.save"),
@@ -168,8 +194,9 @@ impl AppView {
             );
 
         // 与 render 同源：只发布已启用模型的规则卡（ADR-063）。
-        let catalog =
-            crate::projection::subagent_rule_models(&self.projection.settings_providers.model_catalog);
+        let catalog = crate::projection::subagent_rule_models(
+            &self.projection.settings_providers.model_catalog,
+        );
         if catalog.is_empty() {
             return page.child(
                 AxNode::new(

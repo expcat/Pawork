@@ -803,7 +803,8 @@ impl SettingsSubagentsState {
 }
 
 /// Activity 浮层「子智能体」卡状态（Host `subagent_list` 权威）。数据
-/// 绑定查询时的 session；切换活动会话 / 断线即清空，不跨会话展示。
+/// 绑定查询时的 session；切换活动会话即清空，不跨会话展示。断线保留
+/// 旧数据并标记 stale（RV-11），重连后由 UI 重查收敛。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SubagentActivityState {
     pub session_id: Option<String>,
@@ -812,6 +813,9 @@ pub struct SubagentActivityState {
     pub request_id: u64,
     pub error: Option<String>,
     pub cancelling: Option<String>,
+    /// 断线标记（原始 wire reason，不翻译）：面板以本地化前缀 + reason
+    /// 呈现「内容可能过期」；重新查询（begin_loading / 回执）即清除。
+    pub stale_reason: Option<String>,
 }
 
 impl SubagentActivityState {
@@ -823,6 +827,7 @@ impl SubagentActivityState {
         self.session_id = Some(session_id.to_string());
         self.loading = true;
         self.error = None;
+        self.stale_reason = None;
         self.request_id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.request_id
     }
@@ -838,11 +843,11 @@ impl SubagentActivityState {
         }
         self.loading = false;
         self.error = None;
+        self.stale_reason = None;
         self.agents = data.agents;
         if self.cancelling.as_ref().is_some_and(|id| {
             !self.agents.iter().any(|agent| {
-                &agent.agent_id == id
-                    && matches!(agent.status.as_str(), "running" | "waiting")
+                &agent.agent_id == id && matches!(agent.status.as_str(), "running" | "waiting")
             })
         }) {
             self.cancelling = None;
@@ -855,6 +860,17 @@ impl SubagentActivityState {
             self.loading = false;
             self.error = Some(reason);
         }
+    }
+
+    /// 断线收口（RV-11）：保留 agents / 会话绑定与选中对话，只清在途
+    /// 瞬时标记（loading / cancelling——对应请求不会再有回执）并记录
+    /// stale 原因；重连后 UI 重新查询经 begin_loading 清除。
+    pub fn mark_disconnected(&mut self, reason: String) {
+        self.loading = false;
+        // begin_loading 的 id 从 1 起；使已断开连接的迟到回执失效。
+        self.request_id = 0;
+        self.cancelling = None;
+        self.stale_reason = Some(reason);
     }
 
     /// 运行中 / 等待中与已完成计数（浮层摘要行；render 与 AX 同源）。
@@ -876,9 +892,7 @@ impl SubagentActivityState {
     /// 浮层列表顺序：运行中 / 等待中置顶，其余保持到达顺序（稳定排序）。
     pub fn display_agents(&self) -> Vec<&SubagentInfo> {
         let mut agents: Vec<&SubagentInfo> = self.agents.iter().collect();
-        agents.sort_by_key(|agent| {
-            !matches!(agent.status.as_str(), "running" | "waiting")
-        });
+        agents.sort_by_key(|agent| !matches!(agent.status.as_str(), "running" | "waiting"));
         agents
     }
 }

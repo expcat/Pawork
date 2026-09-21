@@ -20,7 +20,7 @@
 
 ## ADR-060：UI-6b G2 逐账号额度与耗尽切换（2026-09-09）
 
-状态：Accepted。用户在 [G2 实施方案](../review/ui6b-quota-plan-2026-09-09.md) 后回复「确认」，授权 GUI 1.16；实现与验证状态见 [ROADMAP](../review/roadmap-ui-2026-09-09.md#ui-6b-g2-本批证据2026-09-09)。
+状态：Accepted。用户在 G2 实施方案（Git `f8df04b2:docs/review/ui6b-quota-plan-2026-09-09.md`） 后回复「确认」，授权 GUI 1.16；实现与验证状态见 ROADMAP（Git `f8df04b2:docs/review/roadmap-ui-2026-09-09.md`）。
 
 - **D1 权威来源**：Go 按指定 provider/credential 的存储 API key 请求一次 `/usage`，读取 rolling/weekly/monthly 三窗。百分比采用官方整数精度，reset 严格解析官方 UTC ISO 毫秒格式；单窗畸形为 typed failure，不取本地账本补余额。同订阅多个 key 不算多份额度，不相加或猜测上游身份。
 - **D2 查询与版本**：GUI 1.16 在既有 `quota_overview` 上以明确 `provider_id + credential_id + unit=percent` 请求 `QuotaOverviewView`，限默认本地作用域、无 model；空 windows 为三窗，Overall unsupported。无凭证过滤的旧调用保留本地 `UsageOverview` 响应。旧 minor 在发网前拒绝新路径；Percent 是整数百分点，与 Token/Cost/Count 分离，本地 ledger 不支持该单位。
@@ -31,7 +31,7 @@
 
 ## ADR-059：UI-6b 命名账号与持久选择（2026-09-08）
 
-状态：Accepted。用户在 [实施方案](../review/ui6b-accounts-plan-2026-09-08.md) 后明确回复「确认实施」。G1 已实现，定向自动检查与代理真窗口检查通过，等待用户人工视觉验收，G2 权威额度与自动切换后续由 ADR-060 接续；G1 验收不表示 UI-6b 整体完成。以下决策取代 ADR-056 的单 kind 默认槽与 provider 级 GUI 操作限制。
+状态：Accepted。用户在 实施方案（Git `f8df04b2:docs/review/ui6b-accounts-plan-2026-09-08.md`） 后明确回复「确认实施」。G1 已实现，定向自动检查与代理真窗口检查通过，等待用户人工视觉验收，G2 权威额度与自动切换后续由 ADR-060 接续；G1 验收不表示 UI-6b 整体完成。以下决策取代 ADR-056 的单 kind 默认槽与 provider 级 GUI 操作限制。
 
 - **D1 存储**：每 provider 在 auth backend 的 `pawork.<provider>/accounts.meta` 保存版本 1 索引、递增 revision、账号名称/ID/kind/创建时间与显式选择。新账号使用 opaque `cred_*` ID；API key 为同 service 下 ID 槽，OAuth 为 `pawork.<provider>.oauth` 下 ID 的 `.access/.refresh/.meta` 槽。旧 key/OAuth 保留 `default` 定位，隐式读为 `default-api-key` / `default-oauth`，首次写入才登记索引。FileBackend 外层 version 1 不变，无数据库或 config 迁移，无新增依赖。
 - **D2 原子性**：索引与 secret 在同一个 backend transaction 中提交；FileBackend 沿用跨进程写锁、单次 load 与原子 rename，MemoryBackend 同样回滚失败操作。OAuth 共用参数化的持久化与 refresh 核心，成功轮换同步推进 revision，让其他 Host 丢弃旧 bearer；网络在写锁外，提交时重核原 access/refresh，防止删除后复活或覆盖新登录。OAuth cancel 与完成落盘在同一 flight 锁下串行化。索引损坏、选择失效或缺 secret 均 fail-closed。
@@ -42,7 +42,7 @@
 
 ## ADR-058：UI-6a 目录权威与凭证验证（2026-09-08）
 
-状态：已实现，定向检查与代理真窗口检查通过，等待用户人工视觉验收，见 [ROADMAP UI-6a](../review/roadmap-ui-2026-09-09.md#8-ui-6--providers供应商目录多账号)。GUI wire、配置 schema、认证存储和 domain 形状不变；自动检查与视觉验收分别记录在路线图。
+状态：已实现，定向检查与代理真窗口检查通过，等待用户人工视觉验收，见 ROADMAP UI-6a（Git `f8df04b2:docs/review/roadmap-ui-2026-09-09.md`）。GUI wire、配置 schema、认证存储和 domain 形状不变；自动检查与视觉验收分别记录在路线图。
 
 - **D1 ID 集合**：成功的远端目录替换该 provider 静态 ID 集合，包括合法空数组；不保留远端已消失的静态或 `[[models]]` 条目。静态仅为仍存在的相同 ID 补已有证据、定价与别名；用户 `[[models]]` 的窗口/输出覆盖仅作用于仍存在的 ID。目录失败保留回退；选择模型（含静态命中）也重新核对远端，禁止静默选用已下线 ID。聚合仍以 `(provider, model)` 保留跨供应商同名项。
 - **D2 可运行过滤（2026-09-13 修订）**：成功远端决定 ID 集合。Go / Qwen 的官方逐模型协议表与家族回退只决定 **如何路由**，不再当 ID 白名单。未在表中的新 ID 进入可运行目录：缺省 Chat Completions；Go 上与官方 endpoint 表同一家族的 `grok-*` / `gpt-*` / `muse-spark-*` 走 Responses，`qwen*` / `minimax-*` 走 Messages。仅 Messages-only（本 adapter 尚不能组 Messages 请求）与 Qwen 已知非文本 ID 不进入可运行目录，直接请求仍网络前拒绝。显式 transport 配置仍优先。禁止再把「表里没有」当成丢弃理由。未知窗口/输出为 0（unknown），未知工具能力不宣称支持；Kimi/xAI/ChatGPT 消费有证据的远端字段。
@@ -52,7 +52,7 @@
 
 ## ADR-056：OPT-3d/3e 同供应商多凭证最小切片与额度槽诚实空态（2026-09-06）
 
-状态：Accepted（实现与门禁证据见 OPT 归档对应批次记录）。落地 [ROADMAP §6](../review/roadmap-opt-2026-09-05.md#6-opt-3--供应商模型启用与默认角色) OPT-3d/3e：同一 provider 的 API key 与 OAuth 两类凭证可**共存**并在 Settings 展开卡内逐条列出状态；额度槽（Usage）在无权威 QuotaSnapshot 来源前只呈现诚实空态，不渲染数字。GUI API 1.12 → 1.13（minor 只增，additive）。对照 OPT-D 签字稿 `design/opt-settings-providers-expanded-v1.png`。
+状态：Accepted（实现与门禁证据见 OPT 归档对应批次记录）。落地 ROADMAP §6（Git `f8df04b2:docs/review/roadmap-opt-2026-09-05.md`） OPT-3d/3e：同一 provider 的 API key 与 OAuth 两类凭证可**共存**并在 Settings 展开卡内逐条列出状态；额度槽（Usage）在无权威 QuotaSnapshot 来源前只呈现诚实空态，不渲染数字。GUI API 1.12 → 1.13（minor 只增，additive）。对照 OPT-D 签字稿 `design/opt-settings-providers-expanded-v1.png`。
 
 - **D1 共存语义（修订 SET-4 A3 替换语义）**：`auth_set_key` 写入 API key 不再删除该 provider 的 OAuth default 条目；`oauth_finish` 写入 OAuth 不再删除 API key default 条目。替换语义缩窄为**同 kind 覆盖**：Replace API key 覆盖 api key default 条目，Replace OAuth 原子覆盖 oauth default 三账户，新登录未返回 refresh_token 时同批删除旧账号 refresh；只有刷新响应缺 refresh_token 时保留当前账号 refresh。Remove（`auth_logout`）维持 provider 级语义：删除该 provider 全部存储凭证（幂等）。运行期解析链不变：装配仍按通道固定顺序（api_key 通道只查 api key；xAI / Kimi Code api-key 优先、OAuth 兜底；ChatGPT 只走 OAuth），即「生效凭证」由通道形态决定，本切片不引入账户选择/亲和路由（G1–G6 仍在 backlog）。同 kind 多账户（两个 API key）不在本切片：存储层 `SecretBackend` 结构天然容纳，但选择语义与命名 UX 属 G1 账户池，签字稿未呈现。
 - **D1a 生效与互斥**：认证或供应商代理设置变化后，当前 adapter 标记失效；下一次 Run（即使 provider/model 未改变）重新装配。`AuthRemove` 与同 provider 的认证写入共用单飞闸，验证/授权尚未结束时返回 `busy`。API key 验证、OAuth device start/token exchange/refresh 与模型请求统一遵循该 provider 的 `use_proxy` 设置。
@@ -69,7 +69,7 @@
 
 ## ADR-055：OPT-3 模型启用集与默认角色（2026-09-05）
 
-状态：Accepted（protocol / workspace / app 已实现并通过各自定向门禁与合并收口，API 1.12，golden/typegen 先红后绿，证据见 [ROADMAP §10.4](../review/roadmap-opt-2026-09-05.md#104-本批交付与证据2026-09-05opt-3a3b-内核协议配置)；Desktop GUI 控件批次已实现（§10.5，desktop 门禁 207/207、协议层验收通过；代理 Switch 像素级复验已通过，见 §10.6）；验收中修复清除判定口径，见 D3a）。落地 OPT-3a/3b 的内核、协议与配置半区：模型启用集（3a）与四默认角色配置键与读写（3b）。Desktop 控件（模型启用弹层、四默认角色区、代理 Switch）已按 OPT-D 签字稿落地（见 [OPT 归档 §10.5](../review/roadmap-opt-2026-09-05.md#105-本批交付与证据2026-09-06opt-3-gui-控件批次)）；OPT-3d/3e（多凭证、额度槽）不在本 ADR 范围。GUI API 1.11 → 1.12（minor 只增）。对应 [ROADMAP §6](../review/roadmap-opt-2026-09-05.md#6-opt-3--供应商模型启用与默认角色)。
+状态：Accepted（protocol / workspace / app 已实现并通过各自定向门禁与合并收口，API 1.12，golden/typegen 先红后绿，证据见 ROADMAP §10.4（Git `f8df04b2:docs/review/roadmap-opt-2026-09-05.md`）；Desktop GUI 控件批次已实现（§10.5，desktop 门禁 207/207、协议层验收通过；代理 Switch 像素级复验已通过，见 §10.6）；验收中修复清除判定口径，见 D3a）。落地 OPT-3a/3b 的内核、协议与配置半区：模型启用集（3a）与四默认角色配置键与读写（3b）。Desktop 控件（模型启用弹层、四默认角色区、代理 Switch）已按 OPT-D 签字稿落地（见 OPT 归档 §10.5（Git `f8df04b2:docs/review/roadmap-opt-2026-09-05.md`））；OPT-3d/3e（多凭证、额度槽）不在本 ADR 范围。GUI API 1.11 → 1.12（minor 只增）。对应 ROADMAP §6（Git `f8df04b2:docs/review/roadmap-opt-2026-09-05.md`）。
 
 - **D1 启用集存储**：Global `[[providers]]` 条目新增 `disabled_models: Vec<String>`（denylist）。键缺失或空数组 = 该 provider 模型全部启用；运行期目录新出现的模型默认启用，无需配置迁移，这是选 denylist 而非 enabled 字段的原因。启用语义属于「某 provider 的某模型」，放 `[[providers]]` 条目内而不放扁平 `[[models]]`（后者无 provider 归属，跨供应商会撞 id）。`disabled_models` 是 Global 独占偏好：非 Global 层出现即剥离并记录 warning（与 `use_proxy` 同闸，loader 扩展现有 provider 条目剥离）。
 - **D2 协议词汇（API 1.12）**：
@@ -89,7 +89,7 @@
 
 ## ADR-053：OPT-1 设置持久化（2026-09-05）
 
-状态：OPT-1 已实现、定向自动验证通过、Appearance 真窗口重启恢复通过；用户视觉签字与发布独立记录（[本批证据](../review/roadmap-opt-2026-09-05.md#101-本批交付与证据2026-09-05)）；替代 ADR-048 的「审批与会话信任不持久化」语义。GUI command / response 形状不变，无数据库迁移。设计像素仍受 OPT-D 签字闸门约束。
+状态：OPT-1 已实现、定向自动验证通过、Appearance 真窗口重启恢复通过；用户视觉签字与发布独立记录（本批证据（Git `f8df04b2:docs/review/roadmap-opt-2026-09-05.md`））；替代 ADR-048 的「审批与会话信任不持久化」语义。GUI command / response 形状不变，无数据库迁移。设计像素仍受 OPT-D 签字闸门约束。
 
 - **D1 审批默认**：Global `config.toml` 新增可选 `approval_mode`，复用 Policy 五种 snake_case 值；缺失为 `read_only`，非法值拒绝加载。启动显式 `AppLoadOptions.approval_mode` 优先，只覆盖当前进程。`set_approval_mode` 先原子写 Global，再更新当前 Host 与 scheduler；写入失败返回 `config_write` 并保留旧运行态。
 - **D2 项目信任**：Global 新增 `workspace_trust` 表，键为 Host 解析的 canonical workspace 根路径、值为 bool；当前项目显式 true/false 优先于 `trust_workspaces` 全局默认。`workspace_trust` 命令只接 attached workspace id，Host 自行解析路径后写盘，不能用其他 id 或客户端任意路径写入。不得将信任一个项目扩大到全部项目；没有可解析根路径时 fail-closed。重启恢复同一路径的选择；新项目沿用全局默认。显式启动 trust 覆盖只影响当次进程；用户在 Settings 保存当前项目信任后，清除该启动覆盖，后续按各项目保存值/全局默认解析。

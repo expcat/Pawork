@@ -34,7 +34,7 @@ pub(super) const MAX_PAGES: usize = 200;
 pub enum ControllerEvent {
     ComposerAttachmentsLoaded {
         draft: Option<String>,
-        result: Result<Vec<ComposerAttachment>, String>,
+        result: Result<Vec<ComposerAttachment>, ComposerAttachmentError>,
     },
     WorkspaceFileResult {
         workspace_id: String,
@@ -381,7 +381,7 @@ pub struct DesktopController {
 mod attachments;
 mod browser;
 mod files;
-pub use attachments::{ComposerAttachment, ComposerOptions};
+pub use attachments::{ComposerAttachment, ComposerAttachmentError, ComposerOptions};
 pub use files::FileOperation;
 mod session;
 mod settings;
@@ -2070,6 +2070,7 @@ mod tests {
                 image: true,
             }],
             web_search: Some(false),
+            attachment_error: None,
         };
         let value = serde_json::to_value(run_start_command("unassigned", "", None, None, &options))
             .unwrap();

@@ -212,7 +212,8 @@ impl AppView {
 
     pub(super) fn composer_action_hint(&self, action: ComposerAction) -> &'static str {
         match action {
-            ComposerAction::Files | ComposerAction::Image => t("composer.local_files"),
+            ComposerAction::Files => t("composer.local_files"),
+            ComposerAction::Image => t("composer.local_images"),
             ComposerAction::Search => t("composer.search_hint"),
             _ => "",
         }
@@ -586,7 +587,10 @@ impl AppView {
         };
 
         let options = self.current_composer_options();
-        let has_options = !options.attachments.is_empty() || options.web_search.is_some();
+        // 附件读取失败也占一行（RV-03）：无附件时错误行同样需要渲染。
+        let has_options = !options.attachments.is_empty()
+            || options.web_search.is_some()
+            || options.attachment_error.is_some();
         let attachments = self.composer_attachments_element(cx);
         let card = div()
             .id("composer-card")
@@ -783,11 +787,14 @@ impl AppView {
 
     pub(super) fn composer_options_height(&self) -> f32 {
         let options = self.current_composer_options();
-        if options.attachments.is_empty() && options.web_search.is_none() {
+        if options.attachments.is_empty()
+            && options.web_search.is_none()
+            && options.attachment_error.is_none()
+        {
             return 0.0;
         }
         self.settings_element_layouts
-            .get("composer-options")
+            .get("composer-attachments")
             .map(|handle| f32::from(handle.bounds().size.height))
             .unwrap_or(0.0)
             + metrics::COMPOSER_GAP

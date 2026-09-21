@@ -20,32 +20,31 @@
 use std::collections::HashSet;
 
 use gpui::{
-    AnyElement, Context, ListOffset, ListState, Pixels, SharedString, WeakEntity, Window, div,
-    list, prelude::*, px,
+    div, list, prelude::*, px, AnyElement, Context, ListOffset, ListState, Pixels, SharedString,
+    WeakEntity, Window,
 };
 
 use crate::projection::{
-    ConnectionState, ForkBoundary, TimelineEntry, TimelineEntryKind, TimelineRow, run_footer_label,
-    run_summary_texts,
+    run_footer_label, run_summary_texts, ConnectionState, ForkBoundary, TimelineEntry,
+    TimelineEntryKind, TimelineRow,
 };
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
 use crate::ui::components::dropdown::Dropdown;
 use crate::ui::components::empty_state::EmptyState;
 use crate::ui::components::follow_scroll::BackToBottom;
-use crate::ui::components::icon::{Icon, icon_sized};
+use crate::ui::components::icon::{icon_sized, Icon};
 use crate::ui::components::label::Label;
 use crate::ui::i18n::t;
 use crate::ui::theme::{dark, font, metrics};
 
 use super::approval_card::approval_card_height;
 use super::timeline_entry::{
-    FailureNextStep, RunSummaryTerminal, RunSummaryView, SUMMARY_BANNER_GAP_REMS,
-    SUMMARY_BANNER_PAD_X, SUMMARY_BANNER_PAD_Y_REMS, SUMMARY_FAIL_ICON,
-    SUMMARY_NEXT_STEP_BUTTON_HEIGHT, SUMMARY_STATUS_CIRCLE, ToolRowView, assistant_is_streaming,
-    default_text_line_height, display_time, estimated_wrapped_lines, failure_next_step,
-    tool_row_height,
+    assistant_is_streaming, default_text_line_height, display_time, estimated_wrapped_lines,
+    failure_next_step, tool_row_height, FailureNextStep, RunSummaryTerminal, RunSummaryView,
+    ToolRowView, SUMMARY_BANNER_GAP_REMS, SUMMARY_BANNER_PAD_X, SUMMARY_BANNER_PAD_Y_REMS,
+    SUMMARY_FAIL_ICON, SUMMARY_NEXT_STEP_BUTTON_HEIGHT, SUMMARY_STATUS_CIRCLE,
 };
-use super::{AppView, MenuKind, now_unix_ms, workspace_empty_title};
+use super::{now_unix_ms, workspace_empty_title, AppView, MenuKind};
 
 /// list() 视口外上下方向的预渲染量（px，非视觉尺寸；仅影响滚动顺滑度）。
 pub(super) const TIMELINE_OVERDRAW: f32 = 200.0;
@@ -157,18 +156,111 @@ fn message_entry_height(
     } else {
         0.0
     };
+    let body_width = (column_width - 2.0 * inset).max(0.0);
+    2.0 * vertical_inset + header + markdown_body_height(&measure, body_width, rem_px)
+}
+
+/// Markdown 正文体高：与 render 侧 message_body_element 的块高 + 段间距 +
+/// 代码块工具行补偿同源（用户 / 助手 / 错误消息与附件消息的文本段共用）。
+fn markdown_body_height(
+    measure: &super::markdown::MessageMeasure,
+    body_width: f32,
+    rem_px: f32,
+) -> f32 {
     let body_font_px = font::BODY.0 * rem_px;
     let body_line_height = (font::from_pixels(metrics::MSG_LINE_HEIGHT).0 * rem_px).round();
-    let body_width = (column_width - 2.0 * inset).max(0.0);
     let blocks = measure.block_line_counts(body_width, body_font_px);
-    let body = blocks
+    blocks
         .iter()
         .map(|lines| *lines as f32 * body_line_height)
         .sum::<f32>()
         + metrics::MSG_PARAGRAPH_GAP * blocks.len().saturating_sub(1) as f32
         + measure.code_block_count() as f32
-            * (metrics::ICON_BUTTON_SIZE - body_line_height).max(0.0);
-    2.0 * vertical_inset + header + body
+            * (metrics::ICON_BUTTON_SIZE - body_line_height).max(0.0)
+}
+
+/// 含附件用户消息的分段布局（RV-02）：渲染 / 测高 / AX 三处同源的单次
+/// 累加——附件存在时气泡强制整宽（entry_shell 同判定）；文本段按 Markdown
+/// 正文体，附件块 = border 2px + 折叠头 +（展开时）thinking 同款内容体，
+/// 段间距 = 渲染的 MSG_PARAGRAPH_GAP。返回（消息总高，各段相对条目内容
+/// 区顶部的偏移与高度，附件段带折叠键）。
+pub(super) struct SegmentLayout {
+    /// 段顶相对条目内容区顶部的偏移（含气泡上内边距与作者行）。
+    pub top: f32,
+    pub height: f32,
+    /// 附件段的折叠态键（attachment_key）；文本段为 None。
+    pub attachment_key: Option<String>,
+}
+
+pub(super) fn user_segment_layouts(
+    event_id: &str,
+    segments: &[super::attachment_blocks::AttachmentSegment],
+    column_width: f32,
+    rem_px: f32,
+    expanded_timeline_details: &HashSet<String>,
+) -> (f32, Vec<SegmentLayout>) {
+    let body_width = (column_width - 2.0 * metrics::MSG_USER_INSET_X).max(0.0);
+    let header =
+        default_text_line_height(font::BODY_SM.0 * rem_px).max(24.0) + metrics::MSG_LABEL_BODY_GAP;
+    let mut top = metrics::MSG_USER_INSET_Y + header;
+    let mut layouts = Vec::new();
+    let mut attachment_index = 0usize;
+    for (ix, segment) in segments.iter().enumerate() {
+        if ix > 0 {
+            top += metrics::MSG_PARAGRAPH_GAP;
+        }
+        let mut key = None;
+        let height = match segment {
+            super::attachment_blocks::AttachmentSegment::Text(text) => markdown_body_height(
+                &super::markdown::MessageMeasure::new(text),
+                body_width,
+                rem_px,
+            ),
+            super::attachment_blocks::AttachmentSegment::File { content, .. } => {
+                let attachment_key =
+                    super::attachment_blocks::attachment_key(event_id, attachment_index);
+                attachment_index += 1;
+                let expanded = expanded_timeline_details.contains(&attachment_key);
+                key = Some(attachment_key);
+                2.0 + metrics::THINKING_HEADER_HEIGHT
+                    + if expanded {
+                        thinking_body_height(content, (body_width - 2.0).max(0.0), rem_px)
+                    } else {
+                        0.0
+                    }
+            }
+            super::attachment_blocks::AttachmentSegment::Image { .. } => {
+                attachment_index += 1;
+                2.0 + metrics::THINKING_HEADER_HEIGHT
+            }
+        };
+        layouts.push(SegmentLayout {
+            top,
+            height,
+            attachment_key: key,
+        });
+        top += height;
+    }
+    // top 累计起点已含一次上内边距；总高 = 上内边距 + 累计终点。
+    (metrics::MSG_USER_INSET_Y + top, layouts)
+}
+
+/// 含附件用户消息测高：布局累加器的总高。
+fn user_segmented_message_height(
+    event_id: &str,
+    segments: &[super::attachment_blocks::AttachmentSegment],
+    column_width: f32,
+    rem_px: f32,
+    expanded_timeline_details: &HashSet<String>,
+) -> f32 {
+    user_segment_layouts(
+        event_id,
+        segments,
+        column_width,
+        rem_px,
+        expanded_timeline_details,
+    )
+    .0
 }
 
 /// 思考展开区与渲染共用 12px 内边距和次级正文字号。
@@ -390,6 +482,17 @@ pub(super) fn timeline_row_height(
                 }
                 _ => true,
             };
+            if let TimelineEntryKind::UserMessage { text } = &entry.kind {
+                if let Some(segments) = super::attachment_blocks::split_user_message(text) {
+                    return user_segmented_message_height(
+                        &entry.event_id,
+                        &segments,
+                        column_width,
+                        rem_px,
+                        expanded_timeline_details,
+                    );
+                }
+            }
             message_entry_height(
                 text,
                 column_width,

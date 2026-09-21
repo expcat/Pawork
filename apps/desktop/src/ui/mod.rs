@@ -6,6 +6,7 @@
 mod accessibility;
 mod approval_card;
 mod archive;
+mod attachment_blocks;
 mod attachments;
 mod barriers;
 mod browser;
@@ -562,6 +563,11 @@ pub struct AppView {
     composer_options: HashMap<Option<String>, crate::controller::ComposerOptions>,
     composer_loading: bool,
     composer_sending: bool,
+    /// RV-01：当前打开的附件预览 =（会话, 附件 id）；会话不匹配或附件已
+    /// 移除时不渲染，切换任务不受影响。
+    composer_attachment_preview: Option<(Option<String>, String)>,
+    /// RV-01：附件 id → 解码用 gpui::Image 缓存，render 懒建、随附件回收。
+    composer_attachment_images: HashMap<String, Arc<gpui::Image>>,
     composer_drafts: HashMap<String, String>,
     no_session_draft: String,
     /// 首页无任务发送：`session_create(None)` 在途时记下正文，回执后再发。
@@ -720,6 +726,14 @@ pub struct AppView {
     subagent_reveal_selected: bool,
     /// chip 实测布局（AX 按滚动视口裁剪发布，与 Activity 行同口径）。
     subagent_agent_layouts: HashMap<String, ScrollHandle>,
+    /// 对话栏条目 / 结果盒实测布局（AX 按滚动视口裁剪发布；key =
+    /// `<event_id>:item|tool-header` 或 `<agent_id>:result[:toggle]`）。
+    subagent_item_layouts: HashMap<String, ScrollHandle>,
+    /// 对话栏工具行 / 长回执展开偏好（key 与主 Timeline 折叠集合同构
+    /// 但独立成集，不污染主 Timeline 的展开态）。
+    expanded_subagent_details: HashSet<String>,
+    /// 对话栏工具行 / 结果盒展开按钮焦点（按 key 懒建）。
+    subagent_item_focus: HashMap<String, FocusHandle>,
     subagent_refresh_focus: FocusHandle,
     subagent_back_to_bottom_focus: FocusHandle,
     terminal_back_to_bottom_focus: FocusHandle,
@@ -937,6 +951,8 @@ impl AppView {
             composer_options: HashMap::new(),
             composer_loading: false,
             composer_sending: false,
+            composer_attachment_preview: None,
+            composer_attachment_images: HashMap::new(),
             composer_drafts: HashMap::new(),
             no_session_draft: String::new(),
             pending_home_send: None,
@@ -1121,6 +1137,9 @@ impl AppView {
             subagent_agent_focus: HashMap::new(),
             subagent_reveal_selected: false,
             subagent_agent_layouts: HashMap::new(),
+            subagent_item_layouts: HashMap::new(),
+            expanded_subagent_details: HashSet::new(),
+            subagent_item_focus: HashMap::new(),
             subagent_refresh_focus: cx
                 .focus_handle()
                 .tab_stop(true)
@@ -1833,9 +1852,13 @@ impl AppView {
                     .settings_providers
                     .account_mode_pending
                     .clear();
-                self.projection.subagent_activity = Default::default();
-                self.projection.subagent_conversation = Default::default();
-                self.subagent_conversation_scroll.jump_to_bottom();
+                // RV-11：断线保留子代理面板已加载内容（代理列表 / 选中
+                // 项 / 对话正文与阅读位置），只清瞬时在途标记并标记过期；
+                // 重连后由 refresh_open_inspector_tab 重查权威数据。
+                self.projection
+                    .subagent_activity
+                    .mark_disconnected(reason.clone());
+                self.projection.subagent_conversation.loading = false;
                 let stale_reason = format!("connection lost · {reason}");
                 self.handshake_info = None;
                 if self.settings_page == SettingsPage::About {
@@ -2255,17 +2278,28 @@ impl AppView {
             }
             ControllerEvent::ComposerAttachmentsLoaded { draft, result } => {
                 self.composer_loading = false;
+                // 成功清错误；失败与超限都按会话落在 Composer 附件区域
+                //（RV-03），不再写到窗口右下角 status_hint（含旧瞬态提示）。
+                self.status_hint = None;
                 match result {
                     Ok(attachments) => {
                         let options = self.composer_options.entry(draft).or_default();
                         if options.attachments.len() + attachments.len() <= 4 {
                             options.attachments.extend(attachments);
-                            self.status_hint = None;
+                            options.attachment_error = None;
                         } else {
-                            self.status_hint = Some(i18n::t("composer.attachment_limit").into());
+                            options.attachment_error =
+                                Some(crate::controller::ComposerAttachmentError::TooMany {
+                                    count: options.attachments.len() + attachments.len(),
+                                });
                         }
                     }
-                    Err(reason) => self.status_hint = Some(reason),
+                    Err(error) => {
+                        self.composer_options
+                            .entry(draft)
+                            .or_default()
+                            .attachment_error = Some(error);
+                    }
                 }
             }
             ControllerEvent::MessageSent {
@@ -3219,6 +3253,12 @@ impl AppView {
         }
         if key == "escape" && self.account_rename_input_focused(window, cx) {
             self.cancel_account_rename(window, cx);
+            cx.stop_propagation();
+            return;
+        }
+        // RV-01：附件预览浮层开着时 Escape 只关预览（不动草稿与菜单）。
+        if key == "escape" && self.composer_attachment_preview.is_some() {
+            self.close_composer_attachment_preview(cx);
             cx.stop_propagation();
             return;
         }
@@ -4319,6 +4359,12 @@ impl AppView {
     /// 选中子代理并拉取其对话（浮层行点击与对话栏切换器共用入口）。id
     /// 变化即整体复位旧代理时间线；同 id 重选也重查（终态水合同路径）。
     pub(crate) fn select_subagent_agent(&mut self, agent_id: &str, cx: &mut Context<Self>) {
+        if !matches!(
+            self.projection.connection,
+            ConnectionState::Connected { .. }
+        ) {
+            return;
+        }
         if self.projection.subagent_conversation.select_agent(agent_id) {
             // 换代理即换时间线：滚动偏移与跟随态不跨代理保留，先贴底，
             // 新内容到达后按跟随语义继续。

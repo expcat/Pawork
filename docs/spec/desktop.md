@@ -6,7 +6,7 @@
 
 ## ADR-057：UI-3 思考投影与会话身份（2026-09-08）
 
-状态：**Accepted**，用户在本次会话明确「确认实施」。实现、自动验证、代理真窗口检查和用户人工视觉验收分别登记在 [路线图](../review/roadmap-ui-2026-09-09.md)。
+状态：**Accepted**，用户在本次会话明确「确认实施」。实现、自动验证、代理真窗口检查和用户人工视觉验收分别登记在 路线图（Git `f8df04b2:docs/review/roadmap-ui-2026-09-09.md`）。
 
 - **GUI API 1.14**：复用 live `AppEvent::ThinkingDelta`；历史新增 `TimelineItemKind::ThinkingDelta` 与可选 `message_id` / `thinking_text`。每个持久事件仍只对应一条 wire 条目，`MessageCommitted` 的正文与思考同载于 `AssistantMessage`，共享 reducer 再拆成显示行，不改变磁盘事件 schema 或 SQLite 版本。
 - **合并与降级**：reducer 按 run/message/正文或思考维度合并有序增量，committed 全文替换累积体并阻止迟到增量重复追加；思考保留首次增量的 sequence/timestamp，迟到增量只可前移已有思考行，不恢复隐藏内容；分页、live 和重放收敛。Host 对 API <1.14 的历史响应移除新 kind 与新字段，保留原 `next_sequence` / `head_sequence` / `complete`，包括整页被过滤时的游标。
@@ -17,7 +17,7 @@
 
 ## ADR-054：OPT-2 会话生命周期与自动标题（2026-09-05）
 
-背景：OPT-2（[OPT 归档](../review/roadmap-opt-2026-09-05.md#5-opt-2--会话与无项目任务) §5，反馈 F7/F9 与 F8 的自动命名）。设计闸门 OPT-D 已签字（[design/README §0](../../design/README.md)）。GUI API minor 1.10 → 1.11，golden/typegen 先行。
+背景：OPT-2（OPT 归档（Git `f8df04b2:docs/review/roadmap-opt-2026-09-05.md`） §5，反馈 F7/F9 与 F8 的自动命名）。设计闸门 OPT-D 已签字（[design/README §0](../../design/README.md)）。GUI API minor 1.10 → 1.11，golden/typegen 先行。
 
 - **D1 `SessionCreate.workspace_id` 改可选（since 1.11）**：wire 上字段可缺省或显式 `null` → Host 落盘 `workspace_id = NULL`，归 Unassigned；显式传值行为不变。无项目会话不获得任何 workspace 授权面：文件类工具按现有 Policy 对无 workspace 会话 fail-closed，只适用于问答等不碰仓库的任务。
 - **D2 `SessionRename{session_id, title}`**：两字段必填；title trim 后为空为结构化错误，不写盘。写盘成功后回执 Data（session_view，即写后状态）。
@@ -26,7 +26,7 @@
 - **D4a 自动命名并发收口（2026-09-06 审查修复）**：读取素材只读重放，不决议 pending approval、不追加 Agent 事件；命名任务快照依赖后释放 Core 锁，装配、目录解析、补全共用 20s 超时。写回前确认命名配置仍有效，以单条条件 UPDATE 校验占位标题并写入，避免覆盖手动改名；改名/配置清除期间返回的旧结果丢弃。
 - **D5 `AppEvent::SessionMetaChanged{session_id, title, archived}`**：改名/归档/自动标题写回后由 Host 经 EventHub 广播；Desktop 收到后重取 snapshot，列表即时反映写后状态。当前会话归档时一并收口 Composer、分页、Changes 与 Terminal workspace 草稿；重复刷新保持当前 UI scope。新建会话严格使用创建回执的 session_id，不从列表顺序猜测。
 
-UI-3 的 Markdown、工具折叠与 Run 终态呈现更新见 [GUI 设计](../gui-design.md#ui-3-时间线更新2026-09-08进行中)；下文旧阶段数值不覆盖本次规格。独立思考投影与默认折叠已按 ADR-057 实现，UI-3 等待用户人工视觉验收；自动检查、真窗口与人工验收分别见 [路线图](../review/roadmap-ui-2026-09-09.md)。
+UI-3 的 Markdown、工具折叠与 Run 终态呈现更新见 [GUI 设计](../gui-design.md#ui-3-时间线更新2026-09-08进行中)；下文旧阶段数值不覆盖本次规格。独立思考投影与默认折叠已按 ADR-057 实现，UI-3 等待用户人工视觉验收；自动检查、真窗口与人工验收分别见 路线图（Git `f8df04b2:docs/review/roadmap-ui-2026-09-09.md`）。
 
 ## 1. 产品定位
 
@@ -81,7 +81,7 @@ flowchart LR
 
 ### 右侧浏览器（2026-09-16）
 
-用户通过面板「+」/ 空态 / Cmd+K 打开手动浏览器；地址栏、前进后退、刷新 / 停止与真实错误已接线。每任务一页、隐藏保留、关闭释放；站点数据使用隔离的非持久 WebKit profile。首版 macOS 系统 WebKit，HTTP(S)（含 localhost）导航；新窗口链接同页打开。模型操作、DOM / 截图、下载、多网页标签和跨启动恢复未实现。浏览器实现由独立 [pawork-browser](crates/browser.md) 提供，Desktop 只负责布局、输入和任务归属；不改 GUI Protocol / Core。验收状态见 [路线图](../ROADMAP.md#右侧浏览器首版2026-09-16)。
+用户通过面板「+」/ 空态 / Cmd+K 打开手动浏览器；地址栏、前进后退、刷新 / 停止与真实错误已接线。每任务一页、隐藏保留、关闭释放；站点数据使用隔离的非持久 WebKit profile。首版 macOS 系统 WebKit，HTTP(S)（含 localhost）导航；新窗口链接同页打开。模型操作、DOM / 截图、下载、多网页标签和跨启动恢复未实现。浏览器实现由独立 [pawork-browser](crates/browser.md) 提供，Desktop 只负责布局、输入和任务归属；不改 GUI Protocol / Core。验收状态见 历史记录（Git `f8df04b2:docs/ROADMAP.md`，原「右侧浏览器首版2026-09-16」节）。
 
 | ID | 要求 | 状态 |
 | --- | --- | --- |
@@ -103,11 +103,11 @@ flowchart LR
 
 - Timeline 使用 880px 居中可读列，两侧至少各留 28px；16px / 26px 正文、32px 消息间距，用户浅底卡片与 36px 轻量工具摘要区分层次；独立完成页脚前留 12px。
 - TaskRail 项目头计数 / 「+」与任务行改名 / 归档共用 64px 尾槽（两格 32×32，右缘 8px）；Header 为 medium；24px StatusBar 使用 12px 字阶和窄窗裁切。已连接且无选中任务时，Composer 可直接发送并归为 Unassigned 无任务对话。
-- UI-4 Composer 的 input / 模型 / Send/Cancel 共属居中卡片（至少 110px、最高 220px），项目与上下文移到卡片下方；缺值仍如实显示 unavailable。留白、字号与交互见 [GUI 设计](../gui-design.md#ui-4-输入栏更新2026-09-08)，当前验收状态见 [路线图](../review/roadmap-ui-2026-09-09.md#ui-4-本批证据2026-09-08)。
+- UI-4 Composer 的 input / 模型 / Send/Cancel 共属居中卡片（至少 110px、最高 220px），项目与上下文移到卡片下方；缺值仍如实显示 unavailable。留白、字号与交互见 [GUI 设计](../gui-design.md#ui-4-输入栏更新2026-09-08)，当前验收状态见 路线图（Git `f8df04b2:docs/review/roadmap-ui-2026-09-09.md`）。
 - Changes 文件行使用稳定前后槽；DiffView 的只读路径 header 位于横滚外，24px 语义 gutter 与中性正文分离；ActivityPopover 内容宽 320px，内容高随 100%/125%/150% 为 144/180/216px，外框包含 8px padding 与 1px border，摘要可见且保持 capability honesty。
 - 三张阶段图与本机视觉走查已收口；此结论不扩张为 Timeline/Changes 全状态 AX 几何覆盖或发布级签字。
 
-UI-5 设置壳与七个非供应商页沿用 UI-1 token，改为 40px 导航、36px 动作与全宽分区布局；页内命中框按 GPUI 实际布局和滚动视口同步，离屏项不暴露动作。原有设置持久化、可用性与断线 gate 不变，供应商页产品改动属于 UI-6。规格见 [GUI 设计 UI-5](../gui-design.md#ui-5-设置更新2026-09-08)，验收状态见 [路线图](../review/roadmap-ui-2026-09-09.md#ui-5-本批证据2026-09-08)。
+UI-5 设置壳与七个非供应商页沿用 UI-1 token，改为 40px 导航、36px 动作与全宽分区布局；页内命中框按 GPUI 实际布局和滚动视口同步，离屏项不暴露动作。原有设置持久化、可用性与断线 gate 不变，供应商页产品改动属于 UI-6。规格见 [GUI 设计 UI-5](../gui-design.md#ui-5-设置更新2026-09-08)，验收状态见 路线图（Git `f8df04b2:docs/review/roadmap-ui-2026-09-09.md`）。
 
 ## 5. 键盘、IME 与可访问性
 
@@ -162,7 +162,7 @@ GUI P0–P2 及追加中文/供应商代理开关均已实现；本机 E2 自动
 
 ### 8.1 OPT-2 会话生命周期真窗口验收（2026-09-05）
 
-隔离实例 `opt2acc`，Host 当次 `--provider opencode-go --model glm-5.3-flash`（不写持久默认），生产实例 `desktop` 未受影响。逐项窗口 + AX + SQLite 交叉验证：全局 New task 直建 Unassigned 会话（DB `workspace_id` NULL，无 WorkspaceConfirm）；Composer No project 与文件工具不可用提示；真实问答 Run 三次 completed；行内改名 Enter 提交/Esc 取消（DB 写后状态一致）；归档后列表隐藏且 `archived=1` 未删除；临时配置命名模型后占位标题在 Run 成功终态自动改写并经 SessionMetaChanged 即时刷新；Host 重启后 Reconnect 恢复连接与草稿。验收中发现并修复：ADR-044 D3 对未绑定会话的 fail-closed 与 ADR-054 D1 冲突，致无项目会话无法问答——显式 NULL 归属改以空授权面 `ws-unbound` 运行，文件工具仍 Policy fail-closed（详见 [OPT 归档 §10.3](../review/roadmap-opt-2026-09-05.md#103-本批交付与证据2026-09-05opt-2-真窗口验收--无项目问答修复)）。命名用配置已还原，本批不推定 OPT-3/4 与发布状态。
+隔离实例 `opt2acc`，Host 当次 `--provider opencode-go --model glm-5.3-flash`（不写持久默认），生产实例 `desktop` 未受影响。逐项窗口 + AX + SQLite 交叉验证：全局 New task 直建 Unassigned 会话（DB `workspace_id` NULL，无 WorkspaceConfirm）；Composer No project 与文件工具不可用提示；真实问答 Run 三次 completed；行内改名 Enter 提交/Esc 取消（DB 写后状态一致）；归档后列表隐藏且 `archived=1` 未删除；临时配置命名模型后占位标题在 Run 成功终态自动改写并经 SessionMetaChanged 即时刷新；Host 重启后 Reconnect 恢复连接与草稿。验收中发现并修复：ADR-044 D3 对未绑定会话的 fail-closed 与 ADR-054 D1 冲突，致无项目会话无法问答——显式 NULL 归属改以空授权面 `ws-unbound` 运行，文件工具仍 Policy fail-closed（详见 OPT 归档 §10.3（Git `f8df04b2:docs/review/roadmap-opt-2026-09-05.md`））。命名用配置已还原，本批不推定 OPT-3/4 与发布状态。
 
 Full workspace gate: NOT RUN（当前未设置全量门禁）。
 
@@ -182,7 +182,7 @@ Full workspace gate: NOT RUN（当前未设置全量门禁）。
 
 ## 右侧文件浏览与编辑（2026-09-16）
 
-Files 工具以懒加载目录树浏览当前项目、打开多份已有文本、修改并显式保存。正文占满文件区高度，右侧目录树可收起，文件名筛选覆盖已展开的目录（忽略大小写）；每份文件直接与终端、浏览器等内容共用顶部标签栏，文件区只保留路径和操作。Markdown 默认预览，可切换源码编辑，预览包含当前未保存修改。每份文件保留独立草稿与未保存标记；不同项目隔离，切换任务 / 标签及收起工具保留草稿。⌘S 与按钮等待 Host 回执，外部版本冲突拒绝覆盖；重新载入、关闭未保存文件标签或窗口先确认；关闭后台文件保留当前页，关闭最后一份文件回到仍打开的工具。支持 UTF-8、无 NUL、≤128 KiB 的已有普通文件。协议版本 GUI 1.19，全部 IO 经 CLI Host；不直接从 Desktop 读取文件。新建 / 删除 / 重命名、语法高亮、自动保存不在本批。见 [GUI 设计](../gui-design.md#14-右侧文件浏览与编辑2026-09-16)与[实施状态](../ROADMAP.md#右侧文件浏览与编辑2026-09-16)。
+Files 工具以懒加载目录树浏览当前项目、打开多份已有文本、修改并显式保存。正文占满文件区高度，右侧目录树可收起，文件名筛选覆盖已展开的目录（忽略大小写）；每份文件直接与终端、浏览器等内容共用顶部标签栏，文件区只保留路径和操作。Markdown 默认预览，可切换源码编辑，预览包含当前未保存修改。每份文件保留独立草稿与未保存标记；不同项目隔离，切换任务 / 标签及收起工具保留草稿。⌘S 与按钮等待 Host 回执，外部版本冲突拒绝覆盖；重新载入、关闭未保存文件标签或窗口先确认；关闭后台文件保留当前页，关闭最后一份文件回到仍打开的工具。支持 UTF-8、无 NUL、≤128 KiB 的已有普通文件。协议版本 GUI 1.19，全部 IO 经 CLI Host；不直接从 Desktop 读取文件。新建 / 删除 / 重命名、语法高亮、自动保存不在本批。见 [GUI 设计](../gui-design.md#14-右侧文件浏览与编辑2026-09-16)与历史记录（Git `f8df04b2:docs/ROADMAP.md`，原「右侧文件浏览与编辑2026-09-16」节）。
 
 
-Composer「+」在首页与无项目任务也可使用本机文件 / 图片附件及本轮网络搜索。系统选择器明确选择文件，Desktop 后台有界读取，经 API 1.22 分块上传后由 Host 校验并转换为消息内容；不注册用户目录、不改变项目归属。附件名称与移除操作随任务草稿保存，失败保留，成功接收清除；搜索三态为沿用默认 / 本轮开启 / 本轮关闭。能力不匹配时提示选择支持的模型。项目相对引用保留独立入口。最新验证状态与未实现功能见 [路线图](../ROADMAP.md#composer-添加菜单与无项目能力2026-09-21)。
+Composer「+」在首页与无项目任务也可使用本机文件 / 图片附件及本轮网络搜索。系统选择器明确选择文件，Desktop 后台有界读取，经 API 1.22 分块上传后由 Host 校验并转换为消息内容；不注册用户目录、不改变项目归属。附件名称与移除操作随任务草稿保存，失败保留，成功接收清除；搜索三态为沿用默认 / 本轮开启 / 本轮关闭。能力不匹配时提示选择支持的模型。项目相对引用保留独立入口。最新验证状态与未实现功能见 [剩余工作与验收](../ROADMAP.md)。

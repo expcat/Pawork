@@ -5,7 +5,6 @@ use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use futures::{stream::FuturesUnordered, StreamExt};
 use pawork_domain::{ActorId, ConnectionId, GuiClientId};
 use pawork_protocol::app::registry::{command_entry, query_entry, RegistryEntry};
 use pawork_protocol::codec::decode_client_frame;
@@ -21,6 +20,7 @@ use pawork_transport::{
     ConnectionInfo, GuiConnection, TransportError, TransportErrorKind, TransportFrame,
 };
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
+use tokio::task::JoinSet;
 use tokio::time::{interval, MissedTickBehavior};
 
 use crate::gui_server::connection::{ClientRegistration, ManagerError};
@@ -196,15 +196,23 @@ async fn run(
     ));
     watchdog.set_missed_tick_behavior(MissedTickBehavior::Delay);
     watchdog.tick().await;
-    // Only remote account quota reads may wait on upstream I/O. Keep their
-    // futures owned by this connection so disconnect drops the requests too.
-    let mut quota_queries = FuturesUnordered::new();
+    // 会因上游 I/O 阻塞的查询（账户额度 HTTP、ModelList 目录探测）并发执行；
+    // 其余帧保持串行。独立任务在串行命令等待 Core 写锁时仍能推进并释放
+    // 读锁；不能只依赖主循环 poll。JoinSet 归本连接所有，断连即取消。
+    let mut upstream_queries = JoinSet::new();
 
     loop {
         tokio::select! {
             biased;
             _ = &mut close_rx => break,
-            Some(outcome) = quota_queries.next(), if !quota_queries.is_empty() => {
+            Some(outcome) = upstream_queries.join_next(), if !upstream_queries.is_empty() => {
+                let outcome = match outcome {
+                    Ok(outcome) => outcome,
+                    Err(error) => {
+                        tracing::warn!(%client_id, %error, "gui upstream query task failed");
+                        break;
+                    }
+                };
                 if let FrameOutcome::Reply(replies) = outcome {
                     let mut sent = true;
                     for reply in replies {
@@ -281,11 +289,18 @@ async fn run(
                 if let Err(error) = inner.connections.heartbeat(&client_id, now_timestamp()) {
                     tracing::debug!(%client_id, %error, "gui heartbeat update failed");
                 }
+                // RV-10：慢查询（额度 / 目录探测）入并发集合。串行时一个 4s
+                // 级探测会让排在后面的轻量查询（如 subagent_settings）越过
+                // 客户端 10s 超时。响应按 request_id 关联（client 只接同 id
+                // 帧），乱序安全；无 request_id 的 Snapshot 仍走串行主路径。
                 if matches!(&frame, ClientFrame::Query(envelope)
-                    if matches!(&envelope.query, pawork_protocol::AppQuery::QuotaOverview { query }
-                        if crate::provider_quota::is_account_query(query)))
+                    if query_waits_on_upstream(&envelope.query))
                 {
-                    quota_queries.push(handle_frame(&inner, frame, &client_id));
+                    let query_inner = Arc::clone(&inner);
+                    let query_client_id = client_id.clone();
+                    upstream_queries.spawn(async move {
+                        handle_frame(&query_inner, frame, &query_client_id).await
+                    });
                     continue;
                 }
                 match handle_frame(&inner, frame, &client_id).await {
@@ -309,7 +324,7 @@ async fn run(
             }
         }
     }
-    drop(quota_queries);
+    drop(upstream_queries);
     if let Err(error) = stop_tx.send(()) {
         tracing::debug!(%client_id, error = ?error, "gui forwarder stop signal dropped");
     }
@@ -441,6 +456,19 @@ fn host_stamp_query(mut envelope: AppQueryEnvelope, client_id: &GuiClientId) -> 
         display_name: None,
     };
     envelope
+}
+
+/// 会因上游 I/O 阻塞的查询（RV-10）：远程账户额度读（HTTP）与 ModelList
+/// 目录探测（每 provider 4s 超时、join_all 并发）。此类查询进并发集合，
+/// 不在串行主循环里饿死其后的轻量配置读。命令与其它查询保持串行语义。
+fn query_waits_on_upstream(query: &pawork_protocol::AppQuery) -> bool {
+    match query {
+        pawork_protocol::AppQuery::QuotaOverview { query } => {
+            crate::provider_quota::is_account_query(query)
+        }
+        pawork_protocol::AppQuery::ModelList { .. } => true,
+        _ => false,
+    }
 }
 
 async fn handle_frame(inner: &Inner, frame: ClientFrame, client_id: &GuiClientId) -> FrameOutcome {
@@ -993,6 +1021,34 @@ fn now_timestamp() -> pawork_domain::Timestamp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// RV-10：上游阻塞型查询（ModelList 目录探测 / 账户额度）进并发集合，
+    /// 轻量配置读与 Snapshot 保持串行主路径。该归类决定排队语义，须钉住。
+    #[test]
+    fn upstream_query_classification() {
+        assert!(query_waits_on_upstream(
+            &pawork_protocol::AppQuery::ModelList {
+                provider_id: None,
+                include_disabled: false,
+            }
+        ));
+        let mut account = pawork_protocol::QuotaOverviewQuery::default_local();
+        assert!(!query_waits_on_upstream(
+            &pawork_protocol::AppQuery::QuotaOverview {
+                query: account.clone(),
+            }
+        ));
+        account.credential_id = Some("cred-1".into());
+        assert!(query_waits_on_upstream(
+            &pawork_protocol::AppQuery::QuotaOverview { query: account }
+        ));
+        assert!(!query_waits_on_upstream(
+            &pawork_protocol::AppQuery::SubagentSettings
+        ));
+        assert!(!query_waits_on_upstream(
+            &pawork_protocol::AppQuery::SnapshotFetch
+        ));
+    }
 
     /// ADR-045/ADR-046：宿主语义错误码到 wire 码的映射——not_found →
     /// RequestNotFound、busy → Busy（可重试）、校验失败类 →
