@@ -560,6 +560,8 @@ impl Client {
                 provider: None,
                 profile: None,
                 effort: None,
+                attachment_ids: Vec::new(),
+                web_search: None,
             },
         )))
         .await

@@ -22,7 +22,7 @@
 | `src/headless/stream.rs` | ~110 | `EventSubscription`（有界 `mpsc` 事件通道，可取消）与 `BackpressurePolicy`（Drop 计数丢弃 / Error 显式溢出） |
 | `src/headless/error.rs` | ~150 | `SdkError` / `SdkErrorKind`（spawn、I/O、malformed frame、`UnknownResponseType`、`UnsupportedCapability`、`IncompatibleApiVersion`、`RequestFailed`、`Backpressure`、`Cancelled`、`Timeout`、`Protocol(ProtocolErrorKind)`；`as_str` 稳定标签） |
 | `src/headless/mock.rs` | ~150 | `MockTransport`：脚本化响应队列 + 已发送行记录（`Clone` 共享），供下游无进程测试 |
-| `src/headless/version.rs` | ~20 | `SDK_VERSION`（crate 版本）与 `SDK_API_VERSION`（直接引用 `pawork_protocol::API_VERSION`，现为 1.21）；无内联测试，兼容性由握手测试验证 |
+| `src/headless/version.rs` | ~20 | `SDK_VERSION`（crate 版本）与 `SDK_API_VERSION`（直接引用 `pawork_protocol::API_VERSION`，现为 1.22）；无内联测试，兼容性由握手测试验证 |
 | `examples/probe.rs` | ~580 | live 模式测试客户端：`--connect`（外部握手 + WorkspaceList）、`--live-two-gui`、`--live-pty`、`--token`（缺省读 `{data_dir}/gui.token`） |
 | `tests/contract.rs` | ~770 | GUI Connection Protocol 契约测试（LocalTransport UDS × 进程内 `GuiServer` + `GuiHostAdapter` + `MockProvider`），9 测试 |
 | `tests/probe.rs` + `tests/probe/harness.rs` + `tests/probe/scenarios.rs` | ~1 110 | `--self-test` 13 场景（MemoryTransport 进程内装配）；harness 提供 AppCore / GuiServer / 握手 / CLI 侧命令辅助；默认不编译，`probe-self-test` feature 显式启用 |
@@ -53,7 +53,7 @@
 **headless SDK（`pub mod headless`）**
 
 - `PaworkClient::spawn(PaworkOptions)`：spawn `pawork headless --json-stdio` 并完成 hello/ack 握手（`SDK_API_VERSION` 协商，major 不兼容显式失败）；`from_transport(Box<dyn Transport>, options)` 注入自定义 transport（如 `MockTransport`）。
-- 高层 API：`create_session(workspace_id, title)`、`run_start(session_id, message, model)`（effort 为 ADR-063 GUI-only 字段，headless 高层 API 暂不暴露）、`cancel(run_id)`、`run_retry`、`list_workspaces()`、`resume`、`import_compat` / `compat_history`（compat 导入与历史）、`close()`（取消 in-flight 与后续请求）；握手元信息 `api_version()` / `instance_id()` / `capabilities()`；raw 逃生口 `query_envelope` 直返 `AppResponse`。
+- 高层 API：`create_session(workspace_id, title)`、`run_start(session_id, message, model)`（effort 为 ADR-063 GUI-only 字段，headless 高层 API 暂不暴露；GUI 1.22 的 attachment_ids / web_search 同样不暴露，构造时使用空列表 / None）、`cancel(run_id)`、`run_retry`、`list_workspaces()`、`resume`、`import_compat` / `compat_history`（compat 导入与历史）、`close()`（取消 in-flight 与后续请求）；握手元信息 `api_version()` / `instance_id()` / `capabilities()`；raw 逃生口 `query_envelope` 直返 `AppResponse`。
 - `subscribe(streams, buffer, BackpressurePolicy) -> EventSubscription`：有界事件通道；`Drop` 策略静默丢弃并计数（`dropped_count`），`Error` 策略在溢出时向消费者返回 `SdkErrorKind::Backpressure`。
 - 未知 / 不支持情况全部落显式错误类别（`UnknownResponseType` / `UnsupportedCapability` / `IncompatibleApiVersion`），不静默忽略。稳定面 = `PaworkClient` / `PaworkOptions` / `EventSubscription` / `SdkError` / `Transport` / `MockTransport`；`experimental::CompatOutcome` 可能不发 major 调整。
 

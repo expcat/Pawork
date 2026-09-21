@@ -83,3 +83,40 @@ fn subagent_effort_fields_are_additive() {
     let encoded = serde_json::to_value(&settings).unwrap();
     assert_eq!(encoded["models"][0]["default_effort"], "low");
 }
+
+#[test]
+fn attachment_upload_wire_roundtrip_and_gui_version_gate() {
+    let value: serde_json::Value =
+        serde_json::from_str(include_str!("golden/attachment_upload.json")).unwrap();
+    let command: AppCommand = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&command).unwrap(), value);
+    let entry = command_entry(&command);
+    assert_eq!(entry.since, ApiVersion::new(1, 22));
+    assert!(entry.gui.available && entry.headless.is_none() && !entry.acp);
+    assert!(!entry.idempotent);
+}
+
+#[test]
+fn run_start_attachment_and_search_are_additive() {
+    let with: AppCommand = serde_json::from_value(serde_json::json!({
+        "method": "run_start",
+        "params": {
+            "session_id": "session-1",
+            "user_message": "hi",
+            "attachment_ids": ["att-1"],
+            "web_search": true
+        }
+    }))
+    .unwrap();
+    let value = serde_json::to_value(&with).unwrap();
+    assert_eq!(value["params"]["attachment_ids"], serde_json::json!(["att-1"]));
+    assert_eq!(value["params"]["web_search"], true);
+    let without: AppCommand = serde_json::from_value(serde_json::json!({
+        "method": "run_start",
+        "params": { "session_id": "session-1", "user_message": "hi" }
+    }))
+    .unwrap();
+    let value = serde_json::to_value(&without).unwrap();
+    assert!(value["params"].get("attachment_ids").is_none());
+    assert!(value["params"].get("web_search").is_none());
+}

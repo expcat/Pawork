@@ -86,12 +86,64 @@ fn subagent_status_color(status: &str) -> Rgba {
 }
 
 impl AppView {
+    pub(super) fn can_refresh_subagents(&self) -> bool {
+        self.projection.active_session_id.is_some()
+            && matches!(
+                self.projection.connection,
+                crate::projection::ConnectionState::Connected { .. }
+            )
+            && !self.projection.subagent_activity.loading
+    }
+
+    pub(super) fn can_cancel_subagent(&self) -> bool {
+        let state = &self.projection.subagent_activity;
+        matches!(
+            self.projection.connection,
+            crate::projection::ConnectionState::Connected { .. }
+        ) && self.projection.active_session_id == state.session_id
+            && state.cancelling.is_none()
+            && state.agents.iter().any(|agent| {
+                Some(&agent.agent_id) == self.projection.subagent_conversation.agent_id.as_ref()
+                    && matches!(agent.status.as_str(), "running" | "waiting")
+            })
+    }
+
+    pub(super) fn cancel_selected_subagent(&mut self, cx: &mut Context<Self>) {
+        if !self.can_cancel_subagent() {
+            return;
+        }
+        let session_id = self
+            .projection
+            .active_session_id
+            .clone()
+            .expect("bound session");
+        let agent_id = self
+            .projection
+            .subagent_conversation
+            .agent_id
+            .clone()
+            .expect("selected agent");
+        if self
+            .controller
+            .cancel_subagent(session_id, agent_id.clone())
+        {
+            self.projection.subagent_activity.cancelling = Some(agent_id);
+            self.projection.subagent_activity.error = None;
+        }
+        cx.notify();
+    }
+
     pub(super) fn subagent_conversation_element(
         &mut self,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let can_refresh = self.can_refresh_subagents();
+        let can_cancel = self.can_cancel_subagent();
         let activity = &self.projection.subagent_activity;
+        let activity_error = activity.error.clone();
+        let cancel_pending = activity.cancelling.is_some()
+            && activity.cancelling == self.projection.subagent_conversation.agent_id;
         let bound = activity.session_id.is_some()
             && self.projection.active_session_id == activity.session_id;
         let selected_id = self.projection.subagent_conversation.agent_id.clone();
@@ -226,6 +278,14 @@ impl AppView {
                 self.subagent_chips_scroll.scroll_to_item(index);
             }
         }
+        let cancel_focus = self
+            .settings_action_focus
+            .entry("subagent-cancel".into())
+            .or_insert_with(|| cx.focus_handle().tab_stop(true))
+            .clone();
+        let show_cancel = selected
+            .as_ref()
+            .is_some_and(|a| matches!(a.status.as_str(), "running" | "waiting"));
         let header = div()
             .flex()
             .flex_row()
@@ -236,12 +296,38 @@ impl AppView {
             .border_b_1()
             .border_color(dark().border.subtle)
             .child(chips)
+            .when(show_cancel, |header| {
+                header.child(
+                    self.settings_element("subagent-cancel").child(
+                        Button::new("subagent-cancel")
+                            .track_focus(&cancel_focus)
+                            .variant(ButtonVariant::Ghost)
+                            .disabled(!can_cancel)
+                            .child(t(if cancel_pending {
+                                "subagents.cancelling"
+                            } else {
+                                "subagents.cancel"
+                            }))
+                            .on_click(cx.listener(|view, event, _, cx| {
+                                if !view.consume_button_key_click("subagent-cancel", event) {
+                                    view.cancel_selected_subagent(cx);
+                                }
+                            }))
+                            .on_activate(cx.listener(|view, _, _, cx| {
+                                view.note_button_key_activate("subagent-cancel");
+                                view.cancel_selected_subagent(cx);
+                                cx.stop_propagation();
+                            })),
+                    ),
+                )
+            })
             .child(
                 div()
                     .id("subagent-refresh-layout")
                     .track_scroll(&self.subagent_refresh_layout)
                     .child(
                         Button::new("subagent-refresh")
+                            .disabled(!can_refresh)
                             .variant(ButtonVariant::Ghost)
                             .padding(ButtonPadding::Horizontal(metrics::PADDING_SM))
                             .text_color(dark().text.secondary)
@@ -271,6 +357,16 @@ impl AppView {
             .flex_1()
             .min_h_0()
             .child(header)
+            .when_some(activity_error, |panel, error| {
+                panel.child(
+                    div()
+                        .px_2()
+                        .py_1()
+                        .text_size(font::SM)
+                        .text_color(dark().semantic.danger_text)
+                        .child(error),
+                )
+            })
             .child(body)
     }
 
@@ -610,6 +706,10 @@ pub(super) fn subagent_ax(view: &AppView, frame: AxRect) -> AxNode {
     } else {
         t("subagents.panel_empty").to_string()
     };
+    if let Some(reason) = &activity.error {
+        value.push_str(" · ");
+        value.push_str(reason);
+    }
     if conversation.loading {
         value.push_str(" · ");
         value.push_str(t("subagents.loading"));
@@ -670,6 +770,28 @@ pub(super) fn subagent_ax(view: &AppView, frame: AxRect) -> AxNode {
                         refresh.size.height.into(),
                     ),
                 )
+                .enabled(view.can_refresh_subagents())
+                .action(AxAction::Press),
+            );
+        }
+        if activity.agents.iter().any(|a| {
+            Some(&a.agent_id) == conversation.agent_id.as_ref()
+                && matches!(a.status.as_str(), "running" | "waiting")
+        }) {
+            node = node.child(
+                AxNode::new(
+                    "subagent-cancel",
+                    AxRole::Button,
+                    t(if activity.cancelling.is_some()
+                        && activity.cancelling == conversation.agent_id
+                    {
+                        "subagents.cancelling"
+                    } else {
+                        "subagents.cancel"
+                    }),
+                    view.settings_menu_element_bounds("subagent-cancel", "subagent-cancel"),
+                )
+                .enabled(view.can_cancel_subagent())
                 .action(AxAction::Press),
             );
         }

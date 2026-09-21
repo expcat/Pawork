@@ -542,34 +542,54 @@ pub(crate) fn instruction_kind_name(kind: ResourceInstructionKind) -> &'static s
     }
 }
 
-pub(crate) fn at_tokens(text: &str) -> Vec<String> {
+/// Composer `@` 引用：旧 bare token 走 file-index fuzzy；`@"..."` 是 GUI
+/// 插入的精确相对路径（`serde_json::to_string(path)`），不得 fuzzy。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum AtRef {
+    Fuzzy(String),
+    Exact(String),
+}
+
+pub(crate) fn at_tokens(text: &str) -> Vec<AtRef> {
     let mut tokens = Vec::new();
-    let chars: Vec<char> = text.chars().collect();
-    let mut index = 0;
-    while index < chars.len() {
-        if chars[index] == '@' {
-            index += 1;
-            let start = index;
-            while index < chars.len()
-                && (chars[index].is_ascii_alphanumeric()
-                    || matches!(chars[index], '_' | '-' | '.' | '/'))
-            {
-                index += 1;
-            }
-            if index > start {
-                let mut token: String = chars[start..index].iter().collect();
-                token = token
-                    .trim_end_matches(|ch: char| matches!(ch, '.' | ',' | ';' | ':' | '/'))
-                    .to_string();
-                if !token.is_empty() {
-                    tokens.push(token);
+    let mut rest = text;
+    while let Some(at) = rest.find('@') {
+        rest = &rest[at + 1..];
+        if rest.starts_with('"') {
+            match take_json_string(rest) {
+                Some((token, consumed)) => {
+                    rest = &rest[consumed..];
+                    if !token.is_empty() {
+                        tokens.push(AtRef::Exact(token));
+                    }
+                }
+                None => {
+                    rest = &rest[1..];
                 }
             }
-        } else {
-            index += 1;
+            continue;
+        }
+        let end = rest
+            .char_indices()
+            .find(|(_, ch)| !(ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | '/')))
+            .map(|(i, _)| i)
+            .unwrap_or(rest.len());
+        let mut token = rest[..end].to_string();
+        rest = &rest[end..];
+        token = token
+            .trim_end_matches(|ch: char| matches!(ch, '.' | ',' | ';' | ':' | '/'))
+            .to_string();
+        if !token.is_empty() {
+            tokens.push(AtRef::Fuzzy(token));
         }
     }
     tokens
+}
+
+fn take_json_string(input: &str) -> Option<(String, usize)> {
+    let mut values = serde_json::Deserializer::from_str(input).into_iter::<String>();
+    let value = values.next()?.ok()?;
+    Some((value, values.byte_offset()))
 }
 
 #[cfg(test)]
@@ -589,6 +609,28 @@ mod tests {
             permissions: Default::default(),
             trusted: false,
         }
+    }
+
+    #[test]
+    fn at_tokens_keeps_bare_ascii_and_parses_json_quoted_paths() {
+        assert_eq!(
+            at_tokens("看图 @cat.png 和 @ROADMAP.md。"),
+            vec![
+                AtRef::Fuzzy("cat.png".into()),
+                AtRef::Fuzzy("ROADMAP.md".into()),
+            ]
+        );
+        let chinese = "docs/图 1.png";
+        let quoted = serde_json::to_string(chinese).expect("json path");
+        assert_eq!(
+            at_tokens(&format!("引用 @{quoted}")),
+            vec![AtRef::Exact(chinese.into())]
+        );
+        assert_eq!(
+            at_tokens(r#"@"dir/a\"b.png""#),
+            vec![AtRef::Exact(r#"dir/a"b.png"#.into())]
+        );
+        assert_eq!(at_tokens(r#"未闭合 @"docs/a.png"#), Vec::new());
     }
 
     #[test]

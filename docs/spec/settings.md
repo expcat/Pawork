@@ -343,3 +343,5 @@ SET-6h 本机证据（2026-09-05，macOS）：Global `config.toml` 配置 `proxy
 | SET-D08 | Kimi OAuth 模型目录 contract | SET-5 取证：官方 kimi-cli 实际请求 `https://api.kimi.com/coding/v1/models`（OpenAI 风格 `data[]`），按远端优先实现；形状不符/失败一律 Err，由 Host 落版本固定回退 | Accepted |
 | SET-D09 | Z.AI General API preset | 首期不开放，只做 Coding Plan；后续按需求再决定 | Deferred |
 | SET-D10 | About 如何获得当前 Host 数据目录 | ADR-051 Accepted：API 1.9 Accepted 握手追加可选 `host_data_dir`；GUI Host 与 Core 共用同一次解析，缺字段、空字段或断线时隐藏 About | Accepted（已实现并通过定向门禁） |
+
+2026-09-21 子代理推理强度约束：`allowed_efforts` 非空时同时约束子代理规则默认和模型级默认；越界值按未配置处理，不在 child Run 装配时重新注入。此范围只控制 Pawork 显式发送的 effort，未指定时仍由 Provider 使用自身默认。

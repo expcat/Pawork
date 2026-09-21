@@ -205,6 +205,17 @@ fn command_samples() -> Vec<(&'static str, Option<Value>)> {
                 "supported_efforts": ["low", "medium", "high"]
             })),
         ),
+        (
+            "attachment_upload",
+            Some(json!({
+                "session_id": "session-1",
+                "attachment_id": "att-1",
+                "name": "note.txt",
+                "offset": 0,
+                "total_bytes": 5,
+                "data": [110, 111, 116, 101, 10]
+            })),
+        ),
     ]
 }
 
@@ -812,6 +823,16 @@ fn command_registry_covers_every_variant_without_wildcard() {
                 false,
                 true,
                 pawork_protocol::V1_21,
+            ),
+            AppCommand::AttachmentUpload { .. } => assert_command_entry(
+                &command,
+                "attachment_upload",
+                true,
+                None,
+                None,
+                false,
+                false,
+                pawork_protocol::V1_22,
             ),
         }
     }

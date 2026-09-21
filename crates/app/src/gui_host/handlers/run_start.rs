@@ -133,10 +133,29 @@ pub(crate) async fn run_start(
         provider,
         profile: _,
         effort,
+        attachment_ids,
+        web_search,
     } = command
     else {
         unreachable!("run_start handler receives RunStart")
     };
+    if !attachment_ids.is_empty() || web_search.is_some() {
+        if envelope.api_version.minor < 22 {
+            return Err(GuiHostAdapter::host_error(
+                "unsupported",
+                "local attachments and per-run web_search require API 1.22",
+            ));
+        }
+        if !matches!(
+            envelope.source,
+            pawork_protocol::CommandSource::LocalGui { .. }
+        ) {
+            return Err(GuiHostAdapter::host_error(
+                "unsupported",
+                "local attachments and per-run web_search require a local GUI connection",
+            ));
+        }
+    }
     // ADR-063：effort 名 fail-closed 先解析，非法名不启动 Run。
     let parsed_effort = match effort {
         Some(name) => Some(
@@ -350,12 +369,42 @@ pub(crate) async fn run_start(
     // file-index 附件作为独立 Text part 追加；无 `@` 或未命中时零行为变化。
     // 解析失败按 fail-closed 上抛，禁止把未展开文本静默发给模型。
     // 必须在登记 ActiveGuiRun 之前完成：失败路径不能留下幽灵 run。
-    let content = {
+    let mut content = {
         let core = adapter.core.read().await;
         core.expand_at_refs(Some(session_id), user_message)
             .await
             .map_err(GuiHostAdapter::app_error)?
     };
+    if !attachment_ids.is_empty() {
+        let pawork_protocol::CommandSource::LocalGui { client_id } = &envelope.source else {
+            unreachable!()
+        };
+        content.extend(
+            adapter
+                .attachments
+                .lock()
+                .unwrap()
+                .take_parts(client_id.as_str(), session_id, attachment_ids)
+                .map_err(|message| GuiHostAdapter::host_error("invalid_attachment", message))?,
+        );
+    }
+    if user_message.trim().is_empty() {
+        content.retain(|part| match part {
+            pawork_domain::ContentPart::Text(text) => !text.text.trim().is_empty(),
+            _ => true,
+        });
+    }
+    if user_message.trim().is_empty()
+        && content.iter().all(|part| match part {
+            pawork_domain::ContentPart::Text(text) => text.text.trim().is_empty(),
+            _ => false,
+        })
+    {
+        return Err(GuiHostAdapter::host_error(
+            "empty_turn",
+            "message or attachment is required",
+        ));
+    }
     let n = adapter.next_gui_run.fetch_add(1, Ordering::Relaxed);
     let run_id = RunId::from(format!("run-gui-{}-{n}", now_timestamp().as_unix_millis()));
     adapter.browser.bind(&run_id, &envelope.source);
@@ -378,6 +427,7 @@ pub(crate) async fn run_start(
     let instance = adapter.instance.clone();
     let session = session_id.clone();
     let run = run_id.clone();
+    let web_search = *web_search;
     let mut messages = history;
     messages.push(Message {
         id: MessageId::from("pending"),
@@ -389,7 +439,7 @@ pub(crate) async fn run_start(
         let sink = GuiBroadcastSink::new(Arc::clone(&bus), instance.clone());
         let outcome = {
             let core = core.read().await;
-            core.chat_turn_with_run_id(run.clone(), &session, messages, &sink, token)
+            core.chat_turn_with_run_id(run.clone(), &session, messages, &sink, token, web_search)
                 .await
         };
         let succeeded = outcome.is_ok();

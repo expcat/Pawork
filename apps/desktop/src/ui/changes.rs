@@ -984,6 +984,14 @@ impl AppView {
                     .size(font::BODY_SM)
                     .color(dark().text.secondary),
             );
+        if let Some(error) = &activity.error {
+            card = card.child(
+                div()
+                    .text_size(font::XS)
+                    .text_color(dark().semantic.danger_text)
+                    .child(error.clone()),
+            );
+        }
         if !bound {
             let note = if self.projection.active_session_id.is_none() {
                 t("subagents.no_session")

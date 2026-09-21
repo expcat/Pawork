@@ -163,6 +163,7 @@ async fn probe_smoke(
         "Reply with exactly one word: pong".into(),
         Some((first.provider_id.clone(), first.id.clone())),
         None,
+        Default::default(),
     );
     let first_turn = wait_for_turn(&events, &mut projection, Duration::from_secs(90)).await?;
 
@@ -175,6 +176,7 @@ async fn probe_smoke(
             "Reply with exactly one word: switched".into(),
             Some((model.provider_id.clone(), model.id.clone())),
             None,
+            Default::default(),
         );
         Some(wait_for_turn(&events, &mut projection, Duration::from_secs(90)).await?)
     } else {
@@ -186,6 +188,7 @@ async fn probe_smoke(
         "Write target/s7-wave-d-smoke.txt containing exactly hello-s7d. Use the write tool.".into(),
         Some((first.provider_id.clone(), first.id.clone())),
         None,
+        Default::default(),
     );
     let approval =
         wait_for_approval_or_turn(&events, &mut projection, Duration::from_secs(90)).await?;
@@ -207,6 +210,7 @@ async fn probe_smoke(
         "Count slowly from 1 to 80 in digits only.".into(),
         Some((first.provider_id.clone(), first.id.clone())),
         None,
+        Default::default(),
     );
     let run_id = wait_for_run_id(&events, &mut projection, Duration::from_secs(30)).await?;
     controller.cancel_run(run_id);
@@ -260,6 +264,7 @@ async fn probe_smoke(
         "Count slowly from 1 to 80 in digits only.".into(),
         Some((first.provider_id.clone(), first.id.clone())),
         None,
+        Default::default(),
     );
     let live_run = wait_for_run_id(&events, &mut projection, Duration::from_secs(30)).await?;
     controller.disconnect().await;

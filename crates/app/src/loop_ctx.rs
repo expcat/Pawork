@@ -85,20 +85,21 @@ impl LoopContext for SessionLoopCtx<'_> {
         cancel: CancellationToken,
     ) -> Vec<ToolCallResult> {
         let mut results = Vec::with_capacity(calls.len());
-        let mut calls = calls.into_iter();
-        let Some(first) = calls.next() else {
-            return results;
-        };
-        let mut batch = vec![first];
+        let mut batch = Vec::new();
         for call in calls {
             if self.is_serial(&call) {
-                results.extend(
-                    self.execute_batch(std::mem::take(&mut batch), events.clone(), cancel.clone())
+                if !batch.is_empty() {
+                    results.extend(
+                        self.execute_batch(
+                            std::mem::take(&mut batch),
+                            events.clone(),
+                            cancel.clone(),
+                        )
                         .await,
-                );
-                batch.push(call);
+                    );
+                }
                 results.extend(
-                    self.execute_batch(std::mem::take(&mut batch), events.clone(), cancel.clone())
+                    self.execute_batch(vec![call], events.clone(), cancel.clone())
                         .await,
                 );
             } else {

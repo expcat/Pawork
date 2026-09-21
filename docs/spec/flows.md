@@ -53,6 +53,8 @@ Desktop 四层：`ui` → `controller`（只调 `GuiClient`）→ `projection`�
 
 断线：`ConnectionManager` 心跳清理连接（host idle 30s；desktop 独立任务每 15s 发 heartbeat），**不**取消进行中的 Run。Resume：`Replay` / `SnapshotRequired` / `UpToDate`（`ResumeDisposition`）。Timeline 投影 reducer 在 `protocol::projection`，host 与 desktop 同源。
 
+GUI 1.22 本机附件：系统文件选择器 → Desktop 有界读取显式选定文件 → `GuiClient.command(AttachmentUpload)`（64 KiB 分块）→ Host 按鉴权客户端 / 会话暂存 → `RunStart.attachment_ids` 校验并消费为 Text / Image part → 正常消息持久化与模型能力校验。无需 workspace，不给 Host 传本机路径；文本附件标记为不可信参考资料。`RunStart.web_search` 只覆盖本轮托管搜索，缺省沿用 Global，不改变配置。
+
 Headless / ACP：
 
 - Headless：`pawork headless --json-stdio`，stdout 仅 JSONL；SDK 在 `pawork-client::headless`。

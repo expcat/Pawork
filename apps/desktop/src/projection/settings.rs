@@ -809,26 +809,52 @@ pub struct SubagentActivityState {
     pub session_id: Option<String>,
     pub loading: bool,
     pub agents: Vec<SubagentInfo>,
+    pub request_id: u64,
+    pub error: Option<String>,
+    pub cancelling: Option<String>,
 }
 
 impl SubagentActivityState {
-    pub fn begin_loading(&mut self, session_id: &str) {
+    pub fn begin_loading(&mut self, session_id: &str) -> u64 {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         if self.session_id.as_deref() != Some(session_id) {
-            self.agents.clear();
+            *self = Self::default();
         }
         self.session_id = Some(session_id.to_string());
         self.loading = true;
+        self.error = None;
+        self.request_id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.request_id
     }
 
-    pub fn apply_loaded(&mut self, session_id: &str, data: SubagentListData) {
-        if self.session_id.as_deref() == Some(session_id) {
-            self.loading = false;
-            self.agents = data.agents;
+    pub fn apply_loaded(
+        &mut self,
+        session_id: &str,
+        request_id: u64,
+        data: SubagentListData,
+    ) -> bool {
+        if self.session_id.as_deref() != Some(session_id) || self.request_id != request_id {
+            return false;
         }
+        self.loading = false;
+        self.error = None;
+        self.agents = data.agents;
+        if self.cancelling.as_ref().is_some_and(|id| {
+            !self.agents.iter().any(|agent| {
+                &agent.agent_id == id
+                    && matches!(agent.status.as_str(), "running" | "waiting")
+            })
+        }) {
+            self.cancelling = None;
+        }
+        true
     }
 
-    pub fn apply_failed(&mut self) {
-        self.loading = false;
+    pub fn apply_failed(&mut self, session_id: &str, request_id: u64, reason: String) {
+        if self.session_id.as_deref() == Some(session_id) && self.request_id == request_id {
+            self.loading = false;
+            self.error = Some(reason);
+        }
     }
 
     /// 运行中 / 等待中与已完成计数（浮层摘要行；render 与 AX 同源）。

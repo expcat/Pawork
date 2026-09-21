@@ -6,6 +6,7 @@
 mod accessibility;
 mod approval_card;
 mod archive;
+mod attachments;
 mod barriers;
 mod browser;
 mod changes;
@@ -223,6 +224,7 @@ fn now_unix_ms() -> u64 {
 /// 当前打开的浮层菜单（五组共享，开新即关旧，修互斥不对称）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum MenuKind {
+    ComposerAdd,
     Scope,
     ProjectTask,
     Model,
@@ -498,6 +500,7 @@ struct PendingHomeSend {
     text: String,
     model: Option<(String, String)>,
     effort: Option<String>,
+    options: crate::controller::ComposerOptions,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -556,6 +559,9 @@ pub struct AppView {
     /// 对话栏 Refresh 按钮实测布局（AX Press 同源矩形）。
     subagent_refresh_layout: ScrollHandle,
     /// per-session Composer 草稿（不含终端）。无 active session 时走独立槽。
+    composer_options: HashMap<Option<String>, crate::controller::ComposerOptions>,
+    composer_loading: bool,
+    composer_sending: bool,
     composer_drafts: HashMap<String, String>,
     no_session_draft: String,
     /// 首页无任务发送：`session_create(None)` 在途时记下正文，回执后再发。
@@ -928,6 +934,9 @@ impl AppView {
             model_menu_scroll: ScrollHandle::new(),
             pending_model_menu_scroll: false,
             activity_subagent_scroll: ScrollHandle::new(),
+            composer_options: HashMap::new(),
+            composer_loading: false,
+            composer_sending: false,
             composer_drafts: HashMap::new(),
             no_session_draft: String::new(),
             pending_home_send: None,
@@ -1996,10 +2005,8 @@ impl AppView {
                     );
                 if selected_child_terminal {
                     if let Some(agent_id) = self.projection.subagent_conversation.agent_id.clone() {
-                        let generation =
-                            self.projection.subagent_conversation.begin_loading();
-                        self.controller
-                            .load_subagent_timeline(agent_id, generation);
+                        let generation = self.projection.subagent_conversation.begin_loading();
+                        self.controller.load_subagent_timeline(agent_id, generation);
                     }
                 }
                 if (spawned || child_terminal)
@@ -2061,9 +2068,17 @@ impl AppView {
                     self.composer_drafts
                         .insert(session_id.clone(), pending.text.clone());
                     self.no_session_draft.clear();
+                    self.composer_options.remove(&None);
+                    self.composer_options
+                        .insert(Some(session_id.clone()), pending.options.clone());
                     self.open_session(session_id.clone(), cx);
-                    self.controller
-                        .send_message(session_id, pending.text, pending.model, pending.effort);
+                    self.controller.send_message(
+                        session_id,
+                        pending.text,
+                        pending.model,
+                        pending.effort,
+                        pending.options,
+                    );
                 } else {
                     self.open_session(session_id, cx);
                 }
@@ -2238,11 +2253,28 @@ impl AppView {
                 self.projection
                     .note_terminal_io_failed(&terminal_session_id, reason);
             }
+            ControllerEvent::ComposerAttachmentsLoaded { draft, result } => {
+                self.composer_loading = false;
+                match result {
+                    Ok(attachments) => {
+                        let options = self.composer_options.entry(draft).or_default();
+                        if options.attachments.len() + attachments.len() <= 4 {
+                            options.attachments.extend(attachments);
+                            self.status_hint = None;
+                        } else {
+                            self.status_hint = Some(i18n::t("composer.attachment_limit").into());
+                        }
+                    }
+                    Err(reason) => self.status_hint = Some(reason),
+                }
+            }
             ControllerEvent::MessageSent {
                 session_id,
                 run_id,
                 text,
             } => {
+                self.composer_sending = false;
+                self.composer_options.remove(&Some(session_id.clone()));
                 let now = now_unix_ms();
                 self.projection.note_session_run(&session_id, &run_id, now);
                 // wire 无用户消息事件：发送回执即本地乐观上屏（重放后由
@@ -2428,10 +2460,58 @@ impl AppView {
                     .update(cx, |input, cx| input.reset_text(max, cx));
                 self.remark_settings_stale_if_disconnected();
             }
-            ControllerEvent::SubagentListLoaded { session_id, data } => {
+            ControllerEvent::SubagentListLoaded {
+                session_id,
+                request_id,
+                data,
+            } => {
+                if self
+                    .projection
+                    .subagent_activity
+                    .apply_loaded(&session_id, request_id, data)
+                    && self.inspector_tab == InspectorTab::Subagent
+                    && self.projection.subagent_conversation.agent_id.is_none()
+                {
+                    let first = self
+                        .projection
+                        .subagent_activity
+                        .display_agents()
+                        .first()
+                        .map(|a| a.agent_id.clone());
+                    if let Some(id) = first {
+                        self.select_subagent_agent(&id, cx);
+                    }
+                }
+            }
+            ControllerEvent::SubagentListFailed {
+                session_id,
+                request_id,
+                reason,
+            } => {
                 self.projection
                     .subagent_activity
-                    .apply_loaded(&session_id, data);
+                    .apply_failed(&session_id, request_id, reason);
+            }
+            ControllerEvent::SubagentCancelFinished {
+                session_id,
+                agent_id,
+                result,
+            } => {
+                let state = &mut self.projection.subagent_activity;
+                if state.session_id.as_deref() == Some(&session_id)
+                    && state.cancelling.as_deref() == Some(&agent_id)
+                {
+                    match result {
+                        Ok(()) => {
+                            self.status_hint = Some(i18n::t("subagents.cancel_requested").into());
+                            self.refresh_subagent_conversation();
+                        }
+                        Err(reason) => {
+                            state.cancelling = None;
+                            state.error = Some(reason);
+                        }
+                    }
+                }
             }
             ControllerEvent::SubagentTimelineLoaded {
                 session_id,
@@ -2450,9 +2530,11 @@ impl AppView {
                 generation,
                 reason,
             } => {
-                self.projection
-                    .subagent_conversation
-                    .apply_failed(&session_id, generation, &reason);
+                self.projection.subagent_conversation.apply_failed(
+                    &session_id,
+                    generation,
+                    &reason,
+                );
             }
             ControllerEvent::AuthStarted { provider_id, data } => {
                 self.settings_copied_auth = None;
@@ -2537,9 +2619,6 @@ impl AppView {
                         self.projection.settings_subagents.apply_failed(&message);
                     }
                 }
-                if action == "load subagent list" || action == "cancel subagent" {
-                    self.projection.subagent_activity.apply_failed();
-                }
                 if action == "start provider auth" || action == "verify api key" {
                     // auth_start / auth_set_api_key 的 socket 级失败无对应
                     // AuthChanged 事件：重查权威状态回滚乐观 Connecting
@@ -2561,6 +2640,9 @@ impl AppView {
                 }
                 if action == "create session" {
                     self.pending_home_send = None;
+                }
+                if action == "create session" || action == "send message" {
+                    self.composer_sending = false;
                 }
                 self.status_hint = Some(i18n::t2("status.action_failed", &action, &reason));
             }
@@ -2730,6 +2812,7 @@ impl AppView {
     }
 
     fn open_session(&mut self, session_id: String, cx: &mut Context<Self>) {
+        self.cancel_file_attachment_picker();
         // task 切换会重建 Timeline；先关闭可能锚在旧条目或旧上下文上的浮层，
         // 避免快捷键切换后留下不可见但仍接管键盘的 MenuKind。
         self.close_open_menu(cx);
@@ -3184,6 +3267,9 @@ impl AppView {
             }
             return;
         }
+        if key == "escape" {
+            self.cancel_file_attachment_picker();
+        }
         if self.handle_inspector_key(event, window, cx) {
             return;
         }
@@ -3337,6 +3423,11 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         let trigger = match kind {
+            MenuKind::ComposerAdd => self
+                .settings_action_focus
+                .get("composer-attach")
+                .cloned()
+                .unwrap_or_else(|| self.focus_handle.clone()),
             MenuKind::Scope => self.scope_focus.clone(),
             MenuKind::ProjectTask => self.project_task_focus.clone(),
             MenuKind::Model => self.model_focus.clone(),
@@ -3368,6 +3459,7 @@ impl AppView {
     /// 菜单高亮行数。所有可点击 MenuRow 均进入同一普通键盘分派。
     fn menu_item_count(&self) -> usize {
         match self.open_menu.as_ref() {
+            Some(MenuKind::ComposerAdd) => input_area::ComposerAction::ALL.len(),
             Some(MenuKind::Scope | MenuKind::ProjectTask) => self.project_menu_options().len() + 1,
             Some(MenuKind::Model) => self.model_menu_row_count() + 1,
             Some(MenuKind::Effort) => self.effort_menu_options().len(),
@@ -3392,6 +3484,10 @@ impl AppView {
     /// 当前选中项在菜单中的行位（键盘高亮的回落起点）。
     fn menu_selected_index(&self) -> usize {
         match self.open_menu.as_ref() {
+            Some(MenuKind::ComposerAdd) => input_area::ComposerAction::ALL
+                .iter()
+                .position(|action| self.composer_action_enabled(*action))
+                .unwrap_or(0),
             Some(MenuKind::Scope | MenuKind::ProjectTask) => self
                 .project_menu_options()
                 .iter()
@@ -3457,11 +3553,22 @@ impl AppView {
             .menu_highlight
             .unwrap_or_else(|| self.menu_selected_index())
             .min(len - 1);
-        let next = if forward {
+        let mut next = if forward {
             (current + 1) % len
         } else {
             (current + len - 1) % len
         };
+        if matches!(self.open_menu, Some(MenuKind::ComposerAdd)) {
+            while next != current
+                && !self.composer_action_enabled(input_area::ComposerAction::ALL[next])
+            {
+                next = if forward {
+                    (next + 1) % len
+                } else {
+                    (next + len - 1) % len
+                };
+            }
+        }
         self.menu_highlight = Some(next);
         match self.open_menu {
             Some(MenuKind::Scope | MenuKind::ProjectTask) => {
@@ -3490,6 +3597,14 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         match kind {
+            MenuKind::ComposerAdd => {
+                if self.menu_highlight.is_none() {
+                    return;
+                }
+                if let Some(action) = input_area::ComposerAction::ALL.get(ix) {
+                    self.activate_composer_action(*action, window, cx);
+                }
+            }
             MenuKind::Scope | MenuKind::ProjectTask => {
                 let options = self.project_menu_options();
                 if let Some((workspace_id, _)) = options.get(ix).cloned() {
@@ -3887,8 +4002,16 @@ impl AppView {
         ) {
             return;
         }
-        if self.controller.load_subagent_list(session_id.clone()) {
-            self.projection.subagent_activity.begin_loading(&session_id);
+        let request_id = self.projection.subagent_activity.begin_loading(&session_id);
+        if !self
+            .controller
+            .load_subagent_list(session_id.clone(), request_id)
+        {
+            self.projection.subagent_activity.apply_failed(
+                &session_id,
+                request_id,
+                "not connected".into(),
+            );
         }
     }
 
@@ -4067,6 +4190,9 @@ impl AppView {
             large_text,
         );
         self.inspector_open = !self.inspector_open;
+        if !self.inspector_open {
+            self.cancel_file_attachment_picker();
+        }
         let after = shell_layout::resolve(
             window.viewport_size().width,
             self.inspector_open,
@@ -4096,6 +4222,9 @@ impl AppView {
     /// 切换 Inspector 顶层页签；切入 Changes / Resources 时拉取数据
     /// （拉取时机之一）。切页签不改 active session；各页签滚动状态独立保留。
     fn select_inspector_tab(&mut self, tab: InspectorTab, cx: &mut Context<Self>) {
+        if tab != InspectorTab::Files {
+            self.cancel_file_attachment_picker();
+        }
         self.sync_browser_session(cx);
         if tab == InspectorTab::Browser {
             self.browser.open = true;
@@ -4648,9 +4777,11 @@ impl AppView {
             return;
         }
         let text = self.text_input.read(cx).text().to_string();
-        if text.trim().is_empty() {
+        let options = self.current_composer_options();
+        if text.trim().is_empty() && options.attachments.is_empty() {
             return;
         }
+        self.composer_sending = true;
         let model = self.projection.effective_model().cloned();
         // ADR-063：显式选择的推理强度随本轮 RunStart 发出；None（自动）
         // 省略，Host 回落模型默认。
@@ -4664,25 +4795,32 @@ impl AppView {
             unstarted.as_deref(),
         ) {
             HomeSendPlan::ActiveSession(session_id) => {
-                self.controller.send_message(session_id, text, model, effort);
+                self.controller
+                    .send_message(session_id, text, model, effort, options);
             }
             HomeSendPlan::ReuseUnstarted(session_id) => {
                 self.composer_drafts
                     .insert(session_id.clone(), text.clone());
                 self.no_session_draft.clear();
+                self.composer_options.remove(&None);
+                self.composer_options
+                    .insert(Some(session_id.clone()), options.clone());
                 self.open_session(session_id.clone(), cx);
-                self.controller.send_message(session_id, text, model, effort);
+                self.controller
+                    .send_message(session_id, text, model, effort, options);
             }
             HomeSendPlan::CreateUnassigned => {
                 self.pending_home_send = Some(PendingHomeSend {
                     text,
                     model,
                     effort,
+                    options,
                 });
                 self.controller.create_session(None);
                 cx.notify();
             }
         }
+        cx.notify();
     }
 
     fn on_cancel_clicked(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
@@ -4740,9 +4878,16 @@ impl AppView {
 
     fn composer_has_sendable_text(&self, cx: &App) -> bool {
         !self.text_input.read(cx).text().trim().is_empty()
+            || !self.current_composer_options().attachments.is_empty()
     }
 
     fn can_send(&self, cx: &App) -> bool {
+        if self.composer_loading
+            || self.composer_sending
+            || self.composer_capability_error().is_some()
+        {
+            return false;
+        }
         input_area::composer_send_allowed(
             matches!(
                 self.projection.connection,

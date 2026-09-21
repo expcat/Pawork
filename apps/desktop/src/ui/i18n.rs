@@ -545,6 +545,12 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "settings.subagents.ax_effect" => ("Effect", "生效边界"),
         "settings.subagents.ax_models" => ("Model rules", "模型规则"),
         // ── Activity · Subagents ──
+        "subagents.cancel" => ("Stop", "停止"),
+        "subagents.cancelling" => ("Stopping…", "正在停止…"),
+        "subagents.cancel_requested" => (
+            "Stop requested; waiting for the agent to finish",
+            "已请求停止，等待子代理结束",
+        ),
         "subagents.title" => ("Subagents", "子智能体"),
         "subagents.summary" => ("{} running · {} done", "{} 运行中 · {} 完成"),
         "subagents.empty" => ("No subagents", "暂无子代理"),
@@ -734,10 +740,9 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "settings.providers.effort_default_auto" => ("Auto", "自动"),
         "settings.providers.effort_source_catalog" => ("Catalog range", "目录范围"),
         "settings.providers.effort_source_manual" => ("Manual range", "手动范围"),
-        "settings.providers.effort_source_unknown" => (
-            "Range unknown · set manually",
-            "范围未知 · 可手动设置",
-        ),
+        "settings.providers.effort_source_unknown" => {
+            ("Range unknown · set manually", "范围未知 · 可手动设置")
+        }
         "settings.providers.effort_default_tooltip" => (
             "Default reasoning effort · auto-applied when this model is selected",
             "默认推理强度 · 选择该模型时自动带入",
@@ -792,12 +797,39 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             "查找相关信息并汇总结果。",
         ),
         "settings.roles.save_only_vision" => (
-            "Not active · saves a preference only; image requests do not use this model",
-            "尚未生效 · 仅保存偏好，图片请求不会使用此模型",
+            "Not active · preference only. To read an image, choose an image-capable conversation model and attach a project image from Files.",
+            "尚未生效 · 仅保存偏好。识图请在对话中选择支持图像的模型，再从文件面板引用项目图片。",
         ),
         "settings.roles.save_only_search" => (
-            "Not active · saves a preference only; searches do not use this model",
-            "尚未生效 · 仅保存偏好，搜索不会使用此模型",
+            "Not active · preference only. Hosted search uses the conversation model and requires web_search to be enabled in the Host configuration.",
+            "尚未生效 · 仅保存偏好。托管搜索使用当前对话模型，并需在 Host 配置中启用 web_search。",
+        ),
+        "model_capability.image" => ("Image", "图像"),
+        "model_capability.search" => ("Search", "搜索"),
+        "model_capability.help" => (
+            "Image: supports image attachments. Search: supports the per-message web search option.",
+            "图像：支持图片附件。搜索：支持本轮网络搜索选项。",
+        ),
+        "composer.add" => ("Add", "添加"),
+        "composer.add_files" => ("Attach files", "附加文件"),
+        "composer.add_search" => ("Web search", "网络搜索"),
+        "composer.project_files" => ("Reference project file", "引用项目文件"),
+        "composer.local_files" => ("Choose local images or text files; no project required", "选择本机图片或文本文件，无需选择项目"),
+        "composer.search_hint" => ("Toggle web search for this message", "切换本轮网络搜索"),
+        "composer.search_on" => ("Web search · On", "网络搜索 · 开启"),
+        "composer.search_off" => ("Web search · Off", "网络搜索 · 关闭"),
+        "composer.attachment_limit" => ("Attach at most 4 files per message", "每条消息最多附加 4 个文件"),
+        "composer.remove_attachment" => ("Remove attachment", "移除附件"),
+        "composer.image_model_required" => ("Choose an image-capable model to send these attachments", "请选择支持图像的模型后发送附件"),
+        "composer.search_model_required" => ("Choose a search-capable model or turn off web search", "请选择支持搜索的模型，或关闭网络搜索"),
+        "files.attach_image" => ("Attach image", "附加图片"),
+        "files.image_needs_task" => (
+            "Open a task in this project to attach an image.",
+            "请先打开此项目的任务，再引用图片。",
+        ),
+        "files.image_model_hint" => (
+            "Image attached to the draft. Choose an image-capable model before sending.",
+            "图片已加入草稿，发送前请选择支持图像的模型。",
         ),
         "settings.roles.not_set" => ("Not set", "未设置"),
         "settings.roles.clear" => ("Clear", "清除"),

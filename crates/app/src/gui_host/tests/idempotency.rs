@@ -60,6 +60,8 @@ async fn command_idempotency_replays_first_response_without_repeating_side_effec
             provider: None,
             profile: None,
             effort: None,
+            attachment_ids: Vec::new(),
+            web_search: None,
         },
     );
     let first_start = adapter.command(&start).await.expect("run start");
@@ -90,6 +92,8 @@ async fn command_idempotency_replays_first_response_without_repeating_side_effec
                 provider: None,
                 profile: None,
                 effort: None,
+                attachment_ids: Vec::new(),
+                web_search: None,
             },
         ))
         .await
@@ -163,6 +167,8 @@ async fn distinct_gui_clients_do_not_collide_on_command_id() {
                 provider: None,
                 profile: None,
                 effort: None,
+                attachment_ids: Vec::new(),
+                web_search: None,
             },
         ))
         .await

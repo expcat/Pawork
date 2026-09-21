@@ -2,6 +2,6 @@
 
 import type { ApiVersion } from "./ApiVersion";
 
-export const API_VERSION: ApiVersion = { major: 1, minor: 21 };
+export const API_VERSION: ApiVersion = { major: 1, minor: 22 };
 
-export const SUPPORTED_API_VERSIONS: ReadonlyArray<ApiVersion> = [{ major: 1, minor: 0 }, { major: 1, minor: 1 }, { major: 1, minor: 2 }, { major: 1, minor: 3 }, { major: 1, minor: 4 }, { major: 1, minor: 5 }, { major: 1, minor: 6 }, { major: 1, minor: 7 }, { major: 1, minor: 8 }, { major: 1, minor: 9 }, { major: 1, minor: 10 }, { major: 1, minor: 11 }, { major: 1, minor: 12 }, { major: 1, minor: 13 }, { major: 1, minor: 14 }, { major: 1, minor: 15 }, { major: 1, minor: 16 }, { major: 1, minor: 17 }, { major: 1, minor: 18 }, { major: 1, minor: 19 }, { major: 1, minor: 20 }, { major: 1, minor: 21 }];
+export const SUPPORTED_API_VERSIONS: ReadonlyArray<ApiVersion> = [{ major: 1, minor: 0 }, { major: 1, minor: 1 }, { major: 1, minor: 2 }, { major: 1, minor: 3 }, { major: 1, minor: 4 }, { major: 1, minor: 5 }, { major: 1, minor: 6 }, { major: 1, minor: 7 }, { major: 1, minor: 8 }, { major: 1, minor: 9 }, { major: 1, minor: 10 }, { major: 1, minor: 11 }, { major: 1, minor: 12 }, { major: 1, minor: 13 }, { major: 1, minor: 14 }, { major: 1, minor: 15 }, { major: 1, minor: 16 }, { major: 1, minor: 17 }, { major: 1, minor: 18 }, { major: 1, minor: 19 }, { major: 1, minor: 20 }, { major: 1, minor: 21 }, { major: 1, minor: 22 }];

@@ -1081,6 +1081,8 @@ async fn auth_set_api_key_verifies_replaces_and_masks_end_to_end() {
         provider: Some("glm-coding".into()),
         profile: None,
         effort: None,
+        attachment_ids: Vec::new(),
+        web_search: None,
     });
     assert!(adapter.core.read().await.provider_needs_rebuild());
     let mut run_events = adapter.subscribe_events();
@@ -1416,6 +1418,8 @@ async fn go_account_quota_routes_next_run_and_preserves_manual_selection() {
             provider: Some(provider.clone()),
             profile: None,
             effort: None,
+            attachment_ids: Vec::new(),
+            web_search: None,
         }))
         .await
         .unwrap()

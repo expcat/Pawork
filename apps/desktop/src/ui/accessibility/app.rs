@@ -102,10 +102,7 @@ fn activity_popover_ax_geometry(
         heading.width,
         3.0 * font::XS.0 * rem_px,
     );
-    ActivityPopoverAxGeometry {
-        heading,
-        subagents,
-    }
+    ActivityPopoverAxGeometry { heading, subagents }
 }
 
 /// 按钮行 y 自卡底内缩（p_2 + 32px 按钮槽），随卡位置整体移动。
@@ -498,22 +495,36 @@ impl AppView {
             }
             // 强度菜单行（「自动」+ 可选级别）：与可见行同源，仅菜单
             // 打开时可派发；未知行 fail-closed。
-            other if other.starts_with("effort-")
-                && matches!(self.open_menu, Some(MenuKind::Effort)) =>
+            other
+                if other.starts_with("effort-")
+                    && matches!(self.open_menu, Some(MenuKind::Effort)) =>
             {
-                let Some(option) = self
-                    .effort_menu_options()
-                    .into_iter()
-                    .find(|option| {
-                        format!("effort-{}", option.as_deref().unwrap_or("auto")) == other
-                    })
-                else {
+                let Some(option) = self.effort_menu_options().into_iter().find(|option| {
+                    format!("effort-{}", option.as_deref().unwrap_or("auto")) == other
+                }) else {
                     return false;
                 };
                 self.on_select_effort(option, cx);
                 window.focus(&self.effort_focus);
             }
             "model-menu-settings" => self.on_manage_composer_models(window, cx),
+            "composer-search-toggle" => self.toggle_composer_search(cx),
+            other if other.starts_with("composer-remove-") => {
+                self.remove_composer_attachment(other.trim_start_matches("composer-remove-"), cx);
+            }
+            "composer-attach" => self.on_composer_add_menu(None, cx),
+            other
+                if other.starts_with("composer-add-")
+                    && matches!(self.open_menu, Some(MenuKind::ComposerAdd)) =>
+            {
+                let Some(action) = super::super::input_area::ComposerAction::ALL
+                    .into_iter()
+                    .find(|action| action.id() == other)
+                else {
+                    return false;
+                };
+                self.activate_composer_action(action, window, cx);
+            }
             "cancel" => self.on_cancel_clicked(window, cx),
             "send" => {
                 // 与键盘 Enter 路径（on_send_message）一致：IME 组合中不发送。
@@ -661,6 +672,7 @@ impl AppView {
             "terminal-close" => self.on_close_terminal(window, cx),
             "activity-open-changes" => self.on_activity_open_changes(window, cx),
             // 子代理对话栏按钮（与 render 同源；chip identifier 含 agent_id）。
+            "subagent-cancel" => self.cancel_selected_subagent(cx),
             "subagent-refresh" => {
                 self.refresh_subagent_conversation();
                 cx.notify();
@@ -1815,27 +1827,23 @@ impl AppView {
                         .action(AxAction::Press),
                     );
                 }
-                header = header.child(
-                    popover.child(
-                        {
-                            let bounds = self.activity_open_changes_layout.bounds();
-                            AxNode::new(
-                                "activity-open-changes",
-                                AxRole::Button,
-                                "Open changes",
-                                AxRect::new(
-                                    bounds.origin.x.into(),
-                                    bounds.origin.y.into(),
-                                    bounds.size.width.into(),
-                                    bounds.size.height.into(),
-                                ),
-                            )
-                            .value(self.changes.activity_summary())
-                            .focused(self.menu_highlight_effective(0) == 0)
-                            .action(AxAction::Press)
-                        },
-                    ),
-                );
+                header = header.child(popover.child({
+                    let bounds = self.activity_open_changes_layout.bounds();
+                    AxNode::new(
+                        "activity-open-changes",
+                        AxRole::Button,
+                        "Open changes",
+                        AxRect::new(
+                            bounds.origin.x.into(),
+                            bounds.origin.y.into(),
+                            bounds.size.width.into(),
+                            bounds.size.height.into(),
+                        ),
+                    )
+                    .value(self.changes.activity_summary())
+                    .focused(self.menu_highlight_effective(0) == 0)
+                    .action(AxAction::Press)
+                }));
             }
             // OPT-4b：折叠态重开 Inspector 的专用入口，占最右动作槽；展开态
             // 不发布（折叠走面板内 inspector-collapse）。
@@ -1872,6 +1880,11 @@ impl AppView {
         let activity = &self.projection.subagent_activity;
         let bound = activity.session_id.is_some()
             && self.projection.active_session_id == activity.session_id;
+        if bound {
+            if let Some(error) = &activity.error {
+                return format!("{} · {error}", t("subagents.load_failed"));
+            }
+        }
         if !bound {
             return if self.projection.active_session_id.is_none() {
                 t("subagents.no_session").to_string()
@@ -2781,7 +2794,7 @@ impl AppView {
             card
         };
         let pad = metrics::COMPOSER_PAD + metrics::COMPOSER_BORDER / 2.0;
-        let input_y = card.y + pad;
+        let input_y = card.y + pad + self.composer_options_height();
         let footer_y = card.y + card.height - pad - metrics::COMPOSER_SEND_SIZE;
         let input_height = (footer_y - metrics::COMPOSER_GAP - input_y).max(0.0);
         let action_x = card.x + card.width - pad - metrics::COMPOSER_SEND_SIZE;
@@ -2795,6 +2808,28 @@ impl AppView {
         // （R4 U2 composer-cleared / R5 r5-1 契约）。
         let input_value = self.text_input.read(cx).text().to_string();
         let mut composer = AxNode::new("composer", AxRole::Group, "Composer", frame)
+            .child(
+                AxNode::new(
+                    "composer-attach",
+                    AxRole::Button,
+                    t("composer.add"),
+                    self.settings_menu_element_bounds("composer-attach", "composer-attach"),
+                )
+                .value(if matches!(self.open_menu, Some(MenuKind::ComposerAdd)) {
+                    "Expanded"
+                } else {
+                    "Collapsed"
+                })
+                .description(t("composer.add"))
+                .focused(
+                    self.open_menu.is_none()
+                        && self
+                            .settings_action_focus
+                            .get("composer-attach")
+                            .is_some_and(|focus| focus.is_focused(window)),
+                )
+                .action(AxAction::Press),
+            )
             .child(
                 AxNode::new(
                     "composer-input",
@@ -2859,6 +2894,44 @@ impl AppView {
                     self.composer_workspace_label()
                 }),
             );
+        let options = self.current_composer_options();
+        for attachment in options.attachments {
+            let id = format!("composer-remove-{}", attachment.id);
+            composer = composer.child(
+                AxNode::new(
+                    id.clone(),
+                    AxRole::Button,
+                    format!("{} · {}", t("composer.remove_attachment"), attachment.name),
+                    self.settings_menu_element_bounds(&id, "composer-options"),
+                )
+                .enabled(!self.composer_sending)
+                .action(AxAction::Press),
+            );
+        }
+        if options.web_search.is_some() {
+            composer = composer.child(
+                AxNode::new(
+                    "composer-search-toggle",
+                    AxRole::Button,
+                    t(if options.web_search == Some(true) {
+                        "composer.search_on"
+                    } else {
+                        "composer.search_off"
+                    }),
+                    self.settings_menu_element_bounds("composer-search-toggle", "composer-options"),
+                )
+                .enabled(!self.composer_sending)
+                .action(AxAction::Press),
+            );
+        }
+        if let Some(error) = self.composer_capability_error() {
+            composer = composer.child(AxNode::new(
+                "composer-capability-hint",
+                AxRole::StaticText,
+                error,
+                self.settings_menu_element_bounds("composer-options", "composer-options"),
+            ));
+        }
         if self.composer_context_meter_visible() {
             composer = composer.child(
                 AxNode::new(
@@ -2951,6 +3024,14 @@ impl AppView {
             let bounds = |id: &str| self.settings_menu_element_bounds(id, "model-menu");
             let mut menu = AxNode::new("model-menu", AxRole::Group, "Models", bounds("model-menu"))
                 .child(self.model_search_ax(window, "model-menu"));
+            if self.model_menu_row_count() > 0 {
+                menu = menu.child(AxNode::new(
+                    "model-capability-help",
+                    AxRole::StaticText,
+                    t("model_capability.help"),
+                    bounds("model-capability-help"),
+                ));
+            }
             if self.model_menu_row_count() == 0 {
                 let (title, hint) = if self.projection.models.is_empty() {
                     (
@@ -3013,6 +3094,9 @@ impl AppView {
                                     ),
                                 )
                                 .selected(selected)
+                                .description(super::super::input_area::model_capability_label(
+                                    &model,
+                                ))
                                 .focused(ix == highlight)
                                 .enabled(self.can_switch_model());
                                 if title != model.id {
@@ -3038,6 +3122,36 @@ impl AppView {
                 .focused(highlight == self.model_menu_row_count())
                 .action(AxAction::Press),
             );
+            composer = composer.child(menu);
+        }
+        if matches!(self.open_menu, Some(MenuKind::ComposerAdd)) {
+            let bounds = |id: &str| self.settings_menu_element_bounds(id, "composer-add-menu");
+            let mut menu = AxNode::new(
+                "composer-add-menu",
+                AxRole::Group,
+                t("composer.add"),
+                bounds("composer-add-menu"),
+            );
+            for (ix, action) in super::super::input_area::ComposerAction::ALL
+                .into_iter()
+                .enumerate()
+            {
+                let rect = bounds(action.id());
+                if rect.width <= 0.0 || rect.height <= 0.0 {
+                    continue;
+                }
+                let enabled = self.composer_action_enabled(action);
+                let mut row = AxNode::new(action.id(), AxRole::Button, action.label(), rect)
+                    .description(self.composer_action_hint(action))
+                    .enabled(enabled)
+                    .focused(
+                        enabled && ix == self.menu_highlight_effective(self.menu_selected_index()),
+                    );
+                if enabled {
+                    row = row.action(AxAction::Press);
+                }
+                menu = menu.child(row);
+            }
             composer = composer.child(menu);
         }
         // ADR-063：强度菜单 AX 与 render 同源（effort_menu_options），
@@ -4840,9 +4954,7 @@ mod tests {
     /// GUI 1.20：Activity 子代理行使用真实列表布局，滚动裁剪与 Open
     /// changes 命中区互不重叠。
     #[gpui::test]
-    fn activity_subagent_ax_uses_list_bounds_and_clips_scrolling(
-        cx: &mut gpui::TestAppContext,
-    ) {
+    fn activity_subagent_ax_uses_list_bounds_and_clips_scrolling(cx: &mut gpui::TestAppContext) {
         let platform = std::sync::Arc::new(crate::platform::Platform::new());
         let socket = std::env::temp_dir().join("gui120-activity-subagents.sock");
         let (view, cx) = cx.add_window_view(|_, cx| AppView::new(platform, socket, None, cx));
@@ -4904,6 +5016,102 @@ mod tests {
             assert!(tree.find("activity-subagent-child-0").is_none());
             assert!(tree.find("activity-subagent-child-4").is_some());
             assert!(tree.find("activity-subagent-child-5").is_some());
+        });
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                let state = &mut view.projection.subagent_activity;
+                let old = state.begin_loading("parent");
+                let current = state.begin_loading("parent");
+                state.apply_failed("parent", old, "stale".into());
+                assert!(state.loading && state.error.is_none());
+                state.apply_failed("parent", current, "retry me".into());
+                assert_eq!(state.agents.len(), 7);
+                assert_eq!(state.error.as_deref(), Some("retry me"));
+                view.projection.connection = ConnectionState::Connected {
+                    instance_id: "test".into(),
+                };
+                view.projection
+                    .subagent_conversation
+                    .select_agent("child-0");
+                assert!(view.can_cancel_subagent());
+                view.projection.subagent_activity.cancelling = Some("child-0".into());
+                assert!(!view.can_cancel_subagent());
+                view.handle_controller_event(
+                    crate::controller::ControllerEvent::SubagentCancelFinished {
+                        session_id: "parent".into(),
+                        agent_id: "child-0".into(),
+                        result: Ok(()),
+                    },
+                    cx,
+                );
+                assert_eq!(
+                    view.projection.subagent_activity.cancelling.as_deref(),
+                    Some("child-0"),
+                    "Accepted is not a terminal state"
+                );
+                let state = &mut view.projection.subagent_activity;
+                let request = state.begin_loading("parent");
+                let mut data = pawork_client::SubagentListData {
+                    agents: state.agents.clone(),
+                };
+                assert!(state.apply_loaded("parent", request, data.clone()));
+                assert!(state.cancelling.is_some());
+                data.agents[0].status = "cancelled".into();
+                let terminal = state.begin_loading("parent");
+                assert!(!state.apply_loaded("parent", request, data.clone()));
+                assert!(
+                    state.cancelling.is_some(),
+                    "stale terminal cannot clear pending"
+                );
+                assert!(state.apply_loaded("parent", terminal, data));
+                assert!(state.cancelling.is_none());
+                // A finished older child can leave the bounded display list.
+                state.cancelling = Some("pruned-child".into());
+                let request = state.begin_loading("parent");
+                let data = pawork_client::SubagentListData {
+                    agents: state.agents.clone(),
+                };
+                assert!(state.apply_loaded("parent", request, data));
+                assert!(
+                    state.cancelling.is_none(),
+                    "a missing row must not lock other stops"
+                );
+                // A failed cancellation can be retried.
+                state.agents[0].status = "running".into();
+                state.cancelling = Some("child-0".into());
+                view.handle_controller_event(
+                    crate::controller::ControllerEvent::SubagentCancelFinished {
+                        session_id: "parent".into(),
+                        agent_id: "child-0".into(),
+                        result: Err("retry cancellation".into()),
+                    },
+                    cx,
+                );
+                assert!(view.can_cancel_subagent());
+                assert_eq!(
+                    view.projection.subagent_activity.error.as_deref(),
+                    Some("retry cancellation")
+                );
+                view.inspector_open = true;
+                view.inspector_motion.width(
+                    true,
+                    true,
+                    std::time::Instant::now() - std::time::Duration::from_secs(1),
+                );
+                view.inspector_tab = InspectorTab::Subagent;
+                view.close_open_menu(cx);
+                cx.notify();
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let tree = view.read(cx).accessibility_tree(window, cx);
+            let stop = tree
+                .find("subagent-cancel")
+                .expect("running child exposes Stop");
+            assert!(stop.enabled && stop.bounds.width > 0.0);
+            assert!(tree.find("subagent-refresh").unwrap().enabled);
         });
     }
 

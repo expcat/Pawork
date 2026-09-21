@@ -51,6 +51,8 @@ async fn computer_approval_image_persistence_and_resume_do_not_repeat_input() {
         provider: None,
         profile: None,
         effort: None,
+        attachment_ids: Vec::new(),
+        web_search: None,
     });
     let AppResponse::Accepted {
         run_id: Some(run), ..
@@ -135,6 +137,8 @@ async fn chat_browser_tool_waits_for_approval_and_persists_actual_reply() {
         provider: None,
         profile: None,
         effort: None,
+        attachment_ids: Vec::new(),
+        web_search: None,
     });
     request.source = source.clone();
     let mut events = adapter.subscribe_events();

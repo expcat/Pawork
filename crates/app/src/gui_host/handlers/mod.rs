@@ -1,4 +1,5 @@
 pub(super) mod approval;
+pub(super) mod attachments;
 pub(super) mod command;
 pub(super) mod files;
 pub(super) mod mcp;

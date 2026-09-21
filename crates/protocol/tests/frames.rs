@@ -39,6 +39,8 @@ fn command_envelope() -> AppCommandEnvelope {
             provider: None,
             profile: None,
             effort: None,
+            attachment_ids: Vec::new(),
+            web_search: None,
         },
     }
 }

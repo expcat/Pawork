@@ -407,6 +407,8 @@ impl PaworkClient {
                 provider: None,
                 profile: None,
                 effort: None,
+                attachment_ids: Vec::new(),
+                web_search: None,
             })
             .await?;
         parse_data(&envelope)

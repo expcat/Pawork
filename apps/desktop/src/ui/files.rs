@@ -2,19 +2,19 @@
 use std::collections::{HashMap, HashSet};
 
 use gpui::{
-    App, Context, Entity, FocusHandle, Focusable, ScrollHandle, SharedString, Subscription, Window,
-    div, prelude::*, px,
+    div, prelude::*, px, App, Context, Entity, FocusHandle, Focusable, ScrollHandle, SharedString,
+    Subscription, Window,
 };
 use serde_json::Value;
 
 use super::{
-    AppRoute, AppView, Icon, InspectorTab, SaveFile, TextInput,
     accessibility::{AxAction, AxNode, AxRect, AxRole},
     components::button::{Button, ButtonPadding, ButtonVariant},
     i18n::t,
     icon, icon_sized,
     inspector::{FileTab, PanelTab},
     theme::{dark, font},
+    AppRoute, AppView, Icon, InspectorTab, SaveFile, TextInput,
 };
 use crate::{controller::FileOperation, projection::ConnectionState};
 
@@ -23,6 +23,15 @@ struct FileEntry {
     path: String,
     name: String,
     is_dir: bool,
+}
+
+fn is_image_path(path: &str) -> bool {
+    path.rsplit_once('.').is_some_and(|(_, extension)| {
+        matches!(
+            extension.to_ascii_lowercase().as_str(),
+            "png" | "jpg" | "jpeg" | "gif" | "webp"
+        )
+    })
 }
 
 struct FileDocument {
@@ -88,6 +97,8 @@ impl Default for FileWorkspace {
 
 #[derive(Default)]
 pub(super) struct FilesPanel {
+    /// Explicit attachment picker scope; ordinary file browsing keeps opening text.
+    attachment_target: Option<(String, String)>,
     workspaces: HashMap<String, FileWorkspace>,
     epoch: u64,
     layouts: HashMap<String, ScrollHandle>,
@@ -212,6 +223,47 @@ fn prune_stale_dirs(ws: &mut FileWorkspace, path: &str, entries: &[FileEntry]) {
 }
 
 impl AppView {
+    pub(super) fn cancel_file_attachment_picker(&mut self) {
+        self.files.attachment_target = None;
+    }
+
+    fn picking_file_attachment(&self) -> bool {
+        self.files
+            .attachment_target
+            .as_ref()
+            .is_some_and(|(workspace, session)| {
+                self.projection.active_workspace_id() == Some(workspace.as_str())
+                    && self.projection.active_session_id.as_ref() == Some(session)
+            })
+    }
+
+    pub(super) fn on_attach_image(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.can_attach_image() {
+            return;
+        }
+        self.files.attachment_target = self
+            .projection
+            .active_workspace_id()
+            .zip(self.projection.active_session_id.as_deref())
+            .map(|(workspace, session)| (workspace.to_string(), session.to_string()));
+        self.close_open_menu(cx);
+        self.select_inspector_tab(InspectorTab::Files, cx);
+        if !self.inspector_open {
+            self.on_toggle_inspector(window, cx);
+        }
+        self.ensure_files(cx);
+        if let Some(ws) = self
+            .inspector_workspace_id()
+            .and_then(|id| self.files.workspaces.get_mut(&id))
+        {
+            ws.sidebar = true;
+            if let Some(filter) = &ws.filter {
+                filter.update(cx, |input, cx| input.set_text("", cx));
+            }
+        }
+        cx.notify();
+    }
+
     pub(super) fn files_panel_tabs(&self, cx: &App) -> Vec<PanelTab> {
         let Some(id) = self.inspector_workspace_id() else {
             return vec![];
@@ -758,6 +810,52 @@ impl AppView {
                     if let Some(entry) = entry {
                         if entry.is_dir {
                             self.files_toggle_dir(entry.path, cx);
+                        } else if is_image_path(&entry.path)
+                            || self.files.attachment_target.as_ref().is_some_and(
+                                |(workspace, session)| {
+                                    workspace == &id
+                                        && self.projection.active_session_id.as_ref()
+                                            == Some(session)
+                                },
+                            )
+                        {
+                            if self.projection.active_session_id.is_none()
+                                || self.projection.active_workspace_id() != Some(id.as_str())
+                            {
+                                self.status_hint = Some(t("files.image_needs_task").into());
+                            } else if !self.text_input.read(cx).is_composing() {
+                                // Only the relative reference enters the draft. The Host resolves
+                                // and authorizes the file when the user explicitly sends it.
+                                let mut draft = self.text_input.read(cx).text().to_string();
+                                if !draft.is_empty() && !draft.ends_with(char::is_whitespace) {
+                                    draft.push(' ');
+                                }
+                                draft.push('@');
+                                draft.push_str(
+                                    &serde_json::to_string(&entry.path).expect("path string"),
+                                );
+                                draft.push(' ');
+                                self.text_input
+                                    .update(cx, |input, cx| input.set_text(draft, cx));
+                                let supports_images = self
+                                    .projection
+                                    .effective_model()
+                                    .and_then(|(provider, model)| {
+                                        crate::projection::find_model_entry(
+                                            &self.projection.models,
+                                            provider,
+                                            model,
+                                        )
+                                    })
+                                    .is_some_and(|model| model.image_input);
+                                self.status_hint = (is_image_path(&entry.path) && !supports_images)
+                                    .then(|| t("files.image_model_hint").into());
+                                self.files.attachment_target = None;
+                                self.on_inspector_back(window, cx);
+                                self.pending_inspector_focus =
+                                    Some(super::InspectorFocusTarget::Composer);
+                                self.focus_composer(window, cx);
+                            }
                         } else {
                             self.files_read(entry.path, false, cx);
                         }
@@ -862,10 +960,32 @@ impl AppView {
         }
         label_row = label_row
             .child(icon_sized(
-                if is_dir { Icon::Project } else { Icon::File },
+                if is_dir {
+                    Icon::Project
+                } else if is_image_path(path) {
+                    Icon::Link
+                } else {
+                    Icon::File
+                },
                 px(14.),
             ))
-            .child(div().truncate().child(name.to_string()));
+            .child(div().truncate().child(name.to_string()))
+            .when(
+                !is_dir && (is_image_path(path) || self.picking_file_attachment()),
+                |row| {
+                    row.child(
+                        div()
+                            .flex_none()
+                            .text_size(font::XS)
+                            .text_color(dark().text.secondary)
+                            .child(t(if is_image_path(path) {
+                                "files.attach_image"
+                            } else {
+                                "composer.add_files"
+                            })),
+                    )
+                },
+            );
         let button = Button::new(SharedString::from(id.clone()))
             .variant(if active {
                 ButtonVariant::Raised
@@ -1290,9 +1410,22 @@ impl AppView {
             collect_rows(ws, ".", 0, &query, &mut rows);
             for row in &rows {
                 let (id, label, path, press) = match row {
-                    FilesRow::Entry { path, name, .. } => (
+                    FilesRow::Entry {
+                        path, name, is_dir, ..
+                    } => (
                         format!("files-entry-{path}"),
-                        name.clone(),
+                        if !is_dir && (is_image_path(path) || self.picking_file_attachment()) {
+                            format!(
+                                "{} · {name}",
+                                t(if is_image_path(path) {
+                                    "files.attach_image"
+                                } else {
+                                    "composer.add_files"
+                                })
+                            )
+                        } else {
+                            name.clone()
+                        },
                         Some(path.clone()),
                         true,
                     ),
@@ -1478,6 +1611,105 @@ impl AppView {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[gpui::test]
+    fn image_reference_preserves_draft_and_requires_project_task(cx: &mut gpui::TestAppContext) {
+        let platform = std::sync::Arc::new(crate::platform::Platform::new());
+        let (view, cx) = cx.add_window_view(|_, cx| {
+            AppView::new(
+                platform,
+                std::env::temp_dir().join("image-reference-test.sock"),
+                None,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.workspace_id = Some("one".into());
+                view.projection.connection = ConnectionState::Connected {
+                    instance_id: "images".into(),
+                };
+                view.projection.active_session_id = None;
+                view.on_composer_add_menu(None, cx);
+                assert_eq!(view.open_menu, Some(super::super::MenuKind::ComposerAdd));
+                assert!(!view.can_attach_image());
+                view.close_menu_and_focus_trigger(super::super::MenuKind::ComposerAdd, window, cx);
+                let path = "图片/屏幕 截图.PNG";
+                view.files
+                    .workspaces
+                    .entry("one".into())
+                    .or_default()
+                    .tree
+                    .insert(
+                        ".".into(),
+                        vec![FileEntry {
+                            path: path.into(),
+                            name: "屏幕 截图.PNG".into(),
+                            is_dir: false,
+                        }],
+                    );
+                view.text_input
+                    .update(cx, |input, cx| input.set_text("分析这张图", cx));
+                view.files_action(&format!("files-entry-{path}"), window, cx);
+                assert_eq!(view.text_input.read(cx).text(), "分析这张图");
+                view.projection
+                    .sessions
+                    .push(crate::projection::SessionSummary {
+                        session_id: "image-task".into(),
+                        title: "Images".into(),
+                        workspace_id: Some("one".into()),
+                        updated_at_ms: 0,
+                        parent_branch_id: None,
+                        forked_from_event_id: None,
+                        active: true,
+                        unstarted: true,
+                    });
+                view.projection.active_session_id = Some("image-task".into());
+                view.inspector_open = true;
+                view.files_action(&format!("files-entry-{path}"), window, cx);
+                assert_eq!(
+                    view.text_input.read(cx).text(),
+                    "分析这张图 @\"图片/屏幕 截图.PNG\" "
+                );
+                assert!(view.projection.active_run_id.is_none());
+                assert!(view.files.workspaces["one"].reading.is_none());
+                assert!(view.files.workspaces["one"].documents.is_empty());
+                // The same picker attaches text without opening or sending it.
+                view.files
+                    .workspaces
+                    .get_mut("one")
+                    .unwrap()
+                    .tree
+                    .get_mut(".")
+                    .unwrap()
+                    .push(FileEntry {
+                        path: "docs/需求 说明.md".into(),
+                        name: "需求 说明.md".into(),
+                        is_dir: false,
+                    });
+                view.activate_composer_action(
+                    super::super::input_area::ComposerAction::ProjectFiles,
+                    window,
+                    cx,
+                );
+                view.files_action("files-entry-docs/需求 说明.md", window, cx);
+                assert!(view
+                    .text_input
+                    .read(cx)
+                    .text()
+                    .ends_with("@\"docs/需求 说明.md\" "));
+                assert!(view.projection.active_run_id.is_none());
+                assert!(view.files.attachment_target.is_none());
+                assert!(view.files.workspaces["one"].reading.is_none());
+            })
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            assert!(view.read(cx).composer_focus_handle(cx).is_focused(window));
+            assert!(!view.read(cx).inspector_open);
+        });
+    }
 
     #[gpui::test]
     fn file_drafts_survive_switches_and_save_receipts(cx: &mut gpui::TestAppContext) {

@@ -71,6 +71,13 @@ fn resolve_effort(
         .and_then(|reasoning| reasoning.model(provider, model))
         .and_then(|entry| entry.default_effort.as_deref())
         .and_then(pawork_domain::ReasoningEffort::from_wire_name)
+        .filter(|effort| {
+            rule.allowed_efforts.is_empty()
+                || rule
+                    .allowed_efforts
+                    .iter()
+                    .any(|name| name == effort.as_wire_name())
+        })
 }
 
 pub(crate) fn allows_tool(rule: &SubagentModelConfig, tool: &ToolDescriptor) -> bool {
@@ -257,8 +264,10 @@ impl<'a> SubagentRun<'a> {
         if input.message.trim().is_empty() || input.message.len() > 64 * 1024 {
             return Err(invalid("task must contain 1..65536 bytes"));
         }
-        if self.cancel.is_cancelled() {
-            return Err(invalid("parent run was cancelled"));
+        // Serialize admission with finish; no child can be registered after its join drain.
+        let mut jobs = self.jobs.lock().await;
+        if self.finished.load(Ordering::Acquire) || self.cancel.is_cancelled() {
+            return Err(invalid("parent run has finished or was cancelled"));
         }
         let provider = input
             .provider
@@ -275,6 +284,15 @@ impl<'a> SubagentRun<'a> {
         // 默认）。配置名非法按未配置处理（写路径已 fail-closed 校验）。
         let child_effort = resolve_effort(&self.config, &self.core.config, provider, model);
         child.effort = child_effort;
+        // RunService falls back to this default when effort is None; keep that
+        // fallback consistent with the child's allowed range as well.
+        if let Some(reasoning) = &mut child.config.reasoning {
+            for entry in &mut reasoning.models {
+                if entry.provider_id == provider && entry.model_id == model {
+                    entry.default_effort = child_effort.map(|effort| effort.as_wire_name().into());
+                }
+            }
+        }
         child.parent_tool_run = Some(self.run.clone());
         // A child cannot obtain tools the parent model was not allowed to use.
         let parent_rule = rule(
@@ -329,6 +347,22 @@ impl<'a> SubagentRun<'a> {
             effort: child_effort
                 .map(|effort| effort.as_wire_name().to_string()),
         };
+        supervisor
+            .start_worker(&worker)
+            .await
+            .map_err(|e| invalid(e.to_string()))?;
+        let token = supervisor
+            .cancel_token(&worker)
+            .ok_or_else(|| invalid("missing child cancellation token"))?;
+        self.core.subagents.lock().unwrap().insert(
+            info.agent_id.clone(),
+            ActiveChild {
+                parent_session: self.session.clone(),
+                parent_run: self.run.clone(),
+                token: token.clone(),
+                child_run: child_run.clone(),
+            },
+        );
         let prepare = async {
             let ws = self.core.workspace_for_session_or_unbound(&self.session)?;
             if ws.id.as_str() == "ws-unbound" {
@@ -358,28 +392,13 @@ impl<'a> SubagentRun<'a> {
         }
         .await;
         if let Err(error) = prepare {
+            self.core.subagents.lock().unwrap().remove(&info.agent_id);
             supervisor
                 .fail(&worker, "child setup failed".into())
                 .await
                 .map_err(|e| invalid(e.to_string()))?;
             return Err(error);
         }
-        supervisor
-            .start_worker(&worker)
-            .await
-            .map_err(|e| invalid(e.to_string()))?;
-        let token = supervisor
-            .cancel_token(&worker)
-            .ok_or_else(|| invalid("missing child cancellation token"))?;
-        self.core.subagents.lock().unwrap().insert(
-            info.agent_id.clone(),
-            ActiveChild {
-                parent_session: self.session.clone(),
-                parent_run: self.run.clone(),
-                token: token.clone(),
-                child_run: child_run.clone(),
-            },
-        );
         let active = self.core.subagents.clone();
         let id = info.agent_id.clone();
         let supervisor = supervisor.clone();
@@ -405,6 +424,7 @@ impl<'a> SubagentRun<'a> {
                 }],
                 render.as_ref(),
                 token.clone(),
+                None,
             );
             tokio::pin!(future);
             let outcome = tokio::select! {
@@ -412,8 +432,15 @@ impl<'a> SubagentRun<'a> {
                 _ = parent_cancel.cancelled() => { token.cancel(); future.await }
             };
             if let Err(error) = &outcome {
-                if let Err(seal_error) =
-                    seal_child(&child, &child_session, &child_run, render.as_ref(), error).await
+                if let Err(seal_error) = seal_child(
+                    &child,
+                    &child_session,
+                    &child_run,
+                    render.as_ref(),
+                    error,
+                    token.is_cancelled(),
+                )
+                .await
                 {
                     tracing::error!(%seal_error,"failed to persist subagent terminal state");
                 }
@@ -430,7 +457,7 @@ impl<'a> SubagentRun<'a> {
             }
             active.lock().unwrap().remove(&id);
         });
-        self.jobs.lock().await.push(job);
+        jobs.push(job);
         Ok(serde_json::to_value(info).unwrap())
     }
     async fn wait(&self, input: &Value, cancel: CancellationToken) -> Result<Value, AppError> {
@@ -448,7 +475,10 @@ impl<'a> SubagentRun<'a> {
         let deadline = tokio::time::Instant::now()
             + std::time::Duration::from_millis(input.timeout_ms.unwrap_or(30_000).min(60_000));
         loop {
-            let list = self.core.list_subagents(&self.session).await?;
+            let list = self
+                .core
+                .query_subagents(&self.session, Some(&input.agent_ids))
+                .await?;
             let selected: Vec<_> = list
                 .agents
                 .into_iter()
@@ -471,7 +501,10 @@ impl<'a> SubagentRun<'a> {
     /// close_agent 只作用于本 run 的子代理：session 内其它 run 的 child
     /// 拒绝取消（GUI 的 session 级 subagent_cancel 保留宽语义）。
     async fn close(&self, id: &str) -> Result<Value, AppError> {
-        let list = self.core.list_subagents(&self.session).await?;
+        let list = self
+            .core
+            .query_subagents(&self.session, Some(&[id.to_string()]))
+            .await?;
         let Some(agent) = list.agents.iter().find(|a| a.agent_id == id) else {
             return Err(invalid("agent does not belong to this session"));
         };
@@ -494,6 +527,7 @@ impl<'a> SubagentRun<'a> {
         Ok(json!({"agent_id":id,"cancellation_requested":true}))
     }
     pub fn cancel_children(&self) {
+        self.cancel.cancel();
         for child in self
             .core
             .subagents
@@ -506,10 +540,14 @@ impl<'a> SubagentRun<'a> {
         }
     }
     pub async fn finish(&self) {
-        if self.finished.swap(true, Ordering::AcqRel) {
-            return;
-        }
-        for job in std::mem::take(&mut *self.jobs.lock().await) {
+        let jobs = {
+            let mut jobs = self.jobs.lock().await;
+            if self.finished.swap(true, Ordering::AcqRel) {
+                return;
+            }
+            std::mem::take(&mut *jobs)
+        };
+        for job in jobs {
             if let Err(error) = job.await {
                 tracing::error!(%error,"subagent task terminated");
             }
@@ -572,6 +610,7 @@ async fn seal_child(
     run: &RunId,
     render: &dyn AgentEventSink,
     error: &AppError,
+    cancelled: bool,
 ) -> Result<(), AppError> {
     let snapshot = core.store()?.projection_snapshot(session).await?;
     if snapshot.runs.iter().any(|r| {
@@ -580,20 +619,40 @@ async fn seal_child(
         return Ok(());
     }
     let mut sequence = core.next_sequence(session).await?;
+    if !snapshot.runs.iter().any(|r| r.run_id == *run) {
+        let started = core
+            .append_payload(
+                session,
+                run,
+                &mut sequence,
+                AgentEvent::RunStarted {
+                    trigger_message_id: MessageId::from("pending"),
+                },
+            )
+            .await?;
+        render.emit(started).await?;
+    }
     let event = core
         .append_payload(
             session,
             run,
             &mut sequence,
-            AgentEvent::RunFailed {
-                error: ErrorContext {
-                    category: ErrorCategory::Internal,
-                    message: error.to_string(),
-                    retryable: false,
-                    retry_after_ms: None,
-                    diagnostics: Default::default(),
-                },
-                usage: None,
+            if cancelled {
+                AgentEvent::RunCancelled {
+                    reason: Some("subagent cancelled".into()),
+                    usage: None,
+                }
+            } else {
+                AgentEvent::RunFailed {
+                    error: ErrorContext {
+                        category: ErrorCategory::Internal,
+                        message: error.to_string(),
+                        retryable: false,
+                        retry_after_ms: None,
+                        diagnostics: Default::default(),
+                    },
+                    usage: None,
+                }
             },
         )
         .await?;
@@ -678,25 +737,43 @@ impl AppCore {
         &self,
         session: &SessionId,
     ) -> Result<SubagentListData, AppError> {
+        self.query_subagents(session, None).await
+    }
+
+    async fn query_subagents(
+        &self,
+        session: &SessionId,
+        agent_ids: Option<&[String]>,
+    ) -> Result<SubagentListData, AppError> {
         let branch = self.session_active_branch(session).await?;
         let events = self
             .store()?
             .events_on_lineage(session, &branch, 1, usize::MAX)
             .await?;
-        let mut agents = BTreeMap::<String, SubagentInfo>::new();
+        let mut agents = BTreeMap::new();
         for event in events {
             if let AgentEvent::Diagnostic { code, details } = event.payload {
                 if code == "subagent.spawned" {
                     if let Ok(info) = serde_json::from_value::<SubagentInfo>(details) {
-                        agents.insert(info.agent_id.clone(), info);
+                        if agent_ids.is_none_or(|ids| ids.contains(&info.agent_id)) {
+                            agents.insert(info.agent_id.clone(), (event.sequence, info));
+                        }
                     }
                 }
             }
         }
         let mut agents: Vec<_> = agents.into_values().collect();
-        if agents.len() > 64 {
+        if agent_ids.is_none() && agents.len() > 64 {
+            // Display bounds must not hide active children or select by process ID.
+            // Targeted wait/close queries retain every requested child on this lineage.
+            let active = self.subagents.lock().unwrap();
+            agents.sort_by_key(|(sequence, info)| {
+                (active.contains_key(&info.agent_id), *sequence)
+            });
             agents.drain(..agents.len() - 64);
         }
+        agents.sort_by_key(|(sequence, _)| *sequence);
+        let mut agents: Vec<_> = agents.into_iter().map(|(_, info)| info).collect();
         for info in &mut agents {
             let child_session = SessionId::from(info.session_id.as_str());
             let snapshot = self.store()?.projection_snapshot(&child_session).await?;
@@ -736,7 +813,9 @@ impl AppCore {
         parent: &SessionId,
         id: &str,
     ) -> Result<(), AppError> {
-        let list = self.list_subagents(parent).await?;
+        let list = self
+            .query_subagents(parent, Some(&[id.to_string()]))
+            .await?;
         if !list.agents.iter().any(|a| a.agent_id == id) {
             return Err(invalid("agent does not belong to this session"));
         }
@@ -821,6 +900,10 @@ mod tests {
                     .complete_with(StopReason::ToolUse)
             };
             let script = if child {
+                assert!(
+                    request.reasoning.is_none(),
+                    "child must not bypass allowed efforts via the global default"
+                );
                 assert!(!request
                     .tools
                     .iter()
@@ -855,8 +938,19 @@ mod tests {
                     arguments["provider"] = json!(provider);
                     arguments["model"] = json!(model);
                 }
-                call("spawn_agent", arguments)
-            } else if tools == 1 {
+                MockScript::new()
+                    .tool_call_chunks(
+                        ToolCallId::from(format!("{session}-spawn_agent")),
+                        "spawn_agent",
+                        [arguments.to_string()],
+                    )
+                    .tool_call_chunks(
+                        ToolCallId::from(format!("{session}-parent-read")),
+                        "read_file",
+                        [json!({"path":"note.txt"}).to_string()],
+                    )
+                    .complete_with(StopReason::ToolUse)
+            } else if tools == 2 {
                 let id = request
                     .messages
                     .iter()
@@ -915,7 +1009,16 @@ mod tests {
     }
     #[tokio::test]
     async fn subagent_result_replays_and_tool_restrictions_cannot_be_bypassed() {
-        let (core, dir, session) = setup(false).await;
+        let (mut core, dir, session) = setup(false).await;
+        core.config.reasoning = Some(pawork_workspace::config::ReasoningSettings {
+            models: vec![pawork_workspace::config::ModelReasoningConfig {
+                provider_id: "mock".into(),
+                model_id: "model-1".into(),
+                default_effort: Some("high".into()),
+                ..Default::default()
+            }],
+        });
+        core.config.subagents.as_mut().unwrap().models[0].allowed_efforts = vec!["low".into()];
         core.chat_turn(
             &session,
             vec![user_hello()],
@@ -927,6 +1030,18 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(dir.path().join("note.txt")).unwrap(),
             "original"
+        );
+        let parent_events = core
+            .store()
+            .unwrap()
+            .replay_events(&session, 1, 1000)
+            .await
+            .unwrap();
+        let spawned = parent_events.iter().position(|e| matches!(&e.payload, AgentEvent::Diagnostic { code, .. } if code == "subagent.spawned")).unwrap();
+        let read = parent_events.iter().position(|e| matches!(&e.payload, AgentEvent::ToolExecutionCompleted { tool_call_id, .. } if tool_call_id.as_str().ends_with("parent-read"))).unwrap();
+        assert!(
+            spawned < read,
+            "the first serial tool must complete before following parallel tools"
         );
         let list = core.list_subagents(&session).await.unwrap();
         assert_eq!(list.agents.len(), 1);
@@ -964,6 +1079,98 @@ mod tests {
             .await
             .is_err());
     }
+    #[tokio::test]
+    async fn display_limit_keeps_active_and_recent_children_without_limiting_control() {
+        let (core, _dir, session) = setup(false).await;
+        let parent_run = RunId::from("display-limit");
+        let mut sequence = core.next_sequence(&session).await.unwrap();
+        let mut ids = Vec::new();
+        for index in 0..65 {
+            // IDs deliberately sort opposite to creation order (e.g. after a restart).
+            let id = format!("child-{:02}", 64 - index);
+            let child_session = SessionId::from(id.as_str());
+            core.store()
+                .unwrap()
+                .create_session(&child_session, "child", pawork_engine::now_timestamp())
+                .await
+                .unwrap();
+            let info = SubagentInfo {
+                agent_id: id.clone(),
+                session_id: id.clone(),
+                parent_run_id: parent_run.as_str().into(),
+                title: id.clone(),
+                provider_id: "mock".into(),
+                model_id: "model-1".into(),
+                status: "running".into(),
+                result: None,
+                effort: None,
+            };
+            core.append_payload(
+                &session,
+                &parent_run,
+                &mut sequence,
+                AgentEvent::Diagnostic {
+                    code: "subagent.spawned".into(),
+                    details: serde_json::to_value(info).unwrap(),
+                },
+            )
+            .await
+            .unwrap();
+            let child_run = RunId::from(format!("run-{id}"));
+            if index == 0 {
+                core.subagents.lock().unwrap().insert(
+                    id.clone(),
+                    ActiveChild {
+                        parent_session: session.clone(),
+                        parent_run: parent_run.clone(),
+                        token: CancellationToken::new(),
+                        child_run,
+                    },
+                );
+            } else {
+                seal_child(
+                    &core,
+                    &child_session,
+                    &child_run,
+                    &SilentSink,
+                    &invalid("cancelled"),
+                    true,
+                )
+                .await
+                .unwrap();
+            }
+            ids.push(id);
+        }
+        let displayed = core.list_subagents(&session).await.unwrap().agents;
+        assert_eq!(displayed.len(), 64);
+        assert_eq!(displayed.first().unwrap().agent_id, ids[0]);
+        assert_eq!(displayed.last().unwrap().agent_id, ids[64]);
+        assert!(!displayed.iter().any(|a| a.agent_id == ids[1]));
+        let run = SubagentRun::new(&core, &session, &parent_run, CancellationToken::new());
+        let result = run
+            .wait(
+                &json!({"agent_ids":[ids[1]], "timeout_ms":0}),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result["agents"][0]["status"], "cancelled");
+        assert_eq!(result["timed_out"], false);
+        run.close(&ids[1]).await.unwrap();
+        core.cancel_subagent(&session, &ids[1]).await.unwrap();
+        let other_run = SubagentRun::new(
+            &core,
+            &session,
+            &RunId::from("other"),
+            CancellationToken::new(),
+        );
+        assert!(other_run.close(&ids[1]).await.is_err());
+        let other_session = core.create_session_unbound("other").await.unwrap();
+        assert!(core.cancel_subagent(&other_session, &ids[1]).await.is_err());
+        core.cancel_subagent(&session, &ids[0]).await.unwrap();
+        assert!(core.subagents.lock().unwrap()[&ids[0]].token.is_cancelled());
+    }
+
     #[tokio::test]
     async fn cross_provider_subagents_select_models_and_persist_reasoning() {
         use pawork_providers::ReasoningProtector;
@@ -1147,5 +1354,28 @@ mod tests {
             .await
             .is_err());
         sup.cancel_tree(parent).await.unwrap();
+        run.finish().await;
+        assert!(run.finished.load(Ordering::Acquire));
+        let early_run = RunId::from("early-cancel");
+        seal_child(
+            &core,
+            &session,
+            &early_run,
+            &SilentSink,
+            &invalid("cancelled before start"),
+            true,
+        )
+        .await
+        .unwrap();
+        let snapshot = core
+            .store()
+            .unwrap()
+            .projection_snapshot(&session)
+            .await
+            .unwrap();
+        assert!(snapshot
+            .runs
+            .iter()
+            .any(|r| r.run_id == early_run && r.state == "cancelled"));
     }
 }

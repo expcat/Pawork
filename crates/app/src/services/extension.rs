@@ -13,7 +13,7 @@ use pawork_workspace::{FileIndex, FileIndexError, IndexOptions, WorkspaceService
 
 use crate::extensions::{
     at_tokens, discover_skill_ids, instruction_kind_name, mcp_config_from_pawork, AtAttachmentBody,
-    McpServerSlot, McpServerStatus, AT_FILE_MAX_BYTES, AT_IMAGE_MAX_BYTES,
+    AtRef, McpServerSlot, McpServerStatus, AT_FILE_MAX_BYTES, AT_IMAGE_MAX_BYTES,
 };
 use crate::{AppCore, AppError};
 
@@ -151,7 +151,7 @@ impl ExtensionService {
             text: text.to_string(),
         })];
         for query in at_tokens(text) {
-            if let Some(attachment) = self.resolve_at_query(workspace, &query).await? {
+            if let Some(attachment) = self.resolve_at_ref(workspace, &query).await? {
                 let path = attachment.relative_path;
                 match attachment.body {
                     AtAttachmentBody::Text { content, truncated } => {
@@ -229,38 +229,68 @@ impl ExtensionService {
         Ok(files)
     }
 
-    async fn resolve_at_query(
+    async fn resolve_at_ref(
         &self,
         workspace: &Workspace,
-        query: &str,
+        query: &AtRef,
     ) -> Result<Option<crate::extensions::AtAttachment>, AppError> {
-        let matches = self.search_at(workspace, query, 1).await?;
-        let Some(file) = matches.into_iter().next() else {
-            return Ok(None);
-        };
-        let relative_path = file.key.relative_path;
-        let root = workspace
-            .roots
-            .get(file.key.root_index)
-            .ok_or_else(|| AppError::Import("workspace is not attached".into()))?;
+        match query {
+            AtRef::Exact(relative_path) => {
+                for (index, root) in workspace.roots.iter().enumerate() {
+                    match self.read_at_attachment(
+                        std::slice::from_ref(root),
+                        relative_path,
+                        relative_path,
+                    ) {
+                        Err(AppError::Io(error))
+                            if error.kind() == std::io::ErrorKind::NotFound
+                                && index + 1 < workspace.roots.len() => {}
+                        result => return result.map(Some),
+                    }
+                }
+                Err(AppError::Import("workspace is not attached".into()))
+            }
+            AtRef::Fuzzy(token) => {
+                let matches = self.search_at(workspace, token, 1).await?;
+                let Some(file) = matches.into_iter().next() else {
+                    return Ok(None);
+                };
+                let relative_path = file.key.relative_path;
+                let root = workspace
+                    .roots
+                    .get(file.key.root_index)
+                    .ok_or_else(|| AppError::Import("workspace is not attached".into()))?;
+                self.read_at_attachment(std::slice::from_ref(root), token, &relative_path)
+                    .map(Some)
+            }
+        }
+    }
+
+    fn read_at_attachment(
+        &self,
+        roots: &[PathBuf],
+        query: &str,
+        relative_path: &str,
+    ) -> Result<crate::extensions::AtAttachment, AppError> {
         // 索引不是读取授权：文件在扫描后可能被换成 symlink，且命中可能
         // 来自第二个 root。读取前复用文件工具的路径闸，并使用 canonical 路径。
-        let path =
-            pawork_policy::resolve_workspace_path(std::slice::from_ref(root), &relative_path)
-                .map_err(|error| AppError::Import(format!("@file {relative_path}: {error}")))?;
+        let path = pawork_policy::resolve_workspace_path(roots, relative_path)
+            .map_err(|error| AppError::Import(format!("@file {relative_path}: {error}")))?;
         // 先拒绝 FIFO / 设备等，避免 open 本身阻塞；打开后再核对 fd。
         if !std::fs::metadata(&path.absolute)?.is_file() {
             return Err(AppError::Import(format!(
                 "@file is not a regular file: {relative_path}"
             )));
         }
-        let file = std::fs::File::open(path.absolute)?;
+        let file = std::fs::File::open(&path.absolute)?;
         let metadata = file.metadata()?;
         if !metadata.is_file() {
             return Err(AppError::Import(format!(
                 "@file is not a regular file: {relative_path}"
             )));
         }
+        // canonical 路径只用于安全读取；附件名称与 MIME 保留用户引用的路径。
+        let relative_path = relative_path.to_string();
         // VISION-2：图片扩展名走 base64 Image part，不经过 UTF-8 有损文本展开。
         if let Some(media_type) = image_media_type(&relative_path) {
             let body = if metadata.len() > AT_IMAGE_MAX_BYTES as u64 {
@@ -284,11 +314,11 @@ impl ExtensionService {
                     }
                 }
             };
-            return Ok(Some(crate::extensions::AtAttachment {
+            return Ok(crate::extensions::AtAttachment {
                 query: query.to_string(),
                 relative_path,
                 body,
-            }));
+            });
         }
         let mut bytes = Vec::new();
         file.take((AT_FILE_MAX_BYTES + 1) as u64)
@@ -300,11 +330,11 @@ impl ExtensionService {
             &bytes
         };
         let content = String::from_utf8_lossy(slice).into_owned();
-        Ok(Some(crate::extensions::AtAttachment {
+        Ok(crate::extensions::AtAttachment {
             query: query.to_string(),
             relative_path,
             body: AtAttachmentBody::Text { content, truncated },
-        }))
+        })
     }
 
     pub fn workspace_root(&self) -> Option<&Path> {
@@ -337,7 +367,7 @@ fn image_media_type(relative_path: &str) -> Option<&'static str> {
 
 /// VISION-2：标准 base64（RFC 4648 带 padding）。与 pawork-auth 手写
 /// base64url 同理，不为单一编码需求新增生产依赖边。
-fn base64_encode(bytes: &[u8]) -> String {
+pub(crate) fn base64_encode(bytes: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
@@ -585,12 +615,26 @@ mod tests {
                 [first.path(), second.path()],
             )
             .unwrap();
-        let parts = service
-            .expand_at_refs(&workspace, "@cat.png")
-            .await
+        for reference in ["@cat.png", r#"@"cat.png""#] {
+            let parts = service.expand_at_refs(&workspace, reference).await.unwrap();
+            assert!(matches!(&parts[2], pawork_domain::ContentPart::Image(image)
+                if image.source == pawork_domain::ImageSource::Base64("YWJj".into())));
+        }
+        #[cfg(unix)]
+        {
+            let outside = tempfile::tempdir().unwrap();
+            std::fs::write(outside.path().join("cat.png"), b"private").unwrap();
+            std::os::unix::fs::symlink(
+                outside.path().join("cat.png"),
+                first.path().join("cat.png"),
+            )
             .unwrap();
-        assert!(matches!(&parts[2], pawork_domain::ContentPart::Image(image)
-            if image.source == pawork_domain::ImageSource::Base64("YWJj".into())));
+            let error = service
+                .expand_at_refs(&workspace, r#"@"cat.png""#)
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains("escapes workspace root via symlink"));
+        }
     }
 
     #[cfg(unix)]
@@ -626,6 +670,69 @@ mod tests {
             .await
             .unwrap_err();
         assert!(error.to_string().contains("not a regular file"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn quoted_at_ref_reads_exact_path_and_skips_fuzzy_sibling() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        std::fs::create_dir(workspace.path().join("docs")).expect("docs");
+        std::fs::write(workspace.path().join("docs/图 1.png"), b"abc").expect("quoted png");
+        std::fs::write(workspace.path().join("docs/图10.png"), b"zzz").expect("sibling png");
+        let (mut core, _store) = crate::testsupport::mock_core(Vec::new()).await;
+        core.attach_workspace(workspace.path()).expect("attach");
+        core.prime_extensions().await.expect("prime");
+        let quoted = serde_json::to_string("docs/图 1.png").expect("json path");
+        let parts = core
+            .expand_at_refs(None, &format!("看图 @{quoted}"))
+            .await
+            .expect("expand quoted");
+        assert_eq!(parts.len(), 3, "{parts:?}");
+        match &parts[1] {
+            pawork_domain::ContentPart::Text(text) => {
+                assert_eq!(
+                    text.text,
+                    "[attached image: docs/图 1.png (image/png, 3 bytes)]"
+                )
+            }
+            other => panic!("expected image header marker, got {other:?}"),
+        }
+        match &parts[2] {
+            pawork_domain::ContentPart::Image(image) => {
+                assert_eq!(image.media_type, "image/png");
+                assert_eq!(image.alt_text.as_deref(), Some("docs/图 1.png"));
+                assert_eq!(
+                    image.source,
+                    pawork_domain::ImageSource::Base64("YWJj".into()),
+                );
+            }
+            other => panic!("expected image part, got {other:?}"),
+        }
+
+        #[cfg(unix)]
+        {
+            std::fs::write(workspace.path().join("image-data"), b"abc").unwrap();
+            std::os::unix::fs::symlink("../image-data", workspace.path().join("docs/link.png"))
+                .unwrap();
+            let linked = core
+                .expand_at_refs(None, r#"@"docs/link.png""#)
+                .await
+                .unwrap();
+            assert!(
+                matches!(&linked[2], pawork_domain::ContentPart::Image(image)
+                if image.media_type == "image/png"
+                    && image.alt_text.as_deref() == Some("docs/link.png"))
+            );
+        }
+
+        let error = core
+            .expand_at_refs(None, r#"看图 @"../secret.png""#)
+            .await
+            .expect_err("quoted traversal must fail closed");
+        assert!(
+            error.to_string().contains("path traversal")
+                || error.to_string().contains("escapes workspace"),
+            "{error}"
+        );
     }
 
     #[test]

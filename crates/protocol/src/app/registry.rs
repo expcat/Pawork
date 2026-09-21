@@ -12,7 +12,7 @@ use super::command::AppCommand;
 use super::query::AppQuery;
 use super::version::{
     ApiVersion, V1_0, V1_1, V1_10, V1_11, V1_12, V1_15, V1_16, V1_17, V1_18, V1_19, V1_2, V1_20,
-    V1_21, V1_3, V1_4, V1_5, V1_6, V1_7, V1_8,
+    V1_21, V1_22, V1_3, V1_4, V1_5, V1_6, V1_7, V1_8,
 };
 
 /// GUI 通道访问规格：是否可用 + 命令级所需能力。
@@ -561,6 +561,17 @@ static COMMANDS: &[RegistryEntry] = &[
         since: V1_21,
     },
     RegistryEntry {
+        wire_name: "attachment_upload",
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
+        headless: None,
+        acp: false,
+        idempotent: false,
+        since: V1_22,
+    },
+    RegistryEntry {
         wire_name: "browser_respond",
         gui: GuiChannelAccess {
             available: true,
@@ -851,6 +862,7 @@ pub fn command_wire_name(command: &AppCommand) -> &'static str {
         AppCommand::SetSubagentSettings { .. } => "set_subagent_settings",
         AppCommand::SubagentCancel { .. } => "subagent_cancel",
         AppCommand::SetModelReasoning { .. } => "set_model_reasoning",
+        AppCommand::AttachmentUpload { .. } => "attachment_upload",
     }
 }
 

@@ -87,7 +87,7 @@ impl RunService {
             "run-{}-{run_n}",
             pawork_engine::now_timestamp().as_unix_millis()
         ));
-        self.chat_turn_with_run_id(core, run_id, session_id, messages, render, cancel)
+        self.chat_turn_with_run_id(core, run_id, session_id, messages, render, cancel, None)
             .await
     }
 
@@ -101,6 +101,7 @@ impl RunService {
         mut messages: Vec<Message>,
         render: &dyn AgentEventSink,
         cancel: CancellationToken,
+        web_search: Option<bool>,
     ) -> Result<ModelResponseSummary, AppError> {
         let request_id = run_request_id(core);
         let trigger = messages.last_mut().ok_or(AppError::EmptyTurn)?;
@@ -196,9 +197,9 @@ impl RunService {
         if let Some(effort) = effort {
             request.reasoning = Some(pawork_domain::ReasoningConfig::new(effort));
         }
-        if core.config.web_search == Some(true)
-            && model_rule.permissions.iter().any(|p| p == "network")
-        {
+        // GUI 1.22：RunStart.web_search 仅覆盖本轮；缺省沿用 Global。
+        let enable_web_search = web_search.unwrap_or(core.config.web_search == Some(true));
+        if enable_web_search {
             request.hosted_tools.push(pawork_domain::HostedToolRequest {
                 name: "web_search".into(),
                 kind: pawork_domain::ToolCapabilityTag::WebSearch,
@@ -214,6 +215,7 @@ impl RunService {
         let evidence = core
             .registry
             .capability_evidence(core.model.as_str())
+            .filter(|evidence| evidence.provider.as_ref() == Some(&core.provider_id))
             .unwrap_or_else(|| pawork_providers::registry::CapabilityEvidence {
                 model: core.model.clone(),
                 provider: None,
@@ -513,6 +515,17 @@ mod tests {
             registry,
         );
         core.config.web_search = Some(true);
+        // 主会话搜索不借用子代理模型规则的 network 权限。
+        core.config
+            .subagents
+            .get_or_insert_with(Default::default)
+            .models
+            .push(pawork_workspace::config::SubagentModelConfig {
+                provider_id: "mock".into(),
+                model_id: "mock-search".into(),
+                permissions: vec!["read".into()],
+                ..Default::default()
+            });
 
         let session = core.create_session("search").await.expect("create");
         let sink = RecordingEvents::default();
@@ -534,6 +547,49 @@ mod tests {
             calls[0].hosted_tools
         );
         assert!(!calls[0].has_image);
+
+        let sink = RecordingEvents::default();
+        core.chat_turn_with_run_id(
+            pawork_domain::RunId::from("run-search-off"),
+            &session,
+            vec![user_hello()],
+            &sink,
+            CancellationToken::new(),
+            Some(false),
+        )
+        .await
+        .expect("explicit off must skip hosted search");
+        let calls = provider.calls();
+        assert_eq!(calls.len(), 2);
+        assert!(
+            !calls[1].hosted_tools.contains(&ToolCapabilityTag::WebSearch),
+            "RunStart.web_search=false 须覆盖 Global true：{:?}",
+            calls[1].hosted_tools
+        );
+        core.config.web_search = Some(false);
+        core.chat_turn_with_run_id(
+            pawork_domain::RunId::from("run-search-on"),
+            &session,
+            vec![user_hello()],
+            &sink,
+            CancellationToken::new(),
+            Some(true),
+        )
+        .await
+        .expect("explicit on must override Global false");
+        core.chat_turn(
+            &session,
+            vec![user_hello()],
+            &sink,
+            CancellationToken::new(),
+        )
+        .await
+        .expect("next turn must keep the Global default");
+        let calls = provider.calls();
+        assert_eq!(calls.len(), 4);
+        assert!(calls[2].hosted_tools.contains(&ToolCapabilityTag::WebSearch));
+        assert!(!calls[3].hosted_tools.contains(&ToolCapabilityTag::WebSearch));
+        assert_eq!(core.config.web_search, Some(false));
     }
 
     /// VISION-1 / SEARCH-1：模型未声明能力时 gate 在发 HTTP 前拒绝——
@@ -576,13 +632,29 @@ mod tests {
         let error = core
             .chat_turn(
                 &session,
-                vec![image_message],
+                vec![image_message.clone()],
                 &sink,
                 CancellationToken::new(),
             )
             .await
             .err()
             .expect("image without declaration must fail closed");
+        assert!(matches!(error, crate::AppError::Provider(_)));
+
+        // 同名模型在其它供应商声明图像能力，不得成为当前通道的授权。
+        core.model = pawork_domain::ModelId::from("glm-5.3-flash");
+        let foreign = core.registry.capability_evidence(core.model.as_str()).unwrap();
+        assert!(foreign.merged().image_input);
+        assert_ne!(foreign.provider.as_ref(), Some(&core.provider_id));
+        let error = core
+            .chat_turn(
+                &session,
+                vec![image_message],
+                &sink,
+                CancellationToken::new(),
+            )
+            .await
+            .expect_err("foreign provider capabilities must not authorize an image");
         assert!(matches!(error, crate::AppError::Provider(_)));
     }
 

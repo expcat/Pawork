@@ -1,5 +1,29 @@
 # Pawork 活动路线图：GUI 第二阶段
 
+## Composer 添加菜单与无项目能力（2026-09-21）
+
+用户要求图片与网络搜索不以选择项目为前提，参考加号弹出功能列表；未接通功能登记待办。参考图仅作为交互参考，不代表其中功能已实现。
+
+| 项目 | 当前事实 / 本轮改动 | 剩余工作 |
+| --- | --- | --- |
+| Composer「+」菜单 | 已实现：首页、无项目任务、项目任务均可打开；统一文件、图片、项目文件引用、搜索开关、项目、浏览器、MCP 资源入口；鼠标、键盘、AX 同源 | Desktop 245 项定向回归通过；代理真窗口已核对菜单 / 回焦 / 项目文件引用 / 无项目本机文本附件；用户验收未完成 |
+| 项目文件 / 图片引用 | 复用现有 Host `@"relative path"` 展开；加号进入文件选择状态，文本文件也可加入草稿，普通浏览仍打开编辑器；选择后回输入，不自动发送 | 项目相对引用与本机附件分开；后者见下行 |
+| 无项目网络搜索 | Host 全局 `web_search` 的现有请求链不依赖 workspace；Composer 菜单可切换本轮 `RunStart.web_search`（缺省沿用 Global） | 真实供应商正向验收仍待已声明搜索能力的通道 / 模型 |
+| 本机文件 / 图片附件 | GUI 1.22：系统选择器读取后 64 KiB 分块上传，Host 内存暂存并在 RunStart 转为消息内容；不注册用户目录、不改变项目归属。仅附件发送会丢掉空草稿 Text part | 代理真窗口已核对无项目文本附件上传与持久化；用户验收未完成；真实识图仍待已声明图像能力的通道 / 模型 |
+| 文件夹附加 | 当前只有打开项目，尚无文件夹附件语义 | 明确目录内容范围、数量 / 大小上限和授权，不将目录附加等同于自动授予整个项目写权限 |
+| 目标 | 尚无 GUI 持续目标的设置 / 状态 / 停止链路 | 接通生命周期后再加入可执行菜单项 |
+| 计划模式 | Core / CLI 已有 Plan，GUI 尚无对应命令入口 | 接通创建 / 查看 / 批准 / 拒绝，不用普通草稿文本假冒模式开关 |
+| 浏览器上下文附加 | 已有内置任务浏览器，可从菜单打开；尚不能附加外部 Edge / Chrome 当前页 | 页面选择、上下文快照及来源展示；内置浏览器打开不等于附加页面 |
+| 技能录制 / 绘图 / 插件功能列表 | 尚无录制或绘图交互，MCP 资源不等于插件市场 | 分别定义产物和接入范围；不显示无行为的可点击占位项 |
+
+**协议边界（GUI 1.22）**：本轮搜索使用可选 `RunStart.web_search`（缺省沿用 Global，显式值仅本轮有效）；本机附件经 `attachment_upload` 分块暂存后由 `RunStart.attachment_ids` 引用。保持现有 1 MiB 帧上限、单块 64 KiB、整件 8 MiB、Host 校验及模型能力闸；旧 minor / 非本机 GUI 遇新字段 fail-closed。
+
+**验证**：`bash scripts/test.sh protocol app client` 502 passed；`bash scripts/test.sh desktop` 245 passed。覆盖协议 golden / typegen、无项目附件消费与消息持久化、分块 / 容量 / 客户端和会话隔离、旧 minor / 非本机来源拒绝、搜索双向覆盖且不修改下一轮默认、附件草稿隔离和失败保留。`cargo build --offline -p pawork -p pawork-desktop --bins --features gpui/runtime_shaders` 与 `git diff --check` 通过。本机命令使用 `/tmp/pawork-feature-audit/{rustc-wrapper,test-runner}.py` 复用现有增量依赖，未清理 target；日志 `/tmp/pawork-composer-{backend-final-tests,desktop-final-tests,release-candidate-build}.log`。
+
+**代理真窗口**：最终候选 `/tmp/Pawork-composer-verified.app` 连接隔离 Host `composer-check`，当次指定 `opencode-go / glm-5.3-flash`。无项目首页「+」→ 系统文件选择器 → 附加 `note.txt` → 发送；模型正确回复文件中的 `52719`，SQLite 核对任务 `ses-1789971836009-1` 的 `workspace_id=null`、`run-gui-1789971836014-1` completed，用户消息持久化包含完整附件及不可信参考资料标记。窗口另核对搜索开启后的能力提示与禁发、关闭后恢复、无项目图片选择 / 移除与回焦。最终二进制哈希和存储摘要见 `/tmp/pawork-composer-check/evidence.json`。此前仅附件发送的真窗口记录保留于 `/tmp/pawork-composer-upload/evidence.json`。指定模型没有声明图像 / 托管搜索能力，因此这些真实 Provider 正向路径仍待验；未以切换其他模型绕过验证约定。Full workspace gate: NOT RUN。
+
+**状态**：无项目本机文本附件已实现，定向自动检查与上述代理真窗口路径通过；用户验收未完成；真实图像 / 托管搜索正向验收仍待已声明能力的通道 / 模型；未提交、未发布、未归档。
+
 > 2026-09-20 新活动线：[测试与门禁重构](testing-refactor-plan.md)。先完成全范围分析规划，再按用途与边界分批核查、精简和验证；GUI 历史状态保留。
 
 > 更新：2026-09-15；规划基线：`main / 7a416dd6`，当前主干 `e754f4c5`。2026-09-13 [ADR-061](spec/settings.md#adr-061账号默认名称与重命名2026-09-13) 将 Settings 账号改为默认名（邮箱 / API key 脱敏串）+ 可重命名，Go 三窗用进度条表示已用百分比；GUI API 1.17。2026-09-14 代理完成 §2.2 全部真窗口验收（V-01～V-12 与 ADR-061，证据 /tmp/pawork-vfix-evidence/）；同日下午补齐非空 MCP（GUI 内成功执行）与 GUI3-04 401 CTA（§2.2 末尾补录，含一次凭证操作事故登记，需用户重录 DeepSeek key），用户视觉验收仍未做。本阶段以 [PI-Desktop Screens](https://pi-docs.aiuo.net/guide/screenshots) 为交互与视觉参照，优化已有 GPUI 工作台。**GUI2-01～06 已实现并完成定向自动检查，等待用户验收；GUI2-02 真窗口限制见下文；GUI2-05 / 06 代理真窗口随 GUI2-07 批次完成；GUI2-07 于 2026-09-14 完成真窗口验收并同批复验 §4 GUI3 呈现（证据 /tmp/pawork-gui2-07-evidence/）**；生产能力以源码为准，下一阶段规格见 [GUI 设计](gui-design.md)。2026-09-12 完成一轮显示效果 Review，结论与新增的 GUI3 视觉任务见 [§4](#4-显示效果-review2026-09-12与-gui3-视觉任务)；同日 GUI3-01～07 已由子代理实现并通过 Desktop 定向测试（主代理逐 hunk 审查），代理真窗口 2026-09-14 随 GUI2-07 批次复验（01～03、05～07 通过，04 的 401 CTA 当日下午补齐、08 动效留人工），用户验收未进行；GUI3-08 已按 PI 暗色截图确认有限动效（不循环）并落地，定向测试见本轮报告。2026-09-13 用户在本机 `desktop` 真窗口走查当前工作区候选，疑似问题记 [§2.1](#21-用户视觉走查发现2026-09-13)。2026-09-15 工作区落地 GUI4 壳层收口：StatusBar 三栏（项目 / 分支 · 用量 · 反馈或连接）与共享 `EmptyState`（首页 / Changes / Resources），字号与操作提示改落右栏，Composer 不再承载瞬态 hint。

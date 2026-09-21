@@ -104,6 +104,8 @@ pub struct GuiHostAdapter {
     /// SET-4：flight 值携带种类标记（api_key 验证 / OAuth 等待），auth_cancel
     /// 仅对 OAuth 等待放行（D3）。
     pub(crate) auth_flights: handlers::settings::AuthFlights,
+    /// GUI 1.22：本机附件分块暂存。字节只在内存，不落盘、不进命令账本。
+    pub(crate) attachments: Arc<Mutex<handlers::attachments::AttachmentStore>>,
 }
 
 impl GuiHostAdapter {
@@ -164,6 +166,7 @@ impl GuiHostAdapter {
             terminals: Arc::new(Mutex::new(HashMap::new())),
             browser: Arc::new(browser_tool::BrowserBroker::default()),
             auth_flights: Arc::new(Mutex::new(HashMap::new())),
+            attachments: Arc::new(Mutex::new(handlers::attachments::AttachmentStore::new())),
         }
     }
 
@@ -611,6 +614,13 @@ impl GuiHost for GuiHostAdapter {
                 return Err(error);
             }
         };
+        if matches!(envelope.command, AppCommand::AttachmentUpload { .. }) {
+            // 附件字节只在内存；账本重放会在 Host 重启后假装已暂存。
+            ledger
+                .release(&tenant, &command_id, idempotency_key.as_deref())
+                .await;
+            return Ok(response);
+        }
         let cached = AppResponseEnvelope {
             api_version: envelope.api_version,
             request_id: QueryId::from(envelope.command_id.as_str()),
@@ -863,6 +873,7 @@ gui_command_dispatch! {
     "set_subagent_settings" => command_set_subagent_settings = handlers::subagents::set_settings;
     "subagent_cancel" => command_subagent_cancel = handlers::subagents::cancel;
     "set_model_reasoning" => command_set_model_reasoning = handlers::settings::set_model_reasoning;
+    "attachment_upload" => command_attachment_upload = handlers::attachments::upload;
 }
 
 impl GuiHostAdapter {

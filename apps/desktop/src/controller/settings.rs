@@ -803,13 +803,13 @@ impl DesktopController {
 
     /// 拉取某会话的子代理列表（subagent_list；Activity 浮层「子智能体」
     /// 卡）。返回是否已派出（断线时 UI 保留旧数据并停 loading）。
-    pub fn load_subagent_list(&self, session_id: String) -> bool {
+    pub fn load_subagent_list(&self, session_id: String, request_id: u64) -> bool {
         let Some(client) = self.current_client() else {
             return false;
         };
         let events = self.event_sender();
         self.runtime.spawn(async move {
-            match client
+            let result = match client
                 .query(
                     subagent_list_query(&session_id),
                     command_source(),
@@ -817,28 +817,44 @@ impl DesktopController {
                 )
                 .await
             {
-                Ok(response) => match parse_subagent_list_response(&response) {
-                    Ok(data) => {
-                        let _ = events
-                            .send(ControllerEvent::SubagentListLoaded { session_id, data })
-                            .await;
-                    }
-                    Err(reason) => try_emit(
-                        &events,
-                        ControllerEvent::OperationFailed {
-                            action: "load subagent list",
-                            reason,
-                        },
-                    ),
+                Ok(response) => parse_subagent_list_response(&response),
+                Err(error) => Err(error.to_string()),
+            };
+            let event = match result {
+                Ok(data) => ControllerEvent::SubagentListLoaded {
+                    session_id,
+                    request_id,
+                    data,
                 },
-                Err(error) => try_emit(
-                    &events,
-                    ControllerEvent::OperationFailed {
-                        action: "load subagent list",
-                        reason: error.to_string(),
-                    },
-                ),
-            }
+                Err(reason) => ControllerEvent::SubagentListFailed {
+                    session_id,
+                    request_id,
+                    reason,
+                },
+            };
+            let _ = events.send(event).await;
+        });
+        true
+    }
+
+    pub fn cancel_subagent(&self, session_id: String, agent_id: String) -> bool {
+        let Some(client) = self.current_client() else {
+            return false;
+        };
+        let events = self.event_sender();
+        self.runtime.spawn(async move {
+            let command = serde_json::from_value(json!({
+                "method": "subagent_cancel", "params": {"session_id": session_id, "agent_id": agent_id}
+            })).expect("subagent_cancel command shape is frozen");
+            let result = match client.command(command, command_source(), actor_identity()).await {
+                Ok(response) => match response.response {
+                    AppResponse::Accepted { .. } => Ok(()),
+                    AppResponse::Error(error) => Err(error.message),
+                    other => Err(format!("unexpected response: {other:?}")),
+                },
+                Err(error) => Err(error.to_string()),
+            };
+            let _ = events.send(ControllerEvent::SubagentCancelFinished { session_id, agent_id, result }).await;
         });
         true
     }

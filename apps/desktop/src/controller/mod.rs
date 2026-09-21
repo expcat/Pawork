@@ -32,6 +32,10 @@ pub(super) const MAX_PAGES: usize = 200;
 /// UI 消费的控制器事件（经 smol channel 跨线程投递）。
 #[derive(Clone, Debug)]
 pub enum ControllerEvent {
+    ComposerAttachmentsLoaded {
+        draft: Option<String>,
+        result: Result<Vec<ComposerAttachment>, String>,
+    },
     WorkspaceFileResult {
         workspace_id: String,
         path: String,
@@ -156,7 +160,18 @@ pub enum ControllerEvent {
     /// subagent_list 查询成功（Activity 浮层「子智能体」卡；按 session 落地）。
     SubagentListLoaded {
         session_id: String,
+        request_id: u64,
         data: SubagentListData,
+    },
+    SubagentListFailed {
+        session_id: String,
+        request_id: u64,
+        reason: String,
+    },
+    SubagentCancelFinished {
+        session_id: String,
+        agent_id: String,
+        result: Result<(), String>,
     },
     /// 子代理会话时间线一页（Inspector「子代理」对话栏；session_id 为
     /// 子会话 id，与主 TimelineLoaded 分流，互不污染）。generation 为
@@ -363,8 +378,10 @@ pub struct DesktopController {
     state: Arc<SharedState>,
 }
 
+mod attachments;
 mod browser;
 mod files;
+pub use attachments::{ComposerAttachment, ComposerOptions};
 pub use files::FileOperation;
 mod session;
 mod settings;
@@ -1174,6 +1191,7 @@ pub(super) fn run_start_command(
     text: &str,
     model: Option<&(String, String)>,
     effort: Option<&str>,
+    options: &ComposerOptions,
 ) -> AppCommand {
     let mut params = json!({
         "session_id": session_id,
@@ -1187,6 +1205,16 @@ pub(super) fn run_start_command(
     // 省略参数，Host 回落 [reasoning] 模型默认 → Provider 默认。
     if let Some(effort) = effort {
         params["effort"] = json!(effort);
+    }
+    if !options.attachments.is_empty() {
+        params["attachment_ids"] = json!(options
+            .attachments
+            .iter()
+            .map(|a| &a.id)
+            .collect::<Vec<_>>());
+    }
+    if let Some(search) = options.web_search {
+        params["web_search"] = json!(search);
     }
     serde_json::from_value(json!({
         "method": "run_start",
@@ -2021,6 +2049,7 @@ mod tests {
             "hi",
             Some(&("deepseek".into(), "deepseek-v4-flash".into())),
             Some("high"),
+            &ComposerOptions::default(),
         );
         let value = serde_json::to_value(&command).expect("serialize run_start");
         assert_eq!(value["method"], "run_start");
@@ -2028,9 +2057,24 @@ mod tests {
         assert_eq!(value["params"]["model"], "deepseek-v4-flash");
         assert_eq!(value["params"]["effort"], "high");
         // 未显式选择（自动）时省略 effort 参数（ADR-063 回落语义）。
-        let command = run_start_command("s-1", "hi", None, None);
+        let command = run_start_command("s-1", "hi", None, None, &ComposerOptions::default());
         let value = serde_json::to_value(&command).expect("serialize run_start");
         assert!(value["params"].get("effort").is_none());
+        assert!(value["params"].get("attachment_ids").is_none());
+        assert!(value["params"].get("web_search").is_none());
+        let options = ComposerOptions {
+            attachments: vec![ComposerAttachment {
+                id: "picked-1".into(),
+                name: "image.png".into(),
+                bytes: Arc::new(vec![1]),
+                image: true,
+            }],
+            web_search: Some(false),
+        };
+        let value = serde_json::to_value(run_start_command("unassigned", "", None, None, &options))
+            .unwrap();
+        assert_eq!(value["params"]["attachment_ids"], json!(["picked-1"]));
+        assert_eq!(value["params"]["web_search"], false);
     }
 
     #[test]

@@ -482,6 +482,7 @@ impl DesktopController {
         text: String,
         model: Option<(String, String)>,
         effort: Option<String>,
+        options: super::ComposerOptions,
     ) {
         let Some(client) = self.current_client() else {
             // 断线不是静默成功：可靠回执让 Composer 立刻可见失败原因。
@@ -493,7 +494,35 @@ impl DesktopController {
         };
         let events = self.event_sender();
         self.runtime.spawn(async move {
-            let command = run_start_command(&session_id, &text, model.as_ref(), effort.as_deref());
+            if (!options.attachments.is_empty() || options.web_search.is_some())
+                && client.api_version().minor < 22
+            {
+                let _ = events
+                    .send(ControllerEvent::OperationFailed {
+                        action: "send message",
+                        reason: "Attachments and web search require Host API 1.22".into(),
+                    })
+                    .await;
+                return;
+            }
+            if let Err(reason) =
+                super::attachments::upload(&client, &session_id, &options.attachments).await
+            {
+                let _ = events
+                    .send(ControllerEvent::OperationFailed {
+                        action: "send message",
+                        reason,
+                    })
+                    .await;
+                return;
+            }
+            let command = run_start_command(
+                &session_id,
+                &text,
+                model.as_ref(),
+                effort.as_deref(),
+                &options,
+            );
             match client
                 .command(command, command_source(), actor_identity())
                 .await
@@ -504,6 +533,17 @@ impl DesktopController {
                         ..
                     } => {
                         let run_id = run_id.as_str().to_string();
+                        let text = if options.attachments.is_empty() {
+                            text
+                        } else {
+                            let names = options
+                                .attachments
+                                .iter()
+                                .map(|a| a.name.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            format!("{text}\n\n📎 {names}").trim().to_string()
+                        };
                         let _ = events
                             .send(ControllerEvent::MessageSent {
                                 session_id,

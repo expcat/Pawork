@@ -1505,13 +1505,19 @@ impl AppCore {
         messages: Vec<Message>,
         render: &'a dyn AgentEventSink,
         cancel: CancellationToken,
+        web_search: Option<bool>,
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<ModelResponseSummary, AppError>> + Send + 'a>,
     > {
-        Box::pin(
-            self.run
-                .chat_turn_with_run_id(self, run_id, session_id, messages, render, cancel),
-        )
+        Box::pin(self.run.chat_turn_with_run_id(
+            self,
+            run_id,
+            session_id,
+            messages,
+            render,
+            cancel,
+            web_search,
+        ))
     }
 
     pub(crate) async fn projected_run_usage(

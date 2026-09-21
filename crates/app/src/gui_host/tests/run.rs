@@ -61,6 +61,8 @@ async fn run_success_auto_titles_placeholder_session_and_broadcasts() {
             provider: None,
             profile: None,
             effort: None,
+            attachment_ids: Vec::new(),
+            web_search: None,
         }))
         .await
         .expect("run accepted");
@@ -280,6 +282,8 @@ async fn auto_title_without_naming_config_skips_provider_call() {
             provider: None,
             profile: None,
             effort: None,
+            attachment_ids: Vec::new(),
+            web_search: None,
         }))
         .await
         .expect("run accepted");
@@ -335,6 +339,8 @@ async fn auto_title_failure_keeps_placeholder_title() {
             provider: None,
             profile: None,
             effort: None,
+            attachment_ids: Vec::new(),
+            web_search: None,
         }))
         .await
         .expect("run accepted");
@@ -400,6 +406,8 @@ async fn run_start_expands_at_refs_into_separate_parts() {
             provider: None,
             profile: None,
             effort: None,
+            attachment_ids: Vec::new(),
+            web_search: None,
         }))
         .await
         .expect("run accepted");
@@ -477,6 +485,8 @@ async fn run_start_expand_at_refs_failure_does_not_leave_active_run() {
             provider: None,
             profile: None,
             effort: None,
+            attachment_ids: Vec::new(),
+            web_search: None,
         }))
         .await
         .expect_err("stale @file must fail closed");
@@ -513,6 +523,8 @@ async fn run_start_without_at_token_passes_single_text_part() {
             provider: None,
             profile: None,
             effort: None,
+            attachment_ids: Vec::new(),
+            web_search: None,
         }))
         .await
         .expect("run accepted");
@@ -570,6 +582,8 @@ async fn run_start_reports_run_and_registry_drains_after_completion() {
             provider: None,
             profile: None,
             effort: None,
+            attachment_ids: Vec::new(),
+            web_search: None,
         }))
         .await
         .expect("run accepted");
@@ -636,6 +650,8 @@ async fn run_start_provider_failure_broadcasts_single_terminal_without_synthetic
             provider: None,
             profile: None,
             effort: None,
+            attachment_ids: Vec::new(),
+            web_search: None,
         }))
         .await
         .expect("run accepted");
@@ -688,6 +704,8 @@ async fn run_start_cancel_broadcasts_cancelled_without_synthetic_failed() {
             provider: None,
             profile: None,
             effort: None,
+            attachment_ids: Vec::new(),
+            web_search: None,
         }))
         .await
         .expect("run accepted");
@@ -769,6 +787,8 @@ async fn run_start_early_death_without_terminal_still_synthesizes_failed() {
             provider: None,
             profile: None,
             effort: None,
+            attachment_ids: Vec::new(),
+            web_search: None,
         }))
         .await
         .expect("run accepted");
@@ -971,6 +991,8 @@ async fn run_start_switches_same_registry_model_and_unknown_fails_closed() {
             provider: None,
             profile: None,
             effort: None,
+            attachment_ids: Vec::new(),
+            web_search: None,
         }))
         .await
         .expect("same-registry model switch");
@@ -984,6 +1006,8 @@ async fn run_start_switches_same_registry_model_and_unknown_fails_closed() {
             provider: None,
             profile: None,
             effort: None,
+            attachment_ids: Vec::new(),
+            web_search: None,
         }))
         .await
         .expect_err("unknown model must fail closed");
@@ -1064,6 +1088,8 @@ async fn run_start_second_turn_includes_session_history() {
             provider: None,
             profile: None,
             effort: None,
+            attachment_ids: Vec::new(),
+            web_search: None,
         }))
         .await
         .expect("first run");
@@ -1084,6 +1110,8 @@ async fn run_start_second_turn_includes_session_history() {
             provider: None,
             profile: None,
             effort: None,
+            attachment_ids: Vec::new(),
+            web_search: None,
         }))
         .await
         .expect("second run");
@@ -1193,6 +1221,8 @@ async fn run_start_with_provider_does_not_silently_keep_same_model_id() {
             provider: Some(pawork_domain::ProviderId::from("opencode-go")),
             profile: None,
             effort: None,
+            attachment_ids: Vec::new(),
+            web_search: None,
         }))
         .await
         .expect_err("same model id on another channel must not silently accept");
@@ -1245,6 +1275,8 @@ async fn run_start_fails_closed_when_model_disabled() {
             provider: None,
             profile: None,
             effort: None,
+            attachment_ids: Vec::new(),
+            web_search: None,
         }))
         .await
         .expect_err("disabled effective model must fail closed");
@@ -1263,9 +1295,137 @@ async fn run_start_fails_closed_when_model_disabled() {
             provider: None,
             profile: None,
             effort: None,
+            attachment_ids: Vec::new(),
+            web_search: None,
         }))
         .await
         .expect_err("disabled requested model must fail closed");
     assert_eq!(error.code, "model_disabled", "error: {error:?}");
     assert!(adapter.runs.active().is_empty());
+}
+
+#[tokio::test]
+async fn local_attachment_upload_and_run_start_consume_staged_bytes() {
+    let dir = tempfile::tempdir().expect("store");
+    let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
+        .await
+        .expect("store");
+    let provider = MockProvider::sequence(vec![MockScript::new().text("ok").complete()]);
+    let core = AppCore::from_parts(
+        Arc::new(provider),
+        None,
+        pawork_domain::ModelId::from("model-1"),
+        pawork_domain::ProviderId::from("mock"),
+        Some(store),
+    );
+    let session = core.create_session("attachments").await.expect("session");
+    let adapter = GuiHostAdapter::new(Arc::new(core));
+    let mut events = adapter.subscribe_events();
+    let mut upload = command_envelope(AppCommand::AttachmentUpload {
+        session_id: session.clone(),
+        attachment_id: "att-1".into(),
+        name: "note.txt".into(),
+        offset: 0,
+        total_bytes: 5,
+        data: b"hello".to_vec(),
+    });
+    upload.source = CommandSource::LocalGui {
+        client_id: "gui-att".into(),
+    };
+    let AppResponse::Data(data) = adapter.command(&upload).await.expect("upload") else {
+        panic!("upload must return data");
+    };
+    assert_eq!(data["attachment_id"], "att-1");
+
+    let mut old = command_envelope(AppCommand::RunStart {
+        session_id: session.clone(),
+        user_message: String::new(),
+        model: None,
+        provider: None,
+        profile: None,
+        effort: None,
+        attachment_ids: vec!["att-1".into()],
+        web_search: None,
+    });
+    old.api_version = pawork_protocol::ApiVersion::new(1, 21);
+    old.source = CommandSource::LocalGui {
+        client_id: "gui-att".into(),
+    };
+    let error = adapter.command(&old).await.expect_err("old minor must fail closed");
+    assert_eq!(error.code, "unsupported");
+
+    let automation = command_envelope(AppCommand::RunStart {
+        session_id: session.clone(),
+        user_message: String::new(),
+        model: None,
+        provider: None,
+        profile: None,
+        effort: None,
+        attachment_ids: vec!["att-1".into()],
+        web_search: None,
+    });
+    let error = adapter
+        .command(&automation)
+        .await
+        .expect_err("automation must not consume local attachments");
+    assert_eq!(error.code, "unsupported");
+
+    let mut start = command_envelope(AppCommand::RunStart {
+        session_id: session.clone(),
+        user_message: String::new(),
+        model: None,
+        provider: None,
+        profile: None,
+        effort: None,
+        attachment_ids: vec!["att-1".into()],
+        web_search: Some(false),
+    });
+    start.source = CommandSource::LocalGui {
+        client_id: "gui-att".into(),
+    };
+    let AppResponse::Accepted {
+        run_id: Some(run_id),
+        ..
+    } = adapter.command(&start).await.expect("run accepted")
+    else {
+        panic!("RunStart must be accepted");
+    };
+    wait_run_completed(&mut events, &run_id).await;
+
+    let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
+        .await
+        .expect("reopen store");
+    let messages = store
+        .projection_snapshot(&session)
+        .await
+        .expect("projection snapshot")
+        .messages;
+    let user = messages
+        .iter()
+        .rev()
+        .find(|message| message.role == MessageRole::User)
+        .expect("user message persisted");
+    match &user.content[0] {
+        ContentPart::Text(text) => {
+            assert!(text.text.contains("note.txt"), "{:?}", text.text);
+            assert!(text.text.contains("hello"), "{:?}", text.text);
+        }
+        other => panic!("expected attached text: {other:?}"),
+    }
+
+    let mut reuse = command_envelope(AppCommand::RunStart {
+        session_id: session,
+        user_message: "again".into(),
+        model: None,
+        provider: None,
+        profile: None,
+        effort: None,
+        attachment_ids: vec!["att-1".into()],
+        web_search: None,
+    });
+    reuse.source = CommandSource::LocalGui {
+        client_id: "gui-att".into(),
+    };
+    let error = adapter.command(&reuse).await.expect_err("consumed id must fail");
+    assert_eq!(error.code, "invalid_attachment");
 }

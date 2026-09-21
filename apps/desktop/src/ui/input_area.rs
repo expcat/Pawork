@@ -4,21 +4,79 @@
 //! Forked / 发送失败等瞬态反馈落 StatusBar 右栏。
 
 use gpui::{
-    Context, Corner, Pixels, Point, SharedString, TextRun, Window, div, point, prelude::*, px,
+    div, point, prelude::*, px, Context, Corner, Pixels, Point, SharedString, TextRun, Window,
 };
 
-use crate::projection::{
-    ConnectionState, ModelEntry, ProviderAuthStatusEntry, find_model_entry,
-};
+use crate::projection::{find_model_entry, ConnectionState, ModelEntry, ProviderAuthStatusEntry};
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
-use crate::ui::components::dropdown::{ANCHOR_GAP_Y, Dropdown, MenuPanel};
-use crate::ui::components::icon::{Icon, icon, icon_sized};
+use crate::ui::components::dropdown::{Dropdown, MenuPanel, ANCHOR_GAP_Y};
+use crate::ui::components::icon::{icon, icon_sized, Icon};
 use crate::ui::components::label::Label;
 use crate::ui::i18n::{t, t2};
 use crate::ui::settings::settings_role_candidates;
 use crate::ui::theme::{dark, font, metrics};
 
-use super::{AppView, MenuKind};
+use super::{AppView, InspectorTab, MenuKind};
+
+/// Stable actions shared by the visual menu, keyboard navigation and AX.
+#[derive(Clone, Copy)]
+pub(super) enum ComposerAction {
+    Files,
+    Image,
+    ProjectFiles,
+    Search,
+    Project,
+    Browser,
+    Resources,
+}
+
+impl ComposerAction {
+    pub(super) const ALL: [Self; 7] = [
+        Self::Files,
+        Self::Image,
+        Self::ProjectFiles,
+        Self::Search,
+        Self::Project,
+        Self::Browser,
+        Self::Resources,
+    ];
+
+    pub(super) fn id(self) -> &'static str {
+        match self {
+            Self::Files => "composer-add-files",
+            Self::Image => "composer-add-image",
+            Self::ProjectFiles => "composer-add-project-files",
+            Self::Search => "composer-add-search",
+            Self::Project => "composer-add-project",
+            Self::Browser => "composer-add-browser",
+            Self::Resources => "composer-add-resources",
+        }
+    }
+
+    pub(super) fn label(self) -> &'static str {
+        t(match self {
+            Self::Files => "composer.add_files",
+            Self::Image => "files.attach_image",
+            Self::ProjectFiles => "composer.project_files",
+            Self::Search => "composer.add_search",
+            Self::Project => "composer.project_task",
+            Self::Browser => "inspector.tab_browser",
+            Self::Resources => "inspector.tab_resources",
+        })
+    }
+
+    fn icon(self) -> Icon {
+        match self {
+            Self::Files => Icon::File,
+            Self::Image => Icon::Link,
+            Self::ProjectFiles => Icon::File,
+            Self::Search => Icon::Search,
+            Self::Project => Icon::Project,
+            Self::Browser => Icon::Network,
+            Self::Resources => Icon::Resources,
+        }
+    }
+}
 
 /// Composer 伪二级目录：已连接且至少有一个已启用模型的供应商，组头 + 组内
 /// 模型同一列表展开。未连接或 0 启用整组不出现。
@@ -34,10 +92,16 @@ pub(super) fn composer_model_menu_groups(
             let models: Vec<_> = models
                 .into_iter()
                 .filter(|model| {
+                    if query == t("model_capability.search").to_lowercase() {
+                        return model.web_search;
+                    }
                     query.is_empty()
                         || provider.to_lowercase().contains(&query)
                         || model.display_name.to_lowercase().contains(&query)
                         || model.id.to_lowercase().contains(&query)
+                        || model_capability_label(model)
+                            .to_lowercase()
+                            .contains(&query)
                 })
                 .collect();
             (!models.is_empty()).then_some((provider, models))
@@ -87,6 +151,17 @@ pub(super) fn model_menu_row_title<'a>(display_name: &'a str, id: &'a str) -> &'
     }
 }
 
+pub(super) fn model_capability_label(model: &ModelEntry) -> String {
+    [
+        (model.image_input, t("model_capability.image")),
+        (model.web_search, t("model_capability.search")),
+    ]
+    .into_iter()
+    .filter_map(|(supported, label)| supported.then_some(label))
+    .collect::<Vec<_>>()
+    .join(" · ")
+}
+
 /// 可点击模型的扁平顺序（组头不计入）；鼠标、键盘与 AX 同源。
 pub(super) fn grouped_model_menu_entries(
     models: &[ModelEntry],
@@ -111,6 +186,147 @@ pub(super) fn model_catalog_empty_state(
 }
 
 impl AppView {
+    pub(super) fn on_composer_add_menu(
+        &mut self,
+        down: Option<Point<Pixels>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_menu(MenuKind::ComposerAdd, down, cx);
+    }
+
+    pub(super) fn composer_action_enabled(&self, action: ComposerAction) -> bool {
+        match action {
+            ComposerAction::Files | ComposerAction::Image => {
+                !self.composer_loading && !self.composer_sending
+            }
+            ComposerAction::ProjectFiles => self.can_attach_image() && !self.composer_sending,
+            ComposerAction::Search => !self.composer_sending,
+            ComposerAction::Project => self.can_create_task(),
+            ComposerAction::Browser => true,
+            ComposerAction::Resources => matches!(
+                self.projection.connection,
+                ConnectionState::Connected { .. }
+            ),
+        }
+    }
+
+    pub(super) fn composer_action_hint(&self, action: ComposerAction) -> &'static str {
+        match action {
+            ComposerAction::Files | ComposerAction::Image => t("composer.local_files"),
+            ComposerAction::Search => t("composer.search_hint"),
+            _ => "",
+        }
+    }
+
+    pub(super) fn activate_composer_action(
+        &mut self,
+        action: ComposerAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.composer_action_enabled(action) {
+            return;
+        }
+        self.close_open_menu(cx);
+        match action {
+            ComposerAction::ProjectFiles => self.on_attach_image(window, cx),
+            ComposerAction::Files => self.pick_composer_attachments(false, window, cx),
+            ComposerAction::Image => self.pick_composer_attachments(true, window, cx),
+            ComposerAction::Search => self.toggle_composer_search(cx),
+            ComposerAction::Project => self.on_project_task_menu(None, window, cx),
+            ComposerAction::Browser | ComposerAction::Resources => {
+                let tab = if matches!(action, ComposerAction::Browser) {
+                    InspectorTab::Browser
+                } else {
+                    InspectorTab::Resources
+                };
+                self.select_inspector_tab(tab, cx);
+                if !self.inspector_open {
+                    self.on_toggle_inspector(window, cx);
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    fn composer_add_menu_element(&mut self, cx: &mut Context<Self>) -> MenuPanel {
+        let scroll = self
+            .settings_element_layouts
+            .entry("composer-add-menu".into())
+            .or_default()
+            .clone();
+        let highlight = self.menu_highlight_effective(self.menu_selected_index());
+        let mut list = div().w(px(320.0)).flex().flex_col();
+        for (ix, action) in ComposerAction::ALL.into_iter().enumerate() {
+            let enabled = self.composer_action_enabled(action);
+            let hint = self.composer_action_hint(action);
+            let mut row = self
+                .settings_element(action.id())
+                .w_full()
+                .px_2()
+                .py_2()
+                .rounded(px(metrics::CONTROL_RADIUS))
+                .bg(if enabled && ix == highlight {
+                    dark().surface.raised
+                } else {
+                    dark().bg.menu
+                })
+                .text_color(if enabled {
+                    dark().text.primary
+                } else {
+                    dark().text.ghost
+                })
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(icon_sized(action.icon(), px(metrics::ICON_SM)))
+                        .child(action.label()),
+                )
+                .when(!hint.is_empty(), |row| {
+                    row.child(
+                        div()
+                            .text_size(font::XS)
+                            .text_color(dark().text.secondary)
+                            .whitespace_normal()
+                            .child(hint),
+                    )
+                });
+            if enabled {
+                row = row
+                    .cursor_pointer()
+                    .hover(|style| style.bg(dark().surface.hover))
+                    .on_hover(cx.listener(move |view, hovered: &bool, _, cx| {
+                        if *hovered {
+                            view.menu_highlight = Some(ix);
+                            cx.notify();
+                        }
+                    }))
+                    .on_click(cx.listener(move |view, _, window, cx| {
+                        view.activate_composer_action(action, window, cx)
+                    }));
+            }
+            list = list.child(row);
+        }
+        MenuPanel::new("composer-add-menu")
+            .track_scroll(&scroll)
+            .max_height(400.0)
+            .dismiss_on_outside(cx.listener(|view, event: &gpui::MouseDownEvent, _, cx| {
+                view.dismiss_menu_on_outside(MenuKind::ComposerAdd, event.position, cx)
+            }))
+            .child(list)
+    }
+
+    pub(super) fn can_attach_image(&self) -> bool {
+        self.projection.active_session_id.is_some()
+            && self.projection.active_workspace_id().is_some()
+            && matches!(
+                self.projection.connection,
+                ConnectionState::Connected { .. }
+            )
+    }
+
     pub(super) fn composer_element(
         &mut self,
         window: &Window,
@@ -130,6 +346,40 @@ impl AppView {
             self.composer_workspace_label()
         };
         let meta_height = Self::composer_meta_height(window);
+        let attachment_focus = self
+            .settings_action_focus
+            .entry("composer-attach".into())
+            .or_insert_with(|| cx.focus_handle().tab_stop(true))
+            .clone();
+        let attachment = Button::new("composer-attach")
+            .track_focus(&attachment_focus)
+            .variant(ButtonVariant::Ghost)
+            .height(px(metrics::COMPOSER_FOOTER_CONTROL))
+            .width(px(metrics::COMPOSER_FOOTER_CONTROL))
+            .child(icon_sized(Icon::Plus, px(metrics::ICON_SM)))
+            .tooltip(t("composer.add"))
+            .on_click(cx.listener(|view, event, _window, cx| {
+                if !view.consume_button_key_click("composer-attach", event) {
+                    view.on_composer_add_menu(Self::click_down_position(event), cx);
+                }
+            }))
+            .on_activate(cx.listener(|view, _, _window, cx| {
+                view.note_button_key_activate("composer-attach");
+                if view.open_menu.is_some() {
+                    return;
+                }
+                view.on_composer_add_menu(None, cx);
+                cx.stop_propagation();
+            }));
+        let mut attachment = Dropdown::new(attachment)
+            .panel_anchor(Corner::BottomLeft, point(px(0.0), px(-ANCHOR_GAP_Y)));
+        if matches!(self.open_menu, Some(MenuKind::ComposerAdd)) {
+            attachment = attachment.panel(self.composer_add_menu_element(cx));
+        }
+        let attachment = self
+            .settings_element("composer-attach")
+            .flex_none()
+            .child(attachment);
         let input_focused = self.composer_focus_handle(cx).is_focused(window);
         self.sync_composer_placeholder(composer_hint.clone(), cx);
 
@@ -335,6 +585,9 @@ impl AppView {
             send.into_any_element()
         };
 
+        let options = self.current_composer_options();
+        let has_options = !options.attachments.is_empty() || options.web_search.is_some();
+        let attachments = self.composer_attachments_element(cx);
         let card = div()
             .id("composer-card")
             .track_scroll(&self.composer_layouts["composer-card"])
@@ -345,7 +598,9 @@ impl AppView {
             .gap(px(metrics::COMPOSER_GAP))
             .p(px(metrics::COMPOSER_PAD))
             .min_h(px(metrics::COMPOSER_PANEL_MIN_HEIGHT))
-            .max_h(px(metrics::COMPOSER_PANEL_MAX_HEIGHT))
+            .max_h(px(
+                metrics::COMPOSER_PANEL_MAX_HEIGHT + if has_options { 108.0 } else { 0.0 }
+            ))
             .border_1()
             .border_color(if input_focused {
                 dark().accent.primary
@@ -355,6 +610,7 @@ impl AppView {
             .rounded(px(metrics::COMPOSER_RADIUS))
             .bg(dark().surface.raised)
             .shadow_sm()
+            .when(has_options, |card| card.child(attachments))
             .child(
                 div()
                     .flex()
@@ -370,6 +626,7 @@ impl AppView {
                     .gap(px(metrics::SPACE_2))
                     .h(px(metrics::COMPOSER_SEND_SIZE))
                     .flex_none()
+                    .child(attachment)
                     .child(
                         div()
                             .id("composer-model-slot")
@@ -524,8 +781,21 @@ impl AppView {
         notes
     }
 
+    pub(super) fn composer_options_height(&self) -> f32 {
+        let options = self.current_composer_options();
+        if options.attachments.is_empty() && options.web_search.is_none() {
+            return 0.0;
+        }
+        self.settings_element_layouts
+            .get("composer-options")
+            .map(|handle| f32::from(handle.bounds().size.height))
+            .unwrap_or(0.0)
+            + metrics::COMPOSER_GAP
+    }
+
     pub(super) fn composer_outer_height(&self, input_height: f32, window: &Window) -> f32 {
         Self::composer_panel_height(input_height)
+            + self.composer_options_height()
             + metrics::COMPOSER_OUTER_TOP
             + metrics::COMPOSER_OUTER_BOTTOM
             + metrics::COMPOSER_META_GAP
@@ -618,6 +888,9 @@ impl AppView {
         let query = self.model_search_query.trim().to_lowercase();
         model.display_name.to_lowercase().contains(&query)
             || model.id.to_lowercase().contains(&query)
+            || model_capability_label(model)
+                .to_lowercase()
+                .contains(&query)
     }
 
     pub(super) fn composer_model_row_title<'a>(&self, model: &'a ModelEntry) -> &'a str {
@@ -803,7 +1076,18 @@ impl AppView {
             .w(px(340.0))
             .flex()
             .flex_col()
-            .child(self.model_search_element(cx));
+            .child(self.model_search_element(cx))
+            .when(self.model_menu_row_count() > 0, |content| {
+                content.child(
+                    self.settings_element("model-capability-help")
+                        .px_2()
+                        .py_1()
+                        .text_size(font::XS)
+                        .text_color(dark().text.secondary)
+                        .whitespace_normal()
+                        .child(t("model_capability.help")),
+                )
+            });
         if self.model_menu_row_count() == 0 {
             let (title, hint) = if self.projection.models.is_empty() {
                 (
@@ -873,6 +1157,7 @@ impl AppView {
             .is_some_and(|(provider, id)| *provider == model.provider_id && *id == model.id);
         let row_id = format!("model-{}-{}", model.provider_id, model.id);
         let title = model_menu_row_title(&model.display_name, &model.id);
+        let capabilities = model_capability_label(&model);
         self.settings_element(row_id)
             .w_full()
             .py_2()
@@ -916,7 +1201,16 @@ impl AppView {
                             .text_color(dark().text.primary)
                             .whitespace_normal()
                             .child(title.to_string()),
-                    ),
+                    )
+                    .when(!capabilities.is_empty(), |row| {
+                        row.child(
+                            div()
+                                .flex_none()
+                                .text_size(font::XS)
+                                .text_color(dark().text.secondary)
+                                .child(capabilities),
+                        )
+                    }),
             )
             .on_click(cx.listener(move |view, _, window, cx| {
                 view.on_select_model(model.clone(), cx);
@@ -1031,17 +1325,15 @@ impl AppView {
                             .flex()
                             .items_center()
                             .gap_2()
-                            .child(
-                                div()
-                                    .w(px(metrics::SPACE_4))
-                                    .flex_none()
-                                    .when(selected, |slot| {
-                                        slot.child(
-                                            icon_sized(Icon::Check, px(metrics::ICON_SM))
-                                                .text_color(dark().accent.primary),
-                                        )
-                                    }),
-                            )
+                            .child(div().w(px(metrics::SPACE_4)).flex_none().when(
+                                selected,
+                                |slot| {
+                                    slot.child(
+                                        icon_sized(Icon::Check, px(metrics::ICON_SM))
+                                            .text_color(dark().accent.primary),
+                                    )
+                                },
+                            ))
                             .child(
                                 div()
                                     .flex_1()
@@ -1240,8 +1532,8 @@ fn composer_placeholder_hint(connection: &ConnectionState, running: bool) -> Str
 #[cfg(test)]
 mod tests {
     use super::{
-        AppView, composer_model_menu_groups, composer_placeholder_hint, composer_send_allowed,
-        grouped_model_menu_entries, model_catalog_empty_state, model_menu_row_title,
+        composer_model_menu_groups, composer_placeholder_hint, composer_send_allowed,
+        grouped_model_menu_entries, model_catalog_empty_state, model_menu_row_title, AppView,
     };
     use crate::projection::{
         ConnectionState, ModelEntry, ProviderAuthState, ProviderAuthStatusEntry,
@@ -1353,7 +1645,7 @@ mod tests {
 
     #[test]
     fn model_menu_selected_follows_effective_model() {
-        let models = [
+        let mut models = [
             model_entry("openai", "gpt-4.1", "GPT-4.1"),
             model_entry("anthropic", "opus", "Opus"),
             model_entry("openai", "gpt-4.1-mini", "GPT-4.1 mini"),
@@ -1423,6 +1715,19 @@ mod tests {
             ["glm-5.3"]
         );
         assert!(composer_model_menu_groups(&models, &providers, "claude").is_empty());
+        models[0].web_search = true;
+        models[1].display_name = "Search without hosted capability".into();
+        assert_eq!(
+            grouped_model_menu_entries(
+                &models,
+                &providers,
+                crate::ui::i18n::t("model_capability.search")
+            )
+            .iter()
+            .map(|model| model.id.as_str())
+            .collect::<Vec<_>>(),
+            ["gpt-4.1"]
+        );
     }
 
     #[test]
@@ -1446,5 +1751,4 @@ mod tests {
             1
         );
     }
-
 }

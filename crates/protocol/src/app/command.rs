@@ -410,6 +410,12 @@ pub enum AppCommand {
         /// 非法名为结构化 fail-closed RunStart 错误。
         #[serde(default, skip_serializing_if = "Option::is_none")]
         effort: Option<String>,
+        /// GUI 1.22：本轮已上传附件 id（空则省略）。旧 minor 遇非空 fail-closed。
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attachment_ids: Vec<String>,
+        /// GUI 1.22：仅覆盖本轮 hosted 搜索；缺省沿用 Global。旧 minor 遇 Some fail-closed。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        web_search: Option<bool>,
     },
     RunCancel {
         run_id: RunId,
@@ -577,6 +583,16 @@ pub enum AppCommand {
     SubagentCancel {
         session_id: SessionId,
         agent_id: String,
+    },
+    /// GUI-only local attachment chunk (since 1.22). Host keeps bytes in memory.
+    /// Single chunk <= 64 KiB; complete attachment <= 8 MiB.
+    AttachmentUpload {
+        session_id: SessionId,
+        attachment_id: String,
+        name: String,
+        offset: u64,
+        total_bytes: u64,
+        data: Vec<u8>,
     },
     /// GUI-only per-model reasoning prefs write (since 1.21, ADR-063)。
     /// 全态语义：default_effort / supported_efforts 为 None 即清除该键；
