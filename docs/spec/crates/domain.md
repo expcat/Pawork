@@ -23,7 +23,7 @@
 | `src/tool.rs` | ~380 | Canonical Tool v2：`ToolKind` 3 位点、`ContinuationMode` 2 模式、`ToolCapabilityTag` 14 变体及 `capability_key()`（稳定 `tool:PascalCase` wire key）、`ToolHosting` 3 变体、`ToolCapability` 7 调度分类、`ToolDescriptor`（含 `has_consistent_hosting`） |
 | `src/tool_api.rs` | ~250 | trait `AgentTool` / `ToolEventSink`、`ToolRequest`、`ToolExecutionContext`（`workspace_id` + 相对 `working_directory`）、`ToolResult`、`ToolStreamEvent`（OutputDelta / Progress / ArtifactAvailable）、`ToolOutputChannel`、`ToolError` / `ToolErrorKind`（含 `NotLocallyExecutable`） |
 | `src/server_tool.rs` | ~400 | P15-5 server tool 归一：`ServerToolEvent` 11 变体、`Citation` / `CitationSourceKind`、`Source`、`ProgramStream`、`TranscriptItem`、`ProviderTranscriptEnvelope`（cursor / continuation_reference） |
-| `src/reasoning.rs` | ~90 | `ReasoningEffort` 6 档（None…Max，默认 Medium）、`ReasoningItem`（`protected_blob_ref` 代替明文 continuation） |
+| `src/reasoning.rs` | ~90 | `ReasoningEffort` 5 档（Low…Max，默认 Medium；不含 none） 、`ReasoningItem`（`protected_blob_ref` 代替明文 continuation） |
 | `src/profile.rs` | ~290 | Agent Profile v2（P17-5）：`AgentProfileV2` 全维度（prompt / model / effort / tools / skills / mcp / permissions / hooks / memory / max_turns / background / isolation）、`ProfileToolRules`（deny 优先）、`ProfileRef`（version pin）、`ProfilePrompt` / `ProfileModel`、`ProfileMemory` / `ProfileMemoryAvailability`（fail-closed）、`ProfileIsolation` |
 | `src/provider_hints.rs` | ~170 | `provider_hints.<provider>.<key>` 命名空间：`is_provider_hint_key` / `canonical_hint_key`、`LEGACY_HINT_KEY_MAP`（冻结读兼容）、`MAX_HINT_KEY_BYTES = 128` / `MAX_HINT_VALUE_BYTES = 64 KiB`、预定义键（OpenAI summary entries / Anthropic block kind） |
 | `src/degrade.rs` | ~250 | 降级可观测契约（R4 T8）：`DegradeEvent` / `DegradeKind` 6 类 / `DegradeSeverity` 3 档 / `DegradeSink` 2 通道、`to_agent_event()` 转 `AgentEvent::Diagnostic` |
@@ -138,7 +138,7 @@
 
 ### 3.7 其余主题
 
-- **reasoning**：`ReasoningEffort`（none / low / medium / high / x_high / max，serde 名稳定；`requires_reasoning_support()`）；`ReasoningItem` 只持 `protected_blob_ref` 与非敏感 metadata。
+- **reasoning**：`ReasoningEffort`（low / medium / high / x_high / max，serde 名稳定；不含 none，「不推理」用 `Option<ReasoningConfig> = None` 表达）；`ReasoningItem` 只持 `protected_blob_ref` 与非敏感 metadata。
 - **profile**：`ProfileToolRules::policy()` deny 优先返回 `Denied / Allowed / Unrestricted`；`ProfileMemory::availability()` 存在 `unavailable` 标注时无条件 `Unavailable`（绝不虚假可用）；`ProfileIsolation`（None / Restricted / Container）。
 - **hints**：合法键 = `provider_hints.` 前缀 + 小写 provider 段 + ASCII 键段且总长 ≤128B；`canonical_hint_key` 只查旧拼写映射（规范键/未知键返回 None），写路径永不产出旧拼写。
 - **degrade**：`DegradeKind` 6 类（HomeDirFallback / MissingCredential / EventStreamLagged / TasksFinishFailed / IdempotencyConflict / AcpState），`code()` = `degrade.<suffix>` 逐字冻结；`default_sink()` 只有 `TasksFinishFailed` 落事件流，其余走帧 + stderr；`to_agent_event()` 在 details 上合并 kind / severity / message 三键（冲突以契约为准），非 object details 包进 `"context"`。

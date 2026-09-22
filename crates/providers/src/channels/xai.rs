@@ -2,10 +2,11 @@
 //!
 //! OAuth acquisition/refresh is owned by `pawork-auth`; this adapter only consumes a resolved
 //! bearer credential. SET-4 A3 起同时接受 OAuth bearer 与 API key（Bearer 用法相同，
-//! 切换语义由宿主保证互斥替换）。SET-5 起 `list_models` 走远端
-//! `GET {base}/language-models`（只保留 output_modalities 含 "text" 的模型）。
+//! 切换语义由宿主保证互斥替换）。订阅走 CLI proxy 的 `/models`；API key
+//! 走 API 的 `/language-models`（只保留 output_modalities 含 "text" 的模型）。
 
-use std::sync::Arc;
+use std::collections::BTreeMap;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use crate::net::http::{HttpClient, HttpClientConfig};
@@ -13,7 +14,7 @@ use crate::ReasoningProtector;
 use async_trait::async_trait;
 use pawork_domain::{CancellationToken, ModelId, ProviderId};
 use pawork_domain::{
-    CanonicalModelRequest, ModelCapabilities, ModelDefinition, ModelProvider,
+    CanonicalModelRequest, CredentialKind, ModelCapabilities, ModelDefinition, ModelProvider,
     ModelResponseSummary, ModelTransport, ProviderError, ProviderErrorKind, ProviderEventSink,
     ResolvedCredential,
 };
@@ -24,6 +25,7 @@ use crate::responses::{ResponsesTransport, ResponsesTransportConfig, ResponsesWi
 use serde_json::Value;
 
 pub const DEFAULT_BASE_URL: &str = "https://api.x.ai/v1";
+const SUBSCRIPTION_BASE_URL: &str = "https://cli-chat-proxy.grok.com/v1";
 pub const PROVIDER_ID: &str = "xai";
 
 #[derive(Clone, Debug)]
@@ -58,15 +60,27 @@ pub struct XaiProvider {
     models_http: HttpClient,
     models_url: String,
     credential: ResolvedCredential,
+    discovered_transports: RwLock<BTreeMap<ModelId, ModelTransport>>,
 }
 
 impl XaiProvider {
     pub fn new(
-        config: XaiConfig,
+        mut config: XaiConfig,
         credential: Option<ResolvedCredential>,
     ) -> Result<Self, ProviderError> {
         let credential = super::require_bearer_credential("xAI Grok", credential)?;
-        let chat = OpenAiCompatibleProvider::new(
+        let subscription = credential.kind() == CredentialKind::OAuthBearer;
+        if subscription {
+            // 宿主传入注册表默认值时，按凭证选择订阅端点；自定义端点保留。
+            if config.base_url.trim_end_matches('/') == DEFAULT_BASE_URL {
+                config.base_url = SUBSCRIPTION_BASE_URL.into();
+            }
+            config
+                .http
+                .extra_headers
+                .push(("X-XAI-Token-Auth".into(), "xai-grok-cli".into()));
+        }
+        let mut chat = OpenAiCompatibleProvider::new(
             OpenAiCompatibleConfig {
                 base_url: config.base_url.clone(),
                 provider_id: ProviderId::new(PROVIDER_ID),
@@ -75,13 +89,18 @@ impl XaiProvider {
             },
             Some(credential.clone()),
         )?;
-        // SET-5：远端目录客户端（GET {base}/language-models），超时语义与 chat 对齐。
+        // 目录与推理共用端点、认证头与超时配置。
         let mut models_http_config = config.http.clone();
         if let Some(timeout) = config.request_timeout {
             models_http_config.timeout = Some(timeout);
         }
         let models_http = HttpClient::new(models_http_config)?;
-        let models_url = format!("{}/language-models", config.base_url.trim_end_matches('/'));
+        let models_path = if subscription {
+            "models"
+        } else {
+            "language-models"
+        };
+        let models_url = format!("{}/{models_path}", config.base_url.trim_end_matches('/'));
         let mut responses = ResponsesTransportConfig::new(config.base_url, PROVIDER_ID);
         responses.http = config.http;
         responses.request_timeout = config.request_timeout;
@@ -90,12 +109,18 @@ impl XaiProvider {
             include_encrypted_reasoning: true,
             hosted_web_search: true,
         };
+        let mut responses = ResponsesTransport::new(responses, credential.clone())?;
+        if subscription {
+            chat = chat.with_model_header("x-grok-model-override");
+            responses = responses.with_model_header("x-grok-model-override");
+        }
         Ok(Self {
             chat,
-            responses: ResponsesTransport::new(responses, credential.clone())?,
+            responses,
             models_http,
             models_url,
             credential,
+            discovered_transports: RwLock::new(BTreeMap::new()),
         })
     }
 
@@ -123,7 +148,7 @@ impl ModelProvider for XaiProvider {
         &self,
         _credential: Option<&ResolvedCredential>,
     ) -> Result<Vec<ModelDefinition>, ProviderError> {
-        // 远端目录：GET {base}/language-models，OAuth bearer 与 API key 同为 Bearer。
+        let subscription = self.credential.kind() == CredentialKind::OAuthBearer;
         let auth_header = (
             "Authorization".to_string(),
             format!("Bearer {}", self.credential.expose_secret()),
@@ -137,17 +162,25 @@ impl ModelProvider for XaiProvider {
                 CancellationToken::new(),
             )
             .await?;
-        let entries = crate::provider::catalog_entries(&value, "models")?;
+        let entries =
+            crate::provider::catalog_entries(&value, if subscription { "data" } else { "models" })?;
         let builtin = builtin_models();
         let mut definitions = Vec::new();
         for entry in entries {
-            let id = crate::provider::catalog_model_id(entry, "id")?;
+            let id_key = if subscription && entry.get("model").is_some() {
+                "model"
+            } else if subscription && entry.get("modelId").is_some() {
+                "modelId"
+            } else {
+                "id"
+            };
+            let id = crate::provider::catalog_model_id(entry, id_key)?;
             // 只保留可输出文本的模型；modalities 缺失视为未证明，不入目录。
             let text_output = entry
                 .get("output_modalities")
                 .and_then(Value::as_array)
                 .is_some_and(|modalities| modalities.iter().any(|m| m.as_str() == Some("text")));
-            if !text_output {
+            if !subscription && !text_output {
                 continue;
             }
             let mut definition = builtin
@@ -168,19 +201,71 @@ impl ModelProvider for XaiProvider {
             definition.id = ModelId::new(id);
             // canonical ID 与 stream 使用相同路由；别名只补能力，不改变实际请求路径。
             definition.capabilities.transport = Self::transport_for(&definition.id);
-            if definition.capabilities.transport != ModelTransport::Responses {
+            if subscription {
+                definition.capabilities.transport = match entry
+                    .get("apiBackend")
+                    .or_else(|| entry.get("api_backend"))
+                    .and_then(Value::as_str)
+                {
+                    Some("responses") => ModelTransport::Responses,
+                    Some("chat_completions") | None => ModelTransport::ChatCompletions,
+                    Some(_) => continue,
+                };
+                if let Some(name) = entry.get("name").and_then(Value::as_str) {
+                    definition.display_name = name.into();
+                }
+                if let Some(context) = entry
+                    .get("contextWindow")
+                    .or_else(|| entry.get("context_window"))
+                    .or_else(|| entry.pointer("/_meta/contextWindow"))
+                    .or_else(|| entry.pointer("/_meta/totalContextTokens"))
+                    .and_then(Value::as_u64)
+                {
+                    definition.context_window_tokens = context;
+                }
+                if let Some(max) = entry
+                    .get("maxCompletionTokens")
+                    .or_else(|| entry.get("max_completion_tokens"))
+                    .and_then(Value::as_u64)
+                {
+                    definition.max_output_tokens = max;
+                }
+            }
+            // 搜索声明随 transport 走（2026-09-22 调研）：xAI Responses API
+            // 官方提供 server 端 web_search 工具（docs.x.ai/developers/tools/
+            // web-search），订阅 CLI proxy 亦经 /responses 调 web_search
+            //（xai-org/grok-build xai-grok-tools）；Chat 路径未接线，清除标签。
+            if definition.capabilities.transport == ModelTransport::Responses {
+                definition
+                    .capabilities
+                    .hosted_tool_tags
+                    .insert(pawork_domain::ToolCapabilityTag::WebSearch);
+            } else {
                 definition.capabilities.hosted_tool_tags.clear();
             }
             if let Some(modalities) = entry.get("input_modalities").and_then(Value::as_array) {
                 definition.capabilities.image_input = modalities
                     .iter()
                     .any(|modality| modality.as_str() == Some("image"));
+            } else {
+                // VISION-2：远端未声明模态时按官方模型页默认表回填。
+                crate::registry::apply_default_image_input(&mut definition);
             }
             if let Some(context) = entry.get("context_length").and_then(Value::as_u64) {
                 definition.context_window_tokens = context;
             }
+            // ADR-063：远端未声明推理强度时按默认表回填（订阅目录
+            // reasoning_efforts 声明未来接入时优先于默认表）。
+            crate::registry::apply_default_supported_efforts(&mut definition);
             definitions.push(definition);
         }
+        *self
+            .discovered_transports
+            .write()
+            .expect("xAI transports lock poisoned") = definitions
+            .iter()
+            .map(|model| (model.id.clone(), model.capabilities.transport))
+            .collect();
         Ok(definitions)
     }
 
@@ -190,7 +275,14 @@ impl ModelProvider for XaiProvider {
         sink: &dyn ProviderEventSink,
         cancel: CancellationToken,
     ) -> Result<ModelResponseSummary, ProviderError> {
-        match Self::transport_for(&request.model) {
+        let transport = self
+            .discovered_transports
+            .read()
+            .expect("xAI transports lock poisoned")
+            .get(&request.model)
+            .copied()
+            .unwrap_or_else(|| Self::transport_for(&request.model));
+        match transport {
             ModelTransport::Responses => self
                 .responses
                 .stream(request, sink, cancel)
@@ -210,7 +302,7 @@ impl ModelProvider for XaiProvider {
 }
 
 /// 已知 id 的 transport / 能力提示，不是 GUI 选择目录。
-/// 可选模型只来自 `list_models` 的远端 `GET {base}/language-models`。
+/// 可选模型只来自 `list_models` 的远端目录。
 pub fn builtin_models() -> Vec<ModelDefinition> {
     fn model(
         id: &str,
@@ -326,6 +418,19 @@ mod tests {
         )
         .expect("API key credential must construct");
         assert_eq!(provider.id().as_str(), "xai");
+        assert_eq!(provider.models_url, "https://api.x.ai/v1/language-models");
+        let subscription = XaiProvider::new(
+            XaiConfig::new(format!("{DEFAULT_BASE_URL}/")),
+            Some(ResolvedCredential::new(
+                CredentialKind::OAuthBearer,
+                "oauth-token",
+            )),
+        )
+        .unwrap();
+        assert_eq!(
+            subscription.models_url,
+            "https://cli-chat-proxy.grok.com/v1/models"
+        );
     }
 
     #[test]
@@ -429,15 +534,18 @@ mod tests {
             alias.capabilities.transport,
             ModelTransport::ChatCompletions
         );
+        assert!(!server.received_requests().await.unwrap()[0]
+            .headers
+            .contains_key("x-xai-token-auth"));
         server.verify().await;
     }
 
     #[tokio::test]
-    async fn remote_language_models_failure_returns_err() {
+    async fn remote_subscription_models_forbidden_returns_err() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/language-models"))
-            .respond_with(ResponseTemplate::new(500))
+            .and(path("/models"))
+            .respond_with(ResponseTemplate::new(403))
             .expect(1)
             .mount(&server)
             .await;
@@ -459,6 +567,7 @@ mod tests {
             .await
             .err()
             .expect("remote failure must error");
-        assert_eq!(error.kind, ProviderErrorKind::ProviderUnavailable);
+        assert_eq!(error.kind, ProviderErrorKind::Authorization);
+        server.verify().await;
     }
 }

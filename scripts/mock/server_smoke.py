@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MOCK-3 自测：对照 docs/mock-simulation-plan.md §2.2/§2.3 逐端点核对形状。
+"""MOCK-3 自测：对照 Git 历史 37fae8f3:docs/mock-simulation-plan.md §2.2/§2.3 逐端点核对形状。
 
 三阶段：
   1) fixtures-root=fixtures/mock/synthetic —— fixture 命中优先、定速回放、

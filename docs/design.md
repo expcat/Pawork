@@ -72,6 +72,7 @@
 | --- | --- |
 | 六条首发通道：ChatGPT OAuth、xAI Grok OAuth、Z.AI GLM Coding Plan、OpenCode Go、Qwen Token Plan、DeepSeek | 各厂商官方 API；端点/凭证形态对照 Codex Router；GLM Coding Plan 的账号绑定与编码/通用端点分轨对照 ZCode |
 | ChatGPT/xAI 共用 Responses transport；按模型 capability 选 Chat/Responses | canonical 保持 provider-neutral |
+| Grok 订阅与 API key 按凭证分流：订阅用 CLI proxy `/models` 与专用认证/模型路由头，API key 用公开 API `/language-models` | [providers Spec](spec/crates/providers.md)；目录请求前刷新过期 OAuth，刷新与探测共用超时；只认远端结果，失败不填静态列表 |
 | `auth.json` 文件凭证 + `pawork auth` | 形态对齐 Codex CLI；额外锁定 0600、跨进程写锁、原子写、损坏 fail-closed、掩码展示与全链日志脱敏。env 仅作 headless/CI fallback |
 | ChatGPT/xAI OAuth（PKCE/Device/refresh/callback） | Codex Sign in with ChatGPT；OAuth client secret 不进入 adapter/仓库 |
 | REPL `/model` `/provider` 切换（事件流记录变更） | OpenCode `/models` + transform 归一化历史；Pi 跨厂商 handoff |

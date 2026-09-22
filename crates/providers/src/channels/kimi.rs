@@ -13,8 +13,8 @@ use crate::net::http::{HttpClient, HttpClientConfig};
 use async_trait::async_trait;
 use pawork_domain::{CancellationToken, ModelId, ProviderId};
 use pawork_domain::{
-    CanonicalModelRequest, ModelCapabilities, ModelDefinition, ModelProvider,
-    ModelResponseSummary, ModelTransport, ProviderError, ProviderEventSink, ResolvedCredential,
+    CanonicalModelRequest, ModelCapabilities, ModelDefinition, ModelProvider, ModelResponseSummary,
+    ModelTransport, ProviderError, ProviderEventSink, ResolvedCredential,
 };
 
 use crate::normalize_vendor_error;
@@ -135,8 +135,14 @@ impl ModelProvider for KimiCodeProvider {
             }
             if let Some(image_input) = entry.get("supports_image_in").and_then(Value::as_bool) {
                 definition.capabilities.image_input = image_input;
+            } else {
+                // VISION-2：远端未声明时按官方视觉指南默认表回填。
+                crate::registry::apply_default_image_input(&mut definition);
             }
             // supports_video_in 无 canonical 字段，不能冒充 image_input。
+            // ADR-063：远端未声明推理强度时按默认表回填（k3 系实测忽略
+            // effort 字段，表内为未知不约束；K2.7 系为显式无档位）。
+            crate::registry::apply_default_supported_efforts(&mut definition);
             definitions.push(definition);
         }
         Ok(definitions)
@@ -148,6 +154,8 @@ impl ModelProvider for KimiCodeProvider {
         sink: &dyn ProviderEventSink,
         cancel: CancellationToken,
     ) -> Result<ModelResponseSummary, ProviderError> {
+        // 官方视觉指南只收 base64 与 ms:// 文件 ID；外部 URL 发 HTTP 前拒绝。
+        crate::request::reject_kimi_external_image_urls(request)?;
         self.chat
             .stream(request, sink, cancel)
             .await

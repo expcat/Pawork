@@ -3,9 +3,9 @@
 //! 侧栏 / Inspector 的壳：bg.panel + 侧描边 + 固定宽，背景 / 描边 / 圆角取
 //! 现状值，抽壳不改视觉。
 
-use gpui::{AnyElement, App, IntoElement, Pixels, RenderOnce, Styled, Window, div, prelude::*};
+use gpui::{div, prelude::*, AnyElement, App, IntoElement, Pixels, RenderOnce, Styled, Window};
 
-use crate::ui::theme::dark;
+use crate::ui::theme::theme;
 
 /// Panel 基础面板容器。
 #[derive(IntoElement)]
@@ -55,8 +55,9 @@ impl Panel {
 }
 
 impl RenderOnce for Panel {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        let mut panel = div().flex().flex_col().h_full().bg(dark().bg.panel);
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = theme(cx);
+        let mut panel = div().flex().flex_col().h_full().bg(theme.bg.panel);
         if let Some(width) = self.width {
             // 固定宽侧栏必须拒绝 flex shrink；否则 Workspace 内长文本的
             // min-content 宽度会把真实 Inspector 挤窄，而 AX 仍报告合同宽度。
@@ -70,7 +71,7 @@ impl RenderOnce for Panel {
         if self.border_right {
             panel = panel.border_r_1();
         }
-        panel = panel.border_color(dark().border.subtle);
+        panel = panel.border_color(theme.border.subtle);
         if self.gap_2 {
             panel = panel.gap_2();
         }

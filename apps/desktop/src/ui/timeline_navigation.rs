@@ -4,7 +4,7 @@ use super::i18n::t;
 use super::*;
 use crate::projection::{TimelineEntry, TimelineEntryKind, TimelineRow};
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
-use crate::ui::components::icon::{Icon, icon};
+use crate::ui::components::icon::{icon, Icon};
 use crate::ui::theme::{dark, font, metrics};
 
 #[derive(Clone, Debug, PartialEq, Eq)]

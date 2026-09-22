@@ -11,12 +11,12 @@ use std::collections::HashSet;
 use std::sync::Mutex;
 
 use gpui::{
-    Animation, AnimationExt, App, ClickEvent, FocusHandle, IntoElement, KeyDownEvent, RenderOnce,
-    SharedString, Window, div, prelude::*, px,
+    div, prelude::*, px, Animation, AnimationExt, App, ClickEvent, FocusHandle, IntoElement,
+    KeyDownEvent, RenderOnce, SharedString, Window,
 };
 
 use crate::ui::components::focus_ring::focus_ring;
-use crate::ui::theme::{dark, motion};
+use crate::ui::theme::{motion, theme};
 
 fn switch_is_first_paint(id: &str) -> bool {
     static SEEN: Mutex<Option<HashSet<String>>> = Mutex::new(None);
@@ -100,18 +100,19 @@ impl Switch {
 }
 
 impl RenderOnce for Switch {
-    fn render(self, window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = theme(cx);
         let enabled = !self.disabled;
         // 轨道色：开 = 主色；关 / 禁用 = strong 描边色（禁用不另开色档）。
         let track_bg = if self.checked {
-            dark().accent.primary
+            theme.accent.primary
         } else {
-            dark().border.strong
+            theme.border.strong
         };
         let dot_color = if self.checked {
-            dark().text.on_accent
+            theme.text.on_accent
         } else {
-            dark().text.secondary
+            theme.text.secondary
         };
         let travel = SWITCH_TRACK_WIDTH - 4.0 - SWITCH_DOT_SIZE;
         let target = if self.checked { travel } else { 0.0 };
@@ -166,9 +167,11 @@ impl RenderOnce for Switch {
         if enabled {
             switch = switch.cursor_pointer();
             if self.checked {
-                switch = switch.hover(|style| style.bg(dark().accent.hover));
+                let hover = theme.accent.hover;
+                switch = switch.hover(move |style| style.bg(hover));
             } else {
-                switch = switch.hover(|style| style.bg(dark().surface.hover));
+                let hover = theme.surface.hover;
+                switch = switch.hover(move |style| style.bg(hover));
             }
         }
         if let Some(tooltip) = self.tooltip {

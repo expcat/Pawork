@@ -2,25 +2,25 @@
 
 use gpui::{App, Focusable, Window};
 
-use super::{AxAction, AxNode, AxRect, AxRole, dynamic_identifier};
+use super::{dynamic_identifier, AxAction, AxNode, AxRect, AxRole};
 use crate::projection::{
     ConnectionState, ProviderAuthState, ProviderCatalogState, ProviderStatusLabels,
 };
 use crate::ui::i18n::t;
 use crate::ui::settings::{
-    SettingsAuthAction, SettingsRole, provider_catalog_overview_label,
-    provider_credential_kind_label, provider_credential_status_label, provider_status_lines,
-    quota_identifier, settings_account_action_identifier, settings_account_rename_identifier,
+    provider_catalog_overview_label, provider_credential_kind_label,
+    provider_credential_status_label, provider_status_lines, quota_identifier,
+    settings_account_action_identifier, settings_account_rename_identifier,
     settings_account_rename_input_identifier, settings_api_key_input_identifier,
     settings_credential_row_identifier, settings_default_unavailable_note,
     settings_manage_models_identifier, settings_model_effort_chip_identifier,
     settings_model_effort_default_identifier, settings_model_effort_reset_identifier,
-    settings_model_switch_identifier,
-    settings_models_disable_all_identifier, settings_models_enable_all_identifier,
-    settings_models_menu_identifier, settings_models_refresh_identifier,
-    settings_provider_expand_identifier, settings_role_candidates, settings_role_clear_identifier,
-    settings_role_description_label, settings_role_item_identifier,
-    settings_role_trigger_identifier, settings_use_proxy_identifier,
+    settings_model_switch_identifier, settings_models_disable_all_identifier,
+    settings_models_enable_all_identifier, settings_models_menu_identifier,
+    settings_models_refresh_identifier, settings_provider_expand_identifier,
+    settings_role_candidates, settings_role_clear_identifier, settings_role_description_label,
+    settings_role_item_identifier, settings_role_trigger_identifier, settings_use_proxy_identifier,
+    SettingsAuthAction, SettingsRole,
 };
 use crate::ui::{AppView, MenuKind};
 
@@ -758,8 +758,7 @@ impl AppView {
                 .map(|efforts| efforts.to_vec())
                 .unwrap_or_default();
             for level in model.effort_options() {
-                let chip_id =
-                    settings_model_effort_chip_identifier(&level, provider_id, &model.id);
+                let chip_id = settings_model_effort_chip_identifier(&level, provider_id, &model.id);
                 let chip_focused = self
                     .settings_action_focus
                     .get(&chip_id)

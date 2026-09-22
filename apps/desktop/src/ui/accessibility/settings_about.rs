@@ -1,8 +1,8 @@
 //! Settings AX 导航与页分发。identifier / Press gate / 几何与 render 同源。
 
 use super::{AxNode, AxRect, AxRole};
-use crate::ui::AppView;
 use crate::ui::i18n::t;
+use crate::ui::AppView;
 
 impl AppView {
     /// 「关于」页 AX（SET-6g）：三项只读事实；`host_data_dir` 非空 gate；

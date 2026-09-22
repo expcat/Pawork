@@ -26,7 +26,7 @@ mod subagent_panel;
 mod task_rail;
 mod terminal_view;
 pub mod text_input;
-mod theme;
+pub(crate) mod theme;
 mod timeline;
 mod timeline_entry;
 mod timeline_navigation;

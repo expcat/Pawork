@@ -14,6 +14,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::task::{Context, Poll, Waker};
 
+use pawork_domain::ReasoningEffort;
 use pawork_domain::{Cost, ModelId, ProviderId, TokenUsage};
 use pawork_domain::{ModelCapabilities, ModelDefinition, ModelProvider, ResolvedCredential};
 use serde::{Deserialize, Serialize};
@@ -830,6 +831,130 @@ pub fn caps(
     }
 }
 
+/// ADR-063 默认推理强度表（2026-09-22）：逐 model_id 的默认 `supported_efforts`，
+/// 跨 Provider 按 model_id 合并（`deepseek/deepseek-flash` 与 `opencode-go/deepseek-flash`
+/// 等同 id 共用一套声明）。
+///
+/// 取值口径（优先级：真实端点实测 > 官方目录声明 > 官方文档；竞品配置仅作线索）：
+/// 2026-09-22 对 glm-coding / opencode-go / qwen-token-plan / kimi-code / xai 订阅
+/// 五个真实端点逐档发送消息验证（非法值探针对照），只登记服务端校验或目录
+/// 明确声明的档位；`Some([])` = 推理常开但实测无任何强度档位（effort 字段被
+/// 忽略或仅 thinking enabled）。未登记的模型 = 未知（None，不约束），不臆测。
+///
+/// canonical 词汇不含 none；厂商的 none/minimal/ultra 等词不在表内（minimal
+/// 视为 low 之下的关闭邻近档，ultra 超出 canonical 上限）。
+///
+/// 2026-09-22 官方文档交叉核对（docs.x.ai / api-docs.deepseek.com /
+/// platform.kimi.ai / z.ai / 阿里云百炼）：DeepSeek 原生 low/high/max 三档、
+/// xAI grok-4.6+ 为 low/medium/high/xhigh（grok-4.5 无 xhigh）、MiniMax M3
+/// 官方仅 enabled/adaptive 无强度档，均与实测登记一致；glm-5.3 与 kimi-k3
+/// 官方文档只写 low/high/max 三档、kimi-k2.6 官方文档无 effort 字段，而
+/// 服务端实测接受更宽枚举，按上述优先级以实测为准；Qwen 官方文档未公布
+/// effort 枚举值，登记依据仅为阿里云服务端校验。
+pub fn default_supported_efforts(model: &str) -> Option<Vec<ReasoningEffort>> {
+    use ReasoningEffort::{High, Low, Max, Medium, XHigh};
+    let all = || vec![Low, Medium, High, XHigh, Max];
+    // DeepSeek 文档原生档位 low/high/max（medium/xhigh 为服务端映射 high 的
+    // 兼容别名），按原生档位登记。
+    let deepseek = || vec![Low, High, Max];
+    let no_gears = Vec::new;
+    Some(match model {
+        // z.ai 服务端枚举校验（none/minimal/low/medium/high/xhigh/max）。
+        "glm-5.3" | "glm-5.2" => all(),
+        // opencode-go 实测五档生效（reasoning token 随档变化）；z.ai 原生端
+        // 同模型忽略该字段（非法值也 200），合并口径取已验证集。
+        "glm-5.3-flash" => all(),
+        // DeepSeek：go 端 422 校验 + api-docs.deepseek.com thinking_mode 文档。
+        "deepseek-flash" | "deepseek-v4-flash" | "deepseek-v4.1-flash" | "deepseek-v4-pro" => {
+            deepseek()
+        }
+        // Kimi：go 端服务端校验（k3 五档；k2.6 服务端枚举含 xhigh）。
+        "kimi-k3" | "kimi-k2.6" => all(),
+        // K2.7 系：effort 字段被忽略（非法值 200），thinking 仅 enabled，无档位。
+        "kimi-k2.7-code" | "kimi-for-coding" | "kimi-for-coding-highspeed" => no_gears(),
+        // MiniMax M3：effort 字段被忽略；thinking enabled/adaptive 非强度档位。
+        "minimax-m3" => no_gears(),
+        // go 服务端枚举校验（max|xhigh|high|medium|low|minimal|none）。
+        "mimo-v2.5" | "hy3" | "omen-alpha" => all(),
+        // 阿里云服务端枚举：3.8 系含 max，3.7/3.6 系止于 xhigh。
+        "qwen3.8-max" | "qwen3.8-flash" => all(),
+        "qwen3.7-max" | "qwen3.7-plus" | "qwen3.6-flash" => {
+            vec![Low, Medium, High, XHigh]
+        }
+        // xAI 订阅目录逐模型声明 + 实测 max 拒绝；grok-4.5 无 xhigh（传入钳 high）。
+        "grok-4.7" | "grok-4.7-build-fast" | "grok-4.6" => vec![Low, Medium, High, XHigh],
+        "grok-4.5" => vec![Low, Medium, High],
+        _ => return None,
+    })
+}
+
+/// 为远端目录条目补默认推理强度声明：仅在条目自身未声明时回填
+/// （远端 / 探测声明优先，默认表只兜未知）。
+pub fn apply_default_supported_efforts(definition: &mut ModelDefinition) {
+    if definition.capabilities.supported_efforts.is_none() {
+        definition.capabilities.supported_efforts =
+            default_supported_efforts(definition.id.as_str());
+    }
+}
+
+/// VISION-2 默认图像输入表（2026-09-22）：逐 model_id 的默认 `image_input`，
+/// 跨 Provider 按 model_id 合并（与 `default_supported_efforts` 同口径）。
+///
+/// 取值口径（优先级：真实端点实测 > 官方目录声明 > 官方文档；竞品配置仅作
+/// 线索）。`image_input` 是布尔而非 Option，`Some(false)` 记录「官方证实
+/// text-only」、未登记记录「未知」，二者在日志与文档层面区分；调用方只在
+/// 远端与静态目录均未声明时按本表升级 true，显式 false 永不被覆盖。
+///
+/// 2026-09-22 官方文档调研（docs.z.ai / help.aliyun.com 百炼视觉理解页 /
+/// platform.minimax.io / mimo.mi.com / api-docs.deepseek.com Vision 指南 /
+/// platform.kimi.ai 视觉模型指南 / docs.x.ai 模型页 / Tencent-Hunyuan Hy3
+/// 官方 README；models.dev 仅作旁证，不单独构成登记依据）：
+/// - 支持图像：GLM-5.3-Flash（官方明确多模态，含视频/文件）；Qwen 3.8/3.7/
+///   3.6 系（百炼视觉理解页列入；3.7-max 自 2026-06-08 快照增视觉模态）；
+///   MiniMax M3（官方博客原生多模态，含视频）；小米 MiMo V2.5（官方全模态）；
+///   DeepSeek V4.1-Flash（Vision 指南；legacy 名 v4-flash 官方说明同样路由
+///   到 V4.1-Flash）；Kimi k3 / k2.6 / k2.7-code 系（官方视觉指南四款均
+///   列入，含视频；Coding Plan 的 k3 / k3-256k / kimi-for-coding 为同模型
+///   计划内 id）；Grok 4.5+（官方模型页 text,image→text；grok-4.7-build-fast
+///   官方无 slug，release notes 说明 Grok 4.7 Fast 为同模型）。
+/// - 官方证实 text-only：GLM-5.3 / GLM-5.2、DeepSeek V4 Pro（模型表 Vision
+///   Not supported；2026-09-14 起官方公告请求路由到 V4.1-Flash 计费，能力
+///   声明仍按官方模型表登记）、腾讯混元 Hy3（官方 README 纯文本 MoE）。
+/// - 未登记 = 未知：omen-alpha 仅有 models.dev「attachments」旁证（厂商
+///   未官宣、条目已 deprecated），不满足官方证据门槛。
+pub fn default_image_input(model: &str) -> Option<bool> {
+    Some(match model {
+        "glm-5.3-flash" => true,
+        "qwen3.8-max" | "qwen3.8-flash" | "qwen3.7-max" | "qwen3.7-plus" | "qwen3.6-flash" => true,
+        "minimax-m3" => true,
+        "mimo-v2.5" => true,
+        "deepseek-flash" | "deepseek-v4-flash" | "deepseek-v4.1-flash" => true,
+        "kimi-k3"
+        | "k3"
+        | "k3-256k"
+        | "kimi-k2.6"
+        | "kimi-k2.7-code"
+        | "kimi-k2.7-code-highspeed"
+        | "kimi-for-coding"
+        | "kimi-for-coding-highspeed" => true,
+        "grok-4.7" | "grok-4.7-build-fast" | "grok-4.6" | "grok-4.5" => true,
+        "glm-5.3" | "glm-5.2" | "deepseek-v4-pro" | "hy3" => false,
+        _ => return None,
+    })
+}
+
+/// 为远端目录条目补默认图像输入声明：仅在条目未声明（false 同时表示
+/// 「未声明」与「不支持」，布尔无法区分）且默认表有官方支持证据时升级；
+/// 远端 `supports_image_in` / `input_modalities` 显式声明（含 false）的
+/// 条目不经过本函数，保证显式声明优先。
+pub fn apply_default_image_input(definition: &mut ModelDefinition) {
+    if !definition.capabilities.image_input
+        && default_image_input(definition.id.as_str()) == Some(true)
+    {
+        definition.capabilities.image_input = true;
+    }
+}
+
 /// 内置目录（S5 起为两条开发通道；S6 波 C 增补 qwen/deepseek 聚合条目）：
 ///
 /// - `glm-5.2` / `glm-5.3` / `glm-5.3-flash`（GLM Coding Plan）：订阅制通道，无公开 per-token 费率——
@@ -944,6 +1069,14 @@ fn builtin_entries() -> Vec<CatalogEntry> {
             aliases: Vec::new(),
         },
     ]
+    .into_iter()
+    .map(|mut entry| {
+        // ADR-063：静态条目按默认表回填 supported_efforts（表外模型保持
+        // None = 未知，不约束）。
+        entry.capabilities.supported_efforts = default_supported_efforts(entry.id.as_str());
+        entry
+    })
+    .collect()
 }
 
 #[cfg(test)]
@@ -1072,6 +1205,89 @@ mod tests {
             8,
             "内置目录静态条目（VISION-1 增 glm-5.3 / glm-5.3-flash / deepseek-flash）"
         );
+    }
+
+    #[test]
+    fn default_supported_efforts_is_per_model_id_and_merge_safe() {
+        use pawork_domain::ReasoningEffort as E;
+        // 2026-09-22 实测集：glm-5.3 五档；deepseek-flash 原生三档。
+        assert_eq!(
+            default_supported_efforts("glm-5.3"),
+            Some(vec![E::Low, E::Medium, E::High, E::XHigh, E::Max])
+        );
+        assert_eq!(
+            default_supported_efforts("deepseek-flash"),
+            Some(vec![E::Low, E::High, E::Max])
+        );
+        // 显式无档位（effort 字段被忽略）≠ 未知（不约束）。
+        assert_eq!(default_supported_efforts("kimi-k2.7-code"), Some(vec![]));
+        assert_eq!(default_supported_efforts("glm-5.1"), None);
+        assert_eq!(default_supported_efforts("longcat-2.0"), None);
+
+        // apply 只回填未知，远端声明优先。
+        let mut unknown = mock_definition("glm-5.3", ModelCapabilities::default());
+        apply_default_supported_efforts(&mut unknown);
+        assert_eq!(
+            unknown
+                .capabilities
+                .supported_efforts
+                .as_ref()
+                .map(Vec::len),
+            Some(5)
+        );
+        let declared = ModelCapabilities {
+            supported_efforts: Some(vec![E::High]),
+            ..ModelCapabilities::default()
+        };
+        let mut remote = mock_definition("glm-5.3", declared);
+        apply_default_supported_efforts(&mut remote);
+        assert_eq!(remote.capabilities.supported_efforts, Some(vec![E::High]));
+
+        // 静态目录同 id 跨 Provider 同套声明：deepseek/deepseek-flash 与任一
+        // Provider 的同 id 条目共用默认表值。
+        let registry = ModelRegistry::builtin();
+        let entry = registry.resolve("deepseek-flash").expect("deepseek-flash");
+        assert_eq!(
+            entry.capabilities.supported_efforts,
+            Some(vec![E::Low, E::High, E::Max])
+        );
+        let glm = registry.resolve("glm-5.3-flash").expect("glm-5.3-flash");
+        assert_eq!(
+            glm.capabilities.supported_efforts.as_ref().map(Vec::len),
+            Some(5)
+        );
+        // 表外模型保持未知（deepseek-chat 无实测证据）。
+        let chat = registry.resolve("deepseek-chat").expect("deepseek-chat");
+        assert_eq!(chat.capabilities.supported_efforts, None);
+    }
+
+    #[test]
+    fn default_image_input_distinguishes_verified_text_only_from_unknown() {
+        // 2026-09-22 官方文档调研集：多模态升级、官方 text-only 与未知分轨。
+        assert_eq!(default_image_input("qwen3.7-plus"), Some(true));
+        assert_eq!(default_image_input("minimax-m3"), Some(true));
+        assert_eq!(default_image_input("mimo-v2.5"), Some(true));
+        assert_eq!(default_image_input("kimi-k2.7-code"), Some(true));
+        assert_eq!(default_image_input("k3-256k"), Some(true));
+        assert_eq!(default_image_input("grok-4.7"), Some(true));
+        assert_eq!(default_image_input("deepseek-v4.1-flash"), Some(true));
+        // 官方证实 text-only ≠ 未知。
+        assert_eq!(default_image_input("glm-5.3"), Some(false));
+        assert_eq!(default_image_input("glm-5.2"), Some(false));
+        assert_eq!(default_image_input("deepseek-v4-pro"), Some(false));
+        assert_eq!(default_image_input("hy3"), Some(false));
+        assert_eq!(default_image_input("omen-alpha"), None);
+
+        // apply 只升级未声明条目；text-only / 未知保持 false。
+        let mut multimodal = mock_definition("mimo-v2.5", ModelCapabilities::default());
+        apply_default_image_input(&mut multimodal);
+        assert!(multimodal.capabilities.image_input);
+        let mut text_only = mock_definition("hy3", ModelCapabilities::default());
+        apply_default_image_input(&mut text_only);
+        assert!(!text_only.capabilities.image_input);
+        let mut unknown = mock_definition("omen-alpha", ModelCapabilities::default());
+        apply_default_image_input(&mut unknown);
+        assert!(!unknown.capabilities.image_input);
     }
 
     #[test]

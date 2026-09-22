@@ -75,8 +75,8 @@ OPT-1 / ADR-053：`gui::run_gui` 经 `AppCore::set_approval_host` 只接线 GUI 
 
 | 命令 | 用途 | 关键参数 | 输出 / 交互形态 | 安全 / 审批语义 |
 | --- | --- | --- | --- | --- |
-| `chat` | 流式多轮对话（REPL）或单次提问 | `--prompt`（单次后退出）、`--resume`（完整 id / 唯一前缀 / `latest`）、`--branch`（需 `--resume`，进入前切 branch） | 文本：assistant 增量 → stdout，thinking / 工具活动 / 提示 → stderr；非 TTY 无 `--prompt` 时读 stdin 一行；`--json` 需 `--prompt` | TTY 用 `InteractiveApprovals`（y/a/n）；`--json` 或 stdin 非 TTY 一律 `DenyAllApprovals` |
-| `run <prompt>` | 非交互单次任务 | 位置参数 prompt | 同 `chat --prompt`；`--json` 输出 `HeadlessResponse` JSONL | 同上（fail-closed） |
+| `chat` | 流式多轮对话（REPL）或单次提问 | `--prompt`（单次后退出）、`--resume`（完整 id / 唯一前缀 / `latest`）、`--branch`（需 `--resume`，进入前切 branch）、`--image`（可重复；png / jpeg / gif / webp，每个不超过 8 MiB；只用于本次 `--prompt`，REPL 与 `--json` 拒绝） | 文本：assistant 增量 → stdout，thinking / 工具活动 / 提示 → stderr；非 TTY 无 `--prompt` 时读 stdin 一行；`--json` 需 `--prompt` | TTY 用 `InteractiveApprovals`（y/a/n）；`--json` 或 stdin 非 TTY 一律 `DenyAllApprovals` |
+| `run <prompt>` | 非交互单次任务 | 位置参数 prompt、`--image`（可重复，限制同 `chat`；`--json` 拒绝） | 同 `chat --prompt`；`--json` 输出 `HeadlessResponse` JSONL | 同上（fail-closed） |
 | `sessions list` | 按更新时间列未归档会话 | — | 文本 tab 分隔（id / 更新时间 / 标题）；`--json` 数组 | 只读 |
 | `sessions show <session>` | 会话元数据 + 投影消息 | 位置参数支持前缀 / `latest` | 元数据、usage、逐条消息、model switches（读 `model.switched` Diagnostic 事件投影 from/to） | 只读 |
 | `sessions export` | 导出 export v3 JSON | `--session`、`--out`（默认 `{session_id}.export.json`） | 写文件并回显路径；`--json` 且无 `--out` 时文档直接打 stdout | 只读源会话 |

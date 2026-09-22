@@ -24,8 +24,8 @@ export type AppCommand = { "method": "core_initialize" } | { "method": "workspac
  */
 profile?: string | null,
 /**
- * ADR-063：可选 canonical reasoning effort 名（none/low/medium/
- * high/x_high/max）。缺省 = Host 按模型默认配置或 Provider 默认解析；
+ * ADR-063：可选 canonical reasoning effort 名（low/medium/high/
+ * x_high/max，词汇不含 none）。缺省 = Host 按模型默认配置或 Provider 默认解析；
  * 非法名为结构化 fail-closed RunStart 错误。
  */
 effort?: string | null,

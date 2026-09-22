@@ -3,7 +3,7 @@
 
 单端口承载全部通道 persona：按 Authorization: Bearer mock-<channel>
 （anthropic 另认 x-api-key: mock-anthropic）区分通道，路由
-docs/mock-simulation-plan.md §2.2 端点矩阵：
+Git 历史 37fae8f3:docs/mock-simulation-plan.md §2.2 端点矩阵：
 
     GET  /models                    OpenAI data[] 目录（glm-coding / opencode-go /
                                     qwen-token-plan / deepseek / kimi-platform / kimi-code）

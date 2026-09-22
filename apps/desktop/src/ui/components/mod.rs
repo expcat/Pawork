@@ -16,4 +16,4 @@ pub mod skeleton;
 pub mod status_bar;
 pub mod switch;
 
-pub use icon::{Assets, Icon, icon, icon_sized};
+pub use icon::{icon, icon_sized, Assets, Icon};

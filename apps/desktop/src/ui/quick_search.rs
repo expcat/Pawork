@@ -1,7 +1,7 @@
 //! GUI2-03：仅搜索当前 Snapshot 与已有安全导航；不查询历史、不执行写操作。
 use super::accessibility::{AxAction, AxNode, AxRect, AxRole, AxTree};
 use super::i18n::t;
-use super::settings::{SettingsSearchKind, settings_page_title_key, settings_search_entries};
+use super::settings::{settings_page_title_key, settings_search_entries, SettingsSearchKind};
 use super::*;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -804,12 +804,10 @@ mod tests {
                     let results = v.quick_search_results();
                     assert_eq!(results[0].target, SearchTarget::Task("s-00".into()));
                     assert_ne!(results[0].detail, results[1].detail);
-                    assert!(
-                        tree.children[0]
-                            .children
-                            .iter()
-                            .all(|node| node.identifier != "quick-task-s-39")
-                    );
+                    assert!(tree.children[0]
+                        .children
+                        .iter()
+                        .all(|node| node.identifier != "quick-task-s-39"));
                 });
             }
         }
@@ -820,12 +818,10 @@ mod tests {
         cx.run_until_parked();
         cx.update(|window, cx| {
             let v = view.read(cx);
-            assert!(
-                v.quick_search_ax(window, cx).children[0]
-                    .children
-                    .iter()
-                    .any(|node| node.identifier == "quick-task-s-30")
-            );
+            assert!(v.quick_search_ax(window, cx).children[0]
+                .children
+                .iter()
+                .any(|node| node.identifier == "quick-task-s-30"));
             assert_eq!(v.projection.active_session_id.as_deref(), Some("s-00"));
         });
         cx.simulate_keystrokes("escape");
@@ -878,11 +874,10 @@ mod tests {
             assert_eq!(v.projection.active_session_id.as_deref(), Some("s-01"));
             assert!(v.scope_workspace_id.is_none());
             assert_eq!(v.composer_drafts["s-00"], "保留草稿");
-            assert!(
-                v.status_hint
-                    .as_ref()
-                    .is_some_and(|s| s == t("quick.filter_cleared"))
-            );
+            assert!(v
+                .status_hint
+                .as_ref()
+                .is_some_and(|s| s == t("quick.filter_cleared")));
         });
     }
 

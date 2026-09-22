@@ -1014,15 +1014,13 @@ async fn auth_set_api_key_verifies_replaces_and_masks_end_to_end() {
     .expect("select must not wait for running Run")
     .unwrap();
     assert!(guard.provider_needs_rebuild());
-    assert!(
-        adapter
-            .command(&command_envelope(AppCommand::AuthAccountRemove {
-                provider_id: "glm-coding".into(),
-                credential_id: account_id
-            }))
-            .await
-            .is_err()
-    );
+    assert!(adapter
+        .command(&command_envelope(AppCommand::AuthAccountRemove {
+            provider_id: "glm-coding".into(),
+            credential_id: account_id
+        }))
+        .await
+        .is_err());
     drop(guard);
     let mut removed_events = adapter.subscribe_events();
     adapter
@@ -1045,11 +1043,9 @@ async fn auth_set_api_key_verifies_replaces_and_masks_end_to_end() {
     let AppResponse::Data(old_status) = adapter.query(&old_query).await.unwrap() else {
         panic!("status");
     };
-    assert!(
-        old_status["providers"][0]["credentials"][0]
-            .get("credential_id")
-            .is_none()
-    );
+    assert!(old_status["providers"][0]["credentials"][0]
+        .get("credential_id")
+        .is_none());
 
     // 同 provider/model 连接成功后下一轮必须重装配，不能继续使用旧 Mock adapter。
     Mock::given(method("POST"))
@@ -1183,16 +1179,14 @@ async fn auth_account_empty_name_generates_label_and_rename() {
         panic!("rename must return Data: {renamed:?}")
     };
     assert_eq!(renamed["display_name"], "Work");
-    assert!(
-        adapter
-            .command(&command_envelope(AppCommand::AuthAccountRename {
-                provider_id: "glm-coding".into(),
-                credential_id: credential_id.into(),
-                display_name: "   ".into(),
-            }))
-            .await
-            .is_err()
-    );
+    assert!(adapter
+        .command(&command_envelope(AppCommand::AuthAccountRename {
+            provider_id: "glm-coding".into(),
+            credential_id: credential_id.into(),
+            display_name: "   ".into(),
+        }))
+        .await
+        .is_err());
     let inventory =
         pawork_auth::list_provider_accounts(backend.as_ref(), &"glm-coding".into()).unwrap();
     assert_eq!(inventory.accounts[0].display_name, "Work");
@@ -1273,11 +1267,9 @@ async fn go_key_verification_uses_authenticated_usage_and_preserves_old_key_on_f
         }))
         .await
         .expect("rate-limited is still an authenticated subscription");
-    assert!(
-        !serde_json::to_string(&response)
-            .unwrap()
-            .contains(candidate)
-    );
+    assert!(!serde_json::to_string(&response)
+        .unwrap()
+        .contains(candidate));
     assert_eq!(
         backend.get("pawork.opencode-go", "default").unwrap(),
         candidate
@@ -1287,7 +1279,7 @@ async fn go_key_verification_uses_authenticated_usage_and_preserves_old_key_on_f
 
 #[tokio::test]
 async fn go_account_quota_routes_next_run_and_preserves_manual_selection() {
-    use pawork_auth::{ProviderAccountSelectionMode, add_api_key_account, list_provider_accounts};
+    use pawork_auth::{add_api_key_account, list_provider_accounts, ProviderAccountSelectionMode};
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -1368,12 +1360,10 @@ async fn go_account_quota_routes_next_run_and_preserves_manual_selection() {
     );
     let mut wrong = query.clone();
     wrong.account_id = "another-account".into();
-    assert!(
-        adapter
-            .query(&query_envelope(AppQuery::QuotaOverview { query: wrong }))
-            .await
-            .is_err()
-    );
+    assert!(adapter
+        .query(&query_envelope(AppQuery::QuotaOverview { query: wrong }))
+        .await
+        .is_err());
     let AppResponse::Data(legacy) = adapter
         .query(&query_envelope(AppQuery::QuotaOverview {
             query: pawork_protocol::QuotaOverviewQuery {
@@ -1446,11 +1436,9 @@ async fn go_account_quota_routes_next_run_and_preserves_manual_selection() {
         .projection_snapshot(&session)
         .await
         .unwrap();
-    assert!(
-        serde_json::to_string(&snapshot.messages)
-            .unwrap()
-            .contains("G2_QUOTA_OK")
-    );
+    assert!(serde_json::to_string(&snapshot.messages)
+        .unwrap()
+        .contains("G2_QUOTA_OK"));
     adapter
         .command(&command_envelope(AppCommand::AuthAccountSelect {
             provider_id: provider.clone(),
@@ -1464,16 +1452,14 @@ async fn go_account_quota_routes_next_run_and_preserves_manual_selection() {
         ProviderAccountSelectionMode::Manual
     );
     let requests_before = server.received_requests().await.unwrap().len();
-    assert!(
-        adapter
-            .core
-            .read()
-            .await
-            .select_account_for_run(&CancellationToken::new())
-            .await
-            .unwrap()
-            .is_none()
-    );
+    assert!(adapter
+        .core
+        .read()
+        .await
+        .select_account_for_run(&CancellationToken::new())
+        .await
+        .unwrap()
+        .is_none());
     assert_eq!(
         server.received_requests().await.unwrap().len(),
         requests_before
@@ -1504,16 +1490,14 @@ async fn go_account_quota_routes_next_run_and_preserves_manual_selection() {
             ProviderAccountSelectionMode::WhenExhausted,
         )
         .unwrap();
-        assert!(
-            adapter
-                .core
-                .read()
-                .await
-                .select_account_for_run(&CancellationToken::new())
-                .await
-                .unwrap()
-                .is_none()
-        );
+        assert!(adapter
+            .core
+            .read()
+            .await
+            .select_account_for_run(&CancellationToken::new())
+            .await
+            .unwrap()
+            .is_none());
         assert_eq!(
             list_provider_accounts(backend.as_ref(), &provider)
                 .unwrap()
@@ -1528,16 +1512,14 @@ async fn go_account_quota_routes_next_run_and_preserves_manual_selection() {
         .respond_with(ResponseTemplate::new(401).set_body_string(first_key))
         .mount(&server)
         .await;
-    assert!(
-        adapter
-            .core
-            .read()
-            .await
-            .select_account_for_run(&CancellationToken::new())
-            .await
-            .unwrap()
-            .is_none()
-    );
+    assert!(adapter
+        .core
+        .read()
+        .await
+        .select_account_for_run(&CancellationToken::new())
+        .await
+        .unwrap()
+        .is_none());
     for entry in std::fs::read_dir(dir.path()).unwrap() {
         let path = entry.unwrap().path();
         if path.is_file() {
@@ -2257,6 +2239,15 @@ async fn provider_auth_status_lists_dual_credentials_in_fixed_order() {
 
 #[tokio::test]
 async fn provider_auth_status_marks_expired_oauth_credential() {
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(json!({"error": "invalid_grant"})))
+        .expect(1)
+        .mount(&server)
+        .await;
     let backend = Arc::new(pawork_auth::MemoryBackend::new());
     let provider = pawork_domain::ProviderId::from("xai");
     // expires_in = 0：到期时刻即写入时刻，查询时已过当前时刻。
@@ -2274,7 +2265,18 @@ async fn provider_auth_status_marks_expired_oauth_credential() {
     )
     .expect("seed oauth token");
     let (adapter, _dir) =
-        settings_adapter_for_channel("xai", "grok-4", "http://127.0.0.1:1".into(), backend).await;
+        settings_adapter_for_channel("xai", "grok-4", server.uri(), backend.clone()).await;
+    {
+        let mut core = adapter.core.write().await;
+        core.config.extra.insert(
+            "oauth".into(),
+            json!({"xai": {
+                "client_id": "client-id", "device_auth_url": format!("{}/device", server.uri()),
+                "token_url": format!("{}/token", server.uri()), "scopes": []
+            }}),
+        );
+        core.set_provider_use_proxy("xai", false);
+    }
 
     let status = adapter
         .query(&query_envelope(AppQuery::ProviderAuthStatus {
@@ -2296,6 +2298,64 @@ async fn provider_auth_status_marks_expired_oauth_credential() {
     assert_eq!(credentials[0]["kind"], "oauth");
     assert_eq!(credentials[0]["expired"], true);
     assert!(credentials[0]["expires_at"].as_str().is_some());
+    assert_eq!(status["providers"][0]["catalog"]["type"], "unavailable");
+    server.verify().await;
+    server.reset().await;
+
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            crate::testsupport::token_success_json("renewed-access", Some("renewed-refresh"), None),
+        ))
+        .expect(2)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/models"))
+        .and(header("authorization", "Bearer renewed-access"))
+        .and(header("x-xai-token-auth", "xai-grok-cli"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"data": [
+            {"id": "grok-4.7", "api_backend": "responses", "context_window": 500000}
+        ]})))
+        .expect(2)
+        .mount(&server)
+        .await;
+    let AppResponse::Data(status) = adapter
+        .query(&query_envelope(AppQuery::ProviderAuthStatus {
+            provider_id: Some("xai".into()),
+        }))
+        .await
+        .unwrap()
+    else {
+        panic!("expected status")
+    };
+    assert_eq!(status["providers"][0]["catalog"]["type"], "remote");
+    assert_eq!(status["providers"][0]["credentials"][0]["expired"], false);
+
+    // 当前 adapter 的 OAuth 也会过期；overview 不得继续复用旧 bearer。
+    pawork_auth::store_default_oauth_token(
+        backend.as_ref(),
+        "xai".into(),
+        &pawork_auth::TokenSet {
+            access_token: "expired-again".into(),
+            refresh_token: Some("renewed-refresh".into()),
+            id_token: None,
+            expires_in: Some(0),
+            token_type: "Bearer".into(),
+            scope: None,
+        },
+    )
+    .unwrap();
+    let mut core = adapter.core.write().await;
+    core.credential = Some(pawork_domain::ResolvedCredential::new(
+        pawork_domain::CredentialKind::OAuthBearer,
+        "expired-again",
+    ));
+    let models = core.models_overview().await;
+    assert!(models
+        .iter()
+        .any(|model| model.provider.as_str() == "xai" && model.id.as_str() == "grok-4.7"));
+    server.verify().await;
 }
 
 #[tokio::test]

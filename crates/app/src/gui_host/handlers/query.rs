@@ -105,13 +105,17 @@ pub(crate) async fn model_list(
                 .config()
                 .reasoning
                 .as_ref()
-                .and_then(|reasoning| reasoning.model(entry.provider.as_str(), entry.id.as_str()));
-            let catalog_efforts = entry.capabilities.supported_efforts.as_ref().map(|efforts| {
-                efforts
-                    .iter()
-                    .map(|effort| effort.as_wire_name())
-                    .collect::<Vec<_>>()
-            });
+                .and_then(|reasoning| reasoning.model(entry.id.as_str()));
+            let catalog_efforts = entry
+                .capabilities
+                .supported_efforts
+                .as_ref()
+                .map(|efforts| {
+                    efforts
+                        .iter()
+                        .map(|effort| effort.as_wire_name())
+                        .collect::<Vec<_>>()
+                });
             json!({
                 "provider_id": entry.provider.as_str(),
                 "id": entry.id.as_str(),

@@ -646,7 +646,9 @@ async fn contract_list_models() {
             ResponseTemplate::new(200).set_body_json(serde_json::json!({"data":[
                 {"id":"qwen3.8-max", "input_modalities":["text"], "supports_web_search":true},
                 {"id":"remote-vision", "input_modalities":["text","image"]},
-                {"id":"remote-disabled", "supports_image_in":false, "input_modalities":["image"]}
+                {"id":"remote-disabled", "supports_image_in":false, "input_modalities":["image"]},
+                {"id":"mimo-v2.5"},
+                {"id":"hy3"}
             ]})),
         )
         .expect(1)
@@ -663,7 +665,9 @@ async fn contract_list_models() {
             .iter()
             .map(|model| model.capabilities.image_input)
             .collect::<Vec<_>>(),
-        [false, true, false]
+        // 远端完全未声明模态时按 VISION-2 默认表回填（mimo-v2.5 官方全模态；
+        // hy3 官方 text-only，回填不改变）。
+        [false, true, false, true, false]
     );
     assert!(models
         .iter()

@@ -355,6 +355,8 @@ impl AppView {
         let attachment = Button::new("composer-attach")
             .track_focus(&attachment_focus)
             .variant(ButtonVariant::Ghost)
+            .padding(ButtonPadding::None)
+            .center()
             .height(px(metrics::COMPOSER_FOOTER_CONTROL))
             .width(px(metrics::COMPOSER_FOOTER_CONTROL))
             .child(icon_sized(Icon::Plus, px(metrics::ICON_SM)))
@@ -685,6 +687,7 @@ impl AppView {
                 .variant(ButtonVariant::Ghost)
                 .padding(ButtonPadding::None)
                 .height(px(meta_height))
+                .vcenter()
                 .text_size(font::XS)
                 .label(self.composer_project_task_label())
                 .disabled(!can_create);

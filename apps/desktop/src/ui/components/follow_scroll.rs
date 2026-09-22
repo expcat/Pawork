@@ -4,7 +4,7 @@
 //! 用户上滚脱钩自动跟随，滚回底部自动重挂；脱钩时滚动区右下浮出
 //! 「↓ 回到底部」控件，点击滚底并重挂，跟随态隐藏。
 
-use gpui::{AnyElement, App, ScrollHandle, Window, div, prelude::*, px};
+use gpui::{div, prelude::*, px, AnyElement, App, ScrollHandle, Window};
 
 use crate::ui::theme::metrics;
 

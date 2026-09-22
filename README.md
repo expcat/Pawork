@@ -58,12 +58,11 @@ Pawork/                  # 仓库根 = Cargo workspace 根
 | 文档 | 职责 |
 | --- | --- |
 | [docs/architecture.md](docs/architecture.md) | 架构：红线、包布局与依赖方向、冻结契约、安全语义 |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | 当前待办与未闭合验收：图片、网络搜索、子代理新一轮视觉 / 功能复测；已完成事项不再保留为活动任务 |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | 当前待办与未闭合验收：多模态（图像 / 视频）与搜索通道扩展（MM-1～3）、子代理复测待人工验收；已完成事项不再保留为活动任务 |
 | [docs/design.md](docs/design.md) | 功能设计：能力域与参照项目映射、明确不做的形态 |
 | [docs/spec/README.md](docs/spec/README.md) | 产品与包级 Spec 总索引 |
 | [docs/spec/crates/](docs/spec/README.md#12-包级-spec) | 每包一篇 Spec（agent 辅助阅读主入口） |
 | [docs/spec/flows.md](docs/spec/flows.md) | 跨包核心链路 |
-| [docs/testing-refactor-plan.md](docs/testing-refactor-plan.md) | 测试与门禁：全范围分批核查、真实用途与边界判据、处置和验证记录 |
 | [docs/spec/settings.md](docs/spec/settings.md) | Settings Feature Spec |
 | [docs/gui-design.md](docs/gui-design.md) | Desktop GUI 设计（配套 [design/README.md](design/README.md)） |
 | [docs/references.md](docs/references.md) | 参照项目手册与调研附录 |

@@ -71,7 +71,7 @@ ADR-061 使用 GUI API 1.17：空 `display_name` 在 add/start 时由 Host 生�
 - `ArtifactStreaming` 枚举可保留，但生产宿主当前不得宣告。
 - `WorkspaceRelativePath` 拒绝绝对路径与 `..`；客户端不因 UI 便利绕过 host Policy。
 
-- API 1.21（[ADR-063](settings.md#adr-063模型推理强度偏好2026-09-18)）：`RunStart.effort`、`ModelList` 条目能力与强度字段、GUI-only `set_model_reasoning` 全态写；`SubagentInfo.effort` 与 `SubagentModelRule` 强度字段；canonical effort 词汇 none/low/medium/high/x_high/max；生效顺序 RunStart 显式 > 子代理规则 > 模型级默认 > Provider 默认；旧 Host 缺省回落，minor <21 请求前拒绝。
+- API 1.21（[ADR-063](settings.md#adr-063模型推理强度偏好2026-09-18)）：`RunStart.effort`、`ModelList` 条目能力与强度字段、GUI-only `set_model_reasoning` 全态写；`SubagentInfo.effort` 与 `SubagentModelRule` 强度字段；canonical effort 词汇 low/medium/high/x_high/max（不含 none）；生效顺序 RunStart 显式 > 子代理规则 > 模型级默认 > Provider 默认；旧 Host 缺省回落，minor <21 请求前拒绝。
 - API 1.20（2026-09-17 子代理设置与运行时）：GUI-only `subagent_settings` / `set_subagent_settings` / `subagent_list` / `subagent_cancel`；设置全态写并原子持久化，cancel 校验会话归属；minor <20 请求前拒绝。
 - API 1.19（2026-09-16 工作区文件浏览/编辑）：新增 GUI-only `WorkspaceFiles` / `WorkspaceFileRead` 查询与 `WorkspaceFileWrite` 命令；路径均为 `WorkspaceRelativePath`、根目录用 `.`；写带 `expected_revision` 乐观锁；minor <19 请求前拒绝；文件正文不进入日志/账本持久化；仅接受本地 GUI 来源。
 - API 1.18（2026-09-16 右侧浏览器）：新增 `browser_next` / `browser_respond` 与 `GuiCapability::BrowserControl`；聊天经 Host `browser` 工具、Policy 与显式审批操作当前任务页面；历史重放不派发操作。

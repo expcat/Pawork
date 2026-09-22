@@ -1,8 +1,8 @@
 //! StatusBar 底部状态行容器（R8 波 B 轨 1）。
 
-use gpui::{AnyElement, App, IntoElement, RenderOnce, Styled, Window, div, prelude::*, px};
+use gpui::{div, prelude::*, px, AnyElement, App, IntoElement, RenderOnce, Styled, Window};
 
-use crate::ui::theme::{dark, font, metrics};
+use crate::ui::theme::{font, metrics, theme};
 
 /// 底部 30px 状态行：bg.panel + 顶描边 + SM 次要文字（GUI4 三栏）。
 ///
@@ -49,7 +49,8 @@ impl Default for StatusBar {
 }
 
 impl RenderOnce for StatusBar {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = theme(cx);
         div()
             .id("shell-status-bar")
             .debug_selector(|| "shell-status-bar".into())
@@ -60,10 +61,10 @@ impl RenderOnce for StatusBar {
             .items_center()
             .justify_between()
             .border_t_1()
-            .border_color(dark().border.subtle)
-            .bg(dark().bg.panel)
+            .border_color(theme.border.subtle)
+            .bg(theme.bg.panel)
             .text_size(font::SM)
-            .text_color(dark().text.secondary)
+            .text_color(theme.text.secondary)
             .child(status_slot(self.leading, true))
             .when_some(self.centered, |bar, centered| {
                 bar.child(

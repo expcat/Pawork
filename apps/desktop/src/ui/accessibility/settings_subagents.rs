@@ -193,9 +193,10 @@ impl AppView {
                 .value(t("settings.subagents.effect_note")),
             );
 
-        // 与 render 同源：只发布已启用模型的规则卡（ADR-063）。
+        // 与 render 同源：只发布已连接供应商的已启用模型规则卡（ADR-063）。
         let catalog = crate::projection::subagent_rule_models(
             &self.projection.settings_providers.model_catalog,
+            &self.projection.settings_providers.providers,
         );
         if catalog.is_empty() {
             return page.child(

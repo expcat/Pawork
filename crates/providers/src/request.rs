@@ -235,6 +235,178 @@ fn message_to_openai(message: &pawork_domain::Message) -> Vec<Value> {
     out
 }
 
+/// Kimi 视觉输入不接受外部 URL。`ms://` 文件 ID 与 base64 继续交给编码器。
+pub(crate) fn reject_kimi_external_image_urls(
+    request: &CanonicalModelRequest,
+) -> Result<(), pawork_domain::ProviderError> {
+    fn walk(parts: &[pawork_domain::ContentPart]) -> Result<(), pawork_domain::ProviderError> {
+        for part in parts {
+            match part {
+                pawork_domain::ContentPart::Image(image) => {
+                    if let pawork_domain::ImageSource::Url(url) = &image.source {
+                        if !url.trim().to_ascii_lowercase().starts_with("ms://") {
+                            return Err(pawork_domain::ProviderError::new(
+                                pawork_domain::ProviderErrorKind::InvalidRequest,
+                                "Kimi image input accepts base64 or an ms:// file id, not an external URL",
+                            ));
+                        }
+                    }
+                }
+                pawork_domain::ContentPart::ToolResult(result) => walk(&result.content)?,
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+    for message in &request.messages {
+        walk(&message.content)?;
+    }
+    Ok(())
+}
+
+/// MM-1：发 HTTP 前按通道官方图像限制拒绝。
+///
+/// 只校验已登记的 (provider, model)。未登记通道保持现有能力闸门，不在这里另造限制。
+/// base64 按解码后字节计；URL 只校验媒体类型，大小由对端在取图时判定。
+pub(crate) fn reject_channel_image_limits(
+    provider_id: &str,
+    request: &CanonicalModelRequest,
+) -> Result<(), pawork_domain::ProviderError> {
+    let Some(limit) = image_limit(provider_id, request.model.as_str()) else {
+        return Ok(());
+    };
+    fn walk(
+        parts: &[pawork_domain::ContentPart],
+        limit: ImageLimit,
+    ) -> Result<(), pawork_domain::ProviderError> {
+        for part in parts {
+            match part {
+                pawork_domain::ContentPart::Image(image) => check_image(image, limit)?,
+                pawork_domain::ContentPart::ToolResult(result) => walk(&result.content, limit)?,
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+    for message in &request.messages {
+        walk(&message.content, limit)?;
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+struct ImageLimit {
+    /// 解码后字节上限；`None` 表示官方文档未给可执行的单图字节上限。
+    max_decoded_bytes: Option<usize>,
+    media_types: &'static [&'static str],
+}
+
+fn image_limit(provider_id: &str, model: &str) -> Option<ImageLimit> {
+    let png_jpeg = &["image/png", "image/jpeg"][..];
+    let common = &["image/png", "image/jpeg", "image/gif", "image/webp"][..];
+    let bailian = &[
+        "image/png",
+        "image/jpeg",
+        "image/webp",
+        "image/bmp",
+        "image/gif",
+    ][..];
+    match (provider_id, model) {
+        // docs.z.ai vision：jpg/png，单图不超过 5MB。
+        ("glm-coding", "glm-5.3-flash") => Some(ImageLimit {
+            max_decoded_bytes: Some(5 * 1024 * 1024),
+            media_types: png_jpeg,
+        }),
+        // 百炼视觉理解：常见格式，单图不超过 20MB。
+        (
+            "qwen-token-plan",
+            "qwen3.8-max" | "qwen3.8-flash" | "qwen3.7-max" | "qwen3.7-plus" | "qwen3.6-flash",
+        ) => Some(ImageLimit {
+            max_decoded_bytes: Some(20 * 1024 * 1024),
+            media_types: bailian,
+        }),
+        // DeepSeek Vision：jpeg/png/gif/webp，base64 上限 32 MiB。
+        ("deepseek", "deepseek-flash" | "deepseek-v4-flash" | "deepseek-v4.1-flash") => {
+            Some(ImageLimit {
+                max_decoded_bytes: Some(32 * 1024 * 1024),
+                media_types: common,
+            })
+        }
+        // MiniMax 官方只列 jpeg/png/webp，未给可执行的单图字节上限。
+        ("opencode-go", "minimax-m3") => Some(ImageLimit {
+            max_decoded_bytes: None,
+            media_types: &["image/jpeg", "image/png", "image/webp"],
+        }),
+        // xAI 图像生成指南的输入格式；Chat 与 Responses 共用。
+        ("xai", model) if model.starts_with("grok-") => Some(ImageLimit {
+            max_decoded_bytes: Some(20 * 1024 * 1024),
+            media_types: common,
+        }),
+        _ => None,
+    }
+}
+
+fn check_image(
+    image: &pawork_domain::ImageContent,
+    limit: ImageLimit,
+) -> Result<(), pawork_domain::ProviderError> {
+    let media_type = image.media_type.trim().to_ascii_lowercase();
+    if !limit
+        .media_types
+        .iter()
+        .any(|allowed| *allowed == media_type)
+    {
+        return Err(image_limit_error(format!(
+            "image media type {media_type} is not accepted by this model"
+        )));
+    }
+    let Some(max_decoded_bytes) = limit.max_decoded_bytes else {
+        return Ok(());
+    };
+    let pawork_domain::ImageSource::Base64(data) = &image.source else {
+        return Ok(());
+    };
+    let decoded = decoded_base64_len(data)
+        .ok_or_else(|| image_limit_error("image base64 payload is not valid base64"))?;
+    if decoded > max_decoded_bytes {
+        return Err(image_limit_error(format!(
+            "image is {decoded} bytes after base64 decode, above the {max_decoded_bytes} byte limit for this model"
+        )));
+    }
+    Ok(())
+}
+
+fn image_limit_error(message: impl Into<String>) -> pawork_domain::ProviderError {
+    pawork_domain::ProviderError::new(pawork_domain::ProviderErrorKind::InvalidRequest, message)
+}
+
+fn decoded_base64_len(data: &str) -> Option<usize> {
+    let compact: String = data
+        .chars()
+        .filter(|ch| !ch.is_ascii_whitespace())
+        .collect();
+    if compact.is_empty() || !compact.is_ascii() || compact.len() % 4 != 0 {
+        return None;
+    }
+    let bytes = compact.as_bytes();
+    if bytes.iter().any(|byte| !is_base64_byte(*byte)) {
+        return None;
+    }
+    let padding = match bytes {
+        [.., b'=', b'='] => 2,
+        [.., b'='] => 1,
+        _ => 0,
+    };
+    if bytes[..bytes.len() - padding].contains(&b'=') {
+        return None;
+    }
+    Some(compact.len() / 4 * 3 - padding)
+}
+
+fn is_base64_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/' | b'=')
+}
+
 /// 把 canonical 图片转换为 OpenAI `image_url` 的 url 字符串。
 ///
 /// - `Url`：直接透传；
@@ -543,6 +715,106 @@ mod tests {
             content[2]["image_url"]["url"],
             "data:image/png;base64,QkFTRTY0"
         );
+    }
+
+    #[test]
+    fn kimi_rejects_external_image_url_before_http() {
+        use pawork_domain::{ImageContent, ImageSource, ProviderErrorKind};
+
+        let mut external = base_request();
+        external.messages[0]
+            .content
+            .push(ContentPart::Image(ImageContent {
+                source: ImageSource::Url("https://example.com/a.png".into()),
+                media_type: "image/png".into(),
+                alt_text: None,
+            }));
+        let error = reject_kimi_external_image_urls(&external)
+            .err()
+            .expect("external url must be rejected");
+        assert_eq!(error.kind, ProviderErrorKind::InvalidRequest);
+
+        let mut file_id = base_request();
+        file_id.messages[0]
+            .content
+            .push(ContentPart::Image(ImageContent {
+                source: ImageSource::Url("ms://file-1".into()),
+                media_type: "image/png".into(),
+                alt_text: None,
+            }));
+        file_id.messages[0]
+            .content
+            .push(ContentPart::Image(ImageContent {
+                source: ImageSource::Base64("QkFTRTY0".into()),
+                media_type: "image/png".into(),
+                alt_text: None,
+            }));
+        reject_kimi_external_image_urls(&file_id).expect("ms:// and base64 stay allowed");
+
+        let mut nested = base_request();
+        nested.messages.push(Message {
+            id: MessageId::new("t-img"),
+            role: MessageRole::Tool,
+            content: vec![ContentPart::ToolResult(ToolResultContent {
+                tool_call_id: ToolCallId::from("call-img"),
+                tool_name: Some("read".into()),
+                content: vec![ContentPart::Image(ImageContent {
+                    source: ImageSource::Url("http://example.com/nested.png".into()),
+                    media_type: "image/png".into(),
+                    alt_text: None,
+                })],
+                is_error: false,
+                metadata: serde_json::Value::Null,
+                artifacts: Vec::new(),
+            })],
+            metadata: MessageMetadata::default(),
+        });
+        assert!(
+            reject_kimi_external_image_urls(&nested).is_err(),
+            "nested tool-result image url must be rejected"
+        );
+    }
+
+    #[test]
+    fn channel_image_limits_reject_format_and_decoded_size() {
+        use pawork_domain::{ImageContent, ImageSource, ProviderErrorKind};
+
+        fn with_image(model: &str, media_type: &str, data: &str) -> CanonicalModelRequest {
+            let mut request = base_request();
+            request.model = pawork_domain::ModelId::from(model);
+            request.messages[0]
+                .content
+                .push(ContentPart::Image(ImageContent {
+                    source: ImageSource::Base64(data.into()),
+                    media_type: media_type.into(),
+                    alt_text: None,
+                }));
+            request
+        }
+
+        let png = with_image("glm-5.3-flash", "image/png", "QkFTRTY0");
+        reject_channel_image_limits("glm-coding", &png).expect("png within 5MB");
+
+        let gif = with_image("glm-5.3-flash", "image/gif", "QkFTRTY0");
+        let error = reject_channel_image_limits("glm-coding", &gif).unwrap_err();
+        assert_eq!(error.kind, ProviderErrorKind::InvalidRequest);
+        assert!(error.message.contains("image/gif"), "{}", error.message);
+
+        // 5MB + 1 byte of decoded payload, expressed as base64 length.
+        let over = "A".repeat((5 * 1024 * 1024 + 1 + 2) / 3 * 4);
+        let huge = with_image("glm-5.3-flash", "image/jpeg", &over);
+        let error = reject_channel_image_limits("glm-coding", &huge).unwrap_err();
+        assert!(error.message.contains("byte limit"), "{}", error.message);
+
+        let webp = with_image("deepseek-flash", "image/webp", "QkFTRTY0");
+        reject_channel_image_limits("deepseek", &webp).expect("deepseek accepts webp");
+
+        let minimax_gif = with_image("minimax-m3", "image/gif", "QkFTRTY0");
+        assert!(reject_channel_image_limits("opencode-go", &minimax_gif).is_err());
+
+        let unknown = with_image("omen-alpha", "image/gif", "QkFTRTY0");
+        reject_channel_image_limits("opencode-go", &unknown)
+            .expect("unregistered model is not given an invented limit");
     }
 
     #[cfg(feature = "anthropic")]

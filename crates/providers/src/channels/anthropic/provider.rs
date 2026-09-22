@@ -189,15 +189,8 @@ impl AnthropicProvider {
             .thinking
             .as_ref()
             .is_some_and(|config| config.level != ThinkingLevel::Off)
-            || request
-                .reasoning
-                .as_ref()
-                .is_some_and(|config| config.requires_reasoning_support());
-        let thinking = if request
-            .reasoning
-            .as_ref()
-            .is_some_and(|config| config.requires_reasoning_support())
-        {
+            || request.reasoning.is_some();
+        let thinking = if request.reasoning.is_some() {
             clamp_reasoning_to_thinking(request.reasoning.as_ref(), request.thinking.as_ref())
         } else {
             request.thinking.clone().unwrap_or(ThinkingConfig {
@@ -507,7 +500,7 @@ fn requirements_from_request(request: &CanonicalModelRequest) -> CapabilityRequi
                 } else {
                     Some(ReasoningConfig {
                         effort: match thinking.level {
-                            ThinkingLevel::Off => ReasoningEffort::None,
+                            ThinkingLevel::Off => unreachable!("Off level filtered above"),
                             ThinkingLevel::Low => ReasoningEffort::Low,
                             ThinkingLevel::Medium => ReasoningEffort::Medium,
                             ThinkingLevel::High => ReasoningEffort::High,
@@ -522,9 +515,9 @@ fn requirements_from_request(request: &CanonicalModelRequest) -> CapabilityRequi
             })
         })
         .map(|mut config| {
-            if config.requires_reasoning_support() {
-                config.state.requires_signature = true;
-            }
+            // effort 词汇不含 none：ReasoningConfig 存在即要求 reasoning，
+            // Anthropic 路径签名 continuation 恒置位。
+            config.state.requires_signature = true;
             config
         });
 

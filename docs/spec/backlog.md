@@ -66,6 +66,8 @@
 | E2 | Bedrock/Vertex 模型源 | P2 |
 | F1 | 版本自检 + 可选遥测 + 离线模式 | P3 |
 
+**B5 激活登记（2026-09-22）**：状态——进入活动线，由 [ROADMAP](../ROADMAP.md) MM-1（图像端到端）与 MM-2（视频 canonical）承接；前置——VISION-2 逐模型能力证据与 `default_image_input` 默认表已落地（[providers.md](crates/providers.md)）；写入集——`crates/providers` / `crates/cli` / `crates/domain`（MM-2 契约演进，golden 先行且需用户确认）/ `crates/protocol` / `crates/app` / `apps/desktop` 及对应 Spec；复活资产——无（不触及 `v2-final` 归档）；停止条件——Kimi 外部 URL 拒绝等 fail-closed 语义不得放宽为静默透传，MM-2 契约草案未经用户确认不得实施。同期用户另立 MM-3（Chat 通道原生搜索接线），属 Provider 托管搜索 wire，不占用 B1（Agent 侧 webfetch / websearch 内置工具）候选。
+
 ## 4. 其它产品候选/归档复活面
 
 | ID | 候选 | 当前状态 | 激活条件 |
@@ -108,7 +110,7 @@ Settings 活动线已实现并有原批次本机真窗口记录（2026-09-05，�
 
 | 系列 | 规划文档 | 状态 |
 | --- | --- | --- |
-| MOCK-1～MOCK-8 本地 Provider 模拟仿真 | [mock-simulation-plan.md](../mock-simulation-plan.md) | 已实施完成（2026-09-10）：MOCK-2～MOCK-8 已实现并通过 gate 与 review，端到端证据见规划 §7；MOCK-0b 保持候选未获批。 |
+| MOCK-1～MOCK-8 本地 Provider 模拟仿真 | mock-simulation-plan.md（已随规划收口移出活动文档，见 Git 历史 37fae8f3:docs/mock-simulation-plan.md） | 已实施完成（2026-09-10）：MOCK-2～MOCK-8 已实现并通过 gate 与 review，端到端证据见规划 §7；MOCK-0b 保持候选未获批。 |
 
 ## 8. 实施过程登记的产品缺陷
 

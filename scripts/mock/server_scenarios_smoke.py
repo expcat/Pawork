@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """MOCK-4 自测：场景库双触发、HTTP 状态码全表、needle、截断与定速。
 
-对照 docs/mock-simulation-plan.md §2.4/§2.5/§4 MOCK-4 断言：
+对照 Git 历史 37fae8f3:docs/mock-simulation-plan.md §2.4/§2.5/§4 MOCK-4 断言：
   1) manifest 形态（名字唯一、sse 场景 fixture 存在、transports 非空）；
   2) HTTP 状态码全表（400-504 + Retry-After 秒/IMF-fixdate 两形态）逐场景核对；
   3) persona 正交：chatgpt/xai/anthropic/opencode-go 各端点 + GET 端点全局场景；

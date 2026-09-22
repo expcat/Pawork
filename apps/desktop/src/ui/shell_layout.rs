@@ -8,7 +8,7 @@
 //! StatusBar 组件装配同构壳层（参照 u1_probe.rs，不挂 AppView / Platform /
 //! socket）。
 
-use gpui::{IntoElement, Pixels, div, prelude::*, px};
+use gpui::{div, prelude::*, px, IntoElement, Pixels};
 
 use super::theme::metrics;
 
@@ -187,7 +187,7 @@ mod tests {
     use super::*;
     use crate::ui::components::panel::Panel;
     use crate::ui::components::status_bar::StatusBar;
-    use gpui::{Bounds, Context, TestAppContext, VisualTestContext, Window, size};
+    use gpui::{size, Bounds, Context, TestAppContext, VisualTestContext, Window};
 
     /// 与 AppView::render 同构的壳层探针：resolve 决定几何，rail /
     /// workspace / inspector / StatusBar 用生产组件装配。

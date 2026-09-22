@@ -127,7 +127,7 @@
 
 ## 7. 测试与验证资产
 
-2026-09-20 测试重构：删除 FakeWorktreeAllocator 自建目录/写副本的自证测试，以 `git_allocator_isolates_worker_writes_from_parent` 驱动真实 GitWorktreeAllocator，核对父工作区不变与显式释放。Guard 生命周期仍用边界替身；`bash scripts/test.sh orchestration` 开启 git feature，默认不带 feature 的绿不能证明 Git 隔离。 本批执行状态见 [测试重构计划](../../testing-refactor-plan.md)。
+2026-09-20 测试重构：删除 FakeWorktreeAllocator 自建目录/写副本的自证测试，以 `git_allocator_isolates_worker_writes_from_parent` 驱动真实 GitWorktreeAllocator，核对父工作区不变与显式释放。Guard 生命周期仍用边界替身；`bash scripts/test.sh orchestration` 开启 git feature，默认不带 feature 的绿不能证明 Git 隔离。 本批执行状态见 Git 历史（37fae8f3:docs/testing-refactor-plan.md）。
 
 无 `tests/` 目录，全部内联 `#[cfg(test)]`：
 

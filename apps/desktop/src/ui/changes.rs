@@ -880,14 +880,16 @@ impl AppView {
         // 单行代理（标题 + 强度 + 状态）；列表限高 5 行溢出滚动，面板高度
         // 按可见行数计算（ADR-063 浮层改进）。
         let subagent_rows = if subagent_bound {
-            subagents.agents.len().clamp(1, ACTIVITY_SUBAGENT_VISIBLE_ROWS)
+            subagents
+                .agents
+                .len()
+                .clamp(1, ACTIVITY_SUBAGENT_VISIBLE_ROWS)
         } else {
             1
         };
-        let subagent_extra =
-            (60.0 + subagent_rows as f32 * ACTIVITY_SUBAGENT_ROW_HEIGHT)
-                * self.text_scale.rem_pixels()
-                / font::BASE_REM_PIXELS;
+        let subagent_extra = (60.0 + subagent_rows as f32 * ACTIVITY_SUBAGENT_ROW_HEIGHT)
+            * self.text_scale.rem_pixels()
+            / font::BASE_REM_PIXELS;
         let content_height =
             metrics::ACTIVITY_POPOVER_HEIGHT * self.text_scale.rem_pixels() / font::BASE_REM_PIXELS;
         // 字号同时放大 rem 间距；外框还需容纳 MenuPanel 的 padding 与 border。
@@ -964,11 +966,7 @@ impl AppView {
     /// Activity 浮层「子智能体」卡（展示型，参考 Codex 信息卡）：标题 +
     /// 运行/完成汇总 + 每代理标题与状态。数据只在列表绑定当前活动会话
     /// 时呈现；无活动会话 / 加载中 / 空态如实展示，不伪造数据。
-    fn activity_subagent_card(
-        &self,
-        bound: bool,
-        cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
+    fn activity_subagent_card(&self, bound: bool, cx: &mut Context<Self>) -> gpui::AnyElement {
         let activity = &self.projection.subagent_activity;
         let mut card = div()
             .flex()
@@ -1035,7 +1033,7 @@ impl AppView {
         let mut list = div()
             .id("activity-subagent-list")
             .max_h(px(
-                ACTIVITY_SUBAGENT_VISIBLE_ROWS as f32 * ACTIVITY_SUBAGENT_ROW_HEIGHT,
+                ACTIVITY_SUBAGENT_VISIBLE_ROWS as f32 * ACTIVITY_SUBAGENT_ROW_HEIGHT
             ))
             .overflow_y_scroll()
             .track_scroll(&self.activity_subagent_scroll)

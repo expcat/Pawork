@@ -445,10 +445,7 @@ pub fn write_subagent_settings(
             // ADR-063：None / 空数组清除既有键，保持盘上配置最小。
             match &model.default_effort {
                 Some(effort) => {
-                    entry.insert(
-                        "default_effort".into(),
-                        toml::Value::String(effort.clone()),
-                    );
+                    entry.insert("default_effort".into(), toml::Value::String(effort.clone()));
                 }
                 None => {
                     entry.remove("default_effort");
@@ -479,6 +476,10 @@ pub fn write_subagent_settings(
 /// 全态语义：`default_effort` / `supported_efforts` 为 None 即清除该键；
 /// 两者皆 None 时移除整条目。条目内未知键保留（与 `write_subagent_settings`
 /// 同先例）。
+///
+/// 2026-09-22 合并语义：同一 model_id 跨 Provider 共用一套配置——按
+/// model_id 去重（旧有的逐 Provider 重复条目合并为一条），`provider_id`
+/// 记录最近一次写入来源，不参与匹配。
 pub fn write_model_reasoning(
     path: &Path,
     provider_id: &str,
@@ -499,17 +500,20 @@ pub fn write_model_reasoning(
         let mut found = false;
         for item in models {
             let is_target = item.as_table().is_some_and(|entry| {
-                entry.get("provider_id").and_then(toml::Value::as_str) == Some(provider_id)
-                    && entry.get("model_id").and_then(toml::Value::as_str) == Some(model_id)
+                entry.get("model_id").and_then(toml::Value::as_str) == Some(model_id)
             });
             if !is_target {
                 rewritten.push(item);
                 continue;
             }
             found = true;
-            if let Some(entry) =
-                reasoning_entry(item.as_table().cloned().unwrap_or_default(), provider_id, model_id, default_effort, supported_efforts)
-            {
+            if let Some(entry) = reasoning_entry(
+                item.as_table().cloned().unwrap_or_default(),
+                provider_id,
+                model_id,
+                default_effort,
+                supported_efforts,
+            ) {
                 rewritten.push(toml::Value::Table(entry));
             }
         }
@@ -545,10 +549,7 @@ fn reasoning_entry(
         "provider_id".into(),
         toml::Value::String(provider_id.to_string()),
     );
-    entry.insert(
-        "model_id".into(),
-        toml::Value::String(model_id.to_string()),
-    );
+    entry.insert("model_id".into(), toml::Value::String(model_id.to_string()));
     match default_effort {
         Some(effort) => {
             entry.insert(
@@ -950,8 +951,7 @@ mod tests {
             Some(&["low".to_string(), "medium".to_string(), "high".to_string()]),
         )
         .expect("write reasoning");
-        let table: toml::Table =
-            toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let table: toml::Table = toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         let entry = &table["reasoning"]["models"][0];
         assert_eq!(entry["provider_id"].as_str(), Some("glm-coding"));
         assert_eq!(entry["default_effort"].as_str(), Some("high"));
@@ -965,17 +965,45 @@ mod tests {
             .unwrap()
             .contains("trust_workspaces = true"));
 
+        // 跨 Provider 合并：同 model_id 经另一 Provider 写入时合并为一条，
+        // provider_id 记录最近写入来源。
+        write_model_reasoning(&path, "opencode-go", "glm-5.3-flash", Some("medium"), None)
+            .expect("merge write from another provider");
+        let table: toml::Table = toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let models = table["reasoning"]["models"].as_array().expect("models");
+        let glm_entries: Vec<_> = models
+            .iter()
+            .filter(|entry| entry["model_id"].as_str() == Some("glm-5.3-flash"))
+            .collect();
+        assert_eq!(glm_entries.len(), 1, "同 model_id 只保留一条");
+        assert_eq!(glm_entries[0]["provider_id"].as_str(), Some("opencode-go"));
+        assert_eq!(glm_entries[0]["default_effort"].as_str(), Some("medium"));
+        // 全态语义：未传 supported_efforts 即清除该键。
+        assert!(glm_entries[0].get("supported_efforts").is_none());
+
         // 全态清除：两键皆 None 移除整条目，保留其他模型条目。
         write_model_reasoning(&path, "deepseek", "deepseek-chat", Some("low"), None)
             .expect("write second entry");
         write_model_reasoning(&path, "glm-coding", "glm-5.3-flash", None, None)
             .expect("clear first entry");
-        let table: toml::Table =
-            toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let table: toml::Table = toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         let models = table["reasoning"]["models"].as_array().expect("models");
-        assert_eq!(models.len(), 1);
-        assert_eq!(models[0]["provider_id"].as_str(), Some("deepseek"));
-        assert!(models[0].get("supported_efforts").is_none());
+        let deepseek_entries: Vec<_> = models
+            .iter()
+            .filter(|entry| entry["model_id"].as_str() == Some("deepseek-chat"))
+            .collect();
+        assert_eq!(deepseek_entries.len(), 1);
+        assert_eq!(
+            deepseek_entries[0]["provider_id"].as_str(),
+            Some("deepseek")
+        );
+        assert!(deepseek_entries[0].get("supported_efforts").is_none());
+        assert!(
+            models
+                .iter()
+                .all(|entry| entry["model_id"].as_str() != Some("glm-5.3-flash")),
+            "清除后无 glm-5.3-flash 条目"
+        );
         std::fs::remove_file(&path).ok();
     }
 

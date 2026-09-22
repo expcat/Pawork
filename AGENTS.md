@@ -43,7 +43,7 @@
 
 ## 5. 验证决策
 
-测试以真实用途、结果完整性和边界拒绝为准，不以数量或实现细节副本为目标。先选受影响的操作与包，再运行 `bash scripts/test.sh <包名>...`：同一次 Cargo 调用补齐所选包的必要 feature，避免默认 feature 漏跑。Desktop 单独用 `bash scripts/test.sh desktop`；真实 Host 子进程用 `bash scripts/test.sh --host`。命令与证据边界见 [验证规格](docs/spec/verification.md) 和 [重构计划](docs/testing-refactor-plan.md)。
+测试以真实用途、结果完整性和边界拒绝为准，不以数量或实现细节副本为目标。先选受影响的操作与包，再运行 `bash scripts/test.sh <包名>...`：同一次 Cargo 调用补齐所选包的必要 feature，避免默认 feature 漏跑。Desktop 单独用 `bash scripts/test.sh desktop`；真实 Host 子进程用 `bash scripts/test.sh --host`。命令与证据边界见 [验证规格](docs/spec/verification.md)（2026-09-20 测试重构的分批记录已收口，见 Git 历史 37fae8f3:docs/testing-refactor-plan.md）。
 
 安全红线、持久化/重放、协议/解析回归不能因精简被丢弃；删除前必须有无效性依据或保留的替代锚点。Mock 只代替外部边界，fixture 工具自测不等于产品集成通过。显式选择的测试缺少环境时必须失败或如实记待验，禁止 `return` 假通过。普通任务不跑无关包、全 workspace 或真实 Provider；已有定向回归足够时不扩测。
 

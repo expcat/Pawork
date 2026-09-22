@@ -132,7 +132,7 @@ UI-6b 起先解析账号索引：显式 API key 选择返回该账号；显式 O
 
 ## 7. 测试与验证资产
 
-2026-09-20 测试重构：删除仅检查 MemoryBackend 的 Send + Sync 自证测试；生产 SecretBackend trait 已要求这两个边界。真实凭证存取、原子事务、并发刷新和脱敏回归保留。MCP 文件名属于兼容契约，保留原断言。 执行状态见 [测试重构计划](../../testing-refactor-plan.md)。
+2026-09-20 测试重构：删除仅检查 MemoryBackend 的 Send + Sync 自证测试；生产 SecretBackend trait 已要求这两个边界。真实凭证存取、原子事务、并发刷新和脱敏回归保留。MCP 文件名属于兼容契约，保留原断言。 执行状态见 Git 历史（37fae8f3:docs/testing-refactor-plan.md）。
 
 无 `tests/` 目录；回归内联于各文件 `#[cfg(test)]`（dev-dependencies 仅 `wiremock` 与多线程 tokio（含 test-util）；文件后端测试使用显式临时路径，不引入 tempfile）。共享测试件位于 `src/testsupport.rs`（`#[cfg(test)]`）：OAuth token 端点 wiremock 形状单一来源，`oauth.rs` / `default_credential.rs` / `accounts.rs` 的 token 端点 mock 于 MOCK-7 起统一引用；与 pawork-app 的 testsupport 同形、两包各自内联（跨包共用需新增 dev-helper crate，按不新增包约定不做）。默认验证命令：`cargo test -p pawork-auth --offline --lib --tests`。
 

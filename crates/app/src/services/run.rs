@@ -184,15 +184,12 @@ impl RunService {
         // ADR-063：reasoning effort = RunStart 显式值 > Global `[reasoning]`
         // 模型默认；都无则不写 reasoning 字段（Provider 默认，行为同旧版）。
         let effort = core.effort().or_else(|| {
-            core.config
-                .reasoning
-                .as_ref()
-                .and_then(|reasoning| {
-                    reasoning
-                        .model(core.provider_id.as_str(), core.model.as_str())
-                        .and_then(|entry| entry.default_effort.as_deref())
-                        .and_then(pawork_domain::ReasoningEffort::from_wire_name)
-                })
+            core.config.reasoning.as_ref().and_then(|reasoning| {
+                reasoning
+                    .model(core.model.as_str())
+                    .and_then(|entry| entry.default_effort.as_deref())
+                    .and_then(pawork_domain::ReasoningEffort::from_wire_name)
+            })
         });
         if let Some(effort) = effort {
             request.reasoning = Some(pawork_domain::ReasoningConfig::new(effort));
@@ -562,7 +559,9 @@ mod tests {
         let calls = provider.calls();
         assert_eq!(calls.len(), 2);
         assert!(
-            !calls[1].hosted_tools.contains(&ToolCapabilityTag::WebSearch),
+            !calls[1]
+                .hosted_tools
+                .contains(&ToolCapabilityTag::WebSearch),
             "RunStart.web_search=false 须覆盖 Global true：{:?}",
             calls[1].hosted_tools
         );
@@ -587,8 +586,12 @@ mod tests {
         .expect("next turn must keep the Global default");
         let calls = provider.calls();
         assert_eq!(calls.len(), 4);
-        assert!(calls[2].hosted_tools.contains(&ToolCapabilityTag::WebSearch));
-        assert!(!calls[3].hosted_tools.contains(&ToolCapabilityTag::WebSearch));
+        assert!(calls[2]
+            .hosted_tools
+            .contains(&ToolCapabilityTag::WebSearch));
+        assert!(!calls[3]
+            .hosted_tools
+            .contains(&ToolCapabilityTag::WebSearch));
         assert_eq!(core.config.web_search, Some(false));
     }
 
@@ -643,7 +646,10 @@ mod tests {
 
         // 同名模型在其它供应商声明图像能力，不得成为当前通道的授权。
         core.model = pawork_domain::ModelId::from("glm-5.3-flash");
-        let foreign = core.registry.capability_evidence(core.model.as_str()).unwrap();
+        let foreign = core
+            .registry
+            .capability_evidence(core.model.as_str())
+            .unwrap();
         assert!(foreign.merged().image_input);
         assert_ne!(foreign.provider.as_ref(), Some(&core.provider_id));
         let error = core

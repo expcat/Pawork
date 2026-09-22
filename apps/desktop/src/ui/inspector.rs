@@ -4,19 +4,19 @@
 //! ScrollHandle（FollowScroll），不随 Timeline 改 list()；各页滚动状态
 //! 独立保留。宽窗 440px 侧栏；窄窗显式打开时同一实体占用中央 Workspace。
 
-use gpui::{App, Context, Focusable, MouseDownEvent, Window, canvas, div, prelude::*, px};
+use gpui::{canvas, div, prelude::*, px, App, Context, Focusable, MouseDownEvent, Window};
 
 use crate::projection::{ConnectionState, TERMINAL_CWD_UNKNOWN};
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
 use crate::ui::components::dropdown::{Dropdown, MenuPanel, MenuRow};
 use crate::ui::components::follow_scroll::BackToBottom;
-use crate::ui::components::icon::{Icon, icon, icon_sized};
+use crate::ui::components::icon::{icon, icon_sized, Icon};
 use crate::ui::components::panel::Panel;
 use crate::ui::i18n::t;
 use crate::ui::shell_layout::InspectorPlacement;
 use crate::ui::theme::{dark, font, metrics};
 
-use super::{AppView, MenuKind, terminal_can_close, terminal_can_operate};
+use super::{terminal_can_close, terminal_can_operate, AppView, MenuKind};
 
 pub(crate) use super::terminal_view::{render_terminal_lines, terminal_text_size};
 
@@ -294,9 +294,9 @@ impl AppView {
             InspectorTab::Resources => self.resources_element(cx).into_any_element(),
             InspectorTab::Browser => self.browser_element(cx).into_any_element(),
             InspectorTab::Files => self.files_element(window, cx).into_any_element(),
-            InspectorTab::Subagent => {
-                self.subagent_conversation_element(window, cx).into_any_element()
-            }
+            InspectorTab::Subagent => self
+                .subagent_conversation_element(window, cx)
+                .into_any_element(),
         };
         let mut panel = if placement.is_center() {
             Panel::fill()

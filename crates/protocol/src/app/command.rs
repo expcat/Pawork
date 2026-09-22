@@ -405,8 +405,8 @@ pub enum AppCommand {
         /// 跨 workspace / 引用不可用为结构化 fail-closed RunStart 错误。
         #[serde(default, skip_serializing_if = "Option::is_none")]
         profile: Option<String>,
-        /// ADR-063：可选 canonical reasoning effort 名（none/low/medium/
-        /// high/x_high/max）。缺省 = Host 按模型默认配置或 Provider 默认解析；
+        /// ADR-063：可选 canonical reasoning effort 名（low/medium/high/
+        /// x_high/max，词汇不含 none）。缺省 = Host 按模型默认配置或 Provider 默认解析；
         /// 非法名为结构化 fail-closed RunStart 错误。
         #[serde(default, skip_serializing_if = "Option::is_none")]
         effort: Option<String>,

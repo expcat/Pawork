@@ -71,11 +71,95 @@ fn provider(server: &MockServer) -> XaiProvider {
 }
 
 #[tokio::test]
+async fn subscription_catalog_drives_model_and_transport_routing() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/models"))
+        .and(header("authorization", "Bearer oauth-xai"))
+        .and(header("x-xai-token-auth", "xai-grok-cli"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": [
+                {"id": "picker-id", "model": "grok-subscription", "name": "Grok Subscription",
+                 "contextWindow": 262144, "maxCompletionTokens": 32768, "apiBackend": "responses"},
+                {"id": "grok-4.7", "model": "grok-4.7", "apiBackend": "responses"},
+                {"id": "grok-chat", "context_window": 131072},
+                {"id": "unsupported", "apiBackend": "messages"}
+            ]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    for (model, endpoint, body) in [
+        (
+            "grok-subscription",
+            "/responses",
+            common::responses_completed_body(),
+        ),
+        (
+            "grok-chat",
+            "/chat/completions",
+            common::chat_finish_only_body(),
+        ),
+        ("grok-4.7", "/responses", common::responses_completed_body()),
+    ] {
+        Mock::given(method("POST"))
+            .and(path(endpoint))
+            .and(header("authorization", "Bearer oauth-xai"))
+            .and(header("x-xai-token-auth", "xai-grok-cli"))
+            .and(header("x-grok-model-override", model))
+            .and(body_string_contains(model))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(body),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+    let provider = provider(&server);
+    let models = provider.list_models(None).await.unwrap();
+    assert_eq!(models.len(), 3);
+    assert_eq!(models[0].id.as_str(), "grok-subscription");
+    assert_eq!(models[0].display_name, "Grok Subscription");
+    assert_eq!(models[0].context_window_tokens, 262144);
+    assert_eq!(models[0].max_output_tokens, 32768);
+    assert_eq!(
+        models[0].capabilities.transport,
+        pawork_domain::ModelTransport::Responses
+    );
+    // grok-4.7：远端未声明模态，按 VISION-2 默认表回填 image_input；
+    // Responses 模型声明 hosted WebSearch（API 级 web_search + 订阅 proxy
+    // 经 /responses 调搜索），Chat 模型不声明。
+    assert_eq!(models[1].id.as_str(), "grok-4.7");
+    assert!(models[1].capabilities.image_input);
+    assert!(models[1]
+        .capabilities
+        .hosted_tool_tags
+        .contains(&pawork_domain::ToolCapabilityTag::WebSearch));
+    assert_eq!(models[2].context_window_tokens, 131072);
+    assert!(models[2].capabilities.hosted_tool_tags.is_empty());
+    for model in models {
+        provider
+            .stream(
+                &request(model.id.as_str()),
+                &Sink::default(),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+    }
+    server.verify().await;
+}
+
+#[tokio::test]
 async fn model_capability_selects_responses_or_chat() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/responses"))
         .and(header("authorization", "Bearer oauth-xai"))
+        .and(header("x-xai-token-auth", "xai-grok-cli"))
+        .and(header("x-grok-model-override", "grok-4"))
         .respond_with(
             ResponseTemplate::new(200)
                 .insert_header("content-type", "text/event-stream")
@@ -87,12 +171,14 @@ async fn model_capability_selects_responses_or_chat() {
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
         .and(header("authorization", "Bearer oauth-xai"))
+        .and(header("x-xai-token-auth", "xai-grok-cli"))
+        .and(header("x-grok-model-override", "grok-3"))
         .respond_with(
             ResponseTemplate::new(200)
                 .insert_header("content-type", "text/event-stream")
                 .set_body_string(common::chat_finish_only_body()),
         )
-        .expect(1)
+        .expect(2)
         .mount(&server)
         .await;
 
@@ -117,6 +203,18 @@ async fn model_capability_selects_responses_or_chat() {
         )
         .await
         .unwrap();
+    let mut image = request("grok-3");
+    image.messages[0]
+        .content
+        .push(ContentPart::Image(pawork_domain::ImageContent {
+            source: pawork_domain::ImageSource::Base64("QkFTRTY0".into()),
+            media_type: "image/png".into(),
+            alt_text: None,
+        }));
+    provider
+        .stream(&image, &Sink::default(), CancellationToken::new())
+        .await
+        .unwrap();
     assert!(server
         .received_requests()
         .await
@@ -133,6 +231,17 @@ async fn model_capability_selects_responses_or_chat() {
     let body: serde_json::Value = serde_json::from_slice(&sent[0].body).unwrap();
     assert_eq!(body["tools"][0]["type"], "web_search");
     assert!(body.get("search_parameters").is_none());
+    let chat_image = sent
+        .iter()
+        .rev()
+        .find(|request| request.url.path() == "/chat/completions")
+        .expect("chat image request");
+    let chat_image: serde_json::Value = serde_json::from_slice(&chat_image.body).unwrap();
+    assert_eq!(chat_image["messages"][0]["content"][1]["type"], "image_url");
+    assert_eq!(
+        chat_image["messages"][0]["content"][1]["image_url"]["url"],
+        "data:image/png;base64,QkFTRTY0"
+    );
     assert!(pawork_providers::xai_builtin_models()
         .iter()
         .all(|model| model

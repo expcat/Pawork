@@ -6,15 +6,15 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use gpui::{
-    FontStyle, FontWeight, InteractiveText, Rgba, SharedString, StyledText, TextRun, div,
-    prelude::*, px,
+    div, prelude::*, px, FontStyle, FontWeight, InteractiveText, Rgba, SharedString, StyledText,
+    TextRun,
 };
 
-use super::AppView;
 use super::components::button::{Button, ButtonPadding, ButtonVariant};
-use super::components::icon::{Icon, icon};
+use super::components::icon::{icon, Icon};
 use super::i18n::t;
 use super::theme::{dark, font, metrics};
+use super::AppView;
 
 /// 代码复制走 SVG；命中区与 Header 图标按钮同为 36×36。
 const TABLE_CELL_PAD_X: f32 = 6.0;
@@ -1023,7 +1023,10 @@ mod tests {
         assert_eq!(actions[4].content, "https://other.test");
         assert!(!actions[4].open);
         assert!(actions[4].label.contains("other.test"));
-        assert_eq!(MessageMeasure::new(text).block_line_counts(900.0, 14.0), [2, 3, 1]);
+        assert_eq!(
+            MessageMeasure::new(text).block_line_counts(900.0, 14.0),
+            [2, 3, 1]
+        );
         let url = "https://en.wikipedia.org/wiki/Function_(mathematics)";
         for source in [format!("[定义]({url})"), format!("({url}).")] {
             let actions = message_actions(&source);
@@ -1054,10 +1057,10 @@ mod tests {
                 text
             );
         }
-        assert!(
-            message_actions("[bad](javascript:alert) [file](file:///tmp/a) `https://code.test`")
-                .is_empty()
-        );
+        assert!(message_actions(
+            "[bad](javascript:alert) [file](file:///tmp/a) `https://code.test`"
+        )
+        .is_empty());
         assert_eq!(
             parse("| 中文 | 值 |\n| --- | --")[0].kind,
             BlockKind::Paragraph
@@ -1068,11 +1071,9 @@ mod tests {
         );
         let single_line = parse("```hello```\nnormal");
         assert_eq!(single_line[0].kind, BlockKind::Paragraph);
-        assert!(
-            single_line[0].lines[0]
-                .iter()
-                .any(|span| span.text.contains("hello"))
-        );
+        assert!(single_line[0].lines[0]
+            .iter()
+            .any(|span| span.text.contains("hello")));
         let blocks = parse("```\n中文 **原样**\n🙂");
         assert_eq!(blocks[0].lines[0][0].text, "中文 **原样**");
         assert_eq!(blocks[0].lines[1][0].text, "🙂");

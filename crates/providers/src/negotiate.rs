@@ -137,12 +137,13 @@ impl CapabilityNegotiator {
         resolved.requested.insert(key.clone());
 
         // 模型未声明任何 reasoning 能力（v1 thinking=false 且 v2 reasoning 空）。
+        // effort 词汇不含 none：ReasoningConfig 存在即要求模型声明 reasoning 能力。
         let model_supports_reasoning = caps.thinking
             || caps.reasoning.state.requires_signature
             || caps.reasoning.state.requires_encrypted
             || caps.reasoning.state.supports_interleaved
             || caps.reasoning.supports_granular_effort;
-        if reasoning.requires_reasoning_support() && !model_supports_reasoning {
+        if !model_supports_reasoning {
             resolved.unsupported.insert(key.clone());
             resolved.fallback.insert(
                 key,

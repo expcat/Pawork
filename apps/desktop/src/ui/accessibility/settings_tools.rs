@@ -2,14 +2,14 @@
 
 use gpui::Window;
 
-use super::{AxAction, AxNode, AxRect, AxRole, dynamic_identifier};
+use super::{dynamic_identifier, AxAction, AxNode, AxRect, AxRole};
 use crate::projection::ConnectionState;
-use crate::ui::AppView;
 use crate::ui::i18n::t;
 use crate::ui::settings::{
-    SettingsMcpAction, settings_mcp_effect_note, settings_mcp_remove_confirm_note,
-    tools_status_lines,
+    settings_mcp_effect_note, settings_mcp_remove_confirm_note, tools_status_lines,
+    SettingsMcpAction,
 };
+use crate::ui::AppView;
 
 impl AppView {
     /// 「工具与 MCP」页 AX（SET-6c）：server 行复用 resources_ax 的形状

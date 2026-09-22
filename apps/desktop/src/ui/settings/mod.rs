@@ -711,7 +711,10 @@ pub(crate) fn settings_model_effort_chip_identifier(
 ) -> String {
     format!(
         "{SETTINGS_MODELS_CONTROL_PREFIX}{}",
-        dynamic_identifier(&format!("effort-{level}"), &format!("{provider_id}:{model_id}"))
+        dynamic_identifier(
+            &format!("effort-{level}"),
+            &format!("{provider_id}:{model_id}")
+        )
     )
 }
 
@@ -1202,6 +1205,28 @@ mod tests {
         let flat = settings_role_menu_entries(&models, &providers);
         assert_eq!(flat.len(), 1);
         assert_eq!(flat[0].provider_id, "kimi");
+
+        let mut catalog = models;
+        catalog.push(model("deepseek", "deepseek-chat"));
+        catalog.push(model("deepseek", "deepseek-reasoner"));
+        catalog.push(ModelEntry {
+            enabled: false,
+            ..model("kimi", "disabled")
+        });
+        let mut providers = providers;
+        providers.push(provider("deepseek", ProviderAuthState::None));
+        let subagents = crate::projection::subagent_rule_models(&catalog, &providers);
+        assert_eq!(subagents.len(), 1);
+        assert_eq!(subagents[0].id, "kimi-k2");
+        providers.last_mut().unwrap().auth = ProviderAuthState::Connected {
+            method: "api_key".into(),
+            masked_credential: None,
+        };
+        assert_eq!(
+            crate::projection::subagent_rule_models(&catalog, &providers).len(),
+            3,
+            "连接后恢复已启用模型，仍排除禁用模型与缺失供应商"
+        );
     }
 
     /// OPT-3b：角色控件 identifier 三路径同源——构造与解析互逆；

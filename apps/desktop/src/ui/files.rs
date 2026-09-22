@@ -2122,11 +2122,10 @@ mod tests {
         cx.run_until_parked();
         cx.update(|window, cx| {
             view.update(cx, |view, cx| {
-                assert!(
-                    view.accessibility_tree(window, cx)
-                        .find("files-entry-docs/review")
-                        .is_some()
-                );
+                assert!(view
+                    .accessibility_tree(window, cx)
+                    .find("files-entry-docs/review")
+                    .is_some());
                 // 列举失败在所属目录下就地显示，折叠再展开即重试
                 view.files_action("files-entry-docs/review", window, cx);
                 let epoch = view.files.epoch;
@@ -2149,11 +2148,9 @@ mod tests {
                 assert_eq!(note.label, "Permission denied");
                 view.files_action("files-entry-docs/review", window, cx);
                 view.files_action("files-entry-docs/review", window, cx);
-                assert!(
-                    view.files.workspaces["one"]
-                        .loading
-                        .contains_key("docs/review")
-                );
+                assert!(view.files.workspaces["one"]
+                    .loading
+                    .contains_key("docs/review"));
                 let epoch = view.files.epoch;
                 view.files_result(
                     "one".into(),

@@ -4,12 +4,12 @@ use gpui::{App, Window};
 
 use super::{AxAction, AxNode, AxRect, AxRole};
 use crate::projection::ConnectionState;
-use crate::ui::AppView;
 use crate::ui::i18n::t;
 use crate::ui::settings::{
-    APPROVAL_MODE_ALL, approval_mode_description, approval_mode_label, permissions_status_lines,
-    settings_permissions_effect_note, settings_trust_unset,
+    approval_mode_description, approval_mode_label, permissions_status_lines,
+    settings_permissions_effect_note, settings_trust_unset, APPROVAL_MODE_ALL,
 };
+use crate::ui::AppView;
 
 impl AppView {
     /// 「权限与审批」页 AX（SET-6b）：五档审批模式（当前档只读、其余

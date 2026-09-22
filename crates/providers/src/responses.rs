@@ -72,6 +72,7 @@ pub struct ResponsesTransport {
     credential: ResolvedCredential,
     reasoning_protector: Arc<dyn ReasoningProtector>,
     opencode_session: bool,
+    model_header: Option<&'static str>,
 }
 
 impl ResponsesTransport {
@@ -100,11 +101,18 @@ impl ResponsesTransport {
             credential,
             reasoning_protector: Arc::new(InMemoryReasoningProtector::default()),
             opencode_session: false,
+            model_header: None,
         })
     }
 
     pub(crate) fn with_opencode_session(mut self) -> Self {
         self.opencode_session = true;
+        self
+    }
+
+    #[cfg(feature = "xai-oauth")]
+    pub(crate) fn with_model_header(mut self, name: &'static str) -> Self {
+        self.model_header = Some(name);
         self
     }
 
@@ -171,11 +179,15 @@ impl ResponsesTransport {
         }
 
         let mut headers = self.request_headers();
+        if let Some(name) = self.model_header {
+            headers.push((name.into(), request.model.to_string()));
+        }
         if self.opencode_session {
             headers.extend(crate::provider::opencode_session_header(request)?);
         }
         let reasoning_inputs =
             resolve_reasoning_inputs(request, self.reasoning_protector.as_ref()).await;
+        crate::request::reject_channel_image_limits(self.config.provider_id.as_str(), request)?;
         let body = to_responses_body(request, reasoning_inputs, self.config.wire);
         let mut bytes = self
             .client
@@ -356,18 +368,23 @@ pub fn to_responses_body(
 
     let clamped =
         clamp_reasoning_to_thinking(request.reasoning.as_ref(), request.thinking.as_ref());
+    // effort 词汇不含 none：显式 reasoning 优先，缺省由旧 thinking 派生；
+    // thinking Off / 皆无 → 不发送 reasoning 字段（回落 Provider 默认）。
     let effort = request
         .reasoning
         .as_ref()
         .map(|reasoning| reasoning.effort)
-        .unwrap_or_else(|| match clamped.level {
-            ThinkingLevel::Off => ReasoningEffort::None,
-            ThinkingLevel::Low => ReasoningEffort::Low,
-            ThinkingLevel::Medium => ReasoningEffort::Medium,
-            ThinkingLevel::High => ReasoningEffort::High,
+        .or_else(|| match clamped.level {
+            ThinkingLevel::Off => None,
+            ThinkingLevel::Low => Some(ReasoningEffort::Low),
+            ThinkingLevel::Medium => Some(ReasoningEffort::Medium),
+            ThinkingLevel::High => Some(ReasoningEffort::High),
         });
-    if let Some(effort) = reasoning_effort(effort) {
-        body.insert("reasoning".into(), json!({"effort": effort}));
+    if let Some(effort) = effort {
+        body.insert(
+            "reasoning".into(),
+            json!({"effort": reasoning_effort(effort)}),
+        );
     }
     if wire.include_encrypted_reasoning {
         body.insert("include".into(), json!(["reasoning.encrypted_content"]));
@@ -540,12 +557,11 @@ fn tool_choice(choice: &ToolChoice) -> Value {
     }
 }
 
-fn reasoning_effort(effort: ReasoningEffort) -> Option<&'static str> {
+fn reasoning_effort(effort: ReasoningEffort) -> &'static str {
     match effort {
-        ReasoningEffort::None => None,
-        ReasoningEffort::Low => Some("low"),
-        ReasoningEffort::Medium => Some("medium"),
-        ReasoningEffort::High | ReasoningEffort::XHigh | ReasoningEffort::Max => Some("high"),
+        ReasoningEffort::Low => "low",
+        ReasoningEffort::Medium => "medium",
+        ReasoningEffort::High | ReasoningEffort::XHigh | ReasoningEffort::Max => "high",
     }
 }
 

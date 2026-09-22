@@ -8,9 +8,9 @@ use std::time::Duration;
 
 use pawork_auth::locator::api_key_env_name;
 use pawork_auth::{
-    ApiKeyCredential, AuthError, CredentialSource, OAuthRefreshConfig, SecretBackend,
     refresh_default_oauth_credential_if_needed, resolve_oauth_credential,
-    resolve_provider_credential,
+    resolve_provider_credential, ApiKeyCredential, AuthError, CredentialSource, OAuthRefreshConfig,
+    SecretBackend,
 };
 use pawork_domain::{
     AgentEvent, CancellationToken, CanonicalModelRequest, ContentPart, Message, MessageId,
@@ -28,7 +28,7 @@ use pawork_workspace::config::{PaworkConfig, ProviderConfig};
 use async_trait::async_trait;
 
 use crate::channels::{self, ChannelKind};
-use crate::protocol::{AdapterProtocol, resolve_adapter_protocol};
+use crate::protocol::{resolve_adapter_protocol, AdapterProtocol};
 use crate::{AppCore, AppError};
 
 /// 自动命名一次性补全的兜底超时（ADR-054 D4：超时保留占位名）。
@@ -428,52 +428,43 @@ impl AppCore {
                 }
             }
         }
-        let mut probe_jobs = Vec::new();
-        for id in provider_ids {
-            let assembled =
-                if id.as_str() == self.provider_id.as_str() && !self.provider_needs_rebuild() {
-                    Some((Arc::clone(&self.provider), self.credential.clone()))
-                } else {
-                    match assemble_provider(
-                        &self.config,
-                        &id,
-                        &self.backend,
-                        false,
-                        Arc::clone(&self.reasoning_protector) as Arc<dyn ReasoningProtector>,
-                    )
-                    .await
-                    {
-                        Ok(assembled) => Some((assembled.adapter, assembled.credential)),
-                        Err(_) => None,
-                    }
-                };
-            if let Some((adapter, credential)) = assembled {
-                probe_jobs.push((id, adapter, credential));
-            }
-        }
         let catalog_for_probe = ModelRegistry::empty();
-        // 单通道探测若挂起（临期 OAuth / 不可达厂商），不得拖死 Desktop
-        // ModelList：客户端默认 10s 超时，静态目录已含 §1.1 低消耗模型。
+        // OAuth 刷新与目录请求共用 4s 窗口；各通道并行，避免拖死 GUI ModelList。
         const OVERVIEW_PROBE_TIMEOUT: Duration = Duration::from_secs(4);
-        let probe_results =
-            futures::future::join_all(probe_jobs.into_iter().map(|(id, adapter, credential)| {
-                let catalog = catalog_for_probe.clone();
-                async move {
-                    let result = match tokio::time::timeout(
-                        OVERVIEW_PROBE_TIMEOUT,
-                        catalog.probe_provider(adapter.as_ref(), credential.as_ref()),
-                    )
-                    .await
-                    {
-                        Ok(result) => result,
-                        Err(_) => Err(pawork_providers::ProbeError::new(
-                            "runtime model probe timed out",
-                        )),
+        let probe_results = futures::future::join_all(provider_ids.into_iter().map(|id| {
+            let catalog = catalog_for_probe.clone();
+            async move {
+                let result = match tokio::time::timeout(OVERVIEW_PROBE_TIMEOUT, async {
+                    let reuse = id == self.provider_id && !self.provider_needs_rebuild();
+                    let (adapter, credential) = if reuse {
+                        (Arc::clone(&self.provider), self.credential.clone())
+                    } else {
+                        let assembled = assemble_provider(
+                            &self.config,
+                            &id,
+                            &self.backend,
+                            true,
+                            Arc::clone(&self.reasoning_protector) as Arc<dyn ReasoningProtector>,
+                        )
+                        .await
+                        .map_err(|error| pawork_providers::ProbeError::new(error.to_string()))?;
+                        (assembled.adapter, assembled.credential)
                     };
-                    (id, result)
-                }
-            }))
-            .await;
+                    catalog
+                        .probe_provider(adapter.as_ref(), credential.as_ref())
+                        .await
+                })
+                .await
+                {
+                    Ok(result) => result,
+                    Err(_) => Err(pawork_providers::ProbeError::new(
+                        "runtime model probe timed out",
+                    )),
+                };
+                (id, result)
+            }
+        }))
+        .await;
         for (id, result) in probe_results {
             match result {
                 Err(error) => {
@@ -1082,8 +1073,8 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use pawork_auth::SecretBackend;
     use pawork_auth::locator::api_key_env_name;
+    use pawork_auth::SecretBackend;
     use pawork_domain::{
         AgentEvent, ModelId, ModelResponseSummary, ProviderId, StopReason, TokenUsage,
     };
@@ -1094,7 +1085,7 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use crate::testsupport::{
-        ScriptedProvider, core_with_registry, mock_core, remove_env, sample_config, set_env,
+        core_with_registry, mock_core, remove_env, sample_config, set_env, ScriptedProvider,
     };
     use crate::{AdapterProtocol, AppCore, AppError};
     use pawork_providers::ReasoningProtector;
@@ -1263,23 +1254,18 @@ mod tests {
         assert_eq!(selected.context_window_tokens, 4096);
         assert_eq!(selected.max_output_tokens, 2048);
         let catalog = core.model_catalog().await;
-        assert!(
-            catalog
-                .iter()
-                .any(|entry| entry.id.as_str() == "runtime-only-model")
-        );
-        assert!(
-            !catalog
-                .iter()
-                .any(|entry| entry.id.as_str() == "retired-model")
-        );
-        assert!(
-            core.models_overview()
-                .await
-                .iter()
-                .filter(|entry| entry.provider == provider_id)
-                .all(|entry| entry.id.as_str() == "runtime-only-model")
-        );
+        assert!(catalog
+            .iter()
+            .any(|entry| entry.id.as_str() == "runtime-only-model"));
+        assert!(!catalog
+            .iter()
+            .any(|entry| entry.id.as_str() == "retired-model"));
+        assert!(core
+            .models_overview()
+            .await
+            .iter()
+            .filter(|entry| entry.provider == provider_id)
+            .all(|entry| entry.id.as_str() == "runtime-only-model"));
         assert!(matches!(
             core.switch_provider(None, provider_id.as_str(), Some("retired-model"))
                 .await,
@@ -1355,16 +1341,12 @@ mod tests {
             pawork_domain::ModelTransport::Responses
         );
         let overview = core.models_overview().await;
-        assert!(
-            !overview
-                .iter()
-                .any(|entry| entry.provider == go && entry.id.as_str() == "minimax-m3")
-        );
-        assert!(
-            overview
-                .iter()
-                .any(|entry| entry.provider == go && entry.id.as_str() == "unlisted-model")
-        );
+        assert!(!overview
+            .iter()
+            .any(|entry| entry.provider == go && entry.id.as_str() == "minimax-m3"));
+        assert!(overview
+            .iter()
+            .any(|entry| entry.provider == go && entry.id.as_str() == "unlisted-model"));
     }
 
     #[tokio::test]

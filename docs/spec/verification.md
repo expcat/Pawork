@@ -54,7 +54,7 @@ E3/E4 证据必须包含日期、环境/版本、输入范围、实际结果和�
 
 ## 4. 三类不可推迟的回归
 
-2026-09-20 启动 [测试与门禁重构](../testing-refactor-plan.md)：每个测试须对应真实操作的结果、失败边界或恢复完整性；测试数量和内部常量副本不作为完成证据。按包分批检查，删除须有无效性依据或明确替代锚点。mock 服务自测只证明测试工具自身可用，不证明 Pawork 的 Provider / Host 路径通过。
+2026-09-20 启动测试与门禁重构（T0–T8 已收口，分批记录见 Git 历史 37fae8f3:docs/testing-refactor-plan.md）：每个测试须对应真实操作的结果、失败边界或恢复完整性；测试数量和内部常量副本不作为完成证据。按包分批检查，删除须有无效性依据或明确替代锚点。mock 服务自测只证明测试工具自身可用，不证明 Pawork 的 Provider / Host 路径通过。
 
 
 | 类别 | 最低覆盖 |
@@ -76,7 +76,7 @@ E3/E4 证据必须包含日期、环境/版本、输入范围、实际结果和�
 | mock/fixture 工具变化 | `bash scripts/mock/gate.sh --level 0,2` | 测试工具的 HTTP 回放、凭证/配置恢复与脱敏；quota 探针对空窗、失败、过期缓存与缺失 provenance fail-closed；不算真实 Provider 验收 |
 | 真实 Provider/OS/窗口/隔离桌面 | 对应包 Spec 的专项步骤 | 必须记录外部效果和前置条件；未执行不算通过 |
 
-不使用测试数或覆盖率配额驱动删减。便宜且有独立边界意义的单测可以保留；golden 检查外部格式兼容，不属于应删除的实现副本。重构分批记录见 [计划](../testing-refactor-plan.md)。
+不使用测试数或覆盖率配额驱动删减。便宜且有独立边界意义的单测可以保留；golden 检查外部格式兼容，不属于应删除的实现副本。
 
 UI 取证工具须提供真实失败信号：`ui-fixture.sh desktop` 清除旧 `timeline_stable` 后等待新实例就绪——barrier 必须是本进程启动后写入的有效 JSON（`settle_seq>=1`、`at_ms` 不早于启动时刻），进程提前退出、PID 归属变化或超时均失败；fixture 与 desktop 构建产物同样经 artifact 消息定位。`ui-ax-dump.swift` 无窗口、AX 权限不足、没有应用 identifier 或动作失败均非零；`ui-key-event.swift` 投递前确认目标 PID 在前台且具备事件投递权限。操作效果仍须由窗口状态与外部事实核对。
 

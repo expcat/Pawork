@@ -7,7 +7,7 @@ use crate::ui::i18n::{t, t2};
 use pawork_client::{ResumeDisposition, Snapshot};
 use serde_json::Value;
 
-use super::{DesktopProjection, TimelineEntryKind};
+use super::{DesktopProjection, ProviderAuthState, ProviderAuthStatusEntry, TimelineEntryKind};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ConnectionState {
@@ -275,7 +275,8 @@ pub struct ModelEntry {
 
 /// canonical 推理强度词汇（与 pawork-domain ReasoningEffort wire 名一致；
 /// Desktop 不依赖 domain，本地保一份常量用于菜单与配置 UI）。
-pub const EFFORT_LEVELS: [&str; 6] = ["none", "low", "medium", "high", "x_high", "max"];
+/// 词汇不含 none：「不推理」= 未选择（Auto），不设显式档位。
+pub const EFFORT_LEVELS: [&str; 5] = ["low", "medium", "high", "x_high", "max"];
 
 impl Default for ModelEntry {
     /// 测试与占位构造用默认值；生产路径一律走 parse_models 显式填充。
@@ -314,17 +315,29 @@ impl ModelEntry {
                 .filter(|name| EFFORT_LEVELS.contains(&name.as_str()))
                 .cloned()
                 .collect(),
-            None => EFFORT_LEVELS.iter().map(|name| (*name).to_string()).collect(),
+            None => EFFORT_LEVELS
+                .iter()
+                .map(|name| (*name).to_string())
+                .collect(),
         }
     }
 }
 
-/// 子代理页模型目录：只含「模型与供应商」中已启用的模型（render / 派发
-/// / AX 三路径同源；ADR-063——未启用模型不在子代理配置中出现）。
-pub fn subagent_rule_models(catalog: &[ModelEntry]) -> Vec<ModelEntry> {
+/// 子代理页模型目录：只含已连接供应商的已启用模型（render / 派发
+/// / AX 三路径同源），未连接供应商的静态回退条目不作为候选。
+pub fn subagent_rule_models(
+    catalog: &[ModelEntry],
+    providers: &[ProviderAuthStatusEntry],
+) -> Vec<ModelEntry> {
     catalog
         .iter()
-        .filter(|model| model.enabled)
+        .filter(|model| {
+            model.enabled
+                && providers.iter().any(|provider| {
+                    provider.provider_id == model.provider_id
+                        && matches!(provider.auth, ProviderAuthState::Connected { .. })
+                })
+        })
         .cloned()
         .collect()
 }

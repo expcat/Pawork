@@ -6,12 +6,12 @@
 //! 面板统一走 Dropdown（轨 2）。
 
 use gpui::{
-    AnyElement, App, ClickEvent, FocusHandle, IntoElement, KeyDownEvent, Pixels, Rems, RenderOnce,
-    Rgba, SharedString, Window, div, prelude::*, px,
+    div, prelude::*, px, AnyElement, App, ClickEvent, FocusHandle, IntoElement, KeyDownEvent,
+    Pixels, Rems, RenderOnce, Rgba, SharedString, Window,
 };
 
 use crate::ui::components::focus_ring::focus_ring;
-use crate::ui::theme::{dark, font, metrics};
+use crate::ui::theme::{font, metrics, theme};
 
 /// 按钮形态：决定底色、文字色与 hover / active 映射（design/README.md §8.1）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -225,78 +225,82 @@ impl Button {
 
 impl ButtonVariant {
     /// （enabled 底色, hover 色, pressed 色）；Ghost 无底色。
-    fn colors(self) -> (Option<Rgba>, Rgba, Rgba) {
+    fn colors(self, cx: &App) -> (Option<Rgba>, Rgba, Rgba) {
+        let theme = theme(cx);
         match self {
             Self::Primary | Self::IconCircle => (
-                Some(dark().accent.primary),
-                dark().accent.hover,
-                dark().accent.primary,
+                Some(theme.accent.primary),
+                theme.accent.hover,
+                theme.accent.primary,
             ),
-            Self::Ghost => (None, dark().surface.raised, dark().surface.hover),
+            Self::Ghost => (None, theme.surface.raised, theme.surface.hover),
             Self::Danger => (
-                Some(dark().semantic.danger_bg),
-                dark().semantic.danger_hover,
-                dark().semantic.danger_bg,
+                Some(theme.semantic.danger_bg),
+                theme.semantic.danger_hover,
+                theme.semantic.danger_bg,
             ),
             Self::Success => (
-                Some(dark().semantic.success_bg),
-                dark().semantic.success_hover,
-                dark().semantic.success_bg,
+                Some(theme.semantic.success_bg),
+                theme.semantic.success_hover,
+                theme.semantic.success_bg,
             ),
             Self::Raised => (
-                Some(dark().surface.raised),
-                dark().surface.hover,
-                dark().surface.pressed,
+                Some(theme.surface.raised),
+                theme.surface.hover,
+                theme.surface.pressed,
             ),
         }
     }
 
     /// enabled 文字色（None = 继承容器）。
-    fn text_color(self) -> Option<Rgba> {
+    fn text_color(self, cx: &App) -> Option<Rgba> {
+        let theme = theme(cx);
         match self {
             Self::Primary | Self::IconCircle | Self::Danger | Self::Success => {
-                Some(dark().text.on_accent)
+                Some(theme.text.on_accent)
             }
-            Self::Raised => Some(dark().text.primary),
+            Self::Raised => Some(theme.text.primary),
             Self::Ghost => None,
         }
     }
 
     /// disabled 底色（Ghost 无底色）。
-    fn disabled_bg(self) -> Option<Rgba> {
+    fn disabled_bg(self, cx: &App) -> Option<Rgba> {
+        let theme = theme(cx);
         match self {
             Self::Primary | Self::IconCircle | Self::Danger | Self::Success => {
-                Some(dark().border.strong)
+                Some(theme.border.strong)
             }
-            Self::Raised => Some(dark().surface.disabled),
+            Self::Raised => Some(theme.surface.disabled),
             Self::Ghost => None,
         }
     }
 
     /// disabled 文字色（None = 继承容器）。
-    fn disabled_text_color(self) -> Option<Rgba> {
+    fn disabled_text_color(self, cx: &App) -> Option<Rgba> {
+        let theme = theme(cx);
         match self {
             Self::Primary | Self::IconCircle | Self::Danger | Self::Success => {
-                Some(dark().text.on_accent)
+                Some(theme.text.on_accent)
             }
-            Self::Raised | Self::Ghost => Some(dark().text.disabled),
+            Self::Raised | Self::Ghost => Some(theme.text.disabled),
         }
     }
 }
 
 impl RenderOnce for Button {
-    fn render(self, window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let enabled = !self.disabled;
-        let (rest_bg, hover, pressed) = self.variant.colors();
+        let (rest_bg, hover, pressed) = self.variant.colors(cx);
         let bg = if enabled {
             rest_bg
         } else {
-            self.variant.disabled_bg()
+            self.variant.disabled_bg(cx)
         };
         let text_color = if enabled {
-            self.text_color.or_else(|| self.variant.text_color())
+            self.text_color.or_else(|| self.variant.text_color(cx))
         } else {
-            self.variant.disabled_text_color()
+            self.variant.disabled_text_color(cx)
         };
 
         let mut button = div().id(self.id);
@@ -333,7 +337,7 @@ impl RenderOnce for Button {
             button = button.rounded(px(radius));
         }
         if self.bordered {
-            button = button.border_1().border_color(dark().border.subtle);
+            button = button.border_1().border_color(theme(cx).border.subtle);
         }
         button = match self.padding {
             ButtonPadding::None => button,

@@ -6,11 +6,11 @@
 //! 业务选中态与焦点独立，禁止用动态 border / padding 改变控件几何。
 
 use gpui::{
-    AbsoluteLength, App, Global, IntoElement, KeyDownEvent, MouseDownEvent, RenderOnce, Window,
-    div, prelude::*, px,
+    div, prelude::*, px, AbsoluteLength, App, Global, IntoElement, KeyDownEvent, MouseDownEvent,
+    RenderOnce, Window,
 };
 
-use crate::ui::theme::{dark, metrics};
+use crate::ui::theme::{metrics, theme};
 
 /// Desktop 为单窗口；仅记录输入方式，不改变 FocusHandle 或业务状态。
 #[derive(Default)]
@@ -69,7 +69,7 @@ impl RenderOnce for FocusRing {
             .rounded(self.0)
             .when(keyboard_focus_visible(cx), |ring| {
                 ring.border(px(metrics::FOCUS_RING_WIDTH))
-                    .border_color(dark().text.secondary)
+                    .border_color(theme(cx).text.secondary)
             })
     }
 }

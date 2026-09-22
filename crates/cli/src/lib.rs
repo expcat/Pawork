@@ -98,6 +98,10 @@ pub enum Command {
         /// 续聊时切换到指定 branch（需 `--resume`）
         #[arg(long)]
         branch: Option<String>,
+        /// 本地图片（png / jpeg / gif / webp，每个不超过 8 MiB）。可重复。
+        /// 只作用于本次 `--prompt`；REPL 与 `--json` 不接受。
+        #[arg(long = "image", value_name = "PATH")]
+        images: Vec<String>,
     },
     /// 列出 / 查看已落盘会话
     Sessions {
@@ -108,6 +112,10 @@ pub enum Command {
     Run {
         /// 用户提示（位置参数）
         prompt: String,
+        /// 本地图片（png / jpeg / gif / webp，每个不超过 8 MiB）。可重复。
+        /// `--json` 不接受。
+        #[arg(long = "image", value_name = "PATH")]
+        images: Vec<String>,
     },
     /// 列出当前 provider 的模型目录
     Models,
@@ -453,8 +461,21 @@ async fn run_inner() -> Result<(), CliError> {
             prompt,
             resume,
             branch,
-        } if cli.json => return chat::run_json(core, prompt, resume, branch).await,
-        Command::Run { prompt } if cli.json => {
+            images,
+        } if cli.json => {
+            if !images.is_empty() {
+                return Err(CliError::Usage(
+                    "--image 不能与 --json 一起使用（JSONL 路径只发送文本）".into(),
+                ));
+            }
+            return chat::run_json(core, prompt, resume, branch).await;
+        }
+        Command::Run { prompt, images } if cli.json => {
+            if !images.is_empty() {
+                return Err(CliError::Usage(
+                    "--image 不能与 --json 一起使用（JSONL 路径只发送文本）".into(),
+                ));
+            }
             return chat::run_json(core, Some(prompt), None, None).await;
         }
         command => {
@@ -463,11 +484,12 @@ async fn run_inner() -> Result<(), CliError> {
                     prompt,
                     resume,
                     branch,
-                } => chat::run_chat(&mut core, prompt, resume, branch).await,
+                    images,
+                } => chat::run_chat(&mut core, prompt, resume, branch, images).await,
                 Command::Sessions { command } => {
                     sessions::run_sessions(&core, command, cli.json).await
                 }
-                Command::Run { prompt } => chat::run_once(&core, &prompt).await,
+                Command::Run { prompt, images } => chat::run_once(&core, &prompt, images).await,
                 Command::Models => run_models(&core, cli.json).await,
                 Command::Auth { command } => auth::run_auth(&core, command, cli.json).await,
                 Command::Diff { session, page } => {
@@ -654,10 +676,12 @@ mod tests {
                 prompt,
                 resume,
                 branch,
+                images,
             } => {
                 assert_eq!(prompt.as_deref(), Some("hi"));
                 assert!(resume.is_none());
                 assert!(branch.is_none());
+                assert!(images.is_empty());
             }
             other => panic!("unexpected {other:?}"),
         }
@@ -691,7 +715,10 @@ mod tests {
 
         let cli = Cli::try_parse_from(["pawork", "run", "explain this"]).expect("parse");
         match cli.command {
-            Command::Run { prompt } => assert_eq!(prompt, "explain this"),
+            Command::Run { prompt, images } => {
+                assert_eq!(prompt, "explain this");
+                assert!(images.is_empty());
+            }
             other => panic!("unexpected {other:?}"),
         }
     }
@@ -1064,9 +1091,40 @@ mod tests {
             Cli::try_parse_from(["pawork", "chat", "--resume", "ses-1", "--branch", "fork-1"])
                 .expect("parse branch");
         match cli.command {
-            Command::Chat { resume, branch, .. } => {
+            Command::Chat {
+                resume,
+                branch,
+                images,
+                ..
+            } => {
                 assert_eq!(resume.as_deref(), Some("ses-1"));
                 assert_eq!(branch.as_deref(), Some("fork-1"));
+                assert!(images.is_empty());
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_repeatable_image_paths() {
+        let cli = Cli::try_parse_from([
+            "pawork", "chat", "--prompt", "看图", "--image", "a.png", "--image", "b.jpg",
+        ])
+        .expect("parse");
+        match cli.command {
+            Command::Chat { prompt, images, .. } => {
+                assert_eq!(prompt.as_deref(), Some("看图"));
+                assert_eq!(images, ["a.png", "b.jpg"]);
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+
+        let cli = Cli::try_parse_from(["pawork", "run", "--image", "shot.webp", "describe"])
+            .expect("parse run");
+        match cli.command {
+            Command::Run { prompt, images } => {
+                assert_eq!(prompt, "describe");
+                assert_eq!(images, ["shot.webp"]);
             }
             other => panic!("unexpected {other:?}"),
         }

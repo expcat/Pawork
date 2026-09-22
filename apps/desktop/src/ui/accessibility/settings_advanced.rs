@@ -3,9 +3,9 @@
 use gpui::Window;
 
 use super::{AxAction, AxNode, AxRect, AxRole};
-use crate::ui::AppView;
 use crate::ui::i18n::t;
 use crate::ui::settings::{settings_advanced_doctor_note, settings_advanced_target_note};
+use crate::ui::AppView;
 
 impl AppView {
     /// 「高级」页 AX（SET-6f）：与 render 共用诊断行和安全边界；Reconnect

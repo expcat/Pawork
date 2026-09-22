@@ -657,6 +657,7 @@ fn run_app(socket: PathBuf, barrier_dir: Option<PathBuf>) {
         .with_assets(ui::Assets)
         .run(move |cx: &mut App| {
             ui::install_keybindings(cx);
+            ui::theme::install(cx);
             let bounds = Bounds::centered(None, size(px(1440.), px(1024.)), cx);
             let view_platform = Arc::clone(&platform);
             let view_socket = socket.clone();

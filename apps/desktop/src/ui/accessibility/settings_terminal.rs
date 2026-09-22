@@ -4,12 +4,12 @@ use gpui::{App, Focusable, Window};
 
 use super::{AxAction, AxNode, AxRect, AxRole};
 use crate::projection::ConnectionState;
-use crate::ui::AppView;
 use crate::ui::i18n::t;
 use crate::ui::settings::{
     parse_terminal_dimension, settings_terminal_effect_note, settings_terminal_shell_unset,
     terminal_save_enabled, terminal_status_lines,
 };
+use crate::ui::AppView;
 
 impl AppView {
     /// 「终端」页 AX（SET-6d / ADR-050）：shell / columns / rows 输入

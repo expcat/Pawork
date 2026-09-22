@@ -226,10 +226,11 @@ impl AppView {
                 "settings-subagents-models-note",
                 t("settings.subagents.models_note"),
             ));
-        // ADR-063：只列「模型与供应商」中已启用的模型（未启用不出现在
+        // ADR-063：只列已连接供应商中已启用的模型（未启用不出现在
         // 子代理配置中；派发 / AX 同源用 subagent_rule_models）。
         let catalog = crate::projection::subagent_rule_models(
             &self.projection.settings_providers.model_catalog,
+            &self.projection.settings_providers.providers,
         );
         let models_section = if catalog.is_empty() {
             models_section.child(self.settings_note(
@@ -683,9 +684,10 @@ impl AppView {
             | SettingsSubagentControl::ToggleEffort(_, escaped)
             | SettingsSubagentControl::Reset(escaped) => escaped,
         };
-        // 与 render 同源：只在已启用模型上解析目标（ADR-063）。
+        // 与 render 同源：只在已连接供应商的已启用模型上解析目标（ADR-063）。
         let catalog = crate::projection::subagent_rule_models(
             &self.projection.settings_providers.model_catalog,
+            &self.projection.settings_providers.providers,
         );
         let Some((provider_id, model_id)) = settings_subagent_target_for_escaped(&catalog, escaped)
         else {
@@ -821,6 +823,7 @@ impl AppView {
     ) {
         let catalog = crate::projection::subagent_rule_models(
             &self.projection.settings_providers.model_catalog,
+            &self.projection.settings_providers.providers,
         );
         let Some(model) = catalog
             .iter()

@@ -8,12 +8,12 @@
 //! Escape API。选项行 hover 取值按 §8.1。
 
 use gpui::{
-    AnchoredPositionMode, AnyElement, App, ClickEvent, Corner, IntoElement, MouseDownEvent, Pixels,
-    Point, RenderOnce, ScrollHandle, SharedString, Styled, Window, anchored, deferred, div, point,
-    prelude::*, px,
+    anchored, deferred, div, point, prelude::*, px, AnchoredPositionMode, AnyElement, App,
+    ClickEvent, Corner, IntoElement, MouseDownEvent, Pixels, Point, RenderOnce, ScrollHandle,
+    SharedString, Styled, Window,
 };
 
-use crate::ui::theme::{dark, font, metrics};
+use crate::ui::theme::{font, metrics, theme};
 
 /// 浮层与触发器的垂直间距。
 pub const ANCHOR_GAP_Y: f32 = metrics::MENU_ANCHOR_GAP;
@@ -77,7 +77,8 @@ impl MenuRow {
 }
 
 impl RenderOnce for MenuRow {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = theme(cx);
         let marker = if self.selected { "✓" } else { "" };
         let mut row = div()
             .id(self.id)
@@ -94,24 +95,26 @@ impl RenderOnce for MenuRow {
                 div()
                     .w(px(metrics::SPACE_4))
                     .flex_none()
-                    .text_color(dark().accent.primary)
+                    .text_color(theme.accent.primary)
                     .child(marker),
             );
         if self.disabled {
             return row
-                .text_color(dark().text.ghost)
+                .text_color(theme.text.ghost)
                 .child(div().flex_1().min_w_0().truncate().child(self.label));
         }
         row = row
             .cursor_pointer()
             .bg(if self.selected || self.highlighted {
-                dark().surface.raised
+                theme.surface.raised
             } else {
-                dark().bg.menu
+                theme.bg.menu
             });
+        let hover = theme.surface.hover;
+        let pressed = theme.surface.pressed;
         row = row
-            .hover(|style| style.bg(dark().surface.hover))
-            .active(|style| style.bg(dark().surface.pressed));
+            .hover(move |style| style.bg(hover))
+            .active(move |style| style.bg(pressed));
         row = row.child(div().flex_1().min_w_0().truncate().child(self.label));
         if let Some(on_click) = self.on_click {
             row = row.on_click(on_click);
@@ -178,14 +181,15 @@ impl MenuPanel {
 }
 
 impl RenderOnce for MenuPanel {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = theme(cx);
         let mut panel = div()
             .id(self.id)
             .p(px(metrics::MENU_PADDING))
             .rounded(px(metrics::INPUT_MENU_RADIUS))
-            .bg(dark().bg.menu)
+            .bg(theme.bg.menu)
             .border_1()
-            .border_color(dark().border.strong)
+            .border_color(theme.border.strong)
             .min_w(px(metrics::MENU_MIN_WIDTH))
             .max_w(px(metrics::MENU_MAX_WIDTH))
             .max_h(px(self.max_height))

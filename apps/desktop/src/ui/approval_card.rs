@@ -1,7 +1,7 @@
 //! 审批卡（ApprovalCard）：pending approval 的警示卡与 Allow once /
 //! Allow for run / Deny 操作（R8 波 C 自 ui/mod.rs 逐样式迁移）。
 
-use gpui::{Context, SharedString, div, prelude::*, px};
+use gpui::{div, prelude::*, px, Context, SharedString};
 
 use crate::ui::components::button::{Button, ButtonVariant};
 use crate::ui::i18n::t;
@@ -72,7 +72,11 @@ impl AppView {
                     .text_color(dark().text.primary)
                     .child(pending.reason.clone()),
             );
-        if let Some(detail) = pending.detail.as_deref().filter(|detail| !detail.is_empty()) {
+        if let Some(detail) = pending
+            .detail
+            .as_deref()
+            .filter(|detail| !detail.is_empty())
+        {
             card = card.child(
                 div()
                     .text_size(font::XS)

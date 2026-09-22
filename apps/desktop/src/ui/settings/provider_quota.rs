@@ -1,7 +1,7 @@
 //! Go 逐账号额度：只消费 Host 的 canonical 读数；刷新身份与显示共用稳定 ID。
 use super::*;
 use crate::ui::components::switch::Switch;
-use crate::ui::{AppRoute, SettingsPage, now_unix_ms};
+use crate::ui::{now_unix_ms, AppRoute, SettingsPage};
 use pawork_client::{
     ProviderAccountSelectionMode, QuotaMeasure, QuotaReset, QuotaUnit, QuotaWindow, WindowReadView,
 };

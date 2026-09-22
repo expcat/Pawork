@@ -1,11 +1,14 @@
 //! `pawork chat` / `pawork run`：落盘会话上的多轮或单次对话。
 
-use std::io::{self, IsTerminal, Write};
+use std::io::{self, IsTerminal, Read, Write};
 
 use pawork_app::gui_server::GuiHost;
 use pawork_app::{session_title_from_text, AppCore, AppError, GuiApprovalHost};
 use pawork_domain::ProviderErrorKind;
-use pawork_domain::{ContentPart, Message, MessageId, MessageRole, RunId, SessionId};
+use pawork_domain::{
+    ContentPart, ImageContent, ImageSource, Message, MessageId, MessageRole, RunId, SessionId,
+    TextContent,
+};
 use pawork_engine::{
     AgentEventSink, CancelHandle, CancelReason, EngineError, NoopProcessTreeCleaner,
 };
@@ -25,10 +28,16 @@ pub async fn run_chat(
     prompt: Option<String>,
     resume: Option<String>,
     branch: Option<String>,
+    images: Vec<String>,
 ) -> Result<(), CliError> {
     switch_branch_if_requested(core, resume.as_deref(), branch.as_deref()).await?;
     if let Some(prompt) = prompt {
-        return run_prompt(core, &prompt, resume, true).await;
+        return run_prompt(core, &prompt, resume, true, &images).await;
+    }
+    if !images.is_empty() {
+        return Err(CliError::Usage(
+            "--image 需要 --prompt；交互 REPL 不接受图片参数".into(),
+        ));
     }
     if !io::stdin().is_terminal() {
         let mut line = String::new();
@@ -39,13 +48,13 @@ pub async fn run_chat(
                 "非交互模式需要 --prompt 或从 stdin 提供一行问题".into(),
             ));
         }
-        return run_prompt(core, text, resume, true).await;
+        return run_prompt(core, text, resume, true, &[]).await;
     }
     run_repl(core, resume).await
 }
 
-pub async fn run_once(core: &AppCore, prompt: &str) -> Result<(), CliError> {
-    run_prompt(core, prompt, None, true).await
+pub async fn run_once(core: &AppCore, prompt: &str, images: Vec<String>) -> Result<(), CliError> {
+    run_prompt(core, prompt, None, true, &images).await
 }
 
 pub async fn run_json(
@@ -255,6 +264,7 @@ async fn run_prompt(
     prompt: &str,
     resume: Option<String>,
     one_shot: bool,
+    images: &[String],
 ) -> Result<(), CliError> {
     let (session, mut history, mut next_msg) =
         open_or_create(core, resume.as_deref(), prompt).await?;
@@ -266,6 +276,7 @@ async fn run_prompt(
         &mut next_msg,
         prompt,
         one_shot,
+        images,
     )
     .await
 }
@@ -352,7 +363,7 @@ async fn run_repl(core: &mut AppCore, resume: Option<String>) -> Result<(), CliE
                             session = Some(id);
                         }
                         let id = session.as_ref().expect("session created");
-                        run_one_turn(&*core, id, &mut history, &mut next_msg, text, false).await?;
+                        run_one_turn(&*core, id, &mut history, &mut next_msg, text, false, &[]).await?;
                     }
                 }
             }
@@ -534,8 +545,10 @@ async fn run_one_turn(
     next_msg: &mut u64,
     text: &str,
     one_shot: bool,
+    images: &[String],
 ) -> Result<(), CliError> {
-    let content = core.expand_at_refs(Some(session), text).await?;
+    let mut content = core.expand_at_refs(Some(session), text).await?;
+    content.extend(local_image_parts(images)?);
     history.push(Message {
         id: next_id(session, next_msg),
         role: MessageRole::User,
@@ -653,6 +666,102 @@ fn map_turn_error(error: pawork_app::AppError) -> Result<(), CliError> {
     }
 }
 
+/// MM-1：`--image` 读取调用方显式给出的本地文件，编码为 base64 Image part。
+/// 与 GUI 附件同一交集：png / jpeg / gif / webp，每个不超过 8 MiB。
+fn local_image_parts(paths: &[String]) -> Result<Vec<ContentPart>, CliError> {
+    const MAX_BYTES: u64 = 8 * 1024 * 1024;
+    const MAX_COUNT: usize = 4;
+    if paths.len() > MAX_COUNT {
+        return Err(CliError::Usage(format!(
+            "--image 最多 {MAX_COUNT} 张，收到 {}",
+            paths.len()
+        )));
+    }
+    let mut parts = Vec::new();
+    for raw in paths {
+        let path = std::path::Path::new(raw);
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .filter(|n| !n.is_empty())
+            .ok_or_else(|| CliError::Usage(format!("--image 路径无效: {raw}")))?;
+        let media_type = image_media_type(name).ok_or_else(|| {
+            CliError::Usage(format!("--image 只接受 png、jpeg、gif、webp: {raw}"))
+        })?;
+        let meta = std::fs::metadata(path)
+            .map_err(|err| CliError::Usage(format!("--image 无法读取 {raw}: {err}")))?;
+        if !meta.is_file() {
+            return Err(CliError::Usage(format!("--image 不是普通文件: {raw}")));
+        }
+        if meta.len() == 0 || meta.len() > MAX_BYTES {
+            return Err(CliError::Usage(format!(
+                "--image {raw} 必须在 1 字节到 8 MiB 之间"
+            )));
+        }
+        let mut file = std::fs::File::open(path)
+            .map_err(|err| CliError::Usage(format!("--image 无法读取 {raw}: {err}")))?;
+        if !file.metadata().map(|m| m.is_file()).unwrap_or(false) {
+            return Err(CliError::Usage(format!("--image 不是普通文件: {raw}")));
+        }
+        let mut bytes = Vec::new();
+        std::io::Read::take(&mut file, MAX_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|err| CliError::Usage(format!("--image 无法读取 {raw}: {err}")))?;
+        if bytes.is_empty() || bytes.len() as u64 > MAX_BYTES {
+            return Err(CliError::Usage(format!(
+                "--image {raw} 必须在 1 字节到 8 MiB 之间"
+            )));
+        }
+        parts.push(ContentPart::Text(TextContent {
+            text: format!(
+                "[attached image: {name} ({media_type}, {} bytes)]",
+                bytes.len()
+            ),
+        }));
+        parts.push(ContentPart::Image(ImageContent {
+            source: ImageSource::Base64(base64_encode(&bytes)),
+            media_type: media_type.into(),
+            alt_text: Some(name.to_string()),
+        }));
+    }
+    Ok(parts)
+}
+
+fn image_media_type(name: &str) -> Option<&'static str> {
+    let extension = name.rsplit('.').next()?.to_ascii_lowercase();
+    match extension.as_str() {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        _ => None,
+    }
+}
+
+fn base64_encode(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = u32::from(chunk[0]);
+        let b1 = u32::from(*chunk.get(1).unwrap_or(&0));
+        let b2 = u32::from(*chunk.get(2).unwrap_or(&0));
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        out.push(ALPHABET[((n >> 18) & 63) as usize] as char);
+        out.push(ALPHABET[((n >> 12) & 63) as usize] as char);
+        out.push(if chunk.len() > 1 {
+            ALPHABET[((n >> 6) & 63) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            ALPHABET[(n & 63) as usize] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
 fn next_message_counter(history: &[Message]) -> u64 {
     history.len() as u64 + 1
 }
@@ -661,4 +770,36 @@ fn next_id(session: &SessionId, next_msg: &mut u64) -> MessageId {
     let id = *next_msg;
     *next_msg += 1;
     MessageId::from(format!("msg-{session}-{id}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{image_media_type, local_image_parts};
+    use pawork_domain::{ContentPart, ImageSource};
+
+    #[test]
+    fn local_image_becomes_base64_part() {
+        let dir = std::env::temp_dir().join(format!("pawork-cli-image-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("shot.png");
+        std::fs::write(&path, b"png-bytes").expect("write");
+
+        let parts = local_image_parts(&[path.display().to_string()]).expect("image part");
+        assert!(matches!(&parts[0], ContentPart::Text(text) if text.text.contains("shot.png")));
+        match &parts[1] {
+            ContentPart::Image(image) => {
+                assert_eq!(image.media_type, "image/png");
+                assert!(
+                    matches!(&image.source, ImageSource::Base64(data) if data == "cG5nLWJ5dGVz")
+                );
+            }
+            other => panic!("expected image, got {other:?}"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let error = local_image_parts(&["notes.txt".into()]).unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("png"), "{message}");
+        assert_eq!(image_media_type("photo.JPEG"), Some("image/jpeg"));
+    }
 }

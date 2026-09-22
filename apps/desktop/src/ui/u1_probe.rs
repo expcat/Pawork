@@ -5,10 +5,10 @@
 //! 不挂 AppView / Platform / socket；IME composing 与 AX 不在本层覆盖。
 
 use gpui::{
-    ClipboardItem, Context, Entity, EntityInputHandler, FocusHandle, Focusable, InteractiveElement,
-    Modifiers, ParentElement, Render, ScrollDelta, ScrollHandle, ScrollWheelEvent,
-    StatefulInteractiveElement, Styled, TestAppContext, VisualTestContext, Window, div, point,
-    prelude::*, px, size,
+    div, point, prelude::*, px, size, ClipboardItem, Context, Entity, EntityInputHandler,
+    FocusHandle, Focusable, InteractiveElement, Modifiers, ParentElement, Render, ScrollDelta,
+    ScrollHandle, ScrollWheelEvent, StatefulInteractiveElement, Styled, TestAppContext,
+    VisualTestContext, Window,
 };
 
 use super::components::button::{Button, ButtonVariant};

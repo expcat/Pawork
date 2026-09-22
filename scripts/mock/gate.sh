@@ -5,7 +5,7 @@
 # 定位：这是 mock 系列的快速定向门禁，不是全量门禁；仓库「当前未设置全量
 # 门禁」的约定不变。任一级失败即非零退出并指明级别。
 #
-#   L0（秒级）docs/mock-simulation-plan.md 与当前改动过的 docs/**/*.md 的
+#   L0（秒级）docs/ROADMAP.md 与当前改动过的 docs/**/*.md 的
 #      markdown 相对链接存在性抽查 + git diff --check。
 #   L1 单条 cargo 命令带齐 features 跑 pawork-providers 全部测试目标
 #      （口径见 docs/spec/crates/providers.md §7，另加 kimi-code 覆盖其
@@ -35,7 +35,7 @@ MOCK-8 mock 快速门禁（快速定向门禁，非全量门禁）
   ./scripts/mock/gate.sh [--packages <pkg1,pkg2,...>] [--level <0,1,2 的子集>]
 
 级别：
-  L0  文档抽查：docs/mock-simulation-plan.md 与当前改动过的 docs/**/*.md 的
+  L0  文档抽查：docs/ROADMAP.md 与当前改动过的 docs/**/*.md 的
       markdown 相对链接存在性 + git diff --check（秒级）
   L1  cargo test -p pawork-providers --offline --tests --features <全套
       含 kimi-code（覆盖其 feature 门控 lib 测试）>
@@ -177,7 +177,7 @@ level_summary() {
 level0() {
   echo "=== L0 文档链接抽查 + git diff --check ==="
   target_list="$(mktemp)"
-  printf '%s\n' docs/mock-simulation-plan.md > "$target_list"
+  printf '%s\n' docs/ROADMAP.md > "$target_list"
   changed="$(
     {
       git diff --name-only HEAD -- docs

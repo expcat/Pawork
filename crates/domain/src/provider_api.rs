@@ -320,7 +320,6 @@ impl ModelTransport {
 /// 兼容层，故 clamp 作为本 crate 的自由函数提供（不按 Provider 名分支）。
 pub fn clamp_effort_to_thinking_level(effort: ReasoningEffort) -> ThinkingLevel {
     match effort {
-        ReasoningEffort::None => ThinkingLevel::Off,
         ReasoningEffort::Low => ThinkingLevel::Low,
         ReasoningEffort::Medium => ThinkingLevel::Medium,
         ReasoningEffort::High | ReasoningEffort::XHigh | ReasoningEffort::Max => {
@@ -376,11 +375,6 @@ impl ReasoningConfig {
             effort,
             state: ReasoningStateDescriptor::default(),
         }
-    }
-
-    /// 是否要求模型声明 reasoning 能力。
-    pub fn requires_reasoning_support(&self) -> bool {
-        self.effort.requires_reasoning_support()
     }
 }
 

@@ -10,7 +10,7 @@ use cocoa::base::{id, nil};
 use cocoa::foundation::{NSArray, NSAutoreleasePool, NSPoint, NSRect, NSSize, NSString};
 use gpui::Window;
 use objc::declare::ClassDecl;
-use objc::runtime::{self, BOOL, Class, NO, Object, Sel, YES};
+use objc::runtime::{self, Class, Object, Sel, BOOL, NO, YES};
 use objc::{class, msg_send, sel, sel_impl};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 

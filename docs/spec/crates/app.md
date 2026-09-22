@@ -130,7 +130,7 @@ ADR-053 启动：显式 `AppLoadOptions.approval_mode` > Global 审批 > ReadOnl
 ### 3.3 模型、凭证与通道
 
 - `list_models()`：当前 provider 实时列举（走网络，缺凭证时经 `CatalogOnlyProvider` 返回静态目录）。
-- `model_catalog()` / `models_overview()`：聚合 `CatalogEntry`，**可发网络请求**，GUI ModelList 消费 overview。每次成功聚合写入 `AppCore` 内存快照，供 `set_model_enabled` / 全关展开复用（ADR-055 D2a）；查询与显式 Refresh 仍探测。ADR-058：成功远端替换该 provider ID 集合与元数据，合法空目录同样替换；失败保留回退。xAI 与 ChatGPT 无静态选择目录，探测失败该通道不出现在列表，用户只从服务端返回的模型里选。静态只补相同 ID 的定价/别名，`[[models]]` 仅覆盖仍存在 ID 的窗口/输出，不复活远端缺失项。`provider_models()` 仅读当前 provider 的内存 registry，不发网络请求。
+- `model_catalog()` / `models_overview()`：聚合 `CatalogEntry`，**可发网络请求**，GUI ModelList 消费 overview。每次成功聚合写入 `AppCore` 内存快照，供 `set_model_enabled` / 全关展开复用（ADR-055 D2a）；查询与显式 Refresh 仍探测。目录聚合及 Settings 认证状态探测在请求前刷新临期/过期 OAuth，当前 OAuth adapter 临期/过期时也重新装配以免复用旧 bearer；各通道并行执行，刷新、装配、目录请求共用单通道 4s 超时。刷新失败保留真实错误或既有静态回退。ADR-058：成功远端替换该 provider ID 集合与元数据，合法空目录同样替换；失败保留回退。xAI 与 ChatGPT 无静态选择目录，探测失败该通道不出现在列表，用户只从服务端返回的模型里选。静态只补相同 ID 的定价/别名，`[[models]]` 仅覆盖仍存在 ID 的窗口/输出，不复活远端缺失项。`provider_models()` 仅读当前 provider 的内存 registry，不发网络请求。
 - `switch_model(model)`：先核对远端目录再切换；静态命中也不能绕过成功远端。4s 超时/错误保留回退，未知或已移除 ID fail-closed；成功同步运行期 registry。
 - `switch_provider(provider, model)`：重装配 provider（重新走凭证链与协议解析），成功后发 ModelSwitched 诊断事件；带 provider 而 model 未指明时不得静默保留旧 model id；ADR-055 起目标模型禁用即 `ModelDisabled` fail-closed。
 - `auth_status() -> Vec<AuthChannelStatus>`：逐通道报 `AuthSource`{File/Env/None}，永不回显 key 本体。
@@ -302,13 +302,15 @@ WorkspaceList 与 snapshot Workspaces 段均按每个目标 workspace roots 调�
 
 ## 7. 测试与验证资产
 
-2026-09-20 测试重构：live-smoke 只以 feature 显式选择，不再叠加 ignore，缺环境直接失败；验证非空流式文本、唯一成功终态与 `resume_messages` 可恢复的助手内容。普通 `bash scripts/test.sh app` 开启 ui-fixture、不开 live-smoke，不请求真实 Provider。真实模型仍按产品验证规格执行；本次执行状态见 [测试重构计划](../../testing-refactor-plan.md)。
+2026-09-20 测试重构：live-smoke 只以 feature 显式选择，不再叠加 ignore，缺环境直接失败；验证非空流式文本、唯一成功终态与 `resume_messages` 可恢复的助手内容。普通 `bash scripts/test.sh app` 开启 ui-fixture、不开 live-smoke，不请求真实 Provider。真实模型仍按产品验证规格执行；本次执行状态见 Git 历史（37fae8f3:docs/testing-refactor-plan.md）。
 
 新入口实际发现 `ui_fixture_projection` 仍断言只返回主 workspace，与当前注册表全集合行为不符。该测试改为核对全部已登记 workspace 的根目录、快照 id/name 集合及每个 session 的归属；不依赖工作区返回顺序，也不重新录制 golden。
 
 `subagents::tests` 覆盖结果重放、普通任务列表排除子会话、禁止嵌套派发与工具越权、父取消和并发上限；`display_limit_keeps_active_and_recent_children_without_limiting_control` 验证超过 64 项且 ID 与创建顺序相反时保留活跃 / 最近子代理、已移出展示项仍可等待 / 取消，以及跨 run / session 的拒绝。`cross_provider_subagents_select_models_and_persist_reasoning` 通过本地模拟 HTTP 接口验证非 GLM 模型的 Chat Completions / Messages 跨供应商派发、实际请求 model、结果回传和推理签名持久化；不等同于真实供应商联网验收。
 
 `gui_host/tests/chat_controls.rs::computer_approval_image_persistence_and_resume_do_not_repeat_input` 验证 computer 工具在批准前零调用、动作预览、canonical 图片持久化和恢复历史不重执行。隔离桌面连接和输入由 tools / computer-use 定向测试及真实 probe 另验。
+
+`provider_auth_status_marks_expired_oauth_credential` 同时覆盖刷新拒绝仍标过期、设置目录刷新成功、当前 OAuth adapter 过期后的 overview 重新装配；仅使用本地 HTTP mock。
 
 默认验证命令：
 

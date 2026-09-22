@@ -162,6 +162,7 @@ pub fn icon(icon: Icon) -> Svg {
 }
 
 /// 指定边长（chip / 行内 16px，工具勾 14px 等）。
+/// 默认不染色：Svg 作为 alpha mask 时继承父级 `text_color`。
 pub fn icon_sized(icon: Icon, size: impl Into<Pixels>) -> Svg {
     let size = size.into();
     svg()

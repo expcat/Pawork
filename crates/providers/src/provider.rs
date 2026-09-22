@@ -61,6 +61,7 @@ pub struct OpenAiCompatibleProvider {
     client: HttpClient,
     credential: Option<ResolvedCredential>,
     opencode_session: bool,
+    model_header: Option<&'static str>,
 }
 
 impl OpenAiCompatibleProvider {
@@ -95,11 +96,18 @@ impl OpenAiCompatibleProvider {
             client,
             credential,
             opencode_session: false,
+            model_header: None,
         })
     }
 
     pub(crate) fn with_opencode_session(mut self) -> Self {
         self.opencode_session = true;
+        self
+    }
+
+    #[cfg(feature = "xai-oauth")]
+    pub(crate) fn with_model_header(mut self, name: &'static str) -> Self {
+        self.model_header = Some(name);
         self
     }
 
@@ -118,6 +126,7 @@ impl OpenAiCompatibleProvider {
         sink: &dyn ProviderEventSink,
         cancel: CancellationToken,
     ) -> Result<ModelResponseSummary, ProviderError> {
+        crate::request::reject_channel_image_limits(self.config.provider_id.as_str(), request)?;
         // 构造请求体（canonical → OpenAI）
         let body = crate::request::to_chat_completions_body(request);
 
@@ -126,6 +135,9 @@ impl OpenAiCompatibleProvider {
 
         // 认证头（明文 secret 只在此短暂存在，不持久化、不记录）
         let mut per_request_headers: Vec<_> = self.auth_header().into_iter().collect();
+        if let Some(name) = self.model_header {
+            per_request_headers.push((name.into(), request.model.to_string()));
+        }
         if self.opencode_session {
             per_request_headers.extend(opencode_session_header(request)?);
         }
@@ -298,6 +310,10 @@ impl ModelProvider for OpenAiCompatibleProvider {
                     definition.capabilities.image_input = modalities
                         .iter()
                         .any(|modality| modality.as_str() == Some("image"));
+                } else {
+                    // VISION-2：远端未声明模态时按官方文档默认表回填
+                    //（显式 false / 纯文本模态已在上面分支覆盖静态声明）。
+                    crate::registry::apply_default_image_input(&mut definition);
                 }
                 // 远端模型能力不等于本适配器已接通的能力：Chat hosted wire 未实现。
                 definition.capabilities.hosted_tool_tags.clear();

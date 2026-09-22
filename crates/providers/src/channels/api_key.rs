@@ -327,6 +327,9 @@ impl ModelProvider for ApiKeyChannelProvider {
         models.retain_mut(|model| match self.transport_for(&model.id) {
             Some(transport @ (ModelTransport::ChatCompletions | ModelTransport::Responses)) => {
                 model.capabilities.transport = transport;
+                // ADR-063：同 model_id 跨 Provider 合并的默认推理强度声明
+                //（仅回填未知；远端已声明时优先）。
+                crate::registry::apply_default_supported_efforts(model);
                 true
             }
             Some(ModelTransport::Messages) | None => false,
@@ -353,6 +356,9 @@ impl ModelProvider for ApiKeyChannelProvider {
                         ProviderErrorKind::InvalidRequest,
                         "API-key Chat Completions model does not declare provider-hosted tools",
                     ));
+                }
+                if self.preset.id == "kimi-platform" {
+                    crate::request::reject_kimi_external_image_urls(request)?;
                 }
                 self.chat
                     .stream(request, sink, cancel)

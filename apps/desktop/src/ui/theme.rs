@@ -3,7 +3,7 @@
 //! 色板、字阶、圆角、间距与有限动效由这里统一提供。普通面板无阴影，
 //! 仅浮层与 Composer 保留 elevation；运行时仍为单一 dark 主题。
 
-use gpui::{Global, Rgba, rgb, rgba};
+use gpui::{rgb, rgba, App, Global, Rgba};
 
 /// 七组颜色 token 宿主。
 #[derive(Debug, Clone, Copy)]
@@ -24,8 +24,28 @@ pub struct Theme {
     pub diff: DiffColors,
 }
 
-/// 未来主题挂载点（见模块文档）；当前仍由 dark() 按帧读取 palette。
+/// 窗口级主题。当前只有 [`dark`]；页面经 [`theme`] 读取。
 impl Global for Theme {}
+
+/// 把当前 dark palette 挂到 App。正式窗口在首帧前调用一次。
+pub fn install(cx: &mut App) {
+    cx.set_global(dark());
+}
+
+/// 当前窗口主题。正式窗口由 [`install`] 注入；测试窗口未注入时回退 [`dark`]。
+pub fn theme(cx: &App) -> &Theme {
+    if cx.has_global::<Theme>() {
+        cx.global::<Theme>()
+    } else {
+        fallback()
+    }
+}
+
+fn fallback() -> &'static Theme {
+    use std::sync::OnceLock;
+    static THEME: OnceLock<Theme> = OnceLock::new();
+    THEME.get_or_init(dark)
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct BackgroundColors {

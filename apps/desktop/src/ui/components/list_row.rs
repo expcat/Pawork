@@ -5,12 +5,12 @@
 //! raised 行 → surface.hover），pressed 使用更沉的 surface.pressed。
 
 use gpui::{
-    AbsoluteLength, AnyElement, App, ClickEvent, FocusHandle, IntoElement, KeyDownEvent,
-    RenderOnce, SharedString, Window, div, prelude::*, px, rems,
+    div, prelude::*, px, rems, AbsoluteLength, AnyElement, App, ClickEvent, FocusHandle,
+    IntoElement, KeyDownEvent, RenderOnce, SharedString, Window,
 };
 
 use crate::ui::components::focus_ring::focus_ring;
-use crate::ui::theme::{dark, metrics};
+use crate::ui::theme::{metrics, theme};
 
 /// 列表行形态。
 #[derive(Debug, Clone, Copy)]
@@ -106,7 +106,8 @@ impl ListRow {
 }
 
 impl RenderOnce for ListRow {
-    fn render(self, window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = theme(cx);
         let mut row = div().id(self.id).cursor_pointer();
         if let Some(focus) = self.focus.as_ref() {
             row = row.tab_stop(true).track_focus(focus).relative();
@@ -132,11 +133,11 @@ impl RenderOnce for ListRow {
                     .px_2()
                     .rounded(ring_radius);
                 if selected {
-                    row = row.bg(dark().surface.raised);
-                    dark().surface.hover
+                    row = row.bg(theme.surface.raised);
+                    theme.surface.hover
                 } else {
-                    row = row.bg(dark().bg.panel);
-                    dark().surface.raised
+                    row = row.bg(theme.bg.panel);
+                    theme.surface.raised
                 }
             }
             ListRowKind::ProjectHeader => {
@@ -152,11 +153,12 @@ impl RenderOnce for ListRow {
                     .h(px(self.height))
                     .px_2()
                     .rounded(ring_radius);
-                dark().surface.raised
+                theme.surface.raised
             }
         };
         row = row.hover(move |style| style.bg(hover));
-        row = row.active(|style| style.bg(dark().surface.pressed));
+        let pressed = theme.surface.pressed;
+        row = row.active(move |style| style.bg(pressed));
         for child in self.children {
             row = row.child(child);
         }

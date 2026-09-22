@@ -68,7 +68,7 @@ fn resolve_effort(
     global
         .reasoning
         .as_ref()
-        .and_then(|reasoning| reasoning.model(provider, model))
+        .and_then(|reasoning| reasoning.model(model))
         .and_then(|entry| entry.default_effort.as_deref())
         .and_then(pawork_domain::ReasoningEffort::from_wire_name)
         .filter(|effort| {
@@ -344,8 +344,7 @@ impl<'a> SubagentRun<'a> {
             model_id: model.into(),
             status: "running".into(),
             result: None,
-            effort: child_effort
-                .map(|effort| effort.as_wire_name().to_string()),
+            effort: child_effort.map(|effort| effort.as_wire_name().to_string()),
         };
         supervisor
             .start_worker(&worker)
@@ -767,9 +766,7 @@ impl AppCore {
             // Display bounds must not hide active children or select by process ID.
             // Targeted wait/close queries retain every requested child on this lineage.
             let active = self.subagents.lock().unwrap();
-            agents.sort_by_key(|(sequence, info)| {
-                (active.contains_key(&info.agent_id), *sequence)
-            });
+            agents.sort_by_key(|(sequence, info)| (active.contains_key(&info.agent_id), *sequence));
             agents.drain(..agents.len() - 64);
         }
         agents.sort_by_key(|(sequence, _)| *sequence);

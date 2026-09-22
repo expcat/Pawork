@@ -10,13 +10,13 @@ use std::time::Duration;
 use crate::net::http::HttpClientConfig;
 use crate::ReasoningProtector;
 use async_trait::async_trait;
+use pawork_domain::ReasoningEffort;
 use pawork_domain::{CancellationToken, ModelId, ProviderId};
 use pawork_domain::{
     CanonicalModelRequest, CredentialKind, ModelCapabilities, ModelDefinition, ModelProvider,
     ModelResponseSummary, ModelTransport, ProviderError, ProviderErrorKind, ProviderEventSink,
     ResolvedCredential,
 };
-use pawork_domain::ReasoningEffort;
 use serde_json::Value;
 
 use crate::responses::{ResponsesTransport, ResponsesTransportConfig, ResponsesWireOptions};
@@ -186,7 +186,7 @@ fn catalog_supported_efforts(model: &Value) -> Option<Vec<ReasoningEffort>> {
                 .as_str()
                 .or_else(|| level.get("effort").and_then(Value::as_str))?;
             match name {
-                "none" => Some(ReasoningEffort::None),
+                // canonical 词汇不含 none：目录显式 "none" 视为无可识别档位跳过。
                 "minimal" | "low" => Some(ReasoningEffort::Low),
                 "medium" => Some(ReasoningEffort::Medium),
                 "high" => Some(ReasoningEffort::High),

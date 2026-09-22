@@ -13,9 +13,9 @@ use crate::app_core::RoleModelKind;
 use crate::gui_host::GuiHostAdapter;
 use crate::gui_server::GuiHostError;
 use crate::provider_assembly::{assemble_provider, assemble_registry, channel_protocol};
-use crate::{AppCore, channels};
+use crate::{channels, AppCore};
 
-use super::{AuthFlights, flight_active, iso8601_utc, now_millis, settings_data};
+use super::{flight_active, iso8601_utc, now_millis, settings_data, AuthFlights};
 
 /// 单通道目录探测上限（与 models_overview 的探测窗口一致）。
 const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(4);
@@ -245,32 +245,31 @@ async fn catalog_state(
     };
     let registry = assemble_registry(core.config(), &id, protocol, Some(channel));
     let has_static = registry.list().iter().any(|entry| entry.provider == id);
-    let assembled = assemble_provider(
-        core.config(),
-        &id,
-        core.auth_backend(),
-        false,
-        Arc::clone(&core.reasoning_protector) as Arc<dyn ReasoningProtector>,
-    )
-    .await;
-    let probe_error = match assembled {
-        Ok(assembled) => {
-            match tokio::time::timeout(
-                PROBE_TIMEOUT,
-                assembled.adapter.list_models(assembled.credential.as_ref()),
-            )
+    let probe_error = match tokio::time::timeout(PROBE_TIMEOUT, async {
+        let assembled = assemble_provider(
+            core.config(),
+            &id,
+            core.auth_backend(),
+            true,
+            Arc::clone(&core.reasoning_protector) as Arc<dyn ReasoningProtector>,
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+        assembled
+            .adapter
+            .list_models(assembled.credential.as_ref())
             .await
-            {
-                Ok(Ok(_)) => {
-                    return ProviderCatalogState::Remote {
-                        fetched_at: iso8601_utc(now_millis()),
-                    };
-                }
-                Ok(Err(error)) => error.to_string(),
-                Err(_) => "runtime model probe timed out".to_string(),
-            }
+            .map_err(|error| error.to_string())
+    })
+    .await
+    {
+        Ok(Ok(_)) => {
+            return ProviderCatalogState::Remote {
+                fetched_at: iso8601_utc(now_millis()),
+            };
         }
-        Err(error) => error.to_string(),
+        Ok(Err(error)) => error,
+        Err(_) => "runtime model probe timed out".to_string(),
     };
     if has_static {
         ProviderCatalogState::FixedFallback {
@@ -726,11 +725,13 @@ pub(crate) async fn set_model_reasoning(
     let invalid_effort = || {
         GuiHostAdapter::host_error(
             "invalid_effort",
-            "effort names must be canonical (none/low/medium/high/x_high/max) and the default must be inside the supported range",
+            "effort names must be canonical (low/medium/high/x_high/max) and the default must be inside the supported range",
         )
     };
     let default = match default_effort {
-        Some(name) => Some(pawork_domain::ReasoningEffort::from_wire_name(name).ok_or_else(|| invalid_effort())?),
+        Some(name) => Some(
+            pawork_domain::ReasoningEffort::from_wire_name(name).ok_or_else(|| invalid_effort())?,
+        ),
         None => None,
     };
     let manual = match supported_efforts {
@@ -764,13 +765,14 @@ pub(crate) async fn set_model_reasoning(
         if let Some(default) = default {
             let known_range: Option<Vec<pawork_domain::ReasoningEffort>> = manual
                 .clone()
+                .or_else(|| persisted_manual_efforts(&core, model))
                 .or_else(|| {
-                    persisted_manual_efforts(&core, id, model)
-                })
-                .or_else(|| {
+                    // 跨 Provider 合并：同 model_id 共用目录声明范围——优先本
+                    // Provider 条目，其次任一 Provider 的同 id 声明。
                     catalog
                         .iter()
                         .find(|entry| entry.provider.as_str() == id && entry.id.as_str() == model)
+                        .or_else(|| catalog.iter().find(|entry| entry.id.as_str() == model))
                         .and_then(|entry| entry.capabilities.supported_efforts.clone())
                 });
             if let Some(range) = known_range {
@@ -799,23 +801,24 @@ pub(crate) async fn set_model_reasoning(
     .map_err(config_write_error)?;
     let reasoning = core.config.reasoning.get_or_insert_with(Default::default);
     if default_wire.is_none() && manual_wire.is_none() {
-        reasoning
-            .models
-            .retain(|entry| !(entry.provider_id == id && entry.model_id == model));
+        reasoning.models.retain(|entry| entry.model_id != model);
     } else if let Some(entry) = reasoning
         .models
         .iter_mut()
-        .find(|entry| entry.provider_id == id && entry.model_id == model)
+        .find(|entry| entry.model_id == model)
     {
+        entry.provider_id = id.to_string();
         entry.default_effort = default_wire.clone();
         entry.supported_efforts = manual_wire.clone();
     } else {
-        reasoning.models.push(pawork_workspace::config::ModelReasoningConfig {
-            provider_id: id.to_string(),
-            model_id: model.to_string(),
-            default_effort: default_wire.clone(),
-            supported_efforts: manual_wire.clone(),
-        });
+        reasoning
+            .models
+            .push(pawork_workspace::config::ModelReasoningConfig {
+                provider_id: id.to_string(),
+                model_id: model.to_string(),
+                default_effort: default_wire.clone(),
+                supported_efforts: manual_wire.clone(),
+            });
     }
     Ok(settings_data(ModelReasoningData {
         provider_id: id.to_string(),
@@ -825,16 +828,16 @@ pub(crate) async fn set_model_reasoning(
     }))
 }
 
-/// 盘上生效配置里该模型的既有手动范围（内存生效配置；ADR-063 校验用）。
+/// 盘上生效配置里该模型的既有手动范围（内存生效配置；ADR-063 校验用；
+/// 跨 Provider 按 model_id 匹配合并）。
 fn persisted_manual_efforts(
     core: &AppCore,
-    id: &str,
     model: &str,
 ) -> Option<Vec<pawork_domain::ReasoningEffort>> {
     core.config()
         .reasoning
         .as_ref()
-        .and_then(|reasoning| reasoning.model(id, model))
+        .and_then(|reasoning| reasoning.model(model))
         .and_then(|entry| entry.supported_efforts.clone())
         .map(|names| {
             names

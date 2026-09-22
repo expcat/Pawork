@@ -5,9 +5,9 @@ use std::collections::HashSet;
 use gpui::{Focusable, Point, SharedString, Window};
 
 use super::*;
-use crate::ui::MenuKind;
 use crate::ui::components::dropdown::{Dropdown, MenuPanel, MenuRow};
 use crate::ui::components::switch::Switch;
+use crate::ui::MenuKind;
 
 /// 授权按钮只交给浏览器 HTTP(S) 链接，不启动任意系统协议。
 fn oauth_url_can_open(url: &str) -> bool {
@@ -2435,7 +2435,11 @@ impl AppView {
                     .px_1()
                     .rounded(px(4.0))
                     .bg(dark().surface.raised)
-                    .child(Label::new(source).size(font::XS).color(dark().text.tertiary)),
+                    .child(
+                        Label::new(source)
+                            .size(font::XS)
+                            .color(dark().text.tertiary),
+                    ),
             );
         // 默认强度 cycle 按钮。
         let default_id = settings_model_effort_default_identifier(provider_id, &model_id);
@@ -2859,7 +2863,8 @@ impl AppView {
                 }));
             // ADR-063：启用行 + 推理强度行（默认 cycle + 范围 chips +
             // 来源徽标）。写在途 / 只读时禁用。
-            let effort_row = self.settings_model_effort_row(provider_id, &model, writes && !pending, cx);
+            let effort_row =
+                self.settings_model_effort_row(provider_id, &model, writes && !pending, cx);
             list = list.child(
                 div()
                     .flex()

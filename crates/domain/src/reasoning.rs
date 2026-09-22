@@ -12,10 +12,12 @@ use crate::{ProtectedBlobRef, ReasoningItemId};
 /// Profile 或 Agent Core 按 Provider 名分支。显式 `ReasoningConfig` 优先；
 /// 旧 `ThinkingConfig.level` 仅在缺省时派生；`XHigh / Max` 进入旧 P6 adapter
 /// 时显式 clamp 为 `High`，不形成双轨。
+///
+/// 词汇不含 `none`（ADR-063 修订，2026-09-22）：「不推理」用
+/// `Option<ReasoningConfig> = None`（不发送 reasoning 字段）表达，不设显式档位。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReasoningEffort {
-    None,
     Low,
     #[default]
     Medium,
@@ -25,16 +27,10 @@ pub enum ReasoningEffort {
 }
 
 impl ReasoningEffort {
-    /// 是否要求模型声明 reasoning 能力（任何非 None effort）。
-    pub fn requires_reasoning_support(self) -> bool {
-        !matches!(self, Self::None)
-    }
-
     /// Canonical wire 名（与 serde snake_case 词汇一致；ADR-063 起 GUI
     /// 设置与 RunStart 共用同一词汇，不经 serde JSON 中转）。
     pub fn as_wire_name(self) -> &'static str {
         match self {
-            Self::None => "none",
             Self::Low => "low",
             Self::Medium => "medium",
             Self::High => "high",
@@ -46,7 +42,6 @@ impl ReasoningEffort {
     /// 解析 canonical wire 名；非法名返回 None（调用方 fail-closed）。
     pub fn from_wire_name(name: &str) -> Option<Self> {
         match name {
-            "none" => Some(Self::None),
             "low" => Some(Self::Low),
             "medium" => Some(Self::Medium),
             "high" => Some(Self::High),
@@ -110,14 +105,11 @@ mod tests {
             r#""x_high""#
         );
         assert_eq!(ReasoningEffort::default(), ReasoningEffort::Medium);
-        assert!(!ReasoningEffort::None.requires_reasoning_support());
-        assert!(ReasoningEffort::Max.requires_reasoning_support());
     }
 
     #[test]
     fn reasoning_effort_wire_names_round_trip() {
         for (name, effort) in [
-            ("none", ReasoningEffort::None),
             ("low", ReasoningEffort::Low),
             ("medium", ReasoningEffort::Medium),
             ("high", ReasoningEffort::High),
@@ -127,6 +119,7 @@ mod tests {
             assert_eq!(ReasoningEffort::from_wire_name(name), Some(effort));
             assert_eq!(effort.as_wire_name(), name);
         }
+        assert_eq!(ReasoningEffort::from_wire_name("none"), None);
         assert_eq!(ReasoningEffort::from_wire_name("xhigh"), None);
         assert_eq!(ReasoningEffort::from_wire_name(""), None);
     }

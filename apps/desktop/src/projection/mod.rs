@@ -24,13 +24,13 @@ use serde_json::Value;
 
 pub use pawork_client::projection::{ForkBoundary, TimelineEntry, TimelineEntryKind};
 
-pub use session::{group_models_by_provider, subagent_rule_models};
 pub use session::{
     find_model_entry, sessions_in_snapshot, ActiveRun, ConnectionState, DateBucket, ModelEntry,
-    PendingApproval, ResumeApply, ResumeState, RunUsageDisplay, SessionLiveStatus,
-    SessionSummary, TaskRailDateGroup, TaskRailGrouping, TaskRailProjectGroup, WorkspaceSummary,
-    EFFORT_LEVELS, UNASSIGNED_PROJECT,
+    PendingApproval, ResumeApply, ResumeState, RunUsageDisplay, SessionLiveStatus, SessionSummary,
+    TaskRailDateGroup, TaskRailGrouping, TaskRailProjectGroup, WorkspaceSummary, EFFORT_LEVELS,
+    UNASSIGNED_PROJECT,
 };
+pub use session::{group_models_by_provider, subagent_rule_models};
 pub use settings::{
     parse_auth_change, ApprovalModeWire, AuthChange, AuthStartData, DefaultModelPair,
     GeneralSettingsData, PermissionsSettingsData, ProviderAuthState, ProviderAuthStatusData,

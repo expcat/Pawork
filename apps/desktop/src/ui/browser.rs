@@ -3,18 +3,18 @@
 use std::{collections::HashMap, rc::Rc, time::Duration};
 
 use gpui::{
-    App, Context, Entity, FocusHandle, Focusable, ScrollHandle, Window, canvas, div, prelude::*, px,
+    canvas, div, prelude::*, px, App, Context, Entity, FocusHandle, Focusable, ScrollHandle, Window,
 };
 use pawork_browser::{BrowserState, BrowserView};
 use raw_window_handle::HasWindowHandle;
 
 use super::{
-    AppRoute, AppView, Icon, InspectorTab, TextInput,
     accessibility::{AxAction, AxNode, AxRect, AxRole},
     components::button::{Button, ButtonPadding, ButtonVariant},
     i18n::t,
     icon,
     theme::{dark, font},
+    AppRoute, AppView, Icon, InspectorTab, TextInput,
 };
 
 pub(super) struct BrowserPanel {
@@ -187,15 +187,13 @@ impl AppView {
 
     pub(super) fn ensure_browser_poll(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.browser.native.is_some() && self.browser.poll.is_none() {
-            self.browser.poll = Some(cx.spawn_in(window, async move |this, cx| {
-                loop {
-                    smol::Timer::after(Duration::from_millis(250)).await;
-                    if this
-                        .update_in(cx, |view, window, cx| view.sync_browser_state(window, cx))
-                        .is_err()
-                    {
-                        break;
-                    }
+            self.browser.poll = Some(cx.spawn_in(window, async move |this, cx| loop {
+                smol::Timer::after(Duration::from_millis(250)).await;
+                if this
+                    .update_in(cx, |view, window, cx| view.sync_browser_state(window, cx))
+                    .is_err()
+                {
+                    break;
                 }
             }));
         }
