@@ -906,35 +906,48 @@ pub fn apply_default_supported_efforts(definition: &mut ModelDefinition) {
 /// 远端与静态目录均未声明时按本表升级 true，显式 false 永不被覆盖。
 ///
 /// 2026-09-22 官方文档调研（docs.z.ai / help.aliyun.com 百炼视觉理解页 /
-/// platform.minimax.io / mimo.mi.com / api-docs.deepseek.com Vision 指南 /
+/// platform.minimax.io / mimo.mi.com / api-docs.deepseek.com /
 /// platform.kimi.ai 视觉模型指南 / docs.x.ai 模型页 / Tencent-Hunyuan Hy3
-/// 官方 README；models.dev 仅作旁证，不单独构成登记依据）：
-/// - 支持图像：GLM-5.3-Flash（官方明确多模态，含视频/文件）；Qwen 3.8/3.7/
-///   3.6 系（百炼视觉理解页列入；3.7-max 自 2026-06-08 快照增视觉模态）；
-///   MiniMax M3（官方博客原生多模态，含视频）；小米 MiMo V2.5（官方全模态）；
-///   DeepSeek V4.1-Flash（Vision 指南；legacy 名 v4-flash 官方说明同样路由
-///   到 V4.1-Flash）；Kimi k3 / k2.6 / k2.7-code 系（官方视觉指南四款均
-///   列入，含视频；Coding Plan 的 k3 / k3-256k / kimi-for-coding 为同模型
-///   计划内 id）；Grok 4.5+（官方模型页 text,image→text；grok-4.7-build-fast
-///   官方无 slug，release notes 说明 Grok 4.7 Fast 为同模型）。
+/// 官方 README；models.dev 仅作旁证，不单独构成登记依据）；2026-09-23
+/// 按官方页复查更正（见下）。
+/// - 支持图像：GLM-5.3-Flash / FlashX（官方明确多模态，含视频/文件；
+///   FlashX 为同页登记的加速档，模态相同）；Qwen 3.8 系 / 3.7-plus /
+///   3.6-flash（百炼视觉理解页列入，2026-09-23 token-plan 实测识图正确）；
+///   MiniMax M3（官方博客原生多模态，含视频）；小米 MiMo V2.5（官方全
+///   模态）；DeepSeek V4.1-Flash（官方公告 news260910 标称 native visual
+///   understanding，news260821 说明图像可经 base64 / 外部 URL / Files API
+///   输入；原 Vision 指南页已随模型下线 404）；Kimi k3 / k2.6 / k2.7-code
+///   系（官方视觉指南四款均列入，含视频；Coding Plan 的 k3 / k3-256k /
+///   kimi-for-coding 为同模型计划内 id）；Grok 4.5+（官方模型页
+///   text,image→text；grok-4.7-build-fast 官方无 slug，release notes
+///   说明 Grok 4.7 Fast 为同模型）。
+/// - qwen3.7-max 官方口径（2026-09-23 复查百炼模型信息页 / 视觉理解页，
+///   更正 2026-09-22 把快照能力误挂到别名）：视觉模态只属于日期快照
+///   qwen3.7-max-2026-06-08，裸别名 qwen3.7-max 当前等同 2026-05-20
+///   纯文本快照。token-plan 只上架裸别名（日期快照 404），端点图片 400
+///   与官方文档一致，不构成冲突。
 /// - 官方证实 text-only：GLM-5.3 / GLM-5.2、DeepSeek V4 Pro（模型表 Vision
-///   Not supported；2026-09-14 起官方公告请求路由到 V4.1-Flash 计费，能力
-///   声明仍按官方模型表登记）、腾讯混元 Hy3（官方 README 纯文本 MoE）。
+///   Not supported；官方曾公告 2026-09-14 起路由到 V4.1-Flash 计费，随后
+///   在 pricing 页撤回并继续独立提供服务与计费）、腾讯混元 Hy3（官方
+///   README 纯文本 MoE）。
 /// - 2026-09-23 实测补登：omen-alpha / mimo-v2.6-flash / mimo-v2.6-pro /
 ///   deepseek-v4-flash-vision-exp（opencode-go）与 qwen auto（token-plan）
-///   正确描述 64x64 纯红图；glm-4.x / glm-5 系、muse-spark 系、longcat-2.0
-///   为 text-only。端点实测优先于官方文档，覆盖 deepseek-v4-flash 与
-///   qwen3.7-max 的文档结论（见函数内注释）。
-/// - 未登记 = 未知：glm-5.3-flashx（429 限流未测）、gpt-5.6-luna（403 计划
-///   未开通）、hy3 / hy4-preview / mimo-v2.5-pro（推理端点 404）、
-///   deepseek-v4-flash-0731（回答异常未采信）。
+///   正确描述 64x64 纯红图；glm-4.x / glm-5 系、muse-spark 系为 text-only；
+///   longcat-2.0 与 deepseek-v4-flash-0731 接受请求但静默忽略图片。
+///   deepseek-v4-flash 为实测与官方声明的分歧项（见函数内注释）。
+/// - 未登记 = 未知：gpt-5.6-luna（403 计划未开通）、hy4-preview /
+///   mimo-v2.5-pro（推理端点 404）。
 pub fn default_image_input(model: &str) -> Option<bool> {
     Some(match model {
-        "glm-5.3-flash" => true,
+        // glm-5.3-flash 2026-09-23 glm-coding 实测识图正确；flashx 为官方
+        // VLM 页登记的同模型加速档（模态相同），当前套餐未开通（1311）
+        // 未实测，按官方文档登记。
+        "glm-5.3-flash" | "glm-5.3-flashx" => true,
         // 2026-09-23 实测（opencode-go）：接受图片并正确描述 64x64 纯红图。
         "deepseek-v4-flash-vision-exp" | "omen-alpha" | "mimo-v2.6-flash" | "mimo-v2.6-pro" => true,
         // 2026-09-23 实测（qwen-token-plan）：auto 路由到的模型带视觉。
         "auto" => true,
+        // 2026-09-23 token-plan 实测：四款均正确描述 64x64 纯红图。
         "qwen3.8-max" | "qwen3.8-flash" | "qwen3.7-plus" | "qwen3.6-flash" => true,
         "minimax-m3" => true,
         "mimo-v2.5" => true,
@@ -954,13 +967,20 @@ pub fn default_image_input(model: &str) -> Option<bool> {
             false
         }
         "glm-5.3" | "glm-5.2" | "deepseek-v4-pro" | "hy3" => false,
-        // 2026-09-23 实测翻转：deepseek-v4-flash（legacy id）在 opencode-go
-        // 对图片 400（文本 200，同端点 v4.1-flash 正常识图）；qwen3.7-max
-        // 在 token-plan 对图片 400（文本 200）——端点实测优先于官方文档。
+        // 2026-09-23 实测与官方复查：deepseek-v4-flash（legacy id）官方
+        // pricing 页称「临时」路由到 V4.1-Flash（应继承视觉），但 opencode-go
+        // 网关未跟随该路由——图片请求 400（base64 与公网 URL 均拒，文本
+        // 200），同端点 v4.1-flash / vision-exp 正常识图，端点实测优先。
+        // qwen3.7-max 在 token-plan 图片 400、文本 200，与官方口径一致
+        // （裸别名 = 2026-05-20 纯文本快照，见表头注释），非文档冲突。
         "deepseek-v4-flash" | "qwen3.7-max" => false,
-        // 2026-09-23 实测（opencode-go）：muse-spark 系列 400；longcat-2.0
-        // 接受请求但对图片回答「无」（文本模型静默忽略图片）。
-        "muse-spark-1.2-contributor" | "muse-spark-1.3-contributor" | "longcat-2.0" => false,
+        // 2026-09-23 实测：muse-spark 系列（opencode-go）400；longcat-2.0
+        // 与 deepseek-v4-flash-0731（token-plan）接受请求（200）但模型自述
+        // 看不到图片（reasoning 称无图），文本模型静默忽略图片。
+        "muse-spark-1.2-contributor"
+        | "muse-spark-1.3-contributor"
+        | "longcat-2.0"
+        | "deepseek-v4-flash-0731" => false,
         _ => return None,
     })
 }
@@ -1341,8 +1361,9 @@ mod tests {
 
     #[test]
     fn default_image_input_distinguishes_verified_text_only_from_unknown() {
-        // 2026-09-22 官方文档调研 + 2026-09-23 端点实测：多模态升级、
-        // text-only 与未知分轨；实测结论覆盖文档（v4-flash / qwen3.7-max）。
+        // 2026-09-22 官方文档调研 + 2026-09-23 端点实测与复查：多模态升级、
+        // text-only 与未知分轨；v4-flash 实测覆盖官方临时路由声明，
+        // qwen3.7-max 与官方别名口径一致（= 2026-05-20 纯文本快照）。
         assert_eq!(default_image_input("qwen3.7-plus"), Some(true));
         assert_eq!(default_image_input("minimax-m3"), Some(true));
         assert_eq!(default_image_input("mimo-v2.5"), Some(true));
@@ -1364,8 +1385,11 @@ mod tests {
         assert_eq!(default_image_input("deepseek-v4-flash"), Some(false));
         assert_eq!(default_image_input("qwen3.7-max"), Some(false));
         assert_eq!(default_image_input("longcat-2.0"), Some(false));
-        // 429 限流未测 = 未知。
-        assert_eq!(default_image_input("glm-5.3-flashx"), None);
+        assert_eq!(default_image_input("deepseek-v4-flash-0731"), Some(false));
+        // 官方 VLM 页登记多模态（当前套餐未开通未能实测）。
+        assert_eq!(default_image_input("glm-5.3-flashx"), Some(true));
+        // 计划未开通且无文档证据 = 未知。
+        assert_eq!(default_image_input("gpt-5.6-luna"), None);
 
         // apply 只升级未声明条目；text-only / 未知保持 false。
         let mut multimodal = mock_definition("mimo-v2.5", ModelCapabilities::default());
@@ -1374,7 +1398,7 @@ mod tests {
         let mut text_only = mock_definition("hy3", ModelCapabilities::default());
         apply_default_image_input(&mut text_only);
         assert!(!text_only.capabilities.image_input);
-        let mut unknown = mock_definition("glm-5.3-flashx", ModelCapabilities::default());
+        let mut unknown = mock_definition("gpt-5.6-luna", ModelCapabilities::default());
         apply_default_image_input(&mut unknown);
         assert!(!unknown.capabilities.image_input);
 
