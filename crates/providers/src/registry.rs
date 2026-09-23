@@ -920,15 +920,25 @@ pub fn apply_default_supported_efforts(definition: &mut ModelDefinition) {
 /// - 官方证实 text-only：GLM-5.3 / GLM-5.2、DeepSeek V4 Pro（模型表 Vision
 ///   Not supported；2026-09-14 起官方公告请求路由到 V4.1-Flash 计费，能力
 ///   声明仍按官方模型表登记）、腾讯混元 Hy3（官方 README 纯文本 MoE）。
-/// - 未登记 = 未知：omen-alpha 仅有 models.dev「attachments」旁证（厂商
-///   未官宣、条目已 deprecated），不满足官方证据门槛。
+/// - 2026-09-23 实测补登：omen-alpha / mimo-v2.6-flash / mimo-v2.6-pro /
+///   deepseek-v4-flash-vision-exp（opencode-go）与 qwen auto（token-plan）
+///   正确描述 64x64 纯红图；glm-4.x / glm-5 系、muse-spark 系、longcat-2.0
+///   为 text-only。端点实测优先于官方文档，覆盖 deepseek-v4-flash 与
+///   qwen3.7-max 的文档结论（见函数内注释）。
+/// - 未登记 = 未知：glm-5.3-flashx（429 限流未测）、gpt-5.6-luna（403 计划
+///   未开通）、hy3 / hy4-preview / mimo-v2.5-pro（推理端点 404）、
+///   deepseek-v4-flash-0731（回答异常未采信）。
 pub fn default_image_input(model: &str) -> Option<bool> {
     Some(match model {
         "glm-5.3-flash" => true,
-        "qwen3.8-max" | "qwen3.8-flash" | "qwen3.7-max" | "qwen3.7-plus" | "qwen3.6-flash" => true,
+        // 2026-09-23 实测（opencode-go）：接受图片并正确描述 64x64 纯红图。
+        "deepseek-v4-flash-vision-exp" | "omen-alpha" | "mimo-v2.6-flash" | "mimo-v2.6-pro" => true,
+        // 2026-09-23 实测（qwen-token-plan）：auto 路由到的模型带视觉。
+        "auto" => true,
+        "qwen3.8-max" | "qwen3.8-flash" | "qwen3.7-plus" | "qwen3.6-flash" => true,
         "minimax-m3" => true,
         "mimo-v2.5" => true,
-        "deepseek-flash" | "deepseek-v4-flash" | "deepseek-v4.1-flash" => true,
+        "deepseek-flash" | "deepseek-v4.1-flash" => true,
         "kimi-k3"
         | "k3"
         | "k3-256k"
@@ -938,7 +948,19 @@ pub fn default_image_input(model: &str) -> Option<bool> {
         | "kimi-for-coding"
         | "kimi-for-coding-highspeed" => true,
         "grok-4.7" | "grok-4.7-build-fast" | "grok-4.6" | "grok-4.5" => true,
+        // 2026-09-23 实测（glm-coding）：glm-4.x / glm-5 / 5-turbo / 5.1 / 5.2 /
+        // 5.3 纯文本，图片请求一律 400。
+        "glm-4.5" | "glm-4.5-air" | "glm-4.6" | "glm-4.7" | "glm-5" | "glm-5-turbo" | "glm-5.1" => {
+            false
+        }
         "glm-5.3" | "glm-5.2" | "deepseek-v4-pro" | "hy3" => false,
+        // 2026-09-23 实测翻转：deepseek-v4-flash（legacy id）在 opencode-go
+        // 对图片 400（文本 200，同端点 v4.1-flash 正常识图）；qwen3.7-max
+        // 在 token-plan 对图片 400（文本 200）——端点实测优先于官方文档。
+        "deepseek-v4-flash" | "qwen3.7-max" => false,
+        // 2026-09-23 实测（opencode-go）：muse-spark 系列 400；longcat-2.0
+        // 接受请求但对图片回答「无」（文本模型静默忽略图片）。
+        "muse-spark-1.2-contributor" | "muse-spark-1.3-contributor" | "longcat-2.0" => false,
         _ => return None,
     })
 }
@@ -952,6 +974,62 @@ pub fn apply_default_image_input(definition: &mut ModelDefinition) {
         && default_image_input(definition.id.as_str()) == Some(true)
     {
         definition.capabilities.image_input = true;
+    }
+}
+
+/// 图像生成默认表（2026-09-23）：逐 model_id 的默认 `image_output`，
+/// 与 `default_image_input` 同口径（跨 Provider 按 model_id 合并）。
+///
+/// 2026-09-23 实测（qwen-token-plan compatible-mode /chat/completions）：
+/// wan2.7-image / wan2.7-image-pro 以 content 数组输入文生图请求，返回
+/// `{"type":"image","image":"<url>"}` content part 与 image_count 用量。
+/// 两款模型当前被 `non_text_model` 过滤在聊天目录之外（Chat 文本流不
+/// 消费图像输出）；本表作为目录级能力声明保留，供图像生成接线后使用。
+/// 其余可访问目录（glm-coding / opencode-go / kimi-code / xai）均无图像
+/// 生成模型，未登记 = 未知（fail-closed）。
+pub fn default_image_output(model: &str) -> Option<bool> {
+    Some(match model {
+        "wan2.7-image" | "wan2.7-image-pro" => true,
+        _ => return None,
+    })
+}
+
+/// 为远端目录条目补默认图像生成声明：仅在条目未声明且默认表有实测
+/// 支持证据时升级（与 `apply_default_image_input` 同语义）。
+pub fn apply_default_image_output(definition: &mut ModelDefinition) {
+    if !definition.capabilities.image_output
+        && default_image_output(definition.id.as_str()) == Some(true)
+    {
+        definition.capabilities.image_output = true;
+    }
+}
+
+/// hosted WebSearch 默认表（2026-09-23）：逐 model_id 的服务端 `WebSearch`
+/// 标签，与 `default_image_input` 同口径。
+///
+/// 2026-09-23 实测：xai 订阅（cli-chat-proxy Responses，grok-4.5/4.6/4.7/
+/// grok-4.7-build-fast）与 opencode-go Responses（grok-4.6/4.7）透传
+/// `{"type":"web_search"}` 工具并返回 web_search_call 事件与 url_citation。
+/// Chat Completions 通道未接线 hosted 搜索 wire（工具键为保留键），一律
+/// 不声明；未登记 = 未知（fail-closed，协商层拒绝带搜索的请求）。
+pub fn default_hosted_web_search(model: &str) -> Option<bool> {
+    Some(match model {
+        "grok-4.5" | "grok-4.6" | "grok-4.7" | "grok-4.7-build-fast" => true,
+        _ => return None,
+    })
+}
+
+/// 为远端目录条目补默认 hosted WebSearch 声明：仅 Responses 传输（已接线
+/// web_search wire）且默认表有实测证据时插入标签；Messages 通道由
+/// Anthropic 适配器自带声明，Chat 通道保持不声明。
+pub fn apply_default_hosted_web_search(definition: &mut ModelDefinition) {
+    if definition.capabilities.transport == pawork_domain::ModelTransport::Responses
+        && default_hosted_web_search(definition.id.as_str()) == Some(true)
+    {
+        definition
+            .capabilities
+            .hosted_tool_tags
+            .insert(pawork_domain::ToolCapabilityTag::WebSearch);
     }
 }
 
@@ -1263,20 +1341,31 @@ mod tests {
 
     #[test]
     fn default_image_input_distinguishes_verified_text_only_from_unknown() {
-        // 2026-09-22 官方文档调研集：多模态升级、官方 text-only 与未知分轨。
+        // 2026-09-22 官方文档调研 + 2026-09-23 端点实测：多模态升级、
+        // text-only 与未知分轨；实测结论覆盖文档（v4-flash / qwen3.7-max）。
         assert_eq!(default_image_input("qwen3.7-plus"), Some(true));
         assert_eq!(default_image_input("minimax-m3"), Some(true));
         assert_eq!(default_image_input("mimo-v2.5"), Some(true));
+        assert_eq!(default_image_input("omen-alpha"), Some(true));
+        assert_eq!(
+            default_image_input("deepseek-v4-flash-vision-exp"),
+            Some(true)
+        );
         assert_eq!(default_image_input("kimi-k2.7-code"), Some(true));
         assert_eq!(default_image_input("k3-256k"), Some(true));
         assert_eq!(default_image_input("grok-4.7"), Some(true));
         assert_eq!(default_image_input("deepseek-v4.1-flash"), Some(true));
-        // 官方证实 text-only ≠ 未知。
+        // 官方证实 / 实测 text-only ≠ 未知。
         assert_eq!(default_image_input("glm-5.3"), Some(false));
         assert_eq!(default_image_input("glm-5.2"), Some(false));
+        assert_eq!(default_image_input("glm-5.1"), Some(false));
         assert_eq!(default_image_input("deepseek-v4-pro"), Some(false));
         assert_eq!(default_image_input("hy3"), Some(false));
-        assert_eq!(default_image_input("omen-alpha"), None);
+        assert_eq!(default_image_input("deepseek-v4-flash"), Some(false));
+        assert_eq!(default_image_input("qwen3.7-max"), Some(false));
+        assert_eq!(default_image_input("longcat-2.0"), Some(false));
+        // 429 限流未测 = 未知。
+        assert_eq!(default_image_input("glm-5.3-flashx"), None);
 
         // apply 只升级未声明条目；text-only / 未知保持 false。
         let mut multimodal = mock_definition("mimo-v2.5", ModelCapabilities::default());
@@ -1285,9 +1374,32 @@ mod tests {
         let mut text_only = mock_definition("hy3", ModelCapabilities::default());
         apply_default_image_input(&mut text_only);
         assert!(!text_only.capabilities.image_input);
-        let mut unknown = mock_definition("omen-alpha", ModelCapabilities::default());
+        let mut unknown = mock_definition("glm-5.3-flashx", ModelCapabilities::default());
         apply_default_image_input(&mut unknown);
         assert!(!unknown.capabilities.image_input);
+
+        // 2026-09-23 实测默认表：图像生成与 hosted WebSearch 同口径分轨。
+        assert_eq!(default_image_output("wan2.7-image"), Some(true));
+        assert_eq!(default_image_output("wan2.7-image-pro"), Some(true));
+        assert_eq!(default_image_output("glm-5.3"), None);
+        let mut generator = mock_definition("wan2.7-image", ModelCapabilities::default());
+        apply_default_image_output(&mut generator);
+        assert!(generator.capabilities.image_output);
+
+        assert_eq!(default_hosted_web_search("grok-4.6"), Some(true));
+        assert_eq!(default_hosted_web_search("grok-4.7-build-fast"), Some(true));
+        assert_eq!(default_hosted_web_search("glm-5.3"), None);
+        // 仅 Responses 传输插标签；Chat 通道保持不声明。
+        let mut responses_model = mock_definition("grok-4.6", ModelCapabilities::default());
+        responses_model.capabilities.transport = pawork_domain::ModelTransport::Responses;
+        apply_default_hosted_web_search(&mut responses_model);
+        assert!(responses_model
+            .capabilities
+            .hosted_tool_tags
+            .contains(&pawork_domain::ToolCapabilityTag::WebSearch));
+        let mut chat_model = mock_definition("grok-4.6", ModelCapabilities::default());
+        apply_default_hosted_web_search(&mut chat_model);
+        assert!(chat_model.capabilities.hosted_tool_tags.is_empty());
     }
 
     #[test]

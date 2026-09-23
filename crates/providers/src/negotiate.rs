@@ -303,6 +303,7 @@ mod tests {
     fn full_caps() -> ModelCapabilities {
         ModelCapabilities {
             text: true,
+            image_output: false,
             image_input: true,
             tool_calls: true,
             parallel_tool_calls: true,

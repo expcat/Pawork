@@ -276,6 +276,11 @@ pub struct ModelCapabilities {
     /// 模型声明的传输路径（仅声明驱动，禁止按 Provider 名推断）。
     #[serde(default)]
     pub transport: ModelTransport,
+    /// 模型可生成图像输出（如 qwen token plan 的 wan2.7-image 经
+    /// compatible-mode 返回 image content part）。目录声明维度，不承诺
+    /// Chat/Responses 文本流已接线。
+    #[serde(default)]
+    pub image_output: bool,
     /// Provider 服务端内置工具能力标签（WebSearch / CodeExecution / ...）。
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub hosted_tool_tags: BTreeSet<ToolCapabilityTag>,

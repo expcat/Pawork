@@ -26,6 +26,8 @@ use serde_json::Value;
 
 pub const DEFAULT_BASE_URL: &str = "https://api.x.ai/v1";
 const SUBSCRIPTION_BASE_URL: &str = "https://cli-chat-proxy.grok.com/v1";
+/// 订阅代理强制校验的 CLI 版本下限之上的当前官方版本（≥ 0.1.202）。
+const GROK_CLIENT_VERSION: &str = "1.0.41";
 pub const PROVIDER_ID: &str = "xai";
 
 #[derive(Clone, Debug)]
@@ -75,10 +77,17 @@ impl XaiProvider {
             if config.base_url.trim_end_matches('/') == DEFAULT_BASE_URL {
                 config.base_url = SUBSCRIPTION_BASE_URL.into();
             }
+            // cli-chat-proxy 2026-09 起按 x-grok-client-version 强制最低版本
+            //（缺失即 426 "CLI version (none) is outdated"）；取值对齐官方
+            // grok CLI 当前 lockstep 版本（xai-org/grok-build xai-grok-version）。
             config
                 .http
                 .extra_headers
                 .push(("X-XAI-Token-Auth".into(), "xai-grok-cli".into()));
+            config
+                .http
+                .extra_headers
+                .push(("x-grok-client-version".into(), GROK_CLIENT_VERSION.into()));
         }
         let mut chat = OpenAiCompatibleProvider::new(
             OpenAiCompatibleConfig {

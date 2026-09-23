@@ -314,6 +314,7 @@ impl ModelProvider for OpenAiCompatibleProvider {
                     // VISION-2：远端未声明模态时按官方文档默认表回填
                     //（显式 false / 纯文本模态已在上面分支覆盖静态声明）。
                     crate::registry::apply_default_image_input(&mut definition);
+                    crate::registry::apply_default_image_output(&mut definition);
                 }
                 // 远端模型能力不等于本适配器已接通的能力：Chat hosted wire 未实现。
                 definition.capabilities.hosted_tool_tags.clear();

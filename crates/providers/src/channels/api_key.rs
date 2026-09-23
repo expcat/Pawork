@@ -128,8 +128,9 @@ impl ApiKeyChannelProvider {
         responses.wire = ResponsesWireOptions {
             store: None,
             include_encrypted_reasoning: true,
-            // SEARCH-1：API-key 通道 Responses 模型未证实透传 web_search，保持拒绝。
-            hosted_web_search: false,
+            // SEARCH-1：API-key 通道 Responses 模型默认不写 web_search；opencode-go
+            // 的 grok 家族 2026-09-23 实测透传（见 registry 默认表），按通道放开。
+            hosted_web_search: config.preset.id == "opencode-go",
         };
         let mut responses = ResponsesTransport::new(responses, credential)?;
         if config.preset.id == "opencode-go" {
@@ -330,6 +331,10 @@ impl ModelProvider for ApiKeyChannelProvider {
                 // ADR-063：同 model_id 跨 Provider 合并的默认推理强度声明
                 //（仅回填未知；远端已声明时优先）。
                 crate::registry::apply_default_supported_efforts(model);
+                // 2026-09-23 实测默认表：图像生成与 hosted WebSearch（仅
+                // Responses 传输生效，Chat 通道保持不声明）。
+                crate::registry::apply_default_image_output(model);
+                crate::registry::apply_default_hosted_web_search(model);
                 true
             }
             Some(ModelTransport::Messages) | None => false,

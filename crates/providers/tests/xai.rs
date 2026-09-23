@@ -13,7 +13,7 @@ use pawork_domain::{
 };
 use pawork_providers::net::http::HttpClientConfig;
 use pawork_providers::{XaiConfig, XaiProvider};
-use wiremock::matchers::{body_string_contains, header, method, path};
+use wiremock::matchers::{body_string_contains, header, header_regex, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 mod common;
@@ -77,6 +77,8 @@ async fn subscription_catalog_drives_model_and_transport_routing() {
         .and(path("/models"))
         .and(header("authorization", "Bearer oauth-xai"))
         .and(header("x-xai-token-auth", "xai-grok-cli"))
+        // 2026-09-23：订阅代理强制 x-grok-client-version（缺失即 426）。
+        .and(header_regex("x-grok-client-version", r"^\d+\.\d+\.\d+$"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "data": [
                 {"id": "picker-id", "model": "grok-subscription", "name": "Grok Subscription",
@@ -106,6 +108,7 @@ async fn subscription_catalog_drives_model_and_transport_routing() {
             .and(path(endpoint))
             .and(header("authorization", "Bearer oauth-xai"))
             .and(header("x-xai-token-auth", "xai-grok-cli"))
+            .and(header_regex("x-grok-client-version", r"^\d+\.\d+\.\d+$"))
             .and(header("x-grok-model-override", model))
             .and(body_string_contains(model))
             .respond_with(
