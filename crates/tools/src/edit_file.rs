@@ -83,21 +83,23 @@ impl AgentTool for EditFileTool {
         request: ToolRequest,
         context: ToolExecutionContext,
         _sink: &dyn ToolEventSink,
-        _cancel: CancellationToken,
+        cancel: CancellationToken,
     ) -> Result<ToolResult, ToolError> {
         let service = self.workspaces.clone();
         let workspace_id = context.workspace_id;
         let input = request.input;
-        let result = tokio::task::spawn_blocking(move || edit(&service, &workspace_id, &input))
-            .await
-            .map_err(|error| ToolError {
-                kind: pawork_domain::ToolErrorKind::Internal,
-                message: format!("edit_file worker failed: {error}"),
-                retryable: false,
-                retry_after_ms: None,
-            })?;
+        let result =
+            tokio::task::spawn_blocking(move || edit(&service, &workspace_id, &input, &cancel))
+                .await
+                .map_err(|error| ToolError {
+                    kind: pawork_domain::ToolErrorKind::Internal,
+                    message: format!("edit_file worker failed: {error}"),
+                    retryable: false,
+                    retry_after_ms: None,
+                })?;
         match result {
             Ok(result) => Ok(result),
+            Err(EditFileError::Cancelled) => Err(ToolError::cancelled("edit_file cancelled")),
             Err(error) => Err(BuiltinToolError::from(error).into()),
         }
     }
@@ -127,6 +129,8 @@ pub enum EditFileError {
     Conflict(String),
     #[error("old_string not found in {path}")]
     NotFound { path: String },
+    #[error("edit_file cancelled")]
+    Cancelled,
 }
 
 impl From<EditFileError> for BuiltinToolError {
@@ -136,6 +140,7 @@ impl From<EditFileError> for BuiltinToolError {
             EditFileError::Io(io) => BuiltinToolError::Io(io),
             EditFileError::Conflict(m) => BuiltinToolError::Other(m),
             EditFileError::NotFound { .. } => BuiltinToolError::Other(error.to_string()),
+            EditFileError::Cancelled => BuiltinToolError::Other("edit_file cancelled".into()),
         }
     }
 }
@@ -144,6 +149,7 @@ fn edit(
     service: &WorkspaceService,
     workspace_id: &WorkspaceId,
     input: &Value,
+    cancel: &CancellationToken,
 ) -> Result<ToolResult, EditFileError> {
     let path = require_str(input, "path")?;
     let allow_fuzzy = opt_bool(input, "allow_fuzzy")?.unwrap_or(false);
@@ -200,6 +206,11 @@ fn edit(
 
     if content == original {
         return Err(EditFileError::NotFound { path: path.clone() });
+    }
+
+    // R-10：提交边界检查——取消命中时不得开始写。
+    if cancel.is_cancelled() {
+        return Err(EditFileError::Cancelled);
     }
 
     atomic_write(&absolute, content.as_bytes())?;
@@ -392,6 +403,15 @@ mod tests {
 
     fn single_edit(path: &str, old: &str, new: &str) -> Value {
         json!({"path": path, "old_string": old, "new_string": new})
+    }
+
+    // 测试辅助：遮蔽生产 `edit`，默认不取消。
+    fn edit(
+        service: &WorkspaceService,
+        id: &WorkspaceId,
+        input: &Value,
+    ) -> Result<ToolResult, EditFileError> {
+        super::edit(service, id, input, &CancellationToken::new())
     }
 
     #[test]

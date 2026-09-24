@@ -11,12 +11,36 @@ use serde_json::json;
 
 use crate::gui_server::GuiHostError;
 
-use super::super::{ActiveGuiRun, GuiBroadcastSink, GuiHostAdapter};
+use super::super::{ActiveGuiRun, GuiBroadcastSink, GuiHostAdapter, GuiRunRegistry};
+
+/// 同会话 Run 占用槽的 RAII 守卫（R-06）：handler 内任何同步/异步拒绝
+/// 路径自动释放；spawn 成功后 disarm，由 run 收尾释放。
+struct SessionSlotGuard {
+    runs: Arc<GuiRunRegistry>,
+    session_id: SessionId,
+    held: bool,
+}
+
+impl SessionSlotGuard {
+    fn disarm(&mut self) {
+        self.held = false;
+    }
+}
+
+impl Drop for SessionSlotGuard {
+    fn drop(&mut self) {
+        if self.held {
+            self.runs.release_session(&self.session_id);
+        }
+    }
+}
 
 /// engine 未报终态即死时的收口闸门（合成终态硬化）：先 best-effort 持久化
 /// 真实 `RunFailed`（persist-first，参照非 live ToolApprove durable seal），
 /// 成功后经正常映射补广播（携带真实持久化 sequence）；持久化失败才退回
 /// `publish_raw` 合成兜底。两种路径都补 `run.failed` 诊断供 GUI 展示原因。
+/// 早死若发生在 engine 持久化 `RunStarted` 之前，先补建 runs 行再落
+/// `RunFailed`——projection 的终态 UPDATE 要求 run 行存在（R-19）。
 pub(crate) async fn seal_run_without_terminal(
     core: &crate::AppCore,
     bus: &Arc<super::super::bus::GuiEventBus>,
@@ -33,36 +57,68 @@ pub(crate) async fn seal_run_without_terminal(
     }
     let message = error.to_string();
     let sealed = async {
+        // 早死时 engine 尚未持久化 RunStarted：先补建 runs 行，
+        // 否则 RunFailed 的 projection UPDATE 无行可命中、整段
+        // seal 落入合成兜底，重开 store 后该 run 无持久生命周期。
+        // 以 store 投影为准（runs 行也可能绕开 bus 落库，如种子事件）。
+        let run_row_exists = core
+            .store()?
+            .projection_snapshot(session_id)
+            .await?
+            .runs
+            .iter()
+            .any(|run| run.run_id == *run_id);
         let mut sequence = core.next_sequence(session_id).await?;
-        core.append_payload(
-            session_id,
-            run_id,
-            &mut sequence,
-            AgentEvent::RunFailed {
-                error: ErrorContext {
-                    category: ErrorCategory::Internal,
-                    message: message.clone(),
-                    retryable: false,
-                    retry_after_ms: None,
-                    diagnostics: Default::default(),
+        let mut started = None;
+        if !run_row_exists {
+            started = Some(
+                core.append_payload(
+                    session_id,
+                    run_id,
+                    &mut sequence,
+                    AgentEvent::RunStarted {
+                        trigger_message_id: MessageId::from(format!(
+                            "msg-{}-seal",
+                            run_id.as_str()
+                        )),
+                    },
+                )
+                .await?,
+            );
+        }
+        let failed = core
+            .append_payload(
+                session_id,
+                run_id,
+                &mut sequence,
+                AgentEvent::RunFailed {
+                    error: ErrorContext {
+                        category: ErrorCategory::Internal,
+                        message: message.clone(),
+                        retryable: false,
+                        retry_after_ms: None,
+                        diagnostics: Default::default(),
+                    },
+                    usage: None,
                 },
-                usage: None,
-            },
-        )
-        .await
+            )
+            .await?;
+        Ok::<_, crate::AppError>((started, failed))
     }
     .await;
     match sealed {
-        Ok(envelope) => {
+        Ok((started, failed)) => {
             // persist-first 已落库；复用 live 路径的广播 sink 经正常映射
-            // 补实时事件（RunFailed → RunChanged{Failed}，真实 sequence）。
+            // 补实时事件（真实 sequence），先补发 RunStarted 再发 RunFailed。
             let sink = GuiBroadcastSink::new(Arc::clone(bus), instance.clone());
-            if let Err(broadcast_error) = sink.emit(envelope).await {
-                tracing::warn!(
-                    run_id = run_id.as_str(),
-                    error = %broadcast_error,
-                    "run failed durable seal broadcast failed"
-                );
+            for envelope in started.into_iter().chain(std::iter::once(failed)) {
+                if let Err(broadcast_error) = sink.emit(envelope).await {
+                    tracing::warn!(
+                        run_id = run_id.as_str(),
+                        error = %broadcast_error,
+                        "run failed durable seal broadcast failed"
+                    );
+                }
             }
         }
         Err(seal_error) => {
@@ -165,9 +221,29 @@ pub(crate) async fn run_start(
         ),
         None => None,
     };
+    // R-06：同一 Session 同时只允许一个活动 Run。占用早于首个 await，
+    // join! 突发的第二个 RunStart 才能确定性拒绝；守卫覆盖此后所有
+    // 拒绝路径，spawn 成功后 disarm、由 run 收尾释放。
+    let mut session_slot = if adapter.runs.try_acquire_session(session_id) {
+        SessionSlotGuard {
+            runs: Arc::clone(&adapter.runs),
+            session_id: session_id.clone(),
+            held: true,
+        }
+    } else {
+        return Err(GuiHostAdapter::host_error(
+            "session_busy",
+            "session already has an active run",
+        ));
+    };
     let (history, workspace_id, workspace_roots) = {
         let core = adapter.core.read().await;
         core.get_session(session_id)
+            .await
+            .map_err(GuiHostAdapter::app_error)?;
+        // R-19：计划闸门前移到接受边界，未批准 Plan 同步拒绝，不再
+        // 先回 Accepted 再异步 Failed。
+        core.ensure_plan_allows_execution(session_id)
             .await
             .map_err(GuiHostAdapter::app_error)?;
         let workspace = core
@@ -450,6 +526,9 @@ pub(crate) async fn run_start(
         approvals.clear_run(&run);
         runs.remove(&run);
         browser.unbind(&run);
+        // 会话槽释放在 terminal 登记清理之前：后者是外部 settle 观测点，
+        // 观测到清理完成时会话槽必然已可再占用（R-06）。
+        runs.release_session(&session);
         bus.clear_terminal_reported(run.as_str());
         // ADR-054 D4：成功终态后异步自动命名，不阻塞终态事件；独立任务
         // 复用 bus 广播 SessionMetaChanged，失败/超时静默保留占位名。
@@ -461,6 +540,7 @@ pub(crate) async fn run_start(
             );
         }
     });
+    session_slot.disarm();
     Ok(AppResponse::Accepted {
         command_id: envelope.command_id.clone(),
         run_id: Some(run_id),

@@ -98,9 +98,9 @@ async fn run_success_auto_titles_placeholder_session_and_broadcasts() {
 #[tokio::test]
 async fn auto_title_preserves_pending_approval_and_event_ledger() {
     let (mut core, _dir) = crate::testsupport::mock_core(Vec::new()).await;
-    core.provider = Arc::new(naming_mock_provider(vec![
-        MockScript::new().text("保留审批的标题").complete(),
-    ]));
+    core.provider = Arc::new(naming_mock_provider(vec![MockScript::new()
+        .text("保留审批的标题")
+        .complete()]));
     core.config.naming_provider = Some("mock".into());
     core.config.naming_model = Some("model-1".into());
     let session = core.create_session("New session").await.expect("session");
@@ -733,12 +733,26 @@ async fn run_start_cancel_broadcasts_cancelled_without_synthetic_failed() {
         !has_run_failed_diagnostic(&wire),
         "host must not misreport a cancelled run as synthetic failed: {wire:?}"
     );
+    // R-05：run 入口取消后，任务终态以真实 run 终态映射为 Canceled
+    //（旧口径把 Err 一律记 Failed）。
+    let core = adapter.core.read().await;
+    let agent_tasks: Vec<_> = core
+        .tasks_list()
+        .into_iter()
+        .filter(|task| task.task_kind == pawork_domain::TaskKind::Agent)
+        .collect();
+    assert_eq!(agent_tasks.len(), 1, "one agent task per run");
+    assert_eq!(
+        agent_tasks[0].status,
+        pawork_domain::TaskStatus::Canceled,
+        "cancelled run must map its agent task to Canceled"
+    );
 }
 
 #[tokio::test]
-async fn run_start_early_death_without_terminal_still_synthesizes_failed() {
-    // 无终态早死路径：Draft plan 使 chat_turn 在 run_session 之前被闸门拒绝，
-    // engine 未报任何终态 —— 宿主合成 RunChanged{Failed} + run.failed 兜底不丢。
+async fn run_start_unapproved_plan_rejects_synchronously() {
+    // R-19：计划闸门前移到接受边界——Draft plan 会话的 RunStart 同步拒绝
+    //（plan_not_approved），不再先回 Accepted 再异步 Failed。
     let dir = tempfile::tempdir().expect("tempdir");
     let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
         .await
@@ -777,9 +791,7 @@ async fn run_start_early_death_without_terminal_still_synthesizes_failed() {
         .await
         .expect("seed draft plan");
     let adapter = GuiHostAdapter::new(Arc::new(core));
-    let runs = adapter.runs();
-    let mut events = adapter.subscribe_events();
-    let response = adapter
+    let error = adapter
         .command(&command_envelope(AppCommand::RunStart {
             session_id: session.clone(),
             user_message: "blocked by plan gate".into(),
@@ -791,57 +803,26 @@ async fn run_start_early_death_without_terminal_still_synthesizes_failed() {
             web_search: None,
         }))
         .await
-        .expect("run accepted");
-    let AppResponse::Accepted {
-        run_id: Some(run), ..
-    } = response
-    else {
-        panic!("RunStart must be accepted: {response:?}");
-    };
-    wait_run_registry_drains(&runs, &run).await;
-    let envelopes = drain_wire_envelopes(&mut events);
-    let wire: Vec<AppEvent> = envelopes
-        .iter()
-        .map(|envelope| envelope.payload.clone())
-        .collect();
-    assert_eq!(
-        terminal_states_for(&wire, &run),
-        vec![RunState::Failed],
-        "early death without an engine terminal must still synthesize exactly one RunChanged{{Failed}}: {wire:?}"
-    );
+        .expect_err("unapproved plan must reject synchronously");
+    assert_eq!(error.code, "plan_not_approved", "{error:?}");
     assert!(
-        has_run_failed_diagnostic(&wire),
-        "fallback run.failed diagnostic must survive for early-death paths: {wire:?}"
+        adapter.runs().active().is_empty(),
+        "synchronously rejected RunStart must not register an active run"
     );
-    // 合成兜底不占真实持久化号段：序号从 SYNTHETIC_SEQUENCE_BASE 递增自取，
-    // 有序插入落在既有时间线内容（含用户消息乐观回显）之后而非 seq-0 顶端。
-    let synthetic_sequences: Vec<u64> = envelopes
-        .iter()
-        .filter(|envelope| {
-            matches!(
-                envelope.payload,
-                AppEvent::RunChanged {
-                    state: RunState::Failed,
-                    ..
-                } | AppEvent::Diagnostic { .. }
-            )
-        })
-        .map(|envelope| envelope.stream_sequence)
-        .collect();
-    assert_eq!(
-        synthetic_sequences.len(),
-        2,
-        "early death must emit exactly the synthetic terminal pair: {wire:?}"
-    );
+    // 同步拒绝不落任何 run 行：投影中该会话无 runs 记录。
+    let snapshot = adapter
+        .core
+        .read()
+        .await
+        .store()
+        .expect("store")
+        .projection_snapshot(&session)
+        .await
+        .expect("snapshot");
     assert!(
-        synthetic_sequences
-            .iter()
-            .all(|sequence| *sequence >= super::bus::SYNTHETIC_SEQUENCE_BASE),
-        "synthetic envelopes must not occupy the persisted sequence space: {synthetic_sequences:?}"
-    );
-    assert!(
-        synthetic_sequences[0] < synthetic_sequences[1],
-        "synthetic sequences must follow arrival order: {synthetic_sequences:?}"
+        snapshot.runs.is_empty(),
+        "sync rejection must not persist any run row: {:?}",
+        snapshot.runs
     );
 }
 
@@ -982,6 +963,7 @@ async fn run_start_switches_same_registry_model_and_unknown_fails_closed() {
     );
     let session = core.create_session("switch").await.expect("session");
     let adapter = GuiHostAdapter::new(Arc::new(core));
+    let mut events = adapter.subscribe_events();
     let host: Arc<dyn GuiHost> = Arc::new(adapter);
     let accepted = host
         .command(&command_envelope(AppCommand::RunStart {
@@ -996,7 +978,15 @@ async fn run_start_switches_same_registry_model_and_unknown_fails_closed() {
         }))
         .await
         .expect("same-registry model switch");
-    assert!(matches!(accepted, AppResponse::Accepted { .. }));
+    // R-06：同 session 串行闸要求等首个 run 收尾后再发第二轮。
+    let AppResponse::Accepted {
+        run_id: Some(first_run),
+        ..
+    } = accepted
+    else {
+        panic!("first RunStart must be accepted: {accepted:?}");
+    };
+    wait_run_completed(&mut events, &first_run).await;
 
     let error = host
         .command(&command_envelope(AppCommand::RunStart {
@@ -1203,9 +1193,9 @@ async fn run_start_with_provider_does_not_silently_keep_same_model_id() {
         .await
         .expect("store");
     let core = AppCore::from_parts(
-        Arc::new(MockProvider::sequence(vec![
-            MockScript::new().text("ok").complete(),
-        ])),
+        Arc::new(MockProvider::sequence(vec![MockScript::new()
+            .text("ok")
+            .complete()])),
         None,
         pawork_domain::ModelId::from("deepseek-v4-flash"),
         pawork_domain::ProviderId::from("deepseek"),
@@ -1351,7 +1341,10 @@ async fn local_attachment_upload_and_run_start_consume_staged_bytes() {
     old.source = CommandSource::LocalGui {
         client_id: "gui-att".into(),
     };
-    let error = adapter.command(&old).await.expect_err("old minor must fail closed");
+    let error = adapter
+        .command(&old)
+        .await
+        .expect_err("old minor must fail closed");
     assert_eq!(error.code, "unsupported");
 
     let automation = command_envelope(AppCommand::RunStart {
@@ -1426,6 +1419,190 @@ async fn local_attachment_upload_and_run_start_consume_staged_bytes() {
     reuse.source = CommandSource::LocalGui {
         client_id: "gui-att".into(),
     };
-    let error = adapter.command(&reuse).await.expect_err("consumed id must fail");
+    let error = adapter
+        .command(&reuse)
+        .await
+        .expect_err("consumed id must fail");
     assert_eq!(error.code, "invalid_attachment");
+}
+
+#[tokio::test]
+async fn run_start_second_run_same_session_rejected_until_settled() {
+    // R-06：同一 Session 同时只允许一个活动 Run——运行中第二轮同步拒绝
+    //（session_busy），首个 run 取消收尾后可再启动。
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
+        .await
+        .expect("store");
+    let provider = MockProvider::sequence(vec![
+        MockScript::new().wait_for_cancellation(),
+        MockScript::new().text("ok").complete(),
+    ]);
+    let provider_calls = provider.clone();
+    let core = AppCore::from_parts(
+        Arc::new(provider),
+        None,
+        pawork_domain::ModelId::from("model-1"),
+        pawork_domain::ProviderId::from("mock"),
+        Some(store),
+    );
+    let session = core.create_session("session-slot").await.expect("session");
+    let adapter = GuiHostAdapter::new(Arc::new(core));
+    let mut events = adapter.subscribe_events();
+
+    let first = adapter
+        .command(&command_envelope(AppCommand::RunStart {
+            session_id: session.clone(),
+            user_message: "block until cancelled".into(),
+            model: None,
+            provider: None,
+            profile: None,
+            effort: None,
+            attachment_ids: Vec::new(),
+            web_search: None,
+        }))
+        .await
+        .expect("first run accepted");
+    let AppResponse::Accepted {
+        run_id: Some(first_run),
+        ..
+    } = first
+    else {
+        panic!("first RunStart must be accepted: {first:?}");
+    };
+
+    let busy = adapter
+        .command(&command_envelope(AppCommand::RunStart {
+            session_id: session.clone(),
+            user_message: "second turn while busy".into(),
+            model: None,
+            provider: None,
+            profile: None,
+            effort: None,
+            attachment_ids: Vec::new(),
+            web_search: None,
+        }))
+        .await
+        .expect_err("same session must reject a second active run");
+    assert_eq!(busy.code, "session_busy", "{busy:?}");
+
+    // 等首个 run 真正进入 provider 流再取消：engine 的取消短路不消费脚本，
+    // 只有等 mock 记录到调用，wait_for_cancellation 脚本才被确定性占用。
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    while provider_calls.calls().is_empty() {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "first run must reach the provider"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    adapter
+        .command(&command_envelope(AppCommand::RunCancel {
+            run_id: first_run.clone(),
+        }))
+        .await
+        .expect("cancel accepted");
+    let wire = wait_host_run_task_settled(&adapter, &mut events, &first_run).await;
+    assert_eq!(
+        terminal_states_for(&wire, &first_run),
+        vec![RunState::Cancelled]
+    );
+
+    // 收尾完成（terminal 登记清理先于返回）后会话槽已释放，可再启动。
+    let third = adapter
+        .command(&command_envelope(AppCommand::RunStart {
+            session_id: session.clone(),
+            user_message: "after settle".into(),
+            model: None,
+            provider: None,
+            profile: None,
+            effort: None,
+            attachment_ids: Vec::new(),
+            web_search: None,
+        }))
+        .await
+        .expect("run must be accepted again after the first settles");
+    let AppResponse::Accepted {
+        run_id: Some(third_run),
+        ..
+    } = third
+    else {
+        panic!("third RunStart must be accepted: {third:?}");
+    };
+    wait_run_completed(&mut events, &third_run).await;
+}
+
+#[tokio::test]
+async fn run_start_async_early_death_seals_durable_failed() {
+    // R-19：接受后、engine 报任何事件前早死（hosted web_search 无能力证据
+    // fail-closed）时，宿主 seal 先补持久化 RunStarted 再持久化 RunFailed——
+    // 重开 store 能看到该 run 的完整持久生命周期（running → failed）。
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db = dir.path().join("session.db");
+    let (store, _) = pawork_storage::session::SessionStore::open(&db)
+        .await
+        .expect("store");
+    let provider = MockProvider::sequence(vec![MockScript::new().text("unreachable").complete()]);
+    let core = AppCore::from_parts(
+        Arc::new(provider),
+        None,
+        pawork_domain::ModelId::from("model-1"),
+        pawork_domain::ProviderId::from("mock"),
+        Some(store),
+    );
+    let session = core
+        .create_session("gui-early-death")
+        .await
+        .expect("session");
+    let adapter = GuiHostAdapter::new(Arc::new(core));
+    let mut events = adapter.subscribe_events();
+    let mut start = command_envelope(AppCommand::RunStart {
+        session_id: session.clone(),
+        user_message: "search the web".into(),
+        model: None,
+        provider: None,
+        profile: None,
+        effort: None,
+        attachment_ids: Vec::new(),
+        web_search: Some(true),
+    });
+    start.source = CommandSource::LocalGui {
+        client_id: "gui-seal".into(),
+    };
+    let AppResponse::Accepted {
+        run_id: Some(run), ..
+    } = adapter.command(&start).await.expect("run accepted")
+    else {
+        panic!("RunStart must be accepted");
+    };
+    let mut wire = wait_host_run_task_settled(&adapter, &mut events, &run).await;
+    wire.extend(drain_wire_events(&mut events));
+    assert_eq!(
+        terminal_states_for(&wire, &run),
+        vec![RunState::Failed],
+        "early death must surface exactly one terminal RunChanged{{Failed}}: {wire:?}"
+    );
+    assert!(
+        has_run_failed_diagnostic(&wire),
+        "run.failed diagnostic must survive the early-death seal: {wire:?}"
+    );
+    drop(adapter);
+
+    let (store, _) = pawork_storage::session::SessionStore::open(&db)
+        .await
+        .expect("reopen store");
+    let snapshot = store
+        .projection_snapshot(&session)
+        .await
+        .expect("projection snapshot");
+    let sealed = snapshot
+        .runs
+        .iter()
+        .find(|item| item.run_id == run)
+        .expect("sealed run row must exist after reopen");
+    assert_eq!(
+        sealed.state, "failed",
+        "early-death run must persist a complete lifecycle ending failed: {:?}",
+        snapshot.runs
+    );
 }

@@ -23,7 +23,7 @@ Desktop 启动脚本不加载 fixture、seed 或测试 profile。它默认使用
 
 ```text
 Pawork/                  # 仓库根 = Cargo workspace 根
-├── crates/              # 19 个库（扁平布局，目录 = 包名去 pawork- 前缀）
+├── crates/              # 22 个库（扁平布局，目录 = 包名去 pawork- 前缀）
 │   ├── domain/          # canonical 领域 + provider_api/tool_api 契约 + 事件信封 golden
 │   ├── protocol/        # GUI 帧 / headless-json / core-api / typegen
 │   ├── testkit/         # dev-only mock 与契约断言
@@ -42,7 +42,10 @@ Pawork/                  # 仓库根 = Cargo workspace 根
 │   ├── transport/       # local（UDS）+ memory
 │   ├── app/             # 装配宿主 + gui_server/
 │   ├── cli/             # 21 子命令 + channels/acp/
-│   └── client/          # framed 连接面 + headless/
+│   ├── client/          # framed 连接面 + headless/
+│   ├── terminal/        # 纯终端显示解析与按键映射
+│   ├── computer-use/    # 专用虚拟桌面 RFB 观察与输入
+│   └── browser/         # 系统 WebView 与导航
 ├── apps/                # pawork（CLI 宿主 + composition root）、desktop（GPUI GUI）
 ├── schemas/             # protocol typegen 检入的 .d.ts
 ├── fixtures/            # 测试夹具
@@ -51,14 +54,15 @@ Pawork/                  # 仓库根 = Cargo workspace 根
 └── docs/                # 架构、设计、Spec、参照
 ```
 
-21 成员（19 库 + 2 应用）。包清单、依赖方向与冻结契约见 [docs/architecture.md](docs/architecture.md)。
+24 成员（22 库 + 2 应用）。包清单、依赖方向与冻结契约见 [docs/architecture.md](docs/architecture.md)。
 
 ## 文档导航
 
 | 文档 | 职责 |
 | --- | --- |
 | [docs/architecture.md](docs/architecture.md) | 架构：红线、包布局与依赖方向、冻结契约、安全语义 |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | 当前待办与未闭合验收：多模态（图像 / 视频）与搜索通道扩展（MM-1～3）、子代理复测待人工验收；已完成事项不再保留为活动任务 |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | 当前修复优先级、产品缺口与未闭合验收 |
+| [docs/Plan/README.md](docs/Plan/README.md) | 全项目 Review、24 包定位、修复执行计划与剩余验收 |
 | [docs/design.md](docs/design.md) | 功能设计：能力域与参照项目映射、明确不做的形态 |
 | [docs/spec/README.md](docs/spec/README.md) | 产品与包级 Spec 总索引 |
 | [docs/spec/crates/](docs/spec/README.md#12-包级-spec) | 每包一篇 Spec（agent 辅助阅读主入口） |

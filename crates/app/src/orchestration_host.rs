@@ -84,9 +84,6 @@ impl crate::AppCore {
         .await?;
 
         for worker in [&left, &right] {
-            if let Err(error) = self.tasks_start_agent(None) {
-                tracing::warn!(%error, "failed to start orchestration worker agent task");
-            }
             if let Some(limit) = options.budget_input_tokens {
                 supervisor
                     .record_usage(worker, limit.saturating_add(1), 0, 0)
@@ -95,31 +92,65 @@ impl crate::AppCore {
             }
         }
 
-        let mut cancelled = Vec::new();
-        if options.cancel {
-            let receipt = supervisor
-                .cancel_tree(&parent)
-                .await
-                .map_err(|error| AppError::Orchestration(error.to_string()))?;
-            cancelled = receipt
-                .cancelled_ids
-                .iter()
-                .map(|id| id.as_str().to_string())
-                .collect();
-        } else {
-            supervisor
-                .complete(&left)
-                .await
-                .map_err(|error| AppError::Orchestration(error.to_string()))?;
-            supervisor
-                .complete(&right)
-                .await
-                .map_err(|error| AppError::Orchestration(error.to_string()))?;
-            supervisor
-                .complete(&parent)
-                .await
-                .map_err(|error| AppError::Orchestration(error.to_string()))?;
+        // R-16：demo 登记的 Agent 任务持有 ID 并在终态配对收口，
+        // 不留无执行体的悬空任务（任务无真实执行体令牌，挂独立令牌）。
+        let mut worker_tasks = Vec::new();
+        for _worker in [&left, &right] {
+            match self.tasks_start_agent(None, &pawork_domain::CancellationToken::new()) {
+                Ok(task_id) => worker_tasks.push(task_id),
+                Err(error) => {
+                    tracing::warn!(%error, "failed to start orchestration worker agent task")
+                }
+            }
         }
+
+        let mut cancelled = Vec::new();
+        let outcome: Result<(), AppError> = async {
+            if options.cancel {
+                let receipt = supervisor
+                    .cancel_tree(&parent)
+                    .await
+                    .map_err(|error| AppError::Orchestration(error.to_string()))?;
+                cancelled = receipt
+                    .cancelled_ids
+                    .iter()
+                    .map(|id| id.as_str().to_string())
+                    .collect();
+            } else {
+                supervisor
+                    .complete(&left)
+                    .await
+                    .map_err(|error| AppError::Orchestration(error.to_string()))?;
+                supervisor
+                    .complete(&right)
+                    .await
+                    .map_err(|error| AppError::Orchestration(error.to_string()))?;
+                supervisor
+                    .complete(&parent)
+                    .await
+                    .map_err(|error| AppError::Orchestration(error.to_string()))?;
+            }
+            Ok(())
+        }
+        .await;
+        // 任务终态与 supervisor 真实终态配对：取消 → Canceled；全部完成
+        // → Completed；中途失败 → Failed（带原因）。
+        let (task_status, task_detail) = match &outcome {
+            Err(error) => (
+                pawork_domain::TaskStatus::Failed,
+                Some(format!("demo aborted: {error}")),
+            ),
+            Ok(()) if options.cancel => (pawork_domain::TaskStatus::Canceled, None),
+            Ok(()) => (pawork_domain::TaskStatus::Completed, None),
+        };
+        for task_id in &worker_tasks {
+            if let Err(error) =
+                self.tasks_finish_from_run(task_id, task_status, task_detail.clone())
+            {
+                tracing::warn!(%error, "failed to finish orchestration worker agent task");
+            }
+        }
+        outcome?;
 
         let event_kinds: Vec<String> = supervisor
             .events()
@@ -203,4 +234,60 @@ fn orchestration_event_kind(event: &OrchestrationEvent) -> String {
         OrchestrationEvent::PatchConflict { .. } => "PatchConflict",
     }
     .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use pawork_domain::{TaskKind, TaskStatus};
+    use pawork_workflow::task::is_terminal_status;
+
+    use super::*;
+    use crate::testsupport::mock_core;
+
+    /// R-16：demo 执行与取消两臂都不留悬空 Agent 任务——任务终态与
+    /// supervisor 真实终态配对，持久快照重放后无活跃残留。
+    #[tokio::test]
+    async fn demo_pairs_worker_task_terminals() {
+        for cancel in [false, true] {
+            let (mut core, dir) = mock_core(Vec::new()).await;
+            core.open_control_plane(dir.path()).expect("control plane");
+            let report = core
+                .run_multi_agent_demo(MultiAgentDemoOptions {
+                    cancel,
+                    budget_input_tokens: None,
+                })
+                .await
+                .expect("demo");
+            assert_eq!(report.workers.len(), 2);
+
+            let expected = if cancel {
+                TaskStatus::Canceled
+            } else {
+                TaskStatus::Completed
+            };
+            let agent_tasks: Vec<_> = core
+                .tasks_list()
+                .into_iter()
+                .filter(|task| task.task_kind == TaskKind::Agent)
+                .collect();
+            assert_eq!(agent_tasks.len(), 2, "demo registers two worker tasks");
+            for task in &agent_tasks {
+                assert_eq!(
+                    task.status, expected,
+                    "worker task terminal must pair with demo outcome"
+                );
+            }
+
+            let reloaded = crate::tasks_host::load_task_manager(&dir.path().join("tasks.json"))
+                .expect("reload tasks snapshot");
+            assert!(
+                reloaded
+                    .tasks()
+                    .iter()
+                    .all(|task| is_terminal_status(task.status)),
+                "persisted snapshot must not claim any task still active"
+            );
+            core.shutdown().await.expect("shutdown");
+        }
+    }
 }

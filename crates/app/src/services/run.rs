@@ -265,7 +265,7 @@ impl RunService {
             checkpoints: core.checkpoints.clone(),
             workspace_roots: run_workspace.roots.clone(),
         };
-        let task_id = match core.tasks_start_agent(Some(session_id)) {
+        let task_id = match core.tasks_start_agent(Some(session_id), &cancel) {
             Ok(task_id) => Some(task_id),
             Err(error) => {
                 tracing::warn!(error=%error, "tasks_start_agent failed; run proceeds without task ledger entry");
@@ -299,13 +299,17 @@ impl RunService {
                 tracing::warn!(error = %error, "usage ledger record failed");
             }
         }
+        // R-05：任务终态以真实 run 终态映射——取消（GUI RunCancel /
+        // tasks cancel 共用同一令牌）记 Canceled，不再谎报 Failed。
         let finish_status = if result.is_ok() {
             pawork_domain::TaskStatus::Completed
+        } else if result.as_ref().is_err_and(|error| error.is_cancelled()) {
+            pawork_domain::TaskStatus::Canceled
         } else {
             pawork_domain::TaskStatus::Failed
         };
         if let Some(task_id) = &task_id {
-            match core.tasks_finish(task_id, finish_status, None) {
+            match core.tasks_finish_from_run(task_id, finish_status, None) {
                 Ok(()) => {
                     if let Some(degrade) = core.tasks.take_last_degrade() {
                         emit_tasks_finish_degrade(core, session_id, &run_id, &sink, degrade).await;
@@ -939,6 +943,227 @@ mod tests {
             found,
             "run sink must receive tasks_finish_failed Diagnostic"
         );
+        core.shutdown().await.expect("shutdown");
+    }
+
+    /// R-02：上游流错误 message 回显敏感文本时，经「SSE 解析 → engine →
+    /// 持久化 → 投影」全链路后原文不出现；错误对象只保留白名单 type，
+    /// 错误类别仍可辨认。
+    #[tokio::test]
+    async fn provider_stream_error_is_persisted_without_upstream_message() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let secret = "sk-FAKE-SECRET-9f8e7d";
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(format!(
+                        "data: {{\"type\":\"error\",\"error\":{{\"type\":\"rate_limit_error\",\"message\":\"slow down, key {secret} throttled\"}}}}\n\n"
+                    )),
+            )
+            .mount(&server)
+            .await;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (store, _) = SessionStore::open(&dir.path().join("session.db"))
+            .await
+            .expect("store");
+        let provider = pawork_providers::AnthropicProvider::new(
+            pawork_providers::AnthropicConfig::new(server.uri()),
+            None,
+        )
+        .expect("provider");
+        let provider_id = pawork_domain::ModelProvider::id(&provider);
+        let core = AppCore::from_parts(
+            Arc::new(provider),
+            None,
+            pawork_domain::ModelId::from("claude-3-5-sonnet"),
+            provider_id,
+            Some(store),
+        );
+        let session = core
+            .create_session("stream-error-redaction")
+            .await
+            .expect("create");
+        let sink = RecordingEvents::default();
+        let error = core
+            .chat_turn(
+                &session,
+                vec![user_hello()],
+                &sink,
+                CancellationToken::new(),
+            )
+            .await
+            .expect_err("stream error must fail the turn");
+        assert!(
+            !format!("{error:?}").contains(secret),
+            "returned error object must not carry upstream message: {error:?}"
+        );
+
+        let events = core
+            .store()
+            .expect("store")
+            .replay_events(&session, 1, 100)
+            .await
+            .expect("replay");
+        let serialized = serde_json::to_string(&events).expect("serialize events");
+        assert!(
+            !serialized.contains(secret),
+            "persisted events must not carry upstream message: {serialized}"
+        );
+        let run_failed = events
+            .iter()
+            .find_map(|envelope| match &envelope.payload {
+                AgentEvent::RunFailed { error, .. } => Some(error),
+                _ => None,
+            })
+            .expect("RunFailed persisted");
+        assert_eq!(run_failed.category, pawork_domain::ErrorCategory::RateLimit);
+        assert_eq!(
+            run_failed.message,
+            "anthropic stream error (type=rate_limit_error)"
+        );
+
+        let messages = core.resume_messages(&session).await.expect("resume");
+        let projected = serde_json::to_string(&messages).expect("serialize messages");
+        assert!(
+            !projected.contains(secret),
+            "projection must not carry upstream message: {projected}"
+        );
+        core.shutdown().await.expect("shutdown");
+    }
+
+    /// 上游可直接返回取消错误，任务终态必须按 Engine 结果映射。
+    #[tokio::test]
+    async fn provider_cancellation_sets_task_terminal_without_cancelling_input_token() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (store, _) = SessionStore::open(dir.path().join("session.db"))
+            .await
+            .expect("store");
+        let provider = MockProvider::new(MockScript::new().fail(
+            pawork_domain::ProviderError::cancelled("upstream cancelled"),
+        ));
+        let core = AppCore::from_parts(
+            Arc::new(provider),
+            None,
+            pawork_domain::ModelId::from("model-1"),
+            pawork_domain::ProviderId::from("mock"),
+            Some(store),
+        );
+        let session = core
+            .create_session("provider-cancel")
+            .await
+            .expect("session");
+        let cancel = CancellationToken::new();
+        let result = core
+            .chat_turn(
+                &session,
+                vec![user_hello()],
+                &RecordingEvents::default(),
+                cancel.clone(),
+            )
+            .await;
+        assert!(result.is_err());
+        assert_eq!(
+            core.tasks_list()[0].status,
+            pawork_domain::TaskStatus::Canceled
+        );
+        let runs = core
+            .store()
+            .expect("store")
+            .projection_snapshot(&session)
+            .await
+            .expect("snapshot")
+            .runs;
+        assert_eq!(runs[0].state, "cancelled");
+        core.shutdown().await.expect("shutdown");
+    }
+
+    /// R-05 task 入口：tasks_cancel 经共享令牌停止同一阻塞 run。
+    #[tokio::test]
+    async fn tasks_cancel_stops_blocking_run_and_records_canceled_once() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (store, _) = SessionStore::open(dir.path().join("session.db"))
+            .await
+            .expect("store");
+        let provider = MockProvider::sequence(vec![MockScript::new().wait_for_cancellation()]);
+        let core = AppCore::from_parts(
+            Arc::new(provider.clone()),
+            None,
+            pawork_domain::ModelId::from("model-1"),
+            pawork_domain::ProviderId::from("mock"),
+            Some(store),
+        );
+        let session = core.create_session("task-cancel").await.expect("session");
+        let sink = RecordingEvents::default();
+        let run = core.chat_turn(
+            &session,
+            vec![user_hello()],
+            &sink,
+            CancellationToken::new(),
+        );
+        let driver = async {
+            for _ in 0..200 {
+                if !provider.calls().is_empty() {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+            assert_eq!(
+                provider.calls().len(),
+                1,
+                "run must reach the blocking provider stream"
+            );
+            let task = core
+                .tasks_list()
+                .into_iter()
+                .find(|task| task.task_kind == pawork_domain::TaskKind::Agent)
+                .expect("agent task registered for the run");
+            let cancelled = core
+                .tasks_cancel(task.task_id.as_str())
+                .expect("task cancel");
+            assert!(cancelled.contains(&task.task_id));
+            task.task_id
+        };
+        let (result, task_id) = tokio::join!(run, driver);
+        assert!(result.is_err(), "cancelled run must not succeed");
+
+        let snapshot = core.tasks_status(task_id.as_str()).expect("task status");
+        assert_eq!(snapshot.status, pawork_domain::TaskStatus::Canceled);
+        let finish_events = core
+            .tasks
+            .tasks
+            .event_log()
+            .into_iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    pawork_domain::TaskEvent::Finished { task_id: id, .. } if *id == task_id
+                )
+            })
+            .count();
+        assert_eq!(finish_events, 1, "run 收尾不得对已收口任务再写第二份终态");
+
+        let events = core
+            .store()
+            .expect("store")
+            .replay_events(&session, 1, 100)
+            .await
+            .expect("replay");
+        let cancelled = events
+            .iter()
+            .filter(|envelope| matches!(envelope.payload, AgentEvent::RunCancelled { .. }))
+            .count();
+        let failed = events
+            .iter()
+            .filter(|envelope| matches!(envelope.payload, AgentEvent::RunFailed { .. }))
+            .count();
+        assert_eq!(cancelled, 1, "run 终态为 RunCancelled: {events:?}");
+        assert_eq!(failed, 0, "取消不得谎报 RunFailed: {events:?}");
         core.shutdown().await.expect("shutdown");
     }
 }

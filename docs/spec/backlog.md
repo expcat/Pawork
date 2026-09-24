@@ -106,36 +106,8 @@ Settings 活动线已实现并有原批次本机真窗口记录（2026-09-05，�
 
 如用户选择其中一类，按 §1 闸门创建独立 Feature Spec/任务切片，明确不做项、成功指标与证据预算。发布继续维持 BK-RELEASE-01 未授权状态。
 
-## 7. 已登记系列规划
+## 7. 活动计划与历史记录
 
-| 系列 | 规划文档 | 状态 |
-| --- | --- | --- |
-| MOCK-1～MOCK-8 本地 Provider 模拟仿真 | mock-simulation-plan.md（已随规划收口移出活动文档，见 Git 历史 37fae8f3:docs/mock-simulation-plan.md） | 已实施完成（2026-09-10）：MOCK-2～MOCK-8 已实现并通过 gate 与 review，端到端证据见规划 §7；MOCK-0b 保持候选未获批。 |
+当前审查发现、包定位和实施切片统一见 [Plan](../Plan/README.md)，优先级见 [ROADMAP](../ROADMAP.md)。本页只管理候选和激活条件。
 
-## 8. 实施过程登记的产品缺陷
-
-以下缺陷在 mock 系列端到端验收（MOCK-6，2026-09-10）中发现并已定位根因，均未在 mock 写入集内修复，按最小方案另立任务处理。
-
-### BUG-OAUTH-01：OAuth 请求前刷新被静默跳过（FileBackend 路径）— 已修复
-
-- 现象：持有已过期 access token + 有效 refresh token 的 OAuth 凭证发起对话时，`refresh_oauth_credential_with`（[oauth.rs](../../crates/auth/src/oauth.rs)）在锁内 reload 后比较整个 `StoredCredential`，`metadata_changed` 恒为真，直接 `return Ok(false)`，既不刷新也不报错；请求带过期 token 发出后被 Provider 401 拒绝。
-- 根因：`load_account` 会用账户索引里的 `display_name`（默认 "Default OAuth"，ADR-061 后常为邮箱或脱敏串）覆盖凭证 meta，而 `stored_from_meta` 侧硬编码 "default oauth"；两处不一致使 `metadata_changed` 在每次 reload 后恒真，提前短路刷新分支。
-- 修法：锁内 reload 比较排除 `display_name`，并保留账号索引别名。Settings / 目录探测仍只陈述 access 到期时间，不在查询路径消费 refresh token。
-- 定向回归：`file_backend_refresh_ignores_account_display_name`（过期 FileBackend 凭证 + 索引名与 meta 占位名不一致 → 命中 token 端点并轮转落盘）。
-
-### BUG-USAGE-01：usage ledger request-id 跨进程撞车 — 已修复
-
-- 现象：同一 data dir 内第二次起 Host 进程跑对话，usage ledger 记录报 `usage record id conflict: rec-run-...`（host.log warn），第二次运行的用量不落账。
-- 根因：[services/run.rs](../../crates/app/src/services/run.rs) 的 usage record id 用进程内计数器拼 `req-{n}`，而 control-plane 侧按 (tenant, account, request_id, attempt) 去重；新进程计数器从 0 重来，与上一进程同 data dir 的记录撞 id。
-- 修法（2026-09-14，824ba259）：request_id 改 `req-<pid_hex>-<nanos_hex>-<n>` 进程级命名空间（与 client `new_request_namespace` 同形态；毫秒粒度不够，同毫秒双进程仍撞）。
-- 定向回归：`run_request_id_survives_counter_reset_across_host_restarts`（[services/run.rs](../../crates/app/src/services/run.rs)）；修复后新 run 记录成功入帐，既有漏记行不回填（账本 append-only）。
-
-### BUG-GUI-01：GUI Run 事件路径静默断连 — 已关闭（主干不再复现，复验通过）
-
-- 现象（MOCK-6 真窗口验收中 6 次复现）：任意 Run 启动后约 1.5–10 秒，Desktop 连接被静默关闭（状态栏「已断开 · connection is closed」），慢流期间同样触发；断连后 Cancel 按钮因「需要活连接」被禁用，GUI 内 Reconnect 按钮多次点击无状态变化；Host 进程仍存活并接受新协议连接（quota 探针正常），Run 在 Host 侧继续执行直至自然完成；重启 Desktop 后完整重放恢复且 Run 不受影响。
-- 已排除项：客户端 stderr 无错误输出；host.log 无连接错误；mock server 未断开 HTTP 流（Run 正常完成）。
-- 影响面：GUI 取消主路径被阻断（CLI 取消已验证不受影响）；断连期间设置页刷新与额度查询同样不可达。
-- 复验（2026-09-14，主干 bundle 含 API 1.17 UI）：`MOCK:SLOW_STREAM` 真窗口 4 次全程慢流（约 15s，覆盖原 1.5–10s 故障窗口）连接保持「已连接」；流中取消两次（约 2s / 7s 处）均正常落 `cancelled` 终态、连接保持；同窗口另完成文本流、工具流与 5s 处取消。缺陷不再复现。
-- 归因说明：f775febd..HEAD 连接路径（`crates/app/src/gui_server`、`crates/client`、`crates/transport`、Desktop controller 连接段）零改动，无法定点到修复提交；原 6 次复现环境（2026-09-10 旧 bundle + 旧 host 二进制）已不存在。按当前事实登记为「主干不再复现」，而非已定位修复。
-- 定向回归：`event_stream_with_heartbeat_only_inbound_survives_watchdog`（[gui_server/session.rs](../../crates/app/tests/gui_server/session.rs)）——事件流期间客户端只发心跳跨多个看门狗窗口连接保持；心跳停发后看门狗按超时断开（对照臂）。
-- 复发处理：若同类静默断连再现，先取 Host 侧 `RUST_LOG=pawork_app::gui_server=debug` 日志定位 close 发起方，再重开本条。
+已完成的 MOCK-1～8 与已关闭 BUG-OAUTH-01 / BUG-USAGE-01 / BUG-GUI-01 过程记录移出活动文档，可从 `git show f14edb23:docs/spec/backlog.md` 追溯；更早计划见 `37fae8f3:docs/mock-simulation-plan.md`。MOCK-0b 仍为未获批候选，已有回归资产不因文档清理删除。未闭合的真实环境和用户验收见 [验收清单](../Plan/product-and-acceptance.md)。

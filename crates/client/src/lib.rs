@@ -687,11 +687,22 @@ impl GuiClient {
         loop {
             match self
                 .recv_matching(self.config.timeout, FrameWant::Snapshot(&request_id))
-                .await?
+                .await
             {
-                ServerFrame::Snapshot(snapshot) => return Ok(snapshot),
-                ServerFrame::Error(envelope) => return Err(ClientError::Protocol(envelope.error)),
-                other => self.stash(other).await,
+                Ok(ServerFrame::Snapshot(snapshot)) => return Ok(snapshot),
+                Ok(ServerFrame::Error(envelope)) => {
+                    return Err(ClientError::Protocol(envelope.error));
+                }
+                Ok(other) => self.stash(other).await,
+                Err(error) => {
+                    // R-12：快照帧无 request_id，超时后迟到的旧快照可能被下一
+                    // 请求误收——超时即废弃连接（调用方经既有重连路径恢复），
+                    // 旧帧不得成为后续请求的结果。
+                    if matches!(error, ClientError::Timeout { .. }) {
+                        let _ = self.disconnect().await;
+                    }
+                    return Err(error);
+                }
             }
         }
     }
@@ -718,10 +729,21 @@ impl GuiClient {
         let mut replayed = Vec::new();
         let mut snapshot = None;
         loop {
-            match self
+            let frame = match self
                 .recv_matching(self.config.timeout, FrameWant::Resume(&request_id))
-                .await?
+                .await
             {
+                Ok(frame) => frame,
+                Err(error) => {
+                    // R-12：resume 可能携带无身份的 Snapshot 帧；超时即废弃连接，
+                    // 迟到的旧快照/补发帧不得被后续请求误收（同 snapshot 路径）。
+                    if matches!(error, ClientError::Timeout { .. }) {
+                        let _ = self.disconnect().await;
+                    }
+                    return Err(error);
+                }
+            };
+            match frame {
                 ServerFrame::Resume(ResumeResponse {
                     request_id: rid,
                     disposition: found,
@@ -1681,6 +1703,32 @@ mod tests {
             .await
             .expect_err("idle timeout must keep the connection usable");
         assert!(matches!(error, ClientError::Timeout { .. }));
+    }
+
+    #[tokio::test]
+    async fn snapshot_timeout_discards_connection() {
+        // R-12：快照回复帧无 request_id——超时后迟到的旧快照可能被后续
+        // 请求误收；最小缓解：超时即废弃连接，后续操作报 Disconnected。
+        let mut client = mock_gui_client(API_VERSION);
+        client.conn = Arc::new(HangingConnection::new());
+        client.config = ClientConfig {
+            timeout: Duration::from_millis(30),
+            ..ClientConfig::default()
+        };
+        let error = client
+            .snapshot()
+            .await
+            .expect_err("hanging snapshot must time out");
+        assert!(matches!(error, ClientError::Timeout { .. }));
+        assert!(!client.is_connected(), "快照超时后连接必须被废弃");
+        let follow = client
+            .snapshot()
+            .await
+            .expect_err("discarded connection must reject follow-up");
+        assert!(
+            matches!(follow, ClientError::Disconnected),
+            "废弃连接上的后续请求应为 Disconnected，实际 {follow:?}"
+        );
     }
 
     fn mock_gui_client(api_version: ApiVersion) -> GuiClient {

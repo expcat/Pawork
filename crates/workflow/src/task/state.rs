@@ -73,6 +73,22 @@ impl TaskRecord {
         parent_task_id: Option<BackgroundTaskId>,
         status: TaskStatus,
     ) -> Self {
+        Self::with_cancel_token(
+            task_id,
+            task_kind,
+            parent_task_id,
+            status,
+            CancellationToken::new(),
+        )
+    }
+
+    pub(crate) fn with_cancel_token(
+        task_id: BackgroundTaskId,
+        task_kind: TaskKind,
+        parent_task_id: Option<BackgroundTaskId>,
+        status: TaskStatus,
+        cancel_token: CancellationToken,
+    ) -> Self {
         Self {
             snapshot: TaskSnapshot {
                 task_id,
@@ -83,7 +99,7 @@ impl TaskRecord {
                 output_seq: 0,
                 output_bytes: 0,
             },
-            cancel_token: CancellationToken::new(),
+            cancel_token,
         }
     }
 }
@@ -221,6 +237,18 @@ impl TaskManagerState {
         task_kind: TaskKind,
         parent_task_id: Option<BackgroundTaskId>,
     ) -> Result<BackgroundTaskId, TaskManagerError> {
+        self.insert_queued_with_cancel_token(task_kind, parent_task_id, CancellationToken::new())
+    }
+
+    /// 同 insert_queued，但任务记录共享调用方提供的取消令牌：
+    /// 执行体（如 agent run）持有真实 token 时，tasks cancel 经此令牌
+    /// 停止真实执行体，而不是只改状态机（R-05）。
+    pub(crate) fn insert_queued_with_cancel_token(
+        &mut self,
+        task_kind: TaskKind,
+        parent_task_id: Option<BackgroundTaskId>,
+        cancel_token: CancellationToken,
+    ) -> Result<BackgroundTaskId, TaskManagerError> {
         if let Some(parent) = &parent_task_id {
             if !self.tasks.contains_key(parent) {
                 return Err(TaskManagerError::UnknownParent(parent.clone()));
@@ -229,11 +257,12 @@ impl TaskManagerState {
         let task_id = self.allocate_task_id();
         self.tasks.insert(
             task_id.clone(),
-            TaskRecord::new(
+            TaskRecord::with_cancel_token(
                 task_id.clone(),
                 task_kind,
                 parent_task_id,
                 TaskStatus::Queued,
+                cancel_token,
             ),
         );
         Ok(task_id)

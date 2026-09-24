@@ -82,12 +82,7 @@ impl GuiConnection for SessionHandle {
     }
 
     async fn receive(&self) -> Result<TransportFrame, TransportError> {
-        let mut done = self.done_rx.lock().expect("done rx lock").clone();
-        if !*done.borrow() {
-            if let Err(error) = done.changed().await {
-                tracing::debug!(%error, "gui session done watch closed");
-            }
-        }
+        self.wait_done().await;
         Err(connection_closed("connection task has ended"))
     }
 
@@ -105,6 +100,15 @@ impl GuiConnection for SessionHandle {
 
     fn info(&self) -> ConnectionInfo {
         self.info.clone()
+    }
+
+    async fn wait_done(&self) {
+        let mut done = self.done_rx.lock().expect("done rx lock").clone();
+        if !*done.borrow() {
+            if let Err(error) = done.changed().await {
+                tracing::debug!(%error, "gui session done watch closed");
+            }
+        }
     }
 }
 

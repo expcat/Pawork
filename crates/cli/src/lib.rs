@@ -408,6 +408,18 @@ async fn run_inner() -> Result<(), CliError> {
         .then(|| consume_data_dir_outcome(default_data_dir_outcome()));
     options.data_dir = gui_data_dir.clone();
     options.instance = instance.clone();
+    // R-04/R-24：实例角色决定所有权与启动清扫资格——执行型命令登记活跃
+    // 并在确认无其他活跃宿主时清扫；GUI Host 额外独占 gui.lock；其余
+    // （sessions/models/usage/tasks 等旁路查询）Catalog 不清扫活跃 run。
+    options.instance_role = match &cli.command {
+        Command::Gui { .. } => pawork_app::InstanceRole::GuiHost,
+        Command::Chat { .. }
+        | Command::Run { .. }
+        | Command::Headless { .. }
+        | Command::Acp { .. }
+        | Command::Agents { .. } => pawork_app::InstanceRole::Executor,
+        _ => pawork_app::InstanceRole::Catalog,
+    };
     options.approval_mode = match cli.approval_mode.as_deref() {
         Some(value) => Some(parse_approval_mode(value).map_err(CliError::Usage)?),
         None => None,

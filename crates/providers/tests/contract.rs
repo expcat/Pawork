@@ -497,6 +497,37 @@ async fn contract_malformed_stream_is_interrupted() {
     );
 }
 
+/// R-08：畸形 chunk 后即便正常 [DONE] 收尾也必须失败（正文可能已缺失）。
+#[tokio::test]
+async fn contract_malformed_chunk_fails_even_if_done_follows() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(common::sse_body(&["not-json"])),
+        )
+        .mount(&server)
+        .await;
+
+    let p = provider(&server, None);
+    let sink = RecordingProviderSink::default();
+    let err = p
+        .stream(
+            &request("gpt-4o"),
+            &sink,
+            pawork_domain::CancellationToken::new(),
+        )
+        .await
+        .expect_err("畸形 chunk 不得被 [DONE] 救回为成功");
+    contract::assert_error_kind(
+        &sink.events(),
+        Some(&err),
+        ProviderErrorKind::MalformedResponse,
+    );
+}
+
 #[tokio::test]
 async fn contract_reconnect_after_interrupted_stream() {
     let server = MockServer::start().await;

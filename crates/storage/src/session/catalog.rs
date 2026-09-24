@@ -141,28 +141,52 @@ impl SessionStore {
 
     /// 列出未归档会话，按 `updated_at_ms` 降序。
     pub async fn list_sessions(&self) -> Result<Vec<SessionRecord>, SessionStoreError> {
+        self.list_sessions_inner(false).await
+    }
+
+    /// 维护查询（R-20）：列出全部会话含归档，按 `updated_at_ms` 降序。
+    /// 归档不豁免崩溃清扫与启动对账等维护扫描；用户列表仍走
+    /// [`Self::list_sessions`] 隐藏归档项。
+    pub async fn list_sessions_including_archived(
+        &self,
+    ) -> Result<Vec<SessionRecord>, SessionStoreError> {
+        self.list_sessions_inner(true).await
+    }
+
+    async fn list_sessions_inner(
+        &self,
+        include_archived: bool,
+    ) -> Result<Vec<SessionRecord>, SessionStoreError> {
+        let sql = if include_archived {
+            "SELECT session_id, title, created_at_ms, updated_at_ms, archived, active_branch, workspace_id \
+             FROM sessions ORDER BY updated_at_ms DESC"
+        } else {
+            "SELECT session_id, title, created_at_ms, updated_at_ms, archived, active_branch, workspace_id \
+             FROM sessions WHERE archived=0 ORDER BY updated_at_ms DESC"
+        };
         let rows = self
             .database()
-            .call(|connection| -> rusqlite::Result<Vec<(String, String, i64, i64, i64, String, Option<String>)>> {
-                let mut statement = connection.prepare(
-                    "SELECT session_id, title, created_at_ms, updated_at_ms, archived, active_branch, workspace_id \
-                     FROM sessions WHERE archived=0 ORDER BY updated_at_ms DESC",
-                )?;
-                let rows = statement
-                    .query_map([], |row| {
-                        Ok((
-                            row.get(0)?,
-                            row.get(1)?,
-                            row.get(2)?,
-                            row.get(3)?,
-                            row.get(4)?,
-                            row.get(5)?,
-                            row.get(6)?,
-                        ))
-                    })?
-                    .collect::<rusqlite::Result<Vec<_>>>()?;
-                Ok(rows)
-            })
+            .call(
+                |connection| -> rusqlite::Result<
+                    Vec<(String, String, i64, i64, i64, String, Option<String>)>,
+                > {
+                    let mut statement = connection.prepare(sql)?;
+                    let rows = statement
+                        .query_map([], |row| {
+                            Ok((
+                                row.get(0)?,
+                                row.get(1)?,
+                                row.get(2)?,
+                                row.get(3)?,
+                                row.get(4)?,
+                                row.get(5)?,
+                                row.get(6)?,
+                            ))
+                        })?
+                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                    Ok(rows)
+                },
+            )
             .await??;
         Ok(rows
             .into_iter()
@@ -398,6 +422,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn maintenance_listing_includes_archived_sessions() {
+        // R-20：维护查询覆盖归档会话（崩溃清扫/启动对账用），用户列表
+        // 继续隐藏归档项。
+        let (_dir, path) = temp_db();
+        let (store, _) = SessionStore::open(&path).await.expect("store");
+        store
+            .create_session(
+                &SessionId::from("session-live"),
+                "live",
+                Timestamp::from_unix_millis(100),
+            )
+            .await
+            .expect("live");
+        store
+            .create_session(
+                &SessionId::from("session-archived"),
+                "archived",
+                Timestamp::from_unix_millis(200),
+            )
+            .await
+            .expect("archived");
+        store
+            .database()
+            .call(|connection| {
+                connection.execute(
+                    "UPDATE sessions SET archived=1 WHERE session_id='session-archived'",
+                    [],
+                )
+            })
+            .await
+            .expect("actor")
+            .expect("archive");
+
+        let all = store
+            .list_sessions_including_archived()
+            .await
+            .expect("maintenance list");
+        assert_eq!(all.len(), 2);
+        assert!(all
+            .iter()
+            .any(|record| record.archived && record.session_id.as_str() == "session-archived"));
+
+        let user_visible = store.list_sessions().await.expect("user list");
+        assert_eq!(user_visible.len(), 1);
+        assert_eq!(user_visible[0].session_id.as_str(), "session-live");
+
+        store.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
     async fn get_session_missing_returns_not_found() {
         let (_dir, path) = temp_db();
         let (store, _) = SessionStore::open(&path).await.expect("store");
@@ -493,7 +567,10 @@ mod tests {
             .archive_session(&session, false, 800)
             .await
             .expect("unarchive");
-        let record = store.get_session(&session).await.expect("unarchived record");
+        let record = store
+            .get_session(&session)
+            .await
+            .expect("unarchived record");
         assert!(!record.archived);
         assert_eq!(record.updated_at_ms, 800);
         let error = store

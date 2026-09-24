@@ -121,7 +121,7 @@
 
 ## 6. 依赖关系
 
-- **生产依赖**：`pawork-domain`；`pawork-control-plane`（`default-features = false`，不拉 rusqlite）；optional `pawork-git`（仅 feature `git`）；`async-trait` / `serde` / `serde_json` / `thiserror` / `tokio`（sync, rt, macros）/ `tracing` / `blake3`。
+- **生产依赖**：`pawork-domain`；`pawork-policy`（merge 路径校验）；`pawork-control-plane`（`default-features = false`，不拉 rusqlite）；optional `pawork-git`（仅 feature `git`）；`async-trait` / `serde` / `serde_json` / `thiserror` / `tokio`（sync, rt, macros）/ `tracing` / `blake3`。
 - **features**：`default = []`；`git = ["dep:pawork-git"]`（启用 `GitWorktreeAllocator` 与 `GitDiffProvider`）。当前 workspace 无成员打开 `git` feature（`pawork-app` 以 default-features = false 依赖本包）。
 - **被依赖**：仅 `pawork-app`（orchestration host）。
 

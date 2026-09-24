@@ -35,6 +35,7 @@ pub(super) fn bind(
         first_instance: AtomicU32::new(0),
         next_connection_id: AtomicU64::new(0),
         closed: AtomicBool::new(false),
+        close_watch: tokio::sync::watch::channel(false).0,
     }))
 }
 
@@ -153,6 +154,9 @@ struct NamedPipeListener {
     first_instance: AtomicU32,
     next_connection_id: AtomicU64,
     closed: AtomicBool,
+    /// R-17：close watch——挂起的 connect 经 select 被唤醒；watch 保留当前值，
+    /// 即使通知先于等待注册也不丢（并发 accept 场景 Notify 会漏唤醒）。
+    close_watch: tokio::sync::watch::Sender<bool>,
 }
 
 #[async_trait]
@@ -171,7 +175,22 @@ impl GuiListener for NamedPipeListener {
                 ),
             )
         })?;
-        server.connect().await.map_err(|error| {
+        // R-17：connect 与 close select——挂起的 connect 在 close 到达时被
+        // 唤醒（原先 close 只置标记，已挂起的 connect 无法退出）。
+        let connect = server.connect();
+        tokio::pin!(connect);
+        let mut closed_rx = self.close_watch.subscribe();
+        if *closed_rx.borrow() {
+            return Err(connection_closed("listener is closed"));
+        }
+        tokio::select! {
+            biased;
+            result = &mut connect => result,
+            _ = closed_rx.changed() => {
+                return Err(connection_closed("listener is closed"));
+            }
+        }
+        .map_err(|error| {
             transport_error(
                 TransportErrorKind::ConnectionFailed,
                 format!("named pipe client disconnected during connect: {error}"),
@@ -190,6 +209,9 @@ impl GuiListener for NamedPipeListener {
 
     async fn close(&self) -> Result<(), TransportError> {
         self.closed.store(true, Ordering::Release);
+        // R-17：唤醒所有挂起的 accept（Named Pipe 支持并发 accept）；
+        // watch 值留存，晚到的 accept 经入口 closed 检查与 borrow 双保险拒绝。
+        self.close_watch.send_replace(true);
         Ok(())
     }
 }

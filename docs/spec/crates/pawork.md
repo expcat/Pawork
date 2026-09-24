@@ -45,7 +45,7 @@
 
 ## 7. 测试与验证资产
 
-默认验证命令：`cargo test -p pawork --offline --lib --tests`
+默认验证命令：`bash scripts/test.sh pawork`（bin-only 包，不使用 `--lib`）
 
 - `src/redact.rs` 内嵌测试 ×2：
   - `redacts_headers_tokens_cookies_oauth_jwt_and_custom_patterns`：14 组泄漏样例（头行 / Basic / Cookie / oauth_code / `sk-` 前缀与嵌入形态 / JWT / 自定义模式 / URL query 双键 / 转义 JSON 嵌套 / 自定义 Token header）断言 Secret 不外泄，且 `context_tokens=128` 等非敏感字段保持可观测。

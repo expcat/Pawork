@@ -938,10 +938,13 @@ impl ResponsesStreamAssembler {
     fn response_failed(&mut self, value: &Value) -> Vec<ResponsesAssemblyEvent> {
         let response = response(value).unwrap_or(value);
         let error = response.get("error").unwrap_or(response);
-        let message = error
-            .get("message")
-            .and_then(Value::as_str)
-            .unwrap_or("Responses request failed");
+        // R-02：上游 message 可能回显敏感文本，不进入错误对象；
+        // 只保留白名单 code 字段作为诊断信息。
+        let message = crate::stream::stream_error_message(
+            "Responses request failed",
+            "code",
+            error.get("code").and_then(Value::as_str),
+        );
         self.stop_reason = Some(StopReason::Error);
         self.completed = true;
         vec![
@@ -1013,6 +1016,31 @@ mod tests {
                 StopReason::ToolUse
             ))
         )));
+    }
+
+    /// R-02：response.failed 的上游 message 可能回显敏感文本，
+    /// 错误事件不得携带原文；白名单 code 保留。
+    #[test]
+    fn response_failed_does_not_leak_upstream_message() {
+        let mut assembler = ResponsesStreamAssembler::new();
+        let events = assembler.feed(
+            r#"{"type":"response.failed","response":{"status":"failed","error":{"code":"rate_limit_exceeded","message":"key sk-FAKE-SECRET-9f8e7d rejected"}}}"#,
+        );
+        let ResponsesAssemblyEvent::Canonical(ProviderStreamEvent::Error(err)) = &events[0] else {
+            panic!("error event expected: {events:?}");
+        };
+        assert!(!err.message.contains("sk-FAKE-SECRET-9f8e7d"));
+        assert!(!err.message.contains("rejected"));
+        assert_eq!(
+            err.message,
+            "Responses request failed (code=rate_limit_exceeded)"
+        );
+        assert!(matches!(
+            events.last(),
+            Some(ResponsesAssemblyEvent::Canonical(
+                ProviderStreamEvent::ResponseCompleted(StopReason::Error)
+            ))
+        ));
     }
 
     fn bare_request() -> CanonicalModelRequest {

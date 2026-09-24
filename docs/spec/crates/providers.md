@@ -18,7 +18,7 @@
 | `src/error_table.rs` | ~160 | `VENDOR_ERROR_RULES` 数据表 + `normalize_vendor_error`：按厂商子串把错误改判为更精确的 `ProviderErrorKind`（如 ChatGPT usage limit、xAI live_search quota） |
 | `src/provider.rs` | ~500 | `OpenAiCompatibleConfig` / `OpenAiCompatibleProvider`：Chat Completions transport 的 `ModelProvider` 实现；构造期拒绝 config 头携带凭证头 |
 | `src/request.rs` | ~670 | `to_chat_completions_body`：canonical → Chat Completions 请求体；`provider_options` 保留键忽略并 `tracing` 警告 |
-| `src/stream.rs` | ~230 | `chunk_to_events` / `is_done` / `ChunkState`：Chat Completions SSE chunk → `ProviderStreamEvent`（文本/工具调用增量、usage、finish_reason） |
+| `src/stream.rs` | ~230 | `chunk_to_events` / `is_done` / `ChunkState`：Chat Completions SSE chunk → `ProviderStreamEvent`（文本/工具调用增量、usage、finish_reason）；畸形 chunk → `MalformedResponse` 错误事件（R-08）；`stream_error_message` 流错误安全文案（R-02） |
 | `src/usage.rs` | ~300 | `normalize_usage`（多厂商字段名归一为 `TokenUsage`）、`map_stop_reason`、`UsageAccumulator`（会话级累计） |
 | `src/pricing.rs` | ~200 | `ModelPricing` / `estimate_cost`（micro-unit 定点算费，`MILLION` 基数）、`BUILTIN_RATE_CARD`（`"builtin"`）与 `BUILTIN_RATE_VERSION`（`"2026-08-15"`） |
 | `src/registry.rs` | ~2.1k | `ModelRegistry`（目录 + 别名 + 三源能力证据 + 动态发现合并）、`CatalogEntry`、`CapabilityEvidence` / `CapabilitySource`、`merge_capabilities`、`ProviderProbe` / `ProbeError` / `ProviderCapabilitySource`、`caps` 构造 helper、四张逐 model_id 默认能力表（`default_supported_efforts` / `default_image_input` / `default_image_output` / `default_hosted_web_search`）与对应 `apply_default_*` 回填 |
@@ -40,7 +40,7 @@
 | `src/channels/anthropic/mod.rs` | ~20 | re-export 与 `ANTHROPIC_VERSION`（`anthropic-version` 头值） |
 | `src/channels/anthropic/provider.rs` | ~1.1k | `AnthropicProvider(Config)`：Messages transport；`prepare_request` 能力收口（§4.3）；`builtin_models` 静态目录（claude-3-5-sonnet / haiku） |
 | `src/channels/anthropic/request.rs` | ~790 | `to_messages_body(_with_plan)` / `MessagesWirePlan`：system 提升、`tool_use` 块、`thinking` 与 `cache_control` 按 plan 写 wire |
-| `src/channels/anthropic/stream.rs` | ~690 | `parse_event` / `event_to_events` / `AnthropicStreamState` / `StreamOutput`：Anthropic SSE 事件 → canonical 事件；thinking signature 以 `PendingSignature` 输出待 protect |
+| `src/channels/anthropic/stream.rs` | ~690 | `parse_event` / `event_to_events` / `AnthropicStreamState` / `StreamOutput`：Anthropic SSE 事件 → canonical 事件；thinking signature 以 `PendingSignature` 输出待 protect；畸形事件 JSON → `MalformedResponse`（R-08）；`error` 事件错误文案不含上游 message（R-02） |
 
 共 28 个 `.rs` 文件，约 12.7k 行。
 
@@ -164,7 +164,7 @@ UI-6b G2：`fetch_go_usage(config, &ResolvedCredential, cancel)` 单次认证 GE
 2. `stream(&request, sink, cancel)`：先查 `cancel`——预取消不发任何 HTTP 请求。
 3. `to_chat_completions_body` 生成请求体：messages / tools / response_format 按 canonical 语义翻译，`provider_options` 白名单透传（保留键忽略并 `tracing` 告警）。
 4. `HttpClient` POST `{base_url}/chat/completions`，凭证经 `Authorization: Bearer` 头注入；请求阶段错误走 `classify_request_error`，非 2xx 走 `classify_status`，再经 `normalize_vendor_error` 按渠道细化。
-5. 响应字节流喂 `SseParser::feed`；每个 SSE event 的 data 经 `chunk_to_events`（`ChunkState` 跨 chunk 组装工具调用 id/name/参数增量）映射为 `ProviderStreamEvent`，逐个 `sink.emit`。
+5. 响应字节流喂 `SseParser::feed`；每个 SSE event 的 data 经 `chunk_to_events`（`ChunkState` 跨 chunk 组装工具调用 id/name/参数增量）映射为 `ProviderStreamEvent`，逐个 `sink.emit`；`Error` 事件（如畸形 chunk）先广播再终止流，不被后续 `[DONE]` 救回（R-08）。
 6. usage chunk 经 `normalize_usage` 发 `UsageUpdated`；`finish_reason` 经 `map_stop_reason` 发 `ResponseCompleted`；`[DONE]` 到达而无 finish_reason 时按 `Completed` 收尾。
 7. 每收到一个 chunk 重置读超时（长流不误杀）；流中断（未见完成信号）报 `StreamInterrupted`；取消点贯穿字节循环与事件循环。
 8. `ApiKeyChannelProvider` 额外一步：若模型 capability 显式声明 Responses transport，则路由到共享 `ResponsesTransport`——按能力数据路由，不按通道名分支。
@@ -192,7 +192,7 @@ ADR-057：`ApiKeyChannelProvider` 仅为 `opencode-go` 启用内部会话头映�
 4. thinking 预检：`reasoning` 优先经 `clamp_reasoning_to_thinking` 翻译；budget < `MIN_THINKING_BUDGET_TOKENS`（1024）、`temperature != 1.0`、`max_output_tokens <= budget` 均拒绝。
 5. 历史 thinking 块经 `ReasoningProtector::recover` 还原签名（`resolve_thinking_blocks`）。
 6. 组装 `MessagesWirePlan { write_cache, thinking_budget, resolved_thinking_blocks }` → `to_messages_body_with_plan`；`Required` 但 body 无任何 `cache_control` 断点 → 拒绝。
-7. 发 HTTP（`x-api-key` + `anthropic-version`）；SSE → `parse_event`：thinking signature 以 `PendingSignature` 输出，经 `protect` 变 `ReasoningItem`（`continuation_metadata` 带 anthropic model hint）；无 `message_stop` 即 `StreamInterrupted`。
+7. 发 HTTP（`x-api-key` + `anthropic-version`）；SSE → `parse_event`：thinking signature 以 `PendingSignature` 输出，经 `protect` 变 `ReasoningItem`（`continuation_metadata` 带 anthropic model hint）；无 `message_stop` 即 `StreamInterrupted`；畸形事件 JSON 即 `MalformedResponse` 终止（R-08）。
 8. 服务端工具的 `server_tool_use` 结束只代表参数块结束；收到对应 result 块并结束后才发 Completed。`web_search_tool_result_error` / `is_error` 发 Failed（保留 error_code），同调用只发一个终态；引用可在终态后继续到达。依据：[Anthropic Web Search](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool)。
 
 ### 4.4 usage / pricing 计量
@@ -225,8 +225,8 @@ canonical `ToolResultContent.content` 中 Image 不再被编码器丢弃。Chat 
 - **保留键防覆盖**：`provider_options` 不能覆盖 `model` / `messages` / `stream` 等 wire 保留键（Chat 与 Responses 两处独立拦截）。
 - **SSE 有界缓冲与收尾**：单事件缓冲上限 1 MiB（`MAX_BUFFER_BYTES`），防恶意/异常流占满内存；流结束后必须调 `finish()` 取出无终止空行的最后一个事件，否则尾事件丢失。
 - **`[DONE]` 哨兵**：Chat Completions 路径用 `is_done`（容忍首尾空白）判定收尾；Responses 路径把 `[DONE]` 与空 data 一并忽略后按自身完成事件收尾。
-- **流完成信号必需**：Anthropic 无 `message_stop`、Responses 流 malformed 均按 `StreamInterrupted`/错误处理，不伪造成功；Chat Completions 的 `[DONE]` 正常收尾但缺 finish_reason 时按 `Completed`（协议允许）。
-- **错误消息不携带响应正文**：`classify_status` 的 message 固定 `HTTP <code>`，body_snippet 不入 message（上游正文可能回显 token）；`Retry-After` 仅 retryable 错误采纳。
+- **流完成信号必需**：Anthropic 无 `message_stop`、Responses 流 malformed 均按 `StreamInterrupted`/错误处理，不伪造成功；Chat 与 Anthropic 的畸形 JSON 片段同样立即 `MalformedResponse` 终止，不被后续正常收尾救回（R-08）；合法 ping/未知扩展事件保持忽略兼容。Chat Completions 的 `[DONE]` 正常收尾但缺 finish_reason 时按 `Completed`（协议允许）。
+- **错误消息不携带响应正文**：`classify_status` 的 message 固定 `HTTP <code>`，body_snippet 不入 message（上游正文可能回显 token）；`Retry-After` 仅 retryable 错误采纳。流内错误事件同理（R-02）：上游 `message` 原文不进 `ProviderError`，只保留白名单诊断字段（Anthropic `type` / Responses `code`，限 ASCII 标识符字符与 64 字符长度），统一经 `stream_error_message` 生成。
 - **计价单轨**：`usage` 模块不含任何计价逻辑，定价统一走 `pricing`（micro-unit 定点），避免双轨口径。
 - **模块纪律**：core 模块（registry/pricing/usage/negotiate/reasoning/error）零 `net` 引用，测试强制。
 
@@ -266,11 +266,11 @@ canonical `ToolResultContent.content` 中 Image 不再被编码器丢弃。Chat 
 - 文本流 / 单工具调用 / usage + stop 三切面合并为默认执行的 `contract_chat_facets_default_coverage`，五通道表驱动用例另外复用 `tests/common` 样例与断言；并行工具调用回归保留；
 - 流中取消与预取消（预取消不发请求）、超时归一、长流逐 chunk 重置读超时；
 - 429 归一（含 `Retry-After`）、上下文溢出（413）归一；
-- malformed 流中断与中断后重连、`[DONE]` 无 finish_reason 按完成、部分 JSON 工具参数跨 chunk 组装、`list_models`。
+- malformed 流中断与中断后重连、畸形 chunk 后 `[DONE]` 仍失败（R-08）、`[DONE]` 无 finish_reason 按完成、部分 JSON 工具参数跨 chunk 组装、`list_models`。
 
 `tests/anthropic.rs` 契约点：
 
-- 文本/单工具/并行工具流、流中取消与预取消、429 归一、缺 `message_stop` 判 `StreamInterrupted`；
+- 文本/单工具/并行工具流、流中取消与预取消、429 归一、缺 `message_stop` 判 `StreamInterrupted`、畸形事件后 `message_stop` 仍失败（R-08）；
 - `list_models` 静态目录不触网；
 - prompt cache 与 thinking 按 plan 写 wire（`contract_prompt_cache_and_thinking_are_written`）；
 - hosted WebSearch 写成 `web_search_20250305` 并放行、未声明的 hosted 工具 HTTP 前拒绝（`hosted_web_search_written_and_undeclared_tools_rejected_before_http`，SEARCH-1 起替换原全拒口径）；

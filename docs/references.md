@@ -434,7 +434,7 @@ F1–F6 与 [design.md](design.md) §3（G1–G7）对应：G1↔F1、G2↔F2、
 
 ### A §7 与 Pawork 现有资产的对照
 
-V1 已有大量同构资产（详见 V1 归档 [provider-control-plane](../../Pawork_v1/docs/features/provider-control-plane.md)、[usage-quota](../../Pawork_v1/docs/features/usage-quota.md)、[context](../../Pawork_v1/docs/features/context.md)），撰写时点规划为 V2 S11 激活（S 阶段为 V2 语境，历史）：
+V1 已有大量同构资产（历史出处为原 Pawork_v1 仓库的 `docs/features/provider-control-plane.md`、`usage-quota.md`、`context.md`；当前仓库不含这些文件），撰写时点规划为 V2 S11 激活（S 阶段为 V2 语境，历史）：
 
 | 外部模式 | Pawork V1 对应资产 | 状态（撰写时点） |
 | --- | --- | --- |

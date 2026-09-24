@@ -16,8 +16,8 @@
 | `src/lib.rs` | ~25 | crate 文档、feature 门控（`local` / `memory`）、re-export：`api::*`、`LocalTransport`、`MemoryTransport` / `MemoryListener` |
 | `src/api.rs` | ~215 | 始终编译的抽象层：`DEFAULT_MAX_FRAME_BYTES`、`TransportFrame`、`TransportEndpoint`、`ConnectOptions`、`ConnectionInfo`/`ConnectionLocality`、四个核心 trait、`TransportError`/`TransportErrorKind`、远程契约 trait 与 DTO |
 | `src/local.rs` | ~300 | feature `local`：`LocalTransport`（同一类型兼任 Server 与 Client）、帧编解码核心 `StreamConnection<R, W>`（读写各持一把 `tokio::sync::Mutex`）、错误构造辅助；按平台 `#[path]` 引入下两文件 |
-| `src/local_unix.rs` | ~320 | Unix Domain Socket 的 `bind`/`connect`：陈旧 socket 文件清理、`0o600` 权限收紧、`UnixSocketListener`（close 时删除 socket 文件） |
-| `src/local_windows.rs` | ~330 | Windows Named Pipe 的 `bind`/`connect`：owner-only DACL 管道创建、逐连接重建 pipe instance |
+| `src/local_unix.rs` | ~450 | Unix Domain Socket 的 `bind`/`connect`：陈旧 socket 文件清理、`0o600` 权限收紧、`UnixSocketListener`（bind 时记录所创建 socket 文件的 dev/ino，close 仅当路径仍指向该文件才删除——旧所有者不删新端点，R-04；重复 close 幂等；R-17：accept 持锁等待时与 `close_notify` select，close 先置 closed 再唤醒，pending accept 被唤醒放锁、close 因此有界收口） |
+| `src/local_windows.rs` | ~350 | Windows Named Pipe 的 `bind`/`connect`：owner-only DACL 管道创建、逐连接重建 pipe instance；R-17：`close_watch`（watch 留存值）唤醒 pending `server.connect()`，close 幂等（Windows 侧未在本平台验证，记待验） |
 | `src/memory/mod.rs` | ~430 | feature `memory`：`MemoryTransport`（channel 名注册表）、`MemoryListener`、`MemoryConnection`（`tokio::sync::mpsc` 无界通道对，locality = `InProcess`，帧上限仍校验） |
 
 无 `tests/` 目录；回归全部在各文件 `#[cfg(test)]`。
@@ -36,7 +36,7 @@
 
 - `GuiTransportServer::bind(endpoint) -> Box<dyn GuiListener>`；`GuiListener::{accept, close}`。
 - `GuiTransportClient::connect(endpoint, options) -> Box<dyn GuiConnection>`。
-- `GuiConnection::{send(frame), receive() -> TransportFrame, close, info}`：`&self` 并发安全；`close` 幂等。
+- `GuiConnection::{send(frame), receive() -> TransportFrame, close, info, wait_done}`：`&self` 并发安全；`close` 幂等。R-11：`wait_done()` 为默认方法（默认立即就绪），会话型连接覆盖为「会话任务完全收口」信号，供宿主登记与有序关闭路径等待。
 
 **错误**
 
@@ -56,7 +56,7 @@
 2. 客户端 `connect`：按 `timeout_ms` 限时建立流（超时 → `Timeout`，失败 → `ConnectionFailed`）；连接两端各自持有 `ConnectionInfo`（服务端 id 形如 `connection-N`，客户端形如 `client-N`）。
 3. `send(frame)`：先在写入前按 `info.max_frame_bytes` 校验长度（超限 → `FrameTooLarge`，不写任何字节），再写 `[u32 LE payload_len][payload]`。对端已断（BrokenPipe / ConnectionReset 等）→ 标记关闭并返回 `ConnectionClosed`。
 4. `receive()`：分帧进度跨调用保留（外层超时取消不丢半帧）。先读 4 字节长度前缀——帧边界上的干净 EOF 视为对端正常关闭（`ConnectionClosed`）；前缀或 payload 读到一半断流同样关闭连接（`ConnectionClosed`，避免残留字节当下一帧长度前缀）；声明长度超过上限时**在分配缓冲区之前**拒绝（`FrameTooLarge`）并标记连接关闭（流已错位不可恢复）；然后读满 payload。
-5. `close()`：幂等；首次关闭 shutdown 写半部。Unix listener `close` 额外删除 socket 文件。
+5. `close()`：幂等；首次关闭 shutdown 写半部。Unix listener `close` 额外删除 socket 文件，但先比对 bind 时记录的 (dev, ino)：路径已被新所有者重新绑定（inode 不同）时跳过删除（R-04），无法证明归属宁可留下文件。
 
 **进程内通道（`memory/mod.rs`）**
 
@@ -83,7 +83,7 @@
 
 - `api.rs`（1）：`TransportEndpoint` serde 往返不需要 protocol 类型。帧只持有字节由 `local.rs` 超限拒绝与 round-trip 证明。
 - `local.rs`（2）：默认帧上限 = 1 MiB（与 protocol 对齐的钉子测试）；非 `Local` 端点被拒。
-- `local_unix.rs`（5）：bind 后 socket 权限 `0o600`；双向帧往返；超限 send 在写前被拒；伪造超限长度头在分配前被拒；对端关闭 → `ConnectionClosed`、关闭后的 listener 拒绝 accept。
+- `local_unix.rs`（7）：bind 后 socket 权限 `0o600`；双向帧往返；超限 send 在写前被拒；伪造超限长度头在分配前被拒；对端关闭 → `ConnectionClosed`、关闭后的 listener 拒绝 accept；R-04 归属回归——路径被新所有者重绑后旧 close 不删新端点（`close_does_not_remove_socket_rebound_by_new_owner`）；R-17：pending accept 被并发 close 唤醒、双方有界结束且重复 close 幂等（`pending_accept_is_woken_by_close`）。
 - `local_windows.rs`（3）：Windows 侧对应回归（round trip / 权限 / 关闭）。
 - `memory/mod.rs`（6）：bind/connect/accept 配对、重复 bind 拒绝、未 bind connect 拒绝、帧上限校验、关闭语义。
 
@@ -96,3 +96,5 @@
 - `memory` 通道为 mpsc 无界队列：不模拟背压与半关闭细节，仅供进程内装配测试。
 - 声明长度超限后连接被单方面标记关闭，调用方需重连而非重试同一连接。
 - 更多跨包流程见 [../flows.md](../flows.md)（GUI Connection Protocol 一节）与 [../../architecture.md](../../architecture.md)。
+
+2026-09-24 审查补充：Unix accept 获取监听锁后复查关闭状态，排队 accept 不会阻塞 close；Windows watch 以 `send_replace` 保留关闭值，subscribe 后先检查当前值再等待，避免先关闭后订阅漏通知。Windows 路径仍待目标平台验收。

@@ -337,43 +337,67 @@ impl ToolScheduler {
 
         let handle = self.acquire(&cancel).await?;
 
-        let exec = tool.execute(request, context, sink, cancel);
+        // R-10：派生执行令牌——调用方取消经桥接原样传播；scheduler 超时单独
+        // 触发派生令牌，并等待工具协作收口后再回执，保证响应返回后不会再
+        // 启动新的写操作（阻塞闭包的最终结果已被等待，而非丢弃后失控）。
+        let exec_cancel = CancellationToken::new();
+        let bridge = tokio::spawn({
+            let source = cancel.clone();
+            let derived = exec_cancel.clone();
+            async move {
+                source.cancelled().await;
+                derived.cancel();
+            }
+        });
+
+        let exec = tool.execute(request, context, sink, exec_cancel.clone());
+        tokio::pin!(exec);
         let result = if let Some(ms) = descriptor.default_timeout_ms {
-            match tokio::time::timeout(Duration::from_millis(ms), exec).await {
-                Ok(result) => result,
-                Err(_) => Err(ToolError {
-                    kind: ToolErrorKind::Timeout,
-                    message: format!("tool `{}` timed out after {ms}ms", descriptor.name),
-                    retryable: false,
-                    retry_after_ms: None,
-                }),
+            let deadline = tokio::time::sleep(Duration::from_millis(ms));
+            tokio::pin!(deadline);
+            tokio::select! {
+                biased;
+                result = &mut exec => result,
+                () = &mut deadline => {
+                    // 超时：请求协作停止并等待在途工作结束，再回执 Timeout。
+                    exec_cancel.cancel();
+                    let _ = exec.await;
+                    Err(ToolError {
+                        kind: ToolErrorKind::Timeout,
+                        message: format!("tool `{}` timed out after {ms}ms", descriptor.name),
+                        retryable: false,
+                        retry_after_ms: None,
+                    })
+                }
             }
         } else {
             exec.await
         };
 
+        bridge.abort();
         drop(handle);
         result
     }
 
     async fn acquire(&self, cancel: &CancellationToken) -> Result<ToolHandle, ToolError> {
-        let permit = self
-            .global
-            .clone()
-            .acquire_owned()
-            .await
-            .map_err(|_| ToolError {
+        let acquire = self.global.clone().acquire_owned();
+        tokio::pin!(acquire);
+        // R-09：槽位等待与取消 select——取消命中时不等 permit 释放即返回，
+        // executor 不会被调用。
+        let permit = tokio::select! {
+            biased;
+            () = cancel.cancelled() => {
+                return Err(ToolError::cancelled(
+                    "tool cancelled while waiting for scheduling slot",
+                ));
+            }
+            permit = &mut acquire => permit.map_err(|_| ToolError {
                 kind: ToolErrorKind::Internal,
                 message: "scheduler semaphore closed".into(),
                 retryable: false,
                 retry_after_ms: None,
-            })?;
-
-        if cancel.is_cancelled() {
-            return Err(ToolError::cancelled(
-                "tool cancelled while waiting for scheduling lock",
-            ));
-        }
+            })?,
+        };
 
         Ok(ToolHandle { _permit: permit })
     }
@@ -642,10 +666,14 @@ mod tests {
             _request: ToolRequest,
             _context: ToolExecutionContext,
             _sink: &dyn ToolEventSink,
-            _cancel: CancellationToken,
+            cancel: CancellationToken,
         ) -> Result<ToolResult, ToolError> {
-            tokio::time::sleep(Duration::from_millis(self.sleep_ms)).await;
-            Ok(ToolResult::success(vec![]))
+            tokio::select! {
+                () = tokio::time::sleep(Duration::from_millis(self.sleep_ms)) => {
+                    Ok(ToolResult::success(vec![]))
+                }
+                () = cancel.cancelled() => Err(ToolError::cancelled("sleep cancelled")),
+            }
         }
     }
 
@@ -883,6 +911,227 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.kind, ToolErrorKind::Timeout);
+    }
+
+    #[tokio::test]
+    async fn queued_call_cancelled_while_waiting_for_slot() {
+        // R-09：max_concurrent=1，首个调用占住槽位；第二个在排队期间取消，
+        // 必须及时返回 Cancelled 且 executor 不被调用。
+        struct Blocker {
+            started: Arc<tokio::sync::Notify>,
+            release: Arc<tokio::sync::Notify>,
+            exec_count: Arc<AtomicU64>,
+        }
+
+        #[async_trait::async_trait]
+        impl AgentTool for Blocker {
+            fn descriptor(&self) -> ToolDescriptor {
+                client_descriptor("blocker")
+            }
+
+            async fn execute(
+                &self,
+                _request: ToolRequest,
+                _context: ToolExecutionContext,
+                _sink: &dyn ToolEventSink,
+                _cancel: CancellationToken,
+            ) -> Result<ToolResult, ToolError> {
+                self.exec_count.fetch_add(1, Ordering::SeqCst);
+                self.started.notify_one();
+                self.release.notified().await;
+                Ok(ToolResult::success(vec![]))
+            }
+        }
+
+        let started = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let exec_count = Arc::new(AtomicU64::new(0));
+        let scheduler = Arc::new(make_scheduler(
+            vec![Arc::new(Blocker {
+                started: started.clone(),
+                release: release.clone(),
+                exec_count: exec_count.clone(),
+            })],
+            ToolSchedulerConfig {
+                max_concurrent: 1,
+                ..Default::default()
+            },
+        ));
+
+        let first = tokio::spawn({
+            let scheduler = scheduler.clone();
+            async move { execute_named(&scheduler, "blocker", json!({})).await }
+        });
+        started.notified().await;
+
+        let queued_cancel = CancellationToken::new();
+        let second = tokio::spawn({
+            let scheduler = scheduler.clone();
+            let queued_cancel = queued_cancel.clone();
+            async move {
+                scheduler
+                    .execute_named(
+                        "blocker",
+                        req("blocker", json!({})),
+                        execution_context(),
+                        queued_cancel,
+                        Some(&AutoApproveResolver),
+                        &NoopToolEventSink,
+                    )
+                    .await
+            }
+        });
+        tokio::task::yield_now().await;
+        queued_cancel.cancel();
+        let second = tokio::time::timeout(Duration::from_secs(5), second)
+            .await
+            .expect("排队取消必须在槽位释放前及时返回")
+            .expect("second task panicked");
+        assert!(
+            matches!(second, Err(ref e) if e.kind == ToolErrorKind::Cancelled),
+            "排队期间取消应返回 Cancelled，实际 {second:?}"
+        );
+
+        release.notify_one();
+        first
+            .await
+            .expect("first task panicked")
+            .expect("first run ok");
+        assert_eq!(
+            exec_count.load(Ordering::SeqCst),
+            1,
+            "被取消的排队调用不得调用 executor"
+        );
+    }
+
+    #[tokio::test]
+    async fn timeout_waits_for_cooperative_drain_before_responding() {
+        // R-10：超时触发派生令牌取消，scheduler 等待工具协作收口后才回执
+        // Timeout；取消后工具不再启动后续操作。
+        struct DrainTool {
+            saw_cancel: Arc<AtomicU64>,
+            post_cancel_ops: Arc<AtomicU64>,
+        }
+
+        #[async_trait::async_trait]
+        impl AgentTool for DrainTool {
+            fn descriptor(&self) -> ToolDescriptor {
+                let mut descriptor = client_descriptor("drain");
+                descriptor.default_timeout_ms = Some(40);
+                descriptor
+            }
+
+            async fn execute(
+                &self,
+                _request: ToolRequest,
+                _context: ToolExecutionContext,
+                _sink: &dyn ToolEventSink,
+                cancel: CancellationToken,
+            ) -> Result<ToolResult, ToolError> {
+                // 模拟多操作写工具：第一个操作完成后在边界等待取消。
+                cancel.cancelled().await;
+                self.saw_cancel.fetch_add(1, Ordering::SeqCst);
+                if cancel.is_cancelled() {
+                    return Err(ToolError::cancelled("drain cancelled at op boundary"));
+                }
+                self.post_cancel_ops.fetch_add(1, Ordering::SeqCst);
+                Ok(ToolResult::success(vec![]))
+            }
+        }
+
+        let saw_cancel = Arc::new(AtomicU64::new(0));
+        let post_cancel_ops = Arc::new(AtomicU64::new(0));
+        let scheduler = make_scheduler(
+            vec![Arc::new(DrainTool {
+                saw_cancel: saw_cancel.clone(),
+                post_cancel_ops: post_cancel_ops.clone(),
+            })],
+            ToolSchedulerConfig::default(),
+        );
+        let err = execute_named(&scheduler, "drain", json!({}))
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind, ToolErrorKind::Timeout);
+        assert_eq!(
+            saw_cancel.load(Ordering::SeqCst),
+            1,
+            "Timeout 回执前必须等到工具观察到取消并收口"
+        );
+        assert_eq!(
+            post_cancel_ops.load(Ordering::SeqCst),
+            0,
+            "取消后不得再启动后续操作"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancel_between_ops_stops_later_ops() {
+        // R-10：执行中取消经桥接传播到工具；操作边界检查后不再启动后续操作。
+        struct MultiOpTool {
+            first_op_done: Arc<tokio::sync::Notify>,
+            ops_started: Arc<AtomicU64>,
+        }
+
+        #[async_trait::async_trait]
+        impl AgentTool for MultiOpTool {
+            fn descriptor(&self) -> ToolDescriptor {
+                client_descriptor("multi_op")
+            }
+
+            async fn execute(
+                &self,
+                _request: ToolRequest,
+                _context: ToolExecutionContext,
+                _sink: &dyn ToolEventSink,
+                cancel: CancellationToken,
+            ) -> Result<ToolResult, ToolError> {
+                self.ops_started.fetch_add(1, Ordering::SeqCst);
+                self.first_op_done.notify_one();
+                cancel.cancelled().await;
+                if cancel.is_cancelled() {
+                    return Err(ToolError::cancelled("cancelled before op 2"));
+                }
+                self.ops_started.fetch_add(1, Ordering::SeqCst);
+                Ok(ToolResult::success(vec![]))
+            }
+        }
+
+        let first_op_done = Arc::new(tokio::sync::Notify::new());
+        let ops_started = Arc::new(AtomicU64::new(0));
+        let scheduler = make_scheduler(
+            vec![Arc::new(MultiOpTool {
+                first_op_done: first_op_done.clone(),
+                ops_started: ops_started.clone(),
+            })],
+            ToolSchedulerConfig::default(),
+        );
+        let cancel = CancellationToken::new();
+        let exec = scheduler.execute_named(
+            "multi_op",
+            req("multi_op", json!({})),
+            execution_context(),
+            cancel.clone(),
+            Some(&AutoApproveResolver),
+            &NoopToolEventSink,
+        );
+        tokio::pin!(exec);
+        // 驱动 exec 直到工具完成第一个操作并停下等待取消。
+        tokio::select! {
+            biased;
+            result = &mut exec => panic!("取消前不应完成，实际 {result:?}"),
+            () = first_op_done.notified() => {}
+        }
+        cancel.cancel();
+        let result = exec.await;
+        assert!(
+            matches!(result, Err(ref e) if e.kind == ToolErrorKind::Cancelled),
+            "执行中取消应返回 Cancelled，实际 {result:?}"
+        );
+        assert_eq!(
+            ops_started.load(Ordering::SeqCst),
+            1,
+            "取消后不得再启动后续操作"
+        );
     }
 
     #[tokio::test]

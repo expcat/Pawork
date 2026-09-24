@@ -66,21 +66,23 @@ impl AgentTool for WriteFileTool {
         request: ToolRequest,
         context: ToolExecutionContext,
         _sink: &dyn ToolEventSink,
-        _cancel: CancellationToken,
+        cancel: CancellationToken,
     ) -> Result<ToolResult, ToolError> {
         let service = self.workspaces.clone();
         let workspace_id = context.workspace_id;
         let input = request.input;
-        let result = tokio::task::spawn_blocking(move || write(&service, &workspace_id, &input))
-            .await
-            .map_err(|error| ToolError {
-                kind: pawork_domain::ToolErrorKind::Internal,
-                message: format!("write_file worker failed: {error}"),
-                retryable: false,
-                retry_after_ms: None,
-            })?;
+        let result =
+            tokio::task::spawn_blocking(move || write(&service, &workspace_id, &input, &cancel))
+                .await
+                .map_err(|error| ToolError {
+                    kind: pawork_domain::ToolErrorKind::Internal,
+                    message: format!("write_file worker failed: {error}"),
+                    retryable: false,
+                    retry_after_ms: None,
+                })?;
         match result {
             Ok(result) => Ok(result),
+            Err(WriteFileError::Cancelled) => Err(ToolError::cancelled("write_file cancelled")),
             Err(error) => Err(BuiltinToolError::from(error).into()),
         }
     }
@@ -90,11 +92,17 @@ fn write(
     service: &WorkspaceService,
     workspace_id: &WorkspaceId,
     input: &Value,
+    cancel: &CancellationToken,
 ) -> Result<ToolResult, WriteFileError> {
     let path = require_str(input, "path")?;
     let content = require_str(input, "content")?;
     let roots = workspace_roots(service, workspace_id)?;
     let absolute = resolve_write_rel(&roots, &path)?;
+
+    // R-10：提交边界检查——取消命中时不得开始写。
+    if cancel.is_cancelled() {
+        return Err(WriteFileError::Cancelled);
+    }
 
     atomic_write(&absolute, content.as_bytes())?;
 
@@ -120,6 +128,8 @@ pub enum WriteFileError {
     Common(#[from] BuiltinToolError),
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    #[error("write_file cancelled")]
+    Cancelled,
 }
 
 impl From<WriteFileError> for BuiltinToolError {
@@ -127,6 +137,7 @@ impl From<WriteFileError> for BuiltinToolError {
         match error {
             WriteFileError::Common(common) => common,
             WriteFileError::Io(io) => BuiltinToolError::Io(io),
+            WriteFileError::Cancelled => BuiltinToolError::Other("write_file cancelled".into()),
         }
     }
 }
@@ -167,6 +178,15 @@ mod tests {
             .add(id.clone(), "demo", [root.clone()])
             .expect("add");
         (service, id, root, ws_dir)
+    }
+
+    // 测试辅助：遮蔽生产 `write`，默认不取消。
+    fn write(
+        service: &WorkspaceService,
+        id: &WorkspaceId,
+        input: &Value,
+    ) -> Result<ToolResult, WriteFileError> {
+        super::write(service, id, input, &CancellationToken::new())
     }
 
     fn write_input(path: &str, content: &str) -> Value {

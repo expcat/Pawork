@@ -115,21 +115,23 @@ impl AgentTool for ApplyPatchTool {
         request: ToolRequest,
         context: ToolExecutionContext,
         _sink: &dyn ToolEventSink,
-        _cancel: CancellationToken,
+        cancel: CancellationToken,
     ) -> Result<ToolResult, ToolError> {
         let service = self.workspaces.clone();
         let workspace_id = context.workspace_id;
         let input = request.input;
-        let result = tokio::task::spawn_blocking(move || apply(&service, &workspace_id, &input))
-            .await
-            .map_err(|error| ToolError {
-                kind: pawork_domain::ToolErrorKind::Internal,
-                message: format!("apply_patch worker failed: {error}"),
-                retryable: false,
-                retry_after_ms: None,
-            })?;
+        let result =
+            tokio::task::spawn_blocking(move || apply(&service, &workspace_id, &input, &cancel))
+                .await
+                .map_err(|error| ToolError {
+                    kind: pawork_domain::ToolErrorKind::Internal,
+                    message: format!("apply_patch worker failed: {error}"),
+                    retryable: false,
+                    retry_after_ms: None,
+                })?;
         match result {
             Ok(result) => Ok(result),
+            Err(ApplyPatchError::Cancelled(message)) => Err(ToolError::cancelled(message)),
             Err(error) => Err(BuiltinToolError::from(error).into()),
         }
     }
@@ -139,6 +141,7 @@ fn apply(
     service: &WorkspaceService,
     workspace_id: &WorkspaceId,
     input: &Value,
+    cancel: &CancellationToken,
 ) -> Result<ToolResult, ApplyPatchError> {
     let dry_run = opt_bool(input, "dry_run")?.unwrap_or(false);
     let ops = parse_ops(input)?;
@@ -176,6 +179,21 @@ fn apply(
 
     let mut applied_changes: Vec<PlannedChange> = Vec::new();
     for (op, abs, to_abs) in planned {
+        // R-10：每个操作边界检查取消——命中则回滚已应用操作，保持全成或全滚，
+        // 取消后的回执与磁盘最终状态一致（不会继续启动后续操作）。
+        if cancel.is_cancelled() {
+            let message = match restore_backups(&backups) {
+                Ok(()) => format!(
+                    "apply_patch cancelled before op `{}`; applied ops rolled back",
+                    op.path
+                ),
+                Err(rollback) => format!(
+                    "apply_patch cancelled before op `{}`; local rollback failed: {rollback}",
+                    op.path
+                ),
+            };
+            return Err(ApplyPatchError::Cancelled(message));
+        }
         match exec_op(&op, &abs, to_abs.as_deref()) {
             Ok(()) => {
                 applied_changes.push(PlannedChange {
@@ -361,6 +379,8 @@ pub enum ApplyPatchError {
         message: String,
         applied: Vec<PlannedChange>,
     },
+    #[error("{0}")]
+    Cancelled(String),
 }
 
 impl From<ApplyPatchError> for BuiltinToolError {
@@ -369,6 +389,7 @@ impl From<ApplyPatchError> for BuiltinToolError {
             ApplyPatchError::Common(c) => c,
             ApplyPatchError::Io(io) => BuiltinToolError::Io(io),
             ApplyPatchError::Partial { message, .. } => BuiltinToolError::Other(message),
+            ApplyPatchError::Cancelled(message) => BuiltinToolError::Other(message),
         }
     }
 }
@@ -410,6 +431,15 @@ mod tests {
         (service, id, root, ws_dir)
     }
 
+    // 测试辅助：遮蔽生产 `apply`，默认不取消。
+    fn apply(
+        service: &WorkspaceService,
+        id: &WorkspaceId,
+        input: &Value,
+    ) -> Result<ToolResult, ApplyPatchError> {
+        super::apply(service, id, input, &CancellationToken::new())
+    }
+
     #[test]
     fn multi_file_create() {
         let (service, id, root, _ws_dir) = make_service();
@@ -420,6 +450,25 @@ mod tests {
         apply(&service, &id, &input).expect("apply");
         assert_eq!(fs::read_to_string(root.join("a.txt")).unwrap(), "AAA");
         assert_eq!(fs::read_to_string(root.join("b.txt")).unwrap(), "BBB");
+    }
+
+    #[test]
+    fn cancelled_token_starts_no_ops() {
+        // R-10：取消命中操作边界时不得开始任何写入，返回 Cancelled。
+        let (service, id, root, _ws_dir) = make_service();
+        let input = json!({"ops": [
+            {"op": "create", "path": "a.txt", "content": "AAA"},
+            {"op": "create", "path": "b.txt", "content": "BBB"}
+        ]});
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let err = super::apply(&service, &id, &input, &cancel).unwrap_err();
+        assert!(
+            matches!(err, ApplyPatchError::Cancelled(_)),
+            "应为 Cancelled，实际 {err:?}"
+        );
+        assert!(!root.join("a.txt").exists(), "取消后不得创建 a.txt");
+        assert!(!root.join("b.txt").exists(), "取消后不得创建 b.txt");
     }
 
     #[test]

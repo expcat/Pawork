@@ -14,7 +14,7 @@ memory = []
 
 [dependencies]
 async-trait.workspace = true
-tokio = { workspace = true, features = ["net", "io-util", "sync", "time", "rt"] }
+tokio = { workspace = true, features = ["net", "io-util", "sync", "time", "rt", "macros"] }
 serde.workspace = true
 thiserror.workspace = true
 

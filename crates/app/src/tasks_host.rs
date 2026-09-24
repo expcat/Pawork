@@ -1,7 +1,9 @@
 //! S11 波 D：后台任务可见面。默认纯状态机，快照落在实例目录 `tasks.json`。
 
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use pawork_domain::{BackgroundTaskId, SessionId, TaskKind, TaskStatus};
 use pawork_workflow::task::{TaskManager, TaskManagerSnapshot, TaskSnapshot};
@@ -28,17 +30,18 @@ impl crate::AppCore {
     pub(crate) fn tasks_start_agent(
         &self,
         session_id: Option<&SessionId>,
+        cancel: &pawork_domain::CancellationToken,
     ) -> Result<BackgroundTaskId, AppError> {
-        self.tasks.tasks_start_agent(session_id)
+        self.tasks.tasks_start_agent(session_id, cancel)
     }
 
-    pub(crate) fn tasks_finish(
+    pub(crate) fn tasks_finish_from_run(
         &self,
         task_id: &BackgroundTaskId,
         status: TaskStatus,
         detail: Option<String>,
     ) -> Result<(), AppError> {
-        self.tasks.tasks_finish(task_id, status, detail)
+        self.tasks.tasks_finish_from_run(task_id, status, detail)
     }
 
     pub(crate) fn open_tasks(&mut self, path: PathBuf) -> Result<(), AppError> {
@@ -84,11 +87,43 @@ pub(crate) fn save_task_manager(
     }
     let json = serde_json::to_vec_pretty(snapshot)
         .map_err(|error| AppError::Task(format!("serialize tasks: {error}")))?;
-    let tmp = path.with_extension("json.tmp");
-    fs::write(&tmp, json)?;
-    if path.exists() {
-        fs::remove_file(path)?;
-    }
-    fs::rename(&tmp, path)?;
-    Ok(())
+    // R-03：独占创建的独立临时文件 + rename 直接原子替换——不先删原文件，
+    // 替换失败或中途崩溃时上一份快照仍可读；并发保存不共享同一临时路径
+    // （与 auth file_backend 的写入形态一致）。
+    static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+    let mut attempt = 0u32;
+    let tmp = loop {
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("tasks.json");
+        let candidate = path.with_file_name(format!(
+            ".{name}.{}.{}.tmp",
+            std::process::id(),
+            TMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(mut file) => {
+                let written = file.write_all(&json).and_then(|()| file.sync_all());
+                drop(file);
+                if let Err(error) = written {
+                    let _ = fs::remove_file(&candidate);
+                    return Err(error.into());
+                }
+                break candidate;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists && attempt + 1 < 16 => {
+                attempt += 1;
+            }
+            Err(error) => return Err(error.into()),
+        }
+    };
+    fs::rename(&tmp, path).map_err(|error| {
+        let _ = fs::remove_file(&tmp);
+        AppError::from(error)
+    })
 }

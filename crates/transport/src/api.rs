@@ -85,6 +85,11 @@ pub trait GuiConnection: Send + Sync {
     async fn receive(&self) -> Result<TransportFrame, TransportError>;
     async fn close(&self) -> Result<(), TransportError>;
     fn info(&self) -> ConnectionInfo;
+
+    /// 连接后台任务的完成通知：任务结束（对端断开、close 或错误）后就绪。
+    /// 无后台任务的连接（如裸流）默认立即就绪。用于宿主回收句柄与
+    /// 有序关闭（R-11）。
+    async fn wait_done(&self) {}
 }
 
 #[async_trait]

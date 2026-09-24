@@ -384,6 +384,20 @@ impl QuotaCache {
             .map(|(_, entry)| entry.snapshot.clone())
             .collect()
     }
+
+    /// R-13：移除该 scope 下的本地派生缓存（LocalLedger / Derived）——
+    /// 本地账本成功入账后调用，下一次读重新归集而不是继续发旧窗口；
+    /// 远端权威（Exact / Scraped 等）缓存保持自身 TTL 语义不动。
+    fn remove_local_for_scope(&self, scope: &QuotaScope) {
+        self.entries
+            .lock()
+            .expect("quota cache poisoned")
+            .retain(|key, entry| {
+                let is_local = entry.snapshot.provenance.adapter_kind == AdapterKind::LocalLedger
+                    || entry.snapshot.confidence == Confidence::Derived;
+                !(key.scope == *scope && is_local)
+            });
+    }
 }
 
 // =========================================================================
@@ -758,6 +772,14 @@ impl QuotaService {
     /// this; normal reads rely on TTL.
     pub fn invalidate(&self) {
         self.inner.cache.clear();
+    }
+
+    /// Drop the ledger-derived cached snapshots for one scope (R-13). Called
+    /// after a successful local ledger write so the next read re-aggregates
+    /// instead of serving the pre-write derived window; remote authoritative
+    /// entries in the same scope keep their own cache/TTL semantics.
+    pub fn invalidate_local_scope(&self, scope: &QuotaScope) {
+        self.inner.cache.remove_local_for_scope(scope);
     }
 
     /// Number of cached entries (test/diagnostic helper).
@@ -2630,5 +2652,58 @@ mod tests {
         // A sibling credential sees nothing.
         let scope_c = scope("anthropic").with_credential_id("cred-c");
         assert!(svc.cached_snapshots_for_scope(&scope_c).is_empty());
+    }
+
+    #[tokio::test]
+    async fn invalidate_local_scope_drops_only_local_entries_in_scope() {
+        // R-13：本地账本入账只失效本 scope 的本地派生窗口；同 scope 的远端
+        // Exact 缓存与兄弟 scope 的本地窗口都不受影响。
+        let clock = Arc::new(MutableQuotaClock::at(1_000));
+        let svc = QuotaService::with_ttl(clock, Duration::from_secs(60));
+        let scope_a = scope("anthropic").with_credential_id("cred-a");
+        let scope_b = scope("anthropic").with_credential_id("cred-b");
+
+        // 同 scope 的远端 Exact：经 adapter 读取路径入缓存。
+        let adapter = Arc::new(MockAdapter::exact(1_000));
+        svc.register(ScopeMatch::any(), adapter);
+        let remote_req = QuotaRequest {
+            scope: scope_a.clone(),
+            window: QuotaWindow::Monthly,
+            unit: QuotaUnit::Token,
+        };
+        svc.read(&remote_req, &CancellationToken::new())
+            .await
+            .expect("remote read ok");
+
+        svc.publish_local_snapshot(snapshot(
+            &scope_a,
+            QuotaWindow::Overall,
+            QuotaUnit::Token,
+            Confidence::Derived,
+            AdapterKind::LocalLedger,
+            1_000,
+        ))
+        .expect("local a");
+        svc.publish_local_snapshot(snapshot(
+            &scope_b,
+            QuotaWindow::Overall,
+            QuotaUnit::Token,
+            Confidence::Derived,
+            AdapterKind::LocalLedger,
+            1_000,
+        ))
+        .expect("local b");
+        assert_eq!(svc.cache_size(), 3);
+
+        svc.invalidate_local_scope(&scope_a);
+
+        // scope_a 的本地窗口被移除；scope_a 的远端 Exact 与 scope_b 的本地
+        // 窗口保留。
+        let remaining_a = svc.cached_snapshots_for_scope(&scope_a);
+        assert_eq!(remaining_a.len(), 1);
+        assert_eq!(remaining_a[0].confidence, Confidence::Exact);
+        assert_eq!(remaining_a[0].window, QuotaWindow::Monthly);
+        assert_eq!(svc.cached_snapshots_for_scope(&scope_b).len(), 1);
+        assert_eq!(svc.cache_size(), 2);
     }
 }

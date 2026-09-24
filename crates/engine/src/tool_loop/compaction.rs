@@ -5,6 +5,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
+use pawork_domain::ProviderErrorKind;
 use pawork_domain::{
     AgentEvent, CancellationToken, ContentPart, EventSequence, Message, MessageId, MessageRole,
     ModelId, SessionId, TextContent,
@@ -244,6 +245,9 @@ impl ProviderEventSink for SummaryTextSink {
 
 /// 生成被压缩区间的摘要：优先向 provider 发内部摘要请求（assemble_request，
 /// 无 tools）；失败或空摘要时降级为结构性摘要。
+///
+/// R-18：取消不是可降级错误——摘要请求被取消（或摘要返回时令牌已取消）
+/// 直接上抛 Cancelled，调用方不得继续提交压缩。
 async fn summarize_history(
     provider: &dyn ModelProvider,
     loop_ctx: &dyn LoopContext,
@@ -251,7 +255,7 @@ async fn summarize_history(
     session_id: Option<&SessionId>,
     compacted_range: &[Message],
     cancel: CancellationToken,
-) -> String {
+) -> Result<String, EngineError> {
     let mut transcript = String::new();
     for message in compacted_range {
         let text = message_text(message);
@@ -280,13 +284,24 @@ async fn summarize_history(
 
     let sink = SummaryTextSink(Mutex::new(String::new()));
     // 注意：摘要请求的 usage 不计入 run_usage，也不进 AgentEventSink。
-    if run_turn(provider, &request, &sink, cancel).await.is_ok() {
-        let text = sink.0.lock().expect("summary sink mutex").clone();
-        if !text.trim().is_empty() {
-            return text;
+    match run_turn(provider, &request, &sink, cancel.clone()).await {
+        Ok(_) => {
+            let text = sink.0.lock().expect("summary sink mutex").clone();
+            if !text.trim().is_empty() {
+                return Ok(text);
+            }
         }
+        Err(error) if error.kind == ProviderErrorKind::Cancelled => {
+            return Err(error.into());
+        }
+        Err(_) => {}
     }
-    structural_summary(compacted_range)
+    // 摘要以非取消形态返回但令牌已取消（如对端中断先于取消信号落地）：
+    // 同样按取消处理，避免取消期间继续走持久提交。
+    if cancel.is_cancelled() {
+        return Err(ProviderError::cancelled("compaction summary cancelled").into());
+    }
+    Ok(structural_summary(compacted_range))
 }
 
 /// 降级摘要：被压缩区间首条用户消息截 2000 chars 加省略号，再接最近一条消息截 500 chars。
@@ -361,7 +376,13 @@ async fn compact_messages(
         compacted_range,
         cancel.clone(),
     )
-    .await;
+    .await?;
+
+    // R-18：持久提交前再查一次取消——摘要完成后到达的取消也不得写
+    // recovery branch 或发压缩事件。
+    if cancel.is_cancelled() {
+        return Err(ProviderError::cancelled("compaction cancelled before commit").into());
+    }
 
     let outcome = loop_ctx
         .compact_history(reason, &summary_text, cancel)

@@ -54,7 +54,7 @@ Workspace 为 **24 成员（22 库 + 2 应用）**：22 个库平铺 `crates/<�
 
 **不合并清单**（保持独立包）：`policy`、`exec`、`auth`、`git`、`engine`、`protocol`、`testkit`、`transport`、`orchestration`、`workflow`。
 
-理由（布局经验）：`policy` 并入含 tools 的包即成环；`exec` 零内部依赖自含；`auth` 是 Secret 审计边界。GUI 编译闭包可以出现 domain/protocol **纯类型**，不违反「GUI 不加载 Core」——红线指运行时装配，不指类型入编译图。对照外部布局只抄纪律不抄粒度：微 crate 增殖会把跨域改动摊到十几份 Cargo 清单上。
+理由（布局经验）：`policy` 并入含 tools 的包即成环；`exec` 只通过 policy 路径 helper 共享安全内核；`auth` 是 Secret 审计边界。GUI 编译闭包可以出现 domain/protocol **纯类型**，不违反「GUI 不加载 Core」——红线指运行时装配，不指类型入编译图。对照外部布局只抄纪律不抄粒度：微 crate 增殖会把跨域改动摊到十几份 Cargo 清单上。
 
 归档资产以 git tag `v2-final` 兜底；复活条件登记 [产品候选](spec/backlog.md)；不得把归档代码复制回仓库其它位置。`pawork-domain` 的 `plugin = []` 仅作复活锚点。
 

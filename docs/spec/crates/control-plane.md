@@ -28,7 +28,7 @@
 | `src/quota/domain.rs` | ~370 | canonical 配额领域：`QuotaScope`（tenant + account + provider + optional model，`with_credential_id`）、`QuotaWindow`（`Overall` / `Rolling5h` / `Weekly` / `Monthly`）、`QuotaUnit`（`Count` / `Token` / `Percent` / `Cost { currency }`）、`QuotaMeasure`（`Exact` / `Infinite` / `Unknown`）、`QuotaValues`、`Confidence`（`Exact` > `Derived` > `Scraped`）、`QuotaReset`、`QuotaProvenance`（endpoint 清洗）、`QuotaRequest`、`QuotaSnapshot` |
 | `src/quota/error.rs` | ~540 | `QuotaError` 十变体（`Unsupported` / `Unauthorized` / `Forbidden` / `RateLimited` / `ReauthorizationRequired` / `Timeout` / `Transient` / `Parse` / `Cancelled` / `Other`）+ 构造器、`retryable()`、`retry_after_ms()`；`detail` 必须已脱敏 |
 | `src/quota/ledger.rs` | ~1 320 | `LedgerQuotaAdapter`：直接消费 `UsageLedger` 派生本地 used/limit/remaining；`BudgetCap`（`none` / `with_limit`）、远端增量 `reconcile`、`ExhaustionPrediction` / `predict_exhaustion` |
-| `src/quota/service.rs` | ~2 630 | `QuotaService`：适配器注册（`ScopeMatch` 路由）、per-(scope, window, unit) 缓存（默认 TTL 30 s）、singleflight（leader 中止可恢复）、多窗口并发聚合、stale 兜底；`QuotaClock`（+ `SystemQuotaClock` / `MutableQuotaClock`）、`QuotaRead` / `WindowRead` / `QuotaOverview` / `QuotaFailure` / `CacheRead` / `CacheOverview` |
+| `src/quota/service.rs` | ~2 710 | `QuotaService`：适配器注册（`ScopeMatch` 路由）、per-(scope, window, unit) 缓存（默认 TTL 30 s）、singleflight（leader 中止可恢复）、多窗口并发聚合、stale 兜底；`QuotaClock`（+ `SystemQuotaClock` / `MutableQuotaClock`）、`QuotaRead` / `WindowRead` / `QuotaOverview` / `QuotaFailure` / `CacheRead` / `CacheOverview` |
 | `src/quota/util.rs` | ~620 | **私有**工具：UTC 日历换算（`next_month_start_timestamp` 等）与脱敏（`redact_endpoint` / `redact_secrets` / `redact_source`） |
 | `fixtures/audit/event-v1.jsonl` | 1 行 | audit JSONL 冻结 golden（单行、`\n` 结尾） |
 
@@ -92,7 +92,7 @@
 
 **quota 服务（模块路径 `quota::`；`QuotaRead` / `QuotaOverview` / `WindowRead` / `ScopeMatch` / `QuotaFailure` 在 `quota::service::`）**
 
-- `QuotaService`：`register(ScopeMatch, Arc<dyn QuotaAdapter>)` 注册适配器（`ScopeMatch::any()` / `for_provider(id)` 路由）；`read` / `read_with_credential`（单 (scope, window, unit)）与 `overview` / `overview_with_credential`（多窗口并发）；`read_cache_only` / `overview_cache_only`（纯缓存判读，不触发 fetch，返回 `CacheRead` / `CacheOverview`）；`publish_local_snapshot` / `cached_snapshots_for_scope`（本地投影直写缓存）；`set_ledger_reconciler` 挂接 Ledger 对账；`invalidate` / `cache_size`；`new`（TTL 30 s）/ `with_ttl`（0 TTL = 永不新鲜，逢读必 fetch 但仍 singleflight，最近缓存留作 stale 兜底）。
+- `QuotaService`：`register(ScopeMatch, Arc<dyn QuotaAdapter>)` 注册适配器（`ScopeMatch::any()` / `for_provider(id)` 路由）；`read` / `read_with_credential`（单 (scope, window, unit)）与 `overview` / `overview_with_credential`（多窗口并发）；`read_cache_only` / `overview_cache_only`（纯缓存判读，不触发 fetch，返回 `CacheRead` / `CacheOverview`）；`publish_local_snapshot` / `cached_snapshots_for_scope`（本地投影直写缓存）；`set_ledger_reconciler` 挂接 Ledger 对账；`invalidate` / `invalidate_local_scope`（R-13：只失效该 scope 的 LocalLedger/Derived 派生窗口，远端权威缓存不动）/ `cache_size`；`new`（TTL 30 s）/ `with_ttl`（0 TTL = 永不新鲜，逢读必 fetch 但仍 singleflight，最近缓存留作 stale 兜底）。
 - `QuotaAdapter::fetch` 契约：对象安全、cancel-safe（调用方可随时 drop future）；secret 仅以 `pawork_domain::ResolvedCredential` 在适配器调用边界注入——该类型 `Debug` 脱敏且未实现 `Serialize`，本 crate 结构上无法持有或泄漏明文。
 - `QuotaSnapshot`：scope + window + unit + `QuotaValues`（used / limit / remaining，均为 `QuotaMeasure`）+ `Confidence` + `QuotaReset`（绝对 / 相对 + 不确定性）+ `QuotaProvenance`（adapter kind、脱敏 endpoint、取数时刻）。
 - `QuotaError::retryable()`：`RateLimited` / `Timeout` / `Transient` 可重试，`retry_after_ms()` 透传服务器建议；`Unauthorized` / `Forbidden` / `ReauthorizationRequired` 需要上层处理凭证后再试。
@@ -180,7 +180,7 @@ UI-6b G2：`QuotaUnit::Percent` 表示整数百分点，与协议镜像同形；
 
 - `usage.rs`（35）：幂等重放 / 冲突、存储层去重（`sqlite_dedup_unique_index_is_registered` 断言 `idx_usage_dedup` 已登记、`sqlite_dedup_by_request_and_attempt_conflicts` 断言不同 record_id 的同 (request, attempt) 冲突、`in_memory_dedup_matches_sqlite_semantics` 保证双实现语义一致）、`sqlite_v2_to_v3_migration_preserves_history`（迁移保历史）、跨币种聚合拒绝、查询过滤与半开区间、类型由 `SqliteUsageLedger` 的 `Mutex<Connection>` 承担并发。
 - `credential/mod.rs`（27）+ `credential/lease.rs`（8）：并发额度（账号 / 租户 cap / 按 (tenant, account) 覆盖）、幂等释放、`LeaseGuard` Drop 释放（含 detached 驱动）、TTL 过期与 `reclaim_expired`、投影事务失败回滚计数、`recover_records` 崩溃恢复、状态机合法 / 非法迁移、property 测试（proptest）。
-- `quota/service.rs`（34）：缓存 TTL / invalidate、singleflight 并发去重（`singleflight_dedups_concurrent_reads`）与 leader 中止后 follower 晋升、stale 兜底 + `served_stale` 标记、部分失败聚合（`QuotaFailure` 附带）、confidence 择优。
+- `quota/service.rs`（35）：缓存 TTL / invalidate、`invalidate_local_scope` 只清本 scope 本地派生窗口（R-13）、singleflight 并发去重（`singleflight_dedups_concurrent_reads`）与 leader 中止后 follower 晋升、stale 兜底 + `served_stale` 标记、部分失败聚合（`QuotaFailure` 附带）、confidence 择优。
 - `quota/ledger.rs`（29）：Ledger 派生窗口读数（月窗 / 滚动窗）、`BudgetCap` limit 语义、`reconcile` 对账、耗尽预测。
 - `quota/domain.rs`（7）/ `quota/error.rs`（8）/ `quota/adapter.rs`（2）/ `quota/util.rs`（16）：领域类型不变量（measure / confidence 优先级 / endpoint 清洗）、错误可重试分类与 retry_after 透传、secret 脱敏、UTC 日历换算（闰月 / 月界）。
 - `audit.rs`（5）：**`audit_event_v1_jsonl_matches_frozen_fixture`——与 `fixtures/audit/event-v1.jsonl` 逐字节比对**，并断言 fixture 单行、`\n` 结尾、不含 `prompt` / `secret` / `tool_output`；validate 拒绝路径。

@@ -31,13 +31,13 @@
 | `src/session/event_store.rs` | ~2250 | 事件读写核心：`create_session(_with_identity/_with_workspace)`/`create_branch`/`switch_branch`/`append_event`/`replay_events`/`tail_events`/`events_by_branch`；`set_session_workspace`（ADR-043 既有会话归属写穿）；写前 Secret 脱敏（`redact_sensitive_json`、`sanitize_reasoning_metadata`）与 legacy provider hint 键只读映射；`persist_event_in_transaction` 供导入复用 |
 | `src/session/projection.rs` | ~1590 | 投影写入 `apply_projection`、读取 `ProjectionSnapshot`（messages/runs/tool_calls/server_tool_events/program_output/screenshots/transcript_envelopes）、compaction 水位折叠、`rebuild_projection` |
 | `src/session/session_tree.rs` | ~580 | 分支树单点：`load_ancestor_lineage`/`visible_on_lineage`/`events_on_lineage`/`fork_from_event`/`session_tree`；fork 边界校验与幂等 |
-| `src/session/catalog.rs` | ~290 | 会话目录：`list_sessions`/`get_session` 与 `SessionRecord`（v13 起含 `workspace_id: Option<String>` 归属弱引用）；`rename_session`/`rename_session_if_title`/`archive_session`（ADR-054：更新 title/archived 与 `updated_at_ms`，缺失报 `SessionNotFound`）；`list_session_workspace_bindings` 返回含 archived 的全部非 NULL 绑定；v14 起含项目注册表 `WorkspaceRecord` 与 `register_workspace`/`list_workspaces` |
+| `src/session/catalog.rs` | ~610 | 会话目录：`list_sessions`/`get_session` 与 `SessionRecord`（v13 起含 `workspace_id: Option<String>` 归属弱引用）；`list_sessions_including_archived`（R-20 维护查询：覆盖归档会话，供崩溃清扫/启动对账，用户列表仍隐藏归档）；`rename_session`/`rename_session_if_title`/`archive_session`（ADR-054：更新 title/archived 与 `updated_at_ms`，缺失报 `SessionNotFound`）；`list_session_workspace_bindings` 返回含 archived 的全部非 NULL 绑定；v14 起含项目注册表 `WorkspaceRecord` 与 `register_workspace`/`list_workspaces` |
 | `src/session/command_ledger.rs` | ~730 | `CommandLedger`：`check`/`record`/`release`/`reclaim_inflight`/`stats`，容量 4096 全局淘汰；`waiting_tool_call(s)` 审批恢复查询 |
 | `src/session/client_adapter.rs` | ~530 | `SqliteClientSessionRegistryStore`：以 SQLite 实现 domain 的 `SessionRegistryStore`（load_all/insert/compare_and_swap/remove_if_owner，乐观并发） |
 | `src/session/test_support.rs` | ~340 | `cfg(test)` 种子场景（fork_tree/interleaved/compaction），供迁移 golden 复现历史库形态 |
 | `src/session/compaction/mod.rs` | ~60 | feature `compaction` 门面：`TokenEstimator` trait（依赖倒置，估算器由 engine 侧注入）、`CompactionError`、re-export |
 | `src/session/compaction/engine.rs` | ~760 | `CompactionEngine::compact`：读 lineage → 建 recovery 分支 → 套 retention 策略 → 产出 `CompactionSnapshot`（不写事件流） |
-| `src/session/compaction/retention.rs` | ~720 | `RetentionPolicy`/`RetentionInputs`/`RetentionDecision` 与纯函数 `apply`（last-N-turns、未决任务、用户约束、改动文件、pending/failed 工具调用等保留规则） |
+| `src/session/compaction/retention.rs` | ~765 | `RetentionPolicy`/`RetentionInputs`/`RetentionDecision` 与纯函数 `apply`（last-N-turns、last-N-messages count 后缀、reasoning 条目、未决任务、用户约束、改动文件、pending/failed 工具调用等保留规则；消息维度保留集必须为连续后缀，早期 System 不豁免） |
 | `src/session/compaction/snapshot.rs` | ~150 | `CompactionSnapshot` v1（serde 形状冻结）与 `SnapshotVersion` |
 | `src/session/import/mod.rs` | ~15 | 导入门面：re-export formats 解析层，声明 persist_* 持久化层 |
 | `src/session/import/formats/mod.rs` | ~15 | formats 门面 re-export |
@@ -112,7 +112,7 @@
 
 ### 3.7 目录、标签与身份
 
-- `list_sessions()`（固定过滤 `archived=0`、按 `updated_at_ms` 降序，无参数）/ `get_session(&SessionId)`（缺失报 `SessionNotFound`）：`SessionRecord { session_id, title, created_at_ms, updated_at_ms, archived, active_branch }`。`rename_session(&SessionId, title, now_ms)` / `archive_session(&SessionId, archived, now_ms)`（ADR-054）：UPDATE 单行走 `updated_at_ms` 刷新，缺失报 `SessionNotFound`；归档不删事件与投影，`get_session` 仍可读。
+- `list_sessions()`（固定过滤 `archived=0`、按 `updated_at_ms` 降序，无参数）/ `list_sessions_including_archived()`（R-20 维护查询，同序不过滤）/ `get_session(&SessionId)`（缺失报 `SessionNotFound`）：`SessionRecord { session_id, title, created_at_ms, updated_at_ms, archived, active_branch }`。`rename_session(&SessionId, title, now_ms)` / `archive_session(&SessionId, archived, now_ms)`（ADR-054）：UPDATE 单行走 `updated_at_ms` 刷新，缺失报 `SessionNotFound`；归档不删事件与投影，`get_session` 仍可读。
 - `rename_session_if_title(&SessionId, expected_title, title, now_ms) -> bool`：单条条件 UPDATE 原子校验旧标题并更新；不匹配返回 false，标题与时间戳保持不变；缺失报 `SessionNotFound`。自动命名使用此口，多个命名结果仅首个匹配者写回，已改名会话不被旧结果覆盖；不改 schema。
 - `add_tags(session, &[&str])`：幂等插入 `session_tags`。
 - `get_session_identity(session) -> Option<(TenantId, PrincipalId)>`（不存在返回 `None`）。
@@ -129,7 +129,7 @@
 ### 3.9 compaction（feature `compaction`）
 
 - `CompactionEngine::new(&SessionStore, Arc<dyn TokenEstimator>)`（默认策略）/ `with_policy(store, RetentionPolicy, estimator)`；`compact(session, branch_id, reason: CompactionReason, summary_text, &RetentionInputs) -> CompactionResult { reason, snapshot, decision, total_events, .. }`。引擎读 active branch lineage → 在 head 事件处建 `compaction-recovery-<branch>-<head_seq>` recovery 分支（完整历史逃生门，同 head 重试幂等复用）→ 过滤掉 lineage 外的输入后 `retention::apply` 决策保留集 → 产出 `CompactionSnapshot` 与 token 估算。**引擎不追加 `CompactionStarted/Completed` 事件、不改写历史**——事件化由调用方（engine crate）走 `append_event`，投影层在收到 `CompactionCompleted` 时执行水位折叠（§4.3）。
-- `RetentionPolicy` 字段：`keep_last_turns`、`keep_unresolved_tasks`、`keep_user_constraints`、`keep_modified_files`、`keep_pending_tool_calls`、`keep_failed_tool_calls`；`RetentionInputs` 由调用方提供各维度候选（消息回合、任务、约束、改动文件、带 `ToolCallRetentionState::{Pending, Failed, …}` 状态的工具调用），每项挂 `event_id`。
+- `RetentionPolicy` 字段：`retained_turns`（轮后缀）、`retained_messages`（count 后缀，0 关闭，与 engine 折叠边界同语义，R-07）、`retained_reasoning_items`、`keep_unresolved_tasks`、`keep_user_constraints`、`keep_modified_files`、`keep_pending_tool_calls`、`keep_failed_tool_calls`；`RetentionInputs` 由调用方提供各维度候选（消息回合、任务、约束、改动文件、带 `ToolCallRetentionState::{Pending, Failed, …}` 状态的工具调用），每项挂 `event_id`。**后缀约束**：`retained_turns` 与 `retained_messages` 都是后缀规则，并集仍是连续后缀——单一折叠水位（`compacted_through`）只能表达连续后缀，因此消息维度的保留集不允许是非后缀（早期 System 不再特殊保留）。
 - `apply(policy, inputs)` 为纯函数：逐规则把命中项的 `EventId` 并入保留集，输出 `RetentionDecision { retained_event_ids, dropped_count, reasons }`——`reasons` 是人可读的保留理由清单，供快照与日志展示。
 
 ### 3.10 blob 三区
@@ -165,7 +165,7 @@
 1. 引擎（feature `compaction`）`compact`：取 active branch lineage 事件 → 直接 `create_branch` 在 lineage head 事件处建 `compaction-recovery-<branch>-<head_seq>` 分支（保留完整历史；raw 建分支不受四类 fork 边界限制，同 head 重试幂等复用）→ `retention::apply` 得保留集 → `TokenEstimator` 估算前后 token → 产出 `CompactionSnapshot`（v1，serde 冻结：`version`/`summary`/`retained_event_ids`/`replaced_range`/`token_usage_before`/`token_usage_after`/可选 `recovery_branch_id`）。
 2. 调用方把 `CompactionStarted` / `CompactionCompleted{ compacted_through, snapshot }` 作为普通事件 `append_event` 到工作分支。
 3. 投影层收到 `CompactionCompleted` 时执行**本分支物化折叠**：`DELETE FROM messages WHERE branch_id = 本分支 AND sequence <= compacted_through`（v12 冻结语义：只删本分支行，不动祖先/兄弟分支）。
-4. 读侧水位由 projection 内部的 lineage 水位查询单点提供：沿祖先链取可见 `CompactionCompleted` 的最大 `compacted_through`，作为 `ProjectionSnapshot.compacted_through` 暴露给消费方（UI 折叠展示用）。
+4. 读侧水位由 projection 内部的 lineage 水位查询单点提供：沿祖先链取可见 `CompactionCompleted` 的最大 `compacted_through`，作为 `ProjectionSnapshot.compacted_through` 暴露给消费方（UI 折叠展示用）。水位是单一序号，故调用方给出的消息保留集必须是连续后缀（R-07：app 侧 `loop_ctx` 用 `retained_messages` count 后缀策略，与 engine 折叠边界同界，保证当前请求窗口与重启重放水位一致）。
 5. 读侧双保险：`ProjectionSnapshot.messages` 从事件账本按水位重建，因此即便物化表未折叠/被重建，读到的消息窗口一致；recovery 分支不受水位影响，可整段回看。
 
 ### 4.4 CommandLedger 幂等 check/record
@@ -260,7 +260,7 @@ feature 依赖有传递关系：`compaction ⇒ session`，`checkpoint ⇒ blob`
 | `event_store.rs` tests | Secret 脱敏矩阵（provider metadata / server tool / envelope / reasoning hints 超限拒绝）、legacy 键映射与旧行读回、sequence/parent 校验、分支隔离分页 |
 | `projection.rs` tests | 折叠后投影窗口、事件-投影一致性、append-only 触发器、`rebuild_projection` 与增量投影等价 |
 | `session_tree.rs` tests | fork 四类边界与拒绝、幂等、lineage 排除 fork 后父分支追加 |
-| `catalog.rs` / `client_adapter.rs` tests | 目录排序/归档过滤；条件改名匹配写入、失配不更新时间、缺失拒绝；Registry insert/CAS/remove 乐观并发（借 `pawork-protocol` adapter 消费）；workspace 注册表幂等重登、跨重开存活、同 id 异 root fail-closed |
+| `catalog.rs` / `client_adapter.rs` tests | 目录排序/归档过滤、维护查询覆盖归档（`maintenance_listing_includes_archived_sessions`）；条件改名匹配写入、失配不更新时间、缺失拒绝；Registry insert/CAS/remove 乐观并发（借 `pawork-protocol` adapter 消费）；workspace 注册表幂等重登、跨重开存活、同 id 异 root fail-closed |
 | `test_support.rs`（cfg(test)） | fork_tree/interleaved/compaction 三个种子场景构造器，供迁移 golden 与 lineage 断言复现历史库形态 |
 | `command_ledger.rs` tests | New/Replay/InFlight 分类、key 冲突、重启 reclaim、容量 4096 全局淘汰（跨 tenant/scope） |
 | `compaction/*` tests | retention 各策略保留集、engine 产出 recovery 分支与快照（含同 head 重试复用）、snapshot v1 serde golden |

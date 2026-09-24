@@ -59,15 +59,57 @@ fn install_definition(exe: &str, name: &str, instance: &str) -> String {
         let plist = launchd_plist(exe, name, instance);
         format!("{plist}")
     } else if cfg!(target_os = "linux") {
-        format!(
-            "[Unit]\nDescription=Pawork Core\n\n[Service]\nExecStart={exe} --instance {instance} gui serve\nRestart=on-failure\n\n[Install]\nWantedBy=default.target\n"
-        )
+        systemd_unit(exe, instance)
     } else {
         "unsupported platform for service install".to_string()
     }
 }
 
+/// R-15：systemd ExecStart 编码——双引号包裹保证含空格路径解析为单个
+/// argv；反斜杠与双引号转义，`%` 翻倍（systemd specifier 展开）。
+fn systemd_escape(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('"');
+    for ch in value.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '%' => out.push_str("%%"),
+            _ => out.push(ch),
+        }
+    }
+    out.push('"');
+    out
+}
+
+fn systemd_unit(exe: &str, instance: &str) -> String {
+    format!(
+        "[Unit]\nDescription=Pawork Core\n\n[Service]\nExecStart={} --instance {} gui serve\nRestart=on-failure\n\n[Install]\nWantedBy=default.target\n",
+        systemd_escape(exe),
+        systemd_escape(instance)
+    )
+}
+
+/// R-15：plist XML 文本节点转义——`&`、`<`、`>`、`"`、`'`。
+fn xml_escape(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
 fn launchd_plist(exe: &str, name: &str, instance: &str) -> String {
+    let name = xml_escape(name);
+    let exe = xml_escape(exe);
+    let instance = xml_escape(instance);
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -357,6 +399,31 @@ mod tests {
             )),
             "Windows stop must sc delete: {steps:?}"
         );
+    }
+
+    #[test]
+    fn systemd_unit_quotes_and_escapes_executable_path() {
+        // R-15：含空格 / 百分号 / 反斜杠的路径经 systemd 编码后，
+        // ExecStart 解析还原完整 executable 与 argv（双引号包住空格、
+        // `%` 翻倍不触发 specifier 展开）。
+        let unit = systemd_unit("/opt/pa work/100%/pawork", "dev");
+        assert!(
+            unit.contains("ExecStart=\"/opt/pa work/100%%/pawork\" --instance \"dev\" gui serve"),
+            "{unit}"
+        );
+    }
+
+    #[test]
+    fn launchd_plist_escapes_xml_special_characters() {
+        // R-15：含 `&`/`<`/`>` 的路径与名称经 XML 转义后 plist 合法，
+        // ProgramArguments 解析还原完整 argv。
+        let plist = launchd_plist("/tmp/a&b</pawork>", "pa<work>", "dev");
+        assert!(
+            plist.contains("<string>/tmp/a&amp;b&lt;/pawork&gt;</string>"),
+            "{plist}"
+        );
+        assert!(plist.contains("<string>pa&lt;work&gt;</string>"), "{plist}");
+        assert!(!plist.contains("<string>pa<work></string>"), "{plist}");
     }
 
     #[test]

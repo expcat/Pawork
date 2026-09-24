@@ -17,11 +17,11 @@
 | `src/chat.rs` | ~650 | `run_chat`（REPL + 单次）、`run_once`、`run_json`（`--json` 驱动）；REPL 斜杠命令处理；`drive_turn` Ctrl-C 取消；轮末 usage 行；`map_turn_error` |
 | `src/sessions.rs` | ~700 | `sessions list/show/export/import/fork` 实现；`.jsonl` 首行签名嗅探（Codex 信封 / Claude 本地行 / Pi 默认）；`format_millis`（无时区库的 UTC 格式化） |
 | `src/auth.rs` | ~120 | `auth list/set-key/login/logout`；OAuth 登录等待 5 分钟（`LOGIN_TIMEOUT`）；只显示掩码 |
-| `src/gui.rs` | ~150 | `gui serve`：消费 `run_inner` 已解析的 Host data directory，派生单实例 socket/pid/token，向认证握手注入同一路径；单实例探测、`TokenStore`、socket 目录 0o700、pid 文件、`GuiServer` accept 循环；握手能力由 `pawork_protocol::app::registry::gui_supported_capabilities()` **派生**（无手写清单） |
+| `src/gui.rs` | ~280 | `gui serve`：消费 `run_inner` 已解析的 Host data directory，派生单实例 socket/pid/token，向认证握手注入同一路径；单实例由实例级 `gui.lock` 独占锁保证（R-04，装配期获取，不再有探测-绑定竞态）、`TokenStore`、socket 目录 0o700、pid 文件（bind 成功后发布）、`GuiServer` accept 循环；握手能力由 `pawork_protocol::app::registry::gui_supported_capabilities()` **派生**（无手写清单）；R-11：`ConnectionSet` 登记活跃连接 + 每连接 reaper（`wait_done` 就绪即移除，探测短连接不再累积），退出按「关 listener → close 全部连接 → 逐 `wait_done` 收口 → 删除 PID → drop Host 持有者 → pty/Core shutdown → 随 Core 释放实例锁」排序，core 仍被共享时告警而不静默跳过 shutdown |
 | `src/headless.rs` | ~510 | `headless --json-stdio`：`HeadlessHandler`（hello 协商、capability gate、compat import/history、事件轮询）；`HOST_CAPABILITIES` 常量 |
 | `src/acp.rs` | ~280 | `acp serve` 进程循环：stdin 逐行 JSON-RPC 解析、`session/prompt` 并发 inflight、事件泵任务、outbox 冲刷、EOF 后 30s drain 收尾 |
 | `src/ops.rs` | ~360 | `status` / `watch` / `shutdown` / `doctor`；`gui_socket_path` / `gui_token_path` / `gui_pid_path` 命名；token 文件读取组装握手 proof；`InstanceReport` |
-| `src/service.rs` | ~390 | `service install/start/stop`：三平台（launchd plist / systemd user unit / Windows SCM）定义生成；默认 dry-run；`--apply` 执行；stop 回收步骤（`TeardownStep`） |
+| `src/service.rs` | ~450 | `service install/start/stop`：三平台（launchd plist / systemd user unit / Windows SCM）定义生成（R-15：systemd ExecStart 双引号包裹 + 反斜杠/双引号转义 + `%` 翻倍，plist `<string>` XML 五字符转义——含空格或 `&`/`<` 的路径解析后 argv 完整）；默认 dry-run；`--apply` 执行；stop 回收步骤（`TeardownStep`） |
 | `src/vcs.rs` | ~200 | `diff`（分页 10 文件/页、git 概况走 stderr）与 `rollback`（列表 / 询问 / 确认 / Blob 还原） |
 | `src/mcp.rs` | ~50 | `mcp list/test`：`McpServerStatus` 行渲染（name / transport / state / tools / last_error），`--json` 直接序列化数组 |
 | `src/usage.rs` | ~50 | `usage`：`usage_overview` 投影（provider / session / LocalLedger / 配额窗口） |
@@ -109,7 +109,7 @@ OPT-1 / ADR-053：`gui::run_gui` 经 `AppCore::set_approval_host` 只接线 GUI 
 | --- | --- | --- | --- | --- |
 | `headless` | JSONL 协议入口（SDK / 编程驱动） | `--json-stdio`（必须显式给出，否则 Usage 错误） | stdout 只写 JSONL 协议帧（含 hello 握手）；见 §4.4 | 审批走 `GuiApprovalHost`；capability gate fail-closed |
 | `acp serve` | ACP 编辑器通道（JSON-RPC stdio） | 裸 `acp`（无 `serve`）是解析错误 | stdio JSON-RPC（wire protocolVersion 1）；见 §4.5 | 审批转成 `session/request_permission`；registry `acp` 列准入 |
-| `gui serve` | 本机 GUI 协议服务（单客户端切片） | `--socket`（覆盖默认路径） | 前台阻塞 accept 循环；Ctrl-C 退出；bind 前探测拒绝双实例 | Token 认证（`gui.token`）；socket 目录 0o700；审批走 `GuiApprovalHost` 转发给 GUI 客户端 |
+| `gui serve` | 本机 GUI 协议服务（单客户端切片） | `--socket`（覆盖默认路径） | 前台阻塞 accept 循环；Ctrl-C 退出；单实例由装配期 `gui.lock` 独占保证（R-04），冲突即拒绝装配 | Token 认证（`gui.token`）；socket 目录 0o700；审批走 `GuiApprovalHost` 转发给 GUI 客户端 |
 | `service install` | 生成（或写入）开机常驻定义 | `--apply`（缺省 dry-run 只打印 plan 与激活提示） | plan 文本（macOS launchd plist / Linux systemd user unit / Windows `sc create`）；`--json` 输出对象（service / action / dry_run / plan / platform） | 默认不改系统；服务入口硬编码为 `<exe> --instance <i> gui serve` |
 | `service start` | 启动已安装服务 | `--apply` | `launchctl load` / `systemctl --user start` / `sc start` | 同上 |
 | `service stop` | 停止并回收服务 | `--apply` | 回收步骤序列：前缀命令尽力执行，**最后一步（删单元文件 / `sc delete`）必须落地**，避免 KeepAlive / 登录再拉起 | 同上 |
@@ -167,9 +167,9 @@ OPT-1 / ADR-053：`gui::run_gui` 经 `AppCore::set_approval_host` 只接线 GUI 
    - 事件回译：`RunChanged` 终态结算 prompt（映射见 §5），经 outbox 末尾的 `FlushBarrier` 保证此前全部帧写出后才释放；`ToolApprovalRequired` → `session/request_permission` 请求（选项固定 allow-once / reject-once），客户端响应回译为 `ToolApprove` 命令；其余可表示事件 → `session/update` 通知；`Diagnostic` 有意丢弃（不新增 update 臂）。run 归属未知的事件暂存 `held_events`，绑定后冲刷。
    - 订阅滞后 → `fail_closed_all_prompts`：清空 occupancy / pending / run 映射 / held_events，全部未决 prompt 以 Failed 释放，并释放 outbox 中全部屏障；清账本前先拍下已绑定 run 与挂起权限，清空后对每个 run 补发 `RunCancel`、对每个 pending permission 补发 `ToolApprove Deny`（best-effort 补偿，避免 Core 侧悬挂）。stdin EOF 后最多 drain 30 秒（`ACP_DRAIN_TIMEOUT`）等待活跃 run 收尾，inflight 任务 join 超时 2 秒后 abort。
 6. **gui serve 生命周期**：
-   - bind 前向目标 socket 发 300ms 探测连接，能连上即报错拒绝双实例（Unix bind 会清理 stale socket 文件，探测是唯一在线判定）。
-   - 以 `run_inner` 传入的同一 data directory 加载或生成 `gui.token`（`TokenStore`）→ 写 pid 文件 → `HandshakeService`（能力由 registry `gui_supported_capabilities()` 派生，并用 `with_host_data_dir` 注入该目录）+ `TokenAuthenticator` → 认证成功的 Accepted 握手发布可选只读元数据 → accept 循环持有连接句柄（`SessionHandle` 提前 drop 会令客户端握手 Broken pipe）。
-   - Ctrl-C 关闭监听、删 pid 文件、关闭 pty 与 Core；关闭不取消已进入 Core 的 run（进程内 run 随进程结束，跨进程存活语义归 service）。
+   - 单实例由实例级 `gui.lock` 独占锁保证（R-04）：装配期（打开库与 bind 之前）按 `InstanceRole::GuiHost` 获取并持有整个生命周期，锁冲突即拒绝装配——不再有「探测-绑定」竞态，崩溃遗留 socket 文件由 bind 侧 stale 清理兜底。
+   - 以 `run_inner` 传入的同一 data directory 加载或生成 `gui.token`（`TokenStore`）→ `HandshakeService`（能力由 registry `gui_supported_capabilities()` 派生，并用 `with_host_data_dir` 注入该目录）+ `TokenAuthenticator` → bind 成功后写 pid 文件（读到的 PID 必然对应已持有端点的进程）→ 认证成功的 Accepted 握手发布可选只读元数据 → accept 循环把连接句柄登记进 `ConnectionSet` 并挂 reaper（R-11，`wait_done` 完成信号到达即移除；`SessionHandle` 提前 drop 会令客户端握手 Broken pipe）。
+   - Ctrl-C 关闭监听后有序收口（R-11）：close 全部登记连接并逐 `wait_done` 等待会话任务结束 → 删除 pid 文件（实例锁继续持有到 Core 退出）→ drop server/listener 等 Host 持有者 → 关 pty、`Arc::try_unwrap` 成功才显式 Core shutdown（仍被共享则告警）；关闭不取消已进入 Core 的 run（进程内 run 随进程结束，跨进程存活语义归 service）。
 7. **审批五档与宿主选择**：
    - `--approval-mode` 五档：`always-ask` / `ask-for-writes` / `ask-for-dangerous` / `never-ask` / `read-only`（kebab 与 snake 拼写均可；缺省 `read-only`）。已移除的旧档 `on-failure` 保持拼写兼容，**映射为 `NeverAsk`**；未知档报错并列出合法值。
    - `--trust-workspaces` 与审批档正交：它只声明启动宿主对当前 workspace 的信任，不自动降低审批档，也不让 workspace 内容自我提权。
@@ -195,7 +195,8 @@ OPT-1 / ADR-053：`gui::run_gui` 经 `AppCore::set_approval_host` 只接线 GUI 
 - **通道身份戳**：三条程序化通道进 Core 的命令 / 查询一律 `CommandSource::Automation` + `ActorIdentity::Automation`（名称分别 `cli-json` / `headless` / ACP 侧）；ACP 通道由 `CliAcpCommandHost` 强制 `source=Automation` 并拒绝伪装 User——adapter/host 构造的合法 `acp:<client>` Automation 身份（含 `acp:pawork-acp`）原样保留，其余身份回退为 `acp`；`command_id` / `idempotency_key` 不改写，ledger scope 仍按 `CommandSource` 取 `automation`。command id 前缀 `cli-<name>-<进程命名空间>-<n>`（命名空间 = pid + 纳秒，进程级 OnceLock，防 command_ledger 跨进程撞键重放旧响应）/ `acp-<request_id>`——事件与审计侧可区分来源。
 - **ACP 错误映射为显式表**：`AdapterError` → JSON-RPC 码、`AdapterErrorFrame.code` 字符串 → 码、canonical `ErrorContext.category` → 码三张映射都在 `map.rs` 落表（NotFound → -32002、Authentication/Authorization → -32000、InvalidRequest → -32602、Cancelled → -32800、其余 → -32603）；`Artifact` 响应在 ACP 通道不支持（-32603）。
 - **凭证红线**：明文 key 只经 stdin 进 auth 文件；`auth list` 只显示掩码与来源；`format_provider_error` 对认证错误不透传上游消息原文。
-- **单实例与文件权限**：`gui serve` bind 前探测防双实例；socket 父目录（位于数据目录内时）强制 0o700；token 文件缺失 / 空内容显式失败，不回退为无认证。
+- **单实例与文件权限**：`gui serve` 经实例级 `gui.lock` 独占锁防双实例（R-04，装配期获取，先于打开库与 bind）；socket 父目录（位于数据目录内时）强制 0o700；token 文件缺失 / 空内容显式失败，不回退为无认证。
+- **实例角色与恢复隔离**（R-04/R-24）：装配按命令决定 `InstanceRole`——`gui serve` → `GuiHost`；`chat` / `run` / `headless` / `acp` / `agents` → `Executor`（登记活跃、确认无其他活跃宿主才清扫）；其余旁路查询（`sessions` / `models` / `usage` / `tasks` 等）→ `Catalog`（不取锁、永不触发启动清扫）。
 - **实例命名契约**（`ops.rs` 定义、lib.rs 测试钉死 default 命名不因 instance 参数化回归漂移）：
   - default instance：socket `pawork-gui.sock`、token `gui.token`、系统服务名 `pawork`；
   - 命名 instance `<i>`：socket `pawork-gui-<i>.sock`、token `gui-<i>.token`、服务名 `pawork.<i>`；
@@ -229,7 +230,7 @@ OPT-1 / ADR-053：`gui::run_gui` 经 `AppCore::set_approval_host` 只接线 GUI 
 | `src/approval.rs` tests | 审批提示格式（tool / path / risk / preview；edit 与 apply_patch 的 hunk preview） |
 | `src/render.rs` tests | 工具活动行（成功字节数 / 失败原因）、`run_command` 取消提示、stderr 红色仅限彩色终端、`已截断` 检测、沙箱回退 notice（现行 / 旧版 Diagnostic 形状、空 note、message 直传与默认串） |
 | `src/sessions.rs` tests | `.jsonl` 首行签名嗅探（Codex / Claude / Pi、首行无 message、首行超 8K 不误判）、本地源白名单（拒绝 grok）、`format_millis` epoch 断言 |
-| `src/service.rs` tests | 三平台 stop 回收计划（macOS unload + 删 plist、Linux stop + disable + 删 unit、Windows sc stop + delete）；`apply_teardown` 真删文件 |
+| `src/service.rs` tests | 三平台 stop 回收计划（macOS unload + 删 plist、Linux stop + disable + 删 unit、Windows sc stop + delete）；`apply_teardown` 真删文件；R-15 systemd ExecStart 引号/转义与 plist XML 转义（纯文本生成断言，不安装系统服务） |
 | `src/headless.rs` tests | `WorkspaceAdd` 未映射 fail-closed；已授予 capability 放行；registry headless 列 ⊆ `HOST_CAPABILITIES`；`HOST_CAPABILITIES` 快照钉死 |
 | `src/error.rs` tests | 认证 / 限流 / 超时 / 网络四类错误文案（认证错误不透传上游消息） |
 | `src/channels/acp/adapter.rs` tests | registry `acp` 列 = 四命令钉死；准入门放行 / 拒绝 |
@@ -253,7 +254,7 @@ Cargo `[[test]]` 把 target 命名为 `acp_fixtures` / `acp_floor`（文件为 `
 - `models --json` 的 models 数组形状标注 unstable，随 registry 目录演进。
 - `rollback` 交互式输入的 checkpoint id 不在列表内时不在 CLI 层拦截，由 core 侧回滚失败兜底。
 - ACP actor 运行在独立 OS 线程（current_thread runtime）：公开同步 API（drain / fail-closed）带 2s 超时回执，超时降级为 degrade 告警不阻塞 teardown；actor 线程 spawn 失败只记 degrade 事件，宿主进入不可用态（请求回 "ACP host actor is unavailable"）。
-- ACP 首轮能力白名单为空（`ACP_SUPPORTED_CAPABILITIES = []`）：客户端声明的能力全部降级记录（可经 `degraded_capabilities()` 审计），`mcpServers` 非空、`additionalDirectories`、image / audio / resource content block、`session/load` 均显式拒绝；`resource_link` 映射为安全文本引用 `[name](uri)`，不拉取资源。
+- ACP 首轮能力白名单为空（`ACP_SUPPORTED_CAPABILITIES = []`）：客户端声明的能力全部降级记录（可经 `degraded_capabilities()` 审计），`mcpServers` 非空、`additionalDirectories`、image / audio / resource content block、`session/load` 均显式拒绝；`resource_link` 映射为安全文本引用（名称和 URI），不拉取资源。
 - `service` 定义模板硬编码 `gui serve` 为服务入口；不支持的平台显式报错。macOS / Linux 的 `install --apply` 只写定义文件，激活需按提示手动执行或 `start --apply`。
 - `watch` / `doctor` 的握手探测需要 token 文件本机可读；`doctor` 报告 `handshake: failed: …` 而不中断其余检查。
 - 本包自身不安装 tracing subscriber：日志装配与全字段脱敏（`Redactor` / `RedactingFmtLayer`）由宿主二进制承载（见 [pawork.md](pawork.md)），本包只发 `tracing` 事件。

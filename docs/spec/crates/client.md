@@ -44,7 +44,7 @@
 - `command(AppCommand, CommandSource, ActorIdentity)` / `query(AppQuery, ...)`：自动装配信封；自动 id 由握手 `client_id` + 每连接实例 request namespace + 自增序号组成，Host 进程重启后也不会与持久化幂等账本中的旧请求碰撞。`command_envelope` / `query_envelope` 仍接受调用方完整信封（显式幂等重放场景）。返回 `AppResponseEnvelope`。
 - `subscribe(subscription_id, streams)`（空 `streams` = 全量）/ `subscribe_all()` / `unsubscribe(id)`：协议无订阅专用 Ack，实现用「Heartbeat 屏障」——控制帧后紧发 `Heartbeat{nonce}`，Pong 前出现的 request-scoped Error 即订阅失败（如 `PermissionDenied`），不误报成功、不污染后续 Heartbeat。
 - `next_event()` / `next_event_timeout(duration)`：读取下一条 `AppEventEnvelope`；`request_id = None` 的连接级 Error 帧（如 `ReplayUnavailable`）在此路径显式抛出。
-- `snapshot()`、`resume(last_global_sequence) -> ResumeOutcome { disposition, replayed, snapshot }`、`ack(global_sequence)`、`heartbeat()` / `heartbeat_with_nonce(nonce) -> nonce`、`close()` / `disconnect()`（幂等）。
+- `snapshot()`、`resume(last_global_sequence) -> ResumeOutcome { disposition, replayed, snapshot }`、`ack(global_sequence)`、`heartbeat()` / `heartbeat_with_nonce(nonce) -> nonce`、`close()` / `disconnect()`（幂等）。R-12：Snapshot/Resume 回复帧无 request_id，等待超时即 `disconnect()` 废弃连接（迟到的旧快照不会被后续请求误收；调用方经既有重连路径恢复）。
 
 **GuiClient 错误**
 
@@ -88,9 +88,9 @@ UI-6b G2：crate 根增加 `ProviderAccountSelectionMode`、`QuotaOverviewQuery/
 
 ## 5. 契约与不变量
 
-- **版本协商**：`ClientConfig::supported_api_versions` 默认跟随 `pawork-protocol::SUPPORTED_API_VERSIONS`（1.0–1.21），服务端取 major 相同的最高共同 minor；不兼容必须显式拒绝（`IncompatibleVersion`），后续 ServerFrame 信封版本漂移由 `ClientError::Version` 捕获（ADR-036）。headless 侧 `SDK_API_VERSION` 跟随 `pawork_protocol::API_VERSION`（当前 1.21）同理；`command_envelope` / `query_envelope` 发送前按 registry `since` 做版本门，旧 minor 拒发新命令。
+- **版本协商**：`ClientConfig::supported_api_versions` 默认跟随 `pawork-protocol::SUPPORTED_API_VERSIONS`（1.0–1.22），服务端取 major 相同的最高共同 minor；不兼容必须显式拒绝（`IncompatibleVersion`），后续 ServerFrame 信封版本漂移由 `ClientError::Version` 捕获（ADR-036）。headless 侧 `SDK_API_VERSION` 跟随 `pawork_protocol::API_VERSION`（当前 1.22）同理；`command_envelope` / `query_envelope` 发送前按 registry `since` 做版本门，旧 minor 拒发新命令。
 - **帧上限**：经 `ConnectOptions::max_frame_bytes` 与 transport 对齐 1 MiB（见 [transport.md](transport.md)）；本 crate 不改帧格式。
-- **FrameWant 路由不变量**：Response / Resume 只按 `request_id` 匹配；Snapshot 载荷帧无 `request_id`（协议帧无身份，补身份需演进 wire 格式），`snapshot` / `resume` 共用 `snapshot_inflight` 串行锁，保证任意快照帧匹配不会互取对方回复；Event 消费路径独占 `request_id = None` 的错误帧；不匹配帧只 stash 不丢弃——并发调用互不吞帧。
+- **FrameWant 路由不变量**：Response / Resume 只按 `request_id` 匹配；Snapshot 载荷帧无 `request_id`（协议帧无身份，补身份需演进 wire 格式），`snapshot` / `resume` 共用 `snapshot_inflight` 串行锁，防止并发等待互取回复；等待超时即废弃整条连接（R-12），迟到 Snapshot 不可能落到下个请求。Event 消费路径独占 `request_id = None` 的错误帧；不匹配帧只 stash 不丢弃——并发调用互不吞帧。
 - **幂等重放**：同 `command_id` 的 `command_envelope` 重放由宿主 IdempotencyStore 返回相同响应（probe `command-idempotency` 钉住）。
 - **自动请求 id 隔离**：`command` / `query` 的自动 id 在不同 `GuiClient` 连接实例间不复用；即使 Host 重启后 `client_id` 重新从 `client-0` 计数，也不能命中旧进程留下的持久化幂等记录。调用方显式传入 `command_envelope` 的 id 不改写。
 - **Snapshot 能力约定**：未获授 `Snapshots` 时服务端不得发送首帧 Snapshot、客户端不得等待（contract 测试钉住）。
@@ -142,7 +142,7 @@ UI-6b G2：crate 根增加 `ProviderAccountSelectionMode`、`QuotaOverviewQuery/
 
 **`examples/probe.rs`（live 模式，需真实 `pawork gui serve`）**：`--connect`（握手 + WorkspaceList）、`--live-two-gui`（双客户端、kill 一个后 Resume Replay）、`--live-pty`（开 PTY、写入、断线重连续接）；token 缺省读 `{data_dir}/gui.token`。
 
-**`src/lib.rs` 内联（12）**：FrameWant 匹配矩阵（request-scoped vs 连接级 Error）、事件等待者与响应等待者互不饿死、并发 snapshot 往返串行化（第二个请求等第一个完成，request-scoped Error 与 Snapshot 各回各的调用方）、`next_event` 显式暴露 `ReplayUnavailable`、连接实例 request namespace 不重复等。
+**`src/lib.rs` 内联（13）**：FrameWant 匹配矩阵（request-scoped vs 连接级 Error）、事件等待者与响应等待者互不饿死、并发 snapshot 往返串行化（第二个请求等第一个完成，request-scoped Error 与 Snapshot 各回各的调用方）、`next_event` 显式暴露 `ReplayUnavailable`、连接实例 request namespace 不重复、R-12 `snapshot_timeout_discards_connection`（超时废弃连接、后续请求报 Disconnected）等。
 
 默认验证入口：`bash scripts/test.sh client`（补齐 `probe-self-test`）；真实子进程入口为 `bash scripts/test.sh --host`。
 

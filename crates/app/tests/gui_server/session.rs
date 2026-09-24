@@ -499,6 +499,18 @@ mod unix_tests {
     use super::*;
 
     #[tokio::test]
+    async fn wait_done_fires_after_client_disconnect() {
+        // R-11：wait_done 是宿主回收连接句柄的完成信号——对端断开后必须
+        // 在有界时间内就绪。
+        let harness = open_harness("wait-done").await;
+        handshake_and_snapshot(&harness.client).await;
+        drop(harness.client);
+        tokio::time::timeout(Duration::from_secs(2), harness._session.wait_done())
+            .await
+            .expect("client 断开后 wait_done 必须有界就绪");
+    }
+
+    #[tokio::test]
     async fn slow_upstream_queries_allow_writes_heartbeat_and_drop_on_disconnect() {
         for model_list in [false, true] {
             let harness = open_harness("quota-responsive").await;

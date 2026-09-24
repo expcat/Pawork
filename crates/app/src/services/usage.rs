@@ -1,6 +1,8 @@
 //! Usage 领域服务：usage 对账（overview / session / last run）与费用估算。
 
-use pawork_domain::{Cost, ModelId, ProviderId, RequestId, RunId, SessionId, TokenUsage};
+use pawork_domain::{
+    AgentEvent, Cost, ModelId, ProviderId, RequestId, RunId, SessionId, TokenUsage,
+};
 
 use crate::control::{self, ControlPlaneRuntime, UsageOverview};
 use crate::{AppCore, AppError};
@@ -42,24 +44,191 @@ impl UsageService {
         request_id: &RequestId,
         usage: &TokenUsage,
     ) -> Result<(), AppError> {
-        let cost = self.estimate_cost_for(core, &core.model, usage);
-        let record = control::usage_record(
+        self.record_attributed_usage(
+            core,
             session_id,
             run_id,
             request_id,
             &core.provider_id,
             &core.model,
             usage,
+            pawork_engine::now_timestamp().as_unix_millis(),
+        )
+        .await
+    }
+
+    /// 带显式归属的入账：正常路径用 core 当前 provider/model；启动对账
+    /// （R-22）用持久事件恢复的归属，不拿当前配置顶替历史事实。
+    /// R-13：账本成功写入后失效该 scope 的本地派生 quota 窗口缓存，
+    /// 读→写→立即读不再拿到入账前旧窗口；远端权威额度缓存口径不变。
+    async fn record_attributed_usage(
+        &self,
+        core: &AppCore,
+        session_id: &SessionId,
+        run_id: &RunId,
+        request_id: &RequestId,
+        provider_id: &ProviderId,
+        model_id: &ModelId,
+        usage: &TokenUsage,
+        occurred_at_ms: u64,
+    ) -> Result<(), AppError> {
+        let cost = self.estimate_cost_for(core, model_id, usage);
+        let mut record = control::usage_record(
+            session_id,
+            run_id,
+            request_id,
+            provider_id,
+            model_id,
+            usage,
             cost.as_ref().map(|item| item.amount_micros).unwrap_or(0),
             cost.as_ref()
                 .map(|item| item.currency.as_str())
                 .unwrap_or(""),
         );
+        record.occurred_at_ms = occurred_at_ms;
         self.control
             .ledger
             .record(record)
             .await
-            .map_err(|error| AppError::ControlPlane(error.to_string()))
+            .map_err(|error| AppError::ControlPlane(error.to_string()))?;
+        self.control
+            .quota
+            .invalidate_local_scope(&control::quota_scope(provider_id));
+        Ok(())
+    }
+
+    /// R-22 启动对账：持久终态已知用量的 run 若账本缺记录则幂等补账。
+    /// - 归属（request_id / provider / model）只取自该 run 首个
+    ///   `ProviderRequestStarted` 持久事件——缺归属不猜，跳过并告警；
+    /// - 幂等：先按 (tenant, account, run_id) 查账本，命中即跳过；补账
+    ///   与正常入账共用 `usage_record` 构造（record_id 确定性），跨
+    ///   进程撞键由账本 (tenant, account, request_id, attempt) 去重兜底；
+    /// - 只写账本，不改 Run 终态、不追加事件；
+    /// - 单 session 失败只 warn，不阻断启动。
+    pub(crate) async fn reconcile_ledger_from_terminal_runs(&self, core: &AppCore) {
+        let sessions = match core.store() {
+            Ok(store) => match store.list_sessions_including_archived().await {
+                Ok(sessions) => sessions,
+                Err(error) => {
+                    tracing::warn!(error = %error, "usage reconcile skipped: list sessions failed");
+                    return;
+                }
+            },
+            Err(error) => {
+                tracing::warn!(error = %error, "usage reconcile skipped: store not open");
+                return;
+            }
+        };
+        for record in sessions {
+            let session_id = SessionId::from(record.session_id.as_str());
+            if let Err(error) = self.reconcile_session_ledger(core, &session_id).await {
+                tracing::warn!(
+                    session_id = session_id.as_str(),
+                    error = %error,
+                    "usage reconcile failed for session; continuing startup"
+                );
+            }
+        }
+    }
+
+    async fn reconcile_session_ledger(
+        &self,
+        core: &AppCore,
+        session_id: &SessionId,
+    ) -> Result<(), AppError> {
+        let snapshot = core.store()?.projection_snapshot(session_id).await?;
+        let terminal: Vec<(RunId, TokenUsage)> = snapshot
+            .runs
+            .iter()
+            .filter(|run| matches!(run.state.as_str(), "completed" | "failed" | "cancelled"))
+            .filter_map(|run| {
+                usage_from_run_json(&run.data)
+                    .filter(|usage| !usage.is_zero())
+                    .map(|usage| (run.run_id.clone(), usage))
+            })
+            .collect();
+        if terminal.is_empty() {
+            return Ok(());
+        }
+        // 每个 run 的首个 ProviderRequestStarted 归属（事件按序重放，
+        // 首个 request_id 即正常入账使用的那个）。
+        let events = core
+            .store()?
+            .replay_events(session_id, 0, usize::MAX)
+            .await?;
+        let mut attribution: std::collections::HashMap<RunId, (RequestId, ProviderId, String)> =
+            std::collections::HashMap::new();
+        let mut usage_times = std::collections::HashMap::new();
+        for envelope in &events {
+            match &envelope.payload {
+                AgentEvent::UsageUpdated { .. } => {
+                    usage_times
+                        .insert(envelope.run_id.clone(), envelope.timestamp.as_unix_millis());
+                }
+                AgentEvent::RunCompleted { .. }
+                | AgentEvent::RunFailed { .. }
+                | AgentEvent::RunCancelled { .. } => {
+                    usage_times
+                        .entry(envelope.run_id.clone())
+                        .or_insert(envelope.timestamp.as_unix_millis());
+                }
+                _ => {}
+            }
+            if let AgentEvent::ProviderRequestStarted {
+                request_id,
+                provider_id,
+                model,
+            } = &envelope.payload
+            {
+                attribution
+                    .entry(envelope.run_id.clone())
+                    .or_insert_with(|| (request_id.clone(), provider_id.clone(), model.clone()));
+            }
+        }
+        for (run_id, usage) in terminal {
+            let Some(&occurred_at_ms) = usage_times.get(&run_id) else {
+                continue;
+            };
+            let Some((request_id, provider_id, model)) = attribution.get(&run_id) else {
+                tracing::warn!(
+                    run_id = run_id.as_str(),
+                    "usage reconcile skipped: no persisted ProviderRequestStarted attribution"
+                );
+                continue;
+            };
+            match control::ledger_has_run(self.control.ledger.as_ref(), &run_id).await {
+                Ok(true) => continue,
+                Ok(false) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        run_id = run_id.as_str(),
+                        error = %error,
+                        "usage reconcile ledger query failed"
+                    );
+                    continue;
+                }
+            }
+            if let Err(error) = self
+                .record_attributed_usage(
+                    core,
+                    session_id,
+                    &run_id,
+                    request_id,
+                    provider_id,
+                    &ModelId::from(model.as_str()),
+                    &usage,
+                    occurred_at_ms,
+                )
+                .await
+            {
+                tracing::warn!(
+                    run_id = run_id.as_str(),
+                    error = %error,
+                    "usage reconcile record failed"
+                );
+            }
+        }
+        Ok(())
     }
 
     pub async fn usage_overview(
@@ -176,9 +345,9 @@ mod tests {
 
     use async_trait::async_trait;
     use pawork_domain::{
-        CancellationToken, CanonicalModelRequest, ModelDefinition, ModelId, ModelProvider,
-        ModelResponseSummary, ProviderError, ProviderId, ProviderStreamEvent, ResolvedCredential,
-        StopReason, TokenUsage,
+        AgentEvent, CancellationToken, CanonicalModelRequest, MessageId, ModelDefinition, ModelId,
+        ModelProvider, ModelResponseSummary, ProviderError, ProviderId, ProviderStreamEvent,
+        RequestId, ResolvedCredential, RunId, SessionId, StopReason, TokenUsage,
     };
     use pawork_providers::ModelRegistry;
 
@@ -232,6 +401,198 @@ mod tests {
             .expect("last")
             .expect("at least one completed run");
         assert_eq!(last, usage);
+        core.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn reconcile_backfills_missing_ledger_record_once() {
+        // R-22：终态已知用量但账本缺记录（模拟终态后入账失败）——启动对账
+        // 幂等补账恰好一次，重复对账不重复，成功 Run 终态与事件流不变。
+        use pawork_auth::{MemoryBackend, SecretBackend};
+        use pawork_workspace::config::PaworkConfig;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("session.db");
+        let session = SessionId::from("ses-reconcile");
+        let run = RunId::from("run-reconcile");
+        let occurred_at = pawork_domain::Timestamp::from_unix_millis(1_700_000_000_000);
+        let usage = TokenUsage {
+            input_tokens: 200,
+            output_tokens: 80,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+        };
+        {
+            let (store, _) = pawork_storage::session::SessionStore::open(&path)
+                .await
+                .expect("store");
+            store
+                .create_session(&session, "reconcile", pawork_engine::now_timestamp())
+                .await
+                .expect("session");
+            let payloads = [
+                AgentEvent::RunStarted {
+                    trigger_message_id: MessageId::from("msg-reconcile"),
+                },
+                AgentEvent::ProviderRequestStarted {
+                    request_id: RequestId::from("req-reconcile-1"),
+                    provider_id: ProviderId::from("mock"),
+                    model: "glm-5.2".into(),
+                },
+                AgentEvent::RunCompleted {
+                    stop_reason: StopReason::Completed,
+                    usage: usage.clone(),
+                },
+            ];
+            for (index, payload) in payloads.into_iter().enumerate() {
+                store
+                    .append_event(
+                        pawork_storage::session::DEFAULT_BRANCH_ID,
+                        pawork_domain::AgentEventEnvelope::new(
+                            pawork_domain::EventId::from(format!("evt-reconcile-{index}")),
+                            session.clone(),
+                            run.clone(),
+                            pawork_domain::EventSequence::new((index + 1) as u64),
+                            occurred_at,
+                            payload,
+                        ),
+                    )
+                    .await
+                    .expect("append seed event");
+            }
+            store.shutdown().await.expect("seed shutdown");
+        }
+
+        let backend: std::sync::Arc<dyn SecretBackend> = std::sync::Arc::new(MemoryBackend::new());
+        let mut core =
+            crate::AppCore::from_config_inner(PaworkConfig::default(), None, None, backend, true)
+                .await
+                .expect("core");
+        core.attach_workspace(dir.path()).expect("attach workspace");
+        core.open_store(&path).await.expect("open store");
+        core.open_control_plane(dir.path()).expect("control");
+
+        async fn records_for_run(
+            core: &crate::AppCore,
+            run: RunId,
+        ) -> Vec<pawork_control_plane::UsageRecord> {
+            core.usage
+                .control
+                .ledger
+                .query(&pawork_control_plane::UsageQuery {
+                    run_id: Some(run),
+                    ..Default::default()
+                })
+                .await
+                .expect("query")
+        }
+
+        core.reconcile_usage_ledger().await;
+        let records = records_for_run(&core, run.clone()).await;
+        assert_eq!(records.len(), 1, "缺记录必须补恰好一条");
+        assert_eq!(records[0].input_tokens, 200);
+        assert_eq!(records[0].output_tokens, 80);
+        assert_eq!(
+            records[0].occurred_at_ms,
+            occurred_at.as_unix_millis(),
+            "补账必须保留历史时间，不能移入本次启动的用量窗口"
+        );
+        assert_eq!(
+            records[0].request_id.as_ref().map(|id| id.as_str()),
+            Some("req-reconcile-1"),
+            "归属必须取自持久 ProviderRequestStarted"
+        );
+        assert_eq!(records[0].provider_id.as_str(), "mock");
+
+        let snapshot = core
+            .store()
+            .expect("store")
+            .projection_snapshot(&session)
+            .await
+            .expect("snapshot");
+        assert_eq!(snapshot.runs[0].state, "completed", "成功 Run 终态不变");
+        let events = core
+            .store()
+            .expect("store")
+            .replay_events(&session, 0, usize::MAX)
+            .await
+            .expect("replay");
+        assert_eq!(events.len(), 3, "对账只写账本，不追加事件");
+
+        core.reconcile_usage_ledger().await;
+        let records = records_for_run(&core, run.clone()).await;
+        assert_eq!(records.len(), 1, "重复对账不得重复计账");
+        core.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn record_usage_invalidates_local_quota_cache() {
+        // R-13：账本成功入账后，同 scope 的本地派生 quota 窗口缓存失效——
+        // 读→写→立即读不再拿到入账前的旧窗口。
+        let (core, _dir) = mock_core_with_usage(
+            vec![
+                ProviderStreamEvent::TextDelta("ok".into()),
+                ProviderStreamEvent::ResponseCompleted(StopReason::Completed),
+            ],
+            TokenUsage {
+                input_tokens: 10,
+                output_tokens: 5,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+            },
+        )
+        .await;
+        let scope = crate::control::quota_scope(&ProviderId::from("mock"));
+        let snapshot = pawork_control_plane::quota::QuotaSnapshot {
+            scope: scope.clone(),
+            window: pawork_control_plane::quota::QuotaWindow::Overall,
+            unit: pawork_control_plane::quota::QuotaUnit::Token,
+            values: pawork_control_plane::quota::QuotaValues::new(
+                pawork_control_plane::quota::QuotaMeasure::exact(0),
+                pawork_control_plane::quota::QuotaMeasure::exact(100),
+                pawork_control_plane::quota::QuotaMeasure::exact(100),
+            ),
+            reset: pawork_control_plane::quota::QuotaReset::Unknown,
+            confidence: pawork_control_plane::quota::Confidence::Derived,
+            provenance: pawork_control_plane::quota::QuotaProvenance::new(
+                pawork_control_plane::quota::AdapterKind::LocalLedger,
+                "test",
+                pawork_domain::Timestamp::from_unix_millis(1),
+            ),
+        };
+        core.usage
+            .control
+            .quota
+            .publish_local_snapshot(snapshot)
+            .expect("publish");
+        assert_eq!(
+            core.usage
+                .control
+                .quota
+                .cached_snapshots_for_scope(&scope)
+                .len(),
+            1
+        );
+
+        let session = core.create_session("quota").await.expect("create");
+        let sink = RecordingEvents::default();
+        core.chat_turn(
+            &session,
+            vec![user_hello()],
+            &sink,
+            CancellationToken::new(),
+        )
+        .await
+        .expect("turn");
+
+        assert!(
+            core.usage
+                .control
+                .quota
+                .cached_snapshots_for_scope(&scope)
+                .is_empty(),
+            "入账后本地派生窗口缓存必须失效"
+        );
         core.shutdown().await.expect("shutdown");
     }
 

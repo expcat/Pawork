@@ -36,6 +36,7 @@ use crate::data_dir::{
     protected_store_path_for, session_db_path_for,
 };
 use crate::diff::SessionDiff;
+use crate::instance_lock::{InstanceOwnership, InstanceRole};
 use crate::protocol::{AdapterProtocol, ProtocolError};
 use crate::provider_assembly::{
     assemble_provider, assemble_registry, channel_protocol, is_credential_pending,
@@ -58,6 +59,9 @@ pub struct AppLoadOptions {
     pub auth_backend: Option<Arc<dyn SecretBackend>>,
     /// 隔离实例名（数据目录子路径；默认 `default`）。
     pub instance: String,
+    /// 实例角色（R-04/R-24）：决定实例锁获取与启动清扫资格；
+    /// 默认 Catalog（只读不清扫）。
+    pub instance_role: InstanceRole,
 }
 
 impl std::fmt::Debug for AppLoadOptions {
@@ -73,6 +77,7 @@ impl std::fmt::Debug for AppLoadOptions {
             .field("has_approval_host", &self.approval_host.is_some())
             .field("has_auth_backend", &self.auth_backend.is_some())
             .field("instance", &self.instance)
+            .field("instance_role", &self.instance_role)
             .finish()
     }
 }
@@ -89,6 +94,7 @@ impl AppLoadOptions {
             approval_host: None,
             auth_backend: None,
             instance: crate::DEFAULT_INSTANCE.to_string(),
+            instance_role: InstanceRole::default(),
         }
     }
 }
@@ -158,6 +164,8 @@ pub enum AppError {
     InvalidProxy(String),
     #[error("{0}")]
     InvalidInstance(String),
+    #[error("另一个 pawork GUI Host 已在实例上运行：{0}")]
+    InstanceLocked(String),
     #[error(transparent)]
     Checkpoint(#[from] pawork_storage::blob::CheckpointError),
     #[error(transparent)]
@@ -269,8 +277,9 @@ impl RoleModelKind {
     }
 }
 
-/// S5 压缩在 engine 侧保留的最近消息条数；session 侧保留策略按
-/// `RETAINED_MESSAGES / 2` 轮对齐同一折叠边界。
+/// S5 压缩在 engine 侧保留的最近消息条数；session 侧保留策略按同一
+/// count 后缀（`retained_messages`）与 engine 的 `split_at(len - N)`
+/// 共享同一折叠边界（R-07）。
 pub(crate) const RETAINED_MESSAGES: usize = 4;
 
 /// 目录兜底 provider：默认 provider 缺凭证时的占位（list 空目录、stream
@@ -389,6 +398,10 @@ pub struct AppCore {
     pub(crate) next_session: AtomicU64,
     pub(crate) next_message: AtomicU64,
     pub(crate) next_workspace: AtomicU64,
+    /// R-04/R-24：实例所有权。load_with 按 InstanceRole 获取；
+    /// from_parts 等直连装配为 None（沿用既有清扫语义，仅供测试与
+    /// 进程内复用）。
+    pub(crate) instance_ownership: Option<InstanceOwnership>,
 }
 
 /// 把 engine 的完整估算器桥接到 session 侧窄口 trait（依赖倒置的宿主实现）。
@@ -478,6 +491,12 @@ impl AppCore {
         } else {
             crate::normalize_instance(&options.instance).map_err(AppError::InvalidInstance)?
         };
+        // R-04/R-24：实例所有权必须先于打开库与恢复清扫——GuiHost 在此
+        // 被拒（单实例）；Executor 在此登记活跃并判定清扫权；Catalog 不取锁。
+        core.instance_ownership = Some(crate::instance_lock::acquire_instance_ownership(
+            &crate::instance_dir(&data_dir, instance),
+            options.instance_role,
+        )?);
         core.open_store(session_db_path_for(&data_dir, instance))
             .await?;
         core.prime_extensions().await?;
@@ -486,6 +505,7 @@ impl AppCore {
         core.open_protected(protected_store_path_for(&data_dir, instance))
             .await?;
         core.open_control_plane(crate::instance_dir(&data_dir, instance))?;
+        core.reconcile_usage_ledger().await;
         Ok(core)
     }
 
@@ -518,6 +538,7 @@ impl AppCore {
             core.open_checkpoints(parent.join("artifacts")).await?;
             core.open_protected(parent.join("protected")).await?;
             core.open_control_plane(parent.to_path_buf())?;
+            core.reconcile_usage_ledger().await;
         }
         Ok(core)
     }
@@ -756,6 +777,7 @@ impl AppCore {
             next_session: AtomicU64::new(1),
             next_message: AtomicU64::new(1),
             next_workspace: AtomicU64::new(1),
+            instance_ownership: None,
         }
     }
 
@@ -1026,7 +1048,16 @@ impl AppCore {
         // P2-2A 悬空 run 诚实收口：把上次进程在终态前结束遗留的 running
         // run 落 RunFailed（幂等；waiting tool call 保持 pending 可决议；
         // 单 session 失败只 warn，不阻断启动）。
-        self.session.seal_interrupted_runs(self).await;
+        // R-24：只有取得实例所有权并确认无其他活跃宿主的宿主才能清扫；
+        // 只读旁路（Catalog）与旁观者不清扫活跃 Host 的 run。
+        // None（from_parts / load_from 直连路径）沿用既有清扫语义。
+        let may_sweep = self
+            .instance_ownership
+            .as_ref()
+            .map_or(true, |ownership| ownership.can_sweep());
+        if may_sweep {
+            self.session.seal_interrupted_runs(self).await;
+        }
         Ok(())
     }
 
@@ -1034,13 +1065,47 @@ impl AppCore {
         let dir = dir.as_ref();
         self.usage.control = control::ControlPlaneRuntime::persistent(dir)?;
         self.open_tasks(dir.join("tasks.json"))?;
+        // R-23：与 open_store 的 run 清扫同一道所有权门（R-24）——只有
+        // 确认无其他活跃宿主的宿主才收口孤儿任务；Catalog 旁路与旁观者
+        // 不得误扫活跃 Host 的任务。None（from_parts 直连）沿用旧语义。
+        let may_sweep = self
+            .instance_ownership
+            .as_ref()
+            .map_or(true, |ownership| ownership.can_sweep());
+        if may_sweep {
+            self.tasks.seal_orphaned_active_tasks();
+        }
+        // Run 和 Task 恢复共用同一临界区；提前放锁会让下一宿主新建的
+        // 活跃任务被本次 Task 恢复误判为孤儿。
+        if let Some(ownership) = self.instance_ownership.as_mut() {
+            ownership.finish_sweep();
+        }
         Ok(())
+    }
+
+    /// R-22 启动对账：持久终态已知用量的 run 若账本缺记录则幂等补账
+    /// （归属只取自持久 `ProviderRequestStarted` 事件；只写账本，不改
+    /// Run 终态）。与清扫同一道所有权门——旁路 Catalog / 旁观者不对
+    /// 活跃 Host 的账本写记录；None（from_parts 直连）沿用既有语义。
+    pub async fn reconcile_usage_ledger(&self) {
+        let may_sweep = self
+            .instance_ownership
+            .as_ref()
+            .map_or(true, |ownership| ownership.can_sweep());
+        if may_sweep {
+            self.usage.reconcile_ledger_from_terminal_runs(self).await;
+        }
     }
 
     pub fn store(&self) -> Result<&SessionStore, AppError> {
         self.store.as_ref().ok_or(AppError::StoreNotOpen)
     }
 
+    /// 测试注入实例所有权（生产路径由 load_with 按 InstanceRole 获取）。
+    #[cfg(test)]
+    pub(crate) fn set_instance_ownership(&mut self, ownership: InstanceOwnership) {
+        self.instance_ownership = Some(ownership);
+    }
     pub fn provider_id(&self) -> &ProviderId {
         &self.provider_id
     }
@@ -1510,13 +1575,7 @@ impl AppCore {
         Box<dyn std::future::Future<Output = Result<ModelResponseSummary, AppError>> + Send + 'a>,
     > {
         Box::pin(self.run.chat_turn_with_run_id(
-            self,
-            run_id,
-            session_id,
-            messages,
-            render,
-            cancel,
-            web_search,
+            self, run_id, session_id, messages, render, cancel, web_search,
         ))
     }
 
@@ -1916,6 +1975,114 @@ mod tests {
         }));
         assert!(replayed.len() > 6, "event stream keeps original messages");
         core.shutdown().await.expect("shutdown");
+    }
+
+    /// R-07：压缩保留集合与重放水位一致——早期 System + 折叠旧轮 +
+    /// 保留尾轮（末轮含工具消息，turn 边界 ≠ count 边界）时，engine
+    /// 重建结果与重开 store 后的投影遵循同一条 count 后缀边界。
+    #[tokio::test]
+    async fn compact_suffix_matches_projection_after_restart() {
+        let (core, dir) = mock_core(vec![
+            ProviderStreamEvent::TextDelta("folded-history".into()),
+            ProviderStreamEvent::ResponseCompleted(StopReason::Completed),
+        ])
+        .await;
+        let session = core.create_session("compact-suffix").await.expect("create");
+        // 直接种子：早期 System + 三轮对话，末轮带工具消息（9 条）。
+        let seeded = [
+            (MessageRole::System, "early system"),
+            (MessageRole::User, "u1"),
+            (MessageRole::Assistant, "a1"),
+            (MessageRole::User, "u2"),
+            (MessageRole::Assistant, "a2"),
+            (MessageRole::User, "u3"),
+            (MessageRole::Assistant, "a3 toolcall"),
+            (MessageRole::Tool, "t3"),
+            (MessageRole::Assistant, "a3 final"),
+        ];
+        for (index, (role, text)) in seeded.iter().enumerate() {
+            core.store()
+                .expect("store")
+                .append_event(
+                    pawork_storage::session::DEFAULT_BRANCH_ID,
+                    pawork_domain::AgentEventEnvelope::new(
+                        pawork_domain::EventId::from(format!("evt-seed-{index}")),
+                        session.clone(),
+                        pawork_domain::RunId::from("run-seed"),
+                        pawork_domain::EventSequence::new((index + 1) as u64),
+                        pawork_engine::now_timestamp(),
+                        AgentEvent::MessageCommitted {
+                            message: pawork_domain::Message {
+                                id: pawork_domain::MessageId::from(format!("msg-seed-{index}")),
+                                role: role.clone(),
+                                content: vec![ContentPart::Text(pawork_domain::TextContent {
+                                    text: text.to_string(),
+                                })],
+                                metadata: Default::default(),
+                            },
+                        },
+                    ),
+                )
+                .await
+                .expect("seed message");
+        }
+
+        let sink = RecordingEvents::default();
+        let rebuilt = core
+            .compact_session(&session, &sink, CancellationToken::new())
+            .await
+            .expect("compact");
+        let text_of = |message: &pawork_domain::Message| -> String {
+            message
+                .content
+                .iter()
+                .filter_map(|part| match part {
+                    ContentPart::Text(text) => Some(text.text.as_str()),
+                    _ => None,
+                })
+                .collect()
+        };
+        // engine 重建 = [summary] + 末尾 4 条 count 后缀（u3, a3, t3, a3f）。
+        let rebuilt_texts: Vec<String> = rebuilt.iter().map(|m| text_of(m)).collect();
+        assert_eq!(
+            rebuilt_texts[1..],
+            ["u3", "a3 toolcall", "t3", "a3 final"],
+            "engine must rebuild from the count suffix: {rebuilt_texts:?}"
+        );
+        assert!(rebuilt_texts[0].contains("folded-history"));
+
+        // 当前进程投影与 engine 重建同界。
+        let visible = core.resume_messages(&session).await.expect("resume");
+        let visible_texts: Vec<String> = visible.iter().map(|m| text_of(m)).collect();
+        assert_eq!(
+            visible_texts[..4],
+            ["u3", "a3 toolcall", "t3", "a3 final"],
+            "projection must keep the same count suffix: {visible_texts:?}"
+        );
+        assert!(visible_texts[4].contains("folded-history"));
+        assert!(
+            !visible.iter().any(|m| m.role == MessageRole::System),
+            "early System below the watermark must not survive: {visible_texts:?}"
+        );
+
+        // 重启后（重开 store）仍是同一个保留集合。
+        core.shutdown().await.expect("shutdown");
+        let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
+            .await
+            .expect("reopen");
+        let visible = store
+            .projection_snapshot(&session)
+            .await
+            .expect("snapshot")
+            .messages;
+        let visible_texts: Vec<String> = visible.iter().map(|m| text_of(m)).collect();
+        assert_eq!(
+            visible_texts[..4],
+            ["u3", "a3 toolcall", "t3", "a3 final"],
+            "reopened projection must keep the same suffix: {visible_texts:?}"
+        );
+        assert!(visible_texts[4].contains("folded-history"));
+        assert!(!visible.iter().any(|m| m.role == MessageRole::System));
     }
 
     #[test]

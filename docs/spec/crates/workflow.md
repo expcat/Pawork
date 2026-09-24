@@ -43,7 +43,7 @@
 
 ### 3.2 `task` 模块
 
-- **命令面 `TaskManager`**（`Clone` 共享同一内部状态）：`register(task_kind, parent_task_id) -> BackgroundTaskId`（Queued，不发事件，parent 必须存在）；`start` (Queued→Running，`Started`)；`suspend` / `resume`（Running↔Suspended，逻辑挂起，OS 级暂停由 adapter 落地）；`finish(task_id, status, detail)`（Running|Suspended → Completed|Failed，`Canceled` 必须走 `cancel`，否则 `InvalidFinishedStatus`）；`cancel(task_id) -> Vec<TaskEvent>`（沿 `parent_task_id` 链传播到全部后代：Running/Suspended 发 `Finished{Canceled}` 并触发 domain `CancellationToken`，Queued 静默移除，终态跳过）。
+- **命令面 `TaskManager`**（`Clone` 共享同一内部状态）：`register(task_kind, parent_task_id) -> BackgroundTaskId`（Queued，不发事件，parent 必须存在）；`register_with_cancel_token(..., cancel_token)`（R-05：任务记录共享执行体的真实取消令牌，`cancel` 经此令牌停止真实执行体而非只推进状态机）；`start` (Queued→Running，`Started`)；`suspend` / `resume`（Running↔Suspended，逻辑挂起，OS 级暂停由 adapter 落地）；`finish(task_id, status, detail)`（Running|Suspended → Completed|Failed，`Canceled` 必须走 `cancel`，否则 `InvalidFinishedStatus`）；`cancel(task_id) -> Vec<TaskEvent>`（沿 `parent_task_id` 链传播到全部后代：Running/Suspended 发 `Finished{Canceled}` 并触发 domain `CancellationToken`，Queued 静默移除，终态跳过）。
 - **查询与恢复**：`task` / `tasks` / `snapshot`（任务视图 + 完整事件日志）/ `event_log` / `events_since(seq)`（日志下标切片续读增量）/ `replay(events) -> usize`（重建视图，不重复广播）；`subscribe() -> broadcast::Receiver<AgentEvent>` 实时流（收到 `Lagged` 后先 `snapshot()` 再 `events_since` 续读）。
 - **纯状态**：`TaskManagerState::apply(&TaskEvent)`（可失败：未知任务 / 非法转移即 `Err`，与 Plan 的不可失败 apply 不同）；`is_active_status`（Queued/Running/Suspended）/ `is_terminal_status`（Completed/Failed/Canceled）。
 
@@ -101,7 +101,7 @@
 | 资产 | 覆盖点 |
 | --- | --- |
 | `tests/plan_service.rs` | 步骤合法 / 非法转移；`replay_matches_live_service_and_manual_apply`（重放与实况一致）；版本修订链成链；命令错误矩阵；**红线**：`plan_with_write_action_descriptions_is_inert`（写动作描述文本不产生任何执行）；`PlanEvent` 经 `AgentEvent` round-trip；评审全流程（review→comment→changes→revise→approve 带 checkpoint）；`approval_gate_closed_until_approved`（gate 未批准恒关）；非法评审转移矩阵；直接 approve/reject；行锚点评论；revise 版本链校验与重复版本拒绝；评审流重放一致性。2026-09-20 重构删除了两条 `include_str!` 源码文本扫描（文本扫描不能证明运行期行为）；「纯 reducer 无 IO/spawn」的约束以 [../../architecture.md](../../architecture.md) 的依赖方向与评审为准 |
-| `tests/state_and_replay.rs` | 四类 kind 注册查询；合法生命周期事件序；非法转移矩阵；`snapshot_and_replay_rebuild_view`；`pure_state_apply_folds_events`；`cancel_propagates_to_descendants_without_orphans`（取消树无孤儿）；取消跳过终态并移除 Queued；`events_since` 增量；`replay_advances_id_allocator` |
+| `tests/state_and_replay.rs` | 四类 kind 注册查询；合法生命周期事件序；非法转移矩阵；`snapshot_and_replay_rebuild_view`；`pure_state_apply_folds_events`；`cancel_propagates_to_descendants_without_orphans`（取消树无孤儿）；取消跳过终态并移除 Queued；`events_since` 增量；`replay_advances_id_allocator`；R-05 `shared_cancel_token_stops_real_executor`（共享令牌登记的任务 cancel 触达真实执行体令牌，重复 cancel 幂等） |
 
 默认验证命令：`cargo test -p pawork-workflow --offline --lib --tests`。
 

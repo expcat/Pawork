@@ -229,6 +229,23 @@ pub async fn ledger_totals(
         .map_err(|error| AppError::ControlPlane(error.to_string()))
 }
 
+/// R-22：按账本幂等键作用域 (tenant, account) + run_id 判定该 run 是否已
+/// 入账。查询 fail-closed——存储 / 解码错误向上传，绝不当作「未入账」
+/// 触发补账。
+pub async fn ledger_has_run(ledger: &dyn UsageLedger, run_id: &RunId) -> Result<bool, AppError> {
+    let query = UsageQuery {
+        tenant_id: Some(ledger_tenant(None)),
+        account_id: Some(LEDGER_ACCOUNT.to_string()),
+        run_id: Some(run_id.clone()),
+        ..UsageQuery::default()
+    };
+    let records = ledger
+        .query(&query)
+        .await
+        .map_err(|error| AppError::ControlPlane(error.to_string()))?;
+    Ok(!records.is_empty())
+}
+
 pub async fn quota_windows(
     quota: &QuotaService,
     provider_id: &ProviderId,

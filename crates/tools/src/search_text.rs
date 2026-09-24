@@ -2,6 +2,7 @@
 //!
 //! 固定串/正则匹配、文件过滤(glob)、ignore 规则、结果限制、上下文行、Unicode。
 
+use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -32,6 +33,11 @@ use crate::common::BuiltinToolError;
 const DEFAULT_MAX_RESULTS: u64 = 100;
 const DEFAULT_CONTEXT_LINES: u64 = 2;
 const MAX_OUTPUT_BYTES: u64 = 256 * 1024;
+
+/// 单文件读取上限（R-14）：超过即跳过并在 metadata 计数报告——超限
+/// 文件不得完整装入内存，搜索结果对其不完整，经 `skipped_oversize`
+/// 与 `truncated` 如实可见，不冒充完整搜索。
+const MAX_FILE_BYTES: u64 = 4 * 1024 * 1024;
 
 /// `search_text` 工具。
 #[derive(Clone)]
@@ -109,6 +115,16 @@ fn search(
     input: &Value,
     cancel: &CancellationToken,
 ) -> Result<ToolResult, SearchTextError> {
+    search_inner(service, workspace_id, input, cancel, MAX_FILE_BYTES)
+}
+
+fn search_inner(
+    service: &WorkspaceService,
+    workspace_id: &WorkspaceId,
+    input: &Value,
+    cancel: &CancellationToken,
+    max_file_bytes: u64,
+) -> Result<ToolResult, SearchTextError> {
     if cancel.is_cancelled() {
         return Err(SearchTextError::Cancelled);
     }
@@ -137,6 +153,7 @@ fn search(
     let mut budget = MAX_OUTPUT_BYTES as usize;
     let mut truncated = false;
     let mut visited = 0usize;
+    let mut skipped_oversize = 0usize;
 
     for root in &roots {
         let walker = WalkBuilder::new(root)
@@ -180,7 +197,31 @@ fn search(
             if cancel.is_cancelled() {
                 return Err(SearchTextError::Cancelled);
             }
-            if let Ok(text) = std::fs::read_to_string(&absolute) {
+            let Ok(file) = std::fs::File::open(&absolute) else {
+                continue;
+            };
+            let oversize = file
+                .metadata()
+                .map(|meta| meta.len() > max_file_bytes)
+                .unwrap_or(false);
+            if oversize {
+                skipped_oversize += 1;
+                continue;
+            }
+            // 元数据检查后文件仍可能增长；实际读取也必须有硬上限。
+            let mut bytes = Vec::new();
+            if file
+                .take(max_file_bytes.saturating_add(1))
+                .read_to_end(&mut bytes)
+                .is_err()
+            {
+                continue;
+            }
+            if bytes.len() as u64 > max_file_bytes {
+                skipped_oversize += 1;
+                continue;
+            }
+            if let Ok(text) = String::from_utf8(bytes) {
                 if let Some(emitted) =
                     scan_file(rel, &text, &matcher, context_lines, &mut budget, cancel)?
                 {
@@ -197,12 +238,14 @@ fn search(
         }
     }
 
+    let truncated = truncated || skipped_oversize > 0;
     let body = matches.join("\n");
     let metadata = json!({
         "pattern": pattern,
         "is_regex": is_regex,
         "matches": matches.len(),
         "truncated": truncated,
+        "skipped_oversize": skipped_oversize,
     });
     Ok(ToolResult {
         content: vec![ContentPart::Text(TextContent { text: body })],
@@ -468,6 +511,33 @@ mod tests {
         cancel.cancel();
         let error = search(&service, &id, &json!({"pattern": "x"}), &cancel).unwrap_err();
         assert!(matches!(error, SearchTextError::Cancelled));
+    }
+
+    #[test]
+    fn oversize_file_is_skipped_and_reported() {
+        // R-14：超过单文件上限的文件不得完整装入内存——跳过并如实报告，
+        // 结果不冒充完整搜索；未超限文件不受影响。
+        let (service, id, root, _ws_dir) = make_service();
+        let mut big = "x".repeat(256);
+        big.push_str("needle\n");
+        fs::write(root.join("big.log"), big).unwrap();
+        fs::write(root.join("small.txt"), "needle\n").unwrap();
+        let res = search_inner(
+            &service,
+            &id,
+            &json!({"pattern": "needle", "context_lines": 0}),
+            &CancellationToken::new(),
+            64,
+        )
+        .expect("search");
+        let text = match &res.content[0] {
+            ContentPart::Text(t) => t.text.as_str(),
+            _ => panic!("text"),
+        };
+        assert!(text.contains("small.txt"), "{text}");
+        assert!(!text.contains("big.log"), "{text}");
+        assert!(res.truncated, "跳过文件必须标记结果不完整");
+        assert_eq!(res.metadata["skipped_oversize"], json!(1));
     }
 
     #[cfg(unix)]

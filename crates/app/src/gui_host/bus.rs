@@ -4,10 +4,10 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use pawork_domain::{AgentEventEnvelope, CancellationToken, EventId, RunId, SessionId};
-use pawork_engine::{AgentEventSink, EngineError, now_timestamp};
+use pawork_engine::{now_timestamp, AgentEventSink, EngineError};
 use pawork_protocol::{
-    API_VERSION, AppEvent, AppEventEnvelope, AuthChangeState, DiagnosticLevel, EventSource,
-    EventStream, GlobalSequence, RunState,
+    AppEvent, AppEventEnvelope, AuthChangeState, DiagnosticLevel, EventSource, EventStream,
+    GlobalSequence, RunState, API_VERSION,
 };
 use serde_json::Value;
 
@@ -282,6 +282,8 @@ pub struct ActiveGuiRun {
 #[derive(Default)]
 pub struct GuiRunRegistry {
     runs: Mutex<HashMap<String, (ActiveGuiRun, CancellationToken)>>,
+    /// 正在执行 Run 的会话集合：同一 Session 同时只允许一个 Run（R-06）。
+    sessions: Mutex<HashSet<String>>,
 }
 
 impl GuiRunRegistry {
@@ -326,5 +328,20 @@ impl GuiRunRegistry {
             .lock()
             .expect("gui run registry poisoned")
             .contains_key(run_id.as_str())
+    }
+
+    /// 尝试占用会话执行槽：占用成功返回 true，已有 Run 在跑返回 false。
+    pub(in crate::gui_host) fn try_acquire_session(&self, session_id: &SessionId) -> bool {
+        self.sessions
+            .lock()
+            .expect("gui run registry poisoned")
+            .insert(session_id.as_str().to_string())
+    }
+
+    pub(in crate::gui_host) fn release_session(&self, session_id: &SessionId) {
+        self.sessions
+            .lock()
+            .expect("gui run registry poisoned")
+            .remove(session_id.as_str());
     }
 }

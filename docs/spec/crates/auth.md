@@ -15,7 +15,7 @@
 | `src/lib.rs` | ~50 | crate 门面：红线说明；`locator` / `oauth` 为 pub 模块，其余私有模块 + 选择性 re-export |
 | `src/error.rs` | ~120 | `AuthError`：`Storage` / `NotFound` / `InvalidSecret` / `MalformedMetadata` / `OAuth` / `TokenEndpoint{error,description}` / `ExpiredToken` / `Callback` / `Http` / `Io` / `Url`；任何变体 Display 不含明文。`Http` 只保留错误类别与 scheme/host/port，剥掉 userinfo/path/query |
 | `src/backend.rs` | ~270 | `SecretBackend` trait（`store` / `store_batch` / `replace_batch` / `get` / `delete` / `transaction`（原子读改写，未实现后端默认拒绝）/ 隐藏扩展点 `refresh_lock_path`）；`MemoryBackend`（测试用，故意不派生 Debug） |
-| `src/file_backend.rs` | ~620 | `FileBackend`：单 JSON 文件（`version` + `service→account→secret`）、0600、独立临时文件 + rename 原子写、跨进程 write/refresh 锁、损坏 fail-closed；`try_acquire_file_lock` / `FileLockGuard`（crate 内共用） |
+| `src/file_backend.rs` | ~620 | `FileBackend`：单 JSON 文件（`version` + `service→account→secret`）、0600、独立临时文件 + rename 原子写、跨进程 write/refresh 锁、损坏 fail-closed；`acquire_file_lock` / `try_acquire_file_lock` / `FileLockGuard` 跨平台独占文件锁原语（Unix flock / Windows share_mode(0) / 其余 create_new 兜底）对外导出，pawork-app 实例所有权（R-04/R-24）复用 |
 | `src/locator.rs` | ~70 | 命名单一事实源：`PROVIDER_SERVICE_PREFIX`（`pawork`）、`MCP_SERVICE_PREFIX`（`pawork.mcp.`）、`MCP_AUTH_FILE_NAME`（`mcp-auth.json`）、`secret_service_for` / `oauth_secret_service` / `is_mcp_secret_service` / `api_key_env_name` / `read_api_key_from_env` |
 | `src/masked.rs` | ~110 | `MaskedCredential`：`mask`（按字符数分档脱敏）/ `from_masked` / `as_str`；`Display`/`Debug`/`Serialize` 永不含明文 |
 | `src/credential.rs` | ~390 | `StoredCredential`（纯元数据 + 定位，可序列化）、`ApiKeyCredential`（store / store_with_scopes / from_stored / resolve / delete）、`CredentialId`、crate 内 `generate_credential_id` |

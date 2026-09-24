@@ -65,6 +65,19 @@ impl TaskManager {
         self.lock().insert_queued(task_kind, parent_task_id)
     }
 
+    /// 同 register，但任务记录共享调用方提供的取消令牌：执行体
+    ///（如 agent run）持有真实 token 时登记共享之，cancel 经此令牌
+    /// 停止真实执行体，而不是只推进状态机。
+    pub fn register_with_cancel_token(
+        &self,
+        task_kind: TaskKind,
+        parent_task_id: Option<BackgroundTaskId>,
+        cancel_token: CancellationToken,
+    ) -> Result<BackgroundTaskId, TaskManagerError> {
+        self.lock()
+            .insert_queued_with_cancel_token(task_kind, parent_task_id, cancel_token)
+    }
+
     /// 开始任务：Queued → Running，发出 `TaskEvent::Started`。
     pub fn start(&self, task_id: &BackgroundTaskId) -> Result<TaskEvent, TaskManagerError> {
         let mut state = self.lock();

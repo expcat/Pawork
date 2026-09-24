@@ -199,6 +199,13 @@ impl OpenAiCompatibleProvider {
                             summary.stop_reason = stop.clone();
                             saw_completion = true;
                         }
+                        // R-08：流内错误（如畸形 chunk）先广播再终止，
+                        // 不得被后续 [DONE] 救回为成功。
+                        ProviderStreamEvent::Error(error) => {
+                            let error = error.clone();
+                            sink.emit(ev).await?;
+                            return Err(error);
+                        }
                         _ => {}
                     }
                     sink.emit(ev).await?;
@@ -221,6 +228,13 @@ impl OpenAiCompatibleProvider {
                         ProviderStreamEvent::ResponseCompleted(stop) => {
                             summary.stop_reason = stop.clone();
                             saw_completion = true;
+                        }
+                        // R-08：流内错误（如畸形 chunk）先广播再终止，
+                        // 不得被后续 [DONE] 救回为成功。
+                        ProviderStreamEvent::Error(error) => {
+                            let error = error.clone();
+                            sink.emit(ev).await?;
+                            return Err(error);
                         }
                         _ => {}
                     }

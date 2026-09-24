@@ -59,12 +59,28 @@ pub(super) fn bind(
             },
         )?;
     }
+    // R-04：记录本次 bind 创建的 socket 文件身份（dev/ino），close 时据此
+    // 判断路径是否仍属于本 listener——fstat(socket fd) 拿不到文件 inode，
+    // 必须存 bind 时的 lstat 结果。
+    let bound_file_id = std::fs::symlink_metadata(path)
+        .map(|metadata| {
+            use std::os::unix::fs::MetadataExt;
+            (metadata.dev(), metadata.ino())
+        })
+        .map_err(|error| {
+            transport_error(
+                TransportErrorKind::BindFailed,
+                format!("failed to stat bound socket {address}: {error}"),
+            )
+        })?;
     Ok(Box::new(UnixSocketListener {
         path: path.to_path_buf(),
+        bound_file_id,
         listener: Mutex::new(Some(listener)),
         max_frame_bytes,
         next_connection_id: AtomicU64::new(0),
         closed: AtomicBool::new(false),
+        close_notify: tokio::sync::Notify::new(),
     }))
 }
 
@@ -103,10 +119,15 @@ pub(super) async fn connect(
 
 struct UnixSocketListener {
     path: std::path::PathBuf,
+    /// 本次 bind 创建的 socket 文件 (dev, ino)；close 的归属校验基准。
+    bound_file_id: (u64, u64),
     listener: Mutex<Option<UnixListener>>,
     max_frame_bytes: u64,
     next_connection_id: AtomicU64,
     closed: AtomicBool,
+    /// R-17：close 通知——挂起的 accept 持锁等待时被唤醒并释放锁，
+    /// close 因此能在有界时间内拿到锁完成收口。
+    close_notify: tokio::sync::Notify,
 }
 
 #[async_trait]
@@ -116,15 +137,39 @@ impl GuiListener for UnixSocketListener {
             return Err(connection_closed("listener is closed"));
         }
         let guard = self.listener.lock().await;
+        // 排队的 accept 可能已通过入口检查；close 唤醒前一等待者后，
+        // 后续等待者不得再次占锁等待连接，阻塞 close 收口。
+        if self.closed.load(Ordering::Acquire) {
+            return Err(connection_closed("listener is closed"));
+        }
         let listener = guard
             .as_ref()
             .ok_or_else(|| connection_closed("listener is closed"))?;
-        let (stream, _peer_address) = listener.accept().await.map_err(|error| {
-            transport_error(
-                TransportErrorKind::ConnectionFailed,
-                format!("accept failed: {error}"),
-            )
-        })?;
+        // R-17：accept 与 close 通知 select——持锁等待期间 close 到达即放弃
+        // 本次 accept 并释放锁，close 得以完成（原先 close 与 pending accept
+        // 等同一把锁，无客户端时并发 close 无法结束）。select 收进内层块：
+        // 两个 future 均在块尾 drop、解除对 guard 的借用后才允许 move guard。
+        let accepted = {
+            let accept = listener.accept();
+            tokio::pin!(accept);
+            let notified = self.close_notify.notified();
+            tokio::pin!(notified);
+            tokio::select! {
+                biased;
+                result = &mut accept => Some(result.map_err(|error| {
+                    transport_error(
+                        TransportErrorKind::ConnectionFailed,
+                        format!("accept failed: {error}"),
+                    )
+                })?),
+                () = &mut notified => None,
+            }
+        };
+        drop(guard);
+        let (stream, _peer_address) = match accepted {
+            Some(pair) => pair,
+            None => return Err(connection_closed("listener is closed")),
+        };
         let (reader, writer) = tokio::io::split(stream);
         let info = connection_info(
             format!(
@@ -138,19 +183,39 @@ impl GuiListener for UnixSocketListener {
 
     async fn close(&self) -> Result<(), TransportError> {
         self.closed.store(true, Ordering::Release);
+        // R-17：先唤醒可能持锁挂起的 accept，再等锁收口——accept 侧
+        // select 到通知即放锁，此处等锁有界。
+        self.close_notify.notify_one();
         let mut guard = self.listener.lock().await;
+        if guard.is_none() {
+            // 已关闭：幂等早退。
+            return Ok(());
+        }
         guard.take(); // drop 监听器，停止接受新连接
         drop(guard);
-        std::fs::remove_file(&self.path).map_err(|error| {
-            transport_error(
+        // R-04：仅当 socket 路径仍是本 listener bind 时创建的那个文件
+        // （dev/ino 一致）才删除——路径可能已被新所有者重新绑定，旧
+        // listener 的 close 不得删除赢家端点；无法证明归属宁可留下文件。
+        let owned = std::fs::symlink_metadata(&self.path)
+            .map(|metadata| {
+                use std::os::unix::fs::MetadataExt;
+                (metadata.dev(), metadata.ino()) == self.bound_file_id
+            })
+            .unwrap_or(false);
+        if !owned {
+            return Ok(());
+        }
+        match std::fs::remove_file(&self.path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(transport_error(
                 TransportErrorKind::Internal,
                 format!(
                     "failed to remove socket file {}: {error}",
                     self.path.display()
                 ),
-            )
-        })?;
-        Ok(())
+            )),
+        }
     }
 }
 
@@ -192,6 +257,58 @@ mod tests {
             & 0o777;
         assert_eq!(mode, 0o600, "bound socket must be owner-only");
         listener.close().await.expect("close");
+    }
+
+    #[tokio::test]
+    async fn pending_accept_is_woken_by_close() {
+        // R-17：无客户端时挂起的 accept 必须被并发 close 唤醒，两者都在
+        // 有界时间内结束；重复 close 幂等。
+        let temp = tempfile::tempdir().expect("tempdir");
+        let endpoint = local_endpoint(&temp.path().join("gui.sock"));
+        let server = LocalTransport::default();
+        let listener: std::sync::Arc<dyn crate::GuiListener> =
+            std::sync::Arc::from(server.bind(endpoint).await.expect("bind"));
+
+        let accept = tokio::spawn({
+            let listener = std::sync::Arc::clone(&listener);
+            async move { listener.accept().await }
+        });
+        tokio::task::yield_now().await;
+        let queued_accept = tokio::spawn({
+            let listener = std::sync::Arc::clone(&listener);
+            async move { listener.accept().await }
+        });
+        tokio::task::yield_now().await;
+        let closer = tokio::spawn({
+            let listener = std::sync::Arc::clone(&listener);
+            async move { listener.close().await }
+        });
+        let (accept_result, queued_result, close_result) =
+            tokio::time::timeout(std::time::Duration::from_secs(5), async move {
+                tokio::join!(accept, queued_accept, closer)
+            })
+            .await
+            .expect("pending accept 与 close 必须在有界时间内结束");
+        let accept_error = match accept_result.expect("accept task panicked") {
+            Err(error) => error,
+            Ok(_) => panic!("pending accept 不应成功"),
+        };
+        assert_eq!(
+            accept_error.kind,
+            TransportErrorKind::ConnectionClosed,
+            "被 close 唤醒的 accept 应报 ConnectionClosed"
+        );
+        assert!(
+            matches!(queued_result.expect("queued accept task panicked"),
+            Err(error) if error.kind == TransportErrorKind::ConnectionClosed)
+        );
+        close_result
+            .expect("close task panicked")
+            .expect("close ok");
+        listener
+            .close()
+            .await
+            .expect("repeated close is idempotent");
     }
 
     #[tokio::test]
@@ -312,5 +429,44 @@ mod tests {
             Ok(_) => panic!("closed listener"),
         };
         assert_eq!(error.kind, TransportErrorKind::ConnectionClosed);
+    }
+
+    /// R-04：路径被新所有者重新绑定后，旧 listener 的 close 不得删除
+    /// 新端点（dev/ino 归属比对），且重复 close 幂等。
+    #[tokio::test]
+    async fn close_does_not_remove_socket_rebound_by_new_owner() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("gui.sock");
+        let endpoint = local_endpoint(&path);
+        let server = LocalTransport::default();
+        let client = LocalTransport::default();
+        let old = server.bind(endpoint.clone()).await.expect("bind old");
+
+        // 模拟新所有者抢占同一路径（旧文件的 inode 已与新端点不同）。
+        std::fs::remove_file(&path).expect("unlink path");
+        let new = server.bind(endpoint.clone()).await.expect("bind new");
+
+        old.close().await.expect("old close must succeed");
+        assert!(
+            std::fs::symlink_metadata(&path).is_ok(),
+            "old close must not remove the new owners socket"
+        );
+
+        // 新端点仍可接受连接（connect 在内核 backlog 即完成，accept 随后取出）。
+        let client_conn = client
+            .connect(endpoint, options(DEFAULT_MAX_FRAME_BYTES))
+            .await
+            .expect("connect to new owner");
+        let server_conn = new.accept().await.expect("accept");
+        server_conn.close().await.expect("server close");
+        client_conn.close().await.expect("client close");
+
+        // 正常路径：新所有者 close 自己的端点，文件被删除；重复 close 幂等。
+        new.close().await.expect("new close");
+        assert!(
+            std::fs::symlink_metadata(&path).is_err(),
+            "owner close must remove its own socket file"
+        );
+        new.close().await.expect("second close is a no-op");
     }
 }

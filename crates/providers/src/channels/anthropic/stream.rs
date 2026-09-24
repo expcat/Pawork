@@ -46,7 +46,16 @@ pub fn event_to_events(data: &str, state: &mut AnthropicStreamState) -> Vec<Prov
 pub fn parse_event(data: &str, state: &mut AnthropicStreamState) -> Vec<StreamOutput> {
     let value: Value = match serde_json::from_str(data) {
         Ok(v) => v,
-        Err(_) => return Vec::new(),
+        Err(_) => {
+            // R-08：畸形事件 JSON 不得静默忽略——事件内容可能已缺失，
+            // 明确报 MalformedResponse，由 process_chunk 终止流。
+            return vec![StreamOutput::Event(ProviderStreamEvent::Error(
+                ProviderError::new(
+                    ProviderErrorKind::MalformedResponse,
+                    "invalid anthropic SSE event JSON",
+                ),
+            ))];
+        }
     };
     let event_type = value.get("type").and_then(|t| t.as_str()).unwrap_or("");
     let mut outputs = Vec::new();
@@ -336,14 +345,10 @@ pub fn parse_event(data: &str, state: &mut AnthropicStreamState) -> Vec<StreamOu
 
 fn map_error_event(value: &Value) -> ProviderError {
     let error = value.get("error");
-    let message = error
-        .and_then(|err| err.get("message"))
-        .and_then(Value::as_str)
-        .unwrap_or("anthropic stream error");
-    let kind = match error
+    let type_field = error
         .and_then(|err| err.get("type"))
-        .and_then(Value::as_str)
-    {
+        .and_then(Value::as_str);
+    let kind = match type_field {
         Some("authentication_error") => ProviderErrorKind::Authentication,
         Some("permission_error") => ProviderErrorKind::Authorization,
         Some("rate_limit_error") | Some("overloaded_error") => ProviderErrorKind::RateLimited,
@@ -351,7 +356,12 @@ fn map_error_event(value: &Value) -> ProviderError {
         Some("not_found_error") => ProviderErrorKind::ModelNotFound,
         _ => ProviderErrorKind::Unknown,
     };
-    ProviderError::new(kind, message)
+    // R-02：上游 message 可能回显敏感文本，不进入错误对象；
+    // 只保留白名单 type 字段作为诊断信息。
+    ProviderError::new(
+        kind,
+        crate::stream::stream_error_message("anthropic stream error", "type", type_field),
+    )
 }
 
 fn map_citation(value: Option<&Value>) -> Citation {
@@ -729,7 +739,42 @@ mod tests {
         assert!(matches!(
             &events[0],
             ProviderStreamEvent::Error(err)
-                if err.kind == ProviderErrorKind::RateLimited && err.message == "busy"
+                if err.kind == ProviderErrorKind::RateLimited
+                    && err.message == "anthropic stream error (type=overloaded_error)"
+        ));
+    }
+
+    /// R-02：上游错误 message 可能回显敏感文本，错误对象不得携带原文；
+    /// 白名单 type 字段保留，错误类别仍可辨认。
+    #[test]
+    fn error_event_does_not_leak_upstream_message() {
+        let mut state = AnthropicStreamState::default();
+        let events = event_to_events(
+            r#"{"type":"error","error":{"type":"authentication_error","message":"bad key sk-FAKE-SECRET-9f8e7d expired"}}"#,
+            &mut state,
+        );
+        let ProviderStreamEvent::Error(err) = &events[0] else {
+            panic!("error event expected: {events:?}");
+        };
+        assert_eq!(err.kind, ProviderErrorKind::Authentication);
+        assert!(!err.message.contains("sk-FAKE-SECRET-9f8e7d"));
+        assert!(!err.message.contains("bad key"));
+        assert_eq!(
+            err.message,
+            "anthropic stream error (type=authentication_error)"
+        );
+    }
+
+    /// R-08：畸形事件 JSON 映射为 MalformedResponse 错误事件，
+    /// 不再静默吞掉（配合 process_chunk 终止流）。
+    #[test]
+    fn malformed_event_json_yields_malformed_error() {
+        let mut state = AnthropicStreamState::default();
+        let events = event_to_events("not-json", &mut state);
+        assert!(matches!(
+            &events[0],
+            ProviderStreamEvent::Error(err)
+                if err.kind == ProviderErrorKind::MalformedResponse
         ));
     }
 }

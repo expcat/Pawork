@@ -1,8 +1,10 @@
 //! 压缩保留策略（P5-6）。
 //!
 //! [`apply`] 在纯数据上决定压缩后保留哪些事件 id，依据 [`RetentionPolicy`]：
-//! 最近 N 轮对话、最近 N 个 reasoning item、未解决任务、用户约束、修改文件，
-//! 以及待处理 / 失败的 tool call。
+//! 最近 N 轮对话或最近 N 条消息（均为连续后缀）、最近 N 个 reasoning item、
+//! 未解决任务、用户约束、修改文件，以及待处理 / 失败的 tool call。
+//! 消息维度的保留集必须是连续后缀：持久投影以单一水位折叠，非后缀的
+//! 保留声称（如早期的 System 消息）在重启后无法兑现（R-07）。
 //! 本模块不执行 IO，也不依赖 Event Store；调用方（`CompactionEngine` 或上下文重建）
 //! 只需装配 [`RetentionInputs`] 并读取 [`RetentionDecision`]。
 
@@ -105,6 +107,12 @@ pub struct RetentionPolicy {
     /// 保留最近 N 轮对话（一轮 = 一个用户消息起的所有后续消息）。
     #[serde(default = "default_retained_turns")]
     pub retained_turns: u32,
+    /// 保留最近 N 条消息（count 后缀，与 engine 折叠边界同语义，R-07）。
+    /// 0 关闭（旧 JSON 缺省值）。与 `retained_turns` 可同时启用：两者都是
+    /// 后缀规则，并集仍是连续后缀——单一折叠水位只能表达连续后缀，消息
+    /// 维度的保留集不允许是非后缀（早期 System 不再特殊保留）。
+    #[serde(default)]
+    pub retained_messages: u32,
     /// 保留最近 N 条 reasoning 条目（携带它们的 `MessageCommitted` 事件一并保留）。
     /// 0 关闭 reasoning 保留。
     #[serde(default = "default_retained_reasoning_items")]
@@ -120,6 +128,7 @@ impl Default for RetentionPolicy {
     fn default() -> Self {
         Self {
             retained_turns: DEFAULT_RETAINED_TURNS,
+            retained_messages: 0,
             retained_reasoning_items: DEFAULT_RETAINED_REASONING_ITEMS,
             keep_unresolved_tasks: true,
             keep_user_constraints: true,
@@ -180,18 +189,6 @@ pub fn apply(policy: &RetentionPolicy, inputs: &RetentionInputs) -> RetentionDec
         candidates.insert(reasoning.event_id.clone());
     }
 
-    // System prompt 永远保留（不属于对话轮）。
-    let mut system_kept = 0usize;
-    for message in &inputs.messages {
-        if message.message.role == MessageRole::System {
-            retained.insert(message.event_id.clone());
-            system_kept += 1;
-        }
-    }
-    if system_kept > 0 {
-        reasons.push(format!("retained {system_kept} system message(s)"));
-    }
-
     // 最近 N 轮：保留从倒数第 N 个用户消息起的所有消息。
     let user_starts: Vec<usize> = inputs
         .messages
@@ -214,6 +211,18 @@ pub fn apply(policy: &RetentionPolicy, inputs: &RetentionInputs) -> RetentionDec
         reasons.push(format!(
             "retained last {retained_turns} turn(s) ({turn_kept} message(s))"
         ));
+    }
+
+    // 最近 N 条消息（count 后缀）：与 engine `split_at(len - retained)`
+    // 同界，保证当前请求、持久水位与重启重放消费同一个保留决定（R-07）。
+    let policy_messages = usize::try_from(policy.retained_messages).unwrap_or(usize::MAX);
+    if policy_messages > 0 && !inputs.messages.is_empty() {
+        let split = inputs.messages.len().saturating_sub(policy_messages);
+        let message_kept = inputs.messages.len() - split;
+        for message in &inputs.messages[split..] {
+            retained.insert(message.event_id.clone());
+        }
+        reasons.push(format!("retained last {message_kept} message(s)"));
     }
 
     // 最近 N 条 reasoning：保留末尾 N 条对应的 `MessageCommitted` 事件。
@@ -420,7 +429,6 @@ mod tests {
 
         let retained = retained_set(&decision);
         for expected in [
-            "event-sys",
             "event-u3",
             "event-a3",
             "event-tool-pending",
@@ -431,7 +439,10 @@ mod tests {
         ] {
             assert!(retained.contains(expected), "expected {expected} retained");
         }
+        // R-07：早期 System 不再特殊保留——消息保留集必须是连续后缀，
+        // 否则单一水位投影无法兑现该声称。
         for dropped in [
+            "event-sys",
             "event-u1",
             "event-a1",
             "event-u2",
@@ -442,8 +453,8 @@ mod tests {
             assert!(!retained.contains(dropped), "expected {dropped} dropped");
         }
 
-        // 候选 = 14，保留 = 8，丢弃 = 6。
-        assert_eq!(decision.dropped_count, 6);
+        // 候选 = 14，保留 = 7，丢弃 = 7。
+        assert_eq!(decision.dropped_count, 7);
 
         // 输出已去重且按 EventId 字典序稳定排序。
         let mut sorted = decision.retained_event_ids.clone();
@@ -453,7 +464,6 @@ mod tests {
         // 每个保留类别都产生了理由。
         let reasons = decision.reasons.join("\n");
         for needle in [
-            "system",
             "turn",
             "unresolved task",
             "user constraint",
@@ -482,8 +492,8 @@ mod tests {
         assert!(!retained.contains("event-tool-pending"));
         assert!(!retained.contains("event-tool-failed"));
         assert!(retained.contains("event-constraint"));
-        // 候选 14，保留 6，丢弃 8。
-        assert_eq!(decision.dropped_count, 8);
+        // 候选 14，保留 5（R-07：早期 System 不再豁免），丢弃 9。
+        assert_eq!(decision.dropped_count, 9);
     }
 
     #[test]
@@ -509,9 +519,56 @@ mod tests {
         };
         let decision = apply(&policy, &golden_inputs());
         let retained = retained_set(&decision);
-        assert!(retained.contains("event-sys"));
+        // R-07：System 不再豁免——轮规则关闭时全部消息都被折叠。
+        assert!(!retained.contains("event-sys"));
         assert!(!retained.contains("event-u3"));
         assert!(!retained.contains("event-a3"));
+    }
+
+    #[test]
+    fn retained_messages_keeps_exact_count_suffix() {
+        // R-07 主路径：count 后缀与 engine 折叠边界同界——末尾 N 条保留
+        //（含落在后缀内的 System），之前的消息一律折叠（含早期 System）。
+        let policy = RetentionPolicy {
+            retained_turns: 0,
+            retained_messages: 2,
+            keep_unresolved_tasks: false,
+            keep_user_constraints: false,
+            keep_modified_files: false,
+            keep_pending_tool_calls: false,
+            keep_failed_tool_calls: false,
+            retained_reasoning_items: 0,
+        };
+        let decision = apply(&policy, &golden_inputs());
+        // 输出按 EventId 字典序稳定排序（"a3" < "u3"）。
+        assert_eq!(
+            decision.retained_event_ids,
+            vec![
+                pawork_domain::EventId::from("event-a3"),
+                pawork_domain::EventId::from("event-u3"),
+            ],
+            "only the last two messages survive"
+        );
+
+        // 后缀内的 System 照常保留。
+        let inputs = RetentionInputs {
+            messages: vec![
+                entry("event-u1", MessageRole::User, "u1"),
+                entry("event-sys-late", MessageRole::System, "late sys"),
+            ],
+            ..RetentionInputs::default()
+        };
+        let decision = apply(
+            &RetentionPolicy {
+                retained_messages: 1,
+                ..policy.clone()
+            },
+            &inputs,
+        );
+        assert_eq!(
+            decision.retained_event_ids,
+            vec![pawork_domain::EventId::from("event-sys-late")]
+        );
     }
 
     #[test]
@@ -613,6 +670,7 @@ mod tests {
         let policy = RetentionPolicy {
             retained_reasoning_items: 3,
             retained_turns: 0,
+            retained_messages: 0,
             keep_unresolved_tasks: false,
             keep_user_constraints: false,
             keep_modified_files: false,
@@ -642,6 +700,7 @@ mod tests {
         let policy = RetentionPolicy {
             retained_reasoning_items: 0,
             retained_turns: 0,
+            retained_messages: 0,
             keep_unresolved_tasks: false,
             keep_user_constraints: false,
             keep_modified_files: false,

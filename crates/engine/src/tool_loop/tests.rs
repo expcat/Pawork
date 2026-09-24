@@ -2123,6 +2123,76 @@ async fn manual_compaction_rejects_when_nothing_to_compact() {
 }
 
 #[tokio::test]
+async fn manual_compaction_pre_cancelled_token_fails_without_provider_call() {
+    // R-18：已取消的令牌不得发摘要请求、不得产生压缩事件，调用方收到取消。
+    let provider = RecordingProvider::new(MockProvider::sequence(Vec::new()));
+    let ctx = TestContext::new(Vec::new());
+    let sink = RecordingEvents::default();
+    let cancel = CancellationToken::new();
+    cancel.cancel();
+
+    let error = run_manual_compaction(
+        &provider,
+        request_with_messages(numbered_messages(5, "body")),
+        sample_turn(),
+        &sink,
+        cancel,
+        &ctx,
+        turn_context(ContextBudget::default(), None, 2),
+    )
+    .await
+    .expect_err("pre-cancelled compaction must fail");
+
+    assert!(error.is_cancelled(), "应为取消错误，实际 {error:?}");
+    assert!(provider.requests().is_empty(), "取消后不得发摘要请求");
+    assert!(sink.snapshot().is_empty(), "取消后不得产生压缩事件");
+}
+
+#[tokio::test]
+async fn manual_compaction_cancelled_summary_is_not_degraded() {
+    // R-18：摘要进行中取消——不得降级为结构摘要继续提交，无压缩事件三连。
+    let provider = RecordingProvider::new(MockProvider::sequence(vec![MockScript::new()
+        .wait_for_cancellation()
+        .fail(ProviderError::cancelled("summary cancelled"))]));
+    let ctx = TestContext::new(Vec::new());
+    let sink = RecordingEvents::default();
+    let cancel = CancellationToken::new();
+
+    let compaction = run_manual_compaction(
+        &provider,
+        request_with_messages(numbered_messages(5, "body")),
+        sample_turn(),
+        &sink,
+        cancel.clone(),
+        &ctx,
+        turn_context(ContextBudget::default(), None, 2),
+    );
+    tokio::pin!(compaction);
+    // 等摘要请求确实发出后再取消，脚本才确定性对齐。
+    loop {
+        tokio::select! {
+            biased;
+            result = &mut compaction => panic!("取消前不应完成，实际 {result:?}"),
+            () = tokio::time::sleep(std::time::Duration::from_millis(1)) => {
+                if !provider.requests().is_empty() {
+                    break;
+                }
+            }
+        }
+    }
+    cancel.cancel();
+    let error = compaction
+        .await
+        .expect_err("cancelled compaction must fail");
+
+    assert!(error.is_cancelled(), "应为取消错误，实际 {error:?}");
+    assert!(
+        sink.snapshot().is_empty(),
+        "取消摘要后不得产生 CompactionStarted/MessageCommitted/CompactionCompleted"
+    );
+}
+
+#[tokio::test]
 async fn long_conversation_never_exceeds_hard_limit() {
     let provider = GrowingProvider::new();
     let grow = MockTool::new(

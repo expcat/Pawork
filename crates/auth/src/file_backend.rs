@@ -220,7 +220,8 @@ impl SecretBackend for FileBackend {
 }
 
 /// 持有平台原生独占锁；`File` 关闭（包括进程退出）即自动释放。
-pub(crate) struct FileLockGuard {
+/// 实例所有权（pawork-app instance_lock）复用同一原语。
+pub struct FileLockGuard {
     #[allow(dead_code)]
     file: File,
     #[cfg(not(any(unix, windows)))]
@@ -234,10 +235,7 @@ impl Drop for FileLockGuard {
     }
 }
 
-pub(crate) fn acquire_file_lock(
-    path: &Path,
-    timeout: Duration,
-) -> Result<FileLockGuard, AuthError> {
+pub fn acquire_file_lock(path: &Path, timeout: Duration) -> Result<FileLockGuard, AuthError> {
     let started = Instant::now();
     loop {
         if let Some(guard) = try_acquire_file_lock(path)? {
@@ -254,7 +252,7 @@ pub(crate) fn acquire_file_lock(
 }
 
 #[cfg(unix)]
-pub(crate) fn try_acquire_file_lock(path: &Path) -> Result<Option<FileLockGuard>, AuthError> {
+pub fn try_acquire_file_lock(path: &Path) -> Result<Option<FileLockGuard>, AuthError> {
     use std::os::fd::AsRawFd;
     use std::os::raw::c_int;
     use std::os::unix::fs::OpenOptionsExt;
@@ -294,7 +292,7 @@ pub(crate) fn try_acquire_file_lock(path: &Path) -> Result<Option<FileLockGuard>
 }
 
 #[cfg(windows)]
-pub(crate) fn try_acquire_file_lock(path: &Path) -> Result<Option<FileLockGuard>, AuthError> {
+pub fn try_acquire_file_lock(path: &Path) -> Result<Option<FileLockGuard>, AuthError> {
     use std::os::windows::fs::OpenOptionsExt;
 
     create_parent(path)?;
@@ -315,7 +313,7 @@ pub(crate) fn try_acquire_file_lock(path: &Path) -> Result<Option<FileLockGuard>
 }
 
 #[cfg(not(any(unix, windows)))]
-pub(crate) fn try_acquire_file_lock(path: &Path) -> Result<Option<FileLockGuard>, AuthError> {
+pub fn try_acquire_file_lock(path: &Path) -> Result<Option<FileLockGuard>, AuthError> {
     create_parent(path)?;
     match OpenOptions::new()
         .read(true)

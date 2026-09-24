@@ -6,7 +6,8 @@ use std::sync::Mutex;
 
 use pawork_domain::{
     AgentEvent, AgentEventEnvelope, ApprovalDecision, ContentPart, ErrorCategory, ErrorContext,
-    Message, MessageId, MessageRole, SessionId, TextContent, ToolResultContent, WorkspaceId,
+    Message, MessageId, MessageRole, RunId, SessionId, TextContent, TokenUsage, ToolResultContent,
+    WorkspaceId,
 };
 use pawork_engine::EngineError;
 use pawork_storage::session::SessionRecord;
@@ -125,7 +126,9 @@ impl SessionService {
         title: &str,
         now_ms: i64,
     ) -> Result<(), AppError> {
-        core.store()?.rename_session(session_id, title, now_ms).await?;
+        core.store()?
+            .rename_session(session_id, title, now_ms)
+            .await?;
         Ok(())
     }
 
@@ -220,8 +223,10 @@ impl SessionService {
 
     /// 启动清扫（悬空 run 诚实收口）：宿主进程在终态前结束（崩溃 / sink
     /// 失败）遗留的 `running` run 在重放侧永远悬空。装配时对所有 session
-    /// 扫 projection，把仍在 `running` 的 run 收口：非 waiting 的悬空 tool
-    /// call 先落 `ToolExecutionCompleted(is_error)`，再落 `RunFailed`。
+    /// （含归档——R-20，归档不豁免维护清扫）扫 projection，把仍在
+    /// `running` 的 run 收口：非 waiting 的悬空 tool call 先落
+    /// `ToolExecutionCompleted(is_error)`，再落 `RunFailed`；R-21：
+    /// 崩溃前已落盘的 `UsageUpdated` 快照由补偿终态如实携带。
     ///
     /// - `waiting_for_approval` 的 tool call 不追加 ToolExecutionCompleted
     ///   （保持 pending 可决议；pending 重建只看 tool_calls 状态，与 runs
@@ -232,7 +237,7 @@ impl SessionService {
     /// - 单 session 失败只 warn 后继续，不阻断启动。
     pub(crate) async fn seal_interrupted_runs(&self, core: &AppCore) {
         let sessions = match core.store() {
-            Ok(store) => store.list_sessions().await,
+            Ok(store) => store.list_sessions_including_archived().await,
             Err(error) => {
                 tracing::warn!(error = %error, "interrupted-run sweep skipped: store not open");
                 return;
@@ -276,6 +281,10 @@ impl SessionService {
             return Ok(());
         }
         let tool_calls: Vec<_> = snapshot.tool_calls.clone();
+        // R-21：崩溃前已落盘的 UsageUpdated 快照不能丢——重放事件流归集
+        // 每个悬空 run 最近一次已知用量，补偿终态如实携带；未观测到用量
+        // 仍按 None 终态（不推测上游未回报的）。
+        let usage_by_run = self.recover_usage_by_run(core, session_id, &running).await;
         let mut sequence = self.next_sequence(core, session_id).await?;
         for run_id in running {
             for call in tool_calls.iter().filter(|call| {
@@ -315,12 +324,67 @@ impl SessionService {
                         retry_after_ms: None,
                         diagnostics: Default::default(),
                     },
-                    usage: None,
+                    usage: usage_by_run.get(&run_id).cloned(),
                 },
             )
             .await?;
         }
         Ok(())
+    }
+
+    /// R-21：重放会话事件流，每个 request 的 `UsageUpdated` 取最新快照，
+    /// 再累加各 request 得到 run 用量（同一 request 不重复相加）。重放 / 解码失败
+    /// 不阻断收口——usage 落空按 None 终态，与旧行为一致。
+    async fn recover_usage_by_run(
+        &self,
+        core: &AppCore,
+        session_id: &SessionId,
+        running: &[RunId],
+    ) -> HashMap<RunId, TokenUsage> {
+        let mut latest = HashMap::new();
+        let mut requests = HashMap::new();
+        let mut request_usage = HashMap::new();
+        let events = match core.store() {
+            Ok(store) => match store.replay_events(session_id, 0, usize::MAX).await {
+                Ok(events) => events,
+                Err(error) => {
+                    tracing::warn!(
+                        session_id = session_id.as_str(),
+                        error = %error,
+                        "usage recovery replay failed; sealing without usage"
+                    );
+                    return latest;
+                }
+            },
+            Err(_) => return latest,
+        };
+        for envelope in events {
+            if !running.contains(&envelope.run_id) {
+                continue;
+            }
+            match envelope.payload {
+                AgentEvent::ProviderRequestStarted { request_id, .. } => {
+                    requests.insert(envelope.run_id, request_id);
+                }
+                AgentEvent::UsageUpdated { usage } => {
+                    let request_id = requests.get(&envelope.run_id).cloned();
+                    request_usage.insert((envelope.run_id, request_id), usage);
+                }
+                _ => {}
+            }
+        }
+        for ((run_id, _), usage) in request_usage {
+            let total: &mut TokenUsage = latest.entry(run_id).or_default();
+            total.input_tokens = total.input_tokens.saturating_add(usage.input_tokens);
+            total.output_tokens = total.output_tokens.saturating_add(usage.output_tokens);
+            total.cache_read_tokens = total
+                .cache_read_tokens
+                .saturating_add(usage.cache_read_tokens);
+            total.cache_write_tokens = total
+                .cache_write_tokens
+                .saturating_add(usage.cache_write_tokens);
+        }
+        latest
     }
 
     /// 参数化决策与 comment：Denied/Approved 都落 Responded + ToolExecutionCompleted(is_error) + MessageCommitted，
@@ -462,7 +526,7 @@ impl SessionService {
 mod tests {
     use pawork_domain::{
         AgentEvent, AgentEventEnvelope, ContentPart, EventId, EventSequence, MessageId,
-        MessageRole, RunId, SessionId, TextContent, WorkspaceId,
+        MessageRole, RunId, SessionId, TextContent, TokenUsage, WorkspaceId,
     };
     use pawork_storage::session::DEFAULT_BRANCH_ID;
 
@@ -737,6 +801,277 @@ mod tests {
             "second startup sweep must append nothing"
         );
         restarted.shutdown().await.expect("shutdown 2");
+    }
+
+    /// R-24：活跃 Host 持有 running run 时，旁路只读装配（Catalog）不得
+    /// 触发启动清扫；原所有者退出后，新 Executor 所有者仍可幂等恢复。
+    #[tokio::test]
+    async fn catalog_open_does_not_seal_active_host_runs() {
+        use pawork_auth::{MemoryBackend, SecretBackend};
+        use pawork_workspace::config::PaworkConfig;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("session.db");
+        let session = SessionId::from("ses-sweep-ownership");
+        let run = RunId::from("run-sweep-ownership");
+        let backend: std::sync::Arc<dyn SecretBackend> = std::sync::Arc::new(MemoryBackend::new());
+
+        // 活跃 Host：Executor 所有权 + 打开库（空库，清扫无操作）。
+        let mut host = crate::AppCore::from_config_inner(
+            PaworkConfig::default(),
+            None,
+            None,
+            backend.clone(),
+            true,
+        )
+        .await
+        .expect("host core");
+        host.attach_workspace(dir.path()).expect("attach workspace");
+        host.set_instance_ownership(
+            crate::instance_lock::acquire_instance_ownership(
+                dir.path(),
+                crate::InstanceRole::Executor,
+            )
+            .expect("host ownership"),
+        );
+        host.open_store(&path).await.expect("host open store");
+        // Host 开始一个 run（Running，无终态）。
+        host.store()
+            .expect("host store")
+            .create_session(&session, "ownership", pawork_engine::now_timestamp())
+            .await
+            .expect("session");
+        append_sweep_event(
+            host.store().expect("host store"),
+            &session,
+            &run,
+            1,
+            AgentEvent::RunStarted {
+                trigger_message_id: MessageId::from("msg-ownership-1"),
+            },
+        )
+        .await;
+
+        // 旁路只读装配（Catalog，对应 sessions/models/usage/tasks 查询）：
+        // 打开同一个库，不得清扫活跃 Host 的 run。
+        let mut bystander = crate::AppCore::from_config_inner(
+            PaworkConfig::default(),
+            None,
+            None,
+            backend.clone(),
+            true,
+        )
+        .await
+        .expect("bystander core");
+        bystander
+            .attach_workspace(dir.path())
+            .expect("attach workspace");
+        bystander.set_instance_ownership(
+            crate::instance_lock::acquire_instance_ownership(
+                dir.path(),
+                crate::InstanceRole::Catalog,
+            )
+            .expect("bystander ownership"),
+        );
+        bystander
+            .open_store(&path)
+            .await
+            .expect("bystander open store");
+        let snapshot = bystander
+            .store()
+            .expect("bystander store")
+            .projection_snapshot(&session)
+            .await
+            .expect("snapshot");
+        assert_eq!(
+            snapshot.runs[0].state, "running",
+            "旁路只读装配不得触碰活跃 run"
+        );
+        let events = bystander
+            .store()
+            .expect("bystander store")
+            .replay_events(&session, 1, 100)
+            .await
+            .expect("replay");
+        assert_eq!(
+            events.len(),
+            1,
+            "bystander must append zero failure events: {}",
+            events.len()
+        );
+        // shutdown 消费 core，实例登记锁随之释放。
+        bystander.shutdown().await.expect("bystander shutdown");
+
+        // 原所有者退出（登记锁随 drop 释放）后，新 Executor 所有者恢复：
+        // 幂等收口为单个 RunFailed。
+        host.shutdown().await.expect("host shutdown");
+        for attempt in 0..2 {
+            let mut recovery = crate::AppCore::from_config_inner(
+                PaworkConfig::default(),
+                None,
+                None,
+                backend.clone(),
+                true,
+            )
+            .await
+            .expect("recovery core");
+            recovery
+                .attach_workspace(dir.path())
+                .expect("attach workspace");
+            recovery.set_instance_ownership(
+                crate::instance_lock::acquire_instance_ownership(
+                    dir.path(),
+                    crate::InstanceRole::Executor,
+                )
+                .expect("recovery ownership"),
+            );
+            recovery
+                .open_store(&path)
+                .await
+                .expect("recovery open store");
+            let snapshot = recovery
+                .store()
+                .expect("recovery store")
+                .projection_snapshot(&session)
+                .await
+                .expect("snapshot");
+            assert_eq!(snapshot.runs[0].state, "failed");
+            let events = recovery
+                .store()
+                .expect("recovery store")
+                .replay_events(&session, 1, 100)
+                .await
+                .expect("replay");
+            assert_eq!(
+                events.len(),
+                2,
+                "recovery {attempt} must keep exactly one RunFailed (idempotent)"
+            );
+            recovery.shutdown().await.expect("recovery shutdown");
+        }
+    }
+
+    #[tokio::test]
+    async fn startup_sweep_seals_archived_session_and_recovers_usage() {
+        // R-20：归档会话不豁免崩溃清扫——运行中归档再退出，重开后悬空
+        // run 补单个失败终态（重复打开幂等）；R-21：崩溃前已落盘的
+        // UsageUpdated 快照由补偿 RunFailed 如实携带。
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("session.db");
+        let session = SessionId::from("ses-sweep-archived");
+        let run = RunId::from("run-sweep-archived");
+        let usage = TokenUsage {
+            input_tokens: 120,
+            output_tokens: 45,
+            cache_read_tokens: 10,
+            cache_write_tokens: 5,
+        };
+        {
+            let (store, _) = pawork_storage::session::SessionStore::open(&path)
+                .await
+                .expect("store");
+            store
+                .create_session(&session, "archived", pawork_engine::now_timestamp())
+                .await
+                .expect("session");
+            append_sweep_event(
+                &store,
+                &session,
+                &run,
+                1,
+                AgentEvent::RunStarted {
+                    trigger_message_id: MessageId::from("msg-sweep-archived"),
+                },
+            )
+            .await;
+            append_sweep_event(
+                &store,
+                &session,
+                &run,
+                2,
+                AgentEvent::ProviderRequestStarted {
+                    request_id: pawork_domain::RequestId::from("req-sweep-archived"),
+                    provider_id: pawork_domain::ProviderId::from("mock"),
+                    model: "glm-5.2".into(),
+                },
+            )
+            .await;
+            append_sweep_event(
+                &store,
+                &session,
+                &run,
+                3,
+                AgentEvent::UsageUpdated {
+                    usage: usage.clone(),
+                },
+            )
+            .await;
+            // 同一请求重复快照不能翻倍，下一工具轮的快照必须另行累加。
+            for (index, payload) in [
+                AgentEvent::UsageUpdated {
+                    usage: usage.clone(),
+                },
+                AgentEvent::ProviderRequestStarted {
+                    request_id: pawork_domain::RequestId::from("req-sweep-archived-2"),
+                    provider_id: pawork_domain::ProviderId::from("mock"),
+                    model: "glm-5.2".into(),
+                },
+                AgentEvent::UsageUpdated {
+                    usage: TokenUsage {
+                        input_tokens: 2,
+                        ..Default::default()
+                    },
+                },
+                AgentEvent::UsageUpdated {
+                    usage: TokenUsage {
+                        input_tokens: 10,
+                        ..Default::default()
+                    },
+                },
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                append_sweep_event(&store, &session, &run, index as u64 + 4, payload).await;
+            }
+            store
+                .archive_session(
+                    &session,
+                    true,
+                    pawork_engine::now_timestamp().as_unix_millis() as i64,
+                )
+                .await
+                .expect("archive");
+            store.shutdown().await.expect("seed shutdown");
+        }
+
+        for attempt in 0..2 {
+            let core = open_core_with_sweep(&path, dir.path()).await;
+            let snapshot = core
+                .store()
+                .expect("store")
+                .projection_snapshot(&session)
+                .await
+                .expect("snapshot");
+            assert_eq!(snapshot.runs[0].state, "failed", "attempt {attempt}");
+            let recovered = core.session_usage(&session).await.expect("session usage");
+            assert_eq!(
+                recovered,
+                TokenUsage {
+                    input_tokens: usage.input_tokens + 10,
+                    ..usage.clone()
+                },
+                "attempt {attempt}: 补偿终态必须携带崩溃前已知用量"
+            );
+            let events = core
+                .store()
+                .expect("store")
+                .replay_events(&session, 0, usize::MAX)
+                .await
+                .expect("replay");
+            assert_eq!(events.len(), 8, "attempt {attempt}: 恰好补一个 RunFailed");
+            core.shutdown().await.expect("shutdown");
+        }
     }
 
     /// 落一个「RunStarted + tool call 停在 waiting_for_approval、无终态」的

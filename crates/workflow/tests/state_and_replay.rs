@@ -1,6 +1,6 @@
 //! 状态机 / 事件日志 / 快照 / 重放 / 取消传播 的定向测试。
 
-use pawork_domain::{BackgroundTaskId, TaskEvent, TaskKind, TaskStatus};
+use pawork_domain::{BackgroundTaskId, CancellationToken, TaskEvent, TaskKind, TaskStatus};
 use pawork_workflow::task::{is_terminal_status, TaskManager, TaskManagerError, TaskManagerState};
 
 fn manager() -> TaskManager {
@@ -299,6 +299,27 @@ fn cancel_skips_terminal_and_removes_queued() {
     // 事件日志只含已持久化的转移，可直接重放。
     let snapshot = mgr.snapshot();
     assert!(mgr.replay(snapshot.events).is_ok());
+}
+
+#[test]
+fn shared_cancel_token_stops_real_executor() {
+    // R-05：任务登记共享执行体的真实取消令牌时，cancel 除推进状态机外
+    // 必须触发该令牌，让真实执行体（如 agent run）停止。
+    let mgr = manager();
+    let run_token = CancellationToken::new();
+    let id = mgr
+        .register_with_cancel_token(TaskKind::Agent, None, run_token.clone())
+        .unwrap();
+    mgr.start(&id).unwrap();
+
+    let events = mgr.cancel(&id).unwrap();
+    assert_eq!(events.len(), 1);
+    assert!(run_token.is_cancelled(), "cancel 必须触达共享令牌");
+    assert_eq!(mgr.task(&id).unwrap().status, TaskStatus::Canceled);
+
+    // 重复 cancel 幂等：已终态跳过，不发第二份终态事件。
+    let again = mgr.cancel(&id).unwrap();
+    assert!(again.is_empty());
 }
 
 #[test]

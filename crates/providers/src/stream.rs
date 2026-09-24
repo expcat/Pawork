@@ -5,9 +5,27 @@
 
 use crate::usage::{map_stop_reason, normalize_usage};
 use pawork_domain::ProviderStreamEvent;
-use pawork_domain::{TokenUsage, ToolCallId};
+use pawork_domain::{ProviderError, ProviderErrorKind, TokenUsage, ToolCallId};
 use serde_json::Value;
 use std::collections::HashMap;
+
+/// 流错误入口统一安全文案（R-02）：不带上游 message 原文（可能回显敏感
+/// 文本），只保留白名单诊断字段（错误 type/code，限 ASCII 标识符字符与
+/// 长度）——与 HTTP 层不把响应正文写入错误文案（net/retry.rs）同口径。
+pub(crate) fn stream_error_message(context: &str, field: &str, value: Option<&str>) -> String {
+    match value.filter(|value| is_safe_diagnostic_field(value)) {
+        Some(value) => format!("{context} ({field}={value})"),
+        None => context.to_string(),
+    }
+}
+
+fn is_safe_diagnostic_field(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+}
 
 /// 解析单条 SSE data 行的 JSON，返回该 chunk 应发射的事件。
 ///
@@ -15,7 +33,14 @@ use std::collections::HashMap;
 pub fn chunk_to_events(data: &str, pending: &mut ChunkState) -> Vec<ProviderStreamEvent> {
     let value: Value = match serde_json::from_str(data) {
         Ok(v) => v,
-        Err(_) => return Vec::new(),
+        Err(_) => {
+            // R-08：畸形 chunk 不得静默忽略——正文或工具参数可能已缺失，
+            // 明确报 MalformedResponse，由驱动层终止流（不伪造成功）。
+            return vec![ProviderStreamEvent::Error(ProviderError::new(
+                ProviderErrorKind::MalformedResponse,
+                "invalid chat completions SSE chunk JSON",
+            ))];
+        }
     };
 
     let mut events = Vec::new();
@@ -144,6 +169,42 @@ mod tests {
             events.last(),
             Some(ProviderStreamEvent::ResponseCompleted(StopReason::ToolUse))
         ));
+    }
+
+    /// R-08：畸形 chunk 不再静默吞掉，映射为 MalformedResponse 错误事件。
+    #[test]
+    fn malformed_chunk_yields_malformed_error() {
+        let mut state = ChunkState::default();
+        let events = chunk_to_events("not-json", &mut state);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            &events[0],
+            ProviderStreamEvent::Error(err)
+                if err.kind == pawork_domain::ProviderErrorKind::MalformedResponse
+        ));
+    }
+
+    /// R-02：流错误文案只保留白名单诊断字段——安全字符的 code/type 保留，
+    /// 含自由文本（可能回显 Secret）的值整体丢弃。
+    #[test]
+    fn stream_error_message_keeps_only_whitelisted_field() {
+        assert_eq!(
+            stream_error_message("anthropic stream error", "type", Some("overloaded_error")),
+            "anthropic stream error (type=overloaded_error)"
+        );
+        assert_eq!(
+            stream_error_message("Responses request failed", "code", None),
+            "Responses request failed"
+        );
+        // 自由文本（含空格 / 中文）与超长值不作为诊断字段保留。
+        assert_eq!(
+            stream_error_message("ctx", "code", Some("key sk-FAKE-SECRET rejected")),
+            "ctx"
+        );
+        assert_eq!(
+            stream_error_message("ctx", "code", Some(&"a".repeat(65))),
+            "ctx"
+        );
     }
 
     #[test]

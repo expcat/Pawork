@@ -196,7 +196,7 @@ impl LoopContext for SessionLoopCtx<'_> {
         &self,
         reason: AutoCompactionReason,
         summary_text: &str,
-        _cancel: CancellationToken,
+        cancel: CancellationToken,
     ) -> Result<Option<CompactionOutcome>, pawork_engine::EngineError> {
         let (Some(store), Some(session_id), Some(estimator)) = (
             self.store,
@@ -266,12 +266,23 @@ impl LoopContext for SessionLoopCtx<'_> {
             });
         }
 
-        // 对齐 engine 的消息级保留（crate::RETAINED_MESSAGES 条消息 ≈ 2 轮对话），
-        // 让持久化投影与 engine 重建历史在同一边界折叠。
+        // R-07：持久水位与 engine 重建消费同一保留决定——消息维度按 count
+        // 后缀保留 RETAINED_MESSAGES 条，与 engine 的 split_at(len - N)
+        // 完全同界（旧 turn 近似在含工具轮/非成对消息时与 engine 分叉，
+        // 早期 System 的豁免又无法被单一水位兑现）。
+        // R-18：宿主持久写入前检查取消——取消期间不得建 recovery
+        // branch / 快照，手动入口如实返回取消。
+        if cancel.is_cancelled() {
+            return Err(pawork_domain::ProviderError::cancelled(
+                "compaction cancelled before host commit",
+            )
+            .into());
+        }
         let engine = CompactionEngine::with_policy(
             store,
             pawork_storage::session::RetentionPolicy {
-                retained_turns: (crate::RETAINED_MESSAGES / 2) as u32,
+                retained_turns: 0,
+                retained_messages: crate::RETAINED_MESSAGES as u32,
                 ..Default::default()
             },
             estimator,

@@ -15,11 +15,11 @@
 | --- | --- | --- |
 | `src/lib.rs` | ~30 | 门面：12 个模块声明 + re-export（九工具、`NoopToolEventSink`、registry/scheduler 全家、`pub mod mcp`）。 |
 | `src/computer.rs` | — | `ComputerTool`：进程共享隔离桌面会话、按动作必填的 JSON 参数、跨 run 观察隔离、阻塞工作取消、JPEG → canonical Image；复用 Policy / 审批。 |
-| `src/common.rs` | ~230 | 公共层：`BuiltinToolError` 与 → `ToolError` 集中映射；取参 `require_str`/`opt_str`/`opt_u64`/`opt_bool`（opt_* 缺省或 `null` → None，类型不符报 InvalidField）；`workspace_roots`；`resolve_write_rel`（包 `resolve_workspace_path`）；`atomic_write`（同目录临时文件 + rename，覆盖保留既有 Unix mode）。 |
+| `src/common.rs` | ~230 | 公共层：`BuiltinToolError` 与 → `ToolError` 集中映射；取参 `require_str`/`opt_str`/`opt_u64`/`opt_bool`（opt_* 缺省或 `null` → None，类型不符报 InvalidField）；`workspace_roots`；`resolve_write_rel`（包 `resolve_workspace_path`）；`atomic_write`（同目录临时文件经 `create_new` **独占创建**——同名路径已存在（含预置 symlink）即换名重试、不跟随——+ rename，覆盖保留既有 Unix mode）。 |
 | `src/read_file.rs` | ~500（逻辑 ~260 + 测试） | `ReadFileTool`：行号视图、offset/limit、编码探测（chardetng + encoding_rs）、二进制检测（NUL + 控制字节占比）、4 MiB 读上限 / 256 KiB 输出上限。 |
 | `src/list_directory.rs` | ~440（逻辑 ~300 + 测试） | `ListDirectoryTool`：路径解析与目录扫描均在 `spawn_blocking` 内；目录优先字典序、BinaryHeap 单扫描取 offset+limit 窗口（内存 O(offset+limit)）、entry kind/size/mtime/symlink 目标（目标相对化，越 root 省略）。 |
 | `src/find_files.rs` | ~380（逻辑 ~280 + 测试） | `FindFilesTool`：逗号分隔 glob（globset）、`ignore` walker（尊重 .gitignore、隐藏文件默认跳过、不 follow symlink）、file_type/max_depth/max_results、每项 `resolve_write_rel` 复核（逃逸与 `.git` 静默跳过）、`spawn_blocking` 执行。 |
-| `src/search_text.rs` | ~500（逻辑 ~390 + 测试） | `SearchTextTool`：固定串/regex（regex crate）、context_lines、case_sensitive、glob 过滤、`hidden(false)`（搜隐藏文件但仍尊重 .gitignore）、`spawn_blocking`、每 64 个候选查取消、输出预算 256 KiB。 |
+| `src/search_text.rs` | ~530（逻辑 ~410 + 测试） | `SearchTextTool`：固定串/regex（regex crate）、context_lines、case_sensitive、glob 过滤、`hidden(false)`（搜隐藏文件但仍尊重 .gitignore）、`spawn_blocking`、每 64 个候选查取消、输出预算 256 KiB；R-14 单文件 4 MiB 读取上限——超限文件跳过不装入内存，metadata `skipped_oversize` 计数且 `truncated=true` 如实标记结果不完整。 |
 | `src/write_file.rs` | ~330（逻辑 ~160 + 测试） | `WriteFileTool`：整文件原子写、自动建父目录、覆盖保留 mode；`spawn_blocking` 承载阻塞 IO。 |
 | `src/edit_file.rs` | ~530（逻辑 ~345 + 测试） | `EditFileTool`：单段（`old_string`/`new_string`）或多段 `edits[]`；全部替换先内存预演再一次原子写；可选 `allow_fuzzy`（行对齐 whitespace 归一化匹配）；`spawn_blocking` 承载阻塞 IO。 |
 | `src/apply_patch.rs` | ~520（逻辑 ~365 + 测试） | `ApplyPatchTool`：多文件 `ops[]`（create/update/delete/rename）、`dry_run` 预演、执行前逐文件字节备份、失败自动恢复备份（含删除新建文件）；`ApplyPatchError::Partial` 报出 failed_op 与 applied 清单；`spawn_blocking` 承载阻塞 IO。 |
@@ -59,7 +59,7 @@
 - `read_file`：`{行号:>6}\t行文本` 视图；metadata 报 encoding/offset/limit/total_lines/truncated；读上限 4 MiB（超出截断续报）；NUL/控制字节占比判定二进制，只报类型与大小不吐内容。
 - `list_directory`：目录优先字典序，行格式 `{size:>8}  {kind}  {name}[ -> target]`，kind ∈ `file/dir/symlink/broken_symlink`；metadata.entries 结构化（name/kind/size/mtime_ms/is_symlink/symlink_target）；symlink 目标相对化、越 root 时省略（不泄漏宿主路径）；dangling symlink 不致败。
 - `find_files`：相对路径列表（字典序稳定，不按 mtime）；尊重 .gitignore、跳过隐藏文件；每 64 项检查取消；`.git` 与逃逸 symlink 被 `resolve_write_rel` 复核静默跳过。
-- `search_text`：匹配块（`path:line:` + 前后 context）；搜隐藏文件但尊重 .gitignore；非法 regex → InvalidInput；逐文件 `read_to_string`（非 UTF-8 文件跳过）。
+- `search_text`：匹配块（`path:line:` + 前后 context）；搜隐藏文件但尊重 .gitignore；非法 regex → InvalidInput；逐文件有界读取（非 UTF-8 文件跳过；最多读取上限 + 1 字节，以识别读取期间增长的文件）；R-14：超过 4 MiB 的文件不读取直接跳过并计数（`skipped_oversize`），有任何跳过时结果标 `truncated`。
 - `write_file`：原子写 + 自动建父目录 + 覆盖保留 mode；metadata `{path, bytes}`。
 - `edit_file`：内存预演全段——0 命中 NotFound、>1 命中 Conflict（报命中数）、`old==new` Conflict、无净变化 NotFound，任一失败整体不落盘；成功一次原子写；metadata 报 replacements。fuzzy 匹配为行对齐 whitespace 归一化，仍要求唯一命中。
 - `apply_patch`：`dry_run` 只报计划不落盘；执行前对受影响文件做字节备份，op 失败自动恢复（改写还原、新建删除、删除恢复），以 `Partial` 报 failed_op + applied 清单；metadata.changes 逐 op 记录。
@@ -87,7 +87,7 @@
 - `workspace_roots(&WorkspaceService, &WorkspaceId)`：未知 workspace → `WorkspaceError::NotFound`。
 - 取参语义：`require_str` 缺失或类型不符按 `MissingField` 报错；`opt_str`/`opt_u64`/`opt_bool` 可选字段缺省或显式 `null` 视为未提供，字段存在但类型不符（如字符串传给整数位）→ `InvalidField`（映射 `InvalidInput`），模型得到纠错信号而非静默默认值。
 - `resolve_write_rel(roots, rel)`：全部八工具（含只读）解析路径的统一入口。
-- `atomic_write(path, bytes)`：同目录临时文件 + rename；目标已存在时保留其 permissions。
+- `atomic_write(path, bytes)`：同目录临时文件 + rename；临时文件以 `create_new` 独占创建（同名路径已存在——含预置 symlink——即换名重试，有界 16 次），失败只清理本次创建的文件；目标已存在时保留其 permissions。
 
 ### 3.4 调度层
 
@@ -139,7 +139,7 @@
    - `AllowWithConstraints` → 把 `timeout_ms`/`max_output_bytes` 注入 `request.input`（与已有值取更严者）后放行。
    - `Allow` → 继续。
 4. 叠加闸：`descriptor.requires_approval=true`（computer、MCP 写工具）且 policy 非 Deny 时升级为 `AskUser`，必须由 `can_resolve_policy_prompt()==true` 的 resolver 放行（`AutoApproveResolver` 在此闸无效、一律拒绝；无 resolver 同样拒绝）。policy 直接放行（Allow / AllowWithConstraints）的工具，只要调用方传入 resolver，S2 钩子会再确认一次（AutoApprove 恒过、DenyAll 全拒；check_gate 已问过用户则跳过）。
-5. 获全局 `Semaphore` 许可（`max_concurrent`）→ descriptor 有 `default_timeout_ms` 则 `tokio::time::timeout` 包裹 → `tool.execute(...)`；超时 → `Timeout`；取消由各工具协作检查。
+5. 获全局 `Semaphore` 许可（`max_concurrent`）——槽位等待与取消 `select`，排队期间取消立即返回 `Cancelled` 且不调用 executor（R-09）→ descriptor 有 `default_timeout_ms` 则按 deadline 包裹 `tool.execute(...)`；超时 → 先触发派生执行令牌取消、**等待工具协作收口后**再回执 `Timeout`（R-10：响应返回后不会再启动新写操作，阻塞闭包的最终结果已被等待而非丢弃失控）。工具收到的令牌是 scheduler 派生令牌：调用方取消经桥接任务原样传播，scheduler 超时单独触发，互不误伤。
 
 ### 4.2 `run_command` 全流程
 
@@ -171,10 +171,11 @@ Policy 闸门在同步 `decide` 前暂取 input，返回后立即归还，不再
 
 ### 4.5 取消与超时的传播路径
 
-1. 取消源头是 domain `CancellationToken`（engine/宿主持有），经 `execute_named` 原样传入工具。
+1. 取消源头是 domain `CancellationToken`（engine/宿主持有）；scheduler 派生执行令牌传入工具——调用方取消经桥接传播，scheduler 超时也触发同一令牌（R-10）。
 2. 只读四工具：走 `spawn_blocking` 的（find/search）每 64 个候选检查一次并在进入阻塞前检查；read_file 在读文件前后检查。命中即返回 `ToolError::cancelled`（kind=Cancelled）。
+2a. 写三工具（write/edit/apply_patch）：`spawn_blocking` 闭包携带令牌——write/edit 在 `atomic_write` 提交边界检查一次；apply_patch 在每个操作边界检查，命中则回滚已应用操作（保持「全成或全滚」）后返回 `Cancelled`（R-10）。
 3. `run_command`：桥接任务把 domain 取消翻译为 exec token cancel → exec 监督循环 kill 整树（[exec.md](exec.md) §4.1）。
-4. 超时双层：descriptor `default_timeout_ms` 由 scheduler 的 `tokio::time::timeout` 强制（工具无感知）；`run_command` 的 `timeout_ms` 由 exec 层强制（`timed_out` 标记）。两层语义不同：前者报 `Timeout` 错误，后者是带上下文的失败结果。
+4. 超时双层：descriptor `default_timeout_ms` 由 scheduler 强制——超时即取消派生令牌并等待工具收口，再报 `Timeout` 错误（R-10）；`run_command` 的 `timeout_ms` 由 exec 层强制（`timed_out` 标记）。两层语义不同：前者报 `Timeout` 错误，后者是带上下文的失败结果。
 
 ## 5. 契约与不变量
 
@@ -205,16 +206,16 @@ Policy 闸门在同步 `decide` 前暂取 input，返回后立即归还，不再
 
 | 文件 | 覆盖点 |
 | --- | --- |
-| `common.rs` | `opt_*` 取参语义（合法值 / 缺省与显式 `null` → `None`、类型误传 → `InvalidField`→`InvalidInput`）；错误映射分流与 `atomic_write` 行为由各工具用例承载。 |
+| `common.rs` | `opt_*` 取参语义（合法值 / 缺省与显式 `null` → `None`、类型误传 → `InvalidField`→`InvalidInput`）；R-01 预置同名 symlink 不被跟随、外部哨兵不变且写入仍成功；错误映射分流与 `atomic_write` 覆盖/权限行为由各工具用例承载。 |
 | `read_file.rs` | 行号/offset/limit、二进制拒吐、绝对与穿越路径拒绝、missing → NotFound、大文件读上限、symlink 逃逸与 `.git` 拒绝。 |
 | `list_directory.rs` | 类型/symlink 列举、分页与 total、dangling symlink 容忍、逃逸 symlink 目标省略（不回显宿主路径）、非目录报错。 |
 | `find_files.rs` | glob 匹配与字典序、max_results 截断、dir 过滤、遍历中取消、跳过逃逸 symlink 与 `.git`。 |
-| `search_text.rs` | 固定串 + context、regex、glob 过滤、非法 regex → InvalidInput、取消、跳过逃逸与 `.git`。 |
+| `search_text.rs` | 固定串 + context、regex、glob 过滤、非法 regex → InvalidInput、取消、跳过逃逸与 `.git`、R-14 超限文件跳过并报告（`oversize_file_is_skipped_and_reported`）。 |
 | `write_file.rs` | 原子写/建父目录/覆盖保留 mode、路径拒绝。 |
 | `edit_file.rs` | 精确单段、不唯一 Conflict、多段原子、预演失败不落盘、fuzzy 归一化与终止换行保留、fuzzy 唯一性计数、proptest（fuzzy 与精确替换一致性）。 |
-| `apply_patch.rs` | 多文件 create、dry_run 不落盘、delete+rename、部分失败恢复（create/update/delete 各形态）、proptest 字节精确回滚、op 路径穿越拒绝。 |
+| `apply_patch.rs` | 多文件 create、dry_run 不落盘、delete+rename、部分失败恢复（create/update/delete 各形态）、proptest 字节精确回滚、op 路径穿越拒绝、R-10 取消令牌下零写入（`cancelled_token_starts_no_ops`）。 |
 | `run_command.rs` | 输出与 exit_code、非零失败、超时、流式先于退出、descriptor 无网络旁路参数、clamp 上限、**`metadata_sandbox_shape_and_limits_golden`**、macOS Seatbelt 必须上报 `sandbox_exec` / `hard_writes_and_network` / `fallback=false`（探测失败即失败）、显式 Secret env 被剥除。环境白名单由 exec 的权威清单与剥除断言承接。 |
-| `scheduler.rs` | 只读并发、全局并发上限、未知工具、上下文透传、取消（执行前/执行中）、超时映射、审批拒绝不执行、auto-approve 不能绕过 AskForWrites（并入写工具零调用回归）、registry kind/描述符校验、untrusted 写拒绝（NeverAsk 也拒）、AskForWrites 不可被 AutoApprove 绕过、ReadOnly 档拒写、`process_never_ask_trusted_injects_execution_constraints`、约束与显式输入取更严。 |
+| `scheduler.rs` | 只读并发、全局并发上限、未知工具、上下文透传、取消（执行前/执行中）、超时映射、审批拒绝不执行、auto-approve 不能绕过 AskForWrites（并入写工具零调用回归）、registry kind/描述符校验、untrusted 写拒绝（NeverAsk 也拒）、AskForWrites 不可被 AutoApprove 绕过、ReadOnly 档拒写、`process_never_ask_trusted_injects_execution_constraints`、约束与显式输入取更严、R-09 排队取消（`queued_call_cancelled_while_waiting_for_slot`）、R-10 超时协作收口与操作边界停写（`timeout_waits_for_cooperative_drain_before_responding`、`cancel_between_ops_stops_later_ops`）。 |
 | `mcp/mod.rs` | rmcp 隔离守卫扫描、内置与 MCP 工具同表注册。 |
 | `mcp/capabilities.rs` | 发现与命名空间注册、read_only 放行、写工具审批与 untrusted 地板、host_trusted 钳制、取消先于远程调用、输出预算截断、非对象输入拒绝、structured_content 保留、workspace/tool 白名单、is_error 转换、未广播 tools 能力跳过。 |
 | `mcp/codec.rs` | http 配置校验、auth/header 注入、read_only_hint 往返、UTF-8 截断标记、input_required 状态 fail-closed。 |
@@ -229,7 +230,7 @@ Policy 闸门在同步 `decide` 前暂取 input，返回后立即归还，不再
 
 - 默认配置（`ReadOnly` 档 + untrusted）下只有四个只读工具可用；一切副作用工具被 policy 直接 Deny——宿主必须显式提升 `ApprovalMode` 并提供 `ApprovalResolver` 才能写盘/执行命令。
 - `run_command` 的沙箱策略固定派生（Enforce 网络、deny secret 路径、env_clear），不随 workspace 信任度放宽；放宽属 R7 策略分层。真实隔离强度取决于平台后端（macOS Seatbelt 最强；无硬后端时 NativeRestricted 挡不住命令内部越权读，见 [exec.md](exec.md) §8）。
-- `find_files` / `search_text` 尊重 `.gitignore`（被 ignore 的文件搜不到，有意行为）；`find_files` 还跳过隐藏文件，`search_text` 不跳过；`search_text` 逐文件全量读入内存，超大文件受进程内存约束而非显式上限。
+- `find_files` / `search_text` 尊重 `.gitignore`（被 ignore 的文件搜不到，有意行为）；`find_files` 还跳过隐藏文件，`search_text` 不跳过；`search_text` 单文件读取上限 4 MiB（R-14），超限文件跳过并在 metadata 计数报告，结果标记不完整。
 - `edit_file` fuzzy 是行对齐 whitespace 归一化匹配，不做语义/缩进感知；替换文本按字面写入。
 - MCP：HTTP transport 不经进程沙箱（无本地进程，凭 URL 校验与 Secret 域约束）；`ManagedMcpClient` 无后台心跳，断连在下次请求才被发现（`ping()` 供宿主探活）；`auto_start` 仅配置位，启动编排在宿主。
 - `StdioTransportConfig` / `HttpTransportConfig` 位于私有 `mod transport`（类型 pub 但包外不可命名）——以其为参数的公开函数（如 `OAuthHttpConnector::new`）实际只能由 crate 内部装配，这是刻意的封装边界而非疏漏。

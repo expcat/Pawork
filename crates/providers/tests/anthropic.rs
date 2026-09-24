@@ -419,6 +419,30 @@ async fn contract_missing_message_stop_is_interrupted() {
     );
 }
 
+/// R-08：畸形事件 JSON 后即便正常 message_stop 收尾也必须失败。
+#[tokio::test]
+async fn contract_malformed_event_fails_even_if_message_stop_follows() {
+    let server = MockServer::start().await;
+    let body = sse(&["not-json", r#"{"type":"message_stop"}"#]);
+    mount_ok(&server, body).await;
+
+    let p = provider(&server);
+    let sink = RecordingProviderSink::default();
+    let err = p
+        .stream(
+            &request("claude-3-5-sonnet"),
+            &sink,
+            CancellationToken::new(),
+        )
+        .await
+        .expect_err("畸形事件不得被 message_stop 救回为成功");
+    contract::assert_error_kind(
+        &sink.events(),
+        Some(&err),
+        ProviderErrorKind::MalformedResponse,
+    );
+}
+
 #[tokio::test]
 async fn list_models_is_static_and_does_not_hit_network() {
     let server = MockServer::start().await;

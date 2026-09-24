@@ -137,12 +137,12 @@ fn opt_typed<T>(
 ) -> Result<Option<T>, BuiltinToolError> {
     match input.get(key) {
         None | Some(Value::Null) => Ok(None),
-        Some(value) => {
-            cast(value).map(Some).ok_or_else(|| BuiltinToolError::InvalidField {
+        Some(value) => cast(value)
+            .map(Some)
+            .ok_or_else(|| BuiltinToolError::InvalidField {
                 field: key,
                 detail: format!("expected {expected}, got {value}"),
-            })
-        }
+            }),
     }
 }
 
@@ -177,19 +177,15 @@ pub fn atomic_write(path: &Path, content: &[u8]) -> std::io::Result<()> {
             .ok()
             .map(|metadata| metadata.permissions().mode())
     };
-    let temp = path.with_file_name(format!(
-        ".pawork-tmp-{}-{}",
-        std::process::id(),
-        TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
-    ));
+    let (temp, mut file) = create_temp_file(path, &TEMP_COUNTER)?;
     let result = (|| {
-        let mut file = std::fs::File::create(&temp)?;
         file.write_all(content)?;
         file.sync_all()?;
         drop(file);
         std::fs::rename(&temp, path)
     })();
     if result.is_err() {
+        // 临时文件由本次调用独占创建，失败时只清理这一个路径。
         let _ = std::fs::remove_file(&temp);
     }
     result?;
@@ -199,6 +195,35 @@ pub fn atomic_write(path: &Path, content: &[u8]) -> std::io::Result<()> {
         let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode));
     }
     Ok(())
+}
+
+/// 同目录独占创建临时文件（R-01）：create_new 拒绝跟随已存在路径——
+/// 目标目录中被预置或竞速创建的同名 symlink 不会被打开写入，只会换名
+/// 重试；有界次数后放弃。调用方据此保证只清理自己确实创建的文件。
+fn create_temp_file(path: &Path, counter: &AtomicU64) -> std::io::Result<(PathBuf, std::fs::File)> {
+    const MAX_ATTEMPTS: u32 = 16;
+    let mut attempt = 0u32;
+    loop {
+        let candidate = path.with_file_name(format!(
+            ".pawork-tmp-{}-{}",
+            std::process::id(),
+            counter.fetch_add(1, Ordering::Relaxed)
+        ));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(file) => return Ok((candidate, file)),
+            Err(error)
+                if error.kind() == std::io::ErrorKind::AlreadyExists
+                    && attempt + 1 < MAX_ATTEMPTS =>
+            {
+                attempt += 1;
+            }
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -229,5 +254,61 @@ mod tests {
         ));
         let mapped: ToolError = error.into();
         assert_eq!(mapped.kind, ToolErrorKind::InvalidInput);
+    }
+    /// R-01：预置同名 symlink 不能被独占创建跟随；哨兵文件内容不变，
+    /// 临时文件改名落到其它候选名。
+    #[cfg(unix)]
+    #[test]
+    fn create_temp_file_refuses_planted_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target.txt");
+        let sentinel_dir = tempfile::tempdir().unwrap();
+        let sentinel = sentinel_dir.path().join("sentinel.txt");
+        std::fs::write(&sentinel, b"sentinel").unwrap();
+
+        let counter = AtomicU64::new(0);
+        let planted = target.with_file_name(format!(".pawork-tmp-{}-0", std::process::id()));
+        symlink(&sentinel, &planted).unwrap();
+
+        let (temp, file) = create_temp_file(&target, &counter).unwrap();
+        drop(file);
+        assert_ne!(temp, planted, "必须换一个未占用的候选名");
+        assert_eq!(
+            std::fs::read(&sentinel).unwrap(),
+            b"sentinel",
+            "预置链接指向的外部哨兵不得被改写"
+        );
+        assert!(
+            planted.symlink_metadata().unwrap().file_type().is_symlink(),
+            "预置链接本身不得被覆盖或删除"
+        );
+        let _ = std::fs::remove_file(&temp);
+    }
+
+    /// R-01：atomic_write 全路径——预置一批同名 symlink（少于重试上限），
+    /// 写入仍成功且哨兵不变。
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_succeeds_despite_planted_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("out.txt");
+        let sentinel_dir = tempfile::tempdir().unwrap();
+        let sentinel = sentinel_dir.path().join("sentinel.txt");
+        std::fs::write(&sentinel, b"sentinel").unwrap();
+
+        // 预置一小段候选名（少于 MAX_ATTEMPTS，写入必然在段内或段后成功）。
+        let start = TEMP_COUNTER.load(Ordering::Relaxed);
+        for n in start..start + 8 {
+            let name = target.with_file_name(format!(".pawork-tmp-{}-{n}", std::process::id()));
+            symlink(&sentinel, &name).unwrap();
+        }
+
+        atomic_write(&target, b"new content").unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"new content");
+        assert_eq!(std::fs::read(&sentinel).unwrap(), b"sentinel");
     }
 }
