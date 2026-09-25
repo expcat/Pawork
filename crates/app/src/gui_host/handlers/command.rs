@@ -4,6 +4,23 @@ use serde_json::json;
 
 use super::super::GuiHostAdapter;
 
+pub(crate) async fn tasks_cancel(
+    adapter: &GuiHostAdapter,
+    _envelope: &AppCommandEnvelope,
+    command: &AppCommand,
+) -> Result<AppResponse, GuiHostError> {
+    let AppCommand::TasksCancel { task_id } = command else {
+        unreachable!("tasks_cancel handler receives TasksCancel")
+    };
+    let cancelled = adapter
+        .core
+        .read()
+        .await
+        .tasks_cancel(task_id)
+        .map_err(GuiHostAdapter::app_error)?;
+    Ok(AppResponse::Data(json!({ "cancelled": cancelled })))
+}
+
 pub(crate) async fn workspace_add(
     adapter: &GuiHostAdapter,
     _envelope: &AppCommandEnvelope,

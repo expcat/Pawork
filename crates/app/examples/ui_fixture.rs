@@ -562,6 +562,7 @@ impl Client {
                 effort: None,
                 attachment_ids: Vec::new(),
                 web_search: None,
+                video_urls: Vec::new(),
             },
         )))
         .await

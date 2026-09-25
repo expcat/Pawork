@@ -276,6 +276,7 @@ fn content_blocks<'a>(
                     others.push(block);
                 }
             }
+            ContentPart::Video(_) => {} // rejected by adapter before encoding
         }
     }
 

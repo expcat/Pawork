@@ -4606,6 +4606,7 @@ dependencies = [
  "bytes",
  "futures",
  "pawork-domain",
+ "pawork-testkit",
  "proptest",
  "reqwest",
  "serde",

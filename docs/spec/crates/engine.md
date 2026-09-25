@@ -145,6 +145,8 @@
 - `UsageUpdated` / `ResponseStarted` / `ResponseCompleted` / `ProviderMetadata` 增量合并进 `ModelResponseSummary`；`ServerTool` / `TranscriptEnvelope` / `Error` 不参与折叠。
 - `into_message` 产出顺序固定：Thinking → Reasoning items → Text → ToolCall（按出现顺序）；参数 JSON 解析失败降级 `Value::Null`。
 
+API 1.24 视频引用：context token 估算只统计 URL 字符文本，不能估算远程视频时长或视觉 token；工具结果尺寸统计包含视频 URL。循环仍传递 canonical ContentPart，不下载/抽帧、不按 Provider 分支。真实用量以 Provider UsageUpdated/终态为准。
+
 ## 5. 契约与不变量
 
 - **审批事件对（K-02，冻结）**：`ToolApprovalRequested` 由 `request_approval` 实现方在每次阻塞等待前 emit（reason 逐字 ``tool `{name}` requires approval``）；`ToolApprovalResponded` 由 engine 补发。等待审批期间取消 → 有 Requested 无 Responded 是合法事件序。审批经宿主的 ApprovalResolver 体系 await，engine 不感知具体审批 UI。

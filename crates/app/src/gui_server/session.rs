@@ -126,9 +126,17 @@ async fn run(
     mut host_rx: mpsc::UnboundedReceiver<TransportFrame>,
     mut close_rx: oneshot::Receiver<()>,
 ) {
-    let Some(outcome) =
-        handshake_phase(&inner, connection.as_ref(), &client_id, &connection_id).await
-    else {
+    let outcome = tokio::select! {
+        biased;
+        _ = &mut close_rx => {
+            if let Err(error) = connection.close().await {
+                tracing::debug!(%client_id, %error, "gui connection close failed before handshake");
+            }
+            return;
+        }
+        outcome = handshake_phase(&inner, connection.as_ref(), &client_id, &connection_id) => outcome,
+    };
+    let Some(outcome) = outcome else {
         return;
     };
     let negotiated = negotiated_version(&outcome.response);
@@ -157,7 +165,18 @@ async fn run(
     };
 
     if granted.contains(&GuiCapability::Snapshots) {
-        match snapshot_for_client(inner.as_ref(), &client_id).await {
+        let snapshot = tokio::select! {
+            biased;
+            _ = &mut close_rx => {
+                inner.connections.unregister(&client_id);
+                if let Err(error) = connection.close().await {
+                    tracing::debug!(%client_id, %error, "gui connection close failed during snapshot");
+                }
+                return;
+            }
+            snapshot = snapshot_for_client(inner.as_ref(), &client_id) => snapshot,
+        };
+        match snapshot {
             Ok(snapshot) => {
                 if send_frame(
                     connection.as_ref(),
@@ -193,7 +212,7 @@ async fn run(
     }
 
     let (stop_tx, stop_rx) = oneshot::channel();
-    let _forwarder = spawn_forwarder(Arc::clone(&inner), client_id.clone(), stop_rx, host_tx);
+    let forwarder = spawn_forwarder(Arc::clone(&inner), client_id.clone(), stop_rx, host_tx);
 
     let mut watchdog = interval(watchdog_interval(
         inner.connections.config().heartbeat_timeout,
@@ -328,9 +347,12 @@ async fn run(
             }
         }
     }
-    drop(upstream_queries);
+    upstream_queries.shutdown().await;
     if let Err(error) = stop_tx.send(()) {
         tracing::debug!(%client_id, error = ?error, "gui forwarder stop signal dropped");
+    }
+    if let Err(error) = forwarder.await {
+        tracing::debug!(%client_id, %error, "gui forwarder failed during shutdown");
     }
     inner.connections.unregister(&client_id);
     if let Err(error) = connection.close().await {

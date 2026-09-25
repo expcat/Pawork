@@ -15,13 +15,30 @@ use super::super::{ActiveGuiRun, GuiBroadcastSink, GuiHostAdapter, GuiRunRegistr
 
 /// 同会话 Run 占用槽的 RAII 守卫（R-06）：handler 内任何同步/异步拒绝
 /// 路径自动释放；spawn 成功后 disarm，由 run 收尾释放。
-struct SessionSlotGuard {
+pub(super) struct SessionSlotGuard {
     runs: Arc<GuiRunRegistry>,
     session_id: SessionId,
     held: bool,
 }
 
 impl SessionSlotGuard {
+    pub(super) fn acquire(
+        adapter: &GuiHostAdapter,
+        session_id: &SessionId,
+    ) -> Result<Self, GuiHostError> {
+        if !adapter.runs.try_acquire_session(session_id) {
+            return Err(GuiHostAdapter::host_error(
+                "session_busy",
+                "session already has an active operation",
+            ));
+        }
+        Ok(Self {
+            runs: Arc::clone(&adapter.runs),
+            session_id: session_id.clone(),
+            held: true,
+        })
+    }
+
     fn disarm(&mut self) {
         self.held = false;
     }
@@ -182,6 +199,42 @@ pub(crate) async fn run_start(
     envelope: &AppCommandEnvelope,
     command: &AppCommand,
 ) -> Result<AppResponse, GuiHostError> {
+    let _goal_change = adapter.goal_commands.lock().await;
+    if let AppCommand::RunStart { session_id, .. } = command {
+        if adapter
+            .goals
+            .lock()
+            .unwrap()
+            .contains_key(session_id.as_str())
+        {
+            return Err(GuiHostAdapter::host_error(
+                "goal_active",
+                "Pause the goal before sending a separate message",
+            ));
+        }
+    }
+    start(adapter, envelope, command, None).await
+}
+pub(crate) async fn start_for_goal(
+    adapter: &GuiHostAdapter,
+    envelope: &AppCommandEnvelope,
+    command: &AppCommand,
+    budget: u64,
+) -> Result<AppResponse, GuiHostError> {
+    start(adapter, envelope, command, Some(budget)).await
+}
+async fn start(
+    adapter: &GuiHostAdapter,
+    envelope: &AppCommandEnvelope,
+    command: &AppCommand,
+    goal_budget: Option<u64>,
+) -> Result<AppResponse, GuiHostError> {
+    if adapter.runs.is_stopping() {
+        return Err(GuiHostAdapter::host_error(
+            "host_stopping",
+            "Host is stopping",
+        ));
+    }
     let AppCommand::RunStart {
         session_id,
         user_message,
@@ -191,10 +244,30 @@ pub(crate) async fn run_start(
         effort,
         attachment_ids,
         web_search,
+        video_urls,
     } = command
     else {
         unreachable!("run_start handler receives RunStart")
     };
+    if !video_urls.is_empty() {
+        if envelope.api_version.minor < 24 {
+            return Err(GuiHostAdapter::host_error(
+                "unsupported",
+                "Video input requires API 1.24",
+            ));
+        }
+        if video_urls.len() + attachment_ids.len() > 4 {
+            return Err(GuiHostAdapter::host_error(
+                "invalid_attachment",
+                "At most four attachments and videos per turn",
+            ));
+        }
+        for video in video_urls {
+            video
+                .validate()
+                .map_err(|e| GuiHostAdapter::host_error("invalid_video", e))?;
+        }
+    }
     if !attachment_ids.is_empty() || web_search.is_some() {
         if envelope.api_version.minor < 22 {
             return Err(GuiHostAdapter::host_error(
@@ -224,18 +297,7 @@ pub(crate) async fn run_start(
     // R-06：同一 Session 同时只允许一个活动 Run。占用早于首个 await，
     // join! 突发的第二个 RunStart 才能确定性拒绝；守卫覆盖此后所有
     // 拒绝路径，spawn 成功后 disarm、由 run 收尾释放。
-    let mut session_slot = if adapter.runs.try_acquire_session(session_id) {
-        SessionSlotGuard {
-            runs: Arc::clone(&adapter.runs),
-            session_id: session_id.clone(),
-            held: true,
-        }
-    } else {
-        return Err(GuiHostAdapter::host_error(
-            "session_busy",
-            "session already has an active run",
-        ));
-    };
+    let mut session_slot = SessionSlotGuard::acquire(adapter, session_id)?;
     let (history, workspace_id, workspace_roots) = {
         let core = adapter.core.read().await;
         core.get_session(session_id)
@@ -464,6 +526,12 @@ pub(crate) async fn run_start(
                 .map_err(|message| GuiHostAdapter::host_error("invalid_attachment", message))?,
         );
     }
+    content.extend(
+        video_urls
+            .iter()
+            .cloned()
+            .map(pawork_domain::ContentPart::Video),
+    );
     if user_message.trim().is_empty() {
         content.retain(|part| match part {
             pawork_domain::ContentPart::Text(text) => !text.text.trim().is_empty(),
@@ -511,12 +579,25 @@ pub(crate) async fn run_start(
         content,
         metadata: Default::default(),
     });
-    tokio::spawn(async move {
-        let sink = GuiBroadcastSink::new(Arc::clone(&bus), instance.clone());
+    adapter.runs.spawn(async move {
+        let sink = super::goal::BudgetSink {
+            inner: GuiBroadcastSink::new(Arc::clone(&bus), instance.clone()),
+            limit: goal_budget,
+            cancel: token.clone(),
+            usage: std::sync::Mutex::new((0, 0)),
+        };
         let outcome = {
             let core = core.read().await;
-            core.chat_turn_with_run_id(run.clone(), &session, messages, &sink, token, web_search)
-                .await
+            core.chat_turn_with_budget(
+                run.clone(),
+                &session,
+                messages,
+                &sink,
+                token,
+                web_search,
+                goal_budget,
+            )
+            .await
         };
         let succeeded = outcome.is_ok();
         if let Err(error) = outcome {
@@ -530,14 +611,15 @@ pub(crate) async fn run_start(
         // 观测到清理完成时会话槽必然已可再占用（R-06）。
         runs.release_session(&session);
         bus.clear_terminal_reported(run.as_str());
-        // ADR-054 D4：成功终态后异步自动命名，不阻塞终态事件；独立任务
-        // 复用 bus 广播 SessionMetaChanged，失败/超时静默保留占位名。
-        if succeeded {
-            tokio::spawn(
-                crate::gui_host::auto_title::auto_title_after_successful_run(
+        // 终态后继续在受 Host 管理的后台任务内命名，不阻塞终态事件。
+        if succeeded && goal_budget.is_none() && !runs.is_stopping() {
+            tokio::select! {
+                biased;
+                _ = runs.stopped() => {}
+                _ = crate::gui_host::auto_title::auto_title_after_successful_run(
                     core, bus, instance, session,
-                ),
-            );
+                ) => {}
+            }
         }
     });
     session_slot.disarm();

@@ -247,6 +247,7 @@ async fn run_without_credentials_reports_and_persists_failure() {
             effort: None,
             attachment_ids: Vec::new(),
             web_search: None,
+            video_urls: Vec::new(),
         })
         .await
         .expect("run start responds");
@@ -400,6 +401,7 @@ async fn real_host_enforces_granted_capabilities() {
             effort: None,
             attachment_ids: Vec::new(),
             web_search: None,
+            video_urls: Vec::new(),
         })
         .await
         .expect_err("run start must be rejected without Runs grant");

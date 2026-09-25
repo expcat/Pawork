@@ -31,6 +31,7 @@ pub struct Message {
 pub enum ContentPart {
     Text(TextContent),
     Image(ImageContent),
+    Video(VideoContent),
     Thinking(ThinkingContent),
     Reasoning(ReasoningItem),
     ToolCall(ToolCallContent),
@@ -49,6 +50,41 @@ pub struct ImageContent {
     pub media_type: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alt_text: Option<String>,
+}
+
+/// Remote video reference; the Host never downloads or decodes its contents.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(ts_rs::TS))]
+pub struct VideoContent {
+    pub url: String,
+    pub media_type: String,
+}
+
+impl VideoContent {
+    /// Pure syntax boundary shared by GUI, CLI and Provider adapters.
+    pub fn validate(&self) -> Result<(), &'static str> {
+        let rest = self
+            .url
+            .strip_prefix("https://")
+            .or_else(|| self.url.strip_prefix("http://"));
+        let authority = rest.map(|s| s.split(['/', '?', '#']).next().unwrap_or(""));
+        if self.url.len() > 8192
+            || self
+                .url
+                .chars()
+                .any(|c| c.is_whitespace() || c.is_control() || c == '\\')
+            || authority.is_none_or(|a| a.is_empty() || a.contains(['@', '%']))
+        {
+            return Err("Video requires an HTTP(S) URL without embedded credentials");
+        }
+        if !matches!(
+            self.media_type.as_str(),
+            "video/mp4" | "video/webm" | "video/quicktime" | "video/mpeg" | "video/x-msvideo"
+        ) {
+            return Err("Unsupported video media type");
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

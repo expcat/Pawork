@@ -5,7 +5,7 @@
 > 状态（2026-09-24）：**第一批 T-01～T-07 与第二批 T-08a/b/c、T-09a/b、T-10a/b/c、T-11、T-12 已实现并通过定向门禁**——
 > - T-01～T-03：`bash scripts/test.sh tools`（140 过）、`bash scripts/test.sh providers`（224 过）、`bash scripts/test.sh app`（含 R-02 全链路、R-03 并发/替换失败回归）。
 > - T-04（R-04/R-24）：`bash scripts/test.sh transport app cli` 全绿（新增 `instance_lock` 7 单测、R-24 旁路装配验收、listener close 归属回归）+ `bash scripts/test.sh --host`（3 过）+ 真实二进制手动验收（双启动仅一成功、崩溃后 stale 清理与再启动、SIGINT 优雅退出清理 socket/pid/登记、旁路 `sessions list` 不影响活跃 Host）。Windows 侧（`local_windows.rs`、share_mode 锁）未在本平台验证，记待验。
-> - T-05a（R-05，同宿主部分）：`bash scripts/test.sh workflow app` 全绿（新增 `shared_cancel_token_stops_real_executor`、`tasks_cancel_stops_blocking_run_and_records_canceled_once`，并扩充 GUI 取消测试断言任务记 Canceled）。CLI `tasks cancel` 跨进程路由活跃 Host 需新增 `TasksCancel` wire 命令，草案见 T-05a 行「待确认」，确认前不动协议冻结形状。
+> - T-05a（R-05，同宿主部分）：`bash scripts/test.sh workflow app` 全绿（新增 `shared_cancel_token_stops_real_executor`、`tasks_cancel_stops_blocking_run_and_records_canceled_once`，并扩充 GUI 取消测试断言任务记 Canceled）。该批仅含同宿主路径；2026-09-24 已按确认后的 API 1.23 增加 `TasksCancel`，跨进程真实验收结果见下方补充。
 > - T-05b（R-16/R-23）：`bash scripts/test.sh app`（264 过，新增 `orphan_tasks_sealed_only_after_owner_exits`、`demo_pairs_worker_task_terminals`）与 `bash scripts/test.sh cli` 全绿。孤儿任务经 `open_control_plane` 按实例清扫权收口为 Failed(interrupted)，旁观者/旁路 CLI 不误扫；demo 任务与 supervisor 终态配对。
 > - T-06（R-06/R-19）：`bash scripts/test.sh app` 全绿（266 lib + 4 集成二进制；新增 `run_start_second_run_same_session_rejected_until_settled`、`run_start_unapproved_plan_rejects_synchronously`（改写自旧合成兜底测试）、`run_start_async_early_death_seals_durable_failed`）。会话槽占用早于首个 await 保证并发突发确定性；seal 是否补 `RunStarted` 以 store 投影为准（覆盖绕开 bus 落库的种子行）。
 > - T-07（R-07）：`bash scripts/test.sh storage app` 全绿（storage 更新 `golden_session_keeps_critical_state`/`zero_retained_turns_drops_all_conversation_history` 计数并新增 `retained_messages_keeps_exact_count_suffix`；app 新增 `compact_suffix_matches_projection_after_restart`：早期 System + 折叠旧轮 + 含工具轮的保留后缀压缩后，engine 重建窗口、resume 消息与重启重放投影三者同界）。`RetentionPolicy` 新增 `retained_messages` count 后缀规则（serde 缺省 0 向后兼容），早期 System 不再豁免；`loop_ctx` 从轮后缀切换到 count 后缀，与 engine 折叠边界同语义。未动 Compaction 事件与磁盘 schema。
@@ -18,7 +18,7 @@
 > - T-10c（R-13）：`bash scripts/test.sh control-plane app` 全绿（control-plane 新增 `invalidate_local_scope_drops_only_local_entries_in_scope`；app 新增 `record_usage_invalidates_local_quota_cache`）。`QuotaService::invalidate_local_scope` 只失效本 scope 的 LocalLedger/Derived 派生窗口，远端权威缓存口径不变；所有本地入账入口（正常路径与对账共用 `record_attributed_usage`）成功写入即失效。
 > - T-11（R-14）：`bash scripts/test.sh tools`（145 过，新增 `oversize_file_is_skipped_and_reported`）。search_text 单文件 4 MiB 读取上限：超限文件不装入内存直接跳过，metadata `skipped_oversize` 计数且 `truncated=true`，不冒充完整搜索。
 > - T-12（R-15）：`bash scripts/test.sh cli` 全绿（新增 `systemd_unit_quotes_and_escapes_executable_path`、`launchd_plist_escapes_xml_special_characters`）。systemd ExecStart 双引号包裹 + 反斜杠/双引号转义 + `%` 翻倍，plist `<string>` XML 五字符转义；只验证文本生成，不安装系统服务。
-> 已列修复已实施；T-05a 跨进程取消仍 **待确认、未实现**，见 wire 草案。
+> 2026-09-24 补充：T-05a API 1.23 已确认并实现跨进程取消，多 Host 快照锁/所属实例合并同批完成；T-09 新增首帧握手前/初始快照关闭与 Host 管理任务 drain。protocol/providers/workflow/app/cli 定向 830 通过、0 失败、1 既有忽略。真实二进制复验：未握手 socket 保持打开时 SIGINT 0.008 秒退出（exit 0）；独立 CLI 0.36 秒取消活跃 Host 目标 Run，任务 Canceled、目标 Paused。最新产品变更后的复验状态见 ROADMAP。
 
 提交前复审（2026-09-24）：补齐 GUI 锁持有至 Core 退出、Run/Task 恢复完成前保持清扫互斥、并发 accept 关闭竞态、按 request 汇总恢复用量、补账保留发生时间、实际有界读取及 Provider 取消的 Task 终态映射。`bash scripts/test.sh tools providers app transport cli workflow storage engine auth client control-plane` 完成 1,368 项通过、0 失败、3 项既有忽略；`bash scripts/test.sh --host` 3 项通过。当前二进制在临时数据目录实测重复 GUI Host 启动被拒、原 Host 保持运行，SIGINT 清理 socket/PID/登记，随后同实例重启与关闭成功。L0、文档链接、46 个修改 Rust 文件的格式与 diff 检查通过。Windows、真实 Provider、Desktop 真窗口与全 workspace 门禁未运行，不记为已验收或已发布。
 
@@ -41,9 +41,9 @@
 | T-06 GUI Run 接受边界 · R-06/R-19 | app `gui_host/handlers/run_start.rs`、运行注册表与 run 前置校验；app Spec | 读取历史前保留 session 活动槽；能同步拒绝的错误不返回 Accepted；异步失败必须有持久生命周期 | 同 session 第二轮确定性拒绝，结束后可再启动；Plan 拒绝响应与重开 store 一致 |
 | T-07 压缩保留一致性 · R-07 | app `loop_ctx.rs`、engine compaction、storage retention/projection；三包 Spec | 先决定现有契约内能否表达保留集合，当前请求与重放使用一个决定；保持分支隔离 | 早期 System + 折叠旧轮 + 保留尾轮压缩后、重启后消息一致；沿用既有分支回归 |
 
-T-05a 若涉及新增 Host 控制命令，先交出 wire 草案；T-07 若需要改 Compaction 事件或磁盘 schema，先交出兼容与 golden 草案。按现有工程约定确认后实施，不能在“修 bug”名义下静默改冻结形状。本轮只登记该决策点，不引入新审批制度。
+T-05a 若涉及新增 Host 控制命令，先交出 wire 草案；T-07 若需要改 Compaction 事件或磁盘 schema，先交出兼容与 golden 草案。按现有工程约定确认后实施，不能在“修 bug”名义下静默改冻结形状。T-05a 的确认与实现已完成；T-07 保持原事件与磁盘 schema。
 
-**T-05a wire 草案（2026-09-23 登记，待确认后实施）**：同宿主部分已落地（Agent 任务经 `register_with_cancel_token` 共享 run 令牌；run 收尾 `tasks_finish_from_run` 按真实终态映射，已终态跳过）。CLI `tasks cancel` 与执行体天然跨进程，兑现「两入口都停止同一阻塞 run」需要新增 Host 控制命令：
+**T-05a wire 契约（2026-09-23 登记，2026-09-24 已确认并实施 API 1.23）**：同宿主部分已落地（Agent 任务经 `register_with_cancel_token` 共享 run 令牌；run 收尾 `tasks_finish_from_run` 按真实终态映射，已终态跳过）。CLI `tasks cancel` 与执行体天然跨进程，兑现「两入口都停止同一阻塞 run」需要新增 Host 控制命令：
 
 - `AppCommand::TasksCancel { task_id: String }`（沿用命令账本与幂等 wrap）；Host handler 即 `core.tasks_cancel(task_id)`——同进程状态机 + 共享 run 令牌，执行体停止后 run 收尾见任务已终态而跳过。响应 `AppResponse::Data { cancelled: [task_id...] }`；未命中/歧义沿用结构化 host_error。
 - CLI `tasks cancel` 路由：Catalog 加载解析 spec → 任务非活跃则本地幂等收口；活跃则先探测 GUI socket（ops 既有 connect/handshake 路径），Host 可达即发 `TasksCancel`；socket 不可达但 `hosts/` 登记显示活跃 Executor（无控制通道）→ 如实拒绝并提示属主 pid；无任何活跃所有者 → 如实拒绝，孤儿收口归 T-05b。

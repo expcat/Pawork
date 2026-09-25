@@ -1574,8 +1574,25 @@ impl AppCore {
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<ModelResponseSummary, AppError>> + Send + 'a>,
     > {
+        self.chat_turn_with_budget(
+            run_id, session_id, messages, render, cancel, web_search, None,
+        )
+    }
+
+    pub(crate) fn chat_turn_with_budget<'a>(
+        &'a self,
+        run_id: RunId,
+        session_id: &'a SessionId,
+        messages: Vec<Message>,
+        render: &'a dyn AgentEventSink,
+        cancel: CancellationToken,
+        web_search: Option<bool>,
+        budget: Option<u64>,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<ModelResponseSummary, AppError>> + Send + 'a>,
+    > {
         Box::pin(self.run.chat_turn_with_run_id(
-            self, run_id, session_id, messages, render, cancel, web_search,
+            self, run_id, session_id, messages, render, cancel, web_search, budget,
         ))
     }
 

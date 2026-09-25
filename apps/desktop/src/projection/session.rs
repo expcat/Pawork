@@ -263,6 +263,7 @@ pub struct ModelEntry {
     /// ADR-063（API 1.21）：目录能力位，供设置页「图像 / 搜索」徽标。
     /// 旧 Host 缺字段视为 false（不展示徽标）。
     pub image_input: bool,
+    pub video_input: bool,
     pub web_search: bool,
     /// 目录声明的可选推理强度（None = 未知，不约束可选范围）。
     pub catalog_efforts: Option<Vec<String>>,
@@ -289,6 +290,7 @@ impl Default for ModelEntry {
             context_window_tokens: None,
             enabled: true,
             image_input: false,
+            video_input: false,
             web_search: false,
             catalog_efforts: None,
             default_effort: None,

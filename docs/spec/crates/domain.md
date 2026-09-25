@@ -18,7 +18,7 @@
 | `src/lib.rs` | ~40 | 模块声明 + 全量 re-export；crate 级红线文档 |
 | `src/ids.rs` | ~110 | `string_id!` 宏生成 37 个 String newtype ID（基础 27 个：`SessionId` / `RunId` / `WorkspaceId` / `EventId` / `ToolCallId` / `ProviderId` / `ProtectedBlobRef`…；Phase 16 追加 10 个：`PlanId` / `GoalId` / `BackgroundTaskId` / `AutomationId` / `MonitorId` / `MemoryId` / `ReviewSessionId` 等）；`Timestamp`（Unix epoch 毫秒，u64） |
 | `src/events.rs` | ~510 | `CURRENT_SCHEMA_VERSION = 1`、`EventSequence`、`AgentEventEnvelope`（含 `validate_after` 顺序校验、`with_parent`）、`AgentEvent` 32 变体、`ApprovalDecision`、`ToolOutputStream`、`EventOrderError`、`ProviderTranscriptContinuation` |
-| `src/message.rs` | ~300 | `Message` / `MessageRole`（System/User/Assistant/Tool）/ `ContentPart` 7 变体、`ToolResultContent`、`ArtifactReference`、`MessageMetadata`、`TokenUsage`、`Cost`（微单位整数）、`StopReason` 8 变体 |
+| `src/message.rs` | ~300 | `Message` / `MessageRole`（System/User/Assistant/Tool）/ `ContentPart` 8 变体、`ToolResultContent`、`ArtifactReference`、`MessageMetadata`、`TokenUsage`、`Cost`（微单位整数）、`StopReason` 8 变体 |
 | `src/provider_api.rs` | ~940 | `CanonicalModelRequest` 及子结构（`ToolDefinition` / `HostedToolRequest` / `ExtensionToolRequest` / `ToolChoice` / `ThinkingConfig` / `ResponseFormat` / `PromptCachePreference` / `RequestBudget`）、`ProviderStreamEvent` 13 变体、trait `ModelProvider` / `ProviderEventSink`、`ModelResponseSummary`、`ResolvedCredential` / `CredentialKind`、`ProviderError` / `ProviderErrorKind` 15 变体、`ModelDefinition` / `ModelCapabilities`（v1 布尔 + P15-8 v2 字段）、`ModelTransport`、能力协商类型（`CapabilityRequirements` / `ResolvedCapabilities` / `CapabilityFallback` / `ReasoningStateDescriptor` / `ReasoningStateCapability` / `ReasoningConfig`）、`clamp_effort_to_thinking_level`、映射错误（`ServerToolMappingError` / `ReasoningMappingError`） |
 | `src/tool.rs` | ~380 | Canonical Tool v2：`ToolKind` 3 位点、`ContinuationMode` 2 模式、`ToolCapabilityTag` 14 变体及 `capability_key()`（稳定 `tool:PascalCase` wire key）、`ToolHosting` 3 变体、`ToolCapability` 7 调度分类、`ToolDescriptor`（含 `has_consistent_hosting`） |
 | `src/tool_api.rs` | ~250 | trait `AgentTool` / `ToolEventSink`、`ToolRequest`、`ToolExecutionContext`（`workspace_id` + 相对 `working_directory`）、`ToolResult`、`ToolStreamEvent`（OutputDelta / Progress / ArtifactAvailable）、`ToolOutputChannel`、`ToolError` / `ToolErrorKind`（含 `NotLocallyExecutable`） |
@@ -94,6 +94,8 @@
 - `ResolvedCredential`：字段私有，`Debug` 输出 `[REDACTED]`，**不实现 Serialize**；`expose_secret()` 仅 Provider adapter 构造认证请求时读取。
 - 能力面：`ModelDefinition{id, display_name, context_window_tokens, max_output_tokens, capabilities}`；`ModelCapabilities` v1 布尔基线（text / image_input / tool_calls / parallel_tool_calls / thinking / structured_output / prompt_cache）+ v2 字段（CAP-PROBE 2026-09-23 增 `image_output`（模型可生成图像输出，目录声明维度）、`transport: ModelTransport`、`hosted_tool_tags: BTreeSet<ToolCapabilityTag>`、`citations`、`reasoning: ReasoningStateCapability`、ADR-063 `supported_efforts: Option<Vec<ReasoningEffort>>`——None 缺键不约束、present 取交集），v2 全部 `#[serde(default)]` fail-closed；`ModelTransport`（Responses / Messages / ChatCompletions 默认，`is_modern()`）；协商输入 `CapabilityRequirements`（VISION-1 起增 `image_input`：请求消息含图片内容时置位）→ 输出 `ResolvedCapabilities`（不变量 `requested == supported ∪ unsupported`，逐项 `CapabilityFallback` 记录 ClientTool / LegacyTransport / ClampedEffort / Reject 原因）。
 
+API 1.24：`VideoContent {url, media_type}` 只表示远程 HTTP(S) 引用，纯语法校验拒绝内嵌凭据、空主机、控制字符、file/data 与非视频 MIME；实际 URL/endpoint 校验由 Provider 补齐。`ModelCapabilities.video_input` 与 `CapabilityRequirements.video_input` 缺省 false，不能由图片能力推导。`GoalEvent::Created` 附加可选 `budget_tokens/max_runs`，`Resumed` 附加可选 `max_runs`，旧事件缺省保持可反序列化。新增 golden 为 `video_content.json` 与 `goal_budget.json`，批准范围见 [产品契约](../../Plan/product-contracts-2026-09-24.md)。
+
 ### 3.4 Tool 契约
 
 - `ToolKind` 决定唯一续接方式：`ClientFunction → ContinuationMode::CoreSuppliedResult`（唯一本地执行位点），`ProviderHosted` / `ProviderExtension → ProviderTranscript`；调用方不能在结果对象上覆写。
@@ -105,7 +107,7 @@
 
 ### 3.5 消息与 server tool
 
-- `Message{id, role, content, metadata}`；`ContentPart` 7 变体：Text / Image（`ImageSource`）/ Thinking / Reasoning（引用 `ReasoningItem`）/ ToolCall / ToolResult / ArtifactRef。`MessageMetadata`：`model?` / `provider?` / `usage?` / `cost?` / `timestamp?` / `artifacts` / `stop_reason?` / `incomplete` / `trace_id?` / `provider_metadata`（BTreeMap，键须过 provider_hints 语法）。`TokenUsage{input_tokens, output_tokens, cache_read_tokens, cache_write_tokens}`（cache 字段 serde 默认 0）。`StopReason` 8 变体：Completed / StopSequence / MaxTokens / ToolUse / ContentFiltered / Cancelled / Error / Other(String)。
+- `Message{id, role, content, metadata}`；`ContentPart` 8 变体：Text / Image（`ImageSource`）/ Video（`VideoContent`）/ Thinking / Reasoning（引用 `ReasoningItem`）/ ToolCall / ToolResult / ArtifactRef。`MessageMetadata`：`model?` / `provider?` / `usage?` / `cost?` / `timestamp?` / `artifacts` / `stop_reason?` / `incomplete` / `trace_id?` / `provider_metadata`（BTreeMap，键须过 provider_hints 语法）。`TokenUsage{input_tokens, output_tokens, cache_read_tokens, cache_write_tokens}`（cache 字段 serde 默认 0）。`StopReason` 8 变体：Completed / StopSequence / MaxTokens / ToolUse / ContentFiltered / Cancelled / Error / Other(String)。
 - `ServerToolEvent` 11 变体（全部携带 `tool_call_id()`；`type_name()` 给持久化 event_type）：
 
 | 变体 | 载荷要点 |

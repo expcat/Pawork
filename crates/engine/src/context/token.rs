@@ -60,6 +60,8 @@ pub trait TokenEstimator: Send + Sync {
                         .map(|alt| self.count_text(alt))
                         .unwrap_or(0)
             }
+            // Remote duration/frame count is unknown; only reference text can be estimated.
+            ContentPart::Video(video) => self.count_text(&video.url),
             ContentPart::ToolCall(call) => {
                 self.count_text(&call.name)
                     + self.count_text(&call.arguments.to_string())

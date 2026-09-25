@@ -39,6 +39,7 @@ use pawork_transport::{
 use thiserror::Error;
 use tokio::sync::Mutex as AsyncMutex;
 
+pub use pawork_domain::VideoContent;
 /// 重连 disposition（服务端判定结果，[`SessionInfo`] / [`ResumeOutcome`] 使用）。
 pub use pawork_protocol::ResumeDisposition;
 

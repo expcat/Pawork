@@ -1,5 +1,6 @@
 //! Task 领域服务：后台任务注册 / 状态机与 tasks.json 快照持久化。
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -19,6 +20,8 @@ pub(crate) struct TaskService {
     last_degrade: Mutex<Option<DegradeEvent>>,
     /// R-03：取快照到提交串行化，避免并发保存让旧快照后写覆盖新快照。
     persist_lock: Mutex<()>,
+    /// 恢复的快照不拥有另一个 Host 的执行令牌。
+    owned_tasks: Mutex<HashSet<BackgroundTaskId>>,
 }
 
 impl TaskService {
@@ -28,6 +31,7 @@ impl TaskService {
             tasks_path: None,
             last_degrade: Mutex::new(None),
             persist_lock: Mutex::new(()),
+            owned_tasks: Mutex::new(HashSet::new()),
         }
     }
 
@@ -44,6 +48,10 @@ impl TaskService {
             .tasks
             .register(kind, None)
             .map_err(|error| AppError::Task(error.to_string()))?;
+        self.owned_tasks
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(id.clone());
         self.tasks
             .start(&id)
             .map_err(|error| AppError::Task(error.to_string()))?;
@@ -52,7 +60,20 @@ impl TaskService {
     }
 
     pub fn tasks_cancel(&self, spec: &str) -> Result<Vec<BackgroundTaskId>, AppError> {
-        let (id, _) = self.resolve_task(spec)?;
+        let (id, snapshot) = self.resolve_task(spec)?;
+        if is_terminal_status(snapshot.status) {
+            return Ok(Vec::new());
+        }
+        if !self
+            .owned_tasks
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .contains(&id)
+        {
+            return Err(AppError::Task(
+                "task belongs to another Host; cancel through its original host".into(),
+            ));
+        }
         let events = self
             .tasks
             .cancel(&id)
@@ -80,6 +101,10 @@ impl TaskService {
             .tasks
             .register_with_cancel_token(TaskKind::Agent, None, cancel.clone())
             .map_err(|error| AppError::Task(error.to_string()))?;
+        self.owned_tasks
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(id.clone());
         self.tasks
             .start(&id)
             .map_err(|error| AppError::Task(error.to_string()))?;
@@ -164,6 +189,10 @@ impl TaskService {
         }
         let mut sealed = 0usize;
         for task_id in &orphaned {
+            self.owned_tasks
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .insert(task_id.clone());
             match self.tasks.finish(
                 task_id,
                 TaskStatus::Failed,
@@ -190,7 +219,42 @@ impl TaskService {
             .persist_lock
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        save_task_manager(path, &self.tasks.snapshot())
+        // Different Host processes may persist independently. Preserve their event
+        // histories under one file lock; only this Host's tasks are replaced.
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let _file_guard = pawork_auth::acquire_file_lock(
+            &path.with_extension("lock"),
+            std::time::Duration::from_secs(5),
+        )?;
+        let owned = self
+            .owned_tasks
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        let task_id = |event: &pawork_domain::TaskEvent| match event {
+            pawork_domain::TaskEvent::Started { task_id, .. }
+            | pawork_domain::TaskEvent::Suspended { task_id }
+            | pawork_domain::TaskEvent::Resumed { task_id }
+            | pawork_domain::TaskEvent::Finished { task_id, .. } => task_id.clone(),
+        };
+        let disk = load_task_manager(path)?;
+        let events = disk
+            .event_log()
+            .into_iter()
+            .filter(|event| !owned.contains(&task_id(event)))
+            .chain(
+                self.tasks
+                    .event_log()
+                    .into_iter()
+                    .filter(|event| owned.contains(&task_id(event))),
+            );
+        let merged = TaskManager::new();
+        merged
+            .replay(events)
+            .map_err(|error| AppError::Task(error.to_string()))?;
+        save_task_manager(path, &merged.snapshot())
     }
 
     fn resolve_task(&self, spec: &str) -> Result<(BackgroundTaskId, TaskSnapshot), AppError> {
@@ -246,6 +310,37 @@ fn report_tasks_persist_failure(task_id: Option<&str>, error: &AppError) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn independent_hosts_preserve_each_others_tasks_and_cannot_cancel_foreign_tokens() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tasks.json");
+        let mut first = super::TaskService::new();
+        let mut second = super::TaskService::new();
+        first.open_tasks(path.clone()).unwrap();
+        second.open_tasks(path.clone()).unwrap();
+        let a = first
+            .tasks_register(pawork_domain::TaskKind::Agent)
+            .unwrap();
+        let b = second
+            .tasks_register(pawork_domain::TaskKind::Agent)
+            .unwrap();
+        assert_ne!(a, b);
+        first.tasks_cancel(a.as_str()).unwrap();
+        second
+            .tasks_finish_from_run(&b, pawork_domain::TaskStatus::Completed, None)
+            .unwrap();
+        let disk = crate::tasks_host::load_task_manager(&path).unwrap();
+        assert_eq!(
+            disk.task(&a).unwrap().status,
+            pawork_domain::TaskStatus::Canceled
+        );
+        assert_eq!(
+            disk.task(&b).unwrap().status,
+            pawork_domain::TaskStatus::Completed
+        );
+        assert_eq!(disk.tasks().len(), 2);
+    }
+
     #[tokio::test]
     async fn tasks_register_list_and_cancel() {
         let (core, _dir) = crate::testsupport::mock_core(Vec::new()).await;
@@ -459,6 +554,19 @@ mod tests {
         bystander
             .open_control_plane(dir.path())
             .expect("bystander control");
+        let before_cancel = std::fs::read(dir.path().join("tasks.json")).expect("snapshot");
+        assert!(
+            bystander.tasks_cancel(task_id.as_str()).is_err(),
+            "restored tasks have no live token in this Host"
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("tasks.json")).expect("snapshot"),
+            before_cancel
+        );
+        assert_eq!(
+            crate::active_instance_host_pids(dir.path()).expect("owners"),
+            vec![std::process::id()]
+        );
         assert_eq!(
             bystander
                 .tasks_status(task_id.as_str())

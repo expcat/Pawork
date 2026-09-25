@@ -1,7 +1,7 @@
 //! 首发渠道错误细化表。
 //!
-//! HTTP 状态已由 `crate::net` provider-neutral 地归一；这里只处理远端正文中
-//! 无法从状态码判断的稳定错误标记。表内只登记本期八个渠道，不预埋后续厂商。
+//! HTTP 状态由 `crate::net` 归一，正文不参与分类。这里只消费 Responses
+//! 流解析器已经校验并保留的 ASCII 错误码，不依赖已被脱敏丢弃的正文关键词。
 
 use pawork_domain::{ProviderError, ProviderErrorKind};
 
@@ -104,19 +104,18 @@ pub const VENDOR_ERROR_RULES: &[VendorErrorRule] = &[
         detail: "GLM content moderation rejected the request",
         diagnostic_key: "glm_coding_error",
     },
-    VendorErrorRule {
-        vendor: "glm-coding",
-        needles: &["敏感"],
-        kind: ProviderErrorKind::ContentFiltered,
-        retryable: false,
-        detail: "GLM content moderation rejected the request",
-        diagnostic_key: "glm_coding_error",
-    },
 ];
 
 /// 按 adapter id 过滤规则并细化错误；未命中或无专属规则时原样返回。
 pub fn normalize_vendor_error(vendor: &str, mut error: ProviderError) -> ProviderError {
-    let message = error.message.to_ascii_lowercase();
+    let Some(code) = error
+        .message
+        .strip_prefix("Responses request failed (code=")
+        .and_then(|code| code.strip_suffix(')'))
+    else {
+        return error;
+    };
+    let message = code.to_ascii_lowercase();
     for rule in VENDOR_ERROR_RULES
         .iter()
         .filter(|rule| rule.vendor == vendor)
@@ -141,16 +140,28 @@ mod tests {
     fn initial_channel_rules_are_scoped_and_applied() {
         let glm = normalize_vendor_error(
             "glm-coding",
-            ProviderError::new(ProviderErrorKind::InvalidRequest, "HTTP 400: 1113"),
+            ProviderError::new(
+                ProviderErrorKind::InvalidRequest,
+                "Responses request failed (code=1113)",
+            ),
         );
         assert_eq!(glm.kind, ProviderErrorKind::QuotaExceeded);
         assert!(!glm.retryable);
 
         let qwen = normalize_vendor_error(
             "qwen-token-plan",
-            ProviderError::new(ProviderErrorKind::InvalidRequest, "DataInspectionFailed"),
+            ProviderError::new(
+                ProviderErrorKind::InvalidRequest,
+                "Responses request failed (code=DataInspectionFailed)",
+            ),
         );
         assert_eq!(qwen.kind, ProviderErrorKind::ContentFiltered);
+        let http = normalize_vendor_error(
+            "glm-coding",
+            crate::net::retry::classify_status(reqwest::StatusCode::BAD_REQUEST, None, "1113 敏感"),
+        );
+        assert_eq!(http.kind, ProviderErrorKind::InvalidRequest);
+        assert!(http.diagnostics.is_empty());
     }
 
     #[test]

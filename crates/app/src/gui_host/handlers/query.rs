@@ -123,6 +123,7 @@ pub(crate) async fn model_list(
                 "context_window_tokens": entry.context_window_tokens,
                 "enabled": enabled,
                 "image_input": entry.capabilities.image_input,
+                "video_input": entry.capabilities.video_input,
                 "web_search": entry
                     .capabilities
                     .hosted_tool_tags

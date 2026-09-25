@@ -180,6 +180,10 @@ pub enum GoalEvent {
         goal_id: GoalId,
         title: String,
         criteria: Vec<SuccessCriterionSnapshot>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        budget_tokens: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_runs: Option<u32>,
     },
     /// progress 基于 completed Plan 步骤与 criteria 命中率，`progress ∈ [0,1]`。
     ProgressUpdated {
@@ -202,6 +206,8 @@ pub enum GoalEvent {
     Resumed {
         goal_id: GoalId,
         remaining_budget_tokens: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_runs: Option<u32>,
     },
     /// 运行中转向输入（修正方向 / 约束 / 新优先级），事后可回溯。
     Steered {

@@ -64,6 +64,8 @@ Headless / ACP：
 
 ADR-057：Host 转发可见 ThinkingDelta，历史和 live 进入同一 reducer 按 run/message 合并；Desktop 默认折叠。API <1.14 的 SessionGet 过滤新增思考 kind/字段但保留原分页游标；redacted / opaque reasoning 不进入 GUI。
 
+API 1.24 产品链：Plan/Goal/录制面板 → GuiClient → Host handler → 现行 Plan 服务 / Goal canonical 事件 / workspace 安全技能新建。Goal 的串行 Run 在 Host JoinSet 内管理，沿用 RunStart 排他、审批、持久终态与用量；暂停等待当前 Run 收尾。视频从 GUI/CLI URL → canonical Video → 模型/端点 gate → 支持通道 wire，历史只显示引用，不读取远程媒体。
+
 ## 3. 事件持久化与重放
 
 所有 Agent 事件可落盘、可重放。两套「版本号」不要混用：

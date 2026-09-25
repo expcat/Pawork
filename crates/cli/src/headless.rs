@@ -267,7 +267,7 @@ impl HeadlessHandler {
                     request_id: Some(request.request_id),
                     kind: ProtocolErrorKind::Internal,
                     message,
-                }
+                };
             }
         };
         let source = map_source(request.source);
@@ -300,7 +300,7 @@ impl HeadlessHandler {
                     request_id: Some(query.request_id),
                     kind: ProtocolErrorKind::Internal,
                     message,
-                }
+                };
             }
         };
         match store

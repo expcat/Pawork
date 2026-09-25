@@ -63,6 +63,8 @@
 
 ## 4. 核心行为与数据流
 
+2026-09-24：Task ID 改为进程 PID + 纳秒命名空间 + 进程级原子序号，各 TaskManager 与 Host 不再复用裸计数 ID；旧事件 ID 继续原样重放，不改快照字段。`Started` 的历史重放边界仍按现行 reducer，未新增容错重放承诺。
+
 ### 4.1 Plan 版本演进与审批 gate
 
 1. `create_plan` 产出首版（`plan_1` / `planver_1`，全部步骤 `Pending`，评审 `Draft`）。
@@ -107,7 +109,7 @@
 
 ## 8. 注意事项与已知限制
 
-- Cargo.toml 的 package description 仍写「plan/goal/task/automation/monitor 五合一 reducer」，为 V2 归档前的过期描述，以源码树（仅 plan / task）为准。
+- Cargo description 已收敛为 Plan / Task；现行有预算持续目标由 app Host 承载，未复活 V2 reducer。
 - 单 Plan 聚合：一个 `PlanService` 只承载一个 Plan（重复 `create_plan` 返回 `AlreadyExists`），多 Plan 由宿主开多实例。
 - `TaskSnapshot.output_seq` / `output_bytes` 在当前纯状态机档恒为 0（无输出缓冲；输出通道由执行 adapter 承载）。
 - Plan 的 `apply` 对未知 `step_id` 的 `StepUpdated` 静默忽略（事件是已校验事实，防御性折叠）；Task 的 `apply` 则显式报错——两域容错策略不同，重放时注意区分。

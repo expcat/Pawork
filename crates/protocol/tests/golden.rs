@@ -10,17 +10,17 @@ use pawork_domain::{
 };
 use pawork_protocol::DefaultModelPair;
 use pawork_protocol::{
+    encode_client_frame, encode_server_frame, AppQuery, AppQueryEnvelope, AppResponse,
+    AppResponseEnvelope, ArtifactChunk, ArtifactReadRequest, ClientAuthentication, ClientFrame,
+    GuiCapability, HandshakeRequest, HandshakeResponse, ProtocolError, ProtocolErrorCode,
+    ProtocolErrorEnvelope, ResumeDisposition, ResumeRequest, ResumeResponse, ServerFrame, Snapshot,
+    SnapshotSection, SnapshotSectionKind, SubscribeRequest, TimelineItem, TimelineItemKind,
+    TimelinePage, WorkspaceRelativePath,
+};
+use pawork_protocol::{
     ActorIdentity, ApiHandle, ApiKeySecret, AppCommand, AppCommandEnvelope, AppEvent,
     AppEventEnvelope, AuthChangeState, CommandSource, EventSource, EventStream, GlobalSequence,
     RunState, V1_17, V1_18,
-};
-use pawork_protocol::{
-    AppQuery, AppQueryEnvelope, AppResponse, AppResponseEnvelope, ArtifactChunk,
-    ArtifactReadRequest, ClientAuthentication, ClientFrame, GuiCapability, HandshakeRequest,
-    HandshakeResponse, ProtocolError, ProtocolErrorCode, ProtocolErrorEnvelope, ResumeDisposition,
-    ResumeRequest, ResumeResponse, ServerFrame, Snapshot, SnapshotSection, SnapshotSectionKind,
-    SubscribeRequest, TimelineItem, TimelineItemKind, TimelinePage, WorkspaceRelativePath,
-    encode_client_frame, encode_server_frame,
 };
 use serde_json::Value;
 
@@ -1334,4 +1334,119 @@ fn golden_browser_control_frames() {
             response: AppResponse::Data(serde_json::Value::Null),
         })),
     );
+}
+
+#[test]
+fn golden_tasks_cancel() {
+    let frame = client_terminal_command_frame_at(
+        AppCommand::TasksCancel {
+            task_id: "task-1".into(),
+        },
+        pawork_protocol::V1_23,
+    );
+    assert_golden(
+        "client_command_tasks_cancel.json",
+        serde_json::from_slice(&encode_client_frame(&frame).expect("encode")).expect("json"),
+    );
+}
+
+#[test]
+fn golden_plan_commands() {
+    for (name, command) in [
+        (
+            "plan_save",
+            AppCommand::PlanSave {
+                session_id: "session-1".into(),
+                title: "Review changes".into(),
+                steps: vec!["Inspect changes".into(), "Run checks".into()],
+                expected_version: None,
+            },
+        ),
+        (
+            "plan_submit",
+            AppCommand::PlanSubmit {
+                session_id: "session-1".into(),
+                expected_version: "pv-1".into(),
+            },
+        ),
+        (
+            "plan_approve",
+            AppCommand::PlanApprove {
+                session_id: "session-1".into(),
+                expected_version: "pv-1".into(),
+            },
+        ),
+        (
+            "plan_reject",
+            AppCommand::PlanReject {
+                session_id: "session-1".into(),
+                expected_version: "pv-1".into(),
+                reason: "Revise step 2".into(),
+            },
+        ),
+    ] {
+        let frame = client_terminal_command_frame_at(command, pawork_protocol::V1_24);
+        assert_golden(
+            &format!("client_command_{name}.json"),
+            encode_client(&frame),
+        );
+    }
+}
+
+#[test]
+fn golden_product_recording() {
+    let queries = [
+        AppQuery::PlanGet {
+            session_id: "session-1".into(),
+        },
+        AppQuery::SkillRecordPreview {
+            session_id: "session-1".into(),
+            event_ids: vec!["event-1".into()],
+        },
+        AppQuery::PluginList,
+    ];
+    let mut value = serde_json::Map::new();
+    for query in queries {
+        value.insert(
+            pawork_protocol::app::registry::query_wire_name(&query).into(),
+            serde_json::to_value(query).unwrap(),
+        );
+    }
+    value.insert(
+        "skill_record_save".into(),
+        serde_json::to_value(AppCommand::SkillRecordSave {
+            workspace_id: "ws-1".into(),
+            name: "review".into(),
+            description: "Review changes".into(),
+            content: "# Review\nInspect changes.\n".into(),
+        })
+        .unwrap(),
+    );
+    assert_golden("product_recording.json", value.into());
+}
+
+#[test]
+fn golden_goal_commands() {
+    let golden: serde_json::Map<String, Value> =
+        serde_json::from_str(include_str!("golden/goal_commands.json")).unwrap();
+    for (name, value) in golden {
+        if name == "goal_get" {
+            let query: AppQuery = serde_json::from_value(value.clone()).unwrap();
+            assert_eq!(serde_json::to_value(query).unwrap(), value);
+        } else {
+            let command: AppCommand = serde_json::from_value(value.clone()).unwrap();
+            assert_eq!(serde_json::to_value(command).unwrap(), value);
+        }
+    }
+}
+
+#[test]
+fn golden_run_video_and_old_default() {
+    let value: serde_json::Value =
+        serde_json::from_str(include_str!("golden/run_video.json")).unwrap();
+    let command: pawork_protocol::AppCommand = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(serde_json::to_value(command).unwrap(), value);
+    let old = serde_json::json!({"method":"run_start","params":{"session_id":"session-1","user_message":"Text"}});
+    let command: pawork_protocol::AppCommand = serde_json::from_value(old.clone()).unwrap();
+    assert_eq!(serde_json::to_value(command).unwrap(), old);
 }

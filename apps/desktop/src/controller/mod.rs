@@ -381,6 +381,7 @@ pub struct DesktopController {
 mod attachments;
 mod browser;
 mod files;
+mod products;
 pub use attachments::{ComposerAttachment, ComposerAttachmentError, ComposerOptions};
 pub use files::FileOperation;
 mod session;
@@ -1216,6 +1217,9 @@ pub(super) fn run_start_command(
     if let Some(search) = options.web_search {
         params["web_search"] = json!(search);
     }
+    if !options.video_urls.is_empty() {
+        params["video_urls"] = json!(options.video_urls);
+    }
     serde_json::from_value(json!({
         "method": "run_start",
         "params": params
@@ -1482,6 +1486,10 @@ pub(super) fn parse_models(response: &AppResponseEnvelope) -> Result<Vec<ModelEn
                         image_input: entry
                             .get("image_input")
                             .and_then(|value| value.as_bool())
+                            .unwrap_or(false),
+                        video_input: entry
+                            .get("video_input")
+                            .and_then(serde_json::Value::as_bool)
                             .unwrap_or(false),
                         web_search: entry
                             .get("web_search")
@@ -2070,6 +2078,7 @@ mod tests {
                 image: true,
             }],
             web_search: Some(false),
+            video_urls: Vec::new(),
             attachment_error: None,
         };
         let value = serde_json::to_value(run_start_command("unassigned", "", None, None, &options))

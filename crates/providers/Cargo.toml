@@ -32,6 +32,7 @@ reqwest.workspace = true
 bytes.workspace = true
 
 [dev-dependencies]
+pawork-testkit = { path = "../testkit" }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time"] }
 wiremock.workspace = true
 proptest.workspace = true

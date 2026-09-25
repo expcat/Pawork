@@ -201,6 +201,10 @@ fn message_to_openai(message: &pawork_domain::Message) -> Vec<Value> {
                     ordered_parts.push(json!({"type":"image_url","image_url":{"url": url}}));
                 }
             }
+            ContentPart::Video(video) => {
+                has_image = true;
+                ordered_parts.push(json!({"type":"video_url","video_url":{"url":video.url}}));
+            }
             ContentPart::ArtifactRef(_) => {
                 // artifact 由 context-engine 解析为 base64/url 后再进入 provider，此处跳过
             }
@@ -233,6 +237,78 @@ fn message_to_openai(message: &pawork_domain::Message) -> Vec<Value> {
     }
 
     out
+}
+
+/// Official Model Studio Chat endpoint and explicitly documented video models.
+/// Coding Plan and other gateways need their own evidence; image support is irrelevant.
+pub fn video_endpoint_supported(base_url: &str, model: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(base_url) else {
+        return false;
+    };
+    let host = url.host_str().unwrap_or("");
+    url.scheme() == "https"
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.path().trim_end_matches('/') == "/compatible-mode/v1"
+        && (matches!(
+            host,
+            "dashscope.aliyuncs.com" | "dashscope-intl.aliyuncs.com" | "dashscope-us.aliyuncs.com"
+        ) || host.ends_with(".maas.aliyuncs.com"))
+        && matches!(
+            model,
+            "qwen3.8-max"
+                | "qwen3.8-max-0902"
+                | "qwen3.8-flash"
+                | "qwen3.7-plus"
+                | "qwen3.6-flash"
+                | "qwen3-vl-plus"
+                | "qwen3-vl-flash"
+                | "qwen-vl-max"
+                | "qwen-vl-plus"
+        )
+}
+
+pub(crate) fn validate_video_request(
+    request: &CanonicalModelRequest,
+    supported: bool,
+) -> Result<(), pawork_domain::ProviderError> {
+    use pawork_domain::{ContentPart, ProviderError, ProviderErrorKind};
+    fn walk(parts: &[ContentPart], supported: bool) -> Result<(), ProviderError> {
+        for part in parts {
+            match part {
+                ContentPart::Video(video) => {
+                    if !supported {
+                        return Err(ProviderError::new(
+                            ProviderErrorKind::InvalidRequest,
+                            "This endpoint/model does not support remote video input",
+                        ));
+                    }
+                    video
+                        .validate()
+                        .map_err(|e| ProviderError::new(ProviderErrorKind::InvalidRequest, e))?;
+                    let url = reqwest::Url::parse(&video.url).map_err(|_| {
+                        ProviderError::new(ProviderErrorKind::InvalidRequest, "Invalid video URL")
+                    })?;
+                    if url.host_str().is_none()
+                        || !url.username().is_empty()
+                        || url.password().is_some()
+                    {
+                        return Err(ProviderError::new(
+                            ProviderErrorKind::InvalidRequest,
+                            "Invalid video URL",
+                        ));
+                    }
+                }
+                ContentPart::ToolResult(result) => walk(&result.content, supported)?,
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+    for message in &request.messages {
+        walk(&message.content, supported)?;
+    }
+    Ok(())
 }
 
 /// Kimi 视觉输入不接受外部 URL。`ms://` 文件 ID 与 base64 继续交给编码器。
@@ -715,6 +791,88 @@ mod tests {
             content[2]["image_url"]["url"],
             "data:image/png;base64,QkFTRTY0"
         );
+    }
+
+    #[test]
+    fn video_reference_maps_to_documented_chat_wire() {
+        let mut request = base_request();
+        request.messages[0]
+            .content
+            .push(pawork_domain::ContentPart::Video(
+                pawork_domain::VideoContent {
+                    url: "https://example.com/clip.mp4".into(),
+                    media_type: "video/mp4".into(),
+                },
+            ));
+        let endpoint = "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1";
+        assert!(video_endpoint_supported(endpoint, "qwen3.8-max"));
+        validate_video_request(&request, true).unwrap();
+        let body = to_chat_completions_body(&request);
+        assert_eq!(
+            body["messages"][0]["content"][1],
+            json!({"type":"video_url","video_url":{"url":"https://example.com/clip.mp4"}})
+        );
+        let caps = pawork_domain::ModelCapabilities {
+            video_input: true,
+            ..Default::default()
+        };
+        let evidence = crate::registry::CapabilityEvidence {
+            model: request.model.clone(),
+            provider: None,
+            static_declared: Some(caps),
+            probe_declared: None,
+            override_declared: None,
+        };
+        crate::negotiate::capability_gate(&evidence, &request).unwrap();
+    }
+
+    #[test]
+    fn video_rejects_unverified_endpoint_and_unsafe_references_before_network() {
+        let mut request = base_request();
+        for url in [
+            "file:///private/clip.mp4",
+            "data:video/mp4;base64,YQ==",
+            "https://user:secret@example.com/clip.mp4",
+            "https://@example.com/clip.mp4",
+        ] {
+            request.messages[0].content = vec![pawork_domain::ContentPart::Video(
+                pawork_domain::VideoContent {
+                    url: url.into(),
+                    media_type: "video/mp4".into(),
+                },
+            )];
+            assert!(validate_video_request(&request, true).is_err());
+        }
+        assert!(!video_endpoint_supported(
+            "https://api.kimi.com/coding/v1",
+            "k3"
+        ));
+        assert!(!video_endpoint_supported(
+            "https://example.com/compatible-mode/v1",
+            "qwen3.8-max"
+        ));
+        assert!(!video_endpoint_supported(
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "text-only"
+        ));
+        request.messages[0].content = vec![pawork_domain::ContentPart::Video(
+            pawork_domain::VideoContent {
+                url: "https://example.com/clip.mp4".into(),
+                media_type: "video/mp4".into(),
+            },
+        )];
+        assert!(validate_video_request(&request, false).is_err());
+        let evidence = crate::registry::CapabilityEvidence {
+            model: request.model.clone(),
+            provider: None,
+            static_declared: Some(pawork_domain::ModelCapabilities {
+                image_input: true,
+                ..Default::default()
+            }),
+            probe_declared: None,
+            override_declared: None,
+        };
+        assert!(crate::negotiate::capability_gate(&evidence, &request).is_err());
     }
 
     #[test]

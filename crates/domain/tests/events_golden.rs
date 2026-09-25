@@ -182,6 +182,8 @@ fn variant_payloads() -> Vec<AgentEvent> {
             }],
         }),
         AgentEvent::Goal(GoalEvent::Created {
+            budget_tokens: None,
+            max_runs: None,
             goal_id: GoalId::from("goal-1"),
             title: "ship s1".into(),
             criteria: vec![SuccessCriterionSnapshot {
@@ -352,4 +354,37 @@ fn write_event_envelope_golden() {
         ),
     )
     .expect("write parent golden");
+}
+
+#[test]
+fn goal_budget_is_additive_and_roundtrips() {
+    let events = vec![
+        GoalEvent::Created {
+            goal_id: "goal-1".into(),
+            title: "Verify changes".into(),
+            criteria: vec![],
+            budget_tokens: Some(1000),
+            max_runs: Some(3),
+        },
+        GoalEvent::Resumed {
+            goal_id: "goal-1".into(),
+            remaining_budget_tokens: 500,
+            max_runs: Some(2),
+        },
+    ];
+    let golden: Value = serde_json::from_str(include_str!("fixtures/goal_budget.json")).unwrap();
+    assert_eq!(serde_json::to_value(&events).unwrap(), golden);
+    assert_eq!(
+        serde_json::from_value::<Vec<GoalEvent>>(golden).unwrap(),
+        events
+    );
+}
+
+#[test]
+fn video_content_reference_round_trips() {
+    let value: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/video_content.json")).unwrap();
+    let part: pawork_domain::ContentPart = serde_json::from_value(value.clone()).unwrap();
+    assert!(matches!(&part, pawork_domain::ContentPart::Video(video) if video.validate().is_ok()));
+    assert_eq!(serde_json::to_value(part).unwrap(), value);
 }

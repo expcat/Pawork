@@ -29,8 +29,8 @@ use pawork_domain::{
     TokenUsage,
 };
 
-use crate::ResumeDisposition;
 use crate::app::{AppEvent, AppEventEnvelope, RunState, TimelineItem, TimelineItemKind};
+use crate::ResumeDisposition;
 
 const TOOL_CONTEXT_ID_KEY: &str = "_pawork_tool_call_id";
 const TOOL_CONTEXT_DETAIL_KEY: &str = "detail";
@@ -390,6 +390,11 @@ fn join_text(parts: &[ContentPart]) -> String {
                 text.push('\n');
             }
             text.push_str(&content.text);
+        } else if let ContentPart::Video(video) = part {
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            text.push_str(&format!("[video: {}] {}", video.media_type, video.url));
         }
     }
     text

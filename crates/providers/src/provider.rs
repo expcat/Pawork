@@ -127,6 +127,10 @@ impl OpenAiCompatibleProvider {
         cancel: CancellationToken,
     ) -> Result<ModelResponseSummary, ProviderError> {
         crate::request::reject_channel_image_limits(self.config.provider_id.as_str(), request)?;
+        crate::request::validate_video_request(
+            request,
+            crate::request::video_endpoint_supported(&self.config.base_url, request.model.as_str()),
+        )?;
         // 构造请求体（canonical → OpenAI）
         let body = crate::request::to_chat_completions_body(request);
 
@@ -332,6 +336,16 @@ impl ModelProvider for OpenAiCompatibleProvider {
                 }
                 // 远端模型能力不等于本适配器已接通的能力：Chat hosted wire 未实现。
                 definition.capabilities.hosted_tool_tags.clear();
+                definition.capabilities.video_input =
+                    crate::request::video_endpoint_supported(&self.config.base_url, id)
+                        && model
+                            .get("supports_video_in")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(true)
+                        && model
+                            .get("input_modalities")
+                            .and_then(Value::as_array)
+                            .is_none_or(|items| items.iter().any(|v| v.as_str() == Some("video")));
                 if let Some(thinking) = model.get("supports_reasoning").and_then(Value::as_bool) {
                     definition.capabilities.thinking = thinking;
                 }

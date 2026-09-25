@@ -1,7 +1,7 @@
 //! 应用层查询信封、时间线分页与响应。
 
 use pawork_domain::{
-    ArtifactId, CommandId, ErrorContext, ProviderId, QueryId, RunId, SessionId, Timestamp,
+    ArtifactId, CommandId, ErrorContext, EventId, ProviderId, QueryId, RunId, SessionId, Timestamp,
     WorkspaceId,
 };
 use serde::{Deserialize, Serialize};
@@ -80,6 +80,16 @@ pub enum AppQuery {
     },
     SnapshotFetch,
     PluginList,
+    GoalGet {
+        session_id: SessionId,
+    },
+    SkillRecordPreview {
+        session_id: SessionId,
+        event_ids: Vec<EventId>,
+    },
+    PlanGet {
+        session_id: SessionId,
+    },
     McpList,
     ProviderAuthStatus {
         #[serde(default, skip_serializing_if = "Option::is_none")]

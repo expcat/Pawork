@@ -1,0 +1,52 @@
+{
+  "goal_start": {
+    "method": "goal_start",
+    "params": {
+      "session_id": "session-1",
+      "title": "Verify",
+      "criteria": [
+        "Tests pass"
+      ],
+      "budget_tokens": 1000,
+      "max_runs": 3
+    }
+  },
+  "goal_pause": {
+    "method": "goal_pause",
+    "params": {
+      "session_id": "session-1",
+      "goal_id": "goal-1"
+    }
+  },
+  "goal_resume": {
+    "method": "goal_resume",
+    "params": {
+      "session_id": "session-1",
+      "goal_id": "goal-1",
+      "budget_tokens": 500,
+      "max_runs": 2
+    }
+  },
+  "goal_steer": {
+    "method": "goal_steer",
+    "params": {
+      "session_id": "session-1",
+      "goal_id": "goal-1",
+      "input": "Focus on tests"
+    }
+  },
+  "goal_finish": {
+    "method": "goal_finish",
+    "params": {
+      "session_id": "session-1",
+      "goal_id": "goal-1",
+      "outcome": "achieved"
+    }
+  },
+  "goal_get": {
+    "method": "goal_get",
+    "params": {
+      "session_id": "session-1"
+    }
+  }
+}

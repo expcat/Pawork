@@ -1,0 +1,16 @@
+[
+  {
+    "kind": "created",
+    "goal_id": "goal-1",
+    "title": "Verify changes",
+    "criteria": [],
+    "budget_tokens": 1000,
+    "max_runs": 3
+  },
+  {
+    "kind": "resumed",
+    "goal_id": "goal-1",
+    "remaining_budget_tokens": 500,
+    "max_runs": 2
+  }
+]

@@ -50,6 +50,7 @@ struct MockHost {
     timelines: Mutex<Vec<(SessionId, Option<u64>, Option<u32>)>>,
     snapshot_seq: AtomicU64,
     hold_upstream: AtomicBool,
+    hold_snapshot: AtomicBool,
     core_lock: tokio::sync::RwLock<()>,
     write_started: Notify,
     upstream_started: Notify,
@@ -74,6 +75,7 @@ impl MockHost {
             timelines: Mutex::new(Vec::new()),
             snapshot_seq: AtomicU64::new(1),
             hold_upstream: AtomicBool::new(false),
+            hold_snapshot: AtomicBool::new(false),
             core_lock: tokio::sync::RwLock::new(()),
             write_started: Notify::new(),
             upstream_started: Notify::new(),
@@ -113,6 +115,10 @@ impl GuiHost for MockHost {
     }
 
     async fn snapshot(&self) -> Result<Snapshot, GuiHostError> {
+        if self.hold_snapshot.load(Ordering::SeqCst) {
+            self.upstream_started.notify_one();
+            std::future::pending::<()>().await;
+        }
         let seq = self.snapshot_seq.fetch_add(1, Ordering::Relaxed);
         Ok(Snapshot {
             instance_id: self.instance_id.clone(),
@@ -497,6 +503,32 @@ fn event(seq: u64) -> AppEventEnvelope {
 #[cfg(unix)]
 mod unix_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn host_close_before_handshake_or_initial_snapshot_finishes() {
+        for snapshot in [false, true] {
+            let harness = open_harness("close-handshake").await;
+            if snapshot {
+                harness.host.hold_snapshot.store(true, Ordering::SeqCst);
+                harness.client.send(&handshake_frame()).await;
+                tokio::time::timeout(
+                    Duration::from_secs(2),
+                    harness.host.upstream_started.notified(),
+                )
+                .await
+                .expect("initial snapshot started");
+                assert!(matches!(
+                    harness.client.recv().await,
+                    ServerFrame::Handshake(_)
+                ));
+            }
+            harness._session.close().await.expect("host close");
+            tokio::time::timeout(Duration::from_secs(2), harness._session.wait_done())
+                .await
+                .expect("host close must interrupt idle connection setup");
+            assert!(harness.client.conn.receive().await.is_err());
+        }
+    }
 
     #[tokio::test]
     async fn wait_done_fires_after_client_disconnect() {

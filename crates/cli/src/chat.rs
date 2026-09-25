@@ -29,14 +29,15 @@ pub async fn run_chat(
     resume: Option<String>,
     branch: Option<String>,
     images: Vec<String>,
+    video_urls: Vec<String>,
 ) -> Result<(), CliError> {
     switch_branch_if_requested(core, resume.as_deref(), branch.as_deref()).await?;
     if let Some(prompt) = prompt {
-        return run_prompt(core, &prompt, resume, true, &images).await;
+        return run_prompt(core, &prompt, resume, true, &images, &video_urls).await;
     }
-    if !images.is_empty() {
+    if !images.is_empty() || !video_urls.is_empty() {
         return Err(CliError::Usage(
-            "--image 需要 --prompt；交互 REPL 不接受图片参数".into(),
+            "--image / --video-url 需要 --prompt；交互 REPL 不接受附件参数".into(),
         ));
     }
     if !io::stdin().is_terminal() {
@@ -48,13 +49,18 @@ pub async fn run_chat(
                 "非交互模式需要 --prompt 或从 stdin 提供一行问题".into(),
             ));
         }
-        return run_prompt(core, text, resume, true, &[]).await;
+        return run_prompt(core, text, resume, true, &[], &[]).await;
     }
     run_repl(core, resume).await
 }
 
-pub async fn run_once(core: &AppCore, prompt: &str, images: Vec<String>) -> Result<(), CliError> {
-    run_prompt(core, prompt, None, true, &images).await
+pub async fn run_once(
+    core: &AppCore,
+    prompt: &str,
+    images: Vec<String>,
+    video_urls: Vec<String>,
+) -> Result<(), CliError> {
+    run_prompt(core, prompt, None, true, &images, &video_urls).await
 }
 
 pub async fn run_json(
@@ -106,7 +112,7 @@ pub async fn run_json(
             other => {
                 return Err(CliError::Turn(format!(
                     "SessionCreate 应返回 Data，got {other:?}"
-                )))
+                )));
             }
         }
     };
@@ -122,6 +128,7 @@ pub async fn run_json(
             effort: None,
             attachment_ids: Vec::new(),
             web_search: None,
+            video_urls: Vec::new(),
         },
     )
     .await?;
@@ -136,7 +143,7 @@ pub async fn run_json(
         other => {
             return Err(CliError::Turn(format!(
                 "RunStart 应 Accepted 且携带 run id，got {other:?}"
-            )))
+            )));
         }
     };
 
@@ -265,6 +272,7 @@ async fn run_prompt(
     resume: Option<String>,
     one_shot: bool,
     images: &[String],
+    video_urls: &[String],
 ) -> Result<(), CliError> {
     let (session, mut history, mut next_msg) =
         open_or_create(core, resume.as_deref(), prompt).await?;
@@ -277,6 +285,7 @@ async fn run_prompt(
         prompt,
         one_shot,
         images,
+        video_urls,
     )
     .await
 }
@@ -363,7 +372,7 @@ async fn run_repl(core: &mut AppCore, resume: Option<String>) -> Result<(), CliE
                             session = Some(id);
                         }
                         let id = session.as_ref().expect("session created");
-                        run_one_turn(&*core, id, &mut history, &mut next_msg, text, false, &[]).await?;
+                        run_one_turn(&*core, id, &mut history, &mut next_msg, text, false, &[], &[]).await?;
                     }
                 }
             }
@@ -546,9 +555,37 @@ async fn run_one_turn(
     text: &str,
     one_shot: bool,
     images: &[String],
+    video_urls: &[String],
 ) -> Result<(), CliError> {
     let mut content = core.expand_at_refs(Some(session), text).await?;
+    if images.len() + video_urls.len() > 4 {
+        return Err(CliError::Usage(
+            "At most four images/videos per turn".into(),
+        ));
+    }
     content.extend(local_image_parts(images)?);
+    for url in video_urls {
+        let extension = url
+            .split(['?', '#'])
+            .next()
+            .unwrap_or(url)
+            .rsplit('.')
+            .next()
+            .unwrap_or("");
+        let video = pawork_domain::VideoContent {
+            url: url.clone(),
+            media_type: match extension.to_ascii_lowercase().as_str() {
+                "webm" => "video/webm",
+                "mov" => "video/quicktime",
+                "mpeg" | "mpg" => "video/mpeg",
+                "avi" => "video/x-msvideo",
+                _ => "video/mp4",
+            }
+            .into(),
+        };
+        video.validate().map_err(|e| CliError::Usage(e.into()))?;
+        content.push(ContentPart::Video(video));
+    }
     history.push(Message {
         id: next_id(session, next_msg),
         role: MessageRole::User,

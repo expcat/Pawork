@@ -267,6 +267,8 @@ pub struct ModelDefinition {
 pub struct ModelCapabilities {
     pub text: bool,
     pub image_input: bool,
+    #[serde(default)]
+    pub video_input: bool,
     pub tool_calls: bool,
     pub parallel_tool_calls: bool,
     pub thinking: bool,
@@ -391,6 +393,8 @@ impl ReasoningConfig {
 /// `image_input` 在请求消息携带图片内容时置位（VISION-1）。
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CapabilityRequirements {
+    #[serde(default)]
+    pub video_input: bool,
     /// 偏好的传输路径，按顺序优先；空表示「不约束，由 evidence 决定」。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub transport_pref: Vec<ModelTransport>,

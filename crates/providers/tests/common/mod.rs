@@ -1,6 +1,6 @@
 //! providers 集成测试共享件：SSE wire 样例与流断言的单一来源（MOCK-7）。
 //!
-//! 各集成测试二进制以 `mod common;` 引入。本模块只依赖 `pawork-domain`
+//! 各集成测试二进制以 `mod common;` 引入。本模块复用 `pawork-testkit::contract`，仅依赖领域类型
 //! 与纯字符串拼装，不触碰 feature 门控 API；不同二进制按需取用。
 
 #![allow(dead_code)]
@@ -92,65 +92,10 @@ pub fn responses_text_stream_body(response_id: &str, deltas: &[&str], usage: (u6
 pub mod contract {
     use super::{ProviderError, ProviderErrorKind, ProviderStreamEvent, StopReason};
 
-    /// 断言文本流：至少含一条 TextDelta，并以 ResponseCompleted 收尾。
-    pub fn assert_text_stream(events: &[ProviderStreamEvent]) {
-        assert!(
-            events
-                .iter()
-                .any(|e| matches!(e, ProviderStreamEvent::TextDelta(t) if !t.is_empty())),
-            "text 流应至少含一条非空 TextDelta，实际：{events:?}"
-        );
-        assert!(
-            matches!(
-                events.last(),
-                Some(ProviderStreamEvent::ResponseCompleted(_))
-            ),
-            "文本流应以 ResponseCompleted 收尾，实际末尾：{:?}",
-            events.last()
-        );
-    }
-
-    /// 断言单个 tool call 闭合：Started → ArgumentsDelta(可多条) → Completed。
-    pub fn assert_single_tool_call(events: &[ProviderStreamEvent]) {
-        let started = events
-            .iter()
-            .find(|e| matches!(e, ProviderStreamEvent::ToolCallStarted { .. }));
-        assert!(started.is_some(), "应存在 ToolCallStarted");
-        let id = match started.unwrap() {
-            ProviderStreamEvent::ToolCallStarted { id, .. } => id.clone(),
-            _ => unreachable!(),
-        };
-        assert!(
-            events.iter().any(
-                |e| matches!(e, ProviderStreamEvent::ToolCallCompleted { id: cid } if cid == &id)
-            ),
-            "tool call {id} 应被 Completed 闭合"
-        );
-    }
-
-    /// 断言两个 tool call 并行交错且各自闭合。
-    pub fn assert_parallel_tool_calls(events: &[ProviderStreamEvent]) {
-        let started_ids: Vec<_> = events
-            .iter()
-            .filter_map(|e| match e {
-                ProviderStreamEvent::ToolCallStarted { id, .. } => Some(id.clone()),
-                _ => None,
-            })
-            .collect();
-        assert!(
-            started_ids.len() >= 2,
-            "并行 tool call 应至少有两个 Started（实际 {}）",
-            started_ids.len()
-        );
-        for id in &started_ids {
-            assert!(
-                events.iter().any(
-                    |e| matches!(e, ProviderStreamEvent::ToolCallCompleted { id: cid } if cid == id)
-                ),
-                "tool call {id} 应被 Completed 闭合"
-            );
-        }
-    }
+    #[allow(unused_imports)] // Each integration target consumes a different subset.
+    pub use pawork_testkit::contract::{
+        assert_parallel_tool_calls, assert_single_tool_call, assert_text_stream,
+    };
 
     /// 断言 usage 已归一且 stop reason 符合预期。
     pub fn assert_usage_and_stop(events: &[ProviderStreamEvent], expected_stop: StopReason) {

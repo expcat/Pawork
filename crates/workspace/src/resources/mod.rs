@@ -28,3 +28,6 @@ pub use source::{
     ResourceDiagnosticEntry, ResourceDiagnosticStatus, ResourceDiagnostics, ResourceIssue,
     ResourceIssueSeverity, ResourceKind, ResourceOrigin, ResourceProvenance,
 };
+
+mod recording;
+pub use recording::write_skill_recording;

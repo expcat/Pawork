@@ -505,6 +505,15 @@ impl DesktopController {
                     .await;
                 return;
             }
+            if !options.video_urls.is_empty() && client.api_version().minor < 24 {
+                let _ = events
+                    .send(ControllerEvent::OperationFailed {
+                        action: "send message",
+                        reason: "Video input requires Host API 1.24".into(),
+                    })
+                    .await;
+                return;
+            }
             if let Err(reason) =
                 super::attachments::upload(&client, &session_id, &options.attachments).await
             {
@@ -544,6 +553,9 @@ impl DesktopController {
                                 .join(", ");
                             format!("{text}\n\n📎 {names}").trim().to_string()
                         };
+                        let text = options.video_urls.iter().fold(text, |text, video| {
+                            format!("{text}\n[video: {}] {}", video.media_type, video.url)
+                        });
                         let _ = events
                             .send(ControllerEvent::MessageSent {
                                 session_id,

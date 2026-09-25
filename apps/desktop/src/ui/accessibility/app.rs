@@ -523,8 +523,10 @@ impl AppView {
             }
             "composer-attach" => self.on_composer_add_menu(None, cx),
             other
-                if other.starts_with("composer-add-")
-                    && matches!(self.open_menu, Some(MenuKind::ComposerAdd)) =>
+                if matches!(self.open_menu, Some(MenuKind::ComposerAdd))
+                    && super::super::input_area::ComposerAction::ALL
+                        .iter()
+                        .any(|action| action.id() == other) =>
             {
                 let Some(action) = super::super::input_area::ComposerAction::ALL
                     .into_iter()
@@ -2220,6 +2222,31 @@ impl AppView {
         )
         .value(row.status_label.clone())
         .description(row.detail.clone().unwrap_or_default());
+        if row
+            .detail
+            .as_deref()
+            .is_some_and(|detail| !crate::ui::markdown::source_links(detail).is_empty())
+        {
+            node = node.child(
+                AxNode::new(
+                    entry_menu_identifier(&entry.event_id),
+                    AxRole::Button,
+                    t("timeline.actions"),
+                    AxRect::new(rect.x + rect.width - 36.0, rect.y, 24.0, 24.0),
+                )
+                .focused(
+                    self.open_menu.is_none()
+                        && self
+                            .timeline_entry_action_focus
+                            .get(&entry.event_id)
+                            .is_some_and(|focus| focus.is_focused(window)),
+                )
+                .action(AxAction::Press),
+            );
+            if matches!(&self.open_menu, Some(MenuKind::Entry(id)) if id == &entry.event_id) {
+                node = self.entry_actions_ax(node, &entry.event_id);
+            }
+        }
         if row.result_can_expand && !row.event_id.is_empty() {
             let key = tool_result_expand_key(&entry.event_id);
             node = node.child(
@@ -3050,6 +3077,15 @@ impl AppView {
                     self.composer_attachment_meta_label(&attachment)
                 )),
             );
+        }
+        for (index, video) in options.video_urls.iter().enumerate() {
+            let id = format!("composer-video-{index}");
+            composer = composer.child(AxNode::new(
+                &id,
+                AxRole::StaticText,
+                format!("{}: {}", t("video.title"), video.url),
+                self.settings_menu_element_bounds(&id, "composer-options"),
+            ));
         }
         if options.web_search.is_some() {
             composer = composer.child(
@@ -4846,6 +4882,39 @@ mod tests {
                 "zero-token sentinel is unknown and must not draw ContextMeter"
             );
         });
+        // An expanded image must not push the editor/footer outside the card.
+        cx.simulate_resize(size(px(1440.0), px(1024.0)));
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.text_input
+                    .update(cx, |input, cx| input.reset_text("Image review", cx));
+                view.composer_options
+                    .entry(None)
+                    .or_default()
+                    .attachments
+                    .push(crate::controller::ComposerAttachment {
+                        id: "layout-image".into(),
+                        name: "drawing.png".into(),
+                        bytes: std::sync::Arc::new(Vec::new()),
+                        image: true,
+                    });
+                view.composer_attachment_preview = Some((None, "layout-image".into()));
+                cx.notify();
+            });
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        let card = cx.debug_bounds("composer-card").unwrap();
+        let action = cx.debug_bounds("composer-action-slot").unwrap();
+        let meta = cx.debug_bounds("composer-meta").unwrap();
+        assert!(
+            action.bottom() < card.bottom(),
+            "preview must leave the send control inside the card"
+        );
+        assert!(
+            card.bottom() <= meta.top(),
+            "preview must not overlap workspace context"
+        );
     }
 
     /// UX-03：项目筛选不重绑任务，项目新建入口、限制和上下文共用可换行的元信息。

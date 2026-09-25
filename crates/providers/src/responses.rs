@@ -188,6 +188,7 @@ impl ResponsesTransport {
         let reasoning_inputs =
             resolve_reasoning_inputs(request, self.reasoning_protector.as_ref()).await;
         crate::request::reject_channel_image_limits(self.config.provider_id.as_str(), request)?;
+        crate::request::validate_video_request(request, false)?;
         let body = to_responses_body(request, reasoning_inputs, self.config.wire);
         let mut bytes = self
             .client
@@ -450,6 +451,7 @@ fn message_to_input(message: &Message) -> Vec<Value> {
                     content.push(image);
                 }
             }
+            ContentPart::Video(_) => {} // rejected before encoding; Responses video wire is not enabled
             ContentPart::ToolCall(call) => {
                 let arguments = if call.arguments.is_null() {
                     call.raw_arguments.clone().unwrap_or_default()

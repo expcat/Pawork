@@ -16,7 +16,9 @@ mod data_dir;
 pub mod devfixture;
 mod diff;
 mod extensions;
+mod goal_host;
 mod gui_host;
+pub use goal_host::GoalSnapshot;
 pub mod gui_server;
 mod hub;
 mod idempotency;
@@ -69,7 +71,7 @@ pub use import_host::{
     parse_session_source, CompatImportItemView, CompatImportPreview, CompatImportReport,
     CompatTool, SessionImportFormat, SessionImportOutcome,
 };
-pub use instance_lock::InstanceRole;
+pub use instance_lock::{active_instance_host_pids, InstanceRole};
 pub use orchestration_host::{MultiAgentDemoOptions, MultiAgentDemoReport};
 pub use pawork_git::{DiffFile, DiffPage};
 pub use pawork_policy::{ApprovalMode, RiskLevel};

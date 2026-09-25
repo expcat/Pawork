@@ -29,7 +29,7 @@ UI-6b G2 已接线：Go 存储账号可读取官方三窗已用百分比与重�
 | CAP-GUI-01 | 本机 GUI server 与 GPUI Desktop | `gui serve`、`pawork-desktop` | 生产链路已实现；完整人工门禁未完成 | 项目/会话/Changes/Terminal 主路径已验收；完整视觉、AX/IME/跨平台仍需专项证据；断线不取消 Run。 |
 | CAP-SETTINGS-01 | Desktop Settings：供应商连接、认证、模型目录/默认项、通用、权限、MCP、终端、外观、高级连接诊断与关于 | TaskRail `Local` 行 Settings | SET-1～SET-6h 已实现并通过各片定向门禁，本机真窗口验收通过（2026-09-05）；真实账号矩阵人工验收待后续 | 业务设置 Host-driven；Secret 只进 auth backend；外观字号仅当前 Desktop 会话；高级只读消费当前握手/endpoint/resume/ack，不显示 token 或伪造配置 instance。About 只在当前认证握手提供非空 Host 数据目录时启用，缺失/断线 fail-closed。见 [settings.md](settings.md)。 |
 | CAP-CLIENT-01 | GUI typed client、headless JSON、ACP | `headless`、`acp serve`、`pawork-client` | 已实现 | GUI/headless/ACP 能力表同源；wire/JSON 受冻结契约约束。 |
-| CAP-WORKFLOW-01 | plan、tasks 与演示型多 Agent 编排 | `plan`、`tasks`、`agents demo` | 已实现/受限 | `agents` 是 demo 入口；teams/goal/automation/monitor 的完整产品面已归档或候选。 |
+| CAP-WORKFLOW-01 | plan、tasks 与演示型多 Agent 编排 | `plan`、`tasks`、`agents demo` | 已实现/受限 | Desktop 已接 Plan 评审与有预算持续目标（API 1.24），真窗口验收见活动路线图；`agents` 仍是 demo，旧 teams/goal/automation/monitor reducer 不复活。 |
 | CAP-OPS-01 | 服务安装/启停、状态、观察、关闭、诊断 | `service`、`status`、`watch`、`shutdown`、`doctor` | 已实现；平台验收不完整 | service 默认 dry-run，显式 `--apply` 才改系统；Windows SCM 实机仍为候选验收。 |
 | CAP-IMPORT-01 | 外部配置与本机会话导入 | `import`、`sessions import --from` | 已实现 | 配置扫描只读、不执行 hook/不启动 MCP；Claude/Codex 会话扫描有界且不跟 symlink。 |
 
@@ -73,13 +73,15 @@ UI-6b G2 已接线：Go 存储账号可读取官方三窗已用百分比与重�
 | `opencode-go` | API key | 已实现。 |
 | `qwen-token-plan` | API key | 已实现。 |
 | `deepseek` | API key | 已实现。 |
-| Kimi（待登记稳定 ID） | Kimi Platform API key / Kimi Code OAuth | Settings 活动线新增；当前未实现。 |
+| `kimi-platform` / `kimi-code` | Kimi Platform API key / Kimi Code OAuth | 已接 Settings 认证与模型目录；当前账号和验收状态以真实查询为准。 |
 
 此外存在 feature 门控的 Anthropic Messages adapter 和可配置 OpenAI-compatible 入口。它们不应被误写成第七条 `CHANNEL_REGISTRY` 产品通道；实际启用能力以宿主 feature、配置和 `pawork models` 返回为准。
 
 本地 Provider 模拟（mock 环境，非真实 Provider 能力）：仓库随附九通道 fixture 与场景库，可用 `scripts/mock/run-instance.sh` 一键拉起隔离实例（独立 data dir / auth / `--instance mock`）并把 Global config 的 base_url、OAuth 端点临时指向本地 mock server（方案 A：备份注入、`stop` 时恢复）。已验证的回归面：CLI 层对话流、工具流、取消、错误归一、OAuth device 登录与额度三窗（协议层）；GUI 层流式、工具流与取消主路径已随主干 bundle（API 1.17 UI）真窗口复验通过（BUG-GUI-01 不再复现，回归 `event_stream_with_heartbeat_only_inbound_survives_watchdog`），三窗额度 UI 0% / 过期 / 刷新路径已验、>0% 读数待真实用量产生。全部证据属于「本地仿真」层级，不能替代或冒充真实 Provider 冒烟（E3）。用法与运维边界见 [operations.md](operations.md) §3.1。
 
 ## 4. Desktop 可见面
+
+2026-09-24 新增文件夹/浏览器上下文、手绘 PNG 与视频 URL 附件、Plan/持续目标面板、技能录制和真实插件空列表；具体平台、能力和验证边界见 [产品验收](../Plan/product-and-acceptance.md)。下表历史验收不覆盖这些新入口。
 
 | 面 | 当前能力 | 状态 |
 | --- | --- | --- |
@@ -94,4 +96,4 @@ UI-6b G2 已接线：Go 存储账号可读取官方三窗已用百分比与重�
 
 ## 5. 不可宣称为已交付
 
-以下能力仅为已确认未排期、候选或归档：完整 account factory 与缓存感知路由、远程 GUI、Web/Cloud、完整 teams/goal/automation/monitor、GUI stage/unstage/hunk、WASM 插件生态、第一方 IDE 扩展、MCP Server、自更新/安装器、企业 SSO、发布与三平台门禁。完整列表见 [backlog.md](backlog.md)。
+以下能力仅为已确认未排期、候选或归档：完整 account factory 与缓存感知路由、远程 GUI、Web/Cloud、旧版完整 teams/goal/automation/monitor 框架（不含现行有预算持续目标）、GUI stage/unstage/hunk、WASM 插件生态、第一方 IDE 扩展、MCP Server、自更新/安装器、企业 SSO、发布与三平台门禁。完整列表见 [backlog.md](backlog.md)。

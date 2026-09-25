@@ -150,13 +150,13 @@ pawork-desktop [--socket <path>] [--instance <name>] [--probe|--probe-smoke]
 - **Timeline（中栏上）**：虚拟化列表渲染五类条目——靠右内容宽用户气泡（`surface.hover` 浅底）、助手消息不常驻「Pawork」作者行（流式增量合并为一条；当前 active Run 最新相位为 `run streaming_response` 时作者行显示静态「正在生成」）、连续工具 group（折叠标题为工具 headline——单工具 `write_file src/new_feature.rs`，多工具数量 + 前 3 条 headline + 状态计数；展开行 headline 主行、参数 JSON 仅无目标时显示、结果 10 行预览可展开全文、运行中「进行中」+ accent 点；工具组 `raised` 浅底）、运行状态 / 唯一 terminal summary、`Error:` 错误行。回合间距 16px，助手空闲不占作者行高度，思考折叠头 24px；回底按钮仅在内容溢出时出现。用量在状态栏、live / 终态页脚与「···」菜单同源：视觉为上箭头 / 下箭头 / 时钟，AX 为 `↑ 12 · ↓ 7 · Duration 00:45`；运行中按已上屏正文预览，终态回落持久化 usage；权威时长 ≥200ms 且 output>0 时附 `tok/s`。GUI2-01 首页在无条目、无审批、无运行且未加载历史时居中显示 `Start a conversation`。无 active session 可直接在底部 Composer 发送，归为 Unassigned 无任务对话（复用未开始无归属会话或 `session_create(None)`）；Ghost `New task` 仍可达。已有空任务只显示标题，无项目且已连接时显示 Ghost `Bind a project`（`workspace-bind-project`，独立 `welcome_bind_project_focus`，复用项目新建菜单）。首页 title / hint / action 的 AX 读取实测框，Composer 始终保留原底部位置。无 active session 时 Header 不重复显示新建按钮。按钮与 Header 路径共用 `header-new-task` focus / handler，AX 同步 title / description / enabled action；Disconnected 保留旧条目时不显示空态。每条右侧「···」菜单含 Fork（仅 reducer 判定的闭合 run 边界可用；不可用时灰字禁用行；接受后聚焦 Composer）。用户上滚脱钩且内容高于视口（有滚动条）时右下浮出 `↓ Back to bottom`。
 - **审批卡**：`pending_approval` 存在时作为 timeline 末项渲染——警示底色卡片（`Approval · {tool}` / reason / 可选 preview detail）+ 三按钮 Allow once（Cmd+1 / Cmd+Return，Primary）、Allow for run（Cmd+2，Success）、Deny（Cmd+3，Danger）；断线时禁用且 tooltip 给出原因。显式决策由 mouse / keyboard / AX 统一复核 gate，发出后关闭旧菜单并把焦点交回 Composer，避免卡片卸载后悬挂焦点。
 - **Composer（中栏下，R5 Wave A / F-09）**
-  - 单一 raised surface 使用 1px subtle border / r8；常态总高 88–94px（`COMPOSER_PANEL_MIN_HEIGHT=88`，不是输入框 min），增长上限 220px。两行：行 1 TextInput 单行约 28px（含 inset），多行向上增长；行 2 footer `items_center`，控件高 28px；Send/Cancel 同槽 36×36（OPT-4a）。
+  - 单一 raised surface 使用 1px subtle border / r8；常态总高 88–94px（`COMPOSER_PANEL_MIN_HEIGHT=88`，不是输入框 min），输入区增长上限 220px，附件预览占用的额外高度随内容扩展。两行：行 1 TextInput 单行约 28px（含 inset），多行向上增长；行 2 footer `items_center`，控件高 28px；Send/Cancel 同槽 36×36（OPT-4a）。
   - 卡片内动作行：model Dropdown 触发器（仅 `display_name`；provider / raw id 在 tooltip 与 AX value，菜单不再画 id；宽度随名称收缩、上限 220 truncate；run 进行中 / 目录未加载 / 断线禁用并 tooltip 给原因）与右侧发送 / 取消同槽。
   - UX-05 模型菜单：同表伪二级——已连接且至少有一个已启用模型的供应商作组头，其下直接列模型（一律一行：`display_name`，空则 id；不另画 raw id）。未连接、清单缺失或 0 启用整组不出现。打开滚入当前模型；顶部固定搜索 / 清除，可搜供应商名或模型名称 / ID。组头不可点；键盘 / AX 只走模型行与「管理模型与供应商」。列表独立纵向滚动；鼠标悬停和 ↑/↓ 共用高亮，Enter 选择模型。未搜索 / 未移动时 Enter 保持当前项以挡住 AppKit 重复开菜单按键；键盘选择后焦点落工作台根容器，避免同键重开或发送草稿。AX 取菜单和列表实际 bounds，不再猜测首帧顶部几何。
 
   - 卡片下方元信息（GUI3-02）：只读项目 chip（有项目 `Workspace · {name}`；无项目 `No project` + Ghost 正向入口「Bind a project to read and write files」→ 既有项目新建菜单，断线按 `can_create_task` 禁用给 tooltip），不再常驻 warning 色「文件工具不可用」；右侧 ContextMeter 仅在当前生效模型目录有 `context_window_tokens > 0` 时渲染 `Context · — / {window}`，未知时不画节点（`composer_context_meter_visible` render / AX 同源，不画进度条）。模型触发器为 Raised chip + `text.primary`（随名称收缩、上限 220、36px 高）。普通宽度同排，窄窗 / 大字号必要时换行；元信息高至少 28px，仍随字号增长。卡片与各元信息控件经 ScrollHandle 测量，AX 在 prepaint 后同步实际框。当前任务被筛选隐藏的说明仍挂 Composer；`status_hint` 与字号反馈改落 StatusBar 右栏，不占 Composer 行高。项目限制不另占行，有项目任务不保留限制与入口的空位。
   - 动作槽单按钮：视觉 element id 统一 `composer-action`，单一 `composer_action_focus`。idle/disconnected 显示 Send（32×32 圆形 Primary，↑；可用 tooltip「Send message (Enter)」；空/纯空白、断线、running、无已启用模型、首页建会话在途均 disabled + tooltip 给原因）；无 session 已连接且有正文时可发送（无任务对话）。running 显示 Cancel（同槽 32×32 Danger，实心停止方块 SVG 作 alpha mask，tooltip「Cancel run (Cmd+.)」）。Send 点击与 AX press 均先判 `is_composing()`，组合中不发送。AX 节点 id 仍为 send/cancel 随态互换。状态切换两按钮同槽互换，面板几何与锚点零位移。
-  - per-session 草稿：`HashMap<session_id, String>` + 无 session 独立槽；`open_session` 切换前 stash 当前 Composer 文本、切换后 `reset_text` 恢复（无则空，清 undo）；`MessageSent` 成功清该 session 草稿（可见 Composer 仅在回执属于 active session 时清空）；断线不动草稿；终端直接输入不参与。发送清空走 `clear()` 入 undo 栈，发送后 Undo 可恢复上一条文本。超长文本由父容器 max_h + overflow_y_scroll 承载，caret 滚进视口，面板总高仍受 88–94 / 220 合同约束。
+  - per-session 草稿：`HashMap<session_id, String>` + 无 session 独立槽；`open_session` 切换前 stash 当前 Composer 文本、切换后 `reset_text` 恢复（无则空，清 undo）；`MessageSent` 成功清该 session 草稿（可见 Composer 仅在回执属于 active session 时清空）；断线不动草稿；终端直接输入不参与。发送清空走 `clear()` 入 undo 栈，发送后 Undo 可恢复上一条文本。超长文本由父容器 max_h + overflow_y_scroll 承载，caret 滚进视口，输入区高度仍受 88–94 / 220 合同约束，附件预览不挤出发送行或覆盖元信息。
   - 提示行删除。空输入 placeholder 只走状态机（不被 `status_hint` 覆盖）：已连接 idle（含无 session）=`Message Pawork…`；running=`Run in progress — sending is disabled. Cancel remains available.`；connecting/disconnected/failed 沿用既有文案。瞬态反馈（Forked / 发送失败 / 字号百分比等）落 StatusBar 右栏，发送失败在输入非空时也可见。非空输入时状态原因仍由 tooltip + AX 承载。
   - 能力边界：reasoning 与附件已有实际入口；不画 follow-up/queue；ContextMeter 维持文本；workspace 归属只读。UX-03 的新建入口在空态和无项目任务中提供项目列表及添加目录，选择已有项目立即创建并打开新任务；添加目录沿用 `workspace_add`，内部 `WorkspaceOpened.create_task` 随当次请求携带创建意图，收到 Host snapshot / canonical id 后复用同项目未开始任务或才调用既有 `create_session`。不重绑旧会话，草稿沿用原有逐会话保存；目录取消不派出 workspace / session 命令。菜单鼠标、↑/↓、Enter、AX 共享选项，Esc 返回入口焦点。
   - ADR-054：All projects 范围下全局 New task 直接创建无项目会话（`session_create` 不带 workspace_id），归 Unassigned；项目作用域与项目头「+」仍定向绑定新建。同项目（含 Unassigned）已有未开始任务（`session_tree.branches[].head_sequence` 全为 0）时，Header / `Cmd+N` / 项目头「+」打开该条并钉在该项目组顶，不发第二次 `session_create`；缺 `branches` 的扁平快照视为已开始。
@@ -242,7 +242,15 @@ Run 页脚和底栏使用 `run_usage_display` 显示对应 Run 输入 / 输出 t
 
 实现、定向检查与真窗口验收分别记录在 历史记录（Git `f8df04b2:docs/ROADMAP.md`，原「ux-09-视觉文案与可访问性一致性」节）。无新模块、业务依赖、wire 或 schema。
 
+### API 1.24 产品面板（2026-09-24）
+
+Composer 添加菜单接入 `ui/plan.rs`、`ui/goal.rs`、`ui/recording.rs`、`ui/video.rs`、`ui/drawing.rs`；`controller/products.rs` 在 Tokio runtime 发 typed 请求。Plan 带版本编辑/提交/批准/拒绝；Goal 显式预算/轮数、2 秒状态刷新、暂停/恢复/转向/人工达成/放弃，状态与常见暂停原因显示中英文提示；录制从持久操作选择预览、人工编辑后保存；插件面板显示真实空列表并独立链接技能/MCP。视频 URL 按任务草稿保存，编辑/清空即移除，与其它附件合计最多 4 项；模型 `video_input` 与 API 1.24 同时 gate，重放保留来源。旧 Host 的新增入口禁用并给版本提示。
+
+`ui/product_access.rs` 复用 AxBridge，为面板字段、按钮和错误同步 AX 与键盘动作；AppKit Tab monitor 只作用于活动窗口。绘图使用有界 640×360 黑色画布，撤销/清空/取消/附加，内部 PNG 编码后复用普通图片附件链。目标预算不派生子代理；关闭目标面板继续 Host 执行。具体自动检查与真窗口证据分别登记 [产品验收](../../Plan/product-and-acceptance.md)。
+
 ## 4. 核心行为与数据流
+
+2026-09-24 新增实现（真窗口待验）：Composer 文件夹选择生成只读 UTF-8 JSON 文本附件（≤128 文本文件、512 条目、8 层、64 KiB；隐藏项/链接/非文本省略并计数，超限明确拒绝）。macOS Chrome/Edge 当前页面由用户显式选择后读取 URL/标题/有界正文，沿用可预览/移除附件与上传路径；不授予写权限。工具结果内的 HTTP(S) 来源可点击，条目菜单提供同源键盘/AX 打开和复制动作，原文本与重放协议不变。
 
 「子代理」设置从 `model_catalog` 只展示已连接供应商的已启用模型，包括自定义供应商；未连接或状态清单缺失的供应商不显示静态回退条目，连接后恢复候选，不按模型家族筛选。渲染、AX 和控件动作共用 `subagent_rule_models` 过滤。每个 `(provider_id, model_id)` 独立设置可发起、可充当和功能权限；运行仍要求供应商可用、模型已启用且规则允许。
 
@@ -420,6 +428,8 @@ UX-03 定向回归 `project_task_guidance_preserves_context_and_wraps`：项目�
 
 ## 7. 测试与验证资产
 
+`plan_window_keyboard_reaches_fields_and_actions` 挂载实际 Plan 子窗口，验证标题→步骤→原因→刷新及反向焦点遍历；覆盖既有句柄未启用 Tab 的真实缺陷。GPUI 模拟窗口不安装需要原生句柄的 AX 桥接；该边界仍用真实窗口验收，不能由焦点测试推定。
+
 2026-09-20 测试重构：移除 `main.rs` 的尺寸常量副本与 theme 的视觉 token 副本。 `model_menu_row_title` 空名回退并入 `model_menu_selected_follows_effective_model`；U1 删除时钟/几何自测后去掉无用 import。保留文字可读性与字号操作边界；布局依据 `composer_layout_keeps_controls_in_card_and_ax_aligned`、shell 的 resize 和宽窄窗实测，动效依据 `inspector_motion_reverses_without_jump_and_snaps_when_narrow`。冻结面 `APP_VIEW_KEYBINDINGS`（含审批、取消、字号与任务循环）/ `MAIN_PATH_TAB_STOP_IDS` 与 Desktop 握手能力面仍由 bin 内测试钉住；Settings 路由旁路工作台快捷键并入同一键表测试。这些自动化证据不替代真窗口像素验收；本批执行结果见 Git 历史（37fae8f3:docs/testing-refactor-plan.md）。
 
 Composer 面板高度仍用 helper 验证空闲/中等/封顶钳制；发送按钮 36px 由实际布局/AX 覆盖，不再另钉常量。
@@ -526,3 +536,11 @@ UI-6a 将目录 context window 的 0 哨兵视为 unknown，在 Context 显示 u
 - **UI fixture barrier 钩子（R1 Wave B，测试专用）**：启动读 env `PAWORK_UI_BARRIER_DIR`（main.rs；空值视同未设置，`--probe` / `--probe-smoke` 不发射）。未设置时全程零开销：不 spawn tick、无任何文件 IO。设置后由 ui/mod.rs 既有 1s tick 兼任发射点：已连接 && 无进行中 timeline 分页（`open_session` 置位、complete / `open session` 失败 / `Disconnected` 复位）&& 本 tick 窗口无 ControllerEvent 时重写 `<dir>/timeline_stable`（JSON 含 settle_seq 单调自增 / session_id / entry_count / at_ms / detail）；开始连接、打开会话或收到任一 ControllerEvent 时先删除旧 `timeline_stable` 与 `approval_visible`，防只等存在性的 driver 误收陈旧信号。`pending_approval` 存在且已稳定 → 重写 `approval_visible`（含 tool 名），消失 → 保持删除；目录不存在时由 `BarrierSink::new` 惰性创建。写入 tmp+rename 原子替换、任何 IO 失败静默跳过；`projection/` 保持纯状态机零 IO。controller 在未连接、无 TimelinePage 响应或翻页达到上限时发 `SessionOpenFailed{session_id}`，UI 仅在该 session 仍为 active 时复位分页状态。
 
 GUI2-01（2026-09-10）：壳层、侧栏与首页已实现；定向测试 227/227 与候选构建通过，本项真窗口路径完成、用户验收未完成；真实 Provider 请求 HTTP 401，验证结果见 历史记录（Git `f8df04b2:docs/ROADMAP.md`，原「gui2-01-工作台壳首页与侧栏」节）。新增 `welcome_and_rail_follow_actual_layout` 定向回归覆盖首页状态、实测 AX 和两种尺寸 × 三档字号；不改变协议、创建写口或持久化。
+
+2026-09-24 文件夹读取补充：macOS / Linux x86_64、aarch64 使用持有的目录描述符与 `openat(NOFOLLOW)` 逐组件读取，拒绝选择后目录/符号链接替换导致的越界；其它平台入口禁用并显示平台要求。未新增依赖。
+
+2026-09-24 真窗口补修：Composer 新菜单项以完整动作表分发 AX 激活；带图片预览的卡片按内容增高，发送行和工作区元信息不重叠。Plan 状态、绘图/视频取消与视频保存文案本地化；视频草稿 URL 有独立 AX 文本节点；插件面板转到录制时同步窗口标题。
+
+2026-09-25 外部浏览器附件按结构化错误显示中文指引：Chrome/Edge 错误 12 要求用户手动开启 Apple Events JavaScript，系统 -1743 指向 Automation 权限；后台任务错误不透传 panic 文本。
+
+2026-09-25 产品子窗口为 Plan、目标、录制、视频输入和操作按钮显式设置 GPUI Tab 停靠点；仅 div 的 `tab_stop(true)` 不会覆盖既有 `track_focus` 句柄，必须配置 FocusHandle。最终正式构建真窗口复验：Plan 正反向焦点遍历、目标遍历跳过禁用动作通过；Chrome 脚本禁用的中文提示可见且 AX 可读。成功获取外部页面正文仍受浏览器开关阻塞。

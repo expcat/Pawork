@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 authors.workspace = true
-description = "Pawork 多 Agent 编排：Supervisor/Worker 生命周期、任务图、worktree 隔离、预算与 Agent Teams"
+description = "Pawork 多 Agent 编排：Supervisor/Worker 生命周期、任务图、worktree 隔离与预算"
 
 [features]
 default = []

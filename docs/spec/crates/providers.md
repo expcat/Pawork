@@ -154,7 +154,15 @@ CAP-PROBE（2026-09-23 五通道端点实测，glm-coding / opencode-go / qwen-t
 - Anthropic：`to_messages_body` / `to_messages_body_with_plan(request, &MessagesWirePlan)`；`parse_event(data, &mut AnthropicStreamState) -> Vec<StreamOutput>`（`Event` / `MappingError` / `ReasoningError` / `PendingSignature`）；`event_to_events` 兼容入口；`ANTHROPIC_VERSION` 常量。
 - `normalize_vendor_error(vendor, error)`：按 `VENDOR_ERROR_RULES` 细化——`VendorErrorRule { vendor, needles, kind, retryable, detail, diagnostic_key }`，消息小写后须命中该厂商规则的**全部** needles 才改判 kind/retryable 并写入 diagnostics；未命中原样返回。表内只登记本期渠道的稳定标记：chatgpt（usage limit → `QuotaExceeded`、account deactivated → `Authorization`）、xai（live_search quota → `RateLimited`、collection not_ready → `ProviderUnavailable`、insufficient_quota → `QuotaExceeded`）、qwen-token-plan（数据检查 → `ContentFiltered`、throttling → `RateLimited`、quota_exhausted → `QuotaExceeded`）、glm-coding（错误码 1113 → `QuotaExceeded`、1301/敏感 → `ContentFiltered`）。
 
+### 视频与搜索的端点边界（2026-09-24）
+
+`request::video_endpoint_supported` 仅允许已核对的 Model Studio Chat endpoint/model 组合；Video 转为 `video_url` 对象。模型目录 `video_input` 与实际端点共同 gate，Anthropic/Responses/未知网关在 HTTP 前拒绝；Kimi 公开上传文件/base64 示例不能证明本轮远程 HTTP 视频可用。见 [官方 Chat 文档](https://help.aliyun.com/en/model-studio/qwen-api-via-openai-chat-completions)。
+
+Qwen Token Plan 默认专用 base URL 上，已文档化模型的显式 WebSearch 请求复用 ResponsesTransport 与 citation 归一，普通对话/视频保留 Chat；unknown model、自定义 URL、Coding Plan 不获得该声明，不发送 encrypted reasoning include。依据：[Token Plan 工具](https://help.aliyun.com/zh/model-studio/token-plan-team-quickstart)、[Responses 搜索模型表](https://help.aliyun.com/zh/model-studio/web-search)、[Coding Plan 不支持 Responses](https://help.aliyun.com/zh/model-studio/coding-plan-faq)。Kimi 当前使用 Formula/Chat 工具流程，继续拒绝未接线的 hosted WebSearch，见 [Kimi 官方说明](https://platform.kimi.ai/docs/guide/kimi-k3-quickstart)。这些是格式/端点证据，不代替真实账号往返。
+
 ## 4. 核心行为与数据流
+
+2026-09-24 O-01/O-02：集成测试复用既有 `pawork-testkit::contract` 的三项流断言（新增 dev-only 依赖）；HTTP 错误仍只保留状态安全文案。厂商细分类仅消费 Responses 流内已净化的 `Responses request failed (code=…)` 错误码，删除不可达的原始正文关键词规则；不读取或恢复响应正文。
 
 UI-6b G2：`fetch_go_usage(config, &ResolvedCredential, cancel)` 单次认证 GET 返回 `GoUsage{rolling,weekly,monthly: Result<GoUsageWindow, ProviderError>}`；窗口包含 `used_percent` 与 `resets_at: Timestamp`。严格校验整数百分比/状态及 `YYYY-MM-DDTHH:mm:ss.sssZ` 日历；单窗失败独立，顶层畸形整体失败。`verify_api_key` Go 分支复用并要求三窗均成功；GET 与正文读取共用总期限（request_timeout → http.timeout → 60s），均可取消，错误不回显上游字段；Host 额度读取设为 10s。无新增依赖；必要回归位于既有 API-key 测试文件。
 

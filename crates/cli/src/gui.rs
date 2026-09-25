@@ -4,8 +4,7 @@
 //! bind 之前）由 AppCore 按 InstanceRole::GuiHost 获取并持有整个生命
 //! 周期——不存在「探测-绑定」竞态；崩溃遗留的 socket 文件由 bind 侧的
 //! stale 清理兜底。PID 文件在 bind 成功后发布。Ctrl-C 关闭监听并退出；
-//! 关闭不取消已进入 Core 的 Run（进程内 Run 随进程结束，跨进程存活语义
-//! 归 S10 service）。
+//! 客户端断线不取消 Run；Host 退出则取消并等待 Run 持久收尾后关闭 Core。
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -79,6 +78,7 @@ pub async fn run_gui(
     let core = Arc::new(tokio::sync::RwLock::new(core));
     let adapter = GuiHostAdapter::from_locked(Arc::clone(&core), approvals);
     let pty = adapter.pty();
+    let runs = adapter.runs();
     let socket_path = socket.unwrap_or_else(|| gui_socket_path(&data_dir, instance));
     if let Some(parent) = socket_path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -139,6 +139,8 @@ pub async fn run_gui(
     // （对端断开 / 握手失败 / close）到达即移除句柄——状态探测的重复短
     // 连接不再无限累积，集合自动回落。
     let connections = ConnectionSet::default();
+    let shutdown = shutdown_signal();
+    tokio::pin!(shutdown);
     loop {
         tokio::select! {
             accepted = listener.accept() => {
@@ -152,7 +154,8 @@ pub async fn run_gui(
                     }
                 }
             }
-            _ = tokio::signal::ctrl_c() => {
+            result = &mut shutdown => {
+                result?;
                 eprintln!("shutting down gui server");
                 break;
             }
@@ -162,6 +165,7 @@ pub async fn run_gui(
     if let Err(error) = listener.close().await {
         tracing::debug!(%error, "gui listener close failed during shutdown");
     }
+    runs.begin_shutdown();
     // R-11 有序关闭：listener 已停（或 accept 失败退出循环）→ 关闭并等待
     // 全部会话收口——会话任务持有 Inner/adapter 的 core 引用，不等收口
     // 直接 try_unwrap 必然失败，Core shutdown 会被静默跳过。
@@ -174,6 +178,7 @@ pub async fn run_gui(
     for connection in &drained {
         connection.wait_done().await;
     }
+    let run_shutdown = runs.shutdown().await;
     // PID 必须在释放锁前删除；实例锁继续随 Core 持有至 shutdown 完成。
     remove_pid_file(&pid_path);
     // 释放 Host 持有者（server 的 Inner 持有 Arc<adapter>），让 core 可独占。
@@ -183,16 +188,25 @@ pub async fn run_gui(
     if let Err(error) = pty.shutdown().await {
         tracing::debug!(%error, "pty shutdown failed");
     }
-    match Arc::try_unwrap(core) {
-        Ok(core) => {
-            core.into_inner().shutdown().await?;
-        }
-        Err(_) => {
-            // 仍有未释放的 core 引用时如实告警，不静默跳过 Core shutdown。
-            tracing::warn!("gui shutdown: core still shared after releasing host holders; explicit core shutdown skipped");
+    let core = Arc::try_unwrap(core)
+        .map_err(|_| CliError::Usage("GUI shutdown could not release Core holders".into()))?;
+    core.into_inner().shutdown().await?;
+    run_shutdown.map_err(|error| CliError::Usage(format!("GUI run shutdown failed: {error}")))?;
+    Ok(())
+}
+
+async fn shutdown_signal() -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        tokio::select! {
+            result = tokio::signal::ctrl_c() => result,
+            _ = terminate.recv() => Ok(()),
         }
     }
-    Ok(())
+    #[cfg(not(unix))]
+    tokio::signal::ctrl_c().await
 }
 
 #[cfg(test)]

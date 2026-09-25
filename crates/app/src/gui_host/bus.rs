@@ -284,6 +284,8 @@ pub struct GuiRunRegistry {
     runs: Mutex<HashMap<String, (ActiveGuiRun, CancellationToken)>>,
     /// 正在执行 Run 的会话集合：同一 Session 同时只允许一个 Run（R-06）。
     sessions: Mutex<HashSet<String>>,
+    tasks: Mutex<tokio::task::JoinSet<()>>,
+    stopping: CancellationToken,
 }
 
 impl GuiRunRegistry {
@@ -292,10 +294,64 @@ impl GuiRunRegistry {
     }
 
     pub(in crate::gui_host) fn register(&self, run: ActiveGuiRun, token: CancellationToken) {
-        self.runs
+        let mut runs = self.runs.lock().expect("gui run registry poisoned");
+        if self.stopping.is_cancelled() {
+            token.cancel();
+        }
+        runs.insert(run.run_id.as_str().to_string(), (run, token));
+    }
+
+    pub(in crate::gui_host) fn spawn(
+        &self,
+        task: impl std::future::Future<Output = ()> + Send + 'static,
+    ) {
+        let mut tasks = self.tasks.lock().expect("gui run tasks poisoned");
+        while let Some(result) = tasks.try_join_next() {
+            if let Err(error) = result {
+                tracing::error!(%error, "gui run task failed");
+            }
+        }
+        tasks.spawn(task);
+    }
+
+    /// 仅 Host 退出时调用；客户端断线不取消 Run。
+    pub fn begin_shutdown(&self) {
+        self.stopping.cancel();
+        for (_, token) in self
+            .runs
             .lock()
             .expect("gui run registry poisoned")
-            .insert(run.run_id.as_str().to_string(), (run, token));
+            .values()
+        {
+            token.cancel();
+        }
+    }
+
+    /// 停止接收命令后等待 Run、持久终态和自动命名全部释放 Core。
+    pub async fn shutdown(&self) -> Result<(), tokio::task::JoinError> {
+        self.begin_shutdown();
+        let mut failure = None;
+        loop {
+            let mut tasks =
+                std::mem::take(&mut *self.tasks.lock().expect("gui run tasks poisoned"));
+            if tasks.is_empty() {
+                break;
+            }
+            while let Some(result) = tasks.join_next().await {
+                if let Err(error) = result {
+                    failure.get_or_insert(error);
+                }
+            }
+        }
+        failure.map_or(Ok(()), Err)
+    }
+
+    pub(in crate::gui_host) fn is_stopping(&self) -> bool {
+        self.stopping.is_cancelled()
+    }
+
+    pub(in crate::gui_host) async fn stopped(&self) {
+        self.stopping.cancelled().await
     }
 
     pub(in crate::gui_host) fn remove(&self, run_id: &RunId) {
@@ -328,6 +384,13 @@ impl GuiRunRegistry {
             .lock()
             .expect("gui run registry poisoned")
             .contains_key(run_id.as_str())
+    }
+
+    pub(in crate::gui_host) fn session_busy(&self, session: &SessionId) -> bool {
+        self.sessions
+            .lock()
+            .expect("sessions poisoned")
+            .contains(session.as_str())
     }
 
     /// 尝试占用会话执行槽：占用成功返回 true，已有 Run 在跑返回 false。

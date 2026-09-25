@@ -102,6 +102,9 @@ pub enum Command {
         /// 只作用于本次 `--prompt`；REPL 与 `--json` 不接受。
         #[arg(long = "image", value_name = "PATH")]
         images: Vec<String>,
+        /// Remote video HTTP(S) URL. Repeat up to four attachments in total.
+        #[arg(long = "video-url", value_name = "URL")]
+        video_urls: Vec<String>,
     },
     /// 列出 / 查看已落盘会话
     Sessions {
@@ -116,6 +119,9 @@ pub enum Command {
         /// `--json` 不接受。
         #[arg(long = "image", value_name = "PATH")]
         images: Vec<String>,
+        /// Remote video HTTP(S) URL. Repeat up to four attachments in total.
+        #[arg(long = "video-url", value_name = "URL")]
+        video_urls: Vec<String>,
     },
     /// 列出当前 provider 的模型目录
     Models,
@@ -404,7 +410,7 @@ async fn run_inner() -> Result<(), CliError> {
     }
 
     let mut options = AppLoadOptions::from_cli(cli.provider, cli.model);
-    let gui_data_dir = matches!(&cli.command, Command::Gui { .. })
+    let gui_data_dir = matches!(&cli.command, Command::Gui { .. } | Command::Tasks { .. })
         .then(|| consume_data_dir_outcome(default_data_dir_outcome()));
     options.data_dir = gui_data_dir.clone();
     options.instance = instance.clone();
@@ -474,18 +480,23 @@ async fn run_inner() -> Result<(), CliError> {
             resume,
             branch,
             images,
+            video_urls,
         } if cli.json => {
-            if !images.is_empty() {
+            if !images.is_empty() || !video_urls.is_empty() {
                 return Err(CliError::Usage(
-                    "--image 不能与 --json 一起使用（JSONL 路径只发送文本）".into(),
+                    "--image / --video-url 不能与 --json 一起使用（JSONL 路径只发送文本）".into(),
                 ));
             }
             return chat::run_json(core, prompt, resume, branch).await;
         }
-        Command::Run { prompt, images } if cli.json => {
-            if !images.is_empty() {
+        Command::Run {
+            prompt,
+            images,
+            video_urls,
+        } if cli.json => {
+            if !images.is_empty() || !video_urls.is_empty() {
                 return Err(CliError::Usage(
-                    "--image 不能与 --json 一起使用（JSONL 路径只发送文本）".into(),
+                    "--image / --video-url 不能与 --json 一起使用（JSONL 路径只发送文本）".into(),
                 ));
             }
             return chat::run_json(core, Some(prompt), None, None).await;
@@ -497,11 +508,16 @@ async fn run_inner() -> Result<(), CliError> {
                     resume,
                     branch,
                     images,
-                } => chat::run_chat(&mut core, prompt, resume, branch, images).await,
+                    video_urls,
+                } => chat::run_chat(&mut core, prompt, resume, branch, images, video_urls).await,
                 Command::Sessions { command } => {
                     sessions::run_sessions(&core, command, cli.json).await
                 }
-                Command::Run { prompt, images } => chat::run_once(&core, &prompt, images).await,
+                Command::Run {
+                    prompt,
+                    images,
+                    video_urls,
+                } => chat::run_once(&core, &prompt, images, video_urls).await,
                 Command::Models => run_models(&core, cli.json).await,
                 Command::Auth { command } => auth::run_auth(&core, command, cli.json).await,
                 Command::Diff { session, page } => {
@@ -517,7 +533,16 @@ async fn run_inner() -> Result<(), CliError> {
                     import::run_import(&core, tool, yes, dry_run, cli.json).await
                 }
                 Command::Usage { session } => usage::run_usage(&core, session, cli.json).await,
-                Command::Tasks { command } => tasks::run_tasks(&core, command, cli.json).await,
+                Command::Tasks { command } => {
+                    tasks::run_tasks(
+                        &core,
+                        command,
+                        cli.json,
+                        gui_data_dir.as_deref().expect("tasks data dir"),
+                        &instance,
+                    )
+                    .await
+                }
                 Command::Plan { command } => plan::run_plan(&core, command, cli.json).await,
                 Command::Agents { command } => match command {
                     AgentsCommand::Demo {
@@ -689,6 +714,7 @@ mod tests {
                 resume,
                 branch,
                 images,
+                video_urls: _,
             } => {
                 assert_eq!(prompt.as_deref(), Some("hi"));
                 assert!(resume.is_none());
@@ -727,7 +753,11 @@ mod tests {
 
         let cli = Cli::try_parse_from(["pawork", "run", "explain this"]).expect("parse");
         match cli.command {
-            Command::Run { prompt, images } => {
+            Command::Run {
+                prompt,
+                images,
+                video_urls: _,
+            } => {
                 assert_eq!(prompt, "explain this");
                 assert!(images.is_empty());
             }
@@ -1131,12 +1161,30 @@ mod tests {
             other => panic!("unexpected {other:?}"),
         }
 
-        let cli = Cli::try_parse_from(["pawork", "run", "--image", "shot.webp", "describe"])
-            .expect("parse run");
+        let cli = Cli::try_parse_from([
+            "pawork",
+            "run",
+            "--image",
+            "shot.webp",
+            "--video-url",
+            "https://example.test/a.mp4",
+            "--video-url",
+            "https://example.test/b.webm",
+            "describe",
+        ])
+        .expect("parse run");
         match cli.command {
-            Command::Run { prompt, images } => {
+            Command::Run {
+                prompt,
+                images,
+                video_urls,
+            } => {
                 assert_eq!(prompt, "describe");
                 assert_eq!(images, ["shot.webp"]);
+                assert_eq!(
+                    video_urls,
+                    ["https://example.test/a.mp4", "https://example.test/b.webm"]
+                );
             }
             other => panic!("unexpected {other:?}"),
         }

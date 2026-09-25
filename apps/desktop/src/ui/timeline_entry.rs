@@ -711,6 +711,22 @@ fn tool_status_element(row: &ToolRowView) -> gpui::Div {
 /// 展开后 headline 独占主行；参数 JSON 仅在未能抽出目标时作为次级；
 /// 结果预览与「展开全文」共用 `expanded_timeline_details`。
 fn tool_row_element(view: &mut AppView, row: &ToolRowView, cx: &mut Context<AppView>) -> gpui::Div {
+    let source_entry = row
+        .detail
+        .as_deref()
+        .filter(|detail| !super::markdown::source_links(detail).is_empty())
+        .and_then(|_| {
+            view.projection
+                .timeline
+                .iter()
+                .find(|entry| entry.event_id == row.event_id)
+                .cloned()
+        });
+    let source_menu = source_entry.map(|entry| {
+        let open = matches!(&view.open_menu, Some(MenuKind::Entry(id)) if id == &entry.event_id);
+        let can_fork = view.can_fork_entry(&entry.event_id);
+        entry_actions_element(view, cx, &entry, open, can_fork)
+    });
     div()
         .flex()
         .flex_col()
@@ -733,7 +749,8 @@ fn tool_row_element(view: &mut AppView, row: &ToolRowView, cx: &mut Context<AppV
                             .child(row.headline.clone()),
                     ),
                 )
-                .child(tool_status_element(row)),
+                .child(tool_status_element(row))
+                .when_some(source_menu, |header, menu| header.child(menu)),
         )
         .when_some(row.detail.clone(), |element, detail| {
             element.child(
@@ -744,7 +761,11 @@ fn tool_row_element(view: &mut AppView, row: &ToolRowView, cx: &mut Context<AppV
                     .line_height(font::from_pixels(20.0))
                     .font_family("monospace")
                     .text_color(dark().text.secondary)
-                    .child(detail),
+                    .child(super::markdown::source_text_element(
+                        format!("tool-sources-{}", row.event_id),
+                        detail,
+                        dark().text.secondary,
+                    )),
             )
         })
         .when(
@@ -874,6 +895,24 @@ impl AppView {
             .iter()
             .find(|e| e.event_id == event_id)
         {
+            if let TimelineEntryKind::ToolCall {
+                detail: Some(detail),
+                ..
+            } = &entry.kind
+            {
+                actions.extend(
+                    super::markdown::source_actions(detail)
+                        .into_iter()
+                        .map(|action| EntryAction {
+                            label: action.label,
+                            kind: if action.open {
+                                EntryActionKind::Open(action.content)
+                            } else {
+                                EntryActionKind::Copy(action.content)
+                            },
+                        }),
+                );
+            }
             if let TimelineEntryKind::AssistantMessage { text }
             | TimelineEntryKind::UserMessage { text } = &entry.kind
             {

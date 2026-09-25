@@ -362,6 +362,7 @@ impl AcpClientAdapter {
                 effort: None,
                 attachment_ids: Vec::new(),
                 web_search: None,
+                video_urls: Vec::new(),
             },
         )))
     }
@@ -637,6 +638,7 @@ mod tests {
                 effort: None,
                 attachment_ids: Vec::new(),
                 web_search: None,
+                video_urls: Vec::new(),
             },
         ];
         for command in commands {

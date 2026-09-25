@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 authors.workspace = true
-description = "Pawork 工作流：plan/goal/task/automation/monitor 五合一 reducer"
+description = "Pawork 工作流：Plan 与后台 Task 状态归约"
 
 [features]
 default = []

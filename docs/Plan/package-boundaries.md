@@ -1,6 +1,6 @@
 # 包定位与收敛建议
 
-> 基线与证据范围见 [Review 入口](README.md)。以下是建议，不改变 [架构](../architecture.md) 的包布局与冻结契约。
+> 基线与证据范围见 [Review 入口](README.md)。问题描述保留发现时的基线，已完成项以各节状态说明为准。以下建议不改变 [架构](../architecture.md) 的包布局与冻结契约。
 
 ## 1. 24 个成员的定位
 
@@ -35,7 +35,9 @@
 
 本轮没有发现必须通过整包合并解决的重复职责。app 与 desktop 的体积较大，但体积不能证明拆包必要；先围绕实际缺陷收敛内部调用关系。domain、policy、auth、protocol、transport 的边界具有明确共享或审计价值。
 
-## 2. 值得合并或删除的局部重复
+## 2. 局部重复与收敛状态
+
+2026-09-24：O-01 已复用 testkit 流断言；O-02 已改为稳定错误码白名单并移除原始错误正文关键词分类；O-05 已修正两包 Cargo description。下面其余条目仍按触发条件评估。
 
 | ID | 证据与问题 | 最小收敛建议 | 进入实现的条件 |
 | --- | --- | --- | --- |
@@ -43,7 +45,7 @@
 | O-02 | [error_table.rs](../../crates/providers/src/error_table.rs):118 用 message 关键词分类，[retry.rs](../../crates/providers/src/net/retry.rs):14 则只返回 HTTP 状态文案 | 梳理调用点，删除普通 HTTP 路径不可达的正文规则，或消费白名单稳定错误码；不恢复原始 body | 与流错误安全收口同批核查；流内仍可达规则不能误删 |
 | O-03 | [usage.rs](../../crates/control-plane/src/usage.rs):1172–1209 同步 SQLite 锁内全量取行再聚合 | 用代表性长账本测量；若有瓶颈，将等价聚合下推 SQL、避免阻塞 async runtime | 先证明延迟/内存问题，再选最小优化；保留幂等和金额精度，不搬整套存储 |
 | O-04 | [Desktop session.rs](../../apps/desktop/src/controller/session.rs):53 起主会话/子代理分页相似，回执与 generation 不同 | 下次分页行为修改时共享纯页面收集部分，继续分开 UI 身份与过期回执判断 | 只有同时改两条路径且减少重复才抽取 |
-| O-05 | workflow、orchestration 的 Cargo description 仍含已归档 Goal/Agent Teams；源码分别承载 plan/task 与 supervisor | 下次相关源码维护时只改 package description；修正“有 API 就有产品能力”的文档口径 | 本轮不改 Cargo；不借命名清理扩大包布局 |
+| O-05 | workflow、orchestration 的 Cargo description 仍含已归档 Goal/Agent Teams；源码分别承载 plan/task 与 supervisor | 下次相关源码维护时只改 package description；修正“有 API 就有产品能力”的文档口径 | 已仅修正 description；不改变依赖或包布局 |
 
 同目录原子写出现在 tools、app、orchestration 等边界，各自的授权、格式和耐久要求不同。优先修复各实际漏洞；没有证据支持新建跨包文件 IO 框架。exec 与 domain 的 CancellationToken 双类型是现有边界，修复取消接线不要求统一所有类型。
 

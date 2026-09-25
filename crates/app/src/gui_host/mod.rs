@@ -87,6 +87,7 @@ fn attach_session_branches(entry: &mut Value, tree: &SessionTree) {
 }
 
 /// `gui_server` 模块的宿主实现。
+#[derive(Clone)]
 pub struct GuiHostAdapter {
     core: Arc<tokio::sync::RwLock<AppCore>>,
     bus: Arc<GuiEventBus>,
@@ -94,8 +95,10 @@ pub struct GuiHostAdapter {
     approvals: Arc<GuiApprovalHost>,
     waiters: IdempotencyStore,
     instance: pawork_domain::CoreInstanceId,
-    next_gui_run: AtomicU64,
-    next_fork: AtomicU64,
+    next_gui_run: Arc<AtomicU64>,
+    next_fork: Arc<AtomicU64>,
+    goals: handlers::goal::GoalFlights,
+    goal_commands: Arc<tokio::sync::Mutex<()>>,
     pty: Arc<PtyService>,
     terminals: Arc<Mutex<HashMap<String, String>>>,
     browser: Arc<browser_tool::BrowserBroker>,
@@ -160,8 +163,10 @@ impl GuiHostAdapter {
             approvals,
             waiters: IdempotencyStore::new(DEFAULT_IDEMPOTENCY_CAPACITY),
             instance,
-            next_gui_run: AtomicU64::new(1),
-            next_fork: AtomicU64::new(1),
+            next_gui_run: Arc::new(AtomicU64::new(1)),
+            next_fork: Arc::new(AtomicU64::new(1)),
+            goals: Arc::new(Mutex::new(HashMap::new())),
+            goal_commands: Arc::new(tokio::sync::Mutex::new(())),
             pty: Arc::new(PtyService::new()),
             terminals: Arc::new(Mutex::new(HashMap::new())),
             browser: Arc::new(browser_tool::BrowserBroker::default()),
@@ -202,12 +207,18 @@ impl GuiHostAdapter {
     }
 
     pub async fn shutdown(self) -> Result<(), crate::AppError> {
+        self.runs
+            .shutdown()
+            .await
+            .map_err(|e| crate::AppError::Plan(e.to_string()))?;
         if let Err(error) = self.pty.shutdown().await {
             tracing::debug!(%error, "pty shutdown failed");
         }
         match Arc::try_unwrap(self.core) {
             Ok(lock) => lock.into_inner().shutdown().await,
-            Err(_) => Ok(()),
+            Err(_) => Err(crate::AppError::Plan(
+                "Core still shared after Host shutdown".into(),
+            )),
         }
     }
 
@@ -822,6 +833,10 @@ gui_query_dispatch! {
     "diff_list_files" => query_diff_list_files = handlers::query::diff_list_files, inner;
     "diff_get" => query_diff_get = handlers::query::diff_get, inner;
     "quota_overview" => query_quota_overview = handlers::query::quota_overview, inner;
+    "goal_get" => query_goal_get = handlers::goal::get, inner;
+    "skill_record_preview" => query_skill_record_preview = handlers::recording::preview, envelope;
+    "plan_get" => query_plan_get = handlers::plan::get, inner;
+    "plugin_list" => query_plugin_list = handlers::recording::plugins, inner;
     "mcp_list" => query_mcp_list = handlers::query::mcp_list, inner;
     "provider_auth_status" => query_provider_auth_status = handlers::settings::provider_auth_status, inner;
     "general_settings" => query_general_settings = handlers::settings::general_settings, inner;
@@ -846,6 +861,18 @@ gui_command_dispatch! {
     "session_archive" => command_session_archive = handlers::session::session_archive;
     "run_start" => command_run_start = handlers::run_start::run_start;
     "run_cancel" => command_run_cancel = handlers::command::run_cancel;
+    "tasks_cancel" => command_tasks_cancel = handlers::command::tasks_cancel;
+    "goal_start" => command_goal_start = handlers::goal::change;
+    "goal_pause" => command_goal_pause = handlers::goal::change;
+    "goal_resume" => command_goal_resume = handlers::goal::change;
+    "goal_steer" => command_goal_steer = handlers::goal::change;
+    "goal_finish" => command_goal_finish = handlers::goal::change;
+    "skill_record_save" => command_skill_record_save = handlers::recording::save;
+    "plan_save" => command_plan_save = handlers::plan::change;
+    "plan_submit" => command_plan_submit = handlers::plan::change;
+    "plan_approve" => command_plan_approve = handlers::plan::change;
+    "plan_reject" => command_plan_reject = handlers::plan::change;
+
     "auth_start" => command_auth_start = handlers::settings::auth_start;
     "auth_remove" => command_auth_remove = handlers::settings::auth_remove;
     "auth_set_api_key" => command_auth_set_api_key = handlers::settings::auth_set_api_key;

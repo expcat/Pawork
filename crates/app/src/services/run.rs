@@ -87,8 +87,10 @@ impl RunService {
             "run-{}-{run_n}",
             pawork_engine::now_timestamp().as_unix_millis()
         ));
-        self.chat_turn_with_run_id(core, run_id, session_id, messages, render, cancel, None)
-            .await
+        self.chat_turn_with_run_id(
+            core, run_id, session_id, messages, render, cancel, None, None,
+        )
+        .await
     }
 
     /// 以调用方提供的 run_id 执行一轮（GUI 需要在启动前登记取消令牌并
@@ -102,6 +104,7 @@ impl RunService {
         render: &dyn AgentEventSink,
         cancel: CancellationToken,
         web_search: Option<bool>,
+        goal_budget: Option<u64>,
     ) -> Result<ModelResponseSummary, AppError> {
         let request_id = run_request_id(core);
         let trigger = messages.last_mut().ok_or(AppError::EmptyTurn)?;
@@ -115,6 +118,20 @@ impl RunService {
         trigger.id = MessageId::from(format!("msg-{}-{message_n}", run_id.as_str()));
         let trigger = trigger.clone();
         core.ensure_plan_allows_execution(session_id).await?;
+        // A recovered goal never silently absorbs a new manual turn after Host restart.
+        // Live GUI goals reject manual RunStart at the synchronous acceptance boundary.
+        if goal_budget.is_none() {
+            if let Some(goal) = core.goal_snapshot(session_id).await? {
+                if goal.status == pawork_domain::GoalStatus::Active {
+                    core.pause_goal(
+                        session_id,
+                        &goal.goal_id,
+                        "manual_run; explicit resume required",
+                    )
+                    .await?;
+                }
+            }
+        }
         let run_workspace = core.workspace_for_session_or_unbound(session_id)?;
         let account_change = core.select_account_for_run(&cancel).await?;
         let provider = core.request_provider_snapshot().await?;
@@ -153,6 +170,13 @@ impl RunService {
         }
         let subagents =
             crate::subagents::SubagentRun::new(core, session_id, &run_id, cancel.clone());
+        // Child sessions have separate usage ledgers. Until budget sharing is supported,
+        // bounded goals execute on their owning Run and cannot create unbudgeted children.
+        let subagents = if goal_budget.is_some() {
+            subagents.without_spawning()
+        } else {
+            subagents
+        };
         let config = core.config.subagents.clone().unwrap_or_default();
         let model_rule =
             crate::subagents::rule(&config, core.provider_id.as_str(), core.model.as_str());
@@ -181,6 +205,13 @@ impl RunService {
         );
         // SEARCH-1：Global `web_search = true` 时为本轮追加 Provider 服务端搜索。
         let mut request = request;
+        request.max_output_tokens = goal_budget.map(|budget| {
+            core.registry
+                .resolve(core.model.as_str())
+                .map(|entry| entry.max_output_tokens)
+                .filter(|limit| *limit > 0)
+                .map_or(budget, |limit| budget.min(limit))
+        });
         // ADR-063：reasoning effort = RunStart 显式值 > Global `[reasoning]`
         // 模型默认；都无则不写 reasoning 字段（Provider 默认，行为同旧版）。
         let effort = core.effort().or_else(|| {
@@ -220,8 +251,31 @@ impl RunService {
                 probe_declared: None,
                 override_declared: None,
             });
-        pawork_providers::negotiate::capability_gate(&evidence, &request)
-            .map_err(AppError::Provider)?;
+        if let Err(error) = pawork_providers::negotiate::capability_gate(&evidence, &request) {
+            if evidence.provider.is_some() {
+                return Err(AppError::Provider(error));
+            }
+            // A startup model may exist only in this provider's remote catalog.
+            // Resolve it through the same bounded discovery used when switching
+            // models; never borrow a same-named model's foreign capabilities.
+            let mut registry = (*core.registry).clone();
+            tokio::select! {
+                biased;
+                _ = cancel.cancelled() => return Err(AppError::Provider(
+                    pawork_domain::ProviderError::cancelled("model discovery cancelled"),
+                )),
+                result = crate::provider_assembly::resolve_provider_model(
+                    &mut registry, provider.as_ref(), core.credential.as_ref(),
+                    &core.provider_id, core.model.as_str(), &core.config,
+                ) => { result?; }
+            }
+            let discovered = registry
+                .capability_evidence(core.model.as_str())
+                .filter(|entry| entry.provider.as_ref() == Some(&core.provider_id))
+                .ok_or(AppError::Provider(error))?;
+            pawork_providers::negotiate::capability_gate(&discovered, &request)
+                .map_err(AppError::Provider)?;
+        }
         let start_sequence = core.next_sequence(session_id).await?;
         let turn = SessionTurn::new(
             session_id.clone(),
@@ -665,7 +719,53 @@ mod tests {
             )
             .await
             .expect_err("foreign provider capabilities must not authorize an image");
-        assert!(matches!(error, crate::AppError::Provider(_)));
+        assert!(matches!(
+            error,
+            crate::AppError::ModelBelongsToProvider { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn startup_model_discovers_current_provider_image_capability() {
+        use pawork_domain::{ImageContent, ImageSource, ModelCapabilities, ModelDefinition};
+
+        let (mut core, _dir) = mock_core(vec![]).await;
+        core.model = "glm-5.3-flash".into();
+        let provider = MockProvider::new(MockScript::new().text("two crossing lines").complete())
+            .with_models(vec![ModelDefinition {
+                id: core.model.clone(),
+                display_name: "Remote vision model".into(),
+                context_window_tokens: 32_000,
+                max_output_tokens: 1024,
+                capabilities: ModelCapabilities {
+                    text: true,
+                    image_input: true,
+                    ..Default::default()
+                },
+            }]);
+        core.provider = Arc::new(provider.clone());
+        let mut message = user_hello();
+        message.content.push(ContentPart::Image(ImageContent {
+            source: ImageSource::Url("https://example.test/drawing.png".into()),
+            media_type: "image/png".into(),
+            alt_text: None,
+        }));
+        let session = core.create_session("startup vision").await.unwrap();
+        core.chat_turn(
+            &session,
+            vec![message],
+            &RecordingEvents::default(),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        let calls = provider.calls();
+        assert_eq!(calls.len(), 1);
+        assert!(calls[0].has_image);
+        let messages = core.resume_messages(&session).await.unwrap();
+        assert!(messages.last().unwrap().content.iter().any(
+            |part| matches!(part, ContentPart::Text(text) if text.text == "two crossing lines")
+        ));
     }
 
     #[tokio::test]

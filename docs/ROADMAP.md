@@ -1,43 +1,38 @@
 # Pawork 活动路线图
 
-> 更新：2026-09-23；源码基线 `main / f14edb23`。本轮完成全项目静态 Review 与文档整理，未修改实现。这里只保留待实施和未闭合验收，历史完成记录从 Git 追溯。详细入口：[Plan](Plan/README.md)。
+> 更新：2026-09-25；修复基线 `main / 0ee0cadf`，本轮新增实现尚未提交。用户已将全部原“未排期”产品能力纳入范围，并确认 [API 1.24 契约](Plan/product-contracts-2026-09-24.md)。状态按实现、自动验证、真实验收分别记录，不能由代码存在推定“完美完成”。
 
-## 1. 优先修复
+## 1. 缺陷修复
 
-[审查报告](Plan/review-2026-09-23.md) 登记 24 项源码问题（8 项 P1、16 项 P2）；其中 listener 并发关闭是库 API 条件问题。以下按风险与依赖排序，具体写入集和验收见 [执行计划](Plan/remediation.md)。T-01～T-04 已实现并通过定向门禁（2026-09-23，tools/providers/app/cli/transport 回归与 `--host` 全绿；T-04 另经真实二进制手动验收），尚未提交。T-05a 同宿主部分已落地（R-05：Agent 任务共享真实 run 取消令牌、任务终态以 run 终态映射且仅写一次，workflow/app 定向回归全绿）；CLI `tasks cancel` 跨进程路由到活跃 Host 需新增 wire 命令，wire 草案见 [执行计划](Plan/remediation.md) T-05a 行，按冻结契约待确认。 T-05b 已完成（R-16/R-23：孤儿任务按实例所有权收口、demo 任务终态配对）。T-06 已完成（R-06/R-19：同 Session 活动 Run 期间第二轮 `session_busy` 同步拒绝且收尾后可再启动；未批准 Plan 的 RunStart `plan_not_approved` 同步拒绝；engine 无事件早死由宿主 seal 补持久化 RunStarted+RunFailed，重开 store 可见完整 failed 生命周期）。T-07 已完成（R-07：`RetentionPolicy` 新增 `retained_messages` count 后缀规则，早期 System 不再豁免，压缩保留集、当前请求窗口与重启重放水位三者同界；未动 Compaction 事件与磁盘 schema）。T-08a～c 已完成（R-09/R-10/R-18：工具槽位排队取消即回、超时经派生令牌等待协作收口再回执 Timeout、写工具提交/操作边界停写并回滚；压缩摘要取消不再降级提交，持久写入前查令牌，取消路径零压缩事件）。 T-09a/b 已完成（R-11/R-17/R-12：`GuiConnection.wait_done` 完成信号 + cli 连接登记 reaper 与有序关闭收口 Core shutdown、Unix listener pending accept 可被 close 唤醒（Windows 同形态记待验）、Snapshot/Resume 等待超时即废弃连接防迟到旧快照误收；transport/client/cli/app 回归全绿）。 T-10a～c 已完成（R-20/R-21/R-22/R-13：启动清扫覆盖归档会话、补偿终态携带崩溃前已知用量快照、终态缺账 run 启动幂等补账恰好一次（归属只取自持久 ProviderRequestStarted）、本地账本入账即失效同 scope 本地派生 quota 窗口缓存；storage/control-plane/app 回归全绿）。 T-11/T-12 已完成（R-14/R-15：search_text 单文件 4 MiB 读取上限、超限跳过并计数标记不完整；service 定义 systemd ExecStart 与 plist XML 正确编码，含空格/特殊字符路径 argv 完整；tools/cli 回归全绿）。
+T-01～T-12 的既有修复经本轮复核。发现 T-09 仍存在首帧握手前连接使 Host 退出悬挂，已修复关闭与握手/快照竞争，并将 Run/目标/自动命名纳入 Host 任务回收。T-05a 跨进程取消已通过 API 1.23 接入真实 Host；任务快照增加跨进程锁和所属实例合并，避免独立 Host 互相覆盖任务。Task reducer 的迟到 Started 行为仍为 O-08 条件项，没有新增容错重放承诺。
 
-| 顺序 | 任务 | 剩余工作 |
+| 范围 | 实现 | 自动验证 | 真实验收 |
+| --- | --- | --- | --- |
+| T-01～T-12 既有修复 | 已实现 | 基线定向 1,368 通过、0 失败、3 既有忽略；真实 Host 子进程 3 通过 | 原跨平台项继续待对应环境 |
+| T-05a 跨进程取消与多 Host 快照 | 已实现 | app/cli/workflow/protocol 定向通过 | 真实独立 CLI 取消活跃 Host Run 通过（约 0.36 秒），任务与目标均停止 |
+| T-09 握手前关闭、初始快照、Run 收尾 | 已修复 | 关闭和持久终态定向通过 | 真实未握手连接保持打开时，SIGINT 约 0.008 秒退出，exit 0 |
+| O-01 / O-02 | 已收敛共享断言、稳定错误码分类 | providers 定向通过 | 无独立 GUI 验收要求 |
+
+修复与证据入口：[执行计划](Plan/remediation.md)。包定位、条件性优化和未激活模块取舍继续见 [包分析](Plan/package-boundaries.md)，不把建议自动宣称为已启用产品。
+
+## 2. 本轮产品能力
+
+| 能力 | 实现边界 | 当前验证状态 |
 | --- | --- | --- |
-| 1 | ~~T-01 / T-02~~ ✅ | 已完成：文件临时路径独占创建；流错误安全文案与畸形 SSE 失败语义（R-01/R-02/R-08） |
-| 2 | ~~T-03 / T-04~~ ✅ | 已完成：Task 快照原子提交（R-03）；Host 单实例所有权、socket 生命周期与恢复清扫隔离（R-04/R-24，Windows 侧记待验） |
-| 3 | ~~T-05a~~（同宿主部分）✅ / ~~T-05b~~ ✅ | Task 与 Run 取消/终态贯通——同宿主令牌与终态贯通完成（R-05）；孤儿任务按所有权收口与 demo 终态配对完成（R-16/R-23，app/cli 回归全绿）；跨进程 tasks cancel 路由待 wire 草案确认 |
-| 4 | ~~T-06~~ ✅ | 同 session Run 排他；Accepted 与持久生命周期一致（R-06/R-19，2026-09-23 app 回归 266 全绿） |
-| 5 | ~~T-07~~ ✅ | 已完成：压缩保留集合、当前请求和重放投影一致（R-07，storage/app 回归全绿） |
+| 文件夹附件 | 有界文本快照、数量/字节限制、跳过符号链接，不扩大工作区权限 | Desktop 自动回归通过；真窗口选择与文本快照预览通过，隐藏文件被省略 |
+| Plan GUI | 版本校验、编辑/提交/批准/拒绝，复用执行 gate | app 与 Desktop 自动回归通过；真窗口保存→提交→批准及 Host 持久状态通过；最新构建 Tab / Shift+Tab 遍历输入与按钮通过 |
+| 持续目标 | Host 串行执行，显式预算/轮数、暂停/追加恢复/转向/人工达成；重启须恢复 | 生命周期/预算/重放及追加额度定向通过；真模型两轮、耗尽暂停、追加恢复、跨进程取消及人工达成操作通过 |
+| Chrome / Edge 上下文 | macOS 显式获取当前页文本/URL/title，不可信附件包装 | 自动格式/边界验证通过；Chrome 实测错误 12（JavaScript 未启用），浏览器拒绝自动化切换，用户手动点击仍无勾选，按浏览器环境阻塞记录；权限保持关闭，正文未读取 |
+| 技能录制 | 持久操作选择→编辑→当前 workspace 新建 SKILL.md/manifest，拒绝 Secret/覆盖/路径逃逸 | app 加载与拒绝回归通过；真窗口选择、编辑、保存及工作区文件核对通过；非 Unix 安全写入待环境实现 |
+| 绘图 | 有界手绘画布→PNG 图片附件，撤销/清空/移除 | PNG 独立解码和 Desktop 回归通过；真窗口拖绘、撤销、附加与预览通过 |
+| 插件列表 | 真实安装记录为空，明确没有插件运行时；技能/MCP 独立入口 | 真窗口真实空态及技能录制入口通过 |
+| MM-2 视频 | canonical Video、API 1.24、CLI/GUI URL、模型/端点 gate、持久化/重放 | wire 与拒绝/重放回归通过；真窗口链接保存/移除与不支持模型禁发通过；支持端点真实往返待专项环境 |
+| MM-3 搜索 | Qwen Token Plan 已核对专用 Responses 搜索并接线；来源链接可打开/复制 | 接线、来源与最终端点拒绝定向回归通过；Kimi 非 Responses 流程未冒充支持；GLM MCP 未配置 |
 
-## 2. 随后收口
+详细边界和证据：[产品计划](Plan/product-and-acceptance.md)。MM-1 已完成真实识图：`opencode-go / glm-5.3-flash` 正确描述绘图，持久 RunCompleted，输入 3,831 / 输出 178 tokens，约 10 秒；临时模型启用已恢复禁用且未清空默认角色。RV-08～10 设置现场复核通过；其余 RV、GUI2/3/4、IME/字号/键盘矩阵按产品计划保留剩余验收。真实 OAuth/额度、Linux/Windows 等缺环境事项单列，不能用 mock 或本机测试替代。
 
-| 任务 | 剩余工作 |
-| --- | --- |
-| ~~T-08a～c~~ ✅ | 已完成：工具排队取消、阻塞写超时与压缩取消（R-09/R-10/R-18，tools/engine/app 回归全绿） |
-| ~~T-09a / T-09b~~ ✅ | 已完成：连接句柄回收、Core shutdown 有序收口、listener close 唤醒 pending accept、Snapshot 超时废弃连接（R-11/R-17/R-12，transport/client/cli/app 回归全绿，Windows 侧记待验） |
-| ~~T-10a～c~~ ✅ | 已完成：归档会话崩溃清扫与已知用量恢复、终态缺账启动幂等补账、本地 quota 派生窗口入账即失效（R-20/R-21/R-22/R-13，storage/control-plane/app 回归全绿） |
-| ~~T-11 / T-12~~ ✅ | 已完成：search_text 单文件读取上限与跳过报告、service 文件路径按目标格式编码（R-14/R-15，tools/cli 回归全绿） |
+## 3. 收口标准
 
-## 3. 包定位与冗余收敛
+最新自动证据：app 库 280 通过；protocol / client / browser 定向 238 通过；最新二进制 Host 子进程 3 通过；Desktop 255 通过；browser 最终复验 5 通过；Qwen 搜索定向 2 通过。较早 app / providers / workspace 库批次合计 603 通过、0 失败、1 既有忽略，各批覆盖重叠，不累计为独立测试数。真窗口发现并修复 Composer 预览遮挡、产品入口 AX 操作、状态文案，以及 Host 启动模型能力未发现导致图片误拒绝；真实识图已通过。产品窗口 Tab 句柄缺失已修复；9 月 25 日最新 Desktop 构建及真窗口 Plan 正反向焦点、目标遍历跳过禁用操作、Chrome 权限失败中文指引均通过。
 
-[24 包分析](Plan/package-boundaries.md) 建议保留现有包边界。近期只收敛重复契约辅助断言与不可达错误分类；长账本聚合先测量，Desktop 分页抽取随真实改动进行。未装配 DAG/worktree/merge、durable lease、Git staging 和未消费 API 先作产品取舍，再决定接线或退出，不新增包或第二套框架。
-
-## 4. 产品与验收
-
-详细范围与逐项验收见 [产品计划](Plan/product-and-acceptance.md)。
-
-| 线 | 当前剩余项 |
-| --- | --- |
-| MM-1 | 真实识图完整往返、图片预览与失败反馈真窗口验收 |
-| MM-2 | 视频 canonical/能力/wire 草案、契约确认与分层接线 |
-| MM-3 | Kimi/Qwen 实际 endpoint 与 GLM MCP 搜索核对、Desktop 来源展示及正向验收 |
-| RV-01～11 | 已实现功能的逐项真窗口复验与用户验收；不重复开发 |
-| GUI/账号/平台 | GUI2/3/4 用户验收，IME/模型目录/字号与键盘矩阵，真实 OAuth/额度，以及尚缺的特定环境证据 |
-| 未排期产品缺口 | 文件夹附件、持续目标 GUI、Plan GUI、外部浏览器上下文、技能录制/绘图/插件列表 |
-
-其它候选仍见 [Backlog](spec/backlog.md)。冻结契约变更先形成具体草案；真实功能验证按 [验证规格](spec/verification.md) 使用当次指定模型。全 workspace 门禁和发布不在本轮范围。
+本轮本机修复与上述复验已完成，仍有产品计划明确列出的人工验收、真实账号及跨平台缺口，不能宣称全部任务“完美完成”。浏览器开关未启用、正文未读取；模型已恢复禁用。待用户人工验收、缺环境、已归档与已发布分别表述；当前没有发布或全 workspace 门禁任务。其它候选见 [Backlog](spec/backlog.md)。

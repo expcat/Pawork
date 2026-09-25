@@ -30,12 +30,29 @@ impl AppView {
         if options.web_search == Some(true) && !model.is_some_and(|m| m.web_search) {
             return Some(i18n::t("composer.search_model_required"));
         }
+        if !options.video_urls.is_empty() && !model.is_some_and(|m| m.video_input) {
+            return Some(i18n::t("video.model_required"));
+        }
         None
     }
 
     pub(super) fn pick_composer_attachments(
         &mut self,
         images_only: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.pick_composer_paths(images_only, false, window, cx);
+    }
+
+    pub(super) fn pick_composer_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.pick_composer_paths(false, true, window, cx);
+    }
+
+    fn pick_composer_paths(
+        &mut self,
+        images_only: bool,
+        folders: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -49,11 +66,13 @@ impl AppView {
         }
         self.composer_loading = true;
         let selection = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: false,
+            files: !folders,
+            directories: folders,
             multiple: true,
             prompt: Some(
-                i18n::t(if images_only {
+                i18n::t(if folders {
+                    "composer.add_folder"
+                } else if images_only {
                     "files.attach_image"
                 } else {
                     "composer.add_files"
@@ -81,6 +100,21 @@ impl AppView {
             .ok();
         })
         .detach();
+        cx.notify();
+    }
+
+    pub(super) fn attach_external_browser(
+        &mut self,
+        browser: pawork_browser::ExternalBrowser,
+        cx: &mut Context<Self>,
+    ) {
+        self.composer_loading = true;
+        let draft = self.projection.active_session_id.clone();
+        self.composer_options
+            .entry(draft.clone())
+            .or_default()
+            .attachment_error = None;
+        self.controller.load_browser_attachment(draft, browser);
         cx.notify();
     }
 
@@ -164,6 +198,21 @@ impl AppView {
     pub(super) fn composer_attachment_error_text(&self, error: &ComposerAttachmentError) -> String {
         use ComposerAttachmentError as AttachError;
         let (key, name) = match error {
+            AttachError::Browser { error } => {
+                use pawork_browser::ExternalPageError;
+                return match error {
+                    ExternalPageError::JavaScriptDisabled(browser) => {
+                        i18n::t("composer.browser_javascript_disabled")
+                            .replace("{}", browser.name())
+                    }
+                    ExternalPageError::AutomationDenied(browser) => {
+                        i18n::t("composer.browser_automation_denied").replace("{}", browser.name())
+                    }
+                    ExternalPageError::Other(message) => {
+                        format!("{} {message}", i18n::t("composer.browser_error"))
+                    }
+                };
+            }
             AttachError::TooMany { count } => {
                 return i18n::t("composer.attach_too_many").replace("{}", &count.to_string());
             }
@@ -187,6 +236,7 @@ impl AppView {
                 images_only: false,
             } => ("composer.attach_error_unsupported", name),
             AttachError::Io { name } => ("composer.attach_error_io", name),
+            AttachError::FolderLimit { name } => ("composer.attach_error_folder_limit", name),
         };
         i18n::t(key).replace("{}", name)
     }
@@ -464,6 +514,14 @@ impl AppView {
                                 })),
                         ),
                     ),
+            );
+        }
+        for (index, video) in options.video_urls.iter().enumerate() {
+            row = row.child(
+                self.settings_element(format!("composer-video-{index}"))
+                    .w_full()
+                    .text_size(font::XS)
+                    .child(format!("{}: {}", i18n::t("video.title"), video.url)),
             );
         }
         if options.web_search.is_some() {

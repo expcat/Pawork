@@ -93,6 +93,20 @@ impl CapabilityNegotiator {
             }
         }
 
+        if requirements.video_input {
+            resolved.requested.insert("video_input".into());
+            if supported_caps.video_input {
+                resolved.supported.insert("video_input".into());
+            } else {
+                resolved.unsupported.insert("video_input".into());
+                resolved.fallback.insert(
+                    "video_input".into(),
+                    CapabilityFallback::Reject(
+                        "model does not declare video input capability".into(),
+                    ),
+                );
+            }
+        }
         // reasoning：显式 ReasoningConfig 优先。
         if let Some(reasoning) = &requirements.reasoning {
             Self::negotiate_reasoning(reasoning, &supported_caps, &mut resolved);
@@ -252,6 +266,11 @@ pub fn capability_gate(
     let requirements = CapabilityRequirements {
         required_tools,
         image_input,
+        video_input: request
+            .messages
+            .iter()
+            .flat_map(|m| &m.content)
+            .any(content_part_has_video),
         ..CapabilityRequirements::default()
     };
     let resolved = CapabilityNegotiator::negotiate(evidence, &requirements);
@@ -280,6 +299,16 @@ fn content_part_has_image(part: &pawork_domain::ContentPart) -> bool {
     }
 }
 
+pub(crate) fn content_part_has_video(part: &pawork_domain::ContentPart) -> bool {
+    match part {
+        pawork_domain::ContentPart::Video(_) => true,
+        pawork_domain::ContentPart::ToolResult(result) => {
+            result.content.iter().any(content_part_has_video)
+        }
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -303,6 +332,7 @@ mod tests {
     fn full_caps() -> ModelCapabilities {
         ModelCapabilities {
             text: true,
+            video_input: true,
             image_output: false,
             image_input: true,
             tool_calls: true,

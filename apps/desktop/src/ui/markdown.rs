@@ -264,6 +264,102 @@ pub(super) struct MessageAction {
     pub open: bool,
 }
 
+/// 工具输出是原文，不按 Markdown 改写；只识别 HTTP(S) 来源。
+pub(super) fn source_links(text: &str) -> Vec<(Range<usize>, String)> {
+    let mut links = Vec::new();
+    let mut offset = 0;
+    while offset < text.len() {
+        let rest = &text[offset..];
+        if rest.starts_with("https://") || rest.starts_with("http://") {
+            let end = link_end(rest, false).unwrap_or(rest.len());
+            let url = rest[..end].trim_end_matches(['.', ',', ';', '!', '?', '。', '，']);
+            if http_url(url) {
+                links.push((offset..offset + url.len(), url.to_string()));
+                offset += url.len();
+                continue;
+            }
+        }
+        offset += rest.chars().next().unwrap().len_utf8();
+    }
+    links
+}
+
+pub(super) fn source_actions(text: &str) -> Vec<MessageAction> {
+    let mut urls = Vec::new();
+    let mut actions = Vec::new();
+    for (_, url) in source_links(text) {
+        if urls.contains(&url) {
+            continue;
+        }
+        urls.push(url.clone());
+        for open in [true, false] {
+            actions.push(MessageAction {
+                label: format!(
+                    "{} {} · {}",
+                    t(if open {
+                        "timeline.open_link"
+                    } else {
+                        "timeline.copy_link"
+                    }),
+                    urls.len(),
+                    truncated_url(&url)
+                ),
+                content: url.clone(),
+                open,
+            });
+        }
+    }
+    actions
+}
+
+pub(super) fn source_text_element(id: String, text: String, color: Rgba) -> gpui::AnyElement {
+    let links = source_links(&text);
+    if links.is_empty() {
+        return text.into_any_element();
+    }
+    let mut runs = Vec::new();
+    let mut start = 0;
+    for (range, _) in &links {
+        for (len, link) in [(range.start - start, false), (range.len(), true)] {
+            if len == 0 {
+                continue;
+            }
+            runs.push(TextRun {
+                len,
+                font: gpui::font("monospace"),
+                color: color.into(),
+                background_color: None,
+                strikethrough: None,
+                underline: link.then_some(gpui::UnderlineStyle {
+                    thickness: px(1.0),
+                    color: Some(color.into()),
+                    wavy: false,
+                }),
+            });
+        }
+        start = range.end;
+    }
+    if start < text.len() {
+        runs.push(TextRun {
+            len: text.len() - start,
+            font: gpui::font("monospace"),
+            color: color.into(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        });
+    }
+    let ranges = links.iter().map(|(range, _)| range.clone()).collect();
+    InteractiveText::new(
+        SharedString::from(id),
+        StyledText::new(text).with_runs(runs),
+    )
+    .on_click(ranges, move |index, _, cx| {
+        cx.open_url(&links[index].1);
+    })
+    .into_any_element()
+}
+
 fn block_links(block: &Block) -> Vec<String> {
     let mut links = Vec::new();
     for span in block
@@ -946,6 +1042,22 @@ pub(super) fn message_body_element(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn citation_sources_keep_utf8_ranges_and_share_open_copy_actions() {
+        let text = "来源 **原文**\nhttps://example.test/a_(b)\n摘要🙂\nhttps://example.test/a_(b)\nfile:///private\njavascript:alert(1)";
+        let links = source_links(text);
+        assert_eq!(links.len(), 2);
+        for (range, url) in links {
+            assert_eq!(&text[range], url);
+            assert_eq!(url, "https://example.test/a_(b)");
+        }
+        let actions = source_actions(text);
+        assert_eq!(actions.len(), 2);
+        assert!(actions[0].open);
+        assert!(!actions[1].open);
+        assert_eq!(actions[0].content, actions[1].content);
+    }
 
     #[test]
     fn markdown_blocks_and_visible_inline_text_share_line_counts() {

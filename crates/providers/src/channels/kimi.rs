@@ -139,7 +139,7 @@ impl ModelProvider for KimiCodeProvider {
                 // VISION-2：远端未声明时按官方视觉指南默认表回填。
                 crate::registry::apply_default_image_input(&mut definition);
             }
-            // supports_video_in 无 canonical 字段，不能冒充 image_input。
+            // supports_video_in 不证明当前 endpoint 支持远程 HTTP(S) 视频；不能冒充 image_input。
             // ADR-063：远端未声明推理强度时按默认表回填（k3 系实测忽略
             // effort 字段，表内为未知不约束；K2.7 系为显式无档位）。
             crate::registry::apply_default_supported_efforts(&mut definition);

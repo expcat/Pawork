@@ -774,6 +774,7 @@ fn caps_satisfied(have: &ModelCapabilities, required: &ModelCapabilities) -> boo
     // v1 布尔能力：required 为 true 时 have 必须满足。
     let v1 = (!required.text || have.text)
         && (!required.image_input || have.image_input)
+        && (!required.video_input || have.video_input)
         && (!required.tool_calls || have.tool_calls)
         && (!required.parallel_tool_calls || have.parallel_tool_calls)
         && (!required.thinking || have.thinking)
@@ -1132,7 +1133,14 @@ fn builtin_entries() -> Vec<CatalogEntry> {
             display_name: "Qwen3.8 Max".into(),
             context_window_tokens: 0,
             max_output_tokens: 0,
-            capabilities: text_image_tools.clone(),
+            capabilities: ModelCapabilities {
+                video_input: true,
+                hosted_tool_tags: [pawork_domain::ToolCapabilityTag::WebSearch]
+                    .into_iter()
+                    .collect(),
+                citations: true,
+                ..text_image_tools.clone()
+            },
             pricing: None,
             aliases: Vec::new(),
         },

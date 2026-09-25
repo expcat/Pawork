@@ -12,12 +12,17 @@ mod barriers;
 mod browser;
 mod changes;
 mod components;
+mod drawing;
 mod files;
+mod goal;
 pub(crate) mod i18n;
 mod input_area;
 mod inspector;
 mod markdown;
+mod plan;
+mod product_access;
 mod quick_search;
+mod recording;
 mod recovery;
 mod resources;
 mod settings;
@@ -32,6 +37,7 @@ mod timeline_entry;
 mod timeline_navigation;
 #[cfg(test)]
 mod u1_probe;
+mod video;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
@@ -493,7 +499,9 @@ fn install_appkit_tab_monitor(window: &Window, cx: &App) {
     // 进程级监听器只装一次；窗口句柄必须每次刷新。Once 包住句柄赋值会
     // 在窗口重建后把 Tab 打到失效的 AsyncWindowContext（focus_next 失败
     // 后事件原样放行，AppKit 再吞掉裸 Tab）。
-    TAB_WINDOW.with_borrow_mut(|slot| *slot = Some(window.to_async(cx)));
+    if window.is_window_active() {
+        TAB_WINDOW.with_borrow_mut(|slot| *slot = Some(window.to_async(cx)));
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -2284,13 +2292,17 @@ impl AppView {
                 match result {
                     Ok(attachments) => {
                         let options = self.composer_options.entry(draft).or_default();
-                        if options.attachments.len() + attachments.len() <= 4 {
+                        if options.attachments.len() + options.video_urls.len() + attachments.len()
+                            <= 4
+                        {
                             options.attachments.extend(attachments);
                             options.attachment_error = None;
                         } else {
                             options.attachment_error =
                                 Some(crate::controller::ComposerAttachmentError::TooMany {
-                                    count: options.attachments.len() + attachments.len(),
+                                    count: options.attachments.len()
+                                        + options.video_urls.len()
+                                        + attachments.len(),
                                 });
                         }
                     }
@@ -4824,7 +4836,8 @@ impl AppView {
         }
         let text = self.text_input.read(cx).text().to_string();
         let options = self.current_composer_options();
-        if text.trim().is_empty() && options.attachments.is_empty() {
+        if text.trim().is_empty() && options.attachments.is_empty() && options.video_urls.is_empty()
+        {
             return;
         }
         self.composer_sending = true;
@@ -4925,6 +4938,7 @@ impl AppView {
     fn composer_has_sendable_text(&self, cx: &App) -> bool {
         !self.text_input.read(cx).text().trim().is_empty()
             || !self.current_composer_options().attachments.is_empty()
+            || !self.current_composer_options().video_urls.is_empty()
     }
 
     fn can_send(&self, cx: &App) -> bool {

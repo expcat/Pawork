@@ -63,6 +63,7 @@ async fn run_success_auto_titles_placeholder_session_and_broadcasts() {
             effort: None,
             attachment_ids: Vec::new(),
             web_search: None,
+            video_urls: Vec::new(),
         }))
         .await
         .expect("run accepted");
@@ -284,6 +285,7 @@ async fn auto_title_without_naming_config_skips_provider_call() {
             effort: None,
             attachment_ids: Vec::new(),
             web_search: None,
+            video_urls: Vec::new(),
         }))
         .await
         .expect("run accepted");
@@ -341,6 +343,7 @@ async fn auto_title_failure_keeps_placeholder_title() {
             effort: None,
             attachment_ids: Vec::new(),
             web_search: None,
+            video_urls: Vec::new(),
         }))
         .await
         .expect("run accepted");
@@ -408,6 +411,7 @@ async fn run_start_expands_at_refs_into_separate_parts() {
             effort: None,
             attachment_ids: Vec::new(),
             web_search: None,
+            video_urls: Vec::new(),
         }))
         .await
         .expect("run accepted");
@@ -487,6 +491,7 @@ async fn run_start_expand_at_refs_failure_does_not_leave_active_run() {
             effort: None,
             attachment_ids: Vec::new(),
             web_search: None,
+            video_urls: Vec::new(),
         }))
         .await
         .expect_err("stale @file must fail closed");
@@ -525,6 +530,7 @@ async fn run_start_without_at_token_passes_single_text_part() {
             effort: None,
             attachment_ids: Vec::new(),
             web_search: None,
+            video_urls: Vec::new(),
         }))
         .await
         .expect("run accepted");
@@ -557,6 +563,75 @@ async fn run_start_without_at_token_passes_single_text_part() {
 }
 
 #[tokio::test]
+async fn host_shutdown_drains_run_and_releases_core_after_persisting_cancellation() {
+    let (mut core, dir) = crate::testsupport::mock_core(Vec::new()).await;
+    let provider = MockProvider::sequence(vec![MockScript::new().wait_for_cancellation()]);
+    core.provider = Arc::new(provider.clone());
+    let session = core.create_session("host shutdown").await.expect("session");
+    let core = Arc::new(tokio::sync::RwLock::new(core));
+    let adapter = GuiHostAdapter::from_locked(Arc::clone(&core), Arc::new(GuiApprovalHost::new()));
+    let response = adapter
+        .command(&command_envelope(AppCommand::RunStart {
+            session_id: session.clone(),
+            user_message: "wait for shutdown".into(),
+            model: None,
+            provider: None,
+            profile: None,
+            effort: None,
+            attachment_ids: Vec::new(),
+            web_search: None,
+            video_urls: Vec::new(),
+        }))
+        .await
+        .expect("run accepted");
+    let AppResponse::Accepted {
+        run_id: Some(run), ..
+    } = response
+    else {
+        panic!("run must be accepted");
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while provider.calls().is_empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("provider started");
+    let runs = adapter.runs();
+    tokio::time::timeout(std::time::Duration::from_secs(2), runs.shutdown())
+        .await
+        .expect("shutdown must drain")
+        .expect("run task");
+    assert!(runs.active().is_empty());
+    drop(adapter);
+    let core =
+        Arc::try_unwrap(core).unwrap_or_else(|_| panic!("all Core holders must be released"));
+    let core = core.into_inner();
+    let tasks = core.tasks_list();
+    assert_eq!(tasks.len(), 1);
+    assert!(tasks
+        .iter()
+        .all(|task| task.status == pawork_domain::TaskStatus::Canceled));
+    core.shutdown().await.expect("Core shutdown");
+    let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
+        .await
+        .expect("reopen");
+    let events = store
+        .replay_events(&session, 1, 256)
+        .await
+        .expect("persisted events");
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.run_id == run
+                && matches!(event.payload, AgentEvent::RunCancelled { .. }))
+            .count(),
+        1
+    );
+    store.shutdown().await.expect("store shutdown");
+}
+
+#[tokio::test]
 async fn run_start_reports_run_and_registry_drains_after_completion() {
     let dir = tempfile::tempdir().expect("tempdir");
     let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
@@ -584,6 +659,7 @@ async fn run_start_reports_run_and_registry_drains_after_completion() {
             effort: None,
             attachment_ids: Vec::new(),
             web_search: None,
+            video_urls: Vec::new(),
         }))
         .await
         .expect("run accepted");
@@ -652,6 +728,7 @@ async fn run_start_provider_failure_broadcasts_single_terminal_without_synthetic
             effort: None,
             attachment_ids: Vec::new(),
             web_search: None,
+            video_urls: Vec::new(),
         }))
         .await
         .expect("run accepted");
@@ -676,6 +753,12 @@ async fn run_start_provider_failure_broadcasts_single_terminal_without_synthetic
 
 #[tokio::test]
 async fn run_start_cancel_broadcasts_cancelled_without_synthetic_failed() {
+    for via_task in [false, true] {
+        assert_run_cancellation(via_task).await;
+    }
+}
+
+async fn assert_run_cancellation(via_task: bool) {
     // cancel 路径：engine 广播 RunChanged{Cancelled} 后以 Err 收尾，
     // 宿主不得谎报合成 RunChanged{Failed}。
     let dir = tempfile::tempdir().expect("tempdir");
@@ -706,6 +789,7 @@ async fn run_start_cancel_broadcasts_cancelled_without_synthetic_failed() {
             effort: None,
             attachment_ids: Vec::new(),
             web_search: None,
+            video_urls: Vec::new(),
         }))
         .await
         .expect("run accepted");
@@ -715,13 +799,34 @@ async fn run_start_cancel_broadcasts_cancelled_without_synthetic_failed() {
     else {
         panic!("RunStart must be accepted: {response:?}");
     };
-    let cancel_response = adapter
-        .command(&command_envelope(AppCommand::RunCancel {
+    let command = if via_task {
+        let task_id = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                if let Some(task) = adapter.core.read().await.tasks_list().first() {
+                    break task.task_id.as_str().to_string();
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("agent task registered");
+        AppCommand::TasksCancel { task_id }
+    } else {
+        AppCommand::RunCancel {
             run_id: run.clone(),
-        }))
+        }
+    };
+    let cancel_response = adapter
+        .command(&command_envelope(command))
         .await
         .expect("cancel accepted");
-    assert!(matches!(cancel_response, AppResponse::Accepted { .. }));
+    if via_task {
+        assert!(
+            matches!(cancel_response, AppResponse::Data(ref data) if data["cancelled"].as_array().is_some_and(|ids| ids.len() == 1))
+        );
+    } else {
+        assert!(matches!(cancel_response, AppResponse::Accepted { .. }));
+    }
     let mut wire = wait_host_run_task_settled(&adapter, &mut events, &run).await;
     wire.extend(drain_wire_events(&mut events));
     assert_eq!(
@@ -801,6 +906,7 @@ async fn run_start_unapproved_plan_rejects_synchronously() {
             effort: None,
             attachment_ids: Vec::new(),
             web_search: None,
+            video_urls: Vec::new(),
         }))
         .await
         .expect_err("unapproved plan must reject synchronously");
@@ -975,6 +1081,7 @@ async fn run_start_switches_same_registry_model_and_unknown_fails_closed() {
             effort: None,
             attachment_ids: Vec::new(),
             web_search: None,
+            video_urls: Vec::new(),
         }))
         .await
         .expect("same-registry model switch");
@@ -998,6 +1105,7 @@ async fn run_start_switches_same_registry_model_and_unknown_fails_closed() {
             effort: None,
             attachment_ids: Vec::new(),
             web_search: None,
+            video_urls: Vec::new(),
         }))
         .await
         .expect_err("unknown model must fail closed");
@@ -1080,6 +1188,7 @@ async fn run_start_second_turn_includes_session_history() {
             effort: None,
             attachment_ids: Vec::new(),
             web_search: None,
+            video_urls: Vec::new(),
         }))
         .await
         .expect("first run");
@@ -1102,6 +1211,7 @@ async fn run_start_second_turn_includes_session_history() {
             effort: None,
             attachment_ids: Vec::new(),
             web_search: None,
+            video_urls: Vec::new(),
         }))
         .await
         .expect("second run");
@@ -1213,6 +1323,7 @@ async fn run_start_with_provider_does_not_silently_keep_same_model_id() {
             effort: None,
             attachment_ids: Vec::new(),
             web_search: None,
+            video_urls: Vec::new(),
         }))
         .await
         .expect_err("same model id on another channel must not silently accept");
@@ -1267,6 +1378,7 @@ async fn run_start_fails_closed_when_model_disabled() {
             effort: None,
             attachment_ids: Vec::new(),
             web_search: None,
+            video_urls: Vec::new(),
         }))
         .await
         .expect_err("disabled effective model must fail closed");
@@ -1287,6 +1399,7 @@ async fn run_start_fails_closed_when_model_disabled() {
             effort: None,
             attachment_ids: Vec::new(),
             web_search: None,
+            video_urls: Vec::new(),
         }))
         .await
         .expect_err("disabled requested model must fail closed");
@@ -1336,6 +1449,7 @@ async fn local_attachment_upload_and_run_start_consume_staged_bytes() {
         effort: None,
         attachment_ids: vec!["att-1".into()],
         web_search: None,
+        video_urls: Vec::new(),
     });
     old.api_version = pawork_protocol::ApiVersion::new(1, 21);
     old.source = CommandSource::LocalGui {
@@ -1356,6 +1470,7 @@ async fn local_attachment_upload_and_run_start_consume_staged_bytes() {
         effort: None,
         attachment_ids: vec!["att-1".into()],
         web_search: None,
+        video_urls: Vec::new(),
     });
     let error = adapter
         .command(&automation)
@@ -1372,6 +1487,7 @@ async fn local_attachment_upload_and_run_start_consume_staged_bytes() {
         effort: None,
         attachment_ids: vec!["att-1".into()],
         web_search: Some(false),
+        video_urls: Vec::new(),
     });
     start.source = CommandSource::LocalGui {
         client_id: "gui-att".into(),
@@ -1415,6 +1531,7 @@ async fn local_attachment_upload_and_run_start_consume_staged_bytes() {
         effort: None,
         attachment_ids: vec!["att-1".into()],
         web_search: None,
+        video_urls: Vec::new(),
     });
     reuse.source = CommandSource::LocalGui {
         client_id: "gui-att".into(),
@@ -1460,6 +1577,7 @@ async fn run_start_second_run_same_session_rejected_until_settled() {
             effort: None,
             attachment_ids: Vec::new(),
             web_search: None,
+            video_urls: Vec::new(),
         }))
         .await
         .expect("first run accepted");
@@ -1481,6 +1599,7 @@ async fn run_start_second_run_same_session_rejected_until_settled() {
             effort: None,
             attachment_ids: Vec::new(),
             web_search: None,
+            video_urls: Vec::new(),
         }))
         .await
         .expect_err("same session must reject a second active run");
@@ -1519,6 +1638,7 @@ async fn run_start_second_run_same_session_rejected_until_settled() {
             effort: None,
             attachment_ids: Vec::new(),
             web_search: None,
+            video_urls: Vec::new(),
         }))
         .await
         .expect("run must be accepted again after the first settles");
@@ -1565,6 +1685,7 @@ async fn run_start_async_early_death_seals_durable_failed() {
         effort: None,
         attachment_ids: Vec::new(),
         web_search: Some(true),
+        video_urls: Vec::new(),
     });
     start.source = CommandSource::LocalGui {
         client_id: "gui-seal".into(),
@@ -1605,4 +1726,366 @@ async fn run_start_async_early_death_seals_durable_failed() {
         "early-death run must persist a complete lifecycle ending failed: {:?}",
         snapshot.runs
     );
+}
+
+#[tokio::test]
+async fn plan_gui_revisions_review_gate_and_replay() {
+    let (core, _dir) = crate::testsupport::mock_core(vec![]).await;
+    let session = core.create_session("Plan review").await.unwrap();
+    let adapter = GuiHostAdapter::new(Arc::new(core));
+    let data = |response| match response {
+        AppResponse::Data(value) => value,
+        other => panic!("{other:?}"),
+    };
+    assert!(data(
+        adapter
+            .query(&query_envelope(AppQuery::PlanGet {
+                session_id: session.clone()
+            }))
+            .await
+            .unwrap()
+    )
+    .is_null());
+    let created = data(
+        adapter
+            .command(&command_envelope(AppCommand::PlanSave {
+                session_id: session.clone(),
+                title: "Review".into(),
+                steps: vec!["Inspect".into()],
+                expected_version: None,
+            }))
+            .await
+            .unwrap(),
+    );
+    let v1 = created["version"].as_str().unwrap().to_string();
+    assert_eq!(created["review_status"], "draft");
+    assert!(adapter
+        .core
+        .read()
+        .await
+        .ensure_plan_allows_execution(&session)
+        .await
+        .is_err());
+    let submitted = data(
+        adapter
+            .command(&command_envelope(AppCommand::PlanSubmit {
+                session_id: session.clone(),
+                expected_version: v1.clone(),
+            }))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(submitted["review_status"], "in_review");
+    let rejected = data(
+        adapter
+            .command(&command_envelope(AppCommand::PlanReject {
+                session_id: session.clone(),
+                expected_version: v1.clone(),
+                reason: "Add a check".into(),
+            }))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(rejected["review_status"], "rejected");
+    let revised = data(
+        adapter
+            .command(&command_envelope(AppCommand::PlanSave {
+                session_id: session.clone(),
+                title: "Review and verify".into(),
+                steps: vec!["Inspect".into(), "Test".into()],
+                expected_version: Some(v1.clone()),
+            }))
+            .await
+            .unwrap(),
+    );
+    let v2 = revised["version"].as_str().unwrap().to_string();
+    assert_ne!(v1, v2);
+    let error = adapter
+        .command(&command_envelope(AppCommand::PlanApprove {
+            session_id: session.clone(),
+            expected_version: v1,
+        }))
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "plan_version_conflict");
+    assert!(adapter.runs.try_acquire_session(&session));
+    let error = adapter
+        .command(&command_envelope(AppCommand::PlanApprove {
+            session_id: session.clone(),
+            expected_version: v2.clone(),
+        }))
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "session_busy");
+    adapter.runs.release_session(&session);
+    let approved = data(
+        adapter
+            .command(&command_envelope(AppCommand::PlanApprove {
+                session_id: session.clone(),
+                expected_version: v2,
+            }))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(approved["review_status"], "approved");
+    adapter
+        .core
+        .read()
+        .await
+        .ensure_plan_allows_execution(&session)
+        .await
+        .unwrap();
+    assert_eq!(
+        data(
+            adapter
+                .query(&query_envelope(AppQuery::PlanGet {
+                    session_id: session.clone()
+                }))
+                .await
+                .unwrap()
+        ),
+        approved
+    );
+    let events = adapter
+        .core
+        .read()
+        .await
+        .store()
+        .unwrap()
+        .replay_events(&session, 1, 100)
+        .await
+        .unwrap();
+    let replay = pawork_workflow::plan::PlanService::from_events(events.iter().filter_map(|e| {
+        match &e.payload {
+            AgentEvent::Plan(p) => Some(p),
+            _ => None,
+        }
+    }));
+    assert_eq!(
+        serde_json::to_value(replay.plan_snapshot()).unwrap(),
+        approved
+    );
+}
+
+#[tokio::test]
+async fn continuous_goal_budget_pause_resume_steer_and_replay() {
+    use pawork_domain::{GoalId, GoalStatus, TokenUsage};
+    let (mut core, _dir) = crate::testsupport::mock_core(vec![]).await;
+    core.provider = Arc::new(MockProvider::sequence(vec![
+        MockScript::new()
+            .text("Evidence")
+            .usage(TokenUsage {
+                input_tokens: 100_000,
+                output_tokens: 2,
+                ..Default::default()
+            })
+            .complete(),
+        MockScript::new().wait_for_cancellation(),
+    ]));
+    let session = core.create_session("Goal review").await.unwrap();
+    let adapter = GuiHostAdapter::new(Arc::new(core));
+    let AppResponse::Data(started) = adapter
+        .command(&command_envelope(AppCommand::GoalStart {
+            session_id: session.clone(),
+            title: "Verify".into(),
+            criteria: vec!["Tests pass".into()],
+            budget_tokens: 100_000,
+            max_runs: 5,
+        }))
+        .await
+        .unwrap()
+    else {
+        panic!("snapshot")
+    };
+    let id = GoalId::from(started["goal_id"].as_str().unwrap());
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while adapter.goals.lock().unwrap().contains_key(session.as_str()) {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let snapshot = adapter
+        .core
+        .read()
+        .await
+        .goal_snapshot(&session)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(snapshot.status, GoalStatus::Paused);
+    assert_eq!(
+        snapshot.used_runs, 1,
+        "budget must prevent a second request"
+    );
+    assert_eq!(snapshot.used_tokens, 100_002);
+    assert_eq!(
+        snapshot.pause_reason.as_deref(),
+        Some("token_budget_exhausted")
+    );
+    adapter
+        .command(&command_envelope(AppCommand::GoalResume {
+            session_id: session.clone(),
+            goal_id: id.clone(),
+            budget_tokens: 100_000,
+            max_runs: 2,
+        }))
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if adapter
+                .core
+                .read()
+                .await
+                .goal_snapshot(&session)
+                .await
+                .unwrap()
+                .unwrap()
+                .used_runs
+                == 2
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    adapter
+        .command(&command_envelope(AppCommand::GoalPause {
+            session_id: session.clone(),
+            goal_id: id.clone(),
+        }))
+        .await
+        .unwrap();
+    assert!(adapter.runs.active().is_empty());
+    assert!(!adapter.goals.lock().unwrap().contains_key(session.as_str()));
+    adapter
+        .command(&command_envelope(AppCommand::GoalSteer {
+            session_id: session.clone(),
+            goal_id: id.clone(),
+            input: "Review evidence".into(),
+        }))
+        .await
+        .unwrap();
+    adapter
+        .command(&command_envelope(AppCommand::GoalFinish {
+            session_id: session.clone(),
+            goal_id: id.clone(),
+            outcome: "achieved".into(),
+            reason: None,
+        }))
+        .await
+        .unwrap();
+    let snapshot = adapter
+        .core
+        .read()
+        .await
+        .goal_snapshot(&session)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(snapshot.status, GoalStatus::Achieved);
+    assert_eq!(snapshot.pause_reason, None);
+    assert_eq!(snapshot.used_runs, 2);
+    assert_eq!(
+        snapshot.max_runs,
+        Some(7),
+        "resume adds runs without discarding the unused allowance"
+    );
+    assert_eq!(snapshot.budget_tokens, Some(200_002));
+    assert_eq!(snapshot.steering, ["Review evidence"]);
+    assert!(snapshot.criteria.iter().all(|c| c.satisfied));
+    adapter.runs.shutdown().await.unwrap();
+    let db = _dir.path().join("session.db");
+    drop(adapter);
+    let (store, _) = pawork_storage::session::SessionStore::open(db)
+        .await
+        .unwrap();
+    let restored = AppCore::from_parts(
+        Arc::new(MockProvider::sequence(vec![])),
+        None,
+        pawork_domain::ModelId::from("glm-5.2"),
+        pawork_domain::ProviderId::from("mock"),
+        Some(store),
+    );
+    assert_eq!(
+        serde_json::to_value(restored.goal_snapshot(&session).await.unwrap()).unwrap(),
+        serde_json::to_value(Some(snapshot)).unwrap()
+    );
+}
+
+#[tokio::test]
+async fn recovered_goal_requires_explicit_resume_and_refuses_invalid_budget() {
+    use pawork_domain::{GoalEvent, GoalId, GoalStatus};
+    let (core, _dir) = crate::testsupport::mock_core(vec![]).await;
+    let session = core.create_session("Recovered goal").await.unwrap();
+    core.persist_goal_event(
+        &session,
+        GoalEvent::Created {
+            goal_id: GoalId::from("old-goal"),
+            title: "Recover".into(),
+            criteria: vec![],
+            budget_tokens: Some(1000),
+            max_runs: Some(2),
+        },
+    )
+    .await
+    .unwrap();
+    let adapter = GuiHostAdapter::new(Arc::new(core));
+    let AppResponse::Data(snapshot) = adapter
+        .query(&query_envelope(AppQuery::GoalGet {
+            session_id: session.clone(),
+        }))
+        .await
+        .unwrap()
+    else {
+        panic!("snapshot")
+    };
+    assert_eq!(snapshot["status"], "paused");
+    assert!(adapter.runs.active().is_empty());
+    assert!(adapter
+        .command(&command_envelope(AppCommand::GoalResume {
+            session_id: session.clone(),
+            goal_id: GoalId::from("old-goal"),
+            budget_tokens: 0,
+            max_runs: 1
+        }))
+        .await
+        .is_err());
+    let AppResponse::Accepted {
+        run_id: Some(run), ..
+    } = adapter
+        .command(&command_envelope(AppCommand::RunStart {
+            session_id: session.clone(),
+            user_message: "Manual turn".into(),
+            model: None,
+            provider: None,
+            profile: None,
+            effort: None,
+            attachment_ids: vec![],
+            web_search: None,
+            video_urls: Vec::new(),
+        }))
+        .await
+        .unwrap()
+    else {
+        panic!("run")
+    };
+    wait_run_registry_drains(&adapter.runs, &run).await;
+    let snapshot = adapter
+        .core
+        .read()
+        .await
+        .goal_snapshot(&session)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(snapshot.status, GoalStatus::Paused);
+    assert_eq!(
+        snapshot.used_runs, 0,
+        "manual turn is outside the recovered goal"
+    );
+    adapter.runs.shutdown().await.unwrap();
 }

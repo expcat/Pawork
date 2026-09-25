@@ -22,33 +22,60 @@ use super::{AppView, InspectorTab, MenuKind};
 #[derive(Clone, Copy)]
 pub(super) enum ComposerAction {
     Files,
+    Folder,
     Image,
+    Video,
+    Drawing,
+    Plan,
+    Goal,
+    RecordSkill,
+    Plugins,
     ProjectFiles,
     Search,
     Project,
     Browser,
+    Chrome,
+    Edge,
     Resources,
 }
 
 impl ComposerAction {
-    pub(super) const ALL: [Self; 7] = [
+    pub(super) const ALL: [Self; 16] = [
         Self::Files,
+        Self::Folder,
         Self::Image,
+        Self::Video,
+        Self::Drawing,
+        Self::Plan,
+        Self::Goal,
+        Self::RecordSkill,
+        Self::Plugins,
         Self::ProjectFiles,
         Self::Search,
         Self::Project,
         Self::Browser,
+        Self::Chrome,
+        Self::Edge,
         Self::Resources,
     ];
 
     pub(super) fn id(self) -> &'static str {
         match self {
             Self::Files => "composer-add-files",
+            Self::Folder => "composer-add-folder",
             Self::Image => "composer-add-image",
+            Self::Video => "composer-add-video",
+            Self::Drawing => "composer-add-drawing",
+            Self::Plan => "composer-plan",
+            Self::Goal => "composer-goal",
+            Self::RecordSkill => "composer-record-skill",
+            Self::Plugins => "composer-plugins",
             Self::ProjectFiles => "composer-add-project-files",
             Self::Search => "composer-add-search",
             Self::Project => "composer-add-project",
             Self::Browser => "composer-add-browser",
+            Self::Chrome => "composer-add-chrome",
+            Self::Edge => "composer-add-edge",
             Self::Resources => "composer-add-resources",
         }
     }
@@ -56,23 +83,34 @@ impl ComposerAction {
     pub(super) fn label(self) -> &'static str {
         t(match self {
             Self::Files => "composer.add_files",
+            Self::Folder => "composer.add_folder",
             Self::Image => "files.attach_image",
+            Self::Video => "video.title",
+            Self::Drawing => "drawing.title",
+            Self::Plan => "plan.open",
+            Self::Goal => "goal.title",
+            Self::RecordSkill => "record.title",
+            Self::Plugins => "record.plugins",
             Self::ProjectFiles => "composer.project_files",
             Self::Search => "composer.add_search",
             Self::Project => "composer.project_task",
             Self::Browser => "inspector.tab_browser",
+            Self::Chrome => "composer.add_chrome",
+            Self::Edge => "composer.add_edge",
             Self::Resources => "inspector.tab_resources",
         })
     }
 
     fn icon(self) -> Icon {
         match self {
-            Self::Files => Icon::File,
-            Self::Image => Icon::Link,
-            Self::ProjectFiles => Icon::File,
+            Self::Files | Self::Folder => Icon::File,
+            Self::Image | Self::Video | Self::Drawing => Icon::Link,
+            Self::ProjectFiles | Self::Plan | Self::Goal | Self::RecordSkill | Self::Plugins => {
+                Icon::File
+            }
             Self::Search => Icon::Search,
             Self::Project => Icon::Project,
-            Self::Browser => Icon::Network,
+            Self::Browser | Self::Chrome | Self::Edge => Icon::Network,
             Self::Resources => Icon::Resources,
         }
     }
@@ -196,13 +234,36 @@ impl AppView {
 
     pub(super) fn composer_action_enabled(&self, action: ComposerAction) -> bool {
         match action {
-            ComposerAction::Files | ComposerAction::Image => {
+            ComposerAction::Files | ComposerAction::Image | ComposerAction::Drawing => {
                 !self.composer_loading && !self.composer_sending
+            }
+            ComposerAction::Folder => {
+                crate::controller::DesktopController::supports_folder_snapshots()
+                    && !self.composer_loading
+                    && !self.composer_sending
+            }
+            ComposerAction::Video => {
+                self.controller.supports_product_panels() && !self.composer_sending
+            }
+            ComposerAction::Chrome | ComposerAction::Edge => {
+                cfg!(target_os = "macos") && !self.composer_loading && !self.composer_sending
+            }
+            ComposerAction::RecordSkill => {
+                self.can_attach_image() && self.controller.supports_product_panels()
+            }
+            ComposerAction::Plan | ComposerAction::Goal => {
+                self.projection.active_session_id.is_some()
+                    && self.controller.supports_product_panels()
+                    && matches!(
+                        self.projection.connection,
+                        ConnectionState::Connected { .. }
+                    )
             }
             ComposerAction::ProjectFiles => self.can_attach_image() && !self.composer_sending,
             ComposerAction::Search => !self.composer_sending,
             ComposerAction::Project => self.can_create_task(),
             ComposerAction::Browser => true,
+            ComposerAction::Plugins => self.controller.supports_product_panels(),
             ComposerAction::Resources => matches!(
                 self.projection.connection,
                 ConnectionState::Connected { .. }
@@ -211,10 +272,28 @@ impl AppView {
     }
 
     pub(super) fn composer_action_hint(&self, action: ComposerAction) -> &'static str {
+        if matches!(
+            action,
+            ComposerAction::Video
+                | ComposerAction::Plan
+                | ComposerAction::Goal
+                | ComposerAction::RecordSkill
+                | ComposerAction::Plugins
+        ) && !self.controller.supports_product_panels()
+        {
+            return t("composer.product_version");
+        }
         match action {
             ComposerAction::Files => t("composer.local_files"),
+            ComposerAction::Folder
+                if !crate::controller::DesktopController::supports_folder_snapshots() =>
+            {
+                t("composer.folder_platform")
+            }
+            ComposerAction::Folder => t("composer.local_folder"),
             ComposerAction::Image => t("composer.local_images"),
             ComposerAction::Search => t("composer.search_hint"),
+            ComposerAction::Chrome | ComposerAction::Edge => t("composer.browser_hint"),
             _ => "",
         }
     }
@@ -232,8 +311,21 @@ impl AppView {
         match action {
             ComposerAction::ProjectFiles => self.on_attach_image(window, cx),
             ComposerAction::Files => self.pick_composer_attachments(false, window, cx),
+            ComposerAction::Folder => self.pick_composer_folder(window, cx),
             ComposerAction::Image => self.pick_composer_attachments(true, window, cx),
+            ComposerAction::Drawing => self.open_drawing(cx),
+            ComposerAction::Video => self.open_video(cx),
+            ComposerAction::Plan => self.open_plan(cx),
+            ComposerAction::Goal => self.open_goal(cx),
+            ComposerAction::RecordSkill => self.open_recording(false, cx),
+            ComposerAction::Plugins => self.open_recording(true, cx),
             ComposerAction::Search => self.toggle_composer_search(cx),
+            ComposerAction::Chrome => {
+                self.attach_external_browser(pawork_browser::ExternalBrowser::Chrome, cx)
+            }
+            ComposerAction::Edge => {
+                self.attach_external_browser(pawork_browser::ExternalBrowser::Edge, cx)
+            }
             ComposerAction::Project => self.on_project_task_menu(None, window, cx),
             ComposerAction::Browser | ComposerAction::Resources => {
                 let tab = if matches!(action, ComposerAction::Browser) {
@@ -591,6 +683,7 @@ impl AppView {
         let options = self.current_composer_options();
         // 附件读取失败也占一行（RV-03）：无附件时错误行同样需要渲染。
         let has_options = !options.attachments.is_empty()
+            || !options.video_urls.is_empty()
             || options.web_search.is_some()
             || options.attachment_error.is_some();
         let attachments = self.composer_attachments_element(cx);
@@ -604,9 +697,6 @@ impl AppView {
             .gap(px(metrics::COMPOSER_GAP))
             .p(px(metrics::COMPOSER_PAD))
             .min_h(px(metrics::COMPOSER_PANEL_MIN_HEIGHT))
-            .max_h(px(
-                metrics::COMPOSER_PANEL_MAX_HEIGHT + if has_options { 108.0 } else { 0.0 }
-            ))
             .border_1()
             .border_color(if input_focused {
                 dark().accent.primary
@@ -791,6 +881,7 @@ impl AppView {
     pub(super) fn composer_options_height(&self) -> f32 {
         let options = self.current_composer_options();
         if options.attachments.is_empty()
+            && options.video_urls.is_empty()
             && options.web_search.is_none()
             && options.attachment_error.is_none()
         {

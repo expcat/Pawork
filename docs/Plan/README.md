@@ -10,6 +10,7 @@
 | [包定位与收敛](package-boundaries.md) | 24 个包的职责、消费者、保留理由与冗余候选 |
 | [修复执行计划](remediation.md) | 按写入集拆分的任务、先后关系和定向验收 |
 | [产品与待验收事项](product-and-acceptance.md) | 原路线图真正剩余的功能和验收缺口 |
+| [已确认产品契约](product-contracts-2026-09-24.md) | API 1.24 的视频、Plan、目标和技能录制边界 |
 | [ROADMAP](../ROADMAP.md) | 优先级和活动任务入口 |
 
 ## 审查方法与证据边界

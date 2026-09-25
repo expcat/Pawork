@@ -49,7 +49,7 @@
 | B6 | 图片生成工具 | P3 |
 | B7 | Pawork 作为 MCP Server | P2 |
 | B8 | Code Mode / 单轮组合多步工具 | P2 |
-| B9 | 会话级 Goals | P2 |
+| B9 | 会话级 Goals（有预算 Host / GUI 已激活） | P2 |
 | C1 | 能力包打包与 git 分发 | P2 |
 | C2 | 用户级 memories | P2 |
 | C3 | Connector directory | P2 |
@@ -66,6 +66,8 @@
 | E2 | Bedrock/Vertex 模型源 | P2 |
 | F1 | 版本自检 + 可选遥测 + 离线模式 | P3 |
 
+**B9 激活登记（2026-09-24）**：用户将原未排期能力纳入本轮，API 1.24 契约已确认；实现位于 app Host 与 Desktop，复用 Run 生命周期、审批与持久事件。预算/轮数显式有界，重启后须恢复；不复制 V2 Goal reducer。实现与验收分列在 [ROADMAP](../ROADMAP.md)。
+
 **B5 激活登记（2026-09-22）**：状态——进入活动线，由 [ROADMAP](../ROADMAP.md) MM-1（图像端到端）与 MM-2（视频 canonical）承接；前置——VISION-2 逐模型能力证据与 `default_image_input` 默认表已落地（[providers.md](crates/providers.md)）；写入集——`crates/providers` / `crates/cli` / `crates/domain`（MM-2 契约演进，golden 先行且需用户确认）/ `crates/protocol` / `crates/app` / `apps/desktop` 及对应 Spec；复活资产——无（不触及 `v2-final` 归档）；停止条件——Kimi 外部 URL 拒绝等 fail-closed 语义不得放宽为静默透传，MM-2 契约草案未经用户确认不得实施。同期用户另立 MM-3（Chat 通道原生搜索接线），属 Provider 托管搜索 wire，不占用 B1（Agent 侧 webfetch / websearch 内置工具）候选。
 
 ## 4. 其它产品候选/归档复活面
@@ -73,7 +75,7 @@
 | ID | 候选 | 当前状态 | 激活条件 |
 | --- | --- | --- | --- |
 | BK-REMOTE-01 | 远程 GUI transport | 归档/候选 | 按当时 API 版本重评 TLS、认证、授权与远程威胁模型。 |
-| BK-WORK-01 | teams / goal / automation / monitor | reducer 已归档，事件保留 | 先定义真实产品面与持久化/调度语义，再按 `v2-final` 考古。 |
+| BK-WORK-01 | 旧 teams / goal / automation / monitor 框架 | V2 reducer 已归档，事件保留；现行有预算 Goal 单独实现于 app | 旧框架仍需独立激活，不把新 Goal 当作整套框架复活。 |
 | BK-GIT-01 | GUI Branch/Stash/Conflict/History/Commit | 归档/候选 | 产品定义 + host protocol + Policy；不得让 Desktop 直连 Git。 |
 | BK-GIT-02 | Desktop stage/unstage/hunk | 候选 | 新增双向 wire、审批/回滚语义和 ADR；当前 Changes 保持只读。 |
 | BK-EXT-01 | WASM 插件/市场/Hooks/LSP 生态 | 候选 | 只允许纯 Rust/WASM 路线；不引入 Node/Bun/JS Runtime。 |

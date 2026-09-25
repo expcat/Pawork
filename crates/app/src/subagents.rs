@@ -200,6 +200,10 @@ impl<'a> SubagentRun<'a> {
             )
             .allow_spawn
     }
+    pub fn without_spawning(mut self) -> Self {
+        self.config.enabled = false;
+        self
+    }
     async fn supervisor(&self) -> Result<&(Arc<AgentSupervisor>, AgentId), AppError> {
         self.supervisor
             .get_or_try_init(|| async {

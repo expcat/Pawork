@@ -129,6 +129,7 @@ fn content_part_byte_len(part: &ContentPart) -> u64 {
             };
             IMAGE_ESTIMATED_BYTES.saturating_add(encoded_payload)
         }
+        ContentPart::Video(video) => video.url.len() as u64,
         ContentPart::ToolCall(call) => {
             let arguments = serde_json::to_string(&call.arguments).unwrap_or_default();
             u64::try_from(call.name.len())

@@ -64,6 +64,8 @@
 
 GUI 1.18 `browser_next` / `browser_respond` 使用既有 query/command 方法；旧 minor 在发网前拒绝，客户端本身不执行网页操作。
 
+API 1.24：crate 根 re-export `VideoContent` 供 Desktop 使用，Plan/Goal/录制沿用 typed command/query，无新客户端协议或直接 Core 依赖。headless 高层 `run_start` 暂不暴露视频参数，明确构造空 `video_urls`；GUI 由协商版本 gate 新入口。
+
 ## 4. 核心行为与数据流
 
 UI-6b G2：crate 根增加 `ProviderAccountSelectionMode`、`QuotaOverviewQuery/QuotaOverviewView`、`QuotaUnit/QuotaWindow/QuotaMeasure/QuotaReset/WindowReadView` re-export，Desktop 继续只经本包发送通用 query/command；连接、路由与请求超时机制不变。

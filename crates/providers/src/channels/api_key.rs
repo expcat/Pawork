@@ -103,6 +103,7 @@ pub struct ApiKeyChannelProvider {
     chat: OpenAiCompatibleProvider,
     responses: ResponsesTransport,
     model_transports: BTreeMap<ModelId, ModelTransport>,
+    qwen_search_endpoint: bool,
 }
 
 impl ApiKeyChannelProvider {
@@ -112,6 +113,8 @@ impl ApiKeyChannelProvider {
         credential: Option<ResolvedCredential>,
     ) -> Result<Self, ProviderError> {
         let credential = require_api_key(credential)?;
+        let qwen_search_endpoint = config.preset.id == "qwen-token-plan"
+            && config.base_url.trim_end_matches('/') == config.preset.default_base_url;
         let provider_id = ProviderId::new(config.preset.id);
         let mut chat = OpenAiCompatibleProvider::new(
             OpenAiCompatibleConfig {
@@ -127,10 +130,10 @@ impl ApiKeyChannelProvider {
         responses.request_timeout = config.request_timeout;
         responses.wire = ResponsesWireOptions {
             store: None,
-            include_encrypted_reasoning: true,
+            include_encrypted_reasoning: !qwen_search_endpoint,
             // SEARCH-1：API-key 通道 Responses 模型默认不写 web_search；opencode-go
             // 的 grok 家族 2026-09-23 实测透传（见 registry 默认表），按通道放开。
-            hosted_web_search: config.preset.id == "opencode-go",
+            hosted_web_search: config.preset.id == "opencode-go" || qwen_search_endpoint,
         };
         let mut responses = ResponsesTransport::new(responses, credential)?;
         if config.preset.id == "opencode-go" {
@@ -142,6 +145,7 @@ impl ApiKeyChannelProvider {
             chat,
             responses,
             model_transports: config.model_transports,
+            qwen_search_endpoint,
         })
     }
 
@@ -153,6 +157,32 @@ impl ApiKeyChannelProvider {
     fn transport_for(&self, model: &ModelId) -> Option<ModelTransport> {
         resolve_model_transport(self.preset.id, &self.model_transports, model)
     }
+}
+
+// Token Plan documents Responses web_search for these models. Keep ordinary
+// Chat (including video) unchanged; a requested search uses shared Responses.
+// https://help.aliyun.com/zh/model-studio/token-plan-team-quickstart
+// https://help.aliyun.com/zh/model-studio/web-search
+fn qwen_search_model(model: &str) -> bool {
+    matches!(
+        model,
+        "qwen3.8-max"
+            | "qwen3.8-max-0902"
+            | "qwen3.8-flash"
+            | "qwen3.7-max"
+            | "qwen3.7-plus"
+            | "qwen3.7-flash"
+            | "qwen3.6-plus"
+            | "qwen3.6-flash"
+            | "qwen3.5-plus"
+            | "qwen3.5-flash"
+            | "glm-5.2"
+            | "deepseek-v4-pro"
+            | "deepseek-v4-pro-0813"
+            | "deepseek-v4-flash"
+            | "deepseek-v4-flash-0731"
+            | "kimi-k3"
+    )
 }
 
 fn resolve_model_transport(
@@ -328,6 +358,7 @@ impl ModelProvider for ApiKeyChannelProvider {
         models.retain_mut(|model| match self.transport_for(&model.id) {
             Some(transport @ (ModelTransport::ChatCompletions | ModelTransport::Responses)) => {
                 model.capabilities.transport = transport;
+                model.capabilities.video_input &= transport == ModelTransport::ChatCompletions;
                 // ADR-063：同 model_id 跨 Provider 合并的默认推理强度声明
                 //（仅回填未知；远端已声明时优先）。
                 crate::registry::apply_default_supported_efforts(model);
@@ -335,6 +366,18 @@ impl ModelProvider for ApiKeyChannelProvider {
                 // Responses 传输生效，Chat 通道保持不声明）。
                 crate::registry::apply_default_image_output(model);
                 crate::registry::apply_default_hosted_web_search(model);
+                if self.qwen_search_endpoint && qwen_search_model(model.id.as_str()) {
+                    model
+                        .capabilities
+                        .hosted_tool_tags
+                        .insert(pawork_domain::ToolCapabilityTag::WebSearch);
+                    model.capabilities.citations = true;
+                } else if self.preset.id == "qwen-token-plan" {
+                    model
+                        .capabilities
+                        .hosted_tool_tags
+                        .remove(&pawork_domain::ToolCapabilityTag::WebSearch);
+                }
                 true
             }
             Some(ModelTransport::Messages) | None => false,
@@ -348,6 +391,19 @@ impl ModelProvider for ApiKeyChannelProvider {
         sink: &dyn ProviderEventSink,
         cancel: CancellationToken,
     ) -> Result<ModelResponseSummary, ProviderError> {
+        if self.preset.id == "qwen-token-plan" && !request.hosted_tools.is_empty() {
+            if !self.qwen_search_endpoint || !qwen_search_model(request.model.as_str()) {
+                return Err(ProviderError::new(
+                    ProviderErrorKind::InvalidRequest,
+                    "Qwen hosted search requires a documented Token Plan endpoint and model",
+                ));
+            }
+            return self
+                .responses
+                .stream(request, sink, cancel)
+                .await
+                .map_err(|error| normalize_vendor_error(self.preset.id, error));
+        }
         let transport = self.transport_for(&request.model).ok_or_else(|| {
             ProviderError::new(
                 ProviderErrorKind::InvalidRequest,
@@ -612,5 +668,118 @@ mod transport_resolution_tests {
         );
         assert_eq!(resolve("qwen-token-plan", "wan2.7-image"), None);
         assert_eq!(resolve("qwen-token-plan", "qwen-audio-3.0-tts-plus"), None);
+        assert!(qwen_search_model("qwen3.8-max"));
+        assert!(!qwen_search_model("auto"));
+        assert!(!qwen_search_model("qwen3.9-max"));
+    }
+
+    #[test]
+    #[cfg(feature = "qwen-token-plan")]
+    fn qwen_search_only_uses_documented_token_plan_endpoint() {
+        let preset = crate::channels::registry::channel_preset("qwen-token-plan").unwrap();
+        for (url, supported) in [
+            (preset.default_base_url, true),
+            ("https://coding.dashscope.aliyuncs.com/v1", false),
+            ("https://example.test/compatible-mode/v1", false),
+        ] {
+            let provider = ApiKeyChannelProvider::new(
+                ApiKeyChannelConfig::new(preset).unwrap().with_base_url(url),
+                Some(ResolvedCredential::new(CredentialKind::ApiKey, "test")),
+            )
+            .unwrap();
+            assert_eq!(provider.qwen_search_endpoint, supported);
+        }
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "qwen-token-plan")]
+    async fn qwen_search_routes_to_responses_and_preserves_sources() {
+        use pawork_domain::{
+            HostedToolRequest, ProviderStreamEvent, ServerToolEvent, ToolCapabilityTag,
+        };
+        use wiremock::{
+            matchers::{body_partial_json, method, path},
+            Mock, MockServer, ResponseTemplate,
+        };
+        let server = MockServer::start().await;
+        let preset = crate::channels::registry::channel_preset("qwen-token-plan").unwrap();
+        let key = ResolvedCredential::new(CredentialKind::ApiKey, "test");
+        let mut provider = ApiKeyChannelProvider::new(
+            ApiKeyChannelConfig::new(preset).unwrap(),
+            Some(key.clone()),
+        )
+        .unwrap();
+        // Replace only the external HTTP boundary after selecting the real preset.
+        let mut transport = ResponsesTransportConfig::new(server.uri(), preset.id);
+        transport.http = HttpClientConfig::builder().disable_system_proxy().build();
+        transport.wire = ResponsesWireOptions {
+            store: None,
+            include_encrypted_reasoning: false,
+            hosted_web_search: true,
+        };
+        provider.responses = ResponsesTransport::new(transport, key).unwrap();
+        let body = [
+            r#"{"type":"response.output_item.added","item":{"type":"web_search_call","id":"search1"}}"#,
+            r#"{"type":"response.output_text.delta","delta":"Answer"}"#,
+            r#"{"type":"response.output_text.annotation.added","annotation":{"type":"url_citation","url":"https://example.com/source","title":"Source"}}"#,
+            r#"{"type":"response.completed","response":{"status":"completed"}}"#,
+        ].map(|line| format!("data: {line}\n\n")).concat();
+        Mock::given(method("POST"))
+            .and(path("/responses"))
+            .and(body_partial_json(
+                serde_json::json!({"model":"qwen3.8-max","tools":[{"type":"web_search"}]}),
+            ))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(body),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let mut request = CanonicalModelRequest {
+            session_id: None,
+            request_id: "search".into(),
+            model: "qwen3.8-max".into(),
+            messages: Vec::new(),
+            tools: Vec::new(),
+            hosted_tools: vec![HostedToolRequest {
+                name: "web_search".into(),
+                kind: ToolCapabilityTag::WebSearch,
+                description: String::new(),
+                capabilities: Vec::new(),
+                config: None,
+            }],
+            extensions: Vec::new(),
+            tool_choice: pawork_domain::ToolChoice::Auto,
+            thinking: None,
+            reasoning: None,
+            temperature: None,
+            max_output_tokens: None,
+            stop_sequences: Vec::new(),
+            response_format: pawork_domain::ResponseFormat::Text,
+            prompt_cache: pawork_domain::PromptCachePreference::Automatic,
+            budget: Default::default(),
+            provider_options: Default::default(),
+            trace_id: None,
+        };
+        let sink = pawork_testkit::RecordingProviderSink::default();
+        provider
+            .stream(&request, &sink, CancellationToken::new())
+            .await
+            .unwrap();
+        assert!(sink.events().iter().any(|event| matches!(event,
+            ProviderStreamEvent::ServerTool(ServerToolEvent::CitationAdded { citation, .. })
+            if citation.url.as_deref() == Some("https://example.com/source"))));
+        request.model = "qwen-future".into();
+        assert_eq!(
+            provider
+                .stream(&request, &sink, CancellationToken::new())
+                .await
+                .unwrap_err()
+                .kind,
+            ProviderErrorKind::InvalidRequest
+        );
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
     }
 }

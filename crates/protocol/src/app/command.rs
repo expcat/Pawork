@@ -3,8 +3,8 @@
 use std::{fmt, path::Component, str::FromStr};
 
 use pawork_domain::{
-    ActorId, CommandId, ConnectionId, EventId, GuiClientId, ModelId, PluginId, ProviderId, RunId,
-    SessionId, Timestamp, ToolCallId, WorkspaceId,
+    ActorId, CommandId, ConnectionId, EventId, GoalId, GuiClientId, ModelId, PluginId, ProviderId,
+    RunId, SessionId, Timestamp, ToolCallId, WorkspaceId,
 };
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
@@ -416,9 +416,71 @@ pub enum AppCommand {
         /// GUI 1.22：仅覆盖本轮 hosted 搜索；缺省沿用 Global。旧 minor 遇 Some fail-closed。
         #[serde(default, skip_serializing_if = "Option::is_none")]
         web_search: Option<bool>,
+        /// GUI 1.24: bounded remote video references, never downloaded by the Host.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        video_urls: Vec<pawork_domain::VideoContent>,
     },
     RunCancel {
         run_id: RunId,
+    },
+    /// GUI 1.23: cancel through the Host that owns the live task token.
+    TasksCancel {
+        task_id: String,
+    },
+    GoalStart {
+        session_id: SessionId,
+        title: String,
+        criteria: Vec<String>,
+        budget_tokens: u64,
+        max_runs: u32,
+    },
+    GoalPause {
+        session_id: SessionId,
+        goal_id: GoalId,
+    },
+    GoalResume {
+        session_id: SessionId,
+        goal_id: GoalId,
+        budget_tokens: u64,
+        max_runs: u32,
+    },
+    GoalSteer {
+        session_id: SessionId,
+        goal_id: GoalId,
+        input: String,
+    },
+    GoalFinish {
+        session_id: SessionId,
+        goal_id: GoalId,
+        outcome: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+    SkillRecordSave {
+        workspace_id: WorkspaceId,
+        name: String,
+        description: String,
+        content: String,
+    },
+    PlanSave {
+        session_id: SessionId,
+        title: String,
+        steps: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expected_version: Option<String>,
+    },
+    PlanSubmit {
+        session_id: SessionId,
+        expected_version: String,
+    },
+    PlanApprove {
+        session_id: SessionId,
+        expected_version: String,
+    },
+    PlanReject {
+        session_id: SessionId,
+        expected_version: String,
+        reason: String,
     },
     RunRetry {
         run_id: RunId,

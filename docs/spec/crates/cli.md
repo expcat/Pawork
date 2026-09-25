@@ -138,7 +138,11 @@ OPT-1 / ADR-053：`gui::run_gui` 经 `AppCore::set_approval_host` 只接线 GUI 
 | `/plan show\|create\|replace\|submit\|approve\|reject` | Plan 操作；create/replace 语法 `Title \| step1 \| step2` |
 | `@file` | 消息内的工作区文件引用，经 `expand_at_refs` 展开后进入本轮内容 |
 
+API 1.24 视频：`chat --prompt` / `run` 接受重复 `--video-url <HTTP(S)>`，与 `--image` 合计最多 4 项；按 URL 后缀选择 MIME，校验无内嵌凭据后构造 canonical Video。交互无 prompt 和 JSONL 简写路径不支持该参数，明确返回 Usage 错误；不下载媒体，不写配置默认。
+
 ## 4. 核心行为与数据流
+
+2026-09-24：`tasks cancel` 将活动任务的稳定 ID 经鉴权 GUI 连接路由到当前实例 Host（API ≥1.23），输出真实取消 ID；终态幂等返回空列表。旧 Host、不在线或 CLI/headless/ACP 任务明确报错并提示原宿主，不修改快照冒充取消。GUI Host 接 SIGINT/SIGTERM 后先取消运行、等待持久终态与连接回收，再执行 Core shutdown；关闭单个 GUI 窗口仍不取消 Run。
 
 1. **启动与装配**（`run_inner`）：
    - clap 解析 → `normalize_instance`；`service` / `status` / `doctor` / `watch` / `shutdown` 五命令直接进入 pre-core 分支返回。
@@ -169,7 +173,7 @@ OPT-1 / ADR-053：`gui::run_gui` 经 `AppCore::set_approval_host` 只接线 GUI 
 6. **gui serve 生命周期**：
    - 单实例由实例级 `gui.lock` 独占锁保证（R-04）：装配期（打开库与 bind 之前）按 `InstanceRole::GuiHost` 获取并持有整个生命周期，锁冲突即拒绝装配——不再有「探测-绑定」竞态，崩溃遗留 socket 文件由 bind 侧 stale 清理兜底。
    - 以 `run_inner` 传入的同一 data directory 加载或生成 `gui.token`（`TokenStore`）→ `HandshakeService`（能力由 registry `gui_supported_capabilities()` 派生，并用 `with_host_data_dir` 注入该目录）+ `TokenAuthenticator` → bind 成功后写 pid 文件（读到的 PID 必然对应已持有端点的进程）→ 认证成功的 Accepted 握手发布可选只读元数据 → accept 循环把连接句柄登记进 `ConnectionSet` 并挂 reaper（R-11，`wait_done` 完成信号到达即移除；`SessionHandle` 提前 drop 会令客户端握手 Broken pipe）。
-   - Ctrl-C 关闭监听后有序收口（R-11）：close 全部登记连接并逐 `wait_done` 等待会话任务结束 → 删除 pid 文件（实例锁继续持有到 Core 退出）→ drop server/listener 等 Host 持有者 → 关 pty、`Arc::try_unwrap` 成功才显式 Core shutdown（仍被共享则告警）；关闭不取消已进入 Core 的 run（进程内 run 随进程结束，跨进程存活语义归 service）。
+   - SIGINT/SIGTERM 关闭监听后有序收口：触发所有 Run 取消 → close 全部连接并等待 `wait_done` → 等待受管理任务持久终态 → 删除 pid、释放 Host 持有者 → 关闭 PTY 与 Core；Core 仍被持有时显式报错，不再告警后跳过 shutdown。关闭单个 Desktop 窗口不触发 Host 退出。
 7. **审批五档与宿主选择**：
    - `--approval-mode` 五档：`always-ask` / `ask-for-writes` / `ask-for-dangerous` / `never-ask` / `read-only`（kebab 与 snake 拼写均可；缺省 `read-only`）。已移除的旧档 `on-failure` 保持拼写兼容，**映射为 `NeverAsk`**；未知档报错并列出合法值。
    - `--trust-workspaces` 与审批档正交：它只声明启动宿主对当前 workspace 的信任，不自动降低审批档，也不让 workspace 内容自我提权。

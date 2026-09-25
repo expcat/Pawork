@@ -1,0 +1,29 @@
+{
+  "plan_get": {
+    "method": "plan_get",
+    "params": {
+      "session_id": "session-1"
+    }
+  },
+  "skill_record_preview": {
+    "method": "skill_record_preview",
+    "params": {
+      "session_id": "session-1",
+      "event_ids": [
+        "event-1"
+      ]
+    }
+  },
+  "skill_record_save": {
+    "method": "skill_record_save",
+    "params": {
+      "workspace_id": "ws-1",
+      "name": "review",
+      "description": "Review changes",
+      "content": "# Review\nInspect changes.\n"
+    }
+  },
+  "plugin_list": {
+    "method": "plugin_list"
+  }
+}

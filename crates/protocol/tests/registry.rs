@@ -38,6 +38,32 @@ const V1_12: ApiVersion = ApiVersion {
 fn command_samples() -> Vec<(&'static str, Option<Value>)> {
     vec![
         (
+            "goal_start",
+            Some(
+                json!({"session_id": "session-1", "title": "Verify", "criteria": ["Tests pass"], "budget_tokens": 1000, "max_runs": 3}),
+            ),
+        ),
+        (
+            "goal_pause",
+            Some(json!({"session_id": "session-1", "goal_id": "goal-1"})),
+        ),
+        (
+            "goal_resume",
+            Some(
+                json!({"session_id": "session-1", "goal_id": "goal-1", "budget_tokens": 500, "max_runs": 2}),
+            ),
+        ),
+        (
+            "goal_steer",
+            Some(
+                json!({"session_id": "session-1", "goal_id": "goal-1", "input": "Focus on tests"}),
+            ),
+        ),
+        (
+            "goal_finish",
+            Some(json!({"session_id": "session-1", "goal_id": "goal-1", "outcome": "achieved"})),
+        ),
+        (
             "workspace_file_write",
             Some(
                 json!({"workspace_id":"ws-1","path":"notes.txt","content":"hello", "expected_revision":"r1"}),
@@ -72,7 +98,30 @@ fn command_samples() -> Vec<(&'static str, Option<Value>)> {
             "run_start",
             Some(json!({"session_id": "session-1", "user_message": "hi"})),
         ),
+        (
+            "skill_record_save",
+            Some(
+                json!({"workspace_id":"ws-1","name":"review","description":"Review","content":"# Review"}),
+            ),
+        ),
         ("run_cancel", Some(json!({"run_id": "run-1"}))),
+        ("tasks_cancel", Some(json!({"task_id": "task-1"}))),
+        (
+            "plan_save",
+            Some(json!({"session_id":"session-1","title":"Plan","steps":["Review"]})),
+        ),
+        (
+            "plan_submit",
+            Some(json!({"session_id":"session-1","expected_version":"pv-1"})),
+        ),
+        (
+            "plan_approve",
+            Some(json!({"session_id":"session-1","expected_version":"pv-1"})),
+        ),
+        (
+            "plan_reject",
+            Some(json!({"session_id":"session-1","expected_version":"pv-1","reason":"revise"})),
+        ),
         ("run_retry", Some(json!({"run_id": "run-1"}))),
         (
             "run_tool",
@@ -221,6 +270,7 @@ fn command_samples() -> Vec<(&'static str, Option<Value>)> {
 
 fn query_samples() -> Vec<(&'static str, Option<Value>)> {
     vec![
+        ("goal_get", Some(json!({"session_id":"session-1"}))),
         (
             "workspace_files",
             Some(json!({"workspace_id":"ws-1","path":"."})),
@@ -247,7 +297,12 @@ fn query_samples() -> Vec<(&'static str, Option<Value>)> {
             Some(json!({"query": {"tenant_id": "local/default", "account_id": "local/default"}})),
         ),
         ("snapshot_fetch", None),
+        (
+            "skill_record_preview",
+            Some(json!({"session_id":"session-1","event_ids":[]})),
+        ),
         ("plugin_list", None),
+        ("plan_get", Some(json!({"session_id":"session-1"}))),
         ("mcp_list", None),
         (
             "provider_auth_status",
@@ -552,6 +607,116 @@ fn command_registry_covers_every_variant_without_wildcard() {
                 true,
                 false,
                 V1_2,
+            ),
+            AppCommand::GoalStart { .. } => assert_command_entry(
+                &command,
+                "goal_start",
+                true,
+                None,
+                None,
+                false,
+                true,
+                pawork_protocol::V1_24,
+            ),
+            AppCommand::GoalPause { .. } => assert_command_entry(
+                &command,
+                "goal_pause",
+                true,
+                None,
+                None,
+                false,
+                true,
+                pawork_protocol::V1_24,
+            ),
+            AppCommand::GoalResume { .. } => assert_command_entry(
+                &command,
+                "goal_resume",
+                true,
+                None,
+                None,
+                false,
+                true,
+                pawork_protocol::V1_24,
+            ),
+            AppCommand::GoalSteer { .. } => assert_command_entry(
+                &command,
+                "goal_steer",
+                true,
+                None,
+                None,
+                false,
+                true,
+                pawork_protocol::V1_24,
+            ),
+            AppCommand::GoalFinish { .. } => assert_command_entry(
+                &command,
+                "goal_finish",
+                true,
+                None,
+                None,
+                false,
+                true,
+                pawork_protocol::V1_24,
+            ),
+            AppCommand::SkillRecordSave { .. } => assert_command_entry(
+                &command,
+                "skill_record_save",
+                true,
+                None,
+                None,
+                false,
+                true,
+                pawork_protocol::V1_24,
+            ),
+            AppCommand::PlanSave { .. } => assert_command_entry(
+                &command,
+                "plan_save",
+                true,
+                None,
+                None,
+                false,
+                true,
+                pawork_protocol::V1_24,
+            ),
+            AppCommand::PlanSubmit { .. } => assert_command_entry(
+                &command,
+                "plan_submit",
+                true,
+                None,
+                None,
+                false,
+                true,
+                pawork_protocol::V1_24,
+            ),
+            AppCommand::PlanApprove { .. } => assert_command_entry(
+                &command,
+                "plan_approve",
+                true,
+                None,
+                None,
+                false,
+                true,
+                pawork_protocol::V1_24,
+            ),
+            AppCommand::PlanReject { .. } => assert_command_entry(
+                &command,
+                "plan_reject",
+                true,
+                None,
+                None,
+                false,
+                true,
+                pawork_protocol::V1_24,
+            ),
+            AppCommand::TasksCancel { .. } => assert_command_entry(
+                &command,
+                "tasks_cancel",
+                true,
+                None,
+                None,
+                false,
+                true,
+                pawork_protocol::V1_23,
             ),
             AppCommand::RunCancel { .. } => assert_command_entry(
                 &command,
@@ -962,8 +1127,38 @@ fn query_registry_covers_every_variant_without_wildcard() {
                 true,
                 V1_0,
             ),
+            AppQuery::GoalGet { .. } => assert_query_entry(
+                &query,
+                "goal_get",
+                true,
+                None,
+                None,
+                false,
+                true,
+                pawork_protocol::V1_24,
+            ),
+            AppQuery::SkillRecordPreview { .. } => assert_query_entry(
+                &query,
+                "skill_record_preview",
+                true,
+                None,
+                None,
+                false,
+                true,
+                pawork_protocol::V1_24,
+            ),
+            AppQuery::PlanGet { .. } => assert_query_entry(
+                &query,
+                "plan_get",
+                true,
+                None,
+                None,
+                false,
+                true,
+                pawork_protocol::V1_24,
+            ),
             AppQuery::PluginList => {
-                assert_query_entry(&query, "plugin_list", false, None, None, false, true, V1_0)
+                assert_query_entry(&query, "plugin_list", true, None, None, false, true, V1_0)
             }
             AppQuery::McpList => {
                 assert_query_entry(&query, "mcp_list", true, None, None, false, true, V1_0)

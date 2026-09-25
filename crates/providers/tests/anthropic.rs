@@ -40,62 +40,9 @@ impl ProviderEventSink for RecordingProviderSink {
 mod contract {
     use pawork_domain::{ProviderError, ProviderErrorKind, ProviderStreamEvent};
 
-    pub fn assert_text_stream(events: &[ProviderStreamEvent]) {
-        assert!(
-            events
-                .iter()
-                .any(|e| matches!(e, ProviderStreamEvent::TextDelta(t) if !t.is_empty())),
-            "text 流应至少含一条非空 TextDelta，实际：{events:?}"
-        );
-        assert!(
-            matches!(
-                events.last(),
-                Some(ProviderStreamEvent::ResponseCompleted(_))
-            ),
-            "文本流应以 ResponseCompleted 收尾，实际末尾：{:?}",
-            events.last()
-        );
-    }
-
-    pub fn assert_single_tool_call(events: &[ProviderStreamEvent]) {
-        let started = events
-            .iter()
-            .find(|e| matches!(e, ProviderStreamEvent::ToolCallStarted { .. }));
-        assert!(started.is_some(), "应存在 ToolCallStarted");
-        let id = match started.unwrap() {
-            ProviderStreamEvent::ToolCallStarted { id, .. } => id.clone(),
-            _ => unreachable!(),
-        };
-        assert!(
-            events.iter().any(
-                |e| matches!(e, ProviderStreamEvent::ToolCallCompleted { id: cid } if cid == &id)
-            ),
-            "tool call {id} 应被 Completed 闭合"
-        );
-    }
-
-    pub fn assert_parallel_tool_calls(events: &[ProviderStreamEvent]) {
-        let started_ids: Vec<_> = events
-            .iter()
-            .filter_map(|e| match e {
-                ProviderStreamEvent::ToolCallStarted { id, .. } => Some(id.clone()),
-                _ => None,
-            })
-            .collect();
-        assert!(
-            started_ids.len() >= 2,
-            "并行 tool call 应至少有两个 Started（实际 {}）",
-            started_ids.len()
-        );
-        for id in &started_ids {
-            assert!(
-                events.iter().any(
-                    |e| matches!(e, ProviderStreamEvent::ToolCallCompleted { id: cid } if cid == id)
-                ),
-                "tool call {id} 应被 Completed 闭合"
-            );
-        }
-    }
+    pub use pawork_testkit::contract::{
+        assert_parallel_tool_calls, assert_single_tool_call, assert_text_stream,
+    };
 
     pub fn assert_error_kind(
         events: &[ProviderStreamEvent],

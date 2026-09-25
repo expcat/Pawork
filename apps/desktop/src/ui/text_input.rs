@@ -210,6 +210,12 @@ impl TextInput {
         self
     }
 
+    /// Product panels opt into the window's keyboard traversal explicitly.
+    pub fn tab_stop(mut self, enabled: bool) -> Self {
+        self.focus_handle = self.focus_handle.tab_stop(enabled);
+        self
+    }
+
     /// 覆盖高度钳制。Composer 走面板预算；Terminal 独立 28–220，不被
     /// Composer 面板预算截断。
     pub fn height_clamp(mut self, min: f32, max: f32) -> Self {

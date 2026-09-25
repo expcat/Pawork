@@ -43,6 +43,36 @@ const GUI_LOCK_FILE: &str = "gui.lock";
 const SWEEP_LOCK_FILE: &str = "sweep.lock";
 const HOSTS_DIR: &str = "hosts";
 
+/// 活跃属主诊断：只报告仍持登记锁的进程，不清扫或改写任务快照。
+pub fn active_instance_host_pids(instance_dir: &Path) -> Result<Vec<u32>, AppError> {
+    let entries = match std::fs::read_dir(instance_dir.join(HOSTS_DIR)) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error.into()),
+    };
+    let mut pids = Vec::new();
+    for entry in entries {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let name = entry.file_name();
+        let Some(pid) = name
+            .to_str()
+            .and_then(|name| name.split('-').next())
+            .and_then(|pid| pid.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        if try_acquire_file_lock(&entry.path())?.is_none() {
+            pids.push(pid);
+        }
+    }
+    pids.sort_unstable();
+    pids.dedup();
+    Ok(pids)
+}
+
 /// 进程级计数器：同进程同纳秒重复登记也不会撞名（见 AGENTS.md 工程经验）。
 static REGISTRATION_COUNTER: AtomicU64 = AtomicU64::new(0);
 

@@ -6,6 +6,10 @@
 //! 状态机合法性，再 apply 并返回事件供调用方持久化。
 
 use std::collections::BTreeMap;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    OnceLock,
+};
 
 use pawork_domain::{BackgroundTaskId, CancellationToken, TaskEvent, TaskKind, TaskStatus};
 use serde::{Deserialize, Serialize};
@@ -112,7 +116,6 @@ impl TaskRecord {
 pub struct TaskManagerState {
     pub(crate) tasks: BTreeMap<BackgroundTaskId, TaskRecord>,
     pub(crate) log: Vec<TaskEvent>,
-    pub(crate) next_task_seq: u64,
 }
 
 impl TaskManagerState {
@@ -126,7 +129,6 @@ impl TaskManagerState {
     /// `Started` 幂等（已存在则刷新状态为 Running）；`Suspended` / `Resumed`
     /// / `Finished` 校验前置状态，非法转移或未知任务返回错误。
     pub fn apply(&mut self, event: &TaskEvent) -> Result<(), TaskManagerError> {
-        self.note_allocated_id(event_task_id(event));
         match event {
             TaskEvent::Started {
                 task_id,
@@ -313,30 +315,26 @@ impl TaskManagerState {
     }
 
     fn allocate_task_id(&mut self) -> BackgroundTaskId {
+        static NAMESPACE: OnceLock<String> = OnceLock::new();
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let namespace = NAMESPACE.get_or_init(|| {
+            format!(
+                "{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos()
+            )
+        });
         loop {
-            let task_id = BackgroundTaskId::new(format!("task_{}", self.next_task_seq));
-            self.next_task_seq = self.next_task_seq.saturating_add(1);
-            if !self.tasks.contains_key(&task_id) {
-                return task_id;
+            let id = BackgroundTaskId::new(format!(
+                "task_{namespace}-{}",
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            if !self.tasks.contains_key(&id) {
+                return id;
             }
         }
-    }
-
-    fn note_allocated_id(&mut self, task_id: &BackgroundTaskId) {
-        let Some(suffix) = task_id.as_str().strip_prefix("task_") else {
-            return;
-        };
-        if let Ok(n) = suffix.parse::<u64>() {
-            self.next_task_seq = self.next_task_seq.max(n.saturating_add(1));
-        }
-    }
-}
-
-fn event_task_id(event: &TaskEvent) -> &BackgroundTaskId {
-    match event {
-        TaskEvent::Started { task_id, .. }
-        | TaskEvent::Suspended { task_id }
-        | TaskEvent::Resumed { task_id }
-        | TaskEvent::Finished { task_id, .. } => task_id,
     }
 }

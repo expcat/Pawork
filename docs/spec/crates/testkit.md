@@ -64,6 +64,8 @@
 
 ## 6. 依赖关系
 
+2026-09-24：providers 集成测试新增 dev-only 消费，复用已有 contract 断言；生产依赖仍为零。
+
 - **内部**：仅 `pawork-domain`。
 - **外部**：`async-trait`、`serde_json`；dev：`tokio`（macros / rt / sync / time，自测用）。无 feature。
 - **下游（全部为 dev-dependencies）**：`pawork-engine`、`pawork-tools`、`pawork-app`、`pawork-client`——本包永不进入 `pawork` 二进制依赖闭包，也不得被写进 `apps/pawork` 依赖。

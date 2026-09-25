@@ -160,6 +160,7 @@ impl AnthropicProvider {
         &self,
         request: &CanonicalModelRequest,
     ) -> Result<(Value, MessagesWirePlan), ProviderError> {
+        crate::request::validate_video_request(request, false)?;
         let evidence = self.capability_evidence(&request.model);
         let caps = evidence.merged();
         let requirements = requirements_from_request(request);
@@ -426,6 +427,7 @@ impl AnthropicProvider {
 
 fn messages_capabilities() -> ModelCapabilities {
     ModelCapabilities {
+        video_input: false,
         text: true,
         image_output: false,
         image_input: true,
@@ -523,6 +525,11 @@ fn requirements_from_request(request: &CanonicalModelRequest) -> CapabilityRequi
         });
 
     CapabilityRequirements {
+        video_input: request
+            .messages
+            .iter()
+            .flat_map(|m| &m.content)
+            .any(crate::negotiate::content_part_has_video),
         transport_pref: vec![ModelTransport::Messages],
         required_tools,
         reasoning,

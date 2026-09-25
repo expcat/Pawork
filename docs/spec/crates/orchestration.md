@@ -143,7 +143,7 @@
 
 ## 8. 注意事项与已知限制
 
-- Cargo.toml 的 package description 仍含「Agent Teams」，Teams 已随 V2 归档（tag `v2-final`），以源码树为准；不要把 `AppEvent::TeamEvent` 当成现行编排面。
+- Cargo description 已移除归档的 Agent Teams；Teams 仍归档于 `v2-final`，不要把 `AppEvent::TeamEvent` 当成现行编排面。
 - `OrchestrationEvent` 是本包私有事件模型（内存 `event_log`），不并入 `pawork-domain::AgentEvent`；持久化与对外投影由宿主负责。
 - 预算度量当前只贯通 input / output / cost 三维；`UsageRecord` 的 cache_read / cache_write 恒写 0（cache 通路未贯通，完整贯通单独排期，不写误导值）。
 - `recover_report` 不能作为热恢复：崩溃后要继续操作需重新 spawn；报告仅用于诊断孤儿。

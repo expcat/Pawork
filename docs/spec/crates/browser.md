@@ -11,6 +11,7 @@
 | 路径 | 内容 |
 | --- | --- |
 | `src/lib.rs` | `BrowserState`、地址规范化、公开 facade、非 macOS 不支持分支与定向测试 |
+| `src/external.rs` | 显式读取 Chrome/Edge 当前页的有界只读快照 |
 | `src/dom.rs` | 固定 DOM 脚本、参数转义、唯一可见元素检查、JSON 输出预算与定向测试 |
 | `src/macos.rs` | WebKit / AppKit 生命周期、导航 delegate、页面状态、焦点和视图几何 |
 
@@ -21,6 +22,8 @@
 `read_page(callback)` 返回有界 JSON 页面文本、链接、输入元素和按钮（附 CSS 选择器）。`click(selector, callback)` / `type_text(selector, text, callback)` 要求唯一可见元素，错误通过 completion 回调返回。固定 DOM 脚本运行于系统 WebKit，不开放任意脚本求值，拒绝密码和文件输入。Host 经 GUI 1.18 请求/回执授权自动操作；本包没有 Host / 协议依赖。
 
 ## 4. 核心行为与数据流
+
+2026-09-24：`src/external.rs` 新增 `ExternalBrowser::{Chrome,Edge}` 、`ExternalPageError` 与 `capture_external_page`。用户显式选择后，在后台串行调用 macOS NSAppleScript 读取所选浏览器当前页；不读取 profile、Cookie 或密码字段、不导航。仅 HTTP(S) 无内嵌凭据页面，正文最多 8192 字符，最终 JSON ≤64 KiB，附来源及不可信快照说明。依赖既有 cocoa/objc/serde_json/url；其它平台明确返回不支持。需要系统 Automation 权限及浏览器允许 Apple Events JavaScript，Desktop bundle 声明权限用途。
 
 创建时空白，不联网。输入域名补 `https://`，localhost / loopback（含端口）补 `http://`；显式 HTTP(S) 保留。浏览历史、URL、标题与加载状态来自 WebKit；错误回调保存真实失败，取消导航不冒充故障。新窗口链接在当前页打开；启用 WebKit `tabFocusesLinks`，Tab 可遍历网页链接和表单控件。隐藏不清空页面或历史，关闭停止加载并释放原生视图、delegate 与网站数据。
 
@@ -39,3 +42,5 @@ URL 主路径及拒绝边界、Unicode 输出预算与 DOM 回执的定向单元
 ## 8. 注意事项与已知限制
 
 首版只支持 macOS；其它平台明确返回不支持。每任务一个浏览器页，不持久化 URL / Cookie / 历史到下次启动。未提供多网页标签、下载、文件选择、任意脚本执行或截图读取。2026-09-16 聊天控制通过 Host 的 browser 工具经 Policy / 审批授权，由 Desktop 操作 WebView，结果沿用持久化工具事件。页面文本作为未信任数据返回。
+
+2026-09-25 外部页面读取失败使用 `ExternalPageError`：Chromium 错误 12 映射 JavaScriptDisabled，系统 -1743 映射 AutomationDenied；其它失败保留数字码，不返回原始错误字典或页面内容。Desktop 分别显示手动启用浏览器脚本和系统自动化授权指引。Chromium 只接受真实用户输入切换脚本设置，自动化点击不会生效；参见 [Chromium 实现](https://github.com/chromium/chromium/blob/main/chrome/browser/ui/browser_commands_mac.mm)。

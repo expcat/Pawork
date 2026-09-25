@@ -2,6 +2,8 @@
 #![allow(unexpected_cfgs)] // objc 0.2's macros expand their legacy cargo-clippy cfg at crate scope.
 
 mod dom;
+mod external;
+pub use external::{capture_external_page, ExternalBrowser, ExternalPageError};
 
 #[cfg(target_os = "macos")]
 mod macos;

@@ -1,6 +1,89 @@
 use super::*;
 
 #[tokio::test]
+async fn video_reference_survives_run_resume_and_rejects_old_clients() {
+    use pawork_domain::{ModelCapabilities, ModelDefinition, VideoContent};
+    let dir = tempfile::tempdir().unwrap();
+    let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("video.db"))
+        .await
+        .unwrap();
+    let provider = MockProvider::new(MockScript::new().text("video received").complete());
+    let mut core = AppCore::from_parts(
+        Arc::new(provider.clone()),
+        None,
+        "model-1".into(),
+        "mock".into(),
+        Some(store.clone()),
+    );
+    Arc::make_mut(&mut core.registry).merge_provider_models(
+        &"mock".into(),
+        &[ModelDefinition {
+            id: "model-1".into(),
+            display_name: "video model".into(),
+            context_window_tokens: 0,
+            max_output_tokens: 0,
+            capabilities: ModelCapabilities {
+                text: true,
+                video_input: true,
+                ..Default::default()
+            },
+        }],
+    );
+    let session = core.create_session("Video replay").await.unwrap();
+    let video = VideoContent {
+        url: "https://example.test/clip.mp4".into(),
+        media_type: "video/mp4".into(),
+    };
+    let adapter = GuiHostAdapter::new(Arc::new(core));
+    let mut request = command_envelope(AppCommand::RunStart {
+        session_id: session.clone(),
+        user_message: String::new(),
+        model: None,
+        provider: None,
+        profile: None,
+        effort: None,
+        attachment_ids: Vec::new(),
+        web_search: None,
+        video_urls: vec![video.clone()],
+    });
+    request.api_version.minor = 23;
+    assert!(adapter.command(&request).await.is_err());
+    assert!(provider.calls().is_empty());
+    request.api_version = API_VERSION;
+    request.command_id = "video-current".into();
+    request.idempotency_key = None;
+    let mut events = adapter.subscribe_events();
+    let AppResponse::Accepted {
+        run_id: Some(run), ..
+    } = adapter.command(&request).await.unwrap()
+    else {
+        panic!("run not accepted")
+    };
+    wait_host_run_task_settled(&adapter, &mut events, &run).await;
+    assert_eq!(provider.calls().len(), 1);
+    let resumed = adapter
+        .core
+        .read()
+        .await
+        .resume_messages_keep_pending(&session)
+        .await
+        .unwrap();
+    assert!(resumed
+        .iter()
+        .flat_map(|m| &m.content)
+        .any(|p| p == &ContentPart::Video(video.clone())));
+    let timeline = adapter.timeline(&session, None, Some(100)).await.unwrap();
+    assert!(serde_json::to_string(&timeline)
+        .unwrap()
+        .contains(&video.url));
+    assert_eq!(
+        provider.calls().len(),
+        1,
+        "replay must not send the reference again"
+    );
+}
+
+#[tokio::test]
 async fn computer_approval_image_persistence_and_resume_do_not_repeat_input() {
     use pawork_domain::{AgentTool, ContentPart, ImageContent, ImageSource, ToolResult};
     let dir = tempfile::tempdir().unwrap();
@@ -53,6 +136,7 @@ async fn computer_approval_image_persistence_and_resume_do_not_repeat_input() {
         effort: None,
         attachment_ids: Vec::new(),
         web_search: None,
+        video_urls: Vec::new(),
     });
     let AppResponse::Accepted {
         run_id: Some(run), ..
@@ -139,6 +223,7 @@ async fn chat_browser_tool_waits_for_approval_and_persists_actual_reply() {
         effort: None,
         attachment_ids: Vec::new(),
         web_search: None,
+        video_urls: Vec::new(),
     });
     request.source = source.clone();
     let mut events = adapter.subscribe_events();
