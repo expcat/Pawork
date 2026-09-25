@@ -55,7 +55,7 @@ GUI 1.21（ADR-063）additive：`RunStart` 增可选 `effort`（canonical 名 lo
 
 GUI 1.22 additive：新增 GUI-only `AttachmentUpload{session_id, attachment_id, name, offset, total_bytes, data}`（单块 ≤64 KiB、整件 ≤8 MiB，Host 内存暂存，以鉴权客户端 / 会话隔离，15 分钟过期、总声明容量 ≤64 MiB；暂存字节不落盘、不进命令账本，进入 Run 后按正常消息持久化）；`RunStart` 增可选 `attachment_ids[]` 与 `web_search?`（缺省沿用 Global，显式值仅本轮有效）。旧帧省略新字段；minor <22 或非本机 GUI 遇非空附件 / Some(web_search) fail-closed。
 
-API 1.24 新增 GUI-only PlanSave/Submit/Approve/Reject、GoalStart/Pause/Resume/Steer/Finish、SkillRecordSave 及 PlanGet/GoalGet/SkillRecordPreview；启用 PluginList。`RunStart.video_urls: Vec<VideoContent>` serde 缺省空且空时省略，旧 minor 遇非空引用明确拒绝。对应注册表最小版本、wire golden 和三组 TS 声明同批更新，命令/查询形状见 [已确认契约](../../Plan/product-contracts-2026-09-24.md)。共享 timeline 投影将视频显示为 `[video: MIME] URL`，不读取媒体。
+API 1.24 新增 GUI-only PlanSave/Submit/Approve/Reject、GoalStart/Pause/Resume/Steer/Finish、SkillRecordSave 及 PlanGet/GoalGet/SkillRecordPreview；启用 PluginList。`RunStart.video_urls: Vec<VideoContent>` serde 缺省空且空时省略，旧 minor 遇非空引用明确拒绝。对应注册表最小版本、wire golden 和三组 TS 声明同批更新；命令/查询形状见 §3.1 注册表与 `tests/golden/`（用户确认的契约草案随 46a4ff81 收口进 Git 历史）。共享 timeline 投影将视频显示为 `[video: MIME] URL`，不读取媒体。
 
 ### 3.1 core-api 信封与 registry（三通道共用词汇）
 

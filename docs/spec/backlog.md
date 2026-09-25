@@ -66,9 +66,9 @@
 | E2 | Bedrock/Vertex 模型源 | P2 |
 | F1 | 版本自检 + 可选遥测 + 离线模式 | P3 |
 
-**B9 激活登记（2026-09-24）**：用户将原未排期能力纳入本轮，API 1.24 契约已确认；实现位于 app Host 与 Desktop，复用 Run 生命周期、审批与持久事件。预算/轮数显式有界，重启后须恢复；不复制 V2 Goal reducer。实现与验收分列在 [ROADMAP](../ROADMAP.md)。
+**B9 激活登记（2026-09-24）**：用户将原未排期能力纳入本轮，API 1.24 契约已确认；实现位于 app Host 与 Desktop，复用 Run 生命周期、审批与持久事件。预算/轮数显式有界，重启后须恢复；不复制 V2 Goal reducer。2026-09-25 已实现并通过定向与本机真模型验收（生命周期、预算耗尽暂停、追加恢复、跨进程取消与人工达成），证据随 46a4ff81 进 Git 历史。
 
-**B5 激活登记（2026-09-22）**：状态——进入活动线，由 [ROADMAP](../ROADMAP.md) MM-1（图像端到端）与 MM-2（视频 canonical）承接；前置——VISION-2 逐模型能力证据与 `default_image_input` 默认表已落地（[providers.md](crates/providers.md)）；写入集——`crates/providers` / `crates/cli` / `crates/domain`（MM-2 契约演进，golden 先行且需用户确认）/ `crates/protocol` / `crates/app` / `apps/desktop` 及对应 Spec；复活资产——无（不触及 `v2-final` 归档）；停止条件——Kimi 外部 URL 拒绝等 fail-closed 语义不得放宽为静默透传，MM-2 契约草案未经用户确认不得实施。同期用户另立 MM-3（Chat 通道原生搜索接线），属 Provider 托管搜索 wire，不占用 B1（Agent 侧 webfetch / websearch 内置工具）候选。
+**B5 激活登记（2026-09-22）**：前置——VISION-2 逐模型能力证据与 `default_image_input` 默认表已落地（[providers.md](crates/providers.md)）；写入集——`crates/providers` / `crates/cli` / `crates/domain`（MM-2 契约演进，golden 先行且经用户确认）/ `crates/protocol` / `crates/app` / `apps/desktop` 及对应 Spec；复活资产——无（不触及 `v2-final` 归档）；停止条件——Kimi 外部 URL 拒绝等 fail-closed 语义不得放宽为静默透传。2026-09-25 状态：MM-1（图像端到端）真实识图验收通过、闭合；MM-2（视频 canonical）已实现，wire/拒绝/重放回归通过，支持端点真实往返待专项环境；同期 MM-3（Chat 通道原生搜索接线）Qwen Token Plan 已接 Responses 搜索，GLM 搜索 MCP 未配置，DeepSeek 保持拒绝；MM-3 属 Provider 托管搜索 wire，不占用 B1（Agent 侧 webfetch / websearch 内置工具）候选。剩余事项见 [ROADMAP](../ROADMAP.md)。
 
 ## 4. 其它产品候选/归档复活面
 
@@ -86,6 +86,18 @@
 | BK-RES-01 | Resources 已加载规则分区 | 候选 | host 暴露实际加载的 AGENTS.md/Skills query 后再渲染。 |
 | BK-RESP-01 | 1080–1279 窄窗自适应 | 已接受延期 | TaskRail 240px/Inspector 默认折叠需单独 UI 任务和截图验收。 |
 | BK-RELEASE-01 | 发布、全量门禁、三平台矩阵 | 未授权 | License 确定 + 用户明确授权后另立任务。 |
+
+**库激活前置与条件性技术项（2026-09-23 Review 登记，2026-09-25 随本轮提交收口移入）**：
+
+| ID | 事项 | 触发条件 |
+| --- | --- | --- |
+| O-03 | control-plane usage 在同步 SQLite 锁内全量取行再聚合 | 先用代表性长账本测量，证明瓶颈再把等价聚合下推 SQL；保留幂等和金额精度 |
+| O-04 | Desktop 主会话/子代理分页收集逻辑相似 | 只有同批修改两条路径且减少重复时才抽取共享纯页面收集；UI 身份与过期回执判断保持分开 |
+| O-06 | TaskGraph 前向引用可绕过跨租户依赖检查（先登记依赖尚不存在的任务，再登记他租户同名任务） | 接入 Host DAG 前补反向依赖校验，用两种登记顺序验证同一拒绝结果；当前未装配，不计入产品故障 |
+| O-07 | Git merge 用合并时父仓 HEAD 作基准，读取失败还回退当前文件 | 激活 patch merge 前保存真实 fork commit，读取失败明确报错并覆盖父侧并发修改；未激活前不宣传为生产自动合并 |
+| O-08 | Task reducer 迟到/重复 Started 可把完成态改回 Running | 仅在支持增量/容错重放时明确拒绝或幂等语义；不屏蔽合法新生命周期 |
+
+实例 ID 的跨宿主唯一性、远程 transport 的 unpublish/revoke 分工同为条件项：分别在共享同库多宿主、恢复远程传输时复核，不计入当前产品故障数。
 
 ## 5. 架构排除项
 
@@ -110,6 +122,6 @@ Settings 活动线已实现并有原批次本机真窗口记录（2026-09-05，�
 
 ## 7. 活动计划与历史记录
 
-当前审查发现、包定位和实施切片统一见 [Plan](../Plan/README.md)，优先级见 [ROADMAP](../ROADMAP.md)。本页只管理候选和激活条件。
+当前活动任务与验收状态统一见 [ROADMAP](../ROADMAP.md)，本页只管理候选和激活条件。2026-09-23 全项目 Review 的发现、包定位、修复执行计划与产品验收清单随本轮实现提交收口，从 `git show 46a4ff81:docs/Plan/README.md` 追溯。
 
-已完成的 MOCK-1～8 与已关闭 BUG-OAUTH-01 / BUG-USAGE-01 / BUG-GUI-01 过程记录移出活动文档，可从 `git show f14edb23:docs/spec/backlog.md` 追溯；更早计划见 `37fae8f3:docs/mock-simulation-plan.md`。MOCK-0b 仍为未获批候选，已有回归资产不因文档清理删除。未闭合的真实环境和用户验收见 [验收清单](../Plan/product-and-acceptance.md)。
+已完成的 MOCK-1～8 与已关闭 BUG-OAUTH-01 / BUG-USAGE-01 / BUG-GUI-01 过程记录移出活动文档，可从 `git show f14edb23:docs/spec/backlog.md` 追溯；更早计划见 `37fae8f3:docs/mock-simulation-plan.md`。MOCK-0b 仍为未获批候选，已有回归资产不因文档清理删除。

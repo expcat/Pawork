@@ -21,7 +21,7 @@
 
 ---
 
-2026-09-24 经用户确认的 [产品契约](Plan/product-contracts-2026-09-24.md)：API 1.23 新增跨进程 TasksCancel；1.24 新增 Plan/Goal/技能录制与远程 Video 引用。持续目标由现行 Host 驱动并持久化，重启必须显式恢复；Desktop 仍不加载 Core。文件夹与外部浏览器快照只作为显式选定的附件，不注册工作区或扩大工具权限。技能写入由 Host 基于 workspace_id 解析后安全新建，插件面只展示实际记录，不引入插件运行时。
+2026-09-24 经用户确认的产品契约（现行形状见 [协议 Spec](spec/crates/protocol.md)）：API 1.23 新增跨进程 TasksCancel；1.24 新增 Plan/Goal/技能录制与远程 Video 引用。持续目标由现行 Host 驱动并持久化，重启必须显式恢复；Desktop 仍不加载 Core。文件夹与外部浏览器快照只作为显式选定的附件，不注册工作区或扩大工具权限。技能写入由 Host 基于 workspace_id 解析后安全新建，插件面只展示实际记录，不引入插件运行时。
 
 ## 2. 包布局与依赖方向（24 包）
 

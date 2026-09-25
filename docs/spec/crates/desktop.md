@@ -246,7 +246,7 @@ Run 页脚和底栏使用 `run_usage_display` 显示对应 Run 输入 / 输出 t
 
 Composer 添加菜单接入 `ui/plan.rs`、`ui/goal.rs`、`ui/recording.rs`、`ui/video.rs`、`ui/drawing.rs`；`controller/products.rs` 在 Tokio runtime 发 typed 请求。Plan 带版本编辑/提交/批准/拒绝；Goal 显式预算/轮数、2 秒状态刷新、暂停/恢复/转向/人工达成/放弃，状态与常见暂停原因显示中英文提示；录制从持久操作选择预览、人工编辑后保存；插件面板显示真实空列表并独立链接技能/MCP。视频 URL 按任务草稿保存，编辑/清空即移除，与其它附件合计最多 4 项；模型 `video_input` 与 API 1.24 同时 gate，重放保留来源。旧 Host 的新增入口禁用并给版本提示。
 
-`ui/product_access.rs` 复用 AxBridge，为面板字段、按钮和错误同步 AX 与键盘动作；AppKit Tab monitor 只作用于活动窗口。绘图使用有界 640×360 黑色画布，撤销/清空/取消/附加，内部 PNG 编码后复用普通图片附件链。目标预算不派生子代理；关闭目标面板继续 Host 执行。具体自动检查与真窗口证据分别登记 [产品验收](../../Plan/product-and-acceptance.md)。
+`ui/product_access.rs` 复用 AxBridge，为面板字段、按钮和错误同步 AX 与键盘动作；AppKit Tab monitor 只作用于活动窗口。绘图使用有界 640×360 黑色画布，撤销/清空/取消/附加，内部 PNG 编码后复用普通图片附件链。目标预算不派生子代理；关闭目标面板继续 Host 执行。自动检查与真窗口证据留在 Git 历史，剩余验收见 [ROADMAP](../../ROADMAP.md)。
 
 ## 4. 核心行为与数据流
 

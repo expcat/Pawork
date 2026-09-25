@@ -189,7 +189,7 @@ GUI `run_start` 在既有 ToolScheduler 注册 `terminal` / `browser`，保留�
 
 `handlers/recording.rs` 从最近 4096 持久事件列出最多 128 次完成操作，可选最多 64 项生成可编辑技能文本；只录工具名和参数、保留失败标记，不复制输出。保存只接受本机 GUI/API 1.24，Host 解析 workspace roots，检查名称、64 KiB 上限及凭据后调用 workspace 安全新建入口。`plugin_list` 返回真实空记录与 `runtime_available=false`；当前没有插件安装器或运行时。
 
-`RunStart.video_urls` 验证版本、HTTP(S) 无凭据引用及视频/附件合计最多 4 项，转成 canonical Video 后进入持久消息/能力 gate；Host 不下载视频。历史共享投影保留 MIME 和 URL。新增 Plan、目标预算/停止/恢复、录制加载与拒绝、视频运行/重放回归；具体本轮结果见 [产品验收](../../Plan/product-and-acceptance.md)。
+`RunStart.video_urls` 验证版本、HTTP(S) 无凭据引用及视频/附件合计最多 4 项，转成 canonical Video 后进入持久消息/能力 gate；Host 不下载视频。历史共享投影保留 MIME 和 URL。新增 Plan、目标预算/停止/恢复、录制加载与拒绝、视频运行/重放回归；验收状态见 [ROADMAP](../../ROADMAP.md)。
 
 ## 4. 核心行为与数据流
 

@@ -18,7 +18,6 @@
 | [operations.md](operations.md) | 如何启动、配置、诊断、备份与恢复本机实例？当前发布/运维边界是什么？ |
 | [backlog.md](backlog.md) | 已确认扩展、未排期候选、排除项和候选转正闸门是什么？ |
 | [../ROADMAP.md](../ROADMAP.md) | 当前修复优先级、产品缺口与未闭合验收；历史记录从 Git 追溯 |
-| [../Plan/README.md](../Plan/README.md) | 2026-09-23 全项目 Review、包定位与执行切片 |
 | [feature-template.md](feature-template.md) | 大型候选转正时，Feature Spec 最少应包含哪些内容？ |
 
 ### 1.2 包级 Spec

@@ -62,7 +62,6 @@ Pawork/                  # 仓库根 = Cargo workspace 根
 | --- | --- |
 | [docs/architecture.md](docs/architecture.md) | 架构：红线、包布局与依赖方向、冻结契约、安全语义 |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | 当前修复优先级、产品缺口与未闭合验收 |
-| [docs/Plan/README.md](docs/Plan/README.md) | 全项目 Review、24 包定位、修复执行计划与剩余验收 |
 | [docs/design.md](docs/design.md) | 功能设计：能力域与参照项目映射、明确不做的形态 |
 | [docs/spec/README.md](docs/spec/README.md) | 产品与包级 Spec 总索引 |
 | [docs/spec/crates/](docs/spec/README.md#12-包级-spec) | 每包一篇 Spec（agent 辅助阅读主入口） |
