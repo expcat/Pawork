@@ -20,7 +20,7 @@ use pawork_engine::{
     AgentEventSink, ContextBudget, ContextLimits, EngineError, HeuristicEstimator,
     TokenEstimator as EngineTokenEstimator, TurnContext,
 };
-use pawork_providers::{CatalogEntry, ModelRegistry};
+use pawork_models::{CatalogEntry, ModelRegistry};
 use pawork_storage::session::{SessionRecord, SessionStore, SessionStoreError, WorkspaceRecord};
 use pawork_tools::{ToolRegistry, ToolRegistryError, ToolScheduler, ToolSchedulerConfig};
 use pawork_workspace::config::{ConfigError, Loader, PaworkConfig, TerminalConfig};
@@ -183,7 +183,7 @@ pub enum AppError {
     #[error("{0}")]
     Protected(String),
     #[error(transparent)]
-    Mcp(#[from] pawork_tools::mcp::McpError),
+    Mcp(#[from] pawork_mcp::McpError),
     #[error(transparent)]
     Resources(#[from] pawork_workspace::resources::ResourceLoadError),
     #[error(transparent)]
@@ -497,6 +497,13 @@ impl AppCore {
             &crate::instance_dir(&data_dir, instance),
             options.instance_role,
         )?);
+        // A gateway never opens sessions, starts MCP tools or sweeps Agent runs.
+        if options.instance_role == crate::InstanceRole::Gateway {
+            core.open_protected(protected_store_path_for(&data_dir, instance))
+                .await?;
+            core.open_control_plane(crate::instance_dir(&data_dir, instance))?;
+            return Ok(core);
+        }
         core.open_store(session_db_path_for(&data_dir, instance))
             .await?;
         core.prime_extensions().await?;

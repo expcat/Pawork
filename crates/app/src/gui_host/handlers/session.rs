@@ -1,11 +1,11 @@
 use std::sync::atomic::Ordering;
 
 use crate::app_core::PLACEHOLDER_SESSION_TITLE;
-use crate::gui_server::GuiHostError;
 use pawork_domain::{SessionId, WorkspaceId};
 use pawork_engine::now_timestamp;
+use pawork_gui_server::GuiHostError;
 use pawork_protocol::{AppCommand, AppCommandEnvelope, AppEvent, AppResponse};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use super::super::GuiHostAdapter;
 

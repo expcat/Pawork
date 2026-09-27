@@ -12,10 +12,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use pawork_app::devfixture::{self, SeedSpec};
-use pawork_app::gui_server::GuiHost;
 use pawork_app::{AppCore, GuiHostAdapter};
 use pawork_domain::{ModelId, ProviderId, SessionId};
 use pawork_git::LineKind;
+use pawork_gui_server::GuiHost;
 use pawork_protocol::{SnapshotSectionKind, TimelineItem, TimelineItemKind};
 use pawork_storage::session::SessionStore;
 use pawork_testkit::{MockProvider, MockScript};

@@ -20,6 +20,9 @@ ADR-061 使用 GUI API 1.17：空 `display_name` 在 add/start 时由 Host 生�
 
 ## 2. 契约目录
 
+新增独立面 [GW-1](model-gateway.md)：`GET /v1/models` 与 `POST /v1/chat/completions`；模型 ID 为 provider/model；API Base、SSE、错误、鉴权与用量约定见该文档。它不属于 core-api command registry，不更改 GUI/ACP wire。
+
+
 | ID | 契约 | 当前版本/形状锚 | 生产者 → 消费者 | 精确事实源 |
 | --- | --- | --- | --- | --- |
 | CON-PROVIDER-01 | Canonical Provider | `ModelProvider`、`CanonicalModelRequest`（可选 `session_id`，ADR-057）、`ProviderStreamEvent`、`ModelResponseSummary`、`ResolvedCredential`、`ProviderError` | providers adapter → engine/app | [domain provider API](../../crates/domain/src/provider_api.rs)；[architecture §3.2](../architecture.md#32-冻结契约激活即采用完整形状golden-先于实现改动) |
@@ -32,7 +35,7 @@ ADR-061 使用 GUI API 1.17：空 `display_name` 在 add/start 时由 Host 生�
 | CON-GUI-01 | GUI Connection Protocol | API `1.21`；支持 `1.0`–`1.21`；Accepted 握手可选 `host_data_dir`；`ClientFrame`/`ServerFrame`；上限 1 MiB | app GUI host ↔ client/Desktop | [protocol](../../crates/protocol/src)；[schemas/gui-protocol](../../schemas/gui-protocol)；protocol fixtures/golden |
 | CON-REGISTRY-01 | Command/Capability Registry | 45 `AppCommand`、20 `AppQuery`；GUI/headless/ACP 可用性同源 | protocol registry → app/cli/client | [registry](../../crates/protocol/src/app/registry.rs) |
 | CON-HEADLESS-01 | Headless JSON | 与 GUI 帧正交的 request/response JSONL；stdout-only | CLI stdio ↔ SDK/automation | [headless protocol](../../crates/protocol/src/headless)；[schemas/headless-json](../../schemas/headless-json) |
-| CON-ACP-01 | ACP 映射 | ACP adapter 只接 registry 允许的能力，未登记拒绝 | IDE/ACP client ↔ CLI/AppCore | [CLI ACP](../../crates/cli/src/channels/acp)；ACP fixtures |
+| CON-ACP-01 | ACP 映射 | ACP adapter 只接 registry 允许的能力，未登记拒绝 | IDE/ACP client ↔ CLI/AppCore | [ACP](../../crates/acp/src)；ACP fixtures |
 | CON-USAGE-01 | Usage 与审计 | usage `dedup_key`；audit 为 JSONL | app/control-plane → usage ledger/audit | [control-plane](../../crates/control-plane/src)；对应 golden |
 | CON-AUTH-01 | 本机 Secret 文件 | auth format v1；`0600`、原子 rename、损坏 fail-closed；MCP 独立文件/前缀 | CLI/app/tools ↔ auth backend | [auth backend](../../crates/auth/src) |
 | CON-TRANSPORT-01 | 本机字节传输 | `[u32 LE payload_len][payload]`，上限 1 MiB | transport ↔ protocol codec | [transport](../../crates/transport/src)；[protocol codec](../../crates/protocol/src/codec.rs) |

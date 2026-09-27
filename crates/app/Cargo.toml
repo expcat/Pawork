@@ -15,6 +15,10 @@ ui-fixture = []
 live-smoke = []
 
 [dependencies]
+pawork-gui-server = { path = "../gui-server" }
+pawork-mcp = { path = "../mcp" }
+pawork-gateway = { path = "../gateway" }
+pawork-models = { path = "../models" }
 pawork-domain = { path = "../domain" }
 pawork-engine = { path = "../engine" }
 pawork-providers = { path = "../providers", features = [
@@ -46,7 +50,7 @@ futures.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "fs", "sync", "time"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "fs", "sync", "time", "net"] }
 reqwest.workspace = true
 toml.workspace = true
 blake3.workspace = true
@@ -64,14 +68,6 @@ pawork-storage = { path = "../storage" }
 pawork-testkit = { path = "../testkit" }
 pawork-transport = { path = "../transport", features = ["local", "memory"] }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "sync", "time"] }
-
-[[test]]
-name = "gui_server_session"
-path = "tests/gui_server/session.rs"
-
-[[test]]
-name = "gui_server_multi_gui_runtime"
-path = "tests/gui_server/multi_gui_runtime.rs"
 
 [[test]]
 name = "ui_fixture_projection"

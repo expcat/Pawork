@@ -5,11 +5,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 
-use crate::channels::{AcpCommandHost, AcpHostError};
 use async_trait::async_trait;
-use pawork_app::gui_server::GuiHost;
+use pawork_acp::{AcpCommandHost, AcpHostError};
 use pawork_app::{AppCore, GuiApprovalHost, GuiHostAdapter};
 use pawork_domain::{CommandId, QueryId, Timestamp};
+use pawork_gui_server::GuiHost;
 use pawork_protocol::{
     ActorIdentity, AppCommand, AppCommandEnvelope, AppEventEnvelope, AppQueryEnvelope, AppResponse,
     AppResponseEnvelope, CommandSource, API_VERSION,

@@ -23,11 +23,11 @@ use pawork_domain::{
 use serde_json::{json, Value};
 
 use crate::memory_protector::InMemoryReasoningProtector;
-use crate::negotiate::{clamp_reasoning_to_thinking, CapabilityNegotiator};
 use crate::net::http::{HttpClient, HttpClientConfig};
 use crate::net::sse::SseParser;
-use crate::registry::{CapabilityEvidence, ModelRegistry};
 use crate::{ReasoningProtectError, ReasoningProtector};
+use pawork_models::negotiate::{clamp_reasoning_to_thinking, CapabilityNegotiator};
+use pawork_models::registry::{CapabilityEvidence, ModelRegistry};
 
 use super::request::{has_prompt_cache_breakpoint, to_messages_body_with_plan, MessagesWirePlan};
 use super::stream::{parse_event, AnthropicStreamState, StreamOutput};
@@ -529,7 +529,7 @@ fn requirements_from_request(request: &CanonicalModelRequest) -> CapabilityRequi
             .messages
             .iter()
             .flat_map(|m| &m.content)
-            .any(crate::negotiate::content_part_has_video),
+            .any(pawork_models::negotiate::content_part_has_video),
         transport_pref: vec![ModelTransport::Messages],
         required_tools,
         reasoning,

@@ -1,12 +1,13 @@
 //! Continuous goals reuse RunStart, its session reservation, approvals and durable terminal path.
 use super::super::{GuiBroadcastSink, GuiHostAdapter};
 use super::run_start::SessionSlotGuard;
-use crate::{gui_server::GuiHostError, GoalSnapshot};
+use crate::GoalSnapshot;
 use pawork_domain::{
     AgentEvent, AgentEventEnvelope, CancellationToken, CriterionKind, GoalEvent, GoalId,
     GoalStatus, SessionId, SuccessCriterionSnapshot,
 };
 use pawork_engine::{AgentEventSink, EngineError};
+use pawork_gui_server::GuiHostError;
 use pawork_protocol::{AppCommand, AppCommandEnvelope, AppQuery, AppResponse};
 use std::{
     collections::HashMap,

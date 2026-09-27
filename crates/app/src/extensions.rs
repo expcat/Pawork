@@ -11,12 +11,12 @@ use pawork_engine::InjectedLayer;
 use pawork_exec::{
     default_secret_paths, FilesystemPolicy, NativeRestricted, NetworkMode, SandboxPolicy,
 };
-use pawork_tools::mcp::capabilities::register_server_tools;
-use pawork_tools::mcp::config::{McpConfig, McpServerConfig, StdioSandboxRuntime, TransportSpec};
-use pawork_tools::mcp::manager::{ConnectionState, ManagedMcpClient};
-use pawork_tools::mcp::sandbox::apply_mcp_stdio_env_hygiene;
-use pawork_tools::mcp::security::SecretRef;
-use pawork_tools::mcp::{McpError, McpPeer};
+use pawork_mcp::capabilities::register_server_tools;
+use pawork_mcp::config::{McpConfig, McpServerConfig, StdioSandboxRuntime, TransportSpec};
+use pawork_mcp::manager::{ConnectionState, ManagedMcpClient};
+use pawork_mcp::sandbox::apply_mcp_stdio_env_hygiene;
+use pawork_mcp::security::SecretRef;
+use pawork_mcp::{McpError, McpPeer};
 use pawork_tools::{
     ApplyPatchTool, EditFileTool, FindFilesTool, ListDirectoryTool, ReadFileTool, RunCommandTool,
     SearchTextTool, ToolRegistry, ToolScheduler, ToolSchedulerConfig, WriteFileTool,
@@ -56,13 +56,18 @@ pub struct AtAttachment {
 /// 图片转 canonical Image part（base64）；超限图片不静默丢弃，改给诚实省略标记。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AtAttachmentBody {
-    Text { content: String, truncated: bool },
+    Text {
+        content: String,
+        truncated: bool,
+    },
     Image {
         media_type: &'static str,
         data_base64: String,
         byte_len: usize,
     },
-    ImageOmitted { byte_len: usize },
+    ImageOmitted {
+        byte_len: usize,
+    },
 }
 
 pub(crate) struct McpServerSlot {
@@ -343,7 +348,7 @@ impl AppCore {
             .list_tools()
             .await?
             .into_iter()
-            .map(|tool| pawork_tools::mcp::capabilities::namespaced_name(name, &tool.name))
+            .map(|tool| pawork_mcp::capabilities::namespaced_name(name, &tool.name))
             .collect();
         let health = client.health().await;
         let state = match health.state {

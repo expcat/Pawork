@@ -18,6 +18,8 @@
 
 ## 2. 能力域与参照映射
 
+2026-09-27 包边界调整：模型目录、能力协商与定价由 `pawork-models` 共享，具体 API/wire 与厂商差异留在 `pawork-providers`；GUI、ACP、MCP、HTTP 网关各自拥有接入运行时，业务装配仍归 `pawork-app` / `pawork-cli`。依据是职责、依赖方向和独立演进，不以执行成本或包数量为目标；完整决策见 [架构 §2.1](architecture.md#21-2026-09-27-包边界决策)。
+
 「参照」列给出该能力在参照项目中的对应实现。项目背景见 [references.md](references.md)；反向分类见同文 §6。机制细节见其附录 A。
 
 ### 对话 CLI

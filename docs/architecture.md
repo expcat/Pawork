@@ -23,9 +23,9 @@
 
 2026-09-24 经用户确认的产品契约（现行形状见 [协议 Spec](spec/crates/protocol.md)）：API 1.23 新增跨进程 TasksCancel；1.24 新增 Plan/Goal/技能录制与远程 Video 引用。持续目标由现行 Host 驱动并持久化，重启必须显式恢复；Desktop 仍不加载 Core。文件夹与外部浏览器快照只作为显式选定的附件，不注册工作区或扩大工具权限。技能写入由 Host 基于 workspace_id 解析后安全新建，插件面只展示实际记录，不引入插件运行时。
 
-## 2. 包布局与依赖方向（24 包）
+## 2. 包布局与依赖方向（29 包）
 
-Workspace 为 **24 成员（22 库 + 2 应用）**：22 个库平铺 `crates/<短名>`（目录 = 包名去 `pawork-` 前缀，包名保持 `pawork-` 前缀），2 个应用 `apps/{pawork,desktop}`。2026-09-16 按用户明确要求新增独立浏览器包；2026-09-17 按用户明确授权新增独立 computer use 包；其它新能力仍往既有包加模块，包布局变更须向用户确认。
+Workspace 为 **29 成员（27 库 + 2 应用）**：27 个库平铺 `crates/<短名>`（目录 = 包名去 `pawork-` 前缀，包名保持 `pawork-` 前缀），2 个应用 `apps/{pawork,desktop}`。2026-09-16 按用户明确要求新增独立浏览器包；2026-09-17 按用户明确授权新增独立 computer use 包；2026-09-27 用户授权本次合拆评估与实施，新增 models / gui-server / acp / mcp / gateway；判断依据见 §2.1。
 
 | 包 | 目录 | 依赖方向 | 备注 |
 | --- | --- | --- | --- |
@@ -34,10 +34,11 @@ Workspace 为 **24 成员（22 库 + 2 应用）**：22 个库平铺 `crates/<�
 | `pawork-testkit` | `crates/testkit` | → domain | dev-only：MockProvider/MockTool/契约断言 |
 | `pawork-policy` | `crates/policy` | → domain | 安全内核；`PolicyDecision`/`ApprovalMode` 冻结契约与红线回归锚；shell 风险分类；`path` 内核 |
 | `pawork-exec` | `crates/exec` | → policy（仅路径 helper） | process/sandbox/pty；不直接依赖 domain；CancellationToken 仍为本包类型 |
-| `pawork-tools` | `crates/tools` | → domain、exec、policy、workspace、auth、computer-use | 八个文件/命令工具 + computer + scheduler + `mcp/`（rmcp 隔离断言为模块级测试） |
+| `pawork-tools` | `crates/tools` | → domain、exec、policy、workspace、computer-use | 九个内置工具 + registry/scheduler；不依赖 MCP SDK 或认证客户端 |
 | `pawork-workspace` | `crates/workspace` | → domain、policy | `service/`+`path/`+`file_index/`、`resources/`、`config/`（六层矩阵）、`import/`（五来源导入 + session_scan） |
 | `pawork-storage` | `crates/storage` | → domain | `sqlite/`（Actor+migration 框架）、`session/`（DDL/迁移/export）、`blob/`（artifact + 共用 `atomic_write_bytes` + PWB1/checkpoint/protected）；`default = ["session","blob"]`，compaction/checkpoint/protected opt-in |
-| `pawork-providers` | `crates/providers` | → domain | `net/`（http/sse/retry）+ `registry/`/`pricing/`/`usage/`/`negotiate/`/`reasoning/` + `channels/`（八通道，feature 门控；通道登记单点 `channels/registry.rs` `CHANNEL_REGISTRY`，app 侧为 facade）；core 不依赖 net 为模块纪律 + 源扫描测试 |
+| `pawork-models` | `crates/models` | → domain | registry/能力证据与默认表、negotiate、pricing；无具体 Provider、HTTP、存储或 GUI 依赖 |
+| `pawork-providers` | `crates/providers` | → domain、models | HTTP/SSE + Chat/Responses/Messages wire、八通道适配、usage/error 归一、reasoning 保护端口；通道静态注册单源 |
 | `pawork-auth` | `crates/auth` | → domain | Secret 后端/OAuth/脱敏/解析链 + `locator` 单一事实源（Secret 审计边界） |
 | `pawork-git` | `crates/git` | → domain、exec | Diff/Status/GitService/GitRunner/HunkStage/worktree；单一 `FileStatus` |
 | `pawork-engine` | `crates/engine` | → domain（唯一 pawork-* 生产依赖，`tests/domain_only.rs` 断言护航） | tool_loop/session_turn/context/cancel/appender |
@@ -45,8 +46,12 @@ Workspace 为 **24 成员（22 库 + 2 应用）**：22 个库平铺 `crates/<�
 | `pawork-orchestration` | `crates/orchestration` | → domain、policy（路径内核）、control-plane（default-features = false）、git(opt) | supervisor/budget/lifecycle/merge/task_graph/worktree/identity；不依赖 workflow（装配在 app） |
 | `pawork-control-plane` | `crates/control-plane` | → domain（rusqlite optional，自开连接） | 控制面 core + `quota/` + `credential/`（lease/pool）；租户裁决 `TenantPolicyDecision`（与 policy 的 `PolicyDecision` 不同名）；usage `dedup_key`/audit JSONL golden |
 | `pawork-transport` | `crates/transport` | 无内部依赖（帧长度常量与 protocol 对齐，但不依赖该 crate） | local（UDS/named pipe）+ memory |
-| `pawork-app` | `crates/app` | 领域宿主依赖 + transport | 装配宿主 + `gui_server/`（GuiServer/ConnectionManager/GuiHost trait）+ `gui_host/`（分发表） |
-| `pawork-cli` | `crates/cli` | 原 cli 依赖（GuiHost 经 app） | 21 子命令 + `channels/acp/`（AcpHost 四件套） |
+| `pawork-mcp` | `crates/mcp` | → domain、tools、exec、workspace、auth | MCP 协议/连接/认证；rmcp 隔离于 codec；复用 tools 注册表和调度 |
+| `pawork-gui-server` | `crates/gui-server` | → domain、protocol、transport | GuiServer / ConnectionManager / GuiHost 端口，无 Core 装配依赖 |
+| `pawork-acp` | `crates/acp` | → domain、protocol | ACP wire、映射、会话 actor、AcpCommandHost 端口；无 CLI / app 依赖 |
+| `pawork-gateway` | `crates/gateway` | → domain、auth | loopback HTTP/SSE、token、GatewayBackend；不依赖 Core/Provider/数据库 |
+| `pawork-app` | `crates/app` | → domain、engine、models、providers、auth、tools、mcp、policy、workspace、exec、storage、git、workflow、orchestration、control-plane、protocol、transport、gui-server、gateway | AppCore / gui_host / GatewayBackend 实现；账户、租约、账本、工具与事件装配 |
+| `pawork-cli` | `crates/cli` | → app、client、domain、engine、protocol、storage、transport、gui-server、acp、gateway | 子命令、REPL、stdio / listener / 进程生命周期装配 |
 | `pawork-client` | `crates/client` | → domain、protocol、transport | framed 连接面 + `headless/`；probe 场景为本包 tests/，live 模式 `examples/probe.rs` |
 | `pawork-terminal` | `crates/terminal` | 无内部依赖 | 终端显示核心：行缓冲解析（CR/退格/擦除/光标/折行/SGR 16 色）、按键→PTY 字节映射、面板像素→列×行估算；不是完整 VT emulator |
 | `pawork-computer-use` | `crates/computer-use` | 无内部依赖 | 独立虚拟桌面截图和输入（本地 RFB / 容器内 Xvnc），不使用本机 HID；不依赖 GUI / Core / Provider，tools 适配后由 Host 执行 |
@@ -56,19 +61,48 @@ Workspace 为 **24 成员（22 库 + 2 应用）**：22 个库平铺 `crates/<�
 
 **不合并清单**（保持独立包）：`policy`、`exec`、`auth`、`git`、`engine`、`protocol`、`testkit`、`transport`、`orchestration`、`workflow`。
 
-理由（布局经验）：`policy` 并入含 tools 的包即成环；`exec` 只通过 policy 路径 helper 共享安全内核；`auth` 是 Secret 审计边界。GUI 编译闭包可以出现 domain/protocol **纯类型**，不违反「GUI 不加载 Core」——红线指运行时装配，不指类型入编译图。对照外部布局只抄纪律不抄粒度：微 crate 增殖会把跨域改动摊到十几份 Cargo 清单上。
+理由：这些包对应不同安全、执行、契约或状态职责，合并会破坏单向依赖或独立消费者边界。GUI 编译闭包可以出现 domain/protocol **纯类型**，红线指 GUI 不加载 Core 运行时装配。新增包需要现有职责、真实消费者与可以强制的依赖边界，不按文件大小或厂商品牌拆包。
 
 归档资产以 git tag `v2-final` 兜底；复活条件登记 [产品候选](spec/backlog.md)；不得把归档代码复制回仓库其它位置。`pawork-domain` 的 `plugin = []` 仅作复活锚点。
 
 ---
 
+### 2.1 2026-09-27 包边界决策
+
+本次以长期职责内聚、依赖方向、协议/SDK 升级隔离及真实消费者为依据，不把实施成本或包数量作为目标。结论为 **5 处拆分、0 处合并**，24 → 29 成员。用户已授权分析后按推荐方案实施，覆盖此前“当前不新增包”的布局限制。
+
+| 原边界 | 决策与现有证据 | 新依赖方向 |
+| --- | --- | --- |
+| providers 的 registry / negotiate / pricing / error | 抽出 models。app 与 adapter 共同使用目录、能力 gate 和计价；模型逻辑不应依赖 HTTP/厂商实现，迁出模块由 Cargo 边界隔离，留下的 usage/reasoning 保留 net 禁入守卫 | app → models；providers → models → domain |
+| app 的 gui_server | 抽出 gui-server。已有 GuiHost 端口，握手/背压/心跳/重放不需要 Core 私有状态，MockHost 测试随迁；GUI 业务实现留在 app | cli → gui-server；app 实现 GuiHost；gui-server → protocol/transport/domain |
+| cli 的 channels/acp | 抽出 acp。已有 AcpCommandHost，wire/会话 actor/权限映射只依赖 canonical 协议；CLI 承载 stdio 和进程生命周期 | cli → acp → protocol/domain |
+| tools 的 mcp | 抽出 mcp。SDK、远端连接、OAuth 和 stdio 生命周期与本地文件工具不同；直接复用 ToolRegistry，不另建调度 | app → mcp → tools；tools 不依赖 rmcp/auth/reqwest |
+| app 的 gateway_server / gateway_tokens | 抽出 gateway 并定义 GatewayBackend。HTTP/token 不加载 Core；Completion 保存宿主冻结请求，保持准备失败在 SSE 成功头之前返回 | cli → gateway；app 实现 GatewayBackend；gateway → domain/auth |
+
+厂商通道继续在 providers 内按模块组织。八条通道共用三种 wire 协议，按品牌拆 crate 会使相同协议的更新跨越多个相互关联的包；没有独立 SDK、依赖闭包或真实消费者要求按品牌分割。HTTP/SSE 也不单独成为通用网络包：当前只是 providers 内部实现，认证/MCP 各有不同安全策略。reasoning 保护端口与 wire usage 归一留在 providers。
+
+以下边界保留：domain 的纯契约；protocol 的共享 wire/投影、client 的客户端行为、transport 的字节 IO；policy 的裁决、exec 的执行与沙箱、auth 的 Secret；workspace 的根/配置/资源、storage 的事件与 blob 持久化、git 的系统 Git；engine 的 domain-only 执行核；workflow 的可重放状态机、orchestration 的 worker 生命周期、control-plane 的租约/配额/账本；testkit 的开发依赖；browser、computer-use、terminal 的独立平台/显示职责；两个应用的进程边界。当前没有职责重复到值得合包的生产实现，也不按文件长度进一步拆 workspace/storage/app。
+
+实施是原实现及现有回归的单次迁移，消费者直接指向新包，不保留旧模块 re-export 或双轨实现。GUI/core-api、ACP、网关 HTTP、数据库和持久事件格式均不变；不新增第三方生产依赖。服务仍只有 `pawork` 正式宿主，Desktop 直接内部依赖仍为 client/terminal/browser。
+
+竞品依据为 2026-09-27 获取的官方源码（固定 commit，具体机制并非照搬）：
+
+- [Codex model-provider](https://github.com/openai/codex/tree/8f195c93d7e7acfef95acf273f0e49cce917e291/codex-rs/model-provider) 与 [models-manager](https://github.com/openai/codex/tree/8f195c93d7e7acfef95acf273f0e49cce917e291/codex-rs/models-manager)：协议请求、模型目录与 Provider 生命周期有独立职责；其 Provider 对 login/secrets/遥测的聚合不作为 Pawork 窄 adapter 的目标。
+- [OpenCode provider](https://github.com/anomalyco/opencode/blob/b471c2b4495747353af768fbf2e0790c9d820ce2/packages/opencode/src/provider/provider.ts)：通用 SDK 协议与品牌配置可以复用；其 Bun/插件/应用服务形态不适合纯 Rust 约束。
+- [Zed language_model_core](https://github.com/zed-industries/zed/tree/bda9c0bd43a8d235d82adb01ea5bc875b861ecfc/crates/language_model_core) 与 [open_ai](https://github.com/zed-industries/zed/blob/bda9c0bd43a8d235d82adb01ea5bc875b861ecfc/crates/open_ai/src/open_ai.rs)：共享语义与协议适配分离可参考；[language_model](https://github.com/zed-industries/zed/blob/bda9c0bd43a8d235d82adb01ea5bc875b861ecfc/crates/language_model/Cargo.toml) 的 GPUI 依赖不能进入 Pawork 模型/Provider 层。
+
+---
+
 ## 3. 冻结契约与「追加不重写」
+
+2026-09-25 用户授权的 [GW-1 本机模型网关](spec/model-gateway.md)：`pawork gateway serve` 在 127.0.0.1:17432 提供独立 OpenAI HTTP v1 子集，gateway 包完成 HTTP wire 翻译，通过 app 的 GatewayBackend 实现经既有 providers 调用模型，不走 Agent loop。使用按客户端可撤销的摘要 token、Host/Origin 校验及 thirdparty 租户账本；GUI/core-api 版本与既有 schema 不变。2026-09-27 已按职责抽为 gateway 库，不新增服务二进制，不开放远程账户池或凭证导出。
+
 
 **右侧浏览器（2026-09-16，用户授权）**：`desktop → browser → 系统 WebKit` 承载网页视图及受限 DOM 操作；网页脚本运行于系统内容进程，不把 JS Runtime 嵌入 Agent / Core 或构建链。每任务一个内存页面，非持久网站数据互相隔离；不导入系统浏览器资料，不提供网页到 Rust 的工具桥。地址栏、链接与重定向限定 HTTP(S)，支持本地预览。聊天经 Host 的 `browser` 工具、Policy 与显式审批，通过 GUI 1.18 `browser_next` / `browser_respond` 操作当前任务页面，结果作为工具事件持久化；历史重放不派发操作。关闭释放，隐藏和切任务保留；尚无截图、多标签、下载与跨启动恢复。数据库 schema 不变。
 
 ### 3.1 终局包布局先行
 
-- 现行布局为 §2 的 24 成员；browser 从首版即按用户要求独立。其它新能力 = 已有包内新模块；**禁止**「先写在 bin 里、以后再抽包」。
+- 现行布局为 §2 的 29 成员；browser 从首版即按用户要求独立。新能力按职责归属进入现有包；新增独立边界依 §2.1 的判断并取得任务授权；**禁止**「先写在 bin 里、以后再抽包」。
 - 包间依赖方向遵守 §2 表与不合并清单；canonical 纯净红线不变。
 
 ### 3.2 冻结契约（激活即采用完整形状；golden 先于实现改动）

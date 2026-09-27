@@ -244,14 +244,14 @@ impl RunService {
             .registry
             .capability_evidence(core.model.as_str())
             .filter(|evidence| evidence.provider.as_ref() == Some(&core.provider_id))
-            .unwrap_or_else(|| pawork_providers::registry::CapabilityEvidence {
+            .unwrap_or_else(|| pawork_models::registry::CapabilityEvidence {
                 model: core.model.clone(),
                 provider: None,
                 static_declared: None,
                 probe_declared: None,
                 override_declared: None,
             });
-        if let Err(error) = pawork_providers::negotiate::capability_gate(&evidence, &request) {
+        if let Err(error) = pawork_models::negotiate::capability_gate(&evidence, &request) {
             if evidence.provider.is_some() {
                 return Err(AppError::Provider(error));
             }
@@ -273,7 +273,7 @@ impl RunService {
                 .capability_evidence(core.model.as_str())
                 .filter(|entry| entry.provider.as_ref() == Some(&core.provider_id))
                 .ok_or(AppError::Provider(error))?;
-            pawork_providers::negotiate::capability_gate(&discovered, &request)
+            pawork_models::negotiate::capability_gate(&discovered, &request)
                 .map_err(AppError::Provider)?;
         }
         let start_sequence = core.next_sequence(session_id).await?;
@@ -533,7 +533,7 @@ mod tests {
     #[tokio::test]
     async fn web_search_config_injects_hosted_tool_when_model_declares_it() {
         use pawork_domain::{ModelCapabilities, ModelId, ProviderId, ToolCapabilityTag};
-        use pawork_providers::{CatalogEntry, ModelRegistry};
+        use pawork_models::{CatalogEntry, ModelRegistry};
         use pawork_storage::session::SessionStore;
 
         let mut registry = ModelRegistry::builtin();

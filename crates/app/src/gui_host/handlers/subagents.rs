@@ -1,5 +1,5 @@
 use crate::gui_host::GuiHostAdapter;
-use crate::gui_server::GuiHostError;
+use pawork_gui_server::GuiHostError;
 use pawork_protocol::{
     AppCommand, AppCommandEnvelope, AppQuery, AppResponse, SubagentModelRule, SubagentSettingsData,
 };
@@ -111,9 +111,7 @@ fn validate(settings: &SubagentSettingsData) -> Result<(), GuiHostError> {
             if pawork_domain::ReasoningEffort::from_wire_name(name).is_none() {
                 return Err(invalid());
             }
-            if !rule.allowed_efforts.is_empty()
-                && !rule.allowed_efforts.iter().any(|n| n == name)
-            {
+            if !rule.allowed_efforts.is_empty() && !rule.allowed_efforts.iter().any(|n| n == name) {
                 return Err(invalid());
             }
         }

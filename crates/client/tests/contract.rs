@@ -1,4 +1,4 @@
-//! P13-9 GUI Connection Protocol 契约测试（pawork-client × pawork-app::gui_server）。
+//! P13-9 GUI Connection Protocol 契约测试（pawork-client × pawork-gui-server）。
 //!
 //! 本机装配：LocalTransport + GuiServer + GuiHostAdapter(AppCore) + MockProvider。
 //! UDS 地址落在 tempdir 下的唯一 socket 文件。覆盖：
@@ -19,10 +19,10 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use pawork_app::gui_server::{GuiHost, GuiServer, GuiServerConfig};
 use pawork_app::{AppCore, GuiHostAdapter};
 use pawork_client::{ClientConfig, ClientError, GuiClient, ResumeDisposition, SessionInfo};
 use pawork_domain::{ActorId, ModelId, ProviderId, RunId, SessionId, WorkspaceId};
+use pawork_gui_server::{GuiHost, GuiServer, GuiServerConfig};
 use pawork_protocol::{
     ActorIdentity, ApiVersion, AppCommand, AppEvent, AppEventEnvelope, AppQuery, AppResponse,
     CommandSource, GlobalSequence, GuiCapability, HandshakeService, ProtocolErrorCode, RunState,

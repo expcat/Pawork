@@ -1,4 +1,4 @@
-//! GUI Host 端口适配：把 AppCore 装配到 `pawork-app::gui_server::GuiHost`。
+//! GUI Host 端口适配：把 AppCore 装配到 `pawork_gui_server::GuiHost`。
 //!
 //! S10 10b：Snapshot 基线、SessionGet 分页 Timeline、SessionCreate/Fork、
 //! RunStart/RunCancel/ToolApprove、Terminal*、RunStart.model 切换。
@@ -8,12 +8,12 @@ use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 
-use crate::gui_server::{GuiHost, GuiHostError};
 use async_trait::async_trait;
 use futures::future::BoxFuture;
 use pawork_domain::{CommandId, QueryId, SessionId, TenantId, WorkspaceId};
 use pawork_engine::now_timestamp;
 use pawork_exec::PtyService;
+use pawork_gui_server::{GuiHost, GuiHostError};
 use pawork_protocol::{
     AppCommand, AppCommandEnvelope, AppEvent, AppEventEnvelope, AppQueryEnvelope, AppResponse,
     AppResponseEnvelope, GlobalSequence, Snapshot, SnapshotSection, SnapshotSectionKind,
@@ -86,7 +86,7 @@ fn attach_session_branches(entry: &mut Value, tree: &SessionTree) {
     }
 }
 
-/// `gui_server` 模块的宿主实现。
+/// `pawork-gui-server` 的宿主实现。
 #[derive(Clone)]
 pub struct GuiHostAdapter {
     core: Arc<tokio::sync::RwLock<AppCore>>,
@@ -531,7 +531,7 @@ impl GuiHost for GuiHostAdapter {
     async fn query(&self, envelope: &AppQueryEnvelope) -> Result<AppResponse, GuiHostError> {
         if envelope.api_version.minor < 16
             && matches!(&envelope.query, pawork_protocol::AppQuery::QuotaOverview { query }
-                if crate::provider_quota::is_account_query(query))
+                if query.is_account_query())
         {
             return Err(Self::host_error(
                 "unsupported",

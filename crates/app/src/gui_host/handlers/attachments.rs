@@ -1,7 +1,7 @@
 //! GUI 1.22 本机附件分块暂存。字节只在内存，不落盘、不进命令账本。
 use super::super::GuiHostAdapter;
-use crate::gui_server::GuiHostError;
 use pawork_domain::{ContentPart, ImageContent, ImageSource, SessionId, TextContent};
+use pawork_gui_server::GuiHostError;
 use pawork_protocol::{AppCommand, AppCommandEnvelope, AppResponse, CommandSource};
 use serde_json::json;
 use std::collections::{BTreeSet, HashMap};

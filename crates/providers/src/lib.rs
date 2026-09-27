@@ -13,32 +13,21 @@ pub(crate) fn is_credential_header(name: &str) -> bool {
 }
 
 pub mod channels;
-pub mod error;
 pub mod error_table;
 pub mod memory_protector;
-pub mod negotiate;
 pub mod net;
-pub mod pricing;
 pub mod provider;
 pub mod reasoning;
-pub mod registry;
 pub mod request;
 pub mod responses;
 mod responses_reasoning;
 pub mod stream;
 pub mod usage;
 
-pub use error::RegistryError;
 pub use error_table::{normalize_vendor_error, VendorErrorRule, VENDOR_ERROR_RULES};
 pub use memory_protector::InMemoryReasoningProtector;
-pub use negotiate::{clamp_reasoning_to_thinking, CapabilityNegotiator};
-pub use pricing::{estimate_cost, ModelPricing, BUILTIN_RATE_CARD, BUILTIN_RATE_VERSION};
 pub use provider::{OpenAiCompatibleConfig, OpenAiCompatibleProvider};
 pub use reasoning::{ReasoningProtectError, ReasoningProtector};
-pub use registry::{
-    caps, merge_capabilities, CapabilityEvidence, CapabilitySource, CatalogEntry, ModelRegistry,
-    ProbeError, ProviderCapabilitySource, ProviderProbe,
-};
 pub use request::to_chat_completions_body;
 pub use stream::{chunk_to_events, is_done, ChunkState};
 pub use usage::{map_stop_reason, normalize_usage, UsageAccumulator};
@@ -114,14 +103,9 @@ mod module_discipline {
     #[test]
     fn core_modules_do_not_reference_net_module() {
         let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        let files = [
-            "registry.rs",
-            "pricing.rs",
-            "usage.rs",
-            "negotiate.rs",
-            "reasoning.rs",
-            "error.rs",
-        ];
+        // registry/pricing/negotiate/error 由 models 的 Cargo 边界隔离。
+        // 本包保留的纯转换与保护端口仍禁止回依赖 net。
+        let files = ["usage.rs", "reasoning.rs"];
         for name in files {
             let path = src.join(name);
             let contents = fs::read_to_string(&path)

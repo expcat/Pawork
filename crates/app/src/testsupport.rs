@@ -10,7 +10,7 @@ use pawork_domain::{
     ProviderStreamEvent, ResolvedCredential, StopReason, TextContent, TokenUsage,
 };
 use pawork_engine::{AgentEventSink, EngineError};
-use pawork_providers::ModelRegistry;
+use pawork_models::ModelRegistry;
 use pawork_storage::session::SessionStore;
 use pawork_workspace::config::{PaworkConfig, ProviderConfig};
 

@@ -76,9 +76,19 @@ E3/E4 证据必须包含日期、环境/版本、输入范围、实际结果和�
 | mock/fixture 工具变化 | `bash scripts/mock/gate.sh --level 0,2` | 测试工具的 HTTP 回放、凭证/配置恢复与脱敏；quota 探针对空窗、失败、过期缓存与缺失 provenance fail-closed；不算真实 Provider 验收 |
 | 真实 Provider/OS/窗口/隔离桌面 | 对应包 Spec 的专项步骤 | 必须记录外部效果和前置条件；未执行不算通过 |
 
+2026-09-27 包边界迁移验证：`bash scripts/test.sh models providers` 覆盖共享模型语义及全部通道；`bash scripts/test.sh mcp tools gui-server acp gateway protocol app cli client engine` 覆盖迁移后的接入、宿主和协议回归。GUI 连接测试归 gui-server，ACP fixtures/floor 归 acp，MCP 测试归 mcp，网关 token 测试归 gateway；AppCore + HTTP/模拟上游联调仍在 app。正式宿主另用 `--host` 验证，不能用包内 MockHost 代替；生产依赖图用 `cargo metadata` / `cargo tree -p pawork --edges normal` 检查无环、Desktop/Engine 边界和第三方闭包不扩张。具体完成状态见 [ROADMAP](../ROADMAP.md)。
+
 不使用测试数或覆盖率配额驱动删减。便宜且有独立边界意义的单测可以保留；golden 检查外部格式兼容，不属于应删除的实现副本。
 
 UI 取证工具须提供真实失败信号：`ui-fixture.sh desktop` 清除旧 `timeline_stable` 后等待新实例就绪——barrier 必须是本进程启动后写入的有效 JSON（`settle_seq>=1`、`at_ms` 不早于启动时刻），进程提前退出、PID 归属变化或超时均失败；fixture 与 desktop 构建产物同样经 artifact 消息定位。`ui-ax-dump.swift` 无窗口、AX 权限不足、没有应用 identifier 或动作失败均非零；`ui-key-event.swift` 投递前确认目标 PID 在前台且具备事件投递权限。操作效果仍须由窗口状态与外部事实核对。
+
+### 4.2 构建时间与缓存空间
+
+- 用 `bash scripts/test.sh --log /tmp/pawork-tests.log <包名>...` 一次保存完整 stdout/stderr；日志追加，每条命令记录耗时和退出码，失败仍非零退出。`--host` 与 `desktop` 同样支持；`--print` 不创建日志。不要用 `... | tail` 丢掉中间结果和原始退出码，也不要为补日志重复整批验证。
+- 同批相关包放在一次调用中以统一 feature；单个缺陷优先按包 Spec 选 `--lib` / `--test` 和过滤器。类型检查用 `cargo check`，需要实际行为证据时仍跑测试。保持单 Cargo 进程，复用默认 `target/`。
+- 当前 dev/test 已启用 `incremental=true`、`debug="line-tables-only"`、`split-debuginfo="unpacked"`。不要为日常提速反复改 profile、RUSTFLAGS 或 toolchain：这会制造不同构建指纹并触发重编译。未测量前不切换链接器、关闭增量或另建缓存目录。
+- 空闲时先运行 `python3 scripts/clean-stale-incremental.py --dry-run`，审阅后执行同一命令去掉 `--dry-run`；不与 Cargo 同时清理，不运行 `cargo clean`。incremental 按 7 天年龄清理，deps/examples/build 还保留每组最新 hash 构建代；年龄不是不可达证明，较少使用的 feature 组合可能需要重编译。不要每天清理仍在使用的缓存。
+- 真窗口与 mock 验收结束后使用对应脚本的 stop/清理入口，并核对原实例 PID 已退出。对遗留进程先核对命令和实例再定点停止，避免后台空转持续占用 CPU。
 
 ## 5. 当前验收缺口
 

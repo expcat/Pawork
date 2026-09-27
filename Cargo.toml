@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-# 22 库平铺 crates/<短名> + 2 应用 apps/{pawork,desktop}；members 24。
+# 27 库平铺 crates/<短名> + 2 应用 apps/{pawork,desktop}；members 29。
 members = [
     "crates/*",
     "apps/*",
@@ -22,6 +22,9 @@ serde_json = "1"
 thiserror = "2"
 ts-rs = { version = "12", features = ["serde-json-impl"] }
 bytes = "1"
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
 futures = "0.3"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream", "json", "form"] }
 toml = "1.1"

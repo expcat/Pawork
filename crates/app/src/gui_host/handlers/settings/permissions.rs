@@ -7,7 +7,7 @@ use pawork_protocol::{
 use serde_json::json;
 
 use crate::gui_host::GuiHostAdapter;
-use crate::gui_server::GuiHostError;
+use pawork_gui_server::GuiHostError;
 
 use super::{policy_approval_mode, settings_data, wire_approval_mode};
 

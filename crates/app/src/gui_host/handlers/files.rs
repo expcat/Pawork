@@ -1,18 +1,18 @@
 //! Explicit local GUI file operations. Never record file bodies in the command ledger.
 use super::super::GuiHostAdapter;
-use crate::gui_server::GuiHostError;
 use pawork_domain::WorkspaceId;
+use pawork_gui_server::GuiHostError;
 use pawork_protocol::{
     AppCommand, AppCommandEnvelope, AppQuery, AppQueryEnvelope, AppResponse, CommandSource,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::{
     fs,
     io::{Read, Write},
     path::{Component, Path, PathBuf},
     sync::{
-        Mutex,
         atomic::{AtomicU64, Ordering},
+        Mutex,
     },
 };
 

@@ -1,6 +1,6 @@
 # Pawork Spec 文档集
 
-> 基线日期：2026-09-01。状态：**现行（Living）**。本目录描述 Pawork 当前产品范围、需求、可见能力、稳定契约、安全边界、Desktop、验证与运维约束，并承载 **24 个包的逐包 Spec** 与跨包链路速览；它是跨事实源的产品化索引与包内功能的文档化镜像，**不是源码、协议形状或阶段状态的新事实源**。
+> 基线日期：2026-09-01。状态：**现行（Living）**。本目录描述 Pawork 当前产品范围、需求、可见能力、稳定契约、安全边界、Desktop、验证与运维约束，并承载 **29 个包的逐包 Spec** 与跨包链路速览；它是跨事实源的产品化索引与包内功能的文档化镜像，**不是源码、协议形状或阶段状态的新事实源**。
 
 ## 1. 文档范围
 
@@ -13,6 +13,7 @@
 | [contracts.md](contracts.md) | 哪些 API、wire、磁盘格式与安全语义已经冻结，如何演进？ |
 | [security.md](security.md) | 资产、信任边界、威胁、Policy、Sandbox、Secret 与路径要求是什么？ |
 | [desktop.md](desktop.md) | Desktop 的信息架构、交互流程、状态、可访问性与验收边界是什么？ |
+| [model-gateway.md](model-gateway.md) | 外部应用如何通过本机 OpenAI 兼容接口复用已连接模型？ |
 | [settings.md](settings.md) | Settings 如何管理供应商认证、模型发现、默认项与后续设置页？ |
 | [verification.md](verification.md) | 需求如何映射到自动化、golden、真实冒烟和人工证据？当前缺口是什么？ |
 | [operations.md](operations.md) | 如何启动、配置、诊断、备份与恢复本机实例？当前发布/运维边界是什么？ |
@@ -31,10 +32,11 @@
 | [crates/testkit.md](crates/testkit.md) | `pawork-testkit` | dev-only MockProvider/MockTool 与契约断言 |
 | [crates/policy.md](crates/policy.md) | `pawork-policy` | 安全内核：PolicyDecision/ApprovalMode、shell 风险分类、路径校验 |
 | [crates/exec.md](crates/exec.md) | `pawork-exec` | 进程执行 / 沙箱（Seatbelt/Landlock/AppContainer）/ PTY；ADR-052 依赖 policy 路径 helper |
-| [crates/tools.md](crates/tools.md) | `pawork-tools` | 八个内置工具 + ToolScheduler + MCP client |
+| [crates/tools.md](crates/tools.md) | `pawork-tools` | 九个内置工具 + ToolScheduler |
 | [crates/workspace.md](crates/workspace.md) | `pawork-workspace` | workspace 服务、file_index、resources、六层配置、五来源导入 |
 | [crates/storage.md](crates/storage.md) | `pawork-storage` | SQLite Actor + session 事件存储（schema v14）+ PWB1 blob |
-| [crates/providers.md](crates/providers.md) | `pawork-providers` | HTTP/SSE 传输 + registry/pricing/usage/negotiate/reasoning + 八通道 adapter |
+| [crates/models.md](crates/models.md) | `pawork-models` | 共享模型目录、能力证据/协商、定点计价 |
+| [crates/providers.md](crates/providers.md) | `pawork-providers` | HTTP/SSE + wire/usage/reasoning + 八通道 adapter |
 | [crates/auth.md](crates/auth.md) | `pawork-auth` | Secret 后端、OAuth（PKCE/Device）、credential locator、脱敏 |
 | [crates/git.md](crates/git.md) | `pawork-git` | Diff/Status/GitService/HunkStage/worktree/merge |
 | [crates/engine.md](crates/engine.md) | `pawork-engine` | Agent tool loop、审批等待、取消、压缩注入点（生产依赖仅 domain） |
@@ -42,8 +44,12 @@
 | [crates/orchestration.md](crates/orchestration.md) | `pawork-orchestration` | 多 Agent supervisor/budget/lifecycle/merge/task_graph |
 | [crates/control-plane.md](crates/control-plane.md) | `pawork-control-plane` | 控制面：tenant/usage/audit + quota + credential lease/pool |
 | [crates/transport.md](crates/transport.md) | `pawork-transport` | framed 字节传输：local（UDS/named pipe）+ memory |
-| [crates/app.md](crates/app.md) | `pawork-app` | AppCore 装配宿主 + 领域服务 + gui_server/gui_host |
-| [crates/cli.md](crates/cli.md) | `pawork-cli` | 21 子命令 + REPL + headless + ACP host |
+| [crates/mcp.md](crates/mcp.md) | `pawork-mcp` | MCP 客户端、SDK 隔离、工具桥、OAuth/沙箱 |
+| [crates/gui-server.md](crates/gui-server.md) | `pawork-gui-server` | GUI 握手、连接、心跳/背压、订阅与重放 |
+| [crates/acp.md](crates/acp.md) | `pawork-acp` | 编辑器协议、会话 actor、权限与 canonical 映射 |
+| [crates/gateway.md](crates/gateway.md) | `pawork-gateway` | 本机 OpenAI HTTP/SSE 与 token；宿主端口 |
+| [crates/app.md](crates/app.md) | `pawork-app` | AppCore 装配宿主 + 领域服务 + gui_host / GatewayBackend |
+| [crates/cli.md](crates/cli.md) | `pawork-cli` | 21 子命令 + REPL + headless + 协议/进程装配 |
 | [crates/client.md](crates/client.md) | `pawork-client` | GuiClient framed 连接面 + headless SDK + probe |
 | [crates/terminal.md](crates/terminal.md) | `pawork-terminal` | 终端显示核心：行缓冲解析 / SGR 属性分段 / 按键→PTY 字节 / 面板尺寸估算（零依赖纯库） |
 | [crates/computer-use.md](crates/computer-use.md) | `pawork-computer-use` | 独立虚拟桌面观察与输入、坐标转换、一次性观察与取消；无内部依赖 |

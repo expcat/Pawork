@@ -1,4 +1,4 @@
-use crate::gui_server::{GuiHost, GuiHostError};
+use pawork_gui_server::{GuiHost, GuiHostError};
 use pawork_protocol::{AppQuery, AppResponse};
 use serde_json::{json, Value};
 
@@ -197,7 +197,7 @@ pub(crate) async fn quota_overview(
     let AppQuery::QuotaOverview { query } = query else {
         unreachable!("quota_overview handler receives QuotaOverview")
     };
-    if crate::provider_quota::is_account_query(query) {
+    if query.is_account_query() {
         let (config, backend) = {
             let core = adapter.core.read().await;
             (core.config().clone(), core.auth_backend().clone())

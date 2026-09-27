@@ -1,7 +1,7 @@
 //! Usage / stop reason 归一与会话级 usage 聚合（S5 波 A）。
 //!
 //! 归一函数迁自 V1 `provider-runtime::usage`（经 V2 `pawork-providers` 内联版回收），
-//! 不包含 `ModelPricingRef` / `estimate_cost`——定价统一在 [`crate::pricing`]，
+//! 不包含 `ModelPricingRef` / `estimate_cost`——定价统一在 [`pawork_models::pricing`]，
 //! 避免双轨。`UsageAccumulator` 对齐 `ProviderStreamEvent::UsageUpdated`：
 //! 请求内按「最新快照」语义，跨请求按「累加」语义。
 

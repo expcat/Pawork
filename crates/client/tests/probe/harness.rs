@@ -2,10 +2,10 @@
 
 use std::sync::Arc;
 
-use pawork_app::gui_server::{GuiHost, GuiServer, GuiServerConfig};
 use pawork_app::{AppCore, ApprovalMode, DenyAllApprovals, GuiHostAdapter};
 use pawork_client::{ClientConfig, GuiClient};
 use pawork_domain::{ActorId, CommandId, ModelId, ProviderId, RunId, SessionId, Timestamp};
+use pawork_gui_server::{GuiHost, GuiServer, GuiServerConfig};
 use pawork_protocol::{
     ActorIdentity, AppCommand, AppCommandEnvelope, AppResponse, CommandSource, GuiCapability,
     HandshakeService, API_VERSION, SUPPORTED_API_VERSIONS,

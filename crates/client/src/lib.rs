@@ -16,7 +16,7 @@
 //! 错误一律是结构化 [`ClientError`]；SDK 不向调用方泄漏内部帧字节，意外的
 //! 帧只以 [`ClientError::UnexpectedFrame`] 的类别标签呈现，不携带原始内容。
 //!
-//! 本 crate 不依赖任何 GUI 框架，也不链接 pawork-app（其 `gui_server` 模块只在
+//! 本 crate 不依赖任何 GUI 框架，也不链接 pawork-app（GUI server 只在
 //! 契约测试的 dev-dependencies 装配）。
 
 pub mod headless;

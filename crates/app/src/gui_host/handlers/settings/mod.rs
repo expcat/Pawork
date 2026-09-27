@@ -68,7 +68,7 @@ fn flight_begin(
     flights: &AuthFlights,
     provider: &str,
     oauth_wait: bool,
-) -> Result<Arc<AuthFlight>, crate::gui_server::GuiHostError> {
+) -> Result<Arc<AuthFlight>, pawork_gui_server::GuiHostError> {
     let mut flights = flights.lock().expect("auth flights poisoned");
     if flights.contains_key(provider) {
         return Err(crate::gui_host::GuiHostAdapter::host_error(

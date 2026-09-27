@@ -56,18 +56,18 @@ impl ApprovalService {
 #[cfg(test)]
 mod tests {
     use std::path::Path;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
     use std::sync::Mutex;
-    use std::sync::atomic::{AtomicU64, Ordering};
 
     use async_trait::async_trait;
     use pawork_domain::{ApprovalDecision, CancellationToken, MessageRole};
     use pawork_storage::session::SessionStore;
     use pawork_testkit::{MockProvider, MockScript};
 
-    use crate::gui_server::GuiHost;
-    use crate::testsupport::{RecordingEvents, user_hello};
+    use crate::testsupport::{user_hello, RecordingEvents};
     use crate::{AppCore, ApprovalAsk, ApprovalMode, ApprovalPromptHost, DenyAllApprovals};
+    use pawork_gui_server::GuiHost;
 
     struct ScriptedHost {
         queue: Mutex<Vec<ApprovalDecision>>,

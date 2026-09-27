@@ -154,6 +154,11 @@ pub struct QuotaOverviewQuery {
 }
 
 impl QuotaOverviewQuery {
+    /// 凭证级或百分比额度查询需要账户额度读取。
+    pub fn is_account_query(&self) -> bool {
+        self.credential_id.is_some() || self.unit == Some(QuotaUnit::Percent)
+    }
+
     /// 默认 legacy 作用域（local / local/default），无任何过滤维度。
     pub fn default_local() -> Self {
         Self {

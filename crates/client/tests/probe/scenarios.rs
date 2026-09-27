@@ -3,11 +3,12 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use pawork_app::{gui_server::GuiHost, ApprovalMode};
+use pawork_app::ApprovalMode;
 use pawork_client::{ClientConfig, ClientError, GuiClient, ResumeDisposition};
 use pawork_domain::{
     ArtifactId, CommandId, EventId, ProviderId, RunId, SessionId, TenantId, Timestamp,
 };
+use pawork_gui_server::GuiHost;
 use pawork_protocol::{
     decode_server_frame, encode_server_frame, mask_credential_hint, ApiVersion, AppCommand,
     AppCommandEnvelope, AppEvent, AppEventEnvelope, AppQuery, AppResponse, ArtifactChunk,

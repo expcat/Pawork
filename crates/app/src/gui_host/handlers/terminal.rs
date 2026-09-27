@@ -12,9 +12,9 @@ use pawork_protocol::{
     WorkspaceRelativePath,
 };
 use pawork_workspace::resolve_relative_path;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
-use crate::gui_server::GuiHostError;
+use pawork_gui_server::GuiHostError;
 
 use super::super::{GuiEventBus, GuiHostAdapter};
 

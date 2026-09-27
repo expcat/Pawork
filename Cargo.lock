@@ -4343,6 +4343,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "pawork-acp"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "pawork-domain",
+ "pawork-protocol",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "pawork-app"
 version = "0.1.0"
 dependencies = [
@@ -4355,7 +4370,11 @@ dependencies = [
  "pawork-domain",
  "pawork-engine",
  "pawork-exec",
+ "pawork-gateway",
  "pawork-git",
+ "pawork-gui-server",
+ "pawork-mcp",
+ "pawork-models",
  "pawork-orchestration",
  "pawork-policy",
  "pawork-protocol",
@@ -4412,10 +4431,13 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "clap",
+ "pawork-acp",
  "pawork-app",
  "pawork-client",
  "pawork-domain",
  "pawork-engine",
+ "pawork-gateway",
+ "pawork-gui-server",
  "pawork-protocol",
  "pawork-storage",
  "pawork-transport",
@@ -4435,6 +4457,7 @@ dependencies = [
  "clap",
  "pawork-app",
  "pawork-domain",
+ "pawork-gui-server",
  "pawork-protocol",
  "pawork-storage",
  "pawork-testkit",
@@ -4538,6 +4561,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "pawork-gateway"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "blake3",
+ "futures",
+ "getrandom 0.4.3",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "pawork-auth",
+ "pawork-domain",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "pawork-git"
 version = "0.1.0"
 dependencies = [
@@ -4551,6 +4593,54 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "pawork-gui-server"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "pawork-domain",
+ "pawork-protocol",
+ "pawork-transport",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "pawork-mcp"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "pawork-auth",
+ "pawork-domain",
+ "pawork-exec",
+ "pawork-tools",
+ "pawork-workspace",
+ "reqwest",
+ "rmcp",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+ "url",
+ "wiremock",
+]
+
+[[package]]
+name = "pawork-models"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "pawork-domain",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
 ]
 
 [[package]]
@@ -4606,6 +4696,7 @@ dependencies = [
  "bytes",
  "futures",
  "pawork-domain",
+ "pawork-models",
  "pawork-testkit",
  "proptest",
  "reqwest",
@@ -4661,7 +4752,6 @@ dependencies = [
  "encoding_rs",
  "globset",
  "ignore",
- "pawork-auth",
  "pawork-computer-use",
  "pawork-domain",
  "pawork-exec",
@@ -4670,16 +4760,12 @@ dependencies = [
  "pawork-workspace",
  "proptest",
  "regex",
- "reqwest",
- "rmcp",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
  "tracing",
- "url",
- "wiremock",
 ]
 
 [[package]]

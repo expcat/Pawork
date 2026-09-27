@@ -22,10 +22,6 @@ const WINDOWS: [QuotaWindow; 3] = [
 ];
 const MAX_AGE_MS: u64 = 30_000;
 
-pub(crate) fn is_account_query(query: &QuotaOverviewQuery) -> bool {
-    query.credential_id.is_some() || query.unit == Some(QuotaUnit::Percent)
-}
-
 fn invalid(detail: &str) -> AppError {
     AppError::ControlPlane(detail.into())
 }
@@ -245,11 +241,19 @@ impl AppCore {
         &self,
         cancel: &CancellationToken,
     ) -> Result<Option<AccountSelectionChange>, AppError> {
-        if self.provider_id.as_str() != "opencode-go" || cancel.is_cancelled() {
+        self.select_account_for_provider(&self.provider_id, cancel)
+            .await
+    }
+
+    pub(crate) async fn select_account_for_provider(
+        &self,
+        provider_id: &pawork_domain::ProviderId,
+        cancel: &CancellationToken,
+    ) -> Result<Option<AccountSelectionChange>, AppError> {
+        if provider_id.as_str() != "opencode-go" || cancel.is_cancelled() {
             return Ok(None);
         }
-        let inventory =
-            pawork_auth::list_provider_accounts(self.backend.as_ref(), &self.provider_id)?;
+        let inventory = pawork_auth::list_provider_accounts(self.backend.as_ref(), provider_id)?;
         if inventory.selection_mode != ProviderAccountSelectionMode::WhenExhausted {
             return Ok(None);
         }
@@ -257,7 +261,7 @@ impl AppCore {
             return Ok(None);
         };
         let query = |credential_id: &str| QuotaOverviewQuery {
-            provider_id: Some(self.provider_id.clone()),
+            provider_id: Some(provider_id.clone()),
             credential_id: Some(credential_id.into()),
             unit: Some(QuotaUnit::Percent),
             ..QuotaOverviewQuery::default_local()
@@ -316,7 +320,7 @@ impl AppCore {
         }
         if !pawork_auth::select_provider_account_if_revision(
             self.backend.as_ref(),
-            &self.provider_id,
+            provider_id,
             inventory.revision,
             selected,
             &account.credential_id,

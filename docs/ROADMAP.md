@@ -1,8 +1,12 @@
 # Pawork 活动路线图
 
-> 更新：2026-09-25。2026-09-23 全项目 Review 的 T-01～T-12 修复与 API 1.23/1.24 产品能力（文件夹附件、Plan GUI、持续目标、Chrome/Edge 上下文、技能录制、绘图、插件列表、MM-2 视频、MM-3 Qwen 搜索）已实现，通过定向自动门禁与本机真窗口验收并提交；活动计划文档（docs/Plan/）随本轮收口移除，过程与证据从 Git 历史追溯（`git show 46a4ff81:docs/Plan/README.md`）。本页只保留未完成工作，不能由代码存在推定「完美完成」；当前实现以源码和 [Spec](spec/README.md) 为准。
+> 更新：2026-09-27。2026-09-23 全项目 Review 的 T-01～T-12 修复与 API 1.23/1.24 产品能力（文件夹附件、Plan GUI、持续目标、Chrome/Edge 上下文、技能录制、绘图、插件列表、MM-2 视频、MM-3 Qwen 搜索）已实现，通过定向自动门禁与本机真窗口验收并提交；活动计划文档（docs/Plan/）随本轮收口移除，过程与证据从 Git 历史追溯（`git show 46a4ff81:docs/Plan/README.md`）。本页只保留未完成工作，不能由代码存在推定「完美完成」；当前实现以源码和 [Spec](spec/README.md) 为准。
+
+2026-09-27 [包边界调整](architecture.md)已实现：拆出 models、gui-server、acp、mcp、gateway，workspace 为 29 成员，不合并现有包。受影响包的现有回归、协议 golden、依赖边界审计与真实 `pawork` 子进程 3 项测试通过；第三方生产依赖集合、线上协议与持久格式不变。本次未运行 Desktop 构建、真窗口或真实 Provider 验收，不改变下方已有人工验收结论；全 workspace 门禁未运行，改动未提交、未发布、未归档。
 
 ## 等待人工验收（已实现，自动门禁通过）
+
+GW-1 [通用本机模型网关](spec/model-gateway.md) 已实现：OpenAI 兼容目录与普通/SSE 补全、按客户端 token 签发/撤销、路由/租约/用量归因、独立 CLI 生命周期。网关 HTTP 与模拟上游定向回归、CLI 库测试和 `pawork` 构建通过；MoMai 实际客户端与网关跨进程目录/撤销、普通/SSE 补全的模拟上游联调通过，真实 CLI serve/status/shutdown 已验证。MoMai 设置窗口已通过 computer use 验证模拟目录连接、模型显示及失效令牌/断开失败处理；真实智谱 GLM-5.3 与 GLM-5.3-Flash 已通过 MoMai GUI 完成大纲、正文、划词和关系双向推演验证；GUI 设置成功保存凭证流程仍待验，详细边界见 [MoMai ROADMAP](../../MoMai/docs/ROADMAP.md)。本轮未提交、未发布、未归档；全 workspace 门禁未运行。
 
 | 范围 | 待验收要点 |
 | --- | --- |

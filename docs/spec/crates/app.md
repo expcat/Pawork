@@ -8,12 +8,12 @@
 
 - 装配 `AppCore`：配置发现（Builtin → Global → Workspace → CLI 覆盖）、凭证链（auth 文件 → env）、协议中立 provider、内建读写工具 + `run_command` + `computer`、session store、checkpoint/artifact/protected 存储、usage/quota/audit 控制面。
 - 承载一次 run 的宿主编排：`chat_turn` → `pawork_engine::run_session`，事件 persist-first 落库再渲染；审批、压缩、检查点由 `SessionLoopCtx` 桥接进 engine loop。
-- 实现 GUI 宿主侧：`gui_server`（连接/心跳/订阅/resume 帧循环）+ `gui_host`（`GuiHost` trait 适配 `AppCore`，query/command 静态分发、幂等、timeline 投影分页、事件总线）。
+- 实现 GUI 业务宿主：`gui_host` 将 `AppCore` 适配为 [gui-server](gui-server.md) 的 `GuiHost`，负责 query/command、幂等、timeline 投影与事件总线；连接运行时由 gui-server 承担。
 - 提供 CLI 命令背后的领域门面：auth/OAuth、模型目录与切换、diff/checkpoint/rollback、MCP、compat import、tasks、plan gate、usage 报表、多 Agent demo。
 
 **不做什么**
 
-- 不定义 wire 契约：GUI 帧形状、`AppCommand`/`AppQuery`/`AppEvent`、timeline 投影规则全部在 [pawork-protocol](protocol.md)；本包只消费。
+- 不定义既有 GUI wire 契约：GUI 帧形状、`AppCommand`/`AppQuery`/`AppEvent`、timeline 投影规则全部在 [pawork-protocol](protocol.md)；本包只消费。
 - 不实现 Provider 协议、通用工具、持久化、Policy 判定本体（分别在 [providers](providers.md) / [tools](tools.md) / [storage](storage.md) / [policy](policy.md)）。
 - 不做终端/GUI 渲染（cli 与 desktop 的职责）。Desktop 进程**禁止**依赖本包，只经 protocol + transport 连 CLI（架构红线，见 [../../design.md](../../design.md) §2）。
 
@@ -23,10 +23,12 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 
 全包约 3.6 万行（含内嵌测试与 tests/）。src/ 共 64 个 `.rs`，tests/ 5 个，examples/ 1 个。
 
-可见性布局：`gui_server` 是唯一 `pub mod`；`gui_host` 与 `services` 目录私有，公开类型统一经 `lib.rs` re-export；`testsupport` 仅 `cfg(test)` 编译。`AppCore` 本体在 `app_core.rs`。
+可见性布局：`gateway_backend` 为 `pub mod`；`gui_host` 与 `services` 目录私有，公开类型统一经 `lib.rs` re-export；`testsupport` 仅 `cfg(test)` 编译。`AppCore` 本体在 `app_core.rs`。
 
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
+| `src/gateway_backend.rs` | — | `GatewayBackend for AppCore`：目录过滤、模型/凭证冻结、请求执行、租约与第三方用量；HTTP 与 token 由独立 gateway 包提供 |
+| `src/gateway_tests.rs` | — | `cfg(test)`：AppCore + loopback HTTP + 模拟 Provider 的路由、鉴权、SSE、取消和部分用量回归 |
 | `src/gui_host/handlers/subagents.rs` | — | GUI 1.20 子代理设置读取 / 全态写（先原子落盘再更新内存）与列表 / 取消；设置校验并发 1..=16、规则 ≤512、provider/model ≤256、组合去重、权限白名单（ADR-063 起规则增 default_effort / allowed_efforts，非法 effort 名 fail-closed）；列表 / 取消校验会话归属；列表条目 ADR-063 起携带生效 effort（规则默认 > 模型级默认） |
 | `src/gui_host/handlers/files.rs` | — | GUI 手动文件目录 / 文本读取与带内容版本校验的保存；文件正文不进入幂等账本 |
 | `src/gui_host/handlers/attachments.rs` | ~350 | GUI 1.22 本机附件分块暂存：单块 ≤64 KiB、整件 ≤8 MiB、每客户端 / 会话最多 4 件，Host 总声明容量 ≤64 MiB，15 分钟过期；仅本机 GUI + minor≥22，以鉴权客户端 / 会话 / 附件 ID 隔离；字节暂存不落盘、不进命令账本，进入 Run 后按正常消息持久化；RunStart 全部校验通过后消费附件，失败可从 offset 0 重传 |
@@ -47,7 +49,7 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 | `src/control.rs` | ~380 | `ControlPlaneRuntime`（in_memory/persistent：`SqliteUsageLedger` + `QuotaService` + `FileAuditStore`）；usage 记录哨兵字段（`record_id = "rec-<run_id>"`、单机 tenant/principal 哨兵）；`ledger_totals`/`ledger_has_run`（R-22 对账判定，fail-closed）/`quota_windows`/`append_audit`；`UsageOverview` 等报表行类型 |
 | `src/checkpoint.rs` | ~320 | 写工具识别（write_file/edit_file/apply_patch）、写前快照、`list_checkpoints`/`CheckpointSummary`、`rollback`/`perform_rollback`（恢复文件 + 持久化 `CheckpointRolledBack`） |
 | `src/import_host.rs` | ~310 | compat 导入宿主包装：`CompatTool::parse`（claude/codex/grok/cursor/pi）、`SessionImportFormat`、payload 落盘（instructions/skill/MCP merge/profile）、源文件指纹快照（`snapshots_match` 防 TOCTOU） |
-| `src/instance_lock.rs` | ~230 | 实例级 Host 所有权（R-04/R-24）：`InstanceRole`{Catalog/Executor/GuiHost}；`gui.lock` 单实例独占、`sweep.lock` 登记/清扫互斥、`hosts/` 逐进程活跃登记（锁即存活证明，进程退出内核释放）；复用 pawork-auth 文件锁原语 |
+| `src/instance_lock.rs` | ~230 | 实例级 Host 所有权（R-04/R-24）：`InstanceRole`{Catalog/Executor/GuiHost/Gateway}；`gui.lock` 单实例独占、`sweep.lock` 登记/清扫互斥、`hosts/` 逐进程活跃登记（锁即存活证明，进程退出内核释放）；复用 pawork-auth 文件锁原语 |
 | `src/data_dir.rs` | ~300 | 数据目录解析：`PAWORK_DATA_DIR` → `%LOCALAPPDATA%\pawork`(win) → `~/.pawork` → temp 回退；`DataDirOutcome`（HOME 回退附 `DegradeEvent`）、`consume_data_dir_outcome`（唯一告警点）、`normalize_instance` 白名单校验、各实例文件路径 helper |
 | `src/devfixture.rs` | ~1350 | `cfg(any(test, feature = "ui-fixture"))` + `#[doc(hidden)]` dev-only（R1 Wave B）：UI fixture 种子器。默认 feature 关闭，不进入生产编译；声明式数据集在写入前校验引用、枚举、相对路径与时间锚点，拒绝绝对路径 / `.` / `..`、默认数据目录与仓库重叠、Unix socket 路径超限以及时间戳溢出/越界；git 基线隔离用户/系统配置与 `GIT_*` 路由环境；seed 先写 `preparing` marker，完整收口后改 `ready`，失败可安全重试且 serve fail-closed。数据经 SessionStore / CheckpointService 公开 API + git/文件写入隔离 root；不依赖 testkit |
 | `src/channels.rs` | ~210 | 首发通道 facade：从 providers `CHANNEL_REGISTRY` 派生 `FIRST_PARTY_CHANNELS`/`first_party_channel`/`is_first_party`/`ChannelKind`，`oauth_override` 允许配置覆盖 OAuth preset；通道登记单点在 providers |
@@ -64,9 +66,6 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 | `src/services/extension.rs` | ~570 | `ExtensionService`：workspace roots/file-index、`expand_at_refs`（bare `@token` 经 file-index 模糊匹配、JSON 引号 `@"relative path"` 精确解析相对路径，附件展开为独立 part：文本 64 KiB 有界读取与截断标记；按索引 root 解析，读取前复用 Policy 路径闸拒绝 symlink 越界与特殊文件；VISION-2 起 png/jpeg/gif/webp 图片展开为头标记 Text part + base64 Image part，8 MiB 上限、先查元数据再最多读取上限 + 1 字节，超限给诚实省略标记；模型未声明 `image_input` 时由 `capability_gate` 发 HTTP 前拒绝）、`complete_at`、注入层加载（instructions/skills/profiles）、MCP slot 持有与关停 |
 | `src/services/import.rs` | ~310 | `ImportService`：本机会话扫描、compat 预览/应用（指纹校验 `sources_unchanged`）、`export_session_doc`/`import_session_file`（export/compat/pi 三格式） |
 | `src/services/tasks.rs` | ~260 | `TaskService`：`TaskManager` 状态机 + `tasks.json` 持久化（快照到提交经 `persist_lock` 串行，R-03）；注册/查询/取消/收尾；`tasks_start_agent` 共享调用方 run 令牌（R-05）；`tasks_finish_from_run` 以 run 终态为任务终态唯一事实源（Canceled 走 cancel 状态机、已终态跳过）；`seal_orphaned_active_tasks` 孤儿收口（R-23，由 `open_control_plane` 按清扫权触发）；persist 失败发 degrade 不吞错 |
-| `src/gui_server/mod.rs` | ~180 | `GuiHost` trait（snapshot/timeline/query/command）、`GuiHostError`、`GuiServer`/`GuiServerConfig`（bind endpoint、accept 循环、按连接 spawn 会话任务）；re-export 连接层常量 |
-| `src/gui_server/connection.rs` | ~550 | `ConnectionManager`：客户端注册/心跳（`DEFAULT_HEARTBEAT_TIMEOUT` 30s idle 清理）/事件订阅；每连接有界 mpsc 队列（`DEFAULT_QUEUE_CAPACITY` 1024），慢客户端标记 `lagged` 丢新事件不阻塞发布者；断连**不**取消 run |
-| `src/gui_server/session.rs` | ~1100 | 单连接握手与帧循环：协议版本检查、command 盖 client 戳、capability 门（未授予在宿主前拒绝）、Resume 三态调度（replay / SnapshotRequired / up-to-date）、Heartbeat→Pong、订阅确认、lagged→ReplayUnavailable 帧；R-11：`SessionHandle` 覆盖 `wait_done`（done watch 在会话 run 结束时置位），`receive` 在 close 后复用同一信号返回 ConnectionClosed，供 cli 登记集合与有序关闭等待；ADR-045 `deliverable_to_negotiated` 按协商 minor 门控推送——`TerminalExited`（since 1.3）不推给协商 <1.3 的连接（老客户端 serde 遇未知变体会 decode 失败断流），该连接仍可从快照 `terminal_sessions` 的 `state` 获知终态；`host_error_to_protocol` 把宿主 `not_found` 映射为既有 `RequestNotFound` 码（其余维持 Internal），ADR-045 的幂等边界在 wire 上可观察；RV-10 起会因上游 I/O 阻塞的查询（远程账户额度 HTTP、ModelList 目录探测）经 `query_waits_on_upstream` 判入连接级 `JoinSet` 独立任务集合，不在串行主循环饿死其后的轻量配置读（响应按 request_id 关联、乱序安全，无 request_id 的 Snapshot 仍走串行主路径），命令与其它查询保持串行 |
 | `src/gui_host/mod.rs` | ~1180 | `GuiHostAdapter`：实现 `GuiHost`；`QUERY_HANDLERS`/`COMMAND_HANDLERS` 静态分发表（与 protocol registry `gui.available` 双射，SET-2 起六个 Settings 入口，SET-6a 再增 `general_settings` / `set_proxy_url`，SET-6b 再增 `permissions_settings` / `set_approval_mode` / `workspace_trust`、SET-6c 再增 `mcp_test` / `mcp_server_remove`、SET-6 终端页再增 `terminal_settings` / `set_terminal_settings`（ADR-050）、ADR-052 再增 `set_provider_use_proxy`、ADR-054 再增 `session_rename` / `session_archive`、ADR-055 再增 `set_model_enabled` / `set_provider_models_enabled` / `set_default_role_model`、GUI 1.20 再增 `subagent_settings` / `subagent_list` / `set_subagent_settings` / `subagent_cancel`、ADR-063 再增 `set_model_reasoning`）、幂等 wrap（scope 隔离 + begin/record）、snapshot 组装（含重启后 pending approvals 重建，Workspaces 段输出 v14 注册表全集合）、timeline 分页（limit 默认 200、clamp 1..=500，游标跨未投影事件推进）；SET-2 `auth_flights` 按 provider_id 单飞守卫（auth_start / auth_set_api_key / auth_cancel 共用，Arc 身份防误删他人 flight） |
 | `src/gui_host/bus.rs` | ~315 | `GuiEventBus`（内部 `EventHub` 赋全局序 + replay；engine 终态上流时登记 run_id，供宿主合成终态兜底去重；`publish_raw` 合成事件序号从 `SYNTHETIC_SEQUENCE_BASE`=2^60 递增自取，不占真实持久化号段且排在既有时间线内容之后）、`GuiBroadcastSink`（AgentEvent→AppEvent 映射后广播）、`publish_provider_auth`（SET-2：Global 流广播 `AuthChanged`，`EventSource::Provider`，hub 重写全局序）、`GuiRunRegistry`（活跃 GUI run 与 `CancellationToken` 登记；R-06 起附会话执行槽 `try_acquire_session`/`release_session`，同一 Session 同时只允许一个活动 Run） |
 | `src/gui_host/{terminal_tool,browser_tool}.rs` | — | GUI Run 注册的聊天工具；PTY 共用注册表和广播，Browser 请求绑定发起客户端与 run、一次领取、超时回收 |
@@ -90,12 +89,13 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 | `src/gui_host/tests/` | ~6290 | `cfg(test)` 原 `tests.rs` 按域拆为 `mod.rs` + `run` / `session` / `approval` / `idempotency` / `terminal` / `settings`（约 60 条）：双射 pin、timeline 分页、`@` 展开三态、幂等、审批三态与重启后广播收口、合成终态闸门、fork、provider 切换、bus lagged、ADR-045 `terminal_close`、SET-2/4/5/6 settings（含脱敏、xAI / Kimi Code 双认证、proxy/approval/terminal fail-closed） |
 | `tests/smoke.rs` | ~110 | env 门控真实 API 冒烟，不进默认测试路径（`live-smoke` feature 显式启用） |
 | `tests/timeline_projection_host.rs` | ~160 | host `timeline()` 与 protocol 投影 golden 对拍 |
-| `tests/gui_server/session.rs` | ~1400 | 具名 test bin `gui_server_session`：握手/版本/capability/resume/心跳/慢消费/会话完成信号 |
-| `tests/gui_server/multi_gui_runtime.rs` | ~830 | 具名 test bin `gui_server_multi_gui_runtime`：多 GUI 一致性/重连 replay/慢客户端隔离 |
 
 ADR-053 启动：显式 `AppLoadOptions.approval_mode` > Global 审批 > ReadOnly；显式 `trust_workspaces` 仅当次进程，缺省为当前根路径选择 > Global 全项目信任默认。`set_approval_host` 只替换交互入口，GUI/CLI 装配不再把已解析 trust 伪装成显式启动覆盖。Settings 修改当前信任时清除当次启动 trust 覆盖，以保存选择为准；其他项目回到各自配置。Host 持写锁跨写盘和内存更新，失败不改变 scheduler。现有 Settings 测试扩充为落盘/重载、项目隔离、未知模式拒绝与损坏 Global 文件保旧。`session_instructions_follow_target_workspace_trust` 验证 attached 与目标项目信任相反时，AGENTS/Skills 注入只遵循目标项目（含显式 false 覆盖 Global true）。
 
 ## 3. 对外 API 面
+
+本机模型网关（[GW-1](../model-gateway.md)）：`gateway_backend.rs` 实现 [gateway](gateway.md) 的 `GatewayBackend`；目录、模型路由、凭证快照、租约和第三方用量记账保留在 AppCore。HTTP/SSE 和可撤销 token 存储在独立 gateway 包。`InstanceRole::Gateway` 独占 gateway.lock，与 GUI 共存且不打开/清扫会话、不启动 MCP。账号选择共用 `select_account_for_provider`。
+
 
 ### 3.1 装配与生命周期
 
@@ -163,10 +163,7 @@ UI-6b（[ADR-059](../settings.md#adr-059ui-6b-命名账号与持久选择2026-09
 
 ### 3.6 GUI 宿主与复用组件
 
-- `gui_server`（唯一 `pub mod`）：
-  - trait `GuiHost`：`snapshot()` / `timeline(session, cursor, limit)` / `query(envelope)` / `command(envelope)`，是 cli 与测试注入宿主的接口；
-  - `GuiServer::bind(config, host, transport)` + accept 循环，每连接 spawn 独立会话任务；`GuiServerConfig`；
-  - `ConnectionManager` / `GuiSubscription` / `ManagerError`；常量 `DEFAULT_HEARTBEAT_TIMEOUT`（30s）与 `DEFAULT_QUEUE_CAPACITY`（1024）。
+- 连接接口与运行时见 [gui-server](gui-server.md)，本包不 re-export 旧模块。
 - `GuiHostAdapter::new(Arc<AppCore>)`：生产 `GuiHost` 实现；配套 `GuiEventBus`、`GuiBroadcastSink`、`GuiRunRegistry`、`project_timeline_item`。
 - `EventHub` / `HubSubscription` / `HubError` / `DEFAULT_HUB_CAPACITY`（4096）：全局序 + ring + broadcast 的通用事件扇出。
 - `IdempotencyStore` / `IdempotencyCheck`{New/Replay/InFlight} / `IdempotencyError` / `IdempotencyStats` / `should_cache` / `DEFAULT_IDEMPOTENCY_CAPACITY`（= storage `DEFAULT_COMMAND_LEDGER_CAPACITY`）。
@@ -199,11 +196,11 @@ GUI `run_start` 在既有 ToolScheduler 注册 `terminal` / `browser`，保留�
 
 GUI 1.19 文件面板：本机 GUI 用户经 `workspace_files` / `workspace_file_read` / `workspace_file_write` 操作已登记项目的相对路径。目录逐层返回、目录优先、最多 1,000 项；只读写已有 UTF-8 普通文件（≤128 KiB、无 NUL），拒绝路径越界、符号链接及受保护路径。读取返回内容版本；保存必须匹配 `expected_revision`，冲突保留磁盘文件。写后返回路径与新版本，正文不进入日志或命令账本。手动保存不构造 Agent Run，也不授予模型额外权限；模型工具仍走既有 Policy / 审批。
 
-UI-6b G2：新增私有 `provider_quota.rs`，`account_quota` 消费指定存储账号、配置代理与三窗官方读数，转换为 Percent `QuotaOverviewView`；复核 auth revision 拒绝迟到快照。旧无凭证 quota 查询仍返回本地 usage。GUI session 单独异步处理账号 quota，保持收帧/心跳/命令可用，断线丢弃未完成查询。`RunService::chat_turn_with_run_id` 调用 `select_account_for_run`，通过新鲜三窗与原子 CAS 选账号，再取得整轮 provider 快照；选择写持久 Diagnostic，GuiBroadcastSink 发 AuthChanged。Settings 接新模式命令与状态、旧版本 gate；当前 Run/工具续轮、独立命名/压缩保持 G1 身份边界。已有 Settings 回归增加查询归属、实际 Bearer 命中、失败保旧与持久化脱敏检查；`gui_server_session::slow_account_quota_allows_heartbeat_and_drops_on_disconnect` 验证慢查询时心跳、原 request_id 回复和断线取消。
+UI-6b G2：新增私有 `provider_quota.rs`，`account_quota` 消费指定存储账号、配置代理与三窗官方读数，转换为 Percent `QuotaOverviewView`；复核 auth revision 拒绝迟到快照。旧无凭证 quota 查询仍返回本地 usage。GUI session 单独异步处理账号 quota，保持收帧/心跳/命令可用，断线丢弃未完成查询。`RunService::chat_turn_with_run_id` 调用 `select_account_for_run`，通过新鲜三窗与原子 CAS 选账号，再取得整轮 provider 快照；选择写持久 Diagnostic，GuiBroadcastSink 发 AuthChanged。Settings 接新模式命令与状态、旧版本 gate；当前 Run/工具续轮、独立命名/压缩保持 G1 身份边界。已有 Settings 回归增加查询归属、实际 Bearer 命中、失败保旧与持久化脱敏检查；`pawork-gui-server` 的 `gui_server_session::slow_account_quota_allows_heartbeat_and_drops_on_disconnect` 验证慢查询时心跳、原 request_id 回复和断线取消。
 
 ### 4.1 GUI RunStart 全流程
 
-1. GUI 帧到达 `gui_server::session` 帧循环。首帧必须是握手：做协议版本检查，返回 `HandshakeResponse` + 初始 `Snapshot`；非握手首帧直接拒绝并关闭连接。
+1. GUI 帧到达 `pawork_gui_server` 帧循环。首帧必须是握手：做协议版本检查，返回 `HandshakeResponse` + 初始 `Snapshot`；非握手首帧直接拒绝并关闭连接。
 2. 后续 command 帧被盖上 client 戳（连接身份）并做版本校验；client_context 替换尝试被拒绝。
 3. capability 门：所需 capability 未在握手授予的 query/command 在进宿主**之前**被拒（terminal-streaming 相关的 snapshot 分区、事件、命令全路径同规则）。
 4. 帧进入 `GuiHostAdapter::command`：由 envelope 推导幂等 scope（不同 GUI client 的相同 `command_id` 不冲突），`IdempotencyStore::begin` 判定三态——
@@ -228,7 +225,7 @@ UI-6b G2：新增私有 `provider_quota.rs`，`account_quota` 消费指定存储
 3. quota 预检：`projected_run_usage` 估算本轮输入预算并询问 `QuotaService`，超限直接拒绝，不发请求。
 4. 装配 `TurnContext`：system prompt、注入层（instructions / skills / profiles / AGENTS 文件，经 `load_injected_layers`）、工具定义、`git_status_note` 短状态行（任何 git 失败静默省略，不阻断）。
    - SEARCH-1：默认按全局配置 `web_search = true` 为主请求追加 hosted WebSearch 工具声明，不受子代理模型规则的 `network` 权限影响；GUI 1.22 `RunStart.web_search` 仅覆盖本轮（Some(false) 关闭、缺省沿用 Global）；子代理按父子权限交集在装配 child 配置时禁用无 `network` 权限的搜索；
-   - VISION-1 / SEARCH-1 前置闸门：请求组装后按当前模型的三源能力证据跑 `pawork_providers::negotiate::capability_gate`——图片内容要求模型声明 `image_input`，hosted / extension 工具要求对应标签，已有当前供应商证据且不支持时直接拒绝；启动模型只有其它供应商同名静态项时，先查询当前供应商目录（4 秒上限、可取消），仍未知或不支持则拒绝推理请求。纯文本沿用原路径。
+   - VISION-1 / SEARCH-1 前置闸门：请求组装后按当前模型的三源能力证据跑 `pawork_models::negotiate::capability_gate`——图片内容要求模型声明 `image_input`，hosted / extension 工具要求对应标签，已有当前供应商证据且不支持时直接拒绝；启动模型只有其它供应商同名静态项时，先查询当前供应商目录（4 秒上限、可取消），仍未知或不支持则拒绝推理请求。纯文本沿用原路径。
 5. 进入 `pawork_engine::run_session`。`SessionLoopCtx` 作为 `LoopContext` 提供：
    - 审批：转 `ApprovalPromptHost`（CLI 为终端 ask，GUI 为 `GuiApprovalHost`）；
    - 工具执行：经 `ToolScheduler`（并发上限 8，Policy/审批模式约束），写工具执行前先落 checkpoint 快照；同轮多个调用中 `supports_concurrency == false` 的工具（terminal / browser）从并发批中拆出、按输入顺序单独串行执行，结果仍按输入序对齐；
@@ -315,15 +312,18 @@ WorkspaceList 与 snapshot Workspaces 段均按每个目标 workspace roots 调�
 
 ## 6. 依赖关系
 
-**上游（15 个 pawork crate）**：[domain](domain.md)、[engine](engine.md)、[providers](providers.md)（features：anthropic / chatgpt-oauth / xai-oauth / glm-coding / opencode-go / qwen-token-plan / deepseek / kimi-platform / kimi-code，八通道全开）、[auth](auth.md)、[tools](tools.md)、[policy](policy.md)、[workspace](workspace.md)、[exec](exec.md)、[storage](storage.md)（features：compaction / checkpoint / protected）、[git](git.md)、[workflow](workflow.md)、[orchestration](orchestration.md)（`default-features = false`）、[control-plane](control-plane.md)、[protocol](protocol.md)、[transport](transport.md)。三方：tokio、reqwest、toml、blake3、getrandom、tracing、serde 系。
+**生产内部依赖**：[models](models.md)、[gui-server](gui-server.md)、[gateway](gateway.md)、[mcp](mcp.md)、[domain](domain.md)、[engine](engine.md)、[providers](providers.md)（features：anthropic / chatgpt-oauth / xai-oauth / glm-coding / opencode-go / qwen-token-plan / deepseek / kimi-platform / kimi-code，八通道全开）、[auth](auth.md)、[tools](tools.md)、[policy](policy.md)、[workspace](workspace.md)、[exec](exec.md)、[storage](storage.md)（features：compaction / checkpoint / protected）、[git](git.md)、[workflow](workflow.md)、[orchestration](orchestration.md)（`default-features = false`）、[control-plane](control-plane.md)、[protocol](protocol.md)、[transport](transport.md)。三方：tokio、reqwest、toml、blake3、getrandom、tracing、serde 系。
 
 **下游**：生产仅 [pawork-cli](cli.md)（`pawork` 二进制 → cli → app）；[pawork-client](client.md) 以 dev-dependency 使用本包做集成测试。desktop **禁止**依赖本包。
 
-**dev-dependencies**：pawork-testkit（MockProvider/MockScript）、pawork-transport（features local + memory，供 gui_server 集成测试起真实 endpoint）、wiremock、tempfile。
+**dev-dependencies**：pawork-testkit（MockProvider/MockScript）、pawork-transport（features local + memory，供 Host/UI fixture 集成测试起真实 endpoint）、wiremock、tempfile。
 
 依赖方向与全局分层见 [../../architecture.md](../../architecture.md) 与 [../../design.md](../../design.md) §2。本包处在 `pawork` 二进制依赖闭包的最大层：合并/归档波以 `cargo tree -p pawork` 断言无环且闭包不膨胀，给本包新增上游依赖须先过对应任务书。
 
 ## 7. 测试与验证资产
+
+网关回归：`cargo test -p pawork-app --offline --lib gateway_`。`gateway_tests.rs` 集成宿主测试以真实 loopback HTTP + wiremock 验证模型路由、两种响应、usage/strict、鉴权撤销与 Host/Origin 拒绝；阻塞 provider 验证流式超时错误、断开取消和部分记账。独立 gateway 包的 `tokens` 测试验证多客户端、摘要存储、权限与撤销。测试不访问真实模型。
+
 
 2026-09-20 测试重构：live-smoke 只以 feature 显式选择，不再叠加 ignore，缺环境直接失败；验证非空流式文本、唯一成功终态与 `resume_messages` 可恢复的助手内容。普通 `bash scripts/test.sh app` 开启 ui-fixture、不开 live-smoke，不请求真实 Provider。真实模型仍按产品验证规格执行；本次执行状态见 Git 历史（37fae8f3:docs/testing-refactor-plan.md）。
 
@@ -374,14 +374,12 @@ cargo test -p pawork-app --offline --lib --tests --features ui-fixture
   - SEARCH-1 / VISION-1（`services/run.rs`）：`web_search = true` 且模型声明 WebSearch 时注入 hosted 工具并送达 Provider（MockProvider 调用记录断言 `hosted_tools` / `has_image`）；`RunStart.web_search=false/true` 双向覆盖 Global，下一轮仍沿用 Global；无项目上传回归覆盖完整文本持久化与附件只消费一次，暂存边界回归覆盖客户端 / 会话隔离与分块重传；模型未声明时 web search 注入与图片消息均被 `capability_gate` 拒绝（`AppError::Provider`，Provider 零调用）；同名模型在另一供应商的图像声明也必须拒绝；新增启动模型远端图像能力发现→实际请求携图→持久回复回归。 R-02 全链路：wiremock 真 AnthropicProvider 的流错误 message 含敏感文本时，返回错误、持久化 RunFailed 与投影均不含原文，只保留白名单 `type` 且类别可辨认（`provider_stream_error_is_persisted_without_upstream_message`）。
   - 2026-09-15 审查：`extension.rs` 覆盖多根目录的 bare / 引号精确图片引用（第一根路径越界不可回退掩盖）、超大稀疏图片、索引后路径被替换为越界 symlink / 非普通文件；`gui_host/events.rs` 覆盖 hosted 搜索 live / 历史两臂一致、完成 / 失败后追加来源与重复回放去重。Host 用 `protocol::projection::project_server_tool_event` 广播服务端工具展示事件。
 
-**tests/（integration）**——`tests/gui_server/` 下两个文件不是自动发现的，经 Cargo.toml `[[test]]` 声明为具名 test bin：
+**tests/（integration）**——GUI 协议连接测试已迁入 [gui-server](gui-server.md)，本包保留业务宿主集成测试：
 
 | 文件 | 形态 | 覆盖点 |
 | --- | --- | --- |
 | `tests/timeline_projection_host.rs` | 默认跑 | 真实 `GuiHostAdapter::timeline()` 与 protocol 投影 golden（`paged_interleave.jsonl`）逐条对拍；limit=0 收敛最小窗口、游标跨未投影事件推进 |
 | `tests/ui_fixture_projection.rs` | `--features ui-fixture` | R1 Wave B Phase C：devfixture 把 `fixtures/ui/seed.json` 种到隔离 tempdir 后，经真实装配的 `GuiHostAdapter` `snapshot()`/`timeline()` 断言 3 workspaces、7 sessions、四日期桶分布、pending approval 重建、completed 会话条目构成（user/assistant/tool/approval/run 全量对拍 seed turns）、alpha diff 4 文件含 ≥200 字符长行；断言值取自 seed.json |
-| `tests/gui_server/session.rs` | 具名 `[[test]]` `gui_server_session` | 握手往返、非握手首帧拒绝、command 盖戳与版本校验、SessionGet 字段透传、resume 三态与 ack、Heartbeat→Pong、断连不取消 run、lagged→ReplayUnavailable、慢消费不阻塞宿主、client_context 替换拒绝、capability 先于宿主拒绝、terminal-streaming capability 全路径、ADR-045 `TerminalExited` 按协商 minor 门控（1.2 连接跳过且不断流、1.3 连接送达）、R-11 客户端断开后 `wait_done` 有界就绪（`wait_done_fires_after_client_disconnect`） |
-| `tests/gui_server/multi_gui_runtime.rs` | 具名 `[[test]]` `gui_server_multi_gui_runtime` | 三 GUI 收到相同事件序、重连 replay 缺失事件、replay 不可用回退 snapshot、慢客户端不拖累其它 GUI、断连/心跳超时均不触发 RunCancel |
 | `tests/smoke.rs` | `live-smoke` feature + env 门控，默认不编译 | 真实 API 流式冒烟（AssistantTextDelta + RunCompleted）；`cargo test -p pawork-app --features live-smoke --test smoke -- --nocapture`，需 `PAWORK_SMOKE_BASE_URL/API_KEY/MODEL[/PROTOCOL]`，禁止打印 key |
 | `examples/ui_fixture.rs` | `--features ui-fixture` dev-only example（非 test bin） | R1 Wave B UI fixture 工具（CLI 冻结）：`seed`（写隔离 root + manifest/ready marker）、`serve`（真实 GuiServer + 按首行前缀分派的 MockProvider；`drop_socket` 可重复触发）、`self-check`（握手+snapshot 校验+RunStart+Resume Replay，每轮先失效旧 `replay_complete`）、`snapshot-dump`（volatile 归一化 + seed 会话过滤）。数据集 `fixtures/ui/seed.json` 与确定性 PTY；验证链路：`seed → serve → self-check → snapshot-dump` |
 
@@ -407,7 +405,7 @@ UI-6b 扩展已有 key 端到端用例：添加第二个 key、持 Run 读锁选
 - **terminal 审批粒度**：`terminal_create` 在 AskUser 模式 fail-closed 落 Deny（命令级交互审批待 wire ADR，见 ADR-041 D2）；`AskForDangerous` 对默认 shell 返回 constrained allow，NeverAsk/ReadOnly 依 D2 拒绝；会话内容不逐条审批。
 - **tracing interest 缓存投毒**：与无 subscriber 测试共享 callsite 的断言测试会间歇丢事件（tracing-core 0.1.36 `Interest::never()` 缓存）；`RecordingCapture::install` 以双注册 Dispatch 治愈并钉住，窗口结束调 `dismiss()`。
 - **testsupport 环境写**：`set_env`/`remove_env` 直接写进程环境（unsafe），相关测试串行意识自负。
-- **gui_server 集成测试依赖 dev-features**：需要 pawork-transport 的 `local` + `memory`；生产依赖不开这两个 feature。本包仅声明默认关闭的 `ui-fixture` feature，用于 opt-in 编译 devfixture / example / 对应集成测试；providers / storage 的 features 仍由本包 Cargo.toml 固定开启。
+- **Host/UI fixture 测试依赖 dev-features**：需要 pawork-transport 的 `local` + `memory`；连接运行时回归已归 gui-server。本包仅声明默认关闭的 `ui-fixture` feature，用于 opt-in 编译 devfixture / example / 对应集成测试；providers / storage 的 features 仍由本包 Cargo.toml 固定开启。
 - **`mcp_test` 有副作用**：会真实建连并 ping 配置的 MCP server，untrusted workspace 下 stdio 直接报 PermissionDenied。
 - **diff 回退路径是行级替换**：非 git 工作区的快照对比生成单 hunk 全量替换 diff（非最小编辑距离），二进制以 NUL 字节嗅探；`session_diff` 的改动集来自 checkpoint 服务，未 `open_checkpoints` 时返回空 diff 而非报错，git 判定只看首个 workspace root。
 - **`AppCore` 字段全私有或 `pub(crate)`**：消费方只能走方法门面；`Debug` 输出经筛选（provider_id/model/协议/是否有 store 等），不含凭证本体。

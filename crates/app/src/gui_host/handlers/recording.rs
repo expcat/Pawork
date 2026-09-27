@@ -1,7 +1,7 @@
 //! Explicit local skill recording from persisted operations; no automatic execution.
 use super::super::GuiHostAdapter;
-use crate::gui_server::GuiHostError;
 use pawork_domain::{AgentEvent, ContentPart};
+use pawork_gui_server::GuiHostError;
 use pawork_protocol::{
     AppCommand, AppCommandEnvelope, AppQuery, AppQueryEnvelope, AppResponse, CommandSource,
 };
@@ -266,10 +266,10 @@ pub(crate) async fn plugins(_: &GuiHostAdapter, _: &AppQuery) -> Result<AppRespo
 mod tests {
     use super::*;
     use crate::gui_host::tests::{command_envelope, query_envelope};
-    use crate::gui_server::GuiHost;
     use pawork_domain::{
         Message, MessageId, MessageMetadata, MessageRole, RunId, ToolCallContent, ToolResultContent,
     };
+    use pawork_gui_server::GuiHost;
     use pawork_workspace::resources::{
         CurrentPathKind, ResourceLoader, ResourceLoaderOptions, ResourceRequest, ResourceSelection,
         WorkspaceRelativePath,

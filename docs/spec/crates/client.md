@@ -102,7 +102,7 @@ UI-6b G2：crate 根增加 `ProviderAccountSelectionMode`、`QuotaOverviewQuery/
 ## 6. 依赖关系
 
 - **生产依赖**：`pawork-domain`（[domain.md](domain.md)）、`pawork-protocol`（[protocol.md](protocol.md)）、`pawork-transport`（[transport.md](transport.md)）。`default = []`，无 feature。
-- **dev-dep**：`pawork-app`（[app.md](app.md)，进程内 GuiServer / GuiHostAdapter）、`pawork-storage`（SessionStore）、`pawork-testkit`（MockProvider / MockScript）、transport 的 `memory` feature。
+- **dev-dep**：`pawork-gui-server`（[gui-server.md](gui-server.md)，进程内 GuiServer）、`pawork-app`（[app.md](app.md)，GuiHostAdapter）、`pawork-storage`（SessionStore）、`pawork-testkit`（MockProvider / MockScript）、transport 的 `memory` feature。
 - **下游**：`pawork-cli`；`apps/desktop`（**唯一**业务依赖，所需类型全部从本包 re-export）。
 
 ## 7. 测试与验证资产

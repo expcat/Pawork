@@ -4,9 +4,9 @@
 
 use std::sync::Arc;
 
-use pawork_app::gui_server::GuiHost;
 use pawork_app::GuiHostAdapter;
 use pawork_domain::{AgentEventEnvelope, SessionId, Timestamp};
+use pawork_gui_server::GuiHost;
 use pawork_protocol::TimelineItem;
 use pawork_storage::session::SessionStore;
 use pawork_testkit::{MockProvider, MockScript};

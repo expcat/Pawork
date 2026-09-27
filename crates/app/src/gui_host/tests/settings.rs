@@ -49,7 +49,7 @@ pub(super) async fn settings_adapter_with_default(
     let core = AppCore::from_parts(
         Arc::new(
             MockProvider::sequence(Vec::new()).with_models(
-                pawork_providers::ModelRegistry::builtin()
+                pawork_models::ModelRegistry::builtin()
                     .list()
                     .into_iter()
                     .filter(|entry| entry.provider.as_str() == provider_id)
@@ -2612,7 +2612,7 @@ async fn set_model_enabled_accepts_cached_remote_id() {
     let (adapter, _dir) = settings_adapter("http://127.0.0.1:1".into(), backend).await;
     {
         let core = adapter.core.write().await;
-        core.remember_runnable_catalog(vec![pawork_providers::CatalogEntry {
+        core.remember_runnable_catalog(vec![pawork_models::CatalogEntry {
             id: pawork_domain::ModelId::from("glm-flash-unlisted"),
             provider: pawork_domain::ProviderId::from("glm-coding"),
             display_name: "unlisted".into(),

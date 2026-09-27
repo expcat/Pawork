@@ -328,7 +328,7 @@ impl UsageService {
     ) -> Option<Cost> {
         let entry = core.registry.resolve(model.as_str())?;
         let pricing = entry.pricing.as_ref()?;
-        Some(pawork_providers::estimate_cost(usage, pricing))
+        Some(pawork_models::estimate_cost(usage, pricing))
     }
 }
 
@@ -349,7 +349,7 @@ mod tests {
         ModelProvider, ModelResponseSummary, ProviderError, ProviderId, ProviderStreamEvent,
         RequestId, ResolvedCredential, RunId, SessionId, StopReason, TokenUsage,
     };
-    use pawork_providers::ModelRegistry;
+    use pawork_models::ModelRegistry;
 
     use crate::testsupport::{
         core_with_registry, mock_core_with_usage, user_hello, RecordingEvents,

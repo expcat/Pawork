@@ -47,6 +47,8 @@ OPT-1 / [ADR-053](../settings.md#adr-053opt-1-设置持久化2026-09-05)：Setti
 
 ## 3. 对外 API 面
 
+`QuotaOverviewQuery::is_account_query()` 统一识别带 credential_id 或 Percent 单位的账户额度查询，供 GUI 连接调度与 AppCore 查询分流共用；从 app 提升的是纯分类逻辑，序列化字段与版本不变。
+
 GUI 1.19 新增 GUI-only `WorkspaceFiles { workspace_id, path }`、`WorkspaceFileRead { workspace_id, path }` 查询，以及 `WorkspaceFileWrite { workspace_id, path, content, expected_revision }` 命令；路径均为 `WorkspaceRelativePath`，根目录使用 `.`。目录 Data 为 `{workspace_id,path,entries:[{path,name,is_dir}],truncated}`，文本 Data 为 `{workspace_id,path,content,revision}`，保存 Data 仅 `{workspace_id,path,revision}`，不把正文写入幂等回执。minor <19 在请求前拒绝；旧帧形状不变。Host 不在日志 / 账本持久化文件正文；文件方法仅接受本地 GUI 来源。
 
 GUI 1.20 新增 GUI-only `SubagentSettings` / `SubagentList{session_id}` 查询与 `SetSubagentSettings{settings}` / `SubagentCancel{session_id, agent_id}` 命令。设置 Data 为 `{enabled, max_concurrent, models:[{provider_id, model_id, allow_spawn, allow_as_subagent, permissions}]}`（默认 enabled=true、并发 1..=16、模型规则空表 = 全量默认允许；权限白名单 read/write/terminal/network/mcp/browser/computer，显式空数组 = 全拒）；列表 Data 为 `{agents:[{agent_id, session_id, parent_run_id, title, provider_id, model_id, status, result?}]}`。set 为全态写并原子持久化；cancel 校验会话归属。minor <20 在请求前拒绝；旧帧形状不变。
@@ -283,7 +285,7 @@ ADR-057：思考与正文按 run/message 分别累积有序增量，committed �
 - **内部**：仅 `pawork-domain`（feature `typegen` 时连带 `pawork-domain/typegen`）。
 - **外部**：`serde` / `serde_json` / `thiserror` / `tokio`（io-util / sync / macros / rt / time，主依赖）；可选 `async-trait`（`adapter`、`headless`）、`getrandom`（`client-auth`）、`ts-rs`（`typegen`）。dev：`tempfile`。
 - **Feature**：`default = ["adapter", "client-auth", "headless"]`；`typegen` 非默认；`[[bin]] pawork-protocol-typegen` 要求 `typegen`。
-- **下游**：`pawork-app`、`pawork-client`（生产依赖）、`pawork-cli`（`features = ["adapter"]`）。
+- **下游**：`pawork-gui-server`、`pawork-acp`、`pawork-app`、`pawork-client`（生产依赖）、`pawork-cli`（`features = ["adapter"]`）。
 - 全景见 [../../architecture.md](../../architecture.md)、[../../design.md](../../design.md) §2；GUI 链路与事件链路见 [../flows.md](../flows.md)；Desktop 侧消费见 [../../gui-design.md](../../gui-design.md)。
 
 ## 7. 测试与验证资产

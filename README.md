@@ -4,6 +4,8 @@
 
 Pawork 用 Rust 从零实现一个编码智能体（Coding Agent）平台核心。二进制 `pawork` 是 Core 的唯一正式宿主；Desktop GUI（GPUI，`apps/desktop`）作为独立进程，经 CLI 暴露的 GUI Connection Protocol 连接 Core。
 
+外部应用可通过[本机模型网关](docs/spec/model-gateway.md)复用已连接的模型：标准 HTTP、按客户端 token、普通与流式补全。
+
 ## 快速开始
 
 ```bash
@@ -23,16 +25,17 @@ Desktop 启动脚本不加载 fixture、seed 或测试 profile。它默认使用
 
 ```text
 Pawork/                  # 仓库根 = Cargo workspace 根
-├── crates/              # 22 个库（扁平布局，目录 = 包名去 pawork- 前缀）
+├── crates/              # 27 个库（扁平布局，目录 = 包名去 pawork- 前缀）
 │   ├── domain/          # canonical 领域 + provider_api/tool_api 契约 + 事件信封 golden
 │   ├── protocol/        # GUI 帧 / headless-json / core-api / typegen
 │   ├── testkit/         # dev-only mock 与契约断言
 │   ├── policy/          # 安全内核（PolicyDecision/ApprovalMode）
 │   ├── exec/            # 进程/沙箱/PTY
-│   ├── tools/           # 八工具 + scheduler + mcp/
+│   ├── tools/           # 九工具 + scheduler
 │   ├── workspace/       # workspace 服务 + resources/ + config/ + import/
 │   ├── storage/         # sqlite/ + session/ + blob/（PWB1）
-│   ├── providers/       # net/ + registry/pricing/usage/negotiate/reasoning + channels/
+│   ├── models/          # 目录、能力证据/协商、计价
+│   ├── providers/       # net/ + wire/usage/reasoning + channels/
 │   ├── auth/            # Secret 后端 / OAuth / 脱敏解析链
 │   ├── git/             # Diff/Status/Checkpoint/worktree
 │   ├── engine/          # Agent Engine（生产依赖仅 domain）
@@ -40,8 +43,12 @@ Pawork/                  # 仓库根 = Cargo workspace 根
 │   ├── orchestration/   # supervisor/budget/lifecycle/task_graph
 │   ├── control-plane/   # 控制面 core + quota/ + credential/
 │   ├── transport/       # local（UDS）+ memory
-│   ├── app/             # 装配宿主 + gui_server/
-│   ├── cli/             # 21 子命令 + channels/acp/
+│   ├── mcp/             # MCP 客户端，复用 tools 注册/调度
+│   ├── gui-server/      # GUI 协议服务器，依赖 GuiHost 端口
+│   ├── acp/             # 编辑器 ACP 协议与会话 actor
+│   ├── gateway/         # 本机 OpenAI HTTP/SSE 与客户端令牌
+│   ├── app/             # 装配宿主 + 领域服务/协议端口实现
+│   ├── cli/             # 21 子命令 + 进程/stdio 装配
 │   ├── client/          # framed 连接面 + headless/
 │   ├── terminal/        # 纯终端显示解析与按键映射
 │   ├── computer-use/    # 专用虚拟桌面 RFB 观察与输入
@@ -54,7 +61,7 @@ Pawork/                  # 仓库根 = Cargo workspace 根
 └── docs/                # 架构、设计、Spec、参照
 ```
 
-24 成员（22 库 + 2 应用）。包清单、依赖方向与冻结契约见 [docs/architecture.md](docs/architecture.md)。
+29 成员（27 库 + 2 应用）。包清单、依赖方向与冻结契约见 [docs/architecture.md](docs/architecture.md)。
 
 ## 文档导航
 

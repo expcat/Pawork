@@ -4,7 +4,7 @@ use pawork_protocol::{
 };
 
 use crate::gui_host::GuiHostAdapter;
-use crate::gui_server::GuiHostError;
+use pawork_gui_server::GuiHostError;
 
 use super::settings_data;
 

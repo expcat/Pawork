@@ -24,6 +24,7 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["rt", "process", "io-util", "sync", "macros", "time"] }
 
 [dev-dependencies]
+pawork-gui-server = { path = "../gui-server" }
 pawork-app = { path = "../app" }
 pawork-storage = { path = "../storage", default-features = false, features = ["session"] }
 pawork-testkit = { path = "../testkit" }

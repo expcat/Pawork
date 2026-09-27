@@ -10,6 +10,7 @@
 
 1. CLI `chat` / `run` 或 GUI `run_start` → `AppCore::chat_turn*`（实现在 `crates/app/src/services/run.rs`）。
 2. 宿主装配 `SessionLoopCtx`（`crates/app/src/loop_ctx.rs`）实现 `pawork_engine::LoopContext`。
+   模型目录、能力门与定价使用 `pawork-models`；`pawork-providers` 承担具体请求/流式协议与厂商适配。MCP 工具由 `pawork-mcp` 注册进同一 `pawork-tools::ToolRegistry`，沿用同一调度和审批。
 3. Engine 以 `SessionTurn.session_id` 覆盖 canonical 请求会话身份，主请求、工具续轮和压缩保留；仅 OpenCode Go adapter 转为 HTTP 会话头（ADR-057）。`pawork_engine::run_session`（`crates/engine/src/tool_loop/`）调 `ModelProvider::stream`，把 `ProviderStreamEvent` 映射为 `AgentEvent`。
 4. 收集到 tool call 后：`request_approval`（**等待前**必须 emit `ToolApprovalRequested`）→ `execute_tools` → `ToolScheduler`（`pawork-tools`）→ 各 `AgentTool`。
 5. 轮数上限 `DEFAULT_MAX_TOOL_ROUNDS = 20`。压缩走 `LoopContext::compact_history`（host 负责 session fork/snapshot）。
@@ -36,9 +37,9 @@ Desktop（及 probe）如何连上 Core，而不加载 Core crate。
 ```text
 pawork-desktop  ──framed bytes──►  pawork gui serve
      │                                  │
- pawork-client                    pawork-cli → pawork-app
+ pawork-client                    pawork-cli → pawork-gui-server
      │                                  │
- protocol 编解码                    GuiServer + GuiHostAdapter
+ protocol 编解码                    GuiHost ← app::GuiHostAdapter
  transport Local (UDS / pipe)      transport Local
 ```
 
@@ -58,9 +59,10 @@ GUI 1.22 本机附件：系统文件选择器 → Desktop 有界读取显式选�
 Headless / ACP：
 
 - Headless：`pawork headless --json-stdio`，stdout 仅 JSONL；SDK 在 `pawork-client::headless`。
-- ACP：`pawork acp serve`；`AcpHost` 不消费 GUI 帧、不持有凭证、不构造第二个 Core。
+- ACP：`pawork acp serve`；`pawork-acp::AcpHost` 经 CLI 注入的 `AcpCommandHost` 调用业务，不消费 GUI 帧、不持有凭证、不构造第二个 Core。
+- HTTP 网关：`pawork gateway serve` 装配 `pawork-gateway`，AppCore 实现 `GatewayBackend`；prepare 冻结模型与凭证，run 执行及记账。HTTP/token 不依赖 Core；不进入 Agent loop。
 
-相关包：[desktop](crates/desktop.md) · [client](crates/client.md) · [transport](crates/transport.md) · [protocol](crates/protocol.md) · [app](crates/app.md) · [cli](crates/cli.md)
+相关包：[desktop](crates/desktop.md) · [client](crates/client.md) · [transport](crates/transport.md) · [protocol](crates/protocol.md) · [gui-server](crates/gui-server.md) · [acp](crates/acp.md) · [gateway](crates/gateway.md) · [app](crates/app.md) · [cli](crates/cli.md)
 
 ADR-057：Host 转发可见 ThinkingDelta，历史和 live 进入同一 reducer 按 run/message 合并；Desktop 默认折叠。API <1.14 的 SessionGet 过滤新增思考 kind/字段但保留原分页游标；redacted / opaque reasoning 不进入 GUI。
 

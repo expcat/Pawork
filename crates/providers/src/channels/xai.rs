@@ -258,14 +258,14 @@ impl ModelProvider for XaiProvider {
                     .any(|modality| modality.as_str() == Some("image"));
             } else {
                 // VISION-2：远端未声明模态时按官方模型页默认表回填。
-                crate::registry::apply_default_image_input(&mut definition);
+                pawork_models::registry::apply_default_image_input(&mut definition);
             }
             if let Some(context) = entry.get("context_length").and_then(Value::as_u64) {
                 definition.context_window_tokens = context;
             }
             // ADR-063：远端未声明推理强度时按默认表回填（订阅目录
             // reasoning_efforts 声明未来接入时优先于默认表）。
-            crate::registry::apply_default_supported_efforts(&mut definition);
+            pawork_models::registry::apply_default_supported_efforts(&mut definition);
             definitions.push(definition);
         }
         *self

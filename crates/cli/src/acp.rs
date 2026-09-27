@@ -3,9 +3,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::channels::acp::wire::{JsonRpcError, ERROR_PARSE};
-use crate::channels::acp::OutboxItem;
-use crate::channels::{AcpHost, JsonRpcMessage};
+use pawork_acp::wire::{JsonRpcError, ERROR_PARSE};
+use pawork_acp::OutboxItem;
+use pawork_acp::{AcpHost, JsonRpcMessage};
 use pawork_app::AppCore;
 use pawork_protocol::adapter::SessionRegistry;
 use pawork_storage::session::SqliteClientSessionRegistryStore;

@@ -1,19 +1,20 @@
 use std::sync::Arc;
 
 use pawork_domain::ProviderId;
+use pawork_models::CatalogEntry;
 use pawork_protocol::{
     AppCommand, AppCommandEnvelope, AppQuery, AppResponse, DefaultModelPair, ProviderAuthState,
     ProviderAuthStatusData, ProviderAuthStatusEntry, ProviderCatalogState,
     ProviderCredentialStatus, ProviderUseProxyData, RoleDefaultsData, SetDefaultRoleModelData,
     SetModelEnabledData, SetProviderModelsEnabledData,
 };
-use pawork_providers::{CatalogEntry, ReasoningProtector};
+use pawork_providers::ReasoningProtector;
 
 use crate::app_core::RoleModelKind;
 use crate::gui_host::GuiHostAdapter;
-use crate::gui_server::GuiHostError;
 use crate::provider_assembly::{assemble_provider, assemble_registry, channel_protocol};
 use crate::{channels, AppCore};
+use pawork_gui_server::GuiHostError;
 
 use super::{flight_active, iso8601_utc, now_millis, settings_data, AuthFlights};
 

@@ -2,7 +2,6 @@
 
 use std::io::{self, IsTerminal, Read, Write};
 
-use pawork_app::gui_server::GuiHost;
 use pawork_app::{session_title_from_text, AppCore, AppError, GuiApprovalHost};
 use pawork_domain::ProviderErrorKind;
 use pawork_domain::{
@@ -12,6 +11,7 @@ use pawork_domain::{
 use pawork_engine::{
     AgentEventSink, CancelHandle, CancelReason, EngineError, NoopProcessTreeCleaner,
 };
+use pawork_gui_server::GuiHost;
 use pawork_protocol::headless::translate::encode_protocol_response;
 use pawork_protocol::headless::{HeadlessResponse, ProtocolErrorKind};
 use pawork_protocol::{AppCommand, AppEvent, AppResponse, RunState};

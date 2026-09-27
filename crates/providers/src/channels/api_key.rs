@@ -361,11 +361,11 @@ impl ModelProvider for ApiKeyChannelProvider {
                 model.capabilities.video_input &= transport == ModelTransport::ChatCompletions;
                 // ADR-063：同 model_id 跨 Provider 合并的默认推理强度声明
                 //（仅回填未知；远端已声明时优先）。
-                crate::registry::apply_default_supported_efforts(model);
+                pawork_models::registry::apply_default_supported_efforts(model);
                 // 2026-09-23 实测默认表：图像生成与 hosted WebSearch（仅
                 // Responses 传输生效，Chat 通道保持不声明）。
-                crate::registry::apply_default_image_output(model);
-                crate::registry::apply_default_hosted_web_search(model);
+                pawork_models::registry::apply_default_image_output(model);
+                pawork_models::registry::apply_default_hosted_web_search(model);
                 if self.qwen_search_endpoint && qwen_search_model(model.id.as_str()) {
                     model
                         .capabilities

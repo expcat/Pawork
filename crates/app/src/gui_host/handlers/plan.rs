@@ -1,6 +1,6 @@
 use super::super::GuiHostAdapter;
-use crate::gui_server::GuiHostError;
 use pawork_domain::SessionId;
+use pawork_gui_server::GuiHostError;
 use pawork_protocol::{AppCommand, AppCommandEnvelope, AppQuery, AppResponse};
 
 pub(crate) async fn get(

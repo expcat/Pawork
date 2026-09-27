@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use crate::net::http::{HttpClient, HttpClientConfig};
 use crate::net::sse::SseParser;
-use crate::{clamp_reasoning_to_thinking, ReasoningProtector};
+use crate::ReasoningProtector;
 use futures::StreamExt;
 use pawork_domain::{
     CancellationToken, ContentPart, ImageContent, ImageSource, Message, MessageRole, ProviderId,
@@ -20,6 +20,7 @@ use pawork_domain::{
     ProviderEventSink, ProviderStreamEvent, ReasoningEffort, ResolvedCredential, ResponseFormat,
     ThinkingLevel, ToolChoice, ToolDefinition,
 };
+use pawork_models::clamp_reasoning_to_thinking;
 use serde_json::{json, Map, Value};
 
 use crate::error_table::normalize_vendor_error;

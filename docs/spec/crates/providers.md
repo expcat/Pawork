@@ -1,28 +1,24 @@
 # pawork-providers
 
-> 首发模型渠道适配器：把 canonical domain 请求（`CanonicalModelRequest`）翻译成各厂商 wire 协议并把响应流映射回 `ProviderStreamEvent`；只依赖 `pawork-domain`（见 [domain.md](domain.md)），被 `pawork-app` 生产依赖、被 `pawork-engine` 仅 dev 依赖。
+> 首发模型渠道适配器：把 canonical domain 请求（`CanonicalModelRequest`）翻译成各厂商 wire 协议并把响应流映射回 `ProviderStreamEvent`；依赖 `pawork-domain` 与 `pawork-models`（见 [models.md](models.md)），被 `pawork-app` 生产依赖、被 `pawork-engine` 仅 dev 依赖。
 
 ## 1. 职责与边界
 
-- **职责**：承载四种 transport 形态（OpenAI-compatible Chat Completions、Responses、Anthropic Messages、xAI 按模型能力二选一）、模型目录与能力证据（`ModelRegistry`）、逐 model_id 默认能力表（推理强度 / 图像输入 / 图像生成 / hosted WebSearch，实测口径统一）、能力协商（`CapabilityNegotiator`）、计价与用量归一（pricing/usage）、厂商错误归一（error_table）、reasoning 续传保护接口（`ReasoningProtector`）、八条首发通道的静态注册（`CHANNEL_REGISTRY`，SET-4 新增 Kimi Platform / Kimi Code）与网络层（HTTP/SSE/错误分类）。
+- **职责**：承载四种 transport 形态（OpenAI-compatible Chat Completions、Responses、Anthropic Messages、xAI 按模型能力二选一）、消费 models 的模型目录、能力证据与协商；本包负责 wire 用量归一（usage）、厂商错误归一（error_table）、reasoning 续传保护接口（`ReasoningProtector`）、八条首发通道的静态注册（`CHANNEL_REGISTRY`，SET-4 新增 Kimi Platform / Kimi Code）与网络层（HTTP/SSE/错误分类）。
 - **不做**：凭证的存取与解析（`pawork-auth`，见 [auth.md](auth.md)）；事件持久化；Agent loop 编排；GUI。装配（把 preset + 凭证 + registry 组装成 Provider 实例）由 `pawork-app` 承载。
-- **模块纪律**：core 纯逻辑模块（`registry` / `pricing` / `usage` / `negotiate` / `reasoning` / `error`）不得引用 `net` 模块，由 `lib.rs` 内 `module_discipline` 测试护航。
+- **编译边界**：模型目录 / 能力协商 / 计价已迁入 `pawork-models`；依赖方向为 providers → models → domain。原 core 不引用 net 的文本扫描测试由独立 Cargo 边界替代，消费方直接导入 models，无旧路径 re-export。
 - **engine 不认厂商名**：能力差异一律走 registry/capability 证据；`pawork-engine` 仅以 dev-dependency 引用本包，用 `CHANNEL_REGISTRY` 派生 no-provider-branch 守护测试名单。
 
 ## 2. 模块与文件地图
 
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
-| `src/lib.rs` | ~120 | crate 门面：模块声明与 feature 门控 re-export；`is_credential_header`（五个凭证头小写匹配）；`module_discipline` 测试 |
-| `src/error.rs` | ~20 | `RegistryError`（`NotFound` / `DuplicateAlias` / `DuplicateModelId`） |
+| `src/lib.rs` | ~120 | crate 门面：模块声明与 feature 门控 re-export；`is_credential_header`（五个凭证头小写匹配） |
 | `src/error_table.rs` | ~160 | `VENDOR_ERROR_RULES` 数据表 + `normalize_vendor_error`：按厂商子串把错误改判为更精确的 `ProviderErrorKind`（如 ChatGPT usage limit、xAI live_search quota） |
 | `src/provider.rs` | ~500 | `OpenAiCompatibleConfig` / `OpenAiCompatibleProvider`：Chat Completions transport 的 `ModelProvider` 实现；构造期拒绝 config 头携带凭证头 |
 | `src/request.rs` | ~670 | `to_chat_completions_body`：canonical → Chat Completions 请求体；`provider_options` 保留键忽略并 `tracing` 警告 |
 | `src/stream.rs` | ~230 | `chunk_to_events` / `is_done` / `ChunkState`：Chat Completions SSE chunk → `ProviderStreamEvent`（文本/工具调用增量、usage、finish_reason）；畸形 chunk → `MalformedResponse` 错误事件（R-08）；`stream_error_message` 流错误安全文案（R-02） |
 | `src/usage.rs` | ~300 | `normalize_usage`（多厂商字段名归一为 `TokenUsage`）、`map_stop_reason`、`UsageAccumulator`（会话级累计） |
-| `src/pricing.rs` | ~200 | `ModelPricing` / `estimate_cost`（micro-unit 定点算费，`MILLION` 基数）、`BUILTIN_RATE_CARD`（`"builtin"`）与 `BUILTIN_RATE_VERSION`（`"2026-08-15"`） |
-| `src/registry.rs` | ~2.1k | `ModelRegistry`（目录 + 别名 + 三源能力证据 + 动态发现合并）、`CatalogEntry`、`CapabilityEvidence` / `CapabilitySource`、`merge_capabilities`、`ProviderProbe` / `ProbeError` / `ProviderCapabilitySource`、`caps` 构造 helper、四张逐 model_id 默认能力表（`default_supported_efforts` / `default_image_input` / `default_image_output` / `default_hosted_web_search`）与对应 `apply_default_*` 回填 |
-| `src/negotiate.rs` | ~730 | `CapabilityNegotiator::negotiate`（纯函数协商）与 `clamp_reasoning_to_thinking` |
 | `src/reasoning.rs` | ~100 | `ReasoningProtector` trait（protect/recover 不透明 payload）与 `ReasoningProtectError`（`Unavailable` / `Corrupted` 判别） |
 | `src/memory_protector.rs` | ~110 | `InMemoryReasoningProtector`：HashMap 存不透明字节，测试/内存场景用 |
 | `src/responses.rs` | ~1140 | Responses transport 共享件：`ResponsesTransport(Config)` / `ResponsesWireOptions` / `to_responses_body` / `ResponsesStreamAssembler` / `ResponsesAssemblyEvent` / `ResponsesFinalState`；保留键防覆盖；凭证头拒绝 |
@@ -42,7 +38,7 @@
 | `src/channels/anthropic/request.rs` | ~790 | `to_messages_body(_with_plan)` / `MessagesWirePlan`：system 提升、`tool_use` 块、`thinking` 与 `cache_control` 按 plan 写 wire |
 | `src/channels/anthropic/stream.rs` | ~690 | `parse_event` / `event_to_events` / `AnthropicStreamState` / `StreamOutput`：Anthropic SSE 事件 → canonical 事件；thinking signature 以 `PendingSignature` 输出待 protect；畸形事件 JSON → `MalformedResponse`（R-08）；`error` 事件错误文案不含上游 message（R-02） |
 
-共 28 个 `.rs` 文件，约 12.7k 行。
+模块地图以当前源码为准；共享模型逻辑见 [models](models.md)。
 
 ## 3. 对外 API 面
 
@@ -91,17 +87,15 @@ Grok 订阅端点与协议依据：[官方 CLI 目录实现](https://github.com/
 - `ChannelKind` 四变体即四种装配形态：`ApiKey`（五行通道复用 OpenAI-compatible transport，可逐模型切 Responses）、`ChatGptOAuth`（固定 Responses）、`XaiOAuth`（按模型 capability 选 Chat/Responses；SET-4 起凭证可为 OAuth 或 API key）、`KimiOAuth`（固定 Chat Completions；Coding Plan API key 与 OAuth 双认证）。
 - feature `anthropic`（默认开）承载 Messages transport 适配器，不属于 CHANNEL_REGISTRY 八行——它是 transport 基线而非首发通道行。
 
-### 3.3 模型目录与能力证据（registry）
+### 3.3 模型目录与能力证据（消费 models）
 
-- `ModelRegistry`：`empty()` / `builtin()` 构造；`register` / `try_register`（`RegistryError::DuplicateModelId` / `DuplicateAlias` 拒绝重复登记，`resolve` 未命中对应 `NotFound` 语义）；`extend_with`（批量合并）；`merge_provider_models` / `merge_provider_source`（把 Provider `list_models` 发现结果并入，静态已有时逐字段交集收窄）；`resolve(id_or_alias)`（模型 id 与别名同一命名空间查找）；`list` / `filter(required)`（按能力子集筛选）；`validate_context(id, input_tokens)` / `estimate_cost(id, usage)`（经 `CatalogEntry` 的 pricing）。`CatalogEntry::to_definition()` 转 domain `ModelDefinition`。
-- 能力三源：`CapabilitySource::{Static, Probe, Override}`；`CapabilityEvidence { static_declared, probe_declared, override_declared }`，`merged()` 对已出现的来源逐字段取交集（缺失来源不约束）。运行期可 `set_override` / `remove_override`（override 只能收窄）、`record_probe` / `clear_probe`（探测结果按 provider 记录）。`capability_evidence(model)` / `capability_snapshot()` 导出证据。
-- `ProviderCapabilitySource` trait / `ProviderProbe` / `ProbeError`：动态探测抽象。`caps(...)` 是测试与静态目录用的 `ModelCapabilities` 构造 helper。
+`ModelRegistry`、`CatalogEntry`、能力证据与默认表的 API 归属 [pawork-models](models.md)。以下记录 adapter 如何消费目录与端点证据。
 
 UI-6a / ADR-058：`ApiKeyChannelConfig::transport_for` 与 adapter 共用协议解析，Host 静态 / 配置回退同样过滤不可运行模型并同步 transport，显式覆盖仍优先。通用、ChatGPT、Kimi、xAI 目录使用严格形状与非空 ID 校验，合法空数组仍成功。通用未知窗口/输出为 0、未知工具能力 false；已知 ID 仅从同 provider 静态条目补证据，远端实际字段优先。Kimi 消费 display_name/context_length/supports_reasoning/supports_image_in；xAI 消费输入模态和窗口，aliases 仅辅助找静态证据；ChatGPT 空/null/none-only reasoning levels 不算思考。通用 `has_more=true` 显式拒绝，尚未实现翻页。
 
 VISION-1 / SEARCH-1（2026-09-15 八家官方调研）：通用远端目录消费 `supports_image_in` 显式布尔值，缺失时再读 `input_modalities`；纯文本模态或显式 false 会撤销静态视觉能力，两者均缺失才保留已有静态证据。通用 Chat / API-key Responses 没有 hosted search wire，不因远端 `supports_web_search` 而宣称可用；builtin 静态目录增至 8 条——新增 `glm-5.3`（text-only）/ `glm-5.3-flash`（多模态）@glm-coding、`deepseek-flash`（视觉 + thinking，1M / 384K）@deepseek，`qwen3.8-max` 标 `image_input`；能力按型号而非按 provider 声明（GLM-5.3 text / 5.3-Flash 多模态；deepseek-flash 视觉 / v4-pro 无视觉）。
 
-VISION-2（2026-09-22 官方文档调研）：新增 `default_image_input` 逐 model_id 默认表（registry.rs，口径与 ADR-063 强度表相同：实测 > 官方目录 > 官方文档，竞品仅作线索），远端目录（通用 / Kimi / xAI）未声明模态时按表回填 true，显式 false 与纯文本模态仍覆盖一切静态声明。登记为支持图像：glm-5.3-flash、qwen3.8 系 / qwen3.7-plus / qwen3.6-flash、minimax-m3、mimo-v2.5、deepseek-flash 系、kimi k3/k2.6/k2.7-code 系（含 coding 计划 id）、grok-4.5+；登记为官方证实 text-only：glm-5.3/5.2、deepseek-v4-pro、hy3；omen-alpha 等无官方证据保持未知不声明。Kimi 外部图片 URL 在 `reject_kimi_external_image_urls` 发 HTTP 前拒绝（`ms://` 与 base64 放行）。同期搜索调研结论：Chat 通道原生搜索（z.ai `web_search` 工具、百炼 `enable_search`、MiniMax `web_search`、Kimi `$web_search` 及 coding 端点 REST `/search`）均未接线，保持不声明 WebSearch；DeepSeek 官方明确 Responses built-in tools 一律 Ignored（无 hosted 搜索）；xAI Responses API 有 API 级 `web_search` 且订阅 CLI proxy 经 `/responses` 调用（grok-build 源码佐证），故 xAI Responses transport 模型（含远端目录）均声明 hosted WebSearch，Chat 模型不声明。
+VISION-2（2026-09-22 官方文档调研）：新增 `default_image_input` 逐 model_id 默认表（`crates/models/src/registry.rs`，口径与 ADR-063 强度表相同：实测 > 官方目录 > 官方文档，竞品仅作线索），远端目录（通用 / Kimi / xAI）未声明模态时按表回填 true，显式 false 与纯文本模态仍覆盖一切静态声明。登记为支持图像：glm-5.3-flash、qwen3.8 系 / qwen3.7-plus / qwen3.6-flash、minimax-m3、mimo-v2.5、deepseek-flash 系、kimi k3/k2.6/k2.7-code 系（含 coding 计划 id）、grok-4.5+；登记为官方证实 text-only：glm-5.3/5.2、deepseek-v4-pro、hy3；omen-alpha 等无官方证据保持未知不声明。Kimi 外部图片 URL 在 `reject_kimi_external_image_urls` 发 HTTP 前拒绝（`ms://` 与 base64 放行）。同期搜索调研结论：Chat 通道原生搜索（z.ai `web_search` 工具、百炼 `enable_search`、MiniMax `web_search`、Kimi `$web_search` 及 coding 端点 REST `/search`）均未接线，保持不声明 WebSearch；DeepSeek 官方明确 Responses built-in tools 一律 Ignored（无 hosted 搜索）；xAI Responses API 有 API 级 `web_search` 且订阅 CLI proxy 经 `/responses` 调用（grok-build 源码佐证），故 xAI Responses transport 模型（含远端目录）均声明 hosted WebSearch，Chat 模型不声明。
 
 CAP-PROBE（2026-09-23 五通道端点实测，glm-coding / opencode-go / qwen-token-plan / kimi-code / xai 订阅）：经 provider 适配器对当前可访问模型逐一发送 64x64 纯红 PNG 图片请求与 hosted `web_search` 请求（opencode-go 必须带 `x-opencode-session`，否则 400 MissingSessionID），结论按「实测 > 目录 > 文档」回写默认表——
 - `default_image_input` 补登 omen-alpha / mimo-v2.6-flash / mimo-v2.6-pro / deepseek-v4-flash-vision-exp（opencode-go）与 qwen `auto`；补登 text-only：glm-4.5 / 4.5-air / 4.6 / 4.7 / 5 / 5-turbo / 5.1、muse-spark 1.2/1.3、longcat-2.0；实测翻转 deepseek-v4-flash（legacy id 在 go 对图片 400、文本 200）与 qwen3.7-max（token-plan 对图片 400、文本 200）。gpt-5.6-luna（403）与 hy4-preview / mimo-v2.5-pro（推理 404）未测，保持未知。
@@ -112,31 +106,23 @@ CAP-PROBE（2026-09-23 五通道端点实测，glm-coding / opencode-go / qwen-t
 
 `ApiKeyChannelConfig` 初始化 Go/Qwen 官方逐模型 transport 表；显式 `with_model_transport` 覆盖单项。混合通道的目录过滤与 `stream` 共用 `transport_for`：官方表命中用表内协议；未命中先过共用 `non_text_model` 谓词（图片 / 音频 / TTS / realtime 等非文本 ID 为 `None`，Go 与 Qwen Token Plan 同规则），再按官方 endpoint 家族回退（Go：`grok-*`/`gpt-*`/`muse-spark-*` → Responses，`qwen*`/`minimax-*` → Messages，其余 Chat Completions）。只保留 ChatCompletions/Responses 进入可运行目录；Messages-only 与非文本 ID 的直接请求也在 HTTP 前拒绝。远端成功返回的新聊天 ID 不得因缺表被丢弃。其它 Chat 通道仍采用兼容文本基线。来源与协议/认证边界见 [ADR-058](../settings.md#adr-058ui-6a-目录权威与凭证验证2026-09-08)。
 
-### 3.4 能力协商（negotiate）
+### 3.4 能力协商（消费 models）
 
-`CapabilityNegotiator::negotiate(&CapabilityEvidence, &CapabilityRequirements) -> ResolvedCapabilities`：无状态纯函数，不触网、不读 Provider 名、不读 wall-clock。
-
-- 输入：证据快照（三源）× 请求要求（`transport_pref` / `required_tools` / `reasoning` / `citations` / `image_input`——VISION-1 起，请求消息含图片内容时置位，模型未声明图片输入则 `Reject`）。
-- 输出 `ResolvedCapabilities` 字段：`chosen_transport`、`requested` / `supported` / `unsupported` 三集合（保证 `requested == supported ∪ unsupported`）、`fallback` map（键 → `CapabilityFallback`）。
-- `CapabilityFallback` 变体语义：`Reject(原因)`（adapter 必须在发 HTTP 前拒绝）、`LegacyTransport`（请求现代 transport 但模型只有 Chat Completions 基线，降级记录）、`ClampedEffort`（reasoning `XHigh`/`Max` 在模型不支持细粒度 effort 时 clamp 为 `High`）。
-- transport 选择顺序：请求偏好 ∈ 模型声明 → 采用偏好；否则用模型声明的 transport；模型只有基线时退 ChatCompletions（必要时记 `LegacyTransport`）。
-- reasoning：显式 `ReasoningConfig` 优先于旧 `ThinkingConfig.level`；请求 reasoning 但模型 `thinking == false` 时整项进 `unsupported` + `Reject`。
-- `clamp_reasoning_to_thinking(reasoning, thinking)` 供 adapter 复用（Anthropic 把 effort 翻成 thinking budget），避免形成第二套 clamp 双轨。
-- `capability_gate(&CapabilityEvidence, &CanonicalModelRequest)`（VISION-1 / SEARCH-1）：发 HTTP 前的统一前置闸门——从请求派生 `required_tools`（hosted + extension）与 `image_input`，走同一 `negotiate`，任一 `Reject` 即 `InvalidRequest`，不触网。Anthropic 经 `prepare_request` 完整 negotiate 收口；其余通道由装配 / Run 服务在派发前统一调用（按证据判定，不按厂商分支）。无任何证据（未知模型）按空证据处理：纯文本放行，带图片 / hosted 工具 fail-closed。
+`pawork_models::CapabilityNegotiator` / `negotiate::capability_gate` 提供单一协商实现；Anthropic 在 `prepare_request` 消费，Responses 共用 reasoning clamp，其余通道由 Host 派发前检查。协商 API 与不变量见 [models](models.md)。
 
 ### 3.5 计价与用量
 
 - `normalize_usage(&Value) -> TokenUsage`：usage 视图可在顶层或嵌套 `"usage"` 键下；字段名兼容 OpenAI（`prompt_tokens` / `completion_tokens`、嵌套 `prompt_tokens_details.cached_tokens`）与 Anthropic（`input_tokens` / `output_tokens`、`cache_read_input_tokens` / `cache_creation_input_tokens`）等拼写；缺失按 0，绝不 panic。
 - `map_stop_reason(finish, has_tool_calls) -> StopReason`：`has_tool_calls` 为真直接 `ToolUse`；`stop`/`end_turn`/`ended` → `Completed`；`length`/`max_tokens`/`max_output_tokens` → `MaxTokens`；`tool_calls`/`tool_use`/`function_call` 等 → `ToolUse`；`content_filter`/`safety` → `ContentFiltered`；`cancelled` → `Cancelled`；`None`（协议正常收尾但未给 finish）→ `Completed`；其余 → `Other(原文)`。
 - `UsageAccumulator`：请求内「最新快照覆盖」、跨请求「累加」——`record(request_id, usage)` 同请求覆盖，请求 id 变化或 `finish_request()` 时把上一请求终值并入 `total()`；`current()` 读进行中快照。假设同一时刻只有一个进行中请求，交错回放不在支持范围。
-- `estimate_cost(&TokenUsage, &ModelPricing) -> Cost`：micro-unit（`MILLION` 基数）定点计算避免浮点误差；`ModelPricing` 区分 input/output/cache 读写费率。
+- 定价由 `pawork_models::estimate_cost` 负责，providers 不再导出计价 API。
 
 ### 3.6 reasoning 续传保护
 
 `ReasoningProtector`（`Send + Sync`）异步 trait：
 
 - `protect(payload) -> blob_ref`：把厂商返回的 reasoning 载荷（thinking signature / encrypted_content 等不透明字节）封存，返回可安全入事件流的引用；
-- `recover(blob_ref) -> payload`：续传时还原原始载荷交回 wire 组装；
+- `resolve(blob_ref) -> payload`：续传时还原原始载荷交回 wire 组装；
 - 实现只负责加解密与存取，**不解释内容**；错误 `ReasoningProtectError` 提供 `is_unavailable`（后端不可用）/ `is_corrupted`（数据损坏）判别，供上层决定降级或报错。
 - 本包只带测试实现 `InMemoryReasoningProtector`；生产实现 `SwappableReasoningProtector`（含 master key 管理）在 `pawork-app`（见 [app.md](app.md)）。
 
@@ -207,12 +193,14 @@ ADR-057：`ApiKeyChannelProvider` 仅为 `opencode-go` 启用内部会话头映�
 
 1. 每个 usage chunk → `normalize_usage` → `UsageUpdated` 事件（含 cache 读写 token）。
 2. 会话层 `UsageAccumulator::record` 以 `RequestId` 维度覆盖式累计，`finish_request` 后进入 `total`。
-3. 费用 `ModelRegistry::estimate_cost(id_or_alias, usage)` 或直接 `estimate_cost(usage, pricing)`；内置费率卡 `BUILTIN_RATE_CARD`/`BUILTIN_RATE_VERSION` 标注来源与版本。
+3. 费用由 [models](models.md) 统一计算：`ModelRegistry::estimate_cost(id_or_alias, usage)` 或直接 `estimate_cost(usage, pricing)`；内置费率卡 `BUILTIN_RATE_CARD`/`BUILTIN_RATE_VERSION` 标注来源与版本。
 
-### 4.5 目录合并与能力证据流
+### 4.5 消费 models 的目录与能力证据
+
+目录和能力证据实现归 [models](models.md)，本包负责提供远端模型定义和消费协商结果。
 
 1. 装配期：`ModelRegistry::builtin()` 或空表起步，`extend_with` 并入各通道静态目录（如 `anthropic_builtin_models` / `xai_builtin_models`）。
-2. 运行期：`merge_provider_models` / `merge_provider_source` 并入 `list_models` 发现结果——静态没有的模型新增，已有的逐字段交集收窄（动态声明不能放宽静态口径）。
+2. 运行期：`merge_provider_models` / `merge_provider_source` 并入 `list_models` 发现结果——静态没有的模型新增，已有条目按 registry 合并规则更新；Static/Probe/Override 能力证据的合并才是逐字段交集，不应混为同一操作。
 3. probe：`record_probe(provider, ProviderProbe)` 按 provider 记录探测能力，`clear_probe` 清除；override：`set_override` / `remove_override` 运行期人工修正（只可收窄）。
 4. `capability_evidence(model)` 输出三源快照（`static_declared` / `probe_declared` / `override_declared`），`merged()` 对已出现来源逐字段交集后供 negotiate 使用；`capability_snapshot()` 全量导出（诊断/展示）。
 5. adapter 侧兜底：如 `AnthropicProvider` 未注入 registry 时退回 `builtin_models` 静态声明，未知模型退回 Messages 基线能力——证据永远存在，不出现「无证据直接放行」。
@@ -235,12 +223,12 @@ canonical `ToolResultContent.content` 中 Image 不再被编码器丢弃。Chat 
 - **`[DONE]` 哨兵**：Chat Completions 路径用 `is_done`（容忍首尾空白）判定收尾；Responses 路径把 `[DONE]` 与空 data 一并忽略后按自身完成事件收尾。
 - **流完成信号必需**：Anthropic 无 `message_stop`、Responses 流 malformed 均按 `StreamInterrupted`/错误处理，不伪造成功；Chat 与 Anthropic 的畸形 JSON 片段同样立即 `MalformedResponse` 终止，不被后续正常收尾救回（R-08）；合法 ping/未知扩展事件保持忽略兼容。Chat Completions 的 `[DONE]` 正常收尾但缺 finish_reason 时按 `Completed`（协议允许）。
 - **错误消息不携带响应正文**：`classify_status` 的 message 固定 `HTTP <code>`，body_snippet 不入 message（上游正文可能回显 token）；`Retry-After` 仅 retryable 错误采纳。流内错误事件同理（R-02）：上游 `message` 原文不进 `ProviderError`，只保留白名单诊断字段（Anthropic `type` / Responses `code`，限 ASCII 标识符字符与 64 字符长度），统一经 `stream_error_message` 生成。
-- **计价单轨**：`usage` 模块不含任何计价逻辑，定价统一走 `pricing`（micro-unit 定点），避免双轨口径。
-- **模块纪律**：core 模块（registry/pricing/usage/negotiate/reasoning/error）零 `net` 引用，测试强制。
+- **计价单轨**：`usage` 模块不含任何计价逻辑，定价统一走 `pawork_models::pricing`（micro-unit 定点），避免双轨口径。
+- **编译边界**：models 不依赖 providers；其目录/协商/计价测试随实现整体迁移。
 
 ## 6. 依赖关系
 
-- **上游**：仅 `pawork-domain`（canonical 类型、`ModelProvider` / `ProviderEventSink` trait、`ProviderError`）。三方：`reqwest`（HTTP）、`tokio` / `futures`（异步）、`serde(_json)`、`thiserror`、`tracing`、`bytes`、`async-trait`。
+- **上游**：`pawork-models`（目录/协商），`pawork-domain`（canonical 类型、`ModelProvider` / `ProviderEventSink` trait、`ProviderError`）。三方：`reqwest`（HTTP）、`tokio` / `futures`（异步）、`serde(_json)`、`thiserror`、`tracing`、`bytes`、`async-trait`。
 - **下游**：`pawork-app` 生产依赖并开启全部九个 feature（`anthropic` + 八通道）；`pawork-engine` 仅 dev-dependency（守护测试名单）。依赖方向与包布局见 [../../design.md](../../design.md) §2。
 - **features**（全部为空依赖集、只控制条件编译，互不依赖）：
   - `anthropic`（默认开）：Messages transport 适配器与 `builtin_models`；
@@ -250,17 +238,19 @@ canonical `ToolResultContent.content` 中 Image 不再被编码器丢弃。Chat 
 
 ## 7. 测试与验证资产
 
+`module_discipline::core_modules_do_not_reference_net_module` 继续约束本包的 usage/reasoning；迁出的 registry/pricing/negotiate/error 由 models 的无 HTTP/Provider 依赖边界隔离。
+
 2026-09-20 测试重构：Chat 文本/并行工具/usage 的重复解析切面由 HTTP/SSE contract 承接，保留 thinking、终态优先级与损坏流边界；Anthropic 静态目录的能力断言并入 `list_models_is_static_and_does_not_hit_network`，同时验证真实入口不发网。定向入口 `bash scripts/test.sh providers` 显式启用九个通道 feature。 本批执行状态见 Git 历史（37fae8f3:docs/testing-refactor-plan.md）。
 
 同批：删除 `capability_source_priority_is_static_then_probe_then_override`（derive Ord 自证）和 `accumulator_starts_from_zero`（空 Default 自证）。三源收窄仍由 `capability_evidence` 合并测试覆盖；会话累计仍由同请求覆盖、跨请求累加和 `finish_request` 结算三项验证。
 
-2026-09-17 computer use：`request::tests::tool_result_images_map_across_chat_responses_and_anthropic` 覆盖 JPEG 工具结果在三协议的文字/图片保留、多个 tool response 顺序；`negotiate::tests::capability_gate_rejects_nested_tool_result_image_without_declaration` 覆盖不支持图片时拒绝。
+2026-09-17 computer use：`request::tests::tool_result_images_map_across_chat_responses_and_anthropic` 覆盖 JPEG 工具结果在三协议的文字/图片保留、多个 tool response 顺序；`pawork-models` 的 `negotiate::tests::capability_gate_rejects_nested_tool_result_image_without_declaration` 覆盖不支持图片时拒绝。
 
-默认验证入口：`bash scripts/test.sh providers`，一次 Cargo 调用显式启用九个通道 feature。直接运行不带 feature 的 `cargo test -p pawork-providers` 只选择默认 Anthropic，不能证明其余通道通过；需要更窄的回归时按下表明确选择 feature/target。Kimi 真实联网专项仍为显式 ignore，不计入本地通道回归通过。
+默认验证入口：`bash scripts/test.sh models providers`，一次 Cargo 调用显式启用九个通道 feature。直接运行不带 feature 的 `cargo test -p pawork-providers` 只选择默认 Anthropic，不能证明其余通道通过；需要更窄的回归时按下表明确选择 feature/target。Kimi 真实联网专项仍为显式 ignore，不计入本地通道回归通过。
 
 | 测试资产 | required-features | 覆盖点 |
 | --- | --- | --- |
-| `src/**` 内 `#[cfg(test)]` | — | 各模块单测：`module_discipline`（core 不引用 net）、注册表八行顺序与 fail-closed、kimi-code 端点预设与双认证、xAI 双认证凭证接受、xAI/Kimi 远端目录解析与失败路径（wiremock）、SSE 边界、保留键忽略、协商 clamp、pricing 定点、错误分类脱敏等；VISION-1 / SEARCH-1 增补：builtin 目录逐型号视觉断言（`builtin_catalog_declares_vision_per_model`）；MM-1 增补：`channel_image_limits_reject_format_and_decoded_size`；VISION-2 / CAP-PROBE 增补：默认能力表分轨断言（`default_image_input_distinguishes_verified_text_only_from_unknown`，覆盖 image_input 实测翻转、`default_image_output` 与 `apply_default_hosted_web_search` 仅 Responses 插标签）、`capability_gate` 图片 / web search 拒放矩阵（`capability_gate_fail_closed_on_undeclared_image_and_web_search`）、未声明 hosted 工具在发 HTTP 前拒绝（`hosted_tools_rejected_without_declared_wire`）、Responses `web_search` 工具写入与 `web_search_call` / `url_citation` SSE 归一（`responses_body_writes_web_search_tool_only_when_wire_allows` / `assembler_maps_web_search_call_and_url_citation`） |
+| `src/**` 内 `#[cfg(test)]` | — | 通道注册与端点、双认证、远端目录（wiremock）、请求/wire/SSE、错误分类脱敏、图片尺寸/格式、hosted 工具拒绝与 Responses 引用归一。registry / negotiate / pricing 的原回归随源码迁至 [models](models.md)。 |
 | `tests/common/mod.rs` | —（随引用它的测试目标编译） | 集成测试共享件单一来源（MOCK-7 去重）：SSE 帧拼装 `sse_frames`/`sse_body`、chat 文本流 / 单工具调用 / usage+stop / 最小成功 / 仅收尾样例、Responses 完成 / 文本流样例；`contract` 流断言（text / tool / usage / error 归一）供 contract.rs 与 api_key_channels.rs 共用 |
 | `tests/contract.rs` | —（默认即跑） | OpenAI-compatible 契约全集（见下） |
 | `tests/anthropic.rs` | `anthropic` | Messages 契约（见下） |

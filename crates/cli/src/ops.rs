@@ -308,7 +308,7 @@ fn print_report(kind: &str, report: &InstanceReport, json: bool) -> Result<(), C
     Ok(())
 }
 
-fn send_term(pid: u32) -> Result<(), CliError> {
+pub(crate) fn send_term(pid: u32) -> Result<(), CliError> {
     #[cfg(unix)]
     {
         let status = std::process::Command::new("kill")

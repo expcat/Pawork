@@ -13,7 +13,6 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use pawork_app::devfixture::{self, SeedSpec};
-use pawork_app::gui_server::{GuiHost, GuiServer, GuiServerConfig};
 use pawork_app::{AppCore, GuiHostAdapter};
 use pawork_domain::{
     CancellationToken, CanonicalModelRequest, CommandId, ContentPart, MessageRole, ModelDefinition,
@@ -21,6 +20,7 @@ use pawork_domain::{
     ProviderEventSink, ResolvedCredential, SessionId, StopReason, TextContent, Timestamp,
     TokenUsage, WorkspaceId,
 };
+use pawork_gui_server::{GuiHost, GuiServer, GuiServerConfig};
 use pawork_protocol::app::registry::gui_supported_capabilities;
 use pawork_protocol::client_auth::{TokenAuthenticator, TokenStore, TOKEN_SCHEME};
 use pawork_protocol::{

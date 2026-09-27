@@ -35,6 +35,8 @@ pub enum InstanceRole {
     Executor,
     /// GUI 宿主：在 Executor 之上额外独占 `gui.lock`（单实例，R-04）。
     GuiHost,
+    /// Local third-party model gateway, independently exclusive from GUI.
+    Gateway,
 }
 
 /// 清扫互斥的有界等待：正常清扫亚秒级；异常长清扫宁可报错也不无限等。
@@ -129,8 +131,12 @@ pub(crate) fn acquire_instance_ownership(
         });
     }
     std::fs::create_dir_all(instance_dir)?;
-    let gui_lock = if role == InstanceRole::GuiHost {
-        let path = instance_dir.join(GUI_LOCK_FILE);
+    let gui_lock = if matches!(role, InstanceRole::GuiHost | InstanceRole::Gateway) {
+        let path = instance_dir.join(if role == InstanceRole::Gateway {
+            "gateway.lock"
+        } else {
+            GUI_LOCK_FILE
+        });
         match try_acquire_file_lock(&path)? {
             Some(guard) => Some(guard),
             None => {
@@ -156,7 +162,7 @@ pub(crate) fn acquire_instance_ownership(
     // 登记与清扫判定互斥：持锁期间枚举 + 试锁全部登记，消除
     // 「枚举为空 → 他人登记 → 我清扫」的交错窗口。
     let sweep_mutex = acquire_file_lock(&instance_dir.join(SWEEP_LOCK_FILE), SWEEP_MUTEX_TIMEOUT)?;
-    let mut can_sweep = true;
+    let mut can_sweep = role != InstanceRole::Gateway;
     for entry in std::fs::read_dir(&hosts_dir)? {
         let entry = entry?;
         let path = entry.path();
@@ -268,7 +274,19 @@ mod tests {
         let executor =
             acquire_instance_ownership(dir.path(), InstanceRole::Executor).expect("executor");
         assert!(!executor.can_sweep(), "GUI 宿主活跃时执行型宿主不得清扫");
+        let gateway =
+            acquire_instance_ownership(dir.path(), InstanceRole::Gateway).expect("gateway");
+        assert!(!gateway.can_sweep());
+        assert!(matches!(
+            acquire_instance_ownership(dir.path(), InstanceRole::Gateway),
+            Err(AppError::InstanceLocked(_))
+        ));
         drop(gui);
+        drop(executor);
+        drop(gateway);
+        let gateway = acquire_instance_ownership(dir.path(), InstanceRole::Gateway)
+            .expect("standalone gateway");
+        assert!(!gateway.can_sweep(), "gateway never recovers Agent runs");
     }
 
     #[test]

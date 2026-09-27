@@ -5,24 +5,33 @@ cd "$(dirname "$0")/.."
 
 usage() {
   cat <<'HELP'
-用法：bash scripts/test.sh [--print] <包名>...
-      bash scripts/test.sh [--print] --host
+用法：bash scripts/test.sh [--print] [--log FILE] <包名>...
+      bash scripts/test.sh [--print] [--log FILE] --host
 
 包名可用 policy 或 pawork-policy；pawork / desktop 为应用。
 一次 Cargo 调用验证所选包，自动补齐通道、存储、协议、GUI fixture 等特性。
 desktop 单独执行（macOS 使用 runtime_shaders）。
 --host 先构建当前 pawork，再执行 client 的真实子进程集成测试。
+--log FILE 同时显示输出并追加完整日志，保留失败退出码；每条命令显示耗时。
 --print 只显示命令，不编译、不测试；不支持隐式全 workspace 或真实 Provider 请求。
 HELP
 }
 
 print_only=0
 host=0
+log_file=""
 packages=()
-for arg in "$@"; do
+while [ "$#" -gt 0 ]; do
+  arg="$1"
+  shift
   case "$arg" in
     --print) print_only=1 ;;
     --host) host=1 ;;
+    --log)
+      [ "$#" -gt 0 ] && [ -n "$1" ] || { echo '--log 需要文件路径' >&2; exit 2; }
+      log_file="$1"
+      shift
+      ;;
     -h|--help) usage; exit 0 ;;
     --*) echo "未知选项：$arg" >&2; exit 2 ;;
     *)
@@ -46,19 +55,34 @@ for arg in "$@"; do
 done
 
 run() {
-  printf '%q ' "$@"; printf '\n'
-  if [ "$print_only" -eq 0 ]; then "$@"; fi
+  local started=$SECONDS status=0
+  if [ "$print_only" -eq 1 ]; then
+    printf '%q ' "$@"; printf '\n'
+    return
+  fi
+  if [ -n "$log_file" ]; then
+    # 先打开日志；路径不可写时不要启动昂贵构建。
+    { printf '%q ' "$@"; printf '\n'; } | tee -a "$log_file"
+    if "$@" 2>&1 | tee -a "$log_file"; then :; else status=$?; fi
+    printf 'Elapsed: %ss; exit: %s\n' "$((SECONDS - started))" "$status" | tee -a "$log_file"
+  else
+    printf '%q ' "$@"; printf '\n'
+    if "$@"; then :; else status=$?; fi
+    printf 'Elapsed: %ss; exit: %s\n' "$((SECONDS - started))" "$status"
+  fi
+  return "$status"
 }
 
 if [ "$host" -eq 1 ]; then
   [ "${#packages[@]}" -eq 0 ] || { echo '--host 不与包列表混用' >&2; exit 2; }
   # 用 cargo 的 artifact 消息定位本次构建出的可执行文件：config 的
   # target-dir / build.target 都不会让测试误用旧 Host。
-  build_log="$(mktemp)"
   if [ "$print_only" -eq 1 ]; then
     run cargo build -p pawork --offline --bin pawork --message-format=json
     binary="<本次构建的 pawork 可执行文件>"
   else
+    build_log="$(mktemp)"
+    trap 'rm -f "$build_log"' EXIT
     run cargo build -p pawork --offline --bin pawork --message-format=json > "$build_log"
     binary="$(python3 - "$build_log" <<'PYJSON'
 import json, sys

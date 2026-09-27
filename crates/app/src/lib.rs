@@ -16,10 +16,12 @@ mod data_dir;
 pub mod devfixture;
 mod diff;
 mod extensions;
+pub mod gateway_backend;
+#[cfg(test)]
+mod gateway_tests;
 mod goal_host;
 mod gui_host;
 pub use goal_host::GoalSnapshot;
-pub mod gui_server;
 mod hub;
 mod idempotency;
 mod import_host;

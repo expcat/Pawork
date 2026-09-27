@@ -9,8 +9,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use pawork_app::gui_server::{GuiHost, GuiServer, GuiServerConfig};
 use pawork_app::{AppCore, GuiApprovalHost, GuiHostAdapter};
+use pawork_gui_server::{GuiHost, GuiServer, GuiServerConfig};
 use pawork_protocol::app::registry::gui_supported_capabilities;
 use pawork_protocol::client_auth::{TokenAuthenticator, TokenStore};
 use pawork_protocol::{HandshakeService, SUPPORTED_API_VERSIONS};

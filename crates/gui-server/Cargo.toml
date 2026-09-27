@@ -1,0 +1,31 @@
+[package]
+name = "pawork-gui-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+authors.workspace = true
+description = "Pawork GUI Connection Protocol server and host port"
+
+[dependencies]
+pawork-domain = { path = "../domain" }
+pawork-protocol = { path = "../protocol" }
+pawork-transport = { path = "../transport" }
+async-trait.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+tracing.workspace = true
+
+[dev-dependencies]
+pawork-transport = { path = "../transport", features = ["local", "memory"] }
+serde_json.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
+
+[[test]]
+name = "gui_server_session"
+path = "tests/gui_server/session.rs"
+
+[[test]]
+name = "gui_server_multi_gui_runtime"
+path = "tests/gui_server/multi_gui_runtime.rs"

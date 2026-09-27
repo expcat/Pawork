@@ -9,7 +9,7 @@ use pawork_engine::{now_timestamp, AgentEventSink};
 use pawork_protocol::{AppCommand, AppCommandEnvelope, AppEvent, AppResponse, RunState};
 use serde_json::json;
 
-use crate::gui_server::GuiHostError;
+use pawork_gui_server::GuiHostError;
 
 use super::super::{ActiveGuiRun, GuiBroadcastSink, GuiHostAdapter, GuiRunRegistry};
 

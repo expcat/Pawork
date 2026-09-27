@@ -18,10 +18,11 @@ use pawork_domain::{
     ProviderEventSink, ProviderId, ProviderStreamEvent, RequestId, ResolvedCredential, RunId,
     SessionId, TextContent,
 };
+use pawork_models::{CatalogEntry, ModelRegistry};
 use pawork_providers::ReasoningProtector;
 use pawork_providers::{
-    AnthropicConfig, AnthropicProvider, ApiKeyChannelConfig, ApiKeyChannelProvider, CatalogEntry,
-    ModelRegistry, OpenAiCompatibleConfig, OpenAiCompatibleProvider,
+    AnthropicConfig, AnthropicProvider, ApiKeyChannelConfig, ApiKeyChannelProvider,
+    OpenAiCompatibleConfig, OpenAiCompatibleProvider,
 };
 use pawork_workspace::config::{PaworkConfig, ProviderConfig};
 
@@ -447,7 +448,7 @@ impl AppCore {
                             Arc::clone(&self.reasoning_protector) as Arc<dyn ReasoningProtector>,
                         )
                         .await
-                        .map_err(|error| pawork_providers::ProbeError::new(error.to_string()))?;
+                        .map_err(|error| pawork_models::ProbeError::new(error.to_string()))?;
                         (assembled.adapter, assembled.credential)
                     };
                     catalog
@@ -457,7 +458,7 @@ impl AppCore {
                 .await
                 {
                     Ok(result) => result,
-                    Err(_) => Err(pawork_providers::ProbeError::new(
+                    Err(_) => Err(pawork_models::ProbeError::new(
                         "runtime model probe timed out",
                     )),
                 };
@@ -1078,7 +1079,7 @@ mod tests {
     use pawork_domain::{
         AgentEvent, ModelId, ModelResponseSummary, ProviderId, StopReason, TokenUsage,
     };
-    use pawork_providers::ModelRegistry;
+    use pawork_models::ModelRegistry;
     use pawork_storage::session::SessionStore;
     use pawork_workspace::config::{PaworkConfig, ProviderConfig};
     use wiremock::matchers::{body_string_contains, method, path};

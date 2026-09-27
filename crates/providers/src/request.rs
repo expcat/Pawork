@@ -816,14 +816,14 @@ mod tests {
             video_input: true,
             ..Default::default()
         };
-        let evidence = crate::registry::CapabilityEvidence {
+        let evidence = pawork_models::registry::CapabilityEvidence {
             model: request.model.clone(),
             provider: None,
             static_declared: Some(caps),
             probe_declared: None,
             override_declared: None,
         };
-        crate::negotiate::capability_gate(&evidence, &request).unwrap();
+        pawork_models::negotiate::capability_gate(&evidence, &request).unwrap();
     }
 
     #[test]
@@ -862,7 +862,7 @@ mod tests {
             },
         )];
         assert!(validate_video_request(&request, false).is_err());
-        let evidence = crate::registry::CapabilityEvidence {
+        let evidence = pawork_models::registry::CapabilityEvidence {
             model: request.model.clone(),
             provider: None,
             static_declared: Some(pawork_domain::ModelCapabilities {
@@ -872,7 +872,7 @@ mod tests {
             probe_declared: None,
             override_declared: None,
         };
-        assert!(crate::negotiate::capability_gate(&evidence, &request).is_err());
+        assert!(pawork_models::negotiate::capability_gate(&evidence, &request).is_err());
     }
 
     #[test]

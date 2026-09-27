@@ -1,4 +1,4 @@
-//! Pawork CLI：六运行模式 + 运维子命令。
+//! Pawork CLI：七运行模式 + 运维子命令。
 //!
 //! `--json`（`chat --prompt` / `run`）：stdout 只打 `HeadlessResponse` JSONL
 //!（`type=event|response|error`），无 hello。文本与日志走 stderr。
@@ -11,6 +11,7 @@ mod approval;
 mod auth;
 mod chat;
 mod error;
+mod gateway;
 mod gui;
 mod headless;
 mod import;
@@ -23,8 +24,6 @@ mod sessions;
 mod tasks;
 mod usage;
 mod vcs;
-
-pub mod channels;
 
 use std::io::IsTerminal;
 use std::process::ExitCode;
@@ -87,6 +86,11 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
+    /// Reusable local OpenAI-compatible model API.
+    Gateway {
+        #[command(subcommand)]
+        command: GatewayCommand,
+    },
     /// 流式多轮对话
     Chat {
         /// 单次提问后退出（非 REPL）
@@ -374,6 +378,33 @@ pub enum AuthCommand {
 }
 
 #[derive(Subcommand, Debug)]
+pub enum GatewayCommand {
+    /// Serve on 127.0.0.1 only.
+    Serve {
+        #[arg(long, default_value_t = 17432)]
+        port: u16,
+    },
+    /// Issue, list or revoke per-client gateway credentials.
+    Token {
+        #[command(subcommand)]
+        command: GatewayTokenCommand,
+    },
+    Status,
+    Shutdown,
+}
+#[derive(Subcommand, Debug)]
+pub enum GatewayTokenCommand {
+    Issue {
+        #[arg(long)]
+        client: String,
+    },
+    List,
+    Revoke {
+        id: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
 pub enum GuiCommand {
     /// 启动本机 GUI 服务（单客户端，Unix socket / Named pipe）。
     Serve {
@@ -409,9 +440,19 @@ async fn run_inner() -> Result<(), CliError> {
         _ => {}
     }
 
+    if let Command::Gateway { command } = &cli.command {
+        let data_dir = consume_data_dir_outcome(default_data_dir_outcome());
+        let directory = pawork_app::instance_dir(&data_dir, &instance);
+        if gateway::manage(command, &directory, cli.json)? {
+            return Ok(());
+        }
+    }
     let mut options = AppLoadOptions::from_cli(cli.provider, cli.model);
-    let gui_data_dir = matches!(&cli.command, Command::Gui { .. } | Command::Tasks { .. })
-        .then(|| consume_data_dir_outcome(default_data_dir_outcome()));
+    let gui_data_dir = matches!(
+        &cli.command,
+        Command::Gui { .. } | Command::Tasks { .. } | Command::Gateway { .. }
+    )
+    .then(|| consume_data_dir_outcome(default_data_dir_outcome()));
     options.data_dir = gui_data_dir.clone();
     options.instance = instance.clone();
     // R-04/R-24：实例角色决定所有权与启动清扫资格——执行型命令登记活跃
@@ -419,6 +460,7 @@ async fn run_inner() -> Result<(), CliError> {
     // （sessions/models/usage/tasks 等旁路查询）Catalog 不清扫活跃 run。
     options.instance_role = match &cli.command {
         Command::Gui { .. } => pawork_app::InstanceRole::GuiHost,
+        Command::Gateway { .. } => pawork_app::InstanceRole::Gateway,
         Command::Chat { .. }
         | Command::Run { .. }
         | Command::Headless { .. }
@@ -451,6 +493,7 @@ async fn run_inner() -> Result<(), CliError> {
             | Command::Headless { .. }
             | Command::Acp { .. }
             | Command::Gui { .. }
+            | Command::Gateway { .. }
             | Command::Usage { .. }
             | Command::Tasks { .. }
             | Command::Plan { .. }
@@ -462,6 +505,16 @@ async fn run_inner() -> Result<(), CliError> {
         AppCore::load(options).await?
     };
     match cli.command {
+        Command::Gateway {
+            command: GatewayCommand::Serve { port },
+        } => {
+            return gateway::serve(
+                core,
+                pawork_app::instance_dir(gui_data_dir.expect("gateway data dir"), &instance),
+                port,
+            )
+            .await;
+        }
         Command::Gui { command } => {
             return gui::run_gui(
                 core,
@@ -551,6 +604,7 @@ async fn run_inner() -> Result<(), CliError> {
                     } => agents::run_agents_demo(&core, cancel, budget_tokens, cli.json).await,
                 },
                 Command::Gui { .. }
+                | Command::Gateway { .. }
                 | Command::Headless { .. }
                 | Command::Acp { .. }
                 | Command::Service { .. }

@@ -1,0 +1,1444 @@
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use async_trait::async_trait;
+use pawork_domain::{
+    CommandId, CoreInstanceId, EventId, QueryId, RunId, SessionId, Timestamp, ToolCallId,
+    WorkspaceId,
+};
+use pawork_gui_server::{
+    ConnectionManager, ConnectionManagerConfig, GuiHost, GuiHostError, GuiServer, GuiServerConfig,
+};
+use pawork_protocol::{
+    decode_server_frame, encode_client_frame, ActorIdentity, ApiVersion, AppCommand,
+    AppCommandEnvelope, AppEvent, AppEventEnvelope, AppQuery, AppQueryEnvelope, AppResponse,
+    ApprovalDecision, ClientContextSnapshot, ClientFrame, CommandSource, EventSource, EventStream,
+    GlobalSequence, GuiCapability, HandshakeRequest, HandshakeResponse, HandshakeService,
+    ProtocolErrorCode, ResumeDisposition, ResumeRequest, ServerFrame, Snapshot, SnapshotSection,
+    SnapshotSectionKind, SubscribeRequest, TimelineItem, TimelineItemKind, TimelinePage,
+    API_VERSION, SUPPORTED_API_VERSIONS,
+};
+use pawork_transport::{
+    ConnectOptions, GuiConnection, GuiListener, GuiTransportClient, LocalTransport,
+    TransportEndpoint, TransportError, TransportErrorKind, TransportFrame,
+};
+use tokio::sync::{broadcast, Notify};
+
+#[derive(Clone)]
+struct RecordedCommand {
+    source: CommandSource,
+    identity: ActorIdentity,
+    command: AppCommand,
+}
+
+#[derive(Clone)]
+struct RecordedQuery {
+    query: AppQuery,
+    source: CommandSource,
+    identity: ActorIdentity,
+}
+
+struct MockHost {
+    instance_id: CoreInstanceId,
+    events: broadcast::Sender<AppEventEnvelope>,
+    ring: Mutex<VecDeque<AppEventEnvelope>>,
+    ring_capacity: usize,
+    commands: Mutex<Vec<RecordedCommand>>,
+    queries: Mutex<Vec<RecordedQuery>>,
+    timelines: Mutex<Vec<(SessionId, Option<u64>, Option<u32>)>>,
+    snapshot_seq: AtomicU64,
+    hold_upstream: AtomicBool,
+    hold_snapshot: AtomicBool,
+    core_lock: tokio::sync::RwLock<()>,
+    write_started: Notify,
+    upstream_started: Notify,
+    upstream_release: Notify,
+    upstream_dropped: Notify,
+}
+
+impl MockHost {
+    fn new() -> Arc<Self> {
+        Self::with_ring_capacity(1024)
+    }
+
+    fn with_ring_capacity(ring_capacity: usize) -> Arc<Self> {
+        let (events, _) = broadcast::channel(256);
+        Arc::new(Self {
+            instance_id: CoreInstanceId::from("gui-server-test"),
+            events,
+            ring: Mutex::new(VecDeque::new()),
+            ring_capacity: ring_capacity.max(1),
+            commands: Mutex::new(Vec::new()),
+            queries: Mutex::new(Vec::new()),
+            timelines: Mutex::new(Vec::new()),
+            snapshot_seq: AtomicU64::new(1),
+            hold_upstream: AtomicBool::new(false),
+            hold_snapshot: AtomicBool::new(false),
+            core_lock: tokio::sync::RwLock::new(()),
+            write_started: Notify::new(),
+            upstream_started: Notify::new(),
+            upstream_release: Notify::new(),
+            upstream_dropped: Notify::new(),
+        })
+    }
+
+    fn publish(&self, envelope: AppEventEnvelope) {
+        {
+            let mut ring = self.ring.lock().expect("ring");
+            if ring.len() == self.ring_capacity {
+                ring.pop_front();
+            }
+            ring.push_back(envelope.clone());
+        }
+        let _ = self.events.send(envelope);
+    }
+
+    fn recorded_commands(&self) -> Vec<RecordedCommand> {
+        self.commands.lock().expect("commands").clone()
+    }
+
+    fn recorded_timelines(&self) -> Vec<(SessionId, Option<u64>, Option<u32>)> {
+        self.timelines.lock().expect("timelines").clone()
+    }
+
+    fn recorded_queries(&self) -> Vec<RecordedQuery> {
+        self.queries.lock().expect("queries").clone()
+    }
+}
+
+#[async_trait]
+impl GuiHost for MockHost {
+    fn instance_id(&self) -> CoreInstanceId {
+        self.instance_id.clone()
+    }
+
+    async fn snapshot(&self) -> Result<Snapshot, GuiHostError> {
+        if self.hold_snapshot.load(Ordering::SeqCst) {
+            self.upstream_started.notify_one();
+            std::future::pending::<()>().await;
+        }
+        let seq = self.snapshot_seq.fetch_add(1, Ordering::Relaxed);
+        Ok(Snapshot {
+            instance_id: self.instance_id.clone(),
+            snapshot_sequence: GlobalSequence(seq),
+            generated_at: Timestamp::from_unix_millis(seq),
+            sections: vec![
+                SnapshotSection {
+                    kind: SnapshotSectionKind::ActiveRuns,
+                    revision: 1,
+                    data: Some(serde_json::json!({"run_ids": []})),
+                    artifact_id: None,
+                },
+                SnapshotSection {
+                    kind: SnapshotSectionKind::TerminalSessions,
+                    revision: 2,
+                    data: Some(serde_json::json!([{
+                        "terminal_session_id": "terminal-secret",
+                        "owner_session": "session-secret",
+                        "state": "running"
+                    }])),
+                    artifact_id: None,
+                },
+            ],
+        })
+    }
+
+    async fn timeline(
+        &self,
+        session_id: &SessionId,
+        after: Option<u64>,
+        limit: Option<u32>,
+    ) -> Result<TimelinePage, GuiHostError> {
+        self.timelines
+            .lock()
+            .expect("timelines")
+            .push((session_id.clone(), after, limit));
+        Ok(TimelinePage {
+            items: vec![TimelineItem {
+                sequence: after.unwrap_or(0) + 1,
+                event_id: "event-page".into(),
+                kind: TimelineItemKind::UserMessage,
+                run_id: None,
+                text: Some("hello".into()),
+                message_id: None,
+                thinking_text: None,
+                tool_name: None,
+                status: None,
+                detail: None,
+                timestamp: "2026-01-01T00:00:00Z".into(),
+            }],
+            next_sequence: Some(after.unwrap_or(0) + 2),
+            head_sequence: 20,
+            complete: false,
+        })
+    }
+
+    async fn query(&self, envelope: &AppQueryEnvelope) -> Result<AppResponse, GuiHostError> {
+        if matches!(
+            envelope.query,
+            AppQuery::QuotaOverview { .. } | AppQuery::ModelList { .. }
+        ) && self.hold_upstream.load(Ordering::Acquire)
+        {
+            struct QuotaDrop<'a>(&'a Notify);
+            impl Drop for QuotaDrop<'_> {
+                fn drop(&mut self) {
+                    self.0.notify_one();
+                }
+            }
+            let _guard = QuotaDrop(&self.upstream_dropped);
+            let _core = self.core_lock.read().await;
+            self.upstream_started.notify_one();
+            self.upstream_release.notified().await;
+        }
+        self.queries.lock().expect("queries").push(RecordedQuery {
+            query: envelope.query.clone(),
+            source: envelope.source.clone(),
+            identity: envelope.identity.clone(),
+        });
+        // 镜像真实 GuiHost::query：SessionGet 带分页参数时由 query 内部执行
+        // timeline 分页（R3 波 C 移除了 server 层丢弃结果的预调用）。
+        match &envelope.query {
+            AppQuery::SessionGet {
+                session_id,
+                timeline_after_sequence,
+                timeline_limit,
+            } if timeline_after_sequence.is_some() || timeline_limit.is_some() => {
+                let page = self
+                    .timeline(session_id, *timeline_after_sequence, *timeline_limit)
+                    .await?;
+                let mut data = serde_json::json!({"ok": true});
+                data["timeline_page"] = serde_json::to_value(page).expect("timeline page json");
+                Ok(AppResponse::Data(data))
+            }
+            _ => Ok(AppResponse::Data(serde_json::json!({"ok": true}))),
+        }
+    }
+
+    async fn command(&self, envelope: &AppCommandEnvelope) -> Result<AppResponse, GuiHostError> {
+        self.write_started.notify_one();
+        let _core = self.core_lock.write().await;
+        self.commands
+            .lock()
+            .expect("commands")
+            .push(RecordedCommand {
+                source: envelope.source.clone(),
+                identity: envelope.identity.clone(),
+                command: envelope.command.clone(),
+            });
+        Ok(AppResponse::Accepted {
+            command_id: envelope.command_id.clone(),
+            run_id: None,
+        })
+    }
+
+    fn subscribe_events(&self) -> broadcast::Receiver<AppEventEnvelope> {
+        self.events.subscribe()
+    }
+
+    fn current_sequence(&self) -> GlobalSequence {
+        self.ring
+            .lock()
+            .expect("ring")
+            .back()
+            .map(|event| event.global_sequence)
+            .unwrap_or(GlobalSequence(0))
+    }
+
+    fn earliest_available(&self) -> Option<GlobalSequence> {
+        self.ring
+            .lock()
+            .expect("ring")
+            .front()
+            .map(|event| event.global_sequence)
+    }
+
+    fn replay(
+        &self,
+        from: GlobalSequence,
+        through: Option<GlobalSequence>,
+    ) -> Result<Vec<AppEventEnvelope>, GuiHostError> {
+        let ring = self.ring.lock().expect("ring");
+        let through = through.unwrap_or_else(|| {
+            ring.back()
+                .map(|event| event.global_sequence)
+                .unwrap_or(GlobalSequence(0))
+        });
+        if let Some(earliest) = ring.front() {
+            if from < earliest.global_sequence {
+                return Err(GuiHostError {
+                    code: "replay_unavailable".into(),
+                    message: format!(
+                        "replay from {} is before earliest {}",
+                        from.0, earliest.global_sequence.0
+                    ),
+                    retryable: false,
+                });
+            }
+        }
+        Ok(ring
+            .iter()
+            .filter(|event| event.global_sequence >= from && event.global_sequence <= through)
+            .cloned()
+            .collect())
+    }
+
+    fn publish_event_stream_lagged(
+        &self,
+        missed: Option<u64>,
+        client_id: Option<&str>,
+    ) -> Option<AppEventEnvelope> {
+        let next = self
+            .ring
+            .lock()
+            .expect("ring")
+            .back()
+            .map(|event| event.global_sequence.0 + 1)
+            .unwrap_or(1);
+        let mut details = serde_json::json!({});
+        if let Some(missed) = missed {
+            details["missed"] = serde_json::json!(missed);
+        }
+        if let Some(client_id) = client_id {
+            details["client_id"] = serde_json::json!(client_id);
+        }
+        let degrade = pawork_domain::DegradeEvent::new(
+            pawork_domain::DegradeKind::EventStreamLagged,
+            pawork_domain::DegradeSeverity::Warning,
+            "event stream subscriber lagged",
+            details,
+        );
+        let envelope = AppEventEnvelope {
+            api_version: API_VERSION,
+            instance_id: self.instance_id.clone(),
+            event_id: EventId::from("degrade-event-stream-lagged"),
+            global_sequence: GlobalSequence(next),
+            stream: EventStream::Global,
+            stream_sequence: 0,
+            timestamp: Timestamp::from_unix_millis(next),
+            source: EventSource::Core,
+            payload: AppEvent::from(&degrade),
+        };
+        self.publish(envelope.clone());
+        Some(envelope)
+    }
+}
+
+struct Client {
+    conn: Box<dyn GuiConnection>,
+}
+
+impl Client {
+    async fn send(&self, frame: &ClientFrame) {
+        self.conn
+            .send(TransportFrame::new(
+                encode_client_frame(frame).expect("encode"),
+            ))
+            .await
+            .expect("send");
+    }
+
+    async fn recv(&self) -> ServerFrame {
+        decode_server_frame(self.conn.receive().await.expect("recv").as_bytes()).expect("decode")
+    }
+}
+
+struct Harness {
+    host: Arc<MockHost>,
+    client: Client,
+    _listener: Box<dyn GuiListener>,
+    _session: Box<dyn GuiConnection>,
+}
+
+async fn open_harness(label: &str) -> Harness {
+    open_harness_with_connections(label, None).await
+}
+
+async fn open_harness_with_connections(
+    label: &str,
+    connections: Option<Arc<ConnectionManager>>,
+) -> Harness {
+    open_harness_with_capabilities(
+        label,
+        connections,
+        vec![GuiCapability::Events, GuiCapability::Snapshots],
+    )
+    .await
+}
+
+async fn open_harness_with_capabilities(
+    label: &str,
+    connections: Option<Arc<ConnectionManager>>,
+    supported_capabilities: Vec<GuiCapability>,
+) -> Harness {
+    let host = MockHost::new();
+    let handshake = HandshakeService::new(
+        host.instance_id(),
+        SUPPORTED_API_VERSIONS.to_vec(),
+        supported_capabilities,
+    );
+    let transport = Arc::new(LocalTransport::default());
+    let server = GuiServer::new(GuiServerConfig {
+        host: host.clone(),
+        handshake,
+        transport: transport.clone(),
+        connections,
+    });
+    let temp = tempfile::tempdir().expect("tempdir");
+    let socket = temp.path().join(format!("{label}.sock"));
+    let endpoint = TransportEndpoint::Local {
+        address: socket.to_string_lossy().into_owned(),
+    };
+    let listener = server.bind(endpoint.clone()).await.expect("bind");
+    let accept = tokio::spawn({
+        // keep listener alive across accept by moving boxed listener into task? we'll accept then keep.
+        async move { listener.accept().await }
+    });
+    let conn = transport
+        .connect(
+            endpoint,
+            ConnectOptions {
+                timeout_ms: 5_000,
+                client_label: None,
+                max_frame_bytes: 1024 * 1024,
+            },
+        )
+        .await
+        .expect("connect");
+    let session = accept.await.expect("accept task").expect("accept");
+    // leak tempdir until process ends for this test process lifetime
+    std::mem::forget(temp);
+    Harness {
+        host,
+        client: Client { conn },
+        _listener: {
+            // listener already moved; create dummy closed? We don't need it after accept.
+            // reconstruct is hard; use a no-op listener stub.
+            Box::new(ClosedListener)
+        },
+        _session: session,
+    }
+}
+
+struct ClosedListener;
+
+#[async_trait]
+impl GuiListener for ClosedListener {
+    async fn accept(&self) -> Result<Box<dyn GuiConnection>, TransportError> {
+        Err(TransportError {
+            kind: TransportErrorKind::ConnectionClosed,
+            message: "test listener stub".into(),
+            retryable: false,
+        })
+    }
+    async fn close(&self) -> Result<(), TransportError> {
+        Ok(())
+    }
+}
+
+fn handshake_frame() -> ClientFrame {
+    handshake_frame_with_capabilities(vec![GuiCapability::Events, GuiCapability::Snapshots])
+}
+
+fn handshake_frame_with_capabilities(capabilities: Vec<GuiCapability>) -> ClientFrame {
+    ClientFrame::Handshake(HandshakeRequest {
+        request_id: "hs-1".into(),
+        client_name: "test-gui".into(),
+        client_version: "0.1.0".into(),
+        supported_api_versions: vec![API_VERSION],
+        capabilities,
+        authentication: None,
+    })
+}
+
+fn subscribe_all() -> ClientFrame {
+    ClientFrame::Subscribe(SubscribeRequest {
+        request_id: "sub".into(),
+        subscription_id: "all".into(),
+        streams: vec![],
+    })
+}
+
+async fn handshake_and_snapshot(client: &Client) -> (HandshakeResponse, Snapshot) {
+    client.send(&handshake_frame()).await;
+    let ServerFrame::Handshake(response) = client.recv().await else {
+        panic!("expected handshake");
+    };
+    let ServerFrame::Snapshot(snapshot) = client.recv().await else {
+        panic!("expected snapshot after handshake");
+    };
+    client.send(&subscribe_all()).await;
+    client.send(&ClientFrame::Heartbeat { nonce: 1 }).await;
+    loop {
+        match client.recv().await {
+            ServerFrame::Pong { nonce } => {
+                assert_eq!(nonce, 1);
+                break;
+            }
+            ServerFrame::Event(_) => continue,
+            other => panic!("unexpected frame while awaiting subscribe ack: {other:?}"),
+        }
+    }
+    (response, snapshot)
+}
+
+fn event(seq: u64) -> AppEventEnvelope {
+    AppEventEnvelope {
+        api_version: API_VERSION,
+        instance_id: CoreInstanceId::from("gui-server-test"),
+        event_id: EventId::from(format!("event-{seq}")),
+        global_sequence: GlobalSequence(seq),
+        stream: EventStream::Run(RunId::from("run-1")),
+        stream_sequence: seq,
+        timestamp: Timestamp::from_unix_millis(seq),
+        source: EventSource::Core,
+        payload: AppEvent::RunChanged {
+            run_id: RunId::from("run-1"),
+            state: pawork_protocol::RunState::StreamingResponse,
+        },
+    }
+}
+
+#[cfg(unix)]
+mod unix_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn host_close_before_handshake_or_initial_snapshot_finishes() {
+        for snapshot in [false, true] {
+            let harness = open_harness("close-handshake").await;
+            if snapshot {
+                harness.host.hold_snapshot.store(true, Ordering::SeqCst);
+                harness.client.send(&handshake_frame()).await;
+                tokio::time::timeout(
+                    Duration::from_secs(2),
+                    harness.host.upstream_started.notified(),
+                )
+                .await
+                .expect("initial snapshot started");
+                assert!(matches!(
+                    harness.client.recv().await,
+                    ServerFrame::Handshake(_)
+                ));
+            }
+            harness._session.close().await.expect("host close");
+            tokio::time::timeout(Duration::from_secs(2), harness._session.wait_done())
+                .await
+                .expect("host close must interrupt idle connection setup");
+            assert!(harness.client.conn.receive().await.is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn wait_done_fires_after_client_disconnect() {
+        // R-11：wait_done 是宿主回收连接句柄的完成信号——对端断开后必须
+        // 在有界时间内就绪。
+        let harness = open_harness("wait-done").await;
+        handshake_and_snapshot(&harness.client).await;
+        drop(harness.client);
+        tokio::time::timeout(Duration::from_secs(2), harness._session.wait_done())
+            .await
+            .expect("client 断开后 wait_done 必须有界就绪");
+    }
+
+    #[tokio::test]
+    async fn slow_upstream_queries_allow_writes_heartbeat_and_drop_on_disconnect() {
+        for model_list in [false, true] {
+            let harness = open_harness("quota-responsive").await;
+            handshake_and_snapshot(&harness.client).await;
+            harness.host.hold_upstream.store(true, Ordering::Release);
+            let query = |id: &str| {
+                ClientFrame::Query(AppQueryEnvelope {
+                    api_version: API_VERSION,
+                    request_id: QueryId::from(id),
+                    source: CommandSource::Automation,
+                    identity: ActorIdentity::System,
+                    issued_at: Timestamp::from_unix_millis(1),
+                    query: if model_list {
+                        AppQuery::ModelList {
+                            provider_id: None,
+                            include_disabled: false,
+                        }
+                    } else {
+                        AppQuery::QuotaOverview {
+                            query: pawork_protocol::QuotaOverviewQuery {
+                                provider_id: Some("opencode-go".into()),
+                                credential_id: Some("cred-quota".into()),
+                                unit: Some(pawork_protocol::QuotaUnit::Percent),
+                                ..pawork_protocol::QuotaOverviewQuery::default_local()
+                            },
+                        }
+                    },
+                })
+            };
+            harness.client.send(&query("quota-completes")).await;
+            tokio::time::timeout(
+                Duration::from_secs(2),
+                harness.host.upstream_started.notified(),
+            )
+            .await
+            .expect("quota entered host");
+            harness
+                .client
+                .send(&ClientFrame::Heartbeat { nonce: 42 })
+                .await;
+            assert!(matches!(
+                tokio::time::timeout(Duration::from_secs(2), harness.client.recv()).await,
+                Ok(ServerFrame::Pong { nonce: 42 })
+            ));
+            // ModelList holds a Core read lock across upstream I/O. A later serial
+            // write must not stop polling the query that owns that lock.
+            harness
+                .client
+                .send(&ClientFrame::Command(AppCommandEnvelope {
+                    api_version: API_VERSION,
+                    command_id: CommandId::from("write-after-query"),
+                    source: CommandSource::Automation,
+                    identity: ActorIdentity::System,
+                    expected_revision: None,
+                    idempotency_key: None,
+                    issued_at: Timestamp::from_unix_millis(1),
+                    command: AppCommand::SessionOpen {
+                        session_id: SessionId::from("session-1"),
+                    },
+                }))
+                .await;
+            tokio::time::timeout(
+                Duration::from_secs(2),
+                harness.host.write_started.notified(),
+            )
+            .await
+            .expect("serial writer entered host");
+            harness.host.upstream_release.notify_one();
+            let ServerFrame::Response(response) =
+                tokio::time::timeout(Duration::from_secs(2), harness.client.recv())
+                    .await
+                    .expect("writer progresses after query releases lock")
+            else {
+                panic!("expected command response");
+            };
+            assert_eq!(response.request_id.as_str(), "write-after-query");
+            let ServerFrame::Response(response) =
+                tokio::time::timeout(Duration::from_secs(2), harness.client.recv())
+                    .await
+                    .expect("quota completes after release")
+            else {
+                panic!("expected quota response");
+            };
+            assert_eq!(response.request_id.as_str(), "quota-completes");
+            harness.host.upstream_dropped.notified().await;
+
+            harness.client.send(&query("quota-disconnects")).await;
+            tokio::time::timeout(
+                Duration::from_secs(2),
+                harness.host.upstream_started.notified(),
+            )
+            .await
+            .expect("second quota entered host");
+            harness
+                .client
+                .conn
+                .close()
+                .await
+                .expect("client disconnect");
+            tokio::time::timeout(
+                Duration::from_secs(2),
+                harness.host.upstream_dropped.notified(),
+            )
+            .await
+            .expect("disconnect drops pending quota without releasing it");
+        }
+    }
+
+    #[tokio::test]
+    async fn handshake_round_trip_then_snapshot() {
+        let harness = open_harness("hs").await;
+        let (response, snapshot) = handshake_and_snapshot(&harness.client).await;
+        assert!(
+            matches!(response, HandshakeResponse::Accepted { selected_api_version, .. } if selected_api_version == API_VERSION)
+        );
+        assert_eq!(snapshot.instance_id.as_str(), "gui-server-test");
+    }
+
+    #[tokio::test]
+    async fn non_handshake_first_frame_is_rejected_and_closed() {
+        let harness = open_harness("bad-first").await;
+        harness
+            .client
+            .send(&ClientFrame::Heartbeat { nonce: 1 })
+            .await;
+        let ServerFrame::Error(envelope) = harness.client.recv().await else {
+            panic!("expected error");
+        };
+        assert_eq!(envelope.error.code, ProtocolErrorCode::InvalidFrame);
+        let error = harness
+            .client
+            .conn
+            .receive()
+            .await
+            .expect_err("server should close");
+        assert_eq!(error.kind, TransportErrorKind::ConnectionClosed);
+    }
+
+    #[tokio::test]
+    async fn command_is_stamped_and_version_checked() {
+        let harness = open_harness("stamp").await;
+        let _ = handshake_and_snapshot(&harness.client).await;
+        harness
+            .client
+            .send(&ClientFrame::Command(AppCommandEnvelope {
+                api_version: API_VERSION,
+                command_id: CommandId::from("cmd-1"),
+                source: CommandSource::Automation,
+                identity: ActorIdentity::System,
+                expected_revision: None,
+                idempotency_key: None,
+                issued_at: Timestamp::from_unix_millis(1),
+                command: AppCommand::SessionOpen {
+                    session_id: SessionId::from("session-1"),
+                },
+            }))
+            .await;
+        let ServerFrame::Response(envelope) = harness.client.recv().await else {
+            panic!("expected response");
+        };
+        assert!(matches!(envelope.response, AppResponse::Accepted { .. }));
+        let recorded = harness.host.recorded_commands();
+        assert_eq!(recorded.len(), 1);
+        assert!(matches!(
+            recorded[0].source,
+            CommandSource::LocalGui { ref client_id } if client_id.as_str() == "client-0"
+        ));
+        assert!(matches!(
+            recorded[0].identity,
+            ActorIdentity::LocalUser { ref actor_id, .. } if actor_id.as_str() == "client-0"
+        ));
+
+        harness
+            .client
+            .send(&ClientFrame::Command(AppCommandEnvelope {
+                api_version: ApiVersion::new(2, 0),
+                command_id: CommandId::from("cmd-bad"),
+                source: CommandSource::Automation,
+                identity: ActorIdentity::System,
+                expected_revision: None,
+                idempotency_key: None,
+                issued_at: Timestamp::from_unix_millis(2),
+                command: AppCommand::SessionOpen {
+                    session_id: SessionId::from("session-1"),
+                },
+            }))
+            .await;
+        let ServerFrame::Error(error) = harness.client.recv().await else {
+            panic!("expected version error");
+        };
+        assert_eq!(error.error.code, ProtocolErrorCode::IncompatibleVersion);
+    }
+
+    #[tokio::test]
+    async fn session_get_timeline_fields_are_forwarded() {
+        let harness = open_harness("timeline").await;
+        let _ = handshake_and_snapshot(&harness.client).await;
+        harness
+            .client
+            .send(&ClientFrame::Query(AppQueryEnvelope {
+                api_version: API_VERSION,
+                request_id: QueryId::from("q-1"),
+                source: CommandSource::Automation,
+                identity: ActorIdentity::System,
+                issued_at: Timestamp::from_unix_millis(1),
+                query: AppQuery::SessionGet {
+                    session_id: SessionId::from("session-1"),
+                    timeline_after_sequence: Some(10),
+                    timeline_limit: Some(25),
+                },
+            }))
+            .await;
+        let ServerFrame::Response(_) = harness.client.recv().await else {
+            panic!("expected query response");
+        };
+        let timelines = harness.host.recorded_timelines();
+        assert_eq!(timelines.len(), 1);
+        assert_eq!(timelines[0].0.as_str(), "session-1");
+        assert_eq!(timelines[0].1, Some(10));
+        assert_eq!(timelines[0].2, Some(25));
+    }
+
+    #[tokio::test]
+    async fn resume_three_states_and_ack_influence() {
+        let harness = open_harness("resume").await;
+        let _ = handshake_and_snapshot(&harness.client).await;
+
+        harness
+            .client
+            .send(&ClientFrame::Resume(ResumeRequest {
+                request_id: "r-empty".into(),
+                last_global_sequence: GlobalSequence(0),
+            }))
+            .await;
+        let ServerFrame::Resume(resume) = harness.client.recv().await else {
+            panic!("expected resume");
+        };
+        assert!(matches!(
+            resume.disposition,
+            ResumeDisposition::UpToDate { .. }
+        ));
+
+        for seq in 1..=3 {
+            harness.host.publish(event(seq));
+            let ServerFrame::Event(envelope) = harness.client.recv().await else {
+                panic!("expected live event {seq}");
+            };
+            assert_eq!(envelope.global_sequence, GlobalSequence(seq));
+        }
+
+        harness
+            .client
+            .send(&ClientFrame::Resume(ResumeRequest {
+                request_id: "r-replay".into(),
+                last_global_sequence: GlobalSequence(1),
+            }))
+            .await;
+        let ServerFrame::Resume(resume) = harness.client.recv().await else {
+            panic!("expected replay resume");
+        };
+        assert!(matches!(
+            resume.disposition,
+            ResumeDisposition::Replay {
+                from_sequence,
+                through_sequence
+            } if from_sequence == GlobalSequence(2) && through_sequence == GlobalSequence(3)
+        ));
+        for expected in [2, 3] {
+            let ServerFrame::Event(envelope) = harness.client.recv().await else {
+                panic!("expected replayed event");
+            };
+            assert_eq!(envelope.global_sequence, GlobalSequence(expected));
+        }
+
+        harness
+            .client
+            .send(&ClientFrame::Ack {
+                global_sequence: GlobalSequence(3),
+            })
+            .await;
+        harness
+            .client
+            .send(&ClientFrame::Heartbeat { nonce: 9 })
+            .await;
+        assert_eq!(harness.client.recv().await, ServerFrame::Pong { nonce: 9 });
+        harness
+            .client
+            .send(&ClientFrame::Resume(ResumeRequest {
+                request_id: "r-ack".into(),
+                last_global_sequence: GlobalSequence(0),
+            }))
+            .await;
+        let ServerFrame::Resume(resume) = harness.client.recv().await else {
+            panic!("expected ack-influenced resume");
+        };
+        assert!(matches!(
+            resume.disposition,
+            ResumeDisposition::UpToDate { .. }
+        ));
+
+        harness
+            .client
+            .send(&ClientFrame::Resume(ResumeRequest {
+                request_id: "r-snap".into(),
+                last_global_sequence: GlobalSequence(99),
+            }))
+            .await;
+        let ServerFrame::Resume(resume) = harness.client.recv().await else {
+            panic!("expected snapshot-required resume");
+        };
+        assert!(matches!(
+            resume.disposition,
+            ResumeDisposition::SnapshotRequired { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn heartbeat_gets_pong() {
+        let harness = open_harness("hb").await;
+        let _ = handshake_and_snapshot(&harness.client).await;
+        harness
+            .client
+            .send(&ClientFrame::Heartbeat { nonce: 42 })
+            .await;
+        assert_eq!(harness.client.recv().await, ServerFrame::Pong { nonce: 42 });
+    }
+
+    #[tokio::test]
+    async fn disconnect_does_not_cancel_run() {
+        let harness = open_harness("disc").await;
+        let _ = handshake_and_snapshot(&harness.client).await;
+        harness.client.conn.close().await.expect("client close");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let commands = harness.host.recorded_commands();
+        assert!(
+            commands
+                .iter()
+                .all(|item| !matches!(item.command, AppCommand::RunCancel { .. })),
+            "disconnect must not issue RunCancel"
+        );
+    }
+
+    #[tokio::test]
+    async fn event_stream_with_heartbeat_only_inbound_survives_watchdog() {
+        // BUG-GUI-01 回归：Run 流式期间 GUI 只发心跳、不发命令帧，
+        // 看门狗不得在流式途中静默断连；心跳真正停发后看门狗必须生效。
+        let connections = Arc::new(ConnectionManager::with_config(ConnectionManagerConfig {
+            heartbeat_timeout: Duration::from_millis(300),
+            queue_capacity: 1024,
+        }));
+        let harness = open_harness_with_connections("stream-keepalive", Some(connections)).await;
+        let _ = handshake_and_snapshot(&harness.client).await;
+
+        // 持续发布 Run 事件，跨越多个看门狗窗口（300ms 超时 / 150ms tick）。
+        let host = Arc::clone(&harness.host);
+        let publisher = tokio::spawn(async move {
+            for seq in 1..=24 {
+                host.publish(event(seq));
+                tokio::time::sleep(Duration::from_millis(40)).await;
+            }
+        });
+
+        // 客户端只发心跳（约 80ms 一次），期间必须持续收到事件帧。
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(1000);
+        let mut received = 0u64;
+        let mut last_heartbeat = tokio::time::Instant::now();
+        while tokio::time::Instant::now() < deadline {
+            if last_heartbeat.elapsed() >= Duration::from_millis(80) {
+                harness
+                    .client
+                    .send(&ClientFrame::Heartbeat { nonce: 7 })
+                    .await;
+                last_heartbeat = tokio::time::Instant::now();
+            }
+            match tokio::time::timeout(Duration::from_millis(120), harness.client.recv()).await {
+                Ok(ServerFrame::Event(_)) => received += 1,
+                Ok(ServerFrame::Pong { .. }) => {}
+                Ok(other) => panic!("unexpected frame during streaming: {other:?}"),
+                Err(_) => {}
+            }
+        }
+        publisher.await.expect("publisher");
+        assert!(received >= 20, "events must keep flowing, got {received}");
+
+        // 流式结束后连接仍活着：心跳 / Pong 往返正常。
+        harness
+            .client
+            .send(&ClientFrame::Heartbeat { nonce: 99 })
+            .await;
+        loop {
+            match harness.client.recv().await {
+                ServerFrame::Pong { nonce: 99 } => break,
+                ServerFrame::Event(_) | ServerFrame::Pong { .. } => continue,
+                other => panic!("connection lost during streaming: {other:?}"),
+            }
+        }
+
+        // 对照：心跳停发后看门狗必须在超时窗口内断开（证明保活断言非空转）。
+        let closed = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if harness.client.conn.receive().await.is_err() {
+                    break;
+                }
+            }
+        })
+        .await;
+        assert!(
+            closed.is_ok(),
+            "watchdog must drop the connection once heartbeats stop"
+        );
+    }
+
+    #[tokio::test]
+    async fn lagged_queue_sends_replay_unavailable() {
+        let connections = Arc::new(ConnectionManager::with_config(ConnectionManagerConfig {
+            heartbeat_timeout: Duration::from_secs(30),
+            queue_capacity: 2,
+        }));
+        let harness = open_harness_with_connections("lagged", Some(connections)).await;
+        let _ = handshake_and_snapshot(&harness.client).await;
+        for seq in 1..=128u64 {
+            harness.host.publish(event(seq));
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        let mut saw_replay_unavailable = false;
+        let mut disconnected = false;
+        let mut saw_lagged_degrade = false;
+        let mut last_event_seq = 0u64;
+        while tokio::time::Instant::now() < deadline {
+            match tokio::time::timeout(Duration::from_millis(200), harness.client.conn.receive())
+                .await
+            {
+                Ok(Ok(bytes)) => match decode_server_frame(bytes.as_bytes()).expect("decode") {
+                    ServerFrame::Error(envelope) => {
+                        assert_eq!(envelope.error.code, ProtocolErrorCode::ReplayUnavailable);
+                        saw_replay_unavailable = true;
+                        break;
+                    }
+                    ServerFrame::Event(event) => {
+                        assert!(
+                            event.global_sequence.0 > last_event_seq,
+                            "lagged path must assign incrementing sequence, last={last_event_seq} got={}",
+                            event.global_sequence.0
+                        );
+                        last_event_seq = event.global_sequence.0;
+                        if let AppEvent::Diagnostic { code, message, .. } = &event.payload {
+                            if code == "degrade.event_stream_lagged" {
+                                assert_eq!(message, "event stream subscriber lagged");
+                                assert_ne!(event.global_sequence, GlobalSequence(0));
+                                saw_lagged_degrade = true;
+                            }
+                        }
+                    }
+                    other => panic!("unexpected frame while waiting for Lagged: {other:?}"),
+                },
+                Ok(Err(error)) => {
+                    disconnected = error.kind == TransportErrorKind::ConnectionClosed;
+                    break;
+                }
+                Err(_) => continue,
+            }
+        }
+        assert!(
+            saw_replay_unavailable || disconnected,
+            "expected ReplayUnavailable or connection close after overflowing queue_capacity=2"
+        );
+        assert!(
+            saw_lagged_degrade,
+            "expected degrade.event_stream_lagged Event frame with a real incrementing sequence"
+        );
+    }
+
+    #[tokio::test]
+    async fn slow_consumer_does_not_block_host() {
+        let harness = open_harness("slow").await;
+        let _ = handshake_and_snapshot(&harness.client).await;
+        for seq in 1..=80u64 {
+            harness.host.publish(event(seq));
+        }
+        harness.host.publish(event(81));
+        // host publish must return immediately even if client is not reading.
+        let started = std::time::Instant::now();
+        harness.host.publish(event(82));
+        assert!(started.elapsed() < Duration::from_millis(100));
+        harness
+            .client
+            .send(&ClientFrame::Heartbeat { nonce: 1 })
+            .await;
+        // drain until pong arrives; live events may have been dropped from the bounded queue.
+        loop {
+            match harness.client.recv().await {
+                ServerFrame::Pong { nonce } => {
+                    assert_eq!(nonce, 1);
+                    break;
+                }
+                ServerFrame::Event(_) => continue,
+                ServerFrame::Error(envelope)
+                    if envelope.error.code == ProtocolErrorCode::ReplayUnavailable =>
+                {
+                    break;
+                }
+                other => panic!("unexpected {other:?}"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn session_client_context_replace_is_rejected() {
+        let harness = open_harness("ctx").await;
+        let _ = handshake_and_snapshot(&harness.client).await;
+        harness
+            .client
+            .send(&ClientFrame::Command(AppCommandEnvelope {
+                api_version: API_VERSION,
+                command_id: CommandId::from("ctx-1"),
+                source: CommandSource::Automation,
+                identity: ActorIdentity::System,
+                expected_revision: None,
+                idempotency_key: None,
+                issued_at: Timestamp::from_unix_millis(1),
+                command: AppCommand::SessionClientContextReplace {
+                    session_id: SessionId::from("session-1"),
+                    snapshot: ClientContextSnapshot {
+                        revision: 1,
+                        active_document: None,
+                        open_documents: Vec::new(),
+                        diagnostics: Vec::new(),
+                    },
+                },
+            }))
+            .await;
+        let ServerFrame::Error(error) = harness.client.recv().await else {
+            panic!("expected structured error");
+        };
+        assert_eq!(error.error.code, ProtocolErrorCode::PermissionDenied);
+        assert!(harness.host.recorded_commands().is_empty());
+    }
+
+    /// R3 波 A 授权门（未授予分支）：本 harness 握手请求能力为空，服务端
+    /// supported 集亦为空，granted 集必然为空。Terminal*（TerminalStreaming）、
+    /// ToolApprove（Approvals）、SnapshotFetch（Snapshots）必须在进入 host 前
+    /// 被 PermissionDenied 拒绝，host 侧零记录（fail-closed）。
+    #[tokio::test]
+    async fn capability_required_requests_are_denied_before_host_when_not_granted() {
+        let harness = open_harness_with_capabilities("caps", None, vec![]).await;
+        harness
+            .client
+            .send(&handshake_frame_with_capabilities(vec![]))
+            .await;
+        let ServerFrame::Handshake(handshake) = harness.client.recv().await else {
+            panic!("expected handshake accepted");
+        };
+        let HandshakeResponse::Accepted {
+            capabilities: granted,
+            ..
+        } = handshake
+        else {
+            panic!("expected handshake accepted");
+        };
+        assert!(granted.is_empty(), "precondition: no capabilities granted");
+        assert!(!granted.contains(&GuiCapability::TerminalStreaming));
+        assert!(!granted.contains(&GuiCapability::Approvals));
+        assert!(!granted.contains(&GuiCapability::Snapshots));
+
+        // Events / Snapshots 是连接层内禀能力；未授予时专用帧也必须拒绝，
+        // 且握手后不得先泄漏一帧 Snapshot。
+        harness.client.send(&subscribe_all()).await;
+        let ServerFrame::Error(subscribe) = harness.client.recv().await else {
+            panic!("expected PermissionDenied for event subscription");
+        };
+        assert_eq!(subscribe.error.code, ProtocolErrorCode::PermissionDenied);
+        harness
+            .client
+            .send(&ClientFrame::SnapshotRequest {
+                request_id: "snapshot-frame-denied".into(),
+            })
+            .await;
+        let ServerFrame::Error(snapshot_frame) = harness.client.recv().await else {
+            panic!("expected PermissionDenied for snapshot request");
+        };
+        assert_eq!(
+            snapshot_frame.error.code,
+            ProtocolErrorCode::PermissionDenied
+        );
+
+        // terminal_create：需要 TerminalStreaming。
+        harness
+            .client
+            .send(&ClientFrame::Command(AppCommandEnvelope {
+                api_version: API_VERSION,
+                command_id: CommandId::from("terminal-denied"),
+                source: CommandSource::Automation,
+                identity: ActorIdentity::System,
+                expected_revision: None,
+                idempotency_key: None,
+                issued_at: Timestamp::from_unix_millis(1),
+                command: AppCommand::TerminalCreate {
+                    workspace_id: WorkspaceId::from("ws-1"),
+                    working_directory: None,
+                },
+            }))
+            .await;
+        let ServerFrame::Error(terminal) = harness.client.recv().await else {
+            panic!("expected PermissionDenied for terminal_create");
+        };
+        assert_eq!(terminal.error.code, ProtocolErrorCode::PermissionDenied);
+
+        // tool_approve：需要 Approvals。
+        harness
+            .client
+            .send(&ClientFrame::Command(AppCommandEnvelope {
+                api_version: API_VERSION,
+                command_id: CommandId::from("approve-denied"),
+                source: CommandSource::Automation,
+                identity: ActorIdentity::System,
+                expected_revision: None,
+                idempotency_key: None,
+                issued_at: Timestamp::from_unix_millis(2),
+                command: AppCommand::ToolApprove {
+                    run_id: RunId::from("run-1"),
+                    tool_call_id: ToolCallId::from("call-1"),
+                    decision: ApprovalDecision::ApproveOnce,
+                },
+            }))
+            .await;
+        let ServerFrame::Error(approve) = harness.client.recv().await else {
+            panic!("expected PermissionDenied for tool_approve");
+        };
+        assert_eq!(approve.error.code, ProtocolErrorCode::PermissionDenied);
+
+        // snapshot_fetch（query）：需要 Snapshots。
+        harness
+            .client
+            .send(&ClientFrame::Query(AppQueryEnvelope {
+                api_version: API_VERSION,
+                request_id: QueryId::from("snapshot-denied"),
+                source: CommandSource::Automation,
+                identity: ActorIdentity::System,
+                issued_at: Timestamp::from_unix_millis(3),
+                query: AppQuery::SnapshotFetch,
+            }))
+            .await;
+        let ServerFrame::Error(snapshot) = harness.client.recv().await else {
+            panic!("expected PermissionDenied for snapshot_fetch");
+        };
+        assert_eq!(snapshot.error.code, ProtocolErrorCode::PermissionDenied);
+
+        // 授权门在进入 host 之前生效：命令与查询均零记录。
+        assert!(harness.host.recorded_commands().is_empty());
+        assert!(harness.host.recorded_queries().is_empty());
+    }
+
+    #[tokio::test]
+    async fn terminal_snapshot_sections_require_terminal_streaming_capability_on_all_paths() {
+        let without = open_harness("snapshot-terminal-denied").await;
+        without.client.send(&handshake_frame()).await;
+        let ServerFrame::Handshake(_) = without.client.recv().await else {
+            panic!("expected handshake accepted");
+        };
+        let ServerFrame::Snapshot(initial) = without.client.recv().await else {
+            panic!("expected initial snapshot");
+        };
+        assert!(!initial
+            .sections
+            .iter()
+            .any(|section| section.kind == SnapshotSectionKind::TerminalSessions));
+
+        without
+            .client
+            .send(&ClientFrame::SnapshotRequest {
+                request_id: "snapshot-filtered".into(),
+            })
+            .await;
+        let ServerFrame::Snapshot(requested) = without.client.recv().await else {
+            panic!("expected requested snapshot");
+        };
+        assert!(!requested
+            .sections
+            .iter()
+            .any(|section| section.kind == SnapshotSectionKind::TerminalSessions));
+
+        without
+            .client
+            .send(&ClientFrame::Resume(ResumeRequest {
+                request_id: "resume-filtered".into(),
+                last_global_sequence: GlobalSequence(99),
+            }))
+            .await;
+        let ServerFrame::Resume(resume) = without.client.recv().await else {
+            panic!("expected resume response");
+        };
+        assert!(matches!(
+            resume.disposition,
+            ResumeDisposition::SnapshotRequired { .. }
+        ));
+        let ServerFrame::Snapshot(resumed) = without.client.recv().await else {
+            panic!("expected resume snapshot");
+        };
+        assert!(!resumed
+            .sections
+            .iter()
+            .any(|section| section.kind == SnapshotSectionKind::TerminalSessions));
+
+        let with = open_harness_with_capabilities(
+            "snapshot-terminal-granted",
+            None,
+            vec![GuiCapability::Snapshots, GuiCapability::TerminalStreaming],
+        )
+        .await;
+        with.client
+            .send(&handshake_frame_with_capabilities(vec![
+                GuiCapability::Snapshots,
+                GuiCapability::TerminalStreaming,
+            ]))
+            .await;
+        let ServerFrame::Handshake(_) = with.client.recv().await else {
+            panic!("expected handshake accepted");
+        };
+        let ServerFrame::Snapshot(initial) = with.client.recv().await else {
+            panic!("expected initial snapshot");
+        };
+        assert!(initial
+            .sections
+            .iter()
+            .any(|section| section.kind == SnapshotSectionKind::TerminalSessions));
+    }
+
+    #[tokio::test]
+    async fn terminal_events_require_terminal_streaming_capability() {
+        let harness = open_harness("terminal-event-gate").await;
+        let (handshake, _) = handshake_and_snapshot(&harness.client).await;
+        let HandshakeResponse::Accepted {
+            capabilities: granted,
+            ..
+        } = handshake
+        else {
+            panic!("expected handshake accepted");
+        };
+        assert!(granted.contains(&GuiCapability::Events));
+        assert!(!granted.contains(&GuiCapability::TerminalStreaming));
+
+        let mut terminal = event(1);
+        terminal.stream = EventStream::Terminal("terminal-1".into());
+        terminal.payload = AppEvent::TerminalOutput {
+            terminal_session_id: "terminal-1".into(),
+            delta: "secret terminal output".into(),
+        };
+        harness.host.publish(terminal);
+        harness.host.publish(event(2));
+
+        let ServerFrame::Event(visible) = harness.client.recv().await else {
+            panic!("expected non-terminal event");
+        };
+        assert_eq!(visible.global_sequence, GlobalSequence(2));
+        assert!(!matches!(visible.stream, EventStream::Terminal(_)));
+    }
+
+    // ADR-045 D3：TerminalExited（1.3 引入）不推给协商 < 1.3 的连接；该连接
+    // 不因此断流（老客户端 serde 遇未知变体才会 decode 失败）。
+    #[tokio::test]
+    async fn terminal_exited_event_is_gated_by_negotiated_minor() {
+        let harness = open_harness("terminal-exited-gated").await;
+        harness
+            .client
+            .send(&ClientFrame::Handshake(HandshakeRequest {
+                request_id: "hs-1".into(),
+                client_name: "test-gui".into(),
+                client_version: "0.1.0".into(),
+                supported_api_versions: vec![ApiVersion::new(1, 2)],
+                capabilities: vec![
+                    GuiCapability::Events,
+                    GuiCapability::Snapshots,
+                    GuiCapability::TerminalStreaming,
+                ],
+                authentication: None,
+            }))
+            .await;
+        let ServerFrame::Handshake(HandshakeResponse::Accepted {
+            selected_api_version,
+            ..
+        }) = harness.client.recv().await
+        else {
+            panic!("expected handshake accepted");
+        };
+        assert_eq!(selected_api_version, ApiVersion::new(1, 2));
+        let ServerFrame::Snapshot(_) = harness.client.recv().await else {
+            panic!("expected snapshot after handshake");
+        };
+        harness.client.send(&subscribe_all()).await;
+        harness
+            .client
+            .send(&ClientFrame::Heartbeat { nonce: 1 })
+            .await;
+        loop {
+            match harness.client.recv().await {
+                ServerFrame::Pong { nonce } => {
+                    assert_eq!(nonce, 1);
+                    break;
+                }
+                ServerFrame::Event(_) => continue,
+                other => panic!("unexpected frame while awaiting subscribe ack: {other:?}"),
+            }
+        }
+
+        let mut exited = event(1);
+        exited.stream = EventStream::Terminal("terminal-1".into());
+        exited.payload = AppEvent::TerminalExited {
+            terminal_session_id: "terminal-1".into(),
+            exit_code: Some(0),
+            signal: None,
+            reason: pawork_protocol::TerminalExitReason::Exited,
+        };
+        harness.host.publish(exited);
+        // 1.2 协商下只有信封 ≤1.2 的帧能送达；用它证明连接未因被门控的
+        // TerminalExited 断流。
+        let mut normal = event(2);
+        normal.api_version = ApiVersion::new(1, 2);
+        harness.host.publish(normal);
+
+        let ServerFrame::Event(visible) = harness.client.recv().await else {
+            panic!("expected the 1.2-compatible event after the gated one");
+        };
+        assert_eq!(visible.global_sequence, GlobalSequence(2));
+        assert!(matches!(visible.payload, AppEvent::RunChanged { .. }));
+    }
+
+    #[tokio::test]
+    async fn terminal_exited_event_is_delivered_at_1_3() {
+        let harness = open_harness_with_capabilities(
+            "terminal-exited-delivered",
+            None,
+            vec![
+                GuiCapability::Events,
+                GuiCapability::Snapshots,
+                GuiCapability::TerminalStreaming,
+            ],
+        )
+        .await;
+        harness
+            .client
+            .send(&handshake_frame_with_capabilities(vec![
+                GuiCapability::Events,
+                GuiCapability::Snapshots,
+                GuiCapability::TerminalStreaming,
+            ]))
+            .await;
+        let ServerFrame::Handshake(HandshakeResponse::Accepted {
+            selected_api_version,
+            ..
+        }) = harness.client.recv().await
+        else {
+            panic!("expected handshake accepted");
+        };
+        assert_eq!(selected_api_version, API_VERSION);
+        let ServerFrame::Snapshot(_) = harness.client.recv().await else {
+            panic!("expected snapshot after handshake");
+        };
+        harness.client.send(&subscribe_all()).await;
+        harness
+            .client
+            .send(&ClientFrame::Heartbeat { nonce: 1 })
+            .await;
+        loop {
+            match harness.client.recv().await {
+                ServerFrame::Pong { nonce } => {
+                    assert_eq!(nonce, 1);
+                    break;
+                }
+                ServerFrame::Event(_) => continue,
+                other => panic!("unexpected frame while awaiting subscribe ack: {other:?}"),
+            }
+        }
+
+        let mut exited = event(1);
+        exited.stream = EventStream::Terminal("terminal-1".into());
+        exited.payload = AppEvent::TerminalExited {
+            terminal_session_id: "terminal-1".into(),
+            exit_code: Some(1),
+            signal: None,
+            reason: pawork_protocol::TerminalExitReason::Exited,
+        };
+        harness.host.publish(exited);
+
+        let ServerFrame::Event(visible) = harness.client.recv().await else {
+            panic!("expected TerminalExited at negotiated 1.3");
+        };
+        let AppEvent::TerminalExited {
+            terminal_session_id,
+            exit_code,
+            ..
+        } = visible.payload
+        else {
+            panic!("expected TerminalExited payload: {:?}", visible.payload);
+        };
+        assert_eq!(terminal_session_id, "terminal-1");
+        assert_eq!(exit_code, Some(1));
+    }
+}

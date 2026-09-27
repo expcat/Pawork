@@ -1,19 +1,19 @@
 # pawork-tools
 
-> 工具层：九个内置 Agent 工具（读/列/找/搜/写/改/补丁/命令/桌面）、最小调度器（ToolRegistry + ToolScheduler：注册、Policy 闸门、审批解析、并发上限、超时）、MCP 客户端子系统（`mcp/`，rmcp SDK 隔离在 `codec.rs` 单文件）。依赖 domain / policy / exec / workspace / auth / computer-use；被依赖方仅 `pawork-app`（engine 不依赖本包，工具由宿主装配进 LoopContext）。
+> 工具层：九个内置 Agent 工具（读/列/找/搜/写/改/补丁/命令/桌面）、最小调度器（ToolRegistry + ToolScheduler：注册、Policy 闸门、审批解析、并发上限、超时）。依赖 domain / policy / exec / workspace / computer-use；被依赖方为 `pawork-app` 与 `pawork-mcp`（engine 不依赖本包，工具由宿主装配进 LoopContext）。
 
 ## 1. 职责与边界
 
 - **内置工具**：九个 `pawork_domain::AgentTool` 实现；文件工具的路径输入 = `workspace_id + relative_path`，统一经 [`pawork-policy`](policy.md) `resolve_workspace_path` 解析——模型无法用绝对路径直达文件系统。
 - **调度**：`ToolRegistry` 是唯一注册表（内置与 MCP 工具同表）；`ToolScheduler::execute_named` 串起「查表 → Policy 裁决 → 审批解析 → 并发信号量 → 超时 → 执行」。
-- **MCP**：配置解析与校验、受管客户端（惰性连接/退避重连/超时/取消）、能力发现与 `{server}_{tool}` 命名空间注册、stdio 服务器强制经 Sandbox Runtime 托管、Secret 只存 locator（`SecretRef`）、PKCE OAuth。
+- **扩展工具**：MCP 适配器在 [mcp](mcp.md)，通过本包 ToolRegistry 注册；本包不包含网络客户端或 MCP SDK。
 - **不做**：不做风险分类与裁决（policy）；不实现进程/沙箱原语（exec）；不持久化事件（engine/store 侧）。
 
 ## 2. 模块与文件地图
 
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
-| `src/lib.rs` | ~30 | 门面：12 个模块声明 + re-export（九工具、`NoopToolEventSink`、registry/scheduler 全家、`pub mod mcp`）。 |
+| `src/lib.rs` | ~30 | 门面：12 个模块声明 + re-export（九工具、`NoopToolEventSink`、registry/scheduler 全家）。 |
 | `src/computer.rs` | — | `ComputerTool`：进程共享隔离桌面会话、按动作必填的 JSON 参数、跨 run 观察隔离、阻塞工作取消、JPEG → canonical Image；复用 Policy / 审批。 |
 | `src/common.rs` | ~230 | 公共层：`BuiltinToolError` 与 → `ToolError` 集中映射；取参 `require_str`/`opt_str`/`opt_u64`/`opt_bool`（opt_* 缺省或 `null` → None，类型不符报 InvalidField）；`workspace_roots`；`resolve_write_rel`（包 `resolve_workspace_path`）；`atomic_write`（同目录临时文件经 `create_new` **独占创建**——同名路径已存在（含预置 symlink）即换名重试、不跟随——+ rename，覆盖保留既有 Unix mode）。 |
 | `src/read_file.rs` | ~500（逻辑 ~260 + 测试） | `ReadFileTool`：行号视图、offset/limit、编码探测（chardetng + encoding_rs）、二进制检测（NUL + 控制字节占比）、4 MiB 读上限 / 256 KiB 输出上限。 |
@@ -25,15 +25,6 @@
 | `src/apply_patch.rs` | ~520（逻辑 ~365 + 测试） | `ApplyPatchTool`：多文件 `ops[]`（create/update/delete/rename）、`dry_run` 预演、执行前逐文件字节备份、失败自动恢复备份（含删除新建文件）；`ApplyPatchError::Partial` 报出 failed_op 与 applied 清单；`spawn_blocking` 承载阻塞 IO。 |
 | `src/run_command.rs` | ~830（逻辑 ~430 + 测试） | `RunCommandTool`：argv 优先 / `command` 经平台 shell；cwd 相对解析；timeout/输出/资源 clamp；手工构造 `SandboxPolicy` + `SandboxSelector::pick`；domain↔exec 取消桥；`metadata.sandbox` 上报后端选择。 |
 | `src/scheduler.rs` | ~1080（逻辑 ~400 + 测试） | `ToolRegistry` / `ToolRegistryError`、`ToolScheduler` / `ToolSchedulerConfig`、审批接口 `ApprovalResolver` / `ApprovalOutcome` / `AutoApproveResolver`、闸门 `check_gate` 与约束注入、`NoopToolEventSink`。 |
-| `src/mcp/mod.rs` | ~250（含测试） | MCP 边界类型：`McpError`（10 变体）、`McpServerCapabilities`、`McpToolInfo`、`McpToolCall`、`McpPeer` trait；re-export sandbox 三件套；「公开源码不得出现 rmcp」守卫测试。 |
-| `src/mcp/capabilities.rs` | ~740（逻辑 ~300 + 测试） | 能力桥：`McpCapabilities::discover`、`McpToolAdapter`（MCP 工具 → `AgentTool`）、`register_server_tools` / `register_discovered_tools`、`namespaced_name`；workspace/工具白名单、非对象输入拒绝、输出预算、信任钳制。 |
-| `src/mcp/codec.rs` | ~700（逻辑 ~430 + 测试） | **rmcp SDK 唯一隔离点**（crate 私有 mod）：`RunningClient`/`ClientPeer` 包装、initialize 握手、`Tool → McpToolInfo`（read_only_hint）、`CallToolResult → ToolResult`（structured_content 进 metadata、is_error 转 error context）、`apply_tool_result_budget`（UTF-8 安全截断）、`timed`/`should_retry`、streamable-http 构建、`test_support::InProcessConnector`。 |
-| `src/mcp/config.rs` | ~875（逻辑 ~485 + 测试） | `McpConfig`（读 `ResolvedConfig.extra["mcp"]` 已合并层）、`McpServerConfig{transport, auto_start, timeout_ms, restart, permissions, trusted}`、`TransportSpec::{Stdio, Http}` 校验、`RestartPolicy`、`McpPermissions`、`StdioSandboxRuntime`、`SecretResolvingConnector`、服务器名禁 `.`。 |
-| `src/mcp/manager.rs` | ~590（逻辑 ~375 + 测试） | `ManagedMcpClient`：惰性连接、指数退避有界重启（耗尽后冷却 4×max_delay）、请求超时、shutdown 取消在途、`HealthSnapshot`/`ConnectionState`；`should_retry` 触发单次强制重连重试；实现 `McpPeer`。 |
-| `src/mcp/oauth.rs` | ~370（逻辑 ~150 + 测试） | PKCE：`begin_pkce_login` / `complete_pkce_login`（换码 + 存储）；`McpBearerProvider`（到期自动 refresh）；`OAuthHttpConnector`；测试与构造一律 `pawork_auth::http_client()`（`redirect(none)`），不使用 `Client::new()`。 |
-| `src/mcp/sandbox.rs` | ~580（逻辑 ~390 + 测试） | stdio 托管：`StdioSpawner` trait / `SandboxedStdioSpawner`（唯一生产实现，走 `SandboxBackend::spawn_interactive`）/ `SpawnedStdio`（AsyncRead/AsyncWrite 适配，stdout 预算 8 MiB fail-closed 断连）；`apply_mcp_stdio_env_hygiene`（env_clear + untrusted allowlist + 追加 deny `PAWORK_API_KEY_*`，不改 network_mode）。 |
-| `src/mcp/security.rs` | ~205（逻辑 ~115 + 测试） | `SecretRef{service, account}`（只序列化 locator；`resolve` 强制 `pawork.mcp.*` 前缀，Provider/OAuth 域 fail-closed）；`ResolvedSecret`（Debug/Display 恒 `[REDACTED]`）。 |
-| `src/mcp/transport.rs` | ~400（逻辑 ~300 + 测试） | 传输配置（crate 私有 mod，类型 pub 但包外不可命名）：`StdioTransportConfig` / `HttpTransportConfig` / `TransportConfig`（携密字段 Debug 手写 redact、URL 打码 userinfo/query/fragment）、`McpConnector` trait（pub(crate)）、`DefaultConnector`。 |
 
 无 `tests/` 目录与 fixture 文件；全部回归内联 `#[cfg(test)]`（edit_file / apply_patch 各含 proptest）。
 
@@ -100,32 +91,7 @@
 - `NoopToolEventSink`：丢事件 sink，测试与最小宿主用。
 - 装配约定：宿主构造 `Arc<WorkspaceService>` → 八工具 `new` → `ToolRegistry::register` → `ToolScheduler::new`；MCP 工具经 `register_server_tools` 进同一 registry，两类工具走同一 `execute_named` 闸门，无旁路。
 
-### 3.5 MCP 子系统
-
-- **配置入口**：`McpConfig::from_resolved(&ResolvedConfig)` / `from_value(&Value)`（读已按 global→workspace→session→run 合并后的 `extra["mcp"]`）；`servers: BTreeMap<name, McpServerConfig>`；服务器名非空且禁 `.`（进入工具命名空间）。
-- `McpServerConfig::build_client(name, Arc<dyn SecretBackend>, Option<StdioSandboxRuntime>) -> Result<ManagedMcpClient, McpError>`：
-  - stdio 传输缺 runtime 直接 `McpError::Config`（fail-closed）；http 不需要 runtime。
-  - `runtime_options` 暴露请求超时（默认 30s）与 `RestartPolicy`（默认 max_attempts=1、base 200ms、cap 10s）。
-- **传输规格**：`TransportSpec::Stdio{command, args, env: BTreeMap<String, SecretRef>}` / `Http{url, headers: BTreeMap<String, SecretRef>}`（serde tag=`kind`）。校验：仅 http/https scheme、拒 URL userinfo 与 fragment、明文 http 携密 header 仅 loopback 允许。
-- **权限**：`McpPermissions { allowed_tools: BTreeSet<String>, allowed_workspaces: BTreeSet<String>, max_output_bytes: u64（默认 1 MiB） }`：
-  - 空集 = 不限制；非空 = 白名单。
-  - `allowed_tools` 双重生效：注册期过滤（不在名单的工具不进 registry）+ 调用期复核。
-  - `allowed_workspaces` 调用期按 `context.workspace_id` 校验，违规返回 Authorization 失败结果。
-  - `max_output_bytes` 是 codec 输出预算（`apply_tool_result_budget` 的上限来源）。
-- **边界类型**：`McpServerCapabilities { tools, resources, prompts: bool }`（服务器 initialize 广播；未广播 tools 的服务器跳过工具注册）；`McpToolInfo { name, description, input_schema, read_only }`；`McpToolCall { name, arguments }`；`McpPeer` trait（`server_capabilities` / `list_tools` / `call_tool`）是 manager 与 capabilities 之间的抽象缝，测试用 in-process peer 替换。
-- **受管客户端**：`ManagedMcpClient` 实现 `McpPeer`；另有 `ping()`、`health() -> HealthSnapshot{state: ConnectionState, transport, last_error, last_connected_at, restart_attempts, max_restart_attempts}`、`shutdown()`（5s 优雅关闭）。
-- **能力桥**：`register_server_tools(registry, server, peer, permissions, trusted, host_trusted)` → `McpCapabilities::discover`（握手能力 + list_tools）+ 白名单过滤 + 注册，返回 descriptors；`register_discovered_tools` 供已有发现结果复用。`McpToolAdapter` descriptor 规则：
-  - 注册名 = `namespaced_name(server, tool)`：`{server}.{tool}` 拼接后把 `[A-Za-z0-9_-]` 之外的字符全部折叠为 `_`（上游 Provider 拒绝带 `.` 等字符的工具名，HTTP 400，2026-09-16 `echo.echo` 实证）。
-  - `read_only_hint=true` → `ToolCapability::ReadOnly` + `requires_approval=false`。
-  - 否则 → `ExternalPlugin` + `requires_approval=true`（descriptor 叠加闸生效，policy 放行后仍需 resolver 确认）。
-  - `allowed_in_untrusted_workspace = read_only || trusted`，且注册期 `trusted &&= host_trusted`（MCP 配置的 trusted 不得越过宿主信任地板）。
-- **Secret 域**：`SecretRef::new(service, account)` / `.resolve(&dyn SecretBackend) -> Result<ResolvedSecret, McpError>`；service 必须 `pawork.mcp.*` 前缀（Provider/OAuth 命名空间 fail-closed）；`ResolvedSecret` 与全部 transport 配置 Debug/Display 手写 redact；`McpError` 文案不含明文。
-- **OAuth**：`begin_pkce_login(PkceFlowConfig) -> PkceSession`；`complete_pkce_login(session, code, state, http, backend, display_name) -> StoredCredential`；`McpBearerProvider::bearer()`（到期自动 refresh）；`OAuthHttpConnector`（transport 层注入 `Authorization: Bearer`，拒绝配置里已有 Authorization header；token 轮换要求重建 transport）。
-- **stdio 托管**：`StdioSpawner` trait + `SandboxedStdioSpawner` + `SpawnedStdio`（`pub use` 于 `mcp`）；`apply_mcp_stdio_env_hygiene(&mut SandboxPolicy)`。
-- `McpError` 变体：`Config / Transport / Protocol / Disconnected / Timeout(Duration) / Cancelled / PermissionDenied / Secret / OAuth / Registry(ToolRegistryError)`。
-- 内部但值得知道：`codec.rs` 私有；`StdioTransportConfig`/`HttpTransportConfig` 在私有 `mod transport`——以其为参数的公开函数实际只能由 crate 内装配。
-
-`ToolScheduler::with_tools` 克隆既有 registry 与策略配置并追加 Host 工具，保留内置与 MCP 工具以及旧 Run 快照。
+MCP 的独立 API、连接与认证见 [mcp](mcp.md)，注册适配器仍使用本包唯一工具表。
 
 ## 4. 核心行为与数据流
 
@@ -159,16 +125,6 @@
 2. 内存预演全部变更（edit 的段替换、patch 的 op 计划）；任何一段失败整体失败，不触盘。
 3. 落盘：`atomic_write`（写类）；apply_patch 执行前对受影响文件做字节备份，op 失败即恢复备份（改写还原、新建删除），并以 `Partial` 报出 failed_op 与 applied 清单（proptest 断言恢复字节精确）。
 
-### 4.4 MCP 服务器接入与调用
-
-1. `McpConfig::from_resolved` 解析校验；每个 server `build_client`：stdio 必须携 `StdioSandboxRuntime{backend, policy, workspace_roots}`（缺失 fail-closed），构造 `SecretResolvingConnector`。
-2. 首次请求触发惰性 connect：`SecretRef` 逐项 `resolve`（仅 `pawork.mcp.*`）→ 组装 transport → stdio 经 `SandboxedStdioSpawner.spawn`（`apply_mcp_stdio_env_hygiene`：env_clear + untrusted allowlist + 追加 deny `PAWORK_API_KEY_*`；`spawn_interactive` 进沙箱；stdout 预算 8 MiB 超限断连）→ codec initialize 握手。
-3. `register_server_tools` 发现工具 → 白名单过滤 → `McpToolAdapter` 以清洗后的 `{server}_{tool}` 注册进同一 `ToolRegistry`（与内置工具同表同闸门）。
-4. 调用：scheduler 闸门（ExternalPlugin 走 descriptor 叠加审批）→ adapter 校验 workspace/tool 白名单（违规 → Authorization 失败结果而非异常）→ 非对象输入拒绝 → `ManagedMcpClient::call_tool`（超时/取消/`should_retry` 单次强制重连重试）→ codec 转换 → `apply_tool_result_budget` 按 `max_output_bytes` UTF-8 安全截断（structured_content 超预算整体丢弃并标记 truncated）。
-5. 断连恢复：指数退避（base×2^n 封顶 max_delay）至 `max_attempts` 耗尽 → `Disconnected`；冷却 4×max_delay 后允许再试；crash 重启复用同一 spawner（沙箱保证不降级）。
-
-Policy 闸门在同步 `decide` 前暂取 input，返回后立即归还，不再复制整份 JSON；审批与工具执行仍使用同一份输入。
-
 ### 4.5 取消与超时的传播路径
 
 1. 取消源头是 domain `CancellationToken`（engine/宿主持有）；scheduler 派生执行令牌传入工具——调用方取消经桥接传播，scheduler 超时也触发同一令牌（R-10）。
@@ -180,10 +136,7 @@ Policy 闸门在同步 `decide` 前暂取 input，返回后立即归还，不再
 ## 5. 契约与不变量
 
 - **路径红线**：所有文件类工具输入 = `workspace_id + relative_path`，唯一解析入口 `resolve_workspace_path`；`.git` 与 symlink 逃逸永拒（PermissionDenied），错误信息不回显宿主绝对路径。工具层无绕行通道。
-- **rmcp 隔离**：SDK 类型只出现在 `mcp/codec.rs`；守卫测试 `public_sources_do_not_mention_rmcp` 扫描 `src/mcp/*.rs`（除 codec）断言无 `rmcp::` / `use rmcp`。SDK 升级不外溢。
-- **MCP Secret 域**：配置只持久化 `SecretRef{service, account}`；service 强制 `pawork.mcp.*`（Provider/OAuth 命名空间 fail-closed）；`ResolvedSecret` 与 transport 配置 Debug 全 redact；`McpError` 文案无明文。
-- **stdio 必沙箱**：本地 MCP stdio 服务器唯一 spawn 路径是 `SandboxBackend::spawn_interactive`；无 runtime 即拒建；`PAWORK_API_KEY_*` 永不进子进程环境。
-- **信任地板**：MCP `trusted` 注册期被 `host_trusted` 钳制；写类 MCP 工具在 untrusted workspace 恒不可用。
+- **MCP 边界**：SDK 隔离、Secret 域、stdio 沙箱与宿主信任钳制由 [mcp](mcp.md) 承担；本包仍负责全部工具的共同审批与调度闸门。
 - **调度默认最保守**：`ToolSchedulerConfig::default` = `ReadOnly` 档 + untrusted + 并发 8；policy `AskUser` 无有权 resolver 时 fail-closed 拒绝；`AutoApproveResolver` 不能回答 policy prompt。
 - **原子性**：write/edit 单文件原子写；edit 多段与 apply_patch 多文件「全成或全滚」，回滚字节精确（proptest 钉死）。
 - **`metadata.sandbox` 形状**：run_command 必带后端选择证据（backend/isolation/fallback/note/attempted/limits），`metadata_sandbox_shape_and_limits_golden` 钉死——「fail-closed 可观测回退」在工具层的落点。
@@ -192,13 +145,13 @@ Policy 闸门在同步 `decide` 前暂取 input，返回后立即归还，不再
 
 ## 6. 依赖关系
 
-- **workspace 内**：`pawork-domain`（AgentTool/ToolResult/CancellationToken 等 canonical 类型）、`pawork-policy`（路径内核 + PolicyEngine）、`pawork-exec`（Process/Sandbox Runtime）、`pawork-workspace`（WorkspaceService、ResolvedConfig）、`pawork-auth`（SecretBackend、OAuth 原语、`http_client()`）、`pawork-computer-use`（隔离虚拟桌面操作）。
-- **外部**：`tokio`、`async-trait`、`serde/serde_json`、`thiserror`、`tracing`、`ignore`、`globset`、`regex`、`chardetng`、`encoding_rs`、`rmcp`（仅 codec）、`reqwest`（OAuth）、`url`、`base64`（截图编码）。dev：`tempfile`、`proptest`、`wiremock`。无 cargo feature。
-- **被依赖**：仅 `pawork-app`（注册与调度装配；engine 经 LoopContext 回调消费，不依赖本包）。
+- **workspace 内**：`pawork-domain`（AgentTool/ToolResult/CancellationToken 等 canonical 类型）、`pawork-policy`（路径内核 + PolicyEngine）、`pawork-exec`（Process/Sandbox Runtime）、`pawork-workspace`（WorkspaceService、ResolvedConfig）、`pawork-computer-use`（隔离虚拟桌面操作）。
+- **外部**：`tokio`、`async-trait`、`serde/serde_json`、`thiserror`、`tracing`、`ignore`、`globset`、`regex`、`chardetng`、`encoding_rs`、`base64`（截图编码）。dev：`tempfile`、`proptest`。无 cargo feature。
+- **被依赖**：`pawork-mcp`（注册外部工具）、`pawork-app`（注册与调度装配；engine 经 LoopContext 回调消费，不依赖本包）。
 
 ## 7. 测试与验证资产
 
-2026-09-20 精简：HTTP 配置拒绝只保留 codec 的完整输入矩阵；auto-approve 标志并入实际写工具被拒绝且零调用的回归；环境白名单副本由 exec 权威测试和 run_command 的真实子进程环境检查承接。MCP 源码依赖边界检查成本小且保护封装，保留。
+2026-09-20 精简：HTTP 配置拒绝只保留 codec 的完整输入矩阵；auto-approve 标志并入实际写工具被拒绝且零调用的回归；环境白名单副本由 exec 权威测试和 run_command 的真实子进程环境检查承接。MCP 回归已随迁至 mcp 包。
 
 `computer.rs` 三项回归：显式批准后的截图结果与序列化、缺 click 字段在触达 backend 前返回可纠正参数错误、未信任/只读/自动批准均不触碰虚拟桌面后端。输入与观察安全由 [computer-use](computer-use.md) 负责。
 
@@ -216,15 +169,6 @@ Policy 闸门在同步 `decide` 前暂取 input，返回后立即归还，不再
 | `apply_patch.rs` | 多文件 create、dry_run 不落盘、delete+rename、部分失败恢复（create/update/delete 各形态）、proptest 字节精确回滚、op 路径穿越拒绝、R-10 取消令牌下零写入（`cancelled_token_starts_no_ops`）。 |
 | `run_command.rs` | 输出与 exit_code、非零失败、超时、流式先于退出、descriptor 无网络旁路参数、clamp 上限、**`metadata_sandbox_shape_and_limits_golden`**、macOS Seatbelt 必须上报 `sandbox_exec` / `hard_writes_and_network` / `fallback=false`（探测失败即失败）、显式 Secret env 被剥除。环境白名单由 exec 的权威清单与剥除断言承接。 |
 | `scheduler.rs` | 只读并发、全局并发上限、未知工具、上下文透传、取消（执行前/执行中）、超时映射、审批拒绝不执行、auto-approve 不能绕过 AskForWrites（并入写工具零调用回归）、registry kind/描述符校验、untrusted 写拒绝（NeverAsk 也拒）、AskForWrites 不可被 AutoApprove 绕过、ReadOnly 档拒写、`process_never_ask_trusted_injects_execution_constraints`、约束与显式输入取更严、R-09 排队取消（`queued_call_cancelled_while_waiting_for_slot`）、R-10 超时协作收口与操作边界停写（`timeout_waits_for_cooperative_drain_before_responding`、`cancel_between_ops_stops_later_ops`）。 |
-| `mcp/mod.rs` | rmcp 隔离守卫扫描、内置与 MCP 工具同表注册。 |
-| `mcp/capabilities.rs` | 发现与命名空间注册、read_only 放行、写工具审批与 untrusted 地板、host_trusted 钳制、取消先于远程调用、输出预算截断、非对象输入拒绝、structured_content 保留、workspace/tool 白名单、is_error 转换、未广播 tools 能力跳过。 |
-| `mcp/codec.rs` | http 配置校验、auth/header 注入、read_only_hint 往返、UTF-8 截断标记、input_required 状态 fail-closed。 |
-| `mcp/config.rs` | keyed map 解析校验、stdio 无沙箱 fail-closed、http 免沙箱、重连复用 spawner、非法 transport/permissions、层级合并、SecretRef 内联明文拒绝、URL userinfo/fragment 拒绝、Debug 无泄漏、超时与重启语义。 |
-| `mcp/manager.rs` | 握手/list/call/ping、调用与握手超时、退避重连、尝试耗尽与冷却、shutdown 取消在途、健康快照。 |
-| `mcp/oauth.rs` | refresh 流（wiremock）、token 轮换触发重连、已有 Authorization 拒绝、PKCE 换码存储。 |
-| `mcp/sandbox.rs` | stdio 经沙箱往返、stdout 预算有界（无半帧）、stderr 打爆预算干净失败、env 卫生化不动 network、`PAWORK_API_KEY_*` 不继承、空命令拒绝。 |
-| `mcp/security.rs` | 只序列化 locator、Debug 无明文、resolve 往返、missing → Secret 错误、非 `pawork.mcp.*` 拒绝。 |
-| `mcp/transport.rs` | stdio/http Debug 全 redact、URL 打码、非法配置拒绝。 |
 
 ## 8. 注意事项与已知限制
 
@@ -232,7 +176,7 @@ Policy 闸门在同步 `decide` 前暂取 input，返回后立即归还，不再
 - `run_command` 的沙箱策略固定派生（Enforce 网络、deny secret 路径、env_clear），不随 workspace 信任度放宽；放宽属 R7 策略分层。真实隔离强度取决于平台后端（macOS Seatbelt 最强；无硬后端时 NativeRestricted 挡不住命令内部越权读，见 [exec.md](exec.md) §8）。
 - `find_files` / `search_text` 尊重 `.gitignore`（被 ignore 的文件搜不到，有意行为）；`find_files` 还跳过隐藏文件，`search_text` 不跳过；`search_text` 单文件读取上限 4 MiB（R-14），超限文件跳过并在 metadata 计数报告，结果标记不完整。
 - `edit_file` fuzzy 是行对齐 whitespace 归一化匹配，不做语义/缩进感知；替换文本按字面写入。
-- MCP：HTTP transport 不经进程沙箱（无本地进程，凭 URL 校验与 Secret 域约束）；`ManagedMcpClient` 无后台心跳，断连在下次请求才被发现（`ping()` 供宿主探活）；`auto_start` 仅配置位，启动编排在宿主。
+- MCP 的连接、自动启动与 HTTP 限制见 [mcp](mcp.md)；本包只承接其工具适配器。
 - `StdioTransportConfig` / `HttpTransportConfig` 位于私有 `mod transport`（类型 pub 但包外不可命名）——以其为参数的公开函数（如 `OAuthHttpConnector::new`）实际只能由 crate 内部装配，这是刻意的封装边界而非疏漏。
 - `list_directory` 的 `path` 不接受空串（`PathSafetyError::Empty` → InvalidInput），列 root 用 `"."`；`read_file` 对超过 4 MiB 的文件只读前 4 MiB 并标记 truncated，不报错。
 - 相关文档：[policy.md](policy.md)（裁决与路径内核）、[exec.md](exec.md)（执行原语）、[../flows.md](../flows.md)（跨包链路）、[../../architecture.md](../../architecture.md)、[../../design.md](../../design.md)、[../README.md](../README.md)、[AGENTS.md](../../../AGENTS.md)。

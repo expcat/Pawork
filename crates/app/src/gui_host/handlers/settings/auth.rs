@@ -8,8 +8,8 @@ use pawork_protocol::{
 use serde_json::json;
 
 use crate::gui_host::GuiHostAdapter;
-use crate::gui_server::GuiHostError;
-use crate::{AppError, OAuthLogin, channels};
+use crate::{channels, AppError, OAuthLogin};
+use pawork_gui_server::GuiHostError;
 
 use super::{
     cancel_oauth_flight_if_present, flight_begin, flight_end, iso8601_utc, now_millis,
