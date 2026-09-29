@@ -56,7 +56,7 @@
 
 硬约束：
 
-- 禁止 `cargo clean`；复用默认 `target/` 增量缓存，仅清理本任务临时输出。stale 构建代（incremental/deps/examples/build 下 >7 天未动的死代，Cargo 无内置 target GC）用 `python3 scripts/clean-stale-incremental.py` 按龄清理，先 `--dry-run` 再实删，禁止 `rm -rf target`。
+- 禁止 `cargo clean`，仅清理本任务临时输出。构建统一经仓库 `.cargo/config.toml` 的 `rustc-wrapper = "kache"`：kache 生效时自动关闭并清理 incremental，产物按内容键跨 `target/` 复用；store 须与仓库同 APFS 卷（本机 `~/.config/kache/config.toml` 设 `cache.local_store = "/Volumes/SSD/.kache"`）。未安装 kache 时 Cargo 直接失败（`cargo install kache --locked`），单次绕过用 `RUSTC_WRAPPER= cargo …`。仅绕过 wrapper 的时期才用 `python3 scripts/clean-stale-incremental.py` 按龄清死代，禁止 `rm -rf target`。
 - 全会话同一时刻只允许一个 Cargo 进程；并行轨不得抢同一 `target/` 锁。审查者读 worker `/tmp` 日志，不再编译。
 - 文档或不影响构建行为的配置改动只做链接、格式与 diff 检查，不为形式完整跑编译。
 - 前一层失败先收敛原因，不盲目扩大范围。
@@ -108,6 +108,8 @@ bash scripts/test.sh --host            # 当前 pawork 构建 + spawn_e2e
 ```
 
 入口不请求真实 Provider。Providers、storage、protocol、orchestration、transport、app 和 client 的必要 feature 由脚本显式选择；feature 组合只改变测试构建，不改变生产默认。需要更窄的回归时直接用包级 Spec 的 `cargo test -p … --test/--lib/--bin … <filter>`，报告实际目标与 feature，不能把未编译目标记为通过。无测试或仅需类型检查时用 `cargo check -p <crate> --offline`。合并/归档波才追加 `cargo tree` 断言；全量发布门禁仍单独定义。
+
+以上与仓库内所有 Cargo 命令透明经 `.cargo/config.toml` 的 kache wrapper；单次绕过用 `RUSTC_WRAPPER= cargo …`（增量缓存只在绕过时期存在，详见 §5 硬约束）。
 
 ## 11. 工程经验
 
