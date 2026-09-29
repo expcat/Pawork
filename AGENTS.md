@@ -56,7 +56,7 @@
 
 硬约束：
 
-- 禁止 `cargo clean`，仅清理本任务临时输出。构建统一经仓库 `.cargo/config.toml` 的 `rustc-wrapper = "kache"`：kache 生效时自动关闭并清理 incremental，产物按内容键跨 `target/` 复用；store 须与仓库同 APFS 卷（本机 `~/.config/kache/config.toml` 设 `cache.local_store = "/Volumes/SSD/.kache"`）。未安装 kache 时 Cargo 直接失败（`cargo install kache --locked`），单次绕过用 `RUSTC_WRAPPER= cargo …`。仅绕过 wrapper 的时期才用 `python3 scripts/clean-stale-incremental.py` 按龄清死代，禁止 `rm -rf target`。
+- 禁止 `cargo clean`，仅清理本任务临时输出。构建统一经仓库 `.cargo/config.toml` 的 `rustc-wrapper = "kache"`：kache 生效时自动关闭并清理 incremental，产物按内容键跨 `target/` 复用；store 须与仓库同 APFS 卷（本机 `~/.config/kache/config.toml` 设 `cache.local_store = "/Volumes/SSD/.kache"`）。未安装 kache 时 Cargo 直接失败（`cargo install kache --locked`），单次绕过用 `RUSTC_WRAPPER= cargo …`。kache 只接管 incremental；`target/` 的 deps/build 死代仍随指纹变化累积，继续用 `python3 scripts/clean-stale-incremental.py` 按龄清理（先 `--dry-run`），禁止 `rm -rf target`。
 - 全会话同一时刻只允许一个 Cargo 进程；并行轨不得抢同一 `target/` 锁。审查者读 worker `/tmp` 日志，不再编译。
 - 文档或不影响构建行为的配置改动只做链接、格式与 diff 检查，不为形式完整跑编译。
 - 前一层失败先收敛原因，不盲目扩大范围。

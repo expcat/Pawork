@@ -87,7 +87,7 @@ UI 取证工具须提供真实失败信号：`ui-fixture.sh desktop` 清除旧 `
 - 用 `bash scripts/test.sh --log /tmp/pawork-tests.log <包名>...` 一次保存完整 stdout/stderr；日志追加，每条命令记录耗时和退出码，失败仍非零退出。`--host` 与 `desktop` 同样支持；`--print` 不创建日志。不要用 `... | tail` 丢掉中间结果和原始退出码，也不要为补日志重复整批验证。
 - 同批相关包放在一次调用中以统一 feature；单个缺陷优先按包 Spec 选 `--lib` / `--test` 和过滤器。类型检查用 `cargo check`，需要实际行为证据时仍跑测试。保持单 Cargo 进程，复用默认 `target/`。
 - 2026-09-29 起构建统一经仓库 `.cargo/config.toml` 的 `rustc-wrapper = "kache"`（用户授权采用，实测：全新 `target/` 二轮构建 11.03s → 2.62s、31/31 可缓存 crate 命中、59.7MB 恢复 100% 零拷贝）。kache 生效时自动关闭并清理 incremental；dev/test 仍为 `debug="line-tables-only"`、`split-debuginfo="unpacked"`，不要为日常提速反复改 profile、RUSTFLAGS、toolchain 或切换链接器，避免制造不同构建指纹。kache store 须与仓库同 APFS 卷（本机 `~/.config/kache/config.toml` → `/Volumes/SSD/.kache`），容量由 kache GC 自动管理。
-- 增量代清理只在绕过 wrapper 的时期适用：空闲时先运行 `python3 scripts/clean-stale-incremental.py --dry-run`，审阅后执行同一命令去掉 `--dry-run`；不与 Cargo 同时清理，不运行 `cargo clean`。incremental 按 7 天年龄清理，deps/examples/build 还保留每组最新 hash 构建代；年龄不是不可达证明，较少使用的 feature 组合可能需要重编译。不要每天清理仍在使用的缓存。
+- target/ 死代清理继续用脚本（kache 只接管 incremental，deps/build 死代仍随指纹变化累积；2026-09-29 实测单次清理释放 10.1G）：空闲时先运行 `python3 scripts/clean-stale-incremental.py --dry-run`，审阅后执行同一命令去掉 `--dry-run`；不与 Cargo 同时清理，不运行 `cargo clean`。incremental 按 7 天年龄清理，deps/examples/build 还保留每组最新 hash 构建代；年龄不是不可达证明，较少使用的 feature 组合可能需要重编译。不要每天清理仍在使用的缓存。
 - 真窗口与 mock 验收结束后使用对应脚本的 stop/清理入口，并核对原实例 PID 已退出。对遗留进程先核对命令和实例再定点停止，避免后台空转持续占用 CPU。
 
 ## 5. 当前验收缺口

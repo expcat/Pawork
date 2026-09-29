@@ -4,6 +4,12 @@
 Cargo never deletes old build generations: every fingerprint change leaves
 orphaned incremental session dirs and stale deps/build artifacts behind.
 
+With kache as rustc-wrapper (repo .cargo/config.toml), kache itself strips
+and cleans incremental/ dirs on compile; this script remains responsible for
+deps/examples/build generations, which kache does not manage. kache-restored
+artifacts are clonefiles/hardlinks into the kache store, so deleting them
+from target/ never touches the store.
+
 Rules (all deletions also require mtime older than --days, default 7;
 or older than --older-than FILE's mtime — e.g. Cargo.toml after a
 profile/toolchain change, to collect generations the change killed):
