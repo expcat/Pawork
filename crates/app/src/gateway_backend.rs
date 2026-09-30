@@ -298,7 +298,7 @@ impl GatewayBackend for AppCore {
         let result = tokio::select! {
             biased;
             _ = cancel.cancelled() => Err(GatewayError::cancelled()),
-            result = tokio::time::timeout(std::time::Duration::from_secs(300),completion.provider.stream(&completion.request,&sink,cancel.clone())) => {
+            result = tokio::time::timeout(std::time::Duration::from_secs(600),completion.provider.stream(&completion.request,&sink,cancel.clone())) => {
                 match result { Ok(value)=>value.map_err(GatewayError::from),Err(_)=>{cancel.cancel();Err(GatewayError::timeout())} }
             }
         };
