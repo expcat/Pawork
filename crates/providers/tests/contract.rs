@@ -679,7 +679,8 @@ async fn contract_list_models() {
                 {"id":"remote-vision", "input_modalities":["text","image"]},
                 {"id":"remote-disabled", "supports_image_in":false, "input_modalities":["image"]},
                 {"id":"mimo-v2.5"},
-                {"id":"hy3"}
+                {"id":"hy3"},
+                {"id":"wan2.7-image", "supports_image_in":false}
             ]})),
         )
         .expect(1)
@@ -698,8 +699,14 @@ async fn contract_list_models() {
             .collect::<Vec<_>>(),
         // 远端完全未声明模态时按 VISION-2 默认表回填（mimo-v2.5 官方全模态；
         // hy3 官方 text-only，回填不改变）。
-        [false, true, false, true, false]
+        [false, true, false, true, false, false]
     );
+    let generator = models
+        .iter()
+        .find(|model| model.id.as_str() == "wan2.7-image")
+        .unwrap();
+    assert!(generator.capabilities.image_output);
+    assert!(!generator.capabilities.text);
     assert!(models
         .iter()
         .all(|model| model.capabilities.hosted_tool_tags.is_empty()));

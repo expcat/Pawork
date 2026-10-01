@@ -9,8 +9,8 @@ use hyper::{
 };
 use hyper_util::rt::{TokioIo, TokioTimer};
 use pawork_domain::{
-    CancellationToken, ProviderError, ProviderEventSink, ProviderStreamEvent, StopReason,
-    TokenUsage,
+    CancellationToken, ModelPurpose, ProviderError, ProviderEventSink, ProviderStreamEvent,
+    StopReason, TokenUsage,
 };
 use serde_json::{json, Value};
 use std::{
@@ -172,20 +172,34 @@ async fn handle_inner<B: GatewayBackend>(
             GatewayError::new(401, "invalid_api_key", "Invalid or revoked gateway token.")
         })?;
     let path = request.uri().path();
-    if request.uri().query().is_some() {
-        return Err(GatewayError::invalid());
-    }
+    let query = request.uri().query().unwrap_or_default();
     if path == "/v1/models" {
         if request.method() != Method::GET {
             return Err(GatewayError::new(405, "method_not_allowed", "Use GET."));
         }
-        let models = tokio::time::timeout(Duration::from_secs(15), core.gateway_models())
+        // ADR-064（Gateway v1.1）：?purpose=<name> 可重复，取交集；
+        // 未知参数 / 未知用途值 fail-closed。缺省 = v1 口径（仅 text 模型）。
+        let mut purposes = Vec::new();
+        for pair in query.split('&').filter(|pair| !pair.is_empty()) {
+            let (key, value) = pair.split_once('=').ok_or_else(GatewayError::invalid)?;
+            if key != "purpose" {
+                return Err(GatewayError::invalid());
+            }
+            let purpose = ModelPurpose::from_wire_name(value).ok_or_else(GatewayError::invalid)?;
+            if !purposes.contains(&purpose) {
+                purposes.push(purpose);
+            }
+        }
+        let models = tokio::time::timeout(Duration::from_secs(15), core.gateway_models(&purposes))
             .await
             .map_err(|_| GatewayError::timeout())??;
         return Ok(json_response(200, json!({"object":"list","data":models})));
     }
     if path != "/v1/chat/completions" {
         return Err(GatewayError::new(404, "not_found", "Unknown API route."));
+    }
+    if !query.is_empty() {
+        return Err(GatewayError::invalid());
     }
     if request.method() != Method::POST {
         return Err(GatewayError::new(405, "method_not_allowed", "Use POST."));
@@ -257,6 +271,7 @@ async fn handle_inner<B: GatewayBackend>(
     let sink = Arc::new(OutputSink {
         sender: streaming.then_some(sender.clone()),
         text: Mutex::new(String::new()),
+        images: Mutex::new(Vec::new()),
         bytes: std::sync::atomic::AtomicUsize::new(0),
         id: id.clone(),
         model: model.clone(),
@@ -289,7 +304,10 @@ async fn handle_inner<B: GatewayBackend>(
             }
             let _=tokio::time::timeout(Duration::from_secs(5),sender.send(Bytes::from_static(b"data: [DONE]\n\n"))).await;
         } else {
-            let value=result.map(|summary|json!({"id":id,"object":"chat.completion","created":created,"model":model,"choices":[{"index":0,"message":{"role":"assistant","content":sink.text.lock().expect("output").clone()},"finish_reason":finish_reason(&summary.stop_reason)}],"usage":usage_json(&summary.usage)}));
+            // ADR-064：图像生成模型透传 image part（message.images 数组，
+            // additive 字段；文本模型恒为空数组，v1 客户端可忽略）。
+            let images = sink.images.lock().expect("output").clone();
+            let value=result.map(|summary|json!({"id":id,"object":"chat.completion","created":created,"model":model,"choices":[{"index":0,"message":{"role":"assistant","content":sink.text.lock().expect("output").clone(),"images":images.iter().map(|url|json!({"url":url})).collect::<Vec<_>>()},"finish_reason":finish_reason(&summary.stop_reason)}],"usage":usage_json(&summary.usage)}));
             let _=done.send(value);
         }
     });
@@ -345,6 +363,7 @@ fn usage_json(usage: &TokenUsage) -> Value {
 struct OutputSink {
     sender: Option<mpsc::Sender<Bytes>>,
     text: Mutex<String>,
+    images: Mutex<Vec<String>>,
     bytes: std::sync::atomic::AtomicUsize,
     id: String,
     model: String,
@@ -370,6 +389,20 @@ impl ProviderEventSink for OutputSink {
                     self.text.lock().expect("output").push_str(&text);
                 }
                 json!({"content":text})
+            }
+            ProviderStreamEvent::ImageOutput { url } => {
+                let size = self
+                    .bytes
+                    .fetch_add(url.len(), std::sync::atomic::Ordering::Relaxed)
+                    + url.len();
+                if size > OUTPUT_LIMIT {
+                    return Err(ProviderError::new(
+                        pawork_domain::ProviderErrorKind::InvalidRequest,
+                        "gateway output limit exceeded",
+                    ));
+                }
+                self.images.lock().expect("output").push(url.clone());
+                json!({"images":[{"url":url}]})
             }
             ProviderStreamEvent::ResponseStarted { .. } => json!({"role":"assistant","content":""}),
             _ => return Ok(()),

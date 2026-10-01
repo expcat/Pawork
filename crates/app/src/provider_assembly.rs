@@ -175,6 +175,14 @@ impl AppCore {
                 model: entry.id.as_str().to_string(),
             });
         }
+        // ADR-064：会话模型要求 text 能力——图像生成等专用模型
+        // （text=false）不进入对话循环，fail-closed 且给出可读原因。
+        if !entry.capabilities.text {
+            return Err(AppError::ModelNotText {
+                provider: provider_id.as_str().to_string(),
+                model: entry.id.as_str().to_string(),
+            });
+        }
         let from = (self.provider_id.clone(), self.model.clone());
         self.model = entry.id.clone();
         let to = (self.provider_id.clone(), self.model.clone());
@@ -241,7 +249,9 @@ impl AppCore {
                 .registry
                 .list()
                 .into_iter()
-                .find(|entry| entry.provider == target)
+                // ADR-064：缺省回落优先 text 模型，避免把图像生成等
+                // 专用模型选为会话模型。
+                .find(|entry| entry.provider == target && entry.capabilities.text)
                 .map(|entry| entry.id.clone())
                 .ok_or_else(|| AppError::UnknownModel {
                     model: "<any>".to_string(),
@@ -254,6 +264,17 @@ impl AppCore {
             .is_model_enabled(target.as_str(), target_model.as_str())
         {
             return Err(AppError::ModelDisabled {
+                provider: target.as_str().to_string(),
+                model: target_model.as_str().to_string(),
+            });
+        }
+        // ADR-064：会话模型要求 text 能力（同 switch_model 闸门）。
+        if assembled
+            .registry
+            .resolve(target_model.as_str())
+            .is_some_and(|entry| entry.provider == target && !entry.capabilities.text)
+        {
+            return Err(AppError::ModelNotText {
                 provider: target.as_str().to_string(),
                 model: target_model.as_str().to_string(),
             });
@@ -333,6 +354,12 @@ impl AppCore {
                     &config,
                 )
                 .await?;
+                if !entry.capabilities.text {
+                    return Err(AppError::ModelNotText {
+                        provider: provider.to_string(),
+                        model: entry.id.to_string(),
+                    });
+                }
                 let request = naming_request(entry.id.clone(), session_id, &first_user_text);
                 let sink = TitleTextSink::default();
                 adapter
@@ -1039,7 +1066,10 @@ fn apply_transport_overrides(registry: &mut ModelRegistry, config: &PaworkConfig
 
 /// 把 config `[[models]]` 覆盖并入 registry：已有条目只改 window / max_output
 /// （能力、定价、别名保持目录权威），未知条目追加（provider 归当前 provider，
-/// 能力 fail-closed 全 false，定价 None——不编造）。
+/// 能力 fail-closed、定价 None——不编造）。ADR-064：text 例外取 true——
+/// 与探测路径的未知聊天 ID 同口径（provider.rs 默认定义 text=true），
+/// 否则用户显式配置的会话模型会被 text 闸门误拒；image / video / tools
+/// 等维度仍全 false。
 pub(crate) fn apply_config_models(
     registry: &mut ModelRegistry,
     models: &[pawork_workspace::config::ModelConfig],
@@ -1054,7 +1084,10 @@ pub(crate) fn apply_config_models(
                 display_name: config.id.clone(),
                 context_window_tokens: 0,
                 max_output_tokens: 0,
-                capabilities: Default::default(),
+                capabilities: pawork_domain::ModelCapabilities {
+                    text: true,
+                    ..Default::default()
+                },
                 pricing: None,
                 aliases: Vec::new(),
             },
@@ -1364,7 +1397,10 @@ mod tests {
                 display_name: id.into(),
                 context_window_tokens: 8_000,
                 max_output_tokens: 1_024,
-                capabilities: Default::default(),
+                capabilities: pawork_domain::ModelCapabilities {
+                    text: true,
+                    ..Default::default()
+                },
                 pricing: None,
                 aliases: Vec::new(),
             }]);

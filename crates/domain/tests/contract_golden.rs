@@ -80,7 +80,7 @@ fn full_provider_error() -> ProviderError {
     }
 }
 
-/// 13 变体顺序即声明序;增减变体时同步更新计数断言与夹具。
+/// 14 变体顺序即声明序;增减变体时同步更新计数断言与夹具。
 fn all_stream_events() -> Vec<ProviderStreamEvent> {
     vec![
         ProviderStreamEvent::ResponseStarted {
@@ -88,6 +88,9 @@ fn all_stream_events() -> Vec<ProviderStreamEvent> {
         },
         ProviderStreamEvent::TextDelta("hello".into()),
         ProviderStreamEvent::ThinkingDelta("考虑中".into()),
+        ProviderStreamEvent::ImageOutput {
+            url: "https://dashscope-result.example/generated.png".into(),
+        },
         ProviderStreamEvent::ReasoningItem(ReasoningItem {
             id: ReasoningItemId::from("reasoning-1"),
             summary: Some("safe summary".into()),
@@ -217,11 +220,11 @@ fn tool_results() -> Vec<ToolResult> {
 }
 
 #[test]
-fn provider_stream_event_13_variants_byte_golden() {
+fn provider_stream_event_14_variants_byte_golden() {
     let events = all_stream_events();
-    assert_eq!(events.len(), 13, "ProviderStreamEvent 变体数锁定为 13");
+    assert_eq!(events.len(), 14, "ProviderStreamEvent 变体数锁定为 14");
     check_golden(
-        "provider_stream_event_13.jsonl",
+        "provider_stream_event_14.jsonl",
         "ProviderStreamEvent",
         &events,
     );

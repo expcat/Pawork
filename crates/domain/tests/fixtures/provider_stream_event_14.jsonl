@@ -1,6 +1,7 @@
 {"type":"response_started","data":{"response_id":"resp-1"}}
 {"type":"text_delta","data":"hello"}
 {"type":"thinking_delta","data":"考虑中"}
+{"type":"image_output","data":{"url":"https://dashscope-result.example/generated.png"}}
 {"type":"reasoning_item","data":{"id":"reasoning-1","summary":"safe summary","protected_blob_ref":"protected-1","opaque_metadata":{"origin":"wire"}}}
 {"type":"tool_call_started","data":{"id":"tc-1","name":"read_file"}}
 {"type":"tool_call_arguments_delta","data":{"id":"tc-1","json":"{\"path\":"}}

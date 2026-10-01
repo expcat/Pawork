@@ -723,10 +723,20 @@ impl AppView {
                 } else {
                     t("settings.providers.switch_off")
                 })
-                .description(format!("{}/{}", model.provider_id, model.id))
+                .description({
+                    let mut description = format!("{}/{}", model.provider_id, model.id);
+                    let capabilities = crate::ui::input_area::model_capability_label(&model);
+                    if !capabilities.is_empty() {
+                        description.push_str(&format!(" · {capabilities}"));
+                    }
+                    description
+                })
                 .selected(model.enabled);
             node.bounds = self.settings_menu_element_bounds(&id, &list_id);
             menu = menu.child(node);
+            if !model.text {
+                continue;
+            }
             // ADR-063：推理强度行（默认 cycle + 范围 chips + 手动范围时
             // 重置），identifier 与 render 同源，几何取滚动列表实测布局。
             let effort_enabled = writes && !pending;

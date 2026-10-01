@@ -111,6 +111,21 @@ impl RunService {
         if trigger.role != MessageRole::User {
             return Err(AppError::EmptyTurn);
         }
+        // 直接启动 / 恢复会话同样受 text 闸门约束，不能只在切模型时校验。
+        // 同 Provider 的目录证据优先；尚未探测时沿用模型默认声明。
+        let text = core
+            .registry
+            .capability_evidence(core.model.as_str())
+            .filter(|evidence| evidence.provider.as_ref() == Some(&core.provider_id))
+            .map(|evidence| evidence.merged().text)
+            .or_else(|| pawork_models::registry::default_text(core.model.as_str()))
+            .unwrap_or(true);
+        if !text {
+            return Err(AppError::ModelNotText {
+                provider: core.provider_id.to_string(),
+                model: core.model.to_string(),
+            });
+        }
         // trigger 与 assistant/tool 消息共用 next_message 命名空间；
         // 若误用 next_request，两个计数器同从 1 起且同毫秒时会产生相同
         // message_id（messages.message_id 全局主键 → UNIQUE 冲突）。
@@ -273,6 +288,12 @@ impl RunService {
                 .capability_evidence(core.model.as_str())
                 .filter(|entry| entry.provider.as_ref() == Some(&core.provider_id))
                 .ok_or(AppError::Provider(error))?;
+            if !discovered.merged().text {
+                return Err(AppError::ModelNotText {
+                    provider: core.provider_id.to_string(),
+                    model: core.model.to_string(),
+                });
+            }
             pawork_models::negotiate::capability_gate(&discovered, &request)
                 .map_err(AppError::Provider)?;
         }
@@ -723,6 +744,19 @@ mod tests {
             error,
             crate::AppError::ModelBelongsToProvider { .. }
         ));
+        // CLI --model / 已恢复会话可以绕过 switch_model；不得进入 Agent loop。
+        core.model = pawork_domain::ModelId::from("wan2.7-image");
+        let error = core
+            .chat_turn(
+                &session,
+                vec![user_hello()],
+                &sink,
+                CancellationToken::new(),
+            )
+            .await
+            .expect_err("image generation must not run as a conversation");
+        assert!(matches!(error, crate::AppError::ModelNotText { .. }));
+        assert!(sink.types().is_empty());
     }
 
     #[tokio::test]

@@ -4438,6 +4438,7 @@ dependencies = [
  "pawork-engine",
  "pawork-gateway",
  "pawork-gui-server",
+ "pawork-models",
  "pawork-protocol",
  "pawork-storage",
  "pawork-transport",

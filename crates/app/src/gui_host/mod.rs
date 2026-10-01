@@ -235,6 +235,7 @@ impl GuiHostAdapter {
             crate::AppError::UnknownModel { .. }
             | crate::AppError::ModelBelongsToProvider { .. } => "unknown_model",
             crate::AppError::ModelDisabled { .. } => "model_disabled",
+            crate::AppError::ModelNotText { .. } => "model_not_text",
             crate::AppError::PlanNotApproved { .. } => "plan_not_approved",
             crate::AppError::SessionNotFound(_)
             | crate::AppError::Session(

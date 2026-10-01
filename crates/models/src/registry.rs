@@ -433,6 +433,15 @@ impl ModelRegistry {
             .collect()
     }
 
+    /// 按用途过滤（ADR-064）：多个用途取交集（同时满足）。
+    pub fn filter_by_purpose(
+        &self,
+        purposes: &[pawork_domain::ModelPurpose],
+    ) -> Vec<&CatalogEntry> {
+        let required = purpose_requirements(purposes);
+        self.filter(&required)
+    }
+
     /// 校验输入 token 数是否在模型的上下文窗口内。
     pub fn validate_context(&self, id_or_alias: &str, input_tokens: u64) -> bool {
         match self.resolve(id_or_alias) {
@@ -775,6 +784,7 @@ fn caps_satisfied(have: &ModelCapabilities, required: &ModelCapabilities) -> boo
     let v1 = (!required.text || have.text)
         && (!required.image_input || have.image_input)
         && (!required.video_input || have.video_input)
+        && (!required.image_output || have.image_output)
         && (!required.tool_calls || have.tool_calls)
         && (!required.parallel_tool_calls || have.parallel_tool_calls)
         && (!required.thinking || have.thinking)
@@ -803,6 +813,35 @@ fn caps_satisfied(have: &ModelCapabilities, required: &ModelCapabilities) -> boo
         return false;
     }
     true
+}
+
+/// 用途 → 能力要求（ADR-064）：把 canonical 用途映射为 `filter` 的
+/// requirements；多个用途取交集。用途是既有能力维度的选择，不引入
+/// 新能力位。
+pub fn purpose_requirements(purposes: &[pawork_domain::ModelPurpose]) -> ModelCapabilities {
+    let mut required = ModelCapabilities::default();
+    for purpose in purposes {
+        match purpose {
+            pawork_domain::ModelPurpose::Text => required.text = true,
+            pawork_domain::ModelPurpose::ImageInput => required.image_input = true,
+            pawork_domain::ModelPurpose::ImageOutput => required.image_output = true,
+            pawork_domain::ModelPurpose::VideoInput => required.video_input = true,
+            pawork_domain::ModelPurpose::WebSearch => {
+                required
+                    .hosted_tool_tags
+                    .insert(pawork_domain::ToolCapabilityTag::WebSearch);
+            }
+        }
+    }
+    required
+}
+
+/// 单条能力声明是否满足某用途（目录筛选的逐条判定）。
+pub fn capabilities_support_purpose(
+    capabilities: &ModelCapabilities,
+    purpose: pawork_domain::ModelPurpose,
+) -> bool {
+    caps_satisfied(capabilities, &purpose_requirements(&[purpose]))
 }
 
 /// 构造能力集合的便捷函数。
@@ -1004,8 +1043,8 @@ pub fn apply_default_image_input(definition: &mut ModelDefinition) {
 /// 2026-09-23 实测（qwen-token-plan compatible-mode /chat/completions）：
 /// wan2.7-image / wan2.7-image-pro 以 content 数组输入文生图请求，返回
 /// `{"type":"image","image":"<url>"}` content part 与 image_count 用量。
-/// 两款模型当前被 `non_text_model` 过滤在聊天目录之外（Chat 文本流不
-/// 消费图像输出）；本表作为目录级能力声明保留，供图像生成接线后使用。
+/// 两款模型进入完整目录，由 `default_text` 收窄为专用图像生成模型；
+/// Gateway 消费图像输出，对话选择面按 text 能力排除。
 /// 其余可访问目录（glm-coding / opencode-go / kimi-code / xai）均无图像
 /// 生成模型，未登记 = 未知（fail-closed）。
 pub fn default_image_output(model: &str) -> Option<bool> {
@@ -1022,6 +1061,29 @@ pub fn apply_default_image_output(definition: &mut ModelDefinition) {
         && default_image_output(definition.id.as_str()) == Some(true)
     {
         definition.capabilities.image_output = true;
+    }
+}
+
+/// 文本能力默认表（ADR-064）：逐 model_id 的默认 `text`，与
+/// `default_image_input` 同口径（跨 Provider 按 model_id 合并）。
+///
+/// 仅登记「实测确认的纯图像生成模型」：远端 /models 目录不携带模态
+/// 字段，探测定义的 text=true 是缺省假设而非显式声明；本表把已证实
+/// 的图像生成模型收窄为 text=false，使对话选择面 fail-closed。未登记
+/// 模型不受影响（保持 text=true 缺省）。收窄只在目录条目仍宣称
+/// image_output 时生效，避免误伤同名文本模型。
+pub fn default_text(model: &str) -> Option<bool> {
+    Some(match model {
+        "wan2.7-image" | "wan2.7-image-pro" => false,
+        _ => return None,
+    })
+}
+
+/// 为目录条目补默认文本能力声明：条目按默认表证实为图像生成模型时
+/// 收窄 text=false（远端无模态字段可显式声明，缺省 true 仅为假设）。
+pub fn apply_default_text(definition: &mut ModelDefinition) {
+    if definition.capabilities.image_output && default_text(definition.id.as_str()) == Some(false) {
+        definition.capabilities.text = false;
     }
 }
 
@@ -1417,6 +1479,21 @@ mod tests {
         let mut generator = mock_definition("wan2.7-image", ModelCapabilities::default());
         apply_default_image_output(&mut generator);
         assert!(generator.capabilities.image_output);
+        // ADR-064：已证实图像生成模型收窄 text；未升级 image_output 的
+        // 同名条目不受影响。
+        assert_eq!(default_text("wan2.7-image"), Some(false));
+        assert_eq!(default_text("glm-5.3"), None);
+        let mut narrowed = mock_definition("wan2.7-image", ModelCapabilities::default());
+        narrowed.capabilities.text = true;
+        apply_default_image_output(&mut narrowed);
+        apply_default_text(&mut narrowed);
+        assert!(narrowed.capabilities.image_output);
+        assert!(!narrowed.capabilities.text);
+        // image_output 未升级的条目不被 text 表收窄（防误伤同名文本模型）。
+        let mut text_model = mock_definition("wan2.7-image", ModelCapabilities::default());
+        text_model.capabilities.text = true;
+        apply_default_text(&mut text_model);
+        assert!(text_model.capabilities.text);
 
         assert_eq!(default_hosted_web_search("grok-4.6"), Some(true));
         assert_eq!(default_hosted_web_search("grok-4.7-build-fast"), Some(true));
@@ -1767,6 +1844,102 @@ mod tests {
         let baseline = caps(true, false, false, false, false, false, false);
         let req_default = ModelCapabilities::default();
         assert!(caps_satisfied(&baseline, &req_default));
+    }
+
+    #[test]
+    fn purpose_filter_covers_four_capabilities_and_intersects() {
+        use pawork_domain::ModelPurpose;
+
+        let generator = ModelCapabilities {
+            image_output: true,
+            ..caps(true, false, false, false, false, false, false)
+        };
+        // 图像生成模型被收窄为非对话模型（ADR-064 默认表）。
+        let mut narrowed = generator.clone();
+        narrowed.text = false;
+
+        let vision = ModelCapabilities {
+            hosted_tool_tags: [pawork_domain::ToolCapabilityTag::WebSearch]
+                .into_iter()
+                .collect(),
+            ..caps(true, true, false, false, false, false, false)
+        };
+        let mut video = vision.clone();
+        video.video_input = true;
+
+        // 单用途：四个维度各自命中。
+        assert!(capabilities_support_purpose(&vision, ModelPurpose::Text));
+        assert!(capabilities_support_purpose(
+            &vision,
+            ModelPurpose::ImageInput
+        ));
+        assert!(capabilities_support_purpose(
+            &vision,
+            ModelPurpose::WebSearch
+        ));
+        assert!(!capabilities_support_purpose(
+            &vision,
+            ModelPurpose::VideoInput
+        ));
+        assert!(!capabilities_support_purpose(
+            &vision,
+            ModelPurpose::ImageOutput
+        ));
+        assert!(capabilities_support_purpose(
+            &narrowed,
+            ModelPurpose::ImageOutput
+        ));
+        assert!(!capabilities_support_purpose(&narrowed, ModelPurpose::Text));
+        assert!(capabilities_support_purpose(
+            &video,
+            ModelPurpose::VideoInput
+        ));
+
+        // 交集：识图 + 搜索同时要求。
+        let both = purpose_requirements(&[ModelPurpose::ImageInput, ModelPurpose::WebSearch]);
+        assert!(caps_satisfied(&vision, &both));
+        assert!(!caps_satisfied(
+            &caps(true, true, false, false, false, false, false),
+            &both
+        ));
+
+        // registry 级过滤：text 用途排除图像生成条目。
+        let entries = vec![
+            CatalogEntry {
+                provider: ProviderId::new("qwen-token-plan"),
+                id: ModelId::new("wan2.7-image"),
+                display_name: "Wan 2.7 Image".into(),
+                context_window_tokens: 0,
+                max_output_tokens: 0,
+                capabilities: narrowed,
+                pricing: None,
+                aliases: Vec::new(),
+            },
+            CatalogEntry {
+                provider: ProviderId::new("qwen-token-plan"),
+                id: ModelId::new("qwen3.8-max"),
+                display_name: "Qwen3.8 Max".into(),
+                context_window_tokens: 262_144,
+                max_output_tokens: 32_768,
+                capabilities: vision,
+                pricing: None,
+                aliases: Vec::new(),
+            },
+        ];
+        let mut registry = ModelRegistry::empty();
+        registry.extend_with(entries);
+        let text_ids: Vec<&str> = registry
+            .filter_by_purpose(&[ModelPurpose::Text])
+            .iter()
+            .map(|entry| entry.id.as_str())
+            .collect();
+        assert_eq!(text_ids, ["qwen3.8-max"]);
+        let image_gen_ids: Vec<&str> = registry
+            .filter_by_purpose(&[ModelPurpose::ImageOutput])
+            .iter()
+            .map(|entry| entry.id.as_str())
+            .collect();
+        assert_eq!(image_gen_ids, ["wan2.7-image"]);
     }
 
     #[test]

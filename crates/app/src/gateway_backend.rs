@@ -4,7 +4,10 @@ use crate::{AdapterProtocol, AppCore, AppError};
 use async_trait::async_trait;
 use pawork_control_plane::credential::{AcquireRequest, LeaseOutcome};
 use pawork_domain::*;
-use pawork_gateway::{GatewayBackend, GatewayChatRequest, GatewayError, GatewayModel};
+use pawork_gateway::{
+    GatewayBackend, GatewayChatRequest, GatewayContent, GatewayContentPart, GatewayError,
+    GatewayModel,
+};
 use serde_json::Value;
 use std::sync::{Arc, Mutex};
 
@@ -26,6 +29,92 @@ impl From<AppError> for GatewayError {
         }
     }
 }
+
+/// Gateway v1.1 多模态正文 → canonical ContentPart。
+///
+/// URL 只做语法边界校验（长度 / 无空白控制符 / 凭证拒绝），Host 不下载、
+/// 不解码、不转存；media_type 按扩展名 / data URL 前缀推断，未知图像
+/// 扩展回落 image/png（所有已接通道的公共白名单项）。
+fn gateway_content_parts(content: GatewayContent) -> Result<Vec<ContentPart>, GatewayError> {
+    let parts = match content {
+        GatewayContent::Text(text) => return Ok(vec![ContentPart::Text(TextContent { text })]),
+        GatewayContent::Parts(parts) => parts,
+    };
+    if parts.is_empty() {
+        return Err(GatewayError::invalid());
+    }
+    let mut converted = Vec::with_capacity(parts.len());
+    for part in parts {
+        match part {
+            GatewayContentPart::Text { text } => {
+                converted.push(ContentPart::Text(TextContent { text }));
+            }
+            GatewayContentPart::ImageUrl { image_url } => {
+                converted.push(ContentPart::Image(image_part(image_url.url)?));
+            }
+            GatewayContentPart::VideoUrl { video_url } => {
+                let video = VideoContent {
+                    url: video_url.url,
+                    media_type: "video/mp4".into(),
+                };
+                video.validate().map_err(|_| GatewayError::invalid())?;
+                converted.push(ContentPart::Video(video));
+            }
+        }
+    }
+    Ok(converted)
+}
+
+fn image_part(url: String) -> Result<ImageContent, GatewayError> {
+    let invalid = || GatewayError::invalid();
+    if url.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err(invalid());
+    }
+    if let Some(rest) = url.strip_prefix("data:") {
+        let (header, data) = rest.split_once(',').ok_or_else(invalid)?;
+        let media_type = header.strip_suffix(";base64").ok_or_else(invalid)?;
+        if !media_type.starts_with("image/")
+            || media_type.contains(';')
+            || data.is_empty()
+            || !data
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'=')
+        {
+            return Err(invalid());
+        }
+        return Ok(ImageContent {
+            source: ImageSource::Base64(data.to_string()),
+            media_type: media_type.to_string(),
+            alt_text: None,
+        });
+    }
+    // 内嵌图片受 HTTP 请求体 2 MiB 上限约束；8 KiB 只限制远程 URL。
+    if url.len() > 8192 {
+        return Err(invalid());
+    }
+    url.strip_prefix("https://")
+        .and_then(|rest| rest.split(['/', '?', '#']).next())
+        .filter(|host| !host.is_empty() && !host.contains(['@', '%']))
+        .ok_or_else(invalid)?;
+    let media_type = match url
+        .rsplit('.')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        _ => "image/png",
+    };
+    Ok(ImageContent {
+        source: ImageSource::Url(url),
+        media_type: media_type.into(),
+        alt_text: None,
+    })
+}
 pub struct GatewayCompletion {
     provider: Arc<dyn ModelProvider>,
     request: CanonicalModelRequest,
@@ -37,7 +126,10 @@ pub struct GatewayCompletion {
 #[async_trait]
 impl GatewayBackend for AppCore {
     type Completion = GatewayCompletion;
-    async fn gateway_models(&self) -> Result<Vec<GatewayModel>, GatewayError> {
+    async fn gateway_models(
+        &self,
+        purposes: &[pawork_domain::ModelPurpose],
+    ) -> Result<Vec<GatewayModel>, GatewayError> {
         let catalog = self.models_overview().await;
         // The regular settings catalog includes unconnected static choices; this API does not.
         let mut connected = std::collections::HashSet::new();
@@ -66,12 +158,35 @@ impl GatewayBackend for AppCore {
                         .config
                         .is_model_enabled(e.provider.as_str(), e.id.as_str())
             })
+            // ADR-064（Gateway v1.1）：按 canonical 用途过滤；缺省保持
+            // v1「可聊天」口径（仅 text 模型），第三方显式带用途才见
+            // 图像生成等专用模型。
+            .filter(|e| {
+                let effective: &[pawork_domain::ModelPurpose] = if purposes.is_empty() {
+                    &[pawork_domain::ModelPurpose::Text]
+                } else {
+                    purposes
+                };
+                effective.iter().all(|purpose| {
+                    pawork_models::capabilities_support_purpose(&e.capabilities, *purpose)
+                })
+            })
             .map(|e| GatewayModel {
                 id: format!("{}/{}", e.provider, e.id),
                 object: "model",
                 owned_by: e.provider.to_string(),
                 display_name: e.display_name,
                 context_window: e.context_window_tokens,
+                capabilities: pawork_gateway::GatewayModelCapabilities {
+                    text: e.capabilities.text,
+                    image_input: e.capabilities.image_input,
+                    image_output: e.capabilities.image_output,
+                    video_input: e.capabilities.video_input,
+                    web_search: e
+                        .capabilities
+                        .hosted_tool_tags
+                        .contains(&pawork_domain::ToolCapabilityTag::WebSearch),
+                },
             })
             .collect())
     }
@@ -116,10 +231,11 @@ impl GatewayBackend for AppCore {
             messages.push(Message {
                 id: MessageId::new(format!("gateway-{i}")),
                 role,
-                content: vec![ContentPart::Text(TextContent { text: m.content })],
+                content: gateway_content_parts(m.content)?,
                 metadata: Default::default(),
             });
         }
+        let web_search = input.web_search;
         let provider_id = ProviderId::new(provider);
         self.select_account_for_provider(&provider_id, &CancellationToken::new())
             .await?;
@@ -244,6 +360,30 @@ impl GatewayBackend for AppCore {
             }
         }
         let credential_id = account.map(|a| a.credential_id);
+        // ADR-064（Gateway v1.1）：请求级 hosted web search 与多模态输入
+        // 都走既有 capability_gate——按目录证据 fail-closed，不支持即
+        // 400，不静默降级、不触网。
+        if web_search {
+            request.hosted_tools.push(pawork_domain::HostedToolRequest {
+                name: "web_search".into(),
+                kind: pawork_domain::ToolCapabilityTag::WebSearch,
+                description: "Provider-hosted web search".into(),
+                capabilities: Vec::new(),
+                config: None,
+            });
+        }
+        let evidence = registry
+            .capability_evidence(entry.id.as_str())
+            .filter(|evidence| evidence.provider.as_ref() == Some(&provider_id))
+            .unwrap_or_else(|| pawork_models::registry::CapabilityEvidence {
+                model: entry.id.clone(),
+                provider: None,
+                static_declared: None,
+                probe_declared: None,
+                override_declared: None,
+            });
+        pawork_models::negotiate::capability_gate(&evidence, &request)
+            .map_err(GatewayError::from)?;
         let account_id = format!(
             "{}/{}",
             provider,
@@ -317,29 +457,40 @@ impl GatewayBackend for AppCore {
             }
             _ => Ok(summary),
         });
-        let mut record = crate::control::usage_record(
-            &session,
-            &RunId::new(completion.request.request_id.as_str()),
-            &completion.request.request_id,
-            &completion.provider_id,
-            &completion.request.model,
-            &usage,
-            0,
-            "",
-        );
-        record.tenant_id = tenant;
-        record.principal_id = PrincipalId::new(client);
-        record.agent_id = AgentId::new("gateway");
-        record.account_id = completion.account_id;
-        record.credential_id = completion.credential_id;
-        self.usage
-            .control
-            .ledger
-            .record(record)
-            .await
-            .map_err(|_| {
-                GatewayError::new(500, "usage_unavailable", "Cannot persist model usage.")
-            })?;
+        // ADR-064：图像生成模型经 chat 兼容端点可能不回传 usage；账本契约
+        // 要求 token / cost 至少一项大于 0。零用量如实跳过记账：不伪造
+        // token，也不因记账失败拒绝已成功的生成结果。
+        let billable = usage
+            .input_tokens
+            .saturating_add(usage.output_tokens)
+            .saturating_add(usage.cache_read_tokens)
+            .saturating_add(usage.cache_write_tokens)
+            > 0;
+        if billable {
+            let mut record = crate::control::usage_record(
+                &session,
+                &RunId::new(completion.request.request_id.as_str()),
+                &completion.request.request_id,
+                &completion.provider_id,
+                &completion.request.model,
+                &usage,
+                0,
+                "",
+            );
+            record.tenant_id = tenant;
+            record.principal_id = PrincipalId::new(client);
+            record.agent_id = AgentId::new("gateway");
+            record.account_id = completion.account_id;
+            record.credential_id = completion.credential_id;
+            self.usage
+                .control
+                .ledger
+                .record(record)
+                .await
+                .map_err(|_| {
+                    GatewayError::new(500, "usage_unavailable", "Cannot persist model usage.")
+                })?;
+        }
         *lease.outcome_mut() = match &result {
             Ok(_) => LeaseOutcome::Completed,
             Err(e) if e.code == "cancelled" => LeaseOutcome::Cancelled,

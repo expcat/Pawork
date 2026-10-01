@@ -1487,6 +1487,18 @@ pub(super) fn parse_models(response: &AppResponseEnvelope) -> Result<Vec<ModelEn
                             .get("image_input")
                             .and_then(|value| value.as_bool())
                             .unwrap_or(false),
+                        // ADR-064（API 1.25）：additive；旧 Host 缺字段 =
+                        // 无生图徽标 / 筛选不可命中。
+                        image_output: entry
+                            .get("image_output")
+                            .and_then(serde_json::Value::as_bool)
+                            .unwrap_or(false),
+                        // ADR-064（API 1.25）：旧 Host 目录只含对话模型，
+                        // text 缺字段 = true。
+                        text: entry
+                            .get("text")
+                            .and_then(serde_json::Value::as_bool)
+                            .unwrap_or(true),
                         video_input: entry
                             .get("video_input")
                             .and_then(serde_json::Value::as_bool)
@@ -2389,6 +2401,20 @@ mod tests {
             (models[1].id.as_str(), models[1].enabled),
             ("glm-4.7", true)
         );
+    }
+
+    /// ADR-064（API 1.25）：additive 能力位——text 缺省 true（旧 Host 目录
+    /// 只含对话模型），image_output 缺省 false；显式值原样读取。
+    #[test]
+    fn parse_models_reads_capability_bits_additively() {
+        let models = parse_models(&envelope(serde_json::json!([
+            { "provider_id": "qwen", "id": "wan2.7-image", "text": false, "image_output": true },
+            { "provider_id": "glm", "id": "glm-4.7" }
+        ])))
+        .expect("parse models");
+        assert_eq!(models.len(), 2);
+        assert!(!(models[0].text) && models[0].image_output);
+        assert!(models[1].text && !models[1].image_output);
     }
 
     fn envelope(data: serde_json::Value) -> AppResponseEnvelope {

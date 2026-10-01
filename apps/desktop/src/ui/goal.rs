@@ -371,6 +371,11 @@ impl Render for GoalView {
             let focus = self.focus[i].clone().tab_stop(enabled);
             let button = Button::new(format!("goal-action-{i}"))
                 .label(i18n::t(label))
+                .variant(if matches!(i, 1 | 3) {
+                    ButtonVariant::Primary
+                } else {
+                    ButtonVariant::Raised
+                })
                 .track_focus(&focus)
                 .disabled(!enabled)
                 .on_click(cx.listener(move |view, event, _, cx| {

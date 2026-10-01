@@ -126,6 +126,10 @@ pub enum AppError {
     UnknownModel { model: String, provider: String },
     #[error("模型 {model}（provider {provider}）已被禁用")]
     ModelDisabled { provider: String, model: String },
+    #[error(
+        "模型 {model}（provider {provider}）不支持文本对话（图像生成等专用模型，不能作为会话模型）"
+    )]
+    ModelNotText { provider: String, model: String },
     #[error("模型 {model} 属于 provider {owner}，当前是 {current}；先 /provider {owner}")]
     ModelBelongsToProvider {
         model: String,

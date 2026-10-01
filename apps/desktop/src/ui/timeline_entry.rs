@@ -76,6 +76,7 @@ pub(super) enum ToolRowStatus {
     Succeeded,
     Failed,
     Cancelled,
+    Stopped,
     Other,
 }
 
@@ -246,6 +247,7 @@ fn tool_group_status_parts(rows: &[ToolRowView]) -> Vec<String> {
     let mut pending = 0;
     let mut failed = 0;
     let mut cancelled = 0;
+    let mut stopped = 0;
     let mut other = 0;
     for row in rows {
         match row.status {
@@ -254,6 +256,7 @@ fn tool_group_status_parts(rows: &[ToolRowView]) -> Vec<String> {
             ToolRowStatus::Pending => pending += 1,
             ToolRowStatus::Failed => failed += 1,
             ToolRowStatus::Cancelled => cancelled += 1,
+            ToolRowStatus::Stopped => stopped += 1,
             ToolRowStatus::Other => other += 1,
         }
     }
@@ -264,6 +267,7 @@ fn tool_group_status_parts(rows: &[ToolRowView]) -> Vec<String> {
         (pending, t("tool.group_pending")),
         (failed, t("tool.group_failed")),
         (cancelled, t("tool.group_cancelled")),
+        (stopped, t("tool.group_stopped")),
         (other, t("tool.group_other")),
     ] {
         if count > 0 {
@@ -427,6 +431,7 @@ fn tool_row_status(status: &str) -> ToolRowStatus {
         "succeeded" => ToolRowStatus::Succeeded,
         "failed" => ToolRowStatus::Failed,
         "cancelled" => ToolRowStatus::Cancelled,
+        "stopped" => ToolRowStatus::Stopped,
         "running" => ToolRowStatus::Running,
         "pending" => ToolRowStatus::Pending,
         _ => ToolRowStatus::Other,
@@ -671,7 +676,7 @@ fn tool_status_element(row: &ToolRowView) -> gpui::Div {
         ToolRowStatus::Succeeded => dark().text.emphasis,
         ToolRowStatus::Failed | ToolRowStatus::Cancelled => dark().semantic.danger_text,
         ToolRowStatus::Running | ToolRowStatus::Pending => dark().text.secondary,
-        ToolRowStatus::Other => dark().text.tertiary,
+        ToolRowStatus::Stopped | ToolRowStatus::Other => dark().text.tertiary,
     };
     let word = div()
         .text_size(font::BODY_SM)
@@ -702,9 +707,10 @@ fn tool_status_element(row: &ToolRowView) -> gpui::Div {
                     .bg(dark().accent.primary),
             )
             .child(word),
-        ToolRowStatus::Failed | ToolRowStatus::Cancelled | ToolRowStatus::Other => {
-            div().flex().flex_none().items_center().child(word)
-        }
+        ToolRowStatus::Failed
+        | ToolRowStatus::Cancelled
+        | ToolRowStatus::Stopped
+        | ToolRowStatus::Other => div().flex().flex_none().items_center().child(word),
     }
 }
 

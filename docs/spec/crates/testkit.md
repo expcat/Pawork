@@ -52,6 +52,7 @@
 
 1. **脚本回放**：`MockProvider::stream` 先登记调用（`calls` 追加记录），再取脚本（Replay 克隆同一份；Sequence 按 `AtomicUsize` 取下一份，耗尽即报错）。
 2. **逐步执行**：每步之前检查 `cancel.is_cancelled()`——已取消则标记 `cancelled = true` 并返回 `ProviderError::cancelled`；`Event` 步先按事件更新 `ModelResponseSummary`（ResponseStarted → response_id、UsageUpdated → usage、ResponseCompleted → stop_reason 并标记 `completed`、ProviderMetadata → provider_metadata），再 `sink.emit` 并累加 `event_count`；`Fail` 步立即返回脚本错误；`WaitForCancellation` 步 `cancel.cancelled().await` 挂起。
+   ADR-064 新增的 `ImageOutput` 同样原样转交 sink 并计数，不写入 `ModelResponseSummary`；图像输出的消费由调用方负责。
 3. **收尾校验**：脚本走完但没有 `ResponseCompleted` → 返回 `StreamInterrupted`（"mock script ended without ResponseCompleted"），强迫测试脚本闭合，模拟真实 Provider 的流完整性要求。
 4. **MockTool 执行**：`execute` 先记录调用（含取消位），已取消则返回 `ToolError::cancelled`；否则克隆返回预设 `Ok(ToolResult)` / `Err(ToolError)`。不经 sink 发任何 `ToolStreamEvent`。
 

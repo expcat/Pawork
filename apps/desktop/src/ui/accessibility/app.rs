@@ -18,6 +18,7 @@ use crate::ui::components::dropdown::ANCHOR_GAP_Y;
 #[cfg(test)]
 use crate::ui::components::dropdown::MENU_MAX_HEIGHT;
 use crate::ui::i18n::t;
+use crate::ui::input_area::ModelPurposeFilter;
 use crate::ui::inspector::InspectorTab;
 use crate::ui::resources::ResourcesFetch;
 use crate::ui::settings::{
@@ -238,6 +239,14 @@ impl AppView {
         match request.action {
             AxAction::Focus => match request.identifier.as_str() {
                 "model-search-input" => window.focus(&self.model_search_focus),
+                _ if ModelPurposeFilter::ALL
+                    .iter()
+                    .any(|purpose| purpose.identifier() == request.identifier) =>
+                {
+                    if let Some(focus) = self.settings_action_focus.get(&request.identifier) {
+                        window.focus(focus);
+                    }
+                }
                 "workspace-bind-project" => window.focus(&self.welcome_bind_project_focus),
                 "composer-input" => self.focus_composer(window, cx),
                 // ADR-054 D2：行内改名编辑器聚焦（与点击行内输入框同路径）。
@@ -405,6 +414,18 @@ impl AppView {
             // SET-3：Settings 进出与可见 / 键盘路径同一 handler。
             "open-settings" => self.on_open_settings(window, cx),
             "model-search-clear" => self.clear_model_search(window, cx),
+            other
+                if ModelPurposeFilter::ALL
+                    .iter()
+                    .any(|purpose| purpose.identifier() == other) =>
+            {
+                if let Some(purpose) = ModelPurposeFilter::ALL
+                    .into_iter()
+                    .find(|purpose| purpose.identifier() == other)
+                {
+                    self.set_model_purpose_filter(purpose, window, cx);
+                }
+            }
             "settings-back" => self.on_close_settings(window, cx),
             // SET-5：页级刷新与可见按钮同一 handler（permits 按当前树核对
             // disabled）。
@@ -2381,8 +2402,11 @@ impl AppView {
                 let mut tool_y = rect.y + metrics::TOOL_GROUP_HEADER_HEIGHT;
                 for &entry_index in entry_indices {
                     let entry = &self.projection.timeline[entry_index];
-                    let Some(row) = tool_call_row_view(entry, &self.expanded_timeline_details)
-                    else {
+                    let Some(row) = tool_call_row_view(
+                        entry,
+                        &self.expanded_timeline_details,
+                        &self.projection.timeline,
+                    ) else {
                         continue;
                     };
                     let rem = f32::from(window.rem_size());
@@ -2445,9 +2469,11 @@ impl AppView {
                     if !collapsed {
                         for &entry_index in entry_indices {
                             let entry = &self.projection.timeline[entry_index];
-                            let Some(row) =
-                                tool_call_row_view(entry, &self.expanded_timeline_details)
-                            else {
+                            let Some(row) = tool_call_row_view(
+                                entry,
+                                &self.expanded_timeline_details,
+                                &self.projection.timeline,
+                            ) else {
                                 continue;
                             };
                             let rem = f32::from(window.rem_size());
@@ -3203,6 +3229,25 @@ impl AppView {
             let bounds = |id: &str| self.settings_menu_element_bounds(id, "model-menu");
             let mut menu = AxNode::new("model-menu", AxRole::Group, "Models", bounds("model-menu"))
                 .child(self.model_search_ax(window, "model-menu"));
+            for purpose in ModelPurposeFilter::ALL {
+                let id = purpose.identifier();
+                let focused = self
+                    .settings_action_focus
+                    .get(&id)
+                    .is_some_and(|focus| focus.is_focused(window));
+                menu = menu.child(
+                    AxNode::new(
+                        id.clone(),
+                        AxRole::Button,
+                        t(purpose.label_key()),
+                        bounds(&id),
+                    )
+                    .selected(self.model_purpose_filter == purpose)
+                    .focused(focused)
+                    .action(AxAction::Press)
+                    .action(AxAction::Focus),
+                );
+            }
             if self.model_menu_row_count() > 0 {
                 menu = menu.child(AxNode::new(
                     "model-capability-help",
@@ -3212,16 +3257,7 @@ impl AppView {
                 ));
             }
             if self.model_menu_row_count() == 0 {
-                let (title, hint) = if self.projection.models.is_empty() {
-                    (
-                        t("composer.model_none_available"),
-                        t("composer.model_menu_empty"),
-                    )
-                } else if self.model_search_query.trim().is_empty() {
-                    (t("model_search.no_providers"), t("model_search.manage"))
-                } else {
-                    (t("model_search.no_results"), t("model_search.clear"))
-                };
+                let (title, hint) = self.model_menu_empty_text();
                 menu = menu.child(
                     AxNode::new(
                         "model-menu-empty",
@@ -4020,19 +4056,20 @@ fn tool_group_toggle_identifier(event_id: &str) -> String {
 fn tool_call_row_view(
     entry: &TimelineEntry,
     expanded_timeline_details: &std::collections::HashSet<String>,
+    timeline: &[TimelineEntry],
 ) -> Option<ToolRowView> {
     let TimelineEntryKind::ToolCall {
         name,
-        status,
         detail,
         arguments,
+        ..
     } = &entry.kind
     else {
         return None;
     };
     Some(ToolRowView::present(
         name,
-        status,
+        timeline::tool_display_status(entry, timeline),
         arguments.as_deref(),
         detail.as_deref(),
         &entry.event_id,
@@ -7116,6 +7153,51 @@ mod tests {
         cx.update(|window, cx| {
             view.update(cx, |view, cx| {
                 assert_eq!(view.filtered_model_entries().len(), 20);
+                view.handle_accessibility_request(
+                    AxRequest {
+                        identifier: ModelPurposeFilter::VideoInput.identifier(),
+                        action: AxAction::Press,
+                        value: None,
+                    },
+                    window,
+                    cx,
+                );
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                let tree = view.accessibility_tree(window, cx);
+                tree.validate().unwrap();
+                assert_eq!(
+                    tree.find("model-menu-empty").unwrap().label,
+                    t("model_purpose.no_models")
+                );
+                let video_id = ModelPurposeFilter::VideoInput.identifier();
+                let video = tree.find(&video_id).unwrap();
+                assert!(video.selected && video.bounds.height > 0.0);
+                view.handle_accessibility_request(
+                    AxRequest {
+                        identifier: video_id.clone(),
+                        action: AxAction::Focus,
+                        value: None,
+                    },
+                    window,
+                    cx,
+                );
+                assert!(view.settings_action_focus[&video_id].is_focused(window));
+                view.handle_accessibility_request(
+                    AxRequest {
+                        identifier: ModelPurposeFilter::Conversation.identifier(),
+                        action: AxAction::Press,
+                        value: None,
+                    },
+                    window,
+                    cx,
+                );
+                assert_eq!(view.projection.effective_model().unwrap().1, "model-03");
+                assert_eq!(view.filtered_model_entries().len(), 20);
                 for _ in 0..12 {
                     view.move_menu_highlight(true);
                 }
@@ -7226,12 +7308,15 @@ mod tests {
             assert!(empty.actions.is_empty());
             assert_eq!(empty.value.as_deref(), Some(t("composer.model_menu_empty")));
             // 菜单不发布任何可选模型行：不编造模型。
-            assert_eq!(menu.children.len(), 3); // 搜索区、诚实空态与管理导航
+            assert_eq!(menu.children.len(), 3 + ModelPurposeFilter::ALL.len());
             assert!(menu
                 .children
                 .iter()
                 .all(|child| child.role != AxRole::Button
-                    || child.identifier == "model-menu-settings"));
+                    || child.identifier == "model-menu-settings"
+                    || ModelPurposeFilter::ALL
+                        .iter()
+                        .any(|purpose| purpose.identifier() == child.identifier)));
         });
     }
 

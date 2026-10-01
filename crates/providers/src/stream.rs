@@ -62,13 +62,50 @@ pub fn chunk_to_events(data: &str, pending: &mut ChunkState) -> Vec<ProviderStre
     };
     let delta = choice.get("delta");
 
-    // text delta
-    if let Some(content) = delta
-        .and_then(|d| d.get("content"))
-        .and_then(|c| c.as_str())
-    {
-        if !content.is_empty() {
-            events.push(ProviderStreamEvent::TextDelta(content.to_string()));
+    // text delta / image content part（图像生成模型经 Chat 通道返回
+    // content 数组：text 段映射 TextDelta，image 段映射 ImageOutput）。
+    if let Some(content) = delta.and_then(|d| d.get("content")) {
+        match content {
+            Value::String(text) => {
+                if !text.is_empty() {
+                    events.push(ProviderStreamEvent::TextDelta(text.clone()));
+                }
+            }
+            Value::Array(parts) => {
+                for part in parts {
+                    match part.get("type").and_then(Value::as_str) {
+                        Some("text") => {
+                            if let Some(text) = part.get("text").and_then(Value::as_str) {
+                                if !text.is_empty() {
+                                    events.push(ProviderStreamEvent::TextDelta(text.to_string()));
+                                }
+                            }
+                        }
+                        // qwen compatible-mode：{"type":"image","image":"<url>"}
+                        Some("image") => {
+                            if let Some(url) = part.get("image").and_then(Value::as_str) {
+                                events.push(ProviderStreamEvent::ImageOutput {
+                                    url: url.to_string(),
+                                });
+                            }
+                        }
+                        // OpenAI 习惯形状：{"type":"image_url","image_url":{"url":...}}
+                        Some("image_url") => {
+                            if let Some(url) = part
+                                .get("image_url")
+                                .and_then(|v| v.get("url"))
+                                .and_then(Value::as_str)
+                            {
+                                events.push(ProviderStreamEvent::ImageOutput {
+                                    url: url.to_string(),
+                                });
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
@@ -235,5 +272,36 @@ mod tests {
             e,
             ProviderStreamEvent::ThinkingDelta(t) if t == "more"
         )));
+    }
+
+    /// ADR-064：图像生成模型的 delta.content 数组——text 段映射
+    /// TextDelta，image / image_url 段映射 ImageOutput；字符串形态不变。
+    #[test]
+    fn content_array_parts_map_text_and_image_output() {
+        let mut state = ChunkState::default();
+        let data = r#"{"choices":[{"index":0,"delta":{"content":[
+            {"type":"text","text":"generated"},
+            {"type":"image","image":"https://gen.example/a.png"},
+            {"type":"image_url","image_url":{"url":"https://gen.example/b.png"}},
+            {"type":"ignored","value":1}
+        ]}}]}"#;
+        let events = chunk_to_events(data, &mut state);
+        assert_eq!(events.len(), 3);
+        assert_eq!(
+            events[0],
+            ProviderStreamEvent::TextDelta("generated".into())
+        );
+        assert_eq!(
+            events[1],
+            ProviderStreamEvent::ImageOutput {
+                url: "https://gen.example/a.png".into()
+            }
+        );
+        assert_eq!(
+            events[2],
+            ProviderStreamEvent::ImageOutput {
+                url: "https://gen.example/b.png".into()
+            }
+        );
     }
 }

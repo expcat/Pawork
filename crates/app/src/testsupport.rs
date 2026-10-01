@@ -199,7 +199,10 @@ pub(crate) async fn mock_core_with_usage(
                 display_name: "glm-5.2".into(),
                 context_window_tokens: 0,
                 max_output_tokens: 0,
-                capabilities: pawork_domain::ModelCapabilities::default(),
+                capabilities: pawork_domain::ModelCapabilities {
+                    text: true,
+                    ..Default::default()
+                },
             }],
         }),
         None,

@@ -178,6 +178,15 @@ pub enum ProviderStreamEvent {
     },
     TextDelta(String),
     ThinkingDelta(String),
+    /// Provider 返回的生成图像（OpenAI 兼容 image content part 的归一）。
+    ///
+    /// 仅图像生成模型（text=false / image_output=true）会产生；URL 由
+    /// Provider 生成，Core 不下载、不缓存、不转存。对话 Engine 不消费
+    /// 本事件（text 能力闸门保证图像生成模型不进入 Agent loop），
+    /// Gateway 等直连消费方据此透传图像输出。
+    ImageOutput {
+        url: String,
+    },
     /// Complete provider reasoning continuation item. Sensitive continuation
     /// bytes have already been replaced with a Protected Blob Store reference.
     ReasoningItem(ReasoningItem),
@@ -299,6 +308,61 @@ pub struct ModelCapabilities {
     /// present 来源取交集」语义。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supported_efforts: Option<Vec<crate::ReasoningEffort>>,
+}
+
+/// 模型用途词汇（ADR-064）：对外筛选面的 canonical 用途名。
+///
+/// 用途不是第二套能力体系，而是对 ModelCapabilities 既有维度的单项
+/// 选择：Host / Gateway / CLI 的「按用途筛选可用模型」统一使用本枚举的
+/// snake_case wire 名，禁止在通道层维护平行别名。Text 是对话缺省用途
+/// （普通聊天 / Agent loop），其余四项对应目录能力位。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelPurpose {
+    /// 普通对话（要求 text 能力；Agent loop / Composer 缺省口径）。
+    Text,
+    /// 识别图片（要求 image_input）。
+    ImageInput,
+    /// 生成图片（要求 image_output）。
+    ImageOutput,
+    /// 识别视频（要求 video_input）。
+    VideoInput,
+    /// 网络搜索（要求 hosted WebSearch 工具标签）。
+    WebSearch,
+}
+
+impl ModelPurpose {
+    /// wire 名（与 serde snake_case 一致）；未知串由调用方 fail-closed。
+    pub fn as_wire_name(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::ImageInput => "image_input",
+            Self::ImageOutput => "image_output",
+            Self::VideoInput => "video_input",
+            Self::WebSearch => "web_search",
+        }
+    }
+
+    /// 按 wire 名解析；未知值返回 None（不猜测、不别名）。
+    pub fn from_wire_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "text" => Self::Text,
+            "image_input" => Self::ImageInput,
+            "image_output" => Self::ImageOutput,
+            "video_input" => Self::VideoInput,
+            "web_search" => Self::WebSearch,
+            _ => return None,
+        })
+    }
+
+    /// 全部 canonical 用途（固定序，供 CLI / 文档枚举）。
+    pub const ALL: [Self; 5] = [
+        Self::Text,
+        Self::ImageInput,
+        Self::ImageOutput,
+        Self::VideoInput,
+        Self::WebSearch,
+    ];
 }
 
 /// Canonical 传输路径（P15-8）。transport 选择只能由逐模型声明驱动，

@@ -263,6 +263,12 @@ pub struct ModelEntry {
     /// ADR-063（API 1.21）：目录能力位，供设置页「图像 / 搜索」徽标。
     /// 旧 Host 缺字段视为 false（不展示徽标）。
     pub image_input: bool,
+    /// ADR-064（API 1.25）：目录能力位补 image_output（生图徽标 / 用途
+    /// 筛选）；旧 Host 缺字段视为 false。
+    pub image_output: bool,
+    /// ADR-064（API 1.25）：text 能力位（false = 图像生成等专用模型，
+    /// 不进会话候选）；旧 Host 缺字段视为 true（旧目录只有对话模型）。
+    pub text: bool,
     pub video_input: bool,
     pub web_search: bool,
     /// 目录声明的可选推理强度（None = 未知，不约束可选范围）。
@@ -290,6 +296,8 @@ impl Default for ModelEntry {
             context_window_tokens: None,
             enabled: true,
             image_input: false,
+            image_output: false,
+            text: true,
             video_input: false,
             web_search: false,
             catalog_efforts: None,
@@ -335,6 +343,8 @@ pub fn subagent_rule_models(
         .iter()
         .filter(|model| {
             model.enabled
+                // ADR-064：子代理是文本 Agent loop，专用模型不进候选。
+                && model.text
                 && providers.iter().any(|provider| {
                     provider.provider_id == model.provider_id
                         && matches!(provider.auth, ProviderAuthState::Connected { .. })

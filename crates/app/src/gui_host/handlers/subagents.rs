@@ -69,6 +69,28 @@ pub(crate) async fn set_settings(
         unreachable!()
     };
     validate(settings)?;
+    // ADR-064：子代理是文本 Agent loop——规则模型必须具备 text 能力，
+    // 图像生成等专用模型 fail-closed（与 set_default_model 同口径）。
+    {
+        let core = adapter.core.read().await;
+        let overview = core.models_overview().await;
+        for rule in &settings.models {
+            let text_model = overview.iter().any(|entry| {
+                entry.provider.as_str() == rule.provider_id
+                    && entry.id.as_str() == rule.model_id
+                    && entry.capabilities.text
+            });
+            if !text_model {
+                return Err(GuiHostAdapter::host_error(
+                    "model_not_text",
+                    format!(
+                        "model {} of provider {} does not support text conversation",
+                        rule.model_id, rule.provider_id
+                    ),
+                ));
+            }
+        }
+    }
     let path = pawork_workspace::config::global_config_path().ok_or_else(|| {
         GuiHostAdapter::host_error("config_unavailable", "global configuration unavailable")
     })?;

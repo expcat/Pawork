@@ -18,7 +18,7 @@ use pawork_domain::{
     ResolvedCredential, ResponseFormat, ToolChoice,
 };
 use pawork_providers::channels::registry::{
-    CHANNEL_REGISTRY, ChannelKind, ChannelPreset, channel_preset, is_enabled,
+    channel_preset, is_enabled, ChannelKind, ChannelPreset, CHANNEL_REGISTRY,
 };
 use pawork_providers::net::http::HttpClientConfig;
 use pawork_providers::{ApiKeyChannelConfig, ApiKeyChannelProvider};
@@ -335,10 +335,20 @@ async fn mixed_catalog_keeps_undeclared_chat_and_shares_routes() {
             Some("grok-4.6"),
             "qwen3.8-max",
         ),
-        ("qwen-token-plan", "qwen3.8-max", None, "wan2.7-image"),
+        // ADR-064：wan2.7-image 已实测文生图，保留在目录（text=false）；
+        // 未接线的 tts 端点仍被排除。
+        (
+            "qwen-token-plan",
+            "qwen3.8-max",
+            None,
+            "qwen-audio-3.0-tts-plus",
+        ),
     ] {
         let server = MockServer::start().await;
         let mut ids = vec![chat_id, excluded, "unknown-model", "deepseek-flash"];
+        if channel == "qwen-token-plan" {
+            ids.push("wan2.7-image");
+        }
         ids.extend(responses_id);
         if channel == "opencode-go" {
             ids.push("grok-4.5");
@@ -362,6 +372,15 @@ async fn mixed_catalog_keeps_undeclared_chat_and_shares_routes() {
         assert!(listed.contains(&"unknown-model"), "{listed:?}");
         assert!(listed.contains(&"deepseek-flash"), "{listed:?}");
         assert!(!listed.contains(&excluded), "{listed:?}");
+        if channel == "qwen-token-plan" {
+            let wan = models
+                .iter()
+                .find(|model| model.id.as_str() == "wan2.7-image")
+                .expect("wan2.7-image stays in the catalog for gateway filtering");
+            assert!(!wan.capabilities.text);
+            assert!(wan.capabilities.image_output);
+            assert_eq!(wan.capabilities.transport, ModelTransport::ChatCompletions);
+        }
         if channel == "opencode-go" {
             assert!(listed.contains(&"grok-4.5"), "{listed:?}");
             assert_eq!(

@@ -7,7 +7,10 @@ fn naming_mock_provider(scripts: Vec<MockScript>) -> MockProvider {
         display_name: "model-1".into(),
         context_window_tokens: 0,
         max_output_tokens: 0,
-        capabilities: pawork_domain::ModelCapabilities::default(),
+        capabilities: pawork_domain::ModelCapabilities {
+            text: true,
+            ..Default::default()
+        },
     }])
 }
 
@@ -306,6 +309,37 @@ async fn auto_title_without_naming_config_skips_provider_call() {
         "naming must not call the provider without naming config"
     );
     assert_session_title(&adapter, &session, "New session").await;
+    // 手写配置也不能让纯生图模型进入命名执行路径。
+    let naming = {
+        let mut core = adapter.core.write().await;
+        core.config.naming_provider = Some("mock".into());
+        core.config.naming_model = Some("wan2.7-image".into());
+        core.provider =
+            Arc::new(
+                provider
+                    .clone()
+                    .with_models(vec![pawork_domain::ModelDefinition {
+                        id: "wan2.7-image".into(),
+                        display_name: "Wan".into(),
+                        context_window_tokens: 0,
+                        max_output_tokens: 0,
+                        capabilities: pawork_domain::ModelCapabilities {
+                            image_output: true,
+                            ..Default::default()
+                        },
+                    }]),
+            );
+        core.generate_session_title(&session, "hello")
+    };
+    assert!(matches!(
+        naming.await,
+        Err(crate::AppError::ModelNotText { .. })
+    ));
+    assert_eq!(
+        provider.calls().len(),
+        1,
+        "non-text naming must not call the provider"
+    );
 }
 
 #[tokio::test]
@@ -1053,15 +1087,30 @@ async fn run_start_switches_same_registry_model_and_unknown_fails_closed() {
         .expect("store");
     let provider =
         MockProvider::sequence(vec![MockScript::new().text("hello from other").complete()])
-            .with_models(vec![pawork_domain::ModelDefinition {
-                id: pawork_domain::ModelId::from("model-2"),
-                display_name: "Model 2".into(),
-                context_window_tokens: 8_000,
-                max_output_tokens: 1_024,
-                capabilities: Default::default(),
-            }]);
+            .with_models(vec![
+                pawork_domain::ModelDefinition {
+                    id: pawork_domain::ModelId::from("model-2"),
+                    display_name: "Model 2".into(),
+                    context_window_tokens: 8_000,
+                    max_output_tokens: 1_024,
+                    capabilities: pawork_domain::ModelCapabilities {
+                        text: true,
+                        ..Default::default()
+                    },
+                },
+                pawork_domain::ModelDefinition {
+                    id: "wan2.7-image".into(),
+                    display_name: "Wan".into(),
+                    context_window_tokens: 0,
+                    max_output_tokens: 0,
+                    capabilities: pawork_domain::ModelCapabilities {
+                        image_output: true,
+                        ..Default::default()
+                    },
+                },
+            ]);
     let core = AppCore::from_parts(
-        Arc::new(provider),
+        Arc::new(provider.clone()),
         None,
         pawork_domain::ModelId::from("model-1"),
         pawork_domain::ProviderId::from("mock"),
@@ -1094,6 +1143,23 @@ async fn run_start_switches_same_registry_model_and_unknown_fails_closed() {
         panic!("first RunStart must be accepted: {accepted:?}");
     };
     wait_run_completed(&mut events, &first_run).await;
+
+    let error = host
+        .command(&command_envelope(AppCommand::RunStart {
+            session_id: session.clone(),
+            user_message: "generate".into(),
+            model: Some("wan2.7-image".into()),
+            provider: None,
+            profile: None,
+            effort: None,
+            attachment_ids: Vec::new(),
+            web_search: None,
+            video_urls: Vec::new(),
+        }))
+        .await
+        .expect_err("non-text model must fail closed before starting a run");
+    assert_eq!(error.code, "model_not_text");
+    assert_eq!(provider.calls().len(), 1);
 
     let error = host
         .command(&command_envelope(AppCommand::RunStart {
@@ -1348,7 +1414,10 @@ async fn run_start_fails_closed_when_model_disabled() {
             display_name: "Model 2".into(),
             context_window_tokens: 8_000,
             max_output_tokens: 1_024,
-            capabilities: Default::default(),
+            capabilities: pawork_domain::ModelCapabilities {
+                text: true,
+                ..Default::default()
+            },
         }]);
     let mut core = AppCore::from_parts(
         Arc::new(provider),

@@ -554,6 +554,9 @@ pub struct AppView {
     model_search_input: Entity<TextInput>,
     model_search_focus: FocusHandle,
     model_search_query: String,
+    /// Composer 模型菜单用途筛选（ADR-064）：默认 Conversation（全部
+    /// 文本模型），chips 单选切换；图像生成不在 Composer 执行面。
+    pub(super) model_purpose_filter: input_area::ModelPurposeFilter,
     model_menu_scroll: ScrollHandle,
     pending_model_menu_scroll: bool,
     /// Activity 浮层「子智能体」卡列表滚动（限高 + 溢出滚动，ADR-063 浮层
@@ -953,6 +956,7 @@ impl AppView {
             model_search_input,
             model_search_focus,
             model_search_query: String::new(),
+            model_purpose_filter: input_area::ModelPurposeFilter::default(),
             model_menu_scroll: ScrollHandle::new(),
             pending_model_menu_scroll: false,
             activity_subagent_scroll: ScrollHandle::new(),
@@ -4540,7 +4544,7 @@ impl AppView {
     }
 
     /// 正式窗口首帧前恢复；构造纯 UI 状态不访问磁盘。
-    pub(crate) fn restore_appearance(&mut self, window: &mut Window, _cx: &mut Context<Self>) {
+    pub(crate) fn restore_appearance(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.persist_appearance = true;
         match crate::platform::load_preferences() {
             Ok(prefs) => {
@@ -4550,6 +4554,12 @@ impl AppView {
                     i18n::Language::English
                 };
                 i18n::set_language(self.language);
+                self.settings_search_input.update(cx, |input, cx| {
+                    input.set_placeholder(i18n::t("settings.search.placeholder"), cx)
+                });
+                self.quick_search.input.update(cx, |input, cx| {
+                    input.set_placeholder(i18n::t("quick.placeholder"), cx)
+                });
                 self.text_scale = match prefs.text_scale {
                     125 => font::TextScale::Percent125,
                     150 => font::TextScale::Percent150,
@@ -5392,8 +5402,8 @@ impl Render for AppView {
             {
                 self.pending_model_menu_scroll = false;
             } else if self.model_menu_scroll.bounds().size.height > px(0.0) {
-                if let Some(child) = self.model_menu_scroll_child_index(self.menu_selected_index())
-                {
+                let highlight = self.menu_highlight_effective(self.menu_selected_index());
+                if let Some(child) = self.model_menu_scroll_child_index(highlight) {
                     self.model_menu_scroll.scroll_to_item(child);
                 }
                 self.pending_model_menu_scroll = false;

@@ -20,7 +20,7 @@ ADR-061 使用 GUI API 1.17：空 `display_name` 在 add/start 时由 Host 生�
 
 ## 2. 契约目录
 
-新增独立面 [GW-1](model-gateway.md)：`GET /v1/models` 与 `POST /v1/chat/completions`；模型 ID 为 provider/model；API Base、SSE、错误、鉴权与用量约定见该文档。它不属于 core-api command registry，不更改 GUI/ACP wire。
+新增独立面 [GW-1](model-gateway.md)：`GET /v1/models` 与 `POST /v1/chat/completions`；模型 ID 为 provider/model；API Base、SSE、错误、鉴权与用量约定见该文档。它不属于 core-api command registry，不更改 GUI/ACP wire。ADR-064（2026-10-01，Gateway v1.1）：`/v1/models` 条目增 `capabilities` 五布尔并支持 `?purpose=<name>`（可重复取交集、未知值 400、缺省仅 text 模型）；chat 消息 content 增数组形态（text / image_url / video_url part）与顶层 `web_search: true` 请求位；图像生成模型经 `message.images` / 流式 `delta.images` 透传，均 additive，v1 客户端不受影响。GUI 侧同批 bump API 1.25（`ModelList` 条目增 `text` / `image_output`），canonical 用途词汇为 domain `ModelPurpose`。
 
 
 | ID | 契约 | 当前版本/形状锚 | 生产者 → 消费者 | 精确事实源 |

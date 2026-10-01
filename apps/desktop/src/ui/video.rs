@@ -154,6 +154,11 @@ impl Render for VideoView {
         .enumerate()
         {
             let button = Button::new(*id)
+                .variant(if i == 0 {
+                    ButtonVariant::Primary
+                } else {
+                    ButtonVariant::Raised
+                })
                 .label(i18n::t(label))
                 .track_focus(&self.focus[i])
                 .on_click(cx.listener(move |view, event, window, cx| {

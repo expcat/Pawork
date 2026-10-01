@@ -33,7 +33,7 @@ impl AppView {
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 titlebar: Some(gpui::TitlebarOptions {
-                    title: Some("Plan".into()),
+                    title: Some(i18n::t("plan.open").into()),
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -174,6 +174,7 @@ impl PlanView {
 
 impl Render for PlanView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        window.set_window_title(i18n::t("plan.open"));
         #[cfg(target_os = "macos")]
         install_appkit_tab_monitor(window, cx);
         self.access.begin();
@@ -193,6 +194,11 @@ impl Render for PlanView {
             let focus = self.focus[index].clone().tab_stop(enabled);
             let button = Button::new(format!("plan-action-{index}"))
                 .label(i18n::t(label))
+                .variant(if index == 1 {
+                    ButtonVariant::Primary
+                } else {
+                    ButtonVariant::Raised
+                })
                 .track_focus(&focus)
                 .disabled(!enabled)
                 .on_click(cx.listener(move |view, event, _, cx| {

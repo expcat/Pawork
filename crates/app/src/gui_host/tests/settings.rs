@@ -2618,7 +2618,10 @@ async fn set_model_enabled_accepts_cached_remote_id() {
             display_name: "unlisted".into(),
             context_window_tokens: 0,
             max_output_tokens: 0,
-            capabilities: pawork_domain::ModelCapabilities::default(),
+            capabilities: pawork_domain::ModelCapabilities {
+                text: true,
+                ..Default::default()
+            },
             pricing: None,
             aliases: Vec::new(),
         }]);

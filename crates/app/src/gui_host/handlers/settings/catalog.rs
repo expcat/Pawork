@@ -114,13 +114,21 @@ async fn validate_runnable_model(
         ));
     }
     let overview = core.models_overview().await;
-    if !overview
+    let entry = overview
         .iter()
-        .any(|entry| entry.provider.as_str() == id && entry.id.as_str() == model_id)
-    {
+        .find(|entry| entry.provider.as_str() == id && entry.id.as_str() == model_id);
+    if entry.is_none() {
         return Err(GuiHostAdapter::host_error(
             "unknown_model",
             format!("model {model_id} is not in the runnable catalog of provider {id}"),
+        ));
+    }
+    // ADR-064：默认/角色默认模型必须是 text 模型——图像生成等专用
+    // 模型不能作为会话默认（fail-closed，可读原因）。
+    if entry.is_some_and(|entry| !entry.capabilities.text) {
+        return Err(GuiHostAdapter::host_error(
+            "model_not_text",
+            format!("model {model_id} of provider {id} does not support text conversation"),
         ));
     }
     Ok(())

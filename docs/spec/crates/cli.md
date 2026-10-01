@@ -13,7 +13,7 @@
 
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
-| `src/lib.rs` | ~1080 | `Cli`（全局参数）与 `Command` 及全部子命令 enum（`SessionsCommand` / `AuthCommand` / `GuiCommand` / `AcpCommand` / `ServiceCommand` / `McpCommand` / `TasksCommand` / `PlanCommand` / `AgentsCommand`）；`run()` / `run_inner()` 分发（GUI 分支把同一次 data-dir 解析同时注入 Core 与 `run_gui`）；`run_models`；`approval_host` 选择；`CliError`；clap 解析单元测试 |
+| `src/lib.rs` | ~1100 | `Cli`（全局参数）与 `Command` 及全部子命令 enum（`SessionsCommand` / `AuthCommand` / `GuiCommand` / `AcpCommand` / `ServiceCommand` / `McpCommand` / `TasksCommand` / `PlanCommand` / `AgentsCommand`）；`run()` / `run_inner()` 分发（GUI 分支把同一次 data-dir 解析同时注入 Core 与 `run_gui`）；`run_models`（ADR-064 起 `--purpose <PURPOSE>` 可重复按 canonical 用途交集过滤，未知值 Usage 错误；用途无匹配时明确提示筛选结果为空；`--json` 条目增五布尔 `capabilities`）；`approval_host` 选择；`CliError`；clap 解析单元测试 |
 | `src/chat.rs` | ~650 | `run_chat`（REPL + 单次）、`run_once`、`run_json`（`--json` 驱动）；REPL 斜杠命令处理；`drive_turn` Ctrl-C 取消；轮末 usage 行；`map_turn_error` |
 | `src/sessions.rs` | ~700 | `sessions list/show/export/import/fork` 实现；`.jsonl` 首行签名嗅探（Codex 信封 / Claude 本地行 / Pi 默认）；`format_millis`（无时区库的 UTC 格式化） |
 | `src/auth.rs` | ~120 | `auth list/set-key/login/logout`；OAuth 登录等待 5 分钟（`LOGIN_TIMEOUT`）；只显示掩码 |
@@ -79,7 +79,7 @@ OPT-1 / ADR-053：`gui::run_gui` 经 `AppCore::set_approval_host` 只接线 GUI 
 
 | 命令 | 用途 | 关键参数 | 输出 / 交互形态 | 安全 / 审批语义 |
 | --- | --- | --- | --- | --- |
-| `models` | 列 provider 模型目录 | 全局 `-p` 可切目录视角 | 文本按六首发通道顺序聚合 + config 自定义 provider，无静态条目的通道提示「login/set-key 后运行期探测」；定价按 micros → 每 M token 货币展示；`--json` 形状标注 unstable | 目录兜底装配（允许默认 provider 缺凭证） |
+| `models` | 列 provider 模型目录 | 全局 `-p` 可切目录视角；`--purpose text/image_input/image_output/video_input/web_search`（ADR-064，可重复取交集） | 文本按六首发通道顺序聚合 + config 自定义 provider，无静态条目的通道提示「login/set-key 后运行期探测」；定价按 micros → 每 M token 货币展示；`--json` 形状标注 unstable（条目含 `capabilities`） | 目录兜底装配（允许默认 provider 缺凭证） |
 | `auth list` | 各通道凭证状态 | — | 表格：provider / kind / source / **掩码** / 过期时间；ADR-056 起双形态通道两类已存凭证各占一行 | 不显示明文 |
 | `auth set-key <provider>` | 写入 API key | — | key 从 stdin 单行读入；结果只回显掩码 | 明文只经 stdin 进 auth 文件，不回显、不落日志 |
 | `auth login <provider>` | OAuth 登录 | — | PKCE 回调或 Device Flow；URL / user code 走 stderr；最长等待 5 分钟 | token 落 auth 文件 default 条目 |

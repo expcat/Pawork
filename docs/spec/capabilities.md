@@ -21,6 +21,7 @@ UI-6b G2 已接线：Go 存储账号可读取官方三窗已用百分比与重�
 | CAP-APPROVAL-01 | 工具审批、Run 内授权、拒绝、取消 | CLI approval、Desktop 审批卡 | 已实现 | 非 TTY/JSON deny-all；CLI resume seal Denied，GUI resume 保留 pending。 |
 | CAP-EXEC-01 | 子进程、进程树回收、Sandbox、PTY | `run_command`、Desktop Terminal | 已实现 | Sandbox 可观测回退；PTY 创建的 AskUser 当前 fail-closed 为 Deny。 |
 | CAP-PROVIDER-01 | 八条第一方通道、Anthropic 协议适配、OpenAI-compatible 端点 | `models`、全局 provider/model、配置 | 已实现 | 八通道：chatgpt/xai/glm-coding/opencode-go/qwen-token-plan/deepseek/kimi-platform/kimi-code；未启用 feature/未知能力显式拒绝。 |
+| CAP-MODEL-01 | 按用途筛选可用模型（对话 / 识图 / 生图 / 视频 / 搜索），Desktop 徽标与用途 chips、CLI `--purpose`、Gateway `/v1/models?purpose=` 三面同源 | Desktop Composer / Settings、`pawork models --purpose`、`GET /v1/models` | 已实现（ADR-064，API 1.25 / Gateway v1.1）；真实图像生成模型的端到端冒烟待真实账号 | canonical 用途词汇 `ModelPurpose` 由 domain 定义，映射既有能力位（text / image_input / image_output / video_input / hosted WebSearch），不建第二套能力体系；图像生成模型（text=false）不进会话候选；无证据不声明（fail-closed）。 |
 | CAP-AUTH-01 | API key、OAuth 登录/刷新、脱敏状态 | `auth list/set-key/login/logout` | 已实现；部分待人工验收 | ChatGPT/xAI 自然临期 refresh 仍需真实账号窗口；OS Keychain 不在当前实现。 |
 | CAP-CONTEXT-01 | 上下文预算、compaction、用量/定价 | Run、`usage` | 已实现 | usage 幂等冲突与哨兵口径仍需专项复核。 |
 | CAP-GIT-01 | diff、checkpoint、rollback、fork/worktree 支撑 | `diff`、`rollback`、Desktop Changes | 部分实现 | Core/CLI 已实现；Desktop Changes 只读，stage/unstage/hunk 是 ADR 候选。 |
@@ -88,11 +89,11 @@ UI-6b G2 已接线：Go 存储账号可读取官方三窗已用百分比与重�
 | Workbench | 紧凑 Header、Inspector 开合 / 页签、分组运行状态、共享主题 token | UI-1 已实现；自动验证与真窗口检查见 路线图（Git `f8df04b2:docs/review/roadmap-ui-2026-09-09.md`）；用户人工视觉验收已通过（2026-09-07），未归档。 |
 | TaskRail | 会话/任务选择、新建、长标题截断；悬停或键盘聚焦即可改名 / 归档 | UI-2 已实现；214 项自动检查与代理真窗口检查通过；等待用户人工视觉验收，见 路线图（Git `f8df04b2:docs/review/roadmap-ui-2026-09-09.md`）。 |
 | Timeline | 居中阅读列、用户消息卡片、变高虚拟化、流式条目、Markdown 子集、默认折叠思考与工具详情、审批、fork 边界、回底 | UI-3 思考与正文独立投影已实现（ADR-057），完整用户视觉验收未完成，详见 路线图（Git `f8df04b2:docs/review/roadmap-ui-2026-09-09.md`）。 |
-| Composer | 输入、发送、`@` host 展开 | 部分实现；真实 IME/粘贴仍待人工，`@` 候选仅在 Host capability 存在时实现。 |
+| Composer | 输入、发送、`@` host 展开、模型用途筛选 chips（对话 / 识图 / 视频 / 搜索，ADR-064）与能力徽标 | 部分实现；真实 IME/粘贴仍待人工，`@` 候选仅在 Host capability 存在时实现。 |
 | Changes | Files/Summary/DiffView/ActivityPopover | 只读生产入口已实现；写操作仍是 ADR 候选。 |
 | Terminal | 创建、输入、resize、Stop/Close、输出 | 生产入口已实现；真 PTY 主路径已验收。 |
 | Resources | MCP server/tool 状态只读列表 | 生产入口已实现；无 host query 的分区不展示。 |
-| Settings | 供应商连接、认证、模型目录/default、通用、权限/MCP/终端、外观、高级连接诊断与关于 | SET-1～SET-6g 已实现并通过定向门禁；SET-6h 供应商级代理开关按 ADR-052（API 1.10）实现，真窗口验收通过（2026-09-05）；ADR-056（API 1.13）起供应商卡可展开：同 provider 的 API key 与 OAuth 凭证共存并逐条列出状态（env fallback 不入列），Usage 槽恒「Usage unavailable」诚实空态（G2 未落地不渲染数字），真窗口验收通过（2026-09-06）；About 按 ADR-051 动态启用，真实账号/完整真窗口/人工验收待后续。 |
+| Settings | 供应商连接、认证、模型目录/default（含能力徽标：图像 / 生图 / 视频 / 搜索，ADR-064）、通用、权限/MCP/终端、外观、高级连接诊断与关于 | SET-1～SET-6g 已实现并通过定向门禁；SET-6h 供应商级代理开关按 ADR-052（API 1.10）实现，真窗口验收通过（2026-09-05）；ADR-056（API 1.13）起供应商卡可展开：同 provider 的 API key 与 OAuth 凭证共存并逐条列出状态（env fallback 不入列），Usage 槽恒「Usage unavailable」诚实空态（G2 未落地不渲染数字），真窗口验收通过（2026-09-06）；About 按 ADR-051 动态启用，真实账号/完整真窗口/人工验收待后续。 |
 
 ## 5. 不可宣称为已交付
 

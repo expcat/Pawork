@@ -1228,19 +1228,21 @@ impl AppView {
                 })
                 .child(header)
                 .child(
-                    div().flex().flex_row().flex_1().min_w_0().child(
-                        div().overflow_hidden().child(
-                            Label::new(format!(
-                                "{} · {}",
-                                credential.masked_credential,
-                                provider_credential_status_label(credential.expired)
-                            ))
-                            .size(font::BODY_SM)
-                            .color(if credential.expired {
-                                dark().semantic.danger_text
-                            } else {
-                                dark().text.tertiary
-                            }),
+                    div().flex().flex_row().flex_none().child(
+                        div().flex_1().min_w_0().child(
+                            div()
+                                .truncate()
+                                .text_size(font::BODY_SM)
+                                .text_color(if credential.expired {
+                                    dark().semantic.danger_text
+                                } else {
+                                    dark().text.tertiary
+                                })
+                                .child(format!(
+                                    "{} · {}",
+                                    credential.masked_credential,
+                                    provider_credential_status_label(credential.expired)
+                                )),
                         ),
                     ),
                 );
@@ -2863,8 +2865,12 @@ impl AppView {
                 }));
             // ADR-063：启用行 + 推理强度行（默认 cycle + 范围 chips +
             // 来源徽标）。写在途 / 只读时禁用。
-            let effort_row =
-                self.settings_model_effort_row(provider_id, &model, writes && !pending, cx);
+            let effort_row = model.text.then(|| {
+                self.settings_model_effort_row(provider_id, &model, writes && !pending, cx)
+            });
+            // ADR-064：目录能力徽标（图像 / 生图 / 视频 / 搜索）——目录
+            // 透明度，非可交互控件；与 Composer 徽标同一标签源。
+            let capability_label = crate::ui::input_area::model_capability_label(&model);
             list = list.child(
                 div()
                     .flex()
@@ -2895,12 +2901,14 @@ impl AppView {
                                             .text_color(dark().text.primary)
                                             .child(model.display_name.clone()),
                                     )
-                                    .child(
-                                        div()
-                                            .text_size(font::XS)
-                                            .text_color(dark().text.tertiary)
-                                            .child(model.id.clone()),
-                                    ),
+                                    .when(model.display_name != model.id, |label| {
+                                        label.child(
+                                            div()
+                                                .text_size(font::XS)
+                                                .text_color(dark().text.tertiary)
+                                                .child(model.id.clone()),
+                                        )
+                                    }),
                             )
                             .child(
                                 self.settings_element(switch_id)
@@ -2908,7 +2916,15 @@ impl AppView {
                                     .child(row_switch),
                             ),
                     )
-                    .child(effort_row),
+                    .when(!capability_label.is_empty(), |row| {
+                        row.child(
+                            div()
+                                .text_size(font::XS)
+                                .text_color(dark().text.secondary)
+                                .child(capability_label),
+                        )
+                    })
+                    .children(effort_row),
             );
         }
         content = content.child(list);

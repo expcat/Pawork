@@ -34,6 +34,14 @@ pub fn to_chat_completions_body(request: &CanonicalModelRequest) -> Value {
         }
     }
     flush_tool_result_images(&mut messages, &mut pending_tool_images);
+    // 已声明的纯生图模型要求 content parts，即使输入只有文本。
+    if pawork_models::registry::default_text(request.model.as_str()) == Some(false) {
+        for message in &mut messages {
+            if let Some(text) = message.get("content").and_then(Value::as_str) {
+                message["content"] = json!([{ "type": "text", "text": text }]);
+            }
+        }
+    }
     body.insert("messages".into(), Value::Array(messages));
 
     // tools / tool_choice

@@ -133,6 +133,11 @@ impl Render for Drawing {
             let enabled = index == 3 || !self.strokes.is_empty();
             let focus = self.focus[index].clone().tab_stop(enabled);
             let button = Button::new(*id)
+                .variant(if index == 2 {
+                    ButtonVariant::Primary
+                } else {
+                    ButtonVariant::Raised
+                })
                 .label(i18n::t(label))
                 .track_focus(&focus)
                 .disabled(!enabled)

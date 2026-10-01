@@ -350,10 +350,12 @@ impl AppView {
                     .color(dark().text.primary),
             ),
         );
-        // ADR-063：目录能力徽标（图像识别 / 搜索），只展示真实能力位。
+        // 与 Composer 和目录使用同一能力词汇。
         for (capable, label) in [
-            (model.image_input, t("settings.subagents.capability_image")),
-            (model.web_search, t("settings.subagents.capability_search")),
+            (model.image_input, t("model_capability.image")),
+            (model.image_output, t("model_capability.image_gen")),
+            (model.video_input, t("model_capability.video")),
+            (model.web_search, t("model_capability.search")),
         ] {
             if capable {
                 name_row = name_row.child(

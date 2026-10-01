@@ -9,7 +9,7 @@ use pawork_protocol::{
     ActorIdentity, AppEvent, AppQuery, CommandSource, EventStream, RunState, TimelineItemKind,
 };
 use pawork_testkit::{MockProvider, MockScript};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 mod approval;
@@ -194,6 +194,11 @@ async fn model_list_uses_aggregated_overview() {
         !providers.contains("xai"),
         "xai selectable models must come from the remote catalog: {providers:?}"
     );
+    // ADR-064（API 1.25）：条目 additive 能力位 text / image_output。
+    assert!(entries.iter().all(|entry| {
+        entry.get("text").and_then(Value::as_bool).is_some()
+            && entry.get("image_output").and_then(Value::as_bool).is_some()
+    }));
 }
 
 #[tokio::test]

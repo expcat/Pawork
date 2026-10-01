@@ -827,11 +827,22 @@ pub(crate) fn settings_role_candidates(
 ) -> Vec<(String, Vec<ModelEntry>)> {
     group_models_by_provider(models)
         .into_iter()
-        .filter(|(provider_id, _)| {
-            providers.iter().any(|entry| {
-                entry.provider_id == *provider_id
-                    && matches!(entry.auth, ProviderAuthState::Connected { .. })
-            })
+        .map(|(provider, models)| {
+            // ADR-064：角色 / Composer / 子代理都是文本对话面——目录新进
+            // 入的图像生成等专用模型（text=false，Host 1.25 起可见）不
+            // 作为会话候选；Settings 启停列表不经本函数，仍显示全量。
+            let models = models
+                .into_iter()
+                .filter(|model| model.text)
+                .collect::<Vec<_>>();
+            (provider, models)
+        })
+        .filter(|(provider_id, models)| {
+            !models.is_empty()
+                && providers.iter().any(|entry| {
+                    entry.provider_id == *provider_id
+                        && matches!(entry.auth, ProviderAuthState::Connected { .. })
+                })
         })
         .collect()
 }
@@ -1185,6 +1196,11 @@ mod tests {
             model("kimi", "kimi-k2"),
             model("glm", "glm-4.7"),
             model("ghost", "ghost-x"),
+            ModelEntry {
+                text: false,
+                image_output: true,
+                ..model("image-only", "generator")
+            },
         ];
         let providers = vec![
             provider(
@@ -1195,6 +1211,13 @@ mod tests {
                 },
             ),
             provider("glm", ProviderAuthState::None),
+            provider(
+                "image-only",
+                ProviderAuthState::Connected {
+                    method: "api_key".to_string(),
+                    masked_credential: None,
+                },
+            ),
         ];
         let candidates = settings_role_candidates(&models, &providers);
         assert_eq!(candidates.len(), 1);

@@ -332,8 +332,10 @@ impl ModelProvider for OpenAiCompatibleProvider {
                     // VISION-2：远端未声明模态时按官方文档默认表回填
                     //（显式 false / 纯文本模态已在上面分支覆盖静态声明）。
                     pawork_models::registry::apply_default_image_input(&mut definition);
-                    pawork_models::registry::apply_default_image_output(&mut definition);
                 }
+                // 输入模态的显式声明不阻断独立的输出 / 文本能力回填。
+                pawork_models::registry::apply_default_image_output(&mut definition);
+                pawork_models::registry::apply_default_text(&mut definition);
                 // 远端模型能力不等于本适配器已接通的能力：Chat hosted wire 未实现。
                 definition.capabilities.hosted_tool_tags.clear();
                 definition.capabilities.video_input =

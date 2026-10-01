@@ -128,7 +128,12 @@ pub enum Command {
         video_urls: Vec<String>,
     },
     /// 列出当前 provider 的模型目录
-    Models,
+    Models {
+        /// 按用途过滤（ADR-064）：text / image_input / image_output /
+        /// video_input / web_search，可重复取交集。
+        #[arg(long = "purpose", value_name = "PURPOSE")]
+        purposes: Vec<String>,
+    },
     /// 凭证管理（auth 文件为主，env 为显式 fallback）
     Auth {
         #[command(subcommand)]
@@ -483,7 +488,7 @@ async fn run_inner() -> Result<(), CliError> {
     // 目录 / 凭证 / 协议入口允许默认 provider 缺凭证（目录兜底装配）。
     let tolerant = matches!(
         &cli.command,
-        Command::Models
+        Command::Models { .. }
             | Command::Sessions { .. }
             | Command::Auth { .. }
             | Command::Diff { .. }
@@ -571,7 +576,7 @@ async fn run_inner() -> Result<(), CliError> {
                     images,
                     video_urls,
                 } => chat::run_once(&core, &prompt, images, video_urls).await,
-                Command::Models => run_models(&core, cli.json).await,
+                Command::Models { purposes } => run_models(&core, cli.json, &purposes).await,
                 Command::Auth { command } => auth::run_auth(&core, command, cli.json).await,
                 Command::Diff { session, page } => {
                     vcs::run_diff(&core, session, page, cli.json).await
@@ -621,8 +626,25 @@ async fn run_inner() -> Result<(), CliError> {
     }
 }
 
-async fn run_models(core: &AppCore, json: bool) -> Result<(), CliError> {
+async fn run_models(core: &AppCore, json: bool, purposes: &[String]) -> Result<(), CliError> {
+    // ADR-064：--purpose 走 canonical ModelPurpose 词汇，未知值 fail-closed。
+    let mut parsed_purposes = Vec::new();
+    for purpose in purposes {
+        let value = pawork_domain::ModelPurpose::from_wire_name(purpose).ok_or_else(|| {
+            CliError::Usage(format!(
+                "unknown --purpose {purpose}; expected one of text / image_input / image_output / video_input / web_search"
+            ))
+        })?;
+        if !parsed_purposes.contains(&value) {
+            parsed_purposes.push(value);
+        }
+    }
     let mut catalog = core.models_overview().await;
+    catalog.retain(|entry| {
+        parsed_purposes.iter().all(|purpose| {
+            pawork_models::capabilities_support_purpose(&entry.capabilities, *purpose)
+        })
+    });
     catalog.sort_by(|a, b| {
         a.provider
             .as_str()
@@ -650,6 +672,16 @@ async fn run_models(core: &AppCore, json: bool) -> Result<(), CliError> {
                     "display_name": entry.display_name.as_str(),
                     "context_window_tokens": entry.context_window_tokens,
                     "max_output_tokens": entry.max_output_tokens,
+                    "capabilities": {
+                        "text": entry.capabilities.text,
+                        "image_input": entry.capabilities.image_input,
+                        "image_output": entry.capabilities.image_output,
+                        "video_input": entry.capabilities.video_input,
+                        "web_search": entry
+                            .capabilities
+                            .hosted_tool_tags
+                            .contains(&pawork_domain::ToolCapabilityTag::WebSearch),
+                    },
                     "pricing": &entry.pricing,
                 })
             })
@@ -686,7 +718,11 @@ async fn run_models(core: &AppCore, json: bool) -> Result<(), CliError> {
                 .filter(|e| e.provider.as_str() == provider)
                 .collect();
             if entries.is_empty() {
-                println!("  (no static models; login/set-key 后运行期探测)");
+                if parsed_purposes.is_empty() {
+                    println!("  (no static models; login/set-key 后运行期探测)");
+                } else {
+                    println!("  (no models match the requested purposes)");
+                }
                 continue;
             }
             for entry in entries {
@@ -858,7 +894,7 @@ mod tests {
     fn parses_models_with_short_flags() {
         let cli = Cli::try_parse_from(["pawork", "-p", "glm-coding", "models"]).expect("parse");
         assert_eq!(cli.provider.as_deref(), Some("glm-coding"));
-        assert!(matches!(cli.command, Command::Models));
+        assert!(matches!(cli.command, Command::Models { .. }));
     }
 
     #[test]

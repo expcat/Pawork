@@ -12,7 +12,7 @@
 
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
-| `src/lib.rs` | ~410（非测试 ~95） | crate 门面与 re-export；`assemble_request(_with_tools)` 冻结默认值装配；`pub(crate) run_turn` 单轮原语（取 `&CanonicalModelRequest`，预取消检查 + `provider.stream`，13 变体原样透传） |
+| `src/lib.rs` | ~410（非测试 ~95） | crate 门面与 re-export；`assemble_request(_with_tools)` 冻结默认值装配；`pub(crate) run_turn` 单轮原语（取 `&CanonicalModelRequest`，预取消检查 + `provider.stream`，14 变体原样透传） |
 | `src/tool_loop/mod.rs` | ~360 | `run_session` 编排；`LoopContext` trait；`ApprovalGate` / `PendingToolInvocation` / `WriteCheckpoint` / `CompactionOutcome`；`DEFAULT_MAX_TOOL_ROUNDS` |
 | `src/tool_loop/round.rs` | ~110 | 单轮 `run_turn` 收集（`collect_stream_round`，请求按引用透传：工具循环每轮直接 `&current`，不 clone 全历史）、助手消息装配、usage 饱和加法 |
 | `src/tool_loop/approval.rs` | ~110 | `wait_and_apply`：`request_approval` await 后补发 `ToolApprovalResponded`；gate 数不匹配 fail-closed Denied；ApprovedForRun 跨轮记忆 |
@@ -68,7 +68,7 @@
   - `Provider(ProviderError)`：provider 侧错误透传（`is_cancelled()` 判定其中的 Cancelled）；
   - `Sink(String)`：事件出口 / 前置校验失败（persist 失败、start_sequence 非法、nothing to compact 等）；
   - `MaxToolRounds(u64)`：工具轮数超限。
-- `map_provider_event(&ProviderStreamEvent, &MessageId) -> Option<AgentEvent>`：单轮映射（TextDelta / ThinkingDelta / ToolCallStarted / ToolCallArgumentsDelta / UsageUpdated / ServerTool / TranscriptEnvelope）；未列出变体（ReasoningItem / ToolCallCompleted / ResponseStarted / ResponseCompleted / ProviderMetadata / Error）只缓冲给 `AssembledTurn` 不映射。
+- `map_provider_event(&ProviderStreamEvent, &MessageId) -> Option<AgentEvent>`：单轮映射（TextDelta / ThinkingDelta / ToolCallStarted / ToolCallArgumentsDelta / UsageUpdated / ServerTool / TranscriptEnvelope）；未列出变体（ImageOutput / ReasoningItem / ToolCallCompleted / ResponseStarted / ResponseCompleted / ProviderMetadata / Error）只缓冲给 `AssembledTurn` 不映射。
 - `LoopEventEmitter`：`execute_tools` 期间发工具流事件（可 Clone，复制 sequence 与 sink 引用）。
 
 `run_session` 事件发射总表（按可能出现的顺序）：
@@ -142,7 +142,7 @@
 
 - `TextDelta` / `ThinkingDelta` 追加进 text / thinking 缓冲；`ReasoningItem` 追加进列表。
 - `ToolCallStarted` 建立 `PendingToolCall` 并记录顺序（重复 id 忽略）；`ToolCallArgumentsDelta` 追加 raw JSON——若早于 Started 到达则容错补建空名调用；`ToolCallCompleted` 置 completed 标记。
-- `UsageUpdated` / `ResponseStarted` / `ResponseCompleted` / `ProviderMetadata` 增量合并进 `ModelResponseSummary`；`ServerTool` / `TranscriptEnvelope` / `Error` 不参与折叠。
+- `UsageUpdated` / `ResponseStarted` / `ResponseCompleted` / `ProviderMetadata` 增量合并进 `ModelResponseSummary`；`ImageOutput` / `ServerTool` / `TranscriptEnvelope` / `Error` 不参与折叠。ADR-064 的图像输出由 Gateway 消费；Host 对话入口先拒绝非 text 模型。
 - `into_message` 产出顺序固定：Thinking → Reasoning items → Text → ToolCall（按出现顺序）；参数 JSON 解析失败降级 `Value::Null`。
 
 API 1.24 视频引用：context token 估算只统计 URL 字符文本，不能估算远程视频时长或视觉 token；工具结果尺寸统计包含视频 URL。循环仍传递 canonical ContentPart，不下载/抽帧、不按 Provider 分支。真实用量以 Provider UsageUpdated/终态为准。
@@ -153,7 +153,7 @@ API 1.24 视频引用：context token 估算只统计 URL 字符文本，不能�
 - **事件可持久化可重放**：所有事件带连续 sequence（从 `start_sequence` 起）；sink persist 失败后 engine 不再补发终态事件（磁盘停在最后一条成功 append，恢复由重放完成）。
 - **不按 Provider 名称分支**：`src/` 出现任何已知 provider 名串即红线违规（`tests/no_provider_branch.rs` 守护，名单自 `CHANNEL_REGISTRY` 派生 + 基线别名）。压缩 = 重写前缀 = 缓存失效，不做任何厂商 cache 特例。
 - **依赖红线**：生产依赖唯一 `pawork-*` 为 `pawork-domain`（`tests/domain_only.rs` 守护）；不依赖 tools / exec / storage / policy；`ProcessTreeCleaner` / 工具执行 / 落库全部由宿主注入。
-- **`run_turn` 透传**：`ProviderStreamEvent` 13 变体全部由 provider 发射、sink 原样接收，engine 不滤不删；预取消时不调 provider 直接 `ProviderError::cancelled`。
+- **`run_turn` 透传**：`ProviderStreamEvent` 14 变体全部由 provider 发射、sink 原样接收，engine 不滤不删；预取消时不调 provider 直接 `ProviderError::cancelled`。
 - **压缩失败即失败**：`compact_history` 的宿主错误必须终止当前 run；无持久化 outcome 时水位只能为 0，不得拿摘要事件自身 sequence 代替。
 - **fail-closed 审批**：gate 向量长度与调用数不匹配时全部按 Denied 处理，不执行任何工具。
 - **截断保底**：硬限截断永不丢最后 `retained_messages` 条，也不丢 System 消息。

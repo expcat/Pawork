@@ -236,6 +236,13 @@ impl RecordingView {
             .tab_stop(!self.busy && enabled);
         let button = Button::new(format!("record-{id}"))
             .label(i18n::t(label))
+            .variant(
+                if id == "save" || (id == "preview" && !self.preview_ready) {
+                    ButtonVariant::Primary
+                } else {
+                    ButtonVariant::Raised
+                },
+            )
             .track_focus(&focus)
             .disabled(self.busy || !enabled)
             .on_click(cx.listener(move |view, event, _, cx| {
@@ -244,8 +251,9 @@ impl RecordingView {
                 }
             }))
             .on_activate(cx.listener(move |view, _, _, cx| view.action(id, cx)));
-        self.access
-            .wrap(
+        div()
+            .flex()
+            .child(self.access.wrap(
                 &format!("record-{id}"),
                 i18n::t(label),
                 AxRole::Button,
@@ -253,7 +261,7 @@ impl RecordingView {
                 !self.busy && enabled,
                 false,
                 button,
-            )
+            ))
             .into_any_element()
     }
 }

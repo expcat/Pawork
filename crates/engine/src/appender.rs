@@ -148,7 +148,11 @@ impl AssembledTurn {
                 });
                 summary.provider_metadata = metadata.clone();
             }
-            ProviderStreamEvent::ServerTool(_)
+            // 图像输出事件不进入 Agent loop：会话模型的 text 能力闸门
+            //（ADR-064）保证图像生成模型不会被选为对话模型，此臂仅为
+            // 穷尽匹配，不消费、不伪造文本。
+            ProviderStreamEvent::ImageOutput { .. }
+            | ProviderStreamEvent::ServerTool(_)
             | ProviderStreamEvent::TranscriptEnvelope(_)
             | ProviderStreamEvent::Error(_) => {}
         }

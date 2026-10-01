@@ -11,6 +11,7 @@ description = "Pawork CLI（七运行模式 + 运维：chat/run/headless/acp/gui
 pawork-acp = { path = "../acp" }
 pawork-gui-server = { path = "../gui-server" }
 pawork-gateway = { path = "../gateway" }
+pawork-models = { path = "../models" }
 pawork-app = { path = "../app" }
 pawork-client = { path = "../client" }
 pawork-domain = { path = "../domain" }

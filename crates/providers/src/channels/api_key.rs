@@ -202,7 +202,7 @@ fn inferred_transport(channel: &str, model: &str) -> Option<ModelTransport> {
     match channel {
         "opencode-go" => {
             if non_text_model(model) {
-                None
+                image_generation_transport(model)
             } else {
                 Some(if go_responses_family(model) {
                     ModelTransport::Responses
@@ -215,7 +215,7 @@ fn inferred_transport(channel: &str, model: &str) -> Option<ModelTransport> {
         }
         "qwen-token-plan" => {
             if non_text_model(model) {
-                None
+                image_generation_transport(model)
             } else {
                 Some(ModelTransport::ChatCompletions)
             }
@@ -232,14 +232,25 @@ fn go_messages_family(id: &str) -> bool {
     id.starts_with("qwen") || id.starts_with("minimax-")
 }
 
-/// 图片 / 音频等非文本 ID：当前 Chat adapter 不能跑，不是「未知聊天模型」。
-/// Go 与 Token Plan 目录共用；误伤方向是少显示，不会报运行时错误。
+/// 图片 / 音频等非文本家族 ID：Go 与 Token Plan 目录共用；已接线生图
+/// 模型另经默认表保留，未接线端点排除，不把它们当作未知聊天模型。
 fn non_text_model(id: &str) -> bool {
     id.starts_with("wan")
         || id.contains("-image")
         || id.contains("audio")
         || id.contains("-tts")
         || id.contains("-realtime")
+}
+
+/// 图像生成模型的传输回退（ADR-064）：已实测经 Chat Completions 兼容
+/// 端点文生图的模型（registry 默认表）保持 Chat 传输并进目录，由
+/// text=false 能力位把对话选择面收窄；表外 non-text ID（audio / tts /
+/// realtime 等未接线端点）仍返回 None 不进目录。
+fn image_generation_transport(model: &str) -> Option<ModelTransport> {
+    match pawork_models::registry::default_image_output(model) {
+        Some(true) => Some(ModelTransport::ChatCompletions),
+        _ => None,
+    }
 }
 
 /// 官方逐模型端点表（2026-09-13 对照 https://opencode.ai/docs/go/#endpoints）。
@@ -365,6 +376,7 @@ impl ModelProvider for ApiKeyChannelProvider {
                 // 2026-09-23 实测默认表：图像生成与 hosted WebSearch（仅
                 // Responses 传输生效，Chat 通道保持不声明）。
                 pawork_models::registry::apply_default_image_output(model);
+                pawork_models::registry::apply_default_text(model);
                 pawork_models::registry::apply_default_hosted_web_search(model);
                 if self.qwen_search_endpoint && qwen_search_model(model.id.as_str()) {
                     model
@@ -661,12 +673,17 @@ mod transport_resolution_tests {
     }
 
     #[test]
-    fn qwen_keeps_undeclared_chat_and_drops_non_text() {
+    fn qwen_keeps_undeclared_chat_and_gates_non_text_by_evidence() {
         assert_eq!(
             resolve("qwen-token-plan", "qwen3.9-max"),
             Some(ModelTransport::ChatCompletions)
         );
-        assert_eq!(resolve("qwen-token-plan", "wan2.7-image"), None);
+        // ADR-064：已实测的图像生成模型保持 Chat transport 进目录
+        //（text=false 由 default 表收窄），未接线端点仍不进目录。
+        assert_eq!(
+            resolve("qwen-token-plan", "wan2.7-image"),
+            Some(ModelTransport::ChatCompletions)
+        );
         assert_eq!(resolve("qwen-token-plan", "qwen-audio-3.0-tts-plus"), None);
         assert!(qwen_search_model("qwen3.8-max"));
         assert!(!qwen_search_model("auto"));

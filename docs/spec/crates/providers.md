@@ -16,8 +16,8 @@
 | `src/lib.rs` | ~120 | crate 门面：模块声明与 feature 门控 re-export；`is_credential_header`（五个凭证头小写匹配） |
 | `src/error_table.rs` | ~160 | `VENDOR_ERROR_RULES` 数据表 + `normalize_vendor_error`：按厂商子串把错误改判为更精确的 `ProviderErrorKind`（如 ChatGPT usage limit、xAI live_search quota） |
 | `src/provider.rs` | ~500 | `OpenAiCompatibleConfig` / `OpenAiCompatibleProvider`：Chat Completions transport 的 `ModelProvider` 实现；构造期拒绝 config 头携带凭证头 |
-| `src/request.rs` | ~670 | `to_chat_completions_body`：canonical → Chat Completions 请求体；`provider_options` 保留键忽略并 `tracing` 警告 |
-| `src/stream.rs` | ~230 | `chunk_to_events` / `is_done` / `ChunkState`：Chat Completions SSE chunk → `ProviderStreamEvent`（文本/工具调用增量、usage、finish_reason）；畸形 chunk → `MalformedResponse` 错误事件（R-08）；`stream_error_message` 流错误安全文案（R-02） |
+| `src/request.rs` | ~670 | `to_chat_completions_body`：canonical → Chat Completions 请求体（ADR-064：默认表声明的纯生图模型即使只有文本也发送 content parts 数组）；`provider_options` 保留键忽略并 `tracing` 警告 |
+| `src/stream.rs` | ~290 | `chunk_to_events` / `is_done` / `ChunkState`：Chat Completions SSE chunk → `ProviderStreamEvent`（文本/工具调用增量、usage、finish_reason）；`delta.content` 数组形态解析 text / image part——图像生成模型的输出归一为 `ImageOutput{url}`（ADR-064，qwen `{"type":"image","image":url}` 与 OpenAI `image_url` 形状）；畸形 chunk → `MalformedResponse` 错误事件（R-08）；`stream_error_message` 流错误安全文案（R-02） |
 | `src/usage.rs` | ~300 | `normalize_usage`（多厂商字段名归一为 `TokenUsage`）、`map_stop_reason`、`UsageAccumulator`（会话级累计） |
 | `src/reasoning.rs` | ~100 | `ReasoningProtector` trait（protect/recover 不透明 payload）与 `ReasoningProtectError`（`Unavailable` / `Corrupted` 判别） |
 | `src/memory_protector.rs` | ~110 | `InMemoryReasoningProtector`：HashMap 存不透明字节，测试/内存场景用 |
@@ -29,7 +29,7 @@
 | `src/net/retry.rs` | ~220 | `classify_status` / `classify_request_error`（HTTP 状态与 reqwest 错误 → `ProviderError`，解析 `Retry-After`，消息脱敏）、`parse_retry_after` |
 | `src/channels/mod.rs` | ~60 | 八通道 feature 门控的模块声明与 re-export |
 | `src/channels/registry.rs` | ~360 | `CHANNEL_REGISTRY`（八行静态 preset）、`ChannelPreset`（含 `display_name` 与 `auth_methods` 数据字段，SET-4 起不再按 kind 派生）/ `ChannelKind`、`OAuthPreset(Data)` / `OAuthFlow(Data)`、`channel_preset`、`is_enabled`（唯一 cfg 求值点） |
-| `src/channels/api_key.rs` | ~610 | `ApiKeyChannelConfig` / `ApiKeyChannelProvider`：API-key 通道共用适配器（五行，含 kimi-platform；xAI / Kimi Code 双认证亦复用 `verify_api_key`）；默认 Chat Completions，官方表 / 家族回退决定 Responses 或 Messages（list_models 解析 transport 后回填默认能力表：efforts / image_output / hosted WebSearch，后者仅 Responses 生效）；未登记聊天 ID 不丢弃；`verify_api_key` 用候选 key 发已认证 GET 做写前验证（Go `/usage`，其余 `/models`，不持久化） |
+| `src/channels/api_key.rs` | ~640 | `ApiKeyChannelConfig` / `ApiKeyChannelProvider`：API-key 通道共用适配器（五行，含 kimi-platform；xAI / Kimi Code 双认证亦复用 `verify_api_key`）；默认 Chat Completions，官方表 / 家族回退决定 Responses 或 Messages（list_models 解析 transport 后回填默认能力表：efforts / image_output / text 收窄 / hosted WebSearch，后者仅 Responses 生效）；ADR-064 起 non-text 回退按 `default_image_output` 表驱动——已实测的图像生成模型（wan2.7-image 系）保持 Chat transport 进目录并由 `default_text` 收窄为非对话模型，audio / tts / realtime 等未接线端点仍返回 None 不进目录；未登记聊天 ID 不丢弃；`verify_api_key` 用候选 key 发已认证 GET 做写前验证（Go `/usage`，其余 `/models`，不持久化） |
 | `src/channels/chatgpt.rs` | ~280 | `ChatGptConfig` / `ChatGptProvider`：ChatGPT OAuth 通道（Responses transport、`chatgpt-account-id` / `originator` 头、`client_version` 校验、`DEFAULT_BASE_URL`） |
 | `src/channels/xai.rs` | ~600 | `XaiConfig` / `XaiProvider`：xAI Grok OAuth 通道，按模型 capability 声明选 Responses 或 Chat Completions；选择目录只认远端：OAuth 为 CLI proxy `/models`，API key 为 `/language-models`（output_modalities 含 "text" 才入目录），不预填静态 grok；`xai_builtin_models` 仅给已知 id（`grok-4` / `grok-4-fast` / `grok-3` / `grok-2`）补 transport / 能力，未知 id 保守默认（text + Chat Completions + 窗口 0，订阅远端可指定 Chat/Responses，远端字段可覆盖窗口与图像）；`DEFAULT_BASE_URL` |
 | `src/channels/kimi.rs` | ~420 | `KimiCodeConfig` / `KimiCodeProvider`：Kimi Code 通道（SET-4 A2），接受 OAuth bearer 或 Coding Plan API key、只走 Chat Completions（`https://api.kimi.com/coding/v1`）；SET-5 起 `list_models` 走远端 `GET {base}/models`（OpenAI 风格 `data[]`，已知 id 沿用 `builtin_models` 元数据，未知 id 给保守默认；`builtin_models` 仅作元数据来源与静态兜底） |
@@ -91,7 +91,7 @@ Grok 订阅端点与协议依据：[官方 CLI 目录实现](https://github.com/
 
 `ModelRegistry`、`CatalogEntry`、能力证据与默认表的 API 归属 [pawork-models](models.md)。以下记录 adapter 如何消费目录与端点证据。
 
-UI-6a / ADR-058：`ApiKeyChannelConfig::transport_for` 与 adapter 共用协议解析，Host 静态 / 配置回退同样过滤不可运行模型并同步 transport，显式覆盖仍优先。通用、ChatGPT、Kimi、xAI 目录使用严格形状与非空 ID 校验，合法空数组仍成功。通用未知窗口/输出为 0、未知工具能力 false；已知 ID 仅从同 provider 静态条目补证据，远端实际字段优先。Kimi 消费 display_name/context_length/supports_reasoning/supports_image_in；xAI 消费输入模态和窗口，aliases 仅辅助找静态证据；ChatGPT 空/null/none-only reasoning levels 不算思考。通用 `has_more=true` 显式拒绝，尚未实现翻页。
+UI-6a / ADR-058：`ApiKeyChannelConfig::transport_for` 与 adapter 共用协议解析，Host 静态 / 配置回退同样过滤不可运行模型并同步 transport，显式覆盖仍优先。通用、ChatGPT、Kimi、xAI 目录使用严格形状与非空 ID 校验，合法空数组仍成功。通用未知窗口/输出为 0、未知工具能力 false；已知 ID 仅从同 provider 静态条目补证据，远端实际字段优先。Kimi 消费 display_name/context_length/supports_reasoning/supports_image_in；xAI 消费输入模态和窗口，aliases 仅辅助找静态证据；ChatGPT 空/null/none-only reasoning levels 不算思考。通用 `has_more=true` 显式拒绝，尚未实现翻页。 ADR-064：生图输出与 text 默认声明独立于输入模态回填；远端显式拒绝识图不会掩盖已知生图模型的输出能力。
 
 VISION-1 / SEARCH-1（2026-09-15 八家官方调研）：通用远端目录消费 `supports_image_in` 显式布尔值，缺失时再读 `input_modalities`；纯文本模态或显式 false 会撤销静态视觉能力，两者均缺失才保留已有静态证据。通用 Chat / API-key Responses 没有 hosted search wire，不因远端 `supports_web_search` 而宣称可用；builtin 静态目录增至 8 条——新增 `glm-5.3`（text-only）/ `glm-5.3-flash`（多模态）@glm-coding、`deepseek-flash`（视觉 + thinking，1M / 384K）@deepseek，`qwen3.8-max` 标 `image_input`；能力按型号而非按 provider 声明（GLM-5.3 text / 5.3-Flash 多模态；deepseek-flash 视觉 / v4-pro 无视觉）。
 

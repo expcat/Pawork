@@ -237,20 +237,12 @@ impl AppView {
                         &model.display_name,
                         self.settings_element_bounds(&name_id_bounds),
                     )
-                    // 能力徽标与 render 同源（图像 / 搜索）。
+                    // 能力徽标与 Composer / render 同源。
                     .description({
                         let mut detail = format!("{provider_id}/{model_id}");
-                        if model.image_input {
-                            detail.push_str(&format!(
-                                " · {}",
-                                t("settings.subagents.capability_image")
-                            ));
-                        }
-                        if model.web_search {
-                            detail.push_str(&format!(
-                                " · {}",
-                                t("settings.subagents.capability_search")
-                            ));
+                        let capabilities = crate::ui::input_area::model_capability_label(&model);
+                        if !capabilities.is_empty() {
+                            detail.push_str(&format!(" · {capabilities}"));
                         }
                         detail
                     })

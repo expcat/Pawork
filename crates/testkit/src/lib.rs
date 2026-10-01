@@ -335,6 +335,7 @@ impl ModelProvider for MockProvider {
                         | ProviderStreamEvent::ToolCallStarted { .. }
                         | ProviderStreamEvent::ToolCallArgumentsDelta { .. }
                         | ProviderStreamEvent::ToolCallCompleted { .. }
+                        | ProviderStreamEvent::ImageOutput { .. }
                         | ProviderStreamEvent::ServerTool(_)
                         | ProviderStreamEvent::TranscriptEnvelope(_)
                         | ProviderStreamEvent::Error(_) => {}

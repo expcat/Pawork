@@ -24,7 +24,8 @@
 - `merge_provider_models` / `merge_provider_source`：合并提供方目录；`ProviderCapabilitySource` 是注入目录端口。
 - `probe_provider` / `record_probe` / `clear_probe`、`ProviderProbe` / `ProbeError`：按 Provider 缓存发现结果及失败，并发共享探测槽，取消后的槽可重试。
 - `set_override` / `remove_override`、`capability_evidence` / `capability_snapshot`：读写能力证据。`CapabilityEvidence::merged` / `merge_capabilities` 对已出现来源取保守交集。
-- `registry::{default_supported_efforts,default_image_input,default_image_output,default_hosted_web_search}` 与 `apply_default_*`：逐型号默认能力，远端显式声明优先；未知保持未知。端点限制仍由 providers 执行。
+- `registry::{default_supported_efforts,default_image_input,default_image_output,default_text,default_hosted_web_search}` 与 `apply_default_*`：逐型号默认能力，远端显式声明优先；未知保持未知。端点限制仍由 providers 执行。
+- `purpose_requirements` / `capabilities_support_purpose` / `ModelRegistry::filter_by_purpose`（ADR-064）：canonical `ModelPurpose` → 既有能力位要求的映射与目录筛选；多个用途取交集。`caps_satisfied` 的 v1 布尔链补齐 `image_output`（此前按图像生成过滤不生效）。
 - `CapabilityNegotiator::negotiate`、`negotiate::capability_gate`、`clamp_reasoning_to_thinking`、`negotiate::content_part_has_video`：模型证据与请求相交；图片和视频递归覆盖工具结果。
 - `ModelPricing` / `estimate_cost` / `BUILTIN_RATE_CARD` / `BUILTIN_RATE_VERSION`：micro-unit 整数计价；不把未知价格编造成零费用。
 
@@ -33,6 +34,8 @@
 真实 model id 优先于 alias，替换条目清理旧别名；不同 Provider 同名目录不会自动跨通道借用证据。Host 从本包建目录，providers 将远端目录转换为 domain 定义后合并；Agent Engine 始终只看 domain 契约。
 
 能力来源 `Static / Probe / Override` 用于溯源，合并是已出现来源逐字段交集，override 只能收窄。请求协商满足 `requested == supported ∪ unsupported`，不支持能力明确拒绝或记录降级。transport 由能力声明驱动；reasoning 显式配置优先于旧 thinking 配置，无法表达的强度按既有规则 clamp。
+
+用途筛选（ADR-064）不引入新能力位：`text` / `image_input` / `image_output` / `video_input` / `web_search`（hosted WebSearch 标签）是 `ModelCapabilities` 既有维度的单项选择。`default_text` 表（2026-09-23 实测依据）把已证实的图像生成模型（wan2.7-image / wan2.7-image-pro）收窄为 `text=false`——远端 /models 目录无模态字段，探测定义的 text=true 仅为缺省假设；收窄只在条目同时升级 `image_output` 时生效，防误伤同名文本模型。无实测证据不新增 `default_video_input`。
 
 目录探测以 Provider 为键，同一轮并发共享结果，不持锁跨 await。静态默认表与费率卡随产品更新；厂商协议能力声明仍须有实际 wire 支持，不能仅靠目录标签开放功能。
 

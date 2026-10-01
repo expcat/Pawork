@@ -13,15 +13,15 @@
 | 文件 | 职责 |
 | --- | --- |
 | `src/lib.rs` | 公共导出与本机时间戳 |
-| `src/backend.rs` | HTTP 输入/输出类型、脱敏错误、`GatewayBackend` 端口 |
-| `src/server.rs` | loopback HTTP、路由、请求限制、JSON/SSE、取消和连接回收 |
+| `src/backend.rs` | HTTP 输入/输出类型（含 ADR-064 的 `GatewayContent` /`GatewayContentPart` 多模态正文与 `GatewayModelCapabilities`）、`web_search` 请求位、脱敏错误、`GatewayBackend` 端口（`gateway_models(purposes)` 用途过滤参数） |
+| `src/server.rs` | loopback HTTP、路由（`/v1/models?purpose=` 解析：可重复、取交集、未知参数/值 400；chat 路径仍拒绝 query string）、请求限制、JSON/SSE（`ImageOutput` 事件 → `message.images` / 流式 `delta.images`，计入输出上限）、取消和连接回收 |
 | `src/tokens.rs` | token 签发、摘要持久化、列表、鉴权与撤销 |
 
 ## 3. 对外 API 面
 
 - `serve_gateway(Arc<B>, TcpListener, GatewayTokenStore, CancellationToken)`，`B: GatewayBackend`；非 127.0.0.1 listener 拒绝。
-- `GatewayBackend`：`gateway_models`、`prepare_gateway_completion`、`run_gateway_completion`。关联类型 `Completion: Send` 是宿主冻结的请求快照，HTTP 层不访问凭证或模型实例。
-- `GatewayChatRequest` / `GatewayMessage` / `GatewayStreamOptions` / `GatewayModel` / `GatewayError`：既有 HTTP 子集与错误类型。
+- `GatewayBackend`：`gateway_models(purposes)`（空 = v1 兼容仅 text 模型）、`prepare_gateway_completion`、`run_gateway_completion`。关联类型 `Completion: Send` 是宿主冻结的请求快照，HTTP 层不访问凭证或模型实例。
+- `GatewayChatRequest`（含 `web_search: bool`）/ `GatewayMessage`（content 字符串或 part 数组）/ `GatewayContent` / `GatewayContentPart` / `GatewayContentUrl` / `GatewayStreamOptions` / `GatewayModel`（含 `capabilities`）/ `GatewayModelCapabilities` / `GatewayError`：HTTP 子集与错误类型。
 - `GatewayTokenStore::{new,issue,list,revoke,authenticate}`、`GatewayTokenInfo`、`tokens::valid_client`。
 - `gateway_is_running`：基于文件锁验证存活，不能仅信 PID 文件。
 

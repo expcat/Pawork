@@ -122,7 +122,13 @@ pub(crate) async fn model_list(
                 "display_name": entry.display_name,
                 "context_window_tokens": entry.context_window_tokens,
                 "enabled": enabled,
+                // ADR-064（API 1.25）：text 能力位——图像生成等专用模型
+                // text=false，客户端据此从会话候选中排除（fail-closed）。
+                "text": entry.capabilities.text,
                 "image_input": entry.capabilities.image_input,
+                // ADR-064（API 1.25）：目录能力位补 image_output——
+                // 旧 Host 缺字段视为 false（Desktop 不显示生图徽标）。
+                "image_output": entry.capabilities.image_output,
                 "video_input": entry.capabilities.video_input,
                 "web_search": entry
                     .capabilities

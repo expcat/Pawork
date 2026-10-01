@@ -8,8 +8,8 @@ mod server;
 pub mod tokens;
 
 pub use backend::{
-    GatewayBackend, GatewayChatRequest, GatewayError, GatewayMessage, GatewayModel,
-    GatewayStreamOptions,
+    GatewayBackend, GatewayChatRequest, GatewayContent, GatewayContentPart, GatewayContentUrl,
+    GatewayError, GatewayMessage, GatewayModel, GatewayModelCapabilities, GatewayStreamOptions,
 };
 pub use server::{gateway_is_running, serve_gateway};
 pub use tokens::{GatewayTokenInfo, GatewayTokenStore};

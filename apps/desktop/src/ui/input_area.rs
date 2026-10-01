@@ -116,12 +116,60 @@ impl ComposerAction {
     }
 }
 
+/// Composer 模型菜单的用途筛选（ADR-064）：对对话模型目录按 canonical
+/// 用途维度过滤；默认 Conversation = 全部文本模型。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub(super) enum ModelPurposeFilter {
+    #[default]
+    Conversation,
+    ImageInput,
+    VideoInput,
+    WebSearch,
+}
+
+impl ModelPurposeFilter {
+    pub(super) fn identifier(self) -> String {
+        format!("model-purpose-{}", self.label_key())
+    }
+
+    pub(super) fn label_key(self) -> &'static str {
+        match self {
+            Self::Conversation => "model_purpose.filter_text",
+            Self::ImageInput => "model_purpose.filter_image_input",
+            Self::VideoInput => "model_purpose.filter_video_input",
+            Self::WebSearch => "model_purpose.filter_web_search",
+        }
+    }
+
+    /// 筛选语义：会话模型（text）× 用途能力位；图像生成等专用模型
+    /// （text=false）不进入任何 Composer 筛选（无对话执行面）。
+    fn matches(self, model: &ModelEntry) -> bool {
+        if !model.text {
+            return false;
+        }
+        match self {
+            Self::Conversation => true,
+            Self::ImageInput => model.image_input,
+            Self::VideoInput => model.video_input,
+            Self::WebSearch => model.web_search,
+        }
+    }
+
+    pub(super) const ALL: [Self; 4] = [
+        Self::Conversation,
+        Self::ImageInput,
+        Self::VideoInput,
+        Self::WebSearch,
+    ];
+}
+
 /// Composer 伪二级目录：已连接且至少有一个已启用模型的供应商，组头 + 组内
-/// 模型同一列表展开。未连接或 0 启用整组不出现。
+/// 模型同一列表展开。未连接或 0 启用整组不出现；用途筛选先于文本搜索。
 pub(super) fn composer_model_menu_groups(
     models: &[ModelEntry],
     providers: &[ProviderAuthStatusEntry],
     query: &str,
+    purpose: ModelPurposeFilter,
 ) -> Vec<(String, Vec<ModelEntry>)> {
     let query = query.trim().to_lowercase();
     settings_role_candidates(models, providers)
@@ -130,16 +178,14 @@ pub(super) fn composer_model_menu_groups(
             let models: Vec<_> = models
                 .into_iter()
                 .filter(|model| {
-                    if query == t("model_capability.search").to_lowercase() {
-                        return model.web_search;
-                    }
-                    query.is_empty()
-                        || provider.to_lowercase().contains(&query)
-                        || model.display_name.to_lowercase().contains(&query)
-                        || model.id.to_lowercase().contains(&query)
-                        || model_capability_label(model)
-                            .to_lowercase()
-                            .contains(&query)
+                    purpose.matches(model)
+                        && (query.is_empty()
+                            || provider.to_lowercase().contains(&query)
+                            || model.display_name.to_lowercase().contains(&query)
+                            || model.id.to_lowercase().contains(&query)
+                            || model_capability_label(model)
+                                .to_lowercase()
+                                .contains(&query))
                 })
                 .collect();
             (!models.is_empty()).then_some((provider, models))
@@ -192,6 +238,8 @@ pub(super) fn model_menu_row_title<'a>(display_name: &'a str, id: &'a str) -> &'
 pub(super) fn model_capability_label(model: &ModelEntry) -> String {
     [
         (model.image_input, t("model_capability.image")),
+        (model.image_output, t("model_capability.image_gen")),
+        (model.video_input, t("model_capability.video")),
         (model.web_search, t("model_capability.search")),
     ]
     .into_iter()
@@ -205,8 +253,9 @@ pub(super) fn grouped_model_menu_entries(
     models: &[ModelEntry],
     providers: &[ProviderAuthStatusEntry],
     query: &str,
+    purpose: ModelPurposeFilter,
 ) -> Vec<ModelEntry> {
-    composer_model_menu_groups(models, providers, query)
+    composer_model_menu_groups(models, providers, query, purpose)
         .into_iter()
         .flat_map(|(_, models)| models)
         .collect()
@@ -1003,6 +1052,7 @@ impl AppView {
             &self.projection.models,
             &self.projection.settings_providers.providers,
             &self.model_search_query,
+            self.model_purpose_filter,
         )
     }
 
@@ -1011,11 +1061,32 @@ impl AppView {
             &self.projection.models,
             &self.projection.settings_providers.providers,
             &self.model_search_query,
+            self.model_purpose_filter,
         )
     }
 
     pub(super) fn model_menu_row_count(&self) -> usize {
         self.filtered_model_entries().len()
+    }
+
+    pub(super) fn model_menu_empty_text(&self) -> (&'static str, &'static str) {
+        if self.projection.models.is_empty() {
+            (
+                t("composer.model_none_available"),
+                t("composer.model_menu_empty"),
+            )
+        } else if settings_role_candidates(
+            &self.projection.models,
+            &self.projection.settings_providers.providers,
+        )
+        .is_empty()
+        {
+            (t("model_search.no_providers"), t("model_search.manage"))
+        } else if !self.model_search_query.trim().is_empty() {
+            (t("model_search.no_results"), t("model_search.clear"))
+        } else {
+            (t("model_purpose.no_models"), t("model_purpose.try_other"))
+        }
     }
 
     /// 可点击模型行在滚动列表中的子下标（组头占一位，管理入口不在列表内）。
@@ -1083,6 +1154,24 @@ impl AppView {
         cx.notify();
     }
 
+    /// 切换用途筛选：与搜索输入同源的导航状态复位（高亮 / 滚动）。
+    pub(super) fn set_model_purpose_filter(
+        &mut self,
+        purpose: ModelPurposeFilter,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.model_purpose_filter == purpose {
+            return;
+        }
+        self.model_purpose_filter = purpose;
+        self.menu_highlight = None;
+        self.model_menu_scroll.set_offset(point(px(0.0), px(0.0)));
+        self.pending_model_menu_scroll = matches!(self.open_menu, Some(MenuKind::Model));
+        window.focus(&self.model_search_focus);
+        cx.notify();
+    }
+
     pub(super) fn model_search_element(&mut self, cx: &mut Context<Self>) -> gpui::Div {
         let placeholder = if matches!(self.open_menu, Some(MenuKind::Model)) {
             t("model_search.placeholder_providers")
@@ -1125,6 +1214,39 @@ impl AppView {
                     .flex_none()
                     .child(clear),
             )
+    }
+
+    /// 用途筛选 chips（ADR-064）：单选，默认「对话」；选中态 Raised、
+    /// 其余 Ghost，鼠标 / 键盘（focus + activate）与 AX 同源。
+    pub(super) fn model_purpose_chips_element(&mut self, cx: &mut Context<Self>) -> gpui::Div {
+        let mut row = div().flex().items_center().gap_1().pb_2().flex_wrap();
+        for purpose in ModelPurposeFilter::ALL {
+            let selected = self.model_purpose_filter == purpose;
+            let id = purpose.identifier();
+            let focus = self
+                .settings_action_focus
+                .entry(id.clone().into())
+                .or_insert_with(|| cx.focus_handle().tab_stop(true))
+                .clone();
+            let chip = Button::new(SharedString::from(id.clone()))
+                .track_focus(&focus)
+                .variant(if selected {
+                    ButtonVariant::Raised
+                } else {
+                    ButtonVariant::Ghost
+                })
+                .text_size(font::XS)
+                .label(t(purpose.label_key()))
+                .on_click(cx.listener(move |view, _, window, cx| {
+                    view.set_model_purpose_filter(purpose, window, cx);
+                }))
+                .on_activate(cx.listener(move |view, _, window, cx| {
+                    view.set_model_purpose_filter(purpose, window, cx);
+                    cx.stop_propagation();
+                }));
+            row = row.child(self.settings_element(id).flex_none().child(chip));
+        }
+        row
     }
 
     fn model_settings_entry(&mut self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
@@ -1178,6 +1300,7 @@ impl AppView {
             .flex()
             .flex_col()
             .child(self.model_search_element(cx))
+            .child(self.model_purpose_chips_element(cx))
             .when(self.model_menu_row_count() > 0, |content| {
                 content.child(
                     self.settings_element("model-capability-help")
@@ -1190,16 +1313,7 @@ impl AppView {
                 )
             });
         if self.model_menu_row_count() == 0 {
-            let (title, hint) = if self.projection.models.is_empty() {
-                (
-                    t("composer.model_none_available"),
-                    t("composer.model_menu_empty"),
-                )
-            } else if self.model_search_query.trim().is_empty() {
-                (t("model_search.no_providers"), t("model_search.manage"))
-            } else {
-                (t("model_search.no_results"), t("model_search.clear"))
-            };
+            let (title, hint) = self.model_menu_empty_text();
             return panel.child(
                 content
                     .child(
@@ -1635,6 +1749,7 @@ mod tests {
     use super::{
         composer_model_menu_groups, composer_placeholder_hint, composer_send_allowed,
         grouped_model_menu_entries, model_catalog_empty_state, model_menu_row_title, AppView,
+        ModelPurposeFilter,
     };
     use crate::projection::{
         ConnectionState, ModelEntry, ProviderAuthState, ProviderAuthStatusEntry,
@@ -1757,7 +1872,8 @@ mod tests {
             connected("anthropic"),
             connected("glm-coding"),
         ];
-        let entries = grouped_model_menu_entries(&models, &providers, "");
+        let entries =
+            grouped_model_menu_entries(&models, &providers, "", ModelPurposeFilter::Conversation);
         assert_eq!(
             entries
                 .iter()
@@ -1793,7 +1909,8 @@ mod tests {
             })
             .unwrap_or(0);
         assert_eq!(none_ix, 0);
-        let groups = composer_model_menu_groups(&models, &providers, "");
+        let groups =
+            composer_model_menu_groups(&models, &providers, "", ModelPurposeFilter::Conversation);
         assert_eq!(
             groups
                 .iter()
@@ -1802,32 +1919,53 @@ mod tests {
             ["openai", "anthropic", "glm-coding"]
         );
         assert_eq!(
-            composer_model_menu_groups(&models, &providers, "gpt-4.1-mini")
-                .iter()
-                .map(|(provider, models)| (provider.as_str(), models.len()))
-                .collect::<Vec<_>>(),
+            composer_model_menu_groups(
+                &models,
+                &providers,
+                "gpt-4.1-mini",
+                ModelPurposeFilter::Conversation,
+            )
+            .iter()
+            .map(|(provider, models)| (provider.as_str(), models.len()))
+            .collect::<Vec<_>>(),
             [("openai", 1)]
         );
-        assert_eq!(
-            grouped_model_menu_entries(&models, &providers, "glm-5.3")
-                .iter()
-                .map(|model| model.id.as_str())
-                .collect::<Vec<_>>(),
-            ["glm-5.3"]
-        );
-        assert!(composer_model_menu_groups(&models, &providers, "claude").is_empty());
-        models[0].web_search = true;
-        models[1].display_name = "Search without hosted capability".into();
         assert_eq!(
             grouped_model_menu_entries(
                 &models,
                 &providers,
-                crate::ui::i18n::t("model_capability.search")
+                "glm-5.3",
+                ModelPurposeFilter::Conversation
             )
             .iter()
             .map(|model| model.id.as_str())
             .collect::<Vec<_>>(),
+            ["glm-5.3"]
+        );
+        assert!(composer_model_menu_groups(
+            &models,
+            &providers,
+            "claude",
+            ModelPurposeFilter::Conversation
+        )
+        .is_empty());
+        models[0].web_search = true;
+        // ADR-064：搜索用途 chips 只留 web_search 模型；徽标文本搜索仍
+        // 可按「Search」字面命中（能力标签进搜索面）。
+        models[1].image_input = true;
+        assert_eq!(
+            grouped_model_menu_entries(&models, &providers, "", ModelPurposeFilter::WebSearch)
+                .iter()
+                .map(|model| model.id.as_str())
+                .collect::<Vec<_>>(),
             ["gpt-4.1"]
+        );
+        assert_eq!(
+            grouped_model_menu_entries(&models, &providers, "", ModelPurposeFilter::ImageInput)
+                .iter()
+                .map(|model| model.id.as_str())
+                .collect::<Vec<_>>(),
+            ["opus"]
         );
     }
 
@@ -1842,14 +1980,56 @@ mod tests {
             connected("openai"),
             provider_entry("anthropic", ProviderAuthState::None),
         ];
-        let groups = composer_model_menu_groups(&models, &providers, "");
+        let groups =
+            composer_model_menu_groups(&models, &providers, "", ModelPurposeFilter::Conversation);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].0, "openai");
         assert_eq!(groups[0].1[0].id, "gpt-4.1");
-        assert!(composer_model_menu_groups(&models, &providers, "opus").is_empty());
+        assert!(composer_model_menu_groups(
+            &models,
+            &providers,
+            "opus",
+            ModelPurposeFilter::Conversation
+        )
+        .is_empty());
         assert_eq!(
-            grouped_model_menu_entries(&models, &providers, "openai").len(),
+            grouped_model_menu_entries(
+                &models,
+                &providers,
+                "openai",
+                ModelPurposeFilter::Conversation
+            )
+            .len(),
             1
         );
+    }
+
+    #[test]
+    fn purpose_filter_excludes_non_text_models_from_every_purpose() {
+        let mut generator = model_entry("qwen-token-plan", "wan2.7-image", "Wan 2.7 Image");
+        generator.text = false;
+        generator.image_output = true;
+        // 挂满用途能力位仍被排除：text=false 是会话闸门，不看能力位叠加。
+        generator.image_input = true;
+        generator.video_input = true;
+        generator.web_search = true;
+        let vision = {
+            let mut entry = model_entry("qwen-token-plan", "qwen3.8-max", "Qwen3.8 Max");
+            entry.image_input = true;
+            entry
+        };
+        let models = [generator, vision];
+        let providers = [connected("qwen-token-plan")];
+        for purpose in ModelPurposeFilter::ALL {
+            let entries = grouped_model_menu_entries(&models, &providers, "", purpose);
+            let ids: Vec<&str> = entries.iter().map(|model| model.id.as_str()).collect();
+            let expected: Vec<&str> = match purpose {
+                ModelPurposeFilter::Conversation | ModelPurposeFilter::ImageInput => {
+                    vec!["qwen3.8-max"]
+                }
+                ModelPurposeFilter::VideoInput | ModelPurposeFilter::WebSearch => vec![],
+            };
+            assert_eq!(ids, expected, "purpose {purpose:?}");
+        }
     }
 }

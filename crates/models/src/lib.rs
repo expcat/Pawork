@@ -13,6 +13,7 @@ pub use error::RegistryError;
 pub use negotiate::{clamp_reasoning_to_thinking, CapabilityNegotiator};
 pub use pricing::{estimate_cost, ModelPricing, BUILTIN_RATE_CARD, BUILTIN_RATE_VERSION};
 pub use registry::{
-    caps, merge_capabilities, CapabilityEvidence, CapabilitySource, CatalogEntry, ModelRegistry,
-    ProbeError, ProviderCapabilitySource, ProviderProbe,
+    capabilities_support_purpose, caps, merge_capabilities, purpose_requirements,
+    CapabilityEvidence, CapabilitySource, CatalogEntry, ModelRegistry, ProbeError,
+    ProviderCapabilitySource, ProviderProbe,
 };

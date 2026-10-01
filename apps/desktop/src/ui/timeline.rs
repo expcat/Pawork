@@ -112,9 +112,31 @@ pub(super) fn tool_status_label(status: &str) -> String {
         "pending" => t("tool.group_pending"),
         "failed" => t("tool.group_failed"),
         "cancelled" => t("tool.group_cancelled"),
+        "stopped" => t("tool.group_stopped"),
         other => other,
     }
     .into()
+}
+
+/// Run 已有终态时，缺少工具结果的旧条目不能继续声称正在执行。
+pub(super) fn tool_display_status<'a>(
+    entry: &'a TimelineEntry,
+    timeline: &[TimelineEntry],
+) -> &'a str {
+    let TimelineEntryKind::ToolCall { status, .. } = &entry.kind else {
+        return "";
+    };
+    if matches!(status.as_str(), "running" | "pending")
+        && entry.run_id.as_ref().is_some_and(|run_id| {
+            timeline.iter().any(|candidate| {
+                candidate.run_id.as_ref() == Some(run_id) && candidate.fork_boundary.is_some()
+            })
+        })
+    {
+        "stopped"
+    } else {
+        status
+    }
 }
 
 /// UI-3：消息间距 24px，工具组前 16px；独立终态页脚前 12px。
@@ -1044,16 +1066,16 @@ impl AppView {
                 let entry = &self.projection.timeline[ix];
                 let TimelineEntryKind::ToolCall {
                     name,
-                    status,
                     detail,
                     arguments,
+                    ..
                 } = &entry.kind
                 else {
                     return ToolRowView::from_parts("tool", "", None);
                 };
                 ToolRowView::present(
                     name,
-                    status,
+                    tool_display_status(entry, &self.projection.timeline),
                     arguments.as_deref(),
                     detail.as_deref(),
                     &entry.event_id,
@@ -1171,5 +1193,33 @@ mod tests {
             run_id: Some("r1".into()),
         };
         assert!(!run_summary_card_visible(&cancelled, false));
+    }
+
+    #[test]
+    fn terminal_run_stops_only_its_unfinished_tool_display() {
+        let mut tool = failed_entry("");
+        tool.fork_boundary = None;
+        tool.kind = TimelineEntryKind::ToolCall {
+            name: "run_command".into(),
+            status: "running".into(),
+            detail: None,
+            arguments: None,
+        };
+        let mut terminal = failed_entry("run failed");
+        terminal.run_id = Some("other-run".into());
+        assert_eq!(tool_display_status(&tool, &[terminal.clone()]), "running");
+        terminal.run_id = tool.run_id.clone();
+        for boundary in [
+            ForkBoundary::Cancelled,
+            ForkBoundary::Failed,
+            ForkBoundary::Completed,
+        ] {
+            terminal.fork_boundary = Some(boundary);
+            assert_eq!(tool_display_status(&tool, &[terminal.clone()]), "stopped");
+        }
+        if let TimelineEntryKind::ToolCall { status, .. } = &mut tool.kind {
+            *status = "succeeded".into();
+        }
+        assert_eq!(tool_display_status(&tool, &[terminal]), "succeeded");
     }
 }
