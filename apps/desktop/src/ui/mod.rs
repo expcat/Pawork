@@ -1007,7 +1007,7 @@ impl AppView {
             persist_appearance: false,
             appearance_error: None,
             language: i18n::language(),
-            grouping: TaskRailGrouping::Timeline,
+            grouping: TaskRailGrouping::Projects,
             scope_workspace_id: None,
             collapsed_projects: BTreeSet::new(),
             expanded_timeline_details: HashSet::new(),

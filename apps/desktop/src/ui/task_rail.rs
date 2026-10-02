@@ -1,13 +1,15 @@
 //! Sessions 侧栏（TaskRail）：分组直接切换、范围菜单、项目块与任务列表。
 //!
 //! GUI2-01：顶部两行（任务 / 新建、scope / 分组），连接状态位于底部 Local 区、日期桶 → 项目头 → 任务行的列表节奏。
-//! GUI3-06：单项目 / Unassigned 桶跳过项目头；空闲不画状态点；桶头 24px；
-//! 150% 任务行 36px；标题截断右侧渐隐。几何常量与 AX 树共享 theme::metrics。
+//! 项目 / 会话行统一 36px，标题按项目缩进，时间 / 操作覆盖显示并提供完整标题预览。
+//! 几何常量与 AX 树共享 theme::metrics。
 
 use gpui::{
-    div, linear_color_stop, linear_gradient, point, prelude::*, px, AnyElement, ClickEvent,
-    Context, Corner, FontWeight, KeyDownEvent, Pixels, Point, Rgba, SharedString, Window,
+    div, linear_color_stop, linear_gradient, point, prelude::*, px, Animation, AnimationExt,
+    AnyElement, ClickEvent, Context, Corner, FontWeight, KeyDownEvent, Pixels, Point, Render, Rgba,
+    SharedString, Window,
 };
+use std::time::Duration;
 
 use crate::projection::{
     ConnectionState, SessionLiveStatus, TaskRailDateGroup, TaskRailGrouping, TaskRailProjectGroup,
@@ -29,6 +31,42 @@ use super::{
 enum RailView {
     Timeline(Vec<TaskRailDateGroup>),
     Projects(Vec<TaskRailProjectGroup>),
+}
+
+struct RailSessionTooltip {
+    title: SharedString,
+    project: SharedString,
+    activity: SharedString,
+}
+
+impl Render for RailSessionTooltip {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .w(px(320.0))
+            .p(px(metrics::SPACE_3))
+            .flex()
+            .flex_col()
+            .gap(px(metrics::SPACE_2))
+            .rounded(px(metrics::INPUT_MENU_RADIUS))
+            .bg(dark().surface.raised)
+            .border_1()
+            .border_color(dark().border.subtle)
+            .shadow_md()
+            .text_size(font::BASE)
+            .text_color(dark().text.primary)
+            .child(div().whitespace_normal().child(self.title.clone()))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(metrics::SPACE_2))
+                    .text_size(font::BODY_SM)
+                    .text_color(dark().text.secondary)
+                    .child(icon_sized(Icon::Project, px(metrics::ICON_SM)))
+                    .child(div().flex_1().truncate().child(self.project.clone()))
+                    .child(self.activity.clone()),
+            )
+    }
 }
 
 /// 相对时间（now / Nm / Nh / Nd）：rail 会话行与 Timeline 条目时间共用
@@ -83,6 +121,20 @@ fn status_dot(filled: bool, color: Rgba) -> gpui::Div {
 }
 
 impl AppView {
+    fn session_row_focused(&self, session_id: &str, window: &Window) -> bool {
+        [
+            rail_session_focus_key(session_id),
+            rail_session_rename_focus_key(session_id),
+            rail_session_archive_focus_key(session_id),
+        ]
+        .iter()
+        .any(|key| {
+            self.rail_row_focus
+                .get(key)
+                .is_some_and(|focus| focus.is_focused(window))
+        })
+    }
+
     pub(super) fn session_actions_visible(&self, session_id: &str, window: &Window) -> bool {
         !self
             .session_rename
@@ -90,17 +142,7 @@ impl AppView {
             .is_some_and(|state| state.session_id == session_id)
             && (self.projection.active_session_id.as_deref() == Some(session_id)
                 || self.rail_hovered_session.as_deref() == Some(session_id)
-                || [
-                    rail_session_focus_key(session_id),
-                    rail_session_rename_focus_key(session_id),
-                    rail_session_archive_focus_key(session_id),
-                ]
-                .iter()
-                .any(|key| {
-                    self.rail_row_focus
-                        .get(key)
-                        .is_some_and(|focus| focus.is_focused(window))
-                }))
+                || self.session_row_focused(session_id, window))
     }
 
     /// rail 宽由 shell_layout::resolve 按窗口带宽与文本缩放给出
@@ -149,18 +191,18 @@ impl AppView {
                 cx.stop_propagation();
             }));
 
-        // F-03 scope 行：全宽 raised 行 + 1px 描边 + 圆角 4 + 高 36 + 字阶 18。
+        // 项目筛选使用轻量文字行，减少列表上方的边框与视觉层级。
         let scope_focus = self.scope_focus.clone();
         let scope_button = Button::new("project-scope")
             .track_focus(&scope_focus)
-            .variant(ButtonVariant::Raised)
-            // 文字贴左内缩 12（量图：box x20 → 文字 x32），垂直居中。
-            .padding(ButtonPadding::Horizontal(metrics::RAIL_INNER_PAD))
+            .variant(ButtonVariant::Ghost)
+            // 与列表行共用 8px 水平内缩，文字垂直居中。
+            .padding(ButtonPadding::Horizontal(metrics::RAIL_TASK_PAD_X))
             .height(px(metrics::RAIL_TOP_ROW_HEIGHT))
             .vcenter()
             .radius(metrics::CONTROL_RADIUS)
-            .bordered()
-            .text_size(font::BASE)
+            .text_size(font::BODY_SM)
+            .text_color(dark().text.secondary)
             .width(
                 rail_width
                     - window.rem_size() * 1.5
@@ -303,8 +345,8 @@ impl AppView {
                     .flex_none()
                     .child(
                         div()
-                            .text_size(font::TITLE)
-                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_size(font::HEADER_TITLE)
+                            .font_weight(FontWeight::MEDIUM)
                             .text_color(dark().text.primary)
                             .child(t("rail.tasks")),
                     )
@@ -689,26 +731,36 @@ impl AppView {
             // 焦点面（R03：高亮必须包住「+」）。「+」仍只建任务、不折叠。
             // Unassigned 无 +。折叠态只显示头。
             let header_row = ListRow::project_header(header_id)
-                .radius(metrics::CONTROL_RADIUS)
+                .radius(metrics::INPUT_MENU_RADIUS)
                 .track_focus(&header_focus)
                 .child(
                     div()
                         .flex()
                         .flex_row()
                         .items_center()
-                        .gap_1()
+                        .gap(px(metrics::SPACE_2))
                         .flex_1()
                         .min_w_0()
                         .text_size(font::BASE)
-                        .font_weight(FontWeight::MEDIUM)
+                        .font_weight(FontWeight::NORMAL)
                         .text_color(dark().text.emphasis)
-                        .child(if expanded {
-                            icon_sized(Icon::ChevronDown, px(metrics::ICON_SM))
-                        } else {
-                            icon_sized(Icon::ChevronRight, px(metrics::ICON_SM))
-                        })
+                        .child(
+                            icon_sized(Icon::Project, px(metrics::ICON_SM))
+                                .text_color(dark().text.secondary),
+                        )
                         // 长项目头标题 truncate（flex_1 + min_w_0）。
-                        .child(div().flex_1().truncate().child(project.name.clone())),
+                        .child(div().flex_1().truncate().child(project.name.clone()))
+                        .child(
+                            icon_sized(
+                                if expanded {
+                                    Icon::ChevronDown
+                                } else {
+                                    Icon::ChevronRight
+                                },
+                                px(metrics::SPACE_3),
+                            )
+                            .text_color(dark().text.tertiary),
+                        ),
                 )
                 .child({
                     // 与任务行改名 / 归档共用 64px 尾槽：左格计数、右格「+」。
@@ -729,7 +781,7 @@ impl AppView {
                                 .child(
                                     Label::new(project.task_count().to_string())
                                         .size(font::BODY_SM)
-                                        .color(dark().text.secondary),
+                                        .color(dark().text.tertiary),
                                 ),
                         );
                     if !project.is_unassigned() {
@@ -861,8 +913,7 @@ impl AppView {
                     .map(|state| state.input.clone());
                 let live_status = self.projection.session_live_status(&task.session_id);
                 let row_height = metrics::rail_task_row_height(self.text_scale);
-                let reserve_trailing =
-                    show_actions || self.text_scale != font::TextScale::Percent150;
+                let indented = !skip_header || live_status.is_some();
                 let hovered =
                     self.rail_hovered_session.as_deref() == Some(task.session_id.as_str());
                 let fade_color = if is_active {
@@ -876,7 +927,7 @@ impl AppView {
                 } else {
                     dark().bg.panel
                 };
-                // 项目头 → 首个任务行 2；跳过项目头时首行吃桶头间距。
+                // 项目头与首个任务行连续排列；跳过项目头时首行吃桶头间距。
                 let row_gap = if task_index == 0 {
                     if skip_header {
                         header_gap
@@ -888,64 +939,100 @@ impl AppView {
                 };
                 let title_slot = match rename_input {
                     Some(input) => div().flex_1().min_w_0().child(input),
-                    None => div()
-                        .relative()
-                        .flex_1()
-                        .child(
-                            div()
-                                .truncate()
-                                .text_size(font::BASE)
-                                .font_weight(if is_active {
-                                    FontWeight::MEDIUM
-                                } else if unread {
-                                    FontWeight::SEMIBOLD
-                                } else {
-                                    FontWeight::NORMAL
-                                })
-                                .text_color(if is_active {
-                                    dark().text.primary
-                                } else {
-                                    dark().text.emphasis
-                                })
-                                .child(crate::ui::i18n::session_title(&task.title).to_string()),
-                        )
-                        .child(title_fade(fade_color)),
+                    None => {
+                        let title = SharedString::from(
+                            crate::ui::i18n::session_title(&task.title).to_string(),
+                        );
+                        let weight = if is_active {
+                            FontWeight::MEDIUM
+                        } else if unread {
+                            FontWeight::SEMIBOLD
+                        } else {
+                            FontWeight::NORMAL
+                        };
+                        let mut label = div()
+                            .text_size(font::BASE)
+                            .font_weight(weight)
+                            .text_color(if is_active {
+                                dark().text.primary
+                            } else {
+                                dark().text.emphasis
+                            })
+                            .child(title.clone());
+                        let mut title_width = 0.0;
+                        let mut travel = 0.0;
+                        if hovered || self.session_row_focused(&task.session_id, window) {
+                            let mut style = window.text_style();
+                            style.font_weight = weight;
+                            title_width = f32::from(
+                                window
+                                    .text_system()
+                                    .shape_line(
+                                        title.clone(),
+                                        font::BASE.to_pixels(window.rem_size()),
+                                        &[style.to_run(title.len())],
+                                        None,
+                                    )
+                                    .width,
+                            )
+                            .ceil();
+                            let (_, visible_width) = metrics::rail_session_title_layout(
+                                f32::from(self.rail_scroll.bounds().size.width),
+                                indented,
+                                metrics::rail_trailing_width(),
+                            );
+                            // 末尾停在操作槽的渐隐之前，确保最后几个字完整可读。
+                            let readable_width = visible_width - metrics::RAIL_TITLE_FADE_WIDTH;
+                            // 只有真正截断才启动，避免短标题因渐隐产生微小晃动。
+                            if readable_width > 0.0 && title_width > visible_width {
+                                travel = (title_width - readable_width).max(0.0);
+                            }
+                        }
+                        let label = if travel > 0.0 {
+                            // 先停留 0.8s，再以 40px/s 左移，末尾停留 1.2s 后重播。
+                            // 失焦时不渲染动画，GPUI 回收计时状态，下次从开头开始。
+                            let scrolling = travel / 40.0;
+                            let duration = 0.8 + scrolling + 1.2;
+                            label = label.w(px(title_width)).whitespace_nowrap().relative();
+                            label
+                                .with_animation(
+                                    SharedString::from(format!(
+                                        "session-title-marquee-{}",
+                                        task.session_id
+                                    )),
+                                    Animation::new(Duration::from_secs_f32(duration)).repeat(),
+                                    move |label, delta| {
+                                        let progress =
+                                            ((delta * duration - 0.8) / scrolling).clamp(0.0, 1.0);
+                                        label.left(px(-travel * progress))
+                                    },
+                                )
+                                .into_any_element()
+                        } else {
+                            label.truncate().into_any_element()
+                        };
+                        div().flex_1().min_w_0().overflow_hidden().child(label)
+                    }
                 };
-                let mut title_row = div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_2()
-                    .min_w_0()
-                    .flex_1();
-                if let Some(status) = live_status {
-                    title_row = title_row.child(status_dot(true, session_status_dot_color(status)));
+                let mut title_row = div().flex().flex_row().items_center().min_w_0().flex_1();
+                if indented {
+                    title_row = title_row.child(
+                        div()
+                            .w(px(metrics::RAIL_SESSION_INDENT))
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .when_some(live_status, |slot, status| {
+                                slot.child(status_dot(true, session_status_dot_color(status)))
+                            }),
+                    );
                 }
                 title_row = title_row.child(title_slot);
                 let mut row = ListRow::task(SharedString::from(session_id.clone()), is_active)
                     .height(row_height)
-                    .radius(metrics::CONTROL_RADIUS)
+                    .radius(metrics::INPUT_MENU_RADIUS)
                     .track_focus(&task_focus)
                     .child(title_row);
-                if reserve_trailing {
-                    row = row.child(
-                        div()
-                            .ml_2()
-                            .w(px(metrics::RAIL_SESSION_ACTION_SIZE * 2.0))
-                            .flex_none()
-                            .flex()
-                            .justify_end()
-                            .child(
-                                Label::new(if show_actions {
-                                    String::new()
-                                } else {
-                                    relative_activity(task.updated_at_ms, now_ms)
-                                })
-                                .size(font::BODY_SM)
-                                .color(dark().text.secondary),
-                            ),
-                    );
-                }
                 if !renaming {
                     row = row
                         .on_click(cx.listener(move |view, event: &ClickEvent, window, cx| {
@@ -970,9 +1057,8 @@ impl AppView {
                             },
                         ));
                 }
-                // 150% 仅在动作面露出时保留 64px 尾槽，避免挤占标题；
-                // 100% / 125% 时间戳 / 两个动作仍共用固定槽，标题宽度不跳动。
-                // 动作是行的覆盖层兄弟节点，点击不会冒泡成打开会话。
+                // 右侧覆盖层与同色渐隐遮住标题尾部，不改变标题的 flex 宽度。
+                // 上下让出焦点描边；动作仍是行的兄弟节点，点击不会冒泡成打开会话。
                 let hovered_id = task.session_id.clone();
                 let mut shell = div()
                     .id(SharedString::from(format!(
@@ -992,6 +1078,21 @@ impl AppView {
                         cx.notify();
                     }))
                     .child(row);
+                if !renaming {
+                    let title =
+                        SharedString::from(crate::ui::i18n::session_title(&task.title).to_string());
+                    let project_name = SharedString::from(project.name.clone());
+                    let activity =
+                        SharedString::from(relative_activity(task.updated_at_ms, now_ms));
+                    shell = shell.tooltip(move |_, cx| {
+                        cx.new(|_| RailSessionTooltip {
+                            title: title.clone(),
+                            project: project_name.clone(),
+                            activity: activity.clone(),
+                        })
+                        .into()
+                    });
+                }
                 if show_actions {
                     let rename_focus = self.rail_row_focus_handle(
                         &rail_session_rename_focus_key(&task.session_id),
@@ -1076,11 +1177,36 @@ impl AppView {
                         div()
                             .absolute()
                             .right(px(metrics::RAIL_TRAILING_INSET))
-                            .top(px((row_height - metrics::RAIL_SESSION_ACTION_SIZE) / 2.0))
+                            .top(px(metrics::FOCUS_RING_WIDTH))
+                            .h(px(row_height - metrics::FOCUS_RING_WIDTH * 2.0))
+                            .w(px(metrics::rail_trailing_width()))
+                            .bg(fade_color)
                             .flex()
                             .items_center()
+                            .child(title_fade(fade_color).right(px(metrics::rail_trailing_width())))
                             .child(rename_button)
                             .child(archive_button),
+                    );
+                } else if !renaming {
+                    shell = shell.child(
+                        div()
+                            .absolute()
+                            .right(px(metrics::RAIL_TRAILING_INSET))
+                            .top(px(metrics::FOCUS_RING_WIDTH))
+                            .h(px(row_height - metrics::FOCUS_RING_WIDTH * 2.0))
+                            .w(px(metrics::RAIL_SESSION_META_WIDTH))
+                            .bg(fade_color)
+                            .flex()
+                            .items_center()
+                            .justify_end()
+                            .child(
+                                title_fade(fade_color).right(px(metrics::RAIL_SESSION_META_WIDTH)),
+                            )
+                            .child(
+                                Label::new(relative_activity(task.updated_at_ms, now_ms))
+                                    .size(font::BODY_SM)
+                                    .color(dark().text.tertiary),
+                            ),
                     );
                 }
                 children.push(shell.into_any_element());

@@ -65,7 +65,7 @@ impl ListRow {
         self
     }
 
-    /// 多行设置项可按当前字号提供行高；TaskRail 保持默认 44px。
+    /// 多行设置项可按当前字号提供行高；TaskRail 保持默认 36px。
     pub fn height(mut self, height: f32) -> Self {
         self.height = height;
         self
@@ -113,7 +113,7 @@ impl RenderOnce for ListRow {
             row = row.tab_stop(true).track_focus(focus).relative();
         }
         // 聚焦描边覆盖层圆角与行外壳同源；未指定时默认 rounded_sm，
-        // TaskRail 传入 CONTROL_RADIUS。
+        // TaskRail 传入 INPUT_MENU_RADIUS。
         let ring_radius: AbsoluteLength = self
             .radius
             .map(|radius| px(radius).into())
@@ -121,8 +121,8 @@ impl RenderOnce for ListRow {
         let hover = match self.kind {
             ListRowKind::Task { selected } => {
                 // flex_row + min_w_0：让子项 flex_1/truncate 拿到 Definite 宽度
-                // （R8 波 C 长标题截断依赖此约束）。R3 Wave A：行高 44（量图
-                // 43–44 取 44）+ 内容垂直居中；选中面圆角与外壳同源。
+                // （R8 波 C 长标题截断依赖此约束）。内容垂直居中；
+                // 选中面圆角与外壳同源。
                 row = row
                     .flex()
                     .flex_row()

@@ -335,7 +335,7 @@ pub mod metrics {
     /// OPT-D 签字：主操作命中区 ≥36×36）。
     pub const RAIL_ICON_BUTTON_SIZE: f32 = ICON_BUTTON_SIZE;
     /// 32：会话行改名 / 归档按钮边长（OPT-D 签字约束：Session 行动作
-    /// hit area ≥32×32，行高 44 内垂直居中）。
+    /// hit area ≥32×32，行高 36 内垂直居中）。
     pub const RAIL_SESSION_ACTION_SIZE: f32 = 32.0;
     /// 10：rail 状态圆点直径（量图 Ø10–11）。
     pub const RAIL_STATUS_DOT_SIZE: f32 = 10.0;
@@ -343,11 +343,10 @@ pub mod metrics {
     pub const RAIL_TOP_ROW_HEIGHT: f32 = 36.0;
     /// 36：标题行高（量图 grouping 钮区 y49–84 = 36）。
     pub const RAIL_TITLE_ROW_HEIGHT: f32 = 36.0;
-    /// 10：标题行 → scope 行纵向间距（内容顶 52 + 36 + 10 = scope 顶 98，
-    /// 与量图 scope 盒 y98 精确对齐；文字到底 33 的读数是行底→文字带口径）。
-    pub const RAIL_TITLE_SCOPE_GAP: f32 = 10.0;
-    /// 18：筛选行（断线时 Reconnect）到列表首行的间距。
-    pub const RAIL_LIST_TOP_GAP: f32 = 18.0;
+    /// 4：标题行 → scope 行纵向间距。
+    pub const RAIL_TITLE_SCOPE_GAP: f32 = SPACE_1;
+    /// 8：筛选行到列表首行的间距。
+    pub const RAIL_LIST_TOP_GAP: f32 = SPACE_2;
     /// 24：日期桶头行高（GUI3-06：36 收为 24，12px medium secondary 不变）。
     pub const RAIL_BUCKET_HEADER_HEIGHT: f32 = 24.0;
     /// 20：日期桶头距上一组的纵向间距（量图「两桶头间距 380」反推 21，
@@ -355,44 +354,38 @@ pub mod metrics {
     pub const RAIL_BUCKET_TOP_GAP: f32 = 20.0;
     /// 2：日期桶头 → 桶内首个项目头（200+36+2 = 项目头顶 238 ±2 内）。
     pub const RAIL_BUCKET_TO_PROJECT_GAP: f32 = 2.0;
-    /// 2：项目头 → 首个任务行（238+44+2 = 任务行顶 284，与量图精确对齐）。
-    pub const RAIL_PROJECT_TO_TASK_GAP: f32 = 2.0;
-    /// 44：任务行 / 项目头行高（量图 43–44 / 43–46 取 44）；100% / 125% 任务行与项目头。
-    pub const RAIL_TASK_ROW_HEIGHT: f32 = 44.0;
-    /// 36：150% 字号任务行（项目头仍 44，命中区与改名 / 归档 32×32 不变）。
-    pub const RAIL_TASK_ROW_HEIGHT_COMPACT: f32 = 36.0;
+    /// 项目头与首个任务行连续排列。
+    pub const RAIL_PROJECT_TO_TASK_GAP: f32 = 0.0;
+    /// 36：三档字号共用紧凑任务 / 项目行，保留 32×32 行动作命中区。
+    pub const RAIL_TASK_ROW_HEIGHT: f32 = 36.0;
+    /// 24：任务标题与项目名称对齐；状态点放在这段缩进内。
+    pub const RAIL_SESSION_INDENT: f32 = ICON_SM + SPACE_2;
+    /// 48：空闲时间覆盖槽；行操作使用原有 64px 覆盖槽。
+    pub const RAIL_SESSION_META_WIDTH: f32 = 48.0;
     /// 16：标题截断槽右侧渐隐宽。
     pub const RAIL_TITLE_FADE_WIDTH: f32 = 16.0;
     /// Task 行 ListRow 水平 padding（与 `.px_2()` / 动作 `right(px(8))` 钉死 8px）。
     pub const RAIL_TASK_PAD_X: f32 = SPACE_2;
 
-    /// 任务行高：仅 150% 顶档收为 36px，100% / 125% 保持 44。
-    pub const fn rail_task_row_height(scale: super::font::TextScale) -> f32 {
-        match scale {
-            super::font::TextScale::Percent150 => RAIL_TASK_ROW_HEIGHT_COMPACT,
-            _ => RAIL_TASK_ROW_HEIGHT,
-        }
+    pub const fn rail_task_row_height(_scale: super::font::TextScale) -> f32 {
+        RAIL_TASK_ROW_HEIGHT
     }
 
-    /// 标题槽相对行左缘的起点与宽度（状态点与尾槽占用同源；render / AX 共用）。
+    /// 标题可见区域；右侧覆盖槽不参与 flex 布局，悬停时标题不重新排版。
     pub fn rail_session_title_layout(
         row_width: f32,
-        has_status_dot: bool,
-        reserve_trailing: bool,
+        indented: bool,
+        trailing_width: f32,
     ) -> (f32, f32) {
         let mut left = RAIL_TASK_PAD_X;
-        if has_status_dot {
-            left += RAIL_STATUS_DOT_SIZE + SPACE_2;
+        if indented {
+            left += RAIL_SESSION_INDENT;
         }
-        let right = if reserve_trailing {
-            RAIL_TRAILING_INSET + rail_trailing_width()
-        } else {
-            RAIL_TASK_PAD_X
-        };
+        let right = RAIL_TRAILING_INSET + trailing_width;
         (left, (row_width - left - right).max(0.0))
     }
-    /// 8：项目块间距（量图 任务→下个项目头 52–54 − 行高 44）。
-    pub const RAIL_PROJECT_BLOCK_GAP: f32 = 8.0;
+    /// 12：项目块间留白，区分紧凑会话列表。
+    pub const RAIL_PROJECT_BLOCK_GAP: f32 = SPACE_3;
     /// 项目头计数 / 「+」与任务行改名 / 归档共用的右缘 inset（与 ListRow `px_2` 同源）。
     pub const RAIL_TRAILING_INSET: f32 = RAIL_TASK_PAD_X;
     /// 两格尾槽总宽：计数+新建，或改名+归档。

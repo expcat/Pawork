@@ -1532,8 +1532,13 @@ impl AppView {
                     .as_ref()
                     .is_some_and(|state| state.session_id == session.session_id);
                 let show_actions = self.session_actions_visible(&session.session_id, window);
-                let reserve_trailing =
-                    show_actions || self.text_scale != font::TextScale::Percent150;
+                let trailing_width = if show_actions {
+                    metrics::rail_trailing_width()
+                } else if renaming {
+                    0.0
+                } else {
+                    metrics::RAIL_SESSION_META_WIDTH
+                };
                 let row_top = top + consumed;
                 let action_y = row_top + (row_height - metrics::RAIL_SESSION_ACTION_SIZE) / 2.0;
                 let mut row = AxNode::new(
@@ -1564,8 +1569,11 @@ impl AppView {
                         ),
                     ));
                 }
-                let (title_left, title_width) =
-                    metrics::rail_session_title_layout(width, status.is_some(), reserve_trailing);
+                let (title_left, title_width) = metrics::rail_session_title_layout(
+                    width,
+                    !skip_header || status.is_some(),
+                    trailing_width,
+                );
                 if renaming {
                     // 行内改名：行不再激活打开，发布编辑器（Focus / SetValue
                     // 与 composer 输入同构；AXValue 即草稿纯文本）。
@@ -5760,7 +5768,7 @@ mod tests {
     }
 
     /// GUI3-06：Timeline 单项目 / Unassigned 跳过项目头；空闲无 status-dot；
-    /// 桶头 24px；150% 任务行 36px 且标题 >80px，动作不遮标题。
+    /// 桶头 24px；三档字号任务行 36px，150% 标题 >80px，动作不遮标题。
     #[gpui::test]
     fn task_rail_skips_redundant_headers_and_compacts_150(cx: &mut gpui::TestAppContext) {
         use crate::ui::theme::font::TextScale;
@@ -5816,10 +5824,10 @@ mod tests {
             let today = tree.find("date-group-Today").expect("today bucket");
             assert_eq!(today.bounds.height, metrics::RAIL_BUCKET_HEADER_HEIGHT);
             let idle = tree.find(&session_identifier("idle")).unwrap();
-            assert_eq!(idle.bounds.height, 44.0);
+            assert_eq!(idle.bounds.height, 36.0);
             assert!(tree.find(&session_status_dot_identifier("idle")).is_none());
             let running = tree.find(&session_identifier("running")).unwrap();
-            assert_eq!(running.bounds.height, 44.0);
+            assert_eq!(running.bounds.height, 36.0);
             assert!(tree
                 .find(&session_status_dot_identifier("running"))
                 .is_some());
@@ -5965,7 +5973,7 @@ mod tests {
                     .unwrap()
                     .bounds
                     .height,
-                44.0
+                36.0
             );
         });
     }
@@ -6113,7 +6121,7 @@ mod tests {
             let composer = view.read(cx).composer_focus_handle(cx);
             window.focus(&composer);
         });
-        for expected in [TaskRailGrouping::Projects, TaskRailGrouping::Timeline] {
+        for expected in [TaskRailGrouping::Timeline, TaskRailGrouping::Projects] {
             cx.update(|window, cx| {
                 view.update(cx, |view, cx| {
                     view.handle_accessibility_request(
