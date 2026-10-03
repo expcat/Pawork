@@ -20,7 +20,6 @@
 from __future__ import annotations
 
 import base64
-import importlib.util
 import json
 import sys
 import tempfile
@@ -29,21 +28,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-
-def load_server_module():
-    path = Path(__file__).with_name("server.py")
-    spec = importlib.util.spec_from_file_location("pawork_mock_server", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def load_seed_auth_module():
-    path = Path(__file__).with_name("seed_auth.py")
-    spec = importlib.util.spec_from_file_location("pawork_mock_seed_auth", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+import server as server_module
+import seed_auth
 
 
 def post_form(url: str, form: dict) -> tuple:
@@ -126,18 +112,7 @@ def assert_success_shape(body: dict, channel: str) -> None:
     assert isinstance(body.get("expires_in"), int), body
 
 
-def main() -> int:
-    server_module = load_server_module()
-    fixtures_root = Path(tempfile.mkdtemp(prefix="pawork-mock-oauth-selftest-"))
-    config = server_module.MockConfig(
-        fixtures_root=fixtures_root, chunk_bytes=1024, chunk_interval_ms=0.0, scenarios={}
-    )
-    server = server_module.MockProviderServer(
-        ("127.0.0.1", 0), server_module.MockProviderHandler, config
-    )
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    base = f"http://127.0.0.1:{server.server_address[1]}"
-
+def run_checks(base: str) -> int:
     checks = []
 
     def check(name, fn):
@@ -379,41 +354,57 @@ def main() -> int:
     check("mock-issued oauth token acts as persona", issued_token_persona)
 
     def seed_auth_default_tokens():
-        seed = load_seed_auth_module()
-        home = Path(tempfile.mkdtemp(prefix="pawork-mock-seed-selftest-"))
-        # 先 seed API key 再 seed OAuth：合并不得残留 default 槽——否则
-        # resolve.rs 在 selected=null 时直接采用 default API key，xAI 双认证
-        # 优先 API key，把 OAuth（含请求前 refresh）整条短路。
-        seed.main(["--home", str(home), "--provider", "xai", "--api-key", "mock-xai"])
-        seed.main(["--home", str(home), "--provider", "xai", "--oauth"])
-        raw = json.loads((home / "auth.json").read_text(encoding="utf-8"))
-        provider_entry = raw["entries"]["pawork.xai"]
-        assert "default" not in provider_entry, provider_entry
-        index = json.loads(provider_entry["accounts.meta"])
-        assert [a["credential_id"] for a in index["accounts"]] == ["default-oauth"], index
-        assert index["selected_credential_id"] is None, index
-        entry = raw["entries"]["pawork.xai.oauth"]
-        assert entry["default.access"] == "mock-xai-access-0", entry
-        assert entry["default.refresh"] == "mock-xai-refresh-0", entry
-        body = json.dumps({"model": "grok-4.6", "stream": True, "messages": []}).encode()
-        request = urllib.request.Request(
-            base + "/chat/completions",
-            data=body,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {entry['default.access']}",
-            },
-        )
-        with urllib.request.urlopen(request, timeout=10) as response:
-            payload = response.read().decode("utf-8")
-            assert response.status == 200 and "data: " in payload, payload
+        with tempfile.TemporaryDirectory(prefix="pawork-mock-seed-selftest-") as directory:
+            home = Path(directory)
+            # 先 seed API key 再 seed OAuth：合并不得残留 default 槽——否则
+            # resolve.rs 在 selected=null 时直接采用 default API key，xAI 双认证
+            # 优先 API key，把 OAuth（含请求前 refresh）整条短路。
+            seed_auth.main(["--home", str(home), "--provider", "xai", "--api-key", "mock-xai"])
+            seed_auth.main(["--home", str(home), "--provider", "xai", "--oauth"])
+            raw = json.loads((home / "auth.json").read_text(encoding="utf-8"))
+            provider_entry = raw["entries"]["pawork.xai"]
+            assert "default" not in provider_entry, provider_entry
+            index = json.loads(provider_entry["accounts.meta"])
+            assert [a["credential_id"] for a in index["accounts"]] == ["default-oauth"], index
+            assert index["selected_credential_id"] is None, index
+            entry = raw["entries"]["pawork.xai.oauth"]
+            assert entry["default.access"] == "mock-xai-access-0", entry
+            assert entry["default.refresh"] == "mock-xai-refresh-0", entry
+            body = json.dumps({"model": "grok-4.6", "stream": True, "messages": []}).encode()
+            request = urllib.request.Request(
+                base + "/chat/completions",
+                data=body,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {entry['default.access']}",
+                },
+            )
+            with urllib.request.urlopen(request, timeout=10) as response:
+                payload = response.read().decode("utf-8")
+                assert response.status == 200 and "data: " in payload, payload
 
     check("seed_auth default oauth token acts as persona", seed_auth_default_tokens)
 
-    server.shutdown()
-    server.server_close()
     print(f"\n{len(checks)} checks passed")
     return 0
+
+
+def main() -> int:
+    with tempfile.TemporaryDirectory(prefix="pawork-mock-oauth-selftest-") as directory:
+        config = server_module.MockConfig(
+            fixtures_root=Path(directory), chunk_bytes=1024, chunk_interval_ms=0.0, scenarios={}
+        )
+        with server_module.MockProviderServer(
+            ("127.0.0.1", 0), server_module.MockProviderHandler, config
+        ) as mock_server:
+            thread = threading.Thread(target=mock_server.serve_forever,
+                                      kwargs={"poll_interval": 0.05}, daemon=True)
+            thread.start()
+            try:
+                return run_checks(f"http://127.0.0.1:{mock_server.server_port}")
+            finally:
+                mock_server.shutdown()
+                thread.join()
 
 
 if __name__ == "__main__":

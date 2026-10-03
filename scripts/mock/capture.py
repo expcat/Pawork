@@ -1116,7 +1116,9 @@ def check_usage(obj):
             errors.append("%s.resetsAt must be YYYY-MM-DDTHH:mm:ss.sssZ" % window_name)
         else:
             try:
-                dt.datetime.strptime(resets, "%Y-%m-%dT%H:%M:%S.%fZ")
+                reset_at = dt.datetime.strptime(resets, "%Y-%m-%dT%H:%M:%S.%fZ")
+                if reset_at.year < 1970:
+                    errors.append("%s.resetsAt must not precede 1970" % window_name)
             except ValueError:
                 errors.append("%s.resetsAt is not a real calendar date" % window_name)
     return errors

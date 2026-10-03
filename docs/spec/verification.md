@@ -69,11 +69,12 @@ E3/E4 证据必须包含日期、环境/版本、输入范围、实际结果和�
 
 | 改动范围 | 命令 | 证据边界 |
 | --- | --- | --- |
-| 文档/格式 | `bash scripts/mock/gate.sh --level 0` | 链接存在性与 diff；不证明产品行为 |
+| 文档/格式 | `bash scripts/mock/gate.sh --level 0` | ROADMAP 与当前所有改动 Markdown 的相对链接存在性、diff；不证明产品行为 |
 | 包内或紧相关操作 | `bash scripts/test.sh <包名>...` | 生产代码驱动的单测/集成；自动补必要 feature，实际选择用 `--print` 查看 |
 | CLI/SDK 子进程链 | `bash scripts/test.sh --host` | 先构建当前 pawork 并经 artifact 消息定位本次产物（config 的 target-dir/build.target 不会导致误测旧二进制），再运行真实 headless 子进程；缺二进制不能跳过成成功 |
 | Desktop 状态/操作/布局 | `bash scripts/test.sh desktop` | GPUI 模拟操作与实际布局；不能证明系统 IME、WebKit 页面效果或真窗口像素 |
-| mock/fixture 工具变化 | `bash scripts/mock/gate.sh --level 0,2` | 测试工具的 HTTP 回放、凭证/配置恢复与脱敏；quota 探针对空窗、失败、过期缓存与缺失 provenance fail-closed；不算真实 Provider 验收 |
+| mock/fixture/构建入口变化 | `bash scripts/mock/gate.sh --level 0,2` | 测试工具的 HTTP 回放、凭证/配置恢复、脱敏、UI 扫描与脚本调度；quota 探针对空窗、失败、过期缓存与缺失 provenance fail-closed；不算真实 Provider 验收 |
+| 正式 Host/Desktop 构建 | `bash scripts/pawork-desktop.sh build` | 同一次 Cargo 调用构建两个正式二进制，按 artifact 消息校验产物；不证明真窗口行为 |
 | 真实 Provider/OS/窗口/隔离桌面 | 对应包 Spec 的专项步骤 | 必须记录外部效果和前置条件；未执行不算通过 |
 
 2026-09-27 包边界迁移验证：`bash scripts/test.sh models providers` 覆盖共享模型语义及全部通道；`bash scripts/test.sh mcp tools gui-server acp gateway protocol app cli client engine` 覆盖迁移后的接入、宿主和协议回归。GUI 连接测试归 gui-server，ACP fixtures/floor 归 acp，MCP 测试归 mcp，网关 token 测试归 gateway；AppCore + HTTP/模拟上游联调仍在 app。正式宿主另用 `--host` 验证，不能用包内 MockHost 代替；生产依赖图用 `cargo metadata` / `cargo tree -p pawork --edges normal` 检查无环、Desktop/Engine 边界和第三方闭包不扩张。具体完成状态见 [ROADMAP](../ROADMAP.md)。
@@ -81,6 +82,12 @@ E3/E4 证据必须包含日期、环境/版本、输入范围、实际结果和�
 不使用测试数或覆盖率配额驱动删减。便宜且有独立边界意义的单测可以保留；golden 检查外部格式兼容，不属于应删除的实现副本。
 
 UI 取证工具须提供真实失败信号：`ui-fixture.sh desktop` 清除旧 `timeline_stable` 后等待新实例就绪——barrier 必须是本进程启动后写入的有效 JSON（`settle_seq>=1`、`at_ms` 不早于启动时刻），进程提前退出、PID 归属变化或超时均失败；fixture 与 desktop 构建产物同样经 artifact 消息定位。`ui-ax-dump.swift` 无窗口、AX 权限不足、没有应用 identifier 或动作失败均非零；`ui-key-event.swift` 投递前确认目标 PID 在前台且具备事件投递权限。操作效果仍须由窗口状态与外部事实核对。
+
+2026-10-03 入口精简：`test.sh --host`、`ui-fixture.sh` 和 `pawork-desktop.sh` 共用 [cargo-build.sh](../../scripts/cargo-build.sh) 的产物定位；缺产物、构建失败均非零，拒绝把测试 harness 当正式二进制。`--print` 不运行 Cargo；Desktop 的 `runtime_shaders` 仅在 macOS 选择，启动参数在编译前校验，内容相同的 bundle 文件不重复覆盖。Rust 子进程回归由实际 spawn/握手判断 Host 可用，删除三次额外的 `--help` 文案探测。
+
+mock 服务的端点、媒体与场景测试合并为 [server_smoke.py](../../scripts/mock/server_smoke.py)，HTTP 服务启动从五次减至三次；usage 形状共用 `capture.check_usage`，保留三窗、percent、日历与 1970 下界拒绝。删除按场景描述文案推断 wire 行为的检查，以及无场景请求必须小于 0.5 秒的环境相关断言；实际 HTTP/流内错误、截断、定速与复位回归保留。OAuth 自测退出时关闭线程与临时目录；mock 八通道 seed 在进程内调用既有写入工具，显式指定隔离 home。L2 纳入原有 20 项 UI 扫描回归；门禁计时改用 Bash `SECONDS`，不再为计时派生 Python/awk。
+
+本批已验证：`bash scripts/mock/gate.sh --level 0,2` 通过 17 项 OAuth 检查、4 项隔离/脱敏/入口回归、20 项 UI 扫描回归和 115 项 HTTP/mock 检查；`bash scripts/test.sh --host` 通过 3 项真实 Host 子进程回归；`bash scripts/pawork-desktop.sh build` 成功构建两个正式二进制；`bash scripts/ui-fixture.sh seed --root <隔离临时目录>` 实际运行 `ui_fixture`，生成 ready marker 与数据文件。Shell/Python 语法、Rust 格式和 diff 检查通过；未执行全 workspace 门禁、真实 Provider 或真窗口验收。
 
 ### 4.2 构建时间与缓存空间
 

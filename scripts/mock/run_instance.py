@@ -27,6 +27,8 @@ import tempfile
 import time
 import urllib.request
 
+import seed_auth
+
 REPO = Path(__file__).resolve().parents[2]
 KEY_CHANNELS = ('glm-coding', 'opencode-go', 'qwen-token-plan', 'deepseek', 'kimi-platform')
 OAUTH_CHANNELS = ('xai', 'kimi-code', 'chatgpt')
@@ -147,7 +149,7 @@ class Instance:
         self.home.mkdir(parents=True, exist_ok=True, mode=0o700)
         for channel in KEY_CHANNELS + OAUTH_CHANNELS:
             form = ['--api-key', 'mock-' + channel] if channel in KEY_CHANNELS else ['--oauth']
-            subprocess.run([sys.executable, str(REPO / 'scripts/mock/seed_auth.py'), '--provider', channel, *form], env=self.env, check=True)
+            seed_auth.main(['--home', str(self.home), '--provider', channel, *form])
 
     @staticmethod
     def process_identity(pid):

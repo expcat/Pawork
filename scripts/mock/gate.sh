@@ -1,253 +1,107 @@
 #!/usr/bin/env bash
-#
-# MOCK-8 mock 快速门禁：单入口四级定向验证。
-#
-# 定位：这是 mock 系列的快速定向门禁，不是全量门禁；仓库「当前未设置全量
-# 门禁」的约定不变。任一级失败即非零退出并指明级别。
-#
-#   L0（秒级）docs/ROADMAP.md 与当前改动过的 docs/**/*.md 的
-#      markdown 相对链接存在性抽查 + git diff --check。
-#   L1 单条 cargo 命令带齐 features 跑 pawork-providers 全部测试目标
-#      （口径见 docs/spec/crates/providers.md §7，另加 kimi-code 覆盖其
-#      feature 门控的 lib 测试，如 KimiCodeProvider）；--packages a,b 可
-#      追加写入集定向包，同一条 Cargo 命令执行。
-#   L2（不触外网）fixture 脱敏、OAuth、配置恢复/凭证边界回归；复用 server_smoke.py / server_scenarios_smoke.py
-#      （内部各自以随机空闲端口启动 mock server）；/usage 录制字节及形状
-#      在 server_smoke.py 的录制回放阶段一次验证，不重复启动 server。
-#   L3 真实 Provider 冒烟不入门禁：保持手动触发并单独记录，口径为
-#      docs/spec/verification.md §2.1（opencode-go / glm-5.3-flash）。
-#
-# 用法：
-#   ./scripts/mock/gate.sh
-#   ./scripts/mock/gate.sh --packages pawork-auth,pawork-app
-#   ./scripts/mock/gate.sh --level 0,2
-
-set -u -o pipefail
-
-REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-cd "$REPO_ROOT"
+# mock 定向门禁：文档、所选 Rust 包、本地 Python/HTTP 回归；非全 workspace 门禁。
+set -euo pipefail
+cd "$(dirname "$0")/../.."
 
 usage() {
-  cat <<'USAGE'
-MOCK-8 mock 快速门禁（快速定向门禁，非全量门禁）
+  cat <<'HELP'
+用法：bash scripts/mock/gate.sh [--packages <包名,...>] [--level <0,1,2 的子集>]
 
-用法：
-  ./scripts/mock/gate.sh [--packages <pkg1,pkg2,...>] [--level <0,1,2 的子集>]
-
-级别：
-  L0  文档抽查：docs/ROADMAP.md 与当前改动过的 docs/**/*.md 的
-      markdown 相对链接存在性 + git diff --check（秒级）
-  L1  cargo test -p pawork-providers --offline --tests --features <全套
-      含 kimi-code（覆盖其 feature 门控 lib 测试）>
-      （单条命令、单 Cargo 进程）；--packages 追加 -p <pkg>，去重后一次执行
-      --tests 包含 lib / bin 的单测及集成目标；Desktop 走其 Spec 专用命令
-  L2  mock 回归（不触外网）：capture verify + oauth_selftest + review_selftest
-      + server_smoke.py + server_scenarios_smoke.py
-      （server_smoke 已含录制树 /usage 字节与形状验证）
-  L3  真实 Provider 冒烟不入门禁：保持手动，按 docs/spec/verification.md §2.1
-      （opencode-go / glm-5.3-flash）口径执行并单独记录
-
-退出码：0 全绿；1 用法错误；2 L0 失败；3 L1 失败；4 L2 失败。
-本门禁不改变仓库「当前未设置全量门禁」的约定。
-
---level 只跑指定级别（如 --level 0,2），便于并行开发期 cargo 锁占用时
-排障；默认全跑。未选级别的退出码语义不变。
-USAGE
+L0  ROADMAP 与当前改动 Markdown 的相对链接存在性、git diff --check。
+L1  scripts/test.sh providers <追加包...>；同一次 Cargo 调用补齐 feature。
+L2  fixture 脱敏、OAuth、配置/凭证恢复、测试入口、UI 扫描和 mock HTTP 场景。
+默认运行 L0/L1/L2；Desktop 仍单独用 scripts/test.sh desktop。
+真实 Provider 冒烟按 docs/spec/verification.md §2.1 手动执行，不入本门禁。
+退出码：1 用法错误；2 L0 失败；3 L1 失败；4 L2 失败。
+HELP
 }
 
 extra_csv=""
-run_l0=1
-run_l1=1
-run_l2=1
-
+levels=",0,1,2,"
 parse_levels() {
-  run_l0=0
-  run_l1=0
-  run_l2=0
-  old_ifs="$IFS"
-  IFS=','
-  for item in $1; do
-    item="$(printf '%s' "$item" | tr -d ' \t')"
+  local csv="${1//[[:space:]]/}" item
+  local items=()
+  IFS=',' read -r -a items <<< "$csv"
+  levels=","
+  for item in "${items[@]+"${items[@]}"}"; do
     case "$item" in
-      0) run_l0=1 ;;
-      1) run_l1=1 ;;
-      2) run_l2=1 ;;
+      0|1|2) levels+="$item," ;;
       '') ;;
-      *)
-        echo "gate: 未知级别：""$item""（可用：0,1,2）" >&2
-        IFS="$old_ifs"
-        return 1
-        ;;
+      *) echo "gate: 未知级别：${item}（可用：0,1,2）" >&2; return 1 ;;
     esac
   done
-  IFS="$old_ifs"
-  if [ "$run_l0" -eq 0 ] && [ "$run_l1" -eq 0 ] && [ "$run_l2" -eq 0 ]; then
-    echo "gate: --level 未指定任何有效级别（可用：0,1,2）" >&2
-    return 1
-  fi
+  [ "$levels" != "," ] || { echo 'gate: --level 未指定有效级别' >&2; return 1; }
 }
 
-while [ $# -gt 0 ]; do
+while [ "$#" -gt 0 ]; do
   case "$1" in
-    --packages)
-      shift
-      if [ $# -eq 0 ]; then
-        echo "gate: --packages 需要一个逗号分隔的包列表" >&2
-        exit 1
-      fi
-      if [ -n "$extra_csv" ]; then
-        extra_csv="$extra_csv,$1"
-      else
-        extra_csv="$1"
-      fi
+    --packages|--level)
+      option="$1"
+      [ "$#" -ge 2 ] || { echo "gate: $option 需要参数" >&2; exit 1; }
+      value="$2"
+      shift 2
       ;;
-    --packages=*)
-      value="$(printf '%s' "$1" | cut -d= -f2-)"
-      if [ -n "$extra_csv" ]; then
-        extra_csv="$extra_csv,$value"
-      else
-        extra_csv="$value"
-      fi
-      ;;
-    --level)
-      shift
-      if [ $# -eq 0 ]; then
-        echo "gate: --level 需要一个逗号分隔的级别列表（0,1,2）" >&2
-        exit 1
-      fi
-      parse_levels "$1"
-      if [ $? -ne 0 ]; then
-        exit 1
-      fi
-      ;;
-    --level=*)
-      parse_levels "$(printf '%s' "$1" | cut -d= -f2-)"
-      if [ $? -ne 0 ]; then
-        exit 1
-      fi
-      ;;
-    -h|--help)
-      usage
-      exit 0
-      ;;
-    *)
-      echo "gate: 未知参数：$1" >&2
-      usage >&2
-      exit 1
-      ;;
+    --packages=*|--level=*) option="${1%%=*}"; value="${1#*=}"; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "gate: 未知参数：$1" >&2; usage >&2; exit 1 ;;
   esac
-  shift
+  case "$option" in
+    --packages) extra_csv+="$value," ;;
+    --level) parse_levels "$value" || exit 1 ;;
+  esac
 done
 
-now_ms() { python3 -c 'import time; print(int(round(time.time() * 1000)))'; }
-fmt_s() { awk -v ms="$1" 'BEGIN { printf "%.1fs", ms / 1000 }'; }
-
-l0_ms=0
-l1_ms=0
-l2_ms=0
-
-fail_level() {
-  level="$1"
-  exit_code="$2"
-  echo ""
-  echo "GATE FAIL at L""$level""（分级耗时：$(level_summary)）"
-  exit "$exit_code"
-}
-
-level_summary() {
-  parts=""
-  if [ "$run_l0" -eq 1 ]; then
-    parts="L0 $(fmt_s "$l0_ms")"
-  fi
-  if [ "$run_l1" -eq 1 ]; then
-    if [ -n "$parts" ]; then
-      parts="$parts | "
-    fi
-    parts="$parts""L1 $(fmt_s "$l1_ms")"
-  fi
-  if [ "$run_l2" -eq 1 ]; then
-    if [ -n "$parts" ]; then
-      parts="$parts | "
-    fi
-    parts="$parts""L2 $(fmt_s "$l2_ms")"
-  fi
-  printf '%s' "$parts"
-}
-
 level0() {
-  echo "=== L0 文档链接抽查 + git diff --check ==="
-  target_list="$(mktemp)"
-  printf '%s\n' docs/ROADMAP.md > "$target_list"
-  changed="$(
-    {
-      git diff --name-only HEAD -- docs
-      git ls-files -o --exclude-standard -- ':(glob)docs/**/*.md'
-    } | sort -u | grep '\.md$' || true
-  )"
-  printf '%s\n' "$changed" | while IFS= read -r file; do
-    if [ -n "$file" ] && [ -f "$file" ] && ! grep -Fxq "$file" "$target_list"; then
-      printf '%s\n' "$file" >> "$target_list"
-    fi
-  done
-  python3 - "$target_list" <<'PYLINK'
+  python3 - <<'PY'
 import re
-import sys
+import subprocess
 from pathlib import Path
 
-repo = Path.cwd()
-fence = chr(96) * 3
-link_re = re.compile(r"\[[^\]]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
+files = {"docs/ROADMAP.md"}
+for args in (
+    ["git", "diff", "--name-only", "-z", "HEAD", "--", "*.md"],
+    ["git", "ls-files", "--others", "--exclude-standard", "-z", "--", "*.md"],
+):
+    files.update(subprocess.check_output(args).decode().split("\0"))
+link_re = re.compile(r'\[[^\]]*\]\((<[^>]+>|[^)\s]+)(?:\s+"[^"]*")?\)')
 broken = []
 checked = 0
-listing = Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
-for arg in [line.strip() for line in listing if line.strip()]:
-    md = repo / arg
-    if not md.is_file():
-        broken.append(arg + ": 文件不存在")
+for name in sorted(files):
+    md = Path(name)
+    if not name or not md.is_file():
         continue
     checked += 1
-    in_fence = False
+    fence = None
     for lineno, line in enumerate(md.read_text(encoding="utf-8").splitlines(), 1):
-        if line.lstrip().startswith(fence):
-            in_fence = not in_fence
+        stripped = line.lstrip()
+        if stripped.startswith(("```", "~~~")):
+            marker = stripped[:3]
+            if fence is None:
+                fence = marker
+            elif marker == fence:
+                fence = None
             continue
-        if in_fence:
+        if fence:
             continue
         for target in link_re.findall(line):
-            if target.startswith(("#", "mailto:", "http://", "https://", "data:", "//", "<")):
+            target = target.strip("<>")
+            if target.startswith(("#", "mailto:", "http://", "https://", "data:", "//")):
                 continue
             path = target.split("#", 1)[0]
-            if not path:
-                continue
-            if not (md.parent / path).resolve().exists():
-                broken.append(arg + ":" + str(lineno) + ": " + target)
+            if path and not (md.parent / path).resolve().exists():
+                broken.append(f"{name}:{lineno}: {target}")
 if broken:
-    print("L0 FAIL markdown 相对链接缺失：")
-    for item in broken:
-        print("  " + item)
-    sys.exit(1)
-print("L0 markdown 相对链接 OK（" + str(checked) + " 个文件）")
-PYLINK
-  if [ $? -ne 0 ]; then
-    rm -f "$target_list"
-    return 1
-  fi
-  rm -f "$target_list"
-
-  if ! git diff --check HEAD; then
-    echo "L0 FAIL git diff --check 报告了空白错误"
-    return 1
-  fi
-  echo "L0 git diff --check OK"
+    raise SystemExit("相对链接缺失：\n" + "\n".join(broken))
+print(f"Markdown 相对链接 OK（{checked} 个文件）")
+PY
+  [ "$?" -eq 0 ] || return 1
+  git diff --check HEAD
 }
 
 level1() {
-  local packages
-  local selected=(pawork-providers)
-  local pkg
-  # shared entry owns package validation, deduplication and feature selection.
-  IFS=',' read -r -a packages <<< "pawork-providers,$extra_csv"
-  for pkg in "${packages[@]}"; do
+  local pkg packages=() selected=(providers)
+  IFS=',' read -r -a packages <<< "$extra_csv"
+  for pkg in "${packages[@]+"${packages[@]}"}"; do
     pkg="${pkg//[[:space:]]/}"
     [ -n "$pkg" ] || continue
     case "$pkg" in
@@ -259,72 +113,26 @@ level1() {
 }
 
 level2() {
-  echo "=== L2 fixture 脱敏/形状、OAuth 与配置恢复回归 ==="
+  local script
   python3 scripts/mock/capture.py verify || return 1
-  python3 scripts/mock/oauth_selftest.py || return 1
-  python3 scripts/mock/review_selftest.py || return 1
-  echo "=== L2 server_smoke.py（§2.2 端点形状 + §2.3 usage 形状） ==="
-  python3 scripts/mock/server_smoke.py
-  if [ $? -ne 0 ]; then
-    echo "L2 FAIL server_smoke.py"
-    return 1
-  fi
-
-  echo ""
-  echo "=== L2 server_scenarios_smoke.py（场景库：错误归一 / 截断 / 定速 / 触发） ==="
-  python3 scripts/mock/server_scenarios_smoke.py
-  if [ $? -ne 0 ]; then
-    echo "L2 FAIL server_scenarios_smoke.py"
-    return 1
-  fi
-
+  for script in scripts/mock/oauth_selftest.py scripts/mock/review_selftest.py \
+                scripts/test_ui_fixture_scan.py scripts/mock/server_smoke.py; do
+    echo "Running: $script"
+    python3 "$script" || return 1
+  done
 }
 
-gate_start="$(now_ms)"
-echo "MOCK-8 mock 快速门禁（快速定向门禁，非全量门禁；L3 真实冒烟保持手动）"
-echo "repo: $REPO_ROOT"
-
-if [ "$run_l0" -eq 1 ]; then
-  t="$(now_ms)"
-  level0
-  rc=$?
-  l0_ms=$(( $(now_ms) - t ))
-  if [ "$rc" -ne 0 ]; then
-    fail_level 0 2
+started=$SECONDS
+summary=()
+for level in 0 1 2; do
+  [[ "$levels" == *",$level,"* ]] || continue
+  level_started=$SECONDS
+  if "level$level"; then
+    summary+=("L$level $((SECONDS - level_started))s")
+    echo "L$level PASS ($((SECONDS - level_started))s)"
+  else
+    echo "GATE FAIL L$level ($((SECONDS - level_started))s)" >&2
+    exit "$((level + 2))"
   fi
-  echo "[L0] PASS $(fmt_s "$l0_ms")"
-fi
-
-if [ "$run_l1" -eq 1 ]; then
-  t="$(now_ms)"
-  level1
-  rc=$?
-  l1_ms=$(( $(now_ms) - t ))
-  if [ "$rc" -ne 0 ]; then
-    fail_level 1 3
-  fi
-  echo "[L1] PASS $(fmt_s "$l1_ms")"
-fi
-
-if [ "$run_l2" -eq 1 ]; then
-  t="$(now_ms)"
-  level2
-  rc=$?
-  l2_ms=$(( $(now_ms) - t ))
-  if [ "$rc" -ne 0 ]; then
-    fail_level 2 4
-  fi
-  echo "[L2] PASS $(fmt_s "$l2_ms")"
-fi
-
-total_ms=$(( $(now_ms) - gate_start ))
-echo ""
-if [ "$run_l0" -eq 1 ] && [ "$run_l1" -eq 1 ] && [ "$run_l2" -eq 1 ]; then
-  pass_label="L0/L1/L2 全绿"
-else
-  pass_label="所选级别全绿"
-fi
-echo "GATE PASS（""$pass_label""）总耗时 $(fmt_s "$total_ms")"
-echo "  $(level_summary)"
-echo "L3（不入门禁）：真实 Provider 冒烟保持手动，按 docs/spec/verification.md §2.1（opencode-go / glm-5.3-flash）口径执行并单独记录。"
-exit 0
+done
+printf 'GATE PASS (%ss): %s\n' "$((SECONDS - started))" "${summary[*]}"

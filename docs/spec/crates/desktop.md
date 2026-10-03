@@ -131,7 +131,7 @@ pawork-desktop [--socket <path>] [--instance <name>] [--probe|--probe-smoke]
 - `--probe`：不开窗，connect + snapshot + `model_list` 后打印一行 `connected: instance=… sessions=… models=… catalog=…` 退出（成功 0 / 失败 1）。
 - `--probe-smoke`：同一条 controller 路径跑真实冒烟——流式回合、切模型、写文件触发审批、取消 run、两次断线重连（持久化回放 + `disconnect_survive` 断言进行中 run 未被断线取消），打印签名行退出。
 - 正常模式：1440×1024 居中窗口、最小 1080×720（透明 titlebar，traffic lights 悬浮于壳层，rail 顶部留 36px 安全区），启动即聚焦 Composer。
-- 仓库入口 `scripts/pawork-desktop.sh` 支持 `build|start`：只构建正式 `pawork`/`pawork-desktop`，默认独立 `desktop` 实例，审批与逐项目信任跟随 Global 配置；显式环境参数仅覆盖当次启动；不加载 fixture、seed 或测试 profile。macOS 通过最小 `.app` bundle 执行真实二进制以获得正常窗口/AX 注册。
+- 仓库入口 `scripts/pawork-desktop.sh` 支持 `build|start`：同一次 Cargo 调用构建正式 `pawork`/`pawork-desktop`，经共享 `scripts/cargo-build.sh` 从 artifact 消息定位产物，支持自定义 target 目录；`runtime_shaders` 仅在 macOS 选择。默认独立 `desktop` 实例，审批与逐项目信任跟随 Global 配置；显式环境参数仅覆盖当次启动，非法值在编译前拒绝；不加载 fixture、seed 或测试 profile。macOS 通过最小 `.app` bundle 执行真实二进制以获得正常窗口/AX 注册，内容相同的文件不重复覆盖。
 
 ### 3.2 三栏工作台（100%：侧栏 288 / Inspector 440 / 状态栏高 30；窗口宽 ≤1279 时侧栏 240，Inspector 展开需 ≥1288；150%：侧栏 320、宽度不足 1320 时 Inspector 折叠；Workspace ≥560）
 

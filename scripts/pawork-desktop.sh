@@ -3,9 +3,10 @@
 set -euo pipefail
 
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+source "$repo_dir/scripts/cargo-build.sh"
 runtime_dir="$repo_dir/target/pawork-desktop-runtime"
-pawork_bin="$repo_dir/target/debug/pawork"
-desktop_bin="$repo_dir/target/debug/pawork-desktop"
+pawork_bin=""
+desktop_bin=""
 host_log="$runtime_dir/host.log"
 macos_bundle="$runtime_dir/Pawork.app"
 command_mode="${1:-start}"
@@ -19,12 +20,12 @@ usage() {
 }
 
 build_binaries() {
+  local binaries args=(--offline -p pawork -p pawork-desktop --bins)
   cd "$repo_dir"
-  cargo build --offline \
-    -p pawork \
-    -p pawork-desktop \
-    --bins \
-    --features gpui/runtime_shaders
+  if [[ "$(uname -s)" == Darwin ]]; then args+=(--features gpui/runtime_shaders); fi
+  binaries=$(cargo_build_artifacts pawork,pawork-desktop cargo build "${args[@]}")
+  pawork_bin="${binaries%%$'\n'*}"
+  desktop_bin="${binaries#*$'\n'}"
 }
 
 host_is_running() {
@@ -36,12 +37,16 @@ host_is_running() {
 prepare_macos_bundle() {
   local executable_dir="$macos_bundle/Contents/MacOS"
   mkdir -p "$executable_dir"
-  cp "$repo_dir/apps/desktop/macos/Info.plist" "$macos_bundle/Contents/Info.plist"
+  if ! cmp -s "$repo_dir/apps/desktop/macos/Info.plist" "$macos_bundle/Contents/Info.plist"; then
+    cp "$repo_dir/apps/desktop/macos/Info.plist" "$macos_bundle/Contents/Info.plist"
+  fi
   # 必须复制真实二进制，不能用符号链接：LaunchServices(open) 启动「指向
   # target/debug/pawork-desktop 的 symlink」时，新构建二进制的进程会永久卡死
   # 在 dyld 的 getOnDiskBinarySliceOffset -> open()（2026-09-05 实测：
   # symlink bundle 三次启动全部卡死，真实文件 bundle 同二进制正常启动）。
-  cp -f "$desktop_bin" "$executable_dir/Pawork"
+  if ! cmp -s "$desktop_bin" "$executable_dir/Pawork"; then
+    cp -f "$desktop_bin" "$executable_dir/Pawork"
+  fi
 }
 
 case "$command_mode" in
@@ -63,9 +68,6 @@ case "$command_mode" in
     ;;
 esac
 
-build_binaries
-mkdir -p "$runtime_dir"
-
 case "$approval_mode" in
   ""|always-ask|ask-for-writes|ask-for-dangerous|never-ask|read-only)
     ;;
@@ -74,6 +76,13 @@ case "$approval_mode" in
     exit 2
     ;;
 esac
+case "$trust_workspaces" in
+  0|1) ;;
+  *) printf 'PAWORK_DESKTOP_TRUST_WORKSPACES must be 0 or 1.\n' >&2; exit 2 ;;
+esac
+
+build_binaries
+mkdir -p "$runtime_dir"
 
 host_was_started=0
 host_process_id=""
@@ -95,9 +104,6 @@ else
   host_args=(--instance "$instance_name")
   if [[ "$trust_workspaces" == "1" ]]; then
     host_args+=(--trust-workspaces)
-  elif [[ "$trust_workspaces" != "0" ]]; then
-    printf 'PAWORK_DESKTOP_TRUST_WORKSPACES must be 0 or 1.\n' >&2
-    exit 2
   fi
   if [[ -n "$approval_mode" ]]; then
     host_args+=(--approval-mode "$approval_mode")

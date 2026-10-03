@@ -324,6 +324,8 @@ WorkspaceList 与 snapshot Workspaces 段均按每个目标 workspace roots 调�
 
 ## 7. 测试与验证资产
 
+2026-10-03 UI fixture 构建入口精简：`scripts/ui-fixture.sh` 复用 `scripts/cargo-build.sh` 的本次 artifact 定位，保留隔离 root、marker 与 barrier 拒绝边界；过长 socket 路径在编译前失败且正确报告中文错误。example CLI 与 seed 数据格式不变，构建和入口回归的证据边界见 [验证规格](../verification.md#41-按用途选择入口)。
+
 网关回归：`cargo test -p pawork-app --offline --lib gateway_`。`gateway_tests.rs` 集成宿主测试以真实 loopback HTTP + wiremock 验证模型路由、两种响应、usage/strict、鉴权撤销与 Host/Origin 拒绝；其中 Go 路径同时断言普通 / SSE 请求的上游会话头存在且互不相同，session ID 不进入 JSON 正文；生图路径验证普通 JSON 的 `output.choices` 归一、非流式上游请求和 HTTP 200 错误正文拒绝 / 脱敏。阻塞 provider 验证流式超时错误、断开取消和部分记账。原生视频回归验证一次异步提交、查询 / 失败码脱敏、固定参数及无效请求拒绝。独立 gateway 包的 `tokens` 测试验证多客户端、摘要存储、权限与撤销。测试不访问真实模型。
 
 

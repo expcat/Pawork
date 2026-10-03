@@ -15,12 +15,13 @@
 #   PAWORK_UI_BARRIER_TIMEOUT_SECS drop-socket/self-check 等 barrier 超时（默认 120）
 #   PAWORK_UI_DESKTOP_BIN          仅覆盖 desktop 启动的已构建可执行文件；必须是
 #                                  默认 build 产物或仓库外、名为 pawork-desktop 的
-#                                  绝对路径。未设置时仍
-#                                  build/启动 target/debug/pawork-desktop。
+#                                  绝对路径。未设置时按本次 Cargo artifact
+#                                  定位并启动 Desktop。
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+source "$SCRIPT_DIR/cargo-build.sh"
 DEFAULT_SCAN_TARGET="$REPO_ROOT/fixtures/ui"
 SERVE_TIMEOUT_SECS="${PAWORK_UI_SERVE_TIMEOUT_SECS:-300}"
 BARRIER_TIMEOUT_SECS="${PAWORK_UI_BARRIER_TIMEOUT_SECS:-120}"
@@ -35,7 +36,7 @@ if [[ -n "${CARGO_TARGET_DIR:-}" ]]; then
 else
   TARGET_DIR="$REPO_ROOT/target"
 fi
-UI_FIXTURE_BIN="$TARGET_DIR/debug/examples/ui_fixture"
+UI_FIXTURE_BIN=""
 DEFAULT_DESKTOP_BIN="$TARGET_DIR/debug/pawork-desktop"
 DESKTOP_BIN="$DEFAULT_DESKTOP_BIN"
 if [[ -n "${PAWORK_UI_DESKTOP_BIN:-}" ]]; then
@@ -145,7 +146,7 @@ PY
 
 require_socket_path() {
   python3 - "$ROOT" <<'PY' || \
-    die "fixture Unix socket 路径校验失败：$ROOT（请改用 /tmp 下的短 root）"
+    die "fixture Unix socket 路径校验失败：${ROOT}（请改用 /tmp 下的短 root）"
 import os
 import sys
 from pathlib import Path
@@ -213,53 +214,16 @@ seeded_root_dirs() {
   mkdir -p "$ROOT/logs" "$ROOT/barriers"
 }
 
-# 用 cargo 的 artifact 消息定位本次构建出的可执行文件：cargo config 的
-# target-dir / build.target（交叉编译 triple 目录）都不会让 fixture 误测
-# 路径上的旧产物。
-cargo_build_artifact() { # $1=目标名；$2...=cargo build 其余参数
-  local name="$1" build_log exe
-  shift
-  build_log=$(mktemp)
-  if ! (cd "$REPO_ROOT" && cargo build --offline --message-format=json "$@") \
-      > "$build_log"; then
-    cat "$build_log" >&2 || true
-    rm -f "$build_log"
-    die "cargo build $name 失败"
-  fi
-  exe=$(python3 - "$build_log" "$name" <<'PY'
-import json
-import sys
-
-exe = ""
-for line in open(sys.argv[1], encoding="utf-8"):
-    try:
-        msg = json.loads(line)
-    except ValueError:
-        continue
-    target = msg.get("target", {})
-    if (
-        msg.get("reason") == "compiler-artifact"
-        and target.get("name") == sys.argv[2]
-        and msg.get("executable")
-    ):
-        exe = msg["executable"]
-print(exe)
-PY
-)
-  rm -f "$build_log"
-  [[ -n "$exe" && -x "$exe" ]] || die "未能定位本次构建的 $name 可执行文件"
-  printf '%s\n' "$exe"
-}
-
 build_ui_fixture() {
-  UI_FIXTURE_BIN=$(cargo_build_artifact ui_fixture \
+  UI_FIXTURE_BIN=$(cd "$REPO_ROOT" && cargo_build_artifacts ui_fixture cargo build --offline \
     -p pawork-app --features ui-fixture --example ui_fixture)
 }
 
 build_desktop() {
   if [[ -z "${PAWORK_UI_DESKTOP_BIN:-}" ]]; then
-    DESKTOP_BIN=$(cargo_build_artifact pawork-desktop \
-      -p pawork-desktop --features gpui/runtime_shaders --bin pawork-desktop)
+    local args=(--offline -p pawork-desktop --bin pawork-desktop)
+    if [[ "$(uname -s)" == Darwin ]]; then args+=(--features gpui/runtime_shaders); fi
+    DESKTOP_BIN=$(cd "$REPO_ROOT" && cargo_build_artifacts pawork-desktop cargo build "${args[@]}")
   fi
   [[ -x "$DESKTOP_BIN" ]] || die "找不到已构建的 pawork-desktop：$DESKTOP_BIN"
 }

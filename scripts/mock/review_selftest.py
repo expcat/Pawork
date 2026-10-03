@@ -40,7 +40,8 @@ class ReviewRegression(unittest.TestCase):
         self.config.write_bytes(self.original)
         self.config.chmod(0o640)
         self.environ = patch.dict(os.environ, {'PAWORK_MOCK_STATE_DIR': str(self.root / 'state'),
-            'PAWORK_MOCK_GLOBAL_CONFIG': str(self.config), 'PAWORK_BIN': str(self.host), 'MOCK_PORT': str(self.port)})
+            'PAWORK_MOCK_GLOBAL_CONFIG': str(self.config), 'PAWORK_BIN': str(self.host),
+            'PAWORK_HOME': str(self.root / 'unrelated-home'), 'MOCK_PORT': str(self.port)})
         self.environ.start()
         self.instance = run_instance.Instance()
         # 只替换测试 Host 的启动方式，仍创建真实进程/socket 并经过 Instance.spawn。
@@ -69,6 +70,12 @@ class ReviewRegression(unittest.TestCase):
         with self.instance.locked():
             self.instance.start()
             first = self.instance.process('host')
+            auth_path = self.instance.home / 'auth.json'
+            entries = json.loads(auth_path.read_text())['entries']
+            self.assertEqual(auth_path.stat().st_mode & 0o777, 0o600)
+            self.assertTrue(all('pawork.' + channel in entries
+                                for channel in run_instance.KEY_CHANNELS + run_instance.OAUTH_CHANNELS))
+            self.assertFalse((self.root / 'unrelated-home').exists())
             self.instance.start()
             self.assertEqual(first, self.instance.process('host'))
             self.assertEqual(self.config.read_bytes().count(b'[oauth.xai]'), 1)
@@ -158,6 +165,10 @@ class ReviewRegression(unittest.TestCase):
         self.assertIsNone(server.find_fixture(fixture_root, 'deepseek', 'chat', '', 'leak.sse'))
         sanitized = capture.scrub_json(b'{"workspace_id":123,"account":{"id":"private"}}')
         self.assertEqual(json.loads(sanitized), {'workspace_id': '[REDACTED]', 'account': '[REDACTED]'})
+        usage = server.build_usage_payload()
+        self.assertEqual(capture.check_usage(usage), [])
+        usage['usage']['rolling']['resetsAt'] = '1969-12-31T23:59:59.999Z'
+        self.assertIn('rolling.resetsAt must not precede 1970', capture.check_usage(usage))
         synthetic_key = 'sk-' + 'x' * 24
         self.assertNotIn(synthetic_key, str(capture.check_sanitized('example', synthetic_key.encode(), [])))
         hits = []
@@ -239,7 +250,7 @@ class TestEntryRegression(unittest.TestCase):
     def test_dispatch_rejects_options_and_propagates_cargo_failure(self):
         repo = Path(__file__).resolve().parents[2]
         # Only replace Cargo: execute the real Bash entries and their argument parsing.
-        with tempfile.TemporaryDirectory(prefix='pawork-entry-') as directory:
+        with tempfile.TemporaryDirectory(prefix='pawork-entry-', dir='/tmp') as directory:
             log = Path(directory) / 'commands'
             cargo = Path(directory) / 'cargo'
             exe_dir = Path(directory) / 'exe dir'
@@ -247,9 +258,16 @@ class TestEntryRegression(unittest.TestCase):
 printf "%s\n" "$*" >> "$COMMAND_LOG"
 if [ -n "${PAWORK_BIN:-}" ]; then printf "PAWORK_BIN=%s\n" "$PAWORK_BIN" >> "$COMMAND_LOG"; fi
 if [ "$1" = "build" ] && [ "${FAKE_STATUS:-0}" = "0" ]; then
-  mkdir -p "$FAKE_EXE_DIR"; exe="$FAKE_EXE_DIR/pawork"
-  printf '#!/bin/bash\nexit 0\n' > "$exe"; chmod +x "$exe"
-  printf '{"reason":"compiler-artifact","target":{"name":"pawork","kind":["bin"]},"executable":"%s"}\n' "$exe"
+  mkdir -p "$FAKE_EXE_DIR"
+  if [ "${FAKE_MISSING_ARTIFACT:-0}" != "1" ]; then
+    for name in pawork pawork-desktop ui_fixture; do
+      exe="$FAKE_EXE_DIR/$name"; kind=bin
+      [ "$name" != ui_fixture ] || kind=example
+      printf '#!/bin/bash\nexit 0\n' > "$exe"; chmod +x "$exe"
+      printf '{"reason":"compiler-artifact","target":{"name":"%s","kind":["%s"]},"executable":"%s"}\n' "$name" "$kind" "$exe"
+    done
+    printf '{"reason":"compiler-artifact","target":{"name":"pawork","kind":["bin"]},"profile":{"test":true},"executable":"%s/pawork-desktop"}\n' "$FAKE_EXE_DIR"
+  fi
 fi
 exit "${FAKE_STATUS:-0}"
 """
@@ -286,9 +304,30 @@ exit "${FAKE_STATUS:-0}"
             self.assertIn('--features spawn-e2e --test spawn_e2e', lines[1])
             self.assertEqual(lines[2], 'PAWORK_BIN=' + str(exe_dir / 'pawork'))
             self.assertEqual(run('scripts/test.sh', ['--print', 'client'], 0), [])
+            self.assertEqual(run('scripts/test.sh', ['--print', '--host'], 0), [])
+            self.assertEqual(run('scripts/test.sh',
+                ['--host', '--log', str(Path(directory) / 'missing-parent/log')], 1), [])
+            lines = run('scripts/pawork-desktop.sh', ['build'], 0)
+            self.assertEqual(len(lines), 1)
+            self.assertIn('-p pawork -p pawork-desktop --bins', lines[0])
+            self.assertIn('--message-format=json', lines[0])
+            lines = run('scripts/ui-fixture.sh', ['seed', '--root', str(Path(directory) / 'fixture')], 0)
+            self.assertEqual(len(lines), 1)
+            self.assertIn('--example ui_fixture', lines[0])
+            self.assertEqual(run('scripts/ui-fixture.sh',
+                ['seed', '--root', str(Path(directory) / ('long-' + 'x' * 100))], 1), [])
+            env['PAWORK_DESKTOP_TRUST_WORKSPACES'] = 'invalid'
+            self.assertEqual(run('scripts/pawork-desktop.sh', ['start'], 2), [])
+            del env['PAWORK_DESKTOP_TRUST_WORKSPACES']
+            env['FAKE_MISSING_ARTIFACT'] = '1'
+            self.assertEqual(len(run('scripts/test.sh', ['--host'], 1)), 1)
+            del env['FAKE_MISSING_ARTIFACT']
             env['FAKE_STATUS'] = '17'
             lines = run('scripts/test.sh', ['--host'], 17)
             self.assertEqual(len(lines), 1, 'failed build must not execute host tests')
+            self.assertEqual(len(run('scripts/pawork-desktop.sh', ['build'], 17)), 1)
+            self.assertEqual(len(run('scripts/ui-fixture.sh',
+                ['seed', '--root', str(Path(directory) / 'fixture')], 17)), 1)
             lines = run('scripts/mock/gate.sh',
                         ['--level', '1', '--packages=providers,policy,pawork-policy'], 3)
             self.assertEqual(len(lines), 1)

@@ -4,13 +4,11 @@
 三阶段：
   1) fixtures-root=fixtures/mock/synthetic —— fixture 命中优先、定速回放、
      /usage 合法形状 + 故意畸形变体（?fixture= 显式指定）；
-  2) fixtures-root=空目录 —— 全 persona 目录端点与三种 transport SSE 兜底；
+  2) fixtures-root=空目录 —— 全 persona 目录端点、三种 transport SSE 兜底与媒体任务；
   3) fixtures-root=fixtures/mock —— 默认录制树命名约定回归（chat_text.sse /
-     chat_tool.sse / usage.json 字节级命中；不依赖尚未录制的通道文件）。
+     chat_tool.sse / usage.json 字节级命中），并在同一服务验证错误、截断、定速与场景触发。
 
-/usage 红线校验（三窗独立 / percent 整数 / ok 0-99 / rate-limited 100 /
-resetsAt 严格 24 字符真实日历）在本地复刻 channels/api_key.rs 的
-parse_go_window / parse_go_reset 语义，用形状比对断言，不跑 pawork。
+/usage 形状复用 capture.check_usage；HTTP 自测不替代 Pawork 的真实解析回归。
 """
 
 from __future__ import annotations
@@ -28,9 +26,14 @@ from urllib import request as urlrequest
 from urllib.error import HTTPError
 from urllib.parse import urlencode
 
+from capture import check_usage
+
 REPO = Path(__file__).resolve().parents[2]
 SERVER = REPO / "scripts" / "mock" / "server.py"
-SYNTHETIC = REPO / "fixtures" / "mock" / "synthetic"
+FIXTURES = REPO / "fixtures" / "mock"
+SYNTHETIC = FIXTURES / "synthetic"
+MANIFEST = FIXTURES / "scenarios" / "manifest.json"
+FIXDATE_RE = re.compile(r"^[A-Z][a-z]{2}, \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT$")
 
 RESULTS = []
 
@@ -99,61 +102,6 @@ def parse_sse_json(body):
     return events, [json.loads(event) for event in events[:-1]]
 
 
-# --- /usage 红线校验（复刻 channels/api_key.rs 语义） -------------------------
-
-
-def valid_go_reset(value):
-    if not isinstance(value, str) or len(value) != 24:
-        return False
-    separators = {4: "-", 7: "-", 10: "T", 13: ":", 16: ":", 19: ".", 23: "Z"}
-    for position, expected in separators.items():
-        if value[position] != expected:
-            return False
-    spans = {(0, 4), (5, 7), (8, 10), (11, 13), (14, 16), (17, 19), (20, 23)}
-    numbers = {}
-    for start, end in spans:
-        digits = value[start:end]
-        if not digits.isdigit():
-            return False
-        numbers[(start, end)] = int(digits)
-    year = numbers[(0, 4)]
-    month = numbers[(5, 7)]
-    day = numbers[(8, 10)]
-    hour = numbers[(11, 13)]
-    minute = numbers[(14, 16)]
-    second = numbers[(17, 19)]
-    if year < 1970 or not 1 <= month <= 12:
-        return False
-    if hour > 23 or minute > 59 or second > 59:
-        return False
-    leap = year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
-    month_days = [31, 29 if leap else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    return 1 <= day <= month_days[month - 1]
-
-
-def valid_go_window(window):
-    if not isinstance(window, dict):
-        return False
-    percent = window.get("percent")
-    if isinstance(percent, bool) or not isinstance(percent, int) or not 0 <= percent <= 100:
-        return False
-    status = window.get("status")
-    if status == "ok" and percent > 99:
-        return False
-    if status == "rate-limited" and percent != 100:
-        return False
-    if status not in {"ok", "rate-limited"}:
-        return False
-    return valid_go_reset(window.get("resetsAt"))
-
-
-def valid_go_usage(payload):
-    usage = payload.get("usage") if isinstance(payload, dict) else None
-    if not isinstance(usage, dict):
-        return False
-    return all(valid_go_window(usage.get(name)) for name in ("rolling", "weekly", "monthly"))
-
-
 # --- 阶段 1：fixture 优先 + /usage 合法与畸形 ---------------------------------
 
 
@@ -202,7 +150,7 @@ def phase_fixture_precedence():
         monthly = payload.get("usage", {}).get("monthly", {})
         check(
             "usage fixture: three-window shape satisfies §2.3 red lines",
-            status == 200 and valid_go_usage(payload),
+            status == 200 and not check_usage(payload),
             f"status={status} payload={payload}",
         )
         check(
@@ -218,7 +166,7 @@ def phase_fixture_precedence():
         payload = json.loads(body)
         check(
             "usage malformed variant rejected by §2.3 shape check (ok with 100)",
-            status == 200 and not valid_go_usage(payload),
+            status == 200 and bool(check_usage(payload)),
             f"status={status} payload={payload}",
         )
 
@@ -229,7 +177,7 @@ def phase_fixture_precedence():
         payload = json.loads(body)
         check(
             "usage malformed variant rejected by §2.3 shape check (Feb 30)",
-            status == 200 and not valid_go_usage(payload),
+            status == 200 and bool(check_usage(payload)),
             f"status={status} payload={payload}",
         )
     finally:
@@ -308,7 +256,7 @@ def phase_fallback_shapes():
             payload = json.loads(body)
             check(
                 "usage fallback: dynamic three-window payload satisfies §2.3",
-                status == 200 and valid_go_usage(payload),
+                status == 200 and not check_usage(payload),
                 f"status={status} payload={payload}",
             )
             status, _, _, _ = http("GET", base, "/usage", token="mock-deepseek")
@@ -422,13 +370,14 @@ def phase_fallback_shapes():
             check("missing persona token is rejected 401", status == 401, f"status={status}")
             status, _, _, _ = http("GET", base, "/models", token="mock-unknown")
             check("unknown persona token is rejected 401", status == 401, f"status={status}")
+            phase_media_tasks(base)
         finally:
             stop_server(proc)
 
 
 def phase_recorded_tree():
-    recorded = REPO / "fixtures" / "mock"
-    proc, base = start_server(recorded)
+    recorded = FIXTURES
+    proc, base = start_server(recorded, extra=("--chunk-bytes", "64"))
     try:
         cases = [
             (
@@ -463,7 +412,7 @@ def phase_recorded_tree():
             status, _, body, _ = http(method, base, path, token=token, payload=payload)
             expected = fixture.read_bytes()
             if name.endswith("usage.json bytes"):
-                same = body == expected and valid_go_usage(json.loads(body))
+                same = body == expected and not check_usage(json.loads(body))
             else:
                 # 流式回放 id 逐响应唯一化（-m<salt> 后缀），归一后应与录制字节一致。
                 same = normalize_stream_ids(body) == normalize_stream_ids(expected)
@@ -471,6 +420,7 @@ def phase_recorded_tree():
                   f"status={status} body[:80]={body[:80]!r} expected[:80]={expected[:80]!r}")
 
         phase_tool_loop(base)
+        phase_scenarios(base)
     finally:
         stop_server(proc)
 
@@ -613,53 +563,437 @@ def phase_tool_loop(base):
           f"status={status}")
 
 
-def phase_media_tasks():
-    with tempfile.TemporaryDirectory() as root:
-        proc, base = start_server(Path(root))
-        try:
-            status, _, body, _ = http("GET", base, "/compatible-mode/v1/models", token="mock-qwen-token-plan")
-            check("Qwen compatible catalogue advertises image generation", status == 200 and "wan2.7-image" in [m["id"] for m in json.loads(body)["data"]])
-            image_request = {"model": "wan2.7-image", "stream": False, "messages": [{"role": "user", "content": [{"type": "text", "text": "a paper boat"}]}]}
-            status, headers, body, _ = http("POST", base, "/compatible-mode/v1/chat/completions", token="mock-qwen-token-plan", payload=image_request)
-            check("Qwen image request returns JSON output.choices", status == 200 and headers.get("Content-Type") == "application/json" and json.loads(body)["output"]["finished"])
-            status, _, image, _ = http("GET", base, "/__media/image.png")
-            valid_png = image.startswith(b"\x89PNG\r\n\x1a\n")
-            offset = 8
-            chunks = {}
-            while valid_png and offset < len(image):
-                length = int.from_bytes(image[offset:offset + 4], "big")
-                end = offset + 12 + length
-                chunk = image[offset + 4:offset + 8 + length]
-                valid_png = end <= len(image) and zlib.crc32(chunk) == int.from_bytes(image[end - 4:end], "big")
-                chunks[chunk[:4]] = chunk[4:]
-                offset = end
-            try:
-                valid_png = (
-                    valid_png
-                    and offset == len(image)
-                    and struct.unpack("!II", chunks[b"IHDR"][:8]) == (1, 1)
-                    and len(zlib.decompress(chunks[b"IDAT"])) == 5
-                    and b"IEND" in chunks
-                )
-            except (KeyError, struct.error, zlib.error):
-                valid_png = False
-            check("image output downloads as valid PNG pixels", status == 200 and valid_png)
-            submit = {"model": "happyhorse-1.1-t2v", "input": {"prompt": "a paper boat"}, "parameters": {"resolution": "720P", "ratio": "16:9", "duration": 5}}
-            endpoint = "/api/v1/services/aigc/video-generation/video-synthesis"
-            status, _, _, _ = http("POST", base, endpoint, token="mock-qwen-token-plan", payload=submit)
-            check("native video requires async header", status == 400)
-            for failed in (False, True):
-                submit["input"]["prompt"] = "MOCK:VIDEO_FAILED" if failed else "a paper boat"
-                status, _, body, _ = http("POST", base, endpoint, token="mock-qwen-token-plan", payload=submit, extra_headers={"X-DashScope-Async": "enable"})
-                task = json.loads(body)["output"]
-                check("video submits PENDING", status == 200 and task["task_status"] == "PENDING")
-                for expected in ("RUNNING", "FAILED" if failed else "SUCCEEDED"):
-                    status, _, body, _ = http("GET", base, "/api/v1/tasks/" + task["task_id"], token="mock-qwen-token-plan")
-                    check("video progresses " + expected, status == 200 and json.loads(body)["output"]["task_status"] == expected)
-                status, _, _, _ = http("GET", base, "/api/v1/tasks/" + task["task_id"], token="qwen-token-plan")
-                check("different video account cannot query task", status == 404)
-        finally:
-            stop_server(proc)
+def phase_media_tasks(base):
+    status, _, body, _ = http("GET", base, "/compatible-mode/v1/models", token="mock-qwen-token-plan")
+    check("Qwen compatible catalogue advertises image generation", status == 200 and "wan2.7-image" in [m["id"] for m in json.loads(body)["data"]])
+    image_request = {"model": "wan2.7-image", "stream": False, "messages": [{"role": "user", "content": [{"type": "text", "text": "a paper boat"}]}]}
+    status, headers, body, _ = http("POST", base, "/compatible-mode/v1/chat/completions", token="mock-qwen-token-plan", payload=image_request)
+    check("Qwen image request returns JSON output.choices", status == 200 and headers.get("Content-Type") == "application/json" and json.loads(body)["output"]["finished"])
+    status, _, image, _ = http("GET", base, "/__media/image.png")
+    valid_png = image.startswith(b"\x89PNG\r\n\x1a\n")
+    offset = 8
+    chunks = {}
+    while valid_png and offset < len(image):
+        length = int.from_bytes(image[offset:offset + 4], "big")
+        end = offset + 12 + length
+        chunk = image[offset + 4:offset + 8 + length]
+        valid_png = end <= len(image) and zlib.crc32(chunk) == int.from_bytes(image[end - 4:end], "big")
+        chunks[chunk[:4]] = chunk[4:]
+        offset = end
+    try:
+        valid_png = (
+            valid_png
+            and offset == len(image)
+            and struct.unpack("!II", chunks[b"IHDR"][:8]) == (1, 1)
+            and len(zlib.decompress(chunks[b"IDAT"])) == 5
+            and b"IEND" in chunks
+        )
+    except (KeyError, struct.error, zlib.error):
+        valid_png = False
+    check("image output downloads as valid PNG pixels", status == 200 and valid_png)
+    submit = {"model": "happyhorse-1.1-t2v", "input": {"prompt": "a paper boat"}, "parameters": {"resolution": "720P", "ratio": "16:9", "duration": 5}}
+    endpoint = "/api/v1/services/aigc/video-generation/video-synthesis"
+    status, _, _, _ = http("POST", base, endpoint, token="mock-qwen-token-plan", payload=submit)
+    check("native video requires async header", status == 400)
+    for failed in (False, True):
+        submit["input"]["prompt"] = "MOCK:VIDEO_FAILED" if failed else "a paper boat"
+        status, _, body, _ = http("POST", base, endpoint, token="mock-qwen-token-plan", payload=submit, extra_headers={"X-DashScope-Async": "enable"})
+        task = json.loads(body)["output"]
+        check("video submits PENDING", status == 200 and task["task_status"] == "PENDING")
+        for expected in ("RUNNING", "FAILED" if failed else "SUCCEEDED"):
+            status, _, body, _ = http("GET", base, "/api/v1/tasks/" + task["task_id"], token="mock-qwen-token-plan")
+            check("video progresses " + expected, status == 200 and json.loads(body)["output"]["task_status"] == expected)
+        status, _, _, _ = http("GET", base, "/api/v1/tasks/" + task["task_id"], token="qwen-token-plan")
+        check("different video account cannot query task", status == 404)
+
+
+# --- 阶段 3 附加：同一录制树服务上的错误、截断、定速与触发回归 ------------
+
+def chat_body(model, text):
+    return {"model": model, "stream": True, "messages": [{"role": "user", "content": text}]}
+
+
+def responses_body(model, text):
+    return {"model": model, "stream": True, "store": False, "input": text}
+
+
+def messages_body(text):
+    return {
+        "model": "claude-sonnet-4.6",
+        "stream": True,
+        "messages": [
+            {"role": "user", "content": [{"type": "text", "text": text}]}
+        ],
+    }
+
+
+def sse_events(body):
+    return [json.loads(event) for event in sse_data_events(body) if event != "[DONE]"]
+
+
+def control(base_url, payload=None, method="POST"):
+    data = None if payload is None else json.dumps(payload)
+    req = urlrequest.Request(
+        base_url + "/__control",
+        data=data.encode("utf-8") if data is not None else None,
+        headers={"Content-Type": "application/json"} if data is not None else {},
+        method=method,
+    )
+    try:
+        with urlrequest.urlopen(req, timeout=15) as resp:
+            status, raw = resp.status, resp.read()
+    except HTTPError as error:
+        status, raw = error.code, error.read()
+    return status, json.loads(raw)
+
+
+def phase_manifest(scenarios):
+    names = [item["name"] for item in scenarios]
+    check(
+        "manifest: scenario names unique",
+        len(names) == len(set(names)),
+        f"duplicates={sorted({n for n in names if names.count(n) > 1})}",
+    )
+    http_scenarios = [item for item in scenarios if item["kind"] == "http_error"]
+    expected_codes = {400, 401, 402, 403, 404, 408, 413, 429, 451, 500, 502, 503, 504}
+    check(
+        "manifest: http_error covers the full §2.5 status table",
+        {item["status"] for item in http_scenarios} == expected_codes and len(http_scenarios) == 14,
+        f"statuses={sorted(item['status'] for item in http_scenarios)}",
+    )
+    retry_forms = [item.get("retry_after") for item in http_scenarios if item["status"] == 429]
+    check(
+        "manifest: 429 has seconds and IMF-fixdate Retry-After variants",
+        len(retry_forms) == 2
+        and any(str(v).isdigit() for v in retry_forms)
+        and any(FIXDATE_RE.match(str(v)) for v in retry_forms),
+        f"retry_forms={retry_forms}",
+    )
+    missing = [
+        item["fixture"]
+        for item in scenarios
+        if item["kind"] == "sse"
+        and (not item.get("transports") or not (FIXTURES / "scenarios" / item["fixture"]).is_file())
+    ]
+    check("manifest: sse scenarios carry transports and fixture files", not missing, f"missing={missing}")
+
+
+def phase_http_table(url, scenarios):
+    http_scenarios = [item for item in scenarios if item["kind"] == "http_error"]
+    for item in http_scenarios:
+        name = item["name"]
+        status, headers, body, _ = http(
+            "POST", url, "/chat/completions", token="mock-glm-coding",
+            payload=chat_body("glm-5.2", f"please run MOCK:{name.upper()} now"),
+        )
+        retry = headers.get("Retry-After")
+        expected_retry = str(item["retry_after"]) if item.get("retry_after") else None
+        ok = status == item["status"] and retry == expected_retry
+        check(
+            f"http table: keyword MOCK:{name.upper()} -> {item['status']}"
+            + (f" Retry-After={expected_retry}" if expected_retry else ""),
+            ok,
+            f"status={status} retry={retry!r} expected={item['status']}/{expected_retry!r} body={body[:80]!r}",
+        )
+
+
+def phase_orthogonality(url):
+    status, headers, _, _ = http(
+        "POST", url, "/responses", token="mock-chatgpt",
+        payload=responses_body("gpt-5.6-terra", "MOCK:HTTP_402 via input string"),
+    )
+    check("orthogonality: chatgpt /responses keyword -> 402", status == 402, f"status={status}")
+
+    status, _, _, _ = http(
+        "POST", url, "/v1/messages", api_key="mock-anthropic",
+        payload=messages_body("MOCK:HTTP_451 inside content blocks"),
+    )
+    check("orthogonality: anthropic /v1/messages keyword -> 451", status == 451, f"status={status}")
+
+    status, headers, _, _ = http(
+        "POST", url, "/chat/completions", token="mock-xai",
+        payload=chat_body("grok-3", "MOCK:RATE_LIMIT on chat channel"),
+    )
+    check(
+        "orthogonality: xai grok-3 chat keyword -> 429 + Retry-After 30",
+        status == 429 and headers.get("Retry-After") == "30",
+        f"status={status} retry={headers.get('Retry-After')!r}",
+    )
+
+    status, headers, _, _ = http(
+        "POST", url, "/responses", token="mock-opencode-go",
+        payload={
+            "model": "grok-4.6",
+            "stream": True,
+            "input": [{"type": "message", "content": [{"type": "input_text", "text": "MOCK:RATE_LIMIT_DATE"}]}],
+        },
+    )
+    check(
+        "orthogonality: opencode-go /responses input array -> 429 + fixdate",
+        status == 429 and FIXDATE_RE.match(headers.get("Retry-After") or "") is not None,
+        f"status={status} retry={headers.get('Retry-After')!r}",
+    )
+
+    control(url, {"scenario": "rate_limit"})
+    status, _, _, _ = http("GET", url, "/models", token="mock-glm-coding")
+    check("orthogonality: global scenario drives GET /models (no body)", status == 429, f"status={status}")
+    status, _, _, _ = http("GET", url, "/usage", token="mock-opencode-go")
+    check("orthogonality: global scenario drives GET /usage", status == 429, f"status={status}")
+    control(url, {"scenario": None})
+    status, _, _, _ = http("GET", url, "/models", token="mock-glm-coding")
+    check("orthogonality: reset restores GET /models", status == 200, f"status={status}")
+
+
+def phase_responses_needles(url):
+    cases = [
+        (
+            "responses needle: chatgpt error event carries usage+limit",
+            "mock-chatgpt",
+            "gpt-5.6-terra",
+            "MOCK:RESPONSES_ERROR_CHATGPT_QUOTA",
+            "error",
+            "usage",
+        ),
+        (
+            "responses needle: xai response.failed carries insufficient_quota",
+            "mock-xai",
+            "grok-4",
+            "MOCK:RESPONSES_ERROR_XAI_QUOTA",
+            "response.failed",
+            "insufficient_quota",
+        ),
+        (
+            "responses needle: opencode-go response.failed message passes through",
+            "mock-opencode-go",
+            "grok-4.6",
+            "MOCK:RESPONSES_ERROR_GO_QUOTA",
+            "response.failed",
+            "opencode-go responses quota",
+        ),
+    ]
+    for name, token, model, keyword, event_type, needle in cases:
+        status, _, body, _ = http(
+            "POST", url, "/responses", token=token,
+            payload=responses_body(model, f"{keyword} please"),
+        )
+        events = sse_events(body)
+        hit = next(
+            (
+                event
+                for event in events
+                if event.get("type") == event_type
+                and needle in json.dumps(event, ensure_ascii=False)
+            ),
+            None,
+        )
+        ok = status == 200 and hit is not None
+        if ok and event_type == "response.failed":
+            ok = needle in hit.get("response", {}).get("error", {}).get("message", "")
+        elif ok:
+            ok = needle in hit.get("message", "")
+        check(name, ok, f"status={status} events={events}")
+
+    for channel in ("mock-glm-coding", "mock-qwen-token-plan"):
+        status, _, body, _ = http(
+            "POST", url, "/responses", token=channel,
+            payload=responses_body("glm-5.2", "MOCK:RESPONSES_ERROR_CHATGPT_QUOTA"),
+        )
+        check(
+            f"responses needle: {channel[5:]} has no /responses wire path (404, no copy events)",
+            status == 404 and b"insufficient" not in body and b"usage limit" not in body,
+            f"status={status} body={body[:80]!r}",
+        )
+
+
+def phase_truncation(url):
+    status, _, body, _ = http(
+        "POST", url, "/chat/completions", token="mock-glm-coding",
+        payload=chat_body("glm-5.2", "MOCK:TRUNCATED_CHAT"),
+    )
+    text = body.decode("utf-8")
+    check(
+        "truncation: chat stream has neither [DONE] nor finish_reason",
+        status == 200 and "[DONE]" not in text and "finish_reason" not in text,
+        f"status={status} tail={text[-90:]!r}",
+    )
+
+    status, _, body, _ = http(
+        "POST", url, "/v1/messages", api_key="mock-anthropic",
+        payload=messages_body("MOCK:TRUNCATED_MESSAGES"),
+    )
+    types = [event.get("type") for event in sse_events(body)]
+    check(
+        "truncation: anthropic stream lacks message_stop",
+        status == 200 and "message_stop" not in types and "content_block_delta" in types,
+        f"status={status} types={types}",
+    )
+
+    status, _, body, _ = http(
+        "POST", url, "/responses", token="mock-chatgpt",
+        payload=responses_body("gpt-5.6-terra", "MOCK:TRUNCATED_RESPONSES"),
+    )
+    types = [event.get("type") for event in sse_events(body)]
+    terminals = {"response.completed", "response.incomplete", "response.failed", "error"}
+    check(
+        "truncation: responses stream has no terminal event",
+        status == 200 and not (set(types) & terminals) and "response.output_text.delta" in types,
+        f"status={status} types={types}",
+    )
+
+
+def phase_shapes(url):
+    status, _, body, _ = http(
+        "POST", url, "/chat/completions", token="mock-deepseek",
+        payload=chat_body("deepseek-v4-pro", "MOCK:CHAT_USAGE_CHUNK"),
+    )
+    events = sse_data_events(body)
+    parsed = [json.loads(event) for event in events[:-1]] if events[-1] == "[DONE]" else []
+    usage_chunk = next((chunk for chunk in parsed if chunk.get("choices") == [] and "usage" in chunk), None)
+    has_finish = any(
+        chunk.get("choices") and chunk["choices"][0].get("finish_reason") == "stop" for chunk in parsed
+    )
+    check(
+        "shape: usage arrives as an independent chunk before [DONE]",
+        status == 200 and events[-1] == "[DONE]" and usage_chunk is not None and has_finish,
+        f"status={status} events={events}",
+    )
+
+    status, _, body, _ = http(
+        "POST", url, "/chat/completions", token="mock-qwen-token-plan",
+        payload=chat_body("qwen3.8-max", "MOCK:CHAT_TOOL_ARGS_SPLIT"),
+    )
+    events = sse_data_events(body)
+    parsed = [json.loads(event) for event in events[:-1]] if events[-1] == "[DONE]" else []
+    fragments = [
+        call
+        for chunk in parsed
+        for call in (chunk.get("choices") or [{}])[0].get("delta", {}).get("tool_calls", [])
+        if (call.get("function") or {}).get("arguments")
+    ]
+    firsts = [
+        call
+        for chunk in parsed
+        for call in (chunk.get("choices") or [{}])[0].get("delta", {}).get("tool_calls", [])
+        if call.get("id") and call.get("function", {}).get("name")
+    ]
+    joined = "".join(call["function"]["arguments"] for call in fragments)
+    has_finish = any(
+        chunk.get("choices") and chunk["choices"][0].get("finish_reason") == "tool_calls" for chunk in parsed
+    )
+    try:
+        reassembled = json.loads(joined)
+    except ValueError:
+        reassembled = None
+    check(
+        "shape: tool arguments split across chunks reassemble to valid JSON",
+        status == 200
+        and events[-1] == "[DONE]"
+        and len(firsts) == 1
+        and len(fragments) >= 2
+        and reassembled == {"city": "Paris", "unit": "celsius"}
+        and has_finish,
+        f"status={status} joined={joined!r} reassembled={reassembled}",
+    )
+
+
+def phase_control_and_priority(url, scenarios):
+    code, payload = control(url, method="GET")
+    expected = sorted(item["name"] for item in scenarios)
+    check(
+        "control: GET reports null scenario and full catalog",
+        code == 200 and payload.get("scenario") is None and payload.get("available") == expected,
+        f"code={code} payload={payload}",
+    )
+
+    code, payload = control(url, {"scenario": "rate_limit"})
+    check(
+        "control: POST sets global scenario (case-insensitive)",
+        code == 200 and payload.get("scenario") == "rate_limit",
+        f"code={code} payload={payload}",
+    )
+
+    status, headers, _, _ = http(
+        "POST", url, "/chat/completions", token="mock-glm-coding",
+        payload=chat_body("glm-5.2", "no keyword here"),
+    )
+    check(
+        "control: global scenario applies to plain request without keyword",
+        status == 429 and headers.get("Retry-After") == "30",
+        f"status={status} retry={headers.get('Retry-After')!r}",
+    )
+
+    status, _, _, _ = http(
+        "POST", url, "/chat/completions", token="mock-glm-coding",
+        payload=chat_body("glm-5.2", "MOCK:HTTP_402 beats the global scenario"),
+    )
+    check(
+        "control: prompt keyword takes priority over global scenario",
+        status == 402,
+        f"status={status} (expected 402 while global=rate_limit/429)",
+    )
+
+    status, _, _, _ = http(
+        "POST", url, "/chat/completions", token="mock-glm-coding",
+        payload=chat_body("glm-5.2", "MOCK:UNKNOWN_NAME falls back"),
+    )
+    check(
+        "control: unknown keyword falls back to global scenario",
+        status == 429,
+        f"status={status} (expected 429 from global)",
+    )
+
+    code, payload = control(url, {"scenario": "no_such_scenario"})
+    check(
+        "control: unknown scenario name rejected 404",
+        code == 404 and "available" in payload,
+        f"code={code} payload={payload}",
+    )
+    code, _ = control(url, {"scenario": 123})
+    check("control: non-string non-null scenario rejected 400", code == 400, f"code={code}")
+
+    code, payload = control(url, {"scenario": None})
+    check(
+        "control: scenario null resets to normal behavior",
+        code == 200 and payload.get("scenario") is None,
+        f"code={code} payload={payload}",
+    )
+    status, _, body, _ = http(
+        "POST", url, "/chat/completions", token="mock-glm-coding",
+        payload=chat_body("glm-5.2", "back to normal"),
+    )
+    events = sse_data_events(body)
+    check(
+        "control: after reset plain request streams normally with [DONE]",
+        status == 200 and events and events[-1] == "[DONE]",
+        f"status={status} events={events}",
+    )
+
+
+def phase_slow_stream(url):
+    # responses_text.sse ≈317B，--chunk-bytes 64 → 5 块 4 次间隔；150ms → ≥0.6s。
+    status, _, body, elapsed = http(
+        "POST", url, "/responses", token="mock-chatgpt",
+        payload=responses_body("gpt-5.6-terra", "MOCK:SLOW_STREAM paced"),
+        query={"interval_ms": "150"},
+    )
+    types = [event.get("type") for event in sse_events(body)]
+    check(
+        "slow stream: scenario pacing stretches chunk interval, stream still completes",
+        status == 200 and elapsed >= 0.5 and "response.completed" in types,
+        f"status={status} elapsed={elapsed:.3f}s types={types}",
+    )
+
+
+def phase_scenarios(url):
+    scenarios = json.loads(MANIFEST.read_text(encoding="utf-8"))["scenarios"]
+    phase_manifest(scenarios)
+    phase_http_table(url, scenarios)
+    phase_orthogonality(url)
+    phase_responses_needles(url)
+    phase_truncation(url)
+    phase_shapes(url)
+    phase_control_and_priority(url, scenarios)
+    phase_slow_stream(url)
 
 
 def main() -> int:
@@ -667,7 +1001,6 @@ def main() -> int:
     phase_fixture_precedence()
     phase_fallback_shapes()
     phase_recorded_tree()
-    phase_media_tasks()
     passed = sum(RESULTS)
     total = len(RESULTS)
     verdict = "PASS" if passed == total else "FAIL"

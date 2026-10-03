@@ -19,6 +19,8 @@ Pawork 用 Rust 从零实现一个编码智能体（Coding Agent）平台核心�
 
 Desktop 启动脚本不加载 fixture、seed 或测试 profile。它默认使用独立的真实实例 `desktop`，避免把日常 CLI 会话混入 UI 检查；可用 `PAWORK_DESKTOP_INSTANCE=<name>` 覆盖。脚本默认跟随用户 Global 配置中的审批默认与逐项目信任（未设时只读、不信任），Settings 修改后重启仍在。`PAWORK_DESKTOP_APPROVAL_MODE=ask-for-dangerous` 可显式覆盖当次审批，`PAWORK_DESKTOP_TRUST_WORKSPACES=1` 可显式信任当次进程中的工作区；`0` 表示不注入信任覆盖、跟随保存值。上述参数只在脚本新启 Host 时生效；若复用已运行实例，则沿用该 Host 的设置。Desktop 退出时只关闭脚本自己启动的 Host，日志位于 `target/pawork-desktop-runtime/host.log`。
 
+脚本从本次 Cargo 构建消息定位 Host/Desktop，支持自定义 target 目录；内容未变时复用现有 macOS bundle。测试与构建入口的选择见[验证规格](docs/spec/verification.md#41-按用途选择入口)。
+
 凭证经 `pawork auth` 写入 `~/.pawork/auth.json`；env 变量仅作遗留 fallback。Secret 红线：key/token 不入日志、事件与任何可提交文件。
 
 ## 仓库结构

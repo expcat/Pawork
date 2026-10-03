@@ -2,6 +2,7 @@
 # 按改动包验证真实行为；显式补齐容易漏跑的测试 feature。
 set -euo pipefail
 cd "$(dirname "$0")/.."
+source scripts/cargo-build.sh
 
 usage() {
   cat <<'HELP'
@@ -62,7 +63,7 @@ run() {
   fi
   if [ -n "$log_file" ]; then
     # 先打开日志；路径不可写时不要启动昂贵构建。
-    { printf '%q ' "$@"; printf '\n'; } | tee -a "$log_file"
+    { printf '%q ' "$@"; printf '\n'; } | tee -a "$log_file" || return $?
     if "$@" 2>&1 | tee -a "$log_file"; then :; else status=$?; fi
     printf 'Elapsed: %ss; exit: %s\n' "$((SECONDS - started))" "$status" | tee -a "$log_file"
   else
@@ -79,28 +80,9 @@ if [ "$host" -eq 1 ]; then
   # target-dir / build.target 都不会让测试误用旧 Host。
   if [ "$print_only" -eq 1 ]; then
     run cargo build -p pawork --offline --bin pawork --message-format=json
-    binary="<本次构建的 pawork 可执行文件>"
+    binary="<built-pawork>"
   else
-    build_log="$(mktemp)"
-    trap 'rm -f "$build_log"' EXIT
-    run cargo build -p pawork --offline --bin pawork --message-format=json > "$build_log"
-    binary="$(python3 - "$build_log" <<'PYJSON'
-import json, sys
-exe = ""
-for line in open(sys.argv[1], encoding="utf-8"):
-    try:
-        msg = json.loads(line)
-    except ValueError:
-        continue
-    target = msg.get("target", {})
-    if (msg.get("reason") == "compiler-artifact" and target.get("name") == "pawork"
-            and "bin" in target.get("kind", []) and msg.get("executable")):
-        exe = msg["executable"]
-print(exe)
-PYJSON
-)"
-    rm -f "$build_log"
-    [ -n "$binary" ] && [ -x "$binary" ] || { echo '未能定位本次构建的 pawork 可执行文件' >&2; exit 1; }
+    binary=$(cargo_build_artifacts pawork run cargo build -p pawork --offline --bin pawork)
   fi
   run env PAWORK_BIN="$binary" cargo test -p pawork-client --offline --features spawn-e2e --test spawn_e2e
   exit 0

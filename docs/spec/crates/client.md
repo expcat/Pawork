@@ -107,6 +107,8 @@ UI-6b G2：crate 根增加 `ProviderAccountSelectionMode`、`QuotaOverviewQuery/
 
 ## 7. 测试与验证资产
 
+2026-10-03 子进程回归精简：`spawn_e2e` 删除每项测试前额外启动的 `pawork --help` 文案探测，直接以实际 spawn/握手验证 headless 可用性。仍保留三项真实 Host 回归，缺二进制或握手失败不能跳过记绿；`scripts/test.sh --host` 经共享 `scripts/cargo-build.sh` 定位本次正式产物，排除 test harness。入口与证据边界见 [验证规格](../verification.md#41-按用途选择入口)。
+
 2026-09-20 测试重构：删除向 Vec push capability 再 contains 的自证、版本文案 contains 检查，以及 `SDK_API_VERSION == pawork_protocol::API_VERSION` 的别名自证；握手/授权/版本拒绝由真实连接与协议测试承接。`spawn-e2e` 显式选择后缺二进制/缺 headless 必须失败，去掉三处提前返回；未映射 WorkspaceAdd 的重复检查只保留在主路径。`bash scripts/test.sh client` 包含 probe-self-test；`bash scripts/test.sh --host` 先构建当前 Host 再验证真实子进程。 本批执行状态见 Git 历史（37fae8f3:docs/testing-refactor-plan.md）。
 
 **`tests/probe.rs`（`--self-test` 13 场景，MemoryTransport 进程内装配；`probe-self-test` feature 显式启用）**

@@ -5,7 +5,8 @@
 
 //! 二进制定位：`PAWORK_BIN` 环境变量优先，否则回退到工作区默认构建产物
 //! `target/debug/pawork`。`spawn-e2e` 是显式 feature：缺二进制或没有
-//! `headless` 子命令时必须失败，不得 skip 记绿。
+//! `headless` 子命令时必须失败，不得 skip 记绿；由实际 spawn/握手验证，
+//! 不再先启动额外进程检查 `--help` 文案。
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -26,24 +27,7 @@ fn pawork_binary() -> PathBuf {
         "spawn-e2e requires a pawork binary; set PAWORK_BIN or build target/debug/pawork first (missing {})",
         binary.display()
     );
-    assert!(
-        supports_headless(&binary),
-        "spawn-e2e requires `{}` to expose the `headless` subcommand; rebuild pawork or set PAWORK_BIN",
-        binary.display()
-    );
     binary
-}
-
-fn supports_headless(binary: &std::path::Path) -> bool {
-    let output = std::process::Command::new(binary).arg("--help").output();
-    match output {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            stdout.contains("headless") || stderr.contains("headless")
-        }
-        Err(_) => false,
-    }
 }
 
 /// 握手 + Command/Query 往返 + compat 持久化 + 关闭（真实进程）。
