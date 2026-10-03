@@ -84,7 +84,7 @@ class Instance:
         base = 'http://127.0.0.1:' + str(self.port)
         lines = ['# pawork-mock temporary config', 'default_provider = "glm-coding"', 'default_model = "glm-5.3"']
         for channel in KEY_CHANNELS + OAUTH_CHANNELS:
-            lines += ['[[providers]]', 'id = ' + json.dumps(channel), 'base_url = ' + json.dumps(base)]
+            lines += ['[[providers]]', 'id = ' + json.dumps(channel), 'base_url = ' + json.dumps(base + '/compatible-mode/v1' if channel == 'qwen-token-plan' else base)]
         for channel, device, token in (
             ('xai', '/oauth2/device/code', '/oauth2/token'),
             ('kimi-code', '/api/oauth/device_authorization', '/api/oauth/token'),

@@ -121,6 +121,38 @@ pub struct HttpClient {
 /// 字节流（由 [`HttpClient::post_stream`] 返回）。
 pub type ByteStream = Pin<Box<dyn Stream<Item = Result<Bytes, ProviderError>> + Send>>;
 
+/// JSON 正文与 SSE 分别限制内存；生图与异步媒体任务共用同一读取边界。
+pub(crate) const MAX_JSON_BYTES: usize = 1024 * 1024;
+
+pub(crate) async fn read_json_stream(
+    mut stream: ByteStream,
+    cancel: CancellationToken,
+) -> Result<serde_json::Value, ProviderError> {
+    let mut bytes = Vec::new();
+    loop {
+        let item = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Err(ProviderError::cancelled("JSON response cancelled")),
+            item = stream.next() => item,
+        };
+        let Some(item) = item else { break };
+        let chunk = item?;
+        if chunk.len() > MAX_JSON_BYTES - bytes.len() {
+            return Err(ProviderError::new(
+                ProviderErrorKind::MalformedResponse,
+                "JSON response exceeds buffer limit",
+            ));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&bytes).map_err(|_| {
+        ProviderError::new(
+            ProviderErrorKind::MalformedResponse,
+            "invalid response JSON",
+        )
+    })
+}
+
 impl HttpClient {
     /// 按配置构造客户端。
     pub fn new(config: HttpClientConfig) -> Result<Self, ProviderError> {
@@ -206,6 +238,24 @@ impl HttpClient {
                 let response = response.map_err(http_error)?;
                 self.handle_response(response).await
             }
+        }
+    }
+
+    /// 返回 GET 响应字节流，供原生任务客户端按自身上限读取；不自动重试。
+    pub async fn get_stream_with_headers(
+        &self,
+        url: &str,
+        headers: &[(String, String)],
+        cancel: CancellationToken,
+    ) -> Result<ByteStream, ProviderError> {
+        let mut request = self.client.get(url);
+        for (name, value) in self.config.extra_headers.iter().chain(headers) {
+            request = request.header(name, value);
+        }
+        tokio::select! {
+            biased;
+            _ = cancel.cancelled() => Err(ProviderError::cancelled("http request cancelled")),
+            response = request.send() => self.handle_response(response.map_err(http_error)?).await,
         }
     }
 
@@ -444,8 +494,20 @@ mod tests {
         assert!(!err.contains("alice"), "{err}");
         assert!(!err.contains(SECRET), "{err}");
         let provider_err = ProviderError::new(ProviderErrorKind::InvalidRequest, err);
-        assert!(!provider_err.message.contains("alice"), "{}", provider_err.message);
-        assert!(!provider_err.message.contains(SECRET), "{}", provider_err.message);
-        assert!(!provider_err.message.contains(&invalid), "{}", provider_err.message);
+        assert!(
+            !provider_err.message.contains("alice"),
+            "{}",
+            provider_err.message
+        );
+        assert!(
+            !provider_err.message.contains(SECRET),
+            "{}",
+            provider_err.message
+        );
+        assert!(
+            !provider_err.message.contains(&invalid),
+            "{}",
+            provider_err.message
+        );
     }
 }

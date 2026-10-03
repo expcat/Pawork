@@ -1,6 +1,6 @@
 # 本机模型网关
 
-- 最近更新：2026-10-01
+- 最近更新：2026-10-03
 - 范围：第三方本机程序复用 Pawork 已连接模型的 HTTP API；MoMai 是消费者之一，接口不包含 MoMai 专属字段。
 - 架构：[architecture](../architecture.md)；实现：[gateway](crates/gateway.md)、[app](crates/app.md)、[cli](crates/cli.md)；阶段状态：[ROADMAP](../ROADMAP.md)。
 
@@ -24,6 +24,22 @@
 - **多模态输入**：v1.1 起 `chat/completions` 消息 content 接受数组（text / image_url / video_url part）。URL 只做语法边界校验（长度、无空白控制符、拒绝内嵌凭证），Host 不下载、不解码、不转存；data: URL 仅 `image/*;base64` 形状，受请求体 2 MiB 上限约束；远程图片 URL 单独限 8 KiB。media_type 取自前缀，https 图像 URL 按扩展名推断（未知回落 image/png）。带图片 / 视频的请求走既有 `capability_gate`，模型证据不支持即 400。
 - **图像输出**：Chat 通道 wire 解析 image content part（qwen `{"type":"image","image":"<url>"}` 与 OpenAI `image_url` 形状）归一为 `ProviderStreamEvent::ImageOutput`；已声明的纯生图模型以 content parts 数组发送文本提示。非流式响应在 `choices[].message` 增 `images: [{"url": ...}]`（additive，文本模型恒空数组）；流式以 `choices[].delta.images` chunk 透传，均计入输出字节上限。
 - **web_search 请求位**：`web_search: true`（顶层 additive）映射 hosted WebSearch 工具要求并经 `capability_gate` 校验；模型未声明 WebSearch 即 400，不静默降级。
+
+## 原生视频任务扩展（2026-10-03）
+
+Qwen Token Plan 原生视频走异步任务 API。compatible `/models` 没有视频型号，不据此判断套餐无权限；依据[阿里云 Token Plan 多模态文档](https://help.aliyun.com/zh/model-studio/token-plan-multimodal-gen)的端点契约，独立提供视频目录与任务路由，保持 Chat / canonical 用途字段不变。
+
+| 方法与路径 | 行为 |
+| --- | --- |
+| `GET /v1/video/models` | 已连接且启用 Qwen Token Plan 时列出 `qwen-token-plan/happyhorse-1.1-t2v`；目录表示客户端配置可用，套餐权限仍以实际提交结果为准 |
+| `POST /v1/video/tasks` | 仅 `{"model":"qwen-token-plan/happyhorse-1.1-t2v","prompt":"提示词"}`；原生异步提交一次，固定 720P、16:9、5 秒，返回 HTTP 202 |
+| `GET /v1/video/tasks/{id}` | 按任务 ID 绑定的提交账号查询，不受当前账号选择影响；不生成新任务 |
+
+任务响应为 `{"id":"default-api-key.供应商任务ID","model":"完整模型 ID","status":"PENDING","url":null,"error_code":null}`。状态限 `PENDING` / `RUNNING` / `SUCCEEDED` / `FAILED` / `CANCELED` / `UNKNOWN`；成功必须有 HTTP(S) 输出 URL。客户端立即保存 ID，成功后完整下载并归档，临时 URL 不作为唯一资产。原始错误 message、提示词及凭证不回显，失败码只保留固定白名单。
+
+提示词限 1–8000 字。供应商 ID 最多 128 字节，只含 ASCII 字母、数字、连字符、下划线；网关返回账号限定的不透明 ID（最多 256 字节，允许点分隔），客户端须原样保存并查询，不能用供应商裸 ID 替代。路由拒绝查询参数和未知字段，复用既有认证 / Host / Origin / 请求体限制。提交和查询各 60 秒上限，供应商 JSON 各 1 MiB 上限，不自动轮询或重试。取消 / 超时只停止本地网络；上游可能已接受任务，不能承诺远端取消，也不能自动重交。任务查询始终读取提交账号，不修改当前账号选择；凭证被删除、替换或环境凭证失效后，查询可能失败。禁用模型会阻止新提交，已有任务仍可查询。
+
+providers 从已配置的 `/compatible-mode/v1` 基地址推导同源原生根，Chat 与视频共用渠道基地址 / 代理装配；在 SecretBackend 同一事务中冻结凭证与账号身份。提交与查询均取得绑定账号的并发租约，并在完成、失败、取消或超时后释放；后台执行任务由网关退出流程等待收尾。domain 的 `VideoGenerationModel` / `VideoGenerationTask` / `VideoTaskStatus` 是共享类型，宿主必须明确实现三个视频端口，无无类型 JSON 或默认兼容实现。原生视频按条 / 秒计费，未写成 token 账本，不估造费用。本轮模拟回归与真实 Host + mock 验收仅证明本机协议、媒体下载与资源收尾，不能替代真实供应商套餐权限或消费者 GUI 验收。
 
 ## 启动和接入
 
@@ -59,6 +75,10 @@ pawork gateway shutdown
 | `POST /v1/chat/completions` | 文本多轮上下文、普通响应或 SSE；无服务器会话状态。v1.1 起消息 content 可为数组（text / image_url / video_url part）并支持顶层 `web_search: true`；图像生成模型经 `message.images` / 流式 `delta.images` 返回生成图 URL。 |
 
 模型 ID 为 `<provider>/<model>`，只按第一个 `/` 拆分，上游模型 ID 可以继续包含 `/`。不会把同名模型路由到其他供应商，也不回落到默认模型。
+
+OpenCode Go 的上游 `x-opencode-session` 由网关在每次请求中使用同一个租约 / canonical 请求身份生成，客户端无需提供。普通 JSON 与 SSE 均适用，连续请求身份互不相同；它不表示服务器持久会话。
+
+已声明的纯生图模型使用非流式上游请求；Token Plan 的普通 JSON `output.choices` 被适配器归一为图片输出与完成事件。客户端仍使用本文的 Chat Completions API，不新增 `/images/generations`；HTTP 200 的错误正文不算成功；普通 JSON 直接解析，复用与 SSE 相同的 content part 映射。缺完成标记、非成功终态、缺图片或带凭证 / 非 HTTP(S) 图片 URL 均拒绝；JSON 正文最多 1 MiB，等待正文期间可取消。
 
 最小请求：
 
@@ -105,3 +125,22 @@ usage 使用 prompt_tokens / completion_tokens / total_tokens，缓存读取量�
 ## 验证边界
 
 定向回归通过真实本地 HTTP 和模拟上游检查目录、鉴权、token 撤销、非流式/SSE/usage、请求模型路由、结构化参数保留、Host/Origin 拒绝，以及流式超时错误、断开后取消和部分用量落账。token 测试检查无秘密落盘、文件权限和路径拒绝。实例锁回归检查与 GUI 共存、网关独占和不清扫 Agent 会话。MoMai 实际客户端与实际网关跨进程验证目录与撤销错误，普通/SSE 补全连接本地模拟上游；CLI 另验签发/list/revoke/serve/status/shutdown。真实供应商、Windows 系统行为、系统服务安装不由这些回归证明，状态见 [ROADMAP](../ROADMAP.md)。
+
+### 2026-10-03 验证记录
+
+受影响包运行 `bash scripts/test.sh --log /tmp/pawork-gateway-root-20261003-tests.log domain providers gateway app`。初次在旧 `api_key_channels` 生图 mock 把 JSON 契约当 SSE 时失败，已同步 mock 并补跑该目标及其后尚未运行的目标：
+
+```bash
+cargo test -p pawork-providers --offline \
+  --test api_key_channels --test chatgpt --test contract --test responses --test xai \
+  --features anthropic,chatgpt-oauth,xai-oauth,glm-coding,opencode-go,qwen-token-plan,deepseek,kimi-platform,kimi-code
+cargo test -p pawork-app --offline --lib --features ui-fixture gateway_
+bash scripts/test.sh --log /tmp/pawork-gateway-root-20261003-host.log --host
+bash scripts/mock/gate.sh --level 0,2
+```
+
+所选目标共 522 个不同测试通过；最后 App 网关专项 4 项通过，包含视频等待上游时断连与 Host 退出后的租约释放。当前 `pawork` 正式构建及真实 Host 子进程 3 项通过；mock L0/L2 通过，server smoke 为 70/70。全 workspace 门禁未运行。
+
+代理通过当前 `target/debug/pawork` 和本地 mock 模拟消费者操作，27/27 项通过：CLI 生命周期、三类目录、普通 / SSE 及 fixture 权威用量、生图 JSON 到消费者 SSE 和 PNG 下载解码、视频 PENDING → RUNNING → 重启 Host → SUCCEEDED 与 MP4 下载解码、失败脱敏、无效参数 / 鉴权 / Origin 拒绝、token 撤销。mock 视频由临时 1 秒 MP4 fixture 回放，下载后逐帧解码并核对摘要；固定 720P / 16:9 / 5 秒请求参数由定向回归校验，不据回放文件推定真实生成质量。
+
+验收准备阶段保留了三次失败：首次 CLI 启动超过脚本 15 秒预算，后续预算改为 60 秒；第二次端点放在 Workspace 层而被产品 Global-only 规则剥离，改用现有 `run_instance.py` 的独占备份 / 恢复流程；第三次空 fixture 兜底无 usage，改为现有 `opencode-go/chat_text.sse` 并精确核对 9 输入 / 3 输出 token。最终原 Global 配置字节和权限均已恢复，全部验收进程退出。本机证据为 `/tmp/pawork-gateway-root-20261003-acceptance-final-pass.log` 与 `/tmp/pw-gateway-e3-ycteecza/results.json`；临时脚本和媒体不入仓库。这是代理消费者 HTTP 模拟，真实媒体供应商、消费者 GUI 和用户人工签字未由本轮证明。

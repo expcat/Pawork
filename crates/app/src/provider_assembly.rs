@@ -860,18 +860,8 @@ pub(crate) async fn assemble_provider(
             )
         }
         Some(ChannelKind::ApiKey) => {
-            let preset = channels::api_key_channel(id)
-                .filter(|preset| pawork_providers::is_enabled(*preset))
-                .ok_or_else(|| AppError::UnknownProvider { id: id.to_string() })?;
             let (credential, _source) = resolve_api_key_credential(backend, id)?;
-            let mut channel_config = ApiKeyChannelConfig::new(preset)?;
-            channel_config.http.proxy = provider_proxy(config, id);
-            if let Some(base_url) = config_base {
-                channel_config = channel_config.with_base_url(base_url);
-            }
-            for (model, transport) in model_transport_overrides(config) {
-                channel_config = channel_config.with_model_transport(model, transport);
-            }
+            let channel_config = api_key_channel_config(config, id)?;
             let provider = ApiKeyChannelProvider::new(channel_config, Some(credential.clone()))?
                 .with_reasoning_protector(Arc::clone(&reasoning_protector));
             (
@@ -927,6 +917,29 @@ pub(crate) async fn assemble_provider(
         protocol,
         registry,
     })
+}
+/// Chat 与原生媒体任务使用同一渠道配置，避免代理 / 基地址各自装配。
+pub(crate) fn api_key_channel_config(
+    config: &PaworkConfig,
+    id: &str,
+) -> Result<ApiKeyChannelConfig, AppError> {
+    let preset = channels::api_key_channel(id)
+        .filter(|preset| pawork_providers::is_enabled(*preset))
+        .ok_or_else(|| AppError::UnknownProvider { id: id.to_string() })?;
+    let mut channel = ApiKeyChannelConfig::new(preset)?;
+    channel.http.proxy = provider_proxy(config, id);
+    if let Some(base) = config
+        .providers
+        .iter()
+        .find(|provider| provider.id == id)
+        .and_then(|provider| provider.base_url.as_ref())
+    {
+        channel.base_url = base.clone();
+    }
+    for (model, transport) in model_transport_overrides(config) {
+        channel = channel.with_model_transport(model, transport);
+    }
+    Ok(channel)
 }
 /// API key 凭证链（可选形态）：auth 文件 → env fallback → None。
 fn try_api_key_credential(

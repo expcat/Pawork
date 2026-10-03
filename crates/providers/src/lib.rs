@@ -88,6 +88,8 @@ pub use channels::anthropic;
     feature = "kimi-code"
 ))]
 pub use channels::api_key;
+#[cfg(feature = "qwen-token-plan")]
+pub mod token_plan_video;
 #[cfg(feature = "chatgpt-oauth")]
 pub use channels::chatgpt;
 #[cfg(feature = "kimi-code")]

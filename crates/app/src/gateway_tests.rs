@@ -31,15 +31,15 @@ async fn gateway_http_routes_models_completions_and_auth_without_exposing_provid
     let backend = Arc::new(pawork_auth::MemoryBackend::new());
     pawork_auth::store_default_api_key(
         backend.as_ref(),
-        &ProviderId::new("test"),
+        &ProviderId::new("opencode-go"),
         "upstream-test-secret",
     )
     .unwrap();
     let config = pawork_workspace::config::PaworkConfig {
-        default_provider: Some("test".into()),
+        default_provider: Some("opencode-go".into()),
         default_model: Some("model-a".into()),
         providers: vec![pawork_workspace::config::ProviderConfig {
-            id: "test".into(),
+            id: "opencode-go".into(),
             base_url: Some(format!("{}/v1", upstream.uri())),
             ..Default::default()
         }],
@@ -75,9 +75,9 @@ async fn gateway_http_routes_models_completions_and_auth_without_exposing_provid
         .as_array()
         .unwrap()
         .iter()
-        .any(|m| m["id"] == "test/model-a"));
+        .any(|m| m["id"] == "opencode-go/model-a"));
     assert!(!models.to_string().contains("upstream-test-secret"));
-    let request = json!({"model":"test/model-a","messages":[{"role":"system","content":"中文写作"},{"role":"user","content":"你好"}],"max_tokens":20,"response_format":{"type":"json_schema","json_schema":{"name":"answer","strict":true,"schema":{"type":"object"}}}});
+    let request = json!({"model":"opencode-go/model-a","messages":[{"role":"system","content":"中文写作"},{"role":"user","content":"你好"}],"max_tokens":20,"response_format":{"type":"json_schema","json_schema":{"name":"answer","strict":true,"schema":{"type":"object"}}}});
     let normal = http
         .post(format!("{base}/v1/chat/completions"))
         .bearer_auth(&token)
@@ -107,6 +107,23 @@ async fn gateway_http_routes_models_completions_and_auth_without_exposing_provid
             && text.ends_with("data: [DONE]\n\n")
     );
     let upstream_requests = upstream.received_requests().await.unwrap();
+    let posted_requests: Vec<_> = upstream_requests
+        .iter()
+        .filter(|r| r.method == "POST")
+        .collect();
+    assert_eq!(posted_requests.len(), 2);
+    let sessions: Vec<_> = posted_requests
+        .iter()
+        .map(|r| {
+            r.headers
+                .get("x-opencode-session")
+                .unwrap()
+                .to_str()
+                .unwrap()
+        })
+        .collect();
+    assert!(sessions.iter().all(|s| !s.is_empty()));
+    assert_ne!(sessions[0], sessions[1]);
     let posted = upstream_requests
         .iter()
         .find(|r| r.method == "POST")
@@ -114,6 +131,7 @@ async fn gateway_http_routes_models_completions_and_auth_without_exposing_provid
     let posted: Value = serde_json::from_slice(&posted.body).unwrap();
     assert_eq!(posted["model"], "model-a");
     assert_eq!(posted["response_format"]["json_schema"]["strict"], true);
+    assert!(posted.get("session_id").is_none());
     let records = core
         .usage
         .control
@@ -204,24 +222,22 @@ async fn gateway_models_purpose_filter_and_multimodal_gates() {
         })))
         .mount(&upstream)
         .await;
-    // wan 生图流式响应：content 数组携带 image part（qwen compatible 形状）。
-    let image_chunk = r#"{"choices":[{"index":0,"delta":{"content":[{"type":"image","image":"https://gen.example/out.png"}]},"finish_reason":null}]}"#;
-    let finish_chunk = r#"{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#;
+    // Token Plan 生图返回普通 JSON，output.choices 携带图片。
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
         .and(body_partial_json(json!({
             "model":"wan2.7-image",
+            "stream":false,
             "messages":[{"role":"user","content":[
                 {"type":"text","text":"a red cube on white background"}
             ]}]
         })))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .insert_header("content-type", "text/event-stream")
-                .set_body_string(format!(
-                    "data: {image_chunk}\n\ndata: {finish_chunk}\n\ndata: [DONE]\n\n"
-                )),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "output":{"choices":[{"message":{"role":"assistant","content":[
+                {"type":"image","image":"https://gen.example/out.png"}
+            ]},"finish_reason":"stop"}],"finished":true},
+            "usage":{"input_tokens":32,"output_tokens":2,"image_count":1}
+        })))
         .mount(&upstream)
         .await;
     let backend = Arc::new(pawork_auth::MemoryBackend::new());
@@ -252,7 +268,7 @@ async fn gateway_models_purpose_filter_and_multimodal_gates() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     let cancel = CancellationToken::new();
-    let _server = tokio::spawn(serve_gateway(
+    let server = tokio::spawn(serve_gateway(
         core.clone(),
         listener,
         tokens.clone(),
@@ -400,6 +416,40 @@ async fn gateway_models_purpose_filter_and_multimodal_gates() {
     assert_eq!(message["content"], "");
     assert_eq!(message["images"][0]["url"], "https://gen.example/out.png");
     assert_eq!(completion["choices"][0]["finish_reason"], "stop");
+    assert_eq!(completion["usage"]["total_tokens"], 34);
+    let image_request = upstream
+        .received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|request| request.method == "POST")
+        .unwrap();
+    let image_request: Value = serde_json::from_slice(&image_request.body).unwrap();
+    assert!(image_request.get("stream_options").is_none());
+
+    // HTTP 200 错误正文不能成为成功，也不能回显上游原文。
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .and(body_partial_json(
+            json!({"messages":[{"role":"user","content":[
+                {"type":"text","text":"image error"}
+            ]}]}),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "code":"DataInspectionFailed","message":"upstream-test-secret"
+        })))
+        .expect(1)
+        .mount(&upstream)
+        .await;
+    let failure = http.post(format!("{base}/v1/chat/completions"))
+        .bearer_auth(&token)
+        .json(&json!({"model":"test/wan2.7-image","messages":[{"role":"user","content":"image error"}]}))
+        .send().await.unwrap();
+    assert_eq!(failure.status(), 502);
+    let failure: Value = failure.json().await.unwrap();
+    assert!(failure.get("error").is_some());
+    assert!(failure.get("choices").is_none());
+    assert!(!failure.to_string().contains("upstream-test-secret"));
     // 常规内嵌图片可以超过 8 KiB；上游收到完整 data URL，仍受 2 MiB body 闸门约束。
     let image_url = format!("data:image/png;base64,{}", "AAAA".repeat(4096));
     Mock::given(method("POST"))
@@ -432,6 +482,11 @@ async fn gateway_models_purpose_filter_and_multimodal_gates() {
         .unwrap();
     assert_eq!(vision["choices"][0]["message"]["content"], "image received");
     cancel.cancel();
+    tokio::time::timeout(Duration::from_secs(5), server)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
 }
 
 struct WaitingProvider;
@@ -543,6 +598,280 @@ async fn gateway_disconnect_cancels_upstream_and_records_partial_usage() {
     .await
     .expect("disconnect must stop and account upstream");
     cancel.cancel();
+    tokio::time::timeout(Duration::from_secs(5), server)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+}
+
+#[tokio::test]
+async fn gateway_native_video_submits_once_queries_and_redacts_failures() {
+    let upstream = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/compatible-mode/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"data":[{"id":"model-a"}]})))
+        .mount(&upstream)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/services/aigc/video-generation/video-synthesis"))
+        .and(header("authorization", "Bearer video-provider-secret"))
+        .and(header("x-dashscope-async", "enable"))
+        .and(body_partial_json(json!({"model":"happyhorse-1.1-t2v","input":{"prompt":"纸船漂流"},"parameters":{"resolution":"720P","ratio":"16:9","duration":5}})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"output":{"task_id":"task-123","task_status":"PENDING"}})))
+        .expect(1).mount(&upstream).await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/tasks/task-123"))
+        .and(header("authorization", "Bearer video-provider-secret"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"output":{"task_id":"task-123","task_status":"SUCCEEDED","video_url":"https://video.example/result.mp4"}})))
+        .expect(1).mount(&upstream).await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/tasks/task-failed"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"output":{"task_id":"task-failed","task_status":"FAILED","code":"InvalidParameter","message":"video-provider-secret private-prompt"}})))
+        .expect(1).mount(&upstream).await;
+    let backend = Arc::new(pawork_auth::MemoryBackend::new());
+    pawork_auth::store_default_api_key(
+        backend.as_ref(),
+        &ProviderId::new("qwen-token-plan"),
+        "video-provider-secret",
+    )
+    .unwrap();
+    let core = Arc::new(
+        AppCore::from_config(
+            pawork_workspace::config::PaworkConfig {
+                default_provider: Some("qwen-token-plan".into()),
+                default_model: Some("model-a".into()),
+                providers: vec![pawork_workspace::config::ProviderConfig {
+                    id: "qwen-token-plan".into(),
+                    base_url: Some(format!("{}/compatible-mode/v1", upstream.uri())),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            None,
+            None,
+            backend.clone(),
+        )
+        .await
+        .unwrap(),
+    );
+    let temp = tempfile::tempdir().unwrap();
+    let tokens = GatewayTokenStore::new(temp.path());
+    let (_, token) = tokens.issue("yingmai").unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let cancel = CancellationToken::new();
+    let server = tokio::spawn(serve_gateway(
+        core.clone(),
+        listener,
+        tokens,
+        cancel.clone(),
+    ));
+    let http = reqwest::Client::new();
+    let models: Value = http
+        .get(format!("{base}/v1/video/models"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        models["data"][0]["id"],
+        "qwen-token-plan/happyhorse-1.1-t2v"
+    );
+    let submitted = http
+        .post(format!("{base}/v1/video/tasks"))
+        .bearer_auth(&token)
+        .json(&json!({"model":"qwen-token-plan/happyhorse-1.1-t2v","prompt":"纸船漂流"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(submitted.status(), 202);
+    let submitted: Value = submitted.json().await.unwrap();
+    assert_eq!(submitted["id"], "default-api-key.task-123");
+    // 切换账号后仍查询提交账号，网关不把任务路由到新选中的凭证。
+    let second = pawork_auth::add_api_key_account(
+        backend.as_ref(),
+        &ProviderId::new("qwen-token-plan"),
+        "second",
+        "second-provider-secret",
+        false,
+    )
+    .unwrap();
+    pawork_auth::select_provider_account(
+        backend.as_ref(),
+        &ProviderId::new("qwen-token-plan"),
+        &second.credential_id,
+    )
+    .unwrap();
+    assert_eq!(submitted["status"], "PENDING");
+    let ready: Value = http
+        .get(format!("{base}/v1/video/tasks/default-api-key.task-123"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(ready["status"], "SUCCEEDED");
+    assert_eq!(ready["url"], "https://video.example/result.mp4");
+    let failed: Value = http
+        .get(format!("{base}/v1/video/tasks/default-api-key.task-failed"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(failed["status"], "FAILED");
+    assert_eq!(failed["error_code"], "InvalidParameter");
+    assert!(!failed.to_string().contains("video-provider-secret"));
+    assert!(!failed.to_string().contains("private-prompt"));
+    for invalid in [
+        json!({"model":"wrong/model","prompt":"纸船漂流"}),
+        json!({"model":"qwen-token-plan/happyhorse-1.1-t2v","prompt":""}),
+        json!({"model":"qwen-token-plan/happyhorse-1.1-t2v","prompt":"纸船漂流","duration":10}),
+    ] {
+        assert_eq!(
+            http.post(format!("{base}/v1/video/tasks"))
+                .bearer_auth(&token)
+                .json(&invalid)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            400
+        );
+    }
+    assert_eq!(
+        http.get(format!(
+            "{base}/v1/video/tasks/default-api-key.task-123?again=true"
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .status(),
+        400
+    );
+    assert_eq!(
+        http.get(format!("{base}/v1/video/models"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
+    // 畸形终态、身份错配与带凭证 URL 均拒绝，不能留下租约。
+    for (id, response) in [
+        ("bad-status", json!({"output":{"task_id":"bad-status","task_status":"FINISHED"}}).to_string()),
+        ("bad-identity", json!({"output":{"task_id":"other-task","task_status":"RUNNING"}}).to_string()),
+        ("bad-url", json!({"output":{"task_id":"bad-url","task_status":"SUCCEEDED","video_url":"https://video-provider-secret@video.example/result.mp4"}}).to_string()),
+        ("no-output", json!({"output":{"task_id":"no-output","task_status":"SUCCEEDED"}}).to_string()),
+        ("oversized", json!({"padding":"x".repeat(1024*1024)}).to_string()),
+    ] {
+        Mock::given(method("GET")).and(path(format!("/api/v1/tasks/{id}")))
+            .and(header("authorization", "Bearer video-provider-secret"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(response)).expect(1).mount(&upstream).await;
+        let response = http.get(format!("{base}/v1/video/tasks/default-api-key.{id}"))
+            .bearer_auth(&token).send().await.unwrap();
+        assert_eq!(response.status(), 502);
+        assert!(!response.text().await.unwrap().contains("video-provider-secret"));
+    }
+    let missing = http
+        .get(format!("{base}/v1/video/tasks/missing-account.task-123"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing.status(), 503);
+    assert_eq!(
+        upstream
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .filter(|r| r.method == "POST")
+            .count(),
+        1
+    );
+    assert!(core
+        .usage
+        .control
+        .ledger
+        .query(&UsageQuery::by_tenant(TenantId::new("thirdparty/yingmai")))
+        .await
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        core.usage.control.pool.active_count_for(
+            &TenantId::new("thirdparty/yingmai"),
+            &AccountId::new("qwen-token-plan/default-api-key")
+        ),
+        0
+    );
+    // 非流式任务等待上游时，断连与 Host 退出都必须取消并释放租约。
+    Mock::given(method("GET"))
+        .and(path("/api/v1/tasks/task-slow"))
+        .and(header("authorization", "Bearer video-provider-secret"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_delay(Duration::from_secs(30))
+                .set_body_json(json!({"output":{"task_id":"task-slow","task_status":"RUNNING"}})),
+        )
+        .expect(2)
+        .mount(&upstream)
+        .await;
+    for (index, shutdown) in [false, true].into_iter().enumerate() {
+        use tokio::io::AsyncWriteExt;
+        let address = base.trim_start_matches("http://");
+        let mut socket = tokio::net::TcpStream::connect(address).await.unwrap();
+        socket.write_all(format!("GET /v1/video/tasks/default-api-key.task-slow HTTP/1.1\r\nHost: {address}\r\nAuthorization: Bearer {token}\r\n\r\n").as_bytes()).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while upstream
+                .received_requests()
+                .await
+                .unwrap()
+                .iter()
+                .filter(|request| request.url.path() == "/api/v1/tasks/task-slow")
+                .count()
+                <= index
+            {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("video query must reach upstream");
+        assert_eq!(
+            core.usage.control.pool.active_count_for(
+                &TenantId::new("thirdparty/yingmai"),
+                &AccountId::new("qwen-token-plan/default-api-key")
+            ),
+            1
+        );
+        let _connection = if shutdown {
+            cancel.cancel();
+            Some(socket)
+        } else {
+            drop(socket);
+            None
+        };
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while core.usage.control.pool.active_count_for(
+                &TenantId::new("thirdparty/yingmai"),
+                &AccountId::new("qwen-token-plan/default-api-key"),
+            ) != 0
+            {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("cancelled video query must release its lease");
+    }
     tokio::time::timeout(Duration::from_secs(5), server)
         .await
         .unwrap()

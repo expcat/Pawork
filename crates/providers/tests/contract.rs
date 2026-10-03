@@ -747,3 +747,110 @@ async fn contract_no_authorization_when_credential_none() {
     .expect("credential=None 应能完成流式请求");
     contract::assert_text_stream(&sink.events());
 }
+
+#[tokio::test]
+async fn image_json_response_maps_content_usage_and_completes_once() {
+    let server = MockServer::start().await;
+    for (prompt, envelope) in [("qwen", true), ("openai", false)] {
+        let choice = serde_json::json!({"message":{"role":"assistant","content":[
+            {"type":"text","text":"generated"},
+            {"type":"image","image":"https://images.example/one.png"},
+            {"type":"image_url","image_url":{"url":"https://images.example/two.png"}}
+        ]},"finish_reason":"stop"});
+        let mut response =
+            serde_json::json!({"choices":[choice],"usage":{"input_tokens":7,"output_tokens":2}});
+        if envelope {
+            response = serde_json::json!({"output":{"choices":response["choices"],"finished":true},"usage":response["usage"]});
+        }
+        Mock::given(method("POST")).and(path("/v1/chat/completions"))
+            .and(body_partial_json(serde_json::json!({"stream":false,"messages":[{"role":"user","content":[{"type":"text","text":prompt}]}]})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(response)).expect(1).mount(&server).await;
+        let provider = provider_at(format!("{}/v1", server.uri()), None);
+        let mut input = request("wan2.7-image");
+        input.messages = vec![user(prompt)];
+        let sink = RecordingProviderSink::default();
+        let summary = provider
+            .stream(&input, &sink, CancellationToken::new())
+            .await
+            .unwrap();
+        assert_eq!(summary.stop_reason, StopReason::Completed);
+        assert_eq!(summary.usage.input_tokens, 7);
+        assert_eq!(summary.usage.output_tokens, 2);
+        let events = sink.events();
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| matches!(e, ProviderStreamEvent::ImageOutput { .. }))
+                .count(),
+            2
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| matches!(e, ProviderStreamEvent::ResponseCompleted(_)))
+                .count(),
+            1
+        );
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, ProviderStreamEvent::UsageUpdated(u) if u.input_tokens == 7)));
+    }
+    assert!(server.received_requests().await.unwrap().iter().all(|r| {
+        let body: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+        body.get("stream_options").is_none()
+    }));
+}
+
+#[tokio::test]
+async fn image_json_response_rejects_incomplete_invalid_and_oversized_results() {
+    let server = MockServer::start().await;
+    let image = serde_json::json!({"choices":[{"message":{"content":[{"type":"image","image":"https://images.example/ok.png"}]},"finish_reason":"stop"}]});
+    let mut unfinished = image.clone();
+    unfinished["finished"] = false.into();
+    let mut truncated = image.clone();
+    truncated["choices"][0]["finish_reason"] = "length".into();
+    let mut unmarked = image.clone();
+    unmarked["choices"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("finish_reason");
+    let mut credentials = image.clone();
+    credentials["choices"][0]["message"]["content"][0]["image"] =
+        "https://upstream-private-secret@images.example/ok.png".into();
+    let cases = vec![
+        serde_json::json!({"code":"DataInspectionFailed","message":"upstream-private-secret"})
+            .to_string(),
+        unfinished.to_string(),
+        truncated.to_string(),
+        unmarked.to_string(),
+        credentials.to_string(),
+        serde_json::json!({"choices":[{"message":{"content":"no image"},"finish_reason":"stop"}]})
+            .to_string(),
+        serde_json::json!({"padding":"x".repeat(1024*1024)}).to_string(),
+        "invalid upstream-private-secret JSON".into(),
+    ];
+    for (i, response) in cases.into_iter().enumerate() {
+        let prompt = format!("case-{i}");
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .and(body_partial_json(
+                serde_json::json!({"messages":[{"content":[{"type":"text","text":prompt}]}]}),
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_string(response))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let mut input = request("wan2.7-image");
+        input.messages = vec![user(&prompt)];
+        let sink = RecordingProviderSink::default();
+        let error = provider_at(format!("{}/v1", server.uri()), None)
+            .stream(&input, &sink, CancellationToken::new())
+            .await
+            .unwrap_err();
+        assert!(!error.to_string().contains("upstream-private-secret"));
+        assert!(!sink.events().iter().any(|e| matches!(
+            e,
+            ProviderStreamEvent::ImageOutput { .. } | ProviderStreamEvent::ResponseCompleted(_)
+        )));
+    }
+}

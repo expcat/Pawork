@@ -97,6 +97,8 @@ Workspace 为 **29 成员（27 库 + 2 应用）**：27 个库平铺 `crates/<�
 
 2026-09-25 用户授权的 [GW-1 本机模型网关](spec/model-gateway.md)：`pawork gateway serve` 在 127.0.0.1:17432 提供独立 OpenAI HTTP v1 子集，gateway 包完成 HTTP wire 翻译，通过 app 的 GatewayBackend 实现经既有 providers 调用模型，不走 Agent loop。使用按客户端可撤销的摘要 token、Host/Origin 校验及 thirdparty 租户账本；GUI/core-api 版本与既有 schema 不变。2026-09-27 已按职责抽为 gateway 库，不新增服务二进制，不开放远程账户池或凭证导出。
 
+2026-10-03 用户授权对未发布功能直接修正 API：网关原生视频目录 / 任务使用 domain 的共享纯数据类型，`GatewayBackend` 显式实现目录、提交与按客户端查询三个端口，移除默认兼容实现。视频任务 ID 绑定提交账号，Secret 与身份同事务快照，查询不依赖当前选中账号；Chat / 视频共用渠道配置、JSON 有界读取及租约取消收尾。该媒体任务 API 不进入 Agent loop，不新增数据库或依赖边；生图仍归一为既有 `ImageOutput`，GUI / 事件冻结契约不变。
+
 
 **右侧浏览器（2026-09-16，用户授权）**：`desktop → browser → 系统 WebKit` 承载网页视图及受限 DOM 操作；网页脚本运行于系统内容进程，不把 JS Runtime 嵌入 Agent / Core 或构建链。每任务一个内存页面，非持久网站数据互相隔离；不导入系统浏览器资料，不提供网页到 Rust 的工具桥。地址栏、链接与重定向限定 HTTP(S)，支持本地预览。聊天经 Host 的 `browser` 工具、Policy 与显式审批，通过 GUI 1.18 `browser_next` / `browser_respond` 操作当前任务页面，结果作为工具事件持久化；历史重放不派发操作。关闭释放，隐藏和切任务保留；尚无截图、多标签、下载与跨启动恢复。数据库 schema 不变。
 

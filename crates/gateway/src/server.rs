@@ -1,5 +1,7 @@
 //! Loopback-only OpenAI-compatible HTTP/1 gateway. No Agent session or tool execution.
-use crate::{GatewayBackend, GatewayChatRequest, GatewayError, GatewayTokenStore};
+use crate::{
+    GatewayBackend, GatewayChatRequest, GatewayError, GatewayTokenStore, GatewayVideoRequest,
+};
 use async_trait::async_trait;
 use futures::stream;
 use http_body_util::{combinators::UnsyncBoxBody, BodyExt, Full, Limited, StreamBody};
@@ -173,6 +175,43 @@ async fn handle_inner<B: GatewayBackend>(
         })?;
     let path = request.uri().path();
     let query = request.uri().query().unwrap_or_default();
+    if path == "/v1/video/models" {
+        if request.method() != Method::GET {
+            return Err(GatewayError::new(405, "method_not_allowed", "Use GET."));
+        }
+        if !query.is_empty() {
+            return Err(GatewayError::invalid());
+        }
+        let models = tokio::time::timeout(Duration::from_secs(15), core.gateway_video_models())
+            .await
+            .map_err(|_| GatewayError::timeout())??;
+        return Ok(json_response(200, json!({"object":"list","data":models})));
+    }
+    if let Some(id) = path.strip_prefix("/v1/video/tasks/") {
+        if request.method() != Method::GET {
+            return Err(GatewayError::new(405, "method_not_allowed", "Use GET."));
+        }
+        if !query.is_empty()
+            || id.is_empty()
+            || id.len() > 256
+            || !id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+        {
+            return Err(GatewayError::invalid());
+        }
+        let id = id.to_string();
+        let (tx, rx) = oneshot::channel();
+        jobs.lock().expect("gateway jobs").spawn(async move {
+            let task = core
+                .query_gateway_video(&client, &id, connection_cancel)
+                .await;
+            let _ = tx.send(task);
+        });
+        let task = rx.await.map_err(|_| GatewayError::cancelled())??;
+        return Ok(json_response(200, json!(task)));
+    }
+    let video_submission = path == "/v1/video/tasks";
     if path == "/v1/models" {
         if request.method() != Method::GET {
             return Err(GatewayError::new(405, "method_not_allowed", "Use GET."));
@@ -195,7 +234,7 @@ async fn handle_inner<B: GatewayBackend>(
             .map_err(|_| GatewayError::timeout())??;
         return Ok(json_response(200, json!({"object":"list","data":models})));
     }
-    if path != "/v1/chat/completions" {
+    if path != "/v1/chat/completions" && !video_submission {
         return Err(GatewayError::new(404, "not_found", "Unknown API route."));
     }
     if !query.is_empty() {
@@ -234,6 +273,22 @@ async fn handle_inner<B: GatewayBackend>(
         )
     })?
     .to_bytes();
+    if video_submission {
+        let input: GatewayVideoRequest =
+            serde_json::from_slice(&body).map_err(|_| GatewayError::invalid())?;
+        if input.prompt.trim().is_empty() || input.prompt.chars().count() > 8000 {
+            return Err(GatewayError::invalid());
+        }
+        let (tx, rx) = oneshot::channel();
+        jobs.lock().expect("gateway jobs").spawn(async move {
+            let task = core
+                .submit_gateway_video(&client, input, connection_cancel)
+                .await;
+            let _ = tx.send(task);
+        });
+        let task = rx.await.map_err(|_| GatewayError::cancelled())??;
+        return Ok(json_response(202, json!(task)));
+    }
     let input: GatewayChatRequest =
         serde_json::from_slice(&body).map_err(|_| GatewayError::invalid())?;
     let streaming = input.stream;

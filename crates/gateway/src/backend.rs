@@ -2,7 +2,7 @@
 use async_trait::async_trait;
 use pawork_domain::{
     CancellationToken, ModelPurpose, ModelResponseSummary, ProviderError, ProviderErrorKind,
-    ProviderEventSink,
+    ProviderEventSink, VideoGenerationModel, VideoGenerationTask,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -26,7 +26,7 @@ impl GatewayError {
         Self::new(
             400,
             "invalid_request",
-            "Unsupported or invalid completion request.",
+            "Unsupported or invalid API request.",
         )
     }
     pub fn cancelled() -> Self {
@@ -143,11 +143,33 @@ pub struct GatewayStreamOptions {
     pub include_usage: bool,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GatewayVideoRequest {
+    pub model: String,
+    pub prompt: String,
+}
+
 /// 网关只负责 HTTP 与客户端认证；模型路由、账户、租约和用量由宿主实现。
 #[async_trait]
 pub trait GatewayBackend: Send + Sync + 'static {
     /// 宿主冻结的请求与凭证快照；HTTP 层不读取其内容。
     type Completion: Send;
+
+    /// 原生异步视频任务与 Chat/SSE 独立，宿主必须明确实现能力边界。
+    async fn gateway_video_models(&self) -> Result<Vec<VideoGenerationModel>, GatewayError>;
+    async fn submit_gateway_video(
+        &self,
+        client: &str,
+        input: GatewayVideoRequest,
+        cancel: CancellationToken,
+    ) -> Result<VideoGenerationTask, GatewayError>;
+    async fn query_gateway_video(
+        &self,
+        client: &str,
+        id: &str,
+        cancel: CancellationToken,
+    ) -> Result<VideoGenerationTask, GatewayError>;
 
     /// ADR-064：按用途过滤目录；空用途集 = v1 兼容口径（仅 text 模型）。
     async fn gateway_models(

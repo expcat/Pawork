@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use crate::net::http::{HttpClient, HttpClientConfig};
+use crate::net::http::{read_json_stream, HttpClient, HttpClientConfig};
 use crate::net::sse::SseParser;
 use async_trait::async_trait;
 use pawork_domain::{CancellationToken, ModelId, ProviderId, StopReason, TokenUsage};
@@ -136,6 +136,7 @@ impl OpenAiCompatibleProvider {
 
         // Chat Completions 未声明 hosted / extension wire，发 HTTP 前拒绝。
         let body = apply_hosted_tool_wire(body, request)?;
+        let image_response = body["stream"] == false;
 
         // 认证头（明文 secret 只在此短暂存在，不持久化、不记录）
         let mut per_request_headers: Vec<_> = self.auth_header().into_iter().collect();
@@ -163,6 +164,73 @@ impl OpenAiCompatibleProvider {
         sink.emit(ProviderStreamEvent::ResponseStarted { response_id })
             .await?;
 
+        use futures::StreamExt;
+        if image_response {
+            let value = read_json_stream(byte_stream, cancel).await?;
+            let malformed =
+                |message| ProviderError::new(ProviderErrorKind::MalformedResponse, message);
+            if value.get("error").is_some() || value.get("code").is_some() {
+                return Err(ProviderError::new(
+                    ProviderErrorKind::ProviderUnavailable,
+                    "image generation failed",
+                ));
+            }
+            let output = value.get("output").unwrap_or(&value);
+            if output.get("finished").and_then(Value::as_bool) == Some(false) {
+                return Err(malformed("image response is unfinished"));
+            }
+            let choice = output
+                .get("choices")
+                .and_then(Value::as_array)
+                .and_then(|choices| choices.first())
+                .ok_or_else(|| malformed("image response has no choices"))?;
+            let finish = choice["finish_reason"].as_str();
+            if finish.is_none() && output["finished"] != true {
+                return Err(malformed("image response has no completion marker"));
+            }
+            let stop_reason = crate::usage::map_stop_reason(finish, false);
+            if stop_reason != StopReason::Completed {
+                return Err(malformed("image response did not complete successfully"));
+            }
+            let events = crate::stream::content_to_events(&choice["message"]["content"]);
+            let mut images = 0;
+            for event in &events {
+                if let ProviderStreamEvent::ImageOutput { url } = event {
+                    let parsed = reqwest::Url::parse(url)
+                        .map_err(|_| malformed("invalid image output URL"))?;
+                    if !matches!(parsed.scheme(), "http" | "https")
+                        || parsed.host_str().is_none()
+                        || !parsed.username().is_empty()
+                        || parsed.password().is_some()
+                        || url.len() > 8192
+                        || url.chars().any(|c| c.is_whitespace() || c.is_control())
+                    {
+                        return Err(malformed("invalid image output URL"));
+                    }
+                    images += 1;
+                }
+            }
+            if images == 0 {
+                return Err(malformed("image response has no image output"));
+            }
+            for event in events {
+                sink.emit(event).await?;
+            }
+            let usage = crate::usage::normalize_usage(&value);
+            if usage != TokenUsage::default() {
+                sink.emit(ProviderStreamEvent::UsageUpdated(usage.clone()))
+                    .await?;
+            }
+            sink.emit(ProviderStreamEvent::ResponseCompleted(stop_reason.clone()))
+                .await?;
+            return Ok(ModelResponseSummary {
+                stop_reason,
+                usage,
+                response_id: request.trace_id.clone(),
+                provider_metadata: Value::Null,
+            });
+        }
+
         // 用 SSE 解析器消费字节流
         let mut sse = SseParser::new();
         let mut chunk_state = ChunkState::default();
@@ -174,7 +242,6 @@ impl OpenAiCompatibleProvider {
         };
         let mut saw_completion = false;
 
-        use futures::StreamExt;
         while let Some(item) = byte_stream.next().await {
             if cancel.is_cancelled() {
                 return Err(ProviderError::cancelled("stream cancelled"));

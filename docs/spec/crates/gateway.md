@@ -21,6 +21,7 @@
 
 - `serve_gateway(Arc<B>, TcpListener, GatewayTokenStore, CancellationToken)`，`B: GatewayBackend`；非 127.0.0.1 listener 拒绝。
 - `GatewayBackend`：`gateway_models(purposes)`（空 = v1 兼容仅 text 模型）、`prepare_gateway_completion`、`run_gateway_completion`。关联类型 `Completion: Send` 是宿主冻结的请求快照，HTTP 层不访问凭证或模型实例。
+- 原生视频端口：`gateway_video_models`、`submit_gateway_video(client, GatewayVideoRequest, cancel)`、`query_gateway_video(client, id, cancel)`；三个端口均必需实现，目录 / 任务返回 domain 的 `VideoGenerationModel` / `VideoGenerationTask`，状态为 `VideoTaskStatus`。`GatewayVideoRequest` 只接受 `model` 与 `prompt`。
 - `GatewayChatRequest`（含 `web_search: bool`）/ `GatewayMessage`（content 字符串或 part 数组）/ `GatewayContent` / `GatewayContentPart` / `GatewayContentUrl` / `GatewayStreamOptions` / `GatewayModel`（含 `capabilities`）/ `GatewayModelCapabilities` / `GatewayError`：HTTP 子集与错误类型。
 - `GatewayTokenStore::{new,issue,list,revoke,authenticate}`、`GatewayTokenInfo`、`tokens::valid_client`。
 - `gateway_is_running`：基于文件锁验证存活，不能仅信 PID 文件。
@@ -29,7 +30,7 @@
 
 鉴权和完整请求准备成功后才返回 SSE 成功头。模型执行任务独立于响应 body，连接关闭传播取消，服务退出等待租约与账本结算收尾。此两阶段顺序与抽包前一致。
 
-只提供 `GET /v1/models` 和 `POST /v1/chat/completions`；普通 JSON 与 SSE 共享 canonical 事件归一。请求体 2 MiB、输出 16 MiB、连接上限 64；令牌只落摘要，Secret 只在签发时返回一次。详细协议和限制以 [产品规格](../model-gateway.md) 为准。
+提供 `GET /v1/models`、`POST /v1/chat/completions`，以及独立的 `GET /v1/video/models`、`POST /v1/video/tasks`、`GET /v1/video/tasks/{id}`。视频提交返回 202，不自动轮询 / 重试；提示词 1–8000 字、网关任务 ID 绑定提交账号，限字母 / 数字 / 连字符 / 下划线 / 点（最多 256 字节）；客户端原样保存并查询，拒绝未知字段和查询参数。视频路由复用 token、Host / Origin、JSON 与请求体限制，宿主为上游提交 / 查询实施 60 秒上限，HTTP 后台任务与 Chat 一样登记并等待取消后的租约收尾；断连传播取消，但不宣称取消已被供应商接受的任务。普通 Chat JSON 与 SSE 继续共享 canonical 事件归一。请求体 2 MiB、输出 16 MiB、连接上限 64；令牌只落摘要，Secret 只在签发时返回一次。详细协议和限制以 [产品规格](../model-gateway.md) 为准。
 
 ## 5. 依赖与 feature
 
@@ -42,6 +43,8 @@
 ## 7. 测试与 golden 资产
 
 token 原回归随迁，运行 `bash scripts/test.sh gateway`。真实 `AppCore` + HTTP + 模拟上游联调保留在 `crates/app/src/gateway_tests.rs`，覆盖目录、普通/SSE、撤销、拒绝、取消、租约和用量；运行 `cargo test -p pawork-app --offline --lib gateway_`。不以单独 token 测试代替宿主集成。
+
+原生视频回归覆盖实际路由、异步提交 / 查询、换账号后仍查询原账号、畸形状态 / 身份 / URL / 超大正文拒绝、固定生成参数、未知字段拒绝、鉴权、错误消息脱敏与不重复提交；等待上游时断连或停止 Host 均取消并释放租约，视频秒数不伪造为 token 用量。
 
 ## 8. 相关文档
 

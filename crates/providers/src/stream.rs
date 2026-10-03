@@ -62,51 +62,8 @@ pub fn chunk_to_events(data: &str, pending: &mut ChunkState) -> Vec<ProviderStre
     };
     let delta = choice.get("delta");
 
-    // text delta / image content part（图像生成模型经 Chat 通道返回
-    // content 数组：text 段映射 TextDelta，image 段映射 ImageOutput）。
     if let Some(content) = delta.and_then(|d| d.get("content")) {
-        match content {
-            Value::String(text) => {
-                if !text.is_empty() {
-                    events.push(ProviderStreamEvent::TextDelta(text.clone()));
-                }
-            }
-            Value::Array(parts) => {
-                for part in parts {
-                    match part.get("type").and_then(Value::as_str) {
-                        Some("text") => {
-                            if let Some(text) = part.get("text").and_then(Value::as_str) {
-                                if !text.is_empty() {
-                                    events.push(ProviderStreamEvent::TextDelta(text.to_string()));
-                                }
-                            }
-                        }
-                        // qwen compatible-mode：{"type":"image","image":"<url>"}
-                        Some("image") => {
-                            if let Some(url) = part.get("image").and_then(Value::as_str) {
-                                events.push(ProviderStreamEvent::ImageOutput {
-                                    url: url.to_string(),
-                                });
-                            }
-                        }
-                        // OpenAI 习惯形状：{"type":"image_url","image_url":{"url":...}}
-                        Some("image_url") => {
-                            if let Some(url) = part
-                                .get("image_url")
-                                .and_then(|v| v.get("url"))
-                                .and_then(Value::as_str)
-                            {
-                                events.push(ProviderStreamEvent::ImageOutput {
-                                    url: url.to_string(),
-                                });
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            _ => {}
-        }
+        events.extend(content_to_events(content));
     }
 
     // reasoning / thinking delta（OpenAI o-series：delta.reasoning_content / reasoning）
@@ -175,6 +132,54 @@ pub fn chunk_to_events(data: &str, pending: &mut ChunkState) -> Vec<ProviderStre
         events.push(ProviderStreamEvent::ResponseCompleted(stop));
     }
 
+    events
+}
+
+/// JSON message 与 SSE delta 共用内容映射；不把完整响应伪装为流式 chunk。
+pub(crate) fn content_to_events(content: &Value) -> Vec<ProviderStreamEvent> {
+    let mut events = Vec::new();
+    match content {
+        Value::String(text) => {
+            if !text.is_empty() {
+                events.push(ProviderStreamEvent::TextDelta(text.clone()));
+            }
+        }
+        Value::Array(parts) => {
+            for part in parts {
+                match part.get("type").and_then(Value::as_str) {
+                    Some("text") => {
+                        if let Some(text) = part.get("text").and_then(Value::as_str) {
+                            if !text.is_empty() {
+                                events.push(ProviderStreamEvent::TextDelta(text.to_string()));
+                            }
+                        }
+                    }
+                    // qwen compatible-mode：{"type":"image","image":"<url>"}
+                    Some("image") => {
+                        if let Some(url) = part.get("image").and_then(Value::as_str) {
+                            events.push(ProviderStreamEvent::ImageOutput {
+                                url: url.to_string(),
+                            });
+                        }
+                    }
+                    // OpenAI 习惯形状：{"type":"image_url","image_url":{"url":...}}
+                    Some("image_url") => {
+                        if let Some(url) = part
+                            .get("image_url")
+                            .and_then(|v| v.get("url"))
+                            .and_then(Value::as_str)
+                        {
+                            events.push(ProviderStreamEvent::ImageOutput {
+                                url: url.to_string(),
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        _ => {}
+    }
     events
 }
 

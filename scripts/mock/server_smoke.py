@@ -17,10 +17,12 @@ from __future__ import annotations
 
 import json
 import re
+import struct
 import subprocess
 import sys
 import tempfile
 import time
+import zlib
 from pathlib import Path
 from urllib import request as urlrequest
 from urllib.error import HTTPError
@@ -59,11 +61,11 @@ def stop_server(proc):
     proc.wait(timeout=5)
 
 
-def http(method, base, path, token=None, api_key=None, payload=None, query=None):
+def http(method, base, path, token=None, api_key=None, payload=None, query=None, extra_headers=None):
     url = base + path
     if query:
         url += "?" + urlencode(query)
-    headers = {}
+    headers = dict(extra_headers or {})
     if token:
         headers["Authorization"] = f"Bearer {token}"
     if api_key:
@@ -407,8 +409,8 @@ def phase_fallback_shapes():
                  "/chat/completions", "mock-xai", {"model": "grok-4"}, 404),
                 ("qwen-token-plan unregistered text model streams on /chat/completions", "POST",
                  "/chat/completions", "mock-qwen-token-plan", {"model": "gpt-4o"}, 200),
-                ("qwen-token-plan non-text model on /chat/completions is 400", "POST",
-                 "/chat/completions", "mock-qwen-token-plan", {"model": "wan2.7-image"}, 400),
+                ("qwen-token-plan unsupported non-text model on /chat/completions is 400", "POST",
+                 "/chat/completions", "mock-qwen-token-plan", {"model": "qwen-audio"}, 400),
                 ("chatgpt persona on /chat/completions is 404", "POST",
                  "/chat/completions", "mock-chatgpt", {"model": "gpt-5.6-terra"}, 404),
             ]
@@ -611,11 +613,61 @@ def phase_tool_loop(base):
           f"status={status}")
 
 
+def phase_media_tasks():
+    with tempfile.TemporaryDirectory() as root:
+        proc, base = start_server(Path(root))
+        try:
+            status, _, body, _ = http("GET", base, "/compatible-mode/v1/models", token="mock-qwen-token-plan")
+            check("Qwen compatible catalogue advertises image generation", status == 200 and "wan2.7-image" in [m["id"] for m in json.loads(body)["data"]])
+            image_request = {"model": "wan2.7-image", "stream": False, "messages": [{"role": "user", "content": [{"type": "text", "text": "a paper boat"}]}]}
+            status, headers, body, _ = http("POST", base, "/compatible-mode/v1/chat/completions", token="mock-qwen-token-plan", payload=image_request)
+            check("Qwen image request returns JSON output.choices", status == 200 and headers.get("Content-Type") == "application/json" and json.loads(body)["output"]["finished"])
+            status, _, image, _ = http("GET", base, "/__media/image.png")
+            valid_png = image.startswith(b"\x89PNG\r\n\x1a\n")
+            offset = 8
+            chunks = {}
+            while valid_png and offset < len(image):
+                length = int.from_bytes(image[offset:offset + 4], "big")
+                end = offset + 12 + length
+                chunk = image[offset + 4:offset + 8 + length]
+                valid_png = end <= len(image) and zlib.crc32(chunk) == int.from_bytes(image[end - 4:end], "big")
+                chunks[chunk[:4]] = chunk[4:]
+                offset = end
+            try:
+                valid_png = (
+                    valid_png
+                    and offset == len(image)
+                    and struct.unpack("!II", chunks[b"IHDR"][:8]) == (1, 1)
+                    and len(zlib.decompress(chunks[b"IDAT"])) == 5
+                    and b"IEND" in chunks
+                )
+            except (KeyError, struct.error, zlib.error):
+                valid_png = False
+            check("image output downloads as valid PNG pixels", status == 200 and valid_png)
+            submit = {"model": "happyhorse-1.1-t2v", "input": {"prompt": "a paper boat"}, "parameters": {"resolution": "720P", "ratio": "16:9", "duration": 5}}
+            endpoint = "/api/v1/services/aigc/video-generation/video-synthesis"
+            status, _, _, _ = http("POST", base, endpoint, token="mock-qwen-token-plan", payload=submit)
+            check("native video requires async header", status == 400)
+            for failed in (False, True):
+                submit["input"]["prompt"] = "MOCK:VIDEO_FAILED" if failed else "a paper boat"
+                status, _, body, _ = http("POST", base, endpoint, token="mock-qwen-token-plan", payload=submit, extra_headers={"X-DashScope-Async": "enable"})
+                task = json.loads(body)["output"]
+                check("video submits PENDING", status == 200 and task["task_status"] == "PENDING")
+                for expected in ("RUNNING", "FAILED" if failed else "SUCCEEDED"):
+                    status, _, body, _ = http("GET", base, "/api/v1/tasks/" + task["task_id"], token="mock-qwen-token-plan")
+                    check("video progresses " + expected, status == 200 and json.loads(body)["output"]["task_status"] == expected)
+                status, _, _, _ = http("GET", base, "/api/v1/tasks/" + task["task_id"], token="qwen-token-plan")
+                check("different video account cannot query task", status == 404)
+        finally:
+            stop_server(proc)
+
+
 def main() -> int:
     print(f"repo: {REPO}")
     phase_fixture_precedence()
     phase_fallback_shapes()
     phase_recorded_tree()
+    phase_media_tasks()
     passed = sum(RESULTS)
     total = len(RESULTS)
     verdict = "PASS" if passed == total else "FAIL"

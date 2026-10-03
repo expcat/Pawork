@@ -6,7 +6,7 @@ use pawork_control_plane::credential::{AcquireRequest, LeaseOutcome};
 use pawork_domain::*;
 use pawork_gateway::{
     GatewayBackend, GatewayChatRequest, GatewayContent, GatewayContentPart, GatewayError,
-    GatewayModel,
+    GatewayModel, GatewayVideoRequest,
 };
 use serde_json::Value;
 use std::sync::{Arc, Mutex};
@@ -123,9 +123,234 @@ pub struct GatewayCompletion {
     credential_id: Option<String>,
 }
 
+const VIDEO_PROVIDER: &str = "qwen-token-plan";
+
+fn gateway_request_id() -> Result<RequestId, GatewayError> {
+    let mut nonce = [0u8; 16];
+    getrandom::fill(&mut nonce).map_err(|_| {
+        GatewayError::new(
+            500,
+            "entropy_unavailable",
+            "Cannot create request identity.",
+        )
+    })?;
+    Ok(RequestId::new(format!(
+        "gateway-{}",
+        nonce.iter().map(|b| format!("{b:02x}")).collect::<String>()
+    )))
+}
+
+enum VideoOperation<'a> {
+    Submit(&'a str),
+    Query(&'a str),
+}
+
+impl AppCore {
+    fn gateway_video_client(
+        &self,
+        account: Option<&str>,
+    ) -> Result<
+        (
+            pawork_providers::token_plan_video::TokenPlanVideoClient,
+            String,
+        ),
+        AppError,
+    > {
+        use pawork_auth::{ApiKeyCredential, CredentialSource};
+        // 账号身份与 Secret 在同一个后端事务中读取，不装配无关的 Chat adapter。
+        let provider = ProviderId::new(VIDEO_PROVIDER);
+        let mut resolved = None;
+        self.backend.transaction(&mut |backend| {
+            let source = match account {
+                None => pawork_auth::resolve_provider_credential(backend, VIDEO_PROVIDER)?,
+                Some("environment") => {
+                    match pawork_auth::locator::read_api_key_from_env(VIDEO_PROVIDER) {
+                        Some(secret) => CredentialSource::EnvFallback(ResolvedCredential::new(
+                            CredentialKind::ApiKey,
+                            secret,
+                        )),
+                        None => CredentialSource::None,
+                    }
+                }
+                Some(id) => {
+                    let inventory = pawork_auth::list_provider_accounts(backend, &provider)?;
+                    let entry = inventory
+                        .accounts
+                        .into_iter()
+                        .find(|entry| {
+                            entry.credential_id == id
+                                && entry.kind == pawork_auth::ProviderAccountKind::ApiKey
+                        })
+                        .ok_or(pawork_auth::AuthError::NotFound)?;
+                    CredentialSource::AuthFile(entry.stored)
+                }
+            };
+            resolved = match source {
+                CredentialSource::AuthFile(stored) => {
+                    let id = if stored.secret_account == "default" {
+                        pawork_auth::LEGACY_API_KEY_ID.to_string()
+                    } else {
+                        stored.id.to_string()
+                    };
+                    Some((ApiKeyCredential::from_stored(stored)?.resolve(backend)?, id))
+                }
+                CredentialSource::EnvFallback(credential) => {
+                    Some((credential, "environment".into()))
+                }
+                CredentialSource::None => None,
+            };
+            Ok(())
+        })?;
+        let (credential, account) = resolved.ok_or_else(|| AppError::MissingCredential {
+            provider: VIDEO_PROVIDER.into(),
+            env_name: pawork_auth::locator::api_key_env_name(VIDEO_PROVIDER),
+        })?;
+        let config =
+            crate::provider_assembly::api_key_channel_config(&self.config, VIDEO_PROVIDER)?;
+        Ok((
+            pawork_providers::token_plan_video::TokenPlanVideoClient::new(config, credential)?,
+            account,
+        ))
+    }
+
+    async fn execute_gateway_video(
+        &self,
+        client: &str,
+        provider: pawork_providers::token_plan_video::TokenPlanVideoClient,
+        account: String,
+        operation: VideoOperation<'_>,
+        cancel: CancellationToken,
+    ) -> Result<VideoGenerationTask, GatewayError> {
+        let request_id = gateway_request_id()?;
+        let mut lease = self
+            .usage
+            .control
+            .pool
+            .acquire_guard(AcquireRequest {
+                tenant_id: TenantId::new(format!("thirdparty/{client}")),
+                principal_id: PrincipalId::new(client),
+                session_id: SessionId::new(request_id.as_str()),
+                agent_id: AgentId::new("gateway"),
+                provider_id: Some(ProviderId::new(VIDEO_PROVIDER)),
+                account_id: Some(AccountId::new(format!("{VIDEO_PROVIDER}/{account}"))),
+                trace_id: None,
+            })
+            .await
+            .map_err(|_| {
+                GatewayError::new(429, "concurrency_limit", "Too many concurrent requests.")
+            })?;
+        let result = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => Err(GatewayError::cancelled()),
+            result = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+                match operation {
+                    VideoOperation::Submit(prompt) => provider.submit(prompt, cancel.clone()).await,
+                    VideoOperation::Query(id) => provider.query(id, cancel.clone()).await,
+                }
+            }) => match result {
+                Ok(result) => result.map_err(GatewayError::from),
+                Err(_) => { cancel.cancel(); Err(GatewayError::timeout()) }
+            }
+        };
+        let outcome = match &result {
+            Ok(_) => LeaseOutcome::Completed,
+            Err(error) if error.code == "cancelled" => LeaseOutcome::Cancelled,
+            Err(_) => LeaseOutcome::Failed,
+        };
+        *lease.outcome_mut() = outcome;
+        if let Some(lease) = lease.into_lease() {
+            self.usage
+                .control
+                .pool
+                .release(lease.lease_id, outcome)
+                .await
+                .map_err(|_| {
+                    GatewayError::new(500, "lease_unavailable", "Cannot release model lease.")
+                })?;
+        }
+        result.map(|mut task| {
+            // 可持久保存的账号限定 ID；客户端原样保存，不解析内部组成。
+            task.id = format!("{account}.{}", task.id);
+            task.model = format!("{VIDEO_PROVIDER}/{}", task.model);
+            task
+        })
+    }
+}
+
 #[async_trait]
 impl GatewayBackend for AppCore {
     type Completion = GatewayCompletion;
+
+    async fn gateway_video_models(&self) -> Result<Vec<VideoGenerationModel>, GatewayError> {
+        use pawork_providers::token_plan_video::TOKEN_PLAN_VIDEO_MODEL;
+        if !self
+            .config
+            .is_model_enabled(VIDEO_PROVIDER, TOKEN_PLAN_VIDEO_MODEL)
+        {
+            return Ok(Vec::new());
+        }
+        match self.gateway_video_client(None) {
+            Ok(_) => Ok(vec![VideoGenerationModel {
+                id: format!("{VIDEO_PROVIDER}/{TOKEN_PLAN_VIDEO_MODEL}"),
+                display_name: "HappyHorse 1.1 · 5 秒 / 720P / 16:9".into(),
+            }]),
+            Err(AppError::MissingCredential { .. }) => Ok(Vec::new()),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    async fn submit_gateway_video(
+        &self,
+        client: &str,
+        input: GatewayVideoRequest,
+        cancel: CancellationToken,
+    ) -> Result<VideoGenerationTask, GatewayError> {
+        use pawork_providers::token_plan_video::TOKEN_PLAN_VIDEO_MODEL;
+        if !pawork_gateway::tokens::valid_client(client)
+            || input.model != format!("{VIDEO_PROVIDER}/{TOKEN_PLAN_VIDEO_MODEL}")
+        {
+            return Err(GatewayError::invalid());
+        }
+        if !self
+            .config
+            .is_model_enabled(VIDEO_PROVIDER, TOKEN_PLAN_VIDEO_MODEL)
+        {
+            return Err(GatewayError::new(
+                404,
+                "model_not_found",
+                "Video model is disabled.",
+            ));
+        }
+        let (provider, account) = self.gateway_video_client(None)?;
+        self.execute_gateway_video(
+            client,
+            provider,
+            account,
+            VideoOperation::Submit(&input.prompt),
+            cancel,
+        )
+        .await
+    }
+
+    async fn query_gateway_video(
+        &self,
+        client: &str,
+        id: &str,
+        cancel: CancellationToken,
+    ) -> Result<VideoGenerationTask, GatewayError> {
+        let (account, id) = id
+            .split_once('.')
+            .filter(|(account, id)| {
+                !account.is_empty() && pawork_providers::token_plan_video::valid_task_id(id)
+            })
+            .ok_or_else(GatewayError::invalid)?;
+        if !pawork_gateway::tokens::valid_client(client) {
+            return Err(GatewayError::invalid());
+        }
+        let (provider, account) = self.gateway_video_client(Some(account))?;
+        self.execute_gateway_video(client, provider, account, VideoOperation::Query(id), cancel)
+            .await
+    }
     async fn gateway_models(
         &self,
         purposes: &[pawork_domain::ModelPurpose],
@@ -285,20 +510,10 @@ impl GatewayBackend for AppCore {
                 "Provider account changed. Retry the request.",
             ));
         }
-        let mut nonce = [0u8; 16];
-        getrandom::fill(&mut nonce).map_err(|_| {
-            GatewayError::new(
-                500,
-                "entropy_unavailable",
-                "Cannot create request identity.",
-            )
-        })?;
-        let id: String = nonce.iter().map(|b| format!("{b:02x}")).collect();
-        let mut request = pawork_engine::assemble_request(
-            RequestId::new(format!("gateway-{id}")),
-            entry.id.clone(),
-            messages,
-        );
+        let request_id = gateway_request_id()?;
+        let session_id = SessionId::new(request_id.as_str());
+        let mut request = pawork_engine::assemble_request(request_id, entry.id.clone(), messages);
+        request.session_id = Some(session_id);
         request.max_output_tokens = input.max_completion_tokens.or(input.max_tokens);
         request.temperature = input.temperature;
         if let Some(format) = input.response_format {

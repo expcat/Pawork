@@ -10,7 +10,11 @@ Git 历史 37fae8f3:docs/mock-simulation-plan.md §2.2 端点矩阵：
     GET  /models?client_version=…   ChatGPT models[].slug 目录（query 原样接受）
     GET  /language-models           xAI models[] 目录（output_modalities 含 text）
     GET  /usage                     opencode-go 三窗额度（§2.3 红线形状）
-    POST /chat/completions          Chat Completions SSE
+    POST /chat/completions          Chat Completions SSE / Qwen 生图 JSON
+    POST /api/v1/services/aigc/video-generation/video-synthesis  原生视频提交
+    GET  /api/v1/tasks/<id>         视频 RUNNING / SUCCEEDED / FAILED
+    GET  /__media/image.png         模拟图片
+    GET  /__media/video.mp4         fixtures-root/media/video.mp4 回放
     POST /responses                 Responses SSE（chatgpt / xai grok-4、grok-4-fast /
                                     Go Responses 家族；错家族/不可运行模型按生产语义
                                     400/404，家族路由对照 api_key.rs inferred_transport）
@@ -337,6 +341,8 @@ CATALOG_DATA = {
         "deepseek-v4-pro",
         "deepseek-v4-pro-0813",
         "deepseek-v4-flash-0731",
+        "wan2.7-image",
+        "wan2.7-image-pro",
     ],
     "deepseek": ["deepseek-v4-pro", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp"],
     "kimi-platform": ["kimi-k3", "kimi-k2.6"],
@@ -638,6 +644,7 @@ ROUTES = {
     ("POST", "/chat/completions"): "handle_chat",
     ("POST", "/responses"): "handle_responses",
     ("POST", "/v1/messages"): "handle_messages",
+    ("POST", "/api/v1/services/aigc/video-generation/video-synthesis"): "handle_video_submit",
 }
 # MOCK-4：/__control 场景切换不走本表（无 persona 要求），在 _dispatch 特判。
 # MOCK-5：OAuth 端点同样不走本表（登录阶段无 Bearer，persona 检查前特判）。
@@ -687,8 +694,15 @@ class MockProviderHandler(BaseHTTPRequestHandler):
                 else:
                     self.handle_oauth_token(channel)
                 return
+            if method == "GET" and split.path in {"/__media/image.png", "/__media/video.mp4"}:
+                self.handle_media(split.path)
+                return
             channel = self._persona_channel()
-            handler_name = ROUTES.get((method, split.path))
+            route = split.path.removeprefix("/compatible-mode/v1")
+            handler_name = ROUTES.get((method, route))
+            if method == "GET" and route.startswith("/api/v1/tasks/"):
+                handler_name = "handle_video_query"
+                query["task_id"] = route.removeprefix("/api/v1/tasks/")
             if channel is None:
                 self._send_json(
                     401, {"error": {"message": "missing or unknown mock persona token"}}
@@ -1036,6 +1050,16 @@ class MockProviderHandler(BaseHTTPRequestHandler):
                 )
                 return
             # 其余文本 id（含表外新 id）按家族路由均由 Chat Completions 承接。
+        if channel == "qwen-token-plan" and model in {"wan2.7-image", "wan2.7-image-pro"}:
+            messages = body.get("messages")
+            if body.get("stream") is not False or "stream_options" in body or not isinstance(messages, list) or not messages or any(not isinstance(m.get("content"), list) for m in messages):
+                self._send_json(400, {"code": "InvalidParameter", "message": "image generation requires non-streaming content parts"})
+                return
+            if "MOCK:IMAGE_ERROR" in json.dumps(messages):
+                self._send_json(200, {"code": "DataInspectionFailed", "message": "mock-qwen-token-plan private prompt"})
+                return
+            self._send_json(200, {"output": {"finished": True, "choices": [{"message": {"role": "assistant", "content": [{"type": "image", "image": f"http://{self.headers['Host']}/__media/image.png"}]}, "finish_reason": "stop"}]}, "usage": {"input_tokens": 8, "output_tokens": 2, "image_count": 1}})
+            return
         if channel == "qwen-token-plan":
             # ADR-061：表外文本 id 进目录并走 Chat Completions；仅非文本 id 被拒
             # （生产在 HTTP 前本地 InvalidRequest，mock 以 400 防御性对齐）。
@@ -1054,6 +1078,49 @@ class MockProviderHandler(BaseHTTPRequestHandler):
             return build_chat_sse(channel, model)
 
         self._stream_fixture_or(channel, "chat", model, query, fallback, body)
+
+    def handle_media(self, path: str) -> None:
+        if path == "/__media/image.png":
+            image = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYPj/HwADAgH/5ncLrgAAAABJRU5ErkJggg==")
+            self._send_bytes(200, image, "image/png")
+        else:
+            video = self.server.mock_config.fixtures_root / "media" / "video.mp4"
+            if not video.is_file():
+                self._send_json(404, {"error": "no video replay fixture"})
+                return
+            self._send_bytes(200, video.read_bytes(), "video/mp4")
+
+    def handle_video_submit(self, channel: str, query: dict, body: dict) -> None:
+        if channel != "qwen-token-plan":
+            self._send_json(404, {"error": "video endpoint unavailable"})
+            return
+        prompt = body.get("input", {}).get("prompt")
+        if body.get("model") != "happyhorse-1.1-t2v" or not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 8000 or body.get("parameters") != {"resolution": "720P", "ratio": "16:9", "duration": 5} or self.headers.get("X-DashScope-Async") != "enable":
+            self._send_json(400, {"code": "InvalidParameter"})
+            return
+        if "MOCK:VIDEO_REJECTED" in prompt:
+            self._send_json(200, {"code": "DataInspectionFailed", "message": "mock-qwen-token-plan private prompt"})
+            return
+        task_id = "video-" + secrets.token_hex(8)
+        with self.server.video_lock:
+            self.server.video_tasks[task_id] = {"owner": self.headers.get("Authorization"), "polls": 0, "failed": "MOCK:VIDEO_FAILED" in prompt}
+        self._send_json(200, {"output": {"task_id": task_id, "task_status": "PENDING"}})
+
+    def handle_video_query(self, channel: str, query: dict, body: dict) -> None:
+        task_id = query["task_id"]
+        with self.server.video_lock:
+            task = self.server.video_tasks.get(task_id)
+            if channel != "qwen-token-plan" or task is None or task["owner"] != self.headers.get("Authorization"):
+                self._send_json(404, {"code": "TaskNotFound"})
+                return
+            task["polls"] += 1
+            status = "RUNNING" if task["polls"] == 1 else "FAILED" if task["failed"] else "SUCCEEDED"
+        output = {"task_id": task_id, "task_status": status}
+        if status == "SUCCEEDED":
+            output["video_url"] = f"http://{self.headers['Host']}/__media/video.mp4"
+        elif status == "FAILED":
+            output.update(code="DataInspectionFailed", message="mock-qwen-token-plan private prompt")
+        self._send_json(200, {"output": output})
 
     def handle_responses(self, channel: str, query: dict, body: dict) -> None:
         model = str(body.get("model") or "")
@@ -1280,6 +1347,8 @@ class MockProviderServer(ThreadingHTTPServer):
         self._scenario_name = None
         self._stream_lock = threading.Lock()
         self._stream_counter = 0
+        self.video_lock = threading.Lock()
+        self.video_tasks = {}
         self._oauth_lock = threading.Lock()
         self._oauth_scripts = {}
         self._oauth_devices = {}

@@ -9,10 +9,14 @@ use serde_json::{json, Map, Value};
 ///
 /// 一个适配同时覆盖云端 OpenAI 兼容接口与多数本地服务（Ollama / vLLM / LM Studio）。
 pub fn to_chat_completions_body(request: &CanonicalModelRequest) -> Value {
+    let image_generation =
+        pawork_models::registry::default_text(request.model.as_str()) == Some(false);
     let mut body = Map::new();
     body.insert("model".into(), Value::String(request.model.to_string()));
-    body.insert("stream".into(), Value::Bool(true));
-    body.insert("stream_options".into(), json!({ "include_usage": true }));
+    body.insert("stream".into(), Value::Bool(!image_generation));
+    if !image_generation {
+        body.insert("stream_options".into(), json!({ "include_usage": true }));
+    }
 
     // messages
     let mut messages = Vec::new();
@@ -35,7 +39,7 @@ pub fn to_chat_completions_body(request: &CanonicalModelRequest) -> Value {
     }
     flush_tool_result_images(&mut messages, &mut pending_tool_images);
     // 已声明的纯生图模型要求 content parts，即使输入只有文本。
-    if pawork_models::registry::default_text(request.model.as_str()) == Some(false) {
+    if image_generation {
         for message in &mut messages {
             if let Some(text) = message.get("content").and_then(Value::as_str) {
                 message["content"] = json!([{ "type": "text", "text": text }]);

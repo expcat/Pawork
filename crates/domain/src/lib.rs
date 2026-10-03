@@ -19,6 +19,7 @@ mod reasoning;
 mod server_tool;
 mod tool;
 mod tool_api;
+mod video_generation;
 mod workflow;
 
 pub use cancel::{CancellationFuture, CancellationToken};
@@ -35,4 +36,5 @@ pub use reasoning::*;
 pub use server_tool::*;
 pub use tool::*;
 pub use tool_api::*;
+pub use video_generation::*;
 pub use workflow::*;

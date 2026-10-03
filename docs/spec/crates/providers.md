@@ -15,16 +15,17 @@
 | --- | --- | --- |
 | `src/lib.rs` | ~120 | crate 门面：模块声明与 feature 门控 re-export；`is_credential_header`（五个凭证头小写匹配） |
 | `src/error_table.rs` | ~160 | `VENDOR_ERROR_RULES` 数据表 + `normalize_vendor_error`：按厂商子串把错误改判为更精确的 `ProviderErrorKind`（如 ChatGPT usage limit、xAI live_search quota） |
-| `src/provider.rs` | ~500 | `OpenAiCompatibleConfig` / `OpenAiCompatibleProvider`：Chat Completions transport 的 `ModelProvider` 实现；构造期拒绝 config 头携带凭证头 |
-| `src/request.rs` | ~670 | `to_chat_completions_body`：canonical → Chat Completions 请求体（ADR-064：默认表声明的纯生图模型即使只有文本也发送 content parts 数组）；`provider_options` 保留键忽略并 `tracing` 警告 |
-| `src/stream.rs` | ~290 | `chunk_to_events` / `is_done` / `ChunkState`：Chat Completions SSE chunk → `ProviderStreamEvent`（文本/工具调用增量、usage、finish_reason）；`delta.content` 数组形态解析 text / image part——图像生成模型的输出归一为 `ImageOutput{url}`（ADR-064，qwen `{"type":"image","image":url}` 与 OpenAI `image_url` 形状）；畸形 chunk → `MalformedResponse` 错误事件（R-08）；`stream_error_message` 流错误安全文案（R-02） |
+| `src/provider.rs` | ~600 | `OpenAiCompatibleConfig` / `OpenAiCompatibleProvider`：Chat Completions transport 的 `ModelProvider` 实现；构造期拒绝 config 头携带凭证头；纯生图解析普通 JSON 的 `output.choices` / `choices`，归一图片、用量与完成事件，HTTP 200 错误正文仍失败，支持取消和独立 1 MiB JSON 正文限制 |
+| `src/token_plan_video.rs` | ~200 | feature `qwen-token-plan`：原生 HappyHorse 文生视频客户端，固定 720P / 16:9 / 5 秒；提交 / 查询读取有界 JSON，归一任务 ID / 状态 / 结果地址 / 白名单失败码，复用 HTTP 与凭证、无自动重试 / 轮询 |
+| `src/request.rs` | ~670 | `to_chat_completions_body`：canonical → Chat Completions 请求体（ADR-064：默认表声明的纯生图模型即使只有文本也发送 content parts 数组；2026-10-03 起发送 `stream=false` 且不带 `stream_options`，文本仍使用 SSE）；`provider_options` 保留键忽略并 `tracing` 警告 |
+| `src/stream.rs` | ~290 | `chunk_to_events` / `is_done` / `ChunkState` 与 crate 内 `content_to_events`（普通 JSON / SSE 共用）：Chat Completions SSE chunk → `ProviderStreamEvent`（文本/工具调用增量、usage、finish_reason）；`delta.content` 数组形态解析 text / image part——图像生成模型的输出归一为 `ImageOutput{url}`（ADR-064，qwen `{"type":"image","image":url}` 与 OpenAI `image_url` 形状）；畸形 chunk → `MalformedResponse` 错误事件（R-08）；`stream_error_message` 流错误安全文案（R-02） |
 | `src/usage.rs` | ~300 | `normalize_usage`（多厂商字段名归一为 `TokenUsage`）、`map_stop_reason`、`UsageAccumulator`（会话级累计） |
 | `src/reasoning.rs` | ~100 | `ReasoningProtector` trait（protect/recover 不透明 payload）与 `ReasoningProtectError`（`Unavailable` / `Corrupted` 判别） |
 | `src/memory_protector.rs` | ~110 | `InMemoryReasoningProtector`：HashMap 存不透明字节，测试/内存场景用 |
 | `src/responses.rs` | ~1140 | Responses transport 共享件：`ResponsesTransport(Config)` / `ResponsesWireOptions` / `to_responses_body` / `ResponsesStreamAssembler` / `ResponsesAssemblyEvent` / `ResponsesFinalState`；保留键防覆盖；凭证头拒绝 |
 | `src/responses_reasoning.rs` | ~250 | crate 私有：Responses reasoning item → canonical `ReasoningItem`（提取 `encrypted_content` 交 protector；容忍历史 hint 键拼写） |
 | `src/net/mod.rs` | ~10 | re-export `http` / `sse` / `retry` |
-| `src/net/http.rs` | ~400 | `HttpClient` / `HttpClientConfig`（builder：timeout/proxy/user_agent/自定义头/禁系统代理）、`is_local_target` / `loopback_aware_proxy`（本地目标绕过代理）；Debug 输出对凭证头脱敏 |
+| `src/net/http.rs` | ~450 | `HttpClient` / `HttpClientConfig`（builder：timeout/proxy/user_agent/自定义头/禁系统代理）、`is_local_target` / `loopback_aware_proxy`（本地目标绕过代理）；Debug 输出对凭证头脱敏 |
 | `src/net/sse.rs` | ~450 | 增量 `SseParser`（feed/finish）、`SseEvent` / `SseParseError`、`MAX_BUFFER_BYTES`（1 MiB 缓冲上限，UTF-8 安全跨 chunk） |
 | `src/net/retry.rs` | ~220 | `classify_status` / `classify_request_error`（HTTP 状态与 reqwest 错误 → `ProviderError`，解析 `Retry-After`，消息脱敏）、`parse_retry_after` |
 | `src/channels/mod.rs` | ~60 | 八通道 feature 门控的模块声明与 re-export |
@@ -41,6 +42,10 @@
 模块地图以当前源码为准；共享模型逻辑见 [models](models.md)。
 
 ## 3. 对外 API 面
+
+### 原生视频客户端
+
+`TokenPlanVideoClient::new(ApiKeyChannelConfig, ResolvedCredential)` 要求 Qwen Token Plan API key 与 compatible-mode 基地址，拒绝自定义凭证头。`submit(prompt, cancel)`、`query(id, cancel)` 返回 domain 的 `VideoGenerationTask`（供应商裸 ID、模型 ID 与 `VideoTaskStatus`）；账号限定和模型命名空间由宿主投影；`valid_task_id` 校验 ID，型号常量为 `TOKEN_PLAN_VIDEO_MODEL`。这条异步媒体路径不经过 Agent / Chat SSE，不改变 canonical 模型用途。共享 `HttpClient::get_stream_with_headers` 与 crate 内 `read_json_stream`（独立 `MAX_JSON_BYTES = 1 MiB`）提供有界、可取消的 JSON 正文读取，生图与视频直接复用；提交和查询不自动重试。基地址和输出 URL 拒绝 userinfo、空白 / 控制字符，输出限 HTTP(S)；任务查询核对返回的供应商 ID。具体契约见 [模型网关](../model-gateway.md#原生视频任务扩展2026-10-03)。
 
 ### 3.1 Provider adapters（`pawork_domain::ModelProvider` 实现）
 
@@ -101,6 +106,8 @@ CAP-PROBE（2026-09-23 五通道端点实测，glm-coding / opencode-go / qwen-t
 - `default_image_input` 补登 omen-alpha / mimo-v2.6-flash / mimo-v2.6-pro / deepseek-v4-flash-vision-exp（opencode-go）与 qwen `auto`；补登 text-only：glm-4.5 / 4.5-air / 4.6 / 4.7 / 5 / 5-turbo / 5.1、muse-spark 1.2/1.3、longcat-2.0；实测翻转 deepseek-v4-flash（legacy id 在 go 对图片 400、文本 200）与 qwen3.7-max（token-plan 对图片 400、文本 200）。gpt-5.6-luna（403）与 hy4-preview / mimo-v2.5-pro（推理 404）未测，保持未知。
 - 同日复查批次（官方页复核 + 端点复测，解决实测与文档出入）：qwen3.7-max 与官方一致——百炼模型信息页 / 视觉理解页标明裸别名等同 2026-05-20 纯文本快照，视觉只属于日期快照 qwen3.7-max-2026-06-08（token-plan 未上架该快照，404），更正 2026-09-22 把快照能力误挂别名的登记依据；deepseek-v4-flash 为真分歧——官方 pricing 页称 legacy 名「临时」路由到 V4.1-Flash（news260910），但 opencode-go 网关未跟随（base64 与公网 URL 均 400，同端点 v4.1-flash / vision-exp 正常识图），维持实测 false；deepseek-v4-flash-0731（token-plan）复测确认 200 但模型自述无图（与 longcat-2.0 同型静默忽略），补登 false；qwen3.7-plus / qwen3.6-flash / qwen3.8-flash 在 token-plan 复测识图正确，登记依据由官方文档升级为实测；glm-5.3-flashx 的 429 实为 1311 套餐未开通，官方 VLM 页声明其为 Flash 加速档且模态相同，按文档登记 true；V4 Pro 的 2026-09-14 路由计费公告已被官方 pricing 页撤回（继续独立服务与计费），text-only 登记不变。
 - 新增 `default_image_output`：qwen token-plan compatible-mode 实测 wan2.7-image / wan2.7-image-pro 文生图（content 数组入、`{"type":"image","image":<url>}` 出、image_count 用量）；两款模型仍被 `non_text_model` 过滤在聊天目录外，本表作为目录级声明保留给图像生成接线。其余四通道目录无图像生成模型。
+
+2026-10-03 生图接线复核：Token Plan compatible-mode 即使收到 `stream=true`，实际仍返回 HTTP 200 的普通 JSON（`output.choices[].message.content`），旧 SSE 解析器会将已生成图片判为流中断。纯生图请求改用非流式，响应直接解析普通 JSON，与 SSE 共用 content part 映射归一为 `ImageOutput`、用量与唯一完成事件；错误正文、未完成或无图片、缺完成标记、非成功终态、带凭证或非法输出 URL 不能变成成功。不新增供应商字段或网关端点。
 - 新增 `default_hosted_web_search`：xai 订阅（grok-4.5/4.6/4.7/4.7-build-fast）与 opencode-go Responses（grok-4.6/4.7）实测透传 `{"type":"web_search"}` 并返回 web_search_call 事件与 url_citation；`apply_default_hosted_web_search` 仅在 Responses 传输插标签，Chat 通道仍不声明（fail-closed）。
 - 同批产品修复：xAI 订阅代理 2026-09 起强制 `x-grok-client-version`（缺失即 426 "CLI version (none) is outdated"，需 ≥0.1.202），适配器订阅路径统一附带该头（当前对齐官方 lockstep 版本 1.0.41，目录与推理共用）；opencode-go Responses 的 `hosted_web_search` wire 由恒 false 改为按通道放开（见 §5 Responses transport）。
 
@@ -257,12 +264,13 @@ canonical `ToolResultContent.content` 中 Image 不再被编码器丢弃。Chat 
 | `tests/chatgpt.rs` | `chatgpt-oauth` | OAuth 头 / models / Responses 路径接线；malformed Responses 事件即使后随完成事件也报错 |
 | `tests/xai.rs` | `xai-oauth` | 模型能力选 Responses/Chat；Grok 订阅 `/models` 目录、实际模型 ID 与协议路由、认证头（含 `x-grok-client-version` 存在性）与模型路由头、VISION-2 默认图像回填与 Responses 模型 WebSearch 声明；Responses 带 OAuth Bearer 的全链路往返 |
 | `tests/responses.rs` | `chatgpt-oauth` | `to_responses_body` 保留 canonical tools、拦截保留键覆盖 |
-| `tests/api_key_channels.rs` | 五个 API-key feature（含 kimi-platform） | 五通道默认 id/endpoint 覆盖、未声明 api_key 的 preset 与缺/错凭证 fail-closed、固定凭证头拒绝、Bearer Chat 路径、模型声明 transport 选 Responses 且不按通道分支 |
+| `tests/api_key_channels.rs` | 五个 API-key feature（含 kimi-platform） | 五通道默认 id/endpoint 覆盖、未声明 api_key 的 preset 与缺/错凭证 fail-closed、固定凭证头拒绝、Bearer Chat 路径、模型声明 transport 选 Responses 且不按通道分支；混合目录的生图请求使用普通 JSON mock，文本仍使用 SSE，验证实际图片输出 |
 
 `tests/contract.rs` 契约点（wiremock 驱动）：
 
 - 文本流 / 单工具调用 / usage + stop 三切面合并为默认执行的 `contract_chat_facets_default_coverage`，五通道表驱动用例另外复用 `tests/common` 样例与断言；并行工具调用回归保留；
 - 流中取消与预取消（预取消不发请求）、超时归一、长流逐 chunk 重置读超时；
+- 生图完整 JSON 与 `output.choices` 封装归一、用量和唯一完成事件；错误正文、未完成 / 截断 / 缺完成标记 / 无图、非法 URL、超大正文及非 JSON 不能产生成功输出；
 - 429 归一（含 `Retry-After`）、上下文溢出（413）归一；
 - malformed 流中断与中断后重连、畸形 chunk 后 `[DONE]` 仍失败（R-08）、`[DONE]` 无 finish_reason 按完成、部分 JSON 工具参数跨 chunk 组装、`list_models`。
 

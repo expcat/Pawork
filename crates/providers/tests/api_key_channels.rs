@@ -392,9 +392,15 @@ async fn mixed_catalog_keeps_undeclared_chat_and_shares_routes() {
             );
         }
         let mut chat = 0;
+        let mut images = 0;
         let mut responses = 0;
         for model in &models {
             match model.capabilities.transport {
+                ModelTransport::ChatCompletions
+                    if model.capabilities.image_output && !model.capabilities.text =>
+                {
+                    images += 1
+                }
                 ModelTransport::ChatCompletions => chat += 1,
                 ModelTransport::Responses => responses += 1,
                 ModelTransport::Messages => panic!("unsupported transport in runnable catalog"),
@@ -403,12 +409,24 @@ async fn mixed_catalog_keeps_undeclared_chat_and_shares_routes() {
         if chat > 0 {
             Mock::given(method("POST"))
                 .and(path("/chat/completions"))
+                .and(body_partial_json(serde_json::json!({"stream":true})))
                 .respond_with(
                     ResponseTemplate::new(200)
                         .insert_header("content-type", "text/event-stream")
                         .set_body_string(common::chat_finish_only_body()),
                 )
                 .expect(chat)
+                .mount(&server)
+                .await;
+        }
+        if images > 0 {
+            Mock::given(method("POST"))
+                .and(path("/chat/completions"))
+                .and(body_partial_json(serde_json::json!({"stream":false})))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "output":{"finished":true,"choices":[{"message":{"content":[{"type":"image","image":"https://images.example/result.png"}]},"finish_reason":"stop"}]}
+                })))
+                .expect(images)
                 .mount(&server)
                 .await;
         }
@@ -425,16 +443,19 @@ async fn mixed_catalog_keeps_undeclared_chat_and_shares_routes() {
                 .await;
         }
         for model in models {
+            let image_output = model.capabilities.image_output && !model.capabilities.text;
             let mut req = request();
             req.model = model.id;
+            let sink = RecordingProviderSink::default();
             provider
-                .stream(
-                    &req,
-                    &RecordingProviderSink::default(),
-                    CancellationToken::new(),
-                )
+                .stream(&req, &sink, CancellationToken::new())
                 .await
                 .expect("runnable route");
+            if image_output {
+                assert!(sink.events().iter().any(|event| matches!(
+                    event, ProviderStreamEvent::ImageOutput { url } if url == "https://images.example/result.png"
+                )));
+            }
         }
         let before = server.received_requests().await.unwrap().len();
         let mut req = request();

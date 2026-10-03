@@ -16,6 +16,7 @@
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
 | `src/lib.rs` | ~40 | 模块声明 + 全量 re-export；crate 级红线文档 |
+| `src/video_generation.rs` | ~30 | `VideoGenerationModel` / `VideoGenerationTask` / `VideoTaskStatus`：异步文生视频纯数据，providers 与 gateway 共用 |
 | `src/ids.rs` | ~110 | `string_id!` 宏生成 37 个 String newtype ID（基础 27 个：`SessionId` / `RunId` / `WorkspaceId` / `EventId` / `ToolCallId` / `ProviderId` / `ProtectedBlobRef`…；Phase 16 追加 10 个：`PlanId` / `GoalId` / `BackgroundTaskId` / `AutomationId` / `MonitorId` / `MemoryId` / `ReviewSessionId` 等）；`Timestamp`（Unix epoch 毫秒，u64） |
 | `src/events.rs` | ~510 | `CURRENT_SCHEMA_VERSION = 1`、`EventSequence`、`AgentEventEnvelope`（含 `validate_after` 顺序校验、`with_parent`）、`AgentEvent` 32 变体、`ApprovalDecision`、`ToolOutputStream`、`EventOrderError`、`ProviderTranscriptContinuation` |
 | `src/message.rs` | ~300 | `Message` / `MessageRole`（System/User/Assistant/Tool）/ `ContentPart` 8 变体、`ToolResultContent`、`ArtifactReference`、`MessageMetadata`、`TokenUsage`、`Cost`（微单位整数）、`StopReason` 8 变体 |
@@ -139,6 +140,8 @@ API 1.24：`VideoContent {url, media_type}` 只表示远程 HTTP(S) 引用，纯
 - `ReviewEvent` 4 变体（Review Engine）：配 `ReviewAnchor` / `ReviewSeverity` / `ReviewResolution` / `SuggestedPatch`；`FindingOpened` 的 `evidence` / `fingerprint` 为附加式可选字段。
 
 ### 3.7 其余主题
+
+原生视频共享类型（2026-10-03）：`VideoGenerationModel { id, display_name }`、`VideoGenerationTask { id, model, status, url, error_code }`；`VideoTaskStatus` wire 为 `PENDING` / `RUNNING` / `SUCCEEDED` / `FAILED` / `CANCELED` / `UNKNOWN`。供应商解析与网关账号绑定由各自边界完成；domain 不包含具体 Provider，不修改 Agent 事件、GUI wire 或持久化 schema。
 
 - **reasoning**：`ReasoningEffort`（low / medium / high / x_high / max，serde 名稳定；不含 none，「不推理」用 `Option<ReasoningConfig> = None` 表达）；`ReasoningItem` 只持 `protected_blob_ref` 与非敏感 metadata。
 - **profile**：`ProfileToolRules::policy()` deny 优先返回 `Denied / Allowed / Unrestricted`；`ProfileMemory::availability()` 存在 `unavailable` 标注时无条件 `Unavailable`（绝不虚假可用）；`ProfileIsolation`（None / Restricted / Container）。

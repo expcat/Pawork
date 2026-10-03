@@ -1,6 +1,6 @@
 # Pawork 活动路线图
 
-> 更新：2026-10-02。2026-09-23 全项目 Review 的 T-01～T-12 修复与 API 1.23/1.24 产品能力（文件夹附件、Plan GUI、持续目标、Chrome/Edge 上下文、技能录制、绘图、插件列表、MM-2 视频、MM-3 Qwen 搜索）已实现，通过定向自动门禁与本机真窗口验收并提交；活动计划文档（docs/Plan/）随本轮收口移除，过程与证据从 Git 历史追溯（`git show 46a4ff81:docs/Plan/README.md`）。本页只保留未完成工作，不能由代码存在推定「完美完成」；当前实现以源码和 [Spec](spec/README.md) 为准。
+> 更新：2026-10-03。2026-09-23 全项目 Review 的 T-01～T-12 修复与 API 1.23/1.24 产品能力（文件夹附件、Plan GUI、持续目标、Chrome/Edge 上下文、技能录制、绘图、插件列表、MM-2 视频、MM-3 Qwen 搜索）已实现，通过定向自动门禁与本机真窗口验收并提交；活动计划文档（docs/Plan/）随本轮收口移除，过程与证据从 Git 历史追溯（`git show 46a4ff81:docs/Plan/README.md`）。本页只保留未完成工作，不能由代码存在推定「完美完成」；当前实现以源码和 [Spec](spec/README.md) 为准。
 
 2026-09-27 [包边界调整](architecture.md)已实现：拆出 models、gui-server、acp、mcp、gateway，workspace 为 29 成员，不合并现有包。受影响包的现有回归、协议 golden、依赖边界审计与真实 `pawork` 子进程 3 项测试通过；第三方生产依赖集合、线上协议与持久格式不变。本次未运行 Desktop 构建、真窗口或真实 Provider 验收，不改变下方已有人工验收结论；全 workspace 门禁未运行，改动未提交、未发布、未归档。
 
@@ -12,7 +12,9 @@ ADR-064 [模型能力用途筛选](spec/model-gateway.md#决策adr-064-模型能
 
 代理已走查首页与侧栏、用途菜单、全部九页 Settings、附件与项目引用、Timeline / 审批 / 失败 / 取消 / 查找、Files / Markdown 保存、Changes / diff、PTY、MCP Resources、系统 WebView、子代理空态和五类辅助窗口，并复验宽窄窗、三档字号与中英文；截图保留在会话验收目录，不入仓库。此结论为代理真窗口验收，用户人工签字未完成；录制后续 Run、非空子代理交互与外部浏览器正文沿用下方待验项。Gateway 实际目录的五用途过滤和请求大小边界已核对；固定真实验证模型 `opencode-go / glm-5.3-flash` 返回 `model_not_found`，真实识图 / 生图 / 视频 / 搜索推理未获本轮成功证据。没有切换验证模型或改持久默认；未发布、未归档。
 
-GW-1 [通用本机模型网关](spec/model-gateway.md) 已实现：OpenAI 兼容目录与普通/SSE 补全、按客户端 token 签发/撤销、路由/租约/用量归因、独立 CLI 生命周期。网关 HTTP 与模拟上游定向回归、CLI 库测试和 `pawork` 构建通过；MoMai 实际客户端与网关跨进程目录/撤销、普通/SSE 补全的模拟上游联调通过，真实 CLI serve/status/shutdown 已验证。MoMai 设置窗口已通过 computer use 验证模拟目录连接、模型显示及失效令牌/断开失败处理；真实智谱 GLM-5.3 与 GLM-5.3-Flash 已通过 MoMai GUI 完成大纲、正文、划词和关系双向推演验证；GUI 设置成功保存凭证流程仍待验，详细边界见 [MoMai ROADMAP](../../MoMai/docs/ROADMAP.md)。本轮未提交、未发布、未归档；全 workspace 门禁未运行。
+GW-1 [通用本机模型网关](spec/model-gateway.md) 已实现：OpenAI 兼容目录与普通/SSE 补全、按客户端 token 签发/撤销、路由/租约/用量归因、独立 CLI 生命周期。网关 HTTP 与模拟上游定向回归、CLI 库测试和 `pawork` 构建通过；MoMai 实际客户端与网关跨进程目录/撤销、普通/SSE 补全的模拟上游联调通过，真实 CLI serve/status/shutdown 已验证。MoMai 设置窗口已通过 computer use 验证模拟目录连接、模型显示及失效令牌/断开失败处理；真实智谱 GLM-5.3 与 GLM-5.3-Flash 已通过 MoMai GUI 完成大纲、正文、划词和关系双向推演验证；GUI 设置成功保存凭证流程仍待验，详细边界见 [MoMai ROADMAP](../../MoMai/docs/ROADMAP.md)。本轮媒体扩展的实现与验证记录随提交收口；未发布、未归档，全 workspace 门禁未运行。
+
+2026-10-03 未发布改动审查已实现根因修复：纯生图直接解析有界、可取消的完整 JSON，与 SSE 共用内容映射；原生视频使用共享类型和必需后端端口，任务 ID 绑定提交账号，凭证与身份同事务冻结，提交 / 查询共用渠道配置及租约收尾；Go 会话头与 canonical 请求身份统一。domain / providers / gateway / app 所选目标共 522 个不同测试通过，最终 App 网关专项 4 项和真实 Host 子进程 3 项通过；旧生图 mock 改为实际 JSON 契约，mock L0/L2 通过（server smoke 70 项）。当前 `pawork` + 本地 mock 的代理消费者模拟验收 27 项通过：普通 / SSE、生图 PNG 下载解码、视频提交后跨 Host 重启查询及 MP4 下载解码、失败脱敏、参数 / 鉴权拒绝、撤销和退出；原 Global 配置 / 权限已恢复，验收进程已退出。命令、首次失败及证据边界见 [验证记录](spec/model-gateway.md#2026-10-03-验证记录)。这是本机模拟验收，真实媒体供应商、MoMai 媒体 GUI 和用户人工签字仍待验；未发布、未归档。
 
 | 范围 | 待验收要点 |
 | --- | --- |

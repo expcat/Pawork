@@ -27,15 +27,15 @@ R4 已把早期巨 match 拆为 `services/` 七个领域服务 + `gui_host/handl
 
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
-| `src/gateway_backend.rs` | — | `GatewayBackend for AppCore`：目录过滤（ADR-064 起 `gateway_models(purposes)` 按 canonical 用途交集过滤，缺省 = 仅 text 模型；条目携带五布尔 `capabilities`）、多模态消息转换（image_url / video_url part → canonical ContentPart，URL 仅语法校验、Host 不下载；远程图片 URL 限 8 KiB，内嵌 data URL 受 HTTP body 2 MiB 上限约束）、`web_search` 请求位 → hosted 工具要求、`capability_gate` 前置闸门、模型/凭证冻结、请求执行、租约与第三方用量；HTTP 与 token 由独立 gateway 包提供 |
-| `src/gateway_tests.rs` | — | `cfg(test)`：AppCore + loopback HTTP + 模拟 Provider 的路由、鉴权、SSE、取消和部分用量回归 |
+| `src/gateway_backend.rs` | — | `GatewayBackend for AppCore`：目录过滤（ADR-064 起 `gateway_models(purposes)` 按 canonical 用途交集过滤，缺省 = 仅 text 模型；条目携带五布尔 `capabilities`）、多模态消息转换（image_url / video_url part → canonical ContentPart，URL 仅语法校验、Host 不下载；远程图片 URL 限 8 KiB，内嵌 data URL 受 HTTP body 2 MiB 上限约束）、`web_search` 请求位 → hosted 工具要求、`capability_gate` 前置闸门、模型/凭证冻结、请求执行、租约与第三方用量；HTTP 与 token 由独立 gateway 包提供；原生视频使用 TokenPlanVideoClient、凭证 / 账号同事务快照、账号限定任务 ID、提交 / 查询并发租约及取消收尾，提供独立目录 / 提交 / 查询，不伪造视频 token 用量 |
+| `src/gateway_tests.rs` | — | `cfg(test)`：AppCore + loopback HTTP + 模拟 Provider 的路由、鉴权、SSE、取消和部分用量回归；视频账号切换仍查询原账号，状态 / 任务身份 / URL / 正文上限拒绝且租约归零，等待上游时断连和 Host 退出均取消并完成租约收尾 |
 | `src/gui_host/handlers/subagents.rs` | — | GUI 1.20 子代理设置读取 / 全态写（先原子落盘再更新内存）与列表 / 取消；设置校验并发 1..=16、规则 ≤512、provider/model ≤256、组合去重、权限白名单（ADR-063 起规则增 default_effort / allowed_efforts，非法 effort 名 fail-closed；ADR-064 起规则模型须为 text 模型，否则 `model_not_text` fail-closed）；列表 / 取消校验会话归属；列表条目 ADR-063 起携带生效 effort（规则默认 > 模型级默认） |
 | `src/gui_host/handlers/files.rs` | — | GUI 手动文件目录 / 文本读取与带内容版本校验的保存；文件正文不进入幂等账本 |
 | `src/gui_host/handlers/attachments.rs` | ~350 | GUI 1.22 本机附件分块暂存：单块 ≤64 KiB、整件 ≤8 MiB、每客户端 / 会话最多 4 件，Host 总声明容量 ≤64 MiB，15 分钟过期；仅本机 GUI + minor≥22，以鉴权客户端 / 会话 / 附件 ID 隔离；字节暂存不落盘、不进命令账本，进入 Run 后按正常消息持久化；RunStart 全部校验通过后消费附件，失败可从 offset 0 重传 |
 | `src/lib.rs` | ~80 | 模块声明与 crate 根 re-export 单点（CLI 消费面不变） |
 | `src/app_core.rs` | ~2100 | `AppLoadOptions`、`AppError`（46 变体错误汇聚）、`CatalogOnlyProvider`（缺凭证 fail-closed 占位 provider）、`AppCore` 结构体与装配（`load*`/`from_config`/`from_parts*`）、会话/运行/usage/diff/checkpoint 门面方法、`SessionTokenEstimatorBridge`、`session_title_from_text`；`from_parts_with_protocol` 的 HTTP 客户端为 `pawork_auth::http_client()`（F06 `redirect(Policy::none())`），带 proxy 的路径仍走 `http_from_config` |
 | `src/provider_quota.rs` | — | Go 指定账号三窗 Percent 查询、30s/reset 新鲜度与 Run 前 revision CAS 选择（ADR-060） |
-| `src/provider_assembly.rs` | ~1710 | provider 装配单点：`assemble_provider`/`assemble_registry`、通道→协议解析（KimiOAuth→ChatCompletions 装配 `KimiCodeProvider`；xAI / Kimi Code 双认证按存储形态解析凭证——api key 优先、无则 OAuth 含刷新）、OAuth 刷新装配、`switch_model`/`switch_provider`（含 ModelSwitched 诊断事件；重装配成功清除 provider_pending / provider_stale；ADR-055 D4 起目标模型在 `disabled_models` denylist 时 `AppError::ModelDisabled` fail-closed；ADR-064 起目标模型 `text=false` 时 `AppError::ModelNotText` fail-closed，缺省回落优先 text 模型）、`model_catalog`/`models_overview`/`provider_models` 目录聚合（以 provider+model 去重，保留跨供应商同名模型；成功远端替换该 provider ID 集合，失败回退；xAI / ChatGPT 无静态选择目录，探测失败不预填 grok；config 仅覆盖仍存在 ID 的窗口，kimi-code 静态目录作回退）、`is_credential_pending`、ADR-054/057 `generate_session_title(session_id, first_user_text)`（传递真实会话身份；命名 provider 与当前已装配相同且凭证就绪时复用 adapter，否则全量装配；无工具一次性补全，64 output tokens、同步快照依赖后返回不借用 Core 的任务；装配、目录解析与补全共用 20s 超时，解析后拒绝非 text 命名模型（包含手写配置），输出取首个非空行限长 72）、ADR-052 `provider_proxy` 按 provider 解析生效代理（Global `proxy_url` 统一生效，仅当该 provider 显式 `use_proxy = false` 时绕过；模型装配与 API key 验证、OAuth device start/token exchange/refresh 统一接入，不按 provider 名称特判） |
+| `src/provider_assembly.rs` | ~1710 | provider 装配单点：`assemble_provider`/`assemble_registry`、Chat / 原生媒体共用的 `api_key_channel_config`、通道→协议解析（KimiOAuth→ChatCompletions 装配 `KimiCodeProvider`；xAI / Kimi Code 双认证按存储形态解析凭证——api key 优先、无则 OAuth 含刷新）、OAuth 刷新装配、`switch_model`/`switch_provider`（含 ModelSwitched 诊断事件；重装配成功清除 provider_pending / provider_stale；ADR-055 D4 起目标模型在 `disabled_models` denylist 时 `AppError::ModelDisabled` fail-closed；ADR-064 起目标模型 `text=false` 时 `AppError::ModelNotText` fail-closed，缺省回落优先 text 模型）、`model_catalog`/`models_overview`/`provider_models` 目录聚合（以 provider+model 去重，保留跨供应商同名模型；成功远端替换该 provider ID 集合，失败回退；xAI / ChatGPT 无静态选择目录，探测失败不预填 grok；config 仅覆盖仍存在 ID 的窗口，kimi-code 静态目录作回退）、`is_credential_pending`、ADR-054/057 `generate_session_title(session_id, first_user_text)`（传递真实会话身份；命名 provider 与当前已装配相同且凭证就绪时复用 adapter，否则全量装配；无工具一次性补全，64 output tokens、同步快照依赖后返回不借用 Core 的任务；装配、目录解析与补全共用 20s 超时，解析后拒绝非 text 命名模型（包含手写配置），输出取首个非空行限长 72）、ADR-052 `provider_proxy` 按 provider 解析生效代理（Global `proxy_url` 统一生效，仅当该 provider 显式 `use_proxy = false` 时绕过；模型装配与 API key 验证、OAuth device start/token exchange/refresh 统一接入，不按 provider 名称特判） |
 | `src/idempotency.rs` | ~660 | `IdempotencyStore`：以 storage `CommandLedger`（SQLite）为权威 CAS 持久态，内存 `Notify` 做 InFlight 有界等待；`IdempotencyCheck`{New/Replay/InFlight}、`should_cache`、容量逐出、`IdempotencyStats` |
 | `src/protected.rs` | ~620 | Reasoning 保护：`SwappableReasoningProtector`（内存 ↔ 持久动态绑定）、`ProtectedBlobStore` + `FileKeyResolver`（`master.key`）注入；instance 级 `BlobScope` `instance-reasoning` |
 | `src/approval.rs` | ~520 | `ApprovalAsk`/`ApprovalResolve`、`ApprovalPromptHost` trait、`GuiApprovalHost`（pending/queued 单锁决议池 + `ToolApprovalRequired` 事件发布）、`DenyAllApprovals`、`PreApprovedResolver`、`parse_approval_mode`、写工具预览（`relative_path_from_input`/`preview_for_tool`；computer 展示结构化动作参数） |
@@ -95,6 +95,8 @@ ADR-053 启动：显式 `AppLoadOptions.approval_mode` > Global 审批 > ReadOnl
 ## 3. 对外 API 面
 
 本机模型网关（[GW-1](../model-gateway.md)）：`gateway_backend.rs` 实现 [gateway](gateway.md) 的 `GatewayBackend`；目录、模型路由、凭证快照、租约和第三方用量记账保留在 AppCore。HTTP/SSE 和可撤销 token 存储在独立 gateway 包。`InstanceRole::Gateway` 独占 gateway.lock，与 GUI 共存且不打开/清扫会话、不启动 MCP。账号选择共用 `select_account_for_provider`。
+
+2026-10-03：每次网关补全在准备阶段把 request ID 派生的租约 session ID 写入冻结的 canonical `ModelRequest.session_id`，让 OpenCode Go 适配器发送必需的 `x-opencode-session`。普通响应与 SSE 均使用各自唯一身份，不新增客户端字段或持久会话；其他通道仍由适配器决定是否发送该头。
 
 
 ### 3.1 装配与生命周期
@@ -322,7 +324,7 @@ WorkspaceList 与 snapshot Workspaces 段均按每个目标 workspace roots 调�
 
 ## 7. 测试与验证资产
 
-网关回归：`cargo test -p pawork-app --offline --lib gateway_`。`gateway_tests.rs` 集成宿主测试以真实 loopback HTTP + wiremock 验证模型路由、两种响应、usage/strict、鉴权撤销与 Host/Origin 拒绝；阻塞 provider 验证流式超时错误、断开取消和部分记账。独立 gateway 包的 `tokens` 测试验证多客户端、摘要存储、权限与撤销。测试不访问真实模型。
+网关回归：`cargo test -p pawork-app --offline --lib gateway_`。`gateway_tests.rs` 集成宿主测试以真实 loopback HTTP + wiremock 验证模型路由、两种响应、usage/strict、鉴权撤销与 Host/Origin 拒绝；其中 Go 路径同时断言普通 / SSE 请求的上游会话头存在且互不相同，session ID 不进入 JSON 正文；生图路径验证普通 JSON 的 `output.choices` 归一、非流式上游请求和 HTTP 200 错误正文拒绝 / 脱敏。阻塞 provider 验证流式超时错误、断开取消和部分记账。原生视频回归验证一次异步提交、查询 / 失败码脱敏、固定参数及无效请求拒绝。独立 gateway 包的 `tokens` 测试验证多客户端、摘要存储、权限与撤销。测试不访问真实模型。
 
 
 2026-09-20 测试重构：live-smoke 只以 feature 显式选择，不再叠加 ignore，缺环境直接失败；验证非空流式文本、唯一成功终态与 `resume_messages` 可恢复的助手内容。普通 `bash scripts/test.sh app` 开启 ui-fixture、不开 live-smoke，不请求真实 Provider。真实模型仍按产品验证规格执行；本次执行状态见 Git 历史（37fae8f3:docs/testing-refactor-plan.md）。
