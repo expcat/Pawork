@@ -106,6 +106,14 @@ impl ResponsesTransport {
         })
     }
 
+    #[cfg(any(
+        feature = "glm-coding",
+        feature = "opencode-go",
+        feature = "qwen-token-plan",
+        feature = "deepseek",
+        feature = "kimi-platform",
+        feature = "kimi-code"
+    ))]
     pub(crate) fn with_opencode_session(mut self) -> Self {
         self.opencode_session = true;
         self

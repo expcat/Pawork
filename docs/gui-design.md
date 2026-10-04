@@ -23,7 +23,7 @@ Pawork 是本机 Coding Agent 工作台：用户围绕一个任务阅读、输�
 | [模型菜单](https://pi-docs.aiuo.net/assets/model-menu.wVU-WNKg.webp) | 轻量分组菜单和设置入口 | GUI2-02：Pawork 保留 Composer 的现有模型菜单，补充管理入口，不另在 Header 放一套模型选择 |
 | [Review 工作面板](https://pi-docs.aiuo.net/assets/panel-review.2_EVU-w7.webp) | 侧面板以名称选择器、关闭动作和诚实空态组织 | GUI2-05：用于既有 Changes / Terminal / Resources；不据空态截图推断文件写入能力 |
 | [查找结果](https://pi-docs.aiuo.net/assets/search-query.BEGJDFT3.webp) | 一个浮层列任务与所属分组 | GUI2-03：查找当前 Snapshot 的任务、现有页面与导航操作 |
-| [深色设置](https://pi-docs.aiuo.net/assets/dark-settings.Bf6yhVBk.webp) | 可搜索导航、分区标题、可见当前值和说明 | GUI2-06：保留八页与真实 gate，增加标题查找 / 行定位，收紧信息组织 |
+| [深色设置](https://pi-docs.aiuo.net/assets/dark-settings.Bf6yhVBk.webp) | 可搜索导航、分区标题、可见当前值和说明 | GUI2-06：保留九页与真实 gate，增加标题查找 / 行定位，收紧信息组织 |
 
 页面文字与截图存在版本差异：文字称 minimap 在右侧、模型芯片在 Composer；本次查看的 minimap 图标记在阅读区左侧，模型菜单从 Header 打开。因此只借鉴明确可见的层级与操作目的，不把其位置描述当成冻结合同。下文尺寸均为 Pawork 当前值或本次目标值，不冒充从 PI 像素测得。
 
@@ -45,7 +45,7 @@ Codex Desktop、OpenCode、Zed、ZCode 等前阶段参照保留在 [功能设计
 | Timeline | 880px 阅读列、Markdown 子集、表格 / 代码 / 链接动作、默认折叠工具与可见思考、Run 页脚、审批、回底与虚拟化 | 短用户消息靠右、正文查找、回合定位 |
 | Composer | 自然换行、110–220px 卡片、逐任务草稿、IME、防误发、模型搜索、项目与 Context | 更紧凑的信息排列，模型管理就近入口 |
 | Inspector | 默认收起，Changes / Terminal / Resources；统一工具 / 文件 / PTY 标签栏、空面板入口、窄窗中央呈现与「返回对话」；GUI3-05 已实现 SVG 图标（Collapse / Chevron / Refresh / 回底）；GUI3-08 加载骨架 | 保持 |
-| Settings | 八页、全宽滚动、已连接供应商优先、账号 / 额度、四默认角色、模型启用 / 搜索；GUI2-06 已实现设置标题搜索、命中行定位、导航分组与卡头 / radio 整理；GUI3-05 已实现八页导航 16px SVG 图标；GUI3-08 Switch 120ms | 保持 |
+| Settings | 九页、全宽滚动、已连接供应商优先、账号 / 额度、四默认角色、模型启用 / 搜索；GUI2-06 已实现设置标题搜索、命中行定位、导航分组与卡头 / radio 整理；GUI3-05 已实现导航 16px SVG 图标；GUI3-08 Switch 120ms | 保持 |
 | 恢复与反馈 | 断线原因 / 重试 / 诊断、就地终端错误、3 秒字号反馈、归档撤销 | 布局变化后保留同一状态和可达性 |
 
 当前事实入口：[theme.rs](../apps/desktop/src/ui/theme.rs)、[shell_layout.rs](../apps/desktop/src/ui/shell_layout.rs)、[task_rail.rs](../apps/desktop/src/ui/task_rail.rs)、[timeline.rs](../apps/desktop/src/ui/timeline.rs)、[input_area.rs](../apps/desktop/src/ui/input_area.rs)、[settings](../apps/desktop/src/ui/settings/mod.rs)。这些是源码核对，不代表本次重新验证功能。UX-01～09 的剩余缺口见 [剩余工作与验收](ROADMAP.md)，历史通过项从 Git `f8df04b2:docs/ROADMAP.md` 追溯。
@@ -179,9 +179,9 @@ Terminal 首次打开且项目可用、无已有 PTY 或启动错误时自动创
 
 <a id="ui-5-设置更新2026-09-08"></a>
 
-Settings 是独立目的地，保留八页顺序：Models & providers、Network、Approvals、Tools & MCP、Terminal、Appearance、Advanced、About。进入时工作台不渲染，返回恢复任务、阅读位置、草稿、Inspector 和 Run；离开设置清除 secure 编辑缓冲，不能把凭证文字带入搜索。
+Settings 是独立目的地，保留九页顺序：Models & providers、Subagents、Network、Approvals、Tools & MCP、Terminal、Appearance、Advanced、About（GUI 1.20 增「子代理」页）。进入时工作台不渲染，返回恢复任务、阅读位置、草稿、Inspector 和 Run；离开设置清除 secure 编辑缓冲，不能把凭证文字带入搜索。
 
-**已实现（GUI2-06，验收状态见路线图）**：返回按钮下增加「查找设置」，只查标题、公开说明与中英文别名；与 `Cmd+K` 共用页面 / 设置条目目录。选择命中先切页，再将实际行滚入视口并短暂标识（约 2 秒），焦点落在对应可操作控件或只读行。它是导航，不自动保存或修改值。当前能力不可用的页不出现可执行结果；Advanced 与本地 Appearance 按既有离线行为保留。导航按「模型 / 工作台 / 系统」分组；供应商卡头为 52px 单行（中性状态色点 · 名称 · 认证方式 · 连接 chip · chevron）；Approvals 为真实圆环 radio；Switch 关态 hover 不用主色。八页导航图标已随 GUI3-05 落地（单色 SVG，必须在 Svg 上染色，默认 `text.primary`；Primary/Danger 上的 Send/Cancel 用 `on_accent`）。Manage models 弹层头行常驻 Refresh；加 key / OAuth 成功后自动重拉目录。
+**已实现（GUI2-06，验收状态见路线图）**：返回按钮下增加「查找设置」，只查标题、公开说明与中英文别名；与 `Cmd+K` 共用页面 / 设置条目目录。选择命中先切页，再将实际行滚入视口并短暂标识（约 2 秒），焦点落在对应可操作控件或只读行。它是导航，不自动保存或修改值。当前能力不可用的页不出现可执行结果；Advanced 与本地 Appearance 按既有离线行为保留。导航按「模型 / 工作台 / 系统」分组；供应商卡头为 52px 单行（中性状态色点 · 名称 · 认证方式 · 连接 chip · chevron）；Approvals 为真实圆环 radio；Switch 关态 hover 不用主色。页导航图标已随 GUI3-05 落地（单色 SVG，必须在 Svg 上染色，默认 `text.primary`；Primary/Danger 上的 Send/Cancel 用 `on_accent`）。Manage models 弹层头行常驻 Refresh；加 key / OAuth 成功后自动重拉目录。
 
 设置内容继续全宽、左右 32px。每行清楚区分名称、说明、当前值和动作，描述与输入不过度并列；窄窗 / 大字号将控件移到下一行。导航选中只改变背景 / 字重，文字坐标不移动。除了供应商 / 账号这类实际分组，不给每个普通设置再包一层卡片。
 

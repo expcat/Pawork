@@ -46,6 +46,7 @@ UI-6b G2 已接线：Go 存储账号可读取官方三窗已用百分比与重�
 | `models` | 远端权威目录与失败回退 | 已实现。 |
 | `auth` | `list/set-key/login/logout` | 已实现；auth file 为当前 Secret 后端。 |
 | `gui` | `serve` 本机 GUI 连接服务 | 已实现；需要 token 认证。 |
+| `gateway` | `serve/status/shutdown/token` 本机 OpenAI 兼容网关 | 已实现；127.0.0.1 + bearer token，契约见 [model-gateway](model-gateway.md)。 |
 | `diff` | 查看工作区变更 | 已实现。 |
 | `rollback` | 回滚到 checkpoint | 已实现；属破坏性文件动作，受既有安全/确认语义约束。 |
 | `mcp` | `list/test` | 已实现；MCP Client，不是 MCP Server。 |

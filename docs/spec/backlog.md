@@ -128,3 +128,12 @@ Settings 活动线已实现并有原批次本机真窗口记录（2026-09-05，�
 当前活动任务与验收状态统一见 [ROADMAP](../ROADMAP.md)，本页只管理候选和激活条件。2026-09-23 全项目 Review 的发现、包定位、修复执行计划与产品验收清单随本轮实现提交收口，从 `git show 46a4ff81:docs/Plan/README.md` 追溯。
 
 已完成的 MOCK-1～8 与已关闭 BUG-OAUTH-01 / BUG-USAGE-01 / BUG-GUI-01 过程记录移出活动文档，可从 `git show f14edb23:docs/spec/backlog.md` 追溯；更早计划见 `37fae8f3:docs/mock-simulation-plan.md`。MOCK-0b 仍为未获批候选，已有回归资产不因文档清理删除。
+
+## 8. 2026-10 全量 Review 遗留跟踪
+
+R-01～R-10（收口记录见 [ROADMAP](../ROADMAP.md)）移交后仍需长期跟踪的工程项；B 级待用户裁决清单不在本节重复，见 ROADMAP 收口记录。
+
+| ID | 项 | 说明 | 触发条件 |
+| --- | --- | --- | --- |
+| RV-2026-10-A | engine 测试骨架 LoopContext 转发收敛 | `crates/engine/src/tool_loop/tests.rs` 多个包装 Context 手工转发 `execute_tools` / `next_message_id` / `next_request_id`，与 ScriptedProvider 近重复；收益中等，不动行为 | 下次改 engine 测试骨架时顺势收敛，不单独立项 |
+| RV-2026-10-B | workspace MCP secret 前缀副本彻底收敛 | `crates/workspace/src/import/mcp.rs` 仍持 `MCP_SECRET_SERVICE_PREFIX` 本地副本（auth locator 为单一事实源，已加注释声明同步义务）；彻底收敛需 workspace 依赖 auth 或提公共常量包，属跨包依赖方向裁决 | 用户对 B 级清单裁决后处理 |

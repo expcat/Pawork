@@ -81,6 +81,10 @@ Builtin < Global < Profile < Workspace < Session < Run
 - `status`、`watch`、`shutdown`、`doctor` 在加载完整 AppCore 前运行，适合诊断宿主不可启动的情形。
 - pid 文件是提示，不是权威活性检测；以进程、socket 握手和 doctor 结果交叉确认。
 
+### 4.1 Gateway 运维
+
+`pawork gateway serve` 默认 127.0.0.1:17432，token 目录与 `gateway.lock`、配置快照重启语义、`gateway token issue/list/revoke` 与 `gateway status/shutdown` 见 [model-gateway](model-gateway.md)「启动和接入」；本节不重复维护该清单。
+
 ## 5. 备份与恢复
 
 当前没有发布级、跨平台自动备份命令。开发/本机备份遵守以下最小规则：

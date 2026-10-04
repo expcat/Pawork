@@ -22,6 +22,7 @@
 | 外部 Provider/MCP | 外部系统 | token 泄漏、恶意响应、错误体回显、网络外传 | auth 分域、HTTP 错误脱敏、MCP auth 隔离、capability gate |
 | 本机子进程/PTY | 高风险副作用 | 读写本机、网络访问、孤儿进程 | command risk、审批、SandboxSelector、进程树回收、PTY 创建闸 |
 | GUI socket/token | 本机敏感控制面 | 未认证客户端、能力伪装、重放 | token proof、`0o700` socket 目录、版本/registry/command ledger |
+| 本机 HTTP Gateway（127.0.0.1 + bearer token） | 本机敏感控制面（第三方消费者） | 未认证客户端、token 泄漏、越权模型调用 | 仅监听 127.0.0.1、按客户端 token 签发/撤销、路由/租约/用量归因；边界见 [model-gateway](model-gateway.md) |
 | Session/Blob/Usage/Audit | 持久化敏感数据 | 篡改、损坏、Secret 落盘、分支污染 | append-only、migration/golden、Secret 扫描、PWB1、lineage、幂等 |
 | auth 文件 | 最高敏感 | 明文 token 泄漏、权限过宽、损坏降级 | 独立文件、`0600`、原子 rename、损坏 fail-closed、日志脱敏 |
 

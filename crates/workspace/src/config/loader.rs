@@ -739,7 +739,7 @@ default_model = 'kept'
             assert_eq!(resolved.warnings.len(), 1);
             assert!(
                 matches!(resolved.warnings[0], ConfigWarning::PermissionsIgnored {
-                key: ref key, tier: source_tier, path: Some(ref source_path), ..
+                ref key, tier: source_tier, path: Some(ref source_path), ..
             } if key == "subagents" && source_tier == tier && source_path == &path)
             );
         }

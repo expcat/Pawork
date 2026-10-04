@@ -258,7 +258,7 @@ GPUI Settings
 Settings 沿用参考设计的 1440×1024 深色语言和 8px 节奏，不另起 Dashboard 卡片墙：
 
 - TaskRail 底部 `Local` 行右侧新增 Settings gear。
-- Settings Rail 首项固定为 `← Back to workspace`；八页导航默认 English（Appearance 页可切换简体中文，ADR-053 起即时生效并持久化），首个可用页为 `Models & providers`；OPT-4c 起内容用满 Rail 外可用宽度、两侧各 32px padding，不再保留 820px 上限。
+- Settings Rail 首项固定为 `← Back to workspace`；九页导航默认 English（GUI 1.20 增「子代理」页）（Appearance 页可切换简体中文，ADR-053 起即时生效并持久化），首个可用页为 `Models & providers`；OPT-4c 起内容用满 Rail 外可用宽度、两侧各 32px padding，不再保留 820px 上限。
 - 内容区使用稳定的 page header / section / field / feedback 层级；不显示工作台 RunStatusBar。
 - UI-6a provider 默认层改为随内容与字号增高的卡片，分组显示名称 / 认证方式与连接状态 / 目录模型数；默认角色说明和选择器分列，凭证输入与动作分行。Manage models 为 320px 宽、最高 400px 的滚动弹层，显示真实启用数与目录不代表账号权限的说明；页面与弹层 AX 使用实际布局并裁剪离屏控件；普通 render 与 AX summary 不发布 masked credential、endpoint、catalog error、raw model id 或无权威来源余额。endpoint / 错误仅在连接、等待或删除确认详情显示；API key editor 仅在 Connect / Replace 后展开。
 - 默认模型使用独立 section；认证成功与目录成功继续分开表达，Remove 仍需二次确认。
@@ -286,7 +286,7 @@ P2 视觉方向见 [desktop-ui-p2-settings-v4.png](../../design/desktop-ui-p2-se
 
 ## 7. 实现索引
 
-SET-1～SET-6h 已落地：契约在 protocol/client，认证与目录由 auth/providers/app 提供，Global 配置由 workspace writer 持久化，Desktop 提供八页 Settings 与供应商代理开关。模块、API、边界及对应验证以各包 Spec 和下表为准；已完成的切片排期不再保留。
+SET-1～SET-6h 已落地：契约在 protocol/client，认证与目录由 auth/providers/app 提供，Global 配置由 workspace writer 持久化，Desktop 提供九页 Settings（GUI 1.20 增子代理页） 与供应商代理开关。模块、API、边界及对应验证以各包 Spec 和下表为准；已完成的切片排期不再保留。
 
 ## 8. 验证与证据
 

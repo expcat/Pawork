@@ -324,6 +324,14 @@ pub(crate) fn validate_video_request(
 }
 
 /// Kimi 视觉输入不接受外部 URL。`ms://` 文件 ID 与 base64 继续交给编码器。
+#[cfg(any(
+    feature = "glm-coding",
+    feature = "opencode-go",
+    feature = "qwen-token-plan",
+    feature = "deepseek",
+    feature = "kimi-platform",
+    feature = "kimi-code"
+))]
 pub(crate) fn reject_kimi_external_image_urls(
     request: &CanonicalModelRequest,
 ) -> Result<(), pawork_domain::ProviderError> {

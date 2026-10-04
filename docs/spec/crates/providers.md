@@ -17,7 +17,7 @@
 | `src/error_table.rs` | ~160 | `VENDOR_ERROR_RULES` 数据表 + `normalize_vendor_error`：按厂商子串把错误改判为更精确的 `ProviderErrorKind`（如 ChatGPT usage limit、xAI live_search quota） |
 | `src/provider.rs` | ~600 | `OpenAiCompatibleConfig` / `OpenAiCompatibleProvider`：Chat Completions transport 的 `ModelProvider` 实现；构造期拒绝 config 头携带凭证头；纯生图解析普通 JSON 的 `output.choices` / `choices`，归一图片、用量与完成事件，HTTP 200 错误正文仍失败，支持取消和独立 1 MiB JSON 正文限制 |
 | `src/token_plan_video.rs` | ~200 | feature `qwen-token-plan`：原生 HappyHorse 文生视频客户端，固定 720P / 16:9 / 5 秒；提交 / 查询读取有界 JSON，归一任务 ID / 状态 / 结果地址 / 白名单失败码，复用 HTTP 与凭证、无自动重试 / 轮询 |
-| `src/request.rs` | ~670 | `to_chat_completions_body`：canonical → Chat Completions 请求体（ADR-064：默认表声明的纯生图模型即使只有文本也发送 content parts 数组；2026-10-03 起发送 `stream=false` 且不带 `stream_options`，文本仍使用 SSE）；`provider_options` 保留键忽略并 `tracing` 警告 |
+| `src/request.rs` | ~1120 | `to_chat_completions_body`：canonical → Chat Completions 请求体（ADR-064：默认表声明的纯生图模型即使只有文本也发送 content parts 数组；2026-10-03 起发送 `stream=false` 且不带 `stream_options`，文本仍使用 SSE）；`provider_options` 保留键忽略并 `tracing` 警告 |
 | `src/stream.rs` | ~290 | `chunk_to_events` / `is_done` / `ChunkState` 与 crate 内 `content_to_events`（普通 JSON / SSE 共用）：Chat Completions SSE chunk → `ProviderStreamEvent`（文本/工具调用增量、usage、finish_reason）；`delta.content` 数组形态解析 text / image part——图像生成模型的输出归一为 `ImageOutput{url}`（ADR-064，qwen `{"type":"image","image":url}` 与 OpenAI `image_url` 形状）；畸形 chunk → `MalformedResponse` 错误事件（R-08）；`stream_error_message` 流错误安全文案（R-02） |
 | `src/usage.rs` | ~300 | `normalize_usage`（多厂商字段名归一为 `TokenUsage`）、`map_stop_reason`、`UsageAccumulator`（会话级累计） |
 | `src/reasoning.rs` | ~100 | `ReasoningProtector` trait（protect/recover 不透明 payload）与 `ReasoningProtectError`（`Unavailable` / `Corrupted` 判别） |
@@ -28,7 +28,7 @@
 | `src/net/http.rs` | ~450 | `HttpClient` / `HttpClientConfig`（builder：timeout/proxy/user_agent/自定义头/禁系统代理）、`is_local_target` / `loopback_aware_proxy`（本地目标绕过代理）；Debug 输出对凭证头脱敏 |
 | `src/net/sse.rs` | ~450 | 增量 `SseParser`（feed/finish）、`SseEvent` / `SseParseError`、`MAX_BUFFER_BYTES`（1 MiB 缓冲上限，UTF-8 安全跨 chunk） |
 | `src/net/retry.rs` | ~220 | `classify_status` / `classify_request_error`（HTTP 状态与 reqwest 错误 → `ProviderError`，解析 `Retry-After`，消息脱敏）、`parse_retry_after` |
-| `src/channels/mod.rs` | ~60 | 八通道 feature 门控的模块声明与 re-export |
+| `src/channels/mod.rs` | ~93 | 八通道 feature 门控的模块声明与 re-export |
 | `src/channels/registry.rs` | ~360 | `CHANNEL_REGISTRY`（八行静态 preset）、`ChannelPreset`（含 `display_name` 与 `auth_methods` 数据字段，SET-4 起不再按 kind 派生）/ `ChannelKind`、`OAuthPreset(Data)` / `OAuthFlow(Data)`、`channel_preset`、`is_enabled`（唯一 cfg 求值点） |
 | `src/channels/api_key.rs` | ~640 | `ApiKeyChannelConfig` / `ApiKeyChannelProvider`：API-key 通道共用适配器（五行，含 kimi-platform；xAI / Kimi Code 双认证亦复用 `verify_api_key`）；默认 Chat Completions，官方表 / 家族回退决定 Responses 或 Messages（list_models 解析 transport 后回填默认能力表：efforts / image_output / text 收窄 / hosted WebSearch，后者仅 Responses 生效）；ADR-064 起 non-text 回退按 `default_image_output` 表驱动——已实测的图像生成模型（wan2.7-image 系）保持 Chat transport 进目录并由 `default_text` 收窄为非对话模型，audio / tts / realtime 等未接线端点仍返回 None 不进目录；未登记聊天 ID 不丢弃；`verify_api_key` 用候选 key 发已认证 GET 做写前验证（Go `/usage`，其余 `/models`，不持久化） |
 | `src/channels/chatgpt.rs` | ~280 | `ChatGptConfig` / `ChatGptProvider`：ChatGPT OAuth 通道（Responses transport、`chatgpt-account-id` / `originator` 头、`client_version` 校验、`DEFAULT_BASE_URL`） |
@@ -236,7 +236,7 @@ canonical `ToolResultContent.content` 中 Image 不再被编码器丢弃。Chat 
 ## 6. 依赖关系
 
 - **上游**：`pawork-models`（目录/协商），`pawork-domain`（canonical 类型、`ModelProvider` / `ProviderEventSink` trait、`ProviderError`）。三方：`reqwest`（HTTP）、`tokio` / `futures`（异步）、`serde(_json)`、`thiserror`、`tracing`、`bytes`、`async-trait`。
-- **下游**：`pawork-app` 生产依赖并开启全部九个 feature（`anthropic` + 八通道）；`pawork-engine` 仅 dev-dependency（守护测试名单）。依赖方向与包布局见 [../../design.md](../../design.md) §2。
+- **下游**：`pawork-app` 生产依赖并开启全部九个 feature（`anthropic` + 八通道）；`pawork-engine` 仅 dev-dependency（守护测试名单）。依赖方向与包布局见 [../../architecture.md](../../architecture.md) §2。
 - **features**（全部为空依赖集、只控制条件编译，互不依赖）：
   - `anthropic`（默认开）：Messages transport 适配器与 `builtin_models`；
   - `chatgpt-oauth` / `xai-oauth`：两条 OAuth 通道适配器；

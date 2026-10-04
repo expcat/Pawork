@@ -113,7 +113,7 @@
 | `gui serve` 多客户端 + 断线 Replay + 慢客户端隔离 | Desktop 增量见 [gui-design.md](gui-design.md) |
 | `pawork acp serve` | [Agent Client Protocol](https://github.com/zed-industries/agent-client-protocol) |
 | 会话分支 / `pawork session fork`（仅闭合 turn 后稳定事件） | Pi session tree；OpenCode 子 session；DeepSeek Harness `ctx.sessions.fork` |
-| `pawork service install/start/stop` + 运维子命令 | 六运行模式（外部无直接对标） |
+| `pawork service install/start/stop` + 运维子命令 | 七运行模式（外部无直接对标） |
 | PTY 交互式命令 + GUI Terminal | DeepSeek Harness `tool-terminal` + 持久 bash |
 
 ### 工作流、多 Agent 与控制面
@@ -193,4 +193,4 @@ flowchart LR
 
 应用必须运行于虚拟桌面，本机已打开应用不可直接接管。默认不挂载宿主目录/设备/剪贴板；容器不自动启动，环境未就绪即明确失败。专用服务器拒绝第二个控制客户端，防止另一 Host 抢断会话。桌面名用于防误接，真正的输入隔离来自容器内虚拟显示器，不是 VNC 协议名称校验。
 
-先截图，再用像素坐标和一次性观察 id 输入。观察绑定 run、连接身份和虚拟尺寸，60 秒失效；断线后重新截图，失败不重试副作用。每次输入后截图核验。Host 审批、取消、持久化与 Provider 图片编码继续复用首版链路，不改 GUI wire。截图 JPEG ≤512 KiB，三协议保留图片。详见 [包 Spec](spec/crates/computer-use.md)、[部署说明](../crates/computer-use/README.md) 与 [参照证据](references.md#computer-use实现调研2026-09-17)。
+先截图，再用像素坐标和一次性观察 id 输入。观察绑定 run、连接身份和虚拟尺寸，60 秒失效；断线后重新截图，失败不重试副作用。每次输入后截图核验。Host 审批、取消、持久化与 Provider 图片编码继续复用首版链路，不改 GUI wire。截图 JPEG ≤512 KiB，三协议保留图片。详见 [包 Spec](spec/crates/computer-use.md)、[部署说明](../crates/computer-use/README.md) 与 [参照证据](references.md#computer-use-实现调研2026-09-17)。

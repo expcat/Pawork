@@ -15,6 +15,7 @@
 | [desktop.md](desktop.md) | Desktop 的信息架构、交互流程、状态、可访问性与验收边界是什么？ |
 | [model-gateway.md](model-gateway.md) | 外部应用如何通过本机 OpenAI 兼容接口复用已连接模型？ |
 | [settings.md](settings.md) | Settings 如何管理供应商认证、模型发现、默认项与后续设置页？ |
+| [task-usage-ui.md](task-usage-ui.md) | 任务 / 子代理消耗统一调用日志与 Desktop 统计窗口如何查询与呈现？ |
 | [verification.md](verification.md) | 需求如何映射到自动化、golden、真实冒烟和人工证据？当前缺口是什么？ |
 | [operations.md](operations.md) | 如何启动、配置、诊断、备份与恢复本机实例？当前发布/运维边界是什么？ |
 | [backlog.md](backlog.md) | 已确认扩展、未排期候选、排除项和候选转正闸门是什么？ |
@@ -49,7 +50,7 @@
 | [crates/acp.md](crates/acp.md) | `pawork-acp` | 编辑器协议、会话 actor、权限与 canonical 映射 |
 | [crates/gateway.md](crates/gateway.md) | `pawork-gateway` | 本机 OpenAI HTTP/SSE 与 token；宿主端口 |
 | [crates/app.md](crates/app.md) | `pawork-app` | AppCore 装配宿主 + 领域服务 + gui_host / GatewayBackend |
-| [crates/cli.md](crates/cli.md) | `pawork-cli` | 21 子命令 + REPL + headless + 协议/进程装配 |
+| [crates/cli.md](crates/cli.md) | `pawork-cli` | 22 子命令 + REPL + headless + 协议/进程装配 |
 | [crates/client.md](crates/client.md) | `pawork-client` | GuiClient framed 连接面 + headless SDK + probe |
 | [crates/terminal.md](crates/terminal.md) | `pawork-terminal` | 终端显示核心：行缓冲解析 / SGR 属性分段 / 按键→PTY 字节 / 面板尺寸估算（零依赖纯库） |
 | [crates/computer-use.md](crates/computer-use.md) | `pawork-computer-use` | 独立虚拟桌面观察与输入、坐标转换、一次性观察与取消；无内部依赖 |

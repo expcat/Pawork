@@ -32,8 +32,8 @@ ADR-061 使用 GUI API 1.17：空 `display_name` 在 add/start 时由 Host 生�
 | CON-BLOB-01 | Artifact/Protected Blob | `PWB1_MAGIC`，`PWB1_VERSION = 1`；protected 使用 AEAD | checkpoint/reasoning → artifact/protected stores | [blob](../../crates/storage/src/blob)；[PWB1 golden](../../crates/storage/tests/golden) |
 | CON-POLICY-01 | Policy 决策 | `PolicyDecision` 四变体；`ApprovalMode` 五档，默认 `ReadOnly` | tools/app → CLI/Desktop/exec | [policy](../../crates/policy/src)；[security.md](security.md) |
 | CON-CONFIG-01 | 配置 schema/层级 | `Builtin < Global < Profile < Workspace < Session < Run`；`ProviderConfig` 无 `api_key` | workspace loader → app/providers | [workspace config](../../crates/workspace/src/config) |
-| CON-GUI-01 | GUI Connection Protocol | API `1.21`；支持 `1.0`–`1.21`；Accepted 握手可选 `host_data_dir`；`ClientFrame`/`ServerFrame`；上限 1 MiB | app GUI host ↔ client/Desktop | [protocol](../../crates/protocol/src)；[schemas/gui-protocol](../../schemas/gui-protocol)；protocol fixtures/golden |
-| CON-REGISTRY-01 | Command/Capability Registry | 45 `AppCommand`、20 `AppQuery`；GUI/headless/ACP 可用性同源 | protocol registry → app/cli/client | [registry](../../crates/protocol/src/app/registry.rs) |
+| CON-GUI-01 | GUI Connection Protocol | API `1.26`；支持 `1.0`–`1.26`；Accepted 握手可选 `host_data_dir`；`ClientFrame`/`ServerFrame`；上限 1 MiB | app GUI host ↔ client/Desktop | [protocol](../../crates/protocol/src)；[schemas/gui-protocol](../../schemas/gui-protocol)；protocol fixtures/golden |
+| CON-REGISTRY-01 | Command/Capability Registry | 57 `AppCommand`、24 `AppQuery`；GUI/headless/ACP 可用性同源 | protocol registry → app/cli/client | [registry](../../crates/protocol/src/app/registry.rs) |
 | CON-HEADLESS-01 | Headless JSON | 与 GUI 帧正交的 request/response JSONL；stdout-only | CLI stdio ↔ SDK/automation | [headless protocol](../../crates/protocol/src/headless)；[schemas/headless-json](../../schemas/headless-json) |
 | CON-ACP-01 | ACP 映射 | ACP adapter 只接 registry 允许的能力，未登记拒绝 | IDE/ACP client ↔ CLI/AppCore | [ACP](../../crates/acp/src)；ACP fixtures |
 | CON-USAGE-01 | Usage 与审计 | usage `dedup_key`；audit 为 JSONL | app/control-plane → usage ledger/audit | [control-plane](../../crates/control-plane/src)；对应 golden |
@@ -74,6 +74,11 @@ ADR-061 使用 GUI API 1.17：空 `display_name` 在 add/start 时由 Host 生�
 - `ArtifactStreaming` 枚举可保留，但生产宿主当前不得宣告。
 - `WorkspaceRelativePath` 拒绝绝对路径与 `..`；客户端不因 UI 便利绕过 host Policy。
 
+- API 1.26（2026-10-04 任务消耗统计）：新增 `TaskUsage{query}` 查询（DTO 自 domain re-export）；minor <26 请求前拒绝。
+- API 1.25（ADR-064）：`ModelList` 条目增 `text` / `image_output`；minor <25 请求前拒绝。
+- API 1.24（2026-09-23 持续目标 / Plan / 技能）：新增 Goal（Start/Pause/Resume/Steer/Finish）、Plan（Save/Submit/Approve/Reject）、`SkillRecordSave` 及对应查询；minor <24 请求前拒绝。
+- API 1.23（2026-09-23 跨进程任务取消）：新增 `TasksCancel{task_id}`，取消运行期后台任务；minor <23 请求前拒绝。
+- API 1.22（2026-09-22 附件与搜索）：`RunStart` 增 `attachment_ids` / `web_search`；新增 GUI-only `AttachmentUpload` 分块上传（仅本机 GUI，内存分块暂存）；minor <22 请求前拒绝。
 - API 1.21（[ADR-063](settings.md#adr-063模型推理强度偏好2026-09-18)）：`RunStart.effort`、`ModelList` 条目能力与强度字段、GUI-only `set_model_reasoning` 全态写；`SubagentInfo.effort` 与 `SubagentModelRule` 强度字段；canonical effort 词汇 low/medium/high/x_high/max（不含 none）；生效顺序 RunStart 显式 > 子代理规则 > 模型级默认 > Provider 默认；旧 Host 缺省回落，minor <21 请求前拒绝。
 - API 1.20（2026-09-17 子代理设置与运行时）：GUI-only `subagent_settings` / `set_subagent_settings` / `subagent_list` / `subagent_cancel`；设置全态写并原子持久化，cancel 校验会话归属；minor <20 请求前拒绝。
 - API 1.19（2026-09-16 工作区文件浏览/编辑）：新增 GUI-only `WorkspaceFiles` / `WorkspaceFileRead` 查询与 `WorkspaceFileWrite` 命令；路径均为 `WorkspaceRelativePath`、根目录用 `.`；写带 `expected_revision` 乐观锁；minor <19 请求前拒绝；文件正文不进入日志/账本持久化；仅接受本地 GUI 来源。
