@@ -12,7 +12,7 @@
 
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
-| `src/lib.rs` | ~800（约后半为 `#[cfg(test)]` 自测） | `MockScript`（Provider 事件脚本 builder）、`MockProvider`（实现 `ModelProvider`；Replay/Sequence 两种脚本源 + 调用记录）、`MockProviderCallRecord`、`MockTool`（实现 `AgentTool`）、`MockToolCallRecord`、`RecordingProviderSink` / `RecordingToolSink`（记录型 sink）、`assert_provider_request_order`；re-export `contract` 断言到 crate 根 |
+| `src/lib.rs` | ~750（约后半为 `#[cfg(test)]` 自测） | `MockScript`（Provider 事件脚本 builder）、`MockProvider`（实现 `ModelProvider`；Replay/Sequence 两种脚本源 + 调用记录）、`MockProviderCallRecord`、`MockTool`（实现 `AgentTool`）、`MockToolCallRecord`、`RecordingProviderSink` / `RecordingToolSink`（记录型 sink）；re-export `contract` 断言到 crate 根 |
 | `src/contract.rs` | ~140 | Provider 流最小断言（不绑定具体 Provider，不按 Provider 名分支）：`assert_text_stream`、`assert_single_tool_call`、`assert_parallel_tool_calls`、`count_variant` |
 
 无 `tests/` 目录；自测全部内嵌于两个源文件。
@@ -27,9 +27,7 @@
 | `text(t)` / `thinking(t)` | 追加 `TextDelta` / `ThinkingDelta` |
 | `tool_call(name, args)` | 自动编号 `mock-tool-call-N`，参数一次成串（Started → 单条 ArgumentsDelta → Completed） |
 | `tool_call_chunks(id, name, chunks)` | 显式 `ToolCallId` + 多片 JSON 分片，保序发出 |
-| `server_tool_started(id, name)` / `server_tool_citation(id, citation)` / `server_tool_completed(id)` | SEARCH-1：server tool 生命周期事件（`ServerTool` Started / CitationAdded / Completed，Provider 服务端工具，非本地 ToolCall） |
 | `usage(TokenUsage)` | 追加 `UsageUpdated`（同时进 summary） |
-| `provider_metadata(Value)` | 追加 `ProviderMetadata`（同时进 summary） |
 | `complete()` / `complete_with(stop_reason)` | 追加 `ResponseCompleted`（默认 `StopReason::Completed`） |
 | `fail(ProviderError)` | 走到此步立即以该错误终止（其后步骤不执行） |
 | `wait_for_cancellation()` | 挂起等待 token 取消，然后返回 `Cancelled` 错误 |
@@ -46,12 +44,11 @@
 - `assert_single_tool_call`：存在 `ToolCallStarted` 且同 id 被 `ToolCallCompleted` 闭合。
 - `assert_parallel_tool_calls`：≥2 个 `Started` 且各自闭合（可交错）。
 - `count_variant(events, predicate)`：按谓词计数。
-- `assert_provider_request_order(provider, &["request-1", …])`：按 `request_id` 比对 Provider 调用顺序。
 
 ## 4. 核心行为与数据流
 
 1. **脚本回放**：`MockProvider::stream` 先登记调用（`calls` 追加记录），再取脚本（Replay 克隆同一份；Sequence 按 `AtomicUsize` 取下一份，耗尽即报错）。
-2. **逐步执行**：每步之前检查 `cancel.is_cancelled()`——已取消则标记 `cancelled = true` 并返回 `ProviderError::cancelled`；`Event` 步先按事件更新 `ModelResponseSummary`（ResponseStarted → response_id、UsageUpdated → usage、ResponseCompleted → stop_reason 并标记 `completed`、ProviderMetadata → provider_metadata），再 `sink.emit` 并累加 `event_count`；`Fail` 步立即返回脚本错误；`WaitForCancellation` 步 `cancel.cancelled().await` 挂起。
+2. **逐步执行**：每步之前检查 `cancel.is_cancelled()`——已取消则标记 `cancelled = true` 并返回 `ProviderError::cancelled`；`Event` 步先按事件更新 `ModelResponseSummary`（ResponseStarted → response_id、UsageUpdated → usage、ResponseCompleted → stop_reason 并标记 `completed`），再 `sink.emit` 并累加 `event_count`；`Fail` 步立即返回脚本错误；`WaitForCancellation` 步 `cancel.cancelled().await` 挂起。
    ADR-064 新增的 `ImageOutput` 同样原样转交 sink 并计数，不写入 `ModelResponseSummary`；图像输出的消费由调用方负责。
 3. **收尾校验**：脚本走完但没有 `ResponseCompleted` → 返回 `StreamInterrupted`（"mock script ended without ResponseCompleted"），强迫测试脚本闭合，模拟真实 Provider 的流完整性要求。
 4. **MockTool 执行**：`execute` 先记录调用（含取消位），已取消则返回 `ToolError::cancelled`；否则克隆返回预设 `Ok(ToolResult)` / `Err(ToolError)`。不经 sink 发任何 `ToolStreamEvent`。

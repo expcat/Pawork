@@ -29,7 +29,7 @@ pub struct MemoryTransport {
 }
 
 impl MemoryTransport {
-    /// 指定连接 id 前缀的计数起点（测试确定性 id 用）。
+    /// 创建进程内 Transport；连接 id 计数从 0 起（测试确定性 id 用）。
     pub fn new() -> Self {
         Self {
             registry: Arc::new(Mutex::new(HashMap::new())),

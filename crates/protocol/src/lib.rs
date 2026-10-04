@@ -7,7 +7,8 @@
 //! 装配在 host（CLI / app-service），不在本 crate 内实现 Server 或 Transport。
 //!
 //! 模块划分：
-//! - [`app`]：应用层六模块（version / command / query / event / quota / limits）；
+//! - [`app`]：应用层协议词汇（command / event / limits / query / quota /
+//!   registry / settings / subagents / version）；
 //! - [`codec`]：有界 JSON 编解码与 u32 LE 长度前缀分帧读写；
 //! - [`handshake`]：版本协商、握手服务端逻辑与信封版本校验；
 //! - [`resume`]：重连 disposition 计算；
@@ -19,8 +20,7 @@
 //! - [`client_auth`]：GUI token 认证辅助（feature `client-auth`）；
 //! - [`typegen`]：TypeScript declaration 生成与校验。
 //!
-//! 线上 serde 格式（tag/content/rename_all）是冻结契约，见
-//! [ADR-036](../../../../Pawork_v1/docs/adr/ADR-036-gui-protocol-versioning.md)。
+//! 线上 serde 格式（tag/content/rename_all）是冻结契约（ADR-036）。
 
 use pawork_domain::{ArtifactId, CommandId, ConnectionId, CoreInstanceId, GuiClientId, Timestamp};
 use serde::{Deserialize, Serialize};
@@ -44,12 +44,6 @@ pub mod snapshot;
 pub mod typegen;
 
 pub use app::*;
-pub use app::{
-    API_VERSION, ActorIdentity, ApiHandle, ApiKeySecret, ApiVersion, AppCommand,
-    AppCommandEnvelope, AppEvent, AppEventEnvelope, AppQuery, AppQueryEnvelope, AppResponse,
-    AppResponseEnvelope, AuthChangeState, CommandSource, EventSource, EventStream, GlobalSequence,
-    SUPPORTED_API_VERSIONS, TimelineItem, TimelineItemKind, TimelinePage,
-};
 
 pub use codec::{
     FRAME_LENGTH_PREFIX_BYTES, ProtocolCodecError, decode_client_frame, decode_length_prefixed,
@@ -67,9 +61,7 @@ pub use resume::{ResumeContext, compute_resume_disposition};
 
 /// 单帧线上 JSON 上限（含长度前缀）。
 pub const MAX_PROTOCOL_FRAME_BYTES: usize = 1024 * 1024;
-/// Artifact chunk 数据上限（大 payload 走 Artifact ID，[ADR-018]）。
-///
-/// [ADR-018]: ../../../../Pawork_v1/docs/adr/ADR-018-large-payload-artifact-id.md
+/// Artifact chunk 数据上限（大 payload 走 Artifact ID；ADR-018）。
 pub const MAX_ARTIFACT_CHUNK_BYTES: usize = 64 * 1024;
 /// Snapshot section 内联 data 的编码后上限；超过则必须改用 `artifact_id`。
 pub const MAX_SNAPSHOT_SECTION_DATA_BYTES: usize = 256 * 1024;

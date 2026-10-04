@@ -202,9 +202,7 @@ impl HandshakeService {
 
 /// 校验信封 api_version 与协商结果兼容（major 相同且 minor 不高于协商值）。
 ///
-/// 不兼容时产生 `IncompatibleVersion` 错误（[ADR-036]）。
-///
-/// [ADR-036]: ../../../../Pawork_v1/docs/adr/ADR-036-gui-protocol-versioning.md
+/// 不兼容时产生 `IncompatibleVersion` 错误（ADR-036）。
 pub fn ensure_compatible_api_version(
     envelope_version: ApiVersion,
     negotiated: ApiVersion,

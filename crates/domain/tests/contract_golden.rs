@@ -1,5 +1,5 @@
 //! 字节级契约 golden(R1 波 A 前置建立于 pawork-api、golden 先行,随后随类型
-//! 整组平移至 `pawork-domain`,ADR-039)。锁定 `ProviderStreamEvent` 13 变体
+//! 整组平移至 `pawork-domain`,ADR-039)。锁定 `ProviderStreamEvent` 14 变体
 //! (tag=`type`/content=`data`/snake_case)、`ProviderError`、
 //! `CanonicalModelRequest`、`ToolResult` 的 JSON 形状;形状演进必须显式
 //! 重建夹具:

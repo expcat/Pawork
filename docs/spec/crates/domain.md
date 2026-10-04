@@ -102,10 +102,10 @@ API 1.24：`VideoContent {url, media_type}` 只表示远程 HTTP(S) 引用，纯
 
 - `ToolKind` 决定唯一续接方式：`ClientFunction → ContinuationMode::CoreSuppliedResult`（唯一本地执行位点），`ProviderHosted` / `ProviderExtension → ProviderTranscript`；调用方不能在结果对象上覆写。
 - `ToolCapabilityTag` 14 变体：WebSearch / WebFetch / FileOrCollectionSearch / XSearch / CodeExecution / HostedShell / ProviderApplyPatch / ComputerUse / ImageGeneration / ServerSideMcp / ToolSearch / Memory / ProgrammaticToolCalling / ServerSideMultiAgent；`capability_key()` 产出稳定 `tool:PascalCase` wire 名，穷举 match 守卫新增变体。
-- `ToolCapability` 7 调度分类：ReadOnly（唯一允许并发）/ WorkspaceWrite / GitWrite / Process / Network / UserInteraction / ExternalPlugin（F41 预留）。
+- `ToolCapability` 7 调度分类：ReadOnly（唯一允许并发）/ WorkspaceWrite / GitWrite / Process / Network / UserInteraction / ExternalPlugin（MCP 外部工具与 computer-use 复用，走显式审批闸门）。
 - `ToolDescriptor`：`name` / `description` / `input_schema` / `capability` / `kind` / `hosting`（须与 kind 一致，`has_consistent_hosting()` 校验）/ `capabilities` / `requires_approval` / `read_only` / `supports_concurrency` / `default_timeout_ms` / `max_output_bytes` / `allowed_in_untrusted_workspace`。v2 新增字段全带 serde 默认，旧 JSON 缺省解为 ClientFunction/Local。
 - trait `AgentTool`：`descriptor()` + `execute(request, context, sink, cancel)`。`ToolExecutionContext` 只携带 `workspace_id` + 相对 `working_directory`，绝对路径由可信 Workspace 服务解析（路径安全红线）。`ToolResult` 仅表示 ClientFunction 结果（success/failure 构造器、`is_error()`、`truncated` 标记）；`ToolError::not_locally_executable()` 供 hosted/extension 被误调用时 fail-closed。
-- `ToolStreamEvent`：`OutputDelta{channel, delta}` / `Progress{message}` / `ArtifactAvailable{artifact}`，经 `ToolEventSink::emit` 流出。
+- `ToolStreamEvent`：`OutputDelta{channel, delta}` / `Progress{completed, total?, message?}` / `ArtifactAvailable{artifact}`，经 `ToolEventSink::emit` 流出。
 
 ### 3.5 消息与 server tool
 
@@ -152,7 +152,7 @@ API 1.24：`VideoContent {url, media_type}` 只表示远程 HTTP(S) 引用，纯
 - **client_session**：`CapabilitySnapshot::validate()` 校验 schema 版本与非空字段；`SessionRegistryStore` 定义原子 ownership CAS（`insert` / `compare_and_swap` / `remove_if_owner`），冲突返回最新权威记录供重同步；内存实现在 pawork-protocol，SQLite 实现在 pawork-storage。
 - **error**：`ErrorCategory` 14 变体（Provider / Tool / Internal / Cancelled / RateLimit / Timeout / Authentication / Authorization / InvalidRequest / NotFound / Conflict / ResourceExhausted / Unavailable / MalformedData）；`ErrorContext{category, message, retryable, retry_after_ms?, diagnostics}`。
 
-### 3.7 任务日志与消耗（2026-10-04）
+### 3.8 任务日志与消耗（2026-10-04）
 
 `src/task_usage.rs` 私有模块经 crate 根导出纯数据契约：`UsageTaskRef`、`TaskUsageContext`、`TaskUsageOperation`、`TaskUsageStatus`、`TaskUsageSource`、`TaskUsageCostKind/Cost`、`TaskUsageRecord`、`TaskUsageQuery/Cursor/GroupBy`、`TaskUsageTotals/CurrencyTotal/Group/Report`、`TaskUsageOperationReport`。同一套结构供 Gateway、Host 和 Desktop 使用；`TokenUsage`、`Cost`、`VideoTaskStatus` 增 typegen derive，不改变原 serde 形状。
 
@@ -173,7 +173,7 @@ ADR-057：`CanonicalModelRequest` 增加可选 `session_id: Option<SessionId>`�
 
 ## 5. 契约与不变量
 
-- **信封版本独立**：`CURRENT_SCHEMA_VERSION = 1` 是磁盘/线上信封契约版本，与 session-store 的 SQLite migration 链版本（`crates/storage/src/session/migration.rs`，当前至 version 13）相互独立：加迁移不必动信封版本，反之亦然。
+- **信封版本独立**：`CURRENT_SCHEMA_VERSION = 1` 是磁盘/线上信封契约版本，与 session-store 的 SQLite migration 链版本（`crates/storage/src/session/migration.rs`，当前至 version 14）相互独立：加迁移不必动信封版本，反之亦然。
 - **字节级 golden**（形状漂移即测试失败，演进须 ADR + 显式重建）：
   - `crates/domain/tests/fixtures/agent_event_envelope_variants.jsonl`（32 变体信封逐行字节比对）与 `agent_event_envelope_parent.json`（parent_event_id 序列化）；
   - `crates/domain/tests/fixtures/provider_stream_event_14.jsonl`、`canonical_model_request_full.json`、`provider_error_full.json`、`tool_result_pair.jsonl`。
@@ -194,9 +194,9 @@ ADR-057：`CanonicalModelRequest` 增加可选 `session_id: Option<SessionId>`�
 
 | 资产 | 覆盖点 |
 | --- | --- |
-| `tests/events_golden.rs` | 32 变体计数守卫 + 逐条 round-trip + 与检入 jsonl 字节比对；parent envelope 字节比对；重建入口为 ignored 测试 `write_event_envelope_golden`，须 `PAWORK_WRITE_EVENT_GOLDEN=1` |
+| `tests/events_golden.rs` | 32 变体计数守卫 + 逐条 round-trip + 与检入 jsonl 字节比对；parent envelope 字节比对；`goal_budget.json` / `video_content.json` 附加字段 round-trip；重建入口为 ignored 测试 `write_event_envelope_golden`，须 `PAWORK_WRITE_EVENT_GOLDEN=1` |
 | `tests/contract_golden.rs` | `ProviderStreamEvent` 14 变体 / `ProviderError` / `CanonicalModelRequest` / `ToolResult` 字节 golden（`GOLDEN_UPDATE=1` 重建）；行数、字节、回读三重断言 |
-| `tests/fixtures/`（6 个） | `agent_event_envelope_variants.jsonl` · `agent_event_envelope_parent.json` · `provider_stream_event_14.jsonl` · `canonical_model_request_full.json` · `provider_error_full.json` · `tool_result_pair.jsonl` |
+| `tests/fixtures/`（8 个） | `agent_event_envelope_variants.jsonl` · `agent_event_envelope_parent.json` · `provider_stream_event_14.jsonl` · `canonical_model_request_full.json` · `provider_error_full.json` · `tool_result_pair.jsonl` · `goal_budget.json` · `video_content.json` |
 | `src/cancel.rs` tests | 取消幂等、多 waiter 唤醒、Drop 注销 |
 | `src/events.rs` tests | 信封顺序校验、legacy 行解码（缺省字段） |
 | `src/message.rs` tests | ContentPart 全变体往返、legacy `signature` 丢弃 |
@@ -213,7 +213,6 @@ ADR-057：`CanonicalModelRequest` 增加可选 `session_id: Option<SessionId>`�
 
 - 两套审批枚举并存且拼写不同：本包 `ApprovalDecision`（`approved_once`）用于持久化事件，protocol 侧 `ApprovalDecision`（`approve_once`）用于命令；不要互换。
 - `ModelCapabilities` v1 布尔字段与 v2 结构并存：v1 是 P6 兼容基线，`thinking: bool` 仅作派生源；判定现代能力一律走 v2 字段。`clamp_effort_to_thinking_level` 是旧 P6 adapter 的显式降级入口（XHigh/Max → High），不形成双轨。
-- `ToolCapability::ExternalPlugin` / `PluginId` / feature `plugin` 均为 F41 生态预留，当前无运行时消费。
+- `ToolCapability::ExternalPlugin` 已被运行时复用（MCP 外部工具与 computer-use 的调度分类，policy / app 据此走审批闸门）；`PluginId` 进入 protocol `AppEvent` wire（`plugin_error` 变体）。仅 feature `plugin` 仍为 F41 空锚点，无任何 cfg 门。
 - `client_session.rs` 只定义 trait 与记录形状，不含任何存储逻辑；两个实现分别在 protocol（内存）与 storage/session（SQLite）。
-- 源码注释中引用的 "26 帧 golden"（`degrade.rs`）是 R4 时点的历史计数，protocol 侧 golden 夹具现已扩至 32 个文件；以 `crates/protocol/tests/golden/` 实际内容为准。
 - 相关文档：[protocol.md](protocol.md) · [testkit.md](testkit.md) · [../README.md](../README.md) · [AGENTS.md](../../../AGENTS.md)。

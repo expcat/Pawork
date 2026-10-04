@@ -155,7 +155,7 @@ pub const API_VERSION: ApiVersion = V1_26;
 /// 宿主支持的完整 API 版本表（P13-10 schema 版本化）。
 ///
 /// 同 major 内 minor 只增、已发布 minor 必须继续支持；删除或新增 major 走
-/// [ADR-036](../../../../../Pawork_v1/docs/adr/ADR-036-gui-protocol-versioning.md) 定义的废弃与删除流程。
+/// ADR-036 定义的废弃与删除流程。
 pub const SUPPORTED_API_VERSIONS: &[ApiVersion] = &[
     V1_0, V1_1, V1_2, V1_3, V1_4, V1_5, V1_6, V1_7, V1_8, V1_9, V1_10, V1_11, V1_12, V1_13, V1_14,
     V1_15, V1_16, V1_17, V1_18, V1_19, V1_20, V1_21, V1_22, V1_23, V1_24, V1_25, V1_26,

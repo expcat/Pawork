@@ -17,8 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ids::{
     ArtifactId, AutomationId, BackgroundTaskId, CheckpointId, EventId, GoalId, MemoryId, MonitorId,
-    PlanId, PlanStepId, PlanVersionId, ReviewFindingId, ReviewSessionId, RunId, SessionId,
-    WorkspaceId,
+    PlanId, PlanStepId, PlanVersionId, ReviewFindingId, ReviewSessionId, RunId, WorkspaceId,
 };
 
 // =========================================================================
@@ -508,14 +507,6 @@ pub enum ReviewEvent {
         forge: String,
     },
 }
-
-// 引用占位：保持 session/run 关联类型在文档语义中可见，避免未使用 import 警告。
-const _: fn() = || {
-    let _ = (
-        std::marker::PhantomData::<SessionId>,
-        std::marker::PhantomData::<RunId>,
-    );
-};
 
 #[cfg(test)]
 mod tests {

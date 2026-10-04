@@ -15,7 +15,7 @@
 | --- | --- | --- |
 | `src/lib.rs` | ~25 | crate 文档、feature 门控（`local` / `memory`）、re-export：`api::*`、`LocalTransport`、`MemoryTransport` / `MemoryListener` |
 | `src/api.rs` | ~215 | 始终编译的抽象层：`DEFAULT_MAX_FRAME_BYTES`、`TransportFrame`、`TransportEndpoint`、`ConnectOptions`、`ConnectionInfo`/`ConnectionLocality`、四个核心 trait、`TransportError`/`TransportErrorKind`、远程契约 trait 与 DTO |
-| `src/local.rs` | ~300 | feature `local`：`LocalTransport`（同一类型兼任 Server 与 Client）、帧编解码核心 `StreamConnection<R, W>`（读写各持一把 `tokio::sync::Mutex`）、错误构造辅助；按平台 `#[path]` 引入下两文件 |
+| `src/local.rs` | ~420 | feature `local`：`LocalTransport`（同一类型兼任 Server 与 Client）、帧编解码核心 `StreamConnection<R, W>`（读写各持一把 `tokio::sync::Mutex`；跨调用保留分帧进度，半截帧头/帧尾断流即标记关闭）、错误构造辅助；按平台 `#[path]` 引入下两文件 |
 | `src/local_unix.rs` | ~450 | Unix Domain Socket 的 `bind`/`connect`：陈旧 socket 文件清理、`0o600` 权限收紧、`UnixSocketListener`（bind 时记录所创建 socket 文件的 dev/ino，close 仅当路径仍指向该文件才删除——旧所有者不删新端点，R-04；重复 close 幂等；R-17：accept 持锁等待时与 `close_notify` select，close 先置 closed 再唤醒，pending accept 被唤醒放锁、close 因此有界收口） |
 | `src/local_windows.rs` | ~350 | Windows Named Pipe 的 `bind`/`connect`：owner-only DACL 管道创建、逐连接重建 pipe instance；R-17：`close_watch`（watch 留存值）唤醒 pending `server.connect()`，close 幂等（Windows 侧未在本平台验证，记待验） |
 | `src/memory/mod.rs` | ~430 | feature `memory`：`MemoryTransport`（channel 名注册表）、`MemoryListener`、`MemoryConnection`（`tokio::sync::mpsc` 无界通道对，locality = `InProcess`，帧上限仍校验） |
@@ -82,7 +82,7 @@
 全部为源文件内联 `#[cfg(test)]`：
 
 - `api.rs`（1）：`TransportEndpoint` serde 往返不需要 protocol 类型。帧只持有字节由 `local.rs` 超限拒绝与 round-trip 证明。
-- `local.rs`（2）：默认帧上限 = 1 MiB（与 protocol 对齐的钉子测试）；非 `Local` 端点被拒。
+- `local.rs`（4）：默认帧上限 = 1 MiB（与 protocol 对齐的钉子测试）；非 `Local` 端点被拒；半截帧头 / 帧尾断流后连接标记关闭、残留字节不当下一帧前缀（`truncated_header_or_payload_closes_connection`）；外层超时取消 receive 后从断点续读不丢半帧（`cancelled_receive_mid_frame_resumes_without_desync`）。
 - `local_unix.rs`（7）：bind 后 socket 权限 `0o600`；双向帧往返；超限 send 在写前被拒；伪造超限长度头在分配前被拒；对端关闭 → `ConnectionClosed`、关闭后的 listener 拒绝 accept；R-04 归属回归——路径被新所有者重绑后旧 close 不删新端点（`close_does_not_remove_socket_rebound_by_new_owner`）；R-17：pending accept 被并发 close 唤醒、双方有界结束且重复 close 幂等（`pending_accept_is_woken_by_close`）。
 - `local_windows.rs`（3）：Windows 侧对应回归（round trip / 权限 / 关闭）。
 - `memory/mod.rs`（6）：bind/connect/accept 配对、重复 bind 拒绝、未 bind connect 拒绝、帧上限校验、关闭语义。

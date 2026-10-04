@@ -3,7 +3,7 @@
 //! 线上分帧格式为 `[u32 LE payload_len][payload]`。长度前缀在分配缓冲区之前
 //! 校验，防止损坏或恶意的帧头声明超大长度；payload 是
 //! [`MAX_PROTOCOL_FRAME_BYTES`](crate::MAX_PROTOCOL_FRAME_BYTES) 内的 JSON。
-//! Transport（如 `transport-api` 的各实现）只搬运字节，本模块是唯一负责
+//! Transport（`pawork-transport` 各实现）只搬运字节，本模块是唯一负责
 //! 帧编解码的地方。
 
 use std::io::{Read, Write};

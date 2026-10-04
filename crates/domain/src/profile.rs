@@ -76,11 +76,6 @@ impl ProfileRef {
             version: None,
         }
     }
-
-    /// version pin 是否约束具体版本：`None` / `*` / `latest` 表示任意版本。
-    pub fn pins_version(&self) -> bool {
-        matches!(self.version.as_deref(), Some(v) if v != "*" && v != "latest")
-    }
 }
 
 /// Prompt 维度：system 必填，instructions 可选。
@@ -267,23 +262,4 @@ mod tests {
         assert!(!encoded.contains("reasoning_effort"));
     }
 
-    #[test]
-    fn version_pin_semantics() {
-        assert!(!ProfileRef::new("x").pins_version());
-        assert!(!ProfileRef {
-            id: "x".into(),
-            version: Some("*".into()),
-        }
-        .pins_version());
-        assert!(!ProfileRef {
-            id: "x".into(),
-            version: Some("latest".into()),
-        }
-        .pins_version());
-        assert!(ProfileRef {
-            id: "x".into(),
-            version: Some("1.2.3".into()),
-        }
-        .pins_version());
-    }
 }

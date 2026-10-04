@@ -19,7 +19,7 @@ use pawork_domain::{
     CancellationToken, ModelId, ProviderId, RequestId, RunId, StopReason, TokenUsage, ToolCallId,
     ToolCapability, ToolDescriptor, ToolHosting, ToolKind, WorkspaceId,
 };
-use pawork_domain::{Citation, ContentPart, ServerToolEvent, ToolCapabilityTag};
+use pawork_domain::{ContentPart, ToolCapabilityTag};
 use serde_json::Value;
 
 #[derive(Clone, Debug, Default)]
@@ -94,53 +94,11 @@ impl MockScript {
         self
     }
 
-    /// SEARCH-1：server tool 开始执行（Provider 服务端，非本地 ToolCall）。
-    pub fn server_tool_started(mut self, id: ToolCallId, name: impl Into<String>) -> Self {
-        self.steps.push(MockProviderStep::Event(
-            ProviderStreamEvent::ServerTool(ServerToolEvent::Started {
-                tool_call_id: id,
-                name: name.into(),
-                arguments: None,
-            }),
-        ));
-        self
-    }
-
-    /// SEARCH-1：server tool 新增一条引用。
-    pub fn server_tool_citation(mut self, id: ToolCallId, citation: Citation) -> Self {
-        self.steps.push(MockProviderStep::Event(
-            ProviderStreamEvent::ServerTool(ServerToolEvent::CitationAdded {
-                tool_call_id: id,
-                citation,
-            }),
-        ));
-        self
-    }
-
-    /// SEARCH-1：server tool 执行完成。
-    pub fn server_tool_completed(mut self, id: ToolCallId) -> Self {
-        self.steps.push(MockProviderStep::Event(
-            ProviderStreamEvent::ServerTool(ServerToolEvent::Completed {
-                tool_call_id: id,
-                summary: None,
-                artifacts: Vec::new(),
-            }),
-        ));
-        self
-    }
-
     pub fn usage(mut self, usage: TokenUsage) -> Self {
         self.steps
             .push(MockProviderStep::Event(ProviderStreamEvent::UsageUpdated(
                 usage,
             )));
-        self
-    }
-
-    pub fn provider_metadata(mut self, metadata: Value) -> Self {
-        self.steps.push(MockProviderStep::Event(
-            ProviderStreamEvent::ProviderMetadata(metadata),
-        ));
         self
     }
 
@@ -489,15 +447,6 @@ impl ToolEventSink for RecordingToolSink {
     }
 }
 
-pub fn assert_provider_request_order(provider: &MockProvider, expected: &[&str]) {
-    let actual: Vec<_> = provider
-        .calls()
-        .iter()
-        .map(|call| call.request_id.as_str().to_owned())
-        .collect();
-    assert_eq!(actual, expected, "mock provider request sequence differs");
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -561,6 +510,14 @@ mod tests {
         (result, sink.events())
     }
 
+    fn request_ids(provider: &MockProvider) -> Vec<String> {
+        provider
+            .calls()
+            .iter()
+            .map(|call| call.request_id.as_str().to_owned())
+            .collect()
+    }
+
     #[tokio::test]
     async fn single_script_text_tool_call_and_complete() {
         let script = MockScript::new()
@@ -589,7 +546,7 @@ mod tests {
         ));
         assert_single_tool_call(&events);
         assert_text_stream(&events);
-        assert_provider_request_order(&provider, &["request-1"]);
+        assert_eq!(request_ids(&provider), ["request-1"]);
         assert!(provider.calls()[0].completed);
 
         let (replay, _) = stream(&provider, "request-2").await;
@@ -597,7 +554,7 @@ mod tests {
             replay.expect("replay same script").stop_reason,
             StopReason::Completed
         );
-        assert_provider_request_order(&provider, &["request-1", "request-2"]);
+        assert_eq!(request_ids(&provider), ["request-1", "request-2"]);
     }
 
     #[tokio::test]
@@ -644,7 +601,10 @@ mod tests {
             error.message
         );
         assert!(third_events.is_empty());
-        assert_provider_request_order(&provider, &["request-1", "request-2", "request-3"]);
+        assert_eq!(
+            request_ids(&provider),
+            ["request-1", "request-2", "request-3"]
+        );
         assert!(!provider.calls()[2].completed);
     }
 

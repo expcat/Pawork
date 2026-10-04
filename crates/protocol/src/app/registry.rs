@@ -62,7 +62,6 @@ static COMMANDS: &[RegistryEntry] = &[
         idempotent: true,
         since: V1_19,
     },
-    // --- AppCommand（44）---
     RegistryEntry {
         wire_name: "core_initialize",
         gui: GuiChannelAccess {
@@ -728,7 +727,6 @@ static QUERIES: &[RegistryEntry] = &[
         idempotent: true,
         since: V1_19,
     },
-    // --- AppQuery（20）---
     RegistryEntry {
         wire_name: "workspace_list",
         gui: GuiChannelAccess {

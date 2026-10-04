@@ -427,7 +427,8 @@ pub struct TeamBoardTask {
     pub max_retries: u32,
 }
 
-/// Team 协作 canonical 事件镜像（与 `teams::TeamEvent` 1:1，18 变体）。
+/// Team 协作 canonical 事件镜像（18 变体；原 `teams` crate 已随 R0 归档，
+/// 此处为仓内唯一定义）。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(tag = "kind", rename_all = "snake_case")]

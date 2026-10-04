@@ -25,7 +25,7 @@
 
 | 任务 | 范围与写入集 | 子代理划分（glm） | 验证 | 状态 |
 | --- | --- | --- | --- | --- |
-| R-01 契约层 | domain、protocol、testkit、transport | ① domain+testkit ② protocol+transport | `test.sh domain protocol testkit transport` | 待启动 |
+| R-01 契约层 | domain、protocol、testkit、transport | ① domain+testkit ② protocol+transport | `test.sh domain protocol testkit transport` | 已完成（2026-10-04） |
 | R-02 安全与配置 | policy、exec、workspace | ① policy+exec ② workspace | `test.sh policy exec workspace` | 待启动 |
 | R-03 持久化与账本 | storage、control-plane | ① storage ② control-plane | `test.sh storage control-plane` | 待启动 |
 | R-04 模型与网关 | models、providers、auth、gateway | ① models+providers ② auth+gateway | `test.sh models providers auth gateway` | 待启动 |
@@ -37,6 +37,8 @@
 | R-10 文档与门禁收口 | docs/、scripts/、Cargo 依赖审计 | ① Spec 与源码漂移核对 ② 测试脚本与门禁效率 ③ 链接/数字/backlog 清理 | 文档链接检查 + 受影响包定向 | 待启动 |
 
 执行顺序按表自上而下：契约与叶子包在前，装配与桌面在后，文档/门禁收口最后以吸纳前序改动造成的漂移。R-07～R-09 范围最大，子代理划分以执行时模块实测为准，保持写入集互不重叠。需用户确认的事项随各任务报告列出，不在子代理内静默执行。
+
+R-01 移交项（2026-10-04 登记，执行到对应任务时处理）：R-04 注意 providers 三处本地 `RecordingProviderSink` 复制（tests/contract.rs、tests/anthropic.rs、tests/api_key_channels.rs）可收敛到 testkit；R-05 注意 crates/git 与 crates/engine 仍有 Pawork_v1 死链注释；R-08 注意 docs/spec/crates/client.md 的 `SUPPORTED_API_VERSIONS` / API 版本与 protocol 现状漂移；R-10 统一处理 ADR 正文仅存于 v2-final 归档导致的裸编号引用（是否建 docs/adr/ 索引）。
 
 2026-09-27 [包边界调整](architecture.md)已实现：拆出 models、gui-server、acp、mcp、gateway，workspace 为 29 成员，不合并现有包。受影响包的现有回归、协议 golden、依赖边界审计与真实 `pawork` 子进程 3 项测试通过；第三方生产依赖集合、线上协议与持久格式不变。本次未运行 Desktop 构建、真窗口或真实 Provider 验收，不改变下方已有人工验收结论；全 workspace 门禁未运行，改动已提交，未发布、未归档。
 

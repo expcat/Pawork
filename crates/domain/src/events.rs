@@ -4,8 +4,8 @@
 //! JSON 往返，`sequence` 在同一 Session 事件流内必须严格递增。
 //!
 //! 本模块由 V1 `agent-events` 整包并入。信封 [`CURRENT_SCHEMA_VERSION`] 是
-//! **磁盘/线上契约版本（值为 1）**，与 session-store 的 DB migration 版本
-//! （`CURRENT_SCHEMA_VERSION = 9`）相互独立，不得混用。
+//! **磁盘/线上契约版本（值为 1）**，与 session-store 的 SQLite migration 链版本
+//! （见 `crates/storage/src/session/migration.rs`）相互独立，不得混用。
 
 use std::{error::Error, fmt};
 

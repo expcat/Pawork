@@ -4,7 +4,7 @@
 //! 幂等冲突 / ACP 内部状态错误)统一事件化为 [`DegradeEvent`],经既有
 //! `AgentEvent::Diagnostic`(持久化事件流)与 protocol `AppEvent::Diagnostic`
 //!(实时帧,转换为 `From<&DegradeEvent>`,定义在 pawork-protocol)双通道外发。
-//! 本契约**不改变**两通道的 serde 形状:26 帧 golden 与 events_golden 零 diff。
+//! 本契约**不改变**两通道的 serde 形状:protocol 侧 golden 与 events_golden 零 diff。
 //!
 //! 红线:`details` 永不携带 Secret(凭证 / Token / 明文 key);启动期与流受损
 //! 等无会话上下文的接点走 [`DegradeSink::FrameStderr`],可重放接点走
