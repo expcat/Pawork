@@ -29,7 +29,7 @@
 | R-02 安全与配置 | policy、exec、workspace | ① policy+exec ② workspace | `test.sh policy exec workspace` | 已完成（2026-10-04） |
 | R-03 持久化与账本 | storage、control-plane | ① storage ② control-plane | `test.sh storage control-plane` | 已完成（2026-10-04） |
 | R-04 模型与网关 | models、providers、auth、gateway | ① models+providers ② auth+gateway | `test.sh models providers auth gateway` | 已完成（2026-10-04） |
-| R-05 Agent 执行层 | engine、workflow、orchestration、git | ① engine+workflow ② orchestration+git | `test.sh engine workflow orchestration git` | 待启动 |
+| R-05 Agent 执行层 | engine、workflow、orchestration、git | ① engine+workflow ② orchestration+git | `test.sh engine workflow orchestration git` | 已完成（2026-10-04） |
 | R-06 工具与平台包 | tools、mcp、browser、computer-use、terminal | ① tools+mcp ② browser+computer-use+terminal | `test.sh tools mcp browser computer-use terminal` | 待启动 |
 | R-07 Core 装配 | app | ① app_core+services ② gui_host ③ control+其余模块 | `test.sh app`，动装配加 `--host` | 待启动 |
 | R-08 入口与连接 | cli、acp、client、gui-server、apps/pawork | ① cli+pawork ② acp+client+gui-server | `test.sh cli acp client gui-server` + `--host` | 待启动 |
@@ -38,13 +38,15 @@
 
 执行顺序按表自上而下：契约与叶子包在前，装配与桌面在后，文档/门禁收口最后以吸纳前序改动造成的漂移。R-07～R-09 范围最大，子代理划分以执行时模块实测为准，保持写入集互不重叠。需用户确认的事项随各任务报告列出，不在子代理内静默执行。
 
-R-01 移交项（2026-10-04 登记，执行到对应任务时处理）：R-04 注意 providers 三处本地 `RecordingProviderSink` 复制（tests/contract.rs、tests/anthropic.rs、tests/api_key_channels.rs）可收敛到 testkit；R-05 注意 crates/git 与 crates/engine 仍有 Pawork_v1 死链注释；R-08 注意 docs/spec/crates/client.md 的 `SUPPORTED_API_VERSIONS` / API 版本与 protocol 现状漂移；R-10 统一处理 ADR 正文仅存于 v2-final 归档导致的裸编号引用（是否建 docs/adr/ 索引）。
+R-01 移交项（2026-10-04 登记，执行到对应任务时处理）：R-04 注意 providers 三处本地 `RecordingProviderSink` 复制（tests/contract.rs、tests/anthropic.rs、tests/api_key_channels.rs）可收敛到 testkit；R-08 注意 docs/spec/crates/client.md 的 `SUPPORTED_API_VERSIONS` / API 版本与 protocol 现状漂移；R-10 统一处理 ADR 正文仅存于 v2-final 归档导致的裸编号引用（是否建 docs/adr/ 索引）。crates/git 与 crates/engine 的 Pawork_v1 死链已随 R-05 清理。
 
 R-02 移交项（2026-10-04 登记）：R-07 注意 workspace 的 prompt-template / 未落地 ResourceKind 集群（`ResourceSelection.prompt_template/prompt_arguments`、`ResourceLimits.max_template_file_refs/max_rendered_prompt_bytes`、`ResourceKind::{PromptTemplate, LanguageServer, UserHook}`、`ResourceInstructionKind::PromptTemplate`）零消费但跨包，删除需同步 `crates/app/src/extensions.rs:544` 穷举匹配，建议随 app 任务整体裁决。R-02 需用户确认项（`PolicyEngine.mode` 字段、`classify_command` 公开面、PTY `read_output` 系列零消费、exec 五项安全行为缺口是否补测）随任务报告上报，不在后续任务静默执行。
 
 R-03 移交项（2026-10-04 登记）：R-07 注意 control-plane 两个无生产消费者的子系统——QuotaService 读面（read/overview/cache_only/invalidate/singleflight/stale 机器，生产只用 register / set_ledger_reconciler / invalidate_local_scope）与 LeaseProjection 崩溃恢复机器（with_projection / restore / recover_records 无真实投影实现接线）——若用户确认收敛，落点跨 control-plane + app 装配，并入 R-07 统筹；R-10 注意归档 ADR P14-7 step 3（predict_exhaustion）代码锚点已随 R-03 删除移除，与 R-01 已登记的 ADR 裸编号引用问题一并核对。R-03 需用户确认项（storage 参数化预留与 retain / snapshot_run / conflict_check / replay_events 保留面，control-plane 上述两子系统及 CredentialPicker / BudgetCap / PolicyGate::Retention 变体）随任务报告上报，不在后续任务静默执行。
 
 R-04 移交项（2026-10-04 登记）：R-06/R-07 注意 auth `locator::is_mcp_secret_service` 全仓零生产消费者，而 mcp（security.rs）与 app（extensions.rs）各自手写 `starts_with(MCP_SECRET_SERVICE_PREFIX)` 判定，与「locator 单一事实源」相悖，若用户确认统一消费，落点跨 auth + mcp + app；R-07 注意 app 子 core（subagents 同 Provider 路径，app_core.rs 经 `from_parts_with_protocol`）挂空 `MemoryBackend` 作 auth backend，若子 core 生命周期内读 auth backend（revision / needs_refresh）会误判无凭证，建议核实。R-04 需用户确认项（models 四个零生产消费者 Spec 记录 API：`validate_context` / `merge_provider_source` / `capability_snapshot` / `filter_by_purpose`；auth `ApiKeyCredential::store/store_with_scopes/delete`、`StoredCredential::with_expires_at`、`DeviceAuthorization` 中转结构、`keychain_*` serde alias 版本期；auth 两处 OAuth 可疑实现：`read_refresh_token` 全错误归一 NotFound、`poll_device_token` slow_down 不等待不查 deadline）随任务报告上报，不在后续任务静默执行。
+
+R-05 移交项（2026-10-04 登记）：R-07 注意 orchestration 注入与恢复面（`with_task_graph` / `with_worktree_allocator` / `with_patch_merger`、`retry_task` / `recover_report`）全仓无生产调用点，app 实际只用 spawn / start_worker / record_usage / cancel_tree / events（`flush_usage` 为「flush 不吞 pending」不变式的文档化重试入口，保留）；`next_agent_id` 实例级计数器使同进程多 supervisor 同产 `agent-0`（不进持久幂等键，仅 lease 记录 / 用量归属 / worktree 分支名跨 supervisor 重名）。R-10 注意 providers 存在 3 处 dead_code 警告（`with_opencode_session` 两处、`reject_kimi_external_image_urls`，R-04 收口后遗留）；engine 测试骨架有 5 个 LoopContext 包装各自手工转发与 ScriptedProvider 近重复 mock，收益中等，随测试门禁任务裁决。R-05 需用户确认项（orchestration budget flush `record_id` 缺进程级命名空间，Host 重启同 (tenant, account) 撞键可致 `UsageFlushPending` 挂起或静默漏记；engine `run_session_turn` 与 `tool_result_trim` 模块整装零消费者；`ContextBudget::reserved_tokens` 等零消费者小 API 集群；`TokenEstimator::estimator_kind` 零调用但移除跨 storage；git Stage / HunkStage 生产接线）随任务报告上报，不在后续任务静默执行。
 
 2026-09-27 [包边界调整](architecture.md)已实现：拆出 models、gui-server、acp、mcp、gateway，workspace 为 29 成员，不合并现有包。受影响包的现有回归、协议 golden、依赖边界审计与真实 `pawork` 子进程 3 项测试通过；第三方生产依赖集合、线上协议与持久格式不变。本次未运行 Desktop 构建、真窗口或真实 Provider 验收，不改变下方已有人工验收结论；全 workspace 门禁未运行，改动已提交，未发布、未归档。
 

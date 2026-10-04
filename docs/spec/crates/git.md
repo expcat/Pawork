@@ -14,7 +14,7 @@
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
 | `src/lib.rs` | ~40 | crate 门面：7 个模块声明与全部公开 re-export；`FileStatus` 唯一定义在 `status`，`diff::FileStatus` 为同一类型 re-export |
-| `src/error.rs` | ~70 | `GitError` 统一错误枚举（17 个 variant）；`From<pawork_exec::ProcessError>` 归一：Spawn 且 `NotFound`→`GitNotFound`、`KillTimeout`→`Timeout`、其余 Spawn/ProcessTree/Isolation→`Other`、IO 透传 |
+| `src/error.rs` | ~60 | `GitError` 统一错误枚举（9 个 variant，2026-10 R-05 删除 V2 归档服务的 8 个零构造点遗留）；`From<pawork_exec::ProcessError>` 归一：Spawn 且 `NotFound`→`GitNotFound`、`KillTimeout`→`Timeout`、其余 Spawn/ProcessTree/Isolation→`Other`、IO 透传 |
 | `src/process.rs` | ~200 | `GitRunner`（默认 `git` 路径、30s 超时、16MB 输出上限）；`validate_position_arg` 注入防护；domain→exec 取消令牌桥接（已取消立即 cancel，否则后台任务等待）；Windows `\\?\` verbatim cwd 经 `dunce` 简化 |
 | `src/repo.rs` | ~410 | `GitService`：`open`（`rev-parse --show-toplevel` 定位 work tree，失败→`NotARepository`）、`git_dir` / `is_bare` / `current_branch` / `current_head` / `repo_info`（合并 rev-parse，固定两次 spawn，unborn 回退路径）；`Head::{Branch(name), Detached(sha), Unborn}` / `RepoInfo` |
 | `src/status.rs` | ~370 | `StatusService` 与自由函数 `read_status`：`git status --porcelain=v1 -z --untracked-files=all` 解析为 `FileChange`（X 列 index / Y 列 worktree 双状态 + `untracked` 标记 + rename/copy 原路径）；`FileStatus` 九态状态码映射；`changed_files` 过滤未跟踪与全未修改条目 |
@@ -122,7 +122,6 @@
 
 - **单一 `FileStatus`**：定义在 `status.rs`（porcelain 九态，crate root re-export）；`diff::FileStatus` 是同一类型。`--raw` 的相似度数字只用于 rename/copy 检测，不进枚举。
 - **`HunkStageService` / `StageService` / `WorktreeService` 当前零默认闭包消费者**：HunkStage 与 Stage 在整个 workspace 无生产调用点（Desktop 未接线）；Worktree 仅被 orchestration 的默认关闭 feature 使用。API 保留但演进时无下游回归网。
-- `GitError` 中 `NothingToCommit` / `BranchAlreadyExists` / `BranchNotFound` / `BranchNotMerged` / `ReferenceNotFound` / `Conflict` / `DetachedHead` / `LocalChangesWouldBeOverwritten` 等 variant 是 V2 归档服务的遗留，当前全 workspace 无构造点。
 - hunk 级暂存对输入来源敏感：`stage_*` 只接受 worktree-vs-index diff、`unstage_*` 只接受 staged diff，混用会 `PatchDoesNotApply`；rename / binary / untracked 不支持。
 - 输出为 lossy UTF-8：非 UTF-8 文件名 / 内容会被替换字符污染而非报错。
 - rename 检测、porcelain 输出细节依赖系统 git 版本行为，本包未固定最低 git 版本。

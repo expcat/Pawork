@@ -74,7 +74,8 @@ pub enum MergeError {
     },
 }
 
-/// 变更来源抽象：真实实现包装 `diff-service` + `std::fs`，测试注入 fake。
+/// 变更来源抽象：真实实现包装 `pawork-git` 的 `DiffService` + `std::fs`，
+/// 测试注入 fake。
 #[async_trait]
 pub trait DiffProvider: Send + Sync {
     /// 返回 worktree 相对 `HEAD` 变更的文件相对路径列表。
@@ -93,7 +94,7 @@ pub trait DiffProvider: Send + Sync {
     }
 }
 
-/// 真实 DiffProvider：变更清单走 `diff-service`，文件内容走 `std::fs`，
+/// 真实 DiffProvider：变更清单走 `pawork-git` 的 `DiffService`，文件内容走 `std::fs`，
 /// 基准内容走 `git show HEAD:<rel>`。
 #[cfg(feature = "git")]
 pub struct GitDiffProvider {

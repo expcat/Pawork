@@ -45,11 +45,9 @@ pub struct TaskSnapshot {
     pub status: TaskStatus,
     /// 终态补充说明（如退出码 / 取消原因）。
     pub detail: Option<String>,
-    /// 该任务输出流的下一个游标（重连后从 `output_since(output_seq)` 续读增量）。
-    /// 默认档无输出缓冲，恒为 0。
+    /// 该任务输出流的下一个游标。默认档无输出缓冲，恒为 0。
     pub output_seq: u64,
-    /// 已缓冲输出字节数（上限为 CommandSpec::max_output_bytes）。
-    /// 默认档无输出缓冲，恒为 0。
+    /// 已缓冲输出字节数。默认档无输出缓冲，恒为 0。
     pub output_bytes: u64,
 }
 

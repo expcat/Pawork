@@ -1,7 +1,7 @@
-//! git-service 错误类型。
+//! git 错误类型。
 //!
 //! 把 process-runtime 的 `ProcessError`、git 非零退出与超时/取消统一归一为
-//! [`GitError`]，供上层（status/stage/worktree/cache）一致处理。
+//! [`GitError`]，供上层（status/stage/worktree）一致处理。
 
 /// git 操作统一错误。
 ///
@@ -12,30 +12,14 @@ pub enum GitError {
     GitNotFound(String),
     #[error("not a git repository: {0}")]
     NotARepository(String),
-    #[error("detached HEAD")]
-    DetachedHead,
     #[error("git failed (exit code {code:?}): {stderr}")]
     GitFailed { code: Option<i32>, stderr: String },
-    #[error("nothing to commit")]
-    NothingToCommit,
-    #[error("branch already exists: {0}")]
-    BranchAlreadyExists(String),
-    #[error("branch not found: {0}")]
-    BranchNotFound(String),
-    #[error("branch not fully merged: {0}")]
-    BranchNotMerged(String),
-    #[error("reference not found: {0}")]
-    ReferenceNotFound(String),
     #[error(
         "invalid git positional argument `{name}`: values starting with '-' are not allowed ({value})"
     )]
     InvalidPositionArgument { name: &'static str, value: String },
-    #[error("local changes would be overwritten: {0:?}")]
-    LocalChangesWouldBeOverwritten(Vec<String>),
     #[error("patch does not apply (index changed since diff?)")]
     PatchDoesNotApply,
-    #[error("merge conflict: {0}")]
-    Conflict(String),
     #[error("git operation timed out")]
     Timeout,
     #[error("git operation cancelled")]

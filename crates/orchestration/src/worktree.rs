@@ -1,7 +1,7 @@
 //! Worker 独立 worktree 分配与隔离守卫（P12-3）。
 //!
 //! [`WorktreeAllocator`] 抽象了 worktree 的分配 / 释放，真实实现
-//! ([`GitWorktreeAllocator`]) 委托 `git-service` 的 `WorktreeService`，
+//! ([`GitWorktreeAllocator`]) 委托 `pawork-git` 的 `WorktreeService`，
 //! 测试注入 [`FakeWorktreeAllocator`]（测试模块内）。
 //!
 //! 安全约定（ADR-007）：释放只调用 `git worktree remove`，绝不递归删除
@@ -45,7 +45,7 @@ pub enum WorktreeError {
     Io(#[from] std::io::Error),
 }
 
-/// worktree 分配器抽象（真实实现走 git-service，测试注入 fake）。
+/// worktree 分配器抽象（真实实现走 pawork-git，测试注入 fake）。
 #[async_trait]
 pub trait WorktreeAllocator: Send + Sync {
     /// 在 `parent_path`（git 仓库）下分配名为 `branch` 的 worktree。
@@ -60,7 +60,7 @@ pub trait WorktreeAllocator: Send + Sync {
     async fn release(&self, path: &Path) -> Result<(), WorktreeError>;
 }
 
-/// 真实分配器：委托 `git-service` 的 [`WorktreeService`]。
+/// 真实分配器：委托 `pawork-git` 的 [`WorktreeService`]。
 #[cfg(feature = "git")]
 pub struct GitWorktreeAllocator {
     runner: Arc<GitRunner>,

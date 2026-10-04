@@ -1,8 +1,8 @@
 //! Pawork 多 Agent 编排：Supervisor / Worker 生命周期、任务图、worktree
 //! 隔离与预算闸门。
 //!
-//! 合并自 V1 `orchestration`。`OrchestrationEvent` 留在
-//! [`lifecycle`]，不并入 `pawork-domain` / `AgentEvent`。
+//! `OrchestrationEvent` 留在 [`lifecycle`]，不并入 `pawork-domain` /
+//! `AgentEvent`。
 
 mod budget;
 mod identity;

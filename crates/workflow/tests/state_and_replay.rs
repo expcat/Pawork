@@ -342,7 +342,7 @@ fn events_since_returns_increment() {
 }
 
 #[test]
-fn replay_advances_id_allocator() {
+fn replay_then_register_keeps_ids_unique() {
     let mgr = manager();
     let first = mgr.register(TaskKind::Agent, None).unwrap();
     mgr.start(&first).unwrap();

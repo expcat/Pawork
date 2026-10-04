@@ -51,7 +51,7 @@ impl TaskManager {
     /// 订阅实时事件流（`AgentEvent::Task(...)`）。
     ///
     /// 收到 `RecvError::Lagged` 表示错过事件：先 `snapshot()` 重建视图，
-    /// 再用 `events_since` / `output_since` 续读增量。
+    /// 再用 `events_since` 续读增量。
     pub fn subscribe(&self) -> broadcast::Receiver<AgentEvent> {
         self.inner.live.subscribe()
     }

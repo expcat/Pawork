@@ -248,11 +248,7 @@ fn parse_raw(raw: &str, staged: bool) -> Vec<DiffFile> {
             if i_orig < tokens.len() && !tokens[i_orig].is_empty() {
                 previous_path = Some(path.to_string());
                 // 新路径为第二段。
-                let new_path = if i_orig < tokens.len() {
-                    tokens[i_orig].to_string()
-                } else {
-                    path.to_string()
-                };
+                let new_path = tokens[i_orig].to_string();
                 i = i_orig + 1;
                 files.push(DiffFile {
                     path: new_path,

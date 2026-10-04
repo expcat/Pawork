@@ -19,7 +19,7 @@
 | `src/plan/snapshot.rs` | ~30 | 查询面 DTO：`PlanSnapshot`、`PlanVersionInfo`（serde 可序列化，供 CLI/GUI 经 GUI Connection Protocol 消费） |
 | `src/plan/error.rs` | ~60 | `PlanError`（非法步骤 / 评审转移、版本与 plan_id 不匹配、空 plan / 空步骤文本 / 空理由 / 空评论、重复版本等 14 变体） |
 | `src/task/mod.rs` | ~40 | task 门面与 re-export；模块级文档（统一抽象、断连续存、取消传播、执行所有权边界） |
-| `src/task/state.rs` | ~315 | `TaskManagerState` 纯聚合（任务表 `BTreeMap` + 只追加事件日志）；`apply` 唯一折叠入口（`Started` 幂等，`Finished` 校验前置状态与终态合法性）；`TaskSnapshot` / `TaskManagerSnapshot`；`is_active_status` / `is_terminal_status`；`subtree` 后代收集；id 分配与重放推进 |
+| `src/task/state.rs` | ~315 | `TaskManagerState` 纯聚合（任务表 `BTreeMap` + 只追加事件日志）；`apply` 唯一折叠入口（`Started` 幂等，`Finished` 校验前置状态与终态合法性）；`TaskSnapshot` / `TaskManagerSnapshot`；`is_active_status` / `is_terminal_status`；`subtree` 后代收集；id 分配（进程唯一命名空间） |
 | `src/task/manager.rs` | ~265 | `TaskManager` 命令面 / 查询面 / `broadcast` 实时事件（容量默认 256，Lagged 后走 snapshot + events_since 恢复） |
 | `src/task/error.rs` | ~30 | `TaskManagerError`（UnknownTask / UnknownParent / InvalidTransition / InvalidFinishedStatus） |
 | `tests/plan_service.rs` | ~785 | Plan 全流程集成测试（见 §7） |
@@ -80,7 +80,7 @@
 2. `start` 发 `Started`（携带 kind 与 parent），任务自此进入可重放事件流；`apply` 对 `Started` 幂等（已存在则刷新为 Running）。
 3. Running ↔ Suspended（`Suspended` / `Resumed` 事件）；`finish` 收敛到 Completed / Failed。
 4. `cancel(root)`：`subtree` 沿 parent 链自根向下栈式遍历（深度优先序）收集全部后代 → 逐个按状态处理（见 §3.2）→ 先在锁外触发全部取消令牌、再广播事件，无孤儿。
-5. 断连恢复：调用方持久化事件后可用 `snapshot()`（视图 + 日志）或 `replay(events)` 重建，`events_since(seq)` 续读增量；重放同时推进 id 分配器（`task_N` 后缀取 max+1），避免恢复后新 id 碰撞。
+5. 断连恢复：调用方持久化事件后可用 `snapshot()`（视图 + 日志）或 `replay(events)` 重建，`events_since(seq)` 续读增量；重放只重建视图与日志，新 id 由进程唯一命名空间分配器生成（见本节开头 2026-09-24 说明），与重放恢复的历史 id 天然不碰撞。
 
 ## 5. 契约与不变量
 
@@ -103,7 +103,7 @@
 | 资产 | 覆盖点 |
 | --- | --- |
 | `tests/plan_service.rs` | 步骤合法 / 非法转移；`replay_matches_live_service_and_manual_apply`（重放与实况一致）；版本修订链成链；命令错误矩阵；**红线**：`plan_with_write_action_descriptions_is_inert`（写动作描述文本不产生任何执行）；`PlanEvent` 经 `AgentEvent` round-trip；评审全流程（review→comment→changes→revise→approve 带 checkpoint）；`approval_gate_closed_until_approved`（gate 未批准恒关）；非法评审转移矩阵；直接 approve/reject；行锚点评论；revise 版本链校验与重复版本拒绝；评审流重放一致性。2026-09-20 重构删除了两条 `include_str!` 源码文本扫描（文本扫描不能证明运行期行为）；「纯 reducer 无 IO/spawn」的约束以 [../../architecture.md](../../architecture.md) 的依赖方向与评审为准 |
-| `tests/state_and_replay.rs` | 四类 kind 注册查询；合法生命周期事件序；非法转移矩阵；`snapshot_and_replay_rebuild_view`；`pure_state_apply_folds_events`；`cancel_propagates_to_descendants_without_orphans`（取消树无孤儿）；取消跳过终态并移除 Queued；`events_since` 增量；`replay_advances_id_allocator`；R-05 `shared_cancel_token_stops_real_executor`（共享令牌登记的任务 cancel 触达真实执行体令牌，重复 cancel 幂等） |
+| `tests/state_and_replay.rs` | 四类 kind 注册查询；合法生命周期事件序；非法转移矩阵；`snapshot_and_replay_rebuild_view`；`pure_state_apply_folds_events`；`cancel_propagates_to_descendants_without_orphans`（取消树无孤儿）；取消跳过终态并移除 Queued；`events_since` 增量；`replay_then_register_keeps_ids_unique`；R-05 `shared_cancel_token_stops_real_executor`（共享令牌登记的任务 cancel 触达真实执行体令牌，重复 cancel 幂等） |
 
 默认验证命令：`cargo test -p pawork-workflow --offline --lib --tests`。
 

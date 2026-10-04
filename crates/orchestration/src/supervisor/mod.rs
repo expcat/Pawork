@@ -59,7 +59,7 @@ pub struct SupervisorConfig {
     pub default_pool_concurrency: u64,
     /// spawn 未显式携带预算时使用的默认预算。
     pub budget: WorkerBudgetLimits,
-    /// 沿 parent_id 的最大 worker 深度；`None` 表示不限制（与 V1 默认行为一致）。
+    /// 沿 parent_id 的最大 worker 深度；`None` 表示不限制。
     pub max_worker_depth: Option<u64>,
 }
 

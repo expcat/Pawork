@@ -4,7 +4,7 @@
 //!
 //! - **Agent 并发**：由 [`crate::AgentSupervisor`] 的活动 worker 计数 +
 //!   `TenantPolicyEngine::check_agent_concurrency` 实现（见 supervisor.rs）；
-//! - **请求 / Lease 并发**：由 `provider-control` 的 `CredentialPool` 实现。
+//! - **请求 / Lease 并发**：由 `pawork-control-plane` 的 `CredentialPool` 实现。
 //!
 //! 两层互不读写对方状态（P12-4 验收标准："Agent 并发与 account request
 //! concurrency 使用独立计数器/状态机"）。本模块只负责 token / cost 度量
@@ -373,7 +373,7 @@ impl WorkerBudgetController {
             // P14-7 审查（cache 通路）：本地预算度量当前只跟踪 input/output/cost，
             // 不贯通 cache_read/cache_write token。贯通需要 usage-ledger 的
             // UsageRecord（已含字段）+ 本快照 + 累加器 + record_usage 签名四处协同
-            // 扩展，且 provider-control 侧需提供 cache 维度来源；此处明确停止，
+            // 扩展，且 control-plane 侧需提供 cache 维度来源；此处明确停止，
             // 不在未贯通的情况下写入 0 之外的值，避免误导对账。完整贯通单独排期。
             cache_read_tokens: 0,
             cache_write_tokens: 0,
