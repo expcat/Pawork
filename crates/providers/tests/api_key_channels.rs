@@ -4,7 +4,6 @@
 //! 全程 wiremock，不接触真实网络与 Key。本文件依赖 pawork-providers 导出
 //! api_key 类型；在 lib.rs 接线前本测试无法编译。
 
-use std::collections::BTreeMap;
 use pawork_domain::{
     CancellationToken, ContentPart, Message, MessageId, MessageMetadata, MessageRole, ModelId,
     StopReason, TextContent,
@@ -20,6 +19,7 @@ use pawork_providers::channels::registry::{
 use pawork_providers::net::http::HttpClientConfig;
 use pawork_providers::{ApiKeyChannelConfig, ApiKeyChannelProvider};
 use pawork_testkit::RecordingProviderSink;
+use std::collections::BTreeMap;
 use wiremock::matchers::{body_partial_json, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 

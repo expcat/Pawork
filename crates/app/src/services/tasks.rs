@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use pawork_domain::{
-    BackgroundTaskId, CancellationToken, DegradeEvent, DegradeKind, DegradeSeverity,
-    TaskKind, TaskStatus,
+    BackgroundTaskId, CancellationToken, DegradeEvent, DegradeKind, DegradeSeverity, TaskKind,
+    TaskStatus,
 };
 use pawork_workflow::task::{is_terminal_status, TaskManager, TaskSnapshot};
 use serde_json::json;

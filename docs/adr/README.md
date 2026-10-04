@@ -12,11 +12,11 @@
 
 | 编号段 | 正文位置 | 说明 |
 | --- | --- | --- |
-| ADR-001～ADR-036 | `git show b7b3d5af:docs/adr/ADR-0XX-*.md` | V1 决策目录完整快照；b7b3d5af 是归档收缩（ca24df16）前最后版本 |
+| ADR-001～ADR-036 | `git ls-tree --name-only b7b3d5af docs/adr/` 定位文件，再 `git show b7b3d5af:<完整路径>` | V1 决策目录完整快照；b7b3d5af 是归档收缩（ca24df16）前最后版本 |
 | ADR-037 | `git show v2-final:docs/adr/ADR-037-s13-wave-b-contracts.md` | V2 S13 wave B 契约 |
 | ADR-038 | `git show v2-final:plan/R0-inventory-decisions.md` | V3 R0 库存与产品形态（D1～D16 决策清单） |
 | ADR-039 | `git show v2-final:plan/R1-package-consolidation.md` | V3 R1 包布局合并 |
-| P12～P18 阶段计划 | `git show b7b3d5af:plan/P*.md` | V1 阶段计划（如 P14-7 = `plan/P14-7-quota-local-usage-budget.md`） |
+| P12～P18 阶段计划 | `git ls-tree --name-only b7b3d5af plan/` 定位文件，再 `git show b7b3d5af:<完整路径>` | V1 阶段计划（如 P14-7 = `plan/P14-7-quota-local-usage-budget.md`）；`git show` 不展开路径通配符 |
 
 ## 约定
 

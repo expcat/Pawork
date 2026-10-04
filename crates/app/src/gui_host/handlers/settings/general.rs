@@ -4,8 +4,8 @@ use crate::gui_host::GuiHostAdapter;
 use crate::AppCore;
 use pawork_gui_server::GuiHostError;
 
-use super::settings_data;
 use super::super::global_config_file;
+use super::settings_data;
 
 fn invalid_proxy_url_error(candidate: Option<&str>) -> GuiHostError {
     let reason = match candidate {

@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use pawork_domain::{
     CancellationToken, ContentPart, Message, MessageId, MessageMetadata, MessageRole, ModelId,
     StopReason, TextContent,
@@ -10,6 +9,7 @@ use pawork_domain::{
 use pawork_providers::net::http::HttpClientConfig;
 use pawork_providers::{XaiConfig, XaiProvider};
 use pawork_testkit::RecordingProviderSink;
+use std::collections::BTreeMap;
 use wiremock::matchers::{body_string_contains, header, header_regex, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -181,7 +181,11 @@ async fn model_capability_selects_responses_or_chat() {
         config: None,
     });
     provider
-        .stream(&search, &RecordingProviderSink::default(), CancellationToken::new())
+        .stream(
+            &search,
+            &RecordingProviderSink::default(),
+            CancellationToken::new(),
+        )
         .await
         .unwrap();
     provider
@@ -201,7 +205,11 @@ async fn model_capability_selects_responses_or_chat() {
             alt_text: None,
         }));
     provider
-        .stream(&image, &RecordingProviderSink::default(), CancellationToken::new())
+        .stream(
+            &image,
+            &RecordingProviderSink::default(),
+            CancellationToken::new(),
+        )
         .await
         .unwrap();
     assert!(server
@@ -212,7 +220,11 @@ async fn model_capability_selects_responses_or_chat() {
         .all(|request| !request.headers.contains_key("x-opencode-session")));
     search.model = ModelId::new("grok-3");
     let error = provider
-        .stream(&search, &RecordingProviderSink::default(), CancellationToken::new())
+        .stream(
+            &search,
+            &RecordingProviderSink::default(),
+            CancellationToken::new(),
+        )
         .await
         .unwrap_err();
     assert_eq!(error.kind, pawork_domain::ProviderErrorKind::InvalidRequest);

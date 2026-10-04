@@ -4,7 +4,7 @@
 
 ## 已收口：2026-10 全量 Review（R-01～R-10）
 
-2026-10-04 用户授权的全量 Review（过度设计、低效测试门禁、过时内容、繁琐优化）已按 R-01→R-10 顺序完成，每个任务独立提交。累计（R-01～R-09）：131 个文件 +449 / −1507 行；R-10 收口提交包含本节改写、ADR 索引、下述移交项修复与 backlog 登记。冻结契约、架构红线与安全语义未动；全部 B 级事项见下方汇总，未裁决前不改代码。
+2026-10-04 用户授权的全量 Review（过度设计、低效测试门禁、过时内容、繁琐优化）已按 R-01→R-10 顺序完成，每个任务独立提交。累计（R-01～R-09）：131 个文件 +449 / −1507 行；R-10 收口提交包含本节改写、ADR 索引、下述移交项修复与 backlog 登记。冻结契约、架构红线与安全语义未动；全部 B 级事项见下方汇总。后续用户授权复验并修复发现的问题，本轮已修 B7 / B9 的行为缺陷，其余 API / 产品取舍仍保留待裁决。
 
 ### 任务与提交
 
@@ -19,7 +19,7 @@
 | R-07 Core 装配 | app | 5b912fb9 |
 | R-08 入口与连接 | cli、acp、client、gui-server、apps/pawork | 147ae5b2 |
 | R-09 Desktop | apps/desktop | 7cd1fd36 |
-| R-10 文档与门禁收口 | docs/、scripts/、依赖审计 | 本提交 |
+| R-10 文档与门禁收口 | docs/、scripts/、依赖审计 | 215fc8c5 |
 
 ### R-10 收口结论
 
@@ -27,9 +27,32 @@
 - **门禁效率**：scripts/test.sh feature 组合与各包 `[[test]]` required-features 逐一核对一致（providers 9 通道 feature、storage compaction/checkpoint/protected、protocol typegen、transport memory、orchestration git、app ui-fixture、client probe-self-test）；live-smoke 为 env 门控真实 API、spawn-e2e 走 --host，均按设计不进默认门禁；无重复冒烟。脚本本次未改动。
 - **ADR 索引**：新增 [docs/adr/README.md](adr/README.md)，裸编号引用（ADR-001～039、P12～P18 系列）统一按索引检索归档正文；AGENTS.md 已加指引。
 
-### B 级：待用户裁决汇总
+### 2026-10-04 复验与修复
 
-以下事项跨冻结契约 / 安全语义 / 对外 semver 或跨包依赖方向，逐项拍板后才执行；编号便于引用。
+复验范围为 `bec896e5..215fc8c5` 的 R-01～R-10 全部修改，以及本次发现的问题修复。已实现：OAuth Device 轮询在 pending / slow_down 后等待，请求和等待共用较短有效期限；refresh token 读取保留后端损坏 / IO 错误；budget record_id 增加进程命名空间，避免重启后的同归属 / 同用量记录被幂等账本吞掉。原有 Clone、pending、失败 / 取消重试语义保持。另修复 ADR 历史路径通配符命令，收敛 R 改动行的格式差异，并同步 auth / orchestration Spec。
+
+自动验证命令与结果：
+
+| 验证 | 实际命令 / 范围 | 结果 |
+| --- | --- | --- |
+| 28 个非 Desktop 包 | `bash scripts/test.sh --log /tmp/pawork-r01-r10-packages-final.log domain protocol testkit transport policy exec workspace storage control-plane models providers auth gateway engine workflow orchestration git tools mcp browser computer-use terminal app cli acp client gui-server pawork` | 2117 个不同目标 / 测试通过；包含安全拒绝、协议 / typegen golden、持久化 / 重放、Provider mock、App / GUI fixture |
+| Desktop | `bash scripts/test.sh --log /tmp/pawork-r01-r10-desktop-tests.log desktop` | 258 项通过 |
+| 最终 OAuth 慢 HTTP 回归 | `cargo test -p pawork-auth --offline --lib oauth::tests::device_poll_waits_and_obeys_deadline` | 1 项通过；mock HTTP 延迟 5 秒，轮询期限 200 毫秒，2 秒外层护栏 |
+| 真实 Host 子进程 | `bash scripts/test.sh --log /tmp/pawork-r01-r10-host-tests.log --host` | 3 项通过：协议往返、权限拒绝、无凭证失败持久化 |
+| 正式 Host / Desktop 构建 | `bash scripts/pawork-desktop.sh build` | 两个正式二进制构建成功，按本次 artifact 消息定位产物 |
+| 生产依赖 | `cargo metadata --offline --format-version 1`、`cargo tree --workspace --offline --edges normal`、`cargo tree -p pawork --offline --edges normal` | 29 成员，无环；Host 闭包 25；Domain 与 Desktop 边界通过，第三方生产依赖未新增 |
+
+联合回归汇总中的 2119 次通过包含 budget 跨进程回归的两次子进程执行，主测试数按目标 / 名称去重为 2117。4 项显式 ignored 分别为 OAuth refresh 子进程入口（父回归会实际调用）、两个 golden 写入生成器及需真实 Kimi API key 的 live 目录验证；未把真实 Provider 待验记为通过。最终 OAuth 定向复验在联合回归后加强 mock 延迟，生产源码未再改变。
+
+首次联合编译因本次格式整理误删三个 Settings 导入而失败，恢复后全批通过；R-07 原提交包含这些导入，不属于 R 回退。静态检查已确认 R 改动行不再有 rustfmt 差异，保留 R 之前的全仓格式遗留；不声明 `cargo fmt --all --check` 全仓通过。R 涉及的 36 篇 Markdown 共 551 个相对链接、52 个锚点有效；`bash scripts/mock/gate.sh --level 0`、两处行为修复文件的 `rustfmt --check --edition 2021`、三个构建 / 测试入口的 `bash -n` 及 `git diff --check bec896e5` 通过。单个审查者只读检查 R 全范围与最终行为修复，未发现可行动问题。完整测试日志在上述本机 `/tmp` 路径，不能替代仓库可复现命令。
+
+代理真窗口验证已通过（2026-10-04，macOS 26.6.2，本次正式构建）。使用独立 bundle 与隔离目录 `/tmp/pawork-r01-r10-ui.LDQOJk`：`ask-for-writes` 档如实拒绝需审批的 TerminalCreate；隔离 Host 临时改用 `ask-for-dangerous` 后，PTY 在正确项目目录读取 `proof.txt` 并写出三份验收标记。新 Desktop 进程通过 canonical 快照恢复原终端 ID、项目归属和运行态，原 Host / shell PID 不变且能继续输入；暂停 Desktop 50 秒覆盖 30 秒心跳期限及 15 秒 watchdog 采样，窗口显示断线、保留已有输出，点击重连后同一 PTY 继续读写；关闭终端后标签消失且 shell PID 退出。窗口像素 / AX 与真实文件、进程事实相互核对，记录为上述目录的 `window-verification.json` / `process-*.json` / `host.log`，截图只保留在会话中。Desktop 外观配置未改变，验收 Host / Desktop / PTY 均已退出。
+
+Host 仅在当次启动使用 `--provider opencode-go --model glm-5.3-flash`，未改持久默认；隔离凭证目录为空，目录回退与 PTY 不构成真实模型请求验收。用户人工验收、真实 OAuth / Provider 与跨平台验证未完成；未发布、未归档。Full workspace gate: NOT RUN（当前未设置全量门禁）。
+
+### B 级：保留事项与缺陷修复
+
+B7 / B9 已按本次修复授权处理；其余事项涉及公开 API、产品取舍或跨包依赖方向，继续保留待裁决。编号便于引用。
 
 | # | 领域 | 事项 |
 | --- | --- | --- |
@@ -39,9 +62,9 @@
 | B4 | workspace+app | prompt-template / 未落地 ResourceKind 集群（`ResourceSelection.prompt_template/prompt_arguments`、`ResourceLimits.max_template_file_refs/max_rendered_prompt_bytes`、`ResourceKind::{PromptTemplate,LanguageServer,UserHook}`、`ResourceInstructionKind::PromptTemplate` app 穷举死臂）——删除跨 workspace + app |
 | B5 | models | 四个零消费者 Spec 记录 API：`validate_context` / `merge_provider_source` / `capability_snapshot` / `filter_by_purpose` |
 | B6 | auth | `ApiKeyCredential::store/store_with_scopes/delete`、`StoredCredential::with_expires_at`、`DeviceAuthorization` 中转结构、`keychain_*` serde alias 版本期保留面 |
-| B7 | auth | OAuth 两处可疑实现：`read_refresh_token` 全错误归一 NotFound；`poll_device_token` slow_down 不等待不查 deadline——修复或接受并记录 |
+| B7 | auth | 本轮已修：refresh 读取保留 Storage / IO 错误；Device pending / slow_down 等待、HTTP 请求共享有界期限。auth 82 项与定向回归通过，真实 OAuth 仍需账号验收 |
 | B8 | auth+workspace | `locator::is_mcp_secret_service` 消费收敛收尾：workspace 前缀副本彻底收敛（跨包依赖方向，见 backlog RV-2026-10-B） |
-| B9 | orchestration | budget flush `record_id` 缺进程级命名空间——Host 重启同 (tenant, account) 撞键可致 `UsageFlushPending` 挂起或静默漏记（同族前例已三处，建议修） |
+| B9 | orchestration | 本轮已修：budget record_id 增 PID + 纳秒 + 进程级计数器；两个真实子进程同归属 / 同用量记录都完整入账，原有失败 / 取消重试与 Clone 幂等回归通过 |
 | B10 | engine | `run_session_turn` 与 `tool_result_trim` 模块整装零消费者；`ContextBudget::reserved_tokens` 等小 API 集群；`TokenEstimator::estimator_kind`（移除跨 storage） |
 | B11 | orchestration | 注入 / 恢复面 `with_task_graph` / `with_worktree_allocator` / `with_patch_merger` / `retry_task` / `recover_report` app 零调用 |
 | B12 | git | Stage / HunkStage 生产接线或归档 |

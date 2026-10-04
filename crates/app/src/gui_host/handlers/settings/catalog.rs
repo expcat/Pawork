@@ -16,8 +16,8 @@ use crate::provider_assembly::{assemble_provider, assemble_registry, channel_pro
 use crate::{channels, AppCore};
 use pawork_gui_server::GuiHostError;
 
-use super::{flight_active, iso8601_utc, now_millis, settings_data, AuthFlights};
 use super::super::global_config_file;
+use super::{flight_active, iso8601_utc, now_millis, settings_data, AuthFlights};
 
 /// 单通道目录探测上限（与 models_overview 的探测窗口一致）。
 const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(4);

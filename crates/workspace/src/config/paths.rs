@@ -80,8 +80,8 @@ mod paths_integration {
         // canonicalize：macOS 下 /var 是 /private/var 的符号链接，
         // locate 内部 canonicalize 返回 /private/var，需与期望路径一致。
         // 与实现一致使用 dunce（Windows 下不带 \\?\ 前缀）。
-        let tmp = dunce::canonicalize(holder.path())
-            .unwrap_or_else(|_| holder.path().to_path_buf());
+        let tmp =
+            dunce::canonicalize(holder.path()).unwrap_or_else(|_| holder.path().to_path_buf());
         let nested = tmp.join("a/b/c");
         fs::create_dir_all(&nested).unwrap();
 

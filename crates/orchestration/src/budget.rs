@@ -166,7 +166,7 @@ pub struct WorkerBudgetController {
     limits: WorkerBudgetLimits,
     usage: Arc<UsageAccumulator>,
     soft_ratio_ppm: u64,
-    controller_id: u64,
+    controller_id: String,
     flush_state: Arc<AsyncMutex<FlushState>>,
     /// 已发出 `BudgetExceeded` 的硬超限维度：持续超限去重，恢复后再告警。
     /// `Clone` 共享同一集合，保证多句柄去重一致。
@@ -179,7 +179,7 @@ impl Clone for WorkerBudgetController {
             limits: self.limits.clone(),
             usage: Arc::clone(&self.usage),
             soft_ratio_ppm: self.soft_ratio_ppm,
-            controller_id: self.controller_id,
+            controller_id: self.controller_id.clone(),
             flush_state: Arc::clone(&self.flush_state),
             signaled_hard: Arc::clone(&self.signaled_hard),
         }
@@ -193,7 +193,15 @@ impl WorkerBudgetController {
             limits,
             usage: Arc::new(UsageAccumulator::new()),
             soft_ratio_ppm: DEFAULT_SOFT_RATIO_PPM,
-            controller_id: NEXT_BUDGET_CONTROLLER_ID.fetch_add(1, Ordering::Relaxed),
+            controller_id: format!(
+                "{:x}-{:x}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|duration| duration.as_nanos())
+                    .unwrap_or(0),
+                NEXT_BUDGET_CONTROLLER_ID.fetch_add(1, Ordering::Relaxed),
+            ),
             flush_state: Arc::new(AsyncMutex::new(FlushState::default())),
             signaled_hard: Arc::new(Mutex::new(BTreeSet::new())),
         }
@@ -297,7 +305,7 @@ impl WorkerBudgetController {
     /// 把尚未成功提交的增量用量写入注入的 usage ledger（归属信息由 `ctx` 提供）。
     ///
     /// flush 由 async mutex 序列化（不持有 `std::sync::Mutex` 跨 await）。每条
-    /// record 的内容为 `target - last_committed`，ID 包含逻辑控制器 ID 与目标
+    /// record 的内容为 `target - last_committed`，ID 包含进程命名空间、控制器 ID 与目标
     /// totals。record 在 await 前保存为 pending；ledger 返回 `Ok`（包括幂等
     /// 重放成功）后才推进 `last_committed`，错误或取消会保留完全相同的 ID、
     /// delta 与 `occurred_at_ms` 供下次重试。无新增 token 且无新增成本时
@@ -653,6 +661,42 @@ mod tests {
             Some("credential-1"),
             "credential_id 必须从 LedgerContext 写入记录"
         );
+    }
+
+    #[tokio::test]
+    async fn flush_ids_survive_process_restarts() {
+        const RECORD_PATH: &str = "PAWORK_BUDGET_TEST_RECORD";
+        let ledger = InMemoryUsageLedger::new();
+        if let Some(path) = std::env::var_os(RECORD_PATH) {
+            let controller = WorkerBudgetController::new(limits());
+            controller.record_tokens(30, 20);
+            controller.record_cost(5_000);
+            controller.flush_to_ledger(&ledger, &ctx()).await.unwrap();
+            let records = ledger.query(&UsageQuery::default()).await.unwrap();
+            std::fs::write(path, serde_json::to_vec(&records[0]).unwrap()).unwrap();
+            return;
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        for index in 0..2 {
+            let path = dir.path().join(format!("record-{index}.json"));
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "budget::tests::flush_ids_survive_process_restarts",
+                ])
+                .env(RECORD_PATH, &path)
+                .status()
+                .unwrap();
+            assert!(status.success());
+            let record = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+            ledger.record(record).await.unwrap();
+        }
+        assert_eq!(ledger.query(&UsageQuery::default()).await.unwrap().len(), 2);
+        let totals = ledger.aggregate(&UsageQuery::default()).await.unwrap();
+        assert_eq!(totals.input_tokens, 60);
+        assert_eq!(totals.output_tokens, 40);
+        assert_eq!(totals.cost_micros, 10_000);
     }
 
     #[tokio::test]

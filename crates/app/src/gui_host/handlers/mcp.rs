@@ -8,8 +8,8 @@ use serde_json::json;
 
 use pawork_gui_server::GuiHostError;
 
-use super::global_config_file;
 use super::super::GuiHostAdapter;
+use super::global_config_file;
 
 /// ADR-049 D1：现场验证单个 MCP server（复用 `AppCore::mcp_test`：
 /// ping + list_tools 并回写 slot 状态）。未知 server fail-closed（Error，

@@ -1,15 +1,15 @@
-use std::collections::BTreeMap;
 use pawork_domain::{
     CancellationToken, ContentPart, Message, MessageId, MessageMetadata, MessageRole, ModelId,
     StopReason, TextContent,
 };
 use pawork_domain::{
-    CanonicalModelRequest, CredentialKind, ModelProvider, PromptCachePreference,
-    ProviderErrorKind, RequestBudget, ResolvedCredential, ResponseFormat, ToolChoice,
+    CanonicalModelRequest, CredentialKind, ModelProvider, PromptCachePreference, ProviderErrorKind,
+    RequestBudget, ResolvedCredential, ResponseFormat, ToolChoice,
 };
 use pawork_providers::net::http::HttpClientConfig;
 use pawork_providers::{ChatGptConfig, ChatGptProvider};
 use pawork_testkit::RecordingProviderSink;
+use std::collections::BTreeMap;
 use wiremock::matchers::{body_partial_json, header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -127,7 +127,11 @@ async fn malformed_responses_event_fails_even_if_completion_follows() {
         .await;
 
     let error = provider(&server)
-        .stream(&request(), &RecordingProviderSink::default(), CancellationToken::new())
+        .stream(
+            &request(),
+            &RecordingProviderSink::default(),
+            CancellationToken::new(),
+        )
         .await
         .expect_err("malformed event must terminate the stream");
     assert_eq!(error.kind, ProviderErrorKind::MalformedResponse);

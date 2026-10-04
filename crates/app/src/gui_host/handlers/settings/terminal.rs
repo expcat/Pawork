@@ -6,8 +6,8 @@ use pawork_protocol::{
 use crate::gui_host::GuiHostAdapter;
 use pawork_gui_server::GuiHostError;
 
-use super::settings_data;
 use super::super::global_config_file;
+use super::settings_data;
 
 /// ADR-050 D2：终端默认设置生效值。`shell` 为 Global 持久值（null =
 /// 跟随平台默认），columns/rows 未设回落 exec 既有默认（`PtyWindowSize::

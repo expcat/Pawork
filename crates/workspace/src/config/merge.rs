@@ -32,7 +32,6 @@ impl ConfigValue {
     pub(crate) fn as_value_mut(&mut self) -> &mut Value {
         &mut self.value
     }
-
 }
 
 impl From<Value> for ConfigValue {
@@ -125,5 +124,4 @@ mod tests {
         lower.merge(&higher);
         assert_eq!(lower.into_inner(), json!({ "k": { "nested": true } }));
     }
-
 }

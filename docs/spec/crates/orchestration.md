@@ -50,7 +50,7 @@
 
 - `WorkerBudgetController::new(limits)` / `.with_soft_ratio(0.0..=1.0)`；`record_tokens` / `record_cost` / `usage()` / `limits()`。`Clone` 是同一逻辑控制器的共享句柄（累加器、提交游标、去重记忆全共享）。
 - `check() -> BudgetReport`：软告警（`used >= ratio × limit`，ppm 整数比较）与硬超限（`used >= limit`）分维度报告；`diff_hard_exceeded(&report)` 返回新进入硬超限的维度并维护「已告警」记忆（恢复后遗忘、可再告警）。
-- `flush_to_ledger(&dyn UsageLedger, &LedgerContext)`：把 `目标快照 - last_committed` 的增量写为一条 `UsageRecord`（record_id 含控制器 id 与目标 totals，幂等键）；async mutex 序列化，失败 / 取消保留完全相同的 pending record 供重试，Ok 后才推进游标；无增量为空操作。
+- `flush_to_ledger(&dyn UsageLedger, &LedgerContext)`：把 `目标快照 - last_committed` 的增量写为一条 `UsageRecord`（record_id 含进程命名空间、控制器 id 与目标 totals，幂等键；PID + 纳秒 + 进程级计数器防重启或同进程多控制器撞键）；async mutex 序列化，失败 / 取消保留完全相同的 pending record 供重试，Ok 后才推进游标；无增量为空操作。
 - `UsageAccumulator`：无锁原子多维累加器。`LedgerContext`：flush 归属（tenant / principal / account / session / agent / provider / model / 可选 run 与 credential_id）。
 
 ### 3.3 生命周期与事件（`lifecycle`）
@@ -135,7 +135,7 @@
 | --- | --- |
 | `supervisor/mod.rs`（~40 个用例） | spawn 生命周期事件序（created→admitted→started）；lease 持有到 complete / fail 的 outcome 与账号健康；cancel_tree 递归取消、幂等、lease Cancelled 释放、flush pending 上抛；并发闸门（全局 / 租户 / 深度，`ConcurrencyDenied`）；策略闸门（角色 / 模型 / provider / account 白名单、日预算 fail-closed、AcquireRequest 错配、恶意 pool lease 作用域校验）；`record_usage` 终态拒绝与 `BudgetExceeded` 去重；`flush_usage` 重试矩阵（not-terminal / context-missing / in-flight / 幂等重放）；worktree 分配失败路径与显式释放；TaskGraph 联动（Ready 直启 / Blocked 等待 / retry；注册拒绝收口为 Failed + WorkerFailed 且释放 lease / worktree / 并发槽位）；patch propose→approve 全流程；`recover_report` 孤儿推演 |
 | `lifecycle.rs` | 状态机合法 / 非法转换矩阵；终态拒绝；`replay_workers` 容错重放（截断日志、迟到事件）；事件 serde round-trip |
-| `budget.rs` | 软 / 硬阈值判定与 ppm 精度；`diff_hard_exceeded` 去重与恢复再告警；flush 幂等游标（失败重放同 record、cost-only 增量、并发 clone 句柄共享游标） |
+| `budget.rs` | 软 / 硬阈值判定与 ppm 精度；`diff_hard_exceeded` 去重与恢复再告警；flush 幂等游标（失败重放同 record、cost-only 增量、并发 clone 句柄共享游标）；`flush_ids_survive_process_restarts` 两个真实子进程生成同归属 / 同用量记录后，父进程账本完整接收并双计 |
 | `task_graph.rs` | 拒环 / 跨租户依赖 / 重复 id；前向引用与 ready_tasks；转换矩阵；retry 上限 |
 | `worktree.rs` / `merge.rs` / `identity.rs` | Guard 显式释放与 Drop 告警语义；冲突检测（基准 vs 父侧）、Merge 拒绝未解决冲突、原子写、collect / detect_conflicts / merge 主路径路径穿越拒绝；身份构造与 serde |
 

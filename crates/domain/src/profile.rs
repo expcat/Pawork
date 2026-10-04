@@ -261,5 +261,4 @@ mod tests {
         assert!(encoded.contains(r#""effort":"high""#));
         assert!(!encoded.contains("reasoning_effort"));
     }
-
 }

@@ -38,7 +38,6 @@ impl SecretRef {
             account: account.into(),
         }
     }
-
 }
 
 /// One MCP server's configuration.

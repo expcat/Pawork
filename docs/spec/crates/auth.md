@@ -36,7 +36,7 @@
 - `FileBackend::new()`：默认路径 `$PAWORK_HOME/auth.json`，未设时 `~/.pawork/auth.json`；`with_path`（测试）；`path()` 诊断（不含 secret）。`AppCore` 始终用默认路径——凭证为全局共享，**不随 `--instance` 隔离**（2026-09-14 事故：测试实例里 `auth set-key` 覆盖了生产 deepseek key，操作前须先备份该文件）。
 - 文件格式：`{ version: 1, entries: { service: { account: secret } } }`；只接受 `FORMAT_VERSION = 1`，版本不符 fail-closed。
 - 锁文件（与 auth 文件同目录、非机密）：写锁 `auth.write.lock`（10ms 重试、30s 超时）；OAuth refresh 锁 `auth.refresh.lock`（经 `refresh_lock_path` 暴露给 refresh 编排）。
-- `MemoryBackend::new()` / `len` / `is_empty`：进程内 HashMap；消费方为单元测试与 app 子 core（subagents 同 Provider 路径挂空凭证后端）；故意不派生 Debug 防明文入断言输出。
+- `MemoryBackend::new()` / `len` / `is_empty`：进程内 HashMap；消费方为单元测试及 app 的注入装配；subagents 同 Provider 路径复用父凭证快照，跨 Provider 路径使用父真实 backend，空后端不参与读取父凭证；故意不派生 Debug 防明文入断言输出。
 - OS Keychain 后端已按用户决策移除；secret 统一走文件后端（参照 Codex CLI auth.json 形态）。
 
 `SecretBackend::transaction` 在写锁内提供隔离快照，回调失败不提交；FileBackend load-modify-save 一次，MemoryBackend 复制并提交，未实现事务的 backend 显式拒绝。回调不能持原 backend 或跨网络等待。
@@ -62,7 +62,7 @@
 ### 3.4 OAuth 流程
 
 - 类型：`PkceFlowConfig`（client_id / auth_url / token_url / redirect_uri / scopes / provider / extra_auth_params）与 `PkceSession`；`Pkce`（S256；verifier = 48 随机字节的 base64url，恰 64 字符，满足 RFC 7636 43–128 且无取模偏差）；`DeviceFlowConfig` / `DeviceUserPrompt`（user_code / verification_uri(_complete) / device_code / expires_in / interval）；`OAuthRefreshConfig { token_url, client_id, refresh_skew }`；`TokenSet { access_token, refresh_token?, id_token?, expires_in?, token_type, scope? }`（明文只短暂在内存，Debug 全脱敏，绝不落盘）。
-- 入口：`http_client()`（唯一 OAuth/MCP 默认构造：`redirect(Policy::none())`，失败映射 `AuthError::Http`）；`start_pkce_flow` / `start_pkce_flow_with_callback`（绑定一次性 `CallbackServer` 并回填实际端口）/ `exchange_pkce_code`（state 不符即 CSRF 拒绝）；`request_device_authorization` / `poll_device_token`（`authorization_pending` 续轮询、`slow_down` interval +5s、`expired_token` 或超出 max_duration → `ExpiredToken`）；`refresh_access_token`；`store_oauth_token` / `update_oauth_token`（多凭证形态，service=`pawork.<provider>.oauth`，account=`<cred_id>.access/.refresh`；空 access/refresh 先拒绝且不产生部分写入；轮换场景整批 `store_batch` 提交，兼容后端至少先写 refresh 再写 access）；`resolve_oauth_credential(_for_request)`（后者先 auto-refresh 再返回 `CredentialKind::OAuthBearer`）；`oauth_login_email`（不验签读 `id_token` 的 `email` claim，形态不合理则忽略）；`read_refresh_token`（缺失归一 `NotFound`）；`needs_refresh(stored, skew)`（无 `expires_at` 视为不需刷新）；`random_state`（32 随机字节 base64url）。
+- 入口：`http_client()`（唯一 OAuth/MCP 默认构造：`redirect(Policy::none())`，失败映射 `AuthError::Http`）；`start_pkce_flow` / `start_pkce_flow_with_callback`（绑定一次性 `CallbackServer` 并回填实际端口）/ `exchange_pkce_code`（state 不符即 CSRF 拒绝）；`request_device_authorization` / `poll_device_token`（`authorization_pending` 按 interval 等待、`slow_down` interval +5s 后等待；HTTP 请求与轮询等待共同受 max_duration / device_code 有效期的较短期限约束，`expired_token` 或到期 → `ExpiredToken`）；`refresh_access_token`；`store_oauth_token` / `update_oauth_token`（多凭证形态，service=`pawork.<provider>.oauth`，account=`<cred_id>.access/.refresh`；空 access/refresh 先拒绝且不产生部分写入；轮换场景整批 `store_batch` 提交，兼容后端至少先写 refresh 再写 access）；`resolve_oauth_credential(_for_request)`（后者先 auto-refresh 再返回 `CredentialKind::OAuthBearer`）；`oauth_login_email`（不验签读 `id_token` 的 `email` claim，形态不合理则忽略）；`read_refresh_token`（条目缺失返回 `NotFound`，后端损坏 / IO 错误保留原错误）；`needs_refresh(stored, skew)`（无 `expires_at` 视为不需刷新）；`random_state`（32 随机字节 base64url）。
 - `CallbackServer::start(port)`（监听 127.0.0.1）/ `local_addr` / `bind_redirect_uri`（强制 http + loopback host、端口回填校验）/ `wait_for_code(timeout)`；单连接、5 分钟 accept 上限、请求头 64 KiB 上限、响应固定纯文本（不回显 query 输入）。
 - 错误：token endpoint 标准错误归一为 `TokenEndpoint { error, description }`；其余流程错误 `OAuth(String)` / `Callback(String)`，都不含 token。
 
@@ -148,8 +148,8 @@ UI-6b 起先解析账号索引：显式 API key 选择返回该账号；显式 O
 
 - PKCE verifier 长度/字符集/无偏 base64url、S256 challenge 对 RFC 7636 附录 B 向量确定性一致、state 高熵 URL-safe；
 - `TokenSet` / `PkceSession` / `DeviceUserPrompt` Debug 全脱敏；`store_oauth_token` 元数据与序列化无明文、空 refresh 拒绝且零写入；
-- `update_oauth_token` 轮换落盘、刷新缺 `expires_in` 保留旧到期时间、`needs_refresh` skew 边界；
-- wiremock 驱动：PKCE 交换成功 / state 不符拒绝 / token endpoint 标准错误归一、Device pending→成功轮询、refresh 换新 token、请求前置解析自动刷新并持久化轮换；
+- `update_oauth_token` 轮换落盘、刷新缺 `expires_in` 保留旧到期时间、`needs_refresh` skew 边界；refresh 读取区分条目缺失与真实 FileBackend 损坏错误；
+- wiremock 驱动：PKCE 交换成功 / state 不符拒绝 / token endpoint 标准错误归一、Device pending→成功轮询、`device_poll_waits_and_obeys_deadline` 覆盖 pending / slow_down 等待与慢 HTTP 总超时、refresh 换新 token、请求前置解析自动刷新并持久化轮换；
 - `concurrent_refreshes_share_one_singleflight_exchange`：并发刷新只发生一次 token exchange（`.expect(1)`）；
 - FileBackend 锁内 reload 比较排除账号 `display_name`（`file_backend_refresh_ignores_account_display_name`）；
 - 回调服务器：code/state 解析、错误回调不反射 query 输入、分片请求头（8 KiB cookie）读取、PKCE 回调流使用实际监听端口。

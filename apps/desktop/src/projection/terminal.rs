@@ -69,9 +69,7 @@ impl Default for TerminalState {
 
 impl TerminalState {
     pub(crate) fn from_snapshot(entry: &Value) -> Option<Self> {
-        let session_id = entry
-            .get("terminal_session_id")
-            .and_then(Value::as_str)?;
+        let session_id = entry.get("terminal_session_id").and_then(Value::as_str)?;
         let workspace_id = entry
             .get("owner_session")
             .and_then(Value::as_str)

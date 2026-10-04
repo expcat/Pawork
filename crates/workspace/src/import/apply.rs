@@ -284,7 +284,6 @@ impl CompatPlan {
         plan.fingerprint = format!("{:016x}", fnv64(&selected));
         plan
     }
-
 }
 
 fn status_str(status: ImportStatus) -> &'static str {

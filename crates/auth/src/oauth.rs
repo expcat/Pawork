@@ -369,7 +369,7 @@ pub async fn request_device_authorization(
 /// 轮询 device token endpoint 直到拿到 token 或过期。
 ///
 /// - `authorization_pending` → 继续；
-/// - `slow_down` → 增大 interval；
+/// - `slow_down` → 增大 interval 并等待；
 /// - `expired_token` → 返回 [`AuthError::ExpiredToken`]。
 pub async fn poll_device_token(
     config: &DeviceFlowConfig,
@@ -378,23 +378,31 @@ pub async fn poll_device_token(
     max_duration: Duration,
 ) -> Result<TokenSet, AuthError> {
     let mut interval = prompt.interval.max(1);
-    let deadline = tokio::time::Instant::now() + max_duration;
+    let deadline =
+        tokio::time::Instant::now() + max_duration.min(Duration::from_secs(prompt.expires_in));
     loop {
+        if tokio::time::Instant::now() >= deadline {
+            return Err(AuthError::ExpiredToken);
+        }
         let params = [
             ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
             ("device_code", prompt.device_code.as_str()),
             ("client_id", config.client_id.as_str()),
         ];
-        match exchange_token(http, &config.token_url, &params).await {
+        let response =
+            tokio::time::timeout_at(deadline, exchange_token(http, &config.token_url, &params))
+                .await
+                .map_err(|_| AuthError::ExpiredToken)?;
+        match response {
             Ok(token) => return Ok(token),
-            Err(AuthError::TokenEndpoint { error, .. }) if error == "authorization_pending" => {
-                if tokio::time::Instant::now() >= deadline {
-                    return Err(AuthError::ExpiredToken);
+            Err(AuthError::TokenEndpoint { error, .. })
+                if error == "authorization_pending" || error == "slow_down" =>
+            {
+                if error == "slow_down" {
+                    interval = interval.saturating_add(5);
                 }
-                tokio::time::sleep(Duration::from_secs(interval)).await;
-            }
-            Err(AuthError::TokenEndpoint { error, .. }) if error == "slow_down" => {
-                interval += 5;
+                let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                tokio::time::sleep(Duration::from_secs(interval).min(remaining)).await;
             }
             Err(AuthError::TokenEndpoint { error, .. }) if error == "expired_token" => {
                 return Err(AuthError::ExpiredToken);
@@ -588,9 +596,7 @@ pub fn read_refresh_token(
     backend: &dyn SecretBackend,
 ) -> Result<String, AuthError> {
     let refresh_account = format!("{}.refresh", stored.id.as_str());
-    backend
-        .get(&stored.secret_service, &refresh_account)
-        .or(Err(AuthError::NotFound))
+    backend.get(&stored.secret_service, &refresh_account)
 }
 
 /// 判断 credential 是否需要 refresh（临近过期或已过期）。
@@ -1451,6 +1457,16 @@ mod tests {
         assert!(!serde_json::to_string(&stored)
             .expect("serialize")
             .contains("new-access"));
+
+        assert!(matches!(
+            read_refresh_token(&stored, &MemoryBackend::new()),
+            Err(AuthError::NotFound)
+        ));
+        let path = std::env::temp_dir().join(format!("pawork-refresh-{}.json", random_state()));
+        std::fs::write(&path, b"invalid JSON").expect("write damaged backend");
+        let error = read_refresh_token(&stored, &crate::FileBackend::with_path(&path));
+        std::fs::remove_file(path).expect("remove temporary backend");
+        assert!(matches!(error, Err(AuthError::Storage(_))));
     }
 
     #[test]
@@ -1621,8 +1637,8 @@ mod tests {
                 None,
             )),
         )
-            .up_to_n_times(1)
-            .mount(&server)
+        .up_to_n_times(1)
+        .mount(&server)
         .await;
         crate::testsupport::token_mock(
             "/token",
@@ -1653,6 +1669,53 @@ mod tests {
             .await
             .expect("poll");
         assert_eq!(token.access_token, "DF-access-token-secret");
+    }
+
+    #[tokio::test]
+    async fn device_poll_waits_and_obeys_deadline() {
+        for (error, delay) in [
+            ("slow_down", Duration::ZERO),
+            ("authorization_pending", Duration::ZERO),
+            ("authorization_pending", Duration::from_secs(5)),
+        ] {
+            let server = MockServer::start().await;
+            crate::testsupport::token_mock(
+                "/token",
+                ResponseTemplate::new(400)
+                    .set_body_json(crate::testsupport::token_error_json(error, None))
+                    .set_delay(delay),
+            )
+            .mount(&server)
+            .await;
+            let config = DeviceFlowConfig {
+                client_id: "cid".into(),
+                device_auth_url: format!("{}/device", server.uri()),
+                token_url: format!("{}/token", server.uri()),
+                scopes: Vec::new(),
+                provider: ProviderId::new("p"),
+            };
+            let prompt = DeviceUserPrompt {
+                device_code: "DC".into(),
+                user_code: "USER-CODE".into(),
+                verification_uri: "https://example.com/device".into(),
+                verification_uri_complete: None,
+                expires_in: 300,
+                interval: 1,
+            };
+            let http = http_client().expect("http client");
+            let result = tokio::time::timeout(
+                Duration::from_secs(2),
+                poll_device_token(&config, &prompt, &http, Duration::from_millis(200)),
+            )
+            .await
+            .expect("poll must stop at its deadline");
+            assert!(matches!(result, Err(AuthError::ExpiredToken)), "{error}");
+            assert_eq!(
+                server.received_requests().await.unwrap().len(),
+                1,
+                "{error}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -1688,7 +1751,12 @@ mod tests {
             .and(path("/token"))
             .and(body_string_contains("refresh_token=old-refresh"))
             .respond_with(ResponseTemplate::new(200).set_body_json(
-                crate::testsupport::token_success_json("new-access", Some("rotated-refresh"), Some("read write"))))
+                crate::testsupport::token_success_json(
+                    "new-access",
+                    Some("rotated-refresh"),
+                    Some("read write"),
+                ),
+            ))
             .expect(1)
             .mount(&server)
             .await;
@@ -1742,7 +1810,11 @@ mod tests {
             .respond_with(
                 ResponseTemplate::new(200)
                     .set_delay(Duration::from_millis(100))
-                    .set_body_json(crate::testsupport::token_success_json("singleflight-access", Some("singleflight-refresh"), Some("read write"))),
+                    .set_body_json(crate::testsupport::token_success_json(
+                        "singleflight-access",
+                        Some("singleflight-refresh"),
+                        Some("read write"),
+                    )),
             )
             .expect(1)
             .mount(&server)
