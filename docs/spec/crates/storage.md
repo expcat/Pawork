@@ -165,7 +165,7 @@
 1. 引擎（feature `compaction`）`compact`：取 active branch lineage 事件 → 直接 `create_branch` 在 lineage head 事件处建 `compaction-recovery-<branch>-<head_seq>` 分支（保留完整历史；raw 建分支不受四类 fork 边界限制，同 head 重试幂等复用）→ `retention::apply` 得保留集 → `TokenEstimator` 估算前后 token → 产出 `CompactionSnapshot`（v1，serde 冻结：`version`/`summary`/`retained_event_ids`/`replaced_range`/`token_usage_before`/`token_usage_after`/可选 `recovery_branch_id`）。
 2. 调用方把 `CompactionStarted` / `CompactionCompleted{ compacted_through, snapshot }` 作为普通事件 `append_event` 到工作分支。
 3. 投影层收到 `CompactionCompleted` 时执行**本分支物化折叠**：`DELETE FROM messages WHERE branch_id = 本分支 AND sequence <= compacted_through`（v12 冻结语义：只删本分支行，不动祖先/兄弟分支）。
-4. 读侧水位由 projection 内部的 lineage 水位查询单点提供：沿祖先链取可见 `CompactionCompleted` 的最大 `compacted_through`，作为 `ProjectionSnapshot.compacted_through` 暴露给消费方（UI 折叠展示用）。水位是单一序号，故调用方给出的消息保留集必须是连续后缀（R-07：app 侧 `loop_ctx` 用 `retained_messages` count 后缀策略，与 engine 折叠边界同界，保证当前请求窗口与重启重放水位一致）。
+4. 读侧水位由 projection 内部的 lineage 水位查询单点提供：沿祖先链取可见 `CompactionCompleted` 的最大 `compacted_through`，仅在读取路径内部过滤 messages（§3.5：不进 `ProjectionSnapshot` 结构、不向消费方暴露）。水位是单一序号，故调用方给出的消息保留集必须是连续后缀（R-07：app 侧 `loop_ctx` 用 `retained_messages` count 后缀策略，与 engine 折叠边界同界，保证当前请求窗口与重启重放水位一致）。
 5. 读侧双保险：`ProjectionSnapshot.messages` 从事件账本按水位重建，因此即便物化表未折叠/被重建，读到的消息窗口一致；recovery 分支不受水位影响，可整段回看。
 
 ### 4.4 CommandLedger 幂等 check/record
@@ -237,7 +237,7 @@ feature 依赖有传递关系：`compaction ⇒ session`，`checkpoint ⇒ blob`
 | `checkpoint` | `blob` + `serde_json`、`tracing`、`tokio` `rt` 等 |
 | `protected` | `blob` + `chacha20poly1305`、`getrandom`、`zeroize`、`pawork-domain` |
 
-工作区内唯一生产上游是 [pawork-domain](domain.md)（信封/ID/`provider_hints`/`SessionRegistryStore` 等类型）；不依赖 engine/protocol/provider。dev-dependencies：`pawork-protocol`（`adapter` feature，client_adapter 测试消费）、`tempfile`、`tokio`（rt-multi-thread）、`blake3`、`chacha20poly1305`（当前无用点）、`serde_json`。
+工作区内唯一生产上游是 [pawork-domain](domain.md)（信封/ID/`provider_hints`/`SessionRegistryStore` 等类型）；不依赖 engine/protocol/provider。dev-dependencies：`pawork-protocol`（`adapter` feature，client_adapter 测试消费）、`tempfile`、`tokio`（rt-multi-thread）、`blake3`、`chacha20poly1305`（`tests/pwb1_golden.rs` 独立密封/校验已知向量）、`serde_json`。
 
 下游消费方：
 

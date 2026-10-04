@@ -350,10 +350,6 @@ impl ProtectedBlobStore {
         Ok(store)
     }
 
-    pub fn root(&self) -> &Path {
-        &self.root
-    }
-
     pub async fn put(
         &self,
         scope: &BlobScope,

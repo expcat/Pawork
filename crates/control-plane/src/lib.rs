@@ -16,8 +16,8 @@ pub mod tenant;
 pub mod usage;
 
 pub use audit::{
-    AuditAction, AuditDecision, AuditDimensions, AuditError, AuditEventV1, AuditSink, AuditStore,
-    AuditTargetKind, FileAuditStore, InMemoryAuditStore, AUDIT_SCHEMA_VERSION,
+    AuditAction, AuditDecision, AuditError, AuditEventV1, AuditSink, AuditStore, AuditTargetKind,
+    FileAuditStore, InMemoryAuditStore, AUDIT_SCHEMA_VERSION,
 };
 pub use decision::{sanitize_reason, PolicyDecisionEvent, PolicyDecisionKind, PolicyGate};
 pub use identity::{
@@ -30,14 +30,13 @@ pub use pawork_domain::{
 };
 pub use rbac::{AuditExportPolicy, Permission, PermissionProfile, PrincipalRole};
 pub use tenant::{
-    decide_account, decide_agent_concurrency, decide_audit_export, decide_budget, decide_model,
-    decide_permission, decide_provider, decide_request_concurrency, decide_retention,
+    decide_account, decide_audit_export, decide_model, decide_permission, decide_provider,
     BudgetDimension, ConcurrencyKind, InMemoryTenantPolicyEngine, TenantPolicy,
     TenantPolicyDecision, TenantPolicyEngine, TenantPolicyError,
 };
 pub use usage::{
-    CostConfidence, InMemoryUsageLedger, UsageAttribution, UsageFilterField, UsageLedger,
-    UsageLedgerError, UsageQuery, UsageRecord, UsageTotals, AUTO_RECORD_ID_PREFIX, RECORD_VERSION,
+    CostConfidence, InMemoryUsageLedger, UsageLedger, UsageLedgerError, UsageQuery, UsageRecord,
+    UsageTotals, AUTO_RECORD_ID_PREFIX, RECORD_VERSION,
 };
 
 #[cfg(feature = "sqlite")]

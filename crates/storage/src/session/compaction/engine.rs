@@ -91,11 +91,6 @@ impl<'a> CompactionEngine<'a> {
         }
     }
 
-    /// 当前生效的保留策略。
-    pub fn policy(&self) -> &RetentionPolicy {
-        &self.policy
-    }
-
     /// 执行压缩（手动 / 自动统一入口）。
     ///
     /// `branch_id` 是被压缩的分支（同时作为 recovery branch 的 parent）。

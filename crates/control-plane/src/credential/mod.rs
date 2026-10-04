@@ -235,11 +235,6 @@ pub trait CredentialPool: Send + Sync {
         0
     }
 
-    /// 账号健康状态（**tenant-scoped canonical** 视图）。默认 [`AccountHealth::default`]。
-    fn account_health_for(&self, _tenant: &TenantId, _account: &AccountId) -> AccountHealth {
-        AccountHealth::default()
-    }
-
     /// 回收过期 / 已释放 lease 到终态 `Reclaimed`（幂等，无永久泄漏）。
     ///
     /// 扫描 `Acquired` 且已过 TTL 的 lease → `Expired`（归还并发额度），再把所有
@@ -883,18 +878,6 @@ impl CredentialPool for InMemoryCredentialPool {
             .accounts
             .get(&(tenant.clone(), account.clone()))
             .map_or(0, |state| state.active)
-    }
-
-    /// 账号健康状态（tenant-scoped canonical 视图）。
-    fn account_health_for(&self, tenant: &TenantId, account: &AccountId) -> AccountHealth {
-        lock(&self.inner)
-            .accounts
-            .get(&(tenant.clone(), account.clone()))
-            .map_or_else(AccountHealth::default, |state| AccountHealth {
-                active_leases: state.active,
-                consecutive_failures: state.consecutive_failures,
-                cancelled_count: state.cancelled_count,
-            })
     }
 
     /// 回收过期 / 已释放 lease 到终态 `Reclaimed`（幂等，无永久泄漏）。

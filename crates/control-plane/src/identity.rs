@@ -3,7 +3,6 @@
 //! `IdentityContext` 是跨模块统一键（tenant + principal），Session / Agent /
 //! Usage / Audit 的创建与查询都必须携带它；`TenantId` 表示组织 / 逻辑租户，
 //! `PrincipalId` 表示当前用户或服务账号，两者不得由 API key hash 代替
-//! （[tenant-audit](../../../docs/features/tenant-audit.md)）。
 //!
 //! 未配置 tenant 的本地用户固定映射 `tenant_id = local/default`、
 //! `principal_id = local/user`（ADR-033），由 [`LocalIdentityResolver`] 提供。

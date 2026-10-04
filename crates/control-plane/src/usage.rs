@@ -18,15 +18,12 @@
 //! 历史费用不因模型价格更新漂移）与调用链 `trace_id`。旧 v1 JSON（无 v2 字段）
 //! 经 serde 默认值解码为 `version = 1` 且 trace/pricing 为空，不丢历史记录。
 //!
-//! ## 归属注入（UsageAttribution）
+//! ## 归属注入
 //!
-//! 账本契约只接受调用方注入的 [`UsageAttribution`]（tenant/principal/
-//! account/credential/trace），绝不回退到账本内部猜默认账号。当前 run
-//! 生命周期的注入点（`app-service::supervisor::spawn_run_task`）在 P18-4
-//! CredentialLease 接入前为过渡派生：tenant/principal 来自身份解析的
-//! `IdentityContext`，account 取 legacy 默认哨兵、credential/trace 为
-//! `None`。P18-4 稳定后由主代理在宿主侧（RunRequest 装配处）整合
-//! `From<&CredentialLease>` 构造真实归属再注入，账本契约不变。
+//! 记录的身份 / 账号 / 凭据 / trace 归属由调用方在构造 [`UsageRecord`]
+//! 时注入（宿主从 `CredentialLease` / `IdentityContext` 派生），账本不自行
+//! 猜测默认账号：`validate_record` 强制 tenant / account / provider /
+//! model 非空。
 //!
 //! ## 幂等与隔离
 //!
@@ -96,28 +93,6 @@ pub enum CostConfidence {
 /// 旧 v1 JSON 缺少 `version` 字段时的解码值（兼容迁移，不丢历史记录）。
 fn legacy_version() -> u32 {
     1
-}
-
-/// 记账归属（P18-8）：由调用方在 run 生命周期注入实际身份 / 账号 / 凭据 /
-/// trace 归属，账本不自行猜测默认账号。
-///
-/// P18-4 CredentialLease 稳定后，宿主侧（`app-service` RunRequest 装配处）
-/// 整合 `From<&CredentialLease>` 构造真实归属；接入完成前，当前调用点
-/// （`spawn_run_task`）以过渡派生填充（IdentityContext + legacy 默认哨兵，
-/// credential/trace 为 `None`），详见 `app-service` 对应注释。
-/// `credential_id` 为 opaque 定位符（非 secret），允许持久化。
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct UsageAttribution {
-    /// 所属租户（P18-2 canonical identity，如 `local/default`）。
-    pub tenant_id: TenantId,
-    /// 发起主体。
-    pub principal_id: PrincipalId,
-    /// 实际账号（P18-4 lease 的 account_id；legacy 默认 `local/default`）。
-    pub account_id: String,
-    /// 实际凭据（P18-4 lease 的 credential_id；无 lease 时为 `None`）。
-    pub credential_id: Option<String>,
-    /// 调用链 trace（P18-4 AcquireRequest.trace_id；无则 `None`）。
-    pub trace_id: Option<String>,
 }
 
 /// 一条不可变的多维 usage/cost 记录。
@@ -287,22 +262,6 @@ impl UsageRecord {
             && self.cost_confidence == other.cost_confidence
             && self.cost_provenance == other.cost_provenance
     }
-}
-
-/// 查询过滤维度，供 `UsageQuery` 的维度语义参考。
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum UsageFilterField {
-    Tenant,
-    Principal,
-    Account,
-    Credential,
-    Session,
-    Agent,
-    Run,
-    Provider,
-    Model,
-    Currency,
-    OccurredAt,
 }
 
 /// 多维查询条件：仅 `Some` 的维度参与过滤，全部满足才命中。

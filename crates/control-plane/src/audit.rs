@@ -67,18 +67,6 @@ pub enum AuditTargetKind {
     Audit,
 }
 
-/// Optional correlation dimensions shared by control-plane producers. The type contains
-/// identifiers only; free-form request or response payloads are deliberately impossible.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct AuditDimensions {
-    pub session_id: Option<SessionId>,
-    pub agent_id: Option<AgentId>,
-    pub provider_id: Option<ProviderId>,
-    pub account_id: Option<AccountId>,
-    pub client_id: Option<String>,
-    pub trace_id: Option<String>,
-}
-
 /// Canonical immutable audit event v1.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuditEventV1 {
@@ -140,17 +128,6 @@ impl AuditEventV1 {
             trace_id: None,
             decision_version,
         }
-    }
-
-    /// Adds the allowlisted identifier dimensions to an event.
-    pub fn with_dimensions(mut self, dimensions: AuditDimensions) -> Self {
-        self.session_id = dimensions.session_id;
-        self.agent_id = dimensions.agent_id;
-        self.provider_id = dimensions.provider_id;
-        self.account_id = dimensions.account_id;
-        self.client_id = dimensions.client_id;
-        self.trace_id = dimensions.trace_id;
-        self
     }
 
     pub fn validate(&self) -> Result<(), AuditError> {

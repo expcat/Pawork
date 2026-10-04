@@ -446,48 +446,6 @@ fn window_reset(window: crate::quota::QuotaWindow, now: Timestamp) -> QuotaReset
     }
 }
 
-// =========================================================================
-// Exhaustion prediction (P14-7 step 3)
-// =========================================================================
-
-/// Predicted time-to-exhaustion for a derived quota.
-///
-/// `None` means no prediction is possible (infinite/unknown limit or zero
-/// observed rate).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ExhaustionPrediction {
-    /// Seconds until `used` reaches `limit` at the observed rate.
-    pub seconds_until_exhausted: u64,
-}
-
-/// Predict when `used` will reach `limit`, given an observed usage rate.
-///
-/// `used_per_second` must be non-negative; zero yields `None`. Limit must be a
-/// finite `Exact` measure; `Infinite`/`Unknown` yield `None`.
-pub fn predict_exhaustion(
-    used: QuotaMeasure,
-    limit: QuotaMeasure,
-    used_per_second: u64,
-) -> Option<ExhaustionPrediction> {
-    let limit_v = match limit {
-        QuotaMeasure::Exact(v) => v,
-        QuotaMeasure::Infinite | QuotaMeasure::Unknown => return None,
-    };
-    if used_per_second == 0 {
-        return None;
-    }
-    let used_v = match used {
-        QuotaMeasure::Exact(v) => v,
-        // Infinite used is already exhausted; Unknown used blocks prediction.
-        QuotaMeasure::Infinite | QuotaMeasure::Unknown => return None,
-    };
-    let remaining = limit_v.checked_sub(used_v)?;
-    let seconds = remaining.checked_div(used_per_second)?;
-    Some(ExhaustionPrediction {
-        seconds_until_exhausted: seconds,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -888,20 +846,6 @@ mod tests {
         let json = serde_json::to_string(&snap).expect("serialize");
         assert!(!json.contains("sk-"));
         assert!(!json.contains("secret"));
-    }
-
-    #[test]
-    fn predict_exhaustion_returns_none_for_infinite_or_zero_rate() {
-        // used=25, limit=100, rate=1/s → 75s。
-        let p =
-            predict_exhaustion(QuotaMeasure::exact(25), QuotaMeasure::exact(100), 1).expect("some");
-        assert_eq!(p.seconds_until_exhausted, 75);
-        assert!(predict_exhaustion(QuotaMeasure::exact(25), QuotaMeasure::Infinite, 1).is_none());
-        assert!(predict_exhaustion(QuotaMeasure::exact(25), QuotaMeasure::exact(100), 0).is_none());
-        // Already at or over limit.
-        assert!(
-            predict_exhaustion(QuotaMeasure::exact(150), QuotaMeasure::exact(100), 1).is_none()
-        );
     }
 
     #[tokio::test]

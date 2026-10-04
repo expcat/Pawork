@@ -490,28 +490,6 @@ impl TenantPolicyEngine for InMemoryTenantPolicyEngine {
     }
 }
 
-/// 决策助手：判断 agent 并发是否放行（`None` 不限制，`current >= max` 拒绝）。
-pub fn decide_agent_concurrency(current: u64, max: Option<u64>) -> TenantPolicyDecision {
-    match max {
-        None => TenantPolicyDecision::Allow,
-        Some(max) if current >= max => TenantPolicyDecision::Deny {
-            reason: format!("agent 并发已达上限 {max}（当前 {current}）"),
-        },
-        Some(_) => TenantPolicyDecision::Allow,
-    }
-}
-
-/// 决策助手：判断请求并发是否放行（`None` 不限制，`current >= max` 拒绝）。
-pub fn decide_request_concurrency(current: u64, max: Option<u64>) -> TenantPolicyDecision {
-    match max {
-        None => TenantPolicyDecision::Allow,
-        Some(max) if current >= max => TenantPolicyDecision::Deny {
-            reason: format!("请求并发已达上限 {max}（当前 {current}）"),
-        },
-        Some(_) => TenantPolicyDecision::Allow,
-    }
-}
-
 /// 决策助手：判断模型是否放行（`None` 不限制；`Some([])` 拒绝全部；
 /// 命中列表放行，否则拒绝）。
 pub fn decide_model(model: &ModelId, allowed: Option<&[ModelId]>) -> TenantPolicyDecision {
@@ -568,20 +546,6 @@ pub fn decide_permission(role: PrincipalRole, permission: Permission) -> TenantP
     }
 }
 
-/// 决策助手：判断记录是否仍在保留期内。
-///
-/// `None` 永久保留；`Some(days)` 且 `age_days > days` 时返回 `Limit`
-/// （允许按保留期修剪），否则放行。
-pub fn decide_retention(age_days: u64, retention_days: Option<u64>) -> TenantPolicyDecision {
-    match retention_days {
-        None => TenantPolicyDecision::Allow,
-        Some(days) if age_days > days => TenantPolicyDecision::Limit {
-            reason: format!("记录年龄 {age_days} 天超过保留期 {days} 天"),
-        },
-        Some(_) => TenantPolicyDecision::Allow,
-    }
-}
-
 /// 决策助手：判断 Audit 导出是否放行（角色 + 导出策略 + 目标白名单，
 /// 全部 deny-first）。
 pub fn decide_audit_export(
@@ -616,41 +580,6 @@ pub fn decide_audit_export(
             reason: format!("导出目标 {destination} 不在允许列表内"),
         }
     }
-}
-
-/// 决策助手：判断预算是否放行（任一维度 `used >= limit` 即拒绝——达到
-/// 上限同样拒绝，按输入 / 输出 / 成本顺序检查）。
-#[allow(clippy::too_many_arguments)]
-pub fn decide_budget(
-    used_input_tokens: u64,
-    used_output_tokens: u64,
-    used_cost_micros: u64,
-    input_limit: Option<u64>,
-    output_limit: Option<u64>,
-    cost_limit: Option<u64>,
-) -> TenantPolicyDecision {
-    if let Some(limit) = input_limit {
-        if used_input_tokens >= limit {
-            return TenantPolicyDecision::Deny {
-                reason: format!("输入 token 预算超限：used={used_input_tokens} limit={limit}"),
-            };
-        }
-    }
-    if let Some(limit) = output_limit {
-        if used_output_tokens >= limit {
-            return TenantPolicyDecision::Deny {
-                reason: format!("输出 token 预算超限：used={used_output_tokens} limit={limit}"),
-            };
-        }
-    }
-    if let Some(limit) = cost_limit {
-        if used_cost_micros >= limit {
-            return TenantPolicyDecision::Deny {
-                reason: format!("成本预算超限：used={used_cost_micros} limit={limit}"),
-            };
-        }
-    }
-    TenantPolicyDecision::Allow
 }
 
 #[cfg(test)]

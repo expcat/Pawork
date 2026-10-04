@@ -219,10 +219,6 @@ impl ArtifactStore {
         &self.root
     }
 
-    pub fn disk_budget(&self) -> Option<u64> {
-        self.disk_budget
-    }
-
     pub fn database(&self) -> &DatabaseActor {
         &self.database
     }
@@ -1183,7 +1179,6 @@ mod tests {
         let store = ArtifactStore::open_with_options(options)
             .await
             .expect("open store");
-        assert_eq!(store.disk_budget(), Some(32));
 
         let first = store.put(&[1u8; 16]).await.expect("first put fits");
         assert!(first.created);
