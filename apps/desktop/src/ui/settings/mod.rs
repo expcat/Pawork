@@ -1,8 +1,8 @@
 //! Settings 壳：导航与共享类型；各页实现见子模块。
 //!
 //! Settings 壳（SET-3/4/6a/6b/6c/6d/6e/6f/6g）：Settings Rail、「Models &
-//! providers」、「Network」、「权限与审批」、「工具与 MCP」、「终端」、「外观」
-//!、「高级」与「关于」页。
+//! providers」、「子代理」、「Network」、「权限与审批」、「工具与 MCP」、「终端」、
+//! 「外观」、「高级」与「关于」页。
 //!
 //! 供应商页只呈现 Host `provider_auth_status` 权威事实：供应商名称、
 //! 认证方式、连接状态与目录来源（SET-3）；SET-4 增认证写操作（API key

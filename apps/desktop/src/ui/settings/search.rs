@@ -100,7 +100,7 @@ const fn row_entry(
     }
 }
 
-/// 八页标题 + 任务覆盖的设置行。Cmd+K 页面分组由此派生。
+/// 各设置页标题 + 任务覆盖的设置行。Cmd+K 页面分组由此派生。
 pub(crate) fn settings_search_entries() -> &'static [SettingsSearchEntry] {
     const ENTRIES: &[SettingsSearchEntry] = &[
         page_entry(

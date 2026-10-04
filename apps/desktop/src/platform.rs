@@ -35,23 +35,17 @@ impl Platform {
     }
 }
 
-impl Default for Platform {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// 默认 GUI socket 路径：<data_dir>/pawork-gui.sock。
 ///
-/// 语义镜像 pawork_app::default_data_dir（对照 host/app/src/data_dir.rs
-/// 与 host/cli/src/gui.rs 的 serve 端路径），但按分层约束不依赖
+/// 语义镜像 pawork_app::default_data_dir（对照 crates/app/src/data_dir.rs
+/// 与 crates/cli/src/ops.rs 的 gui_socket_path / gui_token_path），但按分层约束不依赖
 /// pawork-app crate：PAWORK_DATA_DIR →（Windows）%LOCALAPPDATA%/pawork →
 /// $HOME/.pawork → 临时目录/pawork。
 pub fn default_socket_path() -> PathBuf {
     socket_path_for_instance(None)
 }
 
-/// 默认 GUI token 路径：<data_dir>/gui.token（与 A5 `{data_dir}/gui.token` 对齐）。
+/// 默认 GUI token 路径：<data_dir>/gui.token（与 `gui serve` 的 `{data_dir}/gui.token` 对齐）。
 pub fn default_token_path() -> PathBuf {
     token_path_for_instance(None)
 }

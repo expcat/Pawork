@@ -71,11 +71,9 @@ impl TerminalState {
     pub(crate) fn from_snapshot(entry: &Value) -> Option<Self> {
         let session_id = entry
             .get("terminal_session_id")
-            .or_else(|| entry.get("id"))
             .and_then(Value::as_str)?;
         let workspace_id = entry
             .get("owner_session")
-            .or_else(|| entry.get("workspace_id"))
             .and_then(Value::as_str)
             .map(str::to_string);
         let runtime_state = entry
@@ -116,7 +114,6 @@ impl TerminalState {
             runtime_state,
             dropped_events: entry
                 .get("dropped_events")
-                .or_else(|| entry.get("dropped"))
                 .and_then(Value::as_u64)
                 .unwrap_or(0),
             availability,

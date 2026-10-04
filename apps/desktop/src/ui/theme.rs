@@ -254,7 +254,7 @@ pub mod font {
         }
     }
 
-    /// 22px：Workspace Header 任务标题。
+    /// 18px：Workspace Header 任务标题。
     pub const HEADER_TITLE: Rems = from_pixels(18.0);
     /// 12px：次级信息（相对时间 / 项目计数 / 连接行 / 时间戳）。
     pub const BODY_SM: Rems = from_pixels(12.0);
@@ -400,8 +400,6 @@ pub mod metrics {
     pub fn rail_trailing_plus_x(row_width: f32) -> f32 {
         rail_trailing_origin_x(row_width) + RAIL_SESSION_ACTION_SIZE
     }
-    /// 兼容旧名：计数格宽等于单格动作。
-    pub const RAIL_META_SLOT_WIDTH: f32 = RAIL_SESSION_ACTION_SIZE;
     /// UI-1：30px，共享几何。
     pub const STATUS_BAR_HEIGHT: f32 = 30.0;
     /// GUI4：居中用量槽左右留白，避免与左右栏重叠。
@@ -457,8 +455,6 @@ pub mod metrics {
     pub const TOOL_GROUP_HEADER_HEIGHT: f32 = 36.0;
     /// 思考折叠头：单行 chevron + 文案，不走工具组 36px 宽条。
     pub const THINKING_HEADER_HEIGHT: f32 = 24.0;
-    /// 15：Tool activity 面板内左 inset（量图图标 x341，面板 x326）。
-    pub const TOOL_GROUP_INNER_INSET: f32 = 15.0;
     /// 52：Tool 行高（量图行距 ≈54 − 分隔线 2）。
     pub const TOOL_ROW_HEIGHT: f32 = 52.0;
     /// UI-3：工具行分隔线 1px。
@@ -469,16 +465,12 @@ pub mod metrics {
     pub const TOOL_GROUP_TOP_GAP: f32 = 12.0;
     /// 12：Tool 面板 → Run 摘要卡间距（量图 13 取 12）。
     pub const SUMMARY_CARD_GAP: f32 = 12.0;
-    /// 40：Run 摘要卡 ✓ 状态圆直径（量图 Ø40）。
-    pub const SUMMARY_CHECK_CIRCLE: f32 = 40.0;
     /// 168：Run 摘要卡动作按钮宽（量图 168×40 / 168×39）。
     pub const SUMMARY_BUTTON_WIDTH: f32 = 168.0;
     /// 40：Run 摘要卡动作按钮高。
     pub const SUMMARY_BUTTON_HEIGHT: f32 = 40.0;
     /// 8：Run 摘要卡动作按钮圆角（量图 r≈8–10±2 取 8）。
     pub const SUMMARY_BUTTON_RADIUS: f32 = 8.0;
-    /// 20：摘要卡两动作按钮间距（量图 19 取 20）。
-    pub const SUMMARY_BUTTON_GAP: f32 = 20.0;
     /// 8：正文到 Timeline 页脚。
     pub const TIMELINE_FOOTER_GAP: f32 = 8.0;
     /// 288：TaskRail 侧栏宽度。
@@ -529,8 +521,6 @@ pub mod metrics {
     pub const ACTIVITY_POPOVER_HEIGHT: f32 = 144.0;
     /// UI-1 / GUI2-05：48px 面板头（名称选择器 + 关闭）。
     pub const INSPECTOR_TAB_HEIGHT: f32 = 48.0;
-    /// 100：历史顶层页签槽宽；现仅作选择器最小宽度参考。
-    pub const INSPECTOR_TAB_WIDTH: f32 = 100.0;
     /// 36：窄窗中央「返回对话」条高度。
     pub const INSPECTOR_BACK_HEIGHT: f32 = 36.0;
     /// UI-1：40px，共享几何。
@@ -547,16 +537,12 @@ pub mod metrics {
     pub const CHANGES_FILE_GLYPH_WIDTH: f32 = 20.0;
     /// 32：Changes 文件清单紧凑行高（28–32 合同取 32）。
     pub const CHANGES_FILE_ROW_HEIGHT: f32 = 32.0;
-    /// 72：Changes 文件状态文字固定右对齐槽（摘要 / 旧布局参考）。
-    pub const CHANGES_FILE_STATUS_WIDTH: f32 = 72.0;
     /// 76：Changes 文件增删统计固定右对齐槽。
     pub const CHANGES_FILE_DELTA_WIDTH: f32 = 76.0;
     /// 32：Diff 左右行号列宽。
     pub const DIFF_LINE_NUMBER_WIDTH: f32 = 32.0;
     /// 16：Diff +/- 符号列。
     pub const DIFF_SIGN_WIDTH: f32 = 16.0;
-    /// 24：历史单列 gutter 宽；现由行号列 + 符号列替代，保留常量供对照。
-    pub const DIFF_GUTTER_WIDTH: f32 = 24.0;
     /// 36：Diff 当前文件只读 header 高度。
     pub const DIFF_HEADER_HEIGHT: f32 = 36.0;
     /// 0：行高保护性比较。

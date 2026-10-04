@@ -5878,8 +5878,8 @@ mod tests {
                     {"session_id": "s-a", "title": "A", "workspace_id": "ws-a", "updated_at_ms": 1}
                 ]},
                 {"kind": "terminal_sessions", "revision": 1, "data": [
-                    {"id": "term-a", "workspace_id": "ws-a", "state": "running"},
-                    {"id": "term-b", "workspace_id": "ws-b", "state": "running"}
+                    {"terminal_session_id": "term-a", "owner_session": "ws-a", "state": "running"},
+                    {"terminal_session_id": "term-b", "owner_session": "ws-b", "state": "running"}
                 ]}
             ]
         }))

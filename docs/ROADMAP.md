@@ -33,7 +33,7 @@
 | R-06 工具与平台包 | tools、mcp、browser、computer-use、terminal | ① tools+mcp ② browser+computer-use+terminal | `test.sh tools mcp browser computer-use terminal` | 已完成（2026-10-04） |
 | R-07 Core 装配 | app | ① app_core+services ② gui_host ③ control+其余模块 | `test.sh app`，动装配加 `--host` | 已完成（2026-10-04） |
 | R-08 入口与连接 | cli、acp、client、gui-server、apps/pawork | ① cli+pawork ② acp+client+gui-server | `test.sh cli acp client gui-server` + `--host` | 已完成（2026-10-04） |
-| R-09 Desktop | apps/desktop | ① projection+controller ② ui/ ③ accessibility+platform | `test.sh desktop` | 待启动 |
+| R-09 Desktop | apps/desktop | ① projection+controller ② ui/ ③ accessibility+platform | `test.sh desktop` | 已完成（2026-10-04） |
 | R-10 文档与门禁收口 | docs/、scripts/、Cargo 依赖审计 | ① Spec 与源码漂移核对 ② 测试脚本与门禁效率 ③ 链接/数字/backlog 清理 | 文档链接检查 + 受影响包定向 | 待启动 |
 
 执行顺序按表自上而下：契约与叶子包在前，装配与桌面在后，文档/门禁收口最后以吸纳前序改动造成的漂移。R-07～R-09 范围最大，子代理划分以执行时模块实测为准，保持写入集互不重叠。需用户确认的事项随各任务报告列出，不在子代理内静默执行。
@@ -53,6 +53,8 @@ R-06 移交项（2026-10-04 登记）：R-07 注意 `crates/workspace/src/import
 R-07 移交项（2026-10-04 登记）：R-03 移交结论修正——QuotaService `overview` 读面实际有生产消费者（app `usage_overview` → CLI `pawork usage` 与 GUI QuotaOverview 非 account 路径），若收敛须按此修正；`read` / `read_cache_only` / `overview_cache_only` / `invalidate` 仍零生产消费者，LeaseProjection 恢复机 app 侧零接线（确认属实）。R-05 移交确认——orchestration 注入/恢复面（`with_task_graph` / `with_worktree_allocator` / `with_patch_merger` / `retry_task` / `recover_report`）app 零调用。R-10 注意 `crates/workspace/src/import/mcp.rs` 仍持 MCP secret 前缀本地副本（mcp / app 侧已收敛到 `locator::is_mcp_secret_service`）。R-02 移交确认——`ResourceInstructionKind::PromptTemplate` 在 app 侧为穷举匹配死臂，删除跨 workspace + app 待用户裁决。R-07 需用户确认项（`AppCore::from_resolved` / `from_config` 测试专用同步装配双轨（内部 `block_on`）、gui_host `query.rs` diff_get `complete` 表达式死乘法（零测试覆盖）、`set_model_enabled` / `set_provider_models_enabled` 尾部 cleared_roles 写盘重复收敛、config_unavailable 两处 GUI 文案统一、same-provider 子 core `provider_auth_revision` 不回填导致首轮冗余重装配、lib.rs 对 EventHub / IdempotencyStore 家族的 crate 内 re-export 收窄）随任务报告上报，不在后续任务静默执行。
 
 R-08 移交项（2026-10-04 登记）：R-10 注意 [docs/design.md](design.md) 仍写「六运行模式」（cli / pawork Spec 已改为七，含 gateway）；apps/pawork redact.rs 模块头 ADR-039 / ADR-038 D8 裸编号引用并入 R-01 已登记的 ADR 归档索引问题。R-08 需用户确认项（gateway 子命令 clap 帮助与 chat 附件上限错误文案为英文，与全库中文 UI 不一致；chat local_image_parts 打开文件后二次 is_file 复查收益低；headless SDK 稳定面 MockTransport 四个零消费公开方法 push_responses / fail_next_read / sent_count / assert_sent_json，以及未列入稳定面的 sdk_version_string，删除属对外 semver 收缩）随任务报告上报，不在后续任务静默执行。
+
+R-09 移交项（2026-10-04 登记）：R-10 注意 [docs/gui-design.md](gui-design.md) 第 9 节与能力表仍写 Settings「八页」，源码导航与 desktop Spec 已是九页（含子代理）。R-09 需用户确认项（终端 create 响应仍把 `id` 当作 `terminal_session_id` 回退，快照投影侧的 `id` / `workspace_id` / `dropped` 别名已删；`default_socket_path` / `default_token_path` / `token_path_for_instance` 无生产调用，Spec 与测试仍点名；`--probe` / `--probe-smoke` 仍选 `glm-coding` / `glm-4.7` 与 `deepseek-v4-flash`，与验证规格功能测试模型 `opencode-go` / `glm-5.3-flash` 不一致，改模型会改变冒烟行为；`format_size`（f32）与 `format_byte_size`（f64）文案相同但边界舍入可能差 0.1；单工具组标题不用已删除的 `tool.group_one`，多工具一律 “N tools”；`task_usage` 的 `tr` 与 `ui/i18n.rs` 的 `t()` 并行，词条不在主目录）随任务报告上报，不在后续任务静默执行。
 
 2026-09-27 [包边界调整](architecture.md)已实现：拆出 models、gui-server、acp、mcp、gateway，workspace 为 29 成员，不合并现有包。受影响包的现有回归、协议 golden、依赖边界审计与真实 `pawork` 子进程 3 项测试通过；第三方生产依赖集合、线上协议与持久格式不变。本次未运行 Desktop 构建、真窗口或真实 Provider 验收，不改变下方已有人工验收结论；全 workspace 门禁未运行，改动已提交，未发布、未归档。
 

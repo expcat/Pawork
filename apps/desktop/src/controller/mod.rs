@@ -2,7 +2,7 @@
 //!
 //! 职责：连接握手 + 事件泵、SessionGet 分页、SessionCreate / SessionFork /
 //! RunStart / RunCancel / ToolApprove / ModelList，以及 TerminalCreate /
-//! TerminalWrite / TerminalResize。重连走 [`GuiClient::connect_with_resume`]，
+//! TerminalWrite / TerminalResize。重连走 [`GuiClient::connect_with_resume_config`]，
 //! 记录 last_acked `global_sequence`（来自事件与 Ack），按 Replay /
 //! SnapshotRequired / UpToDate 三态交给 projection。
 
@@ -410,7 +410,7 @@ impl DesktopController {
             .clone()
     }
 
-    /// 连接 + 握手 + 订阅。有 last_ack 时走 `connect_with_resume`，不要永远
+    /// 连接 + 握手 + 订阅。有 last_ack 时走 `connect_with_resume_config`，不要永远
     /// 全新 Snapshot。
     pub async fn connect(&self, socket: PathBuf) -> Result<DesktopConnect, String> {
         let token_path = crate::platform::token_path_for_socket(&socket);

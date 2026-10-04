@@ -131,7 +131,6 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             "已解除项目筛选，显示所选任务",
         ),
         "inspector.project" => ("Project", "项目"),
-        "inspector.input" => ("Terminal input", "终端输入"),
         "inspector.output" => ("Terminal output", "终端输出"),
         "inspector.hide" => ("Hide inspector", "收起检查器"),
         "timeline.actions" => ("Entry actions", "消息操作"),
@@ -150,7 +149,6 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "timeline.attachment_file" => ("Text file attachment", "文本附件"),
         "timeline.attachment_image" => ("Image attachment", "图片附件"),
         "timeline.tool" => ("Tool", "工具"),
-        "tool.group_one" => ("{} tool", "{} 个工具"),
         "tool.group_many" => ("{} tools", "{} 个工具"),
         "tool.group_completed" => ("completed", "已完成"),
         "tool.group_running" => ("running", "运行中"),
@@ -221,11 +219,6 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "changes.work_dir" => ("Work dir", "工作目录"),
         "inspector.output_dropped" => ("{} output events dropped", "已丢弃 {} 条输出事件"),
         "inspector.stop" => ("Stop", "停止"),
-        "inspector.close" => ("Close", "关闭"),
-        "inspector.fewer_columns" => ("Fewer terminal columns", "减少终端列数"),
-        "inspector.more_columns" => ("More terminal columns", "增加终端列数"),
-        "inspector.fewer_rows" => ("Fewer terminal rows", "减少终端行数"),
-        "inspector.more_rows" => ("More terminal rows", "增加终端行数"),
         "settings.tools.configure" => (
             "Add a server under [mcp.servers.<name>] in the global config.toml, with transport (stdio command or http url). Restart the Pawork service, then refresh this page.",
             "在全局 config.toml 的 [mcp.servers.<名称>] 中配置 transport（stdio 的 command 或 http 的 url）。重启 Pawork 服务后刷新此页。",
@@ -238,7 +231,6 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "model_search.clear" => ("Clear search", "清除搜索"),
         "model_search.no_results" => ("No matching models", "没有匹配的模型"),
         "model_search.no_providers" => ("No available chat models", "没有可用的对话模型"),
-        "model_search.model_count" => ("{} models", "{} 个模型"),
         "model_search.status_unknown" => (
             "Connection and catalog source unverified",
             "连接状态与目录来源尚未确认",
@@ -537,8 +529,6 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             "Remove the custom rule for this model",
             "移除该模型的自定义规则",
         ),
-        "settings.subagents.capability_image" => ("Image", "图像"),
-        "settings.subagents.capability_search" => ("Search", "搜索"),
         "settings.subagents.effort_default" => ("Default effort", "默认强度"),
         "settings.subagents.effort_default_tooltip" => (
             "Default reasoning effort when running as subagent · Auto follows the model default",
@@ -662,7 +652,6 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             "Route requests through a proxy server",
             "通过代理服务器路由请求",
         ),
-        "settings.providers.account_name" => ("Account name", "账号名称"),
         "settings.providers.account_alias" => ("Account alias", "账号别名"),
         "settings.providers.account_rename" => ("Rename", "重命名"),
         "settings.providers.account_selected_badge" => ("Selected", "当前"),
@@ -714,7 +703,6 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             "获取时间异常（晚于当前时间）",
         ),
         "settings.providers.accounts_title" => ("Accounts", "账号"),
-        "settings.providers.add_account" => ("Add account", "添加账号"),
         "settings.roles.inactive" => ("Not active", "尚未生效"),
         "settings.quota.stale" => ("Stale · refresh required", "已过期 · 请刷新"),
         "settings.quota.loading" => ("Loading usage…", "正在获取额度…"),
@@ -1064,8 +1052,6 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             "允许只读操作并拦截所有写入",
         ),
         // ── 连接 / 恢复 / 时间分组 / 任务状态 ──
-        "recovery.terminal_start" => ("Start", "启动"),
-        "recovery.terminal_new" => ("New terminal", "新建终端"),
         "recovery.reconnecting" => ("Reconnecting…", "正在重新连接…"),
         "recovery.wait" => (
             "Waiting for the local service. Your drafts are kept.",
@@ -1165,7 +1151,6 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             "Send message (Enter). Shift+Enter for a new line.",
             "发送消息（Enter），Shift+Enter 换行。",
         ),
-        "composer.placeholder_open_session" => ("Message Pawork…", "给 Pawork 发消息…"),
         "composer.send_disabled_starting" => ("Starting conversation…", "正在开始对话…"),
         "composer.placeholder_waiting" => ("Waiting for connection…", "等待连接…"),
         "composer.placeholder_disconnected" => (
@@ -1207,7 +1192,6 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         ),
         "composer.workspace_scope" => ("Workspace · {}", "工作区 · {}"),
         "composer.no_project_chip" => ("No project", "无项目"),
-        "composer.file_tools_unavailable" => ("File tools unavailable", "文件工具不可用"),
         "composer.bind_project" => (
             "Bind a project to read and write files",
             "绑定项目后可读写文件",
@@ -1221,7 +1205,6 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "common.add_project" => ("Add project…", "添加项目…"),
         // ── Workspace chrome · Task rail ──
         "rail.reconnect" => ("Retry", "重试"),
-        "rail.local" => ("Local", "本地"),
         "rail.tooltip_settings" => ("Settings", "设置"),
         "rail.no_tasks" => ("No tasks", "暂无任务"),
         "rail.scope_all_projects" => ("All projects", "所有项目"),
@@ -1251,7 +1234,6 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         // ── Workspace chrome · Timeline / 条目动作 ──
         "timeline.new_task" => ("New task", "新建任务"),
         "timeline.new_task_tooltip" => ("New task (Cmd+N)", "新建任务（Cmd+N）"),
-        "timeline.back_to_bottom" => ("↓ Back to bottom", "↓ 回到底部"),
         "timeline.thinking" => ("Thinking", "思考"),
         "timeline.ax_back_to_bottom" => ("Back to bottom", "回到底部"),
         "timeline.copy_code" => ("Copy code", "复制代码"),
@@ -1268,7 +1250,6 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "timeline.fork_no_session" => {
             ("Open a task to fork this turn.", "打开任务后可分叉此回合。")
         }
-        "timeline.fork" => ("Fork", "分叉"),
         "timeline.review_changes" => ("Review changes", "查看变更"),
         "rail.tasks" => ("Tasks", "任务"),
         "timeline.empty_task_hint" => (
@@ -1305,12 +1286,9 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "run.footer_failed" => ("Run failed", "运行失败"),
         "run.failed_desc_fallback" => ("The run failed.", "运行失败。"),
         "run.open_provider_settings" => ("Open provider settings", "打开供应商设置"),
-        "run.usage_unknown" => ("↑ — · ↓ —", "↑ — · ↓ —"),
         "run.usage" => ("↑ {input} · ↓ {output}", "↑ {input} · ↓ {output}"),
         "run.tok_s" => ("{} tok/s", "{} tok/s"),
         "run.duration" => ("Duration", "时长"),
-        "tool.arguments" => ("Arguments", "参数"),
-        "tool.result" => ("Result", "结果"),
         "tool.arguments_missing" => ("Arguments not provided", "未提供参数"),
         "tool.result_missing" => ("Result not provided", "尚无结果数据"),
         "tool.directory_empty" => (
@@ -1409,7 +1387,6 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "common.placeholder_no_details" => {
             ("No additional details are available.", "暂无更多详情。")
         }
-        "inspector.tooltip_apply_size" => ("Apply terminal size", "应用终端尺寸"),
         "inspector.tab_changes" => ("Changes", "变更"),
         "inspector.tab_terminal" => ("Terminal", "终端"),
         "inspector.tab_resources" => ("Resources", "资源"),
@@ -1444,38 +1421,14 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             "Return to the conversation to handle the approval",
             "返回对话处理审批",
         ),
-        "inspector.terminal_empty_output" => (
-            "Terminal output will appear here.",
-            "终端输出将显示在这里。",
-        ),
-        "inspector.resize_not_applied" => ("size not applied", "尺寸尚未应用"),
-        "inspector.resize_confirmed" => ("resize confirmed", "尺寸调整已确认"),
-        "inspector.terminal_input_placeholder" => (
-            "Type a command, or use Ctrl-C / Tab / ↑ in the terminal",
-            "输入命令，或用 Ctrl-C / Tab / ↑ 直通终端",
-        ),
         "inspector.terminal_new_tab" => ("Terminal", "终端"),
         "header.tooltip_activity" => ("Activity", "动态"),
         // OPT-4b：折叠态 Header 最右的重开入口（tooltip 与 AX name 同源）。
         "header.tooltip_open_inspector" => ("Open inspector", "打开检查器"),
         // ── Workspace chrome · 状态栏提示 ──
-        "status.connect_failed_retry" => (
-            "Connect failed. Click Reconnect to retry.",
-            "连接失败。点击重新连接重试。",
-        ),
-        "status.connection_lost" => (
-            "Connection lost. Click Reconnect.",
-            "连接丢失。点击重新连接。",
-        ),
         "status.project_opened" => ("Project opened · {}", "已打开项目 · {}"),
         "status.forked" => ("Forked · {}", "已分叉 · {}"),
-        "status.terminal_create_failed" => ("Create terminal failed: {}", "创建终端失败：{}"),
-        "status.terminal_input_sent" => ("Terminal input sent.", "终端输入已发送。"),
-        "status.terminal_write_failed" => ("Terminal write failed: {}", "终端写入失败：{}"),
-        "status.terminal_size" => ("Terminal size · {}×{}", "终端尺寸 · {}×{}"),
-        "status.terminal_resize_failed" => ("Terminal resize failed: {}", "终端尺寸调整失败：{}"),
         "status.terminal_closed" => ("Terminal closed.", "终端已关闭。"),
-        "status.terminal_close_failed" => ("Terminal close failed: {}", "终端关闭失败：{}"),
         "status.action_failed" => ("{} failed: {}", "{} 失败：{}"),
         "status.open_session_failed" => ("open session failed: {}", "打开会话失败：{}"),
         "status.mcp_remove_failed" => (
@@ -1499,20 +1452,6 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             ("Changes data is not available yet.", "变更数据还不可用。")
         }
         "status.text_scale" => ("Text size · {}%", "字号 · {}%"),
-        "status.terminal_needs_connection" => (
-            "Terminal needs a live connection; input was kept.",
-            "终端需要有效连接；输入已保留。",
-        ),
-        "status.terminal_waiting_write" => (
-            "Waiting for the previous terminal write.",
-            "正在等待上一次终端写入。",
-        ),
-        "status.terminal_not_ready" => (
-            "Terminal is not ready; input was kept and nothing was written.",
-            "终端尚未就绪；输入已保留，未写入。",
-        ),
-        "status.terminal_starting" => ("Starting terminal…", "正在启动终端…"),
-        "status.open_session_first" => ("Open a session first.", "请先打开一个会话。"),
         "status.language" => ("Language · {}", "语言 · {}"),
         _ => (key, key),
     };

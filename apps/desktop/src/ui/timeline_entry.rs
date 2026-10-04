@@ -630,7 +630,7 @@ fn entry_shell_element(
                 .px(px(metrics::MSG_USER_INSET_X))
                 .py(px(metrics::MSG_USER_INSET_Y))
                 .bg(dark().surface.hover)
-                .rounded(px(12.0))
+                .rounded(px(metrics::SURFACE_RADIUS))
                 .child(body.w_auto()),
         )
     } else {
