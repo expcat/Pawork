@@ -1,6 +1,42 @@
 # Pawork 活动路线图
 
-> 更新：2026-10-04。2026-09-23 全项目 Review 的 T-01～T-12 修复与 API 1.23/1.24 产品能力（文件夹附件、Plan GUI、持续目标、Chrome/Edge 上下文、技能录制、绘图、插件列表、MM-2 视频、MM-3 Qwen 搜索）已实现，通过定向自动门禁与本机真窗口验收并提交；活动计划文档（docs/Plan/）随本轮收口移除，过程与证据从 Git 历史追溯（`git show 46a4ff81:docs/Plan/README.md`）。本页只保留未完成工作，不能由代码存在推定「完美完成」；当前实现以源码和 [Spec](spec/README.md) 为准。
+> 更新：2026-10-04。2026-09-23 全项目 Review 的 T-01～T-12 修复与 API 1.23/1.24 产品能力（文件夹附件、Plan GUI、持续目标、Chrome/Edge 上下文、技能录制、绘图、插件列表、MM-2 视频、MM-3 Qwen 搜索）已实现，通过定向自动门禁与本机真窗口验收并提交；活动计划文档（docs/Plan/）随本轮收口移除，过程与证据从 Git 历史追溯（`git show 46a4ff81:docs/Plan/README.md`）。本页只保留未完成工作，不能由代码存在推定「完美完成」；当前实现以源码和 [Spec](spec/README.md) 为准。2026-10-04 用户授权新一轮全量 Review（过度设计、低效测试门禁、过时内容、繁琐优化），任务规划 R-01～R-10 见本文「2026-10 全量 Review」节。
+
+## 当前任务：2026-10 全量 Review（R-01～R-10）
+
+2026-10-04 用户授权对全部代码与文档做全量 Review：检查过度设计、低效测试门禁、清理过时内容、优化繁琐。本节为任务规划；执行按 R-01→R-10 顺序进行，每个任务开一次新对话、完成后提交再开下一任务，均可使用 glm 子代理。基线（2026-10-04 实测）：29 成员（27 库 + 2 应用）src 约 20.2 万行、tests/ 约 2.6 万行、`#[test]` 约 2400 个；包级 Spec 29 篇 5049 行；src 内 TODO/FIXME/HACK 仅 9 处、`legacy` 字样 288 处（多为契约兼容读入的正当标注，需逐个甄别）；无 `#[deprecated]` 属性。
+
+### 审查维度（各任务统一适用）
+
+1. 过度设计：无消费者抽象与 feature 门、双轨/兼容层、为未发生需求预留的参数化；只清理有证据的死路径，冻结契约、架构红线与安全语义不动。
+2. 低效测试门禁：镜像实现的测试、重复覆盖、慢 fixture 低价值断言、`scripts/test.sh` feature 组合遗漏或冗余；不以覆盖率数字为目标，安全红线与持久化/重放回归不精简。
+3. 过时内容：Spec 与源码漂移、失效链接与过时数字（成员数、API 版本、schema 版本）、已落地仍挂 backlog 的条目、陈旧标记。
+4. 繁琐：同批低风险可收敛的重复逻辑与无信息量样板；不顺手重构无关代码。
+
+### 执行约定
+
+- 每个 R 任务一次新对话；主代理协调，glm 子代理按互不重叠写入集划分，单子代理范围 ≤ 1～2 包或一个内聚模块组；子代理不得再派生。
+- 子代理提示词点名写入集包的 `docs/spec/crates/<pkg>.md`，先读该包 Spec 再读代码；产出发现清单（直接清理 / 需用户确认 / 登记 backlog 三级）并直接执行最小修复。
+- 冻结契约、架构红线、安全语义、删除安全回归一律随任务报告上报等待确认，不静默执行；不可逆操作按服务级确认口令。
+- 验证按 `bash scripts/test.sh <受影响包>`；desktop 单独执行；纯文档改动只查链接与 diff。发现属于其它任务范围的问题登记到对应任务条目，不越权改。
+- 任务完成后同批更新涉及包 Spec 与本节状态，提交一次再开下一任务；写入集跨任务不重叠。
+
+### 任务表
+
+| 任务 | 范围与写入集 | 子代理划分（glm） | 验证 | 状态 |
+| --- | --- | --- | --- | --- |
+| R-01 契约层 | domain、protocol、testkit、transport | ① domain+testkit ② protocol+transport | `test.sh domain protocol testkit transport` | 待启动 |
+| R-02 安全与配置 | policy、exec、workspace | ① policy+exec ② workspace | `test.sh policy exec workspace` | 待启动 |
+| R-03 持久化与账本 | storage、control-plane | ① storage ② control-plane | `test.sh storage control-plane` | 待启动 |
+| R-04 模型与网关 | models、providers、auth、gateway | ① models+providers ② auth+gateway | `test.sh models providers auth gateway` | 待启动 |
+| R-05 Agent 执行层 | engine、workflow、orchestration、git | ① engine+workflow ② orchestration+git | `test.sh engine workflow orchestration git` | 待启动 |
+| R-06 工具与平台包 | tools、mcp、browser、computer-use、terminal | ① tools+mcp ② browser+computer-use+terminal | `test.sh tools mcp browser computer-use terminal` | 待启动 |
+| R-07 Core 装配 | app | ① app_core+services ② gui_host ③ control+其余模块 | `test.sh app`，动装配加 `--host` | 待启动 |
+| R-08 入口与连接 | cli、acp、client、gui-server、apps/pawork | ① cli+pawork ② acp+client+gui-server | `test.sh cli acp client gui-server` + `--host` | 待启动 |
+| R-09 Desktop | apps/desktop | ① projection+controller ② ui/ ③ accessibility+platform | `test.sh desktop` | 待启动 |
+| R-10 文档与门禁收口 | docs/、scripts/、Cargo 依赖审计 | ① Spec 与源码漂移核对 ② 测试脚本与门禁效率 ③ 链接/数字/backlog 清理 | 文档链接检查 + 受影响包定向 | 待启动 |
+
+执行顺序按表自上而下：契约与叶子包在前，装配与桌面在后，文档/门禁收口最后以吸纳前序改动造成的漂移。R-07～R-09 范围最大，子代理划分以执行时模块实测为准，保持写入集互不重叠。需用户确认的事项随各任务报告列出，不在子代理内静默执行。
 
 2026-09-27 [包边界调整](architecture.md)已实现：拆出 models、gui-server、acp、mcp、gateway，workspace 为 29 成员，不合并现有包。受影响包的现有回归、协议 golden、依赖边界审计与真实 `pawork` 子进程 3 项测试通过；第三方生产依赖集合、线上协议与持久格式不变。本次未运行 Desktop 构建、真窗口或真实 Provider 验收，不改变下方已有人工验收结论；全 workspace 门禁未运行，改动已提交，未发布、未归档。
 
