@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use pawork_auth::locator::{MCP_AUTH_FILE_NAME, MCP_SERVICE_PREFIX};
+use pawork_auth::locator::{is_mcp_secret_service, MCP_AUTH_FILE_NAME, MCP_SERVICE_PREFIX};
 use pawork_auth::{FileBackend, SecretBackend};
 use pawork_domain::ContentPart;
 use pawork_engine::InjectedLayer;
@@ -471,7 +471,7 @@ pub(crate) fn mcp_server_secrets_for_removal(
     for reference in references {
         if reference.service() == expected_service {
             owned.push(reference.clone());
-        } else if !reference.service().starts_with(MCP_SERVICE_PREFIX) {
+        } else if !is_mcp_secret_service(reference.service()) {
             return Err(AppError::Mcp(McpError::Secret(format!(
                 "secret service '{}' is outside the pawork.mcp.* namespace",
                 reference.service()

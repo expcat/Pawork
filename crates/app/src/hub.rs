@@ -104,19 +104,8 @@ impl EventHub {
     }
 
     /// Publish a `degrade.event_stream_lagged` Diagnostic frame onto the hub.
-    /// Used when a subscriber reports Lagged or a bus publish cannot be delivered.
-    pub fn publish_lagged_degrade(
-        &self,
-        instance_id: pawork_domain::CoreInstanceId,
-        missed: Option<u64>,
-        client_id: Option<&str>,
-    ) -> usize {
-        self.publish_lagged_degrade_envelope(instance_id, missed, client_id)
-            .1
-    }
-
-    /// Same as [`EventHub::publish_lagged_degrade`], returning the sequenced envelope
-    /// and the number of live subscribers that received the broadcast.
+    /// Used when a subscriber reports Lagged or a bus publish cannot be delivered;
+    /// returns the sequenced envelope and the number of live subscribers reached.
     pub fn publish_lagged_degrade_envelope(
         &self,
         instance_id: pawork_domain::CoreInstanceId,
@@ -399,11 +388,12 @@ mod tests {
     fn lagged_degrade_frame_is_published_onto_the_hub() {
         let hub = EventHub::new();
         let mut subscription = hub.subscribe();
-        hub.publish_lagged_degrade(
+        hub.publish_lagged_degrade_envelope(
             pawork_domain::CoreInstanceId::from("instance-1"),
             Some(2),
             Some("gui-1"),
-        );
+        )
+        .1;
         let event = subscription.try_recv().expect("lagged frame");
         match event.payload {
             AppEvent::Diagnostic {

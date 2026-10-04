@@ -5,6 +5,7 @@ use crate::AppCore;
 use pawork_gui_server::GuiHostError;
 
 use super::settings_data;
+use super::super::global_config_file;
 
 fn invalid_proxy_url_error(candidate: Option<&str>) -> GuiHostError {
     let reason = match candidate {
@@ -45,19 +46,14 @@ pub(crate) async fn set_proxy_url(
     };
     let mut candidate = pawork_workspace::config::PaworkConfig::default();
     candidate.proxy_url = proxy_url.clone();
-    let http = AppCore::http_from_config(&candidate)
+    AppCore::http_from_config(&candidate)
         .map_err(|_| invalid_proxy_url_error(proxy_url.as_deref()))?;
-    let path = pawork_workspace::config::global_config_path().ok_or_else(|| {
-        GuiHostAdapter::host_error(
-            "config_unavailable",
-            "global config directory is not available on this platform",
-        )
-    })?;
+    let path = global_config_file()?;
     pawork_workspace::config::write_proxy_url(&path, proxy_url.as_deref())
         .map_err(|error| GuiHostAdapter::host_error("config_write", error.to_string()))?;
     {
         let mut core = adapter.core.write().await;
-        core.set_proxy_url(proxy_url.clone(), http);
+        core.set_proxy_url(proxy_url.clone());
     }
     Ok(settings_data(GeneralSettingsData {
         proxy_url: proxy_url.clone(),

@@ -169,7 +169,7 @@ impl GuiEventBus {
 
     /// 发布 provider 认证变更事件（ADR-046 D3）：Global 流、Provider 来源。
     /// global_sequence 由 hub 统一重写；stream_sequence 沿用临时 Global
-    /// 事件的既有约定置 0（与 publish_lagged_degrade / publish_terminal 一致）。
+    /// 事件的既有约定置 0（与 publish_lagged_degrade_envelope / publish_terminal 一致）。
     pub(in crate::gui_host) fn publish_provider_auth(
         &self,
         instance: pawork_domain::CoreInstanceId,

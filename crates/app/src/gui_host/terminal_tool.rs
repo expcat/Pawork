@@ -17,8 +17,8 @@ use serde_json::{Value, json};
 
 use super::bus::{ActiveGuiRun, GuiEventBus, GuiRunRegistry};
 use super::handlers::terminal::{
-    cwd_label_for_terminal, decode_registered_terminal, register_terminal,
-    spawn_terminal_output_forwarder, unregister_terminal,
+    decode_terminal_registration, register_terminal, spawn_terminal_output_forwarder,
+    terminal_cwd_label, unregister_terminal,
 };
 
 const MAX_OUTPUT_BYTES: usize = 64 * 1024;
@@ -240,7 +240,7 @@ impl TerminalTool {
                     format!("terminal {terminal_session_id} is not registered"),
                 )
             })?;
-        let (owner, _) = decode_registered_terminal(&registration);
+        let (owner, _) = decode_terminal_registration(&registration);
         if owner != workspace_id.as_str() {
             return Err(error(
                 ToolErrorKind::PermissionDenied,
@@ -264,7 +264,7 @@ impl TerminalTool {
         let entries: Vec<Value> = registered
             .into_iter()
             .filter_map(|(id, registration)| {
-                let (owner, cwd) = decode_registered_terminal(&registration);
+                let (owner, cwd) = decode_terminal_registration(&registration);
                 if owner != workspace_id.as_str() {
                     return None;
                 }
@@ -284,7 +284,7 @@ impl TerminalTool {
         }
         let resolved =
             resolve_relative_path(&run.workspace_roots, cwd.unwrap_or(".")).map_err(path_error)?;
-        let cwd_label = cwd_label_for_terminal(resolved.relative);
+        let cwd_label = terminal_cwd_label(resolved.relative);
         let owner = OwnerSessionId::new(run.workspace_id.as_str());
         let spec = PtyCreateSpec {
             owner_session: owner.clone(),

@@ -341,7 +341,7 @@ impl RunService {
             checkpoints: core.checkpoints.clone(),
             workspace_roots: run_workspace.roots.clone(),
         };
-        let task_id = match core.tasks_start_agent(Some(session_id), &cancel) {
+        let task_id = match core.tasks_start_agent(&cancel) {
             Ok(task_id) => Some(task_id),
             Err(error) => {
                 tracing::warn!(error=%error, "tasks_start_agent failed; run proceeds without task ledger entry");

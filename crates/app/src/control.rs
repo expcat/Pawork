@@ -18,9 +18,8 @@ use pawork_control_plane::{
 };
 use pawork_control_plane::{InMemoryTenantPolicyEngine, TenantPolicyEngine};
 use pawork_domain::{
-    AgentId, EventId, ModelId, ProviderId, RequestId, RunId, SessionId, TenantId, TokenUsage,
+    AgentId, EventId, ModelId, ProviderId, RequestId, RunId, SessionId, TokenUsage,
 };
-use pawork_protocol::DEFAULT_QUOTA_TENANT;
 use serde::Serialize;
 
 use crate::AppError;
@@ -118,14 +117,6 @@ impl From<UsageTotals> for LedgerTotals {
     }
 }
 
-/// quota 查询 tenant：`local` 与 `local/default` 都映射到账本租户 `local/default`。
-pub fn ledger_tenant(query_tenant: Option<&TenantId>) -> TenantId {
-    match query_tenant.map(TenantId::as_str) {
-        None | Some(DEFAULT_QUOTA_TENANT) | Some("local/default") => default_tenant(),
-        Some(other) => TenantId::new(other),
-    }
-}
-
 /// Host usage record constructor.
 ///
 /// ADR-038 D1 single-machine sentinel: `account_id` is [`LEDGER_ACCOUNT`]
@@ -217,7 +208,7 @@ pub async fn ledger_totals(
     session_id: Option<&SessionId>,
 ) -> Result<UsageTotals, AppError> {
     let query = UsageQuery {
-        tenant_id: Some(ledger_tenant(None)),
+        tenant_id: Some(default_tenant()),
         account_id: Some(LEDGER_ACCOUNT.to_string()),
         provider_id: Some(provider_id.clone()),
         session_id: session_id.cloned(),
@@ -234,7 +225,7 @@ pub async fn ledger_totals(
 /// 触发补账。
 pub async fn ledger_has_run(ledger: &dyn UsageLedger, run_id: &RunId) -> Result<bool, AppError> {
     let query = UsageQuery {
-        tenant_id: Some(ledger_tenant(None)),
+        tenant_id: Some(default_tenant()),
         account_id: Some(LEDGER_ACCOUNT.to_string()),
         run_id: Some(run_id.clone()),
         ..UsageQuery::default()

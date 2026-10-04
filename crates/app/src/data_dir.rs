@@ -94,18 +94,6 @@ fn resolve_data_dir_outcome(
     }
 }
 
-/// Test seam for exercising the real HOME-fallback resolution from other
-/// modules' unit tests without touching process environment variables.
-#[cfg(test)]
-pub(crate) fn data_dir_outcome_for_test(
-    pawork_data_dir: Option<String>,
-    local_app_data: Option<String>,
-    home: Option<OsString>,
-    temp_dir: PathBuf,
-) -> DataDirOutcome {
-    resolve_data_dir_outcome(pawork_data_dir, local_app_data, home, temp_dir)
-}
-
 /// 校验 `--instance`：trim 后仅允许 `[A-Za-z0-9._-]`；空、空白、分号、
 /// 换行、引号、`/`、`..` 一律拒绝。`default` 保持原语义（合法标识）。
 pub fn normalize_instance(name: &str) -> Result<&str, String> {
@@ -127,19 +115,9 @@ pub fn instance_dir(data_dir: impl AsRef<Path>, instance: &str) -> PathBuf {
     data_dir.as_ref().join(instance)
 }
 
-/// `<data_dir>/default/session.db`。
-pub fn session_db_path(data_dir: impl AsRef<Path>) -> PathBuf {
-    session_db_path_for(data_dir, DEFAULT_INSTANCE)
-}
-
 /// `<data_dir>/<instance>/session.db`。
 pub fn session_db_path_for(data_dir: impl AsRef<Path>, instance: &str) -> PathBuf {
     instance_dir(data_dir, instance).join("session.db")
-}
-
-/// `<data_dir>/default/artifacts`：写前快照与回滚 Blob。
-pub fn artifact_store_path(data_dir: impl AsRef<Path>) -> PathBuf {
-    artifact_store_path_for(data_dir, DEFAULT_INSTANCE)
 }
 
 /// `<data_dir>/<instance>/artifacts`。
@@ -152,21 +130,6 @@ pub fn protected_store_path_for(data_dir: impl AsRef<Path>, instance: &str) -> P
     instance_dir(data_dir, instance).join("protected")
 }
 
-/// `<data_dir>/<instance>/usage-ledger.sqlite3`。
-pub fn usage_ledger_path_for(data_dir: impl AsRef<Path>, instance: &str) -> PathBuf {
-    instance_dir(data_dir, instance).join("usage-ledger.sqlite3")
-}
-
-/// `<data_dir>/<instance>/audit.jsonl`。
-pub fn audit_log_path_for(data_dir: impl AsRef<Path>, instance: &str) -> PathBuf {
-    instance_dir(data_dir, instance).join("audit.jsonl")
-}
-
-/// `<data_dir>/<instance>/tasks.json`。
-pub fn tasks_snapshot_path_for(data_dir: impl AsRef<Path>, instance: &str) -> PathBuf {
-    instance_dir(data_dir, instance).join("tasks.json")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -174,12 +137,12 @@ mod tests {
 
     #[test]
     fn session_db_path_uses_default_instance() {
-        let path = session_db_path("/tmp/pawork-data");
+        let path = session_db_path_for("/tmp/pawork-data", DEFAULT_INSTANCE);
         assert!(
             path.ends_with("default/session.db") || path.ends_with("default\\session.db"),
             "{path:?}"
         );
-        let artifacts = artifact_store_path("/tmp/pawork-data");
+        let artifacts = artifact_store_path_for("/tmp/pawork-data", DEFAULT_INSTANCE);
         assert!(
             artifacts.ends_with("default/artifacts") || artifacts.ends_with("default\\artifacts"),
             "{artifacts:?}"

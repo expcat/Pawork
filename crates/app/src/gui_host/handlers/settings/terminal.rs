@@ -7,6 +7,7 @@ use crate::gui_host::GuiHostAdapter;
 use pawork_gui_server::GuiHostError;
 
 use super::settings_data;
+use super::super::global_config_file;
 
 /// ADR-050 D2：终端默认设置生效值。`shell` 为 Global 持久值（null =
 /// 跟随平台默认），columns/rows 未设回落 exec 既有默认（`PtyWindowSize::
@@ -82,12 +83,7 @@ pub(crate) async fn set_terminal_settings(
             format!("terminal size must be within 2..=1000 (got columns={columns}, rows={rows})"),
         ));
     }
-    let path = pawork_workspace::config::global_config_path().ok_or_else(|| {
-        GuiHostAdapter::host_error(
-            "config_unavailable",
-            "global config directory is not available on this platform",
-        )
-    })?;
+    let path = global_config_file()?;
     pawork_workspace::config::write_terminal_settings(&path, shell, *columns, *rows)
         .map_err(|error| GuiHostAdapter::host_error("config_write", error.to_string()))?;
     {

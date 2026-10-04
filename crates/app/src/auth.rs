@@ -597,11 +597,7 @@ mod tests {
         let mut core = core_with_device_override(server.uri());
         core.config.proxy_url = Some("http://[invalid-proxy".into());
         core.set_provider_use_proxy("xai", false);
-        // 旧共享客户端故意指向不可达代理；开始与完成均须按 provider 重建。
-        core.http = reqwest::Client::builder()
-            .proxy(reqwest::Proxy::all("http://127.0.0.1:1").expect("proxy"))
-            .build()
-            .expect("http client");
+        // OAuth 开始与完成均按 provider 重建客户端，不受旧共享客户端影响。
         let login = core.oauth_begin("xai").await.expect("device begin");
         let OAuthLogin::Device { prompt, .. } = &login else {
             panic!("xai login must be device flow");

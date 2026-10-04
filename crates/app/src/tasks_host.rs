@@ -5,7 +5,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use pawork_domain::{BackgroundTaskId, SessionId, TaskKind, TaskStatus};
+use pawork_domain::{BackgroundTaskId, TaskKind, TaskStatus};
 use pawork_workflow::task::{TaskManager, TaskManagerSnapshot, TaskSnapshot};
 
 use crate::AppError;
@@ -29,10 +29,9 @@ impl crate::AppCore {
 
     pub(crate) fn tasks_start_agent(
         &self,
-        session_id: Option<&SessionId>,
         cancel: &pawork_domain::CancellationToken,
     ) -> Result<BackgroundTaskId, AppError> {
-        self.tasks.tasks_start_agent(session_id, cancel)
+        self.tasks.tasks_start_agent(cancel)
     }
 
     pub(crate) fn tasks_finish_from_run(

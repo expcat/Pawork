@@ -127,7 +127,7 @@ fn encode_terminal_registration(owner: &OwnerSessionId, cwd: &str) -> String {
     format!("{}\u{0}{}", owner.as_str(), cwd)
 }
 
-fn decode_terminal_registration(registration: &str) -> (&str, Option<&str>) {
+pub(crate) fn decode_terminal_registration(registration: &str) -> (&str, Option<&str>) {
     match registration.split_once('\u{0}') {
         Some((owner, cwd)) => (owner, Some(cwd)),
         None => (registration, None),
@@ -225,18 +225,10 @@ pub(crate) fn spawn_terminal_output_forwarder(
     });
 }
 
-pub(crate) fn decode_registered_terminal(registration: &str) -> (&str, Option<&str>) {
-    decode_terminal_registration(registration)
-}
-
-pub(crate) fn cwd_label_for_terminal(relative: String) -> String {
-    terminal_cwd_label(relative)
-}
-
 /// 记账/快照的 cwd 标签口径：策略层把根目录归一为空串（`resolve "."` 的
 /// canonical 形），标签统一回落 `"."`（与 None 分支同口径），避免面板
 /// cwd 空白（片 3 真窗口缺陷）。
-fn terminal_cwd_label(relative: String) -> String {
+pub(crate) fn terminal_cwd_label(relative: String) -> String {
     if relative.is_empty() {
         ".".to_string()
     } else {

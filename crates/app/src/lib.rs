@@ -1,5 +1,6 @@
-//! 应用门面：读配置 → 凭证链（auth 文件 → env）→ provider → 读写工具 +
-//! run_command → 事件化 `run_session`（当前八通道正式装配）。
+//! 应用装配门面：配置发现与凭证链 → provider 装配 → 内建 / MCP 工具 →
+//! 事件化 `run_session`（persist-first），并把 `AppCore` 适配为 GUI 业务
+//! 宿主（gui_host）与本机模型网关后端（gateway_backend）。
 //!
 //! 不按 Provider 名称分支；协议来自 `extra.provider_protocols` 与默认表。
 //! 落库 persist-first，再推渲染 sink。
@@ -54,13 +55,12 @@ pub use channels::{
 pub use checkpoint::{CheckpointSummary, RollbackOutcome};
 pub use control::{LedgerTotals, QuotaWindowLine, SessionUsageLine, UsageOverview};
 pub use data_dir::{
-    artifact_store_path, artifact_store_path_for, audit_log_path_for, consume_data_dir_outcome,
-    default_data_dir, default_data_dir_outcome, instance_dir, normalize_instance,
-    protected_store_path_for, session_db_path, session_db_path_for, tasks_snapshot_path_for,
-    usage_ledger_path_for, DataDirOutcome, DEFAULT_INSTANCE,
+    artifact_store_path_for, consume_data_dir_outcome, default_data_dir, default_data_dir_outcome,
+    instance_dir, normalize_instance, protected_store_path_for, session_db_path_for,
+    DataDirOutcome, DEFAULT_INSTANCE,
 };
 pub use diff::{paginate_diff, render_diff_file, render_session_diff, GitDiffHeader, SessionDiff};
-pub use extensions::{AtAttachment, McpServerStatus};
+pub use extensions::McpServerStatus;
 pub use gui_host::{
     project_timeline_item, GuiBroadcastSink, GuiEventBus, GuiHostAdapter, GuiRunRegistry,
 };

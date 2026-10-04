@@ -67,11 +67,7 @@ impl ExtensionService {
                     .map(|(name, server)| McpServerStatus {
                         name: name.clone(),
                         transport: server.transport.kind().to_string(),
-                        state: if server.auto_start {
-                            "configured".into()
-                        } else {
-                            "configured".into()
-                        },
+                        state: "configured".into(),
                         tools: Vec::new(),
                         last_error: None,
                     })

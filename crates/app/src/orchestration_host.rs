@@ -96,7 +96,7 @@ impl crate::AppCore {
         // 不留无执行体的悬空任务（任务无真实执行体令牌，挂独立令牌）。
         let mut worker_tasks = Vec::new();
         for _worker in [&left, &right] {
-            match self.tasks_start_agent(None, &pawork_domain::CancellationToken::new()) {
+            match self.tasks_start_agent(&pawork_domain::CancellationToken::new()) {
                 Ok(task_id) => worker_tasks.push(task_id),
                 Err(error) => {
                     tracing::warn!(%error, "failed to start orchestration worker agent task")

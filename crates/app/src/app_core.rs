@@ -362,8 +362,6 @@ pub struct AppCore {
     pub(crate) config: PaworkConfig,
     /// 凭证后端（auth 文件或测试注入的内存后端）。
     pub(crate) backend: Arc<dyn SecretBackend>,
-    /// OAuth 刷新 / token 交换用的共享 HTTP 客户端。
-    pub(crate) http: reqwest::Client,
     /// 模型目录（builtin + provider 静态目录 + config 覆盖 + 运行期探测）。
     pub(crate) registry: Arc<ModelRegistry>,
     /// 最近一次 `models_overview` 聚合快照。启停写命令复用，避免每次
@@ -520,40 +518,6 @@ impl AppCore {
         Ok(core)
     }
 
-    pub async fn load_from(
-        global_file: Option<&Path>,
-        workspace_file: Option<&Path>,
-        provider: Option<&str>,
-        model: Option<&str>,
-        store_path: impl AsRef<Path>,
-    ) -> Result<Self, AppError> {
-        let resolved = Loader::discover_from(global_file, workspace_file).resolve()?;
-        let backend: Arc<dyn SecretBackend> = Arc::new(FileBackend::new());
-        let trusted = resolved.config.trust_workspaces.unwrap_or(false);
-        let mut core = Self::from_config(resolved.config, provider, model, backend).await?;
-        core.configure_approval(
-            core.config.approval_mode.unwrap_or_default(),
-            trusted,
-            Arc::new(DenyAllApprovals),
-        );
-        core.trust_override = None;
-        if let Some(root) = workspace_root_from_config_file(workspace_file) {
-            core.attach_workspace(&root)?;
-        } else if let Ok(cwd) = std::env::current_dir() {
-            core.attach_workspace(&cwd)?;
-        }
-        let store_path = store_path.as_ref();
-        core.open_store(store_path).await?;
-        core.prime_extensions().await?;
-        if let Some(parent) = store_path.parent() {
-            core.open_checkpoints(parent.join("artifacts")).await?;
-            core.open_protected(parent.join("protected")).await?;
-            core.open_control_plane(parent.to_path_buf())?;
-            core.reconcile_usage_ledger().await;
-        }
-        Ok(core)
-    }
-
     pub fn from_resolved(
         mut config: PaworkConfig,
         provider: Option<&str>,
@@ -598,7 +562,8 @@ impl AppCore {
         .with_state(config, backend);
         core.provider_auth_revision = assembled.auth_revision;
         core.reasoning_protector = reasoning_protector;
-        core.http = Self::http_from_config(&core.config)?;
+        // 校验生效 proxy 配置可构造 F06 客户端；OAuth / 探测客户端按需新建。
+        Self::http_from_config(&core.config)?;
         Ok(core)
     }
 
@@ -706,7 +671,8 @@ impl AppCore {
         };
         let mut core = core.with_state(config, backend);
         core.reasoning_protector = reasoning_protector;
-        core.http = Self::http_from_config(&core.config)?;
+        // 校验生效 proxy 配置可构造 F06 客户端；OAuth / 探测客户端按需新建。
+        Self::http_from_config(&core.config)?;
         core.provider_pending = pending;
         core.provider_auth_revision = auth_revision;
         Ok(core)
@@ -752,7 +718,6 @@ impl AppCore {
             provider_id,
             config: PaworkConfig::default(),
             backend: Arc::new(MemoryBackend::new()),
-            http: pawork_auth::http_client().expect("F06 HTTP client"),
             registry: Arc::new(registry),
             runnable_catalog: Mutex::new(None),
             heuristic,
@@ -1061,7 +1026,7 @@ impl AppCore {
         // 单 session 失败只 warn，不阻断启动）。
         // R-24：只有取得实例所有权并确认无其他活跃宿主的宿主才能清扫；
         // 只读旁路（Catalog）与旁观者不清扫活跃 Host 的 run。
-        // None（from_parts / load_from 直连路径）沿用既有清扫语义。
+        // None（from_parts 等直连装配路径）沿用既有清扫语义。
         let may_sweep = self
             .instance_ownership
             .as_ref()
@@ -1152,9 +1117,8 @@ impl AppCore {
     }
 
     /// SET-6a: set_proxy_url 写盘成功后直接赋值内存 proxy_url（含 None，禁止 merge_with）并换入预构 HTTP 客户端。
-    pub(crate) fn set_proxy_url(&mut self, proxy_url: Option<String>, http: reqwest::Client) {
+    pub(crate) fn set_proxy_url(&mut self, proxy_url: Option<String>) {
         self.config.proxy_url = proxy_url;
-        self.http = http;
     }
 
     /// ADR-052 SET-6h：set_provider_use_proxy 写盘成功后同步内存生效配置。
@@ -1775,16 +1739,6 @@ pub fn session_title_from_text(text: &str) -> String {
     }
 }
 
-fn workspace_root_from_config_file(workspace_file: Option<&Path>) -> Option<PathBuf> {
-    let path = workspace_file?;
-    let parent = path.parent()?;
-    if parent.file_name().and_then(|name| name.to_str()) == Some(".pawork") {
-        parent.parent().map(Path::to_path_buf)
-    } else {
-        Some(parent.to_path_buf())
-    }
-}
-
 fn workspace_name_for_root(root: &Path) -> String {
     root.file_name()
         .and_then(|name| name.to_str())
@@ -2204,66 +2158,6 @@ mod tests {
             .expect("budget demo");
         assert!(budget.budget_exceeded, "{budget:?}");
         core.shutdown().await.expect("shutdown");
-    }
-
-    #[test]
-    fn load_with_home_fallback_consumes_degrade_and_warns_once() {
-        let expected = PathBuf::from("/tmp/process-temp/pawork");
-        let outcome = crate::data_dir::data_dir_outcome_for_test(
-            None,
-            None,
-            None,
-            expected.parent().expect("parent").to_path_buf(),
-        );
-        assert!(
-            outcome.degrade.is_some(),
-            "HOME fallback must produce DegradeEvent"
-        );
-        let subscriber = crate::testsupport::RecordingSubscriber::new();
-        let path = tracing::subscriber::with_default(subscriber.clone(), || {
-            crate::data_dir::consume_data_dir_outcome(outcome.clone())
-        });
-        assert_eq!(path, expected);
-        let events = subscriber.events();
-        let emitted: Vec<_> = events
-            .iter()
-            .filter(|event| {
-                event.fields.get("code").map(String::as_str) == Some("degrade.home_dir_fallback")
-            })
-            .collect();
-        assert_eq!(
-            emitted.len(),
-            1,
-            "load_with consumer must warn once: {events:?}"
-        );
-        let emitted = emitted[0];
-        assert_eq!(emitted.level, "WARN");
-        assert!(emitted.message.contains("HOME is unset"), "{emitted:?}");
-        assert_eq!(
-            emitted.fields.get("severity").map(String::as_str),
-            Some("warning"),
-            "{emitted:?}"
-        );
-        assert_eq!(
-            emitted.fields.get("path").map(String::as_str),
-            Some(expected.display().to_string().as_str()),
-            "{emitted:?}"
-        );
-
-        let subscriber = crate::testsupport::RecordingSubscriber::new();
-        tracing::subscriber::with_default(subscriber.clone(), || {
-            let _ = crate::data_dir::consume_data_dir_outcome(crate::DataDirOutcome {
-                path: expected.clone(),
-                degrade: None,
-            });
-        });
-        assert!(
-            subscriber.events().iter().all(|event| {
-                event.fields.get("code").map(String::as_str) != Some("degrade.home_dir_fallback")
-            }),
-            "consume_data_dir_outcome must stay silent when degrade is absent: {:?}",
-            subscriber.events()
-        );
     }
 
     #[tokio::test]

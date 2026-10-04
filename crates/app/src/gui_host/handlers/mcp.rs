@@ -8,6 +8,7 @@ use serde_json::json;
 
 use pawork_gui_server::GuiHostError;
 
+use super::global_config_file;
 use super::super::GuiHostAdapter;
 
 /// ADR-049 D1：现场验证单个 MCP server（复用 `AppCore::mcp_test`：
@@ -72,12 +73,7 @@ pub(crate) async fn mcp_server_remove(
         let workspace_root = core.workspace_root().map(|root| root.to_path_buf());
         (secret_refs, workspace_root)
     };
-    let path = pawork_workspace::config::global_config_path().ok_or_else(|| {
-        GuiHostAdapter::host_error(
-            "config_unavailable",
-            "global config directory is not available on this platform",
-        )
-    })?;
+    let path = global_config_file()?;
     // P2 跨层同名守卫：按盘上配置探测同名 server 是否还定义在 Global 之外
     // 的层（workspace / 派生 profile 等）。仅删 Global 条目会让它在下次装配
     // 时复活，而其 SecretRef 已被清理；故写盘前命中即 fail-closed 拒绝。

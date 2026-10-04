@@ -17,6 +17,7 @@ use crate::{channels, AppCore};
 use pawork_gui_server::GuiHostError;
 
 use super::{flight_active, iso8601_utc, now_millis, settings_data, AuthFlights};
+use super::super::global_config_file;
 
 /// 单通道目录探测上限（与 models_overview 的探测窗口一致）。
 const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(4);
@@ -143,16 +144,6 @@ fn validate_model_enabled(core: &AppCore, id: &str, model_id: &str) -> Result<()
         ));
     }
     Ok(())
-}
-
-/// Global 配置路径（不可用即 `config_unavailable`）。
-fn global_config_file() -> Result<std::path::PathBuf, GuiHostError> {
-    pawork_workspace::config::global_config_path().ok_or_else(|| {
-        GuiHostAdapter::host_error(
-            "config_unavailable",
-            "global config directory is not available on this platform",
-        )
-    })
 }
 
 fn config_write_error(error: pawork_workspace::config::ConfigError) -> GuiHostError {
@@ -409,12 +400,7 @@ pub(crate) async fn set_default_model(
         // 校验复用 models_overview 口径；ADR-055 D4 起含禁用校验。
         validate_runnable_model(&core, id, model_id).await?;
     }
-    let path = pawork_workspace::config::global_config_path().ok_or_else(|| {
-        GuiHostAdapter::host_error(
-            "config_unavailable",
-            "global config directory is not available on this platform",
-        )
-    })?;
+    let path = global_config_file()?;
     let mut core = adapter.core.write().await;
     validate_model_enabled(&core, id, model_id)?;
     pawork_workspace::config::write_default_model_pair(&path, id, model_id)
@@ -446,25 +432,14 @@ pub(crate) async fn set_provider_use_proxy(
     let id = provider_id.as_str();
     {
         let core = adapter.core.read().await;
-        let known = channels::is_first_party(id)
-            || core
-                .config()
-                .providers
-                .iter()
-                .any(|provider| provider.id == id);
-        if !known {
+        if !known_provider(&core, id) {
             return Err(GuiHostAdapter::host_error(
                 "unknown_provider",
                 format!("provider {id} is unknown"),
             ));
         }
     }
-    let path = pawork_workspace::config::global_config_path().ok_or_else(|| {
-        GuiHostAdapter::host_error(
-            "config_unavailable",
-            "global config directory is not available on this platform",
-        )
-    })?;
+    let path = global_config_file()?;
     let mut core = adapter.core.write().await;
     pawork_workspace::config::write_provider_use_proxy(&path, id, *use_proxy)
         .map_err(|error| GuiHostAdapter::host_error("config_write", error.to_string()))?;

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use pawork_domain::{
-    BackgroundTaskId, CancellationToken, DegradeEvent, DegradeKind, DegradeSeverity, SessionId,
+    BackgroundTaskId, CancellationToken, DegradeEvent, DegradeKind, DegradeSeverity,
     TaskKind, TaskStatus,
 };
 use pawork_workflow::task::{is_terminal_status, TaskManager, TaskSnapshot};
@@ -92,7 +92,6 @@ impl TaskService {
 
     pub(crate) fn tasks_start_agent(
         &self,
-        _session_id: Option<&SessionId>,
         cancel: &CancellationToken,
     ) -> Result<BackgroundTaskId, AppError> {
         // R-05：Agent 任务共享真实 run 的取消令牌——tasks cancel 经
