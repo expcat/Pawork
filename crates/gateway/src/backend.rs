@@ -2,7 +2,8 @@
 use async_trait::async_trait;
 use pawork_domain::{
     CancellationToken, ModelPurpose, ModelResponseSummary, ProviderError, ProviderErrorKind,
-    ProviderEventSink, VideoGenerationModel, VideoGenerationTask,
+    ProviderEventSink, TaskUsageContext, TaskUsageOperationReport, TaskUsageQuery, TaskUsageRecord,
+    TaskUsageReport, VideoGenerationModel, VideoGenerationTask,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -13,6 +14,7 @@ pub struct GatewayError {
     pub status: u16,
     pub code: &'static str,
     pub message: &'static str,
+    pub call_id: Option<String>,
 }
 impl GatewayError {
     pub fn new(status: u16, code: &'static str, message: &'static str) -> Self {
@@ -20,6 +22,7 @@ impl GatewayError {
             status,
             code,
             message,
+            call_id: None,
         }
     }
     pub fn invalid() -> Self {
@@ -96,6 +99,8 @@ pub struct GatewayChatRequest {
     /// WebSearch 能力时由宿主能力闸门 fail-closed（400）。
     #[serde(default)]
     pub web_search: bool,
+    /// 本机任务归属，宿主保留，不透传供应商。
+    pub pawork_usage: Option<TaskUsageContext>,
 }
 
 #[derive(Deserialize)]
@@ -148,6 +153,20 @@ pub struct GatewayStreamOptions {
 pub struct GatewayVideoRequest {
     pub model: String,
     pub prompt: String,
+    pub pawork_usage: Option<TaskUsageContext>,
+}
+
+#[derive(Clone, Serialize)]
+pub struct GatewayUsageLink {
+    pub call_id: String,
+    pub related_call_id: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct GatewayVideoResponse {
+    #[serde(flatten)]
+    pub task: VideoGenerationTask,
+    pub pawork_usage: GatewayUsageLink,
 }
 
 /// 网关只负责 HTTP 与客户端认证；模型路由、账户、租约和用量由宿主实现。
@@ -155,6 +174,17 @@ pub struct GatewayVideoRequest {
 pub trait GatewayBackend: Send + Sync + 'static {
     /// 宿主冻结的请求与凭证快照；HTTP 层不读取其内容。
     type Completion: Send;
+    fn gateway_completion_call_id(&self, completion: &Self::Completion) -> String;
+    async fn gateway_task_usage(
+        &self,
+        client: &str,
+        query: TaskUsageQuery,
+    ) -> Result<TaskUsageReport, GatewayError>;
+    async fn report_gateway_operation(
+        &self,
+        client: &str,
+        report: TaskUsageOperationReport,
+    ) -> Result<TaskUsageRecord, GatewayError>;
 
     /// 原生异步视频任务与 Chat/SSE 独立，宿主必须明确实现能力边界。
     async fn gateway_video_models(&self) -> Result<Vec<VideoGenerationModel>, GatewayError>;
@@ -163,13 +193,13 @@ pub trait GatewayBackend: Send + Sync + 'static {
         client: &str,
         input: GatewayVideoRequest,
         cancel: CancellationToken,
-    ) -> Result<VideoGenerationTask, GatewayError>;
+    ) -> Result<GatewayVideoResponse, GatewayError>;
     async fn query_gateway_video(
         &self,
         client: &str,
         id: &str,
         cancel: CancellationToken,
-    ) -> Result<VideoGenerationTask, GatewayError>;
+    ) -> Result<GatewayVideoResponse, GatewayError>;
 
     /// ADR-064：按用途过滤目录；空用途集 = v1 兼容口径（仅 text 模型）。
     async fn gateway_models(

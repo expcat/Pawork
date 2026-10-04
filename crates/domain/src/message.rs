@@ -165,6 +165,7 @@ pub struct MessageMetadata {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(ts_rs::TS))]
 pub struct TokenUsage {
     pub input_tokens: u64,
     pub output_tokens: u64,
@@ -189,6 +190,7 @@ impl TokenUsage {
 
 /// 以微单位保存费用，避免浮点数在持久化与跨语言传输时产生误差。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(ts_rs::TS))]
 pub struct Cost {
     pub currency: String,
     pub amount_micros: u64,

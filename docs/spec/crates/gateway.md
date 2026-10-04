@@ -21,10 +21,16 @@
 
 - `serve_gateway(Arc<B>, TcpListener, GatewayTokenStore, CancellationToken)`，`B: GatewayBackend`；非 127.0.0.1 listener 拒绝。
 - `GatewayBackend`：`gateway_models(purposes)`（空 = v1 兼容仅 text 模型）、`prepare_gateway_completion`、`run_gateway_completion`。关联类型 `Completion: Send` 是宿主冻结的请求快照，HTTP 层不访问凭证或模型实例。
-- 原生视频端口：`gateway_video_models`、`submit_gateway_video(client, GatewayVideoRequest, cancel)`、`query_gateway_video(client, id, cancel)`；三个端口均必需实现，目录 / 任务返回 domain 的 `VideoGenerationModel` / `VideoGenerationTask`，状态为 `VideoTaskStatus`。`GatewayVideoRequest` 只接受 `model` 与 `prompt`。
+- 原生视频端口：`gateway_video_models`、`submit_gateway_video(client, GatewayVideoRequest, cancel)`、`query_gateway_video(client, id, cancel)`；三个端口均必需实现，目录 / 任务返回 domain 的 `VideoGenerationModel` / `GatewayVideoResponse`，状态为 `VideoTaskStatus`。`GatewayVideoRequest` 接受 `model`、`prompt` 与可选 `pawork_usage`。
 - `GatewayChatRequest`（含 `web_search: bool`）/ `GatewayMessage`（content 字符串或 part 数组）/ `GatewayContent` / `GatewayContentPart` / `GatewayContentUrl` / `GatewayStreamOptions` / `GatewayModel`（含 `capabilities`）/ `GatewayModelCapabilities` / `GatewayError`：HTTP 子集与错误类型。
 - `GatewayTokenStore::{new,issue,list,revoke,authenticate}`、`GatewayTokenInfo`、`tokens::valid_client`。
 - `gateway_is_running`：基于文件锁验证存活，不能仅信 PID 文件。
+
+### 任务日志端口（2026-10-04）
+
+Chat / Video 请求可带 `pawork_usage: Option<TaskUsageContext>`，此元数据仅交宿主，不送上游。Chat 普通 JSON、SSE chunk 与视频响应增 `pawork_usage.call_id`；错误增可选 `error.call_id`。视频响应用 `GatewayVideoResponse` flatten 原 `VideoGenerationTask`，另附 `GatewayUsageLink`，保留既有 id/model/status/url 形状。
+
+`GatewayBackend` 新增 `gateway_task_usage`、`report_gateway_operation` 和 completion call ID accessor，HTTP 增 `POST /v1/usage/query` 与 `POST /v1/usage/operations`，复用既有鉴权 / Host / Origin / body gate。查询只能读取 bearer token 所属 client；本地操作只接受下载 / 导入 / 导出 / 编辑的终态，不允许客户端声称 Token 或供应商费用。完整字段见 [模型网关](../model-gateway.md#任务日志与统计2026-10-04)。
 
 ## 4. 关键行为与语义
 

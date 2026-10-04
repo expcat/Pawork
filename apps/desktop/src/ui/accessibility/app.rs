@@ -401,6 +401,9 @@ impl AppView {
                 window.focus(&self.add_task_focus);
                 self.on_new_session(window, cx)
             }
+            "task-usage-open" => {
+                self.open_task_usage(cx);
+            }
             // F-05 Header 动作：与 rail 全局「+」同 handler / enable gate。
             "header-new-task" => {
                 window.focus(&self.header_new_task_focus);
@@ -1163,13 +1166,7 @@ impl AppView {
 
     fn sidebar_ax(&self, window: &Window, cx: &App, frame: AxRect) -> AxNode {
         let can_create = self.can_create_task();
-        // 与可见 TaskRail 对齐（R3 Wave A，几何单一来源 theme::metrics）：
-        // Panel p_2(8) + 36px traffic-light 安全区 + gap_2(8) 后进入标题行，
-        // 两行导航；控件矩形读取实际布局，不投影到按钮带。
-        let rem_px = f32::from(window.rem_size());
-        let inset = 0.5 * rem_px + metrics::RAIL_INNER_PAD;
-        let title_y = rem_px + shell_layout::TRAFFIC_LIGHT_SAFE_HEIGHT;
-        let mut y = title_y + metrics::RAIL_TITLE_ROW_HEIGHT + metrics::RAIL_TITLE_SCOPE_GAP;
+        // 控件与列表矩形读取实际布局，页脚入口不参与会话行坐标推算。
         let grouping = AxNode::new(
             "task-rail-grouping",
             AxRole::Button,
@@ -1207,8 +1204,6 @@ impl AppView {
         .enabled(can_create)
         .focused(self.open_menu.is_none() && self.add_task_focus.is_focused(window))
         .action(AxAction::Press);
-        y += metrics::RAIL_TOP_ROW_HEIGHT;
-
         let mut sidebar = AxNode::new("task-rail", AxRole::Group, "Tasks", frame)
             .child(
                 AxNode::new(
@@ -1223,6 +1218,17 @@ impl AppView {
             .child(add_task)
             .child(scope)
             .child(grouping)
+            .child(
+                AxNode::new(
+                    "task-usage-open",
+                    AxRole::Button,
+                    t("usage.title"),
+                    self.shell_ax_rect("rail-usage-layout"),
+                )
+                .enabled(true)
+                .focused(self.task_usage_focus.is_focused(window))
+                .action(AxAction::Press),
+            )
             .child(connection);
         // 与可见路径同源：Reconnect 仅 Disconnected / ConnectFailed 发布
         // （projection.show_reconnect()）。GUI3-07：底部 Local 行 Ghost，
@@ -1241,9 +1247,11 @@ impl AppView {
             );
         }
 
-        let list_top = y + metrics::RAIL_LIST_TOP_GAP;
-        let list_height = (frame.height - list_top - CONTROL_HEIGHT).max(0.0);
-        let list_width = (frame.width - inset * 2.0).max(0.0);
+        let bounds = self.rail_scroll.bounds();
+        let inset = f32::from(bounds.origin.x);
+        let list_top = f32::from(bounds.origin.y);
+        let list_height = f32::from(bounds.size.height);
+        let list_width = f32::from(bounds.size.width);
         let mut list = AxNode::new(
             "session-list",
             AxRole::List,

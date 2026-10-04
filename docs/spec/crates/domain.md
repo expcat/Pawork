@@ -16,6 +16,7 @@
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
 | `src/lib.rs` | ~40 | 模块声明 + 全量 re-export；crate 级红线文档 |
+| `src/task_usage.rs` | — | task / group / subtask 关联、操作类型、可空用量 / 金额、查询 / 汇总 / 游标与本地操作报告 |
 | `src/video_generation.rs` | ~30 | `VideoGenerationModel` / `VideoGenerationTask` / `VideoTaskStatus`：异步文生视频纯数据，providers 与 gateway 共用 |
 | `src/ids.rs` | ~110 | `string_id!` 宏生成 37 个 String newtype ID（基础 27 个：`SessionId` / `RunId` / `WorkspaceId` / `EventId` / `ToolCallId` / `ProviderId` / `ProtectedBlobRef`…；Phase 16 追加 10 个：`PlanId` / `GoalId` / `BackgroundTaskId` / `AutomationId` / `MonitorId` / `MemoryId` / `ReviewSessionId` 等）；`Timestamp`（Unix epoch 毫秒，u64） |
 | `src/events.rs` | ~510 | `CURRENT_SCHEMA_VERSION = 1`、`EventSequence`、`AgentEventEnvelope`（含 `validate_after` 顺序校验、`with_parent`）、`AgentEvent` 32 变体、`ApprovalDecision`、`ToolOutputStream`、`EventOrderError`、`ProviderTranscriptContinuation` |
@@ -150,6 +151,14 @@ API 1.24：`VideoContent {url, media_type}` 只表示远程 HTTP(S) 引用，纯
 - **cancel**：`CancellationToken::cancel()` 幂等并唤醒全部 waiter；`cancelled()` 返回可 await 的 `CancellationFuture`（Drop 自动注销 waiter，不泄漏）。
 - **client_session**：`CapabilitySnapshot::validate()` 校验 schema 版本与非空字段；`SessionRegistryStore` 定义原子 ownership CAS（`insert` / `compare_and_swap` / `remove_if_owner`），冲突返回最新权威记录供重同步；内存实现在 pawork-protocol，SQLite 实现在 pawork-storage。
 - **error**：`ErrorCategory` 14 变体（Provider / Tool / Internal / Cancelled / RateLimit / Timeout / Authentication / Authorization / InvalidRequest / NotFound / Conflict / ResourceExhausted / Unavailable / MalformedData）；`ErrorContext{category, message, retryable, retry_after_ms?, diagnostics}`。
+
+### 3.7 任务日志与消耗（2026-10-04）
+
+`src/task_usage.rs` 私有模块经 crate 根导出纯数据契约：`UsageTaskRef`、`TaskUsageContext`、`TaskUsageOperation`、`TaskUsageStatus`、`TaskUsageSource`、`TaskUsageCostKind/Cost`、`TaskUsageRecord`、`TaskUsageQuery/Cursor/GroupBy`、`TaskUsageTotals/CurrencyTotal/Group/Report`、`TaskUsageOperationReport`。同一套结构供 Gateway、Host 和 Desktop 使用；`TokenUsage`、`Cost`、`VideoTaskStatus` 增 typegen derive，不改变原 serde 形状。
+
+`context` 用 `task` 关联完整作品、可选 `subtask` 关联章节 / 视频分段、可选 `group` 关联分部；group 与 subtask 正交。operation 区分 text/storyboard/image/video/coding/query/download/import/export/edit，retry_of 只指明确补交。client 由 Host 鉴权决定，跨客户端共享 task ID 必须显式提交。IDs ≤256 字节、标题 ≤512 字节，拒绝空白与控制字符。
+
+记录的 Token、金额、图片数与计划视频秒数均可空；空不是 0。金额按微单位、币种及 actual/estimated 区分。查询支持客户端、作品、分部、章节 / 分段、操作、供应商、模型、状态和毫秒时间半开区间；limit 缺省 100、范围 1–200，cursor 为 `(started_at_ms, client, id)`。Report 的 totals/groups 覆盖全部匹配记录，只有 records 分页；group.filter 是服务端提供的准确下钻条件。本地操作上报不接受 Token 或费用。完整 HTTP 用法见 [模型网关](../model-gateway.md#任务日志与统计2026-10-04)。
 
 ## 4. 核心行为与数据流
 

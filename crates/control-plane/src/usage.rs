@@ -50,6 +50,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use pawork_domain::{TaskUsageQuery, TaskUsageRecord, TaskUsageReport};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -422,6 +423,32 @@ pub enum UsageLedgerError {
 /// 只读多维用量账本接口。
 #[async_trait]
 pub trait UsageLedger: Send + Sync {
+    async fn start_task_usage(&self, _record: TaskUsageRecord) -> Result<(), UsageLedgerError> {
+        Err(crate::task_usage::unsupported())
+    }
+    async fn finish_task_usage(&self, _record: TaskUsageRecord) -> Result<(), UsageLedgerError> {
+        Err(crate::task_usage::unsupported())
+    }
+    async fn get_task_usage(
+        &self,
+        _client: &str,
+        _id: &str,
+    ) -> Result<Option<TaskUsageRecord>, UsageLedgerError> {
+        Err(crate::task_usage::unsupported())
+    }
+    async fn find_task_usage_video(
+        &self,
+        _client: Option<&str>,
+        _id: &str,
+    ) -> Result<Option<TaskUsageRecord>, UsageLedgerError> {
+        Err(crate::task_usage::unsupported())
+    }
+    async fn task_usage_report(
+        &self,
+        _query: &TaskUsageQuery,
+    ) -> Result<TaskUsageReport, UsageLedgerError> {
+        Err(crate::task_usage::unsupported())
+    }
     /// 写入一条记录；校验失败返回 `InvalidRecord`。
     ///
     /// `record_id` 是 (tenant, account) 作用域内的幂等键：相同 ID 与相同内容
@@ -447,6 +474,7 @@ pub trait UsageLedger: Send + Sync {
 #[derive(Debug)]
 pub struct InMemoryUsageLedger {
     records: Arc<Mutex<Vec<UsageRecord>>>,
+    pub(crate) task_usage: Mutex<Vec<TaskUsageRecord>>,
 }
 
 impl InMemoryUsageLedger {
@@ -454,6 +482,7 @@ impl InMemoryUsageLedger {
     pub fn new() -> Self {
         Self {
             records: Arc::new(Mutex::new(Vec::new())),
+            task_usage: Mutex::new(Vec::new()),
         }
     }
 }
@@ -588,6 +617,32 @@ fn validate_record(record: &UsageRecord) -> Result<(), UsageLedgerError> {
 
 #[async_trait]
 impl UsageLedger for InMemoryUsageLedger {
+    async fn start_task_usage(&self, record: TaskUsageRecord) -> Result<(), UsageLedgerError> {
+        self.journal_write(record, false)
+    }
+    async fn finish_task_usage(&self, record: TaskUsageRecord) -> Result<(), UsageLedgerError> {
+        self.journal_write(record, true)
+    }
+    async fn get_task_usage(
+        &self,
+        client: &str,
+        id: &str,
+    ) -> Result<Option<TaskUsageRecord>, UsageLedgerError> {
+        self.journal_get(client, id)
+    }
+    async fn find_task_usage_video(
+        &self,
+        client: Option<&str>,
+        id: &str,
+    ) -> Result<Option<TaskUsageRecord>, UsageLedgerError> {
+        self.journal_video(client, id)
+    }
+    async fn task_usage_report(
+        &self,
+        query: &TaskUsageQuery,
+    ) -> Result<TaskUsageReport, UsageLedgerError> {
+        self.journal_report(query)
+    }
     async fn record(&self, mut record: UsageRecord) -> Result<(), UsageLedgerError> {
         validate_record(&record)?;
         if record.record_id.is_empty() {
@@ -680,13 +735,13 @@ impl UsageLedger for InMemoryUsageLedger {
 #[cfg(feature = "sqlite")]
 #[derive(Debug)]
 pub struct SqliteUsageLedger {
-    conn: Mutex<Connection>,
+    pub(crate) conn: Mutex<Connection>,
 }
 
 /// 账本 SQLite schema 版本（P18-8 首版 = 2；v3 增加 `trace_id` 列与按
-/// `(tenant, account, request_id, upstream_attempt)` 去重的部分唯一索引）。
+/// `(tenant, account, request_id, upstream_attempt)` 去重的部分唯一索引；v4 新增调用日志表）。
 #[cfg(feature = "sqlite")]
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 4;
 
 #[cfg(feature = "sqlite")]
 impl SqliteUsageLedger {
@@ -733,7 +788,7 @@ impl SqliteUsageLedger {
                 // （request_id/upstream_attempt 均为 NULL 的记录不受索引约束）。
                 Self::migrate_v2_to_v3(&conn)?;
             }
-            SCHEMA_VERSION => {
+            3 | SCHEMA_VERSION => {
                 Self::ensure_v3_schema(&conn)?;
             }
             other => {
@@ -745,6 +800,9 @@ impl SqliteUsageLedger {
                 });
             }
         }
+        crate::task_usage::ensure_schema(&conn)?;
+        conn.pragma_update(None, "user_version", SCHEMA_VERSION)
+            .map_err(storage_error)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -1169,6 +1227,32 @@ const SELECT_RECORD_COLUMNS: &str = "record_id, version, tenant_id, principal_id
 #[cfg(feature = "sqlite")]
 #[async_trait]
 impl UsageLedger for SqliteUsageLedger {
+    async fn start_task_usage(&self, record: TaskUsageRecord) -> Result<(), UsageLedgerError> {
+        self.journal_write(record, false)
+    }
+    async fn finish_task_usage(&self, record: TaskUsageRecord) -> Result<(), UsageLedgerError> {
+        self.journal_write(record, true)
+    }
+    async fn get_task_usage(
+        &self,
+        client: &str,
+        id: &str,
+    ) -> Result<Option<TaskUsageRecord>, UsageLedgerError> {
+        self.journal_get(client, id)
+    }
+    async fn find_task_usage_video(
+        &self,
+        client: Option<&str>,
+        id: &str,
+    ) -> Result<Option<TaskUsageRecord>, UsageLedgerError> {
+        self.journal_video(client, id)
+    }
+    async fn task_usage_report(
+        &self,
+        query: &TaskUsageQuery,
+    ) -> Result<TaskUsageReport, UsageLedgerError> {
+        self.journal_report(query)
+    }
     async fn record(&self, record: UsageRecord) -> Result<(), UsageLedgerError> {
         validate_record(&record)?;
         if record.record_id.is_empty() {

@@ -418,6 +418,28 @@ impl AppView {
         if self.archive_notice_text().is_some() {
             content = content.child(self.archive_notice_element(cx));
         }
+        content = content.child(
+            self.shell_element("rail-usage-layout")
+                .flex_none()
+                .mt_auto()
+                .child(
+                    Button::new("task-usage-open")
+                        .label(t("usage.title"))
+                        .variant(ButtonVariant::Ghost)
+                        .track_focus(&self.task_usage_focus)
+                        .on_click(cx.listener(|view, event, _, cx| {
+                            if view.consume_button_key_click("task-usage-open", event) {
+                                return;
+                            }
+                            view.open_task_usage(cx);
+                        }))
+                        .on_activate(cx.listener(|view, _, _, cx| {
+                            view.note_button_key_activate("task-usage-open");
+                            view.open_task_usage(cx);
+                            cx.stop_propagation();
+                        })),
+                ),
+        );
         // TR-12 honest-hidden：只保留「Local」本机身份行，不画头像 / 姓名 /
         // quota（无权威账户 capability）。SET-3 起右侧 gear 是真实 Settings
         // 入口（可见 / 键盘 / AX 同 gate），不是占位图标。
@@ -427,6 +449,7 @@ impl AppView {
                 .mt_auto()
                 .pt_2()
                 .flex()
+                .flex_none()
                 .flex_row()
                 .items_center()
                 .gap_2()

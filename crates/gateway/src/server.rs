@@ -12,7 +12,7 @@ use hyper::{
 use hyper_util::rt::{TokioIo, TokioTimer};
 use pawork_domain::{
     CancellationToken, ModelPurpose, ProviderError, ProviderEventSink, ProviderStreamEvent,
-    StopReason, TokenUsage,
+    StopReason, TaskUsageOperationReport, TaskUsageQuery, TokenUsage,
 };
 use serde_json::{json, Value};
 use std::{
@@ -99,7 +99,12 @@ fn json_response(status: u16, value: Value) -> Response<Body> {
         .expect("static response")
 }
 fn error_value(error: &GatewayError) -> Value {
-    json!({"error":{"message":error.message,"type":if error.status<500 {"invalid_request_error"} else {"server_error"},"code":error.code,"param":null}})
+    let mut value = json!({"error":{"message":error.message,"type":if error.status<500 {"invalid_request_error"} else {"server_error"},"code":error.code,"param":null}});
+    if let Some(id) = &error.call_id {
+        value["error"]["call_id"] = json!(id);
+        value["pawork_usage"] = json!({"call_id":id});
+    }
+    value
 }
 fn error_response(error: GatewayError) -> Response<Body> {
     json_response(error.status, error_value(&error))
@@ -212,6 +217,8 @@ async fn handle_inner<B: GatewayBackend>(
         return Ok(json_response(200, json!(task)));
     }
     let video_submission = path == "/v1/video/tasks";
+    let usage_query = path == "/v1/usage/query";
+    let operation_report = path == "/v1/usage/operations";
     if path == "/v1/models" {
         if request.method() != Method::GET {
             return Err(GatewayError::new(405, "method_not_allowed", "Use GET."));
@@ -234,7 +241,7 @@ async fn handle_inner<B: GatewayBackend>(
             .map_err(|_| GatewayError::timeout())??;
         return Ok(json_response(200, json!({"object":"list","data":models})));
     }
-    if path != "/v1/chat/completions" && !video_submission {
+    if path != "/v1/chat/completions" && !video_submission && !usage_query && !operation_report {
         return Err(GatewayError::new(404, "not_found", "Unknown API route."));
     }
     if !query.is_empty() {
@@ -273,6 +280,18 @@ async fn handle_inner<B: GatewayBackend>(
         )
     })?
     .to_bytes();
+    if usage_query {
+        let input: TaskUsageQuery =
+            serde_json::from_slice(&body).map_err(|_| GatewayError::invalid())?;
+        let report = core.gateway_task_usage(&client, input).await?;
+        return Ok(json_response(200, json!(report)));
+    }
+    if operation_report {
+        let input: TaskUsageOperationReport =
+            serde_json::from_slice(&body).map_err(|_| GatewayError::invalid())?;
+        let record = core.report_gateway_operation(&client, input).await?;
+        return Ok(json_response(200, json!(record)));
+    }
     if video_submission {
         let input: GatewayVideoRequest =
             serde_json::from_slice(&body).map_err(|_| GatewayError::invalid())?;
@@ -303,6 +322,7 @@ async fn handle_inner<B: GatewayBackend>(
     )
     .await
     .map_err(|_| GatewayError::timeout())??;
+    let call_id = core.gateway_completion_call_id(&prepared);
     let cancel = CancellationToken::new();
     let guard = CancelOnDrop(cancel.clone());
     let (sender, receiver) = mpsc::channel::<Bytes>(32);
@@ -332,6 +352,7 @@ async fn handle_inner<B: GatewayBackend>(
         model: model.clone(),
         created,
         include_usage,
+        call_id: call_id.clone(),
     });
     jobs.lock().expect("gateway jobs").spawn(async move {
         let execution=core.run_gateway_completion(&client,prepared,sink.clone(),cancel.clone());
@@ -343,8 +364,10 @@ async fn handle_inner<B: GatewayBackend>(
         if streaming {
             let frames=match result {
                 Ok(summary)=>{
-                    let mut values=vec![chunk(&id,&model,created,json!({}),Some(finish_reason(&summary.stop_reason)),include_usage)];
-                    if include_usage {values.push(json!({"id":id,"object":"chat.completion.chunk","created":created,"model":model,"choices":[],"usage":usage_json(&summary.usage)}));}
+                    let mut value=chunk(&id,&model,created,json!({}),Some(finish_reason(&summary.stop_reason)),include_usage);
+                    value["pawork_usage"]=json!({"call_id":call_id});
+                    let mut values=vec![value];
+                    if include_usage {values.push(json!({"id":id,"object":"chat.completion.chunk","created":created,"model":model,"choices":[],"usage":usage_json(&summary.usage),"pawork_usage":{"call_id":call_id}}));}
                     values
                 },
                 Err(error)=>vec![error_value(&error)],
@@ -362,7 +385,7 @@ async fn handle_inner<B: GatewayBackend>(
             // ADR-064：图像生成模型透传 image part（message.images 数组，
             // additive 字段；文本模型恒为空数组，v1 客户端可忽略）。
             let images = sink.images.lock().expect("output").clone();
-            let value=result.map(|summary|json!({"id":id,"object":"chat.completion","created":created,"model":model,"choices":[{"index":0,"message":{"role":"assistant","content":sink.text.lock().expect("output").clone(),"images":images.iter().map(|url|json!({"url":url})).collect::<Vec<_>>()},"finish_reason":finish_reason(&summary.stop_reason)}],"usage":usage_json(&summary.usage)}));
+            let value=result.map(|summary|json!({"id":id,"object":"chat.completion","created":created,"model":model,"choices":[{"index":0,"message":{"role":"assistant","content":sink.text.lock().expect("output").clone(),"images":images.iter().map(|url|json!({"url":url})).collect::<Vec<_>>()},"finish_reason":finish_reason(&summary.stop_reason)}],"usage":usage_json(&summary.usage),"pawork_usage":{"call_id":call_id}}));
             let _=done.send(value);
         }
     });
@@ -424,6 +447,7 @@ struct OutputSink {
     model: String,
     created: u64,
     include_usage: bool,
+    call_id: String,
 }
 #[async_trait]
 impl ProviderEventSink for OutputSink {
@@ -463,15 +487,17 @@ impl ProviderEventSink for OutputSink {
             _ => return Ok(()),
         };
         if let Some(sender) = &self.sender {
+            let mut value = chunk(
+                &self.id,
+                &self.model,
+                self.created,
+                delta,
+                None,
+                self.include_usage,
+            );
+            value["pawork_usage"] = json!({"call_id":self.call_id});
             sender
-                .send(sse(chunk(
-                    &self.id,
-                    &self.model,
-                    self.created,
-                    delta,
-                    None,
-                    self.include_usage,
-                )))
+                .send(sse(value))
                 .await
                 .map_err(|_| ProviderError::cancelled("gateway client disconnected"))?;
         }

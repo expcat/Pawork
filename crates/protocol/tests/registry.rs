@@ -296,6 +296,15 @@ fn query_samples() -> Vec<(&'static str, Option<Value>)> {
             "quota_overview",
             Some(json!({"query": {"tenant_id": "local/default", "account_id": "local/default"}})),
         ),
+        (
+            "task_usage",
+            Some(json!({"query": {
+                "client": null, "task_id": null, "group_id": null, "subtask_id": null,
+                "operation": null, "provider": null, "model": null, "status": null,
+                "started_after_ms": null, "started_before_ms": null,
+                "group_by": "task", "limit": 100, "cursor": null
+            }})),
+        ),
         ("snapshot_fetch", None),
         (
             "skill_record_preview",
@@ -1116,6 +1125,16 @@ fn query_registry_covers_every_variant_without_wildcard() {
                 false,
                 true,
                 V1_0,
+            ),
+            AppQuery::TaskUsage { .. } => assert_query_entry(
+                &query,
+                "task_usage",
+                true,
+                None,
+                None,
+                false,
+                true,
+                pawork_protocol::V1_26,
             ),
             AppQuery::SnapshotFetch => assert_query_entry(
                 &query,

@@ -16,8 +16,8 @@ use ts_rs::TS;
 use crate::app::SubagentListData;
 use crate::headless::{HeadlessRequest, HeadlessResponse};
 use crate::{
-    API_VERSION, AppCommandEnvelope, AppEventEnvelope, AppQueryEnvelope, AppResponseEnvelope,
-    ClientFrame, SUPPORTED_API_VERSIONS, ServerFrame,
+    AppCommandEnvelope, AppEventEnvelope, AppQueryEnvelope, AppResponseEnvelope, ClientFrame,
+    ServerFrame, API_VERSION, SUPPORTED_API_VERSIONS,
 };
 
 type Result<T> = std::result::Result<T, TypegenError>;
@@ -132,6 +132,8 @@ fn generate_core_api(output: &Path) -> Result<(&'static str, BTreeMap<String, St
     // `subagent_list` 的 Data 载荷走 `AppResponse::Data(Value)`，不在 envelope
     // 依赖图内；作为 GUI 契约面（API 1.20+）显式导出。
     SubagentListData::export_all(&config)?;
+    pawork_domain::TaskUsageReport::export_all(&config)?;
+    pawork_domain::TaskUsageOperationReport::export_all(&config)?;
     write_core_api_versions(output)?;
     Ok(("core-api", collect_declarations(output)?))
 }
@@ -162,6 +164,7 @@ fn generate_gui_protocol(output: &Path) -> Result<(&'static str, BTreeMap<String
     ClientFrame::export_all(&config)?;
     ServerFrame::export_all(&config)?;
     SubagentListData::export_all(&config)?;
+    pawork_domain::TaskUsageReport::export_all(&config)?;
     Ok(("gui-protocol", collect_declarations(output)?))
 }
 

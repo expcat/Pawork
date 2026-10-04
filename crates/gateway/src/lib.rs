@@ -10,7 +10,7 @@ pub mod tokens;
 pub use backend::{
     GatewayBackend, GatewayChatRequest, GatewayContent, GatewayContentPart, GatewayContentUrl,
     GatewayError, GatewayMessage, GatewayModel, GatewayModelCapabilities, GatewayStreamOptions,
-    GatewayVideoRequest,
+    GatewayUsageLink, GatewayVideoRequest, GatewayVideoResponse,
 };
 pub use server::{gateway_is_running, serve_gateway};
 pub use tokens::{GatewayTokenInfo, GatewayTokenStore};

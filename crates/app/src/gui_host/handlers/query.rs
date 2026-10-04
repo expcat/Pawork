@@ -4,6 +4,32 @@ use serde_json::{json, Value};
 
 use super::super::{session_tree_entry, GuiHostAdapter};
 
+pub(crate) async fn task_usage(
+    adapter: &GuiHostAdapter,
+    query: &AppQuery,
+) -> Result<AppResponse, GuiHostError> {
+    let AppQuery::TaskUsage { query } = query else {
+        unreachable!("task_usage handler")
+    };
+    if !query.validate() {
+        return Err(GuiHostAdapter::host_error(
+            "invalid_query",
+            "Invalid task usage query.",
+        ));
+    }
+    let core = adapter.core.read().await;
+    let report = core
+        .usage
+        .control
+        .ledger
+        .task_usage_report(query)
+        .await
+        .map_err(|e| GuiHostAdapter::host_error("usage_unavailable", e.to_string()))?;
+    Ok(AppResponse::Data(serde_json::to_value(report).map_err(
+        |e| GuiHostAdapter::host_error("internal", e.to_string()),
+    )?))
+}
+
 pub(crate) async fn workspace_list(
     adapter: &GuiHostAdapter,
     query: &AppQuery,

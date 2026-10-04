@@ -859,6 +859,7 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "plan.steps" => ("One step per line", "每行一个步骤"),
         "plan.reason" => ("Reason for rejection", "拒绝原因"),
         "goal.title" => ("Continuous goal", "持续目标"),
+        "usage.title" => ("Task usage", "任务消耗"),
         "common.cancel" => ("Cancel", "取消"),
         "goal.active" => ("Running", "运行中"),
         "goal.paused" => ("Paused", "已暂停"),

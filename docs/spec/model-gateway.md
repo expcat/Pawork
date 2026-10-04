@@ -6,7 +6,7 @@
 
 ## 决策：GW-1 通用本机模型接口
 
-本次用户明确要求 Pawork 提供通用、可复用的外部模型访问接口。采用 OpenAI Chat Completions 兼容子集，独立于 GUI/core-api/ACP，不变更既有协议版本、Agent 事件或数据库 schema。仍由唯一 `pawork` 二进制托管。2026-09-27 按用户授权的包边界调整，将 HTTP/SSE 与客户端 token 提取到 `pawork-gateway`；AppCore 实现 `GatewayBackend`，继续负责模型路由、账户快照、租约与用量，CLI 负责进程装配。HTTP 沿用 hyper / hyper-util / http-body-util，无新增第三方依赖。
+Pawork 提供通用、可复用的外部模型访问接口，采用 OpenAI Chat Completions 兼容子集，由唯一 `pawork` 二进制托管。HTTP Gateway 独立于 GUI/core-api/ACP；初版未改变 Agent 事件或数据库 schema，2026-10-04 的任务日志扩展见下文。2026-09-27 按用户授权的包边界调整，将 HTTP/SSE 与客户端 token 提取到 `pawork-gateway`；AppCore 实现 `GatewayBackend`，继续负责模型路由、账户快照、租约与用量，CLI 负责进程装配。HTTP 沿用 hyper / hyper-util / http-body-util，无新增第三方依赖。
 
 后端调用保持「prepare → run」两阶段：参数、模型与凭证准备失败先返回正常 HTTP 错误，再开始补全或发送 SSE 成功响应头。宿主的 `Completion` 为不透明快照，接入层不读取凭证或重做模型路由。
 
@@ -122,7 +122,114 @@ usage 使用 prompt_tokens / completion_tokens / total_tokens，缓存读取量�
 
 每请求分配随机唯一 request ID，使用既有 CredentialPool 租约，按 `thirdparty/<client>` 租户与实际 provider/credential 归属写 UsageLedger。取消或失败时仅记已收到的 usage，不估造缺失用量；上游完全未回传 usage（如图像生成模型经 chat 兼容端点）时零记录如实跳过账本，不伪造 token，也不让已成功响应因记账校验回 500（ADR-064）。第三方记录独立于 `local/default`，当前不并入 GUI 的个人 quota 投影；同一厂商账号的真实远端额度仍共同消耗。池的并发限制沿用进程内、租户/账号作用域，不宣称跨进程全局限流。未提供价格时费用记录为 unknown/unpriced。
 
+## 任务日志与统计（2026-10-04）
+
+本次新增持久调用日志及查询，复用既有供应商执行、鉴权和账本连接。完整作品是一级 `task`，小说章节 / 视频分段是可选二级 `subtask`，分部是正交的可选 `group`；消耗用途单独用 `operation`。客户端不需要把小说和视频改成同一种页面。相同作品跨客户端的关联只由明确提交的 task ID 决定，不按时间 / 名称猜测。
+
+### 生成时提交关联
+
+`POST /v1/chat/completions` 可追加以下字段，旧客户端省略时仍记录为未关联任务。文字 / 分镜操作要求 text 能力，图片操作要求 image_output 能力；省略 operation 上下文时由已解析模型能力判断 text 或 image。
+
+```json
+{
+  "model": "glm-coding/glm-5.2",
+  "messages": [{"role": "user", "content": "续写本章"}],
+  "pawork_usage": {
+    "task": {"id": "novel:42", "title": "纸船的午后"},
+    "group": {"id": "part:1", "title": "第一部"},
+    "subtask": {"id": "chapter:3", "title": "第三章"},
+    "operation": "text",
+    "retry_of": null
+  }
+}
+```
+
+视频 `POST /v1/video/tasks` 追加相同上下文，把 subtask 换成分段、operation 设为 `video`；仍仅接受已有 model / prompt 生成参数。group / subtask / retry_of 可省略或为 null。ID 为稳定非空字符串，最多 256 字节；标题最多 512 字节，是调用时的快照，后续改名仍按 ID 关联；均拒绝控制字符。不能把 bearer token、提示词或正文放入这些字段。`retry_of` 是同一 client、同一作品的原 call ID，明确补交生成新记录，保留原记录。
+
+普通响应及每个 SSE chunk 追加 `"pawork_usage":{"call_id":"gateway-…"}`；视频响应另有 `related_call_id`（提交时 null，查询时为原生成 call ID）。call ID 与 OpenAI completion ID、账号限定的视频任务 id 各司其职，客户端应分别保存。已经进入执行阶段的错误尽可能返回 `error.call_id`；准备阶段拒绝没有已执行记录。
+
+### 查询记录与全量汇总
+
+`POST /v1/usage/query` 接受 JSON `TaskUsageQuery`，复用 Gateway bearer 鉴权：
+
+```json
+{
+  "task_id": "novel:42",
+  "group_id": "part:1",
+  "group_by": "subtask",
+  "limit": 100
+}
+```
+
+| 字段 | 语义 |
+| --- | --- |
+| client | 可省略；Host 强制使用 token 所属 client，传其它 client 返回 403 |
+| task_id / group_id / subtask_id | 完整作品 / 分部 / 章节或分段精确筛选，可组合 |
+| operation | text / storyboard / image / video / coding / query / download / import / export / edit |
+| provider / model / status | 精确筛选；status 为 running / submitted / succeeded / failed / cancelled / unknown |
+| started_after_ms / started_before_ms | Unix 毫秒半开区间 `[start,end)`；不是归档时间或媒体时长 |
+| group_by | task（缺省）/ group / subtask / operation / model / client |
+| limit / cursor | limit 缺省 100，1–200；cursor 原样回传 `next_cursor`，不解析或自行生成 |
+
+响应为 `TaskUsageReport { totals, groups, records, next_cursor }`。totals 与 groups 总计全部匹配记录，limit / cursor 只分页 records；不要把每页 totals 再相加。groups 每项携带 key / title / totals / filter，filter 提供保留已有筛选的准确下钻条件；未关联维度的 filter 为 null。章节 / 分部 key 包含父作品，客户端不得解析 key。records 按 `(started_at_ms,client,id)` 倒序，末页 next_cursor 为 null。数据仍可能在轮询后更新，刷新重新从首页查询。
+
+记录包含 call ID、认证 client、来源（gateway / native_run / client_report）、任务上下文、操作、供应商 / 模型、开始 / 完成毫秒、状态、可空 Token / cost / output_images / planned_video_seconds、上游任务 ID / 状态、related_call_id 和脱敏 error_code。没有提示词、正文、媒体 URL 或供应商 Secret。
+
+totals 分别给出 records、generation_calls、failed / cancelled / unfinished、已知 tokens（输入 / 输出 / 缓存读写）、unknown_token_calls / unknown_cost_calls、output_images、planned_video_seconds、currencies。每币种区分 actual_micros / estimated_micros 与各自 records 数；没有对应记录时不展示虚构的实际 0，不跨币种合计。未知条数只覆盖生成和原生 Run，查询 / 本地操作不伪造未知生成费用。缓存读写保留 canonical 定义，不再加到输入 / 输出 Token 上。
+
+### 上报关联的本地操作
+
+`POST /v1/usage/operations` 只记录下载 / 导入 / 导出 / 编辑，不能补报生成 Token 或费用：
+
+```json
+{
+  "report_id": "download:stable-operation-id",
+  "context": {
+    "task": {"id": "film:42", "title": "纸船的午后"},
+    "subtask": {"id": "segment:3", "title": "第三段"},
+    "operation": "download"
+  },
+  "status": "succeeded",
+  "started_at_ms": 1791000000000,
+  "finished_at_ms": 1791000001200,
+  "related_call_id": "gateway-original-generation-id"
+}
+```
+
+report_id 最多 128 字节，Host 生成 `client-<report_id>`，同 client 的相同报告重放幂等，内容冲突 409；终态只接受 succeeded / failed / cancelled，结束时间不得早于开始时间。关联原 call 必须存在于该 client。响应为 TaskUsageRecord，明确 source=client_report；多余字段（包括 Token、金额）400。这些记录不增加生成次数 / 图像 / 视频用量。
+
+### 记录与显示边界
+
+鉴权、请求与模型 / 凭证准备成功后，执行尝试在租约 / 上游前持久化；正常、失败、取消都有日志，尚未执行的准备拒绝不冒充已执行调用。费用账本仍只追加非零用量，日志能记录无 usage 的成功图片和视频。Token 只有明确 UsageUpdated 或非零 summary 才确认，缺失为 null；标准 OpenAI usage 里的兼容零值不能作为账单证据，应以日志的可空 tokens 为准。
+
+Gateway 当前没有供应商账单来源，cost 为 null；原生 Pawork Run 只在既有 pricing 可用时提供 estimated。视频秒数是固定参数的计划值（当前每次提交 5 秒），不能当实测媒体时长、credits 或实际扣费。提交超时 / 取消 / 回执丢失可能已被上游接受，记 unknown，明确补交单独保留。查询作为 query 关联原生成并更新确认终态，保持提交耗时，不重复生成统计；已确认终态不会被迟到并发轮询倒退。
+
+新视频 handle 的 client owner 持久化，跨 client 查询返回 404；升级前未有日志的旧 handle 沿用原查询能力，查询记录未关联，不回填猜测 owner。历史缺失调用和账单不能从成片 / 字数反推。running 也表示结果尚未确认，进程异常退出不能伪造成功或零扣费。
+
+相同 data_dir / instance 的 Gateway 与 GUI Host 读取同一 `usage-ledger.sqlite3`（SQLite v4 纯新增表，保留 v2/v3 历史费用与去重）；GUI API 1.26 的 task_usage 可汇总该实例全部 client。Desktop 入口与显示见 [任务消耗](task-usage-ui.md#7-本轮生产实现)；消费者应按各自 token 查询，在 MoMai 用作品 / 分部 / 章节，在 YingMai 用作品 / 分段 / 操作类型。
+
 ## 验证边界
+
+### 2026-10-04 任务消耗验证记录
+
+所选 domain / control-plane / protocol / gateway / app / client 回归通过。组合命令在新 registry 样本的默认字段往返断言失败；样本改为完整 canonical JSON 后，失败与尚未执行目标全部补跑通过，旧 golden 保留。Desktop 首次定位到新增侧栏入口推低列表而 AX 坐标仍按旧位置计算；修正为页脚入口并读取真实列表视口。随后真窗口发现纯查询 / 本地操作费用文案有歧义，改为「不计生成费用」，最终 Desktop 258 项回归全部通过。
+
+```bash
+bash scripts/test.sh domain control-plane protocol gateway app client
+cargo test -p pawork-protocol --offline --features typegen \
+  --test registry --test resume --test snapshot --test subagents \
+  --test typegen --test workspace_files
+bash scripts/test.sh desktop
+bash scripts/pawork-desktop.sh build
+bash scripts/mock/gate.sh --level 0
+git diff --check
+```
+
+修改与新增的 29 个 Rust 文件另通过 `rustfmt --check --edition 2021 --config skip_children=true`；typegen 与检入 schema 一致。组合失败日志保留在 `/tmp/pawork-task-usage-tests-verified.log`，补验及最终日志为 `/tmp/pawork-task-usage-protocol-remaining.log`、`/tmp/pawork-task-usage-desktop-tests-ui-final.log`、`/tmp/pawork-task-usage-build-final.log`。全 workspace 门禁未运行。
+
+代理使用本次正式构建、隔离 `usage` 实例的真实 GUI Host / Gateway、本地模拟上游与平行 bundle 验收。小说两章及分部、明确补交；视频两段的分镜 / 图片成功与失败补交 / 视频成功与失败及各两次查询；下载幂等重放及 101 条本地导出共同产生 **115 条记录、9 次生成、2 张已知图片、10 秒视频计划提交**。MoMai 作用域 104 条 / 3 次生成 / 27 输入 Token，YingMai 11 条 / 6 次生成 / 5 条 Token 未回传 / 2 条失败；API 精确下钻、全量汇总与分页、客户端 / 伪游标拒绝、视频 owner 和拒绝补报 Token 均通过。SQLite v4 持久条目与查询一致，不含测试 token、提示词和媒体 URL；视频查询没有重复计生成或延长原提交耗时。
+
+真实 GPUI 窗口复验章节 / 分部 / 分段、操作 / 模型 / 客户端 / 时间筛选、未知与不计生成费用、失败 / 补交详情、101 条加载更多、复制 ID、Tab / Shift+Tab / Enter / Esc、1000 / 720 / 572 px 宽度和断线错误。HTTP / SQLite 证据及截图保留于 `/tmp/pawork-task-usage-acceptance`，不入仓库；最终 Global 配置原字节和权限已恢复，GUI / Host / Gateway / mock 进程退出。这是代理模拟上游与本机真窗口验收；真实供应商账单和用户人工验收未由本轮证明，已提交并推送，未发布、未归档。
 
 定向回归通过真实本地 HTTP 和模拟上游检查目录、鉴权、token 撤销、非流式/SSE/usage、请求模型路由、结构化参数保留、Host/Origin 拒绝，以及流式超时错误、断开后取消和部分用量落账。token 测试检查无秘密落盘、文件权限和路径拒绝。实例锁回归检查与 GUI 共存、网关独占和不清扫 Agent 会话。MoMai 实际客户端与实际网关跨进程验证目录与撤销错误，普通/SSE 补全连接本地模拟上游；CLI 另验签发/list/revoke/serve/status/shutdown。真实供应商、Windows 系统行为、系统服务安装不由这些回归证明，状态见 [ROADMAP](../ROADMAP.md)。
 

@@ -40,6 +40,12 @@ use thiserror::Error;
 use tokio::sync::Mutex as AsyncMutex;
 
 pub use pawork_domain::VideoContent;
+pub use pawork_domain::{
+    TaskUsageContext, TaskUsageCost, TaskUsageCostKind, TaskUsageCurrencyTotal, TaskUsageCursor,
+    TaskUsageGroup, TaskUsageGroupBy, TaskUsageOperation, TaskUsageOperationReport, TaskUsageQuery,
+    TaskUsageRecord, TaskUsageReport, TaskUsageSource, TaskUsageStatus, TaskUsageTotals,
+    UsageTaskRef,
+};
 /// 重连 disposition（服务端判定结果，[`SessionInfo`] / [`ResumeOutcome`] 使用）。
 pub use pawork_protocol::ResumeDisposition;
 

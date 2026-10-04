@@ -190,6 +190,16 @@ GUI `run_start` 在既有 ToolScheduler 注册 `terminal` / `browser`，保留�
 
 `RunStart.video_urls` 验证版本、HTTP(S) 无凭据引用及视频/附件合计最多 4 项，转成 canonical Video 后进入持久消息/能力 gate；Host 不下载视频。历史共享投影保留 MIME 和 URL。新增 Plan、目标预算/停止/恢复、录制加载与拒绝、视频运行/重放回归；验收状态见 [ROADMAP](../../ROADMAP.md)。
 
+### 任务日志装配（2026-10-04）
+
+`gateway_backend.rs` 在准备完成后、租约 / 上游执行前记调用，正常 / 失败 / 取消都收尾；无效请求、鉴权或准备阶段拒绝不记为已执行尝试。`UsageSink` 只有收到 UsageUpdated 或非零 summary 才确认 Token，默认零值不冒充回传；ImageOutput 计已知图片。费用账本沿用非零 append-only 规则，调用日志同时保留没有用量的请求。Gateway 费用目前未知，不从响应成功推算扣费。
+
+视频提交记计划 5 秒，回执 / 轮询补供应商任务 ID 与确认终态；查询单独作为 query 记录、关联原生成，不增加生成 / Token / 视频秒数。并发轮询保留首先确认的终态，查询自身日志仍收尾。新视频任务跨 client 查询返回 404；无日志 owner 的旧 handle 保留兼容查询且不臆造归属。日志与租约错误带 call ID，释放失败也保留已接收的供应商回执。
+
+`services/run.rs` 同源记录 client=local/pawork（不可签发为外部 token）、source=native_run、operation=coding 的 Run 汇总，按 session → Run 关联，估算费用明确标 estimated，不计单次生成次数；无回传依据的零用量为未知。开始记录失败拒绝执行；Run 真终态已落库后，日志收尾失败仅显式 warn，不改变 canonical Run 终态。
+
+GUI `handlers/query.rs::task_usage` 经 API 1.26 读取同一 UsageLedger；Gateway 和 GUI 在相同 data_dir / instance 打开同一 `usage-ledger.sqlite3`，GUI 可汇总各 client。HTTP client/cursor 越权 403、本地操作不可伪造费用。
+
 ## 4. 核心行为与数据流
 
 2026-09-24 修复：GUI Host 管理 Run/自动命名任务，关停先取消 Run 并等待持久终态，回收查询与事件转发器后释放 Core；握手及首个快照等待响应 Host close。`tasks_cancel`（GUI API 1.23）在原 Host 触发真实令牌；重放快照不授予任务所有权。`tasks.json` 在跨进程文件锁内合并各 Host 自有任务事件，避免旁观者旧快照覆盖其他 Host。定向资产：`host_shutdown_drains_run_and_releases_core_after_persisting_cancellation`、`host_close_before_handshake_or_initial_snapshot_finishes`、`independent_hosts_preserve_each_others_tasks_and_cannot_cancel_foreign_tokens`。最新门禁状态见 [ROADMAP](../../ROADMAP.md)。
@@ -398,6 +408,8 @@ API-key 渠道静态 / 配置回退复用 `ApiKeyChannelConfig::transport_for`�
 UI-6b 扩展已有 key 端到端用例：添加第二个 key、持 Run 读锁选择不阻塞、选中删除拒绝、删除非选中账号保留连接状态、旧 minor 过滤字段、下一 Run 命中第二个 Bearer、ledger/DB 无明文。ADR-061：`auth_account_empty_name_generates_label_and_rename` 覆盖空名生成脱敏默认名、重命名别名与空重命名拒绝。
 
 提交前复核扩展现有 `slow_upstream_queries_allow_writes_heartbeat_and_drop_on_disconnect`：对 ModelList 和账户额度查询分别模拟持读锁等待上游，同连接写命令等待写锁；释放上游后两条响应按各自 request_id 正确返回，等待期间心跳可用、断连取消未完成查询。旧 `FuturesUnordered` 实现先复现写命令超时，连接级 `JoinSet` 修复后通过。
+
+任务消耗扩展现有 Gateway 回归：带小说 / 分部 / 章节的 Chat 元数据不送上游、call ID、全量汇总分页、token client 隔离、本地操作幂等与伪 Token 拒绝、图像 / 无 usage / 失败记录、断连部分用量、视频持久重开 / 跨客户端拒绝 / 并发轮询不重复统计。运行 `bash scripts/test.sh app`。
 
 ## 8. 注意事项与已知限制
 

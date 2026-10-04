@@ -5,7 +5,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use pawork_domain::{
     AgentEvent, AgentEventEnvelope, CancellationToken, ContentPart, DegradeEvent, EventId,
     EventSequence, Message, MessageId, MessageRole, ModelResponseSummary, RequestId, RunId,
-    SessionId, TextContent,
+    SessionId, TaskUsageContext, TaskUsageCost, TaskUsageCostKind, TaskUsageOperation,
+    TaskUsageRecord, TaskUsageSource, TaskUsageStatus, TextContent, UsageTaskRef,
 };
 use pawork_engine::{
     assemble_request, assemble_request_with_tools, run_manual_compaction, run_session,
@@ -347,6 +348,45 @@ impl RunService {
                 None
             }
         };
+        let mut usage_log = TaskUsageRecord {
+            id: format!("native-{}", run_id.as_str()),
+            // 斜线命名空间不能签发为 Gateway client，防止外部 token 读取原生 Run。
+            client: "local/pawork".into(),
+            source: TaskUsageSource::NativeRun,
+            context: Some(TaskUsageContext {
+                task: UsageTaskRef {
+                    id: format!("session:{}", session_id.as_str()),
+                    title: "Pawork 会话".into(),
+                },
+                group: None,
+                subtask: Some(UsageTaskRef {
+                    id: run_id.as_str().into(),
+                    title: run_id.as_str().into(),
+                }),
+                operation: TaskUsageOperation::Coding,
+                retry_of: None,
+            }),
+            operation: TaskUsageOperation::Coding,
+            provider: Some(core.provider_id.as_str().into()),
+            model: Some(core.model.as_str().into()),
+            started_at_ms: pawork_engine::now_timestamp().as_unix_millis(),
+            finished_at_ms: None,
+            status: TaskUsageStatus::Running,
+            tokens: None,
+            cost: None,
+            output_images: None,
+            planned_video_seconds: None,
+            upstream_task_id: None,
+            upstream_status: None,
+            related_call_id: None,
+            error_code: None,
+        };
+        core.usage
+            .control
+            .ledger
+            .start_task_usage(usage_log.clone())
+            .await
+            .map_err(|e| AppError::ControlPlane(e.to_string()))?;
         let result = run_session(
             provider.as_ref(),
             request,
@@ -366,6 +406,15 @@ impl RunService {
             Ok(summary) => Some(summary.usage.clone()),
             Err(_) => core.projected_run_usage(session_id, &run_id).await,
         };
+        usage_log.tokens = usage.clone().filter(|u| !u.is_zero());
+        usage_log.cost = usage_log
+            .tokens
+            .as_ref()
+            .and_then(|u| core.estimate_cost_for(&core.model, u))
+            .map(|value| TaskUsageCost {
+                value,
+                kind: TaskUsageCostKind::Estimated,
+            });
         if let Some(usage) = usage.filter(|item| !item.is_zero()) {
             if let Err(error) = core
                 .record_completed_usage(session_id, &run_id, &request_id, &usage)
@@ -383,6 +432,31 @@ impl RunService {
         } else {
             pawork_domain::TaskStatus::Failed
         };
+        usage_log.status = match finish_status {
+            pawork_domain::TaskStatus::Completed => TaskUsageStatus::Succeeded,
+            pawork_domain::TaskStatus::Canceled => TaskUsageStatus::Cancelled,
+            _ => TaskUsageStatus::Failed,
+        };
+        usage_log.finished_at_ms = Some(
+            pawork_engine::now_timestamp()
+                .as_unix_millis()
+                .max(usage_log.started_at_ms),
+        );
+        usage_log.error_code = result.as_ref().err().map(|e| {
+            if e.is_cancelled() {
+                "cancelled"
+            } else {
+                "run_failed"
+            }
+            .into()
+        });
+        let journal_result = core
+            .usage
+            .control
+            .ledger
+            .finish_task_usage(usage_log)
+            .await
+            .map_err(|e| AppError::ControlPlane(e.to_string()));
         if let Some(task_id) = &task_id {
             match core.tasks_finish_from_run(task_id, finish_status, None) {
                 Ok(()) => {
@@ -403,6 +477,10 @@ impl RunService {
                     emit_tasks_finish_degrade(core, session_id, &run_id, &sink, degrade).await;
                 }
             }
+        }
+        if let Err(error) = journal_result {
+            // Run 的真实终态已持久化，统计故障不能改写为另一条 RunFailed。
+            tracing::warn!(error = %error, call_id = %format!("native-{}", run_id.as_str()), "task usage journal finish failed");
         }
         Ok(result?)
     }
@@ -1076,6 +1154,29 @@ mod tests {
         assert!(
             found,
             "run sink must receive tasks_finish_failed Diagnostic"
+        );
+        let report = core
+            .usage
+            .control
+            .ledger
+            .task_usage_report(&pawork_domain::TaskUsageQuery {
+                client: Some("local/pawork".into()),
+                ..Default::default()
+            })
+            .await
+            .expect("native journal");
+        assert_eq!(report.totals.records, 1);
+        assert_eq!(
+            report.totals.generation_calls, 0,
+            "Run summaries are not individual generations"
+        );
+        assert_eq!(
+            report.records[0].status,
+            pawork_domain::TaskUsageStatus::Succeeded
+        );
+        assert!(
+            report.records[0].tokens.is_none(),
+            "no usage event is not a confirmed zero"
         );
         core.shutdown().await.expect("shutdown");
     }

@@ -6,7 +6,7 @@ use pawork_control_plane::credential::{AcquireRequest, LeaseOutcome};
 use pawork_domain::*;
 use pawork_gateway::{
     GatewayBackend, GatewayChatRequest, GatewayContent, GatewayContentPart, GatewayError,
-    GatewayModel, GatewayVideoRequest,
+    GatewayModel, GatewayUsageLink, GatewayVideoRequest, GatewayVideoResponse,
 };
 use serde_json::Value;
 use std::sync::{Arc, Mutex};
@@ -121,6 +121,8 @@ pub struct GatewayCompletion {
     provider_id: ProviderId,
     account_id: String,
     credential_id: Option<String>,
+    usage_context: Option<TaskUsageContext>,
+    operation: TaskUsageOperation,
 }
 
 const VIDEO_PROVIDER: &str = "qwen-token-plan";
@@ -143,6 +145,74 @@ fn gateway_request_id() -> Result<RequestId, GatewayError> {
 enum VideoOperation<'a> {
     Submit(&'a str),
     Query(&'a str),
+}
+
+fn usage_error(error: pawork_control_plane::UsageLedgerError) -> GatewayError {
+    use pawork_control_plane::UsageLedgerError::*;
+    match error {
+        InvalidRecord { .. } => GatewayError::invalid(),
+        Conflict { .. } => GatewayError::new(
+            409,
+            "usage_conflict",
+            "Usage report conflicts with an existing record.",
+        ),
+        _ => GatewayError::new(
+            500,
+            "usage_unavailable",
+            "Cannot access task usage records.",
+        ),
+    }
+}
+fn gateway_record(
+    id: &str,
+    client: &str,
+    context: Option<TaskUsageContext>,
+    operation: TaskUsageOperation,
+    provider: Option<String>,
+    model: Option<String>,
+) -> TaskUsageRecord {
+    TaskUsageRecord {
+        id: id.into(),
+        client: client.into(),
+        source: TaskUsageSource::Gateway,
+        context,
+        operation,
+        provider,
+        model,
+        started_at_ms: pawork_engine::now_timestamp().as_unix_millis(),
+        finished_at_ms: None,
+        status: TaskUsageStatus::Running,
+        tokens: None,
+        cost: None,
+        output_images: None,
+        planned_video_seconds: None,
+        upstream_task_id: None,
+        upstream_status: None,
+        related_call_id: None,
+        error_code: None,
+    }
+}
+fn complete_record<T>(record: &mut TaskUsageRecord, result: &Result<T, GatewayError>) {
+    record.finished_at_ms = Some(
+        pawork_engine::now_timestamp()
+            .as_unix_millis()
+            .max(record.started_at_ms),
+    );
+    record.status = match result {
+        Ok(_) => TaskUsageStatus::Succeeded,
+        Err(e) if e.code == "cancelled" => TaskUsageStatus::Cancelled,
+        Err(_) => TaskUsageStatus::Failed,
+    };
+    record.error_code = result.as_ref().err().map(|e| e.code.into());
+}
+fn video_status(status: VideoTaskStatus) -> TaskUsageStatus {
+    match status {
+        VideoTaskStatus::Pending | VideoTaskStatus::Running => TaskUsageStatus::Submitted,
+        VideoTaskStatus::Succeeded => TaskUsageStatus::Succeeded,
+        VideoTaskStatus::Failed => TaskUsageStatus::Failed,
+        VideoTaskStatus::Canceled => TaskUsageStatus::Cancelled,
+        VideoTaskStatus::Unknown => TaskUsageStatus::Unknown,
+    }
 }
 
 impl AppCore {
@@ -219,14 +289,37 @@ impl AppCore {
         provider: pawork_providers::token_plan_video::TokenPlanVideoClient,
         account: String,
         operation: VideoOperation<'_>,
+        context: Option<TaskUsageContext>,
+        original: Option<TaskUsageRecord>,
         cancel: CancellationToken,
-    ) -> Result<VideoGenerationTask, GatewayError> {
+    ) -> Result<GatewayVideoResponse, GatewayError> {
         let request_id = gateway_request_id()?;
-        let mut lease = self
-            .usage
+        let submitting = matches!(&operation, VideoOperation::Submit(_));
+        let mut record = gateway_record(
+            request_id.as_str(),
+            client,
+            context,
+            if submitting {
+                TaskUsageOperation::Video
+            } else {
+                TaskUsageOperation::Query
+            },
+            Some(VIDEO_PROVIDER.into()),
+            Some(pawork_providers::token_plan_video::TOKEN_PLAN_VIDEO_MODEL.into()),
+        );
+        record.related_call_id = original.as_ref().map(|r| r.id.clone());
+        if submitting {
+            record.planned_video_seconds = Some(5);
+        }
+        self.usage
             .control
-            .pool
-            .acquire_guard(AcquireRequest {
+            .ledger
+            .start_task_usage(record.clone())
+            .await
+            .map_err(usage_error)?;
+        let mut release_result = Ok(());
+        let result: Result<VideoGenerationTask, GatewayError> = async {
+            let mut lease = self.usage.control.pool.acquire_guard(AcquireRequest {
                 tenant_id: TenantId::new(format!("thirdparty/{client}")),
                 principal_id: PrincipalId::new(client),
                 session_id: SessionId::new(request_id.as_str()),
@@ -234,52 +327,191 @@ impl AppCore {
                 provider_id: Some(ProviderId::new(VIDEO_PROVIDER)),
                 account_id: Some(AccountId::new(format!("{VIDEO_PROVIDER}/{account}"))),
                 trace_id: None,
-            })
-            .await
-            .map_err(|_| {
-                GatewayError::new(429, "concurrency_limit", "Too many concurrent requests.")
-            })?;
-        let result = tokio::select! {
-            biased;
-            _ = cancel.cancelled() => Err(GatewayError::cancelled()),
-            result = tokio::time::timeout(std::time::Duration::from_secs(60), async {
-                match operation {
-                    VideoOperation::Submit(prompt) => provider.submit(prompt, cancel.clone()).await,
-                    VideoOperation::Query(id) => provider.query(id, cancel.clone()).await,
+            }).await.map_err(|_|GatewayError::new(429,"concurrency_limit","Too many concurrent requests."))?;
+            let result = tokio::select! {
+                biased;
+                _ = cancel.cancelled() => Err(GatewayError::cancelled()),
+                result = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+                    match operation {
+                        VideoOperation::Submit(prompt) => provider.submit(prompt, cancel.clone()).await,
+                        VideoOperation::Query(id) => provider.query(id, cancel.clone()).await,
+                    }
+                }) => match result {
+                    Ok(result) => result.map_err(GatewayError::from),
+                    Err(_) => { cancel.cancel(); Err(GatewayError::timeout()) }
                 }
-            }) => match result {
-                Ok(result) => result.map_err(GatewayError::from),
-                Err(_) => { cancel.cancel(); Err(GatewayError::timeout()) }
+            };
+            let outcome=match &result {Ok(_)=>LeaseOutcome::Completed,Err(e) if e.code=="cancelled"=>LeaseOutcome::Cancelled,Err(_)=>LeaseOutcome::Failed};
+            *lease.outcome_mut()=outcome;
+            if let Some(lease)=lease.into_lease() {
+                release_result = self.usage.control.pool.release(lease.lease_id,outcome).await.map(|_| ())
+                    .map_err(|_|GatewayError::new(500,"lease_unavailable","Cannot release model lease."));
             }
-        };
-        let outcome = match &result {
-            Ok(_) => LeaseOutcome::Completed,
-            Err(error) if error.code == "cancelled" => LeaseOutcome::Cancelled,
-            Err(_) => LeaseOutcome::Failed,
-        };
-        *lease.outcome_mut() = outcome;
-        if let Some(lease) = lease.into_lease() {
-            self.usage
-                .control
-                .pool
-                .release(lease.lease_id, outcome)
-                .await
-                .map_err(|_| {
-                    GatewayError::new(500, "lease_unavailable", "Cannot release model lease.")
-                })?;
+            result.map(|mut task| {
+                task.id=format!("{account}.{}",task.id);
+                task.model=format!("{VIDEO_PROVIDER}/{}",task.model);
+                task
+            })
+        }.await;
+        complete_record(&mut record, &result);
+        let mut original_result = Ok(());
+        if let Ok(task) = &result {
+            record.upstream_task_id = Some(task.id.clone());
+            record.upstream_status = Some(task.status);
+            if submitting {
+                record.status = video_status(task.status);
+            }
+            if let Some(mut original) = original {
+                if matches!(
+                    original.status,
+                    TaskUsageStatus::Submitted
+                        | TaskUsageStatus::Running
+                        | TaskUsageStatus::Unknown
+                ) {
+                    original.status = video_status(task.status);
+                    original.upstream_status = Some(task.status);
+                    original.error_code = matches!(task.status, VideoTaskStatus::Failed)
+                        .then(|| "video_failed".into());
+                    let original_id = original.id.clone();
+                    original_result = self.usage.control.ledger.finish_task_usage(original).await;
+                    if matches!(
+                        original_result,
+                        Err(pawork_control_plane::UsageLedgerError::Conflict { .. })
+                    ) {
+                        // 另一次并发轮询已确认终态时，保留该结果，不让迟到响应倒退状态。
+                        match self
+                            .usage
+                            .control
+                            .ledger
+                            .get_task_usage(client, &original_id)
+                            .await
+                        {
+                            Ok(Some(latest))
+                                if matches!(
+                                    latest.status,
+                                    TaskUsageStatus::Succeeded
+                                        | TaskUsageStatus::Failed
+                                        | TaskUsageStatus::Cancelled
+                                ) =>
+                            {
+                                original_result = Ok(())
+                            }
+                            Err(error) => original_result = Err(error),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        } else if submitting
+            && result
+                .as_ref()
+                .is_err_and(|e| matches!(e.code, "timeout" | "cancelled" | "upstream_error"))
+        {
+            // 请求可能已被供应商接受；没有回执不能断言没有生成或扣费。
+            record.status = TaskUsageStatus::Unknown;
         }
-        result.map(|mut task| {
-            // 可持久保存的账号限定 ID；客户端原样保存，不解析内部组成。
-            task.id = format!("{account}.{}", task.id);
-            task.model = format!("{VIDEO_PROVIDER}/{}", task.model);
-            task
-        })
+        let journal_result = self
+            .usage
+            .control
+            .ledger
+            .finish_task_usage(record.clone())
+            .await;
+        let with_id = |mut error: GatewayError| {
+            error.call_id = Some(record.id.clone());
+            error
+        };
+        journal_result.map_err(usage_error).map_err(with_id)?;
+        original_result.map_err(usage_error).map_err(with_id)?;
+        release_result.map_err(with_id)?;
+        result
+            .map(|task| GatewayVideoResponse {
+                task,
+                pawork_usage: GatewayUsageLink {
+                    call_id: record.id.clone(),
+                    related_call_id: record.related_call_id,
+                },
+            })
+            .map_err(|mut e| {
+                e.call_id = Some(record.id);
+                e
+            })
     }
 }
 
 #[async_trait]
 impl GatewayBackend for AppCore {
     type Completion = GatewayCompletion;
+    fn gateway_completion_call_id(&self, completion: &GatewayCompletion) -> String {
+        completion.request.request_id.as_str().into()
+    }
+
+    async fn gateway_task_usage(
+        &self,
+        client: &str,
+        mut query: TaskUsageQuery,
+    ) -> Result<TaskUsageReport, GatewayError> {
+        if !pawork_gateway::tokens::valid_client(client) || !query.validate() {
+            return Err(GatewayError::invalid());
+        }
+        if query.client.as_deref().is_some_and(|c| c != client)
+            || query.cursor.as_ref().is_some_and(|c| c.client != client)
+        {
+            return Err(GatewayError::new(
+                403,
+                "usage_forbidden",
+                "Usage is scoped to the authenticated client.",
+            ));
+        }
+        query.client = Some(client.into());
+        self.usage
+            .control
+            .ledger
+            .task_usage_report(&query)
+            .await
+            .map_err(usage_error)
+    }
+
+    async fn report_gateway_operation(
+        &self,
+        client: &str,
+        input: TaskUsageOperationReport,
+    ) -> Result<TaskUsageRecord, GatewayError> {
+        if !pawork_gateway::tokens::valid_client(client)
+            || !input.context.validate()
+            || !valid_usage_id(&input.report_id)
+            || input.report_id.len() > 128
+            || !input.context.operation.is_client_operation()
+            || !matches!(
+                input.status,
+                TaskUsageStatus::Succeeded | TaskUsageStatus::Failed | TaskUsageStatus::Cancelled
+            )
+            || input.started_at_ms == 0
+            || input.finished_at_ms < input.started_at_ms
+        {
+            return Err(GatewayError::invalid());
+        }
+        let id = format!("client-{}", input.report_id);
+        let mut record = gateway_record(
+            &id,
+            client,
+            Some(input.context.clone()),
+            input.context.operation,
+            None,
+            None,
+        );
+        record.source = TaskUsageSource::ClientReport;
+        record.started_at_ms = input.started_at_ms;
+        record.finished_at_ms = Some(input.finished_at_ms);
+        record.status = input.status;
+        record.related_call_id = input.related_call_id;
+        self.usage
+            .control
+            .ledger
+            .start_task_usage(record.clone())
+            .await
+            .map_err(usage_error)?;
+        Ok(record)
+    }
 
     async fn gateway_video_models(&self) -> Result<Vec<VideoGenerationModel>, GatewayError> {
         use pawork_providers::token_plan_video::TOKEN_PLAN_VIDEO_MODEL;
@@ -304,10 +536,14 @@ impl GatewayBackend for AppCore {
         client: &str,
         input: GatewayVideoRequest,
         cancel: CancellationToken,
-    ) -> Result<VideoGenerationTask, GatewayError> {
+    ) -> Result<GatewayVideoResponse, GatewayError> {
         use pawork_providers::token_plan_video::TOKEN_PLAN_VIDEO_MODEL;
         if !pawork_gateway::tokens::valid_client(client)
             || input.model != format!("{VIDEO_PROVIDER}/{TOKEN_PLAN_VIDEO_MODEL}")
+            || input
+                .pawork_usage
+                .as_ref()
+                .is_some_and(|c| !c.validate() || c.operation != TaskUsageOperation::Video)
         {
             return Err(GatewayError::invalid());
         }
@@ -327,6 +563,8 @@ impl GatewayBackend for AppCore {
             provider,
             account,
             VideoOperation::Submit(&input.prompt),
+            input.pawork_usage,
+            None,
             cancel,
         )
         .await
@@ -337,7 +575,21 @@ impl GatewayBackend for AppCore {
         client: &str,
         id: &str,
         cancel: CancellationToken,
-    ) -> Result<VideoGenerationTask, GatewayError> {
+    ) -> Result<GatewayVideoResponse, GatewayError> {
+        let original = self
+            .usage
+            .control
+            .ledger
+            .find_task_usage_video(None, id)
+            .await
+            .map_err(usage_error)?;
+        if original.as_ref().is_some_and(|r| r.client != client) {
+            return Err(GatewayError::new(
+                404,
+                "not_found",
+                "Video task is unavailable.",
+            ));
+        }
         let (account, id) = id
             .split_once('.')
             .filter(|(account, id)| {
@@ -348,8 +600,24 @@ impl GatewayBackend for AppCore {
             return Err(GatewayError::invalid());
         }
         let (provider, account) = self.gateway_video_client(Some(account))?;
-        self.execute_gateway_video(client, provider, account, VideoOperation::Query(id), cancel)
-            .await
+        let context = original
+            .as_ref()
+            .and_then(|r| r.context.clone())
+            .map(|mut c| {
+                c.operation = TaskUsageOperation::Query;
+                c.retry_of = None;
+                c
+            });
+        self.execute_gateway_video(
+            client,
+            provider,
+            account,
+            VideoOperation::Query(id),
+            context,
+            original,
+            cancel,
+        )
+        .await
     }
     async fn gateway_models(
         &self,
@@ -421,6 +689,17 @@ impl GatewayBackend for AppCore {
         &self,
         input: GatewayChatRequest,
     ) -> Result<GatewayCompletion, GatewayError> {
+        if input.pawork_usage.as_ref().is_some_and(|c| {
+            !c.validate()
+                || !matches!(
+                    c.operation,
+                    TaskUsageOperation::Text
+                        | TaskUsageOperation::Storyboard
+                        | TaskUsageOperation::Image
+                )
+        }) {
+            return Err(GatewayError::invalid());
+        }
         let (provider, model) = input
             .model
             .split_once('/')
@@ -499,6 +778,18 @@ impl GatewayBackend for AppCore {
             &self.config,
         )
         .await?;
+        let operation = input.pawork_usage.as_ref().map(|c| c.operation).unwrap_or(
+            if entry.capabilities.image_output && !entry.capabilities.text {
+                TaskUsageOperation::Image
+            } else {
+                TaskUsageOperation::Text
+            },
+        );
+        if (operation == TaskUsageOperation::Image && !entry.capabilities.image_output)
+            || (operation != TaskUsageOperation::Image && !entry.capabilities.text)
+        {
+            return Err(GatewayError::invalid());
+        }
         let account = crate::auth::effective_provider_account(self.backend.as_ref(), &provider_id)?;
         if revision
             != pawork_auth::provider_accounts_revision(self.backend.as_ref(), &provider_id)
@@ -610,6 +901,8 @@ impl GatewayBackend for AppCore {
             provider_id,
             account_id,
             credential_id,
+            usage_context: input.pawork_usage,
+            operation,
         })
     }
 
@@ -625,7 +918,26 @@ impl GatewayBackend for AppCore {
         }
         let tenant = TenantId::new(format!("thirdparty/{client}"));
         let session = SessionId::new(completion.request.request_id.as_str());
-        let mut lease = self
+        let mut log = gateway_record(
+            completion.request.request_id.as_str(),
+            client,
+            completion.usage_context,
+            completion.operation,
+            Some(completion.provider_id.as_str().into()),
+            Some(completion.request.model.as_str().into()),
+        );
+        let with_id = |mut e: GatewayError| {
+            e.call_id = Some(log.id.clone());
+            e
+        };
+        self.usage
+            .control
+            .ledger
+            .start_task_usage(log.clone())
+            .await
+            .map_err(usage_error)
+            .map_err(with_id)?;
+        let lease = self
             .usage
             .control
             .pool
@@ -638,17 +950,32 @@ impl GatewayBackend for AppCore {
                 account_id: Some(AccountId::new(&completion.account_id)),
                 trace_id: None,
             })
-            .await
-            .map_err(|_| {
-                GatewayError::new(
+            .await;
+        let mut lease = match lease {
+            Ok(value) => value,
+            Err(_) => {
+                let result: Result<ModelResponseSummary, GatewayError> = Err(GatewayError::new(
                     429,
                     "concurrency_limit",
                     "Too many concurrent model requests.",
-                )
-            })?;
+                ));
+                complete_record(&mut log, &result);
+                self.usage
+                    .control
+                    .ledger
+                    .finish_task_usage(log.clone())
+                    .await
+                    .map_err(usage_error)?;
+                return result.map_err(|mut e| {
+                    e.call_id = Some(log.id);
+                    e
+                });
+            }
+        };
         let sink = UsageSink {
             inner: sink,
-            usage: Mutex::new(TokenUsage::default()),
+            usage: Mutex::new(None),
+            images: std::sync::atomic::AtomicU64::new(0),
         };
         let result = tokio::select! {
             biased;
@@ -658,8 +985,8 @@ impl GatewayBackend for AppCore {
             }
         };
         let usage = match &result {
-            Ok(s) => s.usage.clone(),
-            Err(_) => sink.usage.lock().expect("usage").clone(),
+            Ok(summary) if !summary.usage.is_zero() => Some(summary.usage.clone()),
+            _ => sink.usage.lock().expect("usage").clone(),
         };
         let result = result.and_then(|summary| match summary.stop_reason {
             StopReason::Cancelled => Err(GatewayError::cancelled()),
@@ -672,23 +999,22 @@ impl GatewayBackend for AppCore {
             }
             _ => Ok(summary),
         });
-        // ADR-064：图像生成模型经 chat 兼容端点可能不回传 usage；账本契约
-        // 要求 token / cost 至少一项大于 0。零用量如实跳过记账：不伪造
-        // token，也不因记账失败拒绝已成功的生成结果。
-        let billable = usage
-            .input_tokens
-            .saturating_add(usage.output_tokens)
-            .saturating_add(usage.cache_read_tokens)
-            .saturating_add(usage.cache_write_tokens)
-            > 0;
-        if billable {
+        log.tokens = usage.clone();
+        if log.operation == TaskUsageOperation::Image {
+            let images = sink.images.load(std::sync::atomic::Ordering::Relaxed);
+            // 输出事件是已知证据；失败且没有输出不冒充已确认 0 张。
+            log.output_images = (images > 0 || result.is_ok()).then_some(images);
+        }
+        complete_record(&mut log, &result);
+        let billable = usage.as_ref().filter(|u| !u.is_zero());
+        let ledger_result = if let Some(usage) = billable {
             let mut record = crate::control::usage_record(
                 &session,
                 &RunId::new(completion.request.request_id.as_str()),
                 &completion.request.request_id,
                 &completion.provider_id,
                 &completion.request.model,
-                &usage,
+                usage,
                 0,
                 "",
             );
@@ -702,44 +1028,60 @@ impl GatewayBackend for AppCore {
                 .ledger
                 .record(record)
                 .await
-                .map_err(|_| {
-                    GatewayError::new(500, "usage_unavailable", "Cannot persist model usage.")
-                })?;
-        }
-        *lease.outcome_mut() = match &result {
+                .map_err(usage_error)
+        } else {
+            Ok(())
+        };
+        let journal_result = self
+            .usage
+            .control
+            .ledger
+            .finish_task_usage(log.clone())
+            .await
+            .map_err(usage_error);
+        let outcome = match &result {
             Ok(_) => LeaseOutcome::Completed,
             Err(e) if e.code == "cancelled" => LeaseOutcome::Cancelled,
             Err(_) => LeaseOutcome::Failed,
         };
-        if let Some(value) = lease.into_lease() {
+        *lease.outcome_mut() = outcome;
+        let release_result = if let Some(value) = lease.into_lease() {
             self.usage
                 .control
                 .pool
-                .release(
-                    value.lease_id,
-                    match &result {
-                        Ok(_) => LeaseOutcome::Completed,
-                        Err(e) if e.code == "cancelled" => LeaseOutcome::Cancelled,
-                        Err(_) => LeaseOutcome::Failed,
-                    },
-                )
+                .release(value.lease_id, outcome)
                 .await
+                .map(|_| ())
                 .map_err(|_| {
                     GatewayError::new(500, "lease_unavailable", "Cannot release model lease.")
-                })?;
-        }
-        result
+                })
+        } else {
+            Ok(())
+        };
+        let with_id = |mut e: GatewayError| {
+            e.call_id = Some(log.id.clone());
+            e
+        };
+        journal_result.map_err(with_id)?;
+        ledger_result.map_err(with_id)?;
+        release_result.map_err(with_id)?;
+        result.map_err(with_id)
     }
 }
 struct UsageSink {
     inner: Arc<dyn ProviderEventSink>,
-    usage: Mutex<TokenUsage>,
+    usage: Mutex<Option<TokenUsage>>,
+    images: std::sync::atomic::AtomicU64,
 }
 #[async_trait]
 impl ProviderEventSink for UsageSink {
     async fn emit(&self, event: ProviderStreamEvent) -> Result<(), ProviderError> {
         if let ProviderStreamEvent::UsageUpdated(usage) = &event {
-            *self.usage.lock().expect("usage") = usage.clone();
+            *self.usage.lock().expect("usage") = Some(usage.clone());
+        }
+        if matches!(&event, ProviderStreamEvent::ImageOutput { .. }) {
+            self.images
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
         if let ProviderStreamEvent::Error(error) = event {
             return Err(error);

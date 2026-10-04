@@ -29,6 +29,7 @@ mod settings;
 mod shell_layout;
 mod subagent_panel;
 mod task_rail;
+mod task_usage;
 mod terminal_view;
 pub mod text_input;
 pub(crate) mod theme;
@@ -143,6 +144,8 @@ pub(crate) const RAIL_TAB_INDEX_RECONNECT: isize = -17;
 pub(crate) const RAIL_TAB_INDEX_ROWS: isize = -16;
 /// TaskRail 页脚 Settings gear（SET-3）：位于行级 -16 之后，rail 焦点链尾。
 pub(crate) const RAIL_TAB_INDEX_SETTINGS: isize = -15;
+/// 任务消耗入口接在 rail 页脚之后、主工作区之前。
+pub(crate) const RAIL_TAB_INDEX_USAGE: isize = -14;
 /// composer 在 Tab 链中的位次：链尾（1 档），主路径 0 档之后。
 pub(crate) const COMPOSER_TAB_INDEX: isize = 1;
 
@@ -541,6 +544,7 @@ pub struct AppView {
     /// 时清空，避免把旧 Host 信息冒充当前状态。
     handshake_info: Option<DesktopHandshakeInfo>,
     projection: DesktopProjection,
+    task_usage_focus: FocusHandle,
     text_input: Entity<TextInput>,
     terminal_input: Entity<terminal_view::TerminalInput>,
     browser: browser::BrowserPanel,
@@ -944,6 +948,10 @@ impl AppView {
             socket,
             handshake_info: None,
             projection: DesktopProjection::default(),
+            task_usage_focus: cx
+                .focus_handle()
+                .tab_stop(true)
+                .tab_index(RAIL_TAB_INDEX_USAGE),
             text_input,
             terminal_input,
             browser: browser::BrowserPanel::new(cx),
@@ -1075,6 +1083,7 @@ impl AppView {
                 "rail-scope-layout",
                 "rail-add-layout",
                 "rail-search-layout",
+                "rail-usage-layout",
                 "rail-grouping-layout",
                 "rail-reconnect-layout",
                 "rail-settings-layout",

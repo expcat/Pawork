@@ -17,6 +17,8 @@
 
 ## 2. 模块与文件地图
 
+`src/ui/task_usage.rs`：任务消耗统计窗口；`src/controller/products.rs::task_usage_request`：经 GUI Host 的 typed 只读查询。
+
 源码全部在 `[[bin]] pawork-desktop` target 内（无 lib target、无 crate `tests/` 目录）。
 
 | 路径 | 行数 | 承载内容 |
@@ -248,6 +250,14 @@ Run 页脚和底栏使用 `run_usage_display` 显示对应 Run 输入 / 输出 t
 Composer 添加菜单接入 `ui/plan.rs`、`ui/goal.rs`、`ui/recording.rs`、`ui/video.rs`、`ui/drawing.rs`；`controller/products.rs` 在 Tokio runtime 发 typed 请求。Plan 带版本编辑/提交/批准/拒绝；Goal 显式预算/轮数、2 秒状态刷新、暂停/恢复/转向/人工达成/放弃，状态与常见暂停原因显示中英文提示；录制从持久操作选择预览、人工编辑后保存；插件面板显示真实空列表并独立链接技能/MCP。视频 URL 按任务草稿保存，编辑/清空即移除，与其它附件合计最多 4 项；模型 `video_input` 与 API 1.24 同时 gate，重放保留来源。旧 Host 的新增入口禁用并给版本提示。
 
 `ui/product_access.rs` 复用 AxBridge，为面板字段、按钮和错误同步 AX 与键盘动作；AppKit Tab monitor 只作用于活动窗口。绘图使用有界 640×360 黑色画布，撤销/清空/取消/附加，内部 PNG 编码后复用普通图片附件链。目标预算不派生子代理；关闭目标面板继续 Host 执行。自动检查与真窗口证据留在 Git 历史，剩余验收见 [ROADMAP](../../ROADMAP.md)。
+
+### 任务消耗窗口（API 1.26，2026-10-04）
+
+侧栏页脚、Local / Settings 行上方的「Task usage / 任务消耗」打开独立 GPUI 统计窗口（`ui/task_usage.rs`），复用现有产品窗口与 `PanelAccess`，主工作区 / 会话 / 草稿保留；会话列表 AX 矩形读取真实滚动视口。Controller 的 `task_usage_request` 在 Tokio 中查询 Host，旧 Host / 断线 / 失败 / 空集显式显示。
+
+可按完整任务、分部、章节 / 分段、操作、模型和客户端分组，按操作、状态和近 24h / 7d / 30d 筛选；group.filter 提供准确下钻，刷新 / 清除 / 加载更多，迟到响应按 generation 丢弃。总量覆盖全部匹配记录，列表按游标分页并去重。显示已知输入 / 输出 / 缓存读写 Token 与未知条数、按币种实际 / 估算、已知图片和计划视频秒数；调用详情显示任务 / 分部 / 章节或分段、操作类型、来源、供应商 / 模型、状态、关联 / 补交、视频 handle、耗时、未知用量与复制 ID，Esc 关闭详情。原生 Run 和本地报告明确标源；查询 / 本地操作显示不计生成用量。按钮共用鼠标 / 键盘 / AX，侧栏入口 Tab 档 -14，接在 Settings -15 后、主区 0 前；原 Reconnect -17 不变。
+
+这是本次最小生产界面；原型中的整任务结果、媒体实测时长、credits、来源证据页与账单补录没有对应生产来源，不能因原型存在宣称已接入。见 [任务消耗设计](../task-usage-ui.md)。
 
 ## 4. 核心行为与数据流
 

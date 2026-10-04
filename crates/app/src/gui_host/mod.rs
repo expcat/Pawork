@@ -834,6 +834,7 @@ gui_query_dispatch! {
     "diff_list_files" => query_diff_list_files = handlers::query::diff_list_files, inner;
     "diff_get" => query_diff_get = handlers::query::diff_get, inner;
     "quota_overview" => query_quota_overview = handlers::query::quota_overview, inner;
+    "task_usage" => query_task_usage = handlers::query::task_usage, inner;
     "goal_get" => query_goal_get = handlers::goal::get, inner;
     "skill_record_preview" => query_skill_record_preview = handlers::recording::preview, envelope;
     "plan_get" => query_plan_get = handlers::plan::get, inner;

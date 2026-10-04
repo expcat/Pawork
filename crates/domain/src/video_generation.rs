@@ -8,6 +8,7 @@ pub struct VideoGenerationModel {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typegen", derive(ts_rs::TS))]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum VideoTaskStatus {
     Pending,

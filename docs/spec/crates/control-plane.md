@@ -20,7 +20,8 @@
 | `src/decision.rs` | ~275 | `PolicyGate`（9 个 enforcement point：`RouteCandidate` / `LeaseAcquire` / `AgentSpawn` / `RequestAdmission` / `SessionQuery` / `UsageQuery` / `AuditQuery` / `AuditExport` / `Retention`）、`PolicyDecisionKind`（`Allow` / `Deny` / `Limit` / `Fallback`）、`PolicyDecisionEvent`（版本化决策事件）、`sanitize_reason`（脱敏 + 截断） |
 | `src/rbac.rs` | ~290 | `PrincipalRole`（`Admin` / `User` / `Service` / `Viewer`，`rank` / `permissions` / `allows` / `merge_deny_first`）、`Permission`（8 项）、`PermissionProfile`（`effective_role`）、`AuditExportPolicy`；合并一律 deny-first |
 | `src/tenant.rs` | ~930 | `TenantPolicy`（并发上限、预算、允许的 model/provider/account、保留期、审计导出）、`TenantPolicyDecision` / `ConcurrencyKind` / `BudgetDimension` / `TenantPolicyError`、`TenantPolicyEngine` trait（check_* + `set_policy` / `policy_version`）、`InMemoryTenantPolicyEngine`、9 个纯函数 `decide_*`（决策逻辑与引擎分离，可独立单测） |
-| `src/usage.rs` | ~2 830 | 多维 usage/cost 账本：`UsageRecord`（`RECORD_VERSION = 2`）、`UsageAttribution`、`UsageTotals`、`UsageQuery`、`UsageFilterField`、`CostConfidence`、`UsageLedgerError`、`UsageLedger` trait、`InMemoryUsageLedger`、`SqliteUsageLedger`（feature `sqlite`；`SCHEMA_VERSION = 3`）、`AUTO_RECORD_ID_PREFIX = "auto-rec-"` |
+| `src/task_usage.rs` | — | 与费用账本共用连接的调用日志、身份 / 关联校验、任务统计和游标分页；两后端及两项持久 / 隔离回归 |
+| `src/usage.rs` | ~2 830 | 多维 usage/cost 账本：`UsageRecord`（`RECORD_VERSION = 2`）、`UsageAttribution`、`UsageTotals`、`UsageQuery`、`UsageFilterField`、`CostConfidence`、`UsageLedgerError`、`UsageLedger` trait、`InMemoryUsageLedger`、`SqliteUsageLedger`（feature `sqlite`；`SCHEMA_VERSION = 4`）、`AUTO_RECORD_ID_PREFIX = "auto-rec-"` |
 | `src/credential/mod.rs` | ~2 270 | `CONTROL_PLANE_SCHEMA_VERSION = 2`、`LeaseId`、`AcquireRequest`、`CredentialLease`（**无 secret 字段**）、`LeaseOutcome`、`PoolError`、`AccountHealth`、`ReleaseReceipt`、`CredentialPool` trait、`LeaseGuard`（RAII）、`DEFAULT_LEASE_TTL_MS = 3_600_000`、`CredentialPicker` / `LegacyCredentialPicker`、`PoolConfig`、`LeaseIdGenerator`、`InMemoryCredentialPool` |
 | `src/credential/lease.rs` | ~840 | canonical 租约状态机（纯领域、无 I/O 无 await）：`LeaseState`、`LeaseRecord`（versioned、无 secret；`open` / `release` / `expire` / `reclaim` / `to_public_lease`）、`LeaseEvent`、`LeaseTransitionError`、`LeaseClock`（+ `SystemLeaseClock` / `FixedLeaseClock`）、`ReclaimReport`、`LeaseProjection`（对象安全持久化 sink，+ `Null` / `InMemory` 实现） |
 | `src/quota/mod.rs` | ~35 | 模块文档与 re-export：`adapter::{AdapterKind, QuotaAdapter}`、`domain::*`、`error::QuotaError`、`ledger::LedgerQuotaAdapter`、`service::{CacheOverview, CacheRead, QuotaClock, QuotaService}`；`util` 为私有模块 |
@@ -53,7 +54,7 @@
 - `UsageAttribution`：由宿主在 run 生命周期注入的归属五元组（tenant / principal / account / credential / trace），账本不自行猜测默认账号。
 - `UsageQuery`：`by_tenant` / `by_session` / `by_agent` / `by_credential` / `by_run` / `by_provider` / `by_model` / `by_currency` / `by_occurred_between`（半开区间）构造器，可叠加过滤；`UsageTotals` 聚合四类 token + `cost_micros`（饱和累加）。
 - 错误：`InvalidRecord`（校验失败）、`Conflict`（幂等冲突）、`MixedCurrencies`（跨币种聚合拒绝）、`Storage`。
-- `SqliteUsageLedger::open(path)`：自开 rusqlite 连接（`Mutex<Connection>`，整体 `Send + Sync`）；建表 + 迁移到 `SCHEMA_VERSION = 3`。
+- `SqliteUsageLedger::open(path)`：自开 rusqlite 连接（`Mutex<Connection>`，整体 `Send + Sync`）；建表 + 迁移到 `SCHEMA_VERSION = 4`。
 
 **audit / decision（根 re-export）**
 
@@ -105,11 +106,17 @@
 | --- | --- | --- |
 | `DEFAULT_TENANT` / `DEFAULT_PRINCIPAL` | `"local/default"` / `"local/user"` | 单机哨兵身份（ADR-038 D1） |
 | `RECORD_VERSION` | 2 | `UsageRecord` 当前版本（v1 JSON 兼容解码） |
-| `SCHEMA_VERSION`（feature `sqlite`） | 3 | usage SQLite 库 schema 版本 |
+| `SCHEMA_VERSION`（feature `sqlite`） | 4 | usage SQLite 库 schema 版本 |
 | `AUTO_RECORD_ID_PREFIX` | `"auto-rec-"` | 自动记录 ID 保留前缀 |
 | `AUDIT_SCHEMA_VERSION` | 1 | `AuditEventV1` schema 版本 |
 | `CONTROL_PLANE_SCHEMA_VERSION` = `LEASE_SCHEMA_VERSION` | 2 | 凭证租约实体 schema 版本（与 app-database 迁移对齐） |
 | `DEFAULT_LEASE_TTL_MS` | 3 600 000 | lease 默认 TTL（1 小时） |
+
+### 任务调用日志
+
+`src/task_usage.rs` 承载与费用账本共用连接的持久调用记录；`UsageLedger` 新增 `start_task_usage`、`finish_task_usage`、`get_task_usage`、`find_task_usage_video`、`task_usage_report`，Memory / SQLite 两后端实现，未实现日志的自定义账本显式返回 Storage unsupported。
+
+`task_usage_calls` 按 `(client,id)` 幂等，开始先落盘，完成仅补结果 / 用量 / 视频状态；身份、任务关联、供应商、模型、开始时间不可改。相同重放成功，冲突显式失败。视频轮询可更新 submitted/running/unknown 的确认状态，保留原提交耗时。关联 ID 必须属于同一 client，retry 还须属于同一作品。统计分开实际 / 估算币种、已知 Token 与未知条数；只有 text/storyboard/image/video 增加生成次数，query 和本地操作不重复累计。章节 / 分部 key 带父 task，避免不同作品同章节 ID 合并；下钻保留已有筛选。查询读取错误不退为空集。
 
 ## 4. 核心行为与数据流
 
@@ -158,7 +165,7 @@ UI-6b G2：`QuotaUnit::Percent` 表示整数百分点，与协议镜像同形；
 
 - **usage 去重契约（冻结）**：`record_id` 在 `(tenant, account)` 作用域内是幂等键；SQLite 侧 `idx_usage_dedup` 部分唯一索引按 `(tenant, account, request_id, COALESCE(upstream_attempt,'0'))` 强制 event/request attempt 去重。账本 append-only。
 - **audit JSONL golden（冻结）**：`AuditEventV1` 序列化必须与 `fixtures/audit/event-v1.jsonl` **逐字节**一致（内联测试 `audit_event_v1_jsonl_matches_frozen_fixture`）；fixture 中不得出现 `prompt` / `secret` / `tool_output` 字段。`AUDIT_SCHEMA_VERSION = 1`。
-- **版本常量**：`RECORD_VERSION = 2`（v1 JSON 缺省解码兼容）；SQLite `SCHEMA_VERSION = 3`（v2 → v3 迁移保留历史、补 `trace_id` 列与去重索引）；`CONTROL_PLANE_SCHEMA_VERSION = 2` = `LEASE_SCHEMA_VERSION`（与 app-database `credential_leases` 迁移对齐）。
+- **版本常量**：`RECORD_VERSION = 2`（v1 JSON 缺省解码兼容）；SQLite `SCHEMA_VERSION = 4`（v2 → v3 保留历史、补 `trace_id` 与去重索引；v3 → v4 纯新增 `task_usage_calls`，既有 append-only 费用行与 dedup 索引不改）；`CONTROL_PLANE_SCHEMA_VERSION = 2` = `LEASE_SCHEMA_VERSION`（与 app-database `credential_leases` 迁移对齐）。
 - **lease 状态机（冻结）**：`Requested → Acquired → Released | Expired → Reclaimed`；`holds_slot`（占用并发额度）只在 `Acquired`；`is_settled` 表示 `Released` / `Expired`，终态（`is_terminal`）只有 `Reclaimed`；非法迁移返回 `LeaseTransitionError`；`as_db_str` / `from_db_str` 的字符串形态与持久化层对齐。
 - **LeaseRecord 版本单调**：每次合法状态迁移 `version` 自增并产出对应 `LeaseEvent`，投影按事件序回放可重建同一快照。
 - **无 secret 不变量**：`CredentialLease` / `LeaseRecord` / audit / quota 各视图均无明文 secret 字段；`ResolvedCredential` 不可序列化；`QuotaProvenance::canonical_endpoint` 清洗 query / fragment；`QuotaError.detail` 必须已脱敏。
@@ -176,7 +183,7 @@ UI-6b G2：`QuotaUnit::Percent` 表示整数百分点，与协议镜像同形；
 
 ## 7. 测试与验证资产
 
-无独立 `tests/` 目录，共 205 个内联测试分布如下（`#[test]` + `#[tokio::test]` 计数）：
+无独立 `tests/` 目录，共 207 个内联测试分布如下（`#[test]` + `#[tokio::test]` 计数）：
 
 - `usage.rs`（35）：幂等重放 / 冲突、存储层去重（`sqlite_dedup_unique_index_is_registered` 断言 `idx_usage_dedup` 已登记、`sqlite_dedup_by_request_and_attempt_conflicts` 断言不同 record_id 的同 (request, attempt) 冲突、`in_memory_dedup_matches_sqlite_semantics` 保证双实现语义一致）、`sqlite_v2_to_v3_migration_preserves_history`（迁移保历史）、跨币种聚合拒绝、查询过滤与半开区间、类型由 `SqliteUsageLedger` 的 `Mutex<Connection>` 承担并发。
 - `credential/mod.rs`（27）+ `credential/lease.rs`（8）：并发额度（账号 / 租户 cap / 按 (tenant, account) 覆盖）、幂等释放、`LeaseGuard` Drop 释放（含 detached 驱动）、TTL 过期与 `reclaim_expired`、投影事务失败回滚计数、`recover_records` 崩溃恢复、状态机合法 / 非法迁移、property 测试（proptest）。
@@ -187,6 +194,8 @@ UI-6b G2：`QuotaUnit::Percent` 表示整数百分点，与协议镜像同形；
 - `decision.rs`（6）：`sanitize_reason` 脱敏与截断、gate / kind 标签稳定。`rbac.rs`（6）：deny-first 合并、角色权限表。`tenant.rs`（11）：各 `decide_*` 决策分支。`identity.rs`（5）：默认哨兵身份与 fail-closed。
 
 默认验证命令：`cargo test -p pawork-control-plane --offline --lib --tests`。
+
+任务日志新增两项必要回归：`journal_migrates_preserves_usage_and_resumes_video_without_double_counting`（v3 升级、历史费用保留、重开、视频确认状态与 JSON 损坏拒绝）与 `journal_report_scopes_retries_and_aggregates_all_pages_and_currencies`（Memory/SQLite 客户端隔离、补交、父任务作用域、全量汇总 + 分页、多币种与准确下钻）。
 
 ## 8. 注意事项与已知限制
 

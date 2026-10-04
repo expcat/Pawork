@@ -1,6 +1,6 @@
 use crate::AppCore;
 use async_trait::async_trait;
-use pawork_control_plane::UsageQuery;
+use pawork_control_plane::{UsageLedger, UsageQuery};
 use pawork_domain::*;
 use pawork_gateway::{serve_gateway, GatewayTokenStore};
 use serde_json::{json, Value};
@@ -77,7 +77,7 @@ async fn gateway_http_routes_models_completions_and_auth_without_exposing_provid
         .iter()
         .any(|m| m["id"] == "opencode-go/model-a"));
     assert!(!models.to_string().contains("upstream-test-secret"));
-    let request = json!({"model":"opencode-go/model-a","messages":[{"role":"system","content":"中文写作"},{"role":"user","content":"你好"}],"max_tokens":20,"response_format":{"type":"json_schema","json_schema":{"name":"answer","strict":true,"schema":{"type":"object"}}}});
+    let request = json!({"pawork_usage":{"task":{"id":"novel","title":"作品"},"group":{"id":"part-1","title":"第一部"},"subtask":{"id":"chapter-1","title":"第一章"},"operation":"text","retry_of":null},"model":"opencode-go/model-a","messages":[{"role":"system","content":"中文写作"},{"role":"user","content":"你好"}],"max_tokens":20,"response_format":{"type":"json_schema","json_schema":{"name":"answer","strict":true,"schema":{"type":"object"}}}});
     let normal = http
         .post(format!("{base}/v1/chat/completions"))
         .bearer_auth(&token)
@@ -89,6 +89,10 @@ async fn gateway_http_routes_models_completions_and_auth_without_exposing_provid
     let normal: Value = normal.json().await.unwrap();
     assert_eq!(normal["choices"][0]["message"]["content"], "你好");
     assert_eq!(normal["usage"]["total_tokens"], 5);
+    let call_id = normal["pawork_usage"]["call_id"]
+        .as_str()
+        .expect("usage identity")
+        .to_string();
     let mut streaming = request.clone();
     streaming["stream"] = json!(true);
     streaming["stream_options"] = json!({"include_usage":true});
@@ -132,6 +136,7 @@ async fn gateway_http_routes_models_completions_and_auth_without_exposing_provid
     assert_eq!(posted["model"], "model-a");
     assert_eq!(posted["response_format"]["json_schema"]["strict"], true);
     assert!(posted.get("session_id").is_none());
+    assert!(posted.get("pawork_usage").is_none());
     let records = core
         .usage
         .control
@@ -146,6 +151,99 @@ async fn gateway_http_routes_models_completions_and_auth_without_exposing_provid
     assert!(!serde_json::to_string(&records)
         .unwrap()
         .contains("upstream-test-secret"));
+    let report: TaskUsageReport = http
+        .post(format!("{base}/v1/usage/query"))
+        .bearer_auth(&token)
+        .json(&json!({"limit":1,"group_by":"model"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        (
+            report.records.len(),
+            report.totals.records,
+            report.totals.tokens.input_tokens
+        ),
+        (1, 2, 6)
+    );
+    assert_eq!(report.totals.unknown_cost_calls, 2);
+    assert!(report.next_cursor.is_some());
+    assert!(core
+        .usage
+        .control
+        .ledger
+        .get_task_usage("momai", &call_id)
+        .await
+        .unwrap()
+        .is_some());
+    let (_, foreign_token) = tokens.issue("yingmai").unwrap();
+    let foreign: TaskUsageReport = http
+        .post(format!("{base}/v1/usage/query"))
+        .bearer_auth(&foreign_token)
+        .json(&json!({}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(foreign.totals.records, 0);
+    assert_eq!(
+        http.post(format!("{base}/v1/usage/query"))
+            .bearer_auth(&token)
+            .json(&json!({"client":"yingmai"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
+    let local = json!({"report_id":"download-1","context":{"task":{"id":"novel","title":"作品"},"operation":"download","group":null,"subtask":null,"retry_of":null},"status":"succeeded","started_at_ms":10,"finished_at_ms":12,"related_call_id":call_id});
+    for _ in 0..2 {
+        assert_eq!(
+            http.post(format!("{base}/v1/usage/operations"))
+                .bearer_auth(&token)
+                .json(&local)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            200
+        );
+    }
+    let mut fabricated = local.clone();
+    fabricated["tokens"] = json!({"input_tokens":1});
+    assert_eq!(
+        http.post(format!("{base}/v1/usage/operations"))
+            .bearer_auth(&token)
+            .json(&fabricated)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        400
+    );
+    let report = core
+        .usage
+        .control
+        .ledger
+        .task_usage_report(&TaskUsageQuery {
+            client: Some("momai".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        (
+            report.totals.records,
+            report.totals.generation_calls,
+            report.totals.tokens.input_tokens
+        ),
+        (3, 2, 6)
+    );
     assert_eq!(
         http.get(format!("{base}/v1/models"))
             .send()
@@ -417,6 +515,20 @@ async fn gateway_models_purpose_filter_and_multimodal_gates() {
     assert_eq!(message["images"][0]["url"], "https://gen.example/out.png");
     assert_eq!(completion["choices"][0]["finish_reason"], "stop");
     assert_eq!(completion["usage"]["total_tokens"], 34);
+    let log = core
+        .usage
+        .control
+        .ledger
+        .get_task_usage(
+            "momai",
+            completion["pawork_usage"]["call_id"].as_str().unwrap(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(log.operation, TaskUsageOperation::Image);
+    assert_eq!(log.output_images, Some(1));
+    assert!(log.cost.is_none());
     let image_request = upstream
         .received_requests()
         .await
@@ -481,6 +593,26 @@ async fn gateway_models_purpose_filter_and_multimodal_gates() {
         .await
         .unwrap();
     assert_eq!(vision["choices"][0]["message"]["content"], "image received");
+    let unknown = core
+        .usage
+        .control
+        .ledger
+        .get_task_usage("momai", vision["pawork_usage"]["call_id"].as_str().unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(unknown.status, TaskUsageStatus::Succeeded);
+    assert!(unknown.tokens.is_none() && unknown.cost.is_none());
+    let failed_log = core
+        .usage
+        .control
+        .ledger
+        .get_task_usage("momai", failure["error"]["call_id"].as_str().unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(failed_log.status, TaskUsageStatus::Failed);
+    assert!(failed_log.tokens.is_none() && failed_log.output_images.is_none());
     cancel.cancel();
     tokio::time::timeout(Duration::from_secs(5), server)
         .await
@@ -597,6 +729,21 @@ async fn gateway_disconnect_cancels_upstream_and_records_partial_usage() {
     })
     .await
     .expect("disconnect must stop and account upstream");
+    let report = core
+        .usage
+        .control
+        .ledger
+        .task_usage_report(&TaskUsageQuery {
+            client: Some("editor".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(report.totals.records, 2);
+    assert_eq!(report.totals.tokens.input_tokens, 14);
+    assert_eq!(report.totals.cancelled, 1);
+    assert_eq!(report.totals.failed, 1);
+    assert!(report.records.iter().all(|r| r.finished_at_ms.is_some()));
     cancel.cancel();
     tokio::time::timeout(Duration::from_secs(5), server)
         .await
@@ -624,7 +771,7 @@ async fn gateway_native_video_submits_once_queries_and_redacts_failures() {
         .and(path("/api/v1/tasks/task-123"))
         .and(header("authorization", "Bearer video-provider-secret"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"output":{"task_id":"task-123","task_status":"SUCCEEDED","video_url":"https://video.example/result.mp4"}})))
-        .expect(1).mount(&upstream).await;
+        .expect(2).mount(&upstream).await;
     Mock::given(method("GET"))
         .and(path("/api/v1/tasks/task-failed"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"output":{"task_id":"task-failed","task_status":"FAILED","code":"InvalidParameter","message":"video-provider-secret private-prompt"}})))
@@ -636,28 +783,29 @@ async fn gateway_native_video_submits_once_queries_and_redacts_failures() {
         "video-provider-secret",
     )
     .unwrap();
-    let core = Arc::new(
-        AppCore::from_config(
-            pawork_workspace::config::PaworkConfig {
-                default_provider: Some("qwen-token-plan".into()),
-                default_model: Some("model-a".into()),
-                providers: vec![pawork_workspace::config::ProviderConfig {
-                    id: "qwen-token-plan".into(),
-                    base_url: Some(format!("{}/compatible-mode/v1", upstream.uri())),
-                    ..Default::default()
-                }],
+    let mut core = AppCore::from_config(
+        pawork_workspace::config::PaworkConfig {
+            default_provider: Some("qwen-token-plan".into()),
+            default_model: Some("model-a".into()),
+            providers: vec![pawork_workspace::config::ProviderConfig {
+                id: "qwen-token-plan".into(),
+                base_url: Some(format!("{}/compatible-mode/v1", upstream.uri())),
                 ..Default::default()
-            },
-            None,
-            None,
-            backend.clone(),
-        )
-        .await
-        .unwrap(),
-    );
+            }],
+            ..Default::default()
+        },
+        None,
+        None,
+        backend.clone(),
+    )
+    .await
+    .unwrap();
     let temp = tempfile::tempdir().unwrap();
+    core.open_control_plane(temp.path()).unwrap();
+    let core = Arc::new(core);
     let tokens = GatewayTokenStore::new(temp.path());
     let (_, token) = tokens.issue("yingmai").unwrap();
+    let (_, foreign_token) = tokens.issue("momai").unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     let cancel = CancellationToken::new();
@@ -707,17 +855,70 @@ async fn gateway_native_video_submits_once_queries_and_redacts_failures() {
     )
     .unwrap();
     assert_eq!(submitted["status"], "PENDING");
-    let ready: Value = http
-        .get(format!("{base}/v1/video/tasks/default-api-key.task-123"))
-        .bearer_auth(&token)
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    assert_eq!(
+        http.get(format!("{base}/v1/video/tasks/default-api-key.task-123"))
+            .bearer_auth(&foreign_token)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        404
+    );
+    // 同一视频并发轮询仍只有一次生成，迟到响应不会导致统计写入冲突。
+    let poll = || async {
+        let response = http
+            .get(format!("{base}/v1/video/tasks/default-api-key.task-123"))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        response.json::<Value>().await.unwrap()
+    };
+    let (ready, second_ready) = tokio::join!(poll(), poll());
+    assert_eq!(second_ready["status"], "SUCCEEDED");
     assert_eq!(ready["status"], "SUCCEEDED");
     assert_eq!(ready["url"], "https://video.example/result.mp4");
+    let report = core
+        .usage
+        .control
+        .ledger
+        .task_usage_report(&TaskUsageQuery {
+            client: Some("yingmai".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        (
+            report.totals.records,
+            report.totals.generation_calls,
+            report.totals.planned_video_seconds
+        ),
+        (3, 1, 5)
+    );
+    let generated = report
+        .records
+        .iter()
+        .find(|r| r.operation == TaskUsageOperation::Video)
+        .unwrap();
+    assert_eq!(generated.status, TaskUsageStatus::Succeeded);
+    assert!(generated.tokens.is_none() && generated.cost.is_none());
+    let reopened =
+        pawork_control_plane::SqliteUsageLedger::open(temp.path().join("usage-ledger.sqlite3"))
+            .unwrap();
+    assert_eq!(
+        reopened
+            .find_task_usage_video(Some("yingmai"), "default-api-key.task-123")
+            .await
+            .unwrap()
+            .unwrap(),
+        *generated
+    );
+    assert_eq!(
+        ready["pawork_usage"]["related_call_id"],
+        submitted["pawork_usage"]["call_id"]
+    );
     let failed: Value = http
         .get(format!("{base}/v1/video/tasks/default-api-key.task-failed"))
         .bearer_auth(&token)

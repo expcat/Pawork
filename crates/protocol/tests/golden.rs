@@ -26,6 +26,62 @@ use serde_json::Value;
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/golden");
 
+#[test]
+fn task_usage_contract_preserves_unknown_and_task_hierarchy() {
+    use pawork_domain::*;
+    let context = TaskUsageContext {
+        task: UsageTaskRef {
+            id: "novel-1".into(),
+            title: "作品".into(),
+        },
+        group: Some(UsageTaskRef {
+            id: "part-1".into(),
+            title: "第一部".into(),
+        }),
+        subtask: Some(UsageTaskRef {
+            id: "chapter-1".into(),
+            title: "第一章".into(),
+        }),
+        operation: TaskUsageOperation::Text,
+        retry_of: None,
+    };
+    let query = AppQuery::TaskUsage {
+        query: TaskUsageQuery {
+            client: Some("momai".into()),
+            task_id: Some("novel-1".into()),
+            group_by: TaskUsageGroupBy::Subtask,
+            ..Default::default()
+        },
+    };
+    let record = TaskUsageRecord {
+        id: "gateway-call-1".into(),
+        client: "momai".into(),
+        source: TaskUsageSource::Gateway,
+        context: None,
+        operation: TaskUsageOperation::Image,
+        provider: Some("provider-1".into()),
+        model: Some("image-model".into()),
+        started_at_ms: 7,
+        finished_at_ms: Some(9),
+        status: TaskUsageStatus::Succeeded,
+        tokens: None,
+        cost: None,
+        output_images: Some(1),
+        planned_video_seconds: None,
+        upstream_task_id: None,
+        upstream_status: None,
+        related_call_id: None,
+        error_code: None,
+    };
+    assert_golden(
+        "task_usage.json",
+        serde_json::json!({"context":context,"query":query,"record":record}),
+    );
+    assert!(
+        serde_json::from_value::<TaskUsageQuery>(serde_json::json!({"unexpected":true})).is_err()
+    );
+}
+
 fn fixture_path(name: &str) -> PathBuf {
     PathBuf::from(FIXTURES).join(name)
 }

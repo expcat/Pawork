@@ -13,6 +13,12 @@ pub mod version;
 pub use command::*;
 pub use event::*;
 pub use limits::*;
+pub use pawork_domain::{
+    TaskUsageContext, TaskUsageCost, TaskUsageCostKind, TaskUsageCurrencyTotal, TaskUsageCursor,
+    TaskUsageGroup, TaskUsageGroupBy, TaskUsageOperation, TaskUsageOperationReport, TaskUsageQuery,
+    TaskUsageRecord, TaskUsageReport, TaskUsageSource, TaskUsageStatus, TaskUsageTotals,
+    UsageTaskRef,
+};
 pub use query::*;
 pub use quota::*;
 pub use settings::*;

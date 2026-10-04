@@ -78,6 +78,9 @@ pub enum AppQuery {
     QuotaOverview {
         query: QuotaOverviewQuery,
     },
+    TaskUsage {
+        query: pawork_domain::TaskUsageQuery,
+    },
     SnapshotFetch,
     PluginList,
     GoalGet {

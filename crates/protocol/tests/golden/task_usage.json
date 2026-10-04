@@ -1,0 +1,28 @@
+{
+  "context": {
+    "task": {"id": "novel-1", "title": "作品"},
+    "group": {"id": "part-1", "title": "第一部"},
+    "subtask": {"id": "chapter-1", "title": "第一章"},
+    "operation": "text",
+    "retry_of": null
+  },
+  "query": {
+    "method": "task_usage",
+    "params": {"query": {
+      "client": "momai", "task_id": "novel-1", "group_id": null,
+      "subtask_id": null, "operation": null, "provider": null,
+      "model": null, "status": null, "started_after_ms": null,
+      "started_before_ms": null, "group_by": "subtask", "limit": 100,
+      "cursor": null
+    }}
+  },
+  "record": {
+    "id": "gateway-call-1", "client": "momai", "source": "gateway",
+    "context": null, "operation": "image", "provider": "provider-1",
+    "model": "image-model", "started_at_ms": 7, "finished_at_ms": 9,
+    "status": "succeeded", "tokens": null, "cost": null,
+    "output_images": 1, "planned_video_seconds": null,
+    "upstream_task_id": null, "upstream_status": null,
+    "related_call_id": null, "error_code": null
+  }
+}

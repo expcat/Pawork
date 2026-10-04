@@ -12,7 +12,7 @@ use super::command::AppCommand;
 use super::query::AppQuery;
 use super::version::{
     ApiVersion, V1_0, V1_1, V1_10, V1_11, V1_12, V1_15, V1_16, V1_17, V1_18, V1_19, V1_2, V1_20,
-    V1_21, V1_22, V1_23, V1_24, V1_3, V1_4, V1_5, V1_6, V1_7, V1_8,
+    V1_21, V1_22, V1_23, V1_24, V1_26, V1_3, V1_4, V1_5, V1_6, V1_7, V1_8,
 };
 
 /// GUI 通道访问规格：是否可用 + 命令级所需能力。
@@ -820,6 +820,17 @@ static QUERIES: &[RegistryEntry] = &[
         since: V1_0,
     },
     RegistryEntry {
+        wire_name: "task_usage",
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
+        headless: None,
+        acp: false,
+        idempotent: true,
+        since: V1_26,
+    },
+    RegistryEntry {
         wire_name: "snapshot_fetch",
         gui: GuiChannelAccess {
             // GUI 使用专用 SnapshotRequest 帧；AppQuery 变体未由 GuiHost 实现。
@@ -1044,6 +1055,7 @@ pub fn query_wire_name(query: &AppQuery) -> &'static str {
         AppQuery::DiffGet { .. } => "diff_get",
         AppQuery::ArtifactRead { .. } => "artifact_read",
         AppQuery::QuotaOverview { .. } => "quota_overview",
+        AppQuery::TaskUsage { .. } => "task_usage",
         AppQuery::SnapshotFetch => "snapshot_fetch",
         AppQuery::GoalGet { .. } => "goal_get",
         AppQuery::SkillRecordPreview { .. } => "skill_record_preview",

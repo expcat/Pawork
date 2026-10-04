@@ -11,6 +11,7 @@ pub mod decision;
 pub mod identity;
 pub mod quota;
 pub mod rbac;
+mod task_usage;
 pub mod tenant;
 pub mod usage;
 
