@@ -86,7 +86,7 @@ impl<'de> serde::Deserialize<'de> for ModelPricing {
 }
 
 /// `1_000_000`：per-million-token 单价到 per-token 的除数。
-pub const MILLION: u64 = 1_000_000;
+const MILLION: u64 = 1_000_000;
 
 /// 按定价与实际 usage 估算费用（整数 micro 口径，无浮点）。
 pub fn estimate_cost(usage: &TokenUsage, pricing: &ModelPricing) -> Cost {

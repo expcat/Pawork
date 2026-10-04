@@ -1,33 +1,19 @@
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
-
-use async_trait::async_trait;
 use pawork_domain::{
     CancellationToken, ContentPart, Message, MessageId, MessageMetadata, MessageRole, ModelId,
     StopReason, TextContent,
 };
 use pawork_domain::{
-    CanonicalModelRequest, CredentialKind, ModelProvider, PromptCachePreference, ProviderError,
-    ProviderEventSink, ProviderStreamEvent, RequestBudget, ResolvedCredential, ResponseFormat,
-    ToolChoice,
+    CanonicalModelRequest, CredentialKind, ModelProvider, PromptCachePreference,
+    ProviderStreamEvent, RequestBudget, ResolvedCredential, ResponseFormat, ToolChoice,
 };
 use pawork_providers::net::http::HttpClientConfig;
 use pawork_providers::{XaiConfig, XaiProvider};
+use pawork_testkit::RecordingProviderSink;
 use wiremock::matchers::{body_string_contains, header, header_regex, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 mod common;
-
-#[derive(Default)]
-struct Sink(Arc<Mutex<Vec<ProviderStreamEvent>>>);
-
-#[async_trait]
-impl ProviderEventSink for Sink {
-    async fn emit(&self, event: ProviderStreamEvent) -> Result<(), ProviderError> {
-        self.0.lock().unwrap().push(event);
-        Ok(())
-    }
-}
 
 fn request(model: &str) -> CanonicalModelRequest {
     CanonicalModelRequest {
@@ -146,7 +132,7 @@ async fn subscription_catalog_drives_model_and_transport_routing() {
         provider
             .stream(
                 &request(model.id.as_str()),
-                &Sink::default(),
+                &RecordingProviderSink::default(),
                 CancellationToken::new(),
             )
             .await
@@ -195,13 +181,13 @@ async fn model_capability_selects_responses_or_chat() {
         config: None,
     });
     provider
-        .stream(&search, &Sink::default(), CancellationToken::new())
+        .stream(&search, &RecordingProviderSink::default(), CancellationToken::new())
         .await
         .unwrap();
     provider
         .stream(
             &request("grok-3"),
-            &Sink::default(),
+            &RecordingProviderSink::default(),
             CancellationToken::new(),
         )
         .await
@@ -215,7 +201,7 @@ async fn model_capability_selects_responses_or_chat() {
             alt_text: None,
         }));
     provider
-        .stream(&image, &Sink::default(), CancellationToken::new())
+        .stream(&image, &RecordingProviderSink::default(), CancellationToken::new())
         .await
         .unwrap();
     assert!(server
@@ -226,7 +212,7 @@ async fn model_capability_selects_responses_or_chat() {
         .all(|request| !request.headers.contains_key("x-opencode-session")));
     search.model = ModelId::new("grok-3");
     let error = provider
-        .stream(&search, &Sink::default(), CancellationToken::new())
+        .stream(&search, &RecordingProviderSink::default(), CancellationToken::new())
         .await
         .unwrap_err();
     assert_eq!(error.kind, pawork_domain::ProviderErrorKind::InvalidRequest);
@@ -273,13 +259,13 @@ async fn grok4_responses_round_trip_streams_events_with_oauth_bearer() {
         .await;
 
     let provider = provider(&server);
-    let sink = Sink::default();
+    let sink = RecordingProviderSink::default();
     let summary = provider
         .stream(&request("grok-4"), &sink, CancellationToken::new())
         .await
         .unwrap();
 
-    let events = sink.0.lock().unwrap().clone();
+    let events = sink.events();
     let deltas = events
         .iter()
         .filter_map(|event| match event {

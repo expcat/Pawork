@@ -36,7 +36,7 @@
 - `FileBackend::new()`：默认路径 `$PAWORK_HOME/auth.json`，未设时 `~/.pawork/auth.json`；`with_path`（测试）；`path()` 诊断（不含 secret）。`AppCore` 始终用默认路径——凭证为全局共享，**不随 `--instance` 隔离**（2026-09-14 事故：测试实例里 `auth set-key` 覆盖了生产 deepseek key，操作前须先备份该文件）。
 - 文件格式：`{ version: 1, entries: { service: { account: secret } } }`；只接受 `FORMAT_VERSION = 1`，版本不符 fail-closed。
 - 锁文件（与 auth 文件同目录、非机密）：写锁 `auth.write.lock`（10ms 重试、30s 超时）；OAuth refresh 锁 `auth.refresh.lock`（经 `refresh_lock_path` 暴露给 refresh 编排）。
-- `MemoryBackend::new()` / `len` / `is_empty`：进程内 HashMap，仅单元测试用；故意不派生 Debug 防明文入断言输出。
+- `MemoryBackend::new()` / `len` / `is_empty`：进程内 HashMap；消费方为单元测试与 app 子 core（subagents 同 Provider 路径挂空凭证后端）；故意不派生 Debug 防明文入断言输出。
 - OS Keychain 后端已按用户决策移除；secret 统一走文件后端（参照 Codex CLI auth.json 形态）。
 
 `SecretBackend::transaction` 在写锁内提供隔离快照，回调失败不提交；FileBackend load-modify-save 一次，MemoryBackend 复制并提交，未实现事务的 backend 显式拒绝。回调不能持原 backend 或跨网络等待。
@@ -112,7 +112,7 @@ UI-6b 起先解析账号索引：显式 API key 选择返回该账号；显式 O
 
 ## 5. 契约与不变量
 
-- **明文只在后端**：`StoredCredential` / `ApiKeyCredential` / `DefaultOAuthMeta` 可序列化字段永无明文；`TokenSet` / `Pkce` / `PkceSession` / `DeviceAuthorization` / `DeviceUserPrompt` 的 `Debug` 输出对 token / verifier / state / device_code / user_code 一律 `[REDACTED]`（有内联回归断言）。
+- **明文只在后端**：`StoredCredential` / `ApiKeyCredential` / `DefaultOAuthMeta` 可序列化字段永无明文；`TokenSet` / `Pkce` / `PkceSession` / `DeviceAuthorization` / `DeviceUserPrompt` 的 `Debug` 输出对 token / verifier / state / device_code / user_code 一律 `[REDACTED]`（`TokenSet` / `PkceSession` / `DeviceUserPrompt` 有内联回归断言）。
 - **刷新状态无明文**：singleflight gate 只保存脱敏元数据 + access 的 SHA-256 指纹（对应结构不实现 Debug），不持有 token 明文。
 - **`ResolvedCredential`（domain 定义）Debug 脱敏、无 `Serialize`**：仅供 adapter 构造认证请求时短暂使用。
 - **错误不携带 Secret**：`AuthError` 全部变体的 Display 只含归因描述；token endpoint 错误只保留标准 `error/error_description`。

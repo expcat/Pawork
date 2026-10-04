@@ -1,33 +1,19 @@
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
-
-use async_trait::async_trait;
 use pawork_domain::{
     CancellationToken, ContentPart, Message, MessageId, MessageMetadata, MessageRole, ModelId,
     StopReason, TextContent,
 };
 use pawork_domain::{
-    CanonicalModelRequest, CredentialKind, ModelProvider, PromptCachePreference, ProviderError,
-    ProviderErrorKind, ProviderEventSink, ProviderStreamEvent, RequestBudget, ResolvedCredential,
-    ResponseFormat, ToolChoice,
+    CanonicalModelRequest, CredentialKind, ModelProvider, PromptCachePreference,
+    ProviderErrorKind, RequestBudget, ResolvedCredential, ResponseFormat, ToolChoice,
 };
 use pawork_providers::net::http::HttpClientConfig;
 use pawork_providers::{ChatGptConfig, ChatGptProvider};
+use pawork_testkit::RecordingProviderSink;
 use wiremock::matchers::{body_partial_json, header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 mod common;
-
-#[derive(Default)]
-struct Sink(Arc<Mutex<Vec<ProviderStreamEvent>>>);
-
-#[async_trait]
-impl ProviderEventSink for Sink {
-    async fn emit(&self, event: ProviderStreamEvent) -> Result<(), ProviderError> {
-        self.0.lock().unwrap().push(event);
-        Ok(())
-    }
-}
 
 fn request() -> CanonicalModelRequest {
     CanonicalModelRequest {
@@ -107,7 +93,7 @@ async fn oauth_headers_models_and_responses_path_are_wired() {
     let provider = provider(&server);
     let models = provider.list_models(None).await.unwrap();
     assert_eq!(models[0].id.as_str(), "codex-test");
-    let sink = Sink::default();
+    let sink = RecordingProviderSink::default();
     let summary = provider
         .stream(&request(), &sink, CancellationToken::new())
         .await
@@ -141,7 +127,7 @@ async fn malformed_responses_event_fails_even_if_completion_follows() {
         .await;
 
     let error = provider(&server)
-        .stream(&request(), &Sink::default(), CancellationToken::new())
+        .stream(&request(), &RecordingProviderSink::default(), CancellationToken::new())
         .await
         .expect_err("malformed event must terminate the stream");
     assert_eq!(error.kind, ProviderErrorKind::MalformedResponse);

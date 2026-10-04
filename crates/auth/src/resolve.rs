@@ -1,9 +1,10 @@
-//! 凭证解析链（S6）：auth 文件 → env fallback → 无凭证。
+//! 凭证解析链（S6 / UI-6b）：账号索引 → legacy 主条目 → env fallback → 无凭证。
 //!
-//! [`resolve_provider_credential`] 是 Provider 装配期的统一凭证入口：先查
-//! SecretBackend 的 Provider 主条目（service 沿用 [`StoredCredential`] 约定
-//! `pawork.<provider>`，固定 account `default`），未命中再读
-//! `PAWORK_API_KEY_<ID 大写、`-`→`_`>`；仅 [`AuthError::NotFound`] 允许降级，
+//! [`resolve_provider_credential`] 是 Provider 装配期的统一凭证入口：先读
+//! 账号索引（`accounts.meta`），存在显式选择时按其 kind 返回（OAuth 选择令
+//! API key 解析返回 None，由 app 走 OAuth 路径）；无选择才查 legacy 主条目
+//! （service 沿用 [`StoredCredential`] 约定 `pawork.<provider>`，固定 account
+//! `default`），未命中再读 `PAWORK_API_KEY_<ID 大写、`-`→`_`>`；仅 [`AuthError::NotFound`] 允许降级，
 //! 后端损坏或访问失败原样上抛；两级都缺返回 [`CredentialSource::None`]，由调用方
 //! fail-closed。
 //!
@@ -58,7 +59,7 @@ pub enum CredentialSource {
     None,
 }
 
-/// 解析 Provider 凭证：auth 文件主条目 → env fallback → 无凭证。
+/// 解析 Provider 凭证：账号索引显式选择 → legacy 主条目 → env fallback → 无凭证。
 ///
 /// auth 文件侧仅「条目不存在」视为未命中并继续 env；后端损坏或访问异常必须
 /// fail-closed。两级都缺时返回 [`CredentialSource::None`]，绝不构造伪凭证。

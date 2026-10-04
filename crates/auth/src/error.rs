@@ -1,6 +1,6 @@
 //! pawork-auth 的错误类型。
 //!
-//! 所有错误均为 `Send + Sync`，且**不携带任何明文 secret**：keyring 返回的
+//! 所有错误均为 `Send + Sync`，且**不携带任何明文 secret**：存储后端返回的
 //! 原始错误统一归一为 `Storage(String)`，仅保留可读的归因描述。
 
 use thiserror::Error;

@@ -1,10 +1,9 @@
 //! Anthropic Messages 契约测试（S2 基线）。
 //!
-//! `RecordingProviderSink` 与断言 helper 就地复制自 `tests/contract.rs`，
-//! 不依赖 V1 `test-support`。全程 wiremock，不接触真实网络与 Key。
+//! `RecordingProviderSink` 复用 `pawork-testkit`，断言 helper 收敛于
+//! `tests/common`。全程 wiremock，不接触真实网络与 Key。
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use pawork_domain::{
@@ -17,49 +16,13 @@ use pawork_domain::{
     ResponseFormat, ToolChoice,
 };
 use pawork_providers::{AnthropicConfig, AnthropicProvider, ANTHROPIC_VERSION};
+use pawork_testkit::RecordingProviderSink;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-#[derive(Clone, Debug, Default)]
-struct RecordingProviderSink(Arc<Mutex<Vec<ProviderStreamEvent>>>);
+mod common;
 
-impl RecordingProviderSink {
-    fn events(&self) -> Vec<ProviderStreamEvent> {
-        self.0.lock().expect("provider sink mutex").clone()
-    }
-}
-
-#[async_trait]
-impl ProviderEventSink for RecordingProviderSink {
-    async fn emit(&self, event: ProviderStreamEvent) -> Result<(), ProviderError> {
-        self.0.lock().expect("provider sink mutex").push(event);
-        Ok(())
-    }
-}
-
-mod contract {
-    use pawork_domain::{ProviderError, ProviderErrorKind, ProviderStreamEvent};
-
-    pub use pawork_testkit::contract::{
-        assert_parallel_tool_calls, assert_single_tool_call, assert_text_stream,
-    };
-
-    pub fn assert_error_kind(
-        events: &[ProviderStreamEvent],
-        stream_error: Option<&ProviderError>,
-        kind: ProviderErrorKind,
-    ) {
-        let event_matches = events.iter().any(|e| match e {
-            ProviderStreamEvent::Error(err) => err.kind == kind,
-            _ => false,
-        });
-        let return_matches = stream_error.is_some_and(|error| error.kind == kind);
-        assert!(
-            event_matches || return_matches,
-            "应存在 kind={kind:?} 的 Error 事件或 stream 返回错误，事件：{events:?}，返回错误：{stream_error:?}"
-        );
-    }
-}
+use common::contract;
 
 #[derive(Clone)]
 struct CancelAfterTextSink {

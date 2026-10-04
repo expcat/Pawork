@@ -2,7 +2,7 @@
 //!
 //! 单 JSON 文件（默认 ~/.pawork/auth.json，可用 PAWORK_HOME 覆盖），
 //! 0600 权限、跨进程 write/refresh 锁、独立临时文件 + rename 原子写。keyspace
-//! 与 OS 后端一致：(service, account) 二元组，上层（default_credential / resolve）
+//! 为 (service, account) 二元组，上层（default_credential / resolve / accounts）
 //! 无感知。
 //! 损坏文件 fail-closed（报错，不静默清空）。
 

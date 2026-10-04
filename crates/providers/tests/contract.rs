@@ -5,12 +5,11 @@
 //! 全程不接触真实网络与真实 auth 文件。
 //!
 //! 流断言与 SSE 样例收敛于 `tests/common`（MOCK-7）；`RecordingProviderSink`
-//! 就地复制自 V1 `test-support`，不依赖 V1 crate。
+//! 复用 `pawork-testkit`。
 
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::net::TcpListener;
-use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -26,29 +25,13 @@ use pawork_domain::{
     ToolChoice,
 };
 use pawork_providers::{OpenAiCompatibleConfig, OpenAiCompatibleProvider};
+use pawork_testkit::RecordingProviderSink;
 use wiremock::matchers::{body_partial_json, header, method, path};
 use wiremock::{Match, Mock, MockServer, Request, ResponseTemplate};
 
 mod common;
 
 use common::contract;
-
-#[derive(Clone, Debug, Default)]
-struct RecordingProviderSink(Arc<Mutex<Vec<ProviderStreamEvent>>>);
-
-impl RecordingProviderSink {
-    fn events(&self) -> Vec<ProviderStreamEvent> {
-        self.0.lock().expect("provider sink mutex").clone()
-    }
-}
-
-#[async_trait]
-impl ProviderEventSink for RecordingProviderSink {
-    async fn emit(&self, event: ProviderStreamEvent) -> Result<(), ProviderError> {
-        self.0.lock().expect("provider sink mutex").push(event);
-        Ok(())
-    }
-}
 
 /// 匹配「请求不带 Authorization 头」。
 struct NoAuthorizationHeader;

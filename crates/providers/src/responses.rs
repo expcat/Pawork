@@ -16,7 +16,7 @@ use pawork_domain::{
     StopReason, TokenUsage, ToolCallId,
 };
 use pawork_domain::{
-    CanonicalModelRequest, ModelDefinition, ModelResponseSummary, ProviderError, ProviderErrorKind,
+    CanonicalModelRequest, ModelResponseSummary, ProviderError, ProviderErrorKind,
     ProviderEventSink, ProviderStreamEvent, ReasoningEffort, ResolvedCredential, ResponseFormat,
     ThinkingLevel, ToolChoice, ToolDefinition,
 };
@@ -130,10 +130,6 @@ impl ResponsesTransport {
         format!("{}/responses", self.config.base_url.trim_end_matches('/'))
     }
 
-    pub fn models_url(&self) -> String {
-        format!("{}/models", self.config.base_url.trim_end_matches('/'))
-    }
-
     fn request_headers(&self) -> Vec<(String, String)> {
         let mut headers = self.config.request_headers.clone();
         headers.push((
@@ -141,12 +137,6 @@ impl ResponsesTransport {
             format!("Bearer {}", self.credential.expose_secret()),
         ));
         headers
-    }
-
-    /// 读取标准 OpenAI-compatible `{ data: [{ id }] }` 模型目录。
-    pub async fn list_standard_models(&self) -> Result<Vec<ModelDefinition>, ProviderError> {
-        let value = self.get_json(&self.models_url()).await?;
-        Ok(standard_model_definitions(&value))
     }
 
     /// 使用与 Responses 请求相同的 OAuth/API bearer 与固定头读取 JSON。
@@ -618,27 +608,6 @@ async fn resolve_reasoning_inputs(
         }
     }
     inputs
-}
-
-fn standard_model_definitions(value: &Value) -> Vec<ModelDefinition> {
-    value
-        .get("data")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|model| model.get("id").and_then(Value::as_str))
-        .map(|id| ModelDefinition {
-            id: pawork_domain::ModelId::new(id),
-            display_name: id.to_string(),
-            context_window_tokens: 0,
-            max_output_tokens: 0,
-            capabilities: pawork_domain::ModelCapabilities {
-                text: true,
-                tool_calls: true,
-                ..Default::default()
-            },
-        })
-        .collect()
 }
 
 #[derive(Clone, Debug)]

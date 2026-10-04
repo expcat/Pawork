@@ -5,44 +5,25 @@
 //! api_key 类型；在 lib.rs 接线前本测试无法编译。
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
-
-use async_trait::async_trait;
 use pawork_domain::{
     CancellationToken, ContentPart, Message, MessageId, MessageMetadata, MessageRole, ModelId,
     StopReason, TextContent,
 };
 use pawork_domain::{
     CanonicalModelRequest, CredentialKind, ModelProvider, ModelTransport, PromptCachePreference,
-    ProviderError, ProviderErrorKind, ProviderEventSink, ProviderStreamEvent, RequestBudget,
-    ResolvedCredential, ResponseFormat, ToolChoice,
+    ProviderErrorKind, ProviderStreamEvent, RequestBudget, ResolvedCredential, ResponseFormat,
+    ToolChoice,
 };
 use pawork_providers::channels::registry::{
     channel_preset, is_enabled, ChannelKind, ChannelPreset, CHANNEL_REGISTRY,
 };
 use pawork_providers::net::http::HttpClientConfig;
 use pawork_providers::{ApiKeyChannelConfig, ApiKeyChannelProvider};
+use pawork_testkit::RecordingProviderSink;
 use wiremock::matchers::{body_partial_json, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 mod common;
-
-#[derive(Clone, Debug, Default)]
-struct RecordingProviderSink(Arc<Mutex<Vec<ProviderStreamEvent>>>);
-
-impl RecordingProviderSink {
-    fn events(&self) -> Vec<ProviderStreamEvent> {
-        self.0.lock().expect("provider sink mutex").clone()
-    }
-}
-
-#[async_trait]
-impl ProviderEventSink for RecordingProviderSink {
-    async fn emit(&self, event: ProviderStreamEvent) -> Result<(), ProviderError> {
-        self.0.lock().expect("provider sink mutex").push(event);
-        Ok(())
-    }
-}
 
 fn user(text: &str) -> Message {
     Message {

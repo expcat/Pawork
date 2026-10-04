@@ -180,34 +180,17 @@ impl HttpClient {
         Ok(Self { client, config })
     }
 
-    /// 引用的底层 reqwest 客户端（供 adapter 复用连接池等高级用法）。
-    pub fn inner(&self) -> &reqwest::Client {
-        &self.client
-    }
-
     /// 访问配置（只读）。
     pub fn config(&self) -> &HttpClientConfig {
         &self.config
     }
 
-    /// 发起 POST 流式请求，返回字节流。
+    /// 发起 POST 流式请求，返回字节流，并额外附加 per-request 请求头
+    /// （如 Provider 认证头；明文 secret 只在此短暂存在，不持久化、不记录）。
     ///
     /// - trace_id 注入为 `x-trace-id` 请求头；
     /// - 在拿到响应头与取消令牌之间竞争，取消即返回 [`ProviderError::cancelled`]；
     /// - 非 2xx 响应经 [`classify_status`](crate::net::retry::classify_status) 归一为 ProviderError。
-    pub async fn post_stream(
-        &self,
-        url: &str,
-        body: serde_json::Value,
-        trace_id: Option<&str>,
-        cancel: CancellationToken,
-    ) -> Result<ByteStream, ProviderError> {
-        self.post_stream_with_headers(url, body, trace_id, &[], cancel)
-            .await
-    }
-
-    /// 与 [`post_stream`](Self::post_stream) 相同，但额外附加 per-request 请求头
-    /// （如 Provider 认证头；明文 secret 只在此短暂存在，不持久化、不记录）。
     pub async fn post_stream_with_headers(
         &self,
         url: &str,
@@ -259,18 +242,8 @@ impl HttpClient {
         }
     }
 
-    /// 发起 GET 请求并返回 JSON 正文（用于 list_models 等）。
-    #[allow(clippy::needless_return)]
-    pub async fn get_json(
-        &self,
-        url: &str,
-        trace_id: Option<&str>,
-        cancel: CancellationToken,
-    ) -> Result<serde_json::Value, ProviderError> {
-        self.get_json_with_headers(url, trace_id, &[], cancel).await
-    }
-
-    /// 与 [`get_json`](Self::get_json) 相同，但额外附加 per-request 请求头。
+    /// 发起 GET 请求并返回 JSON 正文（用于 list_models 等），
+    /// 额外附加 per-request 请求头。
     #[allow(clippy::needless_return)]
     pub async fn get_json_with_headers(
         &self,
