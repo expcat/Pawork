@@ -127,7 +127,7 @@ impl McpServerConfig {
         Ok(ManagedMcpClient::new(connector, self.runtime_options(name)))
     }
 
-    pub fn runtime_options(&self, name: impl Into<Arc<str>>) -> ManagedMcpClientOptions {
+    pub(crate) fn runtime_options(&self, name: impl Into<Arc<str>>) -> ManagedMcpClientOptions {
         ManagedMcpClientOptions {
             name: name.into(),
             request_timeout: Duration::from_millis(
@@ -248,7 +248,7 @@ impl TransportSpec {
         }
     }
 
-    pub fn resolve_transport(
+    pub(crate) fn resolve_transport(
         &self,
         backend: &dyn SecretBackend,
     ) -> Result<TransportConfig, McpError> {

@@ -12,14 +12,14 @@
 
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
-| `src/lib.rs` | ~770 | 全部实现与单元测试：`Screen` 行缓冲状态机、`Attrs` / `Cell` / `Line`、`render_lines` / `plain_output`、`KeyEvent`（含 `KeyEvent::new` 构造器与 Home/End/Esc/Backspace/Shift+Tab（ESC[Z）具体映射）/ `Modifiers` 与 `key_to_pty_bytes`、`size_from_bounds(_scaled)` 与几何常量 |
+| `src/lib.rs` | ~770 | 全部实现与单元测试：`Screen` 行缓冲状态机、`Attrs` / `Cell` / `Line`、`render_lines` / `plain_output`、`KeyEvent`（含 `KeyEvent::new` 构造器与 Home/End/Esc/Backspace/Shift+Tab（ESC[Z）具体映射）/ `Modifiers` 与 `key_to_pty_bytes`、`size_from_bounds_scaled` 与几何常量 |
 
 ## 3. 对外 API 面
 
 - **解析**：`Screen::new()` / `Screen::with_size(columns, rows)` / `feed(&str)` / `feed_with_width(&str, width)`（渲染方提供 0/1/2 列宽）；`cursor()` 返回行列，`cursor_byte_offset()` 返回可见文本中的字节偏移，`display_lines()` 保留当前光标行及尾随空格；`cursor_visible` / `bracketed_paste` 跟踪对应私有模式；`render_lines(raw) -> Vec<StyledLine>`（`StyledLine { text, spans }`，`Span { len, attrs }` 按 UTF-8 字节长度分段；空行以单空格占位保行高）；`plain_output(raw) -> String`（AX / 纯文本路径）。
 - **属性**：`Attrs { fg, bg, bold, dim, inverse }`，fg / bg 为 0-15 颜色索引（256 色收敛到 16 色、truecolor 忽略），色值映射在调用方。
 - **按键**：`KeyEvent { key, key_char, modifiers }` / `Modifiers { control, alt, shift, platform, function }`（平台无关，由调用方从自己的按键类型转换）；`key_to_pty_bytes(&KeyEvent) -> Option<String>`（Enter 输出 CR，Ctrl 字母映射控制字节；方向键 / Tab / Delete 输出终端转义序列）。
-- **几何**：`TERMINAL_LINE_HEIGHT`（16px）/ `TERMINAL_CELL_WIDTH`（7.2px）/ `TERMINAL_OUTPUT_PAD_X/Y`（与 Inspector 输出面 px_2 / py_1 同源）；`size_from_bounds(width, height)` / `size_from_bounds_scaled(width, height, rem_scale) -> Option<(u16, u16)>`（钳 20-500 列 × 6-200 行，内容过小返回 None）。
+- **几何**：`TERMINAL_LINE_HEIGHT`（16px）/ `TERMINAL_CELL_WIDTH`（7.2px）/ `TERMINAL_OUTPUT_PAD_X/Y`（与 Inspector 输出面 px_2 / py_1 同源）；`size_from_bounds_scaled(width, height, rem_scale) -> Option<(u16, u16)>`（rem_scale=1 即基础估算；钳 20-500 列 × 6-200 行，内容过小返回 None）。
 
 ## 4. 核心行为与数据流
 
@@ -39,7 +39,7 @@
 
 - **生产依赖**：无（零依赖纯库）。
 - **features**：`default = []`，无具名 feature。
-- **被依赖**：仅 `pawork-desktop`（生产依赖白名单 `{pawork-client, pawork-terminal}`，由 desktop `platform.rs` deny-list 测试断言）。
+- **被依赖**：仅 `pawork-desktop`（其生产 `pawork-*` 依赖白名单为 `{pawork-client, pawork-terminal, pawork-browser}`，由 desktop `platform.rs` deny-list 测试断言）。
 
 ## 7. 测试与验证资产
 

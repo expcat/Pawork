@@ -74,7 +74,6 @@ fn process_env_denylist() -> Vec<String> {
 pub struct RunCommandTool {
     workspaces: WorkspaceService,
     runtime: ProcessRuntime,
-    extra_env_allowlist: Vec<String>,
 }
 
 impl RunCommandTool {
@@ -82,7 +81,6 @@ impl RunCommandTool {
         Self {
             workspaces,
             runtime: ProcessRuntime::new(),
-            extra_env_allowlist: Vec::new(),
         }
     }
 
@@ -90,18 +88,7 @@ impl RunCommandTool {
         Self {
             workspaces,
             runtime,
-            extra_env_allowlist: Vec::new(),
         }
-    }
-
-    /// 追加由配置层明确允许继承的环境变量名。
-    pub fn with_extra_env_allowlist<I, S>(mut self, names: I) -> Self
-    where
-        I: IntoIterator<Item = S>,
-        S: Into<String>,
-    {
-        self.extra_env_allowlist = names.into_iter().map(Into::into).collect();
-        self
     }
 }
 
@@ -151,7 +138,6 @@ impl AgentTool for RunCommandTool {
             self.runtime,
             &context.workspace_id,
             &request.input,
-            &self.extra_env_allowlist,
             sink,
             cancel,
         )
@@ -186,7 +172,6 @@ async fn run(
     runtime: ProcessRuntime,
     workspace_id: &WorkspaceId,
     input: &Value,
-    extra_env_allowlist: &[String],
     sink: &dyn ToolEventSink,
     cancel: CancellationToken,
 ) -> Result<ToolResult, RunCommandError> {
@@ -215,14 +200,6 @@ async fn run(
             spec.env.push((name.clone(), value));
         }
     }
-    for name in extra_env_allowlist {
-        if allowlist.contains(name) {
-            continue;
-        }
-        if let Ok(value) = std::env::var(name) {
-            spec.env.push((name.clone(), value));
-        }
-    }
     if let Some(map) = env_map {
         for (k, v) in map {
             if let Some(s) = v.as_str() {
@@ -232,7 +209,6 @@ async fn run(
     }
 
     let mut env_allowlist = allowlist.clone();
-    env_allowlist.extend(extra_env_allowlist.iter().cloned());
     if let Some(map) = env_map {
         env_allowlist.extend(map.keys().cloned());
     }
@@ -492,7 +468,6 @@ mod tests {
             ProcessRuntime::new(),
             &id,
             &json!({"command": "echo hello"}),
-            &[],
             &sink,
             CancellationToken::new(),
         )
@@ -539,7 +514,6 @@ mod tests {
             ProcessRuntime::new(),
             &id,
             &json!({"command": command}),
-            &[],
             &sink,
             CancellationToken::new(),
         )
@@ -563,7 +537,6 @@ mod tests {
             ProcessRuntime::new(),
             &id,
             &json!({"command": command, "timeout_ms": 200}),
-            &[],
             &sink,
             CancellationToken::new(),
         )
@@ -597,7 +570,6 @@ mod tests {
                 ProcessRuntime::new(),
                 &id,
                 &input,
-                &[],
                 &sink,
                 CancellationToken::new(),
             )
@@ -663,7 +635,6 @@ mod tests {
                 "open_fds": u64::MAX,
                 "max_procs": u64::MAX,
             }),
-            &[],
             &RecordingToolSink::default(),
             CancellationToken::new(),
         )
@@ -686,7 +657,6 @@ mod tests {
             ProcessRuntime::new(),
             &id,
             &json!({"command": "echo golden"}),
-            &[],
             &RecordingToolSink::default(),
             CancellationToken::new(),
         )
@@ -758,7 +728,6 @@ mod tests {
             ProcessRuntime::new(),
             &id,
             &json!({"command": "echo seatbelt"}),
-            &[],
             &RecordingToolSink::default(),
             CancellationToken::new(),
         )
@@ -805,7 +774,6 @@ mod tests {
             ProcessRuntime::new(),
             &id,
             &input,
-            &[],
             &sink,
             CancellationToken::new(),
         )
@@ -883,7 +851,6 @@ mod tests {
             ProcessRuntime::new(),
             &id,
             &input,
-            &[],
             &sink,
             CancellationToken::new(),
         )

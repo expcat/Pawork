@@ -18,8 +18,6 @@ static DESKTOP_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("isolated desktop does not support this operation")]
-    Unsupported,
     #[error("permission required: {0}")]
     Permission(&'static str),
     #[error("invalid computer action: {0}")]

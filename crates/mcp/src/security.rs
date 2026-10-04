@@ -8,7 +8,7 @@
 
 use std::fmt;
 
-use pawork_auth::locator::MCP_SERVICE_PREFIX;
+use pawork_auth::locator::is_mcp_secret_service;
 use pawork_auth::{AuthError, SecretBackend};
 use serde::{Deserialize, Serialize};
 
@@ -51,10 +51,11 @@ impl SecretRef {
     /// [`McpError::Secret`] without ever embedding plaintext (which never
     /// leaves the backend).
     ///
-    /// `service` must start with [`MCP_SERVICE_PREFIX`]; Provider locators such
-    /// as `pawork.openai` / `pawork.chatgpt.oauth` fail closed.
+    /// `service` must fall in the MCP secret namespace
+    /// ([`is_mcp_secret_service`]); Provider locators such as `pawork.openai` /
+    /// `pawork.chatgpt.oauth` fail closed.
     pub fn resolve(&self, backend: &dyn SecretBackend) -> Result<ResolvedSecret, McpError> {
-        if !self.service.starts_with(MCP_SERVICE_PREFIX) {
+        if !is_mcp_secret_service(&self.service) {
             return Err(McpError::Secret(
                 "secret service must be in the pawork.mcp.* namespace".into(),
             ));

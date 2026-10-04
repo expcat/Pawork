@@ -108,7 +108,7 @@ impl McpToolAdapter {
 
     /// Record whether the host workspace is trusted. MCP `trusted` must not
     /// exceed this floor.
-    pub fn with_host_trusted(mut self, host_trusted: bool) -> Self {
+    pub(crate) fn with_host_trusted(mut self, host_trusted: bool) -> Self {
         self.host_trusted = host_trusted;
         self
     }
@@ -245,7 +245,7 @@ pub async fn register_server_tools(
 }
 
 /// Register discovered tools (synchronous variant).
-pub fn register_discovered_tools(
+pub(crate) fn register_discovered_tools(
     registry: &mut ToolRegistry,
     server: &str,
     capabilities: &McpCapabilities,

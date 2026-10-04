@@ -109,7 +109,7 @@ impl AgentTool for ComputerTool {
                 Error::Invalid(_) => ToolErrorKind::InvalidInput,
                 Error::Stale => ToolErrorKind::Conflict,
                 Error::Cancelled => ToolErrorKind::Cancelled,
-                Error::Unsupported | Error::Backend(_) => ToolErrorKind::ExecutionFailed,
+                Error::Backend(_) => ToolErrorKind::ExecutionFailed,
             };
             tool_error(kind, &error.to_string())
         })?;

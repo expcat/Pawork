@@ -13,7 +13,7 @@
 
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
-| `src/lib.rs` | ~30 | 门面：12 个模块声明 + re-export（九工具、`NoopToolEventSink`、registry/scheduler 全家）。 |
+| `src/lib.rs` | ~30 | 门面：11 个模块声明 + re-export（九工具、`NoopToolEventSink`、registry/scheduler 全家）。 |
 | `src/computer.rs` | — | `ComputerTool`：进程共享隔离桌面会话、按动作必填的 JSON 参数、跨 run 观察隔离、阻塞工作取消、JPEG → canonical Image；复用 Policy / 审批。 |
 | `src/common.rs` | ~230 | 公共层：`BuiltinToolError` 与 → `ToolError` 集中映射；取参 `require_str`/`opt_str`/`opt_u64`/`opt_bool`（opt_* 缺省或 `null` → None，类型不符报 InvalidField）；`workspace_roots`；`resolve_write_rel`（包 `resolve_workspace_path`）；`atomic_write`（同目录临时文件经 `create_new` **独占创建**——同名路径已存在（含预置 symlink）即换名重试、不跟随——+ rename，覆盖保留既有 Unix mode）。 |
 | `src/read_file.rs` | ~500（逻辑 ~260 + 测试） | `ReadFileTool`：行号视图、offset/limit、编码探测（chardetng + encoding_rs）、二进制检测（NUL + 控制字节占比）、4 MiB 读上限 / 256 KiB 输出上限。 |
@@ -121,11 +121,11 @@ MCP 的独立 API、连接与认证见 [mcp](mcp.md)，注册适配器仍使用�
 
 三个写工具的 `execute` 均以 `tokio::task::spawn_blocking` 承载全部同步文件 IO（与 list_directory / find / search 同形；`JoinError` → `Internal`）。路径与落盘步骤：
 
-1. `workspace_roots` 取 roots → `resolve_write_rel(roots, path)`（拒绝绝对/穿越/`.git`/逃逸/非常规文件，错误映射见 §3.2）。
+1. `workspace_roots` 取 roots → `resolve_write_rel(roots, path)`（拒绝绝对/穿越/`.git`/逃逸/非常规文件，错误映射见 §3.3）。
 2. 内存预演全部变更（edit 的段替换、patch 的 op 计划）；任何一段失败整体失败，不触盘。
 3. 落盘：`atomic_write`（写类）；apply_patch 执行前对受影响文件做字节备份，op 失败即恢复备份（改写还原、新建删除），并以 `Partial` 报出 failed_op 与 applied 清单（proptest 断言恢复字节精确）。
 
-### 4.5 取消与超时的传播路径
+### 4.4 取消与超时的传播路径
 
 1. 取消源头是 domain `CancellationToken`（engine/宿主持有）；scheduler 派生执行令牌传入工具——调用方取消经桥接传播，scheduler 超时也触发同一令牌（R-10）。
 2. 只读四工具：走 `spawn_blocking` 的（find/search）每 64 个候选检查一次并在进入阻塞前检查；read_file 在读文件前后检查。命中即返回 `ToolError::cancelled`（kind=Cancelled）。
@@ -155,7 +155,7 @@ MCP 的独立 API、连接与认证见 [mcp](mcp.md)，注册适配器仍使用�
 
 `computer.rs` 三项回归：显式批准后的截图结果与序列化、缺 click 字段在触达 backend 前返回可纠正参数错误、未信任/只读/自动批准均不触碰虚拟桌面后端。输入与观察安全由 [computer-use](computer-use.md) 负责。
 
-默认验证命令：`cargo test -p pawork-tools --offline --lib --tests`（无 `tests/` 目录，用例全部在 `--lib`）。
+默认验证命令：`bash scripts/test.sh tools`（无 `tests/` 目录，用例全部在 `--lib`）。
 
 | 文件 | 覆盖点 |
 | --- | --- |
@@ -177,6 +177,5 @@ MCP 的独立 API、连接与认证见 [mcp](mcp.md)，注册适配器仍使用�
 - `find_files` / `search_text` 尊重 `.gitignore`（被 ignore 的文件搜不到，有意行为）；`find_files` 还跳过隐藏文件，`search_text` 不跳过；`search_text` 单文件读取上限 4 MiB（R-14），超限文件跳过并在 metadata 计数报告，结果标记不完整。
 - `edit_file` fuzzy 是行对齐 whitespace 归一化匹配，不做语义/缩进感知；替换文本按字面写入。
 - MCP 的连接、自动启动与 HTTP 限制见 [mcp](mcp.md)；本包只承接其工具适配器。
-- `StdioTransportConfig` / `HttpTransportConfig` 位于私有 `mod transport`（类型 pub 但包外不可命名）——以其为参数的公开函数（如 `OAuthHttpConnector::new`）实际只能由 crate 内部装配，这是刻意的封装边界而非疏漏。
 - `list_directory` 的 `path` 不接受空串（`PathSafetyError::Empty` → InvalidInput），列 root 用 `"."`；`read_file` 对超过 4 MiB 的文件只读前 4 MiB 并标记 truncated，不报错。
 - 相关文档：[policy.md](policy.md)（裁决与路径内核）、[exec.md](exec.md)（执行原语）、[../flows.md](../flows.md)（跨包链路）、[../../architecture.md](../../architecture.md)、[../../design.md](../../design.md)、[../README.md](../README.md)、[AGENTS.md](../../../AGENTS.md)。

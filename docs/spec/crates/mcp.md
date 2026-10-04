@@ -27,7 +27,7 @@
 - **配置入口**：`McpConfig::from_resolved(&ResolvedConfig)` / `from_value(&Value)`（读已按 global→workspace→session→run 合并后的 `extra["mcp"]`）；`servers: BTreeMap<name, McpServerConfig>`；服务器名非空且禁 `.`（进入工具命名空间）。
 - `McpServerConfig::build_client(name, Arc<dyn SecretBackend>, Option<StdioSandboxRuntime>) -> Result<ManagedMcpClient, McpError>`：
   - stdio 传输缺 runtime 直接 `McpError::Config`（fail-closed）；http 不需要 runtime。
-  - `runtime_options` 暴露请求超时（默认 30s）与 `RestartPolicy`（默认 max_attempts=1、base 200ms、cap 10s）。
+  - `runtime_options`（crate 内部，`build_client` 使用）暴露请求超时（默认 30s）与 `RestartPolicy`（默认 max_attempts=1、base 200ms、cap 10s）。
 - **传输规格**：`TransportSpec::Stdio{command, args, env: BTreeMap<String, SecretRef>}` / `Http{url, headers: BTreeMap<String, SecretRef>}`（serde tag=`kind`）。校验：仅 http/https scheme、拒 URL userinfo 与 fragment、明文 http 携密 header 仅 loopback 允许。
 - **权限**：`McpPermissions { allowed_tools: BTreeSet<String>, allowed_workspaces: BTreeSet<String>, max_output_bytes: u64（默认 1 MiB） }`：
   - 空集 = 不限制；非空 = 白名单。
@@ -36,13 +36,13 @@
   - `max_output_bytes` 是 codec 输出预算（`apply_tool_result_budget` 的上限来源）。
 - **边界类型**：`McpServerCapabilities { tools, resources, prompts: bool }`（服务器 initialize 广播；未广播 tools 的服务器跳过工具注册）；`McpToolInfo { name, description, input_schema, read_only }`；`McpToolCall { name, arguments }`；`McpPeer` trait（`server_capabilities` / `list_tools` / `call_tool`）是 manager 与 capabilities 之间的抽象缝，测试用 in-process peer 替换。
 - **受管客户端**：`ManagedMcpClient` 实现 `McpPeer`；另有 `ping()`、`health() -> HealthSnapshot{state: ConnectionState, transport, last_error, last_connected_at, restart_attempts, max_restart_attempts}`、`shutdown()`（5s 优雅关闭）。
-- **能力桥**：`register_server_tools(registry, server, peer, permissions, trusted, host_trusted)` → `McpCapabilities::discover`（握手能力 + list_tools）+ 白名单过滤 + 注册，返回 descriptors；`register_discovered_tools` 供已有发现结果复用。`McpToolAdapter` descriptor 规则：
+- **能力桥**：`register_server_tools(registry, server, peer, permissions, trusted, host_trusted)` → `McpCapabilities::discover`（握手能力 + list_tools）+ 白名单过滤 + 注册，返回 descriptors；`register_discovered_tools` 为 crate 内部同步复用入口（不对外）。`McpToolAdapter` descriptor 规则：
   - 注册名 = `namespaced_name(server, tool)`：`{server}.{tool}` 拼接后把 `[A-Za-z0-9_-]` 之外的字符全部折叠为 `_`（上游 Provider 拒绝带 `.` 等字符的工具名，HTTP 400，2026-09-16 `echo.echo` 实证）。
   - `read_only_hint=true` → `ToolCapability::ReadOnly` + `requires_approval=false`。
   - 否则 → `ExternalPlugin` + `requires_approval=true`（descriptor 叠加闸生效，policy 放行后仍需 resolver 确认）。
   - `allowed_in_untrusted_workspace = read_only || trusted`，且注册期 `trusted &&= host_trusted`（MCP 配置的 trusted 不得越过宿主信任地板）。
-- **Secret 域**：`SecretRef::new(service, account)` / `.resolve(&dyn SecretBackend) -> Result<ResolvedSecret, McpError>`；service 必须 `pawork.mcp.*` 前缀（Provider/OAuth 命名空间 fail-closed）；`ResolvedSecret` 与全部 transport 配置 Debug/Display 手写 redact；`McpError` 文案不含明文。
-- **OAuth**：`begin_pkce_login(PkceFlowConfig) -> PkceSession`；`complete_pkce_login(session, code, state, http, backend, display_name) -> StoredCredential`；`McpBearerProvider::bearer()`（到期自动 refresh）；`OAuthHttpConnector`（transport 层注入 `Authorization: Bearer`，拒绝配置里已有 Authorization header；token 轮换要求重建 transport）。
+- **Secret 域**：`SecretRef::new(service, account)` / `.resolve(&dyn SecretBackend) -> Result<ResolvedSecret, McpError>`；`pawork.mcp.*` 命名空间判定消费 auth locator 单一事实源 `is_mcp_secret_service`（Provider/OAuth 命名空间 fail-closed）；`ResolvedSecret` 与全部 transport 配置 Debug/Display 手写 redact；`McpError` 文案不含明文。
+- **OAuth**：`begin_pkce_login(PkceFlowConfig) -> PkceSession`；`complete_pkce_login(session, code, state, http, backend, display_name) -> StoredCredential`；`McpBearerProvider::bearer()`（到期自动 refresh）；`OAuthHttpConnector`（transport 层注入 `Authorization: Bearer`，拒绝配置里已有 Authorization header；token 轮换要求重建 transport）。当前该流程无宿主接线，仅本包测试消费（2026-10-04 R-06 核实，处置待用户确认）。
 - **stdio 托管**：`StdioSpawner` trait + `SandboxedStdioSpawner` + `SpawnedStdio`（`pub use` 于 `mcp`）；`apply_mcp_stdio_env_hygiene(&mut SandboxPolicy)`。
 - `McpError` 变体：`Config / Transport / Protocol / Disconnected / Timeout(Duration) / Cancelled / PermissionDenied / Secret / OAuth / Registry(ToolRegistryError)`。
 - 内部但值得知道：`codec.rs` 私有；`StdioTransportConfig`/`HttpTransportConfig` 在私有 `mod transport`——以其为参数的公开函数实际只能由 crate 内装配。

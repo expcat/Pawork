@@ -523,10 +523,6 @@ pub fn plain_output(raw: &str) -> String {
 }
 
 /// 按面板像素估算列 × 行，并钳制在 PTY 边界内。
-pub fn size_from_bounds(width: f32, height: f32) -> Option<(u16, u16)> {
-    size_from_bounds_scaled(width, height, 1.0)
-}
-
 /// rem_scale 为当前窗口 rem_px / 16；字号放大时 cell 变大，列数变少。
 pub fn size_from_bounds_scaled(width: f32, height: f32, rem_scale: f32) -> Option<(u16, u16)> {
     let rem_scale = rem_scale.max(0.5);
@@ -716,9 +712,9 @@ mod tests {
 
     #[test]
     fn size_from_bounds_clamps_to_existing_limits() {
-        assert_eq!(size_from_bounds(576.0, 384.0), Some((77, 23)));
-        assert_eq!(size_from_bounds(10.0, 10.0), None);
-        let (columns, rows) = size_from_bounds(10_000.0, 10_000.0).unwrap();
+        assert_eq!(size_from_bounds_scaled(576.0, 384.0, 1.0), Some((77, 23)));
+        assert_eq!(size_from_bounds_scaled(10.0, 10.0, 1.0), None);
+        let (columns, rows) = size_from_bounds_scaled(10_000.0, 10_000.0, 1.0).unwrap();
         assert_eq!((columns, rows), (500, 200));
         assert_eq!(size_from_bounds_scaled(576.0, 384.0, 1.5), Some((51, 15)));
     }

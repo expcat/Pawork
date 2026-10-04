@@ -47,7 +47,7 @@ pub enum McpError {
 
 impl McpError {
     /// Build a secret-safe error from an authentication failure.
-    pub fn from_auth(error: pawork_auth::AuthError) -> Self {
+    pub(crate) fn from_auth(error: pawork_auth::AuthError) -> Self {
         Self::OAuth(error.to_string())
     }
 }
