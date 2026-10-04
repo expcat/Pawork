@@ -32,7 +32,7 @@
 | R-05 Agent 执行层 | engine、workflow、orchestration、git | ① engine+workflow ② orchestration+git | `test.sh engine workflow orchestration git` | 已完成（2026-10-04） |
 | R-06 工具与平台包 | tools、mcp、browser、computer-use、terminal | ① tools+mcp ② browser+computer-use+terminal | `test.sh tools mcp browser computer-use terminal` | 已完成（2026-10-04） |
 | R-07 Core 装配 | app | ① app_core+services ② gui_host ③ control+其余模块 | `test.sh app`，动装配加 `--host` | 已完成（2026-10-04） |
-| R-08 入口与连接 | cli、acp、client、gui-server、apps/pawork | ① cli+pawork ② acp+client+gui-server | `test.sh cli acp client gui-server` + `--host` | 待启动 |
+| R-08 入口与连接 | cli、acp、client、gui-server、apps/pawork | ① cli+pawork ② acp+client+gui-server | `test.sh cli acp client gui-server` + `--host` | 已完成（2026-10-04） |
 | R-09 Desktop | apps/desktop | ① projection+controller ② ui/ ③ accessibility+platform | `test.sh desktop` | 待启动 |
 | R-10 文档与门禁收口 | docs/、scripts/、Cargo 依赖审计 | ① Spec 与源码漂移核对 ② 测试脚本与门禁效率 ③ 链接/数字/backlog 清理 | 文档链接检查 + 受影响包定向 | 待启动 |
 
@@ -51,6 +51,8 @@ R-05 移交项（2026-10-04 登记）：R-07 注意 orchestration 注入与恢�
 R-06 移交项（2026-10-04 登记）：R-07 注意 `crates/workspace/src/import/mcp.rs` 自带本地 `MCP_SECRET_SERVICE_PREFIX` 常量副本，是 auth locator 单一事实源之外的第三份拷贝（R-06 已把 mcp 侧收敛到 `locator::is_mcp_secret_service`，workspace / app 侧仍各持一份）；R-10 注意 `docs/design.md` 引用 `references.md#computer-use实现调研2026-09-17` 锚缺连字符（正确锚为 `#computer-use-实现调研2026-09-17`）。R-06 需用户确认项（crates/mcp oauth 模块整体零生产接线：`begin_pkce_login` / `complete_pkce_login` / `McpBearerProvider` / `OAuthHttpConnector` 仅本包测试消费，删除或接线涉 MCP 凭证链路安全语义）随任务报告上报，不在后续任务静默执行。
 
 R-07 移交项（2026-10-04 登记）：R-03 移交结论修正——QuotaService `overview` 读面实际有生产消费者（app `usage_overview` → CLI `pawork usage` 与 GUI QuotaOverview 非 account 路径），若收敛须按此修正；`read` / `read_cache_only` / `overview_cache_only` / `invalidate` 仍零生产消费者，LeaseProjection 恢复机 app 侧零接线（确认属实）。R-05 移交确认——orchestration 注入/恢复面（`with_task_graph` / `with_worktree_allocator` / `with_patch_merger` / `retry_task` / `recover_report`）app 零调用。R-10 注意 `crates/workspace/src/import/mcp.rs` 仍持 MCP secret 前缀本地副本（mcp / app 侧已收敛到 `locator::is_mcp_secret_service`）。R-02 移交确认——`ResourceInstructionKind::PromptTemplate` 在 app 侧为穷举匹配死臂，删除跨 workspace + app 待用户裁决。R-07 需用户确认项（`AppCore::from_resolved` / `from_config` 测试专用同步装配双轨（内部 `block_on`）、gui_host `query.rs` diff_get `complete` 表达式死乘法（零测试覆盖）、`set_model_enabled` / `set_provider_models_enabled` 尾部 cleared_roles 写盘重复收敛、config_unavailable 两处 GUI 文案统一、same-provider 子 core `provider_auth_revision` 不回填导致首轮冗余重装配、lib.rs 对 EventHub / IdempotencyStore 家族的 crate 内 re-export 收窄）随任务报告上报，不在后续任务静默执行。
+
+R-08 移交项（2026-10-04 登记）：R-10 注意 [docs/design.md](design.md) 仍写「六运行模式」（cli / pawork Spec 已改为七，含 gateway）；apps/pawork redact.rs 模块头 ADR-039 / ADR-038 D8 裸编号引用并入 R-01 已登记的 ADR 归档索引问题。R-08 需用户确认项（gateway 子命令 clap 帮助与 chat 附件上限错误文案为英文，与全库中文 UI 不一致；chat local_image_parts 打开文件后二次 is_file 复查收益低；headless SDK 稳定面 MockTransport 四个零消费公开方法 push_responses / fail_next_read / sent_count / assert_sent_json，以及未列入稳定面的 sdk_version_string，删除属对外 semver 收缩）随任务报告上报，不在后续任务静默执行。
 
 2026-09-27 [包边界调整](architecture.md)已实现：拆出 models、gui-server、acp、mcp、gateway，workspace 为 29 成员，不合并现有包。受影响包的现有回归、协议 golden、依赖边界审计与真实 `pawork` 子进程 3 项测试通过；第三方生产依赖集合、线上协议与持久格式不变。本次未运行 Desktop 构建、真窗口或真实 Provider 验收，不改变下方已有人工验收结论；全 workspace 门禁未运行，改动已提交，未发布、未归档。
 

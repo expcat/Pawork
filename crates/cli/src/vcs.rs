@@ -97,7 +97,7 @@ pub async fn run_rollback(
                 return Err(CliError::Usage("no checkpoints in this session".into()));
             }
             print_checkpoint_list(&listed);
-            prompt_checkpoint(&listed).await?
+            prompt_checkpoint().await?
         }
     };
     let summary = listed
@@ -153,7 +153,7 @@ fn print_checkpoint_list(listed: &[CheckpointSummary]) {
     }
 }
 
-async fn prompt_checkpoint(listed: &[CheckpointSummary]) -> Result<String, CliError> {
+async fn prompt_checkpoint() -> Result<String, CliError> {
     eprint!("checkpoint id: ");
     if let Err(error) = io::stderr().flush() {
         tracing::debug!(%error, "checkpoint prompt stderr flush failed");
@@ -165,13 +165,7 @@ async fn prompt_checkpoint(listed: &[CheckpointSummary]) -> Result<String, CliEr
     if trimmed.is_empty() {
         return Err(CliError::Usage("checkpoint id is required".into()));
     }
-    if listed.iter().any(|item| item.checkpoint_id == trimmed)
-        || listed
-            .iter()
-            .any(|item| item.tool_call_id.as_deref() == Some(trimmed))
-    {
-        return Ok(trimmed.to_string());
-    }
+    // 未知 id 不在 CLI 层拦截，由 core 侧回滚失败兜底（见包 Spec §8）。
     Ok(trimmed.to_string())
 }
 

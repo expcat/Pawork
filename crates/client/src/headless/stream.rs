@@ -5,20 +5,22 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tokio::sync::mpsc;
 
-use crate::headless::error::{SdkError, SdkErrorKind};
+use crate::headless::error::SdkError;
 
 /// 背压策略：消费者跟不上时的行为。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BackpressurePolicy {
     /// 丢弃新事件并计数（不阻塞 Host 读取循环，事件流永远前进）。
     Drop,
-    /// 记录溢出，下一次读取返回 [`SdkErrorKind::Backpressure`]。
+    /// 记录溢出，下一次读取返回
+    /// [`crate::headless::error::SdkErrorKind::Backpressure`]。
     Error,
 }
 
 /// 事件订阅句柄：从有界通道读取 [`AppEventEnvelope`]。
 ///
-/// 订阅被客户端关闭或自身被 drop 后，读取返回 [`SdkErrorKind::Cancelled`]。
+/// 订阅被客户端关闭或自身被 drop 后，读取返回
+/// [`crate::headless::error::SdkErrorKind::Cancelled`]。
 #[derive(Debug)]
 pub struct EventSubscription {
     stream_label: String,
@@ -103,9 +105,4 @@ impl Drop for EventSubscription {
     fn drop(&mut self) {
         self.receiver.close();
     }
-}
-
-/// 断言用的辅助：把事件流标签与错误类别暴露给测试。
-pub fn backpressure_error_kind() -> SdkErrorKind {
-    SdkErrorKind::Backpressure
 }

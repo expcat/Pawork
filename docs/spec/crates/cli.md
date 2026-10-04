@@ -13,19 +13,20 @@
 
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
-| `src/lib.rs` | ~1100 | `Cli`（全局参数）与 `Command` 及全部子命令 enum（`SessionsCommand` / `AuthCommand` / `GuiCommand` / `AcpCommand` / `ServiceCommand` / `McpCommand` / `TasksCommand` / `PlanCommand` / `AgentsCommand`）；`run()` / `run_inner()` 分发（GUI 分支把同一次 data-dir 解析同时注入 Core 与 `run_gui`）；`run_models`（ADR-064 起 `--purpose <PURPOSE>` 可重复按 canonical 用途交集过滤，未知值 Usage 错误；用途无匹配时明确提示筛选结果为空；`--json` 条目增五布尔 `capabilities`）；`approval_host` 选择；`CliError`；clap 解析单元测试 |
-| `src/chat.rs` | ~650 | `run_chat`（REPL + 单次）、`run_once`、`run_json`（`--json` 驱动）；REPL 斜杠命令处理；`drive_turn` Ctrl-C 取消；轮末 usage 行；`map_turn_error` |
+| `src/lib.rs` | ~1300 | `Cli`（全局参数）与 `Command` 及全部子命令 enum（`SessionsCommand` / `AuthCommand` / `GuiCommand` / `AcpCommand` / `ServiceCommand` / `McpCommand` / `TasksCommand` / `PlanCommand` / `AgentsCommand` / `GatewayCommand`）；`run()` / `run_inner()` 分发（GUI / Tasks / Gateway 分支把同一次 data-dir 解析同时注入 Core 与对应宿主）；`run_models`（ADR-064 起 `--purpose <PURPOSE>` 可重复按 canonical 用途交集过滤，未知值 Usage 错误；用途无匹配时明确提示筛选结果为空；`--json` 条目增五布尔 `capabilities`）；`approval_host` 选择；`CliError`；clap 解析单元测试 |
+| `src/chat.rs` | ~840 | `run_chat`（REPL + 单次）、`run_once`、`run_json`（`--json` 驱动）；REPL 斜杠命令处理；`drive_turn` Ctrl-C 取消；轮末 usage 行；`map_turn_error`；`--image` / `--video-url` 附件装配（合计上限 4、本地图片 base64 编码） |
 | `src/sessions.rs` | ~700 | `sessions list/show/export/import/fork` 实现；`.jsonl` 首行签名嗅探（Codex 信封 / Claude 本地行 / Pi 默认）；`format_millis`（无时区库的 UTC 格式化） |
 | `src/auth.rs` | ~120 | `auth list/set-key/login/logout`；OAuth 登录等待 5 分钟（`LOGIN_TIMEOUT`）；只显示掩码 |
 | `src/gui.rs` | ~280 | `gui serve`：消费 `run_inner` 已解析的 Host data directory，派生单实例 socket/pid/token，向认证握手注入同一路径；单实例由实例级 `gui.lock` 独占锁保证（R-04，装配期获取，不再有探测-绑定竞态）、`TokenStore`、socket 目录 0o700、pid 文件（bind 成功后发布）、`GuiServer` accept 循环；握手能力由 `pawork_protocol::app::registry::gui_supported_capabilities()` **派生**（无手写清单）；R-11：`ConnectionSet` 登记活跃连接 + 每连接 reaper（`wait_done` 就绪即移除，探测短连接不再累积），退出按「关 listener → close 全部连接 → 逐 `wait_done` 收口 → 删除 PID → drop Host 持有者 → pty/Core shutdown → 随 Core 释放实例锁」排序，core 仍被共享时告警而不静默跳过 shutdown |
 | `src/headless.rs` | ~510 | `headless --json-stdio`：`HeadlessHandler`（hello 协商、capability gate、compat import/history、事件轮询）；`HOST_CAPABILITIES` 常量 |
 | `src/acp.rs` | ~280 | `acp serve` 进程循环：stdin 逐行 JSON-RPC 解析、`session/prompt` 并发 inflight、事件泵任务、outbox 冲刷、EOF 后 30s drain 收尾 |
+| `src/gateway.rs` | ~110 | `gateway serve`（绑 127.0.0.1、PID 发布、Ctrl-C/SIGTERM 收尾）与 token 管理 / status / shutdown 的 Core 前处理（见 §3） |
 | `src/ops.rs` | ~360 | `status` / `watch` / `shutdown` / `doctor`；`gui_socket_path` / `gui_token_path` / `gui_pid_path` 命名；token 文件读取组装握手 proof；`InstanceReport` |
 | `src/service.rs` | ~450 | `service install/start/stop`：三平台（launchd plist / systemd user unit / Windows SCM）定义生成（R-15：systemd ExecStart 双引号包裹 + 反斜杠/双引号转义 + `%` 翻倍，plist `<string>` XML 五字符转义——含空格或 `&`/`<` 的路径解析后 argv 完整）；默认 dry-run；`--apply` 执行；stop 回收步骤（`TeardownStep`） |
 | `src/vcs.rs` | ~200 | `diff`（分页 10 文件/页、git 概况走 stderr）与 `rollback`（列表 / 询问 / 确认 / Blob 还原） |
 | `src/mcp.rs` | ~50 | `mcp list/test`：`McpServerStatus` 行渲染（name / transport / state / tools / last_error），`--json` 直接序列化数组 |
 | `src/usage.rs` | ~50 | `usage`：`usage_overview` 投影（provider / session / LocalLedger / 配额窗口） |
-| `src/tasks.rs` | ~90 | `tasks list/status/cancel/register` |
+| `src/tasks.rs` | ~160 | `tasks list/status/cancel/register`；cancel 把活动任务经鉴权 GUI 连接路由到当前实例 Host（API ≥1.23），旧 Host / 不在线 / CLI 宿主任务显式报错 |
 | `src/plan.rs` | ~100 | `plan show/create/replace/submit/approve/reject`；session 缺省 `latest`，create 无会话时新建 |
 | `src/agents.rs` | ~35 | `agents demo`：多 Agent 编排演示报告输出 |
 | `src/import.rs` | ~80 | `import <tool>`：compat 配置导入向导（预览 / 确认 / 应用） |
@@ -140,7 +141,7 @@ API 1.24 视频：`chat --prompt` / `run` 接受重复 `--video-url <HTTP(S)>`�
    - clap 解析 → `normalize_instance`；`service` / `status` / `doctor` / `watch` / `shutdown` 五命令直接进入 pre-core 分支返回。
    - `gui serve` 在加载 Core 前只解析一次实际 data directory：同一个 `PathBuf` 同时写入 `AppLoadOptions.data_dir` 并传给 `run_gui`；Core 存储、socket/pid/token 派生和 Accepted 握手元数据因此不会分叉。`--socket` 只覆盖 endpoint，不改变 data directory。
    - 组装 `AppLoadOptions`（provider / model / instance / `parse_approval_mode` / `trust_workspaces` / approval_host）；`--trust-workspaces` 只设置本进程显式覆盖，不修改配置；gui / headless / acp 三命令强制换 `GuiApprovalHost`。
-   - 目录与协议入口类命令（models / sessions / auth / diff / rollback / mcp / import / headless / acp / gui / usage / tasks / plan / agents）用 `AppCore::load_for_catalog`（容忍默认 provider 缺凭证的目录兜底装配），其余（chat / run）用 `AppCore::load`。
+   - 目录与协议入口类命令（models / sessions / auth / diff / rollback / mcp / import / headless / acp / gui / gateway / usage / tasks / plan / agents）用 `AppCore::load_for_catalog`（容忍默认 provider 缺凭证的目录兜底装配），其余（chat / run）用 `AppCore::load`。
    - 普通命令路径在结果返回前执行 `core.shutdown()`，快路径命令（gui / headless / acp / json 驱动）各自负责收尾。
 2. **交互式 chat 一轮**：
    - REPL 启动横幅（provider / model / 快捷键说明）走 stderr；`> ` 提示后读行，斜杠命令就地处理；首条普通消息触发 `create_session` 并回显 `session <id>`。
@@ -192,7 +193,7 @@ API 1.24 视频：`chat --prompt` / `run` 接受重复 `--video-url <HTTP(S)>`�
 - **ACP 错误映射为显式表**：`AdapterError` → JSON-RPC 码、`AdapterErrorFrame.code` 字符串 → 码、canonical `ErrorContext.category` → 码三张映射都在 `map.rs` 落表（NotFound → -32002、Authentication/Authorization → -32000、InvalidRequest → -32602、Cancelled → -32800、其余 → -32603）；`Artifact` 响应在 ACP 通道不支持（-32603）。
 - **凭证红线**：明文 key 只经 stdin 进 auth 文件；`auth list` 只显示掩码与来源；`format_provider_error` 对认证错误不透传上游消息原文。
 - **单实例与文件权限**：`gui serve` 经实例级 `gui.lock` 独占锁防双实例（R-04，装配期获取，先于打开库与 bind）；socket 父目录（位于数据目录内时）强制 0o700；token 文件缺失 / 空内容显式失败，不回退为无认证。
-- **实例角色与恢复隔离**（R-04/R-24）：装配按命令决定 `InstanceRole`——`gui serve` → `GuiHost`；`chat` / `run` / `headless` / `acp` / `agents` → `Executor`（登记活跃、确认无其他活跃宿主才清扫）；其余旁路查询（`sessions` / `models` / `usage` / `tasks` 等）→ `Catalog`（不取锁、永不触发启动清扫）。
+- **实例角色与恢复隔离**（R-04/R-24）：装配按命令决定 `InstanceRole`——`gui serve` → `GuiHost`；`gateway serve` → `Gateway`；`chat` / `run` / `headless` / `acp` / `agents` → `Executor`（登记活跃、确认无其他活跃宿主才清扫）；其余旁路查询（`sessions` / `models` / `usage` / `tasks` 等）→ `Catalog`（不取锁、永不触发启动清扫）。
 - **实例命名契约**（`ops.rs` 定义、lib.rs 测试钉死 default 命名不因 instance 参数化回归漂移）：
   - default instance：socket `pawork-gui.sock`、token `gui.token`、系统服务名 `pawork`；
   - 命名 instance `<i>`：socket `pawork-gui-<i>.sock`、token `gui-<i>.token`、服务名 `pawork.<i>`；
@@ -201,7 +202,7 @@ API 1.24 视频：`chat --prompt` / `run` 接受重复 `--video-url <HTTP(S)>`�
 
 ## 6. 依赖关系
 
-**Cargo 依赖**（内部 10 包）：
+**Cargo 依赖**（内部 11 包）：
 
 - `pawork-acp`：ACP wire、actor 与 `AcpCommandHost`（[acp.md](acp.md)）。
 - `pawork-gui-server`：`GuiHost` / `GuiServer` 与连接运行时（[gui-server.md](gui-server.md)）。
@@ -213,6 +214,7 @@ API 1.24 视频：`chat --prompt` / `run` 接受重复 `--video-url <HTTP(S)>`�
 - `pawork-storage`（`default-features = false`, feature `session`）：`SessionStore` compat import / `SqliteClientSessionRegistryStore`（[storage.md](storage.md)）。
 - `pawork-transport`：`LocalTransport` / `TransportEndpoint`（gui serve 监听与运维探测，[transport.md](transport.md)）。
 - `pawork-domain` / `pawork-engine`：id 与事件类型 / `AgentEventSink`、`CancelHandle`（[domain.md](domain.md)、[engine.md](engine.md)）。
+- `pawork-models`：`capabilities_support_purpose`（`models --purpose` 按 canonical 用途交集过滤，[models.md](models.md)）。
 
 **外部依赖**：clap（derive）、tokio（macros / rt-multi-thread / signal / io-std / io-util / sync / time）、serde / serde_json、async-trait、thiserror、tracing。无 crate feature。
 

@@ -1283,15 +1283,9 @@ mod tests {
     #[test]
     fn default_instance_keeps_stable_socket_name() {
         let path = crate::ops::gui_socket_path("/tmp/pawork-data", DEFAULT_INSTANCE);
-        assert!(
-            path.ends_with("pawork-gui.sock") || path.ends_with("pawork-gui.sock"),
-            "{path:?}"
-        );
+        assert!(path.ends_with("pawork-gui.sock"), "{path:?}");
         let named = crate::ops::gui_socket_path("/tmp/pawork-data", "dev");
-        assert!(
-            named.ends_with("pawork-gui-dev.sock") || named.ends_with("pawork-gui-dev.sock"),
-            "{named:?}"
-        );
+        assert!(named.ends_with("pawork-gui-dev.sock"), "{named:?}");
         let token = crate::ops::gui_token_path("/tmp/pawork-data", DEFAULT_INSTANCE);
         assert!(token.ends_with("gui.token"), "{token:?}");
         let named_token = crate::ops::gui_token_path("/tmp/pawork-data", "dev");

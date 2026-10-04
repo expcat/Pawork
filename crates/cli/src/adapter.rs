@@ -23,7 +23,8 @@ static COMMAND_NAMESPACE: OnceLock<String> = OnceLock::new();
 /// 跨进程唯一的命令命名空间。command_ledger 以 (tenant, scope, command_id)
 /// 持久幂等：裸计数器（cli-<name>-1…）会让不同进程的不同逻辑命令撞键，
 /// 命中旧记录重放出旧 session / 已完成 run 的响应（hang 实证见
-/// docs/ROADMAP.md §2.2）。与 client 的 new_request_namespace 同形态。
+/// AGENTS.md §11「CLI command_id 裸计数器撞 command_ledger」）。与 client
+/// 的 new_request_namespace 同形态。
 fn command_namespace() -> &'static str {
     COMMAND_NAMESPACE.get_or_init(|| {
         let nanos = std::time::SystemTime::now()
@@ -98,19 +99,17 @@ pub fn wrap_response(request_id: &str, response: AppResponse) -> AppResponseEnve
 
 pub fn command_envelope(command: AppCommand, name: &str) -> AppCommandEnvelope {
     let n = NEXT_COMMAND.fetch_add(1, Ordering::Relaxed);
-    stamp_automation(
-        AppCommandEnvelope {
-            api_version: API_VERSION,
-            command_id: CommandId::from(format!("cli-{name}-{}-{n}", command_namespace())),
-            source: CommandSource::Automation,
-            identity: ActorIdentity::Automation { name: name.into() },
-            expected_revision: None,
-            idempotency_key: None,
-            issued_at: now_timestamp(),
-            command,
-        },
-        name,
-    )
+    // 字面已携带 Automation source/identity，无需再经 stamp_automation 同值重设。
+    AppCommandEnvelope {
+        api_version: API_VERSION,
+        command_id: CommandId::from(format!("cli-{name}-{}-{n}", command_namespace())),
+        source: CommandSource::Automation,
+        identity: ActorIdentity::Automation { name: name.into() },
+        expected_revision: None,
+        idempotency_key: None,
+        issued_at: now_timestamp(),
+        command,
+    }
 }
 
 pub fn now_timestamp() -> Timestamp {

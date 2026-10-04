@@ -20,7 +20,7 @@
 ## 3. 命令行为与启动装配
 
 - 进程入口 `main`（`#[tokio::main]`，多线程 runtime）：安装日志 → `pawork_cli::run()`，其 `ExitCode` 即进程退出码——成功 `SUCCESS`，任何 CLI 错误在 cli 层打印到 stderr 后返回 `FAILURE`（子命令全集与行为见 [cli.md](cli.md)）。
-- 本包不定义任何自有命令行参数：clap 解析、六运行模式与运维子命令全部在 `pawork-cli`；这里只负责"进程外壳"。
+- 本包不定义任何自有命令行参数：clap 解析、七运行模式（chat / run / headless / acp / gui / service / gateway）与运维子命令全部在 `pawork-cli`；这里只负责"进程外壳"。
 - 日志级别由 `RUST_LOG` 控制（`EnvFilter::try_from_default_env`，缺省 `warn`）；输出固定走 **stderr**，stdout 留给协议 / JSON（`--json`、`headless --json-stdio`、`acp serve` 的 stdout 纪律在 cli 层承载）。
 - `RedactingFmtLayer` 持 `Arc<Mutex<dyn Write + Send>>` 注入 writer（生产为 `io::stderr()`），不做全局可变状态；`install_logging` 在 `run()` 之前完成，保证 CLI 全生命周期的 tracing 输出都过脱敏层。
 

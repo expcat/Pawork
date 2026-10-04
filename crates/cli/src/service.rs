@@ -3,17 +3,10 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use pawork_app::DEFAULT_INSTANCE;
-
 use crate::ops::service_name;
 use crate::{CliError, ServiceCommand};
 
 pub fn run_service(command: ServiceCommand, instance: &str, json: bool) -> Result<(), CliError> {
-    let instance = if instance.trim().is_empty() {
-        DEFAULT_INSTANCE
-    } else {
-        instance
-    };
     let (action, apply) = match command {
         ServiceCommand::Install { apply } => ("install", apply),
         ServiceCommand::Start { apply } => ("start", apply),

@@ -17,7 +17,6 @@ use pawork_engine::{AgentEventSink, EngineError};
 use serde_json::Value;
 
 pub struct TextSink {
-    text: Mutex<String>,
     thinking_open: AtomicBool,
     tools: Mutex<HashMap<ToolCallId, ToolActivity>>,
 }
@@ -35,17 +34,9 @@ struct ToolActivity {
 impl Default for TextSink {
     fn default() -> Self {
         Self {
-            text: Mutex::new(String::new()),
             thinking_open: AtomicBool::new(false),
             tools: Mutex::new(HashMap::new()),
         }
-    }
-}
-
-impl TextSink {
-    #[allow(dead_code)]
-    pub fn collected_text(&self) -> String {
-        self.text.lock().expect("sink text mutex").clone()
     }
 }
 
@@ -59,7 +50,6 @@ impl AgentEventSink for TextSink {
                 io::stdout()
                     .flush()
                     .map_err(|error| EngineError::sink(error.to_string()))?;
-                self.text.lock().expect("sink text mutex").push_str(&delta);
             }
             AgentEvent::AssistantThinkingDelta { delta, .. } => {
                 if !self.thinking_open.swap(true, Ordering::AcqRel) {

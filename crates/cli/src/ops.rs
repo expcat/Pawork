@@ -81,14 +81,6 @@ pub fn gui_pid_path(data_dir: impl AsRef<Path>, instance: &str) -> PathBuf {
     instance_dir(data_dir, instance).join("gui-serve.pid")
 }
 
-pub fn resolved_instance(instance: &str) -> &str {
-    if instance.trim().is_empty() {
-        DEFAULT_INSTANCE
-    } else {
-        instance
-    }
-}
-
 pub async fn run_status(instance: &str, json: bool) -> Result<(), CliError> {
     let report = inspect_instance(instance).await;
     print_report("status", &report, json)
@@ -195,7 +187,8 @@ struct InstanceReport {
 }
 
 async fn inspect_instance(instance: &str) -> InstanceReport {
-    let instance = resolved_instance(instance).to_string();
+    // 入口 run_inner 已 normalize_instance（拒绝空名/非法字符），这里只持有。
+    let instance = instance.to_string();
     let data_dir = consume_data_dir_outcome(default_data_dir_outcome());
     let socket = gui_socket_path(&data_dir, &instance);
     let pid_file = gui_pid_path(&data_dir, &instance);
