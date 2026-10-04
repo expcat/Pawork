@@ -150,7 +150,7 @@ enum GlobSpec {
     },
 }
 
-fn glob_candidates(_workspace: bool) -> Vec<(ExternalSource, GlobSpec)> {
+fn glob_candidates() -> Vec<(ExternalSource, GlobSpec)> {
     use GlobSpec::{Files, Named};
     vec![
         (
@@ -270,7 +270,7 @@ pub(crate) fn detect_files(
                 summaries,
             );
         }
-        for (source, spec) in glob_candidates(true) {
+        for (source, spec) in glob_candidates() {
             scan_glob(
                 root,
                 source,
@@ -313,7 +313,7 @@ pub(crate) fn detect_files(
                 summaries,
             );
         }
-        for (candidate_source, spec) in glob_candidates(false) {
+        for (candidate_source, spec) in glob_candidates() {
             if candidate_source != *source {
                 continue;
             }

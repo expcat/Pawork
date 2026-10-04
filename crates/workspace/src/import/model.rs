@@ -2,7 +2,7 @@
 //!
 //! 每条导入结果要么落到 Pawork canonical 类型（instructions / skill /
 //! MCP server / Agent Profile v2 / User Hook / Permission rule），要么被显式
-//! 标为 Disabled / Unsupported / Conflict；不静默丢弃、不静默放宽权限。
+//! 标为 Unsupported / Conflict；不静默丢弃、不静默放宽权限。
 //! 任何条目都不携带明文 Secret：敏感值只以 credential reference 形式出现。
 
 use std::collections::BTreeSet;
@@ -41,13 +41,12 @@ impl ImportCategory {
     }
 }
 
-/// 条目状态：Imported（可用）/ Disabled（默认禁用，需人工审查）
-/// / Unsupported（无 canonical 表达）/ Conflict（同 id 竞争失败）。
+/// 条目状态：Imported（可用）/ Unsupported（无 canonical 表达）
+/// / Conflict（同 id 竞争失败）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ImportStatus {
     Imported,
-    Disabled,
     Unsupported,
     Conflict,
 }
@@ -59,17 +58,6 @@ pub enum PermissionDecision {
     Allow,
     Ask,
     Deny,
-}
-
-impl PermissionDecision {
-    /// deny-first 优先级：Deny 2 > Ask 1 > Allow 0。
-    pub const fn precedence(self) -> u8 {
-        match self {
-            PermissionDecision::Allow => 0,
-            PermissionDecision::Ask => 1,
-            PermissionDecision::Deny => 2,
-        }
-    }
 }
 
 /// 条目的来源追踪：外部来源 + 配置 tier + 相对路径（无宿主绝对路径）。

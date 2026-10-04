@@ -40,15 +40,6 @@ pub enum HookScope {
     Global,
 }
 
-impl HookScope {
-    pub fn covers(&self, workspace: Option<&WorkspaceId>) -> bool {
-        match self {
-            Self::Global => true,
-            Self::Workspace { workspace_id } => workspace == Some(workspace_id),
-        }
-    }
-}
-
 /// 完整的 user hook 配置。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct HookConfig {
@@ -67,16 +58,12 @@ fn default_enabled() -> bool {
     true
 }
 
-/// 六类 handler 的统一配置枚举。
+/// handler 配置枚举。解析层只映射 command 型；其余 handler 类型一律
+/// 标 Unsupported，不进入计划。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum HandlerConfig {
     Command(CommandHandler),
-    Http(HttpHandler),
-    PromptTransform(PromptTransformHandler),
-    PromptEval(PromptEvalHandler),
-    AgentEval(AgentEvalHandler),
-    McpTool(McpToolHandler),
 }
 
 /// Command handler：经 Sandbox→Process 执行外部命令（导入后不执行）。
@@ -93,110 +80,6 @@ pub struct CommandHandler {
     pub working_directory: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,
-}
-
-/// Http handler：经 http-runtime 发 webhook（导入后不执行）。
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct HttpHandler {
-    pub url: String,
-    #[serde(default = "default_method")]
-    pub method: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub allowed_headers: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub header_secret_refs: Vec<SecretRef>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub body_template: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub timeout_ms: Option<u64>,
-}
-
-fn default_method() -> String {
-    "POST".to_string()
-}
-
-/// PromptTransform handler：在 PromptAssembled 上改写 Agent 输入。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PromptTransformHandler {
-    pub target: PromptTarget,
-    #[serde(default = "default_rewrite_kind")]
-    pub rewrite_kind: String,
-    pub template: String,
-    #[serde(default)]
-    pub allow_system_override: bool,
-}
-
-/// 改写目标。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PromptTarget {
-    System,
-    User,
-    Injected,
-}
-
-fn default_rewrite_kind() -> String {
-    "prefix".to_string()
-}
-
-/// PromptEval handler：调用模型做 hook 判定。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PromptEvalHandler {
-    pub prompt_template: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub response_schema: Option<serde_json::Value>,
-    #[serde(default)]
-    pub on_failure: EvalFallback,
-}
-
-/// AgentEval handler：用受限 Agent 执行 hook 判定。
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct AgentEvalHandler {
-    pub restricted_profile: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tool_allowlist: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub budget: Option<BudgetLimit>,
-    pub prompt_template: String,
-    #[serde(default)]
-    pub on_failure: EvalFallback,
-}
-
-/// 受限预算。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BudgetLimit {
-    pub max_tokens: Option<u64>,
-    pub timeout_ms: Option<u64>,
-}
-
-/// Eval 失败/超时降级策略。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EvalFallback {
-    Allow,
-    #[default]
-    Deny,
-    SafeTransform,
-}
-
-/// McpTool handler：调用 MCP tool 作为 hook handler。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct McpToolHandler {
-    pub server_id: String,
-    pub tool_name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub arg_template: Option<serde_json::Value>,
-    #[serde(default)]
-    pub on_failure: McpFallback,
-}
-
-/// McpTool 调用失败时的降级决策。
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum McpFallback {
-    Allow,
-    #[default]
-    Deny,
 }
 
 /// User hook 触发点。
@@ -220,26 +103,4 @@ pub enum TriggerPoint {
     PreCompact,
     PostCompact,
     Notification,
-}
-
-impl TriggerPoint {
-    pub const ALL: &'static [TriggerPoint] = &[
-        TriggerPoint::SessionStart,
-        TriggerPoint::SessionEnd,
-        TriggerPoint::RunStarted,
-        TriggerPoint::RunCompleted,
-        TriggerPoint::RunFailed,
-        TriggerPoint::PromptAssembled,
-        TriggerPoint::PreToolUse,
-        TriggerPoint::PostToolUse,
-        TriggerPoint::ToolFailed,
-        TriggerPoint::PermissionRequest,
-        TriggerPoint::SubagentStart,
-        TriggerPoint::SubagentStop,
-        TriggerPoint::TaskStarted,
-        TriggerPoint::TaskCompleted,
-        TriggerPoint::PreCompact,
-        TriggerPoint::PostCompact,
-        TriggerPoint::Notification,
-    ];
 }

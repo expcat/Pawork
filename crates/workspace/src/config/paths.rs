@@ -54,22 +54,6 @@ pub fn locate_workspace_config(start: &Path) -> Option<PathBuf> {
     None
 }
 
-/// 默认的搜索根集合（全局 + 工作区），用于在无显式来源时构造加载器输入。
-///
-/// 顺序仅供可读性；合并阶段会按 source key 重新排序，不依赖此顺序。
-pub fn default_search_roots(workspace_root: Option<&Path>) -> Vec<PathBuf> {
-    let mut roots = Vec::new();
-    if let Some(global) = global_config_path() {
-        roots.push(global);
-    }
-    if let Some(root) = workspace_root {
-        if let Some(ws) = locate_workspace_config(root) {
-            roots.push(ws);
-        }
-    }
-    roots
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -92,11 +76,12 @@ mod paths_integration {
     #[test]
     fn locate_finds_nearest_workspace_config_when_walking_up() {
         use std::fs;
-        let tmp = tempfile_dir();
+        let holder = tempfile::tempdir().unwrap();
         // canonicalize：macOS 下 /var 是 /private/var 的符号链接，
         // locate 内部 canonicalize 返回 /private/var，需与期望路径一致。
         // 与实现一致使用 dunce（Windows 下不带 \\?\ 前缀）。
-        let tmp = dunce::canonicalize(&tmp).unwrap_or(tmp);
+        let tmp = dunce::canonicalize(holder.path())
+            .unwrap_or_else(|_| holder.path().to_path_buf());
         let nested = tmp.join("a/b/c");
         fs::create_dir_all(&nested).unwrap();
 
@@ -119,25 +104,4 @@ mod paths_integration {
 
         fs::remove_dir_all(&tmp).ok();
     }
-}
-
-#[cfg(test)]
-fn tempfile_dir() -> std::path::PathBuf {
-    let mut buf = [0u8; 16];
-    // 简单确定性伪随机，避免引入 tempfile 依赖。
-    let seed = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0x9e3779b97f4a7c15) as u64;
-    let mut state = seed;
-    for byte in buf.iter_mut() {
-        state = state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        *byte = (state >> 33) as u8;
-    }
-    let hex: String = buf.iter().map(|b| format!("{b:02x}")).collect();
-    let dir = std::env::temp_dir().join(format!("pawork-config-test-{hex}"));
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
 }

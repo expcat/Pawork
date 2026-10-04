@@ -8,7 +8,7 @@
 //! - 加载与预览阶段绝不执行 hook、MCP、script 或任何外部进程 / 网络请求；
 //! - 明文 Secret 一律丢弃，只保留 credential reference（名称 / 位置）；
 //! - 外部配置永远不是运行时事实源：导入的 hook 默认 disabled，MCP 与权限
-//!   条目带 requires_review，无法安全映射的内容标为 Unsupported / Disabled；
+//!   条目带 requires_review，无法安全映射的内容标为 Unsupported；
 //! - 原文件只读、不改写；重复 export_plan 幂等。
 //!
 //! 典型流程：`CompatLoader::scan`（只读）→ `CompatPlan::preview`（dry-run

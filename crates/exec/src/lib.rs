@@ -4,7 +4,7 @@
 //! 取消令牌用本 crate `cancel`（与 domain 令牌隔离）。
 //! PTY 输出留在本模块环形缓冲，不写入 Agent Event Store。
 
-pub mod cancel;
+mod cancel;
 mod os;
 mod process;
 mod pty;

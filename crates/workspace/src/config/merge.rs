@@ -4,8 +4,6 @@
 //! - object（map）：按键递归合并，子层值覆盖父层同键。
 //! - 标量（bool / 数字 / 字符串）与数组：整体替换，不逐元素拼接。
 
-use std::collections::BTreeMap;
-
 use serde_json::Value;
 
 /// 可参与合并的配置值。
@@ -35,10 +33,6 @@ impl ConfigValue {
         &mut self.value
     }
 
-    /// 是否为 object。只有 object 才会递归合并。
-    pub fn is_object(&self) -> bool {
-        self.value.is_object()
-    }
 }
 
 impl From<Value> for ConfigValue {
@@ -81,21 +75,6 @@ pub fn merge_json(lower: &mut Value, higher: &Value) {
             *slot = replacement.clone();
         }
     }
-}
-
-/// 把多个按优先级升序排列的值合并为单个值。
-///
-/// 数组顺序即优先级：靠后的元素覆盖靠前的。这是合并的基础原语，
-/// 由上层按层级顺序调用。
-pub fn merge_ordered(values: impl IntoIterator<Item = ConfigValue>) -> ConfigValue {
-    let mut iter = values.into_iter();
-    let Some(mut acc) = iter.next() else {
-        return ConfigValue::new(Value::Object(BTreeMap::new().into_iter().collect()));
-    };
-    for next in iter {
-        acc.merge(&next);
-    }
-    acc
 }
 
 #[cfg(test)]
@@ -147,13 +126,4 @@ mod tests {
         assert_eq!(lower.into_inner(), json!({ "k": { "nested": true } }));
     }
 
-    #[test]
-    fn merge_ordered_respects_input_order() {
-        let merged = merge_ordered([
-            ConfigValue::new(json!({ "a": 1 })),
-            ConfigValue::new(json!({ "a": 2 })),
-            ConfigValue::new(json!({ "a": 3 })),
-        ]);
-        assert_eq!(merged.into_inner(), json!({ "a": 3 }));
-    }
 }

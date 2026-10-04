@@ -25,10 +25,9 @@ pub use error::{ConfigError, ConfigParseError};
 pub use loader::{
     ConfigSource, ConfigWarning, LoadedSource, LoadedSourceSpan, Loader, ResolvedConfig,
 };
-pub use merge::{merge_ordered, ConfigValue, Merge};
+pub use merge::{ConfigValue, Merge};
 pub use paths::{
-    config_dir_for_app, default_search_roots, global_config_path, locate_workspace_config,
-    workspace_config_path,
+    config_dir_for_app, global_config_path, locate_workspace_config, workspace_config_path,
 };
 pub use schema::{
     ModelConfig, PaworkConfig, ProfileConfig, ProfileOverrides, ProviderConfig, RunOverrides,

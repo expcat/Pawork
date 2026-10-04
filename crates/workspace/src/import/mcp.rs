@@ -37,15 +37,6 @@ impl SecretRef {
         }
     }
 
-    /// Backend `service` (secret backend namespace) used to locate the secret.
-    pub fn service(&self) -> &str {
-        &self.service
-    }
-
-    /// Backend `account` used to locate the secret.
-    pub fn account(&self) -> &str {
-        &self.account
-    }
 }
 
 /// One MCP server's configuration.

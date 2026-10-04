@@ -3,7 +3,7 @@
 //! export_plan 只把 canonical 计划写入调用方指定的输出目录，绝不执行 hook / MCP /
 //! script，绝不改写外部源文件。凭据只以 reference 形式出现在计划中。
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use pawork_domain::WorkspaceId;
@@ -285,20 +285,11 @@ impl CompatPlan {
         plan
     }
 
-    /// 各状态条目数（供预览与报告）。
-    pub fn counts_by_status(&self) -> BTreeMap<ImportStatus, usize> {
-        let mut counts = BTreeMap::new();
-        for item in &self.items {
-            *counts.entry(item.status).or_insert(0) += 1;
-        }
-        counts
-    }
 }
 
 fn status_str(status: ImportStatus) -> &'static str {
     match status {
         ImportStatus::Imported => "imported",
-        ImportStatus::Disabled => "disabled",
         ImportStatus::Unsupported => "unsupported",
         ImportStatus::Conflict => "conflict",
     }

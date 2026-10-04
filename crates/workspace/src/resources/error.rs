@@ -15,12 +15,6 @@ pub enum ResourceLoadError {
     },
     #[error("path must be workspace-relative and may not contain '..': {0}")]
     InvalidRelativePath(PathBuf),
-    #[error("resource path resolves outside the workspace root: {0}")]
-    PathEscapesWorkspace(PathBuf),
-    #[error("resource watcher could not start: {0}")]
-    Watcher(String),
-    #[error("initial resource load failed: {0}")]
-    InitialLoad(String),
 }
 
 #[derive(Debug, Error)]

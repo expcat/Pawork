@@ -143,8 +143,6 @@ pub enum WorkspaceError {
         #[source]
         source: std::io::Error,
     },
-    #[error("workspace snapshot contains a duplicate id")]
-    DuplicateWorkspaceId,
     #[error("workspace catalog lock is poisoned")]
     Poisoned,
 }

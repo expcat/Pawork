@@ -1,6 +1,6 @@
 # pawork-exec
 
-> 执行内核：跨平台 Process Runtime（进程组/Job、超时、输出上限、协作取消、整树回收）、Sandbox Runtime（macOS Seatbelt / Linux bwrap+Landlock / Windows Job、软沙箱 NativeRestricted、可观测回退选择器）与 PTY 服务。生产 `pawork-*` 依赖仅为 [`pawork-policy`](policy.md)（ADR-052：路径 helper）；**不直接依赖** `pawork-domain`。被 `pawork-tools` 与 app 宿主消费。
+> 执行内核：跨平台 Process Runtime（进程组/Job、超时、输出上限、协作取消、整树回收）、Sandbox Runtime（macOS Seatbelt / Linux bwrap+Landlock / Windows Job、软沙箱 NativeRestricted、可观测回退选择器）与 PTY 服务。生产 `pawork-*` 依赖仅为 [`pawork-policy`](policy.md)（ADR-052：路径 helper）；**不直接依赖** `pawork-domain`。被 `pawork-tools`、`pawork-git`、`pawork-mcp` 与 app 宿主消费。
 
 ## 1. 职责与边界
 
@@ -13,7 +13,7 @@
 
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
-| `src/lib.rs` | ~50 | 门面：`pub mod cancel`，其余模块私有 + 全量 re-export；平台函数（Seatbelt profile / bwrap argv / Landlock 探测 / AppContainer 映射）以 `pub(crate) use` 引入（R0 D21 包外零消费，R7 再评估是否公开）。 |
+| `src/lib.rs` | ~50 | 门面：模块全部私有 + 全量 re-export（2026-10-04 收敛 `pub mod cancel` 双路径）；平台函数（Seatbelt profile / bwrap argv / Landlock 探测 / AppContainer 映射）以 `pub(crate) use` 引入（R0 D21 包外零消费，R7 再评估是否公开）。 |
 | `src/cancel.rs` | ~165（含测试） | 协作取消原语 `CancellationToken` / `CancellationFuture`：`Arc<{AtomicBool, Mutex<Vec<Waker>>}>`，克隆共享，`cancelled().await` 挂起至取消，`cancel()` 幂等唤醒全部 waiter。 |
 | `src/process.rs` | ~1060（逻辑 ~600 + 测试） | `CommandSpec`（含 Linux 专属 `landlock` 字段）/ `ProcessLimits` / `ProcessRuntime` / `ProcessEvent` / `ProcessOutput` / `ProcessInput` / `ProcessHandle` / `ProcessError` / `LinuxLandlockPolicy`（pub(crate)）；Unix `pre_exec`（setpgid + setrlimit + Linux PDEATHSIG + Landlock restrict）；Windows `CREATE_SUSPENDED` → Job attach → `NtResumeProcess`；监督循环与 `kill_child_tree`。 |
 | `src/sandbox.rs` | ~1210（逻辑 ~700 + 测试） | `SandboxPolicy` / `FilesystemPolicy` / `NetworkMode` / `ResourceLimits` / `IsolationLevel` / `SandboxBackend` trait / `SandboxProcessSpec` / `SandboxProcess` / `SandboxInteractiveProcess` / `SandboxError` / `ProbeOutcome` / `BackendSelection`；软沙箱 `NativeRestricted` 与全后端共用第一层 `apply_soft_restrictions`；`SandboxSelector`；`default_secret_paths` / `default_env_allowlist`。 |
@@ -153,8 +153,8 @@
 ## 6. 依赖关系
 
 - **workspace 内**：`pawork-policy`（ADR-052：`canonicalize_platform` / `path_within_root` 供 sandbox 与 Linux bwrap deny 判定；不直接依赖 domain）。
-- **外部**：`tokio`（process/rt/sync/time 等）、`portable-pty`、`async-trait`、`serde/serde_json`、`thiserror`、`tracing`、`libc`（Unix）；Linux 加 `landlock`；Windows 加 `windows`（Win32 Job/Threading/Security feature 集）。dev 依赖 `tempfile`。无 cargo feature。canonicalize 经 policy 使用 `dunce`，本包不再直接依赖 `dunce`。
-- **被依赖**：`pawork-tools`（run_command + MCP stdio 托管）、app 宿主（PTY / 沙箱装配）。`pawork-engine` 刻意不依赖本包（进程操作由宿主注入）。
+- **外部**：`tokio`（process/rt/sync/time 等）、`portable-pty`、`async-trait`、`serde`、`thiserror`、`tracing`、`libc`（Unix）；Linux 加 `landlock`；Windows 加 `windows`（Win32 Job/Threading/Security feature 集）。dev 依赖 `tempfile`、`serde_json`（IsolationLevel golden 断言；2026-10-04 自生产依赖移出）。无 cargo feature。canonicalize 经 policy 使用 `dunce`，本包不再直接依赖 `dunce`。
+- **被依赖**：`pawork-tools`（run_command）、`pawork-git`（进程执行）、`pawork-mcp`（沙箱 stdio 托管）、app 宿主（PTY / 沙箱装配）。`pawork-engine` 刻意不依赖本包（进程操作由宿主注入）。
 
 ## 7. 测试与验证资产
 
@@ -164,15 +164,17 @@
 
 | 文件 | 覆盖点 |
 | --- | --- |
-| `cancel.rs` | 取消传播、克隆共享、waiter 唤醒、幂等。 |
-| `process.rs` | stdout/stderr 捕获与 exit_code、超时（`timed_out+killed`）、取消 kill、输出截断（`Exit.truncated`）、交互式 stdin 写入/close、进程树整树回收（孙进程）、rlimit 应用（Unix）、句柄 Drop 回收；`kill_reaps_descendant_that_escaped_with_setsid` 在 Linux/macOS 走真实 setsid 逃逸，缺 `setsid` 或 `perl POSIX::setsid` 时按平台前提失败，不 skip。 |
-| `sandbox.rs` | `untrusted_default` 形状（只读 + no spawn + Enforce + env_clear）、`isolation_level_vocabulary_golden`、`secret_paths_for_exact_vector_golden` / `default_secret_paths_controlled_env_golden`、env 清洗（denylist 优先、通配大小写）、cwd 越界与 deny 洞拒绝、spawn 未授权 `Denied`、资源映射、selector 回退与 `attempted` 记录、NativeRestricted spawn / spawn_interactive 冒烟；`macos_sandbox_exec_reports_hard_writes_and_network` 仅 `cfg(target_os = "macos")`，非 macOS 不编译、不 `return` 假绿。 |
-| `tree.rs` | attach_external 组长前置校验、terminate 幂等。 |
+| `cancel.rs` | 取消传播、克隆共享、waiter 唤醒与 drop 移除。 |
+| `process.rs` | stdout/stderr 捕获与 exit_code、超时（`timed_out+killed`）、取消 kill、输出截断（`Exit.truncated`）、进程树整树回收（孙进程）、rlimit 应用（Unix）、句柄 Drop 回收；`kill_reaps_descendant_that_escaped_with_setsid` 在 Linux/macOS 走真实 setsid 逃逸，缺 `setsid` 或 `perl POSIX::setsid` 时按平台前提失败，不 skip。 |
+| `sandbox.rs` | `untrusted_default` 形状（只读 + no spawn + Enforce + env_clear）、`isolation_level_vocabulary_golden`、`secret_paths_for_exact_vector_golden` / `default_secret_paths_controlled_env_golden`、env 清洗（denylist 优先、通配大小写）、cwd 越界与 deny 洞拒绝、资源映射、selector 回退与 `attempted` 记录、NativeRestricted spawn 冒烟（真实子进程验证 env 清洗热路径）；`macos_sandbox_exec_reports_hard_writes_and_network` 仅 `cfg(target_os = "macos")`，非 macOS 不编译、不 `return` 假绿。 |
+| `tree.rs` | 无内联测试；attach/terminate 经 process.rs 与 pty/mod.rs 的真实进程路径间接覆盖（组长前置拒绝无定向回归，见下「已知缺口」）。 |
 | `os/linux.rs` | bwrap argv 生成（bind 顺序 / unshare / die-with-parent / deny tmpfs 覆盖）、Landlock 策略编译（读写集合、deny 重叠拒绝、executable 单文件授权）、探测降级 reason、进程树冻结-快照-倒序杀、setsid 逃逸捕获、start_time 防复用；Linux 上 `bwrap_allows_workspace_and_hides_unmounted_sibling` / `landlock_allows_workspace_and_denies_sibling_file` 走真实 spawn，缺 bwrap/userns 或 Landlock ABI 时按平台前提失败，不 skip。 |
 | `os/macos.rs` | **`profile_full_output_golden`** 及结构断言（`profile_denies_network_when_enforce` / `profile_allows_network_when_hint` / `profile_emits_deny_for_secret_paths` / `profile_emits_deny_for_default_secret_paths` / `profile_emits_canonical_deny_for_existing_path` / `profile_emits_write_roots_as_file_write` / `profile_notes_max_procs_unenforced` / `profile_includes_version_header`）、字符串转义、进程树冻结与逃逸回收。 |
-| `os/windows.rs` | AppContainer 能力→SID 映射、`probe_appcontainer_job` 冻结输出、Job 限额映射与后代收养。 |
+| `os/windows.rs` | AppContainer 网络开关与文件系统路径映射、`probe_appcontainer_job` 冻结输出（available:false）；Job 限额映射与后代收养无定向测试（需 Windows CI，见下「已知缺口」）。 |
 | `pty/mod.rs` | 输出捕获、owner 强制、快照重连（游标续读 / Stale 语义）、broadcast 覆写丢弃计数、kill 整树（后代收割）、多会话 cleanup_owner / shutdown、resize、退出状态与 signal 传播。 |
 | `pty/buffer.rs` | 环形丢最老、游标单调、`read_since` 增量、`Stale` / `Future` 判定。 |
+
+已知缺口（2026-10-04 R-02 复核，原表述高估了覆盖）：`allow_spawn=false` 的 `Denied` 硬门、`SandboxBackend::spawn_interactive`（含 NativeRestricted）冒烟、`ProcessRuntime::spawn_interactive` 的 stdin 写入/close、`attach_external` 组长前置拒绝、Windows Job 限额映射均无定向回归；处置待用户确认，未静默补测。
 
 ## 8. 注意事项与已知限制
 
