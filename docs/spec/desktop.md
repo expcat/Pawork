@@ -1,12 +1,10 @@
 # Desktop 产品与交互规格
 
-> 基线日期：2026-09-05。GUI P0–P2（含中文与供应商代理开关）已实现，定向自动验证与本机真窗口验收完成，证据见 §8；工程约定见 [AGENTS.md](../../AGENTS.md)。
-
-> 2026-09-10 文档重整：当前视觉与交互合同统一见 [GUI 设计](../gui-design.md)，其「目标」段落属于尚未实施的 GUI2；下一阶段与 UX 未闭合验收见 [ROADMAP](../ROADMAP.md)。本文早期阶段数值和验收仅保留原批次含义，不覆盖最新源码与 GUI 规格，不代表 GUI2 已通过。
+> 更新：2026-10-04。现行视觉与交互合同见 [GUI 设计](../gui-design.md)，未闭合验收见 [ROADMAP](../ROADMAP.md)，工程约定见 [AGENTS.md](../../AGENTS.md)。
 
 ## ADR-057：UI-3 思考投影与会话身份（2026-09-08）
 
-状态：**Accepted**，用户在本次会话明确「确认实施」。实现、自动验证、代理真窗口检查和用户人工视觉验收分别登记在 路线图（Git `f8df04b2:docs/review/roadmap-ui-2026-09-09.md`）。
+状态：**Accepted**。
 
 - **GUI API 1.14**：复用 live `AppEvent::ThinkingDelta`；历史新增 `TimelineItemKind::ThinkingDelta` 与可选 `message_id` / `thinking_text`。每个持久事件仍只对应一条 wire 条目，`MessageCommitted` 的正文与思考同载于 `AssistantMessage`，共享 reducer 再拆成显示行，不改变磁盘事件 schema 或 SQLite 版本。
 - **合并与降级**：reducer 按 run/message/正文或思考维度合并有序增量，committed 全文替换累积体并阻止迟到增量重复追加；思考保留首次增量的 sequence/timestamp，迟到增量只可前移已有思考行，不恢复隐藏内容；分页、live 和重放收敛。Host 对 API <1.14 的历史响应移除新 kind 与新字段，保留原 `next_sequence` / `head_sequence` / `complete`，包括整页被过滤时的游标。
@@ -14,21 +12,18 @@
 - **Canonical Provider 契约**：`CanonicalModelRequest.session_id: Option<SessionId>` 缺省为 None 且不序列化空值，旧请求仍可解码。真实 `SessionTurn` 覆盖请求会话身份；主请求、工具续轮、自动/手动压缩及自动命名沿用真实会话，`trace_id` 保持原含义，Engine 无 Provider 名特例。
 - **OpenCode Go 请求头**：仅该 API-key 通道在 Chat / Responses 两条传输路径把可用的 canonical session ID 映射到 `x-opencode-session`；每次请求重新取值，其他通道不发送。非法 header 值在发网前返回脱敏 `InvalidRequest`，不把身份塞进请求 body 或配置扩展。
 
-
 ## ADR-054：OPT-2 会话生命周期与自动标题（2026-09-05）
 
-背景：OPT-2（OPT 归档（Git `f8df04b2:docs/review/roadmap-opt-2026-09-05.md`） §5，反馈 F7/F9 与 F8 的自动命名）。设计闸门 OPT-D 已签字（[design/README §0](../../design/README.md)）。GUI API minor 1.10 → 1.11，golden/typegen 先行。
+会话生命周期与自动命名使用 GUI API 1.11；wire 形状以 golden / typegen 为准。
 
 - **D1 `SessionCreate.workspace_id` 改可选（since 1.11）**：wire 上字段可缺省或显式 `null` → Host 落盘 `workspace_id = NULL`，归 Unassigned；显式传值行为不变。无项目会话不获得任何 workspace 授权面：文件类工具按现有 Policy 对无 workspace 会话 fail-closed，只适用于问答等不碰仓库的任务。
 - **D2 `SessionRename{session_id, title}`**：两字段必填；title trim 后为空为结构化错误，不写盘。写盘成功后回执 Data（session_view，即写后状态）。
 - **D3 `SessionArchive{session_id, archived: bool}`**：两字段必填。归档后 `list_sessions`/snapshot 隐藏；归档不删除事件与投影，`SessionOpen` 仍可读；wire 保留 `archived: false` 反向写口，本阶段不提供永久删除，Desktop 只暴露归档入口。
-- **D4 命名模型与自动标题**：Global 配置 `naming_provider` / `naming_model`（分层与 `default_provider`/`default_model` 相同；凭证仍只进 auth backend）。未配置则不自动命名，不用启发式冒充模型命名。会话标题仍为占位名（`New session`）且 Run 达成功终态时，Host 用命名模型做一次无工具一次性补全；成功才写回标题，失败/超时保留占位名。Settings 四默认角色的 GUI 入口属 OPT-3b，本阶段只落配置键与 Host 消费。
+- **D4 命名模型与自动标题**：Global 配置 `naming_provider` / `naming_model`（分层与 `default_provider`/`default_model` 相同；凭证仍只进 auth backend）。未配置则不自动命名，不用启发式冒充模型命名。会话标题仍为占位名（`New session`）且 Run 达成功终态时，Host 用命名模型做一次无工具一次性补全；成功才写回标题，失败/超时保留占位名。Settings 提供四默认角色的选择入口。
 - **D4a 自动命名并发收口（2026-09-06 审查修复）**：读取素材只读重放，不决议 pending approval、不追加 Agent 事件；命名任务快照依赖后释放 Core 锁，装配、目录解析、补全共用 20s 超时。写回前确认命名配置仍有效，以单条条件 UPDATE 校验占位标题并写入，避免覆盖手动改名；改名/配置清除期间返回的旧结果丢弃。
 - **D5 `AppEvent::SessionMetaChanged{session_id, title, archived}`**：改名/归档/自动标题写回后由 Host 经 EventHub 广播；Desktop 收到后重取 snapshot，列表即时反映写后状态。当前会话归档时一并收口 Composer、分页、Changes 与 Terminal workspace 草稿；重复刷新保持当前 UI scope。新建会话严格使用创建回执的 session_id，不从列表顺序猜测。
 
-UI-3 的 Markdown、工具折叠与 Run 终态呈现更新见 [GUI 设计](../gui-design.md#ui-3-时间线更新2026-09-08进行中)；下文旧阶段数值不覆盖本次规格。独立思考投影与默认折叠已按 ADR-057 实现，UI-3 等待用户人工视觉验收；自动检查、真窗口与人工验收分别见 路线图（Git `f8df04b2:docs/review/roadmap-ui-2026-09-09.md`）。
-
-2026-09-24：API 1.24 的 Plan / 持续目标 / 技能录制 / 插件查询与新 Composer 附件入口已实现，逐项验收状态见 [ROADMAP](../ROADMAP.md)；本页历史验收记录不自动覆盖新增面板。
+Markdown、工具折叠与 Run 终态呈现见 [GUI 设计](../gui-design.md#ui-3-时间线更新2026-09-08进行中)；新增面板与剩余验收见 [ROADMAP](../ROADMAP.md)。
 
 ## 1. 产品定位
 
@@ -51,7 +46,7 @@ flowchart LR
 
 | 区域 | 必须呈现 | 当前限制 |
 | --- | --- | --- |
-| TaskRail | 会话/任务条目、新任务、项目范围、`Add project…`、选中态、长标题截断；UI-2 悬停 / 聚焦行操作 | 项目通过系统目录选择器和 Host `workspace_add` 注册；当前 project/session 持久化生命周期仍不完整。100%：宽窗 288px、1080–1279 为 240px；150% 时 320px。 |
+| TaskRail | 会话/任务条目、新任务、项目范围、`Add project…`、选中态、长标题截断；UI-2 悬停 / 聚焦行操作 | 项目通过系统目录选择器和 Host `workspace_add` 注册；100%：宽窗 288px、1080–1279 为 240px；150% 时 320px。 |
 | Timeline | 用户/助手/工具/诊断/Run 状态、流式内容、审批卡、fork 边界、回到底部 | 变高虚拟化；菜单锚点卸载、follow-scroll 与千级事件仍需按风险定向复验。 |
 | Composer | 多行输入、发送、附件/`@` 引用反馈 | host 已展开 `@token`；无模糊候选浮层。系统 IME composing 已取得本机证据；多行粘贴与草稿有定向测试，跨平台输入仍需专项验收。 |
 | Inspector / Changes | OPT-4b 起默认折叠（Header `inspector-expand` 重开）；顶层 Changes/Terminal/Resources 与二级 Files/Summary 分层；DiffView；折叠态 Header ActivityPopover | 只读；无 stage/unstage/hunk 命令。 |
@@ -83,33 +78,32 @@ flowchart LR
 
 ### 右侧浏览器（2026-09-16）
 
-用户通过面板「+」/ 空态 / Cmd+K 打开手动浏览器；地址栏、前进后退、刷新 / 停止与真实错误已接线。每任务一页、隐藏保留、关闭释放；站点数据使用隔离的非持久 WebKit profile。首版 macOS 系统 WebKit，HTTP(S)（含 localhost）导航；新窗口链接同页打开。模型操作、DOM / 截图、下载、多网页标签和跨启动恢复未实现。浏览器实现由独立 [pawork-browser](crates/browser.md) 提供，Desktop 只负责布局、输入和任务归属；不改 GUI Protocol / Core。验收状态见 历史记录（Git `f8df04b2:docs/ROADMAP.md`，原「右侧浏览器首版2026-09-16」节）。
+用户通过面板「+」/ 空态 / Cmd+K 打开手动浏览器；地址栏、前进后退、刷新 / 停止与真实错误已接线。每任务一页、隐藏保留、关闭释放；站点数据使用隔离的非持久 WebKit profile。首版 macOS 系统 WebKit，HTTP(S)（含 localhost）导航；新窗口链接同页打开。聊天自动操作经 Host Policy / 审批执行；截图、下载、多网页标签和跨启动恢复未实现。浏览器实现由独立 [pawork-browser](crates/browser.md) 提供，Desktop 只负责布局、输入和任务归属；不改 GUI Protocol / Core。未闭合验收见 [ROADMAP](../ROADMAP.md)。
 
 | ID | 要求 | 状态 |
 | --- | --- | --- |
 | DESK-01 | 用户能添加/选择真实项目并新建/切换会话，选中态与标题在长列表中可辨认。 | 项目选择、新建和切换生产入口已实现；多项目集合与 Session 归属已持久化并通过重启复验。 |
-| DESK-01a | 全局 New task 直建无项目会话（Unassigned），会话行右侧可改名/归档；配置命名模型后占位标题会话在 Run 成功后自动命名。 | ADR-054 已实现（API 1.11），定向自动验证与真窗口验收通过（2026-09-05，见 §8 OPT-2 验收；验收中修复无项目会话问答 fail-closed 冲突）。归档仅隐藏不删除；无项目会话以空授权面运行问答，文件类工具 fail-closed，Composer 显示 No project 诚实提示。 |
+| DESK-01a | 全局 New task 直建无项目会话（Unassigned），会话行右侧可改名/归档；配置命名模型后占位标题会话在 Run 成功后自动命名。 | ADR-054 已实现（API 1.11）。归档仅隐藏不删除；无项目会话以空授权面运行问答，文件类工具 fail-closed，Composer 显示 No project 诚实提示。 |
 | DESK-02 | Timeline 能按确定顺序投影历史和 live 事件，去重且不跨 Run 串线。 | 已实现；共享 reducer/golden。 |
 | DESK-03 | 流式输出时默认跟随底部；用户上滚后脱钩，显式回底后重挂。 | 生产逻辑已实现；长会话与性能按风险定向重验。 |
-| DESK-04 | 工具请求以审批卡呈现 ApproveOnce/ApproveForRun/Deny；取消动作可见。 | 生产逻辑已实现；本轮真实 `write_file` 审批路径已通过。 |
+| DESK-04 | 工具请求以审批卡呈现 ApproveOnce/ApproveForRun/Deny；取消动作可见。 | 生产逻辑已实现；审批须显式决策，无默认允许。 |
 | DESK-05 | Fork 只在 reducer 标记的闭合 Run 边界开放，动作入口再次校验。 | 已实现。 |
 | DESK-06 | 同时只打开一个菜单；Escape/外点关闭；浮层 occlude 防滚轮穿透。 | 已实现；本机 scope / model / Activity 及键盘关闭回焦已复验。 |
-| DESK-07 | Composer 支持中文 IME、多行粘贴、Shift+Enter 与明确发送。 | 已实现；系统 IME composing 已于 2026-09-05 完成真窗口补证，paste/Shift+Enter 由现有定向回归覆盖。 |
-| DESK-08 | Inspector 三页签独立滚动，切入/展开/会话切换/Run 终态/刷新时拉取正确数据。 | 本轮真实 Changes 与 Terminal 主路径已通过；Resources 和跨会话全矩阵仍按后续任务复验。 |
+| DESK-07 | Composer 支持中文 IME、多行粘贴、Shift+Enter 与明确发送。 | 已实现；paste / Shift+Enter 有定向回归；系统 IME 按真实平台验收。 |
+| DESK-08 | Inspector 三页签独立滚动，切入/展开/会话切换/Run 终态/刷新时拉取正确数据。 | 主路径已实现；Resources 和跨会话矩阵按环境验收。 |
 | DESK-09 | 断线态可 Reconnect，Run/会话不因 UI 断线丢失。 | 重连路径已实现；项目与 Session 归属跨重启已复验。 |
-| DESK-10 | 1080×720 下 Composer、状态栏和 Header Activity 触发器仍可用。 | 已实现；1440×1024、1080×720 与三档字号的本机视觉复验通过（§8）。 |
-| DESK-11 | 可见结构和控件具备稳定 AX identifier、正确 role/name/value/state/action；AX 操作复用鼠标/键盘的业务 gate。 | ADR-042 macOS bridge 已实现；本轮主路径可经 AX 驱动，Windows/Linux 平台仍未验收（VoiceOver 验收已于 2026-09-04 按用户要求移出范围）。 |
-| DESK-12 | Settings 从 TaskRail 进入；Host capability 驱动业务页，本地外观页驱动当前 Desktop 字号；本地高级页提供安全连接诊断；关于页呈现当前 Host 权威元数据；返回时保持工作台状态，secure input 不泄漏 AX value。 | SET-3～SET-6g 已实现。外观页在离线态仍可达，三档按钮/快捷键/AX Press 共享 `TextScale`；高级页的握手摘要只在当前连接存活时可用，runtime ID 不冒充配置 instance，Reconnect 与既有 handler 同源；About 的 render/AX 共用 Connected + 非空 `host_data_dir` gate，断线清空并回退高级。本机视觉（验收时为八页，GUI 1.20 起九页含子代理页）、字号与语言切换已复验；真实账号端到端矩阵与 E4 签字见 [settings.md](settings.md)。 |
+| DESK-10 | 1080×720 下 Composer、状态栏和 Header Activity 触发器仍可用。 | 已实现；宽窄窗与三档字号按当前窗口验收。 |
+| DESK-11 | 可见结构和控件具备稳定 AX identifier、正确 role/name/value/state/action；AX 操作复用鼠标/键盘的业务 gate。 | ADR-042 macOS bridge 已实现；主路径可经 AX 驱动，Windows/Linux 平台仍未验收（VoiceOver 验收已于 2026-09-04 按用户要求移出范围）。 |
+| DESK-12 | Settings 从 TaskRail 进入；Host capability 驱动业务页，本地外观页驱动当前 Desktop 字号；本地高级页提供安全连接诊断；关于页呈现当前 Host 权威元数据；返回时保持工作台状态，secure input 不泄漏 AX value。 | SET-3～SET-6g 已实现。外观页在离线态仍可达，三档按钮/快捷键/AX Press 共享 `TextScale`；高级页的握手摘要只在当前连接存活时可用，runtime ID 不冒充配置 instance，Reconnect 与既有 handler 同源；About 的 render/AX 共用 Connected + 非空 `host_data_dir` gate，断线清空并回退高级。当前九页含子代理页；真实账号端到端矩阵与 E4 签字见 [settings.md](settings.md)。 |
 
 ### 4.1 当前可见合同
 
 - Timeline 使用 880px 居中可读列，两侧至少各留 28px；16px / 26px 正文、32px 消息间距，用户浅底卡片与 36px 轻量工具摘要区分层次；独立完成页脚前留 12px。
 - TaskRail 项目头计数 / 「+」与任务行改名 / 归档共用 64px 尾槽（两格 32×32，右缘 8px）；Header 为 medium；24px StatusBar 使用 12px 字阶和窄窗裁切。已连接且无选中任务时，Composer 可直接发送并归为 Unassigned 无任务对话。
-- UI-4 Composer 的 input / 模型 / Send/Cancel 共属居中卡片（至少 110px、最高 220px），项目与上下文移到卡片下方；缺值仍如实显示 unavailable。留白、字号与交互见 [GUI 设计](../gui-design.md#ui-4-输入栏更新2026-09-08)，当前验收状态见 路线图（Git `f8df04b2:docs/review/roadmap-ui-2026-09-09.md`）。
+- UI-4 Composer 的 input / 模型 / Send/Cancel 共属居中卡片（至少 110px、最高 220px），项目与上下文移到卡片下方；缺值仍如实显示 unavailable。留白、字号与交互见 [GUI 设计](../gui-design.md#ui-4-输入栏更新2026-09-08)。
 - Changes 文件行使用稳定前后槽；DiffView 的只读路径 header 位于横滚外，24px 语义 gutter 与中性正文分离；ActivityPopover 内容宽 320px，内容高随 100%/125%/150% 为 144/180/216px，外框包含 8px padding 与 1px border，摘要可见且保持 capability honesty。
-- 三张阶段图与本机视觉走查已收口；此结论不扩张为 Timeline/Changes 全状态 AX 几何覆盖或发布级签字。
 
-UI-5 设置壳与七个非供应商页沿用 UI-1 token，改为 40px 导航、36px 动作与全宽分区布局；页内命中框按 GPUI 实际布局和滚动视口同步，离屏项不暴露动作。原有设置持久化、可用性与断线 gate 不变，供应商页产品改动属于 UI-6。规格见 [GUI 设计 UI-5](../gui-design.md#ui-5-设置更新2026-09-08)，验收状态见 路线图（Git `f8df04b2:docs/review/roadmap-ui-2026-09-09.md`）。
+UI-5 设置壳与七个非供应商页沿用 UI-1 token，改为 40px 导航、36px 动作与全宽分区布局；页内命中框按 GPUI 实际布局和滚动视口同步，离屏项不暴露动作。原有设置持久化、可用性与断线 gate 不变，供应商页产品改动属于 UI-6。规格见 [GUI 设计 UI-5](../gui-design.md#ui-5-设置更新2026-09-08)。
 
 ## 5. 键盘、IME 与可访问性
 
@@ -148,43 +142,18 @@ UI-5 设置壳与七个非供应商页沿用 UI-1 token，改为 40px 导航、3
 
 证据必须记录实际窗口状态、连接态、真实操作 trace、文件/Git/PTY/Provider 外部事实和实际执行的自动检查。三张阶段目标设计图、Settings 真窗口与发布状态均需单独记录，不能由功能测试互相替代。
 
+## 8. 补充交互合同
 
-## 8. GUI 收尾验收记录（2026-09-05）
+### OAuth 登录详情交互
 
-GUI P0–P2 及追加中文/供应商代理开关均已实现；本机 E2 自动验证与 E3 真窗口检查完成，原活动路线图及实施计划已清理。E4 用户签字、跨平台、真实账号完整矩阵与发布门禁未由此推定。
-
-- **环境与产物**：macOS 26.6.2（25G83），Desktop 0.1.0、GUI API 1.10；源码基线 `f977b34` 加本次局部视觉修复，经正式脚本构建并把真实可执行文件复制进 runtime `.app`。`pawork --instance desktop status` 为 listening，`doctor --instance desktop` 握手正常。
-- **P0 Foundation**：对照三张阶段图中的 Foundation，核对 1440×1024 与 1080×720（含窗框截图 1083×723）、空态唯一 New task、Inspector 自适应折叠、Composer、Timeline/Projects 直接切换。鼠标/Return/Space 切换保持 active session、草稿与焦点；scope 菜单在触发器下方展开且只有一个选中勾，Escape 回焦；model 长菜单可滚动、向上展开。
-- **P1 Run & Review**：保留 2026-09-05 已有真实 `opencode-go / glm-5.3-flash` streaming/tool/Review、Approval Deny 与系统 IME composing 证据。本次重新读取正式 Host 持久事件并在窗口打开历史会话 `ses-1788535764261-1`：`run-gui-1788538222136-1` 为 completed，包含 49 个 assistant text delta、3 次 tool started/completed 与 1 个 run_completed，provider/model 符合指定测试模型。零文件终态只显示 Run completed，Activity 为 `0 files · +0/−0`；不把历史回放当成本次新发模型请求。
-- **P2 Settings & Polish**：computer-use 逐页检查 Models & providers、Network、Approvals、Tools & MCP、Terminal、Appearance、Advanced、About；切换 English/中文及 100%/125%/150%。Connected 与目录错误分层；当前 ChatGPT 目录 HTTP 401 如实展示。真实 Network/供应商代理开关写回证据保留在 [Settings Spec](settings.md)；本次未修改凭证、代理、默认模型或审批策略。
-- **本次视觉修复并复验**：Advanced 长路径正常换行；Settings 页启用受限高度内的纵向滚动，切页归零；provider 认证操作移到详情行；两行审批说明随字号增高；单行输入至少容纳当前行高与内边距；Activity 高度与 AX 几何随字号调整；scope 下方锚定与单勾。最小窗 150% 下高级页底部、审批页信任/说明、模型列表及 Network/Terminal 输入完整可达。
-- **自动验证**：`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders` 189/189；`./scripts/pawork-desktop.sh build` 成功；`cargo tree -p pawork --offline --prefix none` 成功且 manifest/lock 无差异；`git diff --check` 与改动文档相对链接检查通过。未新增依赖或测试数量，仅扩展既有 Activity 几何断言。
-
-- **证据位置**：本次 Codex 任务 `01a06f10-cd2b-77b3-95a8-165ce4cfe6f8` 的 computer-use trace，以及本机 `~/.codex/visualizations/2026/09/05/01a06f10-cd2b-77b3-95a8-165ce4cfe6f8/pawork-audit`（截图 01–42，最终修复图 31–40，恢复后的常规窗口图 41–42）；截图不检入仓库，不作为仓库可复现门禁。临时测试/构建日志前缀为 `/tmp/pawork-gui-closeout-verified-`。
-
-### 8.1 OPT-2 会话生命周期真窗口验收（2026-09-05）
-
-隔离实例 `opt2acc`，Host 当次 `--provider opencode-go --model glm-5.3-flash`（不写持久默认），生产实例 `desktop` 未受影响。逐项窗口 + AX + SQLite 交叉验证：全局 New task 直建 Unassigned 会话（DB `workspace_id` NULL，无 WorkspaceConfirm）；Composer No project 与文件工具不可用提示；真实问答 Run 三次 completed；行内改名 Enter 提交/Esc 取消（DB 写后状态一致）；归档后列表隐藏且 `archived=1` 未删除；临时配置命名模型后占位标题在 Run 成功终态自动改写并经 SessionMetaChanged 即时刷新；Host 重启后 Reconnect 恢复连接与草稿。验收中发现并修复：ADR-044 D3 对未绑定会话的 fail-closed 与 ADR-054 D1 冲突，致无项目会话无法问答——显式 NULL 归属改以空授权面 `ws-unbound` 运行，文件工具仍 Policy fail-closed（详见 OPT 归档 §10.3（Git `f8df04b2:docs/review/roadmap-opt-2026-09-05.md`））。命名用配置已还原，本批不推定 OPT-3/4 与发布状态。
-
-Full workspace gate: NOT RUN（当前未设置全量门禁）。
-
-### OAuth 登录详情交互（2026-09-08）
-
-已实现：授权等待区提供打开浏览器、复制完整授权链接、复制可选验证码；登录详情支持鼠标拖选与键盘复制，长 URL 可横滚，复制按钮显示反馈；终态收起动作。xAI Device Flow 与无验证码的 PKCE 共用 Host 返回数据，不硬编码供应商。只读字段无 AX SetValue，API key secure 输入维持掩码与复制保护。交互规格见 [GUI 设计](../gui-design.md)。
-
-自动验证：`cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders -j 2` 通过 219 项，`cargo build -p pawork-desktop --offline --features gpui/runtime_shaders -j 2` 通过；定向回归覆盖只读编辑保护、完整复制、页面滚动后的行选取、长链接横滚坐标与非 HTTP(S) 链接拒绝。
-
-代理真窗口复验：隔离实例 `oauth-gui-review`（Host 当次 `--provider opencode-go --model glm-5.3-flash`），xAI 授权按钮在系统浏览器打开实际设备授权页；链接、验证码与全选详情经本地文本编辑器粘贴核对；窗口随后显示已连接，CLI `auth list` 确认 OAuth 凭证存在。最终构建另用 ChatGPT PKCE 等待态确认无验证码按钮，滚动后拖选第二行并核对粘贴原文，取消后授权动作收起。复验发现的祖先滚动导致误选首行问题已修复。已完成代理窗口检查，等待用户人工验收；未发布。
-
-Full workspace gate: NOT RUN（当前未设置全量门禁）。
+授权等待区提供打开浏览器、复制完整授权链接、复制可选验证码；登录详情支持鼠标拖选与键盘复制，长 URL 可横滚，复制按钮显示反馈；终态收起动作。xAI Device Flow 与无验证码的 PKCE 共用 Host 返回数据，不硬编码供应商。只读字段无 AX SetValue，API key secure 输入维持掩码与复制保护。交互规格见 [GUI 设计](../gui-design.md)。
 
 ### 聊天控制 Terminal / Browser（2026-09-16）
 
-聊天工具已接入 Host 权限和审批，Terminal 与手动面板共用 PTY，Browser 通过 GUI 1.18 请求/回执操作当前任务系统网页。调用与返回值沿用工具事件持久化，重放不触发动作。接口见 [app](crates/app.md)、[browser](crates/browser.md) 与 [Desktop](crates/desktop.md) Spec；本批验证见 [路线图](../ROADMAP.md)。
+聊天工具已接入 Host 权限和审批，Terminal 与手动面板共用 PTY，Browser 通过 GUI 1.18 请求/回执操作当前任务系统网页。调用与返回值沿用工具事件持久化，重放不触发动作。接口见 [app](crates/app.md)、[browser](crates/browser.md) 与 [Desktop](crates/desktop.md) Spec。
 
-## 右侧文件浏览与编辑（2026-09-16）
+### 右侧文件浏览与编辑（2026-09-16）
 
-Files 工具以懒加载目录树浏览当前项目、打开多份已有文本、修改并显式保存。正文占满文件区高度，右侧目录树可收起，文件名筛选覆盖已展开的目录（忽略大小写）；每份文件直接与终端、浏览器等内容共用顶部标签栏，文件区只保留路径和操作。Markdown 默认预览，可切换源码编辑，预览包含当前未保存修改。每份文件保留独立草稿与未保存标记；不同项目隔离，切换任务 / 标签及收起工具保留草稿。⌘S 与按钮等待 Host 回执，外部版本冲突拒绝覆盖；重新载入、关闭未保存文件标签或窗口先确认；关闭后台文件保留当前页，关闭最后一份文件回到仍打开的工具。支持 UTF-8、无 NUL、≤128 KiB 的已有普通文件。协议版本 GUI 1.19，全部 IO 经 CLI Host；不直接从 Desktop 读取文件。新建 / 删除 / 重命名、语法高亮、自动保存不在本批。见 [GUI 设计](../gui-design.md#14-右侧文件浏览与编辑2026-09-16)与历史记录（Git `f8df04b2:docs/ROADMAP.md`，原「右侧文件浏览与编辑2026-09-16」节）。
+Files 工具以懒加载目录树浏览当前项目、打开多份已有文本、修改并显式保存。正文占满文件区高度，右侧目录树可收起，文件名筛选覆盖已展开的目录（忽略大小写）；每份文件直接与终端、浏览器等内容共用顶部标签栏，文件区只保留路径和操作。Markdown 默认预览，可切换源码编辑，预览包含当前未保存修改。每份文件保留独立草稿与未保存标记；不同项目隔离，切换任务 / 标签及收起工具保留草稿。⌘S 与按钮等待 Host 回执，外部版本冲突拒绝覆盖；重新载入、关闭未保存文件标签或窗口先确认；关闭后台文件保留当前页，关闭最后一份文件回到仍打开的工具。支持 UTF-8、无 NUL、≤128 KiB 的已有普通文件。协议版本 GUI 1.19，全部 IO 经 CLI Host；不直接从 Desktop 读取文件。新建 / 删除 / 重命名、语法高亮、自动保存不在本批。见 [GUI 设计](../gui-design.md#14-右侧文件浏览与编辑2026-09-16)。
 
-
-Composer「+」在首页与无项目任务也可使用本机文件 / 图片附件及本轮网络搜索。系统选择器明确选择文件，Desktop 后台有界读取，经 API 1.22 分块上传后由 Host 校验并转换为消息内容；不注册用户目录、不改变项目归属。附件名称与移除操作随任务草稿保存，失败保留，成功接收清除；搜索三态为沿用默认 / 本轮开启 / 本轮关闭。能力不匹配时提示选择支持的模型。项目相对引用保留独立入口。最新验证状态与未实现功能见 [剩余工作与验收](../ROADMAP.md)。
+Composer「+」在首页与无项目任务也可使用本机文件 / 图片附件及网络搜索。系统选择器明确选择文件，Desktop 后台有界读取，经 API 1.22 分块上传后由 Host 校验并转换为消息内容；不注册用户目录、不改变项目归属。附件名称与移除操作随任务草稿保存，失败保留，成功接收清除；搜索三态为沿用默认 / 本轮开启 / 本轮关闭。能力不匹配时提示选择支持的模型。项目相对引用保留独立入口。未闭合验收与候选见 [剩余工作与验收](../ROADMAP.md)。

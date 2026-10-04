@@ -11,7 +11,7 @@
 
 ## ADR-061：账号默认名称与重命名（2026-09-13）
 
-状态：Accepted。用户要求账号池不再强制手填名称，默认用登录邮箱或 API key 脱敏串，并可用进度条表示额度消耗；授权 GUI 1.17。实现与验证状态见当次任务报告，用户视觉验收未做。
+状态：Accepted。账号默认名、重命名与额度进度展示使用 GUI 1.17；未闭合的用户验收见 [ROADMAP](../ROADMAP.md)。
 
 - **D1 默认名**：`auth_account_add_api_key` / `auth_account_start` 的 `display_name` 可缺省或为空，由 Host 在凭证落盘时生成。API key 用头尾加 `*` 的脱敏串（≤4 为 `••••`，5–12 为前 2 + `***` + 后 2，更长为前 4 + `***` + 后 4）。OAuth 优先读 id_token 的 `email` claim（不验签，形态不合理则忽略）；短邮箱原文，过长只掩本地部分。无邮箱则脱敏 access token。旧 1.15/1.16 Host 仍拒空名；Desktop 仅在协商 minor ≥17 时发送空串，否则本地生成同样规则的 API key 名或 `"OAuth"`。
 - **D2 重命名**：新增 GUI-only `auth_account_rename { provider_id, credential_id, display_name }`，since 1.17，幂等。名称经既有 `validate_account_name`（trim 后非空），写入账号索引并推进 revision。回执 Data 含 provider_id / credential_id / display_name；成功发 `AuthChanged::Succeeded`。空名或未知 ID fail-closed。
@@ -20,7 +20,7 @@
 
 ## ADR-060：UI-6b G2 逐账号额度与耗尽切换（2026-09-09）
 
-状态：Accepted。用户在 G2 实施方案（Git `f8df04b2:docs/review/ui6b-quota-plan-2026-09-09.md`） 后回复「确认」，授权 GUI 1.16；实现与验证状态见 ROADMAP（Git `f8df04b2:docs/review/roadmap-ui-2026-09-09.md`）。
+状态：Accepted。逐账号权威额度与耗尽切换使用 GUI 1.16；真实账号与用户验收见 [ROADMAP](../ROADMAP.md)。
 
 - **D1 权威来源**：Go 按指定 provider/credential 的存储 API key 请求一次 `/usage`，读取 rolling/weekly/monthly 三窗。百分比采用官方整数精度，reset 严格解析官方 UTC ISO 毫秒格式；单窗畸形为 typed failure，不取本地账本补余额。同订阅多个 key 不算多份额度，不相加或猜测上游身份。
 - **D2 查询与版本**：GUI 1.16 在既有 `quota_overview` 上以明确 `provider_id + credential_id + unit=percent` 请求 `QuotaOverviewView`，限默认本地作用域、无 model；空 windows 为三窗，Overall unsupported。无凭证过滤的旧调用保留本地 `UsageOverview` 响应。旧 minor 在发网前拒绝新路径；Percent 是整数百分点，与 Token/Cost/Count 分离，本地 ledger 不支持该单位。
@@ -31,7 +31,7 @@
 
 ## ADR-059：UI-6b 命名账号与持久选择（2026-09-08）
 
-状态：Accepted。用户在 实施方案（Git `f8df04b2:docs/review/ui6b-accounts-plan-2026-09-08.md`） 后明确回复「确认实施」。G1 已实现，定向自动检查与代理真窗口检查通过，等待用户人工视觉验收，G2 权威额度与自动切换后续由 ADR-060 接续；G1 验收不表示 UI-6b 整体完成。以下决策取代 ADR-056 的单 kind 默认槽与 provider 级 GUI 操作限制。
+状态：Accepted。GUI 1.15 引入同供应商命名账号与持久选择，取代 ADR-056 的单 kind 默认槽与 provider 级 GUI 操作限制。权威额度与自动切换由 ADR-060 接续，默认名称与重命名由 ADR-061 接续。
 
 - **D1 存储**：每 provider 在 auth backend 的 `pawork.<provider>/accounts.meta` 保存版本 1 索引、递增 revision、账号名称/ID/kind/创建时间与显式选择。新账号使用 opaque `cred_*` ID；API key 为同 service 下 ID 槽，OAuth 为 `pawork.<provider>.oauth` 下 ID 的 `.access/.refresh/.meta` 槽。旧 key/OAuth 保留 `default` 定位，隐式读为 `default-api-key` / `default-oauth`，首次写入才登记索引。FileBackend 外层 version 1 不变，无数据库或 config 迁移，无新增依赖。
 - **D2 原子性**：索引与 secret 在同一个 backend transaction 中提交；FileBackend 沿用跨进程写锁、单次 load 与原子 rename，MemoryBackend 同样回滚失败操作。OAuth 共用参数化的持久化与 refresh 核心，成功轮换同步推进 revision，让其他 Host 丢弃旧 bearer；网络在写锁外，提交时重核原 access/refresh，防止删除后复活或覆盖新登录。OAuth cancel 与完成落盘在同一 flight 锁下串行化。索引损坏、选择失效或缺 secret 均 fail-closed。
@@ -42,7 +42,7 @@
 
 ## ADR-058：UI-6a 目录权威与凭证验证（2026-09-08）
 
-状态：已实现，定向检查与代理真窗口检查通过，等待用户人工视觉验收，见 ROADMAP UI-6a（Git `f8df04b2:docs/review/roadmap-ui-2026-09-09.md`）。GUI wire、配置 schema、认证存储和 domain 形状不变；自动检查与视觉验收分别记录在路线图。
+状态：Accepted。目录权威与凭证验证沿用既有 GUI wire、配置 schema、认证存储和 domain 形状；真实账号与远端目录验收见 [ROADMAP](../ROADMAP.md)。
 
 - **D1 ID 集合**：成功的远端目录替换该 provider 静态 ID 集合，包括合法空数组；不保留远端已消失的静态或 `[[models]]` 条目。静态仅为仍存在的相同 ID 补已有证据、定价与别名；用户 `[[models]]` 的窗口/输出覆盖仅作用于仍存在的 ID。目录失败保留回退；选择模型（含静态命中）也重新核对远端，禁止静默选用已下线 ID。聚合仍以 `(provider, model)` 保留跨供应商同名项。
 - **D2 可运行过滤（2026-09-13 修订）**：成功远端决定 ID 集合。Go / Qwen 的官方逐模型协议表与家族回退只决定 **如何路由**，不再当 ID 白名单。未在表中的新 ID 进入可运行目录：缺省 Chat Completions；Go 上与官方 endpoint 表同一家族的 `grok-*` / `gpt-*` / `muse-spark-*` 走 Responses，`qwen*` / `minimax-*` 走 Messages。仅 Messages-only（本 adapter 尚不能组 Messages 请求）与 Qwen 已知非文本 ID 不进入可运行目录，直接请求仍网络前拒绝。显式 transport 配置仍优先。禁止再把「表里没有」当成丢弃理由。未知窗口/输出为 0（unknown），未知工具能力不宣称支持；Kimi/xAI/ChatGPT 消费有证据的远端字段。
@@ -52,16 +52,16 @@
 
 ## ADR-056：OPT-3d/3e 同供应商多凭证最小切片与额度槽诚实空态（2026-09-06）
 
-状态：Accepted（实现与门禁证据见 OPT 归档对应批次记录）。落地 ROADMAP §6（Git `f8df04b2:docs/review/roadmap-opt-2026-09-05.md`） OPT-3d/3e：同一 provider 的 API key 与 OAuth 两类凭证可**共存**并在 Settings 展开卡内逐条列出状态；额度槽（Usage）在无权威 QuotaSnapshot 来源前只呈现诚实空态，不渲染数字。GUI API 1.12 → 1.13（minor 只增，additive）。对照 OPT-D 签字稿 `design/opt-settings-providers-expanded-v1.png`。
+状态：Accepted。GUI API 1.13 的多凭证共存与额度空态契约；账号选择、权威额度与重命名扩展分别见 ADR-059、ADR-060、ADR-061。视觉参考见 [供应商展开图](../../design/opt-settings-providers-expanded-v1.png)。
 
-- **D1 共存语义（修订 SET-4 A3 替换语义）**：`auth_set_key` 写入 API key 不再删除该 provider 的 OAuth default 条目；`oauth_finish` 写入 OAuth 不再删除 API key default 条目。替换语义缩窄为**同 kind 覆盖**：Replace API key 覆盖 api key default 条目，Replace OAuth 原子覆盖 oauth default 三账户，新登录未返回 refresh_token 时同批删除旧账号 refresh；只有刷新响应缺 refresh_token 时保留当前账号 refresh。Remove（`auth_logout`）维持 provider 级语义：删除该 provider 全部存储凭证（幂等）。运行期解析链不变：装配仍按通道固定顺序（api_key 通道只查 api key；xAI / Kimi Code api-key 优先、OAuth 兜底；ChatGPT 只走 OAuth），即「生效凭证」由通道形态决定，本切片不引入账户选择/亲和路由（G1–G6 仍在 backlog）。同 kind 多账户（两个 API key）不在本切片：存储层 `SecretBackend` 结构天然容纳，但选择语义与命名 UX 属 G1 账户池，签字稿未呈现。
+- **D1 共存语义（修订 SET-4 A3 替换语义）**：`auth_set_key` 写入 API key 不再删除该 provider 的 OAuth default 条目；`oauth_finish` 写入 OAuth 不再删除 API key default 条目。替换语义缩窄为**同 kind 覆盖**：Replace API key 覆盖 api key default 条目，Replace OAuth 原子覆盖 oauth default 三账户，新登录未返回 refresh_token 时同批删除旧账号 refresh；只有刷新响应缺 refresh_token 时保留当前账号 refresh。Remove（`auth_logout`）维持 provider 级语义：删除该 provider 全部存储凭证（幂等）。运行期解析链不变：装配仍按通道固定顺序（api_key 通道只查 api key；xAI / Kimi Code api-key 优先、OAuth 兜底；ChatGPT 只走 OAuth），即「生效凭证」由通道形态决定，本切片不引入账户选择/亲和路由（账号选择与命名扩展见 ADR-059）。同 kind 多账户（两个 API key）不在本切片：存储层 `SecretBackend` 结构天然容纳，但选择语义与命名 UX 属 G1 账户池，签字稿未呈现。
 - **D1a 生效与互斥**：认证或供应商代理设置变化后，当前 adapter 标记失效；下一次 Run（即使 provider/model 未改变）重新装配。`AuthRemove` 与同 provider 的认证写入共用单飞闸，验证/授权尚未结束时返回 `busy`。API key 验证、OAuth device start/token exchange/refresh 与模型请求统一遵循该 provider 的 `use_proxy` 设置。
 - **D2 wire（API 1.13）**：`provider_auth_status` 的 `ProviderAuthStatusEntry` additive 增 `credentials: Vec<ProviderCredentialStatus>`：
   - `ProviderCredentialStatus { kind, masked_credential, expired, expires_at }`：`kind` 为 `"api_key"` / `"oauth"`；`masked_credential` 为脱敏串（存储凭证恒可脱敏，非可选）；`expired: bool` 由 OAuth meta `expires_at_ms` 与当前时刻比较得出，无 `expires_at` 视为未过期（同 `needs_refresh` 口径）；`expires_at` 仅 OAuth 有值（ISO-8601），api key 为 null 但键必须保留（required-nullable 口径同既有 fixture）。
   - 列表只枚举**盘上存储条目**（auth backend）：api key default 命中 → 一条 api_key；oauth default meta 命中 → 一条 oauth；两者皆有 → 两条（api_key 在前，固定序）；皆无 → 空数组（键保留）。env fallback 不是存储凭证，不入列；provider 级 `auth` 字段口径不变（env 命中仍 `Connected{masked_credential: null}`）。
   - `Connecting` flight 期间列表照常返回盘上状态（flight 只影响 provider 级 `auth` 态，不回写 credentials）。
   - 无新增命令：Connect/Replace/Remove 复用既有 `auth_start` / `auth_set_api_key` / `auth_logout` 等价物，仅 D1 删除语义变化。
-- **D3 诚实性边界**：credentials 列表不含明文、不含 env 值片段；`expired` 只陈述过期事实，不暗示自动刷新结果。双凭证共存时运行期生效方由通道固定顺序决定（xAI 为 api key 优先），本切片 GUI 不呈现「active」标记（签字稿无此元素）；Remove 是 provider 级操作，会移除两类存储凭证；要改用另一类，需整组移除后重新连接目标 kind。当前没有逐类删除或账户选择。
+- **D3 诚实性边界**：credentials 列表不含明文、不含 env 值片段；`expired` 只陈述过期事实，不暗示自动刷新结果。双凭证共存时运行期生效方由通道固定顺序决定（xAI 为 api key 优先），本切片 GUI 不呈现「active」标记（签字稿无此元素）；Remove 是 provider 级操作，会移除两类存储凭证；要改用另一类，需整组移除后重新连接目标 kind。API 1.13 不提供逐类删除或账户选择；后续扩展见 ADR-059。
 - **D4 GUI（OPT-D 签字稿）**：provider 卡右侧增展开/折叠 chevron；展开区自上而下为 Proxy 行（既有 Switch 写回 `set_provider_use_proxy` 不变）、Manage models 行（既有弹层触发器不变）、Credentials 区（每条凭证一行：类型标签 + 状态点 Connected/Expired + masked）、Usage 行。Connect/Replace/Remove 动作按钮移入展开区 Credentials 区下方，动作流（内联 API key 编辑器、OAuth 等待详情、Remove 二次确认）不变。折叠态卡头五列（名称/认证方式/连接状态/目录/右侧 chevron）保持现有信息密度。
 - **D5 额度槽（OPT-3e）**：展开区 Usage 行渲染固定槽位 + 「Usage unavailable」文案（对照签字稿），不渲染任何数字、百分比或进度填充；G2 的 QuotaSnapshot 权威来源落地前该行恒为空态，禁止以任何本地推断填值。
 - **D6 CLI**：`pawork auth list` 双形态通道（xAI）两种已存凭证各占一行（移除 api key 命中后的提前 `continue`）；未存储的 kind 维持现行单行 None 呈现，不为本切片重排 CLI 版式。
@@ -69,7 +69,7 @@
 
 ## ADR-055：OPT-3 模型启用集与默认角色（2026-09-05）
 
-状态：Accepted（protocol / workspace / app 已实现并通过各自定向门禁与合并收口，API 1.12，golden/typegen 先红后绿，证据见 ROADMAP §10.4（Git `f8df04b2:docs/review/roadmap-opt-2026-09-05.md`）；Desktop GUI 控件批次已实现（§10.5，desktop 门禁 207/207、协议层验收通过；代理 Switch 像素级复验已通过，见 §10.6）；验收中修复清除判定口径，见 D3a）。落地 OPT-3a/3b 的内核、协议与配置半区：模型启用集（3a）与四默认角色配置键与读写（3b）。Desktop 控件（模型启用弹层、四默认角色区、代理 Switch）已按 OPT-D 签字稿落地（见 OPT 归档 §10.5（Git `f8df04b2:docs/review/roadmap-opt-2026-09-05.md`））；OPT-3d/3e（多凭证、额度槽）不在本 ADR 范围。GUI API 1.11 → 1.12（minor 只增）。对应 ROADMAP §6（Git `f8df04b2:docs/review/roadmap-opt-2026-09-05.md`）。
+状态：Accepted。GUI API 1.12 引入模型启用集与四默认角色配置读写，Desktop 提供模型启用弹层、四默认角色区与代理 Switch；多凭证与额度扩展见 ADR-056。
 
 - **D1 启用集存储**：Global `[[providers]]` 条目新增 `disabled_models: Vec<String>`（denylist）。键缺失或空数组 = 该 provider 模型全部启用；运行期目录新出现的模型默认启用，无需配置迁移，这是选 denylist 而非 enabled 字段的原因。启用语义属于「某 provider 的某模型」，放 `[[providers]]` 条目内而不放扁平 `[[models]]`（后者无 provider 归属，跨供应商会撞 id）。`disabled_models` 是 Global 独占偏好：非 Global 层出现即剥离并记录 warning（与 `use_proxy` 同闸，loader 扩展现有 provider 条目剥离）。
 - **D2 协议词汇（API 1.12）**：
@@ -77,19 +77,19 @@
   - `SetProviderModelsEnabled { provider_id, enabled }`：全开 = 清空该 provider denylist；全关 = Host 按当前聚合目录展开该 provider 全部模型，并保留盘上已有的禁用项（包括暂时离开目录的模型）。单项启停也基于最新盘上 denylist 修改，避免旧 Host 快照覆盖其他实例已保存的选择。全关时目录为空 fail-closed（`catalog_unavailable`）不写盘——空展开写空 denylist 会退化为全开，语义颠倒。回执 `SetProviderModelsEnabledData { provider_id, enabled, cleared_roles }`。
   - 写盘沿用 `rmw_global_config`，禁用集与角色清除由 `write_provider_model_preferences` 一次原子提交；Host 持写锁跨写盘与内存更新，角色设置在写锁内复核模型启用状态；写盘成功即同步内存生效配置（同 `set_provider_use_proxy` 先例）。
   - **D2a 启停不重探全目录（2026-09-13 修订）**：`unknown_model` 仍要求 ID 属于该 provider 可运行目录，但校验优先用最近一次 `models_overview` 快照、该通道静态回退或已在 `disabled_models` 的 ID；未命中才探测。全关展开同样优先快照。GUI 按回执收敛弹层 Switch、Composer 过滤目录与被清除的角色默认，不再为单次启停重查 `model_list` / `provider_auth_status`（打开弹层、页级 Refresh、认证成功/移除仍重查）。选择默认模型（`set_default_model` / `SetDefaultRoleModel`）仍按 ADR-058 重新核对远端。
-- **D3 禁用即显式失效**：`enabled = false`（含全关展开）命中任一角色默认对（conversation = `default_provider/default_model`、naming、vision、search）时，Host 同一次写盘移除该角色键对，回执 `cleared_roles` 按 wire 名列出被清除角色；禁止静默换绑到其他 provider/模型（ROADMAP OPT-3a 验收）。半配对（provider/model 任一缺失）本就当 null 处理，清除时移除存在的键。模型目录按 `(provider_id, model_id)` 保留跨供应商同名项。进行中的 Run 不受影响，只影响之后启动的 Run（同 ADR-053 D3 口径）。
-  - **D3a 清除判定以盘上持久化配置为准（2026-09-06 修订）**：命中判定读 Global 文件（Builtin + Global 层，不含 Session/Run 覆盖）。启动期 CLI `--provider/--model` 覆盖只进内存生效配置、不落盘；若按内存判定会把覆盖值当成用户默认对，误删盘上真实键对（GUI 批次验收中实际发生一次，当场回滚配置并修复）。内存同步随之收窄：仅当内存对与**被清除的持久化对**一致时才同步置 null；CLI 覆盖的生效值保留（哪怕已指向禁用模型，由 Composer/下拉按过滤规则如实标不可用），不写回盘。
+- **D3 禁用即显式失效**：`enabled = false`（含全关展开）命中任一角色默认对（conversation = `default_provider/default_model`、naming、vision、search）时，Host 同一次写盘移除该角色键对，回执 `cleared_roles` 按 wire 名列出被清除角色；禁止静默换绑到其他 provider/模型。半配对（provider/model 任一缺失）本就当 null 处理，清除时移除存在的键。模型目录按 `(provider_id, model_id)` 保留跨供应商同名项。进行中的 Run 不受影响，只影响之后启动的 Run（同 ADR-053 D3 口径）。
+  - **D3a 清除判定以盘上持久化配置为准（2026-09-06 修订）**：命中判定读 Global 文件（Builtin + Global 层，不含 Session/Run 覆盖）。启动期 CLI `--provider/--model` 覆盖只进内存生效配置、不落盘；若按内存判定会把覆盖值当成用户默认对，误删盘上真实键对。内存同步随之收窄：仅当内存对与**被清除的持久化对**一致时才同步置 null；CLI 覆盖的生效值保留（哪怕已指向禁用模型，由 Composer/下拉按过滤规则如实标不可用），不写回盘。
 - **D4 过滤权威在 Host**：
   - `AppQuery::ModelList` additive 增加可选 `include_disabled`（缺省 false）：缺省响应不含禁用模型，满足「Composer / `ModelList` / 默认项下拉不出现未启用模型」；设置弹层显式传 `true` 取全量。响应条目 additive 增 `enabled: bool`。
   - RunStart：显式 `provider`/`model` 或会话当前生效模型被禁用时结构化 fail-closed（`model_disabled`），不启动 Run、不回退其他模型；`switch_provider` / 会话内模型切换同闸。`set_default_model` 与 `SetDefaultRoleModel` 拒绝把禁用模型设为默认。
-- **D5 四默认角色**：角色 wire 名 `conversation` / `naming` / `vision` / `search`。conversation 即既有 `default_provider/default_model` 与 `set_default_model`（旧命令保留，不复制第二份真相）；naming 键已在 ADR-054 D4 落地并由 auto_title 消费。Global 新增 `vision_provider/vision_model`、`search_provider/search_model`，Global 层独占（非 Global 层剥离并记录 warning，同 `proxy_url` 既有闸）。Vision/Search 落地期**只保存选择、不接路由**（识图依赖 B5、搜索依赖 B1）；接线路径落地前 GUI 不得暗示已生效。
+- **D5 四默认角色**：角色 wire 名 `conversation` / `naming` / `vision` / `search`。conversation 即既有 `default_provider/default_model` 与 `set_default_model`（旧命令保留，不复制第二份真相）；naming 键已在 ADR-054 D4 落地并由 auto_title 消费。Global 新增 `vision_provider/vision_model`、`search_provider/search_model`，Global 层独占（非 Global 层剥离并记录 warning，同 `proxy_url` 既有闸）。Vision/Search 落地期**只保存选择、不接路由**；接线路径落地前 GUI 不得暗示已生效。
   - `SetDefaultRoleModel { role, value }`：`role` 为必填 snake_case 串，未知值 fail-closed（同 `SetApprovalMode` 先例）；`value` 必填可空（同 `SetProxyUrl` 先例，缺字段为解码错误），`{ provider_id, model_id }` 设置、`null` 清除该角色键对。设置校验 = 已知 provider + 可运行目录 + 未禁用。回执 `SetDefaultRoleModelData { role, value }`（写后状态，清除时 `value` 为 null）。
   - `provider_auth_status` 响应 additive 增 `role_defaults: { naming, vision, search }`（三键 required-nullable `DefaultModelPair | null`，半配对输出 null，同既有 `default` 口径）；conversation 仍由既有顶层 `default` 透出。
 - **D6 golden/typegen 先行**：`set_model_enabled` / `set_provider_models_enabled` / `set_default_role_model`（含 clear）与 `model_list`（含 `include_disabled`）golden fixture 先行（先红后绿）；registry 注册、版本表（V1_12）、`schemas/` typegen 产物同批检入；`server_response_provider_auth_status.json` 增补 `role_defaults` 键。
 
 ## ADR-053：OPT-1 设置持久化（2026-09-05）
 
-状态：OPT-1 已实现、定向自动验证通过、Appearance 真窗口重启恢复通过；用户视觉签字与发布独立记录（本批证据（Git `f8df04b2:docs/review/roadmap-opt-2026-09-05.md`））；替代 ADR-048 的「审批与会话信任不持久化」语义。GUI command / response 形状不变，无数据库迁移。设计像素仍受 OPT-D 签字闸门约束。
+状态：Accepted。设置持久化取代 ADR-048 的「审批与会话信任不持久化」语义；GUI command / response 形状不变，无数据库迁移。
 
 - **D1 审批默认**：Global `config.toml` 新增可选 `approval_mode`，复用 Policy 五种 snake_case 值；缺失为 `read_only`，非法值拒绝加载。启动显式 `AppLoadOptions.approval_mode` 优先，只覆盖当前进程。`set_approval_mode` 先原子写 Global，再更新当前 Host 与 scheduler；写入失败返回 `config_write` 并保留旧运行态。
 - **D2 项目信任**：Global 新增 `workspace_trust` 表，键为 Host 解析的 canonical workspace 根路径、值为 bool；当前项目显式 true/false 优先于 `trust_workspaces` 全局默认。`workspace_trust` 命令只接 attached workspace id，Host 自行解析路径后写盘，不能用其他 id 或客户端任意路径写入。不得将信任一个项目扩大到全部项目；没有可解析根路径时 fail-closed。重启恢复同一路径的选择；新项目沿用全局默认。显式启动 trust 覆盖只影响当次进程；用户在 Settings 保存当前项目信任后，清除该启动覆盖，后续按各项目保存值/全局默认解析。
@@ -97,18 +97,19 @@
 - **D4 外观**：Desktop 自有用户配置目录 `desktop.json` 保存 `language`（`en`/`zh`）与 `text_scale`（100/125/150）。仅使用现有 Rust/std/serde_json，不增加业务依赖。启动恢复，缺文件用默认；损坏或无法读取时显示失败提示且不覆盖原文件。修改先读取磁盘值、仅更新用户操作的字段再原子写盘，避免多个实例依次保存时覆盖另一项；失败保旧并提示。快捷键和 Settings 走同一写入口；Desktop 不读写 Host `config.toml` 业务键。
 - **验收**：先固定配置加载/安全剥离 golden，再实施；复用 Host Settings 测试验证保存、重新装配、非法输入/写盘失败保旧与无匹配项目拒绝；外观覆盖保存后重读及损坏文件保留。使用真实窗口复验语言/字号重启恢复，证据不得当作设计签字。
 
-## OPT-1a：八页持久化盘点
+## 设置持久化归属
 
-| 页面 | 可改项与持久化归属 | OPT-1 处理 |
-| --- | --- | --- |
-| Models & providers | 默认对话 `default_provider/default_model`、`providers[].use_proxy` → Global `config.toml`；命名 `naming_provider/naming_model` → Global `config.toml`（ADR-054 D4，OPT-2d 落键与 Host 消费，GUI 入口留 OPT-3b）；API key/OAuth → auth backend | 默认对话/代理已有，不重做；F8 识图/搜索键与四默认角色配置已由 ADR-055 落键（vision/search 只保存不接路由）；四默认角色区、模型启用弹层与代理 Switch GUI 已随 OPT-3 GUI 批次落地（2026-09-06）；ADR-056 起同 provider 的 API key 与 OAuth 凭证可共存并在展开卡 Credentials 区逐条列出，Usage 行恒为「Usage unavailable」诚实空态（G2 无权威来源不渲染数字） |
-| Network | `proxy_url` → Global `config.toml` | 已有，不重做 |
-| Approvals | 审批模式、当前项目 trust 原为 Host 内存；`trust_workspaces` 是 Global 只读默认 | 新增 `approval_mode` / `workspace_trust`，见 ADR-053 |
-| Tools & MCP | Remove → Global `mcp.servers` + 独立 MCP 凭证；Test 是即时连接检查 | 已有，不把检测结果当偏好保存 |
-| Terminal | 默认 shell、columns、rows → Global `[terminal]` | 已有，不重做；当前 PTY 尺寸属于运行态 |
-| Appearance | language、text_scale 原为当次窗口；theme 只读深色 | `desktop.json` 保存语言与字号（含快捷键），重启恢复 |
-| Advanced | 只读连接、API、capabilities 与 resume/ack 运行状态 | 无用户可改配置项 |
-| About | 只读版本、Host 数据目录与支持信息 | 无用户可改配置项 |
+| 页面 | 配置与运行态归属 |
+| --- | --- |
+| Models & providers | 四默认角色、`providers[].use_proxy` / `disabled_models` 与 `[reasoning]` → Global `config.toml`；API key/OAuth、账号名称与选择 → auth backend；权威额度按需查询，不持久化 |
+| Subagents | `[subagents]` 的启用、并发、模型权限与推理强度规则 → Global `config.toml` |
+| Network | `proxy_url` → Global `config.toml` |
+| Approvals | `approval_mode` / `workspace_trust` → Global `config.toml`；当前项目显式选择优先于 `trust_workspaces` 全局默认 |
+| Tools & MCP | Remove → Global `mcp.servers` + 独立 MCP 凭证；Test 是即时连接检查，不保存为偏好 |
+| Terminal | 默认 shell、columns、rows → Global `[terminal]`；当前 PTY 尺寸属于运行态 |
+| Appearance | `language` / `text_scale` → `desktop.json`，含快捷键修改，重启恢复；theme 只读深色 |
+| Advanced | 只读连接、API、capabilities 与 resume/ack 运行状态，无用户配置项 |
+| About | 只读版本、Host 数据目录与支持信息，无用户配置项 |
 
 macOS 外观路径：`~/Library/Application Support/dev.pawork.pawork/desktop.json`；Linux `$XDG_CONFIG_HOME/pawork/desktop.json`（缺省 `~/.config/pawork/desktop.json`）；Windows `%APPDATA%/pawork/pawork/config/desktop.json`。外观与 Host 配置各自拥有文件，避免跨进程覆盖业务键。正式 `scripts/pawork-desktop.sh` 默认不再注入审批/信任覆盖；显式环境参数仍可覆盖当次启动。
 
@@ -117,16 +118,16 @@ macOS 外观路径：`~/Library/Application Support/dev.pawork.pawork/desktop.js
 | 字段 | 值 |
 | --- | --- |
 | Feature ID / 名称 | `SETTINGS-01` / Settings 与模型供应商管理 |
-| 状态 | **Accepted（SET-1～SET-6g 已实现并通过各自定向门禁；SET-012 Network 本机代理闭环已获 E1～E3；SET-6h 供应商级代理开关（ADR-052）已实现并通过 protocol/workspace/app 定向门禁，真窗口验收通过（2026-09-05）；真实账号矩阵的完整人工验收仍 pending）** |
+| 状态 | 已实现；真实账号矩阵与用户验收仍有待办，见 [ROADMAP](../ROADMAP.md) |
 | Owner | Pawork maintainers |
-| 目标阶段 | Settings 活动线；不绑定发布版本 |
-| 最近更新 | 2026-09-05（SET-6h 供应商级代理开关与 Network 本机代理配置边界） |
+| 范围 | 当前 Settings 功能与契约；不绑定发布版本 |
+| 最近更新 | 2026-10-04 |
 | 关联 | [GUI 设计](../gui-design.md) · [AGENTS.md](../../AGENTS.md) |
 
 ## 1. 问题、用户与目标
 
 - **目标用户**：希望在 Desktop 内完成模型供应商连接、模型选择和日常设置，而不需要先记忆 CLI/env 细节的本机开发者。
-- **当前问题**：Desktop 只有 Composer 模型选择器，没有 Settings 路由、凭证状态、添加供应商或登录流程；Provider/auth 能力散落在 CLI/AppCore，GUI 只消费模型列表。
+- **当前目标**：Desktop 通过 Settings 统一管理供应商、凭证、模型目录与偏好；继续核验真实账号认证、额度来源和用户交互，避免本机界面检查替代真实环境验收。
 - **用户场景/JTBD**：打开 Settings，添加一个供应商连接，以其支持的 API key 或 OAuth 登录，确认可用模型，并把其中一个设为下一轮默认模型。
 - **成功指标**：首批四家供应商各至少一条真实认证路径可用；模型目录来源和回退可辨；重启后默认项恢复；Secret 泄漏种子为零；断线、取消、错误不会显示假成功。
 - **非目标**：发布、安装器、自更新、完整 account factory、额度路由、团队 Secret、首批任意自定义端点、假 quota/假模型、Desktop 直连业务服务。
@@ -137,13 +138,13 @@ macOS 外观路径：`~/Library/Application Support/dev.pawork.pawork/desktop.js
 
 | 能力 | 当前生产路径/证据 | 缺口 | 结论 |
 | --- | --- | --- | --- |
-| Settings 入口/路由 | SET-3 起 TaskRail `Local` 行 gear + AppRoute 顶层路由 + Settings Rail + 只读供应商页落地（[settings/](../../apps/desktop/src/ui/settings/)）；SET-6a 的代理入口现显示为 Network，SET-6b～6d 依次启用权限与审批、工具与 MCP、终端；SET-6e/6f 启用始终可用的本地外观页与高级连接诊断页；SET-6g 启用由当前握手权威元数据驱动的 About 页 | — | 已实现；Network 与 Global `config.toml` 共用 Host 权威读写路径 |
-| Provider 注册 | [channel registry](../../crates/providers/src/channels/registry.rs) 八行：chatgpt/xai/glm-coding/opencode-go/qwen-token-plan/deepseek/kimi-platform/kimi-code；SET-4 起 `auth_methods` 为数据字段，支持同供应商多认证方法 | — | 已实现 |
-| API-key 通道 | [api_key.rs](../../crates/providers/src/channels/api_key.rs) 可请求 OpenAI-compatible `/models`；SET-2 增 `verify_api_key` 写前验证与 `auth_set_api_key` 非重放命令（verify-then-replace）；SET-4 起 xAI adapter 接受 API key，桌面端写操作已接通 | — | 已实现（真实账号验收 pending） |
-| OAuth | AppCore/auth 已有 OAuth 基础；xAI Device Flow 已接入；SET-2 起 `AuthStart`/`AuthCancel`/`AuthRemove` 对 GUI 开放并有 handler，进度经 `AuthChanged` 六态下发；SET-4 起 Kimi Code Device Flow 接入（[kimi.rs](../../crates/providers/src/channels/kimi.rs)），桌面端等待/取消 UI 已接通 | — | 已实现（真实账号验收 pending） |
-| 模型目录 | `ModelList` query 已对 GUI 开放；[provider_assembly.rs](../../crates/app/src/provider_assembly.rs) 已实现远端 probe 失败后静态回退；SET-2 起 `provider_auth_status` 返回目录三态（remote / fixed_fallback / unavailable）；SET-5 起 xAI 走远端 `/language-models`（按 output_modalities 过滤可运行模型）、Kimi Code 走远端 `/models`（与官方 kimi-cli 同端点），未知 ID 只给保守默认；Desktop 已有来源/时间/错误标签与显式刷新 | — | 已实现（真实 API 验收 pending） |
-| 默认 provider/model | 配置已有 default provider/model 语义；SET-2 增 Global 层 `write_default_model_pair` 与 `set_default_model` 命令（校验可运行目录后落盘）；SET-5 起 `provider_auth_status` 透出持久化默认项、写盘后同会话内存同步，Desktop「模型与默认项」区可设默认并在 Host 确认后同步 Composer，失效显式提示不静默切换 | 重启恢复真窗口验收待 SET-7 | 已实现（真实环境验收 pending） |
-| Secret 存储 | auth backend 使用独立 `auth.json`、原子写和权限收紧；config 排除 `api_key`；ADR-046 拍板 `ApiKeySecret` 非重放单帧内存传递，SET-4 Desktop secure input 只发掩码、明文不进 projection/日志 | — | 已实现 |
+| Settings 入口/路由 | TaskRail `Local` 行 gear 进入 AppRoute Settings；[settings/](../../apps/desktop/src/ui/settings/) 提供九页设置 | — | 已实现；业务配置经 Host 权威读写 |
+| Provider 注册 | [channel registry](../../crates/providers/src/channels/registry.rs) 八通道：chatgpt/xai/glm-coding/opencode-go/qwen-token-plan/deepseek/kimi-platform/kimi-code；`auth_methods` 声明认证方式 | — | 已实现 |
+| API-key 通道 | [api_key.rs](../../crates/providers/src/channels/api_key.rs) 提供 OpenAI-compatible 目录；Host `verify_api_key` 写前验证，Desktop 经非重放 Secret 命令保存 | 真实账号验收 | 已实现 |
+| OAuth | Host `AuthStart`/`AuthCancel`/`AuthRemove` 与 `AuthChanged` 六态；ChatGPT/xAI/Kimi Code OAuth 与 Desktop 等待/取消界面 | 真实账号与刷新验收 | 已实现 |
+| 模型目录 | [provider_assembly.rs](../../crates/app/src/provider_assembly.rs) 聚合远端目录与固定回退；`provider_auth_status` 返回 remote / fixed_fallback / unavailable；Desktop 显示来源、时间、错误与显式刷新 | 真实 API 验收 | 已实现；目录规则见 ADR-058 |
+| 默认 provider/model | Global `write_default_model_pair` 与 `set_default_model` 校验可运行目录后落盘；Host 回执同步 Composer，失效显式提示，不静默切换 | 真实账号与用户交互验收 | 已实现 |
+| Secret 存储 | auth backend 独立 `auth.json`、原子写与权限收紧；config 排除 `api_key`；`ApiKeySecret` 非重放传递，secure input 的明文不进 projection/日志 | — | 已实现 |
 
 归档或历史实现不能代替当前生产路径。本功能只复用当前包，不从 V1/V2 复活账户池或设置库存。
 
@@ -169,7 +170,7 @@ flowchart LR
 
 ### 3.2 添加供应商
 
-1. 用户选择“添加供应商”，看到首批四家 Host 权威 descriptor。
+1. 用户选择“添加供应商”，看到 Host 权威 descriptor。
 2. 选择供应商后，只显示 Host 声明的认证方式；不由 Desktop 依据名称猜测。
 3. API key 使用 secure input；OAuth 显示授权 URL、device code/浏览器动作、有效期和取消入口。
 4. Host 验证凭证。认证成功和模型目录成功分别给出结果；目录失败不能抹掉已成功的认证。
@@ -177,13 +178,13 @@ flowchart LR
 
 ### 3.3 供应商与认证矩阵
 
-| 产品连接 | 首期认证 | 端点/目录策略 | 当前代码差距 | 权威依据 |
+| 产品连接 | 认证方式 | 端点/目录策略 | 当前状态 | 权威依据 |
 | --- | --- | --- | --- | --- |
-| Z.AI / GLM Coding Plan | API key | 先用现有 `https://api.z.ai/api/coding/paas/v4`；未确认稳定公开 list-model API 时使用有版本标记的固定目录 | 已有 `glm-coding` API-key adapter；缺 GUI 设置面 | [Z.AI API 介绍](https://docs.z.ai/api-reference/introduction) · [模型概览](https://docs.z.ai/guides/overview/overview) |
-| Kimi Platform | API key | `https://api.moonshot.ai/v1`；已认证请求 `GET /v1/models` | 需新增 Kimi 通道/descriptor | [Kimi API 概览](https://platform.kimi.ai/docs/api/overview) · [List Models](https://platform.kimi.ai/docs/api/list-models) |
-| Kimi Code | OAuth Device Code 或 Coding Plan API key | managed endpoint `https://api.kimi.com/coding/v1`；已认证 `GET /models` 验证 API key；OAuth 与 API key 共存时运行期 api key 优先 | 已实现（双认证） | [Kimi Code 入门](https://moonshotai.github.io/kimi-code/en/guides/getting-started.html) · [环境变量/端点](https://moonshotai.github.io/kimi-code/en/configuration/env-vars.html) |
-| DeepSeek | API key | `https://api.deepseek.com`；已认证请求 `GET /models` | 已有 API-key adapter；缺 GUI 设置面 | [DeepSeek API](https://api-docs.deepseek.com/) · [List Models](https://api-docs.deepseek.com/api/list-models/) |
-| xAI / Grok | OAuth Device Flow、API key | API key 使用 `https://api.x.ai/v1/models`；OAuth 目录按 adapter 能力远端获取或固定回退 | OAuth 已有；当前 xAI adapter 明确 OAuth-only 且模型固定，需补 API-key adapter | [xAI Models API](https://docs.x.ai/developers/rest-api-reference/inference/models) · [xAI CLI 登录](https://docs.x.ai/build/cli/reference) |
+| Z.AI / GLM Coding Plan | API key | 使用 `https://api.z.ai/api/coding/paas/v4`；未确认稳定公开 list-model API 时使用有版本标记的固定目录 | 已实现 API-key adapter 与 Settings | [Z.AI API 介绍](https://docs.z.ai/api-reference/introduction) · [模型概览](https://docs.z.ai/guides/overview/overview) |
+| Kimi Platform | API key | `https://api.moonshot.ai/v1`；已认证请求 `GET /v1/models` | 已实现通道与 Settings | [Kimi API 概览](https://platform.kimi.ai/docs/api/overview) · [List Models](https://platform.kimi.ai/docs/api/list-models) |
+| Kimi Code | OAuth Device Code 或 Coding Plan API key | managed endpoint `https://api.kimi.com/coding/v1`；已认证 `GET /models` 验证 API key；未显式选择账号时 API key 优先，显式选择遵循 ADR-059 | 已实现（双认证） | [Kimi Code 入门](https://moonshotai.github.io/kimi-code/en/guides/getting-started.html) · [环境变量/端点](https://moonshotai.github.io/kimi-code/en/configuration/env-vars.html) |
+| DeepSeek | API key | `https://api.deepseek.com`；已认证请求 `GET /models` | 已实现 API-key adapter 与 Settings | [DeepSeek API](https://api-docs.deepseek.com/) · [List Models](https://api-docs.deepseek.com/api/list-models/) |
+| xAI / Grok | OAuth Device Flow、API key | API key 使用 `https://api.x.ai/v1/models`；OAuth 目录按 adapter 能力远端获取或固定回退 | 已实现双认证；真实账号验收待办 | [xAI Models API](https://docs.x.ai/developers/rest-api-reference/inference/models) · [xAI CLI 登录](https://docs.x.ai/build/cli/reference) |
 
 [OpenCode Providers](https://opencode.ai/docs/providers/) 作为聚合产品的交互与供应商覆盖参考：它使用 Models.dev，并支持 DeepSeek、Moonshot/Kimi、Z.AI 和 xAI 的对应连接方式。Pawork 的运行时权限事实仍来自供应商自身；[Models.dev](https://github.com/anomalyco/models.dev) 只可作为实现时固定目录/元数据的参考，不作为在线登录或账号授权依据。
 
@@ -282,11 +283,11 @@ Settings 沿用参考设计的 1440×1024 深色语言和 8px 节奏，不另起
 - headless/ACP 不因 Desktop 功能自动获得 Secret 写入能力；registry 必须对各通道显式声明，首期可只对认证本机 GUI 开放。
 - Desktop/CLI 对同一 auth backend 的状态必须一致；GUI 设置后 `pawork auth list` / `pawork models` 能以脱敏方式核对。
 
-P2 视觉方向见 [desktop-ui-p2-settings-v4.png](../../design/desktop-ui-p2-settings-v4.png)；它不替代真实数据或安全证据。2026-09-05 本机八页、English/中文、三档字号、窄窗与键盘走查已完成 E3，记录见 [Desktop Spec §8](desktop.md#8-gui-收尾验收记录2026-09-05)；四家真实认证/目录矩阵与 E4 签字仍独立登记。
+P2 视觉方向见 [desktop-ui-p2-settings-v4.png](../../design/desktop-ui-p2-settings-v4.png)；它不替代真实数据或安全证据。真实认证 / 目录矩阵与用户签字见 [ROADMAP](../ROADMAP.md)，验收要求见 [Desktop Spec](desktop.md#7-当前验收合同)。
 
 ## 7. 实现索引
 
-SET-1～SET-6h 已落地：契约在 protocol/client，认证与目录由 auth/providers/app 提供，Global 配置由 workspace writer 持久化，Desktop 提供九页 Settings（GUI 1.20 增子代理页） 与供应商代理开关。模块、API、边界及对应验证以各包 Spec 和下表为准；已完成的切片排期不再保留。
+契约在 protocol/client，认证与目录由 auth/providers/app 提供，Global 配置由 workspace writer 持久化，Desktop 提供九页 Settings 与供应商代理开关。模块、API、边界及对应验证以各包 Spec 和下表为准。
 
 ## 8. 验证与证据
 
@@ -306,10 +307,6 @@ SET-1～SET-6h 已落地：契约在 protocol/client，认证与目录由 auth/p
 
 受影响关键回归：协议/golden、Secret/脱敏、配置持久化。测试使用假 key/token 形态；真实凭证只在隔离实例中读取，输出前脱敏。任何 401/429/超时先记录真实类别，不用 mock 冒充 E3。
 
-SET-012 本机证据（2026-09-05，macOS）：GUI `Settings → Network` 将代理保存为 `http://127.0.0.1:38081`，落盘到 workspace 外的用户 Global `config.toml`；旧临时转发端口 `7890` 保持关闭。Host 重启后页面恢复同一值，远端 OpenCode Go 目录从静态回退恢复为 29 项，`opencode-go / glm-5.3-flash` 真窗口请求返回精确 `proxy-ok` 并进入 `Run completed`。E2 同批通过 `pawork-workspace` 150 个测试、app 3 个 proxy handler 测试及 Desktop 186 个 bin 测试；E4 用户签字未由此自动推定。
-
-SET-6h 本机证据（2026-09-05，macOS）：Global `config.toml` 配置 `proxy_url` 后，真窗口各 provider 行显示 `走代理` 开关；中文模式点击 xAI 开关 `走代理`→`直连`，文件即时写入 `[[providers]] id="xai" use_proxy=false`，再点恢复 `use_proxy=true`。重启 Host 并移除 `proxy_url`（Host 启动缓存配置）后开关不再渲染（AX 树 + 截图），行内其它按钮不变；恢复代理配置并重启 Host 后开关重新显示。E2 同批通过 protocol 144、workspace/app 定向门禁与 Desktop 188/188；E4 用户签字未由此自动推定。
-
 ## 9. 运行、迁移与回滚
 
 - 默认关闭未协商的 Settings 写能力；旧 Host/Client 组合只显示不兼容/只读，不静默降级。
@@ -319,15 +316,9 @@ SET-6h 本机证据（2026-09-05，macOS）：Global `config.toml` 配置 `proxy
 - 诊断只记录 provider ID、auth method、阶段、错误类别和脱敏原因，不记录 Secret。
 - 发布、License、三平台供应链、安装/升级/回滚门禁：**none，本 Feature 明确排除**。
 
-## 10. 文档与收尾
+## 10. 文档维护
 
-- [x] Feature Spec 与 GUI 行为设计同步，已完成的活动规划文档已清理。
-- [x] product/capabilities/desktop/verification/backlog 索引本 Feature，状态随各切片诚实同步。
-- [x] SET-1 后同步 contracts/architecture/ADR/protocol/client/app 包级 Spec。
-- [x] SET-2 后同步 providers/workspace/app 包级 Spec（pawork-auth 零改动，无需回写）。
-- [x] SET-3～6g 已同步各实际写入集包级 Spec。
-- [x] SET-3～6g 已逐片写入实际验证和已知缺口，并压缩进 history。
-- [x] 视觉方向沿用 P2 阶段图；真窗口证据留在验收任务，不向仓库新增 bitmap。
+现行交互同步 [GUI 设计](../gui-design.md)，契约与验证资产同步实际写入集包级 Spec；未完成验收统一登记 [ROADMAP](../ROADMAP.md)。
 
 ## 11. 决策与开放问题
 
@@ -344,4 +335,4 @@ SET-6h 本机证据（2026-09-05，macOS）：Global `config.toml` 配置 `proxy
 | SET-D09 | Z.AI General API preset | 首期不开放，只做 Coding Plan；后续按需求再决定 | Deferred |
 | SET-D10 | About 如何获得当前 Host 数据目录 | ADR-051 Accepted：API 1.9 Accepted 握手追加可选 `host_data_dir`；GUI Host 与 Core 共用同一次解析，缺字段、空字段或断线时隐藏 About | Accepted（已实现并通过定向门禁） |
 
-2026-09-21 子代理推理强度约束：`allowed_efforts` 非空时同时约束子代理规则默认和模型级默认；越界值按未配置处理，不在 child Run 装配时重新注入。此范围只控制 Pawork 显式发送的 effort，未指定时仍由 Provider 使用自身默认。
+子代理推理强度约束：`allowed_efforts` 非空时同时约束子代理规则默认和模型级默认；越界值按未配置处理，不在 child Run 装配时重新注入。此范围只控制 Pawork 显式发送的 effort，未指定时仍由 Provider 使用自身默认。

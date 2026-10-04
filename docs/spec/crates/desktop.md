@@ -243,7 +243,7 @@ UX-06（2026-09-09）：供应商列表按已连接优先稳定排序，render /
 
 Run 页脚和底栏使用 `run_usage_display` 显示对应 Run 输入 / 输出 tokens 与时长。终态累计值取持久化 Completed / Failed / Cancelled 的 `usage`；运行中按本轮已上屏用户 / 助手 / 思考正文字符预览（不写 reducer、不报 tok/s），有权威读数即替换；终态无持久化 usage 不展示无标记的字符估算，按缺值未知显示。零值有效，缺值未知，活动 Run 不沿用上一轮读数。取消只保留轻量页脚；失败卡保留原因，页脚不重复状态；Review changes 仅挂到当前任务最近 Run，不能把当前差异挂到早先回合。底栏常驻用量与秒表，不再为 quota 占位；ContextMeter 与订阅额度范围不变。
 
-复用现有投影、本地回显、工具文本与 AX 行高测试，并与 protocol 的实时/历史 golden 同批验证。无新增生产依赖、wire 类型或安全默认变化；真窗口与用户验收状态见 历史记录（Git `f8df04b2:docs/ROADMAP.md`，原「ux-07-工具与运行事实可核查」节）。
+复用现有投影、本地回显、工具文本与 AX 行高测试，并与 protocol 的实时/历史 golden 同批验证。无新增生产依赖、wire 类型或安全默认变化。
 
 #### UX-09 文案与控件一致性（2026-09-10）
 
@@ -252,13 +252,11 @@ Run 页脚和底栏使用 `run_usage_display` 显示对应 Run 输入 / 输出 t
 - 字号反馈独立于 `status_hint`，最后一次成功设置后显示 3 秒；替换持有的 GPUI Task 取消旧计时器，收起时只清字号反馈。两者均落 StatusBar 右栏，不占 Composer 行高；筛选说明仍挂 Composer。外观页持续显示当前档位。
 - 终端目录 / 所属项目 / 状态移入可滚动正文，顶栏留给尺寸控件；底部输入、启动、停止 / 关闭的 AX 框取实际布局。保留原先焦点、权限与执行语义。
 
-实现、定向检查与真窗口验收分别记录在 历史记录（Git `f8df04b2:docs/ROADMAP.md`，原「ux-09-视觉文案与可访问性一致性」节）。无新模块、业务依赖、wire 或 schema。
-
 ### API 1.24 产品面板（2026-09-24）
 
 Composer 添加菜单接入 `ui/plan.rs`、`ui/goal.rs`、`ui/recording.rs`、`ui/video.rs`、`ui/drawing.rs`；`controller/products.rs` 在 Tokio runtime 发 typed 请求。Plan 带版本编辑/提交/批准/拒绝；Goal 显式预算/轮数、2 秒状态刷新、暂停/恢复/转向/人工达成/放弃，状态与常见暂停原因显示中英文提示；录制从持久操作选择预览、人工编辑后保存；插件面板显示真实空列表并独立链接技能/MCP。视频 URL 按任务草稿保存，编辑/清空即移除，与其它附件合计最多 4 项；模型 `video_input` 与 API 1.24 同时 gate，重放保留来源。旧 Host 的新增入口禁用并给版本提示。
 
-`ui/product_access.rs` 复用 AxBridge，为面板字段、按钮和错误同步 AX 与键盘动作；AppKit Tab monitor 只作用于活动窗口。绘图使用有界 640×360 黑色画布，撤销/清空/取消/附加，内部 PNG 编码后复用普通图片附件链。目标预算不派生子代理；关闭目标面板继续 Host 执行。自动检查与真窗口证据留在 Git 历史，剩余验收见 [ROADMAP](../../ROADMAP.md)。
+`ui/product_access.rs` 复用 AxBridge，为面板字段、按钮和错误同步 AX 与键盘动作；AppKit Tab monitor 只作用于活动窗口。绘图使用有界 640×360 黑色画布，撤销/清空/取消/附加，内部 PNG 编码后复用普通图片附件链。目标预算不派生子代理；关闭目标面板继续 Host 执行。剩余验收见 [ROADMAP](../../ROADMAP.md)。
 
 ### 任务消耗窗口（API 1.26，2026-10-04）
 
@@ -266,11 +264,11 @@ Composer 添加菜单接入 `ui/plan.rs`、`ui/goal.rs`、`ui/recording.rs`、`u
 
 可按完整任务、分部、章节 / 分段、操作、模型和客户端分组，按操作、状态和近 24h / 7d / 30d 筛选；group.filter 提供准确下钻，刷新 / 清除 / 加载更多，迟到响应按 generation 丢弃。总量覆盖全部匹配记录，列表按游标分页并去重。显示已知输入 / 输出 / 缓存读写 Token 与未知条数、按币种实际 / 估算、已知图片和计划视频秒数；调用详情显示任务 / 分部 / 章节或分段、操作类型、来源、供应商 / 模型、状态、关联 / 补交、视频 handle、耗时、未知用量与复制 ID，Esc 关闭详情。原生 Run 和本地报告明确标源；查询 / 本地操作显示不计生成用量。按钮共用鼠标 / 键盘 / AX，侧栏入口 Tab 档 -14，接在 Settings -15 后、主区 0 前；原 Reconnect -17 不变。
 
-这是本次最小生产界面；原型中的整任务结果、媒体实测时长、credits、来源证据页与账单补录没有对应生产来源，不能因原型存在宣称已接入。见 [任务消耗设计](../task-usage-ui.md)。
+这是当前生产界面；原型中的整任务结果、媒体实测时长、credits、来源证据页与账单补录没有对应生产来源，不能因原型存在宣称已接入。见 [任务消耗设计](../task-usage-ui.md)。
 
 ## 4. 核心行为与数据流
 
-2026-09-24 新增实现（真窗口待验）：Composer 文件夹选择生成只读 UTF-8 JSON 文本附件（≤128 文本文件、512 条目、8 层、64 KiB；隐藏项/链接/非文本省略并计数，超限明确拒绝）。macOS Chrome/Edge 当前页面由用户显式选择后读取 URL/标题/有界正文，沿用可预览/移除附件与上传路径；不授予写权限。工具结果内的 HTTP(S) 来源可点击，条目菜单提供同源键盘/AX 打开和复制动作，原文本与重放协议不变。
+文件夹与外部浏览器附件：Composer 文件夹选择生成只读 UTF-8 JSON 文本附件（≤128 文本文件、512 条目、8 层、64 KiB；隐藏项/链接/非文本省略并计数，超限明确拒绝）。macOS Chrome/Edge 当前页面由用户显式选择后读取 URL/标题/有界正文，沿用可预览/移除附件与上传路径；不授予写权限。工具结果内的 HTTP(S) 来源可点击，条目菜单提供同源键盘/AX 打开和复制动作，原文本与重放协议不变。
 
 「子代理」设置从 `model_catalog` 只展示已连接供应商的已启用模型，包括自定义供应商；未连接或状态清单缺失的供应商不显示静态回退条目，连接后恢复候选，不按模型家族筛选。渲染、AX 和控件动作共用 `subagent_rule_models` 过滤。每个 `(provider_id, model_id)` 独立设置可发起、可充当和功能权限；运行仍要求供应商可用、模型已启用且规则允许。
 
@@ -278,7 +276,7 @@ Composer 添加菜单接入 `ui/plan.rs`、`ui/goal.rs`、`ui/recording.rs`、`u
 
 2026-09-21 子代理流程审核：Inspector 初次加载成功后自动选中首个代理（运行项优先）；运行 / 等待代理可经既有 `subagent_cancel` 停止，pending 时禁重复提交，Accepted 后保持「正在停止…」，仅匹配最新请求的列表确认该代理真实终态或该条目已移出展示集合后清除本地 pending（移出不伪造终态）；取消请求失败显示错误并允许重试。切换到其它代理不误标「正在停止…」。列表请求携本地唯一 request_id，成功 / 失败均校验会话与请求归属；失败保留内容并显示原因，刷新支持重试。断线禁用停止与刷新；GUI 与 AX 同源。现有 Activity AX 测试扩展覆盖过期失败、保留列表、Stop 可达性及 Accepted / 运行中 / 过期终态 / 真实终态 / 展示项移除 / 请求失败的停止状态收敛。
 
-**右侧文件（2026-09-16）**：Files 接入工具菜单、Home 与 Cmd+K；目录为懒加载树：各层目录优先排序，首次展开按需经 Host 读取该层，折叠保留缓存与子树展开状态，刷新重读根与全部已展开目录并移除已消失子树；正文右侧 160px 目录栏可收起，文件名筛选覆盖已展开（曾加载）的目录、忽略大小写，命中项的祖先目录强制显示。不提供上一级入口，不读取未展开目录。每份已打开文件以 `FileTab { workspace_id, path }` 接入共享 `PanelTab`，与 PTY / Browser / Changes / Resources 共用唯一顶层标签栏及滚动、键盘、AX 和关闭派发，文件区不再维护第二层标签与滚动状态；未打开文件时显示 Files 目录入口标签。操作区下方是全高正文；Markdown（`.md` / `.markdown`，忽略大小写）默认预览，切换源码编辑后预览仍读取当前草稿，复用已有 Markdown 渲染。打开文件保留独立编辑器和草稿，同项目各任务共用文件草稿，不同项目隔离；切换文件 / 工具与收起面板都保留草稿；关闭单个文件释放编辑器，脏文件先确认，保存 / 重载中的文件禁止关闭，取消关闭保留草稿。关闭后台文件不改变当前页，关闭当前文件选择相邻文件，最后一份文件关闭后回到其它工具或 Home。等宽文本编辑支持 Enter 换行、Tab 缩进、方向键、选区、撤销与复制粘贴，⌘S / 保存只在 Host 成功回执后清除对应已提交版本的 dirty 标记；保存期间继续输入保持未保存状态；读取其它文件不禁用当前草稿保存，当前文件自身重新载入期间仍禁保存。读取 / 保存错误显示原因，外部冲突不覆盖磁盘。离线保留可编辑草稿并禁保存；重新载入脏文件及关闭有未保存文件的窗口需用户确认。首版仅已有 UTF-8 文本（≤128 KiB、无 NUL），不含创建 / 删除 / 重命名、语法高亮或自动保存。读写只经 Host `workspace_files` / `workspace_file_read` / `workspace_file_write`，不绕过 workspace 相对路径边界。定向回归覆盖草稿切换、迟到回执、离线 gate、筛选与聊天草稿隔离、Markdown 预览切换、收起目录、文件与终端的共享标签 / 关闭取消及回退；真窗口状态见 历史记录（Git `f8df04b2:docs/ROADMAP.md`，原「右侧文件浏览与编辑2026-09-16」节）。
+**右侧文件（2026-09-16）**：Files 接入工具菜单、Home 与 Cmd+K；目录为懒加载树：各层目录优先排序，首次展开按需经 Host 读取该层，折叠保留缓存与子树展开状态，刷新重读根与全部已展开目录并移除已消失子树；正文右侧 160px 目录栏可收起，文件名筛选覆盖已展开（曾加载）的目录、忽略大小写，命中项的祖先目录强制显示。不提供上一级入口，不读取未展开目录。每份已打开文件以 `FileTab { workspace_id, path }` 接入共享 `PanelTab`，与 PTY / Browser / Changes / Resources 共用唯一顶层标签栏及滚动、键盘、AX 和关闭派发，文件区不再维护第二层标签与滚动状态；未打开文件时显示 Files 目录入口标签。操作区下方是全高正文；Markdown（`.md` / `.markdown`，忽略大小写）默认预览，切换源码编辑后预览仍读取当前草稿，复用已有 Markdown 渲染。打开文件保留独立编辑器和草稿，同项目各任务共用文件草稿，不同项目隔离；切换文件 / 工具与收起面板都保留草稿；关闭单个文件释放编辑器，脏文件先确认，保存 / 重载中的文件禁止关闭，取消关闭保留草稿。关闭后台文件不改变当前页，关闭当前文件选择相邻文件，最后一份文件关闭后回到其它工具或 Home。等宽文本编辑支持 Enter 换行、Tab 缩进、方向键、选区、撤销与复制粘贴，⌘S / 保存只在 Host 成功回执后清除对应已提交版本的 dirty 标记；保存期间继续输入保持未保存状态；读取其它文件不禁用当前草稿保存，当前文件自身重新载入期间仍禁保存。读取 / 保存错误显示原因，外部冲突不覆盖磁盘。离线保留可编辑草稿并禁保存；重新载入脏文件及关闭有未保存文件的窗口需用户确认。首版仅已有 UTF-8 文本（≤128 KiB、无 NUL），不含创建 / 删除 / 重命名、语法高亮或自动保存。读写只经 Host `workspace_files` / `workspace_file_read` / `workspace_file_write`，不绕过 workspace 相对路径边界。定向回归覆盖草稿切换、迟到回执、离线 gate、筛选与聊天草稿隔离、Markdown 预览切换、收起目录、文件与终端的共享标签 / 关闭取消及回退。
 
 **浏览器首版（2026-09-16）**：`ui/browser.rs` 中 `BrowserPanel` 保存地址输入、导航状态、原生视图与 250ms 状态轮询；`AppView` 按 active session（首页用 None）保存页面。右侧空态 / 添加菜单 / Cmd+K 可离线打开，每任务复用一页；导航时惰性创建 WebKit。隐藏 / 切页 / 切任务保留，关闭标签停止轮询并释放；返回任务恢复地址与历史。地址栏 Enter 只导航，不能发送 Composer 草稿。原生网页按 canvas 实测 bounds 与 content mask 裁剪，菜单 / 全局查找 / Settings 时隐藏；Tab 监听放行网页焦点、Cmd+L 返回并全选地址栏，网页聚焦时 Cmd+K / Cmd+I 仍打开全局查找 / 折叠面板；GPUI mouse capture 将原生 firstResponder 归还宿主，AX bridge 合并可见 WebKit 原生子树；网页聚焦时 `performKeyEquivalent:` 分发给 WebKit；因宿主没有 AppKit Edit 菜单，编辑快捷键显式经原生 responder chain 分发，避免 Cmd+V / Cmd+A 被 GPUI 旧输入焦点截走。手动导航直接操作系统网页；聊天自动操作经过 Host Policy / 审批，controller/browser.rs 在活动 Run 的时钟内携带 session_id + run_id 轮询 GUI 1.18 browser_next（上一条请求未回执时不领取下一条），由 ui/browser.rs 主线程执行并经 browser_respond 返回真实页面结果。只领取本窗口发起 Run 的当前任务，切任务明确失败，历史重放不执行动作。详情见 [browser Spec](browser.md)。
 
@@ -317,7 +315,7 @@ OPT-2 审查修复（2026-09-06）：`session_create` 仅从成功 Data 回执�
 - 侧栏底部显示归档结果与「撤销归档」，明确正文保留、撤销记录仅在当前窗口存续。连续归档按最后一次优先逐项撤销；不查询历史归档、不增加永久删除入口。
 - Controller 复用 `session_archive{session_id, archived:false}`。仅 `Data` 的 session_id / archived 与请求一致才确认成功；列表刷新失败不推翻已经完成的写入。内部 `SessionArchiveFinished` 不改变 wire。未确认请求也保留恢复 ID，防止写入成功但回执丢失后无从撤销。
 - 在途与断线禁止再派发；失败就地提示并保留恢复入口。成功恢复后，在已刷新列表中打开同一个任务，清除可能隐藏它的项目筛选，恢复正文、原项目归属与窗口内独立草稿；不创建副本。按钮支持鼠标、Tab / Enter，AX 使用实际布局与同一 gate。
-- `archive_undo_keeps_identity_drafts_and_retry` 覆盖身份 / 项目 / 草稿、重复调用、失败保留及断线重试；Desktop 225 项检查与构建通过。隔离数据库副本的真窗口归档 / 连续撤销、键盘、宽窄窗三档字号通过；用户验收待进行。完整边界与证据见 历史记录（Git `f8df04b2:docs/ROADMAP.md`，原「ux-08-归档的可恢复性」节）。
+- `archive_undo_keeps_identity_drafts_and_retry` 覆盖身份 / 项目 / 草稿、重复调用、失败保留及断线重试；用户验收见 [路线图](../../ROADMAP.md)。
 
 ### 4.4 菜单开合与键盘激活语义
 
@@ -384,16 +382,16 @@ domain id 类型未从 client re-export，命令 / 查询经冻结的 serde 形�
 
 - **2026-10-02 Review 展示语义**：同 Run 已有终态的未完成工具在工具组、展开行与 AX 中统一显示「已停止」，不改事件或持久化结果。账号 masked credential 副标题使用固定内容高度并横向截断，不因 flex 剩余高度归零而消失，普通 AX 仍不发布凭证片段。纯生图模型只显示目录开关与能力徽标，隐藏推理设置；同名 display name / ID 不重复；子代理模型徽标同 Composer / Settings 使用识图 / 生图 / 视频 / 搜索。语言首帧恢复同时更新 Settings 与 Quick Search placeholder。辅助窗口仅突出当前主动作：Plan 保存、目标开始或恢复、录制预览或保存、绘图附加、视频保存；刷新 / 清空 / 撤销 / 取消等使用 Raised 次按钮。
 - **UX-02（2026-09-09）**：常用管线表格按等宽列渲染，支持表头、对齐、中文、escaped pipe / 代码内 pipe；未完成或不匹配行保留正文。`message_body_element(entry_id, text, color)` 用事件 ID 隔离块内控件，`message_actions` 提供代码原文复制与编号 HTTP(S) 链接打开 / 复制（保留配对括号）；标题 / escaped URL 等完整 CommonMark 语法不在本子集内。正文菜单复制消息原始 Markdown，不拼作者 / 时间。`timeline_entry::fork_target` 仅将助手回复映射到相同非空 `run_id` 的后继合法闭合边界，原边界直接使用；连接 / active session gate 继续复核。鼠标、菜单键盘与 AX 共用动作序列；`entry_menu_scroll` 支持高亮滚入，AX 从实际布局裁剪可见项，布局后同步避免首帧缺节点，禁用分叉有可见说明。无 schema / wire / 依赖变化。已实现、221 项自动检查与 build 通过；历史回复真窗口、复制 / 分叉与三档字号通过，新请求流式验收因 HTTP 401 待补，用户未验收，详见 [路线图](../../ROADMAP.md)。
-- **UI-3（2026-09-08，进行中）**：Markdown 正文与工具组默认折叠已实现。`expanded_timeline_details` 以首个 event id 保存显式展开状态，render / AX / 测高同源；输出完整换行，工具行不再限定总高度。旧 RunPhase 由同 Run 后继状态吸收，完成且无 Changes 时仅留页脚，失败/取消与 Review 卡保留。用户视觉反馈后改为 880px 居中列、16px 正文、26px 行高、12px 作者间距与段距、32px 消息间距（条目 padding 参与虚拟列表测高），用户消息为 20px 内边距浅底卡片；工具摘要 36px、无底色，展开保留细边线；详见 [UI-3 规格](../../gui-design.md#ui-3-时间线更新2026-09-08进行中)。ADR-057 补齐共享思考投影与 API 1.14，持久事件与业务依赖不变。思考为独立默认折叠的 36px 摘要，展开显示 14px secondary 全文、四边 12px 内边距；使用稳定 run/message 键与工具共用展开/焦点机制，测高、render、AX 同源，收起时 AX 不含正文。既有 AX 交互测试追加思考折叠/展开与视口保留断言；实际窗口/Provider 状态以 路线图（Git `f8df04b2:docs/review/roadmap-ui-2026-09-09.md`） 为准。
+- **UI-3 时间线**：Markdown 正文与工具组默认折叠已实现。`expanded_timeline_details` 以首个 event id 保存显式展开状态，render / AX / 测高同源；输出完整换行，工具行不再限定总高度。旧 RunPhase 由同 Run 后继状态吸收，完成且无 Changes 时仅留页脚，失败/取消与 Review 卡保留。用户视觉反馈后改为 880px 居中列、16px 正文、26px 行高、12px 作者间距与段距、32px 消息间距（条目 padding 参与虚拟列表测高），用户消息为 20px 内边距浅底卡片；工具摘要 36px、无底色，展开保留细边线；详见 [UI-3 规格](../../gui-design.md#ui-3-时间线更新2026-09-08进行中)。ADR-057 补齐共享思考投影与 API 1.14，持久事件与业务依赖不变。思考为独立默认折叠的 36px 摘要，展开显示 14px secondary 全文、四边 12px 内边距；使用稳定 run/message 键与工具共用展开/焦点机制，测高、render、AX 同源，收起时 AX 不含正文。既有 AX 交互测试追加思考折叠/展开与视口保留断言。
 - **UI-1（2026-09-07）**：共享中性深色 token、6/8/12px 圆角，Header 80px（顶留 24px，标题 18px，动作 40×37px），Inspector 页签 48/40px，状态栏 30px。InspectorMotion 只保存瞬时宽度，以 180ms cubic ease-out 开合，反向连续，空间不足直接收起；每次实际宽度变化（含终帧）刷新 Timeline 测高缓存；AX 使用本帧相同宽度并裁去不可见动作，不改变偏好 / 四层架构 / wire。hover、pressed、焦点即时反馈。新规格见 [GUI 设计](../../gui-design.md#ui-1-工作台视觉更新2026-09-07)，旧阶段尺寸与色值不覆盖本项；自动验证与用户人工验收分开记录，后者已于 2026-09-07 通过。
 
-- **视觉基准事实源**：[../../../design/README.md](../../../design/README.md)（P0–P2 三张 1440×1024 逻辑尺寸阶段目标设计图） 与 [../../gui-design.md](../../gui-design.md)。P0-1 已把基础字阶、六档 spacing、三档 radius、2px focus ring、icon/menu 几何与 hover/pressed 状态冻结到 `theme.rs`；普通 panel 无 shadow，menu/popover 才有 elevation。2026-09-04 已完成三张阶段图的当前构建真窗口视觉签字；2026-09-05 又完成 P0 系统 IME 与 P1 真实 Provider / Review / Approval 补证，并完成 P2 八页、三档字号与窄窗收尾复验；实际记录见 [Desktop Spec §8](../desktop.md#8-gui-收尾验收记录2026-09-05)。以上证据仍不得由 token 测试替代，也不扩张为跨平台或发布级保证。
+- **视觉基准事实源**：[../../../design/README.md](../../../design/README.md)（P0–P2 三张 1440×1024 逻辑尺寸阶段目标设计图） 与 [../../gui-design.md](../../gui-design.md)。P0-1 已把基础字阶、六档 spacing、三档 radius、2px focus ring、icon/menu 几何与 hover/pressed 状态冻结到 `theme.rs`；普通 panel 无 shadow，menu/popover 才有 elevation。视觉效果须由当前构建的真窗口验收，不能由 token 测试替代；待验项见 [路线图](../../ROADMAP.md)。
 - **R9 / P1 可见层级合同**：Timeline 的早期 618px wrapper 与 40/12px 节奏已由 UI-3 居中列与当前间距覆盖；TaskRail 项目计数 56px meta 槽，UI-2 任务时间 / 动作共用 64px 尾槽；Composer surface 与 unavailable 对比；Changes 20/72/76px 文件槽、36px 横滚外 header、24px gutter；ActivityPopover 内容宽 320px，高度随字号为 144/180/216px，外框另计 padding/border，保持 capability honesty。`Ready for review`、Review CTA、summary 行高与 AX 都由 active session 的非空可审阅文件 gate 同源驱动；空文件列表必须显示轻量 `Run completed`。这里只冻结可见实现；阶段图与 P1 真窗口签字已单列通过，但不扩张为 Timeline/Changes 全状态 AX 几何的自动覆盖。
 - **审批 fail-closed**：无默认允许；决策只能来自显式点击或快捷键；断线禁用；run / tool 终态与 `ApprovalResponded` 清卡防幽灵审批。
 - **P1 Run 工作单元（2026-09-04，2026-09-05 收口）**：不改 reducer / wire / sequence，只在 `timeline_rows()` 的既有 run/order 上组织视觉。连续 tool 以首个 event id 为稳定 group key，标题汇总真实数量与状态并可折叠；terminal summary 吸收同 Run 的重复相位，完成、失败、取消不混写。只有当前 Session 的 Changes 为 Ready、非 stale 且至少包含一个文件时显示 `Ready for review` / `Review changes`，mouse / keyboard / AX 进入同一 Changes handler；空列表显示 `Run completed`。Approval 继续占最高层级并保持三决策 fail-closed。Inspector 三页共享诚实 empty/error/stale 语言，Activity 仅呈现 Changes，内容宽 320px，高度随字号为 144/180/216px。
 - **`gui.token` fail-closed**：token 缺失、不可读或为空即连接失败，禁止无认证静默连接；错误信息只含路径，token 内容不落日志。
 - **Enter / IME 语义**：keybinding 仅 `TextInput` 聚焦时生效；Enter 冒泡到 AppView 后结合 `is_composing()`（`marked_range` 存在即组合中）与发送可用性裁决；Composer 的 Shift+Enter 恒为换行；Terminal 无独立输入框，组合态按键留给输入法，其余 Enter 直接写 CR 到 PTY。
-- **UI-4 Composer（2026-09-08）**：卡片与正文居中对齐，留白、输入 / 动作与外部项目 / 上下文分层见 [GUI 设计](../../gui-design.md#ui-4-输入栏更新2026-09-08)。AX 对齐卡片内模型 / 发送坐标，补充真实 ContextMeter 节点；无项目提示与瞬态反馈不覆盖操作区。自动检查与真窗口状态见 路线图（Git `f8df04b2:docs/review/roadmap-ui-2026-09-09.md`）。
+- **UI-4 Composer（2026-09-08）**：卡片与正文居中对齐，留白、输入 / 动作与外部项目 / 上下文分层见 [GUI 设计](../../gui-design.md#ui-4-输入栏更新2026-09-08)。AX 对齐卡片内模型 / 发送坐标，补充真实 ContextMeter 节点；无项目提示与瞬态反馈不覆盖操作区。
 - **Composer 草稿与空输入**：per-session HashMap + 无 session 槽；切换 session 先 stash 再 restore（`reset_text`，终端不参与）；`MessageSent` 成功清该 session 草稿，断线保留。空/纯空白输入使 Send disabled（tooltip「Message is empty.」），消除空点击面。
 - **OAuth 登录交互（2026-09-08）**：统一按 `AuthStartData` 呈现「打开授权链接」「复制链接」与可选「复制验证码」，三种输入路径共用 Settings action handler。打开只允许 HTTP(S)，需要当前 Connecting 且写 gate 有效；复制使用 Host 原始值，无额外标签。登录详情为可选中复制的只读 `TextInput`，长 URL 横滚、AX TextArea 只发布 Focus 不发布 SetValue；错误、端点和到期信息同样可复制。`read_only()` 保留选择 / Copy，屏蔽编辑、Undo / Redo 与 IME，内部 `reset_text` 更新仍有效。终态不再提供授权动作，离开 Settings 清理详情实体及复制反馈。未改 Host / wire / Secret 语义；行为定向验证与真窗口验收分别记录于 [Desktop Spec](../desktop.md)。
 - **Settings 默认模型（SET-5）**：默认项只在 Host `set_default_model` Data 确认后更新 Composer（`selected_model` 同步、清 pending），随后重查 `provider_auth_status` 落地权威 `default`；失败走 OperationFailed 不落地乐观状态。默认失效（provider 未连接，或已加载目录不含该 model，包括成功加载为空）显式提示；尚未成功加载的空目录不判定不误报，不静默切换；`Set default` 要求 provider 已连接、非 stale、非当前默认（四路径同 gate）。刷新失败保留旧列表与默认项。
@@ -443,72 +441,66 @@ domain id 类型未从 client re-export，命令 / 查询经冻结的 serde 形�
 
 UX-05 模型管理弹层：共用 `model_search_input` / query，仅过滤显示目录，不改变模型或批量启用语义；固定头部含搜索、状态 / 来源、完整目录计数、全开 / 全关。最大高 520px，内部模型列表独立滚动，名字与 ID 不截断并可横滚；↑/↓ 移 Switch 焦点，Tab 后实际聚焦行滚入，Esc 回管理入口。render / 键盘 / AX 使用同一筛选结果和实际列表框，保留所有入口写 gate 与 Host 回执权威。
 
-UX-05 复用并更新两个现有主路径回归：`model_menu_ax_culls_rows_outside_clipped_frame` 覆盖 20 模型当前项可见、大小写 ID 搜索、Enter 选择不发送草稿、无结果恢复、键盘滚动 / AX 和 Esc 回焦；`settings_models_menu_ax_pins_gates_switches_and_empty_state` 覆盖原有写 gate / 全量动作与内部列表滚动，以及三档字号下名称 / ID 搜索、无结果恢复与实际可见 Switch。没有新增测试体系。真实窗口和候选证据见 历史记录（Git `f8df04b2:docs/ROADMAP.md`，原「ux-05-模型选择与管理效率」节）。
+UX-05 复用并更新两个现有主路径回归：`model_menu_ax_culls_rows_outside_clipped_frame` 覆盖 20 模型当前项可见、大小写 ID 搜索、Enter 选择不发送草稿、无结果恢复、键盘滚动 / AX 和 Esc 回焦；`settings_models_menu_ax_pins_gates_switches_and_empty_state` 覆盖原有写 gate / 全量动作与内部列表滚动，以及三档字号下名称 / ID 搜索、无结果恢复与实际可见 Switch。没有新增测试体系。真实窗口和候选证据见 历史记录。
 
-UX-03 定向回归 `project_task_guidance_preserves_context_and_wraps`：项目筛选不重绑 / 不改草稿，项目新建菜单排除「所有项目」，Esc 回焦与第二次 Enter 确认，宽窄窗 × 三档字号下元信息实际框不重叠 / 不越界；有项目后移除限制与新建入口但保留其他反馈。复用既有 Composer 布局、会话草稿与目录菜单滚动测试；真窗口证据与用户验收状态见 历史记录（Git `f8df04b2:docs/ROADMAP.md`，原「ux-03-新任务与项目上下文引导」节）。
+UX-03 定向回归 `project_task_guidance_preserves_context_and_wraps`：项目筛选不重绑 / 不改草稿，项目新建菜单排除「所有项目」，Esc 回焦与第二次 Enter 确认，宽窄窗 × 三档字号下元信息实际框不重叠 / 不越界；有项目后移除限制与新建入口但保留其他反馈。复用既有 Composer 布局、会话草稿与目录菜单滚动测试。
 
 ## 7. 测试与验证资产
 
-2026-10-02 模型用途与全界面 Review：`bash scripts/test.sh desktop` 实跑 258 项通过。`terminal_run_stops_only_its_unfinished_tool_display` 验证同 Run 已完成 / 失败 / 取消时，缺少结果的 running / pending 工具只在展示层变为「已停止」；其它 Run 和已有 succeeded 状态保持原样。正式构建与隔离 fixture 的真窗口分别核对模型用途 / 目录和 Timeline / 检查器 / 辅助窗口，文件保存与 PTY 输出另有磁盘 / 进程证据；覆盖与未验边界见 [路线图](../../ROADMAP.md)。不把 fixture 或 AX 通过推定为真实模型推理成功。
+`terminal_run_stops_only_its_unfinished_tool_display` 验证同 Run 已完成 / 失败 / 取消时，缺少结果的 running / pending 工具只在展示层变为「已停止」；其它 Run 和已有 succeeded 状态保持原样。fixture 与 AX 回归不能推定真实模型推理成功；真窗口与外部环境的未闭合验收见 [路线图](../../ROADMAP.md)。
 
 `plan_window_keyboard_reaches_fields_and_actions` 挂载实际 Plan 子窗口，验证标题→步骤→原因→刷新及反向焦点遍历；覆盖既有句柄未启用 Tab 的真实缺陷。GPUI 模拟窗口不安装需要原生句柄的 AX 桥接；该边界仍用真实窗口验收，不能由焦点测试推定。
 
-2026-09-20 测试重构：移除 `main.rs` 的尺寸常量副本与 theme 的视觉 token 副本。 `model_menu_row_title` 空名回退并入 `model_menu_selected_follows_effective_model`；U1 删除时钟/几何自测后去掉无用 import。保留文字可读性与字号操作边界；布局依据 `composer_layout_keeps_controls_in_card_and_ax_aligned`、shell 的 resize 和宽窄窗实测，动效依据 `inspector_motion_reverses_without_jump_and_snaps_when_narrow`。冻结面 `APP_VIEW_KEYBINDINGS`（含审批、取消、字号与任务循环）/ `MAIN_PATH_TAB_STOP_IDS` 与 Desktop 握手能力面仍由 bin 内测试钉住；Settings 路由旁路工作台快捷键并入同一键表测试。这些自动化证据不替代真窗口像素验收；本批执行结果见 Git 历史（37fae8f3:docs/testing-refactor-plan.md）。
+布局回归包括 `composer_layout_keeps_controls_in_card_and_ax_aligned`、shell resize 与宽窄窗实测；动效回归为 `inspector_motion_reverses_without_jump_and_snaps_when_narrow`。冻结面 `APP_VIEW_KEYBINDINGS`（审批、取消、字号与任务循环）、`MAIN_PATH_TAB_STOP_IDS` 与握手能力面由 bin 内测试钉住；Settings 路由旁路工作台快捷键在同一键表测试中验证。这些自动化资产不替代真窗口像素验收。
 
 Composer 面板高度仍用 helper 验证空闲/中等/封顶钳制；发送按钮 36px 由实际布局/AX 覆盖，不再另钉常量。
 
 文件面板：`file_drafts_survive_switches_and_save_receipts` 覆盖逐项目草稿、关闭工具后恢复、保存中继续输入、迟到 / 失败回执、离线保存 gate 与宽窄窗布局；`file_editor_keys_insert_and_navigate_without_sending` 覆盖 Enter / Tab、Unicode 上下移动、撤销及长行光标横滚；`file_tree_expands_lazily_and_prunes_stale_dirs` 覆盖目录树懒加载派发、嵌套缩进、筛选祖先强制显示、折叠缓存复用、展开失败重试、刷新重列与已删除子树修剪。
 
-浏览器复用 Inspector 键盘 / 裁剪 / 关闭与依赖边界测试；新增 `browser_panel_offline_navigation_boundary_and_lifecycle` 覆盖离线 AX 入口、宽窄窗地址栏、非法 URL 在创建原生视图前拒绝、Enter 不发送草稿、任务隔离、隐藏保留与关闭清空。导航真实行为以当前构建真窗口 + 本地 HTTP 请求日志验证，状态见 历史记录（Git `f8df04b2:docs/ROADMAP.md`，原「右侧浏览器首版2026-09-16」节）。
+浏览器复用 Inspector 键盘 / 裁剪 / 关闭与依赖边界测试；新增 `browser_panel_offline_navigation_boundary_and_lifecycle` 覆盖离线 AX 入口、宽窄窗地址栏、非法 URL 在创建原生视图前拒绝、Enter 不发送草稿、任务隔离、隐藏保留与关闭清空。导航真实行为以当前构建真窗口 + 本地 HTTP 请求日志验证，状态见 历史记录。
 
-GUI2-03：`quick_find_navigation_layout_and_drafts` 覆盖当前任务排序、同名不同项目、中文与大小写、无结果、键盘滚动、宽窄三字号布局、Esc 回焦、跨筛选导航与草稿保留；`quick_find_disconnect_rejects_stale_actions` 覆盖断线结果收敛、陈旧任务 / AX 动作拒绝及写操作快捷键隔离。实际运行与真窗口状态见 历史记录（Git `f8df04b2:docs/ROADMAP.md`，原「gui2-03-任务与操作快捷查找」节）。
+GUI2-03：`quick_find_navigation_layout_and_drafts` 覆盖当前任务排序、同名不同项目、中文与大小写、无结果、键盘滚动、宽窄三字号布局、Esc 回焦、跨筛选导航与草稿保留；`quick_find_disconnect_rejects_stale_actions` 覆盖断线结果收敛、陈旧任务 / AX 动作拒绝及写操作快捷键隔离。
 
 UX-09：新增 `text_scale_feedback_expires_without_clearing_errors`，使用可控 GPUI 时钟覆盖连续字号反馈 / 旧计时取消 / 新错误保留（改落 StatusBar 右栏，不再回收 Composer 行高），并检查 MCP 空态配置指引；既有 i18n 与错误恢复回归补充双语词条及终端实际布局 AX 断言。
 
-2026-09-10 真窗口补验：同一最终候选覆盖宽窄窗三档字号的 MCP 空态、字号反馈收起与新普通反馈保留、长标题操作可达、最小与放大窗口的长模型搜索（100% 单行完整 ID，125% 菜单内可读，150% 换行读全）与局部键盘、只读终端布局。没有新 Run；隔离库既有 Run / 事件内容哈希不变。新错误共存、完整长模型矩阵、正常终端生命周期和系统旁白仍待验；未重跑 Cargo，窗口证据见 历史记录（Git `f8df04b2:docs/ROADMAP.md`，原「ux-09-真窗口补验2026-09-10main--14ac19d4」节）。
+UX-06：复用并更新角色 / Provider AX 布局与三窗回归，覆盖连接优先排序、角色位置与未生效说明、实际滚动框、三窗来源 / 已用 / 剩余、剩余未知与过期；新增一个分钟精度倒计时主路径测试（含 6995 分钟 → 4d 20h 35m）。真实额度与倒计时验收见 [路线图](../../ROADMAP.md)。
 
-UX-06：复用并更新角色 / Provider AX 布局与三窗回归，覆盖连接优先排序、角色位置与未生效说明、实际滚动框、三窗来源 / 已用 / 剩余、剩余未知与过期；新增一个分钟精度倒计时主路径测试（含 6995 分钟 → 4d 20h 35m）。Desktop 224 项测试与 build 通过。真窗口已覆盖账号信息、不可用与刷新、宽窄窗三档字号、角色键盘导航；真实三窗数值 / 重置倒计时因当次查询不可用仍待补验，用户验收未完成，见 历史记录（Git `f8df04b2:docs/ROADMAP.md`，原「ux-06-供应商与账号信息层级」节）。
+UX-04 新增 `recovery_keeps_errors_local_and_preserves_drafts`：覆盖离线空态、诊断 / 重试、草稿保留、模型状态、只读创建阻止、实际拒绝的局部提示、权限未知与 stale gate、终端 I/O 错误及成功恢复；复用并扩充 `terminal_io_failure_keeps_running_terminal_operable`。
 
-UX-04 新增 `recovery_keeps_errors_local_and_preserves_drafts`：覆盖离线空态、诊断 / 重试、草稿保留、模型状态、只读创建阻止、实际拒绝的局部提示、权限未知与 stale gate、终端 I/O 错误及成功恢复；复用并扩充 `terminal_io_failure_keeps_running_terminal_operable`。本批 Desktop 223 项测试通过；真实 read-only 拒绝、连接恢复及三档字号证据与验收边界见 历史记录（Git `f8df04b2:docs/ROADMAP.md`，原「ux-04-错误在发生处解释并提供下一步」节）。
-
-UX-01 新增 `wrapped_draft_keeps_text_hit_testing_and_ime_in_sync`：三档字号、两档输入宽度下覆盖长中文、无空格路径、emoji / 组合字符与显式空行，核对完整原文、字宽、滚动、鼠标与 IME 坐标往返、组合更新及单次撤销。既有 Composer 实际布局 / AX 用例改用长段落，继续核对宽窄窗控件位置、卡片预算和断线禁发；测试与真窗口完成状态见 历史记录（Git `f8df04b2:docs/ROADMAP.md`，原「ux-01-长草稿自然换行与编辑」节）。
+UX-01 新增 `wrapped_draft_keeps_text_hit_testing_and_ime_in_sync`：三档字号、两档输入宽度下覆盖长中文、无空格路径、emoji / 组合字符与显式空行，核对完整原文、字宽、滚动、鼠标与 IME 坐标往返、组合更新及单次撤销。既有 Composer 实际布局 / AX 用例改用长段落，继续核对宽窄窗控件位置、卡片预算和断线禁发。
 
 焦点反馈回归 `pointer_focus_stays_functional_without_ring_and_keyboard_restores_it` 使用真实 GPUI 鼠标 / Tab 事件，覆盖点击保留功能焦点、键盘恢复提示、点击遮挡并吞事件的控件仍清除提示。
 
-UI-2 新增 `session_actions_follow_hover_and_keyboard_without_opening`：真实 GPUI 鼠标 / Tab 驱动非当前会话动作，核对悬停可见、点击改名不切会话、取消后焦点保留、断线禁写与 AX 同源；本批实际命令与结果见 路线图（Git `f8df04b2:docs/review/roadmap-ui-2026-09-09.md`）。
+UI-2 新增 `session_actions_follow_hover_and_keyboard_without_opening`：真实 GPUI 鼠标 / Tab 驱动非当前会话动作，核对悬停可见、点击改名不切会话、取消后焦点保留、断线禁写与 AX 同源。
 
-UI-4 本批实跑 216 个测试，全部内嵌于 bin target（`#[cfg(test)]` 模块；无 crate `tests/` 目录），下表保留历次测试资产分布，本批总数以实跑日志为准：
+测试全部内嵌于 bin target（`#[cfg(test)]` 模块；无 crate `tests/` 目录）。主要资产分布：
 
-| 文件 | 数量 | 覆盖面 |
-| --- | --- | --- |
-| `main.rs` | 0 | 窗口最小尺寸不再靠常量副本断言；宽窄窗可用性由 shell / AppView 的实际布局测试验证 |
-| `controller/mod.rs` | 17 | 既有 wire/解析/安全回归；R6 Wave B 增 terminal create 失败 workspace 归属与 diff 内容 session id 生命周期字段。SET-6d 增 terminal_settings 查询/全态写 wire 与回执解析主路径一条（shell Some/null 两态）。删除 last_acked 单调性和生命周期字段自证；保留握手能力面钉板。 |
-| `projection/tests.rs` | 81 | 既有 snapshot/replay、Run/Timeline/TaskRail 与 Terminal 投影；未开始任务钉顶 / 复用、live 活动清钉顶、多标签 Close 回落与 create 失败保兄弟标签；Settings Data 走 protocol 类型 fail-closed（缺 nullable 键 / 类型错误）；SET-3～6d 解析与 stale/禁写回归仍在；子代理对话栏状态（选代理复位 / 分页去重 / 异会话与异代理 fail-closed / 加载代际拒绝过期回执 / live 过滤）主路径一条。 |
-| `platform.rs` | 3 | socket / token 默认路径与 instance 命名并入同一用例；socket→token 推导；deny-list 恰为 `{pawork-client, pawork-terminal, pawork-browser}`；扫描器覆盖别名 / target 表（负例含 dev-dependencies 排除） |
-| `ui/settings/mod.rs` | 5 | SET-6d：空 shell Save 映射为 null、尺寸合法才可保存；OPT-3 角色区与 Manage models 弹层渲染 gate；角色控件 identifier 构造/解析互逆。 |
-| `ui/mod.rs` | 14 | Composer 与 per-session 草稿接线、Inspector 键盘目标、terminal gate 与 workspace 草稿/回执归属、终态关闭 gate；保留冻结键表与主路径 tab_stop 钉板；Activity 可见性布尔、空态文案与 Settings 路由守卫的常量副本仍删除 |
-| `ui/accessibility.rs` | 3 | identifier 唯一与父子关系校验；focus 单一性；bounds hit-test 与无效树拒绝 |
-| `ui/accessibility/settings.rs` | 3 | OPT-4d：100%/125%/150% 下导航 AX 与真实 render bounds 一致，同一项选中/未选中零位移 |
-| `ui/accessibility/app.rs` | 32 | 稳定 identifier、TaskRail/Timeline/审批/菜单焦点与几何同源回归；Activity 320px 内容宽，内容高随字号为 144/180/216px 锚点；secure API key 只发布等长掩码、普通 provider summary 不发布 masked credential、provider 列几何与 render 全宽内容列同源（`SETTINGS_CONTENT_PAD` 32×2，OPT-4c），stale 后输入与写动作 fail-closed；model 菜单裁剪框外行不入树；OPT-4 审查新增 Scope 多项目菜单实测裁剪/滚动/键盘高亮主路径；本地 Settings 页覆盖 Advanced 离线导航、连接摘要、Reconnect gate 与 Appearance AX Press 150%；UI-2 悬停 / Tab 行操作不打开会话；UI-4 增实际 GPUI 布局与 AX 操作区对照（宽窄窗、三档字号、长草稿、断线禁发）；浮层子代理行发布逐行 Button（名称 · 模型 · 强度 · 状态 value，坐标取实际列表布局并按滚动视口裁剪，Press 进对话栏），对话栏 chip / Refresh / 回底 Button 按实测布局发布（chip 坐标按横滑视口裁剪、回底仅真溢出时发布，Press 走同源 handler），RV-07 起对话正文按阅读顺序发布 StaticText（任务盒 / user 回合 / assistant / thinking / 结果盒）与工具行 Button+Press（值含展开态结果摘要、长回执展开入口），条目布局按 transcript 滚动视口裁剪、零面积不发布，卡摘要 value 增每代理一行，InspectorPanel 菜单 / 页签含子代理页；RV-02：附件消息朗读文本经 `attachment_blocks::accessible_text` 清洗（附件头本地化、控制说明不朗读），附件折叠头按分段布局公式发布 Press 节点（渲染 / 测高 / AX 同源） |
-| `ui/accessibility/macos.rs` | 6 | 顶左 bounds → AppKit parent space 坐标转换；value-change diff；结构骨架比较（属性变化不触发重建）；settable/action 双门拒绝越权 value / focus 写入；disabled action fail-closed（macOS） |
-| `ui/barriers.rs` | 1 | timeline_stable 重写且 settle_seq 单调、字段形状齐全；approval_visible 写入（含 tool 名）与消失删除；未启用（None）零写入 |
-| `ui/input_area.rs` | 6 | Composer placeholder / 面板高度、伪二级分组、未连接过滤、全禁用空态；空 display_name 回退 id 并入真实分组菜单用例 |
-| `ui/theme.rs` | 3 | 文字/操作面对比度与字号增减边界；移除颜色、间距、尺寸常量副本，实际布局由 GPUI / AX 用例验证，动画终态由 shell_layout 的开合反向测试验证 |
-| `ui/shell_layout.rs` | 6 | UI-1 过渡反向连续 / 结束 / 窄窗归零；1280 阈值 rail 288↔240；1440×1024 三栏；1080×720 Inspector 折叠 + Workspace ≥560；同一解析测试另钉 150% rail=320 且 Inspector 保持折叠 |
-| `ui/changes.rs` | 7 | ActivityPopover 摘要、非空可审阅文件 gate、epoch/path/session 三重拒旧、断线 stale、latest-session mismatch 与真实横滚内容模型；删除默认 Files 页签自证 |
-| `ui/inspector.rs` | 1 | 终端输出控制序列解析；默认页签与面板/AX 在 accessibility 测试中核对移除旧控件、输出可聚焦与视口几何 |
-| `ui/terminal_view.rs` | 2 | GPUI 按键转换、空行 / 光标 / IME 预编辑文本 runs 完整性；解析与尺寸行为在 `pawork-terminal` 验证 |
-| `ui/resources.rs` | 3 | 默认 Idle、epoch 拒过期与断线保留旧数据但标记 stale |
-| `ui/markdown.rs` | 3 | Markdown 块结构 / 行数估算；Unicode / 流式保留内容；UX-02 表格对齐、escaped pipe / 代码内 pipe、代码原始 CRLF 复制、HTTP(S) 与配对括号链接 |
-| `ui/timeline_entry.rs` | 6 | R4 Wave A 纯逻辑：未知工具状态原样保留、失败/取消 detail 经 ToolRowView 构造归一；`display_time` epoch 串 → 相对词（now/Nm/Nh/Nd 边界）与非法串原样兜底 |
-| `ui/text_input.rs` | 14 | 多行粘贴行计数；AX set-value 清 marked range；动态 placeholder；Composer 视口预算不破面板总高；shift 选择经 SelectLeft/SelectRight 真实 action；IME 经真实 EntityInputHandler 路径 commit 单次入栈且中间态不可 undo；80 行真窗口 overflow scroll（max_offset>0、视口 28–163、caret 滚入视口）；滚动态点击映回可见内容行；reset_text 恢复草稿且清 undo；SET-4 增 secure 掩码只含 grapheme 数量对应掩码字符且非 secure 不发布掩码 |
-| `ui/u1_probe.rs` | 10 | R1 Wave C U1 spike 矩阵 + R5 Wave B SelectAll/Copy/Cut/Undo/Redo、IME commit 单次入栈（真实 EntityInputHandler 路径）、空输入不可发送、Wave B 键位（含 Shift-Enter）keystroke→keymap→action 链路；时钟/几何自测已删；AX 仍不在本层覆盖 |
+| 文件 | 覆盖面 |
+| --- | --- |
+| `main.rs` | 窗口最小尺寸不再靠常量副本断言；宽窄窗可用性由 shell / AppView 的实际布局测试验证 |
+| `controller/mod.rs` | 既有 wire/解析/安全回归；R6 Wave B 增 terminal create 失败 workspace 归属与 diff 内容 session id 生命周期字段。SET-6d 增 terminal_settings 查询/全态写 wire 与回执解析主路径一条（shell Some/null 两态）。删除 last_acked 单调性和生命周期字段自证；保留握手能力面钉板。 |
+| `projection/tests.rs` | 既有 snapshot/replay、Run/Timeline/TaskRail 与 Terminal 投影；未开始任务钉顶 / 复用、live 活动清钉顶、多标签 Close 回落与 create 失败保兄弟标签；Settings Data 走 protocol 类型 fail-closed（缺 nullable 键 / 类型错误）；SET-3～6d 解析与 stale/禁写回归仍在；子代理对话栏状态（选代理复位 / 分页去重 / 异会话与异代理 fail-closed / 加载代际拒绝过期回执 / live 过滤）主路径一条。 |
+| `platform.rs` | socket / token 默认路径与 instance 命名并入同一用例；socket→token 推导；deny-list 恰为 `{pawork-client, pawork-terminal, pawork-browser}`；扫描器覆盖别名 / target 表（负例含 dev-dependencies 排除） |
+| `ui/settings/mod.rs` | SET-6d：空 shell Save 映射为 null、尺寸合法才可保存；OPT-3 角色区与 Manage models 弹层渲染 gate；角色控件 identifier 构造/解析互逆。 |
+| `ui/mod.rs` | Composer 与 per-session 草稿接线、Inspector 键盘目标、terminal gate 与 workspace 草稿/回执归属、终态关闭 gate；保留冻结键表与主路径 tab_stop 钉板；Activity 可见性布尔、空态文案与 Settings 路由守卫的常量副本仍删除 |
+| `ui/accessibility.rs` | identifier 唯一与父子关系校验；focus 单一性；bounds hit-test 与无效树拒绝 |
+| `ui/accessibility/settings.rs` | OPT-4d：100%/125%/150% 下导航 AX 与真实 render bounds 一致，同一项选中/未选中零位移 |
+| `ui/accessibility/app.rs` | 稳定 identifier、TaskRail/Timeline/审批/菜单焦点与几何同源回归；Activity 320px 内容宽，内容高随字号为 144/180/216px 锚点；secure API key 只发布等长掩码、普通 provider summary 不发布 masked credential、provider 列几何与 render 全宽内容列同源（`SETTINGS_CONTENT_PAD` 32×2，OPT-4c），stale 后输入与写动作 fail-closed；model 菜单裁剪框外行不入树；OPT-4 审查新增 Scope 多项目菜单实测裁剪/滚动/键盘高亮主路径；本地 Settings 页覆盖 Advanced 离线导航、连接摘要、Reconnect gate 与 Appearance AX Press 150%；UI-2 悬停 / Tab 行操作不打开会话；UI-4 增实际 GPUI 布局与 AX 操作区对照（宽窄窗、三档字号、长草稿、断线禁发）；浮层子代理行发布逐行 Button（名称 · 模型 · 强度 · 状态 value，坐标取实际列表布局并按滚动视口裁剪，Press 进对话栏），对话栏 chip / Refresh / 回底 Button 按实测布局发布（chip 坐标按横滑视口裁剪、回底仅真溢出时发布，Press 走同源 handler），RV-07 起对话正文按阅读顺序发布 StaticText（任务盒 / user 回合 / assistant / thinking / 结果盒）与工具行 Button+Press（值含展开态结果摘要、长回执展开入口），条目布局按 transcript 滚动视口裁剪、零面积不发布，卡摘要 value 增每代理一行，InspectorPanel 菜单 / 页签含子代理页；RV-02：附件消息朗读文本经 `attachment_blocks::accessible_text` 清洗（附件头本地化、控制说明不朗读），附件折叠头按分段布局公式发布 Press 节点（渲染 / 测高 / AX 同源） |
+| `ui/accessibility/macos.rs` | 顶左 bounds → AppKit parent space 坐标转换；value-change diff；结构骨架比较（属性变化不触发重建）；settable/action 双门拒绝越权 value / focus 写入；disabled action fail-closed（macOS） |
+| `ui/barriers.rs` | timeline_stable 重写且 settle_seq 单调、字段形状齐全；approval_visible 写入（含 tool 名）与消失删除；未启用（None）零写入 |
+| `ui/input_area.rs` | Composer placeholder / 面板高度、伪二级分组、未连接过滤、全禁用空态；空 display_name 回退 id 并入真实分组菜单用例 |
+| `ui/theme.rs` | 文字/操作面对比度与字号增减边界；移除颜色、间距、尺寸常量副本，实际布局由 GPUI / AX 用例验证，动画终态由 shell_layout 的开合反向测试验证 |
+| `ui/shell_layout.rs` | UI-1 过渡反向连续 / 结束 / 窄窗归零；1280 阈值 rail 288↔240；1440×1024 三栏；1080×720 Inspector 折叠 + Workspace ≥560；同一解析测试另钉 150% rail=320 且 Inspector 保持折叠 |
+| `ui/changes.rs` | ActivityPopover 摘要、非空可审阅文件 gate、epoch/path/session 三重拒旧、断线 stale、latest-session mismatch 与真实横滚内容模型；删除默认 Files 页签自证 |
+| `ui/inspector.rs` | 终端输出控制序列解析；默认页签与面板/AX 在 accessibility 测试中核对移除旧控件、输出可聚焦与视口几何 |
+| `ui/terminal_view.rs` | GPUI 按键转换、空行 / 光标 / IME 预编辑文本 runs 完整性；解析与尺寸行为在 `pawork-terminal` 验证 |
+| `ui/resources.rs` | 默认 Idle、epoch 拒过期与断线保留旧数据但标记 stale |
+| `ui/markdown.rs` | Markdown 块结构 / 行数估算；Unicode / 流式保留内容；UX-02 表格对齐、escaped pipe / 代码内 pipe、代码原始 CRLF 复制、HTTP(S) 与配对括号链接 |
+| `ui/timeline_entry.rs` | R4 Wave A 纯逻辑：未知工具状态原样保留、失败/取消 detail 经 ToolRowView 构造归一；`display_time` epoch 串 → 相对词（now/Nm/Nh/Nd 边界）与非法串原样兜底 |
+| `ui/text_input.rs` | 多行粘贴行计数；AX set-value 清 marked range；动态 placeholder；Composer 视口预算不破面板总高；shift 选择经 SelectLeft/SelectRight 真实 action；IME 经真实 EntityInputHandler 路径 commit 单次入栈且中间态不可 undo；80 行真窗口 overflow scroll（max_offset>0、视口 28–163、caret 滚入视口）；滚动态点击映回可见内容行；reset_text 恢复草稿且清 undo；SET-4 增 secure 掩码只含 grapheme 数量对应掩码字符且非 secure 不发布掩码 |
+| `ui/u1_probe.rs` | R1 Wave C U1 spike 矩阵 + R5 Wave B SelectAll/Copy/Cut/Undo/Redo、IME commit 单次入栈（真实 EntityInputHandler 路径）、空输入不可发送、Wave B 键位（含 Shift-Enter）keystroke→keymap→action 链路；时钟/几何自测已删；AX 仍不在本层覆盖 |
 
-UX-02 另在 `ui/accessibility/app.rs` 新增一个 GPUI 主路径测试：正文 / 代码精确复制、实际菜单 AX、同 Run 后继闭合边界与断线禁用；本批 Desktop 总计 221 项通过。
-
-2026-10-02 左侧栏优化已实现：默认项目分组、紧凑层级、完整标题预览与右侧覆盖层；复用既有测试，无新增测试或依赖。`bash scripts/test.sh desktop`（实际 Cargo 为下方 bin-only 命令）258/258、`cargo build -p pawork-desktop --offline --bin pawork-desktop --features gpui/runtime_shaders`、格式与 diff 检查通过。代理真窗口检查覆盖 1440×1024 / 1080×720、100% / 125% / 150% 字号、完整中文长标题预览、选中 / 折叠、时间分组切换、改名不误开与取消、归档 / 撤销；最终候选复验覆盖层让出完整键盘焦点描边。窗口连接隔离 fixture Host，未发起 Provider Run；用户人工验收未完成，全 workspace 门禁未运行。
-
-2026-10-02 长标题走马灯追加已实现：复用 GPUI 动画与既有行焦点，不新增依赖或测试。Desktop 258/258、正式构建、格式与 diff 检查通过。代理真窗口检查覆盖鼠标悬停启动与离开复位、键盘聚焦、204 字中文标题完整滚动周期（末尾完整可读、停留并重播）、失焦复位、改名 / Esc 取消，以及 1440×1024 / 1080×720 和 100% / 125% / 150% 字号；最终候选修正渐隐导致短标题 1px 微动，连续 79 帧文字区域完全相同，并复验长标题继续滚动。字号偏好恢复原值。隔离 fixture Host 未发起 Provider Run，用户人工验收未完成，全 workspace 门禁未运行。
+`ui/accessibility/app.rs` 的 GPUI 主路径回归覆盖正文 / 代码精确复制、实际菜单 AX、同 Run 后继闭合边界与断线禁用。
 
 **验证命令**：
 
@@ -517,7 +509,7 @@ cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders
 ```
 
 - `--bins`：本包是 bin-only（无 lib target），任务指南默认的 `--lib --tests` 匹配不到任何 target。
-- `--features gpui/runtime_shaders`：gpui 默认构建在编译期调用 Metal 着色器编译器；开发机仅有 Xcode CLT 时缺 Metal Toolchain 会构建失败，runtime_shaders 把着色器编译推迟到运行时使本机可闭环。2026-09-04 P0–P2 UI Roadmap 后 Desktop bin 门禁为 187/187；Increase Contrast 移除（2026-09-04）后为 186/186。
+- `--features gpui/runtime_shaders`：gpui 默认构建在编译期调用 Metal 着色器编译器；开发机仅有 Xcode CLT 时缺 Metal Toolchain 会构建失败，runtime_shaders 把着色器编译推迟到运行时使本机可闭环。
 
 本包 dev-dependencies 为 `tempfile`（workspace `3`，仅服务 `ui/barriers.rs` 的临时目录测试）与 `gpui` dev 条目（`=0.2.2` + `test-support` feature，R1 Wave C 起；仅测试构建启用 TestAppContext/VisualTestContext，resolver v2 下不进生产二进制闭包），均不计入生产 deny-list。
 
@@ -525,35 +517,17 @@ cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders
 
 **运行时验证资产**：`--probe`（连接 + snapshot + 模型目录一行摘要）与 `--probe-smoke`（流式回合 / 切模型 / 审批 / 取消 / 两次断线重连持久化 / `disconnect_survive`），配合隔离实例（`--instance` + `PAWORK_DATA_DIR`）在真实 host 上冒烟。[scripts/ui-ax-dump.swift](../../../scripts/ui-ax-dump.swift) 与 [scripts/ui-key-event.swift](../../../scripts/ui-key-event.swift) 可做真窗口 AX / HID 取证。历史编排脚本与运行证据已移出仓库；新结论必须按当前源码与真窗口重建证据。
 
-截至 2026-09-01，正式 Host/Desktop（无 fixture/seed/mock）已完成添加项目、真实 Provider 对话、审批写文件、Changes 与真实 Git 对照、PTY 命令、P1 多项目/会话归属双粒度重开、P2 六链路可靠性与 P3 三面板验收（含 ADR-045 Terminal 生命周期）。P3 隔离实例以 AX + `stty`/`pwd`/Git/SQLite/Host snapshot/ps 双证据验证尺寸变更、exited 重建、cwd 恢复、Changes/Resources 刷新与断线 stale；ADR-045 复验 Stop→无重连即时 killed（进程组击杀证据）、Close→复位 not started 且快照清空、`exit 7` 即时 exited、断线 stale 不回归；P4 片 3 消除 AX 树三处固定偏移几何（stepper / 审批卡 / Timeline）；P4 片 2F 修复并真窗口复验 D1（AXPress 菜单同源移焦与来源回焦）、D2（Timeline/approval 共享 item 序列，稳定帧读取真实 list bounds，AX frame 中心真实点击落盘）与 D3（历史早期工具不清 snapshot 当前审批，切走跳回仍恢复），当前 Desktop 定向门禁 160/160。系统 IME 真实 composing 后续已于 2026-09-05 补证通过（VoiceOver 签字已于 2026-09-04 按用户要求移出范围），P4 其余切片未完成。
+Context 投影回归覆盖目录 context window 的 0 哨兵显示为 unavailable。Provider AX 测试以真实 GPUI prepaint 对照元素框，覆盖 secure input 脱敏、角色过滤、模型启用与空目录、stale 禁写、角色长目录的当前项 / 上下键滚入、模型菜单滚动保持 / 离屏裁剪，以及 1080×720 下 100% / 125% / 150% 展开卡页面滚动。Provider 页面、四角色与模型弹层使用 `settings_element` 实测框；规格见 [GUI 设计](../../gui-design.md#ui-6a-供应商更新2026-09-08)。
 
-2026-09-04 P0–P2 UI Roadmap 已完成源码实现与当轮 Desktop 自动门禁（移除 Increase Contrast / VoiceOver 门禁前 187/187，范围调整后 186/186；含审查修复：Settings AX 列几何与 820px render 列同源、model 菜单 AX 裁剪）。当前源码重新执行 `./scripts/pawork-desktop.sh build` 成功，并在正式 Host / Desktop 上逐张对照 P0–P2 阶段图：1440×1024 宽窗与含约 3px 窗框的 1083×723 最小窗布局、Inspector 折叠、Activity、Settings 八页、provider 分层、100% / 125% / 150% 字号，以及 direct toggle / 菜单焦点路径均通过，三张阶段图视觉签字为 PASSED。当日测试 Host 以临时参数使用 `opencode-go / glm-5.3-flash`，但连接失败；该历史阻塞已由下一条补证关闭。
-
-2026-09-05 P0/P1 最终补证：在不修改持久 Provider/default/proxy 配置的前提下，正式 Host/Desktop 以 `opencode-go / glm-5.3-flash` 完成真实 streaming、tool group、assistant response、tracked `edit_file`、Changes、`Ready for review` / CTA、折叠 Activity 与 Approval Deny 全链路。真窗口同时发现并修复两处事实偏差：Ready 但空文件列表不再显示 Review CTA；`pawork-git` 的多文件 NUL `numstat` 解析恢复真实 `+A/−D`（实窗单文件补证 `+1/−0`）。系统拼音 composing 的首次 Return 只确认组合、不发送 Run。验证标记已移除；Desktop 186/186、`pawork-git` 57 个 lib 单测 + 5 个 parser contract 及正式 build 均通过。P0/P1 Human acceptance：PASSED。
-
-2026-09-06 OPT-3 GUI 控件批次（对照 OPT-D 签字稿）：Manage models 启用弹层（单模型 Switch + Enable all/Disable all + 空目录诚实空态）、页首四默认角色区（候选 = 已连接且已启用，vision/search 只保存标注）、代理开关改 Switch（OPT-3c）、Composer 过滤禁用模型与全禁用空态。门禁 207/207（含弹层/角色区/Switch/空态 AX 钉板、角色 identifier 互逆与 OPT-4d 导航零位移）。真窗口经 AX + 截图核对角色菜单分组（含 240px 折叠滚动）、Composer 与启用弹层；验收中经真窗口+协议层发现并修复 Host 侧清除判定误删盘上默认对缺陷（ADR-055 D3a，pawork-app 208 lib 含回归），协议层复验 Enable/Disable-all 与 cleared_roles 口径通过；代理 Switch 像素级复验已通过（见 ROADMAP §10.6（Git `f8df04b2:docs/review/roadmap-opt-2026-09-05.md`））。详见 ROADMAP §10.5（Git `f8df04b2:docs/review/roadmap-opt-2026-09-05.md`）。
-
-2026-09-06 OPT-4 工作台与 Settings 壳层：六处主操作命中区 ≥36×36、可见字形 20px；Inspector 默认折叠并在 Header 增加 inspector-expand 重开入口；Settings 内容取消 820px 上限（两侧 32px padding，render/AX 同源）；导航选中/未选中文字坐标零位移。门禁 207/207。首次真窗口对照新图验收已通过（ROADMAP §10.7（Git `f8df04b2:docs/review/roadmap-opt-2026-09-05.md`））。详见 ROADMAP §10.6（Git `f8df04b2:docs/review/roadmap-opt-2026-09-05.md`）。
-
-2026-09-04 按用户要求移除 macOS Increase Contrast 支持与全部 VoiceOver 验收门禁：删除 `ui/platform_preferences.rs`（NSWorkspace 显示偏好桥），`theme::dark()` 回归单一冻结 palette 并移除对应定向测试（Desktop 门禁 187→186），Appearance 页主题说明同步更新；AX tree 与键盘支持保留。
-
-2026-09-07 OPT-4 完成效果审查：修复 Settings 导航在大字号下 AX 间距漂移、外观页字号/语言按钮仍用旧原点与估算纵坐标、Scope 长菜单 AX 未裁剪且键盘高亮不滚动三项缺口。导航沿用 rem 布局，外观按钮和 Scope 菜单经宿主 `ScrollHandle` 读取 GPUI 实测位置；Scope 使用 `MenuPanel::track_scroll`，首帧布局后滚入当前项、键盘移动时滚入高亮项；AX 在布局完成后同步。复用导航/外观测试，新增一个 Scope 多项目滚动主路径。验证状态见 ROADMAP §10.12（Git `f8df04b2:docs/review/roadmap-opt-2026-09-05.md`）。
-
-2026-09-07 UI-1 已实现；Desktop 定向测试 213/213 与构建通过（本机使用临时库搜索索引，未改 Cargo 配置）。新增覆盖开合反向连续、窄窗归零、过渡期 AX 裁剪与不可见动作拒绝；共享文字对比度改按 AA 下限验证。代理真窗口检查通过：真实 Host 连接、Inspector 开合 / 连续切换与三页签、Activity → Changes、宽窄布局及 100% / 125% / 150% 字号；probe 确认 1 个空测试会话与 13 个模型，未发起 Run。用户人工视觉验收已通过（2026-09-07），未归档；证据见 ROADMAP UI-1（Git `f8df04b2:docs/review/roadmap-ui-2026-09-09.md`）。
-
-UI-6a 将目录 context window 的 0 哨兵视为 unknown，在 Context 显示 unavailable；复用既有投影用例覆盖该值。复用四个既有 Provider AX 测试，以真实 GPUI prepaint 对照元素框；覆盖 secure input 脱敏、角色过滤、模型启用与空目录、stale 禁写、角色长目录的当前项 / 上下键滚入、模型菜单滚动保持 / 离屏裁剪，以及 1080×720 下 100% / 125% / 150% 展开卡页面滚动。Provider 页面、四角色与模型弹层沿用 `settings_element` 实测框；无新依赖或 wire 变更。规格与验证分别见 [GUI 设计](../../gui-design.md#ui-6a-供应商更新2026-09-08) 和 路线图（Git `f8df04b2:docs/review/roadmap-ui-2026-09-09.md`）。
-
-2026-09-15 右侧面板：统一工具 / 文件 / PTY 标签栏与空面板入口已实现；终端后台关闭保持当前页，回执后才移除标签。键盘方向切换、滚动裁剪与关闭回退由定向用例验证；本批自动检查及真窗口结果在交付时记录，用户人工验收未完成。
-
-提交前复核新增 `attachment_preview_keyboard_and_accessible_close`：真实 GPUI Enter 激活预览，AX 关闭按钮使用实测矩形且可关闭，附件草稿保留。既有断线回归追加离线切换拒绝、迟到列表回执拒绝：断线禁用 chip / AX 切换并失效旧 request_id，避免清掉正文或过期横幅。
+`attachment_preview_keyboard_and_accessible_close` 验证真实 GPUI Enter 激活预览，AX 关闭按钮使用实测矩形且可关闭，附件草稿保留。断线回归覆盖离线切换拒绝、迟到列表回执拒绝：断线禁用 chip / AX 切换并失效旧 request_id，避免清掉正文或过期横幅。
 
 ## 8. 注意事项与已知限制
 
 - **gpui 前台执行器无 tokio reactor（历史崩溃教训）**：在 `cx.spawn` 的前台执行器上 await client 调用，会在 `receive_frame` 内部的 `tokio::time` 直接 panic。连接期握手 / ack / `subscribe_all` 与事件泵**必须**全部跑在 `runtime.spawn` 上，gpui 侧只经 channel 消费结果。`--probe-smoke` 走 `platform.block_on` 自带 runtime，暴露不了这类回归，因此生产窗口启动仍是必需门禁。
 - **Changes 面只读**（用户拍板 2026-08-24）：git_stage / HunkStageService 接线顺延 ADR 候选；`@` 补全浮层与「已加载规则」分区无 Host 出口（`@` 端到端展开在 host 侧 crates/app，不在本 crate）。
 - **host `diff_*` 固定解析 latest 会话**：数据会话与当前查看会话不一致时，UI 以 banner「Showing changes for latest session X — not the active session.」与 popover 提示行如实标注，不静默张冠李戴。
-- **渲染面自动门禁尚未完整**：现有布局、主题、键盘与 AX 定向测试不覆盖完整 Timeline/Changes AX 几何与全组件 hover/inactive，性能阈值也未冻结；三张阶段目标设计图的当前构建真窗口视觉签字已通过，但不扩张为这些未覆盖项的自动保证。
-- **ActivityPopover 已完成视觉签字**：divider/raised Changes section、仅有 Changes capability 时的 320px 内容宽，内容高随字号为 144/180/216px 收缩、最小窗锚定与相关 AX 子节点已由定向测试和当前构建真窗口共同核对。VoiceOver / 完整 screen-reader 已移出当前 GUI 验收范围；后续 capability 增减仍须重新验证动态内容高度与 AX 子树。
+- **渲染面自动门禁尚未完整**：现有布局、主题、键盘与 AX 定向测试不覆盖完整 Timeline/Changes AX 几何与全组件 hover/inactive，性能阈值也未冻结；历史阶段图验收不扩张为这些未覆盖项的自动保证。
+- **ActivityPopover 验收边界**：divider/raised Changes section、仅有 Changes capability 时的 320px 内容宽，内容高随字号为 144/180/216px 收缩、最小窗锚定与相关 AX 子节点须由定向测试和当前构建真窗口共同核对。VoiceOver / 完整 screen-reader 已移出当前 GUI 验收范围；后续 capability 增减仍须重新验证动态内容高度与 AX 子树。
 - **环境性断连**：显示器休眠 / App Nap 下心跳超时断连（Reconnect 横幅恢复）为宿主环境行为，非缺陷。
 - **早死 run 的回显行重选后消失（R4 Wave B 评审 P3，存量语义）**：plan 闸门在 `MessageCommitted` 之前拒绝时，用户消息从未持久化；乐观回显让用户先看见消息，重选 / 重连后快照重建时该行随基线清空消失。消息此前根本不显示，echo 只是使该语义可观察；是否把用户消息持久化提前到闸门之前属 [产品候选](../backlog.md)。同理，合成兜底条目（≥2^60 序号）在屏时若同会话又有真实事件到达，真实事件按序号插到合成条目之前（深边角化妆性排序），重选即自愈。同一 run 的乐观回显行与稍后到达的持久化 UserMessage 在未经重选/重连时理论上可并存（echo 不进 seen）；实际触发面极窄——最新用户消息只经快照到达而快照会重建 timeline——重选即自愈。
 - **单主题**：仅深色 `dark()`，不读取系统显示偏好（Increase Contrast palette 变体已于 2026-09-04 移除）。SET-6e 外观页只读陈述这一事实，不提供 light/system/custom theme 控件；`Theme: Global` 是未来运行时主题挂载点，当前未 `set_global`。
@@ -562,7 +536,7 @@ UI-6a 将目录 context window 的 0 哨兵视为 unknown，在 Context 显示 u
 - **FollowScroll 的滚轮时序假设**：`on_scroll_wheel` 直读已应用（未钳制）的 offset——依赖 vendored gpui 0.2.2 的 Bubble 相监听逆序分发（内部偏移应用先于用户监听）；升级 gpui 时须重核，做 delta 投影会把增量计两次。
 - **UI fixture barrier 钩子（R1 Wave B，测试专用）**：启动读 env `PAWORK_UI_BARRIER_DIR`（main.rs；空值视同未设置，`--probe` / `--probe-smoke` 不发射）。未设置时全程零开销：不 spawn tick、无任何文件 IO。设置后由 ui/mod.rs 既有 1s tick 兼任发射点：已连接 && 无进行中 timeline 分页（`open_session` 置位、complete / `open session` 失败 / `Disconnected` 复位）&& 本 tick 窗口无 ControllerEvent 时重写 `<dir>/timeline_stable`（JSON 含 settle_seq 单调自增 / session_id / entry_count / at_ms / detail）；开始连接、打开会话或收到任一 ControllerEvent 时先删除旧 `timeline_stable` 与 `approval_visible`，防只等存在性的 driver 误收陈旧信号。`pending_approval` 存在且已稳定 → 重写 `approval_visible`（含 tool 名），消失 → 保持删除；目录不存在时由 `BarrierSink::new` 惰性创建。写入 tmp+rename 原子替换、任何 IO 失败静默跳过；`projection/` 保持纯状态机零 IO。controller 在未连接、无 TimelinePage 响应或翻页达到上限时发 `SessionOpenFailed{session_id}`，UI 仅在该 session 仍为 active 时复位分页状态。
 
-GUI2-01（2026-09-10）：壳层、侧栏与首页已实现；定向测试 227/227 与候选构建通过，本项真窗口路径完成、用户验收未完成；真实 Provider 请求 HTTP 401，验证结果见 历史记录（Git `f8df04b2:docs/ROADMAP.md`，原「gui2-01-工作台壳首页与侧栏」节）。新增 `welcome_and_rail_follow_actual_layout` 定向回归覆盖首页状态、实测 AX 和两种尺寸 × 三档字号；不改变协议、创建写口或持久化。
+`welcome_and_rail_follow_actual_layout` 定向回归覆盖首页状态、实测 AX 和两种尺寸 × 三档字号；不改变协议、创建写口或持久化。
 
 2026-09-24 文件夹读取补充：macOS / Linux x86_64、aarch64 使用持有的目录描述符与 `openat(NOFOLLOW)` 逐组件读取，拒绝选择后目录/符号链接替换导致的越界；其它平台入口禁用并显示平台要求。未新增依赖。
 
@@ -570,4 +544,4 @@ GUI2-01（2026-09-10）：壳层、侧栏与首页已实现；定向测试 227/2
 
 2026-09-25 外部浏览器附件按结构化错误显示中文指引：Chrome/Edge 错误 12 要求用户手动开启 Apple Events JavaScript，系统 -1743 指向 Automation 权限；后台任务错误不透传 panic 文本。
 
-2026-09-25 产品子窗口为 Plan、目标、录制、视频输入和操作按钮显式设置 GPUI Tab 停靠点；仅 div 的 `tab_stop(true)` 不会覆盖既有 `track_focus` 句柄，必须配置 FocusHandle。最终正式构建真窗口复验：Plan 正反向焦点遍历、目标遍历跳过禁用动作通过；Chrome 脚本禁用的中文提示可见且 AX 可读。成功获取外部页面正文仍受浏览器开关阻塞。
+产品子窗口为 Plan、目标、录制、视频输入和操作按钮显式设置 GPUI Tab 停靠点；仅 div 的 `tab_stop(true)` 不会覆盖既有 `track_focus` 句柄，必须配置 FocusHandle。成功获取外部页面正文仍受浏览器开关与系统权限限制。

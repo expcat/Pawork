@@ -100,7 +100,6 @@ ADR-053 启动：显式 `AppLoadOptions.approval_mode` > Global 审批 > ReadOnl
 
 2026-10-03：每次网关补全在准备阶段把 request ID 派生的租约 session ID 写入冻结的 canonical `ModelRequest.session_id`，让 OpenCode Go 适配器发送必需的 `x-opencode-session`。普通响应与 SSE 均使用各自唯一身份，不新增客户端字段或持久会话；其他通道仍由适配器决定是否发送该头。
 
-
 ### 3.1 装配与生命周期
 
 - `AppLoadOptions { workspace_root, provider, model, data_dir, approval_mode, trust_workspaces, approval_host, auth_backend, instance }`；`AppLoadOptions::from_cli(provider, model)` 是 CLI 覆盖入口。`trust_workspaces: Option<bool>` 只供可信宿主显式覆盖本进程，`None` 沿用已解析全局配置；不写回配置。`auth_backend` 缺省为 `FileBackend`（auth 文件），测试可注入 `MemoryBackend`。
@@ -336,14 +335,13 @@ WorkspaceList 与 snapshot Workspaces 段均按每个目标 workspace roots 调�
 
 ## 7. 测试与验证资产
 
-2026-10-03 UI fixture 构建入口精简：`scripts/ui-fixture.sh` 复用 `scripts/cargo-build.sh` 的本次 artifact 定位，保留隔离 root、marker 与 barrier 拒绝边界；过长 socket 路径在编译前失败且正确报告中文错误。example CLI 与 seed 数据格式不变，构建和入口回归的证据边界见 [验证规格](../verification.md#41-按用途选择入口)。
+`scripts/ui-fixture.sh` 经 `scripts/cargo-build.sh` 定位本次 artifact；入口回归覆盖隔离 root、marker 与 barrier 拒绝，过长 socket 路径在编译前失败并报告中文错误。构建与入口回归的证据边界见 [验证规格](../verification.md#41-按用途选择入口)。
 
 网关回归：`cargo test -p pawork-app --offline --lib gateway_`。`gateway_tests.rs` 集成宿主测试以真实 loopback HTTP + wiremock 验证模型路由、两种响应、usage/strict、鉴权撤销与 Host/Origin 拒绝；其中 Go 路径同时断言普通 / SSE 请求的上游会话头存在且互不相同，session ID 不进入 JSON 正文；生图路径验证普通 JSON 的 `output.choices` 归一、非流式上游请求和 HTTP 200 错误正文拒绝 / 脱敏。阻塞 provider 验证流式超时错误、断开取消和部分记账。原生视频回归验证一次异步提交、查询 / 失败码脱敏、固定参数及无效请求拒绝。独立 gateway 包的 `tokens` 测试验证多客户端、摘要存储、权限与撤销。测试不访问真实模型。
 
+live-smoke 由 feature 显式选择，缺环境直接失败；验证非空流式文本、唯一成功终态与 `resume_messages` 可恢复的助手内容。普通 `bash scripts/test.sh app` 开启 ui-fixture、不开 live-smoke，不请求真实 Provider；真实模型按 [验证规格](../verification.md) 执行。
 
-2026-09-20 测试重构：live-smoke 只以 feature 显式选择，不再叠加 ignore，缺环境直接失败；验证非空流式文本、唯一成功终态与 `resume_messages` 可恢复的助手内容。普通 `bash scripts/test.sh app` 开启 ui-fixture、不开 live-smoke，不请求真实 Provider。真实模型仍按产品验证规格执行；本次执行状态见 Git 历史（37fae8f3:docs/testing-refactor-plan.md）。
-
-新入口实际发现 `ui_fixture_projection` 仍断言只返回主 workspace，与当前注册表全集合行为不符。该测试改为核对全部已登记 workspace 的根目录、快照 id/name 集合及每个 session 的归属；不依赖工作区返回顺序，也不重新录制 golden。
+`ui_fixture_projection` 核对全部已登记 workspace 的根目录、快照 id/name 集合及每个 session 的归属，不依赖返回顺序。
 
 `subagents::tests` 覆盖结果重放、普通任务列表排除子会话、禁止嵌套派发与工具越权、父取消和并发上限；`display_limit_keeps_active_and_recent_children_without_limiting_control` 验证超过 64 项且 ID 与创建顺序相反时保留活跃 / 最近子代理、已移出展示项仍可等待 / 取消，以及跨 run / session 的拒绝。`cross_provider_subagents_select_models_and_persist_reasoning` 通过本地模拟 HTTP 接口验证非 GLM 模型的 Chat Completions / Messages 跨供应商派发、实际请求 model、结果回传和推理签名持久化；不等同于真实供应商联网验收。
 

@@ -1,6 +1,6 @@
 # pawork-protocol
 
-OPT-1 / [ADR-053](../settings.md#adr-053opt-1-设置持久化2026-09-05)：Settings 审批模式保存为 Global 默认，信任选择按 canonical workspace 根路径保存；非 Global 高层禁止覆盖；命令与回执 JSON 形状保持不变。Appearance 保存用户目录 `desktop.json`。实现/自动验证/人工验收状态分别见 OPT 归档（Git `f8df04b2:docs/review/roadmap-opt-2026-09-05.md`）。
+OPT-1 / [ADR-053](../settings.md#adr-053opt-1-设置持久化2026-09-05)：Settings 审批模式保存为 Global 默认，信任选择按 canonical workspace 根路径保存；非 Global 高层禁止覆盖；命令与回执 JSON 形状保持不变。Appearance 保存用户目录 `desktop.json`。
 
 > CLI/Core 宿主与所有客户端之间的协议层：core-api 信封 + GUI Connection Protocol 帧 + headless-json（NDJSON）+ 外部客户端 adapter + 共享 timeline 投影 + TS typegen；只依赖 `pawork-domain`，不含任何业务执行逻辑。
 
@@ -329,8 +329,6 @@ ADR-057：思考与正文按 run/message 分别累积有序增量，committed �
 | `src/app/{command,event,version,quota}.rs` tests | `WorkspaceRelativePath` 逃逸拒绝、`AppEventEnvelope.validate_after` 双序号、`negotiate` 版本矩阵、quota alert wire 名与 `mask_credential_hint` 不泄漏 |
 
 默认验证命令：`cargo test -p pawork-protocol --offline --lib --tests`（typegen 测试另需 `--features typegen`）。
-
-2026-09-03 SET-6g 以 `--features typegen` 运行上述门禁，155/155 通过；64 个 GUI fixture 数量不变，44 个引用当前 API 的 fixture 仅做 minor 8→9 机械更新，typegen 与检入 schema 同步。
 
 ## 8. 注意事项与已知限制
 

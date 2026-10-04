@@ -109,9 +109,9 @@ UI-6b G2：crate 根增加 `ProviderAccountSelectionMode`、`QuotaOverviewQuery/
 
 ## 7. 测试与验证资产
 
-2026-10-03 子进程回归精简：`spawn_e2e` 删除每项测试前额外启动的 `pawork --help` 文案探测，直接以实际 spawn/握手验证 headless 可用性。仍保留三项真实 Host 回归，缺二进制或握手失败不能跳过记绿；`scripts/test.sh --host` 经共享 `scripts/cargo-build.sh` 定位本次正式产物，排除 test harness。入口与证据边界见 [验证规格](../verification.md#41-按用途选择入口)。
+`spawn_e2e` 以实际 spawn/握手验证 headless 可用性；缺二进制或握手失败必须失败，不能跳过记绿。`bash scripts/test.sh --host` 先构建当前 Host，经 `scripts/cargo-build.sh` 定位正式产物并排除 test harness，再验证真实子进程。入口与证据边界见 [验证规格](../verification.md#41-按用途选择入口)。
 
-2026-09-20 测试重构：删除向 Vec push capability 再 contains 的自证、版本文案 contains 检查，以及 `SDK_API_VERSION == pawork_protocol::API_VERSION` 的别名自证；握手/授权/版本拒绝由真实连接与协议测试承接。`spawn-e2e` 显式选择后缺二进制/缺 headless 必须失败，去掉三处提前返回；未映射 WorkspaceAdd 的重复检查只保留在主路径。`bash scripts/test.sh client` 包含 probe-self-test；`bash scripts/test.sh --host` 先构建当前 Host 再验证真实子进程。 本批执行状态见 Git 历史（37fae8f3:docs/testing-refactor-plan.md）。
+握手、授权和版本拒绝由真实连接与协议测试覆盖。`bash scripts/test.sh client` 显式启用 probe-self-test；`spawn-e2e` 须显式选择。
 
 **`tests/probe.rs`（`--self-test` 13 场景，MemoryTransport 进程内装配；`probe-self-test` feature 显式启用）**
 
@@ -152,11 +152,11 @@ UI-6b G2：crate 根增加 `ProviderAccountSelectionMode`、`QuotaOverviewQuery/
 
 默认验证入口：`bash scripts/test.sh client`（补齐 `probe-self-test`）；真实子进程入口为 `bash scripts/test.sh --host`。
 
-2026-09-17 起 lib 内联含 FrameWant 路由与并发 snapshot 等待；client_tests 22、contract 9 仍覆盖握手/授权/版本拒绝。version.rs 的 SDK 文案自证已删除，协议兼容由握手测试承接。contract 主路径同时锁定 `host_data_dir` 原样透传。Host 重启后的真实 policy fail-closed 另由 Desktop U2 矩阵覆盖。
+lib 内联回归覆盖 FrameWant 路由与并发 snapshot 等待；client_tests 与 contract 覆盖握手、授权和版本拒绝。contract 主路径锁定 `host_data_dir` 原样透传，Host 重启后的真实 policy fail-closed 另由 Desktop U2 矩阵覆盖。
 
 opt-in 复跑：`bash scripts/test.sh client`（含 probe-self-test）；真实子进程用 `bash scripts/test.sh --host`。
 
-本批沿用 headless `hello_ack.json` 的 1.9 fixture，握手回归断言协商结果 1.9，避免将旧 Host 响应误断言为当前 API_VERSION。
+握手回归使用 headless `hello_ack.json` 的 1.9 fixture，握手回归断言协商结果 1.9，避免将旧 Host 响应误断言为当前 API_VERSION。
 
 ## 8. 注意事项与已知限制
 

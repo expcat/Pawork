@@ -1,32 +1,26 @@
 # Pawork Desktop 历史视觉资产
 
-> 2026-09-21：本目录保留 P0–P2、OPT-D 与 UI 阶段的历史资产及原批次说明。当前待办与未闭合验收见 [ROADMAP](../docs/ROADMAP.md)，现行界面合同见 [GUI 设计](../docs/gui-design.md)。下文尺寸、状态和签字只属于所标历史阶段，不覆盖当前源码；旧签字不迁移为新功能验收。旧 Review 文档已清除，历史证据从 Git `f8df04b2:docs/review/` 追溯。新图另存，不覆盖历史资产。
+> 本目录保留视觉参考和生成素材；现行界面合同见 [GUI 设计](../docs/gui-design.md)，待办与未闭合验收见 [ROADMAP](../docs/ROADMAP.md)。历史图片不覆盖当前源码，也不作为新功能验收证据。
 
-## UI-6a 供应商规格（2026-09-08）
+## 1. UI 规格与示意
 
-沿用 UI-1 / UI-5 色板与控件，以当前构建真窗口为验收对象。自然增高卡片、36px 动作、凭证输入与动作分行，以及 320×400px 上限的模型弹层见 [GUI 设计 UI-6a](../docs/gui-design.md#ui-6a-供应商更新2026-09-08)。目录来自当次 Host 结果，额度无来源不造数字；多账户属于 UI-6b。截图不检入仓库，验证状态见 路线图 UI-6a（Git `f8df04b2:docs/review/roadmap-ui-2026-09-09.md`）。
+| 参考 | 用途 |
+| --- | --- |
+| [工作台与共享 token](ui1-workbench-tokens.svg) | UI-1 工作台层级与共享组件示意 |
+| [TaskRail 状态](ui2-taskrail-states.svg) | UI-2 普通、悬停 / 当前会话与键盘聚焦的几何示意 |
+| [时间线](../docs/gui-design.md#ui-3-时间线更新2026-09-08进行中) | 阅读列、Markdown、思考与工具折叠 |
+| [Settings](../docs/gui-design.md#ui-5-设置更新2026-09-08) | 导航、内容布局与 AX |
+| [供应商](../docs/gui-design.md#ui-6a-供应商更新2026-09-08) | 供应商卡、凭证动作和模型目录 |
+| [账号](../docs/gui-design.md#ui-6b-账号交互更新2026-09-08) | 命名账号、逐账号操作与选择 |
+| [额度](../docs/gui-design.md#ui-6b-g2-额度交互更新2026-09-09) | 权威额度、过期与模式开关 |
 
-## UI-5 设置规格（2026-09-08）
+SVG 为规格示意，PNG 为生成视觉参考；产品色值、尺寸和状态以当前源码与 GUI 设计为准。
 
-沿用 UI-1 色板与共享控件；具体规格见 [GUI 设计 UI-5](../docs/gui-design.md#ui-5-设置更新2026-09-08)：40px 导航、36px 动作、全宽内容、24px 分区间距与七个非供应商页的实测 AX。以当前构建真窗口为视觉验收对象，截图不检入仓库；验收与候选记录见 路线图 UI-5（Git `f8df04b2:docs/review/roadmap-ui-2026-09-09.md`）。供应商卡改版属于 UI-6。
+## 2. OPT-D 设计资产
 
-## UI-3 时间线规格（2026-09-08，进行中）
+六张 PNG 均为 1440×1024，共用深色工作台、8px 节奏、蓝色主操作与稳定侧栏。生成参考、提示词与尺寸处理见 [opt-prompts.md](opt-prompts.md)。
 
-本批直接沿用 UI-1 色板与已有组件，规格表见 [GUI 设计 UI-3](../docs/gui-design.md#ui-3-时间线更新2026-09-08进行中)：880px 居中阅读列、16px 正文、32px 实际消息间距、用户浅底卡片、36px 无底色工具摘要、展开后完整输出与单一完成页脚。当前构建真窗口检查记录在 路线图（Git `f8df04b2:docs/review/roadmap-ui-2026-09-09.md`），截图不检入仓库；思考数据投影及默认收起摘要已按 ADR-057 接通，用户视觉验收仍待完成。
-
-## UI-2 会话行规格（2026-09-07）
-
-[TaskRail 状态示意](ui2-taskrail-states.svg) 记录普通、悬停 / 当前会话与键盘聚焦的几何和层级：44px 行、14px 标题、12px 时间、64px 固定尾槽、两个 32px 动作。图为规格示意，非产品截图；交互与验收状态见 [GUI 设计](../docs/gui-design.md#ui-2-会话行更新2026-09-07) 和 路线图（Git `f8df04b2:docs/review/roadmap-ui-2026-09-09.md`）。
-
-## UI-1 当前工作台规格（2026-09-07）
-
-[工作台与共享 token 示意](ui1-workbench-tokens.svg) 为本线新增矢量规格图，非产品截图。Header 80px、Inspector 页签 48 / 40px、状态栏 30px、中性炭灰色板、6 / 8 / 12px 圆角与 180ms 开合过渡，详见 [GUI 设计 UI-1](../docs/gui-design.md#ui-1-工作台视觉更新2026-09-07)。其余模块沿用共享 token，结构在后续模块任务中调整。下文为历史阶段基线，不覆盖本批更新；真窗口截图不检入仓库。用户人工视觉验收已于 2026-09-07 通过，状态见 路线图（Git `f8df04b2:docs/review/roadmap-ui-2026-09-09.md`）。
-
-## 0. OPT-D 统一设计交付（2026-09-05，已签字）
-
-六张 PNG 均为 1440×1024，共用深色工作台、8px 节奏、蓝色主操作与稳定侧栏。它们是同一套设计的不同状态；OPT-2 行为（无项目直建、会话行改名/归档、No project 提示、自动标题）已按本批落地，OPT-2/3 行为与控件、OPT-4（2026-09-06）像素与布局均已按本批落地。生成参考、完整修订提示词和尺寸处理见 [opt-prompts.md](opt-prompts.md)。
-
-| 画幅 | 资产与验收重点 |
+| 画幅 | 资产与画面内容 |
 | --- | --- |
 | 工作台，Inspector 收起 | [无项目任务](opt-workbench-inspector-collapsed-v1.png)：Unassigned、行右改名/归档、New task、No project 与文件工具不可用提示、右上重开入口 |
 | 工作台，Inspector 打开 | [Changes / Terminal / Resources](opt-workbench-inspector-open-v1.png)：折叠控制与对话区让位 |
@@ -35,18 +29,9 @@
 | 供应商详情 | [展开凭证与模型弹层](opt-settings-providers-expanded-v1.png)：Proxy Switch、多个凭证状态、全开/全关、无 quota 数字 |
 | 模型状态板 | [四种状态](opt-model-enablement-states-v1.png)：已连接空目录、未连接、部分启用、全关后不可发送 |
 
-交给 OPT-2/3/4 的约束（签字后实施）：
+图中 provider、模型、任务、凭证和 diff 是设计样例。旧图中的头像、附件及 `Open in editor` 不构成产品要求；额度无权威数据时不画轨道或数字。
 
-- TaskRail / Settings Rail 目标 288px；1080–1279px 收敛到 240px。Inspector 默认收起，打开目标 440px，空间不足保持折叠。PNG 为生成视觉参考，尺寸以本段为准。
-- 六处主要动作（分组、项目/任务新增、Activity、Inspector 折叠、Send/Cancel）的可见图标 20–22px，命中区至少 36×36px；Session 行改名/归档至少 32×32px，保留键盘与 AX 入口。
-- Settings 内容用满 Rail 外可用宽度，两侧 32px padding，不保留 820px 上限；导航选中使用背景和不参与布局的内描边，文字坐标不变。
-- 全局 New task 直接创建无项目任务，项目头 `+` 保留定向项目入口；文件工具须等选择项目。图中其他 New task 箭头不是第二条默认建项目流程。
-- 四默认角色只从已连接且启用的候选中选；关闭所选模型显式失效。Vision/Search 在真实路由接线前只保存选择，说明这一限制。未连接时进入认证；空目录时刷新；全关时禁用发送。
-- 图中 provider、模型、任务、凭证、diff 为设计样例，不是当前可用能力或运行证据。三张首稿保留的 `Jane Doe`/头像、附件与 `Open in editor` 不构成新增产品要求；正式实现统一使用 Local + gear，未实现入口隐藏。额度无权威数据时隐藏轨道与数字。
-
-**交付状态**：资产与状态检查完成；**用户视觉签字已于 2026-09-05 确认**。设计闸门已放行；OPT-2/3/4 已实施（OPT-4 于 2026-09-06 落地图标命中区、Inspector 默认折叠、Settings 全宽与导航零位移，见 OPT 归档 §10（Git `f8df04b2:docs/review/roadmap-opt-2026-09-05.md`））。下文 §1–3 仍描述 P0–P2 历史基线，冲突处以本节与 [GUI 设计](../docs/gui-design.md) 现行生产合同为准。
-
-## 1. 保留资产
+## 3. P0–P2 阶段参考
 
 | 阶段 | 资产 | 用途 |
 | --- | --- | --- |
@@ -60,46 +45,13 @@
 
 ![P2 Settings 与精修](desktop-ui-p2-settings-v4.png)
 
-本目录允许 P0–P2 与 OPT 的目标设计资产；不向本目录或 `docs/` 检入真窗口截图、遮罩、差分图、标注图和临时视觉证据。需要复验时从当前源码和真实状态采集，结论写入当轮报告。
+三张图分别描述 Foundation、Run & Review、Settings & Polish 的视觉方向。它们是历史基线，不是可互换主题；动态内容与真实状态不同不单独决定验收结果。
 
-三张图分别冻结 P0、P1、P2 的视觉方向，不是三个可互换主题。动态内容与真实状态不同不构成单独的通过或失败依据。
+## 4. 对照与证据
 
-## 2. 布局合同
+1. 使用正式 Host / Desktop 和当前源码采集窗口状态。
+2. 用真实文件、Git、Host 或 PTY 输出核对功能效果；截图不能单独证明业务正确。
+3. 对照当前 GUI 设计检查层级、密度与主操作可达性，历史资产只作视觉参考。
+4. 自动检查、代理真窗口、用户验收和发布状态分别记录。
 
-- 宽屏为三栏：TaskRail 约 288px、Workspace 弹性伸缩、Inspector 打开时约 440px；OPT-4b 起 Inspector 默认收起（宽屏同样）。
-- `1080–1279px` 时 TaskRail 收敛到 240px，Inspector 空间不足保持折叠；主操作不得被裁切或遮挡。
-- Workspace Header 常驻；Timeline 从 Header 下开始阅读，短会话不沉到窗口底部。
-- Composer 常态总高 88–94px，Send/Cancel 使用单一主操作槽；RunStatusBar 高 24px。
-- Inspector 提供 Changes、Terminal、Resources；折叠后 Workspace 扩展，Activity 入口位于 Workspace Header 右侧。
-- Settings 从 `Local` 行 gear 进入；进入后隐藏 Workspace/Inspector，以约 288px Settings Rail + 弹性内容区呈现，1080px 宽时 rail 收敛至 240px；OPT-4c 起内容区用满 Rail 外可用宽度、两侧各 32px padding，不保留 820px 上限。
-- 深色桌面工作台语言、8px 间距节奏。生产色值与尺寸以 `apps/desktop/src/ui/theme.rs` 为事实源，设计图不反向覆盖已验证的可访问性约束。
-
-## 3. 交互与诚实性
-
-- `Timeline / Projects` 是分组方式，`All projects / <project>` 是项目范围，两者正交。
-- 分组按钮是 28×28px 二态直接切换，不打开菜单：Timeline 视图显示 folder icon + `Show projects`；Projects 视图显示 clock icon + `Show timeline`。图标表达目标动作，切换后随新目标变化。
-- 项目范围菜单必须提供 `Add project…`，通过系统目录选择器把真实目录交给 Host；不得用 fixture 或预置项目冒充添加成功。
-- 新 Task 绑定当前项目；无项目时明确要求先选择或添加项目。
-- Timeline 只展示真实 Session / Run / Tool 事件。能力不可用时显示 unavailable、禁用或隐藏，不补假数据。
-- Changes 只展示 Host 权威 Git 状态与 diff；Terminal 只展示真实 PTY 输出，纯文本视图必须过滤 ANSI/VT 控制序列。
-- 菜单支持方向键、Enter 与 Escape；主路径控件需要稳定 identifier、role、name、value、enabled、focused 与 selected。
-
-## 4. 对照方法
-
-1. 使用 `./scripts/pawork-desktop.sh start` 构建并启动正式 Host/Desktop；不加载 fixture、seed、probe 或测试 profile。
-2. 用磁盘文件、`git status` / diff 与终端 stdout 交叉核对 UI，不用截图单独证明功能正确。
-3. 按 P0/P1/P2 对照对应设计图检查信息架构、层级、密度和主操作可达性；动态内容不同不构成通过或失败的唯一依据。
-4. 自动检查、真窗口验收、人工视觉签字和发布状态分别记录，不能互相替代。
-
-## 5. 非目标
-
-- 不把 Desktop 改成 WebView、IDE 或多 Agent 控制中心。
-- 不为匹配设计图写入演示数据、假 quota、假 diff、假 Agent 或不可用按钮。
-- 不在视觉修复中演进 GUI wire、绕过 Workspace/Policy/Sandbox，或让 Desktop 直连 Core 服务。
-
-### UI-6b 账号状态
-
-在 UI-6a 供应商卡内增加名称输入、逐账号选择与删除确认，账号 ID 同源绑定渲染/键盘/AX；选择只用于后续请求，Usage 无来源时不画数字。详见 [GUI 设计](../docs/gui-design.md#ui-6b-账号交互更新2026-09-08) 与 [ADR-059](../docs/spec/settings.md#adr-059ui-6b-命名账号与持久选择2026-09-08)。验证与用户验收分别记录于路线图，截图不检入仓库。
-
-
-UI-6b G2 额度与模式开关沿用既有供应商卡、Button/Switch 和字号 token，无新静态图；当前规格见 [GUI 设计](../docs/gui-design.md#ui-6b-g2-额度交互更新2026-09-09)，验收状态见 ROADMAP（Git `f8df04b2:docs/review/roadmap-ui-2026-09-09.md`）。
+不向本目录或 `docs/` 检入真窗口截图、遮罩、差分图、标注图和临时视觉证据；新图另存，不覆盖历史资产。

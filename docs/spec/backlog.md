@@ -31,9 +31,9 @@
 
 设计与决议全文见 [design §3](../design.md#3-已确认扩展功能族g1g7) 和 [references 附录 C（决策 D1–D8）](../references.md#附录-c-决策记录-d1d8-与并入约定原-researchmulti-account-quota-plan-mergemd)。
 
-## 3. 功能对照候选池（28 项）
+## 3. 功能对照候选池（26 项）
 
-下表是未排期候选索引；实际合计 **28 项：P1 5、P2 17、P3 6**。红线排除项见 [design §4](../design.md#4-架构红线排除项不实现)。
+下表是未排期候选索引；实际合计 **26 项：P1 4、P2 16、P3 6**。红线排除项见 [design §4](../design.md#4-架构红线排除项不实现)。
 
 | ID | 候选 | 优先级 |
 | --- | --- | --- |
@@ -45,11 +45,9 @@
 | B2 | question 结构化问答工具 | P2 |
 | B3 | todowrite 轻量任务清单工具 | P2 |
 | B4 | 工作区外 References | P2 |
-| B5 | 图片输入与多模态 | P1 |
 | B6 | 图片生成工具 | P3 |
 | B7 | Pawork 作为 MCP Server | P2 |
 | B8 | Code Mode / 单轮组合多步工具 | P2 |
-| B9 | 会话级 Goals（有预算 Host / GUI 已激活） | P2 |
 | C1 | 能力包打包与 git 分发 | P2 |
 | C2 | 用户级 memories | P2 |
 | C3 | Connector directory | P2 |
@@ -66,14 +64,9 @@
 | E2 | Bedrock/Vertex 模型源 | P2 |
 | F1 | 版本自检 + 可选遥测 + 离线模式 | P3 |
 
-**B9 激活登记（2026-09-24）**：用户将原未排期能力纳入本轮，API 1.24 契约已确认；实现位于 app Host 与 Desktop，复用 Run 生命周期、审批与持久事件。预算/轮数显式有界，重启后须恢复；不复制 V2 Goal reducer。2026-09-25 已实现并通过定向与本机真模型验收（生命周期、预算耗尽暂停、追加恢复、跨进程取消与人工达成），证据随 46a4ff81 进 Git 历史。
-
-**B5 激活登记（2026-09-22）**：前置——VISION-2 逐模型能力证据与 `default_image_input` 默认表已落地（[providers.md](crates/providers.md)）；写入集——`crates/providers` / `crates/cli` / `crates/domain`（MM-2 契约演进，golden 先行且经用户确认）/ `crates/protocol` / `crates/app` / `apps/desktop` 及对应 Spec；复活资产——无（不触及 `v2-final` 归档）；停止条件——Kimi 外部 URL 拒绝等 fail-closed 语义不得放宽为静默透传。2026-09-25 状态：MM-1（图像端到端）真实识图验收通过、闭合；MM-2（视频 canonical）已实现，wire/拒绝/重放回归通过，支持端点真实往返待专项环境；同期 MM-3（Chat 通道原生搜索接线）Qwen Token Plan 已接 Responses 搜索，GLM 搜索 MCP 未配置，DeepSeek 保持拒绝；MM-3 属 Provider 托管搜索 wire，不占用 B1（Agent 侧 webfetch / websearch 内置工具）候选。剩余事项见 [ROADMAP](../ROADMAP.md)。
+多模态与持续目标的剩余验收见 [ROADMAP](../ROADMAP.md)。Provider 托管搜索不属于 B1 的 Agent 内置 webfetch / websearch 候选。
 
 ## 4. 其它产品候选/归档复活面
-
-GW-1（2026-09-25 用户授权）：本机第三方模型网关，消费者 MoMai 及任意 OpenAI 兼容客户端。写入集为 app/cli 和对应 Spec，前置为 Pawork 已连接模型；不复活归档资产。验收为本地真实 HTTP 到模拟上游的两种补全、鉴权/撤销/取消/记账；遇到远程账户池、厂商凭证导出或 Agent 工具执行需求则停止扩展。具体契约与 G7/F6 边界见 [model-gateway](model-gateway.md)。
-
 
 | ID | 候选 | 当前状态 | 激活条件 |
 | --- | --- | --- | --- |
@@ -90,7 +83,7 @@ GW-1（2026-09-25 用户授权）：本机第三方模型网关，消费者 MoMa
 | BK-RESP-01 | 1080–1279 窄窗自适应 | 已接受延期 | TaskRail 240px/Inspector 默认折叠需单独 UI 任务和截图验收。 |
 | BK-RELEASE-01 | 发布、全量门禁、三平台矩阵 | 未授权 | License 确定 + 用户明确授权后另立任务。 |
 
-**库激活前置与条件性技术项（2026-09-23 Review 登记，2026-09-25 随本轮提交收口移入）**：
+**库激活前置与条件性技术项**：
 
 | ID | 事项 | 触发条件 |
 | --- | --- | --- |
@@ -113,9 +106,9 @@ GW-1（2026-09-25 用户授权）：本机第三方模型网关，消费者 MoMa
 
 若要推翻排除项，必须先处理纯 Rust/无 TUI 等架构红线并由用户通过 ADR；普通 Feature Spec 无权覆盖。
 
-## 6. Settings 线收口后的候选纪律
+## 6. 候选范围
 
-Settings 活动线已实现并有原批次本机真窗口记录（2026-09-05，见 [desktop.md §8](desktop.md#8-gui-收尾验收记录2026-09-05)）。OPT 已关闭，UI / UX / GUI2 已实现；当前剩余工作统一进入 [ROADMAP](../ROADMAP.md)。历史实施与验收证据从 Git `f8df04b2:docs/review/` 及 `f8df04b2:docs/ROADMAP.md` 追溯，不因清理文档补记用户验收或发布。UI-6 吸收 G1 同 kind 多账户的 Settings 产品面，以及 G2 有权威 QuotaSnapshot 后的额度切换。下列候选仍不自动并入：
+G1/G2 的 Settings 产品面见 [Settings Spec](settings.md)。下列候选仍需独立立项：
 
 1. **本机多账户与成本效率**：G3–G6，以及 G1/G2 超出 UI-6 的部分（account factory、`pawork accounts` CLI、完整预算 gate）；
 2. **Desktop 完整编码工作台**：Git 写入、`@` 补全、规则可见性等；
@@ -123,15 +116,13 @@ Settings 活动线已实现并有原批次本机真窗口记录（2026-09-05，�
 
 如用户选择其中一类，按 §1 闸门创建独立 Feature Spec/任务切片，明确不做项、成功指标与证据预算。发布继续维持 BK-RELEASE-01 未授权状态。
 
-## 7. 活动计划与历史记录
+## 7. 活动任务
 
-当前活动任务与验收状态统一见 [ROADMAP](../ROADMAP.md)，本页只管理候选和激活条件。2026-09-23 全项目 Review 的发现、包定位、修复执行计划与产品验收清单随本轮实现提交收口，从 `git show 46a4ff81:docs/Plan/README.md` 追溯。
+当前任务与验收状态见 [ROADMAP](../ROADMAP.md)，本页只管理候选和激活条件。MOCK-0b 仍为未获批候选，已有回归资产保留。
 
-已完成的 MOCK-1～8 与已关闭 BUG-OAUTH-01 / BUG-USAGE-01 / BUG-GUI-01 过程记录移出活动文档，可从 `git show f14edb23:docs/spec/backlog.md` 追溯；更早计划见 `37fae8f3:docs/mock-simulation-plan.md`。MOCK-0b 仍为未获批候选，已有回归资产不因文档清理删除。
+## 8. 条件性工程项
 
-## 8. 2026-10 全量 Review 遗留跟踪
-
-R-01～R-10（收口记录见 [ROADMAP](../ROADMAP.md)）移交后仍需长期跟踪的工程项；B 级待用户裁决清单不在本节重复，见 ROADMAP 收口记录。
+API 与产品取舍见 [ROADMAP 待裁决清单](../ROADMAP.md#待裁决api-与产品取舍)，下表只登记按触发条件处理的工程项。
 
 | ID | 项 | 说明 | 触发条件 |
 | --- | --- | --- | --- |

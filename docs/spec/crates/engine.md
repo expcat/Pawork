@@ -167,7 +167,7 @@ API 1.24 视频引用：context token 估算只统计 URL 字符文本，不能�
 
 ## 7. 测试与验证资产
 
-2026-09-20 测试重构：默认上下文的事件数量/无压缩断言并入 `mock_provider_completes_multi_turn_tool_loop`；删除重复单轮 happy-path 回放，保留未消费流变体透传、预取消/中途取消及 session_turn 完整事件序。生产行为不变。 本批执行状态见 Git 历史（37fae8f3:docs/testing-refactor-plan.md）。
+`mock_provider_completes_multi_turn_tool_loop` 覆盖默认上下文与无压缩的多轮工具事件；其余回归覆盖未消费流变体透传、预取消/中途取消及 session_turn 完整事件序。
 
 同批：删除 `framing_constants_match_industry_conventions` 常量副本；图片占位 token 由 `count_message_includes_framing_and_content` 对真实 Image content part 计数验证。
 

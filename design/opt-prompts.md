@@ -1,4 +1,4 @@
-# OPT-D 统一设计稿提示词与覆盖状态
+# OPT-D 设计资产生成参考
 
 ## 生成方式、参考与尺寸
 
@@ -18,7 +18,7 @@
 | `opt-settings-providers-expanded-v1.png` | F3/F8/F10/F11：展开凭证、Proxy Switch、默认角色、模型启用弹层与无数据 usage 槽。 |
 | `opt-model-enablement-states-v1.png` | 已连接空目录、未连接、Z.AI 部分启用、全关后 Composer 空态。 |
 
-## 本轮修订的实际完整最终提示
+## 修订提示词
 
 ### 收起工作台
 
@@ -47,10 +47,3 @@ Primary request: Apply only these required state corrections across the board. I
 Constraints: keep all panel labels readable and use the same dark surfaces, blue accent, thin dividers, restrained radii and 8px rhythm.
 Avoid: Connect language in Empty catalog, a popover on Anthropic in Partially enabled, General navigation, personal account UI, clip/crop.
 ```
-
-## 走查
-
-- 收起图选中 `UNASSIGNED / New session`，Composer 内有 `No project` 与文件工具不可用提示。
-- Provider 图 Vision 为 `Not set`，与 GLM-4V disabled 一致；导航为 `Network`。
-- 状态板 Empty catalog 为已连接但 `No models returned`，有 `Refresh catalog`；部分启用弹层锚在 Z.AI。
-- 所有本轮修订画幅底部为 Local + gear；无 quota 数字或凭证明文；P0–P2 基线未改。

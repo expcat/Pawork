@@ -43,7 +43,6 @@ OPT-1 / ADR-053：`gui::run_gui` 经 `AppCore::set_approval_host` 只接线 GUI 
 
 `src/gateway.rs`：第七运行入口 `gateway serve [--port 17432]`，以及 `gateway token issue --client <name>` / `list` / `revoke <id>`、`gateway status` / `shutdown`。类型为 `GatewayCommand` / `GatewayTokenCommand`；token 命令在 Core 装配前执行，无供应商网络操作。状态/停止核对活跃实例登记、独占锁与 PID。HTTP 和通用接入方法见 [model-gateway](../model-gateway.md)。现有顶层 status/shutdown 与 service 命令仍只操作 GUI。
 
-
 ### 3.1 Rust API（消费方仅 [apps/pawork](pawork.md) 与集成测试）
 
 - `pub async fn run() -> ExitCode`——唯一入口；错误打印到 stderr 并返回 `FAILURE`。
@@ -228,7 +227,7 @@ API 1.24 视频：`chat --prompt` / `run` 接受重复 `--video-url <HTTP(S)>`�
 
 | 资产 | 覆盖点 |
 | --- | --- |
-| `src/lib.rs` 内嵌 tests | 21 个子命令的 clap 解析矩阵（含 `sessions import` 三组互斥断言、`--branch`、`--instance`）；`--approval-mode` kebab 解析、`--trust-workspaces` 全局解析、`on-failure → NeverAsk` 兼容、未知档拒绝；default instance 的 socket / token 命名稳定性 |
+| `src/lib.rs` 内嵌 tests | 子命令的 clap 解析矩阵（含 `sessions import` 三组互斥断言、`--branch`、`--instance`）；`--approval-mode` kebab 解析、`--trust-workspaces` 全局解析、`on-failure → NeverAsk` 兼容、未知档拒绝；default instance 的 socket / token 命名稳定性 |
 | `src/approval.rs` tests | 审批提示格式（tool / path / risk / preview；edit 与 apply_patch 的 hunk preview） |
 | `src/render.rs` tests | 工具活动行（成功字节数 / 失败原因）、`run_command` 取消提示、stderr 红色仅限彩色终端、`已截断` 检测、沙箱回退 notice（现行 / 旧版 Diagnostic 形状、空 note、message 直传与默认串） |
 | `src/sessions.rs` tests | `.jsonl` 首行签名嗅探（Codex / Claude / Pi、首行无 message、首行超 8K 不误判）、本地源白名单（拒绝 grok）、`format_millis` epoch 断言 |
@@ -239,7 +238,7 @@ API 1.24 视频：`chat --prompt` / `run` 接受重复 `--video-url <HTTP(S)>`�
 
 ACP 的 `acp_fixtures` / `acp_floor` target 与 versioned fixtures 已迁入 [acp](acp.md)。交互式 REPL、gui serve 网络路径与真实 Provider 不在本包测试范围（验证策略见 [../verification.md](../verification.md)）。
 
-2026-09-03 SET-6g 与 client 合并运行默认门禁，CLI 89/89、client 46/46 通过；`cargo check -p pawork --offline` 通过。GUI data directory 的同源装配由类型/调用链编译覆盖，握手字段的 wire 与透传由 protocol/client 定向回归锁定。
+GUI data directory 的同源装配由类型/调用链覆盖，握手字段的 wire 与透传由 protocol/client 定向回归锁定。
 
 ## 8. 注意事项与已知限制
 

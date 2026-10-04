@@ -32,4 +32,4 @@ lib 回归验证坐标映射、单次消费、权限、取消、scope/连接变�
 
 ## 8. 相关文档
 
-[部署说明](../../../crates/computer-use/README.md) · 历史记录（Git `f8df04b2:docs/ROADMAP.md`，原「computer-use首版2026-09-17」节） · [设计](../../design.md#computer-use-首版) · [参照调研](../../references.md#computer-use-实现调研2026-09-17) · [架构](../../architecture.md) · [安全](../security.md)
+[部署说明](../../../crates/computer-use/README.md) · [待验收项](../../ROADMAP.md) · [设计](../../design.md#computer-use-首版) · [参照调研](../../references.md#computer-use-实现调研2026-09-17) · [架构](../../architecture.md) · [安全](../security.md)

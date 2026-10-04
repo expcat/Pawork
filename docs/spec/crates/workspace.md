@@ -228,7 +228,7 @@ ADR-053（OPT-1）：schema 新增 `approval_mode: Option<pawork_policy::Approva
 
 ## 7. 测试与验证资产
 
-2026-09-20 测试重构：指令字节数断言并入同一真实资源树的加载顺序用例，删除重复目录夹具；路径、导入、配置权限与原子写回回归保持。 执行状态见 Git 历史（37fae8f3:docs/testing-refactor-plan.md）。
+资源加载回归在同一真实资源树核对加载顺序与指令字节；路径、导入、配置权限与原子写回另有定向回归。
 
 - `tests/loader_file.rs`（12 用例，真实文件系统）：
   - 六层合并：tier 覆盖顺序、providers 数组整体替换、`discover_from` 三层装配顺序断言。

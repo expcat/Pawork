@@ -11,7 +11,7 @@
 3. **是否真实验收**：真实 Provider、真实 OS、真窗口、真实客户端或用户签字是否完成？
 4. **是否可发布**：License、安装/升级、供应链、三平台和发布/回滚门禁是否明确并通过？
 
-前一项不能替代后一项。当前 Pawork 有大量“已实现 + 历史定向测试通过”的能力；Desktop 真实核心路径及 GUI P0–P2 已完成本机 E3 真窗口验收，跨平台与发布门禁仍未完成。
+前一项不能替代后一项。当前未闭合验收见 [ROADMAP](../ROADMAP.md) 与 §5；历史测试通过不代表后续改动自动通过。
 
 ## 2. 证据等级
 
@@ -40,22 +40,21 @@ E3/E4 证据必须包含日期、环境/版本、输入范围、实际结果和�
 | 需求族 | 实现锚 | 自动化锚 | 真实/人工锚 | 当前结论 |
 | --- | --- | --- | --- | --- |
 | PRD-CORE-01 / ARC-01～04 | `apps/pawork`、app/domain/engine、Cargo 依赖 | domain-only、desktop deny-list、依赖断言 | `pawork`/Desktop 冒烟 | 已实现；发布级红线矩阵未执行。 |
-| PRD-CHAT-01 / CAP-CHAT-01 | cli/app/engine/providers | engine mock、provider contract、CLI tests | 四通道真实 chat 矩阵 | 已实现；本轮单通道真实 Run 通过，四通道矩阵未执行。 |
+| PRD-CHAT-01 / CAP-CHAT-01 | cli/app/engine/providers | engine mock、provider contract、CLI tests | 四通道真实 chat 矩阵 | 已实现；四通道矩阵待专项验收。 |
 | PRD-SESSION-01 / CAP-SESSION-01 | storage/app/cli | envelope、migration、export/import、projection golden | 真实 resume/fork/compact/import | 已实现；真实 fork/compact 仍有人工登记。 |
-| PRD-TOOL-01 / CAP-TOOL-01 | tools/workspace/policy/exec | 八工具与路径/进程回归 | 真实仓库读写/命令冒烟 | 已实现；终局安全复跑未执行。 |
+| PRD-TOOL-01 / CAP-TOOL-01 | tools/workspace/policy/exec | 九工具与路径/进程回归 | 真实仓库读写/命令冒烟 | 已实现；终局安全复跑未执行。 |
 | PRD-SAFE-01 / SEC-* | policy/auth/exec/storage/app | 安全种子、Secret 扫描、Seatbelt golden、ledger 回归 | 平台探针、真实审批/PTY | 已实现；部分平台/人工项仍待验。 |
 | PRD-PROVIDER-01 / CAP-PROVIDER-01 | providers/auth/app | adapter/negotiation/OAuth/脱敏测试 | ChatGPT/xAI/GLM/OpenCode 等真实请求 | 已实现；OAuth 自然临期 refresh 与真实 Anthropic/GLM Anthropic 端点待人工。 |
-| PRD-SETTINGS-01 / CAP-SETTINGS-01 / SET-* | protocol/app/auth/providers/workspace/desktop | protocol golden/typegen、Secret 负断言、provider verify、config writer、Desktop/AX | Network 已完成 GUI 保存、Host 重启与真实 Provider 请求；四家真实认证/目录矩阵仍待验 | SET-1～SET-6g 已实现；SET-012 用户级代理闭环于 2026-09-05 获得 E1～E3，完整 Settings 人工签字未推定。 |
+| PRD-SETTINGS-01 / CAP-SETTINGS-01 / SET-* | protocol/app/auth/providers/workspace/desktop | protocol golden/typegen、Secret 负断言、provider verify、config writer、Desktop/AX | Network GUI 保存、Host 重启与真实 Provider 请求；真实认证/目录矩阵 | 已实现；四家真实认证 / 目录矩阵与完整 Settings 人工签字待验。 |
 | PRD-GIT-01 / CAP-GIT-01 | git/app/cli/Desktop Changes | git/checkpoint/diff 定向测试、Desktop projection | 真窗口 Changes、真实 rollback | Core 已实现；Desktop 写操作未实现，横滚人工项待验。 |
 | PRD-RESOURCE-01 / CAP-RESOURCE-01 | workspace/tools/app/Desktop | resources/import/MCP contract | 外部配置、MCP stdio、真窗口 Resources | 主流程已实现；部分 GUI 出口为候选。 |
 | PRD-CLIENT-01 / CAP-CLIENT-01 | protocol/app/client/cli | frame/headless/ACP golden、registry、probe | Desktop probe、Zed ACP、json-stdio | 已实现；发布级客户端矩阵未执行，probe 有已登记偶发超时。 |
-| PRD-DESKTOP-01 / DESK-* | desktop/client/protocol | projection/controller、U0/U1、AX 模型/映射测试 | 真 Host/Desktop、三张阶段目标设计图、AX/IME、用户签字 | 正式构建、项目、消息/文件、Changes、Terminal 与 Session→Workspace 跨 Host 重启已完成本机真窗口验收；P0/P1 的真实 Provider/Review/Approval/IME 于 2026-09-05 补证通过，跨平台仍需专项取证（VoiceOver 验收已于 2026-09-04 按用户要求移出范围）。 |
+| PRD-DESKTOP-01 / DESK-* | desktop/client/protocol | projection/controller、U0/U1、AX 模型/映射测试 | 真 Host/Desktop、三张阶段目标设计图、AX/IME、用户签字 | 已实现；用户验收与跨平台专项取证见 [ROADMAP](../ROADMAP.md)。VoiceOver 系统朗读验收不在范围内。 |
 | PRD-OPS-01 / CAP-OPS-01 | cli ops/service、app data_dir | 路径/状态/doctor 定向测试 | macOS/Linux/Windows service 与恢复演练 | 入口已实现；无发布级三平台/恢复门禁。 |
 
 ## 4. 三类不可推迟的回归
 
-2026-09-20 启动测试与门禁重构（T0–T8 已收口，分批记录见 Git 历史 37fae8f3:docs/testing-refactor-plan.md）：每个测试须对应真实操作的结果、失败边界或恢复完整性；测试数量和内部常量副本不作为完成证据。按包分批检查，删除须有无效性依据或明确替代锚点。mock 服务自测只证明测试工具自身可用，不证明 Pawork 的 Provider / Host 路径通过。
-
+每个测试须对应真实操作的结果、失败边界或恢复完整性；测试数量和内部常量副本不作为完成证据。按包分批检查，删除须有无效性依据或明确替代锚点。mock 服务自测只证明测试工具自身可用，不证明 Pawork 的 Provider / Host 路径通过。
 
 | 类别 | 最低覆盖 |
 | --- | --- |
@@ -77,39 +76,35 @@ E3/E4 证据必须包含日期、环境/版本、输入范围、实际结果和�
 | 正式 Host/Desktop 构建 | `bash scripts/pawork-desktop.sh build` | 同一次 Cargo 调用构建两个正式二进制，按 artifact 消息校验产物；不证明真窗口行为 |
 | 真实 Provider/OS/窗口/隔离桌面 | 对应包 Spec 的专项步骤 | 必须记录外部效果和前置条件；未执行不算通过 |
 
-2026-09-27 包边界迁移验证：`bash scripts/test.sh models providers` 覆盖共享模型语义及全部通道；`bash scripts/test.sh mcp tools gui-server acp gateway protocol app cli client engine` 覆盖迁移后的接入、宿主和协议回归。GUI 连接测试归 gui-server，ACP fixtures/floor 归 acp，MCP 测试归 mcp，网关 token 测试归 gateway；AppCore + HTTP/模拟上游联调仍在 app。正式宿主另用 `--host` 验证，不能用包内 MockHost 代替；生产依赖图用 `cargo metadata` / `cargo tree -p pawork --edges normal` 检查无环、Desktop/Engine 边界和第三方闭包不扩张。具体完成状态见 [ROADMAP](../ROADMAP.md)。
+GUI 连接测试归 gui-server，ACP fixtures / floor 归 acp，MCP 测试归 mcp，网关 token 测试归 gateway；AppCore + HTTP / 模拟上游联调在 app。正式宿主用 `--host` 验证，包内 MockHost 不能代替。依赖边界检查使用 `cargo metadata` / `cargo tree -p pawork --edges normal`，核对无环、Desktop / Engine 边界和第三方闭包。
 
 不使用测试数或覆盖率配额驱动删减。便宜且有独立边界意义的单测可以保留；golden 检查外部格式兼容，不属于应删除的实现副本。
 
 UI 取证工具须提供真实失败信号：`ui-fixture.sh desktop` 清除旧 `timeline_stable` 后等待新实例就绪——barrier 必须是本进程启动后写入的有效 JSON（`settle_seq>=1`、`at_ms` 不早于启动时刻），进程提前退出、PID 归属变化或超时均失败；fixture 与 desktop 构建产物同样经 artifact 消息定位。`ui-ax-dump.swift` 无窗口、AX 权限不足、没有应用 identifier 或动作失败均非零；`ui-key-event.swift` 投递前确认目标 PID 在前台且具备事件投递权限。操作效果仍须由窗口状态与外部事实核对。
 
-2026-10-03 入口精简：`test.sh --host`、`ui-fixture.sh` 和 `pawork-desktop.sh` 共用 [cargo-build.sh](../../scripts/cargo-build.sh) 的产物定位；缺产物、构建失败均非零，拒绝把测试 harness 当正式二进制。`--print` 不运行 Cargo；Desktop 的 `runtime_shaders` 仅在 macOS 选择，启动参数在编译前校验，内容相同的 bundle 文件不重复覆盖。Rust 子进程回归由实际 spawn/握手判断 Host 可用，删除三次额外的 `--help` 文案探测。
+`test.sh --host`、`ui-fixture.sh` 和 `pawork-desktop.sh` 共用 [cargo-build.sh](../../scripts/cargo-build.sh) 定位产物；缺产物、构建失败均非零，测试 harness 不能当正式二进制。`--print` 不运行 Cargo；Desktop 的 `runtime_shaders` 仅在 macOS 选择，启动参数在编译前校验，内容相同的 bundle 文件不重复覆盖。Rust 子进程回归由实际 spawn / 握手判断 Host 可用。
 
-mock 服务的端点、媒体与场景测试合并为 [server_smoke.py](../../scripts/mock/server_smoke.py)，HTTP 服务启动从五次减至三次；usage 形状共用 `capture.check_usage`，保留三窗、percent、日历与 1970 下界拒绝。删除按场景描述文案推断 wire 行为的检查，以及无场景请求必须小于 0.5 秒的环境相关断言；实际 HTTP/流内错误、截断、定速与复位回归保留。OAuth 自测退出时关闭线程与临时目录；mock 八通道 seed 在进程内调用既有写入工具，显式指定隔离 home。L2 纳入原有 20 项 UI 扫描回归；门禁计时改用 Bash `SECONDS`，不再为计时派生 Python/awk。
-
-本批已验证：`bash scripts/mock/gate.sh --level 0,2` 通过 17 项 OAuth 检查、4 项隔离/脱敏/入口回归、20 项 UI 扫描回归和 115 项 HTTP/mock 检查；`bash scripts/test.sh --host` 通过 3 项真实 Host 子进程回归；`bash scripts/pawork-desktop.sh build` 成功构建两个正式二进制；`bash scripts/ui-fixture.sh seed --root <隔离临时目录>` 实际运行 `ui_fixture`，生成 ready marker 与数据文件。Shell/Python 语法、Rust 格式和 diff 检查通过；未执行全 workspace 门禁、真实 Provider 或真窗口验收。
+mock 服务端点、媒体与场景回归在 [server_smoke.py](../../scripts/mock/server_smoke.py)；usage 形状共用 `capture.check_usage`，覆盖三窗、percent、日历与 1970 下界拒绝。回归覆盖实际 HTTP / 流内错误、截断、定速与复位。OAuth 自测退出时关闭线程与临时目录；mock 八通道 seed 显式指定隔离 home。L2 包含 UI 扫描回归。
 
 ### 4.2 构建时间与缓存空间
 
 - 用 `bash scripts/test.sh --log /tmp/pawork-tests.log <包名>...` 一次保存完整 stdout/stderr；日志追加，每条命令记录耗时和退出码，失败仍非零退出。`--host` 与 `desktop` 同样支持；`--print` 不创建日志。不要用 `... | tail` 丢掉中间结果和原始退出码，也不要为补日志重复整批验证。
 - 同批相关包放在一次调用中以统一 feature；单个缺陷优先按包 Spec 选 `--lib` / `--test` 和过滤器。类型检查用 `cargo check`，需要实际行为证据时仍跑测试。保持单 Cargo 进程，复用默认 `target/`。
-- 2026-09-29 起构建统一经仓库 `.cargo/config.toml` 的 `rustc-wrapper = "kache"`（用户授权采用，实测：全新 `target/` 二轮构建 11.03s → 2.62s、31/31 可缓存 crate 命中、59.7MB 恢复 100% 零拷贝）。kache 生效时自动关闭并清理 incremental；dev/test 仍为 `debug="line-tables-only"`、`split-debuginfo="unpacked"`，不要为日常提速反复改 profile、RUSTFLAGS、toolchain 或切换链接器，避免制造不同构建指纹。kache store 须与仓库同 APFS 卷（本机 `~/.config/kache/config.toml` → `/Volumes/SSD/.kache`），容量由 kache GC 自动管理。
-- target/ 死代清理继续用脚本（kache 只接管 incremental，deps/build 死代仍随指纹变化累积；2026-09-29 实测单次清理释放 10.1G）：空闲时先运行 `python3 scripts/clean-stale-incremental.py --dry-run`，审阅后执行同一命令去掉 `--dry-run`；不与 Cargo 同时清理，不运行 `cargo clean`。incremental 按 7 天年龄清理，deps/examples/build 还保留每组最新 hash 构建代；年龄不是不可达证明，较少使用的 feature 组合可能需要重编译。不要每天清理仍在使用的缓存。
+- 构建统一经仓库 `.cargo/config.toml` 的 `rustc-wrapper = "kache"`。kache 生效时自动关闭并清理 incremental；dev/test 仍为 `debug="line-tables-only"`、`split-debuginfo="unpacked"`，不要为日常提速反复改 profile、RUSTFLAGS、toolchain 或切换链接器，避免制造不同构建指纹。kache store 须与仓库同 APFS 卷（本机 `~/.config/kache/config.toml` → `/Volumes/SSD/.kache`），容量由 kache GC 自动管理。
+- target/ 死代清理继续用脚本（kache 只接管 incremental，deps/build 死代仍随指纹变化累积）：空闲时先运行 `python3 scripts/clean-stale-incremental.py --dry-run`，审阅后执行同一命令去掉 `--dry-run`；不与 Cargo 同时清理，不运行 `cargo clean`。incremental 按 7 天年龄清理，deps/examples/build 还保留每组最新 hash 构建代；年龄不是不可达证明，较少使用的 feature 组合可能需要重编译。不要每天清理仍在使用的缓存。
 - 真窗口与 mock 验收结束后使用对应脚本的 stop/清理入口，并核对原实例 PID 已退出。对遗留进程先核对命令和实例再定点停止，避免后台空转持续占用 CPU。
 
 ## 5. 当前验收缺口
 
 | 缺口 | 状态 | 完成条件 |
 | --- | --- | --- |
-| Desktop 真实核心路径 | 已验证（2026-09-05） | 正式脚本构建/启动；真实项目、`opencode-go / glm-5.3-flash` streaming/tool/Review、Approval Deny、Git Changes 与系统 IME 均有窗口与外部事实双证据；详见 [Desktop 收尾记录](desktop.md#8-gui-收尾验收记录2026-09-05)。 |
-| Session→Workspace 重启归属 | ✅ P1 片 1 | 同一 Session 在 Host 重启后仍恢复到原 Workspace，Task/Timeline/Changes 一致；Terminal 进程诚实不恢复，workspace/cwd 恢复后新 PTY 仍在同一仓库。 |
 | 配置根闭环 | 未执行 | git 根/子目录/非 git 三态与六层配置文档一致，偏差已修或登记。 |
 | ChatGPT/xAI 自然临期 OAuth refresh | 待真实账号/临期窗口 | refresh → retry → success 与 `invalid_grant` 清理均有真实证据。 |
 | 三类关键回归发布矩阵 | 未立项 | 发布任务明确命令和环境后执行；普通改动仍同批跑受影响的定向种子。 |
 | 真实客户端/Provider 矩阵 | 未执行 | 四通道 chat、GUI/Desktop、Zed ACP、headless json-stdio、doctor 实际通过或明确 fail-closed。 |
 | 真实 Anthropic、fork/compact、PTY/审批恢复等历史人工项 | 待后续任务 | 实际执行，或由用户明确接受延期并在对应 Spec/收口摘要登记。 |
-| Settings 模型与供应商 | SET-1～SET-6h 已实现；SET-012 Network E1～E3 已验证；SET-6h 真窗口验收通过（2026-09-05） | [settings.md](settings.md) 其余需求完成四家真实认证/目录矩阵；本机视觉/键盘 E3 已完成，E4 用户签字仍独立记录。 |
-| 完整视觉与 Accessibility 签字 | P0–P2 本机 E3 已通过；跨平台待专项 | 主工作台 P0/P1、Settings 八页、三张阶段图、100/125/150%、键盘/AX 与系统 IME 已由当前真窗口取证；非 macOS 与发布级 Accessibility 不在本轮范围。 |
+| Settings 模型与供应商 | 真实矩阵与用户签字待验 | [settings.md](settings.md) 四家真实认证 / 目录矩阵及 E4 用户签字。 |
+| 完整视觉与 Accessibility 签字 | 用户验收与跨平台待专项 | 当前工作台、Settings 九页、100 / 125 / 150%、键盘 / AX 与系统 IME 按对应环境取证；不沿用旧阶段签字。 |
 | 发布级验证 | 未立项 | 发布不在当前任务范围；用户另行授权后先定 License，再定义三平台、供应链、安装/升级/回滚门禁。 |
 
 ## 6. 证据记录格式

@@ -1,6 +1,6 @@
 # Pawork 产品规格
 
-> 更新：2026-09-21。Pawork 当前是本机开发产品，不是已发布发行版。GUI2 / GUI3 与 Composer 新功能已经实现；当前待办、新一轮功能复测及未闭合的用户 / 真实环境验收见 [ROADMAP](../ROADMAP.md)。[Settings](settings.md) 的真实账号认证矩阵仍待验，不能由本机界面检查替代。旧阶段记录从 Git `f8df04b2:docs/review/` 与 `f8df04b2:docs/ROADMAP.md` 追溯。
+> 更新：2026-10-04。Pawork 当前是本机开发产品，不是已发布发行版。未闭合的用户与真实环境验收见 [ROADMAP](../ROADMAP.md)。[Settings](settings.md) 的真实账号认证矩阵仍待验。
 
 ## 1. 产品定义
 
@@ -58,14 +58,14 @@ flowchart LR
 | PRD-CHAT-01 | 必须支持流式多轮 chat、单次 run、模型选择、取消和可读错误。 | 已实现。 |
 | PRD-SESSION-01 | 必须持久化 Agent 事件并支持 list/show/resume/export/import/fork；重放结果须确定。 | 已实现；schema v14、export v3、envelope v1。 |
 | PRD-AGENT-01 | Agent loop 必须以 canonical request 驱动模型与工具，不得在 Engine 中写 Provider 特例。 | 已实现；依赖守护测试在位。 |
-| PRD-TOOL-01 | 必须提供工作区内读、查、写、补丁和命令执行工具，并让 descriptor 明确只读/审批语义。 | 已实现；八工具。 |
+| PRD-TOOL-01 | 必须提供工作区内读、查、写、补丁和命令执行工具，并让 descriptor 明确只读/审批语义。 | 已实现；九工具（含隔离虚拟桌面的 `computer`）。 |
 | PRD-SAFE-01 | 文件与进程操作必须经过工作区路径、Policy、审批和 Sandbox 约束；不可静默放宽灾难地板。 | 已实现；平台能力与回退限制见 [security.md](security.md)。 |
 | PRD-PROVIDER-01 | 必须支持内置通道、可配置兼容端点、能力协商、用量归一与凭证脱敏。 | 已实现；真实 Provider 终局复验仍有人工项。 |
 | PRD-RESOURCE-01 | 必须加载 AGENTS.md、Skills、profiles、`@file`，并作为 MCP Client 管理资源；导入不得执行外部 hook。 | 已实现；Desktop 的 `@` 候选浮层和已加载规则分区未实现。 |
 | PRD-GIT-01 | 必须能查看 diff、创建 checkpoint/rollback；GUI 变更面默认只读。 | 已实现/部分实现：CLI 与核心能力已实现，Desktop stage/unstage/hunk 写操作为候选。 |
 | PRD-CLIENT-01 | Desktop、headless 与 ACP 必须连接同一宿主，能力宣告、授权与实现保持同源且未登记 fail-closed。 | 已实现。 |
 | PRD-DESKTOP-01 | Desktop 必须呈现 TaskRail、Timeline、Composer、审批和 Inspector，并在断线后可恢复且不取消 Run。 | 生产链路已实现；主路径已验收，完整视觉/AX/跨平台仍需专项证据。 |
-| PRD-SETTINGS-01 | Desktop 必须通过 Host 管理供应商连接、API key/OAuth、模型发现与默认 provider/model；Secret 不得由 Desktop 持久化。 | 已实现，本机真窗口验收通过（2026-09-05）；真实账号矩阵人工验收 pending；范围见 [settings.md](settings.md)。 |
+| PRD-SETTINGS-01 | Desktop 必须通过 Host 管理供应商连接、API key/OAuth、模型发现与默认 provider/model；Secret 不得由 Desktop 持久化。 | 已实现；真实账号矩阵与用户验收待闭合；范围见 [settings.md](settings.md)。 |
 | PRD-OPS-01 | 本机实例必须可诊断、可观测数据目录/连接状态，并提供 service/status/watch/shutdown/doctor/usage 入口。 | 已实现；发布级运维、安装和三平台证据未立项。 |
 
 ## 5. 关键用户流程
