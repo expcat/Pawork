@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 
-use gpui::{div, prelude::*, px, Context, MouseDownEvent, ScrollHandle, SharedString};
+use gpui::{div, point, prelude::*, px, Context, MouseDownEvent, ScrollHandle, SharedString};
 
 use crate::controller::{
     DiffFileDetail, DiffFileSummary, DiffLineDetail, DiffLineKind, GitDiffInfo,
@@ -257,6 +257,7 @@ impl ChangesPanelState {
         {
             self.selected = None;
             self.diff = DiffFetch::Idle;
+            self.diff_scroll = ScrollHandle::new();
         }
         self.session_id = session_id;
         self.files = files;
@@ -271,6 +272,7 @@ impl ChangesPanelState {
         self.selected = Some(path.to_string());
         self.diff_epoch += 1;
         self.diff = DiffFetch::Fetching;
+        self.diff_scroll = ScrollHandle::new();
         self.diff_epoch
     }
 
@@ -329,6 +331,7 @@ impl ChangesPanelState {
         self.git = None;
         self.selected = None;
         self.diff = DiffFetch::Idle;
+        self.diff_scroll = ScrollHandle::new();
         self.stale_reason = None;
     }
 
@@ -337,6 +340,18 @@ impl ChangesPanelState {
         let additions: u64 = self.files.iter().map(|file| file.additions).sum();
         let deletions: u64 = self.files.iter().map(|file| file.deletions).sum();
         (self.files.len(), additions, deletions)
+    }
+
+    /// 按渲染列宽度估算是否会超出 440px Inspector。未布局时 max_offset 仍为 0。
+    pub(super) fn diff_needs_horizontal_browse_at(&self, rem_px: f32) -> bool {
+        let DiffFetch::Ready(file) = &self.diff else {
+            return false;
+        };
+        if file.binary || file.hunks.is_empty() {
+            return false;
+        }
+        let content_width = (diff_longest_line(file) as f32 + 12.0) * font::SM.0 * rem_px;
+        content_width > metrics::INSPECTOR_WIDTH
     }
 
     /// Run summary 只在 active session 有至少一个可审阅文件时发布 CTA。
@@ -383,6 +398,7 @@ impl AppView {
         window: &gpui::Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        self.note_diff_horizontal_measure(window, cx);
         let tab = self.changes.tab;
         let secondary_tab =
             |id: &'static str, label: &'static str, current: bool, target: ChangesTab| {
@@ -500,7 +516,7 @@ impl AppView {
                         .border_color(dark().semantic.warning_text)
                         .text_size(font::XS)
                         .text_color(dark().semantic.warning_text)
-                        .child(format!("Stale data · {reason}")),
+                        .child(format!("{} · {reason}", t("common.stale_data"))),
                 )
             })
             .when_some(self.changes_session_mismatch(), |block, data_session| {
@@ -546,11 +562,13 @@ impl AppView {
             }
             ChangesFetch::Fetching | ChangesFetch::Ready => {
                 if self.changes.files.is_empty() {
-                    if self.changes.session_id.is_none() {
-                        changes_placeholder("changes.no_active_session").into_any_element()
-                    } else {
-                        changes_placeholder("changes.empty").into_any_element()
-                    }
+                    // session_id 来自 Host latest 解析。任务已打开但 Host 没有
+                    // 最近结果时，不能说成「没有活动会话」。
+                    let key = changes_empty_files_key(
+                        self.changes.session_id.is_some(),
+                        self.projection.active_session_id.is_some(),
+                    );
+                    changes_placeholder(key).into_any_element()
                 } else {
                     self.changes_file_list_element(cx).into_any_element()
                 }
@@ -631,12 +649,12 @@ impl AppView {
             .flex_1()
             .min_h_0()
             .child(list)
-            .child(self.diff_view_element())
+            .child(self.diff_view_element(cx))
     }
 
     /// DiffView：hunk 头 raised 底 + secondary 字；行级语义着色（§8.5），
     /// 等宽字体、长行横向滚动。
-    fn diff_view_element(&self) -> impl IntoElement {
+    fn diff_view_element(&self, cx: &mut Context<Self>) -> impl IntoElement {
         match &self.changes.diff {
             DiffFetch::Idle => changes_placeholder("changes.diff_select_file").into_any_element(),
             DiffFetch::Fetching => changes_placeholder("changes.diff_loading").into_any_element(),
@@ -716,15 +734,7 @@ impl AppView {
                     // width；nowrap 文字的 paint overflow 不会扩大它。给单一
                     // 内容列一个按最长行估算的明确宽度（1em/字符保守覆盖
                     // CJK），短内容仍由 min_w_full 铺满 Inspector。
-                    let longest_line = file
-                        .hunks
-                        .iter()
-                        .flat_map(|hunk| {
-                            std::iter::once(hunk.header.chars().count())
-                                .chain(hunk.lines.iter().map(|line| line.text.chars().count() + 1))
-                        })
-                        .max()
-                        .unwrap_or_default();
+                    let longest_line = diff_longest_line(file);
                     let mut content = div()
                         .flex()
                         .flex_col()
@@ -803,9 +813,108 @@ impl AppView {
                     .min_h_0()
                     .child(header)
                     .child(body)
+                    .when(
+                        diff_horizontal_overflow(&self.changes.diff_scroll),
+                        |column| column.child(self.diff_horizontal_controls(cx)),
+                    )
                     .into_any_element()
             }
         }
+    }
+
+    /// max_offset 在本帧 paint 收尾才写入。长行首帧先排一次重绘，溢出测到后再显示按钮。
+    fn note_diff_horizontal_measure(&self, window: &gpui::Window, cx: &mut Context<Self>) {
+        if self.changes.tab != ChangesTab::Files
+            || !self
+                .changes
+                .diff_needs_horizontal_browse_at(f32::from(window.rem_size()))
+        {
+            return;
+        }
+        if diff_horizontal_overflow(&self.changes.diff_scroll) {
+            return;
+        }
+        if f32::from(self.changes.diff_scroll.bounds().size.width) > metrics::SCROLL_EPSILON {
+            return;
+        }
+        cx.defer_in(window, |view, _window, cx| {
+            if diff_horizontal_overflow(&view.changes.diff_scroll) {
+                cx.notify();
+            }
+        });
+    }
+
+    fn diff_horizontal_controls(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let (can_left, can_right) = diff_horizontal_ends(&self.changes.diff_scroll);
+        div()
+            .flex()
+            .flex_none()
+            .flex_row()
+            .items_center()
+            .justify_end()
+            .gap_1()
+            .px_2()
+            .h(px(metrics::DIFF_HEADER_HEIGHT))
+            .border_t_1()
+            .border_color(dark().border.subtle)
+            .child(self.diff_scroll_button(
+                "changes-diff-scroll-left",
+                Icon::ChevronLeft,
+                "changes.scroll_left",
+                &self.changes_diff_scroll_left_focus,
+                can_left,
+                -1.0,
+                cx,
+            ))
+            .child(self.diff_scroll_button(
+                "changes-diff-scroll-right",
+                Icon::ChevronRight,
+                "changes.scroll_right",
+                &self.changes_diff_scroll_right_focus,
+                can_right,
+                1.0,
+                cx,
+            ))
+    }
+
+    fn diff_scroll_button(
+        &self,
+        id: &'static str,
+        glyph: Icon,
+        label: &'static str,
+        focus: &gpui::FocusHandle,
+        enabled: bool,
+        direction: f32,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        Button::new(id)
+            .variant(ButtonVariant::Ghost)
+            .padding(ButtonPadding::None)
+            .width(px(metrics::ICON_BUTTON_SIZE))
+            .height(px(metrics::ICON_BUTTON_SIZE))
+            .center()
+            .disabled(!enabled)
+            .child(icon_sized(glyph, px(metrics::ICON_SM)))
+            .tooltip(t(label))
+            .track_focus(focus)
+            .on_click(cx.listener(move |view, event, _window, cx| {
+                if view.consume_button_key_click(id, event) {
+                    return;
+                }
+                view.scroll_diff_horizontal(direction, cx);
+            }))
+    }
+
+    pub(super) fn scroll_diff_horizontal(&mut self, direction: f32, cx: &mut Context<Self>) {
+        let max = f32::from(self.changes.diff_scroll.max_offset().width);
+        let current = f32::from(self.changes.diff_scroll.offset().x);
+        let Some(next) = next_diff_offset(current, max, direction) else {
+            return;
+        };
+        self.changes
+            .diff_scroll
+            .set_offset(point(px(next), self.changes.diff_scroll.offset().y));
+        cx.notify();
     }
 
     fn changes_summary_element(&self) -> impl IntoElement {
@@ -1120,12 +1229,65 @@ fn session_mismatch<'a>(data: Option<&'a str>, active: Option<&str>) -> Option<&
     (data != active).then_some(data)
 }
 
+const DIFF_HORIZONTAL_STEP: f32 = 120.0;
+
+fn diff_longest_line(file: &DiffFileDetail) -> usize {
+    file.hunks
+        .iter()
+        .flat_map(|hunk| {
+            std::iter::once(hunk.header.chars().count())
+                .chain(hunk.lines.iter().map(|line| line.text.chars().count() + 1))
+        })
+        .max()
+        .unwrap_or_default()
+}
+
+/// 任务已打开但 Host 没有 latest session 时，不能说成没有活动会话。
+pub(super) fn changes_empty_files_key(data_session: bool, active_session: bool) -> &'static str {
+    if data_session {
+        "changes.empty"
+    } else if active_session {
+        "changes.no_latest_result"
+    } else {
+        "changes.no_active_session"
+    }
+}
+
+/// 布局完成后 max_offset.width > 0 才算真横向溢出。
+pub(super) fn diff_horizontal_overflow(scroll: &ScrollHandle) -> bool {
+    f32::from(scroll.max_offset().width) > metrics::SCROLL_EPSILON
+}
+
+/// (还能向左, 还能向右)。offset.x 为负，0 是左端。
+pub(super) fn diff_horizontal_ends(scroll: &ScrollHandle) -> (bool, bool) {
+    diff_horizontal_ends_at(
+        f32::from(scroll.offset().x),
+        f32::from(scroll.max_offset().width),
+    )
+}
+
+pub(super) fn diff_horizontal_ends_at(x: f32, max: f32) -> (bool, bool) {
+    (
+        x < -metrics::SCROLL_EPSILON,
+        max > metrics::SCROLL_EPSILON && x > -max + metrics::SCROLL_EPSILON,
+    )
+}
+
+pub(super) fn next_diff_offset(current: f32, max: f32, direction: f32) -> Option<f32> {
+    if max <= metrics::SCROLL_EPSILON {
+        return None;
+    }
+    // direction > 0 向右，offset 变得更负；< 0 向左，回到 0。
+    Some((current - direction * DIFF_HORIZONTAL_STEP).clamp(-max, 0.0))
+}
+
 /// 占位文案按 i18n key 取主文案与说明（同源；不能按翻译后的串匹配）。
 fn changes_placeholder(key: &'static str) -> EmptyState {
     let description = match key {
         "changes.unavailable" => t("changes.unavailable_desc"),
         "changes.loading" => t("changes.loading_desc"),
         "changes.no_active_session" => t("changes.no_active_session_desc"),
+        "changes.no_latest_result" => t("changes.no_latest_result_desc"),
         "changes.empty" => t("changes.empty_desc"),
         "changes.diff_select_file" => t("changes.diff_select_file_desc"),
         "changes.diff_loading" => t("changes.diff_loading_desc"),
@@ -1195,6 +1357,7 @@ fn diff_number_gutter(n: Option<u32>, bg: gpui::Rgba) -> impl IntoElement {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::i18n::{self, Language};
 
     fn ready_state(files: Vec<DiffFileSummary>) -> ChangesPanelState {
         let mut state = ChangesPanelState::default();
@@ -1332,6 +1495,70 @@ mod tests {
         assert_eq!(session_mismatch(Some("s-1"), Some("s-1")), None);
         // 数据会话（latest 解析结果）与查看会话不同 → 返回数据会话 id。
         assert_eq!(session_mismatch(Some("s-2"), Some("s-1")), Some("s-2"));
+    }
+
+    #[test]
+    fn empty_files_copy_and_horizontal_browse_follow_host_and_ends() {
+        assert_eq!(
+            changes_empty_files_key(false, false),
+            "changes.no_active_session"
+        );
+        assert_eq!(
+            changes_empty_files_key(false, true),
+            "changes.no_latest_result"
+        );
+        assert_eq!(changes_empty_files_key(true, true), "changes.empty");
+        let previous = i18n::language();
+        i18n::set_language(Language::English);
+        assert_eq!(
+            t("changes.no_latest_result"),
+            "No latest task changes from the Host."
+        );
+        assert_eq!(t("changes.scroll_left"), "Scroll diff left");
+        assert_eq!(t("changes.scroll_right"), "Scroll diff right");
+        i18n::set_language(Language::Chinese);
+        assert_eq!(
+            t("changes.no_latest_result"),
+            "Host 没有返回最近任务的变更。"
+        );
+        i18n::set_language(previous);
+
+        let long = DiffFileDetail {
+            path: "a.rs".into(),
+            previous_path: None,
+            status: "modified".into(),
+            binary: false,
+            additions: 1,
+            deletions: 0,
+            hunks: vec![crate::controller::DiffHunkDetail {
+                header: "@@ -1 +1 @@".into(),
+                lines: vec![DiffLineDetail {
+                    kind: DiffLineKind::Addition,
+                    text: "x".repeat(80),
+                }],
+            }],
+        };
+        let mut state = ChangesPanelState::default();
+        state.diff = DiffFetch::Ready(long);
+        assert!(state.diff_needs_horizontal_browse_at(font::BASE_REM_PIXELS));
+        if let DiffFetch::Ready(file) = &mut state.diff {
+            file.hunks[0].lines[0].text = "short".into();
+        }
+        assert!(!state.diff_needs_horizontal_browse_at(font::BASE_REM_PIXELS));
+        if let DiffFetch::Ready(file) = &mut state.diff {
+            file.binary = true;
+            file.hunks[0].lines[0].text = "x".repeat(80);
+        }
+        assert!(!state.diff_needs_horizontal_browse_at(font::BASE_REM_PIXELS));
+
+        assert_eq!(diff_horizontal_ends_at(0.0, 0.0), (false, false));
+        assert_eq!(diff_horizontal_ends_at(0.0, 200.0), (false, true));
+        assert_eq!(diff_horizontal_ends_at(-120.0, 200.0), (true, true));
+        assert_eq!(diff_horizontal_ends_at(-200.0, 200.0), (true, false));
+        assert_eq!(next_diff_offset(0.0, 0.0, 1.0), None);
+        assert_eq!(next_diff_offset(0.0, 200.0, 1.0), Some(-120.0));
+        assert_eq!(next_diff_offset(-120.0, 200.0, -1.0), Some(0.0));
+        assert_eq!(next_diff_offset(-160.0, 200.0, 1.0), Some(-200.0));
     }
 
     #[test]

@@ -166,6 +166,49 @@ fn subagent_result_is_long(text: &str) -> bool {
         || text.lines().count() > SUBAGENT_RESULT_COLLAPSE_LINES
 }
 
+/// Host 回执取最后一条非空助手正文（最多 2000 字符），已有正文时不再重复。
+fn subagent_result_matches_reply(result: &str, conversation: &SubagentConversationState) -> bool {
+    conversation
+        .timeline
+        .iter()
+        .rev()
+        .find_map(|entry| {
+            if let TimelineEntryKind::AssistantMessage { text } = &entry.kind {
+                (!text.trim().is_empty()).then_some(text.trim())
+            } else {
+                None
+            }
+        })
+        .is_some_and(|text| {
+            text == result.trim()
+                || (result.chars().count() == 2000 && text.starts_with(result.trim()))
+        })
+}
+
+fn subagent_run_label(state: &str) -> String {
+    let (phase, reason) = state.split_once(" · ").unwrap_or((state, ""));
+    let label = match phase {
+        "run started" => t("run.phase_started"),
+        "run preparing_context" => t("run.phase_preparing_context"),
+        "run waiting_for_provider" => t("run.phase_waiting_for_provider"),
+        "run streaming_response" => t("run.phase_streaming_response"),
+        "run collecting_tool_calls" => t("run.phase_collecting_tool_calls"),
+        "run waiting_for_approval" => t("run.phase_waiting_for_approval"),
+        "run executing_tools" => t("run.phase_executing_tools"),
+        "run appending_tool_results" => t("run.phase_appending_tool_results"),
+        "run completed" => t("run.footer_completed"),
+        "run cancelled" => t("run.footer_cancelled"),
+        "run failed" => t("run.footer_failed"),
+        "run interrupted" => t("run.phase_interrupted"),
+        _ => return state.to_string(),
+    };
+    if reason.is_empty() {
+        label.to_string()
+    } else {
+        format!("{label} · {reason}")
+    }
+}
+
 /// AX 值截断（保留前 N 字符 + 省略号，不伪造内容）。
 fn subagent_ax_text(text: &str) -> String {
     let mut chars = text.chars();
@@ -573,10 +616,14 @@ impl AppView {
                 other => other.event_id().map(|id| format!("{id}:item")),
             })
             .collect();
+        let result_repeated = agent
+            .result
+            .as_deref()
+            .is_some_and(|result| subagent_result_matches_reply(result, conversation));
         if let Some(result) = &agent.result {
             let result_key = format!("{}:result", agent.agent_id);
             visible_keys.insert(result_key.clone());
-            if subagent_result_is_long(result) {
+            if !result_repeated && subagent_result_is_long(result) {
                 visible_keys.insert(format!("{result_key}:toggle"));
             }
         }
@@ -602,31 +649,36 @@ impl AppView {
                     .child(format!("{} · {reason}", t("subagents.load_failed"))),
             );
         }
-        // 元信息行：名称后跟生效模型与状态（与浮层行同源口径）。
+        // 标题完整换行，模型与状态另起一行，避免大字号下标题被硬切。
         let status = super::changes::subagent_status_label(&agent.status);
         transcript = transcript.child(
             div()
                 .flex()
-                .flex_row()
-                .items_center()
-                .gap_2()
-                .flex_wrap()
+                .flex_col()
+                .gap_1()
                 .child(
                     div()
+                        .flex()
                         .flex_row()
-                        .flex_1()
-                        .min_w_0()
-                        .child(div().truncate().child(agent.title.clone())),
+                        .child(div().flex_1().min_w_0().child(agent.title.clone())),
                 )
                 .child(
-                    Label::new(agent.model_id.clone())
-                        .size(font::XS)
-                        .color(dark().text.tertiary),
-                )
-                .child(
-                    Label::new(status)
-                        .size(font::XS)
-                        .color(dark().text.secondary),
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .flex_wrap()
+                        .child(
+                            Label::new(agent.model_id.clone())
+                                .size(font::XS)
+                                .color(dark().text.tertiary),
+                        )
+                        .child(
+                            Label::new(status)
+                                .size(font::XS)
+                                .color(dark().text.secondary),
+                        ),
                 ),
         );
         for item in items {
@@ -638,8 +690,9 @@ impl AppView {
             // 展开入口，展开后全文随外层 transcript 滚动（内嵌滚动区会
             // 吃滚轮，指针停在上面时外层脱钩/跟滚失效）。
             let result_key = format!("{}:result", agent.agent_id);
-            let long = subagent_result_is_long(result);
-            let expanded = !long || self.expanded_subagent_details.contains(&result_key);
+            let long = !result_repeated && subagent_result_is_long(result);
+            let expanded =
+                !result_repeated && (!long || self.expanded_subagent_details.contains(&result_key));
             let result_layout = self
                 .subagent_item_layouts
                 .entry(result_key.clone())
@@ -672,7 +725,13 @@ impl AppView {
                     cx,
                 ));
             }
-            result_box = result_box.child(if expanded {
+            result_box = result_box.child(if result_repeated {
+                div()
+                    .text_size(font::SM)
+                    .text_color(dark().text.secondary)
+                    .child(t("subagents.result_in_transcript"))
+                    .into_any_element()
+            } else if expanded {
                 super::markdown::message_body_element(
                     self,
                     cx,
@@ -1000,7 +1059,7 @@ impl AppView {
             PanelItem::RunState(state) => div()
                 .text_size(font::XS)
                 .text_color(dark().text.tertiary)
-                .child(state)
+                .child(subagent_run_label(&state))
                 .into_any_element(),
             PanelItem::Error(text) => div()
                 .text_size(font::SM)
@@ -1368,9 +1427,10 @@ pub(super) fn subagent_ax(view: &AppView, frame: AxRect) -> AxNode {
                     let result_key = format!("{agent_id}:result");
                     if let Some(layout) = view.subagent_item_layouts.get(&result_key) {
                         if let Some(rect) = subagent_ax_rect(layout.bounds().intersect(&viewport)) {
-                            let long = subagent_result_is_long(result);
-                            let expanded =
-                                !long || view.expanded_subagent_details.contains(&result_key);
+                            let repeated = subagent_result_matches_reply(result, conversation);
+                            let long = !repeated && subagent_result_is_long(result);
+                            let expanded = !repeated
+                                && (!long || view.expanded_subagent_details.contains(&result_key));
                             node = node.child(
                                 AxNode::new(
                                     format!("subagent-result-{agent_id}"),
@@ -1378,7 +1438,9 @@ pub(super) fn subagent_ax(view: &AppView, frame: AxRect) -> AxNode {
                                     t("subagents.result_to_main"),
                                     rect,
                                 )
-                                .value(if expanded {
+                                .value(if repeated {
+                                    t("subagents.result_in_transcript").to_string()
+                                } else if expanded {
                                     subagent_ax_text(result)
                                 } else {
                                     subagent_result_summary(result)

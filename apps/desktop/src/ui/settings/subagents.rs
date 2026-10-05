@@ -530,7 +530,8 @@ impl AppView {
         card.into_any_element()
     }
 
-    /// 单项功能权限 chip：已授予用 Primary、未授予用 Raised，click 与键盘
+    /// 单项功能权限 chip：已授予用主色文字、未授予用次级文字，底都是
+    /// Raised。不占 Primary 实心底，高度与未选中相同。click 与键盘
     /// activate 同一 dispatch 路径。
     fn subagent_permission_chip(
         &mut self,
@@ -548,21 +549,21 @@ impl AppView {
             .entry(id.clone())
             .or_insert_with(|| cx.focus_handle().tab_stop(true))
             .clone();
-        let variant = if granted {
-            ButtonVariant::Primary
-        } else {
-            ButtonVariant::Raised
-        };
         let click_id = id.clone();
         let activate_id = id.clone();
-        Button::new(id.clone())
+        let chip = Button::new(id.clone())
             .track_focus(&focus)
-            .variant(variant)
+            .variant(ButtonVariant::Raised)
             .height(px(SUBAGENT_CHIP_HEIGHT))
             .radius(6.0)
             .text_size(font::BODY_SM)
             .label(subagent_permission_label(permission))
             .tooltip(subagent_permission_label(permission))
+            .text_color(if granted {
+                dark().accent.primary
+            } else {
+                dark().text.secondary
+            })
             .disabled(!writes)
             .on_click(cx.listener(move |view, event, _window, cx| {
                 if view.consume_button_key_click(&click_id, event) {
@@ -574,7 +575,8 @@ impl AppView {
                 view.note_button_key_activate(&activate_id);
                 view.dispatch_settings_subagent_control(&activate_id, cx);
                 cx.stop_propagation();
-            }))
+            }));
+        chip
     }
 
     /// 子代理默认强度 cycle 按钮（ADR-063）：label 为当前默认（自动 /
@@ -621,8 +623,8 @@ impl AppView {
             }))
     }
 
-    /// 可选强度范围 chip（ADR-063）：选中用 Primary、未选中用 Raised；
-    /// 全不选 = 不限。
+    /// 可选强度范围 chip（ADR-063）：选中用主色文字、未选中用次级文字，
+    /// 底都是 Raised；全不选 = 不限。主保存按钮仍独占 Primary。
     fn subagent_effort_chip(
         &mut self,
         level: &str,
@@ -638,22 +640,22 @@ impl AppView {
             .entry(id.clone())
             .or_insert_with(|| cx.focus_handle().tab_stop(true))
             .clone();
-        let variant = if selected {
-            ButtonVariant::Primary
-        } else {
-            ButtonVariant::Raised
-        };
         let level = level.to_string();
         let click_id = id.clone();
         let activate_id = id.clone();
-        Button::new(id.clone())
+        let chip = Button::new(id.clone())
             .track_focus(&focus)
-            .variant(variant)
+            .variant(ButtonVariant::Raised)
             .height(px(SUBAGENT_CHIP_HEIGHT))
             .radius(6.0)
             .text_size(font::BODY_SM)
             .label(level.clone())
             .tooltip(t("settings.subagents.effort_allowed_tooltip"))
+            .text_color(if selected {
+                dark().accent.primary
+            } else {
+                dark().text.secondary
+            })
             .disabled(!writes)
             .on_click(cx.listener(move |view, event, _window, cx| {
                 if view.consume_button_key_click(&click_id, event) {
@@ -665,7 +667,8 @@ impl AppView {
                 view.note_button_key_activate(&activate_id);
                 view.dispatch_settings_subagent_control(&activate_id, cx);
                 cx.stop_propagation();
-            }))
+            }));
+        chip
     }
 
     /// 可见控件 → 单一派发入口（click / 键盘 / AX 三路径同源）：identifier

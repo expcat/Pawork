@@ -713,6 +713,8 @@ impl AppView {
             "changes-tab-files" => self.on_select_changes_tab(ChangesTab::Files, cx),
             "changes-tab-summary" => self.on_select_changes_tab(ChangesTab::Summary, cx),
             "changes-refresh" => self.refresh_changes(cx),
+            "changes-diff-scroll-left" => self.scroll_diff_horizontal(-1.0, cx),
+            "changes-diff-scroll-right" => self.scroll_diff_horizontal(1.0, cx),
             "resources-refresh" => self.refresh_resources(cx),
             "terminal-new-tab" => self.on_new_terminal_tab(cx),
             other if other.starts_with("terminal-tab-") => {
@@ -3090,6 +3092,17 @@ impl AppView {
                 .value(self.composer_attachment_error_text(error)),
             );
         }
+        if let Some(error) = self.current_composer_send_error() {
+            composer = composer.child(
+                AxNode::new(
+                    "composer-send-error",
+                    AxRole::StaticText,
+                    t("composer.send_failed"),
+                    self.settings_menu_element_bounds("composer-send-error", "composer-options"),
+                )
+                .value(error),
+            );
+        }
         if let Some(attachment) = self.composer_attachment_preview_target() {
             composer = composer.child(
                 AxNode::new(
@@ -3822,6 +3835,14 @@ impl AppView {
             let diff_top = body_top + metrics::CHANGES_FILE_LIST_MAX_HEIGHT;
             let horizontal_offset = f32::from(self.changes.diff_scroll.offset().x);
             let horizontal_max = f32::from(self.changes.diff_scroll.max_offset().width);
+            let (can_left, can_right) =
+                crate::ui::changes::diff_horizontal_ends(&self.changes.diff_scroll);
+            let controls_h =
+                if crate::ui::changes::diff_horizontal_overflow(&self.changes.diff_scroll) {
+                    metrics::DIFF_HEADER_HEIGHT
+                } else {
+                    0.0
+                };
             changes = changes.child(
                 AxNode::new(
                     "changes-diff-view",
@@ -3831,13 +3852,45 @@ impl AppView {
                         frame.x + PAD,
                         diff_top,
                         frame.width - PAD * 2.0,
-                        (frame.height - (diff_top - frame.y)).max(ROW_HEIGHT),
+                        (frame.height - (diff_top - frame.y) - controls_h).max(ROW_HEIGHT),
                     ),
                 )
                 .description(format!(
                     "horizontal offset {horizontal_offset:.1} of {horizontal_max:.1}"
                 )),
             );
+            if controls_h > 0.0 {
+                let y = frame.y + frame.height - controls_h;
+                changes = changes
+                    .child(
+                        AxNode::new(
+                            "changes-diff-scroll-left",
+                            AxRole::Button,
+                            t("changes.scroll_left"),
+                            AxRect::new(frame.x + frame.width - 84.0, y, 36.0, controls_h),
+                        )
+                        .enabled(can_left)
+                        .focused(
+                            self.open_menu.is_none()
+                                && self.changes_diff_scroll_left_focus.is_focused(window),
+                        )
+                        .action(AxAction::Press),
+                    )
+                    .child(
+                        AxNode::new(
+                            "changes-diff-scroll-right",
+                            AxRole::Button,
+                            t("changes.scroll_right"),
+                            AxRect::new(frame.x + frame.width - 44.0, y, 36.0, controls_h),
+                        )
+                        .enabled(can_right)
+                        .focused(
+                            self.open_menu.is_none()
+                                && self.changes_diff_scroll_right_focus.is_focused(window),
+                        )
+                        .action(AxAction::Press),
+                    );
+            }
         }
         changes
     }
@@ -3892,8 +3945,9 @@ impl AppView {
                     ),
                 )
                 .value(format!(
-                    "{} · {} · {} tools",
-                    server.state, server.transport, server.tool_count
+                    "{} · {}",
+                    crate::ui::settings::settings_mcp_state_label(&server.state),
+                    crate::ui::resources::mcp_server_meta_text(server)
                 ))
                 .description(server.last_error.clone().unwrap_or_default()),
             );
@@ -4788,6 +4842,97 @@ mod tests {
                     Some("unchanged".into())
                 );
             })
+        });
+    }
+
+    /// 迟到发送失败只显示在原任务，保留草稿，成功回执清掉原错误。
+    #[gpui::test]
+    fn composer_send_failure_stays_with_originating_draft(cx: &mut gpui::TestAppContext) {
+        let (view, cx) = cx.add_window_view(|_, cx| {
+            AppView::new(
+                std::sync::Arc::new(crate::platform::Platform::new()),
+                std::env::temp_dir().join("composer-send-failure.sock"),
+                None,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        let reason = "model_disabled: 当前模型已被禁用，请选择可用模型";
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.composer_sending = true;
+                view.composer_send_target = Some("original".into());
+                view.projection.active_session_id = Some("other".into());
+                view.text_input
+                    .update(cx, |input, cx| input.set_text("保留草稿", cx));
+                view.handle_controller_event(
+                    crate::controller::ControllerEvent::OperationFailed {
+                        action: "send message".into(),
+                        reason: reason.into(),
+                    },
+                    cx,
+                );
+                assert_eq!(view.text_input.read(cx).text(), "保留草稿");
+                assert!(view
+                    .accessibility_tree(window, cx)
+                    .find("composer-send-error")
+                    .is_none());
+                view.projection.active_session_id = Some("original".into());
+                cx.notify();
+            });
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                let tree = view.accessibility_tree(window, cx);
+                let error = tree.find("composer-send-error").unwrap();
+                assert_eq!(error.value.as_deref(), Some(reason));
+                assert!(error.bounds.width > 0.0 && error.bounds.height > 0.0);
+                view.handle_controller_event(
+                    crate::controller::ControllerEvent::MessageSent {
+                        session_id: "original".into(),
+                        run_id: "run".into(),
+                        text: "accepted".into(),
+                    },
+                    cx,
+                );
+                assert!(view
+                    .accessibility_tree(window, cx)
+                    .find("composer-send-error")
+                    .is_none());
+
+                // 首页建会话失败：实际切换任务会将首页草稿存回 None 槽，
+                // 迟到失败跟随该草稿，不能污染已打开任务或丢失首页文本。
+                view.projection.active_session_id = None;
+                view.text_input
+                    .update(cx, |input, cx| input.set_text("首页草稿", cx));
+                view.composer_sending = true;
+                view.composer_send_target = None;
+                view.pending_home_send = Some(crate::ui::PendingHomeSend {
+                    text: "首页草稿".into(),
+                    model: None,
+                    effort: None,
+                    options: Default::default(),
+                });
+                view.open_session("other".into(), cx);
+                assert_eq!(view.no_session_draft, "首页草稿");
+                assert!(view.text_input.read(cx).text().is_empty());
+                view.handle_controller_event(
+                    crate::controller::ControllerEvent::OperationFailed {
+                        action: "create session".into(),
+                        reason: reason.into(),
+                    },
+                    cx,
+                );
+                assert!(view.current_composer_send_error().is_none());
+                assert!(view.pending_home_send.is_none());
+                view.stash_composer_draft(cx);
+                view.projection.active_session_id = None;
+                view.restore_composer_draft(cx);
+                assert_eq!(view.text_input.read(cx).text(), "首页草稿");
+                assert_eq!(view.current_composer_send_error(), Some(reason));
+            });
         });
     }
 

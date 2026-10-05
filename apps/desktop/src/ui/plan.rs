@@ -1,6 +1,9 @@
 //! Plan 的版本化编辑与明确批准，不使用聊天草稿代替计划。
 use super::accessibility::{AxRequest, AxRole};
-use super::product_access::{edit_input, PanelAccess};
+use super::product_access::{
+    edit_input, product_action, product_actions, product_error, product_field, product_heading,
+    product_note, product_panel, PanelAccess,
+};
 use super::*;
 use gpui::{size, Bounds, WindowBounds, WindowOptions};
 use pawork_client::{AppCommand, AppQuery};
@@ -28,6 +31,7 @@ impl AppView {
             return;
         };
         let controller = self.controller.clone();
+        let text_scale = self.text_scale;
         let bounds = Bounds::centered(None, size(px(720.0), px(600.0)), cx);
         if let Err(error) = cx.open_window(
             WindowOptions {
@@ -39,6 +43,7 @@ impl AppView {
                 ..Default::default()
             },
             move |window, cx| {
+                window.set_rem_size(px(text_scale.rem_pixels()));
                 cx.new(|cx| {
                     let title = cx.new(|cx| {
                         TextInput::with_placeholder(i18n::t("plan.title"), cx)
@@ -178,7 +183,7 @@ impl Render for PlanView {
         #[cfg(target_os = "macos")]
         install_appkit_tab_monitor(window, cx);
         self.access.begin();
-        let mut actions = div().flex().flex_wrap().gap_2();
+        let mut actions = product_actions();
         for (index, label) in [
             "plan.refresh",
             "plan.save",
@@ -192,7 +197,7 @@ impl Render for PlanView {
             let enabled =
                 !self.busy && (index == 0 || self.loaded) && (index < 2 || self.version.is_some());
             let focus = self.focus[index].clone().tab_stop(enabled);
-            let button = Button::new(format!("plan-action-{index}"))
+            let button = product_action(Button::new(format!("plan-action-{index}")))
                 .label(i18n::t(label))
                 .variant(if index == 1 {
                     ButtonVariant::Primary
@@ -216,6 +221,28 @@ impl Render for PlanView {
                 self.focus[index].is_focused(window),
                 button,
             ));
+        }
+        let status_line = format!(
+            "{} · {}",
+            self.version.as_deref().unwrap_or("—"),
+            i18n::t(match self.status.as_str() {
+                "draft" => "plan.draft",
+                "in_review" => "plan.in_review",
+                "changes_requested" => "plan.changes_requested",
+                "approved" => "plan.approved",
+                "rejected" => "plan.rejected",
+                _ => "plan.empty",
+            }),
+        );
+        let mut status_body = div()
+            .flex()
+            .flex_col()
+            .flex_none()
+            .gap_2()
+            .w_full()
+            .child(product_note(status_line.clone()));
+        if let Some(error) = &self.error {
+            status_body = status_body.child(product_error(error.clone()));
         }
         let title = self.access.wrap(
             "plan-title",
@@ -244,19 +271,7 @@ impl Render for PlanView {
             self.reason.focus_handle(cx).is_focused(window),
             self.reason.clone(),
         );
-        let status = format!(
-            "{} · {}\n{}",
-            self.version.as_deref().unwrap_or("—"),
-            i18n::t(match self.status.as_str() {
-                "draft" => "plan.draft",
-                "in_review" => "plan.in_review",
-                "changes_requested" => "plan.changes_requested",
-                "approved" => "plan.approved",
-                "rejected" => "plan.rejected",
-                _ => "plan.empty",
-            }),
-            self.error.as_deref().unwrap_or("")
-        );
+        let status = format!("{status_line}\n{}", self.error.as_deref().unwrap_or(""));
         let status = self.access.wrap(
             "plan-status",
             &status,
@@ -264,26 +279,21 @@ impl Render for PlanView {
             None,
             false,
             false,
-            status.clone(),
+            status_body,
         );
         self.access.sync(window, cx, Self::ax_action);
-        div()
-            .id("plan-panel")
-            .size_full()
-            .overflow_y_scroll()
-            .flex()
-            .flex_col()
-            .gap_3()
-            .p_4()
-            .bg(dark().bg.base)
-            .text_color(dark().text.primary)
+        product_panel("plan-panel")
+            .child(product_heading(i18n::t("plan.open"), i18n::t("plan.hint")))
             .child(status)
-            .child(i18n::t("plan.hint"))
             .when(!self.busy, |view| {
-                view.child(title).child(steps).child(reason)
+                view.child(product_field(i18n::t("plan.title"), title))
+                    .child(product_field(i18n::t("plan.steps"), steps))
+                    .child(product_field(i18n::t("plan.reason"), reason))
             })
             .child(actions)
-            .when(self.busy, |view| view.child(i18n::t("plan.loading")))
+            .when(self.busy, |view| {
+                view.child(product_note(i18n::t("plan.loading")))
+            })
     }
 }
 

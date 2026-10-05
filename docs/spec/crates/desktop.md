@@ -258,6 +258,17 @@ Composer 添加菜单接入 `ui/plan.rs`、`ui/goal.rs`、`ui/recording.rs`、`u
 
 `ui/product_access.rs` 复用 AxBridge，为面板字段、按钮和错误同步 AX 与键盘动作；AppKit Tab monitor 只作用于活动窗口。绘图使用有界 640×360 黑色画布，撤销/清空/取消/附加，内部 PNG 编码后复用普通图片附件链。目标预算不派生子代理；关闭目标面板继续 Host 执行。剩余验收见 [ROADMAP](../../ROADMAP.md)。
 
+### 显示与错误呈现
+
+- `input_area.rs` 按当前字号测宽，为长模型名添加省略号，宽度仍受 220px 上限约束；tooltip / AX 保留完整名称。
+- `quick_search.rs` 复用同一测宽函数，为标题 / 项目说明按浮层可用宽度添加省略号；导航数据、tooltip 与 AX 保留完整内容。
+- `mod.rs` 记录单一发送请求的发起任务与逐草稿失败原因，`attachments.rs` 在既有 96px 滚动区换行显示，`accessibility/app.rs` 发布同源 `composer-send-error`；失败保留草稿，迟到失败不跨任务，重试 / 成功清除对应错误。
+- `settings/subagents.rs` 的权限与强度选中态改为中性 Raised；`settings/tools.rs` 的状态本地化、传输 / 工具数与危险色错误分行，`accessibility/settings_tools.rs` 的状态词与可见文案同源。`resources.rs` 复用状态词并将完整错误独立换行；Resources / Changes 的旧数据横幅本地化。
+- `changes.rs` 根据真实横向溢出显示左右 Ghost 按钮，每次移动 120px，到端点禁用，鼠标 / Enter / AX 共用 handler；换文件与会话数据失效时重建 `ScrollHandle`，清除旧横向偏移。空态区分未打开任务与 Host latest 结果为空。
+- `subagent_panel.rs` 标题完整换行、模型与状态另行显示；已知 Run 状态本地化，未知值和原始原因保留。Host 结果匹配最后非空助手正文或其 2000 字符前缀时，结果盒改为引用上方回复的短提示，不重复全文；不同或未加载的结果保留原呈现，AX 与布局条目集合使用同一判断。
+- `product_access.rs` 提供既有产品窗口的标题 / 说明 / 错误 / 字段 / 动作排版；Plan / Goal / Video / Recording 标签常驻、36px 操作按钮、字段不压缩与纵向滚动。Recording 根据真实响应错误状态着色，不按文本语言判断；空操作列表不挂载，非空列表最高 180px，正常非空响应不重复标题说明。
+- Plan / Goal / Video / Drawing / Recording / Task usage 在打开时继承主窗口 `TextScale`。Drawing 仍为固定 640×360，最小宽度 720px 容纳 150% 边距，不改变坐标或 PNG。
+
 ### 任务消耗窗口（API 1.26，2026-10-04）
 
 侧栏页脚、Local / Settings 行上方的「Task usage / 任务消耗」打开独立 GPUI 统计窗口（`ui/task_usage.rs`），复用现有产品窗口与 `PanelAccess`，主工作区 / 会话 / 草稿保留；会话列表 AX 矩形读取真实滚动视口。Controller 的 `task_usage_request` 在 Tokio 中查询 Host，旧 Host / 断线 / 失败 / 空集显式显示。
@@ -446,6 +457,10 @@ UX-05 复用并更新两个现有主路径回归：`model_menu_ax_culls_rows_out
 UX-03 定向回归 `project_task_guidance_preserves_context_and_wraps`：项目筛选不重绑 / 不改草稿，项目新建菜单排除「所有项目」，Esc 回焦与第二次 Enter 确认，宽窄窗 × 三档字号下元信息实际框不重叠 / 不越界；有项目后移除限制与新建入口但保留其他反馈。复用既有 Composer 布局、会话草稿与目录菜单滚动测试。
 
 ## 7. 测试与验证资产
+
+`composer_send_failure_stays_with_originating_draft` 覆盖迟到发送失败的任务归属、草稿保留、可见 AX 原因与成功清除，并复验首页建会话失败后切任务 / 返回首页时的文本与错误归属；现有 Composer / 设置 / 产品面板回归继续验证布局与动作 gate。
+
+`empty_files_copy_and_horizontal_browse_follow_host_and_ends` 覆盖 Changes 空态、真实长行模型、左右端点与移动钳制；自动回归不替代鼠标 / Enter、文件切换回到左端与三档字号的真窗口检查。
 
 `terminal_run_stops_only_its_unfinished_tool_display` 验证同 Run 已完成 / 失败 / 取消时，缺少结果的 running / pending 工具只在展示层变为「已停止」；其它 Run 和已有 succeeded 状态保持原样。fixture 与 AX 回归不能推定真实模型推理成功；真窗口与外部环境的未闭合验收见 [路线图](../../ROADMAP.md)。
 

@@ -39,9 +39,7 @@ pub(super) use crate::projection::{
 pub(super) use crate::ui::text_input::TextInput;
 
 pub(super) use super::accessibility::dynamic_identifier;
-pub(super) use super::resources::{
-    mcp_server_meta_text, mcp_server_name_row, ResourcesFetch, ResourcesPanelState,
-};
+pub(super) use super::resources::{ResourcesFetch, ResourcesPanelState};
 pub(super) use super::shell_layout;
 pub(super) use super::{AppRoute, AppView, SettingsPage};
 
@@ -1369,6 +1367,7 @@ pub(crate) use search::{settings_page_title_key, settings_search_entries, Settin
 mod subagents;
 mod terminal;
 mod tools;
+pub(super) use tools::settings_mcp_state_label;
 
 pub(crate) use approval_labels::{
     description as approval_mode_description, label as approval_mode_label,

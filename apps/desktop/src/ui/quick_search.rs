@@ -415,6 +415,14 @@ impl AppView {
     ) -> gpui::AnyElement {
         let results = self.quick_search_results();
         let selected = self.quick_selected_index(&results);
+        let panel_width = 640.0_f32.min(f32::from(window.viewport_size().width) - 48.0);
+        // 显式约束文字列，避免 flex_col 的 MinContent 把长标题撑到弹层之外。
+        // px_3 随 rem 缩放；图标与 gap 使用固定像素。
+        let text_width = panel_width
+            - 2.0
+            - 1.5 * f32::from(window.rem_size())
+            - metrics::ICON_SM
+            - metrics::SPACE_2;
         self.quick_search.layouts.retain(|id, _| {
             !id.starts_with("quick-task-") || results.iter().any(|r| r.id() == *id)
         });
@@ -438,6 +446,10 @@ impl AppView {
                 );
             }
             let target = result.target.clone();
+            let full_title = SharedString::from(result.title.clone());
+            let title = input_area::ellipsized_label(window, &result.title, text_width, font::BODY);
+            let detail =
+                input_area::ellipsized_label(window, &result.detail, text_width, font::BODY_SM);
             let type_icon = result.type_icon();
             let highlighted = index == selected;
             list = list.child(
@@ -453,6 +465,7 @@ impl AppView {
                         dark().surface.raised
                     })
                     .hover(|s| s.bg(dark().surface.hover))
+                    .tooltip(move |_, cx| tooltip_text(full_title.clone(), cx))
                     .when(highlighted, |row| row.child(quick_search_accent_mark()))
                     .on_click(cx.listener(move |view, _, window, cx| {
                         view.activate_quick_result(target.clone(), window, cx)
@@ -472,27 +485,25 @@ impl AppView {
                                 div()
                                     .flex()
                                     .flex_col()
-                                    .flex_1()
-                                    .min_w_0()
+                                    .w(px(text_width))
+                                    .flex_none()
                                     .child(
-                                        div().flex().flex_row().child(
+                                        div().flex().flex_row().flex_1().min_w_0().child(
                                             div()
                                                 .flex_1()
-                                                .min_w_0()
                                                 .truncate()
                                                 .text_size(font::BODY)
-                                                .child(result.title.clone()),
+                                                .child(title),
                                         ),
                                     )
                                     .child(
-                                        div().flex().flex_row().child(
+                                        div().flex().flex_row().flex_1().min_w_0().child(
                                             div()
                                                 .flex_1()
-                                                .min_w_0()
                                                 .truncate()
                                                 .text_size(font::BODY_SM)
                                                 .text_color(dark().text.secondary)
-                                                .child(result.detail.clone()),
+                                                .child(detail),
                                         ),
                                     ),
                             ),
@@ -530,9 +541,7 @@ impl AppView {
         let panel = self
             .quick_search
             .element("quick-search-dialog")
-            .w(px(
-                640.0_f32.min(f32::from(window.viewport_size().width) - 48.0)
-            ))
+            .w(px(panel_width))
             .max_h(window.viewport_size().height * 0.6)
             .flex()
             .flex_col()

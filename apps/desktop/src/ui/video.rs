@@ -1,6 +1,9 @@
 //! Remote video references are edited locally and sent only with the next explicit turn.
 use super::accessibility::{AxRequest, AxRole};
-use super::product_access::{edit_input, PanelAccess};
+use super::product_access::{
+    edit_input, product_action, product_actions, product_error, product_field, product_heading,
+    product_panel, PanelAccess,
+};
 use super::*;
 use gpui::{size, Bounds, WindowBounds, WindowOptions};
 
@@ -23,6 +26,7 @@ impl AppView {
             .map(|v| v.url.as_str())
             .collect::<Vec<_>>()
             .join("\n");
+        let text_scale = self.text_scale;
         let bounds = Bounds::centered(None, size(px(700.0), px(420.0)), cx);
         if let Err(error) = cx.open_window(
             WindowOptions {
@@ -34,6 +38,7 @@ impl AppView {
                 ..Default::default()
             },
             move |window, cx| {
+                window.set_rem_size(px(text_scale.rem_pixels()));
                 cx.new(|cx| {
                     let urls = cx.new(|cx| {
                         let mut field = TextInput::with_placeholder(i18n::t("video.urls"), cx)
@@ -136,16 +141,19 @@ impl Render for VideoView {
         #[cfg(target_os = "macos")]
         install_appkit_tab_monitor(window, cx);
         self.access.begin();
-        let urls = self.access.wrap(
-            "video-urls",
+        let urls = product_field(
             i18n::t("video.urls"),
-            AxRole::TextArea,
-            Some(self.urls.read(cx).text().into()),
-            true,
-            self.urls.focus_handle(cx).is_focused(window),
-            self.urls.clone(),
+            self.access.wrap(
+                "video-urls",
+                i18n::t("video.urls"),
+                AxRole::TextArea,
+                Some(self.urls.read(cx).text().into()),
+                true,
+                self.urls.focus_handle(cx).is_focused(window),
+                self.urls.clone(),
+            ),
         );
-        let mut actions = div().flex().gap_3();
+        let mut actions = product_actions();
         for (i, (id, label)) in [
             ("video-save", "video.save"),
             ("video-cancel", "common.cancel"),
@@ -153,7 +161,7 @@ impl Render for VideoView {
         .iter()
         .enumerate()
         {
-            let button = Button::new(*id)
+            let button = product_action(Button::new(*id))
                 .variant(if i == 0 {
                     ButtonVariant::Primary
                 } else {
@@ -181,6 +189,11 @@ impl Render for VideoView {
             .error
             .clone()
             .unwrap_or_else(|| i18n::t("video.hint").into());
+        let status_body = if let Some(error) = &self.error {
+            product_error(error.clone())
+        } else {
+            div()
+        };
         let status = self.access.wrap(
             "video-status",
             &status,
@@ -188,19 +201,14 @@ impl Render for VideoView {
             None,
             false,
             false,
-            status.clone(),
+            status_body,
         );
         self.access.sync(window, cx, Self::ax_action);
-        div()
-            .id("video-panel")
-            .size_full()
-            .overflow_y_scroll()
-            .flex()
-            .flex_col()
-            .p_4()
-            .gap_3()
-            .bg(dark().bg.base)
-            .text_color(dark().text.primary)
+        product_panel("video-panel")
+            .child(product_heading(
+                i18n::t("video.title"),
+                i18n::t("video.hint"),
+            ))
             .child(status)
             .child(urls)
             .child(actions)

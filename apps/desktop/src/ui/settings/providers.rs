@@ -2490,20 +2490,20 @@ impl AppView {
                 .entry(chip_id.clone())
                 .or_insert_with(|| cx.focus_handle().tab_stop(true))
                 .clone();
-            let variant = if selected_chip {
-                ButtonVariant::Primary
-            } else {
-                ButtonVariant::Raised
-            };
             let click_id = chip_id.clone();
             let activate_id = chip_id.clone();
             let chip = Button::new(chip_id.clone())
                 .track_focus(&focus)
-                .variant(variant)
+                .variant(ButtonVariant::Raised)
                 .height(px(SETTINGS_MODEL_EFFORT_CHIP_HEIGHT))
                 .radius(6.0)
                 .text_size(font::XS)
                 .label(level.clone())
+                .text_color(if selected_chip {
+                    dark().accent.primary
+                } else {
+                    dark().text.secondary
+                })
                 .tooltip(t("settings.providers.effort_range_tooltip"))
                 .disabled(!enabled)
                 .on_click(cx.listener(move |view, event, _window, cx| {

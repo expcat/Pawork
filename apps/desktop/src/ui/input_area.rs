@@ -193,9 +193,13 @@ pub(super) fn composer_model_menu_groups(
         .collect()
 }
 
-/// 模型触发器宽 = 名称 + 箭头 + 内边距，钳在命中区与 220 上限之间。
-/// Taffy 会把仅有 max_width 的 auto 行撑满上限，必须给明确内容宽。
-fn composer_model_chip_width(window: &Window, label: &str) -> f32 {
+fn composer_chip_chrome(window: &Window) -> f32 {
+    // ButtonPadding::Normal 是 px_2（左右各 0.5rem），加上文字与箭头间距、图标。
+    let pad_x = f32::from(window.rem_size()) * 0.5 * 2.0;
+    pad_x + metrics::SPACE_2 + metrics::ICON_SM
+}
+
+fn shape_label_width(window: &Window, label: &str, size: gpui::Rems) -> f32 {
     let style = window.text_style();
     let text = if label.is_empty() { " " } else { label };
     let run = TextRun {
@@ -206,24 +210,64 @@ fn composer_model_chip_width(window: &Window, label: &str) -> f32 {
         underline: None,
         strikethrough: None,
     };
-    let text_w = f32::from(
+    f32::from(
         window
             .text_system()
             .shape_line(
                 SharedString::from(text.to_string()),
-                font::BASE.to_pixels(window.rem_size()),
+                size.to_pixels(window.rem_size()),
                 &[run],
                 None,
             )
             .width,
-    );
-    let pad_x = f32::from(window.rem_size()) * 0.5 * 2.0;
-    (text_w + pad_x + metrics::SPACE_2 + metrics::ICON_SM)
+    )
+}
+
+/// 模型触发器宽 = 名称 + 箭头 + 内边距，钳在命中区与 220 上限之间。
+/// Taffy 会把仅有 max_width 的 auto 行撑满上限，必须给明确内容宽。
+fn composer_model_chip_width(window: &Window, label: &str) -> f32 {
+    (shape_label_width(window, label, font::BASE) + composer_chip_chrome(window))
         .ceil()
         .clamp(
             metrics::COMPOSER_FOOTER_CONTROL,
             metrics::COMPOSER_MODEL_WIDTH,
         )
+}
+
+/// 长名称在 220 上限内带省略号。按钮 overflow 会把超宽 nowrap 文本硬切，
+/// 且 gpui 在宽度未定时不补省略号；这里按当前字号先收成放得下的字符串。
+/// tooltip 与 AX 仍用完整 model_label，不读这个可见文案。
+fn composer_model_chip_text(window: &Window, label: &str) -> String {
+    let budget = (metrics::COMPOSER_MODEL_WIDTH - composer_chip_chrome(window)).max(1.0);
+    ellipsized_label(window, label, budget, font::BASE)
+}
+
+/// 在给定可见宽度内测量省略号；完整值由调用方保留给 tooltip / AX。
+pub(super) fn ellipsized_label(
+    window: &Window,
+    label: &str,
+    budget: f32,
+    size: gpui::Rems,
+) -> String {
+    if label.is_empty() || shape_label_width(window, label, size) <= budget {
+        return label.to_string();
+    }
+    let chars: Vec<char> = label.chars().collect();
+    let mut best = "…".to_string();
+    let mut low = 0usize;
+    let mut high = chars.len();
+    while low < high {
+        let mid = (low + high + 1) / 2;
+        let mut candidate: String = chars[..mid].iter().collect();
+        candidate.push('…');
+        if shape_label_width(window, &candidate, size) <= budget {
+            best = candidate;
+            low = mid;
+        } else {
+            high = mid - 1;
+        }
+    }
+    best
 }
 
 /// Composer 模型行只画一行：`display_name`，空则回落 id。raw id 不另占行。
@@ -539,7 +583,8 @@ impl AppView {
         };
         let model_focus = self.model_focus.clone();
         let model_label = self.model_label();
-        let model_chip_width = composer_model_chip_width(window, &model_label);
+        let model_visible = composer_model_chip_text(window, &model_label);
+        let model_chip_width = composer_model_chip_width(window, &model_visible);
         let mut model_button = Button::new("model-picker")
             .track_focus(&model_focus)
             .variant(ButtonVariant::Raised)
@@ -552,7 +597,14 @@ impl AppView {
                     .min_w_0()
                     .items_center()
                     .gap(px(metrics::SPACE_2))
-                    .child(div().truncate().child(model_label))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .flex_1()
+                            .min_w_0()
+                            .child(div().truncate().child(model_visible)),
+                    )
                     .child(
                         div()
                             .flex_none()
@@ -729,12 +781,9 @@ impl AppView {
             send.into_any_element()
         };
 
-        let options = self.current_composer_options();
         // 附件读取失败也占一行（RV-03）：无附件时错误行同样需要渲染。
-        let has_options = !options.attachments.is_empty()
-            || !options.video_urls.is_empty()
-            || options.web_search.is_some()
-            || options.attachment_error.is_some();
+        // 发送失败与附件共用上方 96px 可滚动区，避免在动作行再挤一条不可读单行。
+        let has_options = self.composer_options_visible();
         let attachments = self.composer_attachments_element(cx);
         let card = div()
             .id("composer-card")
@@ -928,12 +977,7 @@ impl AppView {
     }
 
     pub(super) fn composer_options_height(&self) -> f32 {
-        let options = self.current_composer_options();
-        if options.attachments.is_empty()
-            && options.video_urls.is_empty()
-            && options.web_search.is_none()
-            && options.attachment_error.is_none()
-        {
+        if !self.composer_options_visible() {
             return 0.0;
         }
         self.settings_element_layouts
@@ -941,6 +985,17 @@ impl AppView {
             .map(|handle| f32::from(handle.bounds().size.height))
             .unwrap_or(0.0)
             + metrics::COMPOSER_GAP
+    }
+
+    /// 附件、视频、搜索、读取失败或发送失败任一存在时，卡片上方选项区可见。
+    /// 高度取 composer-attachments 的实测框，上限仍是该区既有 96px 滚动。
+    fn composer_options_visible(&self) -> bool {
+        let options = self.current_composer_options();
+        !options.attachments.is_empty()
+            || !options.video_urls.is_empty()
+            || options.web_search.is_some()
+            || options.attachment_error.is_some()
+            || self.current_composer_send_error().is_some()
     }
 
     pub(super) fn composer_outer_height(&self, input_height: f32, window: &Window) -> f32 {

@@ -1,6 +1,9 @@
 //! Explicit goal controls; closing the panel does not stop the Host's goal.
 use super::accessibility::{AxRequest, AxRole};
-use super::product_access::{edit_input, PanelAccess};
+use super::product_access::{
+    edit_input, product_action, product_actions, product_error, product_field, product_heading,
+    product_note, product_panel, PanelAccess,
+};
 use super::*;
 use gpui::{size, Bounds, WindowBounds, WindowOptions};
 use pawork_client::{AppCommand, AppQuery};
@@ -24,6 +27,7 @@ impl AppView {
             return;
         };
         let controller = self.controller.clone();
+        let text_scale = self.text_scale;
         let bounds = Bounds::centered(None, size(px(760.0), px(680.0)), cx);
         if let Err(error) = cx.open_window(
             WindowOptions {
@@ -34,7 +38,8 @@ impl AppView {
                 }),
                 ..Default::default()
             },
-            move |_, cx| {
+            move |window, cx| {
+                window.set_rem_size(px(text_scale.rem_pixels()));
                 cx.new(|cx| {
                     let fields = std::array::from_fn(|i| {
                         cx.new(|cx| {
@@ -312,6 +317,16 @@ impl Render for GoalView {
         #[cfg(target_os = "macos")]
         install_appkit_tab_monitor(window, cx);
         self.access.begin();
+        let mut status_body = div()
+            .flex()
+            .flex_col()
+            .flex_none()
+            .gap_2()
+            .w_full()
+            .child(product_note(self.summary.clone()));
+        if let Some(error) = &self.error {
+            status_body = status_body.child(product_error(error.clone()));
+        }
         let status = format!("{}\n{}", self.summary, self.error.as_deref().unwrap_or(""));
         let status = self.access.wrap(
             "goal-status",
@@ -320,20 +335,11 @@ impl Render for GoalView {
             None,
             false,
             false,
-            status.clone(),
+            status_body,
         );
-        let mut body = div()
-            .id("goal-panel")
-            .size_full()
-            .overflow_y_scroll()
-            .flex()
-            .flex_col()
-            .gap_3()
-            .p_4()
-            .bg(dark().bg.base)
-            .text_color(dark().text.primary)
-            .child(status)
-            .child(i18n::t("goal.hint"));
+        let mut body = product_panel("goal-panel")
+            .child(product_heading(i18n::t("goal.title"), i18n::t("goal.hint")))
+            .child(status);
         for (i, label) in [
             "goal.objective",
             "goal.criteria",
@@ -344,7 +350,7 @@ impl Render for GoalView {
         .iter()
         .enumerate()
         {
-            body = body.child(self.access.wrap(
+            let field = self.access.wrap(
                 &format!("goal-field-{i}"),
                 i18n::t(label),
                 AxRole::TextArea,
@@ -352,9 +358,10 @@ impl Render for GoalView {
                 true,
                 self.fields[i].focus_handle(cx).is_focused(window),
                 self.fields[i].clone(),
-            ));
+            );
+            body = body.child(product_field(i18n::t(label), field));
         }
-        let mut actions = div().flex().flex_wrap().gap_2();
+        let mut actions = product_actions();
         for (i, label) in [
             "plan.refresh",
             "goal.start",
@@ -369,7 +376,7 @@ impl Render for GoalView {
         {
             let enabled = self.enabled(i);
             let focus = self.focus[i].clone().tab_stop(enabled);
-            let button = Button::new(format!("goal-action-{i}"))
+            let button = product_action(Button::new(format!("goal-action-{i}")))
                 .label(i18n::t(label))
                 .variant(if matches!(i, 1 | 3) {
                     ButtonVariant::Primary

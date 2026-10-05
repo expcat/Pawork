@@ -578,6 +578,9 @@ pub struct AppView {
     composer_options: HashMap<Option<String>, crate::controller::ComposerOptions>,
     composer_loading: bool,
     composer_sending: bool,
+    /// 发送失败归属于发起请求的草稿，切换任务后不串到当前输入区。
+    composer_send_target: Option<String>,
+    composer_send_errors: HashMap<Option<String>, String>,
     /// RV-01：当前打开的附件预览 =（会话, 附件 id）；会话不匹配或附件已
     /// 移除时不渲染，切换任务不受影响。
     composer_attachment_preview: Option<(Option<String>, String)>,
@@ -730,6 +733,8 @@ pub struct AppView {
     inspector_approval_focus: FocusHandle,
     changes_tab_focus: [FocusHandle; 2],
     changes_refresh_focus: FocusHandle,
+    changes_diff_scroll_left_focus: FocusHandle,
+    changes_diff_scroll_right_focus: FocusHandle,
     changes_file_focus: BTreeMap<String, FocusHandle>,
     resources_refresh_focus: FocusHandle,
     subagent_chips_scroll: ScrollHandle,
@@ -971,6 +976,8 @@ impl AppView {
             composer_options: HashMap::new(),
             composer_loading: false,
             composer_sending: false,
+            composer_send_target: None,
+            composer_send_errors: HashMap::new(),
             composer_attachment_preview: None,
             composer_attachment_images: HashMap::new(),
             composer_drafts: HashMap::new(),
@@ -1146,6 +1153,14 @@ impl AppView {
                     .tab_index(INSPECTOR_TAB_INDEX)
             }),
             changes_refresh_focus: cx
+                .focus_handle()
+                .tab_stop(true)
+                .tab_index(INSPECTOR_TAB_INDEX),
+            changes_diff_scroll_left_focus: cx
+                .focus_handle()
+                .tab_stop(true)
+                .tab_index(INSPECTOR_TAB_INDEX),
+            changes_diff_scroll_right_focus: cx
                 .focus_handle()
                 .tab_stop(true)
                 .tab_index(INSPECTOR_TAB_INDEX),
@@ -2109,6 +2124,7 @@ impl AppView {
             }
             ControllerEvent::SessionCreated { session_id } => {
                 if let Some(pending) = self.pending_home_send.take() {
+                    self.composer_send_target = Some(session_id.clone());
                     self.composer_drafts
                         .insert(session_id.clone(), pending.text.clone());
                     self.no_session_draft.clear();
@@ -2333,6 +2349,8 @@ impl AppView {
                 text,
             } => {
                 self.composer_sending = false;
+                self.composer_send_target = None;
+                self.composer_send_errors.remove(&Some(session_id.clone()));
                 self.composer_options.remove(&Some(session_id.clone()));
                 let now = now_unix_ms();
                 self.projection.note_session_run(&session_id, &run_id, now);
@@ -2604,6 +2622,9 @@ impl AppView {
                     .apply_auth_started(&provider_id, data);
             }
             ControllerEvent::OperationFailed { action, reason } => {
+                let composer_failed = self.composer_sending
+                    && (action == "send message"
+                        || (action == "create session" && self.pending_home_send.is_some()));
                 if action == "load provider status" {
                     self.projection
                         .settings_providers
@@ -2700,10 +2721,16 @@ impl AppView {
                 if action == "create session" {
                     self.pending_home_send = None;
                 }
-                if action == "create session" || action == "send message" {
+                if composer_failed {
+                    self.composer_send_errors
+                        .insert(self.composer_send_target.take(), reason.clone());
                     self.composer_sending = false;
                 }
-                self.status_hint = Some(i18n::t2("status.action_failed", &action, &reason));
+                self.status_hint = Some(if composer_failed {
+                    i18n::t("composer.send_failed").to_string()
+                } else {
+                    i18n::t2("status.action_failed", &action, &reason)
+                });
             }
             ControllerEvent::SessionOpenFailed { session_id, reason } => {
                 // 分页复位按 session 匹配：A→B 快切时 A 的迟到失败不得
@@ -3444,6 +3471,16 @@ impl AppView {
             Some("inspector-expand")
         } else if self.changes_refresh_focus.is_focused(window) && activate {
             Some("changes-refresh")
+        } else if self.changes_diff_scroll_left_focus.is_focused(window)
+            && activate
+            && changes::diff_horizontal_ends(&self.changes.diff_scroll).0
+        {
+            Some("changes-diff-scroll-left")
+        } else if self.changes_diff_scroll_right_focus.is_focused(window)
+            && activate
+            && changes::diff_horizontal_ends(&self.changes.diff_scroll).1
+        {
+            Some("changes-diff-scroll-right")
         } else if self.resources_refresh_focus.is_focused(window) && activate {
             Some("resources-refresh")
         } else if self.terminal_back_to_bottom_focus.is_focused(window) && activate {
@@ -3468,6 +3505,8 @@ impl AppView {
             "inspector-toggle" => self.toggle_menu(MenuKind::Activity, None, cx),
             "inspector-expand" => self.on_toggle_inspector(window, cx),
             "changes-refresh" => self.refresh_changes(cx),
+            "changes-diff-scroll-left" => self.scroll_diff_horizontal(-1.0, cx),
+            "changes-diff-scroll-right" => self.scroll_diff_horizontal(1.0, cx),
             "resources-refresh" => self.refresh_resources(cx),
             "terminal-back-to-bottom" => {
                 self.terminal_scroll.jump_to_bottom();
@@ -4860,6 +4899,9 @@ impl AppView {
             return;
         }
         self.composer_sending = true;
+        self.status_hint = None;
+        self.composer_send_errors
+            .remove(&self.projection.active_session_id);
         let model = self.projection.effective_model().cloned();
         // ADR-063：显式选择的推理强度随本轮 RunStart 发出；None（自动）
         // 省略，Host 回落模型默认。
@@ -4873,10 +4915,13 @@ impl AppView {
             unstarted.as_deref(),
         ) {
             HomeSendPlan::ActiveSession(session_id) => {
+                self.composer_send_target = Some(session_id.clone());
                 self.controller
                     .send_message(session_id, text, model, effort, options);
             }
             HomeSendPlan::ReuseUnstarted(session_id) => {
+                self.composer_send_target = Some(session_id.clone());
+                self.composer_send_errors.remove(&Some(session_id.clone()));
                 self.composer_drafts
                     .insert(session_id.clone(), text.clone());
                 self.no_session_draft.clear();
@@ -4888,6 +4933,7 @@ impl AppView {
                     .send_message(session_id, text, model, effort, options);
             }
             HomeSendPlan::CreateUnassigned => {
+                self.composer_send_target = None;
                 self.pending_home_send = Some(PendingHomeSend {
                     text,
                     model,

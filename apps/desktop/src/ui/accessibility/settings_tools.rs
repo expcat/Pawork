@@ -6,8 +6,8 @@ use super::{dynamic_identifier, AxAction, AxNode, AxRect, AxRole};
 use crate::projection::ConnectionState;
 use crate::ui::i18n::t;
 use crate::ui::settings::{
-    settings_mcp_effect_note, settings_mcp_remove_confirm_note, tools_status_lines,
-    SettingsMcpAction,
+    settings_mcp_effect_note, settings_mcp_remove_confirm_note, settings_mcp_state_label,
+    tools_status_lines, SettingsMcpAction,
 };
 use crate::ui::AppView;
 
@@ -85,7 +85,7 @@ impl AppView {
             )
             .value(
                 t("settings.tools.ax_server_summary")
-                    .replacen("{}", &server.state.to_string(), 1)
+                    .replacen("{}", &settings_mcp_state_label(&server.state), 1)
                     .replacen("{}", &server.transport.to_string(), 1)
                     .replacen("{}", &server.tool_count.to_string(), 1),
             );

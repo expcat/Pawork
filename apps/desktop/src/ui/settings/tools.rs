@@ -75,9 +75,8 @@ impl AppView {
         content
     }
 
-    /// 单个 MCP server 卡片（SET-6c）：清单行复用 Resources 的渲染形状
-    /// （name + state / transport · tools · last_error），动作行含 Test /
-    /// Remove（Remove 走两步确认）。
+    /// 单个 MCP server 卡片（SET-6c）：name + 本地化状态，transport 与工具数
+    /// 在下一行，last_error 再单独换行。动作行含 Test / Remove（两步确认）。
     pub(super) fn settings_mcp_server_card(
         &mut self,
         ix: usize,
@@ -102,14 +101,8 @@ impl AppView {
                 dark().border.subtle
             })
             .bg(dark().surface.raised)
-            .child(mcp_server_name_row(server))
-            .child(
-                div()
-                    .whitespace_normal()
-                    .text_size(font::BASE)
-                    .text_color(dark().text.secondary)
-                    .child(mcp_server_meta_text(server)),
-            );
+            .child(settings_mcp_server_heading(server))
+            .child(settings_mcp_server_details(server));
         if confirming {
             card = card.child(status_line(
                 settings_mcp_remove_confirm_note(),
@@ -230,5 +223,79 @@ impl AppView {
             .servers
             .iter()
             .any(|server| server.name == name)
+    }
+}
+
+fn settings_mcp_server_heading(server: &McpServerEntry) -> gpui::Div {
+    let failed = server.state == "failed";
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .justify_between()
+        .gap_2()
+        .child(
+            div().flex().flex_row().flex_1().min_w_0().child(
+                div()
+                    .truncate()
+                    .text_size(font::SM)
+                    .text_color(dark().text.primary)
+                    .child(server.name.clone()),
+            ),
+        )
+        .child(
+            Label::new(settings_mcp_state_label(&server.state))
+                .size(font::XS)
+                .color(if failed {
+                    dark().semantic.danger_text
+                } else {
+                    dark().text.secondary
+                }),
+        )
+}
+
+fn settings_mcp_server_details(server: &McpServerEntry) -> gpui::Div {
+    let tools = t("resources.tool_count").replace("{}", &server.tool_count.to_string());
+    let summary = format!("{} · {}", server.transport, tools);
+    let mut details = div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .w_full()
+        .child(settings_mcp_wrapped(summary, dark().text.secondary));
+    if let Some(error) = nonempty_mcp_error(server) {
+        details = details.child(settings_mcp_wrapped(
+            error.to_string(),
+            dark().semantic.danger_text,
+        ));
+    }
+    details
+}
+
+fn nonempty_mcp_error(server: &McpServerEntry) -> Option<&str> {
+    server
+        .last_error
+        .as_deref()
+        .filter(|error| !error.is_empty())
+}
+
+fn settings_mcp_wrapped(text: String, color: gpui::Rgba) -> gpui::Div {
+    div()
+        .w_full()
+        .whitespace_normal()
+        .text_size(font::SM)
+        .line_height(gpui::rems(1.4))
+        .text_color(color)
+        .child(text)
+}
+
+pub(in crate::ui) fn settings_mcp_state_label(state: &str) -> String {
+    match state {
+        "failed" => t("subagents.status.failed").to_string(),
+        "connected" => t("settings.advanced.connected").to_string(),
+        "connecting" => t("connection.connecting").to_string(),
+        "disconnected" => t("settings.tools.state_disconnected").to_string(),
+        "configured" => t("settings.tools.state_configured").to_string(),
+        _ => state.to_string(),
     }
 }

@@ -7,7 +7,9 @@ use gpui::{
 };
 
 use super::accessibility::{AxRequest, AxRole};
-use super::product_access::PanelAccess;
+use super::product_access::{
+    product_action, product_actions, product_error, product_heading, product_panel, PanelAccess,
+};
 
 const WIDTH: usize = 640;
 const HEIGHT: usize = 360;
@@ -29,11 +31,12 @@ impl AppView {
     pub(super) fn open_drawing(&mut self, cx: &mut Context<Self>) {
         let owner = cx.entity().downgrade();
         let draft = self.projection.active_session_id.clone();
-        let bounds = Bounds::centered(None, size(px(680.0), px(480.0)), cx);
+        let text_scale = self.text_scale;
+        let bounds = Bounds::centered(None, size(px(720.0), px(640.0)), cx);
         if let Err(error) = cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
-                window_min_size: Some(size(px(680.0), px(480.0))),
+                window_min_size: Some(size(px(720.0), px(480.0))),
                 titlebar: Some(gpui::TitlebarOptions {
                     title: Some(i18n::t("drawing.title").into()),
                     ..Default::default()
@@ -41,6 +44,7 @@ impl AppView {
                 ..Default::default()
             },
             move |window, cx| {
+                window.set_rem_size(px(text_scale.rem_pixels()));
                 cx.new(|cx| {
                     let focus = std::array::from_fn(|_| cx.focus_handle().tab_stop(true));
                     window.focus(&focus[0]);
@@ -120,7 +124,7 @@ impl Render for Drawing {
         #[cfg(target_os = "macos")]
         install_appkit_tab_monitor(window, cx);
         self.access.begin();
-        let mut actions = div().flex().gap_3();
+        let mut actions = product_actions();
         for (index, (id, label)) in [
             ("drawing-undo", "drawing.undo"),
             ("drawing-clear", "drawing.clear"),
@@ -132,7 +136,7 @@ impl Render for Drawing {
         {
             let enabled = index == 3 || !self.strokes.is_empty();
             let focus = self.focus[index].clone().tab_stop(enabled);
-            let button = Button::new(*id)
+            let button = product_action(Button::new(*id))
                 .variant(if index == 2 {
                     ButtonVariant::Primary
                 } else {
@@ -163,6 +167,11 @@ impl Render for Drawing {
             .error
             .clone()
             .unwrap_or_else(|| i18n::t("drawing.hint").into());
+        let hint_body = if let Some(error) = &self.error {
+            product_error(error.clone())
+        } else {
+            div()
+        };
         let hint = self.access.wrap(
             "drawing-status",
             &hint,
@@ -170,18 +179,15 @@ impl Render for Drawing {
             None,
             false,
             false,
-            hint.clone(),
+            hint_body,
         );
         self.access.sync(window, cx, Self::ax_action);
         let strokes = self.strokes.clone();
-        div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .gap_3()
-            .p_4()
-            .bg(dark().bg.base)
-            .text_color(dark().text.primary)
+        product_panel("drawing-panel")
+            .child(product_heading(
+                i18n::t("drawing.title"),
+                i18n::t("drawing.hint"),
+            ))
             .child(hint)
             .child(
                 div()

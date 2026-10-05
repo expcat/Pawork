@@ -416,6 +416,8 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             "无法加载 MCP 服务器 · {}",
         ),
         "settings.tools.status_empty" => ("No MCP servers configured.", "尚未配置 MCP 服务器。"),
+        "settings.tools.state_configured" => ("Configured", "已配置"),
+        "settings.tools.state_disconnected" => ("Disconnected", "已断开"),
         "settings.tools.action_test" => ("Test", "测试"),
         "settings.tools.action_remove" => ("Remove", "移除"),
         "settings.tools.action_confirm_remove" => ("Confirm remove", "确认移除"),
@@ -579,6 +581,7 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         ),
         "subagents.task_from_main" => ("Main agent → subagent", "主代理 → 子代理"),
         "subagents.result_to_main" => ("Subagent → main agent", "子代理 → 主代理"),
+        "subagents.result_in_transcript" => ("The result is shown in the reply above.", "回执内容见上方子代理回复。"),
         "subagents.assistant_label" => ("Subagent", "子代理"),
         "subagents.thinking_label" => ("Thinking", "思考"),
         "subagents.load_failed" => (
@@ -935,6 +938,8 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         ),
         "composer.search_hint" => ("Toggle web search for this message", "切换本轮网络搜索"),
         "composer.search_on" => ("Web search · On", "网络搜索 · 开启"),
+        "composer.send_failed" => ("Message could not be sent", "消息发送失败"),
+        "composer.send_failed_reason" => ("Message could not be sent: {}", "消息发送失败：{}"),
         "composer.search_off" => ("Web search · Off", "网络搜索 · 关闭"),
         "composer.remove_attachment" => ("Remove attachment", "移除附件"),
         "composer.preview_attachment" => ("Preview attachment", "预览附件"),
@@ -1277,6 +1282,15 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             "运行已完成。请审阅本轮的变更。",
         ),
         "run.footer_completed" => ("Run completed", "运行已完成"),
+        "run.phase_started" => ("Run started", "运行已开始"),
+        "run.phase_preparing_context" => ("Preparing context", "正在准备上下文"),
+        "run.phase_waiting_for_provider" => ("Waiting for provider", "正在等待供应商"),
+        "run.phase_streaming_response" => ("Generating response", "正在生成回复"),
+        "run.phase_collecting_tool_calls" => ("Collecting tool calls", "正在收集工具调用"),
+        "run.phase_waiting_for_approval" => ("Waiting for approval", "正在等待审批"),
+        "run.phase_executing_tools" => ("Executing tools", "正在执行工具"),
+        "run.phase_appending_tool_results" => ("Appending tool results", "正在追加工具结果"),
+        "run.phase_interrupted" => ("Run interrupted", "运行已中断"),
         "run.completed_desc" => ("The run finished.", "运行已完成。"),
         "run.footer_cancelled" => ("Run cancelled", "运行已取消"),
         "run.cancelled_desc" => (
@@ -1339,6 +1353,16 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             "Open a task to inspect its changes.",
             "打开任务后即可查看其变更。",
         ),
+        "changes.no_latest_result" => (
+            "No latest task changes from the Host.",
+            "Host 没有返回最近任务的变更。",
+        ),
+        "changes.no_latest_result_desc" => (
+            "This task is open, but the Host has no latest-session diff.",
+            "任务已打开，但 Host 最近任务变更为空或不可用。",
+        ),
+        "changes.scroll_left" => ("Scroll diff left", "向左浏览差异"),
+        "changes.scroll_right" => ("Scroll diff right", "向右浏览差异"),
         "changes.empty" => ("No changes in this session yet.", "本次会话还没有变更。"),
         "changes.empty_desc" => (
             "This session has not reported file changes.",
@@ -1384,6 +1408,7 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             "当前 Pawork 服务没有可用的服务器。",
         ),
         "resources.error_title" => ("Couldn’t load resources", "无法加载资源"),
+        "common.stale_data" => ("Stale data", "旧数据"),
         "common.placeholder_no_details" => {
             ("No additional details are available.", "暂无更多详情。")
         }

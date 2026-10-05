@@ -1,6 +1,6 @@
 # Desktop 产品与交互规格
 
-> 更新：2026-10-04。现行视觉与交互合同见 [GUI 设计](../gui-design.md)，未闭合验收见 [ROADMAP](../ROADMAP.md)，工程约定见 [AGENTS.md](../../AGENTS.md)。
+> 更新：2026-10-05。现行视觉与交互合同见 [GUI 设计](../gui-design.md)，未闭合验收见 [ROADMAP](../ROADMAP.md)，工程约定见 [AGENTS.md](../../AGENTS.md)。
 
 ## ADR-057：UI-3 思考投影与会话身份（2026-09-08）
 
@@ -104,6 +104,8 @@ flowchart LR
 - Changes 文件行使用稳定前后槽；DiffView 的只读路径 header 位于横滚外，24px 语义 gutter 与中性正文分离；ActivityPopover 内容宽 320px，内容高随 100%/125%/150% 为 144/180/216px，外框包含 8px padding 与 1px border，摘要可见且保持 capability honesty。
 
 UI-5 设置壳与七个非供应商页沿用 UI-1 token，改为 40px 导航、36px 动作与全宽分区布局；页内命中框按 GPUI 实际布局和滚动视口同步，离屏项不暴露动作。原有设置持久化、可用性与断线 gate 不变，供应商页产品改动属于 UI-6。规格见 [GUI 设计 UI-5](../gui-design.md#ui-5-设置更新2026-09-08)。
+
+长模型名与搜索结果保留完整 tooltip / AX；发送错误归发起草稿，重试 / 成功清除。MCP 状态、Changes 横向浏览、子代理回执和辅助窗口的显示合同见 [GUI 设计](../gui-design.md)，行为回归见 [desktop crate](crates/desktop.md#7-测试与验证资产)。
 
 ## 5. 键盘、IME 与可访问性
 

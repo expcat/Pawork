@@ -11,6 +11,7 @@ use crate::ui::components::icon::{icon_sized, Icon};
 use crate::ui::components::label::Label;
 use crate::ui::components::skeleton::loading_skeleton;
 use crate::ui::i18n::t;
+use crate::ui::settings::settings_mcp_state_label;
 use crate::ui::theme::{dark, font, metrics};
 
 use super::AppView;
@@ -109,8 +110,7 @@ impl ResourcesPanelState {
     }
 }
 
-/// MCP server 清单行头（name + state；Inspector Resources 与 Settings
-/// 「工具与 MCP」页共用同一渲染形状）。
+/// MCP server 清单行头（name + 本地化状态）。
 pub(super) fn mcp_server_name_row(server: &McpServerEntry) -> gpui::Div {
     div()
         .flex()
@@ -128,7 +128,7 @@ pub(super) fn mcp_server_name_row(server: &McpServerEntry) -> gpui::Div {
                 .child(server.name.clone()),
         )
         .child(
-            Label::new(server.state.clone())
+            Label::new(settings_mcp_state_label(&server.state))
                 .size(font::XS)
                 .color(if server.state == "failed" {
                     dark().semantic.danger_text
@@ -138,17 +138,13 @@ pub(super) fn mcp_server_name_row(server: &McpServerEntry) -> gpui::Div {
         )
 }
 
-/// MCP server 清单行 meta 文案（transport · tools 数 · last_error）。
+/// MCP server 清单行 meta 文案（transport · tools 数）；错误独立换行显示。
 pub(super) fn mcp_server_meta_text(server: &McpServerEntry) -> String {
-    let mut meta = format!(
+    format!(
         "{} · {}",
         server.transport,
         t("resources.tool_count").replace("{}", &server.tool_count.to_string())
-    );
-    if let Some(error) = &server.last_error {
-        meta.push_str(&format!(" · {error}"));
-    }
-    meta
+    )
 }
 
 impl AppView {
@@ -205,14 +201,29 @@ impl AppView {
                         .track_scroll(&self.resources.scroll)
                         .overflow_y_scroll();
                     for server in &self.resources.servers {
-                        list = list.child(mcp_server_name_row(server).px_2().pt_2()).child(
-                            div()
-                                .px_2()
-                                .pb_2()
-                                .text_size(font::XS)
-                                .text_color(dark().text.tertiary)
-                                .child(mcp_server_meta_text(server)),
-                        );
+                        let row = div()
+                            .px_2()
+                            .py_2()
+                            .child(mcp_server_name_row(server))
+                            .child(
+                                div()
+                                    .w_full()
+                                    .whitespace_normal()
+                                    .text_size(font::XS)
+                                    .text_color(dark().text.tertiary)
+                                    .child(mcp_server_meta_text(server)),
+                            )
+                            .when_some(server.last_error.clone(), |row, error| {
+                                row.child(
+                                    div()
+                                        .w_full()
+                                        .whitespace_normal()
+                                        .text_size(font::SM)
+                                        .text_color(dark().semantic.danger_text)
+                                        .child(error),
+                                )
+                            });
+                        list = list.child(row);
                     }
                     list.into_any_element()
                 }
@@ -233,7 +244,7 @@ impl AppView {
                         .border_color(dark().semantic.warning_text)
                         .text_size(font::XS)
                         .text_color(dark().semantic.warning_text)
-                        .child(format!("Stale data · {reason}")),
+                        .child(format!("{} · {reason}", t("common.stale_data"))),
                 )
             })
             .child(body)

@@ -6,6 +6,12 @@ use crate::controller::{ComposerAttachment, ComposerAttachmentError, ComposerOpt
 const PREVIEW_TEXT_LIMIT: usize = 4 * 1024;
 
 impl AppView {
+    pub(super) fn current_composer_send_error(&self) -> Option<&str> {
+        self.composer_send_errors
+            .get(&self.projection.active_session_id)
+            .map(String::as_str)
+    }
+
     pub(super) fn current_composer_options(&self) -> ComposerOptions {
         self.composer_options
             .get(&self.projection.active_session_id)
@@ -569,6 +575,21 @@ impl AppView {
                         .child(div().text_color(dark().semantic.danger_text).child(message)),
                 ),
             );
+        }
+        if let Some(error) = self.current_composer_send_error() {
+            let message = i18n::t("composer.send_failed_reason").replace("{}", error);
+            row =
+                row.child(
+                    self.settings_element("composer-send-error")
+                        .w_full()
+                        .flex()
+                        .flex_row()
+                        .child(
+                            div().flex().flex_row().flex_1().min_w_0().child(
+                                div().text_color(dark().semantic.danger_text).child(message),
+                            ),
+                        ),
+                );
         }
         row
     }

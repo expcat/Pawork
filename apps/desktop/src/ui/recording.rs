@@ -1,6 +1,9 @@
 //! Skills are recorded from durable operations; plugin records stay distinct from MCP.
 use super::accessibility::{AxRequest, AxRole};
-use super::product_access::{edit_input, PanelAccess};
+use super::product_access::{
+    edit_input, product_error, product_field, product_heading, product_note, product_panel,
+    PanelAccess,
+};
 use super::*;
 use gpui::AnyElement;
 use gpui::{size, Bounds, WindowBounds, WindowOptions};
@@ -22,6 +25,7 @@ struct RecordingView {
     busy: bool,
     preview_ready: bool,
     message: String,
+    message_error: bool,
     focus: HashMap<String, FocusHandle>,
 }
 impl AppView {
@@ -30,6 +34,7 @@ impl AppView {
         let session = self.projection.active_session_id.clone();
         let workspace = self.projection.active_workspace_id().map(str::to_owned);
         let owner = cx.entity().downgrade();
+        let text_scale = self.text_scale;
         let bounds = Bounds::centered(None, size(px(760.0), px(740.0)), cx);
         if let Err(error) = cx.open_window(
             WindowOptions {
@@ -47,7 +52,8 @@ impl AppView {
                 }),
                 ..Default::default()
             },
-            move |_, cx| {
+            move |window, cx| {
+                window.set_rem_size(px(text_scale.rem_pixels()));
                 cx.new(|cx| {
                     let name = cx.new(|cx| {
                         TextInput::with_placeholder(i18n::t("record.name"), cx)
@@ -81,6 +87,7 @@ impl AppView {
                         busy: false,
                         preview_ready: false,
                         message: String::new(),
+                        message_error: false,
                         focus: HashMap::new(),
                     };
                     view.refresh(cx);
@@ -104,13 +111,17 @@ impl RecordingView {
         }
         self.busy = true;
         self.message.clear();
+        self.message_error = false;
         let task = self.controller.product_request(request);
         cx.spawn(async move |this, cx| {
             let result = task.await.unwrap_or_else(|e| Err(e.to_string()));
             let _ = this.update(cx, |view, cx| {
                 view.busy = false;
                 match result {
-                    Err(error) => view.message = error,
+                    Err(error) => {
+                        view.message = error;
+                        view.message_error = true;
+                    }
                     Ok(data) if saving => {
                         view.message = format!(
                             "{} {}",
@@ -124,6 +135,7 @@ impl RecordingView {
                             view.message = i18n::t("record.plugins_empty").into();
                         } else {
                             view.message = "Invalid plugin response".into();
+                            view.message_error = true;
                         }
                     }
                     Ok(data) => {
@@ -143,11 +155,12 @@ impl RecordingView {
                             } else if view.operations.is_empty() {
                                 i18n::t("record.empty")
                             } else {
-                                i18n::t("record.hint")
+                                ""
                             }
                             .into();
                         } else {
                             view.message = "Invalid recording response".into();
+                            view.message_error = true;
                         }
                     }
                 }
@@ -173,6 +186,7 @@ impl RecordingView {
             );
         } else {
             self.message = i18n::t("record.session_required").into();
+            self.message_error = false;
         }
     }
     fn action(&mut self, id: &str, cx: &mut Context<Self>) {
@@ -243,6 +257,9 @@ impl RecordingView {
                     ButtonVariant::Raised
                 },
             )
+            .height(px(metrics::ICON_BUTTON_SIZE))
+            .vcenter()
+            .padding(ButtonPadding::Horizontal(metrics::SPACE_3))
             .track_focus(&focus)
             .disabled(self.busy || !enabled)
             .on_click(cx.listener(move |view, event, _, cx| {
@@ -253,6 +270,8 @@ impl RecordingView {
             .on_activate(cx.listener(move |view, _, _, cx| view.action(id, cx)));
         div()
             .flex()
+            .flex_none()
+            .items_center()
             .child(self.access.wrap(
                 &format!("record-{id}"),
                 i18n::t(label),
@@ -275,6 +294,13 @@ impl Render for RecordingView {
         #[cfg(target_os = "macos")]
         install_appkit_tab_monitor(window, cx);
         self.access.begin();
+        let message_body = if self.message.is_empty() {
+            div()
+        } else if self.message_error {
+            product_error(self.message.clone())
+        } else {
+            product_note(self.message.clone())
+        };
         let status = self.access.wrap(
             "record-status",
             &self.message,
@@ -282,20 +308,22 @@ impl Render for RecordingView {
             None,
             false,
             false,
-            self.message.clone(),
+            message_body,
         );
         let refresh = self.button("refresh", "plan.refresh", true, cx);
-        let mut body = div()
-            .id("record-body")
-            .size_full()
-            .overflow_y_scroll()
-            .flex()
-            .flex_col()
-            .gap_3()
-            .p_4()
-            .bg(dark().bg.base)
-            .text_color(dark().text.primary)
-            .child(status)
+        let title = i18n::t(if self.plugins {
+            "record.plugins"
+        } else {
+            "record.title"
+        });
+        let note = if self.plugins {
+            i18n::t("record.runtime")
+        } else {
+            i18n::t("record.hint")
+        };
+        let mut body = product_panel("record-body")
+            .child(product_heading(title, note))
+            .when(!self.message.is_empty(), |body| body.child(status))
             .child(refresh);
         if self.plugins {
             let skills = self.button(
@@ -306,18 +334,16 @@ impl Render for RecordingView {
             );
             let mcp = self.button("mcp", "record.mcp", true, cx);
             self.access.sync(window, cx, Self::ax_action);
-            return body
-                .child(i18n::t("record.runtime"))
-                .child(skills)
-                .child(mcp);
+            return body.child(skills).child(mcp);
         }
         if self.busy {
             self.access.sync(window, cx, Self::ax_action);
-            return body.child(i18n::t("plan.loading"));
+            return body.child(product_note(i18n::t("plan.loading")));
         }
         let mut list = div()
             .id("record-operations")
-            .h(px(180.0))
+            .max_h(px(180.0))
+            .flex_none()
             .overflow_y_scroll()
             .flex()
             .flex_col()
@@ -348,6 +374,9 @@ impl Render for RecordingView {
             let button = Button::new(format!("record-operation-{id}"))
                 .label(label.clone())
                 .variant(ButtonVariant::Ghost)
+                .height(px(metrics::ICON_BUTTON_SIZE))
+                .vcenter()
+                .padding(ButtonPadding::Horizontal(metrics::SPACE_3))
                 .track_focus(&focus)
                 .disabled(operation["recordable"] != true)
                 .on_click(cx.listener(move |view, event, _, cx| {
@@ -403,11 +432,11 @@ impl Render for RecordingView {
         );
         self.access.sync(window, cx, Self::ax_action);
         body = body
-            .child(list)
+            .when(!self.operations.is_empty(), |body| body.child(list))
             .child(preview)
-            .child(name)
-            .child(description)
-            .child(content)
+            .child(product_field(i18n::t("record.name"), name))
+            .child(product_field(i18n::t("record.description"), description))
+            .child(product_field("SKILL.md", content))
             .child(save);
         body
     }

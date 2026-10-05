@@ -138,6 +138,7 @@ struct UsageView {
 impl AppView {
     pub(super) fn open_task_usage(&mut self, cx: &mut Context<Self>) {
         let controller = self.controller.clone();
+        let text_scale = self.text_scale;
         let bounds = Bounds::centered(None, size(px(1000.0), px(820.0)), cx);
         if let Err(error) = cx.open_window(
             WindowOptions {
@@ -148,7 +149,8 @@ impl AppView {
                 }),
                 ..Default::default()
             },
-            move |_, cx| {
+            move |window, cx| {
+                window.set_rem_size(px(text_scale.rem_pixels()));
                 cx.new(|cx| {
                     let mut view = UsageView {
                         controller,

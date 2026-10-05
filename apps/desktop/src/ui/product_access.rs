@@ -1,5 +1,8 @@
 //! The small product windows share the existing native accessibility bridge.
 use super::accessibility::{AxAction, AxBridge, AxNode, AxRect, AxRequest, AxRole, AxTree};
+use super::components::button::{Button, ButtonPadding};
+use super::components::label::Label;
+use super::theme::{dark, font, metrics};
 use super::*;
 use gpui::AnyElement;
 
@@ -54,6 +57,7 @@ impl PanelAccess {
         self.nodes.push(node);
         div()
             .id(SharedString::from(format!("ax-{id}")))
+            .flex_none()
             .track_scroll(&handle)
             .child(child)
             .into_any_element()
@@ -105,6 +109,90 @@ impl PanelAccess {
                 && node.actions.contains(&request.action)
         })
     }
+}
+
+/// 产品子窗口共用的滚动表单壳。字段和动作由调用方标成 flex_none，避免被压扁。
+pub(super) fn product_panel(id: &'static str) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .size_full()
+        .overflow_y_scroll()
+        .flex()
+        .flex_col()
+        .gap_4()
+        .p_4()
+        .bg(dark().bg.base)
+        .text_color(dark().text.primary)
+}
+
+pub(super) fn product_heading(
+    title: impl Into<SharedString>,
+    note: impl Into<SharedString>,
+) -> gpui::Div {
+    div()
+        .flex()
+        .flex_col()
+        .flex_none()
+        .gap_2()
+        .w_full()
+        .child(
+            div()
+                .w_full()
+                .text_size(font::TITLE)
+                .font_weight(gpui::FontWeight::MEDIUM)
+                .text_color(dark().text.primary)
+                .child(title.into()),
+        )
+        .child(product_note(note))
+}
+
+pub(super) fn product_note(text: impl Into<SharedString>) -> gpui::Div {
+    div()
+        .w_full()
+        .flex_none()
+        .whitespace_normal()
+        .text_size(font::BASE)
+        .line_height(gpui::rems(1.4))
+        .text_color(dark().text.secondary)
+        .child(text.into())
+}
+
+pub(super) fn product_error(text: impl Into<SharedString>) -> gpui::Div {
+    div()
+        .w_full()
+        .flex_none()
+        .whitespace_normal()
+        .text_size(font::BASE)
+        .line_height(gpui::rems(1.4))
+        .text_color(dark().semantic.danger_text)
+        .child(text.into())
+}
+
+/// 字段名始终可见；控件本身不参与 flex shrink。
+pub(super) fn product_field(label: &'static str, control: impl IntoElement) -> gpui::Div {
+    div()
+        .flex()
+        .flex_col()
+        .flex_none()
+        .gap_2()
+        .w_full()
+        .child(
+            Label::new(label)
+                .size(font::BASE)
+                .color(dark().text.secondary),
+        )
+        .child(control)
+}
+
+pub(super) fn product_actions() -> gpui::Div {
+    div().flex().flex_none().flex_wrap().items_center().gap_2()
+}
+
+pub(super) fn product_action(button: Button) -> Button {
+    button
+        .height(px(metrics::ICON_BUTTON_SIZE))
+        .vcenter()
+        .padding(ButtonPadding::Horizontal(metrics::SPACE_3))
 }
 
 pub(super) fn edit_input(
