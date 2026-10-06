@@ -44,29 +44,49 @@
 //! never overwrite newer ledger state and every reported generation comes
 //! from the snapshot it was validated against.
 //!
-//! Fail-closed limits: this backend has no signal source for the
-//! accessibility-tree revision or the current web origin yet (CU-05 / CU-15
-//! territory), so it reports None for both. The registry treats that as
-//! unavailable: AX tree-bound observations and website targets cannot
-//! validate against this probe and are rejected (WindowReplaced /
-//! SiteChanged) before dispatch. Application discovery, window binding and
-//! capture observations are unaffected.
+//! Bounded accessibility-tree reads (CU-05) sit on the same discipline:
+//! read_ax_tree gates ledger authorization, process instance, identity
+//! binding and the Accessibility preflight before any content read, then
+//! walks the window's AX subtree bounded in depth, nodes, text and time.
+//! The tree revision is the deterministic fingerprint of one bounded read
+//! recomputed on demand, so an unchanged tree fingerprints identically and
+//! any emitted change stales tree-bound handles; every read failure is
+//! None / an error (fail-closed), never an empty tree disguised as an
+//! application without elements. Element content (AXValue) is never read
+//! and secure-input fields (identified by the AXSecureTextField subrole,
+//! conservatively on identification failure) yield no name, so a tree
+//! read cannot scoop up passwords, tokens or document text.
+//!
+//! Chromium-family targets serialize their real tree only once a client
+//! sets AXManualAccessibility on the application element (the read-enable
+//! VoiceOver performs — idempotent, no UI change); every tree read sets
+//! it best-effort before walking. The renderer then materializes the tree
+//! asynchronously (VS Code took on the order of a minute in CU-05
+//! acceptance), so the first read of a fresh Chromium window may honestly
+//! answer with window chrome only; later reads converge to the full tree.
+//!
+//! Fail-closed limits: this backend has no signal source for the current
+//! web origin yet (CU-15 territory), so current_origin reports None. The
+//! registry treats that as unavailable: website targets cannot validate
+//! against this probe and are rejected (SiteChanged) before dispatch.
+//! Application discovery, window binding and capture observations are
+//! unaffected.
 use std::collections::{HashMap, HashSet};
 use std::ffi::{c_void, CStr, CString};
 use std::os::raw::c_char;
 use std::path::Path;
 use std::ptr;
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use block::ConcreteBlock;
 use core_foundation::base::{CFType, ItemRef, TCFType};
+use core_foundation::boolean::CFBoolean;
 use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
 use core_foundation::number::{CFNumber, CFNumberRef};
 use core_foundation::string::{CFString, CFStringRef};
 use core_graphics::access::ScreenCaptureAccess;
 use core_graphics::display::CGMainDisplayID;
-use core_graphics::geometry::{CGPoint, CGSize};
 use core_graphics::window as cgwindow;
 use image::{codecs::jpeg::JpegEncoder, imageops::FilterType, RgbImage};
 use objc::rc::autoreleasepool;
@@ -75,8 +95,9 @@ use objc::{class, msg_send, sel, sel_impl};
 
 use crate::approval::{TargetAuthorizer, TargetIdentity};
 use crate::target::{
-    AppFamily, AppIdentity, NativeProbe, ProcessInstance, Scope, TargetError, ValidatedWindow,
-    WindowIdentity,
+    ax_tree_revision, AppFamily, AppIdentity, AxTreeNode, AxTreeRead, AxTreeTruncation,
+    NativeProbe, ProcessInstance, Scope, TargetError, ValidatedWindow, WindowIdentity,
+    AX_TREE_BOUNDS,
 };
 use crate::{MAX_IMAGE_BYTES, MAX_IMAGE_EDGE};
 
@@ -475,6 +496,89 @@ impl MacosNative {
         })
     }
 
+    /// Read the bounded accessibility tree of a validated bound window
+    /// (CU-05). Gate order: ledger authorization (a denied, revoked or
+    /// cross-target window never reaches any OS call), process instance,
+    /// identity binding, then the Accessibility preflight — this read IS
+    /// AX content access, so a missing permission is PermissionMissing
+    /// before the liveness AX reads, never a disguised empty tree — then
+    /// window liveness + generation, and only then the bounded walk seam
+    /// (counted in tests). The walk is bounded in depth, nodes, text and
+    /// time (AX_TREE_BOUNDS): one deadline spans window resolution, the
+    /// Chromium read-enable and the walk; every AX call is armed with
+    /// the messaging timeout of the budget remaining when it starts and
+    /// the clock is re-checked when it returns, a read that cannot set
+    /// the timeout refuses, and the clock gets one final check before
+    /// delivery — so the budget bounds the WHOLE read, never just one
+    /// phase. Deterministic truncation is flagged on the read, a
+    /// blown budget fails it. Structural inconsistency (a child list that
+    /// contradicts the reported child count) fails the read rather than
+    /// posing as a complete branch; a failed name read flags the node and
+    /// the read (names) so name-based lookups become explicitly
+    /// unprovable instead of treating the name as absent. The window root
+    /// is always
+    /// nodes[0], so a successful read of a window without exposed elements
+    /// returns exactly the root — "no elements" only ever answers a real
+    /// question, read failures are errors. The returned revision is the
+    /// read's fingerprint; the host registers it as the AxTree
+    /// observation's tree_revision.
+    /// Before the walk, the read enables the target's full tree
+    /// (AXManualAccessibility on the application element, best-effort and
+    /// idempotent — see ax_enable_full_tree): Chromium-family apps answer
+    /// with window chrome only until it is set and then materialize
+    /// asynchronously, so a fresh Chromium window can honestly read as
+    /// chrome-only on the first read and converge on later reads.
+    pub fn read_ax_tree(
+        &self,
+        authorizer: &TargetAuthorizer,
+        validated: &ValidatedWindow,
+    ) -> Result<AxTreeRead, TargetError> {
+        authorizer.check(&validated.scope, &validated.target)?;
+        if !self.process_instance_alive(&validated.instance) {
+            return Err(TargetError::ProcessRestarted);
+        }
+        // The granted identity must own this process before any AX read:
+        // the same binding list_windows and capture_window enforce.
+        verify_instance_owns_bundle(
+            &validated.target.app().bundle_id,
+            validated.instance.pid as i32,
+        )?;
+        match ax_preflight() {
+            AxPreflight::Trusted => {}
+            AxPreflight::NotTrusted => {
+                return Err(TargetError::PermissionMissing("accessibility"));
+            }
+            AxPreflight::Unavailable => {
+                return Err(TargetError::ProbeUnavailable(
+                    "HIServices symbols unavailable".to_string(),
+                ));
+            }
+        }
+        let proven = self
+            .proven_window(&validated.instance, validated.window.window_id)
+            .ok_or(TargetError::WindowReplaced)?;
+        if proven.generation != validated.window.generation {
+            return Err(TargetError::WindowReplaced);
+        }
+        // One deadline spans window resolution, the Chromium read-enable
+        // and the walk — the budget covers the whole read, not one phase.
+        tree_symbols()?;
+        let deadline = Instant::now() + AX_TREE_BOUNDS.max_read();
+        #[cfg(test)]
+        AX_WALK_SYSTEM_CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let window_id = u32::try_from(validated.window.window_id)
+            .map_err(|_| TargetError::Invalid("window id out of range"))?;
+        let element =
+            resolve_window_element(self, validated.instance.pid as i32, window_id, deadline)?;
+        let (nodes, truncation) = walk_ax_tree(&element, deadline)?;
+        Ok(AxTreeRead {
+            window: validated.window,
+            tree_revision: ax_tree_revision(&nodes, truncation),
+            nodes,
+            truncation,
+        })
+    }
+
     /// One consistent window snapshot: enumeration, generation-ledger sync
     /// and the caller's generation extraction run in a single critical
     /// section. An older enumeration can therefore never overwrite newer
@@ -529,11 +633,30 @@ impl NativeProbe for MacosNative {
             .map(|proven| proven.generation)
     }
 
-    /// No AX tree-revision signal source yet (CU-05 territory): reported as
-    /// unavailable, so AX tree-bound handles fail closed (WindowReplaced)
-    /// instead of silently trusting a tree that may have advanced.
-    fn tree_revision(&self, _window: &WindowIdentity) -> Option<u64> {
-        None
+    /// CU-05: the revision is the deterministic fingerprint
+    /// (ax_tree_revision) of one bounded read of the window's AX subtree,
+    /// recomputed on each call with the same fixed bounds. An unchanged
+    /// tree fingerprints identically; an emitted change advances it
+    /// (64-bit FNV-1a — a cheap change signal, not collision-proof).
+    /// Every failure (dead window, ghost id, AX error, missing permission)
+    /// is None — fail-closed, so tree-bound handles reject instead of
+    /// trusting a tree that could not be re-read.
+    fn tree_revision(&self, window: &WindowIdentity) -> Option<u64> {
+        let id = u32::try_from(window.window_id).ok()?;
+        if !ax_is_process_trusted() {
+            return None;
+        }
+        tree_symbols().ok()?;
+        let deadline = Instant::now() + AX_TREE_BOUNDS.max_read();
+        let pid = self.with_window_snapshot(None, |windows, _| {
+            windows
+                .iter()
+                .find(|w| w.id == id && w.layer == 0)
+                .map(|w| w.owner_pid)
+        })?;
+        let element = resolve_window_element(self, pid, id, deadline).ok()?;
+        let (nodes, truncation) = walk_ax_tree(&element, deadline).ok()?;
+        Some(ax_tree_revision(&nodes, truncation))
     }
 
     /// No page-identity signal source yet (CU-05 / CU-15 territory):
@@ -924,6 +1047,16 @@ struct AxFns {
     /// over a decade (yabai, Hammerspoon and others rely on it); when it
     /// is missing the backend falls back to frame-group closure.
     get_window: Option<unsafe extern "C" fn(*const c_void, *mut u32) -> i32>,
+    /// CU-05 tree walk: ranged children fetch, child count, action names
+    /// and a per-call messaging timeout.
+    copy_attribute_values:
+        Option<unsafe extern "C" fn(*mut c_void, CFStringRef, i64, i64, *mut *const c_void) -> i32>,
+    attribute_value_count: Option<unsafe extern "C" fn(*mut c_void, CFStringRef, *mut i64) -> i32>,
+    copy_action_names: Option<unsafe extern "C" fn(*mut c_void, *mut *const c_void) -> i32>,
+    set_messaging_timeout: Option<unsafe extern "C" fn(*mut c_void, f32) -> i32>,
+    /// Chromium-family targets serialize their real tree only once a
+    /// client sets AXManualAccessibility on the application element.
+    set_attribute: Option<unsafe extern "C" fn(*mut c_void, CFStringRef, *const c_void) -> i32>,
 }
 
 fn axf() -> Option<&'static AxFns> {
@@ -951,6 +1084,13 @@ fn axf() -> Option<&'static AxFns> {
             value_get_value: load(handle, "AXValueGetValue")?,
             // Optional: absence degrades identity to frame-group closure.
             get_window: load(handle, "_AXUIElementGetWindow"),
+            // CU-05 tree walk. Optional: liveness (CU-03) works without
+            // them; the tree read refuses when they are missing.
+            copy_attribute_values: load(handle, "AXUIElementCopyAttributeValues"),
+            attribute_value_count: load(handle, "AXUIElementGetAttributeValueCount"),
+            copy_action_names: load(handle, "AXUIElementCopyActionNames"),
+            set_messaging_timeout: load(handle, "AXUIElementSetMessagingTimeout"),
+            set_attribute: load(handle, "AXUIElementSetAttributeValue"),
         })
     })
     .as_ref()
@@ -989,6 +1129,7 @@ extern "C" {
     fn CFRetain(pointer: *const c_void) -> *const c_void;
     fn CFDataGetLength(data: *const c_void) -> isize;
     fn CFDataGetBytePtr(data: *const c_void) -> *const u8;
+    fn CFBooleanGetValue(boolean: *const c_void) -> u8;
 }
 
 #[link(name = "CoreGraphics", kind = "framework")]
@@ -1022,6 +1163,8 @@ enum AxReadError {
     CreateFailed,
     /// AXUIElementCopyAttributeValue(AXWindows) failed (raw AXError).
     ReadFailed(i32),
+    /// The read outlived its wall-clock budget (CU-05 tree reads only).
+    Overtime,
 }
 
 /// kAXErrorAPIDisabled (AXError.h): the process lacks the Accessibility
@@ -1040,6 +1183,9 @@ fn ax_read_target_error(error: AxReadError) -> TargetError {
         AxReadError::CreateFailed => {
             TargetError::ProbeUnavailable("AXUIElementCreateApplication failed".to_string())
         }
+        AxReadError::Overtime => TargetError::ProbeUnavailable(
+            "accessibility tree read exceeded its time budget".to_string(),
+        ),
         AxReadError::ReadFailed(code) if code == K_AX_ERROR_API_DISABLED => {
             TargetError::PermissionMissing("accessibility")
         }
@@ -1049,20 +1195,144 @@ fn ax_read_target_error(error: AxReadError) -> TargetError {
     }
 }
 
-/// The app's own AXWindows — the authoritative answer to which windows
-/// actually exist.
-fn ax_windows(pid: i32) -> Result<Vec<AxWindow>, AxReadError> {
+/// One AX window with its element retained past the AXWindows array that
+/// delivered it (CU-05 needs the element for the tree walk; CU-03 liveness
+/// keeps only id + frame). Drop releases the retain.
+struct AxWindowRef {
+    element: *mut c_void,
+    id: Option<u32>,
+    frame: [f64; 4],
+}
+
+impl Drop for AxWindowRef {
+    fn drop(&mut self) {
+        unsafe { CFRelease(self.element as *const c_void) }
+    }
+}
+
+/// Remaining slice of a read's wall-clock budget as messaging-timeout
+/// seconds for the next AX call; None once the budget is blown, so the
+/// caller fails instead of starting another unbounded call.
+fn remaining_budget(deadline: Instant) -> Option<f32> {
+    let remaining = deadline.checked_duration_since(Instant::now())?;
+    Some(remaining.as_secs_f32().max(f32::EPSILON))
+}
+
+/// Per-call wall-clock budget of one bounded AX read. Messaging timeouts
+/// are per element AND stale the moment they are set: every AX call is
+/// armed with the budget remaining when THAT call starts (arm), and the
+/// clock is re-checked when it returns (check), so the deadline bounds
+/// the whole read — never just one phase — and no call ever starts
+/// unbounded (a blown clock or a failed timeout-set refuses instead).
+struct ReadBudget {
+    set_timeout: unsafe extern "C" fn(*mut c_void, f32) -> i32,
+    deadline: Instant,
+}
+
+/// Why the budget refused a read. Mapped per context: tree reads to
+/// TargetError (budget_target_error), window-list reads to AxReadError
+/// (budget_read_error).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BudgetError {
+    /// The wall-clock budget is blown.
+    Overtime,
+    /// AXUIElementSetMessagingTimeout failed (raw AXError).
+    SetFailed(i32),
+}
+
+impl ReadBudget {
+    /// Arm one element's messaging timeout with the budget remaining
+    /// right now. element must be a live AXUIElementRef.
+    fn arm(&self, element: *mut c_void) -> Result<(), BudgetError> {
+        let Some(remaining) = remaining_budget(self.deadline) else {
+            return Err(BudgetError::Overtime);
+        };
+        // Safety: callers hand over live AXUIElementRefs; the timeout
+        // bounds exactly the calls issued on this element below.
+        let err = unsafe { (self.set_timeout)(element, remaining) };
+        if err != 0 {
+            return Err(BudgetError::SetFailed(err));
+        }
+        Ok(())
+    }
+
+    /// Fail once the wall-clock budget is blown.
+    fn check(&self) -> Result<(), BudgetError> {
+        if remaining_budget(self.deadline).is_none() {
+            return Err(BudgetError::Overtime);
+        }
+        Ok(())
+    }
+
+    /// One armed AX call: arm with the current remaining budget, run,
+    /// re-check the clock. Only for calls whose result owns no retained
+    /// CoreFoundation pointer — a failed post-call check consumes the
+    /// result, so a retained pointer would leak (copy-rule reads run the
+    /// arm/call/check sequence by hand and release before propagating).
+    fn call<T>(&self, element: *mut c_void, f: impl FnOnce() -> T) -> Result<T, BudgetError> {
+        self.arm(element)?;
+        let out = f();
+        self.check()?;
+        Ok(out)
+    }
+}
+
+/// A budget refusal inside a window-list read.
+fn budget_read_error(err: BudgetError) -> AxReadError {
+    match err {
+        BudgetError::Overtime => AxReadError::Overtime,
+        BudgetError::SetFailed(code) => AxReadError::ReadFailed(code),
+    }
+}
+
+/// The app's own AXWindows with retained elements — the authoritative
+/// answer to which windows actually exist, and the entry point of the
+/// CU-05 tree walk.
+/// deadline (CU-05 tree reads) bounds this read too: every AX call — the
+/// AXWindows fetch and each window's id/position/size reads — is armed
+/// with the messaging timeout of the budget remaining when it starts and
+/// the clock is re-checked when it returns (ReadBudget). A blown clock,
+/// a failed timeout-set or a missing timeout symbol fails the read — an
+/// unbounded AX call is never issued. CU-03 liveness passes None and
+/// keeps its unbounded (short, two-call) discipline.
+fn ax_window_list(pid: i32, deadline: Option<Instant>) -> Result<Vec<AxWindowRef>, AxReadError> {
     let f = axf().ok_or(AxReadError::SymbolsUnavailable)?;
     autoreleasepool(|| unsafe {
         let app = (f.create_application)(pid);
         if app.is_null() {
             return Err(AxReadError::CreateFailed);
         }
+        // A deadline-bounded read cannot run without the timeout symbol:
+        // no call below could be time-bounded.
+        let budget = match (deadline, f.set_messaging_timeout) {
+            (Some(deadline), Some(set_timeout)) => Some(ReadBudget {
+                set_timeout,
+                deadline,
+            }),
+            (Some(_), None) => {
+                CFRelease(app as *const c_void);
+                return Err(AxReadError::SymbolsUnavailable);
+            }
+            (None, _) => None,
+        };
+        if let Some(budget) = &budget {
+            if let Err(err) = budget.arm(app) {
+                CFRelease(app as *const c_void);
+                return Err(budget_read_error(err));
+            }
+        }
         let mut windows: *const c_void = ptr::null();
         let err = (f.copy_attribute)(app, nsstr("AXWindows") as CFStringRef, &mut windows);
         if err != 0 || windows.is_null() {
             CFRelease(app as *const c_void);
             return Err(AxReadError::ReadFailed(err));
+        }
+        if let Some(budget) = &budget {
+            if let Err(err) = budget.check() {
+                CFRelease(windows);
+                CFRelease(app as *const c_void);
+                return Err(budget_read_error(err));
+            }
         }
         let count = CFArrayGetCount(windows);
         let mut out = Vec::with_capacity(count as usize);
@@ -1071,14 +1341,45 @@ fn ax_windows(pid: i32) -> Result<Vec<AxWindow>, AxReadError> {
             if window.is_null() {
                 continue;
             }
-            let id = f.get_window.and_then(|get_window| {
+            // Messaging timeouts are per element and go stale: the id
+            // read is armed with the budget remaining when it starts
+            // (budget.call — the result owns no retained pointer), and
+            // the frame's two attribute reads are armed one by one inside
+            // ax_window_frame.
+            let id = if let Some(get_window) = f.get_window {
                 let mut id: u32 = 0;
-                (get_window(window as *const c_void, &mut id) == 0).then_some(id)
-            });
-            let Some(frame) = ax_window_frame(f, window) else {
-                continue;
+                let read = match &budget {
+                    Some(budget) => {
+                        budget.call(window, || get_window(window as *const c_void, &mut id))
+                    }
+                    None => Ok(get_window(window as *const c_void, &mut id)),
+                };
+                match read {
+                    Ok(err) => (err == 0).then_some(id),
+                    Err(err) => {
+                        CFRelease(windows);
+                        CFRelease(app as *const c_void);
+                        return Err(budget_read_error(err));
+                    }
+                }
+            } else {
+                None
             };
-            out.push(AxWindow { id, frame });
+            let frame = match ax_window_frame(f, window, budget.as_ref()) {
+                Ok(Some(frame)) => frame,
+                Ok(None) => continue,
+                Err(err) => {
+                    CFRelease(windows);
+                    CFRelease(app as *const c_void);
+                    return Err(err);
+                }
+            };
+            CFRetain(window as *const c_void);
+            out.push(AxWindowRef {
+                element: window,
+                id,
+                frame,
+            });
         }
         CFRelease(windows);
         CFRelease(app as *const c_void);
@@ -1086,43 +1387,88 @@ fn ax_windows(pid: i32) -> Result<Vec<AxWindow>, AxReadError> {
     })
 }
 
+/// The app's own AXWindows as plain id + frame views (CU-03 liveness).
+fn ax_windows(pid: i32) -> Result<Vec<AxWindow>, AxReadError> {
+    Ok(ax_window_list(pid, None)?
+        .into_iter()
+        .map(|window| AxWindow {
+            id: window.id,
+            frame: window.frame,
+        })
+        .collect())
+}
+
 /// One AX window's frame (x, y, w, h in global points); None when the
-/// position or size attributes cannot be read.
-fn ax_window_frame(f: &AxFns, window: *mut c_void) -> Option<[f64; 4]> {
+/// position or size attributes cannot be read. With a read budget
+/// (CU-05), each attribute read is armed and the clock re-checked after
+/// it — a budget refusal is Err while an unreadable attribute stays
+/// Ok(None) (CU-03 semantics). The retained position is released on
+/// every path, including a budget refusal between the two reads.
+fn ax_window_frame(
+    f: &AxFns,
+    window: *mut c_void,
+    budget: Option<&ReadBudget>,
+) -> Result<Option<[f64; 4]>, AxReadError> {
     unsafe {
-        let mut position = CGPoint::new(0.0, 0.0);
-        let mut size = CGSize::new(0.0, 0.0);
-        let mut raw: *const c_void = ptr::null();
-        if (f.copy_attribute)(window, nsstr("AXPosition") as CFStringRef, &mut raw) != 0
-            || raw.is_null()
-            || !(f.value_get_value)(
-                raw,
-                K_AX_VALUE_TYPE_CGPOINT,
-                &mut position as *mut CGPoint as *mut c_void,
-            )
-        {
-            if !raw.is_null() {
+        if let Some(budget) = budget {
+            budget.arm(window).map_err(budget_read_error)?;
+        }
+        let position = ax_attr_raw(f, window, "AXPosition");
+        if let Some(budget) = budget {
+            if let Err(err) = budget.check() {
+                if let Ok(Some(raw)) = position {
+                    CFRelease(raw);
+                }
+                return Err(budget_read_error(err));
+            }
+        }
+        let position = match position {
+            Ok(position) => position,
+            Err(_) => return Ok(None),
+        };
+        if let Some(budget) = budget {
+            if let Err(err) = budget.arm(window) {
+                if let Some(raw) = position {
+                    CFRelease(raw);
+                }
+                return Err(budget_read_error(err));
+            }
+        }
+        let size = ax_attr_raw(f, window, "AXSize");
+        if let Some(budget) = budget {
+            if let Err(err) = budget.check() {
+                if let Some(raw) = position {
+                    CFRelease(raw);
+                }
+                if let Ok(Some(raw)) = size {
+                    CFRelease(raw);
+                }
+                return Err(budget_read_error(err));
+            }
+        }
+        let size = match size {
+            Ok(size) => size,
+            Err(_) => {
+                if let Some(raw) = position {
+                    CFRelease(raw);
+                }
+                return Ok(None);
+            }
+        };
+        let (Some(position), Some(size)) = (position, size) else {
+            for raw in [position, size].into_iter().flatten() {
                 CFRelease(raw);
             }
-            return None;
-        }
-        CFRelease(raw);
-        let mut raw: *const c_void = ptr::null();
-        if (f.copy_attribute)(window, nsstr("AXSize") as CFStringRef, &mut raw) != 0
-            || raw.is_null()
-            || !(f.value_get_value)(
-                raw,
-                K_AX_VALUE_TYPE_CGSIZE,
-                &mut size as *mut CGSize as *mut c_void,
-            )
-        {
-            if !raw.is_null() {
-                CFRelease(raw);
-            }
-            return None;
-        }
-        CFRelease(raw);
-        Some([position.x, position.y, size.width, size.height])
+            return Ok(None);
+        };
+        let point = ax_value_tuple(f, position, K_AX_VALUE_TYPE_CGPOINT);
+        let extent = ax_value_tuple(f, size, K_AX_VALUE_TYPE_CGSIZE);
+        CFRelease(position);
+        CFRelease(size);
+        let (Some(point), Some(extent)) = (point, extent) else {
+            return Ok(None);
+        };
+        Ok(Some([point.0, point.1, extent.0, extent.1]))
     }
 }
 
@@ -1180,6 +1526,660 @@ fn window_proven_alive(windows: &[RawWindow], ax: &[AxWindow], pid: i32, w: &Raw
                     && !frame_matches(&x.bounds, &frame)
             })
         })
+}
+
+// ---------- bounded accessibility tree read (CU-05) ----------
+
+/// Test-only proof that denied tree reads never reach the AX walk seam.
+#[cfg(test)]
+static AX_WALK_SYSTEM_CALLS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// kAXErrorNoValue / kAXErrorAttributeUnsupported (AXError.h): the element
+/// affirmatively has no such attribute — an answer, not a failure.
+const K_AX_ERROR_NO_VALUE: i32 = -25212;
+const K_AX_ERROR_ATTRIBUTE_UNSUPPORTED: i32 = -25205;
+
+fn ax_attr_absent(err: i32) -> bool {
+    err == K_AX_ERROR_NO_VALUE || err == K_AX_ERROR_ATTRIBUTE_UNSUPPORTED
+}
+
+/// An AX failure during the tree walk keeps its cause: the API-disabled
+/// code is a permission report, everything else a probe failure. Both
+/// refuse access.
+fn ax_tree_read_error(err: i32) -> TargetError {
+    if err == K_AX_ERROR_API_DISABLED {
+        TargetError::PermissionMissing("accessibility")
+    } else {
+        TargetError::ProbeUnavailable(format!("accessibility tree read failed: AXError {err}"))
+    }
+}
+
+/// A budget refusal inside a tree read: overtime is a probe failure, a
+/// failed timeout-set keeps its raw AXError cause.
+fn budget_target_error(err: BudgetError) -> TargetError {
+    match err {
+        BudgetError::Overtime => TargetError::ProbeUnavailable(
+            "accessibility tree read exceeded its time budget".to_string(),
+        ),
+        BudgetError::SetFailed(code) => ax_tree_read_error(code),
+    }
+}
+
+/// Copy-rule attribute read: Ok(Some) carries a retained pointer the
+/// caller releases; Ok(None) is an affirmative absent; Err keeps the raw
+/// AXError.
+unsafe fn ax_attr_raw(
+    f: &AxFns,
+    element: *mut c_void,
+    attribute: &str,
+) -> Result<Option<*const c_void>, i32> {
+    let mut raw: *const c_void = ptr::null();
+    let err = (f.copy_attribute)(element, nsstr(attribute) as CFStringRef, &mut raw);
+    if err == 0 && !raw.is_null() {
+        return Ok(Some(raw));
+    }
+    if !raw.is_null() {
+        CFRelease(raw);
+    }
+    if err == 0 || ax_attr_absent(err) {
+        return Ok(None);
+    }
+    Err(err)
+}
+
+/// CGPoint and CGSize share one layout (two f64); extract either from a
+/// retained AXValue pointer.
+unsafe fn ax_value_tuple(f: &AxFns, raw: *const c_void, value_type: i32) -> Option<(f64, f64)> {
+    let mut pair = [0.0f64; 2];
+    let ok = (f.value_get_value)(raw, value_type, pair.as_mut_ptr() as *mut c_void);
+    ok.then_some((pair[0], pair[1]))
+}
+
+/// Cut on a char boundary; the flag records every cut.
+fn truncate_chars(text: &str, max_text: usize) -> (String, bool) {
+    if text.chars().count() <= max_text {
+        return (text.to_string(), false);
+    }
+    (text.chars().take(max_text).collect(), true)
+}
+
+/// A string attribute cut to max_text chars (flag set when cut).
+/// Non-string values are absent — never a read of the wrong type.
+unsafe fn ax_attr_string(
+    f: &AxFns,
+    element: *mut c_void,
+    attribute: &str,
+    max_text: usize,
+) -> Result<Option<(String, bool)>, i32> {
+    let Some(raw) = ax_attr_raw(f, element, attribute)? else {
+        return Ok(None);
+    };
+    let value = CFType::wrap_under_get_rule(raw);
+    let text = if value.instance_of::<CFString>() {
+        let string = CFString::wrap_under_get_rule(raw as CFStringRef).to_string();
+        Some(truncate_chars(&string, max_text))
+    } else {
+        None
+    };
+    CFRelease(raw);
+    Ok(text)
+}
+
+/// A boolean attribute; None is "not exposed", never a claim of false.
+unsafe fn ax_attr_bool(
+    f: &AxFns,
+    element: *mut c_void,
+    attribute: &str,
+) -> Result<Option<bool>, i32> {
+    let Some(raw) = ax_attr_raw(f, element, attribute)? else {
+        return Ok(None);
+    };
+    let value = CFType::wrap_under_get_rule(raw);
+    let state = if value.instance_of::<CFBoolean>() {
+        Some(CFBooleanGetValue(raw) != 0)
+    } else {
+        None
+    };
+    CFRelease(raw);
+    Ok(state)
+}
+
+/// Secure-input classification. The SDK defines AXSecureTextField as a
+/// SUBROLE (kAXSecureTextFieldSubrole, AXRoleConstants.h): a standard
+/// NSSecureTextField reads as role AXTextField with subrole
+/// AXSecureTextField, so matching the role alone never identifies it.
+/// The subrole is read for AXTextField elements (the only role the SDK
+/// assigns this subrole to); the legacy role match is kept for
+/// nonstandard exposers. A failed subrole read (subrole_read_failed) is
+/// conservative: treated as secure, so no name is ever read from an
+/// element whose secure state could not be determined. Secure elements
+/// are emitted with role, state, frame and actions only — not even a
+/// name, and never a value.
+fn ax_secure(role: &str, subrole: Option<&str>, subrole_read_failed: bool) -> bool {
+    if role == "AXSecureTextField" {
+        return true;
+    }
+    if role != "AXTextField" {
+        return false;
+    }
+    if subrole_read_failed {
+        return true;
+    }
+    subrole == Some("AXSecureTextField")
+}
+
+/// Ask the target to serialize its full accessibility tree: Chromium
+/// family apps (Electron, Chrome, Edge) answer reads with only the
+/// window chrome until a client sets AXManualAccessibility on the
+/// application element — the same read-enable VoiceOver performs, no UI
+/// change, idempotent. AppKit targets already serialize and simply
+/// ignore the attribute. Best-effort and never a read failure: an
+/// unsupported attribute leaves the target as found, and the walk reads
+/// whatever the target actually exposes (a window without exposed
+/// elements stays an honest root-only tree, not an error).
+/// The app element's own calls join the read budget: the messaging
+/// timeout is set to the remaining budget first (a set failure refuses
+/// the read — an unbounded AX call is never issued) and the clock is
+/// re-checked afterwards.
+fn ax_enable_full_tree(pid: i32, deadline: Instant) -> Result<(), TargetError> {
+    let f = axf()
+        .ok_or_else(|| TargetError::ProbeUnavailable("HIServices symbols unavailable".to_string()))?;
+    let (Some(set_attribute), Some(set_timeout)) = (f.set_attribute, f.set_messaging_timeout)
+    else {
+        // No way to ask for the full tree: Chromium reads stay chrome-only
+        // but honest. set_messaging_timeout's absence is refused earlier
+        // by tree_symbols, so this branch is the set_attribute case.
+        return Ok(());
+    };
+    autoreleasepool(|| unsafe {
+        let app = (f.create_application)(pid);
+        if app.is_null() {
+            return Ok(());
+        }
+        let Some(remaining) = remaining_budget(deadline) else {
+            CFRelease(app as *const c_void);
+            return Err(TargetError::ProbeUnavailable(
+                "accessibility tree read exceeded its time budget".to_string(),
+            ));
+        };
+        let timeout_err = (set_timeout)(app, remaining);
+        if timeout_err != 0 {
+            CFRelease(app as *const c_void);
+            return Err(ax_tree_read_error(timeout_err));
+        }
+        let _ = (set_attribute)(
+            app,
+            nsstr("AXManualAccessibility") as CFStringRef,
+            CFBoolean::from(true).as_CFTypeRef() as *const CFType as *const c_void,
+        );
+        CFRelease(app as *const c_void);
+        if remaining_budget(deadline).is_none() {
+            return Err(TargetError::ProbeUnavailable(
+                "accessibility tree read exceeded its time budget".to_string(),
+            ));
+        }
+        Ok(())
+    })
+}
+
+/// Resolve a window to its AX window element for the tree walk. Exact id
+/// correspondence when _AXUIElementGetWindow covers every AX window (a
+/// ghost id is never mapped, so a closed window is WindowReplaced here);
+/// otherwise the frame-group closure discipline of window_proven_alive
+/// decides, and only a single-candidate closed group yields an element —
+/// with several same-frame windows the element's identity is unknowable
+/// and fails closed.
+fn resolve_window_element(
+    native: &MacosNative,
+    pid: i32,
+    window_id: u32,
+    deadline: Instant,
+) -> Result<AxWindowRef, TargetError> {
+    ax_enable_full_tree(pid, deadline)?;
+    let mut list = ax_window_list(pid, Some(deadline)).map_err(ax_read_target_error)?;
+    if list.iter().all(|window| window.id.is_some()) {
+        let index = list
+            .iter()
+            .position(|window| window.id == Some(window_id))
+            .ok_or(TargetError::WindowReplaced)?;
+        return Ok(list.swap_remove(index));
+    }
+    native.with_window_snapshot(None, |windows, _| {
+        let ax: Vec<AxWindow> = list
+            .iter()
+            .map(|window| AxWindow {
+                id: window.id,
+                frame: window.frame,
+            })
+            .collect();
+        let raw = windows
+            .iter()
+            .find(|w| w.id == window_id && w.owner_pid == pid && w.layer == 0)
+            .ok_or(TargetError::WindowReplaced)?;
+        if !window_proven_alive(windows, &ax, pid, raw) {
+            return Err(TargetError::WindowReplaced);
+        }
+        let frame = bounds_frame(&raw.bounds);
+        let matching: Vec<usize> = list
+            .iter()
+            .enumerate()
+            .filter(|(_, window)| frame_eq(&window.frame, &frame))
+            .map(|(index, _)| index)
+            .collect();
+        if matching.len() != 1 {
+            return Err(TargetError::ProbeUnavailable(
+                "window identity is ambiguous without _AXUIElementGetWindow".to_string(),
+            ));
+        }
+        Ok(list.swap_remove(matching[0]))
+    })
+}
+
+/// One bounded preorder walk of a window's AX subtree. Emission stops at
+/// the depth and node bounds (flagged); the time budget fails the read
+/// (see AX_TREE_BOUNDS). Optional attributes that fail degrade to None;
+/// the role, the child list and the action list fail the read, so an
+/// emitted tree is never a partial truth.
+struct TreeWalk<'a> {
+    f: &'a AxFns,
+    copy_values: unsafe extern "C" fn(*mut c_void, CFStringRef, i64, i64, *mut *const c_void) -> i32,
+    value_count: unsafe extern "C" fn(*mut c_void, CFStringRef, *mut i64) -> i32,
+    action_names: unsafe extern "C" fn(*mut c_void, *mut *const c_void) -> i32,
+    budget: ReadBudget,
+    origin: (f64, f64),
+    nodes: Vec<AxTreeNode>,
+    truncation: AxTreeTruncation,
+}
+
+impl TreeWalk<'_> {
+    fn visit(
+        &mut self,
+        element: *mut c_void,
+        depth: u32,
+        path: &mut Vec<u32>,
+    ) -> Result<(), TargetError> {
+        if self.nodes.len() >= AX_TREE_BOUNDS.max_nodes as usize {
+            self.truncation.nodes = true;
+            return Ok(());
+        }
+        // Every AX call is armed with the messaging timeout of the budget
+        // remaining when THAT call starts, and the clock is re-checked
+        // when it returns (ReadBudget::call; copy-rule reads whose result
+        // owns a retained pointer run the same arm/call/check sequence by
+        // hand, releasing before an error propagates). A failed
+        // timeout-set refuses the read — an unbounded AX call is never
+        // issued.
+        // The role is structural: without it the element cannot be
+        // classified, so its absence or failure fails the read.
+        let role = self
+            .budget
+            .call(element, || unsafe { ax_attr_string(self.f, element, "AXRole", 64) })
+            .map_err(budget_target_error)?
+            .map_err(ax_tree_read_error)?
+            .map(|(role, _)| role)
+            .ok_or_else(|| TargetError::ProbeUnavailable("element without a role".to_string()))?;
+        // Secure-input identification (see ax_secure): the SDK defines
+        // AXSecureTextField as a subrole, so AXTextField elements get an
+        // AXSubrole read; a failed identification stays conservative and
+        // no name is read.
+        let secure = if role == "AXTextField" {
+            match self
+                .budget
+                .call(element, || unsafe { ax_attr_string(self.f, element, "AXSubrole", 64) })
+            {
+                Err(budget) => return Err(budget_target_error(budget)),
+                Ok(Ok(subrole)) => {
+                    ax_secure(&role, subrole.as_ref().map(|(text, _)| text.as_str()), false)
+                }
+                Ok(Err(_)) => ax_secure(&role, None, true),
+            }
+        } else {
+            ax_secure(&role, None, false)
+        };
+        // Names are readable labels (AXTitle, else AXDescription); element
+        // content (AXValue) is never read, and secure-input roles not even
+        // a name. A name-read FAILURE (not absence: real apps answer
+        // kAXErrorFailure for AXDescription on text areas) marks the node
+        // name_unreadable and the read's names flag — a name-based lookup
+        // over the read is then explicitly unprovable instead of treating
+        // the unread name as a non-match.
+        let (name, name_truncated, name_failed) = if secure {
+            (None, false, false)
+        } else {
+            match self.budget.call(element, || unsafe {
+                ax_attr_string(self.f, element, "AXTitle", AX_TREE_BOUNDS.max_text)
+            }) {
+                Err(budget) => return Err(budget_target_error(budget)),
+                Ok(Ok(Some(named))) => (Some(named.0), named.1, false),
+                Ok(Ok(None)) => match self.budget.call(element, || unsafe {
+                    ax_attr_string(self.f, element, "AXDescription", AX_TREE_BOUNDS.max_text)
+                }) {
+                    Err(budget) => return Err(budget_target_error(budget)),
+                    Ok(Ok(Some(named))) => (Some(named.0), named.1, false),
+                    Ok(Ok(None)) => (None, false, false),
+                    Ok(Err(_)) => (None, false, true),
+                },
+                Ok(Err(_)) => (None, false, true),
+            }
+        };
+        if name_truncated {
+            self.truncation.text = true;
+        }
+        if name_failed {
+            self.truncation.names = true;
+        }
+        // Optional state degrades to None on an AX failure (never a claim
+        // of false or a fabricated frame); a budget refusal still fails
+        // the read.
+        let enabled = self
+            .budget
+            .call(element, || unsafe { ax_attr_bool(self.f, element, "AXEnabled") })
+            .map_err(budget_target_error)?
+            .unwrap_or(None);
+        let focused = self
+            .budget
+            .call(element, || unsafe { ax_attr_bool(self.f, element, "AXFocused") })
+            .map_err(budget_target_error)?
+            .unwrap_or(None);
+        let frame = self.read_frame(element)?;
+        let actions = unsafe { self.actions(element) }?;
+        let children = unsafe { self.children_count(element) }?;
+        let depth_limited = children > 0 && depth >= AX_TREE_BOUNDS.max_depth;
+        if depth_limited {
+            self.truncation.depth = true;
+        }
+        self.nodes.push(AxTreeNode {
+            path: path.clone(),
+            depth,
+            role,
+            name,
+            name_truncated,
+            name_unreadable: name_failed,
+            enabled,
+            focused,
+            frame,
+            actions,
+            children,
+            depth_limited,
+        });
+        if children == 0 || depth_limited {
+            return Ok(());
+        }
+        let remaining = AX_TREE_BOUNDS.max_nodes as usize - self.nodes.len();
+        let take = (children as usize).min(remaining);
+        if take < children as usize {
+            self.truncation.nodes = true;
+        }
+        if take == 0 {
+            return Ok(());
+        }
+        self.visit_children(element, depth, path, take)
+    }
+
+    /// The element's frame in window-local points (the walk's origin is
+    /// the window's own AX position): two independently armed attribute
+    /// reads. A budget refusal fails the read; an AX failure, a missing
+    /// attribute or a non-AXValue payload degrades to None — never a
+    /// fabricated frame. The retained position is released on every
+    /// path, including a budget refusal between the two reads.
+    fn read_frame(&self, element: *mut c_void) -> Result<Option<[f64; 4]>, TargetError> {
+        unsafe {
+            self.budget.arm(element).map_err(budget_target_error)?;
+            let position = ax_attr_raw(self.f, element, "AXPosition");
+            if let Err(err) = self.budget.check() {
+                if let Ok(Some(raw)) = position {
+                    CFRelease(raw);
+                }
+                return Err(budget_target_error(err));
+            }
+            let position = match position {
+                Ok(position) => position,
+                Err(_) => return Ok(None),
+            };
+            if let Err(err) = self.budget.arm(element) {
+                if let Some(raw) = position {
+                    CFRelease(raw);
+                }
+                return Err(budget_target_error(err));
+            }
+            let size = ax_attr_raw(self.f, element, "AXSize");
+            if let Err(err) = self.budget.check() {
+                if let Some(raw) = position {
+                    CFRelease(raw);
+                }
+                if let Ok(Some(raw)) = size {
+                    CFRelease(raw);
+                }
+                return Err(budget_target_error(err));
+            }
+            let size = match size {
+                Ok(size) => size,
+                Err(_) => {
+                    if let Some(raw) = position {
+                        CFRelease(raw);
+                    }
+                    return Ok(None);
+                }
+            };
+            let (Some(position), Some(size)) = (position, size) else {
+                for raw in [position, size].into_iter().flatten() {
+                    CFRelease(raw);
+                }
+                return Ok(None);
+            };
+            let point = ax_value_tuple(self.f, position, K_AX_VALUE_TYPE_CGPOINT);
+            let extent = ax_value_tuple(self.f, size, K_AX_VALUE_TYPE_CGSIZE);
+            CFRelease(position);
+            CFRelease(size);
+            let (Some(point), Some(extent)) = (point, extent) else {
+                return Ok(None);
+            };
+            Ok(Some([
+                point.0 - self.origin.0,
+                point.1 - self.origin.1,
+                extent.0,
+                extent.1,
+            ]))
+        }
+    }
+
+    /// The affirmative child count: 0 when the attribute is absent (a
+    /// leaf), never when the read fails.
+    unsafe fn children_count(&self, element: *mut c_void) -> Result<u32, TargetError> {
+        let mut count: i64 = 0;
+        let err = self
+            .budget
+            .call(element, || {
+                (self.value_count)(element, nsstr("AXChildren") as CFStringRef, &mut count)
+            })
+            .map_err(budget_target_error)?;
+        if err == 0 {
+            return Ok(count.clamp(0, i64::from(u32::MAX)) as u32);
+        }
+        if ax_attr_absent(err) {
+            return Ok(0);
+        }
+        Err(ax_tree_read_error(err))
+    }
+
+    /// The element's action names. An unreadable or pathologically long
+    /// list fails the read — an emitted `actions` is always the true list.
+    unsafe fn actions(&self, element: *mut c_void) -> Result<Vec<String>, TargetError> {
+        self.budget.arm(element).map_err(budget_target_error)?;
+        let mut raw: *const c_void = ptr::null();
+        let err = (self.action_names)(element, &mut raw);
+        // The clock is re-checked after the call; the retained array is
+        // released on every path before either error propagates.
+        let clock = self.budget.check();
+        if err != 0 || raw.is_null() {
+            if !raw.is_null() {
+                CFRelease(raw);
+            }
+            if let Err(err) = clock {
+                return Err(budget_target_error(err));
+            }
+            if err == 0 || ax_attr_absent(err) {
+                return Ok(Vec::new());
+            }
+            return Err(ax_tree_read_error(err));
+        }
+        let count = CFArrayGetCount(raw);
+        if count > 64 {
+            CFRelease(raw);
+            clock.map_err(budget_target_error)?;
+            return Err(TargetError::ProbeUnavailable(
+                "element reports an implausible action list".to_string(),
+            ));
+        }
+        let mut out = Vec::with_capacity(count as usize);
+        for i in 0..count {
+            let item = CFArrayGetValueAtIndex(raw, i);
+            if item.is_null() {
+                continue;
+            }
+            let value = CFType::wrap_under_get_rule(item);
+            if value.instance_of::<CFString>() {
+                let name = CFString::wrap_under_get_rule(item as CFStringRef).to_string();
+                out.push(truncate_chars(&name, 64).0);
+            }
+        }
+        CFRelease(raw);
+        clock.map_err(budget_target_error)?;
+        Ok(out)
+    }
+
+    /// Visit up to `take` children (a bounded slice fetch — the array the
+    /// app reports is never copied whole). The element already reported
+    /// `take` reachable children, so the fetch must agree: an absent,
+    /// failed, short or null-holed list is a structural inconsistency and
+    /// fails the read — silently treating it as a complete branch would
+    /// let a lookup crown a unique match the read never proved. The
+    /// fetched array is released on every path, including a child visit
+    /// that failed and a clock check that fired after the fetch — the
+    /// clock error propagates only once the retained array is released.
+    fn visit_children(
+        &mut self,
+        element: *mut c_void,
+        depth: u32,
+        path: &mut Vec<u32>,
+        take: usize,
+    ) -> Result<(), TargetError> {
+        self.budget.arm(element).map_err(budget_target_error)?;
+        let mut raw: *const c_void = ptr::null();
+        let err = unsafe {
+            (self.copy_values)(
+                element,
+                nsstr("AXChildren") as CFStringRef,
+                0,
+                take as i64,
+                &mut raw,
+            )
+        };
+        let clock = self.budget.check();
+        if err != 0 || raw.is_null() {
+            if !raw.is_null() {
+                unsafe { CFRelease(raw) };
+            }
+            if let Err(err) = clock {
+                return Err(budget_target_error(err));
+            }
+            return Err(TargetError::ProbeUnavailable(
+                "child list inconsistent with the reported child count".to_string(),
+            ));
+        }
+        let fetched = unsafe { CFArrayGetCount(raw) };
+        if fetched < take as isize {
+            unsafe { CFRelease(raw) };
+            if let Err(err) = clock {
+                return Err(budget_target_error(err));
+            }
+            return Err(TargetError::ProbeUnavailable(
+                "child list inconsistent with the reported child count".to_string(),
+            ));
+        }
+        let mut outcome = Ok(());
+        for i in 0..fetched {
+            let child = unsafe { CFArrayGetValueAtIndex(raw, i) as *mut c_void };
+            if child.is_null() {
+                outcome = Err(TargetError::ProbeUnavailable(
+                    "child list inconsistent with the reported child count".to_string(),
+                ));
+                break;
+            }
+            path.push(i as u32);
+            outcome = self.visit(child, depth + 1, path);
+            path.pop();
+            if outcome.is_err() {
+                break;
+            }
+        }
+        unsafe { CFRelease(raw) };
+        outcome?;
+        clock.map_err(budget_target_error)?;
+        Ok(())
+    }
+}
+
+/// The symbols a tree read cannot run without, including the messaging
+/// timeout the per-call budget relies on: when they are missing the read
+/// refuses instead of walking unbounded.
+fn tree_symbols() -> Result<&'static AxFns, TargetError> {
+    let f = axf()
+        .ok_or_else(|| TargetError::ProbeUnavailable("HIServices symbols unavailable".to_string()))?;
+    if f.copy_attribute_values.is_none()
+        || f.attribute_value_count.is_none()
+        || f.copy_action_names.is_none()
+        || f.set_messaging_timeout.is_none()
+    {
+        return Err(TargetError::ProbeUnavailable(
+            "HIServices tree symbols unavailable".to_string(),
+        ));
+    }
+    Ok(f)
+}
+
+/// One bounded read of the window element's subtree; the root is always
+/// emitted as nodes[0]. The deadline is the caller's: it spans window
+/// resolution, the Chromium read-enable and the walk, so the whole read
+/// — not just the walk — is bounded by AX_TREE_BOUNDS.max_read.
+fn walk_ax_tree(
+    root: &AxWindowRef,
+    deadline: Instant,
+) -> Result<(Vec<AxTreeNode>, AxTreeTruncation), TargetError> {
+    let f = tree_symbols()?;
+    let (Some(copy_values), Some(value_count), Some(action_names), Some(set_timeout)) = (
+        f.copy_attribute_values,
+        f.attribute_value_count,
+        f.copy_action_names,
+        f.set_messaging_timeout,
+    ) else {
+        return Err(TargetError::ProbeUnavailable(
+            "HIServices tree symbols unavailable".to_string(),
+        ));
+    };
+    autoreleasepool(|| {
+        let mut walk = TreeWalk {
+            f,
+            copy_values,
+            value_count,
+            action_names,
+            budget: ReadBudget {
+                set_timeout,
+                deadline,
+            },
+            origin: (root.frame[0], root.frame[1]),
+            nodes: Vec::new(),
+            truncation: AxTreeTruncation::default(),
+        };
+        let mut path = Vec::new();
+        walk.visit(root.element, 0, &mut path)?;
+        // Final clock check before delivery: a walk whose last AX call
+        // returned inside the budget but whose assembly crossed the
+        // deadline still fails rather than delivering late data.
+        walk.budget.check().map_err(budget_target_error)?;
+        Ok((walk.nodes, walk.truncation))
+    })
 }
 
 // ---------- ScreenCaptureKit window capture (CU-04) ----------
@@ -1311,7 +2311,7 @@ mod sck {
             .get_or_init(|| unsafe {
                 CGMainDisplayID();
                 let path =
-                    b"/System/Library/Frameworks/ScreenCaptureKit.framework/ScreenCaptureKit ";
+                    b"/System/Library/Frameworks/ScreenCaptureKit.framework/ScreenCaptureKit\x00";
                 let handle = libc::dlopen(path.as_ptr() as *const c_char, libc::RTLD_LAZY);
                 if handle.is_null() {
                     return Err("dlopen ScreenCaptureKit failed".to_string());
@@ -2148,5 +3148,213 @@ mod tests {
             pid: 99_999_999,
             start_token: 1,
         }));
+    }
+
+    #[test]
+    fn tree_read_authorization_gates_precede_the_walk_seam() {
+        // All counter assertions live in this one test: the counter is
+        // process-global, and parallel tests must not interleave with it.
+        let native = MacosNative::new();
+        let mut authorizer = TargetAuthorizer::default();
+        let app = AppIdentity {
+            bundle_id: "com.apple.TextEdit".into(),
+            family: AppFamily::Appkit,
+        };
+        let target = TargetIdentity::application(app);
+        let calls_before = AX_WALK_SYSTEM_CALLS.load(std::sync::atomic::Ordering::SeqCst);
+        let window = WindowIdentity {
+            window_id: 999_999_999,
+            generation: 1,
+        };
+        let dead = ProcessInstance {
+            pid: 99_999_999,
+            start_token: 1,
+        };
+        let validated = |instance: ProcessInstance| ValidatedWindow {
+            target: target.clone(),
+            instance,
+            window,
+            scope: scope(),
+        };
+        // No grant at all: rejected before any OS access.
+        assert_eq!(
+            native.read_ax_tree(&authorizer, &validated(dead.clone())),
+            Err(TargetError::NotAuthorized)
+        );
+        authorizer
+            .grant(&scope(), &target, GrantKind::ForRun)
+            .unwrap();
+        // A dead process instance: rejected before liveness and the walk.
+        assert_eq!(
+            native.read_ax_tree(&authorizer, &validated(dead)),
+            Err(TargetError::ProcessRestarted)
+        );
+        // A live process whose bundle id does not match the granted
+        // identity: rejected before the preflight and the walk — the test
+        // binary owns no bundle id, so a TextEdit grant never unlocks it.
+        let own = ProcessInstance {
+            pid: std::process::id(),
+            start_token: process_start_token(std::process::id() as i32)
+                .expect("own process start token"),
+        };
+        assert_eq!(
+            native.read_ax_tree(&authorizer, &validated(own)),
+            Err(TargetError::Invalid(
+                "process instance does not belong to the authorized identity"
+            ))
+        );
+        assert_eq!(
+            AX_WALK_SYSTEM_CALLS.load(std::sync::atomic::Ordering::SeqCst),
+            calls_before,
+            "denied tree reads reached the AX walk seam"
+        );
+    }
+
+    #[test]
+    fn ax_absent_attribute_codes_are_answers_not_failures() {
+        assert!(ax_attr_absent(K_AX_ERROR_NO_VALUE));
+        assert!(ax_attr_absent(K_AX_ERROR_ATTRIBUTE_UNSUPPORTED));
+        assert!(!ax_attr_absent(K_AX_ERROR_API_DISABLED));
+        // CannotComplete (-25204) and everything else stay failures.
+        assert!(!ax_attr_absent(-25204));
+        assert!(!ax_attr_absent(0));
+    }
+
+    #[test]
+    fn tree_read_failures_keep_their_cause() {
+        assert_eq!(
+            ax_tree_read_error(K_AX_ERROR_API_DISABLED),
+            TargetError::PermissionMissing("accessibility")
+        );
+        assert!(matches!(
+            ax_tree_read_error(-25204),
+            TargetError::ProbeUnavailable(_)
+        ));
+    }
+
+    #[test]
+    fn secure_fields_yield_no_content_reads() {
+        // Legacy nonstandard role spelling.
+        assert!(ax_secure("AXSecureTextField", None, false));
+        // The SDK-standard shape: role AXTextField + secure subrole.
+        assert!(ax_secure("AXTextField", Some("AXSecureTextField"), false));
+        // Ordinary text field (no subrole, or a non-secure one).
+        assert!(!ax_secure("AXTextField", None, false));
+        assert!(!ax_secure("AXTextField", Some("AXStandardTextField"), false));
+        // A failed subrole identification is conservative: secure.
+        assert!(ax_secure("AXTextField", None, true));
+        assert!(ax_secure("AXTextField", Some("AXSecureTextField"), true));
+        // Other roles never get the secure-by-subrole reading.
+        assert!(!ax_secure("AXButton", None, false));
+        assert!(!ax_secure("AXButton", Some("AXSecureTextField"), false));
+        assert!(!ax_secure("AXButton", None, true));
+    }
+
+    #[test]
+    fn remaining_budget_reports_only_unexpired_time() {
+        let future = Instant::now() + Duration::from_secs(5);
+        let remaining = remaining_budget(future).expect("unexpired deadline");
+        assert!(remaining > 0.0 && remaining <= 5.0);
+        let past = Instant::now() - Duration::from_secs(1);
+        assert_eq!(remaining_budget(past), None);
+    }
+
+    #[test]
+    fn read_budget_arms_each_call_with_the_fresh_remaining_budget() {
+        use std::sync::Mutex;
+        static RECORDED: Mutex<Vec<f32>> = Mutex::new(Vec::new());
+        unsafe extern "C" fn recording_set_timeout(_element: *mut c_void, seconds: f32) -> i32 {
+            RECORDED.lock().unwrap().push(seconds);
+            0
+        }
+        let budget = ReadBudget {
+            set_timeout: recording_set_timeout,
+            deadline: Instant::now() + Duration::from_secs(30),
+        };
+        // Two armed calls through the real call path: each hands the
+        // budget remaining when it starts to the timeout entry point.
+        assert_eq!(budget.call(ptr::null_mut(), || "first"), Ok("first"));
+        assert_eq!(budget.call(ptr::null_mut(), || "second"), Ok("second"));
+        let recorded = RECORDED.lock().unwrap();
+        assert_eq!(recorded.len(), 2, "recorded {recorded:?}");
+        assert!(recorded.iter().all(|seconds| *seconds > 0.0 && *seconds <= 30.0));
+        // A later call never inherits a stale (larger) budget.
+        assert!(recorded[0] >= recorded[1]);
+    }
+
+    #[test]
+    fn read_budget_refuses_to_start_a_call_after_the_deadline() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static CALLED: AtomicUsize = AtomicUsize::new(0);
+        unsafe extern "C" fn forbidden_set_timeout(_element: *mut c_void, _seconds: f32) -> i32 {
+            CALLED.fetch_add(1, Ordering::SeqCst);
+            0
+        }
+        let budget = ReadBudget {
+            set_timeout: forbidden_set_timeout,
+            deadline: Instant::now() - Duration::from_secs(1),
+        };
+        assert_eq!(budget.arm(ptr::null_mut()), Err(BudgetError::Overtime));
+        assert_eq!(
+            budget.call(ptr::null_mut(), || ()),
+            Err(BudgetError::Overtime)
+        );
+        assert_eq!(budget.check(), Err(BudgetError::Overtime));
+        // A blown clock refuses BEFORE arming: the timeout entry point
+        // never ran, so no unbounded AX call was issued.
+        assert_eq!(CALLED.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn read_budget_set_failure_refuses_the_read_with_its_cause() {
+        unsafe extern "C" fn failing_set_timeout(_element: *mut c_void, _seconds: f32) -> i32 {
+            K_AX_ERROR_API_DISABLED
+        }
+        let budget = ReadBudget {
+            set_timeout: failing_set_timeout,
+            deadline: Instant::now() + Duration::from_secs(30),
+        };
+        assert_eq!(
+            budget.arm(ptr::null_mut()),
+            Err(BudgetError::SetFailed(K_AX_ERROR_API_DISABLED))
+        );
+        // The tree-read mapping keeps the permission cause; the
+        // window-list mapping keeps the raw code.
+        assert!(matches!(
+            budget_target_error(BudgetError::SetFailed(K_AX_ERROR_API_DISABLED)),
+            TargetError::PermissionMissing("accessibility")
+        ));
+        assert_eq!(
+            budget_read_error(BudgetError::SetFailed(K_AX_ERROR_API_DISABLED)),
+            AxReadError::ReadFailed(K_AX_ERROR_API_DISABLED)
+        );
+        // Every other set failure is a probe failure, not a permission
+        // report (kAXErrorFailure, -25200).
+        assert!(matches!(
+            budget_target_error(BudgetError::SetFailed(-25200)),
+            TargetError::ProbeUnavailable(_)
+        ));
+        assert_eq!(
+            budget_read_error(BudgetError::Overtime),
+            AxReadError::Overtime
+        );
+    }
+
+    #[test]
+    fn text_truncation_cuts_on_char_boundaries() {
+        assert_eq!(truncate_chars("short", 10), ("short".to_string(), false));
+        assert_eq!(
+            truncate_chars("abcdefghij", 10),
+            ("abcdefghij".to_string(), false)
+        );
+        assert_eq!(
+            truncate_chars("abcdefghijklm", 5),
+            ("abcde".to_string(), true)
+        );
+        // Multibyte characters are never split.
+        assert_eq!(
+            truncate_chars("中文字符串", 3),
+            ("中文字".to_string(), true)
+        );
     }
 }

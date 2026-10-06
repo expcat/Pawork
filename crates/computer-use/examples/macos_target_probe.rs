@@ -24,6 +24,13 @@
 //!                                仅移动仍可派发、图像坐标→窗口坐标映射（结束后还原窗口帧）
 //!   capturegone <bundle_id> [title 子串]
 //!                                捕获成功后语义关窗，同一句柄再捕获按 WindowReplaced 拒绝
+//!   axtree <bundle_id> [title 子串]  CU-05 有界读树：未授权拒绝证据 → 授权读取
+//!                                （版本 / 截断标志 / 角色分布 / 节点样本）→ 登记 AxTree 观测
+//!   axfind <bundle_id> <role|-> [name 子串|-] [title 子串]
+//!                                元素定位：唯一匹配签发元素句柄并验证消费；歧义 /
+//!                                无匹配 / 截断不可证唯一显式返回；跨 run 与伪造句柄拒绝
+//!   axstale <bundle_id> [title 子串] 元素句柄失效证据：缩放改树 → TreeChanged，
+//!                                关窗 → WindowReplaced（验收后窗口帧还原）
 
 #[cfg(target_os = "macos")]
 mod imp {
@@ -34,8 +41,9 @@ mod imp {
     use pawork_computer_use::approval::{GrantKind, TargetIdentity};
     use pawork_computer_use::macos::{DiscoveredApp, DiscoveredWindow, MacosNative, WindowCapture};
     use pawork_computer_use::target::{
-        image_to_window, Environment, ImagePoint, ObservationGeometry, ObservationKind, Scope,
-        TargetObservation, TargetRegistry, ValidatedWindow, WindowHandle,
+        image_to_window, lookup_element, AxTreeRead, ElementHandle, ElementLookup, ElementQuery,
+        Environment, ImagePoint, ObservationGeometry, ObservationKind, Scope, TargetObservation,
+        TargetRegistry, ValidatedWindow, WindowHandle,
     };
     use serde_json::{json, Value};
     use std::collections::HashMap;
@@ -1202,6 +1210,278 @@ mod imp {
         }))
     }
 
+    // ---------- CU-05 有界无障碍树与元素定位 ----------
+
+    /// 一个节点的验收摘要（名称已经过读取侧 200 字符截断）。
+    fn node_summary(read: &AxTreeRead, index: usize) -> Value {
+        let node = &read.nodes[index];
+        json!({
+            "index": index,
+            "path": node.path,
+            "role": node.role,
+            "name": node.name,
+            "name_truncated": node.name_truncated,
+            "enabled": node.enabled,
+            "focused": node.focused,
+            "frame": node.frame,
+            "actions": node.actions,
+            "children": node.children,
+            "depth_limited": node.depth_limited,
+        })
+    }
+
+    /// 登记 AxTree 树版本观测（图像与窗口点 1:1：元素帧本身是窗口点）。
+    fn register_ax_observation(
+        bound: &mut BoundTarget,
+        read: &AxTreeRead,
+    ) -> Result<TargetObservation, String> {
+        bound
+            .registry
+            .begin_observation(
+                &bound.handle,
+                &scope(),
+                Environment::NativeBackground,
+                ObservationKind::AxTree {
+                    tree_revision: read.tree_revision,
+                },
+                ObservationGeometry {
+                    image_width: bound.window.bounds.width.round() as u32,
+                    image_height: bound.window.bounds.height.round() as u32,
+                    window_width: bound.window.bounds.width,
+                    window_height: bound.window.bounds.height,
+                },
+            )
+            .map_err(|e| e.to_string())
+    }
+
+    /// 登记观测并签发元素句柄（token = 节点在本次读取中的序号；节点自带
+    /// path 供后续派发重解析，不落原生指针）。
+    fn issue_ax_element(
+        bound: &mut BoundTarget,
+        read: &AxTreeRead,
+        index: usize,
+    ) -> Result<(TargetObservation, ElementHandle), String> {
+        let observation = register_ax_observation(bound, read)?;
+        let element = bound
+            .registry
+            .issue_element(&observation.observation_id, &scope(), index as u64)
+            .map_err(|e| e.to_string())?;
+        Ok((observation, element))
+    }
+
+    /// 授权读取一扇绑定窗口的有界树。
+    fn read_tree(bound: &BoundTarget) -> Result<AxTreeRead, String> {
+        bound
+            .registry
+            .require_authorized(&bound.handle, &scope())
+            .map_err(|e| e.to_string())?;
+        let validated = bound
+            .registry
+            .validate_window(&bound.handle, &scope())
+            .map_err(|e| e.to_string())?;
+        bound
+            .native
+            .read_ax_tree(bound.registry.authorizer(), &validated)
+            .map_err(|e| e.to_string())
+    }
+
+    fn cmd_axtree(bundle_id: &str, needle: Option<&str>) -> Result<Value, String> {
+        let mut bound = bind_window(bundle_id, needle)?;
+        // 未授权读树必须先于任何 AX 访问拒绝。
+        let denied = {
+            let authorizer = pawork_computer_use::approval::TargetAuthorizer::default();
+            let validated = ValidatedWindow {
+                target: TargetIdentity::application(bound.app.identity.clone()),
+                instance: bound.app.instance.clone(),
+                window: bound.window.window,
+                scope: scope(),
+            };
+            bound
+                .native
+                .read_ax_tree(&authorizer, &validated)
+                .err()
+                .map(|e| e.to_string())
+                .unwrap_or_else(|| "unexpectedly read".to_string())
+        };
+        let started = Instant::now();
+        let read = read_tree(&bound)?;
+        let elapsed_ms = started.elapsed().as_millis();
+        let observation = register_ax_observation(&mut bound, &read)?;
+        let mut roles: HashMap<String, usize> = HashMap::new();
+        for node in &read.nodes {
+            *roles.entry(node.role.clone()).or_default() += 1;
+        }
+        let mut roles: Vec<(String, usize)> = roles.into_iter().collect();
+        roles.sort_by(|a, b| b.1.cmp(&a.1));
+        Ok(json!({
+            "read_without_grant": denied,
+            "window_id": bound.window.window.window_id,
+            "window_title": bound.window.title,
+            "tree_revision": read.tree_revision,
+            "observation_id": observation.observation_id.as_str(),
+            "nodes": read.nodes.len(),
+            "truncation": read.truncation,
+            "elapsed_ms": elapsed_ms,
+            "root_frame_local": read.nodes[0].frame,
+            "window_bounds": [bound.window.bounds.x, bound.window.bounds.y, bound.window.bounds.width, bound.window.bounds.height],
+            "roles_top": roles.iter().take(10).map(|(role, count)| json!({ "role": role, "count": count })).collect::<Vec<_>>(),
+            "sample": (0..read.nodes.len().min(15)).map(|i| node_summary(&read, i)).collect::<Vec<_>>(),
+        }))
+    }
+
+    fn cmd_axfind(
+        bundle_id: &str,
+        role: Option<&str>,
+        name: Option<&str>,
+        needle: Option<&str>,
+    ) -> Result<Value, String> {
+        let mut bound = bind_window(bundle_id, needle)?;
+        let read = read_tree(&bound)?;
+        let query = ElementQuery::new(role, name).map_err(|e| e.to_string())?;
+        match lookup_element(&read, &query) {
+            ElementLookup::Unique { index } => {
+                let (_observation, element) = issue_ax_element(&mut bound, &read, index)?;
+                // 越权拒绝：跨 run 与伪造句柄（拒绝不消耗句柄）。
+                let cross_run = bound
+                    .registry
+                    .consume_element(&element, &Scope::new("cu03-probe", "run-2"), &|| false)
+                    .err()
+                    .map(|e| e.to_string())
+                    .unwrap_or_else(|| "unexpectedly consumed".to_string());
+                let forged: ElementHandle =
+                    serde_json::from_str("\"e-1-1\"").map_err(|e| e.to_string())?;
+                let forged_result = bound
+                    .registry
+                    .consume_element(&forged, &scope(), &|| false)
+                    .err()
+                    .map(|e| e.to_string())
+                    .unwrap_or_else(|| "unexpectedly consumed".to_string());
+                let consumed = bound
+                    .registry
+                    .consume_element(&element, &scope(), &|| false)
+                    .map_err(|e| e.to_string())?;
+                Ok(json!({
+                    "outcome": "unique",
+                    "nodes": read.nodes.len(),
+                    "truncation": read.truncation,
+                    "matched": node_summary(&read, index),
+                    "element_handle": element.as_str(),
+                    "consume_cross_run": cross_run,
+                    "consume_forged": forged_result,
+                    "consumed_element_token": consumed.element_token,
+                    "consumed_tree_revision": consumed.tree_revision,
+                    "matches_read_revision": consumed.tree_revision == read.tree_revision,
+                }))
+            }
+            ElementLookup::NoMatch { tree_truncated } => Ok(json!({
+                "outcome": "no_match",
+                "tree_truncated": tree_truncated,
+                "nodes": read.nodes.len(),
+                "truncation": read.truncation,
+            })),
+            ElementLookup::Ambiguous {
+                matches,
+                tree_truncated,
+            } => Ok(json!({
+                "outcome": "ambiguous",
+                "matches": matches,
+                "tree_truncated": tree_truncated,
+                "nodes": read.nodes.len(),
+                "truncation": read.truncation,
+            })),
+            ElementLookup::UnprovenUnique { index } => Ok(json!({
+                "outcome": "unproven_unique",
+                "candidate": node_summary(&read, index),
+                "nodes": read.nodes.len(),
+                "truncation": read.truncation,
+            })),
+        }
+    }
+
+    fn cmd_axstale(bundle_id: &str, needle: Option<&str>) -> Result<Value, String> {
+        let mut bound = bind_window(bundle_id, needle)?;
+        let pid = bound.app.instance.pid as i32;
+        let original = bound.window.bounds;
+        let query = ElementQuery::new(Some("AXTextArea"), None).map_err(|e| e.to_string())?;
+        let mut steps = Vec::new();
+        let read = read_tree(&bound)?;
+        // 句柄目标：唯一 AXTextArea，找不到退回根节点（窗口自身）。
+        let index = match lookup_element(&read, &query) {
+            ElementLookup::Unique { index } => index,
+            _ => 0,
+        };
+        let (_observation, element) = issue_ax_element(&mut bound, &read, index)?;
+        steps.push(json!({
+            "step": "issued",
+            "index": index,
+            "role": read.nodes[index].role,
+            "tree_revision": read.tree_revision,
+            "nodes": read.nodes.len(),
+        }));
+        // 树变化：缩放窗口 → 元素帧随版面前进 → 版本指纹变化 → TreeChanged。
+        let resized = cmd_axsetframe(
+            pid,
+            original.x,
+            original.y,
+            original.width + 160.0,
+            original.height + 90.0,
+            needle,
+        )?;
+        std::thread::sleep(Duration::from_millis(400));
+        let after_resize = bound
+            .registry
+            .consume_element(&element, &scope(), &|| false)
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_else(|| "unexpectedly consumed".to_string());
+        steps.push(json!({
+            "step": "consume_after_resize",
+            "setframe": resized,
+            "result": after_resize,
+        }));
+        // 还原窗口帧后重读重签（拒绝未消耗旧句柄之外的任何状态）。
+        let restored = cmd_axsetframe(
+            pid,
+            original.x,
+            original.y,
+            original.width,
+            original.height,
+            needle,
+        )?;
+        std::thread::sleep(Duration::from_millis(400));
+        let read2 = read_tree(&bound)?;
+        let index2 = match lookup_element(&read2, &query) {
+            ElementLookup::Unique { index } => index,
+            _ => 0,
+        };
+        let (_observation2, element2) = issue_ax_element(&mut bound, &read2, index2)?;
+        steps.push(json!({
+            "step": "reissued_after_restore",
+            "restored": restored,
+            "tree_revision": read2.tree_revision,
+        }));
+        // 销毁：语义关窗 → 句柄按 WindowReplaced 拒绝。
+        let closed = cmd_axclose(pid, needle)?;
+        std::thread::sleep(Duration::from_millis(600));
+        let after_close = bound
+            .registry
+            .consume_element(&element2, &scope(), &|| false)
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_else(|| "unexpectedly consumed".to_string());
+        steps.push(json!({
+            "step": "consume_after_close",
+            "closed": closed,
+            "result": after_close,
+        }));
+        Ok(json!({
+            "bundle_id": bound.app.identity.bundle_id,
+            "window_id": bound.window.window.window_id,
+            "window_title": bound.window.title,
+            "steps": steps,
+        }))
+    }
+
     pub fn run(args: Vec<String>) -> Result<Value, String> {
         match args.first().map(String::as_str) {
             Some("perms") => Ok(cmd_perms()),
@@ -1277,6 +1557,20 @@ mod imp {
             ),
             Some("capturegone") => cmd_capturegone(
                 args.get(1).ok_or("capturegone 需要 bundle_id")?,
+                args.get(2).map(String::as_str),
+            ),
+            Some("axtree") => cmd_axtree(
+                args.get(1).ok_or("axtree 需要 bundle_id")?,
+                args.get(2).map(String::as_str),
+            ),
+            Some("axfind") => cmd_axfind(
+                args.get(1).ok_or("axfind 需要 bundle_id")?,
+                args.get(2).map(String::as_str).filter(|s| s != &"-"),
+                args.get(3).map(String::as_str).filter(|s| s != &"-"),
+                args.get(4).map(String::as_str),
+            ),
+            Some("axstale") => cmd_axstale(
+                args.get(1).ok_or("axstale 需要 bundle_id")?,
                 args.get(2).map(String::as_str),
             ),
             _ => Err("未知命令".to_string()),
