@@ -947,6 +947,102 @@ pub enum TargetedOutcome {
     },
 }
 
+// ---------- targeted pointer actions (CU-08) ----------
+
+/// Background pointer-action vocabulary (CU-08): click, drag and scroll
+/// against a window, addressed in window points converted from an
+/// observation (CU-04 image_to_window). CU-01 measured CGEventPostToPid
+/// pointer events as ineffective in the background on every family
+/// (caret does not move, buttons do not fire), so the capability matrix
+/// holds Pointer Unsupported across the board: this entry point exists
+/// so the contract rejects these actions explicitly — zero dispatch, no
+/// auto-retry of anything that may have posted — and there is never a
+/// fallback to moving the physical pointer. An in-target move is not
+/// represented at all: it was never proven non-intrusive, and an
+/// unproven action is not exposed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PointerAction {
+    /// One left-button click at a window point.
+    Click { point: WindowPoint },
+    /// Left-button press at `from`, move, release at `to`.
+    Drag { from: WindowPoint, to: WindowPoint },
+    /// Scroll at a window point by finite deltas.
+    Scroll {
+        point: WindowPoint,
+        delta_x: f64,
+        delta_y: f64,
+    },
+}
+
+impl PointerAction {
+    /// The capability-matrix kind this action is gated by.
+    pub fn kind(&self) -> NativeActionKind {
+        NativeActionKind::Pointer
+    }
+
+    /// Structural validity against the observed window size: points are
+    /// finite and inside `[0,width) × [0,height)` — the same
+    /// edge-excluded bounds image_to_window enforces — and scroll deltas
+    /// are finite. Checked before the capability gate, so a malformed
+    /// payload reports its own rejection instead of the family's.
+    pub fn validate(&self, window_width: f64, window_height: f64) -> Result<(), TargetError> {
+        let in_bounds = |p: &WindowPoint| {
+            p.x.is_finite()
+                && p.y.is_finite()
+                && p.x >= 0.0
+                && p.y >= 0.0
+                && p.x < window_width
+                && p.y < window_height
+        };
+        match self {
+            PointerAction::Click { point } | PointerAction::Scroll { point, .. } => {
+                if !in_bounds(point) {
+                    return Err(TargetError::OutOfBounds);
+                }
+            }
+            PointerAction::Drag { from, to } => {
+                if !in_bounds(from) || !in_bounds(to) {
+                    return Err(TargetError::OutOfBounds);
+                }
+            }
+        }
+        if let PointerAction::Scroll { delta_x, delta_y, .. } = self {
+            if !delta_x.is_finite() || !delta_y.is_finite() {
+                return Err(TargetError::Invalid("scroll deltas must be finite"));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Move a bound window to a new top-left origin (CU-08): global screen
+/// coordinates, written through the AX AXPosition route — the one window
+/// move CU-01 measured as working on an occluded AppKit window. The
+/// origin is not clamped to screen bounds: a display left of the primary
+/// has legitimately negative global coordinates, and a partially
+/// off-screen window is legal user state the contract will not silently
+/// "correct".
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WindowMove {
+    pub x: f64,
+    pub y: f64,
+}
+
+impl WindowMove {
+    /// The capability-matrix kind this action is gated by.
+    pub fn kind(&self) -> NativeActionKind {
+        NativeActionKind::WindowMove
+    }
+
+    /// Structural validity: a finite origin.
+    pub fn validate(&self) -> Result<(), TargetError> {
+        if !self.x.is_finite() || !self.y.is_finite() {
+            return Err(TargetError::Invalid("window origin must be finite"));
+        }
+        Ok(())
+    }
+}
+
 /// Live native state supplied by the host; implemented by the macOS backend
 /// (downstream task) and by test fakes. Contract code never calls platform
 /// APIs directly.
@@ -1021,6 +1117,17 @@ pub struct ValidatedElement {
     /// Single-use credential for the one dispatch this consume released
     /// (CU-06): the backend's first dispatch attempt retires it, so a
     /// cloned validation result can never dispatch twice.
+    pub dispatch_permit: DispatchPermit,
+}
+
+/// A consumed window-dispatch lease (CU-08): exactly one window-level
+/// action (window move) may dispatch, bound to the single-use permit its
+/// consume minted. The window binding itself stays live — it is not a
+/// lease — so the same bound window can dispatch again after a fresh
+/// consume.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ValidatedWindowDispatch {
+    pub window: ValidatedWindow,
     pub dispatch_permit: DispatchPermit,
 }
 
@@ -1448,7 +1555,7 @@ impl<P: NativeProbe> TargetRegistry<P> {
         )?;
         let dispatch_permit = self
             .authorizer
-            .spend_for_element_dispatch(scope, &window_record.target)?;
+            .spend_for_dispatch(scope, &window_record.target)?;
         self.touch_occupancy(&dispatch_target, scope);
         let validated = ValidatedElement {
             window,
@@ -1462,6 +1569,44 @@ impl<P: NativeProbe> TargetRegistry<P> {
             .unwrap()
             .consumed = true;
         Ok(validated)
+    }
+
+    /// Consume one window-level dispatch on a live bound window (CU-08:
+    /// window move). The window binding stays live — unlike observation
+    /// and element leases it is not consumed — but every dispatch needs
+    /// its own consume, which re-checks authorization, occupancy and
+    /// user takeover, revalidates liveness (process instance, window
+    /// generation, website origin), spends the grant and mints the
+    /// single-use [DispatchPermit] that authorizes exactly one dispatch.
+    pub fn consume_window_dispatch(
+        &mut self,
+        window: &WindowHandle,
+        scope: &Scope,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<ValidatedWindowDispatch, TargetError> {
+        if cancelled() {
+            return Err(TargetError::Cancelled);
+        }
+        let record = self
+            .windows
+            .get(window.as_str())
+            .ok_or(TargetError::UnknownHandle)?;
+        if &record.scope != scope {
+            return Err(TargetError::CrossRun);
+        }
+        self.authorizer.check(scope, &record.target)?;
+        let dispatch_target = record.target.clone();
+        self.occupancy_conflict(&dispatch_target, scope)?;
+        self.dispatch_paused(&dispatch_target)?;
+        let window = self.live(record)?;
+        let dispatch_permit = self
+            .authorizer
+            .spend_for_dispatch(scope, &record.target)?;
+        self.touch_occupancy(&dispatch_target, scope);
+        Ok(ValidatedWindowDispatch {
+            window,
+            dispatch_permit,
+        })
     }
 
     fn live(&self, record: &WindowRecord) -> Result<ValidatedWindow, TargetError> {
@@ -1666,6 +1811,10 @@ mod tests {
             .bind_window(&scope(), target, instance(), window_identity())
             .unwrap();
         (registry, window)
+    }
+
+    fn forged_window() -> WindowHandle {
+        serde_json::from_str("\"w-forged\"").unwrap()
     }
 
     fn geometry() -> ObservationGeometry {
@@ -1952,6 +2101,146 @@ mod tests {
         assert_eq!(
             require_background(Appkit, NativeActionKind::MenuShortcut, false),
             Err(TargetError::BackgroundUnsupported)
+        );
+    }
+
+    #[test]
+    fn pointer_actions_validate_against_observed_bounds() {
+        let point = |x, y| WindowPoint { x, y };
+        let click = PointerAction::Click { point: point(10.0, 20.0) };
+        assert_eq!(click.kind(), NativeActionKind::Pointer);
+        assert!(click.validate(2560.0, 1440.0).is_ok());
+        // Points share image_to_window's edge-excluded bounds; NaN and
+        // infinities are coordinate errors, not in-bounds values.
+        for bad in [
+            point(2560.0, 20.0),
+            point(10.0, 1440.0),
+            point(-0.1, 20.0),
+            point(10.0, -1.0),
+            point(f64::NAN, 20.0),
+            point(10.0, f64::INFINITY),
+        ] {
+            assert_eq!(
+                PointerAction::Click { point: bad }.validate(2560.0, 1440.0),
+                Err(TargetError::OutOfBounds)
+            );
+        }
+        // A drag needs both endpoints inside the observed window.
+        let drag = PointerAction::Drag {
+            from: point(0.0, 0.0),
+            to: point(2559.9, 1439.9),
+        };
+        assert!(drag.validate(2560.0, 1440.0).is_ok());
+        assert_eq!(
+            PointerAction::Drag {
+                from: point(0.0, 0.0),
+                to: point(2560.0, 1439.9),
+            }
+            .validate(2560.0, 1440.0),
+            Err(TargetError::OutOfBounds)
+        );
+        // Scroll deltas must be finite.
+        let scroll = PointerAction::Scroll {
+            point: point(10.0, 20.0),
+            delta_x: -3.0,
+            delta_y: 0.0,
+        };
+        assert!(scroll.validate(2560.0, 1440.0).is_ok());
+        assert_eq!(
+            PointerAction::Scroll {
+                point: point(10.0, 20.0),
+                delta_x: f64::NAN,
+                delta_y: 0.0,
+            }
+            .validate(2560.0, 1440.0),
+            Err(TargetError::Invalid("scroll deltas must be finite"))
+        );
+    }
+
+    #[test]
+    fn window_moves_require_finite_origins() {
+        let ok = WindowMove { x: -1300.0, y: 200.0 };
+        assert_eq!(ok.kind(), NativeActionKind::WindowMove);
+        assert!(ok.validate().is_ok());
+        // Negative global coordinates are legal (a display left of the
+        // primary); the origin is never clamped, only finiteness-checked.
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert_eq!(
+                WindowMove { x: bad, y: 0.0 }.validate(),
+                Err(TargetError::Invalid("window origin must be finite"))
+            );
+            assert_eq!(
+                WindowMove { x: 0.0, y: bad }.validate(),
+                Err(TargetError::Invalid("window origin must be finite"))
+            );
+        }
+    }
+
+    #[test]
+    fn window_dispatch_mints_one_permit_per_consume() {
+        let (mut registry, window) = bound(AppFamily::Appkit);
+        // Forged handles never reach the ledger.
+        assert_eq!(
+            registry.consume_window_dispatch(&forged_window(), &scope(), &|| false),
+            Err(TargetError::UnknownHandle)
+        );
+        // Cross-run rejection does not mint anything.
+        assert_eq!(
+            registry.consume_window_dispatch(
+                &window,
+                &Scope::new("ws-1", "run-2"),
+                &|| false
+            ),
+            Err(TargetError::CrossRun)
+        );
+        // Cancellation precedes the ledger: nothing is spent.
+        assert_eq!(
+            registry.consume_window_dispatch(&window, &scope(), &|| true),
+            Err(TargetError::Cancelled)
+        );
+        // A user takeover pauses the dispatch without consuming.
+        registry.pause_dispatch(&target(AppFamily::Appkit));
+        assert_eq!(
+            registry.consume_window_dispatch(&window, &scope(), &|| false),
+            Err(TargetError::UserActive)
+        );
+        assert!(registry.resume_dispatch(&target(AppFamily::Appkit)));
+        // The window binding is not a lease: each consume mints an
+        // independent single-use permit.
+        let first = registry
+            .consume_window_dispatch(&window, &scope(), &|| false)
+            .unwrap();
+        let second = registry
+            .consume_window_dispatch(&window, &scope(), &|| false)
+            .unwrap();
+        assert_ne!(first.dispatch_permit, second.dispatch_permit);
+        assert_eq!(first.window, second.window);
+        // A one-shot grant is spent by the first consume only.
+        let (mut once_registry, once_window) = {
+            let mut registry = TargetRegistry::new(FakeProbe::new());
+            registry
+                .grant(&scope(), &target(AppFamily::Appkit), GrantKind::Once)
+                .unwrap();
+            let window = registry
+                .bind_window(&scope(), target(AppFamily::Appkit), instance(), window_identity())
+                .unwrap();
+            (registry, window)
+        };
+        assert!(once_registry
+            .consume_window_dispatch(&once_window, &scope(), &|| false)
+            .is_ok());
+        assert_eq!(
+            once_registry.consume_window_dispatch(&once_window, &scope(), &|| false),
+            Err(TargetError::NotAuthorized)
+        );
+        // Revocation after a consume drops the outstanding permit, so the
+        // dispatch it authorized is blocked at the seam.
+        registry.revoke(&scope(), &target(AppFamily::Appkit));
+        assert_eq!(
+            registry
+                .authorizer
+                .consume_dispatch_permit(&scope(), &target(AppFamily::Appkit), &first.dispatch_permit),
+            Err(TargetError::NotAuthorized)
         );
     }
 

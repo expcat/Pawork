@@ -56,8 +56,8 @@ mod imp {
         TargetRegistry, ValidatedWindow, WindowHandle,
     };
     use pawork_computer_use::target::{
-        require_background, KeyModifiers, SemanticAction, TargetedInput, TargetedKey,
-        TargetedKeyPress, TargetedOutcome,
+        require_background, KeyModifiers, PointerAction, SemanticAction, SemanticOutcome,
+        TargetedInput, TargetedKey, TargetedKeyPress, TargetedOutcome, WindowMove, WindowPoint,
     };
     use serde_json::{json, Value};
     use std::collections::HashMap;
@@ -2020,6 +2020,276 @@ mod imp {
         }))
     }
 
+    /// CU-08 全流程（指针动作拒绝路径）：绑定 → 截图观测 → 矩阵预检 →
+    /// 观测消费 → 后端 pointer_action → 复核零效果与无干扰。能力矩阵
+    /// 当前对三族应用全 Unsupported，预期终态即 BackgroundUnsupported、
+    /// 零派发；预检与后端权威闸结果都入报告。
+    fn cmd_axpointer(
+        bundle_id: &str,
+        action_name: &str,
+        coords: &[f64],
+        needle: Option<&str>,
+    ) -> Result<Value, String> {
+        fn point(coords: &[f64], i: usize) -> Result<WindowPoint, String> {
+            Ok(WindowPoint {
+                x: *coords.get(i).ok_or("缺少坐标参数")?,
+                y: *coords.get(i + 1).ok_or("缺少坐标参数")?,
+            })
+        }
+        let action = match action_name {
+            "click" => PointerAction::Click { point: point(coords, 0)? },
+            "drag" => PointerAction::Drag {
+                from: point(coords, 0)?,
+                to: point(coords, 2)?,
+            },
+            "scroll" => PointerAction::Scroll {
+                point: point(coords, 0)?,
+                delta_x: *coords.get(2).ok_or("缺少滚动增量参数")?,
+                delta_y: *coords.get(3).ok_or("缺少滚动增量参数")?,
+            },
+            other => return Err(format!("未知指针动作: {other}")),
+        };
+        let before = sample_user_settled();
+        let clipboard_before = clipboard_change_count();
+        let mut bound = bind_window(bundle_id, needle)?;
+        let window_id = bound.window.window.window_id;
+        let (_capture, observation) = observe(&mut bound)?;
+        let pre_check = match require_background(
+            bound.app.identity.family,
+            action.kind(),
+            false,
+        ) {
+            Ok(()) => "supported".to_string(),
+            Err(e) => e.to_string(),
+        };
+        let consumed = match bound
+            .registry
+            .consume_observation(&observation.observation_id, &scope(), &|| false)
+        {
+            Ok(consumed) => consumed,
+            Err(e) => {
+                return Ok(json!({
+                    "outcome": "consume_rejected",
+                    "error": e.to_string(),
+                    "pre_check": pre_check,
+                }))
+            }
+        };
+        let dispatch = bound.native.pointer_action(
+            bound.registry.authorizer_mut(),
+            &consumed,
+            &action,
+            &|| false,
+        );
+        let (outcome, dispatch_error) = match &dispatch {
+            Ok(()) => ("dispatched".to_string(), None),
+            Err(e) => ("rejected".to_string(), Some(e.to_string())),
+        };
+        // 复核：零效果（标题不变）与无干扰（前台 / 焦点 / 鼠标 /
+        // 剪贴板）。
+        std::thread::sleep(Duration::from_millis(300));
+        let title_after = bound
+            .native
+            .list_windows(
+                bound.registry.authorizer(),
+                &scope(),
+                &bound.app.identity,
+                &bound.app.instance,
+                true,
+            )
+            .ok()
+            .and_then(|windows| {
+                windows
+                    .into_iter()
+                    .find(|w| w.window.window_id == window_id)
+                    .and_then(|w| w.title)
+            });
+        let after = sample_user_settled();
+        let clipboard_after = clipboard_change_count();
+        Ok(json!({
+            "bundle_id": bound.app.identity.bundle_id,
+            "family": bound.app.identity.family,
+            "window_id": window_id,
+            "action": action_name,
+            "coords": coords,
+            "pre_check": pre_check,
+            "outcome": outcome,
+            "dispatch_error": dispatch_error,
+            "title_before": bound.window.title,
+            "title_after": title_after,
+            "front_unchanged": before["front_pid"] == after["front_pid"],
+            "focus_unchanged": before["focus_pid"] == after["focus_pid"]
+                && before["focus_pid"] != 0,
+            "focus_observed": before["focus_observed"] == true && after["focus_observed"] == true,
+            "mouse_delta": [
+                after["mouse"][0].as_f64().unwrap_or(0.0) - before["mouse"][0].as_f64().unwrap_or(0.0),
+                after["mouse"][1].as_f64().unwrap_or(0.0) - before["mouse"][1].as_f64().unwrap_or(0.0),
+            ],
+            "clipboard_unchanged": clipboard_before == clipboard_after,
+            "user_before": before,
+            "user_after": after,
+        }))
+    }
+
+    /// CU-08 全流程（窗口移动）：绑定 → 读原帧 → 矩阵预检 → 窗口派发
+    /// 消费 → 后端 move_window → 读回复核新帧 → 还原原位 → 无干扰采样。
+    fn cmd_axmove(
+        bundle_id: &str,
+        x: f64,
+        y: f64,
+        needle: Option<&str>,
+    ) -> Result<Value, String> {
+        let before = sample_user_settled();
+        let clipboard_before = clipboard_change_count();
+        let mut bound = bind_window(bundle_id, needle)?;
+        let window_id = bound.window.window.window_id;
+        let frame_before = [
+            bound.window.bounds.x,
+            bound.window.bounds.y,
+            bound.window.bounds.width,
+            bound.window.bounds.height,
+        ];
+        let move_to = WindowMove { x, y };
+        let pre_check = match require_background(
+            bound.app.identity.family,
+            move_to.kind(),
+            false,
+        ) {
+            Ok(()) => "supported".to_string(),
+            Err(e) => e.to_string(),
+        };
+        let consumed = match bound
+            .registry
+            .consume_window_dispatch(&bound.handle, &scope(), &|| false)
+        {
+            Ok(consumed) => consumed,
+            Err(e) => {
+                return Ok(json!({
+                    "outcome": "consume_rejected",
+                    "error": e.to_string(),
+                    "pre_check": pre_check,
+                }))
+            }
+        };
+        let dispatch = bound.native.move_window(
+            bound.registry.authorizer_mut(),
+            &consumed,
+            &move_to,
+            &|| false,
+        );
+        let (outcome, dispatch_error) = match &dispatch {
+            Ok(SemanticOutcome::Dispatched) => ("dispatched".to_string(), None),
+            Ok(SemanticOutcome::UnknownEffect) => ("unknown_effect".to_string(), None),
+            Err(e) => ("rejected".to_string(), Some(e.to_string())),
+        };
+        // 读回复核：窗口服务器帧应到达目标原点（尺寸不变）。
+        std::thread::sleep(Duration::from_millis(500));
+        let frame_after = bound
+            .native
+            .list_windows(
+                bound.registry.authorizer(),
+                &scope(),
+                &bound.app.identity,
+                &bound.app.instance,
+                true,
+            )
+            .ok()
+            .and_then(|windows| {
+                windows
+                    .into_iter()
+                    .find(|w| w.window.window_id == window_id)
+                    .map(|w| [w.bounds.x, w.bounds.y, w.bounds.width, w.bounds.height])
+            });
+        // 还原原位（独立一次消费与派发），失败如实上报。是否还原由读回
+        // 帧驱动：UnknownEffect 时窗口可能已移动；rejected 但读回显示已
+        // 移动属异常，同样还原并如实上报；读回帧缺失时恢复状态记未知。
+        let restore = (|| -> Result<Value, String> {
+            let Some(frame_after_value) = frame_after else {
+                return Ok(json!({ "needed": false, "state": "unknown" }));
+            };
+            let moved = (frame_after_value[0] - frame_before[0]).abs() > 0.5
+                || (frame_after_value[1] - frame_before[1]).abs() > 0.5;
+            if !moved {
+                return Ok(json!({ "needed": false, "state": "unmoved" }));
+            }
+            let consumed = bound
+                .registry
+                .consume_window_dispatch(&bound.handle, &scope(), &|| false)
+                .map_err(|e| e.to_string())?;
+            let back = WindowMove {
+                x: frame_before[0],
+                y: frame_before[1],
+            };
+            let result = bound.native.move_window(
+                bound.registry.authorizer_mut(),
+                &consumed,
+                &back,
+                &|| false,
+            );
+            std::thread::sleep(Duration::from_millis(300));
+            let frame_restored = bound
+                .native
+                .list_windows(
+                    bound.registry.authorizer(),
+                    &scope(),
+                    &bound.app.identity,
+                    &bound.app.instance,
+                    true,
+                )
+                .ok()
+                .and_then(|windows| {
+                    windows
+                        .into_iter()
+                        .find(|w| w.window.window_id == window_id)
+                        .map(|w| [w.bounds.x, w.bounds.y, w.bounds.width, w.bounds.height])
+                });
+            Ok(json!({
+                "needed": true,
+                "outcome": match &result {
+                    Ok(SemanticOutcome::Dispatched) => "dispatched",
+                    Ok(SemanticOutcome::UnknownEffect) => "unknown_effect",
+                    Err(_) => "rejected",
+                },
+                "error": result.err().map(|e| e.to_string()),
+                "frame": frame_restored,
+                "moved_while_rejected": dispatch.is_err(),
+            }))
+        })()?;
+        let after = sample_user_settled();
+        let clipboard_after = clipboard_change_count();
+        Ok(json!({
+            "bundle_id": bound.app.identity.bundle_id,
+            "family": bound.app.identity.family,
+            "window_id": window_id,
+            "target_origin": [x, y],
+            "pre_check": pre_check,
+            "outcome": outcome,
+            "dispatch_error": dispatch_error,
+            "frame_before": frame_before,
+            "frame_after": frame_after,
+            "origin_reached": frame_after
+                .map(|f| {
+                    (f[0] - x).abs() <= 0.5
+                        && (f[1] - y).abs() <= 0.5
+                        && f[2] == frame_before[2]
+                        && f[3] == frame_before[3]
+                })
+                .unwrap_or(false),
+            "restore": restore,
+            "front_unchanged": before["front_pid"] == after["front_pid"],
+            "focus_unchanged": before["focus_pid"] == after["focus_pid"]
+                && before["focus_pid"] != 0,
+            "focus_observed": before["focus_observed"] == true && after["focus_observed"] == true,
+            "mouse_delta": [
+                after["mouse"][0].as_f64().unwrap_or(0.0) - before["mouse"][0].as_f64().unwrap_or(0.0),
+                after["mouse"][1].as_f64().unwrap_or(0.0) - before["mouse"][1].as_f64().unwrap_or(0.0),
+            ],
+            "clipboard_unchanged": clipboard_before == clipboard_after,
+            "user_before": before,
+            "user_after": after,
+        }))
+    }
+
     pub fn run(args: Vec<String>) -> Result<Value, String> {
         match args.first().map(String::as_str) {
             Some("perms") => Ok(cmd_perms()),
@@ -2132,6 +2402,30 @@ mod imp {
                     .ok_or("axinput 需要 text 或 key 参数")?,
                 args.get(6).map(String::as_str).filter(|s| s != &"-"),
                 args.get(7).map(String::as_str),
+            ),
+            Some("axpointer") => {
+                let bundle_id = args.get(1).ok_or("axpointer 需要 bundle_id")?;
+                let action_name = args
+                    .get(2)
+                    .ok_or("axpointer 需要动作：click|drag|scroll")?;
+                let mut coords = Vec::new();
+                let mut needle = None;
+                for arg in &args[3..] {
+                    match arg.parse::<f64>() {
+                        Ok(value) => coords.push(value),
+                        Err(_) => {
+                            needle = Some(arg.clone());
+                            break;
+                        }
+                    }
+                }
+                cmd_axpointer(bundle_id, action_name, &coords, needle.as_deref())
+            }
+            Some("axmove") => cmd_axmove(
+                args.get(1).ok_or("axmove 需要 bundle_id")?,
+                args.get(2).ok_or("axmove 需要 x")?.parse().map_err(|_| "x 非法")?,
+                args.get(3).ok_or("axmove 需要 y")?.parse().map_err(|_| "y 非法")?,
+                args.get(4).map(String::as_str),
             ),
             _ => Err("未知命令".to_string()),
         }

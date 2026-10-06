@@ -100,6 +100,7 @@ use core_graphics::event::{CGEvent, CGEventFlags, CGEventType, CGKeyCode};
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use core_graphics::access::ScreenCaptureAccess;
 use core_graphics::display::CGMainDisplayID;
+use core_graphics::geometry::CGPoint;
 use core_graphics::window as cgwindow;
 use image::{codecs::jpeg::JpegEncoder, imageops::FilterType, RgbImage};
 use objc::rc::autoreleasepool;
@@ -109,9 +110,10 @@ use objc::{class, msg_send, sel, sel_impl};
 use crate::approval::{TargetAuthorizer, TargetIdentity};
 use crate::target::{
     ax_tree_revision, require_background, AppFamily, AppIdentity, AxTreeNode, AxTreeRead,
-    AxTreeTruncation, KeyModifiers, NativeProbe, ProcessInstance, Scope, SemanticAction,
-    SemanticOutcome, TargetError, TargetedInput, TargetedKey, TargetedOutcome, ValidatedElement,
-    ValidatedWindow, WindowIdentity, AX_TREE_BOUNDS,
+    AxTreeTruncation, KeyModifiers, NativeProbe, PointerAction, ProcessInstance, Scope,
+    SemanticAction, SemanticOutcome, TargetError, TargetedInput, TargetedKey, TargetedOutcome,
+    ValidatedElement, ValidatedObservation, ValidatedWindow, ValidatedWindowDispatch,
+    WindowIdentity, WindowMove, AX_TREE_BOUNDS,
 };
 use crate::{MAX_IMAGE_BYTES, MAX_IMAGE_EDGE};
 
@@ -974,6 +976,198 @@ impl MacosNative {
         )
     }
 
+    /// Dispatch one targeted pointer action (click / drag / scroll) on a
+    /// consumed observation (CU-08). Gate order: cancellation, ledger
+    /// recheck (a revocation since the consume blocks here), payload
+    /// validity against the observed window size, process instance,
+    /// identity binding — all before the capability gate, which is where
+    /// this route ends on every family: CU-01 measured CGEventPostToPid
+    /// pointer events as ineffective in the background everywhere (the
+    /// caret does not move, buttons do not fire), so
+    /// [crate::target::background_capability] holds Pointer Unsupported
+    /// across the board and this entry point rejects with
+    /// [TargetError::BackgroundUnsupported] — zero events posted, zero AX
+    /// calls, no auto-retry, and never a fallback to moving the physical
+    /// pointer or activating the target.
+    pub fn pointer_action(
+        &self,
+        authorizer: &mut TargetAuthorizer,
+        validated: &ValidatedObservation,
+        action: &PointerAction,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<(), TargetError> {
+        if cancelled() {
+            return Err(TargetError::Cancelled);
+        }
+        // An observation consume authorized via plain spend and minted no
+        // permit; the ledger recheck still blocks a revocation that
+        // arrived between the consume and this dispatch.
+        authorizer.check(&validated.window.scope, &validated.window.target)?;
+        action.validate(
+            validated.observation.window_width,
+            validated.observation.window_height,
+        )?;
+        if !self.process_instance_alive(&validated.window.instance) {
+            return Err(TargetError::ProcessRestarted);
+        }
+        verify_instance_owns_bundle(
+            &validated.window.target.app().bundle_id,
+            validated.window.instance.pid as i32,
+        )?;
+        // The terminal rejection: no pointer action is proven for any
+        // family, minimized or not, so the gate needs no live window
+        // read — nothing is ever dispatched past this point.
+        require_background(
+            validated.window.target.app().family,
+            action.kind(),
+            false,
+        )
+    }
+
+    /// Move a bound window to a new global origin through the AX
+    /// AXPosition write (CU-08) — the one window move CU-01 measured as
+    /// working on an occluded AppKit window (Chromium-family windows
+    /// ignore the write). Gate order: cancellation, dispatch-side ledger
+    /// authorization (the single-use [crate::approval::DispatchPermit]
+    /// from [crate::target::TargetRegistry::consume_window_dispatch]
+    /// retires on the first attempt whatever happens later), payload
+    /// validity (finite origin, no clamping — negative global
+    /// coordinates are a legal multi-display state), process instance,
+    /// identity binding, the pure family half of the capability gate
+    /// (a Chromium-family target never reaches a single AX call),
+    /// Accessibility preflight, window liveness + generation (bounded by
+    /// the same deadline as everything below), window resolution, the
+    /// minimized half of the capability gate (CU-01 never measured move
+    /// on a minimized window — Unverified rejects exactly like
+    /// Unsupported), then the armed AXPosition write: the point of no
+    /// return, whose returned code alone decides the outcome. Success is
+    /// [crate::target::SemanticOutcome::Dispatched] — dispatch proof
+    /// only, verify with a fresh observation; a messaging timeout is
+    /// [crate::target::SemanticOutcome::UnknownEffect]: the move may
+    /// already have happened and is never reported as a clean failure.
+    /// The window element needs no tree walk: a move does not change the
+    /// tree's window-local frames, so no revision recheck applies.
+    pub fn move_window(
+        &self,
+        authorizer: &mut TargetAuthorizer,
+        validated: &ValidatedWindowDispatch,
+        origin: &WindowMove,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<SemanticOutcome, TargetError> {
+        if cancelled() {
+            return Err(TargetError::Cancelled);
+        }
+        authorizer.consume_dispatch_permit(
+            &validated.window.scope,
+            &validated.window.target,
+            &validated.dispatch_permit,
+        )?;
+        origin.validate()?;
+        if !self.process_instance_alive(&validated.window.instance) {
+            return Err(TargetError::ProcessRestarted);
+        }
+        verify_instance_owns_bundle(
+            &validated.window.target.app().bundle_id,
+            validated.window.instance.pid as i32,
+        )?;
+        require_background(
+            validated.window.target.app().family,
+            origin.kind(),
+            false,
+        )?;
+        match ax_preflight() {
+            AxPreflight::Trusted => {}
+            AxPreflight::NotTrusted => {
+                return Err(TargetError::PermissionMissing("accessibility"));
+            }
+            AxPreflight::Unavailable => {
+                return Err(TargetError::ProbeUnavailable(
+                    "HIServices symbols unavailable".to_string(),
+                ));
+            }
+        }
+        let deadline = Instant::now() + AX_TREE_BOUNDS.max_read();
+        let proven = self.proven_window_cause(
+            &validated.window.instance,
+            validated.window.window.window_id,
+            Some(deadline),
+        )?;
+        if proven.generation != validated.window.window.generation {
+            return Err(TargetError::WindowReplaced);
+        }
+        // The move needs no tree walk, so only its own symbols are
+        // required: messaging timeout, attribute write and AXValue
+        // creation.
+        let f = axf().ok_or_else(|| {
+            TargetError::ProbeUnavailable("HIServices symbols unavailable".to_string())
+        })?;
+        let (Some(set_timeout), Some(set_attribute), Some(value_create)) =
+            (f.set_messaging_timeout, f.set_attribute, f.value_create)
+        else {
+            return Err(TargetError::ProbeUnavailable(
+                "HIServices action symbols unavailable".to_string(),
+            ));
+        };
+        let window_id = u32::try_from(validated.window.window.window_id)
+            .map_err(|_| TargetError::Invalid("window id out of range"))?;
+        let window_element = resolve_window_element(
+            self,
+            validated.window.instance.pid as i32,
+            window_id,
+            deadline,
+        )?;
+        let budget = ReadBudget {
+            set_timeout,
+            deadline,
+        };
+        // Minimized half of the capability gate, read off the live window
+        // element: CU-01 never measured a move on a minimized window, so
+        // that cell stays Unverified — and an unknown state (attribute
+        // absent or non-boolean) proves nothing either way, so it rejects
+        // instead of defaulting the dispatch into the verified matrix.
+        let minimized = move_minimized_gate(dispatch_bool_attr(
+            f,
+            window_element.element,
+            "AXMinimized",
+            &budget,
+        )?)?;
+        require_background(
+            validated.window.target.app().family,
+            origin.kind(),
+            minimized,
+        )?;
+        // The AXPosition write is the point of no return (see the doc
+        // comment); cancellation is honored up to here.
+        if cancelled() {
+            return Err(TargetError::Cancelled);
+        }
+        autoreleasepool(|| unsafe {
+            let point = CGPoint { x: origin.x, y: origin.y };
+            let value =
+                value_create(K_AX_VALUE_TYPE_CGPOINT, &point as *const CGPoint as *const c_void);
+            if value.is_null() {
+                return Err(TargetError::ProbeUnavailable(
+                    "AXValueCreate returned null".to_string(),
+                ));
+            }
+            // Create-rule ownership: the wrapper releases exactly once on
+            // every path, including the budget failure below (the write
+            // has not run yet, so zero writes and one release).
+            let value = RetainedCfValue(value);
+            budget
+                .arm(window_element.element)
+                .map_err(budget_target_error)?;
+            #[cfg(test)]
+            AX_ACTION_SYSTEM_CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let err = set_attribute(
+                window_element.element,
+                nsstr("AXPosition") as CFStringRef,
+                value.0,
+            );
+            semantic_action_result(err)
+        })
+    }
+
     /// One consistent window snapshot: enumeration, generation-ledger sync
     /// and the caller's generation extraction run in a single critical
     /// section. An older enumeration can therefore never overwrite newer
@@ -1480,6 +1674,10 @@ struct AxFns {
     /// CU-06 semantic dispatch. Optional: reads work without them; the
     /// semantic action refuses when the one it needs is missing.
     perform_action: Option<unsafe extern "C" fn(*mut c_void, CFStringRef) -> i32>,
+    /// CU-08 window move: builds the CGPoint AXValue the AXPosition
+    /// write carries. Optional: absent refuses the move instead of
+    /// posting a malformed attribute.
+    value_create: Option<unsafe extern "C" fn(i32, *const c_void) -> *const c_void>,
 }
 
 fn axf() -> Option<&'static AxFns> {
@@ -1515,6 +1713,7 @@ fn axf() -> Option<&'static AxFns> {
             set_messaging_timeout: load(handle, "AXUIElementSetMessagingTimeout"),
             set_attribute: load(handle, "AXUIElementSetAttributeValue"),
             perform_action: load(handle, "AXUIElementPerformAction"),
+            value_create: load(handle, "AXValueCreate"),
         })
     })
     .as_ref()
@@ -2646,6 +2845,33 @@ fn semantic_action_result(err: i32) -> Result<SemanticOutcome, TargetError> {
         code => Err(TargetError::ProbeUnavailable(format!(
             "semantic action failed: AXError {code}"
         ))),
+    }
+}
+
+/// The minimized half of the window-move capability gate (CU-08). Only an
+/// affirmative Some(false) proves the unminimized state CU-01 measured;
+/// Some(true) passes the value on to require_background (the minimized
+/// move cell is Unverified and rejects there), and an unknown state —
+/// AXMinimized absent or non-boolean — rejects outright: a dispatch must
+/// be provably inside the measured matrix, never defaulted into it.
+fn move_minimized_gate(state: Option<bool>) -> Result<bool, TargetError> {
+    match state {
+        Some(minimized) => Ok(minimized),
+        None => Err(TargetError::ProbeUnavailable(
+            "AXMinimized unknown; cannot prove the window unminimized".to_string(),
+        )),
+    }
+}
+
+/// A retained CF object released exactly once on drop (create-rule
+/// discipline): every exit path after acquisition — budget failure,
+/// cancellation, the action call — releases the object exactly once
+/// without hand-written CFRelease pairs per branch.
+struct RetainedCfValue(*const c_void);
+
+impl Drop for RetainedCfValue {
+    fn drop(&mut self) {
+        unsafe { CFRelease(self.0) };
     }
 }
 
@@ -3791,6 +4017,7 @@ mod sck {
 mod tests {
     use super::*;
     use crate::approval::{DispatchPermit, GrantKind};
+    use crate::target::{Environment, TargetObservation};
     use crate::target::MAX_SEMANTIC_TEXT_CHARS;
     use crate::target::{MAX_TARGETED_TEXT_CHARS, TargetedKeyPress};
 
@@ -4383,7 +4610,7 @@ mod tests {
         // attempt retires its permit, so each case mints a fresh one.
         let over_bound = SemanticAction::SetValue("x".repeat(MAX_SEMANTIC_TEXT_CHARS + 1));
         let permit = authorizer
-            .spend_for_element_dispatch(&scope(), &target)
+            .spend_for_dispatch(&scope(), &target)
             .unwrap();
         assert_eq!(
             native.semantic_action(
@@ -4399,7 +4626,7 @@ mod tests {
         );
         // A dead process instance: rejected before identity and the seam.
         let permit = authorizer
-            .spend_for_element_dispatch(&scope(), &target)
+            .spend_for_dispatch(&scope(), &target)
             .unwrap();
         assert_eq!(
             native.semantic_action(&mut authorizer, &validated(dead, permit), &[], &press, &|| false),
@@ -4417,7 +4644,7 @@ mod tests {
                 .expect("own process start token"),
         };
         let permit = authorizer
-            .spend_for_element_dispatch(&scope(), &target)
+            .spend_for_dispatch(&scope(), &target)
             .unwrap();
         assert_eq!(
             native.semantic_action(&mut authorizer, &validated(own, permit), &[], &press, &|| false),
@@ -4435,7 +4662,7 @@ mod tests {
             .grant(&scope(), &target, GrantKind::Once)
             .unwrap();
         let permit = authorizer
-            .spend_for_element_dispatch(&scope(), &target)
+            .spend_for_dispatch(&scope(), &target)
             .unwrap();
         assert_eq!(
             authorizer.check(&scope(), &target),
@@ -4458,7 +4685,7 @@ mod tests {
             .grant(&scope(), &target, GrantKind::Once)
             .unwrap();
         let revoked = authorizer
-            .spend_for_element_dispatch(&scope(), &target)
+            .spend_for_dispatch(&scope(), &target)
             .unwrap();
         authorizer.revoke(&scope(), &target);
         assert_eq!(
@@ -4663,7 +4890,7 @@ mod tests {
         // attempt retires its permit, so each case mints a fresh one.
         let over_bound = TargetedInput::InsertText("x".repeat(MAX_TARGETED_TEXT_CHARS + 1));
         let permit = authorizer
-            .spend_for_element_dispatch(&scope(), &target)
+            .spend_for_dispatch(&scope(), &target)
             .unwrap();
         assert_eq!(
             native.targeted_input(
@@ -4679,12 +4906,12 @@ mod tests {
         );
         // A dead process instance: rejected before identity and the seam.
         let permit = authorizer
-            .spend_for_element_dispatch(&scope(), &target)
+            .spend_for_dispatch(&scope(), &target)
             .unwrap();
         assert_eq!(
             native.targeted_input(
                 &mut authorizer,
-                &validated(dead, permit),
+                &validated(dead.clone(), permit),
                 &[],
                 &text,
                 &|| false
@@ -4703,7 +4930,7 @@ mod tests {
                 .expect("own process start token"),
         };
         let permit = authorizer
-            .spend_for_element_dispatch(&scope(), &target)
+            .spend_for_dispatch(&scope(), &target)
             .unwrap();
         assert_eq!(
             native.targeted_input(
@@ -4727,7 +4954,7 @@ mod tests {
             .grant(&scope(), &target, GrantKind::Once)
             .unwrap();
         let permit = authorizer
-            .spend_for_element_dispatch(&scope(), &target)
+            .spend_for_dispatch(&scope(), &target)
             .unwrap();
         assert_eq!(
             authorizer.check(&scope(), &target),
@@ -4750,7 +4977,7 @@ mod tests {
             .grant(&scope(), &target, GrantKind::Once)
             .unwrap();
         let revoked = authorizer
-            .spend_for_element_dispatch(&scope(), &target)
+            .spend_for_dispatch(&scope(), &target)
             .unwrap();
         authorizer.revoke(&scope(), &target);
         assert_eq!(
@@ -4951,6 +5178,308 @@ mod tests {
             calls_before + 4 + 6 + 2 + 2 + 2 + 2 + 0 + 0 + 2 + 0 + 2,
             "the posting path posted an unexpected number of events"
         );
+    }
+
+    #[test]
+    fn pointer_actions_reject_without_dispatching() {
+        // All counter assertions live in this one test: the counters are
+        // process-global, and parallel tests must not interleave with
+        // them. CU-01 measured pointer events as ineffective in the
+        // background on every family, so the route's terminal state is
+        // the capability gate — and no denied call may touch AX or the
+        // event seam on the way there.
+        let native = MacosNative::new();
+        let mut authorizer = TargetAuthorizer::default();
+        let app = AppIdentity {
+            bundle_id: "com.apple.TextEdit".into(),
+            family: AppFamily::Appkit,
+        };
+        let target = TargetIdentity::application(app);
+        let calls_before = AX_ACTION_SYSTEM_CALLS.load(std::sync::atomic::Ordering::SeqCst);
+        let walks_before = AX_WALK_SYSTEM_CALLS.load(std::sync::atomic::Ordering::SeqCst);
+        let dead = ProcessInstance {
+            pid: 99_999_999,
+            start_token: 1,
+        };
+        let validated = ValidatedObservation {
+            window: ValidatedWindow {
+                target: target.clone(),
+                instance: dead,
+                window: WindowIdentity {
+                    window_id: 999_999_999,
+                    generation: 1,
+                },
+                scope: scope(),
+            },
+            observation: TargetObservation {
+                observation_id: serde_json::from_str("\"o-forged\"").unwrap(),
+                environment: Environment::NativeBackground,
+                window: serde_json::from_str("\"w-forged\"").unwrap(),
+                image_width: 800,
+                image_height: 600,
+                window_width: 1600.0,
+                window_height: 1200.0,
+            },
+            tree_revision: None,
+        };
+        let click = PointerAction::Click {
+            point: crate::target::WindowPoint { x: 10.0, y: 10.0 },
+        };
+        // Cancellation precedes even the ledger recheck.
+        assert_eq!(
+            native.pointer_action(&mut authorizer, &validated, &click, &|| true),
+            Err(TargetError::Cancelled)
+        );
+        // A revocation since the consume blocks at the ledger recheck.
+        assert_eq!(
+            native.pointer_action(&mut authorizer, &validated, &click, &|| false),
+            Err(TargetError::NotAuthorized)
+        );
+        authorizer
+            .grant(&scope(), &target, GrantKind::ForRun)
+            .unwrap();
+        // Payload validity precedes the process check: an out-of-bounds
+        // point on a dead process is OutOfBounds, not ProcessRestarted.
+        let out_of_bounds = PointerAction::Click {
+            point: crate::target::WindowPoint {
+                x: 1600.0,
+                y: 10.0,
+            },
+        };
+        assert_eq!(
+            native.pointer_action(&mut authorizer, &validated, &out_of_bounds, &|| false),
+            Err(TargetError::OutOfBounds)
+        );
+        assert_eq!(
+            native.pointer_action(&mut authorizer, &validated, &click, &|| false),
+            Err(TargetError::ProcessRestarted)
+        );
+        // A live process whose bundle id does not match the granted
+        // identity is rejected before the capability gate: the test
+        // binary owns no bundle id, so a TextEdit grant never unlocks it.
+        let own = ProcessInstance {
+            pid: std::process::id(),
+            start_token: process_start_token(std::process::id() as i32)
+                .expect("own process start token"),
+        };
+        let own_validated = ValidatedObservation {
+            window: ValidatedWindow {
+                target: target.clone(),
+                instance: own,
+                window: WindowIdentity {
+                    window_id: 999_999_999,
+                    generation: 1,
+                },
+                scope: scope(),
+            },
+            observation: validated.observation.clone(),
+            tree_revision: None,
+        };
+        assert_eq!(
+            native.pointer_action(&mut authorizer, &own_validated, &click, &|| false),
+            Err(TargetError::Invalid(
+                "process instance does not belong to the authorized identity"
+            ))
+        );
+        // The capability gate itself (every family rejecting Pointer with
+        // BackgroundUnsupported, zero AX / event contact) is pinned by the
+        // contract tests and the CU-01 matrix.
+        assert_eq!(
+            AX_ACTION_SYSTEM_CALLS.load(std::sync::atomic::Ordering::SeqCst),
+            calls_before,
+            "denied pointer actions reached the AX action seam"
+        );
+        assert_eq!(
+            AX_WALK_SYSTEM_CALLS.load(std::sync::atomic::Ordering::SeqCst),
+            walks_before,
+            "denied pointer actions reached the AX walk seam"
+        );
+    }
+
+    #[test]
+    fn move_window_gates_precede_the_position_seam() {
+        // All counter assertions live in this one test: the counter is
+        // process-global, and parallel tests must not interleave with it.
+        let native = MacosNative::new();
+        let mut authorizer = TargetAuthorizer::default();
+        let app = AppIdentity {
+            bundle_id: "com.apple.TextEdit".into(),
+            family: AppFamily::Appkit,
+        };
+        let target = TargetIdentity::application(app);
+        let calls_before = AX_ACTION_SYSTEM_CALLS.load(std::sync::atomic::Ordering::SeqCst);
+        let window = WindowIdentity {
+            window_id: 999_999_999,
+            generation: 1,
+        };
+        let dead = ProcessInstance {
+            pid: 99_999_999,
+            start_token: 1,
+        };
+        let validated = |instance: ProcessInstance, permit: DispatchPermit| {
+            ValidatedWindowDispatch {
+                window: ValidatedWindow {
+                    target: target.clone(),
+                    instance,
+                    window,
+                    scope: scope(),
+                },
+                dispatch_permit: permit,
+            }
+        };
+        let move_to = WindowMove { x: 100.0, y: 100.0 };
+        // A forged permit is rejected before any OS access, even though
+        // no grant was ever spent for it.
+        let forged = DispatchPermit {
+            token: "dp-forged".into(),
+        };
+        assert_eq!(
+            native.move_window(
+                &mut authorizer,
+                &validated(dead.clone(), forged),
+                &move_to,
+                &|| false
+            ),
+            Err(TargetError::NotAuthorized)
+        );
+        authorizer
+            .grant(&scope(), &target, GrantKind::ForRun)
+            .unwrap();
+        // Payload validity precedes even the process check: a NaN origin
+        // on a dead process is Invalid, not ProcessRestarted. Every
+        // attempt retires its permit, so each case mints a fresh one.
+        let nan_origin = WindowMove { x: f64::NAN, y: 0.0 };
+        let permit = authorizer.spend_for_dispatch(&scope(), &target).unwrap();
+        assert_eq!(
+            native.move_window(
+                &mut authorizer,
+                &validated(dead.clone(), permit),
+                &nan_origin,
+                &|| false
+            ),
+            Err(TargetError::Invalid("window origin must be finite"))
+        );
+        // A dead process instance: rejected before identity and the seam.
+        let permit = authorizer.spend_for_dispatch(&scope(), &target).unwrap();
+        assert_eq!(
+            native.move_window(
+                &mut authorizer,
+                &validated(dead.clone(), permit),
+                &move_to,
+                &|| false
+            ),
+            Err(TargetError::ProcessRestarted)
+        );
+        // A live process whose bundle id does not match the granted
+        // identity: rejected before the capability gate and the seam. The
+        // family half of the gate (a Chromium-family target reaching
+        // BackgroundUnsupported without any AX call) is pinned by the
+        // contract tests and the CU-01 matrix.
+        let own = ProcessInstance {
+            pid: std::process::id(),
+            start_token: process_start_token(std::process::id() as i32)
+                .expect("own process start token"),
+        };
+        let permit = authorizer.spend_for_dispatch(&scope(), &target).unwrap();
+        assert_eq!(
+            native.move_window(
+                &mut authorizer,
+                &validated(own, permit),
+                &move_to,
+                &|| false
+            ),
+            Err(TargetError::Invalid(
+                "process instance does not belong to the authorized identity"
+            ))
+        );
+        // The single-permit discipline: the first attempt retired the
+        // permit, so the same (cloned) validation result can never
+        // dispatch twice; revoking after the consume drops the
+        // outstanding permit and blocks the dispatch; cancellation
+        // precedes even the ledger check.
+        let permit = authorizer.spend_for_dispatch(&scope(), &target).unwrap();
+        let consumed_once = validated(dead.clone(), permit);
+        assert_eq!(
+            native.move_window(&mut authorizer, &consumed_once, &move_to, &|| false),
+            Err(TargetError::ProcessRestarted)
+        );
+        assert_eq!(
+            native.move_window(&mut authorizer, &consumed_once, &move_to, &|| false),
+            Err(TargetError::NotAuthorized)
+        );
+        let revoked = authorizer.spend_for_dispatch(&scope(), &target).unwrap();
+        authorizer.revoke(&scope(), &target);
+        assert_eq!(
+            native.move_window(
+                &mut authorizer,
+                &validated(dead.clone(), revoked),
+                &move_to,
+                &|| false
+            ),
+            Err(TargetError::NotAuthorized)
+        );
+        let forged_again = DispatchPermit {
+            token: "dp-forged".into(),
+        };
+        assert_eq!(
+            native.move_window(
+                &mut authorizer,
+                &validated(dead, forged_again),
+                &move_to,
+                &|| true,
+            ),
+            Err(TargetError::Cancelled)
+        );
+        assert_eq!(
+            AX_ACTION_SYSTEM_CALLS.load(std::sync::atomic::Ordering::SeqCst),
+            calls_before,
+            "denied window moves reached the AX action seam"
+        );
+    }
+
+    #[test]
+    fn move_minimized_gate_fails_closed_on_unknown_state() {
+        // Only an affirmative answer proves anything: Some(false) is the
+        // unminimized proof, Some(true) is passed on for require_background
+        // to reject, and an unknown AXMinimized rejects outright instead of
+        // defaulting the dispatch into the measured matrix. The gate is
+        // pure — the action-seam counter must not move.
+        let calls_before = AX_ACTION_SYSTEM_CALLS.load(std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(move_minimized_gate(Some(false)), Ok(false));
+        assert_eq!(move_minimized_gate(Some(true)), Ok(true));
+        assert_eq!(
+            move_minimized_gate(None),
+            Err(TargetError::ProbeUnavailable(
+                "AXMinimized unknown; cannot prove the window unminimized".to_string()
+            ))
+        );
+        assert_eq!(
+            AX_ACTION_SYSTEM_CALLS.load(std::sync::atomic::Ordering::SeqCst),
+            calls_before,
+            "the minimized gate touched the AX action seam"
+        );
+    }
+
+    #[test]
+    fn retained_cf_value_releases_exactly_once_on_every_path() {
+        extern "C" {
+            fn CFGetRetainCount(cf: *const c_void) -> isize;
+        }
+        // One extra retain makes the wrapper's single release observable
+        // without freeing the string: 2 after the retain, 1 after the
+        // wrapper drops. Dropping the CFString afterwards balances its own
+        // reference — exactly one release per path, never two.
+        let string = CFString::new("cu08-retained-cf-value");
+        let raw = string.as_concrete_TypeRef() as *const c_void;
+        unsafe { CFRetain(raw) };
+        assert_eq!(unsafe { CFGetRetainCount(raw) }, 2);
+        drop(RetainedCfValue(raw));
+        assert_eq!(
+            unsafe { CFGetRetainCount(raw) },
+            1,
+            "RetainedCfValue did not release exactly once on drop"
+        );
+        drop(string);
     }
 
     #[test]

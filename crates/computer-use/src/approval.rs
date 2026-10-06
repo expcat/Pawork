@@ -216,13 +216,15 @@ fn next_permit_token() -> String {
 }
 
 /// Single-use dispatch credential minted by
-/// [TargetAuthorizer::spend_for_element_dispatch] and retired by
-/// [TargetAuthorizer::consume_dispatch_permit]. It binds one element-handle
-/// consume to the one dispatch that consume released: the permit travels
-/// inside [crate::target::ValidatedElement], and the first dispatch
-/// attempt — whatever its later outcome — retires it, so a cloned
-/// validation result can never dispatch twice. The token is crate-private:
-/// outside code can carry a permit but can never mint or forge one.
+/// [TargetAuthorizer::spend_for_dispatch] and retired by
+/// [TargetAuthorizer::consume_dispatch_permit]. It binds one consuming
+/// handle use (element handle since CU-06, window dispatch since CU-08)
+/// to the one dispatch that consume released: the permit travels inside
+/// [crate::target::ValidatedElement] / [crate::target::ValidatedWindowDispatch],
+/// and the first dispatch attempt — whatever its later outcome — retires
+/// it, so a cloned validation result can never dispatch twice. The token
+/// is crate-private: outside code can carry a permit but can never mint
+/// or forge one.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DispatchPermit {
     pub(crate) token: String,
@@ -243,9 +245,9 @@ pub struct TargetAuthorizer {
     grants: HashMap<(Scope, TargetIdentity), GrantKind>,
     /// Outstanding single-use dispatch permits, keyed by the scope and
     /// target their consume was authorized for plus the permit token.
-    /// `spend_for_element_dispatch` mints one permit per element-handle
-    /// consume; `consume_dispatch_permit` removes it on the first
-    /// dispatch attempt, so one consume releases exactly one dispatch.
+    /// `spend_for_dispatch` mints one permit per consuming handle use;
+    /// `consume_dispatch_permit` removes it on the first dispatch
+    /// attempt, so one consume releases exactly one dispatch.
     /// `revoke` / `revoke_scope` drop outstanding permits, so a
     /// revocation between consume and dispatch still blocks the
     /// dispatch.
@@ -353,13 +355,13 @@ impl TargetAuthorizer {
         Ok(())
     }
 
-    /// Consume-side authorization for one element handle: spends the
+    /// Consume-side authorization for one dispatching handle use (an
+    /// element handle, or a window dispatch since CU-08): spends the
     /// grant like [Self::spend], then mints the single-use
     /// [DispatchPermit] that authorizes the one dispatch this consume
     /// released. Observation consumes use plain `spend` and never mint
-    /// a permit, so an observation can never stand in for an element
-    /// dispatch.
-    pub fn spend_for_element_dispatch(
+    /// a permit, so an observation can never stand in for a dispatch.
+    pub fn spend_for_dispatch(
         &mut self,
         scope: &Scope,
         target: &TargetIdentity,
@@ -374,7 +376,7 @@ impl TargetAuthorizer {
     }
 
     /// Dispatch-side authorization: atomically retires the permit the
-    /// element-handle consume minted for this scope and target. The
+    /// consuming handle minted for this scope and target. The
     /// first dispatch attempt consumes the permit whether the dispatch
     /// later succeeds or not — a repeated attempt with the same
     /// (cloned) validation result is [TargetError::NotAuthorized].
@@ -655,7 +657,7 @@ mod tests {
         // permit for the dispatch it released: presence checks and new
         // consumes deny from here on.
         let permit = authorizer
-            .spend_for_element_dispatch(&scope(), &editor())
+            .spend_for_dispatch(&scope(), &editor())
             .unwrap();
         assert_eq!(
             authorizer.check(&scope(), &editor()),
@@ -702,7 +704,7 @@ mod tests {
             .grant(&scope(), &editor(), GrantKind::Once)
             .unwrap();
         let revoked = authorizer
-            .spend_for_element_dispatch(&scope(), &editor())
+            .spend_for_dispatch(&scope(), &editor())
             .unwrap();
         authorizer.revoke(&scope(), &editor());
         assert_eq!(
@@ -714,7 +716,7 @@ mod tests {
             .grant(&scope(), &editor(), GrantKind::Once)
             .unwrap();
         let torn_down = authorizer
-            .spend_for_element_dispatch(&scope(), &editor())
+            .spend_for_dispatch(&scope(), &editor())
             .unwrap();
         authorizer.revoke_scope(&scope());
         assert_eq!(
@@ -728,7 +730,7 @@ mod tests {
             .unwrap();
         for _ in 0..2 {
             let permit = authorizer
-                .spend_for_element_dispatch(&scope(), &editor())
+                .spend_for_dispatch(&scope(), &editor())
                 .unwrap();
             assert!(
                 authorizer
