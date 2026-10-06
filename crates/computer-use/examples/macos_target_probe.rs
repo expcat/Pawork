@@ -31,6 +31,11 @@
 //!                                无匹配 / 截断不可证唯一显式返回；跨 run 与伪造句柄拒绝
 //!   axstale <bundle_id> [title 子串] 元素句柄失效证据：缩放改树 → TreeChanged，
 //!                                关窗 → WindowReplaced（验收后窗口帧还原）
+//!   axact <bundle_id> <press|set_value|insert_text> <role|-> [name|-] [text|-] [title 子串]
+//!                                CU-06 语义动作全流程：矩阵预检 → 读树定位唯一元素 →
+//!                                签发并消费句柄 → 后端派发（能力闸 / 版本复核 / 路径重解析）→
+//!                                读回 AXValue/选区与窗口标题复核效果（探针专用读回，产品路径
+//!                                永不读 AXValue）→ 前台/焦点/鼠标/剪贴板无干扰采样
 
 #[cfg(target_os = "macos")]
 mod imp {
@@ -45,6 +50,7 @@ mod imp {
         Environment, ImagePoint, ObservationGeometry, ObservationKind, Scope, TargetObservation,
         TargetRegistry, ValidatedWindow, WindowHandle,
     };
+    use pawork_computer_use::target::{require_background, SemanticAction};
     use serde_json::{json, Value};
     use std::collections::HashMap;
     use std::ffi::{c_void, CStr, CString};
@@ -64,6 +70,8 @@ mod imp {
         fn CFRelease(p: *const c_void);
         fn CFArrayGetCount(a: *const c_void) -> isize;
         fn CFArrayGetValueAtIndex(a: *const c_void, i: isize) -> *const c_void;
+        fn CFGetTypeID(p: *const c_void) -> u64;
+        fn CFStringGetTypeID() -> u64;
     }
 
     type CFTypeRef = *const c_void;
@@ -757,10 +765,10 @@ mod imp {
                     nsstr("AXMinimized") as *const c_void,
                     &mut raw_mini,
                 );
-                let minimized = !raw_mini.is_null() && raw_mini == unsafe {
-                    core_foundation::boolean::CFBoolean::true_value().as_concrete_TypeRef()
-                        as CFTypeRef
-                };
+                let minimized = !raw_mini.is_null()
+                    && raw_mini
+                        == core_foundation::boolean::CFBoolean::true_value().as_concrete_TypeRef()
+                            as CFTypeRef;
                 if !raw_mini.is_null() {
                     CFRelease(raw_mini);
                 }
@@ -904,30 +912,39 @@ mod imp {
     fn bind_window(bundle_id: &str, needle: Option<&str>) -> Result<BoundTarget, String> {
         let native = MacosNative::new();
         let mut registry = TargetRegistry::new(native.clone());
-        let app = native
+        // 同一 bundle id 可同时跑多个进程实例（独立 --user-data-dir 的
+        // Chrome 与用户会话并存）：按 needle 落到真正持有匹配窗口的实例，
+        // 缺省保持第一个有窗实例。
+        let candidates: Vec<DiscoveredApp> = native
             .list_applications()
             .into_iter()
-            .find(|a| a.identity.bundle_id.eq_ignore_ascii_case(bundle_id))
-            .ok_or_else(|| format!("app not running: {bundle_id}"))?;
-        registry
-            .grant(
-                &scope(),
-                &TargetIdentity::application(app.identity.clone()),
-                GrantKind::ForRun,
-            )
-            .map_err(|e| e.to_string())?;
-        let windows = native
-            .list_windows(
+            .filter(|a| a.identity.bundle_id.eq_ignore_ascii_case(bundle_id))
+            .collect();
+        if candidates.is_empty() {
+            return Err(format!("app not running: {bundle_id}"));
+        }
+        let mut picked: Option<(DiscoveredApp, DiscoveredWindow)> = None;
+        for app in &candidates {
+            let granted = registry
+                .grant(
+                    &scope(),
+                    &TargetIdentity::application(app.identity.clone()),
+                    GrantKind::ForRun,
+                )
+                .map_err(|e| e.to_string());
+            if granted.is_err() {
+                continue;
+            }
+            let Ok(windows) = native.list_windows(
                 registry.authorizer(),
                 &scope(),
                 &app.identity,
                 &app.instance,
                 true,
-            )
-            .map_err(|e| e.to_string())?;
-        let window = windows
-            .into_iter()
-            .find(|w| match needle {
+            ) else {
+                continue;
+            };
+            let found = windows.into_iter().find(|w| match needle {
                 Some(n) => w
                     .title
                     .clone()
@@ -935,8 +952,20 @@ mod imp {
                     .to_lowercase()
                     .contains(&n.to_lowercase()),
                 None => true,
-            })
-            .ok_or_else(|| format!("no window matching {:?}", needle))?;
+            });
+            if let Some(window) = found {
+                picked = Some((app.clone(), window));
+                break;
+            }
+        }
+        let (app, window) = picked.ok_or_else(|| format!("no window matching {:?}", needle))?;
+        registry
+            .grant(
+                &scope(),
+                &TargetIdentity::application(app.identity.clone()),
+                GrantKind::ForRun,
+            )
+            .map_err(|e| e.to_string())?;
         let handle = registry
             .bind_window(
                 &scope(),
@@ -1482,6 +1511,287 @@ mod imp {
         }))
     }
 
+    // ---------- CU-06 后台 AX 语义动作 ----------
+
+    /// 剪贴板 changeCount（NSPasteboard）：语义动作不碰剪贴板的独立事实。
+    fn clipboard_change_count() -> i64 {
+        autoreleasepool(|| unsafe {
+            let pb: *mut Object = msg_send![class!(NSPasteboard), generalPasteboard];
+            if pb.is_null() {
+                return -1;
+            }
+            msg_send![pb, changeCount]
+        })
+    }
+
+    /// 验收探针专用的元素读回：按窗口 id 与 path 重解析活元素，读 AXValue
+    /// （仅字符串类型）与 AXSelectedTextRange。产品路径（树读取与派发）永不
+    /// 读 AXValue；这里是 CU-01 同款的目标侧独立事实取证。
+    fn read_element_text(pid: i32, window_id: u32, path: &[u32]) -> Value {
+        autoreleasepool(|| unsafe {
+            let app = (axf().create_application)(pid);
+            if app.is_null() {
+                return json!({ "ok": false, "error": "no AX application" });
+            }
+            let mut windows: CFTypeRef = ptr::null();
+            let err =
+                (axf().copy_attribute)(app, nsstr("AXWindows") as *const c_void, &mut windows);
+            if err != 0 || windows.is_null() {
+                CFRelease(app as *const c_void);
+                return json!({ "ok": false, "error": format!("AXWindows read: {err}") });
+            }
+            let count = CFArrayGetCount(windows);
+            let mut window: AXEl = ptr::null_mut();
+            for i in 0..count {
+                let candidate = CFArrayGetValueAtIndex(windows, i) as AXEl;
+                if candidate.is_null() {
+                    continue;
+                }
+                let mut id: u32 = 0;
+                if (axf().get_window)(candidate, &mut id) == 0 && id == window_id {
+                    window = candidate;
+                    break;
+                }
+            }
+            if window.is_null() {
+                CFRelease(windows);
+                CFRelease(app as *const c_void);
+                return json!({ "ok": false, "error": "window element not found" });
+            }
+            // 逐级读 AXChildren 下钻；每层数组保活到读回完成。
+            let mut level_arrays: Vec<CFTypeRef> = vec![windows];
+            let mut current = window;
+            let mut failed: Option<String> = None;
+            for &index in path {
+                let mut children: CFTypeRef = ptr::null();
+                let err = (axf().copy_attribute)(
+                    current,
+                    nsstr("AXChildren") as *const c_void,
+                    &mut children,
+                );
+                if err != 0 || children.is_null() {
+                    if !children.is_null() {
+                        CFRelease(children);
+                    }
+                    failed = Some(format!("children read: {err}"));
+                    break;
+                }
+                let n = CFArrayGetCount(children);
+                let child = if (index as isize) < n {
+                    CFArrayGetValueAtIndex(children, index as isize) as AXEl
+                } else {
+                    ptr::null_mut()
+                };
+                if child.is_null() {
+                    CFRelease(children);
+                    failed = Some(format!("path index {index} out of {n} children"));
+                    break;
+                }
+                level_arrays.push(children);
+                current = child;
+            }
+            let result = if let Some(error) = failed {
+                json!({ "ok": false, "error": error })
+            } else {
+                let mut raw_value: CFTypeRef = ptr::null();
+                let value_err = (axf().copy_attribute)(
+                    current,
+                    nsstr("AXValue") as *const c_void,
+                    &mut raw_value,
+                );
+                let value = if value_err == 0
+                    && !raw_value.is_null()
+                    && CFGetTypeID(raw_value) == CFStringGetTypeID()
+                {
+                    Some(rs_str(raw_value as *mut Object))
+                } else {
+                    None
+                };
+                if !raw_value.is_null() {
+                    CFRelease(raw_value);
+                }
+                let mut raw_range: CFTypeRef = ptr::null();
+                let range_err = (axf().copy_attribute)(
+                    current,
+                    nsstr("AXSelectedTextRange") as *const c_void,
+                    &mut raw_range,
+                );
+                // kAXValueTypeCFRange = 4：{location, length} 两个 CFIndex。
+                let mut pair = [0i64; 2];
+                let range = if range_err == 0
+                    && !raw_range.is_null()
+                    && (axf().value_get_value)(raw_range, 4, pair.as_mut_ptr() as *mut c_void)
+                {
+                    Some(pair)
+                } else {
+                    None
+                };
+                if !raw_range.is_null() {
+                    CFRelease(raw_range);
+                }
+                let value_summary = value.as_ref().map(|text| {
+                    json!({
+                        "chars": text.chars().count(),
+                        // 全文 ≤2048 字符直接带，超出带头部样本。
+                        "text": if text.chars().count() <= 2048 { text.clone() } else { text.chars().take(120).collect() },
+                    })
+                });
+                json!({
+                    "ok": true,
+                    "value": value_summary,
+                    "value_err": value_err,
+                    "selected_range": range,
+                    "range_err": range_err,
+                })
+            };
+            for array in level_arrays {
+                CFRelease(array);
+            }
+            CFRelease(app as *const c_void);
+            result
+        })
+    }
+
+    /// CU-06 全流程：绑定 → 读树 → 唯一定位 → 矩阵预检 → 签发/消费句柄 →
+    /// 后端派发 → 读回复核 → 无干扰采样。能力矩阵的预检结果与后端权威闸
+    /// 都入报告（预检拒绝时仍继续走完消费与后端调用，收集两类拒绝证据）。
+    fn cmd_axact(
+        bundle_id: &str,
+        action_name: &str,
+        role: Option<&str>,
+        name: Option<&str>,
+        text: Option<&str>,
+        needle: Option<&str>,
+    ) -> Result<Value, String> {
+        let action = match action_name {
+            "press" => SemanticAction::Press,
+            "set_value" => SemanticAction::SetValue(
+                text.filter(|t| *t != "-")
+                    .ok_or("set_value 需要 text 参数")?
+                    .to_string(),
+            ),
+            "insert_text" => SemanticAction::InsertText(
+                text.filter(|t| *t != "-")
+                    .ok_or("insert_text 需要 text 参数")?
+                    .to_string(),
+            ),
+            other => return Err(format!("未知语义动作: {other}")),
+        };
+        let before = sample_user_settled();
+        let clipboard_before = clipboard_change_count();
+        let mut bound = bind_window(bundle_id, needle)?;
+        let title_before = bound.window.title.clone();
+        let read = read_tree(&bound)?;
+        let query = ElementQuery::new(role, name).map_err(|e| e.to_string())?;
+        let index = match lookup_element(&read, &query) {
+            ElementLookup::Unique { index } => index,
+            ElementLookup::NoMatch { tree_truncated } => {
+                return Ok(json!({ "outcome": "no_match", "tree_truncated": tree_truncated }))
+            }
+            ElementLookup::Ambiguous {
+                matches,
+                tree_truncated,
+            } => {
+                return Ok(
+                    json!({ "outcome": "ambiguous", "matches": matches, "tree_truncated": tree_truncated }),
+                )
+            }
+            ElementLookup::UnprovenUnique { .. } => {
+                return Ok(json!({ "outcome": "unproven_unique" }))
+            }
+        };
+        let node = &read.nodes[index];
+        let pid = bound.app.instance.pid as i32;
+        let window_id = bound.window.window.window_id;
+        // 能力矩阵预检（静态族 × 动作；后端派发前另有权威闸）。
+        let pre_check = match require_background(bound.app.identity.family, action.kind(), false) {
+            Ok(()) => "supported".to_string(),
+            Err(e) => e.to_string(),
+        };
+        let value_before = read_element_text(pid, window_id as u32, &node.path);
+        let (_observation, element) = issue_ax_element(&mut bound, &read, index)?;
+        let consumed = match bound
+            .registry
+            .consume_element(&element, &scope(), &|| false)
+        {
+            Ok(consumed) => consumed,
+            Err(e) => {
+                return Ok(json!({
+                    "outcome": "consume_rejected",
+                    "error": e.to_string(),
+                    "pre_check": pre_check,
+                }))
+            }
+        };
+        let dispatch = bound.native.semantic_action(
+            bound.registry.authorizer_mut(),
+            &consumed,
+            &node.path,
+            &action,
+            &|| false,
+        );
+        let (outcome, dispatch_error) = match &dispatch {
+            Ok(pawork_computer_use::target::SemanticOutcome::Dispatched) => {
+                ("dispatched".to_string(), None)
+            }
+            Ok(pawork_computer_use::target::SemanticOutcome::UnknownEffect) => {
+                ("unknown_effect".to_string(), None)
+            }
+            Err(e) => ("rejected".to_string(), Some(e.to_string())),
+        };
+        // 给目标应用一点生效时间后复核：AXValue / 选区读回与窗口标题。
+        std::thread::sleep(Duration::from_millis(500));
+        let value_after = read_element_text(pid, window_id as u32, &node.path);
+        let title_after = bound
+            .native
+            .list_windows(
+                bound.registry.authorizer(),
+                &scope(),
+                &bound.app.identity,
+                &bound.app.instance,
+                true,
+            )
+            .ok()
+            .and_then(|windows| {
+                windows
+                    .into_iter()
+                    .find(|w| w.window.window_id == window_id)
+                    .and_then(|w| w.title)
+            });
+        let revision_after = read_tree(&bound).ok().map(|r| r.tree_revision);
+        let after = sample_user_settled();
+        let clipboard_after = clipboard_change_count();
+        Ok(json!({
+            "bundle_id": bound.app.identity.bundle_id,
+            "family": bound.app.identity.family,
+            "window_id": window_id,
+            "action": action_name,
+            "matched": node_summary(&read, index),
+            "pre_check": pre_check,
+            "outcome": outcome,
+            "dispatch_error": dispatch_error,
+            "value_before": value_before,
+            "value_after": value_after,
+            "title_before": title_before,
+            "title_after": title_after,
+            "tree_revision_before": read.tree_revision,
+            "tree_revision_after": revision_after,
+            "front_unchanged": before["front_pid"] == after["front_pid"],
+            "focus_unchanged": before["focus_pid"] == after["focus_pid"]
+                && before["focus_pid"] != 0,
+            "focus_observed": before["focus_observed"] == true && after["focus_observed"] == true,
+            "mouse_delta": [
+                after["mouse"][0].as_f64().unwrap_or(0.0) - before["mouse"][0].as_f64().unwrap_or(0.0),
+                after["mouse"][1].as_f64().unwrap_or(0.0) - before["mouse"][1].as_f64().unwrap_or(0.0),
+            ],
+            "clipboard_before": clipboard_before,
+            "clipboard_after": clipboard_after,
+            "clipboard_unchanged": clipboard_before == clipboard_after,
+            "user_before": before,
+            "user_after": after,
+        }))
+    }
+
     pub fn run(args: Vec<String>) -> Result<Value, String> {
         match args.first().map(String::as_str) {
             Some("perms") => Ok(cmd_perms()),
@@ -1572,6 +1882,15 @@ mod imp {
             Some("axstale") => cmd_axstale(
                 args.get(1).ok_or("axstale 需要 bundle_id")?,
                 args.get(2).map(String::as_str),
+            ),
+            Some("axact") => cmd_axact(
+                args.get(1).ok_or("axact 需要 bundle_id")?,
+                args.get(2)
+                    .ok_or("axact 需要动作：press|set_value|insert_text")?,
+                args.get(3).map(String::as_str).filter(|s| s != &"-"),
+                args.get(4).map(String::as_str).filter(|s| s != &"-"),
+                args.get(5).map(String::as_str),
+                args.get(6).map(String::as_str),
             ),
             _ => Err("未知命令".to_string()),
         }

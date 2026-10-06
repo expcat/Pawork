@@ -33,6 +33,8 @@
 //!   exactly as they stand, and a Pawork grant never implies them.
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::OnceLock;
 
 use crate::target::{AppFamily, AppIdentity, Scope, TargetError};
 
@@ -195,16 +197,77 @@ pub enum GrantKind {
     ForRun,
 }
 
+static PERMIT_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+
+/// Process-level namespace for permit tokens (pid + start instant in
+/// nanos): a token minted by a previous host instance can never collide
+/// with one minted after a restart, and the process-wide sequence keeps
+/// tokens unique between authorizers inside one process.
+fn next_permit_token() -> String {
+    static INSTANCE: OnceLock<String> = OnceLock::new();
+    let instance = INSTANCE.get_or_init(|| {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        format!("{}-{}", std::process::id(), nanos)
+    });
+    format!("dp-{}-{}", instance, PERMIT_SEQUENCE.fetch_add(1, Ordering::Relaxed))
+}
+
+/// Single-use dispatch credential minted by
+/// [TargetAuthorizer::spend_for_element_dispatch] and retired by
+/// [TargetAuthorizer::consume_dispatch_permit]. It binds one element-handle
+/// consume to the one dispatch that consume released: the permit travels
+/// inside [crate::target::ValidatedElement], and the first dispatch
+/// attempt — whatever its later outcome — retires it, so a cloned
+/// validation result can never dispatch twice. The token is crate-private:
+/// outside code can carry a permit but can never mint or forge one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DispatchPermit {
+    pub(crate) token: String,
+}
+
 /// Host-side ledger of target grants. The only issuer is the host after an
 /// explicit user decision; checks run inside [crate::target::TargetRegistry]
 /// before any probe or backend access. Protection always includes
 /// [MINIMUM_PROTECTED_BUNDLES], so default construction is safe.
-#[derive(Clone, Debug)]
+/// The ledger is deliberately not Clone: a copy would deep-copy the
+/// outstanding dispatch permits, so one consume could dispatch once per
+/// copy and a revocation on the original would miss the copy's permits.
+/// (The compile-time assertion below pins this.)
+#[derive(Debug)]
 pub struct TargetAuthorizer {
     /// Bundle ids that can never be authorized, lowercase.
     protected: HashSet<String>,
     grants: HashMap<(Scope, TargetIdentity), GrantKind>,
+    /// Outstanding single-use dispatch permits, keyed by the scope and
+    /// target their consume was authorized for plus the permit token.
+    /// `spend_for_element_dispatch` mints one permit per element-handle
+    /// consume; `consume_dispatch_permit` removes it on the first
+    /// dispatch attempt, so one consume releases exactly one dispatch.
+    /// `revoke` / `revoke_scope` drop outstanding permits, so a
+    /// revocation between consume and dispatch still blocks the
+    /// dispatch.
+    dispatch_permits: HashSet<(Scope, TargetIdentity, String)>,
 }
+
+// Compile-time regression for the ledger-duplication finding: if Clone is
+// ever re-derived, both impls below apply to TargetAuthorizer and the
+// ambiguous trait reference stops the build (E0283, verified against a
+// Clone fixture). A cloned ledger would deep-copy outstanding dispatch
+// permits — one consume could then dispatch once per copy, and revoking
+// the original would miss the copy.
+const _: () = {
+    trait AmbiguousIfClone<A> {
+        fn some_item() {}
+    }
+    impl<T> AmbiguousIfClone<()> for T {}
+    #[allow(dead_code)]
+    struct Invalid;
+    impl<T: Clone> AmbiguousIfClone<Invalid> for T {}
+    let _ = <TargetAuthorizer as AmbiguousIfClone<_>>::some_item;
+};
 
 impl Default for TargetAuthorizer {
     fn default() -> Self {
@@ -227,6 +290,7 @@ impl TargetAuthorizer {
                 )
                 .collect(),
             grants: HashMap::new(),
+            dispatch_permits: HashSet::new(),
         }
     }
 
@@ -250,14 +314,18 @@ impl TargetAuthorizer {
         Ok(())
     }
 
-    /// Revoke one target's grant; later gated operations on it are denied.
+    /// Revoke one target's grant; later gated operations on it are
+    /// denied, including the dispatch a spent one-shot had released.
     pub fn revoke(&mut self, scope: &Scope, target: &TargetIdentity) {
         self.grants.remove(&(scope.clone(), target.clone()));
+        self.dispatch_permits
+            .retain(|(held_scope, held_target, _)| held_scope != scope || held_target != target);
     }
 
     /// Drop every grant of a run (run teardown). Other runs keep theirs.
     pub fn revoke_scope(&mut self, scope: &Scope) {
         self.grants.retain(|(held, _), _| held != scope);
+        self.dispatch_permits.retain(|(held, _, _)| held != scope);
     }
 
     /// Non-consuming presence check: protected targets are always rejected;
@@ -283,6 +351,54 @@ impl TargetAuthorizer {
             self.grants.remove(&key);
         }
         Ok(())
+    }
+
+    /// Consume-side authorization for one element handle: spends the
+    /// grant like [Self::spend], then mints the single-use
+    /// [DispatchPermit] that authorizes the one dispatch this consume
+    /// released. Observation consumes use plain `spend` and never mint
+    /// a permit, so an observation can never stand in for an element
+    /// dispatch.
+    pub fn spend_for_element_dispatch(
+        &mut self,
+        scope: &Scope,
+        target: &TargetIdentity,
+    ) -> Result<DispatchPermit, TargetError> {
+        self.spend(scope, target)?;
+        let permit = DispatchPermit {
+            token: next_permit_token(),
+        };
+        self.dispatch_permits
+            .insert((scope.clone(), target.clone(), permit.token.clone()));
+        Ok(permit)
+    }
+
+    /// Dispatch-side authorization: atomically retires the permit the
+    /// element-handle consume minted for this scope and target. The
+    /// first dispatch attempt consumes the permit whether the dispatch
+    /// later succeeds or not — a repeated attempt with the same
+    /// (cloned) validation result is [TargetError::NotAuthorized].
+    /// Protected targets are always rejected, and a revocation since
+    /// the consume removed the permit, so a revoked grant blocks its
+    /// in-flight dispatch here.
+    pub fn consume_dispatch_permit(
+        &mut self,
+        scope: &Scope,
+        target: &TargetIdentity,
+        permit: &DispatchPermit,
+    ) -> Result<(), TargetError> {
+        target.validate()?;
+        if self.is_protected(target.app().bundle_id.as_str()) {
+            return Err(TargetError::ForbiddenTarget);
+        }
+        if self
+            .dispatch_permits
+            .remove(&(scope.clone(), target.clone(), permit.token.clone()))
+        {
+            Ok(())
+        } else {
+            Err(TargetError::NotAuthorized)
+        }
     }
 }
 
@@ -519,6 +635,108 @@ mod tests {
         for _ in 0..3 {
             assert!(authorizer.spend(&scope(), &editor()).is_ok());
         }
+    }
+
+    #[test]
+    fn dispatch_permit_is_bound_to_one_consume_and_one_attempt() {
+        let mut authorizer = TargetAuthorizer::default();
+        authorizer
+            .grant(&scope(), &editor(), GrantKind::Once)
+            .unwrap();
+        // A forged permit never passes, even while a grant exists.
+        let forged = DispatchPermit {
+            token: "dp-forged".into(),
+        };
+        assert_eq!(
+            authorizer.consume_dispatch_permit(&scope(), &editor(), &forged),
+            Err(TargetError::NotAuthorized)
+        );
+        // The element consume spends the one-shot grant and mints the
+        // permit for the dispatch it released: presence checks and new
+        // consumes deny from here on.
+        let permit = authorizer
+            .spend_for_element_dispatch(&scope(), &editor())
+            .unwrap();
+        assert_eq!(
+            authorizer.check(&scope(), &editor()),
+            Err(TargetError::NotAuthorized)
+        );
+        assert_eq!(
+            authorizer.spend(&scope(), &editor()),
+            Err(TargetError::NotAuthorized)
+        );
+        // The permit is bound to its scope and target: under any other
+        // key the attempt fails and does not retire it.
+        assert_eq!(
+            authorizer.consume_dispatch_permit(&Scope::new("ws-1", "run-2"), &editor(), &permit),
+            Err(TargetError::NotAuthorized)
+        );
+        assert_eq!(
+            authorizer.consume_dispatch_permit(&scope(), &site("https://example.com"), &permit),
+            Err(TargetError::NotAuthorized)
+        );
+        // The first real attempt retires the permit: a repeated dispatch
+        // from a cloned validation result is denied.
+        assert!(
+            authorizer
+                .consume_dispatch_permit(&scope(), &editor(), &permit)
+                .is_ok()
+        );
+        assert_eq!(
+            authorizer.consume_dispatch_permit(&scope(), &editor(), &permit),
+            Err(TargetError::NotAuthorized)
+        );
+        // A plain observation spend mints no permit: an observation
+        // consume can never stand in for an element dispatch.
+        authorizer
+            .grant(&scope(), &editor(), GrantKind::Once)
+            .unwrap();
+        authorizer.spend(&scope(), &editor()).unwrap();
+        assert_eq!(
+            authorizer.consume_dispatch_permit(&scope(), &editor(), &permit),
+            Err(TargetError::NotAuthorized)
+        );
+        // Revocation between consume and dispatch drops the outstanding
+        // permit and blocks the dispatch.
+        authorizer
+            .grant(&scope(), &editor(), GrantKind::Once)
+            .unwrap();
+        let revoked = authorizer
+            .spend_for_element_dispatch(&scope(), &editor())
+            .unwrap();
+        authorizer.revoke(&scope(), &editor());
+        assert_eq!(
+            authorizer.consume_dispatch_permit(&scope(), &editor(), &revoked),
+            Err(TargetError::NotAuthorized)
+        );
+        // Run teardown drops outstanding permits too.
+        authorizer
+            .grant(&scope(), &editor(), GrantKind::Once)
+            .unwrap();
+        let torn_down = authorizer
+            .spend_for_element_dispatch(&scope(), &editor())
+            .unwrap();
+        authorizer.revoke_scope(&scope());
+        assert_eq!(
+            authorizer.consume_dispatch_permit(&scope(), &editor(), &torn_down),
+            Err(TargetError::NotAuthorized)
+        );
+        // For-run grants stay: every consume mints an independent
+        // single-use permit.
+        authorizer
+            .grant(&scope(), &editor(), GrantKind::ForRun)
+            .unwrap();
+        for _ in 0..2 {
+            let permit = authorizer
+                .spend_for_element_dispatch(&scope(), &editor())
+                .unwrap();
+            assert!(
+                authorizer
+                    .consume_dispatch_permit(&scope(), &editor(), &permit)
+                    .is_ok()
+            );
+        }
+        assert!(authorizer.check(&scope(), &editor()).is_ok());
     }
 
     #[test]

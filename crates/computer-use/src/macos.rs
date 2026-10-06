@@ -95,9 +95,9 @@ use objc::{class, msg_send, sel, sel_impl};
 
 use crate::approval::{TargetAuthorizer, TargetIdentity};
 use crate::target::{
-    ax_tree_revision, AppFamily, AppIdentity, AxTreeNode, AxTreeRead, AxTreeTruncation,
-    NativeProbe, ProcessInstance, Scope, TargetError, ValidatedWindow, WindowIdentity,
-    AX_TREE_BOUNDS,
+    ax_tree_revision, require_background, AppFamily, AppIdentity, AxTreeNode, AxTreeRead,
+    AxTreeTruncation, NativeProbe, ProcessInstance, Scope, SemanticAction, SemanticOutcome,
+    TargetError, ValidatedElement, ValidatedWindow, WindowIdentity, AX_TREE_BOUNDS,
 };
 use crate::{MAX_IMAGE_BYTES, MAX_IMAGE_EDGE};
 
@@ -579,6 +579,188 @@ impl MacosNative {
         })
     }
 
+    /// Dispatch one semantic action on a validated element handle (CU-06).
+    /// Gate order: cancellation, dispatch-side ledger authorization and
+    /// payload validity (all pure, before any OS call), process instance,
+    /// identity binding, then the CU-01 capability gate — family × action
+    /// must be Supported, so a Chromium value write (measured silently
+    /// ineffective) is rejected here without a single AX call to the
+    /// target, and there is never a fallback to global or foreground
+    /// input — then Accessibility preflight, window liveness + generation
+    /// (bounded by the same deadline as the tree contact below), and only
+    /// then tree contact: the window's subtree is re-walked with the
+    /// fixed bounds and must fingerprint to the revision the element
+    /// handle was validated against (TreeChanged otherwise), the handle's
+    /// child-index path is re-resolved against the live tree, and the
+    /// single AX action call runs armed with the remaining read budget.
+    /// Authorization retires the single-use [crate::approval::DispatchPermit]
+    /// the registry minted when the handle was consumed: the first
+    /// dispatch attempt consumes it whatever its later outcome, so a
+    /// cloned validation result can never dispatch twice, and a
+    /// revocation between consume and dispatch dropped the permit and
+    /// blocks here. Cancellation is honored at entry and
+    /// once more right before the action call; once the call is issued,
+    /// its returned code alone decides the outcome.
+    /// The capability gate does not consult the minimized state: both
+    /// semantic kinds are minimized-invariant in the CU-01 matrix (pinned
+    /// by semantic_capability_gate_is_the_matrix_and_minimized_invariant).
+    /// Value writes to secure-input elements are refused (Invalid): the
+    /// read side never reads secure content, and the write side never
+    /// silently enters it. Terminal states stay honest: clear rejections
+    /// are [TargetError]s decided before the action call (or the element's
+    /// own affirmative refusal, [TargetError::ElementUnsupported]); the
+    /// action call's success is [SemanticOutcome::Dispatched] — not proof
+    /// of effect, verify with a fresh observation or a target-side fact —
+    /// and a messaging timeout is [SemanticOutcome::UnknownEffect]: the
+    /// action may already have happened, so it is never reported as a
+    /// clean failure that would invite a blind retry. The action call is
+    /// the point of no return: once issued, its returned code alone
+    /// decides the outcome.
+    pub fn semantic_action(
+        &self,
+        authorizer: &mut TargetAuthorizer,
+        validated: &ValidatedElement,
+        path: &[u32],
+        action: &SemanticAction,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<SemanticOutcome, TargetError> {
+        if cancelled() {
+            return Err(TargetError::Cancelled);
+        }
+        // Dispatch-side authorization: atomically retires the permit the
+        // element-handle consume minted. The first dispatch attempt
+        // consumes it whatever happens later, so a cloned validation
+        // result can never dispatch twice, and a revocation between
+        // consume and dispatch dropped the permit and blocks here.
+        authorizer.consume_dispatch_permit(
+            &validated.window.scope,
+            &validated.window.target,
+            &validated.dispatch_permit,
+        )?;
+        action.validate()?;
+        if !self.process_instance_alive(&validated.window.instance) {
+            return Err(TargetError::ProcessRestarted);
+        }
+        // The granted identity must own this process before any AX contact:
+        // the same binding list_windows, capture_window and read_ax_tree
+        // enforce.
+        verify_instance_owns_bundle(
+            &validated.window.target.app().bundle_id,
+            validated.window.instance.pid as i32,
+        )?;
+        require_background(validated.window.target.app().family, action.kind(), false)?;
+        match ax_preflight() {
+            AxPreflight::Trusted => {}
+            AxPreflight::NotTrusted => {
+                return Err(TargetError::PermissionMissing("accessibility"));
+            }
+            AxPreflight::Unavailable => {
+                return Err(TargetError::ProbeUnavailable(
+                    "HIServices symbols unavailable".to_string(),
+                ));
+            }
+        }
+        // One deadline spans the liveness proof, window resolution, the
+        // revision re-walk, the path resolution and the armed action
+        // call; a liveness read that outlives it keeps the overtime
+        // cause instead of collapsing into WindowReplaced.
+        let deadline = Instant::now() + AX_TREE_BOUNDS.max_read();
+        let proven = self.proven_window_cause(
+            &validated.window.instance,
+            validated.window.window.window_id,
+            Some(deadline),
+        )?;
+        if proven.generation != validated.window.window.generation {
+            return Err(TargetError::WindowReplaced);
+        }
+        // The dispatch walks and resolves with the same fixed bounds the
+        // read used; the action symbols for the requested kind must exist.
+        let f = tree_symbols()?;
+        let (Some(set_timeout), Some(copy_values)) =
+            (f.set_messaging_timeout, f.copy_attribute_values)
+        else {
+            return Err(TargetError::ProbeUnavailable(
+                "HIServices tree symbols unavailable".to_string(),
+            ));
+        };
+        let perform = match action {
+            SemanticAction::Press => Some(f.perform_action.ok_or_else(|| {
+                TargetError::ProbeUnavailable("HIServices action symbols unavailable".to_string())
+            })?),
+            _ => None,
+        };
+        let set_attribute = if action.is_value_write() {
+            Some(f.set_attribute.ok_or_else(|| {
+                TargetError::ProbeUnavailable("HIServices action symbols unavailable".to_string())
+            })?)
+        } else {
+            None
+        };
+        let window_id = u32::try_from(validated.window.window.window_id)
+            .map_err(|_| TargetError::Invalid("window id out of range"))?;
+        let window_element = resolve_window_element(
+            self,
+            validated.window.instance.pid as i32,
+            window_id,
+            deadline,
+        )?;
+        let (nodes, truncation) = walk_ax_tree(&window_element, deadline)?;
+        if ax_tree_revision(&nodes, truncation) != validated.tree_revision {
+            return Err(TargetError::TreeChanged);
+        }
+        // The revision-identical walk contains the issued node; a path
+        // that does not resolve in it is host contract misuse (a foreign
+        // path paired with this handle's revision), not a tree change.
+        if !nodes.iter().any(|node| node.path.as_slice() == path) {
+            return Err(TargetError::Invalid(
+                "element path does not resolve in the tree the handle was validated against",
+            ));
+        }
+        let budget = ReadBudget {
+            set_timeout,
+            deadline,
+        };
+        let element = resolve_element_by_path(copy_values, &window_element, path, &budget)?;
+        if action.is_value_write() {
+            refuse_secure_write(f, &element, &budget)?;
+        }
+        // The action call is the point of no return (see the doc comment):
+        // it runs armed with the remaining budget, and its returned code
+        // alone decides the outcome. Cancellation is honored up to this
+        // point; once the call is issued, Dispatched / UnknownEffect stay
+        // the honest terminal states.
+        if cancelled() {
+            return Err(TargetError::Cancelled);
+        }
+        budget.arm(element.0).map_err(budget_target_error)?;
+        #[cfg(test)]
+        AX_ACTION_SYSTEM_CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let err = unsafe {
+            match action {
+                SemanticAction::Press => {
+                    (perform.unwrap())(element.0, nsstr("AXPress") as CFStringRef)
+                }
+                SemanticAction::SetValue(text) => {
+                    let value = CFString::new(text);
+                    (set_attribute.unwrap())(
+                        element.0,
+                        nsstr("AXValue") as CFStringRef,
+                        value.as_concrete_TypeRef() as *const c_void,
+                    )
+                }
+                SemanticAction::InsertText(text) => {
+                    let value = CFString::new(text);
+                    (set_attribute.unwrap())(
+                        element.0,
+                        nsstr("AXSelectedText") as CFStringRef,
+                        value.as_concrete_TypeRef() as *const c_void,
+                    )
+                }
+            }
+        };
+        semantic_action_result(err)
+    }
+
     /// One consistent window snapshot: enumeration, generation-ledger sync
     /// and the caller's generation extraction run in a single critical
     /// section. An older enumeration can therefore never overwrite newer
@@ -604,9 +786,33 @@ impl MacosNative {
     /// failure (permission missing, app unresponsive, symbols unavailable)
     /// fails closed: the window cannot be proven alive.
     fn proven_window(&self, instance: &ProcessInstance, window_id: u64) -> Option<ProvenWindow> {
-        let id = u32::try_from(window_id).ok()?;
-        let ax = ax_windows(instance.pid as i32).ok()?;
+        // CU-03 callers keep the unbounded discipline and flatten every
+        // failure to None (fail-closed).
+        self.proven_window_cause(instance, window_id, None).ok()
+    }
+
+    /// Liveness proof that keeps its failure cause (CU-06 dispatch):
+    /// with a deadline, the AXWindows read runs armed with the remaining
+    /// budget of the same deadline that bounds the tree re-walk and the
+    /// action call, and a blown clock surfaces as the overtime cause
+    /// instead of collapsing into WindowReplaced.
+    fn proven_window_cause(
+        &self,
+        instance: &ProcessInstance,
+        window_id: u64,
+        deadline: Option<Instant>,
+    ) -> Result<ProvenWindow, TargetError> {
+        let id =
+            u32::try_from(window_id).map_err(|_| TargetError::Invalid("window id out of range"))?;
         let pid = instance.pid as i32;
+        let ax: Vec<AxWindow> = ax_window_list(pid, deadline)
+            .map_err(ax_read_target_error)?
+            .iter()
+            .map(|window| AxWindow {
+                id: window.id,
+                frame: window.frame,
+            })
+            .collect();
         self.with_window_snapshot(None, |windows, ledger| {
             let window = windows.iter().find(|w| w.id == id && w.owner_pid == pid)?;
             if !window_proven_alive(windows, &ax, pid, window) {
@@ -617,6 +823,7 @@ impl MacosNative {
                 generation: ledger.generation(id)?,
             })
         })
+        .ok_or(TargetError::WindowReplaced)
     }
 }
 
@@ -1057,6 +1264,9 @@ struct AxFns {
     /// Chromium-family targets serialize their real tree only once a
     /// client sets AXManualAccessibility on the application element.
     set_attribute: Option<unsafe extern "C" fn(*mut c_void, CFStringRef, *const c_void) -> i32>,
+    /// CU-06 semantic dispatch. Optional: reads work without them; the
+    /// semantic action refuses when the one it needs is missing.
+    perform_action: Option<unsafe extern "C" fn(*mut c_void, CFStringRef) -> i32>,
 }
 
 fn axf() -> Option<&'static AxFns> {
@@ -1091,6 +1301,7 @@ fn axf() -> Option<&'static AxFns> {
             copy_action_names: load(handle, "AXUIElementCopyActionNames"),
             set_messaging_timeout: load(handle, "AXUIElementSetMessagingTimeout"),
             set_attribute: load(handle, "AXUIElementSetAttributeValue"),
+            perform_action: load(handle, "AXUIElementPerformAction"),
         })
     })
     .as_ref()
@@ -2182,6 +2393,235 @@ fn walk_ax_tree(
     })
 }
 
+// ---------- semantic element actions (CU-06) ----------
+
+/// Test-only proof that denied semantic actions never reach the AX action
+/// seam.
+#[cfg(test)]
+static AX_ACTION_SYSTEM_CALLS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// kAXErrorCannotComplete (AXError.h): the call did not answer within its
+/// messaging timeout. For an action dispatch the effect is unknown — the
+/// element may have performed it — so it is never reported as a clean
+/// failure.
+const K_AX_ERROR_CANNOT_COMPLETE: i32 = -25204;
+/// kAXErrorInvalidUIElement: the element is gone — the live tree moved
+/// past the revision the dispatch was validated against.
+const K_AX_ERROR_INVALID_UI_ELEMENT: i32 = -25202;
+/// kAXErrorActionUnsupported: the element affirmatively refuses the
+/// action.
+const K_AX_ERROR_ACTION_UNSUPPORTED: i32 = -25206;
+
+/// The AX action call's return code mapped to the honest terminal state:
+/// success is Dispatched (not proof of effect); CannotComplete is
+/// UnknownEffect (a timed-out action may already have happened — never
+/// blindly retried); the element's own refusal codes are
+/// ElementUnsupported (a clear rejection — the call ran and the element
+/// declined, nothing was dispatched); a dead element means the tree moved
+/// past the validated revision; API-disabled is the permission report;
+/// everything else keeps its cause as a probe failure.
+fn semantic_action_result(err: i32) -> Result<SemanticOutcome, TargetError> {
+    match err {
+        0 => Ok(SemanticOutcome::Dispatched),
+        K_AX_ERROR_CANNOT_COMPLETE => Ok(SemanticOutcome::UnknownEffect),
+        K_AX_ERROR_ACTION_UNSUPPORTED | K_AX_ERROR_ATTRIBUTE_UNSUPPORTED => {
+            Err(TargetError::ElementUnsupported)
+        }
+        K_AX_ERROR_INVALID_UI_ELEMENT => Err(TargetError::TreeChanged),
+        K_AX_ERROR_API_DISABLED => Err(TargetError::PermissionMissing("accessibility")),
+        code => Err(TargetError::ProbeUnavailable(format!(
+            "semantic action failed: AXError {code}"
+        ))),
+    }
+}
+
+/// An AX read failure while resolving or classifying the dispatch element
+/// keeps its cause; a dead element is a tree change here.
+fn ax_dispatch_read_error(err: i32) -> TargetError {
+    if err == K_AX_ERROR_INVALID_UI_ELEMENT {
+        TargetError::TreeChanged
+    } else {
+        ax_tree_read_error(err)
+    }
+}
+
+/// A retained AX element released on drop: copy-rule discipline for the
+/// dispatch-side path resolution.
+struct RetainedElement(*mut c_void);
+
+impl Drop for RetainedElement {
+    fn drop(&mut self) {
+        unsafe { CFRelease(self.0 as *const c_void) }
+    }
+}
+
+/// Re-resolve a validated element's child-index path against the live
+/// tree, starting at the window element (an empty path is the window
+/// itself). Path shape is validated against the fixed tree bounds first —
+/// a forged path is host contract misuse (Invalid), never an unbounded
+/// fetch. Every step is an armed bounded slice fetch of the child list
+/// (never a whole-array copy); a list that no longer covers the recorded
+/// index means the live tree moved past the revision the handle was
+/// validated against (TreeChanged), while a list contradicting itself
+/// (null hole) stays a structural inconsistency (ProbeUnavailable). The
+/// returned element carries its own retain.
+fn resolve_element_by_path(
+    copy_values: unsafe extern "C" fn(
+        *mut c_void,
+        CFStringRef,
+        i64,
+        i64,
+        *mut *const c_void,
+    ) -> i32,
+    root: &AxWindowRef,
+    path: &[u32],
+    budget: &ReadBudget,
+) -> Result<RetainedElement, TargetError> {
+    if path.len() > AX_TREE_BOUNDS.max_depth as usize {
+        return Err(TargetError::Invalid(
+            "element path deeper than the tree depth bound",
+        ));
+    }
+    if path.iter().any(|&index| index >= AX_TREE_BOUNDS.max_nodes) {
+        return Err(TargetError::Invalid("element path index out of bounds"));
+    }
+    unsafe { CFRetain(root.element as *const c_void) };
+    let mut current = root.element;
+    for &index in path {
+        match resolve_path_child(copy_values, current, index, budget) {
+            Ok(child) => {
+                unsafe { CFRelease(current as *const c_void) };
+                current = child;
+            }
+            Err(err) => {
+                unsafe { CFRelease(current as *const c_void) };
+                return Err(err);
+            }
+        }
+    }
+    Ok(RetainedElement(current))
+}
+
+/// One descent step: the child at "index" of "element", retained for the
+/// caller. The slice fetch runs armed with the remaining budget and the
+/// clock is re-checked when it returns — before the child is retained, so
+/// a blown clock never leaks it. "element" stays the caller's own retain.
+fn resolve_path_child(
+    copy_values: unsafe extern "C" fn(
+        *mut c_void,
+        CFStringRef,
+        i64,
+        i64,
+        *mut *const c_void,
+    ) -> i32,
+    element: *mut c_void,
+    index: u32,
+    budget: &ReadBudget,
+) -> Result<*mut c_void, TargetError> {
+    unsafe {
+        budget.arm(element).map_err(budget_target_error)?;
+        let mut raw: *const c_void = ptr::null();
+        let err = copy_values(
+            element,
+            nsstr("AXChildren") as CFStringRef,
+            0,
+            i64::from(index) + 1,
+            &mut raw,
+        );
+        // The clock is re-checked after the call; the fetched array is
+        // released on every path before either error propagates.
+        let clock = budget.check();
+        if err != 0 || raw.is_null() {
+            if !raw.is_null() {
+                CFRelease(raw);
+            }
+            if let Err(err) = clock {
+                return Err(budget_target_error(err));
+            }
+            // The revision-identical walk just saw this child list; an
+            // absent or failed fetch now means the live tree moved.
+            if err == 0 || ax_attr_absent(err) {
+                return Err(TargetError::TreeChanged);
+            }
+            return Err(ax_dispatch_read_error(err));
+        }
+        let fetched = CFArrayGetCount(raw);
+        if fetched <= index as isize {
+            CFRelease(raw);
+            clock.map_err(budget_target_error)?;
+            return Err(TargetError::TreeChanged);
+        }
+        let child = CFArrayGetValueAtIndex(raw, index as isize) as *mut c_void;
+        if child.is_null() {
+            CFRelease(raw);
+            clock.map_err(budget_target_error)?;
+            return Err(TargetError::ProbeUnavailable(
+                "child list inconsistent with the reported child count".to_string(),
+            ));
+        }
+        // The clock verdict precedes the retain: a blown budget discards
+        // the step instead of leaking the child — and the fetched array
+        // is released before the error propagates.
+        if let Err(err) = clock {
+            CFRelease(raw);
+            return Err(budget_target_error(err));
+        }
+        CFRetain(child as *const c_void);
+        CFRelease(raw);
+        Ok(child)
+    }
+}
+
+/// Value writes to secure-input elements are refused: the read side never
+/// reads secure content (CU-05), and the write side never silently enters
+/// it — entering credentials is the user's keyboard, not a background AX
+/// write. The role (and subrole, for AXTextField) is re-read on the
+/// resolved element with the same conservative classification as the walk;
+/// a failed read classifies as secure. Presses are unaffected.
+fn refuse_secure_write(
+    f: &AxFns,
+    element: &RetainedElement,
+    budget: &ReadBudget,
+) -> Result<(), TargetError> {
+    let role = budget
+        .call(element.0, || unsafe {
+            ax_attr_string(f, element.0, "AXRole", 64)
+        })
+        .map_err(budget_target_error)?
+        .map_err(ax_dispatch_read_error)?;
+    let Some((role, _)) = role else {
+        // The revision-identical walk just emitted a role for this node;
+        // an affirmatively absent role now means the element moved.
+        return Err(TargetError::TreeChanged);
+    };
+    let secure = if role == "AXTextField" {
+        match budget.call(element.0, || unsafe {
+            ax_attr_string(f, element.0, "AXSubrole", 64)
+        }) {
+            Err(budget) => return Err(budget_target_error(budget)),
+            Ok(Ok(subrole)) => ax_secure(
+                &role,
+                subrole.as_ref().map(|(text, _)| text.as_str()),
+                false,
+            ),
+            Ok(Err(err)) if err == K_AX_ERROR_INVALID_UI_ELEMENT => {
+                return Err(TargetError::TreeChanged)
+            }
+            // A failed subrole identification is conservative: secure.
+            Ok(Err(_)) => ax_secure(&role, None, true),
+        }
+    } else {
+        ax_secure(&role, None, false)
+    };
+    if secure {
+        return Err(TargetError::Invalid(
+            "semantic value writes to secure-input elements are refused",
+        ));
+    }
+    Ok(())
+}
+
 // ---------- ScreenCaptureKit window capture (CU-04) ----------
 
 /// Raw-pixel ceilings for one capture, mirroring the isolated desktop's
@@ -2674,7 +3114,8 @@ mod sck {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::approval::GrantKind;
+    use crate::approval::{DispatchPermit, GrantKind};
+    use crate::target::MAX_SEMANTIC_TEXT_CHARS;
 
     fn scope() -> Scope {
         Scope::new("ws", "run")
@@ -3208,6 +3649,283 @@ mod tests {
             calls_before,
             "denied tree reads reached the AX walk seam"
         );
+    }
+
+    #[test]
+    fn semantic_action_authorization_gates_precede_the_action_seam() {
+        // All counter assertions live in this one test: the counter is
+        // process-global, and parallel tests must not interleave with it.
+        let native = MacosNative::new();
+        let mut authorizer = TargetAuthorizer::default();
+        let app = AppIdentity {
+            bundle_id: "com.apple.TextEdit".into(),
+            family: AppFamily::Appkit,
+        };
+        let target = TargetIdentity::application(app);
+        let calls_before = AX_ACTION_SYSTEM_CALLS.load(std::sync::atomic::Ordering::SeqCst);
+        let window = WindowIdentity {
+            window_id: 999_999_999,
+            generation: 1,
+        };
+        let dead = ProcessInstance {
+            pid: 99_999_999,
+            start_token: 1,
+        };
+        let validated = |instance: ProcessInstance, permit: DispatchPermit| ValidatedElement {
+            window: ValidatedWindow {
+                target: target.clone(),
+                instance,
+                window,
+                scope: scope(),
+            },
+            element_token: 0,
+            tree_revision: 0,
+            dispatch_permit: permit,
+        };
+        let press = SemanticAction::Press;
+        // A forged permit is rejected before any OS access, even though
+        // no grant was ever spent for it.
+        let forged = DispatchPermit {
+            token: "dp-forged".into(),
+        };
+        assert_eq!(
+            native.semantic_action(
+                &mut authorizer,
+                &validated(dead.clone(), forged),
+                &[],
+                &press,
+                &|| false
+            ),
+            Err(TargetError::NotAuthorized)
+        );
+        authorizer
+            .grant(&scope(), &target, GrantKind::ForRun)
+            .unwrap();
+        // Payload validity precedes even the process check: an over-long
+        // text on a dead process is Invalid, not ProcessRestarted. Every
+        // attempt retires its permit, so each case mints a fresh one.
+        let over_bound = SemanticAction::SetValue("x".repeat(MAX_SEMANTIC_TEXT_CHARS + 1));
+        let permit = authorizer
+            .spend_for_element_dispatch(&scope(), &target)
+            .unwrap();
+        assert_eq!(
+            native.semantic_action(
+                &mut authorizer,
+                &validated(dead.clone(), permit),
+                &[],
+                &over_bound,
+                &|| false
+            ),
+            Err(TargetError::Invalid(
+                "semantic action text exceeds its bound"
+            ))
+        );
+        // A dead process instance: rejected before identity and the seam.
+        let permit = authorizer
+            .spend_for_element_dispatch(&scope(), &target)
+            .unwrap();
+        assert_eq!(
+            native.semantic_action(&mut authorizer, &validated(dead, permit), &[], &press, &|| false),
+            Err(TargetError::ProcessRestarted)
+        );
+        // A live process whose bundle id does not match the granted
+        // identity: rejected before the capability gate and the seam — the
+        // test binary owns no bundle id, so a TextEdit grant never unlocks
+        // it. The capability gate itself (a Chromium value write reaching
+        // BackgroundUnsupported without any AX call) is pinned by the
+        // contract tests and the VS Code acceptance evidence.
+        let own = ProcessInstance {
+            pid: std::process::id(),
+            start_token: process_start_token(std::process::id() as i32)
+                .expect("own process start token"),
+        };
+        let permit = authorizer
+            .spend_for_element_dispatch(&scope(), &target)
+            .unwrap();
+        assert_eq!(
+            native.semantic_action(&mut authorizer, &validated(own, permit), &[], &press, &|| false),
+            Err(TargetError::Invalid(
+                "process instance does not belong to the authorized identity"
+            ))
+        );
+        // A one-shot grant spent by the consume authorizes the dispatch
+        // it released through the minted permit: the dead process is what
+        // rejects now. The first attempt retired the permit, so the same
+        // (cloned) validation result can never dispatch twice; revoking
+        // after the consume drops the outstanding permit and blocks the
+        // dispatch; cancellation precedes even the ledger check.
+        authorizer
+            .grant(&scope(), &target, GrantKind::Once)
+            .unwrap();
+        let permit = authorizer
+            .spend_for_element_dispatch(&scope(), &target)
+            .unwrap();
+        assert_eq!(
+            authorizer.check(&scope(), &target),
+            Err(TargetError::NotAuthorized)
+        );
+        let dead_again = ProcessInstance {
+            pid: 99_999_999,
+            start_token: 1,
+        };
+        let consumed_once = validated(dead_again.clone(), permit);
+        assert_eq!(
+            native.semantic_action(&mut authorizer, &consumed_once, &[], &press, &|| false),
+            Err(TargetError::ProcessRestarted)
+        );
+        assert_eq!(
+            native.semantic_action(&mut authorizer, &consumed_once, &[], &press, &|| false),
+            Err(TargetError::NotAuthorized)
+        );
+        authorizer
+            .grant(&scope(), &target, GrantKind::Once)
+            .unwrap();
+        let revoked = authorizer
+            .spend_for_element_dispatch(&scope(), &target)
+            .unwrap();
+        authorizer.revoke(&scope(), &target);
+        assert_eq!(
+            native.semantic_action(
+                &mut authorizer,
+                &validated(dead_again.clone(), revoked),
+                &[],
+                &press,
+                &|| false,
+            ),
+            Err(TargetError::NotAuthorized)
+        );
+        let forged_again = DispatchPermit {
+            token: "dp-forged".into(),
+        };
+        assert_eq!(
+            native.semantic_action(
+                &mut authorizer,
+                &validated(dead_again, forged_again),
+                &[],
+                &press,
+                &|| true,
+            ),
+            Err(TargetError::Cancelled)
+        );
+        assert_eq!(
+            AX_ACTION_SYSTEM_CALLS.load(std::sync::atomic::Ordering::SeqCst),
+            calls_before,
+            "denied semantic actions reached the AX action seam"
+        );
+    }
+
+    #[test]
+    fn semantic_action_result_maps_ax_codes_to_terminal_states() {
+        assert_eq!(semantic_action_result(0), Ok(SemanticOutcome::Dispatched));
+        // A messaging timeout may already have performed the action:
+        // unknown effect, never a clean failure inviting a blind retry.
+        assert_eq!(
+            semantic_action_result(K_AX_ERROR_CANNOT_COMPLETE),
+            Ok(SemanticOutcome::UnknownEffect)
+        );
+        // The element's own refusals are clear rejections.
+        assert_eq!(
+            semantic_action_result(K_AX_ERROR_ACTION_UNSUPPORTED),
+            Err(TargetError::ElementUnsupported)
+        );
+        assert_eq!(
+            semantic_action_result(K_AX_ERROR_ATTRIBUTE_UNSUPPORTED),
+            Err(TargetError::ElementUnsupported)
+        );
+        // A dead element is a tree change; API-disabled is the permission
+        // report; everything else keeps its cause as a probe failure.
+        assert_eq!(
+            semantic_action_result(K_AX_ERROR_INVALID_UI_ELEMENT),
+            Err(TargetError::TreeChanged)
+        );
+        assert_eq!(
+            semantic_action_result(K_AX_ERROR_API_DISABLED),
+            Err(TargetError::PermissionMissing("accessibility"))
+        );
+        assert!(matches!(
+            semantic_action_result(-25200),
+            Err(TargetError::ProbeUnavailable(_))
+        ));
+        assert!(matches!(
+            semantic_action_result(K_AX_ERROR_NO_VALUE),
+            Err(TargetError::ProbeUnavailable(_))
+        ));
+    }
+
+    #[test]
+    fn path_resolution_releases_the_child_list_when_the_clock_blows_after_the_fetch() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        extern "C" {
+            fn CFArrayCreate(
+                allocator: *const c_void,
+                values: *const *const c_void,
+                count: isize,
+                callbacks: *const c_void,
+            ) -> *const c_void;
+            fn CFGetRetainCount(cf: *const c_void) -> isize;
+        }
+        // A real CFArray stands in for the AXChildren fetch so the
+        // release is observable: the test holds one retain, the fake
+        // fetch hands out a second (copy rule), and the blown-clock
+        // branch must release it before the budget error propagates.
+        static HANDOUT: AtomicUsize = AtomicUsize::new(0);
+        unsafe extern "C" fn fake_copy_values(
+            _element: *mut c_void,
+            _attribute: CFStringRef,
+            _start: i64,
+            _stop: i64,
+            out: *mut *const c_void,
+        ) -> i32 {
+            std::thread::sleep(Duration::from_millis(200));
+            let array = HANDOUT.load(Ordering::SeqCst) as *const c_void;
+            unsafe {
+                CFRetain(array);
+                *out = array;
+            }
+            0
+        }
+        unsafe extern "C" fn fake_set_timeout(_element: *mut c_void, _seconds: f32) -> i32 {
+            0
+        }
+        autoreleasepool(|| unsafe {
+            let child = nsstr("cu06-path-resolution-leak-probe") as *const c_void;
+            let values = [child];
+            let array = CFArrayCreate(
+                ptr::null(),
+                values.as_ptr(),
+                values.len() as isize,
+                ptr::null(),
+            );
+            assert!(!array.is_null());
+            HANDOUT.store(array as usize, Ordering::SeqCst);
+            let budget = ReadBudget {
+                set_timeout: fake_set_timeout,
+                deadline: Instant::now() + Duration::from_millis(50),
+            };
+            let err = resolve_path_child(fake_copy_values, child as *mut c_void, 0, &budget)
+                .expect_err("a blown clock after the fetch must fail the step");
+            assert_eq!(
+                err,
+                TargetError::ProbeUnavailable(
+                    "accessibility tree read exceeded its time budget".to_string()
+                )
+            );
+            assert_eq!(
+                CFGetRetainCount(array),
+                1,
+                "the blown-clock branch leaked the fetched child list"
+            );
+            // The dispatch-side liveness read maps the same blown clock
+            // to the overtime cause instead of collapsing into
+            // WindowReplaced.
+            assert_eq!(
+                ax_read_target_error(AxReadError::Overtime),
+                TargetError::ProbeUnavailable(
+                    "accessibility tree read exceeded its time budget".to_string()
+                )
+            );
+            CFRelease(array);
+        });
     }
 
     #[test]

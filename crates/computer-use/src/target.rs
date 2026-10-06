@@ -30,7 +30,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-use crate::approval::{normalize_origin, GrantKind, TargetAuthorizer, TargetIdentity};
+use crate::approval::{normalize_origin, DispatchPermit, GrantKind, TargetAuthorizer, TargetIdentity};
 use crate::MAX_IMAGE_EDGE;
 
 /// One-shot lease lifetime, same as the isolated-desktop observation.
@@ -132,6 +132,14 @@ pub enum TargetError {
     /// target back. Nothing is consumed while paused.
     #[error("user is operating the target; dispatch paused until the user yields it back")]
     UserActive,
+    /// The element itself affirmatively refused the action
+    /// (kAXErrorActionUnsupported / kAXErrorAttributeUnsupported): a clear
+    /// rejection — the AX action call ran and the element declined it, so
+    /// nothing was dispatched. Distinct from
+    /// [TargetError::BackgroundUnsupported], which rejects the family ×
+    /// action combination before any element contact.
+    #[error("element does not support this action; nothing was dispatched")]
+    ElementUnsupported,
     /// Host-side contract misuse (e.g. element handle from a screenshot).
     #[error("invalid target contract use: {0}")]
     Invalid(&'static str),
@@ -732,6 +740,85 @@ pub fn require_background(
     }
 }
 
+// ---------- semantic element actions (CU-06) ----------
+
+/// Longest text one semantic value write carries, in chars.
+pub const MAX_SEMANTIC_TEXT_CHARS: usize = 4096;
+
+/// Semantic actions dispatched on a validated element handle (CU-06). Only
+/// what CU-01 measured as non-interfering background actions exists here:
+/// value writes (AppKit) and presses (web pages). CU-01 measured no
+/// standalone selection action, so none exists — [SemanticAction::InsertText]
+/// is the measured "select" primitive (it replaces the current selection).
+/// Every action maps to a [NativeActionKind] and passes the same
+/// [require_background] gate, so an Unverified or Unsupported family
+/// combination is rejected exactly like any other unproven action — there
+/// is never a fallback to global or foreground input.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SemanticAction {
+    /// AXPress on the element (CU-01: web pages, background and minimized).
+    Press,
+    /// Replace the element's whole value (AXValue write; CU-01: AppKit).
+    SetValue(String),
+    /// Replace the element's current selection (AXSelectedText write;
+    /// CU-01: AppKit): insertion at a collapsed cursor, type-over of a
+    /// non-empty selection.
+    InsertText(String),
+}
+
+impl SemanticAction {
+    /// The capability-matrix kind this action is gated by.
+    pub fn kind(&self) -> NativeActionKind {
+        match self {
+            SemanticAction::Press => NativeActionKind::AxPress,
+            SemanticAction::SetValue(_) | SemanticAction::InsertText(_) => {
+                NativeActionKind::AxSemanticWrite
+            }
+        }
+    }
+
+    /// Value writes carry the text payloads; presses do not.
+    pub fn is_value_write(&self) -> bool {
+        !matches!(self, SemanticAction::Press)
+    }
+
+    /// Structural validity: text payloads stay within the fixed bound
+    /// (empty text is a real payload — clearing a field).
+    pub fn validate(&self) -> Result<(), TargetError> {
+        let text = match self {
+            SemanticAction::Press => None,
+            SemanticAction::SetValue(text) | SemanticAction::InsertText(text) => Some(text),
+        };
+        if let Some(text) = text {
+            if text.chars().count() > MAX_SEMANTIC_TEXT_CHARS {
+                return Err(TargetError::Invalid(
+                    "semantic action text exceeds its bound",
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The honest terminal state of a dispatched semantic action (CU-06).
+/// Clear rejections are [TargetError]s decided before the element's AX
+/// action call (plus the element's own affirmative refusal); both Ok
+/// outcomes mean the action call was issued, so neither may be blindly
+/// retried.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SemanticOutcome {
+    /// The AX action call returned success: dispatched — not proof of
+    /// effect (a target can accept a call and ignore it; CU-01 measured a
+    /// Chromium editor doing exactly that, which is why that family ×
+    /// action cell is Unsupported). Verify with a fresh observation or a
+    /// target-side fact.
+    Dispatched,
+    /// The action call did not answer within its messaging timeout
+    /// (kAXErrorCannotComplete): the element may or may not have performed
+    /// the action. Reconcile from a fresh observation before any retry.
+    UnknownEffect,
+}
+
 /// Live native state supplied by the host; implemented by the macOS backend
 /// (downstream task) and by test fakes. Contract code never calls platform
 /// APIs directly.
@@ -803,6 +890,10 @@ pub struct ValidatedElement {
     /// Host-side token the backend maps to its native element reference.
     pub element_token: u64,
     pub tree_revision: u64,
+    /// Single-use credential for the one dispatch this consume released
+    /// (CU-06): the backend's first dispatch attempt retires it, so a
+    /// cloned validation result can never dispatch twice.
+    pub dispatch_permit: DispatchPermit,
 }
 
 /// Host-side registry: the only issuer and validator of handles. Validation
@@ -847,6 +938,10 @@ impl<P: NativeProbe> TargetRegistry<P> {
 
     pub fn authorizer(&self) -> &TargetAuthorizer {
         &self.authorizer
+    }
+
+    pub fn authorizer_mut(&mut self) -> &mut TargetAuthorizer {
+        &mut self.authorizer
     }
 
     /// Record an explicit user approval for a target in this scope. This is
@@ -1223,12 +1318,15 @@ impl<P: NativeProbe> TargetRegistry<P> {
                 parent.observation.window_height,
             ),
         )?;
-        self.authorizer.spend(scope, &window_record.target)?;
+        let dispatch_permit = self
+            .authorizer
+            .spend_for_element_dispatch(scope, &window_record.target)?;
         self.touch_occupancy(&dispatch_target, scope);
         let validated = ValidatedElement {
             window,
             element_token,
             tree_revision: element_tree_revision,
+            dispatch_permit,
         };
         self.elements.get_mut(id.as_str()).unwrap().consumed = true;
         self.observations
@@ -1555,6 +1653,79 @@ mod tests {
                 require_background(family, action, minimized),
                 Err(TargetError::BackgroundUnsupported)
             );
+        }
+    }
+
+    #[test]
+    fn semantic_actions_validate_and_map_to_capability_kinds() {
+        assert_eq!(SemanticAction::Press.kind(), NativeActionKind::AxPress);
+        assert_eq!(
+            SemanticAction::SetValue("x".into()).kind(),
+            NativeActionKind::AxSemanticWrite
+        );
+        assert_eq!(
+            SemanticAction::InsertText("x".into()).kind(),
+            NativeActionKind::AxSemanticWrite
+        );
+        assert!(!SemanticAction::Press.is_value_write());
+        assert!(SemanticAction::SetValue(String::new()).is_value_write());
+        // Empty text is a real payload (clearing a field).
+        assert!(SemanticAction::SetValue(String::new()).validate().is_ok());
+        assert!(SemanticAction::Press.validate().is_ok());
+        // The bound counts chars, not bytes: 4096 three-byte chars pass.
+        let at_bound: String = "漢".repeat(MAX_SEMANTIC_TEXT_CHARS);
+        assert_eq!(at_bound.len(), MAX_SEMANTIC_TEXT_CHARS * 3);
+        assert!(SemanticAction::InsertText(at_bound).validate().is_ok());
+        let over_bound: String = "x".repeat(MAX_SEMANTIC_TEXT_CHARS + 1);
+        assert_eq!(
+            SemanticAction::SetValue(over_bound).validate(),
+            Err(TargetError::Invalid(
+                "semantic action text exceeds its bound"
+            ))
+        );
+    }
+
+    #[test]
+    fn semantic_capability_gate_is_the_matrix_and_minimized_invariant() {
+        use AppFamily::*;
+        // Every semantic action passes only the CU-01 measured cells:
+        // AppKit value writes and Browser presses. Unverified rejects
+        // exactly like Unsupported; there is no fallback to global input.
+        let press = SemanticAction::Press;
+        let set_value = SemanticAction::SetValue("x".into());
+        let insert = SemanticAction::InsertText("x".into());
+        for action in [&set_value, &insert] {
+            assert!(require_background(Appkit, action.kind(), false).is_ok());
+            assert_eq!(
+                require_background(Chromium, action.kind(), false),
+                Err(TargetError::BackgroundUnsupported)
+            );
+            assert_eq!(
+                require_background(Browser, action.kind(), false),
+                Err(TargetError::BackgroundUnsupported)
+            );
+        }
+        assert_eq!(
+            require_background(Appkit, press.kind(), false),
+            Err(TargetError::BackgroundUnsupported)
+        );
+        assert_eq!(
+            require_background(Chromium, press.kind(), false),
+            Err(TargetError::BackgroundUnsupported)
+        );
+        assert!(require_background(Browser, press.kind(), false).is_ok());
+        // CU-01 measured both semantic kinds in background AND minimized
+        // states with identical support, so a dispatch gate does not consult
+        // the window's minimized state for them. If a future measurement
+        // splits a cell by minimized state, this pin breaks and the backend
+        // must read the real state instead of passing false.
+        for family in [Appkit, Chromium, Browser] {
+            for kind in [NativeActionKind::AxPress, NativeActionKind::AxSemanticWrite] {
+                assert_eq!(
+                    background_capability(family, kind, true),
+                    background_capability(family, kind, false)
+                );
+            }
         }
     }
 
@@ -1972,7 +2143,21 @@ mod tests {
         let second = registry
             .issue_element(&observation.observation_id, &scope(), 22)
             .unwrap();
-        registry.consume_element(&first, &scope(), &|| false).unwrap();
+        let validated = registry.consume_element(&first, &scope(), &|| false).unwrap();
+        // The consume minted a single-use dispatch permit bound to this
+        // scope and target: the first dispatch attempt retires it, so a
+        // cloned validation result can never dispatch twice.
+        let permit = validated.dispatch_permit.clone();
+        let authorizer = registry.authorizer_mut();
+        assert!(
+            authorizer
+                .consume_dispatch_permit(&scope(), &target(AppFamily::Appkit), &permit)
+                .is_ok()
+        );
+        assert_eq!(
+            authorizer.consume_dispatch_permit(&scope(), &target(AppFamily::Appkit), &permit),
+            Err(TargetError::NotAuthorized)
+        );
         // The sibling element and the parent observation are both spent.
         assert_eq!(
             registry.consume_element(&second, &scope(), &|| false),
