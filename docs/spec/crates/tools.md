@@ -14,7 +14,7 @@
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
 | `src/lib.rs` | ~30 | 门面：11 个模块声明 + re-export（九工具、`NoopToolEventSink`、registry/scheduler 全家）。 |
-| `src/computer.rs` | — | `ComputerTool`：进程共享隔离桌面会话、按动作必填的 JSON 参数、跨 run 观察隔离、阻塞工作取消、JPEG → canonical Image；复用 Policy / 审批。 |
+| `src/computer.rs` | — | `ComputerTool`：进程共享隔离桌面会话、按动作必填的 JSON 参数、跨 run 观察隔离、阻塞工作取消、JPEG → canonical Image、Run 终态 `release_shared` 释放占用；复用 Policy / 审批。 |
 | `src/common.rs` | ~230 | 公共层：`BuiltinToolError` 与 → `ToolError` 集中映射；取参 `require_str`/`opt_str`/`opt_u64`/`opt_bool`（opt_* 缺省或 `null` → None，类型不符报 InvalidField）；`workspace_roots`；`resolve_write_rel`（包 `resolve_workspace_path`）；`atomic_write`（同目录临时文件经 `create_new` **独占创建**——同名路径已存在（含预置 symlink）即换名重试、不跟随——+ rename，覆盖保留既有 Unix mode）。 |
 | `src/read_file.rs` | ~500（逻辑 ~260 + 测试） | `ReadFileTool`：行号视图、offset/limit、编码探测（chardetng + encoding_rs）、二进制检测（NUL + 控制字节占比）、4 MiB 读上限 / 256 KiB 输出上限。 |
 | `src/list_directory.rs` | ~440（逻辑 ~300 + 测试） | `ListDirectoryTool`：路径解析与目录扫描均在 `spawn_blocking` 内；目录优先字典序、BinaryHeap 单扫描取 offset+limit 窗口（内存 O(offset+limit)）、entry kind/size/mtime/symlink 目标（目标相对化，越 root 省略）。 |
@@ -65,7 +65,7 @@
 
 ### 3.2 Computer use
 
-`ComputerTool::default()` 使用进程共享 `Computer::isolated()`；`new(Arc<Computer>)` 用于注入 backend。工具名 `computer`，`ExternalPlugin` / `ClientFunction` / `Local`，能力标签 `ComputerUse`，禁止 untrusted 与 ReadOnly，`requires_approval=true`（包括截图与权限查询），禁并发。Host 明确批准本轮时仍沿用既有本轮授权。参数与错误见 [computer-use](computer-use.md)，JSON 严格拒绝未知字段，输入上限 16 KiB。工具 schema 按 action 声明必填字段：所有输入必须有新截图的 observation_id，click 还必须带 x / y / button / clicks；解析失败返回参数要求，便于模型纠正，且不触达 backend。调用 `spawn_blocking`；future 取消/超时通过局部 token 停止工作，锁直到底层释放输入才归还。成功截图返回 Text 元数据及 `ImageSource::Base64` JPEG，整个输出预算 768 KiB；不写模型指定路径。每次输入返回投递事实，效果需新截图复验。
+`ComputerTool::default()` 使用进程共享 `Computer::isolated()`（CU-09 起桌面会话绑定 workspace/run 所有权：第二个 Run 的任何动作按 Conflict 错误明确拒绝且零后端访问，取消/超时释放占用并作废待用观测，空闲 60 秒自动失拥有，descriptor 如实告知模型单占用语义）；`new(Arc<Computer>)` 用于注入 backend。CU-09 起 `ComputerTool::release_shared(workspace_id, run_id)` 是 Run 终态收尾入口：scope 与 execute 同源构造（`computer_scope`），完成 / 取消 / 失败统一释放共享桌面占用，未占用过的 Run 为 no-op（生产接线在 app 的 run 终态收尾，见 [app](app.md)）。工具名 `computer`，`ExternalPlugin` / `ClientFunction` / `Local`，能力标签 `ComputerUse`，禁止 untrusted 与 ReadOnly，`requires_approval=true`（包括截图与权限查询），禁并发。Host 明确批准本轮时仍沿用既有本轮授权。参数与错误见 [computer-use](computer-use.md)，JSON 严格拒绝未知字段，输入上限 16 KiB。工具 schema 按 action 声明必填字段：所有输入必须有新截图的 observation_id，click 还必须带 x / y / button / clicks；解析失败返回参数要求，便于模型纠正，且不触达 backend。调用 `spawn_blocking`；future 取消/超时通过局部 token 停止工作，锁直到底层释放输入才归还。成功截图返回 Text 元数据及 `ImageSource::Base64` JPEG，整个输出预算 768 KiB；不写模型指定路径。每次输入返回投递事实，效果需新截图复验。
 
 ### 3.3 公共层（common）
 
@@ -153,7 +153,7 @@ MCP 的独立 API、连接与认证见 [mcp](mcp.md)，注册适配器仍使用�
 
 2026-09-20 精简：HTTP 配置拒绝只保留 codec 的完整输入矩阵；auto-approve 标志并入实际写工具被拒绝且零调用的回归；环境白名单副本由 exec 权威测试和 run_command 的真实子进程环境检查承接。MCP 回归已随迁至 mcp 包。
 
-`computer.rs` 三项回归：显式批准后的截图结果与序列化、缺 click 字段在触达 backend 前返回可纠正参数错误、未信任/只读/自动批准均不触碰虚拟桌面后端。输入与观察安全由 [computer-use](computer-use.md) 负责。
+`computer.rs` 五项回归：显式批准后的截图结果与序列化（零后端计数覆盖全部 backend 方法）、`another_run_conflict_is_visible_and_never_touches_the_backend`（第二个 Run 的 Conflict 错误可见且后端零调用，拥有者观测照常派发）、`release_shared_frees_exactly_the_scope_execute_claims`（Run 终态释放与 execute 认领同 scope，释放后下一 Run 不再撞所有权闸）、缺 click 字段在触达 backend 前返回可纠正参数错误、未信任/只读/自动批准均不触碰虚拟桌面后端。输入与观察安全由 [computer-use](computer-use.md) 负责。
 
 默认验证命令：`bash scripts/test.sh tools`（无 `tests/` 目录，用例全部在 `--lib`）。
 

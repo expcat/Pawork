@@ -402,6 +402,10 @@ impl RunService {
             subagents.cancel_children();
         }
         subagents.finish().await;
+        // CU-09：Run 终态（完成/取消/失败）统一释放 isolated desktop 的
+        // 占用，不把 60 秒所有权留给下一个 Run 撞 Conflict；未占用过
+        // 则为 no-op。GUI 断连不取消已进入 Host 的 Run，也不走到这里。
+        pawork_tools::ComputerTool::release_shared(&loop_ctx.workspace_id, &run_id);
         let usage = match &result {
             Ok(summary) => Some(summary.usage.clone()),
             Err(_) => core.projected_run_usage(session_id, &run_id).await,

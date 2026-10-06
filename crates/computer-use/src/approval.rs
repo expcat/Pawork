@@ -74,6 +74,17 @@ impl TargetIdentity {
         Self::Application { app }
     }
 
+    /// The physical contention boundary CU-09 occupancy tracks: input is
+    /// dispatched to an application process, so the app itself — or the
+    /// browser hosting a website target — is the unit two runs must not
+    /// share.
+    pub fn occupancy_anchor(&self) -> &str {
+        match self {
+            Self::Application { app } => &app.bundle_id,
+            Self::Website { browser, .. } => &browser.bundle_id,
+        }
+    }
+
     /// Website targets require a browser-family application; the origin is
     /// normalized (lowercase, no trailing slash) so casing variants of the
     /// same site share one grant.

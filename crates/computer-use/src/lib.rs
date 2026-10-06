@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
-    Arc, Mutex,
+    Arc, Mutex, OnceLock,
 };
 use std::time::{Duration, Instant};
 
@@ -19,9 +19,12 @@ pub mod macos;
 
 pub const MAX_IMAGE_BYTES: usize = 512 * 1024;
 pub const MAX_IMAGE_EDGE: u32 = 1280;
-static DESKTOP_LOCK: Mutex<()> = Mutex::new(());
+/// How long a run holds the desktop after its last call. Matches the
+/// observation lease so ownership never outlives a usable observation: a
+/// run that stopped calling loses the desktop at the same moment its
+/// freshest screenshot expires.
+pub const OWNERSHIP_TTL: Duration = Duration::from_secs(60);
 static OBSERVATION_SEQUENCE: AtomicU64 = AtomicU64::new(1);
-static DESKTOP_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -33,6 +36,8 @@ pub enum Error {
     Stale,
     #[error("computer action cancelled")]
     Cancelled,
+    #[error("isolated desktop is owned by another run ({0}); it must finish or release it")]
+    Conflict(String),
     #[error("computer backend failed: {0}")]
     Backend(String),
 }
@@ -167,23 +172,73 @@ struct Lease {
     created: Instant,
 }
 
+struct DesktopState {
+    /// The single run that owns this desktop. CU-09: the desktop is an
+    /// exclusive shared boundary — a second run gets a visible conflict,
+    /// never silent serialization or shared observations.
+    owner: Option<(String, Instant)>,
+    generation: u64,
+    latest: Option<Lease>,
+}
+
+/// One physical desktop: whole operations are serialized by `operation`,
+/// while `state` (owner, lease, generation) uses short critical sections so
+/// a conflicting run is rejected immediately instead of queueing behind an
+/// in-flight operation. All `Computer::isolated()` instances share one
+/// session because there is exactly one desktop per deployment; hosts that
+/// construct custom backends get a private session whose boundary they own.
+struct DesktopSession {
+    operation: Mutex<()>,
+    state: Mutex<DesktopState>,
+}
+
+impl DesktopSession {
+    fn new() -> Self {
+        Self {
+            operation: Mutex::new(()),
+            state: Mutex::new(DesktopState {
+                owner: None,
+                generation: 0,
+                latest: None,
+            }),
+        }
+    }
+}
+
 pub struct Computer {
     backend: Arc<dyn Backend>,
-    latest: Mutex<Option<Lease>>,
+    session: Arc<DesktopSession>,
 }
 
 impl Computer {
     pub fn new(backend: Arc<dyn Backend>) -> Self {
         Self {
             backend,
-            latest: Mutex::new(None),
+            session: Arc::new(DesktopSession::new()),
         }
     }
 
     /// Connect lazily to the dedicated desktop shipped in `desktop/compose.yaml`.
     /// No host display, input device, clipboard, or fallback backend is accessed.
     pub fn isolated() -> Self {
-        Self::new(Arc::new(rfb::Rfb::new()))
+        static ISOLATED_SESSION: OnceLock<Arc<DesktopSession>> = OnceLock::new();
+        Self {
+            backend: Arc::new(rfb::Rfb::new()),
+            session: ISOLATED_SESSION
+                .get_or_init(|| Arc::new(DesktopSession::new()))
+                .clone(),
+        }
+    }
+
+    /// Host hook for run end (stop, cancel, disconnect): the owner's
+    /// occupancy and its pending observation are released, and the
+    /// generation bump makes every in-flight handle from that run fail as
+    /// cancelled instead of re-claiming the freed desktop. Releasing a
+    /// scope that does not own the desktop changes nothing.
+    pub fn release(&self, scope: &str) {
+        if let Ok(mut state) = self.session.state.lock() {
+            abandon(&mut state, scope);
+        }
     }
 
     /// `scope` identifies the host run. An observation authorizes at most one input
@@ -194,13 +249,22 @@ impl Computer {
         action: Action,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Output, Error> {
-        let _global = DESKTOP_LOCK
+        // Ownership gate before any lock waiting or backend access: a second
+        // run gets a visible conflict immediately, never a silent queue.
+        claim(&self.session, scope)?;
+        let _operation = self
+            .session
+            .operation
             .lock()
-            .map_err(|_| Error::Backend("desktop lock poisoned".into()))?;
+            .map_err(|_| Error::Backend("desktop operation lock poisoned".into()))?;
+        // Re-check after waiting for an in-flight operation: another run may
+        // have claimed the desktop while this call was queued.
+        claim(&self.session, scope)?;
         if cancelled() {
+            self.release(scope);
             return Err(Error::Cancelled);
         }
-        let permissions = self.backend.permissions()?;
+        let permissions = self.run_backend(scope, cancelled, || self.backend.permissions())?;
         if matches!(action, Action::Status {}) {
             return Ok(Output {
                 observation: None,
@@ -208,18 +272,23 @@ impl Computer {
                 jpeg: None,
             });
         }
-        let mut latest = self
-            .latest
-            .lock()
-            .map_err(|_| Error::Backend("observation lock poisoned".into()))?;
         if !permissions.capture {
             return Err(Error::Permission("isolated desktop capture"));
         }
         if matches!(action, Action::Screenshot {}) {
-            *latest = None;
-            let generation = DESKTOP_GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
-            let capture = self.backend.capture()?;
+            let generation = {
+                let mut state = self
+                    .session
+                    .state
+                    .lock()
+                    .map_err(|_| Error::Backend("desktop state lock poisoned".into()))?;
+                state.latest = None;
+                state.generation += 1;
+                state.generation
+            };
+            let capture = self.run_backend(scope, cancelled, || self.backend.capture())?;
             if cancelled() {
+                self.release(scope);
                 return Err(Error::Cancelled);
             }
             if capture.width == 0
@@ -233,7 +302,7 @@ impl Computer {
                     "screenshot exceeds dimensions or byte budget".into(),
                 ));
             }
-            if self.backend.desktop()? != capture.desktop {
+            if self.run_backend(scope, cancelled, || self.backend.desktop())? != capture.desktop {
                 return Err(Error::Stale);
             }
             let observation = Observation {
@@ -246,12 +315,28 @@ impl Computer {
                 image_width: capture.width,
                 image_height: capture.height,
             };
-            *latest = Some(Lease {
-                generation,
-                scope: scope.into(),
-                observation: observation.clone(),
-                created: Instant::now(),
-            });
+            {
+                let mut state = self
+                    .session
+                    .state
+                    .lock()
+                    .map_err(|_| Error::Backend("desktop state lock poisoned".into()))?;
+                // Store the lease only while this run still owns the desktop:
+                // a concurrent host release must not resurrect a handle.
+                verify_owned(&mut state, scope)?;
+                // The screenshot's generation must still be current: a
+                // release that let the same scope re-claim (a queued call)
+                // must not deliver an observation that is stale on arrival.
+                if generation != state.generation {
+                    return Err(Error::Stale);
+                }
+                state.latest = Some(Lease {
+                    generation,
+                    scope: scope.into(),
+                    observation: observation.clone(),
+                    created: Instant::now(),
+                });
+            }
             return Ok(Output {
                 observation: Some(observation),
                 permissions: None,
@@ -261,25 +346,141 @@ impl Computer {
         if !permissions.input {
             return Err(Error::Permission("isolated desktop input"));
         }
-        let lease = latest.take().ok_or(Error::Stale)?;
-        if lease.generation != DESKTOP_GENERATION.load(Ordering::Relaxed)
-            || lease.scope != scope
-            || lease.created.elapsed() > Duration::from_secs(60)
-            || self.backend.desktop()? != lease.observation.desktop
+        let (lease, generation) = {
+            let mut state = self
+                .session
+                .state
+                .lock()
+                .map_err(|_| Error::Backend("desktop state lock poisoned".into()))?;
+            let lease = state.latest.take().ok_or(Error::Stale)?;
+            if lease.generation != state.generation
+                || lease.scope != scope
+                || lease.created.elapsed() > Duration::from_secs(60)
+            {
+                return Err(Error::Stale);
+            }
+            (lease, state.generation)
+        };
+        if self.run_backend(scope, cancelled, || self.backend.desktop())?
+            != lease.observation.desktop
         {
             return Err(Error::Stale);
         }
         let input = action.into_input(&lease.observation)?;
-        DESKTOP_GENERATION.fetch_add(1, Ordering::Relaxed);
+        let dispatch_generation = {
+            let mut state = self
+                .session
+                .state
+                .lock()
+                .map_err(|_| Error::Backend("desktop state lock poisoned".into()))?;
+            verify_owned(&mut state, scope)?;
+            if generation != state.generation {
+                return Err(Error::Stale);
+            }
+            state.generation += 1;
+            state.generation
+        };
         if cancelled() {
+            self.release(scope);
             return Err(Error::Cancelled);
         }
-        self.backend.input(input, cancelled)?;
+        // Ownership revocation is part of the backend's cancellation
+        // predicate: an input that already entered the backend stops sending
+        // its remaining events the moment its run is released (or the
+        // desktop is taken over); the backend balances key/button state on
+        // cancellation.
+        let session = self.session.clone();
+        let dispatch_scope = scope.to_string();
+        let revoked = move || match session.state.lock() {
+            Ok(state) => {
+                !state
+                    .owner
+                    .as_ref()
+                    .is_some_and(|(owner, _)| owner.as_str() == dispatch_scope)
+                    || state.generation != dispatch_generation
+            }
+            Err(_) => true,
+        };
+        self.run_backend(scope, cancelled, || {
+            self.backend.input(input, &|| cancelled() || revoked())
+        })?;
         Ok(Output {
             observation: None,
             permissions: None,
             jpeg: None,
         })
+    }
+
+    /// Run one backend call of a claimed operation. When the host cancelled
+    /// while the backend was failing, ownership is released so an error path
+    /// cannot strand occupancy; the original error is returned unchanged.
+    fn run_backend<T>(
+        &self,
+        scope: &str,
+        cancelled: &dyn Fn() -> bool,
+        call: impl FnOnce() -> Result<T, Error>,
+    ) -> Result<T, Error> {
+        match call() {
+            Err(error) => {
+                if matches!(error, Error::Cancelled) || cancelled() {
+                    self.release(scope);
+                }
+                Err(error)
+            }
+            Ok(value) => Ok(value),
+        }
+    }
+}
+
+/// Claim or refresh this scope's ownership of the desktop. A different
+/// live owner is a visible conflict; an owner idle past [OWNERSHIP_TTL] is
+/// treated as gone (its observations are expired anyway).
+fn claim_state(state: &mut DesktopState, scope: &str) -> Result<(), Error> {
+    match &state.owner {
+        Some((owner, active)) if owner.as_str() != scope && active.elapsed() < OWNERSHIP_TTL => {
+            Err(Error::Conflict(owner.clone()))
+        }
+        _ => {
+            state.owner = Some((scope.into(), Instant::now()));
+            Ok(())
+        }
+    }
+}
+
+fn claim(session: &DesktopSession, scope: &str) -> Result<(), Error> {
+    let mut state = session
+        .state
+        .lock()
+        .map_err(|_| Error::Backend("desktop state lock poisoned".into()))?;
+    claim_state(&mut state, scope)
+}
+
+/// Verify that `scope` still owns the desktop without ever claiming it.
+/// In-flight operations must not resurrect a slot the host released: a
+/// freed desktop reads as cancelled, a new owner as a visible conflict.
+fn verify_owned(state: &mut DesktopState, scope: &str) -> Result<(), Error> {
+    match &state.owner {
+        Some((owner, _)) if owner.as_str() == scope => {
+            state.owner = Some((scope.into(), Instant::now()));
+            Ok(())
+        }
+        Some((owner, _)) => Err(Error::Conflict(owner.clone())),
+        None => Err(Error::Cancelled),
+    }
+}
+
+/// Release the scope's occupancy and invalidate its pending observation.
+/// The generation bump keeps leases taken before the release unusable even
+/// if the same scope re-claims the desktop right after.
+fn abandon(state: &mut DesktopState, scope: &str) {
+    if state
+        .owner
+        .as_ref()
+        .is_some_and(|(owner, _)| owner.as_str() == scope)
+    {
+        state.owner = None;
+        state.latest = None;
+        state.generation += 1;
     }
 }
 
@@ -428,30 +629,52 @@ fn keysym(key: &str) -> Option<u32> {
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicBool;
-    static TEST_DESKTOP: Mutex<()> = Mutex::new(());
 
     struct Fake {
         changed: AtomicBool,
         denied: AtomicBool,
+        fail: AtomicBool,
+        calls: std::sync::atomic::AtomicUsize,
         positions: Mutex<Vec<Point>>,
+        typed: Mutex<Vec<char>>,
+        hook: Mutex<Option<Box<dyn Fn(&'static str) + Send>>>,
     }
     impl Fake {
         fn new() -> Self {
             Self {
                 changed: AtomicBool::new(false),
                 denied: AtomicBool::new(false),
+                fail: AtomicBool::new(false),
+                calls: std::sync::atomic::AtomicUsize::new(0),
                 positions: Mutex::new(vec![]),
+                typed: Mutex::new(vec![]),
+                hook: Mutex::new(None),
+            }
+        }
+        fn fire(&self, method: &'static str) {
+            if let Some(hook) = self.hook.lock().unwrap().as_ref() {
+                hook(method);
             }
         }
     }
     impl Backend for Fake {
         fn permissions(&self) -> Result<Permissions, Error> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            self.fire("permissions");
+            if self.fail.load(Ordering::Relaxed) {
+                return Err(Error::Backend("injected permissions failure".into()));
+            }
             Ok(Permissions {
                 capture: !self.denied.load(Ordering::Relaxed),
                 input: true,
             })
         }
         fn desktop(&self) -> Result<Desktop, Error> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            self.fire("desktop");
+            if self.fail.load(Ordering::Relaxed) {
+                return Err(Error::Backend("injected desktop failure".into()));
+            }
             Ok(Desktop {
                 width: 2560.0,
                 height: 1440.0,
@@ -463,22 +686,58 @@ mod tests {
             })
         }
         fn capture(&self) -> Result<Capture, Error> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            self.fire("capture");
+            if self.fail.load(Ordering::Relaxed) {
+                return Err(Error::Backend("injected capture failure".into()));
+            }
             Ok(Capture {
-                desktop: self.desktop()?,
+                desktop: Desktop {
+                    width: 2560.0,
+                    height: 1440.0,
+                    session_id: if self.changed.load(Ordering::Relaxed) {
+                        20
+                    } else {
+                        10
+                    },
+                },
                 width: 1280,
                 height: 720,
                 jpeg: vec![0xff, 0xd8, 0xff, 0xd9],
             })
         }
-        fn input(&self, input: Input, _: &dyn Fn() -> bool) -> Result<(), Error> {
-            if let Input::Click { at, .. } = input {
-                self.positions.lock().unwrap().push(at);
+        fn input(&self, input: Input, cancelled: &dyn Fn() -> bool) -> Result<(), Error> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            self.fire("input");
+            if self.fail.load(Ordering::Relaxed) {
+                return Err(Error::Backend("injected input failure".into()));
+            }
+            match input {
+                Input::Click { at, .. } => {
+                    if cancelled() {
+                        return Err(Error::Cancelled);
+                    }
+                    self.positions.lock().unwrap().push(at);
+                }
+                Input::TypeText(text) => {
+                    for ch in text.chars() {
+                        self.typed.lock().unwrap().push(ch);
+                        self.fire("input_char");
+                        if cancelled() {
+                            return Err(Error::Cancelled);
+                        }
+                    }
+                }
+                _ => {}
             }
             Ok(())
         }
     }
     fn observe(c: &Computer) -> String {
-        c.execute("run-1", Action::Screenshot {}, &|| false)
+        observe_as(c, "run-1")
+    }
+    fn observe_as(c: &Computer, scope: &str) -> String {
+        c.execute(scope, Action::Screenshot {}, &|| false)
             .unwrap()
             .observation
             .unwrap()
@@ -496,7 +755,6 @@ mod tests {
 
     #[test]
     fn observed_pixels_map_to_virtual_desktop_and_each_input_consumes_its_observation() {
-        let _test = TEST_DESKTOP.lock().unwrap();
         let backend = Arc::new(Fake::new());
         let c = Computer::new(backend.clone());
         let id = observe(&c);
@@ -516,7 +774,7 @@ mod tests {
         let id = observe(&c);
         assert!(matches!(
             c.execute("run-2", click(id, 640.0), &|| false),
-            Err(Error::Stale)
+            Err(Error::Conflict(_))
         ));
         let id = observe(&c);
         backend.changed.store(true, Ordering::Relaxed);
@@ -529,7 +787,6 @@ mod tests {
 
     #[test]
     fn rejects_permissions_cancellation_stale_and_malformed_inputs_before_virtual_dispatch() {
-        let _test = TEST_DESKTOP.lock().unwrap();
         let backend = Arc::new(Fake::new());
         let c = Computer::new(backend.clone());
         backend.denied.store(true, Ordering::Relaxed);
@@ -550,7 +807,7 @@ mod tests {
             ));
         }
         let id = observe(&c);
-        c.latest.lock().unwrap().as_mut().unwrap().created =
+        c.session.state.lock().unwrap().latest.as_mut().unwrap().created =
             Instant::now() - Duration::from_secs(61);
         assert!(matches!(
             c.execute("run-1", click(id, 0.0), &|| false),
@@ -575,5 +832,214 @@ mod tests {
             Err(Error::Invalid(_))
         ));
         assert!(backend.positions.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn second_run_gets_a_visible_conflict_without_touching_the_backend() {
+        let backend = Arc::new(Fake::new());
+        let c = Computer::new(backend.clone());
+        let id = observe(&c);
+        let calls_before = backend.calls.load(Ordering::Relaxed);
+        match c.execute("run-2", Action::Screenshot {}, &|| false) {
+            Err(Error::Conflict(owner)) => assert!(owner.contains("run-1")),
+            Ok(_) => panic!("expected a visible conflict, got a successful output"),
+            Err(other) => panic!("expected a visible conflict, got {other}"),
+        }
+        // The rejected run never reaches the backend: the conflict is a
+        // registry decision, not a serialized queue that touches the desktop.
+        assert_eq!(backend.calls.load(Ordering::Relaxed), calls_before);
+        // The owner is unaffected and its observation still dispatches.
+        c.execute("run-1", click(id, 640.0), &|| false).unwrap();
+        assert_eq!(backend.positions.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn cancellation_releases_ownership_and_invalidates_the_observation() {
+        let backend = Arc::new(Fake::new());
+        let c = Computer::new(backend.clone());
+        let id = observe(&c);
+        assert!(matches!(
+            c.execute("run-1", click(id.clone(), 640.0), &|| true),
+            Err(Error::Cancelled)
+        ));
+        assert!(backend.positions.lock().unwrap().is_empty());
+        // Cancellation left no residual occupancy and no dispatchable lease.
+        {
+            let state = c.session.state.lock().unwrap();
+            assert!(state.owner.is_none());
+            assert!(state.latest.is_none());
+        }
+        // Another run takes the desktop immediately.
+        observe_as(&c, "run-2");
+        assert!(matches!(
+            c.execute("run-1", Action::Status {}, &|| false),
+            Err(Error::Conflict(_))
+        ));
+    }
+
+    #[test]
+    fn release_and_idle_expiry_free_the_desktop_for_the_next_run() {
+        let backend = Arc::new(Fake::new());
+        let c = Computer::new(backend.clone());
+        let _ = observe(&c);
+        // A foreign scope cannot steal the desktop by releasing it.
+        c.release("run-2");
+        assert!(matches!(
+            c.execute("run-2", Action::Screenshot {}, &|| false),
+            Err(Error::Conflict(_))
+        ));
+        // The owner's release frees the desktop for the next run.
+        c.release("run-1");
+        let orphaned = observe_as(&c, "run-2");
+        assert!(!orphaned.is_empty());
+        // An owner idle past OWNERSHIP_TTL is treated as gone: its freshest
+        // observation is expired at the same moment, so ownership never
+        // outlives a usable lease.
+        {
+            let mut state = c.session.state.lock().unwrap();
+            let (_, active) = state.owner.as_mut().unwrap();
+            *active = Instant::now() - OWNERSHIP_TTL - Duration::from_secs(1);
+        }
+        observe_as(&c, "run-3");
+        // The lapsed run's pending observation is orphaned with it.
+        assert!(matches!(
+            c.execute("run-2", click(orphaned, 640.0), &|| false),
+            Err(Error::Conflict(_))
+        ));
+    }
+
+    #[test]
+    fn release_during_screenshot_prevents_reclaiming_the_desktop() {
+        let backend = Arc::new(Fake::new());
+        let c = Computer::new(backend.clone());
+        let session = c.session.clone();
+        *backend.hook.lock().unwrap() = Some(Box::new(move |method| {
+            if method == "capture" {
+                let mut state = session.state.lock().unwrap();
+                abandon(&mut state, "run-1");
+            }
+        }));
+        assert!(matches!(
+            c.execute("run-1", Action::Screenshot {}, &|| false),
+            Err(Error::Cancelled)
+        ));
+        // The released run leaves neither ownership nor a dispatchable lease.
+        {
+            let state = c.session.state.lock().unwrap();
+            assert!(state.owner.is_none());
+            assert!(state.latest.is_none());
+        }
+        // The freed desktop is claimable by the next run without waiting.
+        observe_as(&c, "run-2");
+    }
+
+    #[test]
+    fn release_after_the_lease_is_taken_prevents_input_dispatch() {
+        let backend = Arc::new(Fake::new());
+        let c = Computer::new(backend.clone());
+        let id = observe(&c);
+        let session = c.session.clone();
+        *backend.hook.lock().unwrap() = Some(Box::new(move |method| {
+            if method == "desktop" {
+                let mut state = session.state.lock().unwrap();
+                abandon(&mut state, "run-1");
+            }
+        }));
+        assert!(matches!(
+            c.execute("run-1", click(id, 640.0), &|| false),
+            Err(Error::Cancelled)
+        ));
+        assert!(backend.positions.lock().unwrap().is_empty());
+        {
+            let state = c.session.state.lock().unwrap();
+            assert!(state.owner.is_none());
+            assert!(state.latest.is_none());
+        }
+    }
+
+    #[test]
+    fn backend_error_during_cancellation_releases_ownership() {
+        let backend = Arc::new(Fake::new());
+        let c = Computer::new(backend.clone());
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let trip = cancelled.clone();
+        *backend.hook.lock().unwrap() = Some(Box::new(move |method| {
+            if method == "permissions" {
+                trip.store(true, Ordering::Relaxed);
+            }
+        }));
+        backend.fail.store(true, Ordering::Relaxed);
+        let flag = cancelled.clone();
+        match c.execute("run-1", Action::Screenshot {}, &move || {
+            flag.load(Ordering::Relaxed)
+        }) {
+            Err(Error::Backend(message)) => assert!(message.contains("injected")),
+            Err(other) => panic!("expected the injected backend error, got {other}"),
+            Ok(_) => panic!("expected the injected backend error, got a successful output"),
+        }
+        // The error path did not strand ownership on a cancelled run.
+        {
+            let state = c.session.state.lock().unwrap();
+            assert!(state.owner.is_none());
+            assert!(state.latest.is_none());
+        }
+    }
+
+    #[test]
+    fn release_during_input_stops_the_remaining_events() {
+        let backend = Arc::new(Fake::new());
+        let c = Computer::new(backend.clone());
+        let id = observe(&c);
+        let session = c.session.clone();
+        *backend.hook.lock().unwrap() = Some(Box::new(move |method| {
+            if method == "input_char" {
+                let mut state = session.state.lock().unwrap();
+                abandon(&mut state, "run-1");
+            }
+        }));
+        assert!(matches!(
+            c.execute(
+                "run-1",
+                Action::TypeText {
+                    observation_id: id,
+                    text: "ab".into()
+                },
+                &|| false
+            ),
+            Err(Error::Cancelled)
+        ));
+        // The first character was already dispatched; the revocation stopped
+        // the rest and left neither ownership nor a lease behind.
+        assert_eq!(*backend.typed.lock().unwrap(), vec!['a']);
+        {
+            let state = c.session.state.lock().unwrap();
+            assert!(state.owner.is_none());
+            assert!(state.latest.is_none());
+        }
+    }
+
+    #[test]
+    fn screenshot_after_release_and_same_scope_reclaim_delivers_no_stale_observation() {
+        let backend = Arc::new(Fake::new());
+        let c = Computer::new(backend.clone());
+        let session = c.session.clone();
+        *backend.hook.lock().unwrap() = Some(Box::new(move |method| {
+            if method == "capture" {
+                let mut state = session.state.lock().unwrap();
+                abandon(&mut state, "run-1");
+                // A queued call from the same run re-claims the freed slot
+                // while the in-flight screenshot is still capturing.
+                claim_state(&mut state, "run-1").unwrap();
+            }
+        }));
+        assert!(matches!(
+            c.execute("run-1", Action::Screenshot {}, &|| false),
+            Err(Error::Stale)
+        ));
+        // No lease was stored for the superseded generation.
+        {
+            let state = c.session.state.lock().unwrap();
+            assert!(state.latest.is_none());
+        }
     }
 }

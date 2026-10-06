@@ -12,8 +12,10 @@
 //! family (see background_capability). Actions without measured background
 //! support are rejected by require_background; there is never a fallback to
 //! global input, and pointer actions have no background support in any family.
-//! User takeover of the same target has no OS-level arbitration (CU-01 T6b):
-//! cancellation is the only stop mechanism. Unverified is not Supported:
+//! User takeover of the same target has no OS-level arbitration (CU-01 T6b),
+//! so CU-09 makes it a host-signal: while the host reports the user active on
+//! a target application, dispatch gates pause (yielding, without consuming
+//! leases) instead of competing. Unverified is not Supported:
 //! actions not yet measured on a family are rejected until a real measurement
 //! promotes them.
 //!
@@ -23,7 +25,7 @@
 //! desktop ([Environment::IsolatedDesktop], RFB route) keeps its own
 //! Computer/Backend path and is unaffected.
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
@@ -120,6 +122,16 @@ pub enum TargetError {
     /// instead of being misreported as a missing permission.
     #[error("native probe unavailable: {0}")]
     ProbeUnavailable(String),
+    /// The target's application is occupied by another workspace/run (CU-09):
+    /// binds, observations and dispatch are exclusive per application so two
+    /// runs never interleave on one physical input boundary.
+    #[error("target application is occupied by another workspace/run; it must finish or release it first")]
+    TargetOccupied,
+    /// The user is operating the target (CU-09 host signal); the agent yields
+    /// and dispatch stays paused until the host reports the user gave the
+    /// target back. Nothing is consumed while paused.
+    #[error("user is operating the target; dispatch paused until the user yields it back")]
+    UserActive,
     /// Host-side contract misuse (e.g. element handle from a screenshot).
     #[error("invalid target contract use: {0}")]
     Invalid(&'static str),
@@ -806,6 +818,14 @@ pub struct TargetRegistry<P: NativeProbe> {
     windows: HashMap<String, WindowRecord>,
     observations: HashMap<String, ObservationRecord>,
     elements: HashMap<String, ElementRecord>,
+    /// CU-09 occupancy: application anchor -> owning scope and last activity.
+    /// Input is dispatched to an application process, so the app (or the
+    /// browser hosting a website target) is the boundary two runs must not
+    /// share. Owners idle past [LEASE_TTL] are treated as done.
+    occupied: HashMap<String, (Scope, Instant)>,
+    /// Applications the user took over (CU-09 host signal): dispatch gates
+    /// reject with [TargetError::UserActive] while paused.
+    user_paused: HashSet<String>,
 }
 
 impl<P: NativeProbe> TargetRegistry<P> {
@@ -820,6 +840,8 @@ impl<P: NativeProbe> TargetRegistry<P> {
             windows: HashMap::new(),
             observations: HashMap::new(),
             elements: HashMap::new(),
+            occupied: HashMap::new(),
+            user_paused: HashSet::new(),
         }
     }
 
@@ -840,19 +862,61 @@ impl<P: NativeProbe> TargetRegistry<P> {
 
     /// Revoke a target's grant: every later gated operation on it is denied.
     pub fn revoke(&mut self, scope: &Scope, target: &TargetIdentity) {
+        // CU-09: revocation keeps the CU-16 contract (in-flight leases are
+        // blocked with NotAuthorized before any probe, consumed history stays
+        // untouched) and additionally releases the scope's occupancy of the
+        // application boundary so another run may take the target.
+        if self
+            .occupied
+            .get(target.occupancy_anchor())
+            .is_some_and(|(owner, _)| owner == scope)
+        {
+            self.occupied.remove(target.occupancy_anchor());
+        }
         self.authorizer.revoke(scope, target);
     }
 
     /// Drop every grant of a run (run teardown).
     pub fn revoke_scope(&mut self, scope: &Scope) {
         self.authorizer.revoke_scope(scope);
+        self.release_scope(scope);
+    }
+
+    /// CU-09 host signal: the user is operating this target's application.
+    /// The agent yields — dispatch gates pause without consuming leases until
+    /// [Self::resume_dispatch] reports the user gave the target back. Hosts
+    /// that cannot determine the user's intent keep the pause asserted
+    /// (fail-closed) instead of competing for the target.
+    pub fn pause_dispatch(&mut self, target: &TargetIdentity) {
+        self.user_paused.insert(target.occupancy_anchor().to_string());
+    }
+
+    /// CU-09 host signal: the user yielded the target back; agent dispatch may
+    /// resume. Returns whether a pause was actually cleared.
+    pub fn resume_dispatch(&mut self, target: &TargetIdentity) -> bool {
+        self.user_paused.remove(target.occupancy_anchor())
+    }
+
+    /// CU-09 run end (stop, cancel, timeout, host disconnect): every handle
+    /// issued to the scope becomes invalid and its target occupancy is
+    /// released. Authorizations are untouched; use [Self::revoke_scope] to
+    /// drop them as well.
+    pub fn release_scope(&mut self, scope: &Scope) {
+        self.observations.retain(|_, record| record.scope != *scope);
+        self.elements.retain(|_, record| record.scope != *scope);
+        self.windows.retain(|_, record| record.scope != *scope);
+        self.occupied.retain(|_, (owner, _)| owner != scope);
     }
 
     /// Pre-flight gate the host must pass before connecting to, launching,
     /// capturing or reading a bound target. Non-consuming: each gated
     /// registry operation re-checks and spends one-shot grants itself.
     /// Ledger denial (NotAuthorized / ForbiddenTarget) precedes any probe
-    /// call; a website binding then re-pins the window's current origin, so
+    /// call, and so does the occupancy gate: a window handle whose run lost
+    /// the application to another run never reaches an origin probe. Like
+    /// [Self::validate_window], the pre-flight never refreshes occupancy;
+    /// activity is refreshed only by binding and successful gated use. A
+    /// website binding then re-pins the window's current origin, so
     /// a same-window navigation (or an undeterminable origin) fails closed
     /// before the host captures. Liveness re-validation stays in the gated
     /// operations.
@@ -869,6 +933,7 @@ impl<P: NativeProbe> TargetRegistry<P> {
             return Err(TargetError::CrossRun);
         }
         self.authorizer.check(scope, &record.target)?;
+        self.occupancy_conflict(&record.target, scope)?;
         if let TargetIdentity::Website { origin, .. } = &record.target {
             if !origin_matches(&self.probe, &record.window, origin) {
                 return Err(TargetError::SiteChanged);
@@ -880,7 +945,9 @@ impl<P: NativeProbe> TargetRegistry<P> {
     /// Bind a window the host just enumerated for scope. Requires an active
     /// grant for the target and rejects a process that is already gone;
     /// the authorization check runs before any probe access. Binding alone
-    /// does not spend a one-shot grant.
+    /// does not spend a one-shot grant, and occupancy is claimed only after
+    /// liveness and origin checks pass — a failed binding never strands
+    /// occupancy another run would have to wait out.
     pub fn bind_window(
         &mut self,
         scope: &Scope,
@@ -889,6 +956,7 @@ impl<P: NativeProbe> TargetRegistry<P> {
         window: WindowIdentity,
     ) -> Result<WindowHandle, TargetError> {
         self.authorizer.check(scope, &target)?;
+        self.occupancy_conflict(&target, scope)?;
         if !self.probe.process_instance_alive(&instance) {
             return Err(TargetError::ProcessRestarted);
         }
@@ -900,6 +968,7 @@ impl<P: NativeProbe> TargetRegistry<P> {
                 return Err(TargetError::SiteChanged);
             }
         }
+        self.touch_occupancy(&target, scope);
         let handle = WindowHandle(next_handle("w"));
         self.windows.insert(
             handle.0.clone(),
@@ -931,10 +1000,12 @@ impl<P: NativeProbe> TargetRegistry<P> {
             return Err(TargetError::CrossRun);
         }
         geometry.validate()?;
+        let bound_target = record.target.clone();
         // Authorization precedes any probe call; the one-shot grant is spent
         // only after the window passed liveness, so a stale target does not
         // burn the user's single approval.
         self.authorizer.check(scope, &record.target)?;
+        self.occupancy_conflict(&record.target, scope)?;
         self.live(record)?;
         // The registered geometry must still be the window's live size:
         // a capture taken before a resize is born stale.
@@ -944,6 +1015,7 @@ impl<P: NativeProbe> TargetRegistry<P> {
             (geometry.window_width, geometry.window_height),
         )?;
         self.authorizer.spend(scope, &record.target)?;
+        self.touch_occupancy(&bound_target, scope);
         let observation = TargetObservation {
             observation_id: ObservationHandle(next_handle("o")),
             environment,
@@ -1023,6 +1095,7 @@ impl<P: NativeProbe> TargetRegistry<P> {
             return Err(TargetError::CrossRun);
         }
         self.authorizer.check(scope, &record.target)?;
+        self.occupancy_conflict(&record.target, scope)?;
         self.live(record)
     }
 
@@ -1048,6 +1121,8 @@ impl<P: NativeProbe> TargetRegistry<P> {
         if record.consumed || record.created.elapsed() > LEASE_TTL {
             return Err(TargetError::StaleHandle);
         }
+        let observation = record.observation.clone();
+        let tree_revision = record.tree_revision;
         let window_record = self
             .windows
             .get(record.window.as_str())
@@ -1056,6 +1131,9 @@ impl<P: NativeProbe> TargetRegistry<P> {
         // before any probe access; the grant is spent only when every other
         // check passed and the action is actually released for dispatch.
         self.authorizer.check(scope, &window_record.target)?;
+        let dispatch_target = window_record.target.clone();
+        self.occupancy_conflict(&dispatch_target, scope)?;
+        self.dispatch_paused(&dispatch_target)?;
         let window = self.live(window_record)?;
         // An AX observation is bound to the tree revision it read: if the
         // tree advanced before the lease is consumed, the observation is as
@@ -1080,10 +1158,11 @@ impl<P: NativeProbe> TargetRegistry<P> {
             ),
         )?;
         self.authorizer.spend(scope, &window_record.target)?;
+        self.touch_occupancy(&dispatch_target, scope);
         let validated = ValidatedObservation {
             window,
-            observation: record.observation.clone(),
-            tree_revision: record.tree_revision,
+            observation,
+            tree_revision,
         };
         self.observations.get_mut(id.as_str()).unwrap().consumed = true;
         Ok(validated)
@@ -1115,11 +1194,17 @@ impl<P: NativeProbe> TargetRegistry<P> {
         if record.consumed || parent.consumed || parent.created.elapsed() > LEASE_TTL {
             return Err(TargetError::StaleHandle);
         }
+        let element_token = record.element_token;
+        let element_tree_revision = record.tree_revision;
+        let parent_key = record.observation.clone();
         let window_record = self
             .windows
             .get(record.window.as_str())
             .ok_or(TargetError::UnknownHandle)?;
         self.authorizer.check(scope, &window_record.target)?;
+        let dispatch_target = window_record.target.clone();
+        self.occupancy_conflict(&dispatch_target, scope)?;
+        self.dispatch_paused(&dispatch_target)?;
         let window = self.live(window_record)?;
         match self.probe.tree_revision(&window_record.window) {
             None => return Err(TargetError::WindowReplaced),
@@ -1139,12 +1224,12 @@ impl<P: NativeProbe> TargetRegistry<P> {
             ),
         )?;
         self.authorizer.spend(scope, &window_record.target)?;
+        self.touch_occupancy(&dispatch_target, scope);
         let validated = ValidatedElement {
             window,
-            element_token: record.element_token,
-            tree_revision: record.tree_revision,
+            element_token,
+            tree_revision: element_tree_revision,
         };
-        let parent_key = record.observation.clone();
         self.elements.get_mut(id.as_str()).unwrap().consumed = true;
         self.observations
             .get_mut(parent_key.as_str())
@@ -1181,6 +1266,43 @@ impl<P: NativeProbe> TargetRegistry<P> {
             window: record.window,
             scope: record.scope.clone(),
         })
+    }
+
+    /// Check-only half of the occupancy gate, usable while record borrows are
+    /// alive: a live foreign owner rejects with [TargetError::TargetOccupied].
+    fn occupancy_conflict(&self, target: &TargetIdentity, scope: &Scope) -> Result<(), TargetError> {
+        if let Some((owner, active)) = self.occupied.get(target.occupancy_anchor()) {
+            if owner != scope && active.elapsed() <= LEASE_TTL {
+                return Err(TargetError::TargetOccupied);
+            }
+        }
+        Ok(())
+    }
+
+    /// Refresh or take occupancy for a scope that just passed
+    /// [Self::occupancy_conflict]; also drops owners idle past [LEASE_TTL].
+    fn touch_occupancy(&mut self, target: &TargetIdentity, scope: &Scope) {
+        let anchor = target.occupancy_anchor();
+        match self.occupied.get_mut(anchor) {
+            Some((owner, active)) if owner == scope => *active = Instant::now(),
+            Some((_, active)) if active.elapsed() <= LEASE_TTL => {}
+            _ => {
+                self.occupied
+                    .retain(|_, (_, active)| active.elapsed() <= LEASE_TTL);
+                self.occupied
+                    .insert(anchor.to_string(), (scope.clone(), Instant::now()));
+            }
+        }
+    }
+
+    /// CU-09 user takeover: dispatch gates reject while the host reports the
+    /// user operating the target's application. Nothing is consumed.
+    fn dispatch_paused(&self, target: &TargetIdentity) -> Result<(), TargetError> {
+        if self.user_paused.contains(target.occupancy_anchor()) {
+            Err(TargetError::UserActive)
+        } else {
+            Ok(())
+        }
     }
 
     /// The observation's recorded window size must still be the live size.
@@ -1461,6 +1583,202 @@ mod tests {
         registry
             .consume_observation(&observation.observation_id, &scope(), &|| false)
             .unwrap();
+    }
+
+    #[test]
+    fn second_run_conflicts_on_the_same_application_until_released() {
+        let (mut registry, window) = bound(AppFamily::Appkit);
+        let other = Scope::new("ws-1", "run-2");
+        registry
+            .grant(&other, &target(AppFamily::Appkit), GrantKind::ForRun)
+            .unwrap();
+        // Same application: a visible conflict, not shared observations.
+        assert_eq!(
+            registry.bind_window(
+                &other,
+                target(AppFamily::Appkit),
+                instance(),
+                window_identity()
+            ),
+            Err(TargetError::TargetOccupied)
+        );
+        // A different application is a different physical boundary.
+        let notes = TargetIdentity::application(AppIdentity {
+            bundle_id: "com.example.notes".into(),
+            family: AppFamily::Appkit,
+        });
+        registry.grant(&other, &notes, GrantKind::ForRun).unwrap();
+        assert!(registry
+            .bind_window(&other, notes, instance(), window_identity())
+            .is_ok());
+        // Websites contend on their browser process, even across origins.
+        let browser = AppIdentity {
+            bundle_id: "com.example.browser".into(),
+            family: AppFamily::Browser,
+        };
+        let site_a = TargetIdentity::website(browser.clone(), "https://a.example").unwrap();
+        let site_b = TargetIdentity::website(browser, "https://b.example").unwrap();
+        registry.grant(&scope(), &site_a, GrantKind::ForRun).unwrap();
+        *registry.probe.origin.lock().unwrap() = Some("https://a.example".into());
+        assert!(registry
+            .bind_window(&scope(), site_a, instance(), window_identity())
+            .is_ok());
+        registry.grant(&other, &site_b, GrantKind::ForRun).unwrap();
+        assert_eq!(
+            registry.bind_window(&other, site_b, instance(), window_identity()),
+            Err(TargetError::TargetOccupied)
+        );
+        // The owner keeps exclusive use: its observation still dispatches.
+        let observation = capture(&mut registry, &window);
+        registry
+            .consume_observation(&observation.observation_id, &scope(), &|| false)
+            .unwrap();
+        // Run teardown releases occupancy and invalidates the owner's handles.
+        registry.release_scope(&scope());
+        assert_eq!(
+            registry.validate_window(&window, &scope()),
+            Err(TargetError::UnknownHandle)
+        );
+        assert!(registry
+            .bind_window(&other, target(AppFamily::Appkit), instance(), window_identity())
+            .is_ok());
+    }
+
+    #[test]
+    fn idle_occupancy_lapses_for_the_next_run() {
+        let (mut registry, _window) = bound(AppFamily::Appkit);
+        let other = Scope::new("ws-1", "run-2");
+        registry
+            .grant(&other, &target(AppFamily::Appkit), GrantKind::ForRun)
+            .unwrap();
+        // An owner idle past LEASE_TTL is treated as done: its freshest
+        // observation is expired at the same moment.
+        if let Some((_, active)) = registry.occupied.get_mut("com.example.app") {
+            *active = Instant::now() - LEASE_TTL - Duration::from_secs(1);
+        }
+        assert!(registry
+            .bind_window(&other, target(AppFamily::Appkit), instance(), window_identity())
+            .is_ok());
+    }
+
+    #[test]
+    fn pre_flight_rejects_a_taken_over_application_before_any_probe_call() {
+        let mut registry = TargetRegistry::new(FakeProbe::new());
+        let browser = AppIdentity {
+            bundle_id: "com.example.browser".into(),
+            family: AppFamily::Browser,
+        };
+        let site = TargetIdentity::website(browser.clone(), "https://example.com").unwrap();
+        registry.grant(&scope(), &site, GrantKind::ForRun).unwrap();
+        *registry.probe.origin.lock().unwrap() = Some("https://example.com".into());
+        let window = registry
+            .bind_window(&scope(), site, instance(), window_identity())
+            .unwrap();
+        let other = Scope::new("ws-1", "run-2");
+        let site_other = TargetIdentity::website(browser, "https://other.example").unwrap();
+        registry
+            .grant(&other, &site_other, GrantKind::ForRun)
+            .unwrap();
+        *registry.probe.origin.lock().unwrap() = Some("https://other.example".into());
+        // The owner goes idle past LEASE_TTL and the next run takes over
+        // the shared browser boundary.
+        if let Some((_, active)) = registry.occupied.get_mut("com.example.browser") {
+            *active = Instant::now() - LEASE_TTL - Duration::from_secs(1);
+        }
+        registry
+            .bind_window(&other, site_other, instance(), window_identity())
+            .unwrap();
+        // The lapsed run's pre-flight hits the occupancy gate before the
+        // origin probe: the host must not read content another run owns.
+        let calls = registry.probe.calls();
+        assert_eq!(
+            registry.require_authorized(&window, &scope()),
+            Err(TargetError::TargetOccupied)
+        );
+        assert_eq!(registry.probe.calls(), calls);
+    }
+
+    #[test]
+    fn failed_binding_leaves_no_occupancy_behind() {
+        let mut registry = TargetRegistry::new(FakeProbe::new());
+        let editor = target(AppFamily::Appkit);
+        registry
+            .grant(&scope(), &editor, GrantKind::ForRun)
+            .unwrap();
+        // The process is already gone: the rejected binding must not strand
+        // occupancy another run would have to wait out.
+        registry.probe.alive.store(false, Ordering::Relaxed);
+        assert_eq!(
+            registry.bind_window(&scope(), editor.clone(), instance(), window_identity()),
+            Err(TargetError::ProcessRestarted)
+        );
+        assert!(registry.occupied.get("com.example.app").is_none());
+        let other = Scope::new("ws-1", "run-2");
+        registry.grant(&other, &editor, GrantKind::ForRun).unwrap();
+        registry.probe.alive.store(true, Ordering::Relaxed);
+        assert!(registry
+            .bind_window(&other, editor, instance(), window_identity())
+            .is_ok());
+    }
+
+    #[test]
+    fn user_takeover_pauses_dispatch_without_consuming() {
+        let (mut registry, window) = bound(AppFamily::Appkit);
+        let ax = ax_observation(&mut registry, &window);
+        let element = registry
+            .issue_element(&ax.observation_id, &scope(), 1)
+            .unwrap();
+        let still = capture(&mut registry, &window);
+        registry.pause_dispatch(&target(AppFamily::Appkit));
+        // Dispatch gates yield to the user; neither lease is consumed.
+        assert_eq!(
+            registry.consume_observation(&ax.observation_id, &scope(), &|| false),
+            Err(TargetError::UserActive)
+        );
+        assert_eq!(
+            registry.consume_element(&element, &scope(), &|| false),
+            Err(TargetError::UserActive)
+        );
+        // Observing stays available: the recovery flow re-observes after the
+        // user acted instead of dispatching against a stale view.
+        assert!(registry
+            .begin_observation(
+                &window,
+                &scope(),
+                Environment::NativeBackground,
+                ObservationKind::Capture,
+                geometry(),
+            )
+            .is_ok());
+        // The user yields back: paused leases dispatch again.
+        assert!(registry.resume_dispatch(&target(AppFamily::Appkit)));
+        assert!(!registry.resume_dispatch(&target(AppFamily::Appkit)));
+        registry
+            .consume_element(&element, &scope(), &|| false)
+            .unwrap();
+        registry
+            .consume_observation(&still.observation_id, &scope(), &|| false)
+            .unwrap();
+    }
+
+    #[test]
+    fn revocation_releases_occupancy_while_leases_block() {
+        let (mut registry, window) = bound(AppFamily::Appkit);
+        let observation = capture(&mut registry, &window);
+        registry.revoke(&scope(), &target(AppFamily::Appkit));
+        // CU-16 semantics stay: the lease is blocked by authorization first.
+        assert_eq!(
+            registry.consume_observation(&observation.observation_id, &scope(), &|| false),
+            Err(TargetError::NotAuthorized)
+        );
+        // CU-09: the application boundary is free for the next run.
+        let other = Scope::new("ws-1", "run-2");
+        registry
+            .grant(&other, &target(AppFamily::Appkit), GrantKind::ForRun)
+            .unwrap();
+        assert!(registry
+            .bind_window(&other, target(AppFamily::Appkit), instance(), window_identity())
+            .is_ok());
     }
 
     #[test]
