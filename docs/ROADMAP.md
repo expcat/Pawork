@@ -21,7 +21,7 @@
 | --- | --- | --- | --- |
 | 等待人工验收 | [CU-01 · macOS 本机后台操作可行性与能力基线](plan/cu-01-background-feasibility.md) | P0 | 证明用户继续操作本机时，Agent 能在后台观察和操作目标应用；先取得真实支持边界，再进入原生重构。 |
 | 等待人工验收 | [CU-02 · 目标、观测与后台能力契约](plan/cu-02-target-contracts.md) | P1 | 在现有 computer-use / tools 内定义应用、窗口、元素和输入的最小有类型契约。 |
-| 待开发 | [CU-03 · 应用发现、窗口选择与受控启动](plan/cu-03-app-window-discovery.md) | P2 | 让 Agent 选择已授权的真实应用与窗口，并按目标身份受控启动应用。 |
+| 等待人工验收 | [CU-03 · 应用发现、窗口选择与受控启动](plan/cu-03-app-window-discovery.md) | P2 | 让 Agent 选择已授权的真实应用与窗口，并按目标身份受控启动应用。 |
 | 待开发 | [CU-04 · 窗口级截图与观测坐标](plan/cu-04-window-observation.md) | P2 | 提供目标窗口截图与可供动作使用的新鲜观测。 |
 | 待开发 | [CU-05 · 有界无障碍树与元素定位](plan/cu-05-accessibility-tree.md) | P2 | 为支持的目标应用提供 AX 状态、元素查找和观测绑定的句柄。 |
 | 待开发 | [CU-06 · 后台 AX 语义动作](plan/cu-06-semantic-actions.md) | P2 | 优先用目标元素的语义动作实现后台点击、选择和赋值。 |

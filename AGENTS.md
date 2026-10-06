@@ -176,3 +176,8 @@ Lagged 后不得伪造起点直发；改经 hub 真序列取信封，并回 `Rep
 **exec 会话派生进程被静默回收**
 
 真窗口验收时，exec 会话内以 `nohup … &` 派生的 Desktop / Host 进程会在会话收尾被回收（空日志、无退出码），随后按路径 getApp 会经 LaunchServices 重拉起**无参数**实例（连默认 socket 报 ConnectionFailed）。GUI 进程用 `open -na <bundle> --args --instance <name>` 启动（launchd 托管、跨会话存活），CLI Host 用常驻 exec 会话承载；验收前后注意核对 `ps` 里的实际 argv。
+
+**CGWindowList 幽灵窗口**
+
+
+macOS 已关闭的窗口会在 CGWindowList（含 SCShareableContent）中长期残留（TextEdit / Terminal 实测关闭后持续在册，系统未承诺回收时机），属性与活窗一致，单凭列表在册不能证明窗口存活；存活判定必须有应用自身 AXWindows 佐证。任意 AX 帧匹配不是身份证据（同帧幽灵会借活窗的帧「复活」）；`_AXUIElementGetWindow`（HIServices 私有导出，yabai / Hammerspoon 同族依赖）把 AX 窗口映射到 CGWindowID，是最干净的对应关系，缺失时只能用「同帧 CG 计数 = AX 计数」的帧组闭合并接受歧义 fail-closed。配套坑：NSRunningApplication 终止态 getter 是 `isTerminated`（写成 `terminated` 会 NSException 崩溃）；AppKit 需空 extern 块（`#[link(name = "AppKit", kind = "framework")] extern "C" {}`）强制链接，否则运行期报 "Class NSWorkspace could not be found"。AX 错误码勿凭印象：APIDisabled 是 -25211、CannotComplete 是 -25204（曾写反，会把权限缺失误报成探针不可用）。macOS 26 下 TextEdit 含最小化窗口可致整应用 AXWindows 元素失效（属性全 AttributeUnsupported、_AXUIElementGetWindow 报 IllegalArgument、AXTitle 退化为应用名），窗口恢复重启照样带病，fail-closed 拒绝即正确行为，契约不承诺最小化存活。无 Accessibility 授权的进程读 AXWindows 不报错，拿到标题=应用名、属性全失败的假元素——AX 诊断必须在获授权进程内进行。epsilon 帧匹配不可传递（a≈b、b≈c 不蕴含 a≈c），帧组闭合时组内 AX 窗若同时匹配组外 CG 窗必须拒绝。

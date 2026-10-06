@@ -6,6 +6,11 @@ rust-version = "1.88"
 publish = false
 description = "Isolated virtual-desktop observation and input, independent of the Pawork host"
 
+# objc 0.2 的 sel_impl!/class! 宏展开引用 cfg(feature = "cargo-clippy")；
+# check-cfg 声明该已知值后不再触发警告，其余未知 cfg 照常告警。
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
@@ -14,12 +19,17 @@ image = { version = "=0.25.10", default-features = false, features = ["jpeg"] }
 [dev-dependencies]
 serde_json = "1"
 
-# 仅 macOS 人工探针 examples/macos_background_probe.rs 使用，全部复用
-# workspace 已锁定版本；库本体不引入任何平台框架。
-[target.'cfg(target_os = "macos")'.dev-dependencies]
+# CU-03 起库本体在 macOS 落地原生后端（src/macos.rs：应用/窗口发现、
+# 窗口代际、受控启动），全部复用 workspace 已锁定版本；非 macOS 目标
+# 无任何平台依赖。
+[target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"
-block = "0.1"
-cocoa = "=0.26.0"
 core-foundation = "0.10"
 core-graphics = { version = "0.24", features = ["elcapitan"] }
 libc = "0.2"
+
+# 仅 macOS 人工探针 examples（非产品路径）使用；objc / core-foundation /
+# core-graphics / libc 已由上方正式依赖覆盖。
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+block = "0.1"
+cocoa = "=0.26.0"

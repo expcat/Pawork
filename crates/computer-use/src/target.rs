@@ -105,6 +105,18 @@ pub enum TargetError {
     /// origin cannot be determined; website targets fail closed.
     #[error("target window no longer shows the authorized origin; bind a new target")]
     SiteChanged,
+    /// An OS permission the native backend needs (Screen Recording,
+    /// Accessibility, …) is missing. Reported as-is by discovery and
+    /// pre-flight paths; Pawork can never grant it, and validation paths
+    /// that cannot verify a target without it fail closed.
+    #[error("native OS permission missing: {0}")]
+    PermissionMissing(&'static str),
+    /// The native probe could not answer although the OS permission is
+    /// present (AX call failed, app unresponsive, symbols unavailable).
+    /// Access is refused all the same; the cause is kept for diagnosis
+    /// instead of being misreported as a missing permission.
+    #[error("native probe unavailable: {0}")]
+    ProbeUnavailable(String),
     /// Host-side contract misuse (e.g. element handle from a screenshot).
     #[error("invalid target contract use: {0}")]
     Invalid(&'static str),

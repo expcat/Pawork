@@ -198,3 +198,7 @@ flowchart LR
 CU-02（2026-10-06）在同包新增 `target` 契约模块，作为本机后台路线的类型地基：目标身份（应用族 / 进程实例 / 窗口代际）经宿主句柄绑定 workspace/run，观测租约 60 秒一次性消费，后台能力按 CU-01 实测矩阵按族收敛，不支持的动作拒绝而非回退全局输入。契约尚未接入生产派发；本机探针与动作实现见 [ROADMAP](ROADMAP.md) CU-03 起的后续任务。
 
 CU-16（2026-10-06）在同包补 `approval` 契约模块：应用与网站范围的 Host 审批。授权以 `TargetIdentity`（整应用或浏览器内单源网站）+ workspace/run Scope 为键，由宿主在显式用户审批后签发（once / for-run 复用既有审批语义），`TargetRegistry` 在绑定、观测、窗口校验与动作派发路径上先查台账授权——未授权 / 已撤销 / 跨目标 / 受保护目标先于任何 probe 调用拒绝；网站目标另经 `current_origin` 接缝复核窗口当前 origin（含宿主捕获前预检 `require_authorized`），同窗口跨源导航即拒。撤销阻断后续动作，已执行历史如实保留。宿主自身 UI（`dev.pawork.desktop`）与 macOS 权限界面内置为受保护目标（大小写不敏感、默认构造即生效），永不授权，Agent 不能经 Pawork 审批界面或系统权限界面自我批准；OS 系统权限与 Pawork 目标授权分离，不代用户批准。授权仅存内存，随 run / Host 消亡；逐目标持久授权须先过 ADR。
+
+
+
+CU-03（2026-10-06）在同包新增 `macos` 模块（仅 macOS 编译）：`NativeProbe` 的真实后端 + 应用发现 / 窗口列举 / 受控启动。进程实例 = pid + sysctl 启动令牌 + NSRunningApplication 终止态；窗口代际的枚举、账本同步与提取在同一把锁内完成。存活判定要求窗口服务器在册且应用自身 AXWindows 证明——已关闭窗口在窗口服务器列表长期残留为幽灵，`_AXUIElementGetWindow` 可用时按窗口 id 精确对应（同帧关窗只失效自己），缺失时帧组闭合（同帧计数相等才判活）、歧义与跨组重叠（epsilon 匹配不可传递）均 fail-closed；最小化窗口的 AX 可见性随平台状态变化（macOS 26 实测可致整应用 AX 元素失效），契约不承诺最小化存活。发现只读元数据；`list_windows` 先经目标授权闸再碰 AX 与标题，并回读 bundle id 校验身份与进程实例绑定，标题仅复制获授权 pid 名下窗口。启动只接受 LaunchServices 可解析的 bundle 身份（模型不能传可执行路径），授权检查先于一切系统调用，恒不激活、不夺焦点。族分类为启发式（声明 web scheme → Browser、捆绑 Electron/CEF → Chromium、其余 AppKit）。AX 树版本与网页 origin 暂无信号源，按契约 fail-closed；尚未接入 tools / Host 生产路径。详见 [CU-03 任务文档](plan/cu-03-app-window-discovery.md)。

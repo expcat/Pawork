@@ -12,6 +12,11 @@ mod rfb;
 pub mod approval;
 pub mod target;
 
+/// macOS native backend (CU-03): application/window discovery, window
+/// generation tracking and activation-free launching by bundle identity.
+#[cfg(target_os = "macos")]
+pub mod macos;
+
 pub const MAX_IMAGE_BYTES: usize = 512 * 1024;
 pub const MAX_IMAGE_EDGE: u32 = 1280;
 static DESKTOP_LOCK: Mutex<()> = Mutex::new(());
