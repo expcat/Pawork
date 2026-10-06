@@ -27,6 +27,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
+use crate::approval::{normalize_origin, GrantKind, TargetAuthorizer, TargetIdentity};
 use crate::MAX_IMAGE_EDGE;
 
 /// One-shot lease lifetime, same as the isolated-desktop observation.
@@ -90,6 +91,20 @@ pub enum TargetError {
     /// Cancelled before the handle was consumed or the action dispatched.
     #[error("computer action cancelled")]
     Cancelled,
+    /// No active grant for this target in this workspace/run: never granted,
+    /// granted to a different application or website, a spent one-shot
+    /// grant, or revoked. Rejected before any probe or backend access.
+    #[error("target is not authorized for this workspace/run; the user must approve this application or website")]
+    NotAuthorized,
+    /// The host forbids this target (its own UI); it can never be granted
+    /// or bound, so the agent cannot approve itself through it.
+    #[error("target is protected and can never be authorized")]
+    ForbiddenTarget,
+    /// The window no longer shows the origin the website target was
+    /// authorized and bound for (same-window navigation), or the current
+    /// origin cannot be determined; website targets fail closed.
+    #[error("target window no longer shows the authorized origin; bind a new target")]
+    SiteChanged,
     /// Host-side contract misuse (e.g. element handle from a screenshot).
     #[error("invalid target contract use: {0}")]
     Invalid(&'static str),
@@ -106,7 +121,7 @@ pub enum Environment {
 }
 
 /// Application family per the CU-01 measured capability matrix.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AppFamily {
     /// Native AppKit apps (CU-01: TextEdit).
@@ -117,7 +132,7 @@ pub enum AppFamily {
     Browser,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AppIdentity {
     pub bundle_id: String,
     pub family: AppFamily,
@@ -142,7 +157,7 @@ pub struct WindowIdentity {
 }
 
 /// The workspace/run a handle is issued to. Cross-run use is rejected.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Scope {
     pub workspace_id: String,
     pub run_id: String,
@@ -393,10 +408,14 @@ pub trait NativeProbe: Send + Sync {
     /// Current accessibility-tree revision of a window; None when the
     /// window or its tree is unavailable.
     fn tree_revision(&self, window: &WindowIdentity) -> Option<u64>;
+    /// Current web origin shown in a window (website targets). None when
+    /// the window is not showing web content or the origin cannot be
+    /// determined — website validation fails closed in both cases.
+    fn current_origin(&self, window: &WindowIdentity) -> Option<String>;
 }
 
 struct WindowRecord {
-    app: AppIdentity,
+    target: TargetIdentity,
     instance: ProcessInstance,
     window: WindowIdentity,
     scope: Scope,
@@ -423,7 +442,7 @@ struct ElementRecord {
 /// A window binding that passed all liveness checks just now.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ValidatedWindow {
-    pub app: AppIdentity,
+    pub target: TargetIdentity,
     pub instance: ProcessInstance,
     pub window: WindowIdentity,
     pub scope: Scope,
@@ -447,10 +466,14 @@ pub struct ValidatedElement {
 }
 
 /// Host-side registry: the only issuer and validator of handles. Validation
-/// order on every use is cancellation, existence, scope, staleness, process
-/// instance, window generation, tree revision.
+/// order on every use is cancellation, existence, scope, staleness,
+/// authorization (CU-16), process instance, window generation, tree
+/// revision; a one-shot grant is spent only after every other check passed.
+/// Authorization is checked before any probe call, so a denied, unknown or
+/// revoked target never reaches the native backend.
 pub struct TargetRegistry<P: NativeProbe> {
     probe: P,
+    authorizer: TargetAuthorizer,
     windows: HashMap<String, WindowRecord>,
     observations: HashMap<String, ObservationRecord>,
     elements: HashMap<String, ElementRecord>,
@@ -458,31 +481,101 @@ pub struct TargetRegistry<P: NativeProbe> {
 
 impl<P: NativeProbe> TargetRegistry<P> {
     pub fn new(probe: P) -> Self {
+        Self::with_authorizer(probe, TargetAuthorizer::default())
+    }
+
+    pub fn with_authorizer(probe: P, authorizer: TargetAuthorizer) -> Self {
         Self {
             probe,
+            authorizer,
             windows: HashMap::new(),
             observations: HashMap::new(),
             elements: HashMap::new(),
         }
     }
 
-    /// Bind a window the host just enumerated for scope. Rejects a process
-    /// that is already gone.
+    pub fn authorizer(&self) -> &TargetAuthorizer {
+        &self.authorizer
+    }
+
+    /// Record an explicit user approval for a target in this scope. This is
+    /// the host's only way to create a grant; models can never widen it.
+    pub fn grant(
+        &mut self,
+        scope: &Scope,
+        target: &TargetIdentity,
+        kind: GrantKind,
+    ) -> Result<(), TargetError> {
+        self.authorizer.grant(scope, target, kind)
+    }
+
+    /// Revoke a target's grant: every later gated operation on it is denied.
+    pub fn revoke(&mut self, scope: &Scope, target: &TargetIdentity) {
+        self.authorizer.revoke(scope, target);
+    }
+
+    /// Drop every grant of a run (run teardown).
+    pub fn revoke_scope(&mut self, scope: &Scope) {
+        self.authorizer.revoke_scope(scope);
+    }
+
+    /// Pre-flight gate the host must pass before connecting to, launching,
+    /// capturing or reading a bound target. Non-consuming: each gated
+    /// registry operation re-checks and spends one-shot grants itself.
+    /// Ledger denial (NotAuthorized / ForbiddenTarget) precedes any probe
+    /// call; a website binding then re-pins the window's current origin, so
+    /// a same-window navigation (or an undeterminable origin) fails closed
+    /// before the host captures. Liveness re-validation stays in the gated
+    /// operations.
+    pub fn require_authorized(
+        &self,
+        window: &WindowHandle,
+        scope: &Scope,
+    ) -> Result<(), TargetError> {
+        let record = self
+            .windows
+            .get(window.as_str())
+            .ok_or(TargetError::UnknownHandle)?;
+        if &record.scope != scope {
+            return Err(TargetError::CrossRun);
+        }
+        self.authorizer.check(scope, &record.target)?;
+        if let TargetIdentity::Website { origin, .. } = &record.target {
+            if !origin_matches(&self.probe, &record.window, origin) {
+                return Err(TargetError::SiteChanged);
+            }
+        }
+        Ok(())
+    }
+
+    /// Bind a window the host just enumerated for scope. Requires an active
+    /// grant for the target and rejects a process that is already gone;
+    /// the authorization check runs before any probe access. Binding alone
+    /// does not spend a one-shot grant.
     pub fn bind_window(
         &mut self,
         scope: &Scope,
-        app: AppIdentity,
+        target: TargetIdentity,
         instance: ProcessInstance,
         window: WindowIdentity,
     ) -> Result<WindowHandle, TargetError> {
+        self.authorizer.check(scope, &target)?;
         if !self.probe.process_instance_alive(&instance) {
             return Err(TargetError::ProcessRestarted);
+        }
+        // A website binding pins the origin the window actually shows:
+        // claiming a different origin than the current page is rejected
+        // before the handle exists.
+        if let TargetIdentity::Website { origin, .. } = &target {
+            if !origin_matches(&self.probe, &window, origin) {
+                return Err(TargetError::SiteChanged);
+            }
         }
         let handle = WindowHandle(next_handle("w"));
         self.windows.insert(
             handle.0.clone(),
             WindowRecord {
-                app,
+                target,
                 instance,
                 window,
                 scope: scope.clone(),
@@ -508,8 +601,13 @@ impl<P: NativeProbe> TargetRegistry<P> {
         if &record.scope != scope {
             return Err(TargetError::CrossRun);
         }
-        self.live(record)?;
         geometry.validate()?;
+        // Authorization precedes any probe call; the one-shot grant is spent
+        // only after the window passed liveness, so a stale target does not
+        // burn the user's single approval.
+        self.authorizer.check(scope, &record.target)?;
+        self.live(record)?;
+        self.authorizer.spend(scope, &record.target)?;
         let observation = TargetObservation {
             observation_id: ObservationHandle(next_handle("o")),
             environment,
@@ -575,7 +673,7 @@ impl<P: NativeProbe> TargetRegistry<P> {
     }
 
     /// Liveness check without consuming anything (status, re-capture, AX
-    /// re-read).
+    /// re-read). Requires an active grant, checked before the probe.
     pub fn validate_window(
         &self,
         window: &WindowHandle,
@@ -588,6 +686,7 @@ impl<P: NativeProbe> TargetRegistry<P> {
         if &record.scope != scope {
             return Err(TargetError::CrossRun);
         }
+        self.authorizer.check(scope, &record.target)?;
         self.live(record)
     }
 
@@ -617,6 +716,10 @@ impl<P: NativeProbe> TargetRegistry<P> {
             .windows
             .get(record.window.as_str())
             .ok_or(TargetError::UnknownHandle)?;
+        // Revocation between observation and dispatch blocks the action
+        // before any probe access; the grant is spent only when every other
+        // check passed and the action is actually released for dispatch.
+        self.authorizer.check(scope, &window_record.target)?;
         let window = self.live(window_record)?;
         // An AX observation is bound to the tree revision it read: if the
         // tree advanced before the lease is consumed, the observation is as
@@ -630,6 +733,7 @@ impl<P: NativeProbe> TargetRegistry<P> {
                 Some(_) => {}
             }
         }
+        self.authorizer.spend(scope, &window_record.target)?;
         let validated = ValidatedObservation {
             window,
             observation: record.observation.clone(),
@@ -669,6 +773,7 @@ impl<P: NativeProbe> TargetRegistry<P> {
             .windows
             .get(record.window.as_str())
             .ok_or(TargetError::UnknownHandle)?;
+        self.authorizer.check(scope, &window_record.target)?;
         let window = self.live(window_record)?;
         match self.probe.tree_revision(&window_record.window) {
             None => return Err(TargetError::WindowReplaced),
@@ -677,6 +782,7 @@ impl<P: NativeProbe> TargetRegistry<P> {
             }
             Some(_) => {}
         }
+        self.authorizer.spend(scope, &window_record.target)?;
         let validated = ValidatedElement {
             window,
             element_token: record.element_token,
@@ -705,8 +811,16 @@ impl<P: NativeProbe> TargetRegistry<P> {
             }
             Some(_) => {}
         }
+        // A website target stays valid only while the window keeps showing
+        // the authorized origin: same-window navigation away (or an
+        // undeterminable origin) rejects before observation or dispatch.
+        if let TargetIdentity::Website { origin, .. } = &record.target {
+            if !origin_matches(&self.probe, &record.window, origin) {
+                return Err(TargetError::SiteChanged);
+            }
+        }
         Ok(ValidatedWindow {
-            app: record.app.clone(),
+            target: record.target.clone(),
             instance: record.instance.clone(),
             window: record.window,
             scope: record.scope.clone(),
@@ -714,16 +828,30 @@ impl<P: NativeProbe> TargetRegistry<P> {
     }
 }
 
+/// A website target is valid only while the window shows the origin it was
+/// authorized and bound for, compared in canonical form so casing or port
+/// spelling cannot dodge the check.
+fn origin_matches<P: NativeProbe>(probe: &P, window: &WindowIdentity, origin: &str) -> bool {
+    probe
+        .current_origin(window)
+        .as_deref()
+        .and_then(|value| normalize_origin(value).ok())
+        .as_deref()
+        == Some(origin)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::{AtomicBool, AtomicUsize};
     use std::sync::Mutex;
 
     struct FakeProbe {
         alive: AtomicBool,
         generation: Mutex<Option<u64>>,
         tree: Mutex<Option<u64>>,
+        origin: Mutex<Option<String>>,
+        calls: AtomicUsize,
     }
 
     impl FakeProbe {
@@ -732,19 +860,32 @@ mod tests {
                 alive: AtomicBool::new(true),
                 generation: Mutex::new(Some(1)),
                 tree: Mutex::new(Some(7)),
+                origin: Mutex::new(None),
+                calls: AtomicUsize::new(0),
             }
+        }
+
+        fn calls(&self) -> usize {
+            self.calls.load(Ordering::Relaxed)
         }
     }
 
     impl NativeProbe for FakeProbe {
         fn process_instance_alive(&self, _: &ProcessInstance) -> bool {
+            self.calls.fetch_add(1, Ordering::Relaxed);
             self.alive.load(Ordering::Relaxed)
         }
         fn window_generation(&self, _: &ProcessInstance, _: u64) -> Option<u64> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
             *self.generation.lock().unwrap()
         }
         fn tree_revision(&self, _: &WindowIdentity) -> Option<u64> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
             *self.tree.lock().unwrap()
+        }
+        fn current_origin(&self, _: &WindowIdentity) -> Option<String> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            self.origin.lock().unwrap().clone()
         }
     }
 
@@ -766,6 +907,10 @@ mod tests {
         }
     }
 
+    fn target(family: AppFamily) -> TargetIdentity {
+        TargetIdentity::application(app(family))
+    }
+
     fn window_identity() -> WindowIdentity {
         WindowIdentity {
             window_id: 42,
@@ -775,8 +920,12 @@ mod tests {
 
     fn bound(family: AppFamily) -> (TargetRegistry<FakeProbe>, WindowHandle) {
         let mut registry = TargetRegistry::new(FakeProbe::new());
+        let target = target(family);
+        registry
+            .grant(&scope(), &target, GrantKind::ForRun)
+            .unwrap();
         let window = registry
-            .bind_window(&scope(), app(family), instance(), window_identity())
+            .bind_window(&scope(), target, instance(), window_identity())
             .unwrap();
         (registry, window)
     }
@@ -989,15 +1138,19 @@ mod tests {
     #[test]
     fn process_exit_or_restart_invalidates_everything() {
         let mut registry = TargetRegistry::new(FakeProbe::new());
+        let target = target(AppFamily::Appkit);
+        registry
+            .grant(&scope(), &target, GrantKind::ForRun)
+            .unwrap();
         // A dead process cannot be bound at all.
         registry.probe.alive.store(false, Ordering::Relaxed);
         assert_eq!(
-            registry.bind_window(&scope(), app(AppFamily::Appkit), instance(), window_identity()),
+            registry.bind_window(&scope(), target.clone(), instance(), window_identity()),
             Err(TargetError::ProcessRestarted)
         );
         registry.probe.alive.store(true, Ordering::Relaxed);
         let window = registry
-            .bind_window(&scope(), app(AppFamily::Appkit), instance(), window_identity())
+            .bind_window(&scope(), target, instance(), window_identity())
             .unwrap();
         let observation = capture(&mut registry, &window);
         // Restart (or exit): the instance token no longer matches.
@@ -1228,5 +1381,274 @@ mod tests {
             ),
             Err(TargetError::Invalid(_))
         ));
+    }
+
+    #[test]
+    fn unauthorized_and_cross_target_rejections_precede_any_probe_call() {
+        let mut registry = TargetRegistry::new(FakeProbe::new());
+        let editor = target(AppFamily::Appkit);
+        // No grant at all: rejected before the probe.
+        assert_eq!(
+            registry.bind_window(&scope(), editor.clone(), instance(), window_identity()),
+            Err(TargetError::NotAuthorized)
+        );
+        registry
+            .grant(&scope(), &editor, GrantKind::ForRun)
+            .unwrap();
+        // A grant covers only the approved application: another app, and any
+        // website (even inside the same bundle), stay unauthorized.
+        let other_app = TargetIdentity::application(AppIdentity {
+            bundle_id: "com.other.app".into(),
+            family: AppFamily::Chromium,
+        });
+        let website = TargetIdentity::website(
+            AppIdentity {
+                bundle_id: "com.example.app".into(),
+                family: AppFamily::Browser,
+            },
+            "https://example.com",
+        )
+        .unwrap();
+        for target in [other_app, website] {
+            assert_eq!(
+                registry.bind_window(&scope(), target, instance(), window_identity()),
+                Err(TargetError::NotAuthorized)
+            );
+        }
+        // A grant is bound to its workspace/run scope.
+        for other_scope in [Scope::new("ws-1", "run-2"), Scope::new("ws-2", "run-1")] {
+            assert_eq!(
+                registry.bind_window(&other_scope, editor.clone(), instance(), window_identity()),
+                Err(TargetError::NotAuthorized)
+            );
+        }
+        assert_eq!(registry.probe.calls(), 0);
+        // The approved target binds, observes and dispatches.
+        let window = registry
+            .bind_window(&scope(), editor, instance(), window_identity())
+            .unwrap();
+        let observation = capture(&mut registry, &window);
+        registry
+            .consume_observation(&observation.observation_id, &scope(), &|| false)
+            .unwrap();
+    }
+
+    #[test]
+    fn one_shot_grant_covers_one_action_and_is_not_spent_early() {
+        let mut registry = TargetRegistry::new(FakeProbe::new());
+        let editor = target(AppFamily::Appkit);
+        registry.grant(&scope(), &editor, GrantKind::Once).unwrap();
+        // Binding requires the grant but does not spend it.
+        let window = registry
+            .bind_window(&scope(), editor.clone(), instance(), window_identity())
+            .unwrap();
+        // A stale target does not burn the single approval: the spend
+        // happens only after liveness passed.
+        registry.probe.alive.store(false, Ordering::Relaxed);
+        assert_eq!(
+            registry.begin_observation(
+                &window,
+                &scope(),
+                Environment::NativeBackground,
+                ObservationKind::Capture,
+                geometry(),
+            ),
+            Err(TargetError::ProcessRestarted)
+        );
+        registry.probe.alive.store(true, Ordering::Relaxed);
+        // The first observation spends the grant.
+        let observation = capture(&mut registry, &window);
+        // The follow-up input is a new action and needs its own approval.
+        assert_eq!(
+            registry.consume_observation(&observation.observation_id, &scope(), &|| false),
+            Err(TargetError::NotAuthorized)
+        );
+        // The rejected attempt consumed neither grant nor lease.
+        registry.grant(&scope(), &editor, GrantKind::Once).unwrap();
+        registry
+            .consume_observation(&observation.observation_id, &scope(), &|| false)
+            .unwrap();
+    }
+
+    #[test]
+    fn revocation_blocks_dispatch_before_backend_access_and_history_stays() {
+        let (mut registry, window) = bound(AppFamily::Appkit);
+        let editor = target(AppFamily::Appkit);
+        let observation = capture(&mut registry, &window);
+        registry.revoke(&scope(), &editor);
+        let calls_before = registry.probe.calls();
+        // The outstanding lease can no longer be dispatched, and the
+        // rejection happens before any probe call.
+        assert_eq!(
+            registry.consume_observation(&observation.observation_id, &scope(), &|| false),
+            Err(TargetError::NotAuthorized)
+        );
+        assert_eq!(registry.probe.calls(), calls_before);
+        // Fresh observations and liveness checks are blocked the same way.
+        assert_eq!(
+            registry.begin_observation(
+                &window,
+                &scope(),
+                Environment::NativeBackground,
+                ObservationKind::Capture,
+                geometry(),
+            ),
+            Err(TargetError::NotAuthorized)
+        );
+        assert_eq!(
+            registry.validate_window(&window, &scope()),
+            Err(TargetError::NotAuthorized)
+        );
+        // Re-approval revives the still-valid lease.
+        registry
+            .grant(&scope(), &editor, GrantKind::ForRun)
+            .unwrap();
+        registry
+            .consume_observation(&observation.observation_id, &scope(), &|| false)
+            .unwrap();
+        // Already-consumed history is not rewritten: the spent lease stays spent.
+        assert_eq!(
+            registry.consume_observation(&observation.observation_id, &scope(), &|| false),
+            Err(TargetError::StaleHandle)
+        );
+    }
+
+    #[test]
+    fn protected_targets_are_rejected_before_any_probe_call() {
+        let authorizer = TargetAuthorizer::new(["dev.pawork.desktop".to_string()]);
+        let mut registry = TargetRegistry::with_authorizer(FakeProbe::new(), authorizer);
+        let own_ui = TargetIdentity::application(AppIdentity {
+            bundle_id: "dev.pawork.desktop".into(),
+            family: AppFamily::Appkit,
+        });
+        // Granting the host's own UI is refused, so it can never be bound:
+        // the agent cannot approve itself through the approval surface.
+        assert_eq!(
+            registry.grant(&scope(), &own_ui, GrantKind::ForRun),
+            Err(TargetError::ForbiddenTarget)
+        );
+        assert_eq!(
+            registry.bind_window(&scope(), own_ui, instance(), window_identity()),
+            Err(TargetError::ForbiddenTarget)
+        );
+        assert_eq!(registry.probe.calls(), 0);
+    }
+
+    #[test]
+    fn default_registry_protects_pawork_ui_and_permission_surfaces() {
+        // Default construction is safe: the built-in minimum protected set
+        // covers Pawork's own approval UI and the OS permission surfaces,
+        // without any host-supplied list.
+        let mut registry = TargetRegistry::new(FakeProbe::new());
+        for bundle in ["dev.pawork.desktop", "com.apple.systempreferences"] {
+            let protected = TargetIdentity::application(AppIdentity {
+                bundle_id: bundle.into(),
+                family: AppFamily::Appkit,
+            });
+            assert_eq!(
+                registry.grant(&scope(), &protected, GrantKind::ForRun),
+                Err(TargetError::ForbiddenTarget)
+            );
+            assert_eq!(
+                registry.bind_window(&scope(), protected, instance(), window_identity()),
+                Err(TargetError::ForbiddenTarget)
+            );
+        }
+        assert_eq!(registry.probe.calls(), 0);
+    }
+
+    #[test]
+    fn website_target_rejects_same_window_navigation_before_dispatch() {
+        let mut registry = TargetRegistry::new(FakeProbe::new());
+        let authorized = TargetIdentity::website(
+            AppIdentity {
+                bundle_id: "com.example.browser".into(),
+                family: AppFamily::Browser,
+            },
+            "https://example.com",
+        )
+        .unwrap();
+        registry
+            .grant(&scope(), &authorized, GrantKind::ForRun)
+            .unwrap();
+        // Binding pins the origin the window actually shows.
+        *registry.probe.origin.lock().unwrap() = Some("https://other.example.com".into());
+        assert_eq!(
+            registry.bind_window(&scope(), authorized.clone(), instance(), window_identity()),
+            Err(TargetError::SiteChanged)
+        );
+        *registry.probe.origin.lock().unwrap() = Some("https://example.com".into());
+        let window = registry
+            .bind_window(&scope(), authorized.clone(), instance(), window_identity())
+            .unwrap();
+        // The capture pre-flight passes while the window shows the
+        // authorized origin.
+        assert!(registry.require_authorized(&window, &scope()).is_ok());
+        let observation = capture(&mut registry, &window);
+        // Same-window navigation to an unauthorized origin blocks dispatch,
+        // observation and liveness checks, with window and grant unchanged.
+        *registry.probe.origin.lock().unwrap() = Some("https://other.example.com".into());
+        // The capture pre-flight rejects just as early: the host must not
+        // read an unauthorized origin's screen.
+        assert_eq!(
+            registry.require_authorized(&window, &scope()),
+            Err(TargetError::SiteChanged)
+        );
+        assert_eq!(
+            registry.consume_observation(&observation.observation_id, &scope(), &|| false),
+            Err(TargetError::SiteChanged)
+        );
+        assert_eq!(
+            registry.begin_observation(
+                &window,
+                &scope(),
+                Environment::NativeBackground,
+                ObservationKind::Capture,
+                geometry(),
+            ),
+            Err(TargetError::SiteChanged)
+        );
+        assert_eq!(
+            registry.validate_window(&window, &scope()),
+            Err(TargetError::SiteChanged)
+        );
+        // An undeterminable origin fails closed the same way.
+        *registry.probe.origin.lock().unwrap() = None;
+        assert_eq!(
+            registry.require_authorized(&window, &scope()),
+            Err(TargetError::SiteChanged)
+        );
+        assert_eq!(
+            registry.validate_window(&window, &scope()),
+            Err(TargetError::SiteChanged)
+        );
+        // Navigating back restores the still-valid lease; origin spelling
+        // differences (trailing slash, casing) cannot dodge or break it.
+        *registry.probe.origin.lock().unwrap() = Some("HTTPS://Example.COM/".into());
+        assert!(registry.require_authorized(&window, &scope()).is_ok());
+        registry
+            .consume_observation(&observation.observation_id, &scope(), &|| false)
+            .unwrap();
+    }
+
+    #[test]
+    fn pre_flight_require_authorized_matches_the_gated_operations() {
+        let (mut registry, window) = bound(AppFamily::Appkit);
+        let editor = target(AppFamily::Appkit);
+        assert!(registry.require_authorized(&window, &scope()).is_ok());
+        assert_eq!(
+            registry.require_authorized(&window, &Scope::new("ws-1", "run-2")),
+            Err(TargetError::CrossRun)
+        );
+        registry.revoke(&scope(), &editor);
+        assert_eq!(
+            registry.require_authorized(&window, &scope()),
+            Err(TargetError::NotAuthorized)
+        );
+        let forged: WindowHandle = serde_json::from_str("\"w-1-1\"").unwrap();
+        assert_eq!(
+            registry.require_authorized(&forged, &scope()),
+            Err(TargetError::UnknownHandle)
+        );
     }
 }

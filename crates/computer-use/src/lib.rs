@@ -9,6 +9,7 @@ use std::sync::{
 use std::time::{Duration, Instant};
 
 mod rfb;
+pub mod approval;
 pub mod target;
 
 pub const MAX_IMAGE_BYTES: usize = 512 * 1024;

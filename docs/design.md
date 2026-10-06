@@ -196,3 +196,5 @@ flowchart LR
 先截图，再用像素坐标和一次性观察 id 输入。观察绑定 run、连接身份和虚拟尺寸，60 秒失效；断线后重新截图，失败不重试副作用。每次输入后截图核验。Host 审批、取消、持久化与 Provider 图片编码继续复用首版链路，不改 GUI wire。截图 JPEG ≤512 KiB，三协议保留图片。详见 [包 Spec](spec/crates/computer-use.md)、[部署说明](../crates/computer-use/README.md) 与 [参照证据](references.md#computer-use-实现调研2026-09-17)。
 
 CU-02（2026-10-06）在同包新增 `target` 契约模块，作为本机后台路线的类型地基：目标身份（应用族 / 进程实例 / 窗口代际）经宿主句柄绑定 workspace/run，观测租约 60 秒一次性消费，后台能力按 CU-01 实测矩阵按族收敛，不支持的动作拒绝而非回退全局输入。契约尚未接入生产派发；本机探针与动作实现见 [ROADMAP](ROADMAP.md) CU-03 起的后续任务。
+
+CU-16（2026-10-06）在同包补 `approval` 契约模块：应用与网站范围的 Host 审批。授权以 `TargetIdentity`（整应用或浏览器内单源网站）+ workspace/run Scope 为键，由宿主在显式用户审批后签发（once / for-run 复用既有审批语义），`TargetRegistry` 在绑定、观测、窗口校验与动作派发路径上先查台账授权——未授权 / 已撤销 / 跨目标 / 受保护目标先于任何 probe 调用拒绝；网站目标另经 `current_origin` 接缝复核窗口当前 origin（含宿主捕获前预检 `require_authorized`），同窗口跨源导航即拒。撤销阻断后续动作，已执行历史如实保留。宿主自身 UI（`dev.pawork.desktop`）与 macOS 权限界面内置为受保护目标（大小写不敏感、默认构造即生效），永不授权，Agent 不能经 Pawork 审批界面或系统权限界面自我批准；OS 系统权限与 Pawork 目标授权分离，不代用户批准。授权仅存内存，随 run / Host 消亡；逐目标持久授权须先过 ADR。
