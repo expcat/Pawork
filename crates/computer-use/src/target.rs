@@ -143,6 +143,14 @@ pub enum TargetError {
     /// Host-side contract misuse (e.g. element handle from a screenshot).
     #[error("invalid target contract use: {0}")]
     Invalid(&'static str),
+    /// The keyboard-target recheck failed (CU-07): the bound window is not
+    /// the application's key window, the resolved element is not focused, or
+    /// a text-insert target exposes no selection range. Background key
+    /// events route to the app's key window and land in its focused view, so
+    /// dispatching anyway could not be attributed to the bound target
+    /// element. Nothing was dispatched.
+    #[error("target window or element does not hold keyboard focus; input would not land in it")]
+    NotFocused,
 }
 
 /// Which environment an observation or action belongs to. The isolated
@@ -817,6 +825,126 @@ pub enum SemanticOutcome {
     /// (kAXErrorCannotComplete): the element may or may not have performed
     /// the action. Reconcile from a fresh observation before any retry.
     UnknownEffect,
+}
+
+// ---------- targeted background input (CU-07) ----------
+
+/// Longest text one targeted input carries, in chars (same bound as a
+/// semantic value write).
+pub const MAX_TARGETED_TEXT_CHARS: usize = 4096;
+
+/// Non-printing keys a targeted key press can carry. Printable characters
+/// travel as [TargetedInput::InsertText] text instead: the Unicode key-event
+/// route is the measured background path, and a keycode for a character
+/// depends on the target's keyboard layout, which the contract cannot see.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TargetedKey {
+    Return,
+    Tab,
+    Space,
+    Backspace,
+    Escape,
+    Delete,
+    Home,
+    End,
+    PageUp,
+    PageDown,
+    Left,
+    Up,
+    Right,
+    Down,
+}
+
+/// Modifier combo riding a targeted key press. Command is deliberately not
+/// representable: a Command combo is a menu shortcut, and CU-01 measured
+/// that menu shortcuts do not route in the background even on AppKit
+/// (the menu bar belongs to the foreground). Use the semantic action route
+/// or a foreground flow instead — there is no background fallback here.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct KeyModifiers {
+    pub shift: bool,
+    pub control: bool,
+    pub option: bool,
+}
+
+impl KeyModifiers {
+    pub fn none() -> Self {
+        Self::default()
+    }
+}
+
+/// One key press: a named key with an optional modifier combo.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TargetedKeyPress {
+    pub key: TargetedKey,
+    pub modifiers: KeyModifiers,
+}
+
+/// Targeted input dispatched through the CGEventPostToPid route on a
+/// validated element handle (CU-07): the complement to CU-06's semantic
+/// writes for what only real key events reach. Every input passes the same
+/// [require_background] gate ([NativeActionKind::TargetedKeys]): AppKit
+/// background only — Chromium-family apps silently drop background key
+/// events (CU-01), so they are rejected without a single event, and an
+/// AppKit window that is minimized drops them just as silently.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TargetedInput {
+    /// Insert Unicode text at the target element's current insertion point
+    /// (replacing a non-empty selection). This types; it never replaces the
+    /// whole value — that is CU-06's [SemanticAction::SetValue].
+    InsertText(String),
+    /// One key press (keyDown + keyUp) with an optional modifier combo.
+    KeyPress(TargetedKeyPress),
+}
+
+impl TargetedInput {
+    /// The capability-matrix kind this input is gated by.
+    pub fn kind(&self) -> NativeActionKind {
+        NativeActionKind::TargetedKeys
+    }
+
+    /// Structural validity, mirroring the isolated-desktop text rule: text
+    /// is 1..=[MAX_TARGETED_TEXT_CHARS] chars without control characters
+    /// (control characters are key presses, not text), and the typed key
+    /// vocabulary admits no invalid values by construction.
+    pub fn validate(&self) -> Result<(), TargetError> {
+        let TargetedInput::InsertText(text) = self else {
+            return Ok(());
+        };
+        if text.is_empty()
+            || text.chars().count() > MAX_TARGETED_TEXT_CHARS
+            || text.chars().any(char::is_control)
+        {
+            return Err(TargetError::Invalid(
+                "targeted text must be 1..4096 chars without control characters; use a key press for Return/Tab",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// The honest terminal state of one targeted input dispatch (CU-07). Clear
+/// rejections are [TargetError]s decided before any event was posted; both
+/// outcomes mean events reached the posting seam.
+#[derive(Debug, PartialEq, Eq)]
+pub enum TargetedOutcome {
+    /// Every planned event was posted to the target pid. CGEventPostToPid
+    /// acknowledges nothing, so this is dispatch proof only, never effect
+    /// proof — verify with a fresh observation or a target-side fact.
+    Dispatched {
+        events_posted: usize,
+        events_total: usize,
+    },
+    /// The sequence stopped early (cancellation or a dead target between
+    /// events). Pressed state was released — every posted keyDown got its
+    /// keyUp and every pressed modifier its release event — but events
+    /// already posted may have taken effect, so the partial input is never
+    /// silently retried as if it were a clean failure.
+    Partial {
+        events_posted: usize,
+        events_total: usize,
+        cause: TargetError,
+    },
 }
 
 /// Live native state supplied by the host; implemented by the macOS backend
@@ -1727,6 +1855,104 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn targeted_inputs_validate_and_map_to_the_capability_kind() {
+        let text = TargetedInput::InsertText("hello 漢😀".into());
+        let key = TargetedInput::KeyPress(TargetedKeyPress {
+            key: TargetedKey::Return,
+            modifiers: KeyModifiers::none(),
+        });
+        assert_eq!(text.kind(), NativeActionKind::TargetedKeys);
+        assert_eq!(key.kind(), NativeActionKind::TargetedKeys);
+        assert!(text.validate().is_ok());
+        assert!(key.validate().is_ok());
+        // Empty text is not a payload here: unlike a semantic value write
+        // (where empty clears a field), targeted text types, and typing
+        // nothing is not an input.
+        assert_eq!(
+            TargetedInput::InsertText(String::new()).validate(),
+            Err(TargetError::Invalid(
+                "targeted text must be 1..4096 chars without control characters; use a key press for Return/Tab"
+            ))
+        );
+        // Control characters are key presses, not text.
+        assert_eq!(
+            TargetedInput::InsertText("a\nb".into()).validate(),
+            Err(TargetError::Invalid(
+                "targeted text must be 1..4096 chars without control characters; use a key press for Return/Tab"
+            ))
+        );
+        // The bound counts chars, not bytes.
+        let at_bound: String = "漢".repeat(MAX_TARGETED_TEXT_CHARS);
+        assert!(TargetedInput::InsertText(at_bound).validate().is_ok());
+        assert_eq!(
+            TargetedInput::InsertText("x".repeat(MAX_TARGETED_TEXT_CHARS + 1)).validate(),
+            Err(TargetError::Invalid(
+                "targeted text must be 1..4096 chars without control characters; use a key press for Return/Tab"
+            ))
+        );
+        // The typed vocabulary admits no invalid values by construction;
+        // every key and modifier combination validates.
+        for key in [
+            TargetedKey::Return,
+            TargetedKey::Tab,
+            TargetedKey::Space,
+            TargetedKey::Backspace,
+            TargetedKey::Escape,
+            TargetedKey::Delete,
+            TargetedKey::Home,
+            TargetedKey::End,
+            TargetedKey::PageUp,
+            TargetedKey::PageDown,
+            TargetedKey::Left,
+            TargetedKey::Up,
+            TargetedKey::Right,
+            TargetedKey::Down,
+        ] {
+            assert!(TargetedInput::KeyPress(TargetedKeyPress {
+                key,
+                modifiers: KeyModifiers {
+                    shift: true,
+                    control: true,
+                    option: true,
+                },
+            })
+            .validate()
+            .is_ok());
+        }
+    }
+
+    #[test]
+    fn targeted_capability_gate_is_the_measured_matrix() {
+        use AppFamily::*;
+        let kind = TargetedInput::InsertText("x".into()).kind();
+        // The CU-01 measured cells: AppKit background yes (occluded or
+        // plain background, with the window the app's key window), AppKit
+        // minimized no (silently dropped), Chromium-family background no
+        // (silently dropped even with AXMain restored). No family has a
+        // fallback to global or foreground input.
+        assert!(require_background(Appkit, kind, false).is_ok());
+        assert_eq!(
+            require_background(Appkit, kind, true),
+            Err(TargetError::BackgroundUnsupported)
+        );
+        for family in [Chromium, Browser] {
+            for minimized in [false, true] {
+                assert_eq!(
+                    require_background(family, kind, minimized),
+                    Err(TargetError::BackgroundUnsupported)
+                );
+            }
+        }
+        // Menu shortcuts stay a separate, rejected kind: a Command combo is
+        // not expressible as a targeted key press, and the matrix cell it
+        // maps to was measured not to route in the background.
+        assert_eq!(
+            require_background(Appkit, NativeActionKind::MenuShortcut, false),
+            Err(TargetError::BackgroundUnsupported)
+        );
     }
 
     #[test]

@@ -36,6 +36,11 @@
 //!                                签发并消费句柄 → 后端派发（能力闸 / 版本复核 / 路径重解析）→
 //!                                读回 AXValue/选区与窗口标题复核效果（探针专用读回，产品路径
 //!                                永不读 AXValue）→ 前台/焦点/鼠标/剪贴板无干扰采样
+//!   axinput <bundle_id> <insert_text|key_press> <role|-> [name|-] <text|key> [mods|-] [title 子串]
+//!                                CU-07 定向输入全流程：矩阵预检 → 读树定位唯一元素 →
+//!                                签发并消费句柄 → 后端派发（能力闸 / 最小化 / AXMain /
+//!                                焦点 / 选区复核）→ 读回 AXValue/选区复核效果 →
+//!                                前台/焦点/鼠标/剪贴板无干扰采样
 
 #[cfg(target_os = "macos")]
 mod imp {
@@ -50,7 +55,10 @@ mod imp {
         Environment, ImagePoint, ObservationGeometry, ObservationKind, Scope, TargetObservation,
         TargetRegistry, ValidatedWindow, WindowHandle,
     };
-    use pawork_computer_use::target::{require_background, SemanticAction};
+    use pawork_computer_use::target::{
+        require_background, KeyModifiers, SemanticAction, TargetedInput, TargetedKey,
+        TargetedKeyPress, TargetedOutcome,
+    };
     use serde_json::{json, Value};
     use std::collections::HashMap;
     use std::ffi::{c_void, CStr, CString};
@@ -72,6 +80,8 @@ mod imp {
         fn CFArrayGetValueAtIndex(a: *const c_void, i: isize) -> *const c_void;
         fn CFGetTypeID(p: *const c_void) -> u64;
         fn CFStringGetTypeID() -> u64;
+        fn CFBooleanGetTypeID() -> u64;
+        fn CFBooleanGetValue(b: *const c_void) -> u8;
     }
 
     type CFTypeRef = *const c_void;
@@ -1524,6 +1534,21 @@ mod imp {
         })
     }
 
+    /// 探针专用布尔属性读回（AXMain / AXFocused 等焦点事实）。
+    unsafe fn ax_bool_read(el: AXEl, attr: &str) -> Option<bool> {
+        let mut raw: CFTypeRef = ptr::null();
+        let err = (axf().copy_attribute)(el, nsstr(attr) as *const c_void, &mut raw);
+        let value = if err == 0 && !raw.is_null() && CFGetTypeID(raw) == CFBooleanGetTypeID() {
+            Some(CFBooleanGetValue(raw) != 0)
+        } else {
+            None
+        };
+        if !raw.is_null() {
+            CFRelease(raw);
+        }
+        value
+    }
+
     /// 验收探针专用的元素读回：按窗口 id 与 path 重解析活元素，读 AXValue
     /// （仅字符串类型）与 AXSelectedTextRange。产品路径（树读取与派发）永不
     /// 读 AXValue；这里是 CU-01 同款的目标侧独立事实取证。
@@ -1642,6 +1667,10 @@ mod imp {
                     "value_err": value_err,
                     "selected_range": range,
                     "range_err": range_err,
+                    // CU-07 焦点事实：窗口是否 app 内 key window（AXMain）
+                    // 与元素是否聚焦（AXFocused）——定向输入的路由依据。
+                    "window_main": ax_bool_read(window, "AXMain"),
+                    "element_focused": ax_bool_read(current, "AXFocused"),
                 })
             };
             for array in level_arrays {
@@ -1792,6 +1821,205 @@ mod imp {
         }))
     }
 
+    // ---------- CU-07 后台定向文本与按键输入 ----------
+
+    fn parse_targeted_key(name: &str) -> Result<TargetedKey, String> {
+        match name {
+            "return" => Ok(TargetedKey::Return),
+            "tab" => Ok(TargetedKey::Tab),
+            "space" => Ok(TargetedKey::Space),
+            "backspace" => Ok(TargetedKey::Backspace),
+            "escape" => Ok(TargetedKey::Escape),
+            "delete" => Ok(TargetedKey::Delete),
+            "home" => Ok(TargetedKey::Home),
+            "end" => Ok(TargetedKey::End),
+            "page_up" => Ok(TargetedKey::PageUp),
+            "page_down" => Ok(TargetedKey::PageDown),
+            "left" => Ok(TargetedKey::Left),
+            "up" => Ok(TargetedKey::Up),
+            "right" => Ok(TargetedKey::Right),
+            "down" => Ok(TargetedKey::Down),
+            other => Err(format!("未知按键: {other}")),
+        }
+    }
+
+    fn parse_modifiers(raw: Option<&str>) -> Result<KeyModifiers, String> {
+        let mut modifiers = KeyModifiers::none();
+        let Some(raw) = raw.filter(|value| !value.is_empty() && *value != "-") else {
+            return Ok(modifiers);
+        };
+        for modifier in raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            match modifier {
+                "shift" => modifiers.shift = true,
+                "control" | "ctrl" => modifiers.control = true,
+                "option" | "alt" => modifiers.option = true,
+                other => return Err(format!("未知修饰键: {other}")),
+            }
+        }
+        Ok(modifiers)
+    }
+
+    /// CU-07 全流程：绑定 → 读树 → 唯一定位 → 矩阵预检 → 签发/消费句柄 →
+    /// 后端定向派发（能力闸 / 最小化 / AXMain / 焦点 / 选区复核）→ 读回
+    /// 复核 → 无干扰采样。预检结果与后端权威闸都入报告（预检拒绝时仍
+    /// 走完消费与后端调用，收集两类拒绝证据）。
+    #[allow(clippy::too_many_arguments)]
+    fn cmd_axinput(
+        bundle_id: &str,
+        action_name: &str,
+        role: Option<&str>,
+        name: Option<&str>,
+        payload: &str,
+        mods: Option<&str>,
+        needle: Option<&str>,
+    ) -> Result<Value, String> {
+        let input = match action_name {
+            "insert_text" => TargetedInput::InsertText(payload.to_string()),
+            "key_press" => TargetedInput::KeyPress(TargetedKeyPress {
+                key: parse_targeted_key(payload)?,
+                modifiers: parse_modifiers(mods)?,
+            }),
+            other => return Err(format!("未知定向输入动作: {other}")),
+        };
+        let before = sample_user_settled();
+        let clipboard_before = clipboard_change_count();
+        let mut bound = bind_window(bundle_id, needle)?;
+        let title_before = bound.window.title.clone();
+        let read = read_tree(&bound)?;
+        let query = ElementQuery::new(role, name).map_err(|e| e.to_string())?;
+        let index = match lookup_element(&read, &query) {
+            ElementLookup::Unique { index } => index,
+            ElementLookup::NoMatch { tree_truncated } => {
+                return Ok(json!({ "outcome": "no_match", "tree_truncated": tree_truncated }))
+            }
+            ElementLookup::Ambiguous {
+                matches,
+                tree_truncated,
+            } => {
+                return Ok(
+                    json!({ "outcome": "ambiguous", "matches": matches, "tree_truncated": tree_truncated }),
+                )
+            }
+            ElementLookup::UnprovenUnique { .. } => {
+                return Ok(json!({ "outcome": "unproven_unique" }))
+            }
+        };
+        let node = &read.nodes[index];
+        let pid = bound.app.instance.pid as i32;
+        let window_id = bound.window.window.window_id;
+        // 能力矩阵预检（静态族 × 动作；后端派发前另有权威闸，且后端
+        // 还复核最小化 / AXMain / 焦点 / 选区）。
+        let pre_check = match require_background(
+            bound.app.identity.family,
+            input.kind(),
+            false,
+        ) {
+            Ok(()) => "supported".to_string(),
+            Err(e) => e.to_string(),
+        };
+        let value_before = read_element_text(pid, window_id as u32, &node.path);
+        let (_observation, element) = issue_ax_element(&mut bound, &read, index)?;
+        let consumed = match bound
+            .registry
+            .consume_element(&element, &scope(), &|| false)
+        {
+            Ok(consumed) => consumed,
+            Err(e) => {
+                return Ok(json!({
+                    "outcome": "consume_rejected",
+                    "error": e.to_string(),
+                    "pre_check": pre_check,
+                }))
+            }
+        };
+        let dispatch = bound.native.targeted_input(
+            bound.registry.authorizer_mut(),
+            &consumed,
+            &node.path,
+            &input,
+            &|| false,
+        );
+        let (outcome, events, cause, dispatch_error) = match &dispatch {
+            Ok(TargetedOutcome::Dispatched {
+                events_posted,
+                events_total,
+            }) => (
+                "dispatched".to_string(),
+                json!({ "posted": events_posted, "total": events_total }),
+                None,
+                None,
+            ),
+            Ok(TargetedOutcome::Partial {
+                events_posted,
+                events_total,
+                cause,
+            }) => (
+                "partial".to_string(),
+                json!({ "posted": events_posted, "total": events_total }),
+                Some(format!("{cause}")),
+                None,
+            ),
+            Err(e) => ("rejected".to_string(), Value::Null, None, Some(e.to_string())),
+        };
+        // 给目标应用一点生效时间后复核：AXValue / 选区读回（含 AXMain /
+        // AXFocused 焦点事实）与窗口标题。
+        std::thread::sleep(Duration::from_millis(500));
+        let value_after = read_element_text(pid, window_id as u32, &node.path);
+        let title_after = bound
+            .native
+            .list_windows(
+                bound.registry.authorizer(),
+                &scope(),
+                &bound.app.identity,
+                &bound.app.instance,
+                true,
+            )
+            .ok()
+            .and_then(|windows| {
+                windows
+                    .into_iter()
+                    .find(|w| w.window.window_id == window_id)
+                    .and_then(|w| w.title)
+            });
+        let revision_after = read_tree(&bound).ok().map(|r| r.tree_revision);
+        let after = sample_user_settled();
+        let clipboard_after = clipboard_change_count();
+        Ok(json!({
+            "bundle_id": bound.app.identity.bundle_id,
+            "family": bound.app.identity.family,
+            "window_id": window_id,
+            "action": action_name,
+            "payload": if action_name == "insert_text" { payload } else { "" },
+            "key": if action_name == "key_press" { payload } else { "" },
+            "mods": mods.unwrap_or("-"),
+            "matched": node_summary(&read, index),
+            "pre_check": pre_check,
+            "outcome": outcome,
+            "events": events,
+            "partial_cause": cause,
+            "dispatch_error": dispatch_error,
+            "value_before": value_before,
+            "value_after": value_after,
+            "title_before": title_before,
+            "title_after": title_after,
+            "tree_revision_before": read.tree_revision,
+            "tree_revision_after": revision_after,
+            "front_unchanged": before["front_pid"] == after["front_pid"],
+            "focus_unchanged": before["focus_pid"] == after["focus_pid"]
+                && before["focus_pid"] != 0,
+            "focus_observed": before["focus_observed"] == true && after["focus_observed"] == true,
+            "mouse_delta": [
+                after["mouse"][0].as_f64().unwrap_or(0.0) - before["mouse"][0].as_f64().unwrap_or(0.0),
+                after["mouse"][1].as_f64().unwrap_or(0.0) - before["mouse"][1].as_f64().unwrap_or(0.0),
+            ],
+            "clipboard_before": clipboard_before,
+            "clipboard_after": clipboard_after,
+            "clipboard_unchanged": clipboard_before == clipboard_after,
+            "user_before": before,
+            "user_after": after,
+        }))
+    }
+
     pub fn run(args: Vec<String>) -> Result<Value, String> {
         match args.first().map(String::as_str) {
             Some("perms") => Ok(cmd_perms()),
@@ -1891,6 +2119,19 @@ mod imp {
                 args.get(4).map(String::as_str).filter(|s| s != &"-"),
                 args.get(5).map(String::as_str),
                 args.get(6).map(String::as_str),
+            ),
+            Some("axinput") => cmd_axinput(
+                args.get(1).ok_or("axinput 需要 bundle_id")?,
+                args.get(2)
+                    .ok_or("axinput 需要动作：insert_text|key_press")?,
+                args.get(3).map(String::as_str).filter(|s| s != &"-"),
+                args.get(4).map(String::as_str).filter(|s| s != &"-"),
+                args.get(5)
+                    .map(String::as_str)
+                    .filter(|s| s != &"-")
+                    .ok_or("axinput 需要 text 或 key 参数")?,
+                args.get(6).map(String::as_str).filter(|s| s != &"-"),
+                args.get(7).map(String::as_str),
             ),
             _ => Err("未知命令".to_string()),
         }

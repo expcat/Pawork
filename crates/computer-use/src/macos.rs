@@ -71,6 +71,17 @@
 //! against this probe and are rejected (SiteChanged) before dispatch.
 //! Application discovery, window binding and capture observations are
 //! unaffected.
+//!
+//! Targeted background input (CU-07) rides CGEventPostToPid — key events
+//! posted to the target pid only, never a session tap, never the user's
+//! event stream. The dispatch rechecks everything the route depends on
+//! right before the first event: the window is the app's key window
+//! (AXMain), the resolved element is focused, a text insert target
+//! exposes a selection range, and the window is not minimized (AppKit
+//! drops background key events for minimized windows). The posting loop
+//! checks cancellation and target liveness between balanced steps and
+//! always releases pressed state on an early stop; a posted sequence is
+//! dispatch proof only, never effect proof.
 use std::collections::{HashMap, HashSet};
 use std::ffi::{c_void, CStr, CString};
 use std::os::raw::c_char;
@@ -85,6 +96,8 @@ use core_foundation::boolean::CFBoolean;
 use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
 use core_foundation::number::{CFNumber, CFNumberRef};
 use core_foundation::string::{CFString, CFStringRef};
+use core_graphics::event::{CGEvent, CGEventFlags, CGEventType, CGKeyCode};
+use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use core_graphics::access::ScreenCaptureAccess;
 use core_graphics::display::CGMainDisplayID;
 use core_graphics::window as cgwindow;
@@ -96,8 +109,9 @@ use objc::{class, msg_send, sel, sel_impl};
 use crate::approval::{TargetAuthorizer, TargetIdentity};
 use crate::target::{
     ax_tree_revision, require_background, AppFamily, AppIdentity, AxTreeNode, AxTreeRead,
-    AxTreeTruncation, NativeProbe, ProcessInstance, Scope, SemanticAction, SemanticOutcome,
-    TargetError, ValidatedElement, ValidatedWindow, WindowIdentity, AX_TREE_BOUNDS,
+    AxTreeTruncation, KeyModifiers, NativeProbe, ProcessInstance, Scope, SemanticAction,
+    SemanticOutcome, TargetError, TargetedInput, TargetedKey, TargetedOutcome, ValidatedElement,
+    ValidatedWindow, WindowIdentity, AX_TREE_BOUNDS,
 };
 use crate::{MAX_IMAGE_BYTES, MAX_IMAGE_EDGE};
 
@@ -759,6 +773,205 @@ impl MacosNative {
             }
         };
         semantic_action_result(err)
+    }
+
+    /// Dispatch one targeted input (Unicode text or a key press with a
+    /// modifier combo) through CGEventPostToPid on a validated element
+    /// handle (CU-07). Gate order: cancellation, dispatch-side ledger
+    /// authorization (the single-use [crate::approval::DispatchPermit]
+    /// retires on the first attempt whatever happens later), payload
+    /// validity — all pure, before any OS call — then process instance,
+    /// identity binding, the pure family half of the CU-01 capability gate
+    /// (a Chromium-family target silently drops background key events, so
+    /// it is rejected without a single AX call; there is never a fallback
+    /// to session taps or global input), Accessibility preflight, window
+    /// liveness + generation (bounded by the same deadline as everything
+    /// below), the minimized half of the capability gate (read live off
+    /// the window element: AppKit drops background key events for
+    /// minimized windows), the tree re-walk fingerprinting to the
+    /// revision the handle was validated against, path re-resolution, the
+    /// secure-input refusal, and the keyboard-target recheck: the window
+    /// must be the app's key window (AXMain) and the resolved element
+    /// focused, and a text insert target must expose a selection range —
+    /// background key events land in the key window's focused view, so
+    /// without these the input could not be attributed to the bound
+    /// target element ([TargetError::NotFocused], nothing dispatched).
+    /// Cancellation is honored at entry and once more right before the
+    /// first event; the posting loop re-checks cancellation, target
+    /// liveness and the binding itself between balanced steps (window
+    /// generation actively proven, the window still not minimized, the
+    /// bound element still focused — each recheck independently bounded
+    /// and failing closed), stops the input on any failure and always
+    /// releases pressed state on an early stop. Every posted sequence is
+    /// [TargetedOutcome::Dispatched] — dispatch proof only, never effect
+    /// proof; a partial sequence is [TargetedOutcome::Partial] and is
+    /// never retried as if it were clean.
+    pub fn targeted_input(
+        &self,
+        authorizer: &mut TargetAuthorizer,
+        validated: &ValidatedElement,
+        path: &[u32],
+        input: &TargetedInput,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<TargetedOutcome, TargetError> {
+        if cancelled() {
+            return Err(TargetError::Cancelled);
+        }
+        authorizer.consume_dispatch_permit(
+            &validated.window.scope,
+            &validated.window.target,
+            &validated.dispatch_permit,
+        )?;
+        input.validate()?;
+        if !self.process_instance_alive(&validated.window.instance) {
+            return Err(TargetError::ProcessRestarted);
+        }
+        verify_instance_owns_bundle(
+            &validated.window.target.app().bundle_id,
+            validated.window.instance.pid as i32,
+        )?;
+        // Pure family gate: a Chromium-family target never reaches a
+        // single AX call or a single posted event. The minimized half of
+        // the same cell needs the live window element and runs below,
+        // before any event is planned.
+        require_background(
+            validated.window.target.app().family,
+            input.kind(),
+            false,
+        )?;
+        match ax_preflight() {
+            AxPreflight::Trusted => {}
+            AxPreflight::NotTrusted => {
+                return Err(TargetError::PermissionMissing("accessibility"));
+            }
+            AxPreflight::Unavailable => {
+                return Err(TargetError::ProbeUnavailable(
+                    "HIServices symbols unavailable".to_string(),
+                ));
+            }
+        }
+        // One deadline spans the liveness proof, window resolution, the
+        // minimized/key-window reads, the revision re-walk, the path
+        // resolution and the focus/selection rechecks.
+        let deadline = Instant::now() + AX_TREE_BOUNDS.max_read();
+        let proven = self.proven_window_cause(
+            &validated.window.instance,
+            validated.window.window.window_id,
+            Some(deadline),
+        )?;
+        if proven.generation != validated.window.window.generation {
+            return Err(TargetError::WindowReplaced);
+        }
+        let f = tree_symbols()?;
+        let (Some(set_timeout), Some(copy_values)) =
+            (f.set_messaging_timeout, f.copy_attribute_values)
+        else {
+            return Err(TargetError::ProbeUnavailable(
+                "HIServices tree symbols unavailable".to_string(),
+            ));
+        };
+        let budget = ReadBudget {
+            set_timeout,
+            deadline,
+        };
+        let window_id = u32::try_from(validated.window.window.window_id)
+            .map_err(|_| TargetError::Invalid("window id out of range"))?;
+        let window_element = resolve_window_element(
+            self,
+            validated.window.instance.pid as i32,
+            window_id,
+            deadline,
+        )?;
+        // Minimized half of the capability gate, read off the live window
+        // element: an affirmatively absent attribute means the window
+        // cannot be minimized (panels), which is not minimized.
+        let minimized =
+            dispatch_bool_attr(f, window_element.element, "AXMinimized", &budget)?.unwrap_or(false);
+        require_background(
+            validated.window.target.app().family,
+            input.kind(),
+            minimized,
+        )?;
+        let (nodes, truncation) = walk_ax_tree(&window_element, deadline)?;
+        if ax_tree_revision(&nodes, truncation) != validated.tree_revision {
+            return Err(TargetError::TreeChanged);
+        }
+        if !nodes.iter().any(|node| node.path.as_slice() == path) {
+            return Err(TargetError::Invalid(
+                "element path does not resolve in the tree the handle was validated against",
+            ));
+        }
+        let element = resolve_element_by_path(copy_values, &window_element, path, &budget)?;
+        refuse_secure_targeted(f, &element, &budget)?;
+        // Keyboard-target recheck: background key events route to the
+        // app's key window and land in its focused view, so both must
+        // hold for the input to be attributable to the bound element.
+        let key_window =
+            dispatch_bool_attr(f, window_element.element, "AXMain", &budget)?.unwrap_or(false);
+        let focused = dispatch_bool_attr(f, element.0, "AXFocused", &budget)?.unwrap_or(false);
+        if !key_window || !focused {
+            return Err(TargetError::NotFocused);
+        }
+        if matches!(input, TargetedInput::InsertText(_))
+            && !selection_present(f, &element, &budget)?
+        {
+            return Err(TargetError::NotFocused);
+        }
+        // The first posted event is the point of no return; cancellation
+        // is honored up to here, and the loop below keeps the sequence
+        // balanced whatever happens after.
+        if cancelled() {
+            return Err(TargetError::Cancelled);
+        }
+        let plan = targeted_event_plan(input);
+        let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState).map_err(|_| {
+            TargetError::ProbeUnavailable("CGEventSource create failed".to_string())
+        })?;
+        // Between-step binding recheck for the posting loop: a live
+        // process is not a live binding — the window may close or
+        // minimize, or the element lose focus, while later chunks would
+        // keep typing into the same pid. Any doubt stops the input.
+        let recheck = || -> Option<TargetError> {
+            let deadline = Instant::now() + TARGETED_RECHECK_BUDGET;
+            match self.proven_window_cause(
+                &validated.window.instance,
+                validated.window.window.window_id,
+                Some(deadline),
+            ) {
+                Ok(proven) if proven.generation == validated.window.window.generation => {}
+                Ok(_) => return Some(TargetError::WindowReplaced),
+                Err(cause) => return Some(cause),
+            }
+            let budget = ReadBudget {
+                set_timeout,
+                deadline: Instant::now() + TARGETED_RECHECK_BUDGET,
+            };
+            match dispatch_bool_attr(f, window_element.element, "AXMinimized", &budget) {
+                Ok(Some(true)) => {
+                    return require_background(
+                        validated.window.target.app().family,
+                        input.kind(),
+                        true,
+                    )
+                    .err();
+                }
+                Ok(_) => {}
+                Err(cause) => return Some(cause),
+            }
+            match dispatch_bool_attr(f, element.0, "AXFocused", &budget) {
+                Ok(Some(true)) => None,
+                Ok(_) => Some(TargetError::NotFocused),
+                Err(cause) => Some(cause),
+            }
+        };
+        post_targeted_plan(
+            &source,
+            validated.window.instance.pid as libc::pid_t,
+            &plan,
+            &|| self.process_instance_alive(&validated.window.instance),
+            cancelled,
+            &recheck,
+        )
     }
 
     /// One consistent window snapshot: enumeration, generation-ledger sync
@@ -2573,17 +2786,14 @@ fn resolve_path_child(
     }
 }
 
-/// Value writes to secure-input elements are refused: the read side never
-/// reads secure content (CU-05), and the write side never silently enters
-/// it — entering credentials is the user's keyboard, not a background AX
-/// write. The role (and subrole, for AXTextField) is re-read on the
-/// resolved element with the same conservative classification as the walk;
-/// a failed read classifies as secure. Presses are unaffected.
-fn refuse_secure_write(
+/// Secure-input classification of a resolved dispatch element: the role
+/// (and subrole, for AXTextField) is re-read with the same conservative
+/// classification as the walk; a failed read classifies as secure.
+fn element_is_secure(
     f: &AxFns,
     element: &RetainedElement,
     budget: &ReadBudget,
-) -> Result<(), TargetError> {
+) -> Result<bool, TargetError> {
     let role = budget
         .call(element.0, || unsafe {
             ax_attr_string(f, element.0, "AXRole", 64)
@@ -2614,12 +2824,478 @@ fn refuse_secure_write(
     } else {
         ax_secure(&role, None, false)
     };
-    if secure {
+    Ok(secure)
+}
+
+/// Value writes to secure-input elements are refused: the read side never
+/// reads secure content (CU-05), and the write side never silently enters
+/// it — entering credentials is the user's keyboard, not a background AX
+/// write. Presses are unaffected.
+fn refuse_secure_write(
+    f: &AxFns,
+    element: &RetainedElement,
+    budget: &ReadBudget,
+) -> Result<(), TargetError> {
+    if element_is_secure(f, element, budget)? {
         return Err(TargetError::Invalid(
             "semantic value writes to secure-input elements are refused",
         ));
     }
     Ok(())
+}
+
+/// Targeted input to secure-input elements is refused with the same rule:
+/// entering credentials is the user's keyboard, not a background agent's
+/// posted key events.
+fn refuse_secure_targeted(
+    f: &AxFns,
+    element: &RetainedElement,
+    budget: &ReadBudget,
+) -> Result<(), TargetError> {
+    if element_is_secure(f, element, budget)? {
+        return Err(TargetError::Invalid(
+            "targeted input to secure-input elements is refused",
+        ));
+    }
+    Ok(())
+}
+
+// ---------- targeted background input (CU-07) ----------
+
+/// Test-only proof that denied targeted inputs never reach the event
+/// posting seam.
+#[cfg(test)]
+static TARGETED_POST_SYSTEM_CALLS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+/// Test-only record of the flags every posted event carried, so the
+/// posting-discipline test can assert the actual modifier masks of the
+/// pre-built release (counts alone cannot see wrong flags).
+#[cfg(test)]
+static TARGETED_POSTED_FLAGS: std::sync::Mutex<Vec<CGEventFlags>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// A boolean attribute read on the dispatch path: armed with the shared
+/// deadline, keeping its cause. None is an affirmative absence, never a
+/// claim of false.
+fn dispatch_bool_attr(
+    f: &AxFns,
+    element: *mut c_void,
+    attribute: &str,
+    budget: &ReadBudget,
+) -> Result<Option<bool>, TargetError> {
+    budget
+        .call(element, || unsafe { ax_attr_bool(f, element, attribute) })
+        .map_err(budget_target_error)?
+        .map_err(ax_dispatch_read_error)
+}
+
+/// Whether the element exposes a selection range (AXSelectedTextRange):
+/// the proof that a text insert has a live insertion point to land in.
+/// Only presence is read — never the range contents.
+fn selection_present(
+    f: &AxFns,
+    element: &RetainedElement,
+    budget: &ReadBudget,
+) -> Result<bool, TargetError> {
+    budget.arm(element.0).map_err(budget_target_error)?;
+    let mut raw: *const c_void = ptr::null();
+    let err =
+        unsafe { (f.copy_attribute)(element.0, nsstr("AXSelectedTextRange") as CFStringRef, &mut raw) };
+    let clock = budget.check();
+    if err != 0 || raw.is_null() {
+        if !raw.is_null() {
+            unsafe { CFRelease(raw) };
+        }
+        if let Err(overtime) = clock {
+            return Err(budget_target_error(overtime));
+        }
+        if ax_attr_absent(err) {
+            return Ok(false);
+        }
+        return Err(ax_dispatch_read_error(err));
+    }
+    if let Err(overtime) = clock {
+        unsafe { CFRelease(raw) };
+        return Err(budget_target_error(overtime));
+    }
+    unsafe { CFRelease(raw) };
+    Ok(true)
+}
+
+/// Max UTF-16 units one Unicode key event carries (the CU-01 probe shape).
+const MAX_EVENT_UTF16_UNITS: usize = 10;
+
+/// Pacing between planned steps, the rhythm the CU-01 measurement used.
+const TARGETED_STEP_PACING: Duration = Duration::from_millis(6);
+
+/// Ceiling for one between-step binding recheck in the posting loop:
+/// the generation proof plus two attribute reads must stay quick — the
+/// recheck guards every step, so it cannot inherit the full read budget.
+const TARGETED_RECHECK_BUDGET: Duration = Duration::from_millis(250);
+
+/// kVK_ keycodes (HIToolbox/Events.h) of the contract's key vocabulary.
+fn targeted_keycode(key: TargetedKey) -> CGKeyCode {
+    match key {
+        TargetedKey::Return => 36,
+        TargetedKey::Tab => 48,
+        TargetedKey::Space => 49,
+        TargetedKey::Backspace => 51,
+        TargetedKey::Escape => 53,
+        TargetedKey::Delete => 117,
+        TargetedKey::Home => 115,
+        TargetedKey::End => 119,
+        TargetedKey::PageUp => 116,
+        TargetedKey::PageDown => 121,
+        TargetedKey::Left => 123,
+        TargetedKey::Up => 126,
+        TargetedKey::Right => 124,
+        TargetedKey::Down => 125,
+    }
+}
+
+/// Active modifiers as (keycode, flags) in the fixed press order.
+fn active_modifiers(modifiers: &KeyModifiers) -> Vec<(CGKeyCode, CGEventFlags)> {
+    let mut active = Vec::new();
+    if modifiers.shift {
+        active.push((56, CGEventFlags::CGEventFlagShift));
+    }
+    if modifiers.control {
+        active.push((59, CGEventFlags::CGEventFlagControl));
+    }
+    if modifiers.option {
+        active.push((58, CGEventFlags::CGEventFlagAlternate));
+    }
+    active
+}
+
+/// One balanced group of posted events. A group, once started, always
+/// completes — so cancellation between groups never leaves a keyDown
+/// without its keyUp.
+#[derive(Clone, Debug, PartialEq)]
+enum PlannedStep {
+    /// One Unicode chunk: keyDown carrying the string plus its keyUp.
+    TextChunk(Vec<u16>),
+    /// Modifier presses before a key tap: one flags-changed event per
+    /// active modifier, each carrying the accumulated mask.
+    ModsDown(Vec<(CGKeyCode, CGEventFlags)>),
+    /// One key tap: keyDown with the modifier flags, keyUp clean.
+    KeyTap {
+        keycode: CGKeyCode,
+        flags: CGEventFlags,
+    },
+    /// Modifier releases after a key tap: the reverse presses, each
+    /// carrying the shrinking mask, ending clean.
+    ModsUp(Vec<(CGKeyCode, CGEventFlags)>),
+}
+
+impl PlannedStep {
+    fn event_count(&self) -> usize {
+        match self {
+            PlannedStep::TextChunk(_) | PlannedStep::KeyTap { .. } => 2,
+            PlannedStep::ModsDown(specs) | PlannedStep::ModsUp(specs) => specs.len(),
+        }
+    }
+}
+
+/// The event plan of one targeted input: chunked on char boundaries (a
+/// surrogate pair never splits across events), modifier combos expressed
+/// as explicit flags-changed press/release steps around one key tap, so
+/// pressed state always exists to release. A bare key is one tap; text is
+/// chunk pairs.
+fn targeted_event_plan(input: &TargetedInput) -> Vec<PlannedStep> {
+    match input {
+        TargetedInput::InsertText(text) => {
+            let mut chunks = Vec::new();
+            let mut current: Vec<u16> = Vec::new();
+            for character in text.chars() {
+                let mut buffer = [0u16; 2];
+                let units = character.encode_utf16(&mut buffer);
+                if current.len() + units.len() > MAX_EVENT_UTF16_UNITS {
+                    chunks.push(std::mem::take(&mut current));
+                }
+                current.extend_from_slice(units);
+            }
+            if !current.is_empty() {
+                chunks.push(current);
+            }
+            chunks.into_iter().map(PlannedStep::TextChunk).collect()
+        }
+        TargetedInput::KeyPress(press) => {
+            let active = active_modifiers(&press.modifiers);
+            let combined = active
+                .iter()
+                .fold(CGEventFlags::empty(), |flags, (_, more)| flags | *more);
+            let mut plan = Vec::new();
+            if !active.is_empty() {
+                let mut accumulated = CGEventFlags::empty();
+                plan.push(PlannedStep::ModsDown(
+                    active
+                        .iter()
+                        .map(|(keycode, flags)| {
+                            accumulated |= *flags;
+                            (*keycode, accumulated)
+                        })
+                    .collect(),
+                ));
+            }
+            plan.push(PlannedStep::KeyTap {
+                keycode: targeted_keycode(press.key),
+                flags: combined,
+            });
+            if !active.is_empty() {
+                plan.push(PlannedStep::ModsUp(release_specs(&active)));
+            }
+            plan
+        }
+    }
+}
+
+/// Release specs matching a press group: the reverse presses, each
+/// carrying the mask remaining after that modifier lifts; the last one
+/// ends clean.
+fn release_specs(active: &[(CGKeyCode, CGEventFlags)]) -> Vec<(CGKeyCode, CGEventFlags)> {
+    let combined = active
+        .iter()
+        .fold(CGEventFlags::empty(), |flags, (_, more)| flags | *more);
+    let mut remaining = combined;
+    let mut specs = Vec::with_capacity(active.len());
+    for (keycode, flags) in active.iter().rev() {
+        remaining -= *flags;
+        specs.push((*keycode, remaining));
+    }
+    specs
+}
+
+fn event_create_failed() -> TargetError {
+    TargetError::ProbeUnavailable("CGEventCreateKeyboardEvent failed".to_string())
+}
+
+/// Test injection for the creation seam: while FAIL_AT is non-zero, the
+/// Nth creation call (1-based, counted process-wide by CALLS) fails.
+/// Only this module's posting tests create keyboard events, so the
+/// counters stay race-free inside the single posting-discipline test.
+#[cfg(test)]
+static TARGETED_CREATE_CALLS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+#[cfg(test)]
+static TARGETED_CREATE_FAIL_AT: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// Create one keyboard event at the shared injection seam.
+fn create_keyboard_event(
+    source: &CGEventSource,
+    keycode: CGKeyCode,
+    key_down: bool,
+) -> Result<CGEvent, TargetError> {
+    #[cfg(test)]
+    {
+        use std::sync::atomic::Ordering;
+        let nth = TARGETED_CREATE_CALLS.fetch_add(1, Ordering::SeqCst) + 1;
+        if TARGETED_CREATE_FAIL_AT.load(Ordering::SeqCst) == nth {
+            return Err(event_create_failed());
+        }
+    }
+    CGEvent::new_keyboard_event(source.clone(), keycode, key_down)
+        .map_err(|_| event_create_failed())
+}
+
+/// One flags-changed event per spec, carrying each spec's mask.
+fn create_flags_changed_events(
+    source: &CGEventSource,
+    specs: &[(CGKeyCode, CGEventFlags)],
+) -> Result<Vec<CGEvent>, TargetError> {
+    specs
+        .iter()
+        .map(|(keycode, flags)| {
+            let event = create_keyboard_event(source, *keycode, true)?;
+            event.set_type(CGEventType::FlagsChanged);
+            event.set_flags(*flags);
+            Ok(event)
+        })
+        .collect()
+}
+
+/// One Unicode chunk: keyDown carrying the string plus its keyUp.
+fn create_text_chunk_events(
+    source: &CGEventSource,
+    units: &[u16],
+) -> Result<Vec<CGEvent>, TargetError> {
+    let down = create_keyboard_event(source, 0, true)?;
+    down.set_string_from_utf16_unchecked(units);
+    let up = create_keyboard_event(source, 0, false)?;
+    Ok(vec![down, up])
+}
+
+/// One key tap: keyDown with the modifier flags, keyUp clean.
+fn create_key_tap_events(
+    source: &CGEventSource,
+    keycode: CGKeyCode,
+    flags: CGEventFlags,
+) -> Result<Vec<CGEvent>, TargetError> {
+    let down = create_keyboard_event(source, keycode, true)?;
+    down.set_flags(flags);
+    let up = create_keyboard_event(source, keycode, false)?;
+    Ok(vec![down, up])
+}
+
+/// Post one event to the target pid only. This is the CU-07 seam counted
+/// in tests: every gate must reject before it.
+fn post_key_event(pid: libc::pid_t, event: &CGEvent) {
+    #[cfg(test)]
+    {
+        TARGETED_POST_SYSTEM_CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        TARGETED_POSTED_FLAGS
+            .lock()
+            .expect("posted-flags record")
+            .push(event.get_flags());
+    }
+    event.post_to_pid(pid);
+}
+
+/// Post a pre-built event group and return how many went out.
+fn post_events(pid: libc::pid_t, events: &[CGEvent]) -> usize {
+    for event in events {
+        post_key_event(pid, event);
+    }
+    events.len()
+}
+
+/// Post the whole plan, checking cancellation, target liveness and the
+/// binding recheck between balanced steps. The first step always posts
+/// (entry cancellation was checked by the caller); every later step may
+/// abort. The release promise is structural: a modifier press group
+/// posts only after its matching release events are created and held, so
+/// whatever stops the input later — cancellation, a dead process, a
+/// failed binding recheck, a creation failure on a later step — can
+/// still post the held release (posting never creates anything, so
+/// cleanup is never blocked), and posts exactly the pressed state this
+/// dispatch created: with nothing pressed, nothing is released. A
+/// creation failure before anything posted and anything pressed is a
+/// plain error — there is no partial effect to report; otherwise an
+/// early stop is [TargetedOutcome::Partial] with the events actually
+/// posted: a partial sequence may already have taken effect and is never
+/// retried as if it were clean. All steps posted is
+/// [TargetedOutcome::Dispatched]: CGEventPostToPid acknowledges nothing,
+/// so dispatch is the proof, not the effect.
+fn post_targeted_plan(
+    source: &CGEventSource,
+    pid: libc::pid_t,
+    plan: &[PlannedStep],
+    target_alive: &dyn Fn() -> bool,
+    cancelled: &dyn Fn() -> bool,
+    recheck: &dyn Fn() -> Option<TargetError>,
+) -> Result<TargetedOutcome, TargetError> {
+    let total: usize = plan.iter().map(PlannedStep::event_count).sum();
+    // While this is Some, pressed state exists and its release events
+    // are already created: the balance promise cannot be broken by any
+    // later failure.
+    let mut held_release: Option<Vec<CGEvent>> = None;
+    let release_held = |posted: &mut usize, held: &mut Option<Vec<CGEvent>>| {
+        if let Some(events) = held.take() {
+            *posted += post_events(pid, &events);
+        }
+    };
+    let partial = |posted: usize, cause: TargetError| TargetedOutcome::Partial {
+        events_posted: posted,
+        events_total: total,
+        cause,
+    };
+    let mut posted = 0usize;
+    for (index, step) in plan.iter().enumerate() {
+        if index > 0 {
+            let cause = if cancelled() {
+                Some(TargetError::Cancelled)
+            } else if !target_alive() {
+                Some(TargetError::ProcessRestarted)
+            } else {
+                recheck()
+            };
+            if let Some(cause) = cause {
+                release_held(&mut posted, &mut held_release);
+                return Ok(partial(posted, cause));
+            }
+        }
+        let built = match step {
+            PlannedStep::TextChunk(units) => create_text_chunk_events(source, units),
+            PlannedStep::KeyTap { keycode, flags } => {
+                create_key_tap_events(source, *keycode, *flags)
+            }
+            PlannedStep::ModsDown(specs) => {
+                // The release specs come from the plan's own ModsUp
+                // step directly: its shrinking masks are derived from
+                // the independent modifier masks, while this step's
+                // specs carry accumulated ones — re-deriving here would
+                // compute wrong flags for multi-modifier combos. The
+                // release is created before any press posts: if it
+                // cannot exist, nothing presses and the release promise
+                // cannot be broken later.
+                let up_specs = plan
+                    .iter()
+                    .skip(index + 1)
+                    .find_map(|step| match step {
+                        PlannedStep::ModsUp(specs) => Some(specs.clone()),
+                        _ => None,
+                    })
+                    .ok_or_else(|| {
+                        TargetError::ProbeUnavailable(
+                            "unbalanced plan: press group without a release step".to_string(),
+                        )
+                    })?;
+                match (
+                    create_flags_changed_events(source, specs),
+                    create_flags_changed_events(source, &up_specs),
+                ) {
+                    (Ok(down), Ok(up)) => {
+                        posted += post_events(pid, &down);
+                        held_release = Some(up);
+                        if index + 1 < plan.len() {
+                            std::thread::sleep(TARGETED_STEP_PACING);
+                        }
+                        continue;
+                    }
+                    (Err(cause), _) | (_, Err(cause)) => Err(cause),
+                }
+            }
+            PlannedStep::ModsUp(_) => {
+                // The plan's own closing release: post the held pre-built
+                // copy (identical to this step's specs by construction —
+                // both come from release_specs on the same press group).
+                match held_release.take() {
+                    Some(events) => {
+                        posted += post_events(pid, &events);
+                        if index + 1 < plan.len() {
+                            std::thread::sleep(TARGETED_STEP_PACING);
+                        }
+                        continue;
+                    }
+                    None => Err(TargetError::ProbeUnavailable(
+                        "unbalanced plan: release step without a held release".to_string(),
+                    )),
+                }
+            }
+        };
+        match built {
+            Ok(events) => {
+                posted += post_events(pid, &events);
+            }
+            Err(cause) => {
+                // Nothing posted and nothing pressed: a plain error,
+                // because there is no partial effect to report.
+                if posted == 0 && held_release.is_none() {
+                    return Err(cause);
+                }
+                release_held(&mut posted, &mut held_release);
+                return Ok(partial(posted, cause));
+            }
+        }
+        if index + 1 < plan.len() {
+            std::thread::sleep(TARGETED_STEP_PACING);
+        }
+    }
+    Ok(TargetedOutcome::Dispatched {
+        events_posted: posted,
+        events_total: total,
+    })
 }
 
 // ---------- ScreenCaptureKit window capture (CU-04) ----------
@@ -3116,6 +3792,7 @@ mod tests {
     use super::*;
     use crate::approval::{DispatchPermit, GrantKind};
     use crate::target::MAX_SEMANTIC_TEXT_CHARS;
+    use crate::target::{MAX_TARGETED_TEXT_CHARS, TargetedKeyPress};
 
     fn scope() -> Scope {
         Scope::new("ws", "run")
@@ -3850,6 +4527,430 @@ mod tests {
             semantic_action_result(K_AX_ERROR_NO_VALUE),
             Err(TargetError::ProbeUnavailable(_))
         ));
+    }
+
+    #[test]
+    fn targeted_event_plans_chunk_on_char_boundaries_and_stay_balanced() {
+        // Text chunks never split a character: every chunk decodes back,
+        // and the chunk sizes respect the per-event UTF-16 bound.
+        let text: String = "a😀汉".repeat(4); // 1+2+1 units per group
+        let plan = targeted_event_plan(&TargetedInput::InsertText(text.clone()));
+        let chunks: Vec<&Vec<u16>> = plan
+            .iter()
+            .map(|step| match step {
+                PlannedStep::TextChunk(units) => units,
+                _ => panic!("text plan must only contain chunks"),
+            })
+            .collect();
+        assert!(chunks
+            .iter()
+            .all(|units| units.len() <= MAX_EVENT_UTF16_UNITS));
+        assert!(chunks
+            .iter()
+            .all(|units| String::from_utf16(units).is_ok()));
+        let reassembled: String = chunks
+            .iter()
+            .map(|units| String::from_utf16(units).unwrap())
+            .collect::<Vec<_>>()
+            .concat();
+        assert_eq!(reassembled, text);
+        // Plain ASCII chunks at the bound: 25 chars -> 10/10/5.
+        let plan = targeted_event_plan(&TargetedInput::InsertText("x".repeat(25)));
+        let sizes: Vec<usize> = plan
+            .iter()
+            .map(|step| match step {
+                PlannedStep::TextChunk(units) => units.len(),
+                _ => panic!("text plan must only contain chunks"),
+            })
+            .collect();
+        assert_eq!(sizes, vec![10, 10, 5]);
+        assert_eq!(plan.iter().map(PlannedStep::event_count).sum::<usize>(), 6);
+
+        // A bare key is one balanced tap with no modifier steps.
+        let plan = targeted_event_plan(&TargetedInput::KeyPress(TargetedKeyPress {
+            key: TargetedKey::Return,
+            modifiers: KeyModifiers::none(),
+        }));
+        assert_eq!(
+            plan,
+            vec![PlannedStep::KeyTap {
+                keycode: 36,
+                flags: CGEventFlags::empty(),
+            }]
+        );
+
+        // A combo presses modifiers with accumulating masks, taps the key
+        // with the combined mask, and releases with shrinking masks ending
+        // clean — pressed state always exists to release.
+        let shift_ctrl = KeyModifiers {
+            shift: true,
+            control: true,
+            option: false,
+        };
+        let plan = targeted_event_plan(&TargetedInput::KeyPress(TargetedKeyPress {
+            key: TargetedKey::Left,
+            modifiers: shift_ctrl,
+        }));
+        let shift = CGEventFlags::CGEventFlagShift;
+        let control = CGEventFlags::CGEventFlagControl;
+        assert_eq!(
+            plan,
+            vec![
+                PlannedStep::ModsDown(vec![(56, shift), (59, shift | control)]),
+                PlannedStep::KeyTap {
+                    keycode: 123,
+                    flags: shift | control,
+                },
+                PlannedStep::ModsUp(vec![(59, shift), (56, CGEventFlags::empty())]),
+            ]
+        );
+        assert_eq!(plan.iter().map(PlannedStep::event_count).sum::<usize>(), 6);
+    }
+
+    #[test]
+    fn targeted_input_authorization_gates_precede_the_post_seam() {
+        // All counter assertions and all real posting live in this one
+        // test: the counter is process-global and parallel tests must not
+        // interleave with it.
+        let native = MacosNative::new();
+        let mut authorizer = TargetAuthorizer::default();
+        let app = AppIdentity {
+            bundle_id: "com.apple.TextEdit".into(),
+            family: AppFamily::Appkit,
+        };
+        let target = TargetIdentity::application(app);
+        let calls_before = TARGETED_POST_SYSTEM_CALLS.load(std::sync::atomic::Ordering::SeqCst);
+        let window = WindowIdentity {
+            window_id: 999_999_999,
+            generation: 1,
+        };
+        let dead = ProcessInstance {
+            pid: 99_999_999,
+            start_token: 1,
+        };
+        let validated = |instance: ProcessInstance, permit: DispatchPermit| ValidatedElement {
+            window: ValidatedWindow {
+                target: target.clone(),
+                instance,
+                window,
+                scope: scope(),
+            },
+            element_token: 0,
+            tree_revision: 0,
+            dispatch_permit: permit,
+        };
+        let text = TargetedInput::InsertText("hello".into());
+        // A forged permit is rejected before any OS access, even though no
+        // grant was ever spent for it.
+        let forged = DispatchPermit {
+            token: "dp-forged".into(),
+        };
+        assert_eq!(
+            native.targeted_input(
+                &mut authorizer,
+                &validated(dead.clone(), forged),
+                &[],
+                &text,
+                &|| false
+            ),
+            Err(TargetError::NotAuthorized)
+        );
+        authorizer
+            .grant(&scope(), &target, GrantKind::ForRun)
+            .unwrap();
+        // Payload validity precedes even the process check: an over-long
+        // text on a dead process is Invalid, not ProcessRestarted. Every
+        // attempt retires its permit, so each case mints a fresh one.
+        let over_bound = TargetedInput::InsertText("x".repeat(MAX_TARGETED_TEXT_CHARS + 1));
+        let permit = authorizer
+            .spend_for_element_dispatch(&scope(), &target)
+            .unwrap();
+        assert_eq!(
+            native.targeted_input(
+                &mut authorizer,
+                &validated(dead.clone(), permit),
+                &[],
+                &over_bound,
+                &|| false
+            ),
+            Err(TargetError::Invalid(
+                "targeted text must be 1..4096 chars without control characters; use a key press for Return/Tab"
+            ))
+        );
+        // A dead process instance: rejected before identity and the seam.
+        let permit = authorizer
+            .spend_for_element_dispatch(&scope(), &target)
+            .unwrap();
+        assert_eq!(
+            native.targeted_input(
+                &mut authorizer,
+                &validated(dead, permit),
+                &[],
+                &text,
+                &|| false
+            ),
+            Err(TargetError::ProcessRestarted)
+        );
+        // A live process whose bundle id does not match the granted
+        // identity: rejected before the capability gate and the seam —
+        // the test binary owns no bundle id, so a TextEdit grant never
+        // unlocks it. The family capability gate (a Chromium target
+        // reaching BackgroundUnsupported without any AX call or event) is
+        // pinned by the contract tests and the acceptance evidence.
+        let own = ProcessInstance {
+            pid: std::process::id(),
+            start_token: process_start_token(std::process::id() as i32)
+                .expect("own process start token"),
+        };
+        let permit = authorizer
+            .spend_for_element_dispatch(&scope(), &target)
+            .unwrap();
+        assert_eq!(
+            native.targeted_input(
+                &mut authorizer,
+                &validated(own, permit),
+                &[],
+                &text,
+                &|| false
+            ),
+            Err(TargetError::Invalid(
+                "process instance does not belong to the authorized identity"
+            ))
+        );
+        // A one-shot grant spent by the consume authorizes the dispatch it
+        // released through the minted permit; the first attempt retired
+        // the permit, so the same (cloned) validation result can never
+        // dispatch twice; revoking after the consume drops the outstanding
+        // permit and blocks the dispatch; cancellation precedes even the
+        // ledger check.
+        authorizer
+            .grant(&scope(), &target, GrantKind::Once)
+            .unwrap();
+        let permit = authorizer
+            .spend_for_element_dispatch(&scope(), &target)
+            .unwrap();
+        assert_eq!(
+            authorizer.check(&scope(), &target),
+            Err(TargetError::NotAuthorized)
+        );
+        let dead_again = ProcessInstance {
+            pid: 99_999_999,
+            start_token: 1,
+        };
+        let consumed_once = validated(dead_again.clone(), permit);
+        assert_eq!(
+            native.targeted_input(&mut authorizer, &consumed_once, &[], &text, &|| false),
+            Err(TargetError::ProcessRestarted)
+        );
+        assert_eq!(
+            native.targeted_input(&mut authorizer, &consumed_once, &[], &text, &|| false),
+            Err(TargetError::NotAuthorized)
+        );
+        authorizer
+            .grant(&scope(), &target, GrantKind::Once)
+            .unwrap();
+        let revoked = authorizer
+            .spend_for_element_dispatch(&scope(), &target)
+            .unwrap();
+        authorizer.revoke(&scope(), &target);
+        assert_eq!(
+            native.targeted_input(
+                &mut authorizer,
+                &validated(dead_again.clone(), revoked),
+                &[],
+                &text,
+                &|| false,
+            ),
+            Err(TargetError::NotAuthorized)
+        );
+        let forged_again = DispatchPermit {
+            token: "dp-forged".into(),
+        };
+        assert_eq!(
+            native.targeted_input(
+                &mut authorizer,
+                &validated(dead_again, forged_again),
+                &[],
+                &text,
+                &|| true,
+            ),
+            Err(TargetError::Cancelled)
+        );
+        assert_eq!(
+            TARGETED_POST_SYSTEM_CALLS.load(std::sync::atomic::Ordering::SeqCst),
+            calls_before,
+            "denied targeted inputs reached the event posting seam"
+        );
+
+        // Posting-path discipline (posted to this test process only — a
+        // CLI without an event loop never consumes them). A combo aborted
+        // between the modifier press and the key tap releases the pressed
+        // modifiers: 1 posted + 1 release event, Partial, never clean.
+        // (A shift-only combo is 4 events: 1 flags press + tap pair + 1
+        // flags release.)
+        let source =
+            CGEventSource::new(CGEventSourceStateID::HIDSystemState).expect("event source");
+        let own_pid = std::process::id() as libc::pid_t;
+        let combo = targeted_event_plan(&TargetedInput::KeyPress(TargetedKeyPress {
+            key: TargetedKey::Left,
+            modifiers: KeyModifiers {
+                shift: true,
+                control: false,
+                option: false,
+            },
+        }));
+        assert_eq!(
+            post_targeted_plan(&source, own_pid, &combo, &|| true, &|| false, &|| None),
+            Ok(TargetedOutcome::Dispatched {
+                events_posted: 4,
+                events_total: 4,
+            })
+        );
+        // A two-modifier combo must release with the plan's own
+        // shrinking masks: control lifts while shift is still held
+        // (flags = S), then shift lifts clean. Asserted on the flags the
+        // pre-built release actually posted — counts alone cannot see a
+        // wrong mask.
+        let shift = CGEventFlags::CGEventFlagShift;
+        let control = CGEventFlags::CGEventFlagControl;
+        let shift_ctrl = targeted_event_plan(&TargetedInput::KeyPress(TargetedKeyPress {
+            key: TargetedKey::Left,
+            modifiers: KeyModifiers {
+                shift: true,
+                control: true,
+                option: false,
+            },
+        }));
+        let flags_before = TARGETED_POSTED_FLAGS.lock().expect("posted-flags").len();
+        assert_eq!(
+            post_targeted_plan(&source, own_pid, &shift_ctrl, &|| true, &|| false, &|| None),
+            Ok(TargetedOutcome::Dispatched {
+                events_posted: 6,
+                events_total: 6,
+            })
+        );
+        let posted_flags = TARGETED_POSTED_FLAGS.lock().expect("posted-flags");
+        // The tap-up carries the HID source's live keyboard state (fn /
+        // numpad, or whatever the person running the test is holding) —
+        // the CU-01 measured shape — so nothing is asserted on it; the
+        // presses, the tap-down and the release pair are exact.
+        assert_eq!(posted_flags[flags_before], shift);
+        assert_eq!(posted_flags[flags_before + 1], shift | control);
+        assert_eq!(posted_flags[flags_before + 2], shift | control);
+        assert_eq!(
+            posted_flags[flags_before + 4],
+            shift,
+            "control must lift while shift is still held"
+        );
+        assert_eq!(
+            posted_flags[flags_before + 5],
+            CGEventFlags::empty(),
+            "shift must lift clean"
+        );
+        drop(posted_flags);
+        assert_eq!(
+            post_targeted_plan(&source, own_pid, &combo, &|| true, &|| true, &|| None),
+            Ok(TargetedOutcome::Partial {
+                events_posted: 2,
+                events_total: 4,
+                cause: TargetError::Cancelled,
+            })
+        );
+        // A dead target between steps reports ProcessRestarted with the
+        // same release discipline.
+        assert_eq!(
+            post_targeted_plan(&source, own_pid, &combo, &|| false, &|| false, &|| None),
+            Ok(TargetedOutcome::Partial {
+                events_posted: 2,
+                events_total: 4,
+                cause: TargetError::ProcessRestarted,
+            })
+        );
+        // A failed between-step binding recheck (window replaced,
+        // minimized, or the element unfocused) stops the input the same
+        // way: release posted, Partial, never clean.
+        assert_eq!(
+            post_targeted_plan(&source, own_pid, &combo, &|| true, &|| false, &|| {
+                Some(TargetError::NotFocused)
+            }),
+            Ok(TargetedOutcome::Partial {
+                events_posted: 2,
+                events_total: 4,
+                cause: TargetError::NotFocused,
+            })
+        );
+        // A text plan aborted between chunks has no pressed state to
+        // release: the partial count is exactly what was posted.
+        let text_plan = targeted_event_plan(&TargetedInput::InsertText("x".repeat(25)));
+        assert_eq!(
+            post_targeted_plan(&source, own_pid, &text_plan, &|| true, &|| true, &|| None),
+            Ok(TargetedOutcome::Partial {
+                events_posted: 2,
+                events_total: 6,
+                cause: TargetError::Cancelled,
+            })
+        );
+        // Creation-failure discipline (injected at the shared creation
+        // seam; the combo's creation order is press #1, held release #2,
+        // tap-down #3, tap-up #4). A failure before anything posted and
+        // anything pressed is a plain error with zero events; once a
+        // press has posted, the pre-built release still goes out and the
+        // result is an honest Partial.
+        let create_failed = || {
+            TargetError::ProbeUnavailable("CGEventCreateKeyboardEvent failed".to_string())
+        };
+        TARGETED_CREATE_CALLS.store(0, std::sync::atomic::Ordering::SeqCst);
+        TARGETED_CREATE_FAIL_AT.store(1, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(
+            post_targeted_plan(&source, own_pid, &combo, &|| true, &|| false, &|| None),
+            Err(create_failed())
+        );
+        TARGETED_CREATE_CALLS.store(0, std::sync::atomic::Ordering::SeqCst);
+        TARGETED_CREATE_FAIL_AT.store(2, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(
+            post_targeted_plan(&source, own_pid, &combo, &|| true, &|| false, &|| None),
+            Err(create_failed())
+        );
+        TARGETED_CREATE_CALLS.store(0, std::sync::atomic::Ordering::SeqCst);
+        TARGETED_CREATE_FAIL_AT.store(3, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(
+            post_targeted_plan(&source, own_pid, &combo, &|| true, &|| false, &|| None),
+            Ok(TargetedOutcome::Partial {
+                events_posted: 2,
+                events_total: 4,
+                cause: create_failed(),
+            })
+        );
+        // Text: a first-chunk creation failure is a plain error; a later
+        // chunk failing keeps the posted prefix and reports Partial with
+        // nothing to release.
+        TARGETED_CREATE_CALLS.store(0, std::sync::atomic::Ordering::SeqCst);
+        TARGETED_CREATE_FAIL_AT.store(1, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(
+            post_targeted_plan(&source, own_pid, &text_plan, &|| true, &|| false, &|| None),
+            Err(TargetError::ProbeUnavailable(
+                "CGEventCreateKeyboardEvent failed".to_string(),
+            ))
+        );
+        TARGETED_CREATE_CALLS.store(0, std::sync::atomic::Ordering::SeqCst);
+        TARGETED_CREATE_FAIL_AT.store(3, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(
+            post_targeted_plan(&source, own_pid, &text_plan, &|| true, &|| false, &|| None),
+            Ok(TargetedOutcome::Partial {
+                events_posted: 2,
+                events_total: 6,
+                cause: TargetError::ProbeUnavailable(
+                    "CGEventCreateKeyboardEvent failed".to_string(),
+                ),
+            })
+        );
+        TARGETED_CREATE_CALLS.store(0, std::sync::atomic::Ordering::SeqCst);
+        TARGETED_CREATE_FAIL_AT.store(0, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(
+            TARGETED_POST_SYSTEM_CALLS.load(std::sync::atomic::Ordering::SeqCst),
+            calls_before + 4 + 6 + 2 + 2 + 2 + 2 + 0 + 0 + 2 + 0 + 2,
+            "the posting path posted an unexpected number of events"
+        );
     }
 
     #[test]
