@@ -16,6 +16,14 @@
 //!   axminimize <pid> [title 子串]  语义最小化匹配标题的窗口（构造最小化存活证据）
 //!   watch <bundle_id> <seconds>    绑定全部窗口后轮询校验，状态变化即输出 JSONL
 //!   quit <pid>                     正常退出应用（构造 ProcessRestarted 证据）
+//!   capture <bundle_id> <jpeg> [title 子串]
+//!                                CU-04 窗口截图全流程：未授权拒绝证据 → 预检 →
+//!                                校验 → SCK 捕获 → 注册观测 → 落盘 JPEG（前后台前台/鼠标快照）
+//!   obsflow <bundle_id> [title 子串]
+//!                                观测生命周期：缩放后旧观测 StaleHandle、
+//!                                仅移动仍可派发、图像坐标→窗口坐标映射（结束后还原窗口帧）
+//!   capturegone <bundle_id> [title 子串]
+//!                                捕获成功后语义关窗，同一句柄再捕获按 WindowReplaced 拒绝
 
 #[cfg(target_os = "macos")]
 mod imp {
@@ -24,8 +32,11 @@ mod imp {
     use objc::{class, msg_send, sel, sel_impl};
     use core_foundation::base::TCFType;
     use pawork_computer_use::approval::{GrantKind, TargetIdentity};
-    use pawork_computer_use::macos::MacosNative;
-    use pawork_computer_use::target::{Scope, TargetRegistry, WindowHandle};
+    use pawork_computer_use::macos::{DiscoveredApp, DiscoveredWindow, MacosNative, WindowCapture};
+    use pawork_computer_use::target::{
+        image_to_window, Environment, ImagePoint, ObservationGeometry, ObservationKind, Scope,
+        TargetObservation, TargetRegistry, ValidatedWindow, WindowHandle,
+    };
     use serde_json::{json, Value};
     use std::collections::HashMap;
     use std::ffi::{c_void, CStr, CString};
@@ -37,6 +48,7 @@ mod imp {
     extern "C" {
         fn CGEventCreate(source: *const c_void) -> *mut c_void;
         fn CGEventGetLocation(event: *const c_void) -> CgPoint;
+        fn CGWindowListCopyWindowInfo(option: u32, relative_to_window: u32) -> *const c_void;
     }
 
     #[link(name = "CoreFoundation", kind = "framework")]
@@ -52,12 +64,14 @@ mod imp {
     /// HIServices（AX）运行时解析：验收所需符号。
     struct AxFns {
         create_application: unsafe extern "C" fn(i32) -> AXEl,
+        create_system_wide: unsafe extern "C" fn() -> AXEl,
         copy_attribute: unsafe extern "C" fn(AXEl, *const c_void, *mut CFTypeRef) -> i32,
         perform_action: unsafe extern "C" fn(AXEl, *const c_void) -> i32,
         set_attribute: unsafe extern "C" fn(AXEl, *const c_void, CFTypeRef) -> i32,
         value_create: unsafe extern "C" fn(i32, *const c_void) -> CFTypeRef,
         value_get_value: unsafe extern "C" fn(CFTypeRef, i32, *mut c_void) -> bool,
         get_window: unsafe extern "C" fn(AXEl, *mut u32) -> i32,
+        get_pid: unsafe extern "C" fn(AXEl, *mut i32) -> i32,
     }
 
     fn axf() -> &'static AxFns {
@@ -74,12 +88,14 @@ mod imp {
             }
             AxFns {
                 create_application: load(h, "AXUIElementCreateApplication"),
+                create_system_wide: load(h, "AXUIElementCreateSystemWide"),
                 copy_attribute: load(h, "AXUIElementCopyAttributeValue"),
                 perform_action: load(h, "AXUIElementPerformAction"),
                 set_attribute: load(h, "AXUIElementSetAttributeValue"),
                 value_create: load(h, "AXValueCreate"),
                 value_get_value: load(h, "AXValueGetValue"),
                 get_window: load(h, "_AXUIElementGetWindow"),
+                get_pid: load(h, "AXUIElementGetPid"),
             }
         })
     }
@@ -117,7 +133,9 @@ mod imp {
         }
     }
 
-    /// 前台应用与鼠标位置快照：无干扰判定的独立事实。
+    /// 前台应用、焦点应用与鼠标位置快照：无干扰判定的独立事实。
+    /// 焦点经系统级 AXFocusedApplication 观测（frontmost 只说明活跃，
+    /// 不说明键盘焦点）。
     fn sample_user() -> Value {
         autoreleasepool(|| unsafe {
             let ws: *mut Object = msg_send![class!(NSWorkspace), sharedWorkspace];
@@ -129,17 +147,80 @@ mod imp {
                 let bid: *mut Object = msg_send![front, bundleIdentifier];
                 (pid, rs_str(bid))
             };
+            // WindowServer 连接未建立时系统级焦点查询稳定返回
+            // CannotComplete（本机实测：launch / capture 流程里
+            // list_applications 之后首次成功，open 流程没有窗口枚举
+            // 就持续失败）：先枚举一次窗口列表建立连接，再做焦点
+            // 查询；仍空则如实报 focus_observed=false，不把观测缺失
+            // 当成焦点变化。
+            let window_list = CGWindowListCopyWindowInfo(0, 0);
+            if !window_list.is_null() {
+                CFRelease(window_list);
+            }
             let event = CGEventCreate(ptr::null());
             let point = CGEventGetLocation(event);
             if !event.is_null() {
                 CFRelease(event);
             }
+            let mut focus_pid = 0i32;
+            let mut focus_err = -1i32;
+            for _ in 0..25 {
+                let sys = (axf().create_system_wide)();
+                if !sys.is_null() {
+                    let mut focused: CFTypeRef = ptr::null();
+                    let err = (axf().copy_attribute)(
+                        sys,
+                        nsstr("AXFocusedApplication") as *const c_void,
+                        &mut focused,
+                    );
+                    focus_err = err;
+                    if err == 0 && !focused.is_null() {
+                        (axf().get_pid)(focused as AXEl, &mut focus_pid);
+                        CFRelease(focused);
+                    }
+                    CFRelease(sys as *const c_void);
+                }
+                if focus_pid != 0 {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(80));
+            }
+            let focus_bundle = if focus_pid == 0 {
+                String::new()
+            } else {
+                let app: *mut Object = msg_send![
+                    class!(NSRunningApplication),
+                    runningApplicationWithProcessIdentifier: focus_pid
+                ];
+                if app.is_null() {
+                    String::new()
+                } else {
+                    rs_str(msg_send![app, bundleIdentifier])
+                }
+            };
             json!({
                 "front_pid": front_pid,
                 "front_bundle": front_bundle,
+                "focus_pid": focus_pid,
+                "focus_bundle": focus_bundle,
+                "focus_observed": focus_pid != 0,
+                "focus_err": focus_err,
                 "mouse": [point.x, point.y],
             })
         })
+    }
+
+    /// 采样直到系统级焦点查询可用（进程冷启动 CannotComplete 窗口约
+    /// 数秒）或如实返回未观测样本。
+    fn sample_user_settled() -> Value {
+        for attempt in 0..6 {
+            let sample = sample_user();
+            if sample["focus_observed"] == true || attempt == 5 {
+                return sample;
+            }
+            std::thread::sleep(Duration::from_millis(700));
+        }
+        unreachable!()
     }
 
     fn scope() -> Scope {
@@ -535,7 +616,7 @@ mod imp {
     }
 
     /// 语义最小化匹配标题的窗口（缺省第一扇）。
-    fn cmd_axminimize(pid: i32, needle: Option<&str>) -> Result<Value, String> {
+    fn cmd_axminimize2(pid: i32, needle: Option<&str>, minimized: bool) -> Result<Value, String> {
         autoreleasepool(|| unsafe {
             let app = (axf().create_application)(pid);
             if app.is_null() {
@@ -574,20 +655,34 @@ mod imp {
                 CFRelease(app as *const c_void);
                 return Err(format!("no window matching {:?}", needle));
             };
-            let truth = core_foundation::boolean::CFBoolean::true_value();
+            let value = if minimized {
+                core_foundation::boolean::CFBoolean::true_value()
+            } else {
+                core_foundation::boolean::CFBoolean::false_value()
+            };
             let err = (axf().set_attribute)(
                 window,
                 nsstr("AXMinimized") as *const c_void,
-                truth.as_concrete_TypeRef() as CFTypeRef,
+                value.as_concrete_TypeRef() as CFTypeRef,
             );
             CFRelease(windows);
             CFRelease(app as *const c_void);
             Ok(json!({
-                "minimized": err == 0,
+                "minimized": minimized && err == 0,
                 "set_err": err,
                 "window_title": title,
             }))
         })
+    }
+
+    /// 语义最小化匹配标题的窗口（缺省第一扇）。
+    fn cmd_axminimize(pid: i32, needle: Option<&str>) -> Result<Value, String> {
+        cmd_axminimize2(pid, needle, true)
+    }
+
+    /// 还原最小化（验收后清理用户侧状态）。
+    fn cmd_axunminimize(pid: i32, needle: Option<&str>) -> Result<Value, String> {
+        cmd_axminimize2(pid, needle, false)
     }
 
     /// 诊断：从探针进程（有 Accessibility 授权）读取目标 AX 窗口真值。
@@ -787,6 +882,326 @@ mod imp {
         Ok(json!({ "t": now_ms(), "event": "done", "remaining": bound.len() }))
     }
 
+    // ---------- CU-04 窗口截图与观测坐标 ----------
+
+    struct BoundTarget {
+        native: MacosNative,
+        registry: TargetRegistry<MacosNative>,
+        app: DiscoveredApp,
+        window: DiscoveredWindow,
+        handle: WindowHandle,
+    }
+
+    /// 授权并绑定一扇窗口（缺省第一扇，或按标题子串匹配）。
+    fn bind_window(bundle_id: &str, needle: Option<&str>) -> Result<BoundTarget, String> {
+        let native = MacosNative::new();
+        let mut registry = TargetRegistry::new(native.clone());
+        let app = native
+            .list_applications()
+            .into_iter()
+            .find(|a| a.identity.bundle_id.eq_ignore_ascii_case(bundle_id))
+            .ok_or_else(|| format!("app not running: {bundle_id}"))?;
+        registry
+            .grant(
+                &scope(),
+                &TargetIdentity::application(app.identity.clone()),
+                GrantKind::ForRun,
+            )
+            .map_err(|e| e.to_string())?;
+        let windows = native
+            .list_windows(
+                registry.authorizer(),
+                &scope(),
+                &app.identity,
+                &app.instance,
+                true,
+            )
+            .map_err(|e| e.to_string())?;
+        let window = windows
+            .into_iter()
+            .find(|w| match needle {
+                Some(n) => w
+                    .title
+                    .clone()
+                    .unwrap_or_default()
+                    .to_lowercase()
+                    .contains(&n.to_lowercase()),
+                None => true,
+            })
+            .ok_or_else(|| format!("no window matching {:?}", needle))?;
+        let handle = registry
+            .bind_window(
+                &scope(),
+                TargetIdentity::application(app.identity.clone()),
+                app.instance.clone(),
+                window.window,
+            )
+            .map_err(|e| e.to_string())?;
+        Ok(BoundTarget {
+            native,
+            registry,
+            app,
+            window,
+            handle,
+        })
+    }
+
+    /// 契约观测流程：校验 → SCK 捕获 → 用捕获几何注册一次性观测。
+    fn observe(bound: &mut BoundTarget) -> Result<(WindowCapture, TargetObservation), String> {
+        let validated = bound
+            .registry
+            .validate_window(&bound.handle, &scope())
+            .map_err(|e| e.to_string())?;
+        let capture = bound
+            .native
+            .capture_window(bound.registry.authorizer(), &validated)
+            .map_err(|e| e.to_string())?;
+        let observation = bound
+            .registry
+            .begin_observation(
+                &bound.handle,
+                &scope(),
+                Environment::NativeBackground,
+                ObservationKind::Capture,
+                ObservationGeometry {
+                    image_width: capture.image_width,
+                    image_height: capture.image_height,
+                    window_width: capture.window_width,
+                    window_height: capture.window_height,
+                },
+            )
+            .map_err(|e| e.to_string())?;
+        Ok((capture, observation))
+    }
+
+    /// 边缘覆盖检查：内容未铺满输出时边缘是黑条（平均亮度 ≈0）。
+    /// 四条边缘带（厚度为短边 2%，至少 2px）的平均亮度与全局最大亮度。
+    fn coverage(jpeg: &[u8]) -> Result<Value, String> {
+        let rgb = image::load_from_memory(jpeg)
+            .map_err(|e| format!("decode jpeg: {e}"))?
+            .to_rgb8();
+        let (w, h) = (rgb.width() as usize, rgb.height() as usize);
+        let t = (w.min(h) / 50).max(2);
+        let strip = |xs: std::ops::Range<usize>, ys: std::ops::Range<usize>| {
+            let mut sum = 0u64;
+            let mut n = 0u64;
+            for y in ys {
+                for x in xs.clone() {
+                    let p = rgb.get_pixel(x as u32, y as u32);
+                    sum += (p[0] as u64 + p[1] as u64 + p[2] as u64) / 3;
+                    n += 1;
+                }
+            }
+            (sum / n.max(1)) as u32
+        };
+        let borders = json!({
+            "top": strip(0..w, 0..t),
+            "bottom": strip(0..w, h - t..h),
+            "left": strip(0..t, 0..h),
+            "right": strip(w - t..w, 0..h),
+        });
+        let fills = borders
+            .as_object()
+            .unwrap()
+            .values()
+            .all(|v| v.as_u64().unwrap_or(0) > 16);
+        Ok(json!({ "border_luminance": borders, "content_fills_frame": fills }))
+    }
+
+    /// 两帧解码后的同位置像素一致率（任一通道差 ≤8 视为一致）：
+    /// 窗口仅移动时，真实内容应停留在同一图像相对位置。
+    fn pixel_match_ratio(a: &[u8], b: &[u8]) -> Result<f64, String> {
+        let ia = image::load_from_memory(a)
+            .map_err(|e| format!("decode jpeg: {e}"))?
+            .to_rgb8();
+        let ib = image::load_from_memory(b)
+            .map_err(|e| format!("decode jpeg: {e}"))?
+            .to_rgb8();
+        if ia.dimensions() != ib.dimensions() {
+            return Err("dimension mismatch".to_string());
+        }
+        let mut same = 0u64;
+        for (pa, pb) in ia.pixels().zip(ib.pixels()) {
+            if (0..3).all(|c| (pa[c] as i32 - pb[c] as i32).abs() <= 8) {
+                same += 1;
+            }
+        }
+        Ok(same as f64 / (ia.width() as u64 * ia.height() as u64).max(1) as f64)
+    }
+
+    fn cmd_capture(bundle_id: &str, out: &str, needle: Option<&str>) -> Result<Value, String> {
+        let before = sample_user_settled();
+        let mut bound = bind_window(bundle_id, needle)?;
+        // 未授权捕获必须先于任何 OS 访问拒绝。
+        let denied = {
+            let authorizer = pawork_computer_use::approval::TargetAuthorizer::default();
+            let validated = ValidatedWindow {
+                target: TargetIdentity::application(bound.app.identity.clone()),
+                instance: bound.app.instance.clone(),
+                window: bound.window.window,
+                scope: scope(),
+            };
+            bound
+                .native
+                .capture_window(&authorizer, &validated)
+                .err()
+                .map(|e| e.to_string())
+                .unwrap_or_else(|| "unexpectedly captured".to_string())
+        };
+        bound
+            .registry
+            .require_authorized(&bound.handle, &scope())
+            .map_err(|e| e.to_string())?;
+        let (capture, observation) = observe(&mut bound)?;
+        std::fs::write(out, &capture.jpeg).map_err(|e| format!("write {out}: {e}"))?;
+        let after = sample_user_settled();
+        Ok(json!({
+            "capture_without_grant": denied,
+            "window_id": capture.window.window_id,
+            "generation": capture.window.generation,
+            "window_title": bound.window.title,
+            "observation_id": observation.observation_id.as_str(),
+            "image": [capture.image_width, capture.image_height],
+            "window": [capture.window_width, capture.window_height],
+            "jpeg_bytes": capture.jpeg.len(),
+            "coverage": coverage(&capture.jpeg)?,
+            "path": out,
+            "front_unchanged": before["front_pid"] == after["front_pid"],
+            "focus_unchanged": before["focus_pid"] == after["focus_pid"]
+                && before["focus_pid"] != 0,
+            "focus_observed": before["focus_observed"] == true && after["focus_observed"] == true,
+            "mouse_delta": [
+                after["mouse"][0].as_f64().unwrap_or(0.0) - before["mouse"][0].as_f64().unwrap_or(0.0),
+                after["mouse"][1].as_f64().unwrap_or(0.0) - before["mouse"][1].as_f64().unwrap_or(0.0),
+            ],
+            "user_before": before,
+            "user_after": after,
+        }))
+    }
+
+    fn cmd_obsflow(bundle_id: &str, needle: Option<&str>) -> Result<Value, String> {
+        let mut bound = bind_window(bundle_id, needle)?;
+        let pid = bound.app.instance.pid as i32;
+        let original = bound.window.bounds;
+        let mut steps = Vec::new();
+        let (capture, observation) = observe(&mut bound)?;
+        steps.push(json!({
+            "step": "captured",
+            "image": [capture.image_width, capture.image_height],
+            "window": [capture.window_width, capture.window_height],
+        }));
+        // 缩放窗口：旧观测必须按 StaleHandle 拒绝。
+        let resized = cmd_axsetframe(
+            pid,
+            original.x,
+            original.y,
+            original.width + 160.0,
+            original.height + 90.0,
+            needle,
+        )?;
+        std::thread::sleep(Duration::from_millis(400));
+        let after_resize = bound
+            .registry
+            .consume_observation(&observation.observation_id, &scope(), &|| false)
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_else(|| "unexpectedly dispatched".to_string());
+        steps.push(json!({
+            "step": "consume_after_resize",
+            "setframe": resized,
+            "result": after_resize,
+        }));
+        // 新尺寸重新观测；仅移动窗口（尺寸不变）仍可派发。
+        let (capture2, observation2) = observe(&mut bound)?;
+        let moved = cmd_axsetframe(
+            pid,
+            original.x + 48.0,
+            original.y + 48.0,
+            original.width + 160.0,
+            original.height + 90.0,
+            needle,
+        )?;
+        std::thread::sleep(Duration::from_millis(400));
+        let validated = bound
+            .registry
+            .consume_observation(&observation2.observation_id, &scope(), &|| false)
+            .map_err(|e| e.to_string())?;
+        let center = image_to_window(
+            ImagePoint {
+                x: capture2.image_width as f64 / 2.0,
+                y: capture2.image_height as f64 / 2.0,
+            },
+            &validated.observation,
+        )
+        .map_err(|e| e.to_string())?;
+        steps.push(json!({
+            "step": "consume_after_move",
+            "setframe": moved,
+            "dispatched": true,
+            "center_image_point": [capture2.image_width as f64 / 2.0, capture2.image_height as f64 / 2.0],
+            "center_window_point": [center.x, center.y],
+            "window": [capture2.window_width, capture2.window_height],
+        }));
+        // 真实内容复验：仅移动窗口后同位置内容必须留在同一图像相对
+        // 位置（像素一致率 ≈1），且内容铺满整帧（无黑边），坐标映射
+        // 才不是公式自洽。
+        let (capture3, _observation3) = observe(&mut bound)?;
+        steps.push(json!({
+            "step": "recapture_after_move",
+            "image": [capture3.image_width, capture3.image_height],
+            "moved_content_match_ratio": pixel_match_ratio(&capture2.jpeg, &capture3.jpeg)?,
+            "coverage": coverage(&capture3.jpeg)?,
+        }));
+        // 还原窗口帧，不留下用户侧状态。
+        let restored = cmd_axsetframe(
+            pid,
+            original.x,
+            original.y,
+            original.width,
+            original.height,
+            needle,
+        )?;
+        Ok(json!({
+            "bundle_id": bound.app.identity.bundle_id,
+            "window_id": bound.window.window.window_id,
+            "window_title": bound.window.title,
+            "steps": steps,
+            "restored": restored,
+        }))
+    }
+
+    fn cmd_capturegone(bundle_id: &str, needle: Option<&str>) -> Result<Value, String> {
+        let bound = bind_window(bundle_id, needle)?;
+        let validated = bound
+            .registry
+            .validate_window(&bound.handle, &scope())
+            .map_err(|e| e.to_string())?;
+        let first = bound
+            .native
+            .capture_window(bound.registry.authorizer(), &validated)
+            .map_err(|e| e.to_string())?;
+        let closed = cmd_axclose(bound.app.instance.pid as i32, needle)?;
+        std::thread::sleep(Duration::from_millis(600));
+        let capture_after_close = bound
+            .native
+            .capture_window(bound.registry.authorizer(), &validated)
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_else(|| "unexpectedly captured".to_string());
+        let validate_after_close = bound
+            .registry
+            .validate_window(&bound.handle, &scope())
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_else(|| "unexpectedly valid".to_string());
+        Ok(json!({
+            "first_capture": [first.image_width, first.image_height],
+            "closed": closed,
+            "capture_after_close": capture_after_close,
+            "validate_after_close": validate_after_close,
+        }))
+    }
+
     pub fn run(args: Vec<String>) -> Result<Value, String> {
         match args.first().map(String::as_str) {
             Some("perms") => Ok(cmd_perms()),
@@ -832,6 +1247,13 @@ mod imp {
                     .map_err(|_| "pid 非法")?,
                 args.get(2).map(String::as_str),
             ),
+            Some("axunminimize") => cmd_axunminimize(
+                args.get(1)
+                    .ok_or("axunminimize 需要 pid")?
+                    .parse()
+                    .map_err(|_| "pid 非法")?,
+                args.get(2).map(String::as_str),
+            ),
             Some("axdump") => cmd_axdump(
                 args.get(1)
                     .ok_or("axdump 需要 pid")?
@@ -843,6 +1265,19 @@ mod imp {
                 args.get(2)
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(60),
+            ),
+            Some("capture") => cmd_capture(
+                args.get(1).ok_or("capture 需要 bundle_id")?,
+                args.get(2).ok_or("capture 需要 jpeg 输出路径")?,
+                args.get(3).map(String::as_str),
+            ),
+            Some("obsflow") => cmd_obsflow(
+                args.get(1).ok_or("obsflow 需要 bundle_id")?,
+                args.get(2).map(String::as_str),
+            ),
+            Some("capturegone") => cmd_capturegone(
+                args.get(1).ok_or("capturegone 需要 bundle_id")?,
+                args.get(2).map(String::as_str),
             ),
             _ => Err("未知命令".to_string()),
         }

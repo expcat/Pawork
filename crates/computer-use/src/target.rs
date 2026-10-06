@@ -5,7 +5,8 @@
 //! hold opaque handles issued by the host [TargetRegistry]; they cannot
 //! submit raw pids, absolute paths or network endpoints. Handles are validated
 //! on every use and reject process restart, window destroy/reuse, tree changes,
-//! stale or unknown handles, cross-run use and out-of-bounds coordinates.
+//! window resize since the observation was taken, stale or unknown handles,
+//! cross-run use and out-of-bounds coordinates.
 //!
 //! Background capability follows the CU-01 measured matrix per application
 //! family (see background_capability). Actions without measured background
@@ -65,7 +66,9 @@ pub enum TargetError {
     /// handle minted before a host restart).
     #[error("unknown handle; use only handles issued by the host for this run")]
     UnknownHandle,
-    /// Consumed by an earlier action, or past [LEASE_TTL]. Re-observe.
+    /// Consumed by an earlier action, past [LEASE_TTL], or the window no
+    /// longer has the size the observation recorded (resized since the
+    /// capture/read). Re-observe.
     #[error("handle expired or already consumed; observe the target again")]
     StaleHandle,
     /// Issued to a different workspace/run scope.
@@ -424,6 +427,11 @@ pub trait NativeProbe: Send + Sync {
     /// the window is not showing web content or the origin cannot be
     /// determined — website validation fails closed in both cases.
     fn current_origin(&self, window: &WindowIdentity) -> Option<String>;
+    /// Current size (points) of a live window. None when the window cannot
+    /// be proven alive — the same fail-closed discipline as
+    /// window_generation. Observations dispatch only while the window keeps
+    /// the size they recorded; a resize stales them (StaleHandle).
+    fn window_size(&self, instance: &ProcessInstance, window_id: u64) -> Option<(f64, f64)>;
 }
 
 struct WindowRecord {
@@ -480,7 +488,8 @@ pub struct ValidatedElement {
 /// Host-side registry: the only issuer and validator of handles. Validation
 /// order on every use is cancellation, existence, scope, staleness,
 /// authorization (CU-16), process instance, window generation, tree
-/// revision; a one-shot grant is spent only after every other check passed.
+/// revision, window size; a one-shot grant is spent only after every other
+/// check passed.
 /// Authorization is checked before any probe call, so a denied, unknown or
 /// revoked target never reaches the native backend.
 pub struct TargetRegistry<P: NativeProbe> {
@@ -619,6 +628,13 @@ impl<P: NativeProbe> TargetRegistry<P> {
         // burn the user's single approval.
         self.authorizer.check(scope, &record.target)?;
         self.live(record)?;
+        // The registered geometry must still be the window's live size:
+        // a capture taken before a resize is born stale.
+        self.size_current(
+            &record.instance,
+            &record.window,
+            (geometry.window_width, geometry.window_height),
+        )?;
         self.authorizer.spend(scope, &record.target)?;
         let observation = TargetObservation {
             observation_id: ObservationHandle(next_handle("o")),
@@ -745,6 +761,16 @@ impl<P: NativeProbe> TargetRegistry<P> {
                 Some(_) => {}
             }
         }
+        // A window resized since the observation stales it: coordinates
+        // would no longer map onto the observed image.
+        self.size_current(
+            &window_record.instance,
+            &window_record.window,
+            (
+                record.observation.window_width,
+                record.observation.window_height,
+            ),
+        )?;
         self.authorizer.spend(scope, &window_record.target)?;
         let validated = ValidatedObservation {
             window,
@@ -794,6 +820,16 @@ impl<P: NativeProbe> TargetRegistry<P> {
             }
             Some(_) => {}
         }
+        // Same staleness rule as the parent observation: a resized window
+        // invalidates the geometry every element handle was read against.
+        self.size_current(
+            &window_record.instance,
+            &window_record.window,
+            (
+                parent.observation.window_width,
+                parent.observation.window_height,
+            ),
+        )?;
         self.authorizer.spend(scope, &window_record.target)?;
         let validated = ValidatedElement {
             window,
@@ -838,6 +874,32 @@ impl<P: NativeProbe> TargetRegistry<P> {
             scope: record.scope.clone(),
         })
     }
+
+    /// The observation's recorded window size must still be the live size.
+    /// A window the probe cannot prove alive is replaced (fail-closed, same
+    /// as a generation miss); a live window of a different size stales the
+    /// observation — image coordinates would map onto the wrong points.
+    fn size_current(
+        &self,
+        instance: &ProcessInstance,
+        window: &WindowIdentity,
+        recorded: (f64, f64),
+    ) -> Result<(), TargetError> {
+        match self.probe.window_size(instance, window.window_id) {
+            None => Err(TargetError::WindowReplaced),
+            Some(current) if !size_matches(recorded, current) => Err(TargetError::StaleHandle),
+            Some(_) => Ok(()),
+        }
+    }
+}
+
+/// Two window sizes agree within half a point (the backend's frame
+/// tolerance). A sub-half-point resize shifts image mapping by at most one
+/// image pixel at the 2x capture scale; anything larger stales the
+/// observation.
+fn size_matches(recorded: (f64, f64), current: (f64, f64)) -> bool {
+    const EPSILON: f64 = 0.5;
+    (recorded.0 - current.0).abs() <= EPSILON && (recorded.1 - current.1).abs() <= EPSILON
 }
 
 /// A website target is valid only while the window shows the origin it was
@@ -863,6 +925,7 @@ mod tests {
         generation: Mutex<Option<u64>>,
         tree: Mutex<Option<u64>>,
         origin: Mutex<Option<String>>,
+        size: Mutex<Option<(f64, f64)>>,
         calls: AtomicUsize,
     }
 
@@ -873,6 +936,9 @@ mod tests {
                 generation: Mutex::new(Some(1)),
                 tree: Mutex::new(Some(7)),
                 origin: Mutex::new(None),
+                // Matches geometry() below: the window is live at the size
+                // observations record.
+                size: Mutex::new(Some((2560.0, 1440.0))),
                 calls: AtomicUsize::new(0),
             }
         }
@@ -898,6 +964,10 @@ mod tests {
         fn current_origin(&self, _: &WindowIdentity) -> Option<String> {
             self.calls.fetch_add(1, Ordering::Relaxed);
             self.origin.lock().unwrap().clone()
+        }
+        fn window_size(&self, _: &ProcessInstance, _: u64) -> Option<(f64, f64)> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            *self.size.lock().unwrap()
         }
     }
 
@@ -1305,6 +1375,69 @@ mod tests {
             Err(TargetError::Invalid(
                 "element handles require an accessibility tree observation"
             ))
+        );
+    }
+
+    #[test]
+    fn window_resize_stales_observations_and_element_handles() {
+        let (mut registry, window) = bound(AppFamily::Appkit);
+        // A capture registered against a window that no longer has the
+        // captured size is born stale.
+        *registry.probe.size.lock().unwrap() = Some((1920.0, 1080.0));
+        assert_eq!(
+            registry.begin_observation(
+                &window,
+                &scope(),
+                Environment::NativeBackground,
+                ObservationKind::Capture,
+                geometry(),
+            ),
+            Err(TargetError::StaleHandle)
+        );
+        // A rejected registration consumed nothing: restoring the size lets
+        // the same window observe again.
+        *registry.probe.size.lock().unwrap() = Some((2560.0, 1440.0));
+        let observation = capture(&mut registry, &window);
+        // Resizing after the observation stales it; dispatch is rejected
+        // before the lease is spent.
+        *registry.probe.size.lock().unwrap() = Some((2561.0, 1440.0));
+        assert_eq!(
+            registry.consume_observation(&observation.observation_id, &scope(), &|| false),
+            Err(TargetError::StaleHandle)
+        );
+        // Restoring the recorded size revalidates the still-unconsumed
+        // lease: coordinates map onto the observed image again.
+        *registry.probe.size.lock().unwrap() = Some((2560.0, 1440.0));
+        registry
+            .consume_observation(&observation.observation_id, &scope(), &|| false)
+            .unwrap();
+        // Element handles follow the same rule through their parent
+        // observation's geometry.
+        let observation = ax_observation(&mut registry, &window);
+        let element = registry
+            .issue_element(&observation.observation_id, &scope(), 51)
+            .unwrap();
+        *registry.probe.size.lock().unwrap() = Some((1280.0, 720.0));
+        assert_eq!(
+            registry.consume_element(&element, &scope(), &|| false),
+            Err(TargetError::StaleHandle)
+        );
+        // A window whose size can no longer be proven fails closed like a
+        // generation miss.
+        *registry.probe.size.lock().unwrap() = None;
+        assert_eq!(
+            registry.consume_element(&element, &scope(), &|| false),
+            Err(TargetError::WindowReplaced)
+        );
+        assert_eq!(
+            registry.begin_observation(
+                &window,
+                &scope(),
+                Environment::NativeBackground,
+                ObservationKind::Capture,
+                geometry(),
+            ),
+            Err(TargetError::WindowReplaced)
         );
     }
 
