@@ -12,3 +12,6 @@ secrets/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# CodeGraph 本地索引（数据库仅本机有效，不入库）
+.codegraph/
