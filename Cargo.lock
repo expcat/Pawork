@@ -4474,7 +4474,13 @@ dependencies = [
 name = "pawork-computer-use"
 version = "0.1.0"
 dependencies = [
+ "block",
+ "cocoa 0.26.0",
+ "core-foundation 0.10.0",
+ "core-graphics 0.24.0",
  "image",
+ "libc",
+ "objc",
  "serde",
  "serde_json",
  "thiserror 2.0.20",

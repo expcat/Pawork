@@ -13,3 +13,13 @@ image = { version = "=0.25.10", default-features = false, features = ["jpeg"] }
 
 [dev-dependencies]
 serde_json = "1"
+
+# 仅 macOS 人工探针 examples/macos_background_probe.rs 使用，全部复用
+# workspace 已锁定版本；库本体不引入任何平台框架。
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+objc = "0.2"
+block = "0.1"
+cocoa = "=0.26.0"
+core-foundation = "0.10"
+core-graphics = { version = "0.24", features = ["elcapitan"] }
+libc = "0.2"

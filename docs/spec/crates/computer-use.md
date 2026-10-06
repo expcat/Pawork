@@ -8,7 +8,7 @@
 
 ## 2. 模块树
 
-`src/lib.rs` 定义 Action / Input / Backend / Computer、观察身份、坐标转换、进程内串行、取消与定向测试。`src/rfb.rs` 为固定 `127.0.0.1:5905` 的 RFB 客户端、raw framebuffer → JPEG、虚拟键鼠事件。`desktop/` 提供独立桌面的 Dockerfile / compose / 启动脚本；`examples/isolated_probe.rs` 为人工 JSON 验收入口。
+`src/lib.rs` 定义 Action / Input / Backend / Computer、观察身份、坐标转换、进程内串行、取消与定向测试。`src/rfb.rs` 为固定 `127.0.0.1:5905` 的 RFB 客户端、raw framebuffer → JPEG、虚拟键鼠事件。`desktop/` 提供独立桌面的 Dockerfile / compose / 启动脚本；`examples/isolated_probe.rs` 为隔离桌面人工 JSON 验收入口；`examples/macos_background_probe.rs` 为 CU-01 本机后台可行性人工探针（macOS-only，公开 API：ScreenCaptureKit / AX / CGEventPostToPid，结论见 [CU-01 完成记录](../../plan/cu-01-background-feasibility.md)），不参与产品路径。
 
 ## 3. 对外 API 面
 
@@ -20,7 +20,7 @@
 
 ## 5. 依赖与 feature
 
-serde / thiserror / image（仅 JPEG，已有 workspace lock 版本）；网络为 std::net。无平台专属框架和 `pawork-*` 依赖。独立 Cargo 元数据不继承 workspace；`publish=false`，License 待定。隔离桌面运行依赖 Docker / Xvnc，不改变 CLI / Desktop 的纯 Rust 构建链。
+serde / thiserror / image（仅 JPEG，已有 workspace lock 版本）；网络为 std::net。无平台专属框架和 `pawork-*` 依赖。独立 Cargo 元数据不继承 workspace；`publish=false`，License 待定。隔离桌面运行依赖 Docker / Xvnc，不改变 CLI / Desktop 的纯 Rust 构建链。macOS 探针 example 使用 target-gated dev-dependencies（objc / block / cocoa / core-foundation / core-graphics / libc，均复用 workspace 已锁定版本），仅 macOS 开发目标（测试与 example 构建）使用，不进入生产库依赖面，库本体仍无平台框架。
 
 ## 6. 红线与不变量
 
