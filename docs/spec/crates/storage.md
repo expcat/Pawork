@@ -19,12 +19,12 @@
 
 ## 2. 模块与文件地图
 
-共 29 个 `.rs` 源文件（约 2.01 万行）+ 2 个集成测试 + 8 个 fixture/golden 数据文件。单元测试内嵌于各源文件尾部 `#[cfg(test)] mod tests`（21 处），没有独立单元测试树。
+共 29 个 `.rs` 源文件（约 2.00 万行）+ 2 个集成测试 + 8 个 fixture/golden 数据文件。单元测试内嵌于各源文件尾部 `#[cfg(test)] mod tests`（21 处），没有独立单元测试树。
 
 | 路径 | 行数 | 承载内容 |
 | --- | --- | --- |
 | `src/lib.rs` | ~10 | crate 根：声明 `sqlite` 常开、`session`/`blob` 按 feature；**根层无 re-export**，调用方必须写全路径（如 `pawork_storage::session::SessionStore`） |
-| `src/sqlite/mod.rs` | ~400 | `DatabaseActor`（专用线程 + 有界 `tokio::sync::mpsc` 命令队列，默认容量 128）、`DatabaseOptions`、`DatabaseError`、`backup_to`/`restore_from`、只读打开 |
+| `src/sqlite/mod.rs` | ~390 | `DatabaseActor`（专用线程 + 有界 `tokio::sync::mpsc` 命令队列，固定容量 128）、私有 `DatabaseOptions`、`DatabaseError`、`backup_to`/`restore_from`、只读打开 |
 | `src/sqlite/migration.rs` | ~650 | 通用 migration 框架：`Migration`/`migrate`/`schema_version`/`MigrationReport`/`MigrationError`；账本表按命名空间隔离（不用 `PRAGMA user_version`），升级前 `.pre-migration-v<from>.bak` 备份，单事务整批应用 |
 | `src/session/mod.rs` | ~230 | `SessionStore`（open/open_read_only/schema_version/shutdown）、`SessionStoreError` 全量错误枚举、子模块 re-export（`compaction` 随 feature） |
 | `src/session/migration.rs` | ~1280 | `CURRENT_SCHEMA_VERSION = 14` 与 v1–v14 迁移清单；内嵌 v12–v14 迁移测试、升级 golden 断言与孤儿 fail-closed 回归 |
@@ -50,8 +50,8 @@
 | `src/blob/mod.rs` | ~30 | blob 门面：`atomic` 私有；artifact 常开 re-export；`protected`/`checkpoint` 随 feature |
 | `src/blob/atomic.rs` | ~50 | crate 私有 `atomic_write_bytes`：同目录 `.tmp-{pid}-{counter}`、`create_new`、`write_all`+`sync_all`+`rename`，失败删临时文件；artifact / protected / checkpoint 共用 |
 | `src/blob/artifact.rs` | ~1220 | `ArtifactStore`：`<root>/blobs/ab/cd/<hash>` 分片目录 + `artifacts.sqlite3` 元数据；put 去重/预算、get 重验哈希、`read_range`、refcount、gc、`integrity_check` |
-| `src/blob/protected.rs` | ~1430 | `ProtectedBlobStore`：PWB1 AEAD 信封（XChaCha20-Poly1305）、`BlobScope` 隔离、pending/ready/deleting 三态、延迟回收 gc、崩溃 reconcile；`parse_pwb1_envelope`/`open_pwb1_envelope`/`pwb1_aad` 纯函数 |
-| `src/blob/checkpoint.rs` | ~980 | `CheckpointService`：写前快照 `snapshot_before_write`、`rollback_tool_call`/`rollback_run`、`conflict_check`、`checkpoint-state-v1.json` 原子持久化（`spawn_blocking` 调 `atomic_write_bytes`）、roots 内路径解析防穿越 |
+| `src/blob/protected.rs` | ~1400 | `ProtectedBlobStore`：PWB1 AEAD 信封（XChaCha20-Poly1305）、`BlobScope` 隔离、pending/ready/deleting 三态、延迟回收 gc、崩溃 reconcile；`parse_pwb1_envelope`/`open_pwb1_envelope`/`pwb1_aad` 纯函数 |
+| `src/blob/checkpoint.rs` | ~870 | `CheckpointService`：写前快照 `snapshot_before_write`、`rollback_tool_call`/`rollback_run`、`checkpoint-state-v1.json` 原子持久化（`spawn_blocking` 调 `atomic_write_bytes`）、roots 内路径解析防穿越 |
 | `tests/pwb1_golden.rs` | ~160 | PWB1 已知向量 golden（required-features `protected`） |
 | `tests/read_range.rs` | ~230 | `read_range` 边界/完整性集成测试（required-features `blob`） |
 | `src/session/fixtures/*.jsonl` | 7 个 | v12 升级 golden 的 lineage 期望：`v12_fork_tree.{main,fork-a,fork-b}`、`v12_interleaved.{main,side}`、`v12_compaction.{main,side}`（见 §5/§7） |
@@ -61,9 +61,9 @@
 
 ### 3.1 sqlite：DatabaseActor 与 migration 框架
 
-- `DatabaseActor::open(path)` / `open_with_options(path, DatabaseOptions)` / `open_read_only(path)`：写模式会建父目录、设 `journal_mode=WAL` + `synchronous=NORMAL`；只读模式以 `SQLITE_OPEN_READ_ONLY` 打开、不建目录、不改 journal。两种模式都固定 `foreign_keys=ON`、`busy_timeout=5s`。`DatabaseOptions.queue_capacity` 默认 128，传 0 得 `DatabaseError::InvalidQueueCapacity`。
+- `DatabaseActor::open(path)` / `open_read_only(path)`：写模式会建父目录、设 `journal_mode=WAL` + `synchronous=NORMAL`；只读模式以 `SQLITE_OPEN_READ_ONLY` 打开、不建目录、不改 journal。两种模式都固定 `foreign_keys=ON`、`busy_timeout=5s`、有界队列容量 128；打开模式与 `open_with_options` 为私有实现，不提供容量或超时定制接口。
 - `actor.call(|conn| ...) -> Result<T, DatabaseError>`：唯一执行入口，闭包在 Actor 线程串行运行；命令经有界 `mpsc` 通道排队（队列满时 `send().await` 挂起形成背压）；闭包 panic 被 `catch_unwind` 捕获转 `OperationPanicked`（Actor 存活）。另有 `path()`、`is_read_only()`、`backup_to(path)`（拒绝目标 = 源，`BackupTargetsSource`）、`restore_from(path)`（只读模式报 `ReadOnly`）、`shutdown()`（幂等，等待线程退出）。
-- `DatabaseError` 全集：`Sqlite`/`ActorClosed`（线程已退出）/`OperationPanicked`/`ResponseTypeMismatch`/`InvalidQueueCapacity`/`BackupTargetsSource`/`ReadOnly`/`Io`。
+- `DatabaseError` 全集：`Sqlite`/`ActorClosed`（线程已退出）/`OperationPanicked`/`ResponseTypeMismatch`/`BackupTargetsSource`/`ReadOnly`/`Io`。
 - migration 框架（`sqlite::migration`）：`Migration { version, name, sql }`（静态 SQL 批）数组 + `migrate(actor, table_name, migrations)` / `schema_version(actor, table_name)`。每套 schema 用独立账本表（如 `schema_migrations`，表名先经 `validate_table_name` 白名单校验），因此**信封版本、session schema、blob schema 互不相干**。行为：校验计划（版本从 1 连续、无重复）→ 读当前版本（账本表不存在视为 0）；库版本 > 计划最大版本时报降级拒绝 → 已存在且非空的库先物理备份为 `<db>.pre-migration-v<from>.bak` → 单事务应用全部待做迁移，任一步失败整批回滚 → 返回 `MigrationReport`（含 from/to 版本与 `backup_path`；全新建库无备份）。
 
 ### 3.2 session：SessionStore 生命周期
@@ -80,10 +80,10 @@
 - `register_workspace(workspace_id, name, root_path)` / `list_workspaces()`（ADR-044，v14）：Host 本地项目注册表。按 canonical root 幂等登记——同 root 重登返回既有记录（stable id 不变）；同 id 不同 root 报 `WorkspaceRegistryInvariant`（fail-closed）；单事务写入，`list_workspaces` 按创建序返回全部条目。
 - `append_event(branch_id, AgentEventEnvelope) -> AppendReceipt`：显式点名分支且必须是当前 active 分支（否则 `BranchNotActive`）。sequence 为 **session 级全局单调**：必须 = 全 session 现有最大 sequence + 1（首条 = 1），否则 `NonContiguousSequence { expected, actual }`；因此各分支的事件序是全局序的互不重叠子序列。写前做 Secret 脱敏与 legacy 键规范化（§4.1）。`AppendReceipt { event_id, sequence, branch_id }`。
 - 读取三视图 + lineage 视图（`replay_events`/`tail_events` 对 `limit == 0` 直接返回空集）：
-  - `replay_events(session, from_sequence, limit)`：全 session 账本视图（含所有分支），按全局 sequence 升序——历史兼容接口；
+  - `replay_events(session, from_sequence, limit)`：全 session 账本视图（含所有分支），按全局 sequence 升序；生产消费包括启动清扫的用量恢复、终态用量对账、checkpoint run 查询、Plan/Goal 重建与 CLI 模型切换记录，保留为账本维护和恢复读口；
   - `tail_events(session, limit)`：尾部 N 条升序；
   - `events_by_branch(session, branch, from_sequence, limit)`：仅该分支本地事件，**不含祖先**（不能当恢复源）；
-  - `events_on_lineage(session, branch, from_sequence, limit)`：**恢复重放唯一正确入口**，沿祖先链取可见事件（§4.2）。
+  - `events_on_lineage(session, branch, from_sequence, limit)`：**目标分支信封恢复入口**，沿祖先链取可见事件（§4.2）；活动分支消息恢复也可通过使用同一 lineage 边界的投影读取。
 - 全局 sequence 的推论：切回旧分支继续 `append_event` 是允许的（新事件接在**全局**尾部），因此单一分支内的 sequence 单调递增但**可能带洞**（洞位被其他分支占用）；分支内相对顺序与 lineage 可见性不受影响。
 
 ### 3.4 分支树与 lineage
@@ -134,9 +134,9 @@
 
 ### 3.10 blob 三区
 
-- **artifact（feature `blob`）**：`ArtifactStore::open(root)` / `open_with_options(root, ArtifactStoreOptions { disk_budget })`。`put(&[u8]) -> PutOutcome { id: BlobId, created, ref_count }`（BLAKE3 寻址，重复 put 命中去重仅引用 +1；超预算报 `DiskBudgetExceeded`；经 `atomic_write_bytes` tmp+fsync+rename 原子落盘）；`get`/`read_range(id, offset, limit)` 读时重验哈希，不符报 `BlobCorrupted`（另有 `EmptyRange`/`RangeOffsetOutOfBounds`/`UnknownBlob`/`BlobMissing`）；`release`（下溢报 `RefCountUnderflow`；归零不立即删文件）；`gc()`（删 0 引用 blob + 回收 >24h 的 `.tmp-` 与无元数据孤儿文件）；`integrity_check()`、`disk_usage()`、`metadata`、`byte_length`、`blob_path`、`database`、`shutdown`。
-- **protected（feature `protected`）**：`ProtectedBlobStore::open(root, resolver: Arc<dyn ProtectedKeyResolver>)`。scope = `BlobScope::new(provider_id, session_id)`；内置 `InMemoryKeyResolver`（`insert`/`set_current`/`remove` 管理各 scope 的 `KeyVersion → AeadKey`）可作宿主实现。`put(scope, plaintext) -> PutOutcome { blob_ref, key_version, .. }`：取 scope 当前 `KeyVersion` → PWB1 AEAD 密封 → 三态写入（§4.7）。`get(scope, ref)` 解密返回 `ProtectedBlob`（`expose()` 取明文，Drop 时 `zeroize`）；跨 scope 访问、密钥缺失、文件缺失统一 fail-closed 为 `ProtectedBlobUnavailable`，格式/摘要/AEAD 失败为 `ProtectedBlobCorrupted`（`is_unavailable()`/`is_corrupted()` 判别）。`retain`/`release`（归零后进入 `retention_ms` 延迟回收窗，默认 7 天）、`gc()`、`metadata`、`shutdown`。纯函数 `parse_pwb1_envelope`/`open_pwb1_envelope`/`pwb1_aad` 供离线校验。
-- **checkpoint（feature `checkpoint`）**：`CheckpointService::open(ArtifactStore)`（恢复 `checkpoint-state-v1.json`，版本不符 fail-closed）。`snapshot_run(run_id)` 幂等建条目；`snapshot_before_write(run_id, tool_call_id, roots, relative_path) -> FileSnapshot`：在 roots 内 canonicalize 解析（拒绝绝对路径与 `..` 穿越），读旧内容存 Blob（同 key 去重，并发多余引用自动 release）；`rollback_tool_call`/`rollback_run` 逆序恢复（同一 `atomic_write_bytes`、删新增文件、还原 unix mode）；缺 recorded path 报 `NotFound`，不跳过；`conflict_check(run_id, tool_call_id)` 重读文件比对 pre_hash 报告用户改动；`list_changes(run_id)` 同步快照。
+- **artifact（feature `blob`）**：`ArtifactStore::open(root)`，公开打开入口不限制磁盘预算。`put(&[u8]) -> PutOutcome { id: BlobId, created, ref_count }`（BLAKE3 寻址，重复 put 命中去重仅引用 +1；经 `atomic_write_bytes` tmp+fsync+rename 原子落盘；私有选项下的预算拒绝路径与 `DiskBudgetExceeded` 保留，由定向回归验证）；`get`/`read_range(id, offset, limit)` 读时重验哈希，不符报 `BlobCorrupted`（另有 `EmptyRange`/`RangeOffsetOutOfBounds`/`UnknownBlob`/`BlobMissing`）；`release`（下溢报 `RefCountUnderflow`；归零不立即删文件）；`gc()`（删 0 引用 blob + 回收 >24h 的 `.tmp-` 与无元数据孤儿文件）；`integrity_check()`、`disk_usage()`、`metadata`、`byte_length`、`blob_path`、`database`、`shutdown`。
+- **protected（feature `protected`）**：`ProtectedBlobStore::open(root, resolver: Arc<dyn ProtectedKeyResolver>)`，公开打开入口不限制磁盘预算，保留期固定为 7 天。scope = `BlobScope::new(provider_id, session_id)`；内置 `InMemoryKeyResolver`（`insert`/`set_current`/`remove` 管理各 scope 的 `KeyVersion → AeadKey`）可作宿主实现。`put(scope, plaintext) -> PutOutcome { blob_ref, key_version, .. }`：取 scope 当前 `KeyVersion` → PWB1 AEAD 密封 → 三态写入（§4.7）。`get(scope, ref)` 解密返回 `ProtectedBlob`（`expose()` 取明文，Drop 时 `zeroize`）；跨 scope 访问、密钥缺失、文件缺失统一 fail-closed 为 `ProtectedBlobUnavailable`，格式/摘要/AEAD 失败为 `ProtectedBlobCorrupted`（`is_unavailable()`/`is_corrupted()` 判别）。`release`（归零后进入延迟回收窗）、`gc()`、`metadata`、`shutdown`。纯函数 `parse_pwb1_envelope`/`open_pwb1_envelope`/`pwb1_aad` 供离线校验；预算/保留期选项与 `open_with_options` 为私有实现。
+- **checkpoint（feature `checkpoint`）**：`CheckpointService::open(ArtifactStore)`（恢复 `checkpoint-state-v1.json`，版本不符 fail-closed）。`snapshot_before_write(run_id, tool_call_id, roots, relative_path) -> FileSnapshot`：在 roots 内 canonicalize 解析（拒绝绝对路径与 `..` 穿越），读旧内容存 Blob（同 key 去重，并发多余引用自动 release），自动建立 run 条目；`rollback_tool_call`/`rollback_run` 逆序恢复（同一 `atomic_write_bytes`、删新增文件、还原 unix mode）；缺 recorded path 报 `NotFound`，不跳过；`list_changes(run_id)` 同步快照。
 
 ### 3.11 client_adapter
 
@@ -158,7 +158,8 @@
 1. `load_ancestor_lineage(session, branch)`：从目标分支沿 `parent_branch_id` 回溯到 `main`，每段祖先带上界 = fork 事件的 sequence（含），tip 分支无上界；环路防御 `ProjectionInvariant`。
 2. `events_on_lineage` 按 lineage 段过滤 `session_events`（`visible_on_lineage`：事件属于链上分支且 sequence 不超过该段上界），升序返回 `from_sequence` 起至多 `limit` 条。SQLite 游标先筛选分支与序号，只复制可见事件的 JSON，页满即停止；不再把整个 session 的 payload 物化后分页。
 3. 上界语义的推论：fork 之后父分支继续追加的事件（sequence > fork 点）对子分支 lineage **不可见**——分叉即时间冻结，父子各自演化互不串扰。
-4. 引擎恢复时把这些信封反序列化重放即可重建内存态；投影快照（§3.5）则额外叠加 compaction 水位：`compacted_through` = lineage 可见的最大 `CompactionCompleted.compacted_through`，messages 只取水位之后的事件。
+4. `AppCore::resume_messages*` 经 `projection_snapshot_on_branch` 恢复活动分支消息；投影快照（§3.5）叠加 compaction 水位：`compacted_through` = lineage 可见的最大 `CompactionCompleted.compacted_through`，messages 只取水位之后的事件。
+5. `replay_events` 读取全 session、全部分支账本，供启动清扫恢复中断 run 的用量、终态用量对账等维护流程使用；不能替代上述活动分支上下文恢复。
 
 ### 4.3 compaction 水位折叠
 
@@ -204,7 +205,7 @@
 1. `snapshot_before_write`：`relative_path` 逐个 root `join` + `canonicalize`，校验落在某 root 内（拒绝绝对路径与 `..` 穿越，`PathEscape`/`UnresolvedPath`）。
 2. 同 `run_id + tool_call_id + relative_path` 已有快照直接复用；否则读当前内容（不存在则记 `existed = false`）→ `ArtifactStore::put` 存 pre 内容（去重）→ 记 `FileSnapshot { relative_path, existed, pre_blob, pre_hash, unix_mode }` 挂到该 tool_call 的 `ChangeRecord`；并发竞态下先 put 后发现重复会 `release` 多余引用。
 3. 状态经 `checkpoint-state-v1.json`（`schema_version = 1`）由 `atomic_write_bytes`（`spawn_blocking`）原子持久化；锁内只做内存图操作，从不跨 `.await` 持锁。
-4. `rollback_tool_call`/`rollback_run` 逆序恢复：从 Blob 取回 pre 内容原子写回（恢复 unix mode），`existed = false` 的文件直接删除；`conflict_check` 重读文件重算 BLAKE3 与 `pre_hash` 比对，产出 `ConflictReport { relative_path, user_modified }`，不阻止回滚、只供调用方决策。
+4. `rollback_tool_call`/`rollback_run` 逆序恢复：从 Blob 取回 pre 内容原子写回（恢复 unix mode），`existed = false` 的文件直接删除。现有回滚直接恢复快照，没有冲突检测 gate；`pre_hash` 与 `RunCheckpoint.head` 仍按既有格式持久化。
 
 ## 5. 契约与不变量
 
@@ -268,7 +269,7 @@ feature 依赖有传递关系：`compaction ⇒ session`，`checkpoint ⇒ blob`
 | `import/persist_*` tests | Pi 原文件只读不改、compat 幂等/冲突/历史分页、export↔import 全量往返、文件流式导入与整串等价（>8KiB session_meta 首行嗅探不截断）与流式路径后续行 Secret 拒绝 |
 | `blob/artifact.rs` tests | put 去重与引用计数、预算拒绝、读时哈希校验、gc/孤儿回收、`integrity_check` |
 | `blob/protected.rs` tests | 三态与崩溃 reconcile、scope 隔离 fail-closed、密钥缺失/损坏分类、延迟回收 gc |
-| `blob/checkpoint.rs` tests | 快照去重、回滚（含新增文件删除）、`conflict_check`、路径穿越拒绝、状态持久化往返 |
+| `blob/checkpoint.rs` tests | 写前快照自动建立 run、快照去重、回滚（含新增文件删除与 run 级逆序恢复）、路径穿越拒绝、状态持久化往返 |
 | `tests/read_range.rs` | 范围读中点/跨界/越界/空段、分片拼回、`BlobId` hex serde 与 checkpoint 兼容（required-features `blob`，默认开） |
 | `tests/pwb1_golden.rs` + `tests/golden/pwb1_valid.hex` | PWB1 布局/AAD/坏头 Corrupted/已知向量往返（required-features `protected`） |
 
@@ -290,12 +291,13 @@ cargo test -p pawork-storage --offline --lib --tests --features compaction,check
 
 - **休眠 DDL**：`session_leases`（v3）与 `session_bindings`（v9）建表后当前**无任何生产读写入口**；`SessionStoreError::LeaseHeld` / `LeaseNotHeld` / `SessionHasEvents` 错误变体同样无触发路径——属预留位，勿据此假设租约/绑定功能已可用（v9 注释明示 binding 状态机已随 R0/ADR-038 归档，留表只为 append-only）。
 - **无永久删除写口**：`archive_session` 已提供归档/反归档；没有 `delete_session`、`delete_branch` 公开 API，目录查询固定隐藏 archived 行。
-- `replay_events` 跨分支合并、`events_by_branch` 不含祖先：两者都**不是**恢复语义，恢复一律走 `events_on_lineage`。
+- `replay_events` 为全 session 账本维护/恢复读口，`events_by_branch` 不含祖先；活动分支上下文恢复必须使用 `events_on_lineage` 或基于 lineage 的投影，不能把全账本合并视图当作当前消息窗口。
 - 物化 `messages` 表在 compaction 折叠后存在盲区，读消息请走 `ProjectionSnapshot`（事件账本重建）而非直查表；`runs`/`tool_calls` 等物化表为全 session 维度，不区分分支。
 - CommandLedger 容量淘汰是**全局** 4096（非按 tenant/scope 配额）；淘汰后旧命令重放会得到 `New` 而非 `Replay`。
 - compat 与 Pi 导入固定落 `local/default` / `local/user` 身份与 `main` 分支；Pi 的 Branch marker 折叠为 `pi.branch_collapsed` Diagnostic，不重建分支树。
 - artifact 与 protected 各自持有独立 SQLite（`artifacts.sqlite3` / `protected.sqlite3`），schema 用 `CREATE TABLE IF NOT EXISTS` 直建（`SCHEMA_VERSION = 1`），未接入 migration 框架；每个 root 假定单宿主进程独占（protected 的 open-time reconcile 会清走并发宿主的 pending 文件）。
-- protected 的 `logical_ref` 对外稳定、物理文件按**密文** digest 寻址：密钥轮换后重加密会换物理文件但 ref 不变；`retain` 会清除延迟回收标记（复活窗口内的 blob 可救回）。
+- protected 的 `logical_ref` 对外稳定、物理文件按**密文** digest 寻址：密钥轮换后重加密会换物理文件但 ref 不变；没有增加引用或清除延迟回收标记的公开入口。
+- **B2 预留面裁决（2026-10-08）**：删除无生产/恢复/迁移消费者的 `ProtectedBlobStore::retain`、`CheckpointService::snapshot_run` / `conflict_check` 与 `ConflictReport`；三个 Options 类型及 `open_with_options` 收为私有，SQLite 容量/超时参数删除，blob 预算拒绝与 protected 延迟 GC 实现保留。Host 始终使用默认打开入口；私有预算/保留期测试消费不代表产品可配置或真实 Host 验收。依据与验证见 [B2 记录](../../plan/b2-storage.md)。
 - checkpoint 只靠 Blob 还原、绝不 `git reset --hard`；`checkpoint-state-v1.json` 版本不符直接 fail-closed，不做静默降级。
 - `DatabaseActor` 单连接串行：长事务（大导入、rebuild、迁移）会队头阻塞同一 store 上的所有调用（含读）；诊断类只读负载可另开 `open_read_only` 副本绕开写队列。
 - `switch_branch` 改的是 `sessions.active_branch` 行字段，属**全局写指针**：同一 store 的多个消费方共享 active 分支，切换是全局副作用。

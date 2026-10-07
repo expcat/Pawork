@@ -265,14 +265,14 @@ impl ProtectedBlobError {
 }
 
 #[derive(Clone, Debug)]
-pub struct ProtectedBlobStoreOptions {
-    pub root: PathBuf,
-    pub retention: Duration,
-    pub disk_budget: Option<u64>,
+struct ProtectedBlobStoreOptions {
+    root: PathBuf,
+    retention: Duration,
+    disk_budget: Option<u64>,
 }
 
 impl ProtectedBlobStoreOptions {
-    pub fn new(root: impl Into<PathBuf>) -> Self {
+    fn new(root: impl Into<PathBuf>) -> Self {
         Self {
             root: root.into(),
             retention: Duration::from_secs(7 * 24 * 60 * 60),
@@ -324,7 +324,7 @@ impl ProtectedBlobStore {
         Self::open_with_options(ProtectedBlobStoreOptions::new(root), resolver).await
     }
 
-    pub async fn open_with_options(
+    async fn open_with_options(
         options: ProtectedBlobStoreOptions,
         resolver: Arc<dyn ProtectedKeyResolver>,
     ) -> Result<Self, ProtectedBlobError> {
@@ -494,34 +494,6 @@ impl ProtectedBlobStore {
         blob_ref: &ProtectedBlobRef,
     ) -> Result<ProtectedBlobMetadata, ProtectedBlobError> {
         self.fetch_scoped(scope, blob_ref, false).await
-    }
-
-    pub async fn retain(
-        &self,
-        scope: &BlobScope,
-        blob_ref: &ProtectedBlobRef,
-    ) -> Result<u64, ProtectedBlobError> {
-        let scope = scope.clone();
-        let blob_ref = blob_ref.clone();
-        self.database
-            .call(move |connection| -> Result<u64, ProtectedBlobError> {
-                let current = scoped_ref_count(connection, &scope, &blob_ref)?
-                    .ok_or_else(|| unavailable(blob_ref.clone()))?;
-                let next = current.saturating_add(1);
-                connection.execute(
-                    "UPDATE protected_blobs SET ref_count=?4, retain_until_ms=NULL
-                     WHERE logical_ref=?1 AND provider_id=?2 AND session_id=?3 AND state=?5",
-                    params![
-                        blob_ref.as_str(),
-                        scope.provider_id.as_str(),
-                        scope.session_id.as_str(),
-                        stored_i64(next),
-                        STATE_READY,
-                    ],
-                )?;
-                Ok(next)
-            })
-            .await?
     }
 
     pub async fn release(

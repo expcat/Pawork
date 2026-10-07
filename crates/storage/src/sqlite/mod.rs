@@ -40,34 +40,25 @@ enum Command {
     },
 }
 
-/// SQLite Actor 的打开选项。
+/// SQLite Actor 的内部打开模式；容量与 busy timeout 使用固定宿主默认值。
 #[derive(Clone, Debug)]
-pub struct DatabaseOptions {
-    pub path: PathBuf,
-    pub read_only: bool,
-    pub create_if_missing: bool,
-    pub queue_capacity: usize,
-    pub busy_timeout: Duration,
+struct DatabaseOptions {
+    path: PathBuf,
+    read_only: bool,
 }
 
 impl DatabaseOptions {
-    pub fn read_write(path: impl Into<PathBuf>) -> Self {
+    fn read_write(path: impl Into<PathBuf>) -> Self {
         Self {
             path: path.into(),
             read_only: false,
-            create_if_missing: true,
-            queue_capacity: DEFAULT_QUEUE_CAPACITY,
-            busy_timeout: DEFAULT_BUSY_TIMEOUT,
         }
     }
 
-    pub fn read_only(path: impl Into<PathBuf>) -> Self {
+    fn read_only(path: impl Into<PathBuf>) -> Self {
         Self {
             path: path.into(),
             read_only: true,
-            create_if_missing: false,
-            queue_capacity: DEFAULT_QUEUE_CAPACITY,
-            busy_timeout: DEFAULT_BUSY_TIMEOUT,
         }
     }
 }
@@ -93,17 +84,14 @@ impl DatabaseActor {
         Self::open_with_options(DatabaseOptions::read_only(path)).await
     }
 
-    pub async fn open_with_options(options: DatabaseOptions) -> Result<Self, DatabaseError> {
-        if options.queue_capacity == 0 {
-            return Err(DatabaseError::InvalidQueueCapacity);
-        }
+    async fn open_with_options(options: DatabaseOptions) -> Result<Self, DatabaseError> {
         if !options.read_only {
             if let Some(parent) = options.path.parent() {
                 fs::create_dir_all(parent)?;
             }
         }
 
-        let (sender, receiver) = mpsc::channel(options.queue_capacity);
+        let (sender, receiver) = mpsc::channel(DEFAULT_QUEUE_CAPACITY);
         let (ready_tx, ready_rx) = oneshot::channel();
         let thread_options = options.clone();
         let worker = thread::Builder::new()
@@ -253,14 +241,12 @@ fn open_connection(options: &DatabaseOptions) -> Result<Connection, DatabaseErro
     let flags = if options.read_only {
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX
     } else {
-        let mut flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
-        if options.create_if_missing {
-            flags |= OpenFlags::SQLITE_OPEN_CREATE;
-        }
-        flags
+        OpenFlags::SQLITE_OPEN_READ_WRITE
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX
+            | OpenFlags::SQLITE_OPEN_CREATE
     };
     let connection = Connection::open_with_flags(&options.path, flags)?;
-    connection.busy_timeout(options.busy_timeout)?;
+    connection.busy_timeout(DEFAULT_BUSY_TIMEOUT)?;
     connection.pragma_update(None, "foreign_keys", "ON")?;
     if !options.read_only {
         connection.pragma_update(None, "journal_mode", "WAL")?;
@@ -279,8 +265,6 @@ pub enum DatabaseError {
     OperationPanicked,
     #[error("database actor returned an unexpected response type")]
     ResponseTypeMismatch,
-    #[error("database queue capacity must be greater than zero")]
-    InvalidQueueCapacity,
     #[error("backup destination must differ from the source database")]
     BackupTargetsSource,
     #[error("operation is not available in read-only recovery mode")]

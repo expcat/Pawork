@@ -106,17 +106,17 @@ impl<'de> Deserialize<'de> for BlobId {
     }
 }
 
-/// [`ArtifactStore::open_with_options`] 的打开选项。
+/// 内部打开选项；定向回归用磁盘预算验证写入拒绝边界。
 #[derive(Clone, Debug)]
-pub struct ArtifactStoreOptions {
+struct ArtifactStoreOptions {
     /// 存储根目录，`blobs/` 与 `artifacts.sqlite3` 位于其下。
-    pub root: PathBuf,
+    root: PathBuf,
     /// 允许的全部 blob 总字节上限；`None` 表示不限制。
-    pub disk_budget: Option<u64>,
+    disk_budget: Option<u64>,
 }
 
 impl ArtifactStoreOptions {
-    pub fn new(root: impl Into<PathBuf>) -> Self {
+    fn new(root: impl Into<PathBuf>) -> Self {
         Self {
             root: root.into(),
             disk_budget: None,
@@ -193,9 +193,7 @@ impl ArtifactStore {
     }
 
     /// 打开（必要时创建）存储：`<root>/blobs/` 目录与元数据数据库。
-    pub async fn open_with_options(
-        options: ArtifactStoreOptions,
-    ) -> Result<Self, ArtifactStoreError> {
+    async fn open_with_options(options: ArtifactStoreOptions) -> Result<Self, ArtifactStoreError> {
         let blobs_dir = options.root.join(BLOBS_DIR);
         fs::create_dir_all(&blobs_dir).map_err(|source| ArtifactStoreError::Io {
             source,

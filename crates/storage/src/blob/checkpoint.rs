@@ -10,7 +10,6 @@
 //!   记录 pre 内容 `BlobId` + unix 模式 + 是否存在，挂到该 tool_call 的 change 记录。
 //! - `rollback_tool_call` / `rollback_run`：从 Blob 取回内容，同目录 tmp+sync+rename
 //!   原子写恢复；删除新增文件；按逆序恢复。
-//! - `conflict_check`：重读文件重算 BLAKE3，与 pre 哈希比对，不同即用户改过。
 //! - 路径解析：`roots` 切片逐个 `join(relative_path)` + `canonicalize`，校验在某
 //!   root 内，拒绝 `..` 穿越与绝对路径。
 //!
@@ -58,13 +57,6 @@ pub struct RunCheckpoint {
     pub created_at_ms: u64,
     pub head: Option<String>,
     pub changes: Vec<ChangeRecord>,
-}
-
-/// `conflict_check` 的结果。
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ConflictReport {
-    pub relative_path: String,
-    pub user_modified: bool,
 }
 
 /// Checkpoint / 回滚错误。
@@ -173,23 +165,6 @@ impl CheckpointService {
         let snapshot = guard(&self.state).clone();
         let bytes = serde_json::to_vec(&snapshot)?;
         write_bytes_atomically((*self.state_path).clone(), bytes).await
-    }
-
-    /// 幂等：确保 run 条目存在（`head = None`）。
-    pub async fn snapshot_run(&self, run_id: &str) -> Result<(), CheckpointError> {
-        {
-            let mut state = guard(&self.state);
-            state
-                .runs
-                .entry(run_id.to_string())
-                .or_insert_with(|| RunCheckpoint {
-                    run_id: run_id.to_string(),
-                    created_at_ms: now_ms(),
-                    head: None,
-                    changes: Vec::new(),
-                });
-        }
-        self.persist().await
     }
 
     /// 写前快照：读取当前内容（若存在）存 Blob，挂到该 tool_call 的 change 记录。
@@ -365,45 +340,6 @@ impl CheckpointService {
         Ok(all)
     }
 
-    /// 冲突检测：重读文件重算 BLAKE3，与 pre 哈希比对。
-    pub async fn conflict_check(
-        &self,
-        run_id: &str,
-        tool_call_id: &str,
-        relative_path: &str,
-    ) -> Result<ConflictReport, CheckpointError> {
-        let snapshot = self.find_snapshot(run_id, tool_call_id, relative_path)?;
-        let absolute = {
-            let state = guard(&self.state);
-            state
-                .paths
-                .get(run_id)
-                .and_then(|calls| calls.get(tool_call_id))
-                .and_then(|map| map.get(relative_path))
-                .cloned()
-        };
-
-        let user_modified = match (snapshot.pre_hash.as_ref(), absolute.as_ref()) {
-            (None, _) => false,
-            (Some(pre_hash), Some(target)) => match tokio::fs::read(target).await {
-                Ok(bytes) => blake3::hash(&bytes).to_hex().to_string() != *pre_hash,
-                Err(source) if source.kind() == std::io::ErrorKind::NotFound => true,
-                Err(source) => {
-                    return Err(CheckpointError::Io {
-                        context: format!(" while reading {}", target.display()),
-                        source,
-                    });
-                }
-            },
-            (Some(_), None) => false,
-        };
-
-        Ok(ConflictReport {
-            relative_path: relative_path.to_string(),
-            user_modified,
-        })
-    }
-
     /// 同步快照：返回某 run 的 checkpoint 克隆。
     pub fn list_changes(&self, run_id: &str) -> Option<RunCheckpoint> {
         let state = guard(&self.state);
@@ -467,20 +403,6 @@ impl CheckpointService {
                         .cloned()
                 })
         })
-    }
-
-    fn find_snapshot(
-        &self,
-        run_id: &str,
-        tool_call_id: &str,
-        relative_path: &str,
-    ) -> Result<FileSnapshot, CheckpointError> {
-        self.existing_snapshot(run_id, tool_call_id, relative_path)
-            .ok_or_else(|| {
-                CheckpointError::NotFound(format!(
-                    "run {run_id} / tool_call {tool_call_id} / {relative_path}"
-                ))
-            })
     }
 }
 
@@ -748,54 +670,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn conflict_check_detects_user_modification() {
-        let h = Harness::new("conflict").await;
-        let svc = CheckpointService::new(h.store.clone());
-        let target = h.ws.join("f.txt");
-        std::fs::write(&target, b"base").expect("write");
-
-        svc.snapshot_before_write("run", "tc", &h.roots(), "f.txt")
-            .await
-            .expect("snapshot");
-
-        let report = svc
-            .conflict_check("run", "tc", "f.txt")
-            .await
-            .expect("check unchanged");
-        assert!(!report.user_modified);
-
-        std::fs::write(&target, b"user edit").expect("user modifies");
-        let report = svc
-            .conflict_check("run", "tc", "f.txt")
-            .await
-            .expect("check modified");
-        assert!(report.user_modified);
-
-        std::fs::remove_file(&target).expect("user deletes");
-        let report = svc
-            .conflict_check("run", "tc", "f.txt")
-            .await
-            .expect("check deleted");
-        assert!(report.user_modified, "deletion counts as modification");
-        h.shutdown().await;
-    }
-
-    #[tokio::test]
-    async fn conflict_check_for_new_file_is_not_modified() {
-        let h = Harness::new("conflict-new").await;
-        let svc = CheckpointService::new(h.store.clone());
-        svc.snapshot_before_write("run", "tc", &h.roots(), "fresh.txt")
-            .await
-            .expect("snapshot");
-        let report = svc
-            .conflict_check("run", "tc", "fresh.txt")
-            .await
-            .expect("check");
-        assert!(!report.user_modified);
-        h.shutdown().await;
-    }
-
-    #[tokio::test]
     async fn rollback_run_restores_all_tool_calls_in_reverse() {
         let h = Harness::new("run").await;
         let svc = CheckpointService::new(h.store.clone());
@@ -804,7 +678,6 @@ mod tests {
         std::fs::write(&a, b"A0").expect("write a");
         std::fs::write(&b, b"B0").expect("write b");
 
-        svc.snapshot_run("run").await.expect("snapshot_run");
         svc.snapshot_before_write("run", "tc1", &h.roots(), "a.txt")
             .await
             .expect("snap a");
@@ -936,19 +809,6 @@ mod tests {
         let report = h.store.gc().await.expect("gc");
         assert_eq!(report.deleted, 1);
         assert!(!h.store.blob_path(&blob).exists(), "gc must reclaim blob");
-        h.shutdown().await;
-    }
-
-    #[tokio::test]
-    async fn snapshot_run_is_idempotent_and_keeps_head_none() {
-        let h = Harness::new("idem").await;
-        let svc = CheckpointService::new(h.store.clone());
-        svc.snapshot_run("run").await.expect("first");
-        svc.snapshot_run("run").await.expect("second");
-        let cp = svc.list_changes("run").expect("list");
-        assert_eq!(cp.run_id, "run");
-        assert_eq!(cp.head, None);
-        assert!(cp.changes.is_empty());
         h.shutdown().await;
     }
 
