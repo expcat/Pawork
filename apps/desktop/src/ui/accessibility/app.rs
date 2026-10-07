@@ -663,6 +663,10 @@ impl AppView {
                 self.open_inspector_tool(InspectorTab::Resources, cx);
                 self.close_open_menu(cx);
             }
+            "inspector-tab-computer" => {
+                self.open_inspector_tool(InspectorTab::Computer, cx);
+                self.close_open_menu(cx);
+            }
             "inspector-tab-browser" => {
                 self.open_inspector_tool(InspectorTab::Browser, cx);
                 self.close_open_menu(cx);
@@ -696,6 +700,10 @@ impl AppView {
                 self.launch_inspector_tool(InspectorTab::Subagent, cx);
                 self.close_open_menu(cx);
             }
+            "inspector-menu-computer" => {
+                self.launch_inspector_tool(InspectorTab::Computer, cx);
+                self.close_open_menu(cx);
+            }
             other if other.starts_with("inspector-open-") || other.starts_with("file-tab-") => {
                 if let Some(tab) = self.panel_tabs(cx).into_iter().find(|tab| tab.id == other) {
                     self.activate_panel_tab(&tab, cx);
@@ -716,6 +724,16 @@ impl AppView {
             "changes-diff-scroll-left" => self.scroll_diff_horizontal(-1.0, cx),
             "changes-diff-scroll-right" => self.scroll_diff_horizontal(1.0, cx),
             "resources-refresh" => self.refresh_resources(cx),
+            "computer-refresh" => self.refresh_computer_targets(cx),
+            // CU-18：目标授权 / 撤销按钮（identifier = 前缀 + 目标 key，
+            // 与 render 同源；反查与 gate 在 computer_action_by_id）。
+            other if other
+                .starts_with(crate::ui::computer::COMPUTER_APPROVE_ONCE_PREFIX)
+                || other.starts_with(crate::ui::computer::COMPUTER_APPROVE_RUN_PREFIX)
+                || other.starts_with(crate::ui::computer::COMPUTER_REVOKE_PREFIX) =>
+            {
+                self.computer_action_by_id(other, cx);
+            }
             "terminal-new-tab" => self.on_new_terminal_tab(cx),
             other if other.starts_with("terminal-tab-") => {
                 if let Some(id) = other.strip_prefix("terminal-tab-") {
@@ -3641,6 +3659,9 @@ impl AppView {
             InspectorTab::Terminal => inspector.child(self.terminal_ax(window, cx, body)),
             InspectorTab::Changes => inspector.child(self.changes_ax(window, body)),
             InspectorTab::Resources => inspector.child(self.resources_ax(window, body)),
+            InspectorTab::Computer => {
+                inspector.child(crate::ui::computer::computer_ax(self, window, body))
+            }
             InspectorTab::Browser => inspector.child(self.browser_ax(window, cx, body)),
             InspectorTab::Files => inspector.child(self.files_ax(window, cx, body)),
             InspectorTab::Subagent => {

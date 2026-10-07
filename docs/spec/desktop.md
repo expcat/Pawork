@@ -41,6 +41,7 @@ flowchart LR
     I --> CH["Changes\n只读"]
     I --> PTY["Terminal"]
     I --> RES["Resources\nMCP只读"]
+    I --> CU["Computer use\n目标与授权"]
     R --> SET["Settings\n供应商 / 模型 / 其它设置"]
 ```
 
@@ -52,6 +53,7 @@ flowchart LR
 | Inspector / Changes | OPT-4b 起默认折叠（Header `inspector-expand` 重开）；顶层 Changes/Terminal/Resources 与二级 Files/Summary 分层；DiffView；折叠态 Header ActivityPopover | 只读；无 stage/unstage/hunk 命令。 |
 | Inspector / Terminal | 紧凑标签栏与直接输入的终端窗口；自动启动、自动适配视口、行内光标、粘贴及控制键；流式输出与 live/snapshot 终态 | 无独立输入栏、发送或手动尺寸控件；创建仍需 Policy；支持 shell 行编辑，尚不是完整 VT emulator。关闭标签走真实 `terminal_close`。 |
 | Inspector / Resources | MCP server/tool 状态、刷新 | 只读；没有已加载 AGENTS.md/Skills 分区。 |
+| Inspector / Computer use | computer-use 目标状态卡（授权 / 绑定 / 占用 / 暂停 / 能力矩阵）与授权管理：允许一次、本 run 允许、撤销 | 数据只来自 Host 登记事实（grants ∪ 绑定窗口）；授权仅当前 run、不持久化；按钮 gate 与 AX 同源，旧 Host（GUI API <1.27）显示版本要求占位。 |
 | Settings | English / 中文 Settings Rail + 全宽可滚动内容列（两侧 32px padding，OPT-4c 取消 820px 上限）；Models & providers、Network、Approvals、Tools & MCP、Terminal、Appearance、Advanced、About | P2 已产品化现有能力，OPT-3 起 Models 页为首「Default models」四角色区、Manage models 弹层与代理 Switch；provider 64px 概览与独立认证操作行、Network 写入 workspace 外的用户 `config.toml`、Approvals 整行 radio、Appearance 即时字号样例、Advanced/About definition list。Host-backed 页按权威能力显示并在 stale 时禁写，本地 Appearance/Advanced 离线常在；普通 UI / AX summary 不显示 credential 片段。本机视觉/键盘走查已完成；四家真实认证/目录矩阵与 E4 用户签字仍单独登记。 |
 
 ## 3. 连接与状态模型

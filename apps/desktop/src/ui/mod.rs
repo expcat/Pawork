@@ -12,6 +12,7 @@ mod barriers;
 mod browser;
 mod changes;
 mod components;
+mod computer;
 mod drawing;
 mod files;
 mod goal;
@@ -655,6 +656,8 @@ pub struct AppView {
     changes: ChangesPanelState,
     /// Resources 面状态（MCP server 清单、滚动句柄）。
     resources: ResourcesPanelState,
+    /// Computer-use 面状态（CU-18：目标清单、授权在途、滚动句柄）。
+    computer: computer::ComputerPanelState,
     /// 当前打开的菜单；单一状态位保证至多一个打开（§8.2）。
     open_menu: Option<MenuKind>,
     /// Scope / Model 等菜单的键盘高亮行（None = 尚未移动，回落到
@@ -739,6 +742,11 @@ pub struct AppView {
     changes_diff_scroll_right_focus: FocusHandle,
     changes_file_focus: BTreeMap<String, FocusHandle>,
     resources_refresh_focus: FocusHandle,
+    computer_refresh_focus: FocusHandle,
+    /// Computer-use 卡片授权按钮 / 卡片行的键盘焦点与实测布局（按动作
+    /// id / 行 id 懒建；渲染期随可见键 retain，不跨会话累积）。
+    computer_item_focus: HashMap<String, FocusHandle>,
+    computer_item_layouts: HashMap<String, ScrollHandle>,
     subagent_chips_scroll: ScrollHandle,
     /// 对话栏代理切换 chip 焦点（按 agent_id 懒建；渲染期随可见代理
     /// retain，不跨会话累积）。
@@ -1043,6 +1051,7 @@ impl AppView {
             inspector_item_focus: HashMap::new(),
             changes: ChangesPanelState::default(),
             resources: ResourcesPanelState::default(),
+            computer: computer::ComputerPanelState::default(),
             open_menu: None,
             menu_highlight: None,
             pending_keyboard_menu_select: None,
@@ -1172,6 +1181,12 @@ impl AppView {
                 .focus_handle()
                 .tab_stop(true)
                 .tab_index(INSPECTOR_TAB_INDEX),
+            computer_refresh_focus: cx
+                .focus_handle()
+                .tab_stop(true)
+                .tab_index(INSPECTOR_TAB_INDEX),
+            computer_item_focus: HashMap::new(),
+            computer_item_layouts: HashMap::new(),
             subagent_chips_scroll: ScrollHandle::new(),
             subagent_agent_focus: HashMap::new(),
             subagent_reveal_selected: false,
@@ -1919,6 +1934,7 @@ impl AppView {
                     .set_connection(ConnectionState::Disconnected { reason });
                 self.changes.mark_stale(&stale_reason);
                 self.resources.mark_stale(&stale_reason);
+                self.computer.mark_stale(&stale_reason);
                 self.projection.mark_settings_stale(&stale_reason);
                 self.terminal_pending_write.clear();
                 self.terminal_queued_write.clear();
@@ -2027,6 +2043,14 @@ impl AppView {
                 }
                 if had_active_run && self.projection.active_run_id.is_none() {
                     self.refresh_changes(cx);
+                }
+                // CU-18：目标清单只覆盖活跃 run 的 registry 登记；run
+                // 开始 / 终态切换时重查（页面打开才查，不常驻轮询）。
+                if self.inspector_open
+                    && self.inspector_tab == InspectorTab::Computer
+                    && had_active_run != self.projection.active_run_id.is_some()
+                {
+                    self.refresh_computer_targets(cx);
                 }
                 // 子代理观测：父会话 subagent.spawned / child 会话 Run 终态
                 // 到达即刷新「子智能体」卡（浮层或对话栏打开期间）；对话栏
@@ -2821,6 +2845,39 @@ impl AppView {
                         Some(i18n::t("status.load_resources_failed").replace("{}", &reason));
                 }
             }
+            ControllerEvent::ComputerTargetsLoaded {
+                session_id,
+                request_id,
+                data,
+            } => {
+                self.computer.apply_loaded(&session_id, request_id, data);
+            }
+            ControllerEvent::ComputerTargetsFailed {
+                session_id,
+                request_id,
+                reason,
+            } => {
+                self.computer.apply_failed(&session_id, request_id, reason);
+            }
+            ControllerEvent::ComputerTargetActionFinished {
+                session_id,
+                action_id,
+                result,
+            } => {
+                let approved = result.is_ok();
+                let settled = self.computer.finish_action(&session_id, action_id, result);
+                // Ok：Host 已落地授权 / 撤销，重查列表收敛权威状态
+                //（回执只回显生效 target 与寿命，不带完整清单）。代次不
+                // 匹配的迟到回执（切会话 / 断线后到达）不收敛状态、不触发
+                // 重查。
+                if settled
+                    && approved
+                    && self.inspector_open
+                    && self.inspector_tab == InspectorTab::Computer
+                {
+                    self.refresh_computer_targets(cx);
+                }
+            }
         }
         self.arm_run_clock(cx);
         cx.notify();
@@ -2946,6 +3003,9 @@ impl AppView {
         self.refresh_changes(cx);
         if self.inspector_open && self.inspector_tab == InspectorTab::Resources {
             self.refresh_resources(cx);
+        }
+        if self.inspector_open && self.inspector_tab == InspectorTab::Computer {
+            self.refresh_computer_targets(cx);
         }
         if self.inspector_open && self.inspector_tab == InspectorTab::Subagent {
             self.refresh_subagent_conversation();
@@ -4369,6 +4429,7 @@ impl AppView {
             InspectorTab::Files => self.ensure_files(cx),
             InspectorTab::Changes => self.refresh_changes(cx),
             InspectorTab::Resources => self.refresh_resources(cx),
+            InspectorTab::Computer => self.refresh_computer_targets(cx),
             InspectorTab::Subagent => self.refresh_subagent_conversation(),
             InspectorTab::Terminal => {
                 if self.projection.terminal.session_id.is_none()

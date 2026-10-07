@@ -30,6 +30,7 @@ pub(super) enum InspectorTab {
     Changes,
     Terminal,
     Resources,
+    Computer,
     Browser,
     Files,
     Subagent,
@@ -38,10 +39,11 @@ pub(super) enum InspectorTab {
 }
 
 impl InspectorTab {
-    pub(super) const ALL: [Self; 6] = [
+    pub(super) const ALL: [Self; 7] = [
         Self::Changes,
         Self::Terminal,
         Self::Resources,
+        Self::Computer,
         Self::Browser,
         Self::Files,
         Self::Subagent,
@@ -53,6 +55,7 @@ impl InspectorTab {
             Self::Changes => t("inspector.tab_changes"),
             Self::Terminal => t("inspector.tab_terminal"),
             Self::Resources => t("inspector.tab_resources"),
+            Self::Computer => t("inspector.tab_computer"),
             Self::Browser => t("inspector.tab_browser"),
             Self::Files => t("inspector.tab_files"),
             Self::Subagent => t("inspector.tab_subagent"),
@@ -65,6 +68,7 @@ impl InspectorTab {
             Self::Changes => "inspector-tab-changes",
             Self::Terminal => "inspector-tab-terminal",
             Self::Resources => "inspector-tab-resources",
+            Self::Computer => "inspector-tab-computer",
             Self::Browser => "inspector-tab-browser",
             Self::Files => "inspector-tab-files",
             Self::Subagent => "inspector-tab-subagent",
@@ -77,6 +81,7 @@ impl InspectorTab {
             Self::Changes => "inspector-menu-changes",
             Self::Terminal => "inspector-menu-terminal",
             Self::Resources => "inspector-menu-resources",
+            Self::Computer => "inspector-menu-computer",
             Self::Browser => "inspector-menu-browser",
             Self::Files => "inspector-menu-files",
             Self::Subagent => "inspector-menu-subagent",
@@ -118,6 +123,7 @@ impl InspectorTab {
             Self::Changes => Icon::Changes,
             Self::Terminal => Icon::Terminal,
             Self::Resources => Icon::Resources,
+            Self::Computer => Icon::Approvals,
             Self::Browser => Icon::Network,
             Self::Files => Icon::File,
             Self::Subagent => Icon::Subagents,
@@ -130,6 +136,7 @@ impl InspectorTab {
             Self::Changes => "inspector.changes_hint",
             Self::Terminal => "inspector.terminal_hint",
             Self::Resources => "inspector.resources_hint",
+            Self::Computer => "inspector.computer_hint",
             Self::Browser => "inspector.browser_hint",
             Self::Files => "inspector.files_hint",
             Self::Subagent => "inspector.subagent_hint",
@@ -292,6 +299,7 @@ impl AppView {
             InspectorTab::Changes => self.changes_element(window, cx).into_any_element(),
             InspectorTab::Terminal => self.terminal_page_element(window, cx).into_any_element(),
             InspectorTab::Resources => self.resources_element(cx).into_any_element(),
+            InspectorTab::Computer => self.computer_element(window, cx).into_any_element(),
             InspectorTab::Browser => self.browser_element(cx).into_any_element(),
             InspectorTab::Files => self.files_element(window, cx).into_any_element(),
             InspectorTab::Subagent => self

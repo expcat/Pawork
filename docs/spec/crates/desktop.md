@@ -36,6 +36,7 @@
 | `src/controller/settings.rs` | ~1173 | Settings 查询与写（provider_auth_status、auth_*、general/permissions/terminal、mcp_test/remove、set_provider_use_proxy；ADR-055 增 set_model_enabled / set_provider_models_enabled / set_default_role_model（conversation 角色复用既有 default 键，不再经独立 set_default_model），回执 `cleared_roles` 投影为一次性提示文案）；ADR-061 `auth_account_rename` 仅 minor ≥17 派出，成功后重查 provider 状态；ADR-060/061 补 load_account_quota（minor ≥16）、set_account_selection_mode、auth_account_change（select/remove，minor ≥15），epoch 与 generation 拒绝旧回执；断线不派出；GUI 1.20 增子代理设置读 / 全态写、列表与取消（取消成功后重查列表），ADR-063 增 `set_model_reasoning`（minor ≥21，断线不派出，回执经 `ModelReasoningConfirmed` 收敛） |
 | `src/controller/terminal.rs` | ~208 | terminal_create / write / resize / close 与 ADR-045 回执 |
 | `src/controller/products.rs` | ~65 | Plan / Goal / Recording / Video / Drawing 与任务消耗的 typed 请求；minor ≥24 / ≥26 才派出，等待在 Tokio runtime |
+| `src/controller/computer.rs` | ~149 | CU-18（GUI API 1.27）：computer_target_list 查询与 computer_target_approve / revoke 命令；minor <27 或断线不派出（返回 false 由 UI 收口）；回执事件 ComputerTargetsLoaded/Failed 与 ComputerTargetActionFinished |
 | `src/platform.rs` | ~233 | `Platform`（tokio multi_thread Runtime，`handle()` / `block_on()`）；`default_socket_path` / `socket_path_for_instance` / `token_path_for_instance` / `token_path_for_socket` 路径发现；deny-list 断言；3 个测试 |
 | `src/platform/preferences.rs` | ~157 | `desktop.json` 的语言与 window rem；只改本次写入的字段，保留未知键，损坏文件不覆盖；2 个测试 |
 | `src/projection/mod.rs` | ~579 | `DesktopProjection` 装配与 live 事件应用；ADR-063 `pending_effort`（Composer 显式强度，模型切换 / 权威刷新同步清除）；Settings 断线 `mark_settings_stale` 单点扇出 |
@@ -76,6 +77,7 @@
 | `src/ui/terminal_view.rs` | ~355 | 终端显示的 gpui 胶水层：[pawork-terminal](terminal.md) 属性分段 → 主题色 StyledText runs、Keystroke → KeyEvent 转换、resize 防抖常量；行缓冲解析 / 按键映射 / 面板像素→列×行估算在 `crates/terminal`；2 个测试 |
 | `src/ui/changes.rs` | ~1442 | Changes 面：Files / Summary、只读 DiffView、latest-session mismatch fail-closed 与诚实 scope；empty / unavailable / stale 使用分层占位；GUI3-08 加载态保留标题并加静态骨架。GUI2-05 / R-04：`parse_hunk_header` / `diff_hunk_line_numbers` 从 hunk 头本地递推双列行号（不改 wire，畸形头空行号）；整行 `diff.*` 浅底 token；32px 紧凑文件行 `changes_status_chip`（M / A / D 色标 + 路径 + `+A/−D`）。`has_reviewable_files_for` 要求 active session、Ready、非 stale 且文件非空，供 Run summary render/AX 同源门控。折叠态 Header ActivityPopover 为 320px 内容宽，GUI 1.20 增「子智能体」展示卡（标题 + 运行/完成计数；ADR-063 起行内单行 = 名称 + 生效模型 + 强度 + 状态，运行中 / 等待中稳定置顶，列表 clamp 至 5 行并限高滚动；行可点击（进入 Inspector「子代理」对话栏）；仅绑定当前活动会话，无会话 / 加载 / 空态如实展示，取消入口留在协议层）；7 个测试 |
 | `src/ui/resources.rs` | ~371 | Resources 页：MCP server 只读表 + `ResourcesPanelState`（epoch 防过期）+ 手动刷新；empty / unavailable / error / stale 分层；GUI3-08 加载态加静态骨架；SET-6c 权威回执 bump epoch；3 个测试 |
+| `src/ui/computer.rs` | ~1245 | Inspector「后台操作」页（CU-18）：computer-use 目标卡列表（标题 / 族行 / 授权态 / 能力 chips ✓?× + 最小化收窄说明 / 系统权限指引）+ 每卡允许一次 / 本 run 允许 / 撤销三按钮；`ComputerPanelState` 按 session 绑定 + request_id 防过期，断线保留旧数据标 stale；授权 gate = 连接 × Host minor ≥27 × 活动 run × 面板绑定当前会话 × 无在途，渲染 disabled 与 AX enabled 同源；授权 / 撤销 Ok 回执后重查列表收敛；unavailable / version_required / no_task / no_workspace / no_run / empty / loading / failed 分层空态；AX 组 description 承载 fetch/stale/动作错误，行与按钮只发实测几何（视口裁剪，零面积不发布），dispatch 按动作前缀反查目标 fail-closed；4 个状态单测 + 1 个 AX 钉板 |
 | `src/ui/settings/mod.rs` | ~1937 | English / 中文 Settings 壳与稳定九页导航（GUI 1.20 增「子代理」页与共享控件 identifier / 解析、权限标签、并发解析）（GUI2-06：导航按「模型 / 工作台 / 系统」三组加 12px 组头 `settings-nav-group-*`，组内全隐则组头隐；查询非空时导航被查找结果替换；`settings_element` 支持定位行标识）；OPT-4c 起内容列用满 Rail 外可用宽度（`SETTINGS_CONTENT_PAD` 32×2，不再保留 820px 上限），共享脚手架单列 + 滚动层，受限高度内纵向滚动、切页归零；OPT-4d 导航选中/未选中共用同一外壳几何（UI-5：中性背景 + 字重；焦点描边经 focus_ring 覆盖层，零布局参与），文字坐标零位移（F4）；共享状态 / gate、descriptor 驱动认证动作与 Connect API key 编辑入口；5 个测试（空 shell Save 映射 null；OPT-3 角色区/弹层渲染 gate；角色控件 identifier 构造/解析互逆） |
 | `src/ui/settings/search.rs` | ~858 | GUI2-06：静态目录 `settings_search_entries()`（page / row_id / 中英标题 / 说明 / 别名）与 `filter_settings_search_entries`（忽略英文大小写、按页面 gate 过滤）；Settings 左栏返回按钮下独立 `TextInput` 查找框（`settings-search-input`，不进草稿、不读 secure 缓冲，离开 Settings 清空）、结果列表（`settings-search-result-*`，↑/↓ / Enter / Esc）；`locate_settings_entry` → 切页 → `finish_settings_locate` 用实测框滚入目标行并约 2s 标识（`surface.hover` + 2px accent 左缘）、焦点落控件；只导航不写；供 `quick_search.rs` 共享页面 / 设置行标题；2 个测试 |
 | `src/ui/settings/provider_quota.rs` | ~515 | Go 账号三窗进度条 + 已用百分比、重置倒计时与过期/加载标注；AX 仍用完整已用/剩余/来源文本；刷新、选择模式控件与共享 AX 状态（ADR-060 / ADR-061 / UX-06） |
@@ -389,6 +391,7 @@ OPT-2 审查修复（2026-09-06）：`session_create` 仅从成功 Data 回执�
 | 切换审批模式 / 会话信任 | `set_approval_mode` / `workspace_trust` | `ApprovalModeConfirmed` / `WorkspaceTrustConfirmed`（回执即写后状态） |
 | Changes | `diff_list_files` / `diff_get` | `DiffFilesLoaded` / `DiffContentLoaded`（带 epoch） |
 | Resources | `mcp_list` | `McpServersLoaded`（带 epoch） |
+| 后台操作（CU-18） | `computer_target_list` / `computer_target_approve` / `computer_target_revoke`（minor ≥27） | `ComputerTargetsLoaded` / `ComputerTargetsFailed`（带 session + request_id）/ `ComputerTargetActionFinished`（Ok 后重查列表收敛） |
 | 任意失败 | — | `OperationFailed{action, reason}` |
 
 domain id 类型未从 client re-export，命令 / 查询经冻结的 serde 形状（`method` / `params` JSON）构造，避免引入第二个业务依赖；`CommandSource::Automation` + `ActorIdentity::System` 仅为信封占位，服务端 host_stamp 统一覆盖为 LocalGui + LocalUser。
@@ -516,6 +519,7 @@ UI-2 新增 `session_actions_follow_hover_and_keyboard_without_opening`：真实
 | `ui/inspector.rs` | 终端输出控制序列解析；默认页签与面板/AX 在 accessibility 测试中核对移除旧控件、输出可聚焦与视口几何 |
 | `ui/terminal_view.rs` | GPUI 按键转换、空行 / 光标 / IME 预编辑文本 runs 完整性；解析与尺寸行为在 `pawork-terminal` 验证 |
 | `ui/resources.rs` | 默认 Idle、epoch 拒过期与断线保留旧数据但标记 stale |
+| `ui/computer.rs` | CU-18：过期 / 跨会话回执拒绝与换会话复位、断线保留数据并失效旧 request、授权回执按绑定会话落地、动作 id 转义与反查 roundtrip；AX 钉板钉目标行实测几何发布与无 client 时授权按钮禁用且 Press 无效果 |
 | `ui/markdown.rs` | Markdown 块结构 / 行数估算；Unicode / 流式保留内容；UX-02 表格对齐、escaped pipe / 代码内 pipe、代码原始 CRLF 复制、HTTP(S) 与配对括号链接 |
 | `ui/timeline_entry.rs` | R4 Wave A 纯逻辑：未知工具状态原样保留、失败/取消 detail 经 ToolRowView 构造归一；`display_time` epoch 串 → 相对词（now/Nm/Nh/Nd 边界）与非法串原样兜底 |
 | `ui/text_input.rs` | 多行粘贴行计数；AX set-value 清 marked range；动态 placeholder；Composer 视口预算不破面板总高；shift 选择经 SelectLeft/SelectRight 真实 action；IME 经真实 EntityInputHandler 路径 commit 单次入栈且中间态不可 undo；80 行真窗口 overflow scroll（max_offset>0、视口 28–163、caret 滚入视口）；滚动态点击映回可见内容行；reset_text 恢复草稿且清 undo；SET-4 增 secure 掩码只含 grapheme 数量对应掩码字符且非 secure 不发布掩码 |

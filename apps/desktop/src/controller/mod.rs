@@ -16,7 +16,8 @@ use std::time::Duration;
 use pawork_client::{
     ActorIdentity, AppCommand, AppEvent, AppEventEnvelope, AppQuery, AppResponse,
     AppResponseEnvelope, ApprovalModeWire, AuthStartData, ClientAuthentication, ClientConfig,
-    ClientError, CommandSource, ConnectOptions, DefaultModelPair, GeneralSettingsData,
+    ClientError, CommandSource, ComputerTargetListData, ConnectOptions, DefaultModelPair,
+    GeneralSettingsData,
     GlobalSequence, GuiCapability, GuiClient, GuiTransportClient, LocalTransport,
     PermissionsSettingsData, ProtocolErrorCode, ProviderAuthStatusData, ProviderUseProxyData,
     ResumeDisposition, ResumeOutcome, Snapshot, SubagentListData, SubagentSettingsData,
@@ -268,6 +269,27 @@ pub enum ControllerEvent {
     McpServersReceipt {
         servers: Vec<McpServerEntry>,
     },
+    /// computer_target_list 查询成功（CU-18，GUI API 1.27；按 session +
+    /// 请求代次归属，迟到回执不覆盖新查询）。
+    ComputerTargetsLoaded {
+        session_id: String,
+        request_id: u64,
+        data: ComputerTargetListData,
+    },
+    ComputerTargetsFailed {
+        session_id: String,
+        request_id: u64,
+        reason: String,
+    },
+    /// computer_target_approve / revoke 的回执：Ok 表示 Host 已落地
+    /// 授权决定，UI 随即重查权威列表；Err 为结构化 / 传输原因，落在
+    /// 面板内呈现（不冒充成功）。action_id 为派出代次：A→B→A 切换或
+    /// 断线后的迟到回执不匹配当前在途代次，不收敛状态也不触发重查。
+    ComputerTargetActionFinished {
+        session_id: String,
+        action_id: u64,
+        result: Result<(), String>,
+    },
     /// open_session 的会话级失败：携带 session_id，UI 仅在该会话仍为
     /// active 时复位分页状态（A→B 快切时 A 的迟到失败不影响 B）。
     SessionOpenFailed {
@@ -380,6 +402,7 @@ pub struct DesktopController {
 
 mod attachments;
 mod browser;
+mod computer;
 mod files;
 mod products;
 pub use attachments::{ComposerAttachment, ComposerAttachmentError, ComposerOptions};
