@@ -737,6 +737,29 @@ fn query_browser_next<'a>(
     })
 }
 
+// CU-17：三个带版本闸的观测/目标查询入口（direct 形态，行序与
+// registry gui.available 尾部一致）。
+fn query_observation_list<'a>(
+    adapter: &'a GuiHostAdapter,
+    envelope: &'a AppQueryEnvelope,
+) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
+    Box::pin(handlers::computer::observation_list(adapter, envelope))
+}
+
+fn query_observation_image_read<'a>(
+    adapter: &'a GuiHostAdapter,
+    envelope: &'a AppQueryEnvelope,
+) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
+    Box::pin(handlers::computer::observation_image_read(adapter, envelope))
+}
+
+fn query_computer_target_list<'a>(
+    adapter: &'a GuiHostAdapter,
+    envelope: &'a AppQueryEnvelope,
+) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
+    Box::pin(handlers::computer::computer_target_list(adapter, envelope))
+}
+
 fn command_browser_respond<'a>(
     adapter: &'a GuiHostAdapter,
     envelope: &'a AppCommandEnvelope,
@@ -760,6 +783,26 @@ fn command_browser_respond<'a>(
             run_id: None,
         })
     })
+}
+
+fn command_computer_target_approve<'a>(
+    adapter: &'a GuiHostAdapter,
+    envelope: &'a AppCommandEnvelope,
+    command: &'a AppCommand,
+) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
+    Box::pin(handlers::computer::computer_target_approve(
+        adapter, envelope, command,
+    ))
+}
+
+fn command_computer_target_revoke<'a>(
+    adapter: &'a GuiHostAdapter,
+    envelope: &'a AppCommandEnvelope,
+    command: &'a AppCommand,
+) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
+    Box::pin(handlers::computer::computer_target_revoke(
+        adapter, envelope, command,
+    ))
 }
 
 /// query 包装的转发实参：`inner` 只透传 `&query.query`；`envelope` 转发整个
@@ -825,6 +868,9 @@ gui_query_dispatch! {
     QUERY_HANDLERS;
     direct {
         "browser_next" => query_browser_next;
+        "observation_list" => query_observation_list;
+        "observation_image_read" => query_observation_image_read;
+        "computer_target_list" => query_computer_target_list;
     }
     "workspace_files" => query_workspace_files = handlers::files::query, envelope;
     "workspace_file_read" => query_workspace_file_read = handlers::files::query, envelope;
@@ -853,6 +899,8 @@ gui_command_dispatch! {
     COMMAND_HANDLERS;
     direct {
         "browser_respond" => command_browser_respond;
+        "computer_target_approve" => command_computer_target_approve;
+        "computer_target_revoke" => command_computer_target_revoke;
     }
     "workspace_file_write" => command_workspace_file_write = handlers::files::write;
     "workspace_add" => command_workspace_add = handlers::command::workspace_add;

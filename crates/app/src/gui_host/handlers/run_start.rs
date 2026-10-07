@@ -576,6 +576,17 @@ async fn start(
     let run_id = RunId::from(format!("run-gui-{}-{n}", now_timestamp().as_unix_millis()));
     adapter.browser.bind(&run_id, &envelope.source);
     let token = CancellationToken::new();
+    let target_workspace = workspace_id.clone();
+    // 审查修复 3：先登记活跃 scope 再注册 run——approve 过 run 检查后
+    // grant 必命中已 open 的 scope；终态 close 即移除，不累积终态记录。
+    adapter
+        .core
+        .read()
+        .await
+        .open_target_scope(&pawork_computer_use::target::Scope::new(
+            target_workspace.as_str(),
+            run_id.as_str(),
+        ));
     adapter.runs.register(
         ActiveGuiRun {
             run_id: run_id.clone(),
@@ -627,6 +638,12 @@ async fn start(
             let core = core.read().await;
             seal_run_without_terminal(&core, &bus, instance.clone(), &session, &run, &error).await;
         }
+        // 审查修复 1：终态关闭兜底——chat_turn 内 ? 早退（如 usage 记账
+        // 失败）绕过 services/run.rs 终态块时，这里仍幂等关闭授权 scope，
+        // 阻止竞态窗口内的 late approve 重新授权。
+        core.read().await.close_target_scope(
+            &pawork_computer_use::target::Scope::new(target_workspace.as_str(), run.as_str()),
+        );
         approvals.clear_run(&run);
         runs.remove(&run);
         browser.unbind(&run);

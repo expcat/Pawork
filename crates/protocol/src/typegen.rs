@@ -13,7 +13,9 @@ use std::path::{Path, PathBuf};
 
 use ts_rs::TS;
 
-use crate::app::SubagentListData;
+use crate::app::{
+    ComputerTargetListData, ObservationImageData, ObservationListData, SubagentListData,
+};
 use crate::headless::{HeadlessRequest, HeadlessResponse};
 use crate::{
     AppCommandEnvelope, AppEventEnvelope, AppQueryEnvelope, AppResponseEnvelope, ClientFrame,
@@ -132,6 +134,10 @@ fn generate_core_api(output: &Path) -> Result<(&'static str, BTreeMap<String, St
     // `subagent_list` 的 Data 载荷走 `AppResponse::Data(Value)`，不在 envelope
     // 依赖图内；作为 GUI 契约面（API 1.20+）显式导出。
     SubagentListData::export_all(&config)?;
+    // CU-17 观测与目标查询的 Data 载荷同因（不在依赖图内）显式导出。
+    ComputerTargetListData::export_all(&config)?;
+    ObservationListData::export_all(&config)?;
+    ObservationImageData::export_all(&config)?;
     pawork_domain::TaskUsageReport::export_all(&config)?;
     pawork_domain::TaskUsageOperationReport::export_all(&config)?;
     write_core_api_versions(output)?;
@@ -164,6 +170,9 @@ fn generate_gui_protocol(output: &Path) -> Result<(&'static str, BTreeMap<String
     ClientFrame::export_all(&config)?;
     ServerFrame::export_all(&config)?;
     SubagentListData::export_all(&config)?;
+    ComputerTargetListData::export_all(&config)?;
+    ObservationListData::export_all(&config)?;
+    ObservationImageData::export_all(&config)?;
     pawork_domain::TaskUsageReport::export_all(&config)?;
     Ok(("gui-protocol", collect_declarations(output)?))
 }

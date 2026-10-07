@@ -300,6 +300,13 @@ impl TargetAuthorizer {
         self.protected.contains(bundle_id.to_ascii_lowercase().as_str())
     }
 
+    /// CU-17: read-only iteration over recorded grants as
+    /// ((scope, target), kind). The GUI target list never mutates the
+    /// ledger; this is its only window into it.
+    pub fn grants(&self) -> impl Iterator<Item = (&(Scope, TargetIdentity), &GrantKind)> {
+        self.grants.iter()
+    }
+
     /// Record an explicit user approval. Re-granting replaces the previous
     /// kind (e.g. a spent one-shot grant, or an upgrade to for-run).
     pub fn grant(

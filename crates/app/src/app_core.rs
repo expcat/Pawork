@@ -21,6 +21,8 @@ use pawork_engine::{
     TokenEstimator as EngineTokenEstimator, TurnContext,
 };
 use pawork_models::{CatalogEntry, ModelRegistry};
+use pawork_computer_use::approval::{GrantKind, TargetIdentity};
+use pawork_computer_use::target::{NativeProbe, Scope, TargetRegistry};
 use pawork_storage::session::{SessionRecord, SessionStore, SessionStoreError, WorkspaceRecord};
 use pawork_tools::{ToolRegistry, ToolRegistryError, ToolScheduler, ToolSchedulerConfig};
 use pawork_workspace::config::{ConfigError, Loader, PaworkConfig, TerminalConfig};
@@ -404,6 +406,10 @@ pub struct AppCore {
     /// from_parts 等直连装配为 None（沿用既有清扫语义，仅供测试与
     /// 进程内复用）。
     pub(crate) instance_ownership: Option<InstanceOwnership>,
+    /// CU-17：computer-use 目标登记（授权 / 绑定 / 占用 / 暂停）。
+    /// GUI 目标列表与目标级审批 / 撤销的唯一状态源；探测后端装箱在
+    /// 此（macOS 真实后端，其余平台 fail-closed），GUI 路径永不 probe。
+    pub(crate) targets: Mutex<TargetRegistry<Box<dyn NativeProbe>>>,
 }
 
 /// 把 engine 的完整估算器桥接到 session 侧窄口 trait（依赖倒置的宿主实现）。
@@ -754,7 +760,48 @@ impl AppCore {
             next_message: AtomicU64::new(1),
             next_workspace: AtomicU64::new(1),
             instance_ownership: None,
+            targets: Mutex::new(TargetRegistry::new(pawork_computer_use::platform_probe())),
         }
+    }
+
+    /// CU-17：目标状态快照（grants ∪ 绑定，按 anchor 附加占用与暂停）。
+    /// 只读登记事实，不触发任何原生探测。
+    pub(crate) fn target_states(&self) -> Vec<pawork_computer_use::target::TargetState> {
+        self.lock_targets().target_states()
+    }
+
+    /// CU-17：目标级授权（computer_target_approve；Host 侧唯一写入口）。
+    pub(crate) fn grant_target(
+        &self,
+        scope: &Scope,
+        target: &TargetIdentity,
+        kind: GrantKind,
+    ) -> Result<(), pawork_computer_use::target::TargetError> {
+        self.lock_targets().grant(scope, target, kind)
+    }
+
+    /// CU-17：目标级撤销（撤销授权并释放占用 = 目标级停止）。
+    pub(crate) fn revoke_target(&self, scope: &Scope, target: &TargetIdentity) {
+        self.lock_targets().revoke(scope, target);
+    }
+
+    /// CU-17：run 起始登记活跃 scope（审查修复 3：grant 只接受已 open
+    /// 的 scope；须在 GUI run 注册表登记该 run 之前调用）。
+    pub(crate) fn open_target_scope(&self, scope: &Scope) {
+        self.lock_targets().open_scope(scope);
+    }
+
+    /// CU-17：run 终态关闭（授权随 run 消亡；CU-16 契约）。close 同时
+    /// 移除活跃登记，终态后到达的 approve 一律拒绝（审查修复 1/3）。
+    pub(crate) fn close_target_scope(&self, scope: &Scope) {
+        self.lock_targets().close_scope(scope);
+    }
+
+    fn lock_targets(&self) -> std::sync::MutexGuard<'_, TargetRegistry<Box<dyn NativeProbe>>> {
+        // 锁只在登记读写期间持有，永不跨 await；GUI 路径不触发 probe。
+        self.targets
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
     }
 
     /// 装配后补全 host 状态（config + 凭证后端）。

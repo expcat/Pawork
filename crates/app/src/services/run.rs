@@ -436,6 +436,13 @@ impl RunService {
         // 占用，不把 60 秒所有权留给下一个 Run 撞 Conflict；未占用过
         // 则为 no-op。GUI 断连不取消已进入 Host 的 Run，也不走到这里。
         pawork_tools::ComputerTool::release_shared(&loop_ctx.workspace_id, &run_id);
+        // CU-17：授权随 run 消亡（CU-16 契约）——目标级 grant、句柄与
+        // 占用一并清理并关闭 scope（终态后到达的 approve 拒绝）；
+        // GUI 断连不影响已进入 Host 的 Run 的终态清理。
+        core.close_target_scope(&pawork_computer_use::target::Scope::new(
+            loop_ctx.workspace_id.as_str(),
+            run_id.as_str(),
+        ));
         let usage = match &result {
             Ok(summary) => Some(summary.usage.clone()),
             Err(_) => core.projected_run_usage(session_id, &run_id).await,

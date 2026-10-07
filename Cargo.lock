@@ -4366,6 +4366,7 @@ dependencies = [
  "futures",
  "getrandom 0.4.3",
  "pawork-auth",
+ "pawork-computer-use",
  "pawork-control-plane",
  "pawork-domain",
  "pawork-engine",

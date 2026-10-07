@@ -1,0 +1,29 @@
+{
+  "data": {
+    "api_version": {
+      "major": 1,
+      "minor": 27
+    },
+    "identity": {
+      "actor_id": "actor-1",
+      "type": "local_user"
+    },
+    "issued_at": 1,
+    "query": {
+      "method": "observation_image_read",
+      "params": {
+        "limit": 4096,
+        "offset": 0,
+        "part_index": 0,
+        "sequence": 12,
+        "session_id": "session-1"
+      }
+    },
+    "request_id": "query-computer-1",
+    "source": {
+      "client_id": "gui-1",
+      "type": "local_gui"
+    }
+  },
+  "type": "query"
+}

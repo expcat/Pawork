@@ -1,0 +1,29 @@
+{
+  "data": {
+    "api_version": {
+      "major": 1,
+      "minor": 27
+    },
+    "request_id": "query-computer-1",
+    "responded_at": 3,
+    "response": {
+      "data": {
+        "byte_length": 4096,
+        "captured_at_ms": 2,
+        "data": "QUJDRA==",
+        "eof": false,
+        "event_id": "event-1",
+        "image_height": 1440,
+        "image_width": 2560,
+        "media_type": "image/png",
+        "offset": 0,
+        "part_index": 0,
+        "sequence": 12,
+        "session_id": "session-1",
+        "status": "historical"
+      },
+      "type": "data"
+    }
+  },
+  "type": "response"
+}

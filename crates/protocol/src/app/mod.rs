@@ -1,6 +1,7 @@
 //! CLI 与 GUI 共享的应用层协议类型。
 
 pub mod command;
+pub mod computer;
 pub mod event;
 pub mod limits;
 pub mod query;
@@ -11,6 +12,7 @@ pub mod subagents;
 pub mod version;
 
 pub use command::*;
+pub use computer::*;
 pub use event::*;
 pub use limits::*;
 pub use pawork_domain::{

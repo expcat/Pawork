@@ -12,7 +12,7 @@ use super::command::AppCommand;
 use super::query::AppQuery;
 use super::version::{
     ApiVersion, V1_0, V1_1, V1_10, V1_11, V1_12, V1_15, V1_16, V1_17, V1_18, V1_19, V1_2, V1_20,
-    V1_21, V1_22, V1_23, V1_24, V1_26, V1_3, V1_4, V1_5, V1_6, V1_7, V1_8,
+    V1_21, V1_22, V1_23, V1_24, V1_26, V1_27, V1_3, V1_4, V1_5, V1_6, V1_7, V1_8,
 };
 
 /// GUI 通道访问规格：是否可用 + 命令级所需能力。
@@ -702,6 +702,29 @@ static COMMANDS: &[RegistryEntry] = &[
         idempotent: false,
         since: V1_18,
     },
+    // CU-17：目标级授权/撤销；幂等（同参重授/重复撤销收敛到同一状态）。
+    RegistryEntry {
+        wire_name: "computer_target_approve",
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
+        headless: None,
+        acp: false,
+        idempotent: true,
+        since: V1_27,
+    },
+    RegistryEntry {
+        wire_name: "computer_target_revoke",
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
+        headless: None,
+        acp: false,
+        idempotent: true,
+        since: V1_27,
+    },
 ];
 
 static QUERIES: &[RegistryEntry] = &[
@@ -975,6 +998,40 @@ static QUERIES: &[RegistryEntry] = &[
         idempotent: true,
         since: V1_18,
     },
+    // CU-17：观测证据与目标状态查询；全部 GUI-only。
+    RegistryEntry {
+        wire_name: "observation_list",
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
+        headless: None,
+        acp: false,
+        idempotent: true,
+        since: V1_27,
+    },
+    RegistryEntry {
+        wire_name: "observation_image_read",
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
+        headless: None,
+        acp: false,
+        idempotent: true,
+        since: V1_27,
+    },
+    RegistryEntry {
+        wire_name: "computer_target_list",
+        gui: GuiChannelAccess {
+            available: true,
+            required_capability: None,
+        },
+        headless: None,
+        acp: false,
+        idempotent: true,
+        since: V1_27,
+    },
 ];
 
 /// 变体 → wire 名的唯一映射（从 gui_host 平移收编；禁止在通道侧再建镜像）。
@@ -1037,6 +1094,8 @@ pub fn command_wire_name(command: &AppCommand) -> &'static str {
         AppCommand::SubagentCancel { .. } => "subagent_cancel",
         AppCommand::SetModelReasoning { .. } => "set_model_reasoning",
         AppCommand::AttachmentUpload { .. } => "attachment_upload",
+        AppCommand::ComputerTargetApprove(..) => "computer_target_approve",
+        AppCommand::ComputerTargetRevoke(..) => "computer_target_revoke",
     }
 }
 
@@ -1067,6 +1126,9 @@ pub fn query_wire_name(query: &AppQuery) -> &'static str {
         AppQuery::BrowserNext { .. } => "browser_next",
         AppQuery::SubagentSettings => "subagent_settings",
         AppQuery::SubagentList { .. } => "subagent_list",
+        AppQuery::ObservationList { .. } => "observation_list",
+        AppQuery::ObservationImageRead { .. } => "observation_image_read",
+        AppQuery::ComputerTargetList { .. } => "computer_target_list",
     }
 }
 

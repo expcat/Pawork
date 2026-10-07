@@ -265,6 +265,23 @@ fn command_samples() -> Vec<(&'static str, Option<Value>)> {
                 "data": [110, 111, 116, 101, 10]
             })),
         ),
+        (
+            "computer_target_approve",
+            Some(json!({
+                "session_id": "session-1",
+                "run_id": "run-1",
+                "target": {"kind": "application", "app": {"bundle_id": "com.example.App", "family": "appkit"}},
+                "kind": "for_run"
+            })),
+        ),
+        (
+            "computer_target_revoke",
+            Some(json!({
+                "session_id": "session-1",
+                "run_id": "run-1",
+                "target": {"kind": "website", "browser": {"bundle_id": "com.google.Chrome", "family": "chromium"}, "origin": "https://example.com"}
+            })),
+        ),
     ]
 }
 
@@ -326,6 +343,18 @@ fn query_samples() -> Vec<(&'static str, Option<Value>)> {
         ),
         ("subagent_settings", None),
         ("subagent_list", Some(json!({"session_id": "session-1"}))),
+        (
+            "observation_list",
+            Some(json!({"session_id": "session-1"})),
+        ),
+        (
+            "observation_image_read",
+            Some(json!({"session_id": "session-1", "sequence": 3, "part_index": 0, "offset": 0, "limit": 1024})),
+        ),
+        (
+            "computer_target_list",
+            Some(json!({"session_id": "session-1"})),
+        ),
     ]
 }
 
@@ -1008,6 +1037,26 @@ fn command_registry_covers_every_variant_without_wildcard() {
                 false,
                 pawork_protocol::V1_22,
             ),
+            AppCommand::ComputerTargetApprove(..) => assert_command_entry(
+                &command,
+                "computer_target_approve",
+                true,
+                None,
+                None,
+                false,
+                true,
+                pawork_protocol::V1_27,
+            ),
+            AppCommand::ComputerTargetRevoke(..) => assert_command_entry(
+                &command,
+                "computer_target_revoke",
+                true,
+                None,
+                None,
+                false,
+                true,
+                pawork_protocol::V1_27,
+            ),
         }
     }
 }
@@ -1251,6 +1300,36 @@ fn query_registry_covers_every_variant_without_wildcard() {
                 false,
                 true,
                 pawork_protocol::V1_20,
+            ),
+            AppQuery::ObservationList { .. } => assert_query_entry(
+                &query,
+                "observation_list",
+                true,
+                None,
+                None,
+                false,
+                true,
+                pawork_protocol::V1_27,
+            ),
+            AppQuery::ObservationImageRead { .. } => assert_query_entry(
+                &query,
+                "observation_image_read",
+                true,
+                None,
+                None,
+                false,
+                true,
+                pawork_protocol::V1_27,
+            ),
+            AppQuery::ComputerTargetList { .. } => assert_query_entry(
+                &query,
+                "computer_target_list",
+                true,
+                None,
+                None,
+                false,
+                true,
+                pawork_protocol::V1_27,
             ),
         }
     }

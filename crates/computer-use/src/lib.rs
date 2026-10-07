@@ -17,6 +17,21 @@ pub mod target;
 #[cfg(target_os = "macos")]
 pub mod macos;
 
+/// CU-17: the host's boxed native probe. macOS uses the real backend;
+/// every other platform gets the fail-closed [target::UnsupportedProbe],
+/// so the registry is constructible everywhere but never passes a
+/// liveness check off macOS.
+pub fn platform_probe() -> Box<dyn target::NativeProbe> {
+    #[cfg(target_os = "macos")]
+    {
+        Box::new(macos::MacosNative::new())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Box::new(target::UnsupportedProbe)
+    }
+}
+
 pub const MAX_IMAGE_BYTES: usize = 512 * 1024;
 pub const MAX_IMAGE_EDGE: u32 = 1280;
 /// How long a run holds the desktop after its last call. Matches the

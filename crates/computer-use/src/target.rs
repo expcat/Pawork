@@ -151,6 +151,13 @@ pub enum TargetError {
     /// element. Nothing was dispatched.
     #[error("target window or element does not hold keyboard focus; input would not land in it")]
     NotFocused,
+    /// The scope already reached its terminal close (CU-17 review: the run
+    /// finished, was cancelled, failed, or the host tore it down). Grants
+    /// can never be (re-)minted for it, so a late approval that still sees
+    /// the run in a host registry is rejected instead of leaking past the
+    /// cleanup.
+    #[error("scope is closed; the run already reached a terminal state")]
+    ScopeClosed,
 }
 
 /// Which environment an observation or action belongs to. The isolated
@@ -1065,6 +1072,50 @@ pub trait NativeProbe: Send + Sync {
     fn window_size(&self, instance: &ProcessInstance, window_id: u64) -> Option<(f64, f64)>;
 }
 
+/// Boxed probes stay usable behind a lock (the host keeps one registry
+/// behind a mutex) without naming a concrete backend type.
+impl NativeProbe for Box<dyn NativeProbe> {
+    fn process_instance_alive(&self, instance: &ProcessInstance) -> bool {
+        (**self).process_instance_alive(instance)
+    }
+    fn window_generation(&self, instance: &ProcessInstance, window_id: u64) -> Option<u64> {
+        (**self).window_generation(instance, window_id)
+    }
+    fn tree_revision(&self, window: &WindowIdentity) -> Option<u64> {
+        (**self).tree_revision(window)
+    }
+    fn current_origin(&self, window: &WindowIdentity) -> Option<String> {
+        (**self).current_origin(window)
+    }
+    fn window_size(&self, instance: &ProcessInstance, window_id: u64) -> Option<(f64, f64)> {
+        (**self).window_size(instance, window_id)
+    }
+}
+
+/// Fail-closed probe for hosts without a native backend: every liveness
+/// check denies, so the registry still records grants and bindings but no
+/// gated operation can pass. (CU-17: the GUI path never probes; this only
+/// keeps non-macOS hosts constructible.)
+pub struct UnsupportedProbe;
+
+impl NativeProbe for UnsupportedProbe {
+    fn process_instance_alive(&self, _instance: &ProcessInstance) -> bool {
+        false
+    }
+    fn window_generation(&self, _instance: &ProcessInstance, _window_id: u64) -> Option<u64> {
+        None
+    }
+    fn tree_revision(&self, _window: &WindowIdentity) -> Option<u64> {
+        None
+    }
+    fn current_origin(&self, _window: &WindowIdentity) -> Option<String> {
+        None
+    }
+    fn window_size(&self, _instance: &ProcessInstance, _window_id: u64) -> Option<(f64, f64)> {
+        None
+    }
+}
+
 struct WindowRecord {
     target: TargetIdentity,
     instance: ProcessInstance,
@@ -1131,6 +1182,24 @@ pub struct ValidatedWindowDispatch {
     pub dispatch_permit: DispatchPermit,
 }
 
+/// CU-17: one entry of the registry's target-state view. Recorded facts
+/// only (binding / grant / occupancy / pause); liveness is validated on
+/// use, so listing never probes the backend.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TargetState {
+    pub target: TargetIdentity,
+    pub scope: Scope,
+    /// Outstanding grant; None for a bound-but-unauthorized target.
+    pub grant: Option<GrantKind>,
+    /// Host-issued handle of the bound window, if any.
+    pub window: Option<WindowHandle>,
+    /// Scope currently owning the application boundary; may differ from
+    /// this entry's scope when another run holds the application.
+    pub occupied_by: Option<Scope>,
+    /// CU-09 user-takeover pause state of the application boundary.
+    pub dispatch_paused: bool,
+}
+
 /// Host-side registry: the only issuer and validator of handles. Validation
 /// order on every use is cancellation, existence, scope, staleness,
 /// authorization (CU-16), process instance, window generation, tree
@@ -1152,6 +1221,11 @@ pub struct TargetRegistry<P: NativeProbe> {
     /// Applications the user took over (CU-09 host signal): dispatch gates
     /// reject with [TargetError::UserActive] while paused.
     user_paused: HashSet<String>,
+    /// CU-17 review: scopes currently registered as active runs. Grants are
+    /// only accepted for these; [Self::close_scope] removes the entry, so
+    /// approval can never slip between the terminal cleanup and the host
+    /// registry removal, and no terminal-state record outlives the run.
+    active: HashSet<Scope>,
 }
 
 impl<P: NativeProbe> TargetRegistry<P> {
@@ -1168,6 +1242,7 @@ impl<P: NativeProbe> TargetRegistry<P> {
             elements: HashMap::new(),
             occupied: HashMap::new(),
             user_paused: HashSet::new(),
+            active: HashSet::new(),
         }
     }
 
@@ -1179,6 +1254,13 @@ impl<P: NativeProbe> TargetRegistry<P> {
         &mut self.authorizer
     }
 
+    /// CU-17 review: register a run scope as active (run start). Must happen
+    /// before the host's run registry lists the run, so an approval that
+    /// passes the run check always finds an active scope here.
+    pub fn open_scope(&mut self, scope: &Scope) {
+        self.active.insert(scope.clone());
+    }
+
     /// Record an explicit user approval for a target in this scope. This is
     /// the host's only way to create a grant; models can never widen it.
     pub fn grant(
@@ -1187,6 +1269,9 @@ impl<P: NativeProbe> TargetRegistry<P> {
         target: &TargetIdentity,
         kind: GrantKind,
     ) -> Result<(), TargetError> {
+        if !self.active.contains(scope) {
+            return Err(TargetError::ScopeClosed);
+        }
         self.authorizer.grant(scope, target, kind)
     }
 
@@ -1210,6 +1295,16 @@ impl<P: NativeProbe> TargetRegistry<P> {
     pub fn revoke_scope(&mut self, scope: &Scope) {
         self.authorizer.revoke_scope(scope);
         self.release_scope(scope);
+    }
+
+    /// CU-17 review: terminal close of a run scope. In addition to the
+    /// [Self::revoke_scope] teardown the scope leaves the active registry,
+    /// so a concurrent or late approval can never re-mint a grant for a run
+    /// that already reached its terminal state. Idempotent; nothing is
+    /// retained after the close.
+    pub fn close_scope(&mut self, scope: &Scope) {
+        self.active.remove(scope);
+        self.revoke_scope(scope);
     }
 
     /// CU-09 host signal: the user is operating this target's application.
@@ -1236,6 +1331,61 @@ impl<P: NativeProbe> TargetRegistry<P> {
         self.elements.retain(|_, record| record.scope != *scope);
         self.windows.retain(|_, record| record.scope != *scope);
         self.occupied.retain(|_, (owner, _)| owner != scope);
+    }
+
+    /// CU-17: aggregate view over grants ∪ bound windows for the GUI.
+    /// Grants without bindings and bindings without grants both appear;
+    /// occupancy and pause attach by application anchor. Deterministic
+    /// order (scope, anchor, variant) so repeated calls are stable.
+    pub fn target_states(&self) -> Vec<TargetState> {
+        let mut states: Vec<TargetState> = self
+            .authorizer
+            .grants()
+            .map(|((scope, target), grant)| TargetState {
+                target: target.clone(),
+                scope: scope.clone(),
+                grant: Some(*grant),
+                window: None,
+                occupied_by: None,
+                dispatch_paused: false,
+            })
+            .collect();
+        for (handle, record) in &self.windows {
+            let entry = states
+                .iter_mut()
+                .find(|state| state.scope == record.scope && state.target == record.target);
+            match entry {
+                Some(state) => state.window = Some(WindowHandle(handle.clone())),
+                None => states.push(TargetState {
+                    target: record.target.clone(),
+                    scope: record.scope.clone(),
+                    grant: None,
+                    window: Some(WindowHandle(handle.clone())),
+                    occupied_by: None,
+                    dispatch_paused: false,
+                }),
+            }
+        }
+        for state in &mut states {
+            let anchor = state.target.occupancy_anchor();
+            if let Some((owner, _)) = self.occupied.get(anchor) {
+                state.occupied_by = Some(owner.clone());
+            }
+            state.dispatch_paused = self.user_paused.contains(anchor);
+        }
+        states.sort_by(|a, b| {
+            (
+                a.scope.workspace_id.clone(),
+                a.scope.run_id.clone(),
+                a.target.occupancy_anchor().to_string(),
+            )
+                .cmp(&(
+                    b.scope.workspace_id.clone(),
+                    b.scope.run_id.clone(),
+                    b.target.occupancy_anchor().to_string(),
+                ))
+        });
+        states
     }
 
     /// Pre-flight gate the host must pass before connecting to, launching,
@@ -1794,6 +1944,17 @@ mod tests {
         TargetIdentity::application(app(family))
     }
 
+    fn website_target() -> TargetIdentity {
+        TargetIdentity::website(
+            AppIdentity {
+                bundle_id: "com.example.browser".into(),
+                family: AppFamily::Browser,
+            },
+            "https://example.com",
+        )
+        .unwrap()
+    }
+
     fn window_identity() -> WindowIdentity {
         WindowIdentity {
             window_id: 42,
@@ -1804,6 +1965,7 @@ mod tests {
     fn bound(family: AppFamily) -> (TargetRegistry<FakeProbe>, WindowHandle) {
         let mut registry = TargetRegistry::new(FakeProbe::new());
         let target = target(family);
+        registry.open_scope(&scope());
         registry
             .grant(&scope(), &target, GrantKind::ForRun)
             .unwrap();
@@ -2218,6 +2380,7 @@ mod tests {
         // A one-shot grant is spent by the first consume only.
         let (mut once_registry, once_window) = {
             let mut registry = TargetRegistry::new(FakeProbe::new());
+            registry.open_scope(&scope());
             registry
                 .grant(&scope(), &target(AppFamily::Appkit), GrantKind::Once)
                 .unwrap();
@@ -2275,6 +2438,7 @@ mod tests {
     fn second_run_conflicts_on_the_same_application_until_released() {
         let (mut registry, window) = bound(AppFamily::Appkit);
         let other = Scope::new("ws-1", "run-2");
+        registry.open_scope(&other);
         registry
             .grant(&other, &target(AppFamily::Appkit), GrantKind::ForRun)
             .unwrap();
@@ -2293,6 +2457,7 @@ mod tests {
             bundle_id: "com.example.notes".into(),
             family: AppFamily::Appkit,
         });
+        registry.open_scope(&other);
         registry.grant(&other, &notes, GrantKind::ForRun).unwrap();
         assert!(registry
             .bind_window(&other, notes, instance(), window_identity())
@@ -2304,6 +2469,7 @@ mod tests {
         };
         let site_a = TargetIdentity::website(browser.clone(), "https://a.example").unwrap();
         let site_b = TargetIdentity::website(browser, "https://b.example").unwrap();
+        registry.open_scope(&scope());
         registry.grant(&scope(), &site_a, GrantKind::ForRun).unwrap();
         *registry.probe.origin.lock().unwrap() = Some("https://a.example".into());
         assert!(registry
@@ -2334,6 +2500,7 @@ mod tests {
     fn idle_occupancy_lapses_for_the_next_run() {
         let (mut registry, _window) = bound(AppFamily::Appkit);
         let other = Scope::new("ws-1", "run-2");
+        registry.open_scope(&other);
         registry
             .grant(&other, &target(AppFamily::Appkit), GrantKind::ForRun)
             .unwrap();
@@ -2355,6 +2522,7 @@ mod tests {
             family: AppFamily::Browser,
         };
         let site = TargetIdentity::website(browser.clone(), "https://example.com").unwrap();
+        registry.open_scope(&scope());
         registry.grant(&scope(), &site, GrantKind::ForRun).unwrap();
         *registry.probe.origin.lock().unwrap() = Some("https://example.com".into());
         let window = registry
@@ -2362,6 +2530,7 @@ mod tests {
             .unwrap();
         let other = Scope::new("ws-1", "run-2");
         let site_other = TargetIdentity::website(browser, "https://other.example").unwrap();
+        registry.open_scope(&other);
         registry
             .grant(&other, &site_other, GrantKind::ForRun)
             .unwrap();
@@ -2388,6 +2557,7 @@ mod tests {
     fn failed_binding_leaves_no_occupancy_behind() {
         let mut registry = TargetRegistry::new(FakeProbe::new());
         let editor = target(AppFamily::Appkit);
+        registry.open_scope(&scope());
         registry
             .grant(&scope(), &editor, GrantKind::ForRun)
             .unwrap();
@@ -2400,6 +2570,7 @@ mod tests {
         );
         assert!(registry.occupied.get("com.example.app").is_none());
         let other = Scope::new("ws-1", "run-2");
+        registry.open_scope(&other);
         registry.grant(&other, &editor, GrantKind::ForRun).unwrap();
         registry.probe.alive.store(true, Ordering::Relaxed);
         assert!(registry
@@ -2459,6 +2630,7 @@ mod tests {
         );
         // CU-09: the application boundary is free for the next run.
         let other = Scope::new("ws-1", "run-2");
+        registry.open_scope(&other);
         registry
             .grant(&other, &target(AppFamily::Appkit), GrantKind::ForRun)
             .unwrap();
@@ -2533,6 +2705,7 @@ mod tests {
     fn process_exit_or_restart_invalidates_everything() {
         let mut registry = TargetRegistry::new(FakeProbe::new());
         let target = target(AppFamily::Appkit);
+        registry.open_scope(&scope());
         registry
             .grant(&scope(), &target, GrantKind::ForRun)
             .unwrap();
@@ -2863,6 +3036,7 @@ mod tests {
             registry.bind_window(&scope(), editor.clone(), instance(), window_identity()),
             Err(TargetError::NotAuthorized)
         );
+        registry.open_scope(&scope());
         registry
             .grant(&scope(), &editor, GrantKind::ForRun)
             .unwrap();
@@ -2908,6 +3082,7 @@ mod tests {
     fn one_shot_grant_covers_one_action_and_is_not_spent_early() {
         let mut registry = TargetRegistry::new(FakeProbe::new());
         let editor = target(AppFamily::Appkit);
+        registry.open_scope(&scope());
         registry.grant(&scope(), &editor, GrantKind::Once).unwrap();
         // Binding requires the grant but does not spend it.
         let window = registry
@@ -2971,6 +3146,7 @@ mod tests {
             Err(TargetError::NotAuthorized)
         );
         // Re-approval revives the still-valid lease.
+        registry.open_scope(&scope());
         registry
             .grant(&scope(), &editor, GrantKind::ForRun)
             .unwrap();
@@ -2992,6 +3168,7 @@ mod tests {
             bundle_id: "dev.pawork.desktop".into(),
             family: AppFamily::Appkit,
         });
+        registry.open_scope(&scope());
         // Granting the host's own UI is refused, so it can never be bound:
         // the agent cannot approve itself through the approval surface.
         assert_eq!(
@@ -3012,6 +3189,7 @@ mod tests {
         // without any host-supplied list.
         let mut registry = TargetRegistry::new(FakeProbe::new());
         for bundle in ["dev.pawork.desktop", "com.apple.systempreferences"] {
+            registry.open_scope(&scope());
             let protected = TargetIdentity::application(AppIdentity {
                 bundle_id: bundle.into(),
                 family: AppFamily::Appkit,
@@ -3039,6 +3217,7 @@ mod tests {
             "https://example.com",
         )
         .unwrap();
+        registry.open_scope(&scope());
         registry
             .grant(&scope(), &authorized, GrantKind::ForRun)
             .unwrap();
@@ -3341,5 +3520,141 @@ mod tests {
                 tree_truncated: false
             }
         );
+    }
+
+    #[test]
+    fn target_states_aggregate_grants_bindings_occupancy_and_pause() {
+        let mut registry = TargetRegistry::new(FakeProbe::new());
+        let other = Scope::new("ws-1", "run-2");
+        let site = website_target();
+        registry.open_scope(&scope());
+        registry.open_scope(&other);
+        // A grant without a binding still lists the target.
+        registry.grant(&scope(), &site, GrantKind::ForRun).unwrap();
+        // A binding without a grant lists the target with grant None.
+        let notes = TargetIdentity::application(AppIdentity {
+            bundle_id: "com.example.notes".into(),
+            family: AppFamily::Appkit,
+        });
+        registry.grant(&other, &notes, GrantKind::ForRun).unwrap();
+        registry
+            .bind_window(&other, notes.clone(), instance(), window_identity())
+            .unwrap();
+        // The browser anchor is occupied by another scope and paused.
+        registry
+ .occupied
+            .insert("com.example.browser".into(), (other.clone(), Instant::now()));
+        registry.pause_dispatch(&site);
+
+        let states = registry.target_states();
+        assert_eq!(states.len(), 2, "one entry per (scope, target)");
+        let site_state = states
+            .iter()
+            .find(|state| state.target == site)
+            .expect("website grant listed");
+        assert_eq!(site_state.scope, scope());
+        assert_eq!(site_state.grant, Some(GrantKind::ForRun));
+        assert_eq!(site_state.window, None);
+        assert_eq!(site_state.occupied_by, Some(other.clone()));
+        assert!(site_state.dispatch_paused);
+        let notes_state = states
+            .iter()
+            .find(|state| state.target == notes)
+            .expect("bound target listed");
+        assert_eq!(notes_state.scope, other);
+        assert_eq!(notes_state.grant, Some(GrantKind::ForRun));
+        assert!(notes_state.window.is_some());
+        // Binding refreshes occupancy, so the binder is its own owner.
+        assert_eq!(notes_state.occupied_by, Some(other.clone()));
+        assert!(!notes_state.dispatch_paused);
+
+        // Grant plus binding merge into one entry; revocation keeps the
+        // binding listed with grant None; release_scope clears the rest.
+        registry.occupied.remove("com.example.browser");
+        registry
+            .probe
+            .origin
+            .lock()
+            .unwrap()
+            .replace("https://example.com".into());
+        let window = registry
+            .bind_window(&scope(), site.clone(), instance(), window_identity())
+            .unwrap();
+        let states = registry.target_states();
+        let site_state = states
+            .iter()
+            .find(|state| state.target == site)
+            .expect("merged entry");
+        assert_eq!(site_state.window, Some(window));
+        registry.revoke(&scope(), &site);
+        let states = registry.target_states();
+        let site_state = states.iter().find(|state| state.target == site).unwrap();
+        assert_eq!(site_state.grant, None);
+        assert!(site_state.window.is_some());
+        registry.release_scope(&scope());
+        assert!(registry
+            .target_states()
+            .iter()
+            .all(|state| state.scope != scope()));
+    }
+
+    #[test]
+    fn closed_scopes_reject_late_grants_and_clear_the_ledger() {
+        let mut registry = TargetRegistry::new(FakeProbe::new());
+        let other = Scope::new("ws-1", "run-2");
+        let site = website_target();
+        let notes = TargetIdentity::application(AppIdentity {
+            bundle_id: "com.example.notes".into(),
+            family: AppFamily::Appkit,
+        });
+        registry.open_scope(&scope());
+        registry.grant(&scope(), &site, GrantKind::ForRun).unwrap();
+        registry.open_scope(&other);
+        registry.grant(&other, &notes, GrantKind::ForRun).unwrap();
+
+        // close_scope clears the ledger and the active registration for the
+        // scope, so every later grant from it is rejected without leaving a
+        // terminal-state record behind (nothing accumulates after the close).
+        registry.close_scope(&scope());
+        assert!(registry
+            .target_states()
+            .iter()
+            .all(|state| state.scope != scope()));
+        assert!(matches!(
+            registry.grant(&scope(), &site, GrantKind::ForRun),
+            Err(TargetError::ScopeClosed)
+        ));
+        // Closing again stays idempotent and leaves other scopes alone.
+        registry.close_scope(&scope());
+        let states = registry.target_states();
+        assert_eq!(states.len(), 1, "only the other scope's grant remains");
+        assert_eq!(states[0].scope, other);
+        // A scope that was never opened is closed by definition: the only
+        // grant path (host approval) always follows run registration.
+        let unopened = Scope::new("ws-1", "run-3");
+        assert!(matches!(
+            registry.grant(&unopened, &notes, GrantKind::ForRun),
+            Err(TargetError::ScopeClosed)
+        ));
+    }
+
+    #[test]
+    fn boxed_probe_forwards_every_call() {
+        let probe: Box<dyn NativeProbe> = Box::new(FakeProbe::new());
+        assert!(probe.process_instance_alive(&instance()));
+        assert_eq!(probe.window_generation(&instance(), 42), Some(1));
+        assert_eq!(probe.tree_revision(&window_identity()), Some(7));
+        assert_eq!(probe.current_origin(&window_identity()), None);
+        assert_eq!(probe.window_size(&instance(), 42), Some((2560.0, 1440.0)));
+    }
+
+    #[test]
+    fn unsupported_probe_fails_closed() {
+        let probe = UnsupportedProbe;
+        assert!(!probe.process_instance_alive(&instance()));
+        assert_eq!(probe.window_generation(&instance(), 42), None);
+        assert_eq!(probe.tree_revision(&window_identity()), None);
+        assert_eq!(probe.current_origin(&window_identity()), None);
+        assert_eq!(probe.window_size(&instance(), 42), None);
     }
 }

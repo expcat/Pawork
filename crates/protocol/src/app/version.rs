@@ -150,7 +150,15 @@ pub const V1_26: ApiVersion = ApiVersion {
     major: 1,
     minor: 26,
 };
-pub const API_VERSION: ApiVersion = V1_26;
+
+/// CU-17：GUI 观测证据查询（observation_list / observation_image_read）与
+/// computer-use 目标状态接入（computer_target_list / computer_target_approve /
+/// computer_target_revoke），全部 GUI-only。
+pub const V1_27: ApiVersion = ApiVersion {
+    major: 1,
+    minor: 27,
+};
+pub const API_VERSION: ApiVersion = V1_27;
 
 /// 宿主支持的完整 API 版本表（P13-10 schema 版本化）。
 ///
@@ -158,7 +166,7 @@ pub const API_VERSION: ApiVersion = V1_26;
 /// ADR-036 定义的废弃与删除流程。
 pub const SUPPORTED_API_VERSIONS: &[ApiVersion] = &[
     V1_0, V1_1, V1_2, V1_3, V1_4, V1_5, V1_6, V1_7, V1_8, V1_9, V1_10, V1_11, V1_12, V1_13, V1_14,
-    V1_15, V1_16, V1_17, V1_18, V1_19, V1_20, V1_21, V1_22, V1_23, V1_24, V1_25, V1_26,
+    V1_15, V1_16, V1_17, V1_18, V1_19, V1_20, V1_21, V1_22, V1_23, V1_24, V1_25, V1_26, V1_27,
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -203,6 +211,7 @@ pub struct ProtocolCrateCompatibility {
 }
 
 pub const PROTOCOL_CRATE_COMPATIBILITY: &[ProtocolCrateCompatibility] = &[
+    ProtocolCrateCompatibility { api: V1_27, crate_version: "0.1.0", note: "GUI observation evidence and computer target state" },
     ProtocolCrateCompatibility { api: V1_26, crate_version: "0.1.0", note: "Task usage report" },
     ProtocolCrateCompatibility {
         api: V1_25,
@@ -410,7 +419,7 @@ mod tests {
 
     #[test]
     fn version_helpers_and_supported_table_are_consistent() {
-        assert_eq!(ApiVersion::new(1, 26), API_VERSION);
+        assert_eq!(ApiVersion::new(1, 27), API_VERSION);
         assert_eq!(V1_1, ApiVersion::new(1, 1));
         assert_eq!(V1_3, ApiVersion::new(1, 3));
         assert_eq!(V1_4, ApiVersion::new(1, 4));
@@ -436,7 +445,7 @@ mod tests {
             &[
                 V1_0, V1_1, V1_2, V1_3, V1_4, V1_5, V1_6, V1_7, V1_8, V1_9, V1_10, V1_11, V1_12,
                 V1_13, V1_14, V1_15, V1_16, V1_17, V1_18, V1_19, V1_20, V1_21, V1_22, V1_23, V1_24,
-                V1_25, V1_26
+                V1_25, V1_26, V1_27
             ]
         );
         assert!(SUPPORTED_API_VERSIONS
@@ -462,7 +471,7 @@ mod tests {
         assert!(json.get("crate_version").is_none());
         assert!(!json.to_string().contains("crate_version"));
         let version = serde_json::to_value(API_VERSION).expect("serialize version");
-        assert_eq!(version, serde_json::json!({"major": 1, "minor": 26}));
+        assert_eq!(version, serde_json::json!({"major": 1, "minor": 27}));
     }
 
     #[test]

@@ -4,6 +4,7 @@ use pawork_gui_server::GuiHostError;
 pub(super) mod approval;
 pub(super) mod attachments;
 pub(super) mod command;
+pub(super) mod computer;
 pub(super) mod files;
 pub(super) mod goal;
 pub(super) mod mcp;

@@ -1506,3 +1506,183 @@ fn golden_run_video_and_old_default() {
     let command: pawork_protocol::AppCommand = serde_json::from_value(old.clone()).unwrap();
     assert_eq!(serde_json::to_value(command).unwrap(), old);
 }
+
+/// CU-17（API 1.27）：观测证据查询与 computer-use 目标接入的 5 条新帧。
+#[test]
+fn golden_computer_observation_frames() {
+    use pawork_protocol::{
+        ComputerAppFamily, ComputerAppIdentity, ComputerGrantKind, ComputerTargetApproveParams,
+        ComputerTargetIdentity, ComputerTargetRevokeParams, V1_27,
+    };
+    let app = ComputerAppIdentity {
+        bundle_id: "com.example.App".into(),
+        family: ComputerAppFamily::Appkit,
+    };
+    let browser = ComputerAppIdentity {
+        bundle_id: "com.google.Chrome".into(),
+        family: ComputerAppFamily::Chromium,
+    };
+    let query_envelope = |query: AppQuery| {
+        encode_client(&ClientFrame::Query(AppQueryEnvelope {
+            api_version: V1_27,
+            request_id: pawork_domain::QueryId::from("query-computer-1"),
+            source: CommandSource::LocalGui {
+                client_id: GuiClientId::from("gui-1"),
+            },
+            identity: ActorIdentity::LocalUser {
+                actor_id: pawork_domain::ActorId::from("actor-1"),
+                display_name: None,
+            },
+            issued_at: Timestamp::from_unix_millis(1),
+            query,
+        }))
+    };
+    assert_golden(
+        "client_query_observation_list.json",
+        query_envelope(AppQuery::ObservationList {
+            session_id: pawork_domain::SessionId::from("session-1"),
+            after_sequence: Some(12),
+            limit: Some(50),
+        }),
+    );
+    assert_golden(
+        "client_query_observation_image_read.json",
+        query_envelope(AppQuery::ObservationImageRead {
+            session_id: pawork_domain::SessionId::from("session-1"),
+            sequence: 12,
+            part_index: 0,
+            offset: 0,
+            limit: 4096,
+        }),
+    );
+    assert_golden(
+        "client_query_computer_target_list.json",
+        query_envelope(AppQuery::ComputerTargetList {
+            session_id: pawork_domain::SessionId::from("session-1"),
+        }),
+    );
+    assert_golden(
+        "client_command_computer_target_approve.json",
+        encode_client(&client_terminal_command_frame_at(
+            AppCommand::ComputerTargetApprove(ComputerTargetApproveParams {
+                session_id: pawork_domain::SessionId::from("session-1"),
+                run_id: pawork_domain::RunId::from("run-1"),
+                target: ComputerTargetIdentity::Application { app },
+                kind: ComputerGrantKind::ForRun,
+            }),
+            V1_27,
+        )),
+    );
+    assert_golden(
+        "client_command_computer_target_revoke.json",
+        encode_client(&client_terminal_command_frame_at(
+            AppCommand::ComputerTargetRevoke(ComputerTargetRevokeParams {
+                session_id: pawork_domain::SessionId::from("session-1"),
+                run_id: pawork_domain::RunId::from("run-1"),
+                target: ComputerTargetIdentity::Website {
+                    browser,
+                    origin: "https://example.com".into(),
+                },
+            }),
+            V1_27,
+        )),
+    );
+    // 审查修复：3 条 server 响应 Data 帧（typed 载荷构造），与上面的
+    // query / command 帧同批钉住 wire 形状。
+    let server_data_response = |request: &str, data: serde_json::Value| {
+        encode_server(&ServerFrame::Response(AppResponseEnvelope {
+            api_version: V1_27,
+            request_id: pawork_domain::QueryId::from(request),
+            responded_at: Timestamp::from_unix_millis(3),
+            response: AppResponse::Data(data),
+        }))
+    };
+    use pawork_protocol::{
+        ComputerActionKind, ComputerCapabilitySupport, ComputerTargetCapability,
+        ComputerTargetListData, ComputerTargetScope, ComputerTargetState,
+        ObservationEvidenceEntry, ObservationEvidenceStatus, ObservationImageData,
+        ObservationListData,
+    };
+    let entry = ObservationEvidenceEntry {
+        sequence: 12,
+        event_id: "event-1".into(),
+        run_id: Some("run-1".into()),
+        tool_call_id: "call-1".into(),
+        tool_name: Some("computer".into()),
+        part_index: 0,
+        media_type: "image/png".into(),
+        byte_length: 4096,
+        image_width: Some(2560),
+        image_height: Some(1440),
+        captured_at_ms: 2,
+        status: ObservationEvidenceStatus::Historical,
+    };
+    assert_golden(
+        "server_response_observation_list.json",
+        server_data_response(
+            "query-computer-1",
+            serde_json::to_value(ObservationListData {
+                session_id: pawork_domain::SessionId::from("session-1"),
+                entries: vec![entry],
+                next_sequence: None,
+                head_sequence: 15,
+                complete: true,
+            })
+            .unwrap(),
+        ),
+    );
+    assert_golden(
+        "server_response_observation_image_read.json",
+        server_data_response(
+            "query-computer-1",
+            serde_json::to_value(ObservationImageData {
+                session_id: pawork_domain::SessionId::from("session-1"),
+                sequence: 12,
+                event_id: "event-1".into(),
+                part_index: 0,
+                media_type: "image/png".into(),
+                byte_length: 4096,
+                offset: 0,
+                data: "QUJDRA==".into(),
+                eof: false,
+                captured_at_ms: 2,
+                image_width: Some(2560),
+                image_height: Some(1440),
+                status: ObservationEvidenceStatus::Historical,
+            })
+            .unwrap(),
+        ),
+    );
+    assert_golden(
+        "server_response_computer_target_list.json",
+        server_data_response(
+            "query-computer-1",
+            serde_json::to_value(ComputerTargetListData {
+                session_id: pawork_domain::SessionId::from("session-1"),
+                workspace_id: Some("ws-1".into()),
+                targets: vec![ComputerTargetState {
+                    target: ComputerTargetIdentity::Application {
+                        app: ComputerAppIdentity {
+                            bundle_id: "com.example.App".into(),
+                            family: ComputerAppFamily::Appkit,
+                        },
+                    },
+                    scope: ComputerTargetScope {
+                        workspace_id: "ws-1".into(),
+                        run_id: "run-1".into(),
+                    },
+                    grant: Some(ComputerGrantKind::ForRun),
+                    bound_window: None,
+                    occupied_by: None,
+                    dispatch_paused: false,
+                    capabilities: vec![ComputerTargetCapability {
+                        action: ComputerActionKind::CaptureWindow,
+                        background: ComputerCapabilitySupport::Supported,
+                        minimized: ComputerCapabilitySupport::Unverified,
+                    }],
+                }],
+            })
+            .unwrap(),
+        ),
+    );
+}

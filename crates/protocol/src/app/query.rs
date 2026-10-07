@@ -119,6 +119,29 @@ pub enum AppQuery {
     SubagentList {
         session_id: SessionId,
     },
+    /// GUI-only CU-17 (since 1.27)：会话持久化观测图像引用的分页列表。
+    /// 只读事件账本，永不触发新截图或输入。
+    ObservationList {
+        session_id: SessionId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after_sequence: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
+    /// GUI-only CU-17 (since 1.27)：单条观测图像的有界字节读取
+    /// （offset/limit 地址解码后字节；limit ≤ MAX_OBSERVATION_READ_BYTES）。
+    ObservationImageRead {
+        session_id: SessionId,
+        sequence: u64,
+        part_index: u32,
+        offset: u64,
+        limit: u64,
+    },
+    /// GUI-only CU-17 (since 1.27)：会话范围内的 computer-use 目标状态
+    /// （授权 / 绑定 / 占用 / 暂停与后台能力裁决）。
+    ComputerTargetList {
+        session_id: SessionId,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

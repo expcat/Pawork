@@ -1,0 +1,35 @@
+{
+  "data": {
+    "api_version": {
+      "major": 1,
+      "minor": 27
+    },
+    "request_id": "query-computer-1",
+    "responded_at": 3,
+    "response": {
+      "data": {
+        "complete": true,
+        "entries": [
+          {
+            "byte_length": 4096,
+            "captured_at_ms": 2,
+            "event_id": "event-1",
+            "image_height": 1440,
+            "image_width": 2560,
+            "media_type": "image/png",
+            "part_index": 0,
+            "run_id": "run-1",
+            "sequence": 12,
+            "status": "historical",
+            "tool_call_id": "call-1",
+            "tool_name": "computer"
+          }
+        ],
+        "head_sequence": 15,
+        "session_id": "session-1"
+      },
+      "type": "data"
+    }
+  },
+  "type": "response"
+}

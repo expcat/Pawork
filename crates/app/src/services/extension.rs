@@ -387,6 +387,127 @@ pub(crate) fn base64_encode(bytes: &[u8]) -> String {
     out
 }
 
+/// CU-17：RFC 4648 padded base64 解码（观测图像字节读取用）。
+/// 与 [base64_encode] 同一依赖策略；非法长度、非法字符或错位 padding
+/// 一律整串拒绝（fail-closed，不做有损恢复）。
+pub(crate) fn base64_decode(text: &str) -> Result<Vec<u8>, &'static str> {
+    const INVALID: &str = "invalid base64";
+    let bytes = text.as_bytes();
+    if bytes.len() % 4 != 0 {
+        return Err(INVALID);
+    }
+    let padding = bytes.iter().rev().take_while(|byte| **byte == b'=').count();
+    if padding > 2 {
+        return Err(INVALID);
+    }
+    let value = |byte: u8| -> Result<u32, &'static str> {
+        match byte {
+            b'A'..=b'Z' => Ok(u32::from(byte - b'A')),
+            b'a'..=b'z' => Ok(u32::from(byte - b'a') + 26),
+            b'0'..=b'9' => Ok(u32::from(byte - b'0') + 52),
+            b'+' => Ok(62),
+            b'/' => Ok(63),
+            _ => Err(INVALID),
+        }
+    };
+    let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
+    for (index, chunk) in bytes.chunks(4).enumerate() {
+        let last = index == bytes.len() / 4 - 1;
+        let expected_payload = if last { 4 - padding } else { 4 };
+        for (position, byte) in chunk.iter().enumerate() {
+            let is_padding = *byte == b'=';
+            if position < expected_payload {
+                if is_padding {
+                    return Err(INVALID);
+                }
+            } else if !is_padding {
+                // padding 只允许出现在末尾。
+                return Err(INVALID);
+            }
+        }
+        let symbol = |position: usize| -> Result<u32, &'static str> {
+            if position < expected_payload {
+                value(chunk[position])
+            } else {
+                Ok(0)
+            }
+        };
+        let n =
+            (symbol(0)? << 18) | (symbol(1)? << 12) | (symbol(2)? << 6) | symbol(3)?;
+        out.push((n >> 16) as u8);
+        if expected_payload > 2 {
+            out.push((n >> 8) as u8);
+        }
+        if expected_payload > 3 {
+            out.push(n as u8);
+        }
+    }
+    Ok(out)
+}
+
+/// CU-17 审查修复：零分配整串扫描（O(n)）校验 base64 文本并算出解码
+/// 后长度，不实际解码。校验与 [base64_decode] 同口径：长度须为 4 的
+/// 倍数、字符须在 RFC 4648 字母表内、padding（≤2 个 '='）只出现在末
+/// quad 的尾部；任何非法形状或字符整串拒绝（fail-closed）。
+pub(crate) fn base64_decoded_len(text: &str) -> Result<usize, &'static str> {
+    const INVALID: &str = "invalid base64";
+    let bytes = text.as_bytes();
+    if bytes.len() % 4 != 0 {
+        return Err(INVALID);
+    }
+    let quads = bytes.len() / 4;
+    let mut padding = 0usize;
+    for (index, byte) in bytes.iter().enumerate() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'+' | b'/' => {
+                // 字母表字符不得出现在 padding 之后。
+                if padding > 0 {
+                    return Err(INVALID);
+                }
+            }
+            b'=' => {
+                // '=' 只允许出现在末 quad：单 pad 在第 4 位，双 pad 在
+                // 第 3/4 位（其后不得再有字母表字符）。
+                let position = index % 4;
+                let is_last_quad = index / 4 + 1 == quads;
+                if !is_last_quad || !(position == 3 || (position == 2 && padding == 0)) {
+                    return Err(INVALID);
+                }
+                padding += 1;
+            }
+            _ => return Err(INVALID),
+        }
+    }
+    Ok(bytes.len() / 4 * 3 - padding)
+}
+
+/// CU-17 审查修复：只解码覆盖 `[offset, offset + len)` 的 base64 quad，
+/// 不为读取小切片而整图解码。范围越界一律拒绝；字符与 padding 经
+/// [base64_decoded_len] 整串扫描校验（切片外的非法字符同样拒绝，与
+/// 全量解码语义一致），切片尾与整串尾一致时 padding 判定等价。
+pub(crate) fn base64_decode_range(
+    text: &str,
+    offset: usize,
+    len: usize,
+) -> Result<Vec<u8>, &'static str> {
+    const INVALID: &str = "invalid base64";
+    if len == 0 {
+        return Ok(Vec::new());
+    }
+    let total = base64_decoded_len(text)?;
+    let end = offset.checked_add(len).ok_or(INVALID)?;
+    if end > total {
+        return Err(INVALID);
+    }
+    let first_quad = offset / 3;
+    let last_quad = (end - 1) / 3;
+    let slice = &text.as_bytes()[first_quad * 4..(last_quad + 1) * 4];
+    let quad_text = std::str::from_utf8(slice).map_err(|_| INVALID)?;
+    let decoded = base64_decode(quad_text)?;
+    let skip = offset - first_quad * 3;
+    Ok(decoded[skip..skip + len].to_vec())
+}
+
 #[cfg(test)]
 mod tests {
     #[tokio::test]
@@ -757,5 +878,59 @@ mod tests {
         ] {
             assert_eq!(super::base64_encode(input), expected, "{input:?}");
         }
+    }
+
+    #[test]
+    fn base64_decode_round_trips_and_rejects_malformed() {
+        for len in 0..=8usize {
+            let bytes: Vec<u8> = (0..len as u8).collect();
+            let encoded = super::base64_encode(&bytes);
+            assert_eq!(super::base64_decode(&encoded).as_deref(), Ok(&bytes[..]));
+        }
+        for malformed in ["A", "AAAAA", "A===", "AA=A", "=AAA", "A B=", "YWJ j"] {
+            assert!(super::base64_decode(malformed).is_err(), "{malformed}");
+        }
+    }
+
+    #[test]
+    fn base64_decoded_len_matches_full_decode() {
+        for len in 0..=64usize {
+            let bytes: Vec<u8> = (0..len as u8).collect();
+            let encoded = super::base64_encode(&bytes);
+            assert_eq!(
+                super::base64_decoded_len(&encoded),
+                Ok(bytes.len()),
+                "len {len}"
+            );
+        }
+        for malformed in ["A", "AAAAA", "A===", "AA=A", "=AAA", "AAAA!!!!", "YWJ j"] {
+            assert!(super::base64_decoded_len(malformed).is_err(), "{malformed}");
+        }
+    }
+
+    #[test]
+    fn base64_decode_range_matches_full_decode_slices() {
+        let bytes: Vec<u8> = (0..=79u8).collect();
+        let encoded = super::base64_encode(&bytes);
+        for offset in 0..bytes.len() {
+            for len in 0..(bytes.len() - offset).min(6) {
+                let slice = super::base64_decode_range(&encoded, offset, len).unwrap();
+                assert_eq!(
+                    slice, bytes[offset..offset + len],
+                    "offset {offset} len {len}"
+                );
+            }
+        }
+        assert_eq!(
+            super::base64_decode_range("AA==", 0, 0).unwrap(),
+            Vec::<u8>::new()
+        );
+        assert_eq!(super::base64_decode_range("AA==", 0, 1).unwrap(), vec![0]);
+        assert!(super::base64_decode_range("A===", 0, 1).is_err());
+        assert!(super::base64_decode_range(&encoded, bytes.len(), 1).is_err());
+        assert!(super::base64_decode_range(&encoded, 0, bytes.len() + 1).is_err());
+        // 切片外的非法字符同样整串拒绝（与全量解码语义一致）。
+        assert!(super::base64_decode_range("AAAA!!!!", 0, 3).is_err());
+        assert!(super::base64_decode_range("QUJD!!!!", 0, 3).is_err());
     }
 }

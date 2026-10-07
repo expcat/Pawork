@@ -15,14 +15,14 @@
 
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
-| `src/lib.rs` | ~1 840 | `GuiClient` 全部实现：`ClientConfig`、`SessionInfo`、`ResumeOutcome`、`ClientError` / `ClientErrorKind`、私有 `FrameWant` 帧路由、握手 / 往返 / 订阅屏障 / Snapshot / Resume / Ack / Heartbeat；每连接实例 request namespace 防 Host 重启后的幂等键碰撞；对 Desktop 的 re-export（protocol 类型含 Settings 载荷、`projection`、`TOKEN_SCHEME`、transport 四类型，`ApprovalModeWire` / `AuthStartData` / `DefaultModelPair` / `GeneralSettingsData` / `PermissionsSettingsData` / `ProviderAuthStatus*` / `RoleDefaultsData` / `SubagentInfo` / `SubagentListData` / `SubagentModelRule` / `SubagentSettingsData` / `TerminalSettingsData` / `TimelineItemKind` 等）；13 个内联测试 |
+| `src/lib.rs` | ~1 890 | `GuiClient` 全部实现：`ClientConfig`、`SessionInfo`、`ResumeOutcome`、`ClientError` / `ClientErrorKind`、私有 `FrameWant` 帧路由、握手 / 往返 / 订阅屏障 / Snapshot / Resume / Ack / Heartbeat；每连接实例 request namespace 防 Host 重启后的幂等键碰撞；对 Desktop 的 re-export（protocol 类型含 Settings 载荷、`projection`、`TOKEN_SCHEME`、transport 四类型，`ApprovalModeWire` / `AuthStartData` / `Computer*` / `Observation*`（CU-17 观测与目标词汇，含三个响应 Data：`ComputerTargetListData` / `ObservationListData` / `ObservationImageData`，常量 `MAX_OBSERVATION_READ_BYTES` / `MAX_OBSERVATION_LIST_LIMIT` / `MAX_OBSERVATION_LIST_RESPONSE_BYTES` / `MAX_COMPUTER_TARGET_LIST_TARGETS` / `MAX_COMPUTER_TARGET_LIST_RESPONSE_BYTES`） / `DefaultModelPair` / `GeneralSettingsData` / `PermissionsSettingsData` / `ProviderAuthStatus*` / `RoleDefaultsData` / `SubagentInfo` / `SubagentListData` / `SubagentModelRule` / `SubagentSettingsData` / `TerminalSettingsData` / `TimelineItemKind` 等）；13 个内联测试 |
 | `src/headless/mod.rs` | ~90 | headless SDK 门面：模块文档（版本策略 / 稳定面 / 背压）、re-export（`PaworkClient`、`SdkError`、`EventSubscription`、`SDK_API_VERSION` 等）、`spawn_pawork` 便捷入口、`experimental`（`CompatOutcome`）与 `reexport`（常用协议类型）子模块 |
 | `src/headless/client.rs` | ~770 | `PaworkClient`：`spawn` / `from_transport`（自动握手）、typed 高层 API（`create_session` / `run_start` / `cancel` / `run_retry` / `list_workspaces` / `subscribe` / `unsubscribe` / `resume` / `import_compat` / `compat_history` / `close`）、`RouterState`（pending 请求 + 订阅槽）、`reader_loop`（逐行解析 JSONL 并路由） |
 | `src/headless/transport.rs` | ~180 | `Transport` trait（行级 send / recv / close）与 `StdioTransport`（进程 spawn + stdin/stdout 管道）；`PaworkOptions`（binary 默认 `PAWORK_BIN` 或 `pawork`、args 默认 `["headless", "--json-stdio"]`、env、timeout、`working_dir` / `isolated` / `client_name` / `client_version`） |
 | `src/headless/stream.rs` | ~110 | `EventSubscription`（有界 `mpsc` 事件通道，可取消）与 `BackpressurePolicy`（Drop 计数丢弃 / Error 显式溢出） |
 | `src/headless/error.rs` | ~150 | `SdkError` / `SdkErrorKind`（spawn、I/O、malformed frame、`UnknownResponseType`、`UnsupportedCapability`、`IncompatibleApiVersion`、`RequestFailed`、`Backpressure`、`Cancelled`、`Timeout`、`Protocol(ProtocolErrorKind)`；`as_str` 稳定标签） |
 | `src/headless/mock.rs` | ~150 | `MockTransport`：脚本化响应队列 + 已发送行记录（`Clone` 共享），供下游无进程测试 |
-| `src/headless/version.rs` | ~20 | `SDK_VERSION`（crate 版本）、`SDK_API_VERSION`（直接引用 `pawork_protocol::API_VERSION`，现为 1.26）与 `SDK_SUPPORTED_API_VERSIONS`（跟随 `SUPPORTED_API_VERSIONS`）；无内联测试，兼容性由握手测试验证 |
+| `src/headless/version.rs` | ~20 | `SDK_VERSION`（crate 版本）、`SDK_API_VERSION`（直接引用 `pawork_protocol::API_VERSION`，现为 1.27）与 `SDK_SUPPORTED_API_VERSIONS`（跟随 `SUPPORTED_API_VERSIONS`）；无内联测试，兼容性由握手测试验证 |
 | `examples/probe.rs` | ~580 | live 模式测试客户端：`--connect`（外部握手 + WorkspaceList）、`--live-two-gui`、`--live-pty`、`--token`（缺省读 `{data_dir}/gui.token`） |
 | `tests/contract.rs` | ~770 | GUI Connection Protocol 契约测试（LocalTransport UDS × 进程内 `GuiServer` + `GuiHostAdapter` + `MockProvider`），9 测试 |
 | `tests/probe.rs` + `tests/probe/harness.rs` + `tests/probe/scenarios.rs` | ~1 110 | `--self-test` 13 场景（MemoryTransport 进程内装配）；harness 提供 AppCore / GuiServer / 握手 / CLI 侧命令辅助；默认不编译，`probe-self-test` feature 显式启用 |
@@ -68,6 +68,8 @@ API 1.24：crate 根 re-export `VideoContent` 供 Desktop 使用，Plan/Goal/录
 
 API 1.26：crate 根 re-export domain 的全部 TaskUsage DTO，Desktop 经既有 `GuiClient::query(AppQuery::TaskUsage { query }, …)` 获取 typed report，沿用 registry version gate 和鉴权连接；无新传输、Core 或数据库依赖。headless / ACP 的 task_usage 通道未开放，不能由类型生成推定可调用。
 
+API 1.27：crate 根 re-export CU-17 观测与目标词汇（`Computer*` / `Observation*` 类型、三个响应 Data 与 `MAX_OBSERVATION_READ_BYTES` / `MAX_OBSERVATION_LIST_LIMIT` / `MAX_OBSERVATION_LIST_RESPONSE_BYTES` / `MAX_COMPUTER_TARGET_LIST_TARGETS` / `MAX_COMPUTER_TARGET_LIST_RESPONSE_BYTES` 常量），Desktop 经既有 `query` / `command` 方法发送，registry `since=1.27` 版本门自动生效；无新传输、Core 或 computer-use 依赖。headless / ACP 通道未开放这些消息。
+
 ## 4. 核心行为与数据流
 
 UI-6b G2：crate 根增加 `ProviderAccountSelectionMode`、`QuotaOverviewQuery/QuotaOverviewView`、`QuotaUnit/QuotaWindow/QuotaMeasure/QuotaReset/WindowReadView` re-export，Desktop 继续只经本包发送通用 query/command；连接、路由与请求超时机制不变。
@@ -92,7 +94,7 @@ UI-6b G2：crate 根增加 `ProviderAccountSelectionMode`、`QuotaOverviewQuery/
 
 ## 5. 契约与不变量
 
-- **版本协商**：`ClientConfig::supported_api_versions` 默认跟随 `pawork-protocol::SUPPORTED_API_VERSIONS`（1.0–1.26），服务端取 major 相同的最高共同 minor；不兼容必须显式拒绝（`IncompatibleVersion`），后续 ServerFrame 信封版本漂移由 `ClientError::Version` 捕获（ADR-036）。headless 侧 `SDK_API_VERSION` 跟随 `pawork_protocol::API_VERSION`（当前 1.26）同理；`command_envelope` / `query_envelope` 发送前按 registry `since` 做版本门，旧 minor 拒发新命令。
+- **版本协商**：`ClientConfig::supported_api_versions` 默认跟随 `pawork-protocol::SUPPORTED_API_VERSIONS`（1.0–1.27），服务端取 major 相同的最高共同 minor；不兼容必须显式拒绝（`IncompatibleVersion`），后续 ServerFrame 信封版本漂移由 `ClientError::Version` 捕获（ADR-036）。headless 侧 `SDK_API_VERSION` 跟随 `pawork_protocol::API_VERSION`（当前 1.27）同理；`command_envelope` / `query_envelope` 发送前按 registry `since` 做版本门，旧 minor 拒发新命令。
 - **帧上限**：经 `ConnectOptions::max_frame_bytes` 与 transport 对齐 1 MiB（见 [transport.md](transport.md)）；本 crate 不改帧格式。
 - **FrameWant 路由不变量**：Response / Resume 只按 `request_id` 匹配；Snapshot 载荷帧无 `request_id`（协议帧无身份，补身份需演进 wire 格式），`snapshot` / `resume` 共用 `snapshot_inflight` 串行锁，防止并发等待互取回复；等待超时即废弃整条连接（R-12），迟到 Snapshot 不可能落到下个请求。Event 消费路径独占 `request_id = None` 的错误帧；不匹配帧只 stash 不丢弃——并发调用互不吞帧。
 - **幂等重放**：同 `command_id` 的 `command_envelope` 重放由宿主 IdempotencyStore 返回相同响应（probe `command-idempotency` 钉住）。

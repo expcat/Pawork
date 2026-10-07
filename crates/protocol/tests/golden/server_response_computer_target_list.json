@@ -1,0 +1,42 @@
+{
+  "data": {
+    "api_version": {
+      "major": 1,
+      "minor": 27
+    },
+    "request_id": "query-computer-1",
+    "responded_at": 3,
+    "response": {
+      "data": {
+        "session_id": "session-1",
+        "targets": [
+          {
+            "capabilities": [
+              {
+                "action": "capture_window",
+                "background": "supported",
+                "minimized": "unverified"
+              }
+            ],
+            "dispatch_paused": false,
+            "grant": "for_run",
+            "scope": {
+              "run_id": "run-1",
+              "workspace_id": "ws-1"
+            },
+            "target": {
+              "app": {
+                "bundle_id": "com.example.App",
+                "family": "appkit"
+              },
+              "kind": "application"
+            }
+          }
+        ],
+        "workspace_id": "ws-1"
+      },
+      "type": "data"
+    }
+  },
+  "type": "response"
+}

@@ -667,6 +667,12 @@ pub enum AppCommand {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         supported_efforts: Option<Vec<String>>,
     },
+    /// GUI-only CU-17 (since 1.27)：为指定活跃 run 签发目标授权（映射
+    /// CU-16 TargetAuthorizer::grant；受保护目标明确拒绝）。
+    ComputerTargetApprove(super::computer::ComputerTargetApproveParams),
+    /// GUI-only CU-17 (since 1.27)：撤销目标授权并释放占用（目标级停止；
+    /// 已消费历史不回写）。
+    ComputerTargetRevoke(super::computer::ComputerTargetRevokeParams),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
