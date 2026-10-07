@@ -23,6 +23,12 @@ gpui = "=0.2.2"
 smol = "2"
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time"] }
 serde_json.workspace = true
+# CU-19：observation_image_read 的 Base64 块解码（纯工具库，不触碰
+# pawork-* 依赖红线）。
+base64 = "0.22"
+# CU-19：观测截图入缓存前真实解码校验（gpui::Image 只包装字节不
+# 解码；版本与 gpui 0.2.2 树内 image 0.25 对齐，不引入新传递依赖）。
+image = "0.25"
 unicode-segmentation = "1"
 raw-window-handle = "0.6"
 

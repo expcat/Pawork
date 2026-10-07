@@ -37,7 +37,7 @@
 | 等待人工验收 | [CU-16 · 应用与网站范围的 Host 审批](plan/cu-16-target-approvals.md) | P1 | 在现有 Policy 和显式审批上补目标范围，生产原生操作在本任务落地后才接入。 |
 | 已实现 | [CU-17 · GUI 观测查询与协议版本接入](plan/cu-17-gui-observation-protocol.md) | P5 | 为 GUI 提供有界目标状态与截图证据查询，保留 Host 作为唯一入口。 |
 | 已实现；自动门禁通过，真窗验收覆盖入口/空态/刷新/断线重连；empty 态与授权回执端到端待 CU-20 目标登记后人工验收 | [CU-18 · GUI 目标选择与权限交互](plan/cu-18-gui-target-approvals.md) | P5 | 让用户选择后台操作目标并管理应用/网站授权。 |
-| 待开发 | [CU-19 · GUI 截图证据与停止状态](plan/cu-19-gui-evidence-stop.md) | P5 | 让用户查看实际操作前后证据，并可靠停止后台任务。 |
+| 已实现；自动门禁通过；真窗验收覆盖证据区空态（no_workspace / no_run）与 observation_list 真实往返；观测行 / 停止状态机待活动 run（环境阻塞，见任务记录） | [CU-19 · GUI 截图证据与停止状态](plan/cu-19-gui-evidence-stop.md) | P5 | 让用户查看实际操作前后证据，并可靠停止后台任务。 |
 | 待开发 | [CU-20 · macOS 后台能力端到端验收与文档收口](plan/cu-20-native-acceptance.md) | P6 | 闭合首阶段本机后台核心能力，证明用户可持续工作且操作证据完整。 |
 
 ### 后续环境与能力

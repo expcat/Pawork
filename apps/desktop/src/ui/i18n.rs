@@ -1493,6 +1493,67 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             "action unavailable · not connected or unsupported Host",
             "操作不可用 · 未连接或服务不支持",
         ),
+        "computer.stop_task" => ("Stop task", "停止任务"),
+        "computer.stop_run" => ("run {}", "run {}"),
+        "computer.stop_dispatching" => ("Stopping task", "正在停止任务"),
+        "computer.stop_confirming" => (
+            "Stop accepted · waiting for run to end",
+            "停止已受理 · 等待 run 终止确认",
+        ),
+        "computer.stop_confirming_note" => (
+            "Stop rejected: {} · re-checking current state",
+            "停止命令被拒：{} · 正在核对当前状态",
+        ),
+        "computer.stop_stopped" => (
+            "Task stopped · run reached terminal state",
+            "任务已停止 · run 已终止",
+        ),
+        "computer.stop_observe_failed" => (
+            "Stop sent, status check failed: {} · refresh to retry",
+            "停止已派出，状态核对失败：{} · 可刷新重试",
+        ),
+        "computer.stop_unknown" => (
+            "Stop outcome unknown · connection lost before confirmation",
+            "停止结果未知 · 确认前连接中断",
+        ),
+        "computer.observations_title" => ("Observation evidence", "观测证据"),
+        "computer.observations_count" => ("{} observations", "{} 条观测"),
+        "computer.observations_loading" => ("Loading observations…", "正在加载观测…"),
+        "computer.observations_failed" => ("Couldn’t load observations", "无法加载观测"),
+        "computer.observations_empty" => (
+            "No observation evidence yet.",
+            "暂无观测证据。",
+        ),
+        "computer.observations_truncated" => (
+            "Only the most recent observations are listed.",
+            "仅列出最近的观测记录。",
+        ),
+        "computer.observations_hidden" => (
+            "{} earlier observations not shown.",
+            "更早的 {} 条观测未展开。",
+        ),
+        "computer.observation_current" => ("Latest", "当前"),
+        "computer.observation_history" => ("History", "历史"),
+        "computer.observation_view" => ("View screenshot", "查看截图"),
+        "computer.observation_retry" => ("Retry", "重试"),
+        "computer.observation_loading" => (
+            "Loading screenshot · {} / {}",
+            "正在加载截图 · {} / {}",
+        ),
+        "computer.observation_load_failed" => (
+            "Couldn’t load screenshot",
+            "无法加载截图",
+        ),
+        "computer.observation_corrupt" => (
+            "Screenshot data failed integrity checks.",
+            "截图数据完整性校验失败。",
+        ),
+        "computer.observation_too_large" => (
+            "Screenshot exceeds the preview size budget.",
+            "截图超出预览尺寸预算。",
+        ),
+        "computer.observation_run" => ("run {}", "run {}"),
+        "computer.observation_selected" => ("Selected", "已选中"),
         "common.stale_data" => ("Stale data", "旧数据"),
         "common.placeholder_no_details" => {
             ("No additional details are available.", "暂无更多详情。")

@@ -730,9 +730,15 @@ impl AppView {
             other if other
                 .starts_with(crate::ui::computer::COMPUTER_APPROVE_ONCE_PREFIX)
                 || other.starts_with(crate::ui::computer::COMPUTER_APPROVE_RUN_PREFIX)
-                || other.starts_with(crate::ui::computer::COMPUTER_REVOKE_PREFIX) =>
+                || other.starts_with(crate::ui::computer::COMPUTER_REVOKE_PREFIX)
+                || other.starts_with(crate::ui::computer::COMPUTER_STOP_PREFIX) =>
             {
                 self.computer_action_by_id(other, cx);
+            }
+            // CU-19：观测证据行（选择 + 加载）与预览卡查看 / 重试按钮；
+            // gate 与身份匹配在各自入口内复核。
+            other if other.starts_with("computer-observation-") => {
+                self.computer_observation_ax_action(other, cx);
             }
             "terminal-new-tab" => self.on_new_terminal_tab(cx),
             other if other.starts_with("terminal-tab-") => {

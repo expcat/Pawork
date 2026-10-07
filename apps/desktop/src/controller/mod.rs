@@ -17,6 +17,7 @@ use pawork_client::{
     ActorIdentity, AppCommand, AppEvent, AppEventEnvelope, AppQuery, AppResponse,
     AppResponseEnvelope, ApprovalModeWire, AuthStartData, ClientAuthentication, ClientConfig,
     ClientError, CommandSource, ComputerTargetListData, ConnectOptions, DefaultModelPair,
+    ObservationImageData, ObservationListData,
     GeneralSettingsData,
     GlobalSequence, GuiCapability, GuiClient, GuiTransportClient, LocalTransport,
     PermissionsSettingsData, ProtocolErrorCode, ProviderAuthStatusData, ProviderUseProxyData,
@@ -288,6 +289,41 @@ pub enum ControllerEvent {
     ComputerTargetActionFinished {
         session_id: String,
         action_id: u64,
+        result: Result<(), String>,
+    },
+    /// observation_list 查询成功（CU-19，GUI API 1.27；按 session + 请求
+    /// 代次归属，迟到回执不覆盖新查询）。条目只读持久化事件账本
+    ///（status=historical），不触发新截图或输入。
+    ObservationsLoaded {
+        session_id: String,
+        request_id: u64,
+        data: ObservationListData,
+    },
+    ObservationsFailed {
+        session_id: String,
+        request_id: u64,
+        reason: String,
+    },
+    /// observation_image_read 单块回执（CU-19）：data 为 [offset,
+    /// offset+len) 解码字节的 Base64；eof=false 时 UI 以回显 offset 续读，
+    /// 单块上限 MAX_OBSERVATION_READ_BYTES。
+    ObservationImageChunk {
+        session_id: String,
+        request_id: u64,
+        data: ObservationImageData,
+    },
+    ObservationImageFailed {
+        session_id: String,
+        request_id: u64,
+        reason: String,
+    },
+    /// run_cancel（CU-19 停止后台任务）的回执：Ok 只表示取消命令已被
+    /// Host 接受，不等于已停止；真实释放 / 终态由 UI 重查目标列表与 run
+    /// 终态事件确认。run_id 随回执带回供停止状态机归属。
+    ComputerStopFinished {
+        session_id: String,
+        action_id: u64,
+        run_id: String,
         result: Result<(), String>,
     },
     /// open_session 的会话级失败：携带 session_id，UI 仅在该会话仍为

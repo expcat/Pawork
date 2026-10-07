@@ -596,7 +596,7 @@ impl AppView {
 }
 
 /// 魔数嗅探映射 gpui 解码格式；与 controller 校验共用同一组前缀。
-fn sniff_image_format(bytes: &[u8]) -> Option<gpui::ImageFormat> {
+pub(super) fn sniff_image_format(bytes: &[u8]) -> Option<gpui::ImageFormat> {
     if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
         Some(gpui::ImageFormat::Png)
     } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
@@ -611,7 +611,7 @@ fn sniff_image_format(bytes: &[u8]) -> Option<gpui::ImageFormat> {
 }
 
 /// 字节数格式化为 B / KiB / MiB（附件 chip 与预览共用）。
-fn format_byte_size(bytes: usize) -> String {
+pub(super) fn format_byte_size(bytes: usize) -> String {
     const KIB: f64 = 1024.0;
     let size = bytes as f64;
     if size >= KIB * KIB {

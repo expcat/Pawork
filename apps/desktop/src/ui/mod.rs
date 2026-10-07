@@ -13,6 +13,8 @@ mod browser;
 mod changes;
 mod components;
 mod computer;
+
+use computer::ObservationChunkOutcome;
 mod drawing;
 mod files;
 mod goal;
@@ -52,7 +54,7 @@ use gpui::{
     ListState, PathPromptOptions, Pixels, Point, Render, Rgba, ScrollHandle, SharedString,
     Subscription, Window,
 };
-use pawork_client::AppEvent;
+use pawork_client::{AppEvent, MAX_OBSERVATION_READ_BYTES};
 
 use crate::controller::{ControllerEvent, DesktopController, DesktopHandshakeInfo};
 use crate::platform::Platform;
@@ -1809,6 +1811,14 @@ impl AppView {
             }
             Some(outcome) => self.projection.apply_resume_outcome(outcome, &snapshot),
         };
+        // CU-19：断线期间到达的 run 终态经 Replay 补发恢复——重放事件
+        // 只进 projection reducer，不经 live 事件接线；把面板绑定会话
+        // 内的终态同步交给停止状态机，避免已停止任务永久停在 Unknown。
+        if let Some(outcome) = &resume {
+            if let pawork_client::ResumeDisposition::Replay { .. } = &outcome.disposition {
+                self.apply_replayed_stop_confirmations(&outcome.replayed);
+            }
+        }
         self.status_hint = self.projection.resume.label();
         self.timeline_changed();
         self.refresh_all_settings(cx);
@@ -1848,6 +1858,31 @@ impl AppView {
         // 上重新取权威数据；旧内容在此之前一直带 stale 标记保留。
         self.refresh_open_inspector_tab(cx);
         cx.notify();
+    }
+
+    /// Replay 补发事件中的 run 终态 → 停止状态机（与 live 事件接线同
+    /// 语义：面板绑定该会话即收敛，不要求页面可见；confirm 内部再按
+    /// run 归属过滤）。抽出独立方法便于直接钉板。
+    fn apply_replayed_stop_confirmations(&mut self, replayed: &[pawork_client::AppEventEnvelope]) {
+        for envelope in replayed {
+            if let AppEvent::RunChanged { run_id, state } = &envelope.payload {
+                let terminal = matches!(
+                    state,
+                    pawork_client::RunState::Completed
+                        | pawork_client::RunState::Cancelled
+                        | pawork_client::RunState::Failed
+                        | pawork_client::RunState::Interrupted
+                );
+                let bound_here = matches!(
+                    &envelope.stream,
+                    pawork_client::EventStream::Session(id)
+                        if self.computer.matches_session(Some(id.as_str()))
+                );
+                if terminal && bound_here {
+                    self.computer.confirm_stop_terminal(run_id.as_str());
+                }
+            }
+        }
     }
 
     fn consume_events(
@@ -2046,9 +2081,31 @@ impl AppView {
                 }
                 // CU-18：目标清单只覆盖活跃 run 的 registry 登记；run
                 // 开始 / 终态切换时重查（页面打开才查，不常驻轮询）。
+                // CU-19：run 终态事件是停止状态机的确认通道之一（面板
+                // 绑定该会话即收敛，不要求页面可见）；工具完成即新截图
+                // 落库，页面打开时重查证据（读取持久账本，不触发截图）。
+                if let AppEvent::RunChanged { run_id, state } = &envelope.payload {
+                    let terminal = matches!(
+                        state,
+                        pawork_client::RunState::Completed
+                            | pawork_client::RunState::Cancelled
+                            | pawork_client::RunState::Failed
+                            | pawork_client::RunState::Interrupted
+                    );
+                    let bound_here = matches!(
+                        &envelope.stream,
+                        pawork_client::EventStream::Session(id) if self
+                            .computer
+                            .matches_session(Some(id.as_str()))
+                    );
+                    if terminal && bound_here {
+                        self.computer.confirm_stop_terminal(run_id.as_str());
+                    }
+                }
                 if self.inspector_open
                     && self.inspector_tab == InspectorTab::Computer
-                    && had_active_run != self.projection.active_run_id.is_some()
+                    && (had_active_run != self.projection.active_run_id.is_some()
+                        || matches!(envelope.payload, AppEvent::ToolCompleted { .. }))
                 {
                     self.refresh_computer_targets(cx);
                 }
@@ -2875,6 +2932,88 @@ impl AppView {
                     && self.inspector_open
                     && self.inspector_tab == InspectorTab::Computer
                 {
+                    self.refresh_computer_targets(cx);
+                }
+            }
+            ControllerEvent::ObservationsLoaded {
+                session_id,
+                request_id,
+                data,
+            } => {
+                // 探测页（limit=1）只习得 head：返回尾窗参数；尾窗内被
+                // 单页字节预算截断时按游标同代次续读（页数有界）。收敛
+                // 落库后，面板可见时为选中证据按需自动加载首图。
+                match self.computer.apply_observations(&session_id, request_id, &data) {
+                    Some((after, limit)) => {
+                        self.controller
+                            .observation_list(session_id, request_id, after, Some(limit));
+                    }
+                    None => {
+                        if self.inspector_open && self.inspector_tab == InspectorTab::Computer {
+                            self.computer_start_evidence_load(cx);
+                        }
+                    }
+                }
+            }
+            ControllerEvent::ObservationsFailed {
+                session_id,
+                request_id,
+                reason,
+            } => {
+                self.computer
+                    .apply_observations_failed(&session_id, request_id, reason);
+            }
+            ControllerEvent::ObservationImageChunk {
+                session_id,
+                request_id,
+                data,
+            } => {
+                // eof=false 时以回显偏移续读（单块上限恒 MAX_OBSERVATION_
+                // READ_BYTES；总量以条目申报字节为界，面板侧 fail-closed）。
+                // eof 收齐后字节移交后台执行器做真实解码校验（像素 /
+                // 帧预算 + 全帧解码不占 UI 线程，结果按证据身份与请求
+                // 代次落地）。
+                match self
+                    .computer
+                    .apply_observation_chunk(&session_id, request_id, &data)
+                {
+                    ObservationChunkOutcome::Continue(key, offset) => {
+                        if self.computer.evidence_load.is_some() {
+                            self.controller.observation_image_read(
+                                session_id,
+                                request_id,
+                                key.0,
+                                key.1,
+                                offset,
+                                MAX_OBSERVATION_READ_BYTES,
+                            );
+                        }
+                    }
+                    ObservationChunkOutcome::Decode(task) => {
+                        self.computer_dispatch_evidence_decode(session_id, task, cx);
+                    }
+                    ObservationChunkOutcome::Settled => {}
+                }
+            }
+            ControllerEvent::ObservationImageFailed {
+                session_id,
+                request_id,
+                reason,
+            } => {
+                self.computer
+                    .apply_observation_image_failed(&session_id, request_id, reason);
+            }
+            ControllerEvent::ComputerStopFinished {
+                session_id,
+                action_id,
+                run_id,
+                result,
+            } => {
+                // 回执（Ok / Err）只证明取消命令被接受 / 拒绝，不冒充已
+                // 停止：重查列表只收敛「被拒仍持有」的回落错误与新
+                // run 接管退役（已停止仅由 run 终态事件确认）。代次 /
+                // run 不匹配的迟到回执不触发。
+                if self.computer.finish_stop(&session_id, action_id, &run_id, result) {
                     self.refresh_computer_targets(cx);
                 }
             }
@@ -5858,6 +5997,69 @@ impl Render for AppView {
 mod tests {
     use super::*;
     use crate::projection::SessionSummary;
+
+    fn replayed_run_event(
+        sequence: u64,
+        session: &str,
+        run: &str,
+        state: &str,
+    ) -> pawork_client::AppEventEnvelope {
+        serde_json::from_value(serde_json::json!({
+            "api_version": { "major": 1, "minor": 27 },
+            "instance_id": "instance-1",
+            "event_id": format!("app-{sequence}"),
+            "global_sequence": sequence,
+            "stream": { "type": "session", "id": session },
+            "stream_sequence": sequence,
+            "timestamp": 1_000 + sequence,
+            "source": { "type": "core" },
+            "payload": { "type": "run_changed", "data": { "run_id": run, "state": state } }
+        }))
+        .expect("decode AppEventEnvelope")
+    }
+
+    /// CU-19：断线期间到达的 run 终态经 Replay 补发恢复——重放事件
+    /// 不经 live 事件接线，须把面板绑定会话内的终态交给停止状态机，
+    /// 已停止任务不得永久停在 Unknown。
+    #[gpui::test]
+    fn replayed_run_terminal_confirms_stop_state(cx: &mut gpui::TestAppContext) {
+        let platform = std::sync::Arc::new(crate::platform::Platform::new());
+        let socket = std::env::temp_dir().join("cu19-replay-stop.sock");
+        let (view, cx) = cx.add_window_view(|_, cx| AppView::new(platform, socket, None, cx));
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                let request = view.computer.begin_loading("s1");
+                view.computer.apply_loaded("s1", request, serde_json::from_value(serde_json::json!({
+                    "session_id": "s1",
+                    "workspace_id": "ws-1",
+                    "targets": [],
+                }))
+                .expect("empty list shape"));
+                view.computer.stop = Some(computer::ComputerStop {
+                    key: "k".into(),
+                    run_id: "r1".into(),
+                    action_id: 7,
+                    phase: computer::ComputerStopPhase::Unknown,
+                });
+                // 非终态 + 异会话终态：都不收敛。
+                view.apply_replayed_stop_confirmations(&[
+                    replayed_run_event(1, "s1", "r1", "streaming_response"),
+                    replayed_run_event(2, "s2", "r1", "completed"),
+                ]);
+                assert_eq!(
+                    view.computer.stop.as_ref().unwrap().phase,
+                    computer::ComputerStopPhase::Unknown
+                );
+                // 绑定会话内的 run 终态 → 已停止（与 live 接线同语义）。
+                view.apply_replayed_stop_confirmations(&[replayed_run_event(3, "s1", "r1", "cancelled")]);
+                assert_eq!(
+                    view.computer.stop.as_ref().unwrap().phase,
+                    computer::ComputerStopPhase::Stopped
+                );
+                cx.notify();
+            });
+        });
+    }
 
     fn session(id: &str, workspace: Option<&str>) -> SessionSummary {
         SessionSummary {

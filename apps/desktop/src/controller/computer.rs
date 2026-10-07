@@ -100,6 +100,146 @@ impl DesktopController {
         )
     }
 
+    /// 拉取会话的持久化观测证据（observation_list，CU-19）。返回是否已
+    /// 派出；after_sequence 为事件序游标（None 从头探测），limit 单位是
+    /// 事件数、由 Host 钳制。条目只读事件账本，不触发新截图或输入。
+    pub fn observation_list(
+        &self,
+        session_id: String,
+        request_id: u64,
+        after_sequence: Option<u64>,
+        limit: Option<u32>,
+    ) -> bool {
+        let Some(client) = self.current_client() else {
+            return false;
+        };
+        if client.api_version().minor < 27 {
+            return false;
+        }
+        let events = self.event_sender();
+        self.runtime.spawn(async move {
+            let query = serde_json::from_value(json!({
+                "method": "observation_list",
+                "params": {
+                    "session_id": session_id,
+                    "after_sequence": after_sequence,
+                    "limit": limit,
+                }
+            }))
+            .expect("observation_list query shape is frozen");
+            let result = match client
+                .query(query, command_source(), actor_identity())
+                .await
+            {
+                Ok(response) => parse_observation_list_response(&response),
+                Err(error) => Err(error.to_string()),
+            };
+            let event = match result {
+                Ok(data) => ControllerEvent::ObservationsLoaded {
+                    session_id,
+                    request_id,
+                    data,
+                },
+                Err(reason) => ControllerEvent::ObservationsFailed {
+                    session_id,
+                    request_id,
+                    reason,
+                },
+            };
+            let _ = events.send(event).await;
+        });
+        true
+    }
+
+    /// 读取单条观测图像的有界字节块（observation_image_read，CU-19）。
+    /// data 为 [offset, offset+len) 解码字节的 Base64；eof=false 时调用方
+    /// 以回显 offset 续读，整图重组在 UI 侧完成（有界块 × 条目字节数）。
+    pub fn observation_image_read(
+        &self,
+        session_id: String,
+        request_id: u64,
+        sequence: u64,
+        part_index: u32,
+        offset: u64,
+        limit: u64,
+    ) -> bool {
+        let Some(client) = self.current_client() else {
+            return false;
+        };
+        if client.api_version().minor < 27 {
+            return false;
+        }
+        let events = self.event_sender();
+        self.runtime.spawn(async move {
+            let query = serde_json::from_value(json!({
+                "method": "observation_image_read",
+                "params": {
+                    "session_id": session_id,
+                    "sequence": sequence,
+                    "part_index": part_index,
+                    "offset": offset,
+                    "limit": limit,
+                }
+            }))
+            .expect("observation_image_read query shape is frozen");
+            let result = match client
+                .query(query, command_source(), actor_identity())
+                .await
+            {
+                Ok(response) => parse_observation_image_response(&response),
+                Err(error) => Err(error.to_string()),
+            };
+            let event = match result {
+                Ok(data) => ControllerEvent::ObservationImageChunk {
+                    session_id,
+                    request_id,
+                    data,
+                },
+                Err(reason) => ControllerEvent::ObservationImageFailed {
+                    session_id,
+                    request_id,
+                    reason,
+                },
+            };
+            let _ = events.send(event).await;
+        });
+        true
+    }
+
+    /// 停止后台任务（run_cancel，CU-19 状态机的派发入口）。回执 Ok
+    ///（Data / Accepted）只表示取消命令被 Host 接受；已停止由 UI 以
+    /// run 终态事件确认，回执本身不冒充已停止。
+    pub fn computer_stop_run(&self, session_id: String, action_id: u64, run_id: String) -> bool {
+        let Some(client) = self.current_client() else {
+            return false;
+        };
+        let events = self.event_sender();
+        let command = run_cancel_command(&run_id);
+        self.runtime.spawn(async move {
+            let result = match client
+                .command(command, command_source(), actor_identity())
+                .await
+            {
+                Ok(response) => match response.response {
+                    // run_cancel 的正常成功回执是 Accepted（无 Data 载荷）。
+                    AppResponse::Data(_) | AppResponse::Accepted { .. } => Ok(()),
+                    AppResponse::Error(error) => Err(error.message),
+                    other => Err(format!("unexpected response: {other:?}")),
+                },
+                Err(error) => Err(error.to_string()),
+            };
+            let _ = events
+                .send(ControllerEvent::ComputerStopFinished {
+                    session_id,
+                    action_id,
+                    run_id,
+                    result,
+                })
+                .await;
+        });
+        true
+    }
+
     /// approve / revoke 共用发送路径；返回是否已派出（断线 / 旧 Host
     /// 不派出，调用方保留面板旧状态）。
     fn computer_target_command(
@@ -149,6 +289,32 @@ impl DesktopController {
 fn parse_computer_target_list_response(
     response: &AppResponseEnvelope,
 ) -> Result<ComputerTargetListData, String> {
+    match &response.response {
+        AppResponse::Data(data) => {
+            serde_json::from_value(data.clone()).map_err(|error| error.to_string())
+        }
+        AppResponse::Error(error) => Err(error.message.clone()),
+        other => Err(format!("unexpected response: {other:?}")),
+    }
+}
+
+/// 解包 observation_list 信封：Data 为协议 ObservationListData。
+fn parse_observation_list_response(
+    response: &AppResponseEnvelope,
+) -> Result<ObservationListData, String> {
+    match &response.response {
+        AppResponse::Data(data) => {
+            serde_json::from_value(data.clone()).map_err(|error| error.to_string())
+        }
+        AppResponse::Error(error) => Err(error.message.clone()),
+        other => Err(format!("unexpected response: {other:?}")),
+    }
+}
+
+/// 解包 observation_image_read 信封：Data 为协议 ObservationImageData。
+fn parse_observation_image_response(
+    response: &AppResponseEnvelope,
+) -> Result<ObservationImageData, String> {
     match &response.response {
         AppResponse::Data(data) => {
             serde_json::from_value(data.clone()).map_err(|error| error.to_string())
