@@ -8,8 +8,8 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
-mod rfb;
 pub mod approval;
+mod rfb;
 pub mod target;
 
 /// macOS native backend (CU-03): application/window discovery, window
@@ -130,6 +130,14 @@ pub struct Output {
     pub observation: Option<Observation>,
     pub permissions: Option<Permissions>,
     pub jpeg: Option<Vec<u8>>,
+    /// CU-10: true when input events were dispatched into the backend. This
+    /// is a dispatch fact, not proof the UI accepted the action; the actual
+    /// state is checked against the fresh observation of the same call.
+    pub input_dispatched: bool,
+    /// CU-10: why the post-input observation failed. The dispatch that
+    /// already happened is kept as fact (input_dispatched stays true), the
+    /// observation is absent and never retried within this call.
+    pub observation_failure: Option<String>,
 }
 
 /// Input already validated and converted to virtual display pixels.
@@ -270,77 +278,21 @@ impl Computer {
                 observation: None,
                 permissions: Some(permissions),
                 jpeg: None,
+                input_dispatched: false,
+                observation_failure: None,
             });
         }
         if !permissions.capture {
             return Err(Error::Permission("isolated desktop capture"));
         }
         if matches!(action, Action::Screenshot {}) {
-            let generation = {
-                let mut state = self
-                    .session
-                    .state
-                    .lock()
-                    .map_err(|_| Error::Backend("desktop state lock poisoned".into()))?;
-                state.latest = None;
-                state.generation += 1;
-                state.generation
-            };
-            let capture = self.run_backend(scope, cancelled, || self.backend.capture())?;
-            if cancelled() {
-                self.release(scope);
-                return Err(Error::Cancelled);
-            }
-            if capture.width == 0
-                || capture.height == 0
-                || capture.width > MAX_IMAGE_EDGE
-                || capture.height > MAX_IMAGE_EDGE
-                || capture.jpeg.is_empty()
-                || capture.jpeg.len() > MAX_IMAGE_BYTES
-            {
-                return Err(Error::Backend(
-                    "screenshot exceeds dimensions or byte budget".into(),
-                ));
-            }
-            if self.run_backend(scope, cancelled, || self.backend.desktop())? != capture.desktop {
-                return Err(Error::Stale);
-            }
-            let observation = Observation {
-                observation_id: format!(
-                    "{}-{}",
-                    std::process::id(),
-                    OBSERVATION_SEQUENCE.fetch_add(1, Ordering::Relaxed)
-                ),
-                desktop: capture.desktop,
-                image_width: capture.width,
-                image_height: capture.height,
-            };
-            {
-                let mut state = self
-                    .session
-                    .state
-                    .lock()
-                    .map_err(|_| Error::Backend("desktop state lock poisoned".into()))?;
-                // Store the lease only while this run still owns the desktop:
-                // a concurrent host release must not resurrect a handle.
-                verify_owned(&mut state, scope)?;
-                // The screenshot's generation must still be current: a
-                // release that let the same scope re-claim (a queued call)
-                // must not deliver an observation that is stale on arrival.
-                if generation != state.generation {
-                    return Err(Error::Stale);
-                }
-                state.latest = Some(Lease {
-                    generation,
-                    scope: scope.into(),
-                    observation: observation.clone(),
-                    created: Instant::now(),
-                });
-            }
+            let (observation, jpeg) = self.capture_observation(scope, cancelled, None)?;
             return Ok(Output {
                 observation: Some(observation),
                 permissions: None,
-                jpeg: Some(capture.jpeg),
+                jpeg: Some(jpeg),
+                input_dispatched: false,
+                observation_failure: None,
             });
         }
         if !permissions.input {
@@ -404,11 +356,113 @@ impl Computer {
         self.run_backend(scope, cancelled, || {
             self.backend.input(input, &|| cancelled() || revoked())
         })?;
+        // CU-10: the dispatched input is a fact, not an effect proof. The
+        // same call captures a fresh observation so the next decision sees
+        // the actual state; when that capture fails the dispatch already
+        // happened and is reported as fact with the failure — never erased
+        // by an error and never retried here.
+        let (observation, jpeg, observation_failure) = match self.capture_observation(
+            scope,
+            cancelled,
+            Some(dispatch_generation),
+        ) {
+            Ok((observation, jpeg)) => (Some(observation), Some(jpeg), None),
+            Err(error) => (None, None, Some(error.to_string())),
+        };
         Ok(Output {
-            observation: None,
+            observation,
             permissions: None,
-            jpeg: None,
+            jpeg,
+            input_dispatched: true,
+            observation_failure,
         })
+    }
+
+    /// Capture and register one fresh observation lease for the owning
+    /// scope. Shared by the screenshot action and the CU-10 post-input
+    /// observation: the generation bump invalidates any pending lease, the
+    /// frame must be current (desktop identity re-checked) and the lease is
+    /// stored only while this run still owns the desktop at the generation
+    /// the capture started from. Post-input captures anchor on
+    /// `dispatch_generation`: the anchor check and the bump share one
+    /// critical section, so a release (or same-scope reclaim) between the
+    /// last input event and this capture cannot deliver an observation
+    /// across the CU-09 invalidation — the dispatch fact survives, the
+    /// observation fails instead.
+    fn capture_observation(
+        &self,
+        scope: &str,
+        cancelled: &dyn Fn() -> bool,
+        dispatch_generation: Option<u64>,
+    ) -> Result<(Observation, Vec<u8>), Error> {
+        let generation = {
+            let mut state = self
+                .session
+                .state
+                .lock()
+                .map_err(|_| Error::Backend("desktop state lock poisoned".into()))?;
+            if let Some(expected) = dispatch_generation {
+                verify_owned(&mut state, scope)?;
+                if state.generation != expected {
+                    return Err(Error::Stale);
+                }
+            }
+            state.latest = None;
+            state.generation += 1;
+            state.generation
+        };
+        let capture = self.run_backend(scope, cancelled, || self.backend.capture())?;
+        if cancelled() {
+            self.release(scope);
+            return Err(Error::Cancelled);
+        }
+        if capture.width == 0
+            || capture.height == 0
+            || capture.width > MAX_IMAGE_EDGE
+            || capture.height > MAX_IMAGE_EDGE
+            || capture.jpeg.is_empty()
+            || capture.jpeg.len() > MAX_IMAGE_BYTES
+        {
+            return Err(Error::Backend(
+                "screenshot exceeds dimensions or byte budget".into(),
+            ));
+        }
+        if self.run_backend(scope, cancelled, || self.backend.desktop())? != capture.desktop {
+            return Err(Error::Stale);
+        }
+        let observation = Observation {
+            observation_id: format!(
+                "{}-{}",
+                std::process::id(),
+                OBSERVATION_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+            ),
+            desktop: capture.desktop,
+            image_width: capture.width,
+            image_height: capture.height,
+        };
+        {
+            let mut state = self
+                .session
+                .state
+                .lock()
+                .map_err(|_| Error::Backend("desktop state lock poisoned".into()))?;
+            // Store the lease only while this run still owns the desktop:
+            // a concurrent host release must not resurrect a handle.
+            verify_owned(&mut state, scope)?;
+            // The screenshot's generation must still be current: a
+            // release that let the same scope re-claim (a queued call)
+            // must not deliver an observation that is stale on arrival.
+            if generation != state.generation {
+                return Err(Error::Stale);
+            }
+            state.latest = Some(Lease {
+                generation,
+                scope: scope.into(),
+                observation: observation.clone(),
+                created: Instant::now(),
+            });
+        }
+        Ok((observation, capture.jpeg))
     }
 
     /// Run one backend call of a claimed operation. When the host cancelled
@@ -718,6 +772,7 @@ mod tests {
                         return Err(Error::Cancelled);
                     }
                     self.positions.lock().unwrap().push(at);
+                    self.fire("input_done");
                 }
                 Input::TypeText(text) => {
                     for ch in text.chars() {
@@ -750,6 +805,104 @@ mod tests {
             y: 360.0,
             button: Button::Left,
             clicks: 1,
+        }
+    }
+
+    #[test]
+    fn input_returns_its_fresh_observation_in_the_same_call() {
+        let backend = Arc::new(Fake::new());
+        let c = Computer::new(backend.clone());
+        let first = observe(&c);
+        let output = c
+            .execute("run-1", click(first.clone(), 640.0), &|| false)
+            .unwrap();
+        assert!(output.input_dispatched);
+        assert!(output.observation_failure.is_none());
+        let observation = output.observation.expect("post-input observation");
+        assert_ne!(observation.observation_id, first);
+        assert!(output.jpeg.is_some());
+        // The fresh observation is the only dispatchable lease and works
+        // exactly once: a consume attempt burns it even when the id is stale.
+        let second = observation.observation_id.clone();
+        assert!(c
+            .execute("run-1", click(second.clone(), 640.0), &|| false)
+            .is_ok());
+        assert!(matches!(
+            c.execute("run-1", click(second, 640.0), &|| false),
+            Err(Error::Stale)
+        ));
+        assert!(matches!(
+            c.execute("run-1", click(first, 640.0), &|| false),
+            Err(Error::Stale)
+        ));
+        assert_eq!(backend.positions.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn capture_failure_after_dispatch_keeps_the_input_fact() {
+        let backend = Arc::new(Fake::new());
+        let c = Computer::new(backend.clone());
+        let first = observe(&c);
+        // Fail the capture that runs after an input has really dispatched
+        // (positions non-empty); the standalone first screenshot succeeds.
+        let fail = Arc::downgrade(&backend);
+        *backend.hook.lock().unwrap() = Some(Box::new(move |method| {
+            if method == "capture" {
+                let Some(backend) = fail.upgrade() else {
+                    return;
+                };
+                if !backend.positions.lock().unwrap().is_empty() {
+                    backend.fail.store(true, Ordering::Relaxed);
+                }
+            }
+        }));
+        let output = c.execute("run-1", click(first, 640.0), &|| false).unwrap();
+        // The input happened and the result keeps that fact; the failed
+        // observation is recorded, not retried inside the same call.
+        assert!(output.input_dispatched);
+        assert_eq!(backend.positions.lock().unwrap().len(), 1);
+        assert!(output.observation.is_none());
+        assert!(output.jpeg.is_none());
+        assert!(output
+            .observation_failure
+            .expect("capture failure recorded")
+            .contains("injected"));
+        // observe(3) + permissions/desktop/input(3) + one failed capture: no
+        // silent second attempt.
+        assert_eq!(backend.calls.load(Ordering::Relaxed), 7);
+    }
+
+    #[test]
+    fn release_between_dispatch_and_observation_never_mints_a_lease() {
+        let backend = Arc::new(Fake::new());
+        let c = Computer::new(backend.clone());
+        let id = observe(&c);
+        // The last input event has landed; before the post-input capture
+        // starts, the host releases the run and a queued call from the same
+        // scope re-claims the desktop (the CU-09 interleaving). The old
+        // call must not adopt the new generation and mint a lease across
+        // the release.
+        let session = c.session.clone();
+        *backend.hook.lock().unwrap() = Some(Box::new(move |method| {
+            if method == "input_done" {
+                let mut state = session.state.lock().unwrap();
+                abandon(&mut state, "run-1");
+                claim_state(&mut state, "run-1").unwrap();
+            }
+        }));
+        let output = c
+            .execute("run-1", click(id, 640.0), &|| false)
+            .unwrap();
+        // The click was dispatched; the observation failed honestly and
+        // no lease was stored for the superseded generation.
+        assert_eq!(backend.positions.lock().unwrap().len(), 1);
+        assert!(output.input_dispatched);
+        assert!(output.observation.is_none());
+        assert!(output.jpeg.is_none());
+        assert!(output.observation_failure.is_some());
+        {
+            let state = c.session.state.lock().unwrap();
+            assert!(state.latest.is_none());
         }
     }
 
@@ -807,8 +960,14 @@ mod tests {
             ));
         }
         let id = observe(&c);
-        c.session.state.lock().unwrap().latest.as_mut().unwrap().created =
-            Instant::now() - Duration::from_secs(61);
+        c.session
+            .state
+            .lock()
+            .unwrap()
+            .latest
+            .as_mut()
+            .unwrap()
+            .created = Instant::now() - Duration::from_secs(61);
         assert!(matches!(
             c.execute("run-1", click(id, 0.0), &|| false),
             Err(Error::Stale)

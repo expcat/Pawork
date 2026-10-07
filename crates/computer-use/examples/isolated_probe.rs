@@ -24,7 +24,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 println!(
                     "{}",
-                    serde_json::json!({"ok":true,"observation":output.observation,"permissions":output.permissions})
+                    serde_json::json!({
+                        "ok": true,
+                        "observation": output.observation,
+                        "permissions": output.permissions,
+                        "input_dispatched": output.input_dispatched,
+                        "observation_failure": output.observation_failure,
+                    })
                 );
             }
             Err(error) => println!("{}", serde_json::json!({"ok":false,"error":error})),

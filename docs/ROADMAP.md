@@ -28,7 +28,7 @@
 | 待开发 | [CU-07 · 后台定向文本与按键输入](plan/cu-07-background-text-keys.md) | P2 | 补齐语义赋值不能覆盖但已证实支持后台输入的文本与按键动作。 |
 | 待开发 | [CU-08 · 后台定向点击、滚动与拖动](plan/cu-08-background-pointer.md) | P2 | 实现已通过无干扰验证的窗口定向指针动作。 |
 | 等待人工验收 | [CU-09 · 目标占用、用户接管与后台生命周期](plan/cu-09-ownership-cancellation.md) | P3 | 把现有全局串行改成明确目标归属，保证并发冲突、取消和后台生命周期可解释。 |
-| 待开发 | [CU-10 · 动作与新观测的 Host 闭环](plan/cu-10-action-observe.md) | P3 | 减少单独截图/动作消耗的回合，同时诚实区分输入派发和 UI 接受。 |
+| 隔离路径等待人工验收，native 接线待开发 | [CU-10 · 动作与新观测的 Host 闭环](plan/cu-10-action-observe.md) | P3 | 减少单独截图/动作消耗的回合，同时诚实区分输入派发和 UI 接受。 |
 | 待开发 | [CU-11 · 图像能力的前置工具门控](plan/cu-11-model-vision-gate.md) | P3 | 在工具暴露和执行前拒绝不支持图像的模型，避免截屏后才失败。 |
 | 待开发 | [CU-12 · 请求侧截图历史与上下文预算](plan/cu-12-screenshot-context.md) | P3 | 限制发给模型的旧截图，保留完整持久化证据和历史重放。 |
 | 待开发 | [CU-13 · 内置浏览器截图与 DOM 观测](plan/cu-13-browser-observation.md) | P4 | 在现有系统 WebView 上补截图与稳定 DOM 观测，保持用户可同时使用 Pawork。 |

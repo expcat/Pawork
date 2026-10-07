@@ -359,15 +359,23 @@ impl ToolScheduler {
                 biased;
                 result = &mut exec => result,
                 () = &mut deadline => {
-                    // 超时：请求协作停止并等待在途工作结束，再回执 Timeout。
+                    // 超时：请求协作停止并等待在途工作结束再回执。工具在
+                    // 取消信号后交出的成功终态是既有结果链的一部分（例如
+                    // computer 输入已派发、观测因取消失败的成功结果），
+                    // 保留该事实而非统一丢弃；工具只回错误时按超时回执。
                     exec_cancel.cancel();
-                    let _ = exec.await;
-                    Err(ToolError {
-                        kind: ToolErrorKind::Timeout,
-                        message: format!("tool `{}` timed out after {ms}ms", descriptor.name),
-                        retryable: false,
-                        retry_after_ms: None,
-                    })
+                    match exec.await {
+                        Ok(finalized) => Ok(finalized),
+                        Err(_) => Err(ToolError {
+                            kind: ToolErrorKind::Timeout,
+                            message: format!(
+                                "tool `{}` timed out after {ms}ms",
+                                descriptor.name
+                            ),
+                            retryable: false,
+                            retry_after_ms: None,
+                        }),
+                    }
                 }
             }
         } else {
@@ -1061,6 +1069,52 @@ mod tests {
             post_cancel_ops.load(Ordering::SeqCst),
             0,
             "取消后不得再启动后续操作"
+        );
+    }
+
+    #[tokio::test]
+    async fn timeout_keeps_a_finalized_success_from_the_drained_tool() {
+        // R-10 补充（CU-10）：超时触发协作收口后，工具在取消信号下交出的
+        // 成功终态是既有结果链的一部分（computer 输入已派发、观测因取消
+        // 失败的成功结果），必须原样保留，不被 Timeout 统一覆盖。
+        struct FinalizingTool;
+
+        #[async_trait::async_trait]
+        impl AgentTool for FinalizingTool {
+            fn descriptor(&self) -> ToolDescriptor {
+                let mut descriptor = client_descriptor("finalizing");
+                descriptor.default_timeout_ms = Some(40);
+                descriptor
+            }
+
+            async fn execute(
+                &self,
+                _request: ToolRequest,
+                _context: ToolExecutionContext,
+                _sink: &dyn ToolEventSink,
+                cancel: CancellationToken,
+            ) -> Result<ToolResult, ToolError> {
+                cancel.cancelled().await;
+                let mut result = ToolResult::success(vec![]);
+                result.metadata = json!({
+                    "input_dispatched": true,
+                    "observation_failure": "computer action cancelled",
+                });
+                Ok(result)
+            }
+        }
+
+        let scheduler = make_scheduler(
+            vec![Arc::new(FinalizingTool)],
+            ToolSchedulerConfig::default(),
+        );
+        let result = execute_named(&scheduler, "finalizing", json!({}))
+            .await
+            .unwrap();
+        assert_eq!(result.metadata["input_dispatched"], json!(true));
+        assert_eq!(
+            result.metadata["observation_failure"],
+            json!("computer action cancelled")
         );
     }
 
