@@ -16,7 +16,9 @@ use pawork_domain::{
 use pawork_domain::{CanonicalModelRequest, ModelProvider, ModelResponseSummary, ProviderError};
 
 use crate::appender::ToolCallResult;
-use crate::context::{AutoCompactionReason, TurnContext};
+use crate::context::{
+    observation_image_budget_bytes, trim_observation_images, AutoCompactionReason, TurnContext,
+};
 use crate::event::{AgentEventSink, EngineError, EventEmitter, LoopEventEmitter};
 use crate::session_turn::{optional_usage, SessionTurn};
 
@@ -184,6 +186,29 @@ pub async fn run_session(
     loop {
         if cancel.is_cancelled() {
             return emit_cancelled(&emitter, "turn cancelled", &run_usage).await;
+        }
+
+        // CU-12：请求副本的观测图像裁剪（仅请求侧，在估算 / 收敛之前）。
+        // 最新观测无条件保留；旧截图按 ContextBudget 折算的字节预算保留，
+        // 被裁剪图像原位留「图像存在但已裁剪」文本说明。持久历史
+        //（MessageCommitted 事件）与重放不受影响；limits 未配置时不动请求。
+        if let Some(limits) = context.limits.as_ref() {
+            let budget_bytes = observation_image_budget_bytes(&limits.budget);
+            let trim = trim_observation_images(&mut current.messages, budget_bytes);
+            if trim.trimmed_images > 0 {
+                emitter
+                    .emit(AgentEvent::Diagnostic {
+                        code: "context.observation_images_trimmed".into(),
+                        details: serde_json::json!({
+                            "trimmed_images": trim.trimmed_images,
+                            "trimmed_bytes": trim.trimmed_bytes,
+                            "retained_images": trim.retained_images,
+                            "retained_bytes": trim.retained_bytes,
+                            "retained_image_bytes_budget": budget_bytes,
+                        }),
+                    })
+                    .await?;
+            }
         }
 
         // S5：每轮请求前估算输入 token 并发 ContextPrepared（estimator 未配置时

@@ -27,7 +27,7 @@
 | `src/context/budget.rs` | ~90 | `ContextBudget`（`from_context_window` 推导 `max_input_tokens`，serde 形状冻结）；`ContextBudgetBreakdown` 占用明细 |
 | `src/context/compaction.rs` | ~150 | `compute_compaction` 触发判定纯函数（硬限优先于软限）；`CompactionReason` / `CompactionTrigger`（serde snake_case）；`AutoCompactionReason`（engine → host 原因，含 `Manual`） |
 | `src/context/token.rs` | ~290 | `TokenEstimator` trait（`count_text` 为核心，message / content part / tool schema 计数为默认实现）；`HeuristicEstimator`（非 CJK chars/4，CJK/Kana/Hangul 按 1 字符/token）；`ToolSchema`；`MESSAGE_FRAMING_TOKENS` 由 `count_message` 直接使用；`reply_primer_tokens`（pub(crate)） |
-| `src/context/tool_result_trim.rs` | ~420 | tool result 分级裁剪：`TrimThresholds`（2/16/256 KiB）、`ResultSize`（Small/Medium/Large/Huge）、`trim_tool_result(_with)`、`TrimmedToolResult`（`retained_full` 暂存原文）、`byte_len_of_tool_result` |
+| `src/context/tool_result_trim.rs` | ~560 | tool result 分级裁剪：`TrimThresholds`（2/16/256 KiB）、`ResultSize`（Small/Medium/Large/Huge）、`trim_tool_result(_with)`、`TrimmedToolResult`（`retained_full` 暂存原文）、`byte_len_of_tool_result`；CU-12 请求侧观测图像裁剪：`trim_observation_images`、`observation_image_budget_bytes`、`ObservationImageTrim` |
 | `tests/domain_only.rs` | ~90 | 红线断言：解析本包 Cargo.toml，生产 `pawork-*` 依赖必须恰为 `{pawork-domain}`（覆盖 alias 与 target 表） |
 | `tests/no_provider_branch.rs` | ~115 | 红线断言：扫描 `src/` 全部 `.rs`，禁止出现任何 provider 名串；名单 = `pawork-providers::CHANNEL_REGISTRY` 派生通道 id + 固化基线别名（openai/anthropic/grok/glm 等） |
 
@@ -46,6 +46,7 @@
 - `turn.start_sequence` 必须 ≥ 1（session_events CHECK），否则立即 `EngineError::Sink`。
 - `DEFAULT_MAX_TOOL_ROUNDS = 20`：达到上限发 `RunFailed`（`ErrorCategory::ResourceExhausted`）并返回 `EngineError::MaxToolRounds`，不再开下一轮 stream。
 - 成功返回的 `ModelResponseSummary.usage` 为整个 run 的累计（饱和加法），失败 / 取消事件的 usage 为累计值（全零时省略）。
+ - CU-12：`limits` 配置时每轮请求前先对请求副本做观测图像裁剪（语义见 §3.7）：最新观测保留，超预算的旧截图原位换「图像存在但已裁剪」文本说明；只改请求副本，裁剪发生时报 `Diagnostic(context.observation_images_trimmed)`，`MessageCommitted` 持久历史与重放不受影响。
 
 ### 3.3 `LoopContext` trait（宿主回调，逐方法语义）
 
@@ -80,6 +81,7 @@
 | `ContextPrepared` | 每轮请求前（硬限截断后重发一次） |
 | `CompactionStarted / CompactionCompleted` | 软限压缩链或手动压缩 |
 | `Diagnostic(context_hard_truncated)` | 硬限截断发生时 |
+| `Diagnostic(context.observation_images_trimmed)` | CU-12 请求侧观测图像裁剪发生时（每轮最多一次），details 含 trimmed / retained 图像数与字节及预算 |
 | `ProviderRequestStarted` | 每轮调用 provider 前 |
 | `AssistantTextDelta / AssistantThinkingDelta / ToolCallStarted / ToolCallArgumentsDelta / UsageUpdated / ServerTool / TranscriptEnvelope` | 流式转发（LoopSink 实时映射） |
 | `ToolApprovalRequested` | LoopContext 实现等待前 emit；gate 长度违约时由 engine 补发 |
@@ -102,6 +104,8 @@
 - `compute_compaction(&ContextBudgetBreakdown, history_soft_limit) -> Option<CompactionTrigger>`：`estimated_input_tokens > max_input_tokens` → `InputBudgetExceeded`（优先）；否则 `history_tokens > soft` → `HistorySoftLimit`；否则 None。
 - `TokenEstimator`：`count_text` 唯一必须实现的核心；`count_message`（+4 framing）/ `count_content_part`（图片 85 placeholder；Reasoning 只数 summary）/ `count_tool_schemas`（JSON 序列化 + 每工具 +8）均为默认实现。`HeuristicEstimator::new(chars_per_token)`（默认 4；CJK 类字符恒按 1 字符/token）。
 - `trim_tool_result(_with)(&ToolResultContent, &TrimThresholds, [TrimStrategy])`：按字节分级——Small 完整保留；Medium 头尾各 2 KiB + 截断说明；Large 摘要 + `ArtifactRef` 占位（占位 id `artifact:trimmed-tool-result`）；Huge 仅 `ArtifactRef`。原文经 `TrimmedToolResult::retained_full` 暂存，写 Blob 由调用方负责。
+ - `trim_observation_images(&mut [Message], retained_image_bytes) -> ObservationImageTrim`（CU-12，请求侧截图历史裁剪）：只处理 `Tool` 角色消息内 `ToolResultContent` 的 `ImageSource::Base64` 图像（用户附图、`Url` / `Artifact` 来源不动；`Tool` 消息顶层直接挂的图像也不动——生产循环把工具结果统一包装为 `ToolResult`，顶层图像既不裁剪也不参与最新观测判定）；最后一条含图像的 `Tool` 消息（最新观测）全部图像无条件保留、不占预算；更早图像从新到旧在预算内保留；被裁剪图像原位替换为 `[image trimmed: … retained in session history]` 文本说明（不用 `ArtifactRef`——Chat / Responses 会丢弃 Artifact 类型图像来源），同一 tool result 的文本部分（观测 metadata 等）原样保留。
+ - `observation_image_budget_bytes(&ContextBudget) -> u64`：旧观测图像保留预算 = `max_input_tokens` × 4 字符/token（与 `HeuristicEstimator` 默认口径一致）。token 估算器对图像只计 85 placeholder token，反映不了 base64 在请求体中的真实体量，图像因此单独按字节设限。
 - `TurnContext { limits, estimator, retained_messages（默认 4）, injected_layers }`：`Default` 全禁用，行为与未接线时完全一致（估算 0、不压缩、不截断、不注入）。
 
 ## 4. 核心行为与数据流
@@ -113,15 +117,16 @@
 3. 注入资源层：`injected_layers` 非空时拼为一条 `System` 消息（固定 id `msg-resources`，格式 `[kind] resource_id\ncontent` 以空行连接）插到消息最前（幂等：先移除同 id 旧条目），并发 `Diagnostic { code: "resources.injected" }`（含每层 byte_len）。
 4. **每轮循环**：
    1. 取消检查（命中 → `RunCancelled` + `Err(cancelled)`）。
-   2. 估算输入 token 并发 `ContextPrepared { message_count, estimated_input_tokens }`（estimator 未配置时 estimated 恒 0）。
-   3. 上下文收敛（须同时配置 limits 与 estimator）：软限命中先走压缩链（见 4.2）并重建消息 + 重注入资源层 + 重估算；压缩后仍超硬限、或纯硬限（软限未命中，压缩无收益）时 `truncate_for_budget` 从最旧非 System 消息开始丢弃（永不丢最后 `retained_messages` 条），发 `Diagnostic { code: "context_hard_truncated" }` 并重发 `ContextPrepared`。
-   4. 发 `ProviderRequestStarted` → 内部 `run_turn`（`LoopSink` 把每个 `ProviderStreamEvent` 映射为 AgentEvent 实时转发 + 原样缓冲；sink persist 失败被记录并优先返回，不再补终态事件）。
-   5. 成功：`AssembledTurn` 折叠缓冲事件为助手消息（metadata 带 usage / stop_reason / provider / model），发 `MessageCommitted(assistant)`，usage 累计入 run。无 tool call → 发 `RunCompleted`（usage 为 run 累计）并返回。
-   6. 有 tool call：调 `request_approval(invocations, run_approved, ...)`。返回后再查取消。**gate 数与调用数不匹配 → 协议违约，fail-closed**：全部按 `Denied` 处理、不执行任何调用，且由 engine 补发每个调用的 `ToolApprovalRequested`；正常路径由 `apply_approval_gates` 求出放行集（`NotRequired` 直接放行；`Asked(ApprovedOnce | ApprovedForRun)` 放行，`ApprovedForRun` 置位 run 级记忆，此后同 run 的非拒绝决策自动升级为 `ApprovedForRun`）。对每个 `Asked` 决策发 `ToolApprovalResponded { decision }`。
-   7. `snapshot_write_tools(to_run)` → 每个快照发 `CheckpointCreated`。
-   8. 每个放行调用发 `ToolExecutionStarted` → `execute_tools`（空集则跳过）→ 再查取消。Denied/Cancelled 且未被执行的调用回填拒绝结果（`ErrorCategory::Authorization`，文本 "tool call denied by user"）→ `align_tool_results` 按序对齐补缺 → 逐个发 `ToolExecutionCompleted`；结果 metadata 带 `sandbox.fallback = true` 时追加 `Diagnostic { code: "sandbox.fallback" }`。
-   9. 构建 `Tool` 角色消息并发 `MessageCommitted(tool)`；把助手消息 + 工具消息追加进请求、换取新 `request_id`，`tool_rounds += 1`；达 `max_tool_rounds` → `RunFailed` + `Err(MaxToolRounds)`。
-   10. provider 返回 Cancelled → `RunCancelled`（usage 合并流内最后一条 `UsageUpdated`）；其它 ProviderError → `RunFailed`（`ErrorContext::from(error)`）。
+    2. CU-12 观测图像裁剪（`limits` 配置时）：对请求副本执行 `trim_observation_images`（语义见 §3.7），有裁剪时发 `Diagnostic { code: "context.observation_images_trimmed" }`；只改请求副本，`MessageCommitted` 持久历史与重放不受影响。
+    3. 估算输入 token 并发 `ContextPrepared { message_count, estimated_input_tokens }`（estimator 未配置时 estimated 恒 0）。
+    4. 上下文收敛（须同时配置 limits 与 estimator）：软限命中先走压缩链（见 4.2）并重建消息 + 重注入资源层 + 重估算；压缩后仍超硬限、或纯硬限（软限未命中，压缩无收益）时 `truncate_for_budget` 从最旧非 System 消息开始丢弃（永不丢最后 `retained_messages` 条），发 `Diagnostic { code: "context_hard_truncated" }` 并重发 `ContextPrepared`。
+    5. 发 `ProviderRequestStarted` → 内部 `run_turn`（`LoopSink` 把每个 `ProviderStreamEvent` 映射为 AgentEvent 实时转发 + 原样缓冲；sink persist 失败被记录并优先返回，不再补终态事件）。
+    6. 成功：`AssembledTurn` 折叠缓冲事件为助手消息（metadata 带 usage / stop_reason / provider / model），发 `MessageCommitted(assistant)`，usage 累计入 run。无 tool call → 发 `RunCompleted`（usage 为 run 累计）并返回。
+    7. 有 tool call：调 `request_approval(invocations, run_approved, ...)`。返回后再查取消。**gate 数与调用数不匹配 → 协议违约，fail-closed**：全部按 `Denied` 处理、不执行任何调用，且由 engine 补发每个调用的 `ToolApprovalRequested`；正常路径由 `apply_approval_gates` 求出放行集（`NotRequired` 直接放行；`Asked(ApprovedOnce | ApprovedForRun)` 放行，`ApprovedForRun` 置位 run 级记忆，此后同 run 的非拒绝决策自动升级为 `ApprovedForRun`）。对每个 `Asked` 决策发 `ToolApprovalResponded { decision }`。
+    8. `snapshot_write_tools(to_run)` → 每个快照发 `CheckpointCreated`。
+    9. 每个放行调用发 `ToolExecutionStarted` → `execute_tools`（空集则跳过）→ 再查取消。Denied/Cancelled 且未被执行的调用回填拒绝结果（`ErrorCategory::Authorization`，文本 "tool call denied by user"）→ `align_tool_results` 按序对齐补缺 → 逐个发 `ToolExecutionCompleted`；结果 metadata 带 `sandbox.fallback = true` 时追加 `Diagnostic { code: "sandbox.fallback" }`。
+    10. 构建 `Tool` 角色消息并发 `MessageCommitted(tool)`；把助手消息 + 工具消息追加进请求、换取新 `request_id`，`tool_rounds += 1`；达 `max_tool_rounds` → `RunFailed` + `Err(MaxToolRounds)`。
+    11. provider 返回 Cancelled → `RunCancelled`（usage 合并流内最后一条 `UsageUpdated`）；其它 ProviderError → `RunFailed`（`ErrorContext::from(error)`）。
 5. 循环直到无 tool call、超限、取消或出错。
 
 ### 4.2 压缩链（自动软限 / 手动共用 `compact_messages`）
@@ -175,8 +180,8 @@ API 1.24 视频引用：context token 估算只统计 URL 字符文本，不能�
 | `tests/domain_only.rs` | **红线**：生产依赖 domain-only 断言（含 alias / target 表解析的自测试） |
 | `tests/no_provider_branch.rs` | **红线**：src/ 无 provider 名分支；守护名单派生自 `CHANNEL_REGISTRY` 且包含 chatgpt/xai/glm-coding/opencode-go/qwen-token-plan/deepseek 等首发通道 |
 | `lib.rs` 内联测试 | 装配默认值冻结断言；`run_turn` 透传（含 Thinking/ToolCallStarted 等变体）、预取消不调 provider、流中取消 |
-| `tool_loop/tests.rs`（25 个，原内联测试整文件迁入） | 多轮循环（`mock_provider_completes_multi_turn_tool_loop`）、并行只读工具、工具失败回填续跑、`max_tool_rounds_emits_run_failed_without_extra_stream`、审批事件对与 ApprovedOnce/ForRun/Denied（`approval_event_pair_then_execute_on_approved_once`、`short_approval_gates_fail_closed_without_executing`、`denied_fills_tool_result_and_continues_without_executing`、`approved_for_run_remembers_across_tool_rounds`）、取消（长工具中取消、`cancel_while_waiting_for_approval_emits_requested_without_responded`）、S5 上下文（默认关闭现状、注入层、软限压缩、硬限截断、`compaction_outcome_metadata_flows_into_events`、`compact_history_error_fails_the_run_instead_of_being_swallowed`、手动压缩两例、R-18 压缩取消两例 `manual_compaction_pre_cancelled_token_fails_without_provider_call` / `manual_compaction_cancelled_summary_is_not_degraded`、长对话恒不超硬限）、checkpoint（快照先于执行、回滚追加事件）、sandbox fallback 诊断 |
-| `appender.rs` / `cancel.rs` / `context/*` 内联测试 | 流式折叠、取消幂等与杀树计数、预算推导 / 触发优先级 / 估算口径 / 裁剪分级边界 |
+| `tool_loop/tests.rs`（27 个，原内联测试整文件迁入） | 多轮循环（`mock_provider_completes_multi_turn_tool_loop`）、并行只读工具、工具失败回填续跑、`max_tool_rounds_emits_run_failed_without_extra_stream`、审批事件对与 ApprovedOnce/ForRun/Denied（`approval_event_pair_then_execute_on_approved_once`、`short_approval_gates_fail_closed_without_executing`、`denied_fills_tool_result_and_continues_without_executing`、`approved_for_run_remembers_across_tool_rounds`）、取消（长工具中取消、`cancel_while_waiting_for_approval_emits_requested_without_responded`）、S5 上下文（默认关闭现状、注入层、软限压缩、硬限截断、`compaction_outcome_metadata_flows_into_events`、`compact_history_error_fails_the_run_instead_of_being_swallowed`、手动压缩两例、R-18 压缩取消两例 `manual_compaction_pre_cancelled_token_fails_without_provider_call` / `manual_compaction_cancelled_summary_is_not_degraded`、长对话恒不超硬限）、CU-12 观测图像裁剪（`observation_images_trimmed_in_request_copy_but_persisted_in_events`：多步截图请求图像受控 + 最新观测保留 + 已提交事件图像完整 + Diagnostic 留痕；`observation_images_untouched_without_context_limits`：默认上下文不裁剪）、checkpoint（快照先于执行、回滚追加事件）、sandbox fallback 诊断 |
+| `appender.rs` / `cancel.rs` / `context/*` 内联测试 | 流式折叠、取消幂等与杀树计数、预算推导 / 触发优先级 / 估算口径 / 裁剪分级边界、观测图像裁剪（最新观测保留 / 预算内保留 / 嵌套结果递归 / 用户附图、Url 来源与 Tool 消息顶层图像不动 / 预算折算） |
 
 默认验证命令：`cargo test -p pawork-engine --offline --lib --tests`。
 
@@ -187,7 +192,7 @@ ADR-057 的会话身份语义现由工具循环与压缩路径承载：相关测
 - `run_turn` 为 `pub(crate)`（R0 D12 公开面收口）；外部走 `run_session` / `run_manual_compaction`。
 - `TurnContext::default()` 全禁用：不配置 limits + estimator 时无估算（`estimated_input_tokens = 0`）、无压缩、无截断——上下文管理是 opt-in。
 - 精确 tokenizer（tiktoken）刻意不迁入本包；需要时由宿主实现 `TokenEstimator` 注入，默认只有 `HeuristicEstimator`。
-- tool result 裁剪（`tool_result_trim`）是独立纯函数工具，`run_session` 本体并不自动调用；由宿主在工具结果入上下文前使用，Blob 写入与真实 `ArtifactId` 替换也由调用方完成。当前无生产消费者，作为 [CU-12 请求侧截图上下文预算](../../plan/cu-12-screenshot-context.md) 的登记依赖保留（B10 裁决，2026-10-07）；CU-12 实施时只接一条必要生产路径。
+ - tool result 分级裁剪（`trim_tool_result`，Medium/Large/Huge 含 `ArtifactRef` 占位）仍是独立纯函数工具，`run_session` 不自动调用；Blob 写入与真实 `ArtifactId` 替换由调用方完成，当前仍无生产消费者。CU-12（2026-10-07）已按 B10 裁决接入一条必要生产路径：请求侧观测图像裁剪 `trim_observation_images` 由 `run_session` 在 `limits` 配置时每轮执行，只改请求副本（语义见 §3.7 / §4.1，计划见 [CU-12](../../plan/cu-12-screenshot-context.md)）。
 - `AssembledTurn` 对 `ToolCallArgumentsDelta` 早于 `ToolCallStarted` 到达的乱序容错（补建空名调用）；参数 JSON 解析失败时降级 `Value::Null`，不报错。
 - 结构性摘要（降级路径）只截取文本 part，非文本内容不进入摘要。
 - `ToolStreamEvent::Progress` 与 `ArtifactAvailable` 目前在 `LoopEventEmitter::emit_tool_event` 中被静默忽略，不映射为 AgentEvent。

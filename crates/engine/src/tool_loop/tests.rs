@@ -7,7 +7,8 @@ use async_trait::async_trait;
 use pawork_domain::{
     AgentEvent, AgentEventEnvelope, ApprovalDecision, ArtifactId, ArtifactReference,
     CancellationToken, CheckpointId, ContentPart, ErrorCategory, ErrorContext, EventId,
-    EventSequence, Message, MessageId, MessageRole, ModelId, ProviderId, RequestId, RunId,
+    EventSequence, ImageContent, ImageSource, Message, MessageId, MessageRole, ModelId,
+    ProviderId, RequestId, RunId,
     SessionId, StopReason, TextContent, Timestamp, TokenUsage, ToolCallId, WorkspaceId,
 };
 use pawork_domain::{
@@ -2242,4 +2243,181 @@ async fn long_conversation_never_exceeds_hard_limit() {
             request.messages.len()
         );
     }
+}
+
+// ---------- CU-12 请求侧观测图像裁剪 ----------
+
+fn screenshot_tool(name: &str, b64: String) -> MockTool {
+    MockTool::new(
+        name,
+        ToolResult::success(vec![
+            ContentPart::Text(TextContent {
+                text: format!("observation {name}"),
+            }),
+            ContentPart::Image(ImageContent {
+                source: ImageSource::Base64(b64),
+                media_type: "image/jpeg".into(),
+                alt_text: None,
+            }),
+        ]),
+    )
+}
+
+fn tool_def(name: &str) -> ToolDefinition {
+    ToolDefinition {
+        name: name.into(),
+        description: format!("mock {name}"),
+        input_schema: serde_json::json!({"type": "object"}),
+    }
+}
+
+fn collect_base64_images(parts: &[ContentPart], images: &mut Vec<String>) {
+    for part in parts {
+        match part {
+            ContentPart::ToolResult(result) => collect_base64_images(&result.content, images),
+            ContentPart::Image(image) => {
+                if let ImageSource::Base64(value) = &image.source {
+                    images.push(value.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn request_images(request: &CanonicalModelRequest) -> Vec<String> {
+    let mut images = Vec::new();
+    for message in &request.messages {
+        collect_base64_images(&message.content, &mut images);
+    }
+    images
+}
+
+fn message_images(message: &Message) -> Vec<String> {
+    let mut images = Vec::new();
+    collect_base64_images(&message.content, &mut images);
+    images
+}
+
+fn screenshot_run_setup() -> (
+    RecordingProvider,
+    TestContext,
+    CanonicalModelRequest,
+    String,
+    String,
+    String,
+) {
+    let image_a = "a".repeat(2_000);
+    let image_b = "b".repeat(2_000);
+    let image_c = "c".repeat(2_000);
+    let provider = RecordingProvider::new(MockProvider::sequence(vec![
+        MockScript::new()
+            .tool_call("shot_a", serde_json::json!({}))
+            .complete_with(StopReason::ToolUse),
+        MockScript::new()
+            .tool_call("shot_b", serde_json::json!({}))
+            .complete_with(StopReason::ToolUse),
+        MockScript::new()
+            .tool_call("shot_c", serde_json::json!({}))
+            .complete_with(StopReason::ToolUse),
+        MockScript::new().text("done").complete(),
+    ]));
+    let ctx = TestContext::new(vec![
+        screenshot_tool("shot_a", image_a.clone()),
+        screenshot_tool("shot_b", image_b.clone()),
+        screenshot_tool("shot_c", image_c.clone()),
+    ]);
+    let request = sample_request(vec![tool_def("shot_a"), tool_def("shot_b"), tool_def("shot_c")]);
+    (provider, ctx, request, image_a, image_b, image_c)
+}
+
+#[tokio::test]
+async fn observation_images_trimmed_in_request_copy_but_persisted_in_events() {
+    let (provider, ctx, request, image_a, image_b, image_c) = screenshot_run_setup();
+    let sink = RecordingEvents::default();
+    // 图像保留预算 = max_input_tokens × 4 = 3_000 字节：最新观测之外只留得下一张旧图。
+    let context = turn_context(ContextBudget::from_context_window(750, 0, 0), None, 4);
+
+    run_session(
+        &provider,
+        request,
+        sample_turn(),
+        &sink,
+        CancellationToken::new(),
+        &ctx,
+        DEFAULT_MAX_TOOL_ROUNDS,
+        context,
+    )
+    .await
+    .expect("multi-round screenshot loop");
+
+    let requests = provider.requests();
+    assert_eq!(requests.len(), 4);
+    // 第 2 轮：A 是当时最新观测，原样带上（最新观测仍可用）。
+    assert_eq!(request_images(&requests[1]), vec![image_a.clone()]);
+    // 第 3 轮：B 为最新观测，A 在预算内，两图都保留。
+    assert_eq!(request_images(&requests[2]), vec![image_a.clone(), image_b.clone()]);
+    // 第 4 轮：最新观测 C 无条件保留；预算 3_000 留住 B（2_000），
+    // 再留 A 会到 4_000 超预算 → A 被裁剪成文本说明。请求图像字节
+    // 4_000 受控（< 未裁剪的 6_000，上界 = 预算 3_000 + 最新观测 2_000）。
+    assert_eq!(request_images(&requests[3]), vec![image_b.clone(), image_c.clone()]);
+    let round4 = serde_json::to_string(&requests[3].messages).expect("serialize round 4");
+    assert_eq!(round4.matches("image trimmed").count(), 1);
+    assert!(round4.contains("retained in session history"));
+    // 被裁剪的旧动作结果保留文本部分（观测 metadata 不丢）。
+    assert!(round4.contains("observation shot_a"));
+
+    // 裁剪本身以 Diagnostic 事件留痕（每轮最多一次，仅第 4 轮前触发）。
+    let trim_events: Vec<serde_json::Value> = sink
+        .snapshot()
+        .into_iter()
+        .filter_map(|envelope| match envelope.payload {
+            AgentEvent::Diagnostic { code, details }
+                if code == "context.observation_images_trimmed" =>
+            {
+                Some(details)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(trim_events.len(), 1);
+    assert_eq!(trim_events[0]["trimmed_images"], 1);
+    assert_eq!(trim_events[0]["trimmed_bytes"], 2_000);
+    assert_eq!(trim_events[0]["retained_images"], 2);
+
+    // 持久历史不裁剪：三条已提交工具消息仍带原始图像（重放源不变）。
+    let persisted: Vec<Vec<String>> = tool_messages(&sink)
+        .iter()
+        .map(message_images)
+        .collect();
+    assert_eq!(
+        persisted,
+        vec![vec![image_a.clone()], vec![image_b.clone()], vec![image_c.clone()]]
+    );
+    assert!(sink.types().contains(&"RunCompleted"));
+}
+
+#[tokio::test]
+async fn observation_images_untouched_without_context_limits() {
+    let (provider, ctx, request, image_a, image_b, image_c) = screenshot_run_setup();
+    let sink = RecordingEvents::default();
+
+    run_session(
+        &provider,
+        request,
+        sample_turn(),
+        &sink,
+        CancellationToken::new(),
+        &ctx,
+        DEFAULT_MAX_TOOL_ROUNDS,
+        TurnContext::default(),
+    )
+    .await
+    .expect("default context keeps untrimmed behaviour");
+
+    // TurnContext::default()（limits 未配置）不裁剪：三图全部随请求发出，无 Diagnostic。
+    let requests = provider.requests();
+    assert_eq!(requests.len(), 4);
+    assert_eq!(request_images(&requests[3]), vec![image_a, image_b, image_c]);
+    assert!(!sink.types().contains(&"Diagnostic"));
 }

@@ -30,7 +30,7 @@
 | 等待人工验收 | [CU-09 · 目标占用、用户接管与后台生命周期](plan/cu-09-ownership-cancellation.md) | P3 | 把现有全局串行改成明确目标归属，保证并发冲突、取消和后台生命周期可解释。 |
 | 隔离路径等待人工验收，native 接线待开发 | [CU-10 · 动作与新观测的 Host 闭环](plan/cu-10-action-observe.md) | P3 | 减少单独截图/动作消耗的回合，同时诚实区分输入派发和 UI 接受。 |
 | 自动回归通过，等待人工验收 | [CU-11 · 图像能力的前置工具门控](plan/cu-11-model-vision-gate.md) | P3 | 在工具暴露和执行前拒绝不支持图像的模型，避免截屏后才失败。 |
-| 待开发 | [CU-12 · 请求侧截图历史与上下文预算](plan/cu-12-screenshot-context.md) | P3 | 限制发给模型的旧截图，保留完整持久化证据和历史重放。 |
+| 自动回归通过，等待人工验收 | [CU-12 · 请求侧截图历史与上下文预算](plan/cu-12-screenshot-context.md) | P3 | 限制发给模型的旧截图，保留完整持久化证据和历史重放。 |
 | 待开发 | [CU-13 · 内置浏览器截图与 DOM 观测](plan/cu-13-browser-observation.md) | P4 | 在现有系统 WebView 上补截图与稳定 DOM 观测，保持用户可同时使用 Pawork。 |
 | 待开发 | [CU-14 · 内置浏览器标签页与任务生命周期](plan/cu-14-browser-tabs.md) | P4 | 将每任务单页扩展为有归属的多标签，支持选择与清理。 |
 | 待开发 | [CU-15 · 外部 Chrome / Edge 的真实后台控制](plan/cu-15-external-browser.md) | P4 | 通过 Rust 连接或原生消息通道控制授权浏览器标签页，补齐只读上下文以外的能力。 |

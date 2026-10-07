@@ -20,7 +20,8 @@ pub use compaction::{
 pub(crate) use token::reply_primer_tokens;
 pub use token::{HeuristicEstimator, TokenEstimator, ToolSchema};
 pub use tool_result_trim::{
-    byte_len_of_tool_result, trim_tool_result, trim_tool_result_with, ResultSize, TrimStrategy,
+    byte_len_of_tool_result, observation_image_budget_bytes, trim_observation_images,
+    trim_tool_result, trim_tool_result_with, ObservationImageTrim, ResultSize, TrimStrategy,
     TrimThresholds, TrimmedToolResult,
 };
 
