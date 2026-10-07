@@ -4,7 +4,7 @@
 
 ## 1. 职责与边界
 
-- **做什么**：请求装配（`assemble_request` / `assemble_request_with_tools`）；单轮流式调用（内部 `run_turn`，`pub(crate)`）；多轮工具循环（`run_session`）；单轮会话事件化（`run_session_turn`）；上下文预算 / 压缩触发 / token 估算 / tool result 裁剪（`context` 子模块）；run 级取消（`CancelHandle`）；手动压缩（`run_manual_compaction`）。
+- **做什么**：请求装配（`assemble_request` / `assemble_request_with_tools`）；单轮流式调用（内部 `run_turn`，`pub(crate)`）；多轮工具循环（`run_session`）；上下文预算 / 压缩触发 / token 估算 / tool result 裁剪（`context` 子模块）；run 级取消（`CancelHandle`）；手动压缩（`run_manual_compaction`）。
 - **不做什么**：不重试、不落库（落库由调用方在 `AgentEventSink` 里 persist-first）、不选通道、不读 Secret、不执行工具（经 `LoopContext` 回调宿主）、不杀进程树（经 `ProcessTreeCleaner` 注入）、不按 Provider 名称分支。
 - **宿主注入点**：`ModelProvider`（模型流）、`AgentEventSink`(事件出口)、`LoopContext`（工具执行 / 审批 / 压缩 / 快照回调）、`ProcessTreeCleaner`（取消时杀树）、`TokenEstimator` 与 `ContextLimits`（经 `TurnContext`）。
 
@@ -19,7 +19,7 @@
 | `src/tool_loop/exec.rs` | ~210 | 待执行调用解析、写快照、`execute_tools`、结果对齐与 `MessageCommitted` |
 | `src/tool_loop/compaction.rs` | ~500 | 注入层、输入估算、软限压缩 / 硬限截断、`run_manual_compaction` |
 | `src/tool_loop/tests.rs` | ~2180 | 原 `tool_loop.rs` 内联测试整文件迁入（`#[cfg(test)]`） |
-| `src/session_turn.rs` | ~640（非测试 ~195） | `SessionTurn`（会话轮次标识 + start_sequence）；`run_session_turn` 单轮事件化（无工具循环）；`now_timestamp` |
+| `src/session_turn.rs` | ~70 | `SessionTurn`（会话轮次标识 + start_sequence）；`now_timestamp`；工具循环共享的 usage 归并 helper（`optional_usage` / `last_stream_usage`，`pub(crate)`） |
 | `src/appender.rs` | ~330 | `AssembledTurn`：把 `ProviderStreamEvent` 流折叠成一条助手 `Message`（text / thinking / reasoning / tool_calls / summary）；`PendingToolCall`；`ToolCallResult`；`tool_results_message` |
 | `src/cancel.rs` | ~190 | `CancelHandle`（原子幂等 cancel：取消根 token → 触发 cleaner 杀树）；`CancelReason` / `CancelReceipt`；`ProcessTreeCleaner` trait 与 `NoopProcessTreeCleaner` |
 | `src/event.rs` | ~245 | `EngineError`；`AgentEventSink` trait；`EventEmitter`（pub(crate)，sequence 分配 + 信封封装）；`LoopEventEmitter`（工具流事件入口）；`LoopSink`（pub(crate)，Provider 事件双写：映射转发 + 缓冲）；`map_provider_event` |
@@ -55,11 +55,10 @@
 - `compact_history(reason: AutoCompactionReason, summary_text: &str, cancel) -> Result<Option<CompactionOutcome>, EngineError>`：压缩回调，host（app）负责 session 侧 fork/snapshot 后回传元数据（`source_event_count` + `compacted_through`）。默认实现返回 `Ok(None)`（无持久化宿主时 engine 仍完成消息层压缩）；宿主侧失败**必须**返回 `Err`，engine 将终止当前 run，不静默吞掉。
 - `snapshot_write_tools(calls, events, cancel) -> Vec<WriteCheckpoint>`：写工具执行前由宿主拍快照，默认空；engine 只对每个返回项发 `AgentEvent::CheckpointCreated`，不依赖 blob/git。快照失败时宿主可经 `events`（`LoopEventEmitter::emit`）发 `AgentEvent::Diagnostic{code:"checkpoint.snapshot_failed"}`（P2 片 2B，写入继续，不阻断 run）。
 
-### 3.4 手动压缩与单轮会话
+### 3.4 手动压缩
 
 - `run_manual_compaction(provider, request, turn, events, cancel, loop_ctx, context) -> Result<Vec<Message>, EngineError>`：REPL `/compact` 等入口。不是 run：不发 `RunStarted` / `RunCancelled`，事件序直接 `CompactionStarted → MessageCommitted(summary) → CompactionCompleted`（复用自动链同一内部函数，reason 为 `AutoCompactionReason::Manual`）。`messages.len() <= retained_messages` 时返回 `Err`（nothing to compact）。返回重建后的消息列表（summary + retained tail）。**取消语义（R-18）**：摘要请求的 `Cancelled` 不再降级为结构摘要——直接上抛；摘要返回时令牌已取消同样按取消处理；持久提交（`compact_history`）前再查一次取消。取消路径不产生任何压缩事件，手动入口返回 `EngineError::Provider(Cancelled)`（`is_cancelled()` 为真）。
-- `run_session_turn(provider, request, turn, events, cancel)`：单轮事件化（无工具循环、无 TurnContext）：`RunStarted → MessageCommitted(user) → ContextPrepared(estimated=0) → ProviderRequestStarted → 流式事件 → MessageCommitted(assistant) → RunCompleted`。半轮取消 / 失败不提交未完成的助手消息。
-- `SessionTurn { session_id, run_id, provider_id, model, start_sequence, trigger_message, timestamp }`；`SessionTurn::new` 以 `now_timestamp()` 取当前时间。ADR-057：`run_session`、`run_session_turn` 与手动压缩以该 turn 的真实 session_id 覆盖请求值；工具续轮与自动/手动摘要请求保留此身份，不按 Provider 名称分支。
+- `SessionTurn { session_id, run_id, provider_id, model, start_sequence, trigger_message, timestamp }`；`SessionTurn::new` 以 `now_timestamp()` 取当前时间。ADR-057：`run_session` 与手动压缩以该 turn 的真实 session_id 覆盖请求值；工具续轮与自动/手动摘要请求保留此身份，不按 Provider 名称分支。
 
 ### 3.5 事件与错误
 
@@ -101,7 +100,7 @@
 
 - `ContextBudget::from_context_window(window, output_reserve, thinking_reserve)`：`max_input_tokens = window - reserves`（饱和到 0）；默认 128k/4k/0。serde 形状与 V1 一致（冻结）。
 - `compute_compaction(&ContextBudgetBreakdown, history_soft_limit) -> Option<CompactionTrigger>`：`estimated_input_tokens > max_input_tokens` → `InputBudgetExceeded`（优先）；否则 `history_tokens > soft` → `HistorySoftLimit`；否则 None。
-- `TokenEstimator`：`count_text` 唯一必须实现的核心（另有 `estimator_kind`）；`count_message`（+4 framing）/ `count_content_part`（图片 85 placeholder；Reasoning 只数 summary）/ `count_tool_schemas`（JSON 序列化 + 每工具 +8）均为默认实现。`HeuristicEstimator::new(chars_per_token)`（默认 4；CJK 类字符恒按 1 字符/token）。
+- `TokenEstimator`：`count_text` 唯一必须实现的核心；`count_message`（+4 framing）/ `count_content_part`（图片 85 placeholder；Reasoning 只数 summary）/ `count_tool_schemas`（JSON 序列化 + 每工具 +8）均为默认实现。`HeuristicEstimator::new(chars_per_token)`（默认 4；CJK 类字符恒按 1 字符/token）。
 - `trim_tool_result(_with)(&ToolResultContent, &TrimThresholds, [TrimStrategy])`：按字节分级——Small 完整保留；Medium 头尾各 2 KiB + 截断说明；Large 摘要 + `ArtifactRef` 占位（占位 id `artifact:trimmed-tool-result`）；Huge 仅 `ArtifactRef`。原文经 `TrimmedToolResult::retained_full` 暂存，写 Blob 由调用方负责。
 - `TurnContext { limits, estimator, retained_messages（默认 4）, injected_layers }`：`Default` 全禁用，行为与未接线时完全一致（估算 0、不压缩、不截断、不注入）。
 
@@ -167,7 +166,7 @@ API 1.24 视频引用：context token 估算只统计 URL 字符文本，不能�
 
 ## 7. 测试与验证资产
 
-`mock_provider_completes_multi_turn_tool_loop` 覆盖默认上下文与无压缩的多轮工具事件；其余回归覆盖未消费流变体透传、预取消/中途取消及 session_turn 完整事件序。
+`mock_provider_completes_multi_turn_tool_loop` 覆盖默认上下文与无压缩的多轮工具事件；其余回归覆盖未消费流变体透传与预取消/中途取消。
 
 同批：删除 `framing_constants_match_industry_conventions` 常量副本；图片占位 token 由 `count_message_includes_framing_and_content` 对真实 Image content part 计数验证。
 
@@ -176,20 +175,19 @@ API 1.24 视频引用：context token 估算只统计 URL 字符文本，不能�
 | `tests/domain_only.rs` | **红线**：生产依赖 domain-only 断言（含 alias / target 表解析的自测试） |
 | `tests/no_provider_branch.rs` | **红线**：src/ 无 provider 名分支；守护名单派生自 `CHANNEL_REGISTRY` 且包含 chatgpt/xai/glm-coding/opencode-go/qwen-token-plan/deepseek 等首发通道 |
 | `lib.rs` 内联测试 | 装配默认值冻结断言；`run_turn` 透传（含 Thinking/ToolCallStarted 等变体）、预取消不调 provider、流中取消 |
-| `session_turn.rs` 内联测试 | 单轮事件序 golden、预取消 / 流中取消 / provider 错误 / persist 失败中断且续跑接续 sequence |
 | `tool_loop/tests.rs`（25 个，原内联测试整文件迁入） | 多轮循环（`mock_provider_completes_multi_turn_tool_loop`）、并行只读工具、工具失败回填续跑、`max_tool_rounds_emits_run_failed_without_extra_stream`、审批事件对与 ApprovedOnce/ForRun/Denied（`approval_event_pair_then_execute_on_approved_once`、`short_approval_gates_fail_closed_without_executing`、`denied_fills_tool_result_and_continues_without_executing`、`approved_for_run_remembers_across_tool_rounds`）、取消（长工具中取消、`cancel_while_waiting_for_approval_emits_requested_without_responded`）、S5 上下文（默认关闭现状、注入层、软限压缩、硬限截断、`compaction_outcome_metadata_flows_into_events`、`compact_history_error_fails_the_run_instead_of_being_swallowed`、手动压缩两例、R-18 压缩取消两例 `manual_compaction_pre_cancelled_token_fails_without_provider_call` / `manual_compaction_cancelled_summary_is_not_degraded`、长对话恒不超硬限）、checkpoint（快照先于执行、回滚追加事件）、sandbox fallback 诊断 |
 | `appender.rs` / `cancel.rs` / `context/*` 内联测试 | 流式折叠、取消幂等与杀树计数、预算推导 / 触发优先级 / 估算口径 / 裁剪分级边界 |
 
 默认验证命令：`cargo test -p pawork-engine --offline --lib --tests`。
 
-ADR-057 扩展既有单轮、多轮与压缩测试：捕获 Provider 请求，验证真实 SessionTurn 覆盖错误身份，并在工具续轮、自动/手动压缩中稳定传递。
+ADR-057 的会话身份语义现由工具循环与压缩路径承载：相关测试捕获 Provider 请求，验证真实会话身份覆盖错误值，并在工具续轮、自动/手动压缩中稳定传递。
 
 ## 8. 注意事项与已知限制
 
-- `run_turn` 为 `pub(crate)`（R0 D12 公开面收口）；外部只能走 `run_session` / `run_session_turn`。
+- `run_turn` 为 `pub(crate)`（R0 D12 公开面收口）；外部走 `run_session` / `run_manual_compaction`。
 - `TurnContext::default()` 全禁用：不配置 limits + estimator 时无估算（`estimated_input_tokens = 0`）、无压缩、无截断——上下文管理是 opt-in。
 - 精确 tokenizer（tiktoken）刻意不迁入本包；需要时由宿主实现 `TokenEstimator` 注入，默认只有 `HeuristicEstimator`。
-- tool result 裁剪（`tool_result_trim`）是独立纯函数工具，`run_session` 本体并不自动调用；由宿主在工具结果入上下文前使用，Blob 写入与真实 `ArtifactId` 替换也由调用方完成。
+- tool result 裁剪（`tool_result_trim`）是独立纯函数工具，`run_session` 本体并不自动调用；由宿主在工具结果入上下文前使用，Blob 写入与真实 `ArtifactId` 替换也由调用方完成。当前无生产消费者，作为 [CU-12 请求侧截图上下文预算](../../plan/cu-12-screenshot-context.md) 的登记依赖保留（B10 裁决，2026-10-07）；CU-12 实施时只接一条必要生产路径。
 - `AssembledTurn` 对 `ToolCallArgumentsDelta` 早于 `ToolCallStarted` 到达的乱序容错（补建空名调用）；参数 JSON 解析失败时降级 `Value::Null`，不报错。
 - 结构性摘要（降级路径）只截取文本 part，非文本内容不进入摘要。
 - `ToolStreamEvent::Progress` 与 `ArtifactAvailable` 目前在 `LoopEventEmitter::emit_tool_event` 中被静默忽略，不映射为 AgentEvent。

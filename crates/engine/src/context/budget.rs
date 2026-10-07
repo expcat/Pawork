@@ -36,10 +36,6 @@ impl ContextBudget {
         }
     }
 
-    /// 已为输出与思考预留的总额。
-    pub const fn reserved_tokens(&self) -> u64 {
-        self.output_reserve_tokens + self.thinking_reserve_tokens
-    }
 }
 
 impl Default for ContextBudget {
@@ -71,7 +67,6 @@ mod tests {
     fn reserves_output_and_thinking_from_input_ceiling() {
         let budget = ContextBudget::from_context_window(10_000, 2_000, 1_000);
         assert_eq!(budget.max_input_tokens, 7_000);
-        assert_eq!(budget.reserved_tokens(), 3_000);
     }
 
     #[test]

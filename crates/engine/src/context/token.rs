@@ -34,7 +34,7 @@ pub struct ToolSchema {
     pub input_schema: serde_json::Value,
 }
 
-/// Token 估算器。除 `count_text` 与 `estimator_kind` 外，其余方法均有默认实现，
+/// Token 估算器。`count_text` 是唯一必须实现的核心，其余方法均有默认实现，
 /// 可直接在 `&dyn TokenEstimator` 上调用。
 pub trait TokenEstimator: Send + Sync {
     /// 估算纯文本 token 数。
@@ -115,9 +115,6 @@ pub trait TokenEstimator: Send + Sync {
             })
             .sum()
     }
-
-    /// 估算器标识，用于诊断。
-    fn estimator_kind(&self) -> &'static str;
 }
 
 /// 启发式估算器：无法获得精确 tokenizer 时使用。
@@ -159,10 +156,6 @@ impl TokenEstimator for HeuristicEstimator {
             }
         });
         cjk_chars.saturating_add(other_chars.div_ceil(self.chars_per_token as u64))
-    }
-
-    fn estimator_kind(&self) -> &'static str {
-        "heuristic"
     }
 }
 

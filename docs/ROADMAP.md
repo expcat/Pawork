@@ -65,7 +65,7 @@
 | 待裁决 | [B5 · Models 四个预留 API 裁决](plan/b5-models.md) | 核实模型库四个 Spec 记录 API 的使用情况并裁决。 |
 | 待裁决 | [B6 · Auth 存储 API 与别名保留期裁决](plan/b6-auth.md) | 裁决凭证 API、中转类型及旧 serde 别名的保留范围。 |
 | 待裁决 | [B8 · MCP Secret 前缀单一事实源裁决](plan/b8-mcp-secret-prefix.md) | 裁决 workspace 与 auth 间的前缀副本及依赖方向。 |
-| 待裁决 | [B10 · Engine 预留入口与上下文 API 裁决](plan/b10-engine.md) | 裁决未消费入口、工具结果裁剪模块和跨 Storage 小 API。 |
+| ✅ 完成 | [B10 · Engine 预留入口与上下文 API 裁决](plan/b10-engine.md) | 裁决未消费入口、工具结果裁剪模块和跨 Storage 小 API。 |
 | 待裁决 | [B11 · Orchestration 注入与恢复面裁决](plan/b11-orchestration.md) | 核实未由 App 消费的图、工作树、合并与恢复 API。 |
 | 待裁决 | [B12 · Git Stage / HunkStage 产品面裁决](plan/b12-git-stage.md) | 在生产接线和归档之间裁决 Git 写操作。 |
 | 待裁决 | [B13 · MCP OAuth 未接线模块裁决](plan/b13-mcp-oauth.md) | 裁决 MCP OAuth 生产接入或保留/归档边界。 |

@@ -29,7 +29,7 @@ pub use context::{
     ToolSchema, TrimThresholds, TrimmedToolResult, TurnContext,
 };
 pub use event::{map_provider_event, AgentEventSink, EngineError, LoopEventEmitter};
-pub use session_turn::{now_timestamp, run_session_turn, SessionTurn};
+pub use session_turn::{now_timestamp, SessionTurn};
 pub use tool_loop::{
     run_manual_compaction, run_session, ApprovalGate, CompactionOutcome, LoopContext,
     PendingToolInvocation, WriteCheckpoint, DEFAULT_MAX_TOOL_ROUNDS,
@@ -82,7 +82,7 @@ pub fn assemble_request_with_tools(
 /// 否则把 request / sink / cancel 交给 provider.stream。
 /// 不重试、不落库、不跑工具循环、不按 provider 名分支、不把事件改写成 AgentEvent。
 /// ProviderStreamEvent 14 变体全部由 provider 发射、sink 原样接收；engine 不滤不删。
-/// 公开面已收口；crate 内 `session_turn` / `tool_loop` 继续走此入口。
+/// 公开面已收口；crate 内 `tool_loop` 的续轮与压缩路径继续走此入口。
 pub(crate) async fn run_turn(
     provider: &dyn ModelProvider,
     request: &CanonicalModelRequest,
