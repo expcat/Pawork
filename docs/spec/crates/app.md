@@ -333,7 +333,7 @@ WorkspaceList 与 snapshot Workspaces 段均按每个目标 workspace roots 调�
 - **tasks 快照原子写**（R-03）：`tasks.json` 写入用 `create_new` 独占创建的独立临时文件（`.tasks.json.<pid>.<n>.tmp`），rename 直接原子替换、不先删原文件——替换失败或中途崩溃时上一份快照仍可读；取快照到提交经 `persist_lock` 串行化，并发保存不共享临时路径、旧快照不后写覆盖新快照。persist 失败发 degrade 事件，不静默吞错。
 - **任务/run 取消同体**（R-05）：Agent 任务登记时共享真实 run 的 `CancellationToken`，tasks cancel 与 GUI RunCancel 经同一令牌停止同一执行体；任务终态以 run 真实终态映射（取消记 Canceled 不谎报 Failed），已终态任务 run 收尾跳过，终态仅写一次。
 - **孤儿任务按所有权收口**（R-23）：`open_control_plane` 与 `open_store` 的 run 清扫共用同一道实例所有权门（R-24）——仅确认无其他活跃宿主的宿主把重放后仍 Running/Suspended 的任务收为 `Failed`（detail interrupted）并持久化；Catalog 旁路与无清扫权的旁观 Executor 不得误扫；终态跳过，重复恢复幂等。
-- **工具调度**：`ToolScheduler` 并发上限 8；审批模式或 workspace trust 变更必须 Arc-swap 重建 scheduler 配置（`configure_approval` / `replace_registry` / SET-6b `set_approval_mode`/`set_workspace_trusted` 负责），禁止运行中就地改 PolicyEngine。
+- **工具调度**：`ToolScheduler` 并发上限 8；审批模式或 workspace trust 变更必须 Arc-swap 重建 scheduler 配置（`configure_approval` / `replace_registry` / SET-6b `set_approval_mode`/`set_workspace_trusted` 负责），禁止运行中就地改 scheduler 审批配置。B1：Run 与 Terminal gate 使用无状态 `PolicyEngine::new()`，每次通过 `PolicyInput::approval_mode` 传入档位；进行中的 Run 仍保留启动时的审批 / trust 快照。
 
 ## 6. 依赖关系
 

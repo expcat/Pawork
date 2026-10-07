@@ -714,6 +714,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn interactive_stdin_close_delivers_eof_and_rejects_later_writes() {
+        #[cfg(not(windows))]
+        let mut spec = shell("cat");
+        #[cfg(windows)]
+        let mut spec = CommandSpec::new("powershell.exe").args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "[Console]::OpenStandardInput().CopyTo([Console]::OpenStandardOutput())",
+        ]);
+        spec.timeout = Some(Duration::from_secs(5));
+        let (mut events, input, _handle) = ProcessRuntime::new()
+            .spawn_interactive(spec, CancellationToken::new())
+            .await
+            .expect("interactive spawn");
+        let writer = input.clone();
+        writer.write_all(b"hello-stdin\n").await.expect("write");
+        input.close().await.expect("close sends EOF");
+        writer
+            .close()
+            .await
+            .expect("close is shared and idempotent");
+        assert!(matches!(
+            writer.write_all(b"after-close").await,
+            Err(ProcessError::Io(error)) if error.kind() == std::io::ErrorKind::BrokenPipe
+        ));
+        let mut stdout = Vec::new();
+        loop {
+            match tokio::time::timeout(Duration::from_secs(5), events.recv())
+                .await
+                .expect("process must finish after EOF")
+                .expect("exit event")
+            {
+                ProcessEvent::Stdout(bytes) => stdout.extend(bytes),
+                ProcessEvent::Stderr(bytes) => assert!(bytes.is_empty(), "{bytes:?}"),
+                ProcessEvent::Exit { code, truncated } => {
+                    assert_eq!(code, Some(0));
+                    assert!(!truncated);
+                    break;
+                }
+            }
+        }
+        assert_eq!(stdout, b"hello-stdin\n");
+    }
+
+    #[tokio::test]
     async fn captures_stdout_and_stderr() {
         let runtime = ProcessRuntime::new();
         #[cfg(not(windows))]

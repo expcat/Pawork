@@ -58,7 +58,7 @@
 
 | 状态 | 任务 | 简介 |
 | --- | --- | --- |
-| 待裁决 | [B1 · Policy / Exec 公开面与安全回归裁决](plan/b1-policy-exec.md) | 裁决策略与 PTY 公开 API 的保留范围，以及五项 Exec 安全缺口的回归范围。 |
+| 已裁决并实现，独立 review PASS，Windows 待验 | [B1 · Policy / Exec 公开面与安全回归裁决](plan/b1-policy-exec.md) | macOS 定向回归、Windows 交叉类型检查与依赖检查通过；Windows Job 原生执行待环境。 |
 | 待裁决 | [B2 · Storage 预留接口与恢复面裁决](plan/b2-storage.md) | 核实存储预留接口的消费者，裁决保留或删除。 |
 | 待裁决 | [B3 · Control-plane 读面与未接线能力裁决](plan/b3-control-plane.md) | 裁决额度读面、租约恢复和未消费的凭证、预算及保留策略类型。 |
 | 待裁决 | [B4 · Workspace / App Prompt-template 预留裁决](plan/b4-prompt-template.md) | 裁决未落地资源类型与 Prompt-template 的跨包保留范围。 |

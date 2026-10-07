@@ -720,6 +720,32 @@ mod tests {
         assert!(!p.env_allowlist.is_empty());
     }
 
+    #[tokio::test]
+    async fn native_restricted_rejects_both_spawn_paths_before_execution() {
+        let backend = NativeRestricted::new();
+        // 不存在的程序：若硬门失效走到 OS spawn，错误会是 Process 而非 Denied。
+        let spec = SandboxProcessSpec {
+            command: CommandSpec::new("pawork-b1-must-not-spawn"),
+            workspace_roots: Vec::new(),
+        };
+        assert!(matches!(
+            backend
+                .spawn(
+                    spec.clone(),
+                    SandboxPolicy::default(),
+                    CancellationToken::new()
+                )
+                .await,
+            Err(SandboxError::Denied(_))
+        ));
+        assert!(matches!(
+            backend
+                .spawn_interactive(spec, SandboxPolicy::default(), CancellationToken::new())
+                .await,
+            Err(SandboxError::Denied(_))
+        ));
+    }
+
     #[test]
     fn env_denylist_filters_secrets_over_allowlist() {
         let mut cmd = CommandSpec::new("sh");

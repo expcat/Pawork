@@ -182,3 +182,25 @@ pub(crate) async fn kill_child_tree(child: &mut Child, tree: &ProcessTreeGuard) 
     let _ = child.start_kill();
     let _ = tokio::time::timeout(PROCESS_TREE_KILL_TIMEOUT, child.wait()).await;
 }
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn attach_external_rejects_non_group_leader() {
+        // 普通 child 继承本测试进程组；误绑后 terminate 会危及宿主进程组。
+        let mut child = std::process::Command::new("/bin/sleep")
+            .arg("30")
+            .spawn()
+            .expect("spawn ordinary child");
+        let result = ProcessTreeGuard::attach_external(child.id(), ProcessLimits::default());
+        child.kill().expect("kill fixture");
+        child.wait().expect("reap fixture");
+        let error = match result {
+            Err(error) => error,
+            Ok(_) => panic!("non-leader must not get a process-tree guard"),
+        };
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+    }
+}

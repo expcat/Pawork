@@ -24,21 +24,13 @@ pub struct PolicyInput {
     pub approval_mode: ApprovalMode,
 }
 
-/// 策略引擎。按构造时的默认 [`ApprovalMode`] 运行；`decide` 以
-/// [`PolicyInput::approval_mode`] 为准（支持按调用覆盖）。
-#[derive(Clone, Debug)]
-pub struct PolicyEngine {
-    mode: ApprovalMode,
-}
+/// 无状态策略引擎；每次裁决以 [`PolicyInput::approval_mode`] 为准。
+#[derive(Clone, Debug, Default)]
+pub struct PolicyEngine;
 
 impl PolicyEngine {
-    pub fn new(mode: ApprovalMode) -> Self {
-        Self { mode }
-    }
-
-    /// 引擎构造时的默认审批模式。
-    pub fn mode(&self) -> ApprovalMode {
-        self.mode
+    pub fn new() -> Self {
+        Self
     }
 
     pub fn decide(&self, input: &PolicyInput) -> PolicyDecision {
@@ -248,7 +240,7 @@ mod tests {
 
     #[test]
     fn read_only_mode_denies_writes() {
-        let eng = PolicyEngine::new(ApprovalMode::ReadOnly);
+        let eng = PolicyEngine::new();
         let dec = eng.decide(&input(
             ToolCapability::WorkspaceWrite,
             true,
@@ -260,7 +252,7 @@ mod tests {
 
     #[test]
     fn read_only_mode_allows_reads() {
-        let eng = PolicyEngine::new(ApprovalMode::ReadOnly);
+        let eng = PolicyEngine::new();
         let dec = eng.decide(&input(
             ToolCapability::ReadOnly,
             true,
@@ -272,7 +264,7 @@ mod tests {
 
     #[test]
     fn untrusted_denies_writes_even_in_never_ask() {
-        let eng = PolicyEngine::new(ApprovalMode::NeverAsk);
+        let eng = PolicyEngine::new();
         let dec = eng.decide(&input(
             ToolCapability::WorkspaceWrite,
             false,
@@ -284,7 +276,7 @@ mod tests {
 
     #[test]
     fn untrusted_allows_reads() {
-        let eng = PolicyEngine::new(ApprovalMode::ReadOnly);
+        let eng = PolicyEngine::new();
         let dec = eng.decide(&untrusted_allowed_input(
             ToolCapability::ReadOnly,
             ApprovalMode::ReadOnly,
@@ -296,7 +288,7 @@ mod tests {
     #[test]
     fn trusted_relaxes_write_capability() {
         // P4-10：信任后写能力不再被硬性拒绝（按审批模式走 AskUser/Allow）。
-        let eng = PolicyEngine::new(ApprovalMode::NeverAsk);
+        let eng = PolicyEngine::new();
         let dec = eng.decide(&input(
             ToolCapability::WorkspaceWrite,
             true,
@@ -308,7 +300,7 @@ mod tests {
 
     #[test]
     fn untrusted_descriptor_permission_continues_through_policy() {
-        let eng = PolicyEngine::new(ApprovalMode::NeverAsk);
+        let eng = PolicyEngine::new();
         let dec = eng.decide(&untrusted_allowed_input(
             ToolCapability::WorkspaceWrite,
             ApprovalMode::NeverAsk,
@@ -320,7 +312,7 @@ mod tests {
     #[test]
     fn trusted_relaxes_process_capability_with_constraints() {
         // P4-10：信任后进程能力在 NeverAsk 下带约束放行。
-        let eng = PolicyEngine::new(ApprovalMode::NeverAsk);
+        let eng = PolicyEngine::new();
         let dec = eng.decide(&input(
             ToolCapability::Process,
             true,
@@ -335,7 +327,7 @@ mod tests {
 
     #[test]
     fn ask_for_writes_prompts_on_write() {
-        let eng = PolicyEngine::new(ApprovalMode::AskForWrites);
+        let eng = PolicyEngine::new();
         let dec = eng.decide(&input(
             ToolCapability::WorkspaceWrite,
             true,
@@ -350,7 +342,7 @@ mod tests {
 
     #[test]
     fn ask_for_writes_allows_read() {
-        let eng = PolicyEngine::new(ApprovalMode::AskForWrites);
+        let eng = PolicyEngine::new();
         let dec = eng.decide(&input(
             ToolCapability::ReadOnly,
             true,
@@ -362,7 +354,7 @@ mod tests {
 
     #[test]
     fn ask_for_dangerous_flags_dangerous_command() {
-        let eng = PolicyEngine::new(ApprovalMode::AskForDangerous);
+        let eng = PolicyEngine::new();
         let dec = eng.decide(&input(
             ToolCapability::Process,
             true,
@@ -377,7 +369,7 @@ mod tests {
 
     #[test]
     fn ask_for_dangerous_allows_safe_process_with_constraints() {
-        let eng = PolicyEngine::new(ApprovalMode::AskForDangerous);
+        let eng = PolicyEngine::new();
         let dec = eng.decide(&input(
             ToolCapability::Process,
             true,
@@ -394,7 +386,7 @@ mod tests {
 
     #[test]
     fn never_ask_allows_process_with_constraints() {
-        let eng = PolicyEngine::new(ApprovalMode::NeverAsk);
+        let eng = PolicyEngine::new();
         let dec = eng.decide(&input(
             ToolCapability::Process,
             true,
@@ -409,7 +401,7 @@ mod tests {
 
     #[test]
     fn never_ask_denies_catastrophic_commands() {
-        let eng = PolicyEngine::new(ApprovalMode::NeverAsk);
+        let eng = PolicyEngine::new();
         for command in [
             json!({"command": "rm", "args": ["-rf", "/"]}),
             json!({"command": "mkfs", "args": ["/dev/sda1"]}),
@@ -430,7 +422,7 @@ mod tests {
 
     #[test]
     fn argv_catastrophic_is_denied_in_never_ask_trusted_process() {
-        let eng = PolicyEngine::new(ApprovalMode::NeverAsk);
+        let eng = PolicyEngine::new();
         let dec = eng.decide(&input(
             ToolCapability::Process,
             true,
@@ -445,7 +437,7 @@ mod tests {
 
     #[test]
     fn argv_force_push_asks_user_as_dangerous() {
-        let eng = PolicyEngine::new(ApprovalMode::AskForDangerous);
+        let eng = PolicyEngine::new();
         let dec = eng.decide(&input(
             ToolCapability::Process,
             true,
@@ -460,7 +452,7 @@ mod tests {
 
     #[test]
     fn argv_safe_process_allows_with_constraints() {
-        let eng = PolicyEngine::new(ApprovalMode::AskForDangerous);
+        let eng = PolicyEngine::new();
         let dec = eng.decide(&input(
             ToolCapability::Process,
             true,
@@ -477,7 +469,7 @@ mod tests {
 
     #[test]
     fn always_ask_prompts() {
-        let eng = PolicyEngine::new(ApprovalMode::AlwaysAsk);
+        let eng = PolicyEngine::new();
         let dec = eng.decide(&input(
             ToolCapability::Network,
             true,
@@ -488,9 +480,9 @@ mod tests {
     }
 
     #[test]
-    fn input_mode_overrides_engine_mode() {
-        // 引擎构造为 NeverAsk，但输入指定 AlwaysAsk → 应询问。
-        let eng = PolicyEngine::new(ApprovalMode::NeverAsk);
+    fn input_mode_controls_each_decision() {
+        // 同一个无状态引擎分别按输入档位询问、拒绝与放行。
+        let eng = PolicyEngine::new();
         let dec = eng.decide(&input(
             ToolCapability::WorkspaceWrite,
             true,
@@ -498,6 +490,22 @@ mod tests {
             json!({}),
         ));
         assert!(matches!(dec, PolicyDecision::AskUser { .. }), "{dec:?}");
+        let denied = eng.decide(&input(
+            ToolCapability::WorkspaceWrite,
+            true,
+            ApprovalMode::ReadOnly,
+            json!({}),
+        ));
+        assert!(matches!(denied, PolicyDecision::Deny { .. }), "{denied:?}");
+        assert_eq!(
+            eng.decide(&input(
+                ToolCapability::WorkspaceWrite,
+                true,
+                ApprovalMode::NeverAsk,
+                json!({}),
+            )),
+            PolicyDecision::Allow
+        );
     }
 
     #[test]

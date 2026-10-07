@@ -15,15 +15,15 @@
 | --- | --- | --- |
 | `src/lib.rs` | ~50 | 门面：模块全部私有 + 全量 re-export（2026-10-04 收敛 `pub mod cancel` 双路径）；平台函数（Seatbelt profile / bwrap argv / Landlock 探测 / AppContainer 映射）以 `pub(crate) use` 引入（R0 D21 包外零消费，R7 再评估是否公开）。 |
 | `src/cancel.rs` | ~165（含测试） | 协作取消原语 `CancellationToken` / `CancellationFuture`：`Arc<{AtomicBool, Mutex<Vec<Waker>>}>`，克隆共享，`cancelled().await` 挂起至取消，`cancel()` 幂等唤醒全部 waiter。 |
-| `src/process.rs` | ~1060（逻辑 ~600 + 测试） | `CommandSpec`（含 Linux 专属 `landlock` 字段）/ `ProcessLimits` / `ProcessRuntime` / `ProcessEvent` / `ProcessOutput` / `ProcessInput` / `ProcessHandle` / `ProcessError` / `LinuxLandlockPolicy`（pub(crate)）；Unix `pre_exec`（setpgid + setrlimit + Linux PDEATHSIG + Landlock restrict）；Windows `CREATE_SUSPENDED` → Job attach → `NtResumeProcess`；监督循环与 `kill_child_tree`。 |
+| `src/process.rs` | ~1110（逻辑 ~600 + 测试） | `CommandSpec`（含 Linux 专属 `landlock` 字段）/ `ProcessLimits` / `ProcessRuntime` / `ProcessEvent` / `ProcessOutput` / `ProcessInput` / `ProcessHandle` / `ProcessError` / `LinuxLandlockPolicy`（pub(crate)）；Unix `pre_exec`（setpgid + setrlimit + Linux PDEATHSIG + Landlock restrict）；Windows `CREATE_SUSPENDED` → Job attach → `NtResumeProcess`；监督循环与 `kill_child_tree`。 |
 | `src/sandbox.rs` | ~1210（逻辑 ~700 + 测试） | `SandboxPolicy` / `FilesystemPolicy` / `NetworkMode` / `ResourceLimits` / `IsolationLevel` / `SandboxBackend` trait / `SandboxProcessSpec` / `SandboxProcess` / `SandboxInteractiveProcess` / `SandboxError` / `ProbeOutcome` / `BackendSelection`；软沙箱 `NativeRestricted` 与全后端共用第一层 `apply_soft_restrictions`；`SandboxSelector`；`default_secret_paths` / `default_env_allowlist`。 |
-| `src/tree.rs` | ~185 | `ProcessTreeGuard`：`attach`（pub(crate)，spawn 后立即挂载）与公开的 `attach_external(pid, limits)`（PTY 场景；Unix 要求目标为进程组长）、幂等 `terminate()`；`PROCESS_TREE_KILL_TIMEOUT = 5s`；`kill_child_tree` 收口函数。 |
+| `src/tree.rs` | ~205（含测试） | `ProcessTreeGuard`：`attach`（pub(crate)，spawn 后立即挂载）与公开的 `attach_external(pid, limits)`（PTY 场景；Unix 要求目标为进程组长）、幂等 `terminate()`；`PROCESS_TREE_KILL_TIMEOUT = 5s`；`kill_child_tree` 收口函数。 |
 | `src/os/mod.rs` | ~8 | 平台模块声明（linux / macos / windows，cfg 门控）。 |
 | `src/os/linux.rs` | ~1150（逻辑 ~700 + 测试） | `generate_bwrap_argv`（系统 ro-bind + `--dev/--proc` + roots 绑定 + deny tmpfs 覆盖 + `--unshare-net/pid/ipc/uts` + `--die-with-parent --new-session`）；`BwrapBackend` / `LandlockBackend`；`compile_policy`（Landlock 读写集合编译）；`probe_landlock_support`（OnceLock 缓存，真实 ruleset 创建探测）；`prepare_linux_landlock` / `restrict_linux_landlock`（父进程编 ruleset FD、子进程 `pre_exec` 只做 no_new_privs + restrict_self）；`linux_process_tree`（`/proc` 快照冻结-倒序杀）。 |
 | `src/os/macos.rs` | ~995（逻辑 ~500 + 测试） | `SANDBOX_EXEC_PATH = /usr/bin/sandbox-exec`；`escape_seatbelt_string`；`generate_seatbelt_profile`（全平台编译便于单测）；`SandboxExecBackend`（OnceLock 缓存 smoke 探测：真实跑 `sandbox-exec -p <默认 profile> /usr/bin/true`；实现 `spawn` 与 `spawn_interactive`）；`macos_process_tree`（`proc_listpids`/`proc_pidinfo` 快照，语义与 Linux 版一致）。 |
-| `src/os/windows.rs` | ~545（逻辑 ~400 + 测试） | `job` 模块：Job Object 创建（`KILL_ON_JOB_CLOSE`）、`attach`/`attach_pid`、限额映射（active process / job memory / CPU time）、收养既有后代（Toolhelp32 快照，≤16 轮）；`resume`（`NtResumeProcess`）；`probe_appcontainer_job`（**冻结为 available:false**）与 `AppContainerCapability` / `AppContainerConfig` / `policy_to_appcontainer_config`（R7 预留，未启用）；`WindowsJobBackend`。 |
-| `src/pty/mod.rs` | ~1525（逻辑 ~900 + 测试） | `PtyService` 与全部 PTY 公开类型；portable-pty 之上的会话管理：`PTY_SPAWN_LOCK` 短临界区 spawn、reader/waiter 专用 OS 线程、broadcast（容量 256）+ 丢弃计数、owner 归属校验、幂等清理（`CLEANUP_GRACE = 5s`）。 |
-| `src/pty/buffer.rs` | ~140（含测试） | `RingBuffer`：有界字节环，单调 `OutputCursor`（`start`/`end`），`read_since` 增量读；`RingReadError::{Stale, Future}` 区分被截断的旧游标与伪造的未来游标。 |
+| `src/os/windows.rs` | ~585（逻辑 ~400 + 测试） | `job` 模块：Job Object 创建（`KILL_ON_JOB_CLOSE`）、`attach`/`attach_pid`、限额映射（active process / job memory / CPU time）、收养既有后代（Toolhelp32 快照，≤16 轮）；`resume`（`NtResumeProcess`）；`probe_appcontainer_job`（**冻结为 available:false**）与 `AppContainerCapability` / `AppContainerConfig` / `policy_to_appcontainer_config`（R7 预留，未启用）；`WindowsJobBackend`。 |
+| `src/pty/mod.rs` | ~1480（逻辑 ~850 + 测试） | `PtyService` 与全部 PTY 公开类型；portable-pty 之上的会话管理：`PTY_SPAWN_LOCK` 短临界区 spawn、reader/waiter 专用 OS 线程、broadcast（容量 256）+ 丢弃计数、owner 归属校验、幂等清理（`CLEANUP_GRACE = 5s`）。 |
+| `src/pty/buffer.rs` | ~70（含测试） | PTY 内部 `RingBuffer`（`pub(super)`）：有界字节环，单调 `OutputCursor`（`start`/`end`）与完整快照；不对外暴露可传入游标的读取接口。 |
 
 无 `tests/` 目录与 fixture 文件；全部回归内联（Seatbelt profile golden 为 `os/macos.rs` 内联字符串断言）。
 
@@ -81,15 +81,15 @@
 ### 3.4 进程树守卫与 PTY
 
 - `ProcessTreeGuard::attach_external(process_id: u32, limits: ProcessLimits)`：绑定外部启动的进程。Unix 要求目标是进程组长（`pgid==pid`，否则 InvalidInput；limits 被忽略）；Windows 创建 Job、写入限额并收养既有后代。`terminate()` 幂等整树终止。守卫本身无 Drop 杀树；生命周期兜底靠 `ProcessHandle` Drop（Unix）与 Job 句柄 `KILL_ON_JOB_CLOSE`（Windows）。
-- `PtyService::new()`；方法（除 `subscribe` 外均校验 owner，错配 `PtyError::Ownership`）：
+- `PtyService::new()`；会话操作均校验 owner（含 `subscribe`，错配 `PtyError::Ownership`）；`create` 指定 owner，`list_for_owner` 按 owner 过滤，`session_count` / `shutdown` 属管理操作：
   - `create(spec: PtyCreateSpec) -> Result<TerminalId, PtyError>`（async）。`PtyCreateSpec { owner_session: OwnerSessionId, shell: Option<String>（None → 平台默认 shell）, args, cwd, env, size: PtyWindowSize（默认 24×80）, buffer_capacity: usize（默认 DEFAULT_BUFFER_CAPACITY = 256 KiB） }`。
   - async 方法：`resize` / `write` / `kill` / `wait_exit` / `cleanup` / `cleanup_owner`（返回清理数）/ `shutdown`。
-  - 同步方法：`subscribe`（broadcast 接收器）/ `snapshot` / `read_output(cursor)` / `state` / `list_for_owner` / `session_count`。
-  - `PtySnapshot { terminal_id, owner_session, state, size, buffer_start, buffer_end, buffered, exit_code, exit_signal, dropped_events }`。重连协议 = `snapshot()` 拿基线 + `read_output(cursor)` 增量：游标过旧 → `PtyError::StaleCursor{requested, available_from}`（应重新 snapshot）；未来游标 → `FutureCursor`（输入非法）。
+  - 同步方法：`subscribe`（broadcast 接收器）/ `snapshot` / `state` / `list_for_owner` / `session_count`。
+  - `PtySnapshot { terminal_id, owner_session, state, size, buffer_start, buffer_end, buffered, exit_code, exit_signal, dropped_events }`。宿主 Agent 终端读取完整快照，GUI 经广播消费实时输出；输出区间与退出态保留。GUI Snapshot 的终端节仅列会话元数据，不承诺重放原始输出。
   - `PtyEvent`：`Output { data, cursor_end }` / `Exit { code, signal, state }`（`state` 是 waiter 写入退出事实后的权威 `PtySessionState`，显式 cleanup 与订阅消费并发时仍可无竞态地区分 Exited/Killed；broadcast 容量 256，慢消费者被覆写的事件计入 `dropped_events`）。
-  - `PtySessionState`：`Running / Exited / Killed`；`PtyError` 10 变体：`NotFound / Ownership / Closed / StaleCursor / FutureCursor / Create / Spawn / ProcessTree / Io / ShuttingDown`。
+  - `PtySessionState`：`Running / Exited / Killed`；`PtyError` 8 变体：`NotFound / Ownership / Closed / Create / Spawn / ProcessTree / Io / ShuttingDown`。
   - `OwnerSessionId` / `TerminalId`：字符串 newtype（本包不依赖 domain 的 ID 类型）。
-- `RingBuffer::new(capacity)` / `push` / `read_since(cursor)` / `start()` / `end()`；`OutputCursor` 单调递增，容量满丢最老字节。
+- `OutputCursor` 仍公开（快照与广播输出区间）；容量满丢最老字节。B1（2026-10-08）删除未接线的 `read_output` / `PtyOutputChunk` / `StaleCursor` / `FutureCursor` 与 `RingReadError` / `read_since`，`RingBuffer` 收为 PTY 内部实现；调用方不再传入输出游标，原 Stale / Future 拒绝入口随之消失。保留 owner 拒绝、容量与快照、broadcast 覆写、退出与整树清理回归。
 
 ## 4. 核心行为与数据流
 
@@ -165,16 +165,16 @@
 | 文件 | 覆盖点 |
 | --- | --- |
 | `cancel.rs` | 取消传播、克隆共享、waiter 唤醒与 drop 移除。 |
-| `process.rs` | stdout/stderr 捕获与 exit_code、超时（`timed_out+killed`）、取消 kill、输出截断（`Exit.truncated`）、进程树整树回收（孙进程）、rlimit 应用（Unix）、句柄 Drop 回收；`kill_reaps_descendant_that_escaped_with_setsid` 在 Linux/macOS 走真实 setsid 逃逸，缺 `setsid` 或 `perl POSIX::setsid` 时按平台前提失败，不 skip。 |
+| `process.rs` | stdout/stderr 捕获与 exit_code、超时（`timed_out+killed`）、取消 kill、输出截断（`Exit.truncated`）、进程树整树回收（孙进程）、rlimit 应用（Unix）、句柄 Drop 回收；`interactive_stdin_close_delivers_eof_and_rejects_later_writes` 经真实交互进程验证 stdin 写入、共享幂等关闭、EOF 正常退出与关闭后 BrokenPipe；`kill_reaps_descendant_that_escaped_with_setsid` 在 Linux/macOS 走真实 setsid 逃逸，缺 `setsid` 或 `perl POSIX::setsid` 时按平台前提失败，不 skip。 |
 | `sandbox.rs` | `untrusted_default` 形状（只读 + no spawn + Enforce + env_clear）、`isolation_level_vocabulary_golden`、`secret_paths_for_exact_vector_golden` / `default_secret_paths_controlled_env_golden`、env 清洗（denylist 优先、通配大小写）、cwd 越界与 deny 洞拒绝、资源映射、selector 回退与 `attempted` 记录、NativeRestricted spawn 冒烟（真实子进程验证 env 清洗热路径）；`macos_sandbox_exec_reports_hard_writes_and_network` 仅 `cfg(target_os = "macos")`，非 macOS 不编译、不 `return` 假绿。 |
-| `tree.rs` | 无内联测试；attach/terminate 经 process.rs 与 pty/mod.rs 的真实进程路径间接覆盖（组长前置拒绝无定向回归，见下「已知缺口」）。 |
+| `tree.rs` | `attach_external_rejects_non_group_leader`（Unix）经真实普通子进程验证 `InvalidInput` 拒绝；组长 attach/terminate 继续由 process.rs 与 pty/mod.rs 的真实进程路径覆盖。 |
 | `os/linux.rs` | bwrap argv 生成（bind 顺序 / unshare / die-with-parent / deny tmpfs 覆盖）、Landlock 策略编译（读写集合、deny 重叠拒绝、executable 单文件授权）、探测降级 reason、进程树冻结-快照-倒序杀、setsid 逃逸捕获、start_time 防复用；Linux 上 `bwrap_allows_workspace_and_hides_unmounted_sibling` / `landlock_allows_workspace_and_denies_sibling_file` 走真实 spawn，缺 bwrap/userns 或 Landlock ABI 时按平台前提失败，不 skip。 |
 | `os/macos.rs` | **`profile_full_output_golden`** 及结构断言（`profile_denies_network_when_enforce` / `profile_allows_network_when_hint` / `profile_emits_deny_for_secret_paths` / `profile_emits_deny_for_default_secret_paths` / `profile_emits_canonical_deny_for_existing_path` / `profile_emits_write_roots_as_file_write` / `profile_notes_max_procs_unenforced` / `profile_includes_version_header`）、字符串转义、进程树冻结与逃逸回收。 |
-| `os/windows.rs` | AppContainer 网络开关与文件系统路径映射、`probe_appcontainer_job` 冻结输出（available:false）；Job 限额映射与后代收养无定向测试（需 Windows CI，见下「已知缺口」）。 |
-| `pty/mod.rs` | 输出捕获、owner 强制、快照重连（游标续读 / Stale 语义）、broadcast 覆写丢弃计数、kill 整树（后代收割）、多会话 cleanup_owner / shutdown、resize、退出状态与 signal 传播。 |
-| `pty/buffer.rs` | 环形丢最老、游标单调、`read_since` 增量、`Stale` / `Future` 判定。 |
+| `os/windows.rs` | AppContainer 网络开关与文件系统路径映射、`probe_appcontainer_job` 冻结输出（available:false）；Windows 专属 `job_limits_are_installed_in_kernel` 通过真实 Job + `QueryInformationJobObject` 验证进程数、内存、CPU 100ns 单位与 KILL_ON_JOB_CLOSE 标志，交叉类型检查通过、原生执行待验；后代收养仍无专属定向测试。 |
+| `pty/mod.rs` | 输出捕获、owner 强制、`reconnect_snapshot_retains_output_and_exit_state` 保留退出后缓冲与状态、broadcast 覆写丢弃计数、kill 整树（后代收割）、多会话 cleanup_owner / shutdown、resize、退出状态与 signal 传播。 |
+| `pty/buffer.rs` | 环形丢最老、输出区间与内容一致；被删除的 `read_since` 回归不再有接受外部游标的入口，容量与快照回归仍保留。 |
 
-已知缺口（2026-10-04 R-02 复核，原表述高估了覆盖）：`allow_spawn=false` 的 `Denied` 硬门、`SandboxBackend::spawn_interactive`（含 NativeRestricted）冒烟、`ProcessRuntime::spawn_interactive` 的 stdin 写入/close、`attach_external` 组长前置拒绝、Windows Job 限额映射均无定向回归；处置待用户确认，未静默补测。
+B1（2026-10-08）逐项处置：spawn 禁止硬门新增 `native_restricted_rejects_both_spawn_paths_before_execution`（普通与交互入口均先拒绝）；NativeRestricted 交互启动与 stdin 写入复用 [mcp](mcp.md) 的 `sandboxed_spawner_round_trips_stdio_through_sandbox` 真实消费回归，本轮已通过，不再重复新增冒烟；stdin close 与非组长拒绝补上述最小回归，macOS 包级门禁通过。Windows Job 映射回归已新增，`cargo check -p pawork-exec --offline --tests --target x86_64-pc-windows-msvc` 通过；原生运行待验，不把交叉类型检查记为 Windows 内核行为验证。原五项登记出处与完整验证记录见 [B1 裁决记录](../../plan/b1-policy-exec.md)。
 
 ## 8. 注意事项与已知限制
 

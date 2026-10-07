@@ -320,6 +320,45 @@ mod job {
         }
     }
 
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use std::time::Duration;
+        use windows::Win32::System::JobObjects::QueryInformationJobObject;
+
+        #[test]
+        fn job_limits_are_installed_in_kernel() {
+            let job = Job::create(ProcessLimits {
+                max_processes: Some(2),
+                memory_bytes: Some(64 * 1024 * 1024),
+                cpu_time: Some(Duration::from_millis(1234)),
+                ..Default::default()
+            })
+            .expect("create limited Job");
+            let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+            unsafe {
+                QueryInformationJobObject(
+                    Some(job.0),
+                    JobObjectExtendedLimitInformation,
+                    (&mut info as *mut JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                    u32::try_from(size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>()).unwrap(),
+                    None,
+                )
+            }
+            .expect("query kernel Job limits");
+            assert_eq!(info.BasicLimitInformation.ActiveProcessLimit, 2);
+            assert_eq!(info.JobMemoryLimit, 64 * 1024 * 1024);
+            assert_eq!(info.BasicLimitInformation.PerJobUserTimeLimit, 12_340_000);
+            assert_eq!(
+                info.BasicLimitInformation.LimitFlags,
+                JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+                    | JOB_OBJECT_LIMIT_ACTIVE_PROCESS
+                    | JOB_OBJECT_LIMIT_JOB_MEMORY
+                    | JOB_OBJECT_LIMIT_JOB_TIME
+            );
+        }
+    }
+
     fn descendant_process_ids(root_process_id: u32) -> io::Result<Vec<u32>> {
         let root_creation_time = process_creation_time(root_process_id)?.ok_or_else(|| {
             io::Error::new(

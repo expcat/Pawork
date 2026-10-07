@@ -25,7 +25,8 @@ use tracing::{debug, warn};
 use crate::process::ProcessLimits;
 use crate::tree::ProcessTreeGuard;
 
-pub use buffer::{OutputCursor, RingBuffer, RingReadError};
+pub use buffer::OutputCursor;
+use buffer::RingBuffer;
 
 /// PTY 归属的工作会话标识（本 crate 不依赖 pawork-domain）。
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -222,14 +223,6 @@ pub struct PtySnapshot {
     pub dropped_events: u64,
 }
 
-/// 增量读取结果。
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PtyOutputChunk {
-    pub from: OutputCursor,
-    pub to: OutputCursor,
-    pub data: Vec<u8>,
-}
-
 #[derive(Debug, Error)]
 pub enum PtyError {
     #[error("pty session not found: {0}")]
@@ -238,16 +231,6 @@ pub enum PtyError {
     Ownership(TerminalId, OwnerSessionId),
     #[error("pty session {0} is already closed")]
     Closed(TerminalId),
-    #[error("output cursor is stale (requested {requested}, available from {available_from})")]
-    StaleCursor {
-        requested: OutputCursor,
-        available_from: OutputCursor,
-    },
-    #[error("output cursor is in the future (requested {requested}, end {end})")]
-    FutureCursor {
-        requested: OutputCursor,
-        end: OutputCursor,
-    },
     #[error("failed to create pty: {0}")]
     Create(String),
     #[error("failed to spawn shell: {0}")]
@@ -607,34 +590,6 @@ impl PtyService {
             exit_signal: runtime.exit_signal,
             dropped_events: session.dropped_events.load(Ordering::Relaxed),
         })
-    }
-
-    /// 按游标读取增量输出（重连后续读）。
-    pub fn read_output(
-        &self,
-        terminal_id: &TerminalId,
-        owner: &OwnerSessionId,
-        cursor: OutputCursor,
-    ) -> Result<PtyOutputChunk, PtyError> {
-        let session = self.require_owned(terminal_id, owner)?;
-        let result = session
-            .buffer
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .read_since(cursor);
-        match result {
-            Ok((from, to, data)) => Ok(PtyOutputChunk { from, to, data }),
-            Err(RingReadError::Stale {
-                requested,
-                available_from,
-            }) => Err(PtyError::StaleCursor {
-                requested,
-                available_from,
-            }),
-            Err(RingReadError::Future { requested, end }) => {
-                Err(PtyError::FutureCursor { requested, end })
-            }
-        }
     }
 
     /// 当前会话状态。
@@ -1254,7 +1209,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reconnect_snapshot_and_cursor_resume() {
+    async fn reconnect_snapshot_retains_output_and_exit_state() {
         let service = PtyService::new();
         let owner = owner("reconnect");
         let id = service
@@ -1269,16 +1224,13 @@ mod tests {
             snap.buffer_start + snap.buffered.len() as u64
         );
 
-        // 从 0 续读（缓冲未丢弃时应成功）。
-        let chunk = service.read_output(&id, &owner, 0).expect("read from 0");
-        assert_eq!(chunk.data, snap.buffered);
-        assert_eq!(chunk.to, snap.buffer_end);
-
-        // 从 end 续读为空。
-        let empty = service
-            .read_output(&id, &owner, snap.buffer_end)
-            .expect("read end");
-        assert!(empty.data.is_empty());
+        let (code, signal) = service.wait_exit(&id, &owner).await.expect("wait");
+        let restored = service.snapshot(&id, &owner).expect("reconnect snapshot");
+        // 等待退出期间仍可能追加尾部输出，已有内容必须保留。
+        assert!(restored.buffered.starts_with(&snap.buffered));
+        assert!(restored.buffer_end >= snap.buffer_end);
+        assert_eq!(restored.state, PtySessionState::Exited);
+        assert_eq!((restored.exit_code, restored.exit_signal), (code, signal));
 
         service.cleanup(&id, &owner).await.expect("cleanup");
     }

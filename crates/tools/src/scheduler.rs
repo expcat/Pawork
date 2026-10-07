@@ -208,7 +208,7 @@ pub struct ToolScheduler {
 impl ToolScheduler {
     pub fn new(registry: ToolRegistry, config: ToolSchedulerConfig) -> Self {
         let max = config.max_concurrent.max(1);
-        let policy = PolicyEngine::new(config.approval_mode);
+        let policy = PolicyEngine::new();
         Self {
             registry,
             global: Arc::new(Semaphore::new(max)),
@@ -231,7 +231,7 @@ impl ToolScheduler {
     }
 
     /// 克隆工具表到新 scheduler，并换上新的审批快照。旧实例（含进行中
-    /// run 持有的 Arc）保持原 PolicyEngine；调用方以 Arc-swap 让之后的
+    /// run 持有的 Arc）保持原审批配置；调用方以 Arc-swap 让之后的
     /// run 克隆到新配置。
     pub fn with_approval_snapshot(
         &self,

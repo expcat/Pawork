@@ -364,7 +364,7 @@ pub(crate) fn decide_terminal_create(
             ),
         };
     }
-    match PolicyEngine::new(mode).decide(&PolicyInput {
+    match PolicyEngine::new().decide(&PolicyInput {
         capability: ToolCapability::Process,
         // 与 PolicyEngine::extract_command 的解析形状一致:program 走
         // `command` 键、参数走 `args` 键(`argv` 键要求含 program 的完整 argv)。

@@ -4,7 +4,7 @@
 //! - 审批模式（[`ApprovalMode`]）与裁决结果（[`PolicyDecision`]）；
 //! - 工作区文件路径安全解析（[`resolve_workspace_path`]）：防穿越、绝对路径、
 //!   symlink 跳出、`.git` 内部、设备/FIFO/socket 与 TOCTOU；
-//! - Shell 高风险命令识别（[`classify_command`]）；
+//! - Shell 高风险命令识别（由策略裁决内部调用）；
 //! - 综合 [`PolicyEngine`]：按模式 + 能力 + 信任 + 命令风险给出裁决。
 //!
 //! 路径安全函数收 `roots` 切片，**不依赖** workspace-service，保持解耦。
@@ -15,11 +15,10 @@ mod mode;
 mod path;
 mod shell;
 
-pub use decision::{ApprovalPrompt, CommandRisk, ExecutionConstraints, PolicyDecision, RiskLevel};
+pub use decision::{ApprovalPrompt, ExecutionConstraints, PolicyDecision, RiskLevel};
 pub use engine::{PolicyEngine, PolicyInput};
 pub use mode::ApprovalMode;
 pub use path::{
     canonicalize_platform, path_within_root, relative_to_root, resolve_workspace_path,
     PathSafetyError, ResolvedPath,
 };
-pub use shell::classify_command;

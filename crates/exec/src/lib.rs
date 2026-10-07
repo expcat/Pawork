@@ -21,9 +21,8 @@ pub use process::{
     ProcessOutput, ProcessRuntime,
 };
 pub use pty::{
-    OutputCursor, OwnerSessionId, PtyCreateSpec, PtyError, PtyEvent, PtyOutputChunk, PtyService,
-    PtySessionState, PtySnapshot, PtyWindowSize, RingBuffer, RingReadError, TerminalId,
-    DEFAULT_BUFFER_CAPACITY,
+    OutputCursor, OwnerSessionId, PtyCreateSpec, PtyError, PtyEvent, PtyService, PtySessionState,
+    PtySnapshot, PtyWindowSize, TerminalId, DEFAULT_BUFFER_CAPACITY,
 };
 pub use sandbox::{
     default_env_allowlist, default_secret_paths, BackendSelection, FilesystemPolicy,

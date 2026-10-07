@@ -1290,7 +1290,7 @@ impl AppCore {
     }
 
     /// 审批模式 / workspace trust 变更后 Arc-swap `ToolScheduler`。进行中
-    /// run 继续持有旧 Arc（快照语义）；禁止就地改 PolicyEngine。
+    /// run 继续持有旧 Arc（快照语义）；禁止就地改 scheduler 审批配置。
     fn refresh_scheduler_approval(&mut self) {
         self.scheduler = Arc::new(
             self.scheduler

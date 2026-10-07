@@ -6,7 +6,7 @@
 
 - **裁决**：`PolicyEngine::decide` 综合 `ToolCapability`、工具 JSON 输入、workspace 信任位、descriptor 的 `allowed_in_untrusted_workspace` 与 `ApprovalMode`，产出 `Allow` / `Deny` / `AskUser` / `AllowWithConstraints`。
 - **路径安全**：`resolve_workspace_path` 是所有文件工具解析模型传入路径的**唯一入口**（`workspace_id + relative_path` 语义；函数本身收 `roots` 切片与相对路径字符串，与 workspace-service 解耦）。
-- **shell 风险分类**：`classify_command` 用手写轻量 tokenizer（ADR-041 D4，不引 shell 解析库）+ 固定词表判定 `Safe | Dangerous`；`hits_danger_floor`（`pub(crate)`）单独判定灾难地板。
+- **shell 风险分类**：包内 `classify_command` 用手写轻量 tokenizer（ADR-041 D4，不引 shell 解析库）+ 固定词表判定 `Safe | Dangerous`；`hits_danger_floor` 单独判定灾难地板。两者均为 `pub(crate)`，包外统一走 `PolicyEngine::decide`。
 - **不做**：不执行命令、不碰 Git、不读写文件内容（只做 canonicalize / metadata 查询）、不依赖 `pawork-exec`。
 
 ## 2. 模块与文件地图
@@ -16,7 +16,7 @@
 | `src/lib.rs` | ~25 | crate 门面：5 个私有 `mod` + 全量 re-export，无 `pub mod`。 |
 | `src/decision.rs` | ~105（含测试） | 类型定义：`PolicyDecision`（serde `tag="kind"` snake_case）、`ApprovalPrompt`、`RiskLevel`（Safe/Moderate/Dangerous）、`CommandRisk`（Safe/Dangerous）、`ExecutionConstraints{timeout_ms, max_output_bytes}`。默认值均 Safe。 |
 | `src/mode.rs` | ~63（含测试） | `ApprovalMode` 枚举与 serde 形状（snake_case；`NeverAsk` 带 `alias="on_failure"` 只进不出）；默认 `ReadOnly`。 |
-| `src/engine.rs` | ~550（逻辑 ~215 + 测试） | `PolicyEngine` / `PolicyInput` 与 `decide` 决策树；命令提取 `extract_command`（argv 优先）；进程默认约束常量（timeout 60_000ms、输出 1 MiB）。 |
+| `src/engine.rs` | ~550（逻辑 ~205 + 测试） | 无状态 `PolicyEngine` / `PolicyInput` 与 `decide` 决策树；命令提取 `extract_command`（argv 优先）；进程默认约束常量（timeout 60_000ms、输出 1 MiB）。 |
 | `src/path.rs` | ~510（逻辑 ~260 + 测试） | `resolve_workspace_path` / `ResolvedPath` / `PathSafetyError`；辅助 `canonicalize_platform`（dunce）、`path_within_root`、`relative_to_root`（Windows 大小写不敏感逐组件比较）；`canonicalize_deepest_existing` 支持尚不存在的嵌套新路径。 |
 | `src/shell.rs` | ~1.3k（逻辑 ~840 + 测试） | 手写 Lexer（`Word`/`Tok`/`Cmd`）、`parse_commands`（语句→管道→命令）、升档分类 `classify_snippet`、灾难地板 `script_floor`、固定词表、`extract_shell_script`（`sh -c` / `cmd /c` / `powershell -Command` / POSIX 含 `c` 短选项簇）。 |
 
@@ -37,11 +37,12 @@
   - `Deny { reason: String }`：reason 可展示、可入日志，**禁止含 Secret**。
   - `AskUser { prompt: ApprovalPrompt }`；`ApprovalPrompt { message, risk: RiskLevel }`。
   - `AllowWithConstraints { constraints: ExecutionConstraints }`；`ExecutionConstraints { timeout_ms: Option<u64>, max_output_bytes: Option<u64> }`。
-- `RiskLevel`：`Safe | Moderate | Dangerous`（prompt 展示用）；`CommandRisk`：`Safe | Dangerous`（`classify_command` 返回值）。两者默认值均 `Safe`。
+- `RiskLevel`：`Safe | Moderate | Dangerous`（prompt 展示用），默认值为 `Safe`。包内分类结果 `CommandRisk` 为 `pub(crate)`（`Safe | Dangerous`，默认 `Safe`），不再从门面重导出。
 
 ### 3.2 PolicyEngine
 
-- `PolicyEngine::new(mode)` / `.mode()`：构造档位仅作记录；`decide(&PolicyInput)` 一律以 `PolicyInput::approval_mode` 为准（支持按调用覆盖）。
+- `PolicyEngine::new()` / `Default`：无状态构造；`decide(&PolicyInput)` 一律以 `PolicyInput::approval_mode` 为准。同一个引擎可按不同输入档位分别裁决，审批快照由调用方持有。
+- B1（2026-10-08）删除旧构造参数、`mode` 字段与 `.mode()`：旧字段只被 getter 读取，不参与裁决；scheduler、Run 与 Terminal 创建调用点已迁移。`PolicyDecision` / `ApprovalMode` 冻结形状不变。
 - `PolicyInput { capability: ToolCapability, input: serde_json::Value, trusted: bool, allowed_in_untrusted_workspace: bool, approval_mode: ApprovalMode }`。
 - 命令提取（Process 能力）：优先非空 `argv`（`argv[0]` 为 program、其余为 args，与 `run_command` 实际执行形状一致）；否则 `program` / `command` / `cmd` 字符串 + `args` 数组。
 
@@ -63,9 +64,9 @@
   - `Io(std::io::Error)`：其余文件系统错误。
 - 辅助函数：`canonicalize_platform`（Windows 去 `\\?\` verbatim 前缀）、`path_within_root`、`relative_to_root`（Windows 盘符与组件大小写不敏感）。
 
-### 3.4 shell 风险分类
+### 3.4 包内 shell 风险分类
 
-- `classify_command(program: &str, args: &[String]) -> CommandRisk`：升档判定（是否需要 `AskForDangerous` 询问）。
+- `classify_command(program: &str, args: &[String]) -> CommandRisk` 为 `pub(crate)`：升档判定（是否需要 `AskForDangerous` 询问）。真实生产消费者是 engine 的 `command_risk`，保留实现与全部安全种子，收窄公开面。
 - `hits_danger_floor` 为 `pub(crate)`，仅 engine 消费，**不是**公开 API。
 
 ## 4. 核心行为与数据流
@@ -140,7 +141,7 @@
 | --- | --- |
 | `decision.rs` | `PolicyDecision` 四变体 serde 形状（`kind` tag、`allow` 无载荷、`deny_roundtrips_with_kind_tag`）、`RiskLevel`/`CommandRisk` 默认 Safe。 |
 | `mode.rs` | 五档 snake_case 序列化 golden（`serializes_snake_case`）、全变体反序列化含 `on_failure → NeverAsk`、默认 `ReadOnly`。 |
-| `engine.rs` | 信任门（untrusted 写拒绝 / descriptor 放行续走）、`ReadOnly` 档拒写允读、`trusted+NeverAsk` 放行写与带约束进程、AskForWrites / AskForDangerous / AlwaysAsk 行为、灾难地板三形态 Deny（含 argv 形态）、`git push --force` 升档、`extract_command` argv 优先、输入档位覆盖引擎档位。 |
+| `engine.rs` | 信任门（untrusted 写拒绝 / descriptor 放行续走）、`ReadOnly` 档拒写允读、`trusted+NeverAsk` 放行写与带约束进程、AskForWrites / AskForDangerous / AlwaysAsk 行为、灾难地板三形态 Deny（含 argv 形态）、`git push --force` 升档、`extract_command` argv 优先、`input_mode_controls_each_decision` 同一无状态引擎按输入档位询问 / 拒绝 / 放行。 |
 | `path.rs` | 空/绝对/穿越拒绝、规范化后合法 `..`、`.git` 拒绝（含 `sub/.git`）、dotfile 放行、已存在/新建/深层不存在路径解析、`NoRoot`、root 边界（`root-other` 前缀不误判）、symlink 逃逸拒绝与 root 内 symlink 放行（Unix）、FIFO 拒绝（Unix）、junction 逃逸 / 大小写 / verbatim 前缀 / `.GIT`（Windows）。 |
 | `shell.rs` | 固定词表全家（rm/sudo/dd/mkfs/shutdown 族/chmod -R/git/python -c/perl -e/PowerShell 与 cmd 命名命令/远程管道）、`-lc` 组合簇提取、嵌套 `sh -c`、引号拼接程序名归一化、命令替换递归（升档与地板双管线）、`danger_floor_only_matches_catastrophic_forms`、动态程序位升档不入地板、管道分段独立判定、重定向形态（`2>` `>>` `&>` 引号目标）、转义归一化、地板忽略变量形态、参数位变量保持字面语义、注释/未闭合引号健壮性。 |
 

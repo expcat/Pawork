@@ -35,7 +35,7 @@ use crate::decision::CommandRisk;
 const MAX_SCRIPT_DEPTH: usize = 12;
 
 /// 判定一条命令的风险等级。
-pub fn classify_command(program: &str, args: &[String]) -> CommandRisk {
+pub(crate) fn classify_command(program: &str, args: &[String]) -> CommandRisk {
     // 1) `sh -c` / `cmd /c` / `powershell -Command`：提取脚本交 tokenizer 管线。
     if posix_shell_loads_rc_or_init_file(program, args) {
         return CommandRisk::Dangerous;

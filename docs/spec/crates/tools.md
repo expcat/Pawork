@@ -84,6 +84,7 @@
 
 - `ToolRegistry`：`new` / `register(Arc<dyn AgentTool>)` / `extend` / `get` / `descriptor` / `descriptors` / `len` / `is_empty`。仅接受 `ToolKind::ClientFunction` 且 descriptor 合法（`ToolRegistryError::InvalidDescriptor` / `UnsupportedKind`）；同名注册为覆盖语义（MCP 重连刷新用）。
 - `ToolSchedulerConfig { max_concurrent: 8, approval_mode: ApprovalMode::ReadOnly, workspace_trusted: false }`——**默认即最保守档**。
+- B1：scheduler 持有审批配置；`PolicyEngine::new()` 无状态构造，档位与 trust 通过每次 `PolicyInput` 传入。`with_approval_snapshot` 仍创建新 scheduler，旧 Run 保留原配置。
 - `ToolScheduler::new(registry, config)` / `tool_count()` / `approval_mode()` / `workspace_trusted()` / `with_approval_snapshot(mode, trusted)`（克隆工具表到新 scheduler，旧实例不变，供宿主 Arc-swap） / `execute_named(name, request, context, cancel, approval: Option<&dyn ApprovalResolver>, sink) -> Result<ToolResult, ToolError>`。
 - `ApprovalResolver`（async trait）：`resolve(&[ToolRequest]) -> Vec<ApprovalOutcome>`（`ApprovalOutcome` 为无字段枚举 `Approved` / `Denied`，拒绝文案由闸门统一生成）；`can_resolve_policy_prompt() -> bool`（默认 true；`AutoApproveResolver` 覆写为 **false**——它无法批准任何 `requires_approval` 工具或 policy `AskUser`，只能放行 S2 钩子的例行确认）。
 - 错误面：未知工具 → `ToolError{kind: NotFound}`；policy `Deny` 与审批拒绝**不是 Err**，而是 `Ok(ToolResult{success: false, error: Authorization})`（对模型可见的失败结果，Agent loop 可继续）；超时 → `kind: Timeout`。

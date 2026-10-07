@@ -2,10 +2,10 @@
 
 use serde::{Deserialize, Serialize};
 
-/// 单条命令的静态风险等级（来自 [`crate::classify_command`]）。
+/// 单条命令的静态风险等级（来自 [`crate::shell::classify_command`]）。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum CommandRisk {
+pub(crate) enum CommandRisk {
     #[default]
     Safe,
     Dangerous,
