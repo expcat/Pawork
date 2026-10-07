@@ -84,11 +84,14 @@ impl CapabilityNegotiator {
                 resolved.supported.insert("image_input".into());
             } else {
                 resolved.unsupported.insert("image_input".into());
+                // CU-11：切模型或恢复已有图像上下文时，错误必须指向实际
+                // 缺失（模型 + 能力名），不误报后端断开。
                 resolved.fallback.insert(
                     "image_input".into(),
-                    CapabilityFallback::Reject(
-                        "model does not declare image input capability".into(),
-                    ),
+                    CapabilityFallback::Reject(format!(
+                        "model `{}` does not declare image input capability",
+                        evidence.model.as_str()
+                    )),
                 );
             }
         }

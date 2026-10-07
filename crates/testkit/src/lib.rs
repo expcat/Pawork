@@ -207,6 +207,8 @@ impl MockProvider {
         calls.push(MockProviderCallRecord {
             request_id: request.request_id.clone(),
             model: request.model.clone(),
+            // CU-11：请求暴露的客户端工具名（工具暴露门控断言用）。
+            tool_names: request.tools.iter().map(|tool| tool.name.clone()).collect(),
             hosted_tools: request.hosted_tools.iter().map(|tool| tool.kind).collect(),
             has_image: request
                 .messages
@@ -230,6 +232,8 @@ impl MockProvider {
 pub struct MockProviderCallRecord {
     pub request_id: RequestId,
     pub model: ModelId,
+    /// CU-11：请求暴露的客户端工具名。
+    pub tool_names: Vec<String>,
     /// SEARCH-1：请求携带的 hosted 工具类别（注入断言用）。
     pub hosted_tools: Vec<ToolCapabilityTag>,
     /// VISION-1：请求消息是否携带图片内容。

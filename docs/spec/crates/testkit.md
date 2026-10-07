@@ -34,7 +34,7 @@
 
 ### 3.2 MockProvider / MockTool
 
-- **`MockProvider`**：`new(script)` 同一脚本可重复 replay；`sequence(vec![脚本])` 逐请求原子消耗，耗尽后返回 `ProviderErrorKind::StreamInterrupted`（message 含 "mock script sequence exhausted"）；`with_id(ProviderId)`（默认 `"mock"`）、`with_models(Vec<ModelDefinition>)`（供 `list_models` 返回，默认空）；`calls()` 返回 `MockProviderCallRecord{request_id, model, hosted_tools, has_image, event_count, cancelled, completed}` 快照（SEARCH-1 / VISION-1 起记录请求的 hosted 工具类别与图片内容位，供注入 / 闸门断言）。
+- **`MockProvider`**：`new(script)` 同一脚本可重复 replay；`sequence(vec![脚本])` 逐请求原子消耗，耗尽后返回 `ProviderErrorKind::StreamInterrupted`（message 含 "mock script sequence exhausted"）；`with_id(ProviderId)`（默认 `"mock"`）、`with_models(Vec<ModelDefinition>)`（供 `list_models` 返回，默认空）；`calls()` 返回 `MockProviderCallRecord{request_id, model, tool_names, hosted_tools, has_image, event_count, cancelled, completed}` 快照（SEARCH-1 / VISION-1 起记录请求的 hosted 工具类别与图片内容位；CU-11 起记录请求暴露的客户端工具名，供注入 / 闸门 / 工具暴露断言）。
 - **`MockTool`**：`new(name, ToolResult)` 生成默认 descriptor——`ToolCapability::ReadOnly`、`ToolKind::ClientFunction`、`ToolHosting::Local`、`requires_approval: false`、`read_only: true`、`supports_concurrency: true`、`default_timeout_ms: Some(1000)`、`max_output_bytes: 64 KiB`、`allowed_in_untrusted_workspace: true`、`input_schema: {"type":"object"}`；`failing(name, ToolError)` 固定失败；`with_descriptor` 整体替换；`calls()` 返回 `MockToolCallRecord{tool_call_id, input, workspace_id, run_id, cancelled}`；`assert_called_with(&[input])` 断言输入序列。
 - **Sink**：`RecordingProviderSink::events()` / `RecordingToolSink::events()` 返回捕获的事件向量（内部 `Arc<Mutex<Vec<_>>>`，克隆共享同一存储）。
 

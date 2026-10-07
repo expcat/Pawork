@@ -196,15 +196,45 @@ impl RunService {
         let config = core.config.subagents.clone().unwrap_or_default();
         let model_rule =
             crate::subagents::rule(&config, core.provider_id.as_str(), core.model.as_str());
-        let mut descriptors: Vec<_> = core
-            .descriptors
-            .iter()
-            .filter(|d| crate::subagents::allows_tool(&model_rule, d))
-            .cloned()
-            .collect();
-        if subagents.enabled() {
-            descriptors.extend(crate::subagents::definitions());
-        }
+        // VISION-1 / SEARCH-1 / CU-11 前置闸门共用同一份证据：图片输入与
+        // hosted 工具按当前模型证据 fail-closed（发 HTTP 前拒绝，不静默
+        // 丢弃、不伪造支持）。无任何证据（未知模型）时按空证据处理：
+        // 纯文本请求照常放行，带图片 / hosted 工具的请求 fail-closed。
+        let evidence = core
+            .registry
+            .capability_evidence(core.model.as_str())
+            .filter(|evidence| evidence.provider.as_ref() == Some(&core.provider_id))
+            .unwrap_or_else(|| pawork_models::registry::CapabilityEvidence {
+                model: core.model.clone(),
+                provider: None,
+                static_declared: None,
+                probe_declared: None,
+                override_declared: None,
+            });
+        // CU-11：computer 截图/观测是视觉操作，结果必须作为图像回到模型。
+        // 未声明 image_input 的模型不暴露 ComputerUse 工具——同时离开本轮
+        // 派发允许表（loop_ctx 拒绝模型臆造的调用），文本模型在截图或连接
+        // 桌面后端前被拒，后端访问次数为零；能力裁决只依赖目录证据。
+        let build_descriptors = |image_input: bool| {
+            let mut descriptors: Vec<_> = core
+                .descriptors
+                .iter()
+                .filter(|d| crate::subagents::allows_tool(&model_rule, d))
+                .filter(|d| {
+                    image_input
+                        || !d
+                            .capabilities
+                            .contains(&pawork_domain::ToolCapabilityTag::ComputerUse)
+                })
+                .cloned()
+                .collect();
+            if subagents.enabled() {
+                descriptors.extend(crate::subagents::definitions());
+            }
+            descriptors
+        };
+        let image_input = evidence.merged().image_input;
+        let mut descriptors = build_descriptors(image_input);
         let tool_defs = descriptors
             .iter()
             .map(|d| pawork_domain::ToolDefinition {
@@ -252,21 +282,6 @@ impl RunService {
                 config: None,
             });
         }
-        // VISION-1 / SEARCH-1 前置闸门：图片输入与 hosted 工具按当前模型证据
-        // fail-closed（发 HTTP 前拒绝，不静默丢弃、不伪造支持）。
-        // 无任何证据（未知模型）时按空证据处理：纯文本请求照常放行，
-        // 带图片 / hosted 工具的请求 fail-closed。
-        let evidence = core
-            .registry
-            .capability_evidence(core.model.as_str())
-            .filter(|evidence| evidence.provider.as_ref() == Some(&core.provider_id))
-            .unwrap_or_else(|| pawork_models::registry::CapabilityEvidence {
-                model: core.model.clone(),
-                provider: None,
-                static_declared: None,
-                probe_declared: None,
-                override_declared: None,
-            });
         if let Err(error) = pawork_models::negotiate::capability_gate(&evidence, &request) {
             if evidence.provider.is_some() {
                 return Err(AppError::Provider(error));
@@ -297,6 +312,21 @@ impl RunService {
             }
             pawork_models::negotiate::capability_gate(&discovered, &request)
                 .map_err(AppError::Provider)?;
+            // CU-11 复审：目录发现把 image_input 从「无证据」升级为已声明
+            // 时，本轮工具定义与派发允许表须按最终证据重建——启动时缺当前
+            // Provider 证据的视觉模型不能因发现前的过滤丢掉 computer。
+            // 发现只在空证据（image_input=false）后发生，不存在降级路径。
+            if !image_input && discovered.merged().image_input {
+                descriptors = build_descriptors(true);
+                request.tools = descriptors
+                    .iter()
+                    .map(|d| pawork_domain::ToolDefinition {
+                        name: d.name.clone(),
+                        description: d.description.clone(),
+                        input_schema: d.input_schema.clone(),
+                    })
+                    .collect();
+            }
         }
         let start_sequence = core.next_sequence(session_id).await?;
         let turn = SessionTurn::new(
@@ -803,7 +833,16 @@ mod tests {
             .await
             .err()
             .expect("image without declaration must fail closed");
-        assert!(matches!(error, crate::AppError::Provider(_)));
+        // CU-11：错误指向实际缺失（模型 + 能力名），不误报后端断开。
+        let crate::AppError::Provider(provider_error) = &error else {
+            panic!("image rejection must stay a provider capability error: {error:?}");
+        };
+        assert!(
+            provider_error.message.contains("glm-5.2")
+                && provider_error.message.contains("image input"),
+            "error must name the model and missing capability: {}",
+            provider_error.message
+        );
 
         // 同名模型在其它供应商声明图像能力，不得成为当前通道的授权。
         core.model = pawork_domain::ModelId::from("glm-5.3-flash");
@@ -841,6 +880,144 @@ mod tests {
         assert!(sink.types().is_empty());
     }
 
+    fn vision_gate_registry(model: &str, image_input: bool) -> pawork_models::ModelRegistry {
+        use pawork_domain::{ModelCapabilities, ModelId, ProviderId};
+        use pawork_models::{CatalogEntry, ModelRegistry};
+
+        let mut registry = ModelRegistry::empty();
+        registry
+            .register(CatalogEntry {
+                id: ModelId::from(model),
+                provider: ProviderId::from("mock"),
+                display_name: model.into(),
+                context_window_tokens: 0,
+                max_output_tokens: 0,
+                capabilities: ModelCapabilities {
+                    text: true,
+                    image_input,
+                    ..ModelCapabilities::default()
+                },
+                pricing: None,
+                aliases: Vec::new(),
+            })
+            .expect("register mock model");
+        registry
+    }
+
+    async fn vision_gate_core(
+        model: &str,
+        image_input: bool,
+        provider: pawork_testkit::MockProvider,
+    ) -> (
+        AppCore,
+        tempfile::TempDir,
+        std::sync::Arc<pawork_testkit::MockTool>,
+    ) {
+        use pawork_domain::{AgentTool, ProviderId, ToolResult};
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (store, _) = SessionStore::open(dir.path().join("session.db"))
+            .await
+            .expect("store");
+        let mut core = AppCore::from_parts_with_protocol(
+            std::sync::Arc::new(provider),
+            None,
+            pawork_domain::ModelId::from(model),
+            ProviderId::from("mock"),
+            crate::protocol::AdapterProtocol::ChatCompletions,
+            Some(store),
+            vision_gate_registry(model, image_input),
+        );
+        core.attach_workspace(dir.path()).expect("attach");
+        // 用可计数的 MockTool 顶替调度器里的 computer：门控失效时它会留下
+        // 调用记录（等价于触达桌面后端）。
+        let computer = std::sync::Arc::new(
+            pawork_testkit::MockTool::new("computer", ToolResult::success(Vec::new()))
+                .with_descriptor(pawork_tools::ComputerTool::default().descriptor()),
+        );
+        core.scheduler = std::sync::Arc::new(
+            core.scheduler
+                .with_tools([computer.clone() as std::sync::Arc<dyn AgentTool>])
+                .expect("register mock computer"),
+        );
+        (core, dir, computer)
+    }
+
+    /// CU-11：文本模型不暴露 computer 工具；模型臆造的调用在触达调度器与
+    /// 桌面后端前被拒（MockTool 零调用），模型看到明确拒绝而非静默缺口。
+    #[tokio::test]
+    async fn vision_gate_withholds_computer_and_never_dispatches_for_text_models() {
+        use pawork_testkit::{MockProvider, MockScript};
+
+        let provider = MockProvider::sequence(vec![
+            MockScript::new()
+                .tool_call("computer", serde_json::json!({"action": "screenshot"}))
+                .complete_with(pawork_domain::StopReason::ToolUse),
+            MockScript::new().text("tool unavailable").complete(),
+        ])
+        .with_id(pawork_domain::ProviderId::from("mock"));
+        let (core, _dir, computer) = vision_gate_core("mock-text", false, provider.clone()).await;
+        let session = core.create_session("vision gate").await.expect("create");
+        let sink = RecordingEvents::default();
+        core.chat_turn(
+            &session,
+            vec![user_hello()],
+            &sink,
+            CancellationToken::new(),
+        )
+        .await
+        .expect("turn");
+
+        let calls = provider.calls();
+        assert!(!calls.is_empty());
+        assert!(
+            calls
+                .iter()
+                .all(|call| !call.tool_names.iter().any(|name| name == "computer")),
+            "text model must not see the computer tool: {:?}",
+            calls[0].tool_names
+        );
+        assert_eq!(
+            computer.calls().len(),
+            0,
+            "hallucinated computer call must be denied before dispatch"
+        );
+        let envelopes = sink.0.lock().expect("events").clone();
+        let events = serde_json::to_string(&envelopes).unwrap();
+        assert!(
+            events.contains("this model cannot use this tool"),
+            "the model must see an explicit denial: {events}"
+        );
+    }
+
+    /// CU-11：声明 image_input 的模型照常获得 computer 工具，既有视觉链路
+    /// 不被门控收窄。
+    #[tokio::test]
+    async fn vision_gate_keeps_computer_tool_for_vision_models() {
+        use pawork_testkit::{MockProvider, MockScript};
+
+        let provider = MockProvider::new(MockScript::new().text("ok").complete())
+            .with_id(pawork_domain::ProviderId::from("mock"));
+        let (core, _dir, _computer) = vision_gate_core("mock-vision", true, provider.clone()).await;
+        let session = core.create_session("vision gate").await.expect("create");
+        core.chat_turn(
+            &session,
+            vec![user_hello()],
+            &RecordingEvents::default(),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("turn");
+
+        let calls = provider.calls();
+        assert_eq!(calls.len(), 1);
+        assert!(
+            calls[0].tool_names.iter().any(|name| name == "computer"),
+            "vision model must keep the computer tool: {:?}",
+            calls[0].tool_names
+        );
+    }
+
     #[tokio::test]
     async fn startup_model_discovers_current_provider_image_capability() {
         use pawork_domain::{ImageContent, ImageSource, ModelCapabilities, ModelDefinition};
@@ -860,6 +1037,7 @@ mod tests {
                 },
             }]);
         core.provider = Arc::new(provider.clone());
+        core.attach_workspace(_dir.path()).expect("attach");
         let mut message = user_hello();
         message.content.push(ContentPart::Image(ImageContent {
             source: ImageSource::Url("https://example.test/drawing.png".into()),
@@ -878,6 +1056,11 @@ mod tests {
         let calls = provider.calls();
         assert_eq!(calls.len(), 1);
         assert!(calls[0].has_image);
+        assert!(
+            calls[0].tool_names.iter().any(|name| name == "computer"),
+            "discovered vision model must regain the computer tool this turn: {:?}",
+            calls[0].tool_names
+        );
         let messages = core.resume_messages(&session).await.unwrap();
         assert!(messages.last().unwrap().content.iter().any(
             |part| matches!(part, ContentPart::Text(text) if text.text == "two crossing lines")

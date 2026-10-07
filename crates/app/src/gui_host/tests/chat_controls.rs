@@ -85,7 +85,10 @@ async fn video_reference_survives_run_resume_and_rejects_old_clients() {
 
 #[tokio::test]
 async fn computer_approval_image_persistence_and_resume_do_not_repeat_input() {
-    use pawork_domain::{AgentTool, ContentPart, ImageContent, ImageSource, ToolResult};
+    use pawork_domain::{
+        AgentTool, ContentPart, ImageContent, ImageSource, ModelCapabilities, ModelDefinition,
+        ToolResult,
+    };
     let dir = tempfile::tempdir().unwrap();
     let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("computer.db"))
         .await
@@ -102,6 +105,21 @@ async fn computer_approval_image_persistence_and_resume_do_not_repeat_input() {
         "model-1".into(),
         "mock".into(),
         Some(store.clone()),
+    );
+    // CU-11：computer 截图/观测是视觉操作，模型须声明 image_input 才暴露。
+    Arc::make_mut(&mut core.registry).merge_provider_models(
+        &"mock".into(),
+        &[ModelDefinition {
+            id: "model-1".into(),
+            display_name: "vision model".into(),
+            context_window_tokens: 0,
+            max_output_tokens: 0,
+            capabilities: ModelCapabilities {
+                text: true,
+                image_input: true,
+                ..ModelCapabilities::default()
+            },
+        }],
     );
     core.configure_approval(
         pawork_policy::ApprovalMode::AskForDangerous,

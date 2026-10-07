@@ -33,7 +33,7 @@
 
 真实 model id 优先于 alias，替换条目清理旧别名；不同 Provider 同名目录不会自动跨通道借用证据。Host 从本包建目录，providers 将远端目录转换为 domain 定义后合并；Agent Engine 始终只看 domain 契约。
 
-能力来源 `Static / Probe / Override` 用于溯源，合并是已出现来源逐字段交集，override 只能收窄。请求协商满足 `requested == supported ∪ unsupported`，不支持能力明确拒绝或记录降级。transport 由能力声明驱动；reasoning 显式配置优先于旧 thinking 配置，无法表达的强度按既有规则 clamp。
+能力来源 `Static / Probe / Override` 用于溯源，合并是已出现来源逐字段交集，override 只能收窄。请求协商满足 `requested == supported ∪ unsupported`，不支持能力明确拒绝或记录降级；`image_input` 拒绝理由携带模型 id 与能力名（CU-11：切模型 / 恢复图像上下文时指明实际缺失，不误报后端断开）。transport 由能力声明驱动；reasoning 显式配置优先于旧 thinking 配置，无法表达的强度按既有规则 clamp。
 
 用途筛选（ADR-064）不引入新能力位：`text` / `image_input` / `image_output` / `video_input` / `web_search`（hosted WebSearch 标签）是 `ModelCapabilities` 既有维度的单项选择。`default_text` 表（2026-09-23 实测依据）把已证实的图像生成模型（wan2.7-image / wan2.7-image-pro）收窄为 `text=false`——远端 /models 目录无模态字段，探测定义的 text=true 仅为缺省假设；收窄只在条目同时升级 `image_output` 时生效，防误伤同名文本模型。无实测证据不新增 `default_video_input`。
 
