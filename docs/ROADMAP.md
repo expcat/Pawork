@@ -33,7 +33,7 @@
 | 自动回归通过，等待人工验收 | [CU-12 · 请求侧截图历史与上下文预算](plan/cu-12-screenshot-context.md) | P3 | 限制发给模型的旧截图，保留完整持久化证据和历史重放。 |
 | 已实现；自动回归通过，read/click/句柄/拒绝/重放真实验收通过，截图正路径与焦点探针待人工验收 | [CU-13 · 内置浏览器截图与 DOM 观测](plan/cu-13-browser-observation.md) | P4 | 在现有系统 WebView 上补截图与稳定 DOM 观测，保持用户可同时使用 Pawork。 |
 | 已实现；自动回归通过，归属/负路径/重放真实验收通过；复审修复（Agent 不动展示 / 地址栏标签锚点 / 旧 Desktop 方言探测 / AX「+」裁剪）过自动门禁，真窗复验待 Mac 解锁 | [CU-14 · 内置浏览器标签页与任务生命周期](plan/cu-14-browser-tabs.md) | P4 | 将每任务单页扩展为有归属的多标签，支持选择与清理。 |
-| 待开发 | [CU-15 · 外部 Chrome / Edge 的真实后台控制](plan/cu-15-external-browser.md) | P4 | 通过 Rust 连接或原生消息通道控制授权浏览器标签页，补齐只读上下文以外的能力。 |
+| 实现完成，待真实验收 | [CU-15 · 外部 Chrome / Edge 的真实后台控制](plan/cu-15-external-browser.md) | P4 | MV3 扩展 + native messaging 桥（`pawork_browser_bridge`）+ Host `external_browser` 工具 + Desktop `ext_` 分流；自动门禁全绿，真实浏览器验收待验收机解锁。 |
 | 等待人工验收 | [CU-16 · 应用与网站范围的 Host 审批](plan/cu-16-target-approvals.md) | P1 | 在现有 Policy 和显式审批上补目标范围，生产原生操作在本任务落地后才接入。 |
 | 待开发 | [CU-17 · GUI 观测查询与协议版本接入](plan/cu-17-gui-observation-protocol.md) | P5 | 为 GUI 提供有界目标状态与截图证据查询，保留 Host 作为唯一入口。 |
 | 待开发 | [CU-18 · GUI 目标选择与权限交互](plan/cu-18-gui-target-approvals.md) | P5 | 让用户选择后台操作目标并管理应用/网站授权。 |

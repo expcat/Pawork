@@ -2,6 +2,7 @@
 #![allow(unexpected_cfgs)] // objc 0.2's macros expand their legacy cargo-clippy cfg at crate scope.
 
 mod dom;
+pub mod ext;
 mod external;
 mod observe;
 pub use external::{capture_external_page, ExternalBrowser, ExternalPageError};

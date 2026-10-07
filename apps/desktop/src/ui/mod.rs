@@ -1875,7 +1875,16 @@ impl AppView {
                 request_id,
                 action,
             } => {
-                if self.browser_request.is_some()
+                // CU-15：外部浏览器动作（用户真实 Chrome/Edge）路由到扩展
+                // 桥客户端：不经内嵌 WebView，不依赖本任务面板可见性，也
+                // 不占用 browser_request 槽（两条通道互不阻塞）。
+                if action["action"]
+                    .as_str()
+                    .is_some_and(|name| name.starts_with("ext_"))
+                {
+                    self.controller
+                        .external_browser_request(request_id, action);
+                } else if self.browser_request.is_some()
                     || self.projection.active_session_id.as_deref() != Some(&session_id)
                     || self.projection.active_run_id.as_deref() != Some(&run_id)
                     || self.projection.active_run_id.is_none()

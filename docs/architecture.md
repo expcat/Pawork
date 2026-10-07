@@ -102,6 +102,8 @@ Workspace 为 **29 成员（27 库 + 2 应用）**：27 个库平铺 `crates/<�
 
 **右侧浏览器（2026-09-16，用户授权）**：`desktop → browser → 系统 WebKit` 承载网页视图及受限 DOM 操作；网页脚本运行于系统内容进程，不把 JS Runtime 嵌入 Agent / Core 或构建链。每任务一个内存页面，非持久网站数据互相隔离；不导入系统浏览器资料，不提供网页到 Rust 的工具桥。地址栏、链接与重定向限定 HTTP(S)，支持本地预览。聊天经 Host 的 `browser` 工具、Policy 与显式审批，通过 GUI 1.18 `browser_next` / `browser_respond` 操作当前任务页面，结果作为工具事件持久化；历史重放不派发操作。关闭释放，隐藏和切任务保留；尚无截图、多标签、下载与跨启动恢复。数据库 schema 不变。
 
+**外部浏览器控制（2026-10-07，CU-15 任务授权）**：用户真实 Chrome / Edge 的后台控制经「Host `external_browser` 工具 → GUI 1.18 BrowserBroker（不透明 JSON，wire 零改动）→ Desktop 按 `ext_` 前缀分流 → `pawork-browser` ext client → unix socket → native messaging 桥进程（浏览器按 manifest 拉起，纯 Rust）→ 固定功能 MV3 扩展 → 真实标签页」。扩展 JS 属浏览器自身运行时，不违反纯 Rust 构建链红线；不用前台激活或全局键鼠。站点授权与 CU-16 同构（attach 钉 origin + 每动作扩展侧复核）；句柄绑定桥进程代际；Host 工具为动作盖章 task（run_id），站点绑定（(task, tab) 键）与标签归属均按任务隔离，Agent 只能关本任务建的标签。扩展由用户确认安装（Chrome ≥137 品牌版忽略 `--load-extension`，安装即用户动作）；桥发现文件带同用户 token，多浏览器同时启用即拒绝。旧 Desktop 对未知 `ext_*` 动作 fail-closed。
+
 ### 3.1 终局包布局先行
 
 - 现行布局为 §2 的 29 成员；browser 从首版即按用户要求独立。新能力按职责归属进入现有包；新增独立边界依 §2.1 的判断并取得任务授权；**禁止**「先写在 bin 里、以后再抽包」。

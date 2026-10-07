@@ -12,6 +12,14 @@
 | --- | --- |
 | `src/lib.rs` | `BrowserState`、地址规范化、公开 facade、非 macOS 不支持分支与定向测试 |
 | `src/external.rs` | 显式读取 Chrome/Edge 当前页的有界只读快照 |
+| `src/ext/mod.rs` | 外部控制通道入口：`BrowserKind`、`default_data_dir()`（`PAWORK_DATA_DIR` 覆盖） |
+| `src/ext/origin.rs` | origin 归一化（镜像 CU-16：小写 scheme/host、去默认端口、拒 userinfo/path/query/IPv6）与测试 |
+| `src/ext/protocol.rs` | 帧编解码（u32 LE 长度前缀 + JSON，1 MiB 上限）、桥代际、`xt-` 句柄 wrap/unwrap、token 生成与测试 |
+| `src/ext/discovery.rs` | 发现目录 `<data>/external-browser/` 的 `<browser>-<pid>.json` 原子读写（0600/0700）与扫描 |
+| `src/ext/host.rs` | 桥进程服务器：stdio（扩展侧）+ unix socket（Desktop 侧）、token 鉴权、enabled 门、站点绑定、串行中继与 15s 保活 ping |
+| `src/ext/client.rs` | Desktop 侧无状态客户端：逐动作扫描发现文件、hello 验 token、单启用规则、中继一个动作 |
+| `src/bin/pawork_browser_bridge.rs` | 桥二进制入口：argv origin 校验（钉死扩展 ID）+ 父进程浏览器识别（macOS proc_pidpath） |
+| `extension/` | 固定功能 MV3 扩展（manifest 钉死 key → ID `hgalnnlhankacinahkjmflinpobpanjh`）：sw.js 固定动作集、popup 启用开关、README 安装步骤 |
 | `src/dom.rs` | 固定 DOM 脚本（含观测脚本与句柄动作脚本）、参数转义、唯一可见元素检查、JSON 输出预算与定向测试 |
 | `src/observe.rs` | 元素句柄表（代际 / TTL / 一次性）与观测 JSON 收尾（代际、视口、句柄注入与预算） |
 | `src/macos.rs` | WebKit / AppKit 生命周期、导航 delegate、页面代际、页面状态、截图编码、焦点和视图几何 |
@@ -26,6 +34,8 @@
 
 2026-09-24：`src/external.rs` 新增 `ExternalBrowser::{Chrome,Edge}` 、`ExternalPageError` 与 `capture_external_page`。用户显式选择后，在后台串行调用 macOS NSAppleScript 读取所选浏览器当前页；不读取 profile、Cookie 或密码字段、不导航。仅 HTTP(S) 无内嵌凭据页面，正文最多 8192 字符，最终 JSON ≤64 KiB，附来源及不可信快照说明。依赖既有 cocoa/objc/serde_json/url；其它平台明确返回不支持。需要系统 Automation 权限及浏览器允许 Apple Events JavaScript，Desktop bundle 声明权限用途。
 
+2026-10-07（CU-15）：新增外部 Chrome / Edge 真实后台控制通道（`src/ext/` + `pawork_browser_bridge` 二进制 + `extension/`）。CDP 已实证不可行（Chrome ≥136 默认 profile 拒绝 remote debugging），改走自有 MV3 扩展 + native messaging：浏览器按 NativeMessagingHosts manifest 拉起桥进程（argv 必须是钉死扩展 origin；扩展 manifest 声明 `nativeMessaging` 权限与 `<all_urls>` host 权限——`captureVisibleTab` 的检查口径只认 `<all_urls>` 或当次用户手势授予的 activeTab，后台截图无手势、activeTab 语义不成立，http/https host 权限不够；`<all_urls>` 虽比 http/https 宽，但桥与扩展的 origin 闸仍只接受 http(s)，不扩大可操作页面范围。静态回归钉住），桥在发现目录发布 unix socket 路径与 32 字节随机 token（0600 原子写），Desktop 客户端逐动作扫描 + hello 验 token + 单启用规则（多浏览器同时启用即拒绝）。固定动作集 `tabs / tab_state / new_tab / navigate / read / click / type / screenshot / close_tab / close_owned`，`executeScript` 页面函数自包含（序列化隔离，引用不到 worker 顶层符号）；read / click / type 的页面函数在触碰 DOM 前先核对 `expectOrigin` 与 `location.origin`，不符即返回 site_changed 哨兵；navigate 的 `bound_origin` 由桥随调用下发（跨 origin 拒绝、重定向逃逸报 site_changed 并解绑），未绑定标签首次 navigate 仅在最终 URL 等于目标时绑定，重定向逃逸或取不到 origin 即报错且不绑定。click 对 password 输入 fail-closed 拒绝（read / type 原有密码防护不变）。screenshot 用 `captureVisibleTab`（要求标签为其窗口 active 且非最小化，如实报错），激活 / 导航监听在首次异步读取状态之前安装：记录目标窗口的全部激活变化（含切回目标标签），监听保护下复核目标后捕获，回传前再重取标签复核 active / url / origin，任何变化丢弃截图并要求重试。句柄 `xt-<pid>-<ns>-<seq>-<tabId>` 绑定桥进程代际，桥重启即全部失效。站点授权与 CU-16 同构：attach 时钉 origin（归一化见 `ext/origin.rs`，接受 IPv4 字面量如 `http://127.0.0.1:8933`，IPv6 仍拒绝），每次动作扩展侧原子复核，site_changed 即解绑。归属与绑定均按任务记账：Host 工具为动作盖章 `task = run_id`，桥强制校验（非空、≤128）并透传给扩展，`owned_tasks`（task → tabId 集合）记 `chrome.storage.session`，Agent 只能关本任务建的标签；站点绑定以 (task, tab) 为键，attached / read / click / type / screenshot / navigate 只认本任务 attach 或首航建立的绑定，site_changed 与标签关闭按标签作废所有任务的绑定。enabled 闸取 `ext_call` 锁后再检查，SW 收到 host 消息执行 handler 前再查 `isEnabled()`。MV3 SW 会被回收：桥每 15s 发 ping + SW 30s alarm 重连保活。扩展由用户在浏览器里确认安装（chrome://extensions 加载已解压 + popup 开关）；Chrome ≥137 品牌版忽略 `--load-extension`，不能靠命令行注入。
+
 创建时空白，不联网。输入域名补 `https://`，localhost / loopback（含端口）补 `http://`；显式 HTTP(S) 保留。浏览历史、URL、标题与加载状态来自 WebKit；错误回调保存真实失败，取消导航不冒充故障。新窗口链接在当前页打开；启用 WebKit `tabFocusesLinks`，Tab 可遍历网页链接和表单控件。隐藏不清空页面或历史，关闭停止加载并释放原生视图、delegate 与网站数据。
 
 2026-10-07（CU-13）：观测语义与 CU-02 目标契约同构。页面代际 `generation` 在每次 provisional 导航与网页内容进程终止时 +1；`dom_revision` 是 read 脚本安装的 `MutationObserver` 计数（key 含随机后缀，导航后 window 清空即天然失效）。元素句柄 `e-<pid>-<启动纳秒>-<进程级序号>` 只存内存，绑定签发时的 selector、页面 URL、revision 与 generation，60 秒过期、最多使用一次、进程内上限 512（FIFO 逐出）；兄弟句柄不因单个元素失效而连坐，DOM revision 变化是失效信号。read 输出仍封顶 64 KiB：注入句柄后先压 `text`，再弹最长元素列表。截图最长边 ≤1280px、≤512KiB（质量阶梯 75/50/30，白底填充透明区域）。视图创建默认 1024×768 视口，保证隐藏观测也有真实布局。
@@ -38,9 +48,13 @@
 
 `url`、`serde_json` 与 `raw-window-handle`；macOS 使用既有版本的 `cocoa`、`objc`、`block` 和系统 WebKit framework。唯一消费者是 [Desktop](desktop.md)；Desktop bundle 的 `NSAllowsArbitraryLoadsInWebContent` 允许系统网页 HTTP（含本地预览），不改变 Host 网络策略。不影响 `pawork` CLI 的编译依赖闭包。
 
+CU-15 扩展通道追加：`pawork-browser` 自身新增 `[[bin]] pawork_browser_bridge` 与 macOS `libc`（proc_pidpath 父进程识别）；扩展 JS 运行在浏览器自身运行时，不违反纯 Rust 构建链红线。桥进程由浏览器按 manifest 拉起，不属于 Desktop 或 Host 的编译闭包。
+
 ## 7. 测试与验证资产
 
 URL 主路径及拒绝边界、Unicode 输出预算与 DOM 回执的定向单元测试；观测覆盖句柄生命周期（一次性 / 代际 / TTL / 容量逐出）与预算收缩、观测脚本断言（MutationObserver、rect、新鲜度闸与转义）、脚本元数据优先与 state 回退（CU-13 复审：同次脚本 url/title 为准）、观测状态安装失败显式拒绝（不降级签发句柄）、状态发布仅在 Observer 安装成功后（红证：不残留 revision 让后续 read 跳过安装检查）。Desktop 测试覆盖入口、布局、任务归属与生命周期，真实导航以本地 HTTP fixture、请求日志和真实窗口联合核对。未闭合验收见 [ROADMAP](../../ROADMAP.md)。
+
+CU-15 资产：`ext::{origin,protocol,discovery}` 单测（归一化边界含 IPv4 字面量、句柄代际、帧上限与截断前缀报错、发现文件 round trip 与坏文件跳过）与 manifest 权限静态回归（`nativeMessaging` + `<all_urls>`）；`tests/ext_bridge.rs` 集成测试驱动真二进制子进程 + fake 扩展 stdio（Chrome 是唯一 mock 边界），覆盖 token 鉴权、enabled 门、句柄签发与旧句柄拒绝、attach origin 钉定与 mismatch 拒绝、跨源 navigate 拒绝、同源导航保持绑定、未绑定首导航重定向逃逸拒绝、任务作用域归属与绑定隔离（跨任务 close 拒绝、跨任务 read / navigate 借绑定拒绝、缺 task 拒绝）、close_tab 归属闸、close 只报本桥句柄与未知动作拒绝。
 
 ## 8. 注意事项与已知限制
 

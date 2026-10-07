@@ -7,6 +7,10 @@ publish.workspace = true
 authors.workspace = true
 description = "System WebView and manual browser navigation"
 
+[[bin]]
+name = "pawork_browser_bridge"
+path = "src/bin/pawork_browser_bridge.rs"
+
 [dependencies]
 url.workspace = true
 raw-window-handle = "0.6"
@@ -17,3 +21,8 @@ cocoa = "=0.26.0"
 objc = "0.2"
 block = "0.1"
 base64 = "0.22"
+# CU-15：native messaging 桥进程识别父浏览器进程（proc_pidpath）。
+libc.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

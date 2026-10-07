@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<style>
+body { font: 13px -apple-system, system-ui, sans-serif; width: 280px; margin: 12px; color: #1a1a1a; }
+h1 { font-size: 14px; margin: 0 0 8px; }
+#status { color: #555; margin: 8px 0 12px; line-height: 1.5; }
+label.row { display: flex; gap: 8px; align-items: flex-start; }
+#reconnect { margin-top: 12px; }
+</style>
+</head>
+<body>
+<h1>Pawork Browser Bridge</h1>
+<div id="status">…</div>
+<label class="row"><input type="checkbox" id="enable"><span>允许 Pawork 在后台控制此浏览器<br>Allow Pawork to control this browser in the background</span></label>
+<button id="reconnect">重新连接 / Reconnect</button>
+<script src="popup.js"></script>
+</body>
+</html>

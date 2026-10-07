@@ -39,6 +39,7 @@ mod auto_title;
 mod browser_tool;
 mod bus;
 mod events;
+mod external_browser_tool;
 mod handlers;
 mod terminal_tool;
 #[cfg(test)]

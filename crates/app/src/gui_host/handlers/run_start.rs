@@ -477,6 +477,13 @@ async fn start(
                 image_input: browser_image_input,
                 dialect: Mutex::new(None),
             }),
+            // CU-15：外部 Chrome/Edge 经同一 BrowserBroker 中继（wire 零
+            // 改动）；Desktop 对 ext_ 前缀动作路由到扩展桥客户端。
+            Arc::new(super::super::external_browser_tool::ExternalBrowserTool {
+                broker: adapter.browser.clone(),
+                runs: adapter.runs.clone(),
+                image_input: browser_image_input,
+            }),
         ];
         core.scheduler = Arc::new(
             core.scheduler

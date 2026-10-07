@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "Pawork Browser Bridge",
+  "version": "1.0.0",
+  "description": "Lets Pawork control this browser's tabs in the background after you explicitly enable it. Fixed action set; no arbitrary scripts.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAo4i0GVpqCRUV5hhnp3PssEcMK0XDFEUTV7oS4JRtvNE0y6kITljtwuMPteFexsTWZIQu84UAgYfuLgf61mqkotQRYs2IjDDa+z4zEWVWNAodF1N3ROeKUKyIiU7oF6MiaRSUB1NqUo9kFYHTBjaYZ0iZ4Qc74XMAxC/jUoBUJO6pXJ5IbD1PCBYgmrmg1sDMLt7LhVQzM/rNKs+gw85+tU5uHWZmI42LGkLmrIrdDCsLULhzzzDcVnQSA8rIQkwadOwlfOX4QHrhMaciewL6mrva8sFbo9Ku46EjagHNoi29NYwq8oke5I44vrBMJ3iLESRRPnR2C7DRxZ2Xiu2NfwIDAQAB",
+  "minimum_chrome_version": "116",
+  "permissions": ["tabs", "scripting", "storage", "alarms", "nativeMessaging"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "sw.js" },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Pawork Browser Bridge"
+  }
+}

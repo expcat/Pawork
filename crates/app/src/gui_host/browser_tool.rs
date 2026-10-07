@@ -90,7 +90,7 @@ impl BrowserBroker {
         let _ = item.reply.send(result);
         Ok(())
     }
-    async fn execute(
+    pub(super) async fn execute(
         &self,
         run: RunId,
         action: Value,
@@ -151,6 +151,56 @@ fn error(kind: ToolErrorKind, message: &str) -> ToolError {
         retry_after_ms: None,
     }
 }
+
+/// CU-15 共享闸：URL 形态检查（HTTP(S)、有 host、无内嵌凭据）。
+/// browser（内嵌 WebView）与 external_browser（外部浏览器）共用，
+/// 使两个工具的导航闸语义一致。
+pub(super) fn validate_web_url_field(input: &Value) -> Result<(), ToolError> {
+    let invalid = || {
+        error(
+            ToolErrorKind::InvalidInput,
+            "invalid browser action or arguments",
+        )
+    };
+    let url = reqwest::Url::parse(input["url"].as_str().ok_or_else(invalid)?)
+        .map_err(|_| invalid())?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
+/// CU-15 共享转换：截图回执拆成 Text 元数据 + JPEG Image part。
+pub(super) fn screenshot_parts(data: Value, alt_text: &str) -> Result<ToolResult, ToolError> {
+    let jpeg = data["jpeg_base64"]
+        .as_str()
+        .ok_or_else(|| {
+            error(
+                ToolErrorKind::ExecutionFailed,
+                "browser screenshot returned no image",
+            )
+        })?
+        .to_string();
+    let mut metadata = data;
+    metadata
+        .as_object_mut()
+        .map(|obj| obj.remove("jpeg_base64"));
+    Ok(ToolResult::success(vec![
+        ContentPart::Text(TextContent {
+            text: metadata.to_string(),
+        }),
+        ContentPart::Image(ImageContent {
+            source: ImageSource::Base64(jpeg.to_string()),
+            media_type: "image/jpeg".into(),
+            alt_text: Some(alt_text.into()),
+        }),
+    ]))
+}
+
 /// CU-14 复审③：旧 Desktop 方言的明确禁用错误（探测确认后整 run 生效）。
 fn old_desktop_error() -> ToolError {
     error(
@@ -249,27 +299,10 @@ impl AgentTool for BrowserTool {
             })]));
         }
         // CU-13：截图拆成 CU-12 同款图像 content part；URL/尺寸等元数据留 Text。
-        let data = result["data"].take();
-        let jpeg = data["jpeg_base64"].as_str().ok_or_else(|| {
-            error(
-                ToolErrorKind::ExecutionFailed,
-                "browser screenshot returned no image",
-            )
-        })?;
-        let mut metadata = data.clone();
-        metadata.as_object_mut().map(|obj| obj.remove("jpeg_base64"));
-        Ok(ToolResult::success(vec![
-            ContentPart::Text(TextContent {
-                text: metadata.to_string(),
-            }),
-            ContentPart::Image(ImageContent {
-                source: ImageSource::Base64(jpeg.to_string()),
-                media_type: "image/jpeg".into(),
-                alt_text: Some(
-                    "Untrusted web page screenshot from the live Desktop browser".into(),
-                ),
-            }),
-        ]))
+        screenshot_parts(
+            result["data"].take(),
+            "Untrusted web page screenshot from the live Desktop browser",
+        )
     }
 }
 fn validate(input: &Value) -> Result<(), ToolError> {
@@ -283,18 +316,8 @@ fn validate(input: &Value) -> Result<(), ToolError> {
         return Err(invalid());
     }
     // CU-14：navigate 与 new_tab 共用同一套 URL 闸（HTTP(S)、无内嵌凭据）。
-    let valid_url = |input: &Value| -> Result<(), ToolError> {
-        let url = reqwest::Url::parse(input["url"].as_str().ok_or_else(invalid)?)
-            .map_err(|_| invalid())?;
-        if !matches!(url.scheme(), "http" | "https")
-            || url.host().is_none()
-            || !url.username().is_empty()
-            || url.password().is_some()
-        {
-            return Err(invalid());
-        }
-        Ok(())
-    };
+    // CU-15：闸体提取为 validate_web_url_field，与 external_browser 共享。
+    let valid_url = validate_web_url_field;
     // tab_id 由 Desktop 签发（tab-<pid>-<n>），这里只做形态校验；
     // 归属核对（只能关本任务 Agent 标签）在持有标签状态的 Desktop 侧执行。
     let valid_tab_id = |input: &Value| -> Result<(), ToolError> {

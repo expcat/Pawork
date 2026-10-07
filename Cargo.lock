@@ -4420,9 +4420,11 @@ dependencies = [
  "base64 0.22.1",
  "block",
  "cocoa 0.26.0",
+ "libc",
  "objc",
  "raw-window-handle",
  "serde_json",
+ "tempfile",
  "url",
 ]
 
