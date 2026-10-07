@@ -1,6 +1,6 @@
 # CU-07 · 后台定向文本与按键输入
 
-> 状态：实现与定向回归完成，真实验收待执行（2026-10-07 控制台锁屏阻塞）。前置：[CU-01](cu-01-background-feasibility.md)、[CU-04](cu-04-window-observation.md)、[CU-05](cu-05-accessibility-tree.md)、[CU-09](cu-09-ownership-cancellation.md)、[CU-16](cu-16-target-approvals.md)。更新：2026-10-07。
+> 状态：实现与定向回归完成；探针动作验收通过（2026-10-08，证据 /tmp/cu20/ 不入库），并发无干扰验收（用户连续输入与用户侧文本核对）未完成、登记待人工；生产 tools / Host 接线属 CU-10。前置：[CU-01](cu-01-background-feasibility.md)、[CU-04](cu-04-window-observation.md)、[CU-05](cu-05-accessibility-tree.md)、[CU-09](cu-09-ownership-cancellation.md)、[CU-16](cu-16-target-approvals.md)。更新：2026-10-08。
 
 [返回 ROADMAP](../ROADMAP.md#computer-use-rust-升级)
 
@@ -39,6 +39,6 @@
 
 复审修复第二轮（2026-10-07，6.1 sol 复审 1 项必须修，已落地）：预建释放错误地把 ModsDown 的累积掩码规格传给 `release_specs`（该函数要求独立修饰键掩码）——Shift+Control 时按下规格 (Shift,S)/(Control,S|C) 会算出错误释放 (Control,0)/(Shift,0)，正确应为 (Control,S)/(Shift,0)，正常完成与中止清理都会投递这份错误副本（Control 抬离瞬间系统误认为 Shift 也已抬起）；修法为预建释放直接取计划内匹配 ModsUp 步骤的规格（计划生成时已由 `release_specs` 基于独立掩码算好递减掩码），不再从按下规格重推导，找不到释放步骤按不平衡计划 fail-closed 零投递。回归扩展：双修饰键（Shift+Control+Left）正常完成场景断言实际投出事件的 flags 序列（`TARGETED_POSTED_FLAGS` 逐事件记录）——按下累积掩码 S / S|C、tap 携带 S|C、Control 抬离时 Shift 仍在（S）、Shift 清零收尾；tap-up 从 HIDSystemState 源继承真实键盘状态（fn / numpad，及运行测试者按住的真实修饰键）属 CU-01 实测形状、真实按键与派发残留无法区分，故不对其断言。第三轮微调（同日，复审测试问题）：删除 tap-up「不含虚构组合掩码」断言——用户按住任一修饰键跑测试时合法继承的 flags 会被误判泄漏导致误败；保留按下、tap-down 与释放对的精确断言不变。重跑 `bash scripts/test.sh computer-use` 85 项全绿。真实验收仍因控制台锁屏待执行，状态口径不变。
 
-真实验收：未执行——2026-10-07 验收窗口期控制台锁屏（CGSSessionScreenIsLocked=1；TextEdit 窗口 AX 元素属性全 AttributeUnsupported、标题退化应用名，与 CU-06 记录的锁屏症状一致），CU-01 已明确锁屏未验、不记为支持，锁屏下取得的证据不算本任务验收。探针权限沿责任进程链继承正常（accessibility:true，screen_recording:true）。验收资产已备：/tmp/cu07/te.txt（内容 CU07-BASE）；待控制台解锁后按序执行：TextEdit insert_text 多 chunk 文本（含代理对）落地与焦点事实 → return 按键 → left+shift 组合（选区证据）→ 最小化拒绝（本机此前实测最小化使 TextEdit AXWindows 失效，可能先按 WindowReplaced 拒，如实记录任一真实终态）→ VS Code insert_text 双拒绝（矩阵预检 + 后端权威闸，零 AX 接触，front 不变）→ Chrome 专用实例（--user-data-dir=/tmp/cu07/chrome-profile）insert_text 拒绝；全程前台 / 焦点 / 鼠标 / 剪贴板采样对比，证据 tee 至 /tmp/cu07/（不入库），验收后退出目标应用还原环境。
+真实验收（2026-10-08 执行，macOS 26.6.2 arm64 本机，控制台已解锁；探针路径，证据 tee 至 /tmp/cu20/、不入库；全程用户侧 front / focus 恒为 Edge pid 916、剪贴板 changeCount 不变）：AppKit（TextEdit pid 24371，窗口 cu20keys.txt 全程后台）——insert_text 多 chunk 文本（8 个 🙂 与 6 个 🌍 跨代理对边界）Dispatched，读回完整落地、UTF-16 分块未劈代理对（te-input-text.json；首次尝试树版本复核 TreeChanged fail-closed，重新观测签发后成功——诚实终态与恢复路径同验）；key_press return Dispatched，插入点断行、选区 [45,0]→[46,0]（te-key-return.json）；key_press shift+left Dispatched，选区 [46,0]→[45,1] 左扩一字符（te-key-shiftleft.json）；窗口最小化后 insert_text 按最小化闸拒绝（后端实读 AXMinimized 命中矩阵最小化拒）、值不变（te-min-input.json）。Chromium（VS Code pid 25494）——元素级验收同 CU-06 受树深度截断阻塞（UnprovenUnique 不签发，结构性）；Chromium 定向键零 AX 接触拒绝由定向回归钉住。Browser（隔离 Chrome pid 27014）——insert_text 按 Browser TargetedKeys Unsupported 能力闸拒绝、零事件派发（chr-input.json）。验收后目标应用全部退出、环境还原。
 
-遗留缺口：真实验收待控制台解锁后执行，通过前 ROADMAP 保持「待开发」、不标 ✅；并发无干扰的 session 级单元（用户侧连续输入）沿用 CU-01 T5b2 路由级证据 + 本轮逐步 front/focus/mouse/clipboard 采样，sessiontype 会向真实前台应用发事件、有干扰用户当前输入的风险，本轮不执行并如实登记；生产 tools / Host 接线属 CU-10，不在本任务范围。
+遗留缺口：并发无干扰的 session 级单元（用户侧连续输入）沿用 CU-01 T5b2 路由级证据 + 本轮逐步 front / focus / mouse / clipboard 采样，sessiontype 会向真实前台应用发事件、有干扰用户当前输入的风险，登记待人工验收；VS Code 元素级验收受树深度截断阻塞（结构性）；锁屏场景沿用 CU-01 口径不记为支持；生产 tools / Host 接线属 CU-10，不在本任务范围。

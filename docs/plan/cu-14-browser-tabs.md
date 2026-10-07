@@ -1,6 +1,6 @@
 # CU-14 · 内置浏览器标签页与任务生命周期
 
-> 状态：自动回归通过，真实验收主体完成；复审修复四项已落地并过自动门禁（真窗复验与标签条滚动复验待 Mac 解锁）。前置：[CU-13](cu-13-browser-observation.md)、[CU-09](cu-09-ownership-cancellation.md)。更新：2026-10-07。
+> 状态：自动回归通过，真实验收主体完成；复审修复四项已落地并过自动门禁；标签条滚动与空白标签地址栏清空真窗复验通过（2026-10-08），Agent 不动展示复验需活动 run、随模型链路环境恢复后人工验收。前置：[CU-13](cu-13-browser-observation.md)、[CU-09](cu-09-ownership-cancellation.md)。更新：2026-10-08。
 
 [返回 ROADMAP](../ROADMAP.md#computer-use-rust-升级)
 
@@ -54,4 +54,4 @@
 
 跨进程事实核对：Desktop 退出重启后会话历史重放完整、HTTP 日志零新增（历史不重执行）；断线 Host 重启后 Desktop 手动重试重连、草稿保留。验收中发现并修复两处缺陷（未提交工作区 diff）：① 地址栏在 Agent close / close_tab 与用户切换标签后停留旧标签 URL——根因是 apply_close_plan / select_agent_tab / user_select 预写 self.state 使 sync_browser_state 的 url_changed 检测失效，修复为三处不预写、由随后 sync 检测变化更新输入框，close 分支补 sync；真窗复验通过（切标签与 close 后地址栏均与展示页一致）。② 3 个 160px 标签即溢出检查器宽度截断「+」与关闭钮，标签条改 `overflow_x_scroll`（沿用 subagent chips 同款模式）；截图证据均不落库。临时配置改动（opencode-go disabled_models 移除 glm-5.3-flash）验收后已恢复（与备份逐字节一致）；Desktop / Host / fixture 服务已停止。
 
-遗留缺口：标签条横向滚动的真窗像素复验未执行——修复后重启验收窗口时 Mac 锁屏（自动解锁不可用），仅由 desktop 测试与既有 subagent chips 同款滚动模式锚定；桌面解锁后开 3+ 标签即可核对。其余 CU-13 登记缺口（截图正路径、焦点探针、密码 / 文件输入拒绝、句柄 TTL）不在本任务范围，继续在 CU-13 跟踪。
+遗留缺口：标签条横向滚动真窗复验已通过（2026-10-08，实例 cu20 真窗，3 个 160px 长标题标签溢出）：垂直滚轮经 GPUI overflow_x_scroll 映射横向滚动（delta.x 为零时 delta.y 落入 x 轴），条带偏移真实变化；AX 裁剪发布同验——tab1 裁出即消失、「+」（browser-new-tab）滚入可视即发布，点击「+」正确创建新用户标签（地址栏清空、面板标题回退、新标签选中——修复②空标签地址栏清空分支同验），关闭选中标签落回原位置下一张（末尾取前一张）。复审①「Agent 不动展示」与②的「Agent 导航在途空地址不清输入」分支需活动 run 复验：本轮 RunStart 被用户配置 disabled_models（opencode-go 含 glm-5.3-flash）按 ADR-055 D4 fail-closed 拒绝（行为正确、环境阻塞），待模型链路恢复后人工验收。其余 CU-13 登记缺口（截图正路径、焦点探针、密码 / 文件输入拒绝、句柄 TTL）不在本任务范围，继续在 CU-13 跟踪。

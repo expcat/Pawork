@@ -24,21 +24,21 @@
 | 等待人工验收 | [CU-03 · 应用发现、窗口选择与受控启动](plan/cu-03-app-window-discovery.md) | P2 | 让 Agent 选择已授权的真实应用与窗口，并按目标身份受控启动应用。 |
 | 等待人工验收 | [CU-04 · 窗口级截图与观测坐标](plan/cu-04-window-observation.md) | P2 | 提供目标窗口截图与可供动作使用的新鲜观测。 |
 | 等待人工验收 | [CU-05 · 有界无障碍树与元素定位](plan/cu-05-accessibility-tree.md) | P2 | 为支持的目标应用提供 AX 状态、元素查找和观测绑定的句柄。 |
-| 待开发 | [CU-06 · 后台 AX 语义动作](plan/cu-06-semantic-actions.md) | P2 | 优先用目标元素的语义动作实现后台点击、选择和赋值。 |
-| 待开发 | [CU-07 · 后台定向文本与按键输入](plan/cu-07-background-text-keys.md) | P2 | 补齐语义赋值不能覆盖但已证实支持后台输入的文本与按键动作。 |
-| 待开发 | [CU-08 · 后台定向点击、滚动与拖动](plan/cu-08-background-pointer.md) | P2 | 实现已通过无干扰验证的窗口定向指针动作。 |
+| 已实现；自动回归与真实验收通过（2026-10-08 探针路径三族）；VS Code 元素级受树深度截断结构性阻塞，生产接线属 CU-10 | [CU-06 · 后台 AX 语义动作](plan/cu-06-semantic-actions.md) | P2 | 优先用目标元素的语义动作实现后台点击、选择和赋值。 |
+| 已实现；自动回归与探针动作验收通过（2026-10-08）；并发无干扰验收（用户连续输入）待人工，生产接线属 CU-10 | [CU-07 · 后台定向文本与按键输入](plan/cu-07-background-text-keys.md) | P2 | 补齐语义赋值不能覆盖但已证实支持后台输入的文本与按键动作。 |
+| 已实现；自动回归与真实验收通过（2026-10-08 探针路径三族）；生产接线属 CU-10 | [CU-08 · 后台定向点击、滚动与拖动](plan/cu-08-background-pointer.md) | P2 | 实现已通过无干扰验证的窗口定向指针动作。 |
 | 等待人工验收 | [CU-09 · 目标占用、用户接管与后台生命周期](plan/cu-09-ownership-cancellation.md) | P3 | 把现有全局串行改成明确目标归属，保证并发冲突、取消和后台生命周期可解释。 |
 | 隔离路径等待人工验收，native 接线待开发 | [CU-10 · 动作与新观测的 Host 闭环](plan/cu-10-action-observe.md) | P3 | 减少单独截图/动作消耗的回合，同时诚实区分输入派发和 UI 接受。 |
 | 自动回归通过，等待人工验收 | [CU-11 · 图像能力的前置工具门控](plan/cu-11-model-vision-gate.md) | P3 | 在工具暴露和执行前拒绝不支持图像的模型，避免截屏后才失败。 |
 | 自动回归通过，等待人工验收 | [CU-12 · 请求侧截图历史与上下文预算](plan/cu-12-screenshot-context.md) | P3 | 限制发给模型的旧截图，保留完整持久化证据和历史重放。 |
 | 已实现；自动回归通过，read/click/句柄/拒绝/重放真实验收通过，截图正路径与焦点探针待人工验收 | [CU-13 · 内置浏览器截图与 DOM 观测](plan/cu-13-browser-observation.md) | P4 | 在现有系统 WebView 上补截图与稳定 DOM 观测，保持用户可同时使用 Pawork。 |
-| 已实现；自动回归通过，归属/负路径/重放真实验收通过；复审修复（Agent 不动展示 / 地址栏标签锚点 / 旧 Desktop 方言探测 / AX「+」裁剪）过自动门禁，真窗复验待 Mac 解锁 | [CU-14 · 内置浏览器标签页与任务生命周期](plan/cu-14-browser-tabs.md) | P4 | 将每任务单页扩展为有归属的多标签，支持选择与清理。 |
-| 实现完成，待真实验收 | [CU-15 · 外部 Chrome / Edge 的真实后台控制](plan/cu-15-external-browser.md) | P4 | MV3 扩展 + native messaging 桥（`pawork_browser_bridge`）+ Host `external_browser` 工具 + Desktop `ext_` 分流；自动门禁全绿，真实浏览器验收待验收机解锁。 |
+| 已实现；自动回归通过，归属/负路径/重放真实验收通过；复审修复四项过自动门禁，标签条滚动与空标签地址栏真窗复验通过（2026-10-08），Agent 不动展示复验待模型链路人工验收 | [CU-14 · 内置浏览器标签页与任务生命周期](plan/cu-14-browser-tabs.md) | P4 | 将每任务单页扩展为有归属的多标签，支持选择与清理。 |
+| 实现完成；自动门禁全绿，真实浏览器验收待人工执行（验收机已解锁 2026-10-08，扩展安装须用户当面确认） | [CU-15 · 外部 Chrome / Edge 的真实后台控制](plan/cu-15-external-browser.md) | P4 | MV3 扩展 + native messaging 桥（`pawork_browser_bridge`）+ Host `external_browser` 工具 + Desktop `ext_` 分流；自动门禁全绿，真实浏览器验收待用户确认安装扩展后执行。 |
 | 等待人工验收 | [CU-16 · 应用与网站范围的 Host 审批](plan/cu-16-target-approvals.md) | P1 | 在现有 Policy 和显式审批上补目标范围，生产原生操作在本任务落地后才接入。 |
 | 已实现 | [CU-17 · GUI 观测查询与协议版本接入](plan/cu-17-gui-observation-protocol.md) | P5 | 为 GUI 提供有界目标状态与截图证据查询，保留 Host 作为唯一入口。 |
 | 已实现；自动门禁通过，真窗验收覆盖入口/空态/刷新/断线重连；empty 态与授权回执端到端待 CU-20 目标登记后人工验收 | [CU-18 · GUI 目标选择与权限交互](plan/cu-18-gui-target-approvals.md) | P5 | 让用户选择后台操作目标并管理应用/网站授权。 |
 | 已实现；自动门禁通过；真窗验收覆盖证据区空态（no_workspace / no_run）与 observation_list 真实往返；观测行 / 停止状态机待活动 run（环境阻塞，见任务记录） | [CU-19 · GUI 截图证据与停止状态](plan/cu-19-gui-evidence-stop.md) | P5 | 让用户查看实际操作前后证据，并可靠停止后台任务。 |
-| 待开发 | [CU-20 · macOS 后台能力端到端验收与文档收口](plan/cu-20-native-acceptance.md) | P6 | 闭合首阶段本机后台核心能力，证明用户可持续工作且操作证据完整。 |
+| 自动回归通过；CU-06/07/08 探针动作验收与 CU-14 滚动复验完成、回放核对零重执行；GUI 模型链路被用户配置 fail-closed 拒绝（行为正确），观测行/停止状态机、CU-15 扩展、并发无干扰与真实接管让出待人工验收 | [CU-20 · macOS 后台能力端到端验收与文档收口](plan/cu-20-native-acceptance.md) | P6 | 闭合首阶段本机后台核心能力，证明用户可持续工作且操作证据完整。 |
 
 ### 后续环境与能力
 

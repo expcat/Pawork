@@ -1,6 +1,6 @@
 # CU-15 · 外部 Chrome / Edge 的真实后台控制
 
-> 状态：实现与自动验证完成，真实浏览器验收待执行（2026-10-07 验收机锁屏，解锁后补做）。前置：[CU-01](cu-01-background-feasibility.md)、[CU-02](cu-02-target-contracts.md)、[CU-16](cu-16-target-approvals.md)。更新：2026-10-07。
+> 状态：实现与自动验证完成，真实浏览器验收待人工执行——验收机已解锁（2026-10-08），扩展安装（chrome://extensions 加载已解压）须用户当面操作确认后按既定流程执行。前置：[CU-01](cu-01-background-feasibility.md)、[CU-02](cu-02-target-contracts.md)、[CU-16](cu-16-target-approvals.md)。更新：2026-10-08。
 
 [返回 ROADMAP](../ROADMAP.md#computer-use-rust-升级)
 
@@ -36,7 +36,7 @@
 
 实际命令与结果（2026-10-07，仓库统一 kache wrapper）：`bash scripts/test.sh browser app` 全绿（app 288+2+1，含新增 external_browser 4 项：validate 矩阵、schema enum、screenshot 视觉门先于派发、`ext_` 方言翻译 + Image part；browser 19+2，含 ext 单测与 `tests/ext_bridge.rs` 真二进制集成）；`bash scripts/test.sh desktop` 全绿（262 passed）。修复过程要点：macOS accept 的 socket 继承 listener O_NONBLOCK，serve_client 读到 WouldBlock 误当断连关连接——接受后显式恢复阻塞模式（配 read timeout）；帧前缀截断返回错误而非干净 EOF。
 
-真实结果：待执行。验收环境已就绪：桥二进制 + Chrome NativeMessagingHosts manifest（`~/Library/Application Support/Google/Chrome/NativeMessagingHosts/dev.pawork.browser_bridge.json`，path 指向 target/debug/pawork_browser_bridge）、独立 profile Chrome（`/tmp/cu15-profile`，`open -na` 启动；`--load-extension` 被 Chrome ≥137 品牌版忽略，已确认扩展未注入——安装必须走 chrome://extensions「加载已解压的扩展程序」，这本身就是任务书要求的用户确认安装路径）、本地 fixture HTTP（127.0.0.1:8933，请求日志 `/tmp/cu15/http.log`）。阻塞：验收机当前锁屏，原生应用控制不可用；解锁后按计划执行 tabs→new_tab→navigate→read→type→click→screenshot→close_tab/close 全流程 + 用户标签保留 + 跨源拒绝 + 断线旧句柄拒绝 + 用户侧输入不中断采样 + Edge 连通 smoke，证据落 `/tmp/cu15/`。
+真实结果：待执行。验收环境已就绪：桥二进制 + Chrome NativeMessagingHosts manifest（`~/Library/Application Support/Google/Chrome/NativeMessagingHosts/dev.pawork.browser_bridge.json`，path 指向 target/debug/pawork_browser_bridge）、独立 profile Chrome（`/tmp/cu15-profile`，`open -na` 启动；`--load-extension` 被 Chrome ≥137 品牌版忽略，已确认扩展未注入——安装必须走 chrome://extensions「加载已解压的扩展程序」，这本身就是任务书要求的用户确认安装路径）、本地 fixture HTTP（127.0.0.1:8933，请求日志 `/tmp/cu15/http.log`）。阻塞（2026-10-08 更新）：验收机已解锁；扩展安装须用户当面操作确认（chrome://extensions「加载已解压的扩展程序」），确认后按计划执行 tabs→new_tab→navigate→read→type→click→screenshot→close_tab/close 全流程 + 用户标签保留 + 跨源拒绝 + 断线旧句柄拒绝 + 用户侧输入不中断采样 + Edge 连通 smoke，证据落 `/tmp/cu15/`。
 
 sol 审查修复（2026-10-07 第二轮，9 项全部落地）：① 扩展 manifest 声明 `nativeMessaging` 权限，静态回归 `extension_manifest_declares_native_messaging` 钉住；② read / click / type 页面函数在 DOM 访问前核对 `expectOrigin`，不符返回 site_changed 哨兵；③ `ext_navigate` 改走 `call_tab_scoped` 并下发 `bound_origin`（原扩展侧检查从不执行），site_changed / tab_gone 统一解绑；④ 未绑定标签首次 navigate 仅在最终 URL 等于目标时绑定，重定向逃逸或取不到 origin 报错且不绑定（红证 `bridge_refuses_redirect_escape_on_first_navigation`）；⑤ screenshot 捕获期间挂 `onActivated` / `onUpdated` 监听并在回传前重取标签复核 active / url / origin，变化即丢弃并要求重试；⑥ 归属改任务作用域：Host 工具盖章 `task = run_id`，桥强制校验（非空、≤128）并透传，扩展 `owned_tasks`（task → tabId 集合）记 `chrome.storage.session`（红证 `bridge_ownership_is_task_scoped`）；⑦ password 输入点击 fail-closed 拒绝；⑧ origin 闸接受 IPv4 字面量（`http://127.0.0.1:8933` 等），IPv6 仍拒；⑨ `extension_gate` 检查移到 `ext_call` 锁后，SW `onHostMessage` 执行 handler 前再查 `isEnabled()`。门禁：`bash scripts/test.sh browser app` 全绿（app 288+2+1、browser 20+4，含上述红证与 manifest / IPv4 静态回归）；桥二进制已重建（`cargo build --offline -p pawork-browser --bin pawork_browser_bridge`，真实验收用）。真实 Chrome 连接复验仍受锁屏阻塞：静态核对 + 本记录登记，解锁后随真实验收一并补做。
 

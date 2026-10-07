@@ -253,6 +253,13 @@ mod imp {
         Scope::new("cu03-probe", "run-1")
     }
 
+    /// CU-17 起 grant 只接受已 open 的 scope；探针每个命令自建注册表，先登记活跃 scope。
+    fn probe_registry(native: MacosNative) -> TargetRegistry<MacosNative> {
+        let mut registry = TargetRegistry::new(native);
+        registry.open_scope(&scope());
+        registry
+    }
+
     fn cmd_perms() -> Value {
         let p = MacosNative::new().permissions();
         json!({
@@ -282,7 +289,7 @@ mod imp {
 
     fn cmd_wins(bundle_id: &str, titles: bool) -> Result<Value, String> {
         let native = MacosNative::new();
-        let mut registry = TargetRegistry::new(native.clone());
+        let mut registry = probe_registry(native.clone());
         let app = native
             .list_applications()
             .into_iter()
@@ -334,7 +341,7 @@ mod imp {
 
     fn cmd_deny(bundle_id: &str) -> Value {
         let native = MacosNative::new();
-        let mut registry = TargetRegistry::new(native.clone());
+        let mut registry = probe_registry(native.clone());
         let app = native
             .list_applications()
             .into_iter()
@@ -446,7 +453,7 @@ mod imp {
 
     fn cmd_launch(bundle_id: &str) -> Result<Value, String> {
         let native = MacosNative::new();
-        let mut registry = TargetRegistry::new(native.clone());
+        let mut registry = probe_registry(native.clone());
         let before = sample_user();
         let already = native
             .list_applications()
@@ -820,7 +827,7 @@ mod imp {
 
     fn cmd_watch(bundle_id: &str, seconds: u64) -> Result<Value, String> {
         let native = MacosNative::new();
-        let mut registry = TargetRegistry::new(native.clone());
+        let mut registry = probe_registry(native.clone());
         let app = native
             .list_applications()
             .into_iter()
@@ -921,7 +928,7 @@ mod imp {
     /// 授权并绑定一扇窗口（缺省第一扇，或按标题子串匹配）。
     fn bind_window(bundle_id: &str, needle: Option<&str>) -> Result<BoundTarget, String> {
         let native = MacosNative::new();
-        let mut registry = TargetRegistry::new(native.clone());
+        let mut registry = probe_registry(native.clone());
         // 同一 bundle id 可同时跑多个进程实例（独立 --user-data-dir 的
         // Chrome 与用户会话并存）：按 needle 落到真正持有匹配窗口的实例，
         // 缺省保持第一个有窗实例。
@@ -1290,7 +1297,15 @@ mod imp {
                     window_height: bound.window.bounds.height,
                 },
             )
-            .map_err(|e| e.to_string())
+            .map_err(|e| {
+                format!(
+                    "{e} (bounds=[{}, {}, {}, {}])",
+                    bound.window.bounds.x,
+                    bound.window.bounds.y,
+                    bound.window.bounds.width,
+                    bound.window.bounds.height
+                )
+            })
     }
 
     /// 登记观测并签发元素句柄（token = 节点在本次读取中的序号；节点自带

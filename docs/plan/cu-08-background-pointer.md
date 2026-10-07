@@ -1,6 +1,6 @@
 # CU-08 · 后台定向点击、滚动与拖动
 
-> 状态：实现与定向回归完成，真实验收待执行（2026-10-07 控制台锁屏阻塞）。前置：[CU-01](cu-01-background-feasibility.md)、[CU-04](cu-04-window-observation.md)、[CU-09](cu-09-ownership-cancellation.md)、[CU-16](cu-16-target-approvals.md)。更新：2026-10-07。
+> 状态：实现、定向回归与真实验收完成（2026-10-08 探针路径三族，证据 /tmp/cu20/ 不入库）；生产 tools / Host 接线属 CU-10。前置：[CU-01](cu-01-background-feasibility.md)、[CU-04](cu-04-window-observation.md)、[CU-09](cu-09-ownership-cancellation.md)、[CU-16](cu-16-target-approvals.md)。更新：2026-10-08。
 
 [返回 ROADMAP](../ROADMAP.md#computer-use-rust-升级)
 
@@ -40,6 +40,6 @@
 
 能力要点（CU-01 实测矩阵为准）：拒绝——点击 / 滚动 / 拖动（Pointer）三族后台一律拒绝（AppKit / Electron / Browser 实测 caret 不动、按钮不触发），目标内 move 未证明无干扰不暴露，最小化态窗口移动未实测按 Unverified 同拒，Chromium 系 AXPosition 写被忽略同样拒绝；可用——AppKit 非最小化窗口移动（AXPosition 写，遮挡态实测生效）。
 
-真实验收：未执行——2026-10-07 验收窗口期控制台锁屏（CGSSessionScreenIsLocked=1；窗口服务器对运行中应用呈现零 layer-0 窗口，Terminal 实测 count 0，与 CU-06 / CU-07 锁屏症状一致），CU-01 已明确锁屏未验、不记为支持，锁屏下取得的证据不算本任务验收。探针权限链正常（accessibility:true，screen_recording:true）。待控制台解锁后按序执行：TextEdit `axmove`（移动 → 帧读回 origin_reached=true + 尺寸不变 → 还原原位，全程前台 / 焦点 / 鼠标 / 剪贴板采样不变）→ TextEdit 最小化后 `axmove`（预期能力闸 Unverified 拒绝，或最小化使 AXWindows 失效先按 WindowReplaced 拒，如实记录任一真实终态）→ VS Code `axmove`（Chromium 族半零 AX 接触拒绝，front 不变）→ TextEdit / VS Code / Chrome 专用实例各跑 `axpointer click|drag|scroll`（预期矩阵预检与后端权威闸双 BackgroundUnsupported、标题不变、零派发）；证据 tee 至 /tmp/cu08/（不入库），验收后退出目标应用还原环境。
+真实验收（2026-10-08 执行，macOS 26.6.2 arm64 本机，控制台已解锁；探针路径，证据 tee 至 /tmp/cu20/、不入库；全程用户侧 front / focus 恒为 Edge pid 916、剪贴板 changeCount 不变）：AppKit（TextEdit pid 24371，窗口 note.txt 全程后台）——axmove (470,132)→(900,300) Dispatched，帧读回 origin_reached=true 且尺寸不变，随后还原原位（te-move.json）；axpointer click / drag / scroll 三个全按能力闸拒绝（Pointer 全族 Unsupported）、零事件派发、窗口标题不变（te-pointer-click / drag / scroll.json）；最小化变体（另起实例 pid 39574，min.txt）axmove 按后端最小化闸拒绝（实读 AXMinimized 命中矩阵 Unverified 同拒）、帧不变（te-min-move.json）。Chromium（VS Code pid 25494）——axmove 族闸零 AX 接触拒绝、帧不变（vsc-move.json）；axpointer click 同拒（vsc-pointer-click.json；采样期间用户鼠标真实移动 mouse_delta=[42.3,18.4]，front / focus / 剪贴板不变——用户持续工作的真实背景）。Browser（隔离 Chrome pid 27014）——axmove 族闸拒绝、帧不变、restore unmoved（chr-move.json）；axpointer click / scroll 同拒（chr-pointer-click / scroll.json）。验收后目标应用全部退出、环境还原。
 
-遗留缺口：真实验收待控制台解锁后执行，通过前 ROADMAP 保持「待开发」、不标 ✅；拖动 / 滚动的无干扰证据与点击同路（CGEventPostToPid 指针事件类），未单独实测——矩阵按整类 Unsupported 拒绝，某族未来被证明需先过 CU-01 口径实测再提升矩阵；生产 tools / Host 接线属 CU-10，不在本任务范围。
+遗留缺口：拖动 / 滚动的无干扰证据与点击同路（CGEventPostToPid 指针事件类），未单独实测——矩阵按整类 Unsupported 拒绝，某族未来被证明需先过 CU-01 口径实测再提升矩阵；锁屏场景沿用 CU-01 口径不记为支持；生产 tools / Host 接线属 CU-10，不在本任务范围。
