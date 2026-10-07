@@ -473,14 +473,23 @@ impl AppView {
 impl AppView {
     /// 派发 Host 浏览器请求。CU-13 起在 handle_controller_event 收到请求时
     /// 立即以 app 级后台任务执行：隐藏窗口 render 停摆，不能等下一帧。
-    /// 全程不打开/切换面板、不抢焦点；中途切任务走重取模式落空后明确报错。
+    /// 全程不打开/切换面板、不抢焦点；派发前先同步浏览器归属（切任务后
+    /// 首帧前到达的请求不得绑定旧任务页面），中途切任务走重取模式落空后
+    /// 明确报错。
     pub(super) fn dispatch_browser_request(&mut self, cx: &mut Context<Self>) {
         let Some((session, run_id, request_id, action)) = self.browser_request.take() else {
             return;
         };
         cx.spawn(async move |this, cx| {
             let operation = this.update(cx, |view, cx| {
+                // CU-13 复审 2：浏览器归属（browser_session ↔ 当前面板的
+                // BrowserPanel）只在 render 或 Inspector 切换时同步；请求
+                // 可能在切任务后、下一帧前到达。先按 projection 同步，
+                // 再核对 browser_session 与请求 session 一致，保证绑定
+                // （以及 close）作用于请求所属任务的页面，不是旧任务。
+                view.sync_browser_session(cx);
                 if view.projection.active_session_id.as_deref() != Some(&session)
+                    || view.browser_session.as_deref() != Some(&session)
                     || view.projection.active_run_id.as_deref() != Some(&run_id)
                 {
                     return Err("Task is no longer visible".to_string());
@@ -518,23 +527,18 @@ impl AppView {
                     _ => return Err("Unsupported action or unavailable history".into()),
                 }
                 cx.notify();
-                Ok(Some(name))
+                // 绑定派发时的 BrowserView：后续等待与脚本全部作用于本
+                // 任务的页面，切任务后不重读 view.browser.native。
+                Ok(Some((name, native)))
             });
             let result: Result<serde_json::Value, String> = match operation {
-                Ok(Ok(Some(name))) => {
+                Ok(Ok(Some((name, native)))) => {
                     if matches!(name.as_str(), "navigate" | "back" | "forward" | "reload") {
-                        wait_browser_idle(&this, cx, Duration::from_secs(15)).await;
+                        wait_browser_idle(&this, cx, &native, Duration::from_secs(15)).await;
                     }
                     let state = this
-                        .update(cx, |view, _cx| {
-                            view.browser
-                                .native
-                                .as_ref()
-                                .map(|native| native.state())
-                                .ok_or_else(|| "Browser page closed".to_string())
-                        })
-                        .map_err(|e| e.to_string())
-                        .and_then(|state| state);
+                        .update(cx, |_view, _cx| native.state())
+                        .map_err(|e| e.to_string());
                     match state {
                         Err(error) => Err(error),
                         Ok(state) => {
@@ -543,16 +547,37 @@ impl AppView {
                             } else if state.loading {
                                 Err("Page is still loading; read again later".into())
                             } else {
-                                let primary = browser_script_call(&this, cx, &action, &name).await;
+                                let primary =
+                                    browser_script_call(&this, cx, &native, &action, &name).await;
                                 match primary {
                                     // CU-13：元素动作成功后回一次新鲜观测
                                     //（等 ≤5s 收敛 loading 再 read），让模型
                                     // 一次调用拿到动作结果与最新页面，无需
                                     // 凭旧句柄猜状态。
                                     Ok(mut data) if matches!(name.as_str(), "click" | "type") => {
-                                        wait_browser_idle(&this, cx, Duration::from_secs(5)).await;
-                                        let observation =
-                                            browser_script_call(&this, cx, &action, "read").await;
+                                        wait_browser_idle(&this, cx, &native, Duration::from_secs(5)).await;
+                                        // CU-13 复审：等待期间切任务时保留动作
+                                        // 事实，观测明确记 observation_error，
+                                        // 不把别的任务页面并入原 Run 的结果。
+                                        let still_owned = this
+                                            .update(cx, |view, _cx| {
+                                                view.projection.active_session_id.as_deref()
+                                                    == Some(&session)
+                                                    && view.projection.active_run_id.as_deref()
+                                                        == Some(&run_id)
+                                                    && view
+                                                        .browser
+                                                        .native
+                                                        .as_ref()
+                                                        .is_some_and(|current| Rc::ptr_eq(current, &native))
+                                            })
+                                            .unwrap_or(false);
+                                        let observation = if still_owned {
+                                            browser_script_call(&this, cx, &native, &action, "read")
+                                                .await
+                                        } else {
+                                            Err("任务已切换，动作后观测跳过 / Task switched during action — observation skipped".into())
+                                        };
                                         if let Some(obj) = data.as_object_mut() {
                                             match observation {
                                                 Ok(observation) => {
@@ -600,18 +625,13 @@ impl AppView {
 async fn wait_browser_idle(
     this: &gpui::WeakEntity<AppView>,
     cx: &mut gpui::AsyncApp,
+    native: &Rc<BrowserView>,
     timeout: Duration,
 ) {
     smol::Timer::after(Duration::from_millis(200)).await;
     let started = std::time::Instant::now();
     loop {
-        let loading = this.update(cx, |view, _cx| {
-            view.browser
-                .native
-                .as_ref()
-                .map(|native| native.state().loading)
-                .unwrap_or(false)
-        });
+        let loading = this.update(cx, |_view, _cx| native.state().loading);
         if !matches!(loading, Ok(true)) || started.elapsed() >= timeout {
             break;
         }
@@ -625,6 +645,7 @@ async fn wait_browser_idle(
 async fn browser_script_call(
     this: &gpui::WeakEntity<AppView>,
     cx: &mut gpui::AsyncApp,
+    native: &Rc<BrowserView>,
     action: &serde_json::Value,
     name: &str,
 ) -> Result<serde_json::Value, String> {
@@ -633,10 +654,7 @@ async fn browser_script_call(
         let _ = send.try_send(result);
     };
     let started = this
-        .update(cx, |view, _cx| {
-            let Some(native) = view.browser.native.clone() else {
-                return Err("Browser page closed".to_string());
-            };
+        .update(cx, |_view, _cx| {
             match name {
                 "click" => {
                     if let Some(handle) = action["handle"].as_str() {

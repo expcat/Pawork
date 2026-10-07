@@ -77,11 +77,17 @@ function rectOf(el){
 "#;
 
 /// Revision-counter prologue shared by the read script: installs a
-/// `MutationObserver` once per document under a per-view token; navigation
-/// wipes the page realm, so a missing counter marks a stale observation.
+/// `MutationObserver` once per document under a per-view token in the
+/// isolated content world (page scripts cannot enumerate or rewrite it);
+/// navigation wipes the page realm, so a missing counter marks a stale
+/// observation. State is published only after the observer installs, so an
+/// install failure never leaves a numeric `{revision:0}` behind (a later
+/// read would skip the install check and issue handles without mutation
+/// monitoring); install or storage failure rejects explicitly instead of
+/// degrading to revision 0 and issuing one-shot handles.
 fn revision_prologue(key: &str) -> String {
     format!(
-        "var KEY={key};\nvar st=null;\ntry{{ st=window[KEY]; }}catch(e){{ st=null; }}\nif(!st||typeof st.revision!=='number'){{\n  st={{revision:0}};\n  try{{\n    new MutationObserver(function(){{st.revision+=1;}}).observe(document.documentElement||document,{{subtree:true,childList:true,attributes:true,characterData:true}});\n  }}catch(e){{}}\n  try{{ Object.defineProperty(window,KEY,{{value:st,writable:true,configurable:true}}); }}catch(e2){{ try{{ window[KEY]=st; }}catch(e3){{}} }}\n}}\n",
+        "var KEY={key};\nvar st=null;\ntry{{ st=window[KEY]; }}catch(e){{ st=null; }}\nif(!st||typeof st.revision!=='number'){{\n  st={{revision:0}};\n  var observer=false;\n  try{{\n    new MutationObserver(function(){{st.revision+=1;}}).observe(document.documentElement||document,{{subtree:true,childList:true,attributes:true,characterData:true}});\n    observer=true;\n  }}catch(e){{}}\n  var stored=false;\n  if(observer){{\n    try{{ Object.defineProperty(window,KEY,{{value:st,writable:true,configurable:true}}); }}catch(e2){{ try{{ window[KEY]=st; }}catch(e3){{}} }}\n    try{{ stored=(window[KEY]===st); }}catch(e4){{}}\n  }}\n  if(!observer||!stored){{ return JSON.stringify({{ok:false,error:'观测状态安装失败，拒绝签发句柄 / Observation state unavailable — read cannot issue handles'}}); }}\n}}\n",
         key = js_string(key),
     )
 }
@@ -208,10 +214,22 @@ pub(crate) fn finalize_page_json(
     let obj = data
         .as_object_mut()
         .ok_or_else(|| "网页脚本返回无效 / The page script returned invalid data".to_string())?;
-    if !url.is_empty() {
+    // CU-13 复审：url/title 以同次脚本在页面里读到的值为准（观测事实），
+    // 派发前的 state 只在脚本缺失时回退，避免旧状态把新页标成旧页。
+    let has_script_url = obj
+        .get("url")
+        .and_then(|value| value.as_str())
+        .is_some_and(|value| !value.is_empty());
+    if !has_script_url && !url.is_empty() {
         obj.insert("url".into(), serde_json::Value::String(url.to_string()));
     }
-    obj.insert("title".into(), serde_json::Value::String(title.to_string()));
+    let has_script_title = obj
+        .get("title")
+        .and_then(|value| value.as_str())
+        .is_some_and(|value| !value.is_empty());
+    if !has_script_title && !title.is_empty() {
+        obj.insert("title".into(), serde_json::Value::String(title.to_string()));
+    }
     obj.entry("text")
         .or_insert_with(|| serde_json::Value::String(String::new()));
     obj.entry("links")
@@ -296,8 +314,9 @@ mod tests {
         let out = finalize_page_json(data, "https://example.com/path", "真实标题").unwrap();
         assert!(out.len() <= MAX_OUTPUT_BYTES, "len={}", out.len());
         let parsed: serde_json::Value = serde_json::from_str(&out).unwrap();
-        assert_eq!(parsed["url"], "https://example.com/path");
-        assert_eq!(parsed["title"], "真实标题");
+        // 脚本取得的元数据保留；state 仅在脚本缺失时回退（下方补充覆盖）。
+        assert_eq!(parsed["url"], "https://example.com/");
+        assert_eq!(parsed["title"], "示例");
         let text = parsed["text"].as_str().unwrap();
         assert!(!text.is_empty());
         assert!(text.chars().all(|ch| ch == '测'));
@@ -311,12 +330,60 @@ mod tests {
     }
 
     #[test]
+    fn finalize_page_json_falls_back_to_state_only_when_script_metadata_missing() {
+        let data = serde_json::json!({
+            "text": "hello",
+            "links": [],
+            "inputs": [],
+            "buttons": []
+        });
+        let out = finalize_page_json(data, "https://example.com/path", "真实标题").unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(parsed["url"], "https://example.com/path");
+        assert_eq!(parsed["title"], "真实标题");
+    }
+
+    #[test]
     fn read_script_installs_revision_observer_and_rects() {
         let script = read_page_script("__paworkObs_testtoken");
         assert!(script.contains("MutationObserver"));
         assert!(script.contains("__paworkObs_testtoken"));
         assert!(script.contains("dom_revision:st.revision"));
         assert!(script.contains("rect:rectOf("));
+    }
+
+    #[test]
+    fn read_script_rejects_instead_of_silently_issuing_handles_when_state_install_fails() {
+        // CU-13 复审：观测状态安装失败必须显式拒绝（不签发句柄），
+        // 不能静默降级到 revision=0 继续发一次性句柄。
+        let script = read_page_script("__paworkObs_testtoken");
+        assert!(
+            script.contains("观测状态安装失败，拒绝签发句柄"),
+            "install failure must reject explicitly"
+        );
+        assert!(
+            script.contains("if(!observer||!stored)"),
+            "observer install and storage must both be verified"
+        );
+    }
+
+    #[test]
+    fn read_script_publishes_state_only_after_observer_installs() {
+        // CU-13 复审 2：安装失败不得把 {revision:0} 留在 window[KEY]——
+        // 否则下一次 read 因已有数字 revision 跳过安装检查，签发没有
+        // 变化监测保护的句柄。状态发布（defineProperty / 直接赋值）
+        // 必须发生在 observer 安装成功的分支内。
+        let script = read_page_script("__paworkObs_testtoken");
+        let gate = script
+            .find("if(observer){")
+            .expect("state publication must be gated on observer install");
+        let publish = script
+            .find("Object.defineProperty(window,KEY")
+            .expect("state publication call");
+        assert!(
+            gate < publish,
+            "window[KEY] must be published only after the observer installs"
+        );
     }
 
     #[test]

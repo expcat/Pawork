@@ -208,7 +208,12 @@ pub struct BrowserView {
     parent: id,
     delegate: id,
     error: Box<ErrorState>,
-    generation: Box<GenerationState>,
+    // Rc 共享：snapshot / read 的 completion 回调在回调时核对代际，
+    // 导航发生在派发与回调之间时明确拒绝（不把新页标成旧页）。
+    generation: Rc<GenerationState>,
+    // 固定 DOM 脚本全部在隔离 content world 求值：观测状态（revision
+    // 计数器）不在页面主世界暴露，网页无法枚举或改写它伪造新鲜度。
+    world: id,
     handles: Rc<RefCell<observe::HandleTable>>,
     observe_key: String,
     _main_thread: PhantomData<Rc<()>>,
@@ -240,13 +245,17 @@ impl BrowserView {
                 return Err("Unable to create the system WebKit view".into());
             }
             let error = Box::new(RefCell::new(None));
-            let generation: Box<GenerationState> = Box::new(Cell::new(0));
+            let generation: Rc<GenerationState> = Rc::new(Cell::new(0));
             let delegate: id = msg_send![delegate_class(), new];
             (*delegate).set_ivar(ERROR_IVAR, (&*error as *const ErrorState) as *mut c_void);
-            (*delegate).set_ivar(
-                GENERATION_IVAR,
-                (&*generation as *const GenerationState) as *mut c_void,
-            );
+            (*delegate).set_ivar(GENERATION_IVAR, Rc::as_ptr(&generation) as *mut c_void);
+            let world_name = NSString::alloc(nil).init_str("pawork-observe");
+            let world: id = msg_send![class!(WKContentWorld), worldWithName: world_name];
+            let _: () = msg_send![world_name, release];
+            if world == nil {
+                return Err("Unable to create the isolated content world".into());
+            }
+            let _: id = msg_send![world, retain];
             let _: () = msg_send![view, setNavigationDelegate: delegate];
             let _: () = msg_send![view, setUIDelegate: delegate];
             let _: () = msg_send![view, setHidden: YES];
@@ -258,6 +267,7 @@ impl BrowserView {
                 delegate,
                 error,
                 generation,
+                world,
                 handles: Rc::new(RefCell::new(observe::HandleTable::default())),
                 observe_key: new_observe_key(),
                 _main_thread: PhantomData,
@@ -284,7 +294,13 @@ impl BrowserView {
     pub fn state(&self) -> BrowserState {
         unsafe {
             let url: id = msg_send![self.view, URL];
-            let address: id = msg_send![url, absoluteString];
+            // 首次导航开始前 URL 为 nil：向 nil 发消息会触发 debug 断言
+            //（探针实测），空地址按空串处理。
+            let address: id = if url == nil {
+                nil
+            } else {
+                msg_send![url, absoluteString]
+            };
             let title: id = msg_send![self.view, title];
             let loading: BOOL = msg_send![self.view, isLoading];
             let back: BOOL = msg_send![self.view, canGoBack];
@@ -378,10 +394,19 @@ impl BrowserView {
         let state = self.state();
         let handles = self.handles.clone();
         let generation = self.generation.get();
+        let generation_cell = Rc::clone(&self.generation);
         let viewport = self.viewport();
         self.evaluate(
             dom::read_page_script(&self.observe_key),
             move |raw| {
+                // CU-13 复审：派发与回调之间发生导航时，脚本读到的是
+                // 新页而句柄/元数据按旧代签发——明确拒绝，让调用方重读。
+                if generation_cell.get() != generation {
+                    return Err(
+                        "页面在读取期间导航，请重读 / Page navigated during read — read again"
+                            .into(),
+                    );
+                }
                 let data = dom::decode_envelope(&raw)?;
                 let mut handles = handles.borrow_mut();
                 observe::finalize_observation(
@@ -495,6 +520,7 @@ impl BrowserView {
     pub fn snapshot(&self, callback: impl FnOnce(Result<String, String>) + 'static) {
         let state = self.state();
         let generation = self.generation.get();
+        let generation_cell = Rc::clone(&self.generation);
         let viewport = self.viewport();
         if viewport.0 <= 0.0 || viewport.1 <= 0.0 {
             callback(Err("浏览器尚无可见尺寸 / Browser view has no size yet".into()));
@@ -510,6 +536,13 @@ impl BrowserView {
                     Err(string(description))
                 } else if image == nil {
                     Err("截图未返回图像 / Snapshot returned no image".into())
+                } else if generation_cell.get() != generation {
+                    // CU-13 复审：截图渲染期间页面导航／内容进程终止会
+                    // 推进代际；像素已不属于标签声称的页面，明确拒绝。
+                    Err(
+                        "页面在截图期间导航，请重试 / Page navigated during snapshot — try again"
+                            .into(),
+                    )
                 } else {
                     encode_snapshot_jpeg(image).map(|(jpeg, width, height)| {
                         serde_json::json!({
@@ -559,7 +592,11 @@ impl BrowserView {
                 }
             });
             let block = block.copy();
-            let _: () = msg_send![self.view, evaluateJavaScript: text completionHandler: &*block];
+            // 隔离 content world：脚本共享 DOM 但不共享页面主世界的 JS
+            // 全局，观测状态（window[KEY]）对网页不可见、不可改写。
+            // SDK 只声明 inFrame: 形态（frame=nil 即主框架）；漏掉
+            // inFrame: 的 selector 不存在，运行期才暴露。
+            let _: () = msg_send![self.view, evaluateJavaScript: text inFrame: nil inContentWorld: self.world completionHandler: &*block];
             let _: () = msg_send![text, release];
         }
     }
@@ -577,6 +614,7 @@ impl Drop for BrowserView {
             (*self.delegate).set_ivar(ERROR_IVAR, std::ptr::null_mut::<c_void>());
             (*self.delegate).set_ivar(GENERATION_IVAR, std::ptr::null_mut::<c_void>());
             let _: () = msg_send![self.delegate, release];
+            let _: () = msg_send![self.world, release];
             let _: () = msg_send![self.parent, release];
         }
     }

@@ -301,3 +301,116 @@ async fn chat_browser_tool_waits_for_approval_and_persists_actual_reply() {
         "history must not dispatch"
     );
 }
+
+#[tokio::test]
+async fn run_start_browser_screenshot_gate_falls_back_to_static_default() {
+    use pawork_domain::{ModelCapabilities, ModelDefinition};
+    let dir = tempfile::tempdir().unwrap();
+    let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("fallback.db"))
+        .await
+        .unwrap();
+    let provider = MockProvider::sequence(vec![
+        MockScript::new()
+            .tool_call("browser", json!({"action":"screenshot"}))
+            .complete(),
+        MockScript::new().text("image received").complete(),
+    ]);
+    let mut core = AppCore::from_parts(
+        Arc::new(provider),
+        None,
+        "glm-5.3-flash".into(),
+        "mock".into(),
+        Some(store.clone()),
+    );
+    // CU-13 真实验收发现的门缺陷：目录证据可把模型锚定在另一 provider
+    // （glm-5.3-flash ↔ glm-coding），经 opencode-go 使用时被过滤后截图门
+    // 直接判 false。证据口径与 text 门一致：provider 不匹配回退静态默认。
+    // 这里把错锚证据显式声明为非视觉，证明回退后取的是静态默认。
+    Arc::make_mut(&mut core.registry).merge_provider_models(
+        &"glm-coding".into(),
+        &[ModelDefinition {
+            id: "glm-5.3-flash".into(),
+            display_name: "stale anchor".into(),
+            context_window_tokens: 0,
+            max_output_tokens: 0,
+            capabilities: ModelCapabilities {
+                text: true,
+                image_input: false,
+                ..Default::default()
+            },
+        }],
+    );
+    core.configure_approval(
+        pawork_policy::ApprovalMode::AskForDangerous,
+        true,
+        Arc::new(crate::DenyAllApprovals),
+    );
+    core.attach_workspace(dir.path()).unwrap();
+    let session = core.create_session("browser fallback").await.unwrap();
+    let adapter = GuiHostAdapter::new(Arc::new(core));
+    let source = CommandSource::LocalGui {
+        client_id: "fallback-client".into(),
+    };
+    let mut request = command_envelope(AppCommand::RunStart {
+        session_id: session.clone(),
+        user_message: "screenshot browser".into(),
+        model: None,
+        provider: None,
+        profile: None,
+        effort: None,
+        attachment_ids: Vec::new(),
+        web_search: None,
+        video_urls: Vec::new(),
+    });
+    request.source = source.clone();
+    let mut events = adapter.subscribe_events();
+    let AppResponse::Accepted {
+        run_id: Some(run), ..
+    } = adapter.command(&request).await.unwrap()
+    else {
+        panic!("run not accepted");
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if let AppEvent::ToolApprovalRequired { tool_call_id, .. } =
+                events.recv().await.unwrap().payload
+            {
+                assert!(
+                    adapter.browser.claim(&run, &source).is_null(),
+                    "no request before approval"
+                );
+                adapter
+                    .approvals
+                    .resolve(&run, &tool_call_id, ApprovalDecision::ApprovedOnce)
+                    .unwrap();
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    let claimed = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let result = adapter.browser.claim(&run, &source);
+            if !result.is_null() {
+                break result;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("gate must fall back to static default and dispatch screenshot");
+    adapter
+        .browser
+        .respond(
+            claimed["request_id"].as_str().unwrap(),
+            &source,
+            json!({"ok":true,"data":{"url":"https://example.com/","width":1024,"height":768,"jpeg_base64":"/9j/2Q=="}}),
+        )
+        .unwrap();
+    wait_run_completed(&mut events, &run).await;
+    let persisted = store.replay_events(&session, 1, 100).await.unwrap();
+    let serialized = serde_json::to_string(&persisted).unwrap();
+    assert!(serialized.contains("/9j/2Q=="));
+    assert!(!serialized.contains("vision-capable"));
+}

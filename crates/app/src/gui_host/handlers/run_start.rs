@@ -444,11 +444,17 @@ async fn start(
         let terminal = core.config().terminal.clone().unwrap_or_default();
         // CU-13：browser screenshot 是视觉操作；当前模型未声明 image_input
         // 时，screenshot 在访问真实 WebView 前被拒（其余浏览器动作不受影响）。
+        // 证据口径与 text 闸门一致：同 provider 目录证据优先，provider 不匹配
+        // 或无证据时回退静态默认声明（静态目录可把模型锚定在另一 provider，
+        // 如 glm-5.3-flash 锚定 glm-coding，经 opencode-go 使用时会被过滤）。
         let browser_image_input = core
             .registry
             .capability_evidence(core.model().as_str())
             .filter(|evidence| evidence.provider.as_ref() == Some(&core.provider_id))
             .map(|evidence| evidence.merged().image_input)
+            .or_else(|| {
+                pawork_models::registry::default_image_input(core.model().as_str())
+            })
             .unwrap_or(false);
         let tools: Vec<Arc<dyn pawork_domain::AgentTool>> = vec![
             Arc::new(super::super::terminal_tool::TerminalTool {

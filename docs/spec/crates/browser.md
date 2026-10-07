@@ -20,7 +20,7 @@
 
 `normalize_url(&str) -> Result<String, String>` 规范化地址；`BrowserView::new(WindowHandle)` 借用原生父视图创建浏览器。`navigate` / `back` / `forward` / `reload` / `stop` 执行手动导航；`state()` 返回 `BrowserState { url, title, loading, can_go_back, can_go_forward, error }`。`set_bounds(x,y,width,height)` 使用父视图左上角原点的逻辑像素；`set_visible` 切换显示，`is_focused` 查询网页是否持有原生焦点，`focus_parent` 把键盘交回宿主而不隐藏网页；Drop 释放。只能在 AppKit 主线程使用，不可 Send / Sync。
 
-`read_page(callback)` 返回有界 JSON 页面文本、链接、输入元素和按钮（附 CSS 选择器、视口 rect 与一次性元素句柄），并附页面 `generation`、`dom_revision` 与 `viewport`。`click(selector, callback)` / `type_text(selector, text, callback)` 要求唯一可见元素；`click_handle(handle, callback)` / `type_handle(handle, text, callback)` 改按 read 签发的句柄定位元素，脚本内先过新鲜度闸（观测 key 存在 + `location.href` 与签发时一致 + `dom_revision` 未变），再跑同一套唯一可见检查。`snapshot(callback)` 经 `takeSnapshotWithConfiguration` 在网页内容进程离屏渲染，返回 JPEG base64、页面与图像尺寸及 `generation`；不激活窗口、不抢焦点，视图隐藏时可用。错误通过 completion 回调返回。固定 DOM 脚本运行于系统 WebKit，不开放任意脚本求值，拒绝密码和文件输入。Host 经 GUI 1.18 请求/回执授权自动操作；本包没有 Host / 协议依赖。
+`read_page(callback)` 返回有界 JSON 页面文本、链接、输入元素和按钮（附 CSS 选择器、视口 rect 与一次性元素句柄），并附页面 `generation`、`dom_revision` 与 `viewport`；completion 回调核对页面代际，派发与回调之间发生导航即明确拒绝（"页面在读取期间导航"），返回的 url/title 以同次脚本在页面读到的值为准（派发前 state 仅作脚本缺失时的回退）。`click(selector, callback)` / `type_text(selector, text, callback)` 要求唯一可见元素；`click_handle(handle, callback)` / `type_handle(handle, text, callback)` 改按 read 签发的句柄定位元素，脚本内先过新鲜度闸（观测 key 存在 + `location.href` 与签发时一致 + `dom_revision` 未变），再跑同一套唯一可见检查。`snapshot(callback)` 经 `takeSnapshotWithConfiguration` 在网页内容进程离屏渲染，返回 JPEG base64、页面与图像尺寸及 `generation`；completion 回调核对代际，截图渲染期间导航 / 内容进程终止时像素不再属于标签声称的页面，明确拒绝（"页面在截图期间导航"）；不激活窗口、不抢焦点，视图隐藏时可用。错误通过 completion 回调返回。固定 DOM 脚本运行于系统 WebKit 的隔离 `WKContentWorld`（`pawork-observe`，求值经 `evaluateJavaScript:inFrame:nil inContentWorld:completionHandler:`——SDK 只声明 inFrame 形态）：观测状态（revision 计数器）不暴露给页面主世界，网页无法枚举或改写它伪造新鲜度；状态仅在 Observer 安装成功后发布——安装或存储失败时脚本显式拒绝、不签发句柄，且不残留 `{revision:0}` 让后续 read 跳过安装检查。不开放任意脚本求值，拒绝密码和文件输入。Host 经 GUI 1.18 请求/回执授权自动操作；本包没有 Host / 协议依赖。
 
 ## 4. 核心行为与数据流
 
@@ -40,7 +40,7 @@
 
 ## 7. 测试与验证资产
 
-URL 主路径及拒绝边界、Unicode 输出预算与 DOM 回执的定向单元测试；观测覆盖句柄生命周期（一次性 / 代际 / TTL / 容量逐出）与预算收缩、观测脚本断言（MutationObserver、rect、新鲜度闸与转义）。Desktop 测试覆盖入口、布局、任务归属与生命周期，真实导航以本地 HTTP fixture、请求日志和真实窗口联合核对。未闭合验收见 [ROADMAP](../../ROADMAP.md)。
+URL 主路径及拒绝边界、Unicode 输出预算与 DOM 回执的定向单元测试；观测覆盖句柄生命周期（一次性 / 代际 / TTL / 容量逐出）与预算收缩、观测脚本断言（MutationObserver、rect、新鲜度闸与转义）、脚本元数据优先与 state 回退（CU-13 复审：同次脚本 url/title 为准）、观测状态安装失败显式拒绝（不降级签发句柄）、状态发布仅在 Observer 安装成功后（红证：不残留 revision 让后续 read 跳过安装检查）。Desktop 测试覆盖入口、布局、任务归属与生命周期，真实导航以本地 HTTP fixture、请求日志和真实窗口联合核对。未闭合验收见 [ROADMAP](../../ROADMAP.md)。
 
 ## 8. 注意事项与已知限制
 

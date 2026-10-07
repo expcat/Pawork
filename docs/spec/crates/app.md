@@ -181,7 +181,7 @@ GUI `run_start` 在既有 ToolScheduler 注册 `terminal` / `browser`，保留�
 
 `browser_tool.rs` 将请求绑定发起 Run 的 run_id 与本地 GUI 客户端。`browser_next` 按 run 一次领取（Host 先校验 run 活跃且属于所报 session），`browser_respond` 核对领取者；取消或 25s 超时移除请求，run 终态解除绑定。Desktop 在系统 WebKit 执行 navigate/read/click/type/screenshot/back/forward/reload/close 并回报真实结果；click/type 的 `handle` 与 `selector` 二选一，句柄由 Desktop 侧 pawork-browser 做代际 / TTL / 一次性校验。历史重放不执行动作。
 
-2026-10-07（CU-13）：`browser_respond` 与工具输出上限 96KiB 提至 768KiB（截图 JPEG ≤512KiB 的 base64 + 观测 JSON；1MiB 帧上限仍兜底）。`screenshot` 是视觉操作：仅当 RunStart 装配时当前模型的同 provider 目录证据声明 `image_input` 才放行，否则在访问 broker 前 PermissionDenied（文本模型后端访问次数为零）；成功时 `jpeg_base64` 拆为 `ContentPart::Image`（image/jpeg），URL / 尺寸 / generation 等元数据留在 Text。click/type 成功后 Desktop 回一次新鲜观测（`observation` 或 `observation_error`），由 Host 原样透传。
+2026-10-07（CU-13）：`browser_respond` 与工具输出上限 96KiB 提至 768KiB（截图 JPEG ≤512KiB 的 base64 + 观测 JSON；1MiB 帧上限仍兜底）。`screenshot` 是视觉操作：RunStart 装配时按当前模型的同 provider 目录证据判定 `image_input`，provider 不匹配或无证据时回退静态默认声明（与 `services/run.rs` text 门同款口径；静态目录可把模型锚定在另一 provider，如 glm-5.3-flash ↔ glm-coding，过滤后无回退会永久误拒），否则在访问 broker 前 PermissionDenied（文本模型后端访问次数为零）；成功时 `jpeg_base64` 拆为 `ContentPart::Image`（image/jpeg），URL / 尺寸 / generation 等元数据留在 Text。click/type 成功后 Desktop 回一次新鲜观测（`observation` 或 `observation_error`），由 Host 原样透传。
 
 ### API 1.24 产品面（2026-09-24）
 
@@ -348,7 +348,7 @@ live-smoke 由 feature 显式选择，缺环境直接失败；验证非空流式
 
 `subagents::tests` 覆盖结果重放、普通任务列表排除子会话、禁止嵌套派发与工具越权、父取消和并发上限；`display_limit_keeps_active_and_recent_children_without_limiting_control` 验证超过 64 项且 ID 与创建顺序相反时保留活跃 / 最近子代理、已移出展示项仍可等待 / 取消，以及跨 run / session 的拒绝。`cross_provider_subagents_select_models_and_persist_reasoning` 通过本地模拟 HTTP 接口验证非 GLM 模型的 Chat Completions / Messages 跨供应商派发、实际请求 model、结果回传和推理签名持久化；不等同于真实供应商联网验收。
 
-`gui_host/tests/chat_controls.rs::computer_approval_image_persistence_and_resume_do_not_repeat_input` 验证 computer 工具在批准前零调用、动作预览、canonical 图片持久化和恢复历史不重执行。隔离桌面连接和输入由 tools / computer-use 定向测试及真实 probe 另验。
+`gui_host/tests/chat_controls.rs::computer_approval_image_persistence_and_resume_do_not_repeat_input` 验证 computer 工具在批准前零调用、动作预览、canonical 图片持久化和恢复历史不重执行。隔离桌面连接和输入由 tools / computer-use 定向测试及真实 probe 另验。`run_start_browser_screenshot_gate_falls_back_to_static_default` 验证截图视觉门的 provider 证据回退：错锚目录证据（image_input=false）被过滤后仍按静态默认放行并派发（红证：无回退时零派发超时）。
 
 `provider_auth_status_marks_expired_oauth_credential` 同时覆盖刷新拒绝仍标过期、设置目录刷新成功、当前 OAuth adapter 过期后的 overview 重新装配；仅使用本地 HTTP mock。
 

@@ -256,7 +256,7 @@ mod tests {
         let data = serde_json::json!({
             "url": "https://example.com/inpage",
             "dom_revision": 7,
-            "title": "ignored",
+            "title": "页面标题",
             "text": "测".repeat(40_000),
             "links": [{"selector": "#go", "href": "https://example.com/x", "text": "go", "rect": {"x": 1.0, "y": 2.0, "width": 3.0, "height": 4.0}}],
             "inputs": [{"selector": "#q", "type": "text", "value": "hi"}],
@@ -274,15 +274,17 @@ mod tests {
         .unwrap();
         assert!(out.len() <= MAX_OUTPUT_BYTES, "len={}", out.len());
         let parsed: Value = serde_json::from_str(&out).unwrap();
-        assert_eq!(parsed["url"], "https://example.com/state");
-        assert_eq!(parsed["title"], "真实标题");
+        // CU-13 复审：同次脚本取得的 url/title 是观测事实，state 只作
+        // 脚本缺失时的回退，不得用派发前的旧状态覆盖脚本实际页面。
+        assert_eq!(parsed["url"], "https://example.com/inpage");
+        assert_eq!(parsed["title"], "页面标题");
         assert_eq!(parsed["generation"], 9);
         assert_eq!(parsed["dom_revision"], 7);
         assert_eq!(parsed["viewport"]["width"], 1024.0);
         let handle = parsed["links"][0]["handle"].as_str().unwrap();
         let entry = table.take_valid(handle, 9, now).unwrap();
         assert_eq!(entry.selector, "#go");
-        // 句柄记录脚本侧 location.href（动作脚本按它比较），展示 URL 仍可被 state 覆盖。
+        // 句柄记录脚本侧 location.href，动作脚本按它做同页比较。
         assert_eq!(entry.url, "https://example.com/inpage");
         assert!(parsed["inputs"][0]["handle"].as_str().unwrap().starts_with("e-"));
         assert!(parsed["buttons"][0]["handle"].as_str().unwrap().starts_with("e-"));
