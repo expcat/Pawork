@@ -1,5 +1,5 @@
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use pawork_domain::{
     AgentEvent, CancellationToken, ErrorCategory, ErrorContext, Message, MessageId, MessageRole,
@@ -475,6 +475,7 @@ async fn start(
                 broker: adapter.browser.clone(),
                 runs: adapter.runs.clone(),
                 image_input: browser_image_input,
+                dialect: Mutex::new(None),
             }),
         ];
         core.scheduler = Arc::new(

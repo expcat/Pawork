@@ -269,6 +269,27 @@ async fn chat_browser_tool_waits_for_approval_and_persists_actual_reply() {
     })
     .await
     .unwrap();
+    // CU-14 复审③：首个动作前先应答一次方言探测（tabs），再领取真实动作。
+    let probe = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let result = adapter.browser.claim(&run, &source);
+            if !result.is_null() {
+                break result;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(probe["action"]["action"], "tabs");
+    adapter
+        .browser
+        .respond(
+            probe["request_id"].as_str().unwrap(),
+            &source,
+            json!({"ok":true,"data":{"tabs":[],"active_tab_id":null,"agent_tab_id":null}}),
+        )
+        .unwrap();
     let claimed = tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
             let result = adapter.browser.claim(&run, &source);
@@ -280,6 +301,7 @@ async fn chat_browser_tool_waits_for_approval_and_persists_actual_reply() {
     })
     .await
     .unwrap();
+    assert_eq!(claimed["action"]["action"], "read");
     adapter
         .browser
         .respond(
@@ -389,6 +411,27 @@ async fn run_start_browser_screenshot_gate_falls_back_to_static_default() {
     })
     .await
     .unwrap();
+    // CU-14 复审③：首个动作前先应答一次方言探测（tabs），再领取真实动作。
+    let probe = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let result = adapter.browser.claim(&run, &source);
+            if !result.is_null() {
+                break result;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(probe["action"]["action"], "tabs");
+    adapter
+        .browser
+        .respond(
+            probe["request_id"].as_str().unwrap(),
+            &source,
+            json!({"ok":true,"data":{"tabs":[],"active_tab_id":null,"agent_tab_id":null}}),
+        )
+        .unwrap();
     let claimed = tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
             let result = adapter.browser.claim(&run, &source);
@@ -400,6 +443,7 @@ async fn run_start_browser_screenshot_gate_falls_back_to_static_default() {
     })
     .await
     .expect("gate must fall back to static default and dispatch screenshot");
+    assert_eq!(claimed["action"]["action"], "screenshot");
     adapter
         .browser
         .respond(

@@ -316,6 +316,12 @@ impl BrowserView {
         }
     }
 
+    /// CU-14：当前页面代际（provisional 导航 / 内容进程终止 +1），
+    /// 供宿主标签列表回报各标签的代际归属。
+    pub fn generation(&self) -> u64 {
+        self.generation.get()
+    }
+
     pub fn back(&self) {
         unsafe {
             let _: id = msg_send![self.view, goBack];

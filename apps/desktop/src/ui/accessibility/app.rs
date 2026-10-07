@@ -9353,7 +9353,7 @@ mod tests {
                 );
                 assert!(view.browser_visible());
                 assert!(
-                    view.browser.native.is_none(),
+                    view.browser.tabs.is_empty(),
                     "opening an empty tab must not load a website"
                 );
             })
@@ -9385,7 +9385,7 @@ mod tests {
                     window.focus(&view.browser.focus);
                     view.on_send_message(&crate::ui::SendMessage, window, cx);
                     assert!(
-                        view.browser.native.is_none(),
+                        view.browser.tabs.is_empty(),
                         "invalid address rejected before native creation"
                     );
                     assert_eq!(view.text_input.read(cx).text(), "keep draft");

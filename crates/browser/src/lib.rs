@@ -90,6 +90,9 @@ mod unsupported {
         pub fn state(&self) -> BrowserState {
             BrowserState::default()
         }
+        pub fn generation(&self) -> u64 {
+            0
+        }
         pub fn back(&self) {}
         pub fn forward(&self) {}
         pub fn reload(&self) {}

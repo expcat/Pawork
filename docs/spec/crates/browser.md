@@ -18,7 +18,7 @@
 
 ## 3. 对外 API 面
 
-`normalize_url(&str) -> Result<String, String>` 规范化地址；`BrowserView::new(WindowHandle)` 借用原生父视图创建浏览器。`navigate` / `back` / `forward` / `reload` / `stop` 执行手动导航；`state()` 返回 `BrowserState { url, title, loading, can_go_back, can_go_forward, error }`。`set_bounds(x,y,width,height)` 使用父视图左上角原点的逻辑像素；`set_visible` 切换显示，`is_focused` 查询网页是否持有原生焦点，`focus_parent` 把键盘交回宿主而不隐藏网页；Drop 释放。只能在 AppKit 主线程使用，不可 Send / Sync。
+`normalize_url(&str) -> Result<String, String>` 规范化地址；`BrowserView::new(WindowHandle)` 借用原生父视图创建浏览器。`navigate` / `back` / `forward` / `reload` / `stop` 执行手动导航；`state()` 返回 `BrowserState { url, title, loading, can_go_back, can_go_forward, error }`；`generation()` 返回当前页面代际（2026-10-07 CU-14，Desktop 多标签回执标注用）。`set_bounds(x,y,width,height)` 使用父视图左上角原点的逻辑像素；`set_visible` 切换显示，`is_focused` 查询网页是否持有原生焦点，`focus_parent` 把键盘交回宿主而不隐藏网页；Drop 释放。只能在 AppKit 主线程使用，不可 Send / Sync。
 
 `read_page(callback)` 返回有界 JSON 页面文本、链接、输入元素和按钮（附 CSS 选择器、视口 rect 与一次性元素句柄），并附页面 `generation`、`dom_revision` 与 `viewport`；completion 回调核对页面代际，派发与回调之间发生导航即明确拒绝（"页面在读取期间导航"），返回的 url/title 以同次脚本在页面读到的值为准（派发前 state 仅作脚本缺失时的回退）。`click(selector, callback)` / `type_text(selector, text, callback)` 要求唯一可见元素；`click_handle(handle, callback)` / `type_handle(handle, text, callback)` 改按 read 签发的句柄定位元素，脚本内先过新鲜度闸（观测 key 存在 + `location.href` 与签发时一致 + `dom_revision` 未变），再跑同一套唯一可见检查。`snapshot(callback)` 经 `takeSnapshotWithConfiguration` 在网页内容进程离屏渲染，返回 JPEG base64、页面与图像尺寸及 `generation`；completion 回调核对代际，截图渲染期间导航 / 内容进程终止时像素不再属于标签声称的页面，明确拒绝（"页面在截图期间导航"）；不激活窗口、不抢焦点，视图隐藏时可用。错误通过 completion 回调返回。固定 DOM 脚本运行于系统 WebKit 的隔离 `WKContentWorld`（`pawork-observe`，求值经 `evaluateJavaScript:inFrame:nil inContentWorld:completionHandler:`——SDK 只声明 inFrame 形态）：观测状态（revision 计数器）不暴露给页面主世界，网页无法枚举或改写它伪造新鲜度；状态仅在 Observer 安装成功后发布——安装或存储失败时脚本显式拒绝、不签发句柄，且不残留 `{revision:0}` 让后续 read 跳过安装检查。不开放任意脚本求值，拒绝密码和文件输入。Host 经 GUI 1.18 请求/回执授权自动操作；本包没有 Host / 协议依赖。
 
@@ -44,6 +44,6 @@ URL 主路径及拒绝边界、Unicode 输出预算与 DOM 回执的定向单元
 
 ## 8. 注意事项与已知限制
 
-首版只支持 macOS；其它平台明确返回不支持。每任务一个浏览器页，不持久化 URL / Cookie / 历史到下次启动；元素句柄同样只在内存存活。未提供多网页标签、下载、文件选择或任意脚本执行。2026-09-16 聊天控制通过 Host 的 browser 工具经 Policy / 审批授权，由 Desktop 操作 WebView，结果沿用持久化工具事件。页面文本与截图作为未信任数据返回；截图 JPEG 最长边 1280px、≤512KiB，仅回传给声明 `image_input` 的模型（门控在 Host 的 browser 工具，见 [app Spec](app.md)）。
+首版只支持 macOS；其它平台明确返回不支持。不持久化 URL / Cookie / 历史到下次启动；元素句柄同样只在内存存活。本包仍是单页视图；多网页标签由 Desktop 组合多个 `BrowserView` 实现（2026-10-07 CU-14，见 [desktop Spec](desktop.md)），同样不持久化到下次启动。未提供下载、文件选择或任意脚本执行。2026-09-16 聊天控制通过 Host 的 browser 工具经 Policy / 审批授权，由 Desktop 操作 WebView，结果沿用持久化工具事件。页面文本与截图作为未信任数据返回；截图 JPEG 最长边 1280px、≤512KiB，仅回传给声明 `image_input` 的模型（门控在 Host 的 browser 工具，见 [app Spec](app.md)）。
 
 2026-09-25 外部页面读取失败使用 `ExternalPageError`：Chromium 错误 12 映射 JavaScriptDisabled，系统 -1743 映射 AutomationDenied；其它失败保留数字码，不返回原始错误字典或页面内容。Desktop 分别显示手动启用浏览器脚本和系统自动化授权指引。Chromium 只接受真实用户输入切换脚本设置，自动化点击不会生效；参见 [Chromium 实现](https://github.com/chromium/chromium/blob/main/chrome/browser/ui/browser_commands_mac.mm)。

@@ -427,8 +427,7 @@ fn install_appkit_tab_monitor(window: &Window, cx: &App) {
                         if view
                             .read(cx)
                             .browser
-                            .native
-                            .as_ref()
+                            .active_native()
                             .is_some_and(|native| native.is_focused())
                         {
                             return false;
@@ -5401,8 +5400,8 @@ impl Render for AppView {
                 .map(|handle| handle.as_raw());
         }
         if !self.browser_visible() {
-            if let Some(native) = &self.browser.native {
-                native.set_visible(false);
+            for tab in &self.browser.tabs {
+                tab.native.set_visible(false);
             }
         }
         // 一次性安装 AppKit Tab 本地监听器：NSWindow 会吞掉裸 Tab
