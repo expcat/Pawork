@@ -442,6 +442,14 @@ async fn start(
             adapter.instance.clone(),
         )));
         let terminal = core.config().terminal.clone().unwrap_or_default();
+        // CU-13：browser screenshot 是视觉操作；当前模型未声明 image_input
+        // 时，screenshot 在访问真实 WebView 前被拒（其余浏览器动作不受影响）。
+        let browser_image_input = core
+            .registry
+            .capability_evidence(core.model().as_str())
+            .filter(|evidence| evidence.provider.as_ref() == Some(&core.provider_id))
+            .map(|evidence| evidence.merged().image_input)
+            .unwrap_or(false);
         let tools: Vec<Arc<dyn pawork_domain::AgentTool>> = vec![
             Arc::new(super::super::terminal_tool::TerminalTool {
                 pty: adapter.pty.clone(),
@@ -460,6 +468,7 @@ async fn start(
             Arc::new(super::super::browser_tool::BrowserTool {
                 broker: adapter.browser.clone(),
                 runs: adapter.runs.clone(),
+                image_input: browser_image_input,
             }),
         ];
         core.scheduler = Arc::new(

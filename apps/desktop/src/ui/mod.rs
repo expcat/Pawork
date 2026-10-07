@@ -552,6 +552,9 @@ pub struct AppView {
     browser_request: Option<(String, String, String, serde_json::Value)>,
     browser_sessions: HashMap<Option<String>, browser::BrowserPanel>,
     browser_session: Option<String>,
+    /// render 期捕获的窗口原始句柄：CU-13 起 Host 浏览器请求在后台任务里
+    /// 派发（隐藏窗口 render 停摆），创建 WebView 不再经过 Window 参数。
+    raw_window_handle: Option<raw_window_handle::RawWindowHandle>,
     terminal_action_layouts: HashMap<&'static str, ScrollHandle>,
     quick_search: quick_search::QuickSearch,
     timeline_navigation: timeline_navigation::TimelineNavigation,
@@ -964,6 +967,7 @@ impl AppView {
             browser_request: None,
             browser_sessions: HashMap::new(),
             browser_session: None,
+            raw_window_handle: None,
             quick_search: quick_search::QuickSearch::new(cx),
             timeline_navigation: timeline_navigation::TimelineNavigation::new(cx),
             model_search_input,
@@ -1880,6 +1884,9 @@ impl AppView {
                     self.controller.browser_respond(request_id, serde_json::json!({"ok":false,"error":"Task is no longer visible or browser is busy"}));
                 } else {
                     self.browser_request = Some((session_id, run_id, request_id, action));
+                    // CU-13：立即在后台任务派发。隐藏窗口 display link 停转、
+                    // render 不再触发，等 render 派发会让 Host 25s 超时。
+                    self.dispatch_browser_request(cx);
                 }
             }
             ControllerEvent::Disconnected { reason } => {
@@ -5383,8 +5390,16 @@ impl Render for AppView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_navigation_session();
         self.sync_browser_session(cx);
-        self.ensure_browser_poll(window, cx);
-        self.dispatch_browser_request(window, cx);
+        self.ensure_browser_poll(cx);
+        // CU-13：Host 浏览器请求在 handle_controller_event 里即时派发，
+        // render 只负责刷新创建 WebView 所需的窗口原始句柄。
+        // 测试平台窗口没有真实句柄（window_handle 会 panic），与
+        // product_access 同款 cfg!(test) 守门。
+        if !cfg!(test) {
+            self.raw_window_handle = raw_window_handle::HasWindowHandle::window_handle(window)
+                .ok()
+                .map(|handle| handle.as_raw());
+        }
         if !self.browser_visible() {
             if let Some(native) = &self.browser.native {
                 native.set_visible(false);

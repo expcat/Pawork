@@ -1,11 +1,12 @@
 #![allow(unexpected_cfgs)] // objc 0.2 macros use the historical cargo-clippy cfg.
 
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     ffi::{CStr, c_void},
     marker::PhantomData,
     rc::Rc,
-    sync::OnceLock,
+    sync::{OnceLock, atomic::{AtomicU64, Ordering}},
+    time::Instant,
 };
 
 use block::ConcreteBlock;
@@ -22,13 +23,25 @@ use objc::{
 };
 use raw_window_handle::{RawWindowHandle, WindowHandle};
 
-use super::{BrowserState, dom, navigation_allowed, normalize_url};
+use super::{BrowserState, dom, navigation_allowed, normalize_url, observe};
 
 #[link(name = "WebKit", kind = "framework")]
 extern "C" {}
 
 const ERROR_IVAR: &str = "paworkBrowserError";
 type ErrorState = RefCell<Option<String>>;
+const GENERATION_IVAR: &str = "paworkBrowserGeneration";
+type GenerationState = Cell<u64>;
+
+static NEXT_OBSERVE_KEY: AtomicU64 = AtomicU64::new(1);
+
+fn new_observe_key() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("__paworkObs_{:x}{:x}", nanos, NEXT_OBSERVE_KEY.fetch_add(1, Ordering::Relaxed))
+}
 
 unsafe fn string(value: id) -> String {
     if value == nil {
@@ -54,6 +67,13 @@ unsafe fn set_error(this: &Object, value: Option<String>) {
         if let Ok(mut error) = state.try_borrow_mut() {
             *error = value;
         }
+    }
+}
+
+unsafe fn bump_generation(this: &Object) {
+    let ptr = *this.get_ivar::<*mut c_void>(GENERATION_IVAR) as *const GenerationState;
+    if let Some(state) = ptr.as_ref() {
+        state.set(state.get().wrapping_add(1));
     }
 }
 
@@ -104,6 +124,7 @@ extern "C" fn decide_response(this: &Object, _: Sel, _: id, response: id, handle
 extern "C" fn started(this: &Object, _: Sel, _: id, _: id) {
     unsafe {
         set_error(this, None);
+        bump_generation(this);
     }
 }
 
@@ -119,6 +140,7 @@ extern "C" fn failed(this: &Object, _: Sel, _: id, _: id, error: id) {
 
 extern "C" fn terminated(this: &Object, _: Sel, _: id) {
     unsafe {
+        bump_generation(this);
         set_error(
             this,
             Some("网页进程已退出，请刷新 / Web content process exited; reload to retry".into()),
@@ -147,6 +169,7 @@ fn delegate_class() -> &'static Class {
         let mut decl = ClassDecl::new("PaworkBrowserDelegate", class!(NSObject))
             .expect("browser delegate class");
         decl.add_ivar::<*mut c_void>(ERROR_IVAR);
+        decl.add_ivar::<*mut c_void>(GENERATION_IVAR);
         decl.add_method(
             sel!(webView:decidePolicyForNavigationAction:decisionHandler:),
             decide_navigation as extern "C" fn(&Object, Sel, id, id, id),
@@ -185,6 +208,9 @@ pub struct BrowserView {
     parent: id,
     delegate: id,
     error: Box<ErrorState>,
+    generation: Box<GenerationState>,
+    handles: Rc<RefCell<observe::HandleTable>>,
+    observe_key: String,
     _main_thread: PhantomData<Rc<()>>,
 }
 
@@ -206,14 +232,21 @@ impl BrowserView {
             let _: () = msg_send![preferences, setJavaScriptCanOpenWindowsAutomatically: NO];
             let _: () = msg_send![preferences, setTabFocusesLinks: YES];
             let view: id = msg_send![class!(WKWebView), alloc];
-            let view: id = msg_send![view, initWithFrame: NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(0.0, 0.0)) configuration: config];
+            // 隐藏观测也需要真实布局视口：首版默认 1024×768，面板可见时
+            // canvas 会按实测 bounds 覆盖。
+            let view: id = msg_send![view, initWithFrame: NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(1024.0, 768.0)) configuration: config];
             let _: () = msg_send![config, release];
             if view == nil {
                 return Err("Unable to create the system WebKit view".into());
             }
             let error = Box::new(RefCell::new(None));
+            let generation: Box<GenerationState> = Box::new(Cell::new(0));
             let delegate: id = msg_send![delegate_class(), new];
             (*delegate).set_ivar(ERROR_IVAR, (&*error as *const ErrorState) as *mut c_void);
+            (*delegate).set_ivar(
+                GENERATION_IVAR,
+                (&*generation as *const GenerationState) as *mut c_void,
+            );
             let _: () = msg_send![view, setNavigationDelegate: delegate];
             let _: () = msg_send![view, setUIDelegate: delegate];
             let _: () = msg_send![view, setHidden: YES];
@@ -224,6 +257,9 @@ impl BrowserView {
                 parent,
                 delegate,
                 error,
+                generation,
+                handles: Rc::new(RefCell::new(observe::HandleTable::default())),
+                observe_key: new_observe_key(),
                 _main_thread: PhantomData,
             })
         }
@@ -340,11 +376,23 @@ impl BrowserView {
 
     pub fn read_page(&self, callback: impl FnOnce(Result<String, String>) + 'static) {
         let state = self.state();
+        let handles = self.handles.clone();
+        let generation = self.generation.get();
+        let viewport = self.viewport();
         self.evaluate(
-            dom::read_page_script(),
+            dom::read_page_script(&self.observe_key),
             move |raw| {
                 let data = dom::decode_envelope(&raw)?;
-                dom::finalize_page_json(data, &state.url, &state.title)
+                let mut handles = handles.borrow_mut();
+                observe::finalize_observation(
+                    data,
+                    &state.url,
+                    &state.title,
+                    generation,
+                    viewport,
+                    &mut handles,
+                    Instant::now(),
+                )
             },
             callback,
         );
@@ -377,6 +425,115 @@ impl BrowserView {
             |raw| dom::encode_success(dom::decode_envelope(&raw)?),
             callback,
         );
+    }
+
+    fn viewport(&self) -> (f64, f64) {
+        unsafe {
+            let frame: NSRect = msg_send![self.view, frame];
+            (frame.size.width, frame.size.height)
+        }
+    }
+
+    /// Click an element by a handle issued by the latest read. The handle is
+    /// consumed exactly once when all freshness checks pass; dispatch failures
+    /// never return it for reuse.
+    pub fn click_handle(&self, handle: &str, callback: impl FnOnce(Result<String, String>) + 'static) {
+        let entry = match self
+            .handles
+            .borrow_mut()
+            .take_valid(handle, self.generation.get(), Instant::now())
+        {
+            Ok(entry) => entry,
+            Err(error) => {
+                callback(Err(error));
+                return;
+            }
+        };
+        self.evaluate(
+            dom::click_handle_script(&self.observe_key, &entry.selector, &entry.url, entry.revision),
+            |raw| dom::encode_success(dom::decode_envelope(&raw)?),
+            callback,
+        );
+    }
+
+    /// Type into an element by a handle issued by the latest read; same
+    /// one-shot and freshness semantics as `click_handle`.
+    pub fn type_handle(
+        &self,
+        handle: &str,
+        text: &str,
+        callback: impl FnOnce(Result<String, String>) + 'static,
+    ) {
+        let entry = match self
+            .handles
+            .borrow_mut()
+            .take_valid(handle, self.generation.get(), Instant::now())
+        {
+            Ok(entry) => entry,
+            Err(error) => {
+                callback(Err(error));
+                return;
+            }
+        };
+        self.evaluate(
+            dom::type_handle_script(
+                &self.observe_key,
+                &entry.selector,
+                text,
+                &entry.url,
+                entry.revision,
+            ),
+            |raw| dom::encode_success(dom::decode_envelope(&raw)?),
+            callback,
+        );
+    }
+
+    /// Capture the current page as a bounded JPEG without activating or
+    /// focusing anything: `takeSnapshot` renders in the web content process
+    /// and also works while the view is hidden. The result JSON carries
+    /// `jpeg_base64` plus image/viewport sizes and the page generation.
+    pub fn snapshot(&self, callback: impl FnOnce(Result<String, String>) + 'static) {
+        let state = self.state();
+        let generation = self.generation.get();
+        let viewport = self.viewport();
+        if viewport.0 <= 0.0 || viewport.1 <= 0.0 {
+            callback(Err("浏览器尚无可见尺寸 / Browser view has no size yet".into()));
+            return;
+        }
+        let done = RefCell::new(Some(callback));
+        unsafe {
+            let config: id = msg_send![class!(WKSnapshotConfiguration), new];
+            let _: () = msg_send![config, setRect: NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(viewport.0, viewport.1))];
+            let block = ConcreteBlock::new(move |image: id, error: id| {
+                let raw = if error != nil {
+                    let description: id = msg_send![error, localizedDescription];
+                    Err(string(description))
+                } else if image == nil {
+                    Err("截图未返回图像 / Snapshot returned no image".into())
+                } else {
+                    encode_snapshot_jpeg(image).map(|(jpeg, width, height)| {
+                        serde_json::json!({
+                            "url": state.url,
+                            "title": state.title,
+                            "generation": generation,
+                            "viewport": {"width": viewport.0, "height": viewport.1},
+                            "image": {"width": width, "height": height},
+                            "jpeg_base64": base64::Engine::encode(
+                                &base64::engine::general_purpose::STANDARD,
+                                &jpeg,
+                            ),
+                        })
+                        .to_string()
+                    })
+                };
+                if let Some(callback) = done.borrow_mut().take() {
+                    callback(raw);
+                }
+            });
+            let block = block.copy();
+            let _: () = msg_send![self.view, takeSnapshotWithConfiguration: config completionHandler: &*block];
+            let _: () = msg_send![config, release];
+        }
     }
 
     fn evaluate(
@@ -418,8 +575,98 @@ impl Drop for BrowserView {
             let _: () = msg_send![self.view, removeFromSuperview];
             let _: () = msg_send![self.view, release];
             (*self.delegate).set_ivar(ERROR_IVAR, std::ptr::null_mut::<c_void>());
+            (*self.delegate).set_ivar(GENERATION_IVAR, std::ptr::null_mut::<c_void>());
             let _: () = msg_send![self.delegate, release];
             let _: () = msg_send![self.parent, release];
         }
     }
+}
+
+const MAX_SNAPSHOT_EDGE: f64 = 1280.0;
+const MAX_SNAPSHOT_BYTES: usize = 512 * 1024;
+
+/// Re-encode an `NSImage` snapshot as a JPEG within the CU-04 budget: longest
+/// edge ≤1280 px and ≤512 KiB via a 75/50/30 quality ladder.
+unsafe fn encode_snapshot_jpeg(image: id) -> Result<(Vec<u8>, usize, usize), String> {
+    let tiff: id = msg_send![image, TIFFRepresentation];
+    if tiff == nil {
+        return Err("截图不含像素 / Snapshot has no pixels".into());
+    }
+    let source: id = msg_send![class!(NSBitmapImageRep), alloc];
+    let source: id = msg_send![source, initWithData: tiff];
+    if source == nil {
+        return Err("截图不含像素 / Snapshot has no pixels".into());
+    }
+    let result = encode_snapshot_rep(source);
+    let _: () = msg_send![source, release];
+    result
+}
+
+unsafe fn encode_snapshot_rep(source: id) -> Result<(Vec<u8>, usize, usize), String> {
+    let pw: i64 = msg_send![source, pixelsWide];
+    let ph: i64 = msg_send![source, pixelsHigh];
+    if pw <= 0 || ph <= 0 {
+        return Err("截图不含像素 / Snapshot has no pixels".into());
+    }
+    let longest = pw.max(ph) as f64;
+    let scale = if longest > MAX_SNAPSHOT_EDGE {
+        MAX_SNAPSHOT_EDGE / longest
+    } else {
+        1.0
+    };
+    let tw = ((pw as f64) * scale).floor().max(1.0) as i64;
+    let th = ((ph as f64) * scale).floor().max(1.0) as i64;
+    let target: id = msg_send![class!(NSBitmapImageRep), alloc];
+    let color = NSString::alloc(nil).init_str("NSDeviceRGBColorSpace");
+    let target: id = msg_send![target, initWithBitmapDataPlanes: std::ptr::null_mut::<*mut u8>()
+        pixelsWide: tw
+        pixelsHigh: th
+        bitsPerSample: 8i64
+        samplesPerPixel: 4i64
+        hasAlpha: YES
+        isPlanar: NO
+        colorSpaceName: color
+        bitmapFormat: 0u64
+        bytesPerRow: tw * 4
+        bitsPerPixel: 32i64];
+    let _: () = msg_send![color, release];
+    if target == nil {
+        return Err("无法创建位图 / Unable to allocate bitmap".into());
+    }
+    let context: id = msg_send![class!(NSGraphicsContext), graphicsContextWithBitmapImageRep: target];
+    if context == nil {
+        let _: () = msg_send![target, release];
+        return Err("无法创建绘图上下文 / Unable to allocate graphics context".into());
+    }
+    let _: () = msg_send![class!(NSGraphicsContext), saveGraphicsState];
+    let _: () = msg_send![class!(NSGraphicsContext), setCurrentContext: context];
+    let rect = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(tw as f64, th as f64));
+    let white: id = msg_send![class!(NSColor), whiteColor];
+    let _: () = msg_send![white, set];
+    let _: () = msg_send![class!(NSBezierPath), fillRect: rect];
+    let _: BOOL = msg_send![source, drawInRect: rect];
+    let _: () = msg_send![class!(NSGraphicsContext), restoreGraphicsState];
+    for quality in [0.75f64, 0.5, 0.3] {
+        let key = NSString::alloc(nil).init_str("NSImageCompressionFactor");
+        let number: id = msg_send![class!(NSNumber), numberWithDouble: quality];
+        let props: id = msg_send![class!(NSDictionary), dictionaryWithObject: number forKey: key];
+        let _: () = msg_send![key, release];
+        // NSBitmapImageFileTypeJPEG = 3
+        let data: id = msg_send![target, representationUsingType: 3u64 properties: props];
+        if data == nil {
+            continue;
+        }
+        let len: usize = msg_send![data, length];
+        let ptr: *const u8 = msg_send![data, bytes];
+        if ptr.is_null() || len == 0 {
+            continue;
+        }
+        let bytes = std::slice::from_raw_parts(ptr, len).to_vec();
+        if len <= MAX_SNAPSHOT_BYTES {
+            let _: () = msg_send![target, release];
+            return Ok((bytes, tw as usize, th as usize));
+        }
+    }
+    let _: () = msg_send![target, release];
+    Err("截图超过 512KiB / Snapshot exceeds 512KiB".into())
 }

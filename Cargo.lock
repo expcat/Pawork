@@ -4417,6 +4417,7 @@ dependencies = [
 name = "pawork-browser"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "block",
  "cocoa 0.26.0",
  "objc",

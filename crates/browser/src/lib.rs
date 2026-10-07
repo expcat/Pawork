@@ -3,6 +3,7 @@
 
 mod dom;
 mod external;
+mod observe;
 pub use external::{capture_external_page, ExternalBrowser, ExternalPageError};
 
 #[cfg(target_os = "macos")]
@@ -103,6 +104,20 @@ mod unsupported {
             callback(Err(
                 "浏览器首版仅支持 macOS / Browser is currently available on macOS".into(),
             ));
+        }
+        pub fn click_handle(&self, _: &str, callback: impl FnOnce(Result<String, String>) + 'static) {
+            callback(Err("Unsupported platform".into()));
+        }
+        pub fn type_handle(
+            &self,
+            _: &str,
+            _: &str,
+            callback: impl FnOnce(Result<String, String>) + 'static,
+        ) {
+            callback(Err("Unsupported platform".into()));
+        }
+        pub fn snapshot(&self, callback: impl FnOnce(Result<String, String>) + 'static) {
+            callback(Err("Unsupported platform".into()));
         }
         pub fn click(&self, _: &str, callback: impl FnOnce(Result<String, String>) + 'static) {
             callback(Err("Unsupported platform".into()));

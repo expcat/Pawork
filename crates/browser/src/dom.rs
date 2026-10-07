@@ -69,13 +69,28 @@ function rejectClick(el){
   if(!href||!webUrl(href)) return '不支持此链接 / This link is not supported';
   return null;
 }
+function rectOf(el){
+  var r=el.getBoundingClientRect();
+  var q=function(v){return Math.round(v*100)/100;};
+  return {x:q(r.x),y:q(r.y),width:q(r.width),height:q(r.height)};
+}
 "#;
+
+/// Revision-counter prologue shared by the read script: installs a
+/// `MutationObserver` once per document under a per-view token; navigation
+/// wipes the page realm, so a missing counter marks a stale observation.
+fn revision_prologue(key: &str) -> String {
+    format!(
+        "var KEY={key};\nvar st=null;\ntry{{ st=window[KEY]; }}catch(e){{ st=null; }}\nif(!st||typeof st.revision!=='number'){{\n  st={{revision:0}};\n  try{{\n    new MutationObserver(function(){{st.revision+=1;}}).observe(document.documentElement||document,{{subtree:true,childList:true,attributes:true,characterData:true}});\n  }}catch(e){{}}\n  try{{ Object.defineProperty(window,KEY,{{value:st,writable:true,configurable:true}}); }}catch(e2){{ try{{ window[KEY]=st; }}catch(e3){{}} }}\n}}\n",
+        key = js_string(key),
+    )
+}
 
 fn js_string(value: &str) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "\"\"".into())
 }
 
-fn truncate_to_bytes(text: &str, keep: usize) -> String {
+pub(crate) fn truncate_to_bytes(text: &str, keep: usize) -> String {
     let mut keep = keep.min(text.len());
     while keep > 0 && !text.is_char_boundary(keep) {
         keep -= 1;
@@ -83,10 +98,11 @@ fn truncate_to_bytes(text: &str, keep: usize) -> String {
     text[..keep].to_string()
 }
 
-pub(crate) fn read_page_script() -> String {
+pub(crate) fn read_page_script(observe_key: &str) -> String {
     format!(
-        "(function(){{\n{helper}\nvar MAX={max};\nvar TEXT_MAX=24576;\nvar text=((document.body&&document.body.innerText)||'').slice(0,TEXT_MAX);\nvar links=[], as=document.querySelectorAll('a[href]');\nfor(var i=0;i<as.length&&links.length<80;i++){{\n  var a=as[i];\n  if(!visible(a)) continue;\n  var href=a.href||'';\n  if(!webUrl(href)) continue;\n  links.push({{selector:selectorFor(a),href:href,text:String(a.innerText||'').slice(0,200)}});\n}}\nvar inputs=[], fields=document.querySelectorAll('input,textarea,select');\nfor(var j=0;j<fields.length&&inputs.length<80;j++){{\n  var el=fields[j];\n  if(!visible(el)) continue;\n  var ty=inputType(el);\n  var item={{selector:selectorFor(el),type:ty}};\n  if(ty!=='password'&&ty!=='file') item.value=el.value==null?'':String(el.value).slice(0,500);\n  inputs.push(item);\n}}\nvar buttons=[], btns=document.querySelectorAll('button,input[type=button],input[type=submit],input[type=reset]');\nfor(var k=0;k<btns.length&&buttons.length<80;k++){{\n  var btn=btns[k];\n  if(!visible(btn)) continue;\n  var ty=inputType(btn);\n  buttons.push({{selector:selectorFor(btn),type:ty,text:String(btn.innerText||btn.value||'').slice(0,200)}});\n}}\nvar data={{url:String(location.href||''),title:String(document.title||''),text:text,links:links,inputs:inputs,buttons:buttons}};\nvar out=JSON.stringify({{ok:true,data:data}});\nwhile(out.length>MAX&&data.text.length){{ data.text=data.text.slice(0,Math.max(0,data.text.length-1024)); out=JSON.stringify({{ok:true,data:data}}); }}\nwhile(out.length>MAX&&data.links.length){{ data.links.pop(); out=JSON.stringify({{ok:true,data:data}}); }}\nwhile(out.length>MAX&&data.inputs.length){{ data.inputs.pop(); out=JSON.stringify({{ok:true,data:data}}); }}\nwhile(out.length>MAX&&data.buttons.length){{ data.buttons.pop(); out=JSON.stringify({{ok:true,data:data}}); }}\nif(out.length>MAX) return JSON.stringify({{ok:false,error:'页面内容超过 64KiB / Page snapshot exceeds 64KiB'}});\nreturn out;\n}})();",
+        "(function(){{\n{helper}\n{prologue}\nvar MAX={max};\nvar TEXT_MAX=24576;\nvar text=((document.body&&document.body.innerText)||'').slice(0,TEXT_MAX);\nvar links=[], as=document.querySelectorAll('a[href]');\nfor(var i=0;i<as.length&&links.length<80;i++){{\n  var a=as[i];\n  if(!visible(a)) continue;\n  var href=a.href||'';\n  if(!webUrl(href)) continue;\n  links.push({{selector:selectorFor(a),href:href,text:String(a.innerText||'').slice(0,200),rect:rectOf(a)}});\n}}\nvar inputs=[], fields=document.querySelectorAll('input,textarea,select');\nfor(var j=0;j<fields.length&&inputs.length<80;j++){{\n  var el=fields[j];\n  if(!visible(el)) continue;\n  var ty=inputType(el);\n  var item={{selector:selectorFor(el),type:ty,rect:rectOf(el)}};\n  if(ty!=='password'&&ty!=='file') item.value=el.value==null?'':String(el.value).slice(0,500);\n  inputs.push(item);\n}}\nvar buttons=[], btns=document.querySelectorAll('button,input[type=button],input[type=submit],input[type=reset]');\nfor(var k=0;k<btns.length&&buttons.length<80;k++){{\n  var btn=btns[k];\n  if(!visible(btn)) continue;\n  var ty=inputType(btn);\n  buttons.push({{selector:selectorFor(btn),type:ty,text:String(btn.innerText||btn.value||'').slice(0,200),rect:rectOf(btn)}});\n}}\nvar data={{url:String(location.href||''),title:String(document.title||''),dom_revision:st.revision,text:text,links:links,inputs:inputs,buttons:buttons}};\nvar out=JSON.stringify({{ok:true,data:data}});\nwhile(out.length>MAX&&data.text.length){{ data.text=data.text.slice(0,Math.max(0,data.text.length-1024)); out=JSON.stringify({{ok:true,data:data}}); }}\nwhile(out.length>MAX&&data.links.length){{ data.links.pop(); out=JSON.stringify({{ok:true,data:data}}); }}\nwhile(out.length>MAX&&data.inputs.length){{ data.inputs.pop(); out=JSON.stringify({{ok:true,data:data}}); }}\nwhile(out.length>MAX&&data.buttons.length){{ data.buttons.pop(); out=JSON.stringify({{ok:true,data:data}}); }}\nif(out.length>MAX) return JSON.stringify({{ok:false,error:'页面内容超过 64KiB / Page snapshot exceeds 64KiB'}});\nreturn out;\n}})();",
         helper = HELPER,
+        prologue = revision_prologue(observe_key),
         max = MAX_OUTPUT_BYTES,
     )
 }
@@ -103,6 +119,49 @@ pub(crate) fn type_text_script(selector: &str, text: &str) -> String {
     format!(
         "(function(){{\n{helper}\nvar found=uniqueVisible({sel});\nif(found.error) return JSON.stringify({{ok:false,error:found.error}});\nvar el=found.el;\nvar blocked=rejectSecret(el);\nif(blocked) return JSON.stringify({{ok:false,error:blocked}});\nvar tag=el.tagName;\nif(tag!=='INPUT'&&tag!=='TEXTAREA'&&!el.isContentEditable){{\n  return JSON.stringify({{ok:false,error:'目标不可输入 / Target is not editable'}});\n}}\nel.focus();\nvar value={text};\nif('value' in el){{\n  el.value=value;\n  el.dispatchEvent(new Event('input',{{bubbles:true}}));\n  el.dispatchEvent(new Event('change',{{bubbles:true}}));\n}} else {{\n  el.textContent=value;\n}}\nreturn JSON.stringify({{ok:true,data:{{typed:true}}}});\n}})();",
         helper = HELPER,
+        sel = js_string(selector),
+        text = js_string(text),
+    )
+}
+
+/// Freshness gate shared by handle-based element actions: the page realm must
+/// still hold the observation counter (navigation wipes it), the URL must be
+/// byte-identical to the observed one (covers SPA navigations) and the DOM
+/// revision must not have advanced.
+fn freshness_gate(observe_key: &str, expected_url: &str, expected_revision: u64) -> String {
+    format!(
+        "var KEY={key};\nvar st=null;\ntry{{ st=window[KEY]; }}catch(e){{ st=null; }}\nif(!st||typeof st.revision!=='number'||location.href!=={url}){{ return JSON.stringify({{ok:false,error:'页面已导航，句柄失效 / Page navigated — read the page again'}}); }}\nif(st.revision!=={revision}){{ return JSON.stringify({{ok:false,error:'页面 DOM 已变化，句柄失效 / Page DOM changed — read the page again'}}); }}\n",
+        key = js_string(observe_key),
+        url = js_string(expected_url),
+        revision = expected_revision,
+    )
+}
+
+pub(crate) fn click_handle_script(
+    observe_key: &str,
+    selector: &str,
+    expected_url: &str,
+    expected_revision: u64,
+) -> String {
+    format!(
+        "(function(){{\n{helper}\n{gate}\nvar found=uniqueVisible({sel});\nif(found.error) return JSON.stringify({{ok:false,error:found.error}});\nvar blocked=rejectClick(found.el);\nif(blocked) return JSON.stringify({{ok:false,error:blocked}});\nfound.el.focus();\nfound.el.click();\nreturn JSON.stringify({{ok:true,data:{{clicked:true}}}});\n}})();",
+        helper = HELPER,
+        gate = freshness_gate(observe_key, expected_url, expected_revision),
+        sel = js_string(selector),
+    )
+}
+
+pub(crate) fn type_handle_script(
+    observe_key: &str,
+    selector: &str,
+    text: &str,
+    expected_url: &str,
+    expected_revision: u64,
+) -> String {
+    format!(
+        "(function(){{\n{helper}\n{gate}\nvar found=uniqueVisible({sel});\nif(found.error) return JSON.stringify({{ok:false,error:found.error}});\nvar el=found.el;\nvar blocked=rejectSecret(el);\nif(blocked) return JSON.stringify({{ok:false,error:blocked}});\nvar tag=el.tagName;\nif(tag!=='INPUT'&&tag!=='TEXTAREA'&&!el.isContentEditable){{\n  return JSON.stringify({{ok:false,error:'目标不可输入 / Target is not editable'}});\n}}\nel.focus();\nvar value={text};\nif('value' in el){{\n  el.value=value;\n  el.dispatchEvent(new Event('input',{{bubbles:true}}));\n  el.dispatchEvent(new Event('change',{{bubbles:true}}));\n}} else {{\n  el.textContent=value;\n}}\nreturn JSON.stringify({{ok:true,data:{{typed:true}}}});\n}})();",
+        helper = HELPER,
+        gate = freshness_gate(observe_key, expected_url, expected_revision),
         sel = js_string(selector),
         text = js_string(text),
     )
@@ -249,6 +308,27 @@ mod tests {
                 .iter()
                 .any(|button| button["text"] == "Apply")
         );
+    }
+
+    #[test]
+    fn read_script_installs_revision_observer_and_rects() {
+        let script = read_page_script("__paworkObs_testtoken");
+        assert!(script.contains("MutationObserver"));
+        assert!(script.contains("__paworkObs_testtoken"));
+        assert!(script.contains("dom_revision:st.revision"));
+        assert!(script.contains("rect:rectOf("));
+    }
+
+    #[test]
+    fn handle_scripts_gate_on_url_and_revision_with_escaping() {
+        let script = click_handle_script("__paworkObs_k", "a[href=\"x\"]", "https://example.com/p?a=\"b\"", 41);
+        assert!(script.contains("if(st.revision!==41)"));
+        assert!(script.contains("location.href!==\"https://example.com/p?a=\\\"b\\\"\""));
+        assert!(script.contains("uniqueVisible(\"a[href=\\\"x\\\"]\")"));
+        let typed = type_handle_script("__paworkObs_k", "#q", "文本\"", "https://example.com/", 0);
+        assert!(typed.contains("rejectSecret"));
+        assert!(typed.contains("location.href!==\"https://example.com/\""));
+        assert!(typed.contains("文"));
     }
 
     #[test]

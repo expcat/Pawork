@@ -16,3 +16,4 @@ serde_json.workspace = true
 cocoa = "=0.26.0"
 objc = "0.2"
 block = "0.1"
+base64 = "0.22"

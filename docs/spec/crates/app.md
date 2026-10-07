@@ -179,7 +179,9 @@ UI-6b（[ADR-059](../settings.md#adr-059ui-6b-命名账号与持久选择2026-09
 
 GUI `run_start` 在既有 ToolScheduler 注册 `terminal` / `browser`，保留内置与 MCP 工具。两者要求可信工作区并经过显式审批；调用与结果沿用持久化 Agent 事件。`terminal_tool.rs` 共用 GUI 的 PtyService 与注册表，校验工作区归属和相对 cwd，提供 list/create/read/write/interrupt/close。PTY 没有命令沙箱；write 返回当时输出，不把 shell 仍运行当命令成功。
 
-`browser_tool.rs` 将请求绑定发起 Run 的 run_id 与本地 GUI 客户端。`browser_next` 按 run 一次领取（Host 先校验 run 活跃且属于所报 session），`browser_respond` 核对领取者；取消或 25s 超时移除请求，run 终态解除绑定。Desktop 在系统 WebKit 执行 navigate/read/click/type/back/forward/reload/close 并回报真实结果。历史重放不执行动作。
+`browser_tool.rs` 将请求绑定发起 Run 的 run_id 与本地 GUI 客户端。`browser_next` 按 run 一次领取（Host 先校验 run 活跃且属于所报 session），`browser_respond` 核对领取者；取消或 25s 超时移除请求，run 终态解除绑定。Desktop 在系统 WebKit 执行 navigate/read/click/type/screenshot/back/forward/reload/close 并回报真实结果；click/type 的 `handle` 与 `selector` 二选一，句柄由 Desktop 侧 pawork-browser 做代际 / TTL / 一次性校验。历史重放不执行动作。
+
+2026-10-07（CU-13）：`browser_respond` 与工具输出上限 96KiB 提至 768KiB（截图 JPEG ≤512KiB 的 base64 + 观测 JSON；1MiB 帧上限仍兜底）。`screenshot` 是视觉操作：仅当 RunStart 装配时当前模型的同 provider 目录证据声明 `image_input` 才放行，否则在访问 broker 前 PermissionDenied（文本模型后端访问次数为零）；成功时 `jpeg_base64` 拆为 `ContentPart::Image`（image/jpeg），URL / 尺寸 / generation 等元数据留在 Text。click/type 成功后 Desktop 回一次新鲜观测（`observation` 或 `observation_error`），由 Host 原样透传。
 
 ### API 1.24 产品面（2026-09-24）
 

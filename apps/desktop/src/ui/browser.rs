@@ -6,7 +6,6 @@ use gpui::{
     canvas, div, prelude::*, px, App, Context, Entity, FocusHandle, Focusable, ScrollHandle, Window,
 };
 use pawork_browser::{BrowserState, BrowserView};
-use raw_window_handle::HasWindowHandle;
 
 use super::{
     accessibility::{AxAction, AxNode, AxRect, AxRole},
@@ -185,14 +184,13 @@ impl AppView {
         }
     }
 
-    pub(super) fn ensure_browser_poll(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// CU-13：轮询改在 app 级后台任务上运行（不依赖 window），隐藏窗口
+    /// display link 停转后浏览器状态同步与 Host 请求派发仍然工作。
+    pub(super) fn ensure_browser_poll(&mut self, cx: &mut Context<Self>) {
         if self.browser.native.is_some() && self.browser.poll.is_none() {
-            self.browser.poll = Some(cx.spawn_in(window, async move |this, cx| loop {
+            self.browser.poll = Some(cx.spawn(async move |this, cx| loop {
                 smol::Timer::after(Duration::from_millis(250)).await;
-                if this
-                    .update_in(cx, |view, window, cx| view.sync_browser_state(window, cx))
-                    .is_err()
-                {
+                if this.update(cx, |view, cx| view.sync_browser_state(cx)).is_err() {
                     break;
                 }
             }));
@@ -210,7 +208,7 @@ impl AppView {
     pub(super) fn browser_action(
         &mut self,
         action: &str,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if self.route != AppRoute::Workspace
@@ -229,18 +227,15 @@ impl AppView {
                 }
             };
             if self.browser.native.is_none() {
-                let native = HasWindowHandle::window_handle(window)
-                    .map_err(|error| error.to_string())
-                    .and_then(BrowserView::new);
-                match native {
-                    Ok(native) => self.browser.native = Some(Rc::new(native)),
-                    Err(error) => {
-                        self.browser.error = Some(error);
-                        cx.notify();
-                        return;
+                    match self.create_native_browser() {
+                        Ok(native) => self.browser.native = Some(Rc::new(native)),
+                        Err(error) => {
+                            self.browser.error = Some(error);
+                            cx.notify();
+                            return;
+                        }
                     }
-                }
-                self.ensure_browser_poll(window, cx);
+                    self.ensure_browser_poll(cx);
             }
             self.browser.error = self
                 .browser
@@ -262,11 +257,23 @@ impl AppView {
             }
             self.browser.error = None;
         }
-        self.sync_browser_state(window, cx);
+        self.sync_browser_state(cx);
         cx.notify();
     }
 
-    fn sync_browser_state(&mut self, _window: &Window, cx: &mut Context<Self>) {
+    /// 由渲染入口（interactive 导航）与后台派发共用的 WebView 创建：
+    /// 句柄来自 render 期缓存的原始窗口句柄，不再需要 Window 参数。
+    fn create_native_browser(&self) -> Result<BrowserView, String> {
+        let raw = self
+            .raw_window_handle
+            .ok_or_else(|| "Window handle unavailable".to_string())?;
+        // SAFETY: 单窗口应用；raw 句柄在 render 里每帧从活窗口刷新，
+        // 本调用只读句柄创建子视图，不持有窗口所有权。
+        let handle = unsafe { raw_window_handle::WindowHandle::borrow_raw(raw) };
+        BrowserView::new(handle)
+    }
+
+    fn sync_browser_state(&mut self, cx: &mut Context<Self>) {
         let Some(native) = &self.browser.native else {
             return;
         };
@@ -464,19 +471,21 @@ impl AppView {
 }
 
 impl AppView {
-    pub(super) fn dispatch_browser_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// 派发 Host 浏览器请求。CU-13 起在 handle_controller_event 收到请求时
+    /// 立即以 app 级后台任务执行：隐藏窗口 render 停摆，不能等下一帧。
+    /// 全程不打开/切换面板、不抢焦点；中途切任务走重取模式落空后明确报错。
+    pub(super) fn dispatch_browser_request(&mut self, cx: &mut Context<Self>) {
         let Some((session, run_id, request_id, action)) = self.browser_request.take() else {
             return;
         };
-        cx.spawn_in(window, async move |this, cx| {
-            smol::Timer::after(Duration::from_millis(1)).await;
-            let operation = this.update_in(cx, |view, window, cx| {
+        cx.spawn(async move |this, cx| {
+            let operation = this.update(cx, |view, cx| {
                 if view.projection.active_session_id.as_deref() != Some(&session)
                     || view.projection.active_run_id.as_deref() != Some(&run_id)
                 {
                     return Err("Task is no longer visible".to_string());
                 }
-                let name = action["action"].as_str().unwrap_or("");
+                let name = action["action"].as_str().unwrap_or("").to_string();
                 if name == "close" {
                     view.browser.close(cx);
                     view.inspector_open_tabs
@@ -487,57 +496,37 @@ impl AppView {
                     cx.notify();
                     return Ok(None);
                 }
+                // 面板保持用户当前状态（可后台隐藏执行）；open 标记只让
+                // Browser 标签可发现并跨任务记住，不强制弹出、不切页签。
                 view.browser.open = true;
                 view.remember_inspector_tab(InspectorTab::Browser);
-                view.inspector_tab = InspectorTab::Browser;
-                view.inspector_open = true;
-                view.close_open_menu(cx);
                 if view.browser.native.is_none() {
                     if name != "navigate" {
                         return Err("Browser has no page; navigate first".into());
                     }
-                    let native = HasWindowHandle::window_handle(window)
-                        .map_err(|e| e.to_string())
-                        .and_then(BrowserView::new)?;
+                    let native = view.create_native_browser()?;
                     view.browser.native = Some(Rc::new(native));
-                    view.ensure_browser_poll(window, cx);
+                    view.ensure_browser_poll(cx);
                 }
-                let native = view.browser.native.clone().unwrap();
-                match name {
+                let native = view.browser.native.clone().expect("browser native");
+                match name.as_str() {
                     "navigate" => native.navigate(action["url"].as_str().unwrap_or(""))?,
                     "back" if native.state().can_go_back => native.back(),
                     "forward" if native.state().can_go_forward => native.forward(),
                     "reload" => native.reload(),
-                    "read" | "click" | "type" => {}
+                    "read" | "click" | "type" | "screenshot" => {}
                     _ => return Err("Unsupported action or unavailable history".into()),
                 }
                 cx.notify();
-                Ok(Some(native))
+                Ok(Some(name))
             });
             let result: Result<serde_json::Value, String> = match operation {
-                Ok(Ok(Some(_native))) => {
-                    let name = action["action"].as_str().unwrap_or("");
-                    if matches!(name, "navigate" | "back" | "forward" | "reload") {
-                        smol::Timer::after(Duration::from_millis(200)).await;
-                        let started = std::time::Instant::now();
-                        loop {
-                            let loading = this.update_in(cx, |view, _window, _cx| {
-                                view.browser
-                                    .native
-                                    .as_ref()
-                                    .map(|native| native.state().loading)
-                                    .unwrap_or(false)
-                            });
-                            if !matches!(loading, Ok(true))
-                                || started.elapsed() >= Duration::from_secs(15)
-                            {
-                                break;
-                            }
-                            smol::Timer::after(Duration::from_millis(100)).await;
-                        }
+                Ok(Ok(Some(name))) => {
+                    if matches!(name.as_str(), "navigate" | "back" | "forward" | "reload") {
+                        wait_browser_idle(&this, cx, Duration::from_secs(15)).await;
                     }
                     let state = this
-                        .update_in(cx, |view, _window, _cx| {
+                        .update(cx, |view, _cx| {
                             view.browser
                                 .native
                                 .as_ref()
@@ -554,49 +543,36 @@ impl AppView {
                             } else if state.loading {
                                 Err("Page is still loading; read again later".into())
                             } else {
-                                let (send, receive) = smol::channel::bounded(1);
-                                let callback = move |result| {
-                                    let _ = send.try_send(result);
-                                };
-                                let started = this
-                                    .update_in(cx, |view, _window, _cx| {
-                                        let Some(native) = view.browser.native.clone() else {
-                                            return Err("Browser page closed".to_string());
-                                        };
-                                        match name {
-                                            "click" => native.click(
-                                                action["selector"].as_str().unwrap_or(""),
-                                                callback,
-                                            ),
-                                            "type" => native.type_text(
-                                                action["selector"].as_str().unwrap_or(""),
-                                                action["text"].as_str().unwrap_or(""),
-                                                callback,
-                                            ),
-                                            _ => native.read_page(callback),
+                                let primary = browser_script_call(&this, cx, &action, &name).await;
+                                match primary {
+                                    // CU-13：元素动作成功后回一次新鲜观测
+                                    //（等 ≤5s 收敛 loading 再 read），让模型
+                                    // 一次调用拿到动作结果与最新页面，无需
+                                    // 凭旧句柄猜状态。
+                                    Ok(mut data) if matches!(name.as_str(), "click" | "type") => {
+                                        wait_browser_idle(&this, cx, Duration::from_secs(5)).await;
+                                        let observation =
+                                            browser_script_call(&this, cx, &action, "read").await;
+                                        if let Some(obj) = data.as_object_mut() {
+                                            match observation {
+                                                Ok(observation) => {
+                                                    obj.insert("observation".into(), observation);
+                                                }
+                                                Err(error) => {
+                                                    obj.insert(
+                                                        "observation".into(),
+                                                        serde_json::Value::Null,
+                                                    );
+                                                    obj.insert(
+                                                        "observation_error".into(),
+                                                        error.into(),
+                                                    );
+                                                }
+                                            }
                                         }
-                                        Ok(())
-                                    })
-                                    .map_err(|e| e.to_string())
-                                    .and_then(|started| started);
-                                if let Err(error) = started {
-                                    Err(error)
-                                } else {
-                                    let result = smol::future::or(
-                                        async {
-                                            receive.recv().await.unwrap_or_else(|_| {
-                                                Err("Browser callback closed".into())
-                                            })
-                                        },
-                                        async {
-                                            smol::Timer::after(Duration::from_secs(5)).await;
-                                            Err("Browser did not return a result".into())
-                                        },
-                                    )
-                                    .await;
-                                    result.and_then(|json| {
-                                        serde_json::from_str(&json).map_err(|e| e.to_string())
-                                    })
+                                        Ok(data)
+                                    }
+                                    other => other,
                                 }
                             }
                         }
@@ -617,4 +593,86 @@ impl AppView {
         })
         .detach();
     }
+}
+
+/// 等页面收敛 loading（导航后给 200ms 让加载开始），超时也返回——
+/// 调用方随后按 state 决定是否报错。
+async fn wait_browser_idle(
+    this: &gpui::WeakEntity<AppView>,
+    cx: &mut gpui::AsyncApp,
+    timeout: Duration,
+) {
+    smol::Timer::after(Duration::from_millis(200)).await;
+    let started = std::time::Instant::now();
+    loop {
+        let loading = this.update(cx, |view, _cx| {
+            view.browser
+                .native
+                .as_ref()
+                .map(|native| native.state().loading)
+                .unwrap_or(false)
+        });
+        if !matches!(loading, Ok(true)) || started.elapsed() >= timeout {
+            break;
+        }
+        smol::Timer::after(Duration::from_millis(100)).await;
+    }
+}
+
+/// 在真实 WebView 上跑一段观测/动作脚本并等回调（5s 超时）。
+/// click/type 优先走 read 签发的句柄（代际 + TTL + 一次性由
+/// pawork-browser 校验），无句柄回退 CSS selector。
+async fn browser_script_call(
+    this: &gpui::WeakEntity<AppView>,
+    cx: &mut gpui::AsyncApp,
+    action: &serde_json::Value,
+    name: &str,
+) -> Result<serde_json::Value, String> {
+    let (send, receive) = smol::channel::bounded(1);
+    let callback = move |result| {
+        let _ = send.try_send(result);
+    };
+    let started = this
+        .update(cx, |view, _cx| {
+            let Some(native) = view.browser.native.clone() else {
+                return Err("Browser page closed".to_string());
+            };
+            match name {
+                "click" => {
+                    if let Some(handle) = action["handle"].as_str() {
+                        native.click_handle(handle, callback)
+                    } else {
+                        native.click(action["selector"].as_str().unwrap_or(""), callback)
+                    }
+                }
+                "type" => {
+                    let text = action["text"].as_str().unwrap_or("");
+                    if let Some(handle) = action["handle"].as_str() {
+                        native.type_handle(handle, text, callback)
+                    } else {
+                        native.type_text(action["selector"].as_str().unwrap_or(""), text, callback)
+                    }
+                }
+                "screenshot" => native.snapshot(callback),
+                _ => native.read_page(callback),
+            }
+            Ok(())
+        })
+        .map_err(|error| error.to_string())
+        .and_then(|started| started);
+    started?;
+    let result = smol::future::or(
+        async {
+            receive
+                .recv()
+                .await
+                .unwrap_or_else(|_| Err("Browser callback closed".into()))
+        },
+        async {
+            smol::Timer::after(Duration::from_secs(5)).await;
+            Err("Browser did not return a result".into())
+        },
+    )
+    .await;
+    result.and_then(|json| serde_json::from_str(&json).map_err(|error| error.to_string()))
 }

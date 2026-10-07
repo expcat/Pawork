@@ -246,7 +246,7 @@ UI-6b / API 1.15（[ADR-059](../settings.md#adr-059ui-6b-命名账号与持久�
 
 定向 golden 覆盖参数、空目录、实时完成与分页重复/迟到、终态缺失与零读数、基线清理；现有并发工具与分页语义测试继续覆盖身份隔离。
 
-GUI API 1.18 新增 `BrowserControl` capability 与 GUI-only `BrowserNext { session_id, run_id }` 和 `BrowserRespond { request_id, result }`。Data 回执携带请求；结果使用 `{ok, data}` 或 `{ok:false,error}`。旧 minor 拒绝新操作；动作不经可重放事件下发。`browser_next` 按 run 领取：run 不活跃或不属于该 session 时回 JSON null。
+GUI API 1.18 新增 `BrowserControl` capability 与 GUI-only `BrowserNext { session_id, run_id }` 和 `BrowserRespond { request_id, result }`。Data 回执携带请求；结果使用 `{ok, data}` 或 `{ok:false,error}`。旧 minor 拒绝新操作；动作不经可重放事件下发。`browser_next` 按 run 领取：run 不活跃或不属于该 session 时回 JSON null。 BrowserNext 的 action 与 BrowserRespond 的 result 是不透明 JSON：新增浏览器动作方言（如 CU-13 的 screenshot / handle 定位）不改 wire、不 bump minor；旧 Desktop 对未知动作 fail-closed 回 {ok:false,error}，旧 Host 也只透传不解释。
 
 ### 任务统计（API 1.26，2026-10-04）
 
