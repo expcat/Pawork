@@ -1,23 +1,24 @@
 # pawork-orchestration
 
-> 多 Agent 编排：在控制面（租约 / 用量 / 租户策略）之上运行 `AgentSupervisor`——spawn worker、预算闸门、取消整棵子树、任务依赖图、可选 git worktree 隔离与 patch merge。依赖 `pawork-domain` + `pawork-policy`（共用路径内核）+ `pawork-control-plane`（关 default features），不依赖 `pawork-workflow`。
+> 多 Agent 编排：在控制面（租约 / 用量 / 租户策略）之上运行 `AgentSupervisor`。现行 Host 使用 spawn、预算闸门、终态收口与取消整棵子树。任务依赖图、git worktree 隔离与 patch merge 仍在库内，但 App 不装配。依赖 `pawork-domain` + `pawork-policy`（共用路径内核）+ `pawork-control-plane`（关 default features），不依赖 `pawork-workflow`。
 
 ## 1. 职责与边界
 
-- **做什么**：worker 生命周期状态机与事件溯源（`lifecycle`）；Supervisor 集中拥有 spawn / start / complete / fail / cancel_tree / 恢复诊断（`supervisor/`）；worker 级 token / cost 预算度量与 ledger flush（`budget`）；任务依赖 DAG（`task_graph`）；worker 身份（`identity`）；worktree 分配抽象与 RAII 守卫（`worktree`）；patch 收集 / 冲突检测 / Parent 审批合并（`merge`）。
-- **不做什么**：不写 SQLite（预算超限走注入的控制面 `UsageLedger`）；不自动合并冲突（Parent 审批门）；不自动重试任务；不依赖 `pawork-workflow`（plan / task 装配在 app）；`OrchestrationEvent` 独立于 `pawork-domain::AgentEvent`，持久化由宿主决定。
-- **注入面**：`CredentialPool`（租约）、`TenantPolicyEngine`（策略闸门）、`UsageLedger`（用量账本）来自 `pawork-control-plane`；`WorktreeAllocator` / `PatchMerger` / `TaskGraph` / parent workspace 经 builder 方法可选注入。
+- **做什么**：worker 生命周期状态机与事件溯源（`lifecycle`）；Supervisor 集中拥有 spawn / start / complete / fail / cancel_tree（恢复诊断只在测试构建）；worker 级 token / cost 预算度量与 ledger flush（`budget`）；任务依赖 DAG（`task_graph`，未由 Host 装配）；worker 身份（`identity`）；worktree 分配抽象与 RAII 守卫（`worktree`）；patch 收集 / 冲突检测 / Parent 审批合并（`merge`，未激活）。
+- **不做什么**：不写 SQLite（预算超限走注入的控制面 `UsageLedger`）；不自动合并冲突（Parent 审批门）；不自动重试任务，也不把 `retry_task` 当成复活 Failed worker；不提供 Host 热恢复；不依赖 `pawork-workflow`（plan / task 装配在 app）；`OrchestrationEvent` 独立于 `pawork-domain::AgentEvent`，宿主当前不持久化这组事件。
+- **谁在用**：App 模型子代理（[subagents.rs](../../../crates/app/src/subagents.rs) 的 `supervisor()`）和 S11 demo（[orchestration_host.rs](../../../crates/app/src/orchestration_host.rs)）都只 `new` 控制面 pool / policy / ledger，再 spawn / start / complete / fail / cancel_tree。二者都不调用 `with_task_graph`、`with_worktree_allocator`、`with_patch_merger`、`retry_task`、`recover_report`。子代理与父工作区共享文件；失败后的重跑是新的 `spawn_agent`，恢复走会话事件。demo 不是模型 runtime。
+- **注入面**：`CredentialPool`、`TenantPolicyEngine`、`UsageLedger` 是公开构造参数。`with_parent_workspace` / `with_worktree_allocator` / `with_task_graph` / `with_patch_merger` 以及 `retry_task` / `propose_patch` / `approve_patch` / `recover_report` 只在 `#[cfg(test)]` 中存在。正式库仍编译任务图与 worktree 的条件分支和终态释放，但生产构造无法注入。`TaskGraph`、`WorktreeAllocator`、`PatchMerger` 类型仍公开，Host 未装配；图与合并的激活条件仍是 [O-06 / O-07](../backlog.md)。
 
 ## 2. 模块与文件地图
 
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
 | `src/lib.rs` | ~20 | 7 个私有模块全部 glob re-export 到 crate 根（无 `pub mod` 子命名空间） |
-| `src/supervisor/mod.rs` | ~2820（非测试 ~440） | `AgentSupervisor` 结构（workers / cancel_tokens / children / reservations / budget / event_log / pending_patches / flush_ctx / flush_in_flight）；`SupervisorConfig`（并发 16、池并发建议 4、默认预算、`max_worker_depth`）；`SupervisorError`（11 变体）；builder 注入；`complete` / `fail` / `retry_task` / `propose_patch` / `approve_patch`；约 2380 行内联测试 |
+| `src/supervisor/mod.rs` | ~2820（非测试 ~440） | `AgentSupervisor` 结构（workers / cancel_tokens / children / reservations / budget / event_log / flush_ctx / flush_in_flight；测试构建另有 patch 字段）；`SupervisorConfig`（并发 16、池并发建议 4、默认预算、`max_worker_depth`）；`SupervisorError`（11 变体）；测试构建 builder 注入；公开 `complete` / `fail`，测试构建 `retry_task` / `propose_patch` / `approve_patch`；约 2380 行内联测试 |
 | `src/supervisor/spawn.rs` | ~730 | `SpawnRequest`；`spawn` 全流程（parent 准入 → 原子并发预约 → 策略闸门 → worktree → lease → 注册）；`abort_spawn_as_failed` 统一失败收口（标记 Failed、发 `WorkerFailed`、移除 children / cancel token、释放 worktree 并以 `LeaseOutcome::Released` 释放 lease）；`ConcurrencyReservation`（RAII 槽位）；lease 作用域校验 `validate_lease_scope`；策略决策审计记录 |
 | `src/supervisor/cancel_tree.rs` | ~175 | `cancel_tree`（栈式深度优先遍历取消整棵子树，覆盖全部后代）；`CancelTreeReceipt` |
 | `src/supervisor/budget_gate.rs` | ~260 | `record_usage`（预算检查 + `BudgetExceeded` 去重发射）；`flush_usage`（终态 flush 显式重试）；`flush_terminal_usage`（pub(crate) 终态路径）；`FlushTicket`（在途标记 RAII） |
-| `src/supervisor/recovery.rs` | ~50 | `recover_report`（report-only 崩溃诊断）；`RecoveryReport` |
+| `src/supervisor/recovery.rs` | ~50 | `#[cfg(test)]` 的 `recover_report`（report-only 崩溃诊断）；`RecoveryReport` |
 | `src/supervisor/registry.rs` | ~180 | `WorkerEntry`（instance + 状态机 + lease / worktree 守卫 + model）；`start_worker`；`cancel_token` / `state` / `events` 查询；`emit` / `remove_child`；`apply_terminal_and_take`（终态锁内取守卫） |
 | `src/budget.rs` | ~900（非测试 ~415） | `WorkerBudgetLimits`（None = 不限）；`UsageAccumulator`（原子累加）；`BudgetReport`；维度常量 `DIM_INPUT_TOKENS` / `DIM_OUTPUT_TOKENS` / `DIM_COST_MICROS`；`DEFAULT_SOFT_RATIO = 0.8`（ppm 整数比较避免 f64 误差）；`WorkerBudgetController`（check / diff_hard_exceeded / flush_to_ledger 幂等提交游标）；`LedgerContext` |
 | `src/lifecycle.rs` | ~630（非测试 ~435） | `WorkerState` 九态；`WorkerTransition` / `transition` 纯函数 / `WorkerStateMachine`（apply 返回新状态）；`LifecycleError`；`OrchestrationEvent`（21 变体，serde tag/content snake_case）；`replay_workers` 容错重放 |
@@ -32,7 +33,7 @@
 
 ### 3.1 `AgentSupervisor`
 
-- 构造：`new(pool: Arc<dyn CredentialPool>, policy: Arc<dyn TenantPolicyEngine>, ledger: Arc<dyn UsageLedger>, config: SupervisorConfig)`；builder：`with_parent_workspace(PathBuf)` / `with_worktree_allocator` / `with_task_graph` / `with_patch_merger`。
+- 构造：`new(pool: Arc<dyn CredentialPool>, policy: Arc<dyn TenantPolicyEngine>, ledger: Arc<dyn UsageLedger>, config: SupervisorConfig)` 公开。`with_parent_workspace` / `with_worktree_allocator` / `with_task_graph` / `with_patch_merger` 只在测试构建存在。App 子代理与 S11 demo 都不调用。未注入图时，公开 `SpawnRequest` 上的 `task_deps` / `task_description` / `task_max_retries` 被 spawn 忽略。
 - `SupervisorConfig` 字段：`max_agent_concurrency`（默认 16，本地全局闸门）；`default_pool_concurrency`（默认 4，建池建议值，本包不建池）；`budget`（spawn 未携带预算时的默认 `WorkerBudgetLimits`）；`max_worker_depth`（`None` 不限）。
 - `SupervisorError` 变体一览：`UnknownAgent` / `IllegalLifecycle` / `PolicyDenied` / `PoolAcquire` / `LeaseError` / `Merge` / `WorkerTerminal`（终态拒绝 record_usage）/ `UsageFlushPending`（flush 失败或在途）/ `FlushNotTerminal` / `FlushContextMissing` / `CancelTreeFlushPending { receipt, pending }`。
 - `spawn(SpawnRequest) -> Result<AgentId, SupervisorError>`：创建并启动 worker（流程见 §4.1）。`SpawnRequest` 携带 tenant / principal / parent_id（None = 根 Parent）/ session / 可选 worktree_path / 可选预算覆盖 / 可选 model（过租户模型白名单）/ 可选 `AcquireRequest`（申请 lease）/ 任务图参数（deps / description / max_retries）。
@@ -41,10 +42,10 @@
 - `cancel_tree(&AgentId) -> Result<CancelTreeReceipt, SupervisorError>`：递归取消整棵子树（见 §4.2）；receipt 含 `cancelled_ids` 与 `leases_released`。
 - `record_usage(&AgentId, input, output, cost_micros)`：累加用量并对「新进入硬超限」维度发 `BudgetExceeded`（持续超限去重、回落后可再告警）；终态 worker 拒绝（`WorkerTerminal`）。
 - `flush_usage(&AgentId)`：终态用量 flush 的显式重试入口；活动 worker 拒绝（`FlushNotTerminal`）；在途并发拒绝（`UsageFlushPending`）；controller 在而归属 ctx 缺失 → `FlushContextMissing`（保留 controller 不吞 pending）。
-- `retry_task(&AgentId) -> Result<u32>`：仅复位 TaskGraph 状态（Failed→Created，attempt 递增）并发 `TaskRetried`；worker 生命周期仍是 Failed 终态，重跑需新 spawn。
-- `propose_patch(&AgentId, WorkerPatch) -> ConflictReport`：收集 worker 变更入待审批表，发 `PatchProposed`（有冲突另发 `PatchConflict`）；`approve_patch(&AgentId, MergeDecision) -> MergeOutcome`：按 Parent 决策执行（见 §4.4）。两者都要求已注入 `PatchMerger` 与 parent workspace，否则 `PolicyDenied`。
+- `retry_task(&AgentId) -> Result<u32>`（仅测试构建）：仅复位 TaskGraph 状态（Failed→Created，attempt 递增）并发 `TaskRetried`。worker 生命周期不变，Failed 仍是终态，本方法不 spawn、不把 worker 改回活动态；真正重跑需要新 spawn。未注入图时 `PolicyDenied`。
+- `propose_patch` 与 `approve_patch` 只在测试构建存在。收集、冲突检测与 Parent 决策见 §4.4；都要求已注入 `PatchMerger` 与 parent workspace，否则 `PolicyDenied`。这不是 Host 自动合并。
 - 查询：`state(&AgentId) -> Option<WorkerState>`；`cancel_token(&AgentId)`；`events() -> Vec<OrchestrationEvent>`（事件快照，重放输入）。
-- `recover_report(&[OrchestrationEvent]) -> RecoveryReport`：**report-only** 崩溃诊断——重放后把仍处活动态的孤儿在报告中推演为 Failed；不重建 WorkerEntry / children / cancel token，不 emit 事件，报告不可作为继续操作的恢复态。
+- `recover_report(&[OrchestrationEvent]) -> RecoveryReport`（仅测试构建）：**report-only** 崩溃诊断。重放后把仍处活动态的孤儿在报告中推演为 Failed；不读取、不重建 WorkerEntry / children / cancel token / lease，不 emit 事件。报告不可作为继续 cancel / assign / flush 的恢复态。正式库不提供这个入口。App 不持久化 `OrchestrationEvent`，子代理恢复不走这里。
 
 ### 3.2 预算（`budget`）
 
@@ -114,7 +115,7 @@
 - **spawn 原子并发**：预约与兑现在单一临界区，无 check-then-act 窗口；RAII 保证失败路径归还槽位。
 - **不信任外部输入**：AcquireRequest 由 supervisor 覆写 canonical 身份；pool 返回的 lease 作用域必须校验，错配 fail-closed。
 - **事件流一致**：spawn 中途失败也把 worker 标记 Failed 并注册（`WorkerFailed` 落日志），恢复重放不留悬挂 worker。
-- **recover_report 是 report-only**：不重建可操作状态、不 emit 事件。
+- **recover_report 是 report-only**：只在测试构建中诊断，不重建可操作状态、不 emit 事件，不能当作热恢复。
 - **worktree 释放安全**：只经 allocator（git 侧校验受管 worktree），绝不递归删除用户数据；Guard Drop 不隐式释放（避免无 runtime panic），须显式 `release`。
 - **merge 路径安全**：collect / detect_conflicts / merge 均拒绝绝对分量、任何 `..`、`.git` 与 symlink 逃逸，写入前重新通过 policy 路径内核；写入原子（tmp + rename）。
 - 状态机冻结：`WorkerState` 转换表、`TaskState` 转换表与 `OrchestrationEvent` serde 形状（`type`/`data` snake_case）是重放兼容面。
@@ -133,7 +134,7 @@
 
 | 位置 | 覆盖点 |
 | --- | --- |
-| `supervisor/mod.rs`（~40 个用例） | spawn 生命周期事件序（created→admitted→started）；lease 持有到 complete / fail 的 outcome 与账号健康；cancel_tree 递归取消、幂等、lease Cancelled 释放、flush pending 上抛；并发闸门（全局 / 租户 / 深度，`ConcurrencyDenied`）；策略闸门（角色 / 模型 / provider / account 白名单、日预算 fail-closed、AcquireRequest 错配、恶意 pool lease 作用域校验）；`record_usage` 终态拒绝与 `BudgetExceeded` 去重；`flush_usage` 重试矩阵（not-terminal / context-missing / in-flight / 幂等重放）；worktree 分配失败路径与显式释放；TaskGraph 联动（Ready 直启 / Blocked 等待 / retry；注册拒绝收口为 Failed + WorkerFailed 且释放 lease / worktree / 并发槽位）；patch propose→approve 全流程；`recover_report` 孤儿推演 |
+| `supervisor/mod.rs`（~40 个用例） | spawn 生命周期事件序（created→admitted→started）；lease 持有到 complete / fail 的 outcome 与账号健康；cancel_tree 递归取消、幂等、lease Cancelled 释放、flush pending 上抛；并发闸门（全局 / 租户 / 深度，`ConcurrencyDenied`）；策略闸门（角色 / 模型 / provider / account 白名单、日预算 fail-closed、AcquireRequest 错配、恶意 pool lease 作用域校验）；`record_usage` 终态拒绝与 `BudgetExceeded` 去重；`flush_usage` 重试矩阵（not-terminal / context-missing / in-flight / 幂等重放）；worktree 分配失败路径与显式释放；TaskGraph 联动（Ready 直启 / Blocked 等待 / retry 只复位图且 worker 仍 Failed；注册拒绝收口为 Failed + WorkerFailed 且释放 lease / worktree / 并发槽位）；patch propose→approve 全流程；`recover_report` 孤儿推演且不重建 Supervisor |
 | `lifecycle.rs` | 状态机合法 / 非法转换矩阵；终态拒绝；`replay_workers` 容错重放（截断日志、迟到事件）；事件 serde round-trip |
 | `budget.rs` | 软 / 硬阈值判定与 ppm 精度；`diff_hard_exceeded` 去重与恢复再告警；flush 幂等游标（失败重放同 record、cost-only 增量、并发 clone 句柄共享游标）；`flush_ids_survive_process_restarts` 两个真实子进程生成同归属 / 同用量记录后，父进程账本完整接收并双计 |
 | `task_graph.rs` | 拒环 / 跨租户依赖 / 重复 id；前向引用与 ready_tasks；转换矩阵；retry 上限 |
@@ -146,8 +147,9 @@
 - Cargo description 已移除归档的 Agent Teams；Teams 仍归档于 `v2-final`，不要把 `AppEvent::TeamEvent` 当成现行编排面。
 - `OrchestrationEvent` 是本包私有事件模型（内存 `event_log`），不并入 `pawork-domain::AgentEvent`；持久化与对外投影由宿主负责。
 - 预算度量当前只贯通 input / output / cost 三维；`UsageRecord` 的 cache_read / cache_write 恒写 0（cache 通路未贯通，完整贯通单独排期，不写误导值）。
-- `recover_report` 不能作为热恢复：崩溃后要继续操作需重新 spawn；报告仅用于诊断孤儿。
-- `retry_task` 只复位任务图状态，不会复活 Failed worker。
+- `recover_report` 不能作为热恢复：正式库没有这个入口。崩溃后要继续操作必须重新 spawn。App 不持久化 `OrchestrationEvent`，不能把测试诊断说成宿主已能恢复 lease、取消令牌或 worker 树。
+- `retry_task` 只复位任务图状态，不会复活 Failed worker。现有 `retry_task_emits_task_retried` 同时断言图回到 Created、同一 worker 仍是 Failed。
+- B11（2026-10-08）把 Supervisor 的图、worktree、合并与恢复入口收到测试构建，不是删除 `TaskState` / `WorkerState` / `OrchestrationEvent`，也没有删掉正式库里的条件分支和终态 worktree 释放。O-06 的双顺序反向依赖校验和 O-07 的真实 fork commit 都还没做，本次不激活 Host DAG、自动合并或热恢复。`GitDiffProvider::base_content` 在 `git show HEAD:<rel>` 失败时仍回退父侧当前文件，未激活前不能当成生产合并。
 - `WorktreeGuard` 未显式 release 而 Drop 时 worktree 保持存在（仅告警）——长驻进程需保证终态路径都走显式释放（complete / fail / cancel_tree 已覆盖）。
 - 每个 worker 的 `CancellationToken` 由 spawn 注册，但令牌与实际执行体的绑定由宿主完成；本包只保证取消信号可查询、可触发。
 - 相关文档：[architecture](../../architecture.md) · [design](../../design.md) §2 · [flows](../flows.md) · [Spec 总览](../README.md) · [产品候选](../backlog.md)；相邻包：[domain.md](domain.md) · [control-plane.md](control-plane.md) · [git.md](git.md) · [app.md](app.md)。

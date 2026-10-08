@@ -1,22 +1,22 @@
-//! AgentSupervisor：spawn / 注册表 / 取消树 / 崩溃恢复（P12-1 + P12-6）。
+//! AgentSupervisor：spawn / 注册表 / 取消树。崩溃诊断只在 crate 内。
 //!
 //! - 所有 worker 都必须经 [`AgentSupervisor::spawn`] 创建，禁止脱离监督的
 //!   `tokio::spawn`；
 //! - 生命周期全部事件化、可重放（[`crate::OrchestrationEvent`]）；
 //! - 取消树：取消 parent 递归联动全部后代，lease 以
 //!   [`pawork_control_plane::credential::LeaseOutcome::Cancelled`] 幂等释放，**不惩罚账号健康**；
-//! - 恢复：[`AgentSupervisor::recover_report`] 为 report-only——重放事件后把
-//!   活动孤儿在**报告**中记为 `Failed`，不重建 `WorkerEntry` / children /
-//!   cancel token，也不 emit 恢复事件。
+//! - 诊断：`AgentSupervisor::recover_report` 只在测试构建中存在，且为 report-only。它重放
+//!   事件后把活动孤儿在**报告**中记为 `Failed`，不重建 `WorkerEntry` / children /
+//!   cancel token / lease，也不 emit 事件。App 不调用它，它不是 Host 热恢复。
 
 mod budget_gate;
 mod cancel_tree;
+#[cfg(test)]
 mod recovery;
 mod registry;
 mod spawn;
 
 pub use cancel_tree::CancelTreeReceipt;
-pub use recovery::RecoveryReport;
 pub use registry::WorkerEntry;
 pub use spawn::SpawnRequest;
 
@@ -40,6 +40,7 @@ use crate::identity::WorkerRole;
 use crate::lifecycle::{OrchestrationEvent, WorkerTransition};
 #[cfg(test)]
 use crate::lifecycle::{WorkerState, replay_workers};
+#[cfg(test)]
 use crate::merge::{
     ConflictReport, MergeDecision, MergeOutcome, PatchMerger, PatchProposal, WorkerPatch,
 };
@@ -117,7 +118,10 @@ pub enum SupervisorError {
     },
 }
 
-/// 编排 Supervisor：集中拥有 spawn / assign / cancel_tree / 恢复。
+/// 编排 Supervisor：集中拥有 spawn / start / complete / fail / cancel_tree。
+///
+/// 任务图、worktree 分配与 patch 合并的 builder 只在测试构建中存在。正式库仍保留
+/// 对应的条件分支与终态释放，但生产构造不会注入。App 子代理与 S11 demo 都不使用。
 pub struct AgentSupervisor {
     pub(crate) workers: Arc<Mutex<BTreeMap<AgentId, WorkerEntry>>>,
     pub(crate) cancel_tokens: Arc<Mutex<BTreeMap<AgentId, CancellationToken>>>,
@@ -136,7 +140,9 @@ pub struct AgentSupervisor {
     pub(crate) parent_workspace: Option<PathBuf>,
     pub(crate) worktree_allocator: Option<Arc<dyn WorktreeAllocator>>,
     pub(crate) task_graph: Option<Arc<TaskGraph>>,
+    #[cfg(test)]
     pub(crate) patch_merger: Option<Arc<PatchMerger>>,
+    #[cfg(test)]
     pub(crate) pending_patches: Arc<Mutex<BTreeMap<AgentId, PatchProposal>>>,
     /// 终态 flush 失败时缓存的 ledger 归属上下文，供 `flush_usage` 重试复用，
     /// 保证重试不丢失 account / provider / model 归属（lease 已释放后仍可对账）。
@@ -177,7 +183,9 @@ impl AgentSupervisor {
             parent_workspace: None,
             worktree_allocator: None,
             task_graph: None,
+            #[cfg(test)]
             patch_merger: None,
+            #[cfg(test)]
             pending_patches: Arc::new(Mutex::new(BTreeMap::new())),
             flush_ctx: Arc::new(Mutex::new(BTreeMap::new())),
             flush_in_flight: Arc::new(Mutex::new(BTreeSet::new())),
@@ -185,26 +193,39 @@ impl AgentSupervisor {
     }
 
     /// 设置 parent 工作区（worktree 分配与 patch 合并的基准目录）。
-    pub fn with_parent_workspace(mut self, path: PathBuf) -> Self {
+    ///
+    /// 只在测试构建中存在，供分配器或合并器测试使用。
+    #[cfg(test)]
+    pub(crate) fn with_parent_workspace(mut self, path: PathBuf) -> Self {
         self.parent_workspace = Some(path);
         self
     }
 
     /// 注入 worktree 分配器：spawn 时按需分配隔离 worktree 并持有守卫。
-    pub fn with_worktree_allocator(mut self, allocator: Arc<dyn WorktreeAllocator>) -> Self {
+    ///
+    /// 生产子代理共享父工作区，不经此入口。注入后的终态路径仍显式释放守卫。
+    #[cfg(test)]
+    pub(crate) fn with_worktree_allocator(mut self, allocator: Arc<dyn WorktreeAllocator>) -> Self {
         self.worktree_allocator = Some(allocator);
         self
     }
 
     /// 注入任务依赖图：spawn / complete / fail / cancel 时注册并推进任务，
     /// 发出 Task* 事件。
-    pub fn with_task_graph(mut self, graph: Arc<TaskGraph>) -> Self {
+    ///
+    /// 未注入时 spawn 忽略任务依赖、描述与重试上限。Host DAG 仍受 O-06 约束，
+    /// 本入口不对外装配。
+    #[cfg(test)]
+    pub(crate) fn with_task_graph(mut self, graph: Arc<TaskGraph>) -> Self {
         self.task_graph = Some(graph);
         self
     }
 
     /// 注入 patch 合并器：`propose_patch` / `approve_patch` 使用。
-    pub fn with_patch_merger(mut self, merger: Arc<PatchMerger>) -> Self {
+    ///
+    /// 合并仍受 O-07 约束，不对外装配，也不自动合并冲突。
+    #[cfg(test)]
+    pub(crate) fn with_patch_merger(mut self, merger: Arc<PatchMerger>) -> Self {
         self.patch_merger = Some(merger);
         self
     }
@@ -319,11 +340,12 @@ impl AgentSupervisor {
         flush_outcome
     }
 
-    /// 重试任务（W2）：仅复位 TaskGraph 中的任务状态并发出 `TaskRetried`。
+    /// 只复位已注入 TaskGraph 中的任务并发出 `TaskRetried`。
     ///
-    /// 注意：worker 生命周期仍是 `Failed` 终态，重跑需要新的 spawn；本方法
-    /// 只把任务图状态复位（`Failed → Created`）并递增尝试计数。
-    pub async fn retry_task(&self, agent_id: &AgentId) -> Result<u32, SupervisorError> {
+    /// 任务从 `Failed` 回到 `Created`，attempt 加一。worker 生命周期不变，
+    /// `Failed` 仍是终态，重跑必须新 spawn。未注入图时返回 `PolicyDenied`。
+    #[cfg(test)]
+    pub(crate) async fn retry_task(&self, agent_id: &AgentId) -> Result<u32, SupervisorError> {
         let Some(graph) = &self.task_graph else {
             return Err(SupervisorError::PolicyDenied(
                 "task graph not configured".to_string(),
@@ -341,8 +363,9 @@ impl AgentSupervisor {
     /// 存在冲突时同时发出 `PatchConflict`。
     ///
     /// 要求已配置 [`PatchMerger`] 与 parent 工作区；否则返回
-    /// `PolicyDenied`。
-    pub async fn propose_patch(
+    /// `PolicyDenied`。crate 内测试入口，不是 Host 自动合并。
+    #[cfg(test)]
+    pub(crate) async fn propose_patch(
         &self,
         agent_id: &AgentId,
         patch: WorkerPatch,
@@ -386,8 +409,9 @@ impl AgentSupervisor {
     /// `PatchMerged` / `PatchConflict`。
     ///
     /// 无待审批提案返回 `UnknownAgent`；合并 / 冲突检测错误归一为
-    /// `SupervisorError::Merge`。
-    pub async fn approve_patch(
+    /// `SupervisorError::Merge`。crate 内测试入口；冲突未解决时仍拒绝写入。
+    #[cfg(test)]
+    pub(crate) async fn approve_patch(
         &self,
         agent_id: &AgentId,
         decision: MergeDecision,
@@ -1365,6 +1389,11 @@ mod tests {
         assert_eq!(
             graph.state_of(&TaskId::new(agent.as_str())),
             Some(TaskState::Created)
+        );
+        assert_eq!(
+            supervisor.state(&agent),
+            Some(WorkerState::Failed),
+            "retry_task resets the task graph only"
         );
     }
 

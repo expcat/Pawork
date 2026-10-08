@@ -1,4 +1,7 @@
 //! 崩溃诊断（report-only）：重放事件后报告孤儿与终态，不重建可操作状态。
+//!
+//! 本模块只在测试构建编译。App 不持久化 `OrchestrationEvent`，子代理恢复走会话事件；
+//! 本报告不能当作 Host 热恢复。
 
 use std::collections::BTreeMap;
 
@@ -11,7 +14,7 @@ use crate::lifecycle::{
 use super::AgentSupervisor;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RecoveryReport {
+pub(crate) struct RecoveryReport {
     /// 重放后处于活动态、在报告中标记为 Failed 的孤儿 worker。
     ///
     /// 这只是诊断结论，**不会**写回 Supervisor 或 emit `WorkerFailed`。
@@ -23,9 +26,9 @@ pub struct RecoveryReport {
 impl AgentSupervisor {
     /// Report-only 崩溃诊断：重放事件计算孤儿与终态。
     ///
-    /// **不**重建 `WorkerEntry` / `children` / cancel token，也**不** emit
+    /// **不**重建 `WorkerEntry` / `children` / cancel token / lease，也**不** emit
     /// `WorkerFailed`。返回的报告不能作为继续 cancel / assign / flush 的恢复态。
-    pub async fn recover_report(&self, events: &[OrchestrationEvent]) -> RecoveryReport {
+    pub(crate) async fn recover_report(&self, events: &[OrchestrationEvent]) -> RecoveryReport {
         let states = replay_workers(events);
         let mut orphaned = Vec::new();
         let mut recovered_states = BTreeMap::new();

@@ -66,7 +66,7 @@
 | ✅ 完成 | [B6 · Auth 存储 API 与别名保留期裁决](plan/b6-auth.md) | 删除未消费的 API key 包装写删口、到期构造器与 Device 中转类型，保留 keychain_* 读 alias 并明确删除条件；Auth 82 项回归与宿主类型检查通过，独立 review PASS。 |
 | ✅ 完成 | [B8 · MCP Secret 前缀单一事实源裁决](plan/b8-mcp-secret-prefix.md) | 保留 workspace 导入前缀副本，auth locator 为运行时权威；不改依赖、不物理去重，字节与文档 / 格式检查通过，独立 review PASS。 |
 | ✅ 完成 | [B10 · Engine 预留入口与上下文 API 裁决](plan/b10-engine.md) | 裁决未消费入口、工具结果裁剪模块和跨 Storage 小 API。 |
-| 待裁决 | [B11 · Orchestration 注入与恢复面裁决](plan/b11-orchestration.md) | 核实未由 App 消费的图、工作树、合并与恢复 API。 |
+| ✅ 完成 | [B11 · Orchestration 注入与恢复面裁决](plan/b11-orchestration.md) | 五个闲置入口及耦合入口收到测试构建，保留生产生命周期与重放；87 条定向回归、正式宿主类型检查通过，独立 review PASS；不激活 DAG、自动合并或热恢复。 |
 | 待裁决 | [B12 · Git Stage / HunkStage 产品面裁决](plan/b12-git-stage.md) | 在生产接线和归档之间裁决 Git 写操作。 |
 | 待裁决 | [B13 · MCP OAuth 未接线模块裁决](plan/b13-mcp-oauth.md) | 裁决 MCP OAuth 生产接入或保留/归档边界。 |
 | 待裁决 | [B14 · AppCore 同步装配双轨裁决](plan/b14-app-construction.md) | 核实测试专用同步构造路径并决定最小收敛方式。 |
