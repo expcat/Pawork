@@ -86,7 +86,7 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Reusable local OpenAI-compatible model API.
+    /// 本机可复用的 OpenAI 兼容模型 API。
     Gateway {
         #[command(subcommand)]
         command: GatewayCommand,
@@ -106,7 +106,8 @@ pub enum Command {
         /// 只作用于本次 `--prompt`；REPL 与 `--json` 不接受。
         #[arg(long = "image", value_name = "PATH")]
         images: Vec<String>,
-        /// Remote video HTTP(S) URL. Repeat up to four attachments in total.
+        /// 远程视频的 HTTP(S) URL。可重复，与 `--image` 合计最多 4 项。
+        /// 只作用于本次 `--prompt`；REPL 与 `--json` 不接受。
         #[arg(long = "video-url", value_name = "URL")]
         video_urls: Vec<String>,
     },
@@ -123,7 +124,8 @@ pub enum Command {
         /// `--json` 不接受。
         #[arg(long = "image", value_name = "PATH")]
         images: Vec<String>,
-        /// Remote video HTTP(S) URL. Repeat up to four attachments in total.
+        /// 远程视频的 HTTP(S) URL。可重复，与 `--image` 合计最多 4 项。
+        /// `--json` 不接受。
         #[arg(long = "video-url", value_name = "URL")]
         video_urls: Vec<String>,
     },
@@ -384,27 +386,34 @@ pub enum AuthCommand {
 
 #[derive(Subcommand, Debug)]
 pub enum GatewayCommand {
-    /// Serve on 127.0.0.1 only.
+    /// 只在 127.0.0.1 上提供服务。
     Serve {
         #[arg(long, default_value_t = 17432)]
         port: u16,
     },
-    /// Issue, list or revoke per-client gateway credentials.
+    /// 按客户端签发、列出或撤销网关凭证。
     Token {
         #[command(subcommand)]
         command: GatewayTokenCommand,
     },
+    /// 查看本机网关是否在运行。
     Status,
+    /// 停止正在运行的本机网关。
     Shutdown,
 }
 #[derive(Subcommand, Debug)]
 pub enum GatewayTokenCommand {
+    /// 签发客户端凭证；明文只显示一次。
     Issue {
+        /// 客户端名称。
         #[arg(long)]
         client: String,
     },
+    /// 列出已签发凭证（不含明文）。
     List,
+    /// 按 id 撤销一张凭证。
     Revoke {
+        /// 凭证 id。
         id: String,
     },
 }

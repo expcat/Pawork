@@ -41,7 +41,7 @@ OPT-1 / ADR-053：`gui::run_gui` 经 `AppCore::set_approval_host` 只接线 GUI 
 
 ## 3. 对外 API 面
 
-`src/gateway.rs`：第七运行入口 `gateway serve [--port 17432]`，以及 `gateway token issue --client <name>` / `list` / `revoke <id>`、`gateway status` / `shutdown`。类型为 `GatewayCommand` / `GatewayTokenCommand`；token 命令在 Core 装配前执行，无供应商网络操作。状态/停止核对活跃实例登记、独占锁与 PID。HTTP 和通用接入方法见 [model-gateway](../model-gateway.md)。现有顶层 status/shutdown 与 service 命令仍只操作 GUI。
+`src/gateway.rs`：第七运行入口 `gateway serve [--port 17432]`，以及 `gateway token issue --client <name>` / `list` / `revoke <id>`、`gateway status` / `shutdown`。类型为 `GatewayCommand` / `GatewayTokenCommand`；token 命令在 Core 装配前执行，无供应商网络操作。状态/停止核对活跃实例登记、独占锁与 PID。HTTP 和通用接入方法见 [model-gateway](../model-gateway.md)。现有顶层 status/shutdown 与 service 命令仍只操作 GUI。clap 帮助为中文：`gateway` 是本机可复用的 OpenAI 兼容模型 API；`serve` 只在 127.0.0.1 上提供服务；`token` 按客户端签发、列出或撤销，签发明文只显示一次，列表不含明文；`status` / `shutdown` 分别查看与停止本机网关。命令名、`--port` 默认 17432 和 token 行为不变。
 
 ### 3.1 Rust API（消费方仅 [apps/pawork](pawork.md) 与集成测试）
 
@@ -130,7 +130,7 @@ OPT-1 / ADR-053：`gui::run_gui` 经 `AppCore::set_approval_host` 只接线 GUI 
 | `/plan show\|create\|replace\|submit\|approve\|reject` | Plan 操作；create/replace 语法 `Title \| step1 \| step2` |
 | `@file` | 消息内的工作区文件引用，经 `expand_at_refs` 展开后进入本轮内容 |
 
-API 1.24 视频：`chat --prompt` / `run` 接受重复 `--video-url <HTTP(S)>`，与 `--image` 合计最多 4 项；按 URL 后缀选择 MIME，校验无内嵌凭据后构造 canonical Video。交互无 prompt 和 JSONL 简写路径不支持该参数，明确返回 Usage 错误；不下载媒体，不写配置默认。
+API 1.24 视频：`chat --prompt` / `run` 接受重复 `--video-url <HTTP(S)>`，与 `--image` 合计最多 4 项；按 URL 后缀选择 MIME，校验无内嵌凭据后构造 canonical Video。交互无 prompt 和 JSONL 简写路径不支持该参数，明确返回 Usage 错误；不下载媒体，不写配置默认。`--video-url` 的 clap 帮助为中文，并写明与 `--image` 合计最多 4 项；`chat` 同时写明只作用于本次 `--prompt`，REPL 与 `--json` 不接受，`run` 写明 `--json` 不接受。超过上限时 Usage 为「--image 与 --video-url 每轮合计最多 4 项」。计数仍是两项长度之和大于 4，发生在读取本地图片之前。
 
 ## 4. 核心行为与数据流
 
@@ -244,6 +244,7 @@ GUI data directory 的同源装配由类型/调用链覆盖，握手字段的 wi
 
 - 裸 `pawork acp`（无 `serve`）是 clap 解析错误；`headless` 不带 `--json-stdio` 是显式 Usage 错误（防止把协议帧混进人类终端）。
 - REPL 不支持 `--json`；`--branch` 必须与 `--resume` 同用；非 TTY 管道进 `chat` 只读 stdin 第一行作为单次提问（多轮驱动请改用 headless）。
+- `--image` 先对路径做 `metadata`：不是普通文件，或大小不在 1 字节到 8 MiB，就拒绝。`File::open` 之后再查已打开描述符是不是普通文件；查询失败也拒绝，然后才最多读取 8 MiB + 1 字节。两次检查看的不是同一个对象：前者是打开前的路径目标，后者是已经打开的文件。路径在两次调用之间被换成可打开的非普通文件时，第二次拒绝且不读内容。这不消除两个普通文件之间的内容替换，也不能避免 `File::open` 在 FIFO 等特殊文件上阻塞。图片数量、类型和大小的中文错误本来就存在，本次不改这些字符串，也不新增打开标志。
 - headless 未授予 Streaming 时 `poll_event` 只做 25ms 节流休眠、不转发事件也不报错；客户端要流式必须在 hello 里请求该能力。
 - CLI `resume` 会把中途被杀、停在 waiting_for_approval 的孤儿审批 seal 为 Denied——该语义承载于 `pawork-app`（GUI resume 走 keep-pending，差异是有意的）。
 - `models --json` 的 models 数组形状标注 unstable，随 registry 目录演进。

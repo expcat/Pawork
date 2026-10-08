@@ -560,7 +560,7 @@ async fn run_one_turn(
     let mut content = core.expand_at_refs(Some(session), text).await?;
     if images.len() + video_urls.len() > 4 {
         return Err(CliError::Usage(
-            "At most four images/videos per turn".into(),
+            "--image 与 --video-url 每轮合计最多 4 项".into(),
         ));
     }
     content.extend(local_image_parts(images)?);
@@ -737,6 +737,8 @@ fn local_image_parts(paths: &[String]) -> Result<Vec<ContentPart>, CliError> {
         }
         let mut file = std::fs::File::open(path)
             .map_err(|err| CliError::Usage(format!("--image 无法读取 {raw}: {err}")))?;
+        // 查已打开描述符的类型，不是再查路径。路径被换成可打开的非普通文件时在此拒绝；
+        // 不消除普通文件之间的内容替换，也不避免 File::open 在特殊文件上阻塞。
         if !file.metadata().map(|m| m.is_file()).unwrap_or(false) {
             return Err(CliError::Usage(format!("--image 不是普通文件: {raw}")));
         }
