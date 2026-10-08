@@ -35,28 +35,15 @@ impl Platform {
     }
 }
 
-/// 默认 GUI socket 路径：<data_dir>/pawork-gui.sock。
+/// `<data_dir>/pawork-gui.sock`，或非 default 实例的 `pawork-gui-{instance}.sock`。
 ///
-/// 语义镜像 pawork_app::default_data_dir（对照 crates/app/src/data_dir.rs
-/// 与 crates/cli/src/ops.rs 的 gui_socket_path / gui_token_path），但按分层约束不依赖
-/// pawork-app crate：PAWORK_DATA_DIR →（Windows）%LOCALAPPDATA%/pawork →
-/// $HOME/.pawork → 临时目录/pawork。
-pub fn default_socket_path() -> PathBuf {
-    socket_path_for_instance(None)
-}
-
-/// 默认 GUI token 路径：<data_dir>/gui.token（与 `gui serve` 的 `{data_dir}/gui.token` 对齐）。
-pub fn default_token_path() -> PathBuf {
-    token_path_for_instance(None)
-}
-
-/// 非 default 实例：`pawork-gui-{instance}.sock` / `gui-{instance}.token`。
+/// `None`、空白和 `default` 都无实例后缀。data_dir 语义镜像
+/// pawork_app::default_data_dir（对照 crates/app/src/data_dir.rs 与
+/// crates/cli/src/ops.rs 的 gui_socket_path），但按分层约束不依赖 pawork-app：
+/// PAWORK_DATA_DIR →（Windows）%LOCALAPPDATA%/pawork → $HOME/.pawork → 临时目录/pawork。
+/// 同目录 token 由 [`token_path_for_socket`] 从 socket 文件名推导。
 pub fn socket_path_for_instance(instance: Option<&str>) -> PathBuf {
     default_data_dir().join(instance_file_name("pawork-gui", "sock", instance))
-}
-
-pub fn token_path_for_instance(instance: Option<&str>) -> PathBuf {
-    default_data_dir().join(instance_file_name("gui", "token", instance))
 }
 
 /// 按 socket 文件名推断同目录 token（`pawork-gui.sock` → `gui.token`，
@@ -112,21 +99,18 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn default_token_path_aligns_with_a5_gui_token() {
+    fn socket_instance_path_derives_same_directory_token() {
+        let default_socket = socket_path_for_instance(None);
         assert!(
-            default_socket_path().ends_with("pawork-gui.sock"),
+            default_socket.ends_with("pawork-gui.sock"),
             "unexpected default socket filename"
         );
-        let path = default_token_path();
-        assert!(
-            path.ends_with("gui.token"),
-            "unexpected token path: {path:?}"
-        );
+        assert_eq!(socket_path_for_instance(Some("default")), default_socket);
+        assert!(socket_path_for_instance(Some("dev")).ends_with("pawork-gui-dev.sock"));
         assert_eq!(
-            token_path_for_instance(Some("default")),
-            default_token_path()
+            token_path_for_socket(&default_socket),
+            default_socket.parent().unwrap().join("gui.token")
         );
-        assert!(token_path_for_instance(Some("dev")).ends_with("gui-dev.token"));
         assert_eq!(
             token_path_for_socket(&PathBuf::from("/tmp/pawork-gui.sock")),
             PathBuf::from("/tmp/gui.token")

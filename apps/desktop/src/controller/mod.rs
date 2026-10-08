@@ -17,12 +17,11 @@ use pawork_client::{
     ActorIdentity, AppCommand, AppEvent, AppEventEnvelope, AppQuery, AppResponse,
     AppResponseEnvelope, ApprovalModeWire, AuthStartData, ClientAuthentication, ClientConfig,
     ClientError, CommandSource, ComputerTargetListData, ConnectOptions, DefaultModelPair,
-    ObservationImageData, ObservationListData,
-    GeneralSettingsData,
-    GlobalSequence, GuiCapability, GuiClient, GuiTransportClient, LocalTransport,
-    PermissionsSettingsData, ProtocolErrorCode, ProviderAuthStatusData, ProviderUseProxyData,
-    ResumeDisposition, ResumeOutcome, Snapshot, SubagentListData, SubagentSettingsData,
-    TerminalSettingsData, TimelinePage, TransportEndpoint, TOKEN_SCHEME,
+    GeneralSettingsData, GlobalSequence, GuiCapability, GuiClient, GuiTransportClient,
+    LocalTransport, ObservationImageData, ObservationListData, PermissionsSettingsData,
+    ProtocolErrorCode, ProviderAuthStatusData, ProviderUseProxyData, ResumeDisposition,
+    ResumeOutcome, Snapshot, SubagentListData, SubagentSettingsData, TerminalSettingsData,
+    TimelinePage, TransportEndpoint, TOKEN_SCHEME,
 };
 use serde_json::json;
 
@@ -1195,11 +1194,12 @@ pub(super) fn workspace_opened(response: &AppResponseEnvelope) -> Option<(String
     }
 }
 
+/// 只接受 Data 里的 terminal_session_id 字符串。
+/// 身份键只有它。Host 与 golden 不发 id，协商 minor 也不改键。
 pub(super) fn terminal_session_id(response: &AppResponseEnvelope) -> Option<String> {
     match &response.response {
         AppResponse::Data(data) => data
             .get("terminal_session_id")
-            .or_else(|| data.get("id"))
             .and_then(|value| value.as_str())
             .map(str::to_string),
         _ => None,
@@ -2212,6 +2212,25 @@ mod tests {
         let close = serde_json::to_value(terminal_close_command("term-1")).unwrap();
         assert_eq!(close["method"], "terminal_close");
         assert_eq!(close["params"]["terminal_session_id"], "term-1");
+    }
+
+    #[test]
+    fn terminal_create_receipt_accepts_only_terminal_session_id() {
+        let canonical = envelope(json!({
+            "terminal_session_id": "term-1",
+            "id": "other",
+            "sandboxed": false
+        }));
+        assert_eq!(terminal_session_id(&canonical).as_deref(), Some("term-1"));
+
+        let id_only = envelope(json!({ "id": "term-1" }));
+        assert_eq!(terminal_session_id(&id_only), None);
+
+        let malformed = envelope(json!({
+            "terminal_session_id": 1,
+            "id": "term-1"
+        }));
+        assert_eq!(terminal_session_id(&malformed), None);
     }
 
     #[test]
