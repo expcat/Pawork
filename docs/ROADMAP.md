@@ -70,7 +70,7 @@
 | ✅ 完成 | [B12 · Git Stage / HunkStage 产品面裁决](plan/b12-git-stage.md) | 归档无消费者的 Stage/HunkStage；35 条 Git 回归、宿主与依赖检查通过，独立 review / 复审 PASS；冻结 git_stage 仍不可用，Desktop Changes 保持只读。 |
 | ✅ 完成 | [B13 · MCP OAuth 未接线模块裁决](plan/b13-mcp-oauth.md) | 归档未接线的 MCP OAuth 装配；MCP 61 条回归、Auth 5 条安全锚点与宿主检查通过，独立 review / 复审 PASS；SecretRef 与独立 mcp-auth.json 不变。 |
 | ✅ 完成 | [B14 · AppCore 同步装配双轨裁决](plan/b14-app-construction.md) | 删除零消费者的同步 `from_resolved`，保留异步 `from_config`；14 条装配回归与正式宿主类型检查通过，独立 review PASS。 |
-| 待裁决 | [B15 · App 查询、设置写盘与配置错误收敛](plan/b15-app-small-cleanup.md) | 裁决并收敛三个紧相关的 App 清理线索。 |
+| ✅ 完成 | [B15 · App 查询、设置写盘与配置错误收敛](plan/b15-app-small-cleanup.md) | DiffGet complete 恒真简化；设置重复写盘已落地，no-op；统一三处配置错误路径与跨平台文案，2 条定向回归和正式宿主类型检查通过，独立 review / 复审 PASS。 |
 | 待裁决 | [B16 · App 子 Core 认证修订与重导出收窄](plan/b16-app-auth-revision.md) | 核实冗余装配原因并裁决 crate 内重导出。 |
 | 待裁决 | [B17 · CLI 帮助与附件检查裁决](plan/b17-cli-copy.md) | 裁决 CLI 文案一致性和低收益附件复查。 |
 | 待裁决 | [B18 · Client SDK MockTransport 与版本 API 裁决](plan/b18-client-sdk.md) | 裁决 SDK 对外测试辅助面和未列为稳定面的版本函数。 |

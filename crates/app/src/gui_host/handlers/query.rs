@@ -323,12 +323,14 @@ pub(crate) async fn diff_get(
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(1);
     let paged = crate::paginate_diff(vec![file], page, 1);
+    // 只分页命中的这一个文件，page_size 为 1。paginate 把页码钳到至少 1，
+    // total_files 恒为 1，原 complete 表达式恒为 true。
     Ok(AppResponse::Data(json!({
         "session_id": session.as_str(),
         "path": path.as_str(),
         "page": paged.page,
         "total_files": paged.total_files,
         "files": paged.files,
-        "complete": page >= paged.page && paged.files.is_empty() || paged.page * 1 >= paged.total_files,
+        "complete": true,
     })))
 }

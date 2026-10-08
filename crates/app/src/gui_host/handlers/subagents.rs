@@ -1,3 +1,4 @@
+use super::global_config_file;
 use crate::gui_host::GuiHostAdapter;
 use pawork_gui_server::GuiHostError;
 use pawork_protocol::{
@@ -91,9 +92,7 @@ pub(crate) async fn set_settings(
             }
         }
     }
-    let path = pawork_workspace::config::global_config_path().ok_or_else(|| {
-        GuiHostAdapter::host_error("config_unavailable", "global configuration unavailable")
-    })?;
+    let path = global_config_file()?;
     // 与 set_terminal_settings 同序：先原子写盘，再短写锁同步内存；写后状态
     // 从下一轮 Run 生效（在途 Run 的工具集与权限已按启动时快照固定）。
     let config = to_config(settings);

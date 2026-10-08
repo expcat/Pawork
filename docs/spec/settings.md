@@ -233,7 +233,7 @@ GPUI Settings
 - **需要补的最小能力**：provider/auth descriptor 与状态查询；GUI 可用的 OAuth 生命周期；非重放 API-key 写入；连接移除/替换；默认 provider/model 变更与确认。
 - **冻结契约**：新增/改变 GUI command/query/response/capability 必须先起草对应 ADR、bump 兼容 minor，并以 golden/typegen 先行；SET-1 由 ADR-046 承载，SET-6g 的可选 Accepted 握手字段由 ADR-051 Accepted 承载并随 API 1.9 落地。SET-6h 供应商级代理开关由 ADR-052 承载并随 API 1.10 落地。旧 Host/Client 无能力时隐藏对应 Settings 入口，不能降级为 Desktop 直写文件或本地推断。
 - **Secret 命令**：不得进入持久 command ledger payload、response replay、事件或诊断。具体瞬时传递与失败恢复由 ADR 决定；这是实现硬前置，不以普通 `AppCommand` 直接落地绕过。
-- **配置**：凭证仍不进入 `PaworkConfig`。Network 沿用既有 Global `proxy_url`、`general_settings` / `set_proxy_url` wire 与原子 writer，不改变 schema 或优先级；文件由 `config_dir_for_app` 定位在 workspace 外。workspace 层代理继续剥离。供应商级 `use_proxy` 经原子 writer `write_provider_use_proxy` 只写 Global 层 `[[providers]]` 条目（缺条目时新增最小条目），非 Global 层 `use_proxy` 与 `base_url` 同红线剥离。默认 provider/model 仍复用现有字段和层级。
+- **配置**：凭证仍不进入 `PaworkConfig`。Network 沿用既有 Global `proxy_url`、`general_settings` / `set_proxy_url` wire 与原子 writer，不改变 schema 或优先级；文件由 `config_dir_for_app` 定位在 workspace 外。workspace 层代理继续剥离。供应商级 `use_proxy` 经原子 writer `write_provider_use_proxy` 只写 Global 层 `[[providers]]` 条目（缺条目时新增最小条目），非 Global 层 `use_proxy` 与 `base_url` 同红线剥离。默认 provider/model 仍复用现有字段和层级。无法解析当前用户的 Global 配置目录时，Settings 写入口统一返回 `config_unavailable`，不写盘、不改内存；文案要求检查用户主目录及系统应用数据目录配置后重试。Unix 取决于用户主目录；Windows 上 LocalAppData 与 RoamingAppData 任一失败即失败，并不查询主目录。CLI 使用同一路径，不能绕过这次失败。
 - **迁移**：首期不创建账户表或模型缓存表，预期无 SQLite migration。既有 CLI 凭证必须在 Settings 中以脱敏状态可见。
 
 精确演进规则见 [contracts.md](contracts.md) 和 [architecture.md](../architecture.md) §3.2。

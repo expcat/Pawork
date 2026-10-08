@@ -9,6 +9,7 @@ use serde_json::json;
 use crate::gui_host::GuiHostAdapter;
 use pawork_gui_server::GuiHostError;
 
+use super::super::global_config_file;
 use super::{policy_approval_mode, settings_data, wire_approval_mode};
 
 /// ADR-053：当前生效审批与项目信任；Global 全项目信任默认只读。
@@ -44,7 +45,7 @@ pub(crate) async fn set_approval_mode(
     })?;
     {
         let mut core = adapter.core.write().await;
-        let path = global_config_path()?;
+        let path = global_config_file()?;
         pawork_workspace::config::write_approval_mode(&path, policy_approval_mode(parsed))
             .map_err(|error| GuiHostAdapter::host_error("config_write", error.to_string()))?;
         core.set_approval_mode(policy_approval_mode(parsed));
@@ -88,20 +89,11 @@ pub(crate) async fn workspace_trust(
                 GuiHostAdapter::host_error("unknown_workspace", "workspace has no persistable root")
             })?
             .to_owned();
-        pawork_workspace::config::write_workspace_trust(&global_config_path()?, &root, *trusted)
+        pawork_workspace::config::write_workspace_trust(&global_config_file()?, &root, *trusted)
             .map_err(|error| GuiHostAdapter::host_error("config_write", error.to_string()))?;
         core.set_workspace_trusted(root, *trusted);
     }
     Ok(AppResponse::Data(json!({
         "workspace_trusted": trusted,
     })))
-}
-
-fn global_config_path() -> Result<std::path::PathBuf, GuiHostError> {
-    pawork_workspace::config::global_config_path().ok_or_else(|| {
-        GuiHostAdapter::host_error(
-            "config_unavailable",
-            "global config directory is unavailable",
-        )
-    })
 }
