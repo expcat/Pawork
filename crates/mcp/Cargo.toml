@@ -42,4 +42,3 @@ tokio = { workspace = true, features = [
     "test-util",
     "time",
 ] }
-wiremock.workspace = true

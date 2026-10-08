@@ -26,7 +26,7 @@ UI-6b G2：Go 存储账号可读取官方三窗已用百分比与重置时刻；
 | CAP-CONTEXT-01 | 上下文预算、compaction、用量/定价 | Run、`usage` | 已实现 | usage 幂等冲突与哨兵口径仍需专项复核。 |
 | CAP-GIT-01 | diff、checkpoint、rollback、fork/worktree 支撑 | `diff`、`rollback`、Desktop Changes | 部分实现 | Core/CLI 的 diff、checkpoint、rollback 已实现。B12 归档了无消费者的 typed Stage/HunkStage；Desktop Changes 只读，stage/unstage/hunk 仍是 BK-GIT-02。 |
 | CAP-RESOURCE-01 | AGENTS.md、Skills、profiles、`@file`、配置导入 | chat/run、`import` | 已实现；部分 GUI 缺口 | Desktop 已消费 host `@` 展开和 MCP 列表；无 `@` 候选浮层/已加载规则 query。 |
-| CAP-MCP-01 | MCP Client 配置、测试、工具/资源 | `mcp list/test`、Desktop Resources | 已实现 | MCP auth 与主 Provider auth 分域；Pawork 作为 MCP Server 未实现。 |
+| CAP-MCP-01 | MCP Client 配置、测试、工具/资源 | `mcp list/test`、Desktop Resources | 已实现 | MCP auth 与主 Provider auth 分域，HTTP 只走 SecretRef。B13 归档未接线 OAuth，不是登录能力。Pawork 作为 MCP Server 未实现。 |
 | CAP-GUI-01 | 本机 GUI server 与 GPUI Desktop | `gui serve`、`pawork-desktop` | 生产链路已实现；完整人工门禁未完成 | 项目/会话/Changes/Terminal 主路径已验收；完整视觉、AX/IME/跨平台仍需专项证据；断线不取消 Run。 |
 | CAP-SETTINGS-01 | Desktop Settings：供应商连接、认证、模型目录/默认项、子代理、Network、权限、MCP、终端、外观、高级连接诊断与关于 | TaskRail `Local` 行 Settings | 已实现；真实账号与用户验收见 [ROADMAP](../ROADMAP.md) | 业务设置 Host-driven；Secret 只进 auth backend；外观语言与字号保存到 `desktop.json`；高级只读消费当前握手/endpoint/resume/ack。About 只在当前认证握手提供非空 Host 数据目录时启用，缺失/断线 fail-closed。见 [settings.md](settings.md)。 |
 | CAP-CLIENT-01 | GUI typed client、headless JSON、ACP | `headless`、`acp serve`、`pawork-client` | 已实现 | GUI/headless/ACP 能力表同源；wire/JSON 受冻结契约约束。 |

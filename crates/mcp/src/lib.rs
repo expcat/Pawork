@@ -2,6 +2,12 @@
 //!
 //! The MCP SDK stays inside this crate. Agent Core consumes canonical
 //! [`pawork_domain`] tools and transport-independent capability snapshots.
+//!
+//! B13（2026-10-08）：未接入 Host 的 MCP OAuth 模块已归档删除。
+//! 当前布局的完整源码在 `3c235c91a07ad348dd68c4dc18c01f4290bb9b2f` 的
+//! `crates/mcp/src/oauth.rs`。tag `v2-final` 只有旧路径
+//! `extensions/mcp/src/oauth.rs`，blob 不同，不作为当前布局恢复点。
+//! 不要把该源码拷回主干当作第二套认证装配。
 
 use std::time::Duration;
 
@@ -13,7 +19,6 @@ pub mod capabilities;
 mod codec;
 pub mod config;
 pub mod manager;
-pub mod oauth;
 pub mod sandbox;
 pub mod security;
 mod transport;
@@ -39,17 +44,8 @@ pub enum McpError {
     PermissionDenied(String),
     #[error("MCP secret could not be resolved: {0}")]
     Secret(String),
-    #[error("MCP OAuth failed: {0}")]
-    OAuth(String),
     #[error("MCP tool registration rejected by registry: {0}")]
     Registry(#[from] pawork_tools::ToolRegistryError),
-}
-
-impl McpError {
-    /// Build a secret-safe error from an authentication failure.
-    pub(crate) fn from_auth(error: pawork_auth::AuthError) -> Self {
-        Self::OAuth(error.to_string())
-    }
 }
 
 /// Capability families advertised during the MCP initialize handshake.

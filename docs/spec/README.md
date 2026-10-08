@@ -45,7 +45,7 @@
 | [crates/orchestration.md](crates/orchestration.md) | `pawork-orchestration` | 多 Agent supervisor/budget/lifecycle/merge/task_graph |
 | [crates/control-plane.md](crates/control-plane.md) | `pawork-control-plane` | 控制面：tenant/usage/audit + quota + credential lease/pool |
 | [crates/transport.md](crates/transport.md) | `pawork-transport` | framed 字节传输：local（UDS/named pipe）+ memory |
-| [crates/mcp.md](crates/mcp.md) | `pawork-mcp` | MCP 客户端、SDK 隔离、工具桥、OAuth/沙箱 |
+| [crates/mcp.md](crates/mcp.md) | `pawork-mcp` | MCP 客户端、SDK 隔离、工具桥、沙箱；HTTP 凭证为 SecretRef，无 OAuth 登录装配 |
 | [crates/gui-server.md](crates/gui-server.md) | `pawork-gui-server` | GUI 握手、连接、心跳/背压、订阅与重放 |
 | [crates/acp.md](crates/acp.md) | `pawork-acp` | 编辑器协议、会话 actor、权限与 canonical 映射 |
 | [crates/gateway.md](crates/gateway.md) | `pawork-gateway` | 本机 OpenAI HTTP/SSE 与 token；宿主端口 |

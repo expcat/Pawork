@@ -30,12 +30,6 @@ pub(crate) trait McpConnector: Send + Sync {
     /// `"streamable-http"`.
     fn transport_name(&self) -> &'static str;
 
-    /// Refresh connector-owned authentication state before a request. Returning
-    /// `true` asks the manager to replace the live transport before proceeding.
-    async fn should_reconnect_before_request(&self) -> Result<bool, McpError> {
-        Ok(false)
-    }
-
     /// Build the transport and run the initialize / initialized handshake.
     async fn connect(&self) -> Result<RunningClient, McpError>;
 }

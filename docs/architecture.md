@@ -46,7 +46,7 @@ Workspace 为 **29 成员（27 库 + 2 应用）**：27 个库平铺 `crates/<�
 | `pawork-orchestration` | `crates/orchestration` | → domain、policy（路径内核）、control-plane（default-features = false）、git(opt) | supervisor/budget/lifecycle/merge/task_graph/worktree/identity；不依赖 workflow（装配在 app） |
 | `pawork-control-plane` | `crates/control-plane` | → domain（rusqlite optional，自开连接） | 控制面 core + `quota/` + `credential/`（lease/pool）；租户裁决 `TenantPolicyDecision`（与 policy 的 `PolicyDecision` 不同名）；usage `dedup_key`/audit JSONL golden |
 | `pawork-transport` | `crates/transport` | 无内部依赖（帧长度常量与 protocol 对齐，但不依赖该 crate） | local（UDS/named pipe）+ memory |
-| `pawork-mcp` | `crates/mcp` | → domain、tools、exec、workspace、auth | MCP 协议/连接/认证；rmcp 隔离于 codec；复用 tools 注册表和调度 |
+| `pawork-mcp` | `crates/mcp` | → domain、tools、exec、workspace、auth | MCP 协议/连接/SecretRef；rmcp 隔离于 codec；复用 tools 注册表和调度。无 OAuth 登录装配（B13 归档） |
 | `pawork-gui-server` | `crates/gui-server` | → domain、protocol、transport | GuiServer / ConnectionManager / GuiHost 端口，无 Core 装配依赖 |
 | `pawork-acp` | `crates/acp` | → domain、protocol | ACP wire、映射、会话 actor、AcpCommandHost 端口；无 CLI / app 依赖 |
 | `pawork-gateway` | `crates/gateway` | → domain、auth | loopback HTTP/SSE、token、GatewayBackend；不依赖 Core/Provider/数据库 |
@@ -76,7 +76,7 @@ Workspace 为 **29 成员（27 库 + 2 应用）**：27 个库平铺 `crates/<�
 | providers 的 registry / negotiate / pricing / error | 抽出 models。app 与 adapter 共同使用目录、能力 gate 和计价；模型逻辑不应依赖 HTTP/厂商实现，迁出模块由 Cargo 边界隔离，留下的 usage/reasoning 保留 net 禁入守卫 | app → models；providers → models → domain |
 | app 的 gui_server | 抽出 gui-server。已有 GuiHost 端口，握手/背压/心跳/重放不需要 Core 私有状态，MockHost 测试随迁；GUI 业务实现留在 app | cli → gui-server；app 实现 GuiHost；gui-server → protocol/transport/domain |
 | cli 的 channels/acp | 抽出 acp。已有 AcpCommandHost，wire/会话 actor/权限映射只依赖 canonical 协议；CLI 承载 stdio 和进程生命周期 | cli → acp → protocol/domain |
-| tools 的 mcp | 抽出 mcp。SDK、远端连接、OAuth 和 stdio 生命周期与本地文件工具不同；直接复用 ToolRegistry，不另建调度 | app → mcp → tools；tools 不依赖 rmcp/auth/reqwest |
+| tools 的 mcp | 抽出 mcp。SDK、远端连接、当时的 OAuth 模块和 stdio 生命周期与本地文件工具不同；直接复用 ToolRegistry，不另建调度。B13（2026-10-08）归档了从未接入 Host 的 OAuth 装配；现行认证只剩 SecretRef，复活条件见 [BK-MCP-01](spec/backlog.md) | app → mcp → tools；tools 不依赖 rmcp/auth/reqwest |
 | app 的 gateway_server / gateway_tokens | 抽出 gateway 并定义 GatewayBackend。HTTP/token 不加载 Core；Completion 保存宿主冻结请求，保持准备失败在 SSE 成功头之前返回 | cli → gateway；app 实现 GatewayBackend；gateway → domain/auth |
 
 厂商通道继续在 providers 内按模块组织。八条通道共用三种 wire 协议，按品牌拆 crate 会使相同协议的更新跨越多个相互关联的包；没有独立 SDK、依赖闭包或真实消费者要求按品牌分割。HTTP/SSE 也不单独成为通用网络包：当前只是 providers 内部实现，认证/MCP 各有不同安全策略。reasoning 保护端口与 wire usage 归一留在 providers。
@@ -164,7 +164,7 @@ Workspace 为 **29 成员（27 库 + 2 应用）**：27 个库平铺 `crates/<�
 - **Settings wire**：API key 明文只走非重放单帧 `ApiKeySecret`（Debug 恒 `[REDACTED]`，无 Display）；`SetApprovalMode` 保存 Global `approval_mode` 默认，`WorkspaceTrust` 保存 Global `workspace_trust` canonical 根路径布尔项（[ADR-053](spec/settings.md#adr-053opt-1-设置持久化2026-09-05)）；先落盘后更新后续 Run，进行中 Run 不变；`SetProxyUrl` 写 workspace 外标准用户配置目录的 Global `config.toml`，`SetTerminalSettings` / MCP remove 同写 Global 层；About 只在握手提供非空 `host_data_dir` 时显示，不从 endpoint 反推。
 - **Desktop AX**：GPUI 锁定 `=0.2.2`；显式语义树 + AppKit 虚拟 AX 元素；AX action 回到既有 AppView handler 与 enable gate。
 - **CancellationToken**：exec 与其它包仍双轨，不借路径依赖合并类型。
-- **配置写盘**：Global 层入口共用单一 RMW 内核（`CONFIG_WRITE_LOCK` + tmp/rename）；OAuth/MCP 测试与可注入默认 HTTP 客户端均为 `redirect(Policy::none())`。
+- **配置写盘**：Global 层入口共用单一 RMW 内核（`CONFIG_WRITE_LOCK` + tmp/rename）；auth 的 OAuth 测试与可注入默认 HTTP 客户端 `http_client()` 均为 `redirect(Policy::none())`。MCP 不再构造 OAuth HTTP 客户端。
 - **原子写**：blob / auth / config 共用「同目录临时文件 + rename」；storage 以 `atomic_write_bytes` 为单源。
 
 - **手动文件编辑（2026-09-16 用户要求）**：Desktop Files 经 GUI 1.19 → Host 操作项目文件，输入仍为 workspace_id + relative_path；目录 / 读取不写库，保存只接受读取时的内容版本，冲突不覆盖。文件正文不进入命令账本或日志。只扩展手动 GUI 操作，不改变 Agent 工具 Policy、审批或事件重放语义。

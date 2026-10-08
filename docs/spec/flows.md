@@ -120,7 +120,7 @@ UI-6b / [ADR-059](settings.md#adr-059ui-6b-命名账号与持久选择2026-09-08
 - 二进制：`apps/pawork/src/redact.rs` 的 `RedactingFmtLayer` 覆盖全部 tracing 字段。
 - Provider HTTP：错误路径不得拷贝 request body 进 `ProviderError.message`。
 - Reasoning：事件只带 `ProtectedBlobRef`；明文在 PWB1（`storage` `protected` feature，宿主 `app/protected.rs` 注入）。
-- MCP：独立后端文件，禁止与主 auth 混用。
+- MCP：独立后端文件 `mcp-auth.json`，禁止与主 auth 混用。HTTP 只解析 `pawork.mcp.*` SecretRef，没有 OAuth 登录、callback 或 refresh 装配。
 
 配置：`PaworkConfig` / `ProviderConfig` **无 `api_key` 字段**；`extra` 会剥离该键。compat 导入遇到明文 Secret 拒绝。
 

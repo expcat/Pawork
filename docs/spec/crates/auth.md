@@ -1,6 +1,6 @@
 # pawork-auth
 
-> 身份认证与 Secret 管理：Secret 存储后端（文件/内存）、凭证解析链、全局脱敏与 OAuth（PKCE / Device Flow / auto refresh / 本地回调）；只依赖 `pawork-domain`（见 [domain.md](domain.md)），被 `pawork-app` 与 `pawork-tools`（MCP OAuth）依赖。
+> 身份认证与 Secret 管理：Secret 存储后端（文件/内存）、凭证解析链、全局脱敏与 OAuth（PKCE / Device Flow / auto refresh / 本地回调）；只依赖 `pawork-domain`（见 [domain.md](domain.md)），被 `pawork-app`、`pawork-gateway` 与 `pawork-mcp` 依赖。`pawork-mcp` 只用 SecretBackend 与 locator，不装配 OAuth 登录。`pawork-tools` 不依赖本包。
 
 ## 1. 职责与边界
 
@@ -62,7 +62,7 @@
 ### 3.4 OAuth 流程
 
 - 类型：`PkceFlowConfig`（client_id / auth_url / token_url / redirect_uri / scopes / provider / extra_auth_params）与 `PkceSession`；`Pkce`（S256；verifier = 48 随机字节的 base64url，恰 64 字符，满足 RFC 7636 43–128 且无取模偏差）；`DeviceFlowConfig` / `DeviceUserPrompt`（user_code / verification_uri(_complete) / device_code / expires_in / interval）；`OAuthRefreshConfig { token_url, client_id, refresh_skew }`；`TokenSet { access_token, refresh_token?, id_token?, expires_in?, token_type, scope? }`（明文只短暂在内存，Debug 全脱敏，绝不落盘）。
-- 入口：`http_client()`（唯一 OAuth/MCP 默认构造：`redirect(Policy::none())`，失败映射 `AuthError::Http`）；`start_pkce_flow` / `start_pkce_flow_with_callback`（绑定一次性 `CallbackServer` 并回填实际端口）/ `exchange_pkce_code`（state 不符即 CSRF 拒绝）；`request_device_authorization` / `poll_device_token`（`authorization_pending` 按 interval 等待、`slow_down` interval +5s 后等待；HTTP 请求与轮询等待共同受 max_duration / device_code 有效期的较短期限约束，`expired_token` 或到期 → `ExpiredToken`）；`refresh_access_token`；`store_oauth_token` / `update_oauth_token`（多凭证形态，service=`pawork.<provider>.oauth`，account=`<cred_id>.access/.refresh`；空 access/refresh 先拒绝且不产生部分写入；轮换场景整批 `store_batch` 提交，兼容后端至少先写 refresh 再写 access）；`resolve_oauth_credential(_for_request)`（后者先 auto-refresh 再返回 `CredentialKind::OAuthBearer`）；`oauth_login_email`（不验签读 `id_token` 的 `email` claim，形态不合理则忽略）；`read_refresh_token`（条目缺失返回 `NotFound`，后端损坏 / IO 错误保留原错误）；`needs_refresh(stored, skew)`（无 `expires_at` 视为不需刷新）；`random_state`（32 随机字节 base64url）。
+- 入口：`http_client()`（唯一 OAuth 默认构造：`redirect(Policy::none())`，失败映射 `AuthError::Http`）；`start_pkce_flow` / `start_pkce_flow_with_callback`（绑定一次性 `CallbackServer` 并回填实际端口）/ `exchange_pkce_code`（state 不符即 CSRF 拒绝）；`request_device_authorization` / `poll_device_token`（`authorization_pending` 按 interval 等待、`slow_down` interval +5s 后等待；HTTP 请求与轮询等待共同受 max_duration / device_code 有效期的较短期限约束，`expired_token` 或到期 → `ExpiredToken`）；`refresh_access_token`；`store_oauth_token` / `update_oauth_token`（多凭证形态，service=`pawork.<provider>.oauth`，account=`<cred_id>.access/.refresh`；空 access/refresh 先拒绝且不产生部分写入；轮换场景整批 `store_batch` 提交，兼容后端至少先写 refresh 再写 access）；`resolve_oauth_credential(_for_request)`（后者先 auto-refresh 再返回 `CredentialKind::OAuthBearer`）；`oauth_login_email`（不验签读 `id_token` 的 `email` claim，形态不合理则忽略）；`read_refresh_token`（条目缺失返回 `NotFound`，后端损坏 / IO 错误保留原错误）；`needs_refresh(stored, skew)`（无 `expires_at` 视为不需刷新）；`random_state`（32 随机字节 base64url）。
 - `CallbackServer::start(port)`（监听 127.0.0.1）/ `local_addr` / `bind_redirect_uri`（强制 http + loopback host、端口回填校验）/ `wait_for_code(timeout)`；单连接、5 分钟 accept 上限、请求头 64 KiB 上限、响应固定纯文本（不回显 query 输入）。
 - 错误：token endpoint 标准错误归一为 `TokenEndpoint { error, description }`；其余流程错误 `OAuth(String)` / `Callback(String)`，都不含 token。
 
@@ -128,7 +128,7 @@ UI-6b 起先解析账号索引：显式 API key 选择返回该账号；显式 O
 ## 6. 依赖关系
 
 - **上游**：仅 `pawork-domain`（`ProviderId` / `CredentialId` / `Timestamp` / `ResolvedCredential` / `CredentialKind`）。三方：`reqwest`（token endpoint）、`tokio`（回调/轮询）、`serde(_json)`、`sha2`（PKCE S256 与指纹）、`getrandom`（熵源）、`url`、`directories`（home 定位）、`thiserror`。
-- **下游**：`pawork-app`（八通道装配、`pawork auth`）与 `pawork-tools`（MCP OAuth）。依赖方向见 [../../design.md](../../design.md) §2，产品侧安全边界见 [../security.md](../security.md)。
+- **下游**：`pawork-app`（八通道装配、`pawork auth`）、`pawork-gateway` 与 `pawork-mcp`（SecretBackend / locator）。B13 起 MCP 不再依赖本包的 PKCE、refresh 或 `http_client()`。`pawork-tools` 不依赖本包。依赖方向见 [../../design.md](../../design.md) §2，产品侧安全边界见 [../security.md](../security.md)。
 - 模块可见性：`locator` / `oauth` 为 pub 模块（可全路径引用），其余模块私有、仅经 crate 根 re-export 暴露（`generate_credential_id` 等保持 crate 内可见）。
 
 ## 7. 测试与验证资产

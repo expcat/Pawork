@@ -87,15 +87,9 @@ impl ManagedMcpClient {
     ) -> Result<ClientPeer, McpError> {
         let _lifecycle = self.interruptible(self.lifecycle.lock(), cancel).await?;
 
-        let replace = self
-            .interruptible(self.connector.should_reconnect_before_request(), cancel)
-            .await??;
-        let mut state = self.state.lock().await;
+        let state = self.state.lock().await;
         if state.shutdown_requested {
             return Err(self.shutdown_error());
-        }
-        if replace {
-            drop(state.running.take());
         }
         if let Some(running) = state.running.as_ref().filter(|running| !running.is_dead()) {
             return Ok(running.peer());
