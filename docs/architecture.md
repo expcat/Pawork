@@ -40,7 +40,7 @@ Workspace 为 **29 成员（27 库 + 2 应用）**：27 个库平铺 `crates/<�
 | `pawork-models` | `crates/models` | → domain | registry/能力证据与默认表、negotiate、pricing；无具体 Provider、HTTP、存储或 GUI 依赖 |
 | `pawork-providers` | `crates/providers` | → domain、models | HTTP/SSE + Chat/Responses/Messages wire、八通道适配、usage/error 归一、reasoning 保护端口；通道静态注册单源 |
 | `pawork-auth` | `crates/auth` | → domain | Secret 后端/OAuth/脱敏/解析链 + `locator` 单一事实源（Secret 审计边界） |
-| `pawork-git` | `crates/git` | → domain、exec | Diff/Status/GitService/GitRunner/HunkStage/worktree；单一 `FileStatus` |
+| `pawork-git` | `crates/git` | → domain、exec | Diff/Status/GitService/GitRunner/worktree；单一 `FileStatus` |
 | `pawork-engine` | `crates/engine` | → domain（唯一 pawork-* 生产依赖，`tests/domain_only.rs` 断言护航） | tool_loop/session_turn/context/cancel/appender |
 | `pawork-workflow` | `crates/workflow` | → domain | plan/task 纯 reducer |
 | `pawork-orchestration` | `crates/orchestration` | → domain、policy（路径内核）、control-plane（default-features = false）、git(opt) | supervisor/budget/lifecycle/merge/task_graph/worktree/identity；不依赖 workflow（装配在 app） |

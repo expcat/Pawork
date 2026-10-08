@@ -1,7 +1,7 @@
 //! git 错误类型。
 //!
 //! 把 process-runtime 的 `ProcessError`、git 非零退出与超时/取消统一归一为
-//! [`GitError`]，供上层（status/stage/worktree）一致处理。
+//! [`GitError`]，供上层（status/diff/worktree）一致处理。
 
 /// git 操作统一错误。
 ///
@@ -18,8 +18,6 @@ pub enum GitError {
         "invalid git positional argument `{name}`: values starting with '-' are not allowed ({value})"
     )]
     InvalidPositionArgument { name: &'static str, value: String },
-    #[error("patch does not apply (index changed since diff?)")]
-    PatchDoesNotApply,
     #[error("git operation timed out")]
     Timeout,
     #[error("git operation cancelled")]

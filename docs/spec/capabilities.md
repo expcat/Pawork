@@ -24,7 +24,7 @@ UI-6b G2：Go 存储账号可读取官方三窗已用百分比与重置时刻；
 | CAP-MODEL-01 | 按用途筛选可用模型（对话 / 识图 / 生图 / 视频 / 搜索），Desktop 徽标与用途 chips、CLI `--purpose`、Gateway `/v1/models?purpose=` 三面同源 | Desktop Composer / Settings、`pawork models --purpose`、`GET /v1/models` | 已实现（ADR-064，API 1.25 / Gateway v1.1）；真实图像生成模型的端到端冒烟待真实账号 | canonical 用途词汇 `ModelPurpose` 由 domain 定义，映射既有能力位（text / image_input / image_output / video_input / hosted WebSearch），不建第二套能力体系；图像生成模型（text=false）不进会话候选；无证据不声明（fail-closed）。 |
 | CAP-AUTH-01 | API key、OAuth 登录/刷新、脱敏状态 | `auth list/set-key/login/logout` | 已实现；部分待人工验收 | ChatGPT/xAI 自然临期 refresh 仍需真实账号窗口；OS Keychain 不在当前实现。 |
 | CAP-CONTEXT-01 | 上下文预算、compaction、用量/定价 | Run、`usage` | 已实现 | usage 幂等冲突与哨兵口径仍需专项复核。 |
-| CAP-GIT-01 | diff、checkpoint、rollback、fork/worktree 支撑 | `diff`、`rollback`、Desktop Changes | 部分实现 | Core/CLI 已实现；Desktop Changes 只读，stage/unstage/hunk 是 ADR 候选。 |
+| CAP-GIT-01 | diff、checkpoint、rollback、fork/worktree 支撑 | `diff`、`rollback`、Desktop Changes | 部分实现 | Core/CLI 的 diff、checkpoint、rollback 已实现。B12 归档了无消费者的 typed Stage/HunkStage；Desktop Changes 只读，stage/unstage/hunk 仍是 BK-GIT-02。 |
 | CAP-RESOURCE-01 | AGENTS.md、Skills、profiles、`@file`、配置导入 | chat/run、`import` | 已实现；部分 GUI 缺口 | Desktop 已消费 host `@` 展开和 MCP 列表；无 `@` 候选浮层/已加载规则 query。 |
 | CAP-MCP-01 | MCP Client 配置、测试、工具/资源 | `mcp list/test`、Desktop Resources | 已实现 | MCP auth 与主 Provider auth 分域；Pawork 作为 MCP Server 未实现。 |
 | CAP-GUI-01 | 本机 GUI server 与 GPUI Desktop | `gui serve`、`pawork-desktop` | 生产链路已实现；完整人工门禁未完成 | 项目/会话/Changes/Terminal 主路径已验收；完整视觉、AX/IME/跨平台仍需专项证据；断线不取消 Run。 |

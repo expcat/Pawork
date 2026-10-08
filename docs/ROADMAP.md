@@ -67,7 +67,7 @@
 | ✅ 完成 | [B8 · MCP Secret 前缀单一事实源裁决](plan/b8-mcp-secret-prefix.md) | 保留 workspace 导入前缀副本，auth locator 为运行时权威；不改依赖、不物理去重，字节与文档 / 格式检查通过，独立 review PASS。 |
 | ✅ 完成 | [B10 · Engine 预留入口与上下文 API 裁决](plan/b10-engine.md) | 裁决未消费入口、工具结果裁剪模块和跨 Storage 小 API。 |
 | ✅ 完成 | [B11 · Orchestration 注入与恢复面裁决](plan/b11-orchestration.md) | 五个闲置入口及耦合入口收到测试构建，保留生产生命周期与重放；87 条定向回归、正式宿主类型检查通过，独立 review PASS；不激活 DAG、自动合并或热恢复。 |
-| 待裁决 | [B12 · Git Stage / HunkStage 产品面裁决](plan/b12-git-stage.md) | 在生产接线和归档之间裁决 Git 写操作。 |
+| ✅ 完成 | [B12 · Git Stage / HunkStage 产品面裁决](plan/b12-git-stage.md) | 归档无消费者的 Stage/HunkStage；35 条 Git 回归、宿主与依赖检查通过，独立 review / 复审 PASS；冻结 git_stage 仍不可用，Desktop Changes 保持只读。 |
 | 待裁决 | [B13 · MCP OAuth 未接线模块裁决](plan/b13-mcp-oauth.md) | 裁决 MCP OAuth 生产接入或保留/归档边界。 |
 | 待裁决 | [B14 · AppCore 同步装配双轨裁决](plan/b14-app-construction.md) | 核实测试专用同步构造路径并决定最小收敛方式。 |
 | 待裁决 | [B15 · App 查询、设置写盘与配置错误收敛](plan/b15-app-small-cleanup.md) | 裁决并收敛三个紧相关的 App 清理线索。 |

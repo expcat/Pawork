@@ -550,7 +550,7 @@ Context 投影回归覆盖目录 context window 的 0 哨兵显示为 unavailabl
 ## 8. 注意事项与已知限制
 
 - **gpui 前台执行器无 tokio reactor（历史崩溃教训）**：在 `cx.spawn` 的前台执行器上 await client 调用，会在 `receive_frame` 内部的 `tokio::time` 直接 panic。连接期握手 / ack / `subscribe_all` 与事件泵**必须**全部跑在 `runtime.spawn` 上，gpui 侧只经 channel 消费结果。`--probe-smoke` 走 `platform.block_on` 自带 runtime，暴露不了这类回归，因此生产窗口启动仍是必需门禁。
-- **Changes 面只读**（用户拍板 2026-08-24）：git_stage / HunkStageService 接线顺延 ADR 候选；`@` 补全浮层与「已加载规则」分区无 Host 出口（`@` 端到端展开在 host 侧 crates/app，不在本 crate）。
+- **Changes 面只读**（用户拍板 2026-08-24）：B12（2026-10-08）归档了无消费者的 StageService / HunkStageService。冻结 git_stage 仍三通道不可用，接线仍是 BK-GIT-02，须 Accepted ADR，不得从 UI 直接调用 Git。`@` 补全浮层与「已加载规则」分区无 Host 出口（`@` 端到端展开在 host 侧 crates/app，不在本 crate）。
 - **host `diff_*` 固定解析 latest 会话**：数据会话与当前查看会话不一致时，UI 以 banner「Showing changes for latest session X — not the active session.」与 popover 提示行如实标注，不静默张冠李戴。
 - **渲染面自动门禁尚未完整**：现有布局、主题、键盘与 AX 定向测试不覆盖完整 Timeline/Changes AX 几何与全组件 hover/inactive，性能阈值也未冻结；历史阶段图验收不扩张为这些未覆盖项的自动保证。
 - **ActivityPopover 验收边界**：divider/raised Changes section、仅有 Changes capability 时的 320px 内容宽，内容高随字号为 144/180/216px 收缩、最小窗锚定与相关 AX 子节点须由定向测试和当前构建真窗口共同核对。VoiceOver / 完整 screen-reader 已移出当前 GUI 验收范围；后续 capability 增减仍须重新验证动态内容高度与 AX 子树。

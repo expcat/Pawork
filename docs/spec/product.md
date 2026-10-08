@@ -62,7 +62,7 @@ flowchart LR
 | PRD-SAFE-01 | 文件与进程操作必须经过工作区路径、Policy、审批和 Sandbox 约束；不可静默放宽灾难地板。 | 已实现；平台能力与回退限制见 [security.md](security.md)。 |
 | PRD-PROVIDER-01 | 必须支持内置通道、可配置兼容端点、能力协商、用量归一与凭证脱敏。 | 已实现；真实 Provider 终局复验仍有人工项。 |
 | PRD-RESOURCE-01 | 必须加载 AGENTS.md、Skills、profiles、`@file`，并作为 MCP Client 管理资源；导入不得执行外部 hook。 | 已实现；Desktop 的 `@` 候选浮层和已加载规则分区未实现。 |
-| PRD-GIT-01 | 必须能查看 diff、创建 checkpoint/rollback；GUI 变更面默认只读。 | 已实现/部分实现：CLI 与核心能力已实现，Desktop stage/unstage/hunk 写操作为候选。 |
+| PRD-GIT-01 | 必须能查看 diff、创建 checkpoint/rollback；GUI 变更面默认只读。 | 已实现/部分实现：diff、checkpoint、rollback 已实现。B12 归档了无消费者的 typed Stage/HunkStage；Desktop stage/unstage/hunk 仍是 BK-GIT-02。 |
 | PRD-CLIENT-01 | Desktop、headless 与 ACP 必须连接同一宿主，能力宣告、授权与实现保持同源且未登记 fail-closed。 | 已实现。 |
 | PRD-DESKTOP-01 | Desktop 必须呈现 TaskRail、Timeline、Composer、审批和 Inspector，并在断线后可恢复且不取消 Run。 | 生产链路已实现；主路径已验收，完整视觉/AX/跨平台仍需专项证据。 |
 | PRD-SETTINGS-01 | Desktop 必须通过 Host 管理供应商连接、API key/OAuth、模型发现与默认 provider/model；Secret 不得由 Desktop 持久化。 | 已实现；真实账号矩阵与用户验收待闭合；范围见 [settings.md](settings.md)。 |

@@ -39,7 +39,7 @@
 | [crates/models.md](crates/models.md) | `pawork-models` | 共享模型目录、能力证据/协商、定点计价 |
 | [crates/providers.md](crates/providers.md) | `pawork-providers` | HTTP/SSE + wire/usage/reasoning + 八通道 adapter |
 | [crates/auth.md](crates/auth.md) | `pawork-auth` | Secret 后端、OAuth（PKCE/Device）、credential locator、脱敏 |
-| [crates/git.md](crates/git.md) | `pawork-git` | Diff/Status/GitService/HunkStage/worktree/merge |
+| [crates/git.md](crates/git.md) | `pawork-git` | Diff/Status/GitService/worktree |
 | [crates/engine.md](crates/engine.md) | `pawork-engine` | Agent tool loop、审批等待、取消、压缩注入点（生产依赖仅 domain） |
 | [crates/workflow.md](crates/workflow.md) | `pawork-workflow` | plan/task 纯 reducer |
 | [crates/orchestration.md](crates/orchestration.md) | `pawork-orchestration` | 多 Agent supervisor/budget/lifecycle/merge/task_graph |

@@ -4,27 +4,25 @@
 
 ## 1. 职责与边界
 
-- 提供五类能力：仓库检测与 HEAD 元信息（`GitService`）、工作区状态（`StatusService`）、暂存操作（`StageService`）、worktree 管理（`WorktreeService`）、结构化 Diff 与 hunk/行级暂存（`DiffService` / `HunkStageService`）。
+- 提供四类能力：仓库检测与 HEAD 元信息（`GitService`）、工作区状态（`StatusService`）、worktree 管理（`WorktreeService`）、结构化 Diff（`DiffService`）。
 - 唯一后端是系统 `git`：不引入 libgit2 / gitoxide；所有命令经 `GitRunner` → `pawork_exec::ProcessRuntime` 执行，统一 cwd、超时、输出上限与取消归一。
-- **不做**：commit / branch / stash / conflict / history / cache 六个零消费服务已于旧 R0（ADR-038 D16，2026-08-18 波 C）归档删除，git tag `v2-final` 可找回，复活条件见 [产品候选](../backlog.md)。
-- 不做持久化、不做协议、不做审批决策；`discard` 等危险操作只做风险分级（`StageRisk`），审批由上层 Policy 执行。
+- **不做**：commit / branch / stash / conflict / history / cache 六个零消费服务已于旧 R0（ADR-038 D16，2026-08-18 波 C）归档删除，git tag `v2-final` 可找回。Stage / HunkStage 于 B12（2026-10-08）归档删除：`StageService`、`HunkStageService`、`build_hunk_patch` / `build_line_patch`、`StageOp` / `StageRequest` / `StageRisk`，以及只由它们构造的 `GitError::PatchDoesNotApply`。全仓没有生产调用；Desktop Changes 保持只读；冻结 `git_stage` 三通道不可用，且没有 Host 处理。当前布局的完整源码在提交 `44a8848ed21caeb02fa6318332f4f882df951e3e` 的 `crates/git/src/stage.rs` 与 `crates/git/src/diff/hunk_stage.rs`。tag `v2-final`（`088b539bfa35e4466f8fe7c3550c730b74c551d4`）未包含当前目录布局；旧路径 `vcs/git/src/stage.rs` 与该基线逐字节相同，`vcs/git/src/diff/hunk_stage.rs` 仅有 import 迁移差异。复活条件见 [产品候选](../backlog.md) 的 BK-GIT-02。禁止把归档代码复制回主干库存。
+- 不做持久化、不做协议、不做审批决策。归档 typed stage 不禁止模型经现行受 Policy 约束的 `run_command` 执行 Git 命令。
 
 ## 2. 模块与文件地图
 
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
-| `src/lib.rs` | ~40 | crate 门面：7 个模块声明与全部公开 re-export；`FileStatus` 唯一定义在 `status`，`diff::FileStatus` 为同一类型 re-export |
-| `src/error.rs` | ~60 | `GitError` 统一错误枚举（9 个 variant，2026-10 R-05 删除 V2 归档服务的 8 个零构造点遗留）；`From<pawork_exec::ProcessError>` 归一：Spawn 且 `NotFound`→`GitNotFound`、`KillTimeout`→`Timeout`、其余 Spawn/ProcessTree/Isolation→`Other`、IO 透传 |
+| `src/lib.rs` | ~40 | crate 门面：6 个模块声明与全部公开 re-export；`FileStatus` 唯一定义在 `status`，`diff::FileStatus` 为同一类型 re-export |
+| `src/error.rs` | ~50 | `GitError` 统一错误枚举（8 个 variant。2026-10 R-05 删除 V2 归档服务的 8 个零构造点遗留；B12 再删除仅由 Stage 构造的 `PatchDoesNotApply`）；`From<pawork_exec::ProcessError>` 归一：Spawn 且 `NotFound`→`GitNotFound`、`KillTimeout`→`Timeout`、其余 Spawn/ProcessTree/Isolation→`Other`、IO 透传 |
 | `src/process.rs` | ~200 | `GitRunner`（默认 `git` 路径、30s 超时、16MB 输出上限）；`validate_position_arg` 注入防护；domain→exec 取消令牌桥接（已取消立即 cancel，否则后台任务等待）；Windows `\\?\` verbatim cwd 经 `dunce` 简化 |
 | `src/repo.rs` | ~410 | `GitService`：`open`（`rev-parse --show-toplevel` 定位 work tree，失败→`NotARepository`）、`git_dir` / `is_bare` / `current_branch` / `current_head` / `repo_info`（合并 rev-parse，固定两次 spawn，unborn 回退路径）；`Head::{Branch(name), Detached(sha), Unborn}` / `RepoInfo` |
 | `src/status.rs` | ~370 | `StatusService` 与自由函数 `read_status`：`git status --porcelain=v1 -z --untracked-files=all` 解析为 `FileChange`（X 列 index / Y 列 worktree 双状态 + `untracked` 标记 + rename/copy 原路径）；`FileStatus` 九态状态码映射；`changed_files` 过滤未跟踪与全未修改条目 |
-| `src/stage.rs` | ~450 | `StageService`：`stage` / `unstage` / `discard` / `stage_all` / `classify`（仅 `Discard`=`StageRisk::Dangerous`）；`apply_patch_to_index` 用临时 patch 文件走 `git apply --cached [-R]`，失败归一 `PatchDoesNotApply`；路径一律经 `--` 传递 |
 | `src/worktree.rs` | ~360 | `WorktreeService`：`list`（`worktree list --porcelain` 解析）/ `add` / `remove` / `prune`；`remove` 先经 `list()` 校验目标为 git 受管 worktree，绝不调用 `std::fs` 递归删除用户数据 |
-| `src/diff/mod.rs` | ~23 | diff 子模块声明与 re-export（`hunk_stage` / `model` / `parser` / `service`）；`FileStatus` 来自 `status` |
+| `src/diff/mod.rs` | ~20 | diff 子模块声明与 re-export（`model` / `parser` / `service`）；`FileStatus` 来自 `status` |
 | `src/diff/model.rs` | ~70 | 结构化 diff 数据模型：`DiffFile`（path / previous_path / status:`FileStatus` / staged / binary / additions / deletions / hunks，`changed_lines()`）、`DiffHunk`、`DiffLine`、`HunkId`（全局自增 u64）、`LineKind`（Context / Addition / Deletion） |
 | `src/diff/parser.rs` | ~270 | unified diff 文本状态机解析：`parse_unified` / `parse_unified_with_start`（延续 HunkId 起点）；`@@` 头解析、`\ No newline at end of file` 标记按上一行类型作用到旧侧/新侧（Context 两侧一致）；容忍任意输入不 panic |
 | `src/diff/service.rs` | ~650 | `DiffService`：`diff_summary`（`--raw -z` + `--numstat -z` 按 NUL 记录合并，含多文件与 rename/copy old/new 双路径，工作区视角补 `ls-files --others --exclude-standard -z` 未跟踪文件）、`diff`（逐文件 `-U<n> --no-color -- <path>` 解析 hunks）；`DiffOptions` / `paginate` / `DiffPage`；`--raw` 头解析（状态字母 M/A/D/T/U、R/C 带相似度、mode 160000 gitlink） |
-| `src/diff/hunk_stage.rs` | ~715 | `HunkStageService`：`stage_hunks` / `unstage_hunks` / `stage_lines` / `unstage_lines`（底层 `git apply --cached [-R]`）；纯函数 `build_hunk_patch`（重建 `diff --git` 头 + 选中 hunks）与 `build_line_patch`（按 bool 选择行、重算 hunk 行数） |
 | `tests/parser_contract.rs` | ~65 | parser golden 契约 + proptest（任意输入不 panic）；夹具在 `tests/golden/*.diff` |
 
 ## 3. 对外 API 面
@@ -46,11 +44,6 @@
 - 自由函数 `read_status(work_dir, cancel)`：内部临时构造 `GitRunner` 的一次性入口。
 - `FileStatus` 九态：`' '`/M/A/D/R/C/U/T/`?` → Unmodified/Modified/Added/Deleted/Renamed/Copied/Unmerged/TypeChanged/Untracked；未识别字符保守映射 Unmodified。
 
-**暂存（stage）**
-- `StageRequest::new(paths)`；`StageService::stage/unstage/discard(&StageRequest, cancel)`、`stage_all(cancel)`。
-- `classify(StageOp) -> StageRisk`：仅 `StageOp::Discard` 返回 `Dangerous`，其余 `Safe`——上层审批依据。
-- `apply_patch_to_index(patch, reverse, cancel)`：hunk/行级暂存底层入口；index 自 diff 后已变化→`PatchDoesNotApply`。
-
 **Worktree**
 - `WorktreeService::new(&runner, main_work_dir)`；`list(cancel) -> Vec<Worktree>`（porcelain 解析：path / branch / HEAD 等）。
 - `add(path, branch, base, cancel)`：branch/base 走 `validate_position_arg`，路径经 `--` 传递并拒绝 option 形路径（如 `--force`）；成功后重新 `list()` 返回新条目。
@@ -61,7 +54,6 @@
 - `DiffService::new(GitRunner, work_dir)`；`diff_summary(opts, cancel) -> Vec<DiffFile>`：仅文件清单（binary 标记与 add/del 行数已填，hunks 为空）——大 diff 的轻量入口；`diff(opts, cancel)`：在 summary 基础上逐个非 binary / 非 Untracked 文件补 hunks，`HunkId` 全局自增。
 - `paginate(files, page, page_size) -> DiffPage{files, total_files, page, page_size}`：`page` 从 1 起、`page_size == 0` 返回全部、越界返回空页。
 - `parse_unified(patch)` / `parse_unified_with_start(patch, start) -> (Vec<DiffHunk>, next_id)`：可独立用于解析任意 unified diff 文本。
-- `HunkStageService::new(GitRunner, work_dir)`：`stage_hunks/stage_lines`（输入必须来自 worktree-vs-index 的 diff）与 `unstage_hunks/unstage_lines`（输入必须来自 `staged: true` 的 diff）；rename / binary / untracked 文件不支持 hunk 级暂存。`build_hunk_patch` / `build_line_patch` 为纯函数（行级选择全 false 时返回 `None`）。
 
 **错误语义速查（当前有构造点的 variant）**
 
@@ -71,7 +63,6 @@
 | `NotARepository(path)` | `GitService::open` 的 rev-parse 失败 | 目录不在仓库内 |
 | `GitFailed{code, stderr}` | 命令非零退出 | 按 stderr 呈现；stderr 已 trim |
 | `InvalidPositionArgument{name, value}` | 位置参数以 `-` 开头 | 拒绝输入，不发起子进程 |
-| `PatchDoesNotApply` | `git apply --cached` 失败（index 已变化） | 重新 diff 后重试 |
 | `Timeout` | 超过默认 30s 或 `KillTimeout` | 可放宽超时后重试 |
 | `Cancelled` | 取消令牌触发、进程被杀且无退出码 | 正常取消路径 |
 | `Io` / `Other` | IO 错误 / 罕见 runtime 失败 | 透传诊断 |
@@ -82,23 +73,21 @@
 
 1. **一次 git 调用**：domain `CancellationToken` 桥接为 exec 令牌（已取消立即 cancel，否则 spawn 后台等待任务、调用结束 abort）→ 构造 `CommandSpec`（cwd 经 `dunce::simplified` 去 Windows verbatim 前缀、timeout=30s、max_output_bytes=16MB、`env_clear=false`）→ `ProcessRuntime::run` → 归一：`timed_out`→`Timeout`；`killed` 且无退出码→`Cancelled`；退出码 0→Ok；其余→`GitFailed{code, stderr}`。
 2. **一次结构化 diff**：`base_args`（`diff` + 可选 range / `--cached` / `-M`）→ `--raw -z` 解析文件清单（`:<oldmode> <newmode> <sha> <sha> <STATUS>\0<path>\0[<origpath>\0]`；R/C 带相似度尾数、mode 160000 标 gitlink）→ `--numstat -z` 按 NUL 记录合并行数与 binary 标记（普通记录内联 path；R/C 空 path 后消费 old/new 两字段并匹配 new path）→ 非 staged 视角追加 `ls-files --others --exclude-standard -z` 未跟踪文件 → （`diff` 入口）逐文件 `git diff -U<n> --no-color -- <path>`，`parse_unified_with_start` 解析 hunks 并延续全局 `HunkId`。binary / gitlink / untracked 不跑文本 hunk（避免把 submodule 工作树当内容解析）。
-3. **hunk/行级暂存**：调用方从 `DiffService` 拿 `DiffFile` → `build_hunk_patch`（选中 hunks）或 `build_line_patch`（`selection: &[bool]` 按行保留：未选 Added 行剔除、未选 Removed 行降级为 Context，并重算两侧行数）→ `StageService::apply_patch_to_index`（临时文件 + `git apply --cached [-R]`）→ index 期间被改动则 `PatchDoesNotApply`，调用方应重新 diff 后重试。
-4. **status 解析**：`--porcelain=v1 -z` 按 `\0` 分段；每条 `XY PATH`，X→`index_status`、Y→`worktree_status`；`??` 置 `untracked=true`；X 为 R/C 时下一段为原路径存入 `previous_path`。
-5. **HEAD 判定**：`symbolic-ref --short HEAD` 三分支——成功且非空→`Branch`；`GitFailed` 且 stderr 含 `detached`→`rev-parse HEAD` 取 SHA→`Detached`；其余失败→`Unborn`（新仓库无提交）。
-6. **worktree 生命周期**：`add` 校验 branch / base / 路径 → `git worktree add [--] <path> …` → 重新 `list()` 定位新条目（找不到→`Other`）；`remove` 先 `list()` 确认路径在受管清单内 → `git worktree remove [--force] <path>`；脏 worktree 无 force 删除失败且数据保留。
+3. **status 解析**：`--porcelain=v1 -z` 按 `\0` 分段；每条 `XY PATH`，X→`index_status`、Y→`worktree_status`；`??` 置 `untracked=true`；X 为 R/C 时下一段为原路径存入 `previous_path`。
+4. **HEAD 判定**：`symbolic-ref --short HEAD` 三分支——成功且非空→`Branch`；`GitFailed` 且 stderr 含 `detached`→`rev-parse HEAD` 取 SHA→`Detached`；其余失败→`Unborn`（新仓库无提交）。
+5. **worktree 生命周期**：`add` 校验 branch / base / 路径 → `git worktree add [--] <path> …` → 重新 `list()` 定位新条目（找不到→`Other`）；`remove` 先 `list()` 确认路径在受管清单内 → `git worktree remove [--force] <path>`；脏 worktree 无 force 删除失败且数据保留。
 
 ## 5. 契约与不变量
 
-- **注入防护**：一切来自上层（含模型输出）的 revision / range / branch / worktree 路径若以 `-` 开头一律拒绝（`InvalidPositionArgument`）；文件路径一律放在 `--` 之后传递（名为 `--force` 的文件可被安全 stage，有定向回归）。
+- **注入防护**：一切来自上层（含模型输出）的 revision / range / branch / worktree 路径若以 `-` 开头一律拒绝（`InvalidPositionArgument`）。diff 与 status 的文件路径放在 `--` 之后。B12 删除了只覆盖已退出 StageService 的「文件名 `--force` 经 `--` stage」回归；仍在的锚点是 `validate_position_arg`、worktree 的 option 形 ref 拒绝，以及 diff 的 option 形 commit range 拒绝。
 - **worktree 删除红线**（ADR-007 延续）：`remove` 只删除经 `list()` 验证的 git 受管 worktree，本 crate 永不执行 `std::fs` 递归删除。
-- **风险分级契约**：`StageService::classify` 仅 `Discard` 返回 `Dangerous`；上层审批依赖该分级，不得静默放宽。
 - **parser 契约**（golden + proptest 锁定）：任意输入不 panic；`\ No newline at end of file` 语义按上一行类型归属旧侧/新侧；`tests/golden/*.diff` 为冻结夹具，先改 golden 再改实现。
 - **资源上限**：单次命令输出 ≤16MB、默认超时 30s，防巨型 diff / log 打爆内存。
 - **环境继承**：`GitRunner` 不清空环境变量，git 的用户配置与 credential helper 照常生效——这是行为契约而非疏漏。
 
 ## 6. 依赖关系
 
-- **依赖**：`pawork-domain`（`CancellationToken`）、`pawork-exec`（`ProcessRuntime` / `CommandSpec` / `ProcessError` / exec 侧 `CancellationToken`）、`tokio`（sync / macros / rt / time / fs）、`serde` / `serde_json`、`thiserror`、`tracing`、`dunce`（Windows 路径简化）、`tempfile`（**正式依赖**：`apply_patch_to_index` 写临时 patch 文件）。
+- **依赖**：`pawork-domain`（`CancellationToken`）、`pawork-exec`（`ProcessRuntime` / `CommandSpec` / `ProcessError` / exec 侧 `CancellationToken`）、`tokio`（sync / macros / rt / time / fs）、`serde` / `serde_json`、`thiserror`、`dunce`（Windows 路径简化）。`tempfile` 只在 dev-dependencies，供测试临时仓库。B12 移除生产 `tempfile`（只服务 `apply_patch_to_index`）和 `tracing`（只服务该路径的删除失败日志）。
 - **被依赖**：
   - `pawork-app`：默认闭包内唯一生产消费者，仅用 `GitService` / `StatusService` / `DiffService` / `paginate`（`diff.rs` 只读面）。
   - `pawork-orchestration`：`worktree.rs`（`GitRunner` + `WorktreeService`）与 `merge.rs`（`DiffService` + `DiffOptions`）在 feature `git` 之后；该 feature 默认关闭（`default = []`），且 `pawork-app` 以 `default-features = false` 依赖 orchestration，因此默认二进制闭包不含这些路径。
@@ -112,17 +101,16 @@
   - `process.rs`：option 形位置参数拒绝、相对 cwd 不变、Windows verbatim 简化。
   - `repo.rs`：open / HEAD 三态（Branch / Detached / Unborn）、repo_info 两次 spawn 断言（`call_count` 测试钩子）。
   - `status.rs`：porcelain 双列状态、rename 原路径、untracked 过滤。
-  - `stage.rs`：stage / unstage / discard 真实仓库行为、`--force` 文件名经 `--` 安全 stage、`PatchDoesNotApply` 归一。
   - `worktree.rs`：add / list / remove 生命周期、脏 worktree 无 force 删除失败且数据保留、option 形路径与 branch 拒绝。
-  - `diff/service.rs` / `diff/hunk_stage.rs`：diff 清单与 hunks、多文件 NUL numstat 计数、分页、hunk/行级暂存端到端与失败路径。
+  - `diff/service.rs`：diff 清单与 hunks、多文件 NUL numstat 计数、分页、option 形 commit range 拒绝。
 - `tests/parser_contract.rs`：golden 契约（`tests/golden/basic_hunk.diff` / `no_newline.diff` / `context_no_newline.diff`）+ proptest 任意输入不 panic。
 - 默认验证命令：`cargo test -p pawork-git --offline --lib --tests`（需要系统 git 可用）。
 
 ## 8. 注意事项与已知限制
 
 - **单一 `FileStatus`**：定义在 `status.rs`（porcelain 九态，crate root re-export）；`diff::FileStatus` 是同一类型。`--raw` 的相似度数字只用于 rename/copy 检测，不进枚举。
-- **`HunkStageService` / `StageService` / `WorktreeService` 当前零默认闭包消费者**：HunkStage 与 Stage 在整个 workspace 无生产调用点（Desktop 未接线）；Worktree 仅被 orchestration 的默认关闭 feature 使用。API 保留但演进时无下游回归网。
-- hunk 级暂存对输入来源敏感：`stage_*` 只接受 worktree-vs-index diff、`unstage_*` 只接受 staged diff，混用会 `PatchDoesNotApply`；rename / binary / untracked 不支持。
+- **不提供 index 写入**：stage / unstage / discard / hunk / 行级暂存已于 B12 归档。Desktop Changes 仍是只读投影。冻结 `AppCommand::GitStage` 自 API 1.0 存在，但 registry 中 GUI `available=false`、headless 与 ACP 均未开放；gui-server 在进 Host 前拒绝。App 没有处理分支，也不曾调用已删除的 `StageService`。把它改成可用属于 BK-GIT-02，需要双向 wire、Policy、审批/回滚和 Accepted ADR。
+- **`WorktreeService` 不在默认二进制闭包**：仅被 orchestration 的默认关闭 feature `git` 使用。`pawork-app` 以 `default-features = false` 依赖 orchestration。
 - 输出为 lossy UTF-8：非 UTF-8 文件名 / 内容会被替换字符污染而非报错。
 - rename 检测、porcelain 输出细节依赖系统 git 版本行为，本包未固定最低 git 版本。
 - `read_status` 每次调用新建 `GitRunner`（含新 `ProcessRuntime`）；高频调用应改用 `StatusService` 复用 runner。

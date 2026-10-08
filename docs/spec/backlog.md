@@ -73,7 +73,7 @@
 | BK-REMOTE-01 | 远程 GUI transport | 归档/候选 | 按当时 API 版本重评 TLS、认证、授权与远程威胁模型。 |
 | BK-WORK-01 | 旧 teams / goal / automation / monitor 框架 | V2 reducer 已归档，事件保留；现行有预算 Goal 单独实现于 app | 旧框架仍需独立激活，不把新 Goal 当作整套框架复活。 |
 | BK-GIT-01 | GUI Branch/Stash/Conflict/History/Commit | 归档/候选 | 产品定义 + host protocol + Policy；不得让 Desktop 直连 Git。 |
-| BK-GIT-02 | Desktop stage/unstage/hunk | 候选 | 新增双向 wire、审批/回滚语义和 ADR；当前 Changes 保持只读。 |
+| BK-GIT-02 | Desktop stage/unstage/hunk | 候选 | 新增双向 wire、审批/回滚语义和 Accepted ADR；当前 Changes 保持只读。B12（2026-10-08）已归档无消费者的 StageService / HunkStageService；冻结 git_stage 仍三通道不可用，不是实现。当前布局从提交 44a8848ed21caeb02fa6318332f4f882df951e3e 的 `crates/git/src/` 取回。tag `v2-final` 只有旧路径 `vcs/git/src/`，不作为当前布局恢复点，不把归档源码拷回主干。 |
 | BK-EXT-01 | WASM 插件/市场/Hooks/LSP 生态 | 候选 | 只允许纯 Rust/WASM 路线；不引入 Node/Bun/JS Runtime。 |
 | BK-EGRESS-01 | egress broker + 域名白名单 | 候选 | 另立 ADR/任务，代理与 Sandbox 两层 enforcement；当前网络 allow-hosts 不存在。 |
 | BK-ART-01 | GUI ArtifactStreaming | 候选 | registry/实现/授权/背压/恢复同时落地后才宣告 capability。 |
