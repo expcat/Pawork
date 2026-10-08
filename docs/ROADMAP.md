@@ -60,7 +60,7 @@
 | --- | --- | --- |
 | 已裁决并实现，独立 review PASS，Windows 待验 | [B1 · Policy / Exec 公开面与安全回归裁决](plan/b1-policy-exec.md) | macOS 定向回归、Windows 交叉类型检查与依赖检查通过；Windows Job 原生执行待环境。 |
 | ✅ 完成 | [B2 · Storage 预留接口与恢复面裁决](plan/b2-storage.md) | 删除未接线入口、收窄 Options 公开面，保留账本恢复读口；Storage 定向回归、宿主与契约检查通过，独立 review PASS。 |
-| 待裁决 | [B3 · Control-plane 读面与未接线能力裁决](plan/b3-control-plane.md) | 裁决额度读面、租约恢复和未消费的凭证、预算及保留策略类型。 |
+| ✅ 完成 | [B3 · Control-plane 读面与未接线能力裁决](plan/b3-control-plane.md) | 保留真实额度读链与租约回归，删除未消费读口 / picker，收窄预算配置；定向回归与宿主检查通过，独立 review PASS，持久恢复激活与 Retention 兼容边界已写明。 |
 | 待裁决 | [B4 · Workspace / App Prompt-template 预留裁决](plan/b4-prompt-template.md) | 裁决未落地资源类型与 Prompt-template 的跨包保留范围。 |
 | 待裁决 | [B5 · Models 四个预留 API 裁决](plan/b5-models.md) | 核实模型库四个 Spec 记录 API 的使用情况并裁决。 |
 | 待裁决 | [B6 · Auth 存储 API 与别名保留期裁决](plan/b6-auth.md) | 裁决凭证 API、中转类型及旧 serde 别名的保留范围。 |

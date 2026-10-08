@@ -46,21 +46,21 @@ use crate::quota::{
     QuotaReset, QuotaSnapshot, QuotaUnit, QuotaValues,
 };
 
-/// Optional budget cap used to project `limit` / `remaining` for a scope.
-///
-/// Wrap in `Arc` if shared; otherwise clone cheaply per registration.
+/// Internal budget projection. Production assembly uses no cap; non-default
+/// caps exercise the ledger's limit arithmetic and Percent rejection in tests.
 #[derive(Clone, Debug, Default)]
-pub struct BudgetCap {
+struct BudgetCap {
     /// Cap expressed in the same unit as the request. `None` = no cap.
-    pub limit: Option<QuotaMeasure>,
+    limit: Option<QuotaMeasure>,
 }
 
 impl BudgetCap {
-    pub fn none() -> Self {
+    fn none() -> Self {
         Self { limit: None }
     }
 
-    pub fn with_limit(limit: QuotaMeasure) -> Self {
+    #[cfg(test)]
+    fn with_limit(limit: QuotaMeasure) -> Self {
         Self { limit: Some(limit) }
     }
 }
@@ -83,9 +83,8 @@ pub use crate::quota::service::QuotaClock;
 
 /// Adapter that derives quota from a Usage/Cost Ledger.
 ///
-/// Clone-safe: it holds the ledger by `Arc<dyn UsageLedger>` and an immutable
-/// budget cap. Multiple adapters with different caps can coexist by being
-/// registered under different [`crate::quota::service::ScopeMatch`] predicates.
+/// It holds the ledger by `Arc<dyn UsageLedger>`. The public constructor
+/// projects local usage without a configured budget limit.
 pub struct LedgerQuotaAdapter {
     ledger: Arc<dyn UsageLedger>,
     clock: Arc<dyn QuotaClock>,
@@ -94,14 +93,10 @@ pub struct LedgerQuotaAdapter {
 
 impl LedgerQuotaAdapter {
     pub fn new(ledger: Arc<dyn UsageLedger>, clock: Arc<dyn QuotaClock>) -> Self {
-        Self {
-            ledger,
-            clock,
-            cap: BudgetCap::none(),
-        }
+        Self::with_budget(ledger, clock, BudgetCap::none())
     }
 
-    pub fn with_budget(
+    fn with_budget(
         ledger: Arc<dyn UsageLedger>,
         clock: Arc<dyn QuotaClock>,
         cap: BudgetCap,

@@ -17,19 +17,19 @@
 | `src/lib.rs` | ~45 | 8 个 `pub mod`；crate 根 re-export audit/decision/identity/rbac/tenant/usage 常用类型；`sqlite` 门控 `SqliteUsageLedger` + `SCHEMA_VERSION`。**credential / quota 类型走模块路径**，不在根 re-export |
 | `src/identity.rs` | ~220 | `DEFAULT_TENANT = "local/default"`、`DEFAULT_PRINCIPAL = "local/user"`、`default_tenant()`/`default_principal()`、`IdentityContext`（tenant + principal）、`IdentityResolver` trait、`LocalIdentityResolver`、`IdentityError`（缺失身份 fail-closed） |
 | `src/audit.rs` | ~450 | `AUDIT_SCHEMA_VERSION = 1`、`AuditEventV1`（`new` / `validate`）、`AuditAction` / `AuditDecision` / `AuditTargetKind`、`AuditSink` / `AuditStore` trait、`InMemoryAuditStore`、`FileAuditStore`（JSONL 追加）、`AuditError`；含 JSONL golden 测试 |
-| `src/decision.rs` | ~275 | `PolicyGate`（9 个 enforcement point：`RouteCandidate` / `LeaseAcquire` / `AgentSpawn` / `RequestAdmission` / `SessionQuery` / `UsageQuery` / `AuditQuery` / `AuditExport` / `Retention`）、`PolicyDecisionKind`（`Allow` / `Deny` / `Limit` / `Fallback`）、`PolicyDecisionEvent`（版本化决策事件）、`sanitize_reason`（脱敏 + 截断） |
+| `src/decision.rs` | ~275 | `PolicyGate`（9 个策略标签：`RouteCandidate` / `LeaseAcquire` / `AgentSpawn` / `RequestAdmission` / `SessionQuery` / `UsageQuery` / `AuditQuery` / `AuditExport` / `Retention`；Retention 仅保留持久化兼容标签）、`PolicyDecisionKind`（`Allow` / `Deny` / `Limit` / `Fallback`）、`PolicyDecisionEvent`（版本化决策事件）、`sanitize_reason`（脱敏 + 截断） |
 | `src/rbac.rs` | ~290 | `PrincipalRole`（`Admin` / `User` / `Service` / `Viewer`，`rank` / `permissions` / `allows` / `merge_deny_first`）、`Permission`（8 项）、`PermissionProfile`（`effective_role`）、`AuditExportPolicy`；合并一律 deny-first |
 | `src/tenant.rs` | ~870 | `TenantPolicy`（并发上限、预算、允许的 model/provider/account、保留期、审计导出）、`TenantPolicyDecision` / `ConcurrencyKind` / `BudgetDimension` / `TenantPolicyError`、`TenantPolicyEngine` trait（check_* + `set_policy` / `policy_version`）、`InMemoryTenantPolicyEngine`、5 个纯函数 `decide_*`（model / provider / account / permission / audit_export，供引擎委托） |
 | `src/task_usage.rs` | — | 与费用账本共用连接的调用日志、身份 / 关联校验、任务统计和游标分页；两后端及两项持久 / 隔离回归 |
 | `src/usage.rs` | ~2 860 | 多维 usage/cost 账本：`UsageRecord`（`RECORD_VERSION = 2`）、`UsageTotals`、`UsageQuery`、`CostConfidence`、`UsageLedgerError`、`UsageLedger` trait、`InMemoryUsageLedger`、`SqliteUsageLedger`（feature `sqlite`；`SCHEMA_VERSION = 4`）、`AUTO_RECORD_ID_PREFIX = "auto-rec-"` |
-| `src/credential/mod.rs` | ~2 250 | `CONTROL_PLANE_SCHEMA_VERSION = 2`、`LeaseId`、`AcquireRequest`、`CredentialLease`（**无 secret 字段**）、`LeaseOutcome`、`PoolError`、`AccountHealth`、`ReleaseReceipt`、`CredentialPool` trait、`LeaseGuard`（RAII）、`DEFAULT_LEASE_TTL_MS = 3_600_000`、`CredentialPicker` / `LegacyCredentialPicker`、`PoolConfig`、`LeaseIdGenerator`、`InMemoryCredentialPool` |
+| `src/credential/mod.rs` | ~2 150 | `CONTROL_PLANE_SCHEMA_VERSION = 2`、`LeaseId`、`AcquireRequest`、`CredentialLease`（**无 secret 字段**）、`LeaseOutcome`、`PoolError`、`AccountHealth`、`ReleaseReceipt`、`CredentialPool` trait、`LeaseGuard`（RAII）、`DEFAULT_LEASE_TTL_MS = 3_600_000`、`PoolConfig`、`LeaseIdGenerator`、`InMemoryCredentialPool`（容量准入，固定 opaque `default` 凭据标识） |
 | `src/credential/lease.rs` | ~840 | canonical 租约状态机（纯领域、无 I/O 无 await）：`LeaseState`、`LeaseRecord`（versioned、无 secret；`open` / `release` / `expire` / `reclaim` / `to_public_lease`）、`LeaseEvent`、`LeaseTransitionError`、`LeaseClock`（+ `SystemLeaseClock` / `FixedLeaseClock`）、`ReclaimReport`、`LeaseProjection`（对象安全持久化 sink，+ `Null` / `InMemory` 实现） |
-| `src/quota/mod.rs` | ~35 | 模块文档与 re-export：`adapter::{AdapterKind, QuotaAdapter}`、`domain::*`、`error::QuotaError`、`ledger::LedgerQuotaAdapter`、`service::{CacheOverview, CacheRead, QuotaClock, QuotaService}`；`util` 为私有模块 |
+| `src/quota/mod.rs` | ~35 | 模块文档与 re-export：`adapter::{AdapterKind, QuotaAdapter}`、`domain::*`、`error::QuotaError`、`ledger::LedgerQuotaAdapter`、`service::{QuotaClock, QuotaService}`；`util` 为私有模块 |
 | `src/quota/adapter.rs` | ~120 | `AdapterKind`（`ApiKeyApi` / `OAuthApi` / `WebScrape` / `LocalLedger`）与对象安全异步 `QuotaAdapter` trait（`fetch` 要求 cancel-safe） |
 | `src/quota/domain.rs` | ~320 | canonical 配额领域：`QuotaScope`（tenant + account + provider + optional model，`with_credential_id`）、`QuotaWindow`（`Overall` / `Rolling5h` / `Weekly` / `Monthly`）、`QuotaUnit`（`Count` / `Token` / `Percent` / `Cost { currency }`）、`QuotaMeasure`（`Exact` / `Infinite` / `Unknown`）、`QuotaValues`、`Confidence`（`Exact` > `Derived` > `Scraped`）、`QuotaReset`、`QuotaProvenance`（endpoint 清洗）、`QuotaRequest`、`QuotaSnapshot` |
 | `src/quota/error.rs` | ~540 | `QuotaError` 十变体（`Unsupported` / `Unauthorized` / `Forbidden` / `RateLimited` / `ReauthorizationRequired` / `Timeout` / `Transient` / `Parse` / `Cancelled` / `Other`）+ 构造器、`retryable()`、`retry_after_ms()`；`detail` 必须已脱敏 |
-| `src/quota/ledger.rs` | ~1 300 | `LedgerQuotaAdapter`：直接消费 `UsageLedger` 派生本地 used/limit/remaining；`BudgetCap`（`none` / `with_limit`）、远端增量 `reconcile` |
-| `src/quota/service.rs` | ~2 710 | `QuotaService`：适配器注册（`ScopeMatch` 路由）、per-(scope, window, unit) 缓存（默认 TTL 30 s）、singleflight（leader 中止可恢复）、多窗口并发聚合、stale 兜底；`QuotaClock`（+ `SystemQuotaClock` / `MutableQuotaClock`）、`QuotaRead` / `WindowRead` / `QuotaOverview` / `QuotaFailure` / `CacheRead` / `CacheOverview` |
+| `src/quota/ledger.rs` | ~1 300 | `LedgerQuotaAdapter`：直接消费 `UsageLedger` 派生本地 used/limit/remaining；私有 `BudgetCap`（生产无 cap，带 cap 算术由库内回归覆盖）、远端增量 `reconcile` |
+| `src/quota/service.rs` | ~2 400 | `QuotaService`：适配器注册（`ScopeMatch` 路由）、per-(scope, window, unit) 缓存（默认 TTL 30 s）、singleflight（leader 中止可恢复）、多窗口并发聚合、stale 兜底；`QuotaClock`（+ `SystemQuotaClock` / `MutableQuotaClock`）、`QuotaRead` / `WindowRead` / `QuotaOverview` / `QuotaFailure` |
 | `src/quota/util.rs` | ~620 | **私有**工具：UTC 日历换算（`next_month_start_timestamp` 等）与脱敏（`redact_endpoint` / `redact_secrets` / `redact_source`） |
 | `fixtures/audit/event-v1.jsonl` | 1 行 | audit JSONL 冻结 golden（单行、`\n` 结尾） |
 
@@ -62,6 +62,7 @@
 - `AuditSink::append(event)` 是唯一写入口；`AuditStore: AuditSink` 增加查询能力。
 - `FileAuditStore::open(path)`：JSONL 追加式存储（一行一条、`\n` 结尾）；`InMemoryAuditStore` 供测试；`path()` 暴露落盘位置。
 - `PolicyDecisionEvent::new(gate, kind, reason, ...)`：策略决策审计事件（版本化）；`kind_of(&TenantPolicyDecision)` 把 tenant 决策映射为 `PolicyDecisionKind`；`reason` 一律过 `sanitize_reason`（脱敏 + 长度截断）。
+- `PolicyGate::Retention`：`as_str` 与 serde 的 `"retention"` 标签保持兼容；当前没有生产保留期执行入口，不据此声称已有执行器。
 
 **tenant / rbac（根 re-export）**
 
@@ -79,8 +80,7 @@
 - `LeaseOutcome`：`Completed` / `Cancelled` / `Failed` / `Released`；只有 `Failed` 累加 `AccountHealth.consecutive_failures`，`Cancelled` 只累加取消计数（取消不惩罚账号健康）。
 - 错误 `PoolError`：`NoCandidate`、`ConcurrencyExhausted`（账号并发满，携带 active / max）、`TenantConcurrencyExhausted`（租户 cap）、`TenantDenied`、`Projection`（持久化投影失败）。
 - `LeaseGuard`：RAII；`Drop` 以当前 outcome 释放（先尝试同步完成，`Pending` 则交 detached task 驱动到完成，杜绝额度泄漏）；`outcome_mut()` 在释放前改写分类；`into_lease()` 取走后 `Drop` 无副作用。
-- `CredentialPicker` trait / `LegacyCredentialPicker`：账号 → 凭据的候选选择策略（legacy 单凭据回退：`pick` 恒返回合成 `default` 凭据，不按账号派生）。
-- `InMemoryCredentialPool`：默认实现；`PoolConfig::new(max).with_tenant_cap(..).with_ttl_ms(..).with_account_override(tenant, account, max)`（`max_for` 分层取值：账号覆盖 > 默认）；`LeaseIdGenerator::system()`（进程唯一前缀 + 计数，崩溃重启不重复）；`with_projection` 注入 `LeaseProjection`；`recover_records` 从快照重建。`DEFAULT_LEASE_TTL_MS = 3_600_000`（1 小时）。
+- `InMemoryCredentialPool`：默认实现，`new` / `with_config` / `with_clock` / `with_projection` 构造；池只管理容量，`credential_id` 固定为 opaque `default`，账号选择与 Secret 解析由宿主承担。`PoolConfig::new(max).with_tenant_cap(..).with_ttl_ms(..).with_account_override(tenant, account, max)`（`max_for` 分层取值：账号覆盖 > 默认）；`LeaseIdGenerator::system()`（进程唯一前缀 + 计数，崩溃重启不重复）；`with_projection` 注入 `LeaseProjection`；`recover_records` 从快照重建。`DEFAULT_LEASE_TTL_MS = 3_600_000`（1 小时）。
 
 **quota 领域类型（`quota::domain`，经 `quota::*` re-export）**
 
@@ -92,11 +92,11 @@
 
 **quota 服务（模块路径 `quota::`；`QuotaRead` / `QuotaOverview` / `WindowRead` / `ScopeMatch` / `QuotaFailure` 在 `quota::service::`）**
 
-- `QuotaService`：`register(ScopeMatch, Arc<dyn QuotaAdapter>)` 注册适配器（`ScopeMatch::any()` / `for_provider(id)` 路由）；`read` / `read_with_credential`（单 (scope, window, unit)）与 `overview` / `overview_with_credential`（多窗口并发）；`read_cache_only` / `overview_cache_only`（纯缓存判读，不触发 fetch，返回 `CacheRead` / `CacheOverview`）；`publish_local_snapshot` / `cached_snapshots_for_scope`（本地投影直写缓存）；`set_ledger_reconciler` 挂接 Ledger 对账；`invalidate` / `invalidate_local_scope`（R-13：只失效该 scope 的 LocalLedger/Derived 派生窗口，远端权威缓存不动）/ `cache_size`；`new`（TTL 30 s）/ `with_ttl`（0 TTL = 永不新鲜，逢读必 fetch 但仍 singleflight，最近缓存留作 stale 兜底）。
+- `QuotaService`：`register(ScopeMatch, Arc<dyn QuotaAdapter>)` 注册适配器（`ScopeMatch::any()` / `for_provider(id)` 路由）；`overview` / `overview_with_credential` 是多窗口读取入口，App 的 `quota_windows` 消费前者；`publish_local_snapshot` / `cached_snapshots_for_scope`（本地投影直写缓存）；`set_ledger_reconciler` 挂接 Ledger 对账；`invalidate_local_scope`（R-13：只失效该 scope 的 LocalLedger/Derived 派生窗口，远端权威缓存不动）/ `cache_size`；`new`（TTL 30 s）/ `with_ttl`（0 TTL = 永不新鲜，逢读必 fetch 但仍 singleflight，最近缓存留作 stale 兜底）。单窗口 `read_impl` 为私有共享实现，`read` 仅为 `cfg(test)` 私有助手；B3 已删除未消费的 `read_with_credential`、两个 cache-only 入口及结果类型、全缓存 `invalidate`。
 - `QuotaAdapter::fetch` 契约：对象安全、cancel-safe（调用方可随时 drop future）；secret 仅以 `pawork_domain::ResolvedCredential` 在适配器调用边界注入——该类型 `Debug` 脱敏且未实现 `Serialize`，本 crate 结构上无法持有或泄漏明文。
 - `QuotaSnapshot`：scope + window + unit + `QuotaValues`（used / limit / remaining，均为 `QuotaMeasure`）+ `Confidence` + `QuotaReset`（绝对 / 相对 + 不确定性）+ `QuotaProvenance`（adapter kind、脱敏 endpoint、取数时刻）。
 - `QuotaError::retryable()`：`RateLimited` / `Timeout` / `Transient` 可重试，`retry_after_ms()` 透传服务器建议；`Unauthorized` / `Forbidden` / `ReauthorizationRequired` 需要上层处理凭证后再试。
-- `LedgerQuotaAdapter::new(ledger, clock)` / `with_budget(BudgetCap)`：从唯一 UsageLedger 派生本地 used（`BudgetCap` 提供 limit），`reconcile` 做远端增量对账。
+- `LedgerQuotaAdapter::new(ledger, clock)`：从唯一 UsageLedger 派生本地 used，默认 limit / remaining 为 `Infinite`；`reconcile` 做远端增量对账。`BudgetCap` 与 `with_budget` 是私有内部配置，保留带 cap 算术与 Percent 拒绝回归；当前无公开预算配置入口，也没有据此装配的产品预算 gate。
 - 时钟注入：`QuotaClock`（`SystemQuotaClock` 生产 / `MutableQuotaClock` 测试 `set` / `advance`）；credential 侧对应 `LeaseClock`（`SystemLeaseClock` / `FixedLeaseClock`），两侧独立定义，宿主可 cross-wiring。
 
 **公开常量速查**
@@ -137,17 +137,17 @@ UI-6b G2：`QuotaUnit::Percent` 表示整数百分点，与协议镜像同形；
 3. 若配置投影：事务化持久化 snapshot + 累计事件（`LeaseProjection::apply`）；失败回滚 active 计数并返回 `PoolError::Projection`——**先持久化后放行**（durable-first）。成功则返回公开视图 `CredentialLease`（`to_public_lease`）。
 4. 使用期间 `AccountHealth` 跟踪 `active_leases`；lease 的 `credential_id` 只是 opaque 定位符，resolve 明文 secret 是宿主的事。
 5. `release(lease_id, outcome)`：`Acquired → Released` 归还额度；只有 `Failed` 累加 `consecutive_failures`，`Cancelled` 只累加取消计数（取消不惩罚账号健康）；重复释放幂等（`already_released = true`）。`LeaseGuard` 被 Drop 时自动走该路径。
-6. TTL 过期：`reclaim_expired` 扫描过期的 `Acquired → Expired`（归还额度），再把所有 `Released` / `Expired` 收敛到终态 `Reclaimed` 并事务化持久化每个 lease 的终态 snapshot 与事件；宿主在启动 / 周期心跳时调用；返回 `ReclaimReport`。
-7. 崩溃恢复：`restore` / `recover_records` 从投影读非终态快照，重建 active 计数并回收孤儿 lease——重启不泄漏额度。
+6. TTL 过期：`reclaim_expired` 扫描过期的 `Acquired → Expired`（归还额度），再把所有 `Released` / `Expired` 收敛到终态 `Reclaimed` 并事务化持久化每个 lease 的终态 snapshot 与事件；返回 `ReclaimReport`。这是库边界入口，App 当前没有启动 / 心跳接线。
+7. 恢复：`restore` 从投影加载 outstanding 快照后交给 `recover_records`；未过 TTL 的 `Acquired` 重建 active，过 TTL / 已 settled 的记录推进回收，不能理解为重启立即回收所有孤儿。恢复、TTL 与投影失败回归保留；App 默认 `NullLeaseProjection`，没有持久租约恢复保障，激活条件见 [backlog §8](../backlog.md#8-条件性工程项)。
 
 **quota 读取与窗口聚合**
 
-1. `read(request)`：`QuotaRequest`（scope + window + unit）先查 per-key 缓存，TTL 内的 fresh 条目直接返回（`CacheRead::is_hit`）。
+1. `overview` / `overview_with_credential` 对 scope 匹配适配器的各 (window, unit) 并发调用私有 `read_impl`：`QuotaRequest`（scope + window + unit）先查 per-key 缓存，TTL 内的 fresh 条目直接返回。
 2. 缓存未命中进 singleflight：同 key 并发请求只有 leader 真正调用 `QuotaAdapter::fetch`，followers 等待共享结果；leader future 被 drop（调用方取消 / panic）时 `LeaderGuard` 标记 leaderless 并唤醒 followers，下一个 follower 晋升重跑（abort-safe，有界重试）。
 3. `overview`：对 scope 匹配（`ScopeMatch`）的所有适配器按多窗口并发 fetch，按 `Confidence` 优先级（`Exact > Derived > Scraped`）取最优快照；其余失败以 `QuotaFailure`（typed，含 retryable / retry_after_ms）附带返回——部分失败不掩盖成功窗口（`QuotaOverview::ok_count` / `all_failures`）。
 4. fetch 失败且存在旧缓存时才返回 stale 数据，并置 `QuotaRead::served_stale` 让来源 / 新鲜度链路可见；成功 fetch 总是刷新缓存。
 5. `publish_local_snapshot` 允许本地投影（如 Ledger 派生、宿主推送）直接写入缓存；`set_ledger_reconciler` 注册后，读路径可用 Ledger 事实对远端读数做增量对账。
-6. `LedgerQuotaAdapter` 把 usage 事实换算为窗口读数：窗口起点用本模块 `window_start_ms` 滚动近似（`now − 窗口长度`，Overall 为 0，非 UTC 日历月），`BudgetCap` 给出 limit，remaining = limit − used（饱和）；无 budget 时 limit / remaining 为 `Unknown`。
+6. `LedgerQuotaAdapter` 把 usage 事实换算为窗口读数：窗口起点用本模块 `window_start_ms` 滚动近似（`now − 窗口长度`，Overall 为 0，非 UTC 日历月），私有 `BudgetCap` 的带 cap 分支计算 remaining = limit − used（饱和）；生产无 budget，limit / remaining 为 `Infinite`。
 
 **audit 事件**
 
@@ -156,7 +156,7 @@ UI-6b G2：`QuotaUnit::Percent` 表示整数百分点，与协议镜像同形；
 
 **tenant 策略决策**
 
-1. 宿主在各 enforcement point（`PolicyGate` 九点位）调用 `TenantPolicyEngine::check_*`，引擎按 `TenantId` 取策略（未命中返回 `TenantPolicy::default()` 即全 None 不限制；构造时的默认策略仅播种 `DEFAULT_TENANT`）。
+1. 宿主在已装配的 enforcement point 调用 `TenantPolicyEngine::check_*`（`PolicyGate` 标签集合不代表九项均有生产入口），引擎按 `TenantId` 取策略（未命中返回 `TenantPolicy::default()` 即全 None 不限制；构造时的默认策略仅播种 `DEFAULT_TENANT`）。
 2. model / provider / account / 权限 / 审计导出的 `check_*` 内部委托无状态 `decide_*` 纯函数：白名单为 `None` 视为不限制、命中拒绝返回 deny（含原因）；并发 / 预算比较由引擎按同一 deny-first 边界（`current >= max` / `used >= limit`）直接判定。
 3. 决策结果可选地包装为 `PolicyDecisionEvent`（`kind_of` 映射 kind、`sanitize_reason` 清洗原因）写入审计通道；`policy_version` 随 `set_policy` 递增，供乐观并发检查。
 
@@ -165,7 +165,8 @@ UI-6b G2：`QuotaUnit::Percent` 表示整数百分点，与协议镜像同形；
 - **usage 去重契约（冻结）**：`record_id` 在 `(tenant, account)` 作用域内是幂等键；SQLite 侧 `idx_usage_dedup` 部分唯一索引按 `(tenant, account, request_id, COALESCE(upstream_attempt,'0'))` 强制 event/request attempt 去重。账本 append-only。
 - **audit JSONL golden（冻结）**：`AuditEventV1` 序列化必须与 `fixtures/audit/event-v1.jsonl` **逐字节**一致（内联测试 `audit_event_v1_jsonl_matches_frozen_fixture`）；fixture 中不得出现 `prompt` / `secret` / `tool_output` 字段。`AUDIT_SCHEMA_VERSION = 1`。
 - **版本常量**：`RECORD_VERSION = 2`（v1 JSON 缺省解码兼容）；SQLite `SCHEMA_VERSION = 4`（v2 → v3 保留历史、补 `trace_id` 与去重索引；v3 → v4 纯新增 `task_usage_calls`，既有 append-only 费用行与 dedup 索引不改）；`CONTROL_PLANE_SCHEMA_VERSION = 2` = `LEASE_SCHEMA_VERSION`（与 app-database `credential_leases` 迁移对齐）。
-- **lease 状态机（冻结）**：`Requested → Acquired → Released | Expired → Reclaimed`；`holds_slot`（占用并发额度）只在 `Acquired`；`is_settled` 表示 `Released` / `Expired`，终态（`is_terminal`）只有 `Reclaimed`；非法迁移返回 `LeaseTransitionError`；`as_db_str` / `from_db_str` 的字符串形态与持久化层对齐。
+- **lease 状态机（冻结）**：`Requested → Acquired → Released | Expired → Reclaimed`；`holds_slot`（占用并发额度）只在 `Acquired`；`is_settled` 表示 `Released` / `Expired` / `Reclaimed`，终态（`is_terminal`）只有 `Reclaimed`；非法迁移返回 `LeaseTransitionError`；`as_db_str` / `from_db_str` 的字符串形态与持久化层对齐。
+- **Retention 标签兼容**：`PolicyGate::Retention` 的持久化字符串及 serde 标签固定为 `"retention"`，保留读写兼容，不改变 audit JSONL。
 - **LeaseRecord 版本单调**：每次合法状态迁移 `version` 自增并产出对应 `LeaseEvent`，投影按事件序回放可重建同一快照。
 - **无 secret 不变量**：`CredentialLease` / `LeaseRecord` / audit / quota 各视图均无明文 secret 字段；`ResolvedCredential` 不可序列化；`QuotaProvenance::canonical_endpoint` 清洗 query / fragment；`QuotaError.detail` 必须已脱敏。
 - **单机哨兵语义（ADR-038 D1）**：`DEFAULT_TENANT = "local/default"`、`DEFAULT_PRINCIPAL = "local/user"`；池的默认账号同为 `local/default`。
@@ -182,17 +183,17 @@ UI-6b G2：`QuotaUnit::Percent` 表示整数百分点，与协议镜像同形；
 
 ## 7. 测试与验证资产
 
-无独立 `tests/` 目录，共 196 个内联测试分布如下（`#[test]` + `#[tokio::test]` 计数）：
+无独立 `tests/` 目录，默认 sqlite 门下共 191 个内联测试（B3 实际运行；删除 5 个 cache-only API 专用测试，原恢复 / 安全 / 幂等回归保留）：
 
 - `usage.rs`（35）：幂等重放 / 冲突、存储层去重（`sqlite_dedup_unique_index_is_registered` 断言 `idx_usage_dedup` 已登记、`sqlite_dedup_by_request_and_attempt_conflicts` 断言不同 record_id 的同 (request, attempt) 冲突、`in_memory_dedup_matches_sqlite_semantics` 保证双实现语义一致）、`sqlite_v2_to_v3_migration_preserves_history`（迁移保历史）、跨币种聚合拒绝、查询过滤与半开区间、类型由 `SqliteUsageLedger` 的 `Mutex<Connection>` 承担并发。
 - `credential/mod.rs`（27）+ `credential/lease.rs`（8）：并发额度（账号 / 租户 cap / 按 (tenant, account) 覆盖）、幂等释放、`LeaseGuard` Drop 释放（含 detached 驱动）、TTL 过期与 `reclaim_expired`、投影事务失败回滚计数、`recover_records` 崩溃恢复、状态机合法 / 非法迁移、property 测试（proptest）。
-- `quota/service.rs`（35）：缓存 TTL / invalidate、`invalidate_local_scope` 只清本 scope 本地派生窗口（R-13）、singleflight 并发去重（`singleflight_dedups_concurrent_reads`）与 leader 中止后 follower 晋升、stale 兜底 + `served_stale` 标记、部分失败聚合（`QuotaFailure` 附带）、confidence 择优。
-- `quota/ledger.rs`（26）：Ledger 派生窗口读数（月窗 / 滚动窗）、`BudgetCap` limit 语义、`reconcile` 对账。
+- `quota/service.rs`（30）：缓存 TTL、`invalidate_local_scope` 只清本 scope 本地派生窗口（R-13）、singleflight 并发去重（`singleflight_dedups_concurrent_reads`）与 leader 中止后 follower 晋升、stale 兜底 + `served_stale` 标记、部分失败聚合（`QuotaFailure` 附带）、confidence 择优、`read_impl` / `overview_with_credential` 注入凭证但不序列化 Secret。
+- `quota/ledger.rs`（26）：Ledger 派生窗口读数（月窗 / 滚动窗）、私有 `BudgetCap` limit 算术与 Percent 拒绝、`reconcile` 对账。
 - `quota/domain.rs`（4）/ `quota/error.rs`（8）/ `quota/adapter.rs`（2）/ `quota/util.rs`（16）：领域类型不变量（measure / confidence 优先级 / endpoint 清洗）、错误可重试分类与 retry_after 透传、secret 脱敏、UTC 日历换算（闰月 / 月界）。
 - `audit.rs`（5）：**`audit_event_v1_jsonl_matches_frozen_fixture`——与 `fixtures/audit/event-v1.jsonl` 逐字节比对**，并断言 fixture 单行、`\n` 结尾、不含 `prompt` / `secret` / `tool_output`；validate 拒绝路径。
-- `decision.rs`（6）：`sanitize_reason` 脱敏与截断、gate / kind 标签稳定。`rbac.rs`（6）：deny-first 合并、角色权限表。`tenant.rs`（11）：引擎 `check_*` 决策分支（并发 / 预算 / 白名单 / 权限 / 审计导出）。`identity.rs`（5）：默认哨兵身份与 fail-closed。
+- `decision.rs`（6）：`sanitize_reason` 脱敏与截断、gate / kind 标签稳定；既有 `gate_and_kind_strings_are_stable` 同时验证 Retention 的 `as_str` / serde 序列化 / 反序列化。`rbac.rs`（6）：deny-first 合并、角色权限表。`tenant.rs`（11）：引擎 `check_*` 决策分支（并发 / 预算 / 白名单 / 权限 / 审计导出）。`identity.rs`（5）：默认哨兵身份与 fail-closed。
 
-默认验证命令：`cargo test -p pawork-control-plane --offline --lib --tests`。
+默认验证命令：`bash scripts/test.sh control-plane`（实际 `cargo test --offline --tests -p pawork-control-plane`，默认 sqlite）。
 
 任务日志新增两项必要回归：`journal_migrates_preserves_usage_and_resumes_video_without_double_counting`（v3 升级、历史费用保留、重开、视频确认状态与 JSON 损坏拒绝）与 `journal_report_scopes_retries_and_aggregates_all_pages_and_currencies`（Memory/SQLite 客户端隔离、补交、父任务作用域、全量汇总 + 分页、多币种与准确下钻）。
 
@@ -201,11 +202,11 @@ UI-6b G2：`QuotaUnit::Percent` 表示整数百分点，与协议镜像同形；
 - `TenantPolicyDecision`（`Allow` / `Deny` / `Limit` / `Fallback`）是租户策略内部裁决，crate 根导出；与冻结的 `pawork_policy::PolicyDecision` 不同名。审计通道仍用 `PolicyDecisionKind` / `PolicyDecisionEvent`。
 - 归档资产不存在于本包：account-control-v1 九模块、binding/schema、OTel exporter、identity_schema（复活条件见 [产品候选](../backlog.md)）。RBAC 三类型（role / permission / profile）保留。
 - `mask_credential_hint` **不在本包**（在 `pawork-protocol`，见 [protocol.md](protocol.md)）；本包 quota 的脱敏工具（`redact_endpoint` / `redact_secrets` / `redact_source`）在私有模块 `quota/util.rs`，对外不可见。
-- `quota::service` 的 `QuotaRead` / `QuotaOverview` / `WindowRead` / `ScopeMatch` / `QuotaFailure` 需走 `quota::service::` 路径（`quota::` 只 re-export `QuotaService` / `QuotaClock` / `CacheRead` / `CacheOverview`）。
+- `quota::service` 的 `QuotaRead` / `QuotaOverview` / `WindowRead` / `ScopeMatch` / `QuotaFailure` 需走 `quota::service::` 路径（`quota::` 服务类型只 re-export `QuotaService` / `QuotaClock`）。
 - `SqliteUsageLedger` 与 `pawork-storage` DatabaseActor 是**两条独立连接**；同库并发访问依赖 SQLite 自身锁。
 - `InMemoryUsageLedger` 的空 `record_id` 自动补写是 legacy 测试便利，生产幂等性必须由调用方提供稳定 ID。
 - `SqliteUsageLedger` 的连接是 `Mutex<Connection>` 同步互斥：`record` / `query` / `aggregate` 在 async trait 内短临界区持锁，长事务会阻塞同进程其他账本调用。
 - quota 的时间换算全部按 UTC 日历（无时区配置）；`Rolling5h` 等相对窗口以 `QuotaClock` 注入时钟推算，测试用 `MutableQuotaClock` 拨表。
 - credential 池的公平性：无等待队列，额度耗尽即时返回 `ConcurrencyExhausted`，重试节奏由调用方决定。
-- `LeaseGuard::Drop` 的 detached 释放依赖 tokio runtime 存活；在 runtime 关闭后 drop guard 无法保证释放落投影（进程退出场景由 `restore` 兜底）。
+- `LeaseGuard::Drop` 的 detached 释放依赖 tokio runtime 存活；runtime 关闭后 drop guard 无法保证释放落投影。`restore` 只有在宿主注入真实持久投影并接入恢复时才能兜底；当前 App 的池是 `InMemoryCredentialPool::new(4)` + `NullLeaseProjection`，只保障本进程准入，不提供跨进程租约协调。后续装配触发条件登记在 [backlog §8](../backlog.md#8-条件性工程项)。
 - 架构位置与冻结契约总表见 [../../design.md](../../design.md) §2 / §3.2 与 [../contracts.md](../contracts.md)；跨包数据流见 [../flows.md](../flows.md)；产品 Spec 汇总见 [../README.md](../README.md)。

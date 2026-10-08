@@ -128,3 +128,4 @@ API 与产品取舍见 [ROADMAP 待裁决清单](../ROADMAP.md#待裁决api-与�
 | --- | --- | --- | --- |
 | RV-2026-10-A | engine 测试骨架 LoopContext 转发收敛 | `crates/engine/src/tool_loop/tests.rs` 多个包装 Context 手工转发 `execute_tools` / `next_message_id` / `next_request_id`，与 ScriptedProvider 近重复；收益中等，不动行为 | 下次改 engine 测试骨架时顺势收敛，不单独立项 |
 | RV-2026-10-B | workspace MCP secret 前缀副本彻底收敛 | `crates/workspace/src/import/mcp.rs` 仍持 `MCP_SECRET_SERVICE_PREFIX` 本地副本（auth locator 为单一事实源，已加注释声明同步义务）；彻底收敛需 workspace 依赖 auth 或提公共常量包，属跨包依赖方向裁决 | 用户对 B 级清单裁决后处理 |
+| RV-2026-10-C | Control-plane 持久租约恢复装配 | B3 保留 `LeaseProjection` / `restore` / TTL / durable-first 库能力及回归；App 当前只有内存池 + 空投影，persistent 装配持久化 usage / audit，未保证跨进程准入 | 出现真实持久 / 跨进程租约消费者后，先明确 Host / Run 所有权、存活判定与失效回收规则，提供持久投影，再接启动恢复与周期回收并验证投影失败和重启；未过 TTL 的 Acquired 不能一律当孤儿回收，见 [B3 裁决](../plan/b3-control-plane.md) |

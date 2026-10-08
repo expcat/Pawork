@@ -395,38 +395,6 @@ fn spawn_detached_release(
 /// 默认 lease TTL（毫秒）：1 小时。`new(max)` 使用此值；到期由回收扫描归还额度。
 pub const DEFAULT_LEASE_TTL_MS: u64 = 3_600_000;
 
-/// Credential 选择器（对象安全）：为一次 acquire 决定绑定哪个 credential。
-///
-/// 池本身不接触凭据明文与 repository；宿主组合层注入基于账号仓库的真实选择器。
-/// 默认 [`LegacyCredentialPicker`] 返回合成 `default` 凭据（legacy 单凭据回退），
-/// 满足 P18-4 在未接入 repository 时的独立可用性。
-#[async_trait]
-pub trait CredentialPicker: Send + Sync {
-    /// 按 `(tenant, account, provider)` 选出一个 credential_id（opaque，无明文）。
-    async fn pick(
-        &self,
-        tenant: &TenantId,
-        account: &AccountId,
-        provider: &ProviderId,
-    ) -> Result<CredentialId, PoolError>;
-}
-
-/// 默认选择器：始终返回合成 `default` 凭据（legacy 单凭据回退）。
-#[derive(Clone, Copy, Debug, Default)]
-pub struct LegacyCredentialPicker;
-
-#[async_trait]
-impl CredentialPicker for LegacyCredentialPicker {
-    async fn pick(
-        &self,
-        _tenant: &TenantId,
-        _account: &AccountId,
-        _provider: &ProviderId,
-    ) -> Result<CredentialId, PoolError> {
-        Ok(CredentialId::new("default"))
-    }
-}
-
 /// 池并发 / 期限配置。
 ///
 /// 准入按 `(tenant, account)` 原子判定：先校验可选的 per-tenant 上限，再校验
@@ -553,7 +521,6 @@ pub struct InMemoryCredentialPool {
     id_generator: Arc<LeaseIdGenerator>,
     clock: Arc<dyn LeaseClock>,
     projection: Arc<dyn LeaseProjection>,
-    picker: Arc<dyn CredentialPicker>,
 }
 
 /// 池内部状态（单一互斥锁保护，临界区内无任何 await）。
@@ -592,29 +559,23 @@ fn lock(inner: &Mutex<PoolState>) -> std::sync::MutexGuard<'_, PoolState> {
 
 impl InMemoryCredentialPool {
     /// 创建按账号并发上限为 `max_concurrency_per_account` 的内存池
-    /// （系统时钟、空投影、legacy picker、默认 1h TTL）。
+    /// （系统时钟、空投影、固定 `default` 凭据标识、默认 1h TTL）。
     pub fn new(max_concurrency_per_account: u64) -> Self {
         Self::with_config(PoolConfig::new(max_concurrency_per_account))
     }
 
-    /// 以完整配置构造（系统时钟、空投影、legacy picker）。
+    /// 以完整配置构造（系统时钟、空投影）。
     pub fn with_config(config: PoolConfig) -> Self {
-        Self::build(
+        Self::with_projection(
             config,
             Arc::new(SystemLeaseClock),
             Arc::new(NullLeaseProjection),
-            Arc::new(LegacyCredentialPicker),
         )
     }
 
     /// 注入固定时钟（确定性过期 / 回收测试）。
     pub fn with_clock(config: PoolConfig, clock: Arc<dyn LeaseClock>) -> Self {
-        Self::build(
-            config,
-            clock,
-            Arc::new(NullLeaseProjection),
-            Arc::new(LegacyCredentialPicker),
-        )
+        Self::with_projection(config, clock, Arc::new(NullLeaseProjection))
     }
 
     /// 注入持久化投影（崩溃 / 重启恢复）。
@@ -622,33 +583,6 @@ impl InMemoryCredentialPool {
         config: PoolConfig,
         clock: Arc<dyn LeaseClock>,
         projection: Arc<dyn LeaseProjection>,
-    ) -> Self {
-        Self::build(config, clock, projection, Arc::new(LegacyCredentialPicker))
-    }
-
-    /// 完整构造（配置 + 时钟 + 投影 + 选择器）。
-    pub fn build(
-        config: PoolConfig,
-        clock: Arc<dyn LeaseClock>,
-        projection: Arc<dyn LeaseProjection>,
-        picker: Arc<dyn CredentialPicker>,
-    ) -> Self {
-        Self::build_with_generator(
-            config,
-            clock,
-            projection,
-            picker,
-            Arc::new(LeaseIdGenerator::system()),
-        )
-    }
-
-    /// 全量构造并注入 lease_id 生成器（确定性测试用）。
-    pub fn build_with_generator(
-        config: PoolConfig,
-        clock: Arc<dyn LeaseClock>,
-        projection: Arc<dyn LeaseProjection>,
-        picker: Arc<dyn CredentialPicker>,
-        id_generator: Arc<LeaseIdGenerator>,
     ) -> Self {
         Self {
             inner: Arc::new(Mutex::new(PoolState {
@@ -658,10 +592,9 @@ impl InMemoryCredentialPool {
                 leases: HashMap::new(),
                 inflight: HashMap::new(),
             })),
-            id_generator,
+            id_generator: Arc::new(LeaseIdGenerator::system()),
             clock,
             projection,
-            picker,
         }
     }
 }
@@ -673,15 +606,8 @@ impl CredentialPool for InMemoryCredentialPool {
             .account_id
             .clone()
             .unwrap_or_else(|| AccountId::new("local/default"));
-        let provider = req
-            .provider_id
-            .clone()
-            .unwrap_or_else(|| ProviderId::new("default"));
-        // credential 在锁外选择（picker 不依赖池状态；与 self.inner 的 disjoint borrow）。
-        let credential = self
-            .picker
-            .pick(&req.tenant_id, &account, &provider)
-            .await?;
+        // 池只管理并发容量；宿主负责选择账号与解析 Secret。保持既有合成标识。
+        let credential = CredentialId::new("default");
 
         // 临界区内只做准入判定与计数；事件持久化在锁外（projection.apply 可 await）。
         // 注意：**不在 acquire 热路径做懒过期**（P18-4 主审修复）。懒过期会先归还内存额度
@@ -1427,7 +1353,7 @@ mod tests {
             .acquire(sample_request(Some(AccountId::new("acct-1"))))
             .await
             .unwrap();
-        // 绑定 credential（legacy picker 默认 default），含期限与 version。
+        // 绑定固定 default credential 标识，含期限与 version。
         assert_eq!(lease.credential_id, CredentialId::new("default"));
         assert_eq!(lease.schema_version, CONTROL_PLANE_SCHEMA_VERSION);
         assert_eq!(lease.version, 2);
@@ -1646,11 +1572,10 @@ mod tests {
         // stale 已过 TTL（5_000+1_000=6_000，> 严格大于才过期）→ 用 6_001。
         let advanced =
             std::sync::Arc::new(FixedLeaseClock::new(Timestamp::from_unix_millis(6_001)));
-        let pool = InMemoryCredentialPool::build(
+        let pool = InMemoryCredentialPool::with_projection(
             PoolConfig::new(8),
             advanced.clone(),
             projection.clone(),
-            std::sync::Arc::new(LegacyCredentialPicker),
         );
         let report = pool.restore().await.expect("restore 成功");
         // stale 过期 + released 已释放 → 2 个 settle；live 重建 active。
@@ -1776,11 +1701,10 @@ mod tests {
         let now_ms = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1_000));
         let clock = Arc::new(MutableClock(now_ms.clone()));
         let projection = Arc::new(InMemoryLeaseProjection::new());
-        let pool = InMemoryCredentialPool::build(
+        let pool = InMemoryCredentialPool::with_projection(
             PoolConfig::new(2).with_ttl_ms(100),
             clock,
             projection.clone(),
-            Arc::new(LegacyCredentialPicker),
         );
         let account = AccountId::new("acct-reclaim");
         let _lease = pool
@@ -1830,11 +1754,10 @@ mod tests {
         let projection: Arc<dyn LeaseProjection> = Arc::new(YieldingProjection {
             apply_calls: apply_calls.clone(),
         });
-        let pool = InMemoryCredentialPool::build(
+        let pool = InMemoryCredentialPool::with_projection(
             PoolConfig::new(2),
             Arc::new(SystemLeaseClock),
             projection,
-            Arc::new(LegacyCredentialPicker),
         );
         let account = AccountId::new("acct-yield");
         let tenant = TenantId::new("tenant-a");
@@ -1994,11 +1917,10 @@ mod tests {
         let now_ms = Arc::new(std::sync::atomic::AtomicU64::new(1_000));
         let clock = Arc::new(MutableClock(now_ms.clone()));
         let projection = FailingProjection::new();
-        let pool = InMemoryCredentialPool::build(
+        let pool = InMemoryCredentialPool::with_projection(
             PoolConfig::new(2).with_ttl_ms(100),
             clock,
             Arc::new(projection.clone()),
-            Arc::new(LegacyCredentialPicker),
         );
         let account = AccountId::new("acct-reclaim-fail");
         let _lease = pool
@@ -2118,11 +2040,10 @@ mod tests {
     #[tokio::test]
     async fn concurrent_double_release_emits_single_event() {
         let projection = Arc::new(InMemoryLeaseProjection::new());
-        let pool = Arc::new(InMemoryCredentialPool::build(
+        let pool = Arc::new(InMemoryCredentialPool::with_projection(
             PoolConfig::new(8),
             Arc::new(SystemLeaseClock),
             Arc::new(YieldingProjection(projection.clone())),
-            Arc::new(LegacyCredentialPicker),
         ));
         let account = AccountId::new("acct-double");
         let lease = pool
@@ -2170,11 +2091,10 @@ mod tests {
             let now_ms = Arc::new(std::sync::atomic::AtomicU64::new(1_000));
             let clock = Arc::new(MutableClock(now_ms.clone()));
             let projection = Arc::new(InMemoryLeaseProjection::new());
-            let pool = Arc::new(InMemoryCredentialPool::build(
+            let pool = Arc::new(InMemoryCredentialPool::with_projection(
                 PoolConfig::new(4).with_ttl_ms(100),
                 clock,
                 projection.clone(),
-                Arc::new(LegacyCredentialPicker),
             ));
             let account = AccountId::new("acct-race");
             let lease = pool

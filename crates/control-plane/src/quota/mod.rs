@@ -31,4 +31,4 @@ pub use adapter::{AdapterKind, QuotaAdapter};
 pub use domain::*;
 pub use error::QuotaError;
 pub use ledger::LedgerQuotaAdapter;
-pub use service::{CacheOverview, CacheRead, QuotaClock, QuotaService};
+pub use service::{QuotaClock, QuotaService};

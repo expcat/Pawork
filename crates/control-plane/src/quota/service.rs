@@ -12,12 +12,10 @@
 //! snapshot so downstream readers (refresh scheduler, audit, UI) can branch on
 //! staleness without consulting a separate flag.
 //!
-//! Credential injection: [`QuotaService::read_with_credential`] /
-//! [`QuotaService::overview_with_credential`] thread an optional
+//! Credential injection: [`QuotaService::overview_with_credential`] threads an optional
 //! [`ResolvedCredential`] through to adapters. The credential is borrowed only
 //! for the duration of `fetch` and never stored, serialized, or logged. The
-//! legacy [`QuotaService::read`] / [`QuotaService::overview`] pass `None` and
-//! remain the convenience entry points for anonymous/local-ledger reads.
+//! [`QuotaService::overview`] passes `None` for anonymous/local-ledger reads.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -245,49 +243,6 @@ impl QuotaOverview {
     }
 }
 
-/// Outcome of a cache-only single-window query ([`QuotaService::read_cache_only`]).
-///
-/// Cache-only reads never invoke adapters, the network, or singleflight: they
-/// consult only the in-process cache and return one of three structured
-/// states. This is the read path P14-8's quota query API uses so that a mere
-/// UI poll can never trigger a remote fetch.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum CacheRead {
-    /// A fresh (within TTL) cached snapshot exists.
-    Hit { snapshot: QuotaSnapshot },
-    /// A cache entry exists but is older than TTL. Returned instead of serving
-    /// potentially-stale data without an explicit refresh decision by the
-    /// caller (the read path).
-    Stale { snapshot: QuotaSnapshot },
-    /// No cache entry exists for this key. Distinct from a fetch failure so
-    /// callers can decide whether to trigger a refresh.
-    NoData,
-}
-
-impl CacheRead {
-    /// True if this window has a fresh cached hit.
-    pub fn is_hit(&self) -> bool {
-        matches!(self, CacheRead::Hit { .. })
-    }
-}
-
-/// Aggregated cache-only multi-window view for one `(scope, unit)` pair.
-///
-/// Every window is populated from the cache alone; the absence of a window in
-/// `windows` indicates the caller did not request it.
-#[derive(Clone, Debug)]
-pub struct CacheOverview {
-    pub scope: QuotaScope,
-    pub windows: HashMap<crate::quota::QuotaWindow, CacheRead>,
-}
-
-impl CacheOverview {
-    /// Number of windows with a fresh cached hit.
-    pub fn hit_count(&self) -> usize {
-        self.windows.values().filter(|r| r.is_hit()).count()
-    }
-}
-
 // =========================================================================
 // Internal outcome used by the singleflight cell
 // =========================================================================
@@ -361,10 +316,6 @@ impl QuotaCache {
                 stored_at,
             },
         );
-    }
-
-    fn clear(&self) {
-        self.entries.lock().expect("quota cache poisoned").clear();
     }
 
     fn len(&self) -> usize {
@@ -768,12 +719,6 @@ impl QuotaService {
         self.inner.clock.clone()
     }
 
-    /// Drop all cached snapshots. Tests and explicit "force refresh" paths use
-    /// this; normal reads rely on TTL.
-    pub fn invalidate(&self) {
-        self.inner.cache.clear();
-    }
-
     /// Drop the ledger-derived cached snapshots for one scope (R-13). Called
     /// after a successful local ledger write so the next read re-aggregates
     /// instead of serving the pre-write derived window; remote authoritative
@@ -803,8 +748,8 @@ impl QuotaService {
             .expect("ledger reconciler poisoned") = Some(reconciler);
     }
 
-    /// Publish a locally-derived snapshot directly into the cache so cache-only
-    /// reads and budget projection can surface it without a remote fetch. Only
+    /// Publish a locally-derived snapshot directly into the cache so quota
+    /// reads can surface it without a remote fetch. Only
     /// `LocalLedger` / `Derived` snapshots are accepted — a raw remote `Exact`
     /// or `Scraped` snapshot must not be republished as ledger-derived. The
     /// scope is validated first and the entry is stored under the full scope +
@@ -836,38 +781,14 @@ impl QuotaService {
         self.inner.cache.snapshots_for_scope(scope)
     }
 
-    /// Single-window aggregated read.
-    ///
-    /// Returns [`QuotaRead`] when any candidate (or stale cache fallback)
-    /// produced a snapshot. Returns the typed [`QuotaFailure`]s when every
-    /// candidate failed AND no stale cache entry was available. Adapter
-    /// failures carry their [`AdapterKind`]; query-level failures (scope,
-    /// cancellation, exhaustion) carry no attribution.
-    ///
-    /// Anonymous convenience entry point: passes `None` to adapters. Use
-    /// [`QuotaService::read_with_credential`] to inject a credential.
-    pub async fn read(
+    /// Single-window test helper for the shared production read implementation.
+    #[cfg(test)]
+    async fn read(
         &self,
         request: &crate::quota::QuotaRequest,
         cancel: &CancellationToken,
     ) -> Result<QuotaRead, Vec<QuotaFailure>> {
         read_impl(self.inner.clone(), request, None, cancel).await
-    }
-
-    /// Single-window aggregated read with an optional credential.
-    ///
-    /// The credential is borrowed only for the duration of the underlying
-    /// `fetch`: it is never stored on the service, never serialized into a
-    /// cached [`QuotaSnapshot`], and never logged. The singleflight leader
-    /// re-injects it on every promotion so followers receive identical
-    /// results regardless of which caller happened to lead.
-    pub async fn read_with_credential(
-        &self,
-        request: &crate::quota::QuotaRequest,
-        credential: Option<&ResolvedCredential>,
-        cancel: &CancellationToken,
-    ) -> Result<QuotaRead, Vec<QuotaFailure>> {
-        read_impl(self.inner.clone(), request, credential, cancel).await
     }
 
     /// Multi-window concurrent read. Each window is fetched independently;
@@ -923,78 +844,6 @@ impl QuotaService {
             scope: scope.clone(),
             windows: map,
         }
-    }
-
-    /// Cache-only single-window query.
-    ///
-    /// Consults only the in-process cache. It **never** calls any adapter,
-    /// the network, or singleflight — so a UI poll that only needs to render
-    /// the last-known quota cannot accidentally trigger a remote fetch (the
-    /// bug P14-8 fixes: `AppService` calling [`QuotaService::overview`] on
-    /// every poll was triggering scrapes/API calls).
-    ///
-    /// Returns [`CacheRead::Hit`] when a fresh (within TTL) entry exists,
-    /// [`CacheRead::Stale`] when an entry exists but is older than TTL, and
-    /// [`CacheRead::NoData`] when there is no cached entry. `scope` is still
-    /// validated (`tenant_id` / `account_id` / `provider_id` non-empty); an
-    /// invalid scope surfaces as a plain [`QuotaError`] via [`Result::Err`].
-    pub fn read_cache_only(
-        &self,
-        request: &crate::quota::QuotaRequest,
-    ) -> Result<CacheRead, QuotaError> {
-        validate_scope(&request.scope)?;
-        let key = CacheKey {
-            scope: request.scope.clone(),
-            window: request.window,
-            unit: request.unit.clone(),
-        };
-        let now = self.inner.clock.now();
-        Ok(match self.inner.cache.get(&key) {
-            Some(entry) if entry.is_fresh(now, self.inner.cache_ttl) => CacheRead::Hit {
-                snapshot: entry.snapshot,
-            },
-            Some(entry) => CacheRead::Stale {
-                snapshot: entry.snapshot,
-            },
-            None => CacheRead::NoData,
-        })
-    }
-
-    /// Cache-only multi-window query.
-    ///
-    /// Like [`QuotaService::read_cache_only`] but spans multiple windows; each
-    /// window is resolved independently from the cache, with no adapter or
-    /// singleflight involvement. `scope` validation is shared across windows.
-    pub fn overview_cache_only(
-        &self,
-        scope: &QuotaScope,
-        windows: &[crate::quota::QuotaWindow],
-        unit: &crate::quota::QuotaUnit,
-    ) -> Result<CacheOverview, QuotaError> {
-        validate_scope(scope)?;
-        let now = self.inner.clock.now();
-        let mut map = HashMap::with_capacity(windows.len());
-        for window in windows {
-            let key = CacheKey {
-                scope: scope.clone(),
-                window: *window,
-                unit: unit.clone(),
-            };
-            let entry = match self.inner.cache.get(&key) {
-                Some(entry) if entry.is_fresh(now, self.inner.cache_ttl) => CacheRead::Hit {
-                    snapshot: entry.snapshot,
-                },
-                Some(entry) => CacheRead::Stale {
-                    snapshot: entry.snapshot,
-                },
-                None => CacheRead::NoData,
-            };
-            map.insert(*window, entry);
-        }
-        Ok(CacheOverview {
-            scope: scope.clone(),
-            windows: map,
-        })
     }
 }
 
@@ -1741,7 +1590,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn read_with_credential_threads_credential_to_adapter() {
+    async fn read_impl_threads_credential_to_adapter() {
         let clock = Arc::new(MutableQuotaClock::at(1_000));
         let svc = QuotaService::with_ttl(clock, Duration::from_secs(60));
         let adapter = Arc::new(MockAdapter::exact(1_000));
@@ -1751,8 +1600,7 @@ mod tests {
         let cancel = CancellationToken::new();
         let req = request(QuotaWindow::Monthly);
         let cred = ResolvedCredential::new(CredentialKind::ApiKey, "sk-test-secret-value");
-        let read = svc
-            .read_with_credential(&req, Some(&cred), &cancel)
+        let read = read_impl(svc.inner.clone(), &req, Some(&cred), &cancel)
             .await
             .expect("ok");
         assert_eq!(read.snapshot.confidence, Confidence::Exact);
@@ -2298,155 +2146,6 @@ mod tests {
         assert!(!m.matches(&no_tenant));
         assert!(!m.matches(&no_provider));
         assert!(ScopeMatch::any().matches(&yes));
-    }
-
-    // ----- cache-only reads (no adapter / no network / no singleflight) -----
-
-    #[tokio::test]
-    async fn read_cache_only_returns_no_data_when_cache_empty_and_never_calls_adapter() {
-        let clock = Arc::new(MutableQuotaClock::at(1_000));
-        let svc = QuotaService::with_ttl(clock, Duration::from_secs(60));
-        let adapter = Arc::new(MockAdapter::exact(1_000));
-        let calls = adapter.calls.clone();
-        svc.register(ScopeMatch::any(), adapter);
-
-        let req = request(QuotaWindow::Monthly);
-        let read = svc.read_cache_only(&req).expect("empty cache ok");
-        assert!(
-            matches!(read, CacheRead::NoData),
-            "empty cache must be NoData, got {read:?}"
-        );
-        // No adapter, network, or singleflight involvement.
-        assert_eq!(calls.load(Ordering::SeqCst), 0, "must not call any adapter");
-        assert_eq!(svc.cache_size(), 0);
-    }
-
-    #[tokio::test]
-    async fn read_cache_only_returns_no_data_for_stale_entry_and_never_calls_adapter() {
-        let clock = Arc::new(MutableQuotaClock::at(1_000));
-        let svc = QuotaService::with_ttl(clock.clone(), Duration::from_millis(500));
-        let adapter = Arc::new(MockAdapter::exact(1_000));
-        let calls = adapter.calls.clone();
-        svc.register(ScopeMatch::any(), adapter);
-
-        // Seed the cache with one real read, then age it past TTL.
-        let req = request(QuotaWindow::Monthly);
-        let cancel = CancellationToken::new();
-        let seeded = svc.read(&req, &cancel).await.expect("seed ok");
-        assert!(!seeded.served_stale);
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
-        let seed_calls = calls.load(Ordering::SeqCst);
-
-        clock.advance(5_000); // well past the 500ms TTL
-        let read = svc.read_cache_only(&req).expect("stale cache ok");
-        // A stale entry surfaces as Stale (carrying the snapshot) — distinct
-        // from an empty cache (NoData) — but it MUST NOT trigger a refetch.
-        match read {
-            CacheRead::Stale { .. } => {}
-            other => panic!("expected Stale for aged entry, got {other:?}"),
-        }
-        assert_eq!(
-            calls.load(Ordering::SeqCst),
-            seed_calls,
-            "cache-only read must never call the adapter, even when stale"
-        );
-    }
-
-    #[tokio::test]
-    async fn read_cache_only_returns_from_cache_hit_without_calling_adapter() {
-        let clock = Arc::new(MutableQuotaClock::at(1_000));
-        let svc = QuotaService::with_ttl(clock, Duration::from_secs(60));
-        let adapter = Arc::new(MockAdapter::exact(1_000));
-        let calls = adapter.calls.clone();
-        svc.register(ScopeMatch::any(), adapter);
-
-        // Seed the cache.
-        let req = request(QuotaWindow::Monthly);
-        let cancel = CancellationToken::new();
-        svc.read(&req, &cancel).await.expect("seed ok");
-        let seed_calls = calls.load(Ordering::SeqCst);
-
-        // Subsequent cache-only reads are pure cache hits.
-        for _ in 0..5 {
-            let read = svc.read_cache_only(&req).expect("hit ok");
-            match read {
-                CacheRead::Hit { snapshot } => {
-                    assert_eq!(snapshot.window, QuotaWindow::Monthly);
-                    assert!(!snapshot.provenance.stale);
-                }
-                other => panic!("expected Hit, got {other:?}"),
-            }
-        }
-        assert_eq!(
-            calls.load(Ordering::SeqCst),
-            seed_calls,
-            "cache-only hits must never call the adapter"
-        );
-    }
-
-    #[tokio::test]
-    async fn overview_cache_only_does_not_fetch_and_reports_per_window_state() {
-        let clock = Arc::new(MutableQuotaClock::at(1_000));
-        let svc = QuotaService::with_ttl(clock.clone(), Duration::from_secs(60));
-        let adapter = Arc::new(MockAdapter::exact(1_000));
-        let calls = adapter.calls.clone();
-        svc.register(ScopeMatch::any(), adapter);
-
-        let cancel = CancellationToken::new();
-        // Seed only the Monthly window via a normal read.
-        let monthly = QuotaRequest {
-            scope: scope("anthropic"),
-            window: QuotaWindow::Monthly,
-            unit: QuotaUnit::Token,
-        };
-        svc.read(&monthly, &cancel).await.expect("seed monthly");
-        let seed_calls = calls.load(Ordering::SeqCst);
-
-        let overview = svc
-            .overview_cache_only(
-                &scope("anthropic"),
-                &[QuotaWindow::Monthly, QuotaWindow::Weekly],
-                &QuotaUnit::Token,
-            )
-            .expect("overview ok");
-        assert_eq!(overview.hit_count(), 1);
-        assert!(matches!(
-            overview.windows.get(&QuotaWindow::Monthly),
-            Some(CacheRead::Hit { .. })
-        ));
-        assert!(matches!(
-            overview.windows.get(&QuotaWindow::Weekly),
-            Some(CacheRead::NoData)
-        ));
-        assert_eq!(
-            calls.load(Ordering::SeqCst),
-            seed_calls,
-            "overview_cache_only must never fetch"
-        );
-    }
-
-    #[tokio::test]
-    async fn read_cache_only_validates_scope_and_does_not_touch_cache() {
-        let clock = Arc::new(MutableQuotaClock::at(1_000));
-        let svc = QuotaService::with_ttl(clock, Duration::from_secs(60));
-        let adapter = Arc::new(MockAdapter::exact(1_000));
-        let calls = adapter.calls.clone();
-        svc.register(ScopeMatch::any(), adapter);
-
-        let req = QuotaRequest {
-            scope: QuotaScope::new(
-                TenantId::new(""),
-                AccountId::new("acc"),
-                ProviderId::new("anthropic"),
-                None,
-            ),
-            window: QuotaWindow::Monthly,
-            unit: QuotaUnit::Token,
-        };
-        let err = svc.read_cache_only(&req).expect_err("rejected");
-        assert!(matches!(err, QuotaError::Unsupported { .. }));
-        assert_eq!(calls.load(Ordering::SeqCst), 0);
-        assert_eq!(svc.cache_size(), 0);
     }
 
     // =====================================================================

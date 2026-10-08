@@ -28,7 +28,7 @@ pub enum PolicyGate {
     AuditQuery,
     /// Audit 导出。
     AuditExport,
-    /// Retention（保留期）判定。
+    /// Retention（保留期）持久化标签；当前生产未接保留期执行入口。
     Retention,
 }
 
@@ -184,6 +184,15 @@ mod tests {
     fn gate_and_kind_strings_are_stable() {
         assert_eq!(PolicyGate::AgentSpawn.as_str(), "agent_spawn");
         assert_eq!(PolicyGate::AuditExport.as_str(), "audit_export");
+        assert_eq!(PolicyGate::Retention.as_str(), "retention");
+        assert_eq!(
+            serde_json::to_string(&PolicyGate::Retention).unwrap(),
+            "\"retention\""
+        );
+        assert_eq!(
+            serde_json::from_str::<PolicyGate>("\"retention\"").unwrap(),
+            PolicyGate::Retention
+        );
         assert_eq!(PolicyDecisionKind::Deny.as_str(), "deny");
         assert_eq!(PolicyDecisionKind::Fallback.as_str(), "fallback");
         assert_eq!(
