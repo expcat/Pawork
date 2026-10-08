@@ -64,9 +64,9 @@ pub use extensions::McpServerStatus;
 pub use gui_host::{
     project_timeline_item, GuiBroadcastSink, GuiEventBus, GuiHostAdapter, GuiRunRegistry,
 };
-pub use hub::{EventHub, HubError, HubSubscription, DEFAULT_HUB_CAPACITY};
-pub use idempotency::{
-    should_cache, IdempotencyCheck, IdempotencyError, IdempotencyStats, IdempotencyStore,
+pub(crate) use hub::{EventHub, HubError, DEFAULT_HUB_CAPACITY};
+pub(crate) use idempotency::{
+    should_cache, IdempotencyCheck, IdempotencyError, IdempotencyStore,
     DEFAULT_IDEMPOTENCY_CAPACITY,
 };
 pub use import_host::{

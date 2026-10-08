@@ -671,15 +671,21 @@ impl AppCore {
         model: &str,
     ) -> Result<AppCore, AppError> {
         let mut child = if provider == self.provider_id.as_str() {
+            let prepared = self.provider_snapshot().await?;
             let mut child = Self::from_parts_with_protocol(
-                self.request_provider_snapshot().await?,
-                self.credential.clone(),
+                prepared.adapter,
+                prepared.credential,
                 model.into(),
                 provider.into(),
                 self.adapter_protocol,
                 Some(self.store()?.clone()),
                 (*self.registry).clone(),
             );
+            // Revision names the credential state of this adapter. Reuse keeps
+            // the parent revision; a rebuild keeps the revision captured with
+            // the new adapter. Do not stamp a later backend revision on the
+            // previous adapter.
+            child.provider_auth_revision = prepared.auth_revision;
             // Reused adapters retain this protector; fresh cross-provider adapters
             // retain the one created by from_config_inner instead.
             child.reasoning_protector = self.reasoning_protector.clone();
@@ -1378,5 +1384,104 @@ mod tests {
             .runs
             .iter()
             .any(|r| r.run_id == early_run && r.state == "cancelled"));
+    }
+
+    async fn indexed_mock_parent() -> (AppCore, SessionId, u64, String) {
+        let (core, _dir, session) = setup(false).await;
+        let provider = ProviderId::from("mock");
+        let account = pawork_auth::add_api_key_account(
+            core.backend.as_ref(),
+            &provider,
+            "Work",
+            "fixture-key",
+            true,
+        )
+        .unwrap();
+        let revision = pawork_auth::provider_accounts_revision(core.backend.as_ref(), &provider)
+            .unwrap()
+            .expect("named account writes an index revision");
+        (core, session, revision, account.credential_id)
+    }
+
+    #[tokio::test]
+    async fn same_provider_child_reuses_adapter_and_its_auth_revision() {
+        let (mut core, session, revision, _) = indexed_mock_parent().await;
+        let held = ResolvedCredential::new(CredentialKind::ApiKey, "parent-held");
+        core.credential = Some(held.clone());
+        core.provider_auth_revision = Some(revision);
+        assert!(!core.provider_needs_rebuild());
+        let child = core
+            .child_core(&session, "mock", "model-1")
+            .await
+            .expect("same-provider child");
+        assert!(Arc::ptr_eq(&child.provider, &core.provider));
+        assert_eq!(child.provider_auth_revision, Some(revision));
+        assert_eq!(child.credential.as_ref(), Some(&held));
+        assert!(Arc::ptr_eq(
+            &child.reasoning_protector,
+            &core.reasoning_protector
+        ));
+        assert!(!child.provider_needs_rebuild());
+        let again = child
+            .request_provider_snapshot()
+            .await
+            .expect("reuse held adapter");
+        assert!(Arc::ptr_eq(&again, &child.provider));
+    }
+
+    #[tokio::test]
+    async fn same_provider_child_rebuilds_when_auth_revision_is_stale() {
+        let (mut core, session, revision, credential_id) = indexed_mock_parent().await;
+        let stale = ResolvedCredential::new(CredentialKind::ApiKey, "stale-marker");
+        core.credential = Some(stale.clone());
+        core.provider_auth_revision = Some(revision.saturating_sub(1));
+        core.config
+            .providers
+            .push(pawork_workspace::config::ProviderConfig {
+                id: "mock".into(),
+                base_url: Some("http://127.0.0.1:9".into()),
+                ..Default::default()
+            });
+        assert!(core.provider_needs_rebuild());
+        let child = core
+            .child_core(&session, "mock", "model-1")
+            .await
+            .expect("stale parent assembles a new adapter");
+        assert!(!Arc::ptr_eq(&child.provider, &core.provider));
+        assert_eq!(child.provider_auth_revision, Some(revision));
+        assert_ne!(child.credential.as_ref(), Some(&stale));
+        assert!(child.credential.is_some());
+        assert!(Arc::ptr_eq(
+            &child.reasoning_protector,
+            &core.reasoning_protector
+        ));
+        assert!(!child.provider_needs_rebuild());
+        let again = child
+            .request_provider_snapshot()
+            .await
+            .expect("assembled adapter stays current");
+        assert!(Arc::ptr_eq(&again, &child.provider));
+
+        pawork_auth::rename_provider_account(
+            child.backend.as_ref(),
+            &ProviderId::from("mock"),
+            &credential_id,
+            "Renamed",
+        )
+        .unwrap();
+        let bumped = pawork_auth::provider_accounts_revision(
+            child.backend.as_ref(),
+            &ProviderId::from("mock"),
+        )
+        .unwrap();
+        assert_ne!(bumped, Some(revision));
+        assert_eq!(child.provider_auth_revision, Some(revision));
+        assert!(child.provider_needs_rebuild());
+        let rebuilt = child
+            .request_provider_snapshot()
+            .await
+            .expect("later account write assembles again");
+        assert!(!Arc::ptr_eq(&rebuilt, &child.provider));
+        assert_eq!(child.provider_auth_revision, Some(revision));
     }
 }

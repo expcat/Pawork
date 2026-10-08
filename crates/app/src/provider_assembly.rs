@@ -117,23 +117,47 @@ pub(crate) fn is_credential_pending(err: &AppError) -> bool {
     )
 }
 
+/// 一个 adapter，以及与它同一次装配记下的账号 revision。
+///
+/// 父 adapter 可复用时，`auth_revision` 就是父 Core 上的修订。
+/// 需要重装配时，它是 `assemble_provider` 与新 adapter 一起返回的修订，
+/// 不是事后再读的后端最新值：把更新的修订贴到旧 adapter 上会把旧 bearer 当成当前凭证。
+pub(crate) struct ProviderSnapshot {
+    pub(crate) adapter: Arc<dyn ModelProvider>,
+    pub(crate) credential: Option<ResolvedCredential>,
+    pub(crate) auth_revision: Option<u64>,
+}
+
 impl AppCore {
     /// Freeze one credential-bearing adapter for an entire Run or manual compact.
     pub(crate) async fn request_provider_snapshot(
         &self,
     ) -> Result<Arc<dyn ModelProvider>, AppError> {
+        Ok(self.provider_snapshot().await?.adapter)
+    }
+
+    /// 上面那次快照对应的 adapter、凭证和 auth revision。
+    pub(crate) async fn provider_snapshot(&self) -> Result<ProviderSnapshot, AppError> {
         if !self.provider_needs_rebuild() {
-            return Ok(Arc::clone(&self.provider));
+            return Ok(ProviderSnapshot {
+                adapter: Arc::clone(&self.provider),
+                credential: self.credential.clone(),
+                auth_revision: self.provider_auth_revision,
+            });
         }
-        Ok(assemble_provider(
+        let assembled = assemble_provider(
             &self.config,
             &self.provider_id,
             &self.backend,
             true,
             Arc::clone(&self.reasoning_protector) as Arc<dyn ReasoningProtector>,
         )
-        .await?
-        .adapter)
+        .await?;
+        Ok(ProviderSnapshot {
+            adapter: assembled.adapter,
+            credential: assembled.credential,
+            auth_revision: assembled.auth_revision,
+        })
     }
 
     /// 当前 provider 在 registry 的静态目录（REPL /model 列表用）。

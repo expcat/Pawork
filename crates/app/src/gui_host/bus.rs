@@ -49,11 +49,11 @@ impl GuiEventBus {
         self.hub.subscribe_receiver()
     }
 
-    pub fn hub(&self) -> &EventHub {
+    pub(crate) fn hub(&self) -> &EventHub {
         &self.hub
     }
 
-    pub fn replay(
+    pub(crate) fn replay(
         &self,
         from: GlobalSequence,
         to: Option<GlobalSequence>,
