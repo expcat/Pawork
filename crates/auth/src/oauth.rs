@@ -242,37 +242,6 @@ pub struct DeviceFlowConfig {
     pub provider: ProviderId,
 }
 
-/// Device Flow 的设备授权响应。
-#[derive(Clone)]
-pub struct DeviceAuthorization {
-    pub device_code: String,
-    pub user_code: String,
-    pub verification_uri: String,
-    pub verification_uri_complete: Option<String>,
-    pub expires_in: u64,
-    pub interval: u64,
-}
-
-impl fmt::Debug for DeviceAuthorization {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("DeviceAuthorization")
-            .field("device_code", &"[REDACTED]")
-            .field("user_code", &"[REDACTED]")
-            .field("verification_uri", &self.verification_uri)
-            .field(
-                "verification_uri_complete",
-                &self
-                    .verification_uri_complete
-                    .as_ref()
-                    .map(|_| "[REDACTED]"),
-            )
-            .field("expires_in", &self.expires_in)
-            .field("interval", &self.interval)
-            .finish()
-    }
-}
-
 /// Device Flow 的用户引导信息（含 device_code，用于后续轮询）。
 #[derive(Clone)]
 pub struct DeviceUserPrompt {
@@ -326,7 +295,7 @@ pub async fn request_device_authorization(
             extract_error(&value)
         )));
     }
-    let auth = DeviceAuthorization {
+    Ok(DeviceUserPrompt {
         device_code: value
             .get("device_code")
             .and_then(|v| v.as_str())
@@ -355,14 +324,6 @@ pub async fn request_device_authorization(
             .get("interval")
             .and_then(|v| v.as_u64())
             .unwrap_or(DEFAULT_POLL_INTERVAL_SECS),
-    };
-    Ok(DeviceUserPrompt {
-        user_code: auth.user_code,
-        verification_uri: auth.verification_uri,
-        verification_uri_complete: auth.verification_uri_complete,
-        device_code: auth.device_code,
-        expires_in: auth.expires_in,
-        interval: auth.interval,
     })
 }
 

@@ -70,7 +70,7 @@ Policy 输出固定为 `Allow`、`Deny`、`AskUser`、`AllowWithConstraints`。�
 - 默认主凭证：`$PAWORK_HOME/auth.json`，否则 `~/.pawork/auth.json`；format v1，`0600`，原子替换，损坏即报错。
 - MCP 凭证：独立 `mcp-auth.json` 与 `pawork.mcp.*` service 前缀。
 - 配置 schema 无 `api_key`；env 只作受控 fallback，不回写配置。
-- OS Keychain 已从当前产品移除；旧 `keychain_*` 仅保留一个版本期的读 alias，不代表 Keychain 后端存在。
+- OS Keychain 已从当前产品移除。`StoredCredential` 的 `keychain_service` / `keychain_account` 只是公开 JSON 的读 alias，不是 Keychain 后端，也不在 auth.json v1 或账号索引里；删除条件见 [auth](crates/auth.md) 契约。
 
 ### 5.2 输出与持久化
 

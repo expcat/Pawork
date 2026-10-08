@@ -18,7 +18,7 @@
 | `src/file_backend.rs` | ~620 | `FileBackend`：单 JSON 文件（`version` + `service→account→secret`）、0600、独立临时文件 + rename 原子写、跨进程 write/refresh 锁、损坏 fail-closed；`acquire_file_lock` / `try_acquire_file_lock` / `FileLockGuard` 跨平台独占文件锁原语（Unix flock / Windows share_mode(0) / 其余 create_new 兜底）对外导出，pawork-app 实例所有权（R-04/R-24）复用 |
 | `src/locator.rs` | ~70 | 命名单一事实源：`PROVIDER_SERVICE_PREFIX`（`pawork`）、`MCP_SERVICE_PREFIX`（`pawork.mcp.`）、`MCP_AUTH_FILE_NAME`（`mcp-auth.json`）、`secret_service_for` / `oauth_secret_service` / `is_mcp_secret_service` / `api_key_env_name` / `read_api_key_from_env` |
 | `src/masked.rs` | ~110 | `MaskedCredential`：`mask`（按字符数分档脱敏）/ `from_masked` / `as_str`；`Display`/`Debug`/`Serialize` 永不含明文 |
-| `src/credential.rs` | ~390 | `StoredCredential`（纯元数据 + 定位，可序列化）、`ApiKeyCredential`（store / store_with_scopes / from_stored / resolve / delete）、`CredentialId`、crate 内 `generate_credential_id` |
+| `src/credential.rs` | ~350 | `StoredCredential`（纯元数据 + 定位，可序列化；`keychain_*` 只读 alias）、`ApiKeyCredential`（from_stored / resolve）、`CredentialId`、crate 内 `generate_credential_id` |
 | `src/resolve.rs` | ~240 | `resolve_provider_credential` 解析链、`CredentialSource`（AuthFile / EnvFallback / None）、`store_default_api_key` / `delete_default_api_key`、`PROVIDER_DEFAULT_ACCOUNT` |
 | `src/accounts.rs` | ~1.1k | UI-6b 账号索引、legacy 隐式登记、命名 API key/OAuth 新增、选择与删除；索引与 secret 原子事务、revision 与失败关闭 |
 | `src/default_credential.rs` | ~870 | 参数化 OAuth 条目（账号 `.access` / `.refresh` / `.meta`，兼容旧 default）：store/load/update/delete、`DefaultOAuthMeta`（含 ChatGPT `account_id` claim 提取）、`refresh_default_oauth_credential_if_needed` / `default_oauth_needs_refresh` |
@@ -50,8 +50,8 @@
 
 ### 3.3 凭证类型与解析
 
-- `StoredCredential`：`masked` / `id` / `provider` / `display_name` / `secret_service` / `secret_account` / `created_at` / `expires_at` / `scopes`——纯元数据可序列化（`Debug` 与 JSON 均无明文）；`new(...)` + `with_expires_at` 构造，`secret_backend_ref()` 返回定位二元组。
-- `ApiKeyCredential::store(_with_scopes)`（写后端 + 返回元数据）/ `from_stored`（校验形态）/ `resolve`（→ `ResolvedCredential`，`CredentialKind::ApiKey`）/ `delete`。
+- `StoredCredential`：`masked` / `id` / `provider` / `display_name` / `secret_service` / `secret_account` / `created_at` / `expires_at` / `scopes`——纯元数据可序列化（`Debug` 与 JSON 均无明文）。`new(...)` 构造后由调用方直接写 `expires_at`；`secret_backend_ref()` 返回定位二元组。公开 JSON 反序列化接受旧键 `keychain_service` / `keychain_account`，序列化只写新键。
+- `ApiKeyCredential::from_stored`（service/account 皆非空，否则 `MalformedMetadata`）/ `resolve`（→ `ResolvedCredential`，`CredentialKind::ApiKey`）。API key 写入是 `add_api_key_account` 与 `store_default_api_key`，删除是 `remove_provider_account` 与 `delete_default_api_key`。
 - `resolve_provider_credential(backend, provider_id) -> Result<CredentialSource, AuthError>`：见 §4.1。`store_default_api_key` / `delete_default_api_key` 操作主条目（account 固定 `default`，删除幂等）。
 - default OAuth 条目（每 provider 唯一，`OAUTH_DEFAULT_ACCOUNT = "default"`）：
   - 写：`store_default_oauth_token`（`default.access` / `.refresh` / `.meta` 三账户一次原子提交；重新登录缺 refresh 时通过 `replace_batch` 同批删除旧账号 refresh，刷新缺 refresh 则保留当前值）；`update_default_oauth_token`（refresh 后轮换写回）；`delete_default_oauth_token`。
@@ -112,7 +112,8 @@ UI-6b 起先解析账号索引：显式 API key 选择返回该账号；显式 O
 
 ## 5. 契约与不变量
 
-- **明文只在后端**：`StoredCredential` / `ApiKeyCredential` / `DefaultOAuthMeta` 可序列化字段永无明文；`TokenSet` / `Pkce` / `PkceSession` / `DeviceAuthorization` / `DeviceUserPrompt` 的 `Debug` 输出对 token / verifier / state / device_code / user_code 一律 `[REDACTED]`（`TokenSet` / `PkceSession` / `DeviceUserPrompt` 有内联回归断言）。
+- **明文只在后端**：`StoredCredential` / `ApiKeyCredential` / `DefaultOAuthMeta` 可序列化字段永无明文；`TokenSet` / `Pkce` / `PkceSession` / `DeviceUserPrompt` 的 `Debug` 输出对 token / verifier / state / device_code / user_code 一律 `[REDACTED]`（`TokenSet` / `PkceSession` / `DeviceUserPrompt` 有内联回归断言）。
+- **`keychain_*` 读 alias**：`StoredCredential` 没有独立 format version。auth.json `FORMAT_VERSION = 1` 只存 service 到 account 再到 secret，账号索引 version 1 只存账号条目，两者都不嵌入本结构。2026-08-22（`33dfc36a`）把字段改名为 `secret_*` 后，新 JSON 只写新键；仓库内没有批量改写历史 `StoredCredential` JSON 的迁移。注释里的「一个版本期」因此不是删除条件。继续保留 alias，直到同时满足：确认没有仍需读入的外部 JSON 使用旧键；若该 JSON 进入版本化磁盘或线上契约，先升 format version，并由 golden 拒绝旧键。在此之前不另造迁移框架。
 - **刷新状态无明文**：singleflight gate 只保存脱敏元数据 + access 的 SHA-256 指纹（对应结构不实现 Debug），不持有 token 明文。
 - **`ResolvedCredential`（domain 定义）Debug 脱敏、无 `Serialize`**：仅供 adapter 构造认证请求时短暂使用。
 - **错误不携带 Secret**：`AuthError` 全部变体的 Display 只含归因描述；token endpoint 错误只保留标准 `error/error_description`。

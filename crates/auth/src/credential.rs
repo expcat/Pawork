@@ -13,7 +13,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::backend::SecretBackend;
 use crate::error::AuthError;
-use crate::locator::secret_service_for;
 use crate::masked::MaskedCredential;
 
 /// 统一使用 [`pawork_domain::CredentialId`]（与控制面 CredentialMetadata 对齐）。
@@ -46,9 +45,10 @@ fn now_unix_millis() -> Timestamp {
 /// 仅含元数据与脱敏状态的凭证记录，可安全持久化到数据库与日志。
 ///
 /// 明文 secret **不**在此结构中——它只存在于 SecretBackend。字段名
-/// `secret_service` / `secret_account` 为 auth 文件后端语义，用于定位
-/// auth 文件或内存后端中的 service/account（旧 `keychain_*` 名经 serde
-/// alias 兼容读取一个版本期）。
+/// `secret_service` / `secret_account` 定位 auth 文件或内存后端中的
+/// service/account。反序列化仍接受旧键 `keychain_service` /
+/// `keychain_account`，序列化只写新键。auth.json format v1 与账号索引都不
+/// 保存本结构；alias 没有独立 format version，删除条件见 auth Spec。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StoredCredential {
     /// 凭证唯一标识，同时作为 SecretBackend 的 `account`。
@@ -98,12 +98,6 @@ impl StoredCredential {
         }
     }
 
-    /// 设置过期时间并返回 `&mut Self`，便于构造器式链式调用。
-    pub fn with_expires_at(mut self, expires_at: Timestamp) -> Self {
-        self.expires_at = Some(expires_at);
-        self
-    }
-
     /// 返回 SecretBackend 定位所需的 `(service, account)`。
     pub fn secret_backend_ref(&self) -> (&str, &str) {
         (self.secret_service.as_str(), self.secret_account.as_str())
@@ -112,58 +106,16 @@ impl StoredCredential {
 
 /// API Key 认证方式：持有可持久化的元数据，按需从后端解析出明文 secret。
 ///
+/// 写入与删除由账号索引承担（add_api_key_account / store_default_api_key /
+/// remove_provider_account / delete_default_api_key）。本类型从已有元数据构造。
 /// `resolve` 产出的 [`ResolvedCredential`] 仅在 Provider adapter 构造认证请求时
-/// 短暂使用，不得记录到日志或事件（见 `ResolvedCredential::expose_secret`）。
+/// 短暂使用，不得记录到日志或事件。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApiKeyCredential {
     stored: StoredCredential,
 }
 
 impl ApiKeyCredential {
-    /// 将明文 secret 写入 Secret 后端，返回**仅含元数据/脱敏状态**的 `StoredCredential`。
-    ///
-    /// 明文 secret 不会出现在返回值中。
-    pub fn store(
-        backend: &dyn SecretBackend,
-        provider: ProviderId,
-        display_name: &str,
-        secret: &str,
-    ) -> Result<StoredCredential, AuthError> {
-        Self::store_with_scopes(backend, provider, display_name, secret, Vec::new())
-    }
-
-    /// 与 [`ApiKeyCredential::store`] 相同，但额外写入授权 scope 列表。
-    pub fn store_with_scopes(
-        backend: &dyn SecretBackend,
-        provider: ProviderId,
-        display_name: &str,
-        secret: &str,
-        scopes: Vec<String>,
-    ) -> Result<StoredCredential, AuthError> {
-        if secret.is_empty() {
-            return Err(AuthError::InvalidSecret("secret is empty".into()));
-        }
-        let id = generate_credential_id();
-        let secret_service = secret_service_for(&provider);
-        let secret_account = id.as_str().to_string();
-
-        // 明文只在此处短暂出现：写入后端后即从栈上丢弃。
-        backend.store(&secret_service, &secret_account, secret)?;
-
-        let stored = StoredCredential {
-            masked: MaskedCredential::mask(secret),
-            id,
-            provider,
-            display_name: display_name.to_string(),
-            secret_service,
-            secret_account,
-            created_at: now_unix_millis(),
-            expires_at: None,
-            scopes,
-        };
-        Ok(stored)
-    }
-
     /// 由已持久化的元数据构造 API Key 凭证（不接触明文）。
     pub fn from_stored(stored: StoredCredential) -> Result<Self, AuthError> {
         if stored.secret_service.is_empty() || stored.secret_account.is_empty() {
@@ -193,12 +145,6 @@ impl ApiKeyCredential {
         let secret = backend.get(service, account)?;
         Ok(ResolvedCredential::new(CredentialKind::ApiKey, secret))
     }
-
-    /// 从 Secret 后端删除对应明文。删除成功后本凭证即不可再 `resolve`。
-    pub fn delete(&self, backend: &dyn SecretBackend) -> Result<(), AuthError> {
-        let (service, account) = self.stored.secret_backend_ref();
-        backend.delete(service, account)
-    }
 }
 
 #[cfg(test)]
@@ -209,13 +155,15 @@ mod tests {
     const SECRET: &str = "sk-supersecret-token-1234567890";
 
     fn store_api_key(backend: &MemoryBackend) -> StoredCredential {
-        ApiKeyCredential::store(
+        crate::add_api_key_account(
             backend,
-            ProviderId::new("openai"),
+            &ProviderId::new("openai"),
             "OpenAI Production",
             SECRET,
+            true,
         )
         .expect("store api key")
+        .stored
     }
 
     #[test]
@@ -236,7 +184,6 @@ mod tests {
         // 明文确实进入了后端。
         let (service, account) = stored.secret_backend_ref();
         assert_eq!(backend.get(service, account).expect("get"), SECRET);
-        assert_eq!(backend.len(), 1);
     }
 
     #[test]
@@ -257,10 +204,17 @@ mod tests {
     fn delete_then_resolve_returns_not_found() {
         let backend = MemoryBackend::new();
         let stored = store_api_key(&backend);
+        let provider = stored.provider.clone();
+        let id = stored.id.as_str().to_string();
+        let service = stored.secret_service.clone();
+        let account = stored.secret_account.clone();
         let api_key = ApiKeyCredential::from_stored(stored).expect("from_stored");
 
-        api_key.delete(&backend).expect("delete");
-        assert!(backend.is_empty());
+        crate::remove_provider_account(&backend, &provider, &id, None).expect("delete");
+        assert!(matches!(
+            backend.get(&service, &account),
+            Err(AuthError::NotFound)
+        ));
 
         match api_key.resolve(&backend) {
             Err(AuthError::NotFound) => {}
@@ -271,7 +225,12 @@ mod tests {
     #[test]
     fn empty_secret_is_rejected() {
         let backend = MemoryBackend::new();
-        match ApiKeyCredential::store(&backend, ProviderId::new("openai"), "empty", "") {
+        let provider = ProviderId::new("openai");
+        match crate::add_api_key_account(&backend, &provider, "empty", "", true) {
+            Err(AuthError::InvalidSecret(_)) => {}
+            other => panic!("expected InvalidSecret, got {other:?}"),
+        }
+        match crate::store_default_api_key(&backend, &provider, "") {
             Err(AuthError::InvalidSecret(_)) => {}
             other => panic!("expected InvalidSecret, got {other:?}"),
         }
@@ -281,25 +240,29 @@ mod tests {
     #[test]
     fn multiple_credentials_for_same_provider_use_distinct_accounts() {
         let backend = MemoryBackend::new();
-        let a = ApiKeyCredential::store(
+        let provider = ProviderId::new("openai");
+        let a = crate::add_api_key_account(
             &backend,
-            ProviderId::new("openai"),
+            &provider,
             "first",
             "sk-first-secret-aaaaaaaaaaaa",
+            true,
         )
-        .expect("store first");
-        let b = ApiKeyCredential::store(
+        .expect("store first")
+        .stored;
+        let b = crate::add_api_key_account(
             &backend,
-            ProviderId::new("openai"),
+            &provider,
             "second",
             "sk-second-secret-bbbbbbbbbb",
+            false,
         )
-        .expect("store second");
+        .expect("store second")
+        .stored;
 
         // 同 provider、不同 account，互不覆盖。
         assert_eq!(a.secret_service, b.secret_service);
         assert_ne!(a.secret_account, b.secret_account);
-        assert_eq!(backend.len(), 2);
 
         let resolved_a = ApiKeyCredential::from_stored(a)
             .expect("from_stored")
@@ -314,25 +277,26 @@ mod tests {
 
     #[test]
     fn stored_credential_round_trip_preserves_metadata() {
-        let backend = MemoryBackend::new();
-        let stored = ApiKeyCredential::store_with_scopes(
-            &backend,
+        const SECRET: &str = "sk-ant-secret-cccccccccccc";
+        let stored = StoredCredential::new(
+            CredentialId::new("cred_roundtrip"),
             ProviderId::new("anthropic"),
             "Claude",
-            "sk-ant-secret-cccccccccccc",
+            MaskedCredential::mask(SECRET),
+            "pawork.anthropic",
+            "cred_roundtrip",
             vec!["chat".to_string(), "completions".to_string()],
-        )
-        .expect("store");
+        );
 
         let json = serde_json::to_string(&stored).expect("serialize");
-        assert!(!json.contains("sk-ant-secret-cccccccccccc"));
+        assert!(!json.contains(SECRET));
         let decoded: StoredCredential = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(decoded, stored);
     }
 
     #[test]
     fn legacy_keychain_field_names_migrate_on_rewrite() {
-        // 旧字面 JSON（keychain_* 字段名）仍可读——兼容期一个版本。
+        // 旧字面 JSON 仍可读。alias 无独立 format version，重写只出新字段名。
         let legacy_json = r#"{
             "id": "cred_legacy",
             "provider": "openai",
