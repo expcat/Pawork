@@ -1,4 +1,4 @@
-//! 模型目录、别名解析、能力过滤、上下文校验、费用估算与三源能力证据。
+//! 模型目录、别名解析、能力过滤、费用估算与三源能力证据。
 //!
 //! 迁自 V1 `model-registry` 整包机制：模型能力来自三处——(a) 目录静态声明
 //! （`entries`）、(b) Provider 探测（`probe_provider` / `record_probe`，
@@ -154,20 +154,6 @@ impl std::fmt::Display for ProbeError {
 }
 
 impl std::error::Error for ProbeError {}
-
-/// Narrow hook：Provider factory `builtin_models()` 目录经 `caps()` /
-/// 协商证据进入 registry，Core 不做 Provider 名称匹配。
-pub trait ProviderCapabilitySource: Send + Sync {
-    /// `(provider_id, builtin_models)` 对。调用方提供 id；本 crate 绝不按
-    /// Provider 名称字符串分支。
-    fn provider_catalogs(&self) -> Vec<(ProviderId, Vec<ModelDefinition>)>;
-}
-
-impl ProviderCapabilitySource for Vec<(ProviderId, Vec<ModelDefinition>)> {
-    fn provider_catalogs(&self) -> Vec<(ProviderId, Vec<ModelDefinition>)> {
-        self.clone()
-    }
-}
 
 /// 三来源保守合并：present 来源逐字段取交集，来源缺失不约束。
 ///
@@ -365,19 +351,12 @@ impl ModelRegistry {
         }
     }
 
-    /// 把 factory `builtin_models()` 目录合并进静态目录，从而进入
+    /// 把单个 provider 的 `builtin_models()` 合并进静态目录，从而进入
     /// [`CapabilityEvidence::static_declared`] 证据。
     ///
     /// 仅按 `ProviderId` 相等性查找——Core 不做 Provider 名称匹配/分支。
     /// 跨 provider 的 id 冲突跳过（fail-closed）。新模型追加，不带定价/别名
     /// （二者归目录所有）。
-    pub fn merge_provider_source(&mut self, source: &dyn ProviderCapabilitySource) {
-        for (provider, models) in source.provider_catalogs() {
-            self.merge_provider_models(&provider, &models);
-        }
-    }
-
-    /// 合并单个 provider 的 `builtin_models()` 进静态目录。
     pub fn merge_provider_models(&mut self, provider: &ProviderId, models: &[ModelDefinition]) {
         for definition in models {
             let id = normalized_model_id(&definition.id);
@@ -431,23 +410,6 @@ impl ModelRegistry {
             .values()
             .filter(|entry| caps_satisfied(&entry.capabilities, required))
             .collect()
-    }
-
-    /// 按用途过滤（ADR-064）：多个用途取交集（同时满足）。
-    pub fn filter_by_purpose(
-        &self,
-        purposes: &[pawork_domain::ModelPurpose],
-    ) -> Vec<&CatalogEntry> {
-        let required = purpose_requirements(purposes);
-        self.filter(&required)
-    }
-
-    /// 校验输入 token 数是否在模型的上下文窗口内。
-    pub fn validate_context(&self, id_or_alias: &str, input_tokens: u64) -> bool {
-        match self.resolve(id_or_alias) {
-            Some(entry) => input_tokens <= entry.context_window_tokens,
-            None => false,
-        }
     }
 
     /// 按定价估算费用；模型未注册或无定价时返回 `None`（不编造费用）。
@@ -580,32 +542,6 @@ impl ModelRegistry {
             probe_declared,
             override_declared,
         })
-    }
-
-    /// 全量三源证据快照（按 model id 排序），供 negotiator 初始化。
-    ///
-    /// 模型键并集 = 静态条目 ∪ 探测定义 ∪ 覆盖键；仅含探测/覆盖证据的模型
-    /// 也会出现在快照中（provider 分别为探测锚点或 `None`）。
-    pub fn capability_snapshot(&self) -> Vec<CapabilityEvidence> {
-        let mut models: BTreeSet<ModelId> = self.entries.keys().cloned().collect();
-        for slot in lock(&self.probes).values() {
-            let Some(result) = slot.cached() else {
-                continue;
-            };
-            let Ok(probe) = result else {
-                continue;
-            };
-            for definition in &probe.definitions {
-                models.insert(normalized_model_id(&definition.id));
-            }
-        }
-        for model in lock(&self.overrides).keys() {
-            models.insert(model.clone());
-        }
-        models
-            .into_iter()
-            .filter_map(|model| self.capability_evidence(model.as_str()))
-            .collect()
     }
 
     fn probe_slot(&self, provider: &ProviderId) -> Arc<ProbeSlot> {
@@ -847,8 +783,7 @@ pub fn capabilities_support_purpose(
 /// 构造能力集合的便捷函数。
 //
 // pawork-domain/provider_api 同期新增 v2 能力字段时用 ..Default 兼容，避免构造点编译失败；
-// v2 目录经 `ModelRegistry::merge_provider_models` / `ProviderCapabilitySource`
-// 合并，而不是扩展本函数参数表。
+// v2 目录经 `ModelRegistry::merge_provider_models` 合并，而不是扩展本函数参数表。
 #[allow(clippy::too_many_arguments)]
 pub fn caps(
     text: bool,
@@ -1720,14 +1655,6 @@ mod tests {
     }
 
     #[test]
-    fn context_validation_respects_window() {
-        let registry = ModelRegistry::builtin();
-        assert!(registry.validate_context("glm-5.2", 1_000_000));
-        assert!(!registry.validate_context("glm-5.2", 1_000_001));
-        assert!(!registry.validate_context("unknown-model", 10));
-    }
-
-    #[test]
     fn cost_estimate_matches_manual_integer_math() {
         let registry = ModelRegistry::builtin();
         let usage = TokenUsage {
@@ -1929,13 +1856,13 @@ mod tests {
         let mut registry = ModelRegistry::empty();
         registry.extend_with(entries);
         let text_ids: Vec<&str> = registry
-            .filter_by_purpose(&[ModelPurpose::Text])
+            .filter(&purpose_requirements(&[ModelPurpose::Text]))
             .iter()
             .map(|entry| entry.id.as_str())
             .collect();
         assert_eq!(text_ids, ["qwen3.8-max"]);
         let image_gen_ids: Vec<&str> = registry
-            .filter_by_purpose(&[ModelPurpose::ImageOutput])
+            .filter(&purpose_requirements(&[ModelPurpose::ImageOutput]))
             .iter()
             .map(|entry| entry.id.as_str())
             .collect();
@@ -2128,14 +2055,10 @@ mod tests {
     fn evidence_for_unknown_model_is_none() {
         let registry = ModelRegistry::builtin();
         assert!(registry.capability_evidence("nonexistent").is_none());
-        assert!(registry
-            .capability_snapshot()
-            .iter()
-            .all(|evidence| evidence.model.as_str() != "nonexistent"));
     }
 
     #[test]
-    fn capability_snapshot_covers_all_three_sources() {
+    fn capability_evidence_covers_all_three_sources() {
         let registry = ModelRegistry::builtin();
         registry.record_probe(
             &ProviderId::new("glm-coding"),
@@ -2153,18 +2076,7 @@ mod tests {
             caps(true, false, false, false, false, false, false),
         );
 
-        let snapshot = registry.capability_snapshot();
-        assert!(
-            snapshot
-                .windows(2)
-                .all(|pair| pair[0].model <= pair[1].model),
-            "快照按 model id 排序"
-        );
-
-        let glm = snapshot
-            .iter()
-            .find(|evidence| evidence.model.as_str() == "glm-5.2")
-            .expect("三源齐全");
+        let glm = registry.capability_evidence("glm-5.2").expect("三源齐全");
         assert!(glm.static_declared.is_some());
         assert!(glm.probe_declared.is_some());
         assert!(glm.override_declared.is_some());
@@ -2173,9 +2085,8 @@ mod tests {
             Some("glm-coding")
         );
 
-        let probe_only = snapshot
-            .iter()
-            .find(|evidence| evidence.model.as_str() == "probe-only")
+        let probe_only = registry
+            .capability_evidence("probe-only")
             .expect("仅探测证据");
         assert!(probe_only.static_declared.is_none());
         assert!(probe_only.probe_declared.is_some());
@@ -2185,9 +2096,8 @@ mod tests {
             "探测锚定 provider"
         );
 
-        let override_only = snapshot
-            .iter()
-            .find(|evidence| evidence.model.as_str() == "override-only")
+        let override_only = registry
+            .capability_evidence("override-only")
             .expect("仅覆盖证据");
         assert!(override_only.static_declared.is_none());
         assert!(override_only.probe_declared.is_none());
@@ -2478,11 +2388,10 @@ mod tests {
             citations: true,
             ..ModelCapabilities::default()
         };
-        let source: Vec<(ProviderId, Vec<ModelDefinition>)> = vec![(
-            ProviderId::new("glm-coding"),
-            vec![mock_definition("glm-5.2", v2.clone())],
-        )];
-        registry.merge_provider_source(&source);
+        registry.merge_provider_models(
+            &ProviderId::new("glm-coding"),
+            &[mock_definition("glm-5.2", v2.clone())],
+        );
         let evidence = registry.capability_evidence("glm-5.2").unwrap();
         let static_caps = evidence.static_declared.expect("static after merge");
         assert_eq!(
@@ -2496,9 +2405,9 @@ mod tests {
         );
 
         // 跨 provider id 冲突跳过（不抢占、不做名称匹配）。
-        let other: Vec<(ProviderId, Vec<ModelDefinition>)> = vec![(
-            ProviderId::new("other"),
-            vec![mock_definition(
+        registry.merge_provider_models(
+            &ProviderId::new("other"),
+            &[mock_definition(
                 "glm-5.2",
                 ModelCapabilities {
                     text: true,
@@ -2506,8 +2415,7 @@ mod tests {
                     ..ModelCapabilities::default()
                 },
             )],
-        )];
-        registry.merge_provider_source(&other);
+        );
         let after = registry
             .capability_evidence("glm-5.2")
             .unwrap()
@@ -2516,11 +2424,10 @@ mod tests {
         assert!(after.citations, "foreign provider must not overwrite");
 
         // factory 的未知模型被追加。
-        let extra: Vec<(ProviderId, Vec<ModelDefinition>)> = vec![(
-            ProviderId::new("factory-a"),
-            vec![mock_definition("factory-only-model", v2)],
-        )];
-        registry.merge_provider_source(&extra);
+        registry.merge_provider_models(
+            &ProviderId::new("factory-a"),
+            &[mock_definition("factory-only-model", v2)],
+        );
         let added = registry.capability_evidence("factory-only-model").unwrap();
         assert_eq!(
             added.provider.as_ref().map(ProviderId::as_str),

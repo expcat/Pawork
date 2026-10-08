@@ -62,7 +62,7 @@
 | ✅ 完成 | [B2 · Storage 预留接口与恢复面裁决](plan/b2-storage.md) | 删除未接线入口、收窄 Options 公开面，保留账本恢复读口；Storage 定向回归、宿主与契约检查通过，独立 review PASS。 |
 | ✅ 完成 | [B3 · Control-plane 读面与未接线能力裁决](plan/b3-control-plane.md) | 保留真实额度读链与租约回归，删除未消费读口 / picker，收窄预算配置；定向回归与宿主检查通过，独立 review PASS，持久恢复激活与 Retention 兼容边界已写明。 |
 | ✅ 完成 | [B4 · Workspace / App Prompt-template 预留裁决](plan/b4-prompt-template.md) | 删除未激活的模板字段、限制与资源变体，保留现行加载 / 导入格式；92 条定向回归通过，独立 review PASS。 |
-| 待裁决 | [B5 · Models 四个预留 API 裁决](plan/b5-models.md) | 核实模型库四个 Spec 记录 API 的使用情况并裁决。 |
+| ✅ 完成 | [B5 · Models 四个预留 API 裁决](plan/b5-models.md) | 删除四个测试专用包装口及目录来源 trait，保留生产目录 / 单模型证据 / 用途消费；models 52 条回归与正式宿主类型检查通过，独立 review PASS。 |
 | 待裁决 | [B6 · Auth 存储 API 与别名保留期裁决](plan/b6-auth.md) | 裁决凭证 API、中转类型及旧 serde 别名的保留范围。 |
 | 待裁决 | [B8 · MCP Secret 前缀单一事实源裁决](plan/b8-mcp-secret-prefix.md) | 裁决 workspace 与 auth 间的前缀副本及依赖方向。 |
 | ✅ 完成 | [B10 · Engine 预留入口与上下文 API 裁决](plan/b10-engine.md) | 裁决未消费入口、工具结果裁剪模块和跨 Storage 小 API。 |

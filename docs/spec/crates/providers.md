@@ -206,10 +206,10 @@ ADR-057：`ApiKeyChannelProvider` 仅为 `opencode-go` 启用内部会话头映�
 
 目录和能力证据实现归 [models](models.md)，本包负责提供远端模型定义和消费协商结果。
 
-1. 装配期：`ModelRegistry::builtin()` 或空表起步，`extend_with` 并入各通道静态目录（如 `anthropic_builtin_models` / `xai_builtin_models`）。
-2. 运行期：`merge_provider_models` / `merge_provider_source` 并入 `list_models` 发现结果——静态没有的模型新增，已有条目按 registry 合并规则更新；Static/Probe/Override 能力证据的合并才是逐字段交集，不应混为同一操作。
-3. probe：`record_probe(provider, ProviderProbe)` 按 provider 记录探测能力，`clear_probe` 清除；override：`set_override` / `remove_override` 运行期人工修正（只可收窄）。
-4. `capability_evidence(model)` 输出三源快照（`static_declared` / `probe_declared` / `override_declared`），`merged()` 对已出现来源逐字段交集后供 negotiate 使用；`capability_snapshot()` 全量导出（诊断/展示）。
+1. App 装配期：`ModelRegistry::builtin()` 起步，配置条目经 `extend_with` 并入；协议静态目录由下述入口合并。xAI 选择目录仍以远端探测为准，不预填静态 grok。
+2. 目录合并：App 的 `assemble_registry` 直接用 `merge_provider_models` 并入协议静态目录——静态没有的模型新增，已有条目按 registry 合并规则更新；远端发现经 probe 记录。Static/Probe/Override 能力证据的合并才是逐字段交集，不应混为同一操作。
+3. probe：`record_probe(provider, definitions)` 接收 `Vec<ModelDefinition>`，按 provider 记录探测能力并返回 `Arc<ProviderProbe>`，`clear_probe` 清除；override：`set_override` / `remove_override` 修正证据（只可收窄）。
+4. `capability_evidence(model)` 输出单模型三源快照（`static_declared` / `probe_declared` / `override_declared`），`merged()` 对已出现来源逐字段交集后供 negotiate 使用；B5 删除未被生产消费的全量快照与目录包装口，见 [models](models.md)。
 5. adapter 侧兜底：如 `AnthropicProvider` 未注入 registry 时退回 `builtin_models` 静态声明，未知模型退回 Messages 基线能力——证据永远存在，不出现「无证据直接放行」。
 
 ### Computer use 工具图片续接（2026-09-17）

@@ -20,14 +20,16 @@
 
 ## 3. 对外 API 面
 
-- `ModelRegistry::{empty,builtin,register,try_register,extend_with,resolve,list,filter,validate_context,estimate_cost}`：目录、别名、上下文预算与计价。`CatalogEntry::to_definition` 转为 domain 模型定义。
-- `merge_provider_models` / `merge_provider_source`：合并提供方目录；`ProviderCapabilitySource` 是注入目录端口。
+- `ModelRegistry::{empty,builtin,register,try_register,extend_with,resolve,list,filter,estimate_cost}`：目录、别名、能力筛选与计价；上下文窗口仍由 `CatalogEntry::context_window_tokens` 提供。`CatalogEntry::to_definition` 转为 domain 模型定义。
+- `merge_provider_models`：按 Provider 合并提供方目录；App 的 `assemble_registry` 直接调用此入口。
 - `probe_provider` / `record_probe` / `clear_probe`、`ProviderProbe` / `ProbeError`：按 Provider 缓存发现结果及失败，并发共享探测槽，取消后的槽可重试。
-- `set_override` / `remove_override`、`capability_evidence` / `capability_snapshot`：读写能力证据。`CapabilityEvidence::merged` / `merge_capabilities` 对已出现来源取保守交集。
+- `set_override` / `remove_override`、`capability_evidence`：读写单模型能力证据，支持静态、仅探测与仅覆盖的模型。`CapabilityEvidence::merged` / `merge_capabilities` 对已出现来源取保守交集。
 - `registry::{default_supported_efforts,default_image_input,default_image_output,default_text,default_hosted_web_search}` 与 `apply_default_*`：逐型号默认能力，远端显式声明优先；未知保持未知。端点限制仍由 providers 执行。
-- `purpose_requirements` / `capabilities_support_purpose` / `ModelRegistry::filter_by_purpose`（ADR-064）：canonical `ModelPurpose` → 既有能力位要求的映射与目录筛选；多个用途取交集。`caps_satisfied` 的 v1 布尔链补齐 `image_output`（此前按图像生成过滤不生效）。
+- `purpose_requirements` / `capabilities_support_purpose`（ADR-064）：canonical `ModelPurpose` → 既有能力位要求的映射与逐条判定。Gateway / CLI 对实际选择目录逐用途检查，多个用途取交集；通用 registry 筛选可组合 `filter` 与 `purpose_requirements`。`caps_satisfied` 的 v1 布尔链覆盖 `image_output`。
 - `CapabilityNegotiator::negotiate`、`negotiate::capability_gate`、`clamp_reasoning_to_thinking`、`negotiate::content_part_has_video`：模型证据与请求相交；图片和视频递归覆盖工具结果。
 - `ModelPricing` / `estimate_cost` / `BUILTIN_RATE_CARD` / `BUILTIN_RATE_VERSION`：micro-unit 整数计价；不把未知价格编造成零费用。
+
+[B5 裁决](../../plan/b5-models.md)（2026-10-08）：删除仅由本包测试消费的 `validate_context`、`merge_provider_source`、`capability_snapshot`、`filter_by_purpose`，并删除仅服务于目录包装口的 `ProviderCapabilitySource` 及 Vec 实现 / 导出。这是未发布 workspace 的 Rust API 收敛；目录与证据 serde 类型、domain Provider 契约、用途 wire 名、CLI / Gateway 行为保持不变。CU-11 继续复用单模型 `capability_evidence` + `merged()`。
 
 ## 4. 关键行为与语义
 
@@ -41,7 +43,7 @@
 
 ## 5. 依赖与 feature
 
-生产：`pawork-domain`、`serde`、`serde_json`、`thiserror`。开发：`async-trait`、`tokio`。无 feature。真实生产消费者为 `pawork-app` 与 `pawork-providers`。
+生产：`pawork-domain`、`serde`、`serde_json`、`thiserror`。开发：`async-trait`、`tokio`。无 feature。真实生产消费者为 `pawork-app`、`pawork-providers` 与 `pawork-cli`。
 
 ## 6. 红线与不变量
 
@@ -50,6 +52,8 @@
 ## 7. 测试与 golden 资产
 
 原 registry / negotiate / pricing 内联回归完整迁移，覆盖别名冲突、并发探测/取消、能力收窄、图片/视频与 hosted tools 拒绝、推理强度和整数计价。执行 `bash scripts/test.sh models`；跨适配器联动执行 `bash scripts/test.sh models providers`。本次不新增镜像测试。
+
+B5 保留既有 `merge_provider_catalog_feeds_v2_caps_into_evidence_without_name_match`、`purpose_filter_covers_four_capabilities_and_intersects`，改为直接调用保留入口；三源 / probe-only / override-only 断言改用 `capability_evidence_covers_all_three_sources`。仅移除已删除入口的上下文布尔包装测试、全量快照排序与枚举断言；能力收窄、嵌套图片及用途交集回归保留。嵌套视频检测与 App / providers 视频回归未修改，本轮未执行后两包的视频行为测试。实际验证与独立 review 状态见 [B5](../../plan/b5-models.md)。
 
 ## 8. 相关文档
 
