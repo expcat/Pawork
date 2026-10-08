@@ -8,6 +8,8 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 
 use pawork_auth::{AuthError, FileBackend, MemoryBackend, SecretBackend};
+use pawork_computer_use::approval::{GrantKind, TargetIdentity};
+use pawork_computer_use::target::{NativeProbe, Scope, TargetRegistry};
 use pawork_domain::{
     AgentEvent, AgentEventEnvelope, ApprovalDecision, CancellationToken, Cost, Message, ModelId,
     ProviderId, RequestId, RunId, SessionId, TokenUsage, ToolDescriptor, WorkspaceId,
@@ -21,8 +23,6 @@ use pawork_engine::{
     TokenEstimator as EngineTokenEstimator, TurnContext,
 };
 use pawork_models::{CatalogEntry, ModelRegistry};
-use pawork_computer_use::approval::{GrantKind, TargetIdentity};
-use pawork_computer_use::target::{NativeProbe, Scope, TargetRegistry};
 use pawork_storage::session::{SessionRecord, SessionStore, SessionStoreError, WorkspaceRecord};
 use pawork_tools::{ToolRegistry, ToolRegistryError, ToolScheduler, ToolSchedulerConfig};
 use pawork_workspace::config::{ConfigError, Loader, PaworkConfig, TerminalConfig};
@@ -521,55 +521,6 @@ impl AppCore {
             .await?;
         core.open_control_plane(crate::instance_dir(&data_dir, instance))?;
         core.reconcile_usage_ledger().await;
-        Ok(core)
-    }
-
-    pub fn from_resolved(
-        mut config: PaworkConfig,
-        provider: Option<&str>,
-        model: Option<&str>,
-    ) -> Result<Self, AppError> {
-        if let Some(provider) = provider {
-            config.default_provider = Some(provider.to_string());
-        }
-        if let Some(model) = model {
-            config.default_model = Some(model.to_string());
-        }
-
-        let provider_id = config
-            .default_provider
-            .clone()
-            .ok_or(AppError::MissingDefaultProvider)?;
-        let model_id = config
-            .default_model
-            .clone()
-            .ok_or(AppError::MissingDefaultModel)?;
-        let provider_ref = ProviderId::from(provider_id.as_str());
-        let backend: Arc<dyn SecretBackend> = Arc::new(FileBackend::new());
-        let reasoning_protector =
-            std::sync::Arc::new(crate::protected::SwappableReasoningProtector::in_memory());
-        let assembled = futures::executor::block_on(assemble_provider(
-            &config,
-            &provider_ref,
-            &backend,
-            false,
-            std::sync::Arc::clone(&reasoning_protector)
-                as Arc<dyn pawork_providers::ReasoningProtector>,
-        ))?;
-        let mut core = Self::from_parts_with_protocol(
-            assembled.adapter,
-            assembled.credential,
-            ModelId::from(model_id.as_str()),
-            provider_ref,
-            assembled.protocol,
-            None,
-            assembled.registry,
-        )
-        .with_state(config, backend);
-        core.provider_auth_revision = assembled.auth_revision;
-        core.reasoning_protector = reasoning_protector;
-        // 校验生效 proxy 配置可构造 F06 客户端；OAuth / 探测客户端按需新建。
-        Self::http_from_config(&core.config)?;
         Ok(core)
     }
 

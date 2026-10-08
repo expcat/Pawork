@@ -1139,13 +1139,9 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn from_resolved_requires_provider_and_model() {
-        let err =
-            AppCore::from_resolved(PaworkConfig::default(), None, None).expect_err("empty config");
-        assert!(matches!(err, AppError::MissingDefaultProvider));
-
-        let err = AppCore::from_resolved(
+    #[tokio::test]
+    async fn strict_load_rejects_unknown_provider() {
+        let err = AppCore::from_config(
             PaworkConfig {
                 default_provider: Some("missing".into()),
                 default_model: Some("m".into()),
@@ -1153,7 +1149,9 @@ mod tests {
             },
             None,
             None,
+            Arc::new(pawork_auth::MemoryBackend::new()),
         )
+        .await
         .expect_err("unknown provider");
         assert!(matches!(err, AppError::UnknownProvider { id } if id == "missing"));
     }
@@ -1189,11 +1187,18 @@ mod tests {
         assert!(matches!(err, AppError::MissingDefaultProvider));
     }
 
-    #[test]
-    fn from_resolved_fail_closed_without_env_key() {
+    #[tokio::test]
+    async fn strict_load_fail_closed_without_credential() {
         let id = "app-core-missing-key";
         remove_env(&api_key_env_name(id));
-        let err = AppCore::from_resolved(sample_config(id), None, None).expect_err("no key");
+        let err = AppCore::from_config(
+            sample_config(id),
+            None,
+            None,
+            Arc::new(pawork_auth::MemoryBackend::new()),
+        )
+        .await
+        .expect_err("no key");
         let display = format!("{err}");
         match err {
             AppError::MissingCredential { provider, env_name } => {
@@ -1666,15 +1671,21 @@ mod tests {
         assert!(overview.iter().any(|entry| entry.id.as_str() == "glm-5.2"));
     }
 
-    #[test]
-    fn cli_overrides_win_and_secret_is_redacted() {
+    #[tokio::test]
+    async fn cli_overrides_win_and_secret_is_redacted() {
         let id = "app-core-redact";
-        let env_name = api_key_env_name(id);
         let secret = "super-secret-key-value-not-for-logs";
-        set_env(&env_name, secret);
-        let core = AppCore::from_resolved(sample_config(id), Some(id), Some("deepseek-v4-pro"))
-            .expect("load with key");
-        remove_env(&env_name);
+        let backend = Arc::new(pawork_auth::MemoryBackend::new());
+        pawork_auth::store_default_api_key(backend.as_ref(), &ProviderId::from(id), secret)
+            .expect("store");
+        let core = AppCore::from_config(
+            sample_config(id),
+            Some(id),
+            Some("deepseek-v4-pro"),
+            backend,
+        )
+        .await
+        .expect("load with key");
 
         assert_eq!(core.provider_id().as_str(), id);
         assert_eq!(core.model().as_str(), "deepseek-v4-pro");
@@ -1684,36 +1695,50 @@ mod tests {
         assert!(debug.contains("[REDACTED]"), "{debug}");
     }
 
-    #[test]
-    fn from_resolved_selects_messages_adapter_from_default_table() {
+    #[tokio::test]
+    async fn strict_load_selects_messages_adapter_from_default_table() {
         let id = "glm-coding-anthropic";
-        let env_name = api_key_env_name(id);
-        set_env(&env_name, "not-a-real-key");
-        let core = AppCore::from_resolved(sample_config(id), None, None).expect("load");
-        remove_env(&env_name);
+        let backend = Arc::new(pawork_auth::MemoryBackend::new());
+        pawork_auth::store_default_api_key(
+            backend.as_ref(),
+            &ProviderId::from(id),
+            "not-a-real-key",
+        )
+        .expect("store");
+        let core = AppCore::from_config(sample_config(id), None, None, backend)
+            .await
+            .expect("load");
         assert_eq!(core.adapter_protocol(), AdapterProtocol::Messages);
         assert_eq!(core.provider_id().as_str(), id);
     }
 
-    #[test]
-    fn extra_protocol_overrides_default_and_rejects_unknown() {
+    #[tokio::test]
+    async fn extra_protocol_overrides_default_and_rejects_unknown() {
         let id = "app-core-protocol-extra";
-        let env_name = api_key_env_name(id);
-        set_env(&env_name, "not-a-real-key");
+        let backend = Arc::new(pawork_auth::MemoryBackend::new());
+        pawork_auth::store_default_api_key(
+            backend.as_ref(),
+            &ProviderId::from(id),
+            "not-a-real-key",
+        )
+        .expect("store");
         let mut config = sample_config(id);
         config.extra.insert(
             "provider_protocols".into(),
             serde_json::json!({ id: "messages" }),
         );
-        let core = AppCore::from_resolved(config.clone(), None, None).expect("override");
+        let core = AppCore::from_config(config.clone(), None, None, backend.clone())
+            .await
+            .expect("override");
         assert_eq!(core.adapter_protocol(), AdapterProtocol::Messages);
 
         config.extra.insert(
             "provider_protocols".into(),
             serde_json::json!({ id: "not-a-protocol" }),
         );
-        let err = AppCore::from_resolved(config, None, None).expect_err("bad protocol");
-        remove_env(&env_name);
+        let err = AppCore::from_config(config, None, None, backend)
+            .await
+            .expect_err("bad protocol");
         assert!(matches!(err, AppError::Protocol(_)));
     }
 
