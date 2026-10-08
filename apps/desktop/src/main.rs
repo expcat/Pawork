@@ -20,6 +20,7 @@ use gpui::{
 
 use crate::controller::ControllerEvent;
 use crate::projection::{DesktopProjection, ResumeApply, TimelineEntryKind};
+use pawork_client::{AppEvent, EventStream, RunState};
 
 fn main() {
     let args = match parse_args() {
@@ -92,7 +93,7 @@ fn run_probe(socket: PathBuf) -> i32 {
     let controller = controller::DesktopController::new(platform.handle());
     match platform.block_on(async {
         let connected = controller.connect(socket).await?;
-        let models = controller.fetch_models().await.unwrap_or_default();
+        let models = controller.fetch_models().await?;
         Ok::<_, String>((connected.snapshot, models))
     }) {
         Ok((snapshot, models)) => {
@@ -118,7 +119,8 @@ fn run_probe(socket: PathBuf) -> i32 {
     }
 }
 
-/// 波 C 真实冒烟：同一条 controller 路径走流式回合、切模型、取消、审批。
+/// 真实功能冒烟：流式回合、审批、取消、两次断线重连。
+/// 唯一授权模型覆盖不了切换，签名行输出 `model_switch=uncovered`。
 fn run_probe_smoke(socket: PathBuf) -> i32 {
     let platform = platform::Platform::new();
     let controller = controller::DesktopController::new(platform.handle());
@@ -153,10 +155,12 @@ async fn probe_smoke(
     let session_id = wait_for_session(&events, &mut projection).await?;
     projection.select_session(&session_id);
 
-    let first = pick_model(&models, "glm-coding", "glm-4.7")
-        .or_else(|| pick_model(&models, "deepseek", "deepseek-v4-flash"))
+    // 功能冒烟只允许当次消息携带这一对；不写持久默认，也不按 id 跨 provider 回退。
+    let first = pick_exact_model(&models, PROBE_SMOKE_PROVIDER, PROBE_SMOKE_MODEL)
         .cloned()
-        .ok_or_else(|| "host ModelList is missing glm-4.7 and deepseek-v4-flash".to_string())?;
+        .ok_or_else(|| {
+            format!("host ModelList is missing {PROBE_SMOKE_PROVIDER}/{PROBE_SMOKE_MODEL}")
+        })?;
     projection.set_pending_model(first.provider_id.clone(), first.id.clone());
     controller.send_message(
         session_id.clone(),
@@ -165,24 +169,9 @@ async fn probe_smoke(
         None,
         Default::default(),
     );
-    let first_turn = wait_for_turn(&events, &mut projection, Duration::from_secs(90)).await?;
+    let first_turn = wait_for_turn(&events, &mut projection, Duration::from_secs(90), None).await?;
 
-    let second = pick_other_model(&models, &first).cloned();
-    let second_id = second.as_ref().map(|model| model.id.clone());
-    let second_turn = if let Some(model) = second {
-        projection.set_pending_model(model.provider_id.clone(), model.id.clone());
-        controller.send_message(
-            session_id.clone(),
-            "Reply with exactly one word: switched".into(),
-            Some((model.provider_id.clone(), model.id.clone())),
-            None,
-            Default::default(),
-        );
-        Some(wait_for_turn(&events, &mut projection, Duration::from_secs(90)).await?)
-    } else {
-        None
-    };
-
+    // 写文件只看审批卡和该 run 的终态。模型回复不算文件已落盘。
     controller.send_message(
         session_id.clone(),
         "Write target/s7-wave-d-smoke.txt containing exactly hello-s7d. Use the write tool.".into(),
@@ -197,12 +186,20 @@ async fn probe_smoke(
             .pending_approval
             .as_ref()
             .ok_or_else(|| "approval card missing after ToolApprovalRequired".to_string())?;
+        let approved_run = pending.run_id.clone();
         controller.approve(
-            pending.run_id.clone(),
+            approved_run.clone(),
             pending.tool_call_id.clone(),
             "approve_once",
         );
-        wait_for_turn(&events, &mut projection, Duration::from_secs(90)).await?;
+        // approve 不再发 MessageSent。后续终态只认这张审批卡上的 run。
+        wait_for_turn(
+            &events,
+            &mut projection,
+            Duration::from_secs(90),
+            Some(approved_run.as_str()),
+        )
+        .await?;
     }
 
     controller.send_message(
@@ -213,8 +210,8 @@ async fn probe_smoke(
         Default::default(),
     );
     let run_id = wait_for_run_id(&events, &mut projection, Duration::from_secs(30)).await?;
-    controller.cancel_run(run_id);
-    wait_for_cancel(&events, &mut projection, Duration::from_secs(30)).await?;
+    controller.cancel_run(run_id.clone());
+    wait_for_cancel(&events, &mut projection, Duration::from_secs(30), &run_id).await?;
 
     let assistant_turns = projection
         .timeline
@@ -287,27 +284,26 @@ async fn probe_smoke(
             .iter()
             .any(|run| run.run_id == live_run)
     {
-        controller.cancel_run(live_run);
-        wait_for_cancel(&events, &mut projection, Duration::from_secs(30)).await?;
+        controller.cancel_run(live_run.clone());
+        wait_for_cancel(&events, &mut projection, Duration::from_secs(30), &live_run).await?;
         "running"
     } else {
-        controller.open_session(session_id.clone());
-        wait_for_timeline(&events, &mut projection, Duration::from_secs(15)).await?;
-        if projection.timeline.iter().any(|entry| {
-            entry.run_id.as_deref() == Some(live_run.as_str())
-                && matches!(&entry.kind, TimelineEntryKind::RunState(state) if state.contains("cancelled"))
-        }) {
-            return Err("disconnect cancelled the in-flight run".into());
+        // 不在 active 列表只说明快照没把它当作进行中，不能当成 completed。
+        if !has_terminal_run_label(&projection, &live_run) {
+            if projection.active_session_id.as_deref() != Some(session_id.as_str()) {
+                projection.select_session(&session_id);
+            }
+            controller.open_session(session_id.clone());
+            wait_for_timeline(&events, &mut projection, Duration::from_secs(15)).await?;
         }
-        "completed"
+        classify_disconnect_run(&projection, &live_run)?
     };
 
     Ok(format!(
-        "probe-smoke: session={session_id} models={} first={} first_turn={first_turn} second={} second_turn={} trusted={} approval={} assistant_turns={assistant_turns} cancelled=1 persisted={persisted} disconnect_survive={disconnect_survive}",
+        "probe-smoke: session={session_id} models={} first={}/{} first_turn={first_turn} model_switch=uncovered trusted={} approval={} assistant_turns={assistant_turns} cancelled=1 persisted={persisted} disconnect_survive={disconnect_survive}",
         models.len(),
+        first.provider_id,
         first.id,
-        second_id.as_deref().unwrap_or("-"),
-        second_turn.as_deref().unwrap_or("skipped"),
         match trusted {
             Some(true) => "1",
             Some(false) => "0",
@@ -368,7 +364,11 @@ fn workspace_trusted(snapshot: &pawork_client::Snapshot) -> Option<bool> {
     })
 }
 
-fn pick_model<'a>(
+/// 当次功能冒烟唯一授权模型。Desktop 不接受 provider/model 参数，由消息显式携带。
+const PROBE_SMOKE_PROVIDER: &str = "opencode-go";
+const PROBE_SMOKE_MODEL: &str = "glm-5.3-flash";
+
+fn pick_exact_model<'a>(
     models: &'a [projection::ModelEntry],
     provider: &str,
     id: &str,
@@ -376,18 +376,211 @@ fn pick_model<'a>(
     models
         .iter()
         .find(|model| model.provider_id == provider && model.id == id)
-        .or_else(|| models.iter().find(|model| model.id == id))
 }
 
-fn pick_other_model<'a>(
-    models: &'a [projection::ModelEntry],
-    first: &projection::ModelEntry,
-) -> Option<&'a projection::ModelEntry> {
-    // 只走既定低消耗 fallback 矩阵；目录没有 deepseek-v4-flash 就跳过，
-    // 不擅自换 claude / grok / 同通道相邻档。
-    pick_model(models, "deepseek", "deepseek-v4-flash")
-        .or_else(|| pick_model(models, "opencode-go", "deepseek-v4-flash"))
-        .filter(|model| model.id != first.id || model.provider_id != first.provider_id)
+fn probe_run_state<'a>(
+    event: &'a ControllerEvent,
+    projection: &DesktopProjection,
+    tracked: &str,
+) -> Option<&'a RunState> {
+    let ControllerEvent::Event(envelope) = event else {
+        return None;
+    };
+    let EventStream::Session(session_id) = &envelope.stream else {
+        return None;
+    };
+    if projection.active_session_id.as_deref() != Some(session_id.as_str()) {
+        return None;
+    }
+    match &envelope.payload {
+        AppEvent::RunChanged { run_id, state } if run_id.as_str() == tracked => Some(state),
+        _ => None,
+    }
+}
+
+fn probe_approval_run<'a>(
+    event: &'a ControllerEvent,
+    projection: &DesktopProjection,
+) -> Option<&'a str> {
+    let ControllerEvent::Event(envelope) = event else {
+        return None;
+    };
+    let EventStream::Session(session_id) = &envelope.stream else {
+        return None;
+    };
+    if projection.active_session_id.as_deref() != Some(session_id.as_str()) {
+        return None;
+    }
+    match &envelope.payload {
+        AppEvent::ToolApprovalRequired { run_id, .. } => Some(run_id.as_str()),
+        _ => None,
+    }
+}
+
+fn assistant_text_for_run(projection: &DesktopProjection, run_id: &str) -> Option<String> {
+    projection.timeline.iter().rev().find_map(|entry| {
+        if entry.run_id.as_deref() != Some(run_id) {
+            return None;
+        }
+        match &entry.kind {
+            TimelineEntryKind::AssistantMessage { text } if !text.is_empty() => Some(text.clone()),
+            _ => None,
+        }
+    })
+}
+
+fn turn_outcome(
+    state: &RunState,
+    projection: &DesktopProjection,
+    run_id: &str,
+) -> Option<Result<String, String>> {
+    match state {
+        RunState::Completed => Some(Ok(
+            assistant_text_for_run(projection, run_id).unwrap_or_else(|| "completed".into())
+        )),
+        RunState::Failed | RunState::Interrupted | RunState::Cancelled => {
+            Some(Err(format!("run ended as {state:?}")))
+        }
+        _ => None,
+    }
+}
+
+enum ProjectedRun {
+    Open,
+    Completed,
+    Rejected(String),
+}
+
+fn latest_projected_run_kind<'a>(
+    projection: &'a DesktopProjection,
+    run_id: &str,
+) -> Option<&'a str> {
+    projection.timeline.iter().rev().find_map(|entry| {
+        if entry.run_id.as_deref() != Some(run_id) {
+            return None;
+        }
+        let TimelineEntryKind::RunState(label) = &entry.kind else {
+            return None;
+        };
+        let rest = label.strip_prefix("run ")?;
+        Some(rest.split(" · ").next().unwrap_or(rest).trim())
+    })
+}
+
+fn projected_run(projection: &DesktopProjection, run_id: &str) -> Option<ProjectedRun> {
+    Some(match latest_projected_run_kind(projection, run_id)? {
+        "completed" => ProjectedRun::Completed,
+        "failed" => ProjectedRun::Rejected("run ended as Failed".into()),
+        "interrupted" => ProjectedRun::Rejected("run ended as Interrupted".into()),
+        "cancelled" => ProjectedRun::Rejected("run ended as Cancelled".into()),
+        "started"
+        | "preparing_context"
+        | "waiting_for_provider"
+        | "streaming_response"
+        | "collecting_tool_calls"
+        | "waiting_for_approval"
+        | "executing_tools"
+        | "appending_tool_results" => ProjectedRun::Open,
+        other => ProjectedRun::Rejected(format!("run terminal state unknown: {other}")),
+    })
+}
+
+fn projected_turn_outcome(
+    projection: &DesktopProjection,
+    run_id: &str,
+) -> Option<Result<String, String>> {
+    match projected_run(projection, run_id)? {
+        ProjectedRun::Open => None,
+        ProjectedRun::Completed => Some(Ok(
+            assistant_text_for_run(projection, run_id).unwrap_or_else(|| "completed".into())
+        )),
+        ProjectedRun::Rejected(reason) => Some(Err(reason)),
+    }
+}
+
+fn projected_approval_outcome(
+    projection: &DesktopProjection,
+    run_id: &str,
+) -> Option<Result<String, String>> {
+    match projected_run(projection, run_id)? {
+        ProjectedRun::Open => None,
+        ProjectedRun::Completed => Some(Ok("turn".into())),
+        ProjectedRun::Rejected(reason) => Some(Err(reason)),
+    }
+}
+
+fn bind_tracked_run(
+    projection: &mut DesktopProjection,
+    session_id: &str,
+    run_id: &str,
+    tracked: &mut Option<String>,
+) -> bool {
+    if tracked.is_some() || projection.active_session_id.as_deref() != Some(session_id) {
+        return false;
+    }
+    projection.active_run_id = Some(run_id.to_string());
+    *tracked = Some(run_id.to_string());
+    true
+}
+
+fn cancel_outcome(state: &RunState) -> Option<Result<String, String>> {
+    match state {
+        RunState::Cancelled => Some(Ok("cancelled".into())),
+        RunState::Completed | RunState::Failed | RunState::Interrupted => {
+            Some(Err(format!("run ended as {state:?}")))
+        }
+        _ => None,
+    }
+}
+
+fn latest_run_state_label<'a>(projection: &'a DesktopProjection, run_id: &str) -> Option<&'a str> {
+    projection.timeline.iter().rev().find_map(|entry| {
+        if entry.run_id.as_deref() != Some(run_id) {
+            return None;
+        }
+        match &entry.kind {
+            TimelineEntryKind::RunState(state) => Some(state.as_str()),
+            _ => None,
+        }
+    })
+}
+
+fn run_label_kind(label: &str) -> &str {
+    let body = label.strip_prefix("run ").unwrap_or(label);
+    body.split(" · ").next().unwrap_or(body).trim()
+}
+
+fn has_terminal_run_label(projection: &DesktopProjection, run_id: &str) -> bool {
+    latest_run_state_label(projection, run_id).is_some_and(|label| {
+        matches!(
+            run_label_kind(label),
+            "completed" | "cancelled" | "failed" | "interrupted"
+        )
+    })
+}
+
+fn classify_disconnect_run(
+    projection: &DesktopProjection,
+    run_id: &str,
+) -> Result<&'static str, String> {
+    let Some(label) = latest_run_state_label(projection, run_id) else {
+        return Err(format!("run {run_id} has no persisted run state"));
+    };
+    match run_label_kind(label) {
+        "completed" => Ok("completed"),
+        "cancelled" => Err("disconnect cancelled the in-flight run".into()),
+        "failed" => Err(format!("disconnect run failed: {label}")),
+        "interrupted" => Err(format!("disconnect run interrupted: {label}")),
+        "started"
+        | "preparing_context"
+        | "waiting_for_provider"
+        | "streaming_response"
+        | "collecting_tool_calls"
+        | "waiting_for_approval"
+        | "executing_tools"
+        | "appending_tool_results" => Err(format!("run {run_id} has no terminal state ({label})")),
+        other => Err(format!("disconnect run terminal state unknown: {other}")),
+    }
 }
 
 async fn wait_for_session(
@@ -403,24 +596,17 @@ async fn wait_for_session(
                 projection.merge_snapshot(snapshot);
                 None
             }
-            ControllerEvent::SessionCreated { session_id } => Some(session_id.clone()),
+            ControllerEvent::SessionCreated { session_id } => Some(Ok(session_id.clone())),
             ControllerEvent::OperationFailed { action, reason } => {
-                Some(format!("FAIL {action}: {reason}"))
+                Some(Err(format!("{action}: {reason}")))
             }
             ControllerEvent::SessionOpenFailed { reason, .. } => {
-                Some(format!("FAIL open session: {reason}"))
+                Some(Err(format!("open session: {reason}")))
             }
             _ => None,
         },
     )
     .await
-    .and_then(|value| {
-        if value.starts_with("FAIL ") {
-            Err(value)
-        } else {
-            Ok(value)
-        }
-    })
 }
 
 async fn wait_for_run_id(
@@ -435,76 +621,59 @@ async fn wait_for_run_id(
         |event, projection| match event {
             ControllerEvent::MessageSent { run_id, .. } => {
                 projection.active_run_id = Some(run_id.clone());
-                Some(run_id.clone())
+                Some(Ok(run_id.clone()))
             }
             ControllerEvent::Event(envelope) => {
                 projection.apply_event(envelope);
-                projection.active_run_id.clone()
+                None
             }
             ControllerEvent::OperationFailed { action, reason } => {
-                Some(format!("FAIL {action}: {reason}"))
+                Some(Err(format!("{action}: {reason}")))
             }
             _ => None,
         },
     )
     .await
-    .and_then(|value| {
-        if value.starts_with("FAIL ") {
-            Err(value)
-        } else {
-            Ok(value)
-        }
-    })
 }
 
 async fn wait_for_turn(
     events: &smol::channel::Receiver<ControllerEvent>,
     projection: &mut DesktopProjection,
     timeout: Duration,
+    known_run: Option<&str>,
 ) -> Result<String, String> {
+    let mut tracked = known_run.map(str::to_string);
+    if let Some(run_id) = tracked.clone() {
+        if let Some(outcome) = projected_turn_outcome(projection, &run_id) {
+            return outcome;
+        }
+    }
     wait_event(
         events,
         projection,
         timeout,
         |event, projection| match event {
-            ControllerEvent::MessageSent { run_id, .. } => {
-                projection.active_run_id = Some(run_id.clone());
-                None
+            ControllerEvent::MessageSent {
+                session_id, run_id, ..
+            } => {
+                if !bind_tracked_run(projection, session_id, run_id, &mut tracked) {
+                    return None;
+                }
+                projected_turn_outcome(projection, run_id)
             }
             ControllerEvent::Event(envelope) => {
                 projection.apply_event(envelope);
-                if projection.active_run_id.is_none() {
-                    let text =
-                        projection
-                            .timeline
-                            .iter()
-                            .rev()
-                            .find_map(|entry| match &entry.kind {
-                                TimelineEntryKind::AssistantMessage { text } => Some(text.clone()),
-                                TimelineEntryKind::Error(message) => {
-                                    Some(format!("error:{message}"))
-                                }
-                                _ => None,
-                            });
-                    Some(text.unwrap_or_else(|| "completed".into()))
-                } else {
-                    None
-                }
+                let run_id = tracked.as_deref()?;
+                let state = probe_run_state(event, projection, run_id)?;
+                turn_outcome(state, projection, run_id)
             }
             ControllerEvent::OperationFailed { action, reason } => {
-                Some(format!("FAIL {action}: {reason}"))
+                Some(Err(format!("{action}: {reason}")))
             }
             _ => None,
         },
     )
     .await
-    .and_then(|value| {
-        if value.starts_with("FAIL ") {
-            Err(value)
-        } else {
-            Ok(value)
-        }
-    })
 }
 
 async fn wait_for_approval_or_turn(
@@ -512,38 +681,54 @@ async fn wait_for_approval_or_turn(
     projection: &mut DesktopProjection,
     timeout: Duration,
 ) -> Result<bool, String> {
+    let mut tracked = None;
+    let mut early_approval = None;
     wait_event(
         events,
         projection,
         timeout,
         |event, projection| match event {
-            ControllerEvent::MessageSent { run_id, .. } => {
-                projection.active_run_id = Some(run_id.clone());
+            ControllerEvent::MessageSent {
+                session_id, run_id, ..
+            } => {
+                if !bind_tracked_run(projection, session_id, run_id, &mut tracked) {
+                    return None;
+                }
+                if let Some(outcome) = projected_approval_outcome(projection, run_id) {
+                    return Some(outcome);
+                }
+                if early_approval.as_deref() == Some(run_id.as_str()) {
+                    return Some(Ok("approval".into()));
+                }
                 None
             }
             ControllerEvent::Event(envelope) => {
                 projection.apply_event(envelope);
-                if projection.pending_approval.is_some() {
-                    Some("approval".into())
-                } else if projection.active_run_id.is_none() {
-                    Some("turn".into())
-                } else {
-                    None
+                if let Some(approval_run) = probe_approval_run(event, projection) {
+                    if tracked.as_deref() == Some(approval_run) {
+                        return Some(Ok("approval".into()));
+                    }
+                    if tracked.is_none() {
+                        early_approval = Some(approval_run.to_string());
+                    }
                 }
+                let run_id = tracked.as_deref()?;
+                probe_run_state(event, projection, run_id).and_then(|state| match state {
+                    RunState::Completed => Some(Ok("turn".into())),
+                    RunState::Failed | RunState::Interrupted | RunState::Cancelled => {
+                        Some(Err(format!("run ended as {state:?}")))
+                    }
+                    _ => None,
+                })
             }
             ControllerEvent::OperationFailed { action, reason } => {
-                Some(format!("FAIL {action}: {reason}"))
+                Some(Err(format!("{action}: {reason}")))
             }
             _ => None,
         },
     )
     .await
-    .and_then(|value| match value.as_str() {
-        "approval" => Ok(true),
-        "turn" => Ok(false),
-        other if other.starts_with("FAIL ") => Err(other.to_string()),
-        other => Err(other.to_string()),
-    })
+    .map(|value| value == "approval")
 }
 
 async fn wait_for_timeline(
@@ -559,7 +744,7 @@ async fn wait_for_timeline(
             ControllerEvent::TimelineLoaded { page, .. } => {
                 projection.apply_timeline_page(page);
                 if page.complete {
-                    Some(projection.timeline.len().to_string())
+                    Some(Ok(projection.timeline.len().to_string()))
                 } else {
                     None
                 }
@@ -569,23 +754,19 @@ async fn wait_for_timeline(
                 None
             }
             ControllerEvent::OperationFailed { action, reason } => {
-                Some(format!("FAIL {action}: {reason}"))
+                Some(Err(format!("{action}: {reason}")))
             }
             ControllerEvent::SessionOpenFailed { reason, .. } => {
-                Some(format!("FAIL open session: {reason}"))
+                Some(Err(format!("open session: {reason}")))
             }
             _ => None,
         },
     )
     .await
     .and_then(|value| {
-        if value.starts_with("FAIL ") {
-            Err(value)
-        } else {
-            value
-                .parse()
-                .map_err(|_| format!("bad timeline count {value}"))
-        }
+        value
+            .parse()
+            .map_err(|_| format!("bad timeline count {value}"))
     })
 }
 
@@ -593,6 +774,7 @@ async fn wait_for_cancel(
     events: &smol::channel::Receiver<ControllerEvent>,
     projection: &mut DesktopProjection,
     timeout: Duration,
+    run_id: &str,
 ) -> Result<(), String> {
     wait_event(
         events,
@@ -601,33 +783,24 @@ async fn wait_for_cancel(
         |event, projection| match event {
             ControllerEvent::Event(envelope) => {
                 projection.apply_event(envelope);
-                if projection.active_run_id.is_none() {
-                    Some("cancelled".into())
-                } else {
-                    None
-                }
+                let state = probe_run_state(event, projection, run_id)?;
+                cancel_outcome(state)
             }
             ControllerEvent::OperationFailed { action, reason } => {
-                Some(format!("FAIL {action}: {reason}"))
+                Some(Err(format!("{action}: {reason}")))
             }
             _ => None,
         },
     )
     .await
-    .and_then(|value| {
-        if value.starts_with("FAIL ") {
-            Err(value)
-        } else {
-            Ok(())
-        }
-    })
+    .map(|_| ())
 }
 
 async fn wait_event(
     events: &smol::channel::Receiver<ControllerEvent>,
     projection: &mut DesktopProjection,
     timeout: Duration,
-    mut on_event: impl FnMut(&ControllerEvent, &mut DesktopProjection) -> Option<String>,
+    mut on_event: impl FnMut(&ControllerEvent, &mut DesktopProjection) -> Option<Result<String, String>>,
 ) -> Result<String, String> {
     let deadline = std::time::Instant::now() + timeout;
     loop {
@@ -641,7 +814,7 @@ async fn wait_event(
             Err(_) => return Err("timed out waiting for host event".into()),
         };
         if let Some(value) = on_event(&event, projection) {
-            return Ok(value);
+            return value;
         }
     }
 }
@@ -719,4 +892,285 @@ fn run_app(socket: PathBuf, barrier_dir: Option<PathBuf>) {
                 })
                 .expect("focus composer");
         });
+}
+
+#[cfg(test)]
+mod probe_run_terminal_tests {
+    use super::{wait_for_approval_or_turn, wait_for_cancel, wait_for_turn, DesktopProjection};
+    use crate::controller::ControllerEvent;
+    use pawork_client::AppEventEnvelope;
+    use std::time::Duration;
+
+    fn fresh_projection() -> DesktopProjection {
+        let mut projection = DesktopProjection::default();
+        projection.select_session("session-1");
+        projection
+    }
+
+    fn envelope(seq: u64, payload: serde_json::Value) -> ControllerEvent {
+        envelope_in("session-1", seq, payload)
+    }
+
+    fn envelope_in(session: &str, seq: u64, payload: serde_json::Value) -> ControllerEvent {
+        let raw = serde_json::json!({
+            "api_version": {"major": 1, "minor": 0},
+            "instance_id": "instance-1",
+            "event_id": format!("event-{seq}"),
+            "global_sequence": seq,
+            "stream": {"type": "session", "id": session},
+            "stream_sequence": seq,
+            "timestamp": 1_700_000_000_000u64,
+            "source": {"type": "core"},
+            "payload": payload,
+        });
+        let envelope: AppEventEnvelope = serde_json::from_value(raw).expect("event envelope");
+        ControllerEvent::Event(envelope)
+    }
+
+    fn message(session: &str, run: &str) -> ControllerEvent {
+        ControllerEvent::MessageSent {
+            session_id: session.into(),
+            run_id: run.into(),
+            text: "hi".into(),
+        }
+    }
+
+    fn approval(seq: u64, run_id: &str) -> ControllerEvent {
+        envelope(
+            seq,
+            serde_json::json!({
+                "type": "tool_approval_required",
+                "data": {
+                    "run_id": run_id,
+                    "tool_call_id": "call-1",
+                    "reason": "write file",
+                }
+            }),
+        )
+    }
+
+    fn assistant(seq: u64, run_id: &str, delta: &str) -> ControllerEvent {
+        envelope(
+            seq,
+            serde_json::json!({
+                "type": "assistant_delta",
+                "data": {
+                    "run_id": run_id,
+                    "message_id": format!("msg-{run_id}"),
+                    "delta": delta,
+                }
+            }),
+        )
+    }
+
+    fn run_changed(seq: u64, run_id: &str, state: &str) -> ControllerEvent {
+        envelope(
+            seq,
+            serde_json::json!({
+                "type": "run_changed",
+                "data": {"run_id": run_id, "state": state}
+            }),
+        )
+    }
+
+    fn seed_old_reply(projection: &mut DesktopProjection) {
+        for event in [
+            assistant(1, "run-old", "old-reply"),
+            run_changed(2, "run-old", "completed"),
+        ] {
+            if let ControllerEvent::Event(envelope) = event {
+                projection.apply_event(&envelope);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn probe_run_terminal_completed_turn_uses_current_text() {
+        let (sender, events) = smol::channel::unbounded();
+        let mut projection = fresh_projection();
+        seed_old_reply(&mut projection);
+        sender
+            .try_send(ControllerEvent::MessageSent {
+                session_id: "session-1".into(),
+                run_id: "run-new".into(),
+                text: "hi".into(),
+            })
+            .expect("queue message");
+        sender
+            .try_send(assistant(3, "run-new", "pong"))
+            .expect("queue delta");
+        sender
+            .try_send(run_changed(4, "run-new", "completed"))
+            .expect("queue completed");
+        let text = wait_for_turn(&events, &mut projection, Duration::from_secs(2), None)
+            .await
+            .expect("current run completed");
+        assert_eq!(text, "pong");
+
+        let (sender, events) = smol::channel::unbounded();
+        let mut projection = fresh_projection();
+        seed_old_reply(&mut projection);
+        sender
+            .try_send(message("session-1", "run-new"))
+            .expect("queue message");
+        sender
+            .try_send(approval(3, "run-new"))
+            .expect("queue approval");
+        assert!(
+            wait_for_approval_or_turn(&events, &mut projection, Duration::from_secs(2))
+                .await
+                .expect("approval card")
+        );
+        let approved_run = projection
+            .pending_approval
+            .as_ref()
+            .expect("approval card run")
+            .run_id
+            .clone();
+        assert_eq!(approved_run, "run-new");
+        sender
+            .try_send(assistant(4, "run-new", "pong"))
+            .expect("queue delta");
+        sender
+            .try_send(run_changed(5, "run-new", "completed"))
+            .expect("queue completed");
+        let text = wait_for_turn(
+            &events,
+            &mut projection,
+            Duration::from_secs(2),
+            Some(approved_run.as_str()),
+        )
+        .await
+        .expect("approved run completed without a second receipt");
+        assert_eq!(text, "pong");
+
+        let (sender, events) = smol::channel::unbounded();
+        let mut projection = fresh_projection();
+        seed_old_reply(&mut projection);
+        sender
+            .try_send(assistant(3, "run-new", "pong"))
+            .expect("queue early delta");
+        sender
+            .try_send(run_changed(4, "run-new", "completed"))
+            .expect("queue early completed");
+        sender
+            .try_send(message("session-1", "run-new"))
+            .expect("queue late receipt");
+        let text = wait_for_turn(&events, &mut projection, Duration::from_secs(2), None)
+            .await
+            .expect("terminal state already projected");
+        assert_eq!(text, "pong");
+    }
+
+    #[tokio::test]
+    async fn probe_run_terminal_rejects_false_success() {
+        let (sender, events) = smol::channel::unbounded();
+        let mut projection = fresh_projection();
+        seed_old_reply(&mut projection);
+        sender
+            .try_send(ControllerEvent::MessageSent {
+                session_id: "session-1".into(),
+                run_id: "run-new".into(),
+                text: "hi".into(),
+            })
+            .expect("queue message");
+        sender
+            .try_send(run_changed(3, "run-new", "failed"))
+            .expect("queue failed");
+        let error = wait_for_turn(&events, &mut projection, Duration::from_secs(2), None)
+            .await
+            .expect_err("failed run is not complete");
+        assert!(error.contains("Failed"), "{error}");
+        assert!(!error.contains("old-reply"), "{error}");
+
+        let (sender, events) = smol::channel::unbounded();
+        let mut projection = fresh_projection();
+        projection.active_run_id = Some("run-new".into());
+        sender
+            .try_send(run_changed(1, "run-new", "streaming_response"))
+            .expect("queue streaming");
+        sender
+            .try_send(run_changed(2, "run-new", "completed"))
+            .expect("queue completed");
+        let error = wait_for_cancel(&events, &mut projection, Duration::from_secs(2), "run-new")
+            .await
+            .expect_err("completed run is not cancelled");
+        assert!(error.contains("Completed"), "{error}");
+
+        let (sender, events) = smol::channel::unbounded();
+        let mut projection = fresh_projection();
+        sender
+            .try_send(ControllerEvent::MessageSent {
+                session_id: "session-1".into(),
+                run_id: "run-new".into(),
+                text: "write".into(),
+            })
+            .expect("queue message");
+        sender
+            .try_send(run_changed(1, "run-new", "failed"))
+            .expect("queue failed");
+        let error = wait_for_approval_or_turn(&events, &mut projection, Duration::from_secs(2))
+            .await
+            .expect_err("failed run is not a turn without approval");
+        assert!(error.contains("Failed"), "{error}");
+
+        let (sender, events) = smol::channel::unbounded();
+        let mut projection = fresh_projection();
+        seed_old_reply(&mut projection);
+        sender
+            .try_send(run_changed(3, "run-new", "failed"))
+            .expect("queue early failed");
+        sender
+            .try_send(message("session-1", "run-new"))
+            .expect("queue late receipt");
+        let error = wait_for_turn(&events, &mut projection, Duration::from_secs(2), None)
+            .await
+            .expect_err("early failure is not success");
+        assert!(error.contains("Failed"), "{error}");
+        assert!(!error.contains("old-reply"), "{error}");
+
+        let (sender, events) = smol::channel::unbounded();
+        let mut projection = fresh_projection();
+        seed_old_reply(&mut projection);
+        sender
+            .try_send(envelope_in(
+                "session-other",
+                3,
+                serde_json::json!({
+                    "type": "run_changed",
+                    "data": {"run_id": "run-new", "state": "completed"}
+                }),
+            ))
+            .expect("queue foreign completed");
+        sender
+            .try_send(message("session-other", "run-new"))
+            .expect("queue foreign receipt");
+        sender
+            .try_send(message("session-1", "run-new"))
+            .expect("queue current receipt");
+        sender
+            .try_send(run_changed(4, "run-other", "completed"))
+            .expect("queue other run");
+        sender
+            .try_send(run_changed(5, "run-new", "failed"))
+            .expect("queue current failure");
+        let error = wait_for_turn(&events, &mut projection, Duration::from_secs(2), None)
+            .await
+            .expect_err("other session or run is not this turn");
+        assert!(error.contains("Failed"), "{error}");
+        assert!(!error.contains("old-reply"), "{error}");
+
+        let (sender, events) = smol::channel::unbounded();
+        let mut projection = fresh_projection();
+        sender
+            .try_send(run_changed(1, "run-new", "cancelled"))
+            .expect("queue early cancelled");
+        sender
+            .try_send(message("session-1", "run-new"))
+            .expect("queue late receipt");
+        let error = wait_for_approval_or_turn(&events, &mut projection, Duration::from_secs(2))
+            .await
+            .expect_err("early cancellation is not approval");
+        assert!(error.contains("Cancelled"), "{error}");
+    }
 }
