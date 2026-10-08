@@ -64,7 +64,7 @@
 | ✅ 完成 | [B4 · Workspace / App Prompt-template 预留裁决](plan/b4-prompt-template.md) | 删除未激活的模板字段、限制与资源变体，保留现行加载 / 导入格式；92 条定向回归通过，独立 review PASS。 |
 | ✅ 完成 | [B5 · Models 四个预留 API 裁决](plan/b5-models.md) | 删除四个测试专用包装口及目录来源 trait，保留生产目录 / 单模型证据 / 用途消费；models 52 条回归与正式宿主类型检查通过，独立 review PASS。 |
 | ✅ 完成 | [B6 · Auth 存储 API 与别名保留期裁决](plan/b6-auth.md) | 删除未消费的 API key 包装写删口、到期构造器与 Device 中转类型，保留 keychain_* 读 alias 并明确删除条件；Auth 82 项回归与宿主类型检查通过，独立 review PASS。 |
-| 待裁决 | [B8 · MCP Secret 前缀单一事实源裁决](plan/b8-mcp-secret-prefix.md) | 裁决 workspace 与 auth 间的前缀副本及依赖方向。 |
+| ✅ 完成 | [B8 · MCP Secret 前缀单一事实源裁决](plan/b8-mcp-secret-prefix.md) | 保留 workspace 导入前缀副本，auth locator 为运行时权威；不改依赖、不物理去重，字节与文档 / 格式检查通过，独立 review PASS。 |
 | ✅ 完成 | [B10 · Engine 预留入口与上下文 API 裁决](plan/b10-engine.md) | 裁决未消费入口、工具结果裁剪模块和跨 Storage 小 API。 |
 | 待裁决 | [B11 · Orchestration 注入与恢复面裁决](plan/b11-orchestration.md) | 核实未由 App 消费的图、工作树、合并与恢复 API。 |
 | 待裁决 | [B12 · Git Stage / HunkStage 产品面裁决](plan/b12-git-stage.md) | 在生产接线和归档之间裁决 Git 写操作。 |
@@ -78,7 +78,7 @@
 | 待裁决 | [B20 · Desktop Probe 功能测试模型裁决](plan/b20-desktop-probe-models.md) | 对齐功能测试模型约定，同时明确探针行为变化。 |
 | 待裁决 | [B21 · Desktop 大小格式与词条入口裁决](plan/b21-desktop-format-i18n.md) | 裁决大小舍入差异、工具组标题和任务消耗词条双入口。 |
 
-条件性工程项 RV-2026-10-A / RV-2026-10-B 的触发条件仍见 [backlog](spec/backlog.md#8-条件性工程项)；B8、B10 任务文档注明相关交叉影响。
+条件性工程项 RV-2026-10-A / RV-2026-10-C 的触发条件仍见 [backlog](spec/backlog.md#8-条件性工程项)。RV-2026-10-B 已由 B8 裁决关闭：保留导入副本，不物理去重。B10 对 RV-2026-10-A 的交叉说明仍在其任务文档。
 
 ## 等待人工验收
 

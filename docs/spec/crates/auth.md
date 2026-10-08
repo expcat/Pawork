@@ -117,7 +117,7 @@ UI-6b 起先解析账号索引：显式 API key 选择返回该账号；显式 O
 - **刷新状态无明文**：singleflight gate 只保存脱敏元数据 + access 的 SHA-256 指纹（对应结构不实现 Debug），不持有 token 明文。
 - **`ResolvedCredential`（domain 定义）Debug 脱敏、无 `Serialize`**：仅供 adapter 构造认证请求时短暂使用。
 - **错误不携带 Secret**：`AuthError` 全部变体的 Display 只含归因描述；token endpoint 错误只保留标准 `error/error_description`。
-- **命名唯一事实源**：service 前缀（`pawork` / `pawork.<p>.oauth` / `pawork.mcp.`）、env 名推导、`mcp-auth.json` 文件名只在 `locator` 定义，消费方不得自拼。例外：`pawork-workspace` import 层因依赖方向（不反向依赖 auth crate）保留带注释的 `MCP_SECRET_SERVICE_PREFIX = "pawork.mcp."` 冻结副本（`import/mcp.rs`），与 locator 同值绑定，改动须同批。
+- **运行时命名权威（B8，2026-10-08）**：service 前缀（`pawork` / `pawork.<p>.oauth` / `pawork.mcp.`）、env 名推导和 `mcp-auth.json` 只在 `locator` 定义。`is_mcp_secret_service` 是 MCP 命名空间的唯一运行时判定；`pawork-mcp` 的 `SecretRef::resolve` 与 `pawork-app` 删除 MCP 凭证都消费它。`pawork-workspace` 不解析 Secret，只在 `import/mcp.rs` 用私有 `MCP_SECRET_SERVICE_PREFIX`（值 `pawork.mcp.`）构造导入计划的 `pawork.mcp.<server>`。B8 保留该副本，没有物理去重：workspace 依赖 auth 会把 reqwest / OAuth 带进 `pawork-tools` 的生产闭包。同步范围只是这个前缀字面量（含末尾点）及由此拼出的导入 service；导入用 `SecretRef` 类型、`mcp-auth.json` 与 Provider / OAuth 前缀不在 workspace 复制。改前缀必须与 locator 同批，且不改变导入字节。详见 [B8](../../plan/b8-mcp-secret-prefix.md)。
 - **auth 文件**：0600 权限、原子写、损坏与版本不符 fail-closed；格式版本当前固定 1。
 - **refresh 安全**：一次性 refresh token 绝不被并发重复消费（进程内 singleflight gate + 跨进程文件锁 + 指纹校验三层防线）；轮换 refresh token 已落盘后才返回 bearer。
 - **回调安全**：redirect_uri 强制 http + loopback（host 原样保留、只回填端口）；回调响应固定文本不回显 query（防反射）；请求头 64 KiB 上限。

@@ -11,9 +11,14 @@ const DEFAULT_MAX_OUTPUT_BYTES: u64 = 1024 * 1024;
 const DEFAULT_RESTART_MAX_ATTEMPTS: u32 = 1;
 const DEFAULT_RESTART_BASE_DELAY_MS: u64 = 200;
 const DEFAULT_RESTART_MAX_DELAY_MS: u64 = 10_000;
-/// 与 auth locator（pawork-auth locator::is_mcp_secret_service，单一事实源）的
-/// 冻结域隔离契约等值；workspace 不反向依赖 auth crate，此处保留副本，
-/// 值变更须与 auth locator 同批同步。
+/// 导入计划 service 字符串的冻结副本，与
+/// `pawork_auth::locator::MCP_SERVICE_PREFIX` 字节相同（含末尾点）。
+/// 运行时命名空间判定只在 auth locator 的 `is_mcp_secret_service`；
+/// 本常量不解析 Secret，也不是第二套门禁。
+/// B8（2026-10-08）裁决保留此副本：workspace 不依赖 auth，
+/// 否则 `pawork-tools` 的生产闭包会带上 reqwest / OAuth；
+/// 不为这一字符串新建常量包，也不下沉到 domain。
+/// 改值必须与 auth locator 同批，且不改变 `pawork.mcp.<server>` 导入字节。
 const MCP_SECRET_SERVICE_PREFIX: &str = "pawork.mcp.";
 
 pub(super) fn mcp_secret_service(server: &str) -> String {

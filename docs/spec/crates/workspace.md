@@ -11,7 +11,7 @@
   4. **import**：只读探测 Claude Code / OpenAI Codex / xAI Grok / Cursor / Pi 五个外部来源（P17-13），映射为 canonical 计划；附带本地会话文件的只读发现（`session_scan`）。
 - 路径安全内核（symlink 逃逸 / `.git` 段 / TOCTOU 复核）**委托 `pawork-policy`**，本包只补 Windows 盘符 / UNC / 保留设备名检查；`resolve_relative_path` 对外签名保持稳定。
 - import 是输入侧 Adapter：只读、绝不执行外部内容、绝不改写源文件；导入结果永远不是运行时事实源。
-- 不做持久化（roots 与索引均为进程内状态）、不做网络、不做 Secret 存取（只产生 reference；凭证 env 名与 auth 文件定位归 `pawork-auth`）。
+- 不做持久化（roots 与索引均为进程内状态）、不做网络、不做 Secret 存取（只产生 reference；凭证 env 名、运行时命名空间判定与 auth 文件定位归 `pawork-auth`）。导入计划中的 `pawork.mcp.` 是与 locator 等值的私有副本，不是第二套门禁，见 §5。
 
 ## 2. 模块与文件地图
 
@@ -66,7 +66,7 @@
 | `src/import/frontmatter.rs` | ~140 | 极简 YAML frontmatter 解析：只取顶层标量键值对，复杂键（嵌套 / 列表）记入 `complex_keys` 供诊断，绝不求值 |
 | `src/import/parse.rs` | ~1390 | 八类文件 → canonical 条目（详见 §4.5）：instructions / SKILL.md / agent markdown / agents.json / mcp json / Codex-Grok config.toml / Claude settings.json（permissions + hooks）/ Pi settings.json；`${VAR}` 与 `$VAR` 插值 → `SecretRef`，字面量 Secret 丢弃只留 `PendingCredential` 占位；hook 事件名 snake_case 化后映射 17 种 `TriggerPoint`，不可映射标 Unsupported |
 | `src/import/map.rs` | ~70 | 同 `(category, id)` 冲突裁决：`ConfigTier.priority()` 高者胜 → 平手比 `ExternalSource.rank()` → 再平手比相对路径字典序；败者标 `Conflict`、payload 清空、挂 `conflict_loser` issue |
-| `src/import/mcp.rs` | ~140 | 导入版 `McpServerConfig`：`TransportSpec::{Stdio{command,args,env}, Http{url,headers}}`、`RestartPolicy`、`McpPermissions`、`auto_start` / `trusted`（导入时恒 false）；Secret 一律 `SecretRef{service, account}`（service 命名 `pawork.mcp.<server>`，`mcp_secret_service`） |
+| `src/import/mcp.rs` | ~140 | 导入版 `McpServerConfig`：`TransportSpec::{Stdio{command,args,env}, Http{url,headers}}`、`RestartPolicy`、`McpPermissions`、`auto_start` / `trusted`（导入时恒 false）；Secret 一律 `SecretRef{service, account}`（`mcp_secret_service` 拼出 `pawork.mcp.<server>`；`MCP_SECRET_SERVICE_PREFIX` 是 auth `MCP_SERVICE_PREFIX` 的私有等值副本，B8 保留，未物理去重） |
 | `src/import/hook.rs` | ~120 | 导入版 `HookConfig{id, trigger, scope, lifecycle, enabled, handler}`：`TriggerPoint` 17 种 / `HookScope::{Global, Workspace}` / `HandlerConfig` 单变体 `Command`（解析层只映射 command 型，其余一律 Unsupported）；Secret 只以 `SecretRef` 出现 |
 | `src/import/apply.rs` | ~320 | `CompatLoader::scan / dry_run / export_plan`；FNV-64 内容链指纹（混入 `FINGERPRINT_FORMAT_VERSION` 与 manifest_version）；`CompatPlan::preview / select`；`export_plan` 幂等（指纹 + 磁盘内容身份双校验）、输出目录与目标文件 symlink 拒绝、原子写 `compat-import.json` + `.compat-import-fingerprint` |
 | `src/import/session_scan.rs` | ~320 | 本地会话只读发现：`LocalSessionSource::{Claude, Codex}`、`LocalSessionRoots::detect/from_home`（`~/.claude/projects`、`~/.codex/sessions`）、`LocalSessionFile`、`scan_local_sessions`（深度与总量限额、symlink 跳过、Claude 排除 `agent-*.jsonl` subagent sidecar） |
@@ -211,6 +211,7 @@ ADR-053（OPT-1）：schema 新增 `approval_mode: Option<pawork_policy::Approva
 - **resources 序列化消费面**：`ResourceRequest` / `ResourceSelection` 是宿主内部加载输入，不进入 `PaworkConfig`、数据库、事件或生成的 GUI / core-api / headless schema。`ResourceKind` 与诊断的 serde 不构成独立磁盘 / wire 格式；`ResourceInstructionKind` 另被 `CompatPayload::Instructions` 用于 `compat-import.json`，现行扫描只产出 `user_global_instructions` / `workspace_instructions`。B4 收窄未激活模板 / LSP / hook 预留，不改这些已有字符串、其它注入优先级或 compatibility 计划版本；裁决见 [B4](../../plan/b4-prompt-template.md)。
 - **memory 不虚假可用**：`memory_available=false` 时 profile 声明的 memory 显式标 `Unavailable` 并 warning，绝不静默假装可用。
 - **import 安全边界**（冻结）：只读扫描；绝不执行任何外部内容；明文 Secret 一律丢弃（计划序列化全文不得出现 Secret 字面量，定向回归断言）；导入 hook 恒 `enabled=false` + `requires_review=true`；MCP 条目恒 `trusted=false` + `auto_start=false` + `requires_review`；`bypassPermissions` / approval `never` 拒绝导入（Unsupported）；`on-failure` / `acceptEdits` 降级映射为 Ask 并告警，绝不映射为 Allow。
+- **MCP 导入前缀副本（B8，2026-10-08）**：`MCP_SECRET_SERVICE_PREFIX` 只构造并筛选导入计划里的 service，形状是 `pawork.mcp.<server>`。它不解析 Secret，也不代替 `is_mcp_secret_service`。值必须与 auth locator 的 `pawork.mcp.` 逐字节相同，含末尾点；没有末尾点的 `pawork.mcp` 不属于该命名空间。不改依赖，不改导入 JSON 字节。详见 [B8](../../plan/b8-mcp-secret-prefix.md)。
 - **export_plan 幂等**：相同输入（含 `select` 子集）指纹相同→`Noop`；指纹命中但磁盘内容不符仍重写；输出目录 / 目标文件为 symlink 一律 `UnsafeTarget` 拒绝；只用 tmp + rename 原子写。
 - **冲突裁决确定性**：tier priority → `ExternalSource.rank()` → 相对路径字典序，三级全定序；胜者保留原 `requires_review` 不因胜出放宽。
 - **detect 只读文档化位置**：每种外部来源只探测其文档化的 workspace 内已知路径（或调用方显式启用的全局根）；全局来源默认不读；未知版本 / 形态只返回诊断，绝不猜测执行。
@@ -221,6 +222,7 @@ ADR-053（OPT-1）：schema 新增 `approval_mode: Option<pawork_policy::Approva
 ## 6. 依赖关系
 
 - **依赖**：`pawork-domain`（`WorkspaceId`；profile 域类型 `AgentProfileV2` / `ProfileToolRules` / `ReasoningEffort` 等）、`pawork-policy`（`resolve_workspace_path` 路径内核、`canonicalize_platform` / `path_within_root` / `relative_to_root`、`PathSafetyError`、`ApprovalMode`）、`directories`（平台配置目录）、`dunce`、`ignore` + `notify`（文件索引）、`semver`（serde 特性，skill 版本）、`serde` / `serde_json` / `toml`、`thiserror`、`tokio`（macros / rt / sync / time）；Unix 下 `libc`。
+- **不依赖 `pawork-auth`（B8，2026-10-08）**：§5 的前缀副本是这条依赖方向的结果，不是待删除的临时重复。不为 `pawork.mcp.` 增加对 auth 的依赖，也不把前缀下沉到 domain 或新建常量包。运行时判定留在 auth locator。详见 [B8](../../plan/b8-mcp-secret-prefix.md)。
 - **被依赖**：
   - `pawork-tools`：八个文件系统工具（read_file / write_file / edit_file / apply_patch / list_directory / search_text / find_files / run_command）经 `WorkspaceService` 解析路径；`mcp/config.rs` 消费 `ResolvedConfig`。
   - `pawork-app`：宿主装配 config（`Loader::discover`）、resources（`ResourceLoader`）、import（`CompatLoader` / `scan_local_sessions`，见 `import_host.rs` / `services/import.rs`）并与 tools 共享同一 `WorkspaceService` 实例（约 12 个文件引用）。
