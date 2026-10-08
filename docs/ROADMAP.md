@@ -130,7 +130,7 @@
 | 缺环境 | [ENV-03 · MM-2 视频真实往返验收](plan/env-03-video-roundtrip.md) | 在支持的视频端点与账号上证明真实往返。 |
 | 缺环境 | [ENV-04 · MM-3 GLM 搜索环境验收](plan/env-04-glm-search.md) | 配置真实 GLM 搜索 MCP 后验收搜索链路。 |
 | 缺浏览器授权 | [ENV-05 · Chrome / Edge 只读上下文环境复验](plan/env-05-browser-context.md) | 用户手动授权后复验当前页正文读取。 |
-| 待平台实现 | [ENV-06 · 非 Unix 技能录制写入前置与验收](plan/env-06-skill-non-unix.md) | 补齐非 Unix 安全写入原语，或明确维持 Unsupported 边界。 |
+| ✅ 完成（维持 Unsupported 裁决分支） | [ENV-06 · 非 Unix 技能录制写入前置与验收](plan/env-06-skill-non-unix.md) | Host 固定平台拒绝提示、两条既有 macOS 回归与独立 review PASS；不新增非 Unix 写入、不冒充平台支持或原生验收。 |
 | 缺环境 | [ENV-07 · 网关媒体供应商与账单环境验收](plan/env-07-media-billing.md) | 验收真实图像、视频、搜索供应商、套餐权限和账单来源。 |
 
 库激活前置、按测量触发的技术项和阶段外产品候选仍见 [backlog](spec/backlog.md)。发布与全量门禁维持另行授权（BK-RELEASE-01），不因任务文档或上述能力收口而视为完成。

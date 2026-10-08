@@ -194,7 +194,7 @@ GUI `run_start` 在既有 ToolScheduler 注册 `terminal` / `browser`，保留�
 
 `goal_host.rs` 从 canonical Goal/Run/Usage 事件投影 `GoalSnapshot`；`handlers/goal.rs` 承载显式开始、暂停、追加预算恢复、转向、人工确认达成/放弃。预算和轮数必填，恢复保留未用额度并追加；Host 管理串行 Run 任务，停止等待持久终态。按 Provider 实报 usage 累计，按上下文估算和已观察的预算耗尽取消；这是执行停止界限，不保证上游账单绝对不超额。目标不派生独立计费的子代理，不触发额外自动命名。失败、轮数/预算耗尽、Host 退出即暂停；窗口关闭继续，Host 重启只读恢复、须显式恢复。手动 Run 先暂停遗留 active 目标，避免误计入目标。达成事件清除旧暂停原因，重放后不再提示恢复已完成目标。
 
-`handlers/recording.rs` 从最近 4096 持久事件列出最多 128 次完成操作，可选最多 64 项生成可编辑技能文本；只录工具名和参数、保留失败标记，不复制输出。保存只接受本机 GUI/API 1.24，Host 解析 workspace roots，检查名称、64 KiB 上限及凭据后调用 workspace 安全新建入口。`plugin_list` 返回真实空记录与 `runtime_available=false`；当前没有插件安装器或运行时。
+`handlers/recording.rs` 从最近 4096 持久事件列出最多 128 次完成操作，可选最多 64 项生成可编辑技能文本；只录工具名和参数、保留失败标记，不复制输出。保存只接受本机 GUI/API 1.24，Host 解析 workspace roots，检查名称、64 KiB 上限及凭据后调用 workspace 安全新建入口。ENV-06 维持非 Unix 写入 Unsupported；Host 用现行 `skill_recording` 错误码返回固定文案 `Skill recording is not supported on this platform`，不回显原始 IO 错误、路径或凭据。已有名称仍报 `A skill with this name already exists`，其它写入失败仍提示权限与 symbolic links。`plugin_list` 返回真实空记录与 `runtime_available=false`；当前没有插件安装器或运行时。
 
 `RunStart.video_urls` 验证版本、HTTP(S) 无凭据引用及视频/附件合计最多 4 项，转成 canonical Video 后进入持久消息/能力 gate；Host 不下载视频。历史共享投影保留 MIME 和 URL。新增 Plan、目标预算/停止/恢复、录制加载与拒绝、视频运行/重放回归；验收状态见 [ROADMAP](../../ROADMAP.md)。
 
@@ -350,6 +350,8 @@ WorkspaceList 与 snapshot Workspaces 段均按每个目标 workspace roots 调�
 ## 7. 测试与验证资产
 
 `scripts/ui-fixture.sh` 经 `scripts/cargo-build.sh` 定位本次 artifact；入口回归覆盖隔离 root、marker 与 barrier 拒绝，过长 socket 路径在编译前失败并报告中文错误。构建与入口回归的证据边界见 [验证规格](../verification.md#41-按用途选择入口)。
+
+ENV-06 沿用 `gui_host::handlers::recording::tests` 两条既有回归：Unix 保存 / ResourceLoader 加载、重复不覆盖及 AlreadyExists 文案，Secret / 路径 / source / symlink 拒绝；`cfg(not(unix))` 主路径断言 Unsupported 固定文案与零产物，不以 skip 或提前 return 代替拒绝。2026-10-09 在 macOS 执行 `cargo test -p pawork-app --offline --lib --features ui-fixture gui_host::handlers::recording::tests`，2 passed / 302 filtered；非 Unix 分支未编译、未原生执行，不证明非 Unix 支持。范围裁决与审查状态见 [ENV-06](../../plan/env-06-skill-non-unix.md)。
 
 网关回归：`cargo test -p pawork-app --offline --lib gateway_`。`gateway_tests.rs` 集成宿主测试以真实 loopback HTTP + wiremock 验证模型路由、两种响应、usage/strict、鉴权撤销与 Host/Origin 拒绝；其中 Go 路径同时断言普通 / SSE 请求的上游会话头存在且互不相同，session ID 不进入 JSON 正文；生图路径验证普通 JSON 的 `output.choices` 归一、非流式上游请求和 HTTP 200 错误正文拒绝 / 脱敏。阻塞 provider 验证流式超时错误、断开取消和部分记账。原生视频回归验证一次异步提交、查询 / 失败码脱敏、固定参数及无效请求拒绝。独立 gateway 包的 `tokens` 测试验证多客户端、摘要存储、权限与撤销。测试不访问真实模型。
 

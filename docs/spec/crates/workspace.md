@@ -147,7 +147,7 @@ ADR-053（OPT-1）：schema 新增 `approval_mode: Option<pawork_policy::Approva
 - 条目 id 命名：`instructions:<path>` / `skill:<id>` / `agent:<name>` / `mcp:<server>` / `hook:<event>:<group>:<index>` / `permission:<list>:<tool>` / `permission:global`。
 - 无 feature 门控；全部 API 常驻。
 
-**技能录制写入**：`resources/recording.rs` 导出 `write_skill_recording(roots, name, description, content)`，创建 `.pawork/skills/<name>/SKILL.md` 和现行 `manifest.toml`，返回相对路径。名称校验、既有路径裁决后，Unix 使用持有目录 fd 的 mkdirat/openat + NOFOLLOW/EXCL，新文件 0600、逐文件 sync、manifest 最后写入；已有目录拒绝覆盖。非 Unix 尚无等价安全写入原语，明确返回 Unsupported，不回退存在竞态的路径拼接写入。生产只由鉴权本机 GUI 的 Host 保存命令调用；凭据内容检查在 app。正常产物由既有 ResourceLoader 读取，app 定向回归同时覆盖可加载与 symlink/Secret 拒绝。
+**技能录制写入**：`resources/recording.rs` 导出 `write_skill_recording(roots, name, description, content)`，创建 `.pawork/skills/<name>/SKILL.md` 和现行 `manifest.toml`，返回相对路径。名称校验、既有路径裁决后，Unix 使用持有目录 fd 的 mkdirat/openat + NOFOLLOW/EXCL，新文件 0600、逐文件 sync、manifest 最后写入；已有目录拒绝覆盖。非 Unix 尚无等价安全写入原语，明确返回 `io::ErrorKind::Unsupported`，不回退存在竞态的路径拼接写入。[ENV-06](../../plan/env-06-skill-non-unix.md) 已明确选择维持该边界，未修改 workspace 写入实现，也不表示 Windows 或其它非 Unix 已支持或已原生验收。生产只由鉴权本机 GUI 的 Host 保存命令调用；凭据内容检查在 app。Unix 正常产物由既有 ResourceLoader 读取，app 定向回归覆盖可加载与 symlink/Secret 拒绝；非 Unix 的固定 Host 提示与零产物断言另在其平台分支，本轮 macOS 未编译或执行该分支。
 
 ## 4. 核心行为与数据流
 

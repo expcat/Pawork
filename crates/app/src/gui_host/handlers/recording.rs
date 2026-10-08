@@ -216,10 +216,12 @@ fn save_files(
     }
     pawork_workspace::resources::write_skill_recording(roots, name, description, content).map_err(
         |e| {
-            error(if e.kind() == std::io::ErrorKind::AlreadyExists {
-                "A skill with this name already exists"
-            } else {
-                "Cannot write skill; inspect project permissions and symbolic links"
+            error(match e.kind() {
+                std::io::ErrorKind::AlreadyExists => "A skill with this name already exists",
+                std::io::ErrorKind::Unsupported => {
+                    "Skill recording is not supported on this platform"
+                }
+                _ => "Cannot write skill; inspect project permissions and symbolic links",
             })
         },
     )
@@ -270,6 +272,7 @@ mod tests {
         Message, MessageId, MessageMetadata, MessageRole, RunId, ToolCallContent, ToolResultContent,
     };
     use pawork_gui_server::GuiHost;
+    #[cfg(unix)]
     use pawork_workspace::resources::{
         CurrentPathKind, ResourceLoader, ResourceLoaderOptions, ResourceRequest, ResourceSelection,
         WorkspaceRelativePath,
@@ -365,46 +368,90 @@ mod tests {
             content: content.into(),
         });
         command.source = local;
-        adapter.command(&command).await.unwrap();
-        let workspaces = pawork_workspace::WorkspaceService::new();
-        workspaces
-            .add(
-                record.workspace_id.clone(),
-                "record",
-                [workspace.path().to_path_buf()],
-            )
-            .unwrap();
-        let loader = ResourceLoader::new(workspaces, ResourceLoaderOptions::default());
-        let bundle = loader
-            .load(&ResourceRequest {
-                workspace_id: record.workspace_id,
-                root_index: 0,
-                current_path: WorkspaceRelativePath::default(),
-                current_path_kind: CurrentPathKind::Directory,
-                selection: ResourceSelection {
-                    active_skills: ["read-project".to_string()].into_iter().collect(),
-                    ..Default::default()
-                },
-            })
-            .unwrap();
-        assert_eq!(bundle.skills.skills.len(), 1);
-        assert_eq!(bundle.skills.skills[0].skill_markdown, content);
-        assert!(save_files(
-            &[workspace.path().to_path_buf()],
-            "read-project",
-            "duplicate",
-            "replacement"
-        )
-        .is_err());
-        assert_eq!(
-            std::fs::read_to_string(
-                workspace
-                    .path()
-                    .join(".pawork/skills/read-project/SKILL.md")
-            )
-            .unwrap(),
-            content
-        );
+        #[cfg(unix)]
+        {
+            adapter.command(&command).await.unwrap();
+            let workspaces = pawork_workspace::WorkspaceService::new();
+            workspaces
+                .add(
+                    record.workspace_id.clone(),
+                    "record",
+                    [workspace.path().to_path_buf()],
+                )
+                .unwrap();
+            let loader = ResourceLoader::new(workspaces, ResourceLoaderOptions::default());
+            let bundle = loader
+                .load(&ResourceRequest {
+                    workspace_id: record.workspace_id,
+                    root_index: 0,
+                    current_path: WorkspaceRelativePath::default(),
+                    current_path_kind: CurrentPathKind::Directory,
+                    selection: ResourceSelection {
+                        active_skills: ["read-project".to_string()].into_iter().collect(),
+                        ..Default::default()
+                    },
+                })
+                .unwrap();
+            assert_eq!(bundle.skills.skills.len(), 1);
+            assert_eq!(bundle.skills.skills[0].skill_markdown, content);
+            assert_eq!(
+                save_files(
+                    &[workspace.path().to_path_buf()],
+                    "read-project",
+                    "duplicate",
+                    "replacement"
+                )
+                .expect_err("existing skill")
+                .message,
+                "A skill with this name already exists"
+            );
+            assert_eq!(
+                std::fs::read_to_string(
+                    workspace
+                        .path()
+                        .join(".pawork/skills/read-project/SKILL.md")
+                )
+                .unwrap(),
+                content
+            );
+        }
+        #[cfg(not(unix))]
+        {
+            let list = |root: &std::path::Path| {
+                let mut names = std::fs::read_dir(root)
+                    .expect("workspace root")
+                    .map(|entry| {
+                        entry
+                            .expect("workspace entry")
+                            .file_name()
+                            .into_string()
+                            .expect("utf8 name")
+                    })
+                    .collect::<Vec<_>>();
+                names.sort();
+                names
+            };
+            let before = list(workspace.path());
+            assert!(before.is_empty(), "workspace must start without artifacts");
+            let rejected = adapter
+                .command(&command)
+                .await
+                .expect_err("unsupported platform must reject skill recording");
+            assert_eq!(rejected.code, "skill_recording");
+            assert_eq!(
+                rejected.message,
+                "Skill recording is not supported on this platform"
+            );
+            assert_eq!(list(workspace.path()), before);
+            assert!(!workspace
+                .path()
+                .join(".pawork/skills/read-project/SKILL.md")
+                .exists());
+            assert!(!workspace
+                .path()
+                .join(".pawork/skills/read-project/manifest.toml")
+                .exists());
+        }
     }
 
     #[test]
