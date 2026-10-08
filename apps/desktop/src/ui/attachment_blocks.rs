@@ -152,6 +152,8 @@ pub(super) fn attachment_meta(segment: &AttachmentSegment) -> String {
     }
 }
 
+/// 文本附件内容字节：B / KiB / MiB，1024 进位，一位小数。
+/// 规则与 `attachments::format_byte_size` 相同，输入只来自消息内文，不合并实现。
 fn format_size(bytes: usize) -> String {
     if bytes >= 1024 * 1024 {
         format!("{:.1} MiB", bytes as f32 / (1024.0 * 1024.0))

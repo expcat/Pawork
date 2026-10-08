@@ -610,7 +610,9 @@ pub(super) fn sniff_image_format(bytes: &[u8]) -> Option<gpui::ImageFormat> {
     }
 }
 
-/// 字节数格式化为 B / KiB / MiB（附件 chip 与预览共用）。
+/// 字节数格式化为 B / KiB / MiB（附件 chip、预览与观测申报长度）。
+/// 1024 进位、一位小数，用 f64。观测预览会显示超过 16 MiB 加载上限的申报长度，
+/// 不能改成 f32，也不与时间线 `format_size` 合成新的格式模块。
 pub(super) fn format_byte_size(bytes: usize) -> String {
     const KIB: f64 = 1024.0;
     let size = bytes as f64;

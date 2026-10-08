@@ -277,8 +277,9 @@ fn tool_group_status_parts(rows: &[ToolRowView]) -> Vec<String> {
     states
 }
 
-/// Tool group 折叠标题：单工具直接 headline；多工具为数量 + 前 3 条
-/// headline；状态计数与 render / AX 同源。
+/// Tool group 折叠标题。单工具成功时只留 headline；单工具非成功追加状态计数。
+/// 多工具用 `tool.group_many`（数量 + 前 3 条 headline + 状态计数）。
+/// 不设单数数量词条。状态计数与 render / AX 同源。
 pub(super) fn tool_group_summary(rows: &[ToolRowView]) -> String {
     let statuses = tool_group_status_parts(rows);
     if rows.len() == 1 {

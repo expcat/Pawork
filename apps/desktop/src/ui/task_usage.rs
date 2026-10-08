@@ -8,6 +8,8 @@ use pawork_client::{
     TaskUsageSource, TaskUsageStatus, TaskUsageTotals,
 };
 
+/// 本窗口正文的英中选择，读 `i18n::language()`。
+/// 不迁入主目录：字面重合的 key 属于其它页面，不是同一词条。
 fn tr(en: &'static str, zh: &'static str) -> &'static str {
     if i18n::language() == i18n::Language::Chinese {
         zh
