@@ -16,13 +16,13 @@
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
 | `src/lib.rs` | ~1 890 | `GuiClient` 全部实现：`ClientConfig`、`SessionInfo`、`ResumeOutcome`、`ClientError` / `ClientErrorKind`、私有 `FrameWant` 帧路由、握手 / 往返 / 订阅屏障 / Snapshot / Resume / Ack / Heartbeat；每连接实例 request namespace 防 Host 重启后的幂等键碰撞；对 Desktop 的 re-export（protocol 类型含 Settings 载荷、`projection`、`TOKEN_SCHEME`、transport 四类型，`ApprovalModeWire` / `AuthStartData` / `Computer*` / `Observation*`（CU-17 观测与目标词汇，含三个响应 Data：`ComputerTargetListData` / `ObservationListData` / `ObservationImageData`，常量 `MAX_OBSERVATION_READ_BYTES` / `MAX_OBSERVATION_LIST_LIMIT` / `MAX_OBSERVATION_LIST_RESPONSE_BYTES` / `MAX_COMPUTER_TARGET_LIST_TARGETS` / `MAX_COMPUTER_TARGET_LIST_RESPONSE_BYTES`） / `DefaultModelPair` / `GeneralSettingsData` / `PermissionsSettingsData` / `ProviderAuthStatus*` / `RoleDefaultsData` / `SubagentInfo` / `SubagentListData` / `SubagentModelRule` / `SubagentSettingsData` / `TerminalSettingsData` / `TimelineItemKind` 等）；13 个内联测试 |
-| `src/headless/mod.rs` | ~90 | headless SDK 门面：模块文档（版本策略 / 稳定面 / 背压）、re-export（`PaworkClient`、`SdkError`、`EventSubscription`、`SDK_API_VERSION` 等）、`spawn_pawork` 便捷入口、`experimental`（`CompatOutcome`）与 `reexport`（常用协议类型）子模块 |
+| `src/headless/mod.rs` | ~90 | headless SDK 门面：模块文档（版本策略 / 稳定面 / 背压；协议当前版本与 `API_VERSION` 同为 1.27）、re-export（`PaworkClient`、`SdkError`、`EventSubscription`、`SDK_API_VERSION` 与 `SDK_VERSION`；不含 `sdk_version_string`）、`spawn_pawork` 便捷入口、`experimental`（`CompatOutcome`）与 `reexport`（常用协议类型）子模块 |
 | `src/headless/client.rs` | ~770 | `PaworkClient`：`spawn` / `from_transport`（自动握手）、typed 高层 API（`create_session` / `run_start` / `cancel` / `run_retry` / `list_workspaces` / `subscribe` / `unsubscribe` / `resume` / `import_compat` / `compat_history` / `close`）、`RouterState`（pending 请求 + 订阅槽）、`reader_loop`（逐行解析 JSONL 并路由） |
 | `src/headless/transport.rs` | ~180 | `Transport` trait（行级 send / recv / close）与 `StdioTransport`（进程 spawn + stdin/stdout 管道）；`PaworkOptions`（binary 默认 `PAWORK_BIN` 或 `pawork`、args 默认 `["headless", "--json-stdio"]`、env、timeout、`working_dir` / `isolated` / `client_name` / `client_version`） |
 | `src/headless/stream.rs` | ~110 | `EventSubscription`（有界 `mpsc` 事件通道，可取消）与 `BackpressurePolicy`（Drop 计数丢弃 / Error 显式溢出） |
 | `src/headless/error.rs` | ~150 | `SdkError` / `SdkErrorKind`（spawn、I/O、malformed frame、`UnknownResponseType`、`UnsupportedCapability`、`IncompatibleApiVersion`、`RequestFailed`、`Backpressure`、`Cancelled`、`Timeout`、`Protocol(ProtocolErrorKind)`；`as_str` 稳定标签） |
-| `src/headless/mock.rs` | ~150 | `MockTransport`：脚本化响应队列 + 已发送行记录（`Clone` 共享），供下游无进程测试 |
-| `src/headless/version.rs` | ~20 | `SDK_VERSION`（crate 版本）、`SDK_API_VERSION`（直接引用 `pawork_protocol::API_VERSION`，现为 1.27）与 `SDK_SUPPORTED_API_VERSIONS`（跟随 `SUPPORTED_API_VERSIONS`）；无内联测试，兼容性由握手测试验证 |
+| `src/headless/mock.rs` | ~150 | `MockTransport`：脚本化响应队列 + 已发送行记录（`Clone` 共享），供下游无进程测试。仓库内测试使用 `new` / `push_response` / `push_event` / `sent_lines`。B18 保留零仓库调用的公开方法 `push_responses` / `fail_next_read` / `sent_count` / `assert_sent_json`，不降为 `cfg(test)` 或 `pub(crate)` |
+| `src/headless/version.rs` | ~20 | `SDK_VERSION`（crate 版本）、`SDK_API_VERSION`（直接引用 `pawork_protocol::API_VERSION`，现为 1.27）与 `SDK_SUPPORTED_API_VERSIONS`（跟随 `SUPPORTED_API_VERSIONS`）。`sdk_version_string()` 经 `headless::version` 公开，不在根 re-export，也不在命名稳定面；格式保持 `format!("pawork-sdk {SDK_VERSION} (protocol {SDK_API_VERSION:?})")`，B18 保留不改输出。无内联测试，兼容性由握手测试验证 |
 | `examples/probe.rs` | ~580 | live 模式测试客户端：`--connect`（外部握手 + WorkspaceList）、`--live-two-gui`、`--live-pty`、`--token`（缺省读 `{data_dir}/gui.token`） |
 | `tests/contract.rs` | ~770 | GUI Connection Protocol 契约测试（LocalTransport UDS × 进程内 `GuiServer` + `GuiHostAdapter` + `MockProvider`），9 测试 |
 | `tests/probe.rs` + `tests/probe/harness.rs` + `tests/probe/scenarios.rs` | ~1 110 | `--self-test` 13 场景（MemoryTransport 进程内装配）；harness 提供 AppCore / GuiServer / 握手 / CLI 侧命令辅助；默认不编译，`probe-self-test` feature 显式启用 |
@@ -55,7 +55,7 @@
 - `PaworkClient::spawn(PaworkOptions)`：spawn `pawork headless --json-stdio` 并完成 hello/ack 握手（`SDK_API_VERSION` 协商，major 不兼容显式失败）；`from_transport(Box<dyn Transport>, options)` 注入自定义 transport（如 `MockTransport`）。
 - 高层 API：`create_session(workspace_id, title)`、`run_start(session_id, message, model)`（effort 为 ADR-063 GUI-only 字段，headless 高层 API 暂不暴露；GUI 1.22 的 attachment_ids / web_search 同样不暴露，构造时使用空列表 / None）、`cancel(run_id)`、`run_retry`、`list_workspaces()`、`resume`、`import_compat` / `compat_history`（compat 导入与历史）、`close()`（取消 in-flight 与后续请求）；握手元信息 `api_version()` / `instance_id()` / `capabilities()`；raw 逃生口 `query_envelope` 直返 `AppResponse`。
 - `subscribe(streams, buffer, BackpressurePolicy) -> EventSubscription`：有界事件通道；`Drop` 策略静默丢弃并计数（`dropped_count`），`Error` 策略在溢出时向消费者返回 `SdkErrorKind::Backpressure`。
-- 未知 / 不支持情况全部落显式错误类别（`UnknownResponseType` / `UnsupportedCapability` / `IncompatibleApiVersion`），不静默忽略。稳定面 = `PaworkClient` / `PaworkOptions` / `EventSubscription` / `SdkError` / `Transport` / `MockTransport`；`experimental::CompatOutcome` 可能不发 major 调整。
+- 未知 / 不支持情况全部落显式错误类别（`UnknownResponseType` / `UnsupportedCapability` / `IncompatibleApiVersion`），不静默忽略。稳定面 = `PaworkClient` / `PaworkOptions` / `EventSubscription` / `SdkError` / `Transport` / `MockTransport`；`experimental::CompatOutcome` 可能不发 major 调整。B18（2026-10-08）保留 `MockTransport` 上四个零仓库调用的公开方法；`sdk_version_string` 公开可达但未列入该清单，同样保留，不升格进命名稳定面。
 
 **re-export（Desktop 依赖面）**
 
@@ -101,7 +101,7 @@ UI-6b G2：crate 根增加 `ProviderAccountSelectionMode`、`QuotaOverviewQuery/
 - **自动请求 id 隔离**：`command` / `query` 的自动 id 在不同 `GuiClient` 连接实例间不复用；即使 Host 重启后 `client_id` 重新从 `client-0` 计数，也不能命中旧进程留下的持久化幂等记录。调用方显式传入 `command_envelope` 的 id 不改写。
 - **Snapshot 能力约定**：未获授 `Snapshots` 时服务端不得发送首帧 Snapshot、客户端不得等待（contract 测试钉住）。
 - **安全**：headless spawn 只经 `PaworkOptions`（binary / args / env）配置；GUI 侧认证用 `TOKEN_SCHEME` token 文件；错误与日志不携带原始帧字节。
-- **SDK 稳定面**：稳定面内行为改动需 minor 版本 + CHANGELOG；`SdkErrorKind::as_str` 标签冻结（如 `"backpressure"`），下游可安全按标签分支。
+- **SDK 稳定面**：稳定面内行为改动需 minor 版本 + CHANGELOG；`SdkErrorKind::as_str` 标签冻结（如 `"backpressure"`），下游可安全按标签分支。B18 未改稳定面行为，因此不 bump crate、不新增 CHANGELOG。workspace `publish = false`，且仓库内没有这五个符号的具名外部消费者；这不构成删除公开方法的依据。
 
 ## 6. 依赖关系
 
@@ -144,7 +144,7 @@ UI-6b G2：crate 根增加 `ProviderAccountSelectionMode`、`QuotaOverviewQuery/
 
 （文件头注明两个 V2 用例不迁：同 command_id 重放在 pawork-app 单测覆盖；large artifact 分片读因 V2 无 artifact-store 停止宣告。）
 
-**`tests/client_tests.rs`（headless SDK × MockTransport，22 测试）**：握手三态（版本 / instance / capabilities 暴露、不兼容版本显式失败、未知响应类型显式失败）；`create_session` / `query` / `cancel` 往返 framing；宿主业务错误映射 `RequestFailed`、error 帧携带显式 kind、**无 id error 帧不误路由到唯一 pending**；订阅只路由匹配 stream、背压 Drop 计数 / Error 溢出、退订移除槽位；fork + resume 生命周期；compat 导入与历史往返；close 取消 in-flight 与后续请求；`tests/fixtures/` 5 个固定协议样例（`hello_ack.json` / `session_response.json` / `error_frames.json` / `run_events.jsonl` / `compat_import_response.json`）端到端解码；raw query 信封直返 `AppResponse`；mock 按序记录发送行；`SdkErrorKind::as_str` 标签稳定。
+**`tests/client_tests.rs`（headless SDK × MockTransport，22 测试）**：握手三态（版本 / instance / capabilities 暴露、不兼容版本显式失败、未知响应类型显式失败）；`create_session` / `query` / `cancel` 往返 framing；宿主业务错误映射 `RequestFailed`、error 帧携带显式 kind、**无 id error 帧不误路由到唯一 pending**；订阅只路由匹配 stream、背压 Drop 计数 / Error 溢出、退订移除槽位；fork + resume 生命周期；compat 导入与历史往返；close 取消 in-flight 与后续请求；`tests/fixtures/` 5 个固定协议样例（`hello_ack.json` / `session_response.json` / `error_frames.json` / `run_events.jsonl` / `compat_import_response.json`）端到端解码；raw query 信封直返 `AppResponse`；mock 按序记录发送行；`SdkErrorKind::as_str` 标签稳定。这 22 个测试不调用 `push_responses` / `fail_next_read` / `sent_count` / `assert_sent_json`。B18 未改可执行行为，未重跑本文件。
 
 **`tests/spawn_e2e.rs`（真实进程，3 测试；`PAWORK_BIN` 或 `target/debug/pawork`，缺二进制/无 `headless` 子命令时失败；`spawn-e2e` feature 显式启用）**：spawn + 握手 + 已映射 Command/Query 往返 + 未映射命令 fail-closed + compat 经真实 SessionStore 持久化 + 关闭回收；无凭证时 RunStart 接受后收到 Failed，SessionGet 历史仅有一条对应 Run 的失败终态及缺凭证原因；真实宿主强制执行已授予 capabilities。
 

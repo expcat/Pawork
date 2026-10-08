@@ -73,7 +73,7 @@
 | ✅ 完成 | [B15 · App 查询、设置写盘与配置错误收敛](plan/b15-app-small-cleanup.md) | DiffGet complete 恒真简化；设置重复写盘已落地，no-op；统一三处配置错误路径与跨平台文案，2 条定向回归和正式宿主类型检查通过，独立 review / 复审 PASS。 |
 | ✅ 完成 | [B16 · App 子 Core 认证修订与重导出收窄](plan/b16-app-auth-revision.md) | 同 Provider 子 Core 记下所持 adapter 的认证修订；收窄 EventHub 与幂等家族公开面，32 条定向回归和正式宿主类型检查通过，独立 review PASS。 |
 | ✅ 完成 | [B17 · CLI 帮助与附件检查裁决](plan/b17-cli-copy.md) | gateway 与附件帮助、合计上限文案改为中文；描述符类型复查保留。定向格式、链接与静态差异检查通过，独立 review PASS；未执行真实 help 或附件运行时。 |
-| 待裁决 | [B18 · Client SDK MockTransport 与版本 API 裁决](plan/b18-client-sdk.md) | 裁决 SDK 对外测试辅助面和未列为稳定面的版本函数。 |
+| ✅ 完成 | [B18 · Client SDK MockTransport 与版本 API 裁决](plan/b18-client-sdk.md) | 保留四个 MockTransport 公开辅助方法与 `sdk_version_string`；headless rustdoc 的协议当前版本改为 1.27。定向静态、链接、格式与 diff 检查通过，独立 review / 复审 PASS；未改行为，未跑 Cargo。 |
 | 待裁决 | [B19 · Desktop 终端响应与实例路径裁决](plan/b19-desktop-terminal-paths.md) | 核实旧终端字段回退和零消费路径函数的必要性。 |
 | 待裁决 | [B20 · Desktop Probe 功能测试模型裁决](plan/b20-desktop-probe-models.md) | 对齐功能测试模型约定，同时明确探针行为变化。 |
 | 待裁决 | [B21 · Desktop 大小格式与词条入口裁决](plan/b21-desktop-format-i18n.md) | 裁决大小舍入差异、工具组标题和任务消耗词条双入口。 |
