@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeSet,
     path::{Component, Path, PathBuf},
 };
 
@@ -78,9 +78,6 @@ pub struct ResourceSelection {
     pub active_skills: BTreeSet<String>,
     #[serde(default)]
     pub disabled_skills: BTreeSet<String>,
-    pub prompt_template: Option<String>,
-    #[serde(default)]
-    pub prompt_arguments: BTreeMap<String, String>,
     pub profile: Option<String>,
     pub session_instructions: Option<String>,
     pub run_instructions: Option<String>,
@@ -118,10 +115,6 @@ pub struct ResourceLimits {
     pub max_file_bytes: u64,
     /// 每类最多发现的资源数量。
     pub max_resources_per_kind: usize,
-    /// 单个 Prompt 声明和渲染时最多使用的文件引用数。
-    pub max_template_file_refs: usize,
-    /// Prompt 参数与文件引用展开后的总字节上限。
-    pub max_rendered_prompt_bytes: u64,
 }
 
 impl Default for ResourceLimits {
@@ -129,8 +122,6 @@ impl Default for ResourceLimits {
         Self {
             max_file_bytes: 1024 * 1024,
             max_resources_per_kind: 1024,
-            max_template_file_refs: 32,
-            max_rendered_prompt_bytes: 4 * 1024 * 1024,
         }
     }
 }

@@ -206,6 +206,9 @@ fn export_plan_is_explicit_idempotent_and_never_rewrites_sources() {
     // 写入的计划不含任何明文 secret。
     let persisted =
         std::fs::read_to_string(output_dir.join("compat-import.json")).expect("read plan");
+    let restored = serde_json::from_str::<pawork_workspace::import::CompatPlan>(&persisted)
+        .expect("deserialize exported plan");
+    assert_eq!(restored, plan);
     assert!(!persisted.contains("sk-live-secret-abc123"));
 }
 

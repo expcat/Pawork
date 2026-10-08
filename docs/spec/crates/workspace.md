@@ -42,14 +42,14 @@
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
 | `src/resources/mod.rs` | ~30 | 子模块声明与公开 re-export；模块级安全文档（调用方只能用 `workspace_id + root_index + relative_path`） |
-| `src/resources/request.rs` | ~180 | `WorkspaceRelativePath`（构造与 serde 反序列化两处同样拒绝绝对路径 / `..`）；`CurrentPathKind::{Directory, File}`；`ResourceRequest{workspace_id, root_index, current_path, current_path_kind, selection}`；`ResourceSelection`（active/disabled skills、prompt_template + prompt_arguments、profile、session/run instructions）；`ResourceLimits`；`ResourceLoaderOptions` |
+| `src/resources/request.rs` | ~170 | `WorkspaceRelativePath`（构造与 serde 反序列化两处同样拒绝绝对路径 / `..`）；`CurrentPathKind::{Directory, File}`；`ResourceRequest{workspace_id, root_index, current_path, current_path_kind, selection}`；`ResourceSelection`（active/disabled skills、profile、session/run instructions）；`ResourceLimits`（单文件字节 / 每类发现数）；`ResourceLoaderOptions` |
 | `src/resources/error.rs` | ~50 | `ResourceLoadError`：workspace 服务失败 / workspace 不存在 / root_index 越界 / `InvalidRelativePath`；文件级错误（缺失 / 超限 / 非 UTF-8 / 越界）由 crate-private `ResourceFileError` 承载并隔离为诊断 |
-| `src/resources/source.rs` | ~210 | 溯源与诊断：`ResourceKind` 七类（Instructions / AgentsFile / Skill / PromptTemplate / AgentProfile / LanguageServer / UserHook）；`ResourceOrigin`（Global / Workspace / Session / Run，不暴露宿主绝对路径）；`ResourceProvenance{tier, source_key, origin}`；`ResourceDiagnostics`（`sort_deterministically`）、`ResourceIssue`（warning/error 构造器 + `for_resource`）、`ResourceDiagnosticStatus` / `ResourceDiagnosticEntry` |
+| `src/resources/source.rs` | ~200 | 溯源与诊断：`ResourceKind` 四类（Instructions / AgentsFile / Skill / AgentProfile）；`ResourceOrigin`（Global / Workspace / Session / Run，不暴露宿主绝对路径）；`ResourceProvenance{tier, source_key, origin}`；`ResourceDiagnostics`（`sort_deterministically`）、`ResourceIssue`（warning/error 构造器 + `for_resource`）、`ResourceDiagnosticStatus` / `ResourceDiagnosticEntry` |
 | `src/resources/io.rs` | ~260 | 安全 IO：`join_under_root`、crate-private `canonical_within`（两侧先 `pawork_policy::canonicalize_platform`，再 `path_within_root`）、`read_utf8_bounded` / `read_utf8_bounded_within`、`workspace_relative_key`（`relative_to_root`）、`is_safe_relative_reference`。不再自写 canonicalize / within-root。 |
 | `src/resources/agents.rs` | ~490 | `AGENTS.md` 层级发现：root → `current_path` 每层目录收集，按深度排序；`AgentsDocument`（`relative_path()`）/ `AgentsHierarchy`（`from_documents` / `documents` / `len` / `nearest`）；symlink 逃逸与损坏文件隔离为诊断 |
 | `src/resources/skills.rs` | ~1560 | Skill 装载：`manifest.toml` + 同目录 `SKILL.md` body；`SkillManifest`（id / version / description / parameters / dependencies / conflicts / scripts / assets / permissions）；`SkillParameter` / `SkillScript` / `SkillDependency`；激活集解析：BFS 依赖遍历、semver 兼容检查、循环与显式冲突检测；`LoadedSkill` / `SkillResolution` |
 | `src/resources/profiles.rs` | ~1970 | Agent Profile 装载：v1（instructions + 默认 provider/model）与 v2（`pawork_domain::AgentProfileV2` 全维度）双 schema、v1 自动迁 v2、同名冲突与明文 Secret 检测、tool 规则一致性校验、`memory_available=false` 时显式标 `Unavailable`；`resolve_profile_references` 在 bundle 内解析 profile→skill 引用（`agent_profile_ref_id_invalid` / `ref_version_invalid` / `ref_duplicate` 三类诊断）；`AgentProfile` / `LoadedAgentProfileV2` / `InstructionLayer` / `ResolvedInstructions::ordered_layers` |
-| `src/resources/loader.rs` | ~630 | `ResourceLoader::load` 聚合入口与 `workspace_resource_dir` 校验；`ResourceInstructionKind` 九类注入指令及 `priority()`；`ResourceInstruction`（中性 DTO，`byte_len()` 供 context 预算）；`ResourceBundle` |
+| `src/resources/loader.rs` | ~630 | `ResourceLoader::load` 聚合入口与 `workspace_resource_dir` 校验；`ResourceInstructionKind` 八类注入指令及 `priority()`；`ResourceInstruction`（中性 DTO，`byte_len()` 供 context 预算）；`ResourceBundle` |
 | `src/resources/recording.rs` | ~105 | `write_skill_recording` 技能录制安全写入（详见 §3「技能录制写入」） |
 
 **import/（14 文件）**
@@ -114,7 +114,7 @@ ADR-053（OPT-1）：schema 新增 `approval_mode: Option<pawork_policy::Approva
 **resources**
 - `ResourceLoader::new(WorkspaceService, ResourceLoaderOptions)`；`load(&ResourceRequest) -> Result<ResourceBundle, ResourceLoadError>`（同步、只读）。
 - `ResourceLoaderOptions`：`global_resource_dir`（宿主解析，**不得来自模型输入**）、`workspace_resource_dir`（默认 `.pawork`，拒绝绝对路径与 `..`）、`limits`、`memory_available`（默认 false）。
-- `ResourceLimits` 默认：单文件 1 MiB、每类 1024 个、模板文件引用 32 个、渲染总量 4 MiB（后两项本包只声明不消费，见 §8）。
+- `ResourceLimits` 默认：单文件 1 MiB、每类 1024 个；不声明尚无执行路径的模板预算。
 - `ResourceRequest.current_path` 是 `WorkspaceRelativePath`——构造与 serde 反序列化两个边界都校验；`selection` 控制 skill 激活/禁用集、profile 选择与 session/run 附加指令。
 - `ResourceBundle` 字段：
 
@@ -170,7 +170,6 @@ ADR-053（OPT-1）：schema 新增 `approval_mode: Option<pawork_policy::Approva
    | `RootAgentsFile` | 6 | workspace 根 `AGENTS.md` |
    | `PathAgentsFile` | 7 | current_path 沿途各层 `AGENTS.md` |
    | `ActiveSkill` | 8 | 激活 skill 的 `SKILL.md` body |
-   | `PromptTemplate` | 9 | 选中的 prompt 模板 |
    | `SessionInstructions` | 13 | `selection.session_instructions` |
    | `RunInstructions` | 14 | `selection.run_instructions` |
 4. **skills 激活与依赖解析**：发现所有 `manifest.toml`（含 `SKILL.md` body）→ 以 `selection.active_skills` 为种子 BFS 遍历 `dependencies`（semver 兼容检查，不满足记诊断并跳过）→ `disabled_skills` 强制排除 → 检测循环依赖与 manifest 声明的 `conflicts` → 产出 `SkillResolution`（激活清单 + 诊断）。scripts / assets 路径必须是安全相对引用（`is_safe_relative_reference`）。
@@ -209,6 +208,7 @@ ADR-053（OPT-1）：schema 新增 `approval_mode: Option<pawork_policy::Approva
 - **非 Builtin/Global 层不得自我提权 / 劫持出站**（冻结红线）：`approval_mode` / `workspace_trust` / `trust_workspaces`、顶层 `proxy_url`、顶层 vision/search 角色四键、`providers[].base_url` / `providers[].use_proxy` / `providers[].disabled_models`、`mcp.servers.*.trusted` / `auto_start` 在 Profile / Workspace / Session / Run 层一律剥离并告警；只剥字段、不删整段配置；Global 层设置照常生效。
 - **路径输入契约**：一切工作区文件访问基于 `workspace_id + root_index + relative_path`；绝对路径、盘符、UNC、保留设备名、`.git` 内部、symlink 逃逸、非普通文件一律拒绝。`WorkspaceRelativePath` 在 serde 反序列化边界即拒绝 `..` 与绝对路径（协议入口防线）。
 - **resources 确定性与隔离**：同输入必同输出（条目与诊断确定性排序）；单资源损坏降级为诊断不崩批；`global_resource_dir` 只能由宿主注入。
+- **resources 序列化消费面**：`ResourceRequest` / `ResourceSelection` 是宿主内部加载输入，不进入 `PaworkConfig`、数据库、事件或生成的 GUI / core-api / headless schema。`ResourceKind` 与诊断的 serde 不构成独立磁盘 / wire 格式；`ResourceInstructionKind` 另被 `CompatPayload::Instructions` 用于 `compat-import.json`，现行扫描只产出 `user_global_instructions` / `workspace_instructions`。B4 收窄未激活模板 / LSP / hook 预留，不改这些已有字符串、其它注入优先级或 compatibility 计划版本；裁决见 [B4](../../plan/b4-prompt-template.md)。
 - **memory 不虚假可用**：`memory_available=false` 时 profile 声明的 memory 显式标 `Unavailable` 并 warning，绝不静默假装可用。
 - **import 安全边界**（冻结）：只读扫描；绝不执行任何外部内容；明文 Secret 一律丢弃（计划序列化全文不得出现 Secret 字面量，定向回归断言）；导入 hook 恒 `enabled=false` + `requires_review=true`；MCP 条目恒 `trusted=false` + `auto_start=false` + `requires_review`；`bypassPermissions` / approval `never` 拒绝导入（Unsupported）；`on-failure` / `acceptEdits` 降级映射为 Ask 并告警，绝不映射为 Allow。
 - **export_plan 幂等**：相同输入（含 `select` 子集）指纹相同→`Noop`；指纹命中但磁盘内容不符仍重写；输出目录 / 目标文件为 symlink 一律 `UnsafeTarget` 拒绝；只用 tmp + rename 原子写。
@@ -240,7 +240,7 @@ ADR-053（OPT-1）：schema 新增 `approval_mode: Option<pawork_policy::Approva
   - 五来源六类别全部产出 Imported 条目；导入 hook `enabled=false` + `requires_review` 断言。
   - **明文 Secret 零泄漏**：计划序列化全文断言不含夹具中的假 token；`${VAR}`→`SecretRef`、字面量→`PendingCredential` 占位。
   - 冲突裁决：同 tier 按 source rank（Codex 胜 Claude）、跨 tier 按 priority（workspace 胜 global），败者带 `conflict_loser`；胜者仍 `requires_review`。
-  - `export_plan` 显式幂等且不改写源文件；dry-run 无写入；`select` 子集独立指纹、内容篡改后指纹命中仍重写。
+  - `export_plan` 显式幂等且不改写源文件，磁盘计划反序列化后与实际扫描结果相等；dry-run 无写入；`select` 子集独立指纹、内容篡改后指纹命中仍重写。
   - 防御行为：危险内容（`bypassPermissions` 等）隔离不导入、扫描不追 symlink、per-kind 与 total 限额硬截断、`on-failure` / `acceptEdits` 映射为 Ask 而非 Allow。
 - src 内嵌单元测试：`lib.rs`（roots 去重与 canonicalize、Windows 大小写去重）、`path.rs`（逃逸 / 设备名矩阵）、`file_index.rs`（扫描 / 搜索 / 去抖 / watcher / 错误缓冲）、`config/*`（loader 剥离与告警、merge 语义、paths 定位、schema 序列化、writer 原子写回与未知字段保留，含 `write_proxy_url` 设置/清除主路径、`write_provider_use_proxy` 写入并保留其余条目主路径与 `write_mcp_server_remove` 移除/缺失键路径）、`resources/*`（agents 层级、skills 依赖与冲突、profiles 迁移与校验、io 边界）、`import/*`（detect 限额、parse 各分支、io no-follow、frontmatter、map 裁决、session_scan 排除规则）。
 - dev-dependencies：`tempfile`（临时目录夹具）、`serde_json`、`tokio`（macros / rt-multi-thread / time，供 async 测试）；无 build.rs、无 feature 矩阵，单一编译形态。
@@ -248,7 +248,7 @@ ADR-053（OPT-1）：schema 新增 `approval_mode: Option<pawork_policy::Approva
 
 ## 8. 注意事项与已知限制
 
-- **Prompt 模板渲染不在本包**：`ResourceSelection.prompt_template` / `prompt_arguments` 与 `ResourceLimits.max_template_file_refs` / `max_rendered_prompt_bytes` 已声明并随类型导出，但本包不做模板发现与 `@file` 引用展开；当前整个 workspace 内这些字段无消费者（渲染归上层演进预留）。
+- **模板 / Hooks / LSP 未激活**：资源加载面只提供 Instructions / AgentsFile / Skill / AgentProfile 与八类注入指令，不保留模板选择、参数、渲染预算或相应资源变体。Prompt Templates 与 Hooks / LSP 仍是 [候选池](../backlog.md) 的 A1 / BK-EXT-01，转正须先证明真实消费面；App 的现行 `@file` 附件展开是独立功能。
 - `WorkspaceService` 与 `FileIndex` 均为进程内状态：重启即失，持久化由上层负责；`FileIndex` 无单文件大小上限，超大生成物依赖 ignore 规则排除。
 - config 的 Session / Run 层没有文件来源，只能经 API 注入；`discover*` 永不自动加入这两层。
 - `providers[].base_url`、`providers[].use_proxy` 与 `providers[].disabled_models` 在非 Builtin/Global 层是**无条件剥离**（无回环例外）；`proxy_url` 的「回环与 `.local` 直连」语义是 `pawork-providers` 的运行时行为，不在本包。
@@ -257,4 +257,4 @@ ADR-053（OPT-1）：schema 新增 `approval_mode: Option<pawork_policy::Approva
 - 文件索引的二进制判定基于前 8KB 含 NUL 探测，可能误判无 NUL 的二进制格式为文本。
 - `import/parse.rs` 对外部格式做宽松兼容（未知键记名不复制值），外部工具 schema 演进会产生新的 `unknown_key` 告警，属预期行为而非缺陷。
 - `resources` 与 `import` 仍分两套 IO 错误类型与上限（`resources/io.rs` 委托 policy canonicalize；`import/io.rs` 自管 no-follow 读）。根无法 canonicalize 时 AGENTS.md 加载 fail-closed 为 OutsideRoot，不在无 within-root 检查时读文件。
-- `LanguageServer` / `UserHook` 等 `ResourceKind` 变体已声明，但 resources 加载器当前只装载 Instructions / AgentsFile / Skill / AgentProfile 四类。
+- import 的 `ImportCategory::UserHook` / `CompatPayload::UserHook` 是现行 compatibility 计划内容，继续保持禁用与待 review 语义，不代表 resources 加载器或 hook 运行时已经激活。

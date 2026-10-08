@@ -156,6 +156,8 @@ UI-6b（[ADR-059](../settings.md#adr-059ui-6b-命名账号与持久选择2026-09
 
 ### 3.5 扩展、MCP、导入、tasks/plan/编排
 
+资源注入经 `ExtensionService::load_injected_layers` 在宿主内构造 `ResourceRequest`：只选择生效 profile 与发现的 active skills，按目标 workspace 信任过滤后，把现行八类 `ResourceInstructionKind` 映射成 engine 的文本 `InjectedLayer`。不接入模板选择、参数、渲染或 Hooks / LSP；B4 已删除模板映射死臂，现行 kind 字符串、优先级与 `@file` 附件语义不变（见 [workspace](workspace.md) 与 [B4 裁决](../../plan/b4-prompt-template.md)）。
+
 - `expand_at_refs(session_id, text) -> Vec<ContentPart>`（async，ADR-044 起按 session 归属 workspace 的 file-index 路由）：bare `@token` 保留 file-index 模糊匹配；`@"relative path"` 使用 JSON 字符串转义，支持中文、空格与引号，按 workspace 根顺序精确解析路径，仅在 NotFound 时尝试下一根，路径拒绝等错误不回退；不会误选近似文件。命中时正文作为**独立** part 追加（不拼进 user text），按索引保留的 `root_index` 选择正确根目录，读取前走 `policy::resolve_workspace_path`，拒绝索引后被换成的越界 symlink / 特殊文件；文本最多读 64 KiB + 1 字节并截断标记；VISION-2 起图片扩展名（png/jpg/jpeg/gif/webp，大小写不敏感）展开为头标记 Text part + `ImageSource::Base64` Image part（alt_text 与 MIME 保留引用路径（工作区内图片符号链接不按目标文件名重新分类），原始字节 ≤8 MiB，元数据超限不读取正文，否则最多读上限 + 1 字节；超限行省略标记不静默丢弃）；无 `@` 时返回单 Text part。`complete_at(query, limit)` 补全候选（未索引 workspace 自动先扫描，二进制文件同样入索引可命中）。`workspace_root()`。
 - `mcp_list() -> Vec<McpServerStatus>`（name/transport/state/tools/last_error）；`mcp_test(name?)`：真实建连 + ping + list_tools 并刷新 slot 状态；SET-6c 增 `remove_mcp_server(name)`（同会话生效：写盘后同步 extra、shutdown slot、删 slot、按既有 descriptors 重建 registry）与 `mcp_server_secrets_for_removal`（纯函数：收集本 server 的 `pawork.mcp.*` SecretRef，非该命名空间 Err，其它 server 跳过）。
 - `scan_local_sessions(source, home_root?)`：只读发现本机会话文件。

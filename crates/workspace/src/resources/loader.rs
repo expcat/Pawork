@@ -26,7 +26,6 @@ pub enum ResourceInstructionKind {
     RootAgentsFile,
     PathAgentsFile,
     ActiveSkill,
-    PromptTemplate,
     SessionInstructions,
     RunInstructions,
 }
@@ -40,7 +39,6 @@ impl ResourceInstructionKind {
             Self::RootAgentsFile => 6,
             Self::PathAgentsFile => 7,
             Self::ActiveSkill => 8,
-            Self::PromptTemplate => 9,
             Self::SessionInstructions => 13,
             Self::RunInstructions => 14,
         }

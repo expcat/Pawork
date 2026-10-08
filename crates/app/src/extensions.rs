@@ -541,7 +541,6 @@ pub(crate) fn instruction_kind_name(kind: ResourceInstructionKind) -> &'static s
         ResourceInstructionKind::RootAgentsFile => "root_agents_file",
         ResourceInstructionKind::PathAgentsFile => "path_agents_file",
         ResourceInstructionKind::ActiveSkill => "active_skill",
-        ResourceInstructionKind::PromptTemplate => "prompt_template",
         ResourceInstructionKind::SessionInstructions => "session_instructions",
         ResourceInstructionKind::RunInstructions => "run_instructions",
     }

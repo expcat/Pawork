@@ -8,10 +8,7 @@ pub enum ResourceKind {
     Instructions,
     AgentsFile,
     Skill,
-    PromptTemplate,
     AgentProfile,
-    LanguageServer,
-    UserHook,
 }
 
 impl ResourceKind {
@@ -20,10 +17,7 @@ impl ResourceKind {
             Self::Instructions => "instructions",
             Self::AgentsFile => "agents_file",
             Self::Skill => "skill",
-            Self::PromptTemplate => "prompt_template",
             Self::AgentProfile => "agent_profile",
-            Self::LanguageServer => "language_server",
-            Self::UserHook => "user_hook",
         }
     }
 }
