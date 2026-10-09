@@ -1,6 +1,6 @@
 # CU-11 · 图像能力的前置工具门控
 
-> 状态：已实现；自动回归通过，等待人工验收（P3）。前置：[CU-02](cu-02-target-contracts.md)。更新：2026-10-07。
+> 状态：已实现；自动回归与本轮模拟验收通过；独立 Sol max review PASS（P3）。前置：[CU-02](cu-02-target-contracts.md)。更新：2026-10-09。
 
 [返回 ROADMAP](../ROADMAP.md#computer-use-rust-升级)
 
@@ -10,7 +10,7 @@
 
 ## 当前依据与读取范围
 
-现有协商会扫描工具消息中的图像；文本模型可能先看到 computer 工具，截图进入下一轮请求后才被拒绝。
+当前 app/models 已在工具定义与派发允许表组装前检查 image input 能力，文本模型不暴露 computer / computer_native。工具消息图像仍经既有协商；本轮核正式 AppCore / Engine 的过滤、明确拒绝与能力升级证据。
 
 [models Spec](../spec/crates/models.md)、[app Spec](../spec/crates/app.md)、[tools Spec](../spec/crates/tools.md)、[providers Spec](../spec/crates/providers.md)。
 
@@ -33,7 +33,7 @@
 
 **已实现（2026-10-07）**
 
-- 门控落点：`crates/app/src/services/run.rs` 的 `chat_turn_with_run_id`——工具定义组装前按当前 Provider 的三源能力证据（与 VISION-1/SEARCH-1 前置闸门同一份；未知模型按空证据 fail-closed）判定 `image_input`，未声明时 `ComputerUse` 标签工具（computer）不进本轮工具定义与派发允许表。模型臆造的 computer 调用由既有 loop_ctx 允许表在调度器之前拒绝（"this model cannot use this tool"），桌面后端访问次数为零。GUI / CLI / 子代理 child run 同走该入口，能力裁决只在 app/models，不按 Provider 名称分支。
+- 门控落点：`crates/app/src/services/run.rs` 的 `chat_turn_with_run_id`——工具定义组装前按当前 Provider 的三源能力证据（与 VISION-1/SEARCH-1 前置闸门同一份；未知模型按空证据 fail-closed）判定 `image_input`，未声明时 `ComputerUse` 标签工具（computer / computer_native）不进本轮工具定义与派发允许表。模型臆造的 computer 调用由既有 loop_ctx 允许表在调度器之前拒绝（"this model cannot use this tool"），不调用工具执行器。通过能力闸的 Run 仍登记并关闭内存 target scope；此操作不绑定窗口或截图，不是桌面连接。GUI / CLI / 子代理 child run 同走该入口，能力裁决只在 app/models，不按 Provider 名称分支。
 - 错误语义：`crates/models/src/negotiate.rs` 的 `image_input` 拒绝理由携带模型 id（model `X` does not declare image input capability），切模型 / 恢复已有图像上下文时指明实际缺失，不误报后端断开。
 - 视觉模型不受影响：声明 `image_input` 的模型照常暴露 computer 并沿用既有三协议图像编码；嵌套工具图像回归保留。
 - 与 B5 协调：仅复用既有公开面 `ModelRegistry::capability_evidence` + `CapabilityEvidence::merged()`，未新增或收窄任何 B5 待裁决 API（`validate_context` / `merge_provider_source` / `capability_snapshot` / `filter_by_purpose` 均未触碰）。
@@ -47,7 +47,7 @@
 
 **定向回归**
 
-- `services::run::tests::vision_gate_withholds_computer_and_never_dispatches_for_text_models`：文本模型请求不含 computer 定义；臆造调用收到明确拒绝；MockTool 零调用＝桌面后端零访问。
+- `services::run::tests::vision_gate_withholds_computer_and_never_dispatches_for_text_models`：文本模型请求同时不含 computer / computer_native 定义；臆造 computer 调用在 scheduler 前收到明确拒绝，MockTool 计数为零；这不等于真实 NativeHost / AX / RFB 探测零访问。
 - `services::run::tests::vision_gate_keeps_computer_tool_for_vision_models`：视觉模型照常暴露 computer。
 - `services::run::tests::capability_gate_rejects_undeclared_web_search_and_image`（扩充）：图片拒绝错误含模型 id 与能力名，Provider 零调用。
 - 既有回归保留通过：`negotiate::tests::capability_gate_rejects_nested_tool_result_image_without_declaration`（models）、`request::tests::tool_result_images_map_across_chat_responses_and_anthropic`（providers）、`gui_host::tests::chat_controls::computer_approval_image_persistence_and_resume_do_not_repeat_input`（app）、tools `computer::tests` 全组。
@@ -60,8 +60,27 @@
 
 **真实 / 人工结果**
 
-未执行（本任务为离线实现轮）。待人工项：真实 Host + 文本模型（如 glm-5.3）确认工具列表无 computer 且零桌面连接尝试；真实视觉模型 + compose desktop（按验证规格 `--provider opencode-go --model glm-5.3-flash`）确认截图链路照常。人工验收完成后再将 ROADMAP 标为 ✅。
+历史离线实现轮未执行真实 Provider / Desktop 验收。本轮按用户授权模拟 Provider 边界，直接驱动正式 AppCore → Engine → 派发允许表，结果见下。真实账号、系统图像权限与平台连接单列待验，不以模拟声明真实桌面通过。
 
 **遗留缺口**
 
-无已知实现缺口；人工验收未完成（见上），ROADMAP 如实标注「自动回归通过，等待人工验收」。
+无已知实现缺口；本轮模拟与独立 review PASS。真实 Provider、真窗口截图与系统权限未执行。
+
+
+## 本轮模拟验收（2026-10-09）
+
+Grok xhigh 对话 01a1212b-d96b-7d93-9011-cd598d3c086f 在 main@04c1ed22 交付源码 no-op，无新增测试。由于历史全包日志早于 CU-10 的 run.rs 修改，本轮重跑四条现有 AppCore 回归；首次多过滤器放在 Cargo 的 -- 前造成参数错误（exit 1），失败日志 01 保留，修正参数后的日志 02 为 exit 0。
+
+实际输入与结果：文本模型 mock-text 不声明 image_input，两轮 Provider 请求均不含 computer / computer_native，臆造 computer screenshot 在 scheduler 前由允许表拒绝，事件保留 this model cannot use this tool，替换的 MockTool 计数为零。视觉模型 mock-vision 的请求断言包含 computer；computer_native 由同一 ComputerUse 谓词保留的源码可见，但正路径用例没有直接断言该名称，不把它记为单独运行验证。
+
+当前带图消息的 glm-5.2 在 mock Provider 下不能借用 glm-coding 的同名静态声明；有界 list_models 发现后仍缺能力，在 Engine / 内存 scope 登记之前返回 AppError::Provider，文案含模型 id 与 image input，不误报断线。启动 glm-5.3-flash 目录发现升级 image_input 后，当轮工具表重建，请求携图且含 computer，Provider 恰调用一次。恢复 history 的 CLI 调用同一入口由源码确认，本轮没有单独执行持久化恢复的门控用例。
+
+三协议工具结果图像与嵌套图像拒绝复用 /tmp/cu11-test-fix.log 中对应测试成功记录；models negotiate.rs 与 providers request.rs 的 blob 和历史 a4978e71 一致。此复用只覆盖这两个未变目标，不把历史全包数当作当前 AppCore 的验证。
+
+证据 /tmp/cu11-20261009/ 保留原始命令及退出码、源码 identity、失败和修复日志、完整交付。02-app-vision-gate.log 为 1632 bytes / SHA256 af0ef7596f3b0677dc93c4824034a9d77405695c9d8352403dfa5082388eeed8。当前 run.rs blob cb17bab8f0503a86c034d134ee3ff1c7e21603c4，与 CU-10 提交 20646a75 一致。
+
+Validated: cargo test --offline --lib -p pawork-app --features pawork-app/ui-fixture -- vision_gate capability_gate_rejects_undeclared_web_search_and_image startup_model_discovers_current_provider_image_capability，4 passed / 303 filtered / exit 0；指挥追加 git diff --check 与文档相对链接检查。
+Targeted regressions: 当前重跑文本工具过滤/臆造调用拒绝、视觉工具保留、缺能力图像/搜索拒绝、启动发现升级四项；三协议与嵌套图像拒绝仅按同版日志复用。
+Full workspace gate: NOT RUN。
+
+环境边界：没有真实 Provider、Desktop 窗口、Accessibility / Screen Recording 授权或隔离桌面连接；未改 auth/config/disabled_models。独立 gpt-6.1-sol / max 对话 01a12137-ee0e-70d0-9109-2b7c16ed344a、turn 01a12137-f1ce-7333-a8c1-bb2a73825bfb 返回 PASS，无必须修项；指挥提交。
