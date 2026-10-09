@@ -1238,4 +1238,228 @@ mod tests {
         assert_eq!(surface.semantics(), 0);
         assert_eq!(host.grant_kind(&scope, &target()), Some(GrantKind::ForRun));
     }
+
+    fn open_granted(surface: &Surface) -> (Arc<NativeHost<Surface>>, Scope, String) {
+        let host = Arc::new(NativeHost::new(surface.clone()));
+        let scope = Scope::new("ws", "run");
+        host.open_scope(&scope);
+        host.grant(&scope, &target(), GrantKind::ForRun)
+            .expect("grant");
+        surface.set_activity(ActivityProof::Idle);
+        let bound = host
+            .execute(
+                &scope,
+                NativeRequest::Bind {
+                    bundle_id: BUNDLE.into(),
+                },
+                &|| false,
+            )
+            .expect("bind");
+        let window = bound.window_id.expect("window");
+        (host, scope, window)
+    }
+
+    fn text_element(host: &NativeHost<Surface>, scope: &Scope, window: &str) -> String {
+        let tree = host
+            .execute(
+                scope,
+                NativeRequest::ReadTree {
+                    window: window.to_string(),
+                },
+                &|| false,
+            )
+            .expect("read tree");
+        let observation = tree.observation_id.expect("observation");
+        let found = host
+            .execute(
+                scope,
+                NativeRequest::FindElement {
+                    observation,
+                    role: Some("AXTextField".into()),
+                    name: None,
+                },
+                &|| false,
+            )
+            .expect("find");
+        found.element_id.expect("element")
+    }
+
+    fn dispatch_paused(host: &NativeHost<Surface>, scope: &Scope) -> bool {
+        host.target_states()
+            .iter()
+            .any(|state| state.scope == *scope && state.target == target() && state.dispatch_paused)
+    }
+
+    fn drive_semantic(
+        host: Arc<NativeHost<Surface>>,
+        scope: Scope,
+        element: String,
+        cancelled: Arc<AtomicBool>,
+    ) -> std::sync::mpsc::Receiver<Result<NativeOutput, TargetError>> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let result = host.execute(
+                &scope,
+                NativeRequest::Semantic {
+                    element,
+                    action: SemanticAction::SetValue("hello".into()),
+                },
+                &|| cancelled.load(Ordering::SeqCst),
+            );
+            let _ = tx.send(result);
+        });
+        rx
+    }
+
+    fn wait_semantic_entered(
+        surface: &Surface,
+        rx: &std::sync::mpsc::Receiver<Result<NativeOutput, TargetError>>,
+    ) {
+        let started = std::time::Instant::now();
+        while !surface.semantic_gate_entered() {
+            assert!(
+                started.elapsed() < std::time::Duration::from_secs(2),
+                "semantic dispatch did not enter the platform call"
+            );
+            if let Ok(early) = rx.try_recv() {
+                panic!("semantic returned before the platform gate: {early:?}");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn same_target_operating_stops_inflight_action_and_idle_clears_only_the_pause() {
+        let surface = Surface::new(false);
+        let (host, scope, window) = open_granted(&surface);
+        let inflight = text_element(&host, &scope, &window);
+        let retry = text_element(&host, &scope, &window);
+        surface.arm_semantic_gate();
+        let rx = drive_semantic(
+            host.clone(),
+            scope.clone(),
+            inflight,
+            Arc::new(AtomicBool::new(false)),
+        );
+        wait_semantic_entered(&surface, &rx);
+        surface.set_activity(ActivityProof::Operating);
+        surface.release_semantic_gate();
+        let stopped = rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .expect("semantic must return after the same-target activity stop")
+            .expect_err("user active");
+        assert!(
+            matches!(stopped, TargetError::UserActive),
+            "operating during the platform call must stop as UserActive, got {stopped:?}"
+        );
+        assert_eq!(surface.semantic_entries(), 1);
+        assert_eq!(surface.semantics(), 0);
+        assert_eq!(surface.captures(), 0);
+        assert!(dispatch_paused(&host, &scope));
+        assert_eq!(host.grant_kind(&scope, &target()), Some(GrantKind::ForRun));
+
+        let still = host
+            .execute(
+                &scope,
+                NativeRequest::Semantic {
+                    element: retry.clone(),
+                    action: SemanticAction::SetValue("hello".into()),
+                },
+                &|| false,
+            )
+            .expect_err("pause remains while the target stays frontmost");
+        assert!(
+            matches!(still, TargetError::UserActive),
+            "a fresh element must still yield while activity is Operating, got {still:?}"
+        );
+        assert_eq!(surface.semantic_entries(), 1);
+        assert_eq!(surface.semantics(), 0);
+        assert!(dispatch_paused(&host, &scope));
+        assert_eq!(host.grant_kind(&scope, &target()), Some(GrantKind::ForRun));
+
+        surface.set_activity(ActivityProof::Idle);
+        let wrote = host
+            .execute(
+                &scope,
+                NativeRequest::Semantic {
+                    element: retry,
+                    action: SemanticAction::SetValue("hello".into()),
+                },
+                &|| false,
+            )
+            .expect("idle clears only the activity pause");
+        assert!(wrote.input_dispatched);
+        assert_eq!(wrote.outcome.as_deref(), Some("dispatched"));
+        assert_eq!(surface.semantic_entries(), 2);
+        assert_eq!(surface.semantics(), 1);
+        assert_eq!(surface.captures(), 1);
+        assert!(!dispatch_paused(&host, &scope));
+        assert_eq!(host.grant_kind(&scope, &target()), Some(GrantKind::ForRun));
+    }
+
+    #[test]
+    fn inflight_cancel_does_not_pause_and_idle_does_not_restore_revoke() {
+        let surface = Surface::new(false);
+        let (host, scope, window) = open_granted(&surface);
+        let inflight = text_element(&host, &scope, &window);
+        let held = text_element(&host, &scope, &window);
+        let cancel = Arc::new(AtomicBool::new(false));
+        surface.arm_semantic_gate();
+        let rx = drive_semantic(host.clone(), scope.clone(), inflight, cancel.clone());
+        wait_semantic_entered(&surface, &rx);
+        cancel.store(true, Ordering::SeqCst);
+        surface.release_semantic_gate();
+        let stopped = rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .expect("semantic must return after cancel")
+            .expect_err("cancelled");
+        assert!(
+            matches!(stopped, TargetError::Cancelled),
+            "external cancel during the platform call must stay Cancelled, got {stopped:?}"
+        );
+        assert_eq!(surface.semantic_entries(), 1);
+        assert_eq!(surface.semantics(), 0);
+        assert_eq!(surface.captures(), 0);
+        assert!(!dispatch_paused(&host, &scope));
+        assert_eq!(host.grant_kind(&scope, &target()), Some(GrantKind::ForRun));
+
+        surface.set_activity(ActivityProof::Operating);
+        let paused = host
+            .execute(
+                &scope,
+                NativeRequest::Semantic {
+                    element: held.clone(),
+                    action: SemanticAction::SetValue("hello".into()),
+                },
+                &|| false,
+            )
+            .expect_err("activity pause");
+        assert!(matches!(paused, TargetError::UserActive), "{paused:?}");
+        assert!(dispatch_paused(&host, &scope));
+        assert_eq!(surface.semantics(), 0);
+        host.revoke(&scope, &target());
+        surface.set_activity(ActivityProof::Idle);
+        let denied = host
+            .execute(
+                &scope,
+                NativeRequest::Semantic {
+                    element: held,
+                    action: SemanticAction::SetValue("hello".into()),
+                },
+                &|| false,
+            )
+            .expect_err("revoked");
+        assert!(
+            matches!(denied, TargetError::NotAuthorized),
+            "idle activity must not restore a revoked grant, got {denied:?}"
+        );
+        assert_eq!(surface.semantic_entries(), 1);
+        assert_eq!(surface.semantics(), 0);
+        assert_eq!(surface.captures(), 0);
+        assert!(
+            dispatch_paused(&host, &scope),
+            "idle must not clear the activity pause once authorization is gone"
+        );
+        assert_eq!(host.grant_kind(&scope, &target()), None);
+    }
 }

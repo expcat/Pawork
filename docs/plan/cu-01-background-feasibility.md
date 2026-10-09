@@ -1,6 +1,6 @@
 # CU-01 · macOS 本机后台操作可行性与能力基线
 
-> 状态：等待人工验收（P0）。前置：无。更新：2026-10-06。
+> 状态：✅ 完成（模拟验收，P0），独立 review PASS。按 2026-10-09 用户授权使用模拟收口，接续已提交 CU-10 的 NativeHost / 台账入口；旧原生基线只按其实际日期与证据复用，未证明能力不升级。前置：无。更新：2026-10-09。
 
 [返回 ROADMAP](../ROADMAP.md#computer-use-rust-升级)
 
@@ -86,4 +86,30 @@
 - 文本注入按应用族分裂：AppKit 可直接定向按键；Chromium 系（Electron/浏览器）后台按键无效；VS Code 编辑器语义写无效，只能前台或经其扩展/CLI 通道；Chrome 页面文本控件（textarea）的语义写未验证，不能记为可行。
 - 窗口布景：Chromium 系忽略 AXPosition，遮挡场景不能用 AX 移动其窗口。
 
-遗留缺口：真实人工在场验收（用户侧输入由探针模拟）；Chrome textarea 语义写未验证；用户接管后的协作停止/取消行为未验证（T6b 只证明竞争会继续交错）；VS Code 后台菜单 AXPress 的实际效果未与 auto-save 区分；未授权 denied 态与锁屏未验。ROADMAP 状态：等待人工验收。
+2026-10-06 遗留缺口：真实人工在场验收（用户侧输入由探针模拟）；Chrome textarea 语义写未验证；用户接管后的协作停止/取消行为未验证（T6b 只证明竞争会继续交错）；VS Code 后台菜单 AXPress 的实际效果未与 auto-save 区分；未授权 denied 态与锁屏未验。当日 ROADMAP 状态为等待人工验收；本轮接管停止证据见下文。
+
+## 本轮模拟验收（2026-10-09）
+
+基线为 `main` / `20646a755051b491a03ea38c187636dc778052bc`，CU-10 已提交。执行对话使用 `xai/grok-4.7 xhigh`；本项不改生产行为或能力矩阵，只在现有 [native 工具回归](../../crates/tools/src/computer_native.rs) 补一条主路径与一条关键失败路径，模拟外部平台活动、取消和撤销，驱动当前 `NativeHost::execute`、授权台账与实际派发停止闸。
+
+| 模拟输入 | 产品调用链与可观察结果 | 证据 |
+| --- | --- | --- |
+| 派发进入平台调用、实际动作前注入同目标 `Operating` | `execute(Semantic)` → `platform_dispatch` → `dispatch_stop` → 暂停台账；返回 `UserActive`，平台入口 1 次、动作 0、截图 0，`dispatch_paused=true`，`ForRun` 授权保留；仍活动时另一新元素同样拒绝且计数不增 | `same_target_operating_stops_inflight_action_and_idle_clears_only_the_pause` |
+| 活动恢复 `Idle` | 下一次正式动作入口解除活动暂停，动作累计 1、截图 1，授权仍为 `ForRun` | 同一主路径 |
+| 在途外部取消 | 正式派发停止闸返回 `Cancelled`，动作 0、截图 0，不设置用户活动暂停 | `inflight_cancel_does_not_pause_and_idle_does_not_restore_revoke` |
+| 暂停后经 `NativeHost::revoke` 撤销，再报告 `Idle` | 授权检查先于活动探测返回 `NotAuthorized`；授权为 None，暂停仍在、动作与截图仍为 0，空闲不能恢复授权 | 同一失败路径 |
+
+现有四条 native Host / Tool / Scheduler 回归一并通过，覆盖批准前零后台访问、动作新图、后置截图失败不重试、锁外树版本探测期间撤销及 Once / 原派发票据校验。本次是 Host / 台账正式入口的模拟，不是 Desktop 点击接管按钮，也不宣称真实前台切换已触发本轮 `MacosNative::target_activity`；GUI 交互分别由 CU-18 / CU-19 / CU-20 收口。
+
+复用并重新核对 2026-10-06 T5b2，不重跑：两份发送串各 200 字符，`user-typed.txt` 去掉提交换行后逐字相等，目标 `T5b2-axread.json` 含完整 Agent 串；输入区间重叠 211.765 ms，用户侧区间 214.756 ms。`macos_background_probe::run_watch` 每 25 ms 采样、仅输出状态变化；15 秒 `watch-T5b2.jsonl` 只有初始状态与结束汇总，表示采样未发现前台 Terminal、焦点、指针或剪贴板计数变化，起止剪贴板 hash 相同。采样不证明间隔内瞬时状态，系统焦点读取错误仍按应用级诊断留存。T6b 仍只作系统不仲裁的竞争证据，不作 Host 停止证据。
+
+2026-10-06 / 2026-10-08 探针基线继续区分 raw 平台动作与当前 Host：最小化截图曾成功，不等于当前 AX 能证明该窗口身份；无法证明即拒绝。三族 pointer 仍 Unsupported；Chrome textarea、VS Code 后台菜单效果、最小化窗口移动 / 缩放等未证能力仍 Unverified，均被能力闸拒绝。未做真人在场键鼠验收；TCC 拒绝态与锁屏环境未验，锁屏属 CU-24，不用容器证据替代本机。
+
+```text
+Validated: cargo test -p pawork-tools --offline --lib computer_native::tests:: -- --test-threads=8
+  exit 0；6 passed / 85 filtered；/tmp/cu01/host-stop-20261009.log
+Targeted regressions: 四条既有 native 回归 + 同目标停止主路径 + 取消/撤销失败路径
+Full workspace gate: NOT RUN（当前未设置全量门禁）
+```
+
+原始日志 1220 bytes，SHA256 `230af9ece41ec19e9b084a4fc457934a3d77182ec030324ee66074bdae317643`；只增加测试，不改变生产派发。独立 `gpt-6.1-sol max` review PASS，无必须修项；审查对话 `01a12018-53fb-70c2-807e-1384e9690d27`，turn `01a12018-57de-7bd3-9bac-2429d9343e7a`。受审完整四文件快照 `/tmp/cu01/ROOT-REVIEW-R1.diff` 为 20371 bytes，SHA256 `9cf9151be24c26863f107ef4477d298ea5f74d37cd393723167858c833e20359`，裁决原文 `/tmp/cu01/REVIEW-R1-PASS.txt`；PASS 后只同步本项完成与审查元数据，再精确本地提交。
