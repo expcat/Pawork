@@ -169,7 +169,9 @@ MCP 的独立 API、连接与认证见 [mcp](mcp.md)，注册适配器仍使用�
 
 CU-01 模拟验收补两项：`same_target_operating_stops_inflight_action_and_idle_clears_only_the_pause` 在正式 `NativeHost::execute` 派发期间注入同目标活动，核动作零派发、持续让出、Idle 只恢复活动暂停；`inflight_cancel_does_not_pause_and_idle_does_not_restore_revoke` 验证在途取消与显式撤销，Idle 不恢复撤销授权。复用现有平台替身，仅替代 OS 边界，不新增生产逻辑。2026-10-09 `cargo test -p pawork-tools --offline --lib computer_native::tests:: -- --test-threads=8` exit 0，6 passed / 85 filtered；非全包、真实 macOS 或 GUI 按钮门禁，证据和环境边界见 [CU-01](../../plan/cu-01-background-feasibility.md)。
 
-CU-03 再补两项：`multi_window_bind_returns_handles_and_screenshot_follows_the_choice` 经正式 Tool / Scheduler / NativeHost 验证多窗口句柄、重复绑定、明确选择截图及所选窗口动作后的新观测；`closed_window_handle_from_a_multi_window_bind_is_replaced_before_capture` 验证关闭旧句柄零 capture、幸存窗口可用及 Once 在列举期间撤销后的复用拒绝。当前同过滤器为 8 passed / 85 filtered、exit 0，另有 computer-use lib 99 passed。替身 JPEG 仅证明 canonical Image 通路，不证明真实像素；失败与恢复原始日志、源码指纹和平台边界见 [CU-03](../../plan/cu-03-app-window-discovery.md)。
+CU-03 再补两项：`multi_window_bind_returns_handles_and_screenshot_follows_the_choice` 经正式 Tool / Scheduler / NativeHost 验证多窗口句柄、重复绑定、明确选择截图及所选窗口动作后的新观测；`closed_window_handle_from_a_multi_window_bind_is_replaced_before_capture` 验证关闭旧句柄零 capture、幸存窗口可用及 Once 在列举期间撤销后的复用拒绝。当前同过滤器为 8 passed / 85 filtered、exit 0，另有 computer-use lib 99 passed。CU-03 当次替身 JPEG 是哨兵，仅证明 canonical Image 通路；失败与恢复原始日志、源码指纹和平台边界见 [CU-03](../../plan/cu-03-app-window-discovery.md)。
+
+CU-04（2026-10-09）只扩上述两条现有用例，仍为八条：按所选窗口的 RGB fixture 在平台替身 capture 时编码 JPEG，正式 Tool / Scheduler / Host 返回字节须与该次回帧相同；解码红/绿窗口色值、移动后同窗新 observation、缩放后旧元素零派发、模拟平台权限错误、超图像边长、关窗与进程退出拒绝。jpeg-only `image = 0.25.10` 仅在 dev-dependencies，复用已有 lock 包，不加生产依赖。修后八条通过，同版 computer-use lib 99 项复用；不证明 ScreenCaptureKit 像素、真实 TCC 拒绝或新的坐标点击。失败日志与恢复边界见 [CU-04](../../plan/cu-04-window-observation.md)。
 
 默认验证命令：`bash scripts/test.sh tools`（无 `tests/` 目录，用例全部在 `--lib`）。
 

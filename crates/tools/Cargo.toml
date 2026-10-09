@@ -32,6 +32,7 @@ encoding_rs = "0.8"
 tempfile.workspace = true
 proptest.workspace = true
 pawork-testkit = { path = "../testkit" }
+image = { version = "=0.25.10", default-features = false, features = ["jpeg"] }
 tokio = { workspace = true, features = [
     "fs",
     "io-util",

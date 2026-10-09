@@ -344,6 +344,11 @@ mod tests {
         generation: Option<u64>,
         width: f64,
         height: f64,
+        origin_x: f64,
+        origin_y: f64,
+        pixel_width: u32,
+        pixel_height: u32,
+        pixels: Option<Vec<u8>>,
     }
 
     #[derive(Clone)]
@@ -359,6 +364,10 @@ mod tests {
         launches: AtomicUsize,
         windows: Mutex<Vec<LiveWindow>>,
         captured: Mutex<Vec<u64>>,
+        frames: Mutex<Vec<Vec<u8>>>,
+        alive: AtomicBool,
+        screen_recording: AtomicBool,
+        oversize: AtomicBool,
         activity: Mutex<ActivityProof>,
         fail_capture: AtomicBool,
         tree: AxTreeRead,
@@ -404,8 +413,17 @@ mod tests {
                     generation: Some(1),
                     width: 200.0,
                     height: 100.0,
+                    origin_x: 0.0,
+                    origin_y: 0.0,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                    pixels: None,
                 }]),
                 captured: Mutex::new(Vec::new()),
+                frames: Mutex::new(Vec::new()),
+                alive: AtomicBool::new(true),
+                screen_recording: AtomicBool::new(true),
+                oversize: AtomicBool::new(false),
                 activity: Mutex::new(ActivityProof::Idle),
                 fail_capture: AtomicBool::new(fail_capture),
                 tree,
@@ -463,8 +481,61 @@ mod tests {
                     generation: Some(1),
                     width,
                     height,
+                    origin_x: 0.0,
+                    origin_y: 0.0,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                    pixels: None,
                 })
                 .collect();
+        }
+
+        fn set_pixels(&self, id: u64, width: u32, height: u32, rgb: Vec<u8>) {
+            let mut windows = self.0.windows.lock().expect("windows");
+            let window = windows
+                .iter_mut()
+                .find(|window| window.id == id)
+                .unwrap_or_else(|| panic!("missing window {id}"));
+            window.pixel_width = width;
+            window.pixel_height = height;
+            window.pixels = Some(rgb);
+        }
+
+        fn resize_window(&self, id: u64, width: f64, height: f64) {
+            let mut windows = self.0.windows.lock().expect("windows");
+            let window = windows
+                .iter_mut()
+                .find(|window| window.id == id)
+                .unwrap_or_else(|| panic!("missing window {id}"));
+            window.width = width;
+            window.height = height;
+        }
+
+        fn origin(&self, id: u64) -> (f64, f64) {
+            self.0
+                .windows
+                .lock()
+                .expect("windows")
+                .iter()
+                .find(|window| window.id == id)
+                .map(|window| (window.origin_x, window.origin_y))
+                .unwrap_or_else(|| panic!("missing window {id}"))
+        }
+
+        fn frames(&self) -> Vec<Vec<u8>> {
+            self.0.frames.lock().expect("frames").clone()
+        }
+
+        fn set_screen_recording(&self, allowed: bool) {
+            self.0.screen_recording.store(allowed, Ordering::SeqCst);
+        }
+
+        fn set_oversize(&self, oversize: bool) {
+            self.0.oversize.store(oversize, Ordering::SeqCst);
+        }
+
+        fn kill_process(&self) {
+            self.0.alive.store(false, Ordering::SeqCst);
         }
 
         fn close_window(&self, id: u64) {
@@ -578,7 +649,7 @@ mod tests {
     impl NativeProbe for Surface {
         fn process_instance_alive(&self, instance: &ProcessInstance) -> bool {
             self.bump();
-            live_instance(instance)
+            self.0.alive.load(Ordering::SeqCst) && live_instance(instance)
         }
         fn window_generation(&self, instance: &ProcessInstance, window_id: u64) -> Option<u64> {
             self.bump();
@@ -602,7 +673,10 @@ mod tests {
                     std::thread::park_timeout(std::time::Duration::from_millis(5));
                 }
             }
-            (window.window_id == 7 && window.generation == 1).then_some(self.0.tree.tree_revision)
+            let live = self.0.windows.lock().expect("windows").iter().any(|item| {
+                item.id == window.window_id && item.generation == Some(window.generation)
+            });
+            live.then_some(self.0.tree.tree_revision)
         }
         fn current_origin(&self, _: &WindowIdentity) -> Option<String> {
             self.bump();
@@ -712,6 +786,9 @@ mod tests {
             cancelled: &dyn Fn() -> bool,
         ) -> Result<CapturedFrame, TargetError> {
             self.bump();
+            if !self.0.screen_recording.load(Ordering::SeqCst) {
+                return Err(TargetError::PermissionMissing("screen recording"));
+            }
             self.0.capture.fetch_add(1, Ordering::SeqCst);
             self.0
                 .captured
@@ -726,21 +803,47 @@ mod tests {
                     "injected capture failure".into(),
                 ));
             }
-            let extent = self
+            let shot = self
                 .0
                 .windows
                 .lock()
                 .expect("windows")
                 .iter()
-                .find(|window| window.id == validated.window.window_id)
-                .map(|window| (window.width, window.height))
+                .find(|window| {
+                    window.id == validated.window.window_id && window.generation.is_some()
+                })
+                .map(|window| {
+                    (
+                        window.width,
+                        window.height,
+                        window.pixel_width,
+                        window.pixel_height,
+                        window.pixels.clone(),
+                    )
+                })
                 .ok_or(TargetError::WindowReplaced)?;
+            if self.0.oversize.load(Ordering::SeqCst) {
+                return Ok(CapturedFrame {
+                    image_width: 1281,
+                    image_height: 1,
+                    window_width: shot.0,
+                    window_height: shot.1,
+                    jpeg: vec![1, 2, 3, 4],
+                });
+            }
+            let (image_width, image_height, jpeg) = if let Some(rgb) = shot.4 {
+                let jpeg = encode_fixture(&rgb, shot.2, shot.3)?;
+                (shot.2, shot.3, jpeg)
+            } else {
+                (2, 1, vec![0xFF, 0xD8, 0xFF, 0xD9])
+            };
+            self.0.frames.lock().expect("frames").push(jpeg.clone());
             Ok(CapturedFrame {
-                image_width: 2,
-                image_height: 1,
-                window_width: extent.0,
-                window_height: extent.1,
-                jpeg: vec![0xFF, 0xD8, 0xFF, 0xD9],
+                image_width,
+                image_height,
+                window_width: shot.0,
+                window_height: shot.1,
+                jpeg,
             })
         }
         fn read_tree(
@@ -793,14 +896,25 @@ mod tests {
         }
         fn move_window(
             &self,
-            _: &ValidatedWindowDispatch,
-            _: &WindowMove,
+            validated: &ValidatedWindowDispatch,
+            origin: &WindowMove,
             cancelled: &dyn Fn() -> bool,
         ) -> Result<SemanticOutcome, TargetError> {
             self.bump();
             self.0.moved.fetch_add(1, Ordering::SeqCst);
             if cancelled() {
                 return Err(TargetError::Cancelled);
+            }
+            if let Some(window) = self
+                .0
+                .windows
+                .lock()
+                .expect("windows")
+                .iter_mut()
+                .find(|window| window.id == validated.window.window.window_id)
+            {
+                window.origin_x = origin.x;
+                window.origin_y = origin.y;
             }
             Ok(SemanticOutcome::Dispatched)
         }
@@ -1608,10 +1722,62 @@ mod tests {
             .unwrap_or_else(|| panic!("missing {extent} handle in {text}"))
     }
 
+    fn flat(width: u32, height: u32, color: [u8; 3]) -> Vec<u8> {
+        let mut rgb = Vec::with_capacity((width * height * 3) as usize);
+        for _ in 0..width * height {
+            rgb.extend_from_slice(&color);
+        }
+        rgb
+    }
+
+    fn encode_fixture(rgb: &[u8], width: u32, height: u32) -> Result<Vec<u8>, TargetError> {
+        let image = image::RgbImage::from_raw(width, height, rgb.to_vec()).ok_or_else(|| {
+            TargetError::ProbeUnavailable("fixture is not a complete frame".into())
+        })?;
+        let mut jpeg = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 90)
+            .encode_image(&image)
+            .map_err(|_| TargetError::ProbeUnavailable("JPEG encoding failed".into()))?;
+        Ok(jpeg)
+    }
+
+    fn jpeg_of(result: &ToolResult) -> Vec<u8> {
+        let Some(ContentPart::Image(image)) = result.content.get(1) else {
+            panic!("content part 1 must be an image, got {:?}", result.content);
+        };
+        let ImageSource::Base64(encoded) = &image.source else {
+            panic!("screenshot must be inline base64");
+        };
+        assert_eq!(image.media_type, "image/jpeg");
+        base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .expect("decode base64")
+    }
+
+    fn assert_fixture_color(jpeg: &[u8], width: u32, height: u32, color: [u8; 3]) {
+        let decoded = image::load_from_memory(jpeg)
+            .expect("product jpeg must decode")
+            .into_rgb8();
+        assert_eq!(decoded.dimensions(), (width, height));
+        assert!(jpeg.len() <= 512 * 1024);
+        assert!(width <= 1280 && height <= 1280);
+        let pixel = decoded.get_pixel(width / 2, height / 2).0;
+        for (got, want) in pixel.iter().zip(color) {
+            assert!(
+                (*got as i16 - want as i16).abs() <= 12,
+                "decoded {pixel:?} is not the selected window fixture {color:?}"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn multi_window_bind_returns_handles_and_screenshot_follows_the_choice() {
         let surface = Surface::new(false);
         surface.set_windows(vec![(11, 200.0, 100.0), (22, 640.0, 480.0)]);
+        let wide_color = [220, 10, 10];
+        let narrow_color = [10, 160, 30];
+        surface.set_pixels(22, 32, 16, flat(32, 16, wide_color));
+        surface.set_pixels(11, 32, 16, flat(32, 16, narrow_color));
         let host = Arc::new(NativeHost::new(surface.clone()));
         let performer: Arc<dyn NativePerform> = host.clone();
         let tool = Arc::new(NativeComputerTool::new(performer));
@@ -1681,6 +1847,12 @@ mod tests {
         assert_eq!(chosen.metadata["input_dispatched"], false);
         assert_eq!(surface.captured_windows(), vec![22]);
         assert_eq!(surface.launches(), 0);
+        let chosen_jpeg = jpeg_of(&chosen);
+        assert_eq!(chosen_jpeg, surface.frames()[0]);
+        assert_fixture_color(&chosen_jpeg, 32, 16, wide_color);
+        let chosen_observation = chosen.metadata["observation"]
+            .as_str()
+            .expect("chosen observation");
 
         let other = call(
             &main,
@@ -1692,6 +1864,10 @@ mod tests {
         assert_eq!(other.metadata["window_id"].as_str(), Some(narrow.as_str()));
         assert_eq!(surface.captured_windows(), vec![22, 11]);
         assert_eq!(surface.launches(), 0);
+        let other_jpeg = jpeg_of(&other);
+        assert_eq!(other_jpeg, surface.frames()[1]);
+        assert_ne!(other_jpeg, chosen_jpeg);
+        assert_fixture_color(&other_jpeg, 32, 16, narrow_color);
 
         let moved = call(
             &main,
@@ -1708,6 +1884,78 @@ mod tests {
         assert_eq!(surface.captured_windows(), vec![22, 11, 22]);
         assert_eq!(surface.moves(), 1);
         assert_eq!(surface.launches(), 0);
+        assert_eq!(surface.origin(22), (12.0, 8.0));
+        assert_eq!(surface.origin(11), (0.0, 0.0));
+        let moved_jpeg = jpeg_of(&moved);
+        assert_eq!(moved_jpeg, surface.frames()[2]);
+        assert_eq!(moved_jpeg, chosen_jpeg);
+        let moved_observation = moved.metadata["observation"]
+            .as_str()
+            .expect("moved observation");
+        assert_ne!(moved_observation, chosen_observation);
+
+        let tree = call(&main, "run", json!({"action": "read_tree", "window": wide}))
+            .await
+            .expect("tree");
+        let observation = tree.metadata["observation"]
+            .as_str()
+            .expect("tree observation");
+        let found = call(
+            &main,
+            "run",
+            json!({"action": "find_element", "observation": observation, "role": "AXTextField"}),
+        )
+        .await
+        .expect("element");
+        let element = found.metadata["element_id"].as_str().expect("element id");
+        surface.resize_window(22, 800.0, 480.0);
+        let stale = call(
+            &main,
+            "run",
+            json!({"action": "semantic", "element": element, "semantic": "set_value", "text": "x"}),
+        )
+        .await
+        .expect_err("resized observation");
+        assert!(
+            stale.message.contains("observe the target again"),
+            "resize must stale the old observation before dispatch: {}",
+            stale.message
+        );
+        assert_eq!(surface.semantics(), 0);
+        assert_eq!(surface.frames().len(), 3);
+
+        surface.set_screen_recording(false);
+        let denied = call(
+            &main,
+            "run",
+            json!({"action": "screenshot", "window": wide}),
+        )
+        .await
+        .expect_err("screen recording");
+        assert!(
+            denied.message.contains("screen recording"),
+            "permission must fail before a frame: {}",
+            denied.message
+        );
+        assert_eq!(surface.captures(), 3);
+        assert_eq!(surface.frames().len(), 3);
+
+        surface.set_screen_recording(true);
+        surface.set_oversize(true);
+        let budget = call(
+            &main,
+            "run",
+            json!({"action": "screenshot", "window": wide}),
+        )
+        .await
+        .expect_err("oversize frame");
+        assert!(
+            budget.message.contains("budget"),
+            "an over-budget frame must not be returned: {}",
+            budget.message
+        );
+        assert_eq!(surface.frames().len(), 3);
+        assert_eq!(surface.captured_windows(), vec![22, 11, 22, 22]);
     }
 
     #[tokio::test]
@@ -1806,5 +2054,26 @@ mod tests {
         );
         assert_eq!(surface.launches(), 0);
         assert_eq!(surface.captures(), 1);
+
+        // Authorization is checked before process liveness. The Once grant
+        // was revoked above, so a dead process is not the error a caller
+        // sees until the target is authorized again.
+        host.grant(&scope, &target(), GrantKind::ForRun)
+            .expect("regrant");
+        surface.kill_process();
+        let restarted = call(
+            &main,
+            "run",
+            json!({"action": "screenshot", "window": narrow}),
+        )
+        .await
+        .expect_err("restarted process");
+        assert!(
+            restarted.message.contains("restarted"),
+            "a restarted process must reject the old handle before capture: {}",
+            restarted.message
+        );
+        assert_eq!(surface.captures(), 1);
+        assert_eq!(surface.frames().len(), 1);
     }
 }

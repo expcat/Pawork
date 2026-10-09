@@ -4765,6 +4765,7 @@ dependencies = [
  "encoding_rs",
  "globset",
  "ignore",
+ "image",
  "pawork-computer-use",
  "pawork-domain",
  "pawork-exec",
