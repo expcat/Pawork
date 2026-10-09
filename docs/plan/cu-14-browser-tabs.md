@@ -1,6 +1,6 @@
 # CU-14 · 内置浏览器标签页与任务生命周期
 
-> 状态：自动回归通过，真实验收主体完成；复审修复四项已落地并过自动门禁；标签条滚动与空白标签地址栏清空真窗复验通过（2026-10-08），Agent 不动展示复验需活动 run、随模型链路环境恢复后人工验收。前置：[CU-13](cu-13-browser-observation.md)、[CU-09](cu-09-ownership-cancellation.md)。更新：2026-10-08。
+> 状态：✅ 完成（模拟人工验收）；独立 review / 复审 PASS（P4）。前置：[CU-13](cu-13-browser-observation.md)、[CU-09](cu-09-ownership-cancellation.md)。更新：2026-10-10。
 
 [返回 ROADMAP](../ROADMAP.md#computer-use-rust-升级)
 
@@ -54,4 +54,16 @@
 
 跨进程事实核对：Desktop 退出重启后会话历史重放完整、HTTP 日志零新增（历史不重执行）；断线 Host 重启后 Desktop 手动重试重连、草稿保留。验收中发现并修复两处缺陷（未提交工作区 diff）：① 地址栏在 Agent close / close_tab 与用户切换标签后停留旧标签 URL——根因是 apply_close_plan / select_agent_tab / user_select 预写 self.state 使 sync_browser_state 的 url_changed 检测失效，修复为三处不预写、由随后 sync 检测变化更新输入框，close 分支补 sync；真窗复验通过（切标签与 close 后地址栏均与展示页一致）。② 3 个 160px 标签即溢出检查器宽度截断「+」与关闭钮，标签条改 `overflow_x_scroll`（沿用 subagent chips 同款模式）；截图证据均不落库。临时配置改动（opencode-go disabled_models 移除 glm-5.3-flash）验收后已恢复（与备份逐字节一致）；Desktop / Host / fixture 服务已停止。
 
-遗留缺口：标签条横向滚动真窗复验已通过（2026-10-08，实例 cu20 真窗，3 个 160px 长标题标签溢出）：垂直滚轮经 GPUI overflow_x_scroll 映射横向滚动（delta.x 为零时 delta.y 落入 x 轴），条带偏移真实变化；AX 裁剪发布同验——tab1 裁出即消失、「+」（browser-new-tab）滚入可视即发布，点击「+」正确创建新用户标签（地址栏清空、面板标题回退、新标签选中——修复②空标签地址栏清空分支同验），关闭选中标签落回原位置下一张（末尾取前一张）。复审①「Agent 不动展示」与②的「Agent 导航在途空地址不清输入」分支需活动 run 复验：本轮 RunStart 被用户配置 disabled_models（opencode-go 含 glm-5.3-flash）按 ADR-055 D4 fail-closed 拒绝（行为正确、环境阻塞），待模型链路恢复后人工验收。其余 CU-13 登记缺口（截图正路径、焦点探针、密码 / 文件输入拒绝、句柄 TTL）不在本任务范围，继续在 CU-13 跟踪。
+遗留缺口：标签条横向滚动真窗复验已通过（2026-10-08，实例 cu20 真窗，3 个 160px 长标题标签溢出）：垂直滚轮经 GPUI overflow_x_scroll 映射横向滚动（delta.x 为零时 delta.y 落入 x 轴），条带偏移真实变化；AX 裁剪发布同验——tab1 裁出即消失、「+」（browser-new-tab）滚入可视即发布，点击「+」正确创建新用户标签（地址栏清空、面板标题回退、新标签选中——修复②空标签地址栏清空分支同验），关闭选中标签落回原位置下一张（末尾取前一张）。复审①「Agent 不动展示」与②的「Agent 导航在途空地址不清输入」分支曾在 2026-10-07 被 disabled_models fail-closed 阻塞，2026-10-10 分别由活动 Run 与 browser-go 首航模拟人工验收闭合（见下节）。其余 CU-13 登记缺口不在本任务范围，继续在 CU-13 跟踪。
+
+## 活动 Run 与首航模拟人工验收（2026-10-10）
+
+零产品源码变更复验。执行者在现有 `ui_fixture` 上临时加入 `new_tab / select_tab / navigate` 慢速脚本以生成活动 Run，验收完成后还原该临时改动；仓库保持基线 `a95ab61244a3d8ffc0d245cbc1e15ad1270620c2`，不新增第二 fixture 宿主。
+
+真实窗口为平行 bundle `Pawork-cu14tabs.app`，页面服务 `127.0.0.1:8941`，其中 `slow-a.html` 与 `slow-b.html` 各延迟 8 秒。最终 Run `run-gui-1791585918267-3` 将 176 次真实地址栏按键与 SQLite `tool_execution_started / completed` 区间对齐：`new_tab`（9966 ms）内 78 次完整按键，`select_tab`（714 ms）内 20 次，`navigate`（9117 ms）内 70 次。`select_tab` 回执 `active=false`；每次 AX 采样焦点均为 `browser-address`，选中标签始终为用户标签 `tab-1559-1`，展示页始终为 `CU14-USER-PAGE / user.html`，地址栏文本与按键序列一致。HTTP 请求 `slow-a`、`slow-b` 分别落在 `new_tab` 与 `navigate` 执行区间，证明 Agent 页面确实在途加载而没有抢占用户展示或清掉用户输入。
+
+补充首航场景在同一平行 bundle 与页面服务上执行：初始 BrowserPanel 无标签、地址栏为空，用户输入 `http://127.0.0.1:8941/slow-a.html?flight=go1` 后点击 browser-go。点击当毫秒 AX 已见新标签，地址值仍为完整输入，按钮进入「停止加载」；随后 3562 ms 内连续 30 次 AX 采样地址值不变、焦点始终 `browser-address`，HTTP 在该窗口内收到延迟 8 秒的 `slow-a` 请求，完成后按钮恢复「刷新」、标题为 `CU14-AGENT-A`、选中 `tab-3555-1`，地址值仍未被空 URL 同步清掉。该动作是 Desktop 本地 UI 事件，无 Host session_events，不以 SQLite 工具区间作为时序锚点。
+
+证据目录：`/tmp/pawork-cu14-browser-tabs-acceptance/evidence/`（活动 Run 含 `conclusion.txt`、`run3-correlation.json`、`run3-keys.json`、`samples.jsonl`、HTTP / Host / Desktop 日志与截图；首航含 `browser-go-first-flight/conclusion.txt`、`samples.json`、`samples-until-load.json`、`http-flight.log` 与截图）。fixture Host、页面服务和平行 Desktop 已定点停止，用户原有 Pawork.app 未触碰。本节为模拟人工验收；因最终源码零变更，未重复运行历史自动门禁。
+
+独立 review（2026-10-10）：执行者为线程 `01a122c5-0416-7920-873e-fa56bfb1fad7`（`xai/grok-4.7` / xhigh），产品源码零变更。R1b 受审快照 `/tmp/pawork-cu14-browser-tabs-r1b.diff`，9052 字节，SHA256 `318522ad5f6da8ee757766fbd7fed5f76ec78d2c1e09f4c4e680e4d7b342c28c`；reviewer 复核 R1b 与当时工作区一致。唯一 reviewer 线程 `01a122db-ba14-7a73-bb23-657500006350`（`gpt-6.1-sol` / max）初审 turn `01a122db-bdc2-79e3-92dd-91e0f7431dba` 指出 R1 将 browser-go 首航空地址保护误记为已闭合（P2）；执行者补证后，同 reviewer 复审 turn `01a122e5-ee42-7612-845d-96f715a98d5d` 最终 `VERDICT: PASS`，确认 P2 闭合、证据边界准确。复审另有一条非阻断 P3 建议（“点击当毫秒 AX 已见”可改为“点击返回后的首份 AX 采样”），不影响结论，按复审后不改动受审正文的原则保留原句。reviewer 按要求只读，不运行 Cargo。
